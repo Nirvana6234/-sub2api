@@ -661,6 +661,7 @@ type adminServiceImpl struct {
 	proxyProber          ProxyExitInfoProber
 	proxyLatencyCache    ProxyLatencyCache
 	authCacheInvalidator APIKeyAuthCacheInvalidator
+	channelCacheInvalidator ChannelCacheInvalidator
 	entClient            *dbent.Client // 用于开启数据库事务
 	settingService       *SettingService
 	defaultSubAssigner   DefaultSubscriptionAssigner

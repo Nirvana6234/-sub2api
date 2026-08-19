@@ -98,7 +98,7 @@ func openAIForwardSucceededForScheduling(result *service.OpenAIForwardResult) bo
 	return result.SucceededForScheduling()
 }
 
-func resolveOpenAIMessagesDispatchMappedModel(apiKey *service.APIKey, requestedModel string) string {
+func resolveOpenAIMessagesDispatchMappedModel(c *gin.Context, apiKey *service.APIKey, requestedModel string) string {
 	if apiKey == nil || apiKey.Group == nil {
 		return ""
 	}
@@ -182,7 +182,7 @@ func openAIResponsesRequiredCapability(imageIntent bool, platform string) servic
 	return service.OpenAIEndpointCapabilityChatCompletions
 }
 
-func allowOpenAICompatibleMessagesDispatch(apiKey *service.APIKey) bool {
+func allowOpenAICompatibleMessagesDispatch(c *gin.Context, apiKey *service.APIKey) bool {
 	if apiKey == nil || apiKey.Group == nil {
 		return true
 	}
@@ -968,7 +968,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	)
 
 	// 检查分组是否允许 /v1/messages 调度
-	if !allowOpenAICompatibleMessagesDispatch(apiKey) {
+	if !allowOpenAICompatibleMessagesDispatch(c, apiKey) {
 		h.anthropicErrorResponse(c, http.StatusForbidden, "permission_error",
 			"This group does not allow /v1/messages dispatch")
 		return
@@ -1011,7 +1011,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	}
 	bindOpenAIReasoningEffortPolicyForMessagesRequest(c, apiKey, body)
 	routingModel := service.NormalizeOpenAICompatRequestedModel(reqModel)
-	preferredMappedModel := resolveOpenAIMessagesDispatchMappedModel(apiKey, reqModel)
+	preferredMappedModel := resolveOpenAIMessagesDispatchMappedModel(c, apiKey, reqModel)
 	reqStream := gjson.GetBytes(body, "stream").Bool()
 
 	reqLog = reqLog.With(zap.String("model", reqModel), zap.Bool("stream", reqStream))
@@ -1112,7 +1112,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			)
 			if isAutoGroupSelectionFailoverError(err) && tryOpenAIAutoGroupFailover(c, h.apiKeyService, &apiKey, reqModel, failedGroupIDs, &subscription) {
 				channelMappingMsg, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
-				effectiveMappedModel = resolveOpenAIMessagesDispatchMappedModel(apiKey, reqModel)
+				effectiveMappedModel = resolveOpenAIMessagesDispatchMappedModel(c, apiKey, reqModel)
 				requestPlatform = openAICompatibleRequestPlatform(c.Request.Context(), apiKey)
 				msgPricingCtx, _ := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
 				c.Request = c.Request.WithContext(msgPricingCtx)
@@ -1229,7 +1229,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 					if !failoverErr.ShouldRetryNextAccount() {
 						if shouldTryOpenAIAutoGroupAfterTerminalFailover(failoverErr) && tryOpenAIAutoGroupFailover(c, h.apiKeyService, &apiKey, reqModel, failedGroupIDs, &subscription) {
 							channelMappingMsg, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
-							effectiveMappedModel = resolveOpenAIMessagesDispatchMappedModel(apiKey, reqModel)
+							effectiveMappedModel = resolveOpenAIMessagesDispatchMappedModel(c, apiKey, reqModel)
 							requestPlatform = openAICompatibleRequestPlatform(c.Request.Context(), apiKey)
 							msgPricingCtx, _ := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
 							c.Request = c.Request.WithContext(msgPricingCtx)
@@ -1267,7 +1267,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 					if switchCount >= maxAccountSwitches {
 						if tryOpenAIAutoGroupFailover(c, h.apiKeyService, &apiKey, reqModel, failedGroupIDs, &subscription) {
 							channelMappingMsg, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
-							effectiveMappedModel = resolveOpenAIMessagesDispatchMappedModel(apiKey, reqModel)
+							effectiveMappedModel = resolveOpenAIMessagesDispatchMappedModel(c, apiKey, reqModel)
 							requestPlatform = openAICompatibleRequestPlatform(c.Request.Context(), apiKey)
 							msgPricingCtx, _ := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
 							c.Request = c.Request.WithContext(msgPricingCtx)
@@ -1284,7 +1284,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 					if h.gatewayService.ShouldStopOpenAIOAuth429Failover(account, failoverErr.StatusCode, switchCount, &oauth429FailoverState) {
 						if tryOpenAIAutoGroupFailover(c, h.apiKeyService, &apiKey, reqModel, failedGroupIDs, &subscription) {
 							channelMappingMsg, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
-							effectiveMappedModel = resolveOpenAIMessagesDispatchMappedModel(apiKey, reqModel)
+							effectiveMappedModel = resolveOpenAIMessagesDispatchMappedModel(c, apiKey, reqModel)
 							requestPlatform = openAICompatibleRequestPlatform(c.Request.Context(), apiKey)
 							msgPricingCtx, _ := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
 							c.Request = c.Request.WithContext(msgPricingCtx)

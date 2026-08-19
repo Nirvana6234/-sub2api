@@ -22,6 +22,10 @@ import (
 	"go.uber.org/zap"
 )
 
+type openAICompatBufferedReadError struct{ cause error }
+func (e *openAICompatBufferedReadError) Error() string { return e.cause.Error() }
+func (e *openAICompatBufferedReadError) Unwrap() error { return e.cause }
+
 // ForwardAsAnthropic accepts an Anthropic Messages request body, converts it
 // to OpenAI Responses API format, forwards to the OpenAI upstream, and converts
 // the response back to Anthropic Messages format. This enables Claude Code

@@ -536,6 +536,7 @@ type defaultOpenAIAccountScheduler struct {
 	service                      *OpenAIGatewayService
 	metrics                      openAIAccountSchedulerMetrics
 	stats                        *openAIAccountRuntimeStats
+	grokFreeQuotaGateCache       sync.Map
 	lowCandidateDepthLogTime     sync.Map // group/model key -> *openAILowCandidateDepthLogEntry
 	lowCandidateDepthLogCount    atomic.Int64
 	lowCandidateDepthLogMu       sync.Mutex

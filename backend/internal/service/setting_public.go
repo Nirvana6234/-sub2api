@@ -413,8 +413,19 @@ func clampChannelMonitorInterval(v int) int {
 // consumed by the runner and user-facing handlers.
 type ChannelMonitorRuntime struct {
 	Enabled                bool
+	Mode                   string
 	DefaultIntervalSeconds int
+	HideThroughput         bool
+	ShowQuota              bool
 }
+
+func normalizeChannelMonitorMode(v string) string {
+	if strings.EqualFold(strings.TrimSpace(v), ChannelMonitorModeV2) { return ChannelMonitorModeV2 }
+	return ChannelMonitorModeV1
+}
+
+func (r ChannelMonitorRuntime) ActiveProbesAllowed() bool { return r.Enabled && r.Mode == ChannelMonitorModeV1 }
+func (r ChannelMonitorRuntime) PassiveAggregationAllowed() bool { return r.Enabled && r.Mode == ChannelMonitorModeV2 }
 
 // GetChannelMonitorRuntime reads the channel monitor feature flags directly from
 // the settings store. Fail-open: on error returns Enabled=true with the default interval.

@@ -19,6 +19,12 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+func grokPreviousResponseSessionSeed(body []byte) string {
+	id := strings.TrimSpace(gjson.GetBytes(body, "previous_response_id").String())
+	if strings.HasPrefix(id, "resp_") { return "grok-prev-resp:" + id }
+	return ""
+}
+
 const (
 	openCodeSessionAffinityHeader = "X-Session-Affinity"
 	openCodeSessionIDHeader       = "X-Session-Id"

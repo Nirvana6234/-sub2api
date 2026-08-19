@@ -3,6 +3,7 @@ package service
 import (
 	"compress/gzip"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -241,11 +242,17 @@ type BackupService struct {
 	cronMu      sync.Mutex
 	cronSched   *cron.Cron
 	cronEntryID cron.EntryID
+	lockCache LeaderLockCache
+	db *sql.DB
 
 	wg           sync.WaitGroup     // 追踪活跃的备份/恢复 goroutine
 	shuttingDown atomic.Bool        // 阻止新备份启动
 	bgCtx        context.Context    // 所有后台操作的 parent context
 	bgCancel     context.CancelFunc // 取消所有活跃后台操作
+}
+
+func (s *BackupService) SetLeaderLock(lockCache LeaderLockCache, db *sql.DB) {
+	if s != nil { s.lockCache = lockCache; s.db = db }
 }
 
 func NewBackupService(

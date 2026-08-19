@@ -75,6 +75,32 @@ const (
 
 var AllowedSchedulingThresholdPlatforms = []string{PlatformOpenAI, PlatformAnthropic, PlatformGrok, PlatformKimi, PlatformZhipu}
 
+const (
+	ChannelMonitorModeV1 = "v1"
+	ChannelMonitorModeV2 = "v2"
+)
+
+func NormalizeOpenAICompatiblePlatform(platform string) string {
+	switch platform {
+	case PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek:
+		return platform
+	default:
+		return PlatformOpenAI
+	}
+}
+
+const (
+	SettingKeyRegistrationEmailDomainQuotaEnabled = "registration_email_domain_quota_enabled"
+	SettingKeyTencentCaptchaRegion = "tencent_captcha_region"
+	SettingKeyAccountSchedulingThresholds = "account_scheduling_thresholds"
+	SettingKeyChannelMonitorMode = "channel_monitor_mode"
+	SettingKeyChannelMonitorHideThroughput = "channel_monitor_hide_throughput"
+	SettingKeyChannelMonitorShowQuota = "channel_monitor_show_quota"
+	SettingKeyGrokDefaultTextModel = "grok_default_text_model"
+	SettingKeyGrokCrossClientModelMapEnabled = "grok_cross_client_model_map_enabled"
+	SettingKeyGrokDefaultBaseURLMode = "grok_default_base_url_mode"
+)
+
 // AllowedQuotaPlatforms 是允许设置 user × platform quota 的平台列表（单一权威来源）。
 // ent/schema/user_platform_quota.go 的 Validate 函数独立维护（构建期约束），
 // 若新增平台需同步修改该 schema。

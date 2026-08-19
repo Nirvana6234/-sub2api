@@ -36,6 +36,8 @@ import (
 	"entgo.io/ent/dialect/sql/sqljson"
 )
 
+const codexFingerprintSeedCanonicalPattern = "codex_fingerprint_seed"
+
 // accountRepository 实现 service.AccountRepository 接口。
 // 提供 AI API 账户的完整数据访问功能。
 //

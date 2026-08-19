@@ -893,6 +893,10 @@ func (s *GatewayService) recordUsageWithResolvedMultiplier(ctx context.Context, 
 	user := input.User
 	account := input.Account
 	subscription := input.Subscription
+	pricingAt := input.PricingAt
+	if pricingAt.IsZero() {
+		pricingAt = timezone.Now()
+	}
 
 	// 确定计费模型
 	concreteBillingModel := forwardResultBillingModel(result.Model, result.UpstreamModel)
