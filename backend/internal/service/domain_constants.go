@@ -43,8 +43,37 @@ const (
 	PlatformGemini      = domain.PlatformGemini
 	PlatformAntigravity = domain.PlatformAntigravity
 	PlatformGrok        = domain.PlatformGrok
+	PlatformKimi        = domain.PlatformKimi
+	PlatformZhipu       = domain.PlatformZhipu
+	PlatformDeepseek    = domain.PlatformDeepseek
 	PlatformComposite   = domain.PlatformComposite
 )
+
+const (
+	AccountModePayG   = domain.AccountModePayG
+	AccountModeCoding = domain.AccountModeCoding
+)
+
+func IsCNProvider(platform string) bool {
+	return platform == PlatformKimi || platform == PlatformZhipu || platform == PlatformDeepseek
+}
+
+const (
+	APIProtocolChatCompletions = domain.APIProtocolChatCompletions
+	APIProtocolAnthropic       = domain.APIProtocolAnthropic
+	APIProtocolResponses       = domain.APIProtocolResponses
+	DefaultKimiPayGBaseURL = "https://api.moonshot.cn/v1"
+	DefaultKimiCodingBaseURL = "https://api.kimi.com/coding/v1"
+	DefaultZhipuPayGBaseURL = "https://open.bigmodel.cn/api/paas/v4"
+	DefaultZhipuCodingBaseURL = "https://open.bigmodel.cn/api/coding/paas/v4"
+	DefaultDeepseekBaseURL = "https://api.deepseek.com"
+	DefaultKimiPayGAnthropicBaseURL = "https://api.moonshot.cn/anthropic"
+	DefaultKimiCodingAnthropicBaseURL = "https://api.kimi.com/coding"
+	DefaultZhipuAnthropicBaseURL = "https://open.bigmodel.cn/api/anthropic"
+	DefaultDeepseekAnthropicBaseURL = "https://api.deepseek.com/anthropic"
+)
+
+var AllowedSchedulingThresholdPlatforms = []string{PlatformOpenAI, PlatformAnthropic, PlatformGrok, PlatformKimi, PlatformZhipu}
 
 // AllowedQuotaPlatforms 是允许设置 user × platform quota 的平台列表（单一权威来源）。
 // ent/schema/user_platform_quota.go 的 Validate 函数独立维护（构建期约束），

@@ -222,10 +222,12 @@ type CreateGroupInput struct {
 	RateMultiplier        float64
 	AllowContributionPool bool
 	IsExclusive           bool
+	LongContextPricingEnabled bool
 	SubscriptionType      string   // standard/subscription
 	DailyLimitUSD         *float64 // 日限额 (USD)
 	WeeklyLimitUSD        *float64 // 周限额 (USD)
 	MonthlyLimitUSD       *float64 // 月限额 (USD)
+	ModelPricing          []ChannelModelPricing
 	// 图片生成计费配置（仅 antigravity 平台使用）
 	AllowImageGeneration         bool
 	AllowBatchImageGeneration    bool
@@ -235,6 +237,7 @@ type CreateGroupInput struct {
 	BatchImageHoldMultiplier     *float64
 	VideoRateIndependent         bool
 	VideoRateMultiplier          *float64
+	VideoModelPrices             map[string]map[string]float64
 	// 高峰时段倍率配置（PeakRateMultiplier 为 nil 时按 1.0 处理）
 	PeakRateEnabled    bool
 	PeakStart          string
@@ -248,6 +251,10 @@ type CreateGroupInput struct {
 	VideoPrice1080P    *float64
 	// Codex alpha/search 网页搜索单次价格（USD/次，仅 openai 平台使用）；nil/负数按默认价 0.01 处理
 	WebSearchPricePerCall *float64
+	SearchPricePer1k      *float64
+	AudioRealtimePricePerMin     *float64
+	AudioTTSPricePerMillionChars *float64
+	AudioSTTPricePerHour         *float64
 	ClaudeCodeOnly        bool   // 仅允许 Claude Code 客户端
 	FallbackGroupID       *int64 // 降级分组 ID
 	// 无效请求兜底分组 ID（仅 anthropic 平台使用）
@@ -287,6 +294,8 @@ type UpdateGroupInput struct {
 	RateMultiplier        *float64 // 使用指针以支持设置为0
 	AllowContributionPool *bool
 	IsExclusive           *bool
+	LongContextPricingEnabled *bool
+	ModelPricing              *[]ChannelModelPricing
 	Status                string
 	SubscriptionType      string   // standard/subscription
 	DailyLimitUSD         *float64 // 日限额 (USD)
@@ -301,6 +310,7 @@ type UpdateGroupInput struct {
 	BatchImageHoldMultiplier     *float64
 	VideoRateIndependent         *bool
 	VideoRateMultiplier          *float64
+	VideoModelPrices             map[string]map[string]float64
 	// 高峰时段倍率配置（nil 表示不修改）
 	PeakRateEnabled    *bool
 	PeakStart          *string
@@ -314,6 +324,10 @@ type UpdateGroupInput struct {
 	VideoPrice1080P    *float64
 	// Codex alpha/search 网页搜索单次价格（USD/次）；nil 表示不修改，负数表示清除回默认价 0.01
 	WebSearchPricePerCall *float64
+	SearchPricePer1k      *float64
+	AudioRealtimePricePerMin     *float64
+	AudioTTSPricePerMillionChars *float64
+	AudioSTTPricePerHour         *float64
 	ClaudeCodeOnly        *bool  // 仅允许 Claude Code 客户端
 	FallbackGroupID       *int64 // 降级分组 ID
 	// 无效请求兜底分组 ID（仅 anthropic 平台使用）
@@ -471,6 +485,7 @@ type BulkUpdateAccountsResult struct {
 	SuccessIDs []int64                   `json:"success_ids"`
 	FailedIDs  []int64                   `json:"failed_ids"`
 	Results    []BulkUpdateAccountResult `json:"results"`
+	LongContextInheritedCount int `json:"long_context_inherited_count,omitempty"`
 }
 
 type CreateProxyInput struct {
@@ -655,6 +670,10 @@ type adminServiceImpl struct {
 	affiliateService     adminRechargeAffiliateAccruer
 	compositeRouteRepo   CompositeModelRouteRepository
 	compositeResolver    *CompositeRouteResolver
+}
+
+type ChannelCacheInvalidator interface {
+	InvalidateCache()
 }
 
 type adminRechargeAffiliateAccruer interface {

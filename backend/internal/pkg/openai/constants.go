@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+const CodexUsageProbeModel = "codex-auto-review"
+
 // Model represents an OpenAI model
 type Model struct {
 	ID          string `json:"id"`
