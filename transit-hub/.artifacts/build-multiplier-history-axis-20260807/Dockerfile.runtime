@@ -1,0 +1,8 @@
+FROM transithub:health-recovery-20260807
+WORKDIR /app
+COPY public /app/public
+ENV PORT=10621
+ENV PUBLIC_DIR=/app/public
+ENV TICKET_UPLOAD_DIR=/app/data/ticket-uploads
+EXPOSE 10621
+ENTRYPOINT ["/app/transithub-api"]

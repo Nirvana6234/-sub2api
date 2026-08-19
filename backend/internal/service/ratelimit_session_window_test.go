@@ -110,6 +110,9 @@ func (m *sessionWindowMockRepo) SetError(context.Context, int64, string) error {
 	panic("unexpected")
 }
 func (m *sessionWindowMockRepo) ClearError(context.Context, int64) error { panic("unexpected") }
+func (m *sessionWindowMockRepo) RecoverAutomaticSchedulability(context.Context, int64, *time.Time) (bool, error) {
+	panic("unexpected")
+}
 func (m *sessionWindowMockRepo) SetSchedulable(context.Context, int64, bool) error {
 	panic("unexpected")
 }

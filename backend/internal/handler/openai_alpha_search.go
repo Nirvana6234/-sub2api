@@ -109,8 +109,10 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 	sessionHash := h.gatewayService.GenerateSessionHashWithFallback(c, nil, searchID)
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
+	failedGroupIDs := make(map[int64]struct{})
 	var lastFailoverErr *service.UpstreamFailoverError
 	switchCount := 0
+	maxAccountSwitches := maxAccountSwitchesForRequest(c.Request.Context(), h.maxAccountSwitches)
 	var oauth429FailoverState service.OpenAIOAuth429FailoverState
 	routingStart := time.Now()
 
@@ -139,7 +141,15 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 				reqLog.Info("openai_alpha_search.account_select_aborted_client_disconnected", zap.Error(err))
 				return
 			}
-			if len(failedAccountIDs) == 0 {
+			if isAutoGroupSelectionFailoverError(err) && tryOpenAIAutoGroupFailover(c, h.apiKeyService, &apiKey, requestedModel, failedGroupIDs, &subscription) {
+				channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, requestedModel)
+				asPricingCtx, _ := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
+				c.Request = c.Request.WithContext(asPricingCtx)
+				failedAccountIDs = make(map[int64]struct{})
+				switchCount = 0
+				continue
+			}
+			if len(failedAccountIDs) == 0 && lastFailoverErr == nil {
 				cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, requestedModel, requestedModel, service.PlatformOpenAI)
 				if !cls.ModelNotFound {
 					markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
@@ -214,12 +224,28 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 		h.gatewayService.RecordOpenAIAccountSwitch()
 		failedAccountIDs[account.ID] = struct{}{}
 		lastFailoverErr = failoverErr
-		if switchCount >= h.maxAccountSwitches {
+		if switchCount >= maxAccountSwitches {
+			if tryOpenAIAutoGroupFailover(c, h.apiKeyService, &apiKey, requestedModel, failedGroupIDs, &subscription) {
+				channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, requestedModel)
+				asPricingCtx, _ := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
+				c.Request = c.Request.WithContext(asPricingCtx)
+				failedAccountIDs = make(map[int64]struct{})
+				switchCount = 0
+				continue
+			}
 			h.handleFailoverExhausted(c, failoverErr, false)
 			return
 		}
 		switchCount++
 		if h.gatewayService.ShouldStopOpenAIOAuth429Failover(account, failoverErr.StatusCode, switchCount, &oauth429FailoverState) {
+			if tryOpenAIAutoGroupFailover(c, h.apiKeyService, &apiKey, requestedModel, failedGroupIDs, &subscription) {
+				channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, requestedModel)
+				asPricingCtx, _ := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
+				c.Request = c.Request.WithContext(asPricingCtx)
+				failedAccountIDs = make(map[int64]struct{})
+				switchCount = 0
+				continue
+			}
 			h.handleFailoverExhausted(c, failoverErr, false)
 			return
 		}

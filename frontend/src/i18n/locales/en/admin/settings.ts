@@ -30,6 +30,12 @@ export default {
           enabled: 'Enable Available Channels',
           enabledHint: 'When off, the sidebar entry is hidden and the endpoint returns an empty list.',
         },
+        playground: {
+          title: 'Playground',
+          description: 'Expose the Playground entry points to end users. Disabled by default.',
+          enabled: 'Enable Playground',
+          enabledHint: 'When off, Playground stays hidden and backend adapters should fail closed.',
+        },
         modelPlaza: {
           title: 'Model Plaza',
           description: 'A public page showcasing available models and pricing by group. Disabled by default.',
@@ -366,6 +372,12 @@ export default {
         affiliateRebateRate: 'Affiliate Rebate Rate',
         affiliateRebateRateHint:
           'Rebate percentage credited to inviter after recharge (0-100%, e.g. 10 means 10%)',
+        accountShareRewardRate: 'Shared Account Contributor Reward Rate',
+        accountShareRewardRateHint:
+          'Contribution credit paid to the shared-account owner after another user consumes it (0-100%; 80 returns 80% of actual cost). Changes affect new settlements only.',
+        accountOwnUsageFeeRate: 'Own Contributed Account Platform Fee',
+        accountOwnUsageFeeRateHint:
+          'Platform fee when a user uses an account they contributed (0-100%; default 1%). Contribution credit is used first, then cash balance.',
         defaultConcurrency: 'Default Concurrency',
         defaultConcurrencyHint: 'Maximum concurrent requests for new users',
         defaultUserRpmLimit: 'Default User RPM Limit',
@@ -1244,8 +1256,8 @@ export default {
         oauthRateTitle: 'OAuth scheduling reference rate',
         oauthRatePriorityDescription: 'When a group contains both API Key and OAuth accounts, this rate is used to order OAuth accounts alongside probed API Key billing rates.',
         oauthRateWeightedDescription: 'When a group contains both API Key and OAuth accounts, this rate is used for OAuth accounts when calculating the billing-rate score.',
-        stickyWeightedTitle: 'Sticky weighting',
-        stickyWeightedDescription: 'When enabled, previous_response_id and session_hash affinity are scored by the advanced scheduler. When disabled, sticky accounts keep the legacy hard-hit behavior.',
+        stickyWeightedTitle: 'Session affinity weighting',
+        stickyWeightedDescription: 'When enabled, session_hash is a scoring preference and an unchanged binding keeps its original expiry; previous_response_id always stays on its original account. When disabled, session_hash uses legacy hard affinity.',
         subscriptionPriorityTitle: 'Subscription priority',
         subscriptionPriorityDescription: 'When enabled, the scheduler scores ChatGPT subscription accounts first and falls back to non-subscription accounts only if no subscription slot can be acquired.',
         weightsTitle: 'Scheduler weight overrides',

@@ -51,6 +51,15 @@ type ChannelMonitorRequestTemplate func(*sql.Selector)
 // CompositeModelRoute is the predicate function for compositemodelroute builders.
 type CompositeModelRoute func(*sql.Selector)
 
+// ContributionAccountVerification is the predicate function for contributionaccountverification builders.
+type ContributionAccountVerification func(*sql.Selector)
+
+// ContributionRoom is the predicate function for contributionroom builders.
+type ContributionRoom func(*sql.Selector)
+
+// ContributionRoomAccount is the predicate function for contributionroomaccount builders.
+type ContributionRoomAccount func(*sql.Selector)
+
 // ErrorPassthroughRule is the predicate function for errorpassthroughrule builders.
 type ErrorPassthroughRule func(*sql.Selector)
 
@@ -116,6 +125,9 @@ type UserAttributeDefinition func(*sql.Selector)
 
 // UserAttributeValue is the predicate function for userattributevalue builders.
 type UserAttributeValue func(*sql.Selector)
+
+// UserContributionRoomPreference is the predicate function for usercontributionroompreference builders.
+type UserContributionRoomPreference func(*sql.Selector)
 
 // UserPlatformQuota is the predicate function for userplatformquota builders.
 type UserPlatformQuota func(*sql.Selector)

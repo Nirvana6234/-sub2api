@@ -830,6 +830,15 @@ func (s *RateLimitService) handleOpenAI403(ctx context.Context, account *Account
 		"account may be suspended or lack permissions",
 	)
 
+	// 能归因到具体模型的 403 只惩罚 (账号, 模型) 这一对，账号对其它模型继续可用。
+	// 上游常以 403 表达"本账号未开通该模型"（如 LUNA_MODEL_UNAVAILABLE），旧逻辑
+	// 一律冻结整个账号，导致同账号上完全正常的模型被连坐、反复被踢出调度。
+	// 若该账号下每个模型最终都因 403 被封，调度器按 model_rate_limits 过滤后该账号
+	// 自然对所有模型不可用，等价于账号级停用，无需在此提前扩大惩罚范围。
+	if s.applyModelScopedOpenAI403(ctx, account, msg) {
+		return false
+	}
+
 	if s.openAI403CounterCache == nil {
 		s.handleAuthError(ctx, account, msg)
 		return true
@@ -863,6 +872,52 @@ func (s *RateLimitService) handleOpenAI403(ctx context.Context, account *Account
 		"until", until,
 		"count", count,
 		"threshold", openAI403DisableThreshold,
+	)
+	return true
+}
+
+// openAI403ModelScopedCooldown 是单模型 403 的冷却时长。取 1 小时而非
+// upstreamModelNotFoundCooldown 的 7 天：403 既可能是"未开通该模型"这类持久配置，
+// 也可能是按日重置的额度耗尽，1 小时足以中断反复被踢出调度的抖动，又能在上游恢复
+// 后自动放行，不需要人工干预。
+const openAI403ModelScopedCooldown = time.Hour
+
+// openAI403ModelScopedReason 写入 model_rate_limits 的原因标识，便于与
+// upstream_404_model_not_found 等其它模型级封禁来源区分。
+const openAI403ModelScopedReason = "openai_403_model_scoped"
+
+// applyModelScopedOpenAI403 把 403 的惩罚限定在 (账号, 模型) 这一对上。
+// 返回 true 表示已按模型级处理，调用方不应再做任何账号级动作。
+// 无法归因到模型（requestedModel 为空）时返回 false，交回原有账号级逻辑——
+// 那是既有的兜底行为，不属于扩大惩罚范围。
+func (s *RateLimitService) applyModelScopedOpenAI403(ctx context.Context, account *Account, msg string) bool {
+	if s == nil || account == nil || s.accountRepo == nil {
+		return false
+	}
+	model := tempUnschedulableModel(ctx, nil)
+	if model == "" {
+		return false
+	}
+	// 与 HandleUpstreamModelNotFound 共用同一套 key 解析，确保模型映射、
+	// Antigravity 最终模型名等场景下封禁的 key 与调度侧过滤的 key 一致。
+	modelKey := modelRateLimitKeyForUpstreamModelNotFound(ctx, account, model)
+	if modelKey == "" {
+		return false
+	}
+	resetAt := time.Now().Add(openAI403ModelScopedCooldown)
+	reason := fmt.Sprintf("%s: %s", openAI403ModelScopedReason, msg)
+	if err := s.accountRepo.SetModelRateLimit(ctx, account.ID, modelKey, resetAt, reason); err != nil {
+		slog.Warn("openai_403_set_model_rate_limit_failed",
+			"account_id", account.ID,
+			"model", modelKey,
+			"error", err,
+		)
+		return false
+	}
+	slog.Warn("openai_403_model_scoped",
+		"account_id", account.ID,
+		"model", modelKey,
+		"reset_at", resetAt,
 	)
 	return true
 }
@@ -2019,9 +2074,21 @@ func parseOpenAIImageTryAgainCooldown(body []byte) time.Duration {
 	}
 }
 
-const upstreamModelNotFoundCooldown = 30 * time.Minute
+// upstreamModelNotFoundCooldown marks an (account, model) pair as
+// permanently unavailable for scheduling. Model-not-found is a deterministic
+// signal from the upstream: the account's configuration does not support the
+// model and will not self-heal. Seven days is long enough to cover the typical
+// gap between discovering an unsupported model and an administrator updating
+// the account's model mapping. The scheduler skips the pair via
+// IsSchedulableForModelWithContext until the cooldown expires or the account's
+// model rate limits are manually cleared.
+const upstreamModelNotFoundCooldown = 7 * 24 * time.Hour
 const upstreamModelNotFoundReason = "upstream_404_model_not_found"
-const upstreamCodexPlanGatedModelCooldown = 30 * time.Minute
+
+// upstreamCodexPlanGatedModelCooldown uses the same long duration because the
+// plan-gated rejection is also deterministic: a ChatGPT account on a plan that
+// does not include the requested model cannot serve it until the plan changes.
+const upstreamCodexPlanGatedModelCooldown = 7 * 24 * time.Hour
 const upstreamCodexPlanGatedModelReason = "upstream_400_codex_plan_gated_model"
 const tempUnschedBodyMaxBytes = 64 << 10
 const tempUnschedMessageMaxBytes = 2048

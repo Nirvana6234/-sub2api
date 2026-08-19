@@ -1,0 +1,7 @@
+FROM transithub:auto-priority-group-sort-20260806-r4
+
+COPY .artifacts/build-cached-multiplier-20260806-r1/transithub-api /app/transithub-api
+COPY .artifacts/build-cached-multiplier-20260806-r1/public/ /app/public/
+RUN chmod +x /app/transithub-api
+
+ENTRYPOINT ["/app/transithub-api"]

@@ -118,6 +118,16 @@ func TestGroupRepository_DeleteCascade_PreservesApiKeyGroupID(t *testing.T) {
 		Status:  service.StatusActive,
 	}
 	require.NoError(t, apiKeyRepo.Create(ctx, key))
+	autoKey := &service.APIKey{
+		UserID:          u.ID,
+		Key:             uniqueTestValue(t, "sk-test-delete-cascade-auto"),
+		Name:            "test auto key",
+		AutoGroup:       true,
+		AutoGroupIDs:    []int64{targetGroup.ID, otherGroup.ID},
+		AutoGroupStrategy: "price",
+		Status:          service.StatusActive,
+	}
+	require.NoError(t, apiKeyRepo.Create(ctx, autoKey))
 
 	_, err = groupRepo.DeleteCascade(ctx, targetGroup.ID)
 	require.NoError(t, err)
@@ -144,4 +154,11 @@ func TestGroupRepository_DeleteCascade_PreservesApiKeyGroupID(t *testing.T) {
 	require.NotNil(t, keyAfter.GroupID)
 	require.Equal(t, targetGroup.ID, *keyAfter.GroupID)
 	require.Nil(t, keyAfter.Group)
+
+	// Automatic candidate IDs are not foreign-key backed, so group deletion
+	// must remove the deleted ID explicitly instead of leaving stale routing
+	// configuration behind.
+	autoKeyAfter, err := apiKeyRepo.GetByID(ctx, autoKey.ID)
+	require.NoError(t, err)
+	require.Equal(t, []int64{otherGroup.ID}, autoKeyAfter.AutoGroupIDs)
 }

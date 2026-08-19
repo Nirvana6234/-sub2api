@@ -92,6 +92,9 @@ type AdminService interface {
 	DeleteAccount(ctx context.Context, id int64) error
 	RefreshAccountCredentials(ctx context.Context, id int64) (*Account, error)
 	ClearAccountError(ctx context.Context, id int64) (*Account, error)
+	// RecoverAccountSchedulability 恢复系统自动停用的账号（compare-and-set）。
+	// 返回 ErrSchedulabilityRecoveryConflict 表示条件不满足、状态未被改动。
+	RecoverAccountSchedulability(ctx context.Context, id int64, expectedChangedAt *time.Time) (*Account, error)
 	SetAccountError(ctx context.Context, id int64, errorMsg string) error
 	// EnsureOpenAIPrivacy 检查 OpenAI OAuth 账号 privacy_mode，未设置则尝试关闭训练数据共享并持久化。
 	EnsureOpenAIPrivacy(ctx context.Context, account *Account) string
@@ -148,6 +151,8 @@ type CreateUserInput struct {
 	Concurrency   int
 	RPMLimit      int
 	AllowedGroups []int64
+	AccountManagementEnabled bool
+	ContributionRoomsEnabled bool
 	// ActorAdminID 执行本次操作的管理员ID(来自JWT)，仅用于权限敏感操作的审计日志。
 	ActorAdminID int64
 }
@@ -163,6 +168,8 @@ type UpdateUserInput struct {
 	RPMLimit      *int     // 使用指针区分"未提供"和"设置为0"
 	Status        string
 	AllowedGroups *[]int64 // 使用指针区分"未提供"和"设置为空数组"
+	AccountManagementEnabled *bool
+	ContributionRoomsEnabled *bool
 	// GroupRates 用户专属分组倍率配置
 	// map[groupID]*rate，nil 表示删除该分组的专属倍率
 	GroupRates map[int64]*float64
@@ -209,15 +216,16 @@ type AdminBoundAuthIdentityChannel struct {
 }
 
 type CreateGroupInput struct {
-	Name             string
-	Description      string
-	Platform         string
-	RateMultiplier   float64
-	IsExclusive      bool
-	SubscriptionType string   // standard/subscription
-	DailyLimitUSD    *float64 // 日限额 (USD)
-	WeeklyLimitUSD   *float64 // 周限额 (USD)
-	MonthlyLimitUSD  *float64 // 月限额 (USD)
+	Name                  string
+	Description           string
+	Platform              string
+	RateMultiplier        float64
+	AllowContributionPool bool
+	IsExclusive           bool
+	SubscriptionType      string   // standard/subscription
+	DailyLimitUSD         *float64 // 日限额 (USD)
+	WeeklyLimitUSD        *float64 // 周限额 (USD)
+	MonthlyLimitUSD       *float64 // 月限额 (USD)
 	// 图片生成计费配置（仅 antigravity 平台使用）
 	AllowImageGeneration         bool
 	AllowBatchImageGeneration    bool
@@ -273,16 +281,17 @@ type CreateGroupInput struct {
 }
 
 type UpdateGroupInput struct {
-	Name             string
-	Description      *string
-	Platform         string
-	RateMultiplier   *float64 // 使用指针以支持设置为0
-	IsExclusive      *bool
-	Status           string
-	SubscriptionType string   // standard/subscription
-	DailyLimitUSD    *float64 // 日限额 (USD)
-	WeeklyLimitUSD   *float64 // 周限额 (USD)
-	MonthlyLimitUSD  *float64 // 月限额 (USD)
+	Name                  string
+	Description           *string
+	Platform              string
+	RateMultiplier        *float64 // 使用指针以支持设置为0
+	AllowContributionPool *bool
+	IsExclusive           *bool
+	Status                string
+	SubscriptionType      string   // standard/subscription
+	DailyLimitUSD         *float64 // 日限额 (USD)
+	WeeklyLimitUSD        *float64 // 周限额 (USD)
+	MonthlyLimitUSD       *float64 // 月限额 (USD)
 	// 图片生成计费配置（仅 antigravity 平台使用）
 	AllowImageGeneration         *bool
 	AllowBatchImageGeneration    *bool

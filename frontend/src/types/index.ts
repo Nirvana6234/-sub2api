@@ -89,6 +89,8 @@ export interface User {
   frozen_balance?: number // Balance currently held by async batch jobs
   concurrency: number // Allowed concurrent requests
   rpm_limit?: number // User-level RPM cap (0 = unlimited); effective as fallback when group has no rpm_limit
+  account_management_enabled?: boolean
+  contribution_rooms_enabled?: boolean
   status: 'active' | 'disabled' // Account status
   allowed_groups: number[] | null // Allowed group IDs (null = all non-exclusive groups)
   balance_notify_enabled: boolean
@@ -235,6 +237,8 @@ export interface PublicSettings {
   home_content: string
   compact_home_enabled: boolean
   hide_ccs_import_button: boolean
+  purchase_subscription_enabled?: boolean
+  purchase_subscription_url?: string
   payment_enabled: boolean
   risk_control_enabled: boolean
   table_default_page_size: number
@@ -263,6 +267,9 @@ export interface PublicSettings {
   channel_monitor_enabled: boolean
   channel_monitor_default_interval_seconds: number
   available_channels_enabled: boolean
+  playground_enabled: boolean
+  playground_default_chat_model: string
+  playground_default_image_model: string
   model_plaza_enabled: boolean
   model_plaza_require_auth: boolean
   service_quota_enabled: boolean
@@ -540,7 +547,8 @@ export interface Group {
   name: string
   description: string | null
   platform: GroupPlatform
-  rate_multiplier: number
+	rate_multiplier: number
+	allow_contribution_pool?: boolean
   rpm_limit?: number // Group-level RPM cap (0 = unlimited); overrides user-level rpm_limit when set
   max_reasoning_effort?: string // OpenAI/Codex reasoning ceiling; empty means unlimited
   reasoning_effort_mappings?: ReasoningEffortMapping[]
@@ -687,6 +695,12 @@ export interface ApiKey {
   key: string
   name: string
   group_id: number | null
+  auto_group: boolean
+  auto_group_strategy: 'price' | 'balanced' | 'speed'
+  auto_group_ids: number[]
+  auto_group_current_group?: Group | null
+  auto_group_current_model?: string
+  auto_group_current_selected_at?: string | null
   status: 'active' | 'inactive' | 'quota_exhausted' | 'expired'
   ip_whitelist: string[]
   ip_blacklist: string[]
@@ -716,6 +730,9 @@ export interface ApiKey {
 export interface CreateApiKeyRequest {
   name: string
   group_id?: number | null
+  auto_group?: boolean
+  auto_group_strategy?: 'price' | 'balanced' | 'speed'
+  auto_group_ids?: number[]
   custom_key?: string // Optional custom API Key
   ip_whitelist?: string[]
   ip_blacklist?: string[]
@@ -729,6 +746,9 @@ export interface CreateApiKeyRequest {
 export interface UpdateApiKeyRequest {
   name?: string
   group_id?: number | null
+  auto_group?: boolean
+  auto_group_strategy?: 'price' | 'balanced' | 'speed'
+  auto_group_ids?: number[]
   status?: 'active' | 'inactive'
   ip_whitelist?: string[]
   ip_blacklist?: string[]
@@ -745,7 +765,8 @@ export interface CreateGroupRequest {
   name: string
   description?: string | null
   platform?: GroupPlatform
-  rate_multiplier?: number
+	rate_multiplier?: number
+	allow_contribution_pool?: boolean
   is_exclusive?: boolean
   subscription_type?: SubscriptionType
   daily_limit_usd?: number | null
@@ -799,7 +820,8 @@ export interface UpdateGroupRequest {
   name?: string
   description?: string | null
   platform?: GroupPlatform
-  rate_multiplier?: number
+	rate_multiplier?: number
+	allow_contribution_pool?: boolean
   is_exclusive?: boolean
   status?: 'active' | 'inactive'
   subscription_type?: SubscriptionType
@@ -1092,6 +1114,8 @@ export interface Account {
     antigravity_credits_overages?: Record<string, { activated_at: string; active_until: string }>
     upstream_billing_probe_enabled?: boolean
     upstream_billing_rate_sync_enabled?: boolean
+    upstream_billing_manual_rate_multiplier?: number
+    upstream_billing_newapi_group?: string
     upstream_billing_probe?: UpstreamBillingProbeSnapshot
     codex_reset_credit_snapshot?: {
       available_count?: number
@@ -1112,6 +1136,8 @@ export interface Account {
   } | null
   scheduler_scores?: AccountSchedulerGroupScore[] | null
   priority: number
+  // Returned when the admin list is filtered to a concrete group.
+  group_priority?: number | null
   rate_multiplier?: number // Account billing multiplier (>=0, 0 means free)
   status: 'active' | 'inactive' | 'error'
   error_message: string | null
@@ -1381,6 +1407,7 @@ export interface CreateAccountRequest {
   auto_pause_on_expired?: boolean
   upstream_billing_probe_enabled?: boolean
   confirm_mixed_channel_risk?: boolean
+  contributor_user_id?: number
 }
 
 export interface UpdateAccountRequest {
@@ -1539,6 +1566,7 @@ export interface OpenAICodexPATCreateRequest {
   extra?: Record<string, unknown>
   skip_default_group_bind?: boolean
   confirm_mixed_channel_risk?: boolean
+  contributor_user_id?: number
 }
 
 export interface CodexSessionImportMessage {

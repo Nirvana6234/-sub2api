@@ -63,6 +63,10 @@ const (
 	FieldTotalRecharged = "total_recharged"
 	// FieldRpmLimit holds the string denoting the rpm_limit field in the database.
 	FieldRpmLimit = "rpm_limit"
+	// FieldAccountManagementEnabled holds the string denoting the account_management_enabled field in the database.
+	FieldAccountManagementEnabled = "account_management_enabled"
+	// FieldContributionRoomsEnabled holds the string denoting the contribution_rooms_enabled field in the database.
+	FieldContributionRoomsEnabled = "contribution_rooms_enabled"
 	// EdgeAPIKeys holds the string denoting the api_keys edge name in mutations.
 	EdgeAPIKeys = "api_keys"
 	// EdgeRedeemCodes holds the string denoting the redeem_codes edge name in mutations.
@@ -218,6 +222,8 @@ var Columns = []string{
 	FieldBalanceNotifyExtraEmails,
 	FieldTotalRecharged,
 	FieldRpmLimit,
+	FieldAccountManagementEnabled,
+	FieldContributionRoomsEnabled,
 }
 
 var (
@@ -290,6 +296,10 @@ var (
 	DefaultTotalRecharged float64
 	// DefaultRpmLimit holds the default value on creation for the "rpm_limit" field.
 	DefaultRpmLimit int
+	// DefaultAccountManagementEnabled holds the default value on creation for the "account_management_enabled" field.
+	DefaultAccountManagementEnabled bool
+	// DefaultContributionRoomsEnabled holds the default value on creation for the "contribution_rooms_enabled" field.
+	DefaultContributionRoomsEnabled bool
 )
 
 // OrderOption defines the ordering options for the User queries.
@@ -418,6 +428,16 @@ func ByTotalRecharged(opts ...sql.OrderTermOption) OrderOption {
 // ByRpmLimit orders the results by the rpm_limit field.
 func ByRpmLimit(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldRpmLimit, opts...).ToFunc()
+}
+
+// ByAccountManagementEnabled orders the results by the account_management_enabled field.
+func ByAccountManagementEnabled(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAccountManagementEnabled, opts...).ToFunc()
+}
+
+// ByContributionRoomsEnabled orders the results by the contribution_rooms_enabled field.
+func ByContributionRoomsEnabled(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldContributionRoomsEnabled, opts...).ToFunc()
 }
 
 // ByAPIKeysCount orders the results by api_keys count.

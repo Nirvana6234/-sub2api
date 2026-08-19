@@ -32,6 +32,14 @@ const (
 	UpstreamBillingProbeExtraKey           = "upstream_billing_probe"
 	UpstreamBillingProbeEnabledExtraKey    = "upstream_billing_probe_enabled"
 	UpstreamBillingRateSyncEnabledExtraKey = "upstream_billing_rate_sync_enabled"
+	// UpstreamBillingManualRateMultiplierExtraKey is an administrator-owned
+	// scheduling reference. A valid value takes precedence over probe data until
+	// the administrator explicitly clears it.
+	UpstreamBillingManualRateMultiplierExtraKey = "upstream_billing_manual_rate_multiplier"
+	// UpstreamBillingNewAPIGroupExtraKey stores an administrator-selected New API
+	// group when the upstream exposes the same model set through multiple groups.
+	// It lives in accounts.extra so no schema migration is required.
+	UpstreamBillingNewAPIGroupExtraKey = "upstream_billing_newapi_group"
 
 	upstreamBillingProbeDefaultIntervalMinutes = 30
 	upstreamBillingProbeMinIntervalMinutes     = 5
@@ -143,6 +151,41 @@ type upstreamBillingProbeResponse struct {
 	EffectiveRateMultiplier *float64 `json:"effective_rate_multiplier"`
 	Timezone                *string  `json:"timezone"`
 	ObservedAt              string   `json:"observed_at"`
+}
+
+type newAPIModelsResponse struct {
+	Data []struct {
+		ID string `json:"id"`
+	} `json:"data"`
+}
+
+type newAPIPricingModel struct {
+	ModelName    string   `json:"model_name"`
+	EnableGroups []string `json:"enable_groups"`
+}
+
+type newAPIPricingResponse struct {
+	Success        bool                 `json:"success"`
+	Data           []newAPIPricingModel `json:"data"`
+	GroupRatio     map[string]float64   `json:"group_ratio"`
+	PricingVersion string               `json:"pricing_version"`
+}
+
+func ValidateUpstreamBillingNewAPIGroupExtra(extra map[string]any) error {
+	if extra == nil {
+		return nil
+	}
+	raw, exists := extra[UpstreamBillingNewAPIGroupExtraKey]
+	if !exists || raw == nil {
+		return nil
+	}
+	if group, ok := raw.(string); !ok || strings.TrimSpace(group) == "" {
+		return infraerrors.BadRequest(
+			"INVALID_UPSTREAM_BILLING_NEWAPI_GROUP",
+			"upstream_billing_newapi_group must be a non-empty string or null",
+		)
+	}
+	return nil
 }
 
 // GetUpstreamBillingProbeSettings returns defaults when the setting is absent.
@@ -660,6 +703,12 @@ func (s *UpstreamBillingProbeService) probeLoadedAccount(ctx context.Context, ac
 		return s.persistProbeFailure(ctx, account, intervalMinutes, now, resp.StatusCode, "response_too_large", retryAfter(resp.Header, now))
 	}
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
+		_ = resp.Body.Close()
+		if snapshot, fallbackErr := s.probeNewAPIBilling(ctx, account, intervalMinutes, baseURL, apiKey, proxyURL, tlsProfile, now); fallbackErr == nil && snapshot != nil {
+			return snapshot, nil
+		} else if fallbackErr != nil {
+			slog.Warn("newapi_billing_probe_fallback_failed", "account_id", account.ID, "error", fallbackErr)
+		}
 		return s.persistProbeFailure(ctx, account, intervalMinutes, now, resp.StatusCode, "unsupported", retryAfter(resp.Header, now))
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -714,6 +763,201 @@ func (s *UpstreamBillingProbeService) probeLoadedAccount(ctx context.Context, ac
 	return snapshot, nil
 }
 
+// probeNewAPIBilling supports New API compatible upstreams, which expose the
+// authenticated user's group and public group ratios instead of the Sub2API
+// /v1/sub2api/billing contract. The ratio is account-level and is persisted in
+// the same snapshot shape so display, scheduling, and optional rate sync stay
+// unchanged.
+func (s *UpstreamBillingProbeService) probeNewAPIBilling(
+	ctx context.Context,
+	account *Account,
+	intervalMinutes int,
+	baseURL, apiKey, proxyURL string,
+	tlsProfile *tlsfingerprint.Profile,
+	now time.Time,
+) (*UpstreamBillingProbeSnapshot, error) {
+	requestJSON := func(endpoint string) ([]byte, int, error) {
+		probeCtx, cancel := context.WithTimeout(ctx, upstreamBillingProbeRequestTimeout)
+		defer cancel()
+		req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, endpoint, nil)
+		if err != nil {
+			return nil, 0, err
+		}
+		reqCtx := WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileDefault)
+		req = req.WithContext(WithHTTPUpstreamRedirectsDisabled(reqCtx))
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+		account.ApplyHeaderOverrides(req.Header)
+		resp, err := s.accountTestService.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, tlsProfile)
+		if err != nil {
+			return nil, 0, err
+		}
+		if resp == nil || resp.Body == nil {
+			return nil, 0, fmt.Errorf("new-api returned an empty response")
+		}
+		defer func() { _ = resp.Body.Close() }()
+		body, err := io.ReadAll(io.LimitReader(resp.Body, upstreamBillingProbeMaxBodyBytes+1))
+		if err != nil {
+			return nil, resp.StatusCode, err
+		}
+		if len(body) > upstreamBillingProbeMaxBodyBytes {
+			return nil, resp.StatusCode, fmt.Errorf("new-api response is too large")
+		}
+		return body, resp.StatusCode, nil
+	}
+
+	modelsBody, modelsStatus, err := requestJSON(buildOpenAIEndpointURL(baseURL, "/v1/models"))
+	if err != nil {
+		return nil, err
+	}
+	if modelsStatus < 200 || modelsStatus >= 300 {
+		return nil, fmt.Errorf("new-api model lookup failed: status=%d", modelsStatus)
+	}
+
+	pricingBody, pricingStatus, err := requestJSON(buildNewAPIEndpointURL(baseURL, "/api/pricing"))
+	if err != nil {
+		return nil, err
+	}
+	if pricingStatus < 200 || pricingStatus >= 300 {
+		return nil, fmt.Errorf("new-api pricing lookup failed: status=%d", pricingStatus)
+	}
+	groupOverride := upstreamBillingNewAPIGroupOverride(account)
+	group, ratio, pricingVersion, err := parseNewAPIGroupRatioWithOverride(modelsBody, pricingBody, groupOverride)
+	if err != nil {
+		return nil, err
+	}
+	observedAt := now.UTC()
+	data := map[string]any{
+		"object":                    "newapi.group_billing",
+		"schema_version":            1,
+		"billing_scope":             "token",
+		"group_rate_multiplier":     ratio,
+		"resolved_rate_multiplier":  ratio,
+		"effective_rate_multiplier": ratio,
+		"peak_rate_enabled":         false,
+		"newapi_group":              group,
+		"pricing_version":           pricingVersion,
+		"observed_at":               observedAt.Format(time.RFC3339Nano),
+	}
+	snapshot := &UpstreamBillingProbeSnapshot{
+		Status:        UpstreamBillingProbeStatusOK,
+		Data:          data,
+		ReceivedAt:    &observedAt,
+		FreshUntil:    upstreamBillingTimePtr(observedAt.Add(time.Duration(intervalMinutes) * time.Minute)),
+		LastAttemptAt: observedAt,
+		NextProbeAt:   observedAt.Add(time.Duration(intervalMinutes) * time.Minute),
+		HTTPStatus:    http.StatusOK,
+	}
+	var syncedRate *float64
+	if upstreamBillingRateSyncEnabled(account) {
+		if value, valid := upstreamBillingProbeSyncRate(data); valid {
+			syncedRate = &value
+			snapshot.SyncedRateMultiplier = &value
+		}
+	}
+	if err := s.updateSnapshot(ctx, account, snapshot, syncedRate); err != nil {
+		return nil, err
+	}
+	return snapshot, nil
+}
+
+func upstreamBillingTimePtr(value time.Time) *time.Time { return &value }
+
+func parseNewAPIGroupRatio(modelsBody, pricingBody []byte) (string, float64, string, error) {
+	return parseNewAPIGroupRatioWithOverride(modelsBody, pricingBody, "")
+}
+
+func upstreamBillingNewAPIGroupOverride(account *Account) string {
+	if account == nil || account.Extra == nil {
+		return ""
+	}
+	value, _ := account.Extra[UpstreamBillingNewAPIGroupExtraKey].(string)
+	return strings.TrimSpace(value)
+}
+
+func parseNewAPIGroupRatioWithOverride(modelsBody, pricingBody []byte, groupOverride string) (string, float64, string, error) {
+	var models newAPIModelsResponse
+	if err := json.Unmarshal(modelsBody, &models); err != nil || len(models.Data) == 0 {
+		return "", 0, "", fmt.Errorf("new-api model response missing models")
+	}
+	var pricing newAPIPricingResponse
+	if err := json.Unmarshal(pricingBody, &pricing); err != nil || len(pricing.GroupRatio) == 0 || len(pricing.Data) == 0 {
+		return "", 0, "", fmt.Errorf("new-api pricing response missing group ratios")
+	}
+	availableModels := make(map[string]struct{}, len(models.Data))
+	for _, model := range models.Data {
+		if id := strings.TrimSpace(model.ID); id != "" {
+			availableModels[id] = struct{}{}
+		}
+	}
+	if len(availableModels) == 0 {
+		return "", 0, "", fmt.Errorf("new-api model response missing models")
+	}
+
+	groupModels := make(map[string]map[string]struct{}, len(pricing.GroupRatio))
+	for _, model := range pricing.Data {
+		modelName := strings.TrimSpace(model.ModelName)
+		if modelName == "" {
+			continue
+		}
+		for _, rawGroup := range model.EnableGroups {
+			group := strings.TrimSpace(rawGroup)
+			if _, exists := pricing.GroupRatio[group]; !exists || group == "" {
+				continue
+			}
+			if groupModels[group] == nil {
+				groupModels[group] = make(map[string]struct{})
+			}
+			groupModels[group][modelName] = struct{}{}
+		}
+	}
+
+	matchedGroups := make([]string, 0, len(groupModels))
+	for group, candidateModels := range groupModels {
+		if !equalStringSets(availableModels, candidateModels) {
+			continue
+		}
+		matchedGroups = append(matchedGroups, group)
+	}
+	sort.Strings(matchedGroups)
+	if len(matchedGroups) == 0 {
+		return "", 0, "", fmt.Errorf("new-api model set does not match a pricing group")
+	}
+	matchedGroup := ""
+	if groupOverride != "" {
+		for _, candidate := range matchedGroups {
+			if candidate == groupOverride {
+				matchedGroup = candidate
+				break
+			}
+		}
+		if matchedGroup == "" {
+			return "", 0, "", fmt.Errorf("new-api configured group %q is not one of the matching groups: %s", groupOverride, strings.Join(matchedGroups, ", "))
+		}
+	} else if len(matchedGroups) > 1 {
+		return "", 0, "", fmt.Errorf("new-api model set matches multiple groups: %s; set %s on the account", strings.Join(matchedGroups, ", "), UpstreamBillingNewAPIGroupExtraKey)
+	} else {
+		matchedGroup = matchedGroups[0]
+	}
+	ratio := pricing.GroupRatio[matchedGroup]
+	if ratio < 0 || math.IsNaN(ratio) || math.IsInf(ratio, 0) {
+		return "", 0, "", fmt.Errorf("new-api group ratio is invalid")
+	}
+	return matchedGroup, ratio, pricing.PricingVersion, nil
+}
+
+func equalStringSets(left, right map[string]struct{}) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for value := range left {
+		if _, exists := right[value]; !exists {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *UpstreamBillingProbeService) persistProbeFailure(
 	ctx context.Context,
 	account *Account,
@@ -765,6 +1009,11 @@ func (s *UpstreamBillingProbeService) updateSnapshot(
 	writer, ok := s.accountRepo.(upstreamBillingProbeSnapshotWriter)
 	if !ok {
 		return ErrUpstreamBillingProbeUnavailable
+	}
+	// The repository enforces this again for concurrent changes. Keeping the
+	// intent here also protects alternative repository implementations.
+	if _, manual := upstreamBillingManualRateMultiplier(account.Extra); manual {
+		rateMultiplier = nil
 	}
 	return writer.UpdateUpstreamBillingProbeSnapshot(ctx, account, snapshot, rateMultiplier)
 }
@@ -866,6 +1115,16 @@ func upstreamBillingRateAt(data map[string]any, now time.Time) (float64, bool) {
 		return 0, false
 	}
 	return base, true
+}
+
+// upstreamBillingManualRateMultiplier returns a persistent administrator
+// override. Unlike a probe snapshot, it intentionally has no freshness window.
+func upstreamBillingManualRateMultiplier(extra map[string]any) (float64, bool) {
+	value, ok := resolveAccountExtraNumber(extra, UpstreamBillingManualRateMultiplierExtraKey)
+	if !ok || value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0, false
+	}
+	return value, true
 }
 
 // upstreamBillingProbeSyncRate converts the declared multiplier into the value
@@ -1038,6 +1297,38 @@ func upstreamBillingProbeEnabled(account *Account) bool {
 	}
 	enabled, ok := account.Extra[UpstreamBillingProbeEnabledExtraKey].(bool)
 	return ok && enabled
+}
+
+// accountRateMultiplierSchemaDefault 是 ent schema 给 accounts.rate_multiplier
+// 的建表默认值（见 ent/schema/account.go 的 Default(1.0)）。它对扣费是中性的
+// （不缩放），对成本核算却等同"按上游原价结算"，因此与运营者真的把成本声明为
+// 1.0 完全同形。区分这两者是 accountRateMultiplierIsSchemaDefault 存在的唯一
+// 理由；本常量必须与 schema 的默认值同步改动。
+const accountRateMultiplierSchemaDefault = 1.0
+
+// accountRateMultiplierIsSchemaDefault 报告列值是否还停在建表默认值上，也就是
+// "很可能从来没有人在这一列上做过声明"。它只在已经确定该账号另有指定成本来源
+// （upstreamBillingProbeIsRateSource）时才有意义——单看这一个信号无法区分未维护
+// 与真的声明为原价，所以不要拿它当独立判据。
+func accountRateMultiplierIsSchemaDefault(account *Account) bool {
+	return account != nil && account.RateMultiplier != nil &&
+		*account.RateMultiplier == accountRateMultiplierSchemaDefault
+}
+
+// upstreamBillingProbeIsRateSource 报告"这个账号的上游倍率本应由探测提供"。
+//
+// 两种证据都算数：管理员当前开着探测开关，或账号上留有探测快照（开过又关掉，
+// 来源意图依然成立，且快照本身就说明这个账号的价格是问上游要的）。生产上
+// 3/4/5/35/93 就是开关已关但快照仍在 404 unsupported 的形态，它们和开关还开着
+// 的 137/101/109 面临同一个问题：列值从没人维护过。
+func upstreamBillingProbeIsRateSource(account *Account) bool {
+	if account == nil {
+		return false
+	}
+	if upstreamBillingProbeEnabled(account) {
+		return true
+	}
+	return decodeUpstreamBillingProbeSnapshot(account.Extra) != nil
 }
 
 // upstreamBillingRateSyncEnabled is the probe-side pre-filter deciding whether

@@ -322,6 +322,11 @@ func TestAPIKeyAuthSetsGroupContext(t *testing.T) {
 			c.JSON(http.StatusInternalServerError, gin.H{"ok": false})
 			return
 		}
+		apiKeyIDFromCtx, ok := c.Request.Context().Value(ctxkey.APIKeyID).(int64)
+		if !ok || apiKeyIDFromCtx != apiKey.ID {
+			c.JSON(http.StatusInternalServerError, gin.H{"ok": false})
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 
@@ -1385,7 +1390,7 @@ func TestAPIKeyAuthAllowsBalanceBelowMinimumReserve(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestAPIKeyAuthRejectsExhaustedBalance(t *testing.T) {
+func TestAPIKeyAuthAdmitsExhaustedBalanceForOwnContributedAccountRouting(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	user := &service.User{
@@ -1423,8 +1428,7 @@ func TestAPIKeyAuthRejectsExhaustedBalance(t *testing.T) {
 	req.Header.Set("x-api-key", apiKey.Key)
 	router.ServeHTTP(w, req)
 
-	require.Equal(t, http.StatusForbidden, w.Code)
-	requireAPIKeyAuthError(t, w, "INSUFFICIENT_BALANCE", "Insufficient account balance")
+	require.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestAPIKeyAuthOpenAIQuotaErrorFormat(t *testing.T) {

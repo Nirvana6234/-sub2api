@@ -8,19 +8,49 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"math"
 	"net/http"
 	"reflect"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 )
 
 // Account management implementations
+func contributionAccountManagementAllowed(ctx context.Context) bool {
+	allowed, _ := ctx.Value(ctxkey.AllowContributionAccountManagement).(bool)
+	return allowed
+}
+
+func ensureAdminAccountManagementAccess(ctx context.Context, account *Account) error {
+	if account == nil || account.ContributorUserID() == 0 || contributionAccountManagementAllowed(ctx) {
+		return nil
+	}
+	return infraerrors.New(http.StatusNotFound, "CONTRIBUTION_ACCOUNT_MANAGED_SEPARATELY",
+		"account is managed through the contribution resource workflow")
+}
+
+func (s *adminServiceImpl) getAccountForManagement(ctx context.Context, id int64) (*Account, error) {
+	account, err := s.accountRepo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := ensureAdminAccountManagementAccess(ctx, account); err != nil {
+		return nil, err
+	}
+	return account, nil
+}
+
 func (s *adminServiceImpl) ListAccounts(ctx context.Context, page, pageSize int, platform, accountType, status, search string, groupID int64, privacyMode string, sortBy, sortOrder string) ([]Account, int64, error) {
+	// Keep the regular admin account list separate from contribution governance.
+	// The repository can then apply the exclusion in SQL, before pagination and
+	// total-count calculation, while governance callers opt in explicitly.
+	ctx = context.WithValue(ctx, ctxkey.AdminAccountManagementList, true)
 	params := pagination.PaginationParams{Page: page, PageSize: pageSize, SortBy: sortBy, SortOrder: sortOrder}
 	accounts, result, err := s.accountRepo.ListWithFilters(ctx, params, platform, accountType, status, search, groupID, privacyMode)
 	if err != nil {
@@ -40,14 +70,29 @@ func (s *adminServiceImpl) ListOpenAISchedulableAccountsForSchedulerScore(ctx co
 	if s == nil || s.accountRepo == nil {
 		return nil, nil
 	}
+	var (
+		accounts []Account
+		err      error
+	)
 	if groupID != nil {
-		return s.accountRepo.ListSchedulableByGroupIDAndPlatform(ctx, *groupID, PlatformOpenAI)
+		accounts, err = s.accountRepo.ListSchedulableByGroupIDAndPlatform(ctx, *groupID, PlatformOpenAI)
+	} else {
+		accounts, err = s.accountRepo.ListSchedulableUngroupedByPlatform(ctx, PlatformOpenAI)
 	}
-	return s.accountRepo.ListSchedulableUngroupedByPlatform(ctx, PlatformOpenAI)
+	if err != nil || contributionAccountManagementAllowed(ctx) {
+		return accounts, err
+	}
+	filtered := make([]Account, 0, len(accounts))
+	for _, account := range accounts {
+		if account.ContributorUserID() == 0 {
+			filtered = append(filtered, account)
+		}
+	}
+	return filtered, nil
 }
 
 func (s *adminServiceImpl) GetAccount(ctx context.Context, id int64) (*Account, error) {
-	return s.accountRepo.GetByID(ctx, id)
+	return s.getAccountForManagement(ctx, id)
 }
 
 func (s *adminServiceImpl) GetAccountsByIDs(ctx context.Context, ids []int64) ([]*Account, error) {
@@ -60,6 +105,11 @@ func (s *adminServiceImpl) GetAccountsByIDs(ctx context.Context, ids []int64) ([
 		return nil, fmt.Errorf("failed to get accounts by IDs: %w", err)
 	}
 
+	for _, account := range accounts {
+		if err := ensureAdminAccountManagementAccess(ctx, account); err != nil {
+			return nil, err
+		}
+	}
 	return accounts, nil
 }
 
@@ -453,10 +503,14 @@ func normalizeGrokMediaEligibilityUpdateExtra(account *Account, input *UpdateAcc
 }
 
 func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]any) (*Account, error) {
+	if err := ValidateUpstreamBillingNewAPIGroupExtra(accountExtra); err != nil {
+		return nil, err
+	}
 	// Probe/session state is system-managed. New accounts always start with automatic refresh disabled.
 	delete(accountExtra, UpstreamBillingProbeEnabledExtraKey)
 	delete(accountExtra, UpstreamBillingRateSyncEnabledExtraKey)
 	delete(accountExtra, UpstreamBillingProbeExtraKey)
+	delete(accountExtra, UpstreamBillingManualRateMultiplierExtraKey)
 	delete(accountExtra, OllamaCloudUsageSessionExtraKey)
 	delete(accountExtra, OllamaCloudUsageAutoRefreshExtraKey)
 	delete(accountExtra, OllamaCloudUsageSnapshotExtraKey)
@@ -596,7 +650,7 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 }
 
 func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *UpdateAccountInput) (*Account, error) {
-	account, err := s.accountRepo.GetByID(ctx, id)
+	account, err := s.getAccountForManagement(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -667,6 +721,9 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	requestedProbeEnabledUpdate := input.ProbeEnabled
 	requestedRateSyncEnabledUpdate := input.RateSyncEnabled
 	if input.Extra != nil {
+		if err := ValidateUpstreamBillingNewAPIGroupExtra(input.Extra); err != nil {
+			return nil, err
+		}
 		requestedProbeEnabled, hasRequestedProbeEnabled := normalizedExtra[UpstreamBillingProbeEnabledExtraKey]
 		if hasRequestedProbeEnabled {
 			enabled, ok := requestedProbeEnabled.(bool)
@@ -681,6 +738,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		delete(normalizedExtra, UpstreamBillingProbeEnabledExtraKey)
 		delete(normalizedExtra, UpstreamBillingRateSyncEnabledExtraKey)
 		delete(normalizedExtra, UpstreamBillingProbeExtraKey)
+		delete(normalizedExtra, UpstreamBillingManualRateMultiplierExtraKey)
 		delete(normalizedExtra, OllamaCloudUsageSessionExtraKey)
 		delete(normalizedExtra, OllamaCloudUsageAutoRefreshExtraKey)
 		delete(normalizedExtra, OllamaCloudUsageSnapshotExtraKey)
@@ -695,6 +753,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			UpstreamBillingProbeEnabledExtraKey,
 			UpstreamBillingRateSyncEnabledExtraKey,
 			UpstreamBillingProbeExtraKey,
+			UpstreamBillingManualRateMultiplierExtraKey,
 			OllamaCloudUsageSessionExtraKey,
 			OllamaCloudUsageAutoRefreshExtraKey,
 			OllamaCloudUsageSnapshotExtraKey,
@@ -767,6 +826,12 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		if !isUpstreamBillingProbeAccount(account) {
 			delete(account.Extra, UpstreamBillingProbeEnabledExtraKey)
 			delete(account.Extra, UpstreamBillingRateSyncEnabledExtraKey)
+			// 手工倍率也必须随身份一起清掉。它只能通过
+			// SetAccountUpstreamBillingManualRateMultiplier 写入，而那条路径只
+			// 接受探测型账号；账号改成 OAuth 后若把旧值留着，就成了唯一一处
+			// "无人负责的残留声明"。清掉它，profitControlAccountUpstreamRate
+			// 才能无条件优先采信手工值而不必再用身份判断兜底。
+			delete(account.Extra, UpstreamBillingManualRateMultiplierExtraKey)
 		}
 	}
 	if account.Extra != nil {
@@ -907,6 +972,7 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 	delete(updates, UpstreamBillingProbeEnabledExtraKey)
 	delete(updates, UpstreamBillingRateSyncEnabledExtraKey)
 	delete(updates, UpstreamBillingProbeExtraKey)
+	delete(updates, UpstreamBillingManualRateMultiplierExtraKey)
 	delete(updates, OllamaCloudUsageSessionExtraKey)
 	delete(updates, OllamaCloudUsageAutoRefreshExtraKey)
 	delete(updates, OllamaCloudUsageSnapshotExtraKey)
@@ -919,10 +985,104 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 			return err
 		}
 	}
+	if _, exists := updates[UpstreamBillingNewAPIGroupExtraKey]; exists {
+		if err := ValidateUpstreamBillingNewAPIGroupExtra(updates); err != nil {
+			return err
+		}
+	}
 	if len(updates) == 0 {
 		return nil
 	}
+	if _, err := s.getAccountForManagement(ctx, id); err != nil {
+		return err
+	}
 	return s.accountRepo.UpdateExtra(ctx, id, updates)
+}
+
+// SetAccountUpstreamBillingManualRateMultiplier stores an administrator-owned
+// scheduling reference. It is deliberately separate from account billing rate:
+// this controls upstream-cost selection and survives later probe results.
+func (s *adminServiceImpl) SetAccountUpstreamBillingManualRateMultiplier(ctx context.Context, id int64, rateMultiplier *float64) (*Account, error) {
+	account, err := s.getAccountForManagement(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if !isUpstreamBillingProbeAccount(account) {
+		return nil, ErrUpstreamBillingProbeAccountInvalid
+	}
+	if rateMultiplier != nil && (*rateMultiplier < 0 || math.IsNaN(*rateMultiplier) || math.IsInf(*rateMultiplier, 0)) {
+		return nil, infraerrors.BadRequest(
+			"INVALID_UPSTREAM_BILLING_MANUAL_RATE",
+			"upstream billing manual rate multiplier must be a finite number greater than or equal to zero",
+		)
+	}
+
+	updates := map[string]any{UpstreamBillingManualRateMultiplierExtraKey: nil}
+	if rateMultiplier != nil {
+		updates[UpstreamBillingManualRateMultiplierExtraKey] = *rateMultiplier
+	}
+	if err := s.accountRepo.UpdateExtra(ctx, id, updates); err != nil {
+		return nil, err
+	}
+	s.invalidateAutoGroupSelectionsForAccount(ctx, account)
+	return s.accountRepo.GetByID(ctx, id)
+}
+
+func (s *adminServiceImpl) invalidateAutoGroupSelectionsForAccount(ctx context.Context, account *Account) {
+	if s.authCacheInvalidator == nil || account == nil {
+		return
+	}
+	seen := make(map[int64]struct{}, len(account.GroupIDs))
+	for _, groupID := range account.GroupIDs {
+		if groupID <= 0 {
+			continue
+		}
+		if _, exists := seen[groupID]; exists {
+			continue
+		}
+		seen[groupID] = struct{}{}
+		s.authCacheInvalidator.InvalidateAuthCacheByGroupID(ctx, groupID)
+		invalidateAutoGroupSelectionsForGroup(ctx, s.authCacheInvalidator, groupID)
+	}
+}
+
+// NotifyAccountGroupsChanged is used when account-group membership is changed
+// atomically with data outside the account repository.
+func (s *adminServiceImpl) NotifyAccountGroupsChanged(ctx context.Context, accountID int64, groupIDs []int64) error {
+	notifier, ok := s.accountRepo.(interface {
+		NotifyAccountGroupsChanged(context.Context, int64, []int64) error
+	})
+	if !ok {
+		return nil
+	}
+	return notifier.NotifyAccountGroupsChanged(ctx, accountID, groupIDs)
+}
+
+// UpdateAccountGroupPriorities persists scheduler priority on account_groups,
+// never on the account-wide priority column.
+func (s *adminServiceImpl) UpdateAccountGroupPriorities(ctx context.Context, updates []AccountGroupPriorityUpdate) error {
+	if len(updates) == 0 {
+		return infraerrors.BadRequest("ACCOUNT_GROUP_PRIORITY_EMPTY", "updates cannot be empty")
+	}
+	seen := make(map[[2]int64]struct{}, len(updates))
+	for _, update := range updates {
+		if update.AccountID <= 0 || update.GroupID <= 0 {
+			return infraerrors.BadRequest("ACCOUNT_GROUP_PRIORITY_INVALID_ID", "account_id and group_id must be positive")
+		}
+		if update.Priority < 0 {
+			return infraerrors.BadRequest("ACCOUNT_GROUP_PRIORITY_INVALID_VALUE", "priority must be >= 0")
+		}
+		key := [2]int64{update.AccountID, update.GroupID}
+		if _, exists := seen[key]; exists {
+			return infraerrors.BadRequest("ACCOUNT_GROUP_PRIORITY_DUPLICATE", "duplicate account/group update")
+		}
+		seen[key] = struct{}{}
+	}
+	updater, ok := s.accountRepo.(AccountGroupPriorityRepository)
+	if !ok {
+		return infraerrors.InternalServer("ACCOUNT_GROUP_PRIORITY_UNSUPPORTED", "account group priority updates are unavailable")
+	}
+	return updater.UpdateGroupPriorities(ctx, updates)
 }
 
 // BulkUpdateAccounts updates multiple accounts in one request.
@@ -932,6 +1092,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	delete(input.Extra, UpstreamBillingProbeEnabledExtraKey)
 	delete(input.Extra, UpstreamBillingRateSyncEnabledExtraKey)
 	delete(input.Extra, UpstreamBillingProbeExtraKey)
+	delete(input.Extra, UpstreamBillingManualRateMultiplierExtraKey)
 	delete(input.Extra, OllamaCloudUsageSessionExtraKey)
 	delete(input.Extra, OllamaCloudUsageAutoRefreshExtraKey)
 	delete(input.Extra, OllamaCloudUsageSnapshotExtraKey)
@@ -952,6 +1113,15 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 
 	if len(input.AccountIDs) == 0 {
 		return result, nil
+	}
+	accounts, err := s.accountRepo.GetByIDs(ctx, input.AccountIDs)
+	if err != nil {
+		return nil, err
+	}
+	for _, account := range accounts {
+		if err := ensureAdminAccountManagementAccess(ctx, account); err != nil {
+			return nil, err
+		}
 	}
 	if input.GroupIDs != nil {
 		if err := s.validateGroupIDsExist(ctx, *input.GroupIDs); err != nil {
@@ -1124,11 +1294,31 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	}
 	if input.Schedulable != nil {
 		repoUpdates.Schedulable = input.Schedulable
+		// 批量关闭与单账号关闭享有同样的 manual 所有权保护：
+		// 管理员批量关闭写 manual，批量开启清回 none。
+		source := SchedulabilitySourceNone
+		reason := ""
+		if !*input.Schedulable {
+			source = SchedulabilitySourceManual
+			reason = SchedulabilityReasonAdminDisabled
+		}
+		repoUpdates.SchedulabilitySource = &source
+		repoUpdates.SchedulabilityReason = &reason
 	}
 
 	// Run bulk update for column/jsonb fields first.
 	if _, err := s.accountRepo.BulkUpdate(ctx, input.AccountIDs, repoUpdates); err != nil {
 		return nil, err
+	}
+	if input.Schedulable != nil {
+		for _, account := range accounts {
+			s.invalidateAutoGroupSelectionsForAccount(ctx, account)
+		}
+		if input.GroupIDs != nil {
+			for _, groupID := range *input.GroupIDs {
+				s.invalidateAutoGroupSelectionsForAccount(ctx, &Account{GroupIDs: []int64{groupID}})
+			}
+		}
 	}
 
 	// 将 proxy 变更传播到每个目标账号的 spark 影子账号
@@ -1190,6 +1380,9 @@ func upstreamBillingProbeIdentity(account *Account) map[string]any {
 			identity[key] = value
 		}
 	}
+	if group := upstreamBillingNewAPIGroupOverride(account); group != "" {
+		identity[UpstreamBillingNewAPIGroupExtraKey] = group
+	}
 	return identity
 }
 
@@ -1243,6 +1436,9 @@ func (s *adminServiceImpl) resolveBulkUpdateTargetIDs(ctx context.Context, filte
 }
 
 func (s *adminServiceImpl) DeleteAccount(ctx context.Context, id int64) error {
+	if _, err := s.getAccountForManagement(ctx, id); err != nil {
+		return err
+	}
 	// 级联删除 spark 影子账号（先删影子，再删母账号）
 	shadows, err := s.accountRepo.ListShadowsByParent(ctx, id)
 	if err != nil {
@@ -1260,7 +1456,7 @@ func (s *adminServiceImpl) DeleteAccount(ctx context.Context, id int64) error {
 }
 
 func (s *adminServiceImpl) RefreshAccountCredentials(ctx context.Context, id int64) (*Account, error) {
-	account, err := s.accountRepo.GetByID(ctx, id)
+	account, err := s.getAccountForManagement(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -1269,6 +1465,9 @@ func (s *adminServiceImpl) RefreshAccountCredentials(ctx context.Context, id int
 }
 
 func (s *adminServiceImpl) ClearAccountError(ctx context.Context, id int64) (*Account, error) {
+	if _, err := s.getAccountForManagement(ctx, id); err != nil {
+		return nil, err
+	}
 	if err := s.accountRepo.ClearError(ctx, id); err != nil {
 		return nil, err
 	}
@@ -1290,14 +1489,54 @@ func (s *adminServiceImpl) ClearAccountError(ctx context.Context, id int64) (*Ac
 	return s.accountRepo.GetByID(ctx, id)
 }
 
+// RecoverAccountSchedulability 是给外部恢复检查（TransitHub）用的唯一恢复入口。
+//
+// 与 ClearAccountError 的关键区别：这里是数据库条件更新（compare-and-set），
+// 只有 schedulability_source=automatic 且 status=error 的账号才会被恢复。
+// 如果探测期间管理员把账号改成 manual，或来源/状态已经变化，迟到的恢复请求
+// 会拿到 conflict 并且完全不改状态——管理员决定不可能被覆盖。
+func (s *adminServiceImpl) RecoverAccountSchedulability(
+	ctx context.Context,
+	id int64,
+	expectedChangedAt *time.Time,
+) (*Account, error) {
+	if _, err := s.getAccountForManagement(ctx, id); err != nil {
+		return nil, err
+	}
+	recovered, err := s.accountRepo.RecoverAutomaticSchedulability(ctx, id, expectedChangedAt)
+	if err != nil {
+		return nil, err
+	}
+	if !recovered {
+		return nil, ErrSchedulabilityRecoveryConflict
+	}
+	if s.runtimeBlocker != nil {
+		s.runtimeBlocker.ClearAccountSchedulingBlock(id)
+	}
+	account, err := s.accountRepo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	s.invalidateAutoGroupSelectionsForAccount(ctx, account)
+	return account, nil
+}
+
 func (s *adminServiceImpl) SetAccountError(ctx context.Context, id int64, errorMsg string) error {
+	if _, err := s.getAccountForManagement(ctx, id); err != nil {
+		return err
+	}
 	return s.accountRepo.SetError(ctx, id, errorMsg)
 }
 
 func (s *adminServiceImpl) SetAccountSchedulable(ctx context.Context, id int64, schedulable bool) (*Account, error) {
+	account, err := s.getAccountForManagement(ctx, id)
+	if err != nil {
+		return nil, err
+	}
 	if err := s.accountRepo.SetSchedulable(ctx, id, schedulable); err != nil {
 		return nil, err
 	}
+	s.invalidateAutoGroupSelectionsForAccount(ctx, account)
 	updated, err := s.accountRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -1573,7 +1812,7 @@ func (e *MixedChannelError) Error() string {
 }
 
 func (s *adminServiceImpl) ResetAccountQuota(ctx context.Context, id int64) error {
-	account, err := s.accountRepo.GetByID(ctx, id)
+	account, err := s.getAccountForManagement(ctx, id)
 	if err != nil {
 		return err
 	}

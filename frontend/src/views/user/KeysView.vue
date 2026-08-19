@@ -139,10 +139,35 @@
                 :ref="(el) => setGroupButtonRef(row.id, el)"
                 @click="openGroupSelector(row)"
                 class="-mx-2 -my-1 flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1 transition-all duration-200 hover:bg-gray-100 dark:hover:bg-dark-700"
-                :title="t('keys.clickToChangeGroup')"
+                :title="row.auto_group_current_group
+                  ? `${t('keys.clickToChangeGroup')}: ${row.auto_group_current_group.name}`
+                  : t('keys.clickToChangeGroup')"
               >
+                <span
+                  v-if="row.auto_group"
+                  class="flex min-w-0 flex-col items-start text-left"
+                >
+                  <span class="text-sm font-semibold text-primary-600 dark:text-primary-400">
+                    {{ t('keys.autoGroupWithStrategy', { strategy: autoGroupStrategyLabel(row.auto_group_strategy) }) }}
+                  </span>
+                  <span
+                    v-if="row.auto_group_current_group"
+                    class="max-w-44 truncate text-xs font-normal text-gray-600 dark:text-gray-300"
+                    :title="row.auto_group_current_model
+                      ? `${t('keys.autoGroupCurrentGroup')}: ${row.auto_group_current_group.name} (${row.auto_group_current_model})`
+                      : `${t('keys.autoGroupCurrentGroup')}: ${row.auto_group_current_group.name}`"
+                  >
+                    {{ t('keys.autoGroupCurrentGroup') }}：{{ row.auto_group_current_group.name }}
+                  </span>
+                  <span
+                    v-else
+                    class="text-xs font-normal text-gray-400 dark:text-dark-500"
+                  >
+                    {{ t('keys.autoGroupCurrentGroupPending') }}
+                  </span>
+                </span>
                 <GroupBadge
-                  v-if="row.group"
+                  v-else-if="row.group"
                   :name="row.group.name"
                   :platform="row.group.platform"
                   :subscription-type="row.group.subscription_type"
@@ -467,7 +492,7 @@
         <div>
           <label class="input-label">{{ t('keys.groupLabel') }}</label>
           <Select
-            v-model="formData.group_id"
+            v-model="groupSelection"
             :options="groupOptions"
             :placeholder="t('keys.selectGroup')"
             :searchable="true"
@@ -475,8 +500,14 @@
             data-tour="key-form-group"
           >
             <template #selected="{ option }">
+              <span
+                v-if="option && (option as unknown as GroupOption).kind === 'auto'"
+                class="text-sm font-semibold text-primary-600 dark:text-primary-400"
+              >
+                {{ t('keys.autoGroup') }}
+              </span>
               <GroupBadge
-                v-if="option"
+                v-else-if="option"
                 :name="(option as unknown as GroupOption).label"
                 :platform="(option as unknown as GroupOption).platform"
                 :subscription-type="(option as unknown as GroupOption).subscriptionType"
@@ -490,7 +521,19 @@
               <span v-else class="text-gray-400">{{ t('keys.selectGroup') }}</span>
             </template>
             <template #option="{ option, selected }">
+              <div
+                v-if="(option as unknown as GroupOption).kind === 'auto'"
+                class="flex min-h-10 flex-1 flex-col justify-center"
+              >
+                <span class="text-sm font-semibold text-primary-600 dark:text-primary-400">
+                  {{ t('keys.autoGroup') }}
+                </span>
+                <span class="text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('keys.autoGroupDescription') }}
+                </span>
+              </div>
               <GroupOptionItem
+                v-else
                 :name="(option as unknown as GroupOption).label"
                 :platform="(option as unknown as GroupOption).platform"
                 :subscription-type="(option as unknown as GroupOption).subscriptionType"
@@ -505,6 +548,46 @@
               />
             </template>
           </Select>
+        </div>
+
+        <div v-if="formData.auto_group">
+          <div class="rounded-md border border-primary-200 bg-primary-50 p-3 dark:border-primary-900/70 dark:bg-primary-950/20">
+            <label class="text-sm font-semibold text-primary-900 dark:text-primary-100">自动选择范围</label>
+            <p class="mt-1 text-xs text-primary-800 dark:text-primary-200">
+              只会在你勾选的同一模型类型分组中自动选择；系统仍会跳过当前不可用的分组。
+            </p>
+            <div class="mt-3 grid gap-2 sm:grid-cols-2">
+              <label
+                v-for="group in groups"
+                :key="group.id"
+                :class="[
+                  'flex min-h-10 items-center gap-2 rounded border border-primary-100 bg-white px-2.5 py-2 text-sm transition-colors dark:border-primary-900/50 dark:bg-dark-800',
+                  isAutoGroupCandidateDisabled(group, formData.auto_group_ids)
+                    ? 'cursor-not-allowed opacity-50'
+                    : 'cursor-pointer text-gray-700 hover:border-primary-300 dark:text-gray-200'
+                ]"
+              >
+                <input
+                  :checked="formData.auto_group_ids.includes(group.id)"
+                  type="checkbox"
+                  :disabled="isAutoGroupCandidateDisabled(group, formData.auto_group_ids)"
+                  class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                  @change="toggleAutoGroupCandidate(formData.auto_group_ids, group.id)"
+                />
+                <span class="min-w-0 truncate">{{ group.name }}</span>
+                <span class="ml-auto shrink-0 rounded bg-primary-100 px-1.5 py-0.5 text-[10px] font-medium text-primary-800 dark:bg-primary-900/50 dark:text-primary-200">
+                  {{ platformLabel(group.platform) }}
+                </span>
+              </label>
+            </div>
+            <p v-if="groups.length === 0" class="mt-3 text-sm text-gray-500 dark:text-gray-400">当前没有可选择的分组。</p>
+          </div>
+          <label class="input-label">{{ t('keys.autoGroupStrategy') }}</label>
+          <Select
+            v-model="formData.auto_group_strategy"
+            :options="autoGroupStrategyOptions"
+            :searchable="false"
+          />
         </div>
 
         <!-- Custom Key Section (only for create) -->
@@ -952,6 +1035,66 @@
       </template>
     </BaseDialog>
 
+    <!-- Automatic group configuration from the inline group selector -->
+    <BaseDialog
+      :show="autoGroupConfigKey !== null"
+      title="配置自动分组"
+      width="normal"
+      @close="closeAutoGroupConfig"
+    >
+      <div class="space-y-5">
+        <div class="rounded-md border border-primary-200 bg-primary-50 p-3 dark:border-primary-900/70 dark:bg-primary-950/20">
+          <label class="text-sm font-semibold text-primary-900 dark:text-primary-100">自动选择范围</label>
+          <p class="mt-1 text-xs text-primary-800 dark:text-primary-200">
+            自动选择只会在同一模型类型的候选分组中进行。
+          </p>
+          <div class="mt-3 grid gap-2 sm:grid-cols-2">
+            <label
+              v-for="group in groups"
+              :key="group.id"
+              :class="[
+                'flex min-h-10 items-center gap-2 rounded border border-primary-100 bg-white px-2.5 py-2 text-sm transition-colors dark:border-primary-900/50 dark:bg-dark-800',
+                isAutoGroupCandidateDisabled(group, autoGroupConfig.ids)
+                  ? 'cursor-not-allowed opacity-50'
+                  : 'cursor-pointer text-gray-700 hover:border-primary-300 dark:text-gray-200'
+              ]"
+            >
+              <input
+                :checked="autoGroupConfig.ids.includes(group.id)"
+                type="checkbox"
+                :disabled="isAutoGroupCandidateDisabled(group, autoGroupConfig.ids)"
+                class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                @change="toggleAutoGroupCandidate(autoGroupConfig.ids, group.id)"
+              />
+              <span class="min-w-0 truncate">{{ group.name }}</span>
+              <span class="ml-auto shrink-0 rounded bg-primary-100 px-1.5 py-0.5 text-[10px] font-medium text-primary-800 dark:bg-primary-900/50 dark:text-primary-200">
+                {{ platformLabel(group.platform) }}
+              </span>
+            </label>
+          </div>
+          <p v-if="groups.length === 0" class="mt-3 text-sm text-gray-500 dark:text-gray-400">当前没有可选择的分组。</p>
+        </div>
+        <div>
+          <label class="input-label">{{ t('keys.autoGroupStrategy') }}</label>
+          <Select
+            v-model="autoGroupConfig.strategy"
+            :options="autoGroupStrategyOptions"
+            :searchable="false"
+          />
+        </div>
+      </div>
+      <template #footer>
+        <div class="flex justify-end gap-3">
+          <button type="button" class="btn btn-secondary" @click="closeAutoGroupConfig">
+            {{ t('common.cancel') }}
+          </button>
+          <button type="button" class="btn btn-primary" :disabled="autoGroupConfigSubmitting" @click="saveAutoGroupConfig">
+            {{ autoGroupConfigSubmitting ? t('keys.saving') : t('common.save') }}
+          </button>
+        </div>
+      </template>
+    </BaseDialog>
+
     <!-- Delete Confirmation Dialog -->
     <ConfirmDialog
       :show="showDeleteDialog"
@@ -993,8 +1136,8 @@
       :show="showUseKeyModal"
       :api-key="selectedKey?.key || ''"
       :base-url="publicSettings?.api_base_url || ''"
-      :platform="selectedKey?.group?.platform || null"
-      :allow-messages-dispatch="selectedKey?.group?.allow_messages_dispatch || false"
+      :platform="selectedKeyUsePlatform"
+      :allow-messages-dispatch="selectedKeyAllowsMessagesDispatch"
       @close="closeUseKeyModal"
     />
 
@@ -1082,14 +1225,25 @@
             :class="[
               'flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-sm transition-colors',
               'border-b border-gray-100 last:border-0 dark:border-dark-700',
-              selectedKeyForGroup?.group_id === option.value ||
-              (!selectedKeyForGroup?.group_id && option.value === null)
+              isSelectedGroupOption(selectedKeyForGroup, option.value)
                 ? 'bg-primary-50 dark:bg-primary-900/20'
                 : 'hover:bg-gray-100 dark:hover:bg-dark-700'
             ]"
             :title="option.description || undefined"
           >
+            <div
+              v-if="option.kind === 'auto'"
+              class="flex min-h-10 flex-1 flex-col justify-center text-left"
+            >
+              <span class="text-sm font-semibold text-primary-600 dark:text-primary-400">
+                {{ t('keys.autoGroup') }}
+              </span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">
+                {{ t('keys.autoGroupDescription') }}
+              </span>
+            </div>
             <GroupOptionItem
+              v-else
               :name="option.label"
               :platform="option.platform"
               :subscription-type="option.subscriptionType"
@@ -1101,8 +1255,7 @@
               :peak-rate-multiplier="option.peakRateMultiplier"
               :description="option.description"
               :selected="
-                selectedKeyForGroup?.group_id === option.value ||
-                (!selectedKeyForGroup?.group_id && option.value === null)
+                isSelectedGroupOption(selectedKeyForGroup, option.value)
               "
             />
           </button>
@@ -1133,7 +1286,7 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 	import BaseDialog from '@/components/common/BaseDialog.vue'
 	import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 	import EmptyState from '@/components/common/EmptyState.vue'
-	import Select from '@/components/common/Select.vue'
+	import Select, { type SelectOption } from '@/components/common/Select.vue'
 	import SearchInput from '@/components/common/SearchInput.vue'
 	import Icon from '@/components/icons/Icon.vue'
 	import UseKeyModal from '@/components/keys/UseKeyModal.vue'
@@ -1157,8 +1310,8 @@ const formatDateTimeLocal = (isoDate: string): string => {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
-interface GroupOption {
-  value: number
+interface GroupOption extends SelectOption {
+  value: number | 'auto'
   label: string
   description: string | null
   rate: number
@@ -1169,6 +1322,7 @@ interface GroupOption {
   peakRateMultiplier: number
   subscriptionType: SubscriptionType
   platform: GroupPlatform
+  kind?: 'auto'
 }
 
 const appStore = useAppStore()
@@ -1304,6 +1458,42 @@ const showCcsClientSelect = ref(false)
 const showColumnDropdown = ref(false)
 const pendingCcsRow = ref<ApiKey | null>(null)
 const selectedKey = ref<ApiKey | null>(null)
+const autoGroupConfigKey = ref<ApiKey | null>(null)
+const autoGroupConfigSubmitting = ref(false)
+const autoGroupConfig = ref({
+  ids: [] as number[],
+  strategy: 'price' as 'price' | 'balanced' | 'speed'
+})
+
+const selectedKeyAutoGroupCandidates = computed(() => {
+  const key = selectedKey.value
+  if (!key?.auto_group || key.auto_group_ids.length === 0) return []
+
+  const candidates = key.auto_group_ids.map((id) =>
+    groups.value.find((group) => group.id === id)
+  )
+  return candidates.some((group) => !group) ? [] : candidates as Group[]
+})
+
+const selectedKeyUsePlatform = computed<GroupPlatform | null>(() => {
+  const key = selectedKey.value
+  if (!key) return null
+  if (key.group?.platform) return key.group.platform
+
+  const candidates = selectedKeyAutoGroupCandidates.value
+  if (candidates.length === 0) return null
+  const platforms = new Set(candidates.map((group) => group.platform))
+  return platforms.size === 1 ? candidates[0].platform : null
+})
+
+const selectedKeyAllowsMessagesDispatch = computed(() => {
+  const key = selectedKey.value
+  if (!key) return false
+  if (key.group) return key.group.allow_messages_dispatch === true
+
+  const candidates = selectedKeyAutoGroupCandidates.value
+  return candidates.length > 0 && candidates.every((group) => group.allow_messages_dispatch === true)
+})
 const copiedKeyId = ref<number | null>(null)
 const groupSelectorKeyId = ref<number | null>(null)
 const publicSettings = ref<PublicSettings | null>(null)
@@ -1330,6 +1520,9 @@ const setGroupButtonRef = (keyId: number, el: Element | ComponentPublicInstance 
 const formData = ref({
   name: '',
   group_id: null as number | null,
+  auto_group: false,
+  auto_group_strategy: 'price' as 'price' | 'balanced' | 'speed',
+  auto_group_ids: [] as number[],
   status: 'active' as 'active' | 'inactive',
   use_custom_key: false,
   custom_key: '',
@@ -1370,6 +1563,17 @@ const statusOptions = computed(() => [
   { value: 'inactive', label: t('common.inactive') }
 ])
 
+const autoGroupStrategyOptions = computed(() => [
+  { value: 'price', label: t('keys.autoGroupStrategyPrice') },
+  { value: 'balanced', label: t('keys.autoGroupStrategyBalanced') },
+  { value: 'speed', label: t('keys.autoGroupStrategySpeed') }
+])
+
+const autoGroupStrategyLabel = (strategy?: ApiKey['auto_group_strategy']) => {
+  return autoGroupStrategyOptions.value.find((option) => option.value === (strategy || 'price'))?.label
+    || t('keys.autoGroupStrategyPrice')
+}
+
 const shouldSubmitEditStatus = (key: ApiKey, status: 'active' | 'inactive') => {
   if (key.status === 'quota_exhausted' || key.status === 'expired') {
     return status === 'active'
@@ -1408,8 +1612,22 @@ const onStatusFilterChange = (value: string | number | boolean | null) => {
 }
 
 // Convert groups to Select options format with rate multiplier and subscription type
-const groupOptions = computed(() =>
-  groups.value.map((group) => ({
+const groupOptions = computed<GroupOption[]>(() => [
+  {
+    value: 'auto',
+    label: t('keys.autoGroup'),
+    description: t('keys.autoGroupDescription'),
+    rate: 0,
+    userRate: null,
+    peakRateEnabled: false,
+    peakStart: '',
+    peakEnd: '',
+    peakRateMultiplier: 0,
+    subscriptionType: 'standard' as SubscriptionType,
+    platform: 'openai' as GroupPlatform,
+    kind: 'auto'
+  },
+  ...groups.value.map((group) => ({
     value: group.id,
     label: group.name,
     description: group.description,
@@ -1422,7 +1640,82 @@ const groupOptions = computed(() =>
     subscriptionType: group.subscription_type,
     platform: group.platform
   }))
-)
+])
+
+const groupSelection = computed<number | 'auto' | null>({
+  get: () => formData.value.auto_group ? 'auto' : formData.value.group_id,
+  set: (value) => {
+    if (value === 'auto') {
+      formData.value.auto_group = true
+      formData.value.group_id = null
+      return
+    }
+    formData.value.auto_group = false
+    formData.value.group_id = typeof value === 'number' ? value : null
+  }
+})
+
+const platformLabel = (platform: GroupPlatform) => {
+  const labels: Record<GroupPlatform, string> = {
+    openai: 'OpenAI',
+    anthropic: 'Anthropic',
+    gemini: 'Gemini',
+    antigravity: 'Antigravity',
+    grok: 'Grok',
+    composite: 'Composite'
+  }
+  return labels[platform]
+}
+
+const selectedAutoGroupPlatform = (candidateIDs: number[]) => {
+  const selectedGroup = groups.value.find((group) => candidateIDs.includes(group.id))
+  return selectedGroup?.platform ?? null
+}
+
+const isAutoGroupCandidateDisabled = (group: Group, candidateIDs: number[]) => {
+  const selectedPlatform = selectedAutoGroupPlatform(candidateIDs)
+  return selectedPlatform !== null && selectedPlatform !== group.platform && !candidateIDs.includes(group.id)
+}
+
+const toggleAutoGroupCandidate = (candidateIDs: number[], groupID: number) => {
+  const index = candidateIDs.indexOf(groupID)
+  if (index >= 0) {
+    candidateIDs.splice(index, 1)
+    return
+  }
+
+  const group = groups.value.find((item) => item.id === groupID)
+  if (!group || isAutoGroupCandidateDisabled(group, candidateIDs)) return
+  candidateIDs.push(groupID)
+}
+
+const compatibleAutoGroupCandidateIDs = (candidateIDs: number[]) => {
+  const selectedPlatform = selectedAutoGroupPlatform(candidateIDs)
+  if (selectedPlatform === null) return []
+  return candidateIDs.filter((id) => groups.value.some(
+    (group) => group.id === id && group.platform === selectedPlatform
+  ))
+}
+
+const hasValidAutoGroupCandidates = (candidateIDs: number[]) => {
+  if (candidateIDs.length === 0) {
+    appStore.showError('请至少选择一个用于自动选择的分组')
+    return false
+  }
+
+  const candidateGroups = candidateIDs.map((id) => groups.value.find((group) => group.id === id))
+  if (candidateGroups.some((group) => !group)) {
+    appStore.showError('所选自动分组已不可用，请重新选择')
+    return false
+  }
+
+  const platforms = new Set(candidateGroups.map((group) => group!.platform))
+  if (platforms.size > 1) {
+    appStore.showError('自动分组只能选择同一模型类型的分组')
+    return false
+  }
+  return true
+}
 
 // Group dropdown search
 const groupSearchQuery = ref('')
@@ -1434,6 +1727,11 @@ const filteredGroupOptions = computed(() => {
       (opt.description && opt.description.toLowerCase().includes(query))
   })
 })
+
+const isSelectedGroupOption = (key: ApiKey | null, value: number | 'auto' | null) => {
+  if (value === 'auto') return key?.auto_group === true
+  return key?.auto_group !== true && key?.group_id === value
+}
 
 const copyToClipboard = async (text: string, keyId: number) => {
   const success = await clipboardCopy(text, t('keys.copied'))
@@ -1564,6 +1862,9 @@ const editKey = (key: ApiKey) => {
   formData.value = {
     name: key.name,
     group_id: key.group_id,
+    auto_group: key.auto_group,
+    auto_group_strategy: key.auto_group_strategy || 'price',
+    auto_group_ids: key.auto_group_ids?.length ? compatibleAutoGroupCandidateIDs(key.auto_group_ids) : [],
     status: key.status === 'quota_exhausted' || key.status === 'expired' ? 'inactive' : key.status,
     use_custom_key: false,
     custom_key: '',
@@ -1630,17 +1931,63 @@ const openGroupSelector = (key: ApiKey) => {
   }
 }
 
-const changeGroup = async (key: ApiKey, newGroupId: number | null) => {
+const changeGroup = async (key: ApiKey, selection: number | 'auto' | null) => {
   groupSelectorKeyId.value = null
   dropdownPosition.value = null
-  if (key.group_id === newGroupId) return
+  if (selection === 'auto') {
+    openAutoGroupConfig(key)
+    return
+  }
+
+  const groupId = typeof selection === 'number' ? selection : null
+  if (!key.auto_group && key.group_id === groupId) return
 
   try {
-    await keysAPI.update(key.id, { group_id: newGroupId })
+    await keysAPI.update(key.id, {
+      auto_group: false,
+      group_id: groupId
+    })
     appStore.showSuccess(t('keys.groupChangedSuccess'))
     loadApiKeys()
   } catch (error) {
     appStore.showError(t('keys.failedToChangeGroup'))
+  }
+}
+
+const openAutoGroupConfig = (key: ApiKey) => {
+  autoGroupConfigKey.value = key
+  autoGroupConfig.value = {
+    ids: key.auto_group_ids?.length ? compatibleAutoGroupCandidateIDs(key.auto_group_ids) : [],
+    strategy: key.auto_group_strategy || 'price'
+  }
+}
+
+const closeAutoGroupConfig = () => {
+  if (autoGroupConfigSubmitting.value) return
+  autoGroupConfigKey.value = null
+  autoGroupConfig.value = { ids: [], strategy: 'price' }
+}
+
+const saveAutoGroupConfig = async () => {
+  const key = autoGroupConfigKey.value
+  if (!key || !hasValidAutoGroupCandidates(autoGroupConfig.value.ids)) return
+
+  autoGroupConfigSubmitting.value = true
+  try {
+    await keysAPI.update(key.id, {
+      auto_group: true,
+      group_id: null,
+      auto_group_strategy: autoGroupConfig.value.strategy,
+      auto_group_ids: [...autoGroupConfig.value.ids]
+    })
+    appStore.showSuccess(t('keys.groupChangedSuccess'))
+    autoGroupConfigKey.value = null
+  autoGroupConfig.value = { ids: [], strategy: 'price' }
+    await loadApiKeys()
+  } catch (error) {
+    appStore.showError(t('keys.failedToChangeGroup'))
+  } finally {
+    autoGroupConfigSubmitting.value = false
   }
 }
 
@@ -1663,8 +2010,11 @@ const confirmDelete = (key: ApiKey) => {
 
 const handleSubmit = async () => {
   // Validate group_id is required
-  if (formData.value.group_id === null) {
+  if (!formData.value.auto_group && formData.value.group_id === null) {
     appStore.showError(t('keys.groupRequired'))
+    return
+  }
+  if (formData.value.auto_group && !hasValidAutoGroupCandidates(formData.value.auto_group_ids)) {
     return
   }
 
@@ -1720,7 +2070,10 @@ const handleSubmit = async () => {
     if (showEditModal.value && selectedKey.value) {
       const updates: UpdateApiKeyRequest = {
         name: formData.value.name,
-        group_id: formData.value.group_id,
+        group_id: formData.value.auto_group ? null : formData.value.group_id,
+        auto_group: formData.value.auto_group,
+        auto_group_strategy: formData.value.auto_group_strategy,
+        auto_group_ids: formData.value.auto_group ? formData.value.auto_group_ids : undefined,
         ip_whitelist: ipWhitelist,
         ip_blacklist: ipBlacklist,
         quota: quota,
@@ -1744,7 +2097,10 @@ const handleSubmit = async () => {
         ipBlacklist,
         quota,
         expiresInDays,
-        rateLimitData
+        rateLimitData,
+        formData.value.auto_group,
+        formData.value.auto_group_strategy,
+        formData.value.auto_group_ids
       )
       appStore.showSuccess(t('keys.keyCreatedSuccess'))
       // Only advance tour if active, on submit step, and creation succeeded
@@ -1790,6 +2146,9 @@ const closeModals = () => {
   formData.value = {
     name: '',
     group_id: null,
+    auto_group: false,
+    auto_group_strategy: 'price',
+    auto_group_ids: [],
     status: 'active',
     use_custom_key: false,
     custom_key: '',

@@ -325,6 +325,21 @@ func TestBuildSchedulerMetadataAccount_KeepsOpenAIWSFlags(t *testing.T) {
 	require.Nil(t, got.Extra["unused_large_field"])
 }
 
+func TestBuildSchedulerMetadataAccount_KeepsContributorIdentity(t *testing.T) {
+	account := service.Account{Extra: map[string]any{
+		service.AccountContributionSourceKey:          service.AccountContributionSourceValue,
+		service.AccountContributorUserIDKey:           float64(42),
+		service.AccountContributionGovernanceStateKey: service.AccountContributionGovernancePaused,
+		"submitted_by_email":                          "private@example.com",
+	}}
+
+	got := buildSchedulerMetadataAccount(account)
+	require.Equal(t, service.AccountContributionSourceValue, got.Extra[service.AccountContributionSourceKey])
+	require.Equal(t, float64(42), got.Extra[service.AccountContributorUserIDKey])
+	require.Equal(t, service.AccountContributionGovernancePaused, got.Extra[service.AccountContributionGovernanceStateKey])
+	require.NotContains(t, got.Extra, "submitted_by_email")
+}
+
 func TestBuildSchedulerMetadataAccount_KeepsGrokMediaEligibility(t *testing.T) {
 	t.Run("explicit override", func(t *testing.T) {
 		account := service.Account{

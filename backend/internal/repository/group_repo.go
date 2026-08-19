@@ -61,6 +61,7 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *servi
 		SetDescription(groupIn.Description).
 		SetPlatform(groupIn.Platform).
 		SetRateMultiplier(groupIn.RateMultiplier).
+		SetAllowContributionPool(groupIn.AllowContributionPool).
 		SetSortOrder(groupIn.SortOrder).
 		SetIsExclusive(groupIn.IsExclusive).
 		SetStatus(groupIn.Status).
@@ -234,6 +235,7 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		SetDescription(groupIn.Description).
 		SetPlatform(groupIn.Platform).
 		SetRateMultiplier(groupIn.RateMultiplier).
+		SetAllowContributionPool(groupIn.AllowContributionPool).
 		SetIsExclusive(groupIn.IsExclusive).
 		SetStatus(groupIn.Status).
 		SetSubscriptionType(groupIn.SubscriptionType).
@@ -840,6 +842,27 @@ func (r *groupRepository) DeleteCascade(ctx context.Context, id int64) ([]int64,
 
 	// 3. Delete account_groups join rows.
 	if _, err := exec.ExecContext(ctx, "DELETE FROM account_groups WHERE group_id = $1", id); err != nil {
+		return nil, err
+	}
+
+	// Automatic API keys persist their candidate group IDs in JSON rather than
+	// through a foreign key. Remove the deleted group from those lists in the
+	// same transaction so stale candidates cannot remain visible or be served
+	// from an authentication cache after the group is removed.
+	if _, err := exec.ExecContext(ctx, `
+		UPDATE api_keys AS k
+		SET auto_group_ids = COALESCE(
+			(
+				SELECT jsonb_agg(item.value ORDER BY item.ordinality)
+				FROM jsonb_array_elements(k.auto_group_ids) WITH ORDINALITY AS item(value, ordinality)
+				WHERE item.value <> to_jsonb($1::bigint)
+			),
+			'[]'::jsonb
+		), updated_at = NOW()
+		WHERE k.auto_group = TRUE
+		  AND k.deleted_at IS NULL
+		  AND k.auto_group_ids @> jsonb_build_array($1::bigint)
+	`, id); err != nil {
 		return nil, err
 	}
 

@@ -7,6 +7,20 @@ import (
 
 var upstreamModelNotFoundKeywords = []string{"model not found", "unknown model", "not found"}
 
+// isUpstreamModelCapacityExhausted reports a temporary model-capacity signal.
+// It is intentionally narrower than a generic 503/overloaded error: capacity
+// exhaustion means the request should try another account, but must never be
+// persisted as a model-capability failure.
+func isUpstreamModelCapacityExhausted(body []byte) bool {
+	normalized := normalizeModelNotFoundBody(body)
+	if normalized == "" {
+		return false
+	}
+	return strings.Contains(normalized, "model capacity exhausted") ||
+		strings.Contains(normalized, "model at capacity") ||
+		strings.Contains(normalized, "model is at capacity")
+}
+
 func isUpstreamModelNotFoundError(statusCode int, body []byte) bool {
 	if statusCode != http.StatusNotFound {
 		return false

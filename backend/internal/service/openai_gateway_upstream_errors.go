@@ -241,6 +241,75 @@ func isOpenAIRequestBodyTooLargeError(statusCode int, upstreamMsg string, upstre
 	return statusCode == http.StatusRequestEntityTooLarge && !isOpenAIContextWindowError(upstreamMsg, upstreamBody)
 }
 
+// openAIPermanentCapability403Markers are substrings (matched case-insensitively
+// against the upstream error message/body) that indicate a deterministic,
+// account-level 403 which will not clear on retry: a capability disabled for
+// the account's group/plan, an exhausted quota, or a suspended/deactivated
+// account. Deliberately narrow — an unmatched 403 keeps today's behavior
+// (treated as possibly transient) since the cost of under-matching is just
+// "one more same-account retry", while over-matching would cut off a retry
+// that might have succeeded.
+var openAIPermanentCapability403Markers = []string{
+	"is not enabled for this group",
+	"insufficient_quota",
+	"account is suspended",
+	"account has been deactivated",
+}
+
+// isOpenAIPermanentCapability403 reports whether a 403 response is a
+// deterministic account-level restriction rather than a transient block.
+// Same-account retry (pool mode) and the "skip local state" pool-mode
+// default both assume upstream errors are transient; this carves out the
+// narrow set of 403s where retrying the same account is provably pointless,
+// so callers can switch accounts immediately and route the failure into the
+// short-lived circuit breaker even when the account is pool-mode.
+func isOpenAIPermanentCapability403(upstreamMsg string, upstreamBody []byte) bool {
+	match := func(text string) bool {
+		lower := strings.ToLower(strings.TrimSpace(text))
+		if lower == "" {
+			return false
+		}
+		for _, marker := range openAIPermanentCapability403Markers {
+			if strings.Contains(lower, marker) {
+				return true
+			}
+		}
+		return false
+	}
+	if match(upstreamMsg) {
+		return true
+	}
+	if len(upstreamBody) == 0 {
+		return false
+	}
+	if match(gjson.GetBytes(upstreamBody, "error.message").String()) {
+		return true
+	}
+	if match(gjson.GetBytes(upstreamBody, "error.code").String()) {
+		return true
+	}
+	return match(string(upstreamBody))
+}
+
+// openAIRetryableOnSameAccount centralizes the pool-mode same-account retry
+// decision (account.IsPoolMode() && account.IsPoolModeRetryableStatus(statusCode))
+// so a confirmed permanent-capability 403 is excluded consistently across
+// every OpenAI-platform forwarding path that builds *UpstreamFailoverError
+// literals directly instead of going through newOpenAIUpstreamFailoverError
+// (images, alpha-search, embeddings). Intentionally not wired into the
+// Grok-platform branches (openai_gateway_grok*.go) — isOpenAIPermanentCapability403's
+// message patterns are OpenAI-specific and there's no evidence of the same
+// failure mode on Grok.
+func openAIRetryableOnSameAccount(account *Account, statusCode int, shouldDisable bool, upstreamMsg string, responseBody []byte) bool {
+	if account == nil || shouldDisable || !account.IsPoolMode() || !account.IsPoolModeRetryableStatus(statusCode) {
+		return false
+	}
+	if statusCode == http.StatusForbidden && isOpenAIPermanentCapability403(upstreamMsg, responseBody) {
+		return false
+	}
+	return true
+}
+
 func newOpenAIUpstreamFailoverError(
 	statusCode int,
 	responseHeaders http.Header,
@@ -261,6 +330,9 @@ func newOpenAIUpstreamFailoverError(
 		failoverErr.NextAccountAction = NextAccountRetry
 		failoverErr.ClientStatusCode = http.StatusRequestEntityTooLarge
 		failoverErr.ClientMessage = OpenAIRequestBodyTooLargeClientMessage
+	}
+	if statusCode == http.StatusForbidden && isOpenAIPermanentCapability403(upstreamMsg, responseBody) {
+		failoverErr.RetryableOnSameAccount = false
 	}
 	return failoverErr
 }

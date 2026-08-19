@@ -271,3 +271,27 @@ func TestOpenAIProfitControlAfterAdmissionBindEagerWithoutGate(t *testing.T) {
 	require.NoError(t, svc.BindStickySessionAfterProfitAdmission(context.Background(), &groupID, sessionHash, cheapID))
 	require.Equal(t, cheapID, cache.sessionBindings[cacheKey], "无门时保持既有 eager 绑定行为")
 }
+
+func TestOpenAIProfitControlAfterAdmissionHealthEscapeRebinds(t *testing.T) {
+	groupID := int64(77)
+	sessionHash := "health-escape-rebind"
+	cache := &schedulerTestGatewayCache{sessionBindings: map[string]int64{
+		"openai:" + sessionHash: 7001,
+	}}
+	svc := &OpenAIGatewayService{cache: cache}
+	gate := &openAIProfitControlGate{groupID: groupID, platform: PlatformOpenAI, threshold: 0.5, pricingAt: time.Now()}
+	selection := &AccountSelectionResult{profitGate: gate, replaceStickyBinding: true}
+	ctx := ContextWithSelectionProfitGate(context.Background(), selection)
+
+	require.NoError(t, svc.BindStickySessionAfterProfitAdmission(ctx, &groupID, sessionHash, 7002))
+	require.Equal(t, int64(7002), cache.sessionBindings["openai:"+sessionHash])
+
+	cache.sessionBindings["openai:"+sessionHash] = 7001
+	ctx = ContextWithSelectionProfitGate(context.Background(), &AccountSelectionResult{profitGate: gate})
+	require.NoError(t, svc.BindStickySessionAfterProfitAdmission(ctx, &groupID, sessionHash, 7002))
+	require.Equal(t, int64(7001), cache.sessionBindings["openai:"+sessionHash], "temporary escape without health-rebind marker must preserve the old binding")
+
+	ctx = ContextWithSelectionProfitGate(context.Background(), &AccountSelectionResult{preserveStickyBinding: true})
+	require.NoError(t, svc.BindStickySessionAfterProfitAdmission(ctx, &groupID, sessionHash, 7002))
+	require.Equal(t, int64(7001), cache.sessionBindings["openai:"+sessionHash], "concurrency escape must preserve sticky even without a profit gate")
+}

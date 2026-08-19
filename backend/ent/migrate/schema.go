@@ -17,6 +17,8 @@ var (
 		{Name: "deleted_at", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
 		{Name: "key", Type: field.TypeString, Unique: true, Size: 128},
 		{Name: "name", Type: field.TypeString, Size: 100},
+		{Name: "auto_group", Type: field.TypeBool, Default: false},
+		{Name: "auto_group_strategy", Type: field.TypeString, Size: 20, Default: "price"},
 		{Name: "status", Type: field.TypeString, Size: 20, Default: "active"},
 		{Name: "last_used_at", Type: field.TypeTime, Nullable: true},
 		{Name: "ip_whitelist", Type: field.TypeJSON, Nullable: true},
@@ -44,13 +46,13 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "api_keys_groups_api_keys",
-				Columns:    []*schema.Column{APIKeysColumns[22]},
+				Columns:    []*schema.Column{APIKeysColumns[24]},
 				RefColumns: []*schema.Column{GroupsColumns[0]},
 				OnDelete:   schema.SetNull,
 			},
 			{
 				Symbol:     "api_keys_users_api_keys",
-				Columns:    []*schema.Column{APIKeysColumns[23]},
+				Columns:    []*schema.Column{APIKeysColumns[25]},
 				RefColumns: []*schema.Column{UsersColumns[0]},
 				OnDelete:   schema.NoAction,
 			},
@@ -59,17 +61,17 @@ var (
 			{
 				Name:    "apikey_user_id",
 				Unique:  false,
-				Columns: []*schema.Column{APIKeysColumns[23]},
+				Columns: []*schema.Column{APIKeysColumns[25]},
 			},
 			{
 				Name:    "apikey_group_id",
 				Unique:  false,
-				Columns: []*schema.Column{APIKeysColumns[22]},
+				Columns: []*schema.Column{APIKeysColumns[24]},
 			},
 			{
 				Name:    "apikey_status",
 				Unique:  false,
-				Columns: []*schema.Column{APIKeysColumns[6]},
+				Columns: []*schema.Column{APIKeysColumns[8]},
 			},
 			{
 				Name:    "apikey_deleted_at",
@@ -79,17 +81,17 @@ var (
 			{
 				Name:    "apikey_last_used_at",
 				Unique:  false,
-				Columns: []*schema.Column{APIKeysColumns[7]},
+				Columns: []*schema.Column{APIKeysColumns[9]},
 			},
 			{
 				Name:    "apikey_quota_quota_used",
 				Unique:  false,
-				Columns: []*schema.Column{APIKeysColumns[10], APIKeysColumns[11]},
+				Columns: []*schema.Column{APIKeysColumns[12], APIKeysColumns[13]},
 			},
 			{
 				Name:    "apikey_expires_at",
 				Unique:  false,
-				Columns: []*schema.Column{APIKeysColumns[12]},
+				Columns: []*schema.Column{APIKeysColumns[14]},
 			},
 		},
 	}
@@ -106,10 +108,11 @@ var (
 		{Name: "credentials", Type: field.TypeJSON, SchemaType: map[string]string{"postgres": "jsonb"}},
 		{Name: "extra", Type: field.TypeJSON, SchemaType: map[string]string{"postgres": "jsonb"}},
 		{Name: "proxy_fallback_origin_id", Type: field.TypeInt64, Nullable: true},
-		{Name: "concurrency", Type: field.TypeInt, Default: 3},
+		{Name: "concurrency", Type: field.TypeInt, Default: 30},
 		{Name: "load_factor", Type: field.TypeInt, Nullable: true},
 		{Name: "priority", Type: field.TypeInt, Default: 50},
 		{Name: "rate_multiplier", Type: field.TypeFloat64, Default: 1, SchemaType: map[string]string{"postgres": "decimal(10,4)"}},
+		{Name: "rate_multiplier_undeclared", Type: field.TypeBool, Default: false},
 		{Name: "status", Type: field.TypeString, Size: 20, Default: "active"},
 		{Name: "error_message", Type: field.TypeString, Nullable: true, SchemaType: map[string]string{"postgres": "text"}},
 		{Name: "last_used_at", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
@@ -121,6 +124,9 @@ var (
 		{Name: "overload_until", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
 		{Name: "temp_unschedulable_until", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
 		{Name: "temp_unschedulable_reason", Type: field.TypeString, Nullable: true, SchemaType: map[string]string{"postgres": "text"}},
+		{Name: "schedulability_source", Type: field.TypeString, Size: 16, Default: "none"},
+		{Name: "schedulability_reason", Type: field.TypeString, Nullable: true, Size: 64},
+		{Name: "schedulability_changed_at", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
 		{Name: "session_window_start", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
 		{Name: "session_window_end", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
 		{Name: "session_window_status", Type: field.TypeString, Nullable: true, Size: 20},
@@ -136,13 +142,13 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "accounts_proxies_proxy",
-				Columns:    []*schema.Column{AccountsColumns[30]},
+				Columns:    []*schema.Column{AccountsColumns[34]},
 				RefColumns: []*schema.Column{ProxiesColumns[0]},
 				OnDelete:   schema.SetNull,
 			},
 			{
 				Symbol:     "accounts_accounts_children",
-				Columns:    []*schema.Column{AccountsColumns[31]},
+				Columns:    []*schema.Column{AccountsColumns[35]},
 				RefColumns: []*schema.Column{AccountsColumns[0]},
 				OnDelete:   schema.Restrict,
 			},
@@ -161,12 +167,12 @@ var (
 			{
 				Name:    "account_status",
 				Unique:  false,
-				Columns: []*schema.Column{AccountsColumns[15]},
+				Columns: []*schema.Column{AccountsColumns[16]},
 			},
 			{
 				Name:    "account_proxy_id",
 				Unique:  false,
-				Columns: []*schema.Column{AccountsColumns[30]},
+				Columns: []*schema.Column{AccountsColumns[34]},
 			},
 			{
 				Name:    "account_priority",
@@ -176,27 +182,27 @@ var (
 			{
 				Name:    "account_last_used_at",
 				Unique:  false,
-				Columns: []*schema.Column{AccountsColumns[17]},
+				Columns: []*schema.Column{AccountsColumns[18]},
 			},
 			{
 				Name:    "account_schedulable",
 				Unique:  false,
-				Columns: []*schema.Column{AccountsColumns[20]},
+				Columns: []*schema.Column{AccountsColumns[21]},
 			},
 			{
 				Name:    "account_rate_limited_at",
 				Unique:  false,
-				Columns: []*schema.Column{AccountsColumns[21]},
+				Columns: []*schema.Column{AccountsColumns[22]},
 			},
 			{
 				Name:    "account_rate_limit_reset_at",
 				Unique:  false,
-				Columns: []*schema.Column{AccountsColumns[22]},
+				Columns: []*schema.Column{AccountsColumns[23]},
 			},
 			{
 				Name:    "account_overload_until",
 				Unique:  false,
-				Columns: []*schema.Column{AccountsColumns[23]},
+				Columns: []*schema.Column{AccountsColumns[24]},
 			},
 			{
 				Name:    "account_platform_priority",
@@ -206,7 +212,7 @@ var (
 			{
 				Name:    "account_priority_status",
 				Unique:  false,
-				Columns: []*schema.Column{AccountsColumns[13], AccountsColumns[15]},
+				Columns: []*schema.Column{AccountsColumns[13], AccountsColumns[16]},
 			},
 			{
 				Name:    "account_deleted_at",
@@ -216,7 +222,12 @@ var (
 			{
 				Name:    "account_parent_account_id",
 				Unique:  false,
-				Columns: []*schema.Column{AccountsColumns[31]},
+				Columns: []*schema.Column{AccountsColumns[35]},
+			},
+			{
+				Name:    "account_schedulability_source_status",
+				Unique:  false,
+				Columns: []*schema.Column{AccountsColumns[27], AccountsColumns[16]},
 			},
 		},
 	}
@@ -808,6 +819,7 @@ var (
 		{Name: "enabled", Type: field.TypeBool, Default: true},
 		{Name: "notes", Type: field.TypeString, Nullable: true, SchemaType: map[string]string{"postgres": "text"}},
 		{Name: "group_id", Type: field.TypeInt64},
+		{Name: "group_composite_model_routes", Type: field.TypeInt64, Nullable: true},
 	}
 	// CompositeModelRoutesTable holds the schema information for the "composite_model_routes" table.
 	CompositeModelRoutesTable = &schema.Table{
@@ -820,6 +832,12 @@ var (
 				Columns:    []*schema.Column{CompositeModelRoutesColumns[12]},
 				RefColumns: []*schema.Column{GroupsColumns[0]},
 				OnDelete:   schema.NoAction,
+			},
+			{
+				Symbol:     "composite_model_routes_groups_composite_model_routes",
+				Columns:    []*schema.Column{CompositeModelRoutesColumns[13]},
+				RefColumns: []*schema.Column{GroupsColumns[0]},
+				OnDelete:   schema.SetNull,
 			},
 		},
 		Indexes: []*schema.Index{
@@ -852,6 +870,118 @@ var (
 				Name:    "compositemodelroute_priority",
 				Unique:  false,
 				Columns: []*schema.Column{CompositeModelRoutesColumns[9]},
+			},
+		},
+	}
+	// ContributionAccountVerificationsColumns holds the columns for the "contribution_account_verifications" table.
+	ContributionAccountVerificationsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "updated_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "platform", Type: field.TypeString, Size: 50},
+		{Name: "status", Type: field.TypeString, Size: 20, Default: "pending"},
+		{Name: "model_family", Type: field.TypeString, Size: 32, Default: "unknown"},
+		{Name: "source_kind", Type: field.TypeString, Size: 32, Default: "unknown"},
+		{Name: "tested_model", Type: field.TypeString, Nullable: true, Size: 200},
+		{Name: "tested_at", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "redacted_error_summary", Type: field.TypeString, Nullable: true, SchemaType: map[string]string{"postgres": "text"}},
+		{Name: "account_id", Type: field.TypeInt64},
+	}
+	// ContributionAccountVerificationsTable holds the schema information for the "contribution_account_verifications" table.
+	ContributionAccountVerificationsTable = &schema.Table{
+		Name:       "contribution_account_verifications",
+		Columns:    ContributionAccountVerificationsColumns,
+		PrimaryKey: []*schema.Column{ContributionAccountVerificationsColumns[0]},
+		ForeignKeys: []*schema.ForeignKey{
+			{
+				Symbol:     "contribution_account_verifications_accounts_account",
+				Columns:    []*schema.Column{ContributionAccountVerificationsColumns[10]},
+				RefColumns: []*schema.Column{AccountsColumns[0]},
+				OnDelete:   schema.Cascade,
+			},
+		},
+		Indexes: []*schema.Index{
+			{
+				Name:    "contributionaccountverification_platform_status",
+				Unique:  false,
+				Columns: []*schema.Column{ContributionAccountVerificationsColumns[3], ContributionAccountVerificationsColumns[4]},
+			},
+		},
+	}
+	// ContributionRoomsColumns holds the columns for the "contribution_rooms" table.
+	ContributionRoomsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "updated_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "name", Type: field.TypeString, Size: 100},
+		{Name: "consumer_rate_multiplier", Type: field.TypeFloat64, Default: 1, SchemaType: map[string]string{"postgres": "decimal(10,4)"}},
+		{Name: "status", Type: field.TypeString, Size: 20, Default: "active"},
+		{Name: "visibility", Type: field.TypeString, Size: 20, Default: "private"},
+		{Name: "owner_user_id", Type: field.TypeInt64},
+	}
+	// ContributionRoomsTable holds the schema information for the "contribution_rooms" table.
+	ContributionRoomsTable = &schema.Table{
+		Name:       "contribution_rooms",
+		Columns:    ContributionRoomsColumns,
+		PrimaryKey: []*schema.Column{ContributionRoomsColumns[0]},
+		ForeignKeys: []*schema.ForeignKey{
+			{
+				Symbol:     "contribution_rooms_users_owner",
+				Columns:    []*schema.Column{ContributionRoomsColumns[7]},
+				RefColumns: []*schema.Column{UsersColumns[0]},
+				OnDelete:   schema.Cascade,
+			},
+		},
+		Indexes: []*schema.Index{
+			{
+				Name:    "contributionroom_owner_user_id",
+				Unique:  false,
+				Columns: []*schema.Column{ContributionRoomsColumns[7]},
+			},
+			{
+				Name:    "contributionroom_visibility_status",
+				Unique:  false,
+				Columns: []*schema.Column{ContributionRoomsColumns[6], ContributionRoomsColumns[5]},
+			},
+		},
+	}
+	// ContributionRoomAccountsColumns holds the columns for the "contribution_room_accounts" table.
+	ContributionRoomAccountsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "updated_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "enabled", Type: field.TypeBool, Default: true},
+		{Name: "share_concurrency", Type: field.TypeInt, Default: 1},
+		{Name: "share_budget_usd", Type: field.TypeFloat64, Default: 0, SchemaType: map[string]string{"postgres": "decimal(20,8)"}},
+		{Name: "share_used_usd", Type: field.TypeFloat64, Default: 0, SchemaType: map[string]string{"postgres": "decimal(20,8)"}},
+		{Name: "verified_at", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "room_id", Type: field.TypeInt64},
+		{Name: "account_id", Type: field.TypeInt64},
+	}
+	// ContributionRoomAccountsTable holds the schema information for the "contribution_room_accounts" table.
+	ContributionRoomAccountsTable = &schema.Table{
+		Name:       "contribution_room_accounts",
+		Columns:    ContributionRoomAccountsColumns,
+		PrimaryKey: []*schema.Column{ContributionRoomAccountsColumns[0]},
+		ForeignKeys: []*schema.ForeignKey{
+			{
+				Symbol:     "contribution_room_accounts_contribution_rooms_accounts",
+				Columns:    []*schema.Column{ContributionRoomAccountsColumns[8]},
+				RefColumns: []*schema.Column{ContributionRoomsColumns[0]},
+				OnDelete:   schema.NoAction,
+			},
+			{
+				Symbol:     "contribution_room_accounts_accounts_account",
+				Columns:    []*schema.Column{ContributionRoomAccountsColumns[9]},
+				RefColumns: []*schema.Column{AccountsColumns[0]},
+				OnDelete:   schema.Cascade,
+			},
+		},
+		Indexes: []*schema.Index{
+			{
+				Name:    "contributionroomaccount_room_id_enabled",
+				Unique:  false,
+				Columns: []*schema.Column{ContributionRoomAccountsColumns[8], ContributionRoomAccountsColumns[3]},
 			},
 		},
 	}
@@ -901,6 +1031,7 @@ var (
 		{Name: "name", Type: field.TypeString, Size: 100},
 		{Name: "description", Type: field.TypeString, Nullable: true, SchemaType: map[string]string{"postgres": "text"}},
 		{Name: "rate_multiplier", Type: field.TypeFloat64, Default: 1, SchemaType: map[string]string{"postgres": "decimal(10,4)"}},
+		{Name: "allow_contribution_pool", Type: field.TypeBool, Default: false},
 		{Name: "peak_rate_enabled", Type: field.TypeBool, Default: false},
 		{Name: "peak_start", Type: field.TypeString, Size: 5, Default: ""},
 		{Name: "peak_end", Type: field.TypeString, Size: 5, Default: ""},
@@ -960,22 +1091,22 @@ var (
 			{
 				Name:    "group_status",
 				Unique:  false,
-				Columns: []*schema.Column{GroupsColumns[12]},
+				Columns: []*schema.Column{GroupsColumns[13]},
 			},
 			{
 				Name:    "group_platform",
 				Unique:  false,
-				Columns: []*schema.Column{GroupsColumns[14]},
+				Columns: []*schema.Column{GroupsColumns[15]},
 			},
 			{
 				Name:    "group_subscription_type",
 				Unique:  false,
-				Columns: []*schema.Column{GroupsColumns[15]},
+				Columns: []*schema.Column{GroupsColumns[16]},
 			},
 			{
 				Name:    "group_is_exclusive",
 				Unique:  false,
-				Columns: []*schema.Column{GroupsColumns[11]},
+				Columns: []*schema.Column{GroupsColumns[12]},
 			},
 			{
 				Name:    "group_deleted_at",
@@ -985,12 +1116,12 @@ var (
 			{
 				Name:    "group_sort_order",
 				Unique:  false,
-				Columns: []*schema.Column{GroupsColumns[42]},
+				Columns: []*schema.Column{GroupsColumns[43]},
 			},
 			{
 				Name:    "idx_groups_duplicate_operation_id_active",
 				Unique:  true,
-				Columns: []*schema.Column{GroupsColumns[13]},
+				Columns: []*schema.Column{GroupsColumns[14]},
 				Annotation: &entsql.IndexAnnotation{
 					Where: "duplicate_operation_id IS NOT NULL AND deleted_at IS NULL",
 				},
@@ -1390,6 +1521,7 @@ var (
 		{Name: "port", Type: field.TypeInt},
 		{Name: "username", Type: field.TypeString, Nullable: true, Size: 100},
 		{Name: "password", Type: field.TypeString, Nullable: true, Size: 100},
+		{Name: "owner_user_id", Type: field.TypeInt64, Nullable: true},
 		{Name: "status", Type: field.TypeString, Size: 20, Default: "active"},
 		{Name: "expires_at", Type: field.TypeTime, Nullable: true},
 		{Name: "fallback_mode", Type: field.TypeString, Size: 20, Default: "none"},
@@ -1404,7 +1536,7 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "proxies_proxies_backup_proxy",
-				Columns:    []*schema.Column{ProxiesColumns[14]},
+				Columns:    []*schema.Column{ProxiesColumns[15]},
 				RefColumns: []*schema.Column{ProxiesColumns[0]},
 				OnDelete:   schema.SetNull,
 			},
@@ -1413,7 +1545,7 @@ var (
 			{
 				Name:    "proxy_status",
 				Unique:  false,
-				Columns: []*schema.Column{ProxiesColumns[10]},
+				Columns: []*schema.Column{ProxiesColumns[11]},
 			},
 			{
 				Name:    "proxy_deleted_at",
@@ -1423,12 +1555,17 @@ var (
 			{
 				Name:    "proxy_expires_at",
 				Unique:  false,
-				Columns: []*schema.Column{ProxiesColumns[11]},
+				Columns: []*schema.Column{ProxiesColumns[12]},
 			},
 			{
 				Name:    "proxy_backup_proxy_id",
 				Unique:  false,
-				Columns: []*schema.Column{ProxiesColumns[14]},
+				Columns: []*schema.Column{ProxiesColumns[15]},
+			},
+			{
+				Name:    "proxy_owner_user_id",
+				Unique:  false,
+				Columns: []*schema.Column{ProxiesColumns[10]},
 			},
 		},
 	}
@@ -1774,7 +1911,7 @@ var (
 		{Name: "role", Type: field.TypeString, Size: 20, Default: "user"},
 		{Name: "balance", Type: field.TypeFloat64, Default: 0, SchemaType: map[string]string{"postgres": "decimal(20,8)"}},
 		{Name: "frozen_balance", Type: field.TypeFloat64, Default: 0, SchemaType: map[string]string{"postgres": "decimal(20,8)"}},
-		{Name: "concurrency", Type: field.TypeInt, Default: 5},
+		{Name: "concurrency", Type: field.TypeInt, Default: 30},
 		{Name: "status", Type: field.TypeString, Size: 20, Default: "active"},
 		{Name: "username", Type: field.TypeString, Size: 100, Default: ""},
 		{Name: "notes", Type: field.TypeString, Default: "", SchemaType: map[string]string{"postgres": "text"}},
@@ -1790,6 +1927,8 @@ var (
 		{Name: "balance_notify_extra_emails", Type: field.TypeString, Default: "[]", SchemaType: map[string]string{"postgres": "text"}},
 		{Name: "total_recharged", Type: field.TypeFloat64, Default: 0, SchemaType: map[string]string{"postgres": "decimal(20,8)"}},
 		{Name: "rpm_limit", Type: field.TypeInt, Default: 0},
+		{Name: "account_management_enabled", Type: field.TypeBool, Default: false},
+		{Name: "contribution_rooms_enabled", Type: field.TypeBool, Default: false},
 	}
 	// UsersTable holds the schema information for the "users" table.
 	UsersTable = &schema.Table{
@@ -1925,6 +2064,60 @@ var (
 				Name:    "userattributevalue_attribute_id",
 				Unique:  false,
 				Columns: []*schema.Column{UserAttributeValuesColumns[5]},
+			},
+		},
+	}
+	// UserContributionRoomPreferencesColumns holds the columns for the "user_contribution_room_preferences" table.
+	UserContributionRoomPreferencesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "updated_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "allow_pool_fallback", Type: field.TypeBool, Default: false},
+		{Name: "fallback_group_id", Type: field.TypeInt64, Nullable: true},
+		{Name: "api_key_id", Type: field.TypeInt64},
+		{Name: "room_id", Type: field.TypeInt64},
+		{Name: "user_id", Type: field.TypeInt64},
+	}
+	// UserContributionRoomPreferencesTable holds the schema information for the "user_contribution_room_preferences" table.
+	UserContributionRoomPreferencesTable = &schema.Table{
+		Name:       "user_contribution_room_preferences",
+		Columns:    UserContributionRoomPreferencesColumns,
+		PrimaryKey: []*schema.Column{UserContributionRoomPreferencesColumns[0]},
+		ForeignKeys: []*schema.ForeignKey{
+			{
+				Symbol:     "user_contribution_room_preferences_api_keys_contribution_room_preferences",
+				Columns:    []*schema.Column{UserContributionRoomPreferencesColumns[5]},
+				RefColumns: []*schema.Column{APIKeysColumns[0]},
+				OnDelete:   schema.NoAction,
+			},
+			{
+				Symbol:     "user_contribution_room_preferences_contribution_rooms_preferences",
+				Columns:    []*schema.Column{UserContributionRoomPreferencesColumns[6]},
+				RefColumns: []*schema.Column{ContributionRoomsColumns[0]},
+				OnDelete:   schema.NoAction,
+			},
+			{
+				Symbol:     "user_contribution_room_preferences_users_user",
+				Columns:    []*schema.Column{UserContributionRoomPreferencesColumns[7]},
+				RefColumns: []*schema.Column{UsersColumns[0]},
+				OnDelete:   schema.Cascade,
+			},
+		},
+		Indexes: []*schema.Index{
+			{
+				Name:    "usercontributionroompreference_room_id",
+				Unique:  false,
+				Columns: []*schema.Column{UserContributionRoomPreferencesColumns[6]},
+			},
+			{
+				Name:    "usercontributionroompreference_user_id",
+				Unique:  false,
+				Columns: []*schema.Column{UserContributionRoomPreferencesColumns[7]},
+			},
+			{
+				Name:    "usercontributionroompreference_api_key_id_room_id",
+				Unique:  true,
+				Columns: []*schema.Column{UserContributionRoomPreferencesColumns[5], UserContributionRoomPreferencesColumns[6]},
 			},
 		},
 	}
@@ -2081,6 +2274,9 @@ var (
 		ChannelMonitorHistoriesTable,
 		ChannelMonitorRequestTemplatesTable,
 		CompositeModelRoutesTable,
+		ContributionAccountVerificationsTable,
+		ContributionRoomsTable,
+		ContributionRoomAccountsTable,
 		ErrorPassthroughRulesTable,
 		GroupsTable,
 		IdempotencyRecordsTable,
@@ -2103,6 +2299,7 @@ var (
 		UserAllowedGroupsTable,
 		UserAttributeDefinitionsTable,
 		UserAttributeValuesTable,
+		UserContributionRoomPreferencesTable,
 		UserPlatformQuotasTable,
 		UserSubscriptionsTable,
 	}
@@ -2165,8 +2362,22 @@ func init() {
 		Table: "channel_monitor_request_templates",
 	}
 	CompositeModelRoutesTable.ForeignKeys[0].RefTable = GroupsTable
+	CompositeModelRoutesTable.ForeignKeys[1].RefTable = GroupsTable
 	CompositeModelRoutesTable.Annotation = &entsql.Annotation{
 		Table: "composite_model_routes",
+	}
+	ContributionAccountVerificationsTable.ForeignKeys[0].RefTable = AccountsTable
+	ContributionAccountVerificationsTable.Annotation = &entsql.Annotation{
+		Table: "contribution_account_verifications",
+	}
+	ContributionRoomsTable.ForeignKeys[0].RefTable = UsersTable
+	ContributionRoomsTable.Annotation = &entsql.Annotation{
+		Table: "contribution_rooms",
+	}
+	ContributionRoomAccountsTable.ForeignKeys[0].RefTable = ContributionRoomsTable
+	ContributionRoomAccountsTable.ForeignKeys[1].RefTable = AccountsTable
+	ContributionRoomAccountsTable.Annotation = &entsql.Annotation{
+		Table: "contribution_room_accounts",
 	}
 	ErrorPassthroughRulesTable.Annotation = &entsql.Annotation{
 		Table: "error_passthrough_rules",
@@ -2251,6 +2462,12 @@ func init() {
 	UserAttributeValuesTable.ForeignKeys[1].RefTable = UserAttributeDefinitionsTable
 	UserAttributeValuesTable.Annotation = &entsql.Annotation{
 		Table: "user_attribute_values",
+	}
+	UserContributionRoomPreferencesTable.ForeignKeys[0].RefTable = APIKeysTable
+	UserContributionRoomPreferencesTable.ForeignKeys[1].RefTable = ContributionRoomsTable
+	UserContributionRoomPreferencesTable.ForeignKeys[2].RefTable = UsersTable
+	UserContributionRoomPreferencesTable.Annotation = &entsql.Annotation{
+		Table: "user_contribution_room_preferences",
 	}
 	UserPlatformQuotasTable.ForeignKeys[0].RefTable = UsersTable
 	UserPlatformQuotasTable.Annotation = &entsql.Annotation{

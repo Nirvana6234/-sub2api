@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -47,6 +48,8 @@ func (r *apiKeyRepository) Create(ctx context.Context, key *service.APIKey) erro
 		SetName(key.Name).
 		SetStatus(key.Status).
 		SetNillableGroupID(key.GroupID).
+		SetAutoGroup(key.AutoGroup).
+		SetAutoGroupStrategy(key.AutoGroupStrategy).
 		SetNillableLastUsedAt(key.LastUsedAt).
 		SetQuota(key.Quota).
 		SetQuotaUsed(key.QuotaUsed).
@@ -68,6 +71,11 @@ func (r *apiKeyRepository) Create(ctx context.Context, key *service.APIKey) erro
 		key.LastUsedAt = created.LastUsedAt
 		key.CreatedAt = created.CreatedAt
 		key.UpdatedAt = created.UpdatedAt
+		if key.AutoGroup {
+			if err := r.storeAutoGroupIDs(ctx, key.ID, key.AutoGroupIDs); err != nil {
+				return err
+			}
+		}
 	}
 	return translatePersistenceError(err, nil, service.ErrAPIKeyExists)
 }
@@ -84,7 +92,11 @@ func (r *apiKeyRepository) GetByID(ctx context.Context, id int64) (*service.APIK
 		}
 		return nil, err
 	}
-	return apiKeyEntityToService(m), nil
+	key := apiKeyEntityToService(m)
+	if err := r.hydrateAutoGroupIDs(ctx, key); err != nil {
+		return nil, err
+	}
+	return key, nil
 }
 
 // GetKeyAndOwnerID 根据 API Key ID 获取其 key 与所有者（用户）ID。
@@ -122,7 +134,11 @@ func (r *apiKeyRepository) GetByKey(ctx context.Context, key string) (*service.A
 		}
 		return nil, err
 	}
-	return apiKeyEntityToService(m), nil
+	apiKey := apiKeyEntityToService(m)
+	if err := r.hydrateAutoGroupIDs(ctx, apiKey); err != nil {
+		return nil, err
+	}
+	return apiKey, nil
 }
 
 func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*service.APIKey, error) {
@@ -132,6 +148,8 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 			apikey.FieldID,
 			apikey.FieldUserID,
 			apikey.FieldGroupID,
+			apikey.FieldAutoGroup,
+			apikey.FieldAutoGroupStrategy,
 			apikey.FieldName,
 			apikey.FieldStatus,
 			apikey.FieldIPWhitelist,
@@ -225,7 +243,37 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 		}
 		return nil, err
 	}
-	return apiKeyEntityToService(m), nil
+	apiKey := apiKeyEntityToService(m)
+	if err := r.hydrateAutoGroupIDs(ctx, apiKey); err != nil {
+		return nil, err
+	}
+	return apiKey, nil
+}
+
+// GetContributionBalance is intentionally a lightweight SQL lookup used only
+// when cash balance is exhausted during API-key authentication.
+func (r *apiKeyRepository) GetContributionBalance(ctx context.Context, userID int64) (float64, error) {
+	if r == nil || r.sql == nil {
+		return 0, nil
+	}
+	rows, err := r.sql.QueryContext(ctx, `
+		SELECT balance FROM user_contribution_wallets WHERE user_id = $1
+	`, userID)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	var balance float64
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return 0, err
+		}
+		return 0, nil
+	}
+	if err := rows.Scan(&balance); err != nil {
+		return 0, err
+	}
+	return balance, nil
 }
 
 func (r *apiKeyRepository) Update(ctx context.Context, key *service.APIKey, fields service.APIKeyUpdateFields) error {
@@ -292,6 +340,12 @@ func (r *apiKeyRepository) Update(ctx context.Context, key *service.APIKey, fiel
 			builder.ClearGroupID()
 		}
 	}
+	if fields.AutoGroup {
+		builder.SetAutoGroup(key.AutoGroup)
+	}
+	if fields.AutoGroupStrategy {
+		builder.SetAutoGroupStrategy(key.AutoGroupStrategy)
+	}
 
 	// Expiration time
 	if fields.ExpiresAt {
@@ -323,6 +377,11 @@ func (r *apiKeyRepository) Update(ctx context.Context, key *service.APIKey, fiel
 	if affected == 0 {
 		// 更新影响行数为 0，说明记录不存在或已被软删除。
 		return service.ErrAPIKeyNotFound
+	}
+	if fields.AutoGroupIDs {
+		if err := r.storeAutoGroupIDs(ctx, key.ID, key.AutoGroupIDs); err != nil {
+			return err
+		}
 	}
 
 	// 使用同一时间戳回填，避免并发删除导致二次查询失败。
@@ -466,6 +525,9 @@ func (r *apiKeyRepository) ListByUserID(ctx context.Context, userID int64, param
 	for i := range keys {
 		outKeys = append(outKeys, *apiKeyEntityToService(keys[i]))
 	}
+	if err := r.hydrateAutoGroupIDsForKeys(ctx, outKeys); err != nil {
+		return nil, nil, err
+	}
 	if err := r.attachLastUsedIPs(ctx, outKeys); err != nil {
 		return nil, nil, err
 	}
@@ -485,6 +547,9 @@ func (r *apiKeyRepository) ListAllByUserID(ctx context.Context, userID int64, fi
 	outKeys := make([]service.APIKey, 0, len(keys))
 	for i := range keys {
 		outKeys = append(outKeys, *apiKeyEntityToService(keys[i]))
+	}
+	if err := r.hydrateAutoGroupIDsForKeys(ctx, outKeys); err != nil {
+		return nil, err
 	}
 	if err := r.attachLastUsedIPs(ctx, outKeys); err != nil {
 		return nil, err
@@ -512,6 +577,109 @@ func (r *apiKeyRepository) attachLastUsedIPs(ctx context.Context, keys []service
 		}
 	}
 	return nil
+}
+
+// auto_group_ids is deliberately accessed through narrow SQL rather than the
+// generated Ent model. This keeps the hot authentication query's selected
+// columns minimal while allowing the routing preference to evolve independently.
+func (r *apiKeyRepository) storeAutoGroupIDs(ctx context.Context, keyID int64, groupIDs []int64) error {
+	if r.sql == nil {
+		return errors.New("api key auto-group storage is unavailable")
+	}
+	encoded, err := json.Marshal(groupIDs)
+	if err != nil {
+		return fmt.Errorf("marshal auto-group IDs: %w", err)
+	}
+	result, err := r.sql.ExecContext(ctx, `
+		UPDATE api_keys
+		SET auto_group_ids = $1::jsonb, updated_at = NOW()
+		WHERE id = $2 AND deleted_at IS NULL
+	`, string(encoded), keyID)
+	if err != nil {
+		return err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if updated == 0 {
+		return service.ErrAPIKeyNotFound
+	}
+	return nil
+}
+
+func (r *apiKeyRepository) hydrateAutoGroupIDs(ctx context.Context, key *service.APIKey) error {
+	if key == nil || !key.AutoGroup || r.sql == nil {
+		return nil
+	}
+	rows, err := r.sql.QueryContext(ctx, `
+		SELECT auto_group_ids
+		FROM api_keys
+		WHERE id = $1 AND deleted_at IS NULL
+	`, key.ID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		return service.ErrAPIKeyNotFound
+	}
+	var raw []byte
+	if err := rows.Scan(&raw); err != nil {
+		return err
+	}
+	if len(raw) == 0 {
+		return nil
+	}
+	if err := json.Unmarshal(raw, &key.AutoGroupIDs); err != nil {
+		return fmt.Errorf("decode auto-group IDs for API key %d: %w", key.ID, err)
+	}
+	return rows.Err()
+}
+
+func (r *apiKeyRepository) hydrateAutoGroupIDsForKeys(ctx context.Context, keys []service.APIKey) error {
+	if len(keys) == 0 || r.sql == nil {
+		return nil
+	}
+	ids := make([]int64, 0, len(keys))
+	byID := make(map[int64]*service.APIKey, len(keys))
+	for i := range keys {
+		if !keys[i].AutoGroup {
+			continue
+		}
+		ids = append(ids, keys[i].ID)
+		byID[keys[i].ID] = &keys[i]
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	rows, err := r.sql.QueryContext(ctx, `
+		SELECT id, auto_group_ids
+		FROM api_keys
+		WHERE id = ANY($1) AND deleted_at IS NULL
+	`, pq.Array(ids))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var keyID int64
+		var raw []byte
+		if err := rows.Scan(&keyID, &raw); err != nil {
+			return err
+		}
+		key := byID[keyID]
+		if key == nil || len(raw) == 0 {
+			continue
+		}
+		if err := json.Unmarshal(raw, &key.AutoGroupIDs); err != nil {
+			return fmt.Errorf("decode auto-group IDs for API key %d: %w", keyID, err)
+		}
+	}
+	return rows.Err()
 }
 
 func (r *apiKeyRepository) latestUsageLogIPs(ctx context.Context, apiKeyIDs []int64) (result map[int64]string, err error) {
@@ -630,6 +798,9 @@ func (r *apiKeyRepository) ListByGroupID(ctx context.Context, groupID int64, par
 	for i := range keys {
 		outKeys = append(outKeys, *apiKeyEntityToService(keys[i]))
 	}
+	if err := r.hydrateAutoGroupIDsForKeys(ctx, outKeys); err != nil {
+		return nil, nil, err
+	}
 
 	return outKeys, paginationResultFromTotal(int64(total), params), nil
 }
@@ -690,6 +861,9 @@ func (r *apiKeyRepository) SearchAPIKeys(ctx context.Context, userID int64, keyw
 	for i := range keys {
 		outKeys = append(outKeys, *apiKeyEntityToService(keys[i]))
 	}
+	if err := r.hydrateAutoGroupIDsForKeys(ctx, outKeys); err != nil {
+		return nil, err
+	}
 	return outKeys, nil
 }
 
@@ -735,6 +909,38 @@ func (r *apiKeyRepository) ListKeysByGroupID(ctx context.Context, groupID int64)
 		Select(apikey.FieldKey).
 		Strings(ctx)
 	if err != nil {
+		return nil, err
+	}
+	return keys, nil
+}
+
+// ListKeysByAutoGroupID returns active automatic credentials whose persisted
+// candidate list references a group. It is used only for cache invalidation;
+// unlike ListKeysByGroupID it must not affect the admin group's key listing.
+func (r *apiKeyRepository) ListKeysByAutoGroupID(ctx context.Context, groupID int64) ([]string, error) {
+	if groupID <= 0 || r.sql == nil {
+		return nil, nil
+	}
+	rows, err := r.sql.QueryContext(ctx, `
+		SELECT key
+		FROM api_keys
+		WHERE auto_group = TRUE
+		  AND deleted_at IS NULL
+		  AND auto_group_ids @> jsonb_build_array($1::bigint)
+	`, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	keys := make([]string, 0)
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, err
+		}
+		keys = append(keys, key)
+	}
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	return keys, nil
@@ -859,29 +1065,31 @@ func apiKeyEntityToService(m *dbent.APIKey) *service.APIKey {
 		return nil
 	}
 	out := &service.APIKey{
-		ID:            m.ID,
-		UserID:        m.UserID,
-		Key:           m.Key,
-		Name:          m.Name,
-		Status:        m.Status,
-		IPWhitelist:   m.IPWhitelist,
-		IPBlacklist:   m.IPBlacklist,
-		LastUsedAt:    m.LastUsedAt,
-		CreatedAt:     m.CreatedAt,
-		UpdatedAt:     m.UpdatedAt,
-		GroupID:       m.GroupID,
-		Quota:         m.Quota,
-		QuotaUsed:     m.QuotaUsed,
-		ExpiresAt:     m.ExpiresAt,
-		RateLimit5h:   m.RateLimit5h,
-		RateLimit1d:   m.RateLimit1d,
-		RateLimit7d:   m.RateLimit7d,
-		Usage5h:       m.Usage5h,
-		Usage1d:       m.Usage1d,
-		Usage7d:       m.Usage7d,
-		Window5hStart: m.Window5hStart,
-		Window1dStart: m.Window1dStart,
-		Window7dStart: m.Window7dStart,
+		ID:                m.ID,
+		UserID:            m.UserID,
+		Key:               m.Key,
+		Name:              m.Name,
+		Status:            m.Status,
+		IPWhitelist:       m.IPWhitelist,
+		IPBlacklist:       m.IPBlacklist,
+		LastUsedAt:        m.LastUsedAt,
+		CreatedAt:         m.CreatedAt,
+		UpdatedAt:         m.UpdatedAt,
+		GroupID:           m.GroupID,
+		AutoGroup:         m.AutoGroup,
+		AutoGroupStrategy: m.AutoGroupStrategy,
+		Quota:             m.Quota,
+		QuotaUsed:         m.QuotaUsed,
+		ExpiresAt:         m.ExpiresAt,
+		RateLimit5h:       m.RateLimit5h,
+		RateLimit1d:       m.RateLimit1d,
+		RateLimit7d:       m.RateLimit7d,
+		Usage5h:           m.Usage5h,
+		Usage1d:           m.Usage1d,
+		Usage7d:           m.Usage7d,
+		Window5hStart:     m.Window5hStart,
+		Window1dStart:     m.Window1dStart,
+		Window7dStart:     m.Window7dStart,
 	}
 	if m.Edges.User != nil {
 		out.User = userEntityToService(m.Edges.User)
@@ -926,6 +1134,8 @@ func userEntityToService(u *dbent.User) *service.User {
 		BalanceNotifyThreshold:     u.BalanceNotifyThreshold,
 		TotalRecharged:             u.TotalRecharged,
 		RPMLimit:                   u.RpmLimit,
+		AccountManagementEnabled:   u.AccountManagementEnabled,
+		ContributionRoomsEnabled:   u.ContributionRoomsEnabled,
 		CreatedAt:                  u.CreatedAt,
 		UpdatedAt:                  u.UpdatedAt,
 		DeletedAt:                  u.DeletedAt,
@@ -947,6 +1157,7 @@ func groupEntityToService(g *dbent.Group) *service.Group {
 		Description:                     derefString(g.Description),
 		Platform:                        g.Platform,
 		RateMultiplier:                  g.RateMultiplier,
+		AllowContributionPool:           g.AllowContributionPool,
 		IsExclusive:                     g.IsExclusive,
 		Status:                          g.Status,
 		Hydrated:                        true,

@@ -45,3 +45,24 @@ func TestAPIKeyFromService_MapsNilLastUsedAt(t *testing.T) {
 	require.Nil(t, out.LastUsedAt)
 	require.Nil(t, out.LastUsedIP)
 }
+
+func TestAPIKeyFromService_MapsAutoGroupScope(t *testing.T) {
+	src := &service.APIKey{
+		ID:                1,
+		UserID:            2,
+		Key:               "sk-map-auto-group",
+		Name:              "Automatic routing",
+		Status:            service.StatusActive,
+		AutoGroup:         true,
+		AutoGroupStrategy: "balanced",
+		AutoGroupIDs:      []int64{3, 7},
+	}
+
+	out := APIKeyFromService(src)
+	require.True(t, out.AutoGroup)
+	require.Equal(t, "balanced", out.AutoGroupStrategy)
+	require.Equal(t, []int64{3, 7}, out.AutoGroupIDs)
+
+	src.AutoGroupIDs[0] = 99
+	require.Equal(t, []int64{3, 7}, out.AutoGroupIDs)
+}

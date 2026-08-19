@@ -192,6 +192,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 	if maxAccountSwitches <= 0 {
 		maxAccountSwitches = 3
 	}
+	maxAccountSwitches = maxAccountSwitchesForRequest(requestCtx, maxAccountSwitches)
 	routingStart := time.Now()
 	requiredCapability := grokMediaRequiredCapability(endpoint)
 

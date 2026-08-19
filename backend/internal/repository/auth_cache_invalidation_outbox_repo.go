@@ -19,6 +19,21 @@ func NewAuthCacheInvalidationOutboxRepository(db *sql.DB) service.AuthCacheInval
 	return &authCacheInvalidationOutboxRepository{db: db}
 }
 
+func (r *authCacheInvalidationOutboxRepository) EnqueueControl(ctx context.Context, message string) error {
+	if r == nil || r.db == nil {
+		return errors.New("nil auth cache invalidation outbox database")
+	}
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return nil
+	}
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO auth_cache_invalidation_outbox (cache_key)
+		VALUES ($1)
+	`, message)
+	return err
+}
+
 func (r *authCacheInvalidationOutboxRepository) Claim(ctx context.Context, workerID string, limit int, lease time.Duration) ([]service.AuthCacheInvalidationEvent, error) {
 	if r == nil || r.db == nil {
 		return nil, errors.New("nil auth cache invalidation outbox database")

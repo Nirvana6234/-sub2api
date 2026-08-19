@@ -128,6 +128,9 @@ type CreateAccountRequest struct {
 	AutoPauseOnExpired      *bool          `json:"auto_pause_on_expired"`
 	ProbeEnabled            *bool          `json:"upstream_billing_probe_enabled"`
 	ConfirmMixedChannelRisk *bool          `json:"confirm_mixed_channel_risk"` // 用户确认混合渠道风险
+	// ContributorUserID is set only when an administrator creates an account
+	// on behalf of a user from shared-account governance.
+	ContributorUserID *int64 `json:"contributor_user_id"`
 }
 
 // UpdateAccountRequest represents update account request
@@ -171,6 +174,16 @@ type BulkUpdateAccountsRequest struct {
 	ConfirmMixedChannelRisk *bool                     `json:"confirm_mixed_channel_risk"` // 用户确认混合渠道风险
 }
 
+type AccountGroupPriorityUpdateRequest struct {
+	AccountID int64 `json:"account_id" binding:"required"`
+	GroupID   int64 `json:"group_id" binding:"required"`
+	Priority  int   `json:"priority"`
+}
+
+type AccountGroupPrioritiesRequest struct {
+	Updates []AccountGroupPriorityUpdateRequest `json:"updates" binding:"required,min=1,max=1000"`
+}
+
 type BulkUpdateAccountFilters struct {
 	Platform    string `json:"platform"`
 	Type        string `json:"type"`
@@ -191,6 +204,7 @@ type CheckMixedChannelRequest struct {
 type AccountWithConcurrency struct {
 	*dto.Account
 	CurrentConcurrency int                          `json:"current_concurrency"`
+	GroupPriority      *int                         `json:"group_priority,omitempty"`
 	SchedulerScore     *AccountSchedulerScore       `json:"scheduler_score,omitempty"`
 	SchedulerScores    []AccountSchedulerGroupScore `json:"scheduler_scores,omitempty"`
 	// 以下字段仅对 Anthropic OAuth/SetupToken 账号有效，且仅在启用相应功能时返回
@@ -516,6 +530,7 @@ func (h *AccountHandler) List(c *gin.Context) {
 	includeSchedulerScore := parseBoolQueryWithDefault(c.Query("include_scheduler_score"), false)
 
 	var groupID int64
+	groupFilterRequested := false
 	if groupIDStr := c.Query("group"); groupIDStr != "" {
 		if groupIDStr == accountListGroupUngroupedQueryValue {
 			groupID = service.AccountListGroupUngrouped
@@ -530,6 +545,7 @@ func (h *AccountHandler) List(c *gin.Context) {
 				return
 			}
 			groupID = parsedGroupID
+			groupFilterRequested = true
 		}
 	}
 
@@ -655,6 +671,15 @@ func (h *AccountHandler) List(c *gin.Context) {
 			CurrentConcurrency: concurrencyCounts[acc.ID],
 			SchedulerScore:     schedulerScores[acc.ID],
 			SchedulerScores:    schedulerGroupScores[acc.ID],
+		}
+		if groupFilterRequested {
+			for _, accountGroup := range acc.AccountGroups {
+				if accountGroup.GroupID == groupID {
+					priority := accountGroup.Priority
+					item.GroupPriority = &priority
+					break
+				}
+			}
 		}
 
 		// 添加窗口费用（仅当启用时）
@@ -835,8 +860,17 @@ func (h *AccountHandler) Create(c *gin.Context) {
 		response.BadRequest(c, "rate_multiplier must be >= 0")
 		return
 	}
+	ctx := c.Request.Context()
+	extra, err := h.prepareManagedContributionCreate(ctx, req.ContributorUserID, req.Platform, req.Type, req.GroupIDs, req.Extra)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if req.ContributorUserID != nil {
+		ctx = contributionGovernanceContext(ctx)
+	}
 	// base_rpm 输入校验：负值归零，超过 10000 截断
-	sanitizeExtraBaseRPM(req.Extra)
+	sanitizeExtraBaseRPM(extra)
 
 	// 确定是否跳过混合渠道检查
 	skipCheck := req.ConfirmMixedChannelRisk != nil && *req.ConfirmMixedChannelRisk
@@ -845,14 +879,14 @@ func (h *AccountHandler) Create(c *gin.Context) {
 	// 幂等重放时闭包不会执行 → createdAccount 为 nil → 不重复调度。
 	var createdAccount *service.Account
 
-	result, err := executeAdminIdempotent(c, "admin.accounts.create", req, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
+	result, err := executeAdminIdempotent(c, "admin.accounts.create", req, service.DefaultWriteIdempotencyTTL(), func(_ context.Context) (any, error) {
 		account, execErr := h.adminService.CreateAccount(ctx, &service.CreateAccountInput{
 			Name:                  req.Name,
 			Notes:                 req.Notes,
 			Platform:              req.Platform,
 			Type:                  req.Type,
 			Credentials:           req.Credentials,
-			Extra:                 req.Extra,
+			Extra:                 extra,
 			ProxyID:               req.ProxyID,
 			Concurrency:           req.Concurrency,
 			Priority:              req.Priority,
@@ -861,6 +895,7 @@ func (h *AccountHandler) Create(c *gin.Context) {
 			GroupIDs:              req.GroupIDs,
 			ExpiresAt:             req.ExpiresAt,
 			AutoPauseOnExpired:    req.AutoPauseOnExpired,
+			SkipDefaultGroupBind:  req.ContributorUserID != nil,
 			ProbeEnabled:          req.ProbeEnabled,
 			SkipMixedChannelCheck: skipCheck,
 		})
@@ -1520,6 +1555,47 @@ func (h *AccountHandler) ClearError(c *gin.Context) {
 	response.Success(c, h.buildAccountResponseWithRuntime(c.Request.Context(), account))
 }
 
+// RecoverSchedulabilityRequest 是自动停用账号恢复请求体。
+// ExpectedChangedAt 可选：带上时，Sub2API 会在条件更新里校验它与入队时观测值一致，
+// 从而拒绝探测期间管理员已改动过状态的迟到恢复请求。
+type RecoverSchedulabilityRequest struct {
+	ExpectedChangedAt *time.Time `json:"expected_changed_at"`
+}
+
+// RecoverSchedulability 只恢复来源为 automatic 的系统自动停用账号。
+// POST /api/v1/admin/accounts/:id/recover-schedulability
+//
+// 与 /clear-error 的区别：本接口是数据库 compare-and-set，条件不满足直接返回 409，
+// 绝不覆盖管理员的 manual 决定。TransitHub 的恢复检查只能走这个入口。
+func (h *AccountHandler) RecoverSchedulability(c *gin.Context) {
+	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid account ID")
+		return
+	}
+
+	var req RecoverSchedulabilityRequest
+	// 请求体可以为空（不做 changed_at 校验），因此绑定失败不视为错误。
+	if c.Request.Body != nil {
+		_ = c.ShouldBindJSON(&req)
+	}
+
+	account, err := h.adminService.RecoverAccountSchedulability(c.Request.Context(), accountID, req.ExpectedChangedAt)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	// 与 ClearError 一致：恢复后失效 token 缓存，避免旧的失效 token 立刻再次 401。
+	if h.tokenCacheInvalidator != nil && account.IsOAuth() {
+		if invalidateErr := h.tokenCacheInvalidator.InvalidateToken(c.Request.Context(), account); invalidateErr != nil {
+			log.Printf("[WARN] Failed to invalidate token cache for account %d: %v", accountID, invalidateErr)
+		}
+	}
+
+	response.Success(c, h.buildAccountResponseWithRuntime(c.Request.Context(), account))
+}
+
 // RevertProxyFallback handles reverting account proxy to original before fallback.
 // POST /api/v1/admin/accounts/:id/revert-proxy-fallback
 func (h *AccountHandler) RevertProxyFallback(c *gin.Context) {
@@ -2125,6 +2201,34 @@ func (h *AccountHandler) BulkUpdate(c *gin.Context) {
 	response.Success(c, result)
 }
 
+// UpdateGroupPriorities updates per-group scheduler priorities without
+// changing the accounts.priority field.
+func (h *AccountHandler) UpdateGroupPriorities(c *gin.Context) {
+	var req AccountGroupPrioritiesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	updater, ok := h.adminService.(service.AccountGroupPriorityUpdater)
+	if !ok {
+		response.ErrorFrom(c, infraerrors.InternalServer("ACCOUNT_GROUP_PRIORITY_UNSUPPORTED", "account group priority updates are unavailable"))
+		return
+	}
+	updates := make([]service.AccountGroupPriorityUpdate, 0, len(req.Updates))
+	for _, update := range req.Updates {
+		updates = append(updates, service.AccountGroupPriorityUpdate{
+			AccountID: update.AccountID,
+			GroupID:   update.GroupID,
+			Priority:  update.Priority,
+		})
+	}
+	if err := updater.UpdateAccountGroupPriorities(c.Request.Context(), updates); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"updated": len(updates)})
+}
+
 func toServiceBulkUpdateAccountFilters(filters *BulkUpdateAccountFilters) *service.BulkUpdateAccountFilters {
 	if filters == nil {
 		return nil
@@ -2434,6 +2538,13 @@ func (h *AccountHandler) GetBatchTodayStats(c *gin.Context) {
 	accountIDs := normalizeInt64IDList(req.AccountIDs)
 	if len(accountIDs) == 0 {
 		response.Success(c, gin.H{"stats": map[string]any{}})
+		return
+	}
+	// This endpoint accepts IDs in the request body, so it does not pass
+	// through the :id route guard. Validate the entire batch before consulting
+	// the cache to keep contributed-account usage out of the admin surface.
+	if _, err := h.adminService.GetAccountsByIDs(c.Request.Context(), accountIDs); err != nil {
+		response.ErrorFrom(c, err)
 		return
 	}
 

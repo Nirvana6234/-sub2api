@@ -56,6 +56,40 @@ func TestParseCodexSessionImportEntriesSupportsRawTokenJSONAndArray(t *testing.T
 	}
 }
 
+func TestParseCodexSessionAccountsSupportsSub2APIExportWrapper(t *testing.T) {
+	token1 := buildCodexImportTestJWT(t, time.Now().Add(time.Hour), map[string]any{
+		"email": "first@example.com",
+	})
+	token2 := buildCodexImportTestJWT(t, time.Now().Add(time.Hour), map[string]any{
+		"email": "second@example.com",
+	})
+	content := fmt.Sprintf(`{
+		"exported_at":"2026-07-20T13:45:24+08:00",
+		"proxies":[],
+		"accounts":[
+			{"name":"first@example.com","platform":"openai","type":"oauth","credentials":{"access_token":%q}},
+			{"name":"second@example.com","platform":"openai","type":"oauth","credentials":{"access_token":%q}}
+		]
+	}`, token1, token2)
+
+	accounts, warnings, err := ParseCodexSessionAccounts(CodexSessionImportRequest{Content: content})
+	if err != nil {
+		t.Fatalf("ParseCodexSessionAccounts error = %v", err)
+	}
+	if len(accounts) != 2 {
+		t.Fatalf("len(accounts) = %d, want 2", len(accounts))
+	}
+	if len(warnings) < 2 {
+		t.Fatalf("len(warnings) = %d, want warnings for tokens without refresh credentials", len(warnings))
+	}
+	if accounts[0].Name != "first@example.com" || accounts[1].Name != "second@example.com" {
+		t.Fatalf("unexpected imported account names: %q, %q", accounts[0].Name, accounts[1].Name)
+	}
+	if accounts[0].Credentials["access_token"] == "" || accounts[1].Credentials["access_token"] == "" {
+		t.Fatal("wrapped account credentials were not extracted")
+	}
+}
+
 func TestParseCodexSessionImportEntriesFallsBackToLineModeForMixedJSONAndToken(t *testing.T) {
 	req := CodexSessionImportRequest{
 		Content: "{\"accessToken\":\"json-line-token\"}\nraw-line-token",

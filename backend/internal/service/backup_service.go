@@ -26,6 +26,8 @@ const (
 	settingKeyBackupSchedule = "backup_schedule"
 	settingKeyBackupRecords  = "backup_records"
 
+	backupTypePostgresSystemConfig = "postgres_system_config"
+
 	maxBackupRecords = 100
 )
 
@@ -36,6 +38,7 @@ var (
 	ErrRestoreInProgress     = infraerrors.Conflict("RESTORE_IN_PROGRESS", "a restore is already in progress")
 	ErrBackupRecordsCorrupt  = infraerrors.InternalServer("BACKUP_RECORDS_CORRUPT", "backup records data is corrupted")
 	ErrBackupS3ConfigCorrupt = infraerrors.InternalServer("BACKUP_S3_CONFIG_CORRUPT", "backup S3 config data is corrupted")
+	ErrBackupTypeUnsupported = infraerrors.BadRequest("BACKUP_TYPE_UNSUPPORTED", "only system configuration backups created by this version can be restored")
 
 	// ErrSecretEncryptionKeyNotConfigured is returned when an S3 SecretAccessKey
 	// would be encrypted with an auto-generated (ephemeral) key. That key is
@@ -52,10 +55,107 @@ var (
 
 // ─── 接口定义 ───
 
-// DBDumper abstracts database dump/restore operations
+// DBDumper creates a restoreable system-configuration snapshot. User records,
+// account credentials, contribution data, and usage are deliberately outside
+// this archive boundary.
 type DBDumper interface {
-	Dump(ctx context.Context) (io.ReadCloser, error)
+	DumpSystemConfig(ctx context.Context) (io.ReadCloser, error)
 	Restore(ctx context.Context, data io.Reader) error
+}
+
+// SystemConfigBackupSettingKeys returns the complete, intentionally small
+// allow-list of settings that belong to a portable system configuration. A
+// wildcard is deliberately avoided: settings also contain per-user state and
+// credentials. Add a key here only after confirming that both its key and
+// value are non-sensitive and are not user-owned data.
+func SystemConfigBackupSettingKeys() []string {
+	return []string{
+		SettingKeySiteName,
+		SettingKeySiteLogo,
+		SettingKeySiteSubtitle,
+		SettingKeyAPIBaseURL,
+		SettingKeyContactInfo,
+		SettingKeyDocURL,
+		SettingKeyHomeContent,
+		SettingKeyHideCcsImportButton,
+		SettingKeyPurchaseSubscriptionEnabled,
+		SettingKeyPurchaseSubscriptionURL,
+		SettingKeyTableDefaultPageSize,
+		SettingKeyTablePageSizeOptions,
+		SettingKeyCustomMenuItems,
+		SettingKeyCustomEndpoints,
+		SettingKeyDefaultConcurrency,
+		SettingKeyDefaultBalance,
+		SettingKeyDefaultUserRPMLimit,
+		SettingKeyGeminiQuotaPolicy,
+		SettingKeyEnableModelFallback,
+		SettingKeyFallbackModelAnthropic,
+		SettingKeyFallbackModelOpenAI,
+		SettingKeyFallbackModelGemini,
+		SettingKeyFallbackModelAntigravity,
+		SettingKeyEnableIdentityPatch,
+		SettingKeyIdentityPatchPrompt,
+		SettingKeyOpsMonitoringEnabled,
+		SettingKeyOpsRealtimeMonitoringEnabled,
+		SettingKeyOpsQueryModeDefault,
+		SettingKeyOpsAlertRuntimeSettings,
+		SettingKeyOpsMetricsIntervalSeconds,
+		SettingKeyOpsAdvancedSettings,
+		SettingKeyOpsRuntimeLogConfig,
+		SettingKeyChannelMonitorEnabled,
+		SettingKeyChannelMonitorDefaultIntervalSeconds,
+		SettingKeyAvailableChannelsEnabled,
+		SettingKeyPlaygroundEnabled,
+		SettingKeyOverloadCooldownSettings,
+		SettingKeyRateLimit429CooldownSettings,
+		SettingKeyStreamTimeoutSettings,
+		SettingKeyRectifierSettings,
+		SettingKeyBetaPolicySettings,
+		SettingKeyOpenAIFastPolicySettings,
+		SettingKeyMinClaudeCodeVersion,
+		SettingKeyMaxClaudeCodeVersion,
+		SettingKeyMinCodexVersion,
+		SettingKeyMaxCodexVersion,
+		SettingKeyCodexCLIOnlyBlacklist,
+		SettingKeyCodexCLIOnlyWhitelist,
+		SettingKeyCodexCLIOnlyAllowAppServerClients,
+		SettingKeyCodexCLIOnlyEngineFingerprintSignals,
+		SettingKeyAllowUngroupedKeyScheduling,
+		SettingKeyOpenAIAdvancedSchedulerStickyWeightedEnabled,
+		SettingKeyOpenAIAdvancedSchedulerSubscriptionPriorityEnabled,
+		SettingKeyOpenAIAdvancedSchedulerLBTopK,
+		SettingKeyOpenAIAdvancedSchedulerWeightPriority,
+		SettingKeyOpenAIAdvancedSchedulerWeightLoad,
+		SettingKeyOpenAIAdvancedSchedulerWeightQueue,
+		SettingKeyOpenAIAdvancedSchedulerWeightErrorRate,
+		SettingKeyOpenAIAdvancedSchedulerWeightTTFT,
+		SettingKeyOpenAIAdvancedSchedulerWeightReset,
+		SettingKeyOpenAIAdvancedSchedulerWeightQuotaHeadroom,
+		SettingKeyOpenAIAdvancedSchedulerWeightPreviousResponse,
+		SettingKeyOpenAIAdvancedSchedulerWeightSessionSticky,
+		SettingKeyBackendModeEnabled,
+		SettingKeyEnableFingerprintUnification,
+		SettingKeyEnableMetadataPassthrough,
+		SettingKeyEnableCCHSigning,
+		SettingKeyEnableClaudeOAuthSystemPromptInjection,
+		SettingKeyClaudeOAuthSystemPrompt,
+		SettingKeyClaudeOAuthSystemPromptBlocks,
+		SettingKeyEnableAnthropicCacheTTL1hInjection,
+		SettingKeyEnableClientDatelineNormalization,
+		SettingKeyRewriteMessageCacheControl,
+		SettingKeyAntigravityUserAgentVersion,
+		SettingKeyOpenAICodexUserAgent,
+		SettingKeyOpenAIAllowClaudeCodeCodexPlugin,
+		SettingKeyBalanceLowNotifyEnabled,
+		SettingKeyBalanceLowNotifyThreshold,
+		SettingKeyBalanceLowNotifyRechargeURL,
+		SettingKeySubscriptionExpiryNotifyEnabled,
+		SettingKeyAccountQuotaNotifyEnabled,
+		SettingKeyAccountQuotaNotifyEmails,
+		SettingKeyDefaultPlatformQuotas,
+		SettingKeyAllowUserViewErrorRequests,
+		SettingKeyAccountShareRewardRate,
+	}
 }
 
 // BackupObjectStore abstracts object storage for backup files
@@ -100,7 +200,7 @@ type BackupScheduleConfig struct {
 type BackupRecord struct {
 	ID            string `json:"id"`
 	Status        string `json:"status"`      // pending, running, completed, failed
-	BackupType    string `json:"backup_type"` // postgres
+	BackupType    string `json:"backup_type"` // postgres_system_config
 	FileName      string `json:"file_name"`
 	S3Key         string `json:"s3_key"`
 	SizeBytes     int64  `json:"size_bytes"`
@@ -487,7 +587,7 @@ func (s *BackupService) CreateBackup(ctx context.Context, triggeredBy string, ex
 
 	now := time.Now()
 	backupID := uuid.New().String()[:8]
-	fileName := fmt.Sprintf("%s_%s.sql.gz", s.dbCfg.DBName, now.Format("20060102_150405"))
+	fileName := fmt.Sprintf("%s_%s.system-config.json.gz", s.dbCfg.DBName, now.Format("20060102_150405"))
 	s3Key := s.buildS3Key(s3Cfg, fileName)
 
 	var expiresAt string
@@ -498,7 +598,7 @@ func (s *BackupService) CreateBackup(ctx context.Context, triggeredBy string, ex
 	record := &BackupRecord{
 		ID:          backupID,
 		Status:      "running",
-		BackupType:  "postgres",
+		BackupType:  backupTypePostgresSystemConfig,
 		FileName:    fileName,
 		S3Key:       s3Key,
 		TriggeredBy: triggeredBy,
@@ -506,14 +606,14 @@ func (s *BackupService) CreateBackup(ctx context.Context, triggeredBy string, ex
 		ExpiresAt:   expiresAt,
 	}
 
-	// 流式执行: pg_dump -> gzip -> S3 upload
-	dumpReader, err := s.dumper.Dump(ctx)
+	// 流式执行: 系统配置快照 -> gzip -> S3 upload
+	dumpReader, err := s.dumper.DumpSystemConfig(ctx)
 	if err != nil {
 		record.Status = "failed"
-		record.ErrorMsg = fmt.Sprintf("pg_dump failed: %v", err)
+		record.ErrorMsg = fmt.Sprintf("system config snapshot failed: %v", err)
 		record.FinishedAt = time.Now().Format(time.RFC3339)
 		_ = s.saveRecord(ctx, record)
-		return record, fmt.Errorf("pg_dump: %w", err)
+		return record, fmt.Errorf("system config snapshot: %w", err)
 	}
 
 	// 使用 io.Pipe 将 gzip 压缩数据流式传递给 S3 上传
@@ -610,7 +710,7 @@ func (s *BackupService) StartBackup(ctx context.Context, triggeredBy string, exp
 
 	now := time.Now()
 	backupID := uuid.New().String()[:8]
-	fileName := fmt.Sprintf("%s_%s.sql.gz", s.dbCfg.DBName, now.Format("20060102_150405"))
+	fileName := fmt.Sprintf("%s_%s.system-config.json.gz", s.dbCfg.DBName, now.Format("20060102_150405"))
 	s3Key := s.buildS3Key(s3Cfg, fileName)
 
 	var expiresAt string
@@ -621,7 +721,7 @@ func (s *BackupService) StartBackup(ctx context.Context, triggeredBy string, exp
 	record := &BackupRecord{
 		ID:          backupID,
 		Status:      "running",
-		BackupType:  "postgres",
+		BackupType:  backupTypePostgresSystemConfig,
 		FileName:    fileName,
 		S3Key:       s3Key,
 		TriggeredBy: triggeredBy,
@@ -667,14 +767,14 @@ func (s *BackupService) executeBackup(record *BackupRecord, objectStore BackupOb
 	ctx, cancel := context.WithTimeout(s.bgCtx, 30*time.Minute)
 	defer cancel()
 
-	// 阶段1: pg_dump
+	// 阶段1: 系统配置快照
 	record.Progress = "dumping"
 	_ = s.saveRecord(ctx, record)
 
-	dumpReader, err := s.dumper.Dump(ctx)
+	dumpReader, err := s.dumper.DumpSystemConfig(ctx)
 	if err != nil {
 		record.Status = "failed"
-		record.ErrorMsg = fmt.Sprintf("pg_dump failed: %v", err)
+		record.ErrorMsg = fmt.Sprintf("system config snapshot failed: %v", err)
 		record.Progress = ""
 		record.FinishedAt = time.Now().Format(time.RFC3339)
 		_ = s.saveRecord(context.Background(), record)
@@ -760,6 +860,9 @@ func (s *BackupService) RestoreBackup(ctx context.Context, backupID string) erro
 	if record.Status != "completed" {
 		return infraerrors.BadRequest("BACKUP_NOT_COMPLETED", "can only restore from a completed backup")
 	}
+	if record.BackupType != backupTypePostgresSystemConfig {
+		return ErrBackupTypeUnsupported
+	}
 
 	s3Cfg, err := s.loadS3Config(ctx)
 	if err != nil {
@@ -822,6 +925,9 @@ func (s *BackupService) StartRestore(ctx context.Context, backupID string) (*Bac
 	}
 	if record.Status != "completed" {
 		return nil, infraerrors.BadRequest("BACKUP_NOT_COMPLETED", "can only restore from a completed backup")
+	}
+	if record.BackupType != backupTypePostgresSystemConfig {
+		return nil, ErrBackupTypeUnsupported
 	}
 
 	s3Cfg, err := s.loadS3Config(ctx)

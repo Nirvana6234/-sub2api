@@ -431,6 +431,14 @@ func TestLoadDefaultOpenAIWSConfig(t *testing.T) {
 	if cfg.Gateway.OpenAIScheduler.StickyEscapeErrorRate != 0.5 {
 		t.Fatalf("Gateway.OpenAIScheduler.StickyEscapeErrorRate = %v, want 0.5", cfg.Gateway.OpenAIScheduler.StickyEscapeErrorRate)
 	}
+	if cfg.Gateway.OpenAIScheduler.HealthErrorHalfLifeSeconds != 900 ||
+		cfg.Gateway.OpenAIScheduler.HealthTTFTStaleSeconds != 1800 ||
+		cfg.Gateway.OpenAIScheduler.HealthIdleEvictionSeconds != 7200 ||
+		cfg.Gateway.OpenAIScheduler.ColdStartProbeAfterSeconds != 120 ||
+		cfg.Gateway.OpenAIScheduler.RecoveryProbeAfterSeconds != 1800 ||
+		cfg.Gateway.OpenAIScheduler.RecoveryProbeCooldownSeconds != 600 {
+		t.Fatalf("unexpected OpenAI scheduler health defaults: %+v", cfg.Gateway.OpenAIScheduler)
+	}
 	if !cfg.Gateway.OpenAIWS.SessionHashReadOldFallback {
 		t.Fatalf("Gateway.OpenAIWS.SessionHashReadOldFallback = false, want true")
 	}

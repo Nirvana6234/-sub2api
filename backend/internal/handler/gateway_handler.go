@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -304,7 +305,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	hasBoundSession := sessionKey != "" && sessionBoundAccountID > 0
 
 	if platform == service.PlatformGemini {
-		fs := NewFailoverState(h.maxAccountSwitchesGemini, hasBoundSession)
+		fs := NewFailoverState(maxAccountSwitchesForRequest(c.Request.Context(), h.maxAccountSwitchesGemini), hasBoundSession)
 
 		// 单账号分组提前设置 SingleAccountRetry 标记，让 Service 层首次 503 就不设模型限流标记。
 		// 避免单账号分组收到 503 (MODEL_CAPACITY_EXHAUSTED) 时设 29s 限流，导致后续请求连续快速失败。
@@ -609,7 +610,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	}
 
 	for {
-		fs := NewFailoverState(h.maxAccountSwitches, hasBoundSession)
+		fs := NewFailoverState(maxAccountSwitchesForRequest(c.Request.Context(), h.maxAccountSwitches), hasBoundSession)
 		retryWithFallback := false
 
 		for {
@@ -1072,6 +1073,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 // Falls back to default models if no whitelist is configured
 func (h *GatewayHandler) Models(c *gin.Context) {
 	apiKey, _ := middleware2.GetAPIKeyFromContext(c)
+	if isLocalModelsCatalogRequest(c) {
+		writeWorkspaceModelsList(c, h.gatewayService.GetWorkspaceAvailableModels(c.Request.Context()))
+		return
+	}
 
 	var groupID *int64
 	var platform string
@@ -1138,6 +1143,124 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 		"object": "list",
 		"data":   claude.DefaultModels,
 	})
+}
+
+func isLocalModelsCatalogRequest(c *gin.Context) bool {
+	if c == nil || c.Request == nil {
+		return false
+	}
+	if service.IsWorkspaceLocalFallbackRoute(c.Request.Context()) {
+		return true
+	}
+	host, _, err := net.SplitHostPort(strings.TrimSpace(c.Request.RemoteAddr))
+	if err != nil {
+		host = strings.Trim(strings.TrimSpace(c.Request.RemoteAddr), "[]")
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+type workspaceModelListItem struct {
+	ID                      string                      `json:"id"`
+	Object                  string                      `json:"object"`
+	Created                 int64                       `json:"created"`
+	OwnedBy                 string                      `json:"owned_by"`
+	Type                    string                      `json:"type,omitempty"`
+	DisplayName             string                      `json:"display_name,omitempty"`
+	SupportsReasoningEffort bool                        `json:"supportsReasoningEffort,omitempty"`
+	ReasoningEffort         string                      `json:"reasoningEffort,omitempty"`
+	ReasoningEfforts        []grokReasoningEffortOption `json:"reasoningEfforts,omitempty"`
+}
+
+func writeWorkspaceModelsList(c *gin.Context, availableByPlatform map[string]service.WorkspacePlatformModels) {
+	models := make([]workspaceModelListItem, 0)
+	modelsByPlatform := workspaceModelIDsByPlatform(availableByPlatform)
+	for _, platform := range []string{service.PlatformOpenAI, service.PlatformAnthropic, service.PlatformGrok} {
+		for _, modelID := range modelsByPlatform[platform] {
+			models = append(models, workspaceModelListItemForPlatform(platform, modelID))
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"object": "list",
+		"data":   models,
+	})
+}
+
+func workspaceModelIDsByPlatform(availableByPlatform map[string]service.WorkspacePlatformModels) map[string][]string {
+	result := make(map[string][]string, len(availableByPlatform))
+	seen := make(map[string]struct{})
+	for _, platform := range []string{service.PlatformOpenAI, service.PlatformAnthropic, service.PlatformGrok} {
+		configured, ok := availableByPlatform[platform]
+		if !ok {
+			continue
+		}
+		modelIDs := configured.ModelIDs
+		if configured.UseDefaults {
+			modelIDs = mergeModelIDs(defaultModelIDsForPlatform(platform), configured.ModelIDs)
+		}
+		for _, modelID := range modelIDs {
+			modelID = strings.TrimSpace(modelID)
+			if modelID == "" {
+				continue
+			}
+			key := strings.ToLower(modelID)
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			result[platform] = append(result[platform], modelID)
+		}
+	}
+	return result
+}
+
+func workspaceModelListItemForPlatform(platform, modelID string) workspaceModelListItem {
+	item := workspaceModelListItem{
+		ID:          modelID,
+		Object:      "model",
+		Created:     1704067200,
+		Type:        "model",
+		DisplayName: modelID,
+	}
+	switch platform {
+	case service.PlatformOpenAI:
+		item.OwnedBy = "openai"
+		for _, model := range openai.DefaultModels {
+			if model.ID == modelID {
+				item.Created = model.Created
+				item.DisplayName = model.DisplayName
+				break
+			}
+		}
+	case service.PlatformGrok:
+		item.OwnedBy = "xai"
+		for _, model := range xai.DefaultModels() {
+			if model.ID == modelID {
+				item.Created = model.Created
+				item.DisplayName = model.DisplayName
+				break
+			}
+		}
+		if grokModelSupportsConfigurableReasoning(modelID) {
+			item.SupportsReasoningEffort = true
+			item.ReasoningEffort = "high"
+			item.ReasoningEfforts = []grokReasoningEffortOption{
+				{Value: "low", Label: "Low"},
+				{Value: "medium", Label: "Medium"},
+				{Value: "high", Label: "High", Default: true},
+			}
+		}
+	default:
+		item.OwnedBy = "anthropic"
+		for _, model := range claude.DefaultModels {
+			if model.ID == modelID {
+				item.DisplayName = model.DisplayName
+				break
+			}
+		}
+	}
+	return item
 }
 
 func (h *GatewayHandler) compositeAvailableModels(ctx context.Context, groupID *int64) []string {

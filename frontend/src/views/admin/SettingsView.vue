@@ -3792,6 +3792,46 @@
               </div>
 
               <div class="border-t border-gray-100 pt-4 dark:border-dark-700">
+                <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t("admin.settings.defaults.accountShareRewardRate") }}
+                </label>
+                <div class="max-w-xs">
+                  <input
+                    v-model.number="form.account_share_reward_rate"
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    class="input"
+                    placeholder="80"
+                  />
+                </div>
+                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t("admin.settings.defaults.accountShareRewardRateHint") }}
+                </p>
+              </div>
+
+              <div class="border-t border-gray-100 pt-4 dark:border-dark-700">
+                <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t("admin.settings.defaults.accountOwnUsageFeeRate") }}
+                </label>
+                <div class="max-w-xs">
+                  <input
+                    v-model.number="form.account_own_usage_fee_rate"
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    class="input"
+                    placeholder="1"
+                  />
+                </div>
+                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t("admin.settings.defaults.accountOwnUsageFeeRateHint") }}
+                </p>
+              </div>
+
+              <div class="border-t border-gray-100 pt-4 dark:border-dark-700">
                 <div class="mb-3 flex items-center justify-between">
                   <div>
                     <label class="font-medium text-gray-900 dark:text-white">
@@ -6835,6 +6875,111 @@
         <div class="card">
           <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
             <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+              {{ t('admin.settings.features.playground.title') }}
+            </h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              {{ t('admin.settings.features.playground.description') }}
+            </p>
+          </div>
+          <div class="space-y-5 p-6">
+            <div class="flex items-center justify-between">
+              <div>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t('admin.settings.features.playground.enabled') }}
+                </label>
+                <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('admin.settings.features.playground.enabledHint') }}
+                </p>
+              </div>
+              <Toggle v-model="form.playground_enabled" />
+            </div>
+            <div v-if="form.playground_enabled" class="grid gap-5 border-t border-gray-100 pt-5 dark:border-dark-700 lg:grid-cols-2">
+              <div class="space-y-4">
+                <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
+                  {{ localText('默认对话配置', 'Default chat configuration') }}
+                </h3>
+                <label class="block">
+                  <span class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ localText('默认模型', 'Default model') }}
+                  </span>
+                  <input v-model.trim="form.playground_default_chat_model" type="text" class="input w-full" placeholder="gpt-5.4" />
+                </label>
+                <label class="block">
+                  <span class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ localText('Auto 模式', 'Auto strategy') }}
+                  </span>
+                  <select v-model="form.playground_default_chat_strategy" class="input w-full">
+                    <option value="price">{{ localText('低价优先', 'Price first') }}</option>
+                    <option value="balanced">{{ localText('均衡', 'Balanced') }}</option>
+                    <option value="speed">{{ localText('速度优先', 'Speed first') }}</option>
+                  </select>
+                </label>
+                <fieldset>
+                  <legend class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ localText('新用户对话候选分组', 'New-user chat groups') }}
+                  </legend>
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    {{ localText('不勾选时使用全部可用的 OpenAI 分组。', 'Leave empty to use every available OpenAI group.') }}
+                  </p>
+                  <div class="mt-2 max-h-48 space-y-2 overflow-y-auto rounded border border-gray-200 p-3 dark:border-dark-600">
+                    <label v-for="group in playgroundOpenAIGroups" :key="`chat-${group.id}`" class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+                      <input v-model="form.playground_default_chat_group_ids" type="checkbox" :value="group.id" class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500" />
+                      <span>{{ group.name }}</span>
+                      <span class="text-xs text-gray-400">OpenAI</span>
+                    </label>
+                    <p v-if="playgroundOpenAIGroups.length === 0" class="text-sm text-gray-500">
+                      {{ localText('暂无可用的 OpenAI 分组', 'No active OpenAI groups') }}
+                    </p>
+                  </div>
+                </fieldset>
+              </div>
+
+              <div class="space-y-4">
+                <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
+                  {{ localText('默认生图配置', 'Default image configuration') }}
+                </h3>
+                <label class="block">
+                  <span class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ localText('默认模型', 'Default model') }}
+                  </span>
+                  <input v-model.trim="form.playground_default_image_model" type="text" class="input w-full" placeholder="gpt-image-2" />
+                </label>
+                <label class="block">
+                  <span class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ localText('Auto 模式', 'Auto strategy') }}
+                  </span>
+                  <select v-model="form.playground_default_image_strategy" class="input w-full">
+                    <option value="price">{{ localText('低价优先', 'Price first') }}</option>
+                    <option value="balanced">{{ localText('均衡', 'Balanced') }}</option>
+                    <option value="speed">{{ localText('速度优先', 'Speed first') }}</option>
+                  </select>
+                </label>
+                <fieldset>
+                  <legend class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ localText('新用户生图候选分组', 'New-user image groups') }}
+                  </legend>
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    {{ localText('只显示已开启生图能力的 OpenAI 分组；不勾选时使用全部。', 'Only image-enabled OpenAI groups are shown; leave empty to use all.') }}
+                  </p>
+                  <div class="mt-2 max-h-48 space-y-2 overflow-y-auto rounded border border-gray-200 p-3 dark:border-dark-600">
+                    <label v-for="group in playgroundImageGroups" :key="`image-${group.id}`" class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+                      <input v-model="form.playground_default_image_group_ids" type="checkbox" :value="group.id" class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500" />
+                      <span>{{ group.name }}</span>
+                      <span class="text-xs text-gray-400">OpenAI · Image</span>
+                    </label>
+                    <p v-if="playgroundImageGroups.length === 0" class="text-sm text-gray-500">
+                      {{ localText('暂无可用的生图分组', 'No active image groups') }}
+                    </p>
+                  </div>
+                </fieldset>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
               {{ t('admin.settings.features.modelPlaza.title') }}
             </h2>
             <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
@@ -7414,7 +7559,7 @@
                       v-model="form.payment_product_name_prefix"
                       type="text"
                       class="input"
-                      placeholder="Sub2API"
+                      placeholder="共飞 AI"
                     />
                   </div>
                   <div>
@@ -7436,7 +7581,7 @@
                       class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-300"
                     >
                       {{
-                        (form.payment_product_name_prefix || "Sub2API") +
+                        (form.payment_product_name_prefix || "共飞 AI") +
                         " 100 " +
                         (form.payment_product_name_suffix || "CNY")
                       }}
@@ -8597,6 +8742,13 @@ const adminApiKeyMasked = ref("");
 const adminApiKeyOperating = ref(false);
 const newAdminApiKey = ref("");
 const subscriptionGroups = ref<AdminGroup[]>([]);
+const playgroundGroups = ref<AdminGroup[]>([]);
+const playgroundOpenAIGroups = computed(() =>
+  playgroundGroups.value.filter((group) => group.platform === "openai" && group.status === "active"),
+);
+const playgroundImageGroups = computed(() =>
+  playgroundOpenAIGroups.value.filter((group) => group.allow_image_generation),
+);
 
 // Upstream billing probe state
 const upstreamBillingProbeLoading = ref(true);
@@ -9186,14 +9338,16 @@ const form = reactive<SettingsForm>({
   affiliate_rebate_freeze_hours: 0,
   affiliate_rebate_duration_days: 0,
   affiliate_rebate_per_invitee_cap: 0,
+  account_share_reward_rate: 80,
+  account_own_usage_fee_rate: 1,
   affiliate_admin_recharge_enabled: false,
   default_concurrency: 1,
   default_subscriptions: [],
   force_email_on_third_party_signup: false,
   default_user_rpm_limit: 0,
-  site_name: "Sub2API",
+  site_name: "共飞 AI",
   site_logo: "",
-  site_subtitle: "Subscription to API Conversion Platform",
+  site_subtitle: "一起共享，一起使用 AI",
   api_base_url: "",
   contact_info: "",
   doc_url: "",
@@ -9424,6 +9578,14 @@ const form = reactive<SettingsForm>({
   channel_monitor_default_interval_seconds: 60,
   // Available Channels feature switch
   available_channels_enabled: false,
+  // Playground feature switch
+  playground_enabled: false,
+  playground_default_chat_model: "gpt-5.4",
+  playground_default_image_model: "gpt-image-2",
+  playground_default_chat_group_ids: [] as number[],
+  playground_default_image_group_ids: [] as number[],
+  playground_default_chat_strategy: "price" as "price" | "balanced" | "speed",
+  playground_default_image_strategy: "price" as "price" | "balanced" | "speed",
   // Model Plaza feature switches + description
   model_plaza_enabled: false,
   model_plaza_require_auth: false,
@@ -10534,11 +10696,13 @@ async function loadSettings() {
 async function loadSubscriptionGroups() {
   try {
     const groups = await adminAPI.groups.getAll();
+    playgroundGroups.value = groups;
     subscriptionGroups.value = groups.filter(
       (group) =>
         group.subscription_type === "subscription" && group.status === "active",
     );
   } catch (_error: unknown) {
+    playgroundGroups.value = [];
     subscriptionGroups.value = [];
   }
 }
@@ -10779,6 +10943,14 @@ async function saveSettings() {
       affiliate_rebate_freeze_hours: Math.max(0, Math.min(720, Number(form.affiliate_rebate_freeze_hours) || 0)),
       affiliate_rebate_duration_days: Math.max(0, Math.min(3650, Math.floor(Number(form.affiliate_rebate_duration_days) || 0))),
       affiliate_rebate_per_invitee_cap: Math.max(0, Number(form.affiliate_rebate_per_invitee_cap) || 0),
+      account_share_reward_rate: Math.min(
+        100,
+        Math.max(0, Number(form.account_share_reward_rate) || 0),
+      ),
+      account_own_usage_fee_rate: Math.min(
+        100,
+        Math.max(0, Number(form.account_own_usage_fee_rate) || 0),
+      ),
       affiliate_admin_recharge_enabled: form.affiliate_admin_recharge_enabled,
       default_concurrency: form.default_concurrency,
       default_subscriptions: normalizedDefaultSubscriptions,
@@ -11042,6 +11214,14 @@ async function saveSettings() {
         Number(form.channel_monitor_default_interval_seconds) || 60,
       // Available Channels feature switch
       available_channels_enabled: form.available_channels_enabled,
+      // Playground feature switch
+      playground_enabled: form.playground_enabled,
+      playground_default_chat_model: form.playground_default_chat_model.trim(),
+      playground_default_image_model: form.playground_default_image_model.trim(),
+      playground_default_chat_group_ids: [...form.playground_default_chat_group_ids],
+      playground_default_image_group_ids: [...form.playground_default_image_group_ids],
+      playground_default_chat_strategy: form.playground_default_chat_strategy,
+      playground_default_image_strategy: form.playground_default_image_strategy,
       // Model Plaza feature switches + description
       model_plaza_enabled: form.model_plaza_enabled,
       model_plaza_require_auth: form.model_plaza_require_auth,

@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,6 +15,159 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
+
+func TestUsageBillingRepositoryApply_ContributionRoomSettlementIsAtomic(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	repo := NewUsageBillingRepository(client, integrationDB)
+
+	contributor := mustCreateUser(t, client, &service.User{
+		Email:        fmt.Sprintf("usage-billing-contributor-%s@example.com", uuid.NewString()),
+		PasswordHash: "hash",
+	})
+	consumers := []*service.User{
+		mustCreateUser(t, client, &service.User{
+			Email:        fmt.Sprintf("usage-billing-consumer-a-%s@example.com", uuid.NewString()),
+			PasswordHash: "hash",
+			Balance:      100,
+		}),
+		mustCreateUser(t, client, &service.User{
+			Email:        fmt.Sprintf("usage-billing-consumer-b-%s@example.com", uuid.NewString()),
+			PasswordHash: "hash",
+			Balance:      100,
+		}),
+	}
+	apiKeys := []*service.APIKey{
+		mustCreateApiKey(t, client, &service.APIKey{
+			UserID: consumers[0].ID,
+			Key:    "sk-usage-billing-shared-a-" + uuid.NewString(),
+			Name:   "shared-a",
+		}),
+		mustCreateApiKey(t, client, &service.APIKey{
+			UserID: consumers[1].ID,
+			Key:    "sk-usage-billing-shared-b-" + uuid.NewString(),
+			Name:   "shared-b",
+		}),
+	}
+	account := mustCreateAccount(t, client, &service.Account{
+		Name:     "usage-billing-room-atomic-" + uuid.NewString(),
+		Platform: service.PlatformOpenAI,
+		Extra: map[string]any{
+			service.AccountContributionSourceKey: service.AccountContributionSourceValue,
+			service.AccountContributorUserIDKey:  contributor.ID,
+		},
+	})
+	room := client.ContributionRoom.Create().
+		SetOwnerUserID(contributor.ID).
+		SetName("usage-billing-room-" + uuid.NewString()).
+		SetConsumerRateMultiplier(1).
+		SetStatus("active").
+		SetVisibility("public").
+		SaveX(ctx)
+	verification := client.ContributionAccountVerification.Create().
+		SetAccountID(account.ID).
+		SetPlatform(account.Platform).
+		SetStatus(service.ContributionVerificationStatusVerified).
+		SetModelFamily("gpt").
+		SetTestedAt(time.Now().UTC()).
+		SaveX(ctx)
+	client.ContributionRoomAccount.Create().
+		SetRoomID(room.ID).
+		SetAccountID(account.ID).
+		SetEnabled(true).
+		SetShareBudgetUsd(4).
+		SetVerifiedAt(*verification.TestedAt).
+		SaveX(ctx)
+	for _, consumer := range consumers {
+		_, err := integrationDB.ExecContext(ctx, `
+			INSERT INTO user_contribution_wallets (user_id, balance)
+			VALUES ($1, 1)
+		`, consumer.ID)
+		require.NoError(t, err)
+	}
+
+	type outcome struct {
+		userID int64
+		result *service.UsageBillingApplyResult
+		err    error
+	}
+	start := make(chan struct{})
+	results := make(chan outcome, len(consumers))
+	var wg sync.WaitGroup
+	for i, consumer := range consumers {
+		wg.Add(1)
+		go func(consumer *service.User, apiKey *service.APIKey) {
+			defer wg.Done()
+			<-start
+			result, err := repo.Apply(ctx, &service.UsageBillingCommand{
+				RequestID:               uuid.NewString(),
+				APIKeyID:                apiKey.ID,
+				UserID:                  consumer.ID,
+				AccountID:               account.ID,
+				SharedCost:              3,
+				SharedContributorUserID: contributor.ID,
+				SharedRewardRate:        service.AccountShareRewardRate,
+				SharedRoomID:            room.ID,
+				SharedBudgetCost:        2,
+				BalanceCost:             3,
+			})
+			results <- outcome{userID: consumer.ID, result: result, err: err}
+		}(consumer, apiKeys[i])
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+
+	settled := 0
+	for result := range results {
+		require.NoError(t, result.err)
+		require.NotNil(t, result.result)
+		require.True(t, result.result.Applied)
+		settled++
+	}
+	require.Equal(t, len(consumers), settled)
+
+	var settlementCount int
+	require.NoError(t, integrationDB.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM account_share_settlements WHERE account_id = $1", account.ID,
+	).Scan(&settlementCount))
+	require.Equal(t, len(consumers), settlementCount)
+
+	var rewardBalance, earnedTotal float64
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT balance, earned_total FROM user_contribution_wallets WHERE user_id = $1
+	`, contributor.ID).Scan(&rewardBalance, &earnedTotal))
+	require.InDelta(t, 4.8, rewardBalance, 0.000001)
+	require.InDelta(t, 4.8, earnedTotal, 0.000001)
+
+	var budget, budgetUsed float64
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT share_budget_usd, share_used_usd
+		FROM contribution_room_accounts
+		WHERE room_id = $1 AND account_id = $2
+	`, room.ID, account.ID).Scan(&budget, &budgetUsed))
+	require.InDelta(t, 4.0, budget, 0.000001)
+	require.InDelta(t, 4.0, budgetUsed, 0.000001)
+
+	var roomStatus string
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT status FROM contribution_rooms WHERE id = $1
+	`, room.ID).Scan(&roomStatus))
+	require.Equal(t, "paused", roomStatus)
+
+	for _, consumer := range consumers {
+		var balance, walletBalance, spentTotal float64
+		require.NoError(t, integrationDB.QueryRowContext(ctx, `
+			SELECT u.balance, w.balance, w.spent_total
+			FROM users u
+			JOIN user_contribution_wallets w ON w.user_id = u.id
+			WHERE u.id = $1
+		`, consumer.ID).Scan(&balance, &walletBalance, &spentTotal))
+		require.InDelta(t, 98.0, balance, 0.000001)
+		require.InDelta(t, 0.0, walletBalance, 0.000001)
+		require.InDelta(t, 1.0, spentTotal, 0.000001)
+	}
+}
 
 func TestUsageBillingRepositoryApply_DeduplicatesBalanceBilling(t *testing.T) {
 	ctx := context.Background()

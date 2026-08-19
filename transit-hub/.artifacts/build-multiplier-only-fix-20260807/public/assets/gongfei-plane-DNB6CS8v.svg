@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">共飞 AI 红白双翼飞机</title>
+  <desc id="desc">一架红白配色、带有数字七标记的小型双翼飞机</desc>
+  <g transform="translate(16 47) rotate(-18 112 80)" stroke="#183b5c" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M21 78h27M34 61v34" stroke="#80d7ee" stroke-width="7" opacity=".78"/>
+    <path d="M202 67l24 13-24 13-14-7V74z" fill="#ed4b47" stroke-width="6"/>
+    <path d="M186 59l25-15 3 29-22 3z" fill="#fffdf9" stroke-width="6"/>
+    <path d="M58 34h113l-9 29H69z" fill="#fffdf9" stroke-width="7"/>
+    <path d="M50 112h113l-9-29H61z" fill="#fffdf9" stroke-width="7"/>
+    <path d="M71 37h78l-8 12H68zM64 94h78l-8 12H61z" fill="#ed4b47" stroke="none"/>
+    <path d="M45 67c0-17 14-31 31-31h101c17 0 31 14 31 31v26c0 17-14 31-31 31H76c-17 0-31-14-31-31z" fill="#fffdf9" stroke-width="7"/>
+    <path d="M45 67c0-17 14-31 31-31h31v88H76c-17 0-31-14-31-31z" fill="#ef4d48" stroke-width="7"/>
+    <path d="M78 38h29v84H78z" fill="#d9383e" stroke="none"/>
+    <path d="M111 53h40c12 0 21 9 21 21v12h-61z" fill="#9fe1f2" stroke-width="6"/>
+    <path d="M111 88h61v13c0 8-6 14-14 14h-47z" fill="#fffdf9" stroke="none"/>
+    <path d="M109 97h29l-7 16h-25z" fill="#ef4d48" stroke="none"/>
+    <path d="M156 91h25" stroke="#ef4d48" stroke-width="5"/>
+    <path d="M181 51l12 23-12 23" fill="none" stroke="#ef4d48" stroke-width="7"/>
+    <circle cx="67" cy="80" r="16" fill="#fffdf9" stroke-width="7"/>
+    <circle cx="67" cy="80" r="6" fill="#183b5c" stroke="none"/>
+    <path d="M81 101h21l-7 16H77z" fill="#fffdf9" stroke-width="6"/>
+    <path d="M117 103l15 3-8 13" fill="none" stroke="#ef4d48" stroke-width="6"/>
+    <path d="M151 101l17 3-9 13" fill="none" stroke="#ef4d48" stroke-width="6"/>
+    <path d="M127 98h17l-7 17h-14z" fill="#ef4d48" stroke="none"/>
+    <path d="M125 97h24l-8 7h-20z" fill="#fffdf9" stroke="none"/>
+  </g>
+</svg>

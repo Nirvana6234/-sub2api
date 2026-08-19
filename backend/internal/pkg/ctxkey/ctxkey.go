@@ -26,6 +26,11 @@ const (
 	// ClientRequestID 客户端请求的唯一标识，用于追踪请求全生命周期（用于 Ops 监控与排障）。
 	ClientRequestID Key = "ctx_client_request_id"
 
+	// PlaygroundRequest marks a panel Playground request. Upstream relay code
+	// keeps this request's cancellation signal so a user-issued stop terminates
+	// the upstream generation.
+	PlaygroundRequest Key = "ctx_playground_request"
+
 	// Model 请求模型标识（用于统一请求链路日志字段）。
 	Model Key = "ctx_model"
 
@@ -56,6 +61,32 @@ const (
 	// UserID 认证后的 Sub2API 用户 ID，由 API Key 认证中间件设置。
 	// 供 service 层执行用户级策略，不能使用客户端请求体中的 user 标识替代。
 	UserID Key = "ctx_user_id"
+	// APIKeyID 认证后的 API Key ID。API Key 级策略必须使用该值，避免同一
+	// 用户的多把密钥共享配置互相影响。
+	APIKeyID Key = "ctx_api_key_id"
+	// WorkspaceLocalFallbackRoute marks the desktop app's fixed local relay key.
+	// Its group contains ordered fallback upstreams while the user's ungrouped
+	// contributed accounts remain the primary pool.
+	WorkspaceLocalFallbackRoute Key = "ctx_workspace_local_fallback_route"
+	// ContributionCreditOnly marks requests admitted with a zero cash balance
+	// because the user has contribution credit. Schedulers must route these
+	// requests to a contributed account (their own account is always allowed;
+	// another owner's account must be an eligible shared-pool account).
+	ContributionCreditOnly Key = "ctx_contribution_credit_only"
+	// OwnContributedAccountsOnly marks requests from a user with neither cash
+	// balance nor contribution credit. Such a user may still use accounts they
+	// contributed themselves, but may not consume another contributor's pool.
+	OwnContributedAccountsOnly Key = "ctx_own_contributed_accounts_only"
+	// AllowContributionAccountManagement is an internal capability used only by
+	// the contribution API. It keeps user-contributed accounts out of the
+	// administrator account-management surface while preserving owner actions.
+	AllowContributionAccountManagement Key = "ctx_allow_contribution_account_management"
+	// AdminAccountManagementList marks the paginated account query used by the
+	// regular administrator account-management surface. The repository uses
+	// this narrowly scoped marker to exclude contributed accounts before count
+	// and pagination; contribution governance explicitly opts in via the
+	// AllowContributionAccountManagement capability above.
+	AdminAccountManagementList Key = "ctx_admin_account_management_list"
 
 	// IsMaxTokensOneHaikuRequest 标识当前请求是否为 max_tokens=1 + haiku 模型的探测请求
 	// 用于 ClaudeCodeOnly 验证绕过（绕过 system prompt 检查，但仍需验证 User-Agent）

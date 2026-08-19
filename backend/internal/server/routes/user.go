@@ -76,6 +76,7 @@ func RegisterUserRoutes(
 		keys := authenticated.Group("/keys")
 		{
 			keys.GET("", h.APIKey.List)
+			keys.POST("/playground/ensure", h.APIKey.EnsurePlayground)
 			keys.GET("/:id", h.APIKey.GetByID)
 			keys.POST("", h.APIKey.Create)
 			keys.PUT("/:id", h.APIKey.Update)
@@ -93,6 +94,51 @@ func RegisterUserRoutes(
 		channels := authenticated.Group("/channels")
 		{
 			channels.GET("/available", h.AvailableChannel.List)
+		}
+
+		// 用户贡献账号默认仅本人使用；通过贡献房间明确选择后才可共享。
+		contributions := authenticated.Group("/account-contributions")
+		contributions.Use(middleware.RequireUserFeature(middleware.UserFeatureAccountManagement))
+		{
+			contributions.GET("", h.AccountContribution.List)
+			contributions.GET("/groups", h.AccountContribution.ListGroups)
+			contributions.GET("/pool-groups", h.AccountContribution.ListPoolGroups)
+			contributions.GET("/proxies", h.AccountContribution.ListContributionProxies)
+			contributions.POST("/proxies", h.AccountContribution.CreateContributionProxy)
+			contributions.PUT("/proxies/:proxy_id", h.AccountContribution.UpdateContributionProxy)
+			contributions.DELETE("/proxies/:proxy_id", h.AccountContribution.DeleteContributionProxy)
+			contributions.POST("/proxies/:proxy_id/test", h.AccountContribution.TestContributionProxy)
+			contributions.POST("", h.AccountContribution.Submit)
+			contributions.POST("/openai/generate-auth-url", h.AccountContribution.GenerateOpenAIContributionAuthURL)
+			contributions.POST("/openai/create-from-code", h.AccountContribution.CreateOpenAIContributionFromCode)
+			contributions.POST("/openai/create-from-refresh-token", h.AccountContribution.CreateOpenAIContributionFromRefreshToken)
+			contributions.POST("/openai/create-from-mobile-refresh-token", h.AccountContribution.CreateOpenAIContributionFromMobileRefreshToken)
+			contributions.POST("/openai/create-from-codex-pat", h.AccountContribution.CreateOpenAIContributionFromCodexPAT)
+			contributions.POST("/anthropic/generate-auth-url", h.AccountContribution.GenerateAnthropicContributionAuthURL)
+			contributions.POST("/anthropic/create-from-code", h.AccountContribution.CreateAnthropicContributionFromCode)
+			contributions.GET("/room", h.AccountContribution.GetOwnRoom)
+			contributions.POST("/room", h.AccountContribution.CreateOwnRoom)
+			contributions.PUT("/room", h.AccountContribution.UpdateOwnRoom)
+			contributions.POST("/room/accounts", h.AccountContribution.AddOwnRoomAccount)
+			contributions.PATCH("/room/accounts/:account_id", h.AccountContribution.UpdateOwnRoomAccount)
+			contributions.DELETE("/room/accounts/:account_id", h.AccountContribution.DeleteOwnRoomAccount)
+			contributions.GET("/:id/usage-summary", h.AccountContribution.GetUsageSummary)
+			contributions.GET("/:id/models", h.AccountContribution.GetAvailableModels)
+			contributions.PUT("/:id", h.AccountContribution.Update)
+			contributions.DELETE("/:id", h.AccountContribution.Delete)
+			contributions.POST("/:id/test", h.AccountContribution.Test)
+			contributions.POST("/:id/test-stream", h.AccountContribution.TestStream)
+		}
+
+		// Room selection is independent from group selection and is persisted per
+		// user. Public-pool fallback is always an explicit opt-in.
+		contributionRooms := authenticated.Group("/contribution-rooms")
+		contributionRooms.Use(middleware.RequireUserFeature(middleware.UserFeatureContributionRooms))
+		{
+			contributionRooms.GET("", h.AccountContribution.ListSelectableContributionRooms)
+			contributionRooms.GET("/preference", h.AccountContribution.GetContributionRoomPreference)
+			contributionRooms.PUT("/preference", h.AccountContribution.UpdateContributionRoomPreference)
+			contributionRooms.DELETE("/preference", h.AccountContribution.DeleteContributionRoomPreference)
 		}
 
 		// 使用记录（聚合统计属重查询，叠加更严格的按用户限流）

@@ -373,6 +373,11 @@ func TestUpdateWithAccountBillingSettingsRollsBackWhenOutboxFails(t *testing.T) 
 		WithArgs(int64(27), service.PlatformOpenAI, service.AccountTypeAPIKey, `{"api_key":"sk-test"}`, nil).
 		WillReturnRows(sqlmock.NewRows([]string{"identity_unchanged", "ollama_group_unchanged", "ollama_proxy_unchanged", "enabled", "rate_sync_enabled", "snapshot", "ollama_session", "ollama_auto", "ollama_snapshot"}).
 			AddRow(true, false, true, []byte(`true`), []byte(`true`), []byte(`{"status":"ok"}`), nil, nil, nil))
+	// 同事务内读取当前可调度来源：该行已被上面的 FOR NO KEY UPDATE 锁住，
+	// 用于判断本次编辑能否改写 schedulability_source（manual 不可被夺走）。
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT COALESCE(schedulability_source, '')")).
+		WithArgs(int64(27)).
+		WillReturnRows(sqlmock.NewRows([]string{"schedulability_source"}).AddRow(service.SchedulabilitySourceNone))
 	mock.ExpectExec(`(?s)UPDATE .*accounts.*SET.*WHERE .*id.*`).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(`(?s)SELECT .* FROM "accounts" WHERE "id" = \$1`).
@@ -472,12 +477,22 @@ func TestBulkUpdateRollsBackWhenOutboxFails(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// updatedAccountRows 必须与 dbaccount.Columns 的顺序逐列对齐；
+// 分行按字段语义分组，便于列增删时定位。
 func updatedAccountRows(id int64, extra string) *sqlmock.Rows {
 	now := time.Now()
 	return sqlmock.NewRows(dbaccount.Columns).AddRow(
+		// id, created_at, updated_at, deleted_at, name, notes, platform, type
 		id, now, now, nil, "test", nil, service.PlatformOpenAI, service.AccountTypeAPIKey,
-		[]byte(`{"api_key":"sk-test"}`), []byte(extra), nil, nil, 1, nil, 1, 1.0,
-		service.StatusActive, nil, nil, nil, false, true, nil, nil, nil, nil, nil, nil,
-		nil, nil, nil, service.QuotaDimensionGlobal,
+		// credentials, extra, proxy_id, proxy_fallback_origin_id, concurrency, load_factor, priority, rate_multiplier, rate_multiplier_undeclared
+		[]byte(`{"api_key":"sk-test"}`), []byte(extra), nil, nil, 1, nil, 1, 1.0, false,
+		// status, error_message, last_used_at, expires_at, auto_pause_on_expired, schedulable
+		service.StatusActive, nil, nil, nil, false, true,
+		// rate_limited_at, rate_limit_reset_at, overload_until, temp_unschedulable_until, temp_unschedulable_reason
+		nil, nil, nil, nil, nil,
+		// schedulability_source, schedulability_reason, schedulability_changed_at
+		service.SchedulabilitySourceNone, nil, nil,
+		// session_window_start, session_window_end, session_window_status, parent_account_id, quota_dimension
+		nil, nil, nil, nil, service.QuotaDimensionGlobal,
 	)
 }

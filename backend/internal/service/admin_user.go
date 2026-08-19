@@ -141,6 +141,8 @@ func (s *adminServiceImpl) CreateUser(ctx context.Context, input *CreateUserInpu
 		RPMLimit:      input.RPMLimit,
 		Status:        StatusActive,
 		AllowedGroups: input.AllowedGroups,
+		AccountManagementEnabled: input.AccountManagementEnabled,
+		ContributionRoomsEnabled: input.ContributionRoomsEnabled,
 	}
 	if err := user.SetPassword(input.Password); err != nil {
 		return nil, err
@@ -274,6 +276,16 @@ func (s *adminServiceImpl) UpdateUser(ctx context.Context, id int64, input *Upda
 		fields.RPMLimit = true
 	}
 
+	if input.AccountManagementEnabled != nil {
+		user.AccountManagementEnabled = *input.AccountManagementEnabled
+		fields.AccountManagementEnabled = true
+	}
+
+	if input.ContributionRoomsEnabled != nil {
+		user.ContributionRoomsEnabled = *input.ContributionRoomsEnabled
+		fields.ContributionRoomsEnabled = true
+	}
+
 	if input.AllowedGroups != nil {
 		user.AllowedGroups = *input.AllowedGroups
 		fields.AllowedGroups = true
@@ -290,17 +302,23 @@ func (s *adminServiceImpl) UpdateUser(ctx context.Context, id int64, input *Upda
 	}
 
 	// 同步用户专属分组倍率
+	groupRatesChanged := false
 	if input.GroupRates != nil && s.userGroupRateRepo != nil {
 		if err := s.userGroupRateRepo.SyncUserGroupRates(ctx, user.ID, input.GroupRates); err != nil {
 			logger.LegacyPrintf("service.admin", "failed to sync user group rates: user_id=%d err=%v", user.ID, err)
+		} else {
+			groupRatesChanged = true
 		}
 	}
 
 	if s.authCacheInvalidator != nil {
 		// RPMLimit 直接参与 billing_cache_service.checkRPM 的三级级联，
 		// allowed_groups 参与 API Key 专属分组授权判断；不失效缓存会让修改在一个 L2 TTL 内失去效果。
-		if user.Concurrency != oldConcurrency || user.Status != oldStatus || user.Role != oldRole || user.RPMLimit != oldRPMLimit || !sameInt64Set(user.AllowedGroups, oldAllowedGroups) {
+		if groupRatesChanged || user.Concurrency != oldConcurrency || user.Status != oldStatus || user.Role != oldRole || user.RPMLimit != oldRPMLimit || !sameInt64Set(user.AllowedGroups, oldAllowedGroups) {
 			s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, user.ID)
+		}
+		if groupRatesChanged || !sameInt64Set(user.AllowedGroups, oldAllowedGroups) {
+			invalidateAutoGroupSelectionsForUser(ctx, s.authCacheInvalidator, user.ID)
 		}
 	}
 

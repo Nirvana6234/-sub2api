@@ -347,6 +347,12 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	if before.AffiliateRebateRate != after.AffiliateRebateRate {
 		changed = append(changed, "affiliate_rebate_rate")
 	}
+	if before.AccountShareRewardRate != after.AccountShareRewardRate {
+		changed = append(changed, "account_share_reward_rate")
+	}
+	if before.AccountOwnUsageFeeRate != after.AccountOwnUsageFeeRate {
+		changed = append(changed, "account_own_usage_fee_rate")
+	}
 	if before.AffiliateRebateFreezeHours != after.AffiliateRebateFreezeHours {
 		changed = append(changed, "affiliate_rebate_freeze_hours")
 	}
@@ -569,6 +575,9 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	}
 	if before.AvailableChannelsEnabled != after.AvailableChannelsEnabled {
 		changed = append(changed, "available_channels_enabled")
+	}
+	if before.PlaygroundEnabled != after.PlaygroundEnabled {
+		changed = append(changed, "playground_enabled")
 	}
 	if before.ModelPlazaEnabled != after.ModelPlazaEnabled {
 		changed = append(changed, "model_plaza_enabled")

@@ -6,6 +6,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/stretchr/testify/require"
 )
@@ -14,6 +15,7 @@ type accountRepoStubForAdminList struct {
 	accountRepoStub
 
 	listWithFiltersCalls    int
+	listWithFiltersContext  context.Context
 	listWithFiltersParams   pagination.PaginationParams
 	listWithFiltersPlatform string
 	listWithFiltersType     string
@@ -29,8 +31,9 @@ func (s *accountRepoStubForAdminList) ListAllWithFilters(context.Context, string
 	return nil, nil
 }
 
-func (s *accountRepoStubForAdminList) ListWithFilters(_ context.Context, params pagination.PaginationParams, platform, accountType, status, search string, groupID int64, privacyMode string) ([]Account, *pagination.PaginationResult, error) {
+func (s *accountRepoStubForAdminList) ListWithFilters(ctx context.Context, params pagination.PaginationParams, platform, accountType, status, search string, groupID int64, privacyMode string) ([]Account, *pagination.PaginationResult, error) {
 	s.listWithFiltersCalls++
+	s.listWithFiltersContext = ctx
 	s.listWithFiltersParams = params
 	s.listWithFiltersPlatform = platform
 	s.listWithFiltersType = accountType
@@ -52,6 +55,16 @@ func (s *accountRepoStubForAdminList) ListWithFilters(_ context.Context, params 
 	}
 
 	return s.listWithFiltersAccounts, result, nil
+}
+
+func TestAdminService_ListAccountsMarksRegularManagementSurface(t *testing.T) {
+	repo := &accountRepoStubForAdminList{}
+	svc := &adminServiceImpl{accountRepo: repo}
+
+	_, _, err := svc.ListAccounts(context.Background(), 1, 20, "", "", "", "", 0, "", "", "")
+	require.NoError(t, err)
+	marked, _ := repo.listWithFiltersContext.Value(ctxkey.AdminAccountManagementList).(bool)
+	require.True(t, marked)
 }
 
 type proxyRepoStubForAdminList struct {

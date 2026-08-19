@@ -52,11 +52,16 @@ func TestAccountRepository_GrokCredentialConditionalMutationsAreEligibleAndAtomi
 		require.Contains(t, normalized, "a.proxy_id IS NOT DISTINCT FROM $8")
 		require.Contains(t, normalized, "NOT EXISTS ( SELECT 1 FROM proxies p")
 		require.Contains(t, normalized, "INSERT INTO scheduler_outbox")
-		require.Len(t, exec.execArgs[0], 10)
+		require.Len(t, exec.execArgs[0], 13)
 		require.Equal(t, snapshot.CredentialsJSON, exec.execArgs[0][6])
 		require.Equal(t, &proxyID, exec.execArgs[0][7])
 		require.Equal(t, string(service.GrokCredentialReasonProxyInvalid), exec.execArgs[0][8])
 		require.Equal(t, service.SchedulerOutboxEventAccountChanged, exec.execArgs[0][9])
+		// 自动隔离必须原子写入来源，且 CASE 守卫保证 manual 所有权不被夺走。
+		require.Contains(t, normalized, "schedulability_source = CASE WHEN a.schedulability_source = $11 THEN a.schedulability_source ELSE $12 END")
+		require.Equal(t, service.SchedulabilitySourceManual, exec.execArgs[0][10])
+		require.Equal(t, service.SchedulabilitySourceAutomatic, exec.execArgs[0][11])
+		require.Equal(t, service.SchedulabilityReasonCredentialError, exec.execArgs[0][12])
 	})
 
 	t.Run("transient", func(t *testing.T) {
@@ -194,7 +199,14 @@ func TestAccountRepository_SetGrokOAuthRefreshErrorIfCredentialsUnchanged_UsesAt
 		"background invalid_grant CAS must accept the attempted refresh token; only reconciliation requires it missing")
 	require.Equal(t, &proxyID, exec.execArgs[0][7])
 	require.Contains(t, normalized, "INSERT INTO scheduler_outbox")
-	require.Len(t, exec.execArgs[0], 9)
+	// 自动隔离必须在同一条 UPDATE 里写来源，且用 CASE 守卫 manual 所有权：
+	// 管理员已手动关闭的账号只记录 status/error_message，来源不被夺走。
+	require.Contains(t, normalized,
+		"schedulability_source = CASE WHEN a.schedulability_source = $10 THEN a.schedulability_source ELSE $11 END")
+	require.Len(t, exec.execArgs[0], 12)
+	require.Equal(t, service.SchedulabilitySourceManual, exec.execArgs[0][9])
+	require.Equal(t, service.SchedulabilitySourceAutomatic, exec.execArgs[0][10])
+	require.Equal(t, service.SchedulabilityReasonCredentialError, exec.execArgs[0][11])
 }
 
 func TestAccountRepository_SetGrokOAuthRefreshTempUnschedulableIfCredentialsUnchanged_UsesAttemptCredentialsAndProxy(t *testing.T) {

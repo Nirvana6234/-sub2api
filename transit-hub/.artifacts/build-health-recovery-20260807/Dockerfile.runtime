@@ -1,0 +1,10 @@
+FROM transithub:cached-multiplier-20260806-r1
+WORKDIR /app
+COPY transithub-api /app/transithub-api
+COPY public /app/public
+RUN mkdir -p /app/data/ticket-uploads && chmod 0755 /app/transithub-api
+ENV PORT=10621
+ENV PUBLIC_DIR=/app/public
+ENV TICKET_UPLOAD_DIR=/app/data/ticket-uploads
+EXPOSE 10621
+ENTRYPOINT ["/app/transithub-api"]

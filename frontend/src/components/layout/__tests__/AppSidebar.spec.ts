@@ -42,6 +42,14 @@ describe('AppSidebar scroll position persistence', () => {
   })
 })
 
+describe('AppSidebar purchase link', () => {
+  it('always opens the built-in purchase route', () => {
+    expect(componentSource).toContain("path: '/purchase'")
+    expect(componentSource).toContain('featureFlag: flagPurchase')
+    expect(componentSource).not.toContain('externalUrl: purchaseSubscriptionUrl.value')
+  })
+})
+
 describe('AppSidebar header styles', () => {
   it('does not clip the version badge dropdown', () => {
     const sidebarHeaderBlockMatch = styleSource.match(/\.sidebar-header\s*\{[\s\S]*?\n {2}\}/)

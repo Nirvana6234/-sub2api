@@ -75,6 +75,16 @@ type defaultSubscriptionAssignerStub struct {
 	err   error
 }
 
+type playgroundAPIKeyProvisionerStub struct {
+	userIDs []int64
+	err     error
+}
+
+func (s *playgroundAPIKeyProvisionerStub) EnsurePlaygroundAPIKeys(_ context.Context, userID int64) error {
+	s.userIDs = append(s.userIDs, userID)
+	return s.err
+}
+
 type refreshTokenCacheStub struct{}
 
 type userPlatformQuotaRepoStub struct {
@@ -274,6 +284,34 @@ func TestAuthService_Register_DisabledByDefault(t *testing.T) {
 
 	_, _, err := service.Register(context.Background(), "user@test.com", "password")
 	require.ErrorIs(t, err, ErrRegDisabled)
+}
+
+func TestAuthService_Register_ProvisionsPlaygroundAPIKeys(t *testing.T) {
+	repo := &userRepoStub{nextID: 73}
+	service := newAuthService(repo, map[string]string{
+		SettingKeyRegistrationEnabled: "true",
+	}, nil, nil)
+	provisioner := &playgroundAPIKeyProvisionerStub{}
+	service.SetPlaygroundAPIKeyProvisioner(provisioner)
+
+	_, user, err := service.Register(context.Background(), "playground-user@test.com", "password")
+
+	require.NoError(t, err)
+	require.NotNil(t, user)
+	require.Equal(t, []int64{user.ID}, provisioner.userIDs)
+}
+
+func TestAuthService_Register_DoesNotFailWhenPlaygroundAPIKeyProvisioningFails(t *testing.T) {
+	repo := &userRepoStub{nextID: 74}
+	service := newAuthService(repo, map[string]string{
+		SettingKeyRegistrationEnabled: "true",
+	}, nil, nil)
+	service.SetPlaygroundAPIKeyProvisioner(&playgroundAPIKeyProvisionerStub{err: errors.New("temporary failure")})
+
+	_, user, err := service.Register(context.Background(), "playground-failure@test.com", "password")
+
+	require.NoError(t, err)
+	require.NotNil(t, user)
 }
 
 func TestAuthService_Register_SnapshotsPlatformQuotaDefaults(t *testing.T) {

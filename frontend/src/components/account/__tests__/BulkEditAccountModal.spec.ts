@@ -20,6 +20,7 @@ vi.mock('@/api/admin', () => ({
   adminAPI: {
     accounts: {
       bulkUpdate: vi.fn(),
+      updateGroupPriorities: vi.fn(),
       checkMixedChannelRisk: vi.fn()
     }
   }
@@ -80,6 +81,7 @@ function mountModal(extraProps: Record<string, unknown> = {}) {
 describe('BulkEditAccountModal', () => {
   beforeEach(() => {
     vi.mocked(adminAPI.accounts.bulkUpdate).mockReset()
+    vi.mocked(adminAPI.accounts.updateGroupPriorities).mockReset()
     vi.mocked(adminAPI.accounts.checkMixedChannelRisk).mockReset()
     showError.mockReset()
 
@@ -91,6 +93,31 @@ describe('BulkEditAccountModal', () => {
     vi.mocked(adminAPI.accounts.checkMixedChannelRisk).mockResolvedValue({
       has_risk: false
     } as any)
+    vi.mocked(adminAPI.accounts.updateGroupPriorities).mockResolvedValue({ updated: 2 } as any)
+  })
+
+  it('updates group priorities for successful accounts in a group-filtered list', async () => {
+    vi.mocked(adminAPI.accounts.bulkUpdate).mockResolvedValueOnce({
+      success: 2,
+      failed: 0,
+      success_ids: [1, 2],
+      results: [
+        { account_id: 1, success: true },
+        { account_id: 2, success: true }
+      ]
+    } as any)
+    const wrapper = mountModal({ priorityGroupId: 12 })
+
+    await wrapper.get('#bulk-edit-priority-enabled').setValue(true)
+    await wrapper.get('#bulk-edit-priority').setValue(300)
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], { priority: 300 })
+    expect(adminAPI.accounts.updateGroupPriorities).toHaveBeenCalledWith([
+      { account_id: 1, group_id: 12, priority: 300 },
+      { account_id: 2, group_id: 12, priority: 300 }
+    ])
   })
 
   it('批量修改倍率时提示自动同步账号需要先关闭同步', async () => {

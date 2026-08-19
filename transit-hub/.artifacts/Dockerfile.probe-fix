@@ -1,0 +1,3 @@
+FROM transithub:upstream-token-ui-rootfix-20260802
+COPY transithub-api-probe-fix-20260802-2345 /app/transithub-api
+RUN chmod +x /app/transithub-api

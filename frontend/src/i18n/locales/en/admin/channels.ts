@@ -514,7 +514,9 @@ export default {
         apiModeResponsesHint: 'Use /v1/responses with default instructions + input; best for self-check/Codex paths.',
         endpoint: 'Endpoint',
         endpointPlaceholder: 'https://api.example.com',
+        endpointHint: 'Enter a public HTTPS origin, such as https://api.example.com. Do not include /v1, localhost, 127.0.0.1, or a private-network address.',
         useCurrentDomain: 'Use current service',
+        currentServiceUnavailable: 'The current page is local or not HTTPS, so it cannot be monitored. Enter your deployed public HTTPS domain instead.',
         apiKey: 'API Key',
         apiKeyPlaceholder: 'Enter API Key',
         apiKeyEditPlaceholder: 'Leave blank to keep current key',
@@ -534,6 +536,17 @@ export default {
         jitterSecondsHint: 'Each check fires at interval ± a random offset within this value; 0 means fixed interval. Interval minus jitter must be ≥ 15s',
         enabled: 'Enable monitor',
         kindRequired: 'Please select a provider'
+      },
+      errors: {
+        CHANNEL_MONITOR_INVALID_ENDPOINT: 'Enter a valid public HTTPS origin, such as https://api.example.com.',
+        CHANNEL_MONITOR_ENDPOINT_SCHEME: 'The endpoint must start with https://.',
+        CHANNEL_MONITOR_ENDPOINT_PATH: 'Enter the domain origin only, without /v1, a path, query, or fragment.',
+        CHANNEL_MONITOR_ENDPOINT_PRIVATE: 'The endpoint cannot use localhost, 127.0.0.1, or a private-network address.',
+        CHANNEL_MONITOR_ENDPOINT_UNREACHABLE: 'The endpoint hostname could not be resolved. Verify that it is publicly reachable.',
+        CHANNEL_MONITOR_MISSING_API_KEY: 'An API key is required when creating a monitor.',
+        CHANNEL_MONITOR_MISSING_PRIMARY_MODEL: 'Enter a primary model.',
+        CHANNEL_MONITOR_INVALID_INTERVAL: 'The interval must be between 15 and 3600 seconds.',
+        CHANNEL_MONITOR_INVALID_JITTER: 'Jitter cannot reduce the effective interval below 15 seconds.'
       },
       runResultTitle: 'Check Result',
       noMonitorsYet: 'No monitors yet',

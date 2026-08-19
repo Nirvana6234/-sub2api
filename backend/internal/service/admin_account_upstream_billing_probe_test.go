@@ -17,6 +17,37 @@ func (r *upstreamBillingProbeAdminRepo) ListShadowsByParent(context.Context, int
 	return nil, nil
 }
 
+type schedulableInvalidationRepo struct {
+	*upstreamBillingProbeAccountRepo
+}
+
+type autoGroupInvalidatorTestStub struct {
+	groupIDs     []int64
+	autoGroupIDs []int64
+}
+
+func (s *autoGroupInvalidatorTestStub) InvalidateAuthCacheByKey(context.Context, string)   {}
+func (s *autoGroupInvalidatorTestStub) InvalidateAuthCacheByUserID(context.Context, int64) {}
+func (s *autoGroupInvalidatorTestStub) InvalidateAuthCacheByGroupID(_ context.Context, groupID int64) {
+	s.groupIDs = append(s.groupIDs, groupID)
+}
+func (s *autoGroupInvalidatorTestStub) InvalidateAutoGroupSelectionsByUserID(context.Context, int64) {
+}
+func (s *autoGroupInvalidatorTestStub) InvalidateAutoGroupSelectionsByGroupID(_ context.Context, groupID int64) {
+	s.autoGroupIDs = append(s.autoGroupIDs, groupID)
+}
+
+func (r *schedulableInvalidationRepo) SetSchedulable(_ context.Context, id int64, schedulable bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	account := r.accounts[id]
+	if account == nil {
+		return ErrAccountNotFound
+	}
+	account.Schedulable = schedulable
+	return nil
+}
+
 type accountBillingSettingsAdminRepo struct {
 	*upstreamBillingProbeAccountRepo
 	concurrentRate   *float64
@@ -133,6 +164,61 @@ func TestCreateAccountDropsManagedUpstreamBillingProbeState(t *testing.T) {
 	require.NotContains(t, created.Extra, UpstreamBillingProbeEnabledExtraKey)
 	require.NotContains(t, created.Extra, UpstreamBillingRateSyncEnabledExtraKey)
 	require.NotContains(t, created.Extra, UpstreamBillingProbeExtraKey)
+}
+
+func TestSetAccountUpstreamBillingManualRateMultiplierPersistsUntilCleared(t *testing.T) {
+	accountID := int64(901)
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{
+		accountID: {
+			ID: accountID, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive,
+			Extra: map[string]any{UpstreamBillingProbeExtraKey: map[string]any{"status": UpstreamBillingProbeStatusOK}},
+		},
+	}}
+	svc := &adminServiceImpl{accountRepo: repo}
+	rate := 0.07
+
+	updated, err := svc.SetAccountUpstreamBillingManualRateMultiplier(context.Background(), accountID, &rate)
+	require.NoError(t, err)
+	require.Equal(t, rate, updated.Extra[UpstreamBillingManualRateMultiplierExtraKey])
+	actual, ok := upstreamBillingManualRateMultiplier(updated.Extra)
+	require.True(t, ok)
+	require.Equal(t, rate, actual)
+
+	updated, err = svc.SetAccountUpstreamBillingManualRateMultiplier(context.Background(), accountID, nil)
+	require.NoError(t, err)
+	_, ok = upstreamBillingManualRateMultiplier(updated.Extra)
+	require.False(t, ok)
+}
+
+func TestSetAccountSchedulableInvalidatesAssociatedAutoGroups(t *testing.T) {
+	accountID := int64(902)
+	repo := &schedulableInvalidationRepo{&upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{
+		accountID: {ID: accountID, GroupIDs: []int64{10, 10, 11}, Schedulable: false},
+	}}}
+	invalidator := &autoGroupInvalidatorTestStub{}
+	svc := &adminServiceImpl{accountRepo: repo, authCacheInvalidator: invalidator}
+
+	updated, err := svc.SetAccountSchedulable(context.Background(), accountID, true)
+	require.NoError(t, err)
+	require.True(t, updated.Schedulable)
+	require.ElementsMatch(t, []int64{10, 11}, invalidator.groupIDs)
+	require.ElementsMatch(t, []int64{10, 11}, invalidator.autoGroupIDs)
+}
+
+func TestBulkUpdateSchedulableInvalidatesAssociatedAutoGroups(t *testing.T) {
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{
+		903: {ID: 903, GroupIDs: []int64{10}},
+		904: {ID: 904, GroupIDs: []int64{11}},
+	}}
+	invalidator := &autoGroupInvalidatorTestStub{}
+	svc := &adminServiceImpl{accountRepo: repo, authCacheInvalidator: invalidator}
+	schedulable := true
+
+	_, err := svc.BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
+		AccountIDs: []int64{903, 904}, Schedulable: &schedulable,
+	})
+	require.NoError(t, err)
+	require.ElementsMatch(t, []int64{10, 11}, invalidator.autoGroupIDs)
 }
 
 func TestCreateAccountAcceptsDedicatedUpstreamBillingProbeSetting(t *testing.T) {
@@ -295,9 +381,10 @@ func TestUpdateAccountInvalidatesProbeSnapshotWhenUpstreamIdentityChanges(t *tes
 						"base_url": "https://old.example",
 					},
 					Extra: map[string]any{
-						UpstreamBillingProbeEnabledExtraKey:    true,
-						UpstreamBillingRateSyncEnabledExtraKey: true,
-						UpstreamBillingProbeExtraKey:           map[string]any{"status": "ok"},
+						UpstreamBillingProbeEnabledExtraKey:         true,
+						UpstreamBillingRateSyncEnabledExtraKey:      true,
+						UpstreamBillingProbeExtraKey:                map[string]any{"status": "ok"},
+						UpstreamBillingManualRateMultiplierExtraKey: 0.04,
 					},
 				},
 			}}
@@ -308,9 +395,16 @@ func TestUpdateAccountInvalidatesProbeSnapshotWhenUpstreamIdentityChanges(t *tes
 			require.NotContains(t, updated.Extra, UpstreamBillingProbeExtraKey)
 			if tt.wantEnabled {
 				require.Equal(t, true, updated.Extra[UpstreamBillingProbeEnabledExtraKey])
+				require.Equal(t, 0.04, updated.Extra[UpstreamBillingManualRateMultiplierExtraKey],
+					"仅换凭证不改变账号形态，管理员填的上游倍率必须留着")
 			} else {
 				require.NotContains(t, updated.Extra, UpstreamBillingProbeEnabledExtraKey)
 				require.NotContains(t, updated.Extra, UpstreamBillingRateSyncEnabledExtraKey)
+				// 手工倍率只能通过 SetAccountUpstreamBillingManualRateMultiplier 写入，
+				// 而那条路径只接受探测型账号。账号改成 OAuth 后若留着旧值，它就成了
+				// 唯一一处无人负责的残留声明。在这里清干净，
+				// profitControlAccountUpstreamRate 才敢无条件优先采信手工值。
+				require.NotContains(t, updated.Extra, UpstreamBillingManualRateMultiplierExtraKey)
 			}
 		})
 	}
@@ -373,6 +467,34 @@ func TestUpdateAccountPreservesProbeSnapshotWhenProxyIsUnchanged(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Contains(t, updated.Extra, UpstreamBillingProbeExtraKey)
+}
+
+func TestUpdateAccountInvalidatesProbeSnapshotWhenNewAPIGroupOverrideChanges(t *testing.T) {
+	accountID := int64(142)
+	baseRepo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{
+		accountID: {
+			ID:          accountID,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Credentials: map[string]any{"api_key": "sk-test", "base_url": "https://newapi.example"},
+			Extra: map[string]any{
+				UpstreamBillingProbeEnabledExtraKey: true,
+				UpstreamBillingProbeExtraKey:        map[string]any{"status": "unsupported"},
+			},
+		},
+	}}
+
+	updated, err := (&adminServiceImpl{accountRepo: &upstreamBillingProbeAdminRepo{baseRepo}}).UpdateAccount(
+		context.Background(),
+		accountID,
+		&UpdateAccountInput{Extra: map[string]any{UpstreamBillingNewAPIGroupExtraKey: "gpt-pro"}},
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, "gpt-pro", updated.Extra[UpstreamBillingNewAPIGroupExtraKey])
+	require.NotContains(t, updated.Extra, UpstreamBillingProbeExtraKey)
+	require.Equal(t, true, updated.Extra[UpstreamBillingProbeEnabledExtraKey])
 }
 
 func TestUpdateAccountAcceptsProbeEnabledAndRejectsInjectedSnapshot(t *testing.T) {

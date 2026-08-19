@@ -67,7 +67,7 @@ func TestSingleAccountRetryConstants(t *testing.T) {
 // TestHandleSmartRetry_503_LongDelay_SingleAccountRetry_RetryInPlace
 // 核心场景：503 + retryDelay >= 7s + SingleAccountRetry 标记
 // → 不设模型限流、不切换账号，改为原地重试
-func TestHandleSmartRetry_503_LongDelay_SingleAccountRetry_RetryInPlace(t *testing.T) {
+func TestHandleSmartRetry_503_ModelCapacitySingleAccount_RetriesInPlace(t *testing.T) {
 	// 原地重试成功
 	successResp := &http.Response{
 		StatusCode: http.StatusOK,
@@ -127,18 +127,16 @@ func TestHandleSmartRetry_503_LongDelay_SingleAccountRetry_RetryInPlace(t *testi
 
 	require.NotNil(t, result)
 	require.Equal(t, smartRetryActionBreakWithResp, result.action)
-	// 关键断言：返回 resp（原地重试成功），而非 switchError（切换账号）
-	require.NotNil(t, result.resp, "should return successful response from in-place retry")
+	require.NotNil(t, result.resp)
 	require.Equal(t, http.StatusOK, result.resp.StatusCode)
-	require.Nil(t, result.switchError, "should NOT return switchError in single account mode")
+	require.Nil(t, result.switchError, "successful in-place retry must not switch accounts")
 	require.Nil(t, result.err)
 
 	// 验证未设模型限流（单账号模式不应设限流）
 	require.Len(t, repo.modelRateLimitCalls, 0,
 		"should NOT set model rate limit in single account retry mode")
 
-	// 验证确实调用了 upstream（原地重试）
-	require.GreaterOrEqual(t, len(upstream.calls), 1, "should have made at least one retry call")
+	require.Len(t, upstream.calls, 1, "should retry the same account before failover")
 }
 
 // TestHandleSmartRetry_503_LongDelay_NoSingleAccountRetry_StillSwitches
@@ -839,9 +837,10 @@ func TestHandleSmartRetry_503_SingleAccount_RetryInPlace_ThenSuccess_E2E(t *test
 	require.Len(t, upstream.calls, 2, "first 503, second OK")
 }
 
-// TestAntigravityRetryLoop_503_SingleAccount_InPlaceRetryUsed_E2E
-// 通过 antigravityRetryLoop → handleSmartRetry → handleSingleAccountRetryInPlace 完整链路
-func TestAntigravityRetryLoop_503_SingleAccount_InPlaceRetryUsed_E2E(t *testing.T) {
+// TestAntigravityRetryLoop_503_ModelCapacitySingleAccountReturnsSwitchSignal
+// verifies that the full retry loop does not wait on one account after an
+// explicit model-capacity exhaustion signal.
+func TestAntigravityRetryLoop_503_ModelCapacitySingleAccountRetainsAccountOnRecovery(t *testing.T) {
 	// 初始请求返回 503 + 长延迟
 	initial503Body := []byte(`{
 		"error": {
@@ -900,12 +899,13 @@ func TestAntigravityRetryLoop_503_SingleAccount_InPlaceRetryUsed_E2E(t *testing.
 		},
 	})
 
-	require.NoError(t, err, "should not return error on successful retry")
-	require.NotNil(t, result, "should return result")
-	require.NotNil(t, result.resp, "should return response")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, result.resp)
 	require.Equal(t, http.StatusOK, result.resp.StatusCode)
 
 	// 验证未设模型限流
 	require.Len(t, repo.modelRateLimitCalls, 0,
-		"should NOT set model rate limit in single account retry mode")
+		"should NOT set model rate limit for a capacity signal")
+	require.Len(t, upstream.calls, 2, "initial request plus same-account recovery retry")
 }

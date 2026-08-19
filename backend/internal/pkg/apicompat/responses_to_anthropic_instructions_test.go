@@ -73,6 +73,28 @@ func TestResponsesToAnthropicRequest_Instructions(t *testing.T) {
 	})
 }
 
+func TestResponsesToAnthropicRequest_ConvertsInputFileToDocument(t *testing.T) {
+	req := &ResponsesRequest{
+		Model: "claude-sonnet-4-20250514",
+		Input: json.RawMessage(`[
+			{"role":"user","content":[
+				{"type":"input_file","filename":"notes.pdf","file_data":"data:application/pdf;base64,JVBERi0="}
+			]}
+		]`),
+	}
+
+	result, err := ResponsesToAnthropicRequest(req)
+	require.NoError(t, err)
+	require.Len(t, result.Messages, 1)
+	var blocks []AnthropicContentBlock
+	require.NoError(t, json.Unmarshal(result.Messages[0].Content, &blocks))
+	require.Len(t, blocks, 1)
+	assert.Equal(t, "document", blocks[0].Type)
+	require.NotNil(t, blocks[0].Source)
+	assert.Equal(t, "application/pdf", blocks[0].Source.MediaType)
+	assert.Equal(t, "JVBERi0=", blocks[0].Source.Data)
+}
+
 func TestConvertResponsesInputToAnthropic_DeveloperRole(t *testing.T) {
 	t.Run("developer_becomes_system", func(t *testing.T) {
 		input := `[

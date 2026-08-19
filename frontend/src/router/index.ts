@@ -216,17 +216,51 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
-    path: '/batch-image',
-    name: 'BatchImageGuide',
-    alias: '/docs/batch-image',
-    component: () => import('@/views/user/BatchImageGuideView.vue'),
+    path: '/playground',
+    redirect: '/playground/chat',
+  },
+  {
+    path: '/playground/chat',
+    name: 'PlaygroundChat',
+    component: () => import('@/views/user/PlaygroundView.vue'),
+    props: { mode: 'chat' },
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
-      title: 'Batch Image Guide',
-      titleKey: 'batchImageGuide.title',
-      descriptionKey: 'batchImageGuide.description'
+      title: 'Playground',
+      titleKey: 'playground.title',
+      descriptionKey: 'playground.description'
     }
+  },
+  {
+    path: '/playground/images',
+    name: 'PlaygroundImage',
+    component: () => import('@/views/user/PlaygroundView.vue'),
+    props: { mode: 'image' },
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Playground',
+      titleKey: 'playground.title',
+      descriptionKey: 'playground.description'
+    }
+  },
+  {
+    path: '/playground/gallery',
+    name: 'PlaygroundGallery',
+    component: () => import('@/views/user/PlaygroundGalleryView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Playground',
+      titleKey: 'playground.title',
+      descriptionKey: 'playground.description'
+    }
+  },
+  {
+    path: '/playground/batch-images',
+    alias: ['/batch-image', '/docs/batch-image'],
+    redirect: '/playground/images',
   },
   {
     path: '/usage',
@@ -274,6 +308,32 @@ const routes: RouteRecordRaw[] = [
       title: 'Available Channels',
       titleKey: 'availableChannels.title',
       descriptionKey: 'availableChannels.description'
+    }
+  },
+  {
+    path: '/account-contributions',
+    name: 'AccountContributions',
+    component: () => import('@/views/user/AccountContributionsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      requiresAccountManagement: true,
+      title: 'Account Contributions',
+      titleKey: 'accountContributions.title',
+      descriptionKey: 'accountContributions.description'
+    }
+  },
+  {
+    path: '/shared-rooms',
+    name: 'SharedContributionRooms',
+    component: () => import('@/views/user/SharedContributionRoomsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      requiresContributionRooms: true,
+      title: 'Shared Rooms',
+      titleKey: 'sharedRooms.title',
+      descriptionKey: 'sharedRooms.description'
     }
   },
   {
@@ -525,6 +585,30 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/contributions',
+    name: 'AdminContributions',
+    component: () => import('@/views/admin/ContributionsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Shared Account Governance',
+      titleKey: 'admin.contributions.title',
+      descriptionKey: 'admin.contributions.description'
+    }
+  },
+  {
+    path: '/admin/contribution-rooms',
+    name: 'AdminContributionRooms',
+    component: () => import('@/views/admin/ContributionRoomsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Contribution Rooms',
+      titleKey: 'admin.contributionRooms.title',
+      descriptionKey: 'admin.contributionRooms.description'
+    }
+  },
+  {
     path: '/admin/announcements',
     name: 'AdminAnnouncements',
     component: () => import('@/views/admin/AnnouncementsView.vue'),
@@ -766,6 +850,7 @@ function isBackendModePublicRouteAllowed(path: string, hasPendingAuthSession: bo
   return false
 }
 
+
 router.beforeEach(async (to, _from, next) => {
   // 开始导航加载状态
   navigationLoading.startNavigation()
@@ -790,6 +875,8 @@ router.beforeEach(async (to, _from, next) => {
   // Check if route requires authentication
   const requiresAuth = to.meta.requiresAuth !== false // Default to true
   const requiresAdmin = to.meta.requiresAdmin === true
+  const requiresAccountManagement = to.meta.requiresAccountManagement === true
+  const requiresContributionRooms = to.meta.requiresContributionRooms === true
 
   if (to.path === '/setup') {
     try {
@@ -877,6 +964,15 @@ router.beforeEach(async (to, _from, next) => {
     return
   }
 
+  if (
+    !authStore.isAdmin &&
+    ((requiresAccountManagement && !authStore.user?.account_management_enabled) ||
+      (requiresContributionRooms && !authStore.user?.contribution_rooms_enabled))
+  ) {
+    next('/dashboard')
+    return
+  }
+
   if (requiresAdmin && authStore.isAdmin) {
     const adminComplianceStore = useAdminComplianceStore()
     if (!adminComplianceStore.initialized) {
@@ -903,6 +999,14 @@ router.beforeEach(async (to, _from, next) => {
     }
   }
 
+  if (to.path.startsWith('/playground') && !appStore.publicSettingsLoaded) {
+    try {
+      await appStore.fetchPublicSettings()
+    } catch (error) {
+      console.warn('Failed to load playground settings in route guard', error)
+    }
+  }
+
   // Only an explicit value from successfully loaded settings can disable a route.
   // A transient settings failure is unknown state, not a confirmed feature toggle.
   if (
@@ -920,6 +1024,15 @@ router.beforeEach(async (to, _from, next) => {
     appStore.cachedPublicSettings?.risk_control_enabled === false
   ) {
     next(authStore.isAdmin ? '/admin/settings' : '/dashboard')
+    return
+  }
+
+  if (
+    to.path.startsWith('/playground') &&
+    appStore.publicSettingsLoaded &&
+    appStore.cachedPublicSettings?.playground_enabled === false
+  ) {
+    next(authStore.isAdmin ? '/admin/dashboard' : '/dashboard')
     return
   }
 

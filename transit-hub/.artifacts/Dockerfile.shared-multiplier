@@ -1,0 +1,6 @@
+FROM transithub:auto-priority-group-sort-20260806-r4
+
+COPY .artifacts/build-shared-multiplier-20260806-r1/transithub-api /app/transithub-api
+COPY .artifacts/build-shared-multiplier-20260806-r1/public/ /app/public/
+
+ENTRYPOINT ["/app/transithub-api"]

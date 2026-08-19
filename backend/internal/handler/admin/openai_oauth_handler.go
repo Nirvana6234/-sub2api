@@ -190,6 +190,7 @@ type OpenAICodexPATCreateRequest struct {
 	Extra                   map[string]any `json:"extra"`
 	SkipDefaultGroupBind    *bool          `json:"skip_default_group_bind"`
 	ConfirmMixedChannelRisk *bool          `json:"confirm_mixed_channel_risk"`
+	ContributorUserID       *int64         `json:"contributor_user_id"`
 }
 
 // RefreshToken refreshes an OpenAI OAuth token
@@ -391,6 +392,15 @@ func (h *OpenAIOAuthHandler) CreateAccountFromCodexPAT(c *gin.Context) {
 		response.BadRequest(c, "load_factor must be <= 10000")
 		return
 	}
+	managedExtra, err := prepareManagedContributionExtra(c.Request.Context(), h.adminService, req.ContributorUserID, service.PlatformOpenAI, service.AccountTypeOAuth, req.GroupIDs, req.Extra)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	ctx := c.Request.Context()
+	if req.ContributorUserID != nil {
+		ctx = contributionGovernanceContext(ctx)
+	}
 
 	var proxyURL string
 	if req.ProxyID != nil {
@@ -414,14 +424,26 @@ func (h *OpenAIOAuthHandler) CreateAccountFromCodexPAT(c *gin.Context) {
 		h.openaiOAuthService.BuildAccountCredentials(tokenInfo),
 		sanitizeCodexImportCredentialExtras(req.CredentialExtras),
 	)
-	extra := mergeCodexImportMap(req.Extra, map[string]any{
+	extra := mergeCodexImportMap(managedExtra, map[string]any{
 		"import_source":       "codex_personal_access_token",
 		"auth_provider":       "codex_personal_access_token",
 		"imported_at":         time.Now().UTC().Format(time.RFC3339),
 		"access_token_sha256": codexTokenFingerprint(req.AccessToken),
 	})
+	if req.ContributorUserID != nil {
+		for _, key := range []string{
+			service.AccountContributionSourceKey,
+			service.AccountContributionSubmittedAtKey,
+			service.AccountShareModeKey,
+			service.AccountContributorUserIDKey,
+			service.AccountContributorEmailKey,
+			service.AccountContributorUsernameKey,
+		} {
+			extra[key] = managedExtra[key]
+		}
+	}
 
-	concurrency := 3
+	concurrency := 30
 	if req.Concurrency != nil {
 		concurrency = *req.Concurrency
 	}
@@ -433,8 +455,11 @@ func (h *OpenAIOAuthHandler) CreateAccountFromCodexPAT(c *gin.Context) {
 	if req.SkipDefaultGroupBind != nil {
 		skipDefaultGroupBind = *req.SkipDefaultGroupBind
 	}
+	if req.ContributorUserID != nil {
+		skipDefaultGroupBind = true
+	}
 
-	account, err := h.adminService.CreateAccount(c.Request.Context(), &service.CreateAccountInput{
+	account, err := h.adminService.CreateAccount(ctx, &service.CreateAccountInput{
 		Name:                  buildOpenAICodexPATAccountName(req.Name, tokenInfo),
 		Notes:                 req.Notes,
 		Platform:              service.PlatformOpenAI,

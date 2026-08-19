@@ -383,6 +383,8 @@ export interface SystemSettings {
   affiliate_rebate_freeze_hours: number;
   affiliate_rebate_duration_days: number;
   affiliate_rebate_per_invitee_cap: number;
+  account_share_reward_rate: number;
+  account_own_usage_fee_rate: number;
   affiliate_admin_recharge_enabled: boolean;
   default_concurrency: number;
   default_user_rpm_limit: number;
@@ -674,6 +676,15 @@ export interface SystemSettings {
   // Available Channels feature switch
   available_channels_enabled: boolean;
 
+  // Playground feature switch
+  playground_enabled: boolean;
+  playground_default_chat_model: string;
+  playground_default_image_model: string;
+  playground_default_chat_group_ids: number[];
+  playground_default_image_group_ids: number[];
+  playground_default_chat_strategy: 'price' | 'balanced' | 'speed';
+  playground_default_image_strategy: 'price' | 'balanced' | 'speed';
+
   // Model Plaza feature switches + description
   model_plaza_enabled: boolean;
   model_plaza_require_auth: boolean;
@@ -711,6 +722,8 @@ export interface UpdateSettingsRequest {
   affiliate_rebate_freeze_hours?: number;
   affiliate_rebate_duration_days?: number;
   affiliate_rebate_per_invitee_cap?: number;
+  account_share_reward_rate?: number;
+  account_own_usage_fee_rate?: number;
   affiliate_admin_recharge_enabled?: boolean;
   default_concurrency?: number;
   default_user_rpm_limit?: number;
@@ -963,6 +976,15 @@ export interface UpdateSettingsRequest {
 
   // Available Channels feature switch
   available_channels_enabled?: boolean;
+
+  // Playground feature switch
+  playground_enabled?: boolean;
+  playground_default_chat_model?: string;
+  playground_default_image_model?: string;
+  playground_default_chat_group_ids?: number[];
+  playground_default_image_group_ids?: number[];
+  playground_default_chat_strategy?: 'price' | 'balanced' | 'speed';
+  playground_default_image_strategy?: 'price' | 'balanced' | 'speed';
 
   // Model Plaza feature switches + description
   model_plaza_enabled?: boolean;

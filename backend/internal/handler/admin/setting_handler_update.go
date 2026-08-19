@@ -174,6 +174,8 @@ type UpdateSettingsRequest struct {
 	AffiliateRebateFreezeHours                *int                              `json:"affiliate_rebate_freeze_hours"`
 	AffiliateRebateDurationDays               *int                              `json:"affiliate_rebate_duration_days"`
 	AffiliateRebatePerInviteeCap              *float64                          `json:"affiliate_rebate_per_invitee_cap"`
+	AccountShareRewardRate                    *float64                          `json:"account_share_reward_rate"`
+	AccountOwnUsageFeeRate                    *float64                          `json:"account_own_usage_fee_rate"`
 	AdminRechargeRebateEnabled                *bool                             `json:"affiliate_admin_recharge_enabled"`
 	DefaultUserRPMLimit                       int                               `json:"default_user_rpm_limit"`
 	DefaultSubscriptions                      []dto.DefaultSubscriptionSetting  `json:"default_subscriptions"`
@@ -331,6 +333,15 @@ type UpdateSettingsRequest struct {
 
 	// Available Channels feature switch (user-facing)
 	AvailableChannelsEnabled *bool `json:"available_channels_enabled"`
+
+	// Playground feature switch (user-facing)
+	PlaygroundEnabled              *bool    `json:"playground_enabled"`
+	PlaygroundDefaultChatModel     *string  `json:"playground_default_chat_model"`
+	PlaygroundDefaultImageModel    *string  `json:"playground_default_image_model"`
+	PlaygroundDefaultChatGroupIDs  *[]int64 `json:"playground_default_chat_group_ids"`
+	PlaygroundDefaultImageGroupIDs *[]int64 `json:"playground_default_image_group_ids"`
+	PlaygroundDefaultChatStrategy  *string  `json:"playground_default_chat_strategy"`
+	PlaygroundDefaultImageStrategy *string  `json:"playground_default_image_strategy"`
 
 	// Model Plaza feature switches + description
 	ModelPlazaEnabled     *bool   `json:"model_plaza_enabled"`
@@ -546,6 +557,26 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	}
 	if affiliateRebateRate > service.AffiliateRebateRateMax {
 		affiliateRebateRate = service.AffiliateRebateRateMax
+	}
+	accountShareRewardRate := previousSettings.AccountShareRewardRate
+	if req.AccountShareRewardRate != nil {
+		accountShareRewardRate = *req.AccountShareRewardRate
+	}
+	if accountShareRewardRate < service.AccountShareRewardRateMinPercent {
+		accountShareRewardRate = service.AccountShareRewardRateMinPercent
+	}
+	if accountShareRewardRate > service.AccountShareRewardRateMaxPercent {
+		accountShareRewardRate = service.AccountShareRewardRateMaxPercent
+	}
+	accountOwnUsageFeeRate := previousSettings.AccountOwnUsageFeeRate
+	if req.AccountOwnUsageFeeRate != nil {
+		accountOwnUsageFeeRate = *req.AccountOwnUsageFeeRate
+	}
+	if accountOwnUsageFeeRate < service.AccountOwnUsageFeeRateMinPercent {
+		accountOwnUsageFeeRate = service.AccountOwnUsageFeeRateMinPercent
+	}
+	if accountOwnUsageFeeRate > service.AccountOwnUsageFeeRateMaxPercent {
+		accountOwnUsageFeeRate = service.AccountOwnUsageFeeRateMaxPercent
 	}
 	affiliateRebateFreezeHours := previousSettings.AffiliateRebateFreezeHours
 	if req.AffiliateRebateFreezeHours != nil {
@@ -1603,6 +1634,8 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		AffiliateRebateFreezeHours:             affiliateRebateFreezeHours,
 		AffiliateRebateDurationDays:            affiliateRebateDurationDays,
 		AffiliateRebatePerInviteeCap:           affiliateRebatePerInviteeCap,
+		AccountShareRewardRate:                 accountShareRewardRate,
+		AccountOwnUsageFeeRate:                 accountOwnUsageFeeRate,
 		AdminRechargeRebateEnabled:             adminRechargeRebateEnabled,
 		DefaultUserRPMLimit:                    req.DefaultUserRPMLimit,
 		DefaultSubscriptions:                   defaultSubscriptions,
@@ -1857,6 +1890,28 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.AvailableChannelsEnabled
 		}(),
+		PlaygroundEnabled: func() bool {
+			if req.PlaygroundEnabled != nil {
+				return *req.PlaygroundEnabled
+			}
+			return previousSettings.PlaygroundEnabled
+		}(),
+		PlaygroundDefaultChatModel:  stringSetting(req.PlaygroundDefaultChatModel, previousSettings.PlaygroundDefaultChatModel),
+		PlaygroundDefaultImageModel: stringSetting(req.PlaygroundDefaultImageModel, previousSettings.PlaygroundDefaultImageModel),
+		PlaygroundDefaultChatGroupIDs: func() []int64 {
+			if req.PlaygroundDefaultChatGroupIDs != nil {
+				return append([]int64(nil), (*req.PlaygroundDefaultChatGroupIDs)...)
+			}
+			return append([]int64(nil), previousSettings.PlaygroundDefaultChatGroupIDs...)
+		}(),
+		PlaygroundDefaultImageGroupIDs: func() []int64 {
+			if req.PlaygroundDefaultImageGroupIDs != nil {
+				return append([]int64(nil), (*req.PlaygroundDefaultImageGroupIDs)...)
+			}
+			return append([]int64(nil), previousSettings.PlaygroundDefaultImageGroupIDs...)
+		}(),
+		PlaygroundDefaultChatStrategy:  stringSetting(req.PlaygroundDefaultChatStrategy, previousSettings.PlaygroundDefaultChatStrategy),
+		PlaygroundDefaultImageStrategy: stringSetting(req.PlaygroundDefaultImageStrategy, previousSettings.PlaygroundDefaultImageStrategy),
 		ModelPlazaEnabled: func() bool {
 			if req.ModelPlazaEnabled != nil {
 				return *req.ModelPlazaEnabled
@@ -2181,6 +2236,8 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		AffiliateRebateFreezeHours:                             updatedSettings.AffiliateRebateFreezeHours,
 		AffiliateRebateDurationDays:                            updatedSettings.AffiliateRebateDurationDays,
 		AffiliateRebatePerInviteeCap:                           updatedSettings.AffiliateRebatePerInviteeCap,
+		AccountShareRewardRate:                                 updatedSettings.AccountShareRewardRate,
+		AccountOwnUsageFeeRate:                                 updatedSettings.AccountOwnUsageFeeRate,
 		AdminRechargeRebateEnabled:                             updatedSettings.AdminRechargeRebateEnabled,
 		DefaultUserRPMLimit:                                    updatedSettings.DefaultUserRPMLimit,
 		DefaultSubscriptions:                                   updatedDefaultSubscriptions,
@@ -2283,7 +2340,14 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		ChannelMonitorEnabled:                updatedSettings.ChannelMonitorEnabled,
 		ChannelMonitorDefaultIntervalSeconds: updatedSettings.ChannelMonitorDefaultIntervalSeconds,
 
-		AvailableChannelsEnabled: updatedSettings.AvailableChannelsEnabled,
+		AvailableChannelsEnabled:       updatedSettings.AvailableChannelsEnabled,
+		PlaygroundEnabled:              updatedSettings.PlaygroundEnabled,
+		PlaygroundDefaultChatModel:     updatedSettings.PlaygroundDefaultChatModel,
+		PlaygroundDefaultImageModel:    updatedSettings.PlaygroundDefaultImageModel,
+		PlaygroundDefaultChatGroupIDs:  updatedSettings.PlaygroundDefaultChatGroupIDs,
+		PlaygroundDefaultImageGroupIDs: updatedSettings.PlaygroundDefaultImageGroupIDs,
+		PlaygroundDefaultChatStrategy:  updatedSettings.PlaygroundDefaultChatStrategy,
+		PlaygroundDefaultImageStrategy: updatedSettings.PlaygroundDefaultImageStrategy,
 
 		ModelPlazaEnabled:     updatedSettings.ModelPlazaEnabled,
 		ModelPlazaRequireAuth: updatedSettings.ModelPlazaRequireAuth,

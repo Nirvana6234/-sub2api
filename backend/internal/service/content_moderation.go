@@ -950,7 +950,7 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 					Allowed:         false,
 					Blocked:         true,
 					Flagged:         true,
-					Message:         cfg.BlockMessage,
+					Message:         fmt.Sprintf("%s（命中关键词：%s）", cfg.BlockMessage, keyword),
 					StatusCode:      cfg.BlockStatus,
 					HighestCategory: contentModerationKeywordCategory,
 					HighestScore:    1.0,
@@ -2067,11 +2067,11 @@ func contentModerationEmailVariables(log *ContentModerationLog, cfg *ContentMode
 
 func (s *ContentModerationService) siteName(ctx context.Context) string {
 	if s == nil || s.settingRepo == nil {
-		return "Sub2API"
+		return "共飞 AI"
 	}
 	name, err := s.settingRepo.GetValue(ctx, SettingKeySiteName)
 	if err != nil || strings.TrimSpace(name) == "" {
-		return "Sub2API"
+		return "共飞 AI"
 	}
 	return strings.TrimSpace(name)
 }

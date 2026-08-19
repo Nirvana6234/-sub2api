@@ -354,6 +354,34 @@ func (_c *UserCreate) SetNillableRpmLimit(v *int) *UserCreate {
 	return _c
 }
 
+// SetAccountManagementEnabled sets the "account_management_enabled" field.
+func (_c *UserCreate) SetAccountManagementEnabled(v bool) *UserCreate {
+	_c.mutation.SetAccountManagementEnabled(v)
+	return _c
+}
+
+// SetNillableAccountManagementEnabled sets the "account_management_enabled" field if the given value is not nil.
+func (_c *UserCreate) SetNillableAccountManagementEnabled(v *bool) *UserCreate {
+	if v != nil {
+		_c.SetAccountManagementEnabled(*v)
+	}
+	return _c
+}
+
+// SetContributionRoomsEnabled sets the "contribution_rooms_enabled" field.
+func (_c *UserCreate) SetContributionRoomsEnabled(v bool) *UserCreate {
+	_c.mutation.SetContributionRoomsEnabled(v)
+	return _c
+}
+
+// SetNillableContributionRoomsEnabled sets the "contribution_rooms_enabled" field if the given value is not nil.
+func (_c *UserCreate) SetNillableContributionRoomsEnabled(v *bool) *UserCreate {
+	if v != nil {
+		_c.SetContributionRoomsEnabled(*v)
+	}
+	return _c
+}
+
 // AddAPIKeyIDs adds the "api_keys" edge to the APIKey entity by IDs.
 func (_c *UserCreate) AddAPIKeyIDs(ids ...int64) *UserCreate {
 	_c.mutation.AddAPIKeyIDs(ids...)
@@ -656,6 +684,14 @@ func (_c *UserCreate) defaults() error {
 		v := user.DefaultRpmLimit
 		_c.mutation.SetRpmLimit(v)
 	}
+	if _, ok := _c.mutation.AccountManagementEnabled(); !ok {
+		v := user.DefaultAccountManagementEnabled
+		_c.mutation.SetAccountManagementEnabled(v)
+	}
+	if _, ok := _c.mutation.ContributionRoomsEnabled(); !ok {
+		v := user.DefaultContributionRoomsEnabled
+		_c.mutation.SetContributionRoomsEnabled(v)
+	}
 	return nil
 }
 
@@ -744,6 +780,12 @@ func (_c *UserCreate) check() error {
 	}
 	if _, ok := _c.mutation.RpmLimit(); !ok {
 		return &ValidationError{Name: "rpm_limit", err: errors.New(`ent: missing required field "User.rpm_limit"`)}
+	}
+	if _, ok := _c.mutation.AccountManagementEnabled(); !ok {
+		return &ValidationError{Name: "account_management_enabled", err: errors.New(`ent: missing required field "User.account_management_enabled"`)}
+	}
+	if _, ok := _c.mutation.ContributionRoomsEnabled(); !ok {
+		return &ValidationError{Name: "contribution_rooms_enabled", err: errors.New(`ent: missing required field "User.contribution_rooms_enabled"`)}
 	}
 	return nil
 }
@@ -867,6 +909,14 @@ func (_c *UserCreate) createSpec() (*User, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.RpmLimit(); ok {
 		_spec.SetField(user.FieldRpmLimit, field.TypeInt, value)
 		_node.RpmLimit = value
+	}
+	if value, ok := _c.mutation.AccountManagementEnabled(); ok {
+		_spec.SetField(user.FieldAccountManagementEnabled, field.TypeBool, value)
+		_node.AccountManagementEnabled = value
+	}
+	if value, ok := _c.mutation.ContributionRoomsEnabled(); ok {
+		_spec.SetField(user.FieldContributionRoomsEnabled, field.TypeBool, value)
+		_node.ContributionRoomsEnabled = value
 	}
 	if nodes := _c.mutation.APIKeysIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
@@ -1480,6 +1530,30 @@ func (u *UserUpsert) AddRpmLimit(v int) *UserUpsert {
 	return u
 }
 
+// SetAccountManagementEnabled sets the "account_management_enabled" field.
+func (u *UserUpsert) SetAccountManagementEnabled(v bool) *UserUpsert {
+	u.Set(user.FieldAccountManagementEnabled, v)
+	return u
+}
+
+// UpdateAccountManagementEnabled sets the "account_management_enabled" field to the value that was provided on create.
+func (u *UserUpsert) UpdateAccountManagementEnabled() *UserUpsert {
+	u.SetExcluded(user.FieldAccountManagementEnabled)
+	return u
+}
+
+// SetContributionRoomsEnabled sets the "contribution_rooms_enabled" field.
+func (u *UserUpsert) SetContributionRoomsEnabled(v bool) *UserUpsert {
+	u.Set(user.FieldContributionRoomsEnabled, v)
+	return u
+}
+
+// UpdateContributionRoomsEnabled sets the "contribution_rooms_enabled" field to the value that was provided on create.
+func (u *UserUpsert) UpdateContributionRoomsEnabled() *UserUpsert {
+	u.SetExcluded(user.FieldContributionRoomsEnabled)
+	return u
+}
+
 // UpdateNewValues updates the mutable fields using the new values that were set on create.
 // Using this option is equivalent to using:
 //
@@ -1928,6 +2002,34 @@ func (u *UserUpsertOne) AddRpmLimit(v int) *UserUpsertOne {
 func (u *UserUpsertOne) UpdateRpmLimit() *UserUpsertOne {
 	return u.Update(func(s *UserUpsert) {
 		s.UpdateRpmLimit()
+	})
+}
+
+// SetAccountManagementEnabled sets the "account_management_enabled" field.
+func (u *UserUpsertOne) SetAccountManagementEnabled(v bool) *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.SetAccountManagementEnabled(v)
+	})
+}
+
+// UpdateAccountManagementEnabled sets the "account_management_enabled" field to the value that was provided on create.
+func (u *UserUpsertOne) UpdateAccountManagementEnabled() *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateAccountManagementEnabled()
+	})
+}
+
+// SetContributionRoomsEnabled sets the "contribution_rooms_enabled" field.
+func (u *UserUpsertOne) SetContributionRoomsEnabled(v bool) *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.SetContributionRoomsEnabled(v)
+	})
+}
+
+// UpdateContributionRoomsEnabled sets the "contribution_rooms_enabled" field to the value that was provided on create.
+func (u *UserUpsertOne) UpdateContributionRoomsEnabled() *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateContributionRoomsEnabled()
 	})
 }
 
@@ -2545,6 +2647,34 @@ func (u *UserUpsertBulk) AddRpmLimit(v int) *UserUpsertBulk {
 func (u *UserUpsertBulk) UpdateRpmLimit() *UserUpsertBulk {
 	return u.Update(func(s *UserUpsert) {
 		s.UpdateRpmLimit()
+	})
+}
+
+// SetAccountManagementEnabled sets the "account_management_enabled" field.
+func (u *UserUpsertBulk) SetAccountManagementEnabled(v bool) *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.SetAccountManagementEnabled(v)
+	})
+}
+
+// UpdateAccountManagementEnabled sets the "account_management_enabled" field to the value that was provided on create.
+func (u *UserUpsertBulk) UpdateAccountManagementEnabled() *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateAccountManagementEnabled()
+	})
+}
+
+// SetContributionRoomsEnabled sets the "contribution_rooms_enabled" field.
+func (u *UserUpsertBulk) SetContributionRoomsEnabled(v bool) *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.SetContributionRoomsEnabled(v)
+	})
+}
+
+// UpdateContributionRoomsEnabled sets the "contribution_rooms_enabled" field to the value that was provided on create.
+func (u *UserUpsertBulk) UpdateContributionRoomsEnabled() *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateContributionRoomsEnabled()
 	})
 }
 

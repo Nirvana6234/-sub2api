@@ -224,6 +224,13 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 	if err != nil {
 		return nil, err
 	}
+	accessibleAccounts := accounts[:0]
+	for i := range accounts {
+		if isAccountAccessibleToRequest(ctx, &accounts[i]) {
+			accessibleAccounts = append(accessibleAccounts, accounts[i])
+		}
+	}
+	accounts = accessibleAccounts
 	if len(accounts) == 0 {
 		return nil, ErrNoAvailableAccounts
 	}
@@ -978,6 +985,11 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 				}
 			}
 		}
+		if err != nil {
+			return nil, useMixed, err
+		}
+		applyGroupPriority(accounts, groupID)
+		accounts, err = s.applyContributionRoomRouting(ctx, accounts, groupID, platform, useMixed)
 		return accounts, useMixed, err
 	}
 	useMixed := (platform == PlatformAnthropic || platform == PlatformGemini) && !hasForcePlatform
@@ -1022,7 +1034,8 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 					"tls_fingerprint", acc.IsTLSFingerprintEnabled())
 			}
 		}
-		return filtered, useMixed, nil
+		filtered, err = s.applyContributionRoomRouting(ctx, filtered, groupID, platform, useMixed)
+		return filtered, useMixed, err
 	}
 
 	var accounts []Account
@@ -1042,6 +1055,7 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 			"error", err)
 		return nil, useMixed, err
 	}
+	applyGroupPriority(accounts, groupID)
 	slog.Debug("account_scheduling_list_single",
 		"group_id", derefGroupID(groupID),
 		"platform", platform,
@@ -1057,7 +1071,285 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 				"tls_fingerprint", acc.IsTLSFingerprintEnabled())
 		}
 	}
-	return accounts, useMixed, nil
+	accounts, err = s.applyContributionRoomRouting(ctx, accounts, groupID, platform, useMixed)
+	return accounts, useMixed, err
+}
+
+func applyGroupPriority(accounts []Account, groupID *int64) {
+	if groupID == nil || *groupID <= 0 {
+		return
+	}
+	for i := range accounts {
+		accounts[i].Priority = accounts[i].PriorityForGroup(*groupID)
+	}
+}
+
+func prioritizeContributorAccounts(ctx context.Context, accounts []*Account) []*Account {
+	userID := contributorUserIDFromContext(ctx)
+	if len(accounts) == 0 {
+		return accounts
+	}
+	accounts = filterContributorAccountAccess(ctx, userID, contributionCreditOnly(ctx), accounts)
+	if userID <= 0 {
+		return accounts
+	}
+	preferred := make([]*Account, 0, len(accounts))
+	shared := make([]*Account, 0, len(accounts))
+	for _, account := range accounts {
+		if account != nil && account.IsContributedBy(userID) {
+			preferred = append(preferred, account)
+		} else {
+			shared = append(shared, account)
+		}
+	}
+	if len(preferred) == 0 {
+		return accounts
+	}
+	return append(preferred, shared...)
+}
+
+func filterContributorAccountAccess(ctx context.Context, userID int64, creditOnly bool, accounts []*Account) []*Account {
+	now := time.Now()
+	ownerOnly := ownContributedAccountsOnly(ctx)
+	filtered := make([]*Account, 0, len(accounts))
+	for _, account := range accounts {
+		if account == nil || (!account.IsContributionRoomRouted() && !account.IsSharedPoolAvailableTo(userID, now)) {
+			continue
+		}
+		if ownerOnly && !account.IsContributedBy(userID) {
+			continue
+		}
+		if creditOnly && account.ContributorUserID() <= 0 {
+			continue
+		}
+		filtered = append(filtered, account)
+	}
+	return filtered
+}
+
+func filterByContributorPreference(ctx context.Context, accounts []accountWithLoad) []accountWithLoad {
+	userID := contributorUserIDFromContext(ctx)
+	if len(accounts) == 0 {
+		return accounts
+	}
+	now := time.Now()
+	accessible := make([]accountWithLoad, 0, len(accounts))
+	for _, candidate := range accounts {
+		if candidate.account != nil && (candidate.account.IsContributionRoomRouted() || candidate.account.IsSharedPoolAvailableTo(userID, now)) &&
+			(!ownContributedAccountsOnly(ctx) || candidate.account.IsContributedBy(userID)) &&
+			(!contributionCreditOnly(ctx) || candidate.account.ContributorUserID() > 0) {
+			accessible = append(accessible, candidate)
+		}
+	}
+	if userID <= 0 {
+		return accessible
+	}
+	preferred := make([]accountWithLoad, 0, len(accessible))
+	for _, candidate := range accessible {
+		if candidate.account != nil && candidate.account.IsContributedBy(userID) {
+			preferred = append(preferred, candidate)
+		}
+	}
+	if len(preferred) == 0 {
+		return accessible
+	}
+	return preferred
+}
+
+func (s *GatewayService) applyContributionRoomRouting(ctx context.Context, defaultAccounts []Account, groupID *int64, platform string, useMixed bool) ([]Account, error) {
+	if IsWorkspaceLocalFallbackRoute(ctx) {
+		return s.prependWorkspaceOwnedAccounts(ctx, defaultAccounts, platform, useMixed)
+	}
+	if s == nil || s.contributionRoomRepo == nil {
+		return s.appendPublicContributionPoolAccounts(ctx, defaultAccounts, groupID, platform, useMixed)
+	}
+	userID, apiKeyID := contributorUserIDFromContext(ctx), contributorAPIKeyIDFromContext(ctx)
+	if userID <= 0 || apiKeyID <= 0 {
+		return s.appendPublicContributionPoolAccounts(ctx, defaultAccounts, groupID, platform, useMixed)
+	}
+	route, err := s.contributionRoomRepo.ResolveRouteForAPIKey(ctx, userID, apiKeyID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve contribution room route: %w", err)
+	}
+	if !route.IsExplicitSelection() {
+		accounts, err := s.appendPublicContributionPoolAccounts(ctx, defaultAccounts, groupID, platform, useMixed)
+		if err != nil {
+			return nil, err
+		}
+		return s.prependImplicitOwnContributionAccounts(ctx, accounts, platform, useMixed)
+	}
+	roomAccounts := make([]Account, 0)
+	seen := make(map[int64]struct{})
+	if s.accountRepo != nil {
+		for _, selectedRoom := range route.Rooms {
+			accounts, queryErr := s.accountRepo.GetByIDs(ctx, selectedRoom.AccountIDs)
+			if queryErr != nil {
+				return nil, fmt.Errorf("load contribution room accounts: %w", queryErr)
+			}
+			for _, account := range accounts {
+				if account == nil || !account.IsSchedulable() || !s.isAccountAllowedForPlatform(account, platform, useMixed) {
+					continue
+				}
+				if _, duplicate := seen[account.ID]; duplicate {
+					continue
+				}
+				routed := cloneContributionRouteAccount(*account, ContributionRouteSourceRoom, selectedRoom.RoomID, selectedRoom.ConsumerRateMultiplier)
+				applyContributionRoomConcurrency(&routed, selectedRoom.AccountConcurrencies[account.ID])
+				preferWorkspaceOwnedAccount(&routed)
+				roomAccounts, seen[routed.ID] = append(roomAccounts, routed), struct{}{}
+			}
+		}
+	}
+	if !route.AllowPoolFallback || route.FallbackGroupID == nil || *route.FallbackGroupID <= 0 {
+		return roomAccounts, nil
+	}
+	fallbackAccounts, err := s.listContributionRoomFallbackAccounts(ctx, *route.FallbackGroupID, platform, useMixed)
+	if err != nil {
+		return nil, err
+	}
+	for _, account := range fallbackAccounts {
+		if account.ContributorUserID() > 0 || !account.IsSchedulable() || !s.isAccountAllowedForPlatform(&account, platform, useMixed) {
+			continue
+		}
+		if _, exists := seen[account.ID]; !exists {
+			roomAccounts, seen[account.ID] = append(roomAccounts, account), struct{}{}
+		}
+	}
+	return roomAccounts, nil
+}
+
+func (s *GatewayService) appendPublicContributionPoolAccounts(ctx context.Context, defaultAccounts []Account, groupID *int64, platform string, useMixed bool) ([]Account, error) {
+	if !s.groupAllowsContributionPool(ctx, groupID) {
+		return defaultAccounts, nil
+	}
+	poolAccounts, err := s.listPublicContributionPoolAccounts(ctx, platform, useMixed)
+	if err != nil || len(poolAccounts) == 0 {
+		return defaultAccounts, err
+	}
+	result := append([]Account(nil), defaultAccounts...)
+	seen := make(map[int64]struct{}, len(result)+len(poolAccounts))
+	for _, account := range result {
+		seen[account.ID] = struct{}{}
+	}
+	for _, account := range poolAccounts {
+		if _, exists := seen[account.ID]; !exists {
+			result, seen[account.ID] = append(result, account), struct{}{}
+		}
+	}
+	return result, nil
+}
+
+func (s *GatewayService) groupAllowsContributionPool(ctx context.Context, groupID *int64) bool {
+	if s == nil || groupID == nil || *groupID <= 0 {
+		return false
+	}
+	if group := s.groupFromContext(ctx, *groupID); group != nil {
+		return group.AllowContributionPool
+	}
+	group, err := s.groupRepo.GetByIDLite(ctx, *groupID)
+	return err == nil && group != nil && group.AllowContributionPool
+}
+
+func (s *GatewayService) prependWorkspaceOwnedAccounts(ctx context.Context, fallbackAccounts []Account, platform string, useMixed bool) ([]Account, error) {
+	if s == nil || s.accountRepo == nil {
+		return fallbackAccounts, nil
+	}
+	userID := contributorUserIDFromContext(ctx)
+	if userID <= 0 {
+		return fallbackAccounts, nil
+	}
+	var accounts []Account
+	var err error
+	if useMixed {
+		accounts, err = s.accountRepo.ListSchedulableByPlatforms(ctx, []string{platform, PlatformAntigravity})
+	} else {
+		accounts, err = s.accountRepo.ListSchedulableByPlatform(ctx, platform)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load workspace personal accounts: %w", err)
+	}
+	result := make([]Account, 0, len(accounts)+len(fallbackAccounts))
+	seen := make(map[int64]struct{}, len(accounts)+len(fallbackAccounts))
+	for _, account := range accounts {
+		if account.IsContributedBy(userID) && account.IsSchedulable() && s.isAccountAllowedForPlatform(&account, platform, useMixed) {
+			preferWorkspaceOwnedAccount(&account)
+			result, seen[account.ID] = append(result, account), struct{}{}
+		}
+	}
+	for _, account := range fallbackAccounts {
+		if _, exists := seen[account.ID]; !exists {
+			result = append(result, account)
+		}
+	}
+	return result, nil
+}
+
+func (s *GatewayService) listContributionRoomFallbackAccounts(ctx context.Context, groupID int64, platform string, useMixed bool) ([]Account, error) {
+	if s == nil || s.accountRepo == nil || groupID <= 0 {
+		return nil, nil
+	}
+	if !useMixed {
+		accounts, err := s.accountRepo.ListSchedulableByGroupIDAndPlatform(ctx, groupID, platform)
+		if err != nil {
+			return nil, fmt.Errorf("load contribution fallback group accounts: %w", err)
+		}
+		return accounts, nil
+	}
+	accounts, err := s.accountRepo.ListSchedulableByGroupIDAndPlatforms(ctx, groupID, []string{platform, PlatformAntigravity})
+	if err != nil {
+		return nil, fmt.Errorf("load contribution fallback group accounts: %w", err)
+	}
+	filtered := make([]Account, 0, len(accounts))
+	for _, account := range accounts {
+		if account.Platform != PlatformAntigravity || account.IsMixedSchedulingEnabled() {
+			filtered = append(filtered, account)
+		}
+	}
+	return filtered, nil
+}
+
+func (s *GatewayService) prependImplicitOwnContributionAccounts(ctx context.Context, defaultAccounts []Account, platform string, useMixed bool) ([]Account, error) {
+	if s == nil {
+		return defaultAccounts, nil
+	}
+	userID := contributorUserIDFromContext(ctx)
+	if userID <= 0 {
+		return defaultAccounts, nil
+	}
+	owned, shared := make([]Account, 0, len(defaultAccounts)), make([]Account, 0, len(defaultAccounts))
+	for _, account := range defaultAccounts {
+		if account.IsContributedBy(userID) && account.IsSchedulable() && s.isAccountAllowedForPlatform(&account, platform, useMixed) {
+			preferWorkspaceOwnedAccount(&account)
+			owned = append(owned, account)
+		} else {
+			shared = append(shared, account)
+		}
+	}
+	return append(owned, shared...), nil
+}
+
+func (s *GatewayService) listPublicContributionPoolAccounts(ctx context.Context, platform string, useMixed bool) ([]Account, error) {
+	if s == nil || s.accountRepo == nil {
+		return []Account{}, nil
+	}
+	var accounts []Account
+	var err error
+	if useMixed {
+		accounts, err = s.accountRepo.ListSchedulableByPlatforms(ctx, []string{platform, PlatformAntigravity})
+	} else {
+		accounts, err = s.accountRepo.ListSchedulableByPlatform(ctx, platform)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load public contribution pool: %w", err)
+	}
+	userID, now := contributorUserIDFromContext(ctx), time.Now()
+	filtered := make([]Account, 0, len(accounts))
+	for _, account := range accounts {
+		if account.ContributorUserID() == 0 && account.IsSharedPoolAccount() && account.IsSharedPoolAvailableTo(userID, now) && s.isAccountAllowedForPlatform(&account, platform, useMixed) {
+			filtered = append(filtered, account)
+		}
+	}
+	return filtered, nil
 }
 
 // IsSingleAntigravityAccountGroup 检查指定分组是否只有一个 antigravity 平台的可调度账号。
@@ -2532,4 +2824,75 @@ func (s *GatewayService) isModelSupportedByAccount(account *Account, requestedMo
 	}
 	// 其他平台使用账户的模型支持检查
 	return account.IsModelSupported(requestedModel)
+}
+
+// The contribution-room feature remains a local extension. Keep its access
+// predicates alongside the scheduler so upstream account selection continues
+// to respect contributor-scoped routes.
+func contributorUserIDFromContext(ctx context.Context) int64 {
+	if ctx == nil {
+		return 0
+	}
+	userID, _ := ctx.Value(ctxkey.UserID).(int64)
+	return userID
+}
+
+func contributionCreditOnly(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	value, _ := ctx.Value(ctxkey.ContributionCreditOnly).(bool)
+	return value
+}
+
+func ownContributedAccountsOnly(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	value, _ := ctx.Value(ctxkey.OwnContributedAccountsOnly).(bool)
+	return value
+}
+
+func isAccountAccessibleToRequest(ctx context.Context, account *Account) bool {
+	if account == nil {
+		return false
+	}
+	userID := contributorUserIDFromContext(ctx)
+	if !account.IsContributionRoomRouted() && !account.IsSharedPoolAvailableTo(userID, time.Now()) {
+		return false
+	}
+	if ownContributedAccountsOnly(ctx) {
+		return account.IsContributedBy(userID)
+	}
+	return !contributionCreditOnly(ctx) || account.ContributorUserID() > 0
+}
+
+func hasContributorAccounts(ctx context.Context, accounts []*Account) bool {
+	userID := contributorUserIDFromContext(ctx)
+	if userID <= 0 {
+		return false
+	}
+	for _, account := range accounts {
+		if account != nil && account.IsContributedBy(userID) {
+			return true
+		}
+	}
+	return false
+}
+
+func preferWorkspaceOwnedAccount(account *Account) {
+	if account == nil {
+		return
+	}
+	const (
+		basePriority = -1 << 30
+		maxOffset    = 1<<30 - 1
+	)
+	offset := account.Priority
+	if offset < 0 {
+		offset = 0
+	} else if offset > maxOffset {
+		offset = maxOffset
+	}
+	account.Priority = basePriority + offset
 }

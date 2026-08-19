@@ -30,10 +30,21 @@ Thumbs.db
 # Build artifacts
 dist/
 build/
+!backend/internal/web/dist/
+!backend/internal/web/dist/**
 
 # Node modules (will be installed in container)
 frontend/node_modules/
+frontend/node_modules
+frontend/node_modules/**
+**/node_modules/
+**/node_modules/**
 node_modules/
+frontend/.pnpm-store/
+.pnpm-store/
+**/.pnpm-store/
+**/.ignored/
+**/.vite/
 
 # Go build cache (will be built in container)
 backend/vendor/
@@ -61,6 +72,21 @@ logs/
 tmp/
 temp/
 *.tmp
+
+# Local workspace material not referenced by the production Dockerfile.
+assets/
+data/
+skills/
+openspec/
+tools/
+
+# Local Windows diagnostic binaries; the image builds its Linux binary from Go source.
+backend/*.exe
+backend/.local/
+backend/bin/
+!backend/bin/
+!backend/bin/sub2api-linux-amd64
+backend/data/
 
 # Deploy files (not needed in image)
 deploy/install.sh

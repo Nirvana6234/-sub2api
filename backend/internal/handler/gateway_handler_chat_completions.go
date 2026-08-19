@@ -160,9 +160,9 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		selectionSessionHash = "gemini:" + selectionSessionHash
 	}
 	// 3. Account selection + failover loop
-	fs := NewFailoverState(h.maxAccountSwitches, false)
+	fs := NewFailoverState(maxAccountSwitchesForRequest(c.Request.Context(), h.maxAccountSwitches), false)
 	if groupPlatform == service.PlatformGemini {
-		fs = NewFailoverState(h.maxAccountSwitchesGemini, false)
+		fs = NewFailoverState(maxAccountSwitchesForRequest(c.Request.Context(), h.maxAccountSwitchesGemini), false)
 	}
 
 	for {

@@ -140,6 +140,8 @@ const (
 	SettingKeyAffiliateRebateFreezeHours       = "affiliate_rebate_freeze_hours"       // 返利冻结期（小时，0=不冻结）
 	SettingKeyAffiliateRebateDurationDays      = "affiliate_rebate_duration_days"      // 返利有效期（天，0=永久）
 	SettingKeyAffiliateRebatePerInviteeCap     = "affiliate_rebate_per_invitee_cap"    // 单人返利上限（0=无上限）
+	SettingKeyAccountShareRewardRate           = "account_share_reward_rate"           // 共享账号贡献者奖励比例（百分比，0-100）
+	SettingKeyAccountOwnUsageFeeRate           = "account_own_usage_fee_rate"          // 自用贡献账号的平台抽成比例（百分比，0-100）
 	SettingKeyAffiliateAdminRechargeEnabled    = "affiliate_admin_recharge_enabled"    // 管理员充值是否产生返利
 	SettingKeyRiskControlEnabled               = "risk_control_enabled"                // 是否启用风控中心入口与审计链路
 	SettingKeyContentModerationConfig          = "content_moderation_config"           // 内容审计配置（JSON）
@@ -400,6 +402,15 @@ const (
 	// user-facing aggregate view. When false: user endpoint returns an empty list and the
 	// sidebar entry is hidden. Defaults to false (opt-in feature).
 	SettingKeyAvailableChannelsEnabled = "available_channels_enabled"
+
+	// SettingKeyPlaygroundEnabled is a DB-backed opt-in soft switch for the Playground.
+	SettingKeyPlaygroundEnabled              = "playground_enabled"
+	SettingKeyPlaygroundDefaultChatModel     = "playground_default_chat_model"
+	SettingKeyPlaygroundDefaultImageModel    = "playground_default_image_model"
+	SettingKeyPlaygroundDefaultChatGroupIDs  = "playground_default_chat_group_ids"
+	SettingKeyPlaygroundDefaultImageGroupIDs = "playground_default_image_group_ids"
+	SettingKeyPlaygroundDefaultChatStrategy  = "playground_default_chat_strategy"
+	SettingKeyPlaygroundDefaultImageStrategy = "playground_default_image_strategy"
 
 	// SettingKeyModelPlazaEnabled is a DB-backed soft switch for the Model Plaza page
 	// (public group/model pricing showcase). When false: the plaza endpoint returns 404

@@ -13,6 +13,7 @@ import (
 
 type authInvalidationRepoStub struct {
 	mu         sync.Mutex
+	enqueued   []string
 	events     []AuthCacheInvalidationEvent
 	claimLimit int
 	scheduled  []int64
@@ -21,6 +22,13 @@ type authInvalidationRepoStub struct {
 	retryError string
 	stats      AuthCacheInvalidationOutboxStats
 	statsErr   error
+}
+
+func (r *authInvalidationRepoStub) EnqueueControl(_ context.Context, message string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.enqueued = append(r.enqueued, message)
+	return nil
 }
 
 func (r *authInvalidationRepoStub) Claim(_ context.Context, _ string, limit int, _ time.Duration) ([]AuthCacheInvalidationEvent, error) {
@@ -112,6 +120,39 @@ func TestAuthCacheInvalidationWorker_FirstPassSchedulesSafetyPass(t *testing.T) 
 	require.Equal(t, []string{"hash"}, cache.published)
 	require.Equal(t, []int64{7}, repo.scheduled)
 	require.Empty(t, repo.deleted)
+}
+
+func TestAuthCacheInvalidationWorker_AutoGroupControlSkipsAuthCacheDelete(t *testing.T) {
+	repo := &authInvalidationRepoStub{}
+	cache := &authInvalidationCacheStub{}
+	local := &APIKeyService{}
+	selectionKey := "1:price:gpt-test"
+	local.autoGroupSelections.Store(selectionKey, autoGroupSelection{
+		userID:            7,
+		candidateGroupIDs: []int64{9},
+		groupID:           9,
+	})
+	worker := NewAuthCacheInvalidationWorker(repo, cache, local)
+
+	worker.processEvent(context.Background(), AuthCacheInvalidationEvent{ID: 11, CacheKey: autoGroupGroupInvalidationMessage(9)})
+
+	require.Empty(t, cache.deleted)
+	require.Equal(t, []string{autoGroupGroupInvalidationMessage(9)}, cache.published)
+	_, exists := local.autoGroupSelections.Load(selectionKey)
+	require.False(t, exists)
+	require.Equal(t, []int64{11}, repo.scheduled)
+}
+
+func TestAutoGroupInvalidationPublishFailureFallsBackToDurableOutbox(t *testing.T) {
+	repo := &authInvalidationRepoStub{}
+	cache := &authInvalidationCacheStub{publishFn: func(context.Context, string) error {
+		return errors.New("redis unavailable")
+	}}
+	svc := &APIKeyService{cache: cache, authInvalidationOutbox: repo}
+
+	svc.publishAutoGroupInvalidation(context.Background(), autoGroupUserInvalidationMessage(7))
+
+	require.Equal(t, []string{autoGroupUserInvalidationMessage(7)}, repo.enqueued)
 }
 
 func TestAuthCacheInvalidationWorker_SecondPassCleansEvent(t *testing.T) {
@@ -277,5 +318,29 @@ func TestAuthCacheInvalidationSubscriber_ReconnectsAfterRuntimeDisconnect(t *tes
 	}
 	require.Eventually(t, func() bool { return svc.AuthCacheInvalidationSubscriberHealth().Connected }, time.Second, 10*time.Millisecond)
 	require.Equal(t, uint64(1), svc.AuthCacheInvalidationSubscriberHealth().Failures)
+	svc.StopAuthCacheInvalidationSubscriber()
+}
+
+func TestAuthCacheInvalidationSubscriber_ProcessesAutoGroupScopeWithoutL1Cache(t *testing.T) {
+	processed := make(chan struct{})
+	cache := &authInvalidationCacheStub{subscribeFn: func(ctx context.Context, handler func(string)) error {
+		NotifyAuthCacheSubscriptionReady(ctx)
+		handler(autoGroupGroupInvalidationMessage(9))
+		close(processed)
+		<-ctx.Done()
+		return ctx.Err()
+	}}
+	svc := NewAPIKeyService(nil, nil, nil, nil, nil, cache, nil)
+	selectionKey := autoGroupSelectionKey(&APIKey{ID: 22, UserID: 7, AutoGroup: true, AutoGroupIDs: []int64{9, 10}}, "gpt-test")
+	svc.autoGroupSelections.Store(selectionKey, autoGroupSelection{candidateGroupIDs: []int64{9, 10}, groupID: 9})
+
+	svc.StartAuthCacheInvalidationSubscriber(context.Background())
+	select {
+	case <-processed:
+	case <-time.After(time.Second):
+		t.Fatal("Auto group invalidation message was not processed")
+	}
+	_, exists := svc.autoGroupSelections.Load(selectionKey)
+	require.False(t, exists)
 	svc.StopAuthCacheInvalidationSubscriber()
 }

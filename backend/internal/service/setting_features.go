@@ -77,6 +77,17 @@ func (s *SettingService) IsAffiliateEnabled(ctx context.Context) bool {
 	return value == "true"
 }
 
+func (s *SettingService) IsPlaygroundEnabled(ctx context.Context) bool {
+	if s == nil || s.settingRepo == nil {
+		return false
+	}
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyPlaygroundEnabled)
+	if err != nil {
+		return false
+	}
+	return value == "true"
+}
+
 // IsAffiliateAdminRechargeEnabled reports whether admin balance
 // deposits should participate in the affiliate rebate program.
 func (s *SettingService) IsAffiliateAdminRechargeEnabled(ctx context.Context) bool {
@@ -100,6 +111,38 @@ func (s *SettingService) GetAffiliateRebateRatePercent(ctx context.Context) floa
 		return AffiliateRebateRateDefault
 	}
 	return clampAffiliateRebateRate(rate)
+}
+
+// GetAccountShareRewardRatePercent returns the contribution-credit percentage
+// awarded to the owner of a shared account for each settled shared request.
+func (s *SettingService) GetAccountShareRewardRatePercent(ctx context.Context) float64 {
+	if s == nil || s.settingRepo == nil {
+		return AccountShareRewardRateDefaultPercent
+	}
+	raw, err := s.settingRepo.GetValue(ctx, SettingKeyAccountShareRewardRate)
+	if err != nil {
+		return AccountShareRewardRateDefaultPercent
+	}
+	rate, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil || math.IsNaN(rate) || math.IsInf(rate, 0) {
+		return AccountShareRewardRateDefaultPercent
+	}
+	return clampAccountShareRewardRatePercent(rate)
+}
+
+func (s *SettingService) GetAccountOwnUsageFeeRatePercent(ctx context.Context) float64 {
+	if s == nil || s.settingRepo == nil {
+		return AccountOwnUsageFeeRateDefaultPercent
+	}
+	raw, err := s.settingRepo.GetValue(ctx, SettingKeyAccountOwnUsageFeeRate)
+	if err != nil {
+		return AccountOwnUsageFeeRateDefaultPercent
+	}
+	rate, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil || math.IsNaN(rate) || math.IsInf(rate, 0) {
+		return AccountOwnUsageFeeRateDefaultPercent
+	}
+	return clampAccountOwnUsageFeeRatePercent(rate)
 }
 
 // GetAffiliateRebateFreezeHours 返回返利冻结期（小时）。
@@ -280,7 +323,7 @@ func parseAuditLogRetentionDays(value string) int {
 func (s *SettingService) GetSiteName(ctx context.Context) string {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeySiteName)
 	if err != nil || value == "" {
-		return "Sub2API"
+		return "共飞 AI"
 	}
 	return value
 }

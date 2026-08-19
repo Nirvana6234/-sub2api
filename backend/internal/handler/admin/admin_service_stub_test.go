@@ -529,6 +529,21 @@ func (s *stubAdminService) ClearAccountError(ctx context.Context, id int64) (*se
 	return &account, nil
 }
 
+func (s *stubAdminService) RecoverAccountSchedulability(
+	ctx context.Context,
+	id int64,
+	expectedChangedAt *time.Time,
+) (*service.Account, error) {
+	account := service.Account{
+		ID:                   id,
+		Name:                 "account",
+		Status:               service.StatusActive,
+		Schedulable:          true,
+		SchedulabilitySource: service.SchedulabilitySourceNone,
+	}
+	return &account, nil
+}
+
 func (s *stubAdminService) SetAccountError(ctx context.Context, id int64, errorMsg string) error {
 	return nil
 }

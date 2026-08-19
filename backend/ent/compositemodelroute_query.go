@@ -25,6 +25,7 @@ type CompositeModelRouteQuery struct {
 	inters     []Interceptor
 	predicates []predicate.CompositeModelRoute
 	withGroup  *GroupQuery
+	withFKs    bool
 	modifiers  []func(*sql.Selector)
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
@@ -371,11 +372,15 @@ func (_q *CompositeModelRouteQuery) prepareQuery(ctx context.Context) error {
 func (_q *CompositeModelRouteQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*CompositeModelRoute, error) {
 	var (
 		nodes       = []*CompositeModelRoute{}
+		withFKs     = _q.withFKs
 		_spec       = _q.querySpec()
 		loadedTypes = [1]bool{
 			_q.withGroup != nil,
 		}
 	)
+	if withFKs {
+		_spec.Node.Columns = append(_spec.Node.Columns, compositemodelroute.ForeignKeys...)
+	}
 	_spec.ScanValues = func(columns []string) ([]any, error) {
 		return (*CompositeModelRoute).scanValues(nil, columns)
 	}

@@ -168,6 +168,8 @@ type SystemSettings struct {
 	AffiliateRebateFreezeHours   int                          `json:"affiliate_rebate_freeze_hours"`
 	AffiliateRebateDurationDays  int                          `json:"affiliate_rebate_duration_days"`
 	AffiliateRebatePerInviteeCap float64                      `json:"affiliate_rebate_per_invitee_cap"`
+	AccountShareRewardRate       float64                      `json:"account_share_reward_rate"`
+	AccountOwnUsageFeeRate       float64                      `json:"account_own_usage_fee_rate"`
 	AdminRechargeRebateEnabled   bool                         `json:"affiliate_admin_recharge_enabled"`
 	DefaultUserRPMLimit          int                          `json:"default_user_rpm_limit"`
 	DefaultSubscriptions         []DefaultSubscriptionSetting `json:"default_subscriptions"`
@@ -305,6 +307,15 @@ type SystemSettings struct {
 	// Available Channels feature switch (user-facing aggregate view)
 	AvailableChannelsEnabled bool `json:"available_channels_enabled"`
 
+	// Playground feature switch
+	PlaygroundEnabled              bool    `json:"playground_enabled"`
+	PlaygroundDefaultChatModel     string  `json:"playground_default_chat_model"`
+	PlaygroundDefaultImageModel    string  `json:"playground_default_image_model"`
+	PlaygroundDefaultChatGroupIDs  []int64 `json:"playground_default_chat_group_ids"`
+	PlaygroundDefaultImageGroupIDs []int64 `json:"playground_default_image_group_ids"`
+	PlaygroundDefaultChatStrategy  string  `json:"playground_default_chat_strategy"`
+	PlaygroundDefaultImageStrategy string  `json:"playground_default_image_strategy"`
+
 	// Model Plaza feature (public group/model pricing showcase)
 	ModelPlazaEnabled     bool   `json:"model_plaza_enabled"`
 	ModelPlazaRequireAuth bool   `json:"model_plaza_require_auth"`
@@ -400,6 +411,10 @@ type PublicSettings struct {
 	ChannelMonitorDefaultIntervalSeconds int  `json:"channel_monitor_default_interval_seconds"`
 
 	AvailableChannelsEnabled bool `json:"available_channels_enabled"`
+
+	PlaygroundEnabled           bool   `json:"playground_enabled"`
+	PlaygroundDefaultChatModel  string `json:"playground_default_chat_model"`
+	PlaygroundDefaultImageModel string `json:"playground_default_image_model"`
 
 	ModelPlazaEnabled     bool `json:"model_plaza_enabled"`
 	ModelPlazaRequireAuth bool `json:"model_plaza_require_auth"`

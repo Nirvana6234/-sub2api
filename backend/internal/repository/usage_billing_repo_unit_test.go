@@ -20,7 +20,73 @@ const (
 	captureBatchImageHoldSQL    = `(?s)UPDATE users\s+SET balance = balance\s+\+ CASE WHEN \$1 > \$2 THEN \$1 - \$2 ELSE 0 END\s+- CASE WHEN \$2 > \$1 THEN \$2 - \$1 ELSE 0 END,\s+frozen_balance = COALESCE\(frozen_balance, 0\) - \$1,\s+updated_at = NOW\(\)\s+WHERE id = \$3 AND deleted_at IS NULL AND COALESCE\(frozen_balance, 0\) >= \$1\s+RETURNING balance, frozen_balance`
 	releaseBatchImageHoldSQL    = `(?s)UPDATE users\s+SET balance = balance \+ \$1,\s+frozen_balance = COALESCE\(frozen_balance, 0\) - \$1,\s+updated_at = NOW\(\)\s+WHERE id = \$2 AND deleted_at IS NULL AND COALESCE\(frozen_balance, 0\) >= \$1\s+RETURNING balance, frozen_balance`
 	userExistsForBillingSQL     = `(?s)SELECT 1\s+FROM users\s+WHERE id = \$1 AND deleted_at IS NULL`
+	sharedAccountUsageUpdateSQL = `(?s)UPDATE contribution_room_accounts AS member\s+SET share_used_usd = member.share_used_usd \+ \$1,.*FROM accounts AS account,.*contribution_rooms AS room,.*contribution_account_verifications AS verification.*WHERE account.id = \$2.*account.extra->>'import_source' = \$3.*submitted_by_user_id.*room.id = member.room_id.*verification.account_id = account.id.*member.enabled.*member.verified_at.*room.status.*\(\$5 = 0 OR member.room_id = \$5\).*member.share_used_usd < member.share_budget_usd.*verification.status = \$6.*verification.platform = account.platform.*RETURNING member.room_id, member.share_budget_usd, member.share_used_usd`
+	exhaustedRoomPauseSQL       = `(?s)UPDATE contribution_rooms AS room\s+SET status = 'paused',.*WHERE room.id = \$1.*room.status = 'active'.*NOT EXISTS.*member.room_id = room.id.*member.enabled = TRUE.*member.share_used_usd < member.share_budget_usd`
 )
+
+func TestSettleSharedAccountUsage_RejectsIneligibleAccountBeforeFinancialEffects(t *testing.T) {
+	ctx := context.Background()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	mock.ExpectBegin()
+	tx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	mock.ExpectQuery(sharedAccountUsageUpdateSQL).
+		WithArgs(0.0, int64(99), service.AccountContributionSourceValue, int64(7), int64(0), service.ContributionVerificationStatusVerified).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectRollback()
+
+	walletPaid, reward, err := settleSharedAccountUsage(ctx, tx, &service.UsageBillingCommand{
+		AccountID:               99,
+		UserID:                  42,
+		SharedCost:              3,
+		SharedContributorUserID: 7,
+	})
+	require.ErrorContains(t, err, "no longer eligible")
+	require.Zero(t, walletPaid)
+	require.Zero(t, reward)
+	require.NoError(t, tx.Rollback())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestSettleSharedAccountUsage_ReconcilesRoomStatusAfterBudgetUsage(t *testing.T) {
+	ctx := context.Background()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	mock.ExpectBegin()
+	tx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	mock.ExpectQuery(sharedAccountUsageUpdateSQL).
+		WithArgs(2.0, int64(99), service.AccountContributionSourceValue, int64(7), int64(5), service.ContributionVerificationStatusVerified).
+		WillReturnRows(sqlmock.NewRows([]string{"room_id", "share_budget_usd", "share_used_usd"}).AddRow(5, 2.0, 2.0))
+	mock.ExpectExec(exhaustedRoomPauseSQL).
+		WithArgs(int64(5)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`(?s)INSERT INTO user_contribution_wallets.*ON CONFLICT`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`(?s)INSERT INTO account_share_settlements`).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectRollback()
+
+	walletPaid, reward, err := settleSharedAccountUsage(ctx, tx, &service.UsageBillingCommand{
+		RequestID:               "room-exhausted",
+		APIKeyID:                8,
+		AccountID:               99,
+		UserID:                  42,
+		SharedContributorUserID: 7,
+		SharedRoomID:            5,
+		SharedBudgetCost:        2,
+	})
+	require.NoError(t, err)
+	require.Zero(t, walletPaid)
+	require.Zero(t, reward)
+	require.NoError(t, tx.Rollback())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
 
 func TestDeductUsageBillingBalance_UsesSufficientBalanceGuard(t *testing.T) {
 	ctx := context.Background()

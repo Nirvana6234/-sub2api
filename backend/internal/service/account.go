@@ -18,6 +18,50 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 )
 
+// 可调度来源（schedulability_source）的权威取值。
+//
+// 这三个值是 TransitHub 等外部消费方区分「管理员手动关闭」与「系统自动停用」的唯一依据，
+// 禁止再用 schedulable + status 的组合去推断来源。
+const (
+	// SchedulabilitySourceNone 表示当前没有停用来源（正常可调度账号）。
+	// 绝不能被解释为 automatic。
+	SchedulabilitySourceNone = "none"
+	// SchedulabilitySourceManual 表示管理员明确关闭可调度。
+	// 任何系统错误处理、自动恢复、后台任务都不得覆盖。
+	SchedulabilitySourceManual = "manual"
+	// SchedulabilitySourceAutomatic 表示系统基于错误、凭据、过期等原因自动停止调度，
+	// 允许外部恢复检查在验证成功后请求恢复。
+	SchedulabilitySourceAutomatic = "automatic"
+)
+
+// 稳定的停用原因码，便于审计与排障。
+const (
+	SchedulabilityReasonAdminDisabled   = "admin_disabled"
+	SchedulabilityReasonCredentialError = "credential_error"
+	SchedulabilityReasonUpstreamError   = "upstream_error"
+	SchedulabilityReasonExpired         = "expired"
+)
+
+// IsValidSchedulabilitySource 判断来源取值是否合法。
+// 空值、未知值一律非法，消费方必须失败关闭（不探测、不恢复）。
+func IsValidSchedulabilitySource(source string) bool {
+	switch source {
+	case SchedulabilitySourceNone, SchedulabilitySourceManual, SchedulabilitySourceAutomatic:
+		return true
+	default:
+		return false
+	}
+}
+
+// NormalizeSchedulabilitySource 只做去空格与小写化，**刻意不把空值或未知值补成 none**。
+//
+// 把 "" 归一成 none 等于凭空编造一个「没有停用来源」的结论：字段缺失（例如只选了部分列的
+// 投影查询）或出现非法值时，消费方必须能看出来源不明并失败关闭。这里替它猜一个安全值，
+// 就把审计明确禁止的推断重新引了回来。
+func NormalizeSchedulabilitySource(source string) string {
+	return strings.ToLower(strings.TrimSpace(source))
+}
+
 type Account struct {
 	ID                      int64
 	Name                    string
@@ -33,17 +77,32 @@ type Account struct {
 	Priority                int
 	// RateMultiplier 账号计费倍率（>=0，允许 0 表示该账号计费为 0）。
 	// 使用指针用于兼容旧版本调度缓存（Redis）中缺字段的情况：nil 表示按 1.0 处理。
-	RateMultiplier     *float64
-	LoadFactor         *int // 调度负载因子；nil 表示使用 Concurrency
-	Status             string
-	ErrorMessage       string
-	LastUsedAt         *time.Time
-	ExpiresAt          *time.Time
-	AutoPauseOnExpired bool
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	RateMultiplier *float64
+	// RateMultiplierUndeclared 表示从未有人声明过该账号的上游成本倍率，
+	// RateMultiplier 上的值只是建表默认值而非运营者的判断。利润准入据此放行
+	// 并告警，而不是把默认值当成"声明成本为 1.0"再据此否决整池账号。
+	//
+	// 与 RateMultiplier==nil 是两回事：nil 只可能来自调度缓存漏字段（DB 列非空
+	// 且有默认值），属于坏数据，利润门对它保守拒绝。本字段是零值安全的——快照
+	// 漏列时取 false（视为已声明），fail-closed 姿态不变。
+	RateMultiplierUndeclared bool
+	LoadFactor               *int // 调度负载因子；nil 表示使用 Concurrency
+	Status                   string
+	ErrorMessage             string
+	LastUsedAt               *time.Time
+	ExpiresAt                *time.Time
+	AutoPauseOnExpired       bool
+	CreatedAt                time.Time
+	UpdatedAt                time.Time
 
 	Schedulable bool
+
+	// SchedulabilitySource 记录 schedulable 当前状态的所有权来源：
+	// manual（管理员）/ automatic（系统自动）/ none（无停用来源）。
+	// 与 schedulable 必须在同一条 UPDATE 中原子写入。
+	SchedulabilitySource    string
+	SchedulabilityReason    string
+	SchedulabilityChangedAt *time.Time
 
 	RateLimitedAt    *time.Time
 	RateLimitResetAt *time.Time
@@ -64,6 +123,15 @@ type Account struct {
 	GroupIDs      []int64
 	Groups        []*Group
 
+	// ContributionRouteSource and the related fields exist only for one
+	// in-flight request. They are deliberately not persisted: an account can be
+	// selected from a contributor room for one consumer and from the public pool
+	// for another at the same time, with different billing multipliers.
+	ContributionRouteSource            string   `json:"-"`
+	ContributionRoomID                 int64    `json:"-"`
+	ContributionRateMultiplierOverride *float64 `json:"-"`
+	ContributionConcurrencyOverride    *int     `json:"-"`
+
 	// model_mapping 热路径缓存（非持久化字段）
 	modelMappingCache               map[string]string
 	modelMappingCacheReady          bool
@@ -79,6 +147,24 @@ type Account struct {
 	headerOverrideCacheRawPtr         uintptr
 	headerOverrideCacheRawLen         int
 	headerOverrideCacheRawSig         uint64
+}
+
+// PriorityForGroup returns the scheduler priority for the requested group.
+// A group relation overrides the account-wide priority; callers without a
+// concrete group keep the account-wide value.
+func (a *Account) PriorityForGroup(groupID int64) int {
+	if a == nil {
+		return 0
+	}
+	if groupID <= 0 {
+		return a.Priority
+	}
+	for _, relation := range a.AccountGroups {
+		if relation.GroupID == groupID {
+			return relation.Priority
+		}
+	}
+	return a.Priority
 }
 
 type OpenAIEndpointCapability string
@@ -946,6 +1032,119 @@ func (a *Account) GetExtraString(key string) string {
 		}
 	}
 	return ""
+}
+
+const (
+	AccountContributionSourceKey              = "import_source"
+	AccountContributionSourceValue            = "user_contribution"
+	AccountContributionImportMethodKey        = "contribution_import_method"
+	AccountContributorUserIDKey               = "submitted_by_user_id"
+	AccountContributorEmailKey                = "submitted_by_email"
+	AccountContributorUsernameKey             = "submitted_by_username"
+	AccountContributionSubmittedAtKey         = "submitted_at"
+	AccountShareModeKey                       = "share_mode"
+	AccountShareTotalBudgetKey                = "share_total_budget"
+	AccountShareDailyBudgetKey                = "share_daily_budget"
+	AccountShareExpiresAtKey                  = "share_expires_at"
+	AccountShareUsedTotalKey                  = "share_used_total"
+	AccountShareUsedTodayKey                  = "share_used_today"
+	AccountShareUsageDayKey                   = "share_usage_day"
+	AccountShareConsumerRateMultiplierKey     = "share_consumer_rate_multiplier"
+	AccountContributionGovernanceStateKey     = "contribution_governance_state"
+	AccountContributionGovernanceReasonKey    = "contribution_governance_reason"
+	AccountContributionGovernanceUpdatedAtKey = "contribution_governance_updated_at"
+	AccountContributionGovernanceUpdatedByKey = "contribution_governance_updated_by"
+	AccountContributionGovernancePaused       = "paused"
+	AccountContributionGovernanceActive       = "active"
+	AccountShareModePrivate                   = "private"
+	AccountShareModePool                      = "pool"
+	AccountShareRewardRateDefaultPercent      = 80.0
+	AccountShareRewardRateMinPercent          = 0.0
+	AccountShareRewardRateMaxPercent          = 100.0
+	AccountShareRewardRate                    = AccountShareRewardRateDefaultPercent / 100
+	AccountOwnUsageFeeRateDefaultPercent      = 1.0
+	AccountOwnUsageFeeRateMinPercent          = 0.0
+	AccountOwnUsageFeeRateMaxPercent          = 100.0
+)
+
+const (
+	ContributionRouteSourceNone = ""
+	ContributionRouteSourceRoom = "room"
+	ContributionRouteSourcePool = "pool"
+)
+
+// ContributorUserID returns the authenticated user who contributed this
+// account. Zero means the account is administrator-managed or legacy data
+// without an owner. The value lives in Extra for compatibility with existing
+// user-contributed accounts created before this feature was upstreamed.
+func (a *Account) ContributorUserID() int64 {
+	if a == nil || a.Extra == nil {
+		return 0
+	}
+	if source := strings.TrimSpace(a.GetExtraString(AccountContributionSourceKey)); source != AccountContributionSourceValue {
+		return 0
+	}
+	return int64(parseExtraFloat64(a.Extra[AccountContributorUserIDKey]))
+}
+
+func (a *Account) IsContributedBy(userID int64) bool {
+	return userID > 0 && a != nil && a.ContributorUserID() == userID
+}
+
+func (a *Account) IsSharedPoolAccount() bool {
+	return a != nil && strings.EqualFold(strings.TrimSpace(a.getExtraString(AccountShareModeKey)), AccountShareModePool)
+}
+
+// ContributionConsumerRateMultiplier returns the multiplier captured while
+// routing this request. A room rate always wins; a public-pool account keeps a
+// separate per-account multiplier and never inherits the consumer's group
+// rate. Any malformed legacy value falls back to 1.0.
+func (a *Account) ContributionConsumerRateMultiplier() (float64, bool) {
+	if a == nil {
+		return 0, false
+	}
+	switch a.ContributionRouteSource {
+	case ContributionRouteSourceRoom:
+		if a.ContributionRateMultiplierOverride != nil && *a.ContributionRateMultiplierOverride >= 0 {
+			return *a.ContributionRateMultiplierOverride, true
+		}
+		return 1.0, true
+	case ContributionRouteSourcePool:
+		if a.Extra != nil {
+			if _, configured := a.Extra[AccountShareConsumerRateMultiplierKey]; configured {
+				rate := a.getExtraFloat64(AccountShareConsumerRateMultiplierKey)
+				if rate >= 0 {
+					return rate, true
+				}
+			}
+		}
+		return 1.0, true
+	default:
+		return 0, false
+	}
+}
+
+func (a *Account) IsContributionRoomRouted() bool {
+	return a != nil && a.ContributionRouteSource == ContributionRouteSourceRoom && a.ContributionRoomID > 0
+}
+
+// IsContributionGovernancePaused is an administrator-owned overlay for shared
+// routing. It never changes the contributor's own private-use preference.
+func (a *Account) IsContributionGovernancePaused() bool {
+	return a != nil && strings.EqualFold(strings.TrimSpace(a.getExtraString(AccountContributionGovernanceStateKey)), AccountContributionGovernancePaused)
+}
+
+// IsSharedPoolAvailableTo exposes an administrator-admitted pool account to
+// regular group scheduling. Contributor-owned private accounts retain their
+// owner-only boundary; room routing is checked separately by callers.
+func (a *Account) IsSharedPoolAvailableTo(userID int64, _ time.Time) bool {
+	if a == nil || a.ContributorUserID() == 0 {
+		return true
+	}
+	if a.IsSharedPoolAccount() && !a.IsContributionGovernancePaused() {
+		return true
+	}
+	return a.IsContributedBy(userID)
 }
 
 func (a *Account) GetClaudeUserID() string {

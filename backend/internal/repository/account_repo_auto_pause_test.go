@@ -38,8 +38,15 @@ func TestAutoPauseExpiredAccountsEnqueuesAffectedAccounts(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	now := time.Now()
+	// 过期自动暂停属于系统自动路径：必须与 schedulable 同条 UPDATE 原子写入
+	// source=automatic / reason=expired，并且永不覆盖管理员的 manual 所有权。
 	mock.ExpectQuery(`(?s)UPDATE accounts.*RETURNING id`).
-		WithArgs(now).
+		WithArgs(
+			now,
+			service.SchedulabilitySourceAutomatic,
+			service.SchedulabilityReasonExpired,
+			service.SchedulabilitySourceManual,
+		).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(11)).AddRow(int64(29)))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO scheduler_outbox (event_type, account_id, group_id, payload)")).
 		WithArgs(service.SchedulerOutboxEventAccountBulkChanged, nil, nil, accountIDsPayloadMatcher{want: []int64{11, 29}}).
@@ -60,7 +67,12 @@ func TestAutoPauseExpiredAccountsSkipsOutboxWithoutChanges(t *testing.T) {
 
 	now := time.Now()
 	mock.ExpectQuery(`(?s)UPDATE accounts.*RETURNING id`).
-		WithArgs(now).
+		WithArgs(
+			now,
+			service.SchedulabilitySourceAutomatic,
+			service.SchedulabilityReasonExpired,
+			service.SchedulabilitySourceManual,
+		).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 
 	repo := newAccountRepositoryWithSQL(nil, db, nil)

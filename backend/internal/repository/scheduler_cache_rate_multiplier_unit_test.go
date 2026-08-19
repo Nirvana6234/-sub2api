@@ -20,6 +20,12 @@ import (
 // buildSchedulerMetadataAccount 是显式字段清单，将来任何一次快照结构调整漏掉
 // 这一项，对启用利润控制的分组就是全组 no available accounts——而且是静默的。
 // 这条测试让那种漏列在 CI 就变红。
+//
+// RateMultiplierUndeclared 同理但方向相反：它的零值 false 表示「已声明」，
+// 漏列会让一个从没人填过倍率的账号被按列上的默认 1.0 严格判定——正是那次
+// 6 小时 1153 次 no available accounts 的故障形态。零值刻意落在安全一侧
+// （fail-closed），所以漏列不会让利润门静默失效，但会让未声明账号重新被误判，
+// 因此同样需要钉死。
 func TestSchedulerCachePreservesRateMultiplier(t *testing.T) {
 	rate := 0.75
 	account := service.Account{
@@ -65,6 +71,24 @@ func TestSchedulerCachePreservesRateMultiplier(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, decoded.RateMultiplier)
 		require.Equal(t, 0.0, *decoded.RateMultiplier)
+	})
+
+	t.Run("undeclared flag survives both payloads", func(t *testing.T) {
+		undeclared := account
+		undeclared.ID = 9003
+		undeclared.RateMultiplierUndeclared = true
+
+		meta := buildSchedulerMetadataAccount(undeclared)
+		require.True(t, meta.RateMultiplierUndeclared,
+			"metadata 快照漏掉 rate_multiplier_undeclared 会让未声明账号被按默认倍率误判越线")
+
+		full, metaPayload, err := marshalSchedulerCacheAccount(undeclared)
+		require.NoError(t, err)
+		for name, payload := range map[string][]byte{"full": full, "metadata": metaPayload} {
+			decoded, decodeErr := decodeCachedAccount(payload)
+			require.NoError(t, decodeErr, name)
+			require.True(t, decoded.RateMultiplierUndeclared, "%s payload 反序列化后未声明标记不得丢失", name)
+		}
 	})
 
 	t.Run("SetAccount then GetAccount preserves the field", func(t *testing.T) {

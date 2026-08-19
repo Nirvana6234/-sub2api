@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 
-const { updateAccountMock, checkMixedChannelRiskMock, authIsSimpleMode } = vi.hoisted(() => ({
+const { updateAccountMock, updateGroupPrioritiesMock, checkMixedChannelRiskMock, authIsSimpleMode } = vi.hoisted(() => ({
   updateAccountMock: vi.fn(),
+  updateGroupPrioritiesMock: vi.fn(),
   checkMixedChannelRiskMock: vi.fn(),
   authIsSimpleMode: { value: true }
 }))
@@ -28,6 +29,7 @@ vi.mock('@/api/admin', () => ({
   adminAPI: {
     accounts: {
       update: updateAccountMock,
+      updateGroupPriorities: updateGroupPrioritiesMock,
       checkMixedChannelRisk: checkMixedChannelRiskMock
     },
     settings: {
@@ -290,13 +292,14 @@ function buildOpenAISetupTokenAccount() {
   } as any
 }
 
-function mountModal(account = buildAccount()) {
+function mountModal(account = buildAccount(), extraProps: Record<string, unknown> = {}) {
   return mount(EditAccountModal, {
     props: {
       show: true,
       account,
       proxies: [],
-      groups: []
+      groups: [],
+      ...extraProps
     },
     global: {
       stubs: {
@@ -314,6 +317,59 @@ function mountModal(account = buildAccount()) {
 describe('EditAccountModal', () => {
   beforeEach(() => {
     authIsSimpleMode.value = true
+    updateGroupPrioritiesMock.mockReset()
+    updateGroupPrioritiesMock.mockResolvedValue({ updated: 1 })
+  })
+
+  it('edits the visible group priority when opened from a group-filtered list', async () => {
+    const account = buildAccount()
+    account.group_ids = [12]
+    account.group_priority = 100
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue({ ...account, priority: 250 })
+
+    const wrapper = mountModal(account, { priorityGroupId: 12 })
+    const priorityInput = wrapper.get('[data-tour="account-form-priority"]')
+    expect((priorityInput.element as HTMLInputElement).value).toBe('100')
+
+    await priorityInput.setValue(250)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]).not.toHaveProperty('group_ids')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.priority).toBe(250)
+    expect(updateGroupPrioritiesMock).toHaveBeenCalledWith([{
+      account_id: 1,
+      group_id: 12,
+      priority: 250
+    }])
+    expect(wrapper.emitted('updated')?.[0]?.[0]).toMatchObject({
+      id: 1,
+      priority: 250,
+      group_priority: 250
+    })
+  })
+
+  it('does not overwrite priorities when another field is edited from a group-filtered list', async () => {
+    const account = buildAccount()
+    account.group_ids = [12]
+    account.group_priority = 100
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account, { priorityGroupId: 12 })
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]).not.toHaveProperty('priority')
+    expect(updateAccountMock.mock.calls[0]?.[1]).not.toHaveProperty('group_ids')
+    expect(updateGroupPrioritiesMock).not.toHaveBeenCalled()
   })
 
   it('reopening the same account rehydrates the OpenAI whitelist from props', async () => {
@@ -765,6 +821,38 @@ describe('EditAccountModal', () => {
     expect(payload?.upstream_billing_probe_enabled).toBe(true)
     expect(payload?.upstream_billing_rate_sync_enabled).toBe(false)
     expect(payload?.rate_multiplier).toBe(1)
+  })
+
+  it('submits the account upstream billing auto-probe setting for Anthropic API keys', async () => {
+    const account = buildAccount()
+    account.platform = 'anthropic'
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    const toggle = wrapper.get('[data-testid="upstream-billing-auto-probe"]')
+    await toggle.trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.upstream_billing_probe_enabled).toBe(true)
+  })
+
+  it('persists a trimmed New API billing group override', async () => {
+    const account = buildAccount()
+    account.extra = { upstream_billing_probe_enabled: true }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    await wrapper.get('[data-testid="upstream-billing-newapi-group"] input').setValue('  gpt-额度计费  ')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.upstream_billing_newapi_group).toBe('gpt-额度计费')
   })
 
   it('clears OpenAI APIKey Responses override when set back to auto', async () => {

@@ -1,0 +1,14 @@
+{
+  "url": "http://127.0.0.1:4173/admin/connection-health",
+  "desktop_size": {
+    "width": 390,
+    "height": 844
+  },
+  "mobile_viewport": {
+    "width": 390,
+    "height": 844
+  },
+  "console_errors": [],
+  "auto_score_badge": 1,
+  "ttft_rows": 3
+}

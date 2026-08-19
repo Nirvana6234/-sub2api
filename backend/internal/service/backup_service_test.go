@@ -115,7 +115,7 @@ type mockDumper struct {
 	restErr  error
 }
 
-func (m *mockDumper) Dump(_ context.Context) (io.ReadCloser, error) {
+func (m *mockDumper) DumpSystemConfig(_ context.Context) (io.ReadCloser, error) {
 	if m.dumpErr != nil {
 		return nil, m.dumpErr
 	}
@@ -141,7 +141,7 @@ type blockingDumper struct {
 	restErr error
 }
 
-func (d *blockingDumper) Dump(ctx context.Context) (io.ReadCloser, error) {
+func (d *blockingDumper) DumpSystemConfig(ctx context.Context) (io.ReadCloser, error) {
 	select {
 	case <-d.blockCh:
 	case <-ctx.Done():
@@ -398,11 +398,27 @@ func TestBackupService_CreateBackup_Streaming(t *testing.T) {
 	require.Equal(t, "completed", record.Status)
 	require.Greater(t, record.SizeBytes, int64(0))
 	require.NotEmpty(t, record.S3Key)
+	require.Equal(t, backupTypePostgresSystemConfig, record.BackupType)
 
 	// 验证 S3 上确实有文件
 	store.mu.Lock()
 	require.Len(t, store.objects, 1)
 	store.mu.Unlock()
+}
+
+func TestSystemConfigBackupSettingKeysRejectSensitiveAndUserScopedKeys(t *testing.T) {
+	keys := SystemConfigBackupSettingKeys()
+	require.Contains(t, keys, SettingKeyAccountShareRewardRate)
+	require.Contains(t, keys, SettingKeySiteName)
+	require.NotContains(t, keys, SettingKeyAdminAPIKey)
+	require.NotContains(t, keys, SettingKeyWebSearchEmulationConfig)
+	require.NotContains(t, keys, settingKeyBackupS3Config)
+	require.NotContains(t, keys, settingKeyBackupRecords)
+	for _, key := range keys {
+		require.NotContains(t, key, "secret")
+		require.NotContains(t, key, "password")
+		require.NotContains(t, key, "token")
+	}
 }
 
 func TestBackupService_CreateBackup_DumpFailure(t *testing.T) {
@@ -416,7 +432,7 @@ func TestBackupService_CreateBackup_DumpFailure(t *testing.T) {
 	record, err := svc.CreateBackup(context.Background(), "manual", 14)
 	require.Error(t, err)
 	require.Equal(t, "failed", record.Status)
-	require.Contains(t, record.ErrorMsg, "pg_dump")
+	require.Contains(t, record.ErrorMsg, "system config snapshot")
 }
 
 func TestBackupService_CreateBackup_NoS3Config(t *testing.T) {
@@ -479,6 +495,22 @@ func TestBackupService_RestoreBackup_NotCompleted(t *testing.T) {
 
 	err := svc.RestoreBackup(context.Background(), "fail-1")
 	require.Error(t, err)
+}
+
+func TestBackupService_RestoreBackup_RejectsLegacyOrUnsafeBackupType(t *testing.T) {
+	repo := newMockSettingRepo()
+	svc := newTestBackupService(repo, &mockDumper{}, newMockObjectStore())
+	_ = svc.saveRecord(context.Background(), &BackupRecord{
+		ID:         "legacy-1",
+		Status:     "completed",
+		BackupType: "postgres",
+	})
+
+	err := svc.RestoreBackup(context.Background(), "legacy-1")
+	require.ErrorIs(t, err, ErrBackupTypeUnsupported)
+
+	_, err = svc.StartRestore(context.Background(), "legacy-1")
+	require.ErrorIs(t, err, ErrBackupTypeUnsupported)
 }
 
 func TestBackupService_DeleteBackup(t *testing.T) {

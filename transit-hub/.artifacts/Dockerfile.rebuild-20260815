@@ -1,0 +1,7 @@
+FROM transithub:20260810-amount-currency
+
+COPY .artifacts/build-transithub-rebuild-20260815/transithub-api /app/transithub-api
+COPY frontend/dist /app/public
+RUN chmod +x /app/transithub-api
+
+ENTRYPOINT ["/app/transithub-api"]

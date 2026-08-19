@@ -41,6 +41,8 @@ func RegisterAdminRoutes(
 
 		// 账号管理
 		registerAccountRoutes(admin, h, stepUpAuth)
+		registerContributionGovernanceRoutes(admin, h)
+		registerContributionRoomRoutes(admin, h)
 
 		// 公告管理
 		registerAnnouncementRoutes(admin, h)
@@ -344,7 +346,7 @@ func registerGroupRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 }
 
 func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth middleware.StepUpAuthMiddleware) {
-	accounts := admin.Group("/accounts")
+	accounts := admin.Group("/accounts", h.Admin.Account.RequireAdminManagedAccount())
 	{
 		accounts.GET("", h.Admin.Account.List)
 		accounts.GET("/upstream-billing-probe/settings", h.Admin.Account.GetUpstreamBillingProbeSettings)
@@ -361,6 +363,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.POST("/sync/crs/preview", h.Admin.Account.PreviewFromCRS)
 		accounts.PUT("/:id", h.Admin.Account.Update)
 		accounts.PUT("/:id/upstream-billing-probe", h.Admin.Account.SetUpstreamBillingProbeEnabled)
+		accounts.PUT("/:id/upstream-billing-probe/manual-rate", h.Admin.Account.SetUpstreamBillingManualRate)
 		accounts.POST("/:id/upstream-billing-probe", h.Admin.Account.ProbeUpstreamBilling)
 		accounts.GET("/:id/ollama-cloud-usage", h.Admin.Account.GetOllamaCloudUsage)
 		accounts.PUT("/:id/ollama-cloud-usage/session", h.Admin.Account.SaveOllamaCloudUsageSession)
@@ -376,6 +379,9 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.POST("/:id/refresh-tier", h.Admin.Account.RefreshTier)
 		accounts.GET("/:id/stats", h.Admin.Account.GetStats)
 		accounts.POST("/:id/clear-error", h.Admin.Account.ClearError)
+		// 供外部恢复检查（TransitHub）使用的条件恢复接口：只恢复 source=automatic
+		// 的系统自动停用账号，管理员的 manual 决定无法被迟到的恢复请求覆盖。
+		accounts.POST("/:id/recover-schedulability", h.Admin.Account.RecoverSchedulability)
 		accounts.POST("/:id/revert-proxy-fallback", h.Admin.Account.RevertProxyFallback)
 		accounts.GET("/:id/usage", h.Admin.Account.GetUsage)
 		accounts.GET("/:id/today-stats", h.Admin.Account.GetTodayStats)
@@ -395,6 +401,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.POST("/batch-update-credentials", h.Admin.Account.BatchUpdateCredentials)
 		accounts.POST("/batch-refresh-tier", h.Admin.Account.BatchRefreshTier)
 		accounts.POST("/bulk-update", h.Admin.Account.BulkUpdate)
+		accounts.POST("/group-priorities", h.Admin.Account.UpdateGroupPriorities)
 		accounts.POST("/batch-delete", h.Admin.Account.BatchDelete)
 		accounts.POST("/batch-clear-error", h.Admin.Account.BatchClearError)
 		accounts.POST("/batch-refresh", h.Admin.Account.BatchRefresh)
@@ -415,6 +422,33 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 	}
 }
 
+func registerContributionGovernanceRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	contributions := admin.Group("/contributions")
+	{
+		contributions.GET("", h.Admin.Account.ListContributions)
+		contributions.GET("/:id/usage-summary", h.Admin.Account.GetContributionUsageSummary)
+		contributions.GET("/:id", h.Admin.Account.GetContribution)
+		contributions.PUT("/:id", h.Admin.Account.UpdateManagedContribution)
+		contributions.PATCH("/:id", h.Admin.Account.UpdateContributionGovernance)
+		contributions.POST("/:id/test", h.Admin.Account.TestContribution)
+		contributions.DELETE("/:id", h.Admin.Account.DeleteContribution)
+	}
+}
+
+// registerContributionRoomRoutes is intentionally separate from both normal
+// administrator accounts and legacy pool governance. Its responses use the
+// credential-free contribution room view.
+func registerContributionRoomRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	rooms := admin.Group("/contribution-rooms")
+	{
+		rooms.GET("", h.AccountContribution.ListContributionRoomsForAdmin)
+		rooms.GET("/:id", h.AccountContribution.GetContributionRoomForAdmin)
+		rooms.PUT("/:id", h.AccountContribution.UpdateContributionRoomForAdmin)
+		rooms.PATCH("/:id/accounts/:account_id", h.AccountContribution.UpdateContributionRoomAccountForAdmin)
+		rooms.POST("/:id/accounts/:account_id/test", h.AccountContribution.TestContributionRoomAccountForAdmin)
+	}
+}
+
 func registerAnnouncementRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	announcements := admin.Group("/announcements")
 	{
@@ -428,7 +462,7 @@ func registerAnnouncementRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 }
 
 func registerOpenAIOAuthRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
-	openai := admin.Group("/openai")
+	openai := admin.Group("/openai", h.Admin.Account.RequireAdminManagedAccount())
 	{
 		openai.POST("/generate-auth-url", h.Admin.OpenAIOAuth.GenerateAuthURL)
 		openai.POST("/exchange-code", h.Admin.OpenAIOAuth.ExchangeCode)
@@ -461,7 +495,7 @@ func registerAntigravityOAuthRoutes(admin *gin.RouterGroup, h *handler.Handlers)
 }
 
 func registerGrokOAuthRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
-	grok := admin.Group("/grok")
+	grok := admin.Group("/grok", h.Admin.Account.RequireAdminManagedAccount())
 	{
 		grok.POST("/oauth/auth-url", h.Admin.GrokOAuth.GenerateAuthURL)
 		grok.POST("/oauth/exchange-code", h.Admin.GrokOAuth.ExchangeCode)

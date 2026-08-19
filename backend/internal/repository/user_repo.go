@@ -42,6 +42,29 @@ func newUserRepositoryWithSQL(client *dbent.Client, sqlq sqlExecutor) *userRepos
 	return &userRepository{client: client, sql: sqlq}
 }
 
+func (r *userRepository) GetContributionWallet(ctx context.Context, userID int64) (*service.ContributionWallet, error) {
+	wallet := &service.ContributionWallet{}
+	if r == nil || r.sql == nil {
+		return wallet, nil
+	}
+	rows, err := r.sql.QueryContext(ctx, `
+		SELECT balance, earned_total, spent_total
+		FROM user_contribution_wallets
+		WHERE user_id = $1
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return wallet, nil
+	}
+	return wallet, rows.Scan(&wallet.Balance, &wallet.EarnedTotal, &wallet.SpentTotal)
+}
+
 func (r *userRepository) Create(ctx context.Context, userIn *service.User) error {
 	return r.create(ctx, userIn, false)
 }
@@ -122,6 +145,8 @@ func (r *userRepository) create(ctx context.Context, userIn *service.User, guard
 		SetNillableLastLoginAt(userIn.LastLoginAt).
 		SetNillableLastActiveAt(userIn.LastActiveAt).
 		SetRpmLimit(userIn.RPMLimit).
+		SetAccountManagementEnabled(userIn.AccountManagementEnabled).
+		SetContributionRoomsEnabled(userIn.ContributionRoomsEnabled).
 		Save(txCtx)
 	if err != nil {
 		return translatePersistenceError(err, nil, service.ErrEmailExists)
@@ -281,6 +306,12 @@ func (r *userRepository) Update(ctx context.Context, userIn *service.User, field
 	}
 	if fields.RPMLimit {
 		updateOp = updateOp.SetRpmLimit(userIn.RPMLimit)
+	}
+	if fields.AccountManagementEnabled {
+		updateOp = updateOp.SetAccountManagementEnabled(userIn.AccountManagementEnabled)
+	}
+	if fields.ContributionRoomsEnabled {
+		updateOp = updateOp.SetContributionRoomsEnabled(userIn.ContributionRoomsEnabled)
 	}
 	if fields.Status {
 		updateOp = updateOp.SetStatus(userIn.Status)
@@ -1393,6 +1424,8 @@ func applyUserEntityToService(dst *service.User, src *dbent.User) {
 	dst.LastActiveAt = src.LastActiveAt
 	dst.CreatedAt = src.CreatedAt
 	dst.UpdatedAt = src.UpdatedAt
+	dst.AccountManagementEnabled = src.AccountManagementEnabled
+	dst.ContributionRoomsEnabled = src.ContributionRoomsEnabled
 }
 
 func userSignupSourceOrDefault(signupSource string) string {

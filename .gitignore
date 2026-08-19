@@ -136,6 +136,7 @@ docs/*
 !docs/PAYMENT_CN.md
 !docs/ADMIN_PAYMENT_INTEGRATION_API.md
 !docs/ASYNC_IMAGE_TASKS.md
+!docs/PLAYGROUND.md
 !docs/legal/
 !docs/legal/*.md
 .serena/
@@ -143,3 +144,21 @@ docs/*
 frontend/coverage/
 aicodex
 output/
+
+# Local release archives and deployment artifacts
+.omx/
+artifacts/
+backend/artifacts/
+frontend/.pnpm-store/
+deploy/releases/*.tar
+deploy/releases/*.tar.gz
+deploy/releases/*.tar.sha256
+sub2api-*.tar
+sub2api-*.tar.gz
+sub2api-linux-amd64-*
+backend/backend/bin/
+deploy/release-stage-*/backend/bin/
+deploy/sub2api-auto-group-*.zip
+
+# Personal operational notes are local-only and must never be committed.
+管理员信息/

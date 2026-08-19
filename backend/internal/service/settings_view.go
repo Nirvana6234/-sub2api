@@ -173,6 +173,8 @@ type SystemSettings struct {
 	AffiliateRebateFreezeHours   int
 	AffiliateRebateDurationDays  int
 	AffiliateRebatePerInviteeCap float64
+	AccountShareRewardRate       float64
+	AccountOwnUsageFeeRate       float64
 	AdminRechargeRebateEnabled   bool
 	DefaultUserRPMLimit          int
 	DefaultSubscriptions         []DefaultSubscriptionSetting
@@ -199,7 +201,14 @@ type SystemSettings struct {
 	ChannelMonitorDefaultIntervalSeconds int  `json:"channel_monitor_default_interval_seconds"`
 
 	// Available Channels feature (user-facing aggregate view)
-	AvailableChannelsEnabled bool `json:"available_channels_enabled"`
+	AvailableChannelsEnabled       bool    `json:"available_channels_enabled"`
+	PlaygroundEnabled              bool    `json:"playground_enabled"`
+	PlaygroundDefaultChatModel     string  `json:"playground_default_chat_model"`
+	PlaygroundDefaultImageModel    string  `json:"playground_default_image_model"`
+	PlaygroundDefaultChatGroupIDs  []int64 `json:"playground_default_chat_group_ids"`
+	PlaygroundDefaultImageGroupIDs []int64 `json:"playground_default_image_group_ids"`
+	PlaygroundDefaultChatStrategy  string  `json:"playground_default_chat_strategy"`
+	PlaygroundDefaultImageStrategy string  `json:"playground_default_image_strategy"`
 
 	// Model Plaza feature (public group/model pricing showcase)
 	ModelPlazaEnabled     bool   `json:"model_plaza_enabled"`
@@ -364,7 +373,10 @@ type PublicSettings struct {
 	ChannelMonitorDefaultIntervalSeconds int  `json:"channel_monitor_default_interval_seconds"`
 
 	// Available Channels feature (user-facing aggregate view)
-	AvailableChannelsEnabled bool `json:"available_channels_enabled"`
+	AvailableChannelsEnabled    bool   `json:"available_channels_enabled"`
+	PlaygroundEnabled           bool   `json:"playground_enabled"`
+	PlaygroundDefaultChatModel  string `json:"playground_default_chat_model"`
+	PlaygroundDefaultImageModel string `json:"playground_default_image_model"`
 
 	// Model Plaza feature (public group/model pricing showcase)
 	ModelPlazaEnabled     bool `json:"model_plaza_enabled"`
@@ -378,6 +390,17 @@ type PublicSettings struct {
 
 	// 允许终端用户在用量页查看自己的失败请求
 	AllowUserViewErrorRequests bool `json:"allow_user_view_error_requests"`
+}
+
+// PlaygroundDefaultConfig is the administrator-controlled configuration used
+// when provisioning the built-in Playground API keys for a user.
+type PlaygroundDefaultConfig struct {
+	ChatModel     string
+	ImageModel    string
+	ChatGroupIDs  []int64
+	ImageGroupIDs []int64
+	ChatStrategy  string
+	ImageStrategy string
 }
 
 type LoginAgreementDocument struct {

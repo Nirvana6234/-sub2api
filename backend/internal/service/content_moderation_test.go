@@ -500,6 +500,7 @@ func TestContentModerationCheck_PreBlockKeywordHitSkipsUpstreamCall(t *testing.T
 	require.NoError(t, err)
 	require.True(t, decision.Blocked)
 	require.Equal(t, ContentModerationActionKeywordBlock, decision.Action)
+	require.Contains(t, decision.Message, "命中关键词：secret-token")
 	require.False(t, upstreamCalled, "keyword block must short-circuit upstream moderation call")
 	logs := requireContentModerationLogCount(t, repo, 1)
 	require.True(t, logs[0].Flagged)

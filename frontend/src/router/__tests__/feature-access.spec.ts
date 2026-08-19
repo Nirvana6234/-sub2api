@@ -25,6 +25,7 @@ const appStore = vi.hoisted(() => ({
   cachedPublicSettings: null as null | {
     payment_enabled?: boolean
     risk_control_enabled?: boolean
+    playground_enabled?: boolean
     custom_menu_items?: []
   },
   fetchPublicSettings: vi.fn(),
@@ -173,5 +174,41 @@ describe('feature route guard', () => {
     expect(appStore.fetchPublicSettings).not.toHaveBeenCalled()
     expect(next).toHaveBeenCalledOnce()
     expect(next).toHaveBeenCalledWith(target)
+  })
+
+  it('redirects from playground when the opt-in flag is not enabled', async () => {
+    appStore.cachedPublicSettings = { playground_enabled: false }
+    appStore.publicSettingsLoaded = true
+
+    const { navigation, next } = runGuard({}, '/playground')
+    await navigation
+
+    expect(next).toHaveBeenCalledOnce()
+    expect(next).toHaveBeenCalledWith('/dashboard')
+  })
+
+  it('allows playground when public settings cannot be loaded so the backend gate remains authoritative', async () => {
+    appStore.fetchPublicSettings.mockResolvedValue(null)
+
+    const { navigation, next } = runGuard({}, '/playground')
+    await navigation
+
+    expect(next).toHaveBeenCalledOnce()
+    expect(next).toHaveBeenCalledWith()
+  })
+
+  it('allows playground after loading public settings with the flag enabled', async () => {
+    appStore.fetchPublicSettings.mockImplementation(async () => {
+      appStore.cachedPublicSettings = { playground_enabled: true }
+      appStore.publicSettingsLoaded = true
+      return appStore.cachedPublicSettings
+    })
+
+    const { navigation, next } = runGuard({}, '/playground')
+    await navigation
+
+    expect(appStore.fetchPublicSettings).toHaveBeenCalledTimes(1)
+    expect(next).toHaveBeenCalledOnce()
+    expect(next).toHaveBeenCalledWith()
   })
 })

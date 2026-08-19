@@ -39,6 +39,16 @@ type UsageBillingCommand struct {
 	APIKeyQuotaCost     float64
 	APIKeyRateLimitCost float64
 	AccountQuotaCost    float64
+
+	// SharedCost is the final ActualCost generated while consuming another
+	// user's shared account. The repository settles it atomically with the
+	// normal billing effects.
+	SharedCost              float64
+	SharedContributorUserID int64
+	SharedRewardRate        float64
+	SharedRoomID            int64
+	SharedBudgetCost        float64
+	OwnAccountFeeCost       float64
 }
 
 func (c *UsageBillingCommand) Normalize() {
@@ -56,7 +66,7 @@ func buildUsageBillingFingerprint(c *UsageBillingCommand) string {
 		return ""
 	}
 	raw := fmt.Sprintf(
-		"%d|%d|%d|%s|%s|%s|%s|%d|%d|%d|%d|%d|%d|%s|%d|%0.10f|%0.10f|%0.10f|%0.10f|%0.10f",
+		"%d|%d|%d|%s|%s|%s|%s|%d|%d|%d|%d|%d|%d|%s|%d|%0.10f|%0.10f|%0.10f|%0.10f|%0.10f|%0.10f|%d|%0.6f|%d|%0.10f|%0.10f",
 		c.UserID,
 		c.AccountID,
 		c.APIKeyID,
@@ -77,6 +87,12 @@ func buildUsageBillingFingerprint(c *UsageBillingCommand) string {
 		c.APIKeyQuotaCost,
 		c.APIKeyRateLimitCost,
 		c.AccountQuotaCost,
+		c.SharedCost,
+		c.SharedContributorUserID,
+		c.SharedRewardRate,
+		c.SharedRoomID,
+		c.SharedBudgetCost,
+		c.OwnAccountFeeCost,
 	)
 	if payloadHash := strings.TrimSpace(c.RequestPayloadHash); payloadHash != "" {
 		raw += "|" + payloadHash
@@ -112,11 +128,13 @@ type AccountQuotaState struct {
 }
 
 type UsageBillingApplyResult struct {
-	Applied              bool
-	APIKeyQuotaExhausted bool
-	NewBalance           *float64           // post-deduction balance (nil = no balance deduction)
-	BalanceOverdrafted   bool               // true when the sufficient-balance guard missed and debt was still recorded
-	QuotaState           *AccountQuotaState // post-increment quota state (nil = no quota increment)
+	Applied                bool
+	APIKeyQuotaExhausted   bool
+	NewBalance             *float64           // post-deduction balance (nil = no balance deduction)
+	BalanceOverdrafted     bool               // true when the sufficient-balance guard missed and debt was still recorded
+	QuotaState             *AccountQuotaState // post-increment quota state (nil = no quota increment)
+	ContributionWalletPaid float64
+	ContributionReward     float64
 }
 
 // BatchImageBalanceHoldCommand describes an idempotent balance hold operation.

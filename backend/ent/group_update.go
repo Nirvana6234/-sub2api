@@ -14,6 +14,7 @@ import (
 	"entgo.io/ent/schema/field"
 	"github.com/Wei-Shaw/sub2api/ent/account"
 	"github.com/Wei-Shaw/sub2api/ent/apikey"
+	"github.com/Wei-Shaw/sub2api/ent/compositemodelroute"
 	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/ent/predicate"
 	"github.com/Wei-Shaw/sub2api/ent/redeemcode"
@@ -114,6 +115,20 @@ func (_u *GroupUpdate) SetNillableRateMultiplier(v *float64) *GroupUpdate {
 // AddRateMultiplier adds value to the "rate_multiplier" field.
 func (_u *GroupUpdate) AddRateMultiplier(v float64) *GroupUpdate {
 	_u.mutation.AddRateMultiplier(v)
+	return _u
+}
+
+// SetAllowContributionPool sets the "allow_contribution_pool" field.
+func (_u *GroupUpdate) SetAllowContributionPool(v bool) *GroupUpdate {
+	_u.mutation.SetAllowContributionPool(v)
+	return _u
+}
+
+// SetNillableAllowContributionPool sets the "allow_contribution_pool" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableAllowContributionPool(v *bool) *GroupUpdate {
+	if v != nil {
+		_u.SetAllowContributionPool(*v)
+	}
 	return _u
 }
 
@@ -1099,6 +1114,21 @@ func (_u *GroupUpdate) AddAllowedUsers(v ...*User) *GroupUpdate {
 	return _u.AddAllowedUserIDs(ids...)
 }
 
+// AddCompositeModelRouteIDs adds the "composite_model_routes" edge to the CompositeModelRoute entity by IDs.
+func (_u *GroupUpdate) AddCompositeModelRouteIDs(ids ...int64) *GroupUpdate {
+	_u.mutation.AddCompositeModelRouteIDs(ids...)
+	return _u
+}
+
+// AddCompositeModelRoutes adds the "composite_model_routes" edges to the CompositeModelRoute entity.
+func (_u *GroupUpdate) AddCompositeModelRoutes(v ...*CompositeModelRoute) *GroupUpdate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.AddCompositeModelRouteIDs(ids...)
+}
+
 // Mutation returns the GroupMutation object of the builder.
 func (_u *GroupUpdate) Mutation() *GroupMutation {
 	return _u.mutation
@@ -1230,6 +1260,27 @@ func (_u *GroupUpdate) RemoveAllowedUsers(v ...*User) *GroupUpdate {
 	return _u.RemoveAllowedUserIDs(ids...)
 }
 
+// ClearCompositeModelRoutes clears all "composite_model_routes" edges to the CompositeModelRoute entity.
+func (_u *GroupUpdate) ClearCompositeModelRoutes() *GroupUpdate {
+	_u.mutation.ClearCompositeModelRoutes()
+	return _u
+}
+
+// RemoveCompositeModelRouteIDs removes the "composite_model_routes" edge to CompositeModelRoute entities by IDs.
+func (_u *GroupUpdate) RemoveCompositeModelRouteIDs(ids ...int64) *GroupUpdate {
+	_u.mutation.RemoveCompositeModelRouteIDs(ids...)
+	return _u
+}
+
+// RemoveCompositeModelRoutes removes "composite_model_routes" edges to CompositeModelRoute entities.
+func (_u *GroupUpdate) RemoveCompositeModelRoutes(v ...*CompositeModelRoute) *GroupUpdate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.RemoveCompositeModelRouteIDs(ids...)
+}
+
 // Save executes the query and returns the number of nodes affected by the update operation.
 func (_u *GroupUpdate) Save(ctx context.Context) (int, error) {
 	if err := _u.defaults(); err != nil {
@@ -1352,6 +1403,9 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.AddedRateMultiplier(); ok {
 		_spec.AddField(group.FieldRateMultiplier, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AllowContributionPool(); ok {
+		_spec.SetField(group.FieldAllowContributionPool, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.PeakRateEnabled(); ok {
 		_spec.SetField(group.FieldPeakRateEnabled, field.TypeBool, value)
@@ -1909,6 +1963,51 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 		edge.Target.Fields = specE.Fields
 		_spec.Edges.Add = append(_spec.Edges.Add, edge)
 	}
+	if _u.mutation.CompositeModelRoutesCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   group.CompositeModelRoutesTable,
+			Columns: []string{group.CompositeModelRoutesColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(compositemodelroute.FieldID, field.TypeInt64),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.RemovedCompositeModelRoutesIDs(); len(nodes) > 0 && !_u.mutation.CompositeModelRoutesCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   group.CompositeModelRoutesTable,
+			Columns: []string{group.CompositeModelRoutesColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(compositemodelroute.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.CompositeModelRoutesIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   group.CompositeModelRoutesTable,
+			Columns: []string{group.CompositeModelRoutesColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(compositemodelroute.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
 	if _node, err = sqlgraph.UpdateNodes(ctx, _u.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
 			err = &NotFoundError{group.Label}
@@ -2007,6 +2106,20 @@ func (_u *GroupUpdateOne) SetNillableRateMultiplier(v *float64) *GroupUpdateOne 
 // AddRateMultiplier adds value to the "rate_multiplier" field.
 func (_u *GroupUpdateOne) AddRateMultiplier(v float64) *GroupUpdateOne {
 	_u.mutation.AddRateMultiplier(v)
+	return _u
+}
+
+// SetAllowContributionPool sets the "allow_contribution_pool" field.
+func (_u *GroupUpdateOne) SetAllowContributionPool(v bool) *GroupUpdateOne {
+	_u.mutation.SetAllowContributionPool(v)
+	return _u
+}
+
+// SetNillableAllowContributionPool sets the "allow_contribution_pool" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableAllowContributionPool(v *bool) *GroupUpdateOne {
+	if v != nil {
+		_u.SetAllowContributionPool(*v)
+	}
 	return _u
 }
 
@@ -2992,6 +3105,21 @@ func (_u *GroupUpdateOne) AddAllowedUsers(v ...*User) *GroupUpdateOne {
 	return _u.AddAllowedUserIDs(ids...)
 }
 
+// AddCompositeModelRouteIDs adds the "composite_model_routes" edge to the CompositeModelRoute entity by IDs.
+func (_u *GroupUpdateOne) AddCompositeModelRouteIDs(ids ...int64) *GroupUpdateOne {
+	_u.mutation.AddCompositeModelRouteIDs(ids...)
+	return _u
+}
+
+// AddCompositeModelRoutes adds the "composite_model_routes" edges to the CompositeModelRoute entity.
+func (_u *GroupUpdateOne) AddCompositeModelRoutes(v ...*CompositeModelRoute) *GroupUpdateOne {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.AddCompositeModelRouteIDs(ids...)
+}
+
 // Mutation returns the GroupMutation object of the builder.
 func (_u *GroupUpdateOne) Mutation() *GroupMutation {
 	return _u.mutation
@@ -3121,6 +3249,27 @@ func (_u *GroupUpdateOne) RemoveAllowedUsers(v ...*User) *GroupUpdateOne {
 		ids[i] = v[i].ID
 	}
 	return _u.RemoveAllowedUserIDs(ids...)
+}
+
+// ClearCompositeModelRoutes clears all "composite_model_routes" edges to the CompositeModelRoute entity.
+func (_u *GroupUpdateOne) ClearCompositeModelRoutes() *GroupUpdateOne {
+	_u.mutation.ClearCompositeModelRoutes()
+	return _u
+}
+
+// RemoveCompositeModelRouteIDs removes the "composite_model_routes" edge to CompositeModelRoute entities by IDs.
+func (_u *GroupUpdateOne) RemoveCompositeModelRouteIDs(ids ...int64) *GroupUpdateOne {
+	_u.mutation.RemoveCompositeModelRouteIDs(ids...)
+	return _u
+}
+
+// RemoveCompositeModelRoutes removes "composite_model_routes" edges to CompositeModelRoute entities.
+func (_u *GroupUpdateOne) RemoveCompositeModelRoutes(v ...*CompositeModelRoute) *GroupUpdateOne {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.RemoveCompositeModelRouteIDs(ids...)
 }
 
 // Where appends a list predicates to the GroupUpdate builder.
@@ -3275,6 +3424,9 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	}
 	if value, ok := _u.mutation.AddedRateMultiplier(); ok {
 		_spec.AddField(group.FieldRateMultiplier, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AllowContributionPool(); ok {
+		_spec.SetField(group.FieldAllowContributionPool, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.PeakRateEnabled(); ok {
 		_spec.SetField(group.FieldPeakRateEnabled, field.TypeBool, value)
@@ -3830,6 +3982,51 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 		createE.defaults()
 		_, specE := createE.createSpec()
 		edge.Target.Fields = specE.Fields
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.CompositeModelRoutesCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   group.CompositeModelRoutesTable,
+			Columns: []string{group.CompositeModelRoutesColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(compositemodelroute.FieldID, field.TypeInt64),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.RemovedCompositeModelRoutesIDs(); len(nodes) > 0 && !_u.mutation.CompositeModelRoutesCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   group.CompositeModelRoutesTable,
+			Columns: []string{group.CompositeModelRoutesColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(compositemodelroute.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.CompositeModelRoutesIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   group.CompositeModelRoutesTable,
+			Columns: []string{group.CompositeModelRoutesColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(compositemodelroute.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
 		_spec.Edges.Add = append(_spec.Edges.Add, edge)
 	}
 	_node = &Group{config: _u.config}

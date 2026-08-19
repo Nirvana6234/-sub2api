@@ -147,6 +147,50 @@ func TestAccountHandlerListReturnsSchedulerScoresPerGroup(t *testing.T) {
 	require.Greater(t, high.SchedulerScores[0].BaseScore, low.SchedulerScores[0].BaseScore)
 }
 
+func TestAccountHandlerListReturnsGroupPriorityForNonSchedulableAccount(t *testing.T) {
+	router, adminSvc := setupAccountListRouter()
+	now := time.Now().UTC()
+	groupID := int64(55)
+	adminSvc.accounts = []service.Account{
+		{
+			ID:          103,
+			Name:        "suspended-account",
+			Platform:    service.PlatformOpenAI,
+			Type:        service.AccountTypeAPIKey,
+			Status:      service.StatusDisabled,
+			Schedulable: false,
+			Priority:    1,
+			AccountGroups: []service.AccountGroup{
+				{AccountID: 103, GroupID: groupID, Priority: 99, Group: &service.Group{ID: groupID, Name: "openai"}},
+			},
+			GroupIDs:  []int64{groupID},
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts?page=1&page_size=20&platform=openai&group=55", nil)
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var payload struct {
+		Data struct {
+			Items []struct {
+				ID              int64 `json:"id"`
+				GroupPriority   *int  `json:"group_priority"`
+				SchedulerScores []any `json:"scheduler_scores"`
+			} `json:"items"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+	require.Len(t, payload.Data.Items, 1)
+	require.Equal(t, int64(103), payload.Data.Items[0].ID)
+	require.NotNil(t, payload.Data.Items[0].GroupPriority)
+	require.Equal(t, 99, *payload.Data.Items[0].GroupPriority)
+	require.Empty(t, payload.Data.Items[0].SchedulerScores)
+}
+
 func TestAccountHandlerListSkipsSchedulerScoresByDefault(t *testing.T) {
 	router, adminSvc := setupAccountListRouter()
 	now := time.Now().UTC()

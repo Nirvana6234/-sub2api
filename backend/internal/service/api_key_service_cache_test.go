@@ -128,6 +128,7 @@ type authCacheStub struct {
 	getAuthCache   func(ctx context.Context, key string) (*APIKeyAuthCacheEntry, error)
 	setAuthKeys    []string
 	deleteAuthKeys []string
+	publishedKeys  []string
 }
 
 func (s *authCacheStub) GetCreateAttemptCount(ctx context.Context, userID int64) (int, error) {
@@ -168,6 +169,7 @@ func (s *authCacheStub) DeleteAuthCache(ctx context.Context, key string) error {
 }
 
 func (s *authCacheStub) PublishAuthCacheInvalidation(ctx context.Context, cacheKey string) error {
+	s.publishedKeys = append(s.publishedKeys, cacheKey)
 	return nil
 }
 
@@ -276,6 +278,34 @@ func TestAPIKeyService_SnapshotRoundTrip_PreservesMessagesDispatchModelConfig(t 
 	require.Equal(t, apiKey.Name, roundTrip.Name)
 	require.NotNil(t, roundTrip.Group)
 	require.Equal(t, apiKey.Group.MessagesDispatchModelConfig, roundTrip.Group.MessagesDispatchModelConfig)
+}
+
+func TestAPIKeyService_SnapshotRoundTrip_PreservesAutomaticGroupRouting(t *testing.T) {
+	svc := NewAPIKeyService(nil, nil, nil, nil, nil, nil, &config.Config{})
+	apiKey := &APIKey{
+		ID:                1,
+		UserID:            2,
+		Key:               "k-auto-group",
+		Status:            StatusActive,
+		AutoGroup:         true,
+		AutoGroupStrategy: autoGroupStrategySpeed,
+		AutoGroupIDs:      []int64{9, 12},
+		User: &User{
+			ID:          2,
+			Status:      StatusActive,
+			Role:        RoleUser,
+			Balance:     10,
+			Concurrency: 3,
+		},
+	}
+
+	snapshot := svc.snapshotFromAPIKey(context.Background(), apiKey)
+	roundTrip := svc.snapshotToAPIKey(apiKey.Key, snapshot)
+
+	require.NotNil(t, roundTrip)
+	require.True(t, roundTrip.AutoGroup)
+	require.Equal(t, autoGroupStrategySpeed, roundTrip.AutoGroupStrategy)
+	require.Equal(t, []int64{9, 12}, roundTrip.AutoGroupIDs)
 }
 
 func TestAPIKeyService_SnapshotRoundTrip_PreservesReasoningEffortPolicy(t *testing.T) {
@@ -508,9 +538,14 @@ func TestAPIKeyService_InvalidateAuthCacheByUserID(t *testing.T) {
 		},
 	}
 	svc := NewAPIKeyService(repo, nil, nil, nil, nil, cache, cfg)
+	apiKey := &APIKey{ID: 11, UserID: 7, AutoGroup: true, AutoGroupIDs: []int64{9, 10}}
+	selectionKey := autoGroupSelectionKey(apiKey, "gpt-test")
+	svc.autoGroupSelections.Store(selectionKey, autoGroupSelection{userID: 7, groupID: 9})
 
 	svc.InvalidateAuthCacheByUserID(context.Background(), 7)
 	require.Len(t, cache.deleteAuthKeys, 2)
+	_, exists := svc.autoGroupSelections.Load(selectionKey)
+	require.True(t, exists, "routine auth snapshot invalidation must not reset settled Auto routing")
 }
 
 func TestAPIKeyService_InvalidateAuthCacheByGroupID(t *testing.T) {
@@ -529,6 +564,57 @@ func TestAPIKeyService_InvalidateAuthCacheByGroupID(t *testing.T) {
 
 	svc.InvalidateAuthCacheByGroupID(context.Background(), 9)
 	require.Len(t, cache.deleteAuthKeys, 2)
+}
+
+func TestAPIKeyService_InvalidateAutoGroupSelectionsByUserID(t *testing.T) {
+	cache := &authCacheStub{}
+	svc := &APIKeyService{cache: cache}
+	apiKey := &APIKey{ID: 11, UserID: 7, AutoGroup: true, AutoGroupIDs: []int64{9, 10}}
+	selectionKey := autoGroupSelectionKey(apiKey, "gpt-test")
+	svc.autoGroupSelections.Store(selectionKey, autoGroupSelection{
+		userID:            7,
+		candidateGroupIDs: []int64{9, 10},
+		groupID:           9,
+	})
+
+	svc.InvalidateAutoGroupSelectionsByUserID(context.Background(), 7)
+
+	_, exists := svc.autoGroupSelections.Load(selectionKey)
+	require.False(t, exists)
+	require.Contains(t, cache.publishedKeys, autoGroupUserInvalidationMessage(7))
+}
+
+func TestAPIKeyService_InvalidateAutoGroupSelectionsByGroupID(t *testing.T) {
+	cache := &authCacheStub{}
+	svc := &APIKeyService{cache: cache}
+	relevantKey := autoGroupSelectionKey(&APIKey{ID: 12, UserID: 7, AutoGroup: true, AutoGroupIDs: []int64{9, 10}}, "gpt-test")
+	unrelatedKey := autoGroupSelectionKey(&APIKey{ID: 13, UserID: 8, AutoGroup: true, AutoGroupIDs: []int64{11, 12}}, "gpt-test")
+	svc.autoGroupSelections.Store(relevantKey, autoGroupSelection{candidateGroupIDs: []int64{9, 10}, groupID: 10})
+	svc.autoGroupSelections.Store(unrelatedKey, autoGroupSelection{candidateGroupIDs: []int64{11, 12}, groupID: 11})
+
+	svc.InvalidateAutoGroupSelectionsByGroupID(context.Background(), 9)
+
+	_, relevantExists := svc.autoGroupSelections.Load(relevantKey)
+	_, unrelatedExists := svc.autoGroupSelections.Load(unrelatedKey)
+	require.False(t, relevantExists)
+	require.True(t, unrelatedExists)
+	require.Contains(t, cache.publishedKeys, autoGroupGroupInvalidationMessage(9))
+}
+
+func TestAPIKeyService_HandlesRemoteAutoGroupInvalidation(t *testing.T) {
+	svc := &APIKeyService{}
+	apiKey := &APIKey{ID: 14, UserID: 21, AutoGroup: true, AutoGroupIDs: []int64{9, 10}}
+	selectionKey := autoGroupSelectionKey(apiKey, "gpt-test")
+	svc.autoGroupSelections.Store(selectionKey, autoGroupSelection{
+		userID:            apiKey.UserID,
+		candidateGroupIDs: append([]int64(nil), apiKey.AutoGroupIDs...),
+		groupID:           9,
+	})
+
+	svc.handleAuthCacheInvalidationMessage(autoGroupGroupInvalidationMessage(9))
+
+	_, exists := svc.autoGroupSelections.Load(selectionKey)
+	require.False(t, exists)
 }
 
 func TestAPIKeyService_InvalidateAuthCacheByKey(t *testing.T) {

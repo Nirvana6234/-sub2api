@@ -44,6 +44,7 @@ func (r *complianceGuardRepoStub) GetAll(ctx context.Context) (map[string]string
 func (r *complianceGuardRepoStub) Delete(ctx context.Context, key string) error { return nil }
 
 func TestAdminComplianceGuardBlocksAdminRouteWhenMissing(t *testing.T) {
+	t.Setenv("LOCAL_DESKTOP_MODE", "")
 	gin.SetMode(gin.TestMode)
 	svc := service.NewSettingService(&complianceGuardRepoStub{}, &config.Config{})
 	router := gin.New()
@@ -62,6 +63,50 @@ func TestAdminComplianceGuardBlocksAdminRouteWhenMissing(t *testing.T) {
 
 	require.Equal(t, http.StatusLocked, w.Code)
 	require.Contains(t, w.Body.String(), "ADMIN_COMPLIANCE_ACK_REQUIRED")
+}
+
+func TestAdminComplianceGuardBypassesLoopbackInLocalDesktopMode(t *testing.T) {
+	t.Setenv("LOCAL_DESKTOP_MODE", "true")
+	gin.SetMode(gin.TestMode)
+	svc := service.NewSettingService(&complianceGuardRepoStub{}, &config.Config{})
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(string(ContextKeyUser), AuthSubject{UserID: 1})
+		c.Next()
+	})
+	router.Use(AdminComplianceGuard(svc))
+	router.GET("/api/v1/admin/users", func(c *gin.Context) {
+		c.String(http.StatusOK, "ok")
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/users", nil)
+	req.RemoteAddr = "127.0.0.1:43120"
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestAdminComplianceGuardDoesNotBypassRemoteDesktopRequest(t *testing.T) {
+	t.Setenv("LOCAL_DESKTOP_MODE", "true")
+	gin.SetMode(gin.TestMode)
+	svc := service.NewSettingService(&complianceGuardRepoStub{}, &config.Config{})
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(string(ContextKeyUser), AuthSubject{UserID: 1})
+		c.Next()
+	})
+	router.Use(AdminComplianceGuard(svc))
+	router.GET("/api/v1/admin/users", func(c *gin.Context) {
+		c.String(http.StatusOK, "ok")
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/users", nil)
+	req.RemoteAddr = "192.0.2.50:43120"
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusLocked, w.Code)
 }
 
 func TestAdminComplianceGuardBypassesComplianceEndpoint(t *testing.T) {

@@ -17,6 +17,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/predicate"
 	"github.com/Wei-Shaw/sub2api/ent/usagelog"
 	"github.com/Wei-Shaw/sub2api/ent/user"
+	"github.com/Wei-Shaw/sub2api/ent/usercontributionroompreference"
 )
 
 // APIKeyUpdate is the builder for updating APIKey entities.
@@ -117,6 +118,34 @@ func (_u *APIKeyUpdate) SetNillableGroupID(v *int64) *APIKeyUpdate {
 // ClearGroupID clears the value of the "group_id" field.
 func (_u *APIKeyUpdate) ClearGroupID() *APIKeyUpdate {
 	_u.mutation.ClearGroupID()
+	return _u
+}
+
+// SetAutoGroup sets the "auto_group" field.
+func (_u *APIKeyUpdate) SetAutoGroup(v bool) *APIKeyUpdate {
+	_u.mutation.SetAutoGroup(v)
+	return _u
+}
+
+// SetNillableAutoGroup sets the "auto_group" field if the given value is not nil.
+func (_u *APIKeyUpdate) SetNillableAutoGroup(v *bool) *APIKeyUpdate {
+	if v != nil {
+		_u.SetAutoGroup(*v)
+	}
+	return _u
+}
+
+// SetAutoGroupStrategy sets the "auto_group_strategy" field.
+func (_u *APIKeyUpdate) SetAutoGroupStrategy(v string) *APIKeyUpdate {
+	_u.mutation.SetAutoGroupStrategy(v)
+	return _u
+}
+
+// SetNillableAutoGroupStrategy sets the "auto_group_strategy" field if the given value is not nil.
+func (_u *APIKeyUpdate) SetNillableAutoGroupStrategy(v *string) *APIKeyUpdate {
+	if v != nil {
+		_u.SetAutoGroupStrategy(*v)
+	}
 	return _u
 }
 
@@ -448,6 +477,21 @@ func (_u *APIKeyUpdate) SetGroup(v *Group) *APIKeyUpdate {
 	return _u.SetGroupID(v.ID)
 }
 
+// AddContributionRoomPreferenceIDs adds the "contribution_room_preferences" edge to the UserContributionRoomPreference entity by IDs.
+func (_u *APIKeyUpdate) AddContributionRoomPreferenceIDs(ids ...int64) *APIKeyUpdate {
+	_u.mutation.AddContributionRoomPreferenceIDs(ids...)
+	return _u
+}
+
+// AddContributionRoomPreferences adds the "contribution_room_preferences" edges to the UserContributionRoomPreference entity.
+func (_u *APIKeyUpdate) AddContributionRoomPreferences(v ...*UserContributionRoomPreference) *APIKeyUpdate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.AddContributionRoomPreferenceIDs(ids...)
+}
+
 // AddUsageLogIDs adds the "usage_logs" edge to the UsageLog entity by IDs.
 func (_u *APIKeyUpdate) AddUsageLogIDs(ids ...int64) *APIKeyUpdate {
 	_u.mutation.AddUsageLogIDs(ids...)
@@ -478,6 +522,27 @@ func (_u *APIKeyUpdate) ClearUser() *APIKeyUpdate {
 func (_u *APIKeyUpdate) ClearGroup() *APIKeyUpdate {
 	_u.mutation.ClearGroup()
 	return _u
+}
+
+// ClearContributionRoomPreferences clears all "contribution_room_preferences" edges to the UserContributionRoomPreference entity.
+func (_u *APIKeyUpdate) ClearContributionRoomPreferences() *APIKeyUpdate {
+	_u.mutation.ClearContributionRoomPreferences()
+	return _u
+}
+
+// RemoveContributionRoomPreferenceIDs removes the "contribution_room_preferences" edge to UserContributionRoomPreference entities by IDs.
+func (_u *APIKeyUpdate) RemoveContributionRoomPreferenceIDs(ids ...int64) *APIKeyUpdate {
+	_u.mutation.RemoveContributionRoomPreferenceIDs(ids...)
+	return _u
+}
+
+// RemoveContributionRoomPreferences removes "contribution_room_preferences" edges to UserContributionRoomPreference entities.
+func (_u *APIKeyUpdate) RemoveContributionRoomPreferences(v ...*UserContributionRoomPreference) *APIKeyUpdate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.RemoveContributionRoomPreferenceIDs(ids...)
 }
 
 // ClearUsageLogs clears all "usage_logs" edges to the UsageLog entity.
@@ -555,6 +620,11 @@ func (_u *APIKeyUpdate) check() error {
 			return &ValidationError{Name: "name", err: fmt.Errorf(`ent: validator failed for field "APIKey.name": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.AutoGroupStrategy(); ok {
+		if err := apikey.AutoGroupStrategyValidator(v); err != nil {
+			return &ValidationError{Name: "auto_group_strategy", err: fmt.Errorf(`ent: validator failed for field "APIKey.auto_group_strategy": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.Status(); ok {
 		if err := apikey.StatusValidator(v); err != nil {
 			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "APIKey.status": %w`, err)}
@@ -592,6 +662,12 @@ func (_u *APIKeyUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.Name(); ok {
 		_spec.SetField(apikey.FieldName, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.AutoGroup(); ok {
+		_spec.SetField(apikey.FieldAutoGroup, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.AutoGroupStrategy(); ok {
+		_spec.SetField(apikey.FieldAutoGroupStrategy, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(apikey.FieldStatus, field.TypeString, value)
@@ -754,6 +830,51 @@ func (_u *APIKeyUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 		}
 		_spec.Edges.Add = append(_spec.Edges.Add, edge)
 	}
+	if _u.mutation.ContributionRoomPreferencesCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   apikey.ContributionRoomPreferencesTable,
+			Columns: []string{apikey.ContributionRoomPreferencesColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(usercontributionroompreference.FieldID, field.TypeInt64),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.RemovedContributionRoomPreferencesIDs(); len(nodes) > 0 && !_u.mutation.ContributionRoomPreferencesCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   apikey.ContributionRoomPreferencesTable,
+			Columns: []string{apikey.ContributionRoomPreferencesColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(usercontributionroompreference.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.ContributionRoomPreferencesIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   apikey.ContributionRoomPreferencesTable,
+			Columns: []string{apikey.ContributionRoomPreferencesColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(usercontributionroompreference.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
 	if _u.mutation.UsageLogsCleared() {
 		edge := &sqlgraph.EdgeSpec{
 			Rel:     sqlgraph.O2M,
@@ -904,6 +1025,34 @@ func (_u *APIKeyUpdateOne) SetNillableGroupID(v *int64) *APIKeyUpdateOne {
 // ClearGroupID clears the value of the "group_id" field.
 func (_u *APIKeyUpdateOne) ClearGroupID() *APIKeyUpdateOne {
 	_u.mutation.ClearGroupID()
+	return _u
+}
+
+// SetAutoGroup sets the "auto_group" field.
+func (_u *APIKeyUpdateOne) SetAutoGroup(v bool) *APIKeyUpdateOne {
+	_u.mutation.SetAutoGroup(v)
+	return _u
+}
+
+// SetNillableAutoGroup sets the "auto_group" field if the given value is not nil.
+func (_u *APIKeyUpdateOne) SetNillableAutoGroup(v *bool) *APIKeyUpdateOne {
+	if v != nil {
+		_u.SetAutoGroup(*v)
+	}
+	return _u
+}
+
+// SetAutoGroupStrategy sets the "auto_group_strategy" field.
+func (_u *APIKeyUpdateOne) SetAutoGroupStrategy(v string) *APIKeyUpdateOne {
+	_u.mutation.SetAutoGroupStrategy(v)
+	return _u
+}
+
+// SetNillableAutoGroupStrategy sets the "auto_group_strategy" field if the given value is not nil.
+func (_u *APIKeyUpdateOne) SetNillableAutoGroupStrategy(v *string) *APIKeyUpdateOne {
+	if v != nil {
+		_u.SetAutoGroupStrategy(*v)
+	}
 	return _u
 }
 
@@ -1235,6 +1384,21 @@ func (_u *APIKeyUpdateOne) SetGroup(v *Group) *APIKeyUpdateOne {
 	return _u.SetGroupID(v.ID)
 }
 
+// AddContributionRoomPreferenceIDs adds the "contribution_room_preferences" edge to the UserContributionRoomPreference entity by IDs.
+func (_u *APIKeyUpdateOne) AddContributionRoomPreferenceIDs(ids ...int64) *APIKeyUpdateOne {
+	_u.mutation.AddContributionRoomPreferenceIDs(ids...)
+	return _u
+}
+
+// AddContributionRoomPreferences adds the "contribution_room_preferences" edges to the UserContributionRoomPreference entity.
+func (_u *APIKeyUpdateOne) AddContributionRoomPreferences(v ...*UserContributionRoomPreference) *APIKeyUpdateOne {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.AddContributionRoomPreferenceIDs(ids...)
+}
+
 // AddUsageLogIDs adds the "usage_logs" edge to the UsageLog entity by IDs.
 func (_u *APIKeyUpdateOne) AddUsageLogIDs(ids ...int64) *APIKeyUpdateOne {
 	_u.mutation.AddUsageLogIDs(ids...)
@@ -1265,6 +1429,27 @@ func (_u *APIKeyUpdateOne) ClearUser() *APIKeyUpdateOne {
 func (_u *APIKeyUpdateOne) ClearGroup() *APIKeyUpdateOne {
 	_u.mutation.ClearGroup()
 	return _u
+}
+
+// ClearContributionRoomPreferences clears all "contribution_room_preferences" edges to the UserContributionRoomPreference entity.
+func (_u *APIKeyUpdateOne) ClearContributionRoomPreferences() *APIKeyUpdateOne {
+	_u.mutation.ClearContributionRoomPreferences()
+	return _u
+}
+
+// RemoveContributionRoomPreferenceIDs removes the "contribution_room_preferences" edge to UserContributionRoomPreference entities by IDs.
+func (_u *APIKeyUpdateOne) RemoveContributionRoomPreferenceIDs(ids ...int64) *APIKeyUpdateOne {
+	_u.mutation.RemoveContributionRoomPreferenceIDs(ids...)
+	return _u
+}
+
+// RemoveContributionRoomPreferences removes "contribution_room_preferences" edges to UserContributionRoomPreference entities.
+func (_u *APIKeyUpdateOne) RemoveContributionRoomPreferences(v ...*UserContributionRoomPreference) *APIKeyUpdateOne {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.RemoveContributionRoomPreferenceIDs(ids...)
 }
 
 // ClearUsageLogs clears all "usage_logs" edges to the UsageLog entity.
@@ -1355,6 +1540,11 @@ func (_u *APIKeyUpdateOne) check() error {
 			return &ValidationError{Name: "name", err: fmt.Errorf(`ent: validator failed for field "APIKey.name": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.AutoGroupStrategy(); ok {
+		if err := apikey.AutoGroupStrategyValidator(v); err != nil {
+			return &ValidationError{Name: "auto_group_strategy", err: fmt.Errorf(`ent: validator failed for field "APIKey.auto_group_strategy": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.Status(); ok {
 		if err := apikey.StatusValidator(v); err != nil {
 			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "APIKey.status": %w`, err)}
@@ -1409,6 +1599,12 @@ func (_u *APIKeyUpdateOne) sqlSave(ctx context.Context) (_node *APIKey, err erro
 	}
 	if value, ok := _u.mutation.Name(); ok {
 		_spec.SetField(apikey.FieldName, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.AutoGroup(); ok {
+		_spec.SetField(apikey.FieldAutoGroup, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.AutoGroupStrategy(); ok {
+		_spec.SetField(apikey.FieldAutoGroupStrategy, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(apikey.FieldStatus, field.TypeString, value)
@@ -1564,6 +1760,51 @@ func (_u *APIKeyUpdateOne) sqlSave(ctx context.Context) (_node *APIKey, err erro
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(group.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.ContributionRoomPreferencesCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   apikey.ContributionRoomPreferencesTable,
+			Columns: []string{apikey.ContributionRoomPreferencesColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(usercontributionroompreference.FieldID, field.TypeInt64),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.RemovedContributionRoomPreferencesIDs(); len(nodes) > 0 && !_u.mutation.ContributionRoomPreferencesCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   apikey.ContributionRoomPreferencesTable,
+			Columns: []string{apikey.ContributionRoomPreferencesColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(usercontributionroompreference.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.ContributionRoomPreferencesIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   apikey.ContributionRoomPreferencesTable,
+			Columns: []string{apikey.ContributionRoomPreferencesColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(usercontributionroompreference.FieldID, field.TypeInt64),
 			},
 		}
 		for _, k := range nodes {

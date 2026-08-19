@@ -791,4 +791,32 @@ func TestSelectAccountWithLoadAwareness_StickyReadReuse(t *testing.T) {
 		require.Equal(t, account.ID, result.Account.ID)
 		require.Equal(t, int64(1), cache.getCalls.Load())
 	})
+
+	t.Run("paused_contribution_does_not_reuse_sticky_account", func(t *testing.T) {
+		paused := account
+		paused.Extra = map[string]any{
+			AccountContributionSourceKey:          AccountContributionSourceValue,
+			AccountContributorUserIDKey:           float64(7),
+			AccountShareModeKey:                   AccountShareModePool,
+			AccountShareTotalBudgetKey:            10.0,
+			AccountShareDailyBudgetKey:            10.0,
+			AccountShareExpiresAtKey:              time.Now().Add(time.Hour).Format(time.RFC3339),
+			AccountContributionGovernanceStateKey: AccountContributionGovernancePaused,
+		}
+		cache := &stickyGatewayCacheHotpathStub{stickyID: paused.ID}
+		svc := &GatewayService{
+			accountRepo:        stubOpenAIAccountRepo{accounts: []Account{paused}},
+			cache:              cache,
+			cfg:                cfg,
+			concurrencyService: concurrency,
+			userGroupRateCache: gocache.New(time.Minute, time.Minute),
+			modelsListCache:    gocache.New(time.Minute, time.Minute),
+			modelsListCacheTTL: time.Minute,
+		}
+		ctx := context.WithValue(baseCtx, ctxkey.UserID, int64(8))
+
+		result, err := svc.SelectAccountWithLoadAwareness(ctx, nil, "sess-hash", "", nil, "", int64(8))
+		require.ErrorIs(t, err, ErrNoAvailableAccounts)
+		require.Nil(t, result)
+	})
 }

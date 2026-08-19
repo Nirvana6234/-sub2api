@@ -1,0 +1,4 @@
+FROM transithub:probe-fix-20260802-2345
+
+COPY transithub-api-sse-created-fix-20260803 /app/transithub-api
+RUN chmod +x /app/transithub-api

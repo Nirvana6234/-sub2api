@@ -18,6 +18,7 @@ type upstreamCostTrackingConcurrencyCache struct {
 	acquireLimits map[int64][]int
 	releases      map[int64]int
 	rejectAcquire bool
+	acceptAccount int64
 }
 
 func (c *upstreamCostTrackingConcurrencyCache) AcquireAccountSlot(_ context.Context, accountID int64, maxConcurrency int, _ string) (bool, error) {
@@ -25,7 +26,7 @@ func (c *upstreamCostTrackingConcurrencyCache) AcquireAccountSlot(_ context.Cont
 		c.acquireLimits = make(map[int64][]int)
 	}
 	c.acquireLimits[accountID] = append(c.acquireLimits[accountID], maxConcurrency)
-	return !c.rejectAcquire, nil
+	return !c.rejectAcquire || accountID == c.acceptAccount, nil
 }
 
 func (c *upstreamCostTrackingConcurrencyCache) ReleaseAccountSlot(_ context.Context, accountID int64, _ string) error {
@@ -167,6 +168,32 @@ func TestAdvancedSchedulerCapsRejectedCostOverflowAcquires(t *testing.T) {
 	require.Equal(t, openAIAccountSelectionProbeLimit, cache.totalAcquires())
 }
 
+func TestAdvancedSchedulerRetryOverflowScansBeyondDefaultProbeLimit(t *testing.T) {
+	selectionOrder := make([]openAIAccountCandidateScore, 0, openAIAccountSelectionProbeLimit+1)
+	for id := int64(1); id <= openAIAccountSelectionProbeLimit+1; id++ {
+		account := &Account{ID: id, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1}
+		selectionOrder = append(selectionOrder, openAIAccountCandidateScore{
+			account: account, loadInfo: &AccountLoadInfo{AccountID: id}, loadKnown: false,
+		})
+	}
+	availableID := int64(openAIAccountSelectionProbeLimit + 1)
+	cache := &upstreamCostTrackingConcurrencyCache{rejectAcquire: true, acceptAccount: availableID}
+	scheduler := &defaultOpenAIAccountScheduler{service: &OpenAIGatewayService{
+		concurrencyService: NewConcurrencyService(cache),
+	}}
+	budget := newOpenAISelectionProbeBudget()
+	budget.expandForOverflow(len(selectionOrder))
+
+	selection, _, err := scheduler.tryAcquireOpenAISelectionOrderWithBudget(
+		context.Background(), OpenAIAccountScheduleRequest{Platform: PlatformOpenAI}, selectionOrder, budget,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.Equal(t, availableID, selection.Account.ID)
+	require.Equal(t, openAIAccountSelectionProbeLimit+1, cache.totalAcquires())
+	selection.ReleaseFunc()
+}
+
 func TestOpenAICostOverflowExpandedOnlyWhenCostAddsCandidates(t *testing.T) {
 	candidates := []openAIAccountCandidateScore{
 		{account: &Account{ID: 1, Extra: map[string]any{"openai_compact_supported": true}}},
@@ -249,6 +276,7 @@ func TestAdvancedSchedulerSharesProbeBudgetWithFallbackDBRechecks(t *testing.T) 
 
 	require.Error(t, err)
 	require.Nil(t, selection)
+	require.ErrorContains(t, err, "probe_budget_exhausted")
 	require.Equal(t, openAIAccountSelectionProbeLimit, cache.totalAcquires())
 	require.Equal(t, openAIAccountSelectionProbeLimit, repo.calls())
 }
@@ -761,6 +789,16 @@ func TestOpenAIFreshUpstreamBillingRateUsesFreshCachedSuccessOnly(t *testing.T) 
 	}
 }
 
+func TestOpenAIFreshUpstreamBillingRateManualRateOverridesStaleProbe(t *testing.T) {
+	now := time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC)
+	account := upstreamCostTestAccount(1, UpstreamBillingProbeStatusOK, 0.8, now.Add(-3*time.Hour), 30*time.Minute)
+	account.Extra[UpstreamBillingManualRateMultiplierExtraKey] = 0.03
+
+	rate, ok := openAIFreshUpstreamBillingRate(account, now)
+	require.True(t, ok)
+	require.Equal(t, 0.03, rate)
+}
+
 func TestBuildOpenAISelectionOrderIncludesOverflowOnlyForCostScheduling(t *testing.T) {
 	scheduler := &defaultOpenAIAccountScheduler{}
 	candidates := []openAIAccountCandidateScore{
@@ -822,6 +860,12 @@ func TestBuildOpenAIAccountLoadPlanUsesCostOnlyForTokenScope(t *testing.T) {
 	require.Equal(t, otherPlan.candidates[0].score, otherPlan.candidates[1].score)
 	require.Equal(t, otherPlan.candidates[1].score, otherPlan.candidates[2].score)
 	require.False(t, otherPlan.includeOverflowFallback)
+
+	retryPlan := scheduler.buildOpenAIAccountLoadPlan(context.Background(), OpenAIAccountScheduleRequest{
+		ExcludedIDs: map[int64]struct{}{99: {}},
+	}, accounts, loadMap)
+	require.True(t, retryPlan.includeOverflowFallback, "an upstream-failure retry must traverse hard-eligible overflow candidates")
+	require.Len(t, retryPlan.selectionOrder, len(accounts))
 }
 
 func TestBuildOpenAIAccountSchedulerScoreSnapshotUpstreamCostIsExactNoOpWithoutSignal(t *testing.T) {

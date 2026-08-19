@@ -148,6 +148,23 @@ describe('AccountTestModal', () => {
     })
   })
 
+  it('prefers the lightweight test model for a Free OpenAI account', async () => {
+    getAvailableModelsMock.mockResolvedValue([
+      { id: 'gpt-5.4', display_name: 'GPT-5.4' },
+      { id: 'gpt-5.4-mini', display_name: 'GPT-5.4 Mini' }
+    ])
+    const account = buildAccount()
+    account.credentials = { plan_type: 'free' }
+    const wrapper = mount(AccountTestModal, {
+      props: { show: false, account },
+      global: { stubs: { BaseDialog: BaseDialogStub, Select: SelectStub, TextArea: TextAreaStub } }
+    })
+
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    expect((wrapper.vm as any).selectedModelId).toBe('gpt-5.4-mini')
+  })
+
   it('renders Chat Completions path status from test SSE', async () => {
     const encoder = new TextEncoder()
     const chunks = [

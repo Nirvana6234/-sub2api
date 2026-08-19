@@ -35,6 +35,10 @@ func TestPreviewProfitAdmissionUsesAccountRatesAndPreinitializesModels(t *testin
 		1.0,
 	)
 	expensive.Name = "expensive"
+	// 限定支持的模型：expensive 在新契约下会被探测值救成 admitted，若保持"无映射
+	// = 支持所有模型"，它会把 gpt-luna 和 gpt-no-account 的准入计数一并抬高，
+	// 冲掉下方"无账号支持的模型仍显式保留 0 键"这条断言的意图。
+	expensive.Credentials = map[string]any{"model_mapping": map[string]any{"gpt-sol": "gpt-sol"}}
 
 	invalid := upstreamCostTestOAuthAccount(4)
 	invalid.Name = "invalid"
@@ -64,11 +68,15 @@ func TestPreviewProfitAdmissionUsesAccountRatesAndPreinitializesModels(t *testin
 	require.True(t, byID[cheap.ID].RejectedUnderMinD)
 
 	require.Equal(t, ProfitPreviewClassAdmitted, byID[boundary.ID].Class, "U == 阈值按 epsilon 语义准入")
-	require.Equal(t, ProfitPreviewClassRejectedThreshold, byID[expensive.ID].Class)
+	// 契约变更：新鲜探测值现在参与准入且优先于列值。expensive 列值 1.0 越线，
+	// 但它带着 1 分钟前的 ok 探测快照自报 0.2，因此按 0.2 判定合格。
+	// cheap 的探测快照已过期（3 小时前、30 分钟窗口），仍回退列值 0.5。
+	require.Equal(t, ProfitPreviewClassAdmitted, byID[expensive.ID].Class,
+		"新鲜探测值 0.2 <= 阈值 0.8，优先于列值 1.0")
 	require.Contains(t, byID[expensive.ID].Warnings, ProfitPreviewWarningManualRateOne)
 	require.Equal(t, ProfitPreviewClassRejectedInvalidRate, byID[invalid.ID].Class)
 
-	require.Equal(t, 2, report.RemainingByModel["gpt-sol"])
+	require.Equal(t, 3, report.RemainingByModel["gpt-sol"], "expensive 被新鲜探测值 0.2 救回，准入数 +1")
 	require.Equal(t, 1, report.RemainingByModel["gpt-luna"])
 	require.Equal(t, 0, report.RemainingByModel["gpt-no-account"])
 	_, present := report.RemainingByModel["gpt-no-account"]
@@ -113,10 +121,17 @@ func TestPreviewProfitAdmissionAssumeEnabled(t *testing.T) {
 	for _, verdict := range withAssume.Verdicts {
 		byID[verdict.AccountID] = verdict
 	}
-	require.Equal(t, ProfitPreviewClassAdmitted, byID[cheapAccount.ID].Class,
-		"账号倍率 0.2 <= 阈值 0.5，探测快照的高倍率不参与准入判断")
-	require.Equal(t, ProfitPreviewClassRejectedThreshold, byID[expensiveAccount.ID].Class,
-		"账号倍率 0.9 > 阈值 0.5，探测快照的低倍率不能替代账号倍率")
+	// 契约变更（运营决策）：准入改为「手工倍率 → 新鲜探测值 → 列值」三级优先，
+	// 探测值不再被排除在准入之外。两个账号的探测值都新鲜，因此都以探测值判定，
+	// 结论与按列值判定正好相反。
+	//
+	// 残留风险已知并被显式接受：探测值由上游自报，上游自报足够低就能通过利润门。
+	// 抵消手段是手工倍率永远压过探测值（见 TestProfitControlManualRateBeatsProbe），
+	// 运营对任何不可信的上游都可以用手工倍率钉死成本。
+	require.Equal(t, ProfitPreviewClassRejectedThreshold, byID[cheapAccount.ID].Class,
+		"新鲜探测值 0.9 > 阈值 0.5，优先于列值 0.2")
+	require.Equal(t, ProfitPreviewClassAdmitted, byID[expensiveAccount.ID].Class,
+		"新鲜探测值 0.2 <= 阈值 0.5，优先于列值 0.9")
 }
 
 func TestPreviewProfitAdmissionSupportsFivePlatforms(t *testing.T) {

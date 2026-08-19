@@ -45,6 +45,10 @@ func DefaultModelIDs() []string {
 // DefaultTestModel default model for testing OpenAI accounts
 const DefaultTestModel = "gpt-5.4"
 
+// FreeTestModel is used for known ChatGPT Free accounts during verification.
+// The full GPT-5.4 model is not available to that plan.
+const FreeTestModel = "gpt-5.4-mini"
+
 // DefaultInstructions default instructions for non-Codex CLI requests.
 // 内容为真实 Codex CLI 的 GPT-5-Codex base prompt（codex 系模型默认）。
 //

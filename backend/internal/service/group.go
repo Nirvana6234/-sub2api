@@ -21,6 +21,10 @@ type Group struct {
 	Description    string
 	Platform       string
 	RateMultiplier float64
+	// AllowContributionPool is an administrator-owned admission gate for
+	// user-contributed accounts. Accounts admitted here always bill at this
+	// group's multiplier.
+	AllowContributionPool bool
 	// 高峰时段倍率：peak_rate_enabled 为 true 且当前时刻处于 [PeakStart, PeakEnd) 时，
 	// token 计费倍率额外乘以 PeakRateMultiplier。详见 PeakMultiplierAt。
 	PeakRateEnabled    bool

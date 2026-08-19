@@ -1,0 +1,283 @@
+package upstream
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+)
+
+func TestRecoverSub2APIAdminAccountSchedulability_SendsExpectedChangedAt(t *testing.T) {
+	requestCount := 0
+	changedAt := time.Date(2026, 8, 7, 10, 30, 45, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/admin/accounts/1515/recover-schedulability" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("x-api-key"); got != "admin-key" {
+			t.Fatalf("unexpected admin API key: %q", got)
+		}
+		writeJSON(w, map[string]any{"success": true})
+	}))
+	defer server.Close()
+
+	service := NewPlatformService(NewHTTPClient(server.Client()))
+	session := Session{Platform: PlatformSub2API, BaseURL: server.URL, AccessToken: "token-1", TokenType: "Bearer", AdminAPIKey: "admin-key"}
+	if err := service.RecoverSub2APIAdminAccountSchedulability(session, "1515", &changedAt); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if requestCount != 1 {
+		t.Fatalf("expected one recover request, got %d", requestCount)
+	}
+}
+
+func TestRecoverSub2APIAdminAccountSchedulability_409ReturnsConflictError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		writeJSON(w, map[string]any{"error": "schedulability conflict"})
+	}))
+	defer server.Close()
+
+	service := NewPlatformService(NewHTTPClient(server.Client()))
+	session := Session{Platform: PlatformSub2API, BaseURL: server.URL, AccessToken: "token-1", TokenType: "Bearer", AdminAPIKey: "admin-key"}
+	err := service.RecoverSub2APIAdminAccountSchedulability(session, "1515", nil)
+	if err != ErrSub2APISchedulabilityConflict {
+		t.Fatalf("expected conflict sentinel, got %v", err)
+	}
+}
+
+// TestUpdateSub2APIAdminAccountStatus_UsesFieldOnlyBulkUpdate 楠岃瘉鐘舵€佹洿鏂颁笉浼氳鍙栨垨
+// 鍥炲啓璐﹀彿璇︽儏銆傝姹備綋鍙兘鍖呭惈璐﹀彿 ID 鍜岀洰鏍囩姸鎬侊紝灏ゅ叾涓嶈兘鎼哄甫鍊嶇巼銆佸嚟鎹垨鍒嗙粍瀛楁銆
+func TestUpdateSub2APIAdminAccountStatus_UsesFieldOnlyBulkUpdate(t *testing.T) {
+	var body map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/admin/accounts/bulk-update" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		var err error
+		body, err = readJSONBody(r)
+		if err != nil {
+			t.Fatalf("failed to decode bulk update body: %v", err)
+		}
+		writeJSON(w, map[string]any{"success": true})
+	}))
+	defer server.Close()
+
+	service := NewPlatformService(NewHTTPClient(server.Client()))
+	session := Session{Platform: PlatformSub2API, BaseURL: server.URL, AccessToken: "token-1", TokenType: "Bearer"}
+	if err := service.UpdateSub2APIAdminAccountStatus(session, "1515", "inactive"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	assertSub2APIBulkAccountIDs(t, body, 1515)
+	if len(body) != 2 || body["status"] != "inactive" {
+		t.Fatalf("status update must contain only account_ids and status: %+v", body)
+	}
+}
+
+func TestUpdateSub2APIAdminAccountSchedulable_UsesFieldOnlyBulkUpdate(t *testing.T) {
+	var body map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/admin/accounts/bulk-update" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		var err error
+		body, err = readJSONBody(r)
+		if err != nil {
+			t.Fatalf("failed to decode bulk update body: %v", err)
+		}
+		writeJSON(w, map[string]any{"success": true})
+	}))
+	defer server.Close()
+
+	service := NewPlatformService(NewHTTPClient(server.Client()))
+	session := Session{Platform: PlatformSub2API, BaseURL: server.URL, AccessToken: "token-1", TokenType: "Bearer"}
+	if err := service.UpdateSub2APIAdminAccountSchedulable(session, "1515", false); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	assertSub2APIBulkAccountIDs(t, body, 1515)
+	if len(body) != 2 || body["schedulable"] != false {
+		t.Fatalf("schedulable update must contain only account_ids and schedulable: %+v", body)
+	}
+}
+func TestUpdateAdminGroupStatus_Sub2APIUsesStatusOnlyRequest(t *testing.T) {
+	var body map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || r.URL.Path != "/api/v1/admin/groups/77" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer token-1" {
+			t.Fatalf("unexpected authorization: %q", got)
+		}
+		var err error
+		body, err = readJSONBody(r)
+		if err != nil {
+			t.Fatalf("failed to decode group status body: %v", err)
+		}
+		writeJSON(w, map[string]any{"success": true})
+	}))
+	defer server.Close()
+
+	service := NewPlatformService(NewHTTPClient(server.Client()))
+	session := Session{Platform: PlatformSub2API, BaseURL: server.URL, AccessToken: "token-1", TokenType: "Bearer"}
+	if err := service.UpdateAdminGroupStatus(session, "77", false); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(body) != 1 || body["status"] != "inactive" {
+		t.Fatalf("group status update must contain only status: %+v", body)
+	}
+}
+
+// TestUpdateAdminTargetPriority_Sub2APIUsesFieldOnlyBulkUpdate 鏄€嶇巼浜嬫晠鐨勬牳蹇冨洖褰掓祴璇曪細
+// priority 鍚屾缁濅笉鑳芥妸 rate_multiplier 绛夎鎯呭瓧娈靛甫鍥炰笂娓搞€
+func TestUpdateAdminTargetPriority_Sub2APIUsesFieldOnlyBulkUpdate(t *testing.T) {
+	var body map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/admin/accounts/bulk-update" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		var err error
+		body, err = readJSONBody(r)
+		if err != nil {
+			t.Fatalf("failed to decode bulk update body: %v", err)
+		}
+		writeJSON(w, map[string]any{"success": true})
+	}))
+	defer server.Close()
+
+	service := NewPlatformService(NewHTTPClient(server.Client()))
+	session := Session{Platform: PlatformSub2API, BaseURL: server.URL, AccessToken: "token-1", TokenType: "Bearer"}
+	if err := service.UpdateAdminTargetPriority(session, "1515", 1); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	assertSub2APIBulkAccountIDs(t, body, 1515)
+	if len(body) != 2 || body["priority"] != float64(1) {
+		t.Fatalf("priority update must contain only account_ids and priority: %+v", body)
+	}
+	for _, forbidden := range []string{"rate_multiplier", "credentials", "group_ids", "status", "concurrency"} {
+		if _, exists := body[forbidden]; exists {
+			t.Fatalf("priority update must never include %s: %+v", forbidden, body)
+		}
+	}
+}
+
+func TestUpdateAdminTargetGroupPriority_Sub2APIUsesDedicatedGroupEndpoint(t *testing.T) {
+	var body map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/admin/accounts/group-priorities" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("x-api-key"); got != "admin-key" {
+			t.Fatalf("unexpected admin api key: %q", got)
+		}
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Fatalf("group priority update must not use user authorization: %q", got)
+		}
+		var err error
+		body, err = readJSONBody(r)
+		if err != nil {
+			t.Fatalf("failed to decode group priority body: %v", err)
+		}
+		writeJSON(w, map[string]any{"success": true})
+	}))
+	defer server.Close()
+
+	service := NewPlatformService(NewHTTPClient(server.Client()))
+	session := Session{Platform: PlatformSub2API, BaseURL: server.URL, AccessToken: "token-1", TokenType: "Bearer", AdminAPIKey: "admin-key"}
+	if err := service.UpdateAdminTargetGroupPriority(session, "10", "1515", 7); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	updates, ok := body["updates"].([]any)
+	if !ok || len(updates) != 1 {
+		t.Fatalf("expected one group priority update, got %+v", body)
+	}
+	update, ok := updates[0].(map[string]any)
+	if !ok || update["account_id"] != float64(1515) || update["group_id"] != float64(10) || update["priority"] != float64(7) {
+		t.Fatalf("unexpected group priority payload: %+v", update)
+	}
+	if len(body) != 1 {
+		t.Fatalf("group priority update must contain only updates: %+v", body)
+	}
+}
+
+// TestSub2APIBulkAccountUpdate_UnsupportedDoesNotFallback 楠岃瘉鏃х増鎺ュ彛涓嶆敮鎸佹椂鐩存帴澶辫触锛?// 涓嶅啀灏濊瘯鍗遍櫓鐨?GET+PUT 鏁村璞″洖鍐欍€
+func TestSub2APIBulkAccountUpdate_UnsupportedDoesNotFallback(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/admin/accounts/bulk-update" {
+			t.Fatalf("unexpected fallback request: %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	service := NewPlatformService(NewHTTPClient(server.Client()))
+	session := Session{Platform: PlatformSub2API, BaseURL: server.URL, AccessToken: "token-1", TokenType: "Bearer"}
+	err := service.UpdateSub2APIAdminAccountStatus(session, "1515", "inactive")
+	if err == nil {
+		t.Fatal("expected unsupported bulk update to return an error")
+	}
+	requestErr, ok := err.(*RequestError)
+	if !ok || requestErr.MessageKey != ErrorSub2APIBulkUpdateUnsupported || requestErr.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected explicit unsupported capability error, got %T %+v", err, err)
+	}
+	if requestCount != 1 {
+		t.Fatalf("unsupported endpoint must not trigger a fallback request, count=%d", requestCount)
+	}
+}
+
+func TestSub2APIBulkAccountUpdate_ServerFailureIsNotMisclassifiedAsUnsupported(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/admin/accounts/bulk-update" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	service := NewPlatformService(NewHTTPClient(server.Client()))
+	session := Session{Platform: PlatformSub2API, BaseURL: server.URL, AccessToken: "token-1", TokenType: "Bearer"}
+	err := service.UpdateAdminTargetPriority(session, "1515", 1)
+	requestErr, ok := err.(*RequestError)
+	if !ok || requestErr.MessageKey != ErrorRequest || requestErr.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("server failures must retain request error, got %T %+v", err, err)
+	}
+}
+
+func TestSub2APIBulkAccountUpdate_RejectsNonNumericAccountID(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestCount++
+		writeJSON(w, map[string]any{"success": true})
+	}))
+	defer server.Close()
+
+	service := NewPlatformService(NewHTTPClient(server.Client()))
+	session := Session{Platform: PlatformSub2API, BaseURL: server.URL, AccessToken: "token-1", TokenType: "Bearer"}
+	if err := service.UpdateAdminTargetPriority(session, "acc-1", 1); err == nil {
+		t.Fatal("expected a non-numeric Sub2API account ID to be rejected")
+	}
+	if requestCount != 0 {
+		t.Fatalf("invalid account ID must be rejected before sending a request, count=%d", requestCount)
+	}
+}
+
+func TestUpdateSub2APIAdminAccountStatus_RejectsWrongPlatform(t *testing.T) {
+	service := NewPlatformService(NewHTTPClient(http.DefaultClient))
+	session := Session{Platform: PlatformNewAPI, BaseURL: "https://example.com", AccessToken: "token-1"}
+	if err := service.UpdateSub2APIAdminAccountStatus(session, "1515", "inactive"); err == nil {
+		t.Fatal("expected error for non-Sub2API session")
+	}
+}
+
+func assertSub2APIBulkAccountIDs(t *testing.T, body map[string]any, expected float64) {
+	t.Helper()
+	accountIDs, ok := body["account_ids"].([]any)
+	if !ok || len(accountIDs) != 1 || accountIDs[0] != expected {
+		t.Fatalf("unexpected account_ids: %+v", body["account_ids"])
+	}
+}

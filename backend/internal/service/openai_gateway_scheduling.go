@@ -231,7 +231,7 @@ func (e openAINoAvailableSelectionError) Unwrap() error {
 	return ErrNoAvailableAccounts
 }
 
-// openAICompactSupportTier classifies an OpenAI-compatible account by compact capability.
+// openAICompactSupportTier classifies an OpenAI account by compact capability.
 // 0 = explicitly unsupported, 1 = unknown / not yet probed, 2 = explicitly supported.
 func openAICompactSupportTier(account *Account) int {
 	if account == nil {
@@ -291,10 +291,6 @@ func isOpenAICompatibleAccountEligibleForRequest(ctx context.Context, account *A
 		return false
 	}
 	if !account.SupportsOpenAIEndpointCapability(requiredCapability) {
-		if account.IsGrok() && requiredCapability == OpenAIEndpointCapabilityGrokMediaGeneration {
-			_, reason := account.GrokMediaGenerationEligibility()
-			slog.Debug("grok_media_account_ineligible", "account_id", account.ID, "reason", reason)
-		}
 		return false
 	}
 	if requireCompact && openAICompactSupportTier(account) == 0 {
@@ -637,6 +633,10 @@ func resolveOpenAIAccountUpstreamModelForRequest(account *Account, requestedMode
 
 func (s *OpenAIGatewayService) selectAccountForModelWithExclusions(ctx context.Context, groupID *int64, platform string, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, stickyAccountID int64, requiredCapability OpenAIEndpointCapability, preferLowUpstreamRate bool) (*Account, error) {
 	platform = normalizeOpenAICompatiblePlatform(platform)
+	if s.hasContributionRoomRoute(ctx) {
+		sessionHash = ""
+		stickyAccountID = 0
+	}
 	if s.checkChannelPricingRestriction(ctx, groupID, requestedModel) {
 		slog.Warn("channel pricing restriction blocked request",
 			"group_id", derefGroupID(groupID),
@@ -729,8 +729,12 @@ func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID 
 		_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 		return nil
 	}
+	if s.isOpenAIProxyStreamQuarantined(ctx, account) {
+		_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
+		return nil
+	}
 	account = s.recheckSelectedOpenAIAccountFromDB(ctx, account, groupID, platform, requestedModel, requireCompact, requiredCapability)
-	if account == nil || !s.openAIAccountMatchesSchedulingGroup(account, groupID) {
+	if account == nil || s.isOpenAIProxyStreamQuarantined(ctx, account) || !s.openAIAccountMatchesRequestRoute(ctx, account, groupID) {
 		_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 		return nil
 	}
@@ -777,6 +781,9 @@ func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *i
 		if fresh == nil {
 			continue
 		}
+		if s.isOpenAIProxyStreamQuarantined(ctx, fresh) {
+			continue
+		}
 		if needsUpstreamCheck && s.isUpstreamModelRestrictedByChannel(ctx, *groupID, fresh, requestedModel, requireCompact) {
 			continue
 		}
@@ -802,6 +809,9 @@ func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *i
 	}
 	sort.SliceStable(eligible, func(i, j int) bool {
 		a, b := eligible[i], eligible[j]
+		if workspaceCmp := compareWorkspaceOwnedOpenAIAccounts(ctx, a, b); workspaceCmp != 0 {
+			return workspaceCmp < 0
+		}
 		if requireCompact && compactTiers[a.ID] != compactTiers[b.ID] {
 			return compactTiers[a.ID] > compactTiers[b.ID]
 		}
@@ -857,6 +867,9 @@ func (s *OpenAIGatewayService) SelectAccountWithLoadAwareness(ctx context.Contex
 
 func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Context, groupID *int64, platform string, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, requiredCapability OpenAIEndpointCapability, useUpstreamTokenCost bool) (*AccountSelectionResult, error) {
 	platform = normalizeOpenAICompatiblePlatform(platform)
+	if s.hasContributionRoomRoute(ctx) {
+		sessionHash = ""
+	}
 	if s.checkChannelPricingRestriction(ctx, groupID, requestedModel) {
 		slog.Warn("channel pricing restriction blocked request",
 			"group_id", derefGroupID(groupID),
@@ -931,7 +944,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 					account = s.recheckSelectedOpenAIAccountFromDB(ctx, account, groupID, platform, requestedModel, requireCompact, requiredCapability)
 					if account == nil {
 						_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
-					} else if !s.openAIAccountMatchesSchedulingGroup(account, groupID) {
+					} else if !s.openAIAccountMatchesRequestRoute(ctx, account, groupID) {
 						_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 					} else if s.isOpenAIAccountRequestRuntimeBlocked(account, requestedModel) {
 						_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
@@ -1043,6 +1056,9 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 
 		sort.SliceStable(available, func(i, j int) bool {
 			a, b := available[i], available[j]
+			if workspaceCmp := compareWorkspaceOwnedOpenAIAccounts(ctx, a.account, b.account); workspaceCmp != 0 {
+				return workspaceCmp < 0
+			}
 			if a.account.Priority != b.account.Priority {
 				return a.account.Priority < b.account.Priority
 			}
@@ -1063,6 +1079,9 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		shuffleWithinSortGroups(available)
 		if rateOrder.enabled {
 			sort.SliceStable(available, func(i, j int) bool {
+				if workspaceCmp := compareWorkspaceOwnedOpenAIAccounts(ctx, available[i].account, available[j].account); workspaceCmp != 0 {
+					return workspaceCmp < 0
+				}
 				return rateOrder.compare(available[i].account, available[j].account) < 0
 			})
 		}
@@ -1119,6 +1138,9 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		sortAccountsByPriorityAndLastUsed(ordered, false)
 		if rateOrder.enabled {
 			sort.SliceStable(ordered, func(i, j int) bool {
+				if workspaceCmp := compareWorkspaceOwnedOpenAIAccounts(ctx, ordered[i], ordered[j]); workspaceCmp != 0 {
+					return workspaceCmp < 0
+				}
 				return rateOrder.compare(ordered[i], ordered[j]) < 0
 			})
 		}
@@ -1169,6 +1191,9 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 	sortAccountsByPriorityAndLastUsed(candidates, false)
 	if rateOrder.enabled {
 		sort.SliceStable(candidates, func(i, j int) bool {
+			if workspaceCmp := compareWorkspaceOwnedOpenAIAccounts(ctx, candidates[i], candidates[j]); workspaceCmp != 0 {
+				return workspaceCmp < 0
+			}
 			return rateOrder.compare(candidates[i], candidates[j]) < 0
 		})
 	}
@@ -1205,7 +1230,11 @@ func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, grou
 	platform = normalizeOpenAICompatiblePlatform(platform)
 	if s.schedulerSnapshot != nil {
 		accounts, _, err := s.schedulerSnapshot.ListSchedulableAccounts(ctx, groupID, platform, false)
-		return accounts, err
+		if err != nil {
+			return nil, err
+		}
+		applyGroupPriority(accounts, groupID)
+		return s.applyContributionRoomRouting(ctx, accounts, platform)
 	}
 	var accounts []Account
 	var err error
@@ -1219,7 +1248,181 @@ func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, grou
 	if err != nil {
 		return nil, fmt.Errorf("query accounts failed: %w", err)
 	}
+	applyGroupPriority(accounts, groupID)
+	return s.applyContributionRoomRouting(ctx, accounts, platform)
+}
+
+// applyContributionRoomRouting mirrors the generic gateway policy for OpenAI:
+// selected rooms are isolated and preferred; an explicitly enabled fallback
+// uses administrator-managed accounts from the user-selected fallback group.
+func (s *OpenAIGatewayService) applyContributionRoomRouting(ctx context.Context, defaultAccounts []Account, platform string) ([]Account, error) {
+	if IsWorkspaceLocalFallbackRoute(ctx) {
+		return s.prependWorkspaceOwnedAccounts(ctx, defaultAccounts, platform)
+	}
+	if s == nil || s.contributionRoomRepo == nil {
+		return defaultAccounts, nil
+	}
+	userID := contributorUserIDFromContext(ctx)
+	apiKeyID := contributorAPIKeyIDFromContext(ctx)
+	if userID <= 0 || apiKeyID <= 0 {
+		return defaultAccounts, nil
+	}
+	route, err := s.contributionRoomRepo.ResolveRouteForAPIKey(ctx, userID, apiKeyID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve contribution room route: %w", err)
+	}
+	if !route.IsExplicitSelection() {
+		return s.prependImplicitOwnContributionAccounts(ctx, defaultAccounts, platform)
+	}
+
+	roomAccounts := make([]Account, 0)
+	seen := make(map[int64]struct{})
+	if s.accountRepo != nil {
+		for _, selectedRoom := range route.Rooms {
+			if len(selectedRoom.AccountIDs) == 0 {
+				continue
+			}
+			accounts, queryErr := s.accountRepo.GetByIDs(ctx, selectedRoom.AccountIDs)
+			if queryErr != nil {
+				return nil, fmt.Errorf("load contribution room accounts: %w", queryErr)
+			}
+			for _, account := range accounts {
+				if account == nil || !account.IsSchedulable() || account.Platform != platform || !account.IsOpenAICompatible() {
+					continue
+				}
+				if _, duplicate := seen[account.ID]; duplicate {
+					continue
+				}
+				routed := cloneContributionRouteAccount(*account, ContributionRouteSourceRoom, selectedRoom.RoomID, selectedRoom.ConsumerRateMultiplier)
+				applyContributionRoomConcurrency(&routed, selectedRoom.AccountConcurrencies[account.ID])
+				preferWorkspaceOwnedAccount(&routed)
+				roomAccounts = append(roomAccounts, routed)
+				seen[account.ID] = struct{}{}
+			}
+		}
+	}
+	if !route.AllowPoolFallback || route.FallbackGroupID == nil || *route.FallbackGroupID <= 0 {
+		return roomAccounts, nil
+	}
+
+	fallbackAccounts, err := s.listContributionRoomFallbackAccounts(ctx, *route.FallbackGroupID, platform)
+	if err != nil {
+		return nil, err
+	}
+	for _, account := range fallbackAccounts {
+		if account.ContributorUserID() > 0 || !account.IsSchedulable() || account.Platform != platform || !account.IsOpenAICompatible() {
+			continue
+		}
+		if _, exists := seen[account.ID]; exists {
+			continue
+		}
+		roomAccounts = append(roomAccounts, account)
+		seen[account.ID] = struct{}{}
+	}
+	return roomAccounts, nil
+}
+
+func (s *OpenAIGatewayService) prependWorkspaceOwnedAccounts(ctx context.Context, fallbackAccounts []Account, platform string) ([]Account, error) {
+	if s == nil || s.accountRepo == nil {
+		return fallbackAccounts, nil
+	}
+	userID := contributorUserIDFromContext(ctx)
+	if userID <= 0 {
+		return fallbackAccounts, nil
+	}
+	accounts, err := s.accountRepo.ListSchedulableByPlatform(ctx, platform)
+	if err != nil {
+		return nil, fmt.Errorf("load workspace personal accounts: %w", err)
+	}
+	result := make([]Account, 0, len(accounts)+len(fallbackAccounts))
+	seen := make(map[int64]struct{}, len(accounts)+len(fallbackAccounts))
+	for _, account := range accounts {
+		if !account.IsContributedBy(userID) || !account.IsSchedulable() || account.Platform != platform || !account.IsOpenAICompatible() {
+			continue
+		}
+		preferWorkspaceOwnedAccount(&account)
+		result = append(result, account)
+		seen[account.ID] = struct{}{}
+	}
+	for _, account := range fallbackAccounts {
+		if _, duplicate := seen[account.ID]; duplicate {
+			continue
+		}
+		result = append(result, account)
+	}
+	return result, nil
+}
+
+// compareWorkspaceOwnedOpenAIAccounts keeps the desktop user's personal pool
+// ahead of managed fallback upstreams. Cost and load signals may order accounts
+// within each pool, but must never promote a fallback while a personal account
+// remains eligible.
+func compareWorkspaceOwnedOpenAIAccounts(ctx context.Context, a, b *Account) int {
+	if !IsWorkspaceLocalFallbackRoute(ctx) {
+		return 0
+	}
+	userID := contributorUserIDFromContext(ctx)
+	if userID <= 0 {
+		return 0
+	}
+	aOwned := a != nil && a.IsContributedBy(userID)
+	bOwned := b != nil && b.IsContributedBy(userID)
+	if aOwned == bOwned {
+		return 0
+	}
+	if aOwned {
+		return -1
+	}
+	return 1
+}
+
+func (s *OpenAIGatewayService) listContributionRoomFallbackAccounts(ctx context.Context, groupID int64, platform string) ([]Account, error) {
+	if s == nil || s.accountRepo == nil || groupID <= 0 {
+		return nil, nil
+	}
+	accounts, err := s.accountRepo.ListSchedulableByGroupIDAndPlatform(ctx, groupID, platform)
+	if err != nil {
+		return nil, fmt.Errorf("load contribution fallback group accounts: %w", err)
+	}
 	return accounts, nil
+}
+
+func (s *OpenAIGatewayService) prependImplicitOwnContributionAccounts(ctx context.Context, defaultAccounts []Account, platform string) ([]Account, error) {
+	userID := contributorUserIDFromContext(ctx)
+	if userID <= 0 {
+		return defaultAccounts, nil
+	}
+	owned := make([]Account, 0, len(defaultAccounts))
+	shared := make([]Account, 0, len(defaultAccounts))
+	for _, account := range defaultAccounts {
+		if !account.IsContributedBy(userID) || !account.IsSchedulable() || account.Platform != platform || !account.IsOpenAICompatible() {
+			shared = append(shared, account)
+			continue
+		}
+		preferWorkspaceOwnedAccount(&account)
+		owned = append(owned, account)
+	}
+	return append(owned, shared...), nil
+}
+
+func (s *OpenAIGatewayService) listPublicContributionPoolAccounts(ctx context.Context, platform string) ([]Account, error) {
+	if s == nil || s.accountRepo == nil {
+		return []Account{}, nil
+	}
+	accounts, err := s.accountRepo.ListSchedulableByPlatform(ctx, platform)
+	if err != nil {
+		return nil, fmt.Errorf("load public contribution pool: %w", err)
+	}
+	userID := contributorUserIDFromContext(ctx)
+	now := time.Now()
+	filtered := make([]Account, 0, len(accounts))
+	for _, account := range accounts {
+		if account.ContributorUserID() > 0 || !account.IsSharedPoolAccount() || !account.IsSharedPoolAvailableTo(userID, now) || !account.IsOpenAICompatible() {
+			continue
+		}
+		filtered = append(filtered, account)
+	}
+	return filtered, nil
 }
 
 func (s *OpenAIGatewayService) tryAcquireAccountSlot(ctx context.Context, accountID int64, maxConcurrency int) (*AcquireResult, error) {
@@ -1256,7 +1459,9 @@ func (s *OpenAIGatewayService) resolveFreshSchedulableOpenAIAccount(ctx context.
 	if s.isOpenAIProxyStreamQuarantined(ctx, fresh) {
 		return nil
 	}
-	return fresh
+	// Scheduler snapshots deliberately omit request-scoped data. Restore the
+	// contribution room marker before later selection and billing stages.
+	return preserveContributionRouteMetadata(account, fresh)
 }
 
 // parentAccountLookup 返回供 parentHealthyForShadow 使用的母账号解析闭包:经 accountRepo
@@ -1295,7 +1500,7 @@ func (s *OpenAIGatewayService) recheckSelectedOpenAIAccountFromDB(ctx context.Co
 	if err != nil || latest == nil {
 		return nil
 	}
-	if !s.openAIAccountMatchesSchedulingGroup(latest, groupID) {
+	if !s.openAIAccountMatchesRequestRoute(ctx, latest, groupID) {
 		return nil
 	}
 	if !isOpenAICompatibleAccountEligibleForRequest(ctx, latest, platform, requestedModel, requireCompact, requiredCapability) {
@@ -1310,7 +1515,10 @@ func (s *OpenAIGatewayService) recheckSelectedOpenAIAccountFromDB(ctx context.Co
 	if s.isOpenAIProxyStreamQuarantined(ctx, latest) {
 		return nil
 	}
-	return latest
+	// The database refresh replaces the scheduler candidate with a credential-
+	// complete account. Keep the request-scoped contribution route on that
+	// fresh copy so room usage is billed against the room allowance.
+	return preserveContributionRouteMetadata(account, latest)
 }
 
 func (s *OpenAIGatewayService) openAIAccountMatchesSchedulingGroup(account *Account, groupID *int64) bool {
@@ -1318,6 +1526,17 @@ func (s *OpenAIGatewayService) openAIAccountMatchesSchedulingGroup(account *Acco
 		return account != nil
 	}
 	return openAIStickyAccountMatchesGroup(account, groupID)
+}
+
+func (s *OpenAIGatewayService) openAIAccountMatchesRequestRoute(ctx context.Context, account *Account, groupID *int64) bool {
+	if account == nil {
+		return false
+	}
+	userID := contributorUserIDFromContext(ctx)
+	if IsWorkspaceLocalFallbackRoute(ctx) && userID > 0 && account.IsContributedBy(userID) {
+		return true
+	}
+	return s.openAIAccountMatchesSchedulingGroup(account, groupID)
 }
 
 func (s *OpenAIGatewayService) getSchedulableAccount(ctx context.Context, accountID int64) (*Account, error) {
@@ -1347,7 +1566,7 @@ func (s *OpenAIGatewayService) hydrateSelectedAccount(ctx context.Context, accou
 	if hydrated == nil {
 		return nil, fmt.Errorf("selected openai account %d not found during hydration", account.ID)
 	}
-	return hydrated, nil
+	return preserveContributionRouteMetadata(account, hydrated), nil
 }
 
 func (s *OpenAIGatewayService) newSelectionResult(ctx context.Context, account *Account, acquired bool, release func(), waitPlan *AccountWaitPlan) (*AccountSelectionResult, error) {

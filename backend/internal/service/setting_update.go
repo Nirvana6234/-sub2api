@@ -102,6 +102,14 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	if err := s.validateDefaultSubscriptionGroups(ctx, settings.DefaultSubscriptions); err != nil {
 		return nil, err
 	}
+	settings.PlaygroundDefaultChatGroupIDs = normalizeAutoGroupIDs(settings.PlaygroundDefaultChatGroupIDs)
+	settings.PlaygroundDefaultImageGroupIDs = normalizeAutoGroupIDs(settings.PlaygroundDefaultImageGroupIDs)
+	if err := s.validatePlaygroundDefaultGroupIDs(ctx, settings.PlaygroundDefaultChatGroupIDs, false); err != nil {
+		return nil, err
+	}
+	if err := s.validatePlaygroundDefaultGroupIDs(ctx, settings.PlaygroundDefaultImageGroupIDs, true); err != nil {
+		return nil, err
+	}
 	normalizedWhitelist, err := NormalizeRegistrationEmailSuffixWhitelist(settings.RegistrationEmailSuffixWhitelist)
 	if err != nil {
 		return nil, infraerrors.BadRequest("INVALID_REGISTRATION_EMAIL_SUFFIX_WHITELIST", err.Error())
@@ -381,6 +389,10 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 		settings.AffiliateRebatePerInviteeCap = AffiliateRebatePerInviteeCapDefault
 	}
 	updates[SettingKeyAffiliateRebatePerInviteeCap] = strconv.FormatFloat(settings.AffiliateRebatePerInviteeCap, 'f', 8, 64)
+	settings.AccountShareRewardRate = clampAccountShareRewardRatePercent(settings.AccountShareRewardRate)
+	updates[SettingKeyAccountShareRewardRate] = strconv.FormatFloat(settings.AccountShareRewardRate, 'f', 8, 64)
+	settings.AccountOwnUsageFeeRate = clampAccountOwnUsageFeeRatePercent(settings.AccountOwnUsageFeeRate)
+	updates[SettingKeyAccountOwnUsageFeeRate] = strconv.FormatFloat(settings.AccountOwnUsageFeeRate, 'f', 8, 64)
 	updates[SettingKeyAffiliateAdminRechargeEnabled] = strconv.FormatBool(settings.AdminRechargeRebateEnabled)
 	updates[SettingKeyDefaultUserRPMLimit] = strconv.Itoa(settings.DefaultUserRPMLimit)
 	defaultSubsJSON, err := json.Marshal(settings.DefaultSubscriptions)
@@ -416,6 +428,15 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 
 	// Available channels feature switch
 	updates[SettingKeyAvailableChannelsEnabled] = strconv.FormatBool(settings.AvailableChannelsEnabled)
+	updates[SettingKeyPlaygroundEnabled] = strconv.FormatBool(settings.PlaygroundEnabled)
+	updates[SettingKeyPlaygroundDefaultChatModel] = strings.TrimSpace(settings.PlaygroundDefaultChatModel)
+	updates[SettingKeyPlaygroundDefaultImageModel] = strings.TrimSpace(settings.PlaygroundDefaultImageModel)
+	chatGroupIDs, _ := json.Marshal(normalizeAutoGroupIDs(settings.PlaygroundDefaultChatGroupIDs))
+	imageGroupIDs, _ := json.Marshal(normalizeAutoGroupIDs(settings.PlaygroundDefaultImageGroupIDs))
+	updates[SettingKeyPlaygroundDefaultChatGroupIDs] = string(chatGroupIDs)
+	updates[SettingKeyPlaygroundDefaultImageGroupIDs] = string(imageGroupIDs)
+	updates[SettingKeyPlaygroundDefaultChatStrategy] = normalizeAutoGroupStrategy(settings.PlaygroundDefaultChatStrategy)
+	updates[SettingKeyPlaygroundDefaultImageStrategy] = normalizeAutoGroupStrategy(settings.PlaygroundDefaultImageStrategy)
 
 	// Model plaza feature switches + description
 	updates[SettingKeyModelPlazaEnabled] = strconv.FormatBool(settings.ModelPlazaEnabled)
@@ -722,5 +743,24 @@ func (s *SettingService) validateDefaultSubscriptionGroups(ctx context.Context, 
 		}
 	}
 
+	return nil
+}
+
+func (s *SettingService) validatePlaygroundDefaultGroupIDs(ctx context.Context, groupIDs []int64, imageOnly bool) error {
+	if s.defaultSubGroupReader == nil {
+		return nil
+	}
+	for _, groupID := range groupIDs {
+		group, err := s.defaultSubGroupReader.GetByID(ctx, groupID)
+		if err != nil {
+			return infraerrors.BadRequest("PLAYGROUND_DEFAULT_GROUP_INVALID", fmt.Sprintf("playground group %d does not exist", groupID))
+		}
+		if group.Platform != PlatformOpenAI {
+			return infraerrors.BadRequest("PLAYGROUND_DEFAULT_GROUP_PLATFORM_INVALID", "playground default groups must all use the OpenAI model type")
+		}
+		if imageOnly && !group.AllowImageGeneration {
+			return infraerrors.BadRequest("PLAYGROUND_DEFAULT_IMAGE_GROUP_INVALID", fmt.Sprintf("playground image group %d does not allow image generation", groupID))
+		}
+	}
 	return nil
 }

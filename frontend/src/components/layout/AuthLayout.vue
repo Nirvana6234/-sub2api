@@ -1,51 +1,19 @@
 <template>
-  <div class="relative flex min-h-screen items-center justify-center overflow-hidden p-4">
-    <!-- Background -->
-    <div
-      class="absolute inset-0 bg-gradient-to-br from-gray-50 via-primary-50/30 to-gray-100 dark:from-dark-950 dark:via-dark-900 dark:to-dark-950"
-    ></div>
-
-    <!-- Decorative Elements -->
-    <div class="pointer-events-none absolute inset-0 overflow-hidden">
-      <!-- Gradient Orbs -->
-      <div
-        class="absolute -right-40 -top-40 h-80 w-80 rounded-full bg-primary-400/20 blur-3xl"
-      ></div>
-      <div
-        class="absolute -bottom-40 -left-40 h-80 w-80 rounded-full bg-primary-500/15 blur-3xl"
-      ></div>
-      <div
-        class="absolute left-1/2 top-1/2 h-96 w-96 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary-300/10 blur-3xl"
-      ></div>
-
-      <!-- Grid Pattern -->
-      <div
-        class="absolute inset-0 bg-[linear-gradient(rgba(20,184,166,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(20,184,166,0.03)_1px,transparent_1px)] bg-[size:64px_64px]"
-      ></div>
-    </div>
+  <div class="gongfei-auth relative flex min-h-screen items-center justify-center overflow-hidden p-4">
+    <div class="gongfei-route gongfei-route-top" aria-hidden="true"></div>
+    <div class="gongfei-route gongfei-route-bottom" aria-hidden="true"></div>
 
     <!-- Content Container -->
     <div class="relative z-10 w-full max-w-md">
-      <!-- Logo/Brand -->
-      <div class="mb-8 text-center">
-        <!-- Custom Logo or Default Logo -->
-        <template v-if="settingsLoaded">
-          <div
-            class="mb-4 inline-flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl shadow-lg shadow-primary-500/30"
-          >
-            <img :src="siteLogo || '/logo.svg'" alt="Logo" class="h-full w-full object-contain" />
-          </div>
-          <h1 class="text-gradient mb-2 text-3xl font-bold">
-            {{ siteName }}
-          </h1>
-          <p class="text-sm text-gray-500 dark:text-dark-400">
-            {{ siteSubtitle }}
-          </p>
-        </template>
+      <div class="gongfei-brand mb-7 text-center">
+        <div class="gongfei-plane-wrap mx-auto mb-2">
+          <img :src="siteLogo || '/gongfei-plane.svg'" :alt="`${siteName} 标志`" class="gongfei-plane" />
+        </div>
+        <h1 class="gongfei-title mb-1 text-3xl font-bold">{{ siteName }}</h1>
+        <p class="gongfei-subtitle text-sm">{{ siteSubtitle }}</p>
       </div>
 
-      <!-- Card Container -->
-      <div class="card-glass rounded-2xl p-8 shadow-glass">
+      <div class="gongfei-auth-card p-8">
         <slot />
       </div>
 
@@ -69,10 +37,9 @@ import { sanitizeUrl } from '@/utils/url'
 
 const appStore = useAppStore()
 
-const siteName = computed(() => appStore.siteName || 'Sub2API')
+const siteName = computed(() => appStore.siteName || '共飞 AI')
 const siteLogo = computed(() => sanitizeUrl(appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }))
-const siteSubtitle = computed(() => appStore.cachedPublicSettings?.site_subtitle || 'Subscription to API Conversion Platform')
-const settingsLoaded = computed(() => appStore.publicSettingsLoaded)
+const siteSubtitle = computed(() => appStore.cachedPublicSettings?.site_subtitle || '一起共享，一起使用 AI')
 
 const currentYear = computed(() => new Date().getFullYear())
 
@@ -82,7 +49,124 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.text-gradient {
-  @apply bg-gradient-to-r from-primary-600 to-primary-500 bg-clip-text text-transparent;
+.gongfei-auth {
+  background: #f4fbff;
+}
+
+.gongfei-auth::before {
+  position: absolute;
+  inset: 0;
+  content: '';
+  background-image: linear-gradient(#dbeef7 1px, transparent 1px), linear-gradient(90deg, #dbeef7 1px, transparent 1px);
+  background-size: 40px 40px;
+  opacity: 0.45;
+}
+
+.gongfei-route {
+  position: absolute;
+  z-index: 0;
+  border: 2px dashed #9cdbef;
+  border-radius: 50%;
+  opacity: 0.75;
+}
+
+.gongfei-route-top {
+  top: -13rem;
+  right: -4rem;
+  width: 34rem;
+  height: 22rem;
+}
+
+.gongfei-route-bottom {
+  bottom: -13rem;
+  left: -8rem;
+  width: 30rem;
+  height: 19rem;
+}
+
+.gongfei-brand,
+.gongfei-auth-card {
+  position: relative;
+  z-index: 1;
+}
+
+.gongfei-plane-wrap {
+  display: grid;
+  width: 6rem;
+  height: 5.5rem;
+  place-items: center;
+}
+
+.gongfei-plane {
+  width: 6.5rem;
+  height: 6.5rem;
+  object-fit: contain;
+  filter: drop-shadow(0 9px 10px rgba(225, 66, 61, 0.16));
+  animation: flight-hover 3.8s ease-in-out infinite;
+}
+
+.gongfei-title {
+  color: #173b5c;
+  letter-spacing: 0;
+}
+
+.gongfei-subtitle {
+  color: #5d7387;
+}
+
+.gongfei-auth-card {
+  border: 1px solid #cfe6f1;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 18px 45px rgba(39, 102, 137, 0.14), 0 2px 0 rgba(255, 255, 255, 0.9) inset;
+}
+
+:global(.dark) .gongfei-auth {
+  background: #0d1d2b;
+}
+
+:global(.dark) .gongfei-auth::before {
+  background-image: linear-gradient(#26475c 1px, transparent 1px), linear-gradient(90deg, #26475c 1px, transparent 1px);
+  opacity: 0.32;
+}
+
+:global(.dark) .gongfei-auth-card {
+  border-color: #29475a;
+  background: rgba(17, 35, 50, 0.96);
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.25);
+}
+
+:global(.dark) .gongfei-title {
+  color: #f4fbff;
+}
+
+:global(.dark) .gongfei-subtitle {
+  color: #a3bed0;
+}
+
+@keyframes flight-hover {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-2deg);
+  }
+  50% {
+    transform: translateY(-5px) rotate(2deg);
+  }
+}
+
+@media (max-width: 640px) {
+  .gongfei-route {
+    display: none;
+  }
+
+  .gongfei-auth-card {
+    padding: 1.5rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gongfei-plane {
+    animation: none;
+  }
 }
 </style>

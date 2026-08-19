@@ -371,10 +371,12 @@
               :now="upstreamBillingNow"
               :probing="probingUpstreamBilling.has(row.id)"
               @probe="handleProbeUpstreamBilling(row)"
+              @edit-manual-rate="handleEditUpstreamBillingManualRate(row)"
+              @clear-manual-rate="handleClearUpstreamBillingManualRate(row)"
             />
           </template>
-          <template #cell-priority="{ value }">
-            <span class="text-sm text-gray-700 dark:text-gray-300">{{ value }}</span>
+          <template #cell-priority="{ row, value }">
+            <span class="text-sm text-gray-700 dark:text-gray-300">{{ row.group_priority ?? value }}</span>
           </template>
           <template #header-scheduler_score="{ column }">
             <div class="flex items-center">
@@ -446,7 +448,7 @@
       <template #pagination><Pagination v-if="pagination.total > 0" :page="pagination.page" :total="pagination.total" :page-size="pagination.page_size" @update:page="handlePageChange" @update:pageSize="handlePageSizeChange" /></template>
     </TablePageLayout>
     <CreateAccountModal :show="showCreate" :proxies="proxies" :groups="groups" @close="showCreate = false" @created="reload" />
-    <EditAccountModal :show="showEdit" :account="edAcc" :proxies="proxies" :groups="groups" @close="showEdit = false" @updated="handleAccountUpdated" />
+    <EditAccountModal :show="showEdit" :account="edAcc" :proxies="proxies" :groups="groups" :priority-group-id="priorityGroupId" @close="showEdit = false" @updated="handleAccountUpdated" />
     <ReAuthAccountModal :show="showReAuth" :account="reAuthAcc" @close="closeReAuthModal" @reauthorized="handleAccountUpdated" />
     <AccountTestModal :show="showTest" :account="testingAcc" @close="closeTestModal" />
     <AccountStatsModal :show="showStats" :account="statsAcc" @close="closeStatsModal" />
@@ -462,11 +464,14 @@
       :target="bulkEditTarget ?? undefined"
       :proxies="proxies"
       :groups="groups"
+      :priority-group-id="priorityGroupId"
       @close="showBulkEdit = false"
       @updated="handleBulkUpdated"
     />
     <TempUnschedStatusModal :show="showTempUnsched" :account="tempUnschedAcc" @close="showTempUnsched = false" @reset="handleTempUnschedReset" />
     <ConfirmDialog :show="showDeleteDialog" :title="t('admin.accounts.deleteAccount')" :message="t('admin.accounts.deleteConfirm', { name: deletingAcc?.name })" :confirm-text="t('common.delete')" :cancel-text="t('common.cancel')" :danger="true" @confirm="confirmDelete" @cancel="showDeleteDialog = false" />
+    <ConfirmDialog :show="showDisableScheduleDialog" :title="t('admin.accounts.disableScheduleConfirmTitle')" :message="t('admin.accounts.disableScheduleConfirmMessage', { name: disablingScheduleAcc?.name })" :danger="true" @confirm="confirmDisableSchedule" @cancel="showDisableScheduleDialog = false; disablingScheduleAcc = null" />
+    <ConfirmDialog :show="showBulkDisableScheduleDialog" :title="t('admin.accounts.disableScheduleConfirmTitle')" :message="t('admin.accounts.bulkDisableScheduleConfirmMessage', { count: bulkDisablingScheduleCount })" :danger="true" @confirm="confirmBulkDisableSchedule" @cancel="showBulkDisableScheduleDialog = false" />
     <ConfirmDialog :show="showCreateShadowDialog" :title="t('admin.accounts.createSparkShadow')" :message="t('admin.accounts.createSparkShadowConfirm', { name: creatingShadowAcc?.name })" @confirm="confirmCreateSparkShadow" @cancel="showCreateShadowDialog = false" />
     <ConfirmDialog :show="showExportDataDialog" :title="t('admin.accounts.dataExport')" :message="t('admin.accounts.dataExportConfirmMessage')" :confirm-text="t('admin.accounts.dataExportConfirm')" :cancel-text="t('common.cancel')" @confirm="handleExportData" @cancel="showExportDataDialog = false">
       <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
@@ -485,7 +490,6 @@ import { ref, reactive, computed, onMounted, onUnmounted, toRaw, watch } from 'v
 import { useIntervalFn } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
-import { useAuthStore } from '@/stores/auth'
 import { adminAPI } from '@/api/admin'
 import { useTableLoader } from '@/composables/useTableLoader'
 import { useSwipeSelect, type SwipeSelectVirtualContext } from '@/composables/useSwipeSelect'
@@ -531,7 +535,6 @@ import type { Account, AccountPlatform, AccountSchedulerGroupScore, AccountType,
 
 const { t } = useI18n()
 const appStore = useAppStore()
-const authStore = useAuthStore()
 
 const proxies = ref<AccountProxy[]>([])
 const groups = ref<AdminGroup[]>([])
@@ -603,6 +606,10 @@ const showSchedulePanel = ref(false)
 const scheduleAcc = ref<Account | null>(null)
 const scheduleModelOptions = ref<SelectOption[]>([])
 const togglingSchedulable = ref<number | null>(null)
+const showDisableScheduleDialog = ref(false)
+const disablingScheduleAcc = ref<Account | null>(null)
+const showBulkDisableScheduleDialog = ref(false)
+const bulkDisablingScheduleCount = ref(0)
 const menu = reactive<{show:boolean, acc:Account|null, pos:{top:number, left:number}|null}>({ show: false, acc: null, pos: null })
 const exportingData = ref(false)
 const probingUpstreamBilling = reactive(new Set<number>())
@@ -629,11 +636,11 @@ const accountToolsDropdownStyle = computed(() => ({
   width: `${accountToolsDropdownPosition.width}px`
 }))
 const hiddenColumns = reactive<Set<string>>(new Set())
-const DEFAULT_HIDDEN_COLUMNS = ['today_stats', 'proxy', 'notes', 'priority', 'scheduler_score', 'rate_multiplier']
+const DEFAULT_HIDDEN_COLUMNS = ['today_stats', 'proxy', 'notes', 'scheduler_score', 'rate_multiplier']
 const HIDDEN_COLUMNS_KEY = 'account-hidden-columns'
 // One-time migration: hide scheduler score for existing admins too, because showing it opt-ins to heavy backend scoring.
 const HIDDEN_COLUMNS_VERSION_KEY = 'account-hidden-columns-version'
-const HIDDEN_COLUMNS_CURRENT_VERSION = 'scheduler-score-hidden-by-default'
+const HIDDEN_COLUMNS_CURRENT_VERSION = 'priority-replaces-account-id'
 
 // Sorting settings
 const ACCOUNT_SORT_STORAGE_KEY = 'account-table-sort'
@@ -793,6 +800,7 @@ const loadSavedColumns = () => {
       // Older saved column layouts may have scheduler_score visible; migrate them to the new safe default once.
       if (localStorage.getItem(HIDDEN_COLUMNS_VERSION_KEY) !== HIDDEN_COLUMNS_CURRENT_VERSION) {
         hiddenColumns.add('scheduler_score')
+        hiddenColumns.delete('priority')
         localStorage.setItem(HIDDEN_COLUMNS_KEY, JSON.stringify([...hiddenColumns]))
         localStorage.setItem(HIDDEN_COLUMNS_VERSION_KEY, HIDDEN_COLUMNS_CURRENT_VERSION)
       }
@@ -926,6 +934,13 @@ const {
     sort_by: sortState.sort_by,
     sort_order: sortState.sort_order
   }
+})
+
+const priorityGroupId = computed<number | null>(() => {
+  const rawGroup = String(params.group ?? '').trim()
+  if (!/^\d+$/.test(rawGroup)) return null
+  const groupID = Number(rawGroup)
+  return Number.isSafeInteger(groupID) && groupID > 0 ? groupID : null
 })
 
 const {
@@ -1435,20 +1450,18 @@ const allColumns = computed(() => {
   const c = [
     { key: 'select', label: '', sortable: false },
     { key: 'name', label: t('admin.accounts.columns.name'), sortable: true },
-    { key: 'id', label: t('admin.accounts.columns.id'), sortable: true },
+    { key: 'priority', label: t('admin.accounts.columns.priority'), sortable: true },
     { key: 'platform_type', label: t('admin.accounts.columns.platformType'), sortable: false },
     { key: 'capacity', label: t('admin.accounts.columns.capacity'), sortable: false },
     { key: 'status', label: t('admin.accounts.columns.status'), sortable: true },
     { key: 'schedulable', label: t('admin.accounts.columns.schedulable'), sortable: true },
     { key: 'today_stats', label: t('admin.accounts.columns.todayStats'), sortable: false }
   ]
-  if (!authStore.isSimpleMode) {
-    c.push({ key: 'groups', label: t('admin.accounts.columns.groups'), sortable: false })
-  }
-  c.push({ key: 'usage', label: t('admin.accounts.columns.usageWindows'), sortable: false })
+	// 分组决定账号能否被调度；Simple 模式同样需要展示和管理。
+	c.push({ key: 'groups', label: t('admin.accounts.columns.groups'), sortable: false })
+	c.push({ key: 'usage', label: t('admin.accounts.columns.usageWindows'), sortable: false })
   c.push(
     { key: 'proxy', label: t('admin.accounts.columns.proxy'), sortable: false },
-    { key: 'priority', label: t('admin.accounts.columns.priority'), sortable: true },
     { key: 'scheduler_score', label: t('admin.accounts.columns.schedulerScore'), sortable: false },
     { key: 'rate_multiplier', label: t('admin.accounts.columns.billingRateMultiplier'), sortable: true },
     { key: 'upstream_billing_rate', label: t('admin.accounts.columns.upstreamBillingRate'), sortable: true },
@@ -1681,7 +1694,21 @@ const normalizeBulkSchedulableResult = (
     hasCounts: hasExplicitCounts
   }
 }
-const handleBulkToggleSchedulable = async (schedulable: boolean) => {
+const handleBulkToggleSchedulable = (schedulable: boolean) => {
+  // Same permanent-manual side effect as the single-row toggle, applied to every
+  // selected account at once — confirm before disabling in bulk.
+  if (!schedulable) {
+    bulkDisablingScheduleCount.value = selIds.value.length
+    showBulkDisableScheduleDialog.value = true
+    return
+  }
+  applyBulkToggleSchedulable(schedulable)
+}
+const confirmBulkDisableSchedule = () => {
+  showBulkDisableScheduleDialog.value = false
+  applyBulkToggleSchedulable(false)
+}
+const applyBulkToggleSchedulable = async (schedulable: boolean) => {
   const accountIds = [...selIds.value]
   try {
     const result = await adminAPI.accounts.bulkUpdate(accountIds, { schedulable })
@@ -1924,6 +1951,40 @@ const handleProbeUpstreamBilling = async (account: Account) => {
     probingUpstreamBilling.delete(account.id)
   }
 }
+const handleEditUpstreamBillingManualRate = async (account: Account) => {
+  const current = account.extra?.upstream_billing_manual_rate_multiplier
+  const value = window.prompt(
+    t('admin.accounts.upstreamBilling.manualRatePrompt'),
+    typeof current === 'number' ? String(current) : ''
+  )
+  if (value == null) return
+  const rateMultiplier = Number(value.trim())
+  if (!Number.isFinite(rateMultiplier) || rateMultiplier < 0) {
+    appStore.showError(t('admin.accounts.upstreamBilling.invalidManualRate'))
+    return
+  }
+  try {
+    const updated = await adminAPI.accounts.setUpstreamBillingManualRate(account.id, rateMultiplier)
+    patchAccountInList(updated)
+    markUpstreamBillingSortRefresh()
+    await refreshAccountsAfterUpstreamBillingProbe()
+    appStore.showSuccess(t('admin.accounts.upstreamBilling.manualRateSaved'))
+  } catch (error) {
+    appStore.showError(extractApiErrorMessage(error, t('admin.accounts.upstreamBilling.manualRateSaveFailed')))
+  }
+}
+const handleClearUpstreamBillingManualRate = async (account: Account) => {
+  if (!window.confirm(t('admin.accounts.upstreamBilling.clearManualRateConfirm'))) return
+  try {
+    const updated = await adminAPI.accounts.setUpstreamBillingManualRate(account.id, null)
+    patchAccountInList(updated)
+    markUpstreamBillingSortRefresh()
+    await refreshAccountsAfterUpstreamBillingProbe()
+    appStore.showSuccess(t('admin.accounts.upstreamBilling.manualRateCleared'))
+  } catch (error) {
+    appStore.showError(extractApiErrorMessage(error, t('admin.accounts.upstreamBilling.manualRateSaveFailed')))
+  }
+}
 const handleAccountUpdated = (updatedAccount: Account) => {
   patchAccountInList(updatedAccount)
   enterAutoRefreshSilentWindow()
@@ -2114,8 +2175,7 @@ const confirmCreateSparkShadow = async () => {
 }
 const handleDelete = (a: Account) => { deletingAcc.value = a; showDeleteDialog.value = true }
 const confirmDelete = async () => { if(!deletingAcc.value) return; try { await adminAPI.accounts.delete(deletingAcc.value.id); showDeleteDialog.value = false; deletingAcc.value = null; reload() } catch (error) { console.error('Failed to delete account:', error) } }
-const handleToggleSchedulable = async (a: Account) => {
-  const nextSchedulable = !a.schedulable
+const applyToggleSchedulable = async (a: Account, nextSchedulable: boolean) => {
   togglingSchedulable.value = a.id
   try {
     const updated = await adminAPI.accounts.setSchedulable(a.id, nextSchedulable)
@@ -2127,6 +2187,27 @@ const handleToggleSchedulable = async (a: Account) => {
   } finally {
     togglingSchedulable.value = null
   }
+}
+const handleToggleSchedulable = (a: Account) => {
+  const nextSchedulable = !a.schedulable
+  // Turning scheduling off also stamps schedulability_source=manual on the
+  // backend, which permanently opts the account out of automatic recovery
+  // (quota reset, rate-limit expiry, etc.) until someone flips it back on by
+  // hand. Confirm before applying that side effect — see incident where a
+  // quick on/off click during testing silently disabled auto-recovery.
+  if (!nextSchedulable) {
+    disablingScheduleAcc.value = a
+    showDisableScheduleDialog.value = true
+    return
+  }
+  applyToggleSchedulable(a, nextSchedulable)
+}
+const confirmDisableSchedule = () => {
+  const a = disablingScheduleAcc.value
+  showDisableScheduleDialog.value = false
+  disablingScheduleAcc.value = null
+  if (!a) return
+  applyToggleSchedulable(a, false)
 }
 const handleShowTempUnsched = (a: Account) => { tempUnschedAcc.value = a; showTempUnsched.value = true }
 const handleTempUnschedReset = async (updated: Account) => {

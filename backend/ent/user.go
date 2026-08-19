@@ -65,6 +65,10 @@ type User struct {
 	TotalRecharged float64 `json:"total_recharged,omitempty"`
 	// RpmLimit holds the value of the "rpm_limit" field.
 	RpmLimit int `json:"rpm_limit,omitempty"`
+	// AccountManagementEnabled holds the value of the "account_management_enabled" field.
+	AccountManagementEnabled bool `json:"account_management_enabled,omitempty"`
+	// ContributionRoomsEnabled holds the value of the "contribution_rooms_enabled" field.
+	ContributionRoomsEnabled bool `json:"contribution_rooms_enabled,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
 	// The values are being populated by the UserQuery when eager-loading is set.
 	Edges        UserEdges `json:"edges"`
@@ -237,7 +241,7 @@ func (*User) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case user.FieldTotpEnabled, user.FieldBalanceNotifyEnabled:
+		case user.FieldTotpEnabled, user.FieldBalanceNotifyEnabled, user.FieldAccountManagementEnabled, user.FieldContributionRoomsEnabled:
 			values[i] = new(sql.NullBool)
 		case user.FieldBalance, user.FieldFrozenBalance, user.FieldBalanceNotifyThreshold, user.FieldTotalRecharged:
 			values[i] = new(sql.NullFloat64)
@@ -417,6 +421,18 @@ func (_m *User) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field rpm_limit", values[i])
 			} else if value.Valid {
 				_m.RpmLimit = int(value.Int64)
+			}
+		case user.FieldAccountManagementEnabled:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field account_management_enabled", values[i])
+			} else if value.Valid {
+				_m.AccountManagementEnabled = value.Bool
+			}
+		case user.FieldContributionRoomsEnabled:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field contribution_rooms_enabled", values[i])
+			} else if value.Valid {
+				_m.ContributionRoomsEnabled = value.Bool
 			}
 		default:
 			_m.selectValues.Set(columns[i], values[i])
@@ -607,6 +623,12 @@ func (_m *User) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("rpm_limit=")
 	builder.WriteString(fmt.Sprintf("%v", _m.RpmLimit))
+	builder.WriteString(", ")
+	builder.WriteString("account_management_enabled=")
+	builder.WriteString(fmt.Sprintf("%v", _m.AccountManagementEnabled))
+	builder.WriteString(", ")
+	builder.WriteString("contribution_rooms_enabled=")
+	builder.WriteString(fmt.Sprintf("%v", _m.ContributionRoomsEnabled))
 	builder.WriteByte(')')
 	return builder.String()
 }

@@ -37,6 +37,12 @@ const messages: Record<string, string> = {
   'keys.apiKey': 'API Key',
   'keys.allGroups': 'All Groups',
   'keys.allStatus': 'All Status',
+  'keys.autoGroupStrategyBalanced': 'Balanced price',
+  'keys.autoGroupStrategyPrice': 'Lowest price',
+  'keys.autoGroupStrategySpeed': 'Fastest',
+  'keys.autoGroupWithStrategy': 'Automatic group selection ({strategy})',
+  'keys.autoGroupCurrentGroup': 'Current group',
+  'keys.autoGroupCurrentGroupPending': 'No runtime selection yet',
   'keys.columnSettings': 'Column Settings',
   'keys.createKey': 'Create API Key',
   'keys.created': 'Created',
@@ -100,7 +106,11 @@ vi.mock('vue-i18n', async () => {
   return {
     ...actual,
     useI18n: () => ({
-      t: (key: string) => messages[key] ?? key,
+      t: (key: string, params?: Record<string, unknown>) =>
+        Object.entries(params ?? {}).reduce(
+          (result, [name, value]) => result.replaceAll(`{${name}}`, String(value)),
+          messages[key] ?? key
+        ),
     }),
   }
 })
@@ -170,8 +180,14 @@ const DataTableStub = {
           <slot name="cell-id" :value="row.id" :row="row" />
         </div>
         <slot name="cell-name" :value="row.name" :row="row" />
+        <div data-test="group">
+          <slot name="cell-group" :value="row.group" :row="row" />
+        </div>
         <div data-test="current-concurrency">
           <slot name="cell-current_concurrency" :value="row.current_concurrency" :row="row" />
+        </div>
+        <div data-test="actions">
+          <slot name="cell-actions" :row="row" />
         </div>
         <div
           v-if="columns.some((col) => col.key === 'last_used_ip')"
@@ -215,6 +231,12 @@ const IconStub = {
   template: '<span data-test="icon">{{ name }}</span>',
 }
 
+const UseKeyModalStub = {
+  name: 'UseKeyModal',
+  props: ['show', 'apiKey', 'baseUrl', 'platform', 'allowMessagesDispatch'],
+  template: '<div data-test="use-key-modal" :data-platform="platform" :data-show="show" />',
+}
+
 const mountView = async () => {
   const wrapper = mount(KeysView, {
     global: {
@@ -229,7 +251,7 @@ const mountView = async () => {
         Select: SelectStub,
         SearchInput: SearchInputStub,
         Icon: IconStub,
-        UseKeyModal: true,
+        UseKeyModal: UseKeyModalStub,
         EndpointPopover: true,
         GroupBadge: true,
         GroupOptionItem: true,
@@ -303,6 +325,81 @@ describe('user KeysView column settings', () => {
     expect(visibleColumnKeys(wrapper)).not.toContain('last_used_at')
     expect(visibleColumnKeys(wrapper)).not.toContain('last_used_ip')
     expect(visibleColumnKeys(wrapper)).not.toContain('id')
+  })
+
+  it.each([
+    ['price', 'Lowest price'],
+    ['balanced', 'Balanced price'],
+    ['speed', 'Fastest'],
+  ] as const)('shows the selected automatic group strategy for %s mode', async (strategy, label) => {
+    listKeys.mockResolvedValueOnce({
+      items: [{
+        ...createApiKey(),
+        auto_group: true,
+        auto_group_strategy: strategy,
+        auto_group_ids: [10, 11],
+      }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    })
+
+    const wrapper = await mountView()
+
+    expect(wrapper.get('[data-test="group"]').text()).toContain(
+      `Automatic group selection (${label})`
+    )
+  })
+
+  it('shows the most recently selected runtime group for automatic keys', async () => {
+    listKeys.mockResolvedValueOnce({
+      items: [{
+        ...createApiKey(),
+        auto_group: true,
+        auto_group_strategy: 'price',
+        auto_group_ids: [10, 11],
+        auto_group_current_group: { id: 11, name: 'plus-福利' },
+        auto_group_current_model: 'gpt-5.4',
+      }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    })
+
+    const wrapper = await mountView()
+
+    expect(wrapper.get('[data-test="group"]').text()).toContain('Current group：plus-福利')
+    expect(wrapper.get('[data-test="group"] button').attributes('title')).toContain('plus-福利')
+  })
+
+  it('uses the selected automatic group platform in the key usage guide', async () => {
+    listKeys.mockResolvedValueOnce({
+      items: [{
+        ...createApiKey(),
+        auto_group: true,
+        auto_group_strategy: 'price',
+        auto_group_ids: [10, 11],
+      }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    })
+    getAvailableGroups.mockResolvedValueOnce([
+      { id: 10, platform: 'openai', allow_messages_dispatch: true },
+      { id: 11, platform: 'openai', allow_messages_dispatch: true },
+    ])
+
+    const wrapper = await mountView()
+
+    await getButtonByText(wrapper, 'keys.useKey').trigger('click')
+    await nextTick()
+
+    const modal = wrapper.get('[data-test="use-key-modal"]')
+    expect(modal.attributes('data-show')).toBe('true')
+    expect(modal.attributes('data-platform')).toBe('openai')
   })
 
   it('shows a hidden column when toggled and persists the preference', async () => {

@@ -1,0 +1,6 @@
+FROM transithub:cached-multiplier-20260806-r1
+
+COPY backend/.artifacts/transithub-api-refresh-session-20260806-r1 /app/transithub-api
+RUN chmod +x /app/transithub-api
+
+ENTRYPOINT ["/app/transithub-api"]

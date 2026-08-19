@@ -268,6 +268,20 @@ func (_u *AccountUpdate) AddRateMultiplier(v float64) *AccountUpdate {
 	return _u
 }
 
+// SetRateMultiplierUndeclared sets the "rate_multiplier_undeclared" field.
+func (_u *AccountUpdate) SetRateMultiplierUndeclared(v bool) *AccountUpdate {
+	_u.mutation.SetRateMultiplierUndeclared(v)
+	return _u
+}
+
+// SetNillableRateMultiplierUndeclared sets the "rate_multiplier_undeclared" field if the given value is not nil.
+func (_u *AccountUpdate) SetNillableRateMultiplierUndeclared(v *bool) *AccountUpdate {
+	if v != nil {
+		_u.SetRateMultiplierUndeclared(*v)
+	}
+	return _u
+}
+
 // SetStatus sets the "status" field.
 func (_u *AccountUpdate) SetStatus(v string) *AccountUpdate {
 	_u.mutation.SetStatus(v)
@@ -467,6 +481,60 @@ func (_u *AccountUpdate) SetNillableTempUnschedulableReason(v *string) *AccountU
 // ClearTempUnschedulableReason clears the value of the "temp_unschedulable_reason" field.
 func (_u *AccountUpdate) ClearTempUnschedulableReason() *AccountUpdate {
 	_u.mutation.ClearTempUnschedulableReason()
+	return _u
+}
+
+// SetSchedulabilitySource sets the "schedulability_source" field.
+func (_u *AccountUpdate) SetSchedulabilitySource(v string) *AccountUpdate {
+	_u.mutation.SetSchedulabilitySource(v)
+	return _u
+}
+
+// SetNillableSchedulabilitySource sets the "schedulability_source" field if the given value is not nil.
+func (_u *AccountUpdate) SetNillableSchedulabilitySource(v *string) *AccountUpdate {
+	if v != nil {
+		_u.SetSchedulabilitySource(*v)
+	}
+	return _u
+}
+
+// SetSchedulabilityReason sets the "schedulability_reason" field.
+func (_u *AccountUpdate) SetSchedulabilityReason(v string) *AccountUpdate {
+	_u.mutation.SetSchedulabilityReason(v)
+	return _u
+}
+
+// SetNillableSchedulabilityReason sets the "schedulability_reason" field if the given value is not nil.
+func (_u *AccountUpdate) SetNillableSchedulabilityReason(v *string) *AccountUpdate {
+	if v != nil {
+		_u.SetSchedulabilityReason(*v)
+	}
+	return _u
+}
+
+// ClearSchedulabilityReason clears the value of the "schedulability_reason" field.
+func (_u *AccountUpdate) ClearSchedulabilityReason() *AccountUpdate {
+	_u.mutation.ClearSchedulabilityReason()
+	return _u
+}
+
+// SetSchedulabilityChangedAt sets the "schedulability_changed_at" field.
+func (_u *AccountUpdate) SetSchedulabilityChangedAt(v time.Time) *AccountUpdate {
+	_u.mutation.SetSchedulabilityChangedAt(v)
+	return _u
+}
+
+// SetNillableSchedulabilityChangedAt sets the "schedulability_changed_at" field if the given value is not nil.
+func (_u *AccountUpdate) SetNillableSchedulabilityChangedAt(v *time.Time) *AccountUpdate {
+	if v != nil {
+		_u.SetSchedulabilityChangedAt(*v)
+	}
+	return _u
+}
+
+// ClearSchedulabilityChangedAt clears the value of the "schedulability_changed_at" field.
+func (_u *AccountUpdate) ClearSchedulabilityChangedAt() *AccountUpdate {
+	_u.mutation.ClearSchedulabilityChangedAt()
 	return _u
 }
 
@@ -777,6 +845,16 @@ func (_u *AccountUpdate) check() error {
 			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "Account.status": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.SchedulabilitySource(); ok {
+		if err := account.SchedulabilitySourceValidator(v); err != nil {
+			return &ValidationError{Name: "schedulability_source", err: fmt.Errorf(`ent: validator failed for field "Account.schedulability_source": %w`, err)}
+		}
+	}
+	if v, ok := _u.mutation.SchedulabilityReason(); ok {
+		if err := account.SchedulabilityReasonValidator(v); err != nil {
+			return &ValidationError{Name: "schedulability_reason", err: fmt.Errorf(`ent: validator failed for field "Account.schedulability_reason": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.SessionWindowStatus(); ok {
 		if err := account.SessionWindowStatusValidator(v); err != nil {
 			return &ValidationError{Name: "session_window_status", err: fmt.Errorf(`ent: validator failed for field "Account.session_window_status": %w`, err)}
@@ -868,6 +946,9 @@ func (_u *AccountUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.AddedRateMultiplier(); ok {
 		_spec.AddField(account.FieldRateMultiplier, field.TypeFloat64, value)
 	}
+	if value, ok := _u.mutation.RateMultiplierUndeclared(); ok {
+		_spec.SetField(account.FieldRateMultiplierUndeclared, field.TypeBool, value)
+	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(account.FieldStatus, field.TypeString, value)
 	}
@@ -924,6 +1005,21 @@ func (_u *AccountUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.TempUnschedulableReasonCleared() {
 		_spec.ClearField(account.FieldTempUnschedulableReason, field.TypeString)
+	}
+	if value, ok := _u.mutation.SchedulabilitySource(); ok {
+		_spec.SetField(account.FieldSchedulabilitySource, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.SchedulabilityReason(); ok {
+		_spec.SetField(account.FieldSchedulabilityReason, field.TypeString, value)
+	}
+	if _u.mutation.SchedulabilityReasonCleared() {
+		_spec.ClearField(account.FieldSchedulabilityReason, field.TypeString)
+	}
+	if value, ok := _u.mutation.SchedulabilityChangedAt(); ok {
+		_spec.SetField(account.FieldSchedulabilityChangedAt, field.TypeTime, value)
+	}
+	if _u.mutation.SchedulabilityChangedAtCleared() {
+		_spec.ClearField(account.FieldSchedulabilityChangedAt, field.TypeTime)
 	}
 	if value, ok := _u.mutation.SessionWindowStart(); ok {
 		_spec.SetField(account.FieldSessionWindowStart, field.TypeTime, value)
@@ -1408,6 +1504,20 @@ func (_u *AccountUpdateOne) AddRateMultiplier(v float64) *AccountUpdateOne {
 	return _u
 }
 
+// SetRateMultiplierUndeclared sets the "rate_multiplier_undeclared" field.
+func (_u *AccountUpdateOne) SetRateMultiplierUndeclared(v bool) *AccountUpdateOne {
+	_u.mutation.SetRateMultiplierUndeclared(v)
+	return _u
+}
+
+// SetNillableRateMultiplierUndeclared sets the "rate_multiplier_undeclared" field if the given value is not nil.
+func (_u *AccountUpdateOne) SetNillableRateMultiplierUndeclared(v *bool) *AccountUpdateOne {
+	if v != nil {
+		_u.SetRateMultiplierUndeclared(*v)
+	}
+	return _u
+}
+
 // SetStatus sets the "status" field.
 func (_u *AccountUpdateOne) SetStatus(v string) *AccountUpdateOne {
 	_u.mutation.SetStatus(v)
@@ -1607,6 +1717,60 @@ func (_u *AccountUpdateOne) SetNillableTempUnschedulableReason(v *string) *Accou
 // ClearTempUnschedulableReason clears the value of the "temp_unschedulable_reason" field.
 func (_u *AccountUpdateOne) ClearTempUnschedulableReason() *AccountUpdateOne {
 	_u.mutation.ClearTempUnschedulableReason()
+	return _u
+}
+
+// SetSchedulabilitySource sets the "schedulability_source" field.
+func (_u *AccountUpdateOne) SetSchedulabilitySource(v string) *AccountUpdateOne {
+	_u.mutation.SetSchedulabilitySource(v)
+	return _u
+}
+
+// SetNillableSchedulabilitySource sets the "schedulability_source" field if the given value is not nil.
+func (_u *AccountUpdateOne) SetNillableSchedulabilitySource(v *string) *AccountUpdateOne {
+	if v != nil {
+		_u.SetSchedulabilitySource(*v)
+	}
+	return _u
+}
+
+// SetSchedulabilityReason sets the "schedulability_reason" field.
+func (_u *AccountUpdateOne) SetSchedulabilityReason(v string) *AccountUpdateOne {
+	_u.mutation.SetSchedulabilityReason(v)
+	return _u
+}
+
+// SetNillableSchedulabilityReason sets the "schedulability_reason" field if the given value is not nil.
+func (_u *AccountUpdateOne) SetNillableSchedulabilityReason(v *string) *AccountUpdateOne {
+	if v != nil {
+		_u.SetSchedulabilityReason(*v)
+	}
+	return _u
+}
+
+// ClearSchedulabilityReason clears the value of the "schedulability_reason" field.
+func (_u *AccountUpdateOne) ClearSchedulabilityReason() *AccountUpdateOne {
+	_u.mutation.ClearSchedulabilityReason()
+	return _u
+}
+
+// SetSchedulabilityChangedAt sets the "schedulability_changed_at" field.
+func (_u *AccountUpdateOne) SetSchedulabilityChangedAt(v time.Time) *AccountUpdateOne {
+	_u.mutation.SetSchedulabilityChangedAt(v)
+	return _u
+}
+
+// SetNillableSchedulabilityChangedAt sets the "schedulability_changed_at" field if the given value is not nil.
+func (_u *AccountUpdateOne) SetNillableSchedulabilityChangedAt(v *time.Time) *AccountUpdateOne {
+	if v != nil {
+		_u.SetSchedulabilityChangedAt(*v)
+	}
+	return _u
+}
+
+// ClearSchedulabilityChangedAt clears the value of the "schedulability_changed_at" field.
+func (_u *AccountUpdateOne) ClearSchedulabilityChangedAt() *AccountUpdateOne {
+	_u.mutation.ClearSchedulabilityChangedAt()
 	return _u
 }
 
@@ -1930,6 +2094,16 @@ func (_u *AccountUpdateOne) check() error {
 			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "Account.status": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.SchedulabilitySource(); ok {
+		if err := account.SchedulabilitySourceValidator(v); err != nil {
+			return &ValidationError{Name: "schedulability_source", err: fmt.Errorf(`ent: validator failed for field "Account.schedulability_source": %w`, err)}
+		}
+	}
+	if v, ok := _u.mutation.SchedulabilityReason(); ok {
+		if err := account.SchedulabilityReasonValidator(v); err != nil {
+			return &ValidationError{Name: "schedulability_reason", err: fmt.Errorf(`ent: validator failed for field "Account.schedulability_reason": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.SessionWindowStatus(); ok {
 		if err := account.SessionWindowStatusValidator(v); err != nil {
 			return &ValidationError{Name: "session_window_status", err: fmt.Errorf(`ent: validator failed for field "Account.session_window_status": %w`, err)}
@@ -2038,6 +2212,9 @@ func (_u *AccountUpdateOne) sqlSave(ctx context.Context) (_node *Account, err er
 	if value, ok := _u.mutation.AddedRateMultiplier(); ok {
 		_spec.AddField(account.FieldRateMultiplier, field.TypeFloat64, value)
 	}
+	if value, ok := _u.mutation.RateMultiplierUndeclared(); ok {
+		_spec.SetField(account.FieldRateMultiplierUndeclared, field.TypeBool, value)
+	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(account.FieldStatus, field.TypeString, value)
 	}
@@ -2094,6 +2271,21 @@ func (_u *AccountUpdateOne) sqlSave(ctx context.Context) (_node *Account, err er
 	}
 	if _u.mutation.TempUnschedulableReasonCleared() {
 		_spec.ClearField(account.FieldTempUnschedulableReason, field.TypeString)
+	}
+	if value, ok := _u.mutation.SchedulabilitySource(); ok {
+		_spec.SetField(account.FieldSchedulabilitySource, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.SchedulabilityReason(); ok {
+		_spec.SetField(account.FieldSchedulabilityReason, field.TypeString, value)
+	}
+	if _u.mutation.SchedulabilityReasonCleared() {
+		_spec.ClearField(account.FieldSchedulabilityReason, field.TypeString)
+	}
+	if value, ok := _u.mutation.SchedulabilityChangedAt(); ok {
+		_spec.SetField(account.FieldSchedulabilityChangedAt, field.TypeTime, value)
+	}
+	if _u.mutation.SchedulabilityChangedAtCleared() {
+		_spec.ClearField(account.FieldSchedulabilityChangedAt, field.TypeTime)
 	}
 	if value, ok := _u.mutation.SessionWindowStart(); ok {
 		_spec.SetField(account.FieldSessionWindowStart, field.TypeTime, value)

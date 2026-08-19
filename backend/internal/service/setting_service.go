@@ -296,6 +296,21 @@ func (s *SettingService) GetAllSettings(ctx context.Context) (*SystemSettings, e
 	return s.parseSettings(settings), nil
 }
 
+func (s *SettingService) GetPlaygroundDefaultConfig(ctx context.Context) (PlaygroundDefaultConfig, error) {
+	settings, err := s.GetAllSettings(ctx)
+	if err != nil {
+		return PlaygroundDefaultConfig{}, err
+	}
+	return PlaygroundDefaultConfig{
+		ChatModel:     settings.PlaygroundDefaultChatModel,
+		ImageModel:    settings.PlaygroundDefaultImageModel,
+		ChatGroupIDs:  append([]int64(nil), settings.PlaygroundDefaultChatGroupIDs...),
+		ImageGroupIDs: append([]int64(nil), settings.PlaygroundDefaultImageGroupIDs...),
+		ChatStrategy:  settings.PlaygroundDefaultChatStrategy,
+		ImageStrategy: settings.PlaygroundDefaultImageStrategy,
+	}, nil
+}
+
 // SetOnUpdateCallback sets a callback function to be called when settings are updated
 // This is used for cache invalidation (e.g., HTML cache in frontend server)
 func (s *SettingService) SetOnUpdateCallback(callback func()) {

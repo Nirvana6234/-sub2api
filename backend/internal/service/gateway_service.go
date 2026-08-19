@@ -551,6 +551,12 @@ type AccountSelectionResult struct {
 	// 局部 ctx 上，handler 必须经 ContextWithSelectionProfitGate 重放后才能在
 	// 调度栈之外做抢槽后终检与准入后粘性绑定。
 	profitGate *openAIProfitControlGate
+	// replaceStickyBinding 仅用于健康逃逸：备用账号终检准入后
+	// 可替换原 sticky 绑定。并发占满等短暂逃逸不设置该标记。
+	replaceStickyBinding bool
+	// preserveStickyBinding 用于并发占满等短暂逃逸。备用账号即使
+	// 经过 WaitPlan 后才准入，也不应覆盖原会话绑定。
+	preserveStickyBinding bool
 }
 
 // ProfitGateActive 报告本次选号是否处于利润门之下。
@@ -738,6 +744,16 @@ type GatewayService struct {
 	tlsFPProfileService   *TLSFingerprintProfileService
 	balanceNotifyService  *BalanceNotifyService
 	userPlatformQuotaRepo UserPlatformQuotaRepository
+	contributionRoomRepo  ContributionRoomRoutingRepository
+}
+
+// SetContributionRoomRoutingRepository wires the optional, read-only room
+// routing source after service construction. Keeping it optional preserves the
+// lightweight constructors used by isolated gateway tests.
+func (s *GatewayService) SetContributionRoomRoutingRepository(repo ContributionRoomRoutingRepository) {
+	if s != nil {
+		s.contributionRoomRepo = repo
+	}
 }
 
 // NewGatewayService creates a new GatewayService
@@ -1303,6 +1319,93 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 		modelsListCacheStoreTotal.Add(1)
 	}
 	return cloneStringSlice(models)
+}
+
+// GetWorkspaceAvailableModels returns client-visible model IDs grouped by
+// platform for the desktop app's fixed local relay. The local relay schedules
+// personal accounts before the explicitly enabled fallback accounts, so its
+// model catalog must reflect the complete local scheduler instead of the
+// platform attached to one client API key.
+//
+// A nil model slice means that the platform has at least one schedulable
+// account without an explicit model mapping and should therefore advertise
+// that platform's default model list. Explicit mappings from other accounts
+// are still included by the handler alongside those defaults.
+type WorkspacePlatformModels struct {
+	ModelIDs    []string
+	UseDefaults bool
+}
+
+func (s *GatewayService) GetWorkspaceAvailableModels(ctx context.Context) map[string]WorkspacePlatformModels {
+	if s == nil || s.accountRepo == nil {
+		return nil
+	}
+
+	accounts, err := s.accountRepo.ListSchedulable(ctx)
+	if err != nil || len(accounts) == 0 {
+		return nil
+	}
+	return workspaceAvailableModelsFromAccounts(accounts)
+}
+
+// GetWorkspaceAvailableModels is the OpenAI gateway counterpart used by the
+// Codex manifest endpoint. Both gateway stacks expose the same local catalog.
+func (s *OpenAIGatewayService) GetWorkspaceAvailableModels(ctx context.Context) map[string]WorkspacePlatformModels {
+	if s == nil || s.accountRepo == nil {
+		return nil
+	}
+	accounts, err := s.accountRepo.ListSchedulable(ctx)
+	if err != nil || len(accounts) == 0 {
+		return nil
+	}
+	return workspaceAvailableModelsFromAccounts(accounts)
+}
+
+func workspaceAvailableModelsFromAccounts(accounts []Account) map[string]WorkspacePlatformModels {
+	type platformModels struct {
+		useDefaults bool
+		models      map[string]struct{}
+	}
+	byPlatform := make(map[string]*platformModels, 3)
+	for _, account := range accounts {
+		platform := strings.TrimSpace(account.Platform)
+		switch platform {
+		case PlatformOpenAI, PlatformAnthropic, PlatformGrok:
+		default:
+			continue
+		}
+
+		entry := byPlatform[platform]
+		if entry == nil {
+			entry = &platformModels{models: make(map[string]struct{})}
+			byPlatform[platform] = entry
+		}
+		mapping := account.GetModelMapping()
+		if len(mapping) == 0 {
+			entry.useDefaults = true
+			continue
+		}
+		for model := range mapping {
+			model = strings.TrimSpace(model)
+			if model != "" {
+				entry.models[model] = struct{}{}
+			}
+		}
+	}
+
+	result := make(map[string]WorkspacePlatformModels, len(byPlatform))
+	for platform, entry := range byPlatform {
+		models := make([]string, 0, len(entry.models))
+		for model := range entry.models {
+			models = append(models, model)
+		}
+		sort.Strings(models)
+		result[platform] = WorkspacePlatformModels{
+			ModelIDs:    models,
+			UseDefaults: entry.useDefaults,
+		}
+	}
+	return result
 }
 
 // GetSchedulablePlatforms returns the concrete platforms that currently have

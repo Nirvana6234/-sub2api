@@ -519,10 +519,10 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	ctx := c.Request.Context()
 	mode = normalizeAccountTestMode(mode)
 
-	// Default to openai.DefaultTestModel for OpenAI testing
+	// Use the account-plan-aware default when the caller did not choose a model.
 	testModelID := modelID
 	if testModelID == "" {
-		testModelID = openai.DefaultTestModel
+		testModelID = OpenAITestModelForAccount(account)
 	}
 
 	// Align test routing with gateway behavior: OpenAI accounts apply normal

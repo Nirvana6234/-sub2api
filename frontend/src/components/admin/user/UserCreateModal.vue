@@ -54,6 +54,23 @@
         />
         <p class="input-hint">{{ t('admin.users.form.rpmLimitHint') }}</p>
       </div>
+      <div class="space-y-3">
+        <label class="input-label">{{ t('admin.users.form.optionalFeatures') }}</label>
+        <label class="flex items-start gap-3 text-sm text-gray-700 dark:text-gray-300">
+          <input v-model="form.account_management_enabled" type="checkbox" class="mt-0.5 h-4 w-4" />
+          <span>
+            <span class="block font-medium">{{ t('admin.users.form.accountManagementEnabled') }}</span>
+            <span class="block text-xs text-gray-500 dark:text-gray-400">{{ t('admin.users.form.accountManagementEnabledHint') }}</span>
+          </span>
+        </label>
+        <label class="flex items-start gap-3 text-sm text-gray-700 dark:text-gray-300">
+          <input v-model="form.contribution_rooms_enabled" type="checkbox" class="mt-0.5 h-4 w-4" />
+          <span>
+            <span class="block font-medium">{{ t('admin.users.form.contributionRoomsEnabled') }}</span>
+            <span class="block text-xs text-gray-500 dark:text-gray-400">{{ t('admin.users.form.contributionRoomsEnabledHint') }}</span>
+          </span>
+        </label>
+      </div>
     </form>
     <template #footer>
       <div class="flex justify-end gap-3">
@@ -82,7 +99,7 @@ const props = defineProps<{ show: boolean }>()
 const emit = defineEmits(['close', 'success']); const { t } = useI18n()
 const appStore = useAppStore()
 
-const form = reactive({ email: '', password: '', username: '', notes: '', role: 'user' as 'user' | 'admin', balance: '', concurrency: 1, rpm_limit: 0 })
+const form = reactive({ email: '', password: '', username: '', notes: '', role: 'user' as 'user' | 'admin', balance: '', concurrency: 1, rpm_limit: 0, account_management_enabled: false, contribution_rooms_enabled: false })
 
 const stepUp = useStepUp()
 const loading = ref(false)
@@ -116,7 +133,7 @@ const submit = async () => {
   } finally { loading.value = false }
 }
 
-watch(() => props.show, (v) => { if(v) Object.assign(form, { email: '', password: '', username: '', notes: '', role: 'user', balance: '', concurrency: 1, rpm_limit: 0 }) })
+watch(() => props.show, (v) => { if(v) Object.assign(form, { email: '', password: '', username: '', notes: '', role: 'user', balance: '', concurrency: 1, rpm_limit: 0, account_management_enabled: false, contribution_rooms_enabled: false }) })
 
 const generateRandomPassword = () => {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%^&*'

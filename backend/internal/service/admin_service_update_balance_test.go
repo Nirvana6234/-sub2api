@@ -57,9 +57,11 @@ func (s *balanceRedeemRepoStub) Create(ctx context.Context, code *RedeemCode) er
 }
 
 type authCacheInvalidatorStub struct {
-	userIDs  []int64
-	groupIDs []int64
-	keys     []string
+	userIDs          []int64
+	groupIDs         []int64
+	keys             []string
+	autoGroupUserIDs []int64
+	autoGroupIDs     []int64
 }
 
 type adminRechargeAffiliateAccruerStub struct {
@@ -96,6 +98,14 @@ func (s *authCacheInvalidatorStub) InvalidateAuthCacheByUserID(ctx context.Conte
 
 func (s *authCacheInvalidatorStub) InvalidateAuthCacheByGroupID(ctx context.Context, groupID int64) {
 	s.groupIDs = append(s.groupIDs, groupID)
+}
+
+func (s *authCacheInvalidatorStub) InvalidateAutoGroupSelectionsByUserID(ctx context.Context, userID int64) {
+	s.autoGroupUserIDs = append(s.autoGroupUserIDs, userID)
+}
+
+func (s *authCacheInvalidatorStub) InvalidateAutoGroupSelectionsByGroupID(ctx context.Context, groupID int64) {
+	s.autoGroupIDs = append(s.autoGroupIDs, groupID)
 }
 
 // 管理员调账必须走原子的 AdjustBalance/SetBalance，而不是"读余额→算新值→整行写回"，

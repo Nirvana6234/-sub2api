@@ -282,6 +282,43 @@ func TestAdminService_CreateGroup_WithImagePricing(t *testing.T) {
 	require.InDelta(t, 0.30, *repo.created.ImagePrice4K, 0.0001)
 }
 
+func TestAdminService_CreateGroup_AllowsZeroRateMultiplier(t *testing.T) {
+	repo := &groupRepoStubForAdmin{}
+	svc := &adminServiceImpl{groupRepo: repo}
+
+	group, err := svc.CreateGroup(context.Background(), &CreateGroupInput{
+		Name:             "local-free-routing",
+		Platform:         PlatformOpenAI,
+		RateMultiplier:   0,
+		SubscriptionType: SubscriptionTypeStandard,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, group)
+	require.NotNil(t, repo.created)
+	require.Zero(t, repo.created.RateMultiplier)
+}
+
+func TestAdminService_UpdateGroup_AllowsZeroRateMultiplier(t *testing.T) {
+	repo := &groupRepoStubForAdmin{getByID: &Group{
+		ID:               7,
+		Name:             "existing-routing",
+		Platform:         PlatformOpenAI,
+		Status:           StatusActive,
+		SubscriptionType: SubscriptionTypeStandard,
+		RateMultiplier:   1,
+	}}
+	svc := &adminServiceImpl{groupRepo: repo}
+	zero := 0.0
+
+	group, err := svc.UpdateGroup(context.Background(), 7, &UpdateGroupInput{RateMultiplier: &zero})
+
+	require.NoError(t, err)
+	require.NotNil(t, group)
+	require.NotNil(t, repo.updated)
+	require.Zero(t, repo.updated.RateMultiplier)
+}
+
 func TestAdminService_CreateGroup_WithVideoPricing(t *testing.T) {
 	repo := &groupRepoStubForAdmin{}
 	svc := &adminServiceImpl{groupRepo: repo}

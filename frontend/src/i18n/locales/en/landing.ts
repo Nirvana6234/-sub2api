@@ -8,6 +8,7 @@ export default {
     viewOnGithub: 'View on GitHub',
     viewDocs: 'View Documentation',
     docs: 'Docs',
+    clientDownload: 'Client download',
     switchToLight: 'Switch to Light Mode',
     switchToDark: 'Switch to Dark Mode',
     dashboard: 'Dashboard',
@@ -191,8 +192,8 @@ export default {
 
   // Setup Wizard
   setup: {
-    title: 'Sub2API Setup',
-    description: 'Configure your Sub2API instance',
+    title: 'Cofly AI Setup',
+    description: 'Configure your Cofly AI instance',
     database: {
       title: 'Database Configuration',
       description: 'Connect to your PostgreSQL database',

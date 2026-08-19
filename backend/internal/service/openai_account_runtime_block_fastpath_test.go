@@ -200,6 +200,68 @@ func TestOpenAIPoolModeNonRetryable5xx_StillCreatesModelTransientBlock(t *testin
 	require.True(t, gateway.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-5.4"))
 }
 
+// 池模式账号的 403 默认完全不进熔断（poolModeRetryable=true，见 handleOpenAIAccountUpstreamError
+// 的 !poolModeRetryable 排除）。但当 403 能被 isOpenAIPermanentCapability403 识别为确定性的
+// 账号级权限问题（重试必然还是失败）时，应该照常进入短时内存熔断——这是本次改动新增的例外。
+func TestOpenAIPoolModePermanentCapability403_CreatesModelTransientBlock(t *testing.T) {
+	repo := &errorPolicyRepoStub{}
+	rateLimitService := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	gateway := &OpenAIGatewayService{rateLimitService: rateLimitService}
+	account := &Account{
+		ID:       50,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"pool_mode": true, // default pool_mode_retry_status_codes includes 403
+		},
+	}
+
+	for i := 0; i < 2; i++ {
+		shouldDisable := gateway.handleOpenAIAccountUpstreamError(
+			context.Background(),
+			account,
+			http.StatusForbidden,
+			http.Header{},
+			[]byte(`{"error":{"message":"Image generation is not enabled for this group"}}`),
+			"gpt-5.4",
+		)
+		require.False(t, shouldDisable, "pool mode must not touch DB schedulable state")
+	}
+
+	require.True(t, gateway.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-5.4"),
+		"a permanent-capability 403 must still trip the short-lived circuit breaker even in pool mode")
+}
+
+// 普通（非永久性）403 在池模式下的既有行为保持不变：不进入熔断，交给请求内的
+// 同账号重试预算处理。
+func TestOpenAIPoolModeOrdinary403_DoesNotCreateModelTransientBlock(t *testing.T) {
+	repo := &errorPolicyRepoStub{}
+	rateLimitService := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	gateway := &OpenAIGatewayService{rateLimitService: rateLimitService}
+	account := &Account{
+		ID:       51,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"pool_mode": true,
+		},
+	}
+
+	for i := 0; i < 2; i++ {
+		shouldDisable := gateway.handleOpenAIAccountUpstreamError(
+			context.Background(),
+			account,
+			http.StatusForbidden,
+			http.Header{},
+			[]byte(`{"error":{"message":"Access forbidden"}}`),
+			"gpt-5.4",
+		)
+		require.False(t, shouldDisable)
+	}
+
+	require.False(t, gateway.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-5.4"))
+}
+
 func TestOpenAINonPoolAPIKey5xx_StillCreatesModelTransientBlock(t *testing.T) {
 	repo := &errorPolicyRepoStub{}
 	rateLimitService := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)

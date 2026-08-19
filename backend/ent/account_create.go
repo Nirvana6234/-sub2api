@@ -195,6 +195,20 @@ func (_c *AccountCreate) SetNillableRateMultiplier(v *float64) *AccountCreate {
 	return _c
 }
 
+// SetRateMultiplierUndeclared sets the "rate_multiplier_undeclared" field.
+func (_c *AccountCreate) SetRateMultiplierUndeclared(v bool) *AccountCreate {
+	_c.mutation.SetRateMultiplierUndeclared(v)
+	return _c
+}
+
+// SetNillableRateMultiplierUndeclared sets the "rate_multiplier_undeclared" field if the given value is not nil.
+func (_c *AccountCreate) SetNillableRateMultiplierUndeclared(v *bool) *AccountCreate {
+	if v != nil {
+		_c.SetRateMultiplierUndeclared(*v)
+	}
+	return _c
+}
+
 // SetStatus sets the "status" field.
 func (_c *AccountCreate) SetStatus(v string) *AccountCreate {
 	_c.mutation.SetStatus(v)
@@ -345,6 +359,48 @@ func (_c *AccountCreate) SetTempUnschedulableReason(v string) *AccountCreate {
 func (_c *AccountCreate) SetNillableTempUnschedulableReason(v *string) *AccountCreate {
 	if v != nil {
 		_c.SetTempUnschedulableReason(*v)
+	}
+	return _c
+}
+
+// SetSchedulabilitySource sets the "schedulability_source" field.
+func (_c *AccountCreate) SetSchedulabilitySource(v string) *AccountCreate {
+	_c.mutation.SetSchedulabilitySource(v)
+	return _c
+}
+
+// SetNillableSchedulabilitySource sets the "schedulability_source" field if the given value is not nil.
+func (_c *AccountCreate) SetNillableSchedulabilitySource(v *string) *AccountCreate {
+	if v != nil {
+		_c.SetSchedulabilitySource(*v)
+	}
+	return _c
+}
+
+// SetSchedulabilityReason sets the "schedulability_reason" field.
+func (_c *AccountCreate) SetSchedulabilityReason(v string) *AccountCreate {
+	_c.mutation.SetSchedulabilityReason(v)
+	return _c
+}
+
+// SetNillableSchedulabilityReason sets the "schedulability_reason" field if the given value is not nil.
+func (_c *AccountCreate) SetNillableSchedulabilityReason(v *string) *AccountCreate {
+	if v != nil {
+		_c.SetSchedulabilityReason(*v)
+	}
+	return _c
+}
+
+// SetSchedulabilityChangedAt sets the "schedulability_changed_at" field.
+func (_c *AccountCreate) SetSchedulabilityChangedAt(v time.Time) *AccountCreate {
+	_c.mutation.SetSchedulabilityChangedAt(v)
+	return _c
+}
+
+// SetNillableSchedulabilityChangedAt sets the "schedulability_changed_at" field if the given value is not nil.
+func (_c *AccountCreate) SetNillableSchedulabilityChangedAt(v *time.Time) *AccountCreate {
+	if v != nil {
+		_c.SetSchedulabilityChangedAt(*v)
 	}
 	return _c
 }
@@ -565,6 +621,10 @@ func (_c *AccountCreate) defaults() error {
 		v := account.DefaultRateMultiplier
 		_c.mutation.SetRateMultiplier(v)
 	}
+	if _, ok := _c.mutation.RateMultiplierUndeclared(); !ok {
+		v := account.DefaultRateMultiplierUndeclared
+		_c.mutation.SetRateMultiplierUndeclared(v)
+	}
 	if _, ok := _c.mutation.Status(); !ok {
 		v := account.DefaultStatus
 		_c.mutation.SetStatus(v)
@@ -576,6 +636,10 @@ func (_c *AccountCreate) defaults() error {
 	if _, ok := _c.mutation.Schedulable(); !ok {
 		v := account.DefaultSchedulable
 		_c.mutation.SetSchedulable(v)
+	}
+	if _, ok := _c.mutation.SchedulabilitySource(); !ok {
+		v := account.DefaultSchedulabilitySource
+		_c.mutation.SetSchedulabilitySource(v)
 	}
 	if _, ok := _c.mutation.QuotaDimension(); !ok {
 		v := account.DefaultQuotaDimension
@@ -631,6 +695,9 @@ func (_c *AccountCreate) check() error {
 	if _, ok := _c.mutation.RateMultiplier(); !ok {
 		return &ValidationError{Name: "rate_multiplier", err: errors.New(`ent: missing required field "Account.rate_multiplier"`)}
 	}
+	if _, ok := _c.mutation.RateMultiplierUndeclared(); !ok {
+		return &ValidationError{Name: "rate_multiplier_undeclared", err: errors.New(`ent: missing required field "Account.rate_multiplier_undeclared"`)}
+	}
 	if _, ok := _c.mutation.Status(); !ok {
 		return &ValidationError{Name: "status", err: errors.New(`ent: missing required field "Account.status"`)}
 	}
@@ -644,6 +711,19 @@ func (_c *AccountCreate) check() error {
 	}
 	if _, ok := _c.mutation.Schedulable(); !ok {
 		return &ValidationError{Name: "schedulable", err: errors.New(`ent: missing required field "Account.schedulable"`)}
+	}
+	if _, ok := _c.mutation.SchedulabilitySource(); !ok {
+		return &ValidationError{Name: "schedulability_source", err: errors.New(`ent: missing required field "Account.schedulability_source"`)}
+	}
+	if v, ok := _c.mutation.SchedulabilitySource(); ok {
+		if err := account.SchedulabilitySourceValidator(v); err != nil {
+			return &ValidationError{Name: "schedulability_source", err: fmt.Errorf(`ent: validator failed for field "Account.schedulability_source": %w`, err)}
+		}
+	}
+	if v, ok := _c.mutation.SchedulabilityReason(); ok {
+		if err := account.SchedulabilityReasonValidator(v); err != nil {
+			return &ValidationError{Name: "schedulability_reason", err: fmt.Errorf(`ent: validator failed for field "Account.schedulability_reason": %w`, err)}
+		}
 	}
 	if v, ok := _c.mutation.SessionWindowStatus(); ok {
 		if err := account.SessionWindowStatusValidator(v); err != nil {
@@ -741,6 +821,10 @@ func (_c *AccountCreate) createSpec() (*Account, *sqlgraph.CreateSpec) {
 		_spec.SetField(account.FieldRateMultiplier, field.TypeFloat64, value)
 		_node.RateMultiplier = value
 	}
+	if value, ok := _c.mutation.RateMultiplierUndeclared(); ok {
+		_spec.SetField(account.FieldRateMultiplierUndeclared, field.TypeBool, value)
+		_node.RateMultiplierUndeclared = value
+	}
 	if value, ok := _c.mutation.Status(); ok {
 		_spec.SetField(account.FieldStatus, field.TypeString, value)
 		_node.Status = value
@@ -784,6 +868,18 @@ func (_c *AccountCreate) createSpec() (*Account, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.TempUnschedulableReason(); ok {
 		_spec.SetField(account.FieldTempUnschedulableReason, field.TypeString, value)
 		_node.TempUnschedulableReason = &value
+	}
+	if value, ok := _c.mutation.SchedulabilitySource(); ok {
+		_spec.SetField(account.FieldSchedulabilitySource, field.TypeString, value)
+		_node.SchedulabilitySource = value
+	}
+	if value, ok := _c.mutation.SchedulabilityReason(); ok {
+		_spec.SetField(account.FieldSchedulabilityReason, field.TypeString, value)
+		_node.SchedulabilityReason = &value
+	}
+	if value, ok := _c.mutation.SchedulabilityChangedAt(); ok {
+		_spec.SetField(account.FieldSchedulabilityChangedAt, field.TypeTime, value)
+		_node.SchedulabilityChangedAt = &value
 	}
 	if value, ok := _c.mutation.SessionWindowStart(); ok {
 		_spec.SetField(account.FieldSessionWindowStart, field.TypeTime, value)
@@ -1167,6 +1263,18 @@ func (u *AccountUpsert) AddRateMultiplier(v float64) *AccountUpsert {
 	return u
 }
 
+// SetRateMultiplierUndeclared sets the "rate_multiplier_undeclared" field.
+func (u *AccountUpsert) SetRateMultiplierUndeclared(v bool) *AccountUpsert {
+	u.Set(account.FieldRateMultiplierUndeclared, v)
+	return u
+}
+
+// UpdateRateMultiplierUndeclared sets the "rate_multiplier_undeclared" field to the value that was provided on create.
+func (u *AccountUpsert) UpdateRateMultiplierUndeclared() *AccountUpsert {
+	u.SetExcluded(account.FieldRateMultiplierUndeclared)
+	return u
+}
+
 // SetStatus sets the "status" field.
 func (u *AccountUpsert) SetStatus(v string) *AccountUpsert {
 	u.Set(account.FieldStatus, v)
@@ -1344,6 +1452,54 @@ func (u *AccountUpsert) UpdateTempUnschedulableReason() *AccountUpsert {
 // ClearTempUnschedulableReason clears the value of the "temp_unschedulable_reason" field.
 func (u *AccountUpsert) ClearTempUnschedulableReason() *AccountUpsert {
 	u.SetNull(account.FieldTempUnschedulableReason)
+	return u
+}
+
+// SetSchedulabilitySource sets the "schedulability_source" field.
+func (u *AccountUpsert) SetSchedulabilitySource(v string) *AccountUpsert {
+	u.Set(account.FieldSchedulabilitySource, v)
+	return u
+}
+
+// UpdateSchedulabilitySource sets the "schedulability_source" field to the value that was provided on create.
+func (u *AccountUpsert) UpdateSchedulabilitySource() *AccountUpsert {
+	u.SetExcluded(account.FieldSchedulabilitySource)
+	return u
+}
+
+// SetSchedulabilityReason sets the "schedulability_reason" field.
+func (u *AccountUpsert) SetSchedulabilityReason(v string) *AccountUpsert {
+	u.Set(account.FieldSchedulabilityReason, v)
+	return u
+}
+
+// UpdateSchedulabilityReason sets the "schedulability_reason" field to the value that was provided on create.
+func (u *AccountUpsert) UpdateSchedulabilityReason() *AccountUpsert {
+	u.SetExcluded(account.FieldSchedulabilityReason)
+	return u
+}
+
+// ClearSchedulabilityReason clears the value of the "schedulability_reason" field.
+func (u *AccountUpsert) ClearSchedulabilityReason() *AccountUpsert {
+	u.SetNull(account.FieldSchedulabilityReason)
+	return u
+}
+
+// SetSchedulabilityChangedAt sets the "schedulability_changed_at" field.
+func (u *AccountUpsert) SetSchedulabilityChangedAt(v time.Time) *AccountUpsert {
+	u.Set(account.FieldSchedulabilityChangedAt, v)
+	return u
+}
+
+// UpdateSchedulabilityChangedAt sets the "schedulability_changed_at" field to the value that was provided on create.
+func (u *AccountUpsert) UpdateSchedulabilityChangedAt() *AccountUpsert {
+	u.SetExcluded(account.FieldSchedulabilityChangedAt)
+	return u
+}
+
+// ClearSchedulabilityChangedAt clears the value of the "schedulability_changed_at" field.
+func (u *AccountUpsert) ClearSchedulabilityChangedAt() *AccountUpsert {
+	u.SetNull(account.FieldSchedulabilityChangedAt)
 	return u
 }
 
@@ -1742,6 +1898,20 @@ func (u *AccountUpsertOne) UpdateRateMultiplier() *AccountUpsertOne {
 	})
 }
 
+// SetRateMultiplierUndeclared sets the "rate_multiplier_undeclared" field.
+func (u *AccountUpsertOne) SetRateMultiplierUndeclared(v bool) *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetRateMultiplierUndeclared(v)
+	})
+}
+
+// UpdateRateMultiplierUndeclared sets the "rate_multiplier_undeclared" field to the value that was provided on create.
+func (u *AccountUpsertOne) UpdateRateMultiplierUndeclared() *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateRateMultiplierUndeclared()
+	})
+}
+
 // SetStatus sets the "status" field.
 func (u *AccountUpsertOne) SetStatus(v string) *AccountUpsertOne {
 	return u.Update(func(s *AccountUpsert) {
@@ -1949,6 +2119,62 @@ func (u *AccountUpsertOne) UpdateTempUnschedulableReason() *AccountUpsertOne {
 func (u *AccountUpsertOne) ClearTempUnschedulableReason() *AccountUpsertOne {
 	return u.Update(func(s *AccountUpsert) {
 		s.ClearTempUnschedulableReason()
+	})
+}
+
+// SetSchedulabilitySource sets the "schedulability_source" field.
+func (u *AccountUpsertOne) SetSchedulabilitySource(v string) *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetSchedulabilitySource(v)
+	})
+}
+
+// UpdateSchedulabilitySource sets the "schedulability_source" field to the value that was provided on create.
+func (u *AccountUpsertOne) UpdateSchedulabilitySource() *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateSchedulabilitySource()
+	})
+}
+
+// SetSchedulabilityReason sets the "schedulability_reason" field.
+func (u *AccountUpsertOne) SetSchedulabilityReason(v string) *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetSchedulabilityReason(v)
+	})
+}
+
+// UpdateSchedulabilityReason sets the "schedulability_reason" field to the value that was provided on create.
+func (u *AccountUpsertOne) UpdateSchedulabilityReason() *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateSchedulabilityReason()
+	})
+}
+
+// ClearSchedulabilityReason clears the value of the "schedulability_reason" field.
+func (u *AccountUpsertOne) ClearSchedulabilityReason() *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.ClearSchedulabilityReason()
+	})
+}
+
+// SetSchedulabilityChangedAt sets the "schedulability_changed_at" field.
+func (u *AccountUpsertOne) SetSchedulabilityChangedAt(v time.Time) *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetSchedulabilityChangedAt(v)
+	})
+}
+
+// UpdateSchedulabilityChangedAt sets the "schedulability_changed_at" field to the value that was provided on create.
+func (u *AccountUpsertOne) UpdateSchedulabilityChangedAt() *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateSchedulabilityChangedAt()
+	})
+}
+
+// ClearSchedulabilityChangedAt clears the value of the "schedulability_changed_at" field.
+func (u *AccountUpsertOne) ClearSchedulabilityChangedAt() *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.ClearSchedulabilityChangedAt()
 	})
 }
 
@@ -2527,6 +2753,20 @@ func (u *AccountUpsertBulk) UpdateRateMultiplier() *AccountUpsertBulk {
 	})
 }
 
+// SetRateMultiplierUndeclared sets the "rate_multiplier_undeclared" field.
+func (u *AccountUpsertBulk) SetRateMultiplierUndeclared(v bool) *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetRateMultiplierUndeclared(v)
+	})
+}
+
+// UpdateRateMultiplierUndeclared sets the "rate_multiplier_undeclared" field to the value that was provided on create.
+func (u *AccountUpsertBulk) UpdateRateMultiplierUndeclared() *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateRateMultiplierUndeclared()
+	})
+}
+
 // SetStatus sets the "status" field.
 func (u *AccountUpsertBulk) SetStatus(v string) *AccountUpsertBulk {
 	return u.Update(func(s *AccountUpsert) {
@@ -2734,6 +2974,62 @@ func (u *AccountUpsertBulk) UpdateTempUnschedulableReason() *AccountUpsertBulk {
 func (u *AccountUpsertBulk) ClearTempUnschedulableReason() *AccountUpsertBulk {
 	return u.Update(func(s *AccountUpsert) {
 		s.ClearTempUnschedulableReason()
+	})
+}
+
+// SetSchedulabilitySource sets the "schedulability_source" field.
+func (u *AccountUpsertBulk) SetSchedulabilitySource(v string) *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetSchedulabilitySource(v)
+	})
+}
+
+// UpdateSchedulabilitySource sets the "schedulability_source" field to the value that was provided on create.
+func (u *AccountUpsertBulk) UpdateSchedulabilitySource() *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateSchedulabilitySource()
+	})
+}
+
+// SetSchedulabilityReason sets the "schedulability_reason" field.
+func (u *AccountUpsertBulk) SetSchedulabilityReason(v string) *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetSchedulabilityReason(v)
+	})
+}
+
+// UpdateSchedulabilityReason sets the "schedulability_reason" field to the value that was provided on create.
+func (u *AccountUpsertBulk) UpdateSchedulabilityReason() *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateSchedulabilityReason()
+	})
+}
+
+// ClearSchedulabilityReason clears the value of the "schedulability_reason" field.
+func (u *AccountUpsertBulk) ClearSchedulabilityReason() *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.ClearSchedulabilityReason()
+	})
+}
+
+// SetSchedulabilityChangedAt sets the "schedulability_changed_at" field.
+func (u *AccountUpsertBulk) SetSchedulabilityChangedAt(v time.Time) *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetSchedulabilityChangedAt(v)
+	})
+}
+
+// UpdateSchedulabilityChangedAt sets the "schedulability_changed_at" field to the value that was provided on create.
+func (u *AccountUpsertBulk) UpdateSchedulabilityChangedAt() *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateSchedulabilityChangedAt()
+	})
+}
+
+// ClearSchedulabilityChangedAt clears the value of the "schedulability_changed_at" field.
+func (u *AccountUpsertBulk) ClearSchedulabilityChangedAt() *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.ClearSchedulabilityChangedAt()
 	})
 }
 

@@ -175,6 +175,16 @@ func RpmLimit(v int) predicate.User {
 	return predicate.User(sql.FieldEQ(FieldRpmLimit, v))
 }
 
+// AccountManagementEnabled applies equality check predicate on the "account_management_enabled" field. It's identical to AccountManagementEnabledEQ.
+func AccountManagementEnabled(v bool) predicate.User {
+	return predicate.User(sql.FieldEQ(FieldAccountManagementEnabled, v))
+}
+
+// ContributionRoomsEnabled applies equality check predicate on the "contribution_rooms_enabled" field. It's identical to ContributionRoomsEnabledEQ.
+func ContributionRoomsEnabled(v bool) predicate.User {
+	return predicate.User(sql.FieldEQ(FieldContributionRoomsEnabled, v))
+}
+
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.
 func CreatedAtEQ(v time.Time) predicate.User {
 	return predicate.User(sql.FieldEQ(FieldCreatedAt, v))
@@ -1383,6 +1393,26 @@ func RpmLimitLT(v int) predicate.User {
 // RpmLimitLTE applies the LTE predicate on the "rpm_limit" field.
 func RpmLimitLTE(v int) predicate.User {
 	return predicate.User(sql.FieldLTE(FieldRpmLimit, v))
+}
+
+// AccountManagementEnabledEQ applies the EQ predicate on the "account_management_enabled" field.
+func AccountManagementEnabledEQ(v bool) predicate.User {
+	return predicate.User(sql.FieldEQ(FieldAccountManagementEnabled, v))
+}
+
+// AccountManagementEnabledNEQ applies the NEQ predicate on the "account_management_enabled" field.
+func AccountManagementEnabledNEQ(v bool) predicate.User {
+	return predicate.User(sql.FieldNEQ(FieldAccountManagementEnabled, v))
+}
+
+// ContributionRoomsEnabledEQ applies the EQ predicate on the "contribution_rooms_enabled" field.
+func ContributionRoomsEnabledEQ(v bool) predicate.User {
+	return predicate.User(sql.FieldEQ(FieldContributionRoomsEnabled, v))
+}
+
+// ContributionRoomsEnabledNEQ applies the NEQ predicate on the "contribution_rooms_enabled" field.
+func ContributionRoomsEnabledNEQ(v bool) predicate.User {
+	return predicate.User(sql.FieldNEQ(FieldContributionRoomsEnabled, v))
 }
 
 // HasAPIKeys applies the HasEdge predicate on the "api_keys" edge.

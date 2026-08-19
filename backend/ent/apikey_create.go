@@ -15,6 +15,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/ent/usagelog"
 	"github.com/Wei-Shaw/sub2api/ent/user"
+	"github.com/Wei-Shaw/sub2api/ent/usercontributionroompreference"
 )
 
 // APIKeyCreate is the builder for creating a APIKey entity.
@@ -95,6 +96,34 @@ func (_c *APIKeyCreate) SetGroupID(v int64) *APIKeyCreate {
 func (_c *APIKeyCreate) SetNillableGroupID(v *int64) *APIKeyCreate {
 	if v != nil {
 		_c.SetGroupID(*v)
+	}
+	return _c
+}
+
+// SetAutoGroup sets the "auto_group" field.
+func (_c *APIKeyCreate) SetAutoGroup(v bool) *APIKeyCreate {
+	_c.mutation.SetAutoGroup(v)
+	return _c
+}
+
+// SetNillableAutoGroup sets the "auto_group" field if the given value is not nil.
+func (_c *APIKeyCreate) SetNillableAutoGroup(v *bool) *APIKeyCreate {
+	if v != nil {
+		_c.SetAutoGroup(*v)
+	}
+	return _c
+}
+
+// SetAutoGroupStrategy sets the "auto_group_strategy" field.
+func (_c *APIKeyCreate) SetAutoGroupStrategy(v string) *APIKeyCreate {
+	_c.mutation.SetAutoGroupStrategy(v)
+	return _c
+}
+
+// SetNillableAutoGroupStrategy sets the "auto_group_strategy" field if the given value is not nil.
+func (_c *APIKeyCreate) SetNillableAutoGroupStrategy(v *string) *APIKeyCreate {
+	if v != nil {
+		_c.SetAutoGroupStrategy(*v)
 	}
 	return _c
 }
@@ -317,6 +346,21 @@ func (_c *APIKeyCreate) SetGroup(v *Group) *APIKeyCreate {
 	return _c.SetGroupID(v.ID)
 }
 
+// AddContributionRoomPreferenceIDs adds the "contribution_room_preferences" edge to the UserContributionRoomPreference entity by IDs.
+func (_c *APIKeyCreate) AddContributionRoomPreferenceIDs(ids ...int64) *APIKeyCreate {
+	_c.mutation.AddContributionRoomPreferenceIDs(ids...)
+	return _c
+}
+
+// AddContributionRoomPreferences adds the "contribution_room_preferences" edges to the UserContributionRoomPreference entity.
+func (_c *APIKeyCreate) AddContributionRoomPreferences(v ...*UserContributionRoomPreference) *APIKeyCreate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _c.AddContributionRoomPreferenceIDs(ids...)
+}
+
 // AddUsageLogIDs adds the "usage_logs" edge to the UsageLog entity by IDs.
 func (_c *APIKeyCreate) AddUsageLogIDs(ids ...int64) *APIKeyCreate {
 	_c.mutation.AddUsageLogIDs(ids...)
@@ -383,6 +427,14 @@ func (_c *APIKeyCreate) defaults() error {
 		v := apikey.DefaultUpdatedAt()
 		_c.mutation.SetUpdatedAt(v)
 	}
+	if _, ok := _c.mutation.AutoGroup(); !ok {
+		v := apikey.DefaultAutoGroup
+		_c.mutation.SetAutoGroup(v)
+	}
+	if _, ok := _c.mutation.AutoGroupStrategy(); !ok {
+		v := apikey.DefaultAutoGroupStrategy
+		_c.mutation.SetAutoGroupStrategy(v)
+	}
 	if _, ok := _c.mutation.Status(); !ok {
 		v := apikey.DefaultStatus
 		_c.mutation.SetStatus(v)
@@ -447,6 +499,17 @@ func (_c *APIKeyCreate) check() error {
 	if v, ok := _c.mutation.Name(); ok {
 		if err := apikey.NameValidator(v); err != nil {
 			return &ValidationError{Name: "name", err: fmt.Errorf(`ent: validator failed for field "APIKey.name": %w`, err)}
+		}
+	}
+	if _, ok := _c.mutation.AutoGroup(); !ok {
+		return &ValidationError{Name: "auto_group", err: errors.New(`ent: missing required field "APIKey.auto_group"`)}
+	}
+	if _, ok := _c.mutation.AutoGroupStrategy(); !ok {
+		return &ValidationError{Name: "auto_group_strategy", err: errors.New(`ent: missing required field "APIKey.auto_group_strategy"`)}
+	}
+	if v, ok := _c.mutation.AutoGroupStrategy(); ok {
+		if err := apikey.AutoGroupStrategyValidator(v); err != nil {
+			return &ValidationError{Name: "auto_group_strategy", err: fmt.Errorf(`ent: validator failed for field "APIKey.auto_group_strategy": %w`, err)}
 		}
 	}
 	if _, ok := _c.mutation.Status(); !ok {
@@ -530,6 +593,14 @@ func (_c *APIKeyCreate) createSpec() (*APIKey, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Name(); ok {
 		_spec.SetField(apikey.FieldName, field.TypeString, value)
 		_node.Name = value
+	}
+	if value, ok := _c.mutation.AutoGroup(); ok {
+		_spec.SetField(apikey.FieldAutoGroup, field.TypeBool, value)
+		_node.AutoGroup = value
+	}
+	if value, ok := _c.mutation.AutoGroupStrategy(); ok {
+		_spec.SetField(apikey.FieldAutoGroupStrategy, field.TypeString, value)
+		_node.AutoGroupStrategy = value
 	}
 	if value, ok := _c.mutation.Status(); ok {
 		_spec.SetField(apikey.FieldStatus, field.TypeString, value)
@@ -627,6 +698,22 @@ func (_c *APIKeyCreate) createSpec() (*APIKey, *sqlgraph.CreateSpec) {
 			edge.Target.Nodes = append(edge.Target.Nodes, k)
 		}
 		_node.GroupID = &nodes[0]
+		_spec.Edges = append(_spec.Edges, edge)
+	}
+	if nodes := _c.mutation.ContributionRoomPreferencesIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   apikey.ContributionRoomPreferencesTable,
+			Columns: []string{apikey.ContributionRoomPreferencesColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(usercontributionroompreference.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
 		_spec.Edges = append(_spec.Edges, edge)
 	}
 	if nodes := _c.mutation.UsageLogsIDs(); len(nodes) > 0 {
@@ -778,6 +865,30 @@ func (u *APIKeyUpsert) UpdateGroupID() *APIKeyUpsert {
 // ClearGroupID clears the value of the "group_id" field.
 func (u *APIKeyUpsert) ClearGroupID() *APIKeyUpsert {
 	u.SetNull(apikey.FieldGroupID)
+	return u
+}
+
+// SetAutoGroup sets the "auto_group" field.
+func (u *APIKeyUpsert) SetAutoGroup(v bool) *APIKeyUpsert {
+	u.Set(apikey.FieldAutoGroup, v)
+	return u
+}
+
+// UpdateAutoGroup sets the "auto_group" field to the value that was provided on create.
+func (u *APIKeyUpsert) UpdateAutoGroup() *APIKeyUpsert {
+	u.SetExcluded(apikey.FieldAutoGroup)
+	return u
+}
+
+// SetAutoGroupStrategy sets the "auto_group_strategy" field.
+func (u *APIKeyUpsert) SetAutoGroupStrategy(v string) *APIKeyUpsert {
+	u.Set(apikey.FieldAutoGroupStrategy, v)
+	return u
+}
+
+// UpdateAutoGroupStrategy sets the "auto_group_strategy" field to the value that was provided on create.
+func (u *APIKeyUpsert) UpdateAutoGroupStrategy() *APIKeyUpsert {
+	u.SetExcluded(apikey.FieldAutoGroupStrategy)
 	return u
 }
 
@@ -1203,6 +1314,34 @@ func (u *APIKeyUpsertOne) UpdateGroupID() *APIKeyUpsertOne {
 func (u *APIKeyUpsertOne) ClearGroupID() *APIKeyUpsertOne {
 	return u.Update(func(s *APIKeyUpsert) {
 		s.ClearGroupID()
+	})
+}
+
+// SetAutoGroup sets the "auto_group" field.
+func (u *APIKeyUpsertOne) SetAutoGroup(v bool) *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetAutoGroup(v)
+	})
+}
+
+// UpdateAutoGroup sets the "auto_group" field to the value that was provided on create.
+func (u *APIKeyUpsertOne) UpdateAutoGroup() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateAutoGroup()
+	})
+}
+
+// SetAutoGroupStrategy sets the "auto_group_strategy" field.
+func (u *APIKeyUpsertOne) SetAutoGroupStrategy(v string) *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetAutoGroupStrategy(v)
+	})
+}
+
+// UpdateAutoGroupStrategy sets the "auto_group_strategy" field to the value that was provided on create.
+func (u *APIKeyUpsertOne) UpdateAutoGroupStrategy() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateAutoGroupStrategy()
 	})
 }
 
@@ -1841,6 +1980,34 @@ func (u *APIKeyUpsertBulk) UpdateGroupID() *APIKeyUpsertBulk {
 func (u *APIKeyUpsertBulk) ClearGroupID() *APIKeyUpsertBulk {
 	return u.Update(func(s *APIKeyUpsert) {
 		s.ClearGroupID()
+	})
+}
+
+// SetAutoGroup sets the "auto_group" field.
+func (u *APIKeyUpsertBulk) SetAutoGroup(v bool) *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetAutoGroup(v)
+	})
+}
+
+// UpdateAutoGroup sets the "auto_group" field to the value that was provided on create.
+func (u *APIKeyUpsertBulk) UpdateAutoGroup() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateAutoGroup()
+	})
+}
+
+// SetAutoGroupStrategy sets the "auto_group_strategy" field.
+func (u *APIKeyUpsertBulk) SetAutoGroupStrategy(v string) *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetAutoGroupStrategy(v)
+	})
+}
+
+// UpdateAutoGroupStrategy sets the "auto_group_strategy" field to the value that was provided on create.
+func (u *APIKeyUpsertBulk) UpdateAutoGroupStrategy() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateAutoGroupStrategy()
 	})
 }
 

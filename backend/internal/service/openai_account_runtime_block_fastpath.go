@@ -79,7 +79,7 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 	// Isolate a custom temporary-unschedulable match to the known upstream
 	// model before entering the generic account error path. This keeps the
 	// account available to other models and avoids the account runtime blocker.
-	if s.rateLimitService != nil && statusCode != http.StatusUnauthorized && len(canonicalModel) > 0 && strings.TrimSpace(canonicalModel[0]) != "" &&
+	if s.rateLimitService != nil && !isUpstreamModelCapacityExhausted(responseBody) && statusCode != http.StatusUnauthorized && len(canonicalModel) > 0 && strings.TrimSpace(canonicalModel[0]) != "" &&
 		s.rateLimitService.HandleTempUnschedulable(stateCtx, account, statusCode, responseBody, canonicalModel[0]) {
 		return true
 	}
@@ -98,9 +98,16 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 	// Pool-mode retryable upstream errors are already bounded by the request-local
 	// same-account retry budget. Recording the generic account+model transient
 	// cooldown here would block the next approved retry before that budget is used.
+	// Exception: a permanent-capability 403 will never succeed on retry, so the
+	// same-account retry budget provides no protection for it (newOpenAIUpstreamFailoverError
+	// already forces RetryableOnSameAccount=false for it); route it into the
+	// short-lived circuit breaker regardless of pool mode so other concurrent/
+	// future requests don't keep re-selecting a deterministically broken account.
 	poolModeRetryable := account.IsPoolMode() && account.IsPoolModeRetryableStatus(statusCode)
+	permanentCapability403 := statusCode == http.StatusForbidden && isOpenAIPermanentCapability403("", responseBody)
 	if !shouldDisable && account.Platform == PlatformOpenAI && account.Type == AccountTypeAPIKey &&
-		shouldCooldownOpenAITransientUpstreamError(statusCode, responseBody) && !poolModeRetryable {
+		(shouldCooldownOpenAITransientUpstreamError(statusCode, responseBody) || permanentCapability403) &&
+		(!poolModeRetryable || permanentCapability403) {
 		model := ""
 		if len(canonicalModel) > 0 {
 			model = canonicalModel[0]
@@ -120,6 +127,9 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 }
 
 func shouldCooldownOpenAITransientUpstreamError(statusCode int, responseBody []byte) bool {
+	if isUpstreamModelCapacityExhausted(responseBody) {
+		return false
+	}
 	switch statusCode {
 	case http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout, 520, 521, 522, 523, 524:
 		return true

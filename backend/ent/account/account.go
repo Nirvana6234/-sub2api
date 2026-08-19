@@ -46,6 +46,8 @@ const (
 	FieldPriority = "priority"
 	// FieldRateMultiplier holds the string denoting the rate_multiplier field in the database.
 	FieldRateMultiplier = "rate_multiplier"
+	// FieldRateMultiplierUndeclared holds the string denoting the rate_multiplier_undeclared field in the database.
+	FieldRateMultiplierUndeclared = "rate_multiplier_undeclared"
 	// FieldStatus holds the string denoting the status field in the database.
 	FieldStatus = "status"
 	// FieldErrorMessage holds the string denoting the error_message field in the database.
@@ -68,6 +70,12 @@ const (
 	FieldTempUnschedulableUntil = "temp_unschedulable_until"
 	// FieldTempUnschedulableReason holds the string denoting the temp_unschedulable_reason field in the database.
 	FieldTempUnschedulableReason = "temp_unschedulable_reason"
+	// FieldSchedulabilitySource holds the string denoting the schedulability_source field in the database.
+	FieldSchedulabilitySource = "schedulability_source"
+	// FieldSchedulabilityReason holds the string denoting the schedulability_reason field in the database.
+	FieldSchedulabilityReason = "schedulability_reason"
+	// FieldSchedulabilityChangedAt holds the string denoting the schedulability_changed_at field in the database.
+	FieldSchedulabilityChangedAt = "schedulability_changed_at"
 	// FieldSessionWindowStart holds the string denoting the session_window_start field in the database.
 	FieldSessionWindowStart = "session_window_start"
 	// FieldSessionWindowEnd holds the string denoting the session_window_end field in the database.
@@ -146,6 +154,7 @@ var Columns = []string{
 	FieldLoadFactor,
 	FieldPriority,
 	FieldRateMultiplier,
+	FieldRateMultiplierUndeclared,
 	FieldStatus,
 	FieldErrorMessage,
 	FieldLastUsedAt,
@@ -157,6 +166,9 @@ var Columns = []string{
 	FieldOverloadUntil,
 	FieldTempUnschedulableUntil,
 	FieldTempUnschedulableReason,
+	FieldSchedulabilitySource,
+	FieldSchedulabilityReason,
+	FieldSchedulabilityChangedAt,
 	FieldSessionWindowStart,
 	FieldSessionWindowEnd,
 	FieldSessionWindowStatus,
@@ -210,6 +222,8 @@ var (
 	DefaultPriority int
 	// DefaultRateMultiplier holds the default value on creation for the "rate_multiplier" field.
 	DefaultRateMultiplier float64
+	// DefaultRateMultiplierUndeclared holds the default value on creation for the "rate_multiplier_undeclared" field.
+	DefaultRateMultiplierUndeclared bool
 	// DefaultStatus holds the default value on creation for the "status" field.
 	DefaultStatus string
 	// StatusValidator is a validator for the "status" field. It is called by the builders before save.
@@ -218,6 +232,12 @@ var (
 	DefaultAutoPauseOnExpired bool
 	// DefaultSchedulable holds the default value on creation for the "schedulable" field.
 	DefaultSchedulable bool
+	// DefaultSchedulabilitySource holds the default value on creation for the "schedulability_source" field.
+	DefaultSchedulabilitySource string
+	// SchedulabilitySourceValidator is a validator for the "schedulability_source" field. It is called by the builders before save.
+	SchedulabilitySourceValidator func(string) error
+	// SchedulabilityReasonValidator is a validator for the "schedulability_reason" field. It is called by the builders before save.
+	SchedulabilityReasonValidator func(string) error
 	// SessionWindowStatusValidator is a validator for the "session_window_status" field. It is called by the builders before save.
 	SessionWindowStatusValidator func(string) error
 )
@@ -321,6 +341,11 @@ func ByRateMultiplier(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldRateMultiplier, opts...).ToFunc()
 }
 
+// ByRateMultiplierUndeclared orders the results by the rate_multiplier_undeclared field.
+func ByRateMultiplierUndeclared(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldRateMultiplierUndeclared, opts...).ToFunc()
+}
+
 // ByStatus orders the results by the status field.
 func ByStatus(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldStatus, opts...).ToFunc()
@@ -374,6 +399,21 @@ func ByTempUnschedulableUntil(opts ...sql.OrderTermOption) OrderOption {
 // ByTempUnschedulableReason orders the results by the temp_unschedulable_reason field.
 func ByTempUnschedulableReason(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldTempUnschedulableReason, opts...).ToFunc()
+}
+
+// BySchedulabilitySource orders the results by the schedulability_source field.
+func BySchedulabilitySource(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldSchedulabilitySource, opts...).ToFunc()
+}
+
+// BySchedulabilityReason orders the results by the schedulability_reason field.
+func BySchedulabilityReason(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldSchedulabilityReason, opts...).ToFunc()
+}
+
+// BySchedulabilityChangedAt orders the results by the schedulability_changed_at field.
+func BySchedulabilityChangedAt(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldSchedulabilityChangedAt, opts...).ToFunc()
 }
 
 // BySessionWindowStart orders the results by the session_window_start field.

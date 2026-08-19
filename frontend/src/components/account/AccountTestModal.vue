@@ -308,6 +308,7 @@ const supportsOpenAIImageTest = computed(() => {
 })
 
 const supportsImageTest = computed(() => supportsGeminiImageTest.value || supportsOpenAIImageTest.value)
+const isOpenAIFreeAccount = computed(() => String(props.account?.credentials?.plan_type || '').toLowerCase() === 'free')
 
 const sortTestModels = (models: ClaudeModel[]) => {
   const priorityMap = new Map(prioritizedGeminiModels.map((id, index) => [id, index]))
@@ -355,6 +356,9 @@ const loadAvailableModels = async () => {
     if (availableModels.value.length > 0) {
       if (props.account.platform === 'gemini') {
         selectedModelId.value = availableModels.value[0].id
+      } else if (isOpenAIFreeAccount.value) {
+        const freeModel = availableModels.value.find((model) => model.id === 'gpt-5.4-mini')
+        selectedModelId.value = freeModel?.id || availableModels.value[0].id
       } else {
         // Try to select Sonnet as default, otherwise use first model
         const sonnetModel = availableModels.value.find((m) => m.id.includes('sonnet'))

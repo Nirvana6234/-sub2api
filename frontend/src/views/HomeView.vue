@@ -40,6 +40,16 @@
           >
             <Icon name="book" size="md" />
           </a>
+          <a
+            href="https://gitee.com/borg_zhou/co-fly--chat-gpt-assistant/"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-lg px-3 text-sm font-medium text-gray-600 hover:bg-gray-100 dark:text-dark-300 dark:hover:bg-dark-800"
+            :title="t('home.clientDownload')"
+          >
+            <Icon name="download" size="sm" />
+            <span>{{ t('home.clientDownload') }}</span>
+          </a>
           <button
             class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 dark:text-dark-400 dark:hover:bg-dark-800"
             :title="isDark ? t('home.switchToLight') : t('home.switchToDark')"
@@ -110,8 +120,8 @@
       <nav class="mx-auto flex max-w-6xl items-center justify-between">
         <!-- Logo -->
         <div class="flex items-center">
-          <div class="h-10 w-10 overflow-hidden rounded-xl shadow-md">
-            <img :src="siteLogo || '/logo.svg'" alt="Logo" class="h-full w-full object-contain" />
+          <div class="flex h-12 w-12 items-center justify-center">
+            <img src="/gongfei-plane.svg" :alt="`${siteName} 标志`" class="h-full w-full object-contain" />
           </div>
         </div>
 
@@ -130,6 +140,18 @@
             :title="t('home.viewDocs')"
           >
             <Icon name="book" size="md" />
+          </a>
+
+          <!-- Client download -->
+          <a
+            href="https://gitee.com/borg_zhou/co-fly--chat-gpt-assistant/"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-dark-300 dark:hover:bg-dark-800 dark:hover:text-white"
+            :title="t('home.clientDownload')"
+          >
+            <Icon name="download" size="sm" />
+            <span>{{ t('home.clientDownload') }}</span>
           </a>
 
           <!-- Theme Toggle -->
@@ -487,7 +509,7 @@ const authStore = useAuthStore()
 const appStore = useAppStore()
 
 // Site settings - directly from appStore (already initialized from injected config)
-const siteName = computed(() => appStore.cachedPublicSettings?.site_name || appStore.siteName || 'Sub2API')
+const siteName = computed(() => appStore.cachedPublicSettings?.site_name || appStore.siteName || '共飞 AI')
 const siteLogo = computed(() => sanitizeUrl(appStore.cachedPublicSettings?.site_logo || appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }))
 const siteSubtitle = computed(() => appStore.cachedPublicSettings?.site_subtitle || 'AI API Gateway Platform')
 const docUrl = computed(() => sanitizeUrl(appStore.cachedPublicSettings?.doc_url || appStore.docUrl || ''))

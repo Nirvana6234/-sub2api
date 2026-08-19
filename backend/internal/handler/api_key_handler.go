@@ -30,13 +30,16 @@ func NewAPIKeyHandler(apiKeyService *service.APIKeyService) *APIKeyHandler {
 
 // CreateAPIKeyRequest represents the create API key request payload
 type CreateAPIKeyRequest struct {
-	Name          string   `json:"name" binding:"required"`
-	GroupID       *int64   `json:"group_id"`        // nullable
-	CustomKey     *string  `json:"custom_key"`      // 可选的自定义key
-	IPWhitelist   []string `json:"ip_whitelist"`    // IP 白名单
-	IPBlacklist   []string `json:"ip_blacklist"`    // IP 黑名单
-	Quota         *float64 `json:"quota"`           // 配额限制 (USD)
-	ExpiresInDays *int     `json:"expires_in_days"` // 过期天数
+	Name              string   `json:"name" binding:"required"`
+	GroupID           *int64   `json:"group_id"` // nullable
+	AutoGroup         bool     `json:"auto_group"`
+	AutoGroupStrategy string   `json:"auto_group_strategy"`
+	AutoGroupIDs      []int64  `json:"auto_group_ids"`
+	CustomKey         *string  `json:"custom_key"`      // 可选的自定义key
+	IPWhitelist       []string `json:"ip_whitelist"`    // IP 白名单
+	IPBlacklist       []string `json:"ip_blacklist"`    // IP 黑名单
+	Quota             *float64 `json:"quota"`           // 配额限制 (USD)
+	ExpiresInDays     *int     `json:"expires_in_days"` // 过期天数
 
 	// Rate limit fields (0 = unlimited)
 	RateLimit5h *float64 `json:"rate_limit_5h"`
@@ -46,14 +49,17 @@ type CreateAPIKeyRequest struct {
 
 // UpdateAPIKeyRequest represents the update API key request payload
 type UpdateAPIKeyRequest struct {
-	Name        string    `json:"name"`
-	GroupID     *int64    `json:"group_id"`
-	Status      string    `json:"status" binding:"omitempty,oneof=active inactive"`
-	IPWhitelist *[]string `json:"ip_whitelist"` // IP 白名单（nil 不修改，空数组清空）
-	IPBlacklist *[]string `json:"ip_blacklist"` // IP 黑名单（nil 不修改，空数组清空）
-	Quota       *float64  `json:"quota"`        // 配额限制 (USD), 0=无限制
-	ExpiresAt   *string   `json:"expires_at"`   // 过期时间 (ISO 8601)
-	ResetQuota  *bool     `json:"reset_quota"`  // 重置已用配额
+	Name              string    `json:"name"`
+	GroupID           *int64    `json:"group_id"`
+	AutoGroup         *bool     `json:"auto_group"`
+	AutoGroupStrategy *string   `json:"auto_group_strategy"`
+	AutoGroupIDs      *[]int64  `json:"auto_group_ids"`
+	Status            string    `json:"status" binding:"omitempty,oneof=active inactive"`
+	IPWhitelist       *[]string `json:"ip_whitelist"` // IP 白名单（nil 不修改，空数组清空）
+	IPBlacklist       *[]string `json:"ip_blacklist"` // IP 黑名单（nil 不修改，空数组清空）
+	Quota             *float64  `json:"quota"`        // 配额限制 (USD), 0=无限制
+	ExpiresAt         *string   `json:"expires_at"`   // 过期时间 (ISO 8601)
+	ResetQuota        *bool     `json:"reset_quota"`  // 重置已用配额
 
 	// Rate limit fields (nil = no change, 0 = unlimited)
 	RateLimit5h         *float64 `json:"rate_limit_5h"`
@@ -108,6 +114,24 @@ func (h *APIKeyHandler) List(c *gin.Context) {
 	response.Paginated(c, out, result.Total, page, pageSize)
 }
 
+// EnsurePlayground creates the purpose-bound default keys used by the
+// playground. It is intentionally idempotent so existing users can be
+// repaired when groups become available after signup.
+// POST /api/v1/keys/playground/ensure
+func (h *APIKeyHandler) EnsurePlayground(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+
+	if err := h.apiKeyService.EnsurePlaygroundAPIKeys(c.Request.Context(), subject.UserID); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"ready": true})
+}
+
 // GetByID handles getting a single API key
 // GET /api/v1/api-keys/:id
 func (h *APIKeyHandler) GetByID(c *gin.Context) {
@@ -154,12 +178,15 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 	}
 
 	svcReq := service.CreateAPIKeyRequest{
-		Name:          req.Name,
-		GroupID:       req.GroupID,
-		CustomKey:     req.CustomKey,
-		IPWhitelist:   req.IPWhitelist,
-		IPBlacklist:   req.IPBlacklist,
-		ExpiresInDays: req.ExpiresInDays,
+		Name:              req.Name,
+		GroupID:           req.GroupID,
+		AutoGroup:         req.AutoGroup,
+		AutoGroupStrategy: req.AutoGroupStrategy,
+		AutoGroupIDs:      req.AutoGroupIDs,
+		CustomKey:         req.CustomKey,
+		IPWhitelist:       req.IPWhitelist,
+		IPBlacklist:       req.IPBlacklist,
+		ExpiresInDays:     req.ExpiresInDays,
 	}
 	if req.Quota != nil {
 		svcReq.Quota = *req.Quota
@@ -218,6 +245,9 @@ func (h *APIKeyHandler) Update(c *gin.Context) {
 		svcReq.Name = &req.Name
 	}
 	svcReq.GroupID = req.GroupID
+	svcReq.AutoGroup = req.AutoGroup
+	svcReq.AutoGroupStrategy = req.AutoGroupStrategy
+	svcReq.AutoGroupIDs = req.AutoGroupIDs
 	if req.Status != "" {
 		svcReq.Status = &req.Status
 	}

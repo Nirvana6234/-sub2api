@@ -214,3 +214,11 @@ func AccountSwitchCountFromContext(ctx context.Context) (int, bool) {
 	}
 	return 0, false
 }
+
+func IsWorkspaceLocalFallbackRoute(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	value, _ := ctx.Value(ctxkey.WorkspaceLocalFallbackRoute).(bool)
+	return value
+}

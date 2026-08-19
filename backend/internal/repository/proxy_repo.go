@@ -48,6 +48,9 @@ func (r *proxyRepository) Create(ctx context.Context, proxyIn *service.Proxy) er
 	if proxyIn.Password != "" {
 		builder.SetPassword(proxyIn.Password)
 	}
+	if proxyIn.OwnerUserID != nil {
+		builder.SetOwnerUserID(*proxyIn.OwnerUserID)
+	}
 	if proxyIn.ExpiresAt != nil {
 		builder.SetExpiresAt(*proxyIn.ExpiresAt)
 	}
@@ -79,7 +82,7 @@ func (r *proxyRepository) ListByIDs(ctx context.Context, ids []int64) ([]service
 	}
 
 	proxies, err := r.client.Proxy.Query().
-		Where(proxy.IDIn(ids...)).
+		Where(proxy.IDIn(ids...), proxy.OwnerUserIDIsNil()).
 		All(ctx)
 	if err != nil {
 		return nil, err
@@ -165,6 +168,11 @@ func updateProxyAndInvalidateProbeSnapshots(ctx context.Context, client *dbent.C
 		builder.SetPassword(proxyIn.Password)
 	} else {
 		builder.ClearPassword()
+	}
+	if proxyIn.OwnerUserID != nil {
+		builder.SetOwnerUserID(*proxyIn.OwnerUserID)
+	} else {
+		builder.ClearOwnerUserID()
 	}
 	if proxyIn.ExpiresAt != nil {
 		builder.SetExpiresAt(*proxyIn.ExpiresAt)
@@ -284,7 +292,7 @@ func (r *proxyRepository) List(ctx context.Context, params pagination.Pagination
 
 // ListWithFilters lists proxies with optional filtering by protocol, status, and search query
 func (r *proxyRepository) ListWithFilters(ctx context.Context, params pagination.PaginationParams, protocol, status, search string) ([]service.Proxy, *pagination.PaginationResult, error) {
-	q := r.client.Proxy.Query()
+	q := r.client.Proxy.Query().Where(proxy.OwnerUserIDIsNil())
 	if protocol != "" {
 		q = q.Where(proxy.ProtocolEQ(protocol))
 	}
@@ -322,7 +330,7 @@ func (r *proxyRepository) ListWithFilters(ctx context.Context, params pagination
 
 // ListWithFiltersAndAccountCount lists proxies with filters and includes account count per proxy
 func (r *proxyRepository) ListWithFiltersAndAccountCount(ctx context.Context, params pagination.PaginationParams, protocol, status, search string) ([]service.ProxyWithAccountCount, *pagination.PaginationResult, error) {
-	q := r.client.Proxy.Query()
+	q := r.client.Proxy.Query().Where(proxy.OwnerUserIDIsNil())
 	if protocol != "" {
 		q = q.Where(proxy.ProtocolEQ(protocol))
 	}
@@ -437,7 +445,7 @@ func proxyListOrder(params pagination.PaginationParams) []func(*entsql.Selector)
 
 func (r *proxyRepository) ListActive(ctx context.Context) ([]service.Proxy, error) {
 	proxies, err := r.client.Proxy.Query().
-		Where(proxy.StatusEQ(service.StatusActive)).
+		Where(proxy.StatusEQ(service.StatusActive), proxy.OwnerUserIDIsNil()).
 		All(ctx)
 	if err != nil {
 		return nil, err
@@ -452,7 +460,7 @@ func (r *proxyRepository) ListActive(ctx context.Context) ([]service.Proxy, erro
 // ExistsByHostPortAuth checks if a proxy with the same host, port, username, and password exists
 func (r *proxyRepository) ExistsByHostPortAuth(ctx context.Context, host string, port int, username, password string) (bool, error) {
 	q := r.client.Proxy.Query().
-		Where(proxy.HostEQ(host), proxy.PortEQ(port))
+		Where(proxy.HostEQ(host), proxy.PortEQ(port), proxy.OwnerUserIDIsNil())
 
 	if username == "" {
 		q = q.Where(proxy.Or(proxy.UsernameIsNil(), proxy.UsernameEQ("")))
@@ -550,7 +558,7 @@ func (r *proxyRepository) GetAccountCountsForProxies(ctx context.Context) (count
 // ListActiveWithAccountCount returns all active proxies with account count, sorted by creation time descending
 func (r *proxyRepository) ListActiveWithAccountCount(ctx context.Context) ([]service.ProxyWithAccountCount, error) {
 	proxies, err := r.client.Proxy.Query().
-		Where(proxy.StatusEQ(service.StatusActive)).
+		Where(proxy.StatusEQ(service.StatusActive), proxy.OwnerUserIDIsNil()).
 		Order(dbent.Desc(proxy.FieldCreatedAt)).
 		All(ctx)
 	if err != nil {
@@ -596,6 +604,7 @@ func proxyEntityToService(m *dbent.Proxy) *service.Proxy {
 		FallbackMode:   m.FallbackMode,
 		BackupProxyID:  m.BackupProxyID,
 		ExpiryWarnDays: m.ExpiryWarnDays,
+		OwnerUserID:    m.OwnerUserID,
 	}
 	if m.Username != nil {
 		out.Username = *m.Username
@@ -613,11 +622,12 @@ func applyProxyEntityToService(dst *service.Proxy, src *dbent.Proxy) {
 	dst.ID = src.ID
 	dst.CreatedAt = src.CreatedAt
 	dst.UpdatedAt = src.UpdatedAt
+	dst.OwnerUserID = src.OwnerUserID
 }
 
 // ListAllForFallback 返回所有代理（含过期/非活跃），供改投逻辑使用。
 func (r *proxyRepository) ListAllForFallback(ctx context.Context) ([]service.Proxy, error) {
-	proxies, err := r.client.Proxy.Query().All(ctx)
+	proxies, err := r.client.Proxy.Query().Where(proxy.OwnerUserIDIsNil()).All(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -792,7 +802,7 @@ func (r *proxyRepository) sweepOneExpiredProxyOnExec(ctx context.Context, exec s
 // CountExpired 返回已过期（status=expired）的代理数量。
 func (r *proxyRepository) CountExpired(ctx context.Context) (int64, error) {
 	var c int64
-	err := scanSingleRow(ctx, r.sql, `SELECT COUNT(*) FROM proxies WHERE status=$1 AND deleted_at IS NULL`, []any{service.StatusExpired}, &c)
+	err := scanSingleRow(ctx, r.sql, `SELECT COUNT(*) FROM proxies WHERE status=$1 AND owner_user_id IS NULL AND deleted_at IS NULL`, []any{service.StatusExpired}, &c)
 	return c, err
 }
 
@@ -801,7 +811,7 @@ func (r *proxyRepository) CountExpiringSoon(ctx context.Context, now time.Time) 
 	var c int64
 	err := scanSingleRow(ctx, r.sql, `
 		SELECT COUNT(*) FROM proxies
-		WHERE deleted_at IS NULL AND status=$1 AND expires_at IS NOT NULL
+		WHERE deleted_at IS NULL AND owner_user_id IS NULL AND status=$1 AND expires_at IS NOT NULL
 		  AND expires_at > $2 AND expires_at <= $2 + (expiry_warn_days || ' days')::interval`,
 		[]any{service.StatusActive, now}, &c)
 	return c, err

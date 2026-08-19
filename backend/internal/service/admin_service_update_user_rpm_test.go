@@ -67,3 +67,26 @@ func TestAdminService_UpdateUser_NoInvalidateWhenRPMLimitUnchanged(t *testing.T)
 	require.NoError(t, err)
 	require.Empty(t, invalidator.userIDs, "只改 username 不应触发认证缓存失效")
 }
+
+func TestAdminService_UpdateUser_InvalidatesAutoGroupOnGroupRateChange(t *testing.T) {
+	base := &userRepoStub{user: &User{ID: 42, Email: "u@example.com"}}
+	repo := &rpmUserRepoStub{userRepoStub: base}
+	rateRepo := &userGroupRateRepoStubForGroupRate{}
+	invalidator := &authCacheInvalidatorStub{}
+	svc := &adminServiceImpl{
+		userRepo:             repo,
+		userGroupRateRepo:    rateRepo,
+		redeemCodeRepo:       &redeemRepoStub{},
+		authCacheInvalidator: invalidator,
+	}
+	rate := 0.25
+
+	_, err := svc.UpdateUser(context.Background(), 42, &UpdateUserInput{
+		GroupRates: map[int64]*float64{9: &rate},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(42), rateRepo.syncedUserID)
+	require.Equal(t, []int64{42}, invalidator.userIDs)
+	require.Equal(t, []int64{42}, invalidator.autoGroupUserIDs)
+}

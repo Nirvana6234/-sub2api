@@ -1,0 +1,6 @@
+FROM transithub:20260810-amount-currency
+
+COPY .artifacts/build-schedulability-recovery-20260814/transithub-api /app/transithub-api
+RUN chmod +x /app/transithub-api
+
+ENTRYPOINT ["/app/transithub-api"]

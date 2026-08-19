@@ -250,7 +250,12 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 
 	// Create usage log
 	durationMs := int(result.Duration.Milliseconds())
-	accountRateMultiplier := account.BillingRateMultiplier()
+	// 同 gateway 路径：统计写 NULL（不虚报成本），配额回退 1.0（不放过限额）。
+	accountRateMultiplier := AccountCostRateMultiplier(account, OpenAIPricingAtFromContext(ctx))
+	accountRateForQuota := 1.0
+	if accountRateMultiplier != nil {
+		accountRateForQuota = *accountRateMultiplier
+	}
 	requestID := resolveUsageBillingRequestID(ctx, result.RequestID)
 	if result.OpenAIWSMode {
 		if upstreamRequestID := strings.TrimSpace(result.RequestID); upstreamRequestID != "" {
@@ -314,7 +319,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	} else {
 		usageLog.RateMultiplier = multiplier
 	}
-	usageLog.AccountRateMultiplier = &accountRateMultiplier
+	usageLog.AccountRateMultiplier = accountRateMultiplier
 	usageLog.BillingType = billingType
 	usageLog.Stream = result.Stream
 	if input.CyberBlocked {
@@ -392,7 +397,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 			Subscription:          subscription,
 			RequestPayloadHash:    resolveUsageBillingPayloadFingerprint(ctx, input.RequestPayloadHash),
 			IsSubscriptionBill:    isSubscriptionBilling,
-			AccountRateMultiplier: accountRateMultiplier,
+			AccountRateMultiplier: accountRateForQuota,
 			APIKeyService:         input.APIKeyService,
 			Platform:              quotaPlatform,
 		}, s.billingDeps(), s.usageBillingRepo)

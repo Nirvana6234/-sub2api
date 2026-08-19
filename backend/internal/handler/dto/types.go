@@ -32,7 +32,9 @@ type User struct {
 	TotalRecharged             float64            `json:"total_recharged"`
 
 	// RPMLimit 用户级每分钟请求数上限（0 = 不限制），仅在所用分组未设置 rpm_limit 时作为兜底生效。
-	RPMLimit int `json:"rpm_limit"`
+	RPMLimit                 int  `json:"rpm_limit"`
+	AccountManagementEnabled bool `json:"account_management_enabled"`
+	ContributionRoomsEnabled bool `json:"contribution_rooms_enabled"`
 
 	APIKeys       []APIKey           `json:"api_keys,omitempty"`
 	Subscriptions []UserSubscription `json:"subscriptions,omitempty"`
@@ -51,21 +53,24 @@ type AdminUser struct {
 }
 
 type APIKey struct {
-	ID          int64      `json:"id"`
-	UserID      int64      `json:"user_id"`
-	Key         string     `json:"key"`
-	Name        string     `json:"name"`
-	GroupID     *int64     `json:"group_id"`
-	Status      string     `json:"status"`
-	IPWhitelist []string   `json:"ip_whitelist"`
-	IPBlacklist []string   `json:"ip_blacklist"`
-	LastUsedAt  *time.Time `json:"last_used_at"`
-	LastUsedIP  *string    `json:"last_used_ip"`
-	Quota       float64    `json:"quota"`      // Quota limit in USD (0 = unlimited)
-	QuotaUsed   float64    `json:"quota_used"` // Used quota amount in USD
-	ExpiresAt   *time.Time `json:"expires_at"` // Expiration time (nil = never expires)
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	ID                int64      `json:"id"`
+	UserID            int64      `json:"user_id"`
+	Key               string     `json:"key"`
+	Name              string     `json:"name"`
+	GroupID           *int64     `json:"group_id"`
+	AutoGroup         bool       `json:"auto_group"`
+	AutoGroupStrategy string     `json:"auto_group_strategy"`
+	AutoGroupIDs      []int64    `json:"auto_group_ids"`
+	Status            string     `json:"status"`
+	IPWhitelist       []string   `json:"ip_whitelist"`
+	IPBlacklist       []string   `json:"ip_blacklist"`
+	LastUsedAt        *time.Time `json:"last_used_at"`
+	LastUsedIP        *string    `json:"last_used_ip"`
+	Quota             float64    `json:"quota"`      // Quota limit in USD (0 = unlimited)
+	QuotaUsed         float64    `json:"quota_used"` // Used quota amount in USD
+	ExpiresAt         *time.Time `json:"expires_at"` // Expiration time (nil = never expires)
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
 	// CurrentConcurrency is the real-time active request count for this API key.
 	CurrentConcurrency int `json:"current_concurrency"`
 
@@ -83,18 +88,22 @@ type APIKey struct {
 	Reset1dAt     *time.Time `json:"reset_1d_at,omitempty"`
 	Reset7dAt     *time.Time `json:"reset_7d_at,omitempty"`
 
-	User  *User  `json:"user,omitempty"`
-	Group *Group `json:"group,omitempty"`
+	User                       *User      `json:"user,omitempty"`
+	Group                      *Group     `json:"group,omitempty"`
+	AutoGroupCurrentGroup      *Group     `json:"auto_group_current_group,omitempty"`
+	AutoGroupCurrentModel      string     `json:"auto_group_current_model,omitempty"`
+	AutoGroupCurrentSelectedAt *time.Time `json:"auto_group_current_selected_at,omitempty"`
 }
 
 type Group struct {
-	ID             int64   `json:"id"`
-	Name           string  `json:"name"`
-	Description    string  `json:"description"`
-	Platform       string  `json:"platform"`
-	RateMultiplier float64 `json:"rate_multiplier"`
-	IsExclusive    bool    `json:"is_exclusive"`
-	Status         string  `json:"status"`
+	ID                    int64   `json:"id"`
+	Name                  string  `json:"name"`
+	Description           string  `json:"description"`
+	Platform              string  `json:"platform"`
+	RateMultiplier        float64 `json:"rate_multiplier"`
+	AllowContributionPool bool    `json:"allow_contribution_pool"`
+	IsExclusive           bool    `json:"is_exclusive"`
+	Status                string  `json:"status"`
 
 	SubscriptionType string   `json:"subscription_type"`
 	DailyLimitUSD    *float64 `json:"daily_limit_usd"`
@@ -204,15 +213,26 @@ type Account struct {
 	LoadFactor              *int                           `json:"load_factor,omitempty"`
 	Priority                int                            `json:"priority"`
 	RateMultiplier          float64                        `json:"rate_multiplier"`
-	Status                  string                         `json:"status"`
-	ErrorMessage            string                         `json:"error_message"`
-	LastUsedAt              *time.Time                     `json:"last_used_at"`
-	ExpiresAt               *int64                         `json:"expires_at"`
-	AutoPauseOnExpired      bool                           `json:"auto_pause_on_expired"`
-	CreatedAt               time.Time                      `json:"created_at"`
-	UpdatedAt               time.Time                      `json:"updated_at"`
+	// RateMultiplierUndeclared 表示 rate_multiplier 只是建表默认值、从没有人
+	// 声明过该账号的上游成本。启用利润控制的分组据此放行并告警，而不是把默认值
+	// 当成成本声明去否决账号；后台需要能把这些账号显式标出来催运营补填。
+	RateMultiplierUndeclared bool       `json:"rate_multiplier_undeclared"`
+	Status                   string     `json:"status"`
+	ErrorMessage             string     `json:"error_message"`
+	LastUsedAt               *time.Time `json:"last_used_at"`
+	ExpiresAt                *int64     `json:"expires_at"`
+	AutoPauseOnExpired       bool       `json:"auto_pause_on_expired"`
+	CreatedAt                time.Time  `json:"created_at"`
+	UpdatedAt                time.Time  `json:"updated_at"`
 
 	Schedulable bool `json:"schedulable"`
+
+	// SchedulabilitySource 是外部消费方（如 TransitHub）区分「管理员手动关闭」与
+	// 「系统自动停用」的唯一权威依据：manual / automatic / none。
+	// 消费方必须失败关闭：取值缺失、未知或非法时不得探测、不得恢复、不得推断。
+	SchedulabilitySource    string     `json:"schedulability_source"`
+	SchedulabilityReason    string     `json:"schedulability_reason,omitempty"`
+	SchedulabilityChangedAt *time.Time `json:"schedulability_changed_at,omitempty"`
 
 	RateLimitedAt    *time.Time `json:"rate_limited_at"`
 	RateLimitResetAt *time.Time `json:"rate_limit_reset_at"`

@@ -11,6 +11,11 @@ import (
 )
 
 const scheduledTestDefaultMaxWorkers = 10
+const contributionUnusableRetention = 30 * 24 * time.Hour
+
+type staleContributionRepository interface {
+	ListStaleContributionIDs(ctx context.Context, cutoff time.Time, limit int) ([]int64, error)
+}
 
 // ScheduledTestRunnerService periodically scans due test plans and executes them.
 type ScheduledTestRunnerService struct {
@@ -18,11 +23,14 @@ type ScheduledTestRunnerService struct {
 	scheduledSvc   *ScheduledTestService
 	accountTestSvc *AccountTestService
 	rateLimitSvc   *RateLimitService
+	accountRepo    AccountRepository
 	cfg            *config.Config
 
-	cron      *cron.Cron
-	startOnce sync.Once
-	stopOnce  sync.Once
+	cron                    *cron.Cron
+	startOnce               sync.Once
+	stopOnce                sync.Once
+	cleanupMu               sync.Mutex
+	lastContributionCleanup time.Time
 }
 
 // NewScheduledTestRunnerService creates a new runner.
@@ -31,6 +39,7 @@ func NewScheduledTestRunnerService(
 	scheduledSvc *ScheduledTestService,
 	accountTestSvc *AccountTestService,
 	rateLimitSvc *RateLimitService,
+	accountRepo AccountRepository,
 	cfg *config.Config,
 ) *ScheduledTestRunnerService {
 	return &ScheduledTestRunnerService{
@@ -38,6 +47,7 @@ func NewScheduledTestRunnerService(
 		scheduledSvc:   scheduledSvc,
 		accountTestSvc: accountTestSvc,
 		rateLimitSvc:   rateLimitSvc,
+		accountRepo:    accountRepo,
 		cfg:            cfg,
 	}
 }
@@ -92,6 +102,7 @@ func (s *ScheduledTestRunnerService) runScheduled() {
 	defer cancel()
 
 	now := time.Now()
+	s.cleanupStaleContributions(ctx, now)
 	plans, err := s.planRepo.ListDue(ctx, now)
 	if err != nil {
 		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] ListDue error: %v", err)
@@ -117,6 +128,43 @@ func (s *ScheduledTestRunnerService) runScheduled() {
 	}
 
 	wg.Wait()
+}
+
+func (s *ScheduledTestRunnerService) cleanupStaleContributions(ctx context.Context, now time.Time) {
+	s.cleanupMu.Lock()
+	if !s.lastContributionCleanup.IsZero() && now.Sub(s.lastContributionCleanup) < 24*time.Hour {
+		s.cleanupMu.Unlock()
+		return
+	}
+	s.lastContributionCleanup = now
+	s.cleanupMu.Unlock()
+
+	lister, ok := s.accountRepo.(staleContributionRepository)
+	if !ok || s.accountRepo == nil {
+		return
+	}
+	cutoff := now.Add(-contributionUnusableRetention)
+	deleted := 0
+	for batch := 0; batch < 10; batch++ {
+		ids, err := lister.ListStaleContributionIDs(ctx, cutoff, 200)
+		if err != nil {
+			logger.LegacyPrintf("service.scheduled_test_runner", "[ContributionCleanup] list stale accounts failed: %v", err)
+			return
+		}
+		for _, id := range ids {
+			if err := s.accountRepo.Delete(ctx, id); err != nil {
+				logger.LegacyPrintf("service.scheduled_test_runner", "[ContributionCleanup] delete account=%d failed: %v", id, err)
+				continue
+			}
+			deleted++
+		}
+		if len(ids) < 200 {
+			break
+		}
+	}
+	if deleted > 0 {
+		logger.LegacyPrintf("service.scheduled_test_runner", "[ContributionCleanup] deleted %d account(s) unusable for at least 30 days", deleted)
+	}
 }
 
 func (s *ScheduledTestRunnerService) runOnePlan(ctx context.Context, plan *ScheduledTestPlan) {

@@ -1702,6 +1702,21 @@
         />
       </div>
 
+      <div
+        v-if="account?.type === 'apikey'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+        data-testid="upstream-billing-newapi-group"
+      >
+        <label class="input-label">{{ t('admin.accounts.upstreamBilling.newAPIGroup') }}</label>
+        <input
+          v-model="upstreamBillingNewAPIGroup"
+          type="text"
+          class="input font-mono"
+          :placeholder="t('admin.accounts.upstreamBilling.newAPIGroupPlaceholder')"
+        />
+        <p class="input-hint">{{ t('admin.accounts.upstreamBilling.newAPIGroupHint') }}</p>
+      </div>
+
       <OllamaCloudUsageSettings
         v-if="account?.ollama_cloud_usage?.eligible"
         :account="account"
@@ -2728,6 +2743,7 @@ interface Props {
   account: Account | null
   proxies: Proxy[]
   groups: AdminGroup[]
+  priorityGroupId?: number | null
 }
 
 const props = defineProps<Props>()
@@ -2859,6 +2875,7 @@ const autoPause5hDisabled = ref(false)
 const autoPause7dDisabled = ref(false)
 const upstreamBillingAutoProbeEnabled = ref(false)
 const upstreamBillingRateSyncEnabled = ref(false)
+const upstreamBillingNewAPIGroup = ref('')
 const mixedScheduling = ref(false) // For antigravity accounts: enable mixed scheduling
 const allowOverages = ref(false) // For antigravity accounts: enable AI Credits overages
 const antigravityProjectId = ref('')
@@ -3324,7 +3341,9 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   form.proxy_id = newAccount.proxy_id
   form.concurrency = newAccount.concurrency
   form.load_factor = newAccount.load_factor ?? null
-  form.priority = newAccount.priority
+  form.priority = props.priorityGroupId != null
+    ? (newAccount.group_priority ?? newAccount.priority)
+    : newAccount.priority
   form.rate_multiplier = newAccount.rate_multiplier ?? 1
   form.status = (newAccount.status === 'active' || newAccount.status === 'inactive' || newAccount.status === 'error')
     ? newAccount.status
@@ -3359,6 +3378,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
 	upstreamBillingAutoProbeEnabled.value = extra?.upstream_billing_probe_enabled === true
   upstreamBillingRateSyncEnabled.value =
     upstreamBillingAutoProbeEnabled.value && extra?.upstream_billing_rate_sync_enabled === true
+  upstreamBillingNewAPIGroup.value =
+    typeof extra?.upstream_billing_newapi_group === 'string' ? extra.upstream_billing_newapi_group.trim() : ''
 
   // Load OpenAI passthrough toggle (OpenAI OAuth/SetupToken/API Key)
   openaiPassthroughEnabled.value = false
@@ -4095,8 +4116,25 @@ const submitUpdateAccount = async (accountID: number, updatePayload: Record<stri
   submitting.value = true
   try {
     const updatedAccount = await adminAPI.accounts.update(accountID, withAntigravityConfirmFlag(updatePayload))
+    const priorityGroupID = props.priorityGroupId
+    const submittedGroupIDs = Array.isArray(updatePayload.group_ids)
+      ? updatePayload.group_ids as number[]
+      : form.group_ids
+    const updatesCurrentGroupPriority =
+      priorityGroupID != null &&
+      typeof updatePayload.priority === 'number' &&
+      submittedGroupIDs.includes(priorityGroupID)
+    if (updatesCurrentGroupPriority) {
+      await adminAPI.accounts.updateGroupPriorities([{
+        account_id: accountID,
+        group_id: priorityGroupID,
+        priority: form.priority
+      }])
+    }
     appStore.showSuccess(t('admin.accounts.accountUpdated'))
-    emit('updated', updatedAccount)
+    emit('updated', updatesCurrentGroupPriority
+      ? { ...updatedAccount, group_priority: form.priority }
+      : updatedAccount)
     handleClose()
   } catch (error: any) {
     if (error.status === 409 && error.error === 'mixed_channel_warning' && needsMixedChannelCheck()) {
@@ -4126,6 +4164,19 @@ const handleSubmit = async () => {
 
   const updatePayload: Record<string, unknown> = { ...form }
   try {
+    const existingGroupIDs = props.account.group_ids ?? props.account.groups?.map(group => group.id) ?? []
+    const groupIDsUnchanged =
+      existingGroupIDs.length === form.group_ids.length &&
+      existingGroupIDs.every(groupID => form.group_ids.includes(groupID))
+    if (groupIDsUnchanged) {
+      delete updatePayload.group_ids
+    }
+    const visiblePriority = props.priorityGroupId != null
+      ? (props.account.group_priority ?? props.account.priority)
+      : props.account.priority
+    if (form.priority === visiblePriority) {
+      delete updatePayload.priority
+    }
     // 后端期望 proxy_id: 0 表示清除代理，而不是 null
     if (updatePayload.proxy_id === null) {
       updatePayload.proxy_id = 0
@@ -4711,8 +4762,18 @@ const handleSubmit = async () => {
       // 上游倍率自动探测对全部 API-key 平台开放（sub2api 上游即可应答），
       // Bedrock 凭证无静态 Key 不参与。
       if (props.account.type === 'apikey') {
-        delete newExtra.upstream_billing_probe_enabled
-        delete newExtra.upstream_billing_rate_sync_enabled
+        if (props.account.platform === 'openai') {
+          delete newExtra.upstream_billing_probe_enabled
+          delete newExtra.upstream_billing_rate_sync_enabled
+        } else {
+          newExtra.upstream_billing_probe_enabled = upstreamBillingAutoProbeEnabled.value
+          newExtra.upstream_billing_rate_sync_enabled = upstreamBillingRateSyncEnabled.value
+        }
+        if (upstreamBillingNewAPIGroup.value.trim()) {
+          newExtra.upstream_billing_newapi_group = upstreamBillingNewAPIGroup.value.trim()
+        } else {
+          delete newExtra.upstream_billing_newapi_group
+        }
       }
       // Total quota
       if (editQuotaLimit.value != null && editQuotaLimit.value > 0) {

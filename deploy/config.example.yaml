@@ -424,6 +424,18 @@ gateway:
     sticky_escape_ttft_ms: 15000
     # 错误率 EWMA 超过该阈值时跳过 sticky，默认 0.5，仅在明显降级时触发
     sticky_escape_error_rate: 0.5
+    # 错误率 EWMA 无新样本时的半衰期，默认 15 分钟
+    health_error_half_life_seconds: 900
+    # TTFT 样本过期后不再参与评分，默认 30 分钟
+    health_ttft_stale_seconds: 1800
+    # 不再被观测的运行时健康记录回收时间，默认 2 小时
+    health_idle_eviction_seconds: 7200
+    # 从未被尝试的新账号在 2 分钟后获得一次受控冷启动探测
+    cold_start_probe_after_seconds: 120
+    # 分组内超过 30 分钟未尝试的合格账号可获得一个恢复探测位
+    recovery_probe_after_seconds: 1800
+    # 同账号同分组恢复探测的最小间隔，默认 10 分钟
+    recovery_probe_cooldown_seconds: 600
   # OpenAI HTTP upstream protocol strategy.
   # OpenAI HTTP 上游协议策略（默认 HTTP/2；代理明确不兼容时可临时回退 HTTP/1.1）。
   openai_http2:
@@ -1103,7 +1115,7 @@ default:
   # 新用户默认设置
   # Max concurrent requests per user
   # 每用户最大并发请求数
-  user_concurrency: 5
+  user_concurrency: 30
   # Initial balance for new users
   # 新用户初始余额
   user_balance: 0

@@ -70,6 +70,9 @@ const DataTableStub = {
       <div v-for="row in data" :key="row.id" :data-test="'scheduler-score-' + row.id">
         <slot name="cell-scheduler_score" :row="row" />
       </div>
+      <div v-for="row in data" :key="'priority-' + row.id" :data-test="'priority-' + row.id">
+        <slot name="cell-priority" :row="row" :value="row.priority" />
+      </div>
     </div>
   `
 }
@@ -218,6 +221,27 @@ describe('admin AccountsView scheduler score column', () => {
     expect(groupedCell.text()).toContain('2')
   })
 
+  it('shows the selected group priority when the API returns one', async () => {
+    listAccounts.mockResolvedValueOnce({
+      items: [{
+        ...baseAccount,
+        id: 4,
+        name: 'group-priority-account',
+        priority: 90,
+        group_priority: 3
+      }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1
+    })
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="priority-4"]').text()).toBe('3')
+  })
+
   it('keeps scheduler score hidden for old saved column settings until the admin opts in again', async () => {
     localStorage.setItem('account-hidden-columns', JSON.stringify(['today_stats']))
 
@@ -232,7 +256,7 @@ describe('admin AccountsView scheduler score column', () => {
 
   it('requests scheduler scores when the migrated column settings explicitly show the column', async () => {
     localStorage.setItem('account-hidden-columns', JSON.stringify(['today_stats']))
-    localStorage.setItem('account-hidden-columns-version', 'scheduler-score-hidden-by-default')
+    localStorage.setItem('account-hidden-columns-version', 'priority-replaces-account-id')
 
     mountView()
     await flushPromises()

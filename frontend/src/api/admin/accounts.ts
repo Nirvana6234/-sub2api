@@ -475,6 +475,24 @@ export async function bulkUpdate(
   return data
 }
 
+export interface AccountGroupPriorityUpdate {
+  account_id: number
+  group_id: number
+  priority: number
+}
+
+/**
+ * Update scheduler priorities for existing account-group bindings.
+ */
+export async function updateGroupPriorities(
+  updates: AccountGroupPriorityUpdate[]
+): Promise<{ updated: number }> {
+  const { data } = await apiClient.post<{ updated: number }>('/admin/accounts/group-priorities', {
+    updates
+  })
+  return data
+}
+
 /**
  * Get account today statistics
  * @param id - Account ID
@@ -913,6 +931,13 @@ export async function setUpstreamBillingProbeEnabled(id: number, enabled: boolea
   await apiClient.put(`/admin/accounts/${id}/upstream-billing-probe`, { enabled })
 }
 
+export async function setUpstreamBillingManualRate(id: number, rateMultiplier: number | null): Promise<Account> {
+  const { data } = await apiClient.put<Account>(`/admin/accounts/${id}/upstream-billing-probe/manual-rate`, {
+    rate_multiplier: rateMultiplier
+  })
+  return data
+}
+
 export async function probeUpstreamBilling(id: number): Promise<UpstreamBillingProbeResult> {
   const { data } = await apiClient.post<UpstreamBillingProbeResult>(`/admin/accounts/${id}/upstream-billing-probe`)
   return data
@@ -1003,6 +1028,7 @@ export const accountsAPI = {
   batchCreate,
   batchUpdateCredentials,
   bulkUpdate,
+  updateGroupPriorities,
   previewFromCrs,
   syncFromCrs,
   exportData,
@@ -1021,6 +1047,7 @@ export const accountsAPI = {
   getUpstreamBillingProbeSettings,
   updateUpstreamBillingProbeSettings,
   setUpstreamBillingProbeEnabled,
+  setUpstreamBillingManualRate,
   probeUpstreamBilling,
   probeUpstreamBillingBatch,
   getOllamaCloudUsageSettings,

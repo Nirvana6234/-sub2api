@@ -3,6 +3,11 @@
     <TablePageLayout>
       <template #filters>
         <div class="flex flex-col gap-3">
+          <nav class="flex w-fit max-w-full items-center overflow-x-auto rounded-md bg-gray-100 p-1 text-xs dark:bg-dark-800" :aria-label="t('playground.workspaceLabel')">
+            <RouterLink to="/playground/chat" class="whitespace-nowrap rounded px-2.5 py-1.5 font-medium text-gray-500 transition-colors hover:text-gray-800 dark:text-dark-400 dark:hover:text-dark-100">{{ t('playground.chatWorkspace') }}</RouterLink>
+            <RouterLink to="/playground/images" class="whitespace-nowrap rounded px-2.5 py-1.5 font-medium text-gray-500 transition-colors hover:text-gray-800 dark:text-dark-400 dark:hover:text-dark-100">{{ t('playground.imageWorkspace') }}</RouterLink>
+            <RouterLink to="/playground/batch-images" class="whitespace-nowrap rounded bg-white px-2.5 py-1.5 font-medium text-primary-700 shadow-sm dark:bg-dark-700 dark:text-primary-300">{{ t('playground.batchImageWorkspace') }}</RouterLink>
+          </nav>
           <div class="flex flex-col gap-3 2xl:flex-row 2xl:items-center 2xl:justify-between">
             <div class="grid w-full grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-[260px_160px_144px_152px] 2xl:w-auto">
               <div class="min-w-0">

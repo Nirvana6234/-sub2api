@@ -27,6 +27,24 @@ func buildOpenAIEndpointURL(base string, endpoint string) string {
 	return parsed.String()
 }
 
+// buildNewAPIEndpointURL targets New API's management endpoints at the host
+// root. Account base URLs are commonly entered with an OpenAI /v1 suffix, so
+// remove that suffix before appending /api/* paths.
+func buildNewAPIEndpointURL(base string, endpoint string) string {
+	parsed, err := url.Parse(strings.TrimSpace(base))
+	if err != nil {
+		return strings.TrimRight(strings.TrimSuffix(strings.TrimSpace(base), "/v1"), "/") + "/" + strings.TrimLeft(endpoint, "/")
+	}
+	path := strings.TrimRight(parsed.Path, "/")
+	if openAIBaseURLHasVersionSuffix(path) {
+		path = path[:strings.LastIndex(path, "/")]
+	}
+	parsed.Path = strings.TrimRight(path, "/") + "/" + strings.TrimLeft(endpoint, "/")
+	parsed.RawPath = ""
+	parsed.Fragment = ""
+	return parsed.String()
+}
+
 func buildOpenAIResponsesInputTokensURL(base string) string {
 	return buildOpenAIEndpointURL(base, "/v1/responses/input_tokens")
 }

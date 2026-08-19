@@ -1348,6 +1348,7 @@ interface Props {
   }
   proxies: ProxyConfig[]
   groups: AdminGroup[]
+  priorityGroupId?: number | null
 }
 
 const props = defineProps<Props>()
@@ -1973,6 +1974,29 @@ const submitBulkUpdate = async (baseUpdates: Record<string, unknown>) => {
       : await adminAPI.accounts.bulkUpdate(props.accountIds, updates)
     const success = res.success || 0
     const failed = res.failed || 0
+
+    const submittedGroupIDs = Array.isArray(baseUpdates.group_ids)
+      ? baseUpdates.group_ids as number[]
+      : null
+    const keepsPriorityGroup =
+      props.priorityGroupId != null &&
+      (submittedGroupIDs == null || submittedGroupIDs.includes(props.priorityGroupId))
+    if (success > 0 && enablePriority.value && keepsPriorityGroup) {
+      const successfulAccountIDs = res.success_ids?.length
+        ? res.success_ids
+        : (res.results ?? []).filter(result => result.success).map(result => result.account_id)
+      if (successfulAccountIDs.length !== success) {
+        throw new Error('Bulk update response did not include every successful account ID')
+      }
+      const groupPriorityUpdates = successfulAccountIDs.map(accountID => ({
+        account_id: accountID,
+        group_id: props.priorityGroupId!,
+        priority: priority.value
+      }))
+      for (let offset = 0; offset < groupPriorityUpdates.length; offset += 1000) {
+        await adminAPI.accounts.updateGroupPriorities(groupPriorityUpdates.slice(offset, offset + 1000))
+      }
+    }
 
     if (success > 0 && failed === 0) {
       appStore.showSuccess(t('admin.accounts.bulkEdit.success', { count: success }))

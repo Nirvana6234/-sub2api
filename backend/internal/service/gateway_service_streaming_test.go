@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -184,4 +185,24 @@ func TestDetachUpstreamContextIgnoresClientCancel(t *testing.T) {
 
 	require.NoError(t, upstreamCtx.Err())
 	require.Equal(t, "test-value", upstreamCtx.Value(upstreamContextTestKey("test-key")))
+}
+
+func TestPlaygroundUpstreamRequestContextPropagatesClientCancel(t *testing.T) {
+	parent, cancel := context.WithCancel(context.WithValue(context.Background(), ctxkey.PlaygroundRequest, true))
+	upstreamCtx, release := detachUpstreamRequestContext(parent)
+	defer release()
+
+	cancel()
+
+	require.ErrorIs(t, upstreamCtx.Err(), context.Canceled)
+}
+
+func TestPlaygroundStreamingUpstreamContextPropagatesClientCancel(t *testing.T) {
+	parent, cancel := context.WithCancel(context.WithValue(context.Background(), ctxkey.PlaygroundRequest, true))
+	upstreamCtx, release := detachStreamUpstreamContext(parent, true)
+	defer release()
+
+	cancel()
+
+	require.ErrorIs(t, upstreamCtx.Err(), context.Canceled)
 }

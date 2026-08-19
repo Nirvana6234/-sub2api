@@ -98,7 +98,7 @@ func (Account) Fields() []ent.Field {
 		// concurrency: 账户最大并发请求数
 		// 用于限制同一时间对该账户发起的请求数量
 		field.Int("concurrency").
-			Default(3),
+			Default(30),
 
 		field.Int("load_factor").Optional().Nillable(),
 
@@ -109,9 +109,30 @@ func (Account) Fields() []ent.Field {
 
 		// rate_multiplier: 账号计费倍率（>=0，允许 0 表示该账号计费为 0）
 		// 仅影响账号维度计费口径，不影响用户/API Key 扣费（分组倍率）
+		//
+		// 刻意保持 NOT NULL + Default(1.0)：领域层的 nil 因此只可能来自缓存
+		// 反序列化缺字段，利润门对 nil 保守拒绝（fail-closed）这一安全姿态才
+		// 成立。要表达"尚未声明上游成本"，用 rate_multiplier_undeclared，
+		// 不要把本列改成可空——那会让"未声明"与"快照漏字段"重新同形，并把
+		// 漏字段的后果从保守拒绝变成静默放行。
 		field.Float("rate_multiplier").
 			SchemaType(map[string]string{dialect.Postgres: "decimal(10,4)"}).
 			Default(1.0),
+
+		// rate_multiplier_undeclared: 该账号的上游成本从未被声明过。
+		//
+		// 为什么需要一个独立字段而不是让 rate_multiplier 可空：rate_multiplier
+		// 的默认值 1.0 对计费是中性的（不缩放），对利润准入却是最贵的值，且与
+		// 运营者真的把成本声明为 1.0 完全同形。一次生产故障正源于此——三个从
+		// 没维护过倍率的中转账号被按 1.0 判定越线，整组账号被排除，6 小时内
+		// 1153 次请求返回 no available accounts。
+		//
+		// 语义刻意用否定式，使零值落在安全的一侧：字段缺失或快照漏列时取
+		// false（视为已声明），利润门照常严格判定，维持 fail-closed；只有明确
+		// 写入 true 才表示"没人声明过"。存量账号一律 false，行为逐行不变。
+		// 详见 migrations/202_account_rate_multiplier_undeclared.sql。
+		field.Bool("rate_multiplier_undeclared").
+			Default(false),
 
 		// status: 账户状态，如 "active", "error", "disabled"
 		field.String("status").
@@ -182,6 +203,39 @@ func (Account) Fields() []ent.Field {
 			Nillable().
 			SchemaType(map[string]string{dialect.Postgres: "text"}),
 
+		// ========== 可调度来源（权威停用所有权）==========
+		// 这些字段在 migrations/201_add_schedulability_source.sql 中添加。
+		//
+		// schedulability_source 是 schedulable 当前取值的所有权标记，用于严格区分
+		// “管理员手动关闭”与“系统自动隔离”：
+		//   - manual：管理员明确关闭可调度。该决定永久优先，任何系统错误处理、
+		//     自动恢复或后台任务都不得覆盖。
+		//   - automatic：系统基于凭据、余额、上游故障、过期等原因自动停止调度，
+		//     允许外部巡检（TransitHub）验证后条件恢复。
+		//   - none：当前没有停用来源，用于正常可调度账号；不得被解释为 automatic。
+		//
+		// 该字段必须与 schedulable 在同一条原子 UPDATE 中写入，禁止先改
+		// schedulable 再异步补来源，否则中间态会被读成来源不明。
+		field.String("schedulability_source").
+			Default("none").
+			MaxLen(16).
+			Comment("Ownership of the current schedulable value: manual | automatic | none."),
+
+		// schedulability_reason: 稳定原因码，便于审计与排障
+		// 例：admin_disabled、credential_error、upstream_error、expired
+		field.String("schedulability_reason").
+			Optional().
+			Nillable().
+			MaxLen(64).
+			Comment("Stable reason code explaining the current schedulability source."),
+
+		// schedulability_changed_at: 本次来源与状态变更时间
+		// 外部恢复请求用它做 compare-and-set，避免迟到请求覆盖管理员决定
+		field.Time("schedulability_changed_at").
+			Optional().
+			Nillable().
+			SchemaType(map[string]string{dialect.Postgres: "timestamptz"}),
+
 		// session_window_*: 会话窗口相关字段
 		// 用于管理某些需要会话时间窗口的 API（如 Claude Pro）
 		field.Time("session_window_start").
@@ -249,5 +303,7 @@ func (Account) Indexes() []ent.Index {
 		index.Fields("priority", "status"),
 		index.Fields("deleted_at"), // 软删除查询优化
 		index.Fields("parent_account_id"),
+		// 恢复候选查询：只捞 source=automatic 且 status=error 的账号
+		index.Fields("schedulability_source", "status"),
 	}
 }

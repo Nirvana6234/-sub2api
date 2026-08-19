@@ -37,6 +37,28 @@ func (s *AccountRepoSuite) TestListWithFilters_SortByPriorityDesc() {
 	s.Require().Equal("low-priority", accounts[1].Name)
 }
 
+func (s *AccountRepoSuite) TestListWithFilters_GroupSortByGroupPriority() {
+	group := mustCreateGroup(s.T(), s.client, &service.Group{
+		Name:             "group-priority-sort",
+		Platform:         service.PlatformOpenAI,
+		RateMultiplier:   1,
+		Status:           service.StatusActive,
+		SubscriptionType: service.SubscriptionTypeStandard,
+	})
+	globalHigh := mustCreateAccount(s.T(), s.client, &service.Account{Name: "group-priority-first", Priority: 90})
+	globalLow := mustCreateAccount(s.T(), s.client, &service.Account{Name: "group-priority-second", Priority: 10})
+	s.Require().NoError(s.repo.AddToGroup(s.ctx, globalHigh.ID, group.ID, 1))
+	s.Require().NoError(s.repo.AddToGroup(s.ctx, globalLow.ID, group.ID, 90))
+
+	accounts, _, err := s.repo.ListWithFilters(s.ctx, pagination.PaginationParams{
+		Page: 1, PageSize: 10, SortBy: "priority", SortOrder: "asc",
+	}, "", "", "", "", group.ID, "")
+	s.Require().NoError(err)
+	s.Require().Len(accounts, 2)
+	s.Require().Equal("group-priority-first", accounts[0].Name)
+	s.Require().Equal("group-priority-second", accounts[1].Name)
+}
+
 func (s *AccountRepoSuite) TestListWithFilters_SortByUpstreamBillingRateWithMissingLast() {
 	makeAccount := func(name, status string, rate any) {
 		extra := map[string]any{}

@@ -104,7 +104,10 @@ func (h *SettingHandler) GetPublicSettings(c *gin.Context) {
 		ChannelMonitorEnabled:                settings.ChannelMonitorEnabled,
 		ChannelMonitorDefaultIntervalSeconds: settings.ChannelMonitorDefaultIntervalSeconds,
 
-		AvailableChannelsEnabled: settings.AvailableChannelsEnabled,
+		AvailableChannelsEnabled:    settings.AvailableChannelsEnabled,
+		PlaygroundEnabled:           settings.PlaygroundEnabled,
+		PlaygroundDefaultChatModel:  settings.PlaygroundDefaultChatModel,
+		PlaygroundDefaultImageModel: settings.PlaygroundDefaultImageModel,
 
 		ModelPlazaEnabled:     settings.ModelPlazaEnabled,
 		ModelPlazaRequireAuth: settings.ModelPlazaRequireAuth,

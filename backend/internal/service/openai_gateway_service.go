@@ -421,6 +421,8 @@ type OpenAIGatewayService struct {
 	balanceNotifyService  *BalanceNotifyService
 	settingService        *SettingService
 	userPlatformQuotaRepo UserPlatformQuotaRepository
+	contributionRoomRepo  ContributionRoomRoutingRepository
+
 	liveAttestation       liveattestation.Provider
 	liveAttestationCipher SecretEncryptor
 
@@ -454,6 +456,14 @@ type OpenAIGatewayService struct {
 	codexModelsManifestCache            codexModelsManifestCache
 	openaiCompatSessionResponses        sync.Map
 	openaiCompatAnthropicDigestSessions sync.Map
+}
+
+// SetContributionRoomRoutingRepository wires the optional, credential-free
+// contribution-room policy source after construction.
+func (s *OpenAIGatewayService) SetContributionRoomRoutingRepository(repo ContributionRoomRoutingRepository) {
+	if s != nil {
+		s.contributionRoomRepo = repo
+	}
 }
 
 // NewOpenAIGatewayService creates a new OpenAIGatewayService
@@ -633,6 +643,9 @@ func (s *OpenAIGatewayService) billingDeps() *billingDeps {
 		deferredService:       s.deferredService,
 		balanceNotifyService:  s.balanceNotifyService,
 		userPlatformQuotaRepo: s.userPlatformQuotaRepo,
+		cfg:                   s.cfg,
+		schedulerSnapshot:     s.schedulerSnapshot,
+		settingService:        s.settingService,
 	}
 }
 

@@ -67,27 +67,46 @@ func openaiResponsesProbePayload(modelID string) []byte {
 	return body
 }
 
-// selectResponsesProbeModel 选出用于探测的上游模型。
+// selectResponsesProbeModel 选出用于探测的上游文本模型。
 //
 // 工具能力探测必须用上游真实存在的模型——用占位模型(DefaultTestModel)打第三方
 // 上游只会拿到 400 model-not-found,无从判定工具能力。优先取账号 model_mapping
 // 的上游模型(值),按字典序取首个具体(非通配符)模型以保证可复现;无映射时回退
 // DefaultTestModel(适配 OpenAI 官方 APIKey 账号)。
-func selectResponsesProbeModel(account *Account) string {
+func selectResponsesProbeModel(account *Account) (string, bool) {
 	mapping := account.GetModelMapping()
 	candidates := make([]string, 0, len(mapping))
-	for _, upstream := range mapping {
+	hasImageOnlyMapping := false
+	for clientModel, upstream := range mapping {
+		// Images models only support /images/* and must never be used to probe
+		// /responses. A 404 from such a probe can incorrectly rate-limit the
+		// only image account in a chained Sub2API deployment.
+		if isOpenAIImageOnlyModel(clientModel) || isOpenAIImageOnlyModel(upstream) {
+			hasImageOnlyMapping = true
+			continue
+		}
 		upstream = strings.TrimSpace(upstream)
 		if upstream == "" || strings.Contains(upstream, "*") {
 			continue
 		}
 		candidates = append(candidates, upstream)
 	}
-	if len(candidates) == 0 {
-		return openai.DefaultTestModel
+	if len(candidates) > 0 {
+		sort.Strings(candidates)
+		return candidates[0], true
 	}
-	sort.Strings(candidates)
-	return candidates[0]
+	// A mapping that contains image-only models but no text candidate belongs
+	// to an images-only account and must not receive a /responses probe. Keep
+	// the existing DefaultTestModel fallback for other incomplete mappings.
+	if hasImageOnlyMapping {
+		return "", false
+	}
+	return openai.DefaultTestModel, true
+}
+
+func isOpenAIImageOnlyModel(model string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(model))
+	return strings.HasPrefix(normalized, "gpt-image-") || strings.HasPrefix(normalized, "dall-e-")
 }
 
 // ProbeOpenAIAPIKeyResponsesSupport 探测 OpenAI APIKey 账号上游是否支持
@@ -133,8 +152,12 @@ func (s *AccountTestService) ProbeOpenAIAPIKeyResponsesSupport(ctx context.Conte
 		return
 	}
 
+	probeModel, shouldProbe := selectResponsesProbeModel(account)
+	if !shouldProbe {
+		logger.LegacyPrintf("service.openai_probe", "probe_skip_image_only_mapping: account_id=%d", accountID)
+		return
+	}
 	probeURL := buildOpenAIResponsesURL(normalizedBaseURL)
-	probeModel := selectResponsesProbeModel(account)
 
 	probeCtx, cancel := context.WithTimeout(ctx, openaiResponsesProbeTimeout)
 	defer cancel()

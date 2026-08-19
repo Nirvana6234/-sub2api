@@ -94,8 +94,10 @@ func jwtAuth(
 		}
 
 		c.Set(string(ContextKeyUser), AuthSubject{
-			UserID:      user.ID,
-			Concurrency: user.Concurrency,
+			UserID:                   user.ID,
+			Concurrency:              user.Concurrency,
+			AccountManagementEnabled: user.AccountManagementEnabled,
+			ContributionRoomsEnabled: user.ContributionRoomsEnabled,
 		})
 		c.Set(string(ContextKeyUserRole), user.Role)
 		c.Set(ContextKeyAuthEmail, user.Email)

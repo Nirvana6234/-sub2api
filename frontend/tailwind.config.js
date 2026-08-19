@@ -5,19 +5,19 @@ export default {
   theme: {
     extend: {
       colors: {
-        // 主色调 - Teal/Cyan 青色系
+        // 主色调 - 清爽天空蓝，和共飞 AI 的飞行主题保持一致
         primary: {
-          50: '#f0fdfa',
-          100: '#ccfbf1',
-          200: '#99f6e4',
-          300: '#5eead4',
-          400: '#2dd4bf',
-          500: '#14b8a6',
-          600: '#0d9488',
-          700: '#0f766e',
-          800: '#115e59',
-          900: '#134e4a',
-          950: '#042f2e'
+          50: '#f0faff',
+          100: '#d9f2ff',
+          200: '#b8e9ff',
+          300: '#85dcfb',
+          400: '#47c3ed',
+          500: '#169bd0',
+          600: '#087eae',
+          700: '#09648d',
+          800: '#0c5272',
+          900: '#0e435d',
+          950: '#082b3d'
         },
         // 辅助色 - 深蓝灰
         accent: {
@@ -50,6 +50,9 @@ export default {
       },
       fontFamily: {
         sans: [
+          'HarmonyOS Sans SC',
+          'Alibaba PuHuiTi 3.0',
+          'ui-rounded',
           'system-ui',
           '-apple-system',
           'BlinkMacSystemFont',
@@ -67,20 +70,20 @@ export default {
       boxShadow: {
         glass: '0 8px 32px rgba(0, 0, 0, 0.08)',
         'glass-sm': '0 4px 16px rgba(0, 0, 0, 0.06)',
-        glow: '0 0 20px rgba(20, 184, 166, 0.25)',
-        'glow-lg': '0 0 40px rgba(20, 184, 166, 0.35)',
+        glow: '0 0 20px rgba(22, 155, 208, 0.22)',
+        'glow-lg': '0 0 40px rgba(22, 155, 208, 0.3)',
         card: '0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.06)',
         'card-hover': '0 10px 40px rgba(0, 0, 0, 0.08)',
         'inner-glow': 'inset 0 1px 0 rgba(255, 255, 255, 0.1)'
       },
       backgroundImage: {
         'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))',
-        'gradient-primary': 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
+        'gradient-primary': 'linear-gradient(135deg, #47c3ed 0%, #087eae 100%)',
         'gradient-dark': 'linear-gradient(135deg, #1e293b 0%, #0f172a 100%)',
         'gradient-glass':
           'linear-gradient(135deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.05) 100%)',
         'mesh-gradient':
-          'radial-gradient(at 40% 20%, rgba(20, 184, 166, 0.12) 0px, transparent 50%), radial-gradient(at 80% 0%, rgba(6, 182, 212, 0.08) 0px, transparent 50%), radial-gradient(at 0% 50%, rgba(20, 184, 166, 0.08) 0px, transparent 50%)'
+          'radial-gradient(at 40% 20%, rgba(71, 195, 237, 0.12) 0px, transparent 50%), radial-gradient(at 80% 0%, rgba(22, 155, 208, 0.08) 0px, transparent 50%), radial-gradient(at 0% 50%, rgba(133, 220, 251, 0.1) 0px, transparent 50%)'
       },
       animation: {
         'fade-in': 'fadeIn 0.3s ease-out',
@@ -118,8 +121,8 @@ export default {
           '100%': { backgroundPosition: '200% 0' }
         },
         glow: {
-          '0%': { boxShadow: '0 0 20px rgba(20, 184, 166, 0.25)' },
-          '100%': { boxShadow: '0 0 30px rgba(20, 184, 166, 0.4)' }
+          '0%': { boxShadow: '0 0 20px rgba(22, 155, 208, 0.22)' },
+          '100%': { boxShadow: '0 0 30px rgba(22, 155, 208, 0.34)' }
         }
       },
       backdropBlur: {

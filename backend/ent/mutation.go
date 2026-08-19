@@ -27,6 +27,9 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/channelmonitorhistory"
 	"github.com/Wei-Shaw/sub2api/ent/channelmonitorrequesttemplate"
 	"github.com/Wei-Shaw/sub2api/ent/compositemodelroute"
+	"github.com/Wei-Shaw/sub2api/ent/contributionaccountverification"
+	"github.com/Wei-Shaw/sub2api/ent/contributionroom"
+	"github.com/Wei-Shaw/sub2api/ent/contributionroomaccount"
 	"github.com/Wei-Shaw/sub2api/ent/errorpassthroughrule"
 	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/ent/idempotencyrecord"
@@ -50,6 +53,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/userallowedgroup"
 	"github.com/Wei-Shaw/sub2api/ent/userattributedefinition"
 	"github.com/Wei-Shaw/sub2api/ent/userattributevalue"
+	"github.com/Wei-Shaw/sub2api/ent/usercontributionroompreference"
 	"github.com/Wei-Shaw/sub2api/ent/userplatformquota"
 	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
@@ -64,95 +68,104 @@ const (
 	OpUpdateOne = ent.OpUpdateOne
 
 	// Node types.
-	TypeAPIKey                        = "APIKey"
-	TypeAccount                       = "Account"
-	TypeAccountGroup                  = "AccountGroup"
-	TypeAnnouncement                  = "Announcement"
-	TypeAnnouncementRead              = "AnnouncementRead"
-	TypeAuthIdentity                  = "AuthIdentity"
-	TypeAuthIdentityChannel           = "AuthIdentityChannel"
-	TypeBatchImageEvent               = "BatchImageEvent"
-	TypeBatchImageItem                = "BatchImageItem"
-	TypeBatchImageJob                 = "BatchImageJob"
-	TypeChannelMonitor                = "ChannelMonitor"
-	TypeChannelMonitorDailyRollup     = "ChannelMonitorDailyRollup"
-	TypeChannelMonitorHistory         = "ChannelMonitorHistory"
-	TypeChannelMonitorRequestTemplate = "ChannelMonitorRequestTemplate"
-	TypeCompositeModelRoute           = "CompositeModelRoute"
-	TypeErrorPassthroughRule          = "ErrorPassthroughRule"
-	TypeGroup                         = "Group"
-	TypeIdempotencyRecord             = "IdempotencyRecord"
-	TypeIdentityAdoptionDecision      = "IdentityAdoptionDecision"
-	TypePaymentAuditLog               = "PaymentAuditLog"
-	TypePaymentOrder                  = "PaymentOrder"
-	TypePaymentProviderInstance       = "PaymentProviderInstance"
-	TypePendingAuthSession            = "PendingAuthSession"
-	TypePromoCode                     = "PromoCode"
-	TypePromoCodeUsage                = "PromoCodeUsage"
-	TypeProxy                         = "Proxy"
-	TypeRedeemCode                    = "RedeemCode"
-	TypeSecuritySecret                = "SecuritySecret"
-	TypeSetting                       = "Setting"
-	TypeSubscriptionPlan              = "SubscriptionPlan"
-	TypeTLSFingerprintProfile         = "TLSFingerprintProfile"
-	TypeUsageCleanupTask              = "UsageCleanupTask"
-	TypeUsageLog                      = "UsageLog"
-	TypeUser                          = "User"
-	TypeUserAllowedGroup              = "UserAllowedGroup"
-	TypeUserAttributeDefinition       = "UserAttributeDefinition"
-	TypeUserAttributeValue            = "UserAttributeValue"
-	TypeUserPlatformQuota             = "UserPlatformQuota"
-	TypeUserSubscription              = "UserSubscription"
+	TypeAPIKey                          = "APIKey"
+	TypeAccount                         = "Account"
+	TypeAccountGroup                    = "AccountGroup"
+	TypeAnnouncement                    = "Announcement"
+	TypeAnnouncementRead                = "AnnouncementRead"
+	TypeAuthIdentity                    = "AuthIdentity"
+	TypeAuthIdentityChannel             = "AuthIdentityChannel"
+	TypeBatchImageEvent                 = "BatchImageEvent"
+	TypeBatchImageItem                  = "BatchImageItem"
+	TypeBatchImageJob                   = "BatchImageJob"
+	TypeChannelMonitor                  = "ChannelMonitor"
+	TypeChannelMonitorDailyRollup       = "ChannelMonitorDailyRollup"
+	TypeChannelMonitorHistory           = "ChannelMonitorHistory"
+	TypeChannelMonitorRequestTemplate   = "ChannelMonitorRequestTemplate"
+	TypeCompositeModelRoute             = "CompositeModelRoute"
+	TypeContributionAccountVerification = "ContributionAccountVerification"
+	TypeContributionRoom                = "ContributionRoom"
+	TypeContributionRoomAccount         = "ContributionRoomAccount"
+	TypeErrorPassthroughRule            = "ErrorPassthroughRule"
+	TypeGroup                           = "Group"
+	TypeIdempotencyRecord               = "IdempotencyRecord"
+	TypeIdentityAdoptionDecision        = "IdentityAdoptionDecision"
+	TypePaymentAuditLog                 = "PaymentAuditLog"
+	TypePaymentOrder                    = "PaymentOrder"
+	TypePaymentProviderInstance         = "PaymentProviderInstance"
+	TypePendingAuthSession              = "PendingAuthSession"
+	TypePromoCode                       = "PromoCode"
+	TypePromoCodeUsage                  = "PromoCodeUsage"
+	TypeProxy                           = "Proxy"
+	TypeRedeemCode                      = "RedeemCode"
+	TypeSecuritySecret                  = "SecuritySecret"
+	TypeSetting                         = "Setting"
+	TypeSubscriptionPlan                = "SubscriptionPlan"
+	TypeTLSFingerprintProfile           = "TLSFingerprintProfile"
+	TypeUsageCleanupTask                = "UsageCleanupTask"
+	TypeUsageLog                        = "UsageLog"
+	TypeUser                            = "User"
+	TypeUserAllowedGroup                = "UserAllowedGroup"
+	TypeUserAttributeDefinition         = "UserAttributeDefinition"
+	TypeUserAttributeValue              = "UserAttributeValue"
+	TypeUserContributionRoomPreference  = "UserContributionRoomPreference"
+	TypeUserPlatformQuota               = "UserPlatformQuota"
+	TypeUserSubscription                = "UserSubscription"
 )
 
 // APIKeyMutation represents an operation that mutates the APIKey nodes in the graph.
 type APIKeyMutation struct {
 	config
-	op                 Op
-	typ                string
-	id                 *int64
-	created_at         *time.Time
-	updated_at         *time.Time
-	deleted_at         *time.Time
-	key                *string
-	name               *string
-	status             *string
-	last_used_at       *time.Time
-	ip_whitelist       *[]string
-	appendip_whitelist []string
-	ip_blacklist       *[]string
-	appendip_blacklist []string
-	quota              *float64
-	addquota           *float64
-	quota_used         *float64
-	addquota_used      *float64
-	expires_at         *time.Time
-	rate_limit_5h      *float64
-	addrate_limit_5h   *float64
-	rate_limit_1d      *float64
-	addrate_limit_1d   *float64
-	rate_limit_7d      *float64
-	addrate_limit_7d   *float64
-	usage_5h           *float64
-	addusage_5h        *float64
-	usage_1d           *float64
-	addusage_1d        *float64
-	usage_7d           *float64
-	addusage_7d        *float64
-	window_5h_start    *time.Time
-	window_1d_start    *time.Time
-	window_7d_start    *time.Time
-	clearedFields      map[string]struct{}
-	user               *int64
-	cleareduser        bool
-	group              *int64
-	clearedgroup       bool
-	usage_logs         map[int64]struct{}
-	removedusage_logs  map[int64]struct{}
-	clearedusage_logs  bool
-	done               bool
-	oldValue           func(context.Context) (*APIKey, error)
-	predicates         []predicate.APIKey
+	op                                   Op
+	typ                                  string
+	id                                   *int64
+	created_at                           *time.Time
+	updated_at                           *time.Time
+	deleted_at                           *time.Time
+	key                                  *string
+	name                                 *string
+	auto_group                           *bool
+	auto_group_strategy                  *string
+	status                               *string
+	last_used_at                         *time.Time
+	ip_whitelist                         *[]string
+	appendip_whitelist                   []string
+	ip_blacklist                         *[]string
+	appendip_blacklist                   []string
+	quota                                *float64
+	addquota                             *float64
+	quota_used                           *float64
+	addquota_used                        *float64
+	expires_at                           *time.Time
+	rate_limit_5h                        *float64
+	addrate_limit_5h                     *float64
+	rate_limit_1d                        *float64
+	addrate_limit_1d                     *float64
+	rate_limit_7d                        *float64
+	addrate_limit_7d                     *float64
+	usage_5h                             *float64
+	addusage_5h                          *float64
+	usage_1d                             *float64
+	addusage_1d                          *float64
+	usage_7d                             *float64
+	addusage_7d                          *float64
+	window_5h_start                      *time.Time
+	window_1d_start                      *time.Time
+	window_7d_start                      *time.Time
+	clearedFields                        map[string]struct{}
+	user                                 *int64
+	cleareduser                          bool
+	group                                *int64
+	clearedgroup                         bool
+	contribution_room_preferences        map[int64]struct{}
+	removedcontribution_room_preferences map[int64]struct{}
+	clearedcontribution_room_preferences bool
+	usage_logs                           map[int64]struct{}
+	removedusage_logs                    map[int64]struct{}
+	clearedusage_logs                    bool
+	done                                 bool
+	oldValue                             func(context.Context) (*APIKey, error)
+	predicates                           []predicate.APIKey
 }
 
 var _ ent.Mutation = (*APIKeyMutation)(nil)
@@ -529,6 +542,78 @@ func (m *APIKeyMutation) GroupIDCleared() bool {
 func (m *APIKeyMutation) ResetGroupID() {
 	m.group = nil
 	delete(m.clearedFields, apikey.FieldGroupID)
+}
+
+// SetAutoGroup sets the "auto_group" field.
+func (m *APIKeyMutation) SetAutoGroup(b bool) {
+	m.auto_group = &b
+}
+
+// AutoGroup returns the value of the "auto_group" field in the mutation.
+func (m *APIKeyMutation) AutoGroup() (r bool, exists bool) {
+	v := m.auto_group
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAutoGroup returns the old "auto_group" field's value of the APIKey entity.
+// If the APIKey object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *APIKeyMutation) OldAutoGroup(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAutoGroup is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAutoGroup requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAutoGroup: %w", err)
+	}
+	return oldValue.AutoGroup, nil
+}
+
+// ResetAutoGroup resets all changes to the "auto_group" field.
+func (m *APIKeyMutation) ResetAutoGroup() {
+	m.auto_group = nil
+}
+
+// SetAutoGroupStrategy sets the "auto_group_strategy" field.
+func (m *APIKeyMutation) SetAutoGroupStrategy(s string) {
+	m.auto_group_strategy = &s
+}
+
+// AutoGroupStrategy returns the value of the "auto_group_strategy" field in the mutation.
+func (m *APIKeyMutation) AutoGroupStrategy() (r string, exists bool) {
+	v := m.auto_group_strategy
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAutoGroupStrategy returns the old "auto_group_strategy" field's value of the APIKey entity.
+// If the APIKey object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *APIKeyMutation) OldAutoGroupStrategy(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAutoGroupStrategy is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAutoGroupStrategy requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAutoGroupStrategy: %w", err)
+	}
+	return oldValue.AutoGroupStrategy, nil
+}
+
+// ResetAutoGroupStrategy resets all changes to the "auto_group_strategy" field.
+func (m *APIKeyMutation) ResetAutoGroupStrategy() {
+	m.auto_group_strategy = nil
 }
 
 // SetStatus sets the "status" field.
@@ -1444,6 +1529,60 @@ func (m *APIKeyMutation) ResetGroup() {
 	m.clearedgroup = false
 }
 
+// AddContributionRoomPreferenceIDs adds the "contribution_room_preferences" edge to the UserContributionRoomPreference entity by ids.
+func (m *APIKeyMutation) AddContributionRoomPreferenceIDs(ids ...int64) {
+	if m.contribution_room_preferences == nil {
+		m.contribution_room_preferences = make(map[int64]struct{})
+	}
+	for i := range ids {
+		m.contribution_room_preferences[ids[i]] = struct{}{}
+	}
+}
+
+// ClearContributionRoomPreferences clears the "contribution_room_preferences" edge to the UserContributionRoomPreference entity.
+func (m *APIKeyMutation) ClearContributionRoomPreferences() {
+	m.clearedcontribution_room_preferences = true
+}
+
+// ContributionRoomPreferencesCleared reports if the "contribution_room_preferences" edge to the UserContributionRoomPreference entity was cleared.
+func (m *APIKeyMutation) ContributionRoomPreferencesCleared() bool {
+	return m.clearedcontribution_room_preferences
+}
+
+// RemoveContributionRoomPreferenceIDs removes the "contribution_room_preferences" edge to the UserContributionRoomPreference entity by IDs.
+func (m *APIKeyMutation) RemoveContributionRoomPreferenceIDs(ids ...int64) {
+	if m.removedcontribution_room_preferences == nil {
+		m.removedcontribution_room_preferences = make(map[int64]struct{})
+	}
+	for i := range ids {
+		delete(m.contribution_room_preferences, ids[i])
+		m.removedcontribution_room_preferences[ids[i]] = struct{}{}
+	}
+}
+
+// RemovedContributionRoomPreferences returns the removed IDs of the "contribution_room_preferences" edge to the UserContributionRoomPreference entity.
+func (m *APIKeyMutation) RemovedContributionRoomPreferencesIDs() (ids []int64) {
+	for id := range m.removedcontribution_room_preferences {
+		ids = append(ids, id)
+	}
+	return
+}
+
+// ContributionRoomPreferencesIDs returns the "contribution_room_preferences" edge IDs in the mutation.
+func (m *APIKeyMutation) ContributionRoomPreferencesIDs() (ids []int64) {
+	for id := range m.contribution_room_preferences {
+		ids = append(ids, id)
+	}
+	return
+}
+
+// ResetContributionRoomPreferences resets all changes to the "contribution_room_preferences" edge.
+func (m *APIKeyMutation) ResetContributionRoomPreferences() {
+	m.contribution_room_preferences = nil
+	m.clearedcontribution_room_preferences = false
+	m.removedcontribution_room_preferences = nil
+}
+
 // AddUsageLogIDs adds the "usage_logs" edge to the UsageLog entity by ids.
 func (m *APIKeyMutation) AddUsageLogIDs(ids ...int64) {
 	if m.usage_logs == nil {
@@ -1532,7 +1671,7 @@ func (m *APIKeyMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *APIKeyMutation) Fields() []string {
-	fields := make([]string, 0, 23)
+	fields := make([]string, 0, 25)
 	if m.created_at != nil {
 		fields = append(fields, apikey.FieldCreatedAt)
 	}
@@ -1553,6 +1692,12 @@ func (m *APIKeyMutation) Fields() []string {
 	}
 	if m.group != nil {
 		fields = append(fields, apikey.FieldGroupID)
+	}
+	if m.auto_group != nil {
+		fields = append(fields, apikey.FieldAutoGroup)
+	}
+	if m.auto_group_strategy != nil {
+		fields = append(fields, apikey.FieldAutoGroupStrategy)
 	}
 	if m.status != nil {
 		fields = append(fields, apikey.FieldStatus)
@@ -1624,6 +1769,10 @@ func (m *APIKeyMutation) Field(name string) (ent.Value, bool) {
 		return m.Name()
 	case apikey.FieldGroupID:
 		return m.GroupID()
+	case apikey.FieldAutoGroup:
+		return m.AutoGroup()
+	case apikey.FieldAutoGroupStrategy:
+		return m.AutoGroupStrategy()
 	case apikey.FieldStatus:
 		return m.Status()
 	case apikey.FieldLastUsedAt:
@@ -1679,6 +1828,10 @@ func (m *APIKeyMutation) OldField(ctx context.Context, name string) (ent.Value, 
 		return m.OldName(ctx)
 	case apikey.FieldGroupID:
 		return m.OldGroupID(ctx)
+	case apikey.FieldAutoGroup:
+		return m.OldAutoGroup(ctx)
+	case apikey.FieldAutoGroupStrategy:
+		return m.OldAutoGroupStrategy(ctx)
 	case apikey.FieldStatus:
 		return m.OldStatus(ctx)
 	case apikey.FieldLastUsedAt:
@@ -1768,6 +1921,20 @@ func (m *APIKeyMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetGroupID(v)
+		return nil
+	case apikey.FieldAutoGroup:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAutoGroup(v)
+		return nil
+	case apikey.FieldAutoGroupStrategy:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAutoGroupStrategy(v)
 		return nil
 	case apikey.FieldStatus:
 		v, ok := value.(string)
@@ -2107,6 +2274,12 @@ func (m *APIKeyMutation) ResetField(name string) error {
 	case apikey.FieldGroupID:
 		m.ResetGroupID()
 		return nil
+	case apikey.FieldAutoGroup:
+		m.ResetAutoGroup()
+		return nil
+	case apikey.FieldAutoGroupStrategy:
+		m.ResetAutoGroupStrategy()
+		return nil
 	case apikey.FieldStatus:
 		m.ResetStatus()
 		return nil
@@ -2161,12 +2334,15 @@ func (m *APIKeyMutation) ResetField(name string) error {
 
 // AddedEdges returns all edge names that were set/added in this mutation.
 func (m *APIKeyMutation) AddedEdges() []string {
-	edges := make([]string, 0, 3)
+	edges := make([]string, 0, 4)
 	if m.user != nil {
 		edges = append(edges, apikey.EdgeUser)
 	}
 	if m.group != nil {
 		edges = append(edges, apikey.EdgeGroup)
+	}
+	if m.contribution_room_preferences != nil {
+		edges = append(edges, apikey.EdgeContributionRoomPreferences)
 	}
 	if m.usage_logs != nil {
 		edges = append(edges, apikey.EdgeUsageLogs)
@@ -2186,6 +2362,12 @@ func (m *APIKeyMutation) AddedIDs(name string) []ent.Value {
 		if id := m.group; id != nil {
 			return []ent.Value{*id}
 		}
+	case apikey.EdgeContributionRoomPreferences:
+		ids := make([]ent.Value, 0, len(m.contribution_room_preferences))
+		for id := range m.contribution_room_preferences {
+			ids = append(ids, id)
+		}
+		return ids
 	case apikey.EdgeUsageLogs:
 		ids := make([]ent.Value, 0, len(m.usage_logs))
 		for id := range m.usage_logs {
@@ -2198,7 +2380,10 @@ func (m *APIKeyMutation) AddedIDs(name string) []ent.Value {
 
 // RemovedEdges returns all edge names that were removed in this mutation.
 func (m *APIKeyMutation) RemovedEdges() []string {
-	edges := make([]string, 0, 3)
+	edges := make([]string, 0, 4)
+	if m.removedcontribution_room_preferences != nil {
+		edges = append(edges, apikey.EdgeContributionRoomPreferences)
+	}
 	if m.removedusage_logs != nil {
 		edges = append(edges, apikey.EdgeUsageLogs)
 	}
@@ -2209,6 +2394,12 @@ func (m *APIKeyMutation) RemovedEdges() []string {
 // the given name in this mutation.
 func (m *APIKeyMutation) RemovedIDs(name string) []ent.Value {
 	switch name {
+	case apikey.EdgeContributionRoomPreferences:
+		ids := make([]ent.Value, 0, len(m.removedcontribution_room_preferences))
+		for id := range m.removedcontribution_room_preferences {
+			ids = append(ids, id)
+		}
+		return ids
 	case apikey.EdgeUsageLogs:
 		ids := make([]ent.Value, 0, len(m.removedusage_logs))
 		for id := range m.removedusage_logs {
@@ -2221,12 +2412,15 @@ func (m *APIKeyMutation) RemovedIDs(name string) []ent.Value {
 
 // ClearedEdges returns all edge names that were cleared in this mutation.
 func (m *APIKeyMutation) ClearedEdges() []string {
-	edges := make([]string, 0, 3)
+	edges := make([]string, 0, 4)
 	if m.cleareduser {
 		edges = append(edges, apikey.EdgeUser)
 	}
 	if m.clearedgroup {
 		edges = append(edges, apikey.EdgeGroup)
+	}
+	if m.clearedcontribution_room_preferences {
+		edges = append(edges, apikey.EdgeContributionRoomPreferences)
 	}
 	if m.clearedusage_logs {
 		edges = append(edges, apikey.EdgeUsageLogs)
@@ -2242,6 +2436,8 @@ func (m *APIKeyMutation) EdgeCleared(name string) bool {
 		return m.cleareduser
 	case apikey.EdgeGroup:
 		return m.clearedgroup
+	case apikey.EdgeContributionRoomPreferences:
+		return m.clearedcontribution_room_preferences
 	case apikey.EdgeUsageLogs:
 		return m.clearedusage_logs
 	}
@@ -2271,6 +2467,9 @@ func (m *APIKeyMutation) ResetEdge(name string) error {
 		return nil
 	case apikey.EdgeGroup:
 		m.ResetGroup()
+		return nil
+	case apikey.EdgeContributionRoomPreferences:
+		m.ResetContributionRoomPreferences()
 		return nil
 	case apikey.EdgeUsageLogs:
 		m.ResetUsageLogs()
@@ -2304,6 +2503,7 @@ type AccountMutation struct {
 	addpriority                 *int
 	rate_multiplier             *float64
 	addrate_multiplier          *float64
+	rate_multiplier_undeclared  *bool
 	status                      *string
 	error_message               *string
 	last_used_at                *time.Time
@@ -2315,6 +2515,9 @@ type AccountMutation struct {
 	overload_until              *time.Time
 	temp_unschedulable_until    *time.Time
 	temp_unschedulable_reason   *string
+	schedulability_source       *string
+	schedulability_reason       *string
+	schedulability_changed_at   *time.Time
 	session_window_start        *time.Time
 	session_window_end          *time.Time
 	session_window_status       *string
@@ -3143,6 +3346,42 @@ func (m *AccountMutation) ResetRateMultiplier() {
 	m.addrate_multiplier = nil
 }
 
+// SetRateMultiplierUndeclared sets the "rate_multiplier_undeclared" field.
+func (m *AccountMutation) SetRateMultiplierUndeclared(b bool) {
+	m.rate_multiplier_undeclared = &b
+}
+
+// RateMultiplierUndeclared returns the value of the "rate_multiplier_undeclared" field in the mutation.
+func (m *AccountMutation) RateMultiplierUndeclared() (r bool, exists bool) {
+	v := m.rate_multiplier_undeclared
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRateMultiplierUndeclared returns the old "rate_multiplier_undeclared" field's value of the Account entity.
+// If the Account object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountMutation) OldRateMultiplierUndeclared(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRateMultiplierUndeclared is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRateMultiplierUndeclared requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRateMultiplierUndeclared: %w", err)
+	}
+	return oldValue.RateMultiplierUndeclared, nil
+}
+
+// ResetRateMultiplierUndeclared resets all changes to the "rate_multiplier_undeclared" field.
+func (m *AccountMutation) ResetRateMultiplierUndeclared() {
+	m.rate_multiplier_undeclared = nil
+}
+
 // SetStatus sets the "status" field.
 func (m *AccountMutation) SetStatus(s string) {
 	m.status = &s
@@ -3643,6 +3882,140 @@ func (m *AccountMutation) ResetTempUnschedulableReason() {
 	delete(m.clearedFields, account.FieldTempUnschedulableReason)
 }
 
+// SetSchedulabilitySource sets the "schedulability_source" field.
+func (m *AccountMutation) SetSchedulabilitySource(s string) {
+	m.schedulability_source = &s
+}
+
+// SchedulabilitySource returns the value of the "schedulability_source" field in the mutation.
+func (m *AccountMutation) SchedulabilitySource() (r string, exists bool) {
+	v := m.schedulability_source
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSchedulabilitySource returns the old "schedulability_source" field's value of the Account entity.
+// If the Account object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountMutation) OldSchedulabilitySource(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSchedulabilitySource is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSchedulabilitySource requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSchedulabilitySource: %w", err)
+	}
+	return oldValue.SchedulabilitySource, nil
+}
+
+// ResetSchedulabilitySource resets all changes to the "schedulability_source" field.
+func (m *AccountMutation) ResetSchedulabilitySource() {
+	m.schedulability_source = nil
+}
+
+// SetSchedulabilityReason sets the "schedulability_reason" field.
+func (m *AccountMutation) SetSchedulabilityReason(s string) {
+	m.schedulability_reason = &s
+}
+
+// SchedulabilityReason returns the value of the "schedulability_reason" field in the mutation.
+func (m *AccountMutation) SchedulabilityReason() (r string, exists bool) {
+	v := m.schedulability_reason
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSchedulabilityReason returns the old "schedulability_reason" field's value of the Account entity.
+// If the Account object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountMutation) OldSchedulabilityReason(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSchedulabilityReason is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSchedulabilityReason requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSchedulabilityReason: %w", err)
+	}
+	return oldValue.SchedulabilityReason, nil
+}
+
+// ClearSchedulabilityReason clears the value of the "schedulability_reason" field.
+func (m *AccountMutation) ClearSchedulabilityReason() {
+	m.schedulability_reason = nil
+	m.clearedFields[account.FieldSchedulabilityReason] = struct{}{}
+}
+
+// SchedulabilityReasonCleared returns if the "schedulability_reason" field was cleared in this mutation.
+func (m *AccountMutation) SchedulabilityReasonCleared() bool {
+	_, ok := m.clearedFields[account.FieldSchedulabilityReason]
+	return ok
+}
+
+// ResetSchedulabilityReason resets all changes to the "schedulability_reason" field.
+func (m *AccountMutation) ResetSchedulabilityReason() {
+	m.schedulability_reason = nil
+	delete(m.clearedFields, account.FieldSchedulabilityReason)
+}
+
+// SetSchedulabilityChangedAt sets the "schedulability_changed_at" field.
+func (m *AccountMutation) SetSchedulabilityChangedAt(t time.Time) {
+	m.schedulability_changed_at = &t
+}
+
+// SchedulabilityChangedAt returns the value of the "schedulability_changed_at" field in the mutation.
+func (m *AccountMutation) SchedulabilityChangedAt() (r time.Time, exists bool) {
+	v := m.schedulability_changed_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSchedulabilityChangedAt returns the old "schedulability_changed_at" field's value of the Account entity.
+// If the Account object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountMutation) OldSchedulabilityChangedAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSchedulabilityChangedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSchedulabilityChangedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSchedulabilityChangedAt: %w", err)
+	}
+	return oldValue.SchedulabilityChangedAt, nil
+}
+
+// ClearSchedulabilityChangedAt clears the value of the "schedulability_changed_at" field.
+func (m *AccountMutation) ClearSchedulabilityChangedAt() {
+	m.schedulability_changed_at = nil
+	m.clearedFields[account.FieldSchedulabilityChangedAt] = struct{}{}
+}
+
+// SchedulabilityChangedAtCleared returns if the "schedulability_changed_at" field was cleared in this mutation.
+func (m *AccountMutation) SchedulabilityChangedAtCleared() bool {
+	_, ok := m.clearedFields[account.FieldSchedulabilityChangedAt]
+	return ok
+}
+
+// ResetSchedulabilityChangedAt resets all changes to the "schedulability_changed_at" field.
+func (m *AccountMutation) ResetSchedulabilityChangedAt() {
+	m.schedulability_changed_at = nil
+	delete(m.clearedFields, account.FieldSchedulabilityChangedAt)
+}
+
 // SetSessionWindowStart sets the "session_window_start" field.
 func (m *AccountMutation) SetSessionWindowStart(t time.Time) {
 	m.session_window_start = &t
@@ -4138,7 +4511,7 @@ func (m *AccountMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *AccountMutation) Fields() []string {
-	fields := make([]string, 0, 31)
+	fields := make([]string, 0, 35)
 	if m.created_at != nil {
 		fields = append(fields, account.FieldCreatedAt)
 	}
@@ -4184,6 +4557,9 @@ func (m *AccountMutation) Fields() []string {
 	if m.rate_multiplier != nil {
 		fields = append(fields, account.FieldRateMultiplier)
 	}
+	if m.rate_multiplier_undeclared != nil {
+		fields = append(fields, account.FieldRateMultiplierUndeclared)
+	}
 	if m.status != nil {
 		fields = append(fields, account.FieldStatus)
 	}
@@ -4216,6 +4592,15 @@ func (m *AccountMutation) Fields() []string {
 	}
 	if m.temp_unschedulable_reason != nil {
 		fields = append(fields, account.FieldTempUnschedulableReason)
+	}
+	if m.schedulability_source != nil {
+		fields = append(fields, account.FieldSchedulabilitySource)
+	}
+	if m.schedulability_reason != nil {
+		fields = append(fields, account.FieldSchedulabilityReason)
+	}
+	if m.schedulability_changed_at != nil {
+		fields = append(fields, account.FieldSchedulabilityChangedAt)
 	}
 	if m.session_window_start != nil {
 		fields = append(fields, account.FieldSessionWindowStart)
@@ -4270,6 +4655,8 @@ func (m *AccountMutation) Field(name string) (ent.Value, bool) {
 		return m.Priority()
 	case account.FieldRateMultiplier:
 		return m.RateMultiplier()
+	case account.FieldRateMultiplierUndeclared:
+		return m.RateMultiplierUndeclared()
 	case account.FieldStatus:
 		return m.Status()
 	case account.FieldErrorMessage:
@@ -4292,6 +4679,12 @@ func (m *AccountMutation) Field(name string) (ent.Value, bool) {
 		return m.TempUnschedulableUntil()
 	case account.FieldTempUnschedulableReason:
 		return m.TempUnschedulableReason()
+	case account.FieldSchedulabilitySource:
+		return m.SchedulabilitySource()
+	case account.FieldSchedulabilityReason:
+		return m.SchedulabilityReason()
+	case account.FieldSchedulabilityChangedAt:
+		return m.SchedulabilityChangedAt()
 	case account.FieldSessionWindowStart:
 		return m.SessionWindowStart()
 	case account.FieldSessionWindowEnd:
@@ -4341,6 +4734,8 @@ func (m *AccountMutation) OldField(ctx context.Context, name string) (ent.Value,
 		return m.OldPriority(ctx)
 	case account.FieldRateMultiplier:
 		return m.OldRateMultiplier(ctx)
+	case account.FieldRateMultiplierUndeclared:
+		return m.OldRateMultiplierUndeclared(ctx)
 	case account.FieldStatus:
 		return m.OldStatus(ctx)
 	case account.FieldErrorMessage:
@@ -4363,6 +4758,12 @@ func (m *AccountMutation) OldField(ctx context.Context, name string) (ent.Value,
 		return m.OldTempUnschedulableUntil(ctx)
 	case account.FieldTempUnschedulableReason:
 		return m.OldTempUnschedulableReason(ctx)
+	case account.FieldSchedulabilitySource:
+		return m.OldSchedulabilitySource(ctx)
+	case account.FieldSchedulabilityReason:
+		return m.OldSchedulabilityReason(ctx)
+	case account.FieldSchedulabilityChangedAt:
+		return m.OldSchedulabilityChangedAt(ctx)
 	case account.FieldSessionWindowStart:
 		return m.OldSessionWindowStart(ctx)
 	case account.FieldSessionWindowEnd:
@@ -4487,6 +4888,13 @@ func (m *AccountMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetRateMultiplier(v)
 		return nil
+	case account.FieldRateMultiplierUndeclared:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRateMultiplierUndeclared(v)
+		return nil
 	case account.FieldStatus:
 		v, ok := value.(string)
 		if !ok {
@@ -4563,6 +4971,27 @@ func (m *AccountMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetTempUnschedulableReason(v)
+		return nil
+	case account.FieldSchedulabilitySource:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSchedulabilitySource(v)
+		return nil
+	case account.FieldSchedulabilityReason:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSchedulabilityReason(v)
+		return nil
+	case account.FieldSchedulabilityChangedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSchedulabilityChangedAt(v)
 		return nil
 	case account.FieldSessionWindowStart:
 		v, ok := value.(time.Time)
@@ -4731,6 +5160,12 @@ func (m *AccountMutation) ClearedFields() []string {
 	if m.FieldCleared(account.FieldTempUnschedulableReason) {
 		fields = append(fields, account.FieldTempUnschedulableReason)
 	}
+	if m.FieldCleared(account.FieldSchedulabilityReason) {
+		fields = append(fields, account.FieldSchedulabilityReason)
+	}
+	if m.FieldCleared(account.FieldSchedulabilityChangedAt) {
+		fields = append(fields, account.FieldSchedulabilityChangedAt)
+	}
 	if m.FieldCleared(account.FieldSessionWindowStart) {
 		fields = append(fields, account.FieldSessionWindowStart)
 	}
@@ -4795,6 +5230,12 @@ func (m *AccountMutation) ClearField(name string) error {
 		return nil
 	case account.FieldTempUnschedulableReason:
 		m.ClearTempUnschedulableReason()
+		return nil
+	case account.FieldSchedulabilityReason:
+		m.ClearSchedulabilityReason()
+		return nil
+	case account.FieldSchedulabilityChangedAt:
+		m.ClearSchedulabilityChangedAt()
 		return nil
 	case account.FieldSessionWindowStart:
 		m.ClearSessionWindowStart()
@@ -4861,6 +5302,9 @@ func (m *AccountMutation) ResetField(name string) error {
 	case account.FieldRateMultiplier:
 		m.ResetRateMultiplier()
 		return nil
+	case account.FieldRateMultiplierUndeclared:
+		m.ResetRateMultiplierUndeclared()
+		return nil
 	case account.FieldStatus:
 		m.ResetStatus()
 		return nil
@@ -4893,6 +5337,15 @@ func (m *AccountMutation) ResetField(name string) error {
 		return nil
 	case account.FieldTempUnschedulableReason:
 		m.ResetTempUnschedulableReason()
+		return nil
+	case account.FieldSchedulabilitySource:
+		m.ResetSchedulabilitySource()
+		return nil
+	case account.FieldSchedulabilityReason:
+		m.ResetSchedulabilityReason()
+		return nil
+	case account.FieldSchedulabilityChangedAt:
+		m.ResetSchedulabilityChangedAt()
 		return nil
 	case account.FieldSessionWindowStart:
 		m.ResetSessionWindowStart()
@@ -20521,6 +20974,2838 @@ func (m *CompositeModelRouteMutation) ResetEdge(name string) error {
 	return fmt.Errorf("unknown CompositeModelRoute edge %s", name)
 }
 
+// ContributionAccountVerificationMutation represents an operation that mutates the ContributionAccountVerification nodes in the graph.
+type ContributionAccountVerificationMutation struct {
+	config
+	op                     Op
+	typ                    string
+	id                     *int64
+	created_at             *time.Time
+	updated_at             *time.Time
+	platform               *string
+	status                 *string
+	model_family           *string
+	source_kind            *string
+	tested_model           *string
+	tested_at              *time.Time
+	redacted_error_summary *string
+	clearedFields          map[string]struct{}
+	account                *int64
+	clearedaccount         bool
+	done                   bool
+	oldValue               func(context.Context) (*ContributionAccountVerification, error)
+	predicates             []predicate.ContributionAccountVerification
+}
+
+var _ ent.Mutation = (*ContributionAccountVerificationMutation)(nil)
+
+// contributionaccountverificationOption allows management of the mutation configuration using functional options.
+type contributionaccountverificationOption func(*ContributionAccountVerificationMutation)
+
+// newContributionAccountVerificationMutation creates new mutation for the ContributionAccountVerification entity.
+func newContributionAccountVerificationMutation(c config, op Op, opts ...contributionaccountverificationOption) *ContributionAccountVerificationMutation {
+	m := &ContributionAccountVerificationMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeContributionAccountVerification,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withContributionAccountVerificationID sets the ID field of the mutation.
+func withContributionAccountVerificationID(id int64) contributionaccountverificationOption {
+	return func(m *ContributionAccountVerificationMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *ContributionAccountVerification
+		)
+		m.oldValue = func(ctx context.Context) (*ContributionAccountVerification, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().ContributionAccountVerification.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withContributionAccountVerification sets the old ContributionAccountVerification of the mutation.
+func withContributionAccountVerification(node *ContributionAccountVerification) contributionaccountverificationOption {
+	return func(m *ContributionAccountVerificationMutation) {
+		m.oldValue = func(context.Context) (*ContributionAccountVerification, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m ContributionAccountVerificationMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m ContributionAccountVerificationMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *ContributionAccountVerificationMutation) ID() (id int64, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *ContributionAccountVerificationMutation) IDs(ctx context.Context) ([]int64, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []int64{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().ContributionAccountVerification.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *ContributionAccountVerificationMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *ContributionAccountVerificationMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the ContributionAccountVerification entity.
+// If the ContributionAccountVerification object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContributionAccountVerificationMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *ContributionAccountVerificationMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *ContributionAccountVerificationMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *ContributionAccountVerificationMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the ContributionAccountVerification entity.
+// If the ContributionAccountVerification object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContributionAccountVerificationMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *ContributionAccountVerificationMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// SetAccountID sets the "account_id" field.
+func (m *ContributionAccountVerificationMutation) SetAccountID(i int64) {
+	m.account = &i
+}
+
+// AccountID returns the value of the "account_id" field in the mutation.
+func (m *ContributionAccountVerificationMutation) AccountID() (r int64, exists bool) {
+	v := m.account
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAccountID returns the old "account_id" field's value of the ContributionAccountVerification entity.
+// If the ContributionAccountVerification object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContributionAccountVerificationMutation) OldAccountID(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAccountID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAccountID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAccountID: %w", err)
+	}
+	return oldValue.AccountID, nil
+}
+
+// ResetAccountID resets all changes to the "account_id" field.
+func (m *ContributionAccountVerificationMutation) ResetAccountID() {
+	m.account = nil
+}
+
+// SetPlatform sets the "platform" field.
+func (m *ContributionAccountVerificationMutation) SetPlatform(s string) {
+	m.platform = &s
+}
+
+// Platform returns the value of the "platform" field in the mutation.
+func (m *ContributionAccountVerificationMutation) Platform() (r string, exists bool) {
+	v := m.platform
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPlatform returns the old "platform" field's value of the ContributionAccountVerification entity.
+// If the ContributionAccountVerification object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContributionAccountVerificationMutation) OldPlatform(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPlatform is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPlatform requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPlatform: %w", err)
+	}
+	return oldValue.Platform, nil
+}
+
+// ResetPlatform resets all changes to the "platform" field.
+func (m *ContributionAccountVerificationMutation) ResetPlatform() {
+	m.platform = nil
+}
+
+// SetStatus sets the "status" field.
+func (m *ContributionAccountVerificationMutation) SetStatus(s string) {
+	m.status = &s
+}
+
+// Status returns the value of the "status" field in the mutation.
+func (m *ContributionAccountVerificationMutation) Status() (r string, exists bool) {
+	v := m.status
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldStatus returns the old "status" field's value of the ContributionAccountVerification entity.
+// If the ContributionAccountVerification object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContributionAccountVerificationMutation) OldStatus(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldStatus is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldStatus requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldStatus: %w", err)
+	}
+	return oldValue.Status, nil
+}
+
+// ResetStatus resets all changes to the "status" field.
+func (m *ContributionAccountVerificationMutation) ResetStatus() {
+	m.status = nil
+}
+
+// SetModelFamily sets the "model_family" field.
+func (m *ContributionAccountVerificationMutation) SetModelFamily(s string) {
+	m.model_family = &s
+}
+
+// ModelFamily returns the value of the "model_family" field in the mutation.
+func (m *ContributionAccountVerificationMutation) ModelFamily() (r string, exists bool) {
+	v := m.model_family
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldModelFamily returns the old "model_family" field's value of the ContributionAccountVerification entity.
+// If the ContributionAccountVerification object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContributionAccountVerificationMutation) OldModelFamily(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldModelFamily is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldModelFamily requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldModelFamily: %w", err)
+	}
+	return oldValue.ModelFamily, nil
+}
+
+// ResetModelFamily resets all changes to the "model_family" field.
+func (m *ContributionAccountVerificationMutation) ResetModelFamily() {
+	m.model_family = nil
+}
+
+// SetSourceKind sets the "source_kind" field.
+func (m *ContributionAccountVerificationMutation) SetSourceKind(s string) {
+	m.source_kind = &s
+}
+
+// SourceKind returns the value of the "source_kind" field in the mutation.
+func (m *ContributionAccountVerificationMutation) SourceKind() (r string, exists bool) {
+	v := m.source_kind
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSourceKind returns the old "source_kind" field's value of the ContributionAccountVerification entity.
+// If the ContributionAccountVerification object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContributionAccountVerificationMutation) OldSourceKind(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSourceKind is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSourceKind requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSourceKind: %w", err)
+	}
+	return oldValue.SourceKind, nil
+}
+
+// ResetSourceKind resets all changes to the "source_kind" field.
+func (m *ContributionAccountVerificationMutation) ResetSourceKind() {
+	m.source_kind = nil
+}
+
+// SetTestedModel sets the "tested_model" field.
+func (m *ContributionAccountVerificationMutation) SetTestedModel(s string) {
+	m.tested_model = &s
+}
+
+// TestedModel returns the value of the "tested_model" field in the mutation.
+func (m *ContributionAccountVerificationMutation) TestedModel() (r string, exists bool) {
+	v := m.tested_model
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldTestedModel returns the old "tested_model" field's value of the ContributionAccountVerification entity.
+// If the ContributionAccountVerification object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContributionAccountVerificationMutation) OldTestedModel(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldTestedModel is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldTestedModel requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldTestedModel: %w", err)
+	}
+	return oldValue.TestedModel, nil
+}
+
+// ClearTestedModel clears the value of the "tested_model" field.
+func (m *ContributionAccountVerificationMutation) ClearTestedModel() {
+	m.tested_model = nil
+	m.clearedFields[contributionaccountverification.FieldTestedModel] = struct{}{}
+}
+
+// TestedModelCleared returns if the "tested_model" field was cleared in this mutation.
+func (m *ContributionAccountVerificationMutation) TestedModelCleared() bool {
+	_, ok := m.clearedFields[contributionaccountverification.FieldTestedModel]
+	return ok
+}
+
+// ResetTestedModel resets all changes to the "tested_model" field.
+func (m *ContributionAccountVerificationMutation) ResetTestedModel() {
+	m.tested_model = nil
+	delete(m.clearedFields, contributionaccountverification.FieldTestedModel)
+}
+
+// SetTestedAt sets the "tested_at" field.
+func (m *ContributionAccountVerificationMutation) SetTestedAt(t time.Time) {
+	m.tested_at = &t
+}
+
+// TestedAt returns the value of the "tested_at" field in the mutation.
+func (m *ContributionAccountVerificationMutation) TestedAt() (r time.Time, exists bool) {
+	v := m.tested_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldTestedAt returns the old "tested_at" field's value of the ContributionAccountVerification entity.
+// If the ContributionAccountVerification object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContributionAccountVerificationMutation) OldTestedAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldTestedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldTestedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldTestedAt: %w", err)
+	}
+	return oldValue.TestedAt, nil
+}
+
+// ClearTestedAt clears the value of the "tested_at" field.
+func (m *ContributionAccountVerificationMutation) ClearTestedAt() {
+	m.tested_at = nil
+	m.clearedFields[contributionaccountverification.FieldTestedAt] = struct{}{}
+}
+
+// TestedAtCleared returns if the "tested_at" field was cleared in this mutation.
+func (m *ContributionAccountVerificationMutation) TestedAtCleared() bool {
+	_, ok := m.clearedFields[contributionaccountverification.FieldTestedAt]
+	return ok
+}
+
+// ResetTestedAt resets all changes to the "tested_at" field.
+func (m *ContributionAccountVerificationMutation) ResetTestedAt() {
+	m.tested_at = nil
+	delete(m.clearedFields, contributionaccountverification.FieldTestedAt)
+}
+
+// SetRedactedErrorSummary sets the "redacted_error_summary" field.
+func (m *ContributionAccountVerificationMutation) SetRedactedErrorSummary(s string) {
+	m.redacted_error_summary = &s
+}
+
+// RedactedErrorSummary returns the value of the "redacted_error_summary" field in the mutation.
+func (m *ContributionAccountVerificationMutation) RedactedErrorSummary() (r string, exists bool) {
+	v := m.redacted_error_summary
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRedactedErrorSummary returns the old "redacted_error_summary" field's value of the ContributionAccountVerification entity.
+// If the ContributionAccountVerification object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContributionAccountVerificationMutation) OldRedactedErrorSummary(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRedactedErrorSummary is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRedactedErrorSummary requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRedactedErrorSummary: %w", err)
+	}
+	return oldValue.RedactedErrorSummary, nil
+}
+
+// ClearRedactedErrorSummary clears the value of the "redacted_error_summary" field.
+func (m *ContributionAccountVerificationMutation) ClearRedactedErrorSummary() {
+	m.redacted_error_summary = nil
+	m.clearedFields[contributionaccountverification.FieldRedactedErrorSummary] = struct{}{}
+}
+
+// RedactedErrorSummaryCleared returns if the "redacted_error_summary" field was cleared in this mutation.
+func (m *ContributionAccountVerificationMutation) RedactedErrorSummaryCleared() bool {
+	_, ok := m.clearedFields[contributionaccountverification.FieldRedactedErrorSummary]
+	return ok
+}
+
+// ResetRedactedErrorSummary resets all changes to the "redacted_error_summary" field.
+func (m *ContributionAccountVerificationMutation) ResetRedactedErrorSummary() {
+	m.redacted_error_summary = nil
+	delete(m.clearedFields, contributionaccountverification.FieldRedactedErrorSummary)
+}
+
+// ClearAccount clears the "account" edge to the Account entity.
+func (m *ContributionAccountVerificationMutation) ClearAccount() {
+	m.clearedaccount = true
+	m.clearedFields[contributionaccountverification.FieldAccountID] = struct{}{}
+}
+
+// AccountCleared reports if the "account" edge to the Account entity was cleared.
+func (m *ContributionAccountVerificationMutation) AccountCleared() bool {
+	return m.clearedaccount
+}
+
+// AccountIDs returns the "account" edge IDs in the mutation.
+// Note that IDs always returns len(IDs) <= 1 for unique edges, and you should use
+// AccountID instead. It exists only for internal usage by the builders.
+func (m *ContributionAccountVerificationMutation) AccountIDs() (ids []int64) {
+	if id := m.account; id != nil {
+		ids = append(ids, *id)
+	}
+	return
+}
+
+// ResetAccount resets all changes to the "account" edge.
+func (m *ContributionAccountVerificationMutation) ResetAccount() {
+	m.account = nil
+	m.clearedaccount = false
+}
+
+// Where appends a list predicates to the ContributionAccountVerificationMutation builder.
+func (m *ContributionAccountVerificationMutation) Where(ps ...predicate.ContributionAccountVerification) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the ContributionAccountVerificationMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *ContributionAccountVerificationMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.ContributionAccountVerification, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *ContributionAccountVerificationMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *ContributionAccountVerificationMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (ContributionAccountVerification).
+func (m *ContributionAccountVerificationMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *ContributionAccountVerificationMutation) Fields() []string {
+	fields := make([]string, 0, 10)
+	if m.created_at != nil {
+		fields = append(fields, contributionaccountverification.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, contributionaccountverification.FieldUpdatedAt)
+	}
+	if m.account != nil {
+		fields = append(fields, contributionaccountverification.FieldAccountID)
+	}
+	if m.platform != nil {
+		fields = append(fields, contributionaccountverification.FieldPlatform)
+	}
+	if m.status != nil {
+		fields = append(fields, contributionaccountverification.FieldStatus)
+	}
+	if m.model_family != nil {
+		fields = append(fields, contributionaccountverification.FieldModelFamily)
+	}
+	if m.source_kind != nil {
+		fields = append(fields, contributionaccountverification.FieldSourceKind)
+	}
+	if m.tested_model != nil {
+		fields = append(fields, contributionaccountverification.FieldTestedModel)
+	}
+	if m.tested_at != nil {
+		fields = append(fields, contributionaccountverification.FieldTestedAt)
+	}
+	if m.redacted_error_summary != nil {
+		fields = append(fields, contributionaccountverification.FieldRedactedErrorSummary)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *ContributionAccountVerificationMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case contributionaccountverification.FieldCreatedAt:
+		return m.CreatedAt()
+	case contributionaccountverification.FieldUpdatedAt:
+		return m.UpdatedAt()
+	case contributionaccountverification.FieldAccountID:
+		return m.AccountID()
+	case contributionaccountverification.FieldPlatform:
+		return m.Platform()
+	case contributionaccountverification.FieldStatus:
+		return m.Status()
+	case contributionaccountverification.FieldModelFamily:
+		return m.ModelFamily()
+	case contributionaccountverification.FieldSourceKind:
+		return m.SourceKind()
+	case contributionaccountverification.FieldTestedModel:
+		return m.TestedModel()
+	case contributionaccountverification.FieldTestedAt:
+		return m.TestedAt()
+	case contributionaccountverification.FieldRedactedErrorSummary:
+		return m.RedactedErrorSummary()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *ContributionAccountVerificationMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case contributionaccountverification.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case contributionaccountverification.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	case contributionaccountverification.FieldAccountID:
+		return m.OldAccountID(ctx)
+	case contributionaccountverification.FieldPlatform:
+		return m.OldPlatform(ctx)
+	case contributionaccountverification.FieldStatus:
+		return m.OldStatus(ctx)
+	case contributionaccountverification.FieldModelFamily:
+		return m.OldModelFamily(ctx)
+	case contributionaccountverification.FieldSourceKind:
+		return m.OldSourceKind(ctx)
+	case contributionaccountverification.FieldTestedModel:
+		return m.OldTestedModel(ctx)
+	case contributionaccountverification.FieldTestedAt:
+		return m.OldTestedAt(ctx)
+	case contributionaccountverification.FieldRedactedErrorSummary:
+		return m.OldRedactedErrorSummary(ctx)
+	}
+	return nil, fmt.Errorf("unknown ContributionAccountVerification field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *ContributionAccountVerificationMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case contributionaccountverification.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case contributionaccountverification.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	case contributionaccountverification.FieldAccountID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAccountID(v)
+		return nil
+	case contributionaccountverification.FieldPlatform:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPlatform(v)
+		return nil
+	case contributionaccountverification.FieldStatus:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetStatus(v)
+		return nil
+	case contributionaccountverification.FieldModelFamily:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetModelFamily(v)
+		return nil
+	case contributionaccountverification.FieldSourceKind:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSourceKind(v)
+		return nil
+	case contributionaccountverification.FieldTestedModel:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetTestedModel(v)
+		return nil
+	case contributionaccountverification.FieldTestedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetTestedAt(v)
+		return nil
+	case contributionaccountverification.FieldRedactedErrorSummary:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRedactedErrorSummary(v)
+		return nil
+	}
+	return fmt.Errorf("unknown ContributionAccountVerification field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *ContributionAccountVerificationMutation) AddedFields() []string {
+	var fields []string
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *ContributionAccountVerificationMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *ContributionAccountVerificationMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	}
+	return fmt.Errorf("unknown ContributionAccountVerification numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *ContributionAccountVerificationMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(contributionaccountverification.FieldTestedModel) {
+		fields = append(fields, contributionaccountverification.FieldTestedModel)
+	}
+	if m.FieldCleared(contributionaccountverification.FieldTestedAt) {
+		fields = append(fields, contributionaccountverification.FieldTestedAt)
+	}
+	if m.FieldCleared(contributionaccountverification.FieldRedactedErrorSummary) {
+		fields = append(fields, contributionaccountverification.FieldRedactedErrorSummary)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *ContributionAccountVerificationMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *ContributionAccountVerificationMutation) ClearField(name string) error {
+	switch name {
+	case contributionaccountverification.FieldTestedModel:
+		m.ClearTestedModel()
+		return nil
+	case contributionaccountverification.FieldTestedAt:
+		m.ClearTestedAt()
+		return nil
+	case contributionaccountverification.FieldRedactedErrorSummary:
+		m.ClearRedactedErrorSummary()
+		return nil
+	}
+	return fmt.Errorf("unknown ContributionAccountVerification nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *ContributionAccountVerificationMutation) ResetField(name string) error {
+	switch name {
+	case contributionaccountverification.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case contributionaccountverification.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	case contributionaccountverification.FieldAccountID:
+		m.ResetAccountID()
+		return nil
+	case contributionaccountverification.FieldPlatform:
+		m.ResetPlatform()
+		return nil
+	case contributionaccountverification.FieldStatus:
+		m.ResetStatus()
+		return nil
+	case contributionaccountverification.FieldModelFamily:
+		m.ResetModelFamily()
+		return nil
+	case contributionaccountverification.FieldSourceKind:
+		m.ResetSourceKind()
+		return nil
+	case contributionaccountverification.FieldTestedModel:
+		m.ResetTestedModel()
+		return nil
+	case contributionaccountverification.FieldTestedAt:
+		m.ResetTestedAt()
+		return nil
+	case contributionaccountverification.FieldRedactedErrorSummary:
+		m.ResetRedactedErrorSummary()
+		return nil
+	}
+	return fmt.Errorf("unknown ContributionAccountVerification field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *ContributionAccountVerificationMutation) AddedEdges() []string {
+	edges := make([]string, 0, 1)
+	if m.account != nil {
+		edges = append(edges, contributionaccountverification.EdgeAccount)
+	}
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *ContributionAccountVerificationMutation) AddedIDs(name string) []ent.Value {
+	switch name {
+	case contributionaccountverification.EdgeAccount:
+		if id := m.account; id != nil {
+			return []ent.Value{*id}
+		}
+	}
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *ContributionAccountVerificationMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 1)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *ContributionAccountVerificationMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *ContributionAccountVerificationMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 1)
+	if m.clearedaccount {
+		edges = append(edges, contributionaccountverification.EdgeAccount)
+	}
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *ContributionAccountVerificationMutation) EdgeCleared(name string) bool {
+	switch name {
+	case contributionaccountverification.EdgeAccount:
+		return m.clearedaccount
+	}
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *ContributionAccountVerificationMutation) ClearEdge(name string) error {
+	switch name {
+	case contributionaccountverification.EdgeAccount:
+		m.ClearAccount()
+		return nil
+	}
+	return fmt.Errorf("unknown ContributionAccountVerification unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *ContributionAccountVerificationMutation) ResetEdge(name string) error {
+	switch name {
+	case contributionaccountverification.EdgeAccount:
+		m.ResetAccount()
+		return nil
+	}
+	return fmt.Errorf("unknown ContributionAccountVerification edge %s", name)
+}
+
+// ContributionRoomMutation represents an operation that mutates the ContributionRoom nodes in the graph.
+type ContributionRoomMutation struct {
+	config
+	op                          Op
+	typ                         string
+	id                          *int64
+	created_at                  *time.Time
+	updated_at                  *time.Time
+	name                        *string
+	consumer_rate_multiplier    *float64
+	addconsumer_rate_multiplier *float64
+	status                      *string
+	visibility                  *string
+	clearedFields               map[string]struct{}
+	owner                       *int64
+	clearedowner                bool
+	accounts                    map[int64]struct{}
+	removedaccounts             map[int64]struct{}
+	clearedaccounts             bool
+	preferences                 map[int64]struct{}
+	removedpreferences          map[int64]struct{}
+	clearedpreferences          bool
+	done                        bool
+	oldValue                    func(context.Context) (*ContributionRoom, error)
+	predicates                  []predicate.ContributionRoom
+}
+
+var _ ent.Mutation = (*ContributionRoomMutation)(nil)
+
+// contributionroomOption allows management of the mutation configuration using functional options.
+type contributionroomOption func(*ContributionRoomMutation)
+
+// newContributionRoomMutation creates new mutation for the ContributionRoom entity.
+func newContributionRoomMutation(c config, op Op, opts ...contributionroomOption) *ContributionRoomMutation {
+	m := &ContributionRoomMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeContributionRoom,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withContributionRoomID sets the ID field of the mutation.
+func withContributionRoomID(id int64) contributionroomOption {
+	return func(m *ContributionRoomMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *ContributionRoom
+		)
+		m.oldValue = func(ctx context.Context) (*ContributionRoom, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().ContributionRoom.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withContributionRoom sets the old ContributionRoom of the mutation.
+func withContributionRoom(node *ContributionRoom) contributionroomOption {
+	return func(m *ContributionRoomMutation) {
+		m.oldValue = func(context.Context) (*ContributionRoom, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m ContributionRoomMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m ContributionRoomMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *ContributionRoomMutation) ID() (id int64, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *ContributionRoomMutation) IDs(ctx context.Context) ([]int64, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []int64{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().ContributionRoom.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *ContributionRoomMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *ContributionRoomMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the ContributionRoom entity.
+// If the ContributionRoom object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContributionRoomMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *ContributionRoomMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *ContributionRoomMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *ContributionRoomMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the ContributionRoom entity.
+// If the ContributionRoom object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContributionRoomMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *ContributionRoomMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// SetOwnerUserID sets the "owner_user_id" field.
+func (m *ContributionRoomMutation) SetOwnerUserID(i int64) {
+	m.owner = &i
+}
+
+// OwnerUserID returns the value of the "owner_user_id" field in the mutation.
+func (m *ContributionRoomMutation) OwnerUserID() (r int64, exists bool) {
+	v := m.owner
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldOwnerUserID returns the old "owner_user_id" field's value of the ContributionRoom entity.
+// If the ContributionRoom object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContributionRoomMutation) OldOwnerUserID(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldOwnerUserID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldOwnerUserID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldOwnerUserID: %w", err)
+	}
+	return oldValue.OwnerUserID, nil
+}
+
+// ResetOwnerUserID resets all changes to the "owner_user_id" field.
+func (m *ContributionRoomMutation) ResetOwnerUserID() {
+	m.owner = nil
+}
+
+// SetName sets the "name" field.
+func (m *ContributionRoomMutation) SetName(s string) {
+	m.name = &s
+}
+
+// Name returns the value of the "name" field in the mutation.
+func (m *ContributionRoomMutation) Name() (r string, exists bool) {
+	v := m.name
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldName returns the old "name" field's value of the ContributionRoom entity.
+// If the ContributionRoom object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContributionRoomMutation) OldName(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldName is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldName requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldName: %w", err)
+	}
+	return oldValue.Name, nil
+}
+
+// ResetName resets all changes to the "name" field.
+func (m *ContributionRoomMutation) ResetName() {
+	m.name = nil
+}
+
+// SetConsumerRateMultiplier sets the "consumer_rate_multiplier" field.
+func (m *ContributionRoomMutation) SetConsumerRateMultiplier(f float64) {
+	m.consumer_rate_multiplier = &f
+	m.addconsumer_rate_multiplier = nil
+}
+
+// ConsumerRateMultiplier returns the value of the "consumer_rate_multiplier" field in the mutation.
+func (m *ContributionRoomMutation) ConsumerRateMultiplier() (r float64, exists bool) {
+	v := m.consumer_rate_multiplier
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldConsumerRateMultiplier returns the old "consumer_rate_multiplier" field's value of the ContributionRoom entity.
+// If the ContributionRoom object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContributionRoomMutation) OldConsumerRateMultiplier(ctx context.Context) (v float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldConsumerRateMultiplier is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldConsumerRateMultiplier requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldConsumerRateMultiplier: %w", err)
+	}
+	return oldValue.ConsumerRateMultiplier, nil
+}
+
+// AddConsumerRateMultiplier adds f to the "consumer_rate_multiplier" field.
+func (m *ContributionRoomMutation) AddConsumerRateMultiplier(f float64) {
+	if m.addconsumer_rate_multiplier != nil {
+		*m.addconsumer_rate_multiplier += f
+	} else {
+		m.addconsumer_rate_multiplier = &f
+	}
+}
+
+// AddedConsumerRateMultiplier returns the value that was added to the "consumer_rate_multiplier" field in this mutation.
+func (m *ContributionRoomMutation) AddedConsumerRateMultiplier() (r float64, exists bool) {
+	v := m.addconsumer_rate_multiplier
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetConsumerRateMultiplier resets all changes to the "consumer_rate_multiplier" field.
+func (m *ContributionRoomMutation) ResetConsumerRateMultiplier() {
+	m.consumer_rate_multiplier = nil
+	m.addconsumer_rate_multiplier = nil
+}
+
+// SetStatus sets the "status" field.
+func (m *ContributionRoomMutation) SetStatus(s string) {
+	m.status = &s
+}
+
+// Status returns the value of the "status" field in the mutation.
+func (m *ContributionRoomMutation) Status() (r string, exists bool) {
+	v := m.status
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldStatus returns the old "status" field's value of the ContributionRoom entity.
+// If the ContributionRoom object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContributionRoomMutation) OldStatus(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldStatus is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldStatus requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldStatus: %w", err)
+	}
+	return oldValue.Status, nil
+}
+
+// ResetStatus resets all changes to the "status" field.
+func (m *ContributionRoomMutation) ResetStatus() {
+	m.status = nil
+}
+
+// SetVisibility sets the "visibility" field.
+func (m *ContributionRoomMutation) SetVisibility(s string) {
+	m.visibility = &s
+}
+
+// Visibility returns the value of the "visibility" field in the mutation.
+func (m *ContributionRoomMutation) Visibility() (r string, exists bool) {
+	v := m.visibility
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldVisibility returns the old "visibility" field's value of the ContributionRoom entity.
+// If the ContributionRoom object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContributionRoomMutation) OldVisibility(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldVisibility is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldVisibility requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldVisibility: %w", err)
+	}
+	return oldValue.Visibility, nil
+}
+
+// ResetVisibility resets all changes to the "visibility" field.
+func (m *ContributionRoomMutation) ResetVisibility() {
+	m.visibility = nil
+}
+
+// SetOwnerID sets the "owner" edge to the User entity by id.
+func (m *ContributionRoomMutation) SetOwnerID(id int64) {
+	m.owner = &id
+}
+
+// ClearOwner clears the "owner" edge to the User entity.
+func (m *ContributionRoomMutation) ClearOwner() {
+	m.clearedowner = true
+	m.clearedFields[contributionroom.FieldOwnerUserID] = struct{}{}
+}
+
+// OwnerCleared reports if the "owner" edge to the User entity was cleared.
+func (m *ContributionRoomMutation) OwnerCleared() bool {
+	return m.clearedowner
+}
+
+// OwnerID returns the "owner" edge ID in the mutation.
+func (m *ContributionRoomMutation) OwnerID() (id int64, exists bool) {
+	if m.owner != nil {
+		return *m.owner, true
+	}
+	return
+}
+
+// OwnerIDs returns the "owner" edge IDs in the mutation.
+// Note that IDs always returns len(IDs) <= 1 for unique edges, and you should use
+// OwnerID instead. It exists only for internal usage by the builders.
+func (m *ContributionRoomMutation) OwnerIDs() (ids []int64) {
+	if id := m.owner; id != nil {
+		ids = append(ids, *id)
+	}
+	return
+}
+
+// ResetOwner resets all changes to the "owner" edge.
+func (m *ContributionRoomMutation) ResetOwner() {
+	m.owner = nil
+	m.clearedowner = false
+}
+
+// AddAccountIDs adds the "accounts" edge to the ContributionRoomAccount entity by ids.
+func (m *ContributionRoomMutation) AddAccountIDs(ids ...int64) {
+	if m.accounts == nil {
+		m.accounts = make(map[int64]struct{})
+	}
+	for i := range ids {
+		m.accounts[ids[i]] = struct{}{}
+	}
+}
+
+// ClearAccounts clears the "accounts" edge to the ContributionRoomAccount entity.
+func (m *ContributionRoomMutation) ClearAccounts() {
+	m.clearedaccounts = true
+}
+
+// AccountsCleared reports if the "accounts" edge to the ContributionRoomAccount entity was cleared.
+func (m *ContributionRoomMutation) AccountsCleared() bool {
+	return m.clearedaccounts
+}
+
+// RemoveAccountIDs removes the "accounts" edge to the ContributionRoomAccount entity by IDs.
+func (m *ContributionRoomMutation) RemoveAccountIDs(ids ...int64) {
+	if m.removedaccounts == nil {
+		m.removedaccounts = make(map[int64]struct{})
+	}
+	for i := range ids {
+		delete(m.accounts, ids[i])
+		m.removedaccounts[ids[i]] = struct{}{}
+	}
+}
+
+// RemovedAccounts returns the removed IDs of the "accounts" edge to the ContributionRoomAccount entity.
+func (m *ContributionRoomMutation) RemovedAccountsIDs() (ids []int64) {
+	for id := range m.removedaccounts {
+		ids = append(ids, id)
+	}
+	return
+}
+
+// AccountsIDs returns the "accounts" edge IDs in the mutation.
+func (m *ContributionRoomMutation) AccountsIDs() (ids []int64) {
+	for id := range m.accounts {
+		ids = append(ids, id)
+	}
+	return
+}
+
+// ResetAccounts resets all changes to the "accounts" edge.
+func (m *ContributionRoomMutation) ResetAccounts() {
+	m.accounts = nil
+	m.clearedaccounts = false
+	m.removedaccounts = nil
+}
+
+// AddPreferenceIDs adds the "preferences" edge to the UserContributionRoomPreference entity by ids.
+func (m *ContributionRoomMutation) AddPreferenceIDs(ids ...int64) {
+	if m.preferences == nil {
+		m.preferences = make(map[int64]struct{})
+	}
+	for i := range ids {
+		m.preferences[ids[i]] = struct{}{}
+	}
+}
+
+// ClearPreferences clears the "preferences" edge to the UserContributionRoomPreference entity.
+func (m *ContributionRoomMutation) ClearPreferences() {
+	m.clearedpreferences = true
+}
+
+// PreferencesCleared reports if the "preferences" edge to the UserContributionRoomPreference entity was cleared.
+func (m *ContributionRoomMutation) PreferencesCleared() bool {
+	return m.clearedpreferences
+}
+
+// RemovePreferenceIDs removes the "preferences" edge to the UserContributionRoomPreference entity by IDs.
+func (m *ContributionRoomMutation) RemovePreferenceIDs(ids ...int64) {
+	if m.removedpreferences == nil {
+		m.removedpreferences = make(map[int64]struct{})
+	}
+	for i := range ids {
+		delete(m.preferences, ids[i])
+		m.removedpreferences[ids[i]] = struct{}{}
+	}
+}
+
+// RemovedPreferences returns the removed IDs of the "preferences" edge to the UserContributionRoomPreference entity.
+func (m *ContributionRoomMutation) RemovedPreferencesIDs() (ids []int64) {
+	for id := range m.removedpreferences {
+		ids = append(ids, id)
+	}
+	return
+}
+
+// PreferencesIDs returns the "preferences" edge IDs in the mutation.
+func (m *ContributionRoomMutation) PreferencesIDs() (ids []int64) {
+	for id := range m.preferences {
+		ids = append(ids, id)
+	}
+	return
+}
+
+// ResetPreferences resets all changes to the "preferences" edge.
+func (m *ContributionRoomMutation) ResetPreferences() {
+	m.preferences = nil
+	m.clearedpreferences = false
+	m.removedpreferences = nil
+}
+
+// Where appends a list predicates to the ContributionRoomMutation builder.
+func (m *ContributionRoomMutation) Where(ps ...predicate.ContributionRoom) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the ContributionRoomMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *ContributionRoomMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.ContributionRoom, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *ContributionRoomMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *ContributionRoomMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (ContributionRoom).
+func (m *ContributionRoomMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *ContributionRoomMutation) Fields() []string {
+	fields := make([]string, 0, 7)
+	if m.created_at != nil {
+		fields = append(fields, contributionroom.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, contributionroom.FieldUpdatedAt)
+	}
+	if m.owner != nil {
+		fields = append(fields, contributionroom.FieldOwnerUserID)
+	}
+	if m.name != nil {
+		fields = append(fields, contributionroom.FieldName)
+	}
+	if m.consumer_rate_multiplier != nil {
+		fields = append(fields, contributionroom.FieldConsumerRateMultiplier)
+	}
+	if m.status != nil {
+		fields = append(fields, contributionroom.FieldStatus)
+	}
+	if m.visibility != nil {
+		fields = append(fields, contributionroom.FieldVisibility)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *ContributionRoomMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case contributionroom.FieldCreatedAt:
+		return m.CreatedAt()
+	case contributionroom.FieldUpdatedAt:
+		return m.UpdatedAt()
+	case contributionroom.FieldOwnerUserID:
+		return m.OwnerUserID()
+	case contributionroom.FieldName:
+		return m.Name()
+	case contributionroom.FieldConsumerRateMultiplier:
+		return m.ConsumerRateMultiplier()
+	case contributionroom.FieldStatus:
+		return m.Status()
+	case contributionroom.FieldVisibility:
+		return m.Visibility()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *ContributionRoomMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case contributionroom.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case contributionroom.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	case contributionroom.FieldOwnerUserID:
+		return m.OldOwnerUserID(ctx)
+	case contributionroom.FieldName:
+		return m.OldName(ctx)
+	case contributionroom.FieldConsumerRateMultiplier:
+		return m.OldConsumerRateMultiplier(ctx)
+	case contributionroom.FieldStatus:
+		return m.OldStatus(ctx)
+	case contributionroom.FieldVisibility:
+		return m.OldVisibility(ctx)
+	}
+	return nil, fmt.Errorf("unknown ContributionRoom field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *ContributionRoomMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case contributionroom.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case contributionroom.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	case contributionroom.FieldOwnerUserID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetOwnerUserID(v)
+		return nil
+	case contributionroom.FieldName:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetName(v)
+		return nil
+	case contributionroom.FieldConsumerRateMultiplier:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetConsumerRateMultiplier(v)
+		return nil
+	case contributionroom.FieldStatus:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetStatus(v)
+		return nil
+	case contributionroom.FieldVisibility:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetVisibility(v)
+		return nil
+	}
+	return fmt.Errorf("unknown ContributionRoom field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *ContributionRoomMutation) AddedFields() []string {
+	var fields []string
+	if m.addconsumer_rate_multiplier != nil {
+		fields = append(fields, contributionroom.FieldConsumerRateMultiplier)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *ContributionRoomMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case contributionroom.FieldConsumerRateMultiplier:
+		return m.AddedConsumerRateMultiplier()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *ContributionRoomMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case contributionroom.FieldConsumerRateMultiplier:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddConsumerRateMultiplier(v)
+		return nil
+	}
+	return fmt.Errorf("unknown ContributionRoom numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *ContributionRoomMutation) ClearedFields() []string {
+	return nil
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *ContributionRoomMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *ContributionRoomMutation) ClearField(name string) error {
+	return fmt.Errorf("unknown ContributionRoom nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *ContributionRoomMutation) ResetField(name string) error {
+	switch name {
+	case contributionroom.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case contributionroom.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	case contributionroom.FieldOwnerUserID:
+		m.ResetOwnerUserID()
+		return nil
+	case contributionroom.FieldName:
+		m.ResetName()
+		return nil
+	case contributionroom.FieldConsumerRateMultiplier:
+		m.ResetConsumerRateMultiplier()
+		return nil
+	case contributionroom.FieldStatus:
+		m.ResetStatus()
+		return nil
+	case contributionroom.FieldVisibility:
+		m.ResetVisibility()
+		return nil
+	}
+	return fmt.Errorf("unknown ContributionRoom field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *ContributionRoomMutation) AddedEdges() []string {
+	edges := make([]string, 0, 3)
+	if m.owner != nil {
+		edges = append(edges, contributionroom.EdgeOwner)
+	}
+	if m.accounts != nil {
+		edges = append(edges, contributionroom.EdgeAccounts)
+	}
+	if m.preferences != nil {
+		edges = append(edges, contributionroom.EdgePreferences)
+	}
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *ContributionRoomMutation) AddedIDs(name string) []ent.Value {
+	switch name {
+	case contributionroom.EdgeOwner:
+		if id := m.owner; id != nil {
+			return []ent.Value{*id}
+		}
+	case contributionroom.EdgeAccounts:
+		ids := make([]ent.Value, 0, len(m.accounts))
+		for id := range m.accounts {
+			ids = append(ids, id)
+		}
+		return ids
+	case contributionroom.EdgePreferences:
+		ids := make([]ent.Value, 0, len(m.preferences))
+		for id := range m.preferences {
+			ids = append(ids, id)
+		}
+		return ids
+	}
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *ContributionRoomMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 3)
+	if m.removedaccounts != nil {
+		edges = append(edges, contributionroom.EdgeAccounts)
+	}
+	if m.removedpreferences != nil {
+		edges = append(edges, contributionroom.EdgePreferences)
+	}
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *ContributionRoomMutation) RemovedIDs(name string) []ent.Value {
+	switch name {
+	case contributionroom.EdgeAccounts:
+		ids := make([]ent.Value, 0, len(m.removedaccounts))
+		for id := range m.removedaccounts {
+			ids = append(ids, id)
+		}
+		return ids
+	case contributionroom.EdgePreferences:
+		ids := make([]ent.Value, 0, len(m.removedpreferences))
+		for id := range m.removedpreferences {
+			ids = append(ids, id)
+		}
+		return ids
+	}
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *ContributionRoomMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 3)
+	if m.clearedowner {
+		edges = append(edges, contributionroom.EdgeOwner)
+	}
+	if m.clearedaccounts {
+		edges = append(edges, contributionroom.EdgeAccounts)
+	}
+	if m.clearedpreferences {
+		edges = append(edges, contributionroom.EdgePreferences)
+	}
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *ContributionRoomMutation) EdgeCleared(name string) bool {
+	switch name {
+	case contributionroom.EdgeOwner:
+		return m.clearedowner
+	case contributionroom.EdgeAccounts:
+		return m.clearedaccounts
+	case contributionroom.EdgePreferences:
+		return m.clearedpreferences
+	}
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *ContributionRoomMutation) ClearEdge(name string) error {
+	switch name {
+	case contributionroom.EdgeOwner:
+		m.ClearOwner()
+		return nil
+	}
+	return fmt.Errorf("unknown ContributionRoom unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *ContributionRoomMutation) ResetEdge(name string) error {
+	switch name {
+	case contributionroom.EdgeOwner:
+		m.ResetOwner()
+		return nil
+	case contributionroom.EdgeAccounts:
+		m.ResetAccounts()
+		return nil
+	case contributionroom.EdgePreferences:
+		m.ResetPreferences()
+		return nil
+	}
+	return fmt.Errorf("unknown ContributionRoom edge %s", name)
+}
+
+// ContributionRoomAccountMutation represents an operation that mutates the ContributionRoomAccount nodes in the graph.
+type ContributionRoomAccountMutation struct {
+	config
+	op                   Op
+	typ                  string
+	id                   *int64
+	created_at           *time.Time
+	updated_at           *time.Time
+	enabled              *bool
+	share_concurrency    *int
+	addshare_concurrency *int
+	share_budget_usd     *float64
+	addshare_budget_usd  *float64
+	share_used_usd       *float64
+	addshare_used_usd    *float64
+	verified_at          *time.Time
+	clearedFields        map[string]struct{}
+	room                 *int64
+	clearedroom          bool
+	account              *int64
+	clearedaccount       bool
+	done                 bool
+	oldValue             func(context.Context) (*ContributionRoomAccount, error)
+	predicates           []predicate.ContributionRoomAccount
+}
+
+var _ ent.Mutation = (*ContributionRoomAccountMutation)(nil)
+
+// contributionroomaccountOption allows management of the mutation configuration using functional options.
+type contributionroomaccountOption func(*ContributionRoomAccountMutation)
+
+// newContributionRoomAccountMutation creates new mutation for the ContributionRoomAccount entity.
+func newContributionRoomAccountMutation(c config, op Op, opts ...contributionroomaccountOption) *ContributionRoomAccountMutation {
+	m := &ContributionRoomAccountMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeContributionRoomAccount,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withContributionRoomAccountID sets the ID field of the mutation.
+func withContributionRoomAccountID(id int64) contributionroomaccountOption {
+	return func(m *ContributionRoomAccountMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *ContributionRoomAccount
+		)
+		m.oldValue = func(ctx context.Context) (*ContributionRoomAccount, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().ContributionRoomAccount.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withContributionRoomAccount sets the old ContributionRoomAccount of the mutation.
+func withContributionRoomAccount(node *ContributionRoomAccount) contributionroomaccountOption {
+	return func(m *ContributionRoomAccountMutation) {
+		m.oldValue = func(context.Context) (*ContributionRoomAccount, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m ContributionRoomAccountMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m ContributionRoomAccountMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *ContributionRoomAccountMutation) ID() (id int64, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *ContributionRoomAccountMutation) IDs(ctx context.Context) ([]int64, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []int64{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().ContributionRoomAccount.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *ContributionRoomAccountMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *ContributionRoomAccountMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the ContributionRoomAccount entity.
+// If the ContributionRoomAccount object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContributionRoomAccountMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *ContributionRoomAccountMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *ContributionRoomAccountMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *ContributionRoomAccountMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the ContributionRoomAccount entity.
+// If the ContributionRoomAccount object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContributionRoomAccountMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *ContributionRoomAccountMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// SetRoomID sets the "room_id" field.
+func (m *ContributionRoomAccountMutation) SetRoomID(i int64) {
+	m.room = &i
+}
+
+// RoomID returns the value of the "room_id" field in the mutation.
+func (m *ContributionRoomAccountMutation) RoomID() (r int64, exists bool) {
+	v := m.room
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRoomID returns the old "room_id" field's value of the ContributionRoomAccount entity.
+// If the ContributionRoomAccount object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContributionRoomAccountMutation) OldRoomID(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRoomID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRoomID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRoomID: %w", err)
+	}
+	return oldValue.RoomID, nil
+}
+
+// ResetRoomID resets all changes to the "room_id" field.
+func (m *ContributionRoomAccountMutation) ResetRoomID() {
+	m.room = nil
+}
+
+// SetAccountID sets the "account_id" field.
+func (m *ContributionRoomAccountMutation) SetAccountID(i int64) {
+	m.account = &i
+}
+
+// AccountID returns the value of the "account_id" field in the mutation.
+func (m *ContributionRoomAccountMutation) AccountID() (r int64, exists bool) {
+	v := m.account
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAccountID returns the old "account_id" field's value of the ContributionRoomAccount entity.
+// If the ContributionRoomAccount object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContributionRoomAccountMutation) OldAccountID(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAccountID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAccountID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAccountID: %w", err)
+	}
+	return oldValue.AccountID, nil
+}
+
+// ResetAccountID resets all changes to the "account_id" field.
+func (m *ContributionRoomAccountMutation) ResetAccountID() {
+	m.account = nil
+}
+
+// SetEnabled sets the "enabled" field.
+func (m *ContributionRoomAccountMutation) SetEnabled(b bool) {
+	m.enabled = &b
+}
+
+// Enabled returns the value of the "enabled" field in the mutation.
+func (m *ContributionRoomAccountMutation) Enabled() (r bool, exists bool) {
+	v := m.enabled
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldEnabled returns the old "enabled" field's value of the ContributionRoomAccount entity.
+// If the ContributionRoomAccount object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContributionRoomAccountMutation) OldEnabled(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldEnabled is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldEnabled requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldEnabled: %w", err)
+	}
+	return oldValue.Enabled, nil
+}
+
+// ResetEnabled resets all changes to the "enabled" field.
+func (m *ContributionRoomAccountMutation) ResetEnabled() {
+	m.enabled = nil
+}
+
+// SetShareConcurrency sets the "share_concurrency" field.
+func (m *ContributionRoomAccountMutation) SetShareConcurrency(i int) {
+	m.share_concurrency = &i
+	m.addshare_concurrency = nil
+}
+
+// ShareConcurrency returns the value of the "share_concurrency" field in the mutation.
+func (m *ContributionRoomAccountMutation) ShareConcurrency() (r int, exists bool) {
+	v := m.share_concurrency
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldShareConcurrency returns the old "share_concurrency" field's value of the ContributionRoomAccount entity.
+// If the ContributionRoomAccount object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContributionRoomAccountMutation) OldShareConcurrency(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldShareConcurrency is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldShareConcurrency requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldShareConcurrency: %w", err)
+	}
+	return oldValue.ShareConcurrency, nil
+}
+
+// AddShareConcurrency adds i to the "share_concurrency" field.
+func (m *ContributionRoomAccountMutation) AddShareConcurrency(i int) {
+	if m.addshare_concurrency != nil {
+		*m.addshare_concurrency += i
+	} else {
+		m.addshare_concurrency = &i
+	}
+}
+
+// AddedShareConcurrency returns the value that was added to the "share_concurrency" field in this mutation.
+func (m *ContributionRoomAccountMutation) AddedShareConcurrency() (r int, exists bool) {
+	v := m.addshare_concurrency
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetShareConcurrency resets all changes to the "share_concurrency" field.
+func (m *ContributionRoomAccountMutation) ResetShareConcurrency() {
+	m.share_concurrency = nil
+	m.addshare_concurrency = nil
+}
+
+// SetShareBudgetUsd sets the "share_budget_usd" field.
+func (m *ContributionRoomAccountMutation) SetShareBudgetUsd(f float64) {
+	m.share_budget_usd = &f
+	m.addshare_budget_usd = nil
+}
+
+// ShareBudgetUsd returns the value of the "share_budget_usd" field in the mutation.
+func (m *ContributionRoomAccountMutation) ShareBudgetUsd() (r float64, exists bool) {
+	v := m.share_budget_usd
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldShareBudgetUsd returns the old "share_budget_usd" field's value of the ContributionRoomAccount entity.
+// If the ContributionRoomAccount object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContributionRoomAccountMutation) OldShareBudgetUsd(ctx context.Context) (v float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldShareBudgetUsd is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldShareBudgetUsd requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldShareBudgetUsd: %w", err)
+	}
+	return oldValue.ShareBudgetUsd, nil
+}
+
+// AddShareBudgetUsd adds f to the "share_budget_usd" field.
+func (m *ContributionRoomAccountMutation) AddShareBudgetUsd(f float64) {
+	if m.addshare_budget_usd != nil {
+		*m.addshare_budget_usd += f
+	} else {
+		m.addshare_budget_usd = &f
+	}
+}
+
+// AddedShareBudgetUsd returns the value that was added to the "share_budget_usd" field in this mutation.
+func (m *ContributionRoomAccountMutation) AddedShareBudgetUsd() (r float64, exists bool) {
+	v := m.addshare_budget_usd
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetShareBudgetUsd resets all changes to the "share_budget_usd" field.
+func (m *ContributionRoomAccountMutation) ResetShareBudgetUsd() {
+	m.share_budget_usd = nil
+	m.addshare_budget_usd = nil
+}
+
+// SetShareUsedUsd sets the "share_used_usd" field.
+func (m *ContributionRoomAccountMutation) SetShareUsedUsd(f float64) {
+	m.share_used_usd = &f
+	m.addshare_used_usd = nil
+}
+
+// ShareUsedUsd returns the value of the "share_used_usd" field in the mutation.
+func (m *ContributionRoomAccountMutation) ShareUsedUsd() (r float64, exists bool) {
+	v := m.share_used_usd
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldShareUsedUsd returns the old "share_used_usd" field's value of the ContributionRoomAccount entity.
+// If the ContributionRoomAccount object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContributionRoomAccountMutation) OldShareUsedUsd(ctx context.Context) (v float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldShareUsedUsd is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldShareUsedUsd requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldShareUsedUsd: %w", err)
+	}
+	return oldValue.ShareUsedUsd, nil
+}
+
+// AddShareUsedUsd adds f to the "share_used_usd" field.
+func (m *ContributionRoomAccountMutation) AddShareUsedUsd(f float64) {
+	if m.addshare_used_usd != nil {
+		*m.addshare_used_usd += f
+	} else {
+		m.addshare_used_usd = &f
+	}
+}
+
+// AddedShareUsedUsd returns the value that was added to the "share_used_usd" field in this mutation.
+func (m *ContributionRoomAccountMutation) AddedShareUsedUsd() (r float64, exists bool) {
+	v := m.addshare_used_usd
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetShareUsedUsd resets all changes to the "share_used_usd" field.
+func (m *ContributionRoomAccountMutation) ResetShareUsedUsd() {
+	m.share_used_usd = nil
+	m.addshare_used_usd = nil
+}
+
+// SetVerifiedAt sets the "verified_at" field.
+func (m *ContributionRoomAccountMutation) SetVerifiedAt(t time.Time) {
+	m.verified_at = &t
+}
+
+// VerifiedAt returns the value of the "verified_at" field in the mutation.
+func (m *ContributionRoomAccountMutation) VerifiedAt() (r time.Time, exists bool) {
+	v := m.verified_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldVerifiedAt returns the old "verified_at" field's value of the ContributionRoomAccount entity.
+// If the ContributionRoomAccount object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContributionRoomAccountMutation) OldVerifiedAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldVerifiedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldVerifiedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldVerifiedAt: %w", err)
+	}
+	return oldValue.VerifiedAt, nil
+}
+
+// ClearVerifiedAt clears the value of the "verified_at" field.
+func (m *ContributionRoomAccountMutation) ClearVerifiedAt() {
+	m.verified_at = nil
+	m.clearedFields[contributionroomaccount.FieldVerifiedAt] = struct{}{}
+}
+
+// VerifiedAtCleared returns if the "verified_at" field was cleared in this mutation.
+func (m *ContributionRoomAccountMutation) VerifiedAtCleared() bool {
+	_, ok := m.clearedFields[contributionroomaccount.FieldVerifiedAt]
+	return ok
+}
+
+// ResetVerifiedAt resets all changes to the "verified_at" field.
+func (m *ContributionRoomAccountMutation) ResetVerifiedAt() {
+	m.verified_at = nil
+	delete(m.clearedFields, contributionroomaccount.FieldVerifiedAt)
+}
+
+// ClearRoom clears the "room" edge to the ContributionRoom entity.
+func (m *ContributionRoomAccountMutation) ClearRoom() {
+	m.clearedroom = true
+	m.clearedFields[contributionroomaccount.FieldRoomID] = struct{}{}
+}
+
+// RoomCleared reports if the "room" edge to the ContributionRoom entity was cleared.
+func (m *ContributionRoomAccountMutation) RoomCleared() bool {
+	return m.clearedroom
+}
+
+// RoomIDs returns the "room" edge IDs in the mutation.
+// Note that IDs always returns len(IDs) <= 1 for unique edges, and you should use
+// RoomID instead. It exists only for internal usage by the builders.
+func (m *ContributionRoomAccountMutation) RoomIDs() (ids []int64) {
+	if id := m.room; id != nil {
+		ids = append(ids, *id)
+	}
+	return
+}
+
+// ResetRoom resets all changes to the "room" edge.
+func (m *ContributionRoomAccountMutation) ResetRoom() {
+	m.room = nil
+	m.clearedroom = false
+}
+
+// ClearAccount clears the "account" edge to the Account entity.
+func (m *ContributionRoomAccountMutation) ClearAccount() {
+	m.clearedaccount = true
+	m.clearedFields[contributionroomaccount.FieldAccountID] = struct{}{}
+}
+
+// AccountCleared reports if the "account" edge to the Account entity was cleared.
+func (m *ContributionRoomAccountMutation) AccountCleared() bool {
+	return m.clearedaccount
+}
+
+// AccountIDs returns the "account" edge IDs in the mutation.
+// Note that IDs always returns len(IDs) <= 1 for unique edges, and you should use
+// AccountID instead. It exists only for internal usage by the builders.
+func (m *ContributionRoomAccountMutation) AccountIDs() (ids []int64) {
+	if id := m.account; id != nil {
+		ids = append(ids, *id)
+	}
+	return
+}
+
+// ResetAccount resets all changes to the "account" edge.
+func (m *ContributionRoomAccountMutation) ResetAccount() {
+	m.account = nil
+	m.clearedaccount = false
+}
+
+// Where appends a list predicates to the ContributionRoomAccountMutation builder.
+func (m *ContributionRoomAccountMutation) Where(ps ...predicate.ContributionRoomAccount) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the ContributionRoomAccountMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *ContributionRoomAccountMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.ContributionRoomAccount, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *ContributionRoomAccountMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *ContributionRoomAccountMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (ContributionRoomAccount).
+func (m *ContributionRoomAccountMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *ContributionRoomAccountMutation) Fields() []string {
+	fields := make([]string, 0, 9)
+	if m.created_at != nil {
+		fields = append(fields, contributionroomaccount.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, contributionroomaccount.FieldUpdatedAt)
+	}
+	if m.room != nil {
+		fields = append(fields, contributionroomaccount.FieldRoomID)
+	}
+	if m.account != nil {
+		fields = append(fields, contributionroomaccount.FieldAccountID)
+	}
+	if m.enabled != nil {
+		fields = append(fields, contributionroomaccount.FieldEnabled)
+	}
+	if m.share_concurrency != nil {
+		fields = append(fields, contributionroomaccount.FieldShareConcurrency)
+	}
+	if m.share_budget_usd != nil {
+		fields = append(fields, contributionroomaccount.FieldShareBudgetUsd)
+	}
+	if m.share_used_usd != nil {
+		fields = append(fields, contributionroomaccount.FieldShareUsedUsd)
+	}
+	if m.verified_at != nil {
+		fields = append(fields, contributionroomaccount.FieldVerifiedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *ContributionRoomAccountMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case contributionroomaccount.FieldCreatedAt:
+		return m.CreatedAt()
+	case contributionroomaccount.FieldUpdatedAt:
+		return m.UpdatedAt()
+	case contributionroomaccount.FieldRoomID:
+		return m.RoomID()
+	case contributionroomaccount.FieldAccountID:
+		return m.AccountID()
+	case contributionroomaccount.FieldEnabled:
+		return m.Enabled()
+	case contributionroomaccount.FieldShareConcurrency:
+		return m.ShareConcurrency()
+	case contributionroomaccount.FieldShareBudgetUsd:
+		return m.ShareBudgetUsd()
+	case contributionroomaccount.FieldShareUsedUsd:
+		return m.ShareUsedUsd()
+	case contributionroomaccount.FieldVerifiedAt:
+		return m.VerifiedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *ContributionRoomAccountMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case contributionroomaccount.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case contributionroomaccount.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	case contributionroomaccount.FieldRoomID:
+		return m.OldRoomID(ctx)
+	case contributionroomaccount.FieldAccountID:
+		return m.OldAccountID(ctx)
+	case contributionroomaccount.FieldEnabled:
+		return m.OldEnabled(ctx)
+	case contributionroomaccount.FieldShareConcurrency:
+		return m.OldShareConcurrency(ctx)
+	case contributionroomaccount.FieldShareBudgetUsd:
+		return m.OldShareBudgetUsd(ctx)
+	case contributionroomaccount.FieldShareUsedUsd:
+		return m.OldShareUsedUsd(ctx)
+	case contributionroomaccount.FieldVerifiedAt:
+		return m.OldVerifiedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown ContributionRoomAccount field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *ContributionRoomAccountMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case contributionroomaccount.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case contributionroomaccount.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	case contributionroomaccount.FieldRoomID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRoomID(v)
+		return nil
+	case contributionroomaccount.FieldAccountID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAccountID(v)
+		return nil
+	case contributionroomaccount.FieldEnabled:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetEnabled(v)
+		return nil
+	case contributionroomaccount.FieldShareConcurrency:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetShareConcurrency(v)
+		return nil
+	case contributionroomaccount.FieldShareBudgetUsd:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetShareBudgetUsd(v)
+		return nil
+	case contributionroomaccount.FieldShareUsedUsd:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetShareUsedUsd(v)
+		return nil
+	case contributionroomaccount.FieldVerifiedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetVerifiedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown ContributionRoomAccount field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *ContributionRoomAccountMutation) AddedFields() []string {
+	var fields []string
+	if m.addshare_concurrency != nil {
+		fields = append(fields, contributionroomaccount.FieldShareConcurrency)
+	}
+	if m.addshare_budget_usd != nil {
+		fields = append(fields, contributionroomaccount.FieldShareBudgetUsd)
+	}
+	if m.addshare_used_usd != nil {
+		fields = append(fields, contributionroomaccount.FieldShareUsedUsd)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *ContributionRoomAccountMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case contributionroomaccount.FieldShareConcurrency:
+		return m.AddedShareConcurrency()
+	case contributionroomaccount.FieldShareBudgetUsd:
+		return m.AddedShareBudgetUsd()
+	case contributionroomaccount.FieldShareUsedUsd:
+		return m.AddedShareUsedUsd()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *ContributionRoomAccountMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case contributionroomaccount.FieldShareConcurrency:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddShareConcurrency(v)
+		return nil
+	case contributionroomaccount.FieldShareBudgetUsd:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddShareBudgetUsd(v)
+		return nil
+	case contributionroomaccount.FieldShareUsedUsd:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddShareUsedUsd(v)
+		return nil
+	}
+	return fmt.Errorf("unknown ContributionRoomAccount numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *ContributionRoomAccountMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(contributionroomaccount.FieldVerifiedAt) {
+		fields = append(fields, contributionroomaccount.FieldVerifiedAt)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *ContributionRoomAccountMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *ContributionRoomAccountMutation) ClearField(name string) error {
+	switch name {
+	case contributionroomaccount.FieldVerifiedAt:
+		m.ClearVerifiedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown ContributionRoomAccount nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *ContributionRoomAccountMutation) ResetField(name string) error {
+	switch name {
+	case contributionroomaccount.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case contributionroomaccount.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	case contributionroomaccount.FieldRoomID:
+		m.ResetRoomID()
+		return nil
+	case contributionroomaccount.FieldAccountID:
+		m.ResetAccountID()
+		return nil
+	case contributionroomaccount.FieldEnabled:
+		m.ResetEnabled()
+		return nil
+	case contributionroomaccount.FieldShareConcurrency:
+		m.ResetShareConcurrency()
+		return nil
+	case contributionroomaccount.FieldShareBudgetUsd:
+		m.ResetShareBudgetUsd()
+		return nil
+	case contributionroomaccount.FieldShareUsedUsd:
+		m.ResetShareUsedUsd()
+		return nil
+	case contributionroomaccount.FieldVerifiedAt:
+		m.ResetVerifiedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown ContributionRoomAccount field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *ContributionRoomAccountMutation) AddedEdges() []string {
+	edges := make([]string, 0, 2)
+	if m.room != nil {
+		edges = append(edges, contributionroomaccount.EdgeRoom)
+	}
+	if m.account != nil {
+		edges = append(edges, contributionroomaccount.EdgeAccount)
+	}
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *ContributionRoomAccountMutation) AddedIDs(name string) []ent.Value {
+	switch name {
+	case contributionroomaccount.EdgeRoom:
+		if id := m.room; id != nil {
+			return []ent.Value{*id}
+		}
+	case contributionroomaccount.EdgeAccount:
+		if id := m.account; id != nil {
+			return []ent.Value{*id}
+		}
+	}
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *ContributionRoomAccountMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 2)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *ContributionRoomAccountMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *ContributionRoomAccountMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 2)
+	if m.clearedroom {
+		edges = append(edges, contributionroomaccount.EdgeRoom)
+	}
+	if m.clearedaccount {
+		edges = append(edges, contributionroomaccount.EdgeAccount)
+	}
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *ContributionRoomAccountMutation) EdgeCleared(name string) bool {
+	switch name {
+	case contributionroomaccount.EdgeRoom:
+		return m.clearedroom
+	case contributionroomaccount.EdgeAccount:
+		return m.clearedaccount
+	}
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *ContributionRoomAccountMutation) ClearEdge(name string) error {
+	switch name {
+	case contributionroomaccount.EdgeRoom:
+		m.ClearRoom()
+		return nil
+	case contributionroomaccount.EdgeAccount:
+		m.ClearAccount()
+		return nil
+	}
+	return fmt.Errorf("unknown ContributionRoomAccount unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *ContributionRoomAccountMutation) ResetEdge(name string) error {
+	switch name {
+	case contributionroomaccount.EdgeRoom:
+		m.ResetRoom()
+		return nil
+	case contributionroomaccount.EdgeAccount:
+		m.ResetAccount()
+		return nil
+	}
+	return fmt.Errorf("unknown ContributionRoomAccount edge %s", name)
+}
+
 // ErrorPassthroughRuleMutation represents an operation that mutates the ErrorPassthroughRule nodes in the graph.
 type ErrorPassthroughRuleMutation struct {
 	config
@@ -21854,6 +25139,7 @@ type GroupMutation struct {
 	description                             *string
 	rate_multiplier                         *float64
 	addrate_multiplier                      *float64
+	allow_contribution_pool                 *bool
 	peak_rate_enabled                       *bool
 	peak_start                              *string
 	peak_end                                *string
@@ -21946,6 +25232,9 @@ type GroupMutation struct {
 	allowed_users                           map[int64]struct{}
 	removedallowed_users                    map[int64]struct{}
 	clearedallowed_users                    bool
+	composite_model_routes                  map[int64]struct{}
+	removedcomposite_model_routes           map[int64]struct{}
+	clearedcomposite_model_routes           bool
 	done                                    bool
 	oldValue                                func(context.Context) (*Group, error)
 	predicates                              []predicate.Group
@@ -22309,6 +25598,42 @@ func (m *GroupMutation) AddedRateMultiplier() (r float64, exists bool) {
 func (m *GroupMutation) ResetRateMultiplier() {
 	m.rate_multiplier = nil
 	m.addrate_multiplier = nil
+}
+
+// SetAllowContributionPool sets the "allow_contribution_pool" field.
+func (m *GroupMutation) SetAllowContributionPool(b bool) {
+	m.allow_contribution_pool = &b
+}
+
+// AllowContributionPool returns the value of the "allow_contribution_pool" field in the mutation.
+func (m *GroupMutation) AllowContributionPool() (r bool, exists bool) {
+	v := m.allow_contribution_pool
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAllowContributionPool returns the old "allow_contribution_pool" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldAllowContributionPool(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAllowContributionPool is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAllowContributionPool requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAllowContributionPool: %w", err)
+	}
+	return oldValue.AllowContributionPool, nil
+}
+
+// ResetAllowContributionPool resets all changes to the "allow_contribution_pool" field.
+func (m *GroupMutation) ResetAllowContributionPool() {
+	m.allow_contribution_pool = nil
 }
 
 // SetPeakRateEnabled sets the "peak_rate_enabled" field.
@@ -25063,6 +28388,60 @@ func (m *GroupMutation) ResetAllowedUsers() {
 	m.removedallowed_users = nil
 }
 
+// AddCompositeModelRouteIDs adds the "composite_model_routes" edge to the CompositeModelRoute entity by ids.
+func (m *GroupMutation) AddCompositeModelRouteIDs(ids ...int64) {
+	if m.composite_model_routes == nil {
+		m.composite_model_routes = make(map[int64]struct{})
+	}
+	for i := range ids {
+		m.composite_model_routes[ids[i]] = struct{}{}
+	}
+}
+
+// ClearCompositeModelRoutes clears the "composite_model_routes" edge to the CompositeModelRoute entity.
+func (m *GroupMutation) ClearCompositeModelRoutes() {
+	m.clearedcomposite_model_routes = true
+}
+
+// CompositeModelRoutesCleared reports if the "composite_model_routes" edge to the CompositeModelRoute entity was cleared.
+func (m *GroupMutation) CompositeModelRoutesCleared() bool {
+	return m.clearedcomposite_model_routes
+}
+
+// RemoveCompositeModelRouteIDs removes the "composite_model_routes" edge to the CompositeModelRoute entity by IDs.
+func (m *GroupMutation) RemoveCompositeModelRouteIDs(ids ...int64) {
+	if m.removedcomposite_model_routes == nil {
+		m.removedcomposite_model_routes = make(map[int64]struct{})
+	}
+	for i := range ids {
+		delete(m.composite_model_routes, ids[i])
+		m.removedcomposite_model_routes[ids[i]] = struct{}{}
+	}
+}
+
+// RemovedCompositeModelRoutes returns the removed IDs of the "composite_model_routes" edge to the CompositeModelRoute entity.
+func (m *GroupMutation) RemovedCompositeModelRoutesIDs() (ids []int64) {
+	for id := range m.removedcomposite_model_routes {
+		ids = append(ids, id)
+	}
+	return
+}
+
+// CompositeModelRoutesIDs returns the "composite_model_routes" edge IDs in the mutation.
+func (m *GroupMutation) CompositeModelRoutesIDs() (ids []int64) {
+	for id := range m.composite_model_routes {
+		ids = append(ids, id)
+	}
+	return
+}
+
+// ResetCompositeModelRoutes resets all changes to the "composite_model_routes" edge.
+func (m *GroupMutation) ResetCompositeModelRoutes() {
+	m.composite_model_routes = nil
+	m.clearedcomposite_model_routes = false
+	m.removedcomposite_model_routes = nil
+}
+
 // Where appends a list predicates to the GroupMutation builder.
 func (m *GroupMutation) Where(ps ...predicate.Group) {
 	m.predicates = append(m.predicates, ps...)
@@ -25097,7 +28476,7 @@ func (m *GroupMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *GroupMutation) Fields() []string {
-	fields := make([]string, 0, 55)
+	fields := make([]string, 0, 56)
 	if m.created_at != nil {
 		fields = append(fields, group.FieldCreatedAt)
 	}
@@ -25115,6 +28494,9 @@ func (m *GroupMutation) Fields() []string {
 	}
 	if m.rate_multiplier != nil {
 		fields = append(fields, group.FieldRateMultiplier)
+	}
+	if m.allow_contribution_pool != nil {
+		fields = append(fields, group.FieldAllowContributionPool)
 	}
 	if m.peak_rate_enabled != nil {
 		fields = append(fields, group.FieldPeakRateEnabled)
@@ -25283,6 +28665,8 @@ func (m *GroupMutation) Field(name string) (ent.Value, bool) {
 		return m.Description()
 	case group.FieldRateMultiplier:
 		return m.RateMultiplier()
+	case group.FieldAllowContributionPool:
+		return m.AllowContributionPool()
 	case group.FieldPeakRateEnabled:
 		return m.PeakRateEnabled()
 	case group.FieldPeakStart:
@@ -25402,6 +28786,8 @@ func (m *GroupMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldDescription(ctx)
 	case group.FieldRateMultiplier:
 		return m.OldRateMultiplier(ctx)
+	case group.FieldAllowContributionPool:
+		return m.OldAllowContributionPool(ctx)
 	case group.FieldPeakRateEnabled:
 		return m.OldPeakRateEnabled(ctx)
 	case group.FieldPeakStart:
@@ -25550,6 +28936,13 @@ func (m *GroupMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetRateMultiplier(v)
+		return nil
+	case group.FieldAllowContributionPool:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAllowContributionPool(v)
 		return nil
 	case group.FieldPeakRateEnabled:
 		v, ok := value.(bool)
@@ -26339,6 +29732,9 @@ func (m *GroupMutation) ResetField(name string) error {
 	case group.FieldRateMultiplier:
 		m.ResetRateMultiplier()
 		return nil
+	case group.FieldAllowContributionPool:
+		m.ResetAllowContributionPool()
+		return nil
 	case group.FieldPeakRateEnabled:
 		m.ResetPeakRateEnabled()
 		return nil
@@ -26492,7 +29888,7 @@ func (m *GroupMutation) ResetField(name string) error {
 
 // AddedEdges returns all edge names that were set/added in this mutation.
 func (m *GroupMutation) AddedEdges() []string {
-	edges := make([]string, 0, 6)
+	edges := make([]string, 0, 7)
 	if m.api_keys != nil {
 		edges = append(edges, group.EdgeAPIKeys)
 	}
@@ -26510,6 +29906,9 @@ func (m *GroupMutation) AddedEdges() []string {
 	}
 	if m.allowed_users != nil {
 		edges = append(edges, group.EdgeAllowedUsers)
+	}
+	if m.composite_model_routes != nil {
+		edges = append(edges, group.EdgeCompositeModelRoutes)
 	}
 	return edges
 }
@@ -26554,13 +29953,19 @@ func (m *GroupMutation) AddedIDs(name string) []ent.Value {
 			ids = append(ids, id)
 		}
 		return ids
+	case group.EdgeCompositeModelRoutes:
+		ids := make([]ent.Value, 0, len(m.composite_model_routes))
+		for id := range m.composite_model_routes {
+			ids = append(ids, id)
+		}
+		return ids
 	}
 	return nil
 }
 
 // RemovedEdges returns all edge names that were removed in this mutation.
 func (m *GroupMutation) RemovedEdges() []string {
-	edges := make([]string, 0, 6)
+	edges := make([]string, 0, 7)
 	if m.removedapi_keys != nil {
 		edges = append(edges, group.EdgeAPIKeys)
 	}
@@ -26578,6 +29983,9 @@ func (m *GroupMutation) RemovedEdges() []string {
 	}
 	if m.removedallowed_users != nil {
 		edges = append(edges, group.EdgeAllowedUsers)
+	}
+	if m.removedcomposite_model_routes != nil {
+		edges = append(edges, group.EdgeCompositeModelRoutes)
 	}
 	return edges
 }
@@ -26622,13 +30030,19 @@ func (m *GroupMutation) RemovedIDs(name string) []ent.Value {
 			ids = append(ids, id)
 		}
 		return ids
+	case group.EdgeCompositeModelRoutes:
+		ids := make([]ent.Value, 0, len(m.removedcomposite_model_routes))
+		for id := range m.removedcomposite_model_routes {
+			ids = append(ids, id)
+		}
+		return ids
 	}
 	return nil
 }
 
 // ClearedEdges returns all edge names that were cleared in this mutation.
 func (m *GroupMutation) ClearedEdges() []string {
-	edges := make([]string, 0, 6)
+	edges := make([]string, 0, 7)
 	if m.clearedapi_keys {
 		edges = append(edges, group.EdgeAPIKeys)
 	}
@@ -26646,6 +30060,9 @@ func (m *GroupMutation) ClearedEdges() []string {
 	}
 	if m.clearedallowed_users {
 		edges = append(edges, group.EdgeAllowedUsers)
+	}
+	if m.clearedcomposite_model_routes {
+		edges = append(edges, group.EdgeCompositeModelRoutes)
 	}
 	return edges
 }
@@ -26666,6 +30083,8 @@ func (m *GroupMutation) EdgeCleared(name string) bool {
 		return m.clearedaccounts
 	case group.EdgeAllowedUsers:
 		return m.clearedallowed_users
+	case group.EdgeCompositeModelRoutes:
+		return m.clearedcomposite_model_routes
 	}
 	return false
 }
@@ -26699,6 +30118,9 @@ func (m *GroupMutation) ResetEdge(name string) error {
 		return nil
 	case group.EdgeAllowedUsers:
 		m.ResetAllowedUsers()
+		return nil
+	case group.EdgeCompositeModelRoutes:
+		m.ResetCompositeModelRoutes()
 		return nil
 	}
 	return fmt.Errorf("unknown Group edge %s", name)
@@ -36284,6 +39706,8 @@ type ProxyMutation struct {
 	addport             *int
 	username            *string
 	password            *string
+	owner_user_id       *int64
+	addowner_user_id    *int64
 	status              *string
 	expires_at          *time.Time
 	fallback_mode       *string
@@ -36781,6 +40205,76 @@ func (m *ProxyMutation) ResetPassword() {
 	delete(m.clearedFields, proxy.FieldPassword)
 }
 
+// SetOwnerUserID sets the "owner_user_id" field.
+func (m *ProxyMutation) SetOwnerUserID(i int64) {
+	m.owner_user_id = &i
+	m.addowner_user_id = nil
+}
+
+// OwnerUserID returns the value of the "owner_user_id" field in the mutation.
+func (m *ProxyMutation) OwnerUserID() (r int64, exists bool) {
+	v := m.owner_user_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldOwnerUserID returns the old "owner_user_id" field's value of the Proxy entity.
+// If the Proxy object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProxyMutation) OldOwnerUserID(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldOwnerUserID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldOwnerUserID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldOwnerUserID: %w", err)
+	}
+	return oldValue.OwnerUserID, nil
+}
+
+// AddOwnerUserID adds i to the "owner_user_id" field.
+func (m *ProxyMutation) AddOwnerUserID(i int64) {
+	if m.addowner_user_id != nil {
+		*m.addowner_user_id += i
+	} else {
+		m.addowner_user_id = &i
+	}
+}
+
+// AddedOwnerUserID returns the value that was added to the "owner_user_id" field in this mutation.
+func (m *ProxyMutation) AddedOwnerUserID() (r int64, exists bool) {
+	v := m.addowner_user_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearOwnerUserID clears the value of the "owner_user_id" field.
+func (m *ProxyMutation) ClearOwnerUserID() {
+	m.owner_user_id = nil
+	m.addowner_user_id = nil
+	m.clearedFields[proxy.FieldOwnerUserID] = struct{}{}
+}
+
+// OwnerUserIDCleared returns if the "owner_user_id" field was cleared in this mutation.
+func (m *ProxyMutation) OwnerUserIDCleared() bool {
+	_, ok := m.clearedFields[proxy.FieldOwnerUserID]
+	return ok
+}
+
+// ResetOwnerUserID resets all changes to the "owner_user_id" field.
+func (m *ProxyMutation) ResetOwnerUserID() {
+	m.owner_user_id = nil
+	m.addowner_user_id = nil
+	delete(m.clearedFields, proxy.FieldOwnerUserID)
+}
+
 // SetStatus sets the "status" field.
 func (m *ProxyMutation) SetStatus(s string) {
 	m.status = &s
@@ -37122,7 +40616,7 @@ func (m *ProxyMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ProxyMutation) Fields() []string {
-	fields := make([]string, 0, 14)
+	fields := make([]string, 0, 15)
 	if m.created_at != nil {
 		fields = append(fields, proxy.FieldCreatedAt)
 	}
@@ -37149,6 +40643,9 @@ func (m *ProxyMutation) Fields() []string {
 	}
 	if m.password != nil {
 		fields = append(fields, proxy.FieldPassword)
+	}
+	if m.owner_user_id != nil {
+		fields = append(fields, proxy.FieldOwnerUserID)
 	}
 	if m.status != nil {
 		fields = append(fields, proxy.FieldStatus)
@@ -37191,6 +40688,8 @@ func (m *ProxyMutation) Field(name string) (ent.Value, bool) {
 		return m.Username()
 	case proxy.FieldPassword:
 		return m.Password()
+	case proxy.FieldOwnerUserID:
+		return m.OwnerUserID()
 	case proxy.FieldStatus:
 		return m.Status()
 	case proxy.FieldExpiresAt:
@@ -37228,6 +40727,8 @@ func (m *ProxyMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldUsername(ctx)
 	case proxy.FieldPassword:
 		return m.OldPassword(ctx)
+	case proxy.FieldOwnerUserID:
+		return m.OldOwnerUserID(ctx)
 	case proxy.FieldStatus:
 		return m.OldStatus(ctx)
 	case proxy.FieldExpiresAt:
@@ -37310,6 +40811,13 @@ func (m *ProxyMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetPassword(v)
 		return nil
+	case proxy.FieldOwnerUserID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetOwnerUserID(v)
+		return nil
 	case proxy.FieldStatus:
 		v, ok := value.(string)
 		if !ok {
@@ -37356,6 +40864,9 @@ func (m *ProxyMutation) AddedFields() []string {
 	if m.addport != nil {
 		fields = append(fields, proxy.FieldPort)
 	}
+	if m.addowner_user_id != nil {
+		fields = append(fields, proxy.FieldOwnerUserID)
+	}
 	if m.addexpiry_warn_days != nil {
 		fields = append(fields, proxy.FieldExpiryWarnDays)
 	}
@@ -37369,6 +40880,8 @@ func (m *ProxyMutation) AddedField(name string) (ent.Value, bool) {
 	switch name {
 	case proxy.FieldPort:
 		return m.AddedPort()
+	case proxy.FieldOwnerUserID:
+		return m.AddedOwnerUserID()
 	case proxy.FieldExpiryWarnDays:
 		return m.AddedExpiryWarnDays()
 	}
@@ -37386,6 +40899,13 @@ func (m *ProxyMutation) AddField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddPort(v)
+		return nil
+	case proxy.FieldOwnerUserID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddOwnerUserID(v)
 		return nil
 	case proxy.FieldExpiryWarnDays:
 		v, ok := value.(int)
@@ -37410,6 +40930,9 @@ func (m *ProxyMutation) ClearedFields() []string {
 	}
 	if m.FieldCleared(proxy.FieldPassword) {
 		fields = append(fields, proxy.FieldPassword)
+	}
+	if m.FieldCleared(proxy.FieldOwnerUserID) {
+		fields = append(fields, proxy.FieldOwnerUserID)
 	}
 	if m.FieldCleared(proxy.FieldExpiresAt) {
 		fields = append(fields, proxy.FieldExpiresAt)
@@ -37439,6 +40962,9 @@ func (m *ProxyMutation) ClearField(name string) error {
 		return nil
 	case proxy.FieldPassword:
 		m.ClearPassword()
+		return nil
+	case proxy.FieldOwnerUserID:
+		m.ClearOwnerUserID()
 		return nil
 	case proxy.FieldExpiresAt:
 		m.ClearExpiresAt()
@@ -37480,6 +41006,9 @@ func (m *ProxyMutation) ResetField(name string) error {
 		return nil
 	case proxy.FieldPassword:
 		m.ResetPassword()
+		return nil
+	case proxy.FieldOwnerUserID:
+		m.ResetOwnerUserID()
 		return nil
 	case proxy.FieldStatus:
 		m.ResetStatus()
@@ -47406,6 +50935,8 @@ type UserMutation struct {
 	addtotal_recharged            *float64
 	rpm_limit                     *int
 	addrpm_limit                  *int
+	account_management_enabled    *bool
+	contribution_rooms_enabled    *bool
 	clearedFields                 map[string]struct{}
 	api_keys                      map[int64]struct{}
 	removedapi_keys               map[int64]struct{}
@@ -48612,6 +52143,78 @@ func (m *UserMutation) ResetRpmLimit() {
 	m.addrpm_limit = nil
 }
 
+// SetAccountManagementEnabled sets the "account_management_enabled" field.
+func (m *UserMutation) SetAccountManagementEnabled(b bool) {
+	m.account_management_enabled = &b
+}
+
+// AccountManagementEnabled returns the value of the "account_management_enabled" field in the mutation.
+func (m *UserMutation) AccountManagementEnabled() (r bool, exists bool) {
+	v := m.account_management_enabled
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAccountManagementEnabled returns the old "account_management_enabled" field's value of the User entity.
+// If the User object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserMutation) OldAccountManagementEnabled(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAccountManagementEnabled is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAccountManagementEnabled requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAccountManagementEnabled: %w", err)
+	}
+	return oldValue.AccountManagementEnabled, nil
+}
+
+// ResetAccountManagementEnabled resets all changes to the "account_management_enabled" field.
+func (m *UserMutation) ResetAccountManagementEnabled() {
+	m.account_management_enabled = nil
+}
+
+// SetContributionRoomsEnabled sets the "contribution_rooms_enabled" field.
+func (m *UserMutation) SetContributionRoomsEnabled(b bool) {
+	m.contribution_rooms_enabled = &b
+}
+
+// ContributionRoomsEnabled returns the value of the "contribution_rooms_enabled" field in the mutation.
+func (m *UserMutation) ContributionRoomsEnabled() (r bool, exists bool) {
+	v := m.contribution_rooms_enabled
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldContributionRoomsEnabled returns the old "contribution_rooms_enabled" field's value of the User entity.
+// If the User object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserMutation) OldContributionRoomsEnabled(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldContributionRoomsEnabled is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldContributionRoomsEnabled requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldContributionRoomsEnabled: %w", err)
+	}
+	return oldValue.ContributionRoomsEnabled, nil
+}
+
+// ResetContributionRoomsEnabled resets all changes to the "contribution_rooms_enabled" field.
+func (m *UserMutation) ResetContributionRoomsEnabled() {
+	m.contribution_rooms_enabled = nil
+}
+
 // AddAPIKeyIDs adds the "api_keys" edge to the APIKey entity by ids.
 func (m *UserMutation) AddAPIKeyIDs(ids ...int64) {
 	if m.api_keys == nil {
@@ -49348,7 +52951,7 @@ func (m *UserMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UserMutation) Fields() []string {
-	fields := make([]string, 0, 24)
+	fields := make([]string, 0, 26)
 	if m.created_at != nil {
 		fields = append(fields, user.FieldCreatedAt)
 	}
@@ -49421,6 +53024,12 @@ func (m *UserMutation) Fields() []string {
 	if m.rpm_limit != nil {
 		fields = append(fields, user.FieldRpmLimit)
 	}
+	if m.account_management_enabled != nil {
+		fields = append(fields, user.FieldAccountManagementEnabled)
+	}
+	if m.contribution_rooms_enabled != nil {
+		fields = append(fields, user.FieldContributionRoomsEnabled)
+	}
 	return fields
 }
 
@@ -49477,6 +53086,10 @@ func (m *UserMutation) Field(name string) (ent.Value, bool) {
 		return m.TotalRecharged()
 	case user.FieldRpmLimit:
 		return m.RpmLimit()
+	case user.FieldAccountManagementEnabled:
+		return m.AccountManagementEnabled()
+	case user.FieldContributionRoomsEnabled:
+		return m.ContributionRoomsEnabled()
 	}
 	return nil, false
 }
@@ -49534,6 +53147,10 @@ func (m *UserMutation) OldField(ctx context.Context, name string) (ent.Value, er
 		return m.OldTotalRecharged(ctx)
 	case user.FieldRpmLimit:
 		return m.OldRpmLimit(ctx)
+	case user.FieldAccountManagementEnabled:
+		return m.OldAccountManagementEnabled(ctx)
+	case user.FieldContributionRoomsEnabled:
+		return m.OldContributionRoomsEnabled(ctx)
 	}
 	return nil, fmt.Errorf("unknown User field %s", name)
 }
@@ -49710,6 +53327,20 @@ func (m *UserMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetRpmLimit(v)
+		return nil
+	case user.FieldAccountManagementEnabled:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAccountManagementEnabled(v)
+		return nil
+	case user.FieldContributionRoomsEnabled:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetContributionRoomsEnabled(v)
 		return nil
 	}
 	return fmt.Errorf("unknown User field %s", name)
@@ -49945,6 +53576,12 @@ func (m *UserMutation) ResetField(name string) error {
 		return nil
 	case user.FieldRpmLimit:
 		m.ResetRpmLimit()
+		return nil
+	case user.FieldAccountManagementEnabled:
+		m.ResetAccountManagementEnabled()
+		return nil
+	case user.FieldContributionRoomsEnabled:
+		m.ResetContributionRoomsEnabled()
 		return nil
 	}
 	return fmt.Errorf("unknown User field %s", name)
@@ -52560,6 +56197,861 @@ func (m *UserAttributeValueMutation) ResetEdge(name string) error {
 		return nil
 	}
 	return fmt.Errorf("unknown UserAttributeValue edge %s", name)
+}
+
+// UserContributionRoomPreferenceMutation represents an operation that mutates the UserContributionRoomPreference nodes in the graph.
+type UserContributionRoomPreferenceMutation struct {
+	config
+	op                   Op
+	typ                  string
+	id                   *int64
+	created_at           *time.Time
+	updated_at           *time.Time
+	allow_pool_fallback  *bool
+	fallback_group_id    *int64
+	addfallback_group_id *int64
+	clearedFields        map[string]struct{}
+	user                 *int64
+	cleareduser          bool
+	api_key              *int64
+	clearedapi_key       bool
+	room                 *int64
+	clearedroom          bool
+	done                 bool
+	oldValue             func(context.Context) (*UserContributionRoomPreference, error)
+	predicates           []predicate.UserContributionRoomPreference
+}
+
+var _ ent.Mutation = (*UserContributionRoomPreferenceMutation)(nil)
+
+// usercontributionroompreferenceOption allows management of the mutation configuration using functional options.
+type usercontributionroompreferenceOption func(*UserContributionRoomPreferenceMutation)
+
+// newUserContributionRoomPreferenceMutation creates new mutation for the UserContributionRoomPreference entity.
+func newUserContributionRoomPreferenceMutation(c config, op Op, opts ...usercontributionroompreferenceOption) *UserContributionRoomPreferenceMutation {
+	m := &UserContributionRoomPreferenceMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeUserContributionRoomPreference,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withUserContributionRoomPreferenceID sets the ID field of the mutation.
+func withUserContributionRoomPreferenceID(id int64) usercontributionroompreferenceOption {
+	return func(m *UserContributionRoomPreferenceMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *UserContributionRoomPreference
+		)
+		m.oldValue = func(ctx context.Context) (*UserContributionRoomPreference, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().UserContributionRoomPreference.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withUserContributionRoomPreference sets the old UserContributionRoomPreference of the mutation.
+func withUserContributionRoomPreference(node *UserContributionRoomPreference) usercontributionroompreferenceOption {
+	return func(m *UserContributionRoomPreferenceMutation) {
+		m.oldValue = func(context.Context) (*UserContributionRoomPreference, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m UserContributionRoomPreferenceMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m UserContributionRoomPreferenceMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *UserContributionRoomPreferenceMutation) ID() (id int64, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *UserContributionRoomPreferenceMutation) IDs(ctx context.Context) ([]int64, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []int64{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().UserContributionRoomPreference.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *UserContributionRoomPreferenceMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *UserContributionRoomPreferenceMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the UserContributionRoomPreference entity.
+// If the UserContributionRoomPreference object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserContributionRoomPreferenceMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *UserContributionRoomPreferenceMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *UserContributionRoomPreferenceMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *UserContributionRoomPreferenceMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the UserContributionRoomPreference entity.
+// If the UserContributionRoomPreference object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserContributionRoomPreferenceMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *UserContributionRoomPreferenceMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// SetUserID sets the "user_id" field.
+func (m *UserContributionRoomPreferenceMutation) SetUserID(i int64) {
+	m.user = &i
+}
+
+// UserID returns the value of the "user_id" field in the mutation.
+func (m *UserContributionRoomPreferenceMutation) UserID() (r int64, exists bool) {
+	v := m.user
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUserID returns the old "user_id" field's value of the UserContributionRoomPreference entity.
+// If the UserContributionRoomPreference object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserContributionRoomPreferenceMutation) OldUserID(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUserID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUserID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUserID: %w", err)
+	}
+	return oldValue.UserID, nil
+}
+
+// ResetUserID resets all changes to the "user_id" field.
+func (m *UserContributionRoomPreferenceMutation) ResetUserID() {
+	m.user = nil
+}
+
+// SetAPIKeyID sets the "api_key_id" field.
+func (m *UserContributionRoomPreferenceMutation) SetAPIKeyID(i int64) {
+	m.api_key = &i
+}
+
+// APIKeyID returns the value of the "api_key_id" field in the mutation.
+func (m *UserContributionRoomPreferenceMutation) APIKeyID() (r int64, exists bool) {
+	v := m.api_key
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAPIKeyID returns the old "api_key_id" field's value of the UserContributionRoomPreference entity.
+// If the UserContributionRoomPreference object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserContributionRoomPreferenceMutation) OldAPIKeyID(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAPIKeyID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAPIKeyID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAPIKeyID: %w", err)
+	}
+	return oldValue.APIKeyID, nil
+}
+
+// ResetAPIKeyID resets all changes to the "api_key_id" field.
+func (m *UserContributionRoomPreferenceMutation) ResetAPIKeyID() {
+	m.api_key = nil
+}
+
+// SetRoomID sets the "room_id" field.
+func (m *UserContributionRoomPreferenceMutation) SetRoomID(i int64) {
+	m.room = &i
+}
+
+// RoomID returns the value of the "room_id" field in the mutation.
+func (m *UserContributionRoomPreferenceMutation) RoomID() (r int64, exists bool) {
+	v := m.room
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRoomID returns the old "room_id" field's value of the UserContributionRoomPreference entity.
+// If the UserContributionRoomPreference object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserContributionRoomPreferenceMutation) OldRoomID(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRoomID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRoomID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRoomID: %w", err)
+	}
+	return oldValue.RoomID, nil
+}
+
+// ResetRoomID resets all changes to the "room_id" field.
+func (m *UserContributionRoomPreferenceMutation) ResetRoomID() {
+	m.room = nil
+}
+
+// SetAllowPoolFallback sets the "allow_pool_fallback" field.
+func (m *UserContributionRoomPreferenceMutation) SetAllowPoolFallback(b bool) {
+	m.allow_pool_fallback = &b
+}
+
+// AllowPoolFallback returns the value of the "allow_pool_fallback" field in the mutation.
+func (m *UserContributionRoomPreferenceMutation) AllowPoolFallback() (r bool, exists bool) {
+	v := m.allow_pool_fallback
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAllowPoolFallback returns the old "allow_pool_fallback" field's value of the UserContributionRoomPreference entity.
+// If the UserContributionRoomPreference object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserContributionRoomPreferenceMutation) OldAllowPoolFallback(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAllowPoolFallback is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAllowPoolFallback requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAllowPoolFallback: %w", err)
+	}
+	return oldValue.AllowPoolFallback, nil
+}
+
+// ResetAllowPoolFallback resets all changes to the "allow_pool_fallback" field.
+func (m *UserContributionRoomPreferenceMutation) ResetAllowPoolFallback() {
+	m.allow_pool_fallback = nil
+}
+
+// SetFallbackGroupID sets the "fallback_group_id" field.
+func (m *UserContributionRoomPreferenceMutation) SetFallbackGroupID(i int64) {
+	m.fallback_group_id = &i
+	m.addfallback_group_id = nil
+}
+
+// FallbackGroupID returns the value of the "fallback_group_id" field in the mutation.
+func (m *UserContributionRoomPreferenceMutation) FallbackGroupID() (r int64, exists bool) {
+	v := m.fallback_group_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldFallbackGroupID returns the old "fallback_group_id" field's value of the UserContributionRoomPreference entity.
+// If the UserContributionRoomPreference object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserContributionRoomPreferenceMutation) OldFallbackGroupID(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldFallbackGroupID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldFallbackGroupID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldFallbackGroupID: %w", err)
+	}
+	return oldValue.FallbackGroupID, nil
+}
+
+// AddFallbackGroupID adds i to the "fallback_group_id" field.
+func (m *UserContributionRoomPreferenceMutation) AddFallbackGroupID(i int64) {
+	if m.addfallback_group_id != nil {
+		*m.addfallback_group_id += i
+	} else {
+		m.addfallback_group_id = &i
+	}
+}
+
+// AddedFallbackGroupID returns the value that was added to the "fallback_group_id" field in this mutation.
+func (m *UserContributionRoomPreferenceMutation) AddedFallbackGroupID() (r int64, exists bool) {
+	v := m.addfallback_group_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearFallbackGroupID clears the value of the "fallback_group_id" field.
+func (m *UserContributionRoomPreferenceMutation) ClearFallbackGroupID() {
+	m.fallback_group_id = nil
+	m.addfallback_group_id = nil
+	m.clearedFields[usercontributionroompreference.FieldFallbackGroupID] = struct{}{}
+}
+
+// FallbackGroupIDCleared returns if the "fallback_group_id" field was cleared in this mutation.
+func (m *UserContributionRoomPreferenceMutation) FallbackGroupIDCleared() bool {
+	_, ok := m.clearedFields[usercontributionroompreference.FieldFallbackGroupID]
+	return ok
+}
+
+// ResetFallbackGroupID resets all changes to the "fallback_group_id" field.
+func (m *UserContributionRoomPreferenceMutation) ResetFallbackGroupID() {
+	m.fallback_group_id = nil
+	m.addfallback_group_id = nil
+	delete(m.clearedFields, usercontributionroompreference.FieldFallbackGroupID)
+}
+
+// ClearUser clears the "user" edge to the User entity.
+func (m *UserContributionRoomPreferenceMutation) ClearUser() {
+	m.cleareduser = true
+	m.clearedFields[usercontributionroompreference.FieldUserID] = struct{}{}
+}
+
+// UserCleared reports if the "user" edge to the User entity was cleared.
+func (m *UserContributionRoomPreferenceMutation) UserCleared() bool {
+	return m.cleareduser
+}
+
+// UserIDs returns the "user" edge IDs in the mutation.
+// Note that IDs always returns len(IDs) <= 1 for unique edges, and you should use
+// UserID instead. It exists only for internal usage by the builders.
+func (m *UserContributionRoomPreferenceMutation) UserIDs() (ids []int64) {
+	if id := m.user; id != nil {
+		ids = append(ids, *id)
+	}
+	return
+}
+
+// ResetUser resets all changes to the "user" edge.
+func (m *UserContributionRoomPreferenceMutation) ResetUser() {
+	m.user = nil
+	m.cleareduser = false
+}
+
+// ClearAPIKey clears the "api_key" edge to the APIKey entity.
+func (m *UserContributionRoomPreferenceMutation) ClearAPIKey() {
+	m.clearedapi_key = true
+	m.clearedFields[usercontributionroompreference.FieldAPIKeyID] = struct{}{}
+}
+
+// APIKeyCleared reports if the "api_key" edge to the APIKey entity was cleared.
+func (m *UserContributionRoomPreferenceMutation) APIKeyCleared() bool {
+	return m.clearedapi_key
+}
+
+// APIKeyIDs returns the "api_key" edge IDs in the mutation.
+// Note that IDs always returns len(IDs) <= 1 for unique edges, and you should use
+// APIKeyID instead. It exists only for internal usage by the builders.
+func (m *UserContributionRoomPreferenceMutation) APIKeyIDs() (ids []int64) {
+	if id := m.api_key; id != nil {
+		ids = append(ids, *id)
+	}
+	return
+}
+
+// ResetAPIKey resets all changes to the "api_key" edge.
+func (m *UserContributionRoomPreferenceMutation) ResetAPIKey() {
+	m.api_key = nil
+	m.clearedapi_key = false
+}
+
+// ClearRoom clears the "room" edge to the ContributionRoom entity.
+func (m *UserContributionRoomPreferenceMutation) ClearRoom() {
+	m.clearedroom = true
+	m.clearedFields[usercontributionroompreference.FieldRoomID] = struct{}{}
+}
+
+// RoomCleared reports if the "room" edge to the ContributionRoom entity was cleared.
+func (m *UserContributionRoomPreferenceMutation) RoomCleared() bool {
+	return m.clearedroom
+}
+
+// RoomIDs returns the "room" edge IDs in the mutation.
+// Note that IDs always returns len(IDs) <= 1 for unique edges, and you should use
+// RoomID instead. It exists only for internal usage by the builders.
+func (m *UserContributionRoomPreferenceMutation) RoomIDs() (ids []int64) {
+	if id := m.room; id != nil {
+		ids = append(ids, *id)
+	}
+	return
+}
+
+// ResetRoom resets all changes to the "room" edge.
+func (m *UserContributionRoomPreferenceMutation) ResetRoom() {
+	m.room = nil
+	m.clearedroom = false
+}
+
+// Where appends a list predicates to the UserContributionRoomPreferenceMutation builder.
+func (m *UserContributionRoomPreferenceMutation) Where(ps ...predicate.UserContributionRoomPreference) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the UserContributionRoomPreferenceMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *UserContributionRoomPreferenceMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.UserContributionRoomPreference, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *UserContributionRoomPreferenceMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *UserContributionRoomPreferenceMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (UserContributionRoomPreference).
+func (m *UserContributionRoomPreferenceMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *UserContributionRoomPreferenceMutation) Fields() []string {
+	fields := make([]string, 0, 7)
+	if m.created_at != nil {
+		fields = append(fields, usercontributionroompreference.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, usercontributionroompreference.FieldUpdatedAt)
+	}
+	if m.user != nil {
+		fields = append(fields, usercontributionroompreference.FieldUserID)
+	}
+	if m.api_key != nil {
+		fields = append(fields, usercontributionroompreference.FieldAPIKeyID)
+	}
+	if m.room != nil {
+		fields = append(fields, usercontributionroompreference.FieldRoomID)
+	}
+	if m.allow_pool_fallback != nil {
+		fields = append(fields, usercontributionroompreference.FieldAllowPoolFallback)
+	}
+	if m.fallback_group_id != nil {
+		fields = append(fields, usercontributionroompreference.FieldFallbackGroupID)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *UserContributionRoomPreferenceMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case usercontributionroompreference.FieldCreatedAt:
+		return m.CreatedAt()
+	case usercontributionroompreference.FieldUpdatedAt:
+		return m.UpdatedAt()
+	case usercontributionroompreference.FieldUserID:
+		return m.UserID()
+	case usercontributionroompreference.FieldAPIKeyID:
+		return m.APIKeyID()
+	case usercontributionroompreference.FieldRoomID:
+		return m.RoomID()
+	case usercontributionroompreference.FieldAllowPoolFallback:
+		return m.AllowPoolFallback()
+	case usercontributionroompreference.FieldFallbackGroupID:
+		return m.FallbackGroupID()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *UserContributionRoomPreferenceMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case usercontributionroompreference.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case usercontributionroompreference.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	case usercontributionroompreference.FieldUserID:
+		return m.OldUserID(ctx)
+	case usercontributionroompreference.FieldAPIKeyID:
+		return m.OldAPIKeyID(ctx)
+	case usercontributionroompreference.FieldRoomID:
+		return m.OldRoomID(ctx)
+	case usercontributionroompreference.FieldAllowPoolFallback:
+		return m.OldAllowPoolFallback(ctx)
+	case usercontributionroompreference.FieldFallbackGroupID:
+		return m.OldFallbackGroupID(ctx)
+	}
+	return nil, fmt.Errorf("unknown UserContributionRoomPreference field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *UserContributionRoomPreferenceMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case usercontributionroompreference.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case usercontributionroompreference.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	case usercontributionroompreference.FieldUserID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUserID(v)
+		return nil
+	case usercontributionroompreference.FieldAPIKeyID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAPIKeyID(v)
+		return nil
+	case usercontributionroompreference.FieldRoomID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRoomID(v)
+		return nil
+	case usercontributionroompreference.FieldAllowPoolFallback:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAllowPoolFallback(v)
+		return nil
+	case usercontributionroompreference.FieldFallbackGroupID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetFallbackGroupID(v)
+		return nil
+	}
+	return fmt.Errorf("unknown UserContributionRoomPreference field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *UserContributionRoomPreferenceMutation) AddedFields() []string {
+	var fields []string
+	if m.addfallback_group_id != nil {
+		fields = append(fields, usercontributionroompreference.FieldFallbackGroupID)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *UserContributionRoomPreferenceMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case usercontributionroompreference.FieldFallbackGroupID:
+		return m.AddedFallbackGroupID()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *UserContributionRoomPreferenceMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case usercontributionroompreference.FieldFallbackGroupID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddFallbackGroupID(v)
+		return nil
+	}
+	return fmt.Errorf("unknown UserContributionRoomPreference numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *UserContributionRoomPreferenceMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(usercontributionroompreference.FieldFallbackGroupID) {
+		fields = append(fields, usercontributionroompreference.FieldFallbackGroupID)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *UserContributionRoomPreferenceMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *UserContributionRoomPreferenceMutation) ClearField(name string) error {
+	switch name {
+	case usercontributionroompreference.FieldFallbackGroupID:
+		m.ClearFallbackGroupID()
+		return nil
+	}
+	return fmt.Errorf("unknown UserContributionRoomPreference nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *UserContributionRoomPreferenceMutation) ResetField(name string) error {
+	switch name {
+	case usercontributionroompreference.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case usercontributionroompreference.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	case usercontributionroompreference.FieldUserID:
+		m.ResetUserID()
+		return nil
+	case usercontributionroompreference.FieldAPIKeyID:
+		m.ResetAPIKeyID()
+		return nil
+	case usercontributionroompreference.FieldRoomID:
+		m.ResetRoomID()
+		return nil
+	case usercontributionroompreference.FieldAllowPoolFallback:
+		m.ResetAllowPoolFallback()
+		return nil
+	case usercontributionroompreference.FieldFallbackGroupID:
+		m.ResetFallbackGroupID()
+		return nil
+	}
+	return fmt.Errorf("unknown UserContributionRoomPreference field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *UserContributionRoomPreferenceMutation) AddedEdges() []string {
+	edges := make([]string, 0, 3)
+	if m.user != nil {
+		edges = append(edges, usercontributionroompreference.EdgeUser)
+	}
+	if m.api_key != nil {
+		edges = append(edges, usercontributionroompreference.EdgeAPIKey)
+	}
+	if m.room != nil {
+		edges = append(edges, usercontributionroompreference.EdgeRoom)
+	}
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *UserContributionRoomPreferenceMutation) AddedIDs(name string) []ent.Value {
+	switch name {
+	case usercontributionroompreference.EdgeUser:
+		if id := m.user; id != nil {
+			return []ent.Value{*id}
+		}
+	case usercontributionroompreference.EdgeAPIKey:
+		if id := m.api_key; id != nil {
+			return []ent.Value{*id}
+		}
+	case usercontributionroompreference.EdgeRoom:
+		if id := m.room; id != nil {
+			return []ent.Value{*id}
+		}
+	}
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *UserContributionRoomPreferenceMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 3)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *UserContributionRoomPreferenceMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *UserContributionRoomPreferenceMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 3)
+	if m.cleareduser {
+		edges = append(edges, usercontributionroompreference.EdgeUser)
+	}
+	if m.clearedapi_key {
+		edges = append(edges, usercontributionroompreference.EdgeAPIKey)
+	}
+	if m.clearedroom {
+		edges = append(edges, usercontributionroompreference.EdgeRoom)
+	}
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *UserContributionRoomPreferenceMutation) EdgeCleared(name string) bool {
+	switch name {
+	case usercontributionroompreference.EdgeUser:
+		return m.cleareduser
+	case usercontributionroompreference.EdgeAPIKey:
+		return m.clearedapi_key
+	case usercontributionroompreference.EdgeRoom:
+		return m.clearedroom
+	}
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *UserContributionRoomPreferenceMutation) ClearEdge(name string) error {
+	switch name {
+	case usercontributionroompreference.EdgeUser:
+		m.ClearUser()
+		return nil
+	case usercontributionroompreference.EdgeAPIKey:
+		m.ClearAPIKey()
+		return nil
+	case usercontributionroompreference.EdgeRoom:
+		m.ClearRoom()
+		return nil
+	}
+	return fmt.Errorf("unknown UserContributionRoomPreference unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *UserContributionRoomPreferenceMutation) ResetEdge(name string) error {
+	switch name {
+	case usercontributionroompreference.EdgeUser:
+		m.ResetUser()
+		return nil
+	case usercontributionroompreference.EdgeAPIKey:
+		m.ResetAPIKey()
+		return nil
+	case usercontributionroompreference.EdgeRoom:
+		m.ResetRoom()
+		return nil
+	}
+	return fmt.Errorf("unknown UserContributionRoomPreference edge %s", name)
 }
 
 // UserPlatformQuotaMutation represents an operation that mutates the UserPlatformQuota nodes in the graph.

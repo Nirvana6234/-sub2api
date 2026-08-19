@@ -44,6 +44,12 @@ type Tx struct {
 	ChannelMonitorRequestTemplate *ChannelMonitorRequestTemplateClient
 	// CompositeModelRoute is the client for interacting with the CompositeModelRoute builders.
 	CompositeModelRoute *CompositeModelRouteClient
+	// ContributionAccountVerification is the client for interacting with the ContributionAccountVerification builders.
+	ContributionAccountVerification *ContributionAccountVerificationClient
+	// ContributionRoom is the client for interacting with the ContributionRoom builders.
+	ContributionRoom *ContributionRoomClient
+	// ContributionRoomAccount is the client for interacting with the ContributionRoomAccount builders.
+	ContributionRoomAccount *ContributionRoomAccountClient
 	// ErrorPassthroughRule is the client for interacting with the ErrorPassthroughRule builders.
 	ErrorPassthroughRule *ErrorPassthroughRuleClient
 	// Group is the client for interacting with the Group builders.
@@ -88,6 +94,8 @@ type Tx struct {
 	UserAttributeDefinition *UserAttributeDefinitionClient
 	// UserAttributeValue is the client for interacting with the UserAttributeValue builders.
 	UserAttributeValue *UserAttributeValueClient
+	// UserContributionRoomPreference is the client for interacting with the UserContributionRoomPreference builders.
+	UserContributionRoomPreference *UserContributionRoomPreferenceClient
 	// UserPlatformQuota is the client for interacting with the UserPlatformQuota builders.
 	UserPlatformQuota *UserPlatformQuotaClient
 	// UserSubscription is the client for interacting with the UserSubscription builders.
@@ -238,6 +246,9 @@ func (tx *Tx) init() {
 	tx.ChannelMonitorHistory = NewChannelMonitorHistoryClient(tx.config)
 	tx.ChannelMonitorRequestTemplate = NewChannelMonitorRequestTemplateClient(tx.config)
 	tx.CompositeModelRoute = NewCompositeModelRouteClient(tx.config)
+	tx.ContributionAccountVerification = NewContributionAccountVerificationClient(tx.config)
+	tx.ContributionRoom = NewContributionRoomClient(tx.config)
+	tx.ContributionRoomAccount = NewContributionRoomAccountClient(tx.config)
 	tx.ErrorPassthroughRule = NewErrorPassthroughRuleClient(tx.config)
 	tx.Group = NewGroupClient(tx.config)
 	tx.IdempotencyRecord = NewIdempotencyRecordClient(tx.config)
@@ -260,6 +271,7 @@ func (tx *Tx) init() {
 	tx.UserAllowedGroup = NewUserAllowedGroupClient(tx.config)
 	tx.UserAttributeDefinition = NewUserAttributeDefinitionClient(tx.config)
 	tx.UserAttributeValue = NewUserAttributeValueClient(tx.config)
+	tx.UserContributionRoomPreference = NewUserContributionRoomPreferenceClient(tx.config)
 	tx.UserPlatformQuota = NewUserPlatformQuotaClient(tx.config)
 	tx.UserSubscription = NewUserSubscriptionClient(tx.config)
 }

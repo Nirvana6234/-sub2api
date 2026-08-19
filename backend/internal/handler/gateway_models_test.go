@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -17,6 +18,7 @@ type gatewayModelsAccountRepoStub struct {
 	service.AccountRepository
 
 	byGroup map[int64][]service.Account
+	all     []service.Account
 }
 
 type gatewayModelsResponseForTest struct {
@@ -51,6 +53,12 @@ func (s *gatewayModelsAccountRepoStub) ListSchedulableByGroupID(ctx context.Cont
 	return out, nil
 }
 
+func (s *gatewayModelsAccountRepoStub) ListSchedulable(context.Context) ([]service.Account, error) {
+	out := make([]service.Account, len(s.all))
+	copy(out, s.all)
+	return out, nil
+}
+
 func newGatewayModelsHandlerForTest(repo service.AccountRepository) *GatewayHandler {
 	return &GatewayHandler{
 		gatewayService: service.NewGatewayService(
@@ -59,6 +67,122 @@ func newGatewayModelsHandlerForTest(repo service.AccountRepository) *GatewayHand
 			nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
 		),
 	}
+}
+
+func TestGatewayModels_WorkspaceLocalRouteReturnsMixedSchedulableCatalog(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	groupID := int64(4400)
+	h := newGatewayModelsHandlerForTest(&gatewayModelsAccountRepoStub{
+		byGroup: map[int64][]service.Account{
+			groupID: {{ID: 1, Platform: service.PlatformOpenAI}},
+		},
+		all: []service.Account{
+			{
+				ID:       1,
+				Platform: service.PlatformOpenAI,
+				Credentials: map[string]any{
+					"model_mapping": map[string]any{"gpt-5.6-sol": "gpt-5.6-sol"},
+				},
+			},
+			{
+				ID:       2,
+				Platform: service.PlatformAnthropic,
+				Credentials: map[string]any{
+					"model_mapping": map[string]any{"claude-sonnet-5": "claude-sonnet-5"},
+				},
+			},
+			{
+				ID:       3,
+				Platform: service.PlatformGrok,
+				Credentials: map[string]any{
+					"model_mapping": map[string]any{"grok-4.5": "grok-4.5"},
+				},
+			},
+			{
+				ID:       4,
+				Platform: service.PlatformGrok,
+				Credentials: map[string]any{
+					"model_mapping": map[string]any{"grok-4.5": "grok-4.5"},
+				},
+			},
+		},
+	})
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	request := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	request = request.WithContext(context.WithValue(request.Context(), ctxkey.WorkspaceLocalFallbackRoute, true))
+	c.Request = request
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+		Group: &service.Group{ID: groupID, Platform: service.PlatformOpenAI},
+	})
+
+	h.Models(c)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got gatewayModelsResponseForTest
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.Equal(t, []string{"gpt-5.6-sol", "claude-sonnet-5", "grok-4.5"}, modelIDsForTest(got.Data))
+	require.Equal(t, "openai", got.Data[0].OwnedBy)
+	require.Equal(t, "anthropic", got.Data[1].OwnedBy)
+	require.Equal(t, "xai", got.Data[2].OwnedBy)
+	require.True(t, got.Data[2].SupportsReasoningEffort)
+	require.Equal(t, "high", got.Data[2].ReasoningEffort)
+}
+
+func TestGatewayModels_WorkspaceLocalRouteMergesDefaultsForUnmappedAccount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	h := newGatewayModelsHandlerForTest(&gatewayModelsAccountRepoStub{
+		all: []service.Account{
+			{ID: 1, Platform: service.PlatformOpenAI},
+			{
+				ID:       2,
+				Platform: service.PlatformOpenAI,
+				Credentials: map[string]any{
+					"model_mapping": map[string]any{"custom-gpt": "custom-gpt"},
+				},
+			},
+		},
+	})
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	request := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	request = request.WithContext(context.WithValue(request.Context(), ctxkey.WorkspaceLocalFallbackRoute, true))
+	c.Request = request
+
+	h.Models(c)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got gatewayModelsResponseForTest
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	ids := modelIDsForTest(got.Data)
+	require.Contains(t, ids, "gpt-5.6-sol")
+	require.Contains(t, ids, "custom-gpt")
+	require.Equal(t, 1, countModelIDForTest(ids, "custom-gpt"))
+}
+
+func TestLocalModelsCatalogRequestRecognizesLoopbackWithoutWorkspaceKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	c.Request.RemoteAddr = "127.0.0.1:51000"
+	require.True(t, isLocalModelsCatalogRequest(c))
+
+	c.Request.RemoteAddr = "192.0.2.10:51000"
+	require.False(t, isLocalModelsCatalogRequest(c))
+}
+
+func countModelIDForTest(models []string, target string) int {
+	count := 0
+	for _, model := range models {
+		if model == target {
+			count++
+		}
+	}
+	return count
 }
 
 func TestDefaultModelIDsForCompositeIncludesAntigravityDefaults(t *testing.T) {

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -41,6 +42,10 @@ func (r codexModelsFailoverAccountRepo) ListSchedulableByPlatform(_ context.Cont
 		}
 	}
 	return accounts, nil
+}
+
+func (r codexModelsFailoverAccountRepo) ListSchedulable(context.Context) ([]service.Account, error) {
+	return append([]service.Account(nil), r.accounts...), nil
 }
 
 type codexModelsFailoverHTTPUpstream struct {
@@ -113,6 +118,67 @@ func TestCodexModelsCanceledRequestDoesNotWriteResponse(t *testing.T) {
 
 	if c.Writer.Written() {
 		t.Fatalf("canceled request wrote an HTTP response: status=%d body=%q", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestCodexModelsLoopbackRequestReturnsMixedLocalManifest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	groupID := int64(42)
+	accounts := []service.Account{
+		{
+			ID: 1, Platform: service.PlatformOpenAI, Status: service.StatusActive, Schedulable: true,
+			Credentials: map[string]any{"model_mapping": map[string]any{"gpt-5.6-sol": "gpt-5.6-sol"}},
+		},
+		{
+			ID: 2, Platform: service.PlatformAnthropic, Status: service.StatusActive, Schedulable: true,
+			Credentials: map[string]any{"model_mapping": map[string]any{"claude-sonnet-5": "claude-sonnet-5"}},
+		},
+		{
+			ID: 3, Platform: service.PlatformGrok, Status: service.StatusActive, Schedulable: true,
+			Credentials: map[string]any{"model_mapping": map[string]any{"grok-4.5": "grok-4.5"}},
+		},
+	}
+	upstream := &codexModelsFailoverHTTPUpstream{}
+	gatewayService := service.NewOpenAIGatewayService(
+		codexModelsFailoverAccountRepo{accounts: accounts},
+		nil, nil, nil, nil, nil, nil, &config.Config{RunMode: config.RunModeSimple}, nil, nil, nil, nil, nil,
+		upstream,
+		nil, nil, nil, nil, nil, nil, nil, nil,
+	)
+	handler := &OpenAIGatewayHandler{gatewayService: gatewayService}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/models?client_version=0.144.0", nil)
+	c.Request.RemoteAddr = "127.0.0.1:51000"
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+		Name: "111", GroupID: &groupID,
+		Group: &service.Group{ID: groupID, Platform: service.PlatformOpenAI},
+	})
+
+	handler.CodexModels(c)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var manifest struct {
+		Models []workspaceCodexModel `json:"models"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &manifest); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+	got := make([]string, 0, len(manifest.Models))
+	for _, model := range manifest.Models {
+		got = append(got, model.Slug)
+	}
+	want := []string{"gpt-5.6-sol", "claude-sonnet-5", "grok-4.5"}
+	if !equalStringSlices(got, want) {
+		t.Fatalf("models: got %v, want %v", got, want)
+	}
+	if manifest.Models[2].DefaultReasoningLevel != "high" {
+		t.Fatalf("grok default reasoning: got %q, want high", manifest.Models[2].DefaultReasoningLevel)
+	}
+	if calls := upstream.calls(); len(calls) != 0 {
+		t.Fatalf("local manifest unexpectedly called upstream accounts: %v", calls)
 	}
 }
 
@@ -301,6 +367,18 @@ func performCodexModelsRequest(t *testing.T, handler *OpenAIGatewayHandler, grou
 }
 
 func equalInt64Slices(got, want []int64) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func equalStringSlices(got, want []string) bool {
 	if len(got) != len(want) {
 		return false
 	}

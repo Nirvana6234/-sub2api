@@ -296,8 +296,8 @@ func groupSupportsOAuthOnlyFilter(platform string) bool {
 }
 
 func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupInput) (*Group, error) {
-	if input.RateMultiplier <= 0 {
-		return nil, errors.New("rate_multiplier must be > 0")
+	if input.RateMultiplier < 0 {
+		return nil, errors.New("rate_multiplier must be >= 0")
 	}
 
 	platform := NormalizeGroupPlatform(input.Platform)
@@ -449,6 +449,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		Description:                     input.Description,
 		Platform:                        platform,
 		RateMultiplier:                  input.RateMultiplier,
+		AllowContributionPool:           input.AllowContributionPool,
 		IsExclusive:                     input.IsExclusive,
 		Status:                          StatusActive,
 		SubscriptionType:                subscriptionType,
@@ -636,10 +637,13 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 		group.Platform = input.Platform
 	}
 	if input.RateMultiplier != nil {
-		if *input.RateMultiplier <= 0 {
-			return nil, errors.New("rate_multiplier must be > 0")
+		if *input.RateMultiplier < 0 {
+			return nil, errors.New("rate_multiplier must be >= 0")
 		}
 		group.RateMultiplier = *input.RateMultiplier
+	}
+	if input.AllowContributionPool != nil {
+		group.AllowContributionPool = *input.AllowContributionPool
 	}
 	if input.IsExclusive != nil {
 		group.IsExclusive = *input.IsExclusive
@@ -857,6 +861,7 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 
 	if s.authCacheInvalidator != nil {
 		s.authCacheInvalidator.InvalidateAuthCacheByGroupID(ctx, id)
+		invalidateAutoGroupSelectionsForGroup(ctx, s.authCacheInvalidator, id)
 	}
 
 	// 如果指定了复制账号的源分组，同步绑定（替换当前分组的账号）
@@ -937,6 +942,10 @@ func (s *adminServiceImpl) DeleteGroup(ctx context.Context, id int64) error {
 		if err == nil {
 			groupKeys = keys
 		}
+		// Invalidate before the cascade removes the JSON candidate reference;
+		// after deletion the lookup can no longer discover automatic keys that
+		// used this group.
+		s.authCacheInvalidator.InvalidateAuthCacheByGroupID(ctx, id)
 	}
 
 	affectedUserIDs, err := s.groupRepo.DeleteCascade(ctx, id)
@@ -944,6 +953,19 @@ func (s *adminServiceImpl) DeleteGroup(ctx context.Context, id int64) error {
 		return err
 	}
 	// 注意：user_group_rate_multipliers 表通过外键 ON DELETE CASCADE 自动清理
+
+	// 系统设置里的分组引用没有外键保护，必须显式清理。留下悬挂 ID 的代价不是
+	// "那一项配置失效"，而是整个系统设置页面再也保存不了任何东西：保存走整
+	// 文档校验，一个指向已删除分组的 playground 候选项会让邀请返利这类完全无关
+	// 的设置一起失败，而管理台只渲染活跃分组，用户在界面上根本看不到该删哪个。
+	if s.settingService != nil {
+		if err := s.settingService.RemoveGroupReferences(ctx, id); err != nil {
+			// 分组本身已经删除成功，这里失败不回滚，但必须留下可检索的记录：
+			// 残留引用会在下一次保存系统设置时以 PLAYGROUND_DEFAULT_GROUP_INVALID
+			// 的形式浮现。
+			logger.LegacyPrintf("service.admin", "remove group references from settings failed: group_id=%d err=%v", id, err)
+		}
+	}
 
 	// 事务成功后，异步失效受影响用户的订阅缓存
 	if len(affectedUserIDs) > 0 && s.billingCacheService != nil {
@@ -962,6 +984,7 @@ func (s *adminServiceImpl) DeleteGroup(ctx context.Context, id int64) error {
 		for _, key := range groupKeys {
 			s.authCacheInvalidator.InvalidateAuthCacheByKey(ctx, key)
 		}
+		invalidateAutoGroupSelectionsForGroup(ctx, s.authCacheInvalidator, id)
 	}
 
 	return nil
@@ -987,7 +1010,14 @@ func (s *adminServiceImpl) ClearGroupRateMultipliers(ctx context.Context, groupI
 	if s.userGroupRateRepo == nil {
 		return nil
 	}
-	return s.userGroupRateRepo.DeleteByGroupID(ctx, groupID)
+	if err := s.userGroupRateRepo.DeleteByGroupID(ctx, groupID); err != nil {
+		return err
+	}
+	if s.authCacheInvalidator != nil {
+		s.authCacheInvalidator.InvalidateAuthCacheByGroupID(ctx, groupID)
+		invalidateAutoGroupSelectionsForGroup(ctx, s.authCacheInvalidator, groupID)
+	}
+	return nil
 }
 
 func (s *adminServiceImpl) BatchSetGroupRateMultipliers(ctx context.Context, groupID int64, entries []GroupRateMultiplierInput) error {
@@ -999,7 +1029,14 @@ func (s *adminServiceImpl) BatchSetGroupRateMultipliers(ctx context.Context, gro
 			return fmt.Errorf("rate_multiplier must be > 0 (user_id=%d)", e.UserID)
 		}
 	}
-	return s.userGroupRateRepo.SyncGroupRateMultipliers(ctx, groupID, entries)
+	if err := s.userGroupRateRepo.SyncGroupRateMultipliers(ctx, groupID, entries); err != nil {
+		return err
+	}
+	if s.authCacheInvalidator != nil {
+		s.authCacheInvalidator.InvalidateAuthCacheByGroupID(ctx, groupID)
+		invalidateAutoGroupSelectionsForGroup(ctx, s.authCacheInvalidator, groupID)
+	}
+	return nil
 }
 
 func (s *adminServiceImpl) ClearGroupRPMOverrides(ctx context.Context, groupID int64) error {
@@ -1107,7 +1144,8 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 			if addErr := s.userRepo.AddGroupToAllowedGroups(opCtx, apiKey.UserID, gid); addErr != nil {
 				return nil, fmt.Errorf("add group to user allowed groups: %w", addErr)
 			}
-			if err := s.apiKeyRepo.Update(opCtx, apiKey, APIKeyUpdateFields{GroupID: true}); err != nil {
+			apiKey.AutoGroup = false
+			if err := s.apiKeyRepo.Update(opCtx, apiKey, APIKeyUpdateFields{GroupID: true, AutoGroup: true}); err != nil {
 				return nil, fmt.Errorf("update api key: %w", err)
 			}
 			if tx != nil {
@@ -1131,7 +1169,8 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 	}
 
 	// 非专属分组 / 解绑：无需事务，单步更新即可
-	if err := s.apiKeyRepo.Update(ctx, apiKey, APIKeyUpdateFields{GroupID: true}); err != nil {
+	apiKey.AutoGroup = false
+	if err := s.apiKeyRepo.Update(ctx, apiKey, APIKeyUpdateFields{GroupID: true, AutoGroup: true}); err != nil {
 		return nil, fmt.Errorf("update api key: %w", err)
 	}
 

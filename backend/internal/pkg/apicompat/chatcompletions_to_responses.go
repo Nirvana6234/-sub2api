@@ -378,6 +378,14 @@ func convertChatContentPartsToResponses(parts []ChatContentPart) []ResponsesCont
 					ImageURL: p.ImageURL.URL,
 				})
 			}
+		case "file":
+			if p.File != nil && p.File.FileData != "" {
+				responseParts = append(responseParts, ResponsesContentPart{
+					Type:     "input_file",
+					FileData: p.File.FileData,
+					Filename: p.File.Filename,
+				})
+			}
 		}
 	}
 	return responseParts

@@ -387,6 +387,12 @@ func TestApiKeyAuthWithSubscriptionGoogleSetsGroupContext(t *testing.T) {
 			c.JSON(http.StatusInternalServerError, gin.H{"ok": false})
 			return
 		}
+		userIDFromCtx, userOK := c.Request.Context().Value(ctxkey.UserID).(int64)
+		apiKeyIDFromCtx, apiKeyOK := c.Request.Context().Value(ctxkey.APIKeyID).(int64)
+		if !userOK || userIDFromCtx != user.ID || !apiKeyOK || apiKeyIDFromCtx != apiKey.ID {
+			c.JSON(http.StatusInternalServerError, gin.H{"ok": false})
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 

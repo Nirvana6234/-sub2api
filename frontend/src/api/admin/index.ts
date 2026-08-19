@@ -33,6 +33,8 @@ import adminPaymentAPI from './payment'
 import affiliatesAPI from './affiliates'
 import riskControlAPI from './riskControl'
 import adminComplianceAPI from './compliance'
+import contributionsAPI from './contributions'
+import contributionRoomsAPI from './contributionRooms'
 import auditAPI from './audit'
 
 /**
@@ -69,6 +71,8 @@ export const adminAPI = {
   affiliates: affiliatesAPI,
   riskControl: riskControlAPI,
   compliance: adminComplianceAPI,
+  contributions: contributionsAPI,
+  contributionRooms: contributionRoomsAPI,
   audit: auditAPI
 }
 
@@ -103,8 +107,22 @@ export {
   affiliatesAPI,
   riskControlAPI,
   adminComplianceAPI,
+  contributionsAPI,
+  contributionRoomsAPI,
   auditAPI
 }
+
+export type {
+  AdminContribution,
+  ContributionAction,
+  ContributionGroup,
+  ContributionId,
+  ContributionListFilters,
+  ContributionListResponse,
+  ContributionTestResult,
+  ContributionUsageSummary,
+  UpdateManagedContributionRequest
+} from './contributions'
 
 export default adminAPI
 

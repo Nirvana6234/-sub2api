@@ -11,6 +11,7 @@ import (
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/accountgroup"
+	"github.com/Wei-Shaw/sub2api/ent/contributionroomaccount"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
@@ -300,6 +301,29 @@ func (s *AccountRepoSuite) TestDelete_WithGroupBindings() {
 	count, err := s.client.AccountGroup.Query().Where(accountgroup.AccountIDEQ(account.ID)).Count(s.ctx)
 	s.Require().NoError(err)
 	s.Require().Zero(count, "expected bindings to be removed")
+}
+
+func (s *AccountRepoSuite) TestDelete_RemovesContributionRoomMembership() {
+	owner := mustCreateUser(s.T(), s.client, &service.User{Email: "delete-room-owner@example.com"})
+	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "room-member-delete"})
+	room, err := s.client.ContributionRoom.Create().
+		SetOwnerUserID(owner.ID).
+		SetName("delete-membership-room").
+		Save(s.ctx)
+	s.Require().NoError(err)
+	_, err = s.client.ContributionRoomAccount.Create().
+		SetRoomID(room.ID).
+		SetAccountID(account.ID).
+		Save(s.ctx)
+	s.Require().NoError(err)
+
+	s.Require().NoError(s.repo.Delete(s.ctx, account.ID))
+
+	count, err := s.client.ContributionRoomAccount.Query().
+		Where(contributionroomaccount.AccountIDEQ(account.ID)).
+		Count(s.ctx)
+	s.Require().NoError(err)
+	s.Require().Zero(count)
 }
 
 // --- List / ListWithFilters ---

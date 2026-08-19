@@ -300,6 +300,9 @@ func (c *schedulerCache) GetSnapshot(ctx context.Context, bucket service.Schedul
 		if err != nil {
 			return nil, false, err
 		}
+		if bucket.GroupID > 0 {
+			account.Priority = account.PriorityForGroup(bucket.GroupID)
+		}
 		if err := applySchedulerLastUsed(account, lastUsedValues[i]); err != nil {
 			return nil, false, err
 		}
@@ -864,33 +867,36 @@ func (c *schedulerCache) mgetChunked(ctx context.Context, keys []string) ([]any,
 
 func buildSchedulerMetadataAccount(account service.Account) service.Account {
 	return service.Account{
-		ID:                      account.ID,
-		Name:                    account.Name,
-		Platform:                account.Platform,
-		Type:                    account.Type,
-		Concurrency:             account.Concurrency,
-		LoadFactor:              account.LoadFactor,
-		Priority:                account.Priority,
-		RateMultiplier:          account.RateMultiplier,
-		Status:                  account.Status,
-		LastUsedAt:              account.LastUsedAt,
-		ExpiresAt:               account.ExpiresAt,
-		AutoPauseOnExpired:      account.AutoPauseOnExpired,
-		Schedulable:             account.Schedulable,
-		RateLimitedAt:           account.RateLimitedAt,
-		RateLimitResetAt:        account.RateLimitResetAt,
-		OverloadUntil:           account.OverloadUntil,
-		TempUnschedulableUntil:  account.TempUnschedulableUntil,
-		TempUnschedulableReason: account.TempUnschedulableReason,
-		SessionWindowStart:      account.SessionWindowStart,
-		SessionWindowEnd:        account.SessionWindowEnd,
-		SessionWindowStatus:     account.SessionWindowStatus,
-		ParentAccountID:         account.ParentAccountID,
-		QuotaDimension:          account.QuotaDimension,
-		AccountGroups:           filterSchedulerAccountGroups(account.AccountGroups),
-		GroupIDs:                filterSchedulerGroupIDs(account.GroupIDs, account.AccountGroups),
-		Credentials:             filterSchedulerCredentials(account.Credentials),
-		Extra:                   filterSchedulerExtra(account.Extra),
+		ID:             account.ID,
+		Name:           account.Name,
+		Platform:       account.Platform,
+		Type:           account.Type,
+		Concurrency:    account.Concurrency,
+		LoadFactor:     account.LoadFactor,
+		Priority:       account.Priority,
+		RateMultiplier: account.RateMultiplier,
+		// 利润准入的三态判定要靠它区分"未声明"与"声明为 1.0"；漏列会让未声明
+		// 账号被按默认 1.0 判成越线，对启用利润控制的分组就是整组不可调度。
+		RateMultiplierUndeclared: account.RateMultiplierUndeclared,
+		Status:                   account.Status,
+		LastUsedAt:               account.LastUsedAt,
+		ExpiresAt:                account.ExpiresAt,
+		AutoPauseOnExpired:       account.AutoPauseOnExpired,
+		Schedulable:              account.Schedulable,
+		RateLimitedAt:            account.RateLimitedAt,
+		RateLimitResetAt:         account.RateLimitResetAt,
+		OverloadUntil:            account.OverloadUntil,
+		TempUnschedulableUntil:   account.TempUnschedulableUntil,
+		TempUnschedulableReason:  account.TempUnschedulableReason,
+		SessionWindowStart:       account.SessionWindowStart,
+		SessionWindowEnd:         account.SessionWindowEnd,
+		SessionWindowStatus:      account.SessionWindowStatus,
+		ParentAccountID:          account.ParentAccountID,
+		QuotaDimension:           account.QuotaDimension,
+		AccountGroups:            filterSchedulerAccountGroups(account.AccountGroups),
+		GroupIDs:                 filterSchedulerGroupIDs(account.GroupIDs, account.AccountGroups),
+		Credentials:              filterSchedulerCredentials(account.Credentials),
+		Extra:                    filterSchedulerExtra(account.Extra),
 	}
 }
 
@@ -1012,6 +1018,17 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		"auto_pause_5h_disabled",
 		"auto_pause_7d_disabled",
 		"model_rate_limits",
+		service.AccountContributionSourceKey,
+		service.AccountContributorUserIDKey,
+		service.AccountShareModeKey,
+		service.AccountShareTotalBudgetKey,
+		service.AccountShareDailyBudgetKey,
+		service.AccountShareExpiresAtKey,
+		service.AccountShareUsedTotalKey,
+		service.AccountShareUsedTodayKey,
+		service.AccountShareUsageDayKey,
+		service.AccountContributionGovernanceStateKey,
+		"contribution_unusable_since",
 		service.UpstreamBillingProbeExtraKey,
 		service.GrokMediaEligibleExtraKey,
 		"grok_billing_snapshot",

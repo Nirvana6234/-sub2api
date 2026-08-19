@@ -22,6 +22,15 @@ const (
 	maxDecompressedBodySize = 64 << 20
 )
 
+// BodyTooLargeMessage formats the shared OpenAI-compatible body-limit error.
+func BodyTooLargeMessage(limit int64) string {
+	const mb = 1024 * 1024
+	if limit >= mb {
+		return fmt.Sprintf("Request body too large, limit is %dMB", limit/mb)
+	}
+	return fmt.Sprintf("Request body too large, limit is %dB", limit)
+}
+
 // ReadRequestBodyWithPrealloc reads request body with preallocated buffer based
 // on content length, transparently decoding any Content-Encoding the upstream
 // client used to compress the body (zstd, gzip, deflate).

@@ -514,7 +514,9 @@ export default {
         apiModeResponsesHint: '使用 /v1/responses，默认带 instructions + input；适合本站自检/Codex。',
         endpoint: '上游地址',
         endpointPlaceholder: 'https://api.example.com',
+        endpointHint: '填写可公开访问的 HTTPS 根地址，例如 https://api.example.com；不要填写 /v1、localhost、127.0.0.1 或内网地址。',
         useCurrentDomain: '使用当前服务',
+        currentServiceUnavailable: '当前页面是本地或非 HTTPS 地址，不能用于渠道监控。请填写部署后的公网 HTTPS 域名。',
         apiKey: 'API Key',
         apiKeyPlaceholder: '请输入 API Key',
         apiKeyEditPlaceholder: '留空表示不修改',
@@ -534,6 +536,17 @@ export default {
         jitterSecondsHint: '每次检测在间隔基础上正负随机偏移该秒数，0 表示固定间隔；需满足 间隔 - 抖动 ≥ 15 秒',
         enabled: '启用监控',
         kindRequired: '请选择供应商'
+      },
+      errors: {
+        CHANNEL_MONITOR_INVALID_ENDPOINT: '请填写有效的公网 HTTPS 根地址，例如 https://api.example.com。',
+        CHANNEL_MONITOR_ENDPOINT_SCHEME: '上游地址必须以 https:// 开头。',
+        CHANNEL_MONITOR_ENDPOINT_PATH: '上游地址只能填写域名根地址，不能附带 /v1、路径、参数或锚点。',
+        CHANNEL_MONITOR_ENDPOINT_PRIVATE: '上游地址不能使用 localhost、127.0.0.1 或内网地址。',
+        CHANNEL_MONITOR_ENDPOINT_UNREACHABLE: '无法解析该上游域名，请确认域名可从公网访问。',
+        CHANNEL_MONITOR_MISSING_API_KEY: '新建监控时必须填写 API Key。',
+        CHANNEL_MONITOR_MISSING_PRIMARY_MODEL: '请填写主模型。',
+        CHANNEL_MONITOR_INVALID_INTERVAL: '检测间隔必须在 15 到 3600 秒之间。',
+        CHANNEL_MONITOR_INVALID_JITTER: '随机抖动不能让实际检测间隔低于 15 秒。'
       },
       runResultTitle: '检测结果',
       noMonitorsYet: '暂无监控',

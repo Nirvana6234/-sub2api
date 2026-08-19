@@ -56,6 +56,7 @@
             {{ t('admin.channelMonitor.form.useCurrentDomain') }}
           </button>
         </div>
+        <p class="mt-1 text-xs text-gray-400">{{ t('admin.channelMonitor.form.endpointHint') }}</p>
       </div>
 
       <div>
@@ -188,7 +189,7 @@
 import { ref, reactive, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
-import { extractApiErrorMessage } from '@/utils/apiError'
+import { extractApiErrorMessage, extractI18nErrorMessage } from '@/utils/apiError'
 import { adminAPI } from '@/api/admin'
 import { keysAPI } from '@/api/keys'
 import { userGroupsAPI } from '@/api/groups'
@@ -496,7 +497,62 @@ watch(
 )
 
 function useCurrentDomain() {
-  form.endpoint = window.location.origin
+  const origin = window.location.origin
+  if (!isPublicHTTPSOrigin(origin)) {
+    appStore.showInfo(t('admin.channelMonitor.form.currentServiceUnavailable'))
+    return
+  }
+  form.endpoint = origin
+}
+
+function isPublicHTTPSOrigin(raw: string): boolean {
+  try {
+    const url = new URL(raw)
+    if (url.protocol !== 'https:' || url.pathname !== '/' || url.search || url.hash) return false
+    return !isLocalOrPrivateHostname(url.hostname)
+  } catch {
+    return false
+  }
+}
+
+function isLocalOrPrivateHostname(rawHostname: string): boolean {
+  const hostname = rawHostname.trim().toLowerCase().replace(/^\[|\]$/g, '')
+  if (
+    hostname === 'localhost' ||
+    hostname.endsWith('.localhost') ||
+    hostname === '0.0.0.0' ||
+    hostname === '::1' ||
+    hostname.startsWith('127.') ||
+    hostname.startsWith('10.') ||
+    hostname.startsWith('192.168.')
+  ) {
+    return true
+  }
+  const private172 = /^172\.(1[6-9]|2\d|3[01])\./
+  return private172.test(hostname)
+}
+
+function validateEndpointBeforeSubmit(): boolean {
+  const raw = form.endpoint.trim()
+  try {
+    const url = new URL(raw)
+    if (url.protocol !== 'https:') {
+      appStore.showError(t('admin.channelMonitor.errors.CHANNEL_MONITOR_ENDPOINT_SCHEME'))
+      return false
+    }
+    if (url.pathname !== '/' || url.search || url.hash) {
+      appStore.showError(t('admin.channelMonitor.errors.CHANNEL_MONITOR_ENDPOINT_PATH'))
+      return false
+    }
+    if (isLocalOrPrivateHostname(url.hostname)) {
+      appStore.showError(t('admin.channelMonitor.errors.CHANNEL_MONITOR_ENDPOINT_PRIVATE'))
+      return false
+    }
+  } catch {
+    appStore.showError(t('admin.channelMonitor.errors.CHANNEL_MONITOR_INVALID_ENDPOINT'))
+    return false
+  }
+  return true
 }
 
 async function openMyKeyPicker() {
@@ -558,6 +614,7 @@ async function handleSubmit() {
     appStore.showError(t('admin.channelMonitor.primaryModelRequired'))
     return
   }
+  if (!validateEndpointBeforeSubmit()) return
 
   submitting.value = true
   try {
@@ -581,7 +638,7 @@ async function handleSubmit() {
     emit('saved')
     emit('close')
   } catch (err: unknown) {
-    appStore.showError(extractApiErrorMessage(err, t('common.error')))
+    appStore.showError(extractI18nErrorMessage(err, t, 'admin.channelMonitor.errors', t('common.error')))
   } finally {
     submitting.value = false
   }

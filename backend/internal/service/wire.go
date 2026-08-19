@@ -59,6 +59,7 @@ func ProvideAuthService(
 	defaultSubAssigner DefaultSubscriptionAssigner,
 	affiliateService *AffiliateService,
 	userPlatformQuotaRepo UserPlatformQuotaRepository,
+	apiKeyService *APIKeyService,
 ) *AuthService {
 	svc := NewAuthService(
 		entClient,
@@ -77,6 +78,7 @@ func ProvideAuthService(
 	)
 	svc.SetTencentCaptchaService(tencentCaptchaService)
 	svc.SetAliyunCaptchaService(aliyunCaptchaService)
+	svc.SetPlaygroundAPIKeyProvisioner(apiKeyService)
 	return svc
 }
 
@@ -546,9 +548,10 @@ func ProvideScheduledTestRunnerService(
 	scheduledSvc *ScheduledTestService,
 	accountTestSvc *AccountTestService,
 	rateLimitSvc *RateLimitService,
+	accountRepo AccountRepository,
 	cfg *config.Config,
 ) *ScheduledTestRunnerService {
-	svc := NewScheduledTestRunnerService(planRepo, scheduledSvc, accountTestSvc, rateLimitSvc, cfg)
+	svc := NewScheduledTestRunnerService(planRepo, scheduledSvc, accountTestSvc, rateLimitSvc, accountRepo, cfg)
 	svc.Start()
 	return svc
 }
@@ -719,12 +722,23 @@ func ProvideAPIKeyService(
 	userGroupRateRepo UserGroupRateRepository,
 	cache APIKeyCache,
 	cfg *config.Config,
+	accountRepo AccountRepository,
 	billingCacheService *BillingCacheService,
 	concurrencyService *ConcurrencyService,
+	usageLogRepo UsageLogRepository,
+	settingService *SettingService,
 ) *APIKeyService {
 	svc := NewAPIKeyService(apiKeyRepo, userRepo, groupRepo, userSubRepo, userGroupRateRepo, cache, cfg)
 	svc.SetRateLimitCacheInvalidator(billingCacheService)
 	svc.SetConcurrencyService(concurrencyService)
+	if metricsRepo, ok := usageLogRepo.(AutoGroupMetricRepository); ok {
+		svc.SetAutoGroupMetricRepository(metricsRepo)
+	}
+	svc.SetAutoGroupModelAvailabilityRepository(accountRepo)
+	if runtimeChecker, ok := accountRepo.(AutoGroupRuntimeModelChecker); ok {
+		svc.SetAutoGroupRuntimeModelChecker(runtimeChecker)
+	}
+	svc.SetPlaygroundDefaultsProvider(settingService)
 	return svc
 }
 
@@ -749,6 +763,7 @@ var ProviderSet = wire.NewSet(
 	NewBillingService,
 	ProvideBillingCacheService,
 	NewAnnouncementService,
+	NewPlaygroundHistoryService,
 	NewAdminService,
 	NewGatewayService,
 	NewOpenAIGatewayService,

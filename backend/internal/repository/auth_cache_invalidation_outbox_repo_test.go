@@ -33,6 +33,19 @@ func TestAuthCacheInvalidationOutboxRepository_ClaimUsesLeaseAndSkipLocked(t *te
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestAuthCacheInvalidationOutboxRepository_EnqueueControl(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	mock.ExpectExec("INSERT INTO auth_cache_invalidation_outbox").
+		WithArgs("auto-group:user:7").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	repo := NewAuthCacheInvalidationOutboxRepository(db)
+
+	require.NoError(t, repo.EnqueueControl(context.Background(), "auto-group:user:7"))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestAuthCacheInvalidationOutboxRepository_ClaimIsBoundedByDefault(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -120,4 +133,21 @@ func TestAuthCacheInvalidationMigration_SecurityCoverageAndNoPlaintextPayload(t 
 	sum := sha256.Sum256([]byte(plaintext))
 	require.Len(t, hex.EncodeToString(sum[:]), 64)
 	require.NotContains(t, sqlText, plaintext)
+}
+
+func TestAutoGroupInvalidationMigration_UsesDurableScopeMessages(t *testing.T) {
+	content, err := migrations.FS.ReadFile("198_auto_group_invalidation_outbox.sql")
+	require.NoError(t, err)
+	sqlText := string(content)
+	for _, required := range []string{
+		"^auto-group:(user|group):[1-9][0-9]*$",
+		"trg_groups_auto_group_invalidation",
+		"trg_user_group_rates_auto_group_invalidation",
+		"trg_api_keys_auto_group_invalidation",
+		"trg_user_allowed_groups_auto_group_invalidation",
+		"OLD.rate_multiplier IS NOT DISTINCT FROM NEW.rate_multiplier",
+		"OLD.auto_group_ids IS NOT DISTINCT FROM NEW.auto_group_ids",
+	} {
+		require.Contains(t, sqlText, required)
+	}
 }

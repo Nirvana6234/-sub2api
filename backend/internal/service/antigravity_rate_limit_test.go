@@ -225,14 +225,15 @@ func TestHandleUpstreamError_429_NonModelRateLimit_UsesMappedModelKey(t *testing
 	require.Equal(t, "claude-opus-4-6-thinking", repo.modelRateLimitCalls[0].modelKey)
 }
 
-// TestHandleUpstreamError_503_ModelCapacityExhausted 测试 503 模型容量不足场景
-// MODEL_CAPACITY_EXHAUSTED 时应等待重试，不切换账号
+// TestHandleUpstreamError_503_ModelCapacityExhausted verifies that a temporary
+// capacity shortage advances the request to another account without writing a
+// model cooldown.
 func TestHandleUpstreamError_503_ModelCapacityExhausted(t *testing.T) {
 	repo := &stubAntigravityAccountRepo{}
 	svc := &AntigravityGatewayService{accountRepo: repo}
 	account := &Account{ID: 3, Name: "acc-3", Platform: PlatformAntigravity}
 
-	// 503 + MODEL_CAPACITY_EXHAUSTED → 等待重试，不切换账号
+	// 503 + MODEL_CAPACITY_EXHAUSTED → immediately try another account.
 	body := []byte(`{
 		"error": {
 			"status": "UNAVAILABLE",
@@ -245,12 +246,11 @@ func TestHandleUpstreamError_503_ModelCapacityExhausted(t *testing.T) {
 
 	result := svc.handleUpstreamError(context.Background(), "[test]", account, http.StatusServiceUnavailable, http.Header{}, body, "gemini-3-pro-high", 0, "", false)
 
-	// MODEL_CAPACITY_EXHAUSTED 应该标记为已处理，不切换账号，不设置模型限流
-	// 实际重试由 handleSmartRetry 处理
 	require.NotNil(t, result)
 	require.True(t, result.Handled)
-	require.False(t, result.ShouldRetry, "MODEL_CAPACITY_EXHAUSTED should not trigger retry from handleModelRateLimit path")
-	require.Nil(t, result.SwitchError, "MODEL_CAPACITY_EXHAUSTED should not trigger account switch")
+	require.NotNil(t, result.SwitchError, "MODEL_CAPACITY_EXHAUSTED should switch accounts")
+	require.Equal(t, account.ID, result.SwitchError.OriginalAccountID)
+	require.Equal(t, "gemini-3-pro-high", result.SwitchError.RateLimitedModel)
 	require.Empty(t, repo.modelRateLimitCalls, "MODEL_CAPACITY_EXHAUSTED should not set model rate limit")
 }
 

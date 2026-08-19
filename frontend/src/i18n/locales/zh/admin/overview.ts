@@ -574,7 +574,12 @@ export default {
         selectStatus: '选择状态',
         rpmLimit: '每分钟请求数 (RPM)',
         rpmLimitPlaceholder: '0 表示不限制',
-        rpmLimitHint: '该用户每分钟最大请求数，0 = 不限制；仅在所用分组未设置 rpm_limit 时作为兜底生效'
+        rpmLimitHint: '该用户每分钟最大请求数，0 = 不限制；仅在所用分组未设置 rpm_limit 时作为兜底生效',
+        optionalFeatures: '可选功能',
+        accountManagementEnabled: '允许用户账号管理',
+        accountManagementEnabledHint: '可提交、管理本人账号和自建贡献房间。',
+        contributionRoomsEnabled: '允许用户贡献房间',
+        contributionRoomsEnabledHint: '可查看并选择共享贡献房间。'
       },
       adjustBalance: '调整余额',
       adjustConcurrency: '调整并发数',
@@ -830,6 +835,9 @@ export default {
         rpmLimit: '每分钟请求数 (RPM)',
         rpmLimitPlaceholder: '0 表示不限制',
         rpmLimitHint: '每用户在本分组每分钟最大请求数，0 = 不限制；一旦设置即接管该用户的限流（覆盖用户级 rpm_limit）',
+        allowContributionPool: '允许用户贡献账号并入此号池',
+        allowContributionPoolHint: '用户只能选择已开启的分组；并入账号自动使用本分组的费率倍数。',
+
         maxReasoningEffort: '推理强度上限',
         maxReasoningEffortUnlimited: '不限制（跟随请求）',
         maxReasoningEffortHint: '仅限制客户端主动请求的 OpenAI reasoning effort；Composite 分组仅对解析到 OpenAI 的请求生效。超过上限时自动降档，不会为缺省请求主动开启推理。上限优先级高于推理强度映射。',

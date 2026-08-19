@@ -32,6 +32,30 @@ func TestChatCompletionsToResponses_BasicText(t *testing.T) {
 	assert.Equal(t, "user", items[0].Role)
 }
 
+func TestChatCompletionsToResponses_PreservesFilePart(t *testing.T) {
+	req := &ChatCompletionsRequest{
+		Model: "gpt-4o",
+		Messages: []ChatMessage{{
+			Role: "user",
+			Content: json.RawMessage(`[
+				{"type":"text","text":"Read this file"},
+				{"type":"file","file":{"filename":"notes.pdf","file_data":"data:application/pdf;base64,JVBERi0="}}
+			]`),
+		}},
+	}
+
+	resp, err := ChatCompletionsToResponses(req)
+	require.NoError(t, err)
+	var input []ResponsesInputItem
+	require.NoError(t, json.Unmarshal(resp.Input, &input))
+	parts := []ResponsesContentPart{}
+	require.NoError(t, json.Unmarshal(input[0].Content, &parts))
+	require.Len(t, parts, 2)
+	assert.Equal(t, "input_file", parts[1].Type)
+	assert.Equal(t, "notes.pdf", parts[1].Filename)
+	assert.Equal(t, "data:application/pdf;base64,JVBERi0=", parts[1].FileData)
+}
+
 func TestUsageConversionsPreserveCacheWriteTokens(t *testing.T) {
 	var responsesUsage ResponsesUsage
 	require.NoError(t, json.Unmarshal([]byte(`{

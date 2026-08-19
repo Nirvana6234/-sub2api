@@ -65,6 +65,22 @@ func TestAntigravityModelNotFoundKeepsBare404Fallback(t *testing.T) {
 	}
 }
 
+func TestIsUpstreamModelCapacityExhausted(t *testing.T) {
+	for _, tt := range []struct {
+		body []byte
+		want bool
+	}{
+		{body: []byte(`{"error":{"reason":"MODEL_CAPACITY_EXHAUSTED"}}`), want: true},
+		{body: []byte(`{"error":{"message":"The model is at capacity"}}`), want: true},
+		{body: []byte(`{"error":{"message":"Service overloaded"}}`), want: false},
+		{body: []byte(`{"error":{"message":"model not found"}}`), want: false},
+	} {
+		if got := isUpstreamModelCapacityExhausted(tt.body); got != tt.want {
+			t.Fatalf("isUpstreamModelCapacityExhausted(%s) = %v, want %v", tt.body, got, tt.want)
+		}
+	}
+}
+
 func TestIsOpenAICodexPlanGatedModelError(t *testing.T) {
 	tests := []struct {
 		name       string

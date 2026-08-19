@@ -1,8 +1,10 @@
 package setup
 
 import (
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -198,7 +200,7 @@ func TestWriteConfigFileKeepsDefaultUserConcurrency(t *testing.T) {
 		t.Fatalf("ReadFile() error = %v", err)
 	}
 
-	if !strings.Contains(string(data), "user_concurrency: 5") {
+	if !strings.Contains(string(data), "user_concurrency: 30") {
 		t.Fatalf("config missing default user concurrency, got:\n%s", string(data))
 	}
 }
@@ -238,13 +240,41 @@ func TestBuildDatabaseConnectionDSNsUsesPostgresForBootstrap(t *testing.T) {
 
 	bootstrapDSN, targetDSN := buildDatabaseConnectionDSNs(cfg)
 
-	if !strings.Contains(bootstrapDSN, "dbname=postgres") {
-		t.Fatalf("bootstrap DSN = %q, want default postgres database", bootstrapDSN)
+	assertPostgresDSN(t, bootstrapDSN, cfg, "postgres")
+	assertPostgresDSN(t, targetDSN, cfg, "sub2api")
+}
+
+func TestBuildPostgresDSNHandlesEmptyPasswordAndReservedCharacters(t *testing.T) {
+	tests := []DatabaseConfig{
+		{Host: "127.0.0.1", Port: 5433, User: "postgres", Password: "", DBName: "sub2api", SSLMode: "disable"},
+		{Host: "::1", Port: 5432, User: "user@local", Password: "p a:ss/@word", DBName: "local_data", SSLMode: "require"},
 	}
-	if strings.Contains(bootstrapDSN, "dbname=sub2api") {
-		t.Fatalf("bootstrap DSN = %q, should not connect to target database before checking/creating it", bootstrapDSN)
+
+	for _, cfg := range tests {
+		assertPostgresDSN(t, buildPostgresDSN(&cfg, cfg.DBName), &cfg, cfg.DBName)
 	}
-	if !strings.Contains(targetDSN, "dbname=sub2api") {
-		t.Fatalf("target DSN = %q, want configured database", targetDSN)
+}
+
+func assertPostgresDSN(t *testing.T, dsn string, cfg *DatabaseConfig, database string) {
+	t.Helper()
+	parsed, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatalf("url.Parse(%q) error = %v", dsn, err)
+	}
+	if parsed.Scheme != "postgres" || parsed.Hostname() != cfg.Host || parsed.Port() != strconv.Itoa(cfg.Port) {
+		t.Fatalf("connection target in %q does not match %+v", dsn, cfg)
+	}
+	if parsed.User.Username() != cfg.User {
+		t.Fatalf("username in %q = %q, want %q", dsn, parsed.User.Username(), cfg.User)
+	}
+	password, hasPassword := parsed.User.Password()
+	if hasPassword != (cfg.Password != "") || password != cfg.Password {
+		t.Fatalf("password in %q did not round-trip", dsn)
+	}
+	if strings.TrimPrefix(parsed.Path, "/") != database {
+		t.Fatalf("database in %q = %q, want %q", dsn, parsed.Path, database)
+	}
+	if parsed.Query().Get("sslmode") != cfg.SSLMode {
+		t.Fatalf("sslmode in %q = %q, want %q", dsn, parsed.Query().Get("sslmode"), cfg.SSLMode)
 	}
 }

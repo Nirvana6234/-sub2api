@@ -68,6 +68,18 @@ describe('UpstreamBillingRateCell', () => {
     vi.useRealTimers()
   })
 
+  it('allows manual probes for Anthropic API keys but not OAuth accounts', () => {
+    const anthropicAPIKey = mount(UpstreamBillingRateCell, {
+      props: { account: makeAccount({ platform: 'anthropic', type: 'apikey' }), now: Date.now() }
+    })
+    expect(anthropicAPIKey.find('[data-testid="upstream-billing-probe"]').exists()).toBe(true)
+
+    const anthropicOAuth = mount(UpstreamBillingRateCell, {
+      props: { account: makeAccount({ platform: 'anthropic', type: 'oauth' }), now: Date.now() }
+    })
+    expect(anthropicOAuth.find('[data-testid="upstream-billing-probe"]').exists()).toBe(false)
+  })
+
   it('recomputes the current effective rate and keeps the icon-only probe action', async () => {
     const wrapper = mount(UpstreamBillingRateCell, {
       props: {
@@ -98,6 +110,34 @@ describe('UpstreamBillingRateCell', () => {
     expect(wrapper.get('[data-testid="upstream-billing-probe"]').attributes('aria-label')).toBe(
       'admin.accounts.upstreamBilling.manualProbe'
     )
+  })
+
+  it('uses an administrator manual rate ahead of a stale probe and exposes set and clear actions', async () => {
+    const wrapper = mount(UpstreamBillingRateCell, {
+      props: {
+        account: makeAccount({
+          extra: {
+            upstream_billing_manual_rate_multiplier: 0.03,
+            upstream_billing_probe: {
+              status: 'ok',
+              data: billingData,
+              received_at: '2026-07-12T22:00:00Z',
+              fresh_until: '2026-07-12T23:00:00Z',
+              last_attempt_at: '2026-07-12T22:00:00Z',
+              next_probe_at: '2026-07-12T22:30:00Z'
+            }
+          }
+        }),
+        now: Date.now()
+      }
+    })
+
+    expect(wrapper.get('[data-testid="upstream-billing-rate"]').text()).toBe('0.03x')
+    expect(wrapper.text()).toContain('admin.accounts.upstreamBilling.manual')
+    await wrapper.get('[data-testid="upstream-billing-set-manual-rate"]').trigger('click')
+    await wrapper.get('[data-testid="upstream-billing-clear-manual-rate"]').trigger('click')
+    expect(wrapper.emitted('edit-manual-rate')).toHaveLength(1)
+    expect(wrapper.emitted('clear-manual-rate')).toHaveLength(1)
   })
 
   it('uses retained failed data only while it is still fresh', async () => {

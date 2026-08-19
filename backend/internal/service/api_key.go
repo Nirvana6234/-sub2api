@@ -28,14 +28,17 @@ func IsWindowExpired(windowStart *time.Time, duration time.Duration) bool {
 }
 
 type APIKey struct {
-	ID          int64
-	UserID      int64
-	Key         string
-	Name        string
-	GroupID     *int64
-	Status      string
-	IPWhitelist []string
-	IPBlacklist []string
+	ID                int64
+	UserID            int64
+	Key               string
+	Name              string
+	GroupID           *int64
+	AutoGroup         bool
+	AutoGroupStrategy string
+	AutoGroupIDs      []int64
+	Status            string
+	IPWhitelist       []string
+	IPBlacklist       []string
 	// 预编译的 IP 规则，用于认证热路径避免重复 ParseIP/ParseCIDR。
 	CompiledIPWhitelist *ip.CompiledIPRules `json:"-"`
 	CompiledIPBlacklist *ip.CompiledIPRules `json:"-"`
@@ -45,7 +48,12 @@ type APIKey struct {
 	UpdatedAt           time.Time
 	User                *User
 	Group               *Group
-	CurrentConcurrency  int
+	// AutoGroupCurrentGroup is the most recently selected runtime group for an
+	// automatic key. Automatic routing keeps a separate selection per model.
+	AutoGroupCurrentGroup      *Group
+	AutoGroupCurrentModel      string
+	AutoGroupCurrentSelectedAt *time.Time
+	CurrentConcurrency         int
 
 	// Quota fields
 	Quota     float64    // Quota limit in USD (0 = unlimited)

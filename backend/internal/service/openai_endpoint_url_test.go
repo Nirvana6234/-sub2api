@@ -29,3 +29,8 @@ func TestBuildOpenAIEndpointURLPreservesURLComponents(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildNewAPIEndpointURLUsesHostRoot(t *testing.T) {
+	require.Equal(t, "https://upstream.example/api/user/self", buildNewAPIEndpointURL("https://upstream.example", "/api/user/self"))
+	require.Equal(t, "https://upstream.example/api/pricing", buildNewAPIEndpointURL("https://upstream.example/v1", "/api/pricing"))
+}

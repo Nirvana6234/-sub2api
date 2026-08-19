@@ -86,9 +86,12 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [
       vue(),
-      checker({
-        vueTsc: true
-      }),
+      // [临时] 构建期禁用 checker：它 spawn 子进程时参数不转义，
+      // 而本仓库路径含中文与点号，会导致子进程以 127 退出、构建静默中断。
+      // 类型检查由 package.json 的 vue-tsc -b 单独完成，此处冗余。
+      // checker({
+      //   vueTsc: true
+      // }),
       injectPublicSettings(backendUrl)
     ],
   resolve: {

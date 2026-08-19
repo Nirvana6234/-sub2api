@@ -190,6 +190,15 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		// Available channels feature (default disabled; opt-in)
 		SettingKeyAvailableChannelsEnabled: "false",
 
+		// Playground feature (default disabled; opt-in)
+		SettingKeyPlaygroundEnabled:              "false",
+		SettingKeyPlaygroundDefaultChatModel:     "gpt-5.4",
+		SettingKeyPlaygroundDefaultImageModel:    "gpt-image-2",
+		SettingKeyPlaygroundDefaultChatGroupIDs:  "[]",
+		SettingKeyPlaygroundDefaultImageGroupIDs: "[]",
+		SettingKeyPlaygroundDefaultChatStrategy:  autoGroupStrategyPrice,
+		SettingKeyPlaygroundDefaultImageStrategy: autoGroupStrategyPrice,
+
 		// Model plaza feature (default disabled; opt-in, public unless require_auth)
 		SettingKeyModelPlazaEnabled:     "false",
 		SettingKeyModelPlazaRequireAuth: "false",
@@ -235,7 +244,7 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingPaymentVisibleMethodAlipayEnabled:                     "false",
 		SettingPaymentVisibleMethodWxpayEnabled:                      "false",
 		openAIAdvancedSchedulerSettingKey:                            "false",
-		SettingKeyOpenAIAdvancedSchedulerStickyWeightedEnabled:       "false",
+		SettingKeyOpenAIAdvancedSchedulerStickyWeightedEnabled:       "true",
 		SettingKeyOpenAIAdvancedSchedulerSubscriptionPriorityEnabled: "false",
 		SettingKeyOpenAIAdvancedSchedulerLBTopK:                      "",
 		SettingKeyOpenAIAdvancedSchedulerWeightPriority:              "",
@@ -787,6 +796,21 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	// Available channels feature (default: disabled; strict true)
 	result.AvailableChannelsEnabled = settings[SettingKeyAvailableChannelsEnabled] == "true"
 
+	// Playground feature (default: disabled; strict true)
+	result.PlaygroundEnabled = settings[SettingKeyPlaygroundEnabled] == "true"
+	result.PlaygroundDefaultChatModel = strings.TrimSpace(settings[SettingKeyPlaygroundDefaultChatModel])
+	if result.PlaygroundDefaultChatModel == "" {
+		result.PlaygroundDefaultChatModel = "gpt-5.4"
+	}
+	result.PlaygroundDefaultImageModel = strings.TrimSpace(settings[SettingKeyPlaygroundDefaultImageModel])
+	if result.PlaygroundDefaultImageModel == "" {
+		result.PlaygroundDefaultImageModel = "gpt-image-2"
+	}
+	result.PlaygroundDefaultChatGroupIDs = parsePlaygroundGroupIDs(settings[SettingKeyPlaygroundDefaultChatGroupIDs])
+	result.PlaygroundDefaultImageGroupIDs = parsePlaygroundGroupIDs(settings[SettingKeyPlaygroundDefaultImageGroupIDs])
+	result.PlaygroundDefaultChatStrategy = normalizeAutoGroupStrategy(settings[SettingKeyPlaygroundDefaultChatStrategy])
+	result.PlaygroundDefaultImageStrategy = normalizeAutoGroupStrategy(settings[SettingKeyPlaygroundDefaultImageStrategy])
+
 	// Model plaza feature (default: disabled; strict true)
 	result.ModelPlazaEnabled = settings[SettingKeyModelPlazaEnabled] == "true"
 	result.ModelPlazaRequireAuth = settings[SettingKeyModelPlazaRequireAuth] == "true"
@@ -932,6 +956,17 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.AllowUserViewErrorRequests = settings[SettingKeyAllowUserViewErrorRequests] == "true" // default false
 
 	return result
+}
+
+func parsePlaygroundGroupIDs(raw string) []int64 {
+	if strings.TrimSpace(raw) == "" {
+		return []int64{}
+	}
+	var groupIDs []int64
+	if err := json.Unmarshal([]byte(raw), &groupIDs); err != nil {
+		return []int64{}
+	}
+	return normalizeAutoGroupIDs(groupIDs)
 }
 
 func clampAffiliateRebateRate(value float64) float64 {
@@ -1263,4 +1298,30 @@ func normalizeTablePreferences(defaultPageSize int, options []int) (int, []int) 
 	}
 
 	return defaultPageSize, normalizedOptions
+}
+
+func clampAccountShareRewardRatePercent(value float64) float64 {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return AccountShareRewardRateDefaultPercent
+	}
+	if value < AccountShareRewardRateMinPercent {
+		return AccountShareRewardRateMinPercent
+	}
+	if value > AccountShareRewardRateMaxPercent {
+		return AccountShareRewardRateMaxPercent
+	}
+	return value
+}
+
+func clampAccountOwnUsageFeeRatePercent(value float64) float64 {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return AccountOwnUsageFeeRateDefaultPercent
+	}
+	if value < AccountOwnUsageFeeRateMinPercent {
+		return AccountOwnUsageFeeRateMinPercent
+	}
+	if value > AccountOwnUsageFeeRateMaxPercent {
+		return AccountOwnUsageFeeRateMaxPercent
+	}
+	return value
 }

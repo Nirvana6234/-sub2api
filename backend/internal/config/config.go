@@ -1252,6 +1252,18 @@ type GatewayOpenAISchedulerConfig struct {
 	StickyEscapeTTFTMs int `mapstructure:"sticky_escape_ttft_ms"`
 	// StickyEscapeErrorRate: 错误率 EWMA 超过该阈值时跳过 sticky
 	StickyEscapeErrorRate float64 `mapstructure:"sticky_escape_error_rate"`
+	// HealthErrorHalfLifeSeconds: 错误率 EWMA 在无新样本时向健康值衰减的半衰期
+	HealthErrorHalfLifeSeconds int `mapstructure:"health_error_half_life_seconds"`
+	// HealthTTFTStaleSeconds: TTFT 样本超过该时间后按未知中性值处理
+	HealthTTFTStaleSeconds int `mapstructure:"health_ttft_stale_seconds"`
+	// HealthIdleEvictionSeconds: 账号健康记录未再被观测后的内存回收时间
+	HealthIdleEvictionSeconds int `mapstructure:"health_idle_eviction_seconds"`
+	// ColdStartProbeAfterSeconds: 从未被尝试的新账号进入受控探测的等待时间
+	ColdStartProbeAfterSeconds int `mapstructure:"cold_start_probe_after_seconds"`
+	// RecoveryProbeAfterSeconds: 分组内长时间未尝试账号进入受控恢复探测的等待时间
+	RecoveryProbeAfterSeconds int `mapstructure:"recovery_probe_after_seconds"`
+	// RecoveryProbeCooldownSeconds: 同一账号在同一分组内的恢复探测冷却时间
+	RecoveryProbeCooldownSeconds int `mapstructure:"recovery_probe_cooldown_seconds"`
 }
 
 // GatewayUsageRecordConfig 使用量记录异步队列配置
@@ -1705,6 +1717,24 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	if cfg.Gateway.OpenAIScheduler.StickyEscapeErrorRate == 0 {
 		cfg.Gateway.OpenAIScheduler.StickyEscapeErrorRate = 0.5
 	}
+	if cfg.Gateway.OpenAIScheduler.HealthErrorHalfLifeSeconds == 0 {
+		cfg.Gateway.OpenAIScheduler.HealthErrorHalfLifeSeconds = 15 * 60
+	}
+	if cfg.Gateway.OpenAIScheduler.HealthTTFTStaleSeconds == 0 {
+		cfg.Gateway.OpenAIScheduler.HealthTTFTStaleSeconds = 30 * 60
+	}
+	if cfg.Gateway.OpenAIScheduler.HealthIdleEvictionSeconds == 0 {
+		cfg.Gateway.OpenAIScheduler.HealthIdleEvictionSeconds = 2 * 60 * 60
+	}
+	if cfg.Gateway.OpenAIScheduler.ColdStartProbeAfterSeconds == 0 {
+		cfg.Gateway.OpenAIScheduler.ColdStartProbeAfterSeconds = 2 * 60
+	}
+	if cfg.Gateway.OpenAIScheduler.RecoveryProbeAfterSeconds == 0 {
+		cfg.Gateway.OpenAIScheduler.RecoveryProbeAfterSeconds = 30 * 60
+	}
+	if cfg.Gateway.OpenAIScheduler.RecoveryProbeCooldownSeconds == 0 {
+		cfg.Gateway.OpenAIScheduler.RecoveryProbeCooldownSeconds = 10 * 60
+	}
 	// Kept as a backstop: setEnvReachableDefaults now registers this key with its
 	// effective default (true), so IsSet always reports true and this branch no
 	// longer fires. It still guards the default if that registration is dropped.
@@ -2149,7 +2179,7 @@ func setDefaults() {
 	// Do not ship fixed defaults here to avoid insecure "known credentials" in production.
 	viper.SetDefault("default.admin_email", "")
 	viper.SetDefault("default.admin_password", "")
-	viper.SetDefault("default.user_concurrency", 5)
+	viper.SetDefault("default.user_concurrency", 30)
 	viper.SetDefault("default.user_balance", 0)
 	viper.SetDefault("default.api_key_prefix", "sk-")
 	viper.SetDefault("default.rate_multiplier", 1.0)
@@ -2446,6 +2476,12 @@ func setEnvReachableDefaults() {
 	viper.SetDefault("gateway.openai_scheduler.sticky_escape_enabled", true)
 	viper.SetDefault("gateway.openai_scheduler.sticky_escape_error_rate", 0.0)
 	viper.SetDefault("gateway.openai_scheduler.sticky_escape_ttft_ms", 0)
+	viper.SetDefault("gateway.openai_scheduler.health_error_half_life_seconds", 0)
+	viper.SetDefault("gateway.openai_scheduler.health_ttft_stale_seconds", 0)
+	viper.SetDefault("gateway.openai_scheduler.health_idle_eviction_seconds", 0)
+	viper.SetDefault("gateway.openai_scheduler.cold_start_probe_after_seconds", 0)
+	viper.SetDefault("gateway.openai_scheduler.recovery_probe_after_seconds", 0)
+	viper.SetDefault("gateway.openai_scheduler.recovery_probe_cooldown_seconds", 0)
 
 	// server.trusted_proxies and security.forwarded_client_ip_headers are the
 	// other exception: load() distinguishes explicit configuration from absence
@@ -3376,6 +3412,18 @@ func (c *Config) Validate() error {
 	}
 	if c.Gateway.OpenAIScheduler.StickyEscapeErrorRate < 0 || c.Gateway.OpenAIScheduler.StickyEscapeErrorRate > 1 {
 		return fmt.Errorf("gateway.openai_scheduler.sticky_escape_error_rate must be between 0 and 1")
+	}
+	for key, value := range map[string]int{
+		"health_error_half_life_seconds":  c.Gateway.OpenAIScheduler.HealthErrorHalfLifeSeconds,
+		"health_ttft_stale_seconds":       c.Gateway.OpenAIScheduler.HealthTTFTStaleSeconds,
+		"health_idle_eviction_seconds":    c.Gateway.OpenAIScheduler.HealthIdleEvictionSeconds,
+		"cold_start_probe_after_seconds":  c.Gateway.OpenAIScheduler.ColdStartProbeAfterSeconds,
+		"recovery_probe_after_seconds":    c.Gateway.OpenAIScheduler.RecoveryProbeAfterSeconds,
+		"recovery_probe_cooldown_seconds": c.Gateway.OpenAIScheduler.RecoveryProbeCooldownSeconds,
+	} {
+		if value <= 0 {
+			return fmt.Errorf("gateway.openai_scheduler.%s must be positive", key)
+		}
 	}
 	if c.Gateway.MaxLineSize < 0 {
 		return fmt.Errorf("gateway.max_line_size must be non-negative")

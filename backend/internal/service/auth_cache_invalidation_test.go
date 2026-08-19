@@ -18,6 +18,7 @@ func TestUsageService_InvalidateUsageCaches(t *testing.T) {
 
 	svc.invalidateUsageCaches(context.Background(), 7, true)
 	require.Equal(t, []int64{7}, invalidator.userIDs)
+	require.Empty(t, invalidator.autoGroupUserIDs)
 }
 
 func TestRedeemService_InvalidateRedeemCaches_AuthCache(t *testing.T) {

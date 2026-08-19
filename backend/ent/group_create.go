@@ -13,6 +13,7 @@ import (
 	"entgo.io/ent/schema/field"
 	"github.com/Wei-Shaw/sub2api/ent/account"
 	"github.com/Wei-Shaw/sub2api/ent/apikey"
+	"github.com/Wei-Shaw/sub2api/ent/compositemodelroute"
 	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/ent/redeemcode"
 	"github.com/Wei-Shaw/sub2api/ent/usagelog"
@@ -101,6 +102,20 @@ func (_c *GroupCreate) SetRateMultiplier(v float64) *GroupCreate {
 func (_c *GroupCreate) SetNillableRateMultiplier(v *float64) *GroupCreate {
 	if v != nil {
 		_c.SetRateMultiplier(*v)
+	}
+	return _c
+}
+
+// SetAllowContributionPool sets the "allow_contribution_pool" field.
+func (_c *GroupCreate) SetAllowContributionPool(v bool) *GroupCreate {
+	_c.mutation.SetAllowContributionPool(v)
+	return _c
+}
+
+// SetNillableAllowContributionPool sets the "allow_contribution_pool" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableAllowContributionPool(v *bool) *GroupCreate {
+	if v != nil {
+		_c.SetAllowContributionPool(*v)
 	}
 	return _c
 }
@@ -857,6 +872,21 @@ func (_c *GroupCreate) AddAllowedUsers(v ...*User) *GroupCreate {
 	return _c.AddAllowedUserIDs(ids...)
 }
 
+// AddCompositeModelRouteIDs adds the "composite_model_routes" edge to the CompositeModelRoute entity by IDs.
+func (_c *GroupCreate) AddCompositeModelRouteIDs(ids ...int64) *GroupCreate {
+	_c.mutation.AddCompositeModelRouteIDs(ids...)
+	return _c
+}
+
+// AddCompositeModelRoutes adds the "composite_model_routes" edges to the CompositeModelRoute entity.
+func (_c *GroupCreate) AddCompositeModelRoutes(v ...*CompositeModelRoute) *GroupCreate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _c.AddCompositeModelRouteIDs(ids...)
+}
+
 // Mutation returns the GroupMutation object of the builder.
 func (_c *GroupCreate) Mutation() *GroupMutation {
 	return _c.mutation
@@ -911,6 +941,10 @@ func (_c *GroupCreate) defaults() error {
 	if _, ok := _c.mutation.RateMultiplier(); !ok {
 		v := group.DefaultRateMultiplier
 		_c.mutation.SetRateMultiplier(v)
+	}
+	if _, ok := _c.mutation.AllowContributionPool(); !ok {
+		v := group.DefaultAllowContributionPool
+		_c.mutation.SetAllowContributionPool(v)
 	}
 	if _, ok := _c.mutation.PeakRateEnabled(); !ok {
 		v := group.DefaultPeakRateEnabled
@@ -1073,6 +1107,9 @@ func (_c *GroupCreate) check() error {
 	}
 	if _, ok := _c.mutation.RateMultiplier(); !ok {
 		return &ValidationError{Name: "rate_multiplier", err: errors.New(`ent: missing required field "Group.rate_multiplier"`)}
+	}
+	if _, ok := _c.mutation.AllowContributionPool(); !ok {
+		return &ValidationError{Name: "allow_contribution_pool", err: errors.New(`ent: missing required field "Group.allow_contribution_pool"`)}
 	}
 	if _, ok := _c.mutation.PeakRateEnabled(); !ok {
 		return &ValidationError{Name: "peak_rate_enabled", err: errors.New(`ent: missing required field "Group.peak_rate_enabled"`)}
@@ -1269,6 +1306,10 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.RateMultiplier(); ok {
 		_spec.SetField(group.FieldRateMultiplier, field.TypeFloat64, value)
 		_node.RateMultiplier = value
+	}
+	if value, ok := _c.mutation.AllowContributionPool(); ok {
+		_spec.SetField(group.FieldAllowContributionPool, field.TypeBool, value)
+		_node.AllowContributionPool = value
 	}
 	if value, ok := _c.mutation.PeakRateEnabled(); ok {
 		_spec.SetField(group.FieldPeakRateEnabled, field.TypeBool, value)
@@ -1570,6 +1611,22 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 		edge.Target.Fields = specE.Fields
 		_spec.Edges = append(_spec.Edges, edge)
 	}
+	if nodes := _c.mutation.CompositeModelRoutesIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   group.CompositeModelRoutesTable,
+			Columns: []string{group.CompositeModelRoutesColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(compositemodelroute.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges = append(_spec.Edges, edge)
+	}
 	return _node, _spec
 }
 
@@ -1697,6 +1754,18 @@ func (u *GroupUpsert) UpdateRateMultiplier() *GroupUpsert {
 // AddRateMultiplier adds v to the "rate_multiplier" field.
 func (u *GroupUpsert) AddRateMultiplier(v float64) *GroupUpsert {
 	u.Add(group.FieldRateMultiplier, v)
+	return u
+}
+
+// SetAllowContributionPool sets the "allow_contribution_pool" field.
+func (u *GroupUpsert) SetAllowContributionPool(v bool) *GroupUpsert {
+	u.Set(group.FieldAllowContributionPool, v)
+	return u
+}
+
+// UpdateAllowContributionPool sets the "allow_contribution_pool" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateAllowContributionPool() *GroupUpsert {
+	u.SetExcluded(group.FieldAllowContributionPool)
 	return u
 }
 
@@ -2622,6 +2691,20 @@ func (u *GroupUpsertOne) AddRateMultiplier(v float64) *GroupUpsertOne {
 func (u *GroupUpsertOne) UpdateRateMultiplier() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateRateMultiplier()
+	})
+}
+
+// SetAllowContributionPool sets the "allow_contribution_pool" field.
+func (u *GroupUpsertOne) SetAllowContributionPool(v bool) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetAllowContributionPool(v)
+	})
+}
+
+// UpdateAllowContributionPool sets the "allow_contribution_pool" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateAllowContributionPool() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateAllowContributionPool()
 	})
 }
 
@@ -3844,6 +3927,20 @@ func (u *GroupUpsertBulk) AddRateMultiplier(v float64) *GroupUpsertBulk {
 func (u *GroupUpsertBulk) UpdateRateMultiplier() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateRateMultiplier()
+	})
+}
+
+// SetAllowContributionPool sets the "allow_contribution_pool" field.
+func (u *GroupUpsertBulk) SetAllowContributionPool(v bool) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetAllowContributionPool(v)
+	})
+}
+
+// UpdateAllowContributionPool sets the "allow_contribution_pool" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateAllowContributionPool() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateAllowContributionPool()
 	})
 }
 
