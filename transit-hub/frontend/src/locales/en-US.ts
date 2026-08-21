@@ -123,6 +123,7 @@ export default {
       groupRates: 'Group Rates',
       groupAssociations: 'Pricing Mappings',
       connectionHealth: 'Group Health',
+      purityCheck: 'Purity Check',
       groupRateCampaigns: 'Rate Campaigns',
       sub2apiFeatures: 'Embedded Features',
       settings: 'Settings',
@@ -868,6 +869,102 @@ export default {
       saveSuccess: 'Saved',
       saving: 'Saving...',
       saveError: 'Save failed. Please try again.'
+    },
+    purityCheck: {
+      title: 'GPT-5.6 Purity Check',
+      subtitle:
+        'Run fixed probes against connected OpenAI upstream accounts to check whether they actually serve the claimed variant. Probes consume real upstream tokens, and the detector runs one session at a time, so batches execute serially.',
+      refresh: 'Refresh',
+      disclaimer:
+        'A failed check does not prove the relay is mixing models: provider risk controls, egress IP, reverse proxies, concurrency or temporary routing can all land a request on a different capability tier. A passing check cannot rule out a transparent proxy or differentiated routing either. In a dispute, retest with lower concurrency at a different time/IP and ask the provider for verifiable records for that window.',
+      detectorUnavailable:
+        'The detector sidecar is not deployed or unreachable, so this page is disabled. Check PURITY_CHECK_DETECTOR_URL and the gpt56-detector container.',
+
+      targetsTitle: 'Accounts',
+      targetsEmpty: 'No accounts in the current admin workspace.',
+      selectAll: 'Select all',
+      clearAll: 'Clear',
+      targetReasons: {
+        not_openai: 'OpenAI accounts only: probes are calibrated for GPT-5.6 Sol/Terra/Luna',
+        not_api_key: 'No usable static API key: OAuth/setup-token goes through the ChatGPT backend, Bedrock/Service Account use different credentials',
+        no_base_url: 'No upstream base URL available',
+      },
+
+      tierLabel: 'Tier',
+      tiers: {
+        low: 'Low · quick screen',
+        medium: 'Medium · standard',
+        high: 'High · long context and native Codex comparison',
+      },
+      tierCost: '{logical} probes, up to {http} requests, about {tokens} input tokens',
+      tiersUnavailable: 'Tier information unavailable (detector unreachable).',
+
+      claimedModelLabel: 'Claimed model',
+      requestModelLabel: 'Actual request model',
+      requestModelHint:
+        'Set this when the relay uses a custom alias; leave empty to match the claimed model. A differing name alone never triggers an alert.',
+      submit: 'Check {count} selected account(s)',
+
+      confirmTitle: 'Confirm run',
+      confirmBody: 'Each of the {count} selected account(s) will run one {tier} check. These requests really hit the upstream and are billed.',
+      confirmLogical: 'Total probes',
+      confirmMaxHttp: 'Max requests (with retries)',
+      confirmTokens: 'Estimated input tokens',
+      confirmSerialNote:
+        'The detector allows one session at a time, so jobs run serially in submission order; later ones wait.',
+      confirmCancel: 'Cancel',
+      confirmOk: 'Confirm and start',
+
+      jobsTitle: 'Jobs',
+      jobsEmpty: 'No checks yet.',
+      queueSummary: '{queued} queued',
+      queuePosition: '{ahead} ahead',
+      statuses: {
+        queued: 'Queued',
+        running: 'Running',
+        succeeded: 'Done',
+        failed: 'Failed',
+        cancelled: 'Cancelled',
+      },
+      cancel: 'Cancel',
+      viewReport: 'View report',
+      delete: 'Delete',
+      deleteConfirm: 'Delete the check record and report for "{name}"? This cannot be undone.',
+      retentionHint: 'keeping the latest {max}; older records are removed automatically',
+      probeSuccess: '{ok}/{total} probes succeeded',
+      nonOfficialBadge: '(non-official tier)',
+
+      reportTitle: 'Report',
+      reportEmpty: 'No report content.',
+      reportJuice: 'Juice budget fingerprint',
+      reportFingerprint: 'Behavioural fingerprint',
+      reportFingerprintUnclear: 'Inconclusive',
+      reportMatches: 'Per-model match / strong-signal threshold',
+      reportMatchesNote:
+        'These percentages show how close this batch of fixed answers is to each trusted distribution. They are not routing shares and not a true identity probability.',
+      reportRaw: 'Show raw report',
+      nonOfficialNote:
+        'This run did not use an official tier, so results show reference match values only and do not constitute a formal strong-signal verdict.',
+
+      errors: {
+        request: 'Request failed. Please try again.',
+        network: 'Network error. Check your connection and retry.',
+        unknown: 'An unknown error occurred.',
+        notFound: 'Job not found.',
+        noCurrentAccount: 'Select an admin workspace first.',
+        detectorUnavailable: 'Detector unavailable.',
+        detectorBusy: 'Detector is busy. Try again shortly.',
+        targetNotFound: 'Account not found or removed.',
+        targetIneligible: 'The selected account does not support this check.',
+        invalidTier: 'Invalid tier.',
+        invalidModel: 'Claimed model must be Sol, Terra or Luna.',
+        accountsFetch: 'Failed to load accounts.',
+        credential: 'Could not resolve upstream credentials for this account.',
+        notCancellable: 'This job cannot be cancelled right now.',
+        notDeletable: 'The job is still queued or running. Cancel it before deleting.',
+        upstreamUnreachable: 'The upstream never responded, so no valid probes were collected and no verdict can be drawn.',
+        tooManyTargets: 'At most 20 accounts per submission.',
+      },
     },
     connectionHealth: {
       title: 'Group Health',

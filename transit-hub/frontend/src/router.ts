@@ -74,6 +74,12 @@ const routes = [
         component: () => import('./modules/admin/views/ConnectionHealthView.vue')
       },
       {
+        path: 'purity-check',
+        name: 'AdminPurityCheck',
+        meta: { requiresWorkspace: true },
+        component: () => import('./modules/admin/views/PurityCheckView.vue')
+      },
+      {
         path: 'group-rate-campaigns',
         name: 'AdminGroupRateCampaigns',
         meta: { requiresWorkspace: true },

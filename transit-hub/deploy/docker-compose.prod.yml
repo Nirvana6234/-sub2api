@@ -31,9 +31,33 @@ services:
       # 缺失不影响应用启动，也不影响 SMTP 之外的功能。用 `openssl rand -base64 32` 生成一个 base64 编码的
       # 32 字节随机值；生成后必须长期稳定保存——更换 key 后，旧的 SMTP 密码密文将无法解密，需要重新填写密码。
       # SMTP_ENCRYPTION_KEY: change-this-to-a-generated-base64-32-byte-key
+      # GPT-5.6 纯度检测旁路服务地址。注释掉这一行即可整体关闭该功能：
+      # 接口会返回「检测器不可用」，后台队列 worker 也不启动。
+      PURITY_CHECK_DETECTOR_URL: http://gpt56-detector:8760
     volumes:
       # 持久化工单图片附件；不要挂载到 /app/public 之下，避免变成公开静态目录。
       - ../data/ticket-uploads:/app/data/ticket-uploads
+
+  # GPT-5.6 纯度检测旁路服务（Python 检测器）。
+  #
+  # 【绝对不要给它加 ports 映射】。它只有一层随机生成的 session token，没有任何
+  # 业务鉴权；暴露到公网等于把「用我们的上游 key 发请求」的能力送出去。
+  # 它只需要待在 compose 默认网络里，被 app 通过服务名访问。
+  #
+  # 许可提醒：检测器采用 PolyForm Noncommercial License 1.0.0，商用边界见
+  # gpt56-detector/README.md 的「商用边界」一节，上线前必须先解决。
+  gpt56-detector:
+    build:
+      context: ./gpt56-detector
+    restart: unless-stopped
+    environment:
+      GPT56_BIND_HOST: "0.0.0.0"
+      GPT56_BIND_PORT: "8760"
+      GPT56_RUNS_ROOT: /data/runs
+    volumes:
+      # 会话状态与报告的 SQLite。不挂卷的话容器重建就丢历史会话；
+      # 报告本身 transithub 已经落库了，这里主要是给排障留现场。
+      - ../data/gpt56-runs:/data/runs
 
   # PostgreSQL 数据库服务。
   postgres:

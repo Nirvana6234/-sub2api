@@ -32,6 +32,14 @@ type AdminGroupAccountInfo struct {
 	UsageP95FirstTokenMs    *int     // Sub2API 最近一小时真实请求的首 Token 延迟 P95（至少 3 个样本）
 	UsageSampleCount        int      // 上述 P95 使用的有效样本数；不足 3 时只保留样本数
 	RateMultiplier          *float64 // Sub2API admin 转发账号记录自身的 rate_multiplier，不代表上游 API Key 所属分组倍率。
+	// CostRateMultiplier 是 Sub2API 已按"手工值 > 新鲜探测值 > 列值"解析好的上游成本倍率。
+	// nil 表示无人声明过该账号成本（含探测失败而列上只剩建表默认 1.0 的情况）。
+	// 【不要用 RateMultiplier 代替它做成本核算】：那一列常年停在默认 1.0000，
+	// 生产上 mcgrox.top 的账号手工成本 0.04、上游标称 0.8，只看列值会差 20 倍。
+	// 也【不要】在 nil 时回退 1.0 或回退上游标称倍率——没人声明就是不知道。
+	CostRateMultiplier *float64
+	// CostRateSource 是上面那个倍率的出处："manual" / "probe" / "column" / "none"。
+	CostRateSource string
 	LoadFactor              *int     // 负载因子（sub2api）
 	Weight                  *int     // 权重（仅 new-api channel 有；sub2api 为 nil）
 	Models                  string   // 模型列表（new-api channel.models 等）
@@ -112,6 +120,53 @@ func (s *PlatformService) listSub2APIGroupAccounts(session Session, group AdminG
 	// 不会为评分发起任何模型请求；接口不可用或样本不足时由 connection_health
 	// 回退到 TransitHub 已有探活事件。
 	s.enrichSub2APIAccountUsageLatency(session, group.ID, accounts, time.Now())
+	return accounts, nil
+}
+
+// ListAdminAllAccounts 拉取本方 Sub2API 的全部账号，不按分组过滤。
+//
+// 调价映射需要它来把"上游数据源"绑定到具体账号并读取该账号的真实成本倍率：
+// 绑定关系是跨分组的（一个上游站点的账号可能挂在任意自有分组下，也可能一个
+// 分组都没挂），按分组逐个拉既慢又会漏掉未分组账号。
+//
+// 与 listSub2APIGroupAccounts 的差别仅在于不带 group 参数，因此分组维度的字段
+// （GroupPriority / SchedulerScore）在这里恒为 nil——调价映射不需要它们。
+// 这里也不做 usage latency 富化：那是给调度评分用的，每次多打一轮接口不值当。
+func (s *PlatformService) ListAdminAllAccounts(session Session) ([]AdminGroupAccountInfo, error) {
+	if session.Platform != PlatformSub2API || !session.IsAuthenticated() {
+		return nil, newRequestError(ErrorAuth, PlatformSub2API)
+	}
+	authOptions := adminAuthOptions(session)
+
+	const pageSize = 100
+	const maxPages = 100 // 安全上限，防止上游分页字段异常导致死循环
+	accounts := make([]AdminGroupAccountInfo, 0)
+	for page := 1; page <= maxPages; page++ {
+		pageURL := session.BaseURL + "/api/v1/admin/accounts?page=" + strconvInt(int64(page)) +
+			"&page_size=" + strconvInt(pageSize)
+		response, err := s.httpClient.requestJSON(pageURL, authOptions)
+		if err != nil {
+			return nil, err
+		}
+		items := dataArray(response.Payload)
+		if len(items) == 0 {
+			break
+		}
+		for _, item := range items {
+			record, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			accounts = append(accounts, parseSub2APIAccount(record, ""))
+		}
+		total, hasTotal := paginationTotal(response.Payload)
+		if hasTotal && page*pageSize >= total {
+			break
+		}
+		if !hasTotal && len(items) < pageSize {
+			break
+		}
+	}
 	return accounts, nil
 }
 
@@ -236,6 +291,23 @@ func sub2APIUsageLatencyByAccount(samplesByAccount map[string][]int) map[string]
 	return metrics
 }
 
+// sub2APIAccountBaseURL 从账号记录里取上游地址，供"按域名给绑定建议"使用。
+//
+// Sub2API 的账号响应会带一份脱敏后的 credentials：RedactCredentials 只剥离
+// SensitiveCredentialKeys（api_key / access_token / cookie / private_key 等），
+// base_url 不在其中，因此列表阶段就能拿到。取不到时返回空串，调用方只是少一条
+// 预填建议，绝不能因此影响成本取值。
+func sub2APIAccountBaseURL(record map[string]any) string {
+	if direct := firstStringy(record, []string{"base_url", "baseURL", "baseUrl"}); direct != "" {
+		return direct
+	}
+	credentials, ok := record["credentials"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	return firstStringy(credentials, []string{"base_url", "baseURL", "baseUrl"})
+}
+
 // parseSub2APIAccount 把 sub2api 账号原始记录解析为平台中性结构，主动丢弃 credentials 等敏感字段。
 func parseSub2APIAccount(record map[string]any, groupID string) AdminGroupAccountInfo {
 	account := AdminGroupAccountInfo{
@@ -249,6 +321,9 @@ func parseSub2APIAccount(record map[string]any, groupID string) AdminGroupAccoun
 		CurrentConcurrency:      firstInt(record, []string{"current_concurrency", "currentConcurrency"}),
 		SchedulerScore:          sub2APIGroupSchedulerScore(record, groupID),
 		RateMultiplier:          firstNumber(record, []string{"rate_multiplier", "rateMultiplier"}),
+		CostRateMultiplier:      firstNumber(record, []string{"cost_rate_multiplier", "costRateMultiplier"}),
+		CostRateSource:          firstStringy(record, []string{"cost_rate_source", "costRateSource"}),
+		BaseURL:                 sub2APIAccountBaseURL(record),
 		LoadFactor:              firstInt(record, []string{"load_factor", "loadFactor"}),
 		GroupIDs:                parseGroupIDList(record),
 		Schedulable:             firstBoolValue(record, []string{"schedulable"}),

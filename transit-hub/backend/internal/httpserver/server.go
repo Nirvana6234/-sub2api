@@ -25,6 +25,7 @@ import (
 	"transithub/backend/internal/modules/lottery"
 	"transithub/backend/internal/modules/mass_email"
 	"transithub/backend/internal/modules/my_sites"
+	"transithub/backend/internal/modules/purity_check"
 	"transithub/backend/internal/modules/settings"
 	"transithub/backend/internal/modules/system"
 	"transithub/backend/internal/modules/tickets"
@@ -48,6 +49,8 @@ type Server struct {
 	lotteryFrameAncestorOrigin     func(ctx context.Context, embedToken string) (string, bool)
 	lotteryCancel                  context.CancelFunc
 	lotteryWorker                  *lottery.Worker
+	purityCheckCancel              context.CancelFunc
+	purityCheck                    *purity_check.Service
 }
 
 func New(cfg config.Config, db *pgxpool.Pool, redisClient *redis.Client) *Server {
@@ -228,6 +231,20 @@ func New(cfg config.Config, db *pgxpool.Pool, redisClient *redis.Client) *Server
 	connHealthService.SetPlatformGroupReader(platformService)
 	connection_health.RegisterRoutes(server.mux, connHealthService)
 
+	// GPT-5.6 纯度检测：驱动一个旁路 Python 检测器，判断上游给的到底是不是申报的型号。
+	// mySitesService 提供 admin 会话，platformService 负责列账号并在检测前临时解析明文凭据
+	// （与 connection_health 手动探活复用同一条 ResolveProbeCredential 链路）。
+	// 未配置 PURITY_CHECK_DETECTOR_URL 时接口返回「检测器不可用」，不启动 worker。
+	purityCheckService := purity_check.NewService(
+		purity_check.NewRepository(db),
+		mySitesService,
+		platformService,
+		purity_check.NewDetectorClient(cfg.PurityCheckDetectorURL),
+		cfg.PurityCheckDetectorRunsDir,
+	)
+	purityCheckService.SetAdminAccountResolver(adminAccountsService)
+	purity_check.RegisterRoutes(server.mux, purityCheckService)
+
 	// 所有 workspace 表 schema 完成后再补 legacy 归属；随后才启动 restore、worker 和 scheduler，
 	// 避免后台任务在旧行尚未补齐 workspace 时读取或写回数据。
 	if err := adminAccountsService.AssignLegacyRows(context.Background()); err != nil {
@@ -246,6 +263,11 @@ func New(cfg config.Config, db *pgxpool.Pool, redisClient *redis.Client) *Server
 	server.lotteryWorker = lotteryWorker
 	connHealthService.StartScheduler(context.Background())
 	connHealthService.StartMultiplierSnapshotScheduler(context.Background())
+	// 串行 worker：检测器同一时刻只能跑一个会话，队列必须一个一个来。
+	purityCheckCtx, purityCheckCancel := context.WithCancel(context.Background())
+	purityCheckService.Start(purityCheckCtx)
+	server.purityCheckCancel = purityCheckCancel
+	server.purityCheck = purityCheckService
 
 	// 策略设置变更时通知上游服务更新定时同步配置。
 	applyRefreshConfig := func(s settings.StrategySettings) {
@@ -420,6 +442,14 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
+	// 先停纯度检测：它可能正在驱动一个检测器会话，停之前要让它把 stop 发出去，
+	// 否则旁路服务会留着一个孤儿会话，下次启动的任务全被判 busy。
+	if s.purityCheckCancel != nil {
+		s.purityCheckCancel()
+	}
+	if s.purityCheck != nil {
+		s.purityCheck.Stop()
+	}
 	if s.lotteryCancel != nil {
 		s.lotteryCancel()
 	}
@@ -441,7 +471,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 func (s *Server) protectedPath(path string) bool {
-	return strings.HasPrefix(path, "/api/admin-accounts") || strings.HasPrefix(path, "/api/upstream-sites") || strings.HasPrefix(path, "/api/group-rates") || strings.HasPrefix(path, "/api/group-rate-campaigns") || strings.HasPrefix(path, "/api/my-sites") || strings.HasPrefix(path, "/api/settings") || strings.HasPrefix(path, "/api/dashboard") || strings.HasPrefix(path, "/api/system") || strings.HasPrefix(path, "/api/connection-health") || strings.HasPrefix(path, "/api/tickets") || strings.HasPrefix(path, "/api/leaderboard") || strings.HasPrefix(path, "/api/lottery") || strings.HasPrefix(path, "/api/mass-email")
+	return strings.HasPrefix(path, "/api/admin-accounts") || strings.HasPrefix(path, "/api/upstream-sites") || strings.HasPrefix(path, "/api/group-rates") || strings.HasPrefix(path, "/api/group-rate-campaigns") || strings.HasPrefix(path, "/api/my-sites") || strings.HasPrefix(path, "/api/settings") || strings.HasPrefix(path, "/api/dashboard") || strings.HasPrefix(path, "/api/system") || strings.HasPrefix(path, "/api/connection-health") || strings.HasPrefix(path, "/api/purity-check") || strings.HasPrefix(path, "/api/tickets") || strings.HasPrefix(path, "/api/leaderboard") || strings.HasPrefix(path, "/api/lottery") || strings.HasPrefix(path, "/api/mass-email")
 }
 
 func (s *Server) setSecurityHeaders(w http.ResponseWriter, r *http.Request) {

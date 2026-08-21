@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, onBeforeUnmount, watch, type Component } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { LayoutDashboard, Network, Settings, LogOut, Globe, Moon, Sun, Percent, Megaphone, ChevronDown, ArrowRightLeft, FolderTree, Link2, Activity, MessageSquare, Github, Mail, Menu, X, Trophy, Gift, Boxes } from 'lucide-vue-next'
+import { LayoutDashboard, Network, Settings, LogOut, Globe, Moon, Sun, Percent, Megaphone, ChevronDown, ArrowRightLeft, FolderTree, Link2, Activity, MessageSquare, Github, Mail, Menu, X, Trophy, Gift, Boxes, FlaskConical } from 'lucide-vue-next'
 import { useDark, useToggle } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { useAdminAccounts } from '../composables/useAdminAccounts'
@@ -126,6 +126,9 @@ type MenuEntry =
 const menuItems = computed<MenuEntry[]>(() => [
   { type: 'leaf', name: t('admin.menu.dashboard'), path: '/admin', icon: LayoutDashboard },
   { type: 'leaf', name: t('admin.menu.upstream'), path: '/admin/upstream', icon: Network },
+  // 纯度检测是对上游账号本身的质量核验，不属于分组管理；下面那个分组的三个二级
+  // 菜单顺序有「不随业务改动调整」的约定，不要往里塞第四项。
+  { type: 'leaf', name: t('admin.menu.purityCheck'), path: '/admin/purity-check', icon: FlaskConical },
   {
     type: 'group',
     id: 'group-management',

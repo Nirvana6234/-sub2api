@@ -50,6 +50,16 @@ type Config struct {
 	// SMTP 密码加密密钥：base64 编码的 32 字节 AES-256-GCM key，由 settings 模块解析和校验。
 	// 应用启动时是可选项，缺失不影响启动；这里只原样读取环境变量原值，不做任何解析或校验。
 	SMTPEncryptionKey string
+
+	// GPT-5.6 纯度检测旁路服务地址，形如 http://gpt56-detector:8760。
+	// 留空表示没部署检测器：purity_check 的接口一律返回「检测器不可用」，
+	// 也不启动后台 worker。这个旁路服务没有业务鉴权，只能填容器内网地址。
+	PurityCheckDetectorURL string
+
+	// 检测器旁路服务落盘根目录在本容器内的挂载路径（对应它的 GPT56_RUNS_ROOT）。
+	// 配了才会在裁剪检测历史时把那边对应会话的 SQLite 目录一并删掉；
+	// 留空则只清数据库，功能不受影响，只是旁路服务的卷会一直涨。
+	PurityCheckDetectorRunsDir string
 }
 
 func Load() Config {
@@ -85,6 +95,9 @@ func Load() Config {
 		TicketUploadDir: envOrDefault("TICKET_UPLOAD_DIR", "data/ticket-uploads"),
 
 		SMTPEncryptionKey: os.Getenv("SMTP_ENCRYPTION_KEY"),
+
+		PurityCheckDetectorURL:     os.Getenv("PURITY_CHECK_DETECTOR_URL"),
+		PurityCheckDetectorRunsDir: os.Getenv("PURITY_CHECK_DETECTOR_RUNS_DIR"),
 	}
 }
 
