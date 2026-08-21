@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -369,8 +370,13 @@ func summarizeReport(payload []byte) Report {
 		if hint == "" {
 			hint = first.CategoryCN
 		}
+		// 检测器的 safe_message 一般已经把状态码写进去了（"上游返回HTTP错误（HTTP 503）"），
+		// 无条件再追加就会出现「（HTTP 503）（HTTP 503）」。只在它没提到时才补。
 		if first.HTTPStatus != nil && *first.HTTPStatus > 0 {
-			hint += "（HTTP " + strconv.Itoa(*first.HTTPStatus) + "）"
+			code := strconv.Itoa(*first.HTTPStatus)
+			if !strings.Contains(hint, code) {
+				hint += "（HTTP " + code + "）"
+			}
 		}
 		summary.FailureHint = hint
 	}

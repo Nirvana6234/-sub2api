@@ -65,6 +65,56 @@ func TestSummarizeReport(t *testing.T) {
 	}
 }
 
+// TestSummarizeReportFailureHint 覆盖上游错误提示的拼装。
+//
+// 重点是不要重复写状态码：检测器的 safe_message 通常已经带了「（HTTP 503）」，
+// 无条件再追加会得到「上游返回HTTP错误（HTTP 503）（HTTP 503）」——生产上真出现过。
+func TestSummarizeReportFailureHint(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload string
+		want    string
+	}{
+		{
+			name: "safe_message 已含状态码时不重复追加",
+			payload: `{"network_error_details":[{"category_cn":"上游HTTP错误",
+				"safe_message":"上游返回HTTP错误（HTTP 503）","http_status":503}]}`,
+			want: "上游返回HTTP错误（HTTP 503）",
+		},
+		{
+			name: "safe_message 未含状态码时补上",
+			payload: `{"network_error_details":[{"category_cn":"上游HTTP错误",
+				"safe_message":"上游拒绝了请求","http_status":429}]}`,
+			want: "上游拒绝了请求（HTTP 429）",
+		},
+		{
+			name: "没有 safe_message 时退回分类名",
+			payload: `{"network_error_details":[{"category_cn":"网络连接或传输错误",
+				"safe_message":"","http_status":null}]}`,
+			want: "网络连接或传输错误",
+		},
+		{
+			// 连接类错误没有 http_status，不该凭空造一个。
+			name: "连接失败无状态码",
+			payload: `{"network_error_details":[{"category_cn":"网络连接或传输错误",
+				"safe_message":"网络连接或传输失败","http_status":null}]}`,
+			want: "网络连接或传输失败",
+		},
+		{
+			name:    "没有错误明细时为空",
+			payload: `{"network_summary":{"successful":19,"logical_tasks":19}}`,
+			want:    "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := summarizeReport([]byte(tc.payload)).FailureHint; got != tc.want {
+				t.Errorf("提示不符\n得到: %q\n期望: %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestSummarizeReportInvalidJSON 确认报告不是合法 JSON 时不 panic，
 // 只是摘要为空——原文照旧存下来，前端还能展开看。
 func TestSummarizeReportInvalidJSON(t *testing.T) {
