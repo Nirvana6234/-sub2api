@@ -200,6 +200,17 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		// Available channels feature (default disabled; opt-in)
 		SettingKeyAvailableChannelsEnabled: "false",
 
+		// 客户端下载页（默认开启，保持既有行为）
+		SettingKeyClientDownloadEnabled: "true",
+
+		// 客户端下载地址
+		SettingKeyClientDownloadNetdiskURL: "https://pan.baidu.com/s/5PT50-jTaOtR8D28OfYnbQQ",
+		SettingKeyClientDownloadDirectURL:  "https://gitee.com/borg_zhou/co-fly--chat-gpt-assistant/raw/master/Release/codex-relay-client_v0.1_x64.zip",
+
+		// 备用支付通道（默认关闭；opt-in）
+		SettingKeyBackupPaymentEnabled: "false",
+		SettingKeyBackupPaymentURL:     "https://pay.ldxp.cn/shop/IJBZUZDE",
+
 		// Playground feature (default disabled; opt-in)
 		SettingKeyPlaygroundEnabled:              "false",
 		SettingKeyPlaygroundDefaultChatModel:     "gpt-5.4",
@@ -824,6 +835,16 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 
 	// Available channels feature (default: disabled; strict true)
 	result.AvailableChannelsEnabled = settings[SettingKeyAvailableChannelsEnabled] == "true"
+
+	// 客户端下载页：默认开启，只有显式 "false" 才关闭。
+	result.ClientDownloadEnabled = settings[SettingKeyClientDownloadEnabled] != "false"
+
+	result.ClientDownloadNetdiskURL = strings.TrimSpace(settings[SettingKeyClientDownloadNetdiskURL])
+	result.ClientDownloadDirectURL = strings.TrimSpace(settings[SettingKeyClientDownloadDirectURL])
+
+	// 备用支付通道：默认关闭，严格 true 才开启。
+	result.BackupPaymentEnabled = settings[SettingKeyBackupPaymentEnabled] == "true"
+	result.BackupPaymentURL = strings.TrimSpace(settings[SettingKeyBackupPaymentURL])
 
 	// Playground feature (default: disabled; strict true)
 	result.PlaygroundEnabled = settings[SettingKeyPlaygroundEnabled] == "true"

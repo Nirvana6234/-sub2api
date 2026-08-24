@@ -2,7 +2,10 @@ package upstream
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -15,6 +18,76 @@ type Repository struct {
 
 func NewRepository(db *pgxpool.Pool) *Repository {
 	return &Repository{db: db}
+}
+
+func (r *Repository) InsertMultiplierEvent(ctx context.Context, event MultiplierEvent) error {
+	if event.ID == "" {
+		id, err := randomMultiplierEventID()
+		if err != nil {
+			return err
+		}
+		event.ID = id
+	}
+	if event.ObservedAt.IsZero() {
+		event.ObservedAt = time.Now().UTC()
+	}
+	_, err := r.db.Exec(ctx, `
+		INSERT INTO upstream_group_multiplier_events
+			(id, user_id, admin_account_id, site_id, site_name, group_id, group_name,
+			 previous_multiplier, current_multiplier, mapped, notified, observed_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+	`, event.ID, event.UserID, event.AdminAccountID, event.SiteID, event.SiteName, event.GroupID,
+		event.GroupName, event.PreviousMultiplier, event.CurrentMultiplier, event.Mapped,
+		event.Notified, event.ObservedAt.UTC())
+	return err
+}
+
+func (r *Repository) ListMultiplierEventsSince(ctx context.Context, userID, adminAccountID string, since time.Time, mappedOnly *bool) ([]MultiplierEvent, error) {
+	query := `
+		SELECT id, user_id, admin_account_id, site_id, site_name, group_id, group_name,
+		       previous_multiplier, current_multiplier, mapped, notified, observed_at
+		FROM upstream_group_multiplier_events
+		WHERE user_id = $1 AND admin_account_id = $2 AND observed_at >= $3`
+	args := []any{userID, adminAccountID, since.UTC()}
+	if mappedOnly != nil {
+		query += " AND mapped = $4"
+		args = append(args, *mappedOnly)
+	}
+	query += " ORDER BY observed_at ASC, id ASC"
+
+	rows, err := r.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]MultiplierEvent, 0)
+	for rows.Next() {
+		var event MultiplierEvent
+		if err := rows.Scan(&event.ID, &event.UserID, &event.AdminAccountID, &event.SiteID, &event.SiteName,
+			&event.GroupID, &event.GroupName, &event.PreviousMultiplier, &event.CurrentMultiplier,
+			&event.Mapped, &event.Notified, &event.ObservedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, event)
+	}
+	return result, rows.Err()
+}
+
+func (r *Repository) PruneMultiplierEventsBefore(ctx context.Context, cutoff time.Time) (int64, error) {
+	result, err := r.db.Exec(ctx, `DELETE FROM upstream_group_multiplier_events WHERE observed_at < $1`, cutoff.UTC())
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+func randomMultiplierEventID() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generate multiplier event id: %w", err)
+	}
+	return "mue_" + hex.EncodeToString(b), nil
 }
 
 func (r *Repository) EnsureSchema(ctx context.Context) error {
@@ -233,7 +306,6 @@ func (r *Repository) ListBalanceSnapshots(ctx context.Context, siteID string, st
 	}
 	return snapshots, rows.Err()
 }
-
 
 func (r *Repository) ListSites(ctx context.Context) ([]Site, error) {
 	rows, err := r.db.Query(ctx, `

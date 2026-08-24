@@ -56,6 +56,12 @@ declare module 'vue-router' {
     requiresRiskControl?: boolean
 
     /**
+     * 是否要求客户端下载页开关已启用。该页为公开页，关闭后访客也不可访问。
+     * @default false
+     */
+    requiresClientDownload?: boolean
+
+    /**
      * i18n key for the page title
      */
     titleKey?: string

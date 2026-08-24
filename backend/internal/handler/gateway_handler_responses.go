@@ -115,6 +115,21 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 
+	// Kiro compatibility: a Kiro relay speaks an Anthropic-shaped API but does not
+	// run hosted tools on the model's behalf, so Codex's hosted web_search arrives
+	// somewhere that cannot honour it. Drop the declaration before anything else
+	// reads the body — bodyRef below freezes it.
+	if apiKey.Group != nil && apiKey.Group.KiroCompat {
+		// The forward path resolves the model but never sees the group, so the
+		// flag rides along on the request context.
+		service.MarkKiroCompat(c)
+		if stripped, changed := service.StripHostedWebSearchTool(body); changed {
+			body = stripped
+			reqLog.Debug("gateway.responses.kiro_compat.web_search_stripped",
+				zap.Int64p("group_id", apiKey.GroupID))
+		}
+	}
+
 	if decision := h.checkSecurityAudit(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIResponses, reqModel, body); decision != nil && !decision.AllowNextStage {
 		h.responsesSecurityAuditError(c, decision)
 		return

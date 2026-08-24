@@ -53,6 +53,24 @@ def native_profile_user_agent(path: str | Path = RAW_PROFILE) -> str:
 
 DEFAULT_UPSTREAM_USER_AGENT = native_profile_user_agent()
 
+_BLOCKED_HEADER_OVERRIDES = {
+    "host", "content-length", "content-type", "transfer-encoding", "connection", "keep-alive",
+    "proxy-authenticate", "proxy-authorization", "proxy-connection", "te", "trailer", "upgrade",
+    "authorization", "x-api-key", "x-goog-api-key", "cookie", "accept-encoding",
+}
+
+
+def _normalize_header_overrides(value: dict[str, str] | None) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, str] = {}
+    for raw_name, raw_value in value.items():
+        name = str(raw_name or "").strip().lower()
+        header_value = str(raw_value or "").strip()
+        if name and header_value and name not in _BLOCKED_HEADER_OVERRIDES:
+            out[name] = header_value
+    return out
+
 
 @dataclass(frozen=True)
 class ProxyDecision:
@@ -180,7 +198,16 @@ def resolve_native_proxy(
     return ProxyDecision("direct", None, "none")
 
 
-def _native_child_environment(target_url: str) -> tuple[dict[str, str], ProxyDecision]:
+def _native_child_environment(target_url: str, proxy_url: str | None = None) -> tuple[dict[str, str], ProxyDecision]:
+    if proxy_url:
+        normalized_proxy = _normalize_http_proxy(proxy_url)
+        environment = {
+            key: value
+            for key, value in os.environ.items()
+            if key.casefold() not in {"https_proxy", "all_proxy", "http_proxy", "no_proxy"}
+        }
+        environment["HTTPS_PROXY"] = normalized_proxy
+        return environment, ProxyDecision("proxy", normalized_proxy, "request")
     decision = resolve_native_proxy(target_url)
     proxy_names = {"https_proxy", "all_proxy", "http_proxy", "no_proxy"}
     environment = {
@@ -444,12 +471,25 @@ class StreamingTransport:
         timeout: float = 180.0,
         capture_exchange: bool = False,
         cancellation: RequestCancellationController | None = None,
+        proxy_url: str | None = None,
+        header_overrides: dict[str, str] | None = None,
     ):
         self.base_url = normalize_api_base_url(base_url)
         self.api_key = api_key
         self.timeout = timeout
         self.capture_exchange = capture_exchange
         self.cancellation = cancellation or RequestCancellationController()
+        self.proxy_url = _normalize_http_proxy(proxy_url) if proxy_url else None
+        self.header_overrides = _normalize_header_overrides(header_overrides)
+
+    def _open_request(self, request: urllib.request.Request, timeout: float) -> Any:
+        if not self.proxy_url:
+            return urllib.request.urlopen(request, timeout=timeout)
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({
+            "http": self.proxy_url,
+            "https": self.proxy_url,
+        }))
+        return opener.open(request, timeout=timeout)
 
     def cancel_all(self) -> int:
         return self.cancellation.cancel_all()
@@ -541,12 +581,14 @@ class StreamingTransport:
         body_text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         body = body_text.encode("utf-8")
         url = self.base_url + "/responses"
-        request = urllib.request.Request(url, data=body, method="POST", headers={
+        headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
             "Accept": "text/event-stream",
             "User-Agent": str(os.environ.get("GPT56_USER_AGENT") or "").strip() or DEFAULT_UPSTREAM_USER_AGENT,
-        })
+        }
+        headers.update(self.header_overrides)
+        request = urllib.request.Request(url, data=body, method="POST", headers=headers)
         started_wall = utc_now()
         started = time.perf_counter()
         first_event_at = None
@@ -564,7 +606,7 @@ class StreamingTransport:
 
             def open_response() -> None:
                 try:
-                    response = urllib.request.urlopen(request, timeout=self.timeout)
+                    response = self._open_request(request, timeout=self.timeout)
                     active["response"] = response
                     if self.cancellation.is_cancelled():
                         self._close_response(response)
@@ -686,7 +728,7 @@ class StreamingTransport:
         if context_mode == "fixed_32k_history":
             command.extend(["--history-file", str(HISTORY_FIXTURE)])
         try:
-            environment, proxy_decision = _native_child_environment(url)
+            environment, proxy_decision = _native_child_environment(url, self.proxy_url)
         except ValueError as exc:
             raise TransportError(
                 "unsupported native proxy configuration",
@@ -695,6 +737,7 @@ class StreamingTransport:
                 safe_message=str(exc),
             ) from exc
         environment["GPT56_NATIVE_AUTHORIZATION"] = self.api_key
+        environment["GPT56_HEADER_OVERRIDES"] = json.dumps(self.header_overrides, ensure_ascii=False, separators=(",", ":"))
         started_wall = utc_now()
         started = time.perf_counter()
         process: subprocess.Popen[str] | None = None

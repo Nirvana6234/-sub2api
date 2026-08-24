@@ -147,6 +147,39 @@ func (r *upstreamBillingProbeAccountRepo) FindByExtraField(_ context.Context, ke
 	return result, nil
 }
 
+// Keep the test repository aligned with the production due-account lister:
+// the service applies the final per-account eligibility check after loading
+// this bounded candidate set.
+func (r *upstreamBillingProbeAccountRepo) ListDueUpstreamBillingProbeAccounts(_ context.Context, _ time.Time, limit int) ([]Account, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	result := make([]Account, 0, len(r.accounts))
+	for _, account := range r.accounts {
+		clone := *account
+		clone.Credentials = mergeMap(nil, account.Credentials)
+		clone.Extra = mergeMap(nil, account.Extra)
+		result = append(result, clone)
+	}
+	if limit > 0 && len(result) > limit {
+		result = result[:limit]
+	}
+	return result, nil
+}
+
+func TestUpstreamBillingProbeShouldRunUsesManualOverrideAndUndeclaredDefault(t *testing.T) {
+	undeclared := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, RateMultiplierUndeclared: true}
+	require.True(t, upstreamBillingProbeShouldRun(undeclared))
+
+	manual := 0.04
+	undeclared.Extra = map[string]any{UpstreamBillingManualRateMultiplierExtraKey: manual}
+	require.False(t, upstreamBillingProbeShouldRun(undeclared), "a valid manual multiplier must disable automatic probing")
+
+	declared := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive}
+	require.False(t, upstreamBillingProbeShouldRun(declared))
+	declared.Extra = map[string]any{UpstreamBillingProbeEnabledExtraKey: true}
+	require.True(t, upstreamBillingProbeShouldRun(declared))
+}
+
 type upstreamBillingProbeSettingRepo struct {
 	SettingRepository
 	mu     sync.Mutex

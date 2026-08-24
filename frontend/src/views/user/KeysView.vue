@@ -575,7 +575,16 @@
                   @change="toggleAutoGroupCandidate(formData.auto_group_ids, group.id)"
                 />
                 <span class="min-w-0 truncate">{{ group.name }}</span>
-                <span class="ml-auto shrink-0 rounded bg-primary-100 px-1.5 py-0.5 text-[10px] font-medium text-primary-800 dark:bg-primary-900/50 dark:text-primary-200">
+                <span
+                  class="ml-auto shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold tabular-nums"
+                  :class="autoGroupCandidateRateIsUserSpecific(group)
+                    ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200'
+                    : 'bg-gray-100 text-gray-700 dark:bg-dark-700 dark:text-gray-300'"
+                  :title="autoGroupCandidateRateTitle(group)"
+                >
+                  {{ autoGroupCandidateRateLabel(group) }}
+                </span>
+                <span class="shrink-0 rounded bg-primary-100 px-1.5 py-0.5 text-[10px] font-medium text-primary-800 dark:bg-primary-900/50 dark:text-primary-200">
                   {{ platformLabel(group.platform) }}
                 </span>
               </label>
@@ -1067,7 +1076,16 @@
                 @change="toggleAutoGroupCandidate(autoGroupConfig.ids, group.id)"
               />
               <span class="min-w-0 truncate">{{ group.name }}</span>
-              <span class="ml-auto shrink-0 rounded bg-primary-100 px-1.5 py-0.5 text-[10px] font-medium text-primary-800 dark:bg-primary-900/50 dark:text-primary-200">
+              <span
+                class="ml-auto shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold tabular-nums"
+                :class="autoGroupCandidateRateIsUserSpecific(group)
+                  ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200'
+                  : 'bg-gray-100 text-gray-700 dark:bg-dark-700 dark:text-gray-300'"
+                :title="autoGroupCandidateRateTitle(group)"
+              >
+                {{ autoGroupCandidateRateLabel(group) }}
+              </span>
+              <span class="shrink-0 rounded bg-primary-100 px-1.5 py-0.5 text-[10px] font-medium text-primary-800 dark:bg-primary-900/50 dark:text-primary-200">
                 {{ platformLabel(group.platform) }}
               </span>
             </label>
@@ -1297,6 +1315,7 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import type { Column } from '@/components/common/types'
 import type { BatchApiKeyUsageStats } from '@/api/usage'
 import { formatDateTime } from '@/utils/format'
+import { formatMultiplier } from '@/utils/formatters'
 import { maskApiKey } from '@/utils/maskApiKey'
 import {
   buildCcSwitchImportDeeplink,
@@ -1662,6 +1681,9 @@ const platformLabel = (platform: GroupPlatform) => {
     gemini: 'Gemini',
     antigravity: 'Antigravity',
     grok: 'Grok',
+    kimi: 'Kimi',
+    zhipu: 'Zhipu',
+    deepseek: 'DeepSeek',
     composite: 'Composite'
   }
   return labels[platform]
@@ -1676,6 +1698,27 @@ const isAutoGroupCandidateDisabled = (group: Group, candidateIDs: number[]) => {
   const selectedPlatform = selectedAutoGroupPlatform(candidateIDs)
   return selectedPlatform !== null && selectedPlatform !== group.platform && !candidateIDs.includes(group.id)
 }
+
+// 候选分组上展示的倍率。用户专属倍率优先于分组默认倍率——两者不一致时
+// 展示分组默认值会误导："低价优先"策略比较的是实际生效倍率，
+// 而用户看到的必须是同一个数，否则自动选择的结果会显得没有道理。
+const autoGroupCandidateRate = (group: Group): number => {
+  const userRate = userGroupRates.value[group.id]
+  return typeof userRate === 'number' ? userRate : group.rate_multiplier
+}
+
+// 是否为该用户的专属倍率（用于在 UI 上区别标注，避免与分组默认值混淆）
+const autoGroupCandidateRateIsUserSpecific = (group: Group): boolean =>
+  typeof userGroupRates.value[group.id] === 'number' &&
+  userGroupRates.value[group.id] !== group.rate_multiplier
+
+const autoGroupCandidateRateLabel = (group: Group): string =>
+  `${formatMultiplier(autoGroupCandidateRate(group))}x`
+
+const autoGroupCandidateRateTitle = (group: Group): string =>
+  autoGroupCandidateRateIsUserSpecific(group)
+    ? `你的专属倍率（已覆盖分组默认 ${formatMultiplier(group.rate_multiplier)}x）`
+    : '分组倍率'
 
 const toggleAutoGroupCandidate = (candidateIDs: number[], groupID: number) => {
   const index = candidateIDs.indexOf(groupID)

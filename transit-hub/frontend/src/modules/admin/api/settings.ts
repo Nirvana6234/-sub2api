@@ -1,4 +1,6 @@
 import type {
+  DailyReportPreview,
+  DailyReportSendResult,
   EmailTemplate,
   NotificationChannelSettings,
   SaveEmailTemplatePayload,
@@ -146,4 +148,19 @@ export const testSmtpEmail = async (payload: TestSmtpEmailPayload): Promise<Test
     method: 'POST',
     body: JSON.stringify(payload),
   })
+)
+
+/**
+ * 立即生成并推送一份运营日报。
+ *
+ * 与定时推送共用同一套取数和排版，所以它同时也是「模板改完先试一发」的验证手段。
+ * 不受定时推送「今天已发过」的去重影响——手动触发就是要现在再来一份。
+ */
+export const sendDailyReportNow = async (): Promise<DailyReportSendResult> => (
+  requestJson<DailyReportSendResult>('/daily-report/send-now', { method: 'POST' })
+)
+
+/** 只生成不发送，用来在页面上先看一眼。 */
+export const previewDailyReport = async (): Promise<DailyReportPreview> => (
+  requestJson<DailyReportPreview>('/daily-report/preview')
 )

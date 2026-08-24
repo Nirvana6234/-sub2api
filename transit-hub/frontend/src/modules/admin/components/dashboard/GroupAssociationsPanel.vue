@@ -24,6 +24,7 @@ import { listUpstreamSites } from '../../api/upstream'
 import { getNotificationChannelSettings } from '../../api/settings'
 import type {
   AutoPricingRunResult,
+  MySiteCostAccount,
   MySiteGroupRef,
   MySiteMapping,
   MySiteMappingOwnGroupOption,
@@ -54,6 +55,7 @@ const upstreamSites = ref<UpstreamSiteResponse[]>([])
 const staleOwnGroupNames = ref<string[]>([])
 const staleTargetRefs = ref<MySiteGroupRef[]>([])
 const liveUpstreamTargetMultipliers = ref<MySiteUpstreamTargetMultiplier[]>([])
+const costAccounts = ref<MySiteCostAccount[]>([])
 const botOptions = ref<BotOption[]>([])
 const search = ref('')
 const filter = ref<AssociationFilter>('all')
@@ -81,6 +83,10 @@ const staleOwnGroupSet = computed(() => new Set(staleOwnGroupNames.value))
 const staleTargetSet = computed(() => new Set(staleTargetRefs.value.map(target => targetKey(target.siteId, target.groupName))))
 const siteById = computed(() => new Map(upstreamSites.value.map(site => [site.id, site])))
 const upstreamLabels = computed(() => new Map(upstreamSites.value.map(site => [site.id, site.name])))
+/** siteId -> base_url，供绑定抽屉把同域名的 Sub2API 账号排在候选前面 */
+const siteBaseUrls = computed(() => Object.fromEntries(
+  upstreamSites.value.map(site => [site.id, site.baseUrl ?? '']),
+))
 
 const upstreamMultiplierMap = computed(() => {
   const values = new Map<string, number>()
@@ -211,21 +217,6 @@ const targetOptions = computed<MySiteUpstreamTargetOption[]>(() => {
 
 const selectedTargets = computed(() => selectedMapping.value?.upstreamTargets ?? [])
 
-const calculateEffectiveCostMultiplier = (
-  multiplier: number | null | undefined,
-  rechargeRate: number | null | undefined,
-): number | null => {
-  if (
-    multiplier == null
-    || rechargeRate == null
-    || !Number.isFinite(multiplier)
-    || !Number.isFinite(rechargeRate)
-    || multiplier < 0
-    || rechargeRate <= 0
-  ) return null
-  return multiplier * rechargeRate
-}
-
 const calculateProfitMargin = (
   saleMultiplier: number | null | undefined,
   costMultiplier: number | null,
@@ -239,6 +230,42 @@ const calculateProfitMargin = (
   return (saleMultiplier - costMultiplier) / saleMultiplier
 }
 
+const costAccountById = computed(() => {
+  const map = new Map<string, MySiteCostAccount>()
+  for (const account of costAccounts.value) {
+    if (account.id) map.set(account.id, account)
+  }
+  return map
+})
+
+/**
+ * 解析一个调价数据源的成本倍率。
+ *
+ * 只认显式绑定的 Sub2API 账号，倍率直接采用后端按「手工值 > 新鲜探测值 > 列值」
+ * 解析好的结果，前端不再自己判断优先级（两边各写一套迟早分叉）。
+ *
+ * 这里刻意不乘 rechargeRate（USD→CNY 汇率）：Sub2API 的倍率与自有分组售价倍率
+ * 同处一个标准价体系，dashboard 记账链路同样是直接用 account_rate_multiplier
+ * 而不做汇率换算。上游标称倍率那条老路径才需要换算，因为它来自别人的计价体系。
+ *
+ * 未绑定、账号已不存在、或账号无人声明成本时返回 null —— 该数据源不参与毛利计算。
+ * 绝不回退成上游标称倍率：生产上 mcgrox.top 标称 0.8、实际手工成本 0.04，
+ * 拿标称值顶替会把毛利算成 -1130%。
+ */
+const resolveTargetCost = (target: MySiteGroupRef): { multiplier: number | null, source: string } => {
+  const accountId = (target.sub2apiAccountId ?? '').trim()
+  if (!accountId) return { multiplier: null, source: 'none' }
+  const account = costAccountById.value.get(accountId)
+  if (!account || account.costRateMultiplier == null || !Number.isFinite(account.costRateMultiplier)) {
+    return { multiplier: null, source: 'none' }
+  }
+  const source = String(account.costRateSource ?? '').toLowerCase()
+  if (source !== 'manual' && source !== 'probe' && source !== 'column') {
+    return { multiplier: null, source: 'none' }
+  }
+  return { multiplier: account.costRateMultiplier, source }
+}
+
 const selectedTargetDetails = computed(() => selectedTargets.value.map(target => {
   const option = targetOptions.value.find(item => item.siteId === target.siteId && item.groupName === target.groupName)
   const detail = option ?? {
@@ -250,14 +277,17 @@ const selectedTargetDetails = computed(() => selectedTargets.value.map(target =>
     stale: true,
     source: undefined,
   }
-  const rechargeRate = siteById.value.get(target.siteId)?.rechargeRate
-  const effectiveCostMultiplier = detail.stale
-    ? null
-    : calculateEffectiveCostMultiplier(detail.multiplier, rechargeRate)
+  const cost = resolveTargetCost(target)
+  const boundAccount = (target.sub2apiAccountId ?? '').trim()
+    ? costAccountById.value.get((target.sub2apiAccountId ?? '').trim()) ?? null
+    : null
   return {
     ...detail,
-    effectiveCostMultiplier,
-    profitMargin: calculateProfitMargin(selectedRow.value?.ownGroupInfo?.multiplier, effectiveCostMultiplier),
+    sub2apiAccountId: target.sub2apiAccountId ?? null,
+    boundAccountName: boundAccount?.name ?? '',
+    effectiveCostMultiplier: cost.multiplier,
+    costRateSource: cost.source,
+    profitMargin: calculateProfitMargin(selectedRow.value?.ownGroupInfo?.multiplier, cost.multiplier),
   }
 }))
 
@@ -540,6 +570,7 @@ const loadData = async () => {
     staleOwnGroupNames.value = mappingResponse.staleOwnGroups ?? []
     staleTargetRefs.value = mappingResponse.staleTargets ?? []
     liveUpstreamTargetMultipliers.value = mappingResponse.upstreamTargetMultipliers ?? []
+    costAccounts.value = mappingResponse.costAccounts ?? []
     upstreamSites.value = sites
     botOptions.value = [
       ...(channelSettings.dingtalk ?? []).filter(bot => bot.enabled).map(bot => ({ id: bot.id, name: bot.name, channel: 'DingTalk' })),
@@ -796,6 +827,16 @@ onBeforeUnmount(() => {
                     <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                       <span>{{ target.siteName }}</span>
                       <span v-if="target.platform" class="rounded bg-surface-elevated px-1.5 py-0.5">{{ target.platform }}</span>
+                      <span
+                        v-if="target.boundAccountName"
+                        class="truncate rounded bg-surface-elevated px-1.5 py-0.5"
+                        :title="target.boundAccountName"
+                      >
+                        {{ t('admin.groupAssociations.costBinding.boundTo', { account: target.boundAccountName }) }}
+                      </span>
+                      <span v-else class="rounded border border-warning/30 bg-warning/10 px-1.5 py-0.5 font-medium text-warning">
+                        {{ t('admin.groupAssociations.costBinding.unbound') }}
+                      </span>
                     </div>
                   </div>
                   <div class="grid shrink-0 grid-cols-2 gap-x-6 gap-y-2 text-left sm:grid-cols-3 sm:text-right">
@@ -809,7 +850,15 @@ onBeforeUnmount(() => {
                       <div class="text-[11px] text-muted-foreground">{{ t('admin.groupAssociations.metrics.effectiveUpstream') }}</div>
                     </div>
                     <div>
-                      <div class="text-sm font-semibold tabular-nums text-foreground">{{ formatMultiplier(target.effectiveCostMultiplier) }}</div>
+                      <div class="flex items-center justify-end gap-1.5 text-sm font-semibold tabular-nums text-foreground">
+                        <span>{{ formatMultiplier(target.effectiveCostMultiplier) }}</span>
+                        <span
+                          v-if="target.costRateSource !== 'none'"
+                          class="rounded bg-surface-elevated px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+                        >
+                          {{ t(`admin.groupAssociations.costBinding.source.${target.costRateSource}`) }}
+                        </span>
+                      </div>
                       <div class="text-[11px] text-muted-foreground">{{ t('admin.groupAssociations.metrics.effectiveCost') }}</div>
                     </div>
                     <div>
@@ -879,6 +928,8 @@ onBeforeUnmount(() => {
       :options="targetOptions"
       :selected="selectedTargets"
       :saving="savingOwnGroup === selectedRow?.ownGroup"
+      :cost-accounts="costAccounts"
+      :site-base-urls="siteBaseUrls"
       @close="targetsDrawerOpen = false"
       @save="saveTargets"
     />

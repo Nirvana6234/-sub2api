@@ -28,7 +28,10 @@ type User struct {
 	// value expected in JWT claims and refresh-token state.
 	TokenVersionResolved bool
 	SignupSource         string
-	LastLoginAt          *time.Time
+	// RegisterIP 是注册时的客户端 IP，用于「同一 IP 最多注册 N 个账号」配额。
+	// nil 表示未记录（该字段上线前的存量用户），不参与配额计数。
+	RegisterIP  *string
+	LastLoginAt *time.Time
 	LastActiveAt         *time.Time
 	LastUsedAt           *time.Time
 	CreatedAt            time.Time

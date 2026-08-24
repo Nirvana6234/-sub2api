@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -442,6 +443,13 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 
 	// Available channels feature switch
 	updates[SettingKeyAvailableChannelsEnabled] = strconv.FormatBool(settings.AvailableChannelsEnabled)
+
+	// 客户端下载页与备用支付通道
+	updates[SettingKeyClientDownloadEnabled] = strconv.FormatBool(settings.ClientDownloadEnabled)
+	updates[SettingKeyBackupPaymentEnabled] = strconv.FormatBool(settings.BackupPaymentEnabled)
+	updates[SettingKeyBackupPaymentURL] = normalizeExternalHTTPURL(settings.BackupPaymentURL)
+	updates[SettingKeyClientDownloadNetdiskURL] = normalizeExternalHTTPURL(settings.ClientDownloadNetdiskURL)
+	updates[SettingKeyClientDownloadDirectURL] = normalizeExternalHTTPURL(settings.ClientDownloadDirectURL)
 	updates[SettingKeyPlaygroundEnabled] = strconv.FormatBool(settings.PlaygroundEnabled)
 	updates[SettingKeyPlaygroundDefaultChatModel] = strings.TrimSpace(settings.PlaygroundDefaultChatModel)
 	updates[SettingKeyPlaygroundDefaultImageModel] = strings.TrimSpace(settings.PlaygroundDefaultImageModel)
@@ -868,4 +876,28 @@ func (s *SettingService) validatePlaygroundDefaultGroupIDs(ctx context.Context, 
 		}
 	}
 	return nil
+}
+
+// normalizeExternalHTTPURL 校验管理员填写的外链地址（备用支付、客户端下载等）。
+//
+// 这些地址会被前端直接放进 <a href>，必须挡住 javascript: / data: 之类的伪协议，
+// 否则管理员账号被盗后可以借这些字段对所有用户挂 XSS。只接受 http/https 绝对地址；
+// 非法值一律落成空串，前端据此隐藏对应入口。
+func normalizeExternalHTTPURL(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return ""
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return ""
+	}
+	if parsed.Host == "" {
+		return ""
+	}
+	return trimmed
 }

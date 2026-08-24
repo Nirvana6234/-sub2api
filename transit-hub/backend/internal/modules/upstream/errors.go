@@ -1,5 +1,7 @@
 package upstream
 
+import "errors"
+
 type RequestError struct {
 	MessageKey string
 	Platform   Platform
@@ -19,6 +21,19 @@ func newRequestError(messageKey string, platform Platform) *RequestError {
 
 func newRequestErrorWithStatus(messageKey string, platform Platform, statusCode int) *RequestError {
 	return &RequestError{MessageKey: messageKey, Platform: platform, StatusCode: statusCode}
+}
+
+// IsNotFound reports whether an upstream operation targeted a resource that is
+// already absent. Destructive callers use this to make cleanup idempotent.
+func IsNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	var requestErr *RequestError
+	if !errors.As(err, &requestErr) {
+		return false
+	}
+	return requestErr.StatusCode == 404 || requestErr.MessageKey == ErrorNotFound
 }
 
 func errorKey(err error) string {

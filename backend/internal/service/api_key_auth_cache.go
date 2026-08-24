@@ -90,6 +90,7 @@ type APIKeyAuthGroupSnapshot struct {
 	LongContextPricingEnabled       bool                          `json:"long_context_pricing_enabled"`
 	ModelPricing                    []ChannelModelPricing         `json:"model_pricing,omitempty"`
 	ClaudeCodeOnly                  bool                          `json:"claude_code_only"`
+	KiroCompat                      bool                          `json:"kiro_compat"`
 	FallbackGroupID                 *int64                        `json:"fallback_group_id,omitempty"`
 	FallbackGroupIDOnInvalidRequest *int64                        `json:"fallback_group_id_on_invalid_request,omitempty"`
 

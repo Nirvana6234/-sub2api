@@ -229,6 +229,8 @@ class DetectorSession:
         runtime_policy_path: str | Path = DEFAULT_RUNTIME_POLICY,
         retention_enabled: bool = False,
         retention_directory: str | Path | None = None,
+        proxy_url: str | None = None,
+        header_overrides: dict[str, str] | None = None,
     ):
         claimed_model = str(claimed_model or model or "").strip()
         request_model = str(request_model or claimed_model).strip()
@@ -242,6 +244,10 @@ class DetectorSession:
         self.claimed_model = claimed_model
         self.request_model = request_model
         self.api_key = api_key
+        # The account-bound proxy stays only in this live session; it is not
+        # written to SQLite reports or retention artifacts.
+        self.proxy_url = proxy_url
+        self.header_overrides = dict(header_overrides or {})
         self.config = normalize_config(config)
         self.directory = Path(directory)
         self.directory.mkdir(parents=True, exist_ok=True)
@@ -320,6 +326,8 @@ class DetectorSession:
             timeout=300.0 if "native_codex" in self.config["request_formats"] or "fixed_32k_history" in self.config["context_modes"] else 180.0,
             capture_exchange=self.retention is not None,
             cancellation=self.cancellation,
+            proxy_url=self.proxy_url,
+            header_overrides=self.header_overrides,
         )
 
     def close(self) -> None:
@@ -327,6 +335,10 @@ class DetectorSession:
             return
         self.api_key = ""
         self.transport.api_key = ""
+        self.proxy_url = None
+        self.transport.proxy_url = None
+        self.header_overrides = {}
+        self.transport.header_overrides = {}
         self.store.close()
         self._closed = True
 

@@ -60,6 +60,13 @@ type Service struct {
 	// AfterSync 在站点同步成功后被调用，传入同步前后的指标数据。
 	// 由系统设置模块注入，用于余额预警和倍率变更检测。
 	AfterSync func(ctx context.Context, userID, adminAccountID, siteID, siteName string, oldMetrics, newMetrics Metrics)
+	// AfterRemove runs after a site record has been explicitly deleted. It lets
+	// dependent modules remove references without treating sync failures as deletes.
+	AfterRemove func(ctx context.Context, userID, adminAccountID, siteID string) error
+}
+
+func (s *Service) SetAfterRemove(callback func(ctx context.Context, userID, adminAccountID, siteID string) error) {
+	s.AfterRemove = callback
 }
 
 func (s *Service) SetAdminAccountResolver(accounts AdminAccountResolver) {
@@ -197,6 +204,23 @@ func (s *Service) ListForAccount(ctx context.Context, userID, adminAccountID str
 		responses = append(responses, toResponse(site))
 	}
 	return responses
+}
+
+// ListSiteIDsForAccount returns the durable site records for a workspace. It
+// is used by dependent cleanup flows where the Redis runtime cache must not be
+// mistaken for the authoritative site inventory.
+func (s *Service) ListSiteIDsForAccount(ctx context.Context, userID, adminAccountID string) ([]string, error) {
+	sites, err := s.repository.ListSitesForUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(sites))
+	for _, site := range sites {
+		if site.AdminAccountID == adminAccountID && strings.TrimSpace(site.ID) != "" {
+			ids = append(ids, site.ID)
+		}
+	}
+	return ids, nil
 }
 
 // FetchGroupDailyStats 获取指定站点的分组每日统计数据。
@@ -978,6 +1002,11 @@ func (s *Service) Remove(ctx context.Context, userID string, id string) error {
 	if err := s.deleteSite(ctx, userID, id); err != nil {
 		s.restoreSite(ctx, id, &removedSite)
 		return err
+	}
+	if s.AfterRemove != nil {
+		if cleanupErr := s.AfterRemove(ctx, userID, aid, id); cleanupErr != nil {
+			log.Printf("upstream site deleted but dependent mapping cleanup failed site_id=%s err=%v", id, cleanupErr)
+		}
 	}
 	return nil
 }

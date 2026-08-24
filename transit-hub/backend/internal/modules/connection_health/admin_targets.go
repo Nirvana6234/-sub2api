@@ -37,14 +37,14 @@ const (
 // AdminProbeTarget 是平台中性的独立探活目标：一个 admin 分组下的账号(sub2api)/渠道(new-api)。
 // 不再要求存在 real_connections。TargetID 稳定且可复算，是新状态/事件的核心键。
 type AdminProbeTarget struct {
-	TargetID                string     `json:"targetId"`
-	Platform                string     `json:"platform"`
-	AdminGroupID            string     `json:"adminGroupId"`
-	AdminGroupName          string     `json:"adminGroupName"`
-	AccountID               string     `json:"accountId"`
-	AccountName             string     `json:"accountName"`
-	AccountStatus           string     `json:"accountStatus"`
-	AccountSchedulable      *bool      `json:"accountSchedulable,omitempty"`
+	TargetID           string `json:"targetId"`
+	Platform           string `json:"platform"`
+	AdminGroupID       string `json:"adminGroupId"`
+	AdminGroupName     string `json:"adminGroupName"`
+	AccountID          string `json:"accountId"`
+	AccountName        string `json:"accountName"`
+	AccountStatus      string `json:"accountStatus"`
+	AccountSchedulable *bool  `json:"accountSchedulable,omitempty"`
 	// SchedulabilitySource 是判定「管理员手动关闭」与「系统自动停用」的唯一依据。
 	// 取值 manual / automatic / none；空值或未知值一律失败关闭（不探测、不恢复）。
 	// 禁止再用 AccountSchedulable + AccountStatus 的组合推断来源。
@@ -455,12 +455,14 @@ func (s *Service) probeTargetOnce(ctx context.Context, userID string, adminAccou
 		ModelName: spec.modelName, MaxTokens: spec.maxProbeTokens, ProbePrompt: spec.probePrompt,
 		ProbeMode: spec.policy.ProbeMode, RequireCompletedGeneration: targetRequiresRecoveryProbe(target),
 	})
+	outcome = normalizeProbeOutcomeForHealth(outcome)
 
 	now := time.Now()
+	transitionPolicy := policyForProbeOutcome(spec.policy, outcome)
 	transitionOut := Transition(TransitionInput{
 		Current: current.State, CurrentWeight: current.CurrentWeight, ConsecutiveFailures: current.ConsecutiveFailures,
 		ConsecutiveSuccesses: current.ConsecutiveSuccesses, ObservingUntil: current.ObservingUntil, Now: now,
-		Result: outcome.Result, Policy: spec.policy,
+		Result: outcome.Result, Policy: transitionPolicy,
 	})
 	if !spec.policy.AutoDegradeEnabled {
 		// 自动降级关闭：只记录探活结果，状态机不推进。

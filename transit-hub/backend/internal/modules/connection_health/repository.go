@@ -35,6 +35,57 @@ func (r *Repository) UpsertUpstreamKeyMultiplierHistory(ctx context.Context, rec
 	return err
 }
 
+// MultiplierChange 是一次倍率变动：同一个连接目标上，相邻两次快照的倍率不同。
+type MultiplierChange struct {
+	SiteID     string
+	GroupName  string
+	Previous   float64
+	Current    float64
+	ObservedAt time.Time
+}
+
+// ListMultiplierChangesBetween 找出 [since, until) 内发生的倍率变动，供每日简报汇总。
+// 表里存的是周期性快照而非变更事件，所以用 lag() 比对相邻两条来还原「变了」这件事。
+// 查询窗口刻意往前多取一天：否则窗口内的第一条快照没有前值可比，
+// 跨越零点的那次变动就会被漏掉。
+func (r *Repository) ListMultiplierChangesBetween(ctx context.Context, userID, adminAccountID string, since, until time.Time) ([]MultiplierChange, error) {
+	rows, err := r.db.Query(ctx, `
+		WITH ordered AS (
+			SELECT
+				site_id,
+				group_name,
+				multiplier,
+				observed_at,
+				lag(multiplier) OVER (PARTITION BY target_id ORDER BY observed_at) AS previous
+			FROM connection_health_upstream_key_multiplier_history
+			WHERE user_id = $1
+			  AND admin_account_id = $2
+			  AND observed_at >= $3
+			  AND observed_at < $4
+		)
+		SELECT site_id, group_name, previous, multiplier, observed_at
+		FROM ordered
+		WHERE previous IS NOT NULL
+		  AND previous <> multiplier
+		  AND observed_at >= $5
+		ORDER BY observed_at ASC
+	`, userID, adminAccountID, since.Add(-24*time.Hour), until, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	changes := make([]MultiplierChange, 0)
+	for rows.Next() {
+		var change MultiplierChange
+		if err := rows.Scan(&change.SiteID, &change.GroupName, &change.Previous, &change.Current, &change.ObservedAt); err != nil {
+			return nil, err
+		}
+		changes = append(changes, change)
+	}
+	return changes, rows.Err()
+}
+
 func (r *Repository) ListUpstreamKeyMultiplierHistory(ctx context.Context, userID, adminAccountID, targetID, interval string) ([]UpstreamKeyMultiplierHistoryPoint, error) {
 	period, since := "hour", time.Now().UTC().Add(-48*time.Hour)
 	switch interval {

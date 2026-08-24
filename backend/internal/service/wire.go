@@ -71,6 +71,7 @@ func ProvideAuthService(
 	affiliateService *AffiliateService,
 	userPlatformQuotaRepo UserPlatformQuotaRepository,
 	apiKeyService *APIKeyService,
+	adminLoginAttempts AdminLoginAttemptCache,
 ) *AuthService {
 	svc := NewAuthService(
 		entClient,
@@ -90,6 +91,7 @@ func ProvideAuthService(
 	svc.SetTencentCaptchaService(tencentCaptchaService)
 	svc.SetAliyunCaptchaService(aliyunCaptchaService)
 	svc.SetPlaygroundAPIKeyProvisioner(apiKeyService)
+	svc.SetAdminLoginAttemptCache(adminLoginAttempts)
 	return svc
 }
 
@@ -821,6 +823,7 @@ var ProviderSet = wire.NewSet(
 	NewBillingService,
 	ProvideBillingCacheService,
 	NewAnnouncementService,
+	NewTicketService,
 	NewPlaygroundHistoryService,
 	NewAdminService,
 	NewGatewayService,

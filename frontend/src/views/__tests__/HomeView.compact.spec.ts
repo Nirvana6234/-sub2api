@@ -51,8 +51,10 @@ function mountHome(settings: Record<string, unknown> = {}) {
   })
 }
 
+// 按 testid 精确取主按钮：紧凑头部还有「客户端下载」等其他 router-link，
+// 取「第一个 RouterLink」会随导航项增减而误判。
 function compactDestination(wrapper: ReturnType<typeof mountHome>) {
-  return wrapper.get('[data-testid="compact-home"]').findComponent(RouterLinkStub).props('to')
+  return wrapper.get('[data-testid="compact-home-cta"]').findComponent(RouterLinkStub).props('to')
 }
 
 describe('HomeView compact mode', () => {

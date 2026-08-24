@@ -11,6 +11,38 @@ import type {
   NotifyEmailEntry,
 } from "@/types";
 
+export type GlobalBlacklistKind = "account" | "ip"
+export interface GlobalBlacklistEntry {
+  id: string
+  kind: GlobalBlacklistKind
+  value: string
+  reason?: string
+  expires_at?: string
+  enabled: boolean
+  created_at: string
+}
+
+export async function getGlobalBlacklist() {
+  const { data } = await apiClient.get<{ entries: GlobalBlacklistEntry[] | null }>("/admin/settings/blacklist")
+  // 黑名单为空时后端返回 null（Go nil slice），调用方按数组用，这里收敛成 []
+  return data.entries ?? []
+}
+
+export async function addGlobalBlacklist(entry: {
+  kind: GlobalBlacklistKind
+  value: string
+  reason?: string
+  expires_at?: string
+  enabled?: boolean
+}) {
+  const { data } = await apiClient.post<GlobalBlacklistEntry>("/admin/settings/blacklist", entry)
+  return data
+}
+
+export async function deleteGlobalBlacklist(id: string) {
+  await apiClient.delete(`/admin/settings/blacklist/${encodeURIComponent(id)}`)
+}
+
 export interface DefaultSubscriptionSetting {
   group_id: number;
   validity_days: number;
@@ -726,6 +758,11 @@ export interface SystemSettings {
   available_channels_enabled: boolean;
 
   // Playground feature switch
+  client_download_enabled: boolean;
+  client_download_netdisk_url: string;
+  client_download_direct_url: string;
+  backup_payment_enabled: boolean;
+  backup_payment_url: string;
   playground_enabled: boolean;
   playground_default_chat_model: string;
   playground_default_image_model: string;
@@ -1036,6 +1073,11 @@ export interface UpdateSettingsRequest {
   available_channels_enabled?: boolean;
 
   // Playground feature switch
+  client_download_enabled?: boolean;
+  client_download_netdisk_url?: string;
+  client_download_direct_url?: string;
+  backup_payment_enabled?: boolean;
+  backup_payment_url?: string;
   playground_enabled?: boolean;
   playground_default_chat_model?: string;
   playground_default_image_model?: string;

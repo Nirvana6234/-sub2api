@@ -144,6 +144,10 @@ router.beforeEach(async (to) => {
       }
     }
     if (!isWorkspaceActive()) {
+      // 纯度检测需要 workspace 才能取账号，但入口必须保持可见；否则守卫会把
+      // 用户送到隐藏侧栏的 workspace 选择页，看起来像是功能被部署丢失了。
+      // 页面会展示 noCurrentAccount 并引导用户先选择 workspace。
+      if (to.name === 'AdminPurityCheck') return true
       return { name: 'AdminAccounts' }
     }
   }

@@ -22,6 +22,15 @@ func TestListDueUpstreamBillingProbeAccountsHandlesInvalidCalendarDate(t *testin
 		SET extra = extra - 'upstream_billing_probe_enabled' - 'upstream_billing_probe'
 	`)
 	require.NoError(t, err)
+	// 手动倍率优先：即使遗留了探测开关，也不得进入自动探测队列。
+	var manualID int64
+	err = scanSingleRow(ctx, tx, `
+		INSERT INTO accounts (name, platform, type, status, rate_multiplier_undeclared, extra)
+		VALUES ('probe-grok-manual', 'grok', $1, 'active', TRUE,
+			'{"upstream_billing_probe_enabled":true,"upstream_billing_manual_rate_multiplier":0.04}'::jsonb)
+		RETURNING id
+	`, []any{service.AccountTypeAPIKey}, &manualID)
+	require.NoError(t, err)
 
 	insert := func(name, nextProbeAt string) int64 {
 		t.Helper()
@@ -154,8 +163,9 @@ func TestListDueUpstreamBillingProbeAccountsSelectsEarliestDueAcrossIDs(t *testi
 	require.Equal(t, want, got)
 }
 
-// 探测资格放宽回归：任何 API-key 平台的启用账号都进入定时探测候选并按
-// 到期时间排序；OAuth 与未启用账号仍被排除。
+// 探测资格回归：任何 API-key 平台的启用账号，以及未声明倍率且没有手动
+// 倍率的账号，都进入定时探测候选并按到期时间排序；OAuth 与已声明且未
+// 启用探测的账号仍被排除。
 func TestListDueUpstreamBillingProbeAccountsIncludesAllAPIKeyPlatforms(t *testing.T) {
 	ctx := context.Background()
 	tx := testEntTx(t)
@@ -196,11 +206,33 @@ func TestListDueUpstreamBillingProbeAccountsIncludesAllAPIKeyPlatforms(t *testin
 		RETURNING id
 	`, []any{service.AccountTypeAPIKey}, &disabledID)
 	require.NoError(t, err)
+	// 未声明倍率即使没有逐账号探测开关，也必须自动进入队列。
+	var undeclaredID int64
+	err = scanSingleRow(ctx, tx, `
+		INSERT INTO accounts (name, platform, type, status, rate_multiplier_undeclared, extra)
+		VALUES ('probe-grok-undeclared', 'grok', $1, 'active', TRUE,
+			'{"upstream_billing_probe":{"status":"ok","next_probe_at":"2026-07-26T02:56:00Z"}}'::jsonb)
+		RETURNING id
+	`, []any{service.AccountTypeAPIKey}, &undeclaredID)
+	require.NoError(t, err)
+	// 手动倍率优先：即使遗留了探测开关，也不得进入自动探测队列。
+	var manualID int64
+	err = scanSingleRow(ctx, tx, `
+		INSERT INTO accounts (name, platform, type, status, rate_multiplier_undeclared, extra)
+		VALUES ('probe-grok-manual', 'grok', $1, 'active', TRUE,
+			'{"upstream_billing_probe_enabled":true,"upstream_billing_manual_rate_multiplier":0.04}'::jsonb)
+		RETURNING id
+	`, []any{service.AccountTypeAPIKey}, &manualID)
+	require.NoError(t, err)
 
 	accounts, err := repo.ListDueUpstreamBillingProbeAccounts(ctx, now, 20)
 	require.NoError(t, err)
-	require.Len(t, accounts, 3)
-	require.Equal(t, openaiDue, accounts[0].ID)
-	require.Equal(t, anthropicDue, accounts[1].ID)
-	require.Equal(t, grokDue, accounts[2].ID)
+	require.Len(t, accounts, 4)
+	require.Equal(t, undeclaredID, accounts[0].ID)
+	require.Equal(t, openaiDue, accounts[1].ID)
+	require.Equal(t, anthropicDue, accounts[2].ID)
+	require.Equal(t, grokDue, accounts[3].ID)
+	for _, account := range accounts {
+		require.NotEqual(t, manualID, account.ID)
+	}
 }

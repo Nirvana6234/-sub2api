@@ -246,21 +246,17 @@ export function isPlaygroundImageModel(model: Pick<PlaygroundModel, 'id'>): bool
   return /^(gpt-image-|dall-e-|grok-imagine|imagen-|flux-|sdxl|stable-diffusion|stable-image|seedream|wanx|hunyuan)/.test(id)
 }
 
-// The gateway can expose many operational, preview, audio, embedding, and
-// dated model aliases. Keep the playground focused on the small set of
-// generally useful chat models without changing what an API key can call.
-const PLAYGROUND_PRIMARY_CHAT_MODEL_PATTERNS = [
-  /^gpt-5(?:\.\d+)?(?:-mini)?(?:$|-\d{4})/i,
-  /^gpt-4\.1(?:-mini)?(?:$|-\d{4})/i,
-  /^gpt-4o(?:-mini)?(?:$|-\d{4})/i,
-  /^o[34](?:-mini)?(?:$|-\d{4})/i,
-  /^claude-(?:3(?:-5)?|4)-(?:haiku|sonnet|opus)(?:$|[-.])/i,
-  /^gemini-(?:2\.5|2\.0)-(?:pro|flash)(?:$|[-.])/i,
-  /^grok-(?:3|4)(?:$|[-.])/i,
-  /^deepseek-(?:chat|reasoner)(?:$|[-.])/i,
-]
-
-const PLAYGROUND_NON_CHAT_MODEL_PATTERNS = /(?:embedding|moderation|rerank|realtime|transcri(?:be|ption)|whisper|tts|audio|search-preview|computer-use|codex|sol|terra|luna|spark|nano)/i
+// 只排除确实不能用于对话补全的能力型模型（向量、审核、语音、实时、计算机使用等）。
+//
+// 这里刻意不再维护"允许哪些聊天模型"的白名单：网关返回的模型集合已经跟随账号与
+// 分组实时变化，前端再叠一层按名字写死的白名单，只会让上游每次推出新命名都要改
+// 前端才能选到。历史上这层白名单造成过两类线上问题：
+//   * gpt-5.6-sol / -terra / -luna 因名字里含 sol/terra/luna 被误判为非聊天模型；
+//   * claude 正则按 claude-4-opus 的旧命名书写，与实际的 claude-opus-4-8 /
+//     claude-sonnet-5 / claude-fable-5 全部不匹配，导致 Anthropic 分组下没有任何
+//     可选模型。
+// 因此改为纯黑名单：后端给什么就展示什么，新模型零改动即可选用。
+const PLAYGROUND_NON_CHAT_MODEL_PATTERNS = /(?:embedding|moderation|rerank|realtime|transcri(?:be|ption)|whisper|tts|audio|search-preview|computer-use)/i
 
 export function normalizePlaygroundImageModels(models: PlaygroundModel[]): PlaygroundModel[] {
   return normalizePlaygroundModels(models)
@@ -270,11 +266,10 @@ export function normalizePlaygroundImageModels(models: PlaygroundModel[]): Playg
 }
 
 export function normalizePlaygroundChatModels(models: PlaygroundModel[]): PlaygroundModel[] {
+  // 不再截断：可选模型数量由网关按分组决定，前端截断会让排序靠后的模型永远选不到。
   return normalizePlaygroundModels(models)
     .filter((model) => !isPlaygroundImageModel(model))
     .filter((model) => !PLAYGROUND_NON_CHAT_MODEL_PATTERNS.test(model.id))
-    .filter((model) => PLAYGROUND_PRIMARY_CHAT_MODEL_PATTERNS.some((pattern) => pattern.test(model.id)))
-    .slice(0, 6)
 }
 
 export function formatPlaygroundKeyLabel(key: PlaygroundKeySummary, autoGroupLabel = 'Auto'): string {

@@ -62,7 +62,8 @@ func TestGetUserBreakdownStatsRequestTypeIncludesLegacyFallback(t *testing.T) {
 	requestType := int16(service.RequestTypeStream)
 
 	legacyFilter := `(ul.request_type = $3 OR (ul.request_type = 0 AND ul.stream = TRUE AND ul.openai_ws_mode = FALSE))`
-	mock.ExpectQuery(regexp.QuoteMeta(legacyFilter)).
+	accountCostExpr := `COALESCE(SUM(COALESCE(ul.account_stats_cost, ul.total_cost) * ul.account_rate_multiplier), 0) as account_cost`
+	mock.ExpectQuery("(?s).*"+regexp.QuoteMeta(accountCostExpr)+".*"+regexp.QuoteMeta(legacyFilter)+".*").
 		WithArgs(start, end, requestType).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"user_id", "email", "requests", "input_tokens", "output_tokens",

@@ -161,6 +161,7 @@ export default {
     announcements: 'Announcements',
     apiKeys: 'API Keys',
     clientDownload: 'Client download',
+    tickets: 'Tickets',
     batchImage: 'Batch Images',
     usage: 'Usage',
     redeem: 'Redeem',
@@ -211,6 +212,7 @@ export default {
     contentModeration: 'Content Moderation',
     promptAudit: 'Prompt Audit',
     auditLogs: 'Audit Logs',
+    accessBlacklist: 'Access Blacklist',
   },
 
   // Auth

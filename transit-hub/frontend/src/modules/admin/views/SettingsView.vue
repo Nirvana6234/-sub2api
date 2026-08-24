@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Plus, Save, Loader2, CheckCircle2, MessageSquare, Send, Trash2, Timer, AlertTriangle, TrendingUp, Info, Mail } from 'lucide-vue-next'
+import { Plus, Save, Loader2, CheckCircle2, MessageSquare, Send, Trash2, Timer, AlertTriangle, TrendingUp, Info, Mail, FileBarChart, Eye } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import EmailTemplatesPanel from '../components/settings/EmailTemplatesPanel.vue'
@@ -10,9 +10,11 @@ import {
   getNotificationChannelSettings,
   getSmtpSettings,
   getStrategySettings,
+  previewDailyReport,
   saveNotificationChannelSettings,
   saveSmtpSettings,
   saveStrategySettings,
+  sendDailyReportNow,
   testNotificationChannel,
   testSmtpEmail,
 } from '../api/settings'
@@ -53,6 +55,12 @@ const defaultMultiplierTemplate = computed(() => t('admin.settings.sections.temp
   oldRate: '{oldRate}',
   newRate: '{newRate}',
   changeDirection: '{changeDirection}',
+  changePercent: '{changePercent}',
+  ownGroups: '{ownGroups}',
+  days: '{days}',
+  weeklyCost: '{weeklyCost}',
+  dailyAvgCost: '{dailyAvgCost}',
+  costImpact: '{costImpact}',
 }))
 const normalizeBuiltInTemplate = (template?: string) => (template?.trim() ?? '').replace(/>\s+</g, '><')
 const legacyBalanceTemplates = new Set([
@@ -64,6 +72,10 @@ const legacyBalanceTemplates = new Set([
 const legacyMultiplierTemplates = new Set([
   '【倍率变更】{siteName} 的 {groupName} 分组倍率已{changeDirection}：{oldRate}x -> {newRate}x。',
   '[Multiplier change] {siteName} / {groupName} {changeDirection}: {oldRate}x -> {newRate}x.',
+  // 加影响面之前的 markdown 默认模板。列在这里，没手改过的用户打开设置页
+  // 就会看到带成本影响的新版，而不是停在只有倍率数字的旧文案上。
+  '🟠 **倍率变更预警**\n\n🏷️ **站点：** {siteName}\n📦 **分组：** {groupName}\n📊 **倍率：** {oldRate}x → **{newRate}x**（{changeDirection}）\n\n🔎 请确认成本变化，并检查下游定价策略。',
+  '🟠 **Multiplier change warning**\n\n🏷️ **Site:** {siteName}\n📦 **Group:** {groupName}\n📊 **Rate:** {oldRate}x → **{newRate}x** ({changeDirection})\n\n🔎 Review the cost change and confirm whether downstream pricing needs adjustment.',
   '<div style="border-left:4px solid #3b82f6;background:rgba(59,130,246,0.12);padding:16px;border-radius:6px"><div style="font-size:18px;font-weight:700;color:#3b82f6">🟠 倍率变更预警</div><p style="margin:10px 0 0">上游站点 <strong style="color:#3b82f6">{siteName}</strong> 的分组 <strong style="color:#8b5cf6">{groupName}</strong> 倍率已<strong style="color:#f59e0b">{changeDirection}</strong>。</p><p style="margin:10px 0 0">▫️ 原倍率: <strong>{oldRate}x</strong><br>🔸 新倍率: <strong style="color:#f59e0b">{newRate}x</strong></p><p style="margin:10px 0 0">🔎 请确认成本变化，并检查下游定价策略。</p></div>',
   '<div style="border-left:4px solid #3b82f6;background:rgba(59,130,246,0.12);padding:16px;border-radius:6px"><div style="font-size:18px;font-weight:700;color:#3b82f6">🟠 Multiplier change warning</div><p style="margin:10px 0 0">The <strong style="color:#8b5cf6">{groupName}</strong> multiplier on <strong style="color:#3b82f6">{siteName}</strong> has <strong style="color:#f59e0b">{changeDirection}</strong>.</p><p style="margin:10px 0 0">▫️ Previous rate: <strong>{oldRate}x</strong><br>🔸 New rate: <strong style="color:#f59e0b">{newRate}x</strong></p><p style="margin:10px 0 0">🔎 Review the cost change and confirm whether downstream pricing needs adjustment.</p></div>',
 ].map(normalizeBuiltInTemplate))
@@ -76,6 +88,18 @@ const balanceTemplateFormat = ref<NotificationTemplateFormat>('markdown')
 
 const enableMultiplierAlert = ref(false)
 const multiplierSelectedBots = ref<string[]>([])
+
+// 每日运营报告。后端一直支持这四个字段，但之前没有界面，保存时会被整个丢掉，
+// 于是线上 enableDailyReport 从来没被打开过——报告一次都没发出来。
+const enableDailyReport = ref(false)
+const dailyReportTime = ref('09:00')
+const dailyReportSelectedBots = ref<string[]>([])
+const dailyReportFormat = ref<NotificationTemplateFormat>('markdown')
+const isSendingReport = ref(false)
+const isPreviewingReport = ref(false)
+const reportActionError = ref('')
+const reportActionSuccess = ref('')
+const reportPreview = ref('')
 const multiplierTemplate = ref(defaultMultiplierTemplate.value)
 const multiplierTemplateFormat = ref<NotificationTemplateFormat>('markdown')
 
@@ -99,6 +123,13 @@ const multiplierTemplateVariables = computed(() => [
   { token: '{oldRate}', label: t('admin.settings.varOldRate') },
   { token: '{newRate}', label: t('admin.settings.varNewRate') },
   { token: '{changeDirection}', label: t('admin.settings.varChangeDirection') },
+  // 影响面：光有倍率数字判断不了要不要现在处理。
+  { token: '{changePercent}', label: t('admin.settings.varChangePercent') },
+  { token: '{ownGroups}', label: t('admin.settings.varOwnGroups') },
+  { token: '{days}', label: t('admin.settings.varImpactDays') },
+  { token: '{weeklyCost}', label: t('admin.settings.varWeeklyCost') },
+  { token: '{dailyAvgCost}', label: t('admin.settings.varDailyAvgCost') },
+  { token: '{costImpact}', label: t('admin.settings.varCostImpact') },
 ])
 const multiplierPreviewValues = computed(() => ({
   '{siteName}': t('admin.settings.templateEditor.samples.siteName'),
@@ -106,6 +137,12 @@ const multiplierPreviewValues = computed(() => ({
   '{oldRate}': t('admin.settings.templateEditor.samples.oldRate'),
   '{newRate}': t('admin.settings.templateEditor.samples.newRate'),
   '{changeDirection}': t('admin.settings.templateEditor.samples.changeDirection'),
+  '{changePercent}': t('admin.settings.templateEditor.samples.changePercent'),
+  '{ownGroups}': t('admin.settings.templateEditor.samples.ownGroups'),
+  '{days}': t('admin.settings.templateEditor.samples.impactDays'),
+  '{weeklyCost}': t('admin.settings.templateEditor.samples.weeklyCost'),
+  '{dailyAvgCost}': t('admin.settings.templateEditor.samples.dailyAvgCost'),
+  '{costImpact}': t('admin.settings.templateEditor.samples.costImpact'),
 }))
 // === Tab 2: Channels ===
 const activeChannelTab = ref<NotificationChannel>('dingtalk')
@@ -186,6 +223,13 @@ const applyStrategySettings = (settings: StrategySettings) => {
   const usesDefaultMultiplierTemplate = shouldUseDefaultTemplate(settings.multiplierTemplate, legacyMultiplierTemplates)
   multiplierTemplate.value = usesDefaultMultiplierTemplate ? defaultMultiplierTemplate.value : settings.multiplierTemplate
   multiplierTemplateFormat.value = usesDefaultMultiplierTemplate ? 'markdown' : normalizeTemplateFormat(settings.multiplierTemplateFormat)
+  enableDailyReport.value = settings.enableDailyReport ?? false
+  // 后端对空值不做兜底，这里给一个合理默认，免得开关一打开就是空的推送时刻。
+  dailyReportTime.value = settings.dailyReportTime || '09:00'
+  dailyReportSelectedBots.value = settings.dailyReportBotIds ?? []
+  dailyReportFormat.value = normalizeTemplateFormat(settings.dailyReportFormat) === 'text'
+    ? 'markdown'
+    : normalizeTemplateFormat(settings.dailyReportFormat)
 }
 
 const currentStrategySettings = (): StrategySettings => ({
@@ -200,6 +244,10 @@ const currentStrategySettings = (): StrategySettings => ({
   multiplierNotifyBotIds: multiplierSelectedBots.value,
   multiplierTemplate: multiplierTemplate.value.trim(),
   multiplierTemplateFormat: multiplierTemplateFormat.value,
+  enableDailyReport: enableDailyReport.value,
+  dailyReportTime: dailyReportTime.value,
+  dailyReportBotIds: dailyReportSelectedBots.value,
+  dailyReportFormat: dailyReportFormat.value,
 })
 
 const loadStrategy = async () => {
@@ -384,6 +432,74 @@ const toggleMultiplierBot = (botId: string) => {
   const idx = multiplierSelectedBots.value.indexOf(botId)
   if (idx >= 0) multiplierSelectedBots.value.splice(idx, 1)
   else multiplierSelectedBots.value.push(botId)
+}
+const toggleDailyReportBot = (botId: string) => {
+  const idx = dailyReportSelectedBots.value.indexOf(botId)
+  if (idx >= 0) dailyReportSelectedBots.value.splice(idx, 1)
+  else dailyReportSelectedBots.value.push(botId)
+}
+
+const previewReport = async () => {
+  if (isPreviewingReport.value || isSendingReport.value) return
+  isPreviewingReport.value = true
+  reportActionError.value = ''
+  reportActionSuccess.value = ''
+  try {
+    const result = await previewDailyReport()
+    reportPreview.value = result.report
+  } catch (error) {
+    reportActionError.value = error instanceof Error ? error.message : 'admin.settings.errors.unknown'
+  } finally {
+    isPreviewingReport.value = false
+  }
+}
+
+const persistDailyReportSettings = async () => {
+  const persistedChannels = await getNotificationChannelSettings()
+  const persistedBotIds = new Set([
+    ...persistedChannels.dingtalk,
+    ...persistedChannels.wecom,
+    ...persistedChannels.qq,
+    ...persistedChannels.feishu,
+    ...persistedChannels.telegram,
+  ].map(bot => bot.id))
+  if (dailyReportSelectedBots.value.some(botId => !persistedBotIds.has(botId))) {
+    throw new Error('admin.settings.errors.dailyReportBotsNotSaved')
+  }
+  const persisted = await getStrategySettings()
+  return saveStrategySettings({
+    ...persisted,
+    enableDailyReport: enableDailyReport.value,
+    dailyReportTime: dailyReportTime.value,
+    dailyReportBotIds: dailyReportSelectedBots.value,
+    dailyReportFormat: dailyReportFormat.value,
+  })
+}
+
+const sendReportNow = async () => {
+  if (isSendingReport.value || isPreviewingReport.value || isSavingStrategy.value) return
+  if (dailyReportSelectedBots.value.length === 0) {
+    reportActionError.value = 'admin.settings.errors.dailyReportNoBots'
+    reportActionSuccess.value = ''
+    return
+  }
+  isSendingReport.value = true
+  reportActionError.value = ''
+  reportActionSuccess.value = ''
+  try {
+    // send-now 读取数据库配置；先把当前页面选择落库，避免用户刚勾选机器人就发送时出现“未选择”假错误。
+    isSavingStrategy.value = true
+    applyStrategySettings(await persistDailyReportSettings())
+    const result = await sendDailyReportNow()
+    reportPreview.value = result.report
+    reportActionSuccess.value = 'admin.settings.sections.dailyReport.sendSuccess'
+    setTimeout(() => { reportActionSuccess.value = '' }, 4000)
+  } catch (error) {
+    reportActionError.value = error instanceof Error ? error.message : 'admin.settings.errors.unknown'
+  } finally {
+    isSavingStrategy.value = false
+    isSendingReport.value = false
+  }
 }
 
 // === Tab 3: Email (SMTP) ===
@@ -767,6 +883,83 @@ onMounted(async () => {
                   :placeholder="t('admin.settings.sections.templates.multiplierTemplatePlaceholder', { siteName: '{siteName}', groupName: '{groupName}', oldRate: '{oldRate}', newRate: '{newRate}' })"
                 />
 
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 4: Daily Operations Report -->
+          <div class="rounded-2xl border border-border/50 bg-card shadow-sm overflow-hidden">
+            <div class="p-5 flex items-start justify-between gap-4">
+              <div class="flex items-start gap-3">
+                <div class="p-2 bg-emerald-500/10 text-emerald-500 rounded-xl shrink-0 mt-0.5">
+                  <FileBarChart class="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 class="text-sm font-semibold text-foreground">{{ t('admin.settings.sections.dailyReport.title') }}</h4>
+                  <p class="text-xs text-muted-foreground mt-0.5">{{ t('admin.settings.sections.dailyReport.description') }}</p>
+                </div>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer shrink-0 mt-1">
+                <input type="checkbox" v-model="enableDailyReport" class="sr-only peer" :aria-label="t('admin.settings.sections.dailyReport.title')">
+                <div class="peer h-6 w-11 rounded-full bg-surface-elevated peer-checked:bg-primary peer-focus-visible:ring-2 peer-focus-visible:ring-primary peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-background after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-border after:bg-white after:transition-transform after:content-[''] peer-checked:after:translate-x-full peer-checked:after:border-white"></div>
+              </label>
+            </div>
+            <div v-if="enableDailyReport" class="px-5 pb-5 pt-0">
+              <div class="space-y-4 animate-in slide-in-from-top-2 fade-in duration-200 sm:pl-12">
+                <div class="grid gap-1.5 max-w-xs">
+                  <label for="daily-report-time" class="text-xs font-medium text-muted-foreground">{{ t('admin.settings.sections.dailyReport.time') }}</label>
+                  <Input id="daily-report-time" type="time" v-model="dailyReportTime" class="h-9" />
+                  <p class="text-xs text-muted-foreground">{{ t('admin.settings.sections.dailyReport.timeHelp') }}</p>
+                </div>
+
+                <div class="grid gap-1.5">
+                  <label class="text-xs font-medium text-muted-foreground">{{ t('admin.settings.notifyBots') }} <span class="text-destructive">*</span></label>
+                  <div class="flex flex-wrap gap-2">
+                    <button v-for="bot in allBots" :key="'daily-' + bot.id" type="button" :aria-pressed="dailyReportSelectedBots.includes(bot.id)" @click="toggleDailyReportBot(bot.id)" class="flex select-none items-center gap-2 rounded-lg border px-3 py-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" :class="dailyReportSelectedBots.includes(bot.id) ? 'border-primary bg-primary/10 text-primary' : 'border-border/50 bg-surface/30 hover:bg-surface/50'">
+                      <MessageSquare class="w-3.5 h-3.5" />
+                      <span class="text-sm">{{ bot.name || t('admin.settings.unnamedBot') }}</span>
+                    </button>
+                    <div v-if="!hasBots" class="text-sm text-muted-foreground italic py-1">
+                      {{ t('admin.settings.noBotsConfigured') }}
+                    </div>
+                  </div>
+                  <p v-if="dailyReportSelectedBots.length === 0 && hasBots" class="text-xs text-destructive mt-0.5">{{ t('admin.settings.mustSelectBot') }}</p>
+                </div>
+
+                <div class="grid gap-1.5 max-w-xs">
+                  <label for="daily-report-format" class="text-xs font-medium text-muted-foreground">{{ t('admin.settings.sections.dailyReport.format') }}</label>
+                  <select id="daily-report-format" v-model="dailyReportFormat" class="h-9 rounded-md border border-border/60 bg-background px-3 text-sm text-foreground shadow-sm outline-none transition focus-visible:ring-2 focus-visible:ring-primary">
+                    <option value="markdown">{{ t('admin.settings.templateEditor.formats.markdown') }}</option>
+                    <option value="text">{{ t('admin.settings.templateEditor.formats.text') }}</option>
+                    <option value="html">{{ t('admin.settings.templateEditor.formats.html') }}</option>
+                  </select>
+                </div>
+
+                <p class="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <Info class="h-3.5 w-3.5 shrink-0" />
+                  {{ t('admin.settings.sections.dailyReport.usesSavedConfig') }}
+                </p>
+                <div class="flex flex-wrap items-center gap-3">
+                  <Button variant="secondary" :disabled="isPreviewingReport || isSendingReport" @click="previewReport">
+                    <Loader2 v-if="isPreviewingReport" class="h-4 w-4 animate-spin mr-2" />
+                    <Eye v-else class="h-4 w-4 mr-2" />
+                    {{ isPreviewingReport ? t('admin.settings.sections.dailyReport.previewing') : t('admin.settings.sections.dailyReport.preview') }}
+                  </Button>
+                  <Button :disabled="isSendingReport || isPreviewingReport || isSavingStrategy || dailyReportSelectedBots.length === 0" @click="sendReportNow">
+                    <Loader2 v-if="isSendingReport" class="h-4 w-4 animate-spin mr-2" />
+                    <Send v-else class="h-4 w-4 mr-2" />
+                    {{ isSendingReport ? t('admin.settings.sections.dailyReport.sending') : t('admin.settings.sections.dailyReport.sendNow') }}
+                  </Button>
+                </div>
+                <p v-if="reportActionSuccess" class="text-sm text-emerald-500">{{ t(reportActionSuccess) }}</p>
+                <p v-if="reportActionError" class="text-sm text-destructive">{{ t(reportActionError) }}</p>
+                <div v-if="reportPreview" class="rounded-xl border border-border/50 bg-surface/30 p-4">
+                  <div class="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                    <Eye class="h-3.5 w-3.5" />
+                    {{ t('admin.settings.sections.dailyReport.previewTitle') }}
+                  </div>
+                  <pre class="max-h-96 overflow-auto whitespace-pre-wrap break-words text-xs leading-5 text-foreground">{{ reportPreview }}</pre>
+                </div>
               </div>
             </div>
           </div>

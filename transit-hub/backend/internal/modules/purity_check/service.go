@@ -3,7 +3,9 @@ package purity_check
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,6 +54,10 @@ type Service struct {
 	// 为空表示没挂——那就只清数据库，不动文件，功能照常。
 	detectorRunsDir string
 
+	// httpProxyURL 是「非 HTTP 代理」的替身地址，对应 PURITY_CHECK_HTTP_PROXY_URL。
+	// 见 detectorProxyURL 的说明。
+	httpProxyURL string
+
 	worker *worker
 }
 
@@ -69,6 +75,45 @@ func NewService(repo *Repository, sessions SessionProvider, reader AccountReader
 
 func (s *Service) SetAdminAccountResolver(accounts AdminAccountResolver) {
 	s.accounts = accounts
+}
+
+// SetHTTPProxyURL 配置「非 HTTP 代理」的替身地址。
+func (s *Service) SetHTTPProxyURL(proxyURL string) {
+	s.httpProxyURL = strings.TrimSpace(proxyURL)
+}
+
+// detectorProxyURL 把账号绑定的代理换算成检测器真能用的地址。
+//
+// 检测器的传输层是 urllib + ProxyHandler，只认 http:// 代理（vendor 的
+// _normalize_http_proxy 对别的 scheme 直接抛 ValueError）。而账号这边绑的是
+// xray 的 socks5 端口，直接透传的后果不只是失败，而是**看不出为什么失败**：
+// 检测器的脱敏逻辑会把那句 ValueError 盖成「本地运行发生未分类异常；请下载
+// 完整JSON报告并检查安装文件是否完整」，现场只能看到一个 http 400。
+//
+// 所以在这里换成同一出口的 HTTP 入口（PURITY_CHECK_HTTP_PROXY_URL）。
+// 必须是同一条出口链路：检测的意义就在于复现真实转发的落点，换个出口 IP
+// 测出来的结论对不上真实流量。没配就如实报 ErrorProxyUnsupported，
+// 绝不退化成直连——那等于拿 AWS 的出口 IP 去测一个只在代理后可用的上游。
+func (s *Service) detectorProxyURL(accountProxy string) (string, error) {
+	raw := strings.TrimSpace(accountProxy)
+	if raw == "" {
+		return "", nil
+	}
+	scheme := ""
+	if parsed, err := url.Parse(raw); err == nil {
+		scheme = strings.ToLower(parsed.Scheme)
+	}
+	if scheme == "http" || scheme == "https" {
+		return raw, nil
+	}
+	if s.httpProxyURL == "" {
+		if scheme == "" {
+			scheme = "unknown"
+		}
+		return "", errors.New("account proxy scheme " + scheme +
+			" is not usable by the detector and PURITY_CHECK_HTTP_PROXY_URL is not configured")
+	}
+	return s.httpProxyURL, nil
 }
 
 func (s *Service) currentAdminAccountID(ctx context.Context, userID string) (string, error) {
@@ -112,6 +157,10 @@ func (s *Service) ListTargets(ctx context.Context, userID string) ([]Target, err
 			Type:      account.Type,
 			BaseURL:   account.BaseURL,
 			GroupIDs:  account.GroupIDs,
+			// 成本倍率原样透传，包括 nil：这里不做任何兜底，
+			// 「没人声明过」和「1 倍」是两回事。
+			CostRateMultiplier: account.CostRateMultiplier,
+			CostRateSource:     account.CostRateSource,
 		}
 		switch {
 		case !isOpenAIPlatform(account.Platform):

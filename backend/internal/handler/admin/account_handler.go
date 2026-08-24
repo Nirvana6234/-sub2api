@@ -203,8 +203,14 @@ type CheckMixedChannelRequest struct {
 // AccountWithConcurrency extends Account with real-time concurrency info
 type AccountWithConcurrency struct {
 	*dto.Account
-	CurrentConcurrency int                          `json:"current_concurrency"`
-	GroupPriority      *int                         `json:"group_priority,omitempty"`
+	CurrentConcurrency int `json:"current_concurrency"`
+	// CostRateMultiplier 是该账号的上游成本倍率，按"手工值 > 新鲜探测值 > 列值"取值。
+	// null 表示无人声明过成本（含探测失败而列上只有建表默认 1.0 的情况），消费方
+	// 必须把它当"未知"处理，不得回退 1.0 当成本——那等于凭空按原价计价。
+	CostRateMultiplier *float64 `json:"cost_rate_multiplier"`
+	// CostRateSource 说明上面那个数字的出处："manual" / "probe" / "column" / "none"。
+	CostRateSource  string                       `json:"cost_rate_source"`
+	GroupPriority   *int                         `json:"group_priority,omitempty"`
 	SchedulerScore     *AccountSchedulerScore       `json:"scheduler_score,omitempty"`
 	SchedulerScores    []AccountSchedulerGroupScore `json:"scheduler_scores,omitempty"`
 	// 以下字段仅对 Anthropic OAuth/SetupToken 账号有效，且仅在启用相应功能时返回
@@ -237,14 +243,22 @@ func (h *AccountHandler) accountResponseFromService(account *service.Account) *d
 	return out
 }
 
+// accountCostRateFields 解析账号成本倍率及其来源。所有响应构造路径共用此处，
+// 避免某条路径漏填导致同一账号在不同接口显示不同成本。
+func accountCostRateFields(account *service.Account) (*float64, string) {
+	return service.AccountCostRateMultiplierWithSource(account, timezone.Now())
+}
+
 func (h *AccountHandler) buildAccountResponseWithRuntime(ctx context.Context, account *service.Account) AccountWithConcurrency {
 	item := AccountWithConcurrency{
 		Account:            h.accountResponseFromService(account),
 		CurrentConcurrency: 0,
+		CostRateSource:     service.AccountCostRateSourceNone,
 	}
 	if account == nil {
 		return item
 	}
+	item.CostRateMultiplier, item.CostRateSource = accountCostRateFields(account)
 
 	if h.concurrencyService != nil {
 		if counts, err := h.concurrencyService.GetAccountConcurrencyBatch(ctx, []int64{account.ID}); err == nil {
@@ -672,6 +686,7 @@ func (h *AccountHandler) List(c *gin.Context) {
 			SchedulerScore:     schedulerScores[acc.ID],
 			SchedulerScores:    schedulerGroupScores[acc.ID],
 		}
+		item.CostRateMultiplier, item.CostRateSource = accountCostRateFields(acc)
 		if groupFilterRequested {
 			for _, accountGroup := range acc.AccountGroups {
 				if accountGroup.GroupID == groupID {

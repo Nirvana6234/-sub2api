@@ -58,17 +58,18 @@ type healthRepository interface {
 // Service 组装 connection_health 模块的全部业务逻辑：聚合查询、策略管理、手动动作、
 // 真实探活执行。所有对外可见字段都不含 upstream_key，符合任务书的敏感信息约束。
 type Service struct {
-	repo            healthRepository
-	mySites         MySitesReader
-	sites           SiteLookup
-	accounts        AdminAccountResolver
-	dispatcher      RemoteActionRunner
-	probeRunner     *RealProbeRunner
-	modelDiscovery  *ModelDiscoveryRunner
-	platformGroups  PlatformGroupReader
-	groupStatus     PlatformGroupStatusWriter
-	priorityActions TargetPriorityActioner
-	recoveryActions Sub2APIRecoveryActioner
+	repo                healthRepository
+	mySites             MySitesReader
+	sites               SiteLookup
+	accounts            AdminAccountResolver
+	dispatcher          RemoteActionRunner
+	probeRunner         *RealProbeRunner
+	modelDiscovery      *ModelDiscoveryRunner
+	platformGroups      PlatformGroupReader
+	groupStatus         PlatformGroupStatusWriter
+	priorityActions     TargetPriorityActioner
+	recoveryActions     Sub2APIRecoveryActioner
+	autoDisableNotifier AutomaticDisableNotifier
 }
 
 func NewService(repo *Repository, mySites MySitesReader, sites SiteLookup, platform PlatformActioner) *Service {
@@ -100,6 +101,24 @@ func (s *Service) EnsureSchema(ctx context.Context) error {
 
 func (s *Service) SetAdminAccountResolver(accounts AdminAccountResolver) {
 	s.accounts = accounts
+}
+
+// SetAutomaticDisableNotifier wires the optional operator alert for targets
+// that the scheduler has actually moved out of service.
+func (s *Service) SetAutomaticDisableNotifier(notifier AutomaticDisableNotifier) {
+	s.autoDisableNotifier = notifier
+}
+
+func (s *Service) notifyAutomaticDisable(ctx context.Context, event AutomaticDisableEvent) {
+	if s.autoDisableNotifier != nil {
+		s.autoDisableNotifier.NotifyAutomaticDisable(ctx, event)
+	}
+}
+
+func (s *Service) notifyAutomaticDisables(ctx context.Context, events []AutomaticDisableEvent) {
+	for _, event := range aggregateAutomaticDisableEvents(events) {
+		s.notifyAutomaticDisable(ctx, event)
+	}
 }
 
 func (s *Service) currentAdminAccountID(ctx context.Context, userID string) (string, error) {
@@ -1079,12 +1098,14 @@ func (s *Service) probeOnce(ctx context.Context, conn my_sites.RealConnection, p
 		ModelName: target.ModelName, MaxTokens: target.MaxProbeTokens, ProbePrompt: target.ProbePrompt,
 		ProbeMode: policy.ProbeMode,
 	})
+	outcome = normalizeProbeOutcomeForHealth(outcome)
 
 	now := time.Now()
+	transitionPolicy := policyForProbeOutcome(policy, outcome)
 	transitionOut := Transition(TransitionInput{
 		Current: current.State, CurrentWeight: current.CurrentWeight, ConsecutiveFailures: current.ConsecutiveFailures,
 		ConsecutiveSuccesses: current.ConsecutiveSuccesses, ObservingUntil: current.ObservingUntil, Now: now,
-		Result: outcome.Result, Policy: policy,
+		Result: outcome.Result, Policy: transitionPolicy,
 	})
 	if !policy.AutoDegradeEnabled {
 		// 自动降级关闭：只记录探活结果，状态机不推进，也不触发远端动作。

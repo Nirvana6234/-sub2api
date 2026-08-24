@@ -243,6 +243,52 @@ describe('playground view model', () => {
     ])).toEqual([{ id: 'gpt-4.1' }])
   })
 
+  it('keeps model-name variants that are still chat models', () => {
+    // sol / terra / luna / spark / codex 曾被当作非聊天模型误杀，
+    // 而它们是网关上的主力对话模型。
+    expect(normalizePlaygroundChatModels([
+      { id: 'gpt-5.6-sol' },
+      { id: 'gpt-5.6-terra' },
+      { id: 'gpt-5.6-luna' },
+      { id: 'gpt-5.3-codex-spark' },
+    ]).map((model) => model.id)).toEqual([
+      'gpt-5.3-codex-spark',
+      'gpt-5.6-luna',
+      'gpt-5.6-sol',
+      'gpt-5.6-terra',
+    ])
+  })
+
+  it('keeps current Anthropic model names', () => {
+    // 实际命名是 claude-<族名>-<版本>，旧白名单按 claude-4-opus 书写，全部匹配不上。
+    expect(normalizePlaygroundChatModels([
+      { id: 'claude-opus-5' },
+      { id: 'claude-sonnet-5' },
+      { id: 'claude-opus-4-8' },
+      { id: 'claude-fable-5' },
+    ]).map((model) => model.id)).toEqual([
+      'claude-fable-5',
+      'claude-opus-4-8',
+      'claude-opus-5',
+      'claude-sonnet-5',
+    ])
+  })
+
+  it('still drops non-chat capability models', () => {
+    expect(normalizePlaygroundChatModels([
+      { id: 'text-embedding-3-large' },
+      { id: 'omni-moderation-latest' },
+      { id: 'gpt-4o-realtime-preview' },
+      { id: 'whisper-1' },
+      { id: 'gpt-5.6' },
+    ]).map((model) => model.id)).toEqual(['gpt-5.6'])
+  })
+
+  it('does not cap the chat model list', () => {
+    const many = Array.from({ length: 12 }, (_, index) => ({ id: `gpt-5.${index}` }))
+    expect(normalizePlaygroundChatModels(many)).toHaveLength(12)
+  })
+
   it('keeps provider-specific image options out of Grok requests', () => {
     const input = {
       model: 'grok-imagine-image',

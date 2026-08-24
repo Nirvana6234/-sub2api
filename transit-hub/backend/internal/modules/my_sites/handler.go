@@ -3,6 +3,7 @@ package my_sites
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"transithub/backend/internal/shared/authctx"
 	"transithub/backend/internal/shared/httpjson"
@@ -24,6 +25,8 @@ func RegisterRoutes(mux *http.ServeMux, service *Service) {
 	mux.HandleFunc("POST /api/my-sites/real-connect", handler.realConnect)
 	mux.HandleFunc("POST /api/my-sites/real-bind", handler.realBind)
 	mux.HandleFunc("GET /api/my-sites/upstream-keys", handler.listUpstreamKeys)
+	mux.HandleFunc("POST /api/my-sites/upstream-keys/test", handler.testUpstreamKey)
+	mux.HandleFunc("POST /api/my-sites/upstream-keys/models", handler.listUpstreamKeyModels)
 	mux.HandleFunc("GET /api/my-sites/admin-resources", handler.listAdminResources)
 	mux.HandleFunc("GET /api/my-sites/real-connections", handler.listRealConnections)
 	mux.HandleFunc("POST /api/my-sites/real-disconnect", handler.realDisconnect)
@@ -166,6 +169,52 @@ func (h *Handler) listUpstreamKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpjson.Write(w, http.StatusOK, keys)
+}
+
+// testUpstreamKey 对一个上游 Key 做连通性测试：先列模型，再发一次最小请求。
+//
+// 用 POST 而不是 GET：它会真实打到上游并产生（极小的）计费，不该被当成
+// 可以随便重放的幂等读操作。
+func (h *Handler) testUpstreamKey(w http.ResponseWriter, r *http.Request) {
+	userID, ok := authctx.UserID(r.Context())
+	if !ok {
+		httpjson.WriteError(w, http.StatusUnauthorized, "auth.errors.unauthorized")
+		return
+	}
+	var request UpstreamKeyTestRequest
+	if err := httpjson.Decode(r, &request); err != nil {
+		httpjson.WriteError(w, http.StatusBadRequest, ErrorRequest)
+		return
+	}
+	if strings.TrimSpace(request.UpstreamSiteID) == "" {
+		httpjson.WriteError(w, http.StatusBadRequest, ErrorRequest)
+		return
+	}
+	response, err := h.service.TestUpstreamCredential(r.Context(), userID, request)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	httpjson.Write(w, http.StatusOK, response)
+}
+
+func (h *Handler) listUpstreamKeyModels(w http.ResponseWriter, r *http.Request) {
+	userID, ok := authctx.UserID(r.Context())
+	if !ok {
+		httpjson.WriteError(w, http.StatusUnauthorized, "auth.errors.unauthorized")
+		return
+	}
+	var request UpstreamKeyTestRequest
+	if err := httpjson.Decode(r, &request); err != nil || strings.TrimSpace(request.UpstreamSiteID) == "" {
+		httpjson.WriteError(w, http.StatusBadRequest, ErrorRequest)
+		return
+	}
+	response, err := h.service.ListUpstreamCredentialModels(r.Context(), userID, request)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	httpjson.Write(w, http.StatusOK, response)
 }
 
 // listAdminResources returns existing accounts/channels from one group on the

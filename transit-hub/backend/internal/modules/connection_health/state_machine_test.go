@@ -63,7 +63,7 @@ func TestTransition_ResultOKDoesNotExitDisabled(t *testing.T) {
 }
 
 func TestTransition_FirstFailureKeepsHealthyUpstreamAvailable(t *testing.T) {
-	for _, result := range []ResultKey{ResultServerError, ResultAuth, ResultModelNotFound, ResultNetworkFluctuation, ResultRateLimited, ResultInvalidResponse} {
+	for _, result := range []ResultKey{ResultServerError, ResultAuth, ResultModelNotFound, ResultNetworkFluctuation, ResultInvalidResponse} {
 		out := Transition(TransitionInput{
 			Current:       StateHealthy,
 			CurrentWeight: 100,
@@ -83,6 +83,72 @@ func TestTransition_FirstFailureKeepsHealthyUpstreamAvailable(t *testing.T) {
 	}
 }
 
+func TestPolicyForProbeOutcome_QuotaExhaustionSuspendsOnFirstFailure(t *testing.T) {
+	details := []string{
+		`{"code":"INSUFFICIENT_BALANCE"}`,
+		`{"error":{"code":"insufficient_quota"}}`,
+		`{"code":"USAGE_LIMIT_EXCEEDED"}`,
+		`{"code":"insufficient_user_quota"}`,
+	}
+	for _, detail := range details {
+		policy := policyForProbeOutcome(testPolicy(), ProbeOutcome{Result: ResultAuth, Detail: detail})
+		if policy.FailureThreshold != 1 {
+			t.Fatalf("detail %s: FailureThreshold = %d, want 1", detail, policy.FailureThreshold)
+		}
+	}
+
+	policy := policyForProbeOutcome(testPolicy(), ProbeOutcome{Result: ResultAuth, Detail: details[0]})
+	out := Transition(TransitionInput{
+		Current: StateHealthy, CurrentWeight: 100, Now: time.Now(), Result: ResultAuth, Policy: policy,
+	})
+	if out.NextState != StateSuspended || out.Weight != 0 || !out.TriggerRemoteDegrade {
+		t.Fatalf("insufficient balance must suspend and degrade immediately, got %+v", out)
+	}
+}
+
+func TestPolicyForProbeOutcome_InvalidKeySuspendsOnFirstFailure(t *testing.T) {
+	policy := policyForProbeOutcome(testPolicy(), ProbeOutcome{
+		Result: ResultAuth,
+		Detail: `{"error":{"code":"invalid_api_key"}}`,
+	})
+	if policy.FailureThreshold != 1 {
+		t.Fatalf("FailureThreshold = %d, want 1 for explicit invalid key", policy.FailureThreshold)
+	}
+}
+
+func TestPolicyForProbeOutcome_GenericAuthUsesSecondFailure(t *testing.T) {
+	policy := policyForProbeOutcome(testPolicy(), ProbeOutcome{Result: ResultAuth, Detail: `{"message":"forbidden"}`})
+	if policy.FailureThreshold != 2 {
+		t.Fatalf("FailureThreshold = %d, want 2 for unclassified auth failure", policy.FailureThreshold)
+	}
+}
+
+func TestNormalizeProbeOutcome_ExplicitQuotaOverridesHTTPClassification(t *testing.T) {
+	for _, result := range []ResultKey{ResultRateLimited, ResultInvalidResponse} {
+		outcome := normalizeProbeOutcomeForHealth(ProbeOutcome{
+			Result: result, Detail: `{"error":{"code":"insufficient_quota"}}`,
+		})
+		if outcome.Result != ResultAuth {
+			t.Fatalf("result %s: explicit quota exhaustion normalized to %s, want auth", result, outcome.Result)
+		}
+	}
+}
+
+func TestTransition_RateLimitDoesNotSuspendOrAccumulateFailures(t *testing.T) {
+	for _, state := range []State{StateHealthy, StateDegraded, StateObserving, StateRecovering} {
+		out := Transition(TransitionInput{
+			Current: state, CurrentWeight: 75, ConsecutiveFailures: 99,
+			Now: time.Now(), Result: ResultRateLimited, Policy: testPolicy(),
+		})
+		if out.NextState != StateDegraded || out.Weight <= 0 {
+			t.Fatalf("state %s: rate limit must remain schedulable, got %+v", state, out)
+		}
+		if out.ConsecutiveFailures != 0 || out.TriggerRemoteDegrade {
+			t.Fatalf("state %s: rate limit must not consume suspension threshold, got %+v", state, out)
+		}
+	}
+}
+
 func TestTransition_FailureThresholdSuspendsAndDegradesRemotely(t *testing.T) {
 	policy := testPolicy()
 	now := time.Now()
@@ -92,7 +158,7 @@ func TestTransition_FailureThresholdSuspendsAndDegradesRemotely(t *testing.T) {
 			CurrentWeight:       50,
 			ConsecutiveFailures: 2,
 			Now:                 now,
-			Result:              ResultRateLimited,
+			Result:              ResultServerError,
 			Policy:              policy,
 		})
 		if out.NextState != StateSuspended || out.Weight != 0 {

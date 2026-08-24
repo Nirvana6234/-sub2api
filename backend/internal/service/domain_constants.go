@@ -91,6 +91,12 @@ func NormalizeOpenAICompatiblePlatform(platform string) string {
 
 const (
 	SettingKeyRegistrationEmailDomainQuotaEnabled = "registration_email_domain_quota_enabled"
+	// SettingKeyMaxAccountsPerRegisterIP 同一客户端 IP 允许注册的账号数上限；
+	// 未配置或非正整数时使用 DefaultMaxAccountsPerRegisterIP。
+	SettingKeyMaxAccountsPerRegisterIP = "max_accounts_per_register_ip"
+	// SettingKeyMaxAdminLoginFailures 同一 IP 在 24 小时窗口内允许的管理员登录失败次数；
+	// 未配置或非正整数时使用 DefaultMaxAdminLoginFailures。
+	SettingKeyMaxAdminLoginFailures = "max_admin_login_failures"
 	SettingKeyTencentCaptchaRegion = "tencent_captcha_region"
 	SettingKeyAccountSchedulingThresholds = "account_scheduling_thresholds"
 	SettingKeyChannelMonitorMode = "channel_monitor_mode"
@@ -458,6 +464,21 @@ const (
 	// sidebar entry is hidden. Defaults to false (opt-in feature).
 	SettingKeyAvailableChannelsEnabled = "available_channels_enabled"
 
+	// SettingKeyClientDownloadEnabled 控制公开的客户端下载页 /download 是否可访问。
+	// 关闭后页面与所有入口都隐藏。默认开启，保持既有行为。
+	SettingKeyClientDownloadEnabled = "client_download_enabled"
+
+	// 客户端下载页上的两个下载地址，均由管理员在后台填写。
+	// 为空则对应按钮隐藏；两个都为空时页面只剩图文教程。
+	SettingKeyClientDownloadNetdiskURL = "client_download_netdisk_url"
+	SettingKeyClientDownloadDirectURL  = "client_download_direct_url"
+
+	// SettingKeyBackupPaymentEnabled 控制充值页的「备用支付通道」入口是否展示。
+	// 与 payment_enabled 相互独立：主通道故障时可以只留备用通道。默认关闭（opt-in）。
+	SettingKeyBackupPaymentEnabled = "backup_payment_enabled"
+	// SettingKeyBackupPaymentURL 是备用支付通道的外部地址。
+	SettingKeyBackupPaymentURL = "backup_payment_url"
+
 	// SettingKeyPlaygroundEnabled is a DB-backed opt-in soft switch for the Playground.
 	SettingKeyPlaygroundEnabled              = "playground_enabled"
 	SettingKeyPlaygroundDefaultChatModel     = "playground_default_chat_model"
@@ -537,6 +558,8 @@ const (
 	SettingKeyMaxCodexVersion = "max_codex_version"
 	// SettingKeyCodexCLIOnlyBlacklist codex_cli_only 全局黑名单（[]AllowedClientEntry JSON，OR deny）。
 	SettingKeyCodexCLIOnlyBlacklist = "codex_cli_only_blacklist"
+	// SettingKeyGlobalBlacklist stores administrator-managed account/IP deny rules.
+	SettingKeyGlobalBlacklist = "global_blacklist_entries"
 	// SettingKeyCodexCLIOnlyWhitelist codex_cli_only 全局白名单（[]AllowedClientEntry JSON，双因子 AND allow）。
 	SettingKeyCodexCLIOnlyWhitelist = "codex_cli_only_whitelist"
 	// SettingKeyCodexCLIOnlyAllowAppServerClients App Server 开关：对未列名客户端开闸（默认 false；仅显式 "true" 开）。

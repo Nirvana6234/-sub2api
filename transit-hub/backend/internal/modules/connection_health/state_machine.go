@@ -1,6 +1,9 @@
 package connection_health
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // TransitionInput contains the snapshot and probe result needed for one state decision.
 type TransitionInput struct {
@@ -37,11 +40,76 @@ func isHardFailure(result ResultKey) bool {
 
 func isSoftFailure(result ResultKey) bool {
 	switch result {
-	case ResultNetworkFluctuation, ResultRateLimited, ResultInvalidResponse:
+	case ResultNetworkFluctuation, ResultInvalidResponse:
 		return true
 	default:
 		return false
 	}
+}
+
+// policyForProbeOutcome applies failure thresholds to auth responses according
+// to their explicit reason. Exhausted quota and clearly invalid credentials
+// need operator action and fail closed immediately. An unclassified 401/403 is
+// confirmed once before suspension to avoid treating a transient gateway auth
+// response as a permanently invalid key.
+func policyForProbeOutcome(policy Policy, outcome ProbeOutcome) Policy {
+	detail := strings.ToUpper(outcome.Detail)
+	if isQuotaExhaustionDetail(detail) || isExplicitInvalidCredentialDetail(detail) {
+		policy.FailureThreshold = 1
+		return policy
+	}
+	if outcome.Result != ResultAuth {
+		return policy
+	}
+	if policy.FailureThreshold <= 0 || policy.FailureThreshold > 2 {
+		policy.FailureThreshold = 2
+	}
+	return policy
+}
+
+// normalizeProbeOutcomeForHealth gives explicit business error codes priority
+// over the HTTP status. Some upstreams wrap exhausted quota in 400 or 429; the
+// scheduler must still treat that as an operator-action auth failure rather
+// than a transient malformed response or rate limit.
+func normalizeProbeOutcomeForHealth(outcome ProbeOutcome) ProbeOutcome {
+	detail := strings.ToUpper(outcome.Detail)
+	if isQuotaExhaustionDetail(detail) || isExplicitInvalidCredentialDetail(detail) {
+		outcome.Result = ResultAuth
+	}
+	return outcome
+}
+
+func isQuotaExhaustionDetail(detail string) bool {
+	return containsAny(detail,
+		"INSUFFICIENT_BALANCE",
+		"INSUFFICIENT_QUOTA",
+		"USAGE_LIMIT_EXCEEDED",
+		"INSUFFICIENT_USER_QUOTA",
+		"QUOTA_EXCEEDED",
+		"BALANCE_NOT_ENOUGH",
+		"余额不足",
+		"额度已耗尽",
+		"QUOTA IS NOT ENOUGH",
+	)
+}
+
+func isExplicitInvalidCredentialDetail(detail string) bool {
+	return containsAny(detail,
+		"INVALID_API_KEY",
+		"INCORRECT_API_KEY",
+		"UNAUTHORIZED_API_KEY",
+		"INVALID_ACCESS_TOKEN",
+		"INVALID_TOKEN",
+	)
+}
+
+func containsAny(value string, candidates ...string) bool {
+	for _, candidate := range candidates {
+		if strings.Contains(value, candidate) {
+			return true
+		}
+	}
+	return false
 }
 
 // Transition keeps Disabled manual-only.
@@ -78,6 +146,8 @@ func Transition(in TransitionInput) TransitionOutput {
 	switch {
 	case in.Result == ResultOK:
 		return transitionOnSuccess(in)
+	case in.Result == ResultRateLimited:
+		return transitionOnRateLimit(in)
 	case isHardFailure(in.Result), isSoftFailure(in.Result):
 		return transitionOnFailure(in)
 	default:
@@ -88,6 +158,29 @@ func Transition(in TransitionInput) TransitionOutput {
 			ConsecutiveSuccesses: in.ConsecutiveSuccesses,
 			ObservingUntil:       in.ObservingUntil,
 		}
+	}
+}
+
+// transitionOnRateLimit keeps a rate-limited target schedulable. A 429 only
+// lowers its health tier until a later retry succeeds; it neither consumes the
+// failure threshold nor triggers a remote disable. Targets already suspended
+// for another reason remain suspended until a successful recovery probe.
+func transitionOnRateLimit(in TransitionInput) TransitionOutput {
+	if in.Current == StateSuspended {
+		cooldownUntil := in.Now.Add(cooldownWindow(in.Policy))
+		return TransitionOutput{
+			NextState: StateSuspended, Weight: 0,
+			ConsecutiveFailures: in.ConsecutiveFailures, ConsecutiveSuccesses: 0,
+			CooldownUntil: &cooldownUntil,
+		}
+	}
+	baseWeight := in.CurrentWeight
+	if baseWeight <= 0 {
+		baseWeight = 100
+	}
+	return TransitionOutput{
+		NextState: StateDegraded, Weight: maxInt(1, baseWeight-stepPercent(in.Policy)),
+		ConsecutiveFailures: 0, ConsecutiveSuccesses: 0,
 	}
 }
 

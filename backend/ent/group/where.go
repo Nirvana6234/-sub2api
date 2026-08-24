@@ -260,6 +260,11 @@ func ClaudeCodeOnly(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldClaudeCodeOnly, v))
 }
 
+// KiroCompat applies equality check predicate on the "kiro_compat" field. It's identical to KiroCompatEQ.
+func KiroCompat(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldKiroCompat, v))
+}
+
 // FallbackGroupID applies equality check predicate on the "fallback_group_id" field. It's identical to FallbackGroupIDEQ.
 func FallbackGroupID(v int64) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldFallbackGroupID, v))
@@ -2093,6 +2098,16 @@ func ClaudeCodeOnlyEQ(v bool) predicate.Group {
 // ClaudeCodeOnlyNEQ applies the NEQ predicate on the "claude_code_only" field.
 func ClaudeCodeOnlyNEQ(v bool) predicate.Group {
 	return predicate.Group(sql.FieldNEQ(FieldClaudeCodeOnly, v))
+}
+
+// KiroCompatEQ applies the EQ predicate on the "kiro_compat" field.
+func KiroCompatEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldKiroCompat, v))
+}
+
+// KiroCompatNEQ applies the NEQ predicate on the "kiro_compat" field.
+func KiroCompatNEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldKiroCompat, v))
 }
 
 // FallbackGroupIDEQ applies the EQ predicate on the "fallback_group_id" field.

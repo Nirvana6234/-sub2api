@@ -633,7 +633,7 @@ export default {
           invalidUrl: 'Invalid site address. Enter a valid domain or IP and retry.',
           adminOnly: 'The credential is valid, but this account is not a Sub2API admin. Use an admin account or Admin API Key.',
           authRejected: 'The upstream rejected the Access Token. Paste the browser login access_token, not an sk- model API key.',
-          interactiveLoginRequired: 'This site has Turnstile enabled, which the TransitHub server cannot complete for the browser. Use a token captured after web login or an Admin API Key.',
+          interactiveLoginRequired: 'This site has Turnstile enabled, which the Gongfei Console server cannot complete for the browser. Use a token captured after web login or an Admin API Key.',
           upstreamRequest: 'The upstream rejected the request. The credential may be valid while a statistics or management endpoint is unavailable; check the Sub2API version and permissions.',
           invalidResponse: 'The upstream did not return parseable JSON, possibly due to a proxy or security challenge page.',
           network: 'Network or CORS request failed. Check the site URL.',
@@ -674,6 +674,15 @@ export default {
         cached: 'Cached',
         effectiveCost: 'Converted cost multiplier'
       },
+      costBinding: {
+        boundTo: 'Cost account: {account}',
+        unbound: 'No cost account bound',
+        source: {
+          manual: 'Manual',
+          probe: 'Probe',
+          column: 'Column'
+        }
+      },
       profitCalculator: {
         titleWithGroup: '{group} · Profit Budget',
         customTitle: 'Custom Profit Calculator',
@@ -709,7 +718,15 @@ export default {
         searchLabel: 'Search upstream groups', searchPlaceholder: 'Search site, platform, or group...',
         emptyTitle: 'No matching upstream groups', emptyDescription: 'Adjust the search or sync an upstream site first.',
         unknownMultiplier: 'No multiplier', autoMultiplier: 'Auto', multiplier: '{value}x', stale: 'Stale',
-        close: 'Close source editor', cancel: 'Cancel', save: 'Save sources', saving: 'Saving...'
+        close: 'Close source editor', cancel: 'Cancel', save: 'Save sources', saving: 'Saving...',
+        costBinding: {
+          unbound: 'No cost account',
+          sameHost: 'Same host',
+          otherAccounts: 'Other accounts',
+          noCost: 'No cost data',
+          costValue: '{value}x',
+          unboundHint: 'Excluded from margin until bound'
+        }
       },
       cleanup: {
         title: 'Clean up stale configuration',
@@ -882,8 +899,17 @@ export default {
 
       targetsTitle: 'Accounts',
       targetsEmpty: 'No accounts in the current admin workspace.',
+      targetsSearchPlaceholder: 'Search by name, ID, platform or base URL',
+      targetsSearchEmpty: 'No matching accounts.',
+      targetsSearchCount: '{shown} of {total} matched · {selected} selected',
       selectAll: 'Select all',
       clearAll: 'Clear',
+      rateUndeclared: 'cost not declared',
+      rateSources: {
+        manual: 'manual',
+        probe: 'probed',
+        column: 'column · unverified',
+      },
       targetReasons: {
         not_openai: 'OpenAI accounts only: probes are calibrated for GPT-5.6 Sol/Terra/Luna',
         not_api_key: 'No usable static API key: OAuth/setup-token goes through the ChatGPT backend, Bedrock/Service Account use different credentials',
@@ -963,6 +989,8 @@ export default {
         notCancellable: 'This job cannot be cancelled right now.',
         notDeletable: 'The job is still queued or running. Cancel it before deleting.',
         upstreamUnreachable: 'The upstream never responded, so no valid probes were collected and no verdict can be drawn.',
+        proxyUnsupported:
+          'This account is bound to a non-HTTP proxy (e.g. socks5) and the detector only supports HTTP proxies. Set PURITY_CHECK_HTTP_PROXY_URL to an HTTP proxy port on the same egress path as live forwarding.',
         tooManyTargets: 'At most 20 accounts per submission.',
       },
     },
@@ -1154,7 +1182,7 @@ export default {
             balanced: 'Balanced',
             speed: 'Fastest'
           },
-          priorityStrategyHelp: 'Lowest Cost uses the real upstream API key multiplier. Balanced uses 70% price + 30% speed. Fastest uses the last hour of real-request TTFT P95, up to 20 samples per account with at least 3 required. Sparse data falls back to existing TransitHub probe records; scoring never launches extra probes.',
+          priorityStrategyHelp: 'Lowest Cost uses the real upstream API key multiplier. Balanced uses 70% price + 30% speed. Fastest uses the last hour of real-request TTFT P95, up to 20 samples per account with at least 3 required. Sparse data falls back to existing Gongfei Console probe records; scoring never launches extra probes.',
           multiplierOnlyTitle: 'Sync Multiplier Priority Only',
           multiplierOnlyHelp: 'About every 30 seconds, the scheduler reads the group multiplier of the upstream API key actually linked to each account. Lower multipliers receive higher priority. No probe credentials are required.'
         },
@@ -1398,7 +1426,7 @@ export default {
         priorityModes: {
           none: 'Keep Upstream Values',
           multiplier: 'Sort by Upstream Multiplier',
-          auto: 'TransitHub Auto Score'
+          auto: 'Gongfei Console Auto Score'
         },
         priorityStrategyLabel: 'Auto Scoring Mode',
         priorityStrategies: {
@@ -1406,7 +1434,7 @@ export default {
           balanced: 'Balanced',
           speed: 'Fastest'
         },
-        priorityStrategyHelp: 'Speed uses Sub2API real-request TTFT P95 from the last hour, capped at 20 samples per account with at least 3 required. Sparse data falls back to existing TransitHub probe records, and scoring never launches extra probes. Balanced uses 70% price + 30% speed.',
+        priorityStrategyHelp: 'Speed uses Sub2API real-request TTFT P95 from the last hour, capped at 20 samples per account with at least 3 required. Sparse data falls back to existing Gongfei Console probe records, and scoring never launches extra probes. Balanced uses 70% price + 30% speed.',
         priorityModeHelp: 'Historical upstream priority is used only to detect manual edits, never as a score input. Usable targets follow the selected mode; paused, disabled, unschedulable, or zero-weight targets share the final slot. Sub2API writes priorities independently inside each group.',
         multiplierOnlySummaryTitle: 'Lower Multiplier, Higher Priority',
         multiplierOnlySummary: 'About every 30 seconds, the scheduler reads the group multiplier of the upstream API key actually linked to each account and syncs priority. It never resolves probe credentials, requests models, consumes probe budget, degrades health, or runs remote actions. Manual priority edits stop automatic overwrites.',
@@ -1429,7 +1457,7 @@ export default {
           recoveryStep: 'During recovery, each successful probe raises local weight by this percentage step, instead of jumping straight to 100%.',
           autoDegrade: 'When enabled, probe results drive the health state machine and adjust local routing weight. When disabled, probe results are only recorded — state and weight never change automatically.',
           autoRemoteAction: 'When enabled, supported upstream actions run when the state machine triggers degrade/recovery: Sub2API toggles the admin account active/inactive, and NewAPI updates channel weight/status. When disabled, only probe and state results are recorded.',
-          priorityMode: 'TransitHub calculates priority from each account\'s real linked upstream API key multiplier and observed speed. Unavailable targets always go last, while historical priority is used only to detect manual edits. Results are written independently inside each Sub2API group.'
+          priorityMode: 'Gongfei Console calculates priority from each account\'s real linked upstream API key multiplier and observed speed. Unavailable targets always go last, while historical priority is used only to detect manual edits. Results are written independently inside each Sub2API group.'
         },
         runFlow: {
           buttonLabel: 'How it works',
@@ -1744,6 +1772,21 @@ export default {
         cancel: 'Cancel',
         saveType: 'Save Type'
       },
+      test: {
+        action: 'Test',
+        hint: 'Run a live check with this upstream key: list models, then send one minimal request (billed, ~1 token).',
+        passed: 'Working · {count} models · {model} {latency}ms',
+        chatFailedWithModel: 'Request with model {model} failed',
+        modelSample: 'Models: {models}',
+        chooseTitle: 'Choose a test model',
+        chooseModel: 'Test model',
+        chooseModelPlaceholder: 'Select a model',
+        loadingModels: 'Loading model list…',
+        noModels: 'This key has no available models.',
+        begin: 'Start test',
+        closeChooser: 'Close model selector',
+        failed: 'Test failed, please retry.'
+      },
       filters: {
         searchLabel: 'Search',
         searchPlaceholder: 'Search site or group...',
@@ -1852,8 +1895,8 @@ export default {
         description: 'Confirm disconnecting {site} · {group}?',
         unlinkOnly: 'Unlink Only',
         unlinkOnlyHint: 'Only remove the local binding record, keep the upstream Key and Admin account',
-        deleteAll: 'Delete Account & Key',
-        deleteAllHint: 'Also delete the upstream Key and the Admin site forwarding account',
+        deleteKey: 'Delete Upstream Key',
+        deleteKeyHint: 'Delete only the upstream Key created for this link; keep the Admin forwarding account',
         removePricingMapping: 'Also remove the pricing source',
         removePricingMappingHint: 'Turn this off to keep the upstream group in pricing mappings.',
         confirm: 'Confirm',
@@ -2008,7 +2051,12 @@ export default {
         request: 'Unable to save the pricing mapping. Refresh the page and try again.',
         invalidAutoPricingConfig: 'Invalid auto-pricing config: primary upstream not in linked upstreams, or min multiplier exceeds max.',
         connectionExists: 'A real connection already exists for this upstream group.',
-        managedDeleteOnly: 'Existing-resource links can only be unlinked locally; remote resources cannot be deleted.'
+        managedDeleteOnly: 'Existing-resource links can only be unlinked locally; remote resources cannot be deleted.',
+        testerUnavailable: 'Probe capability is not wired up, testing is unavailable.',
+        credentialNotFound: 'No usable key under this upstream group — connect it first.',
+        modelListUnavailable: 'Key rejected or upstream unreachable: even the model list failed to load.',
+        modelListEmpty: 'Key works, but this group has no models attached — add models to the group upstream.',
+        chatProbeFailed: 'Model list is fine, but the live request failed'
       }
     },
     tickets: {
@@ -2343,7 +2391,13 @@ export default {
           groupName: 'Default group',
           oldRate: '1.0000',
           newRate: '1.1200',
-          changeDirection: 'increased'
+          changeDirection: 'increased',
+          changePercent: '+12.0%',
+          ownGroups: 'Codex Fast (currently 0.6x)',
+          impactDays: '7',
+          weeklyCost: '¥700.00',
+          dailyAvgCost: '¥100.00',
+          costImpact: '+¥84.00'
         }
       },
       balanceTemplateVars: '(Variables: {siteName}, {balance}, {threshold})',
@@ -2358,6 +2412,12 @@ export default {
       varOldRate: 'Old rate',
       varNewRate: 'New rate',
       varChangeDirection: 'Change direction',
+      varChangePercent: 'Change percent',
+      varOwnGroups: 'Our mapped groups (with current rate)',
+      varImpactDays: 'Lookback days',
+      varWeeklyCost: 'Recent cost of this channel',
+      varDailyAvgCost: 'Daily average cost',
+      varCostImpact: 'Estimated cost impact',
       pricingAmount: 'Adjustment Amount',
       botNameLabel: 'Bot Name',
       botNameDingtalkPlaceholder: 'e.g., DingTalk Main',
@@ -2394,8 +2454,22 @@ export default {
           description: 'Configure default alarm triggers for all upstream sites.',
           balanceWarning: 'Balance Warning',
           balanceWarningHelp: 'Send an alert when an upstream site\'s balance (converted to CNY via recharge rate) falls below the configured amount.',
-          multiplierChangeWarning: 'Multiplier Change Alert',
-          multiplierChangeWarningHelp: 'Send notifications when any mapped group multiplier changes.'
+          multiplierChangeWarning: 'Multiplier & Availability Alert',
+          multiplierChangeWarningHelp: 'Send notifications when a mapped group multiplier changes or the scheduler automatically moves an upstream account to last priority.'
+        },
+        dailyReport: {
+          title: 'Daily Operations Report',
+          description: 'Summarize revenue, cost, balances, group performance, and channel issues each day.',
+          time: 'Delivery time',
+          timeHelp: 'Uses Asia/Shanghai time. The scheduler sends the report at this time after saving.',
+          format: 'Message format',
+          usesSavedConfig: 'Preview uses the saved configuration; Send now saves the current report settings first.',
+          preview: 'Preview report',
+          previewing: 'Generating...',
+          previewTitle: 'Report preview',
+          sendNow: 'Send now',
+          sending: 'Sending...',
+          sendSuccess: 'Daily operations report sent.'
         },
         pricing: {
           title: 'Auto-Pricing',
@@ -2441,7 +2515,7 @@ export default {
         },
         templates: {
           balanceDefaultTemplate: '🔴 **Balance warning**\n\n🏷️ **Site:** {siteName}\n💰 **Current balance:** CNY {balance}\n⚠️ **Warning threshold:** CNY {threshold}\n\nPlease review and recharge the upstream account to avoid service interruption.',
-          multiplierDefaultTemplate: '🟠 **Multiplier change warning**\n\n🏷️ **Site:** {siteName}\n📦 **Group:** {groupName}\n📊 **Rate:** {oldRate}x → **{newRate}x** ({changeDirection})\n\n🔎 Review the cost change and confirm whether downstream pricing needs adjustment.',
+          multiplierDefaultTemplate: '🟠 **Multiplier change warning**\n\n🏷️ **Site:** {siteName}\n📦 **Upstream group:** {groupName}\n📊 **Rate:** {oldRate}x → **{newRate}x** ({changeDirection} {changePercent})\n\n🔗 **Our groups:** {ownGroups}\n📈 **Cost over the last {days} days:** {weeklyCost} (daily avg {dailyAvgCost})\n💸 **Weekly cost change at the same volume:** {costImpact}\n\n🔎 Review the cost change and confirm whether downstream pricing needs adjustment.',
           balanceTemplatePlaceholder: 'e.g., 🔴 {siteName} has CNY {balance} remaining, below CNY {threshold}.',
           multiplierTemplatePlaceholder: 'e.g., 🟠 {siteName} / {groupName}: {oldRate}x → {newRate}x.'
         }
@@ -2454,6 +2528,8 @@ export default {
         missingWebhook: 'Enter the robot webhook URL first.',
         missingQQConfig: 'Enter the QQ bot AppID, AppSecret, and User OpenID first.',
         missingTelegramConfig: 'Enter the Telegram Bot Token and Chat ID first.',
+        dailyReportNoBots: 'Select at least one bot for the daily operations report first.',
+        dailyReportBotsNotSaved: 'The selected bot has unsaved channel settings. Save it in Channels & Alerts first.',
         sendFailed: 'Failed to send the test message. Check the robot configuration and network connectivity.'
       },
       smtp: {

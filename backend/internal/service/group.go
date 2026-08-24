@@ -80,7 +80,9 @@ type Group struct {
 	ModelPricing              []ChannelModelPricing
 
 	// Claude Code 客户端限制
-	ClaudeCodeOnly  bool
+	ClaudeCodeOnly bool
+	// KiroCompat 为该分组启用 Codex 专属兼容处理。
+	KiroCompat      bool
 	FallbackGroupID *int64
 	// 无效请求兜底分组（仅 anthropic 平台使用）
 	FallbackGroupIDOnInvalidRequest *int64

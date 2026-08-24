@@ -42,6 +42,16 @@ var (
 		"EMAIL_DOMAIN_REGISTRATION_LIMIT",
 		"this email domain cannot register another account; use a mainstream email or contact support to add the enterprise domain",
 	)
+	// ErrRegisterIPLimit 同一客户端 IP 的注册账号数已达上限。
+	ErrRegisterIPLimit = infraerrors.BadRequest(
+		"REGISTER_IP_LIMIT",
+		"too many accounts registered from this network; contact support if you need another account",
+	)
+	// ErrAdminLoginAttemptsExceeded 管理员登录失败次数超限，该 IP 已被临时封禁。
+	ErrAdminLoginAttemptsExceeded = infraerrors.TooManyRequests(
+		"ADMIN_LOGIN_ATTEMPTS_EXCEEDED",
+		"too many failed admin login attempts from this address; try again later",
+	)
 	ErrRegDisabled             = infraerrors.Forbidden("REGISTRATION_DISABLED", "registration is currently disabled")
 	ErrServiceUnavailable      = infraerrors.ServiceUnavailable("SERVICE_UNAVAILABLE", "service temporarily unavailable")
 	ErrInvitationCodeRequired  = infraerrors.BadRequest("INVITATION_CODE_REQUIRED", "invitation code is required")
@@ -87,6 +97,19 @@ type AuthService struct {
 	defaultSubAssigner    DefaultSubscriptionAssigner
 	userPlatformQuotaRepo UserPlatformQuotaRepository
 	playgroundAPIKeys     PlaygroundAPIKeyProvisioner
+	// adminLoginAttempts 管理员登录失败计数；为 nil 时该防护静默关闭
+	// （单元测试桩不必强制提供 Redis 依赖）。
+	adminLoginAttempts AdminLoginAttemptCache
+}
+
+// SetAdminLoginAttemptCache 注入管理员登录失败计数器。
+// 与 RateLimitService.SetOpenAI403CounterCache 同样采用 setter 注入，
+// 避免改动 NewAuthService 的长参数列表波及所有装配点与测试。
+func (s *AuthService) SetAdminLoginAttemptCache(cache AdminLoginAttemptCache) {
+	if s == nil {
+		return
+	}
+	s.adminLoginAttempts = cache
 }
 
 type CaptchaProof struct {
@@ -536,14 +559,32 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (string
 		return "", nil, ErrServiceUnavailable
 	}
 
+	// 管理员账号：同一 IP 在窗口内失败次数超限则直接拒绝，不再比对密码。
+	// 必须放在 CheckPassword 之前，否则爆破者仍可无限次试密码。
+	isAdmin := user.Role == RoleAdmin
+	if isAdmin {
+		if err := s.ensureAdminLoginAllowed(ctx); err != nil {
+			return "", nil, err
+		}
+	}
+
 	// 验证密码
 	if !s.CheckPassword(password, user.PasswordHash) {
+		if isAdmin {
+			s.recordAdminLoginFailure(ctx)
+		}
 		return "", nil, ErrInvalidCredentials
 	}
 
 	// 检查用户状态
 	if !user.IsActive() {
 		return "", nil, ErrUserNotActive
+	}
+
+	// 密码正确即视为该 IP 的合法来源，清零失败计数，
+	// 避免管理员偶尔输错几次后被自己的防护挡住。
+	if isAdmin {
+		s.resetAdminLoginFailures(ctx)
 	}
 
 	// 生成JWT token
@@ -1202,6 +1243,12 @@ func (s *AuthService) validateRegistrationEmailPolicy(ctx context.Context, email
 // 非白名单域名默认直接拒绝（严格白名单模式）；仅当域名限量注册开关开启时，
 // 非白名单域名每个最多允许一个账户。
 func (s *AuthService) validateRegistrationEmailQuota(ctx context.Context, email string) error {
+	// 每 IP 注册配额与邮箱域名配额相互独立，任一超限都拒绝。
+	// 放在这里而不是各个调用点，是为了让邮箱注册与三条 OAuth 注册路径
+	// （auth_oauth_email_flow.go 的 45/143/227 行）自动获得同一道闸门。
+	if err := s.validateRegisterIPQuota(ctx); err != nil {
+		return err
+	}
 	if s.settingService == nil {
 		return nil
 	}
@@ -1247,7 +1294,9 @@ func (s *AuthService) createUserWithRegistrationEmailGuard(ctx context.Context, 
 	}
 	domain := RegistrationEmailDomain(user.Email)
 	if !IsRegistrationEmailSuffixLimited(user.Email, whitelist) {
-		return s.userRepo.CreateWithEmailAliasGuard(ctx, user)
+		// 不受域名配额约束的注册仍要受 IP 配额约束：走带 IP 锁的原子创建，
+		// 拿不到 IP 或仓储不支持时回落到原有路径，行为不变。
+		return s.createUserWithRegisterIPQuota(ctx, user, s.userRepo.CreateWithEmailAliasGuard)
 	}
 	// 开关关闭时非白名单域名在校验阶段已被拒绝；此处兜底防御设置竞态变更。
 	if s.settingService == nil || !s.settingService.IsRegistrationEmailDomainQuotaEnabled(ctx) {

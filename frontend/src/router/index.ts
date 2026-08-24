@@ -40,6 +40,16 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/download',
+    name: 'ClientDownload',
+    component: () => import('@/views/ClientDownloadView.vue'),
+    meta: {
+      requiresAuth: false,
+      requiresClientDownload: true,
+      title: 'Download Client'
+    }
+  },
+  {
     path: '/login',
     name: 'Login',
     component: () => import('@/views/auth/LoginView.vue'),
@@ -272,6 +282,19 @@ const routes: RouteRecordRaw[] = [
       title: 'Usage Records',
       titleKey: 'usage.title',
       descriptionKey: 'usage.description'
+    }
+  },
+  {
+    path: '/tickets',
+    alias: '/contact',
+    name: 'Tickets',
+    component: () => import('@/views/user/TicketsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Tickets',
+      titleKey: 'tickets.title',
+      descriptionKey: 'tickets.description'
     }
   },
   {
@@ -609,6 +632,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/tickets',
+    name: 'AdminTickets',
+    component: () => import('@/views/admin/TicketsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Tickets',
+      titleKey: 'tickets.adminTitle',
+      descriptionKey: 'tickets.adminDescription'
+    }
+  },
+  {
     path: '/admin/announcements',
     name: 'AdminAnnouncements',
     component: () => import('@/views/admin/AnnouncementsView.vue'),
@@ -679,6 +714,18 @@ const routes: RouteRecordRaw[] = [
       titleKey: 'admin.riskControl.title',
       descriptionKey: 'admin.riskControl.description',
       requiresRiskControl: true
+    }
+  },
+  {
+    path: '/admin/blacklist',
+    name: 'AdminBlacklist',
+    component: () => import('@/views/admin/BlacklistView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Access Blacklist',
+      titleKey: 'nav.accessBlacklist',
+      descriptionKey: 'nav.accessBlacklist'
     }
   },
   {
@@ -999,6 +1046,14 @@ router.beforeEach(async (to, _from, next) => {
     }
   }
 
+  if (to.meta.requiresClientDownload && !appStore.publicSettingsLoaded) {
+    try {
+      await appStore.fetchPublicSettings()
+    } catch (error) {
+      console.warn('Failed to load client download settings in route guard', error)
+    }
+  }
+
   if (to.path.startsWith('/playground') && !appStore.publicSettingsLoaded) {
     try {
       await appStore.fetchPublicSettings()
@@ -1009,12 +1064,27 @@ router.beforeEach(async (to, _from, next) => {
 
   // Only an explicit value from successfully loaded settings can disable a route.
   // A transient settings failure is unknown state, not a confirmed feature toggle.
+  //
+  // 备用支付通道的入口只长在充值页上。如果主支付一关就把整页拦掉，
+  // 「主通道挂了只留备用」这个场景就永远没法用——所以备用开启时仍放行，
+  // 页面自己会只渲染备用入口。
   if (
     to.meta.requiresPayment &&
     appStore.publicSettingsLoaded &&
-    appStore.cachedPublicSettings?.payment_enabled === false
+    appStore.cachedPublicSettings?.payment_enabled === false &&
+    appStore.cachedPublicSettings?.backup_payment_enabled !== true
   ) {
     next(authStore.isAdmin ? '/admin/dashboard' : '/dashboard')
+    return
+  }
+
+  // 下载页是公开页，关闭后未登录访客也不该看到，统一回首页而不是控制台。
+  if (
+    to.meta.requiresClientDownload &&
+    appStore.publicSettingsLoaded &&
+    appStore.cachedPublicSettings?.client_download_enabled === false
+  ) {
+    next('/home')
     return
   }
 

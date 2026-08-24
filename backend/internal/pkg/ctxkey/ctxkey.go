@@ -31,6 +31,10 @@ const (
 	// the upstream generation.
 	PlaygroundRequest Key = "ctx_playground_request"
 
+	// ClientIP 客户端真实 IP。由认证路由的中间件写入，供注册配额等
+	// 需要按来源 IP 判定、又不便逐层透传参数的服务层逻辑读取。
+	ClientIP Key = "ctx_client_ip"
+
 	// Model 请求模型标识（用于统一请求链路日志字段）。
 	Model Key = "ctx_model"
 

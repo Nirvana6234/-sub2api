@@ -10,6 +10,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"transithub/backend/internal/modules/upstream"
 )
 
 // worker 串行消费检测队列。
@@ -171,17 +173,32 @@ func (w *worker) execute(ctx context.Context, job Job) error {
 		return w.fail(finishCtx, job.ID, ErrorCredential, err.Error())
 	}
 
+	// 账号绑的可能是 socks5（xray 客户端），检测器只吃 http:// 代理。
+	// 在这里换算，换不了就带着能看懂的原因失败，不透传给检测器让它吐「未分类异常」。
+	proxyURL, err := w.service.detectorProxyURL(cred.ProxyURL)
+	if err != nil {
+		return w.fail(finishCtx, job.ID, ErrorProxyUnsupported, err.Error())
+	}
+
 	preset, err := w.service.detector.Preset(jobCtx, job.Tier)
 	if err != nil {
 		return w.fail(finishCtx, job.ID, ErrorDetectorUnavailable, err.Error())
 	}
 
+	// 检测器可能卡在上一次没跑完的会话上（进程重启后会被标成 interrupted）。
+	// 那种状态下它会把我们这次的 start 当成「续跑请求」，参数对不上就 400，
+	// 且理由被脱敏成一句看不懂的话。所以先主动清干净再开新会话。
+	w.clearInterruptedSession(jobCtx)
+
+	requestModel := upstream.ResolveMappedModel(cred.ModelMapping, job.RequestModel)
 	started, err := w.service.detector.Start(jobCtx, StartRequest{
-		BaseURL: cred.BaseURL,
+		BaseURL:         cred.BaseURL,
+		ProxyURL:        proxyURL,
+		HeaderOverrides: cred.HeaderOverrides,
 		// 明文 key 只在这一行传递：进请求体、发给检测器，就地丢弃。
 		APIKey:       cred.Key,
 		ClaimedModel: job.ClaimedModel,
-		RequestModel: job.RequestModel,
+		RequestModel: requestModel,
 		Config:       preset,
 	})
 	if err != nil {
@@ -247,6 +264,26 @@ func (w *worker) execute(ctx context.Context, job Job) error {
 	// 一批 30 个提交时它们还都是 queued，不占保留配额。
 	w.service.pruneHistory(finishCtx, job.UserID, job.AdminAccountID)
 	return nil
+}
+
+// clearInterruptedSession 在开新会话前清掉检测器里的中断态残留。
+//
+// 全程best-effort：拿不到状态、或者部署的检测器还没有 reset 端点（404），
+// 都只记一行日志继续往下走——真正的失败留给 Start 去报，这里不该把一次
+// 「可能根本不需要清理」的探查变成任务失败的理由。
+func (w *worker) clearInterruptedSession(ctx context.Context) {
+	status, err := w.service.detector.Status(ctx)
+	if err != nil {
+		log.Printf("[purity_check] 开始前查检测器状态失败，跳过清理: %v", err)
+		return
+	}
+	if !status.StatusIsInterrupted() {
+		return
+	}
+	log.Printf("[purity_check] 检测器残留中断会话 %s，重置后再开新会话", status.SessionID)
+	if err := w.service.detector.ResetSession(ctx); err != nil {
+		log.Printf("[purity_check] 重置检测器会话失败: %v", err)
+	}
 }
 
 // waitForCompletion 轮询检测器直到终态，顺带把进度写回数据库。

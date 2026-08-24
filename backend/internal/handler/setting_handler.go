@@ -110,6 +110,11 @@ func (h *SettingHandler) GetPublicSettings(c *gin.Context) {
 		ChannelMonitorShowQuota:              settings.ChannelMonitorShowQuota,
 
 		AvailableChannelsEnabled:    settings.AvailableChannelsEnabled,
+		ClientDownloadEnabled:       settings.ClientDownloadEnabled,
+		ClientDownloadNetdiskURL:       settings.ClientDownloadNetdiskURL,
+		ClientDownloadDirectURL:       settings.ClientDownloadDirectURL,
+		BackupPaymentEnabled:        settings.BackupPaymentEnabled,
+		BackupPaymentURL:            settings.BackupPaymentURL,
 		PlaygroundEnabled:           settings.PlaygroundEnabled,
 		PlaygroundDefaultChatModel:  settings.PlaygroundDefaultChatModel,
 		PlaygroundDefaultImageModel: settings.PlaygroundDefaultImageModel,

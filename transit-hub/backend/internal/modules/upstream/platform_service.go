@@ -480,6 +480,82 @@ func (s *PlatformService) FetchSub2APIGroupDailyStats(session Session, groups ..
 	return stats, nil
 }
 
+// FetchSub2APIAccountCostRange returns authoritative purchase cost for one
+// local Sub2API account and one local group. Both filters are required by the
+// daily report so an account shared by several groups is never double counted.
+func (s *PlatformService) FetchSub2APIAccountCostRange(session Session, startDate, endDate, accountID, groupID string) (float64, error) {
+	if session.Platform != PlatformSub2API || !session.IsAuthenticated() || strings.TrimSpace(accountID) == "" || strings.TrimSpace(groupID) == "" {
+		return 0, newRequestError(ErrorAuth, PlatformSub2API)
+	}
+	endpoint := session.BaseURL + "/api/v1/admin/dashboard/groups?start_date=" + startDate + "&end_date=" + endDate +
+		"&timezone=Asia%2FShanghai&account_id=" + url.QueryEscape(accountID) + "&group_id=" + url.QueryEscape(groupID)
+	response, err := s.httpClient.requestJSON(endpoint, adminAuthOptions(session))
+	if err != nil {
+		return 0, err
+	}
+	total := 0.0
+	for _, item := range dataArray(response.Payload) {
+		cost, ok := sub2APIGroupAccountCost(item)
+		if !ok {
+			return 0, newRequestError(ErrorInvalidResponse, "missing account_cost")
+		}
+		total += cost
+	}
+	return total, nil
+}
+
+// FetchSub2APIGroupAccountingRange 一次拿到每个自有分组在指定日期区间内的
+// 营收（actual_cost）与采购成本（account_cost）。
+//
+// 与 FetchSub2APIAccountCostRange 走同一个端点，区别是不带 account_id/group_id
+// 过滤，因此返回的是按分组汇总的全量。运营报告用它算分组毛利：只有把「这个分组
+// 收了多少」和「为它付了多少」摆在一起，才知道哪个分组在赚钱、哪个在倒贴。
+func (s *PlatformService) FetchSub2APIGroupAccountingRange(session Session, startDate, endDate string) ([]GroupAccounting, error) {
+	if session.Platform != PlatformSub2API || !session.IsAuthenticated() {
+		return nil, newRequestError(ErrorAuth, PlatformSub2API)
+	}
+	endpoint := session.BaseURL + "/api/v1/admin/dashboard/groups?start_date=" + startDate +
+		"&end_date=" + endDate + "&timezone=" + url.QueryEscape(reportingTimezone)
+	response, err := s.httpClient.requestJSON(endpoint, adminAuthOptions(session))
+	if err != nil {
+		return nil, err
+	}
+	items := dataArray(response.Payload)
+	if len(items) == 0 {
+		if groups, ok := dataRecord(response.Payload)["groups"].([]any); ok {
+			items = groups
+		}
+	}
+
+	// 重名分组合并求和，顺序按首次出现，与 GroupUsageToday 的归一化保持一致。
+	order := make([]string, 0, len(items))
+	byName := make(map[string]*GroupAccounting, len(items))
+	for _, item := range items {
+		name := firstString(item, []string{"group_name", "groupName", "name"})
+		if name == nil || strings.TrimSpace(*name) == "" {
+			continue
+		}
+		key := strings.TrimSpace(*name)
+		entry, exists := byName[key]
+		if !exists {
+			entry = &GroupAccounting{GroupName: key}
+			byName[key] = entry
+			order = append(order, key)
+		}
+		entry.RevenueAmount += sub2APIGroupDailyCost(item)
+		if cost, ok := sub2APIGroupAccountCost(item); ok {
+			entry.CostAmount += cost
+			entry.CostKnown = true
+		}
+	}
+
+	result := make([]GroupAccounting, 0, len(order))
+	for _, key := range order {
+		result = append(result, *byName[key])
+	}
+	return result, nil
+}
+
 // FetchSub2APIAdminUsageStats 调用管理员的 sub2api 站点 /api/v1/admin/usage/stats 接口，
 // 查询指定日期范围内的总实际消费（即站点的盈利额度）。
 // startDate 和 endDate 格式为 "2006-01-02"，查询当天数据时两者传同一天即可。
@@ -976,6 +1052,18 @@ func sub2APIGroupDailyCost(item any) float64 {
 		return 0
 	}
 	return *cost
+}
+
+// sub2APIGroupAccountCost reads the account-side purchase cost exposed by
+// /api/v1/admin/dashboard/groups. The endpoint also returns actual_cost, but
+// that is the amount charged to users and must never be used as procurement
+// cost for the daily report.
+func sub2APIGroupAccountCost(item any) (float64, bool) {
+	cost := firstNumber(item, []string{"account_cost", "accountCost", "today_account_cost", "todayAccountCost"})
+	if cost == nil || math.IsNaN(*cost) || math.IsInf(*cost, 0) || *cost < 0 {
+		return 0, false
+	}
+	return *cost, true
 }
 
 func (s *PlatformService) FetchNewAPIGroupDailyStats(session Session, groups []GroupInfo) ([]GroupDailyStat, error) {

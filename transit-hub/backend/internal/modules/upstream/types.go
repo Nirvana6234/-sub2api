@@ -140,6 +140,23 @@ type Metrics struct {
 	Groups          []GroupInfo `json:"groups"`
 }
 
+// MultiplierEvent 是一次上游分组倍率变化的权威记录。
+// mapped 表示变化发生时该上游分组是否已被我方映射对接；日报只汇总未映射事件。
+type MultiplierEvent struct {
+	ID                 string
+	UserID             string
+	AdminAccountID     string
+	SiteID             string
+	SiteName           string
+	GroupID            string
+	GroupName          string
+	PreviousMultiplier float64
+	CurrentMultiplier  float64
+	Mapped             bool
+	Notified           bool
+	ObservedAt         time.Time
+}
+
 type CreateRequest struct {
 	Name         string   `json:"name"`
 	SiteURL      string   `json:"siteUrl"`
@@ -297,9 +314,39 @@ type LoginResult struct {
 	Metrics  Metrics
 }
 
+// GroupDailyStat 是上游站点按分组统计的当日金额。
+//
+// TodayActualCost 是上游站点对用户的扣费，**不是**我们的采购成本，
+// 只用于手工记账兜底。要拿采购成本请走 FetchSub2APIAccountCostRange，
+// 那条路查的是本方 Sub2API 上明确绑定的账号成本。
 type GroupDailyStat struct {
 	GroupName       string  `json:"groupName"`
 	TodayActualCost float64 `json:"todayActualCost"`
+}
+
+// GroupAccounting 是一个自有分组在某段时间内的营收与采购成本。
+//
+// 两个数字来自同一次 /api/v1/admin/dashboard/groups 调用：actual_cost 是对我方
+// 用户的扣费（营收），account_cost 是付给上游账号的采购成本。**同币种**，
+// 对 sub2api 平台都是人民币，相减即毛利，绝不能再乘汇率
+// （生产上出过 ¥409.57 被乘 7 变成 ¥2866.96 的事故）。
+type GroupAccounting struct {
+	GroupName string
+	// RevenueAmount 是对用户的扣费合计（actual_cost）。
+	RevenueAmount float64
+	// CostAmount 是采购成本合计（account_cost）。
+	CostAmount float64
+	// CostKnown 区分「成本是 0」和「这一版上游不返回 account_cost」。
+	// 为 false 时不能把毛利算成等于营收——那会让分组看起来全是纯利。
+	CostKnown bool
+}
+
+// GrossMargin 返回毛利率（0-1）。营收为 0 或成本口径缺失时返回 false。
+func (g GroupAccounting) GrossMargin() (float64, bool) {
+	if !g.CostKnown || g.RevenueAmount <= 0 {
+		return 0, false
+	}
+	return (g.RevenueAmount - g.CostAmount) / g.RevenueAmount, true
 }
 
 type AdminSiteBalance struct {

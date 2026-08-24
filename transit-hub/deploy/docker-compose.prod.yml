@@ -34,6 +34,12 @@ services:
       # GPT-5.6 纯度检测旁路服务地址。注释掉这一行即可整体关闭该功能：
       # 接口会返回「检测器不可用」，后台队列 worker 也不启动。
       PURITY_CHECK_DETECTOR_URL: http://gpt56-detector:8760
+      # 纯度检测专用的 HTTP 代理。账号在 Sub2API 里绑的是 socks5（xray 客户端），
+      # 而检测器的传输层是 urllib，只认 http:// 代理，直接透传 socks5 会让它抛异常，
+      # 并且把原因盖成「本地运行发生未分类异常」，现场完全查不出是代理问题。
+      # 这里要填**与真实转发同一条出口链路**的 HTTP 入口，否则测的是另一个出口 IP，
+      # 结论对不上线上流量。留空 = 绑了非 HTTP 代理的账号直接判失败并说明原因，不会退化成直连。
+      # PURITY_CHECK_HTTP_PROXY_URL: http://172.18.0.1:10809
     volumes:
       # 持久化工单图片附件；不要挂载到 /app/public 之下，避免变成公开静态目录。
       - ../data/ticket-uploads:/app/data/ticket-uploads

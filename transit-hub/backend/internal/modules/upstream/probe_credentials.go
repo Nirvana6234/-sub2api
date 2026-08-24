@@ -1,8 +1,10 @@
 package upstream
 
 import (
+	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -10,14 +12,21 @@ import (
 // server-side health probe. Key is plaintext and must never be logged, stored,
 // or returned to the browser.
 type ProbeCredential struct {
-	BaseURL         string
-	Key             string
-	ProviderFamily  string
-	Models          []string
+	BaseURL        string
+	Key            string
+	ProviderFamily string
+	Models         []string
+	// ModelMapping is the account-level model_mapping from Sub2API. It is
+	// non-sensitive routing metadata and is used by purity checks to send the
+	// same effective model that normal Sub2API forwarding sends upstream.
+	ModelMapping    map[string]string
 	AccountPlatform string
 	AccountType     string
 	Extra           map[string]any
 	HeaderOverrides map[string]string
+	// ProxyURL is resolved from the Sub2API account binding and is only held
+	// in memory while the probe request is running.
+	ProxyURL string
 }
 
 const chatGPTCodexResponsesURL = "https://chatgpt.com/backend-api/codex/responses"
@@ -125,7 +134,7 @@ func (s *PlatformService) resolveSub2APIAccountCredential(session Session, accou
 		return ProbeCredential{}, newProbeCredentialError(ReasonCredentialUnavailable)
 	}
 
-	exportURL := session.BaseURL + "/api/v1/admin/accounts/data?ids=" + url.QueryEscape(accountID) + "&include_proxies=false"
+	exportURL := session.BaseURL + "/api/v1/admin/accounts/data?ids=" + url.QueryEscape(accountID) + "&include_proxies=true"
 	response, err := s.httpClient.requestJSON(exportURL, adminAuthOptions(session))
 	if err != nil {
 		return ProbeCredential{}, newProbeCredentialError(ReasonExportUnavailable)
@@ -149,6 +158,11 @@ func (s *PlatformService) resolveSub2APIAccountCredential(session Session, accou
 	accountPlatform := firstNonEmptyString(stringFromAny(record["platform"]), account.Platform)
 	accountType := firstNonEmptyString(stringFromAny(record["type"]), account.Type)
 	extra := mapFromAny(record["extra"])
+	proxyURL := resolveExportedProxyURL(record, response.Payload)
+	if proxyKey := strings.TrimSpace(stringFromAny(record["proxy_key"])); proxyKey != "" && proxyURL == "" {
+		// A bound proxy must never silently degrade to a direct request.
+		return ProbeCredential{}, newProbeCredentialError(ReasonCredentialUnavailable)
+	}
 
 	baseURL := firstBaseURL(credentials)
 	if baseURL == "" {
@@ -172,11 +186,98 @@ func (s *PlatformService) resolveSub2APIAccountCredential(session Session, accou
 		Key:             key,
 		ProviderFamily:  accountPlatform,
 		Models:          splitModels(account.Models),
+		ModelMapping:    stringMapping(credentials["model_mapping"]),
 		AccountPlatform: accountPlatform,
 		AccountType:     accountType,
 		Extra:           extra,
 		HeaderOverrides: headerOverridesFromCredentials(accountPlatform, accountType, credentials),
+		ProxyURL:        proxyURL,
 	}, nil
+}
+
+// ResolveMappedModel applies the same account model_mapping semantics as
+// Sub2API: exact keys win, then a trailing-* wildcard with the longest pattern
+// wins, and ties are resolved lexicographically for deterministic behavior.
+// An unmatched model is returned unchanged.
+func ResolveMappedModel(mapping map[string]string, requested string) string {
+	requested = strings.TrimSpace(requested)
+	if requested == "" || len(mapping) == 0 {
+		return requested
+	}
+	if mapped, ok := mapping[requested]; ok {
+		return mapped
+	}
+
+	bestPattern := ""
+	for pattern := range mapping {
+		if !strings.HasSuffix(pattern, "*") {
+			continue
+		}
+		prefix := strings.TrimSuffix(pattern, "*")
+		if !strings.HasPrefix(requested, prefix) {
+			continue
+		}
+		if len(pattern) > len(bestPattern) || (len(pattern) == len(bestPattern) && pattern < bestPattern) {
+			bestPattern = pattern
+		}
+	}
+	if bestPattern != "" {
+		return mapping[bestPattern]
+	}
+	return requested
+}
+
+func stringMapping(value any) map[string]string {
+	raw, ok := value.(map[string]any)
+	if !ok || len(raw) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(raw))
+	for key, value := range raw {
+		if mapped, ok := value.(string); ok {
+			out[key] = mapped
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func resolveExportedProxyURL(account map[string]any, payload any) string {
+	proxyKey, ok := account["proxy_key"].(string)
+	if !ok || strings.TrimSpace(proxyKey) == "" {
+		return ""
+	}
+	root, ok := payload.(map[string]any)
+	if !ok {
+		return ""
+	}
+	data, _ := root["data"].(map[string]any)
+	proxies, _ := data["proxies"].([]any)
+	for _, raw := range proxies {
+		proxy, ok := raw.(map[string]any)
+		if !ok || strings.TrimSpace(stringFromAny(proxy["proxy_key"])) != strings.TrimSpace(proxyKey) {
+			continue
+		}
+		protocol := strings.ToLower(strings.TrimSpace(stringFromAny(proxy["protocol"])))
+		host := strings.TrimSpace(stringFromAny(proxy["host"]))
+		port, ok := proxy["port"].(float64)
+		if !ok || host == "" || port <= 0 || port > 65535 {
+			return ""
+		}
+		if protocol != "http" && protocol != "https" && protocol != "socks5" && protocol != "socks5h" {
+			return ""
+		}
+		u := &url.URL{Scheme: protocol, Host: net.JoinHostPort(host, strconv.Itoa(int(port)))}
+		username := strings.TrimSpace(stringFromAny(proxy["username"]))
+		password := stringFromAny(proxy["password"])
+		if username != "" {
+			u.User = url.UserPassword(username, password)
+		}
+		return u.String()
+	}
+	return ""
 }
 
 func sub2APIExportAccounts(payload any) []any {
@@ -248,7 +349,7 @@ func headerOverridesFromCredentials(platform string, accountType string, credent
 		headerName := strings.ToLower(strings.TrimSpace(name))
 		headerValue, ok := value.(string)
 		headerValue = strings.TrimSpace(headerValue)
-		if !ok || headerName == "" || headerValue == "" || isBlockedHeaderOverrideName(headerName) {
+		if !ok || headerName == "" || headerValue == "" || strings.ContainsAny(headerValue, "\r\n") || isBlockedHeaderOverrideName(headerName) {
 			continue
 		}
 		out[headerName] = headerValue

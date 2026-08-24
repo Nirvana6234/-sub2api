@@ -240,7 +240,7 @@ func (r *MetricsRepository) GetBalanceFilter(ctx context.Context, userID, adminA
 		UserID:          userID,
 		AdminAccountID:  adminAccountID,
 		ExcludeAdmin:    true,
-		ExcludeBalances: []float64{},
+		ExcludeBalances: DefaultExcludedBalances(),
 	}
 	var balancesJSON []byte
 	err := r.db.QueryRow(ctx, `

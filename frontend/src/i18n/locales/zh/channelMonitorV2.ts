@@ -104,6 +104,7 @@ export default {
       groupsSelected: '已选择 {count} 个分组',
       groupsAll: '全部分组',
       groupsEmpty: '没有可选择的分组',
+      groupsLoadFailed: '分组列表暂时无法加载；已保存的监控配置仍可编辑。',
       errorsTitle: '错误分类与忽略',
       errorsHint:
         '勾选「忽略」的类别不计入错误率与健康分，仍在错误原因列表中以灰色显示并标记忽略。未匹配的错误归入「其他」。',

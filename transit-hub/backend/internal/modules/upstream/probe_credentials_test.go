@@ -115,7 +115,7 @@ func TestResolveProbeCredential_Sub2APIExportSingleAccount(t *testing.T) {
 		if r.URL.Path != "/api/v1/admin/accounts/data" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
-		if r.URL.Query().Get("ids") != "55" || r.URL.Query().Get("include_proxies") != "false" {
+		if r.URL.Query().Get("ids") != "55" || r.URL.Query().Get("include_proxies") != "true" {
 			t.Fatalf("unexpected query: %s", r.URL.RawQuery)
 		}
 		writeJSON(w, map[string]any{"data": []map[string]any{
@@ -144,7 +144,7 @@ func TestResolveProbeCredential_Sub2APIExportAccountsShapeSuccess(t *testing.T) 
 		if r.URL.Path != "/api/v1/admin/accounts/data" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
-		if r.URL.Query().Get("ids") != "1443" || r.URL.Query().Get("include_proxies") != "false" {
+		if r.URL.Query().Get("ids") != "1443" || r.URL.Query().Get("include_proxies") != "true" {
 			t.Fatalf("unexpected query: %s", r.URL.RawQuery)
 		}
 		writeJSON(w, map[string]any{"data": map[string]any{
@@ -303,6 +303,7 @@ func TestResolveProbeCredential_Sub2APIPreservesOpenAIExtraAndHeaderOverrides(t 
 				"extra": map[string]any{"openai_responses_supported": false},
 				"credentials": map[string]any{
 					"api_key": "sk-sub2-secret", "base_url": "https://up.example.com",
+					"model_mapping":           map[string]any{"gpt-5.6-sol": "grok-4.6"},
 					"header_override_enabled": true,
 					"header_overrides":        map[string]any{"x-relay-key": "relay", "authorization": "blocked"},
 				},
@@ -322,10 +323,30 @@ func TestResolveProbeCredential_Sub2APIPreservesOpenAIExtraAndHeaderOverrides(t 
 	if supported, _ := cred.Extra["openai_responses_supported"].(bool); supported {
 		t.Fatalf("expected extra openai_responses_supported=false, got %+v", cred.Extra)
 	}
+	if got := cred.ModelMapping["gpt-5.6-sol"]; got != "grok-4.6" {
+		t.Fatalf("expected model mapping to be preserved, got %+v", cred.ModelMapping)
+	}
 	if cred.HeaderOverrides["x-relay-key"] != "relay" {
 		t.Fatalf("expected allowed header override, got %+v", cred.HeaderOverrides)
 	}
 	if _, blocked := cred.HeaderOverrides["authorization"]; blocked {
 		t.Fatalf("authorization override must be blocked: %+v", cred.HeaderOverrides)
+	}
+}
+
+func TestResolveMappedModelMatchesSub2APISemantics(t *testing.T) {
+	mapping := map[string]string{
+		"gpt-*":       "generic",
+		"gpt-5.6-*":   "gpt56-family",
+		"gpt-5.6-sol": "grok-4.6",
+	}
+	if got := ResolveMappedModel(mapping, "gpt-5.6-sol"); got != "grok-4.6" {
+		t.Fatalf("exact mapping should win, got %q", got)
+	}
+	if got := ResolveMappedModel(mapping, "gpt-5.6-terra"); got != "gpt56-family" {
+		t.Fatalf("longest wildcard should win, got %q", got)
+	}
+	if got := ResolveMappedModel(mapping, "claude-sonnet"); got != "claude-sonnet" {
+		t.Fatalf("unmatched model should remain unchanged, got %q", got)
 	}
 }

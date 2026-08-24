@@ -39,6 +39,28 @@ export type StrategySettings = {
   multiplierNotifyBotIds: string[]
   multiplierTemplate: string
   multiplierTemplateFormat?: NotificationTemplateFormat
+  /**
+   * 每日运营报告。这四个字段后端一直支持，但之前前端没有对应界面，
+   * 于是保存设置时会把它们整个丢掉——线上 enableDailyReport 从来没被打开过。
+   */
+  enableDailyReport: boolean
+  /** 推送时刻，Asia/Shanghai 的 HH:MM。 */
+  dailyReportTime: string
+  dailyReportBotIds: string[]
+  dailyReportFormat?: NotificationTemplateFormat
+}
+
+/** POST /api/daily-report/send-now 的响应。 */
+export type DailyReportSendResult = {
+  sent: boolean
+  botCount: number
+  /** 这次发出去的正文，前端可以就地展示，省得再去翻聊天软件。 */
+  report: string
+}
+
+export type DailyReportPreview = {
+  report: string
+  format?: NotificationTemplateFormat
 }
 
 export type DingtalkChannelSettings = {

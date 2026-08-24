@@ -135,6 +135,11 @@ func SignupSource(v string) predicate.User {
 	return predicate.User(sql.FieldEQ(FieldSignupSource, v))
 }
 
+// RegisterIP applies equality check predicate on the "register_ip" field. It's identical to RegisterIPEQ.
+func RegisterIP(v string) predicate.User {
+	return predicate.User(sql.FieldEQ(FieldRegisterIP, v))
+}
+
 // LastLoginAt applies equality check predicate on the "last_login_at" field. It's identical to LastLoginAtEQ.
 func LastLoginAt(v time.Time) predicate.User {
 	return predicate.User(sql.FieldEQ(FieldLastLoginAt, v))
@@ -1025,6 +1030,81 @@ func SignupSourceContainsFold(v string) predicate.User {
 	return predicate.User(sql.FieldContainsFold(FieldSignupSource, v))
 }
 
+// RegisterIPEQ applies the EQ predicate on the "register_ip" field.
+func RegisterIPEQ(v string) predicate.User {
+	return predicate.User(sql.FieldEQ(FieldRegisterIP, v))
+}
+
+// RegisterIPNEQ applies the NEQ predicate on the "register_ip" field.
+func RegisterIPNEQ(v string) predicate.User {
+	return predicate.User(sql.FieldNEQ(FieldRegisterIP, v))
+}
+
+// RegisterIPIn applies the In predicate on the "register_ip" field.
+func RegisterIPIn(vs ...string) predicate.User {
+	return predicate.User(sql.FieldIn(FieldRegisterIP, vs...))
+}
+
+// RegisterIPNotIn applies the NotIn predicate on the "register_ip" field.
+func RegisterIPNotIn(vs ...string) predicate.User {
+	return predicate.User(sql.FieldNotIn(FieldRegisterIP, vs...))
+}
+
+// RegisterIPGT applies the GT predicate on the "register_ip" field.
+func RegisterIPGT(v string) predicate.User {
+	return predicate.User(sql.FieldGT(FieldRegisterIP, v))
+}
+
+// RegisterIPGTE applies the GTE predicate on the "register_ip" field.
+func RegisterIPGTE(v string) predicate.User {
+	return predicate.User(sql.FieldGTE(FieldRegisterIP, v))
+}
+
+// RegisterIPLT applies the LT predicate on the "register_ip" field.
+func RegisterIPLT(v string) predicate.User {
+	return predicate.User(sql.FieldLT(FieldRegisterIP, v))
+}
+
+// RegisterIPLTE applies the LTE predicate on the "register_ip" field.
+func RegisterIPLTE(v string) predicate.User {
+	return predicate.User(sql.FieldLTE(FieldRegisterIP, v))
+}
+
+// RegisterIPContains applies the Contains predicate on the "register_ip" field.
+func RegisterIPContains(v string) predicate.User {
+	return predicate.User(sql.FieldContains(FieldRegisterIP, v))
+}
+
+// RegisterIPHasPrefix applies the HasPrefix predicate on the "register_ip" field.
+func RegisterIPHasPrefix(v string) predicate.User {
+	return predicate.User(sql.FieldHasPrefix(FieldRegisterIP, v))
+}
+
+// RegisterIPHasSuffix applies the HasSuffix predicate on the "register_ip" field.
+func RegisterIPHasSuffix(v string) predicate.User {
+	return predicate.User(sql.FieldHasSuffix(FieldRegisterIP, v))
+}
+
+// RegisterIPIsNil applies the IsNil predicate on the "register_ip" field.
+func RegisterIPIsNil() predicate.User {
+	return predicate.User(sql.FieldIsNull(FieldRegisterIP))
+}
+
+// RegisterIPNotNil applies the NotNil predicate on the "register_ip" field.
+func RegisterIPNotNil() predicate.User {
+	return predicate.User(sql.FieldNotNull(FieldRegisterIP))
+}
+
+// RegisterIPEqualFold applies the EqualFold predicate on the "register_ip" field.
+func RegisterIPEqualFold(v string) predicate.User {
+	return predicate.User(sql.FieldEqualFold(FieldRegisterIP, v))
+}
+
+// RegisterIPContainsFold applies the ContainsFold predicate on the "register_ip" field.
+func RegisterIPContainsFold(v string) predicate.User {
+	return predicate.User(sql.FieldContainsFold(FieldRegisterIP, v))
+}
+
 // LastLoginAtEQ applies the EQ predicate on the "last_login_at" field.
 func LastLoginAtEQ(v time.Time) predicate.User {
 	return predicate.User(sql.FieldEQ(FieldLastLoginAt, v))
@@ -1522,6 +1602,29 @@ func HasAnnouncementReads() predicate.User {
 func HasAnnouncementReadsWith(preds ...predicate.AnnouncementRead) predicate.User {
 	return predicate.User(func(s *sql.Selector) {
 		step := newAnnouncementReadsStep()
+		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
+			for _, p := range preds {
+				p(s)
+			}
+		})
+	})
+}
+
+// HasTickets applies the HasEdge predicate on the "tickets" edge.
+func HasTickets() predicate.User {
+	return predicate.User(func(s *sql.Selector) {
+		step := sqlgraph.NewStep(
+			sqlgraph.From(Table, FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, false, TicketsTable, TicketsColumn),
+		)
+		sqlgraph.HasNeighbors(s, step)
+	})
+}
+
+// HasTicketsWith applies the HasEdge predicate on the "tickets" edge with a given conditions (other predicates).
+func HasTicketsWith(preds ...predicate.Ticket) predicate.User {
+	return predicate.User(func(s *sql.Selector) {
+		step := newTicketsStep()
 		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
 			for _, p := range preds {
 				p(s)

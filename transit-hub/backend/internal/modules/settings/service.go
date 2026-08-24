@@ -97,16 +97,29 @@ func DefaultNotificationChannelSettings() NotificationChannelSettings {
 	}
 }
 
+// defaultDailyReportTime 是每日简报的默认推送时刻（Asia/Shanghai）。
+// 选早上 9 点是因为此时前一天的结算数据已经落定，环比口径最完整。
+const defaultDailyReportTime = "09:00"
+
 func DefaultStrategySettings() StrategySettings {
 	return StrategySettings{
 		RefreshInterval:          minRefreshIntervalSeconds,
 		BalanceTemplateFormat:    NotificationTemplateFormatText,
 		MultiplierTemplateFormat: NotificationTemplateFormatText,
+		DailyReportTime:          defaultDailyReportTime,
+		// 简报是结构化多段内容，纯文本会把排版全糊在一起，默认走 markdown。
+		DailyReportFormat: NotificationTemplateFormatMarkdown,
 	}
 }
 
 func (s *Service) EnsureSchema(ctx context.Context) error {
 	return s.repository.EnsureSchema(ctx)
+}
+
+// ClaimBalanceAlert 记录一次性余额预警。状态按工作区和上游站点持久化，
+// 服务重启或同步冷却时间结束后也不会重复提醒同一个账号。
+func (s *Service) ClaimBalanceAlert(ctx context.Context, userID, adminAccountID, siteID string) (bool, error) {
+	return s.repository.ClaimBalanceAlert(ctx, userID, adminAccountID, siteID)
 }
 
 func (s *Service) GetNotificationChannels(ctx context.Context, userID string) (NotificationChannelSettings, error) {
@@ -130,12 +143,56 @@ func (s *Service) GetFirstStrategy(ctx context.Context) (StrategySettings, error
 	return s.repository.GetFirstStrategy(ctx)
 }
 
+// ListStrategyOwners 供每日简报调度器遍历各工作区。设置在这里统一归一化，
+// 免得历史记录里缺字段或存了非法时刻导致调度器算错时间。
+func (s *Service) ListStrategyOwners(ctx context.Context) ([]StrategyOwner, error) {
+	owners, err := s.repository.ListStrategyOwners(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range owners {
+		owners[i].Settings = normalizeStrategySettings(owners[i].Settings)
+	}
+	return owners, nil
+}
+
 func (s *Service) GetStrategy(ctx context.Context, userID string) (StrategySettings, error) {
 	adminAccountID, err := s.currentAdminAccountID(ctx, userID)
 	if err != nil {
 		return StrategySettings{}, err
 	}
 	return s.repository.GetStrategy(ctx, userID, adminAccountID)
+}
+
+// GetStrategyForWorkspace serves background jobs that already know their
+// workspace. It must not use the user's currently selected workspace.
+func (s *Service) GetStrategyForWorkspace(ctx context.Context, userID, adminAccountID string) (StrategySettings, error) {
+	strategy, err := s.repository.GetStrategy(ctx, userID, adminAccountID)
+	if err != nil {
+		return StrategySettings{}, err
+	}
+	return normalizeStrategySettings(strategy), nil
+}
+
+// CurrentStrategyOwner 返回「当前 workspace + 它的策略设置」。
+//
+// 每日简报的定时推送走 ListStrategyOwners 遍历全部 workspace，而手动触发只针对
+// 用户此刻选中的那一个，两者必须用同一份 StrategyOwner 结构，否则手动发出来的
+// 报告和定时发出来的会来自不同的 workspace。
+func (s *Service) CurrentStrategyOwner(ctx context.Context, userID string) (StrategyOwner, error) {
+	adminAccountID, err := s.currentAdminAccountID(ctx, userID)
+	if err != nil {
+		return StrategyOwner{}, err
+	}
+	strategy, err := s.repository.GetStrategy(ctx, userID, adminAccountID)
+	if err != nil {
+		return StrategyOwner{}, err
+	}
+	return StrategyOwner{
+		UserID:         userID,
+		AdminAccountID: adminAccountID,
+		Settings:       normalizeStrategySettings(strategy),
+	}, nil
 }
 
 func (s *Service) SaveStrategy(ctx context.Context, userID string, settings StrategySettings) (StrategySettings, error) {
@@ -308,7 +365,27 @@ func normalizeStrategySettings(settings StrategySettings) StrategySettings {
 	}
 	settings.BalanceTemplateFormat = normalizeNotificationTemplateFormat(settings.BalanceTemplateFormat)
 	settings.MultiplierTemplateFormat = normalizeNotificationTemplateFormat(settings.MultiplierTemplateFormat)
+	settings.DailyReportTime = normalizeDailyReportTime(settings.DailyReportTime)
+	if settings.DailyReportFormat == "" {
+		settings.DailyReportFormat = NotificationTemplateFormatMarkdown
+	} else {
+		settings.DailyReportFormat = normalizeNotificationTemplateFormat(settings.DailyReportFormat)
+	}
 	return settings
+}
+
+// normalizeDailyReportTime 把推送时刻规整成 HH:MM。非法值一律退回默认时刻，
+// 否则调度器会因为永远匹配不上而静默不发 —— 那是最难排查的一种故障。
+func normalizeDailyReportTime(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return defaultDailyReportTime
+	}
+	parsed, err := time.Parse("15:04", trimmed)
+	if err != nil {
+		return defaultDailyReportTime
+	}
+	return parsed.Format("15:04")
 }
 
 func (s *Service) TestNotification(ctx context.Context, dto TestNotificationRequest) error {

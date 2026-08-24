@@ -371,6 +371,12 @@ export const useAppStore = defineStore('app', () => {
         channel_monitor_enabled: true,
         channel_monitor_default_interval_seconds: 60,
         available_channels_enabled: false,
+        // 下载页默认开启，与后端 client_download_enabled 的默认值保持一致
+        client_download_enabled: true,
+        client_download_netdisk_url: '',
+        client_download_direct_url: '',
+        backup_payment_enabled: false,
+        backup_payment_url: '',
         playground_enabled: false,
         playground_default_chat_model: 'gpt-5.4',
         playground_default_image_model: 'gpt-image-2',

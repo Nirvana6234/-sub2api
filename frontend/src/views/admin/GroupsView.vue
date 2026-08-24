@@ -1464,6 +1464,42 @@
           </div>
         </div>
 
+        <!-- Kiro Codex 兼容（分组级） -->
+        <div class="border-t pt-4">
+          <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+            {{ t("admin.groups.kiroCompat.title") }}
+          </label>
+          <p class="mb-2 text-xs text-gray-500 dark:text-gray-400">
+            {{ t("admin.groups.kiroCompat.hint") }}
+          </p>
+          <div class="flex items-center gap-3">
+            <button
+              type="button"
+              @click="createForm.kiro_compat = !createForm.kiro_compat"
+              :class="[
+                'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
+                createForm.kiro_compat
+                  ? 'bg-primary-500'
+                  : 'bg-gray-300 dark:bg-dark-600',
+              ]"
+            >
+              <span
+                :class="[
+                  'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
+                  createForm.kiro_compat ? 'translate-x-6' : 'translate-x-1',
+                ]"
+              />
+            </button>
+            <span class="text-sm text-gray-500 dark:text-gray-400">
+              {{
+                createForm.kiro_compat
+                  ? t("admin.groups.kiroCompat.enabled")
+                  : t("admin.groups.kiroCompat.disabled")
+              }}
+            </span>
+          </div>
+        </div>
+
         <!-- Codex 网页搜索按次计费（仅 openai 平台） -->
         <div
           v-if="createForm.platform === 'openai'"
@@ -3183,6 +3219,42 @@
             <p class="input-hint">
               {{ t("admin.groups.claudeCode.fallbackHint") }}
             </p>
+          </div>
+        </div>
+
+        <!-- Kiro Codex 兼容（分组级） -->
+        <div class="border-t pt-4">
+          <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+            {{ t("admin.groups.kiroCompat.title") }}
+          </label>
+          <p class="mb-2 text-xs text-gray-500 dark:text-gray-400">
+            {{ t("admin.groups.kiroCompat.hint") }}
+          </p>
+          <div class="flex items-center gap-3">
+            <button
+              type="button"
+              @click="editForm.kiro_compat = !editForm.kiro_compat"
+              :class="[
+                'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
+                editForm.kiro_compat
+                  ? 'bg-primary-500'
+                  : 'bg-gray-300 dark:bg-dark-600',
+              ]"
+            >
+              <span
+                :class="[
+                  'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
+                  editForm.kiro_compat ? 'translate-x-6' : 'translate-x-1',
+                ]"
+              />
+            </button>
+            <span class="text-sm text-gray-500 dark:text-gray-400">
+              {{
+                editForm.kiro_compat
+                  ? t("admin.groups.kiroCompat.enabled")
+                  : t("admin.groups.kiroCompat.disabled")
+              }}
+            </span>
           </div>
         </div>
 
@@ -5091,6 +5163,8 @@ const createForm = reactive({
   profit_safety_buffer_percent: 0,
   // Claude Code 客户端限制（仅 anthropic 平台使用）
   claude_code_only: false,
+  // Kiro Codex 兼容（仅 Kiro 反代分组使用）
+  kiro_compat: false,
   fallback_group_id: null as number | null,
   fallback_group_id_on_invalid_request: null as number | null,
   // OpenAI Messages 调度配置（仅 openai 平台使用）
@@ -5452,6 +5526,8 @@ const editForm = reactive({
   profit_safety_buffer_percent: 0,
   // Claude Code 客户端限制（仅 anthropic 平台使用）
   claude_code_only: false,
+  // Kiro Codex 兼容（仅 Kiro 反代分组使用）
+  kiro_compat: false,
   fallback_group_id: null as number | null,
   fallback_group_id_on_invalid_request: null as number | null,
   // OpenAI Messages 调度配置（仅 openai 平台使用）
@@ -5905,6 +5981,7 @@ const closeCreateModal = () => {
   createForm.profit_min_margin_percent = 0;
   createForm.profit_safety_buffer_percent = 0;
   createForm.claude_code_only = false;
+  createForm.kiro_compat = false;
   createForm.fallback_group_id = null;
   createForm.fallback_group_id_on_invalid_request = null;
   resetMessagesDispatchFormState(createForm);
@@ -6156,6 +6233,7 @@ const handleEdit = async (group: AdminGroup) => {
     group.profit_safety_buffer ?? 0,
   );
   editForm.claude_code_only = group.claude_code_only || false;
+  editForm.kiro_compat = group.kiro_compat || false;
   editForm.fallback_group_id = group.fallback_group_id;
   editForm.fallback_group_id_on_invalid_request =
     group.fallback_group_id_on_invalid_request;

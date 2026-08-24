@@ -155,6 +155,23 @@ func TestOpenAIProfitControlVetoRateStates(t *testing.T) {
 	// 生产配置复刻：D=0.1、margin=buffer=0 → threshold=0.1。
 	const threshold = 0.1
 
+	t.Run("生产故障回归：手工倍率优先于探测值2", func(t *testing.T) {
+		// group 12 在生产中的实际参数是 D=0.11、margin=0.15，门槛为
+		// 0.11*(1-0.15)=0.0935。账号 119/120 的自动探测曾返回 2，
+		// 但管理员已经明确设置手工成本 0.07；利润门必须使用手工值放行。
+		const productionThreshold = 0.0935
+		account := profitControlTestAccountWithRate(
+			upstreamCostTestAccount(120, UpstreamBillingProbeStatusOK, 2, time.Now().Add(-time.Minute), 30*time.Minute),
+			1.0,
+		)
+		account.Platform = PlatformOpenAI
+		account.Extra[UpstreamBillingManualRateMultiplierExtraKey] = 0.07
+
+		vetoed, reason := openAIProfitControlVetoReason(profitRateTestGate(productionThreshold), account)
+		require.False(t, vetoed, "手工成本 0.07 <= 生产门槛 0.0935，不得被自动探测值 2 过滤")
+		require.Empty(t, reason)
+	})
+
 	t.Run("后台标了0.04x的账号不再被列值否决", func(t *testing.T) {
 		account := profitControlTestAccountWithRate(&Account{
 			ID:       121,

@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Check, Link2, Loader2, Search, Server, X } from 'lucide-vue-next'
-import type { MySiteGroupRef, MySiteUpstreamTargetOption } from '../../types/mySites'
+import type { MySiteCostAccount, MySiteGroupRef, MySiteUpstreamTargetOption } from '../../types/mySites'
 
 const props = defineProps<{
   open: boolean
@@ -10,6 +10,10 @@ const props = defineProps<{
   options: MySiteUpstreamTargetOption[]
   selected: MySiteGroupRef[]
   saving?: boolean
+  /** 可绑定的本方 Sub2API 账号，用于按真实成本倍率核算毛利 */
+  costAccounts?: MySiteCostAccount[]
+  /** siteId -> 站点 base_url，仅用于把同域名账号排在候选前面 */
+  siteBaseUrls?: Record<string, string>
 }>()
 
 const emit = defineEmits<{
@@ -23,11 +27,65 @@ const selectedKeys = ref<string[]>([])
 const prefix = 'admin.groupAssociations.targetsDrawer'
 const targetKey = (target: MySiteGroupRef): string => `${target.siteId}\u0000${target.groupName}`
 
+/** key -> 绑定的 Sub2API 账号 ID；空串表示明确不绑定 */
+const bindings = ref<Record<string, string>>({})
+
 watch(() => props.open, (open) => {
   if (!open) return
   search.value = ''
   selectedKeys.value = props.selected.map(targetKey)
+  const next: Record<string, string> = {}
+  for (const target of props.selected) {
+    next[targetKey(target)] = (target.sub2apiAccountId ?? '').trim()
+  }
+  bindings.value = next
 })
+
+/**
+ * 归一化上游地址为可比较的主机名：去协议、端口、路径（base_url 常带 /v1）、
+ * www. 前缀。与后端 normalizeUpstreamHost 保持同一套规则。
+ */
+const normalizeHost = (raw: string | undefined | null): string => {
+  const value = (raw ?? '').trim()
+  if (!value) return ''
+  try {
+    const parsed = new URL(value.includes('://') ? value : `https://${value}`)
+    return parsed.hostname.toLowerCase().replace(/\.$/, '').replace(/^www\./, '')
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * 给某个上游数据源列出账号候选：同域名的排在前面并标记为推荐，其余仍可选。
+ * 不做自动绑定——同一域名下常挂着多个成本迥异的账号（tntapi.com 有 3 个，
+ * 倍率 0.16 / 0.079 / 无），域名不足以判定该用哪个，必须由人确认。
+ */
+const accountCandidates = (option: MySiteUpstreamTargetOption) => {
+  const accounts = props.costAccounts ?? []
+  const siteHost = normalizeHost(props.siteBaseUrls?.[option.siteId])
+  const matched: MySiteCostAccount[] = []
+  const others: MySiteCostAccount[] = []
+  for (const account of accounts) {
+    if (siteHost && normalizeHost(account.baseUrl) === siteHost) matched.push(account)
+    else others.push(account)
+  }
+  return { matched, others }
+}
+
+const bindingFor = (option: MySiteUpstreamTargetOption): string => bindings.value[targetKey(option)] ?? ''
+
+const setBinding = (option: MySiteUpstreamTargetOption, accountId: string) => {
+  bindings.value = { ...bindings.value, [targetKey(option)]: accountId }
+}
+
+const accountLabel = (account: MySiteCostAccount): string => {
+  const rate = account.costRateMultiplier
+  const cost = rate == null || !Number.isFinite(rate)
+    ? t(`${prefix}.costBinding.noCost`)
+    : t(`${prefix}.costBinding.costValue`, { value: Number(rate.toFixed(4)).toString() })
+  return `${account.name} · ${cost}`
+}
 
 const filteredOptions = computed(() => {
   const query = search.value.trim().toLocaleLowerCase()
@@ -52,7 +110,13 @@ const submit = () => {
   const selected = new Set(selectedKeys.value)
   emit('save', props.options
     .filter(option => selected.has(targetKey(option)))
-    .map(option => ({ siteId: option.siteId, groupName: option.groupName })))
+    .map(option => {
+      const accountId = bindingFor(option)
+      // 空串不写进去：未绑定就该是字段缺失，与"绑定了空账号"区分开。
+      return accountId
+        ? { siteId: option.siteId, groupName: option.groupName, sub2apiAccountId: accountId }
+        : { siteId: option.siteId, groupName: option.groupName }
+    }))
 }
 
 const formatMultiplier = (value: number | null): string => {
@@ -152,6 +216,36 @@ const formatOptionMultiplier = (option: MySiteUpstreamTargetOption): string => {
                 <span class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
                   <span>{{ option.siteName }}</span>
                   <span v-if="option.platform" class="rounded bg-surface-elevated px-1.5 py-0.5">{{ option.platform }}</span>
+                </span>
+                <!-- 成本账号绑定：只有选中的数据源才需要，未绑定则不参与毛利计算 -->
+                <span v-if="isSelected(option)" class="mt-2 flex flex-wrap items-center gap-2">
+                  <select
+                    class="max-w-full rounded border border-border bg-background px-2 py-1 text-xs text-foreground"
+                    :value="bindingFor(option)"
+                    @click.stop
+                    @change="setBinding(option, ($event.target as HTMLSelectElement).value)"
+                  >
+                    <option value="">{{ t(`${prefix}.costBinding.unbound`) }}</option>
+                    <optgroup
+                      v-if="accountCandidates(option).matched.length"
+                      :label="t(`${prefix}.costBinding.sameHost`)"
+                    >
+                      <option v-for="account in accountCandidates(option).matched" :key="account.id" :value="account.id">
+                        {{ accountLabel(account) }}
+                      </option>
+                    </optgroup>
+                    <optgroup
+                      v-if="accountCandidates(option).others.length"
+                      :label="t(`${prefix}.costBinding.otherAccounts`)"
+                    >
+                      <option v-for="account in accountCandidates(option).others" :key="account.id" :value="account.id">
+                        {{ accountLabel(account) }}
+                      </option>
+                    </optgroup>
+                  </select>
+                  <span v-if="!bindingFor(option)" class="text-[11px] text-warning">
+                    {{ t(`${prefix}.costBinding.unboundHint`) }}
+                  </span>
                 </span>
               </span>
               <span class="shrink-0 text-xs font-medium tabular-nums text-foreground">{{ formatOptionMultiplier(option) }}</span>

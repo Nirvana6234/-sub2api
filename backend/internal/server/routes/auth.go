@@ -5,6 +5,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/middleware"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	servermiddleware "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -28,6 +29,12 @@ func RegisterAuthRoutes(
 	// 公开接口
 	auth := v1.Group("/auth")
 	auth.Use(servermiddleware.BackendModeAuthGuard(settingService))
+	// 把客户端真实 IP 放进请求 context：注册配额需要按来源 IP 判定，
+	// 而 service 层拿不到 *gin.Context，逐层透传参数又会波及所有注册入口。
+	auth.Use(func(c *gin.Context) {
+		c.Request = c.Request.WithContext(service.WithClientIP(c.Request.Context(), ip.GetClientIP(c)))
+		c.Next()
+	})
 	// 认证事件（登录/注册/2FA/token 刷新失败）入审计
 	auth.Use(gin.HandlerFunc(auditLog))
 	{

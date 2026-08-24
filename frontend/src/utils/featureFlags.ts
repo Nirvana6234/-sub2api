@@ -114,6 +114,16 @@ export const FeatureFlags = {
     mode: 'opt-in',
     label: 'Model Plaza',
   }),
+  clientDownload: defineFlag({
+    key: 'client_download_enabled',
+    mode: 'opt-out',
+    label: 'Client Download',
+  }),
+  backupPayment: defineFlag({
+    key: 'backup_payment_enabled',
+    mode: 'opt-in',
+    label: 'Backup Payment',
+  }),
   payment: defineFlag({
     key: 'payment_enabled',
     mode: 'opt-out',

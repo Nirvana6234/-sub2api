@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -61,6 +62,13 @@ func (r *Repository) EnsureSchema(ctx context.Context) error {
 		`ALTER TABLE strategy_settings DROP CONSTRAINT IF EXISTS strategy_settings_pkey`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_channel_settings_workspace ON notification_channel_settings (user_id, admin_account_id)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_strategy_settings_workspace ON strategy_settings (user_id, admin_account_id)`,
+		`CREATE TABLE IF NOT EXISTS balance_alert_sent (
+			user_id text NOT NULL,
+			admin_account_id text NOT NULL,
+			site_id text NOT NULL,
+			sent_at timestamptz NOT NULL DEFAULT now(),
+			PRIMARY KEY (user_id, admin_account_id, site_id)
+		)`,
 		`CREATE TABLE IF NOT EXISTS email_templates (
 			user_id text NOT NULL,
 			admin_account_id text NOT NULL,
@@ -85,6 +93,25 @@ func (r *Repository) EnsureSchema(ctx context.Context) error {
 	return nil
 }
 
+// ClaimBalanceAlert 原子地声明某个工作区的某个上游站点已经发送过余额预警。
+// 返回 true 仅表示本次 INSERT 成功，调用方才可以实际发送通知；重复同步直接返回 false。
+func (r *Repository) ClaimBalanceAlert(ctx context.Context, userID, adminAccountID, siteID string) (bool, error) {
+	var claimed string
+	err := r.db.QueryRow(ctx, `
+		INSERT INTO balance_alert_sent (user_id, admin_account_id, site_id)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (user_id, admin_account_id, site_id) DO NOTHING
+		RETURNING site_id
+	`, userID, adminAccountID, siteID).Scan(&claimed)
+	if err == pgx.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return claimed != "", nil
+}
+
 // GetFirstStrategy 返回任意一条策略设置（不指定用户）。
 // 启动时用于初始化上游定时同步配置，在单管理员场景下等同于获取唯一的设置记录。
 func (r *Repository) GetFirstStrategy(ctx context.Context) (StrategySettings, error) {
@@ -101,6 +128,34 @@ func (r *Repository) GetFirstStrategy(ctx context.Context) (StrategySettings, er
 		return settings, err
 	}
 	return settings, nil
+}
+
+// ListStrategyOwners 返回所有工作区的策略设置，连同它们的归属。
+// 每日简报调度器没有 HTTP 请求上下文，拿不到当前用户，只能这样反查：
+// 谁配置过策略，就按谁的配置给谁发。
+func (r *Repository) ListStrategyOwners(ctx context.Context) ([]StrategyOwner, error) {
+	rows, err := r.db.Query(ctx, `SELECT user_id, admin_account_id, settings FROM strategy_settings`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	owners := make([]StrategyOwner, 0)
+	for rows.Next() {
+		owner := StrategyOwner{Settings: DefaultStrategySettings()}
+		var settingsJSON []byte
+		if err := rows.Scan(&owner.UserID, &owner.AdminAccountID, &settingsJSON); err != nil {
+			return nil, err
+		}
+		// 单条记录损坏不该拖垮整轮简报，跳过它继续处理其他工作区。
+		if err := json.Unmarshal(settingsJSON, &owner.Settings); err != nil {
+			log.Printf("[settings] 策略设置解析失败，已跳过 user_id=%s admin_account_id=%s err=%v",
+				owner.UserID, owner.AdminAccountID, err)
+			continue
+		}
+		owners = append(owners, owner)
+	}
+	return owners, rows.Err()
 }
 
 func (r *Repository) GetStrategy(ctx context.Context, userID string, adminAccountID string) (StrategySettings, error) {

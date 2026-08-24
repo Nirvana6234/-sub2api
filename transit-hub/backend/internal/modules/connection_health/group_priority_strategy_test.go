@@ -623,6 +623,150 @@ func TestMultiplierPrioritySync_Sub2APIMultiplierOnlyIgnoresStaleProbeState(t *t
 	}
 }
 
+type recordingAutomaticDisableNotifier struct {
+	events []AutomaticDisableEvent
+}
+
+func (n *recordingAutomaticDisableNotifier) NotifyAutomaticDisable(_ context.Context, event AutomaticDisableEvent) {
+	n.events = append(n.events, event)
+}
+
+func TestMultiplierPrioritySync_NotifiesWhenRecentlyUsedSub2APIAccountIsAutomaticallyDeprioritized(t *testing.T) {
+	repo := newFakeRepository()
+	priorityActions := &fakeTargetPriorityActioner{}
+	notifier := &recordingAutomaticDisableNotifier{}
+	priority := 50
+	healthyPriority := 50
+	schedulable := true
+	unschedulable := false
+	reader := fakePlatformGroupReader{
+		groups: []upstream.AdminGroupInfo{{ID: "12", Name: "plus-专线"}},
+		accountsByGrp: map[string][]upstream.AdminGroupAccountInfo{
+			"12": {
+				{ID: "101", Name: "still-available", GroupPriority: &healthyPriority, Schedulable: &schedulable, Models: "gpt-4o"},
+				{ID: "103", Name: "recently-used", GroupPriority: &priority, Schedulable: &unschedulable, UsageSampleCount: 7, Models: "gpt-4o"},
+			},
+		},
+	}
+	service := &Service{
+		repo: repo, mySites: fakeMySitesReader{session: upstream.Session{Platform: upstream.PlatformSub2API}},
+		platformGroups: reader, priorityActions: priorityActions, autoDisableNotifier: notifier,
+	}
+	policy := Policy{ID: "price", UserID: "user1", AdminAccountID: "ws1", Enabled: true, StrategyMode: StrategyModeMultiplierOnly, PriorityMode: PriorityModeMultiplier}
+	assignment := GroupPolicyAssignment{UserID: "user1", AdminAccountID: "ws1", AdminGroupID: "12", PolicyID: policy.ID}
+
+	service.syncMultiplierPriorities(context.Background(), []Policy{policy}, nil, []GroupPolicyAssignment{assignment}, nil, nil)
+	if len(notifier.events) != 1 {
+		t.Fatalf("expected one automatic-disable notification, got %+v", notifier.events)
+	}
+	event := notifier.events[0]
+	if event.GroupName != "plus-专线" || event.AccountName != "recently-used" || event.PreviousPriority != 50 || event.CurrentPriority != 10000 || event.ActiveAccountCount != 1 || event.RecentUsageSamples != 7 {
+		t.Fatalf("unexpected automatic-disable event: %+v", event)
+	}
+	wroteBlockedPriority := false
+	for _, call := range priorityActions.calls {
+		if call.targetID == "103" && call.priority == 10000 {
+			wroteBlockedPriority = true
+		}
+	}
+	if !wroteBlockedPriority {
+		t.Fatalf("expected a priority=10000 upstream write for the blocked account, got %+v", priorityActions.calls)
+	}
+
+	// Simulate the next inventory read after the upstream write. The same blocked
+	// account remains at 10000, so the persisted priority state must suppress a
+	// duplicate operator alert.
+	priority = 10000
+	stored := repo.priorityStates["user1|ws1|12|sub2api:ws1:103"]
+	service.syncMultiplierPriorities(context.Background(), []Policy{policy}, nil, []GroupPolicyAssignment{assignment}, nil, []PrioritySyncState{stored})
+	if len(notifier.events) != 1 {
+		t.Fatalf("unchanged blocked target must not notify again, got %+v", notifier.events)
+	}
+}
+
+func TestMultiplierPrioritySync_AggregatesSharedAccountAutomaticDisableAcrossGroups(t *testing.T) {
+	repo := newFakeRepository()
+	priorityActions := &fakeTargetPriorityActioner{}
+	notifier := &recordingAutomaticDisableNotifier{}
+	plusPriority, linePriority, healthyPriority := 50, 75, 1
+	schedulable, unschedulable := true, false
+	reader := fakePlatformGroupReader{
+		groups: []upstream.AdminGroupInfo{{ID: "12", Name: "plus"}, {ID: "13", Name: "plus-专线"}},
+		accountsByGrp: map[string][]upstream.AdminGroupAccountInfo{
+			"12": {
+				{ID: "healthy-plus", Name: "healthy-plus", GroupPriority: &healthyPriority, Schedulable: &schedulable, Models: "gpt-4o"},
+				{ID: "shared", Name: "shared-account", GroupPriority: &plusPriority, Schedulable: &unschedulable, UsageSampleCount: 4, Models: "gpt-4o"},
+			},
+			"13": {
+				{ID: "healthy-line", Name: "healthy-line", GroupPriority: &healthyPriority, Schedulable: &schedulable, Models: "gpt-4o"},
+				{ID: "shared", Name: "shared-account", GroupPriority: &linePriority, Schedulable: &unschedulable, UsageSampleCount: 4, Models: "gpt-4o"},
+			},
+		},
+	}
+	service := &Service{
+		repo: repo, mySites: fakeMySitesReader{session: upstream.Session{Platform: upstream.PlatformSub2API}},
+		platformGroups: reader, priorityActions: priorityActions, autoDisableNotifier: notifier,
+	}
+	policy := Policy{ID: "price", UserID: "user1", AdminAccountID: "ws1", Enabled: true, StrategyMode: StrategyModeMultiplierOnly, PriorityMode: PriorityModeMultiplier}
+	assignments := []GroupPolicyAssignment{
+		{UserID: "user1", AdminAccountID: "ws1", AdminGroupID: "12", PolicyID: policy.ID},
+		{UserID: "user1", AdminAccountID: "ws1", AdminGroupID: "13", PolicyID: policy.ID},
+	}
+
+	service.syncMultiplierPriorities(context.Background(), []Policy{policy}, nil, assignments, nil, nil)
+	if len(notifier.events) != 1 {
+		t.Fatalf("shared account must generate one notification, got %+v", notifier.events)
+	}
+	event := notifier.events[0]
+	if event.AccountID != "shared" || len(event.Groups) != 2 {
+		t.Fatalf("notification must retain both group entries: %+v", event)
+	}
+	groups := map[string]AutomaticDisableGroup{}
+	for _, group := range event.Groups {
+		groups[group.GroupName] = group
+	}
+	if groups["plus"].PreviousPriority != 50 || groups["plus"].ActiveAccountCount != 1 ||
+		groups["plus-专线"].PreviousPriority != 75 || groups["plus-专线"].ActiveAccountCount != 1 {
+		t.Fatalf("unexpected grouped notification details: %+v", event.Groups)
+	}
+}
+
+func TestMultiplierPrioritySync_DoesNotNotifyManualSub2APIDisable(t *testing.T) {
+	repo := newFakeRepository()
+	priorityActions := &fakeTargetPriorityActioner{}
+	notifier := &recordingAutomaticDisableNotifier{}
+	priority := 50
+	healthyPriority := 50
+	schedulable := true
+	unschedulable := false
+	reader := fakePlatformGroupReader{
+		groups: []upstream.AdminGroupInfo{{ID: "12", Name: "plus-专线"}},
+		accountsByGrp: map[string][]upstream.AdminGroupAccountInfo{
+			"12": {
+				{ID: "101", Name: "still-available", GroupPriority: &healthyPriority, Schedulable: &schedulable, Models: "gpt-4o"},
+				{ID: "103", Name: "manual-disabled", GroupPriority: &priority, Schedulable: &unschedulable, SchedulabilitySource: SchedulabilitySourceManual, Models: "gpt-4o"},
+			},
+		},
+	}
+	service := &Service{
+		repo: repo, mySites: fakeMySitesReader{session: upstream.Session{Platform: upstream.PlatformSub2API}},
+		platformGroups: reader, priorityActions: priorityActions, autoDisableNotifier: notifier,
+	}
+	policy := Policy{ID: "price", UserID: "user1", AdminAccountID: "ws1", Enabled: true, StrategyMode: StrategyModeMultiplierOnly, PriorityMode: PriorityModeMultiplier}
+	assignment := GroupPolicyAssignment{UserID: "user1", AdminAccountID: "ws1", AdminGroupID: "12", PolicyID: policy.ID}
+
+	service.syncMultiplierPriorities(context.Background(), []Policy{policy}, nil, []GroupPolicyAssignment{assignment}, nil, nil)
+	if len(notifier.events) != 0 {
+		t.Fatalf("manual disable must not send automatic-disable notification, got %+v", notifier.events)
+	}
+	for _, call := range priorityActions.calls {
+		if call.targetID == "103" && call.priority == 10000 {
+			return
+		}
+	}
+	t.Fatalf("manual-disabled account should still be assigned the last priority, got %+v", priorityActions.calls)
+}
+
 func TestMultiplierPrioritySync_ConfirmsPendingSystemWrite(t *testing.T) {
 	repo := newFakeRepository()
 	priorityActions := &fakeTargetPriorityActioner{}

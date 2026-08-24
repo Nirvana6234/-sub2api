@@ -151,6 +151,8 @@ output/
 # Local release archives and deployment artifacts
 .omx/
 artifacts/
+# 点号开头的产物目录不会被上面的 artifacts/ 匹配到，需单列
+.artifacts/
 backend/artifacts/
 frontend/.pnpm-store/
 deploy/releases/*.tar
@@ -165,3 +167,7 @@ deploy/sub2api-auto-group-*.zip
 
 # Personal operational notes are local-only and must never be committed.
 管理员信息/
+
+# Python 字节码（transit-hub 的 detector vendor 目录会生成）
+__pycache__/
+*.pyc

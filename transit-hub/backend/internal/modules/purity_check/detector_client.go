@@ -68,11 +68,13 @@ func (e *detectorHTTPError) Error() string {
 // APIKey 是明文上游凭据：它只在这个结构体里短暂存在，序列化后直接发给检测器，
 // 不进日志、不进数据库、不进任何响应。
 type StartRequest struct {
-	BaseURL      string          `json:"base_url"`
-	APIKey       string          `json:"api_key"`
-	ClaimedModel string          `json:"claimed_model"`
-	RequestModel string          `json:"request_model"`
-	Config       json.RawMessage `json:"config"`
+	BaseURL         string            `json:"base_url"`
+	ProxyURL        string            `json:"proxy_url,omitempty"`
+	APIKey          string            `json:"api_key"`
+	HeaderOverrides map[string]string `json:"header_overrides,omitempty"`
+	ClaimedModel    string            `json:"claimed_model"`
+	RequestModel    string            `json:"request_model"`
+	Config          json.RawMessage   `json:"config"`
 }
 
 type StartResponse struct {
@@ -111,10 +113,10 @@ func (s StatusResponse) Terminal() bool {
 }
 
 type EstimateResponse struct {
-	TotalRequests            int    `json:"total_requests"`
-	Fixed32KRequests         int    `json:"fixed_32k_requests"`
-	ApproximateInputTokens   int    `json:"approximate_input_tokens_total"`
-	EstimateDisclaimerCN     string `json:"estimate_disclaimer_cn"`
+	TotalRequests          int    `json:"total_requests"`
+	Fixed32KRequests       int    `json:"fixed_32k_requests"`
+	ApproximateInputTokens int    `json:"approximate_input_tokens_total"`
+	EstimateDisclaimerCN   string `json:"estimate_disclaimer_cn"`
 }
 
 // Preset 返回指定档位的官方预设配置原文，必要时先 bootstrap。
@@ -170,6 +172,23 @@ func (c *DetectorClient) Report(ctx context.Context) (json.RawMessage, error) {
 func (c *DetectorClient) Stop(ctx context.Context) error {
 	return c.do(ctx, http.MethodPost, "/api/detector/stop", map[string]any{}, nil)
 }
+
+// ResetSession 丢弃检测器里残留的会话，让下一次 start 从零开始。
+//
+// 【为什么需要它】检测器进程重启会把没跑完的会话标成 interrupted，而它的
+// start 接口看到 interrupted 就自动尝试续跑，只要新任务的 config_hash /
+// 申报型号 / 端点跟旧会话对不上就 400——文案还被它自己盖成
+// 「本地运行发生未分类异常」。一次容器重启就能让所有账号的检测永久失败，
+// 而且 vendor 的 stop 对非 running 会话什么都不做，自己爬不出来。
+//
+// 端点由我们的 serve.py 提供（不在 vendor 里）。老部署没有这个端点会返回
+// 404，调用方按「重置不可用」处理即可，不该让整个任务失败。
+func (c *DetectorClient) ResetSession(ctx context.Context) error {
+	return c.do(ctx, http.MethodPost, "/api/detector/reset-session", map[string]any{}, nil)
+}
+
+// StatusIsInterrupted 判断检测器是不是卡在「上次没跑完」的中断态。
+func (s StatusResponse) StatusIsInterrupted() bool { return s.Status == "interrupted" }
 
 func (c *DetectorClient) Estimate(ctx context.Context, tier Tier) (EstimateResponse, error) {
 	var out EstimateResponse

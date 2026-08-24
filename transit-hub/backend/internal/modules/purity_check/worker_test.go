@@ -195,6 +195,7 @@ func (fakeSessions) RequireSession(context.Context, string, string) (upstream.Se
 
 type fakeReader struct {
 	key         string
+	mapping     map[string]string
 	resolveCall int32
 }
 
@@ -211,7 +212,7 @@ func (f *fakeReader) ListAdminAllAccounts(upstream.Session) ([]upstream.AdminGro
 
 func (f *fakeReader) ResolveProbeCredential(_ upstream.Session, account upstream.AdminGroupAccountInfo) (upstream.ProbeCredential, error) {
 	atomic.AddInt32(&f.resolveCall, 1)
-	return upstream.ProbeCredential{BaseURL: "https://relay-a.example/v1", Key: f.key}, nil
+	return upstream.ProbeCredential{BaseURL: "https://relay-a.example/v1", Key: f.key, ModelMapping: f.mapping}, nil
 }
 
 func newTestService(repo purityRepository, reader AccountReader, detector *DetectorClient) *Service {
@@ -228,6 +229,7 @@ func newTestService(repo purityRepository, reader AccountReader, detector *Detec
 func TestWorkerRunsJobToCompletion(t *testing.T) {
 	const secretKey = "sk-super-secret-value"
 	var sawKey atomic.Bool
+	var gotRequestModel atomic.Value
 	var polls atomic.Int32
 
 	detector := newFakeDetector(t, fakeDetectorBehaviour{
@@ -235,6 +237,7 @@ func TestWorkerRunsJobToCompletion(t *testing.T) {
 			if req["api_key"] == secretKey {
 				sawKey.Store(true)
 			}
+			gotRequestModel.Store(req["request_model"])
 		},
 		statusFor: func() string {
 			// 前两次报 running（带进度），之后完成。
@@ -251,7 +254,7 @@ func TestWorkerRunsJobToCompletion(t *testing.T) {
 	defer detector.Close()
 
 	repo := newFakeRepo()
-	reader := &fakeReader{key: secretKey}
+	reader := &fakeReader{key: secretKey, mapping: map[string]string{ModelSol: "grok-4.6"}}
 	service := newTestService(repo, reader, NewDetectorClient(detector.URL))
 
 	job := Job{ID: "job-1", UserID: "u1", AccountID: "acc-1", Tier: TierLow,
@@ -269,6 +272,9 @@ func TestWorkerRunsJobToCompletion(t *testing.T) {
 	}
 	if !sawKey.Load() {
 		t.Error("检测器没收到明文 key，检测无法进行")
+	}
+	if got := gotRequestModel.Load(); got != "grok-4.6" {
+		t.Fatalf("检测器应收到映射后的模型 grok-4.6，实际 %v", got)
 	}
 	if len(repo.progress) == 0 {
 		t.Error("运行中应该写过进度，否则前端进度条永远是 0")

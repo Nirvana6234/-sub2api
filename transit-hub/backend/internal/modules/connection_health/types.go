@@ -187,6 +187,50 @@ type PrioritySyncState struct {
 	UpdatedAt            time.Time `json:"updatedAt"`
 }
 
+// AutomaticDisableEvent is emitted after TransitHub has successfully moved an
+// upstream target to its platform's disabled/last-resort scheduling state.
+// It intentionally carries only inventory metadata and never credentials.
+type AutomaticDisableEvent struct {
+	UserID              string
+	AdminAccountID      string
+	Platform            string
+	GroupID             string
+	GroupName           string
+	AccountID           string
+	AccountName         string
+	PreviousPriority    int
+	CurrentPriority     int
+	EffectiveMultiplier float64
+	ActiveAccountCount  int
+	RecentUsageSamples  int
+	Reason              string
+	Groups              []AutomaticDisableGroup
+}
+
+// AutomaticDisableGroup records one affected upstream group for a shared
+// account. A single account can have independent group priorities in Sub2API,
+// but operators need one notification rather than one alert per group.
+type AutomaticDisableGroup struct {
+	GroupID             string
+	GroupName           string
+	PreviousPriority    int
+	CurrentPriority     int
+	EffectiveMultiplier float64
+	ActiveAccountCount  int
+}
+
+// AutomaticDisableNotifier is optional so the health scheduler remains usable
+// in tests and deployments that have not configured notification channels.
+type AutomaticDisableNotifier interface {
+	NotifyAutomaticDisable(ctx context.Context, event AutomaticDisableEvent)
+}
+
+type AutomaticDisableNotifyFunc func(ctx context.Context, event AutomaticDisableEvent)
+
+func (f AutomaticDisableNotifyFunc) NotifyAutomaticDisable(ctx context.Context, event AutomaticDisableEvent) {
+	f(ctx, event)
+}
+
 // TargetActionState 记录分组健康首次接管账号/渠道启停或权重前的上游状态。
 // 健康恢复后只能恢复到这里保存的原值，不能假设账号原本一定启用或权重一定为 100。
 type TargetActionState struct {

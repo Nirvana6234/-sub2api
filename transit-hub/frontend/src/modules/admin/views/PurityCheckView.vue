@@ -8,6 +8,7 @@ import {
   FlaskConical,
   Loader2,
   RefreshCw,
+  Search,
   ShieldAlert,
   Trash2,
   X,
@@ -47,6 +48,7 @@ const isSubmitting = ref(false)
 const errorKey = ref('')
 
 const selectedIds = ref<string[]>([])
+const targetKeyword = ref('')
 const selectedTier = ref<PurityTier>('low')
 const claimedModel = ref<string>(PURITY_CLAIMED_MODELS[0])
 // 中转常给模型起别名，实际写进 HTTP 请求的名字可能跟申报型号不同。留空即跟随申报。
@@ -59,6 +61,28 @@ const isLoadingReport = ref(false)
 
 const eligibleTargets = computed(() => targets.value.filter((target) => target.eligible))
 const selectedCount = computed(() => selectedIds.value.length)
+
+// 账号名普遍是「https://xxx-备注」这种长串，几十个堆在一列里靠肉眼找不现实。
+// 按名称/地址/平台/类型模糊匹配，不区分大小写。
+const filteredTargets = computed(() => {
+  const keyword = targetKeyword.value.trim().toLowerCase()
+  if (!keyword) return targets.value
+  return targets.value.filter((target) =>
+    [target.name, target.accountId, target.baseUrl, target.platform, target.type].some((field) =>
+      (field || '').toLowerCase().includes(keyword),
+    ),
+  )
+})
+
+const filteredEligibleTargets = computed(() => filteredTargets.value.filter((target) => target.eligible))
+
+// 「全选」只作用于当前筛选结果：搜完再点，用户要的是「选中我看到的这些」，
+// 而不是把列表外那几十个也一起提交上去真金白银地跑一遍。
+const allVisibleSelected = computed(
+  () =>
+    filteredEligibleTargets.value.length > 0 &&
+    filteredEligibleTargets.value.every((target) => selectedIds.value.includes(target.accountId)),
+)
 
 const currentTierInfo = computed(() =>
   tiers.value.find((tier) => tier.tier === selectedTier.value) ?? null,
@@ -87,6 +111,35 @@ const formatNumber = (value: number): string => value.toLocaleString('zh-CN')
 const reasonLabel = (reason: string): string =>
   reason ? t(`admin.purityCheck.targetReasons.${reason}`) : ''
 
+/** 0.0550 → "0.055"，1.0000 → "1"。倍率是拿来对账的，别显示成一串没用的零。 */
+const formatRate = (value: number): string => String(Number(value.toFixed(4)))
+
+/**
+ * 成本倍率标签。null 一律显示「未声明」而不是 1x——账号 rate_multiplier 列
+ * 常年停在建表默认值，把「没人声明过」显示成「原价」会让人按错的数字算账。
+ */
+const rateLabel = (target: PurityTarget): string =>
+  target.costRateMultiplier === null || target.costRateMultiplier === undefined
+    ? t('admin.purityCheck.rateUndeclared')
+    : `${formatRate(target.costRateMultiplier)}x`
+
+const rateSourceLabel = (target: PurityTarget): string => {
+  const source = target.costRateSource
+  if (!source || source === 'none') return ''
+  if (target.costRateMultiplier === null || target.costRateMultiplier === undefined) return ''
+  return t(`admin.purityCheck.rateSources.${source}`)
+}
+
+// column 来源 = 只有 sub2api 的 rate_multiplier 列值，没有手工值也没有新鲜探测值，
+// 可信度最低，标成琥珀色提醒别直接拿去对账。
+const rateTone = (target: PurityTarget): string => {
+  if (target.costRateMultiplier === null || target.costRateMultiplier === undefined) {
+    return 'text-muted-foreground'
+  }
+  if (target.costRateSource === 'column') return 'text-amber-600 dark:text-amber-400'
+  return 'text-foreground'
+}
+
 const toggleTarget = (target: PurityTarget) => {
   if (!target.eligible) return
   const index = selectedIds.value.indexOf(target.accountId)
@@ -95,8 +148,16 @@ const toggleTarget = (target: PurityTarget) => {
 }
 
 const toggleAll = () => {
-  if (selectedIds.value.length === eligibleTargets.value.length) selectedIds.value = []
-  else selectedIds.value = eligibleTargets.value.map((target) => target.accountId)
+  const visibleIds = filteredEligibleTargets.value.map((target) => target.accountId)
+  if (visibleIds.length === 0) return
+  if (allVisibleSelected.value) {
+    // 只取消当前可见的，筛选前选中的其它账号保留。
+    selectedIds.value = selectedIds.value.filter((id) => !visibleIds.includes(id))
+    return
+  }
+  const merged = new Set(selectedIds.value)
+  visibleIds.forEach((id) => merged.add(id))
+  selectedIds.value = Array.from(merged)
 }
 
 const loadTargets = async () => {
@@ -313,13 +374,38 @@ onMounted(() => {
           <button
             type="button"
             class="text-xs text-primary hover:underline disabled:opacity-50"
-            :disabled="eligibleTargets.length === 0"
+            :disabled="filteredEligibleTargets.length === 0"
             @click="toggleAll"
           >
-            {{ selectedCount === eligibleTargets.length && eligibleTargets.length > 0
-              ? t('admin.purityCheck.clearAll')
-              : t('admin.purityCheck.selectAll') }}
+            {{ allVisibleSelected ? t('admin.purityCheck.clearAll') : t('admin.purityCheck.selectAll') }}
           </button>
+        </div>
+
+        <div class="border-b border-border/50 px-4 py-2.5">
+          <div class="relative">
+            <Search class="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <input
+              v-model="targetKeyword"
+              type="search"
+              :placeholder="t('admin.purityCheck.targetsSearchPlaceholder')"
+              class="w-full rounded-lg border border-border/60 bg-background py-1.5 pl-8 pr-8 text-sm text-foreground"
+            />
+            <button
+              v-if="targetKeyword"
+              type="button"
+              class="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              @click="targetKeyword = ''"
+            >
+              <X class="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <p v-if="targetKeyword" class="mt-1.5 text-xs text-muted-foreground">
+            {{ t('admin.purityCheck.targetsSearchCount', {
+              shown: filteredTargets.length,
+              total: targets.length,
+              selected: selectedCount,
+            }) }}
+          </p>
         </div>
 
         <div v-if="isLoadingTargets" class="space-y-2 p-4">
@@ -328,9 +414,12 @@ onMounted(() => {
         <p v-else-if="targets.length === 0" class="px-4 py-6 text-sm text-muted-foreground">
           {{ t('admin.purityCheck.targetsEmpty') }}
         </p>
+        <p v-else-if="filteredTargets.length === 0" class="px-4 py-6 text-sm text-muted-foreground">
+          {{ t('admin.purityCheck.targetsSearchEmpty') }}
+        </p>
         <ul v-else class="max-h-[24rem] divide-y divide-border/40 overflow-y-auto">
           <li
-            v-for="target in targets"
+            v-for="target in filteredTargets"
             :key="target.accountId"
             class="px-4 py-2.5"
             :class="target.eligible ? 'cursor-pointer hover:bg-surface/60' : 'opacity-50'"
@@ -347,8 +436,12 @@ onMounted(() => {
               />
               <div class="min-w-0 flex-1">
                 <p class="truncate text-sm text-foreground">{{ target.name || target.accountId }}</p>
-                <p class="truncate text-xs text-muted-foreground">
-                  {{ target.platform || '-' }} · {{ target.type || '-' }}
+                <p class="flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
+                  <span class="truncate">{{ target.platform || '-' }} · {{ target.type || '-' }}</span>
+                  <span class="tabular-nums" :class="rateTone(target)">
+                    · {{ rateLabel(target) }}
+                  </span>
+                  <span v-if="rateSourceLabel(target)">{{ rateSourceLabel(target) }}</span>
                 </p>
                 <p v-if="!target.eligible" class="mt-0.5 text-xs text-amber-600 dark:text-amber-400">
                   {{ reasonLabel(target.reason) }}

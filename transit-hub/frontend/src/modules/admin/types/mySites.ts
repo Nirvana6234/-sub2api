@@ -1,6 +1,12 @@
 export interface MySiteGroupRef {
   siteId: string
   groupName: string
+  /**
+   * 绑定到本方 Sub2API 的账号 ID，用于按该账号的真实成本倍率核算毛利。
+   * 未绑定时为 undefined —— 此时成本按未知处理，该数据源不参与毛利计算，
+   * 绝不退回上游标称倍率（上游标称的是它的售价，不是我们的进货成本）。
+   */
+  sub2apiAccountId?: string | null
 }
 
 export type AutoPricingSource = 'primary_upstream' | 'lowest_upstream' | 'highest_upstream' | 'average_upstream'
@@ -62,6 +68,23 @@ export interface MySiteMappingOptionsResponse {
   staleOwnGroups?: string[]
   staleTargets?: MySiteGroupRef[]
   connectionCapabilities?: ConnectionCapabilities
+  costAccounts?: MySiteCostAccount[]
+}
+
+/** 成本倍率的出处。none 同时覆盖"未绑定账号"和"账号未声明成本"。 */
+export type CostRateSource = 'manual' | 'probe' | 'column' | 'none'
+
+/**
+ * 可绑定的 Sub2API 账号及其成本倍率。
+ * costRateMultiplier 由 Sub2API 按「手工值 > 新鲜探测值 > 列值」解析后给出；
+ * null 表示无人声明过成本，前端必须把该数据源排除出毛利计算。
+ */
+export interface MySiteCostAccount {
+  id: string
+  name: string
+  baseUrl?: string
+  costRateMultiplier: number | null
+  costRateSource: CostRateSource | string
 }
 
 export interface MySiteUpstreamTargetMultiplier extends MySiteGroupRef {
@@ -224,6 +247,45 @@ export interface UpstreamKeyItem {
   status: string
 }
 
+/** 上游 Key 连通性测试：一个阶段的结果。 */
+export interface UpstreamKeyTestStage {
+  ok: boolean
+  /** 上一阶段就失败时后续阶段标成跳过，不要显示成「失败」——那会把人引去查错地方。 */
+  skipped: boolean
+  latencyMs: number
+  errorKey: string
+  detail: string
+}
+
+export interface UpstreamKeyTestRequest {
+  upstreamSiteId: string
+  upstreamGroupId: string
+  upstreamGroupName: string
+  /** 留空时后端自己挑：优先已对接连接用的那个 Key。 */
+  upstreamKeyId?: string
+  model?: string
+}
+
+export interface UpstreamKeyTestResponse {
+  keyId: string
+  keyName: string
+  keyPreview: string
+  /** 打 /v1/models：验证 key 有效并拿到模型池。 */
+  models: UpstreamKeyTestStage
+  /** 拿其中一个模型发一次 max_tokens=1 的真实请求。 */
+  chat: UpstreamKeyTestStage
+  modelCount: number
+  modelSample: string[]
+  testedModel: string
+}
+
+export interface UpstreamKeyModelsResponse {
+  keyId: string
+  keyName: string
+  keyPreview: string
+  models: string[]
+}
+
 export interface AdminResourceOption {
   id: string
   name: string
@@ -239,6 +301,6 @@ export interface RealConnectResponse {
 
 export interface RealDisconnectRequest {
   connectionId: string
-  mode: 'unlink' | 'full'
+  mode: 'unlink' | 'delete-key'
   removePricingMapping?: boolean
 }

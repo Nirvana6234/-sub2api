@@ -43,6 +43,42 @@ func (s *SettingService) IsRegistrationEmailDomainQuotaEnabled(ctx context.Conte
 	return value == "true"
 }
 
+// GetMaxAccountsPerRegisterIP 返回同一客户端 IP 允许注册的账号数上限。
+// 返回 <=0 表示未配置，调用方使用内置默认值（DefaultMaxAccountsPerRegisterIP）。
+// 设置缺失或不可解析时返回 0 而不是报错：注册配额属于加固功能，
+// 配置异常不应让整个注册入口不可用。
+func (s *SettingService) GetMaxAccountsPerRegisterIP(ctx context.Context) int {
+	if s == nil || s.settingRepo == nil {
+		return 0
+	}
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyMaxAccountsPerRegisterIP)
+	if err != nil {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
+}
+
+// GetMaxAdminLoginFailures 返回同一 IP 在 24 小时窗口内允许的管理员登录失败次数。
+// 返回 <=0 表示未配置，调用方使用 DefaultMaxAdminLoginFailures。
+func (s *SettingService) GetMaxAdminLoginFailures(ctx context.Context) int {
+	if s == nil || s.settingRepo == nil {
+		return 0
+	}
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyMaxAdminLoginFailures)
+	if err != nil {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
+}
+
 // GetRegistrationEmailSuffixWhitelist returns normalized registration email suffix whitelist.
 func (s *SettingService) GetRegistrationEmailSuffixWhitelist(ctx context.Context) []string {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyRegistrationEmailSuffixWhitelist)

@@ -537,7 +537,13 @@ func (s *Service) realBindExisting(ctx context.Context, userID string, req RealB
 }
 
 func (s *Service) realDisconnectConnection(ctx context.Context, userID string, req RealDisconnectRequest) error {
-	if strings.TrimSpace(req.ConnectionID) == "" || (req.Mode != "unlink" && req.Mode != "full") || s.connRepository == nil {
+	mode := strings.TrimSpace(req.Mode)
+	// Older frontends used "full" for the destructive action. Keep accepting
+	// it, but never delete the Admin forwarding account from a disconnect.
+	if mode == "full" {
+		mode = "delete-key"
+	}
+	if strings.TrimSpace(req.ConnectionID) == "" || (mode != "unlink" && mode != "delete-key") || s.connRepository == nil {
 		return requestError(ErrorRequest)
 	}
 	adminAccountID, err := s.currentAdminAccountID(ctx, userID)
@@ -552,31 +558,19 @@ func (s *Service) realDisconnectConnection(ctx context.Context, userID string, r
 		return requestError(ErrorRequest)
 	}
 
-	if req.Mode == "full" {
-		legacyManaged := conn.ProvisioningMode == ProvisioningModeLegacy && strings.TrimSpace(conn.AdminAccountID) != ""
-		if conn.ProvisioningMode != ProvisioningModeManaged && !legacyManaged {
-			return requestError(ErrorManagedDeleteOnly)
-		}
-		state, err := s.authenticatedState(ctx, userID, adminAccountID)
-		if err != nil {
-			return err
+	if mode == "delete-key" {
+		if strings.TrimSpace(conn.UpstreamKeyID) == "" {
+			return requestError(ErrorRequest)
 		}
 		upstreamSite, err := s.upstreamLookup.GetSite(ctx, conn.UpstreamSiteID)
 		if err != nil || upstreamSite == nil || upstreamSite.Session == nil || upstreamSite.UserID != userID || upstreamSite.AdminAccountID != adminAccountID {
-			return requestError(ErrorRequest)
-		}
-		adminSession := state.Session
-		if conn.AdminPlatform != "" && conn.AdminPlatform != string(adminSession.Platform) {
 			return requestError(ErrorRequest)
 		}
 		upstreamSession := *upstreamSite.Session
 		if conn.UpstreamPlatform != "" && conn.UpstreamPlatform != string(upstreamSession.Platform) {
 			return requestError(ErrorRequest)
 		}
-		if err := s.deleteAdminResource(adminSession, conn.AdminAccountID); err != nil {
-			return err
-		}
-		if err := s.deleteUpstreamCredential(upstreamSession, conn.UpstreamKeyID); err != nil {
+		if err := s.deleteUpstreamCredential(upstreamSession, conn.UpstreamKeyID); err != nil && !upstream.IsNotFound(err) {
 			return err
 		}
 	}

@@ -1124,10 +1124,54 @@ func openAIResponsesCompletedEventIsEmpty(data []byte, usage *OpenAIUsage) bool 
 	if gjson.GetBytes(data, "error").Exists() || gjson.GetBytes(data, "response.error").Exists() {
 		return false
 	}
-	if output := gjson.GetBytes(data, "response.output"); output.Exists() && output.IsArray() && len(output.Array()) > 0 {
+	// output 数组非空还不足以证明上游真的交付了内容：中转站会返回结构完整但内容
+	// 为空的骨架，例如
+	//   "output":[{"type":"message","content":[{"type":"output_text"}],"status":"completed"}]
+	// —— 有 message、有 content、有 output_text，唯独没有 text 字段。只数数组长度
+	// 会把这种"假成功"当成正常响应放行，用户侧表现为等待数十秒后一个字都没有。
+	// 因此这里下探一层，要求至少有一个 item 携带实质产出。
+	if output := gjson.GetBytes(data, "response.output"); output.Exists() && output.IsArray() &&
+		openAIResponsesOutputHasContent(output) {
 		return false
 	}
 	return true
+}
+
+// openAIResponsesOutputHasContent 报告 response.output 数组里是否至少有一项
+// 携带了实质产出。
+//
+// 判定放得比较宽：只要出现任何一种可交付给客户端的产出就算数（文本、图片、
+// 音频、退火后的 refusal、函数/工具调用、reasoning 摘要）。宁可漏判也不要误判
+// ——漏判只是维持现状（当成正常响应），误判会把一次真实的成功响应错误地判成
+// 上游故障并触发切换重试，代价高得多。
+func openAIResponsesOutputHasContent(output gjson.Result) bool {
+	hasContent := false
+	output.ForEach(func(_, item gjson.Result) bool {
+		switch strings.TrimSpace(item.Get("type").String()) {
+		case "function_call", "custom_tool_call", "tool_call", "computer_call",
+			"file_search_call", "web_search_call", "code_interpreter_call",
+			"image_generation_call", "local_shell_call", "mcp_call":
+			// 工具类产出本身就是交付物，没有 content 数组。
+			hasContent = true
+			return false
+		}
+		if strings.TrimSpace(item.Get("summary").String()) != "" {
+			hasContent = true
+			return false
+		}
+		item.Get("content").ForEach(func(_, part gjson.Result) bool {
+			// 任一非空的实质字段都算交付。text 为空字符串或字段缺失都不算。
+			for _, key := range []string{"text", "refusal", "transcript", "image_url", "audio", "data"} {
+				if strings.TrimSpace(part.Get(key).String()) != "" {
+					hasContent = true
+					return false
+				}
+			}
+			return true
+		})
+		return !hasContent
+	})
+	return hasContent
 }
 
 func mergeHostedImageGenToolUsage(imageGen gjson.Result, usage *OpenAIUsage) {

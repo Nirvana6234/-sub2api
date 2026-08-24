@@ -10,6 +10,9 @@ import type {
   RealConnection,
   RealDisconnectRequest,
   UpstreamKeyItem,
+  UpstreamKeyTestRequest,
+  UpstreamKeyTestResponse,
+  UpstreamKeyModelsResponse,
   AdminResourceOption,
 } from '../types/mySites'
 import {
@@ -148,6 +151,26 @@ export const listAdminResources = async (groupId: string): Promise<AdminResource
   const items = await requestJson<AdminResourceOption[]>(`/my-sites/admin-resources?groupId=${encodeURIComponent(groupId)}`)
   return Array.isArray(items) ? items : []
 }
+
+/**
+ * 测一个上游 Key 到底能不能用：先列模型，再发一次 max_tokens=1 的真实请求。
+ *
+ * 用 POST 是因为它会真实打到上游并产生（极小的）计费。明文 key 不经过这里——
+ * 只传 keyId，后端自己去上游解析。
+ */
+export const testUpstreamKey = async (req: UpstreamKeyTestRequest): Promise<UpstreamKeyTestResponse> => (
+  requestJson<UpstreamKeyTestResponse>('/my-sites/upstream-keys/test', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  })
+)
+
+export const listUpstreamKeyModels = async (req: UpstreamKeyTestRequest): Promise<UpstreamKeyModelsResponse> => (
+  requestJson<UpstreamKeyModelsResponse>('/my-sites/upstream-keys/models', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  })
+)
 
 export const realBind = async (req: RealBindRequest): Promise<RealConnectResponse> => (
   requestJson<RealConnectResponse>('/my-sites/real-bind', {

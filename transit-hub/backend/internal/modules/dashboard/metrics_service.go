@@ -170,7 +170,7 @@ func (s *MetricsService) LiveMetrics(ctx context.Context, userID string) (Metric
 	filterConfig, err := s.metricsRepo.GetBalanceFilter(ctx, userID, adminAccountID)
 	if err != nil {
 		log.Printf("dashboard metrics: load balance filter failed user_id=%s err=%v, using defaults", userID, err)
-		filterConfig = BalanceFilterConfig{ExcludeAdmin: true, ExcludeBalances: []float64{}, USDToCNYRate: DefaultUSDToCNYRate}
+		filterConfig = BalanceFilterConfig{ExcludeAdmin: true, ExcludeBalances: DefaultExcludedBalances(), USDToCNYRate: DefaultUSDToCNYRate}
 	}
 	// 快照里存的是"这一天实际乘了多少"，不是"当时配置的美元汇率"。Trends 用
 	// 每行自己的系数复算，所以只有存实际系数，历史曲线才可复现。
@@ -200,7 +200,7 @@ func (s *MetricsService) LiveMetrics(ctx context.Context, userID string) (Metric
 		filterConfig, err := s.metricsRepo.GetBalanceFilter(ctx, userID, adminAccountID)
 		if err != nil {
 			log.Printf("dashboard metrics: load balance filter failed user_id=%s err=%v, using defaults", userID, err)
-			filterConfig = BalanceFilterConfig{ExcludeAdmin: true, ExcludeBalances: []float64{}}
+			filterConfig = BalanceFilterConfig{ExcludeAdmin: true, ExcludeBalances: DefaultExcludedBalances()}
 		}
 		balanceResult, err := s.platform.FetchAdminSiteBalanceFiltered(session, upstream.BalanceFilter{
 			ExcludeAdmin:    filterConfig.ExcludeAdmin,

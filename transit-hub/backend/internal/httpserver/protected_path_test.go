@@ -69,3 +69,14 @@ func TestSecurityHeadersForLeaderboardEmbedInvalidTokenDenyFrames(t *testing.T) 
 		t.Fatalf("expected frame denial for invalid token, got %q", got)
 	}
 }
+
+// 运营日报的手动触发接口会读出全量经营数据并往机器人推送，必须走鉴权。
+// 新增 /api/xxx 路由时忘了往 protectedPath 里加一条，接口就是裸奔的。
+func TestProtectedPathIncludesDailyReport(t *testing.T) {
+	server := &Server{}
+	for _, path := range []string{"/api/daily-report/send-now", "/api/daily-report/preview"} {
+		if !server.protectedPath(path) {
+			t.Fatalf("expected %s to be protected", path)
+		}
+	}
+}

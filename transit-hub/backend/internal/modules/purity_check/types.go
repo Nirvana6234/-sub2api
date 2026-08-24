@@ -141,6 +141,15 @@ type Target struct {
 	BaseURL   string `json:"baseUrl"`
 	GroupIDs  []string `json:"groupIds"`
 
+	// CostRateMultiplier 是 Sub2API 已按「手工值 > 新鲜探测值 > 列值」解析好的
+	// 上游成本倍率，来源见 CostRateSource（manual / probe / column / none）。
+	//
+	// 挑这个而不是账号自身的 rate_multiplier 列：那一列常年停在默认 1.0000，
+	// 拿它当成本会差一到两个数量级。nil 表示没人声明过成本——【不要回退成 1.0】，
+	// 前端如实显示「未声明」，否则会把「不知道」显示成「原价」。
+	CostRateMultiplier *float64 `json:"costRateMultiplier"`
+	CostRateSource     string   `json:"costRateSource"`
+
 	// Eligible=false 时前端置灰，Reason 说明为什么不能测。
 	Eligible bool   `json:"eligible"`
 	Reason   string `json:"reason"`
@@ -213,6 +222,11 @@ const (
 	ErrorNotDeletable     = "admin.purityCheck.errors.notDeletable"
 	// ErrorUpstreamUnreachable：探针一条都没打通，这次没有产出任何检测证据。
 	ErrorUpstreamUnreachable = "admin.purityCheck.errors.upstreamUnreachable"
+	// ErrorProxyUnsupported：账号绑的代理检测器用不了（它只认 http://），
+	// 而且部署侧没配 HTTP 代理替身。必须单独成一个 key——透传给检测器的话，
+	// 它抛的 ValueError 会被自己的脱敏逻辑盖成「本地运行发生未分类异常」，
+	// 现场根本看不出是代理协议的问题。
+	ErrorProxyUnsupported = "admin.purityCheck.errors.proxyUnsupported"
 )
 
 // 目标不合格的原因，前端据此显示置灰提示。

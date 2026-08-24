@@ -717,12 +717,15 @@ const flagAvailableChannels = makeSidebarFlag(FeatureFlags.availableChannels)
 const flagAffiliate = makeSidebarFlag(FeatureFlags.affiliate)
 const flagRiskControl = makeSidebarFlag(FeatureFlags.riskControl)
 const flagPlayground = makeSidebarFlag(FeatureFlags.playground)
+const flagClientDownload = makeSidebarFlag(FeatureFlags.clientDownload)
 const flagOpsMonitoring = () => adminSettingsStore.opsMonitoringEnabled
 const flagAdminPayment = () => adminSettingsStore.paymentEnabled
 const flagAccountManagement = () => authStore.isAdmin || authStore.user?.account_management_enabled === true
 const flagContributionRooms = () => authStore.isAdmin || authStore.user?.contribution_rooms_enabled === true
 
-const flagPurchase = () => flagPayment()
+const flagBackupPayment = makeSidebarFlag(FeatureFlags.backupPayment)
+// 主通道关闭但备用开启时，充值入口仍要保留，否则用户够不到备用通道。
+const flagPurchase = () => flagPayment() || flagBackupPayment()
 
 // buildSelfNavItems 构造用户自己的导航项（用户端主菜单和管理员的"我的账户"子菜单共享这组声明）。
 // withDashboard=true 时包含仪表盘（用户端），false 时不含（管理员的个人区已经有独立仪表盘入口）。
@@ -737,7 +740,8 @@ function buildSelfNavItems(withDashboard: boolean): NavItem[] {
   items.push(
     { path: '/keys', label: t('nav.apiKeys'), icon: KeyIcon },
     { path: '/playground', label: t('nav.playground'), icon: PlaygroundIcon, featureFlag: flagPlayground },
-    { path: '/client-download', label: t('nav.clientDownload'), icon: ClientDownloadIcon, externalUrl: 'https://gitee.com/borg_zhou/co-fly--chat-gpt-assistant/' },
+    { path: '/download', label: t('nav.clientDownload'), icon: ClientDownloadIcon, featureFlag: flagClientDownload },
+    { path: '/tickets', label: t('nav.tickets'), icon: BellIcon },
     { path: '/usage', label: t('nav.usage'), icon: ChartIcon, hideInSimpleMode: true },
     { path: '/account-contributions', label: t('nav.accountContributions'), icon: UsersIcon, featureFlag: flagAccountManagement },
     { path: '/shared-rooms', label: t('nav.sharedRooms'), icon: FolderIcon, featureFlag: flagContributionRooms },
@@ -816,6 +820,8 @@ const adminNavItems = computed((): NavItem[] => {
     { path: '/admin/contributions', label: t('nav.sharedAccountGovernance'), icon: UsersIcon },
     { path: '/admin/contribution-rooms', label: t('nav.contributionRooms'), icon: FolderIcon },
     { path: '/admin/announcements', label: t('nav.announcements'), icon: BellIcon },
+    { path: '/admin/tickets', label: t('nav.tickets'), icon: BellIcon },
+    { path: '/admin/blacklist', label: t('nav.accessBlacklist'), icon: ShieldIcon },
     { path: '/admin/proxies', label: t('nav.proxies'), icon: ServerIcon },
     {
       path: '/admin/security-audit',

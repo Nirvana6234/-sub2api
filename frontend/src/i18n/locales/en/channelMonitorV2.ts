@@ -106,6 +106,7 @@ export default {
       groupsSelected: '{count} groups selected',
       groupsAll: 'All groups',
       groupsEmpty: 'No groups available',
+      groupsLoadFailed: 'The group list is temporarily unavailable. Existing monitoring settings can still be edited.',
       errorsTitle: 'Error categories and ignores',
       errorsHint:
         'Checked “ignore” categories are excluded from error rate and health score, but still appear greyed in the error breakdown. Unmatched errors roll into “Other”.',

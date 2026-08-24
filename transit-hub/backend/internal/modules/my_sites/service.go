@@ -72,6 +72,9 @@ type Service struct {
 	upstreamLookup  UpstreamSiteLookup
 	botNotifier     BotNotifier
 	accounts        AdminAccountResolver
+	// keyTester 提供上游 Key 连通性测试。由 httpserver 注入，为 nil 时
+	// 只有测试接口不可用，其余功能不受影响。
+	keyTester UpstreamKeyTester
 }
 
 type AdminAccountResolver interface {
@@ -90,6 +93,32 @@ func (s *Service) EnsureSchema(ctx context.Context) error {
 	return nil
 }
 
+// UpstreamGroupKey 拼出「某站点的某个上游分组」的唯一标识。
+// 倍率变更预警和分组映射两处必须用同一套拼法，否则过滤会静默失效。
+func UpstreamGroupKey(siteID, groupName string) string {
+	return siteID + "|" + strings.TrimSpace(groupName)
+}
+
+// ListMappedUpstreamGroups 返回当前工作区被分组映射真正引用的上游分组集合。
+// 倍率变更预警靠它区分「对接了的」和「上游站点上碰巧存在的」——
+// 后者变动与本方定价无关，报出来只会变成噪音。
+func (s *Service) ListMappedUpstreamGroups(ctx context.Context, userID, adminAccountID string) (map[string]struct{}, error) {
+	state, err := s.repository.Get(ctx, userID, adminAccountID)
+	if err != nil {
+		return nil, err
+	}
+	mapped := make(map[string]struct{})
+	if state == nil {
+		return mapped, nil
+	}
+	for _, mapping := range state.Mappings {
+		for _, target := range mapping.UpstreamTargets {
+			mapped[UpstreamGroupKey(target.SiteID, target.GroupName)] = struct{}{}
+		}
+	}
+	return mapped, nil
+}
+
 // SetBotNotifier 注入机器人通知发送能力，供自动调价成功后发送通知。
 func (s *Service) SetBotNotifier(notifier BotNotifier) {
 	s.botNotifier = notifier
@@ -97,6 +126,125 @@ func (s *Service) SetBotNotifier(notifier BotNotifier) {
 
 func (s *Service) SetAdminAccountResolver(accounts AdminAccountResolver) {
 	s.accounts = accounts
+}
+
+// TargetAccountCostRange reads account_cost from this workspace's own Sub2API
+// instance. It deliberately does not query a remote upstream site's
+// actual_cost: that figure is the upstream's user charge, not our purchase.
+// 归集不到成本的目标一律进 Unresolved，绝不静默丢弃——
+// 少算了谁必须能在简报里看见，否则总成本偏低而无人察觉。
+func (s *Service) TargetAccountCostRange(ctx context.Context, userID, adminAccountID, startDate, endDate string) AccountCostResult {
+	var result AccountCostResult
+
+	state, err := s.repository.Get(ctx, userID, adminAccountID)
+	if err != nil || state == nil || state.Session.Platform != upstream.PlatformSub2API || !state.Session.IsAuthenticated() {
+		return result
+	}
+	groups, err := s.platformService.FetchAdminAllGroups(state.Session)
+	if err != nil {
+		log.Printf("[daily-report] 读取自有分组失败: %v", err)
+		return result
+	}
+	groupIDs := make(map[string]string, len(groups))
+	for _, group := range groups {
+		groupIDs[strings.TrimSpace(group.Name)] = strings.TrimSpace(group.ID)
+	}
+	var fallbackAccounts map[string]string
+	if s.connRepository != nil {
+		connections, listErr := s.connRepository.ListRealConnections(ctx, userID, adminAccountID)
+		if listErr != nil {
+			log.Printf("[daily-report] 读取真实对接记录失败，成本账号回退不可用: %v", listErr)
+		} else {
+			fallbackAccounts = realConnectionAccountIndex(connections)
+		}
+	}
+
+	type query struct {
+		accountID, groupID string
+		ownGroup           string
+		targets            []TargetAccountCost
+	}
+	queries := make(map[string]*query)
+
+	for _, mapping := range state.Mappings {
+		ownGroup := strings.TrimSpace(mapping.OwnGroup)
+		groupID := groupIDs[ownGroup]
+		for _, target := range mapping.UpstreamTargets {
+			ref := TargetAccountCost{SiteID: target.SiteID, GroupName: target.GroupName}
+
+			if groupID == "" {
+				result.Unresolved = append(result.Unresolved, unresolvedTarget(ownGroup, ref, ReasonGroupMissing))
+				continue
+			}
+			accountID := normalizeSub2APIAccountID(target.Sub2APIAccountID)
+			if accountID == nil {
+				accountID = fallbackRealConnectionAccount(fallbackAccounts, target.SiteID, target.GroupName)
+			}
+			if accountID == nil {
+				result.Unresolved = append(result.Unresolved, unresolvedTarget(ownGroup, ref, ReasonUnbound))
+				continue
+			}
+
+			key := *accountID + "|" + groupID
+			if existing, ok := queries[key]; ok {
+				// 完全相同的目标重复出现不算冲突，只有指向不同上游时才是。
+				if !containsTarget(existing.targets, ref) {
+					existing.targets = append(existing.targets, ref)
+				}
+				continue
+			}
+			queries[key] = &query{
+				accountID: *accountID, groupID: groupID,
+				ownGroup: ownGroup, targets: []TargetAccountCost{ref},
+			}
+		}
+	}
+
+	result.Costs = make([]TargetAccountCost, 0, len(queries))
+	for key, item := range queries {
+		// 同一个「账号 + 分组」被多个上游目标引用时归属不明：
+		// 把这笔成本算到其中任何一个头上都是错的，全部跳过并报出来。
+		if len(item.targets) > 1 {
+			log.Printf("[daily-report] 成本账号绑定归属冲突，跳过 account_group=%s 涉及 %d 个上游目标",
+				key, len(item.targets))
+			for _, ref := range item.targets {
+				result.Unresolved = append(result.Unresolved, unresolvedTarget(item.ownGroup, ref, ReasonAmbiguous))
+			}
+			continue
+		}
+
+		cost, err := s.platformService.FetchSub2APIAccountCostRange(state.Session, startDate, endDate, item.accountID, item.groupID)
+		if err != nil {
+			log.Printf("[daily-report] 读取账号成本失败 account=%s group=%s err=%v", item.accountID, item.groupID, err)
+			result.Unresolved = append(result.Unresolved, unresolvedTarget(item.ownGroup, item.targets[0], ReasonQueryFailed))
+			continue
+		}
+		// cost == 0 是「确实没花钱」，属于已归集，不进 Unresolved。
+		if cost > 0 {
+			ref := item.targets[0]
+			ref.CostCNY = cost
+			result.Costs = append(result.Costs, ref)
+		}
+	}
+	return result
+}
+
+func unresolvedTarget(ownGroup string, ref TargetAccountCost, reason UnresolvedReason) UnresolvedTarget {
+	return UnresolvedTarget{
+		OwnGroup:  ownGroup,
+		SiteID:    ref.SiteID,
+		GroupName: ref.GroupName,
+		Reason:    reason,
+	}
+}
+
+func containsTarget(targets []TargetAccountCost, ref TargetAccountCost) bool {
+	for _, target := range targets {
+		if target.SiteID == ref.SiteID && target.GroupName == ref.GroupName {
+			return true
+		}
+	}
+	return false
 }
 
 // MappingOptions 获取分组映射选项：自有分组通过 admin 接口拉取全量，上游分组从缓存读取。
@@ -233,7 +381,44 @@ func (s *Service) MappingOptions(ctx context.Context, userID string) (MappingOpt
 		StaleOwnGroups:            staleOwnGroups,
 		StaleTargets:              staleTargets,
 		ConnectionCapabilities:    connectionCapabilities(viewState.Session.Platform),
+		CostAccounts:              s.mappingCostAccounts(viewState.Session),
 	}, nil
+}
+
+// mappingCostAccounts 拉取本方 Sub2API 账号清单，供前端绑定调价数据源与核算成本。
+//
+// 拉取失败只降级不报错：调价映射页面的主体是分组与上游倍率，账号清单缺失时
+// 绑定界面暂时无候选可选，已保存的绑定则按"成本未知"处理并被排除出毛利计算——
+// 这比让整个页面 500 要好。非 Sub2API 平台（new-api）没有对应概念，返回空。
+func (s *Service) mappingCostAccounts(session upstream.Session) []MappingCostAccount {
+	if session.Platform != upstream.PlatformSub2API || !session.IsAuthenticated() {
+		return []MappingCostAccount{}
+	}
+	accounts, err := s.platformService.ListAdminAllAccounts(session)
+	if err != nil {
+		return []MappingCostAccount{}
+	}
+	options := make([]MappingCostAccount, 0, len(accounts))
+	for _, account := range accounts {
+		id := strings.TrimSpace(account.ID)
+		if id == "" {
+			continue
+		}
+		options = append(options, MappingCostAccount{
+			ID:                 id,
+			Name:               strings.TrimSpace(account.Name),
+			BaseURL:            strings.TrimSpace(account.BaseURL),
+			CostRateMultiplier: account.CostRateMultiplier,
+			CostRateSource:     account.CostRateSource,
+		})
+	}
+	sort.Slice(options, func(i, j int) bool {
+		if options[i].Name == options[j].Name {
+			return options[i].ID < options[j].ID
+		}
+		return options[i].Name < options[j].Name
+	})
+	return options
 }
 
 // SaveMappings 保存用户的分组映射关系，包含自动调价配置。
@@ -350,6 +535,81 @@ func (s *Service) RemoveMapping(ctx context.Context, userID string, ownGroup str
 	return StatusResponse{Authenticated: true, BaseURL: state.BaseURL, Email: state.Email, Mappings: state.Mappings}, nil
 }
 
+// CleanupDeletedUpstreamSites removes mapping targets for upstream site
+// records that were explicitly deleted from this workspace. It is intentionally
+// driven by the site lifecycle, not by a failed sync or an incomplete upstream
+// group response, so transient outages cannot erase pricing configuration.
+func (s *Service) CleanupDeletedUpstreamSites(ctx context.Context, userID, adminAccountID string, siteIDs []string) error {
+	deleted := make(map[string]struct{}, len(siteIDs))
+	for _, siteID := range siteIDs {
+		if siteID = strings.TrimSpace(siteID); siteID != "" {
+			deleted[siteID] = struct{}{}
+		}
+	}
+	if len(deleted) == 0 {
+		return nil
+	}
+	_, err := s.mutateState(ctx, userID, adminAccountID, func(state *State) error {
+		if state == nil {
+			return nil
+		}
+		cleaned := make([]GroupMapping, 0, len(state.Mappings))
+		for _, mapping := range state.Mappings {
+			targets := make([]UpstreamGroupRef, 0, len(mapping.UpstreamTargets))
+			for _, target := range mapping.UpstreamTargets {
+				if _, remove := deleted[strings.TrimSpace(target.SiteID)]; remove {
+					continue
+				}
+				targets = append(targets, target)
+			}
+			if len(targets) == 0 {
+				continue
+			}
+			mapping.UpstreamTargets = targets
+			cleaned = append(cleaned, mapping)
+		}
+		state.Mappings = cleaned
+		return nil
+	})
+	return err
+}
+
+// CleanupMissingUpstreamSites removes mappings whose site ID is absent from
+// the authoritative upstream_sites table. Callers must only pass a successfully
+// read site inventory; an empty successful inventory means all site mappings
+// are stale and should be removed.
+func (s *Service) CleanupMissingUpstreamSites(ctx context.Context, userID, adminAccountID string, liveSiteIDs []string) error {
+	live := make(map[string]struct{}, len(liveSiteIDs))
+	for _, siteID := range liveSiteIDs {
+		if siteID = strings.TrimSpace(siteID); siteID != "" {
+			live[siteID] = struct{}{}
+		}
+	}
+	_, err := s.mutateState(ctx, userID, adminAccountID, func(state *State) error {
+		if state == nil {
+			return nil
+		}
+		cleaned := make([]GroupMapping, 0, len(state.Mappings))
+		for _, mapping := range state.Mappings {
+			targets := make([]UpstreamGroupRef, 0, len(mapping.UpstreamTargets))
+			for _, target := range mapping.UpstreamTargets {
+				if _, exists := live[strings.TrimSpace(target.SiteID)]; !exists {
+					continue
+				}
+				targets = append(targets, target)
+			}
+			if len(targets) == 0 {
+				continue
+			}
+			mapping.UpstreamTargets = targets
+			cleaned = append(cleaned, mapping)
+		}
+		state.Mappings = cleaned
+		return nil
+	})
+	return err
+}
+
 // normalizeMappingRequest applies the stable defaults and validation shared by
 // full-array PUT and single-group PATCH. The boolean is false for an empty group name.
 func normalizeMappingRequest(mapping MappingRequest) (GroupMapping, bool, error) {
@@ -370,7 +630,11 @@ func normalizeMappingRequest(mapping MappingRequest) (GroupMapping, bool, error)
 			continue
 		}
 		seenTargets[key] = struct{}{}
-		targets = append(targets, UpstreamGroupRef{SiteID: siteID, GroupName: groupName})
+		targets = append(targets, UpstreamGroupRef{
+			SiteID:           siteID,
+			GroupName:        groupName,
+			Sub2APIAccountID: normalizeSub2APIAccountID(target.Sub2APIAccountID),
+		})
 	}
 
 	source := strings.TrimSpace(mapping.AutoPricingSource)
@@ -589,10 +853,81 @@ func (s *Service) ListRealConnections(ctx context.Context, userID string) ([]Rea
 	if err != nil {
 		return nil, err
 	}
+	connections = s.reconcileMissingSub2APIConnections(ctx, userID, adminAccountID, connections)
 	for i := range connections {
 		connections[i] = publicRealConnection(connections[i])
 	}
 	return connections, nil
+}
+
+// reconcileMissingSub2APIConnections makes external deletion safe. A Sub2API
+// admin account can be removed outside TransitHub; in that case the matching
+// upstream key and local connection must not remain orphaned. Reconciliation is
+// best effort and only runs after a successful, authenticated remote inventory
+// read, so transient upstream failures never cause local data loss.
+func (s *Service) reconcileMissingSub2APIConnections(ctx context.Context, userID, adminAccountID string, connections []RealConnection) []RealConnection {
+	if len(connections) == 0 || s.platformService == nil || s.repository == nil || s.connRepository == nil {
+		return connections
+	}
+	state, err := s.authenticatedState(ctx, userID, adminAccountID)
+	if err != nil || state == nil || state.Session.Platform != upstream.PlatformSub2API {
+		return connections
+	}
+	accounts, err := s.platformService.ListAdminAllAccounts(state.Session)
+	if err != nil {
+		log.Printf("[real-connections] skip remote reconciliation: %v", err)
+		return connections
+	}
+	present := make(map[string]struct{}, len(accounts))
+	for _, account := range accounts {
+		if id := strings.TrimSpace(account.ID); id != "" {
+			present[id] = struct{}{}
+		}
+	}
+	result := make([]RealConnection, 0, len(connections))
+	for _, conn := range connections {
+		if conn.AdminPlatform != string(upstream.PlatformSub2API) || strings.TrimSpace(conn.AdminAccountID) == "" {
+			result = append(result, conn)
+			continue
+		}
+		if _, ok := present[strings.TrimSpace(conn.AdminAccountID)]; ok {
+			result = append(result, conn)
+			continue
+		}
+		if !s.cleanupExternallyDeletedConnection(ctx, userID, adminAccountID, conn) {
+			result = append(result, conn)
+		}
+	}
+	return result
+}
+
+func (s *Service) cleanupExternallyDeletedConnection(ctx context.Context, userID, adminAccountID string, conn RealConnection) bool {
+	if s.upstreamLookup != nil && strings.TrimSpace(conn.UpstreamKeyID) != "" {
+		site, err := s.upstreamLookup.GetSite(ctx, conn.UpstreamSiteID)
+		if err != nil || site == nil || site.Session == nil || site.UserID != userID || site.AdminAccountID != adminAccountID {
+			return false
+		}
+		if conn.UpstreamPlatform != "" && conn.UpstreamPlatform != string(site.Session.Platform) {
+			return false
+		}
+		if err := s.deleteUpstreamCredential(*site.Session, conn.UpstreamKeyID); err != nil && !upstream.IsNotFound(err) {
+			log.Printf("[real-connections] keep stale connection id=%s: upstream key cleanup failed: %v", conn.ID, err)
+			return false
+		}
+	}
+	removePricing := conn.PricingMappingEnabled
+	if repository, ok := s.connRepository.(ScopedRealDisconnectRepository); ok {
+		if err := repository.DeleteRealConnectionWithPricingMapping(ctx, conn, removePricing); err != nil {
+			log.Printf("[real-connections] local cleanup failed id=%s: %v", conn.ID, err)
+			return false
+		}
+		return true
+	}
+	if err := s.connRepository.DeleteRealConnection(ctx, conn.ID, userID, adminAccountID); err != nil {
+		log.Printf("[real-connections] local cleanup failed id=%s: %v", conn.ID, err)
+		return false
+	}
+	return true
 }
 
 // ListRealConnectionsForWorkspace 按显式传入的 userID + adminAccountID 查询真实对接绑定记录，
@@ -681,9 +1016,10 @@ func (s *Service) ListUpstreamKeyGroupSnapshotsForWorkspace(ctx context.Context,
 	return result, nil
 }
 
-// RealDisconnect 取消真实对接：根据 mode 决定是仅删除记录还是同时清理远端资源。
+// RealDisconnect 取消真实对接：根据 mode 决定是仅删除记录还是同时删除上游 Key。
 // mode == "unlink"：仅删除 real_connections 记录（所有平台通用）。
-// mode == "full"：按平台分支删除远端资源（sub2api 删 admin 账号+上游 key，new-api 删 channel+token），再删除记录。
+// mode == "delete-key"：删除该对接使用的上游 Key，再删除记录；Admin 转发账号始终保留。
+// 旧客户端的 mode == "full" 也按 delete-key 处理，防止取消对接误删转发账号。
 func (s *Service) RealDisconnect(ctx context.Context, userID string, req RealDisconnectRequest) error {
 	return s.realDisconnectConnection(ctx, userID, req)
 }

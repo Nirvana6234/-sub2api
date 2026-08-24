@@ -85,6 +85,7 @@ func (s *Service) syncMultiplierPrioritiesWithCache(
 	if s.priorityActions == nil || s.platformGroups == nil {
 		return
 	}
+	automaticDisableEvents := make([]AutomaticDisableEvent, 0)
 
 	assignedTargets := assignedEnabledPoliciesByTarget(policies, targetAssignments)
 	assignedGroups := assignedEnabledPoliciesByGroup(policies, groupAssignments)
@@ -134,8 +135,10 @@ func (s *Service) syncMultiplierPrioritiesWithCache(
 			log.Printf("[connection-health] priority sync list latency samples failed user_id=%s admin_account_id=%s err=%v", userID, adminAccountID, eventErr)
 		}
 		s.applyTransitHubCostInputs(ctx, userID, adminAccountID, string(session.Platform), inventory)
-		s.syncWorkspacePriorities(ctx, session, userID, adminAccountID, inventory, inventoryComplete, states, events, statesByWorkspace[workspaceKey])
+		automaticDisableEvents = append(automaticDisableEvents,
+			s.syncWorkspacePriorities(ctx, session, userID, adminAccountID, inventory, inventoryComplete, states, events, statesByWorkspace[workspaceKey])...)
 	}
+	s.notifyAutomaticDisables(ctx, automaticDisableEvents)
 }
 
 func (s *Service) applyTransitHubCostInputs(
@@ -204,6 +207,7 @@ func (s *Service) priorityInventoryForSnapshot(
 					},
 					account: account,
 				}
+				applySub2APIRuntimeState(&item.target, account)
 				if account.GroupPriority != nil && session.Platform == upstream.PlatformSub2API {
 					item.currentPriority = *account.GroupPriority
 				} else if account.Priority != nil {
@@ -232,7 +236,8 @@ func (s *Service) syncWorkspacePriorities(
 	healthStates []ConnectionHealthState,
 	healthEvents []ConnectionHealthEvent,
 	syncStates []PrioritySyncState,
-) {
+) []AutomaticDisableEvent {
+	automaticDisableEvents := make([]AutomaticDisableEvent, 0)
 	statesByTarget := make(map[string][]ConnectionHealthState)
 	for _, state := range healthStates {
 		if _, isTarget := parseTargetID(state.ConnectionID); isTarget {
@@ -306,6 +311,7 @@ func (s *Service) syncWorkspacePriorities(
 		})
 	}
 	desiredByTarget := make(map[string]int, len(candidates))
+	activeAccountsByGroup := activePriorityCandidatesByGroup(candidates)
 	if session.Platform == upstream.PlatformSub2API {
 		candidatesByGroup := make(map[string][]managedPriorityCandidate)
 		for _, candidate := range candidates {
@@ -369,7 +375,11 @@ func (s *Service) syncWorkspacePriorities(
 			}
 			continue
 		}
+		var automaticDisableEvent *AutomaticDisableEvent
 		if item.currentPriority != desired {
+			priorityWasAutomaticallyDisabled := session.Platform == upstream.PlatformSub2API &&
+				item.currentPriority != 10000 && desired == 10000 &&
+				!isSub2APIManuallyDisabled(item.target)
 			pending := desired
 			stored.PendingPriority = &pending
 			stored.EffectiveMultiplier = multiplier
@@ -381,6 +391,21 @@ func (s *Service) syncWorkspacePriorities(
 				log.Printf("[connection-health] priority sync update failed target_id=%s err=%v", targetID, err)
 				continue
 			}
+			// Defer the notification until the final state save succeeds. That
+			// state is the deduplication checkpoint for later scheduler ticks.
+			if priorityWasAutomaticallyDisabled {
+				event := AutomaticDisableEvent{
+					UserID: userID, AdminAccountID: adminAccountID, Platform: string(session.Platform),
+					GroupID: item.groupID, GroupName: item.target.AdminGroupName,
+					AccountID: item.target.AccountID, AccountName: item.target.AccountName,
+					PreviousPriority: item.currentPriority, CurrentPriority: desired,
+					EffectiveMultiplier: multiplier,
+					ActiveAccountCount:  activeAccountsByGroup[item.groupID],
+					RecentUsageSamples:  item.account.UsageSampleCount,
+					Reason:              automaticPriorityDisableReason(candidateForTarget(candidates, targetID)),
+				}
+				automaticDisableEvent = &event
+			}
 		}
 		stored.LastAppliedPriority = desired
 		stored.PendingPriority = nil
@@ -389,6 +414,10 @@ func (s *Service) syncWorkspacePriorities(
 		stored.LastConflictPriority = nil
 		if err := s.repo.UpsertPrioritySyncState(ctx, stored); err != nil {
 			log.Printf("[connection-health] priority sync state save failed target_id=%s err=%v", targetID, err)
+			continue
+		}
+		if automaticDisableEvent != nil {
+			automaticDisableEvents = append(automaticDisableEvents, *automaticDisableEvent)
 		}
 	}
 
@@ -478,6 +507,78 @@ func (s *Service) syncWorkspacePriorities(
 			log.Printf("[connection-health] priority sync state delete failed target_id=%s err=%v", targetID, err)
 		}
 	}
+	return automaticDisableEvents
+}
+
+func aggregateAutomaticDisableEvents(events []AutomaticDisableEvent) []AutomaticDisableEvent {
+	byAccount := make(map[string]*AutomaticDisableEvent, len(events))
+	keys := make([]string, 0, len(events))
+	for _, event := range events {
+		key := event.UserID + "\x00" + event.AdminAccountID + "\x00" + event.Platform + "\x00" + event.AccountID
+		aggregated, exists := byAccount[key]
+		if !exists {
+			copyEvent := event
+			copyEvent.Groups = nil
+			byAccount[key] = &copyEvent
+			keys = append(keys, key)
+			aggregated = &copyEvent
+		}
+		aggregated.Groups = append(aggregated.Groups, AutomaticDisableGroup{
+			GroupID: event.GroupID, GroupName: event.GroupName,
+			PreviousPriority: event.PreviousPriority, CurrentPriority: event.CurrentPriority,
+			EffectiveMultiplier: event.EffectiveMultiplier, ActiveAccountCount: event.ActiveAccountCount,
+		})
+	}
+	sort.Strings(keys)
+	result := make([]AutomaticDisableEvent, 0, len(keys))
+	for _, key := range keys {
+		event := *byAccount[key]
+		sort.Slice(event.Groups, func(i, j int) bool {
+			if event.Groups[i].GroupName == event.Groups[j].GroupName {
+				return event.Groups[i].GroupID < event.Groups[j].GroupID
+			}
+			return event.Groups[i].GroupName < event.Groups[j].GroupName
+		})
+		result = append(result, event)
+	}
+	return result
+}
+
+// activePriorityCandidatesByGroup counts only targets that remain schedulable
+// under the same observations used for priority assignment. This prevents an
+// alert from calling a paused, runtime-limited, or health-blocked account alive.
+func activePriorityCandidatesByGroup(candidates []managedPriorityCandidate) map[string]int {
+	counts := make(map[string]int)
+	for _, candidate := range candidates {
+		if !managedPriorityHardBlocked(candidate) {
+			counts[candidate.groupID]++
+		}
+	}
+	return counts
+}
+
+func candidateForTarget(candidates []managedPriorityCandidate, targetID string) managedPriorityCandidate {
+	for _, candidate := range candidates {
+		if candidate.targetID == targetID {
+			return candidate
+		}
+	}
+	return managedPriorityCandidate{}
+}
+
+func automaticPriorityDisableReason(candidate managedPriorityCandidate) string {
+	if candidate.runtimeBlocked {
+		return "upstream runtime limited"
+	}
+	if candidate.schedulable != nil && !*candidate.schedulable {
+		return "upstream marked unschedulable"
+	}
+	for _, state := range candidate.states {
+		if state.State == StateDisabled || state.State == StateSuspended || state.CurrentWeight <= 0 {
+			return "health policy marked unavailable"
+		}
+	}
+	return "unavailable"
 }
 
 func preferredTransitHubLatency(sub2APIUsageP95, transitHubProbeP95 *int) *int {

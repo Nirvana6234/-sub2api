@@ -383,6 +383,11 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		GrokDefaultBaseURLMode:         settings.GrokDefaultBaseURLMode,
 
 		AvailableChannelsEnabled:       settings.AvailableChannelsEnabled,
+		ClientDownloadEnabled:          settings.ClientDownloadEnabled,
+		ClientDownloadNetdiskURL:          settings.ClientDownloadNetdiskURL,
+		ClientDownloadDirectURL:          settings.ClientDownloadDirectURL,
+		BackupPaymentEnabled:           settings.BackupPaymentEnabled,
+		BackupPaymentURL:               settings.BackupPaymentURL,
 		PlaygroundEnabled:              settings.PlaygroundEnabled,
 		PlaygroundDefaultChatModel:     settings.PlaygroundDefaultChatModel,
 		PlaygroundDefaultImageModel:    settings.PlaygroundDefaultImageModel,

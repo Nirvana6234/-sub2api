@@ -639,3 +639,47 @@ func AccountCostRateMultiplier(account *Account, at time.Time) *float64 {
 	value := rate
 	return &value
 }
+
+// 对外暴露的成本倍率来源名。内部常量（profitControlRateSource*）承载的是利润门
+// 的实现细节，直接塞进 API 会把内部命名固化成对外契约；这里做一层窄映射，
+// 内部改名时只需改这里。
+const (
+	AccountCostRateSourceManual = "manual"
+	AccountCostRateSourceProbe  = "probe"
+	AccountCostRateSourceColumn = "column"
+	AccountCostRateSourceNone   = "none"
+)
+
+// AccountCostRateMultiplierWithSource 在 AccountCostRateMultiplier 的基础上一并返回
+// 倍率的来源，供管理接口向外披露"这个成本数字是谁声明的"。
+//
+// 它与 AccountCostRateMultiplier 共用 profitControlAccountUpstreamRate，刻意不另写
+// 一套优先级：手工值优先于探测值、探测失败时不拿建表默认 1.0 冒充声明，这些判断
+// 只应存在一处。返回 nil 表示无人声明过成本，调用方不得回退 1.0——理由同
+// AccountCostRateMultiplier 的注释：凭空按原价计价会把盈利的账号显示成巨亏。
+func AccountCostRateMultiplierWithSource(account *Account, at time.Time) (*float64, string) {
+	if account == nil {
+		return nil, AccountCostRateSourceNone
+	}
+	rate, source, state := profitControlAccountUpstreamRate(account, at)
+	if state != profitControlRateDeclared {
+		return nil, AccountCostRateSourceNone
+	}
+	if math.IsNaN(rate) || math.IsInf(rate, 0) || rate < 0 {
+		return nil, AccountCostRateSourceNone
+	}
+	var exposed string
+	switch source {
+	case profitControlRateSourceManualUpstream:
+		exposed = AccountCostRateSourceManual
+	case profitControlRateSourceUpstreamProbe:
+		exposed = AccountCostRateSourceProbe
+	case profitControlRateSourceAccountColumn:
+		exposed = AccountCostRateSourceColumn
+	default:
+		// 未知来源按"无声明"处理：宁可少报，也不把一个说不清出处的数字当成本。
+		return nil, AccountCostRateSourceNone
+	}
+	value := rate
+	return &value, exposed
+}

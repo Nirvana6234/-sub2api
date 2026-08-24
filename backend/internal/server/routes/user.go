@@ -165,6 +165,18 @@ func RegisterUserRoutes(
 			announcements.POST("/:id/read", h.Announcement.MarkRead)
 		}
 
+		// 工单（用户只能看到自己的）
+		tickets := authenticated.Group("/tickets")
+		{
+			tickets.GET("", h.Ticket.List)
+			tickets.POST("", h.Ticket.Create)
+			// unread-count 必须注册在 /:id 之前，否则会被当成 id 匹配掉
+			tickets.GET("/unread-count", h.Ticket.UnreadCount)
+			tickets.GET("/:id", h.Ticket.GetByID)
+			tickets.POST("/:id/messages", h.Ticket.Reply)
+			tickets.POST("/:id/close", h.Ticket.Close)
+		}
+
 		// 卡密兑换
 		redeem := authenticated.Group("/redeem")
 		{

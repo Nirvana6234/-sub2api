@@ -20,6 +20,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/predicate"
 	"github.com/Wei-Shaw/sub2api/ent/promocodeusage"
 	"github.com/Wei-Shaw/sub2api/ent/redeemcode"
+	"github.com/Wei-Shaw/sub2api/ent/ticket"
 	"github.com/Wei-Shaw/sub2api/ent/usagelog"
 	"github.com/Wei-Shaw/sub2api/ent/user"
 	"github.com/Wei-Shaw/sub2api/ent/userattributevalue"
@@ -281,6 +282,26 @@ func (_u *UserUpdate) SetNillableSignupSource(v *string) *UserUpdate {
 	return _u
 }
 
+// SetRegisterIP sets the "register_ip" field.
+func (_u *UserUpdate) SetRegisterIP(v string) *UserUpdate {
+	_u.mutation.SetRegisterIP(v)
+	return _u
+}
+
+// SetNillableRegisterIP sets the "register_ip" field if the given value is not nil.
+func (_u *UserUpdate) SetNillableRegisterIP(v *string) *UserUpdate {
+	if v != nil {
+		_u.SetRegisterIP(*v)
+	}
+	return _u
+}
+
+// ClearRegisterIP clears the value of the "register_ip" field.
+func (_u *UserUpdate) ClearRegisterIP() *UserUpdate {
+	_u.mutation.ClearRegisterIP()
+	return _u
+}
+
 // SetLastLoginAt sets the "last_login_at" field.
 func (_u *UserUpdate) SetLastLoginAt(v time.Time) *UserUpdate {
 	_u.mutation.SetLastLoginAt(v)
@@ -535,6 +556,21 @@ func (_u *UserUpdate) AddAnnouncementReads(v ...*AnnouncementRead) *UserUpdate {
 	return _u.AddAnnouncementReadIDs(ids...)
 }
 
+// AddTicketIDs adds the "tickets" edge to the Ticket entity by IDs.
+func (_u *UserUpdate) AddTicketIDs(ids ...int64) *UserUpdate {
+	_u.mutation.AddTicketIDs(ids...)
+	return _u
+}
+
+// AddTickets adds the "tickets" edges to the Ticket entity.
+func (_u *UserUpdate) AddTickets(v ...*Ticket) *UserUpdate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.AddTicketIDs(ids...)
+}
+
 // AddAllowedGroupIDs adds the "allowed_groups" edge to the Group entity by IDs.
 func (_u *UserUpdate) AddAllowedGroupIDs(ids ...int64) *UserUpdate {
 	_u.mutation.AddAllowedGroupIDs(ids...)
@@ -763,6 +799,27 @@ func (_u *UserUpdate) RemoveAnnouncementReads(v ...*AnnouncementRead) *UserUpdat
 		ids[i] = v[i].ID
 	}
 	return _u.RemoveAnnouncementReadIDs(ids...)
+}
+
+// ClearTickets clears all "tickets" edges to the Ticket entity.
+func (_u *UserUpdate) ClearTickets() *UserUpdate {
+	_u.mutation.ClearTickets()
+	return _u
+}
+
+// RemoveTicketIDs removes the "tickets" edge to Ticket entities by IDs.
+func (_u *UserUpdate) RemoveTicketIDs(ids ...int64) *UserUpdate {
+	_u.mutation.RemoveTicketIDs(ids...)
+	return _u
+}
+
+// RemoveTickets removes "tickets" edges to Ticket entities.
+func (_u *UserUpdate) RemoveTickets(v ...*Ticket) *UserUpdate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.RemoveTicketIDs(ids...)
 }
 
 // ClearAllowedGroups clears all "allowed_groups" edges to the Group entity.
@@ -1007,6 +1064,11 @@ func (_u *UserUpdate) check() error {
 			return &ValidationError{Name: "signup_source", err: fmt.Errorf(`ent: validator failed for field "User.signup_source": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.RegisterIP(); ok {
+		if err := user.RegisterIPValidator(v); err != nil {
+			return &ValidationError{Name: "register_ip", err: fmt.Errorf(`ent: validator failed for field "User.register_ip": %w`, err)}
+		}
+	}
 	return nil
 }
 
@@ -1084,6 +1146,12 @@ func (_u *UserUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.SignupSource(); ok {
 		_spec.SetField(user.FieldSignupSource, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.RegisterIP(); ok {
+		_spec.SetField(user.FieldRegisterIP, field.TypeString, value)
+	}
+	if _u.mutation.RegisterIPCleared() {
+		_spec.ClearField(user.FieldRegisterIP, field.TypeString)
 	}
 	if value, ok := _u.mutation.LastLoginAt(); ok {
 		_spec.SetField(user.FieldLastLoginAt, field.TypeTime, value)
@@ -1351,6 +1419,51 @@ func (_u *UserUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(announcementread.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.TicketsCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.TicketsTable,
+			Columns: []string{user.TicketsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(ticket.FieldID, field.TypeInt64),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.RemovedTicketsIDs(); len(nodes) > 0 && !_u.mutation.TicketsCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.TicketsTable,
+			Columns: []string{user.TicketsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(ticket.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.TicketsIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.TicketsTable,
+			Columns: []string{user.TicketsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(ticket.FieldID, field.TypeInt64),
 			},
 		}
 		for _, k := range nodes {
@@ -1991,6 +2104,26 @@ func (_u *UserUpdateOne) SetNillableSignupSource(v *string) *UserUpdateOne {
 	return _u
 }
 
+// SetRegisterIP sets the "register_ip" field.
+func (_u *UserUpdateOne) SetRegisterIP(v string) *UserUpdateOne {
+	_u.mutation.SetRegisterIP(v)
+	return _u
+}
+
+// SetNillableRegisterIP sets the "register_ip" field if the given value is not nil.
+func (_u *UserUpdateOne) SetNillableRegisterIP(v *string) *UserUpdateOne {
+	if v != nil {
+		_u.SetRegisterIP(*v)
+	}
+	return _u
+}
+
+// ClearRegisterIP clears the value of the "register_ip" field.
+func (_u *UserUpdateOne) ClearRegisterIP() *UserUpdateOne {
+	_u.mutation.ClearRegisterIP()
+	return _u
+}
+
 // SetLastLoginAt sets the "last_login_at" field.
 func (_u *UserUpdateOne) SetLastLoginAt(v time.Time) *UserUpdateOne {
 	_u.mutation.SetLastLoginAt(v)
@@ -2245,6 +2378,21 @@ func (_u *UserUpdateOne) AddAnnouncementReads(v ...*AnnouncementRead) *UserUpdat
 	return _u.AddAnnouncementReadIDs(ids...)
 }
 
+// AddTicketIDs adds the "tickets" edge to the Ticket entity by IDs.
+func (_u *UserUpdateOne) AddTicketIDs(ids ...int64) *UserUpdateOne {
+	_u.mutation.AddTicketIDs(ids...)
+	return _u
+}
+
+// AddTickets adds the "tickets" edges to the Ticket entity.
+func (_u *UserUpdateOne) AddTickets(v ...*Ticket) *UserUpdateOne {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.AddTicketIDs(ids...)
+}
+
 // AddAllowedGroupIDs adds the "allowed_groups" edge to the Group entity by IDs.
 func (_u *UserUpdateOne) AddAllowedGroupIDs(ids ...int64) *UserUpdateOne {
 	_u.mutation.AddAllowedGroupIDs(ids...)
@@ -2473,6 +2621,27 @@ func (_u *UserUpdateOne) RemoveAnnouncementReads(v ...*AnnouncementRead) *UserUp
 		ids[i] = v[i].ID
 	}
 	return _u.RemoveAnnouncementReadIDs(ids...)
+}
+
+// ClearTickets clears all "tickets" edges to the Ticket entity.
+func (_u *UserUpdateOne) ClearTickets() *UserUpdateOne {
+	_u.mutation.ClearTickets()
+	return _u
+}
+
+// RemoveTicketIDs removes the "tickets" edge to Ticket entities by IDs.
+func (_u *UserUpdateOne) RemoveTicketIDs(ids ...int64) *UserUpdateOne {
+	_u.mutation.RemoveTicketIDs(ids...)
+	return _u
+}
+
+// RemoveTickets removes "tickets" edges to Ticket entities.
+func (_u *UserUpdateOne) RemoveTickets(v ...*Ticket) *UserUpdateOne {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.RemoveTicketIDs(ids...)
 }
 
 // ClearAllowedGroups clears all "allowed_groups" edges to the Group entity.
@@ -2730,6 +2899,11 @@ func (_u *UserUpdateOne) check() error {
 			return &ValidationError{Name: "signup_source", err: fmt.Errorf(`ent: validator failed for field "User.signup_source": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.RegisterIP(); ok {
+		if err := user.RegisterIPValidator(v); err != nil {
+			return &ValidationError{Name: "register_ip", err: fmt.Errorf(`ent: validator failed for field "User.register_ip": %w`, err)}
+		}
+	}
 	return nil
 }
 
@@ -2824,6 +2998,12 @@ func (_u *UserUpdateOne) sqlSave(ctx context.Context) (_node *User, err error) {
 	}
 	if value, ok := _u.mutation.SignupSource(); ok {
 		_spec.SetField(user.FieldSignupSource, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.RegisterIP(); ok {
+		_spec.SetField(user.FieldRegisterIP, field.TypeString, value)
+	}
+	if _u.mutation.RegisterIPCleared() {
+		_spec.ClearField(user.FieldRegisterIP, field.TypeString)
 	}
 	if value, ok := _u.mutation.LastLoginAt(); ok {
 		_spec.SetField(user.FieldLastLoginAt, field.TypeTime, value)
@@ -3091,6 +3271,51 @@ func (_u *UserUpdateOne) sqlSave(ctx context.Context) (_node *User, err error) {
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(announcementread.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.TicketsCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.TicketsTable,
+			Columns: []string{user.TicketsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(ticket.FieldID, field.TypeInt64),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.RemovedTicketsIDs(); len(nodes) > 0 && !_u.mutation.TicketsCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.TicketsTable,
+			Columns: []string{user.TicketsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(ticket.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.TicketsIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.TicketsTable,
+			Columns: []string{user.TicketsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(ticket.FieldID, field.TypeInt64),
 			},
 		}
 		for _, k := range nodes {

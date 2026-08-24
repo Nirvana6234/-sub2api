@@ -56,6 +56,14 @@ type Config struct {
 	// 也不启动后台 worker。这个旁路服务没有业务鉴权，只能填容器内网地址。
 	PurityCheckDetectorURL string
 
+	// 纯度检测专用的 HTTP 代理地址，形如 http://172.18.0.1:10809。
+	//
+	// 账号在 Sub2API 里绑的是 xray 的 socks5 端口，而检测器的传输层是
+	// urllib + ProxyHandler，只认 http:// 代理。这里填同一条出口链路的
+	// HTTP 入口，purity_check 会把非 HTTP 代理统一换成它。
+	// 留空 = 绑了非 HTTP 代理的账号一律判失败并说明原因，不会退化成直连。
+	PurityCheckHTTPProxyURL string
+
 	// 检测器旁路服务落盘根目录在本容器内的挂载路径（对应它的 GPT56_RUNS_ROOT）。
 	// 配了才会在裁剪检测历史时把那边对应会话的 SQLite 目录一并删掉；
 	// 留空则只清数据库，功能不受影响，只是旁路服务的卷会一直涨。
@@ -98,6 +106,7 @@ func Load() Config {
 
 		PurityCheckDetectorURL:     os.Getenv("PURITY_CHECK_DETECTOR_URL"),
 		PurityCheckDetectorRunsDir: os.Getenv("PURITY_CHECK_DETECTOR_RUNS_DIR"),
+		PurityCheckHTTPProxyURL:    os.Getenv("PURITY_CHECK_HTTP_PROXY_URL"),
 	}
 }
 

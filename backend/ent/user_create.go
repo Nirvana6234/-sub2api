@@ -19,6 +19,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/pendingauthsession"
 	"github.com/Wei-Shaw/sub2api/ent/promocodeusage"
 	"github.com/Wei-Shaw/sub2api/ent/redeemcode"
+	"github.com/Wei-Shaw/sub2api/ent/ticket"
 	"github.com/Wei-Shaw/sub2api/ent/usagelog"
 	"github.com/Wei-Shaw/sub2api/ent/user"
 	"github.com/Wei-Shaw/sub2api/ent/userattributevalue"
@@ -242,6 +243,20 @@ func (_c *UserCreate) SetNillableSignupSource(v *string) *UserCreate {
 	return _c
 }
 
+// SetRegisterIP sets the "register_ip" field.
+func (_c *UserCreate) SetRegisterIP(v string) *UserCreate {
+	_c.mutation.SetRegisterIP(v)
+	return _c
+}
+
+// SetNillableRegisterIP sets the "register_ip" field if the given value is not nil.
+func (_c *UserCreate) SetNillableRegisterIP(v *string) *UserCreate {
+	if v != nil {
+		_c.SetRegisterIP(*v)
+	}
+	return _c
+}
+
 // SetLastLoginAt sets the "last_login_at" field.
 func (_c *UserCreate) SetLastLoginAt(v time.Time) *UserCreate {
 	_c.mutation.SetLastLoginAt(v)
@@ -455,6 +470,21 @@ func (_c *UserCreate) AddAnnouncementReads(v ...*AnnouncementRead) *UserCreate {
 		ids[i] = v[i].ID
 	}
 	return _c.AddAnnouncementReadIDs(ids...)
+}
+
+// AddTicketIDs adds the "tickets" edge to the Ticket entity by IDs.
+func (_c *UserCreate) AddTicketIDs(ids ...int64) *UserCreate {
+	_c.mutation.AddTicketIDs(ids...)
+	return _c
+}
+
+// AddTickets adds the "tickets" edges to the Ticket entity.
+func (_c *UserCreate) AddTickets(v ...*Ticket) *UserCreate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _c.AddTicketIDs(ids...)
 }
 
 // AddAllowedGroupIDs adds the "allowed_groups" edge to the Group entity by IDs.
@@ -766,6 +796,11 @@ func (_c *UserCreate) check() error {
 			return &ValidationError{Name: "signup_source", err: fmt.Errorf(`ent: validator failed for field "User.signup_source": %w`, err)}
 		}
 	}
+	if v, ok := _c.mutation.RegisterIP(); ok {
+		if err := user.RegisterIPValidator(v); err != nil {
+			return &ValidationError{Name: "register_ip", err: fmt.Errorf(`ent: validator failed for field "User.register_ip": %w`, err)}
+		}
+	}
 	if _, ok := _c.mutation.BalanceNotifyEnabled(); !ok {
 		return &ValidationError{Name: "balance_notify_enabled", err: errors.New(`ent: missing required field "User.balance_notify_enabled"`)}
 	}
@@ -877,6 +912,10 @@ func (_c *UserCreate) createSpec() (*User, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.SignupSource(); ok {
 		_spec.SetField(user.FieldSignupSource, field.TypeString, value)
 		_node.SignupSource = value
+	}
+	if value, ok := _c.mutation.RegisterIP(); ok {
+		_spec.SetField(user.FieldRegisterIP, field.TypeString, value)
+		_node.RegisterIP = &value
 	}
 	if value, ok := _c.mutation.LastLoginAt(); ok {
 		_spec.SetField(user.FieldLastLoginAt, field.TypeTime, value)
@@ -991,6 +1030,22 @@ func (_c *UserCreate) createSpec() (*User, *sqlgraph.CreateSpec) {
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(announcementread.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges = append(_spec.Edges, edge)
+	}
+	if nodes := _c.mutation.TicketsIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.TicketsTable,
+			Columns: []string{user.TicketsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(ticket.FieldID, field.TypeInt64),
 			},
 		}
 		for _, k := range nodes {
@@ -1395,6 +1450,24 @@ func (u *UserUpsert) SetSignupSource(v string) *UserUpsert {
 // UpdateSignupSource sets the "signup_source" field to the value that was provided on create.
 func (u *UserUpsert) UpdateSignupSource() *UserUpsert {
 	u.SetExcluded(user.FieldSignupSource)
+	return u
+}
+
+// SetRegisterIP sets the "register_ip" field.
+func (u *UserUpsert) SetRegisterIP(v string) *UserUpsert {
+	u.Set(user.FieldRegisterIP, v)
+	return u
+}
+
+// UpdateRegisterIP sets the "register_ip" field to the value that was provided on create.
+func (u *UserUpsert) UpdateRegisterIP() *UserUpsert {
+	u.SetExcluded(user.FieldRegisterIP)
+	return u
+}
+
+// ClearRegisterIP clears the value of the "register_ip" field.
+func (u *UserUpsert) ClearRegisterIP() *UserUpsert {
+	u.SetNull(user.FieldRegisterIP)
 	return u
 }
 
@@ -1848,6 +1921,27 @@ func (u *UserUpsertOne) SetSignupSource(v string) *UserUpsertOne {
 func (u *UserUpsertOne) UpdateSignupSource() *UserUpsertOne {
 	return u.Update(func(s *UserUpsert) {
 		s.UpdateSignupSource()
+	})
+}
+
+// SetRegisterIP sets the "register_ip" field.
+func (u *UserUpsertOne) SetRegisterIP(v string) *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.SetRegisterIP(v)
+	})
+}
+
+// UpdateRegisterIP sets the "register_ip" field to the value that was provided on create.
+func (u *UserUpsertOne) UpdateRegisterIP() *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateRegisterIP()
+	})
+}
+
+// ClearRegisterIP clears the value of the "register_ip" field.
+func (u *UserUpsertOne) ClearRegisterIP() *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.ClearRegisterIP()
 	})
 }
 
@@ -2493,6 +2587,27 @@ func (u *UserUpsertBulk) SetSignupSource(v string) *UserUpsertBulk {
 func (u *UserUpsertBulk) UpdateSignupSource() *UserUpsertBulk {
 	return u.Update(func(s *UserUpsert) {
 		s.UpdateSignupSource()
+	})
+}
+
+// SetRegisterIP sets the "register_ip" field.
+func (u *UserUpsertBulk) SetRegisterIP(v string) *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.SetRegisterIP(v)
+	})
+}
+
+// UpdateRegisterIP sets the "register_ip" field to the value that was provided on create.
+func (u *UserUpsertBulk) UpdateRegisterIP() *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateRegisterIP()
+	})
+}
+
+// ClearRegisterIP clears the value of the "register_ip" field.
+func (u *UserUpsertBulk) ClearRegisterIP() *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.ClearRegisterIP()
 	})
 }
 

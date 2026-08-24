@@ -19,10 +19,20 @@ export type PurityTarget = {
   type: string
   baseUrl: string
   groupIds: string[] | null
+  /**
+   * Sub2API 已按「手工值 > 新鲜探测值 > 列值」解析好的上游成本倍率。
+   * null = 没人声明过成本，要显示成「未声明」而不是 1x——那一列常年停在默认
+   * 1.0000，把「不知道」显示成「原价」会差一到两个数量级。
+   */
+  costRateMultiplier: number | null
+  costRateSource: PurityCostRateSource
   /** false 时前端置灰，reason 说明原因。 */
   eligible: boolean
   reason: PurityTargetReason
 }
+
+/** 成本倍率的出处，与后端 CostRateSource 对应。 */
+export type PurityCostRateSource = '' | 'manual' | 'probe' | 'column' | 'none'
 
 export type PurityTierInfo = {
   tier: PurityTier

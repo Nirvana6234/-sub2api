@@ -130,6 +130,7 @@ type CreateGroupRequest struct {
 	VideoPrice1080P                 *float64 `json:"video_price_1080p"`
 	WebSearchPricePerCall           *float64 `json:"web_search_price_per_call"`
 	ClaudeCodeOnly                  bool     `json:"claude_code_only"`
+	KiroCompat                      bool     `json:"kiro_compat"`
 	FallbackGroupID                 *int64   `json:"fallback_group_id"`
 	FallbackGroupIDOnInvalidRequest *int64   `json:"fallback_group_id_on_invalid_request"`
 	// 模型路由配置（仅 anthropic 平台使用）
@@ -193,6 +194,7 @@ type UpdateGroupRequest struct {
 	VideoPrice1080P                 *float64 `json:"video_price_1080p"`
 	WebSearchPricePerCall           *float64 `json:"web_search_price_per_call"`
 	ClaudeCodeOnly                  *bool    `json:"claude_code_only"`
+	KiroCompat                      *bool    `json:"kiro_compat"`
 	FallbackGroupID                 *int64   `json:"fallback_group_id"`
 	FallbackGroupIDOnInvalidRequest *int64   `json:"fallback_group_id_on_invalid_request"`
 	// 模型路由配置（仅 anthropic 平台使用）
@@ -524,6 +526,7 @@ func (h *GroupHandler) Create(c *gin.Context) {
 		VideoPrice1080P:                 req.VideoPrice1080P,
 		WebSearchPricePerCall:           req.WebSearchPricePerCall,
 		ClaudeCodeOnly:                  req.ClaudeCodeOnly,
+		KiroCompat:                      req.KiroCompat,
 		FallbackGroupID:                 req.FallbackGroupID,
 		FallbackGroupIDOnInvalidRequest: req.FallbackGroupIDOnInvalidRequest,
 		ModelRouting:                    req.ModelRouting,
@@ -647,6 +650,7 @@ func (h *GroupHandler) Update(c *gin.Context) {
 		VideoPrice1080P:                 req.VideoPrice1080P,
 		WebSearchPricePerCall:           req.WebSearchPricePerCall,
 		ClaudeCodeOnly:                  req.ClaudeCodeOnly,
+		KiroCompat:                      req.KiroCompat,
 		FallbackGroupID:                 req.FallbackGroupID,
 		FallbackGroupIDOnInvalidRequest: req.FallbackGroupIDOnInvalidRequest,
 		ModelRouting:                    req.ModelRouting,

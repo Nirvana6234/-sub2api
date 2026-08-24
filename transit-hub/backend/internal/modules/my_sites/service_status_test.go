@@ -542,6 +542,104 @@ func TestRealDisconnectAtomicRollbackOnDeleteFailure(t *testing.T) {
 	}
 }
 
+func TestRealDisconnectDeleteKeyKeepsAdminResourceAndTreatsKeyNotFoundAsDeleted(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/admin/groups" {
+			writeConnectionTestJSON(w, map[string]any{"data": []any{}})
+			return
+		}
+		if r.Method == http.MethodDelete && r.URL.Path == "/api/v1/admin/accounts/22" {
+			t.Fatal("disconnect must never delete the Admin forwarding account")
+		}
+		if r.Method == http.MethodDelete && r.URL.Path == "/api/v1/keys/11" {
+			w.WriteHeader(http.StatusNotFound)
+			writeConnectionTestJSON(w, map[string]any{"error": "not found"})
+			return
+		}
+		t.Errorf("unexpected request: %s %s", r.Method, r.URL.String())
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	session := upstream.Session{Platform: upstream.PlatformSub2API, BaseURL: server.URL, AccessToken: "user-token", AdminAPIKey: "admin-key"}
+	stateRepo := &testStateRepo{state: &State{UserID: "user-1", AdminAccountID: "admin-1", Session: session}}
+	connRepo := &testConnRepo{stateRepo: stateRepo, connection: &RealConnection{
+		ID: "conn-1", UserID: "user-1", WorkspaceAdminAccountID: "admin-1", UpstreamSiteID: "site-1",
+		UpstreamKeyID: "11", AdminAccountID: "22", ProvisioningMode: ProvisioningModeManaged,
+		AdminPlatform: string(upstream.PlatformSub2API), UpstreamPlatform: string(upstream.PlatformSub2API),
+	}}
+	lookup := testUpstreamLookup{sites: map[string]*upstream.Site{
+		"site-1": {ID: "site-1", UserID: "user-1", AdminAccountID: "admin-1", Session: &session},
+	}}
+	service := NewService(stateRepo, upstream.NewPlatformService(upstream.NewHTTPClient(server.Client())), lookup)
+	service.SetAdminAccountResolver(testAdminResolver{currentID: "admin-1"})
+	service.connRepository = connRepo
+
+	// full is kept as a safe compatibility alias for older frontends.
+	if err := service.RealDisconnect(context.Background(), "user-1", RealDisconnectRequest{ConnectionID: "conn-1", Mode: "full", RemovePricingMapping: boolPtr(false)}); err != nil {
+		t.Fatalf("expected idempotent disconnect, got %v", err)
+	}
+	if connRepo.connection != nil {
+		t.Fatal("expected local connection to be removed")
+	}
+}
+
+func TestListRealConnectionsReconcilesExternallyDeletedSub2APIAccount(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/admin/groups":
+			writeConnectionTestJSON(w, map[string]any{"data": []any{}})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/admin/accounts":
+			writeConnectionTestJSON(w, map[string]any{"data": []any{}})
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/keys/11":
+			w.WriteHeader(http.StatusNotFound)
+			writeConnectionTestJSON(w, map[string]any{"error": "not found"})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.String())
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	session := upstream.Session{Platform: upstream.PlatformSub2API, BaseURL: server.URL, AccessToken: "user-token", AdminAPIKey: "admin-key"}
+	stateRepo := &testStateRepo{state: &State{UserID: "user-1", AdminAccountID: "admin-1", Session: session}}
+	connRepo := &testConnRepo{stateRepo: stateRepo, connection: &RealConnection{
+		ID: "conn-1", UserID: "user-1", WorkspaceAdminAccountID: "admin-1", UpstreamSiteID: "site-1",
+		UpstreamKeyID: "11", AdminAccountID: "22", ProvisioningMode: ProvisioningModeManaged,
+		AdminPlatform: string(upstream.PlatformSub2API), UpstreamPlatform: string(upstream.PlatformSub2API),
+	}}
+	lookup := testUpstreamLookup{sites: map[string]*upstream.Site{
+		"site-1": {ID: "site-1", UserID: "user-1", AdminAccountID: "admin-1", Session: &session},
+	}}
+	service := NewService(stateRepo, upstream.NewPlatformService(upstream.NewHTTPClient(server.Client())), lookup)
+	service.SetAdminAccountResolver(testAdminResolver{currentID: "admin-1"})
+	service.connRepository = connRepo
+
+	connections, err := service.ListRealConnections(context.Background(), "user-1")
+	if err != nil {
+		t.Fatalf("list connections: %v", err)
+	}
+	if len(connections) != 0 || connRepo.connection != nil {
+		t.Fatalf("expected externally deleted account to be reconciled, connections=%#v local=%#v", connections, connRepo.connection)
+	}
+}
+
+func boolPtr(value bool) *bool { return &value }
+
+func TestRemoveMappingTargetEverywhereDoesNotDependOnOwnGroupNames(t *testing.T) {
+	state := &State{Mappings: []GroupMapping{
+		{OwnGroup: "plus", UpstreamTargets: []UpstreamGroupRef{{SiteID: "site-1", GroupName: "g1"}, {SiteID: "site-2", GroupName: "keep"}}},
+		{OwnGroup: "other", UpstreamTargets: []UpstreamGroupRef{{SiteID: "site-1", GroupName: "g1"}}},
+	}}
+	removeMappingTargetEverywhere(state, UpstreamGroupRef{SiteID: "site-1", GroupName: "g1"})
+	if len(state.Mappings[0].UpstreamTargets) != 1 || state.Mappings[0].UpstreamTargets[0].GroupName != "keep" {
+		t.Fatalf("expected target removed from first mapping, got %#v", state.Mappings[0].UpstreamTargets)
+	}
+	if len(state.Mappings[1].UpstreamTargets) != 0 {
+		t.Fatalf("expected target removed from second mapping, got %#v", state.Mappings[1].UpstreamTargets)
+	}
+}
+
 func TestMappingOptionsDoesNotTreatCachedMissingTargetsAsAuthoritative(t *testing.T) {
 	repo := &testStateRepo{state: &State{
 		UserID:         "user-1",

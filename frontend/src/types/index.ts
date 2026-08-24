@@ -275,6 +275,16 @@ export interface PublicSettings {
   /** When true, user monitor shows account quota/balance snapshots (default off). */
   channel_monitor_show_quota?: boolean
   available_channels_enabled: boolean
+  /** 公开的客户端下载页 /download 是否可访问（默认开启）。 */
+  client_download_enabled: boolean
+  /** 客户端下载页的网盘下载地址；为空则隐藏该按钮。 */
+  client_download_netdisk_url: string
+  /** 客户端下载页的直连下载地址；为空则隐藏该按钮。 */
+  client_download_direct_url: string
+  /** 充值页是否展示备用支付通道入口（默认关闭）。 */
+  backup_payment_enabled: boolean
+  /** 备用支付通道地址；后端已校验只允许 http/https，非法值会落成空串。 */
+  backup_payment_url: string
   playground_enabled: boolean
   playground_default_chat_model: string
   playground_default_image_model: string
@@ -377,6 +387,63 @@ export interface UserAnnouncement {
   read_at?: string
   created_at: string
   updated_at: string
+}
+
+// ==================== 工单 ====================
+
+export type TicketStatus = 'open' | 'answered' | 'closed'
+
+export type TicketSenderRole = 'user' | 'admin'
+
+export interface TicketMessage {
+  id: number
+  ticket_id: number
+  sender_role: TicketSenderRole
+  content: string
+  created_at: string
+}
+
+/** 用户侧工单视图。unread_count 是「管理员回复但我还没看」的条数。 */
+export interface Ticket {
+  id: number
+  subject: string
+  status: TicketStatus
+  unread_count: number
+  last_message_at: string
+  last_message_preview?: string
+  closed_at?: string
+  created_at: string
+  updated_at: string
+  messages?: TicketMessage[]
+}
+
+/** 管理端工单视图。unread_count 是「用户发言但管理员还没看」的条数。 */
+export interface AdminTicket {
+  id: number
+  user_id: number
+  user_email?: string
+  subject: string
+  status: TicketStatus
+  unread_count: number
+  last_message_at: string
+  last_message_preview?: string
+  closed_at?: string
+  created_at: string
+  updated_at: string
+  messages?: TicketMessage[]
+}
+
+export interface CreateTicketRequest {
+  subject: string
+  content: string
+}
+
+export interface TicketListFilters {
+  status?: TicketStatus | ''
+  search?: string
+  unread_only?: boolean
+  sort_by?: string
+  sort_order?: 'asc' | 'desc'
 }
 
 export interface CreateAnnouncementRequest {
@@ -600,6 +667,7 @@ export interface Group {
   peak_rate_multiplier: number
   // Claude Code 客户端限制
   claude_code_only: boolean
+  kiro_compat?: boolean
   fallback_group_id: number | null
   fallback_group_id_on_invalid_request: number | null
   // OpenAI Messages 调度开关（用户侧需要此字段判断是否展示 Claude Code 教程）
@@ -822,6 +890,7 @@ export interface CreateGroupRequest {
   profit_min_margin?: number
   profit_safety_buffer?: number
   claude_code_only?: boolean
+  kiro_compat?: boolean
   fallback_group_id?: number | null
   fallback_group_id_on_invalid_request?: number | null
   mcp_xml_inject?: boolean
@@ -885,6 +954,7 @@ export interface UpdateGroupRequest {
   profit_min_margin?: number
   profit_safety_buffer?: number
   claude_code_only?: boolean
+  kiro_compat?: boolean
   fallback_group_id?: number | null
   fallback_group_id_on_invalid_request?: number | null
   mcp_xml_inject?: boolean

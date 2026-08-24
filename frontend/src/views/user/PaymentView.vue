@@ -5,6 +5,26 @@
         <div class="h-8 w-8 animate-spin rounded-full border-4 border-primary-500 border-t-transparent"></div>
       </div>
       <template v-else>
+        <!-- 备用支付通道：兜底入口，刻意放在 tab 之外——主通道彻底不可用时
+             （checkout 拉取失败、无可用支付方式、payment_enabled 关闭）它仍需可见。 -->
+        <a
+          v-if="backupPaymentUrl && paymentPhase === 'select' && !selectedPlan"
+          :href="backupPaymentUrl"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="card flex items-center justify-between gap-4 p-5 transition-colors hover:bg-gray-50 dark:hover:bg-dark-800"
+        >
+          <span class="min-w-0">
+            <span class="block text-sm font-semibold text-gray-900 dark:text-white">
+              {{ t('payment.backupChannel') }}
+            </span>
+            <span class="mt-0.5 block text-xs text-gray-500 dark:text-gray-400">
+              {{ t('payment.backupChannelHint') }}
+            </span>
+          </span>
+          <Icon name="externalLink" size="sm" class="shrink-0 text-gray-400" />
+        </a>
+
         <!-- Tab Switcher (hide during payment and subscription confirm) -->
         <div v-if="tabs.length > 1 && paymentPhase === 'select' && !selectedPlan" class="flex space-x-1 rounded-xl bg-gray-100 p-1 dark:bg-dark-800">
           <button v-for="tab in tabs" :key="tab.key"
@@ -301,6 +321,16 @@ const authStore = useAuthStore()
 const paymentStore = usePaymentStore()
 const subscriptionStore = useSubscriptionStore()
 const appStore = useAppStore()
+
+// 备用支付通道。开关关闭或地址非法时返回空串，模板据此隐藏入口。
+// 后端 normalizeBackupPaymentURL 已挡掉 javascript:/data: 伪协议，
+// 这里再校验一次，避免旧数据或直接改库绕过后端校验。
+const backupPaymentUrl = computed(() => {
+  const settings = appStore.cachedPublicSettings
+  if (settings?.backup_payment_enabled !== true) return ''
+  const url = (settings?.backup_payment_url || '').trim()
+  return /^https?:\/\//i.test(url) ? url : ''
+})
 
 const user = computed(() => authStore.user)
 const activeSubscriptions = computed(() => subscriptionStore.activeSubscriptions)

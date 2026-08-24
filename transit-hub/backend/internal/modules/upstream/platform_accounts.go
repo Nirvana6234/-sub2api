@@ -19,19 +19,19 @@ import (
 // 数值/布尔字段一律用指针，nil 表示上游未提供，由前端决定展示 "-" 还是隐藏，避免把
 // 「上游没给」误当成「值为 0」。
 type AdminGroupAccountInfo struct {
-	ID                      string   // sub2api account id / new-api channel id
-	Name                    string   // 账号或渠道名称
-	Platform                string   // 上游平台标识（openai / anthropic / ...），可能为空
-	Type                    string   // sub2api 账号类型 / new-api channel 类型（数值转字符串）
-	Status                  string   // 状态（字符串或数值转字符串）
-	Priority                *int     // 优先级
-	GroupPriority           *int     // Sub2API account_groups.priority for this group
-	Concurrency             *int     // 并发（sub2api）
-	CurrentConcurrency      *int     // Sub2API 管理 API 返回的实时并发
-	SchedulerScore          *float64 // Sub2API 在当前分组中的实时基础调度分
-	UsageP95FirstTokenMs    *int     // Sub2API 最近一小时真实请求的首 Token 延迟 P95（至少 3 个样本）
-	UsageSampleCount        int      // 上述 P95 使用的有效样本数；不足 3 时只保留样本数
-	RateMultiplier          *float64 // Sub2API admin 转发账号记录自身的 rate_multiplier，不代表上游 API Key 所属分组倍率。
+	ID                   string   // sub2api account id / new-api channel id
+	Name                 string   // 账号或渠道名称
+	Platform             string   // 上游平台标识（openai / anthropic / ...），可能为空
+	Type                 string   // sub2api 账号类型 / new-api channel 类型（数值转字符串）
+	Status               string   // 状态（字符串或数值转字符串）
+	Priority             *int     // 优先级
+	GroupPriority        *int     // Sub2API account_groups.priority for this group
+	Concurrency          *int     // 并发（sub2api）
+	CurrentConcurrency   *int     // Sub2API 管理 API 返回的实时并发
+	SchedulerScore       *float64 // Sub2API 在当前分组中的实时基础调度分
+	UsageP95FirstTokenMs *int     // Sub2API 最近一小时真实请求的首 Token 延迟 P95（至少 3 个样本）
+	UsageSampleCount     int      // 上述 P95 使用的有效样本数；不足 3 时只保留样本数
+	RateMultiplier       *float64 // Sub2API admin 转发账号记录自身的 rate_multiplier，不代表上游 API Key 所属分组倍率。
 	// CostRateMultiplier 是 Sub2API 已按"手工值 > 新鲜探测值 > 列值"解析好的上游成本倍率。
 	// nil 表示无人声明过该账号成本（含探测失败而列上只剩建表默认 1.0 的情况）。
 	// 【不要用 RateMultiplier 代替它做成本核算】：那一列常年停在默认 1.0000，
@@ -39,7 +39,7 @@ type AdminGroupAccountInfo struct {
 	// 也【不要】在 nil 时回退 1.0 或回退上游标称倍率——没人声明就是不知道。
 	CostRateMultiplier *float64
 	// CostRateSource 是上面那个倍率的出处："manual" / "probe" / "column" / "none"。
-	CostRateSource string
+	CostRateSource          string
 	LoadFactor              *int     // 负载因子（sub2api）
 	Weight                  *int     // 权重（仅 new-api channel 有；sub2api 为 nil）
 	Models                  string   // 模型列表（new-api channel.models 等）

@@ -1122,6 +1122,12 @@ export default {
         fallbackHint: '非 Claude Code 请求将使用此分组，留空则直接拒绝',
         noFallback: '不降级（直接拒绝）'
       },
+      kiroCompat: {
+        title: 'Kiro Codex 兼容',
+        hint: '仅用于 Kiro 反代分组。启用后，服务端会对 Codex 的兼容请求应用该分组专属处理。',
+        enabled: '已启用 Kiro 兼容',
+        disabled: '未启用 Kiro 兼容'
+      },
       openaiMessages: {
         title: 'OpenAI Messages 调度配置',
         allowDispatch: '允许 /v1/messages 调度',

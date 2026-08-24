@@ -609,6 +609,20 @@ func (_c *GroupCreate) SetNillableClaudeCodeOnly(v *bool) *GroupCreate {
 	return _c
 }
 
+// SetKiroCompat sets the "kiro_compat" field.
+func (_c *GroupCreate) SetKiroCompat(v bool) *GroupCreate {
+	_c.mutation.SetKiroCompat(v)
+	return _c
+}
+
+// SetNillableKiroCompat sets the "kiro_compat" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableKiroCompat(v *bool) *GroupCreate {
+	if v != nil {
+		_c.SetKiroCompat(*v)
+	}
+	return _c
+}
+
 // SetFallbackGroupID sets the "fallback_group_id" field.
 func (_c *GroupCreate) SetFallbackGroupID(v int64) *GroupCreate {
 	_c.mutation.SetFallbackGroupID(v)
@@ -1105,6 +1119,10 @@ func (_c *GroupCreate) defaults() error {
 		v := group.DefaultClaudeCodeOnly
 		_c.mutation.SetClaudeCodeOnly(v)
 	}
+	if _, ok := _c.mutation.KiroCompat(); !ok {
+		v := group.DefaultKiroCompat
+		_c.mutation.SetKiroCompat(v)
+	}
 	if _, ok := _c.mutation.ModelRoutingEnabled(); !ok {
 		v := group.DefaultModelRoutingEnabled
 		_c.mutation.SetModelRoutingEnabled(v)
@@ -1304,6 +1322,9 @@ func (_c *GroupCreate) check() error {
 	}
 	if _, ok := _c.mutation.ClaudeCodeOnly(); !ok {
 		return &ValidationError{Name: "claude_code_only", err: errors.New(`ent: missing required field "Group.claude_code_only"`)}
+	}
+	if _, ok := _c.mutation.KiroCompat(); !ok {
+		return &ValidationError{Name: "kiro_compat", err: errors.New(`ent: missing required field "Group.kiro_compat"`)}
 	}
 	if _, ok := _c.mutation.ModelRoutingEnabled(); !ok {
 		return &ValidationError{Name: "model_routing_enabled", err: errors.New(`ent: missing required field "Group.model_routing_enabled"`)}
@@ -1564,6 +1585,10 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.ClaudeCodeOnly(); ok {
 		_spec.SetField(group.FieldClaudeCodeOnly, field.TypeBool, value)
 		_node.ClaudeCodeOnly = value
+	}
+	if value, ok := _c.mutation.KiroCompat(); ok {
+		_spec.SetField(group.FieldKiroCompat, field.TypeBool, value)
+		_node.KiroCompat = value
 	}
 	if value, ok := _c.mutation.FallbackGroupID(); ok {
 		_spec.SetField(group.FieldFallbackGroupID, field.TypeInt64, value)
@@ -2540,6 +2565,18 @@ func (u *GroupUpsert) SetClaudeCodeOnly(v bool) *GroupUpsert {
 // UpdateClaudeCodeOnly sets the "claude_code_only" field to the value that was provided on create.
 func (u *GroupUpsert) UpdateClaudeCodeOnly() *GroupUpsert {
 	u.SetExcluded(group.FieldClaudeCodeOnly)
+	return u
+}
+
+// SetKiroCompat sets the "kiro_compat" field.
+func (u *GroupUpsert) SetKiroCompat(v bool) *GroupUpsert {
+	u.Set(group.FieldKiroCompat, v)
+	return u
+}
+
+// UpdateKiroCompat sets the "kiro_compat" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateKiroCompat() *GroupUpsert {
+	u.SetExcluded(group.FieldKiroCompat)
 	return u
 }
 
@@ -3729,6 +3766,20 @@ func (u *GroupUpsertOne) SetClaudeCodeOnly(v bool) *GroupUpsertOne {
 func (u *GroupUpsertOne) UpdateClaudeCodeOnly() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateClaudeCodeOnly()
+	})
+}
+
+// SetKiroCompat sets the "kiro_compat" field.
+func (u *GroupUpsertOne) SetKiroCompat(v bool) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetKiroCompat(v)
+	})
+}
+
+// UpdateKiroCompat sets the "kiro_compat" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateKiroCompat() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateKiroCompat()
 	})
 }
 
@@ -5133,6 +5184,20 @@ func (u *GroupUpsertBulk) SetClaudeCodeOnly(v bool) *GroupUpsertBulk {
 func (u *GroupUpsertBulk) UpdateClaudeCodeOnly() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateClaudeCodeOnly()
+	})
+}
+
+// SetKiroCompat sets the "kiro_compat" field.
+func (u *GroupUpsertBulk) SetKiroCompat(v bool) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetKiroCompat(v)
+	})
+}
+
+// UpdateKiroCompat sets the "kiro_compat" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateKiroCompat() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateKiroCompat()
 	})
 }
 

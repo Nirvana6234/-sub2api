@@ -61,10 +61,12 @@ func (s *GatewayService) ForwardAsResponses(
 	anthropicReq.Stream = true
 	reqStream := true
 
-	// 4. Model mapping
+	// 4. Model mapping —— 是否还允许账号映射改写见 shouldSkipModelMappingForKiro。
+	skipModelMapping := shouldSkipModelMappingForKiro(c, originalModel)
 	mappedModel := originalModel
 	reasoningEffort := ExtractResponsesReasoningEffortFromBody(body)
-	if account.Type == AccountTypeAPIKey || account.Type == AccountTypeServiceAccount {
+	if !skipModelMapping &&
+		(account.Type == AccountTypeAPIKey || account.Type == AccountTypeServiceAccount) {
 		mappedModel = account.GetMappedModel(originalModel)
 	}
 	if mappedModel == originalModel && account.Platform == PlatformAnthropic && account.Type == AccountTypeServiceAccount {

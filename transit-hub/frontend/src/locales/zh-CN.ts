@@ -633,7 +633,7 @@ export default {
           invalidUrl: '站点地址无效，请填写正确的域名或 IP 后重试。',
           adminOnly: '凭证有效，但该账户不是 Sub2API admin。请使用管理员账号或 Admin API Key。',
           authRejected: '上游拒绝了 Access Token。请确认粘贴的是网页登录会话的 access_token，而不是 sk- 开头的模型 API Key。',
-          interactiveLoginRequired: '该站点已启用 Turnstile，TransitHub 服务端无法代替浏览器完成验证。请改用网页登录取得的 Token 或 Admin API Key。',
+          interactiveLoginRequired: '该站点已启用 Turnstile，共飞后台服务端无法代替浏览器完成验证。请改用网页登录取得的 Token 或 Admin API Key。',
           upstreamRequest: '上游拒绝了请求。凭证可能有效，但对应统计或管理接口不可用；请检查 Sub2API 版本与权限。',
           invalidResponse: '上游没有返回可解析的 JSON，可能是代理或安全验证页面。',
           network: '网络或跨域请求失败，请检查站点地址。',
@@ -674,6 +674,15 @@ export default {
         cached: '缓存',
         effectiveCost: '换算后成本倍率'
       },
+      costBinding: {
+        boundTo: '成本账号：{account}',
+        unbound: '未绑定成本账号',
+        source: {
+          manual: '手工',
+          probe: '探测',
+          column: '列值'
+        }
+      },
       profitCalculator: {
         titleWithGroup: '{group} · 利润预算',
         customTitle: '自定义利润计算器',
@@ -709,7 +718,15 @@ export default {
         searchLabel: '搜索上游分组', searchPlaceholder: '搜索站点、平台或分组...',
         emptyTitle: '没有匹配的上游分组', emptyDescription: '请调整搜索条件或先同步上游站点。',
         unknownMultiplier: '暂无倍率', autoMultiplier: '自动', multiplier: '{value}x', stale: '已失效',
-        close: '关闭数据源编辑', cancel: '取消', save: '保存数据源', saving: '保存中...'
+        close: '关闭数据源编辑', cancel: '取消', save: '保存数据源', saving: '保存中...',
+        costBinding: {
+          unbound: '不绑定成本账号',
+          sameHost: '同域名账号',
+          otherAccounts: '其他账号',
+          noCost: '无成本数据',
+          costValue: '{value}x',
+          unboundHint: '未绑定则不计入毛利'
+        }
       },
       cleanup: {
         title: '清理失效配置',
@@ -880,8 +897,20 @@ export default {
 
       targetsTitle: '待检测账号',
       targetsEmpty: '当前 admin workspace 下没有账号。',
+      targetsSearchPlaceholder: '搜索账号名称、ID、平台或上游地址',
+      targetsSearchEmpty: '没有匹配的账号。',
+      // 全选只作用于筛选结果，所以要同时报出「筛出多少」和「一共选了多少」。
+      targetsSearchCount: '匹配 {shown} / {total} 个 · 已选 {selected} 个',
       selectAll: '全选',
       clearAll: '取消全选',
+      // 倍率是 Sub2API 解析好的上游成本倍率，来源分手工/探测/列值。
+      rateUndeclared: '未声明成本',
+      rateSources: {
+        manual: '手工',
+        probe: '探测',
+        // 只有账号 rate_multiplier 列值：没人声明也没探到，很可能就是建表默认的 1.0000。
+        column: '列值·未核实',
+      },
       targetReasons: {
         not_openai: '仅支持 OpenAI 平台账号：探针只为 GPT-5.6 的 Sol/Terra/Luna 标定过',
         not_api_key: '账号没有可直接使用的静态 API Key：OAuth/setup-token 走 ChatGPT 后端，Bedrock/Service Account 用的是另一套凭据',
@@ -958,6 +987,8 @@ export default {
         notCancellable: '该任务当前无法取消。',
         notDeletable: '任务还在排队或运行中，请先取消再删除。',
         upstreamUnreachable: '上游未响应，本次没有取得任何有效探针，无法得出检测结论。',
+        proxyUnsupported:
+          '该账号绑定的是非 HTTP 代理（如 socks5），检测器只支持 HTTP 代理。请在部署侧配置 PURITY_CHECK_HTTP_PROXY_URL，指向与转发同一出口的 HTTP 代理端口。',
         tooManyTargets: '单次最多提交 20 个账号。',
       },
     },
@@ -1149,7 +1180,7 @@ export default {
             balanced: '兼容',
             speed: '速度优先'
           },
-          priorityStrategyHelp: '低价优先只看真实上游 API Key 倍率；兼容按 70% 价格 + 30% 速度；速度优先使用最近 1 小时真实请求的 TTFT P95。每账号最多 20 条、至少 3 条；不足时回退 TransitHub 已有探活记录，不会为评分额外探活。',
+          priorityStrategyHelp: '低价优先只看真实上游 API Key 倍率；兼容按 70% 价格 + 30% 速度；速度优先使用最近 1 小时真实请求的 TTFT P95。每账号最多 20 条、至少 3 条；不足时回退共飞后台已有探活记录，不会为评分额外探活。',
           multiplierOnlyTitle: '仅同步倍率优先级',
           multiplierOnlyHelp: '后台约每 30 秒读取一次账号实际绑定的上游 API Key 分组倍率；倍率越低，优先级越高。此模式不需要探活凭据。'
         },
@@ -1393,7 +1424,7 @@ export default {
         priorityModes: {
           none: '保持上游设置',
           multiplier: '按上游倍率排序',
-          auto: 'TransitHub 自动评分'
+          auto: '共飞后台自动评分'
         },
         priorityStrategyLabel: '自动评分模式',
         priorityStrategies: {
@@ -1401,7 +1432,7 @@ export default {
           balanced: '兼容',
           speed: '速度优先'
         },
-        priorityStrategyHelp: '速度优先使用 Sub2API 最近 1 小时真实请求的 TTFT P95（每账号最多 20 条、至少 3 条），数据不足才回退 TransitHub 已有探活记录；评分不会额外发起探活。兼容模式按 70% 价格 + 30% 速度。',
+        priorityStrategyHelp: '速度优先使用 Sub2API 最近 1 小时真实请求的 TTFT P95（每账号最多 20 条、至少 3 条），数据不足才回退共飞后台已有探活记录；评分不会额外发起探活。兼容模式按 70% 价格 + 30% 速度。',
         priorityModeHelp: '历史上游优先级只用于检测人工修改，不参与评分。可用目标按所选模式排序；暂停、禁用、不可调度或权重为 0 的目标统一置底；Sub2API 在每个分组内独立写入优先级。',
         multiplierOnlySummaryTitle: '倍率越低，优先级越高',
         multiplierOnlySummary: '系统约每 30 秒读取账号实际绑定的上游 API Key 分组倍率并同步优先级，不解析探活凭据、不请求模型、不消耗探活预算，也不执行自动降级或远端动作。检测到人工修改时会停止覆盖。',
@@ -1424,7 +1455,7 @@ export default {
           recoveryStep: '恢复过程中每次探活成功会按该百分比逐步提高本地权重，不是一次性恢复到 100%。',
           autoDegrade: '开启后，探活结果会推进链路的健康状态机并调整本地转发权重；关闭后只记录探活结果，不会自动改变状态或权重。',
           autoRemoteAction: '开启后，状态机触发降级/恢复时会执行受支持的上游动作：Sub2API 切换 admin 账号 active/inactive，NewAPI 调整 channel 权重/状态。关闭后只记录探活和状态结果。',
-          priorityMode: 'TransitHub 使用账号实际绑定的上游 API Key 倍率和真实速度数据计算优先级；不可用目标统一置底，历史优先级只用于检测人工修改。Sub2API 按每个分组独立写入结果。'
+          priorityMode: '共飞后台使用账号实际绑定的上游 API Key 倍率和真实速度数据计算优先级；不可用目标统一置底，历史优先级只用于检测人工修改。Sub2API 按每个分组独立写入结果。'
         },
         runFlow: {
           buttonLabel: '运行流程',
@@ -1739,6 +1770,24 @@ export default {
         cancel: '取消',
         saveType: '保存类型'
       },
+      // 上游 Key 连通性测试：先列模型验 key，再发一次 max_tokens=1 的真实请求。
+      test: {
+        action: '测试',
+        hint: '用这个上游 Key 实测一次：先列模型，再发一次最小请求（会真实计费，约 1 token）。',
+        passed: '可用 · {count} 个模型 · {model} {latency}ms',
+        // 分两段报是因为要修的东西完全不同：列不出模型多半是 key 废了或地址错了；
+        // 列得出但发不出词，问题在这个分组的渠道配置。
+        chatFailedWithModel: '模型 {model} 发请求失败',
+        modelSample: '模型样例：{models}',
+        chooseTitle: '选择测试模型',
+        chooseModel: '测试模型',
+        chooseModelPlaceholder: '请选择模型',
+        loadingModels: '正在读取模型列表…',
+        noModels: '该 Key 没有可用模型。',
+        begin: '开始测试',
+        closeChooser: '关闭模型选择',
+        failed: '测试失败，请重试。'
+      },
       filters: {
         searchLabel: '搜索',
         searchPlaceholder: '搜索站点或分组...',
@@ -1847,8 +1896,8 @@ export default {
         description: '确认取消 {site} · {group} 的真实对接？',
         unlinkOnly: '仅取消关联',
         unlinkOnlyHint: '仅删除本地绑定记录，保留上游 Key 和 Admin 账号',
-        deleteAll: '删除账号和 Key',
-        deleteAllHint: '同时删除上游 Key 和 Admin 站点的转发账号',
+        deleteKey: '删除上游 Key',
+        deleteKeyHint: '只删除这次对接创建的上游 Key，保留 Admin 站点的转发账号',
         removePricingMapping: '同时移除调价数据源',
         removePricingMappingHint: '取消勾选可保留当前上游分组的调价映射。',
         confirm: '确定',
@@ -2003,7 +2052,13 @@ export default {
         request: '保存调价映射失败，请刷新页面后重试。',
         invalidAutoPricingConfig: '自动调价配置无效：主上游不在关联上游中，或最低倍率大于最高倍率。',
         connectionExists: '该上游分组已经存在真实连接。',
-        managedDeleteOnly: '已有资源关联只能取消本地关联，不能删除远端资源。'
+        managedDeleteOnly: '已有资源关联只能取消本地关联，不能删除远端资源。',
+        testerUnavailable: '探活能力未装配，暂时无法测试。',
+        credentialNotFound: '这个上游分组下没有可用的 Key，先完成对接再测试。',
+        // 这三条要能直接指向「该去改什么」，别只说一句失败。
+        modelListUnavailable: 'Key 无效或上游地址不通：连模型列表都拉不到。',
+        modelListEmpty: 'Key 有效，但这个分组下一个模型都没挂——去上游把模型加到该分组。',
+        chatProbeFailed: '模型列表正常，但真实请求没成功'
       }
     },
     tickets: {
@@ -2338,7 +2393,13 @@ export default {
           groupName: '默认分组',
           oldRate: '1.0000',
           newRate: '1.1200',
-          changeDirection: '上升'
+          changeDirection: '上升',
+          changePercent: '+12.0%',
+          ownGroups: 'Codex 快速（当前 0.6x）',
+          impactDays: '7',
+          weeklyCost: '¥700.00',
+          dailyAvgCost: '¥100.00',
+          costImpact: '+¥84.00'
         }
       },
       balanceTemplateVars: '(支持变量: {siteName}, {balance}, {threshold})',
@@ -2353,6 +2414,12 @@ export default {
       varOldRate: '原倍率',
       varNewRate: '新倍率',
       varChangeDirection: '变更方向',
+      varChangePercent: '变更幅度',
+      varOwnGroups: '我方对接分组（含当前倍率）',
+      varImpactDays: '统计天数',
+      varWeeklyCost: '该通道近期成本',
+      varDailyAvgCost: '日均成本',
+      varCostImpact: '成本影响估算',
       pricingAmount: '调价幅度',
       botNameLabel: '机器人名称标识',
       botNameDingtalkPlaceholder: '例如：钉钉主群',
@@ -2389,8 +2456,22 @@ export default {
           description: '配置针对所有上游站点的默认报警触发条件。',
           balanceWarning: '余额预警',
           balanceWarningHelp: '当某个上游站点的余额（按充值倍率折合人民币）低于设定金额时，通过机器人发送预警通知。',
-          multiplierChangeWarning: '倍率变更预警',
-          multiplierChangeWarningHelp: '当监控的对接分组倍率发生任何变动时，通过机器人发送通知。'
+          multiplierChangeWarning: '倍率与可用性预警',
+          multiplierChangeWarningHelp: '当监控的对接分组倍率发生变化，或调度器将上游账号自动置底时，通过机器人发送通知。'
+        },
+        dailyReport: {
+          title: '每日运营报告',
+          description: '每天汇总营收、成本、余额、分组经营和通道异常，并推送到选定机器人。',
+          time: '推送时刻',
+          timeHelp: '使用上海时区（Asia/Shanghai）。保存设置后，调度器会按此时刻发送。',
+          format: '消息格式',
+          usesSavedConfig: '预览使用已保存的配置；立即发送会先保存当前日报配置。',
+          preview: '预览报告',
+          previewing: '生成中...',
+          previewTitle: '报告预览',
+          sendNow: '立即发送',
+          sending: '发送中...',
+          sendSuccess: '运营日报已发送。'
         },
         pricing: {
           title: '分组倍率调价',
@@ -2436,7 +2517,7 @@ export default {
         },
         templates: {
           balanceDefaultTemplate: '🔴 **余额预警**\n\n🏷️ **站点：** {siteName}\n💰 **当前余额：** ¥{balance}\n⚠️ **预警阈值：** ¥{threshold}\n\n请及时检查并充值，避免服务中断。',
-          multiplierDefaultTemplate: '🟠 **倍率变更预警**\n\n🏷️ **站点：** {siteName}\n📦 **分组：** {groupName}\n📊 **倍率：** {oldRate}x → **{newRate}x**（{changeDirection}）\n\n🔎 请确认成本变化，并检查下游定价策略。',
+          multiplierDefaultTemplate: '🟠 **倍率变更预警**\n\n🏷️ **站点：** {siteName}\n📦 **上游分组：** {groupName}\n📊 **倍率：** {oldRate}x → **{newRate}x**（{changeDirection} {changePercent}）\n\n🔗 **我方分组：** {ownGroups}\n📈 **近 {days} 天该通道成本：** {weeklyCost}（日均 {dailyAvgCost}）\n💸 **按同等用量估算，每周成本变化：** {costImpact}\n\n🔎 请确认成本变化，并检查下游定价策略。',
           balanceTemplatePlaceholder: '例如：🔴 {siteName} 当前余额 ¥{balance}，已低于 ¥{threshold}。',
           multiplierTemplatePlaceholder: '例如：🟠 {siteName} / {groupName}：{oldRate}x → {newRate}x。'
         }
@@ -2449,6 +2530,8 @@ export default {
         missingWebhook: '请先填写机器人 Webhook 地址。',
         missingQQConfig: '请先填写 QQ 机器人的 AppID、AppSecret 和用户 OpenID。',
         missingTelegramConfig: '请先填写 Telegram Bot Token 和 Chat ID。',
+        dailyReportNoBots: '请先选择至少一个每日运营报告机器人。',
+        dailyReportBotsNotSaved: '所选机器人还有未保存的渠道配置，请先到“通知与渠道”保存机器人。',
         sendFailed: '测试消息发送失败，请检查机器人配置和网络连通性。'
       },
       smtp: {

@@ -465,6 +465,8 @@ class Handler(BaseHTTPRequestHandler):
                 directory=run_dir,
                 retention_enabled=bool(body.get("retention_enabled")),
                 retention_directory=body.get("retention_directory"),
+                proxy_url=str(body.get("proxy_url") or "").strip() or None,
+                header_overrides=body.get("header_overrides") if isinstance(body.get("header_overrides"), dict) else None,
             )
             self.server.state.detector_session = session
             self.server.state.detector_run_dir = run_dir

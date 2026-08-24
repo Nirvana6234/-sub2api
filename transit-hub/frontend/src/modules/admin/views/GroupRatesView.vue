@@ -2,13 +2,13 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import { AlertCircle, ArrowUpDown, Check, ChevronDown, History, KeyRound, Link2, Loader2, Megaphone, RefreshCw, Search, ServerCog, Sparkles, X } from 'lucide-vue-next'
+import { AlertCircle, ArrowUpDown, Check, ChevronDown, History, KeyRound, Link2, Loader2, Megaphone, PlugZap, RefreshCw, Search, ServerCog, Sparkles, X } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
-import { getMySiteMappingOptions, realConnect, realBind, listAdminResources, listUpstreamKeys, listRealConnections, realDisconnect } from '../api/mySites'
+import { getMySiteMappingOptions, realConnect, realBind, listAdminResources, listUpstreamKeys, listRealConnections, realDisconnect, listUpstreamKeyModels, testUpstreamKey } from '../api/mySites'
 import { getDashboardAdminStatus } from '../api/dashboardAdmin'
 import { useGroupRates } from '../composables/useGroupRates'
 import type { GroupRate, GroupRateHistoryRow } from '../types/groupRates'
-import type { AdminResourceOption, ConnectionCapabilities, MySiteMapping, MySiteMappingOwnGroupOption, RealConnection, UpstreamKeyItem } from '../types/mySites'
+import type { AdminResourceOption, ConnectionCapabilities, MySiteMapping, MySiteMappingOwnGroupOption, RealConnection, UpstreamKeyItem, UpstreamKeyTestResponse } from '../types/mySites'
 import { LEGACY_NEW_API_CHANNEL_SUGGESTIONS, NEW_API_CHANNEL_TYPES } from '../types/mySites'
 
 const { t, locale } = useI18n()
@@ -59,11 +59,146 @@ const connectionCapabilities = ref<ConnectionCapabilities | null>(null)
 const searchQuery = ref('')
 const realConnectionsData = ref<RealConnection[]>([])
 const disconnectingRate = ref<GroupRate | null>(null)
-const disconnectMode = ref<'unlink' | 'full'>('unlink')
+const disconnectMode = ref<'unlink' | 'delete-key'>('unlink')
 const disconnectRemovePricing = ref(true)
 const isDisconnecting = ref(false)
 const disconnectError = ref('')
-const isAnyDialogOpen = computed(() => Boolean(isHistoryOpen.value || editingRate.value || connectingRate.value || disconnectingRate.value))
+
+// 上游 Key 连通性测试。结果按「站点|分组」缓存，这样一页测过好几行之后
+// 哪些能用一眼看得到，不会点下一个就把上一个的结论冲掉。
+const testResults = ref<Record<string, UpstreamKeyTestResponse>>({})
+const testErrors = ref<Record<string, string>>({})
+const testingKeys = ref<string[]>([])
+// 弹窗里的测试结果单独存：那里测的可能是还没对接的 Key，与列表行不是一回事。
+const connectTestResult = ref<UpstreamKeyTestResponse | null>(null)
+const connectTestError = ref('')
+const isConnectTesting = ref(false)
+const modelTestRate = ref<GroupRate | null>(null)
+const modelTestKeyId = ref('')
+const modelTestMode = ref<'rate' | 'connect'>('rate')
+const modelOptions = ref<string[]>([])
+const selectedTestModel = ref('')
+const isLoadingModels = ref(false)
+const isStartingModelTest = ref(false)
+const modelTestError = ref('')
+
+const rateKey = (rate: GroupRate): string => `${rate.siteId}|${rate.groupId ?? ''}|${rate.groupName}`
+
+const isTesting = (rate: GroupRate): boolean => testingKeys.value.includes(rateKey(rate))
+
+const testResultFor = (rate: GroupRate): UpstreamKeyTestResponse | null => testResults.value[rateKey(rate)] ?? null
+
+const testErrorFor = (rate: GroupRate): string => testErrors.value[rateKey(rate)] ?? ''
+
+/** 两段都过才算这个通道真的能用；任一段失败都要显示成失败。 */
+const isTestPassed = (result: UpstreamKeyTestResponse): boolean => result.models.ok && result.chat.ok
+
+const runRateTest = async (rate: GroupRate, model?: string) => {
+  const key = rateKey(rate)
+  if (testingKeys.value.includes(key)) return
+  testingKeys.value = [...testingKeys.value, key]
+  delete testErrors.value[key]
+  try {
+    testResults.value = {
+      ...testResults.value,
+      [key]: await testUpstreamKey({
+        upstreamSiteId: rate.siteId,
+        upstreamGroupId: rate.groupId ?? '',
+        upstreamGroupName: rate.groupName,
+        model,
+      }),
+    }
+  } catch (error) {
+    testErrors.value = {
+      ...testErrors.value,
+      [key]: error instanceof Error ? error.message : 'admin.groupRates.test.failed',
+    }
+  } finally {
+    testingKeys.value = testingKeys.value.filter(item => item !== key)
+  }
+}
+
+const runConnectTest = async (keyId?: string, model?: string) => {
+  if (!connectingRate.value) return
+  isConnectTesting.value = true
+  connectTestError.value = ''
+  connectTestResult.value = null
+  try {
+    connectTestResult.value = await testUpstreamKey({
+      upstreamSiteId: connectingRate.value.siteId,
+      upstreamGroupId: connectingRate.value.groupId ?? '',
+      upstreamGroupName: connectingRate.value.groupName,
+      upstreamKeyId: keyId,
+      model,
+    })
+  } catch (error) {
+    connectTestError.value = error instanceof Error ? error.message : 'admin.groupRates.test.failed'
+  } finally {
+    isConnectTesting.value = false
+  }
+}
+
+const defaultProbeModel = (models: string[]): string => {
+  const hints = ['mini', 'flash', 'haiku', 'lite', 'small', 'turbo', '3.5']
+  for (const hint of hints) {
+    const match = models.find(model => model.toLowerCase().includes(hint))
+    if (match) return match
+  }
+  return models[0] ?? ''
+}
+
+const openModelChooser = async (rate: GroupRate, mode: 'rate' | 'connect', keyId = '') => {
+  modelTestRate.value = rate
+  modelTestMode.value = mode
+  modelTestKeyId.value = keyId
+  modelOptions.value = []
+  selectedTestModel.value = ''
+  modelTestError.value = ''
+  isLoadingModels.value = true
+  try {
+    const response = await listUpstreamKeyModels({
+      upstreamSiteId: rate.siteId,
+      upstreamGroupId: rate.groupId ?? '',
+      upstreamGroupName: rate.groupName,
+      upstreamKeyId: keyId || undefined,
+    })
+    modelOptions.value = response.models
+    selectedTestModel.value = defaultProbeModel(response.models)
+  } catch (error) {
+    modelTestError.value = error instanceof Error ? error.message : 'admin.groupRates.test.failed'
+  } finally {
+    isLoadingModels.value = false
+  }
+}
+
+const closeModelChooser = () => {
+  if (isLoadingModels.value) return
+  modelTestRate.value = null
+  modelOptions.value = []
+  selectedTestModel.value = ''
+  modelTestError.value = ''
+}
+
+const beginModelTest = async () => {
+  const rate = modelTestRate.value
+  const model = selectedTestModel.value.trim()
+  if (!rate || !model || isStartingModelTest.value) return
+  isStartingModelTest.value = true
+  try {
+    if (modelTestMode.value === 'connect') await runConnectTest(modelTestKeyId.value || undefined, model)
+    else await runRateTest(rate, model)
+    closeModelChooser()
+  } finally {
+    isStartingModelTest.value = false
+  }
+}
+
+/** 阶段失败原因：后端给的是 i18n key，取不到就退回通用文案。 */
+const stageMessage = (stage: { errorKey: string; detail: string }): string => {
+  const label = stage.errorKey ? t(stage.errorKey) : t('admin.groupRates.test.failed')
+  return stage.detail ? `${label} — ${stage.detail}` : label
+}
+const isAnyDialogOpen = computed(() => Boolean(isHistoryOpen.value || editingRate.value || connectingRate.value || disconnectingRate.value || modelTestRate.value))
 let previouslyFocusedElement: HTMLElement | null = null
 let previousBodyOverflow = ''
 
@@ -81,7 +216,8 @@ const handleDialogKeydown = (event: KeyboardEvent) => {
   if (!dialog) return
   if (event.key === 'Escape') {
     event.preventDefault()
-    if (disconnectingRate.value && !isDisconnecting.value) closeDisconnect()
+    if (modelTestRate.value && !isLoadingModels.value && !isStartingModelTest.value) closeModelChooser()
+    else if (disconnectingRate.value && !isDisconnecting.value) closeDisconnect()
     else if (connectingRate.value && !isActionLoading.value) closeConnector()
     else if (editingRate.value && !isActionLoading.value) closeTypeEditor()
     else if (isHistoryOpen.value) closeHistory()
@@ -391,6 +527,17 @@ const openConnector = async (rate: GroupRate) => {
   await loadMySiteMappingData()
 }
 
+// 测试优先：已对接行直接测试当前 Key；未对接行打开绑定流程并先加载已有 Key，
+// 用户可以在确认对接前完成连通性测试。
+const openRateTest = async (rate: GroupRate) => {
+  if (isRealConnected(rate)) {
+    await openModelChooser(rate, 'rate')
+    return
+  }
+  await openConnector(rate)
+  await setConnectMode('bind')
+}
+
 const isActiveResourceStatus = (status: string): boolean => ['1', 'active', 'enabled'].includes(status.toLowerCase())
 
 const resourceStatusLabel = (status: string): string => (
@@ -423,6 +570,9 @@ const closeConnector = () => {
   isLoadingAdminResources.value = false
   addToPricingMapping.value = true
   connectOperationId.value = ''
+  connectTestResult.value = null
+  connectTestError.value = ''
+  isConnectTesting.value = false
 }
 
 const setConnectMode = async (mode: 'real' | 'bind') => {
@@ -435,6 +585,8 @@ const setConnectMode = async (mode: 'real' | 'bind') => {
   selectedAdminResourceId.value = ''
   adminResources.value = []
   realConnectError.value = ''
+  connectTestResult.value = null
+  connectTestError.value = ''
   if (mode === 'bind' && connectingRate.value) {
     await loadUpstreamKeys(connectingRate.value)
   }
@@ -596,7 +748,10 @@ const submitBind = async () => {
 const openDisconnect = (rate: GroupRate) => {
   disconnectingRate.value = rate
   disconnectMode.value = 'unlink'
-  disconnectRemovePricing.value = realConnectionForRate(rate)?.pricingMappingEnabled ?? Boolean(rate.pricingMapped)
+  // A legacy/manual connection can have pricingMappingEnabled=false while
+  // the live rate is still present in the pricing mappings. In that case the
+  // cancellation dialog must default to removing the visible pricing source.
+  disconnectRemovePricing.value = Boolean(realConnectionForRate(rate)?.pricingMappingEnabled || rate.pricingMapped)
   disconnectError.value = ''
 }
 
@@ -831,29 +986,68 @@ const historyRowKey = (row: GroupRateHistoryRow, index: number): string => (
               </td>
               <td class="px-4 py-2.5 text-muted-foreground tabular-nums">{{ formatDateTime(rate.updatedAt) }}</td>
               <td class="px-4 py-2.5 text-right">
-                <div v-if="!rate.deleted" class="flex justify-end gap-2">
-                  <Button
-                    v-if="isRealConnected(rate)"
-                    variant="destructive"
-                    size="sm"
-                    class="gap-1.5"
-                    :disabled="isActionLoading || isDisconnecting"
-                    @click="openDisconnect(rate)"
-                  >
-                    <X class="h-3.5 w-3.5" />
-                    {{ t('admin.groupRates.disconnect.action') }}
-                  </Button>
-                  <Button
-                    v-else
-                    variant="secondary"
-                    size="sm"
-                    class="gap-1.5 text-primary hover:text-primary"
-                    :disabled="isActionLoading"
-                    @click="openConnector(rate)"
-                  >
-                    <Link2 class="h-3.5 w-3.5" />
-                    {{ t('admin.groupRates.actions.connect') }}
-                  </Button>
+                <div v-if="!rate.deleted" class="flex flex-col items-end gap-1.5">
+                  <div class="flex justify-end gap-2">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      class="gap-1.5"
+                      :disabled="isActionLoading || isTesting(rate) || isLoadingModels"
+                      :title="t('admin.groupRates.test.hint')"
+                      @click="openRateTest(rate)"
+                    >
+                      <Loader2 v-if="isTesting(rate)" class="h-3.5 w-3.5 animate-spin" />
+                      <PlugZap v-else class="h-3.5 w-3.5" />
+                      {{ t('admin.groupRates.test.action') }}
+                    </Button>
+                    <Button
+                      v-if="isRealConnected(rate)"
+                      variant="destructive"
+                      size="sm"
+                      class="gap-1.5"
+                      :disabled="isActionLoading || isDisconnecting"
+                      @click="openDisconnect(rate)"
+                    >
+                      <X class="h-3.5 w-3.5" />
+                      {{ t('admin.groupRates.disconnect.action') }}
+                    </Button>
+                    <Button
+                      v-else
+                      variant="secondary"
+                      size="sm"
+                      class="gap-1.5 text-primary hover:text-primary"
+                      :disabled="isActionLoading"
+                      @click="openConnector(rate)"
+                    >
+                      <Link2 class="h-3.5 w-3.5" />
+                      {{ t('admin.groupRates.actions.connect') }}
+                    </Button>
+                  </div>
+
+                  <p v-if="testErrorFor(rate)" class="text-right text-xs text-destructive">
+                    {{ t(testErrorFor(rate)) }}
+                  </p>
+                  <template v-else-if="testResultFor(rate)">
+                    <p
+                      class="text-right text-xs"
+                      :class="isTestPassed(testResultFor(rate)!) ? 'text-emerald-600 dark:text-emerald-400' : 'text-destructive'"
+                    >
+                      <template v-if="isTestPassed(testResultFor(rate)!)">
+                        {{ t('admin.groupRates.test.passed', {
+                          count: testResultFor(rate)!.modelCount,
+                          model: testResultFor(rate)!.testedModel,
+                          latency: testResultFor(rate)!.chat.latencyMs,
+                        }) }}
+                      </template>
+                      <template v-else-if="!testResultFor(rate)!.models.ok">
+                        {{ stageMessage(testResultFor(rate)!.models) }}
+                      </template>
+                      <template v-else>
+                        {{ t('admin.groupRates.test.chatFailedWithModel', { model: testResultFor(rate)!.testedModel }) }}
+                        — {{ stageMessage(testResultFor(rate)!.chat) }}
+                      </template>
+                    </p>
+                  </template>
                 </div>
               </td>
             </tr>
@@ -1161,6 +1355,52 @@ const historyRowKey = (row: GroupRateHistoryRow, index: number): string => (
                 </span>
               </label>
             </div>
+
+            <!-- 选定 Key 之后当场验一次：绑完才发现这个 Key 根本用不了，
+                 还得回过头来取消对接、删账号，代价比这里点一下大得多。 -->
+            <div v-if="selectedKeyId" class="space-y-2 rounded-xl border border-border/50 bg-surface/60 p-3">
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-xs text-muted-foreground">{{ t('admin.groupRates.test.hint') }}</span>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  class="gap-1.5 shrink-0"
+                  :disabled="isConnectTesting || isLoadingModels"
+                  @click="openModelChooser(connectingRate!, 'connect', selectedKeyId)"
+                >
+                  <Loader2 v-if="isConnectTesting" class="h-3.5 w-3.5 animate-spin" />
+                  <PlugZap v-else class="h-3.5 w-3.5" />
+                  {{ t('admin.groupRates.test.action') }}
+                </Button>
+              </div>
+
+              <p v-if="connectTestError" class="text-xs text-destructive">{{ t(connectTestError) }}</p>
+              <template v-else-if="connectTestResult">
+                <p
+                  class="text-xs"
+                  :class="isTestPassed(connectTestResult) ? 'text-emerald-600 dark:text-emerald-400' : 'text-destructive'"
+                >
+                  <template v-if="isTestPassed(connectTestResult)">
+                    {{ t('admin.groupRates.test.passed', {
+                      count: connectTestResult.modelCount,
+                      model: connectTestResult.testedModel,
+                      latency: connectTestResult.chat.latencyMs,
+                    }) }}
+                  </template>
+                  <template v-else-if="!connectTestResult.models.ok">
+                    {{ stageMessage(connectTestResult.models) }}
+                  </template>
+                  <template v-else>
+                    {{ t('admin.groupRates.test.chatFailedWithModel', { model: connectTestResult.testedModel }) }}
+                    — {{ stageMessage(connectTestResult.chat) }}
+                  </template>
+                </p>
+                <p v-if="connectTestResult.modelSample.length > 0" class="text-xs text-muted-foreground">
+                  {{ t('admin.groupRates.test.modelSample', { models: connectTestResult.modelSample.join('、') }) }}
+                </p>
+              </template>
+            </div>
           </div>
 
           <div v-if="connectMode === 'bind'" class="space-y-2">
@@ -1283,6 +1523,50 @@ const historyRowKey = (row: GroupRateHistoryRow, index: number): string => (
       </div>
     </div>
 
+    <div v-if="modelTestRate" class="fixed inset-0 z-[60] flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm">
+      <div data-group-rates-dialog role="dialog" aria-modal="true" aria-labelledby="group-rate-model-test-title" tabindex="-1" class="w-full max-w-md rounded-xl border border-border/50 bg-card shadow-xl">
+        <div class="flex items-start justify-between gap-4 border-b border-border/50 p-6">
+          <div>
+            <h2 id="group-rate-model-test-title" class="text-xl font-semibold text-foreground">{{ t('admin.groupRates.test.chooseTitle') }}</h2>
+            <p class="mt-2 text-sm text-muted-foreground">{{ modelTestRate.siteName }} · {{ modelTestRate.groupName }}</p>
+          </div>
+          <button class="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-surface-line hover:text-foreground" :aria-label="t('admin.groupRates.test.closeChooser')" :disabled="isLoadingModels || isStartingModelTest" @click="closeModelChooser">
+            <X class="h-5 w-5" />
+          </button>
+        </div>
+
+        <div class="space-y-4 p-6">
+          <div v-if="isLoadingModels" class="flex items-center justify-center py-8 text-sm text-muted-foreground">
+            <Loader2 class="mr-2 h-4 w-4 animate-spin" />
+            {{ t('admin.groupRates.test.loadingModels') }}
+          </div>
+          <div v-else-if="modelTestError" class="rounded-lg border border-warning/20 bg-warning/10 p-3 text-sm text-warning">
+            {{ t(modelTestError) }}
+          </div>
+          <div v-else-if="modelOptions.length === 0" class="rounded-lg border border-dashed border-border/60 px-4 py-8 text-center text-sm text-muted-foreground">
+            {{ t('admin.groupRates.test.noModels') }}
+          </div>
+          <label v-else class="block space-y-2">
+            <span class="text-sm font-medium text-foreground">{{ t('admin.groupRates.test.chooseModel') }}</span>
+            <select v-model="selectedTestModel" class="h-11 w-full rounded-lg border border-border/60 bg-surface px-3 text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary" :disabled="isStartingModelTest">
+              <option value="" disabled>{{ t('admin.groupRates.test.chooseModelPlaceholder') }}</option>
+              <option v-for="model in modelOptions" :key="model" :value="model">{{ model }}</option>
+            </select>
+          </label>
+
+          <div class="flex justify-end gap-2">
+            <Button type="button" variant="secondary" :disabled="isLoadingModels || isStartingModelTest" @click="closeModelChooser">
+              {{ t('admin.groupRates.actions.cancel') }}
+            </Button>
+            <Button type="button" class="gap-2" :disabled="isLoadingModels || isStartingModelTest || !selectedTestModel" @click="beginModelTest">
+              <Loader2 v-if="isStartingModelTest" class="h-4 w-4 animate-spin" />
+              {{ t('admin.groupRates.test.begin') }}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div v-if="disconnectingRate" class="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm">
       <div data-group-rates-dialog role="dialog" aria-modal="true" aria-labelledby="group-rate-disconnect-title" tabindex="-1" class="max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto overscroll-contain rounded-xl border border-border/50 bg-card shadow-xl">
         <div class="flex items-start justify-between gap-4 border-b border-border/50 p-6">
@@ -1326,20 +1610,20 @@ const historyRowKey = (row: GroupRateHistoryRow, index: number): string => (
 
             <label
               class="flex cursor-pointer items-start gap-3 rounded-xl border p-4 transition-colors"
-              :class="disconnectMode === 'full'
+              :class="disconnectMode === 'delete-key'
                 ? 'border-red-500/50 bg-red-500/5'
                 : 'border-border/50 bg-surface hover:bg-surface-elevated'"
             >
               <input
                 v-model="disconnectMode"
                 type="radio"
-                value="full"
+                value="delete-key"
                 class="mt-0.5 h-4 w-4 border-border text-red-500 focus:ring-red-500"
                 :disabled="isDisconnecting"
               />
               <div>
-                <span class="text-sm font-medium text-red-600 dark:text-red-400">{{ t('admin.groupRates.disconnect.deleteAll') }}</span>
-                <p class="mt-1 text-xs text-red-500/70">{{ t('admin.groupRates.disconnect.deleteAllHint') }}</p>
+                <span class="text-sm font-medium text-red-600 dark:text-red-400">{{ t('admin.groupRates.disconnect.deleteKey') }}</span>
+                <p class="mt-1 text-xs text-red-500/70">{{ t('admin.groupRates.disconnect.deleteKeyHint') }}</p>
               </div>
             </label>
           </div>
@@ -1365,7 +1649,7 @@ const historyRowKey = (row: GroupRateHistoryRow, index: number): string => (
               {{ t('admin.groupRates.actions.cancel') }}
             </Button>
             <Button
-              :variant="disconnectMode === 'full' ? 'destructive' : 'default'"
+              :variant="disconnectMode === 'delete-key' ? 'destructive' : 'default'"
               class="gap-2"
               :disabled="isDisconnecting"
               @click="submitDisconnect"

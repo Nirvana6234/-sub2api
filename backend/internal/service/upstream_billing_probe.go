@@ -408,7 +408,7 @@ func (s *UpstreamBillingProbeService) RunDue(ctx context.Context) error {
 	due := make([]Account, 0, len(accounts))
 	for i := range accounts {
 		account := accounts[i]
-		if !isUpstreamBillingProbeAccount(&account) || !account.IsActive() || !upstreamBillingProbeEnabled(&account) {
+		if !isUpstreamBillingProbeAccount(&account) || !account.IsActive() || !upstreamBillingProbeShouldRun(&account) {
 			continue
 		}
 		snapshot := decodeUpstreamBillingProbeSnapshot(account.Extra)
@@ -514,7 +514,7 @@ func (s *UpstreamBillingProbeService) probeAccountWithMode(ctx context.Context, 
 			return nil, ErrUpstreamBillingProbeAccountInvalid
 		}
 		if requireEnabled {
-			if !account.IsActive() || !upstreamBillingProbeEnabled(account) {
+			if !account.IsActive() || !upstreamBillingProbeShouldRun(account) {
 				return nil, nil
 			}
 			if snapshot := decodeUpstreamBillingProbeSnapshot(account.Extra); snapshot != nil &&
@@ -1307,6 +1307,22 @@ func upstreamBillingProbeEnabled(account *Account) bool {
 	}
 	enabled, ok := account.Extra[UpstreamBillingProbeEnabledExtraKey].(bool)
 	return ok && enabled
+}
+
+// upstreamBillingProbeShouldRun is the per-account scheduling rule. A valid
+// administrator-owned multiplier is authoritative and needs no network probe.
+// Accounts whose rate has never been declared must be probed automatically;
+// the legacy per-account switch remains an explicit opt-in for declared
+// accounts that want probe snapshots. The global runner setting still gates
+// the whole scheduler.
+func upstreamBillingProbeShouldRun(account *Account) bool {
+	if account == nil || !isUpstreamBillingProbeAccount(account) {
+		return false
+	}
+	if _, manual := upstreamBillingManualRateMultiplier(account.Extra); manual {
+		return false
+	}
+	return account.RateMultiplierUndeclared || upstreamBillingProbeEnabled(account)
 }
 
 // accountRateMultiplierSchemaDefault 是 ent schema 给 accounts.rate_multiplier

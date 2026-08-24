@@ -137,6 +137,15 @@
           </button>
         </div>
         <div class="max-h-[min(40vh,280px)] overflow-y-auto px-3 py-2 sm:px-4">
+          <div
+            v-if="groupsLoadFailed"
+            class="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-xs text-amber-800 dark:text-amber-200"
+          >
+            <span>{{ t('channelMonitorV2.settings.groupsLoadFailed') }}</span>
+            <button type="button" class="btn btn-ghost btn-sm" :disabled="loadingGroups" @click="loadGroups">
+              {{ t('misc.retry') }}
+            </button>
+          </div>
           <div class="grid grid-cols-1 gap-1 sm:grid-cols-2">
             <label
               v-for="group in groups"
@@ -284,6 +293,8 @@ const saving = ref(false)
 const draft = ref<MonitorConfig | null>(null)
 const original = ref('')
 const groups = ref<AdminGroup[]>([])
+const loadingGroups = ref(false)
+const groupsLoadFailed = ref(false)
 
 const dirty = computed(() => (draft.value ? JSON.stringify(draft.value) !== original.value : false))
 const namedModelCount = computed(
@@ -407,15 +418,29 @@ function normalizeConfig(value: MonitorConfig): MonitorConfig {
 async function load() {
   loading.value = true
   try {
-    const [value, groupRows] = await Promise.all([getConfig(), adminAPI.groups.getAllIncludingInactive()])
+    const value = await getConfig()
     const normalized = normalizeConfig(value)
     draft.value = structuredClone(normalized)
-    groups.value = groupRows
     original.value = JSON.stringify(normalized)
   } catch (error) {
     appStore.showError(extractApiErrorMessage(error, t('channelMonitorV2.settings.loadFailed')))
   } finally {
     loading.value = false
+  }
+
+  if (draft.value) await loadGroups()
+}
+
+async function loadGroups() {
+  loadingGroups.value = true
+  groupsLoadFailed.value = false
+  try {
+    groups.value = await adminAPI.groups.getAllIncludingInactive()
+  } catch {
+    // A group-picker failure must not make existing V2 settings unavailable.
+    groupsLoadFailed.value = true
+  } finally {
+    loadingGroups.value = false
   }
 }
 

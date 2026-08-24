@@ -156,6 +156,13 @@ type BalanceFilterConfig struct {
 // DefaultUSDToCNYRate 是未配置时使用的兜底汇率。
 const DefaultUSDToCNYRate = 7.0
 
+// DefaultExcludedBalances are non-spendable placeholder balances. A balance
+// of exactly 0.1 is used by the upstream Sub2API deployment for seeded/demo
+// accounts and must not be counted as user funds in the operations report.
+func DefaultExcludedBalances() []float64 {
+	return []float64{0.1}
+}
+
 // EffectiveUSDToCNYRate 返回可用于计算的汇率。
 // 非正值（未配置、脏数据）一律回退到默认值，避免把营收乘成 0。
 func (c BalanceFilterConfig) EffectiveUSDToCNYRate() float64 {

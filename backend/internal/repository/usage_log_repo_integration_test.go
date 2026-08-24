@@ -792,8 +792,8 @@ func (s *UsageLogRepoSuite) TestDashboardStats_TodayTotalsAndPerformance() {
 	s.Require().Equal(baseStats.TotalTokens+int64(51), stats.TotalTokens, "TotalTokens mismatch")
 	s.Require().Equal(baseStats.TotalCost+2.3, stats.TotalCost, "TotalCost mismatch")
 	s.Require().Equal(baseStats.TotalActualCost+2.0, stats.TotalActualCost, "TotalActualCost mismatch")
-	// account_cost falls back to total_cost when account_stats_cost is NULL
-	s.Require().Equal(baseStats.TotalAccountCost+2.3, stats.TotalAccountCost, "TotalAccountCost mismatch")
+	// 未提供账号倍率的日志不参与账号成本统计，不能被当作 1.0 虚增。
+	s.Require().Equal(baseStats.TotalAccountCost, stats.TotalAccountCost, "TotalAccountCost mismatch")
 	s.Require().GreaterOrEqual(stats.TodayRequests, int64(1), "expected TodayRequests >= 1")
 	s.Require().GreaterOrEqual(stats.TodayCost, 0.0, "expected TodayCost >= 0")
 	s.Require().GreaterOrEqual(stats.TodayAccountCost, 0.0, "expected TodayAccountCost >= 0")
@@ -815,6 +815,7 @@ func (s *UsageLogRepoSuite) TestDashboardStatsWithRange_Fallback() {
 	apiKey1 := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user1.ID, Key: "sk-range-1", Name: "k1"})
 	apiKey2 := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user2.ID, Key: "sk-range-2", Name: "k2"})
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-range"})
+	accountRate := 0.1
 
 	d1, d2, d3 := 100, 200, 300
 	logOutside := &service.UsageLog{
@@ -833,18 +834,19 @@ func (s *UsageLogRepoSuite) TestDashboardStatsWithRange_Fallback() {
 	s.Require().NoError(err)
 
 	logRange := &service.UsageLog{
-		UserID:              user1.ID,
-		APIKeyID:            apiKey1.ID,
-		AccountID:           account.ID,
-		Model:               "claude-3",
-		InputTokens:         10,
-		OutputTokens:        20,
-		CacheCreationTokens: 1,
-		CacheReadTokens:     2,
-		TotalCost:           1.0,
-		ActualCost:          0.9,
-		DurationMs:          &d1,
-		CreatedAt:           rangeStart.Add(2 * time.Hour),
+		UserID:                user1.ID,
+		APIKeyID:              apiKey1.ID,
+		AccountID:             account.ID,
+		Model:                 "claude-3",
+		InputTokens:           10,
+		OutputTokens:          20,
+		CacheCreationTokens:   1,
+		CacheReadTokens:       2,
+		TotalCost:             1.0,
+		ActualCost:            0.9,
+		AccountRateMultiplier: &accountRate,
+		DurationMs:            &d1,
+		CreatedAt:             rangeStart.Add(2 * time.Hour),
 	}
 	_, err = s.repo.Create(s.ctx, logRange)
 	s.Require().NoError(err)
@@ -875,8 +877,8 @@ func (s *UsageLogRepoSuite) TestDashboardStatsWithRange_Fallback() {
 	s.Require().Equal(int64(45), stats.TotalTokens)
 	s.Require().Equal(1.5, stats.TotalCost)
 	s.Require().Equal(1.4, stats.TotalActualCost)
-	// account_cost = COALESCE(account_stats_cost, total_cost) * COALESCE(account_rate_multiplier, 1) = total_cost
-	s.Require().Equal(1.5, stats.TotalAccountCost)
+	// 明确的 0.1 倍率参与统计；没有倍率的另一条日志不能被当作 1.0 虚增。
+	s.Require().InEpsilon(0.1, stats.TotalAccountCost, 0.0001)
 	s.Require().InEpsilon(150.0, stats.AverageDurationMs, 0.0001)
 }
 

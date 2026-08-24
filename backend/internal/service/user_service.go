@@ -190,6 +190,18 @@ type RegistrationEmailDomainRepository interface {
 	CreateWithEmailAliasGuardAndDomainLimit(ctx context.Context, user *User, domain string) error
 }
 
+// RegistrationIPQuotaRepository 为「同一 IP 最多注册 N 个账号」提供原子能力。
+// 与 RegistrationEmailDomainRepository 同样是可选能力：只有生产仓储实现，
+// 单元测试的用户仓储桩不必被注册专用方法污染。
+type RegistrationIPQuotaRepository interface {
+	// CountUsersByRegisterIP 统计该 IP 名下未软删除的账号数。
+	// register_ip 为空的存量用户不计入。
+	CountUsersByRegisterIP(ctx context.Context, ip string) (int, error)
+	// CreateWithEmailAliasGuardAndRegisterIPLimit 在写入用户的同一事务内复查 IP 配额，
+	// 超限返回 ErrRegisterIPLimit。
+	CreateWithEmailAliasGuardAndRegisterIPLimit(ctx context.Context, user *User, ip string, maxPerIP int) error
+}
+
 // RedeemUserAdjustmentRepository provides the atomic, floor-at-zero updates
 // used by negative-value redeem codes. It is intentionally narrower than
 // UserRepository because normal usage billing is allowed to overdraw.

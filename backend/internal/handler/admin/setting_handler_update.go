@@ -344,6 +344,12 @@ type UpdateSettingsRequest struct {
 	// Available Channels feature switch (user-facing)
 	AvailableChannelsEnabled *bool `json:"available_channels_enabled"`
 
+	ClientDownloadEnabled    *bool   `json:"client_download_enabled"`
+	ClientDownloadNetdiskURL *string `json:"client_download_netdisk_url"`
+	ClientDownloadDirectURL  *string `json:"client_download_direct_url"`
+	BackupPaymentEnabled  *bool   `json:"backup_payment_enabled"`
+	BackupPaymentURL      *string `json:"backup_payment_url"`
+
 	// Playground feature switch (user-facing)
 	PlaygroundEnabled              *bool    `json:"playground_enabled"`
 	PlaygroundDefaultChatModel     *string  `json:"playground_default_chat_model"`
@@ -1953,6 +1959,21 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.AvailableChannelsEnabled
 		}(),
+		ClientDownloadEnabled: func() bool {
+			if req.ClientDownloadEnabled != nil {
+				return *req.ClientDownloadEnabled
+			}
+			return previousSettings.ClientDownloadEnabled
+		}(),
+		BackupPaymentEnabled: func() bool {
+			if req.BackupPaymentEnabled != nil {
+				return *req.BackupPaymentEnabled
+			}
+			return previousSettings.BackupPaymentEnabled
+		}(),
+		ClientDownloadNetdiskURL: stringSetting(req.ClientDownloadNetdiskURL, previousSettings.ClientDownloadNetdiskURL),
+		ClientDownloadDirectURL:  stringSetting(req.ClientDownloadDirectURL, previousSettings.ClientDownloadDirectURL),
+		BackupPaymentURL:         stringSetting(req.BackupPaymentURL, previousSettings.BackupPaymentURL),
 		PlaygroundEnabled: func() bool {
 			if req.PlaygroundEnabled != nil {
 				return *req.PlaygroundEnabled
@@ -2413,6 +2434,11 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		GrokDefaultBaseURLMode:         updatedSettings.GrokDefaultBaseURLMode,
 
 		AvailableChannelsEnabled:       updatedSettings.AvailableChannelsEnabled,
+		ClientDownloadEnabled:          updatedSettings.ClientDownloadEnabled,
+		ClientDownloadNetdiskURL:          updatedSettings.ClientDownloadNetdiskURL,
+		ClientDownloadDirectURL:          updatedSettings.ClientDownloadDirectURL,
+		BackupPaymentEnabled:           updatedSettings.BackupPaymentEnabled,
+		BackupPaymentURL:               updatedSettings.BackupPaymentURL,
 		PlaygroundEnabled:              updatedSettings.PlaygroundEnabled,
 		PlaygroundDefaultChatModel:     updatedSettings.PlaygroundDefaultChatModel,
 		PlaygroundDefaultImageModel:    updatedSettings.PlaygroundDefaultImageModel,

@@ -216,8 +216,10 @@ function buildFromProfile(profile, body, overrides) {
     startLine = parts.join(" ");
   }
   const lines = [startLine];
+  const present = new Set();
   for (const header of profile.headers) {
     const name = header.name.toLowerCase();
+    present.add(name);
     let value = header.value;
     if (name === "content-length") value = String(body.length);
     if (overrides.headers?.[name] !== undefined) value = overrides.headers[name];
@@ -227,7 +229,21 @@ function buildFromProfile(profile, body, overrides) {
     if (name === "user-agent" && overrides.userAgent !== undefined) value = overrides.userAgent;
     lines.push(`${header.name}: ${value}`);
   }
+  for (const [name, value] of Object.entries(overrides.headers ?? {})) {
+    if (!present.has(name.toLowerCase())) lines.push(`${name}: ${value}`);
+  }
   return Buffer.concat([Buffer.from(`${lines.join("\r\n")}\r\n\r\n`, "latin1"), body]);
+}
+
+function readHeaderOverrides() {
+  try {
+    const value = JSON.parse(process.env.GPT56_HEADER_OVERRIDES || "{}");
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [String(key).toLowerCase(), String(item)]),
+    );
+  } catch {
+    return {};
+  }
 }
 
 function uuid7Like() {
@@ -830,7 +846,7 @@ async function sendNative(options) {
     authorization,
     host: hostHeader,
     path: requestPath,
-    headers: built.headers,
+    headers: { ...built.headers, ...readHeaderOverrides() },
   });
   const result = await sendRawHttp(target, raw, Number.parseInt(options.timeout ?? "120000", 10));
   const safeHeaders = {};

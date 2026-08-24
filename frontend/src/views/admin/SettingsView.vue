@@ -7178,6 +7178,89 @@
           </div>
         </div>
 
+        <!-- 客户端下载页 / 备用支付通道 -->
+        <div class="card">
+          <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+            <h2 class="text-base font-semibold text-gray-900 dark:text-white">
+              {{ localText('页面开关', 'Page switches') }}
+            </h2>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ localText('控制公开的客户端下载页，以及充值页上的备用支付入口。', 'Control the public client download page and the backup payment entry on the top-up page.') }}
+            </p>
+          </div>
+          <div class="space-y-5 p-6">
+            <div class="flex items-center justify-between">
+              <div>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ localText('客户端下载页', 'Client download page') }}
+                </label>
+                <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ localText('关闭后 /download 页面不可访问，首页与侧栏入口一并隐藏。', 'When off, /download is unreachable and its entries are hidden.') }}
+                </p>
+              </div>
+              <Toggle v-model="form.client_download_enabled" />
+            </div>
+            <div v-if="form.client_download_enabled" class="space-y-4 border-t border-gray-100 pt-5 dark:border-dark-700">
+              <div>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ localText('直接下载链接', 'Direct download URL') }}
+                </label>
+                <input
+                  v-model="form.client_download_direct_url"
+                  type="url"
+                  placeholder="https://example.com/Release/client_x64.zip"
+                  class="input mt-2"
+                />
+                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ localText('点了直接开始下载文件。留空则隐藏该按钮。', 'Starts the download immediately. Leave empty to hide the button.') }}
+                </p>
+              </div>
+              <div>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ localText('网盘下载链接', 'Cloud drive URL') }}
+                </label>
+                <input
+                  v-model="form.client_download_netdisk_url"
+                  type="url"
+                  placeholder="https://pan.baidu.com/s/XXXX"
+                  class="input mt-2"
+                />
+                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ localText('跳转到网盘页面，用户在网盘里下载。留空则隐藏该按钮。', 'Opens a cloud drive page. Leave empty to hide the button.') }}
+                </p>
+              </div>
+              <p class="text-xs text-gray-500 dark:text-gray-400">
+                {{ localText('两个都只接受 http/https 绝对地址，填了别的会被后端清空。', 'Both accept absolute http/https URLs only; anything else is cleared by the backend.') }}
+              </p>
+            </div>
+            <div class="flex items-center justify-between border-t border-gray-100 pt-5 dark:border-dark-700">
+              <div>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ localText('备用支付通道', 'Backup payment channel') }}
+                </label>
+                <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ localText('在充值页展示一个跳转到外部收款页的备用入口。', 'Show a fallback entry on the top-up page that links to an external checkout.') }}
+                </p>
+              </div>
+              <Toggle v-model="form.backup_payment_enabled" />
+            </div>
+            <div v-if="form.backup_payment_enabled" class="border-t border-gray-100 pt-5 dark:border-dark-700">
+              <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                {{ localText('备用支付地址', 'Backup payment URL') }}
+              </label>
+              <input
+                v-model="form.backup_payment_url"
+                type="url"
+                placeholder="https://pay.example.com/shop/XXXX"
+                class="input mt-2"
+              />
+              <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                {{ localText('只接受 http/https 绝对地址；填了别的会被后端清空，入口随之隐藏。', 'Only absolute http/https URLs are accepted; anything else is cleared by the backend and the entry stays hidden.') }}
+              </p>
+            </div>
+          </div>
+        </div>
+
         <div class="card">
           <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
             <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
@@ -9902,6 +9985,12 @@ const form = reactive<SettingsForm>({
   channel_monitor_show_quota: false,
   // Available Channels feature switch
   available_channels_enabled: false,
+  // 页面开关
+  client_download_enabled: true,
+  client_download_netdisk_url: "",
+  client_download_direct_url: "",
+  backup_payment_enabled: false,
+  backup_payment_url: "",
   // Playground feature switch
   playground_enabled: false,
   playground_default_chat_model: "gpt-5.4",
@@ -11576,6 +11665,12 @@ async function saveSettings() {
       channel_monitor_show_quota: Boolean(form.channel_monitor_show_quota),
       // Available Channels feature switch
       available_channels_enabled: form.available_channels_enabled,
+      // 页面开关
+      client_download_enabled: form.client_download_enabled,
+      client_download_netdisk_url: form.client_download_netdisk_url.trim(),
+      client_download_direct_url: form.client_download_direct_url.trim(),
+      backup_payment_enabled: form.backup_payment_enabled,
+      backup_payment_url: form.backup_payment_url.trim(),
       // Playground feature switch
       playground_enabled: form.playground_enabled,
       playground_default_chat_model: form.playground_default_chat_model.trim(),

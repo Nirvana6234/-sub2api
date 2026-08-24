@@ -163,7 +163,8 @@ type UsageLog struct {
 	ActualCost                float64
 	RateMultiplier            float64
 	LongContextBillingApplied bool
-	// AccountRateMultiplier 账号计费倍率快照（nil 表示历史数据，按 1.0 处理）
+	// AccountRateMultiplier 账号成本倍率快照；nil 表示该请求没有可靠成本声明，
+	// 账号成本统计应跳过该行，不能凭空按 1.0 计价。
 	AccountRateMultiplier *float64
 	// AccountStatsCost 账号统计定价预计算费用（nil = 使用默认公式 total_cost × account_rate_multiplier）
 	AccountStatsCost *float64

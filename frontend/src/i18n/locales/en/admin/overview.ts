@@ -1124,6 +1124,12 @@ export default {
         fallbackHint: 'Non-Claude Code requests will use this group. Leave empty to reject directly.',
         noFallback: 'No Fallback (Reject)'
       },
+      kiroCompat: {
+        title: 'Kiro Codex Compatibility',
+        hint: 'Use only for Kiro relay groups. When enabled, the server applies group-specific compatibility handling to Codex requests.',
+        enabled: 'Kiro compatibility enabled',
+        disabled: 'Kiro compatibility disabled'
+      },
       openaiMessages: {
         title: 'OpenAI Messages Dispatch',
         allowDispatch: 'Allow /v1/messages dispatch',

@@ -638,7 +638,7 @@ func TestUsageLogRepositoryGetGroupStatsAccountCostColumn(t *testing.T) {
 	start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	end := start.Add(24 * time.Hour)
 
-	mock.ExpectQuery("FROM usage_logs").
+	mock.ExpectQuery("COALESCE\\(SUM\\(COALESCE\\(ul\\.account_stats_cost, ul\\.total_cost\\) \\* ul\\.account_rate_multiplier\\), 0\\) as account_cost").
 		WithArgs(start, end).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"group_id", "group_name", "requests", "total_tokens",

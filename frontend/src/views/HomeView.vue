@@ -40,16 +40,15 @@
           >
             <Icon name="book" size="md" />
           </a>
-          <a
-            href="https://gitee.com/borg_zhou/co-fly--chat-gpt-assistant/"
-            target="_blank"
-            rel="noopener noreferrer"
+          <router-link
+            v-if="clientDownloadEnabled"
+            to="/download"
             class="flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-lg px-3 text-sm font-medium text-gray-600 hover:bg-gray-100 dark:text-dark-300 dark:hover:bg-dark-800"
             :title="t('home.clientDownload')"
           >
             <Icon name="download" size="sm" />
             <span>{{ t('home.clientDownload') }}</span>
-          </a>
+          </router-link>
           <button
             class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 dark:text-dark-400 dark:hover:bg-dark-800"
             :title="isDark ? t('home.switchToLight') : t('home.switchToDark')"
@@ -59,6 +58,7 @@
             <Icon v-else name="moon" size="md" />
           </button>
           <router-link
+            data-testid="compact-home-cta"
             :to="isAuthenticated ? dashboardPath : '/login'"
             class="inline-flex min-h-10 shrink-0 items-center justify-center rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 dark:bg-white dark:text-gray-900 dark:hover:bg-gray-200"
           >
@@ -143,16 +143,15 @@
           </a>
 
           <!-- Client download -->
-          <a
-            href="https://gitee.com/borg_zhou/co-fly--chat-gpt-assistant/"
-            target="_blank"
-            rel="noopener noreferrer"
+          <router-link
+            v-if="clientDownloadEnabled"
+            to="/download"
             class="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-dark-300 dark:hover:bg-dark-800 dark:hover:text-white"
             :title="t('home.clientDownload')"
           >
             <Icon name="download" size="sm" />
             <span>{{ t('home.clientDownload') }}</span>
-          </a>
+          </router-link>
 
           <!-- Theme Toggle -->
           <button
@@ -512,6 +511,9 @@ const appStore = useAppStore()
 const siteName = computed(() => appStore.cachedPublicSettings?.site_name || appStore.siteName || '共飞 AI')
 const siteLogo = computed(() => sanitizeUrl(appStore.cachedPublicSettings?.site_logo || appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }))
 const siteSubtitle = computed(() => appStore.cachedPublicSettings?.site_subtitle || 'AI API Gateway Platform')
+// opt-out 语义：设置未加载时照常显示，只有后端显式下发 false 才隐藏，
+// 否则刷新瞬间入口会闪一下再消失。
+const clientDownloadEnabled = computed(() => appStore.cachedPublicSettings?.client_download_enabled !== false)
 const docUrl = computed(() => sanitizeUrl(appStore.cachedPublicSettings?.doc_url || appStore.docUrl || ''))
 const homeContent = computed(() => appStore.cachedPublicSettings?.home_content || '')
 const hasHomeContent = computed(() => homeContent.value.trim().length > 0)

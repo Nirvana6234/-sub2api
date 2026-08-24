@@ -228,6 +228,11 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		SettingKeyChannelMonitorEnabled,
 		SettingKeyChannelMonitorDefaultIntervalSeconds,
 		SettingKeyAvailableChannelsEnabled,
+		SettingKeyClientDownloadEnabled,
+		SettingKeyClientDownloadNetdiskURL,
+		SettingKeyClientDownloadDirectURL,
+		SettingKeyBackupPaymentEnabled,
+		SettingKeyBackupPaymentURL,
 		SettingKeyPlaygroundEnabled,
 		SettingKeyPlaygroundDefaultChatModel,
 		SettingKeyPlaygroundDefaultImageModel,
@@ -352,7 +357,13 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		ChannelMonitorDefaultIntervalSeconds: parseChannelMonitorInterval(settings[SettingKeyChannelMonitorDefaultIntervalSeconds]),
 
 		AvailableChannelsEnabled: settings[SettingKeyAvailableChannelsEnabled] == "true",
-		PlaygroundEnabled:        settings[SettingKeyPlaygroundEnabled] == "true",
+		// 下载页默认开启：只有显式 "false" 才关闭。
+		ClientDownloadEnabled: !isFalseSettingValue(settings[SettingKeyClientDownloadEnabled]),
+		ClientDownloadNetdiskURL: strings.TrimSpace(settings[SettingKeyClientDownloadNetdiskURL]),
+		ClientDownloadDirectURL:  strings.TrimSpace(settings[SettingKeyClientDownloadDirectURL]),
+		BackupPaymentEnabled:     settings[SettingKeyBackupPaymentEnabled] == "true",
+		BackupPaymentURL:      strings.TrimSpace(settings[SettingKeyBackupPaymentURL]),
+		PlaygroundEnabled:     settings[SettingKeyPlaygroundEnabled] == "true",
 		PlaygroundDefaultChatModel: func() string {
 			if value := strings.TrimSpace(settings[SettingKeyPlaygroundDefaultChatModel]); value != "" {
 				return value
@@ -577,6 +588,11 @@ type PublicSettingsInjectionPayload struct {
 	ChannelMonitorEnabled                bool   `json:"channel_monitor_enabled"`
 	ChannelMonitorDefaultIntervalSeconds int    `json:"channel_monitor_default_interval_seconds"`
 	AvailableChannelsEnabled             bool   `json:"available_channels_enabled"`
+	ClientDownloadEnabled                bool   `json:"client_download_enabled"`
+	ClientDownloadNetdiskURL             string `json:"client_download_netdisk_url"`
+	ClientDownloadDirectURL              string `json:"client_download_direct_url"`
+	BackupPaymentEnabled                 bool   `json:"backup_payment_enabled"`
+	BackupPaymentURL                     string `json:"backup_payment_url"`
 	PlaygroundEnabled                    bool   `json:"playground_enabled"`
 	PlaygroundDefaultChatModel           string `json:"playground_default_chat_model"`
 	PlaygroundDefaultImageModel          string `json:"playground_default_image_model"`
@@ -655,6 +671,11 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		ChannelMonitorEnabled:                settings.ChannelMonitorEnabled,
 		ChannelMonitorDefaultIntervalSeconds: settings.ChannelMonitorDefaultIntervalSeconds,
 		AvailableChannelsEnabled:             settings.AvailableChannelsEnabled,
+		ClientDownloadEnabled:                settings.ClientDownloadEnabled,
+		ClientDownloadNetdiskURL:             settings.ClientDownloadNetdiskURL,
+		ClientDownloadDirectURL:              settings.ClientDownloadDirectURL,
+		BackupPaymentEnabled:                 settings.BackupPaymentEnabled,
+		BackupPaymentURL:                     settings.BackupPaymentURL,
 		PlaygroundEnabled:                    settings.PlaygroundEnabled,
 		PlaygroundDefaultChatModel:           settings.PlaygroundDefaultChatModel,
 		PlaygroundDefaultImageModel:          settings.PlaygroundDefaultImageModel,

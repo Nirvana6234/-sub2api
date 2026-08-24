@@ -48,6 +48,9 @@ func RegisterAdminRoutes(
 		// 公告管理
 		registerAnnouncementRoutes(admin, h)
 
+		// 工单管理
+		registerTicketRoutes(admin, h)
+
 		// OpenAI OAuth
 		registerOpenAIOAuthRoutes(admin, h)
 
@@ -467,6 +470,18 @@ func registerAnnouncementRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	}
 }
 
+func registerTicketRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	tickets := admin.Group("/tickets")
+	{
+		tickets.GET("", h.Admin.Ticket.List)
+		// unread-count 必须注册在 /:id 之前，否则会被当成 id 匹配掉
+		tickets.GET("/unread-count", h.Admin.Ticket.UnreadCount)
+		tickets.GET("/:id", h.Admin.Ticket.GetByID)
+		tickets.POST("/:id/messages", h.Admin.Ticket.Reply)
+		tickets.PUT("/:id/status", h.Admin.Ticket.UpdateStatus)
+	}
+}
+
 func registerOpenAIOAuthRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	openai := admin.Group("/openai", h.Admin.Account.RequireAdminManagedAccount())
 	{
@@ -584,6 +599,10 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	{
 		adminSettings.GET("", h.Admin.Setting.GetSettings)
 		adminSettings.PUT("", h.Admin.Setting.UpdateSettings)
+		adminSettings.GET("/blacklist", h.Admin.Setting.GetGlobalBlacklist)
+		adminSettings.POST("/blacklist", h.Admin.Setting.AddGlobalBlacklist)
+		adminSettings.PUT("/blacklist", h.Admin.Setting.ReplaceGlobalBlacklist)
+		adminSettings.DELETE("/blacklist/:id", h.Admin.Setting.DeleteGlobalBlacklist)
 		adminSettings.POST("/test-smtp", h.Admin.Setting.TestSMTPConnection)
 		adminSettings.POST("/send-test-email", h.Admin.Setting.SendTestEmail)
 		adminSettings.GET("/email-templates", h.Admin.Setting.ListEmailTemplates)

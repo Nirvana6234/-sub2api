@@ -526,7 +526,12 @@ func (r *Repository) DeleteRealConnectionWithPricingMapping(ctx context.Context,
 				return err
 			}
 			if state != nil {
-				removeMappingTargetForOwnGroups(state, conn.OwnGroupNames, UpstreamGroupRef{SiteID: conn.UpstreamSiteID, GroupName: conn.UpstreamGroupName})
+				// Managed connections own the pricing target they created. Older
+				// rows may not have own_group_names populated, and names can also
+				// change after a binding was created. Remove the target by its
+				// stable site/group identity so cancellation cannot leave the
+				// pricing badge behind.
+				removeMappingTargetEverywhere(state, UpstreamGroupRef{SiteID: conn.UpstreamSiteID, GroupName: conn.UpstreamGroupName})
 				if err := updateStateInTx(ctx, tx, *state); err != nil {
 					return err
 				}
@@ -545,6 +550,21 @@ func (r *Repository) DeleteRealConnectionWithPricingMapping(ctx context.Context,
 	}
 	committed = true
 	return nil
+}
+
+func removeMappingTargetEverywhere(state *State, target UpstreamGroupRef) {
+	if state == nil {
+		return
+	}
+	for i := range state.Mappings {
+		filtered := state.Mappings[i].UpstreamTargets[:0]
+		for _, existing := range state.Mappings[i].UpstreamTargets {
+			if existing.SiteID != target.SiteID || existing.GroupName != target.GroupName {
+				filtered = append(filtered, existing)
+			}
+		}
+		state.Mappings[i].UpstreamTargets = filtered
+	}
 }
 
 // RemoveUpstreamMappingAndDeleteConnection atomically removes the mapping target and local connection row.
