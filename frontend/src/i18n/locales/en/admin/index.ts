@@ -7,6 +7,7 @@ import settings from './settings'
 import contributions from './contributions'
 import audit from './audit'
 import promptAudit from './promptAudit'
+import plugins from './plugins'
 
 export default {
   ...overview,
@@ -18,4 +19,5 @@ export default {
   ...contributions,
   ...audit,
   ...promptAudit,
+  ...plugins,
 }

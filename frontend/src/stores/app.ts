@@ -382,6 +382,7 @@ export const useAppStore = defineStore('app', () => {
         playground_default_image_model: 'gpt-image-2',
         model_plaza_enabled: false,
         model_plaza_require_auth: false,
+        plugin_management_enabled: false,
         risk_control_enabled: false,
         service_quota_enabled: false,
         affiliate_enabled: false,

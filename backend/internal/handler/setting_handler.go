@@ -119,8 +119,9 @@ func (h *SettingHandler) GetPublicSettings(c *gin.Context) {
 		PlaygroundDefaultChatModel:  settings.PlaygroundDefaultChatModel,
 		PlaygroundDefaultImageModel: settings.PlaygroundDefaultImageModel,
 
-		ModelPlazaEnabled:     settings.ModelPlazaEnabled,
-		ModelPlazaRequireAuth: settings.ModelPlazaRequireAuth,
+		ModelPlazaEnabled:       settings.ModelPlazaEnabled,
+		ModelPlazaRequireAuth:   settings.ModelPlazaRequireAuth,
+		PluginManagementEnabled: settings.PluginManagementEnabled,
 
 		AffiliateEnabled: settings.AffiliateEnabled,
 

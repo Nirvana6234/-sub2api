@@ -396,9 +396,10 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		PlaygroundDefaultChatStrategy:  settings.PlaygroundDefaultChatStrategy,
 		PlaygroundDefaultImageStrategy: settings.PlaygroundDefaultImageStrategy,
 
-		ModelPlazaEnabled:     settings.ModelPlazaEnabled,
-		ModelPlazaRequireAuth: settings.ModelPlazaRequireAuth,
-		ModelPlazaDescription: settings.ModelPlazaDescription,
+		ModelPlazaEnabled:       settings.ModelPlazaEnabled,
+		ModelPlazaRequireAuth:   settings.ModelPlazaRequireAuth,
+		PluginManagementEnabled: settings.PluginManagementEnabled,
+		ModelPlazaDescription:   settings.ModelPlazaDescription,
 
 		AffiliateEnabled: settings.AffiliateEnabled,
 
