@@ -6,6 +6,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	mathrand "math/rand"
@@ -66,6 +67,24 @@ func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context
 	}
 	ctx = s.withGatewayProfitControlGate(ctx, groupID)
 
+	tryFallback := func() (*Account, error, bool) {
+		if platform != PlatformAnthropic {
+			return nil, nil, false
+		}
+		fallbackCtx, fallbackGroupID := s.nextGatewayFallbackGroup(ctx, groupID)
+		if fallbackGroupID == nil {
+			return nil, nil, false
+		}
+		account, err := s.SelectAccountForModelWithExclusions(
+			fallbackCtx,
+			fallbackGroupID,
+			"",
+			requestedModel,
+			excludedIDs,
+		)
+		return account, err, true
+	}
+
 	// Claude Code 限制可能已将 groupID 解析为 fallback group，
 	// 渠道限制预检查必须使用解析后的分组。
 	if s.checkChannelPricingRestriction(ctx, groupID, requestedModel) {
@@ -80,6 +99,11 @@ func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context
 	if (platform == PlatformAnthropic || platform == PlatformGemini) && !hasForcePlatform {
 		account, err := s.selectAccountWithMixedScheduling(ctx, groupID, sessionHash, requestedModel, excludedIDs, platform)
 		if err != nil {
+			if errors.Is(err, ErrNoAvailableAccounts) {
+				if fallbackAccount, fallbackErr, used := tryFallback(); used {
+					return fallbackAccount, fallbackErr
+				}
+			}
 			return nil, err
 		}
 		return s.hydrateSelectedAccount(ctx, account)
@@ -89,6 +113,11 @@ func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context
 	// 注意：强制平台模式也必须遵守分组限制，不再回退到全平台查询
 	account, err := s.selectAccountForModelWithPlatform(ctx, groupID, sessionHash, requestedModel, excludedIDs, platform)
 	if err != nil {
+		if errors.Is(err, ErrNoAvailableAccounts) {
+			if fallbackAccount, fallbackErr, used := tryFallback(); used {
+				return fallbackAccount, fallbackErr
+			}
+		}
 		return nil, err
 	}
 	return s.hydrateSelectedAccount(ctx, account)
@@ -220,6 +249,26 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] load-aware enabled: group_id=%v model=%s session=%s platform=%s", derefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), platform)
 	}
 
+	tryFallback := func() (*AccountSelectionResult, error, bool) {
+		if platform != PlatformAnthropic {
+			return nil, nil, false
+		}
+		fallbackCtx, fallbackGroupID := s.nextGatewayFallbackGroup(ctx, groupID)
+		if fallbackGroupID == nil {
+			return nil, nil, false
+		}
+		result, err := s.SelectAccountWithLoadAwareness(
+			fallbackCtx,
+			fallbackGroupID,
+			"",
+			requestedModel,
+			excludedIDs,
+			metadataUserID,
+			sub2apiUserID,
+		)
+		return result, err, true
+	}
+
 	accounts, useMixed, err := s.listSchedulableAccounts(ctx, groupID, platform, hasForcePlatform)
 	if err != nil {
 		return nil, err
@@ -232,6 +281,9 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 	}
 	accounts = accessibleAccounts
 	if len(accounts) == 0 {
+		if fallbackResult, fallbackErr, used := tryFallback(); used {
+			return fallbackResult, fallbackErr
+		}
 		return nil, ErrNoAvailableAccounts
 	}
 	ctx = s.withWindowCostPrefetch(ctx, accounts)
@@ -682,6 +734,9 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 	}
 
 	if len(candidates) == 0 {
+		if fallbackResult, fallbackErr, used := tryFallback(); used {
+			return fallbackResult, fallbackErr
+		}
 		return nil, ErrNoAvailableAccounts
 	}
 
@@ -769,6 +824,9 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			Timeout:        cfg.FallbackWaitTimeout,
 			MaxWaiting:     cfg.FallbackMaxWaiting,
 		})
+	}
+	if fallbackResult, fallbackErr, used := tryFallback(); used {
+		return fallbackResult, fallbackErr
 	}
 	return nil, ErrNoAvailableAccounts
 }

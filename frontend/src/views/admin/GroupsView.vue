@@ -1505,6 +1505,20 @@
             />
             <p class="input-hint">{{ t("admin.groups.claudeCode.fallbackHint") }}</p>
           </div>
+          <div
+            v-else
+            class="mt-3"
+          >
+            <label class="input-label">Claude 兜底分组</label>
+            <Select
+              v-model="createForm.fallback_group_id"
+              :options="anthropicFallbackPoolOptions"
+              placeholder="不兜底"
+            />
+            <p class="input-hint">
+              当前 Claude 分组无可用账号时，会从所选兜底池继续挑选账号。
+            </p>
+          </div>
         </div>
 
         <!-- OpenAI/Grok 兜底池选择：当前分组无可用账号时从指定兜底池借号 -->
@@ -3319,6 +3333,20 @@
             />
             <p class="input-hint">{{ t("admin.groups.claudeCode.fallbackHint") }}</p>
           </div>
+          <div
+            v-else
+            class="mt-3"
+          >
+            <label class="input-label">Claude 兜底分组</label>
+            <Select
+              v-model="editForm.fallback_group_id"
+              :options="anthropicFallbackPoolOptionsForEdit"
+              placeholder="不兜底"
+            />
+            <p class="input-hint">
+              当前 Claude 分组无可用账号时，会从所选兜底池继续挑选账号。
+            </p>
+          </div>
         </div>
 
         <!-- OpenAI/Grok 兜底池选择：当前分组无可用账号时从指定兜底池借号 -->
@@ -5052,6 +5080,39 @@ const fallbackGroupOptionsForEdit = computed(() => {
   eligibleGroups.forEach((g) => {
     options.push({ value: g.id, label: g.name });
   });
+  return options;
+});
+
+// Claude 运行时兜底池选项：与 OpenAI/Grok 一样，只允许指向同平台兜底池。
+const anthropicFallbackPoolOptions = computed(() => {
+  const options: { value: number | null; label: string }[] = [
+    { value: null, label: "不兜底" },
+  ];
+  groups.value
+    .filter(
+      (g) =>
+        g.platform === "anthropic" &&
+        g.is_fallback_pool &&
+        g.status === "active",
+    )
+    .forEach((g) => options.push({ value: g.id, label: g.name }));
+  return options;
+});
+
+const anthropicFallbackPoolOptionsForEdit = computed(() => {
+  const options: { value: number | null; label: string }[] = [
+    { value: null, label: "不兜底" },
+  ];
+  const currentId = editingGroup.value?.id;
+  groups.value
+    .filter(
+      (g) =>
+        g.id !== currentId &&
+        g.platform === "anthropic" &&
+        g.is_fallback_pool &&
+        g.status === "active",
+    )
+    .forEach((g) => options.push({ value: g.id, label: g.name }));
   return options;
 });
 

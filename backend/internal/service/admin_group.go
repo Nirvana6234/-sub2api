@@ -399,6 +399,11 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		if err := s.validateFallbackGroup(ctx, 0, platform, *input.FallbackGroupID); err != nil {
 			return nil, err
 		}
+		if platform == PlatformAnthropic && !input.ClaudeCodeOnly {
+			if err := s.validateAnthropicFallbackPoolTarget(ctx, *input.FallbackGroupID); err != nil {
+				return nil, err
+			}
+		}
 	}
 	fallbackOnInvalidRequest := input.FallbackGroupIDOnInvalidRequest
 	if fallbackOnInvalidRequest != nil && *fallbackOnInvalidRequest <= 0 {
@@ -618,6 +623,23 @@ func (s *adminServiceImpl) validateFallbackGroup(ctx context.Context, currentGro
 		}
 		nextID = *fallbackGroup.FallbackGroupID
 	}
+}
+
+func (s *adminServiceImpl) validateAnthropicFallbackPoolTarget(ctx context.Context, fallbackGroupID int64) error {
+	fallbackGroup, err := s.groupRepo.GetByIDLite(ctx, fallbackGroupID)
+	if err != nil {
+		return fmt.Errorf("fallback group not found: %w", err)
+	}
+	if fallbackGroup == nil || fallbackGroup.Status != StatusActive {
+		return fmt.Errorf("fallback group must be active")
+	}
+	if fallbackGroup.Platform != PlatformAnthropic {
+		return fmt.Errorf("fallback group platform mismatch")
+	}
+	if !fallbackGroup.IsFallbackPool {
+		return fmt.Errorf("fallback group must be marked as fallback pool")
+	}
+	return nil
 }
 
 // validateFallbackGroupOnInvalidRequest 校验无效请求兜底分组的有效性
@@ -862,6 +884,11 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 		// 按合并后的最终平台校验，避免修改平台或兜底标记后留下不兼容的旧配置。
 		if err := s.validateFallbackGroup(ctx, id, group.Platform, *group.FallbackGroupID); err != nil {
 			return nil, err
+		}
+		if group.Platform == PlatformAnthropic && !group.ClaudeCodeOnly {
+			if err := s.validateAnthropicFallbackPoolTarget(ctx, *group.FallbackGroupID); err != nil {
+				return nil, err
+			}
 		}
 	}
 	fallbackOnInvalidRequest := group.FallbackGroupIDOnInvalidRequest
