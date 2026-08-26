@@ -3950,20 +3950,20 @@ const nextDailyResetAtExpr = `(
 	THEN to_char((
 		-- Compute today's reset point in the configured timezone, then pick next future one
 		CASE WHEN NOW() >= (
-			date_trunc('day', NOW() AT TIME ZONE COALESCE(extra->>'quota_reset_timezone', 'UTC'))
+			date_trunc('day', NOW() AT TIME ZONE COALESCE(extra->>'quota_reset_timezone', 'Asia/Shanghai'))
 			+ (COALESCE((extra->>'quota_daily_reset_hour')::int, 0) || ' hours')::interval
-		) AT TIME ZONE COALESCE(extra->>'quota_reset_timezone', 'UTC')
+		) AT TIME ZONE COALESCE(extra->>'quota_reset_timezone', 'Asia/Shanghai')
 		-- NOW() is at or past today's reset point → next reset is tomorrow
 		THEN (
-			date_trunc('day', NOW() AT TIME ZONE COALESCE(extra->>'quota_reset_timezone', 'UTC'))
+			date_trunc('day', NOW() AT TIME ZONE COALESCE(extra->>'quota_reset_timezone', 'Asia/Shanghai'))
 			+ (COALESCE((extra->>'quota_daily_reset_hour')::int, 0) || ' hours')::interval
 			+ '1 day'::interval
-		) AT TIME ZONE COALESCE(extra->>'quota_reset_timezone', 'UTC')
+		) AT TIME ZONE COALESCE(extra->>'quota_reset_timezone', 'Asia/Shanghai')
 		-- NOW() is before today's reset point → next reset is today
 		ELSE (
-			date_trunc('day', NOW() AT TIME ZONE COALESCE(extra->>'quota_reset_timezone', 'UTC'))
+			date_trunc('day', NOW() AT TIME ZONE COALESCE(extra->>'quota_reset_timezone', 'Asia/Shanghai'))
 			+ (COALESCE((extra->>'quota_daily_reset_hour')::int, 0) || ' hours')::interval
-		) AT TIME ZONE COALESCE(extra->>'quota_reset_timezone', 'UTC')
+		) AT TIME ZONE COALESCE(extra->>'quota_reset_timezone', 'Asia/Shanghai')
 		END
 	) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
 	ELSE NULL END
@@ -3983,28 +3983,28 @@ const nextWeeklyResetAtExpr = `(
 		WHEN (
 			-- days_forward = (target_day - current_day + 7) % 7
 			(COALESCE((extra->>'quota_weekly_reset_day')::int, 1)
-			 - EXTRACT(DOW FROM NOW() AT TIME ZONE COALESCE(extra->>'quota_reset_timezone', 'UTC'))::int
+			 - EXTRACT(DOW FROM NOW() AT TIME ZONE COALESCE(extra->>'quota_reset_timezone', 'Asia/Shanghai'))::int
 			 + 7) % 7
 		) = 0 AND NOW() >= (
-			date_trunc('day', NOW() AT TIME ZONE COALESCE(extra->>'quota_reset_timezone', 'UTC'))
+			date_trunc('day', NOW() AT TIME ZONE COALESCE(extra->>'quota_reset_timezone', 'Asia/Shanghai'))
 			+ (COALESCE((extra->>'quota_weekly_reset_hour')::int, 0) || ' hours')::interval
-		) AT TIME ZONE COALESCE(extra->>'quota_reset_timezone', 'UTC')
+		) AT TIME ZONE COALESCE(extra->>'quota_reset_timezone', 'Asia/Shanghai')
 		-- Same weekday and past reset hour → next week
 		THEN (
-			date_trunc('day', NOW() AT TIME ZONE COALESCE(extra->>'quota_reset_timezone', 'UTC'))
+			date_trunc('day', NOW() AT TIME ZONE COALESCE(extra->>'quota_reset_timezone', 'Asia/Shanghai'))
 			+ (COALESCE((extra->>'quota_weekly_reset_hour')::int, 0) || ' hours')::interval
 			+ '7 days'::interval
-		) AT TIME ZONE COALESCE(extra->>'quota_reset_timezone', 'UTC')
+		) AT TIME ZONE COALESCE(extra->>'quota_reset_timezone', 'Asia/Shanghai')
 		ELSE (
 			-- Advance to target weekday this week (or next if days_forward > 0)
-			date_trunc('day', NOW() AT TIME ZONE COALESCE(extra->>'quota_reset_timezone', 'UTC'))
+			date_trunc('day', NOW() AT TIME ZONE COALESCE(extra->>'quota_reset_timezone', 'Asia/Shanghai'))
 			+ (COALESCE((extra->>'quota_weekly_reset_hour')::int, 0) || ' hours')::interval
 			+ ((
 				(COALESCE((extra->>'quota_weekly_reset_day')::int, 1)
-				 - EXTRACT(DOW FROM NOW() AT TIME ZONE COALESCE(extra->>'quota_reset_timezone', 'UTC'))::int
+				 - EXTRACT(DOW FROM NOW() AT TIME ZONE COALESCE(extra->>'quota_reset_timezone', 'Asia/Shanghai'))::int
 				 + 7) % 7
 			) || ' days')::interval
-		) AT TIME ZONE COALESCE(extra->>'quota_reset_timezone', 'UTC')
+		) AT TIME ZONE COALESCE(extra->>'quota_reset_timezone', 'Asia/Shanghai')
 		END
 	) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
 	ELSE NULL END

@@ -5645,7 +5645,7 @@ const createAccountAndFinish = async (
       quotaExtra.quota_weekly_reset_hour = editWeeklyResetHour.value ?? 0
     }
     if (editDailyResetMode.value === 'fixed' || editWeeklyResetMode.value === 'fixed') {
-      quotaExtra.quota_reset_timezone = editResetTimezone.value || 'UTC'
+      quotaExtra.quota_reset_timezone = editResetTimezone.value || 'Asia/Shanghai'
     }
     // Quota notify config
     writeQuotaNotifyToExtra(quotaExtra, 'create')

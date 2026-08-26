@@ -2774,7 +2774,9 @@ func (a *Account) GetQuotaResetTimezone() string {
 	if tz := a.getExtraString("quota_reset_timezone"); tz != "" {
 		return tz
 	}
-	return "UTC"
+	// 默认按北京时间重置：本服务的用户与运营都在 UTC+8，默认 UTC 会让「零点清零」
+	// 实际发生在早上八点，看起来就像配额没按时清空。
+	return "Asia/Shanghai"
 }
 
 // --- Quota Notification Getters ---

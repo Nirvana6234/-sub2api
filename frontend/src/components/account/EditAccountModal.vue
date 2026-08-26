@@ -5324,7 +5324,7 @@ const handleSubmit = async () => {
         delete newExtra.quota_weekly_reset_hour
       }
       if (editDailyResetMode.value === 'fixed' || editWeeklyResetMode.value === 'fixed') {
-        newExtra.quota_reset_timezone = editResetTimezone.value || 'UTC'
+        newExtra.quota_reset_timezone = editResetTimezone.value || 'Asia/Shanghai'
       } else {
         delete newExtra.quota_reset_timezone
       }
