@@ -382,3 +382,9 @@ func TestGatewayHandlerMessages_InterceptWarmup_AntigravityAccount_ForcePlatform
 	require.True(t, strings.HasPrefix(resp["id"].(string), "msg_01"))
 	require.Equal(t, "claude-sonnet-4-5", resp["model"])
 }
+
+// ListGroupsReferencingFallback 满足 GroupRepository 接口。这些用例不覆盖兜底引用
+// 反查，返回空表示"没有分组引用它"，等价于未引入该校验时的行为。
+func (r *fakeGroupRepo) ListGroupsReferencingFallback(context.Context, int64) ([]string, error) {
+	return nil, nil
+}
