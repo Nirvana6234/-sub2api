@@ -14,6 +14,14 @@ func (s *GatewayService) withGatewayProfitControlGate(ctx context.Context, group
 	if _, ok := gatewayTokenRequestPricingAtFromContext(ctx); !ok || groupID == nil || *groupID <= 0 {
 		return ctx
 	}
+	// Fallback-pool selection only changes the account candidate source.
+	// Keep the gate installed for the original request group instead of
+	// rebuilding it from the fallback pool's pricing configuration.
+	if isGatewayFallbackPoolSourcing(ctx) {
+		if existing, ok := ctx.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate); ok && existing != nil {
+			return ctx
+		}
+	}
 	if existing, ok := ctx.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate); ok && existing != nil && existing.groupID == *groupID {
 		return ctx
 	}
