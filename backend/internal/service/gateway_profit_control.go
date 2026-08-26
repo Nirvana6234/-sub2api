@@ -110,6 +110,11 @@ func profitControlVetoLatest(ctx context.Context, selected *Account, snapshot *S
 }
 
 func (s *GatewayService) isGatewayAccountProfitEligible(ctx context.Context, account *Account) bool {
+	// 兜底取号时额外加严：成本从未声明过的账号不参与兜底。常规路径对这类账号是
+	// 「放行并告警」，但借调来的号不该拿未知成本去顶目标分组的利润。
+	if gatewayFallbackPoolRejectReason(ctx, account) != "" {
+		return false
+	}
 	vetoed, _ := openAIProfitControlVetoReason(ctx, account)
 	return !vetoed
 }

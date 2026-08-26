@@ -112,8 +112,8 @@ func TestOpenAIFallbackPoolRejectReason(t *testing.T) {
 			if got := reason != ""; got != tc.rejected {
 				t.Fatalf("rejected = %v（reason=%q），期望 %v", got, reason, tc.rejected)
 			}
-			if tc.rejected && reason != openAIFallbackFilterReasonUndeclaredRate {
-				t.Fatalf("拒绝原因应为 %q，实际 %q", openAIFallbackFilterReasonUndeclaredRate, reason)
+			if tc.rejected && reason != fallbackFilterReasonUndeclaredRate {
+				t.Fatalf("拒绝原因应为 %q，实际 %q", fallbackFilterReasonUndeclaredRate, reason)
 			}
 		})
 	}

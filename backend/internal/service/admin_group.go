@@ -399,8 +399,10 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		if err := s.validateFallbackGroup(ctx, 0, platform, *input.FallbackGroupID); err != nil {
 			return nil, err
 		}
-		if platform == PlatformAnthropic && !input.ClaudeCodeOnly {
-			if err := s.validateAnthropicFallbackPoolTarget(ctx, *input.FallbackGroupID); err != nil {
+		// ClaudeCodeOnly 分组的 fallback_group_id 是旧的降级链路，与运行时兜底池
+		// 复用同一字段但语义不同，这里不施加兜底池的约束。
+		if platformSupportsFallbackPool(platform) && !input.ClaudeCodeOnly {
+			if err := s.validateFallbackPoolTarget(ctx, platform, *input.FallbackGroupID); err != nil {
 				return nil, err
 			}
 		}
@@ -625,7 +627,9 @@ func (s *adminServiceImpl) validateFallbackGroup(ctx context.Context, currentGro
 	}
 }
 
-func (s *adminServiceImpl) validateAnthropicFallbackPoolTarget(ctx context.Context, fallbackGroupID int64) error {
+// validateFallbackPoolTarget 校验运行时兜底池目标。platform 传源分组合并后的最终平台，
+// 目标必须同平台、启用中、且显式标记为兜底池。
+func (s *adminServiceImpl) validateFallbackPoolTarget(ctx context.Context, platform string, fallbackGroupID int64) error {
 	fallbackGroup, err := s.groupRepo.GetByIDLite(ctx, fallbackGroupID)
 	if err != nil {
 		return fmt.Errorf("fallback group not found: %w", err)
@@ -633,7 +637,7 @@ func (s *adminServiceImpl) validateAnthropicFallbackPoolTarget(ctx context.Conte
 	if fallbackGroup == nil || fallbackGroup.Status != StatusActive {
 		return fmt.Errorf("fallback group must be active")
 	}
-	if fallbackGroup.Platform != PlatformAnthropic {
+	if fallbackGroup.Platform != platform {
 		return fmt.Errorf("fallback group platform mismatch")
 	}
 	if !fallbackGroup.IsFallbackPool {
@@ -885,8 +889,8 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 		if err := s.validateFallbackGroup(ctx, id, group.Platform, *group.FallbackGroupID); err != nil {
 			return nil, err
 		}
-		if group.Platform == PlatformAnthropic && !group.ClaudeCodeOnly {
-			if err := s.validateAnthropicFallbackPoolTarget(ctx, *group.FallbackGroupID); err != nil {
+		if platformSupportsFallbackPool(group.Platform) && !group.ClaudeCodeOnly {
+			if err := s.validateFallbackPoolTarget(ctx, group.Platform, *group.FallbackGroupID); err != nil {
 				return nil, err
 			}
 		}

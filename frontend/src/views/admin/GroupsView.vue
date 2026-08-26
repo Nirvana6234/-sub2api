@@ -1521,12 +1521,12 @@
           </div>
         </div>
 
-        <!-- OpenAI/Grok 兜底池选择：当前分组无可用账号时从指定兜底池借号 -->
+        <!-- 运行时兜底池选择（OpenAI / Grok / Gemini）：当前分组无可用账号时从指定兜底池借号 -->
         <div
-          v-if="isOpenAICompatibleFallbackPlatform(createForm.platform)"
+          v-if="usesFallbackPoolSelector(createForm.platform)"
           class="border-t pt-4"
         >
-          <label class="input-label">OpenAI/Grok 兜底分组</label>
+          <label class="input-label">兜底分组</label>
           <Select
             v-model="createForm.fallback_group_id"
             :options="fallbackGroupOptions"
@@ -3349,12 +3349,12 @@
           </div>
         </div>
 
-        <!-- OpenAI/Grok 兜底池选择：当前分组无可用账号时从指定兜底池借号 -->
+        <!-- 运行时兜底池选择（OpenAI / Grok / Gemini）：当前分组无可用账号时从指定兜底池借号 -->
         <div
-          v-if="isOpenAICompatibleFallbackPlatform(editForm.platform)"
+          v-if="usesFallbackPoolSelector(editForm.platform)"
           class="border-t pt-4"
         >
-          <label class="input-label">OpenAI/Grok 兜底分组</label>
+          <label class="input-label">兜底分组</label>
           <Select
             v-model="editForm.fallback_group_id"
             :options="fallbackGroupOptionsForEdit"
@@ -4729,11 +4729,14 @@ import {
 const supportsLivePlatform = (platform: string): boolean =>
   platform === "openai" || platform === "composite";
 
-const isOpenAICompatibleFallbackPlatform = (platform: string): boolean =>
-  platform === "openai" || platform === "grok";
+// 走「运行时兜底池」选择器的平台。anthropic 有自己的选择器（在 ClaudeCode 区块下方），
+// 因为它的 fallback_group_id 还兼着旧的 ClaudeCodeOnly 降级语义，两者要分开呈现。
+// 与后端 platformSupportsFallbackPool 保持同步。
+const usesFallbackPoolSelector = (platform: string): boolean =>
+  platform === "openai" || platform === "grok" || platform === "gemini";
 
 const supportsFallbackPoolPlatform = (platform: string): boolean =>
-  platform === "anthropic" || isOpenAICompatibleFallbackPlatform(platform);
+  platform === "anthropic" || usesFallbackPoolSelector(platform);
 
 const emptyGroupPricing = (): PricingFormEntry => ({
   models: [],
@@ -5031,7 +5034,7 @@ const fallbackGroupOptions = computed(() => {
   const sourcePlatform = createForm.platform;
   const eligibleGroups = groups.value.filter(
     (g) => {
-      if (isOpenAICompatibleFallbackPlatform(sourcePlatform)) {
+      if (usesFallbackPoolSelector(sourcePlatform)) {
         return (
           g.platform === sourcePlatform &&
           g.is_fallback_pool &&
@@ -5063,7 +5066,7 @@ const fallbackGroupOptionsForEdit = computed(() => {
       if (g.id === currentId) {
         return false;
       }
-      if (isOpenAICompatibleFallbackPlatform(sourcePlatform)) {
+      if (usesFallbackPoolSelector(sourcePlatform)) {
         return (
           g.platform === sourcePlatform &&
           g.is_fallback_pool &&
@@ -6939,7 +6942,7 @@ watch(
   (newVal, oldVal) => {
     if (
       newVal !== oldVal &&
-      (newVal !== "anthropic" || isOpenAICompatibleFallbackPlatform(oldVal))
+      (newVal !== "anthropic" || usesFallbackPoolSelector(oldVal))
     ) {
       createForm.fallback_group_id = null;
     }
@@ -6998,7 +7001,7 @@ watch(
   (newVal, oldVal) => {
     if (
       newVal !== oldVal &&
-      (newVal !== "anthropic" || isOpenAICompatibleFallbackPlatform(oldVal))
+      (newVal !== "anthropic" || usesFallbackPoolSelector(oldVal))
     ) {
       editForm.fallback_group_id = null;
     }

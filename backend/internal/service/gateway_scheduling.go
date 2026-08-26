@@ -68,7 +68,7 @@ func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context
 	ctx = s.withGatewayProfitControlGate(ctx, groupID)
 
 	tryFallback := func() (*Account, error, bool) {
-		if platform != PlatformAnthropic {
+		if !gatewayPlatformSupportsFallbackPool(platform) {
 			return nil, nil, false
 		}
 		fallbackCtx, fallbackGroupID := s.nextGatewayFallbackGroup(ctx, groupID)
@@ -250,7 +250,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 	}
 
 	tryFallback := func() (*AccountSelectionResult, error, bool) {
-		if platform != PlatformAnthropic {
+		if !gatewayPlatformSupportsFallbackPool(platform) {
 			return nil, nil, false
 		}
 		fallbackCtx, fallbackGroupID := s.nextGatewayFallbackGroup(ctx, groupID)
