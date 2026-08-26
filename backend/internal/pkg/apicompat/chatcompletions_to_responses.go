@@ -379,11 +379,14 @@ func convertChatContentPartsToResponses(parts []ChatContentPart) []ResponsesCont
 				})
 			}
 		case "file":
-			if p.File != nil && p.File.FileData != "" {
+			// file_id 与 file_data 是二选一的两种给法：前者引用已上传的文件，后者内联
+			// data URI。只认 file_data 会把纯 file_id 的部件静默丢掉。
+			if p.File != nil && (p.File.FileData != "" || p.File.FileID != "") {
 				responseParts = append(responseParts, ResponsesContentPart{
 					Type:     "input_file",
 					FileData: p.File.FileData,
 					Filename: p.File.Filename,
+					FileID:   p.File.FileID,
 				})
 			}
 		}

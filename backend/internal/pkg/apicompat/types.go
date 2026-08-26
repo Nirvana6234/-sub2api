@@ -314,6 +314,7 @@ type ResponsesContentPart struct {
 	ImageURL string `json:"image_url,omitempty"` // data URI for input_image
 	FileData string `json:"file_data,omitempty"`
 	Filename string `json:"filename,omitempty"`
+	FileID   string `json:"file_id,omitempty"`
 }
 
 // ResponsesTool describes a tool in the Responses API.
@@ -703,6 +704,7 @@ type ChatImageURL struct {
 type ChatFile struct {
 	Filename string `json:"filename,omitempty"`
 	FileData string `json:"file_data,omitempty"`
+	FileID   string `json:"file_id,omitempty"`
 }
 
 // ChatTool describes a tool available to the model.
