@@ -344,8 +344,8 @@ func AccountFromServiceShallow(a *service.Account) *Account {
 		}
 	}
 
-	// 提取账号配额限制（apikey / bedrock 类型有效）
-	if a.IsAPIKeyOrBedrock() {
+	// 提取账号配额限制。配额已扩展为所有非影子账号共享能力；影子账号不拥有独立配额。
+	if !a.IsCredentialShadow() {
 		if limit := a.GetQuotaLimit(); limit > 0 {
 			out.QuotaLimit = &limit
 			used := a.GetQuotaUsed()

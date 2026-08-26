@@ -300,6 +300,11 @@ func (c *schedulerCache) GetSnapshot(ctx context.Context, bucket service.Schedul
 		if err != nil {
 			return nil, false, err
 		}
+		// Fixed quota windows are time-based, not request-based. Normalize a
+		// stale cached window on read so an account that crossed its configured
+		// reset time is immediately schedulable even when no new usage write has
+		// occurred since the reset.
+		service.NormalizeFixedQuotaWindows(account.Extra)
 		if bucket.GroupID > 0 {
 			account.Priority = account.PriorityForGroup(bucket.GroupID)
 		}
@@ -985,12 +990,14 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		"quota_daily_start",
 		"quota_daily_reset_mode",
 		"quota_daily_reset_hour",
+		"quota_daily_reset_at",
 		"quota_weekly_limit",
 		"quota_weekly_used",
 		"quota_weekly_start",
 		"quota_weekly_reset_mode",
 		"quota_weekly_reset_day",
 		"quota_weekly_reset_hour",
+		"quota_weekly_reset_at",
 		"quota_reset_timezone",
 		"mixed_scheduling",
 		"window_cost_limit",
