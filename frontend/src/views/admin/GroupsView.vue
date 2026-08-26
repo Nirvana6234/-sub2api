@@ -6683,7 +6683,7 @@ const loadCompositeRoutes = async () => {
     });
   } catch (error: any) {
     appStore.showError(
-      error.response?.data?.detail ||
+      error?.message ||
         error.response?.data?.message ||
         t("admin.groups.compositeRoutes.failedToLoad"),
     );
@@ -6750,7 +6750,7 @@ const saveCompositeRoute = async () => {
     await loadCompositeRoutes();
   } catch (error: any) {
     appStore.showError(
-      error.response?.data?.detail ||
+      error?.message ||
         error.response?.data?.message ||
         t("admin.groups.compositeRoutes.failedToSave"),
     );
@@ -6775,7 +6775,7 @@ const deleteCompositeRoute = async (route: CompositeModelRoute) => {
     await loadCompositeRoutes();
   } catch (error: any) {
     appStore.showError(
-      error.response?.data?.detail ||
+      error?.message ||
         error.response?.data?.message ||
         t("admin.groups.compositeRoutes.failedToDelete"),
     );
@@ -6798,7 +6798,7 @@ const previewCompositeRoute = async () => {
     );
   } catch (error: any) {
     appStore.showError(
-      error.response?.data?.detail ||
+      error?.message ||
         error.response?.data?.message ||
         t("admin.groups.compositeRoutes.failedToPreview"),
     );
@@ -6824,7 +6824,7 @@ const confirmDelete = async () => {
     loadGroups();
   } catch (error: any) {
     appStore.showError(
-      error.response?.data?.detail || t("admin.groups.failedToDelete"),
+      error?.message || t("admin.groups.failedToDelete"),
     );
     console.error("Error deleting group:", error);
   }
@@ -7059,7 +7059,7 @@ const saveSortOrder = async () => {
     loadGroups();
   } catch (error: any) {
     appStore.showError(
-      error.response?.data?.detail || t("admin.groups.failedToUpdateSortOrder"),
+      error?.message || t("admin.groups.failedToUpdateSortOrder"),
     );
     console.error("Error updating sort order:", error);
   } finally {
