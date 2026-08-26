@@ -899,9 +899,10 @@ async function handleSubmit() {
     appStore.showError(t('admin.channelMonitor.primaryModelRequired'))
     return
   }
-  // quota 模式下 endpoint 既不展示也不提交（见下方 endpoint 的三元），校验必须跟着一起跳过，
-  // 否则空串过不了 new URL 解析，提交被拦，而报错指向一个界面上根本不存在的字段。
-  if (usesProbePart.value && !validateEndpointBeforeSubmit()) return
+  // 有意为之，别"修好"它：这里对 quota 模式也一并拦截。quota 监控的日志太占内存，
+  // 产品决定就是不让它存下来，空 endpoint 过不了校验正是拦截手段。看起来像 bug
+  // （字段在 quota 模式下不展示、报错指向看不见的字段）——但这是需求，不是缺陷。
+  if (!validateEndpointBeforeSubmit()) return
 
   submitting.value = true
   try {

@@ -1491,7 +1491,7 @@ const handleGrokProbed = async () => {
   await loadUsage({ source: 'active', bypassCache: true })
 }
 
-// ===== API Key quota progress bars =====
+// ===== Account quota progress bars =====
 
 interface QuotaBarInfo {
   utilization: number
@@ -1530,7 +1530,7 @@ const makeQuotaBar = (
 }
 
 const hasApiKeyQuota = computed(() => {
-  if (props.account.type !== 'apikey' && props.account.type !== 'bedrock') return false
+  if (props.account.parent_account_id) return false
   return (
     (props.account.quota_daily_limit ?? 0) > 0 ||
     (props.account.quota_weekly_limit ?? 0) > 0 ||
