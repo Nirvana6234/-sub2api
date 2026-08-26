@@ -289,3 +289,9 @@ func TestAccountService_Delete_Success(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []int64{55}, repo.deletedIDs) // 验证正确的 ID 被删除
 }
+
+// RecoverAutomaticSchedulability 满足 AccountRepository 接口。这些用例不覆盖自动
+// 可调度性恢复，固定返回 (false, nil)：按接口约定，条件不满足时不得改状态。
+func (r *accountRepoStub) RecoverAutomaticSchedulability(context.Context, int64, *time.Time) (bool, error) {
+	return false, nil
+}

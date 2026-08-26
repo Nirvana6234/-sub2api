@@ -3464,3 +3464,9 @@ func TestGatewayService_ResolveGatewayGroup_DetectsFallbackCycle(t *testing.T) {
 func (m *mockGroupRepoForGateway) ListGroupsReferencingFallback(_ context.Context, _ int64) ([]string, error) {
 	return nil, nil
 }
+
+// RecoverAutomaticSchedulability 满足 AccountRepository 接口。这些测试不覆盖
+// 自动可调度性恢复，固定返回 (false, nil)：按接口约定，条件不满足时不得改状态。
+func (r *mockAccountRepoForPlatform) RecoverAutomaticSchedulability(context.Context, int64, *time.Time) (bool, error) {
+	return false, nil
+}

@@ -301,11 +301,3 @@ func TestFilterGrokFreeQuotaAccountsEvictsDepartedAccounts(t *testing.T) {
 	filtered := filterGrokFreeQuotaAccountsCore(context.Background(), grokFreeQuotaTestConfig(), repo, &cache, accounts)
 	require.Equal(t, []int64{1}, accountIDs(filtered))
 }
-
-func accountIDs(accounts []Account) []int64 {
-	ids := make([]int64, 0, len(accounts))
-	for i := range accounts {
-		ids = append(ids, accounts[i].ID)
-	}
-	return ids
-}

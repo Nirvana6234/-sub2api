@@ -577,3 +577,9 @@ func TestAdminService_AdminUpdateAPIKeyGroupID_Unbind_NoAllowedGroupUpdate(t *te
 	require.False(t, userRepo.addGroupCalled)
 	require.False(t, got.AutoGrantedGroupAccess)
 }
+
+// ListGroupsReferencingFallback 满足 GroupRepository 接口。这些用例不覆盖兜底引用
+// 反查，返回空表示"没有分组引用它"，等价于旧行为下不做该校验。
+func (r *groupRepoStubForGroupUpdate) ListGroupsReferencingFallback(context.Context, int64) ([]string, error) {
+	return nil, nil
+}

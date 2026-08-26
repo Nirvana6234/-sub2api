@@ -1863,3 +1863,21 @@ func TestAdminService_PreviewCompositeRouteUsesExplicitRoutes(t *testing.T) {
 	require.NotNil(t, decision.Route)
 	require.Equal(t, int64(11), decision.Route.ID)
 }
+
+// ListGroupsReferencingFallback 满足 GroupRepository 接口。这些用例不覆盖兜底引用
+// 反查，返回空表示"没有分组引用它"，等价于旧行为下不做该校验。
+func (r *groupRepoStubForAdmin) ListGroupsReferencingFallback(context.Context, int64) ([]string, error) {
+	return nil, nil
+}
+
+// ListGroupsReferencingFallback 满足 GroupRepository 接口。这些用例不覆盖兜底引用
+// 反查，返回空表示"没有分组引用它"，等价于旧行为下不做该校验。
+func (r *groupRepoStubForFallbackCycle) ListGroupsReferencingFallback(context.Context, int64) ([]string, error) {
+	return nil, nil
+}
+
+// ListGroupsReferencingFallback 满足 GroupRepository 接口。这些用例不覆盖兜底引用
+// 反查，返回空表示"没有分组引用它"，等价于旧行为下不做该校验。
+func (r *groupRepoStubForInvalidRequestFallback) ListGroupsReferencingFallback(context.Context, int64) ([]string, error) {
+	return nil, nil
+}

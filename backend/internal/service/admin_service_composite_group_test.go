@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/stretchr/testify/require"
@@ -211,4 +212,10 @@ func TestAdminService_CNProviderModelsListCandidatesKeepClaudeDefaults(t *testin
 	for _, platform := range []string{PlatformKimi, PlatformZhipu, PlatformDeepseek} {
 		require.Equal(t, want, defaultModelsListCandidateIDs(platform), "platform=%s", platform)
 	}
+}
+
+// RecoverAutomaticSchedulability 满足 AccountRepository 接口。这些用例不覆盖自动
+// 可调度性恢复，固定返回 (false, nil)：按接口约定，条件不满足时不得改状态。
+func (r *accountRepoStubForCompositeModelsList) RecoverAutomaticSchedulability(context.Context, int64, *time.Time) (bool, error) {
+	return false, nil
 }

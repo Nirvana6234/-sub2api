@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
@@ -360,4 +361,10 @@ func TestGroupIsolation_SimpleMode_GroupedAccountAlsoSchedulable(t *testing.T) {
 	require.NoError(t, err, "SimpleMode 下已分组账号也应可调度")
 	require.NotNil(t, acc)
 	require.Equal(t, int64(1), acc.ID, "SimpleMode 应能调度已分组账号")
+}
+
+// RecoverAutomaticSchedulability 满足 AccountRepository 接口。这些测试不覆盖
+// 自动可调度性恢复，固定返回 (false, nil)：按接口约定，条件不满足时不得改状态。
+func (r *groupAwareMockAccountRepo) RecoverAutomaticSchedulability(context.Context, int64, *time.Time) (bool, error) {
+	return false, nil
 }

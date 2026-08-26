@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
@@ -278,4 +279,10 @@ func TestAdminService_ListRedeemCodes_WithSearch(t *testing.T) {
 		require.Equal(t, StatusUnused, repo.listWithFiltersStatus)
 		require.Equal(t, "ABC", repo.listWithFiltersSearch)
 	})
+}
+
+// RecoverAutomaticSchedulability 满足 AccountRepository 接口。这些用例不覆盖自动
+// 可调度性恢复，固定返回 (false, nil)：按接口约定，条件不满足时不得改状态。
+func (r *accountRepoStubForAdminList) RecoverAutomaticSchedulability(context.Context, int64, *time.Time) (bool, error) {
+	return false, nil
 }
