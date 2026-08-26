@@ -1007,3 +1007,7 @@ func TestGeminiMessagesCompatService_isModelSupportedByAccount(t *testing.T) {
 		})
 	}
 }
+
+func (m *mockGroupRepoForGemini) ListGroupsReferencingFallback(_ context.Context, _ int64) ([]string, error) {
+	return nil, nil
+}

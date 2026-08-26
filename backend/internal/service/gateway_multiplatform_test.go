@@ -3586,3 +3586,7 @@ func TestGatewayService_SelectAccountForModelWithPlatform_RoutedOpenAIGroup(t *t
 	require.NotNil(t, acc)
 	require.Equal(t, int64(2), acc.ID, "routed account must win over the higher-priority unrouted one")
 }
+
+func (m *mockGroupRepoForGateway) ListGroupsReferencingFallback(_ context.Context, _ int64) ([]string, error) {
+	return nil, nil
+}
