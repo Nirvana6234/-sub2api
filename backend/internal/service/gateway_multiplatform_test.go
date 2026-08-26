@@ -3460,3 +3460,7 @@ func TestGatewayService_ResolveGatewayGroup_DetectsFallbackCycle(t *testing.T) {
 	require.Nil(t, gotID)
 	require.Contains(t, err.Error(), "fallback group cycle")
 }
+
+func (m *mockGroupRepoForGateway) ListGroupsReferencingFallback(_ context.Context, _ int64) ([]string, error) {
+	return nil, nil
+}

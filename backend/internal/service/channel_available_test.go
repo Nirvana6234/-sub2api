@@ -309,3 +309,7 @@ func TestFillGlobalPricingFallback_KeepsExistingPrice(t *testing.T) {
 func newStubPricingServiceFromMap(data map[string]*LiteLLMModelPricing) *PricingService {
 	return &PricingService{pricingData: data}
 }
+
+func (s *stubGroupRepoForAvailable) ListGroupsReferencingFallback(_ context.Context, _ int64) ([]string, error) {
+	return nil, nil
+}

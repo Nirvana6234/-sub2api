@@ -2603,3 +2603,7 @@ func TestUpdate_MappingConflict(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "MAPPING_PATTERN_CONFLICT")
 }
+
+func (m *mockChannelRepository) ListGroupsReferencingFallback(_ context.Context, _ int64) ([]string, error) {
+	return nil, nil
+}

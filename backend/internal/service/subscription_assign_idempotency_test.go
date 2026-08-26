@@ -672,3 +672,7 @@ func strconvFormatInt(v int64) string {
 func infraerrorsReason(err error) string {
 	return infraerrors.Reason(err)
 }
+
+func (groupRepoNoop) ListGroupsReferencingFallback(context.Context, int64) ([]string, error) {
+	return nil, nil
+}

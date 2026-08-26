@@ -27,6 +27,9 @@ type GroupRepository interface {
 	ListActiveByPlatform(ctx context.Context, platform string) ([]Group, error)
 
 	ExistsByName(ctx context.Context, name string) (bool, error)
+	// ListGroupsReferencingFallback 返回把 groupID 当作兜底目标的分组名。
+	// 用于在取消兜底池标记或删除分组前挡住会留下悬空引用的操作。
+	ListGroupsReferencingFallback(ctx context.Context, groupID int64) ([]string, error)
 	GetAccountCount(ctx context.Context, groupID int64) (total int64, active int64, err error)
 	DeleteAccountGroupsByGroupID(ctx context.Context, groupID int64) (int64, error)
 	// GetAccountIDsByGroupIDs 获取多个分组的所有账号 ID（去重）

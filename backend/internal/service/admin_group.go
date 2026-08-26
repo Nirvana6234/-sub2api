@@ -682,6 +682,24 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 		group.IsExclusive = *input.IsExclusive
 	}
 	if input.IsFallbackPool != nil {
+		// 取消兜底池标记前先确认没有分组还指着它。
+		//
+		// 兜底组对用户不可见、也不能被 API Key 绑定，所以它的倍率平时不参与任何
+		// 计费，运维往往就随手填了。而标记一旦取消，它立刻变成普通可选分组——
+		// 那个随手填的倍率当场对用户生效，可能是白送也可能是天价，而且没有任何
+		// 报错，只在对账时才会被发现。
+		if !*input.IsFallbackPool && group.IsFallbackPool {
+			refs, err := s.groupRepo.ListGroupsReferencingFallback(ctx, group.ID)
+			if err != nil {
+				return nil, fmt.Errorf("check fallback references: %w", err)
+			}
+			if len(refs) > 0 {
+				return nil, infraerrors.BadRequest(
+					"FALLBACK_POOL_STILL_REFERENCED",
+					fmt.Sprintf("该分组仍被以下分组用作兜底目标，请先解除引用再取消兜底池标记：%s", strings.Join(refs, "、")),
+				)
+			}
+		}
 		group.IsFallbackPool = *input.IsFallbackPool
 	}
 	if input.Status != "" {
@@ -1038,6 +1056,25 @@ func normalizeGroupModelPricing(platform string, pricing []ChannelModelPricing) 
 }
 
 func (s *adminServiceImpl) DeleteGroup(ctx context.Context, id int64) error {
+	// 被别的分组当作兜底目标时不允许直接删除。
+	//
+	// fallback_group_id 没有外键约束，删掉之后引用方会留下一个指向不存在分组的
+	// ID：调度时兜底静默失效（无号可用时不再有后备），而管理界面上那个分组的
+	// 兜底配置看起来仍然是"配好了的"。与其留下这种查不出来的状态，不如在这里
+	// 挡住，让运维先去解除引用。
+	if s.groupRepo != nil {
+		refs, err := s.groupRepo.ListGroupsReferencingFallback(ctx, id)
+		if err != nil {
+			return fmt.Errorf("check fallback references: %w", err)
+		}
+		if len(refs) > 0 {
+			return infraerrors.BadRequest(
+				"GROUP_STILL_REFERENCED_AS_FALLBACK",
+				fmt.Sprintf("该分组仍被以下分组用作兜底目标，请先解除引用再删除：%s", strings.Join(refs, "、")),
+			)
+		}
+	}
+
 	var groupKeys []string
 	if s.authCacheInvalidator != nil {
 		keys, err := s.apiKeyRepo.ListKeysByGroupID(ctx, id)

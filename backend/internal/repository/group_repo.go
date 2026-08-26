@@ -731,6 +731,33 @@ func (r *groupRepository) ExistsByName(ctx context.Context, name string) (bool, 
 	return r.client.Group.Query().Where(group.NameEQ(name)).Exist(ctx)
 }
 
+// ListGroupsReferencingFallback 返回把 groupID 当作兜底目标的分组名。
+//
+// 取消兜底池标记或删除分组前必须先问一次：兜底组一旦变回普通分组，它的倍率会
+// 立刻对用户生效；一旦被删掉，引用方就留下一个指向不存在分组的 ID。两种情况都
+// 是静默的，只在出问题时才被发现，所以宁可在操作时挡住。
+func (r *groupRepository) ListGroupsReferencingFallback(ctx context.Context, groupID int64) ([]string, error) {
+	rows, err := r.client.Group.Query().
+		Where(
+			group.DeletedAtIsNil(),
+			group.IDNEQ(groupID),
+			group.Or(
+				group.FallbackGroupIDEQ(groupID),
+				group.FallbackGroupIDOnInvalidRequestEQ(groupID),
+			),
+		).
+		Select(group.FieldName).
+		All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(rows))
+	for _, row := range rows {
+		names = append(names, row.Name)
+	}
+	return names, nil
+}
+
 // ExistsByIDs 批量检查分组是否存在（仅检查未软删除记录）。
 // 返回结构：map[groupID]exists。
 func (r *groupRepository) ExistsByIDs(ctx context.Context, ids []int64) (map[int64]bool, error) {
