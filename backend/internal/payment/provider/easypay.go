@@ -7,13 +7,16 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -22,9 +25,13 @@ import (
 
 // EasyPay constants.
 const (
-	easypayCodeSuccess     = 1
-	easypayStatusPaid      = 1
-	easypayHTTPTimeout     = 10 * time.Second
+	easypayCodeSuccess = 1
+	easypayStatusPaid  = 1
+	easypayHTTPTimeout = 10 * time.Second
+	// 最多额外重试 2 次（共 3 次尝试）。再多收益递减，且会拖长用户等待。
+	easypayMaxRetries = 2
+	// 首次退避 200ms，随后翻倍。RST 类失败是秒级的，这个量级足够错开坏节点。
+	easypayRetryBaseDelay  = 200 * time.Millisecond
 	maxEasypayResponseSize = 1 << 20 // 1MB
 	maxEasypayErrorSummary = 512
 	tradeStatusSuccess     = "TRADE_SUCCESS"
@@ -505,7 +512,95 @@ func (e *EasyPay) post(ctx context.Context, endpoint string, params map[string]s
 	return body, err
 }
 
+// postRaw 发起请求，并对传输层的快速失败做有限重试。
+//
+// 为什么需要重试：上游 zpayz.cn 挂在腾讯云 CDN 上，边缘节点按来源地理位置分配，
+// 其中部分节点会持续 RST 连接（HTTP/2 下报 stream INTERNAL_ERROR，HTTP/1.1 下报
+// connection reset by peer，同一个根因）。实测单次成功率一度只有 13/20，而每次
+// 失败都会直接变成用户看到的一次「支付渠道失效」。
+//
+// 重试的幂等性依据：调用方对同一笔订单始终使用同一个 out_trade_no，易支付对相同
+// 订单号返回同一笔交易而不是新建。因此即便某次请求实际已抵达上游、只是响应在回程
+// 丢失，重试也不会产生重复订单。
+//
+// 刻意不重试超时：超时意味着对端慢或不可达，再试一次大概率还是等满超时，只会让
+// 用户多等十几秒。而 RST 类错误是秒级失败，重试能立刻落到另一个健康节点上。
 func (e *EasyPay) postRaw(ctx context.Context, endpoint string, params map[string]string) ([]byte, int, error) {
+	var lastErr error
+	for attempt := 0; attempt <= easypayMaxRetries; attempt++ {
+		if attempt > 0 {
+			backoff := easypayRetryBaseDelay << (attempt - 1)
+			select {
+			case <-ctx.Done():
+				return nil, 0, ctx.Err()
+			case <-time.After(backoff):
+			}
+		}
+
+		body, status, err := e.postRawOnce(ctx, endpoint, params)
+		if err == nil {
+			return body, status, nil
+		}
+		if !isRetryableEasypayTransportError(err) {
+			return nil, status, err
+		}
+		lastErr = err
+	}
+	return nil, 0, lastErr
+}
+
+// isRetryableEasypayTransportError 只认传输层的快速失败。
+//
+// 注意范围：client.Do 返回 error 才会走到这里；上游正常返回 4xx/5xx 时 err 为 nil，
+// 那属于业务响应，绝不能重试（重试可能对已受理的订单再下一单）。
+func isRetryableEasypayTransportError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// 调用方取消或整体超时预算耗尽，继续重试没有意义。
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	// 单次请求超时同样不重试，理由见 postRaw 的说明。
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return false
+	}
+
+	// 优先按 errno 判断：不受平台措辞影响。同一个「连接被重置」在 Linux 上是
+	// "connection reset by peer"，在 Windows 上是 "An existing connection was
+	// forcibly closed by the remote host"，只匹配文本会漏掉一整个平台，而且漏掉时
+	// 是静默的——不重试，直接退回到坏节点带来的高失败率。
+	if errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.Is(err, syscall.ECONNABORTED) ||
+		errors.Is(err, syscall.EPIPE) {
+		return true
+	}
+	// 连接在读响应途中断开，Go 会包成 EOF / ErrUnexpectedEOF。
+	if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) {
+		return true
+	}
+
+	// 文本匹配只作兜底，覆盖没有对应 errno 的情形（主要是 HTTP/2 的 RST）。
+	msg := err.Error()
+	for _, marker := range []string{
+		"INTERNAL_ERROR", // HTTP/2 下连接被 RST 的表现形式
+		"connection reset by peer",
+		"forcibly closed by the remote host", // Windows
+		"connection refused",
+		"broken pipe",
+		"unexpected EOF",
+		"server closed idle connection",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *EasyPay) postRawOnce(ctx context.Context, endpoint string, params map[string]string) ([]byte, int, error) {
 	form := url.Values{}
 	for k, v := range params {
 		form.Set(k, v)
