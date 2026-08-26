@@ -34,10 +34,11 @@ const (
 	antigravitySmartRetryMaxAttempts    = 1                // 智能重试最大次数（仅重试 1 次，防止重复限流/长期等待）
 	antigravityDefaultRateLimitDuration = 30 * time.Second // 默认限流时间（无 retryDelay 时使用）
 
-	// MODEL_CAPACITY_EXHAUSTED 专用重试参数
-	// 模型容量不足时，所有账号共享同一容量池，切换账号无意义
-	// 使用固定 1s 间隔重试，最多重试 60 次
-	antigravityModelCapacityRetryMaxAttempts = 60
+	// MODEL_CAPACITY_EXHAUSTED 是请求级的瞬时状态。先在当前账号上原地重试几次，
+	// 保住粘性会话上下文；仍不成功就清掉粘性并交给调度换账号，不记模型能力缺失、
+	// 也不打限流冷却。次数刻意压得很低：每次重试固定等 1s，调大会让单个请求在这里
+	// 干等数十秒，客户端侧表现为卡死而不是失败。
+	antigravityModelCapacityRetryMaxAttempts = 3
 	antigravityModelCapacityRetryWait        = 1 * time.Second
 
 	// Google RPC 状态和类型常量
