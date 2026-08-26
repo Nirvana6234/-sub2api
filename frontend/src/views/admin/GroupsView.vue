@@ -704,6 +704,42 @@
           </div>
         </div>
 
+        <div
+          v-if="supportsFallbackPoolPlatform(createForm.platform)"
+          class="border-t pt-4"
+        >
+          <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+            兜底账号池
+          </label>
+          <p class="mb-2 text-xs text-gray-500 dark:text-gray-400">
+            {{ createForm.platform === 'anthropic'
+              ? '开启后，此 Claude 分组不会给用户直接选择，可作为其他 Claude 分组的备用目标。'
+              : '开启后，此分组不会给用户直接选择，只作为其他同平台分组无号时的备用账号池。' }}
+          </p>
+          <div class="flex items-center gap-3">
+            <button
+              type="button"
+              @click="createForm.is_fallback_pool = !createForm.is_fallback_pool"
+              :class="[
+                'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
+                createForm.is_fallback_pool
+                  ? 'bg-primary-500'
+                  : 'bg-gray-300 dark:bg-dark-600',
+              ]"
+            >
+              <span
+                :class="[
+                  'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
+                  createForm.is_fallback_pool ? 'translate-x-6' : 'translate-x-1',
+                ]"
+              />
+            </button>
+            <span class="text-sm text-gray-500 dark:text-gray-400">
+              {{ createForm.is_fallback_pool ? '仅作兜底池' : '普通可选分组' }}
+            </span>
+          </div>
+        </div>
+
         <!-- Subscription Configuration -->
         <div class="mt-4 border-t pt-4">
           <div>
@@ -1422,11 +1458,12 @@
               }}
             </span>
           </div>
-          <!-- 降级分组选择（仅当启用 claude_code_only 时显示） -->
-          <div v-if="createForm.claude_code_only" class="mt-3">
-            <label class="input-label">{{
-              t("admin.groups.claudeCode.fallbackGroup")
-            }}</label>
+          <!-- 降级分组选择：Anthropic 走 Claude Code 旧逻辑 -->
+          <div
+            v-if="createForm.claude_code_only"
+            class="mt-3"
+          >
+            <label class="input-label">{{ t("admin.groups.claudeCode.fallbackGroup") }}</label>
             <Select
               v-model="createForm.fallback_group_id"
               :options="fallbackGroupOptions"
@@ -1435,6 +1472,42 @@
             <p class="input-hint">
               {{ t("admin.groups.claudeCode.fallbackHint") }}
             </p>
+          </div>
+        </div>
+
+        <!-- Kiro Codex 兼容（分组级） -->
+        <div class="border-t pt-4">
+          <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+            {{ t("admin.groups.kiroCompat.title") }}
+          </label>
+          <p class="mb-2 text-xs text-gray-500 dark:text-gray-400">
+            {{ t("admin.groups.kiroCompat.hint") }}
+          </p>
+          <div class="flex items-center gap-3">
+            <button
+              type="button"
+              @click="createForm.kiro_compat = !createForm.kiro_compat"
+              :class="[
+                'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
+                createForm.kiro_compat
+                  ? 'bg-primary-500'
+                  : 'bg-gray-300 dark:bg-dark-600',
+              ]"
+            >
+              <span
+                :class="[
+                  'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
+                  createForm.kiro_compat ? 'translate-x-6' : 'translate-x-1',
+                ]"
+              />
+            </button>
+            <span class="text-sm text-gray-500 dark:text-gray-400">
+              {{
+                createForm.kiro_compat
+                  ? t("admin.groups.kiroCompat.enabled")
+                  : t("admin.groups.kiroCompat.disabled")
+              }}
+            </span>
           </div>
         </div>
 
@@ -2338,6 +2411,41 @@
             </span>
           </div>
         </div>
+        <div
+          v-if="supportsFallbackPoolPlatform(editForm.platform)"
+          class="border-t pt-4"
+        >
+          <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+            兜底账号池
+          </label>
+          <p class="mb-2 text-xs text-gray-500 dark:text-gray-400">
+            {{ editForm.platform === 'anthropic'
+              ? '开启后，此 Claude 分组不会给用户直接选择，可作为其他 Claude 分组的备用目标。'
+              : '开启后，此分组不会给用户直接选择，只作为其他同平台分组无号时的备用账号池。' }}
+          </p>
+          <div class="flex items-center gap-3">
+            <button
+              type="button"
+              @click="editForm.is_fallback_pool = !editForm.is_fallback_pool"
+              :class="[
+                'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
+                editForm.is_fallback_pool
+                  ? 'bg-primary-500'
+                  : 'bg-gray-300 dark:bg-dark-600',
+              ]"
+            >
+              <span
+                :class="[
+                  'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
+                  editForm.is_fallback_pool ? 'translate-x-6' : 'translate-x-1',
+                ]"
+              />
+            </button>
+            <span class="text-sm text-gray-500 dark:text-gray-400">
+              {{ editForm.is_fallback_pool ? '仅作兜底池' : '普通可选分组' }}
+            </span>
+          </div>
+        </div>
         <div>
           <label class="input-label">{{ t("admin.groups.form.status") }}</label>
           <Select v-model="editForm.status" :options="editStatusOptions" />
@@ -3062,19 +3170,54 @@
               }}
             </span>
           </div>
-          <!-- 降级分组选择（仅当启用 claude_code_only 时显示） -->
-          <div v-if="editForm.claude_code_only" class="mt-3">
-            <label class="input-label">{{
-              t("admin.groups.claudeCode.fallbackGroup")
-            }}</label>
+          <!-- 降级分组选择：Anthropic 走 Claude Code 旧逻辑 -->
+          <div
+            v-if="editForm.claude_code_only"
+            class="mt-3"
+          >
+            <label class="input-label">{{ t("admin.groups.claudeCode.fallbackGroup") }}</label>
             <Select
               v-model="editForm.fallback_group_id"
               :options="fallbackGroupOptionsForEdit"
               :placeholder="t('admin.groups.claudeCode.noFallback')"
             />
-            <p class="input-hint">
-              {{ t("admin.groups.claudeCode.fallbackHint") }}
-            </p>
+            <p class="input-hint">{{ t("admin.groups.claudeCode.fallbackHint") }}</p>
+          </div>
+        </div>
+
+        <!-- Kiro Codex 兼容（分组级） -->
+        <div class="border-t pt-4">
+          <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+            {{ t("admin.groups.kiroCompat.title") }}
+          </label>
+          <p class="mb-2 text-xs text-gray-500 dark:text-gray-400">
+            {{ t("admin.groups.kiroCompat.hint") }}
+          </p>
+          <div class="flex items-center gap-3">
+            <button
+              type="button"
+              @click="editForm.kiro_compat = !editForm.kiro_compat"
+              :class="[
+                'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
+                editForm.kiro_compat
+                  ? 'bg-primary-500'
+                  : 'bg-gray-300 dark:bg-dark-600',
+              ]"
+            >
+              <span
+                :class="[
+                  'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
+                  editForm.kiro_compat ? 'translate-x-6' : 'translate-x-1',
+                ]"
+              />
+            </button>
+            <span class="text-sm text-gray-500 dark:text-gray-400">
+              {{
+                editForm.kiro_compat
+                  ? t("admin.groups.kiroCompat.enabled")
+                  : t("admin.groups.kiroCompat.disabled")
+              }}
+            </span>
           </div>
         </div>
 
@@ -4373,6 +4516,12 @@ import {
 
 const supportsLivePlatform = (platform: string): boolean =>
   platform === "openai" || platform === "composite";
+
+const isOpenAICompatibleFallbackPlatform = (platform: string): boolean =>
+  platform === "openai" || platform === "grok";
+
+const supportsFallbackPoolPlatform = (platform: string): boolean =>
+  platform === "anthropic" || isOpenAICompatibleFallbackPlatform(platform);
 
 const emptyGroupPricing = (): PricingFormEntry => ({
   models: [],
@@ -6651,7 +6800,16 @@ watch(
 
 watch(
   () => createForm.platform,
-  (newVal) => {
+  (newVal, oldVal) => {
+    if (
+      newVal !== oldVal &&
+      (newVal !== "anthropic" || isOpenAICompatibleFallbackPlatform(oldVal))
+    ) {
+      createForm.fallback_group_id = null;
+    }
+    if (!supportsFallbackPoolPlatform(newVal)) {
+      createForm.is_fallback_pool = false;
+    }
     if (!["anthropic", "antigravity"].includes(newVal)) {
       createForm.fallback_group_id_on_invalid_request = null;
     }
@@ -6708,7 +6866,16 @@ watch(
 
 watch(
   () => editForm.platform,
-  (newVal) => {
+  (newVal, oldVal) => {
+    if (
+      newVal !== oldVal &&
+      (newVal !== "anthropic" || isOpenAICompatibleFallbackPlatform(oldVal))
+    ) {
+      editForm.fallback_group_id = null;
+    }
+    if (!supportsFallbackPoolPlatform(newVal)) {
+      editForm.is_fallback_pool = false;
+    }
     if (!["anthropic", "antigravity"].includes(newVal)) {
       editForm.fallback_group_id_on_invalid_request = null;
     }

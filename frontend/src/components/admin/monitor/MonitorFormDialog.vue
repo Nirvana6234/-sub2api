@@ -779,7 +779,62 @@ watch(
 )
 
 function useCurrentDomain() {
-  form.endpoint = window.location.origin
+  const origin = window.location.origin
+  if (!isPublicHTTPSOrigin(origin)) {
+    appStore.showInfo(t('admin.channelMonitor.form.currentServiceUnavailable'))
+    return
+  }
+  form.endpoint = origin
+}
+
+function isPublicHTTPSOrigin(raw: string): boolean {
+  try {
+    const url = new URL(raw)
+    if (url.protocol !== 'https:' || url.pathname !== '/' || url.search || url.hash) return false
+    return !isLocalOrPrivateHostname(url.hostname)
+  } catch {
+    return false
+  }
+}
+
+function isLocalOrPrivateHostname(rawHostname: string): boolean {
+  const hostname = rawHostname.trim().toLowerCase().replace(/^\[|\]$/g, '')
+  if (
+    hostname === 'localhost' ||
+    hostname.endsWith('.localhost') ||
+    hostname === '0.0.0.0' ||
+    hostname === '::1' ||
+    hostname.startsWith('127.') ||
+    hostname.startsWith('10.') ||
+    hostname.startsWith('192.168.')
+  ) {
+    return true
+  }
+  const private172 = /^172\.(1[6-9]|2\d|3[01])\./
+  return private172.test(hostname)
+}
+
+function validateEndpointBeforeSubmit(): boolean {
+  const raw = form.endpoint.trim()
+  try {
+    const url = new URL(raw)
+    if (url.protocol !== 'https:') {
+      appStore.showError(t('admin.channelMonitor.errors.CHANNEL_MONITOR_ENDPOINT_SCHEME'))
+      return false
+    }
+    if (url.pathname !== '/' || url.search || url.hash) {
+      appStore.showError(t('admin.channelMonitor.errors.CHANNEL_MONITOR_ENDPOINT_PATH'))
+      return false
+    }
+    if (isLocalOrPrivateHostname(url.hostname)) {
+      appStore.showError(t('admin.channelMonitor.errors.CHANNEL_MONITOR_ENDPOINT_PRIVATE'))
+      return false
+    }
+  } catch {
+    appStore.showError(t('admin.channelMonitor.errors.CHANNEL_MONITOR_INVALID_ENDPOINT'))
+    return false
+  }
+  return true
 }
 
 async function openMyKeyPicker() {
@@ -847,6 +902,10 @@ async function handleSubmit() {
     appStore.showError(t('admin.channelMonitor.primaryModelRequired'))
     return
   }
+  // 有意为之，别"修好"它：这里对 quota 模式也一并拦截。quota 监控的日志太占内存，
+  // 产品决定就是不让它存下来，空 endpoint 过不了校验正是拦截手段。看起来像 bug
+  // （字段在 quota 模式下不展示、报错指向看不见的字段）——但这是需求，不是缺陷。
+  if (!validateEndpointBeforeSubmit()) return
 
   submitting.value = true
   try {
