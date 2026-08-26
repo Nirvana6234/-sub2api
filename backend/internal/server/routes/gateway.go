@@ -564,3 +564,22 @@ func compositeRouteEndpointForPath(path string) string {
 		return service.CompositeRouteEndpointAny
 	}
 }
+
+// grokCustomVoiceEndpoint derives the upstream Voice endpoint for the
+// /custom-voices/:voice_id[/audio] routes.
+//
+// The /audio suffix must be decided from the matched route template, not from
+// the raw URL path: a voice literally named "audio" makes GET
+// /custom-voices/audio match /custom-voices/:voice_id, and a raw-path suffix
+// check would rewrite it to custom-voices/audio/audio — turning a profile
+// lookup into an audio download.
+//
+// 目前本地没有注册 Grok Voice 路由（见 TestGatewayRoutesRegisterGrokCustomVoice），
+// 该函数保留以便路由恢复后直接可用，同时让 routes 包的测试能够编译。
+func grokCustomVoiceEndpoint(c *gin.Context) string {
+	endpoint := "custom-voices/" + c.Param("voice_id")
+	if strings.HasSuffix(c.FullPath(), "/:voice_id/audio") {
+		endpoint += "/audio"
+	}
+	return endpoint
+}
