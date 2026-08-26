@@ -78,7 +78,8 @@ export const adminAPI = {
   compliance: adminComplianceAPI,
   contributions: contributionsAPI,
   contributionRooms: contributionRoomsAPI,
-  audit: auditAPI
+  audit: auditAPI,
+  plugins: pluginsAPI
 }
 
 export {
@@ -116,7 +117,8 @@ export {
   adminComplianceAPI,
   contributionsAPI,
   contributionRoomsAPI,
-  auditAPI
+  auditAPI,
+  pluginsAPI
 }
 
 export type {

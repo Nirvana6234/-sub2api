@@ -292,6 +292,18 @@ function buildOpenAISetupTokenAccount() {
   } as any
 }
 
+function buildOpenAIOAuthParentAccount() {
+  return {
+    ...buildAccount(),
+    id: 7,
+    name: 'OpenAI OAuth Parent',
+    type: 'oauth',
+    parent_account_id: null,
+    credentials: { access_token: 'oauth-token' },
+    extra: {}
+  } as any
+}
+
 function mountModal(account = buildAccount(), extraProps: Record<string, unknown> = {}) {
   return mount(EditAccountModal, {
     props: {

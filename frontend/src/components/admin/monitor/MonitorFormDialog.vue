@@ -899,7 +899,9 @@ async function handleSubmit() {
     appStore.showError(t('admin.channelMonitor.primaryModelRequired'))
     return
   }
-  if (!validateEndpointBeforeSubmit()) return
+  // quota 模式下 endpoint 既不展示也不提交（见下方 endpoint 的三元），校验必须跟着一起跳过，
+  // 否则空串过不了 new URL 解析，提交被拦，而报错指向一个界面上根本不存在的字段。
+  if (usesProbePart.value && !validateEndpointBeforeSubmit()) return
 
   submitting.value = true
   try {

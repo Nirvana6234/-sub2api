@@ -330,6 +330,8 @@ describe('MonitorFormDialog linked account selector', () => {
     expect(monitorUpdate).not.toHaveBeenCalled()
 
     await wrapper.get('[data-testid="monitor-primary-model"]').setValue('claude-sonnet-4-5')
+    // probe 模式下 endpoint 是必填且要过公网 HTTPS 校验；原本是 quota 所以留空，切过来得补上
+    await wrapper.get('[data-testid="monitor-endpoint"]').setValue('https://api.example.com')
     await wrapper.get('#channel-monitor-form').trigger('submit')
     await flushPromises()
     expect(monitorUpdate).toHaveBeenCalledWith(42, expect.objectContaining({
@@ -352,6 +354,7 @@ describe('MonitorFormDialog linked account selector', () => {
 
     await wrapper.get('[data-testid="monitor-check-mode-probe"]').trigger('click')
     await wrapper.get('[data-testid="monitor-primary-model"]').setValue('claude-sonnet-4-5')
+    await wrapper.get('[data-testid="monitor-endpoint"]').setValue('https://api.example.com')
     await wrapper.get('#channel-monitor-form').trigger('submit')
     await flushPromises()
 
@@ -365,6 +368,7 @@ describe('MonitorFormDialog linked account selector', () => {
 
     await wrapper.findAll('input[type="text"]')[0].setValue('my monitor')
     await wrapper.get('[data-testid="monitor-primary-model"]').setValue('claude-sonnet-4-5')
+    await wrapper.get('[data-testid="monitor-endpoint"]').setValue('https://api.example.com')
     await wrapper.get('#channel-monitor-form').trigger('submit')
     await flushPromises()
 

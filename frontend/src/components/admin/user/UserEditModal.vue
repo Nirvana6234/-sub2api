@@ -118,6 +118,10 @@ const emit = defineEmits(['close', 'success'])
 const { t } = useI18n(); const appStore = useAppStore(); const { copyToClipboard } = useClipboard()
 
 const submitting = ref(false); const passwordCopied = ref(false)
+const roleOptions = computed(() => [
+  { value: 'user', label: t('admin.users.roles.user') },
+  { value: 'admin', label: t('admin.users.roles.admin') }
+])
 const form = reactive({ email: '', password: '', username: '', notes: '', role: 'user', concurrency: 1, rpm_limit: 0, account_management_enabled: false, contribution_rooms_enabled: false, customAttributes: {} as UserAttributeValuesMap })
 
 watch(() => props.user, (u) => {

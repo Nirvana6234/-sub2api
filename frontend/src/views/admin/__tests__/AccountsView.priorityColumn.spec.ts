@@ -125,7 +125,10 @@ describe('admin AccountsView priority column preferences', () => {
 
   it('preserves an existing preference that explicitly hides priority', async () => {
     localStorage.setItem('account-hidden-columns', JSON.stringify(['priority', 'today_stats']))
-    localStorage.setItem('account-hidden-columns-version', 'scheduler-score-hidden-by-default')
+    // 本地的迁移版本号是 priority-replaces-account-id（priority 列取代了 account id 列），
+    // 与上游的 scheduler-score-hidden-by-default 不同。这里必须写本地值，否则会被判定为
+    // 尚未迁移，迁移逻辑把 priority 强制显示出来，测不到"尊重用户已有隐藏偏好"这件事。
+    localStorage.setItem('account-hidden-columns-version', 'priority-replaces-account-id')
 
     const wrapper = mountView()
     await flushPromises()
