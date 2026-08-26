@@ -6,6 +6,7 @@ import (
 	"context"
 	"net/http"
 	"testing"
+	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/stretchr/testify/require"
@@ -289,4 +290,10 @@ func TestAdminServiceBulkUpdateAccountsRejectsMalformedValueForMixedTargetsInclu
 	require.Nil(t, result)
 	require.Equal(t, http.StatusBadRequest, infraerrors.Code(err))
 	require.Zero(t, repo.bulkUpdateCalls)
+}
+
+// RecoverAutomaticSchedulability 满足 AccountRepository 接口。这些测试不覆盖
+// 自动可调度性恢复，固定返回 (false, nil)：按接口约定，条件不满足时不得改状态。
+func (r *longContextBillingRepoStub) RecoverAutomaticSchedulability(context.Context, int64, *time.Time) (bool, error) {
+	return false, nil
 }
