@@ -174,13 +174,32 @@ func (s *AntigravityGatewayService) handleSmartRetry(p antigravityRetryLoopParam
 		var lastRetryResp *http.Response
 		var lastRetryBody []byte
 
-		// MODEL_CAPACITY_EXHAUSTED uses a bounded in-place retry. This gives a
-		// temporarily full upstream a short chance to recover while retaining the
-		// selected account and its sticky-session context.
+		// MODEL_CAPACITY_EXHAUSTED 使用独立的重试参数（见常量处说明）
 		maxAttempts := antigravitySmartRetryMaxAttempts
 		if isModelCapacityExhausted {
 			maxAttempts = antigravityModelCapacityRetryMaxAttempts
 			waitDuration = antigravityModelCapacityRetryWait
+
+			// 全局去重：同一模型刚被判定容量耗尽且还在 cooldown 内，说明原地重试大概率
+			// 仍然撞墙。跳过重试直接换账号——省掉的是白等的那几秒，不是故障转移本身。
+			if modelName != "" {
+				modelCapacityExhaustedMu.RLock()
+				cooldownUntil, exists := modelCapacityExhaustedUntil[modelName]
+				modelCapacityExhaustedMu.RUnlock()
+				if exists && time.Now().Before(cooldownUntil) {
+					log.Printf("%s status=%d model_capacity_exhausted_dedup model=%s account=%d cooldown_until=%v (skip retry, switching account)",
+						p.prefix, resp.StatusCode, modelName, p.account.ID, cooldownUntil.Format("15:04:05"))
+					s.clearStickySession(p.ctx, p.groupID, p.sessionHash)
+					return &smartRetryResult{
+						action: smartRetryActionBreakWithResp,
+						switchError: &AntigravityAccountSwitchError{
+							OriginalAccountID: p.account.ID,
+							RateLimitedModel:  modelName,
+							IsStickySession:   p.isStickySession,
+						},
+					}
+				}
+			}
 		}
 
 		for attempt := 1; attempt <= maxAttempts; attempt++ {
@@ -214,6 +233,12 @@ func (s *AntigravityGatewayService) handleSmartRetry(p antigravityRetryLoopParam
 			retryResp, retryErr := p.httpUpstream.Do(retryReq, p.proxyURL, p.account.ID, p.account.Concurrency)
 			if retryErr == nil && retryResp != nil && retryResp.StatusCode != http.StatusTooManyRequests && retryResp.StatusCode != http.StatusServiceUnavailable {
 				log.Printf("%s status=%d smart_retry_success attempt=%d/%d", p.prefix, retryResp.StatusCode, attempt, maxAttempts)
+				// 重试成功，清除 MODEL_CAPACITY_EXHAUSTED cooldown
+				if isModelCapacityExhausted && modelName != "" {
+					modelCapacityExhaustedMu.Lock()
+					delete(modelCapacityExhaustedUntil, modelName)
+					modelCapacityExhaustedMu.Unlock()
+				}
 				return &smartRetryResult{action: smartRetryActionBreakWithResp, resp: retryResp}
 			}
 
@@ -252,10 +277,16 @@ func (s *AntigravityGatewayService) handleSmartRetry(p antigravityRetryLoopParam
 			retryBody = respBody
 		}
 
-		// Capacity exhaustion is not an account/model capability failure. After
-		// the bounded in-place retries, clear the sticky binding and let the
-		// scheduler try another account for this request without any cooldown.
+		// 容量耗尽不是账号或模型能力的问题。原地重试用完之后清掉粘性绑定，让调度换个
+		// 账号继续这次请求，不打任何冷却。
 		if isModelCapacityExhausted {
+			// 记一个短 cooldown：后续并发请求撞到同一模型时可以跳过白等的重试，
+			// 直接走换号。只影响是否重试，不影响换号本身。
+			if modelName != "" {
+				modelCapacityExhaustedMu.Lock()
+				modelCapacityExhaustedUntil[modelName] = time.Now().Add(antigravityModelCapacityCooldown)
+				modelCapacityExhaustedMu.Unlock()
+			}
 			log.Printf("%s status=%d smart_retry_exhausted_model_capacity attempts=%d model=%s account=%d body=%s (switching account without cooldown)",
 				p.prefix, resp.StatusCode, maxAttempts, modelName, p.account.ID, truncateForLog(retryBody, 200))
 			s.clearStickySession(p.ctx, p.groupID, p.sessionHash)
@@ -1088,8 +1119,8 @@ func (s *AntigravityGatewayService) handleModelRateLimit(p *handleModelRateLimit
 		return &handleModelRateLimitResult{Handled: false}
 	}
 
-	// MODEL_CAPACITY_EXHAUSTED：模型容量不足，所有账号共享同一容量池
-	// 切换账号无意义，不设置模型限流（实际重试由 handleSmartRetry 处理）
+	// MODEL_CAPACITY_EXHAUSTED：容量耗尽是瞬时状态，不记模型限流（原地重试由
+	// handleSmartRetry 负责），但仍然换账号继续这次请求。
 	if info.IsModelCapacityExhausted {
 		log.Printf("%s status=%d model_capacity_exhausted model=%s (switching account without cooldown)",
 			p.prefix, p.statusCode, info.ModelName)

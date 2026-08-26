@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
@@ -33,9 +34,10 @@ const (
 	antigravitySmartRetryMaxAttempts    = 1                // 智能重试最大次数（仅重试 1 次，防止重复限流/长期等待）
 	antigravityDefaultRateLimitDuration = 30 * time.Second // 默认限流时间（无 retryDelay 时使用）
 
-	// MODEL_CAPACITY_EXHAUSTED is a transient request-level condition. Retry the
-	// current account a few times first to retain sticky-session context, then
-	// fail over without recording a model capability or rate-limit cooldown.
+	// MODEL_CAPACITY_EXHAUSTED 是请求级的瞬时状态。先在当前账号上原地重试几次，
+	// 保住粘性会话上下文；仍不成功就清掉粘性并交给调度换账号，不记模型能力缺失、
+	// 也不打限流冷却。次数刻意压得很低：每次重试固定等 1s，调大会让单个请求在这里
+	// 干等数十秒，客户端侧表现为卡死而不是失败。
 	antigravityModelCapacityRetryMaxAttempts = 3
 	antigravityModelCapacityRetryWait        = 1 * time.Second
 
@@ -59,6 +61,9 @@ const (
 	// 单账号 503 退避重试：原地重试的总累计等待时间上限
 	// 超过此上限将不再重试，直接返回 503
 	antigravitySingleAccountSmartRetryTotalMaxWait = 30 * time.Second
+
+	// MODEL_CAPACITY_EXHAUSTED 全局去重：重试全部失败后的 cooldown 时间
+	antigravityModelCapacityCooldown = 10 * time.Second
 )
 
 // antigravityPassthroughErrorMessages 透传给客户端的错误消息白名单（小写）
@@ -66,6 +71,12 @@ const (
 var antigravityPassthroughErrorMessages = []string{
 	"prompt is too long",
 }
+
+// MODEL_CAPACITY_EXHAUSTED 全局去重：避免多个并发请求同时对同一模型进行容量耗尽重试
+var (
+	modelCapacityExhaustedMu    sync.RWMutex
+	modelCapacityExhaustedUntil = make(map[string]time.Time) // modelName -> cooldown until
+)
 
 const (
 	antigravityForwardBaseURLEnv  = "GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL"
