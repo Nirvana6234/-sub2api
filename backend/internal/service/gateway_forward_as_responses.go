@@ -72,7 +72,6 @@ func (s *GatewayService) ForwardAsResponses(
 	// 4. Model mapping —— 是否还允许账号映射改写见 shouldSkipModelMappingForKiro。
 	skipModelMapping := shouldSkipModelMappingForKiro(c, originalModel)
 	mappedModel := originalModel
-	reasoningEffort := ExtractResponsesReasoningEffortFromBody(body)
 	if !skipModelMapping &&
 		(account.Type == AccountTypeAPIKey || account.Type == AccountTypeServiceAccount) {
 		mappedModel = account.GetMappedModel(originalModel)

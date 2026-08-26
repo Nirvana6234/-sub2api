@@ -8,23 +8,39 @@
 Required Notice: Copyright 2026 chen-006 and contributors.
 Original project: https://github.com/chen-006/gpt56_api_detector
 
-`vendor/` 是上游发行版 **v4.1.1** 的逐字节副本，许可证原文见 `vendor/LICENSE`
+`vendor/` 的基线是上游发行版 **v4.1.1**，许可证原文见 `vendor/LICENSE`
 （PolyForm Noncommercial License 1.0.0），中文边界说明见
-`vendor/NONCOMMERCIAL_NOTICE_CN.md`。
+`vendor/NONCOMMERCIAL_NOTICE_CN.md`。核心指纹基线、预设、概率模型和判定逻辑保持上游原样。
 
-校验 vendor 未被改动：
+上游随包的 35 个文件校验值在 `vendor/SHA256SUMS.txt`。其中 31 个文件应逐字节
+匹配；4 个传输层文件有本项目的受控适配，不能把 `SHA256SUMS.txt` 当作整个 vendor
+目录的全绿断言：
+
+- `gpt56_vnext/transport.py`
+- `gpt56_vnext/detector.py`
+- `gpt56_vnext/server.py`
+- `gpt56_vnext/native/codex-native-transport.mjs`
+
+这四处只支持账号绑定的 HTTP 代理和安全的请求头覆盖，令检测请求复现实际转发链路；
+它们不修改检测请求计划、指纹基线、评分、阈值或 verdict 规则。
+
+校验未改动的上游基线文件：
 
 ```bash
-cd vendor && tr -d '\r' < SHA256SUMS.txt > /tmp/sums.txt && sha256sum -c /tmp/sums.txt
+cd vendor && tr -d '\r' < SHA256SUMS.txt \
+  | grep -v -E 'gpt56_vnext/(transport|detector|server)\.py|gpt56_vnext/native/codex-native-transport\.mjs' \
+  > /tmp/sums.txt && sha256sum -c /tmp/sums.txt
 ```
 
-应输出 35 个 `OK`，没有 FAILED。
+应输出 31 个 `OK`，没有 FAILED；4 个受控适配文件按下面的差异说明人工审阅。
 
 ### 本目录相对上游的修改
 
 按许可证「必须清楚说明修改内容」的要求，逐条列出：
 
-1. `vendor/` 内**没有任何修改**，与上游发行版一致（见上面的校验命令）。
+1. `vendor/` 的上述 4 个传输层文件接受 `proxy_url` 与 `header_overrides`：
+   `proxy_url` 只在内存中用于当前检测会话，`header_overrides` 过滤掉认证、Host、长度、
+   连接等危险头；两者均不写进报告或 SQLite。其余上游文件与 v4.1.1 校验值一致。
 2. 新增 `serve.py`：上游 `gpt56_vnext_web.py` 调用的 `create_server()` 把监听地址
    写死为 `127.0.0.1`，容器内绑回环则同网络的 transithub 连不上。`serve.py` 改用
    上游 `__all__` 公开的 `AppServer` / `AppState` 自行组装服务器，只把绑定地址
@@ -33,6 +49,18 @@ cd vendor && tr -d '\r' < SHA256SUMS.txt > /tmp/sums.txt && sha256sum -c /tmp/su
    无 pip / npm 依赖。
 
 修改版由本仓库运营，与原作者无关，也不代表原作者背书。
+
+### 更新上游发行版
+
+不要用新 zip 直接覆盖 `vendor/`。先保留当前目录并在本机完成下列步骤：
+
+1. 查询 `https://api.github.com/repos/chen-006/gpt56_api_detector/releases/latest`，记录 tag、发布日期、下载地址。
+2. 下载 release asset `gpt56_api_detector_github_upload.zip` 到
+   `transit-hub/.artifacts/upstream-gpt56_api_detector-v<version>.zip`，解压到同名目录。该目录只作只读对照。
+3. 在解压目录中用 `SHA256SUMS.txt` 校验官方包；先审阅 CHANGELOG、LICENSE 与技术报告，再决定是否升级。
+4. 用逐文件 diff 对比新上游与当前 `vendor/`。把上面 4 个传输层适配逐项移植，确认新上游没有提供等价扩展点；不要盲目覆盖或自动合并。
+5. 运行 `python -m compileall -q vendor/gpt56_vnext` 和现有 TransitHub purity-check 测试；用一个受代理账号和一个带允许头覆盖的账号各跑一次低档检测，确认真实请求能完成且报告不含 key、代理或敏感头。
+6. 本地构建检测器镜像或发布目录后再部署。生产只接收已构建产物，禁止在云端编译；保留上一个 release 以便回滚。
 
 ### ⚠️ 商用边界（未解决）
 

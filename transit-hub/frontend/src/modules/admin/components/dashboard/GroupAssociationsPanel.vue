@@ -79,6 +79,9 @@ const targetKey = (siteId: string, groupName: string): string => `${siteId}\u000
 const mappingTargets = (mapping: MySiteMapping): MySiteGroupRef[] => (
   Array.isArray(mapping.upstreamTargets) ? mapping.upstreamTargets : []
 )
+const hasPurityIssue = (mapping: MySiteMapping): boolean => (
+  mappingTargets(mapping).some(target => target.purityIssue != null)
+)
 const staleOwnGroupSet = computed(() => new Set(staleOwnGroupNames.value))
 const staleTargetSet = computed(() => new Set(staleTargetRefs.value.map(target => targetKey(target.siteId, target.groupName))))
 const siteById = computed(() => new Map(upstreamSites.value.map(site => [site.id, site])))
@@ -284,6 +287,7 @@ const selectedTargetDetails = computed(() => selectedTargets.value.map(target =>
   return {
     ...detail,
     sub2apiAccountId: target.sub2apiAccountId ?? null,
+    purityIssue: target.purityIssue ?? null,
     boundAccountName: boundAccount?.name ?? '',
     effectiveCostMultiplier: cost.multiplier,
     costRateSource: cost.source,
@@ -699,7 +703,7 @@ onBeforeUnmount(() => {
             <span class="min-w-0 flex-1">
               <span class="flex items-center gap-2">
                 <span class="truncate text-sm font-medium">{{ row.ownGroup }}</span>
-                <TriangleAlert v-if="row.stale || row.staleTargetCount" class="h-3.5 w-3.5 shrink-0 text-warning" />
+                <TriangleAlert v-if="row.stale || row.staleTargetCount || hasPurityIssue(row.mapping)" class="h-3.5 w-3.5 shrink-0 text-warning" />
               </span>
               <span class="mt-1 block text-xs text-muted-foreground">
                 {{ t('admin.groupAssociations.targetCount', { count: mappingTargets(row.mapping).length }) }}
@@ -822,6 +826,13 @@ onBeforeUnmount(() => {
                       <span class="truncate text-sm font-medium text-foreground">{{ target.groupName }}</span>
                       <span v-if="target.stale" class="rounded border border-warning/30 bg-warning/10 px-1.5 py-0.5 text-[10px] font-medium text-warning">
                         {{ t('admin.groupAssociations.staleTarget') }}
+                      </span>
+                      <span
+                        v-if="target.purityIssue"
+                        class="rounded border border-destructive/30 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive"
+                        :title="t(`admin.groupAssociations.purityIssue.detail.${target.purityIssue.kind}`, { time: formatRunTime(target.purityIssue.detectedAt) })"
+                      >
+                        {{ t(`admin.groupAssociations.purityIssue.label.${target.purityIssue.kind}`) }}
                       </span>
                     </div>
                     <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">

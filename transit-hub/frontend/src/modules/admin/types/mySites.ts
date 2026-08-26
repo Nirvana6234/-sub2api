@@ -7,6 +7,13 @@ export interface MySiteGroupRef {
    * 绝不退回上游标称倍率（上游标称的是它的售价，不是我们的进货成本）。
    */
   sub2apiAccountId?: string | null
+  /** 由最近一次纯度检测派生，只读，不会被保存为调价配置。 */
+  purityIssue?: MySitePurityIssue | null
+}
+
+export interface MySitePurityIssue {
+  kind: 'model_mismatch' | 'upstream_unreachable' | string
+  detectedAt: string
 }
 
 export type AutoPricingSource = 'primary_upstream' | 'lowest_upstream' | 'highest_upstream' | 'average_upstream'

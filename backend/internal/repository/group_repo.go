@@ -69,6 +69,7 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *servi
 		SetAllowContributionPool(groupIn.AllowContributionPool).
 		SetSortOrder(groupIn.SortOrder).
 		SetIsExclusive(groupIn.IsExclusive).
+		SetIsFallbackPool(groupIn.IsFallbackPool).
 		SetStatus(groupIn.Status).
 		SetSubscriptionType(groupIn.SubscriptionType).
 		SetNillableDailyLimitUsd(groupIn.DailyLimitUSD).
@@ -254,6 +255,7 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		SetRateMultiplier(groupIn.RateMultiplier).
 		SetAllowContributionPool(groupIn.AllowContributionPool).
 		SetIsExclusive(groupIn.IsExclusive).
+		SetIsFallbackPool(groupIn.IsFallbackPool).
 		SetStatus(groupIn.Status).
 		SetSubscriptionType(groupIn.SubscriptionType).
 		SetNillableDailyLimitUsd(groupIn.DailyLimitUSD).

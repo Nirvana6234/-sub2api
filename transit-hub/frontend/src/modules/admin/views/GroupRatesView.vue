@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import { AlertCircle, ArrowUpDown, Check, ChevronDown, History, KeyRound, Link2, Loader2, Megaphone, PlugZap, RefreshCw, Search, ServerCog, Sparkles, X } from 'lucide-vue-next'
+import { AlertCircle, ArrowUpDown, Check, ChevronDown, History, KeyRound, Link2, Loader2, Megaphone, PlugZap, RefreshCw, Search, ServerCog, Sparkles, TriangleAlert, X } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { getMySiteMappingOptions, realConnect, realBind, listAdminResources, listUpstreamKeys, listRealConnections, realDisconnect, listUpstreamKeyModels, testUpstreamKey } from '../api/mySites'
 import { getDashboardAdminStatus } from '../api/dashboardAdmin'
@@ -366,7 +366,7 @@ watch(isAnyDialogOpen, async (open) => {
 
 onMounted(() => {
   document.addEventListener('keydown', handleDialogKeydown)
-	void Promise.all([loadRates(), loadRealConnections(), loadAdminPlatform()])
+	void Promise.all([loadRates(), loadRealConnections(), loadAdminPlatform(), loadMySiteMappingData()])
 })
 
 onBeforeUnmount(() => {
@@ -949,6 +949,14 @@ const historyRowKey = (row: GroupRateHistoryRow, index: number): string => (
                   <span v-if="rate.deleted" class="inline-flex rounded-md border border-red-500/20 bg-red-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-red-500">{{ t('admin.groupRates.status.deleted') }}</span>
                   <span v-else-if="isRealConnected(rate)" class="inline-flex rounded-md border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-600 dark:text-emerald-300">{{ t('admin.groupRates.status.mapped') }}</span>
                   <span v-if="!rate.deleted && isPricingMapped(rate)" class="inline-flex rounded-md border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300">{{ t('admin.groupRates.status.pricingMapped') }}</span>
+                  <span
+                    v-if="rate.purityIssue"
+                    class="inline-flex items-center gap-1 rounded-md border border-destructive/30 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-semibold text-destructive"
+                    :title="t(`admin.groupRates.purityIssue.detail.${rate.purityIssue.kind}`, { time: formatDateTime(rate.purityIssue.detectedAt) })"
+                  >
+                    <TriangleAlert class="h-3 w-3" />
+                    {{ t(`admin.groupRates.purityIssue.label.${rate.purityIssue.kind}`) }}
+                  </span>
                 </div>
               </td>
               <td class="px-4 py-2.5">

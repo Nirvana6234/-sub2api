@@ -1435,7 +1435,9 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 		if len(mapping) > 0 {
 			hasAnyMapping = true
 			for model := range mapping {
-				modelSet[model] = struct{}{}
+				if IsPublicModel(model) {
+					modelSet[model] = struct{}{}
+				}
 			}
 		}
 	}
@@ -1529,7 +1531,7 @@ func workspaceAvailableModelsFromAccounts(accounts []Account) map[string]Workspa
 		}
 		for model := range mapping {
 			model = strings.TrimSpace(model)
-			if model != "" {
+			if model != "" && IsPublicModel(model) {
 				entry.models[model] = struct{}{}
 			}
 		}
@@ -1548,6 +1550,13 @@ func workspaceAvailableModelsFromAccounts(accounts []Account) map[string]Workspa
 		}
 	}
 	return result
+}
+
+// IsPublicModel reports whether a model may be advertised in user-facing
+// catalogs. Luna is deliberately excluded even when stale account mappings
+// still contain it.
+func IsPublicModel(model string) bool {
+	return !strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "gpt-5.6-luna")
 }
 
 // GetSchedulablePlatforms returns the concrete platforms that currently have

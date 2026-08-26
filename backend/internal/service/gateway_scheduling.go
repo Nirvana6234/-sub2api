@@ -990,7 +990,10 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 		}
 		applyGroupPriority(accounts, groupID)
 		accounts, err = s.applyContributionRoomRouting(ctx, accounts, groupID, platform, useMixed)
-		return accounts, useMixed, err
+		if err != nil {
+			return nil, useMixed, err
+		}
+		return s.filterAccountsBySchedulingThreshold(ctx, accounts), useMixed, nil
 	}
 	useMixed := (platform == PlatformAnthropic || platform == PlatformGemini) && !hasForcePlatform
 	if useMixed {
@@ -1035,7 +1038,10 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 			}
 		}
 		filtered, err = s.applyContributionRoomRouting(ctx, filtered, groupID, platform, useMixed)
-		return filtered, useMixed, err
+		if err != nil {
+			return nil, useMixed, err
+		}
+		return s.filterAccountsBySchedulingThreshold(ctx, filtered), useMixed, nil
 	}
 
 	var accounts []Account
@@ -1072,7 +1078,31 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 		}
 	}
 	accounts, err = s.applyContributionRoomRouting(ctx, accounts, groupID, platform, useMixed)
-	return accounts, useMixed, err
+	if err != nil {
+		return nil, useMixed, err
+	}
+	return s.filterAccountsBySchedulingThreshold(ctx, accounts), useMixed, nil
+}
+
+func (s *GatewayService) filterAccountsBySchedulingThreshold(ctx context.Context, accounts []Account) []Account {
+	if len(accounts) == 0 {
+		return accounts
+	}
+	filtered := make([]Account, 0, len(accounts))
+	for i := range accounts {
+		if s.isAccountBlockedBySchedulingThreshold(ctx, &accounts[i]) {
+			continue
+		}
+		filtered = append(filtered, accounts[i])
+	}
+	return filtered
+}
+
+func (s *GatewayService) isAccountBlockedBySchedulingThreshold(ctx context.Context, account *Account) bool {
+	if s == nil || s.rateLimitService == nil || account == nil {
+		return false
+	}
+	return s.rateLimitService.ApplyAccountSchedulingThreshold(ctx, account)
 }
 
 func applyGroupPriority(accounts []Account, groupID *int64) {
@@ -1720,10 +1750,25 @@ func (s *GatewayService) checkAndRegisterSession(ctx context.Context, account *A
 }
 
 func (s *GatewayService) getSchedulableAccount(ctx context.Context, accountID int64) (*Account, error) {
+	var account *Account
+	var err error
 	if s.schedulerSnapshot != nil {
-		return s.schedulerSnapshot.GetAccount(ctx, accountID)
+		account, err = s.schedulerSnapshot.GetAccount(ctx, accountID)
+	} else {
+		account, err = s.accountRepo.GetByID(ctx, accountID)
 	}
-	return s.accountRepo.GetByID(ctx, accountID)
+	if err != nil || account == nil {
+		return account, err
+	}
+	if s.isAccountBlockedBySchedulingThreshold(ctx, account) {
+		return nil, nil
+	}
+	if account.IsGrok() {
+		if gated := s.filterGrokFreeQuotaAccountsForGateway(ctx, []Account{*account}); len(gated) == 0 {
+			return nil, nil
+		}
+	}
+	return account, nil
 }
 
 func (s *GatewayService) hydrateSelectedAccount(ctx context.Context, account *Account) (*Account, error) {

@@ -296,7 +296,7 @@ func (s *Service) persistConnection(ctx context.Context, conn RealConnection) er
 	// Older/in-memory repositories do not expose a transaction boundary. Keep
 	// their existing behavior for tests and rolling deployments.
 	if conn.PricingMappingEnabled {
-		s.addUpstreamMapping(ctx, conn.UserID, conn.WorkspaceAdminAccountID, conn.OwnGroupIDs, conn.UpstreamSiteID, conn.UpstreamGroupName)
+		s.addUpstreamMapping(ctx, conn.UserID, conn.WorkspaceAdminAccountID, conn.OwnGroupIDs, conn.UpstreamSiteID, conn.UpstreamGroupName, conn.AdminPlatform, conn.AdminAccountID)
 	}
 	return nil
 }

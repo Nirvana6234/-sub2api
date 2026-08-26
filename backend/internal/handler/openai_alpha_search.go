@@ -114,6 +114,8 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
 	failedGroupIDs := make(map[int64]struct{})
+	// 按账号累计的同号重试次数，配合 GetPoolModeRetryCount 限制单个账号的重试上限。
+	sameAccountRetryCount := make(map[int64]int)
 	var lastFailoverErr *service.UpstreamFailoverError
 	switchCount := 0
 	maxAccountSwitches := maxAccountSwitchesForRequest(c.Request.Context(), h.maxAccountSwitches)

@@ -204,21 +204,22 @@ type BackupScheduleConfig struct {
 
 // BackupRecord 备份记录
 type BackupRecord struct {
-	ID            string `json:"id"`
-	Status        string `json:"status"`      // pending, running, completed, failed
-	BackupType    string `json:"backup_type"` // postgres_system_config
-	FileName      string `json:"file_name"`
-	S3Key         string `json:"s3_key"`
-	SizeBytes     int64  `json:"size_bytes"`
-	TriggeredBy   string `json:"triggered_by"` // manual, scheduled
-	ErrorMsg      string `json:"error_message,omitempty"`
-	StartedAt     string `json:"started_at"`
-	FinishedAt    string `json:"finished_at,omitempty"`
-	ExpiresAt     string `json:"expires_at,omitempty"`     // 过期时间
-	Progress      string `json:"progress,omitempty"`       // "dumping", "uploading", ""
-	RestoreStatus string `json:"restore_status,omitempty"` // "", "running", "completed", "failed"
-	RestoreError  string `json:"restore_error,omitempty"`
-	RestoredAt    string `json:"restored_at,omitempty"`
+	ID            string       `json:"id"`
+	Status        string       `json:"status"`      // pending, running, completed, failed
+	BackupType    string       `json:"backup_type"` // postgres_system_config
+	FileName      string       `json:"file_name"`
+	S3Key         string       `json:"s3_key"`
+	Parts         []BackupPart `json:"parts,omitempty"`
+	SizeBytes     int64        `json:"size_bytes"`
+	TriggeredBy   string       `json:"triggered_by"` // manual, scheduled
+	ErrorMsg      string       `json:"error_message,omitempty"`
+	StartedAt     string       `json:"started_at"`
+	FinishedAt    string       `json:"finished_at,omitempty"`
+	ExpiresAt     string       `json:"expires_at,omitempty"`     // 过期时间
+	Progress      string       `json:"progress,omitempty"`       // "dumping", "uploading", ""
+	RestoreStatus string       `json:"restore_status,omitempty"` // "", "running", "completed", "failed"
+	RestoreError  string       `json:"restore_error,omitempty"`
+	RestoredAt    string       `json:"restored_at,omitempty"`
 }
 
 // BackupService 数据库备份恢复服务
@@ -247,17 +248,21 @@ type BackupService struct {
 	cronMu      sync.Mutex
 	cronSched   *cron.Cron
 	cronEntryID cron.EntryID
-	lockCache LeaderLockCache
-	db *sql.DB
+	lockCache   LeaderLockCache
+	db          *sql.DB
 
-	wg           sync.WaitGroup     // 追踪活跃的备份/恢复 goroutine
-	shuttingDown atomic.Bool        // 阻止新备份启动
-	bgCtx        context.Context    // 所有后台操作的 parent context
-	bgCancel     context.CancelFunc // 取消所有活跃后台操作
+	wg            sync.WaitGroup     // 追踪活跃的备份/恢复 goroutine
+	shuttingDown  atomic.Bool        // 阻止新备份启动
+	bgCtx         context.Context    // 所有后台操作的 parent context
+	bgCancel      context.CancelFunc // 取消所有活跃后台操作
+	partSizeBytes int64
 }
 
 func (s *BackupService) SetLeaderLock(lockCache LeaderLockCache, db *sql.DB) {
-	if s != nil { s.lockCache = lockCache; s.db = db }
+	if s != nil {
+		s.lockCache = lockCache
+		s.db = db
+	}
 }
 
 func NewBackupService(
@@ -277,6 +282,7 @@ func NewBackupService(
 		dumper:                  dumper,
 		bgCtx:                   bgCtx,
 		bgCancel:                bgCancel,
+		partSizeBytes:           defaultBackupPartSizeBytes,
 	}
 }
 
@@ -618,61 +624,27 @@ func (s *BackupService) CreateBackup(ctx context.Context, triggeredBy string, ex
 		ExpiresAt:   expiresAt,
 	}
 
-	// 流式执行: 系统配置快照 -> gzip -> S3 upload
-	dumpReader, err := s.dumper.DumpSystemConfig(ctx)
+	archivePath, sizeBytes, err := s.createCompressedBackupFile(ctx)
 	if err != nil {
 		record.Status = "failed"
-		record.ErrorMsg = fmt.Sprintf("system config snapshot failed: %v", err)
+		record.ErrorMsg = err.Error()
 		record.FinishedAt = time.Now().Format(time.RFC3339)
 		_ = s.saveRecord(ctx, record)
-		return record, fmt.Errorf("system config snapshot: %w", err)
+		return record, err
 	}
-
-	// 使用 io.Pipe 将 gzip 压缩数据流式传递给 S3 上传
-	pr, pw := io.Pipe()
-	gzipDone := make(chan error, 1)
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				pw.CloseWithError(fmt.Errorf("gzip goroutine panic: %v", r)) //nolint:errcheck
-				gzipDone <- fmt.Errorf("gzip goroutine panic: %v", r)
-			}
-		}()
-		gzWriter := gzip.NewWriter(pw)
-		var gzErr error
-		_, gzErr = io.Copy(gzWriter, dumpReader)
-		if closeErr := gzWriter.Close(); closeErr != nil && gzErr == nil {
-			gzErr = closeErr
-		}
-		if closeErr := dumpReader.Close(); closeErr != nil && gzErr == nil {
-			gzErr = closeErr
-		}
-		if gzErr != nil {
-			_ = pw.CloseWithError(gzErr)
-		} else {
-			_ = pw.Close()
-		}
-		gzipDone <- gzErr
-	}()
-
-	contentType := "application/gzip"
-	sizeBytes, err := objectStore.Upload(ctx, s3Key, pr, contentType)
-	if err != nil {
-		_ = pr.CloseWithError(err) // 确保 gzip goroutine 不会悬挂
-		gzErr := <-gzipDone        // 安全等待 gzip goroutine 完成
+	defer func() { _ = cleanupBackupFiles(archivePath) }()
+	record.SizeBytes = sizeBytes
+	if err := s.saveRecord(ctx, record); err != nil {
+		return nil, fmt.Errorf("save initial record: %w", err)
+	}
+	if err := s.uploadBackupArchive(ctx, record, objectStore, s3Cfg, archivePath); err != nil {
 		record.Status = "failed"
-		errMsg := fmt.Sprintf("S3 upload failed: %v", err)
-		if gzErr != nil {
-			errMsg = fmt.Sprintf("gzip/dump failed: %v", gzErr)
-		}
-		record.ErrorMsg = errMsg
+		record.ErrorMsg = err.Error()
 		record.FinishedAt = time.Now().Format(time.RFC3339)
 		_ = s.saveRecord(ctx, record)
 		return record, fmt.Errorf("backup upload: %w", err)
 	}
-	<-gzipDone // 确保 gzip goroutine 已退出
 
-	record.SizeBytes = sizeBytes
 	record.Status = "completed"
 	record.FinishedAt = time.Now().Format(time.RFC3339)
 	if err := s.saveRecord(ctx, record); err != nil {
@@ -768,80 +740,46 @@ func (s *BackupService) StartBackup(ctx context.Context, triggeredBy string, exp
 				_ = s.saveRecord(context.Background(), record)
 			}
 		}()
-		s.executeBackup(record, objectStore)
+		s.executeBackup(record, objectStore, s3Cfg)
 	}()
 
 	return &result, nil
 }
 
 // executeBackup 后台执行备份（独立于 HTTP context）
-func (s *BackupService) executeBackup(record *BackupRecord, objectStore BackupObjectStore) {
+func (s *BackupService) executeBackup(record *BackupRecord, objectStore BackupObjectStore, s3Cfg *BackupS3Config) {
 	ctx, cancel := context.WithTimeout(s.bgCtx, 30*time.Minute)
 	defer cancel()
 
-	// 阶段1: 系统配置快照
+	// 阶段1: 系统配置快照 -> gzip 临时文件
 	record.Progress = "dumping"
 	_ = s.saveRecord(ctx, record)
 
-	dumpReader, err := s.dumper.DumpSystemConfig(ctx)
+	archivePath, sizeBytes, err := s.createCompressedBackupFile(ctx)
 	if err != nil {
 		record.Status = "failed"
-		record.ErrorMsg = fmt.Sprintf("system config snapshot failed: %v", err)
+		record.ErrorMsg = err.Error()
 		record.Progress = ""
 		record.FinishedAt = time.Now().Format(time.RFC3339)
 		_ = s.saveRecord(context.Background(), record)
 		return
 	}
+	defer func() { _ = cleanupBackupFiles(archivePath) }()
+	record.SizeBytes = sizeBytes
 
 	// 阶段2: gzip + upload
 	record.Progress = "uploading"
 	_ = s.saveRecord(ctx, record)
 
-	pr, pw := io.Pipe()
-	gzipDone := make(chan error, 1)
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				pw.CloseWithError(fmt.Errorf("gzip goroutine panic: %v", r)) //nolint:errcheck
-				gzipDone <- fmt.Errorf("gzip goroutine panic: %v", r)
-			}
-		}()
-		gzWriter := gzip.NewWriter(pw)
-		var gzErr error
-		_, gzErr = io.Copy(gzWriter, dumpReader)
-		if closeErr := gzWriter.Close(); closeErr != nil && gzErr == nil {
-			gzErr = closeErr
-		}
-		if closeErr := dumpReader.Close(); closeErr != nil && gzErr == nil {
-			gzErr = closeErr
-		}
-		if gzErr != nil {
-			_ = pw.CloseWithError(gzErr)
-		} else {
-			_ = pw.Close()
-		}
-		gzipDone <- gzErr
-	}()
-
-	contentType := "application/gzip"
-	sizeBytes, err := objectStore.Upload(ctx, record.S3Key, pr, contentType)
-	if err != nil {
-		_ = pr.CloseWithError(err) // 确保 gzip goroutine 不会悬挂
-		gzErr := <-gzipDone        // 安全等待 gzip goroutine 完成
+	if err := s.uploadBackupArchive(ctx, record, objectStore, s3Cfg, archivePath); err != nil {
 		record.Status = "failed"
-		errMsg := fmt.Sprintf("S3 upload failed: %v", err)
-		if gzErr != nil {
-			errMsg = fmt.Sprintf("gzip/dump failed: %v", gzErr)
-		}
-		record.ErrorMsg = errMsg
+		record.ErrorMsg = err.Error()
 		record.Progress = ""
 		record.FinishedAt = time.Now().Format(time.RFC3339)
 		_ = s.saveRecord(context.Background(), record)
 		return
 	}
-	<-gzipDone // 确保 gzip goroutine 已退出
 
-	record.SizeBytes = sizeBytes
 	record.Status = "completed"
 	record.Progress = ""
 	record.FinishedAt = time.Now().Format(time.RFC3339)

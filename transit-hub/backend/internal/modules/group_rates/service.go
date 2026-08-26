@@ -5,11 +5,18 @@ import (
 	"log"
 	"strings"
 	"time"
+
+	"transithub/backend/internal/modules/purity_check"
 )
 
 type Service struct {
-	repository *Repository
-	refresher  GroupRateSnapshotRefresher
+	repository   *Repository
+	refresher    GroupRateSnapshotRefresher
+	purityIssues PurityIssueReader
+}
+
+type PurityIssueReader interface {
+	LatestSiteIssues(ctx context.Context, userID string, adminAccountID string) ([]purity_check.SiteIssue, error)
 }
 
 type GroupRateSnapshotRefresher interface {
@@ -26,6 +33,10 @@ func NewService(repository *Repository) *Service {
 
 func (s *Service) SetSnapshotRefresher(refresher GroupRateSnapshotRefresher) {
 	s.refresher = refresher
+}
+
+func (s *Service) SetPurityIssueReader(reader PurityIssueReader) {
+	s.purityIssues = reader
 }
 
 func (s *Service) EnsureSchema(ctx context.Context) error {
@@ -159,9 +170,25 @@ func (s *Service) List(ctx context.Context, userID string, adminAccountID string
 		return ListResult{}, err
 	}
 
+	issuesBySite := make(map[string]purity_check.SiteIssue)
+	if s.purityIssues != nil {
+		issues, issueErr := s.purityIssues.LatestSiteIssues(ctx, strings.TrimSpace(userID), strings.TrimSpace(adminAccountID))
+		if issueErr != nil {
+			log.Printf("load group-rate purity issues: %v", issueErr)
+		} else {
+			for _, issue := range issues {
+				issuesBySite[issue.SiteKey] = issue
+			}
+		}
+	}
+
 	rows := make([]RateRow, 0, len(records.Items))
 	for _, record := range records.Items {
 		delta, deltaPercent := change(record.Multiplier, record.PreviousMultiplier)
+		var purityIssue *PurityIssue
+		if issue, exists := issuesBySite[purity_check.CanonicalSiteKey(record.BaseURL)]; exists {
+			purityIssue = &PurityIssue{Kind: issue.Kind, DetectedAt: issue.DetectedAt}
+		}
 		rows = append(rows, RateRow{
 			SiteID:             record.SiteID,
 			SiteName:           record.SiteName,
@@ -178,6 +205,7 @@ func (s *Service) List(ctx context.Context, userID string, adminAccountID string
 			CurrentMultiplier:  record.Multiplier * record.RechargeRate,
 			Delta:              delta,
 			DeltaPercent:       deltaPercent,
+			PurityIssue:        purityIssue,
 			UpdatedAt:          record.LastSeenAt,
 		})
 	}

@@ -105,7 +105,7 @@ func TestShouldClearStickySession(t *testing.T) {
 			want:           true,
 		},
 		{
-			name: "oauth quota exceeded not cleared",
+			name: "oauth quota exceeded clears sticky session",
 			account: &Account{
 				Status:      StatusActive,
 				Schedulable: true,
@@ -117,7 +117,7 @@ func TestShouldClearStickySession(t *testing.T) {
 				},
 			},
 			requestedModel: "",
-			want:           false,
+			want:           true,
 		},
 		{
 			name: "overloaded account",

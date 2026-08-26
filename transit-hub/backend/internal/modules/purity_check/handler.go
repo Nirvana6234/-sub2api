@@ -66,13 +66,20 @@ func (h *Handler) listJobs(w http.ResponseWriter, r *http.Request) {
 		httpjson.WriteError(w, http.StatusUnauthorized, "auth.errors.unauthorized")
 		return
 	}
-	limit := 0
+	query := JobListQuery{}
 	if raw := r.URL.Query().Get("limit"); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil {
-			limit = parsed
+			query.Limit = parsed
 		}
 	}
-	response, err := h.service.ListJobs(r.Context(), userID, limit)
+	if raw := r.URL.Query().Get("offset"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil {
+			query.Offset = parsed
+		}
+	}
+	query.Search = r.URL.Query().Get("search")
+	query.Status = r.URL.Query().Get("status")
+	response, err := h.service.ListJobs(r.Context(), userID, query)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -94,12 +101,15 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 		httpjson.WriteError(w, http.StatusBadRequest, ErrorRequest)
 		return
 	}
-	jobs, err := h.service.Submit(r.Context(), userID, input)
+	result, err := h.service.Submit(r.Context(), userID, input)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	httpjson.Write(w, http.StatusOK, map[string]any{"jobs": jobs})
+	if result.Jobs == nil {
+		result.Jobs = []Job{}
+	}
+	httpjson.Write(w, http.StatusOK, result)
 }
 
 func (h *Handler) getJob(w http.ResponseWriter, r *http.Request) {

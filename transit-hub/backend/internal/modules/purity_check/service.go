@@ -17,7 +17,8 @@ import (
 // 定义成接口是为了让排队/结算逻辑能用内存假实现单测，跟 connection_health 一致。
 type purityRepository interface {
 	InsertJobs(ctx context.Context, jobs []Job) error
-	ListJobs(ctx context.Context, userID string, adminAccountID string, limit int) ([]Job, error)
+	ListJobs(ctx context.Context, userID string, adminAccountID string, query JobListQuery) (JobPage, error)
+	ListLatestAccountIssues(ctx context.Context, userID string, adminAccountID string, accountIDs []string) ([]AccountIssue, error)
 	GetJob(ctx context.Context, id string, userID string, adminAccountID string) (*Job, error)
 	ClaimNextQueuedJob(ctx context.Context) (*Job, error)
 	ReleaseJob(ctx context.Context, id string) error
@@ -34,14 +35,19 @@ type purityRepository interface {
 	PruneJobs(ctx context.Context, userID string, adminAccountID string, keep int) ([]string, error)
 }
 
+type siteIssueRepository interface {
+	ListLatestSiteIssues(ctx context.Context, userID string, adminAccountID string) ([]SiteIssue, error)
+}
+
 // MaxRetainedJobs 是每个 workspace 保留的检测历史条数上限。
 //
 // 超出后按创建时间从旧到新删。只裁终态任务：排队中/运行中的不占配额也不会被删，
 // 否则一次批量提交 30 个就会把自己刚排进去的任务削掉。
 //
-// 单份报告 13–31 kB（高档最大），100 份约 3 MB；检测器旁路服务那边每个会话
-// 140–432 kB，100 个约 20 MB——都由这个上限一起兜住。
-const MaxRetainedJobs = 100
+// 单份报告 13–31 kB（高档最大），3000 份约 90 MB；检测器旁路服务那边每个会话
+// 140–432 kB，3000 个约 1.3 GB。历史按 workspace 独立保留，列表使用分页查询，
+// 不会一次传输全部报告摘要。
+const MaxRetainedJobs = 3000
 
 type Service struct {
 	repo     purityRepository
@@ -237,16 +243,16 @@ const officialRetries = 2
 // Submit 把一批账号排进检测队列。凭据在这里不解析——排队可能要等很久，
 // 提前取出来的明文 key 存在内存里等几小时既没必要也不安全。
 // worker 真正要启动某个任务时才现取。
-func (s *Service) Submit(ctx context.Context, userID string, input SubmitInput) ([]Job, error) {
+func (s *Service) Submit(ctx context.Context, userID string, input SubmitInput) (SubmitResult, error) {
 	if !s.detector.Configured() {
-		return nil, requestError(ErrorDetectorUnavailable)
+		return SubmitResult{}, requestError(ErrorDetectorUnavailable)
 	}
 	if !input.Tier.valid() {
-		return nil, requestError(ErrorInvalidTier)
+		return SubmitResult{}, requestError(ErrorInvalidTier)
 	}
 	claimed := strings.TrimSpace(input.ClaimedModel)
 	if !validClaimedModel(claimed) {
-		return nil, requestError(ErrorInvalidModel)
+		return SubmitResult{}, requestError(ErrorInvalidModel)
 	}
 	requestModel := strings.TrimSpace(input.RequestModel)
 	if requestModel == "" {
@@ -267,23 +273,23 @@ func (s *Service) Submit(ctx context.Context, userID string, input SubmitInput) 
 		wanted = append(wanted, trimmed)
 	}
 	if len(wanted) == 0 {
-		return nil, requestError(ErrorRequest)
+		return SubmitResult{}, requestError(ErrorRequest)
 	}
 	if len(wanted) > maxTargetsPerSubmit {
-		return nil, requestError(ErrorTooManyTargets)
+		return SubmitResult{}, requestError(ErrorTooManyTargets)
 	}
 
 	adminAccountID, err := s.currentAdminAccountID(ctx, userID)
 	if err != nil {
-		return nil, err
+		return SubmitResult{}, err
 	}
 	session, err := s.sessions.RequireSession(ctx, userID, adminAccountID)
 	if err != nil {
-		return nil, err
+		return SubmitResult{}, err
 	}
 	accounts, err := s.reader.ListAdminAllAccounts(session)
 	if err != nil {
-		return nil, requestError(ErrorAccountsFetch)
+		return SubmitResult{}, requestError(ErrorAccountsFetch)
 	}
 	byID := make(map[string]upstream.AdminGroupAccountInfo, len(accounts))
 	for _, account := range accounts {
@@ -292,13 +298,20 @@ func (s *Service) Submit(ctx context.Context, userID string, input SubmitInput) 
 
 	batchID := newID()
 	jobs := make([]Job, 0, len(wanted))
+	skippedTargetCount := 0
 	for _, accountID := range wanted {
 		account, ok := byID[accountID]
 		if !ok {
-			return nil, requestError(ErrorTargetNotFound)
+			// 浏览器加载列表后账号可能已被管理员删除。跳过陈旧选择，不让它
+			// 阻断同一批仍存在的账号。
+			skippedTargetCount++
+			continue
 		}
 		if !isOpenAIPlatform(account.Platform) || !isStaticKeyType(account.Type) {
-			return nil, requestError(ErrorTargetIneligible)
+			// 账号仍在但平台/认证类型已被修改，检测器已不具备可用的静态 API
+			// 凭据，同样按失效目标跳过。
+			skippedTargetCount++
+			continue
 		}
 		jobs = append(jobs, Job{
 			ID:              newID(),
@@ -315,14 +328,18 @@ func (s *Service) Submit(ctx context.Context, userID string, input SubmitInput) 
 			BatchID:         batchID,
 		})
 	}
+	result := SubmitResult{Jobs: jobs, SkippedTargetCount: skippedTargetCount}
+	if len(jobs) == 0 {
+		return result, nil
+	}
 
 	if err := s.repo.InsertJobs(ctx, jobs); err != nil {
-		return nil, err
+		return SubmitResult{}, err
 	}
 	// 排完队顺手裁历史，保证「最多 100 份」这条约束不用等定时任务兜底。
 	s.pruneHistory(ctx, userID, adminAccountID)
 	s.worker.notify()
-	return jobs, nil
+	return result, nil
 }
 
 // pruneHistory 把 workspace 的历史裁到 MaxRetainedJobs，并连带清掉检测器那边
@@ -393,6 +410,8 @@ func (s *Service) Delete(ctx context.Context, userID string, jobID string) error
 
 type JobListResponse struct {
 	Jobs []Job `json:"jobs"`
+	// Total 是当前筛选条件下的总记录数，供前端决定是否继续加载下一页。
+	Total int `json:"total"`
 	// QueuedTotal 是全局排队数（跨 workspace）。检测器只有一条队列，
 	// 只报本 workspace 的数字会让人低估等待时间。
 	QueuedTotal int `json:"queuedTotal"`
@@ -402,16 +421,21 @@ type JobListResponse struct {
 	MaxRetained int `json:"maxRetained"`
 }
 
-func (s *Service) ListJobs(ctx context.Context, userID string, limit int) (JobListResponse, error) {
+func (s *Service) ListJobs(ctx context.Context, userID string, query JobListQuery) (JobListResponse, error) {
 	var response JobListResponse
+	query, err := normalizeJobListQuery(query)
+	if err != nil {
+		return response, err
+	}
 	adminAccountID, err := s.currentAdminAccountID(ctx, userID)
 	if err != nil {
 		return response, err
 	}
-	jobs, err := s.repo.ListJobs(ctx, userID, adminAccountID, limit)
+	page, err := s.repo.ListJobs(ctx, userID, adminAccountID, query)
 	if err != nil {
 		return response, err
 	}
+	jobs := page.Jobs
 
 	// 失败和被取消的任务也可能有报告：探针全打不通时我们照样把报告存下来，
 	// 里面的上游错误明细正是排障要看的。只取 succeeded 会把它们藏起来。
@@ -440,10 +464,65 @@ func (s *Service) ListJobs(ctx context.Context, userID string, limit int) (JobLi
 	}
 
 	response.Jobs = jobs
+	response.Total = page.Total
 	response.QueuedTotal = queued
 	response.DetectorAvailable = s.detector.Configured() && s.detector.Health(ctx) == nil
 	response.MaxRetained = MaxRetainedJobs
 	return response, nil
+}
+
+func normalizeJobListQuery(query JobListQuery) (JobListQuery, error) {
+	if query.Limit <= 0 {
+		query.Limit = 100
+	}
+	if query.Limit > 200 {
+		query.Limit = 200
+	}
+	if query.Offset < 0 {
+		query.Offset = 0
+	}
+	query.Search = strings.TrimSpace(query.Search)
+	if len(query.Search) > 200 {
+		query.Search = query.Search[:200]
+	}
+	query.Status = strings.TrimSpace(query.Status)
+	switch query.Status {
+	case "", string(StatusQueued), string(StatusRunning), string(StatusSucceeded), string(StatusFailed), string(StatusCancelled):
+		return query, nil
+	default:
+		return JobListQuery{}, requestError(ErrorRequest)
+	}
+}
+
+// LatestAccountIssues returns the latest actionable purity finding for each
+// requested local Sub2API account. It is consumed by pricing mappings only;
+// the mapping service never reads probe credentials or detector payloads.
+func (s *Service) LatestAccountIssues(ctx context.Context, userID string, adminAccountID string, accountIDs []string) ([]AccountIssue, error) {
+	if len(accountIDs) == 0 {
+		return []AccountIssue{}, nil
+	}
+	return s.repo.ListLatestAccountIssues(ctx, userID, adminAccountID, accountIDs)
+}
+
+// CanonicalSiteKey normalizes an upstream base URL to its website identity.
+// Paths such as /v1 must not split one site's alerts across separate keys.
+func CanonicalSiteKey(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	parsed, err := url.Parse(trimmed)
+	if err == nil && parsed.Host != "" {
+		return strings.ToLower(parsed.Scheme + "://" + parsed.Host)
+	}
+	return strings.ToLower(trimmed)
+}
+
+// LatestSiteIssues returns one current actionable issue for every upstream
+// website. The optional assertion keeps lightweight worker test doubles small.
+func (s *Service) LatestSiteIssues(ctx context.Context, userID string, adminAccountID string) ([]SiteIssue, error) {
+	repository, ok := s.repo.(siteIssueRepository)
+	if !ok {
+		return []SiteIssue{}, nil
+	}
+	return repository.ListLatestSiteIssues(ctx, userID, adminAccountID)
 }
 
 // JobDetail 返回任务加完整报告原文。

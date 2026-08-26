@@ -281,7 +281,9 @@ func (a *Account) IsSchedulable() bool {
 	if a.TempUnschedulableUntil != nil && now.Before(*a.TempUnschedulableUntil) {
 		return false
 	}
-	if a.IsAPIKeyOrBedrock() && a.IsQuotaExceeded() {
+	// Account quotas apply to every directly schedulable account. Credential
+	// shadows use their parent account's credentials and do not own a quota.
+	if !a.IsCredentialShadow() && a.IsQuotaExceeded() {
 		return false
 	}
 	return true
@@ -3081,7 +3083,7 @@ func (a *Account) IsWeeklyQuotaPeriodExpired() bool {
 	return isPeriodExpired(start, 7*24*time.Hour)
 }
 
-// IsQuotaExceeded 检查 API Key 账号配额是否已超限（任一维度超限即返回 true）
+// IsQuotaExceeded reports whether any configured account quota dimension is exhausted.
 func (a *Account) IsQuotaExceeded() bool {
 	// 总额度
 	if limit := a.GetQuotaLimit(); limit > 0 && a.GetQuotaUsed() >= limit {

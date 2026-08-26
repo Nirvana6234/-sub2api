@@ -215,6 +215,10 @@ const loadAllData = async (options: { skipStatusCheck?: boolean } = {}) => {
     void loadOperationalData()
   } catch {
     refreshDataFailed.value = true
+    // 实时指标失败可能是管理员上游会话刚刚失效。
+    // 重新检查一次状态，让页面回到登录弹窗，而不是把旧快照留在
+    // “加载仪表盘指标失败”的死状态。
+    await checkAdminStatus()
   } finally {
     initialLoading.value = false
     isRefreshingData.value = false

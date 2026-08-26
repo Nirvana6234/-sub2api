@@ -15,22 +15,30 @@ type SnapshotGroup struct {
 // RateRow is the list API shape consumed by the admin UI. Delta values compare the latest
 // snapshot with the immediately previous snapshot for the same site/group/platform tuple.
 type RateRow struct {
-	SiteID             string    `json:"siteId"`
-	SiteName           string    `json:"siteName"`
-	GroupID            string    `json:"groupId"`
-	GroupName          string    `json:"groupName"`
-	Platform           string    `json:"platform"`
-	Type               string    `json:"type"`
-	Mapped             bool      `json:"mapped"`
-	Connected          bool      `json:"connected"`
-	PricingMapped      bool      `json:"pricingMapped"`
-	Deleted            bool      `json:"deleted"`
-	UpstreamMultiplier float64   `json:"upstreamMultiplier"`
-	RechargeRate       float64   `json:"rechargeRate"`
-	CurrentMultiplier  float64   `json:"currentMultiplier"`
-	Delta              *float64  `json:"delta"`
-	DeltaPercent       *float64  `json:"deltaPercent"`
-	UpdatedAt          time.Time `json:"updatedAt"`
+	SiteID             string       `json:"siteId"`
+	SiteName           string       `json:"siteName"`
+	GroupID            string       `json:"groupId"`
+	GroupName          string       `json:"groupName"`
+	Platform           string       `json:"platform"`
+	Type               string       `json:"type"`
+	Mapped             bool         `json:"mapped"`
+	Connected          bool         `json:"connected"`
+	PricingMapped      bool         `json:"pricingMapped"`
+	Deleted            bool         `json:"deleted"`
+	UpstreamMultiplier float64      `json:"upstreamMultiplier"`
+	RechargeRate       float64      `json:"rechargeRate"`
+	CurrentMultiplier  float64      `json:"currentMultiplier"`
+	Delta              *float64     `json:"delta"`
+	DeltaPercent       *float64     `json:"deltaPercent"`
+	PurityIssue        *PurityIssue `json:"purityIssue,omitempty"`
+	UpdatedAt          time.Time    `json:"updatedAt"`
+}
+
+// PurityIssue marks a website that currently contains at least one account
+// with an actionable purity finding.
+type PurityIssue struct {
+	Kind       string    `json:"kind"`
+	DetectedAt time.Time `json:"detectedAt"`
 }
 
 // ListQuery describes all list controls exposed by the admin page. PageSize is
@@ -102,6 +110,7 @@ type snapshotRecord struct {
 	AdminAccountID     string
 	SiteID             string
 	SiteName           string
+	BaseURL            string
 	GroupID            string
 	GroupName          string
 	Platform           string

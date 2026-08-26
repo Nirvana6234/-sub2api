@@ -376,10 +376,31 @@ func (s *Service) syncWorkspacePriorities(
 			continue
 		}
 		var automaticDisableEvent *AutomaticDisableEvent
+		var automaticRecoveryEvent *AutomaticRecoveryEvent
 		if item.currentPriority != desired {
 			priorityWasAutomaticallyDisabled := session.Platform == upstream.PlatformSub2API &&
 				item.currentPriority != 10000 && desired == 10000 &&
 				!isSub2APIManuallyDisabled(item.target)
+			priorityWasAutomaticallyRecovered := session.Platform == upstream.PlatformSub2API &&
+				item.currentPriority == 10000 && desired != 10000 &&
+				exists && !stored.Conflict && stored.OriginalPriority != 10000
+			var disableCause automaticDisableCause
+			if priorityWasAutomaticallyDisabled {
+				disableCause = automaticPriorityDisableCause(candidateForTarget(candidates, targetID))
+				if automaticDisableCauseNotifiable(disableCause) {
+					stored.NotificationCauseKey = disableCause.key
+					stored.NotificationCauseDetail = disableCause.detail
+					stored.NotificationCauseModelName = disableCause.modelName
+				} else {
+					// A later recovery must not inherit a previous actionable cause
+					// when this disable was only a transient network/rate-limit event.
+					stored.NotificationCauseKey = ""
+					stored.NotificationCauseDetail = ""
+					stored.NotificationCauseModelName = ""
+				}
+			}
+			notifyAutomaticRecovery := priorityWasAutomaticallyRecovered &&
+				automaticDisableCauseKeyNotifiable(stored.NotificationCauseKey)
 			pending := desired
 			stored.PendingPriority = &pending
 			stored.EffectiveMultiplier = multiplier
@@ -393,7 +414,7 @@ func (s *Service) syncWorkspacePriorities(
 			}
 			// Defer the notification until the final state save succeeds. That
 			// state is the deduplication checkpoint for later scheduler ticks.
-			if priorityWasAutomaticallyDisabled {
+			if priorityWasAutomaticallyDisabled && automaticDisableCauseNotifiable(disableCause) {
 				event := AutomaticDisableEvent{
 					UserID: userID, AdminAccountID: adminAccountID, Platform: string(session.Platform),
 					GroupID: item.groupID, GroupName: item.target.AdminGroupName,
@@ -402,9 +423,31 @@ func (s *Service) syncWorkspacePriorities(
 					EffectiveMultiplier: multiplier,
 					ActiveAccountCount:  activeAccountsByGroup[item.groupID],
 					RecentUsageSamples:  item.account.UsageSampleCount,
-					Reason:              automaticPriorityDisableReason(candidateForTarget(candidates, targetID)),
+					Reason:              disableCause.reason,
+					CauseKey:            disableCause.key,
+					CauseDetail:         disableCause.detail,
+					CauseModelName:      disableCause.modelName,
 				}
 				automaticDisableEvent = &event
+			}
+			if notifyAutomaticRecovery {
+				event := AutomaticRecoveryEvent{
+					UserID: userID, AdminAccountID: adminAccountID, Platform: string(session.Platform),
+					GroupID: item.groupID, GroupName: item.target.AdminGroupName,
+					AccountID: item.target.AccountID, AccountName: item.target.AccountName,
+					EffectiveMultiplier: multiplier, PreviousPriority: item.currentPriority, CurrentPriority: desired,
+					ActiveAccountCount: activeAccountsByGroup[item.groupID],
+					ModelName:          "倍率调度恢复",
+					Stage:              AutomaticRecoveryStageRestored,
+				}
+				automaticRecoveryEvent = &event
+			}
+			if priorityWasAutomaticallyRecovered {
+				// The recovery transition has consumed the alert eligibility. Clear
+				// it in the same final save that records the restored priority.
+				stored.NotificationCauseKey = ""
+				stored.NotificationCauseDetail = ""
+				stored.NotificationCauseModelName = ""
 			}
 		}
 		stored.LastAppliedPriority = desired
@@ -418,6 +461,9 @@ func (s *Service) syncWorkspacePriorities(
 		}
 		if automaticDisableEvent != nil {
 			automaticDisableEvents = append(automaticDisableEvents, *automaticDisableEvent)
+		}
+		if automaticRecoveryEvent != nil {
+			s.notifyAutomaticRecovery(ctx, *automaticRecoveryEvent)
 		}
 	}
 
@@ -566,19 +612,103 @@ func candidateForTarget(candidates []managedPriorityCandidate, targetID string) 
 	return managedPriorityCandidate{}
 }
 
-func automaticPriorityDisableReason(candidate managedPriorityCandidate) string {
+type automaticDisableCause struct {
+	key       string
+	reason    string
+	detail    string
+	modelName string
+}
+
+// automaticPriorityDisableCause prefers the latest concrete probe failure over
+// the scheduler's generic blocked flag. A runtime-limited account may have
+// been marked that way because the real request returned INSUFFICIENT_BALANCE;
+// operators need the actionable upstream cause, not only the final scheduler
+// state.
+func automaticPriorityDisableCause(candidate managedPriorityCandidate) automaticDisableCause {
+	var latest *ConnectionHealthState
+	for index := range candidate.states {
+		state := &candidate.states[index]
+		if (state.State != StateDisabled && state.State != StateSuspended && state.CurrentWeight > 0) ||
+			state.LastErrorKey == "" || strings.TrimSpace(state.LastErrorDetail) == "" {
+			continue
+		}
+		if latest == nil || state.UpdatedAt.After(latest.UpdatedAt) {
+			latest = state
+		}
+	}
+	if latest != nil {
+		key, reason := classifyAutomaticDisableProbeCause(latest.LastErrorKey, latest.LastErrorDetail)
+		return automaticDisableCause{
+			key: key, reason: reason, detail: compactAutomaticDisableDetail(latest.LastErrorDetail), modelName: latest.ModelName,
+		}
+	}
 	if candidate.runtimeBlocked {
-		return "upstream runtime limited"
+		return automaticDisableCause{key: "upstream_runtime_limited", reason: "upstream runtime limited"}
 	}
 	if candidate.schedulable != nil && !*candidate.schedulable {
-		return "upstream marked unschedulable"
+		return automaticDisableCause{key: "upstream_unschedulable", reason: "upstream marked unschedulable"}
 	}
 	for _, state := range candidate.states {
 		if state.State == StateDisabled || state.State == StateSuspended || state.CurrentWeight <= 0 {
-			return "health policy marked unavailable"
+			return automaticDisableCause{key: "health_policy_unavailable", reason: "health policy marked unavailable"}
 		}
 	}
-	return "unavailable"
+	return automaticDisableCause{key: "unavailable", reason: "unavailable"}
+}
+
+func automaticPriorityDisableReason(candidate managedPriorityCandidate) string {
+	return automaticPriorityDisableCause(candidate).reason
+}
+
+// automaticDisableCauseNotifiable deliberately keeps transient operational
+// failures out of operator notifications. Their priority changes still happen
+// under the health policy; only failures that need a human repair are surfaced.
+func automaticDisableCauseNotifiable(cause automaticDisableCause) bool {
+	return automaticDisableCauseKeyNotifiable(cause.key)
+}
+
+func automaticDisableCauseKeyNotifiable(causeKey string) bool {
+	switch strings.TrimSpace(causeKey) {
+	case "balance_exhausted", "invalid_credential", "authentication_failed", "model_unavailable":
+		return true
+	default:
+		return false
+	}
+}
+
+func classifyAutomaticDisableProbeCause(errorKey string, detail string) (string, string) {
+	normalizedDetail := strings.ToUpper(detail)
+	switch {
+	case isQuotaExhaustionDetail(normalizedDetail):
+		return "balance_exhausted", "balance exhausted"
+	case isExplicitInvalidCredentialDetail(normalizedDetail):
+		return "invalid_credential", "invalid credential"
+	}
+	switch ResultKey(strings.TrimSpace(errorKey)) {
+	case ResultRateLimited:
+		return "rate_limited", "upstream rate limited"
+	case ResultNetworkFluctuation:
+		return "network_failure", "upstream network failure"
+	case ResultServerError:
+		return "upstream_server_error", "upstream server error"
+	case ResultModelNotFound:
+		return "model_unavailable", "model unavailable"
+	case ResultAuth:
+		return "authentication_failed", "upstream authentication failed"
+	case ResultInvalidResponse:
+		return "invalid_response", "upstream invalid response"
+	default:
+		return "health_probe_failed", "health probe failed"
+	}
+}
+
+func compactAutomaticDisableDetail(value string) string {
+	compact := strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+	const maxRunes = 280
+	if len([]rune(compact)) <= maxRunes {
+		return compact
+	}
+	return string([]rune(compact)[:maxRunes]) + "..."
 }
 
 func preferredTransitHubLatency(sub2APIUsageP95, transitHubProbeP95 *int) *int {

@@ -634,13 +634,45 @@
       >-</div>
     </div>
   </div>
+
+  <details
+    v-if="todayGroupBreakdown.length"
+    class="mt-1 text-[9px] text-gray-500 dark:text-gray-400"
+  >
+    <summary class="flex cursor-pointer select-none flex-wrap items-center gap-x-1 text-gray-600 dark:text-gray-300">
+      <span class="font-medium">{{ t('admin.accounts.usageWindow.todayTotal') }}</span>
+      <span class="tabular-nums">{{ formatKeyRequests }} req · {{ formatKeyTokens }} · A ${{ formatKeyCost }} · U ${{ formatKeyUserCost }}</span>
+      <span class="text-blue-600 dark:text-blue-400">{{ t('admin.accounts.usageWindow.todayGroups', { count: todayGroupBreakdown.length }) }}</span>
+    </summary>
+    <div class="mt-1 space-y-1 border-l border-gray-200 pl-2 dark:border-dark-600">
+      <div
+        v-for="group in todayGroupBreakdown"
+        :key="group.group_id"
+        class="flex flex-wrap items-center justify-between gap-x-2"
+      >
+        <span class="max-w-[130px] truncate font-medium text-gray-600 dark:text-gray-300" :title="groupLabel(group.group_name, group.group_id)">
+          {{ groupLabel(group.group_name, group.group_id) }}
+        </span>
+        <span class="tabular-nums">{{ formatGroupRequests(group.requests) }} req · {{ formatGroupTokens(group.total_tokens) }} · A ${{ group.account_cost.toFixed(2) }}</span>
+      </div>
+    </div>
+  </details>
+
+  <UsageProgressBar
+    v-if="showUsageWindows && quotaDailyBar"
+    class="mt-1"
+    label="1d"
+    :utilization="quotaDailyBar.utilization"
+    :resets-at="quotaDailyBar.resetsAt"
+    color="indigo"
+  />
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
-import type { Account, AccountUsageInfo, GeminiCredentials, WindowStats } from '@/types'
+import type { Account, AccountUsageInfo, AccountUsageGroupBreakdown, GeminiCredentials, WindowStats } from '@/types'
 import { buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
 import { enqueueUsageRequest } from '@/utils/usageLoadQueue'
 import { formatCompactNumber } from '@/utils/format'
@@ -1558,6 +1590,12 @@ const formatKeyUserCost = computed(() => {
   if (!props.todayStats || props.todayStats.user_cost == null) return '0.00'
   return props.todayStats.user_cost.toFixed(2)
 })
+
+const todayGroupBreakdown = computed<AccountUsageGroupBreakdown[]>(() => props.todayStats?.by_group ?? [])
+
+const groupLabel = (name: string, id: number): string => name || `${t('admin.accounts.usageWindow.ungrouped')} #${id}`
+const formatGroupRequests = (requests: number): string => formatCompactNumber(requests, { allowBillions: false })
+const formatGroupTokens = (tokens: number): string => formatCompactNumber(tokens)
 
 onMounted(() => {
   if (typeof window !== 'undefined') {

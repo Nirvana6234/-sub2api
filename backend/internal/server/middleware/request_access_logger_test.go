@@ -229,6 +229,39 @@ func TestLogger_IngressRejectRemainsInStandardAccessLog(t *testing.T) {
 	}
 }
 
+func TestLogger_AdminUsageAccessLogSkipsOpsSystemLog(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	sink := initMiddlewareTestLogger(t)
+
+	r := gin.New()
+	r.Use(Logger())
+	r.GET("/api/v1/admin/usage", func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/usage?page=1", nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d", w.Code)
+	}
+
+	events := sink.list()
+	if len(events) != 1 {
+		t.Fatalf("events=%d, want 1", len(events))
+	}
+	event := events[0]
+	if event.Message != "http request completed" {
+		t.Fatalf("unexpected message: %q", event.Message)
+	}
+	if got := event.Fields["path"]; got != "/api/v1/admin/usage" {
+		t.Fatalf("path=%v", got)
+	}
+	if got, _ := event.Fields[logger.OpsSystemLogSkipField].(bool); !got {
+		t.Fatalf("%s must be true", logger.OpsSystemLogSkipField)
+	}
+}
+
 func TestLogger_AccessLogUsesForwardedClientIPFromTrustedProxy(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	sink := initMiddlewareTestLogger(t)

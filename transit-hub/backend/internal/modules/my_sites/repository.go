@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"transithub/backend/internal/modules/upstream"
 )
 
 // StateMutation mutates the locked latest my_site_states row before it is saved in the same transaction.
@@ -262,7 +264,12 @@ func (r *Repository) SaveRealConnectionWithPricingMapping(ctx context.Context, c
 		if state == nil {
 			return fmt.Errorf("save real connection: workspace state not found")
 		}
-		addMappingTargetForOwnGroups(state, conn.OwnGroupNames, UpstreamGroupRef{SiteID: conn.UpstreamSiteID, GroupName: conn.UpstreamGroupName})
+		target := UpstreamGroupRef{SiteID: conn.UpstreamSiteID, GroupName: conn.UpstreamGroupName}
+		if conn.AdminPlatform == string(upstream.PlatformSub2API) && strings.TrimSpace(conn.AdminAccountID) != "" {
+			accountID := strings.TrimSpace(conn.AdminAccountID)
+			target.Sub2APIAccountID = &accountID
+		}
+		addMappingTargetForOwnGroups(state, conn.OwnGroupNames, target)
 		if err := updateStateInTx(ctx, tx, *state); err != nil {
 			return err
 		}

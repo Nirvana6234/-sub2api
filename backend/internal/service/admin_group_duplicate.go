@@ -138,6 +138,7 @@ func cloneGroupForDuplicate(source *Group, operationID string) *Group {
 		KiroCompat:                      source.KiroCompat,
 		FallbackGroupID:                 cloneGroupValuePointer(source.FallbackGroupID),
 		FallbackGroupIDOnInvalidRequest: cloneGroupValuePointer(source.FallbackGroupIDOnInvalidRequest),
+		IsFallbackPool:                  source.IsFallbackPool,
 		ModelRouting:                    cloneGroupModelRouting(source.ModelRouting),
 		ModelRoutingEnabled:             source.ModelRoutingEnabled,
 		MCPXMLInject:                    source.MCPXMLInject,

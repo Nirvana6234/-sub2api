@@ -34,6 +34,7 @@ func Logger() gin.HandlerFunc {
 		statusCode := c.Writer.Status()
 		clientIP := ip.GetClientIP(c)
 		protocol := c.Request.Proto
+		skipOpsSystemLog := shouldSkipOpsSystemLogForAccess(method, path)
 		accountID, hasAccountID := c.Request.Context().Value(ctxkey.AccountID).(int64)
 		platform, _ := c.Request.Context().Value(ctxkey.Platform).(string)
 		model, _ := c.Request.Context().Value(ctxkey.Model).(string)
@@ -67,6 +68,8 @@ func Logger() gin.HandlerFunc {
 				zap.String("ingress_reject_reason", string(reason)),
 				zap.Bool(logger.OpsSystemLogSkipField, true),
 			)
+		} else if skipOpsSystemLog {
+			fields = append(fields, zap.Bool(logger.OpsSystemLogSkipField, true))
 		}
 		if hasAccountID && accountID > 0 {
 			fields = append(fields, zap.Int64("account_id", accountID))
@@ -85,4 +88,8 @@ func Logger() gin.HandlerFunc {
 			l.Warn("http request contains gin errors", zap.String("errors", c.Errors.String()))
 		}
 	}
+}
+
+func shouldSkipOpsSystemLogForAccess(method, path string) bool {
+	return method == "GET" && path == "/api/v1/admin/usage"
 }

@@ -14,6 +14,10 @@ export interface GroupRate {
   currentMultiplier: number | null
   delta: number | null
   deltaPercent: number | null
+  purityIssue?: {
+    kind: 'model_mismatch' | 'upstream_unreachable'
+    detectedAt: string
+  } | null
   updatedAt: string | null
 }
 

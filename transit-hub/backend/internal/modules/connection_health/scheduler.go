@@ -266,6 +266,14 @@ func (s *Service) runSub2APIRecoveryProbe(ctx context.Context, j adminProbeJob, 
 				result.state.LastRemoteAction = "sub2api_recovery_failed"
 			}
 		} else {
+			if s.autoRecoveryNotifier != nil && s.priorityRecoveryNotificationEligible(ctx, j.userID, j.adminAccountID, j.target.TargetID) {
+				s.notifyAutomaticRecovery(ctx, AutomaticRecoveryEvent{
+					UserID: j.userID, AdminAccountID: j.adminAccountID, Platform: string(j.session.Platform),
+					GroupID: j.target.AdminGroupID, GroupName: j.target.AdminGroupName,
+					AccountID: j.target.AccountID, AccountName: j.target.AccountName,
+					ModelName: spec.modelName, Stage: AutomaticRecoveryStageRestored,
+				})
+			}
 			result.state.LastRemoteAction = "sub2api_schedulability_recovered"
 			result.state.State = StateHealthy
 			result.state.CurrentWeight = 100

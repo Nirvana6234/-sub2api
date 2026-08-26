@@ -1882,9 +1882,15 @@ func (s *AuthService) RefreshTokenPair(ctx context.Context, refreshToken string)
 	// data.BindingHash 为空表示功能开启前签发的旧会话，放行并在轮转时补齐绑定。
 	if s.settingService != nil && s.settingService.IsSessionBindingEnabled(ctx) && data.BindingHash != "" {
 		if current := sessionBindingHashFromContext(ctx); current != "" && current != data.BindingHash {
-			_ = s.refreshTokenCache.DeleteTokenFamily(ctx, data.FamilyID)
-			logger.LegacyPrintf("service.auth", "[Auth] Session binding mismatch on refresh for user %d, family revoked", data.UserID)
-			return nil, ErrSessionBindingMismatch
+			// 绑定哈希从「精确 IP」改成了「IP 网段」，改算法前签发的会话存的是旧哈希，
+			// 直接判定不匹配等于把全体在线用户登出一次。这里回退比一次旧算法：命中
+			// 说明只是算法换了、指纹并没变，放行即可 —— 下面的轮转会写入新哈希，
+			// 所以每个会话最多走一次这条兼容路径。
+			if legacy := sessionBindingLegacyHashFromContext(ctx); legacy == "" || legacy != data.BindingHash {
+				_ = s.refreshTokenCache.DeleteTokenFamily(ctx, data.FamilyID)
+				logger.LegacyPrintf("service.auth", "[Auth] Session binding mismatch on refresh for user %d, family revoked", data.UserID)
+				return nil, ErrSessionBindingMismatch
+			}
 		}
 	}
 

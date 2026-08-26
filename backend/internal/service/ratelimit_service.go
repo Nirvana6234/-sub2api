@@ -256,6 +256,13 @@ const (
 // 自定义错误码开启时覆盖后续所有逻辑（包括临时不可调度）。
 func (s *RateLimitService) CheckErrorPolicy(ctx context.Context, account *Account, statusCode int, responseBody []byte, requestedModel ...string) ErrorPolicyResult {
 	ctx = withTempUnschedulableModel(ctx, requestedModel)
+	// Provider-side daily usage exhaustion is request/upstream scoped. It must
+	// bypass custom temporary-unschedulable rules as well as the default 403
+	// account/model state machine; the gateway owns bounded retry/failover.
+	if account != nil && account.Platform == PlatformOpenAI &&
+		isOpenAIDailyUsageLimitError(statusCode, "", responseBody) {
+		return ErrorPolicySkipped
+	}
 	if account.IsCustomErrorCodesEnabled() {
 		if account.ShouldHandleErrorCode(statusCode) {
 			return ErrorPolicyMatched
@@ -286,6 +293,14 @@ func (s *RateLimitService) CheckErrorPolicy(ctx context.Context, account *Accoun
 // 返回是否应该停止该账号的调度
 func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte, requestedModel ...string) (shouldDisable bool) {
 	ctx = withTempUnschedulableModel(ctx, requestedModel)
+	// Classify this before team linkage, custom policies, temporary rules, and
+	// the 403 account/model handlers. A provider daily allowance is not a local
+	// capability failure and must never persist a cooldown.
+	if account != nil && account.Platform == PlatformOpenAI &&
+		isOpenAIDailyUsageLimitError(statusCode, "", responseBody) {
+		slog.Info("openai_daily_usage_limit_failover_only", "account_id", account.ID, "account_type", account.Type)
+		return false
+	}
 	// Team 联动熔断必须先于池模式/自定义错误码/临时不可调度的各类早退；
 	// 同请求内与 fastpath 调用点的重复触发由方法内去重吸收。
 	s.maybeHandleOpenAITeamLinkedError(ctx, account, statusCode, responseBody)
@@ -995,6 +1010,12 @@ func (s *RateLimitService) handleOpenAI403(ctx context.Context, account *Account
 	// 一律冻结整个账号，导致同账号上完全正常的模型被连坐、反复被踢出调度。
 	// 若该账号下每个模型最终都因 403 被封，调度器按 model_rate_limits 过滤后该账号
 	// 自然对所有模型不可用，等价于账号级停用，无需在此提前扩大惩罚范围。
+	if isOpenAIInsufficientQuota(upstreamMsg, responseBody) ||
+		isOpenAIDailyUsageLimitError(http.StatusForbidden, upstreamMsg, responseBody) {
+		slog.Warn("openai_insufficient_quota_no_persistent_penalty", "account_id", account.ID)
+		return false
+	}
+
 	if s.applyModelScopedOpenAI403(ctx, account, msg) {
 		return false
 	}
@@ -1045,6 +1066,15 @@ const openAI403ModelScopedCooldown = time.Hour
 // openAI403ModelScopedReason 写入 model_rate_limits 的原因标识，便于与
 // upstream_404_model_not_found 等其它模型级封禁来源区分。
 const openAI403ModelScopedReason = "openai_403_model_scoped"
+
+func isOpenAIInsufficientQuota(upstreamMsg string, responseBody []byte) bool {
+	message := strings.ToLower(upstreamMsg + "\n" + string(responseBody))
+	return strings.Contains(message, "insufficient_quota") ||
+		strings.Contains(message, "daily usage limit exceeded") ||
+		strings.Contains(message, "daily subscription quota exhausted") ||
+		strings.Contains(message, "subscription quota exhausted") ||
+		strings.Contains(message, "当日订阅额度已耗尽")
+}
 
 // applyModelScopedOpenAI403 把 403 的惩罚限定在 (账号, 模型) 这一对上。
 // 返回 true 表示已按模型级处理，调用方不应再做任何账号级动作。

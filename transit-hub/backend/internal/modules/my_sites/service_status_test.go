@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"transithub/backend/internal/modules/purity_check"
 	"transithub/backend/internal/modules/upstream"
 )
 
@@ -18,6 +19,15 @@ type testStateRepo struct {
 	mutateErr    error
 	mutateBefore func(*State)
 	saves        []State
+}
+
+type testPurityIssueReader struct {
+	issues []purity_check.AccountIssue
+	err    error
+}
+
+func (r testPurityIssueReader) LatestAccountIssues(_ context.Context, _ string, _ string, _ []string) ([]purity_check.AccountIssue, error) {
+	return r.issues, r.err
 }
 
 func (r *testStateRepo) Get(ctx context.Context, userID string, adminAccountID string) (*State, error) {
@@ -679,6 +689,40 @@ func TestMappingOptionsDoesNotTreatCachedMissingTargetsAsAuthoritative(t *testin
 	}
 	if len(repo.state.Mappings[0].UpstreamTargets) != 2 {
 		t.Fatalf("expected stored mappings to remain unchanged, got %#v", repo.state.Mappings)
+	}
+}
+
+func TestMappingOptionsAddsPurityIssueWithoutPersistingIt(t *testing.T) {
+	server, _ := newNewAPITestServer(t, map[string]float64{"vip": 1.1}, []string{"vip"})
+	defer server.Close()
+	repo := &testStateRepo{state: &State{
+		UserID:         "user-1",
+		AdminAccountID: "admin-1",
+		Session:        testSession(server.URL),
+		Mappings: []GroupMapping{{
+			OwnGroup: "vip",
+			UpstreamTargets: []UpstreamGroupRef{{
+				SiteID: "site-a", GroupName: "upstream-vip", Sub2APIAccountID: strPtr("119"),
+			}},
+		}},
+	}}
+	service := NewService(repo, upstream.NewPlatformService(upstream.NewHTTPClient(server.Client())), testUpstreamLookup{})
+	service.SetAdminAccountResolver(testAdminResolver{currentID: "admin-1"})
+	detectedAt := time.Unix(1_700_000_000, 0).UTC()
+	service.SetPurityIssueReader(testPurityIssueReader{issues: []purity_check.AccountIssue{{
+		AccountID: "119", Kind: purity_check.PurityIssueModelMismatch, DetectedAt: detectedAt,
+	}}})
+
+	response, err := service.MappingOptions(context.Background(), "user-1")
+	if err != nil {
+		t.Fatalf("MappingOptions returned error: %v", err)
+	}
+	target := response.Mappings[0].UpstreamTargets[0]
+	if target.PurityIssue == nil || target.PurityIssue.Kind != purity_check.PurityIssueModelMismatch || !target.PurityIssue.DetectedAt.Equal(detectedAt) {
+		t.Fatalf("response target purity issue = %#v", target.PurityIssue)
+	}
+	if stored := repo.state.Mappings[0].UpstreamTargets[0].PurityIssue; stored != nil {
+		t.Fatalf("purity issue must stay read-only, stored mapping has %#v", stored)
 	}
 }
 

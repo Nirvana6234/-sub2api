@@ -98,7 +98,7 @@ const remoteActionText = computed(() => {
             :key="record.id"
             class="min-w-[2px] flex-1 rounded-[1px]"
             :class="connectionHealthRecordColorClass(record.result)"
-            :title="`${formatConnectionHealthTime(record.createdAt)} · ${readableMessage(record.result)}`"
+            :title="`${formatConnectionHealthTime(record.createdAt)} · ${readableMessage(record.result)}${record.errorDetail ? `\n${record.errorDetail}` : ''}`"
           />
         </div>
         <span class="text-[10px] text-muted-foreground">{{ t(`${cardPrefix}.now`) }}</span>

@@ -664,6 +664,16 @@ export default {
       detailSubtitle: '当前使用 {count} 个上游分组作为调价数据源',
       staleOwnGroup: '管理员站点已不再返回此分组。配置仍被保留，请确认后再清理。',
       staleTarget: '上游已失效',
+      purityIssue: {
+        label: {
+          model_mismatch: '纯度异常',
+          upstream_unreachable: '上游不可达'
+        },
+        detail: {
+          model_mismatch: '最近一次官方纯度检测确认模型与申报不一致（{time}）。',
+          upstream_unreachable: '最近一次纯度检测全部探针失败，上游未返回有效响应（{time}）。'
+        }
+      },
       metrics: {
         ownMultiplier: '我的分组倍率',
         targets: '调价数据源',
@@ -931,6 +941,7 @@ export default {
       requestModelLabel: '实际请求模型',
       requestModelHint: '中转使用自定义别名时填这里，留空则与申报型号相同。名字不同本身不会触发报警。',
       submit: '检测选中的 {count} 个账号',
+      submitSkippedSummary: '已排队 {queued} 个账号，自动跳过 {skipped} 个已失效或不支持检测的账号。',
 
       confirmTitle: '确认发起检测',
       confirmBody: '将对 {count} 个账号各跑一次{tier}检测。这些请求会真实打到上游并计费。',
@@ -945,6 +956,12 @@ export default {
       jobsEmpty: '还没有检测记录。',
       queueSummary: '队列中 {queued} 个',
       queuePosition: '前面还有 {ahead} 个',
+      historySearchPlaceholder: '搜索账号名、账号 ID 或上游地址',
+      historyStatusLabel: '任务状态',
+      historyAllStatuses: '全部状态',
+      historySearch: '查询',
+      historyCount: '显示 {shown} / {total} 条记录',
+      historyLoadMore: '加载更多',
       statuses: {
         queued: '排队中',
         running: '检测中',
@@ -989,7 +1006,7 @@ export default {
         upstreamUnreachable: '上游未响应，本次没有取得任何有效探针，无法得出检测结论。',
         proxyUnsupported:
           '该账号绑定的是非 HTTP 代理（如 socks5），检测器只支持 HTTP 代理。请在部署侧配置 PURITY_CHECK_HTTP_PROXY_URL，指向与转发同一出口的 HTTP 代理端口。',
-        tooManyTargets: '单次最多提交 20 个账号。',
+        tooManyTargets: '单次最多提交 100 个账号。',
       },
     },
     connectionHealth: {
@@ -1114,7 +1131,8 @@ export default {
           empty: '该目标还没有模型探活结果。',
           latency: '延迟 {value} ms',
           lastProbe: '最近 {value}',
-          weight: '健康权重 {value}%'
+          weight: '健康权重 {value}%',
+          upstreamResponse: '上游响应：{value}'
         }
       },
       setup: {
@@ -1180,7 +1198,7 @@ export default {
             balanced: '兼容',
             speed: '速度优先'
           },
-          priorityStrategyHelp: '低价优先只看真实上游 API Key 倍率；兼容按 70% 价格 + 30% 速度；速度优先使用最近 1 小时真实请求的 TTFT P95。每账号最多 20 条、至少 3 条；不足时回退共飞后台已有探活记录，不会为评分额外探活。',
+          priorityStrategyHelp: '低价优先只看真实上游 API Key 倍率；兼容按 70% 价格 + 30% 速度；速度优先使用最近 1 小时真实请求的 TTFT P95。每账号最多 20 条、至少 3 条；当前分组不足时回退最近 24 小时跨分组真实请求，再不足才回退共飞后台已有探活记录，不会为评分额外探活。',
           multiplierOnlyTitle: '仅同步倍率优先级',
           multiplierOnlyHelp: '后台约每 30 秒读取一次账号实际绑定的上游 API Key 分组倍率；倍率越低，优先级越高。此模式不需要探活凭据。'
         },
@@ -1432,7 +1450,7 @@ export default {
           balanced: '兼容',
           speed: '速度优先'
         },
-        priorityStrategyHelp: '速度优先使用 Sub2API 最近 1 小时真实请求的 TTFT P95（每账号最多 20 条、至少 3 条），数据不足才回退共飞后台已有探活记录；评分不会额外发起探活。兼容模式按 70% 价格 + 30% 速度。',
+        priorityStrategyHelp: '速度优先使用 Sub2API 最近 1 小时真实请求的 TTFT P95（每账号最多 20 条、至少 3 条）；当前分组不足时回退最近 24 小时跨分组真实请求，再不足才回退共飞后台已有探活记录。评分不会额外发起探活。兼容模式按 70% 价格 + 30% 速度。',
         priorityModeHelp: '历史上游优先级只用于检测人工修改，不参与评分。可用目标按所选模式排序；暂停、禁用、不可调度或权重为 0 的目标统一置底；Sub2API 在每个分组内独立写入优先级。',
         multiplierOnlySummaryTitle: '倍率越低，优先级越高',
         multiplierOnlySummary: '系统约每 30 秒读取账号实际绑定的上游 API Key 分组倍率并同步优先级，不解析探活凭据、不请求模型、不消耗探活预算，也不执行自动降级或远端动作。检测到人工修改时会停止覆盖。',
@@ -1726,6 +1744,16 @@ export default {
       badge: '倍率同步记录',
       title: '分组倍率',
       subtitle: '查看各上游站点分组倍率及最近变动，并追踪历史倍率记录。',
+      purityIssue: {
+        label: {
+          model_mismatch: '站点存在纯度异常',
+          upstream_unreachable: '站点检测不可达'
+        },
+        detail: {
+          model_mismatch: '该站点至少一个账号最近一次官方纯度检测确认模型与申报不一致（{time}）。',
+          upstream_unreachable: '该站点至少一个账号最近一次纯度检测全部探针失败，上游未返回有效响应（{time}）。'
+        }
+      },
       common: {
         placeholder: '—',
         allTypes: '全部类型',

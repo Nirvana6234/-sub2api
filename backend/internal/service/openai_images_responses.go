@@ -1830,11 +1830,15 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 				Message:            upstreamMsg,
 			})
 			shouldDisable := s.handleFailoverSideEffects(upstreamCtx, resp, account, respBody, requestModel)
-			return nil, &UpstreamFailoverError{
-				StatusCode:             resp.StatusCode,
-				ResponseBody:           respBody,
-				RetryableOnSameAccount: openAIRetryableOnSameAccount(account, resp.StatusCode, shouldDisable, upstreamMsg, respBody),
-			}
+			return nil, s.newOpenAIAccountFailoverError(
+				account,
+				resp.StatusCode,
+				resp.Header,
+				respBody,
+				upstreamMsg,
+				shouldDisable,
+				openAIRetryableOnSameAccount(account, resp.StatusCode, shouldDisable, upstreamMsg, respBody),
+			)
 		}
 		return s.handleOpenAIImagesErrorResponse(upstreamCtx, resp, c, account, requestModel)
 	}
@@ -2031,10 +2035,13 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthResponseError(
 		return err
 	}
 	shouldDisable := s.handleOpenAIAccountUpstreamError(ctx, account, upstreamErr.StatusCode, headers, responseBody, requestedModel)
-	return &UpstreamFailoverError{
-		StatusCode:             upstreamErr.StatusCode,
-		ResponseBody:           responseBody,
-		ResponseHeaders:        headers,
-		RetryableOnSameAccount: openAIRetryableOnSameAccount(account, upstreamErr.StatusCode, shouldDisable, upstreamErr.clientMessage(), responseBody),
-	}
+	return s.newOpenAIAccountFailoverError(
+		account,
+		upstreamErr.StatusCode,
+		headers,
+		responseBody,
+		upstreamErr.clientMessage(),
+		shouldDisable,
+		openAIRetryableOnSameAccount(account, upstreamErr.StatusCode, shouldDisable, upstreamErr.clientMessage(), responseBody),
+	)
 }

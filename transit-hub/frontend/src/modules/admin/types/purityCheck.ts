@@ -100,6 +100,7 @@ export type PurityJob = {
 
 export type PurityJobListResponse = {
   jobs: PurityJob[]
+  total: number
   /** 全局排队总数：检测器只有一条队列，只看自己的会低估等待时间。 */
   queuedTotal: number
   detectorAvailable: boolean
@@ -112,6 +113,12 @@ export type PuritySubmitInput = {
   tier: PurityTier
   claimedModel: string
   requestModel: string
+}
+
+export type PuritySubmitResult = {
+  jobs: PurityJob[]
+  /** 提交瞬间已不存在或已改成不支持类型的陈旧选择，会自动跳过。 */
+  skippedTargetCount: number
 }
 
 export type PurityJobDetail = {

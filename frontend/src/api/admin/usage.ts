@@ -91,6 +91,7 @@ export interface AdminUsageQueryParams extends UsageQueryParams {
   error_phase?: string | null
   error_category?: string | null
   status_code?: number | null
+  exclude_user_ids?: number[]
 }
 
 // ==================== API Functions ====================

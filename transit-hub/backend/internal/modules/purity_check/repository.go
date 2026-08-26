@@ -81,10 +81,8 @@ func (r *Repository) InsertJobs(ctx context.Context, jobs []Job) error {
 //
 // 位次是全局的：检测器只有一个会话，所有 workspace 的排队任务共享同一条队列，
 // 所以「你前面还有几个」必须跨 workspace 数，只数本 workspace 会骗人。
-func (r *Repository) ListJobs(ctx context.Context, userID string, adminAccountID string, limit int) ([]Job, error) {
-	if limit <= 0 || limit > 500 {
-		limit = 100
-	}
+func (r *Repository) ListJobs(ctx context.Context, userID string, adminAccountID string, query JobListQuery) (JobPage, error) {
+	var page JobPage
 	rows, err := r.db.Query(ctx, `
 		SELECT `+jobColumns+`,
 			CASE WHEN status = 'queued' THEN (
@@ -93,15 +91,19 @@ func (r *Repository) ListJobs(ctx context.Context, userID string, adminAccountID
 			) ELSE 0 END AS queue_position
 		FROM purity_check_jobs j
 		WHERE user_id = $1 AND admin_account_id = $2
+		  AND ($3 = '' OR status = $3)
+		  AND ($4 = '' OR account_id ILIKE '%' || $4 || '%'
+		       OR account_name ILIKE '%' || $4 || '%'
+		       OR base_url ILIKE '%' || $4 || '%')
 		ORDER BY created_at DESC
-		LIMIT $3
-	`, userID, adminAccountID, limit)
+		LIMIT $5 OFFSET $6
+	`, userID, adminAccountID, query.Status, query.Search, query.Limit, query.Offset)
 	if err != nil {
-		return nil, err
+		return page, err
 	}
 	defer rows.Close()
 
-	jobs := make([]Job, 0, limit)
+	jobs := make([]Job, 0, query.Limit)
 	for rows.Next() {
 		var job Job
 		err := rows.Scan(
@@ -114,11 +116,122 @@ func (r *Repository) ListJobs(ctx context.Context, userID string, adminAccountID
 			&job.QueuePosition,
 		)
 		if err != nil {
-			return nil, err
+			return page, err
 		}
 		jobs = append(jobs, job)
 	}
-	return jobs, rows.Err()
+	if err := rows.Err(); err != nil {
+		return page, err
+	}
+	page.Jobs = jobs
+	err = r.db.QueryRow(ctx, `
+		SELECT count(*) FROM purity_check_jobs
+		WHERE user_id = $1 AND admin_account_id = $2
+		  AND ($3 = '' OR status = $3)
+		  AND ($4 = '' OR account_id ILIKE '%' || $4 || '%'
+		       OR account_name ILIKE '%' || $4 || '%'
+		       OR base_url ILIKE '%' || $4 || '%')
+	`, userID, adminAccountID, query.Status, query.Search).Scan(&page.Total)
+	return page, err
+}
+
+// ListLatestAccountIssues derives one current, actionable finding per account.
+// A newer healthy terminal run clears an older finding; non-official reports
+// remain informational and never trigger a pricing-mapping alert.
+func (r *Repository) ListLatestAccountIssues(ctx context.Context, userID string, adminAccountID string, accountIDs []string) ([]AccountIssue, error) {
+	if len(accountIDs) == 0 {
+		return []AccountIssue{}, nil
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT DISTINCT ON (j.account_id)
+			j.account_id, j.status, j.error_key, coalesce(j.finished_at, j.updated_at),
+			coalesce(r.fingerprint_claim_mismatch, false), coalesce(r.official, false)
+		FROM purity_check_jobs j
+		LEFT JOIN purity_check_reports r ON r.job_id = j.id
+		WHERE j.user_id = $1 AND j.admin_account_id = $2
+		  AND j.account_id = ANY($3)
+		  AND j.status IN ('succeeded', 'failed', 'cancelled')
+		ORDER BY j.account_id, coalesce(j.finished_at, j.updated_at) DESC, j.created_at DESC
+	`, userID, adminAccountID, accountIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	issues := make([]AccountIssue, 0)
+	for rows.Next() {
+		var accountID, status, errorKey string
+		var detectedAt time.Time
+		var mismatch, official bool
+		if err := rows.Scan(&accountID, &status, &errorKey, &detectedAt, &mismatch, &official); err != nil {
+			return nil, err
+		}
+		kind := ""
+		switch {
+		case official && mismatch:
+			kind = PurityIssueModelMismatch
+		case status == string(StatusFailed) && errorKey == ErrorUpstreamUnreachable:
+			kind = PurityIssueUpstreamUnreachable
+		}
+		if kind != "" {
+			issues = append(issues, AccountIssue{AccountID: accountID, Kind: kind, DetectedAt: detectedAt})
+		}
+	}
+	return issues, rows.Err()
+}
+
+// ListLatestSiteIssues aggregates every account's latest terminal purity run
+// by upstream website. A newer healthy run clears that account's older issue
+// before the remaining findings are grouped.
+func (r *Repository) ListLatestSiteIssues(ctx context.Context, userID string, adminAccountID string) ([]SiteIssue, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT DISTINCT ON (j.account_id)
+			j.base_url, j.status, j.error_key, coalesce(j.finished_at, j.updated_at),
+			coalesce(r.fingerprint_claim_mismatch, false), coalesce(r.official, false)
+		FROM purity_check_jobs j
+		LEFT JOIN purity_check_reports r ON r.job_id = j.id
+		WHERE j.user_id = $1 AND j.admin_account_id = $2
+		  AND j.status IN ('succeeded', 'failed', 'cancelled')
+		ORDER BY j.account_id, coalesce(j.finished_at, j.updated_at) DESC, j.created_at DESC
+	`, userID, adminAccountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	bySite := make(map[string]SiteIssue)
+	for rows.Next() {
+		var baseURL, status, errorKey string
+		var detectedAt time.Time
+		var mismatch, official bool
+		if err := rows.Scan(&baseURL, &status, &errorKey, &detectedAt, &mismatch, &official); err != nil {
+			return nil, err
+		}
+		kind := ""
+		switch {
+		case official && mismatch:
+			kind = PurityIssueModelMismatch
+		case status == string(StatusFailed) && errorKey == ErrorUpstreamUnreachable:
+			kind = PurityIssueUpstreamUnreachable
+		}
+		if kind == "" {
+			continue
+		}
+		siteKey := CanonicalSiteKey(baseURL)
+		if siteKey == "" {
+			continue
+		}
+		if current, exists := bySite[siteKey]; !exists || detectedAt.After(current.DetectedAt) {
+			bySite[siteKey] = SiteIssue{SiteKey: siteKey, Kind: kind, DetectedAt: detectedAt}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	issues := make([]SiteIssue, 0, len(bySite))
+	for _, issue := range bySite {
+		issues = append(issues, issue)
+	}
+	return issues, nil
 }
 
 // GetJob 按 workspace 取单个任务，跨 workspace 取不到（防越权读别人的报告）。

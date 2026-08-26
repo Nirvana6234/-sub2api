@@ -44,3 +44,12 @@ func TestValidateUpdateAPIKeyRequestNumericLimits(t *testing.T) {
 		require.Error(t, validateUpdateAPIKeyRequest(req))
 	}
 }
+
+func TestAPIKeyServiceCanUserBindGroupRejectsFallbackPool(t *testing.T) {
+	svc := &APIKeyService{}
+	user := &User{ID: 1}
+	publicFallbackGroup := &Group{ID: 10, Status: StatusActive, IsFallbackPool: true}
+
+	allowed := svc.canUserBindGroupInternal(user, publicFallbackGroup, nil)
+	require.False(t, allowed)
+}

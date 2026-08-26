@@ -203,9 +203,13 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		// 客户端下载页（默认开启，保持既有行为）
 		SettingKeyClientDownloadEnabled: "true",
 
-		// 客户端下载地址
+		// 客户端下载地址。
+		//
+		// 必须用 Gitee 的发行版附件通道，不能用 raw：raw 对大文件强制登录，
+		// 匿名请求只会拿到 403 "large file require login for access."，
+		// 用户下到的是一个 55 字节的报错文本而不是安装包。
 		SettingKeyClientDownloadNetdiskURL: "https://pan.baidu.com/s/5PT50-jTaOtR8D28OfYnbQQ",
-		SettingKeyClientDownloadDirectURL:  "https://gitee.com/borg_zhou/co-fly--chat-gpt-assistant/raw/master/Release/codex-relay-client_v0.1_x64.zip",
+		SettingKeyClientDownloadDirectURL:  ClientDownloadDefaultDirectURL,
 
 		// 备用支付通道（默认关闭；opt-in）
 		SettingKeyBackupPaymentEnabled: "false",

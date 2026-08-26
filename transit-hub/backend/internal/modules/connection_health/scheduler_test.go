@@ -336,13 +336,21 @@ func TestRunSub2APIRecoveryProbe_UsesRealGenerationThenClearsRuntimeError(t *tes
 
 	repo := newFakeRepository()
 	recovery := &fakeSub2APIRecoveryActioner{}
-	svc := &Service{repo: repo, probeRunner: NewRealProbeRunner(), recoveryActions: recovery, dispatcher: noopRemoteActionRunner{}}
+	var recoveryEvents []AutomaticRecoveryEvent
+	svc := &Service{repo: repo, probeRunner: NewRealProbeRunner(), recoveryActions: recovery, dispatcher: noopRemoteActionRunner{},
+		autoRecoveryNotifier: AutomaticRecoveryNotifyFunc(func(_ context.Context, event AutomaticRecoveryEvent) {
+			recoveryEvents = append(recoveryEvents, event)
+		})}
 	schedulable := true
 	repo.states["sub2api:ws1:17"] = map[string]ConnectionHealthState{
 		"gpt-4o": {
 			ConnectionID: "sub2api:ws1:17", ModelName: "gpt-4o", State: StateSuspended,
 			CurrentWeight: 0, ConsecutiveFailures: 4,
 		},
+	}
+	repo.priorityStates["user1|ws1|group-1|sub2api:ws1:17"] = PrioritySyncState{
+		UserID: "user1", AdminAccountID: "ws1", TargetID: "group-1|sub2api:ws1:17",
+		OriginalPriority: 100, LastAppliedPriority: 10000, NotificationCauseKey: "balance_exhausted",
 	}
 	target := AdminProbeTarget{
 		TargetID: "sub2api:ws1:17", Platform: string(upstream.PlatformSub2API), AccountID: "17",
@@ -370,6 +378,9 @@ func TestRunSub2APIRecoveryProbe_UsesRealGenerationThenClearsRuntimeError(t *tes
 	if stored.State != StateHealthy || stored.CurrentWeight != 100 || stored.ConsecutiveFailures != 0 {
 		t.Fatalf("successful upstream recovery must also heal local state, got %+v", stored)
 	}
+	if len(recoveryEvents) != 1 || recoveryEvents[0].AccountID != "17" || recoveryEvents[0].ModelName != "gpt-4o" {
+		t.Fatalf("successful recovery must emit one notification event: %+v", recoveryEvents)
+	}
 }
 
 func TestRunSub2APIRecoveryProbe_DoesNotClearAfterFailedGeneration(t *testing.T) {
@@ -384,7 +395,9 @@ func TestRunSub2APIRecoveryProbe_DoesNotClearAfterFailedGeneration(t *testing.T)
 
 	repo := newFakeRepository()
 	recovery := &fakeSub2APIRecoveryActioner{}
-	svc := &Service{repo: repo, probeRunner: NewRealProbeRunner(), recoveryActions: recovery, dispatcher: noopRemoteActionRunner{}}
+	notified := false
+	svc := &Service{repo: repo, probeRunner: NewRealProbeRunner(), recoveryActions: recovery, dispatcher: noopRemoteActionRunner{},
+		autoRecoveryNotifier: AutomaticRecoveryNotifyFunc(func(_ context.Context, _ AutomaticRecoveryEvent) { notified = true })}
 	schedulable := true
 	policy := Policy{ID: "p1", Enabled: true, ProbeMode: ProbeModeModelsEndpoint}
 	job := adminProbeJob{
@@ -397,6 +410,9 @@ func TestRunSub2APIRecoveryProbe_DoesNotClearAfterFailedGeneration(t *testing.T)
 	svc.runSub2APIRecoveryProbe(context.Background(), job, upstream.ProbeCredential{BaseURL: server.URL, Key: "secret"})
 	if len(recovery.calls) != 0 {
 		t.Fatalf("failed generation must not clear runtime error: %+v", recovery.calls)
+	}
+	if notified {
+		t.Fatal("failed generation must not emit recovery notification")
 	}
 }
 

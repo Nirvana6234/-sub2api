@@ -67,6 +67,17 @@ type UpstreamGroupRef struct {
 	// 未绑定时成本按"未知"处理，不参与毛利计算——绝不拿上游标称倍率顶替，
 	// 那正是 mcgrox.top 按 0.8 算出 -1130% 毛利、而真实手工成本只有 0.04 的原因。
 	Sub2APIAccountID *string `json:"sub2apiAccountId,omitempty"`
+	// PurityIssue is derived at read time from the latest purity result of the
+	// explicitly bound local account. It is never persisted as mapping config.
+	PurityIssue *PurityIssue `json:"purityIssue,omitempty"`
+}
+
+// PurityIssue marks an actionable upstream finding on a pricing data source.
+// Kind is owned by the purity-check module; DetectedAt lets operators judge
+// whether a finding is fresh without opening the full history first.
+type PurityIssue struct {
+	Kind       string    `json:"kind"`
+	DetectedAt time.Time `json:"detectedAt"`
 }
 
 // TargetAccountCost is an authoritative CNY purchase cost assigned to one

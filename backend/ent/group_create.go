@@ -651,6 +651,20 @@ func (_c *GroupCreate) SetNillableFallbackGroupIDOnInvalidRequest(v *int64) *Gro
 	return _c
 }
 
+// SetIsFallbackPool sets the "is_fallback_pool" field.
+func (_c *GroupCreate) SetIsFallbackPool(v bool) *GroupCreate {
+	_c.mutation.SetIsFallbackPool(v)
+	return _c
+}
+
+// SetNillableIsFallbackPool sets the "is_fallback_pool" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableIsFallbackPool(v *bool) *GroupCreate {
+	if v != nil {
+		_c.SetIsFallbackPool(*v)
+	}
+	return _c
+}
+
 // SetModelRouting sets the "model_routing" field.
 func (_c *GroupCreate) SetModelRouting(v map[string][]int64) *GroupCreate {
 	_c.mutation.SetModelRouting(v)
@@ -1123,6 +1137,10 @@ func (_c *GroupCreate) defaults() error {
 		v := group.DefaultKiroCompat
 		_c.mutation.SetKiroCompat(v)
 	}
+	if _, ok := _c.mutation.IsFallbackPool(); !ok {
+		v := group.DefaultIsFallbackPool
+		_c.mutation.SetIsFallbackPool(v)
+	}
 	if _, ok := _c.mutation.ModelRoutingEnabled(); !ok {
 		v := group.DefaultModelRoutingEnabled
 		_c.mutation.SetModelRoutingEnabled(v)
@@ -1325,6 +1343,9 @@ func (_c *GroupCreate) check() error {
 	}
 	if _, ok := _c.mutation.KiroCompat(); !ok {
 		return &ValidationError{Name: "kiro_compat", err: errors.New(`ent: missing required field "Group.kiro_compat"`)}
+	}
+	if _, ok := _c.mutation.IsFallbackPool(); !ok {
+		return &ValidationError{Name: "is_fallback_pool", err: errors.New(`ent: missing required field "Group.is_fallback_pool"`)}
 	}
 	if _, ok := _c.mutation.ModelRoutingEnabled(); !ok {
 		return &ValidationError{Name: "model_routing_enabled", err: errors.New(`ent: missing required field "Group.model_routing_enabled"`)}
@@ -1597,6 +1618,10 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.FallbackGroupIDOnInvalidRequest(); ok {
 		_spec.SetField(group.FieldFallbackGroupIDOnInvalidRequest, field.TypeInt64, value)
 		_node.FallbackGroupIDOnInvalidRequest = &value
+	}
+	if value, ok := _c.mutation.IsFallbackPool(); ok {
+		_spec.SetField(group.FieldIsFallbackPool, field.TypeBool, value)
+		_node.IsFallbackPool = value
 	}
 	if value, ok := _c.mutation.ModelRouting(); ok {
 		_spec.SetField(group.FieldModelRouting, field.TypeJSON, value)
@@ -2625,6 +2650,18 @@ func (u *GroupUpsert) AddFallbackGroupIDOnInvalidRequest(v int64) *GroupUpsert {
 // ClearFallbackGroupIDOnInvalidRequest clears the value of the "fallback_group_id_on_invalid_request" field.
 func (u *GroupUpsert) ClearFallbackGroupIDOnInvalidRequest() *GroupUpsert {
 	u.SetNull(group.FieldFallbackGroupIDOnInvalidRequest)
+	return u
+}
+
+// SetIsFallbackPool sets the "is_fallback_pool" field.
+func (u *GroupUpsert) SetIsFallbackPool(v bool) *GroupUpsert {
+	u.Set(group.FieldIsFallbackPool, v)
+	return u
+}
+
+// UpdateIsFallbackPool sets the "is_fallback_pool" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateIsFallbackPool() *GroupUpsert {
+	u.SetExcluded(group.FieldIsFallbackPool)
 	return u
 }
 
@@ -3836,6 +3873,20 @@ func (u *GroupUpsertOne) UpdateFallbackGroupIDOnInvalidRequest() *GroupUpsertOne
 func (u *GroupUpsertOne) ClearFallbackGroupIDOnInvalidRequest() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.ClearFallbackGroupIDOnInvalidRequest()
+	})
+}
+
+// SetIsFallbackPool sets the "is_fallback_pool" field.
+func (u *GroupUpsertOne) SetIsFallbackPool(v bool) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetIsFallbackPool(v)
+	})
+}
+
+// UpdateIsFallbackPool sets the "is_fallback_pool" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateIsFallbackPool() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateIsFallbackPool()
 	})
 }
 
@@ -5254,6 +5305,20 @@ func (u *GroupUpsertBulk) UpdateFallbackGroupIDOnInvalidRequest() *GroupUpsertBu
 func (u *GroupUpsertBulk) ClearFallbackGroupIDOnInvalidRequest() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.ClearFallbackGroupIDOnInvalidRequest()
+	})
+}
+
+// SetIsFallbackPool sets the "is_fallback_pool" field.
+func (u *GroupUpsertBulk) SetIsFallbackPool(v bool) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetIsFallbackPool(v)
+	})
+}
+
+// UpdateIsFallbackPool sets the "is_fallback_pool" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateIsFallbackPool() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateIsFallbackPool()
 	})
 }
 

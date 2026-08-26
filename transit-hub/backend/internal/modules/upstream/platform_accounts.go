@@ -29,7 +29,7 @@ type AdminGroupAccountInfo struct {
 	Concurrency          *int     // 并发（sub2api）
 	CurrentConcurrency   *int     // Sub2API 管理 API 返回的实时并发
 	SchedulerScore       *float64 // Sub2API 在当前分组中的实时基础调度分
-	UsageP95FirstTokenMs *int     // Sub2API 最近一小时真实请求的首 Token 延迟 P95（至少 3 个样本）
+	UsageP95FirstTokenMs *int     // Sub2API 真实请求的首 Token 延迟 P95（当前分组 1 小时优先，稀疏时跨分组回退 24 小时）
 	UsageSampleCount     int      // 上述 P95 使用的有效样本数；不足 3 时只保留样本数
 	RateMultiplier       *float64 // Sub2API admin 转发账号记录自身的 rate_multiplier，不代表上游 API Key 所属分组倍率。
 	// CostRateMultiplier 是 Sub2API 已按"手工值 > 新鲜探测值 > 列值"解析好的上游成本倍率。
@@ -172,6 +172,7 @@ func (s *PlatformService) ListAdminAllAccounts(session Session) ([]AdminGroupAcc
 
 const (
 	sub2APIUsageMetricWindow       = time.Hour
+	sub2APIUsageFallbackWindow     = 24 * time.Hour
 	sub2APIUsageSampleLimit        = 20
 	sub2APIUsageMinReliableSamples = 3
 	sub2APIUsagePageSize           = 100
@@ -191,10 +192,57 @@ func (s *PlatformService) enrichSub2APIAccountUsageLatency(session Session, grou
 	for _, account := range accounts {
 		accountIDs[account.ID] = struct{}{}
 	}
-	samplesByAccount := make(map[string][]int, len(accounts))
-	cutoff := now.Add(-sub2APIUsageMetricWindow)
+	samplesByAccount := s.fetchSub2APIUsageLatencySamples(
+		session,
+		groupID,
+		accountIDs,
+		now.Add(-sub2APIUsageMetricWindow),
+		now,
+	)
+	if hasInsufficientSub2APIUsageSamples(accountIDs, samplesByAccount) {
+		// An account can be attached to several admin groups, while the same
+		// upstream account serves all of them. If the current group is quiet,
+		// use its recent cross-group traffic instead of displaying a false 0/3.
+		fallbackSamples := s.fetchSub2APIUsageLatencySamples(
+			session,
+			"",
+			accountIDs,
+			now.Add(-sub2APIUsageFallbackWindow),
+			now,
+		)
+		for accountID := range accountIDs {
+			if len(samplesByAccount[accountID]) >= sub2APIUsageMinReliableSamples {
+				continue
+			}
+			if samples := fallbackSamples[accountID]; len(samples) > len(samplesByAccount[accountID]) {
+				samplesByAccount[accountID] = samples
+			}
+		}
+	}
+
+	metrics := sub2APIUsageLatencyByAccount(samplesByAccount)
+	for index := range accounts {
+		metric, ok := metrics[accounts[index].ID]
+		if !ok {
+			continue
+		}
+		accounts[index].UsageP95FirstTokenMs = metric.p95Ms
+		accounts[index].UsageSampleCount = metric.sampleCount
+	}
+}
+
+func (s *PlatformService) fetchSub2APIUsageLatencySamples(
+	session Session,
+	groupID string,
+	accountIDs map[string]struct{},
+	cutoff time.Time,
+	now time.Time,
+) map[string][]int {
+	samplesByAccount := make(map[string][]int, len(accountIDs))
 	query := url.Values{}
-	query.Set("group_id", strings.TrimSpace(groupID))
+	if trimmedGroupID := strings.TrimSpace(groupID); trimmedGroupID != "" {
+		query.Set("group_id", trimmedGroupID)
+	}
 	query.Set("page_size", strconv.Itoa(sub2APIUsagePageSize))
 	query.Set("sort_by", "created_at")
 	query.Set("sort_order", "desc")
@@ -221,15 +269,16 @@ func (s *PlatformService) enrichSub2APIAccountUsageLatency(session Session, grou
 		}
 	}
 
-	metrics := sub2APIUsageLatencyByAccount(samplesByAccount)
-	for index := range accounts {
-		metric, ok := metrics[accounts[index].ID]
-		if !ok {
-			continue
+	return samplesByAccount
+}
+
+func hasInsufficientSub2APIUsageSamples(accountIDs map[string]struct{}, samplesByAccount map[string][]int) bool {
+	for accountID := range accountIDs {
+		if len(samplesByAccount[accountID]) < sub2APIUsageMinReliableSamples {
+			return true
 		}
-		accounts[index].UsageP95FirstTokenMs = metric.p95Ms
-		accounts[index].UsageSampleCount = metric.sampleCount
 	}
+	return false
 }
 
 func collectSub2APIUsageLatencySamples(
@@ -247,8 +296,10 @@ func collectSub2APIUsageLatencySamples(
 		if accountID == "" {
 			continue
 		}
-		if recordGroupID := firstStringy(record, []string{"group_id", "groupId"}); recordGroupID != "" && recordGroupID != groupID {
-			continue
+		if strings.TrimSpace(groupID) != "" {
+			if recordGroupID := firstStringy(record, []string{"group_id", "groupId"}); recordGroupID != "" && recordGroupID != groupID {
+				continue
+			}
 		}
 		createdAt := parseFlexibleTime(firstAny(record, []string{"created_at", "createdAt"}))
 		if createdAt != nil && createdAt.Before(cutoff) {

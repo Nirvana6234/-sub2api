@@ -431,6 +431,11 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 			tokens, cost.TotalCost,
 		)
 	}
+	accountQuotaCost := cost.TotalCost
+	if usageLog.AccountStatsCost != nil {
+		accountQuotaCost = *usageLog.AccountStatsCost
+	}
+	accountQuotaCost *= accountRateForQuota
 
 	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
@@ -456,6 +461,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 			RequestPayloadHash:    resolveUsageBillingPayloadFingerprint(ctx, input.RequestPayloadHash),
 			IsSubscriptionBill:    isSubscriptionBilling,
 			AccountRateMultiplier: accountRateForQuota,
+			AccountQuotaCost:      accountQuotaCost,
 			APIKeyService:         input.APIKeyService,
 			Platform:              quotaPlatform,
 		}, s.billingDeps(), s.usageBillingRepo)

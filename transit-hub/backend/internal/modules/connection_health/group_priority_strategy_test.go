@@ -631,8 +631,20 @@ func (n *recordingAutomaticDisableNotifier) NotifyAutomaticDisable(_ context.Con
 	n.events = append(n.events, event)
 }
 
-func TestMultiplierPrioritySync_NotifiesWhenRecentlyUsedSub2APIAccountIsAutomaticallyDeprioritized(t *testing.T) {
+type recordingAutomaticRecoveryNotifier struct {
+	events []AutomaticRecoveryEvent
+}
+
+func (n *recordingAutomaticRecoveryNotifier) NotifyAutomaticRecovery(_ context.Context, event AutomaticRecoveryEvent) {
+	n.events = append(n.events, event)
+}
+
+func TestMultiplierPrioritySync_NotifiesWhenBalanceExhaustionAutomaticallyDeprioritizesSub2APIAccount(t *testing.T) {
 	repo := newFakeRepository()
+	repo.states["sub2api:ws1:103"] = map[string]ConnectionHealthState{
+		"gpt-4o": {ConnectionID: "sub2api:ws1:103", UserID: "user1", AdminAccountID: "ws1", ModelName: "gpt-4o", State: StateSuspended, CurrentWeight: 0,
+			LastErrorKey: string(ResultAuth), LastErrorDetail: `{"code":"INSUFFICIENT_BALANCE"}`, UpdatedAt: time.Now()},
+	}
 	priorityActions := &fakeTargetPriorityActioner{}
 	notifier := &recordingAutomaticDisableNotifier{}
 	priority := 50
@@ -652,7 +664,8 @@ func TestMultiplierPrioritySync_NotifiesWhenRecentlyUsedSub2APIAccountIsAutomati
 		repo: repo, mySites: fakeMySitesReader{session: upstream.Session{Platform: upstream.PlatformSub2API}},
 		platformGroups: reader, priorityActions: priorityActions, autoDisableNotifier: notifier,
 	}
-	policy := Policy{ID: "price", UserID: "user1", AdminAccountID: "ws1", Enabled: true, StrategyMode: StrategyModeMultiplierOnly, PriorityMode: PriorityModeMultiplier}
+	policy := Policy{ID: "price", UserID: "user1", AdminAccountID: "ws1", Enabled: true, StrategyMode: StrategyModeHealthProbe, PriorityMode: PriorityModeMultiplier,
+		ModelTargets: []ModelTarget{{ModelName: "gpt-4o", Enabled: true}}}
 	assignment := GroupPolicyAssignment{UserID: "user1", AdminAccountID: "ws1", AdminGroupID: "12", PolicyID: policy.ID}
 
 	service.syncMultiplierPriorities(context.Background(), []Policy{policy}, nil, []GroupPolicyAssignment{assignment}, nil, nil)
@@ -684,8 +697,74 @@ func TestMultiplierPrioritySync_NotifiesWhenRecentlyUsedSub2APIAccountIsAutomati
 	}
 }
 
+func TestMultiplierPrioritySync_NotifiesWhenAutomaticallyDeprioritizedAccountRecovers(t *testing.T) {
+	repo := newFakeRepository()
+	repo.states["sub2api:ws1:103"] = map[string]ConnectionHealthState{
+		"gpt-4o": {ConnectionID: "sub2api:ws1:103", UserID: "user1", AdminAccountID: "ws1", ModelName: "gpt-4o", State: StateSuspended, CurrentWeight: 0,
+			LastErrorKey: string(ResultAuth), LastErrorDetail: `{"code":"INSUFFICIENT_BALANCE"}`, UpdatedAt: time.Now()},
+	}
+	priorityActions := &fakeTargetPriorityActioner{}
+	disableNotifier := &recordingAutomaticDisableNotifier{}
+	recoveryNotifier := &recordingAutomaticRecoveryNotifier{}
+	priority := 50
+	healthyPriority := 1
+	schedulable := true
+	unschedulable := false
+	reader := fakePlatformGroupReader{
+		groups: []upstream.AdminGroupInfo{{ID: "12", Name: "plus"}},
+		accountsByGrp: map[string][]upstream.AdminGroupAccountInfo{
+			"12": {
+				{ID: "101", Name: "healthy", GroupPriority: &healthyPriority, Schedulable: &schedulable, Models: "gpt-4o"},
+				{ID: "103", Name: "recovering", GroupPriority: &priority, Schedulable: &unschedulable, Models: "gpt-4o"},
+			},
+		},
+	}
+	service := &Service{
+		repo: repo, mySites: fakeMySitesReader{session: upstream.Session{Platform: upstream.PlatformSub2API}},
+		platformGroups: reader, priorityActions: priorityActions,
+		autoDisableNotifier: disableNotifier, autoRecoveryNotifier: recoveryNotifier,
+	}
+	policy := Policy{ID: "price", UserID: "user1", AdminAccountID: "ws1", Enabled: true, StrategyMode: StrategyModeHealthProbe, PriorityMode: PriorityModeMultiplier,
+		ModelTargets: []ModelTarget{{ModelName: "gpt-4o", Enabled: true}}}
+	assignment := GroupPolicyAssignment{UserID: "user1", AdminAccountID: "ws1", AdminGroupID: "12", PolicyID: policy.ID}
+
+	// First scan automatically moves the unschedulable account to 10000.
+	service.syncMultiplierPriorities(context.Background(), []Policy{policy}, nil, []GroupPolicyAssignment{assignment}, nil, nil)
+	if len(disableNotifier.events) != 1 || len(recoveryNotifier.events) != 0 {
+		t.Fatalf("expected only disable notification on first scan, disable=%+v recovery=%+v", disableNotifier.events, recoveryNotifier.events)
+	}
+
+	// The next scan observes that the account is schedulable again and restores
+	// its saved priority. That transition must emit one recovery notification.
+	priority = 10000
+	unschedulable = true
+	repo.states["sub2api:ws1:103"]["gpt-4o"] = ConnectionHealthState{
+		ConnectionID: "sub2api:ws1:103", UserID: "user1", AdminAccountID: "ws1", ModelName: "gpt-4o",
+		State: StateHealthy, CurrentWeight: 100, UpdatedAt: time.Now(),
+	}
+	service.syncMultiplierPriorities(context.Background(), []Policy{policy}, nil, []GroupPolicyAssignment{assignment}, nil, []PrioritySyncState{repo.priorityStates["user1|ws1|12|sub2api:ws1:103"]})
+	if len(recoveryNotifier.events) != 1 {
+		t.Fatalf("expected one automatic-recovery notification, got %+v", recoveryNotifier.events)
+	}
+	event := recoveryNotifier.events[0]
+	if event.AccountID != "103" || event.GroupName != "plus" || event.PreviousPriority != 10000 || event.CurrentPriority == 10000 || event.ActiveAccountCount != 2 || event.ModelName != "倍率调度恢复" {
+		t.Fatalf("unexpected automatic-recovery event: %+v", event)
+	}
+
+	// Repeating the same scan must not emit a duplicate recovery notification.
+	priority = 200
+	service.syncMultiplierPriorities(context.Background(), []Policy{policy}, nil, []GroupPolicyAssignment{assignment}, nil, []PrioritySyncState{repo.priorityStates["user1|ws1|12|sub2api:ws1:103"]})
+	if len(recoveryNotifier.events) != 1 {
+		t.Fatalf("unchanged recovered target must not notify again, got %+v", recoveryNotifier.events)
+	}
+}
+
 func TestMultiplierPrioritySync_AggregatesSharedAccountAutomaticDisableAcrossGroups(t *testing.T) {
 	repo := newFakeRepository()
+	repo.states["sub2api:ws1:shared"] = map[string]ConnectionHealthState{
+		"gpt-4o": {ConnectionID: "sub2api:ws1:shared", UserID: "user1", AdminAccountID: "ws1", ModelName: "gpt-4o", State: StateSuspended, CurrentWeight: 0,
+			LastErrorKey: string(ResultAuth), LastErrorDetail: `{"code":"INSUFFICIENT_BALANCE"}`, UpdatedAt: time.Now()},
+	}
 	priorityActions := &fakeTargetPriorityActioner{}
 	notifier := &recordingAutomaticDisableNotifier{}
 	plusPriority, linePriority, healthyPriority := 50, 75, 1
@@ -707,7 +786,8 @@ func TestMultiplierPrioritySync_AggregatesSharedAccountAutomaticDisableAcrossGro
 		repo: repo, mySites: fakeMySitesReader{session: upstream.Session{Platform: upstream.PlatformSub2API}},
 		platformGroups: reader, priorityActions: priorityActions, autoDisableNotifier: notifier,
 	}
-	policy := Policy{ID: "price", UserID: "user1", AdminAccountID: "ws1", Enabled: true, StrategyMode: StrategyModeMultiplierOnly, PriorityMode: PriorityModeMultiplier}
+	policy := Policy{ID: "price", UserID: "user1", AdminAccountID: "ws1", Enabled: true, StrategyMode: StrategyModeHealthProbe, PriorityMode: PriorityModeMultiplier,
+		ModelTargets: []ModelTarget{{ModelName: "gpt-4o", Enabled: true}}}
 	assignments := []GroupPolicyAssignment{
 		{UserID: "user1", AdminAccountID: "ws1", AdminGroupID: "12", PolicyID: policy.ID},
 		{UserID: "user1", AdminAccountID: "ws1", AdminGroupID: "13", PolicyID: policy.ID},
@@ -765,6 +845,38 @@ func TestMultiplierPrioritySync_DoesNotNotifyManualSub2APIDisable(t *testing.T) 
 		}
 	}
 	t.Fatalf("manual-disabled account should still be assigned the last priority, got %+v", priorityActions.calls)
+}
+
+func TestMultiplierPrioritySync_DoesNotNotifyTemporarySub2APIUnavailable(t *testing.T) {
+	repo := newFakeRepository()
+	priorityActions := &fakeTargetPriorityActioner{}
+	notifier := &recordingAutomaticDisableNotifier{}
+	priority, healthyPriority := 50, 1
+	schedulable, temporarilyUnavailable := true, false
+	reader := fakePlatformGroupReader{
+		groups: []upstream.AdminGroupInfo{{ID: "12", Name: "plus"}},
+		accountsByGrp: map[string][]upstream.AdminGroupAccountInfo{
+			"12": {
+				{ID: "101", Name: "healthy", GroupPriority: &healthyPriority, Schedulable: &schedulable, Models: "gpt-4o"},
+				{ID: "103", Name: "temporary-timeout", GroupPriority: &priority, Schedulable: &temporarilyUnavailable, SchedulabilitySource: SchedulabilitySourceAutomatic, Models: "gpt-4o"},
+			},
+		},
+	}
+	service := &Service{
+		repo: repo, mySites: fakeMySitesReader{session: upstream.Session{Platform: upstream.PlatformSub2API}},
+		platformGroups: reader, priorityActions: priorityActions, autoDisableNotifier: notifier,
+	}
+	policy := Policy{ID: "price", UserID: "user1", AdminAccountID: "ws1", Enabled: true, StrategyMode: StrategyModeMultiplierOnly, PriorityMode: PriorityModeMultiplier}
+	assignment := GroupPolicyAssignment{UserID: "user1", AdminAccountID: "ws1", AdminGroupID: "12", PolicyID: policy.ID}
+
+	service.syncMultiplierPriorities(context.Background(), []Policy{policy}, nil, []GroupPolicyAssignment{assignment}, nil, nil)
+	if len(notifier.events) != 0 {
+		t.Fatalf("temporary unavailability must not notify, got %+v", notifier.events)
+	}
+	stored := repo.priorityStates["user1|ws1|12|sub2api:ws1:103"]
+	if stored.LastAppliedPriority != 10000 || stored.NotificationCauseKey != "" {
+		t.Fatalf("temporary unavailability must still bottom without retaining notification eligibility: %+v", stored)
+	}
 }
 
 func TestMultiplierPrioritySync_ConfirmsPendingSystemWrite(t *testing.T) {

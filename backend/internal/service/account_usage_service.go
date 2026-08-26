@@ -84,6 +84,12 @@ type accountWindowStatsBatchReader interface {
 	GetAccountWindowStatsBatch(ctx context.Context, accountIDs []int64, startTime time.Time) (map[int64]*usagestats.AccountStats, error)
 }
 
+// accountWindowGroupBreakdownBatchReader is kept separate so scheduling paths
+// can continue fetching totals without paying for per-group details.
+type accountWindowGroupBreakdownBatchReader interface {
+	GetAccountWindowGroupBreakdownBatch(ctx context.Context, accountIDs []int64, startTime, endTime time.Time) (map[int64][]usagestats.AccountUsageGroupBreakdown, error)
+}
+
 // apiUsageCache 缓存从 Anthropic API 获取的使用率数据（utilization, resets_at）
 // 同时支持缓存错误响应（负缓存），防止 429 等错误导致的重试风暴
 type apiUsageCache struct {
@@ -137,11 +143,12 @@ func NewUsageCache() *UsageCache {
 // standard_cost: 标准费用（total_cost，不含倍率）
 // user_cost: 用户/API Key 口径费用（actual_cost，受分组倍率影响）
 type WindowStats struct {
-	Requests     int64   `json:"requests"`
-	Tokens       int64   `json:"tokens"`
-	Cost         float64 `json:"cost"`
-	StandardCost float64 `json:"standard_cost"`
-	UserCost     float64 `json:"user_cost"`
+	Requests     int64                                   `json:"requests"`
+	Tokens       int64                                   `json:"tokens"`
+	Cost         float64                                 `json:"cost"`
+	StandardCost float64                                 `json:"standard_cost"`
+	UserCost     float64                                 `json:"user_cost"`
+	ByGroup      []usagestats.AccountUsageGroupBreakdown `json:"by_group,omitempty"`
 }
 
 // UsageProgress 使用量进度
@@ -1429,11 +1436,19 @@ func (s *AccountUsageService) GetTodayStatsBatch(ctx context.Context, accountIDs
 	}
 
 	startTime := timezone.Today()
+	endTime := timezone.StartOfDay(startTime.AddDate(0, 0, 1))
 	if batchReader, ok := s.usageLogRepo.(accountWindowStatsBatchReader); ok {
 		statsByAccount, err := batchReader.GetAccountWindowStatsBatch(ctx, uniqueIDs, startTime)
 		if err == nil {
 			for _, accountID := range uniqueIDs {
 				result[accountID] = windowStatsFromAccountStats(statsByAccount[accountID])
+			}
+			if groupReader, ok := s.usageLogRepo.(accountWindowGroupBreakdownBatchReader); ok {
+				if groupsByAccount, groupErr := groupReader.GetAccountWindowGroupBreakdownBatch(ctx, uniqueIDs, startTime, endTime); groupErr == nil {
+					for _, accountID := range uniqueIDs {
+						result[accountID].ByGroup = groupsByAccount[accountID]
+					}
+				}
 			}
 			return result, nil
 		}

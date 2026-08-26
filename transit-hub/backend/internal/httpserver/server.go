@@ -253,6 +253,19 @@ func New(cfg config.Config, db *pgxpool.Pool, redisClient *redis.Client) *Server
 			event.Platform, event.GroupName, event.AccountName, event.PreviousPriority, event.CurrentPriority, event.RecentUsageSamples, event.Reason)
 		settingsService.SendFormattedToBots(ctx, event.UserID, strategy.MultiplierNotifyBotIDs, message, strategy.MultiplierTemplateFormat)
 	}))
+	connHealthService.SetAutomaticRecoveryNotifier(connection_health.AutomaticRecoveryNotifyFunc(func(ctx context.Context, event connection_health.AutomaticRecoveryEvent) {
+		strategy, err := settingsService.GetStrategyForWorkspace(ctx, event.UserID, event.AdminAccountID)
+		if err != nil {
+			log.Printf("[alert] load automatic-recovery notification settings failed user_id=%s admin_account_id=%s err=%v", event.UserID, event.AdminAccountID, err)
+			return
+		}
+		if !strategy.EnableMultiplierAlert || len(strategy.MultiplierNotifyBotIDs) == 0 {
+			return
+		}
+		message := formatAutomaticRecoveryAlert(event)
+		log.Printf("[alert] upstream target recovery notification stage=%s platform=%s group=%s account=%s model=%s", event.Stage, event.Platform, event.GroupName, event.AccountName, event.ModelName)
+		settingsService.SendFormattedToBots(ctx, event.UserID, strategy.MultiplierNotifyBotIDs, message, strategy.MultiplierTemplateFormat)
+	}))
 	connection_health.RegisterRoutes(server.mux, connHealthService)
 
 	// GPT-5.6 纯度检测：驱动一个旁路 Python 检测器，判断上游给的到底是不是申报的型号。
@@ -267,6 +280,10 @@ func New(cfg config.Config, db *pgxpool.Pool, redisClient *redis.Client) *Server
 		cfg.PurityCheckDetectorRunsDir,
 	)
 	purityCheckService.SetAdminAccountResolver(adminAccountsService)
+	// 分组倍率对接按已绑定的本方账号显示最近一次可行动的纯度问题；状态只在
+	// mapping-options 的响应中派生，不会写回用户的调价配置。
+	mySitesService.SetPurityIssueReader(purityCheckService)
+	groupRatesService.SetPurityIssueReader(purityCheckService)
 	// 账号绑的是 xray 的 socks5 端口，检测器只认 http:// 代理，这里给它同出口的 HTTP 入口。
 	purityCheckService.SetHTTPProxyURL(cfg.PurityCheckHTTPProxyURL)
 	purity_check.RegisterRoutes(server.mux, purityCheckService)
@@ -779,6 +796,8 @@ func formatAutomaticDisableAlert(event connection_health.AutomaticDisableEvent) 
 	if event.RecentUsageSamples > 0 {
 		recentUse = fmt.Sprintf("近 1 小时有 %d 条真实请求样本", event.RecentUsageSamples)
 	}
+	cause := formatAutomaticDisableCause(event)
+	detail := formatAutomaticDisableDetail(event)
 	if len(event.Groups) > 1 {
 		groups := make([]string, 0, len(event.Groups))
 		for _, group := range event.Groups {
@@ -789,11 +808,67 @@ func formatAutomaticDisableAlert(event connection_health.AutomaticDisableEvent) 
 			groups = append(groups, fmt.Sprintf("  · %s：优先级 %d → **%d** ｜ 倍率 %sx ｜ 当前可用账号 %d 个",
 				groupName, group.PreviousPriority, group.CurrentPriority, trimFloat(group.EffectiveMultiplier), group.ActiveAccountCount))
 		}
-		return fmt.Sprintf("🔴 **上游账号已自动置底**\n\n👤 **账号：** %s\n📦 **涉及分组：**\n%s\n⏱️ **使用情况：** %s\n⚠️ **原因：** %s\n\n该账号已被自动调度排到最后，请及时检查上游状态与健康策略。",
-			accountName, strings.Join(groups, "\n"), recentUse, event.Reason)
+		return fmt.Sprintf("🔴 **上游账号已自动置底**\n\n👤 **账号：** %s\n📦 **涉及分组：**\n%s\n⏱️ **使用情况：** %s\n⚠️ **原因：** %s%s\n\n该账号已被自动调度排到最后，请及时检查上游状态与健康策略。",
+			accountName, strings.Join(groups, "\n"), recentUse, cause, detail)
 	}
-	return fmt.Sprintf("🔴 **上游账号已自动置底**\n\n📦 **分组：** %s\n👤 **账号：** %s\n📊 **倍率：** %sx\n📉 **优先级：** %d → **%d**\n✅ **分组当前可用账号：** %d 个\n⏱️ **使用情况：** %s\n⚠️ **原因：** %s\n\n该账号已被自动调度排到最后，请及时检查上游状态与健康策略。",
-		groupName, accountName, trimFloat(event.EffectiveMultiplier), event.PreviousPriority, event.CurrentPriority, event.ActiveAccountCount, recentUse, event.Reason)
+	return fmt.Sprintf("🔴 **上游账号已自动置底**\n\n📦 **分组：** %s\n👤 **账号：** %s\n📊 **倍率：** %sx\n📉 **优先级：** %d → **%d**\n✅ **分组当前可用账号：** %d 个\n⏱️ **使用情况：** %s\n⚠️ **原因：** %s%s\n\n该账号已被自动调度排到最后，请及时检查上游状态与健康策略。",
+		groupName, accountName, trimFloat(event.EffectiveMultiplier), event.PreviousPriority, event.CurrentPriority, event.ActiveAccountCount, recentUse, cause, detail)
+}
+
+func formatAutomaticDisableCause(event connection_health.AutomaticDisableEvent) string {
+	labels := map[string]string{
+		"balance_exhausted":         "余额或额度耗尽",
+		"invalid_credential":        "无效 Key 或凭据",
+		"rate_limited":              "上游限流（429）",
+		"network_failure":           "上游网络连接失败或超时",
+		"upstream_server_error":     "上游服务错误（5xx）",
+		"model_unavailable":         "模型不可用",
+		"authentication_failed":     "上游认证失败",
+		"invalid_response":          "上游返回异常响应",
+		"upstream_runtime_limited":  "上游临时限制该账号",
+		"upstream_unschedulable":    "上游标记账号不可调度",
+		"health_policy_unavailable": "健康策略判定不可用",
+		"health_probe_failed":       "健康探测失败",
+	}
+	if label := labels[event.CauseKey]; label != "" {
+		return label
+	}
+	return event.Reason
+}
+
+func formatAutomaticDisableDetail(event connection_health.AutomaticDisableEvent) string {
+	detail := strings.TrimSpace(event.CauseDetail)
+	if detail == "" {
+		return ""
+	}
+	model := strings.TrimSpace(event.CauseModelName)
+	modelLine := ""
+	if model != "" {
+		modelLine = fmt.Sprintf("\n🤖 **触发模型：** %s", model)
+	}
+	return fmt.Sprintf("%s\n📨 **上游响应：** %s", modelLine, detail)
+}
+
+func formatAutomaticRecoveryAlert(event connection_health.AutomaticRecoveryEvent) string {
+	accountName := strings.TrimSpace(event.AccountName)
+	if accountName == "" {
+		accountName = event.AccountID
+	}
+	groupName := strings.TrimSpace(event.GroupName)
+	if groupName == "" {
+		groupName = event.GroupID
+	}
+	modelName := strings.TrimSpace(event.ModelName)
+	if modelName == "" {
+		modelName = "真实模型请求"
+	}
+	if event.Stage == connection_health.AutomaticRecoveryStageObserving {
+		return fmt.Sprintf("🟡 **上游账号恢复观察中**\n\n📦 **分组：** %s\n👤 **账号：** %s\n📊 **倍率：** %sx\n🤖 **验证模型：** %s\n✅ **探测结果：** 真实模型请求成功\n\n账号此前已自动置底，当前开始恢复观察；后续探测稳定且重新加入自动调度后，会再发送“已自动恢复”通知。", groupName, accountName, trimFloat(event.EffectiveMultiplier), modelName)
+	}
+	if modelName == "倍率调度恢复" {
+		return fmt.Sprintf("🟢 **上游账号已自动恢复**\n\n📦 **分组：** %s\n👤 **账号：** %s\n📊 **倍率：** %sx\n📉 **优先级：** %d → **%d**\n✅ **分组当前可用账号：** %d 个\n✅ **恢复原因：** 倍率调度已恢复该账号的正常优先级，账号重新加入自动调度", groupName, accountName, trimFloat(event.EffectiveMultiplier), event.PreviousPriority, event.CurrentPriority, event.ActiveAccountCount)
+	}
+	return fmt.Sprintf("🟢 **上游账号已自动恢复**\n\n📦 **分组：** %s\n👤 **账号：** %s\n🤖 **验证模型：** %s\n✅ **恢复原因：** 真实模型请求成功，账号已重新加入自动调度\n\n该账号已通过健康验证并恢复可用。", groupName, accountName, modelName)
 }
 
 // defaultMultiplierTemplate 带上影响面。只报「0.055x → 0.065x」没法判断要不要动手：

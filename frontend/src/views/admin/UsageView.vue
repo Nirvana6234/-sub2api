@@ -117,6 +117,42 @@
                 </button>
               </div>
             </div>
+            <div v-if="activeTab === 'usage'" class="relative" ref="hiddenUsersDropdownRef">
+              <button
+                type="button"
+                class="btn btn-secondary px-2 md:px-3"
+                title="不看用户名单"
+                @click="showHiddenUsersDropdown = !showHiddenUsersDropdown"
+              >
+                <Icon name="eyeOff" size="sm" />
+                <span class="hidden md:inline">不看用户<span v-if="hiddenUserIds.length"> ({{ hiddenUserIds.length }})</span></span>
+              </button>
+              <div v-if="showHiddenUsersDropdown" class="absolute right-0 top-full z-50 mt-1 w-72 rounded-lg border border-gray-200 bg-white p-3 shadow-lg dark:border-dark-600 dark:bg-dark-800">
+                <input
+                  v-model="hiddenUserKeyword"
+                  type="search"
+                  class="input mb-2 w-full"
+                  placeholder="搜索用户后加入名单"
+                  @input="searchHiddenUsers"
+                />
+                <div v-if="hiddenUserResults.length" class="max-h-44 overflow-y-auto">
+                  <button
+                    v-for="user in hiddenUserResults"
+                    :key="user.id"
+                    type="button"
+                    class="flex w-full items-center justify-between px-2 py-1.5 text-left text-sm hover:bg-gray-100 dark:hover:bg-dark-700"
+                    @click="toggleHiddenUser(user)"
+                  >
+                    <span class="truncate">{{ user.email }} <span class="text-xs text-gray-400">#{{ user.id }}</span></span>
+                    <Icon :name="hiddenUserIds.includes(user.id) ? 'eye' : 'eyeOff'" size="sm" />
+                  </button>
+                </div>
+                <div v-if="hiddenUserIds.length" class="mt-2 border-t border-gray-200 pt-2 text-xs dark:border-dark-700">
+                  已隐藏 {{ hiddenUserIds.length }} 个用户
+                  <button type="button" class="ml-2 text-primary-600 hover:underline" @click="clearHiddenUsers">清空</button>
+                </div>
+              </div>
+            </div>
           </template>
         </UsageFilters>
 
@@ -233,6 +269,57 @@ let statsReqSeq = 0
 let modelStatsReqSeq = 0
 const exportProgress = reactive({ show: false, progress: 0, current: 0, total: 0, estimatedTime: '' })
 const cleanupDialogVisible = ref(false)
+const hiddenUserIds = ref<number[]>([])
+const hiddenUserKeyword = ref('')
+const hiddenUserResults = ref<Array<{ id: number; email: string; deleted: boolean }>>([])
+const showHiddenUsersDropdown = ref(false)
+const hiddenUsersDropdownRef = ref<HTMLElement | null>(null)
+const HIDDEN_USERS_KEY = 'admin-usage-hidden-user-ids'
+
+const loadHiddenUsers = () => {
+  try {
+    const value = JSON.parse(localStorage.getItem(HIDDEN_USERS_KEY) || '[]')
+    hiddenUserIds.value = Array.isArray(value)
+      ? value.filter((id): id is number => Number.isInteger(id) && id > 0)
+      : []
+  } catch {
+    hiddenUserIds.value = []
+  }
+}
+
+const persistHiddenUsers = () => localStorage.setItem(HIDDEN_USERS_KEY, JSON.stringify(hiddenUserIds.value))
+
+const searchHiddenUsers = async () => {
+  const keyword = hiddenUserKeyword.value.trim()
+  if (!keyword) {
+    hiddenUserResults.value = []
+    return
+  }
+  try {
+    hiddenUserResults.value = await adminUsageAPI.searchUsers(keyword)
+  } catch {
+    hiddenUserResults.value = []
+  }
+}
+
+const refreshForHiddenUsers = () => {
+  pagination.page = 1
+  loadLogs()
+}
+
+const toggleHiddenUser = (user: { id: number; email: string; deleted: boolean }) => {
+  hiddenUserIds.value = hiddenUserIds.value.includes(user.id)
+    ? hiddenUserIds.value.filter((id) => id !== user.id)
+    : [...hiddenUserIds.value, user.id]
+  persistHiddenUsers()
+  refreshForHiddenUsers()
+}
+
+const clearHiddenUsers = () => {
+  hiddenUserIds.value = []
+  persistHiddenUsers()
+  refreshForHiddenUsers()
+}
 // Balance history modal state
 const showBalanceHistoryModal = ref(false)
 const balanceHistoryUser = ref<AdminUser | null>(null)
@@ -381,7 +468,8 @@ const buildUsageListParams = (
     ...filters.value,
     stream: legacyStream === null ? undefined : legacyStream,
     sort_by: sortState.sort_by,
-    sort_order: sortState.sort_order
+    sort_order: sortState.sort_order,
+    exclude_user_ids: hiddenUserIds.value.length ? hiddenUserIds.value : undefined
   }
 }
 
@@ -850,9 +938,13 @@ const handleColumnClickOutside = (event: MouseEvent) => {
   if (columnDropdownRef.value && !columnDropdownRef.value.contains(event.target as HTMLElement)) {
     showColumnDropdown.value = false
   }
+  if (hiddenUsersDropdownRef.value && !hiddenUsersDropdownRef.value.contains(event.target as HTMLElement)) {
+    showHiddenUsersDropdown.value = false
+  }
 }
 
 onMounted(() => {
+  loadHiddenUsers()
   applyRouteQueryFilters()
   void loadRouteUserFilterLabel()
   loadLogs()

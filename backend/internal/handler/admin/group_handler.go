@@ -102,6 +102,7 @@ type CreateGroupRequest struct {
 	RateMultiplier        float64            `json:"rate_multiplier"`
 	AllowContributionPool bool               `json:"allow_contribution_pool"`
 	IsExclusive           bool               `json:"is_exclusive"`
+	IsFallbackPool        bool               `json:"is_fallback_pool"`
 	SubscriptionType      string             `json:"subscription_type" binding:"omitempty,oneof=standard subscription"`
 	DailyLimitUSD         optionalLimitField `json:"daily_limit_usd"`
 	WeeklyLimitUSD        optionalLimitField `json:"weekly_limit_usd"`
@@ -165,6 +166,7 @@ type UpdateGroupRequest struct {
 	RateMultiplier        *float64           `json:"rate_multiplier"`
 	AllowContributionPool *bool              `json:"allow_contribution_pool"`
 	IsExclusive           *bool              `json:"is_exclusive"`
+	IsFallbackPool        *bool              `json:"is_fallback_pool"`
 	Status                string             `json:"status" binding:"omitempty,oneof=active inactive"`
 	SubscriptionType      string             `json:"subscription_type" binding:"omitempty,oneof=standard subscription"`
 	DailyLimitUSD         optionalLimitField `json:"daily_limit_usd"`
@@ -499,6 +501,7 @@ func (h *GroupHandler) Create(c *gin.Context) {
 		RateMultiplier:                  req.RateMultiplier,
 		AllowContributionPool:           req.AllowContributionPool,
 		IsExclusive:                     req.IsExclusive,
+		IsFallbackPool:                  req.IsFallbackPool,
 		SubscriptionType:                req.SubscriptionType,
 		DailyLimitUSD:                   req.DailyLimitUSD.ToServiceInput(),
 		WeeklyLimitUSD:                  req.WeeklyLimitUSD.ToServiceInput(),
@@ -622,6 +625,7 @@ func (h *GroupHandler) Update(c *gin.Context) {
 		RateMultiplier:                  req.RateMultiplier,
 		AllowContributionPool:           req.AllowContributionPool,
 		IsExclusive:                     req.IsExclusive,
+		IsFallbackPool:                  req.IsFallbackPool,
 		Status:                          req.Status,
 		SubscriptionType:                req.SubscriptionType,
 		DailyLimitUSD:                   req.DailyLimitUSD.ToServiceInput(),

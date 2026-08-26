@@ -80,6 +80,7 @@ type postUsageBillingParams struct {
 	RequestPayloadHash    string
 	IsSubscriptionBill    bool
 	AccountRateMultiplier float64
+	AccountQuotaCost      float64
 	APIKeyService         APIKeyQuotaUpdater
 	Platform              string // 来自 APIKey 关联 Group 的平台标识
 }
@@ -126,7 +127,7 @@ func (p *postUsageBillingParams) shouldUpdateRateLimits() bool {
 }
 
 func (p *postUsageBillingParams) shouldUpdateAccountQuota() bool {
-	return p.Cost.TotalCost > 0 && p.Account.IsAPIKeyOrBedrock() && p.Account.HasAnyQuotaLimit()
+	return p.AccountQuotaCost > 0 && !p.Account.IsCredentialShadow() && p.Account.HasAnyQuotaLimit()
 }
 
 // postUsageBilling is the legacy fallback billing path used when the unified
@@ -171,9 +172,8 @@ func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *bill
 	}
 
 	if p.shouldUpdateAccountQuota() {
-		accountCost := cost.TotalCost * p.AccountRateMultiplier
-		if err := deps.accountRepo.IncrementQuotaUsed(billingCtx, p.Account.ID, accountCost); err != nil {
-			slog.Error("increment account quota used failed", "account_id", p.Account.ID, "cost", accountCost, "error", err)
+		if err := deps.accountRepo.IncrementQuotaUsed(billingCtx, p.Account.ID, p.AccountQuotaCost); err != nil {
+			slog.Error("increment account quota used failed", "account_id", p.Account.ID, "cost", p.AccountQuotaCost, "error", err)
 		}
 	}
 
@@ -345,7 +345,7 @@ func buildUsageBillingCommand(requestID string, usageLog *UsageLog, p *postUsage
 		cmd.APIKeyRateLimitCost = p.Cost.ActualCost
 	}
 	if p.shouldUpdateAccountQuota() {
-		cmd.AccountQuotaCost = p.Cost.TotalCost * p.AccountRateMultiplier
+		cmd.AccountQuotaCost = p.AccountQuotaCost
 	}
 
 	cmd.Normalize()
@@ -522,26 +522,25 @@ func notifyAccountQuota(p *postUsageBillingParams, deps *billingDeps, result *Us
 			slog.Error("panic in notifyAccountQuota", "recover", r)
 		}
 	}()
-	if p.Cost.TotalCost <= 0 || p.Account == nil || !p.Account.IsAPIKeyOrBedrock() || deps.balanceNotifyService == nil {
+	if p.AccountQuotaCost <= 0 || p.Account == nil || p.Account.IsCredentialShadow() || deps.balanceNotifyService == nil {
 		slog.Debug("notifyAccountQuota: skipped",
-			"total_cost", p.Cost.TotalCost,
+			"account_quota_cost", p.AccountQuotaCost,
 			"account_nil", p.Account == nil,
-			"is_apikey_or_bedrock", p.Account != nil && p.Account.IsAPIKeyOrBedrock(),
+			"is_credential_shadow", p.Account != nil && p.Account.IsCredentialShadow(),
 			"service_nil", deps.balanceNotifyService == nil,
 		)
 		return
 	}
-	accountCost := p.Cost.TotalCost * p.AccountRateMultiplier
 	var quotaState *AccountQuotaState
 	if result != nil {
 		quotaState = result.QuotaState
 	}
 	slog.Debug("notifyAccountQuota: calling CheckAccountQuotaAfterIncrement",
 		"account_id", p.Account.ID,
-		"account_cost", accountCost,
+		"account_cost", p.AccountQuotaCost,
 		"has_quota_state", quotaState != nil,
 	)
-	deps.balanceNotifyService.CheckAccountQuotaAfterIncrement(context.Background(), p.Account, accountCost, quotaState)
+	deps.balanceNotifyService.CheckAccountQuotaAfterIncrement(context.Background(), p.Account, p.AccountQuotaCost, quotaState)
 }
 
 func detachedBillingContext(ctx context.Context) (context.Context, context.CancelFunc) {
@@ -984,6 +983,11 @@ func (s *GatewayService) recordUsageWithResolvedMultiplier(ctx context.Context, 
 			cost.TotalCost,
 		)
 	}
+	accountQuotaCost := cost.TotalCost
+	if usageLog.AccountStatsCost != nil {
+		accountQuotaCost = *usageLog.AccountStatsCost
+	}
+	accountQuotaCost *= accountRateForQuota
 
 	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple && !isCrossContributorSharedUsage(account, user) {
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
@@ -1012,6 +1016,7 @@ func (s *GatewayService) recordUsageWithResolvedMultiplier(ctx context.Context, 
 		RequestPayloadHash:    resolveUsageBillingPayloadFingerprint(ctx, input.RequestPayloadHash),
 		IsSubscriptionBill:    isSubscriptionBilling,
 		AccountRateMultiplier: accountRateForQuota,
+		AccountQuotaCost:      accountQuotaCost,
 		APIKeyService:         input.APIKeyService,
 		Platform:              quotaPlatform,
 	}, s.billingDeps(), s.usageBillingRepo)

@@ -260,6 +260,7 @@ func (r *Repository) List(ctx context.Context, userID string, adminAccountID str
 				snapshots.user_id,
 				snapshots.site_id,
 				snapshots.site_name,
+				COALESCE(sites.base_url, '') AS base_url,
 				snapshots.group_id,
 				snapshots.group_name,
 				snapshots.platform,
@@ -282,6 +283,7 @@ func (r *Repository) List(ctx context.Context, userID string, adminAccountID str
 				user_id,
 				site_id,
 				site_name,
+				base_url,
 				group_id,
 				group_name,
 				platform,
@@ -301,7 +303,7 @@ func (r *Repository) List(ctx context.Context, userID string, adminAccountID str
 				) AS previous_multiplier
 			FROM enriched
 		), latest AS (
-			SELECT id, user_id, site_id, site_name, group_id, group_name, platform, type, multiplier, deleted, recharge_rate, created_at, last_seen_at, previous_multiplier
+			SELECT id, user_id, site_id, site_name, base_url, group_id, group_name, platform, type, multiplier, deleted, recharge_rate, created_at, last_seen_at, previous_multiplier
 			FROM ranked
 			WHERE row_number = 1
 		), mapped AS (
@@ -357,7 +359,7 @@ func (r *Repository) List(ctx context.Context, userID string, adminAccountID str
 		), counted AS (
 			SELECT count(*)::int AS total FROM filtered
 		)
-		SELECT filtered.id, filtered.user_id, filtered.site_id, filtered.site_name, filtered.group_id, filtered.group_name, filtered.platform, filtered.type, filtered.mapped, filtered.pricing_mapped, filtered.deleted,
+		SELECT filtered.id, filtered.user_id, filtered.site_id, filtered.site_name, filtered.base_url, filtered.group_id, filtered.group_name, filtered.platform, filtered.type, filtered.mapped, filtered.pricing_mapped, filtered.deleted,
 			filtered.multiplier, filtered.recharge_rate, filtered.created_at, filtered.last_seen_at, filtered.previous_multiplier, counted.total, facets.types, facets.platforms
 		FROM filtered
 		CROSS JOIN counted
@@ -503,6 +505,7 @@ func scanListSnapshots(rows pgxRows) (listRecords, error) {
 			&record.UserID,
 			&record.SiteID,
 			&record.SiteName,
+			&record.BaseURL,
 			&record.GroupID,
 			&record.GroupName,
 			&record.Platform,

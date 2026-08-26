@@ -37,6 +37,7 @@ const { t } = useI18n()
 const targets = ref<PurityTarget[]>([])
 const tiers = ref<PurityTierInfo[]>([])
 const jobs = ref<PurityJob[]>([])
+const jobsTotal = ref(0)
 const queuedTotal = ref(0)
 const detectorAvailable = ref(true)
 const maxRetained = ref(0)
@@ -44,11 +45,15 @@ const deletingId = ref('')
 
 const isLoadingTargets = ref(false)
 const isLoadingJobs = ref(false)
+const isLoadingMoreJobs = ref(false)
 const isSubmitting = ref(false)
 const errorKey = ref('')
+const submitSummary = ref('')
 
 const selectedIds = ref<string[]>([])
 const targetKeyword = ref('')
+const historySearch = ref('')
+const historyStatus = ref('')
 const selectedTier = ref<PurityTier>('low')
 const claimedModel = ref<string>(PURITY_CLAIMED_MODELS[0])
 // 中转常给模型起别名，实际写进 HTTP 请求的名字可能跟申报型号不同。留空即跟随申报。
@@ -103,6 +108,8 @@ const estimatedTotals = computed(() => {
 })
 
 const runningJob = computed(() => jobs.value.find((job) => job.status === 'running') ?? null)
+const hasMoreJobs = computed(() => jobs.value.length < jobsTotal.value)
+const jobPageSize = 100
 
 const readableMessage = (key: string): string => (key ? t(key) : '')
 
@@ -169,6 +176,8 @@ const loadTargets = async () => {
     selectedIds.value = selectedIds.value.filter((id) => alive.has(id))
   } catch (error) {
     errorKey.value = error instanceof Error ? error.message : 'admin.purityCheck.errors.request'
+    // 失败原因显示在页面顶部；继续把确认框留在前景会遮住错误，看起来像点击无效。
+    confirmOpen.value = false
   } finally {
     isLoadingTargets.value = false
   }
@@ -184,11 +193,17 @@ const loadTiers = async () => {
   }
 }
 
-const loadJobs = async (options: { silent?: boolean } = {}) => {
+const loadJobs = async (options: { silent?: boolean; append?: boolean } = {}) => {
   if (!options.silent) isLoadingJobs.value = true
   try {
-    const response = await listPurityJobs()
-    jobs.value = response.jobs
+    const response = await listPurityJobs({
+      limit: jobPageSize,
+      offset: options.append ? jobs.value.length : 0,
+      search: historySearch.value,
+      status: historyStatus.value,
+    })
+    jobs.value = options.append ? [...jobs.value, ...response.jobs] : response.jobs
+    jobsTotal.value = response.total
     queuedTotal.value = response.queuedTotal
     detectorAvailable.value = response.detectorAvailable
     maxRetained.value = response.maxRetained
@@ -201,6 +216,21 @@ const loadJobs = async (options: { silent?: boolean } = {}) => {
   }
 }
 
+const searchHistory = async () => {
+  errorKey.value = ''
+  await loadJobs()
+}
+
+const loadMoreJobs = async () => {
+  if (isLoadingMoreJobs.value || !hasMoreJobs.value) return
+  isLoadingMoreJobs.value = true
+  try {
+    await loadJobs({ silent: true, append: true })
+  } finally {
+    isLoadingMoreJobs.value = false
+  }
+}
+
 const refresh = async () => {
   errorKey.value = ''
   await Promise.all([loadTargets(), loadTiers(), loadJobs()])
@@ -208,6 +238,7 @@ const refresh = async () => {
 
 const openConfirm = () => {
   errorKey.value = ''
+  submitSummary.value = ''
   if (selectedCount.value === 0) return
   confirmOpen.value = true
 }
@@ -215,7 +246,7 @@ const openConfirm = () => {
 const confirmSubmit = async () => {
   isSubmitting.value = true
   try {
-    await submitPurityJobs({
+    const result = await submitPurityJobs({
       accountIds: selectedIds.value,
       tier: selectedTier.value,
       claimedModel: claimedModel.value,
@@ -223,9 +254,16 @@ const confirmSubmit = async () => {
     })
     confirmOpen.value = false
     selectedIds.value = []
+    if (result.skippedTargetCount > 0) {
+      submitSummary.value = t('admin.purityCheck.submitSkippedSummary', {
+        queued: result.jobs.length,
+        skipped: result.skippedTargetCount,
+      })
+    }
     await loadJobs()
   } catch (error) {
     errorKey.value = error instanceof Error ? error.message : 'admin.purityCheck.errors.request'
+    submitSummary.value = ''
   } finally {
     isSubmitting.value = false
   }
@@ -358,6 +396,10 @@ onMounted(() => {
 
     <p v-if="errorKey" class="rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">
       {{ readableMessage(errorKey) }}
+    </p>
+
+    <p v-if="submitSummary" class="rounded-lg bg-emerald-500/10 px-4 py-3 text-sm text-emerald-700 dark:text-emerald-300">
+      {{ submitSummary }}
     </p>
 
     <!-- 结论边界：检测器 README 明确写了「不通过不等于中转主动掺水」，原样传达。 -->
@@ -514,11 +556,44 @@ onMounted(() => {
 
       <!-- 右：任务与报告 -->
       <section class="overflow-hidden rounded-lg border border-border/60 bg-card">
-        <div class="flex flex-wrap items-center justify-between gap-2 border-b border-border/50 px-4 py-3">
-          <h2 class="text-sm font-medium text-foreground">{{ t('admin.purityCheck.jobsTitle') }}</h2>
-          <p class="text-xs text-muted-foreground">
-            {{ t('admin.purityCheck.queueSummary', { queued: queuedTotal }) }}
-            <span v-if="maxRetained > 0"> · {{ t('admin.purityCheck.retentionHint', { max: maxRetained }) }}</span>
+        <div class="border-b border-border/50 px-4 py-3">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <h2 class="text-sm font-medium text-foreground">{{ t('admin.purityCheck.jobsTitle') }}</h2>
+            <p class="text-xs text-muted-foreground">
+              {{ t('admin.purityCheck.queueSummary', { queued: queuedTotal }) }}
+              <span v-if="maxRetained > 0"> · {{ t('admin.purityCheck.retentionHint', { max: maxRetained }) }}</span>
+            </p>
+          </div>
+          <form class="mt-3 flex flex-col gap-2 sm:flex-row" @submit.prevent="searchHistory">
+            <div class="relative min-w-0 flex-1">
+              <Search class="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <input
+                v-model="historySearch"
+                type="search"
+                :placeholder="t('admin.purityCheck.historySearchPlaceholder')"
+                class="w-full rounded-lg border border-border/60 bg-background py-1.5 pl-8 pr-3 text-sm text-foreground"
+              />
+            </div>
+            <select
+              v-model="historyStatus"
+              class="h-8 rounded-lg border border-border/60 bg-background px-2 text-sm text-foreground"
+              :aria-label="t('admin.purityCheck.historyStatusLabel')"
+            >
+              <option value="">{{ t('admin.purityCheck.historyAllStatuses') }}</option>
+              <option value="queued">{{ t('admin.purityCheck.statuses.queued') }}</option>
+              <option value="running">{{ t('admin.purityCheck.statuses.running') }}</option>
+              <option value="succeeded">{{ t('admin.purityCheck.statuses.succeeded') }}</option>
+              <option value="failed">{{ t('admin.purityCheck.statuses.failed') }}</option>
+              <option value="cancelled">{{ t('admin.purityCheck.statuses.cancelled') }}</option>
+            </select>
+            <Button type="submit" variant="secondary" size="sm" :disabled="isLoadingJobs">
+              <Loader2 v-if="isLoadingJobs" class="h-4 w-4 animate-spin" />
+              <Search v-else class="h-4 w-4" />
+              {{ t('admin.purityCheck.historySearch') }}
+            </Button>
+          </form>
+          <p v-if="jobsTotal > 0" class="mt-2 text-xs text-muted-foreground">
+            {{ t('admin.purityCheck.historyCount', { shown: jobs.length, total: jobsTotal }) }}
           </p>
         </div>
 
@@ -628,6 +703,12 @@ onMounted(() => {
             </p>
           </li>
         </ul>
+        <div v-if="hasMoreJobs" class="border-t border-border/50 px-4 py-3 text-center">
+          <Button variant="secondary" size="sm" :disabled="isLoadingMoreJobs" @click="loadMoreJobs">
+            <Loader2 v-if="isLoadingMoreJobs" class="h-4 w-4 animate-spin" />
+            <span>{{ t('admin.purityCheck.historyLoadMore') }}</span>
+          </Button>
+        </div>
       </section>
     </div>
 

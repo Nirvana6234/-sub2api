@@ -5,25 +5,67 @@
         <div class="h-8 w-8 animate-spin rounded-full border-4 border-primary-500 border-t-transparent"></div>
       </div>
       <template v-else>
-        <!-- 备用支付通道：兜底入口，刻意放在 tab 之外——主通道彻底不可用时
-             （checkout 拉取失败、无可用支付方式、payment_enabled 关闭）它仍需可见。 -->
-        <a
-          v-if="backupPaymentUrl && paymentPhase === 'select' && !selectedPlan"
-          :href="backupPaymentUrl"
-          target="_blank"
-          rel="noopener noreferrer"
-          class="card flex items-center justify-between gap-4 p-5 transition-colors hover:bg-gray-50 dark:hover:bg-dark-800"
+        <!-- 备用支付通道：主通道异常时提升为醒目的故障兜底入口。 -->
+        <div
+          v-if="backupPaymentUrl && paymentPhase === 'select'"
+          :class="[
+            'rounded-2xl border p-5 shadow-sm transition-all',
+            backupPaymentRecommended
+              ? 'border-amber-300 bg-amber-50 shadow-amber-100 dark:border-amber-700/70 dark:bg-amber-950/30 dark:shadow-none'
+              : 'border-primary-200 bg-primary-50/70 dark:border-primary-800 dark:bg-primary-950/20',
+          ]"
         >
-          <span class="min-w-0">
-            <span class="block text-sm font-semibold text-gray-900 dark:text-white">
-              {{ t('payment.backupChannel') }}
-            </span>
-            <span class="mt-0.5 block text-xs text-gray-500 dark:text-gray-400">
-              {{ t('payment.backupChannelHint') }}
-            </span>
-          </span>
-          <Icon name="externalLink" size="sm" class="shrink-0 text-gray-400" />
-        </a>
+          <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div class="flex min-w-0 items-start gap-3">
+              <div
+                :class="[
+                  'mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl',
+                  backupPaymentRecommended
+                    ? 'bg-amber-500 text-white'
+                    : 'bg-primary-600 text-white',
+                ]"
+              >
+                <Icon :name="backupPaymentRecommended ? 'exclamationTriangle' : 'externalLink'" size="sm" />
+              </div>
+              <div class="min-w-0">
+                <div class="flex flex-wrap items-center gap-2">
+                  <h3 class="text-sm font-bold text-gray-900 dark:text-white">
+                    {{ t('payment.backupChannel') }}
+                  </h3>
+                  <span class="rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-bold text-white">
+                    {{ t('payment.backupChannelBadge') }}
+                  </span>
+                </div>
+                <p class="mt-1 text-xs leading-relaxed text-gray-600 dark:text-gray-300">
+                  {{ backupPaymentRecommended ? t('payment.backupChannelFailureHint') : t('payment.backupChannelHint') }}
+                </p>
+              </div>
+            </div>
+            <a
+              :href="backupPaymentUrl"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-gray-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-gray-700 dark:bg-white dark:text-gray-900 dark:hover:bg-gray-200"
+            >
+              {{ t('payment.backupChannelCta') }}
+              <Icon name="externalLink" size="sm" />
+            </a>
+          </div>
+        </div>
+        <div
+          v-if="backupPaymentRecommended && (errorMessage || errorHintMessage)"
+          role="alert"
+          aria-live="polite"
+          class="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900 shadow-sm dark:border-amber-700/70 dark:bg-amber-950/30 dark:text-amber-100"
+        >
+          <Icon name="exclamationTriangle" size="sm" class="mt-0.5 shrink-0 text-amber-600 dark:text-amber-300" />
+          <div class="min-w-0 text-sm">
+            <p class="font-semibold">{{ errorMessage }}</p>
+            <p v-if="errorHintMessage" class="mt-0.5 text-xs leading-relaxed text-amber-800/80 dark:text-amber-200/80">
+              {{ errorHintMessage }}
+            </p>
+          </div>
+        </div>
 
         <!-- Tab Switcher (hide during payment and subscription confirm) -->
         <div v-if="tabs.length > 1 && paymentPhase === 'select' && !selectedPlan" class="flex space-x-1 rounded-xl bg-gray-100 p-1 dark:bg-dark-800">
@@ -78,7 +120,7 @@
               <PaymentMethodSelector
                 :methods="methodOptions"
                 :selected="selectedMethod"
-                @select="selectedMethod = $event"
+                @select="selectPaymentMethod"
               />
             </div>
             <div v-if="validAmount > 0" class="card p-6">
@@ -173,7 +215,7 @@
                 <PaymentMethodSelector
                   :methods="subMethodOptions"
                   :selected="selectedMethod"
-                  @select="selectedMethod = $event"
+                  @select="selectPaymentMethod"
                 />
               </div>
               <div v-if="feeRate > 0 && selectedPlan.price > 0" class="card p-6">
@@ -352,6 +394,7 @@ const loading = ref(true)
 const submitting = ref(false)
 const errorMessage = ref('')
 const errorHintMessage = ref('')
+const backupPaymentRecommended = ref(false)
 const activeTab = ref<'recharge' | 'subscription'>('recharge')
 const amount = ref<number | null>(null)
 const selectedMethod = ref('')
@@ -449,6 +492,7 @@ function removeRecoverySnapshot() {
 function resetPayment() {
   paymentPhase.value = 'select'
   paymentState.value = emptyPaymentState()
+  backupPaymentRecommended.value = false
   removeRecoverySnapshot()
 }
 
@@ -770,6 +814,7 @@ function planPeakRateLabel(plan: SubscriptionPlan): string {
 function selectPlan(plan: SubscriptionPlan) {
   selectedPlan.value = plan
   errorMessage.value = ''
+  backupPaymentRecommended.value = false
 }
 
 function selectPlanFromModal(plan: SubscriptionPlan) {
@@ -777,6 +822,12 @@ function selectPlanFromModal(plan: SubscriptionPlan) {
   renewGroupId.value = null
   selectedPlan.value = plan
   errorMessage.value = ''
+  backupPaymentRecommended.value = false
+}
+
+function selectPaymentMethod(method: string) {
+  selectedMethod.value = method
+  backupPaymentRecommended.value = false
 }
 
 function closeRenewalModal() {
@@ -798,6 +849,7 @@ async function createOrder(orderAmount: number, orderType: OrderType, planId?: n
   submitting.value = true
   errorMessage.value = ''
   errorHintMessage.value = ''
+  backupPaymentRecommended.value = false
   const requestType = normalizeVisibleMethod(options.paymentType || selectedMethod.value) || options.paymentType || selectedMethod.value
   try {
     const payload = buildCreateOrderPayload({
@@ -967,6 +1019,7 @@ async function createOrder(orderAmount: number, orderType: OrderType, planId?: n
         normalizeVisibleMethod(options.paymentType || selectedMethod.value) || selectedMethod.value,
       )
       if (!handled) {
+        backupPaymentRecommended.value = true
         errorMessage.value = extractI18nErrorMessage(err, t, 'payment.errors', extractApiErrorMessage(err, t('payment.result.failed')))
         errorHintMessage.value = ''
       }
@@ -1088,6 +1141,7 @@ function applyScenarioError(err: unknown, paymentMethod: string): boolean {
   }
   errorMessage.value = t(descriptor.messageKey)
   errorHintMessage.value = descriptor.hintKey ? t(descriptor.hintKey) : ''
+  backupPaymentRecommended.value = true
   appStore.showError(buildPaymentErrorToastMessage(errorMessage.value, errorHintMessage.value))
   return true
 }

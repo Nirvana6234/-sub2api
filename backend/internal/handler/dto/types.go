@@ -145,6 +145,8 @@ type Group struct {
 	// KiroCompat enables Codex-specific compatibility handling for this group.
 	KiroCompat      bool   `json:"kiro_compat"`
 	FallbackGroupID *int64 `json:"fallback_group_id"`
+	// IsFallbackPool marks this group as a fallback-only account pool.
+	IsFallbackPool bool `json:"is_fallback_pool"`
 	// 无效请求兜底分组
 	FallbackGroupIDOnInvalidRequest *int64 `json:"fallback_group_id_on_invalid_request"`
 

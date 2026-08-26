@@ -103,15 +103,23 @@ func (s *OpenAIGatewayService) ForwardAlphaSearch(ctx context.Context, c *gin.Co
 			if shouldApplyOpenAIAlphaSearchAccountErrorSideEffects(resp.StatusCode) {
 				shouldDisable = s.handleFailoverSideEffects(ctx, resp, account, respBody, openAIAlphaSearchSchedulingModel(account, requestedModel))
 			}
-			return nil, &UpstreamFailoverError{
-				StatusCode:             resp.StatusCode,
-				ResponseBody:           respBody,
-				RetryableOnSameAccount: openAIRetryableOnSameAccount(account, resp.StatusCode, shouldDisable, upstreamMessage, respBody),
+			retryableOnSameAccount := openAIRetryableOnSameAccount(account, resp.StatusCode, shouldDisable, upstreamMessage, respBody)
+			// OAuth 类账号的 429 走账号级分类，它会带上同号重试窗口（Retry-After 等）。
+			// 少了这一步，setup token 账号被限流后会被当成普通失败直接换号，
+			// 白白丢掉本可以等待恢复的额度。
+			if account.IsOpenAIOAuthLike() && resp.StatusCode == http.StatusTooManyRequests {
+				return nil, s.newOpenAIAccountFailoverError(account, resp.StatusCode, resp.Header, respBody, upstreamMessage, shouldDisable, retryableOnSameAccount)
 			}
+			// 访问态错误（workspace 受限、组织被停用等）要走带响应头的专用失败类型，
+			// 必须先于通用分支返回：调用方靠它拿到分类信息决定是否换号、是否禁用账号。
 			if isOpenAIHTTPUpstreamAccessStateError(resp.StatusCode, upstreamMessage, respBody) {
 				return nil, newOpenAIUpstreamFailoverError(resp.StatusCode, resp.Header, respBody, upstreamMessage, retryableOnSameAccount)
 			}
-			return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: respBody, RetryableOnSameAccount: retryableOnSameAccount}
+			return nil, &UpstreamFailoverError{
+				StatusCode:             resp.StatusCode,
+				ResponseBody:           respBody,
+				RetryableOnSameAccount: retryableOnSameAccount,
+			}
 		}
 	}
 
@@ -182,15 +190,23 @@ func (s *OpenAIGatewayService) forwardAlphaSearchViaResponsesWebSearch(
 			if shouldApplyOpenAIAlphaSearchAccountErrorSideEffects(resp.StatusCode) {
 				shouldDisable = s.handleFailoverSideEffects(ctx, resp, account, respBody, openAIAlphaSearchSchedulingModel(account, requestedModel))
 			}
-			return nil, &UpstreamFailoverError{
-				StatusCode:             resp.StatusCode,
-				ResponseBody:           respBody,
-				RetryableOnSameAccount: openAIRetryableOnSameAccount(account, resp.StatusCode, shouldDisable, upstreamMessage, respBody),
+			retryableOnSameAccount := openAIRetryableOnSameAccount(account, resp.StatusCode, shouldDisable, upstreamMessage, respBody)
+			// OAuth 类账号的 429 走账号级分类，它会带上同号重试窗口（Retry-After 等）。
+			// 少了这一步，setup token 账号被限流后会被当成普通失败直接换号，
+			// 白白丢掉本可以等待恢复的额度。
+			if account.IsOpenAIOAuthLike() && resp.StatusCode == http.StatusTooManyRequests {
+				return nil, s.newOpenAIAccountFailoverError(account, resp.StatusCode, resp.Header, respBody, upstreamMessage, shouldDisable, retryableOnSameAccount)
 			}
+			// 访问态错误（workspace 受限、组织被停用等）要走带响应头的专用失败类型，
+			// 必须先于通用分支返回：调用方靠它拿到分类信息决定是否换号、是否禁用账号。
 			if isOpenAIHTTPUpstreamAccessStateError(resp.StatusCode, upstreamMessage, respBody) {
 				return nil, newOpenAIUpstreamFailoverError(resp.StatusCode, resp.Header, respBody, upstreamMessage, retryableOnSameAccount)
 			}
-			return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: respBody, RetryableOnSameAccount: retryableOnSameAccount}
+			return nil, &UpstreamFailoverError{
+				StatusCode:             resp.StatusCode,
+				ResponseBody:           respBody,
+				RetryableOnSameAccount: retryableOnSameAccount,
+			}
 		}
 	}
 

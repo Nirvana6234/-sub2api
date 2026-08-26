@@ -387,6 +387,52 @@ func (r *usageLogRepository) GetAccountWindowStatsBatch(ctx context.Context, acc
 	return result, nil
 }
 
+// GetAccountWindowGroupBreakdownBatch reports the group recorded on each usage
+// log. It intentionally does not join account_groups: an account may be bound
+// to many groups, while an individual request belongs to exactly one group.
+func (r *usageLogRepository) GetAccountWindowGroupBreakdownBatch(ctx context.Context, accountIDs []int64, startTime, endTime time.Time) (map[int64][]usagestats.AccountUsageGroupBreakdown, error) {
+	result := make(map[int64][]usagestats.AccountUsageGroupBreakdown, len(accountIDs))
+	if len(accountIDs) == 0 {
+		return result, nil
+	}
+
+	const query = `
+		SELECT
+			ul.account_id,
+			ul.group_id,
+			COALESCE(g.name, '') AS group_name,
+			COUNT(*) AS requests,
+			COALESCE(SUM(ul.input_tokens + ul.output_tokens + ul.cache_creation_tokens + ul.cache_read_tokens), 0) AS total_tokens,
+			COALESCE(SUM(ul.total_cost), 0) AS standard_cost,
+			COALESCE(SUM(COALESCE(ul.account_stats_cost, ul.total_cost) * ul.account_rate_multiplier), 0) AS account_cost,
+			COALESCE(SUM(ul.actual_cost), 0) AS user_cost
+		FROM usage_logs ul
+		LEFT JOIN groups g ON g.id = ul.group_id
+		WHERE ul.account_id = ANY($1) AND ul.created_at >= $2 AND ul.created_at < $3
+		GROUP BY ul.account_id, ul.group_id, g.name
+		ORDER BY ul.account_id ASC, account_cost DESC, ul.group_id ASC
+	`
+
+	rows, err := r.sql.QueryContext(ctx, query, pq.Array(accountIDs), startTime, endTime)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var accountID int64
+		var item usagestats.AccountUsageGroupBreakdown
+		if err := rows.Scan(&accountID, &item.GroupID, &item.GroupName, &item.Requests, &item.TotalTokens, &item.StandardCost, &item.AccountCost, &item.UserCost); err != nil {
+			return nil, err
+		}
+		result[accountID] = append(result[accountID], item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 // GetGeminiUsageTotalsBatch 批量聚合 Gemini 账号在窗口内的 Pro/Flash 请求与用量。
 // 模型分类规则与 service.geminiModelClassFromName 一致：model 包含 flash/lite 视为 flash，其余视为 pro。
 func (r *usageLogRepository) GetGeminiUsageTotalsBatch(ctx context.Context, accountIDs []int64, startTime, endTime time.Time) (map[int64]service.GeminiUsageTotals, error) {
@@ -711,18 +757,26 @@ func (r *usageLogRepository) GetStatsWithFilters(ctx context.Context, filters Us
 			%s
 		)
 		SELECT
-			COUNT(*) as total_requests,
-			COALESCE(SUM(input_tokens), 0) as total_input_tokens,
-			COALESCE(SUM(output_tokens), 0) as total_output_tokens,
-			COALESCE(SUM(cache_creation_tokens + cache_read_tokens), 0) as total_cache_tokens,
-			COALESCE(SUM(cache_creation_tokens), 0) as total_cache_creation_tokens,
-			COALESCE(SUM(cache_read_tokens), 0) as total_cache_read_tokens,
-			COALESCE(SUM(total_cost), 0) as total_cost,
-			COALESCE(SUM(actual_cost), 0) as total_actual_cost,
-			COALESCE(SUM(COALESCE(account_stats_cost, total_cost) * account_rate_multiplier), 0) as total_account_cost,
-			COALESCE(AVG(duration_ms), 0) as avg_duration_ms
-		FROM usage_logs
-		%s
+			GROUPING(inbound_endpoint) AS inbound_grouped,
+			GROUPING(upstream_endpoint) AS upstream_grouped,
+			inbound_endpoint,
+			upstream_endpoint,
+			COUNT(*) AS requests,
+			COALESCE(SUM(input_tokens), 0) AS input_tokens,
+			COALESCE(SUM(output_tokens), 0) AS output_tokens,
+			COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
+			COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+			COALESCE(SUM(total_cost), 0) AS cost,
+			COALESCE(SUM(actual_cost), 0) AS actual_cost,
+			COALESCE(SUM(account_cost), 0) AS account_cost,
+			COALESCE(AVG(duration_ms), 0) AS avg_duration_ms
+		FROM scoped
+		GROUP BY GROUPING SETS (
+			(),
+			(inbound_endpoint),
+			(upstream_endpoint),
+			(inbound_endpoint, upstream_endpoint)
+		)
 	`, buildWhere(conditions))
 
 	stats := &UsageStats{}
@@ -821,6 +875,9 @@ type AccountUsageHistory = usagestats.AccountUsageHistory
 
 // AccountUsageSummary represents summary statistics for an account
 type AccountUsageSummary = usagestats.AccountUsageSummary
+
+// AccountUsageGroupBreakdown represents one account's actual usage in one group.
+type AccountUsageGroupBreakdown = usagestats.AccountUsageGroupBreakdown
 
 // AccountUsageStatsResponse represents the full usage statistics response for an account
 type AccountUsageStatsResponse = usagestats.AccountUsageStatsResponse
@@ -1136,6 +1193,11 @@ func (r *usageLogRepository) GetAccountUsageStats(ctx context.Context, accountID
 		}
 	}
 
+	byGroup, err := r.getAccountUsageGroupBreakdown(ctx, accountID, startTime, endTime)
+	if err != nil {
+		return nil, err
+	}
+
 	models, err := r.GetModelStatsWithFilters(ctx, startTime, endTime, 0, 0, accountID, 0, nil, nil, nil)
 	if err != nil {
 		models = []ModelStat{}
@@ -1154,9 +1216,47 @@ func (r *usageLogRepository) GetAccountUsageStats(ctx context.Context, accountID
 	resp = &AccountUsageStatsResponse{
 		History:           history,
 		Summary:           summary,
+		ByGroup:           byGroup,
 		Models:            models,
 		Endpoints:         endpoints,
 		UpstreamEndpoints: upstreamEndpoints,
 	}
 	return resp, nil
+}
+
+func (r *usageLogRepository) getAccountUsageGroupBreakdown(ctx context.Context, accountID int64, startTime, endTime time.Time) ([]AccountUsageGroupBreakdown, error) {
+	const query = `
+		SELECT
+			ul.group_id,
+			COALESCE(g.name, '') AS group_name,
+			COUNT(*) AS requests,
+			COALESCE(SUM(ul.input_tokens + ul.output_tokens + ul.cache_creation_tokens + ul.cache_read_tokens), 0) AS total_tokens,
+			COALESCE(SUM(ul.total_cost), 0) AS standard_cost,
+			COALESCE(SUM(COALESCE(ul.account_stats_cost, ul.total_cost) * ul.account_rate_multiplier), 0) AS account_cost,
+			COALESCE(SUM(ul.actual_cost), 0) AS user_cost
+		FROM usage_logs ul
+		LEFT JOIN groups g ON g.id = ul.group_id
+		WHERE ul.account_id = $1 AND ul.created_at >= $2 AND ul.created_at < $3
+		GROUP BY ul.group_id, g.name
+		ORDER BY account_cost DESC, ul.group_id ASC
+	`
+
+	rows, err := r.sql.QueryContext(ctx, query, accountID, startTime, endTime)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]AccountUsageGroupBreakdown, 0)
+	for rows.Next() {
+		var item AccountUsageGroupBreakdown
+		if err := rows.Scan(&item.GroupID, &item.GroupName, &item.Requests, &item.TotalTokens, &item.StandardCost, &item.AccountCost, &item.UserCost); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

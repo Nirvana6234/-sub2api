@@ -173,7 +173,9 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 	// future requests don't keep re-selecting a deterministically broken account.
 	poolModeRetryable := account.IsPoolMode() && account.IsPoolModeRetryableStatus(statusCode)
 	permanentCapability403 := statusCode == http.StatusForbidden && isOpenAIPermanentCapability403("", responseBody)
+	dailyUsageLimit403 := isOpenAIDailyUsageLimitError(statusCode, "", responseBody)
 	if !shouldDisable && account.Platform == PlatformOpenAI && account.Type == AccountTypeAPIKey &&
+		!dailyUsageLimit403 &&
 		(shouldCooldownOpenAITransientUpstreamError(statusCode, responseBody) || permanentCapability403) &&
 		(!poolModeRetryable || permanentCapability403) {
 		model := ""

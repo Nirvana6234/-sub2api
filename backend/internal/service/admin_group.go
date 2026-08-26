@@ -396,7 +396,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 
 	// 校验降级分组
 	if input.FallbackGroupID != nil {
-		if err := s.validateFallbackGroup(ctx, 0, *input.FallbackGroupID); err != nil {
+		if err := s.validateFallbackGroup(ctx, 0, platform, *input.FallbackGroupID); err != nil {
 			return nil, err
 		}
 	}
@@ -459,6 +459,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		RateMultiplier:                  input.RateMultiplier,
 		AllowContributionPool:           input.AllowContributionPool,
 		IsExclusive:                     input.IsExclusive,
+		IsFallbackPool:                  input.IsFallbackPool,
 		Status:                          StatusActive,
 		SubscriptionType:                subscriptionType,
 		DailyLimitUSD:                   dailyLimit,
@@ -571,11 +572,13 @@ func normalizePrice(price *float64) *float64 {
 // validateFallbackGroup 校验降级分组的有效性
 // currentGroupID: 当前分组 ID（新建时为 0）
 // fallbackGroupID: 降级分组 ID
-func (s *adminServiceImpl) validateFallbackGroup(ctx context.Context, currentGroupID, fallbackGroupID int64) error {
+func (s *adminServiceImpl) validateFallbackGroup(ctx context.Context, currentGroupID int64, sourcePlatform string, fallbackGroupID int64) error {
 	// 不能将自己设置为降级分组
 	if currentGroupID > 0 && currentGroupID == fallbackGroupID {
 		return fmt.Errorf("cannot set self as fallback group")
 	}
+	openAICompatibleSource := sourcePlatform == PlatformOpenAI || sourcePlatform == PlatformGrok
+	normalizedSourcePlatform := normalizeOpenAICompatiblePlatform(sourcePlatform)
 
 	visited := map[int64]struct{}{}
 	nextID := fallbackGroupID
@@ -592,6 +595,17 @@ func (s *adminServiceImpl) validateFallbackGroup(ctx context.Context, currentGro
 		fallbackGroup, err := s.groupRepo.GetByIDLite(ctx, nextID)
 		if err != nil {
 			return fmt.Errorf("fallback group not found: %w", err)
+		}
+		if openAICompatibleSource {
+			if fallbackGroup.Status != StatusActive {
+				return fmt.Errorf("fallback group must be active")
+			}
+			if !fallbackGroup.IsFallbackPool {
+				return fmt.Errorf("fallback group must be marked as fallback pool")
+			}
+			if normalizeOpenAICompatiblePlatform(fallbackGroup.Platform) != normalizedSourcePlatform {
+				return fmt.Errorf("fallback group platform mismatch")
+			}
 		}
 
 		// 降级分组不能启用 claude_code_only，否则会造成死循环
@@ -666,6 +680,9 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	}
 	if input.IsExclusive != nil {
 		group.IsExclusive = *input.IsExclusive
+	}
+	if input.IsFallbackPool != nil {
+		group.IsFallbackPool = *input.IsFallbackPool
 	}
 	if input.Status != "" {
 		group.Status = input.Status
@@ -816,15 +833,17 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 		group.KiroCompat = *input.KiroCompat
 	}
 	if input.FallbackGroupID != nil {
-		// 校验降级分组
 		if *input.FallbackGroupID > 0 {
-			if err := s.validateFallbackGroup(ctx, id, *input.FallbackGroupID); err != nil {
-				return nil, err
-			}
 			group.FallbackGroupID = input.FallbackGroupID
 		} else {
 			// 传入 0 或负数表示清除降级分组
 			group.FallbackGroupID = nil
+		}
+	}
+	if group.FallbackGroupID != nil {
+		// 按合并后的最终平台校验，避免修改平台或兜底标记后留下不兼容的旧配置。
+		if err := s.validateFallbackGroup(ctx, id, group.Platform, *group.FallbackGroupID); err != nil {
+			return nil, err
 		}
 	}
 	fallbackOnInvalidRequest := group.FallbackGroupIDOnInvalidRequest
@@ -1190,6 +1209,9 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 		}
 		if group.Status != StatusActive {
 			return nil, infraerrors.BadRequest("GROUP_NOT_ACTIVE", "target group is not active")
+		}
+		if group.IsFallbackPool {
+			return nil, infraerrors.BadRequest("FALLBACK_GROUP_NOT_BINDABLE", "fallback pool groups cannot be bound to API keys directly")
 		}
 		// 订阅类型分组：用户须持有该分组的有效订阅才可绑定
 		if group.IsSubscriptionType() {

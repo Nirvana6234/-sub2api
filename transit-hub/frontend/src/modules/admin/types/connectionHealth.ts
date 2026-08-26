@@ -188,6 +188,7 @@ export interface ConnectionHealthEvent {
   toState: string
   latencyMs: number | null
   errorKey: string
+  errorDetail: string
   remoteAction: string
   createdAt: string
 }

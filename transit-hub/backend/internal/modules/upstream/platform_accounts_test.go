@@ -251,6 +251,50 @@ func TestListAdminGroupAccounts_Sub2APIUsagePaginatesForQuieterAccounts(t *testi
 	}
 }
 
+func TestListAdminGroupAccounts_Sub2APIUsageFallsBackAcrossGroups(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	usageQueries := make([]string, 0, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/admin/accounts":
+			writeJSON(w, map[string]any{"data": []map[string]any{{"id": 101}}, "total": 1})
+		case "/api/v1/admin/usage":
+			groupID := r.URL.Query().Get("group_id")
+			usageQueries = append(usageQueries, groupID)
+			if groupID == "42" {
+				writeJSON(w, map[string]any{"data": map[string]any{"items": []map[string]any{
+					{"account_id": 101, "group_id": 42, "first_token_ms": 100, "created_at": now.Add(-10 * time.Minute)},
+					{"account_id": 101, "group_id": 42, "first_token_ms": 200, "created_at": now.Add(-20 * time.Minute)},
+				}}})
+				return
+			}
+			writeJSON(w, map[string]any{"data": map[string]any{"items": []map[string]any{
+				{"account_id": 101, "group_id": 99, "first_token_ms": 300, "created_at": now.Add(-2 * time.Hour)},
+				{"account_id": 101, "group_id": 99, "first_token_ms": 400, "created_at": now.Add(-3 * time.Hour)},
+				{"account_id": 101, "group_id": 99, "first_token_ms": 500, "created_at": now.Add(-4 * time.Hour)},
+			}}})
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	service := NewPlatformService(NewHTTPClient(server.Client()))
+	accounts, err := service.ListAdminGroupAccounts(
+		Session{Platform: PlatformSub2API, BaseURL: server.URL, AccessToken: "token"},
+		AdminGroupInfo{ID: "42"},
+	)
+	if err != nil || len(accounts) != 1 {
+		t.Fatalf("unexpected account result: accounts=%+v err=%v", accounts, err)
+	}
+	if strings.Join(usageQueries, ",") != "42," {
+		t.Fatalf("expected group query followed by cross-group fallback, got %v", usageQueries)
+	}
+	if accounts[0].UsageSampleCount != 3 || accounts[0].UsageP95FirstTokenMs == nil || *accounts[0].UsageP95FirstTokenMs != 500 {
+		t.Fatalf("expected three fallback samples and P95=500, got %+v", accounts[0])
+	}
+}
+
 func TestListAdminGroupAccounts_Sub2APIUsageFallbackIsNonBlocking(t *testing.T) {
 	t.Run("insufficient samples", func(t *testing.T) {
 		now := time.Now().UTC()

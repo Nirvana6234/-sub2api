@@ -36,6 +36,11 @@
         </span>
       </div>
 
+      <div v-if="stats" class="flex flex-wrap items-center justify-between gap-2 border-l-4 border-primary-500 bg-primary-50 px-3 py-2 text-sm text-primary-900 dark:bg-primary-900/20 dark:text-primary-100">
+        <span class="font-medium">跨 {{ stats.by_group.length }} 个实际用量分组总计</span>
+        <span class="text-xs opacity-80">总计按账号汇总，不会因账号绑定多个分组重复计算</span>
+      </div>
+
       <!-- Loading State -->
       <div v-if="loading" class="flex items-center justify-center py-12">
         <LoadingSpinner />
@@ -151,6 +156,37 @@
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accounts.stats.avgDailyUsage') }}
             </p>
+          </div>
+        </div>
+
+        <div v-if="stats.by_group.length" class="overflow-hidden border border-gray-200 dark:border-dark-600">
+          <div class="flex items-center justify-between border-b border-gray-200 bg-gray-50 px-4 py-3 dark:border-dark-600 dark:bg-dark-800">
+            <h3 class="text-sm font-semibold text-gray-900 dark:text-white">按实际使用分组拆分</h3>
+            <span class="text-xs text-gray-500 dark:text-gray-400">按账号成本排序</span>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="min-w-full text-sm">
+              <thead class="bg-gray-50 text-left text-xs text-gray-500 dark:bg-dark-800 dark:text-gray-400">
+                <tr>
+                  <th class="px-4 py-2 font-medium">分组</th>
+                  <th class="px-4 py-2 text-right font-medium">请求</th>
+                  <th class="px-4 py-2 text-right font-medium">Token</th>
+                  <th class="px-4 py-2 text-right font-medium">账号成本</th>
+                  <th class="px-4 py-2 text-right font-medium">用户收费</th>
+                  <th class="px-4 py-2 text-right font-medium">请求占比</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-100 dark:divide-dark-700">
+                <tr v-for="group in stats.by_group" :key="group.group_id" class="text-gray-700 dark:text-gray-200">
+                  <td class="px-4 py-2 font-medium">{{ groupLabel(group.group_name, group.group_id) }}</td>
+                  <td class="px-4 py-2 text-right tabular-nums">{{ formatNumber(group.requests) }}</td>
+                  <td class="px-4 py-2 text-right tabular-nums">{{ formatTokens(group.total_tokens) }}</td>
+                  <td class="px-4 py-2 text-right tabular-nums">${{ formatCost(group.account_cost) }}</td>
+                  <td class="px-4 py-2 text-right tabular-nums">${{ formatCost(group.user_cost) }}</td>
+                  <td class="px-4 py-2 text-right tabular-nums">{{ groupRequestShare(group.requests) }}</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
 
@@ -494,6 +530,12 @@ const emit = defineEmits<{
 
 const loading = ref(false)
 const stats = ref<AccountUsageStatsResponse | null>(null)
+
+const groupLabel = (name: string, id: number): string => `${name || '未分组'} #${id}`
+const groupRequestShare = (requests: number): string => {
+  const total = stats.value?.summary.total_requests || 0
+  return total > 0 ? `${((requests / total) * 100).toFixed(1)}%` : '0.0%'
+}
 
 // Dark mode detection
 const isDarkMode = computed(() => {

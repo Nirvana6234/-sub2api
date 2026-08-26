@@ -9,10 +9,10 @@ import (
 
 func TestIsOpenAIPermanentCapability403(t *testing.T) {
 	tests := []struct {
-		name        string
-		upstreamMsg string
+		name         string
+		upstreamMsg  string
 		upstreamBody []byte
-		expected    bool
+		expected     bool
 	}{
 		{
 			name:        "production_capability_disabled_message_in_upstream_msg",
@@ -68,6 +68,47 @@ func TestIsOpenAIPermanentCapability403(t *testing.T) {
 	}
 }
 
+func TestIsOpenAIDailyUsageLimitError(t *testing.T) {
+	tests := []struct {
+		name         string
+		statusCode   int
+		upstreamMsg  string
+		upstreamBody []byte
+		expected     bool
+	}{
+		{
+			name:         "explicit_daily_usage_message",
+			statusCode:   http.StatusForbidden,
+			upstreamBody: []byte(`{"error":{"message":"daily usage limit exceeded"}}`),
+			expected:     true,
+		},
+		{
+			name:         "insufficient_quota_with_daily_message",
+			statusCode:   http.StatusForbidden,
+			upstreamBody: []byte(`{"error":{"code":"insufficient_quota","message":"daily usage limit exceeded"}}`),
+			expected:     true,
+		},
+		{
+			name:        "same_message_wrong_status",
+			statusCode:  http.StatusBadRequest,
+			upstreamMsg: "daily usage limit exceeded",
+			expected:    false,
+		},
+		{
+			name:         "echoed_prompt_does_not_match_structured_json",
+			statusCode:   http.StatusForbidden,
+			upstreamBody: []byte(`{"error":{"code":"forbidden","message":"Access forbidden"},"prompt":"daily usage limit exceeded"}`),
+			expected:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.expected, isOpenAIDailyUsageLimitError(tt.statusCode, tt.upstreamMsg, tt.upstreamBody))
+		})
+	}
+}
+
 func TestNewOpenAIUpstreamFailoverError_PermanentCapability403ForcesNoSameAccountRetry(t *testing.T) {
 	err := newOpenAIUpstreamFailoverError(
 		http.StatusForbidden,
@@ -94,6 +135,75 @@ func TestNewOpenAIUpstreamFailoverError_TransientForbiddenKeepsCallerDecision(t 
 	require.True(t, err.RetryableOnSameAccount, "an unclassified 403 must keep the caller's retry decision unchanged")
 }
 
+func TestNewOpenAIUpstreamFailoverError_DailyUsageLimitIsRequestScoped(t *testing.T) {
+	err := newOpenAIUpstreamFailoverError(
+		http.StatusForbidden,
+		http.Header{},
+		[]byte(`{"error":{"message":"daily usage limit exceeded"}}`),
+		"daily usage limit exceeded",
+		false,
+	)
+
+	require.NotNil(t, err)
+	require.True(t, err.RequestScopedTransient)
+	require.Equal(t, GatewayFailureScopeRequest, err.Scope)
+	require.Equal(t, OpenAIDailyUsageLimitReason, err.Reason)
+	require.Equal(t, http.StatusServiceUnavailable, err.ClientStatusCode)
+	require.NotEmpty(t, err.ClientMessage)
+}
+
+func TestOpenAIPassthroughDailyUsageLimitAlwaysFailsOver(t *testing.T) {
+	body := []byte(`{"error":{"message":"daily usage limit exceeded"}}`)
+	for _, accountType := range []string{
+		AccountTypeAPIKey,
+		AccountTypeUpstream,
+		AccountTypeOAuth,
+		AccountTypeSetupToken,
+	} {
+		t.Run(accountType, func(t *testing.T) {
+			account := &Account{Platform: PlatformOpenAI, Type: accountType}
+			require.True(t, shouldFailoverOpenAIPassthroughResponse(account, http.StatusForbidden, body))
+		})
+	}
+}
+
+func TestNewOpenAIAccountFailoverError_DailyUsageLimitDiffersByAccountType(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	body := []byte(`{"error":{"message":"daily usage limit exceeded"}}`)
+
+	for _, tc := range []struct {
+		name            string
+		accountType     string
+		credentials     map[string]any
+		wantSameAccount bool
+	}{
+		{name: "upstream_retries_same_account", accountType: AccountTypeUpstream, wantSameAccount: true},
+		{name: "api_key_with_custom_base_url_retries_same_account", accountType: AccountTypeAPIKey, credentials: map[string]any{"base_url": "https://relay.example/v1"}, wantSameAccount: true},
+		{name: "plain_api_key_retries_same_account", accountType: AccountTypeAPIKey, wantSameAccount: true},
+		{name: "oauth_skips_to_next_account", accountType: AccountTypeOAuth, wantSameAccount: false},
+		{name: "setup_token_skips_to_next_account", accountType: AccountTypeSetupToken, wantSameAccount: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			account := &Account{ID: 100, Platform: PlatformOpenAI, Type: tc.accountType, Credentials: tc.credentials}
+			err := svc.newOpenAIAccountFailoverError(
+				account,
+				http.StatusForbidden,
+				http.Header{},
+				body,
+				"daily usage limit exceeded",
+				false,
+				false,
+			)
+
+			require.Equal(t, tc.wantSameAccount, err.RetryableOnSameAccount)
+			require.True(t, err.RequestScopedTransient)
+			require.Equal(t, GatewayFailureScopeRequest, err.Scope)
+			require.Equal(t, OpenAIDailyUsageLimitReason, err.Reason)
+			require.Equal(t, http.StatusServiceUnavailable, err.ClientStatusCode)
+		})
+	}
+}
+
 func TestOpenAIRetryableOnSameAccount(t *testing.T) {
 	poolAccount := &Account{
 		ID:          1,
@@ -105,6 +215,12 @@ func TestOpenAIRetryableOnSameAccount(t *testing.T) {
 		ID:       2,
 		Platform: PlatformOpenAI,
 		Type:     AccountTypeAPIKey,
+	}
+	upstreamRelayAccount := &Account{
+		ID:          5,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Credentials: map[string]any{"base_url": "https://relay.example/v1"},
 	}
 
 	// Pool-mode account, ordinary 403 (not classified as permanent) -> retryable, matching
@@ -120,4 +236,26 @@ func TestOpenAIRetryableOnSameAccount(t *testing.T) {
 
 	// Non-pool-mode account is never same-account-retryable, permanent or not.
 	require.False(t, openAIRetryableOnSameAccount(nonPoolAccount, http.StatusForbidden, false, "Access forbidden", nil))
+
+	require.True(t, openAIRetryableOnSameAccount(nonPoolAccount, http.StatusForbidden, false,
+		"daily usage limit exceeded", nil), "OpenAI API-key accounts get bounded same-account retry")
+
+	require.True(t, openAIRetryableOnSameAccount(upstreamRelayAccount, http.StatusForbidden, false,
+		"daily usage limit exceeded", nil), "upstream relay accounts get bounded same-account retry")
+
+	upstreamAccount := &Account{
+		ID:       3,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeUpstream,
+	}
+	require.True(t, openAIRetryableOnSameAccount(upstreamAccount, http.StatusForbidden, false,
+		"daily usage limit exceeded", nil))
+
+	oauthAccount := &Account{
+		ID:       4,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+	}
+	require.False(t, openAIRetryableOnSameAccount(oauthAccount, http.StatusForbidden, false,
+		"daily usage limit exceeded", nil), "real provider accounts skip to the next account")
 }

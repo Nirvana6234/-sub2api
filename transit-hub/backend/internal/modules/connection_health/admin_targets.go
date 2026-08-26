@@ -681,6 +681,7 @@ func (s *Service) finishTargetProbeBatch(ctx context.Context, userID string, adm
 	if len(results) == 0 {
 		return
 	}
+	s.notifyPriorityRecoveryObservation(ctx, userID, adminAccountID, session, target, results)
 	remoteAction, actionErr := s.reconcileTargetRemoteAction(ctx, userID, adminAccountID, session, target, specs)
 	if actionErr != nil {
 		log.Printf("[connection-health] reconcile target action failed target_id=%s action=%s err=%v", target.TargetID, remoteAction, actionErr)
@@ -725,6 +726,74 @@ func (s *Service) finishTargetProbeBatch(ctx context.Context, userID string, adm
 			string(result.outcome.Result), string(result.previousState), string(result.state.State), &result.latencyMs,
 			result.state.LastErrorKey, result.state.LastErrorDetail, "")
 	}
+}
+
+// notifyPriorityRecoveryObservation reports the first successful health probe
+// after an account previously owned by the priority strategy was placed at
+// priority 10000. The state transition itself makes this one-shot for each
+// recovery attempt; a later failure and new success starts a new observation.
+// It intentionally does not say the account is restored: only the scheduler's
+// confirmed 10000 -> usable-priority transition may emit that green alert.
+func (s *Service) notifyPriorityRecoveryObservation(ctx context.Context, userID string, adminAccountID string, session upstream.Session, target AdminProbeTarget, results []targetProbeResult) {
+	if s.autoRecoveryNotifier == nil || session.Platform != upstream.PlatformSub2API {
+		return
+	}
+	modelName := ""
+	enteredObservation := false
+	for _, result := range results {
+		if result.outcome.Result != ResultOK {
+			continue
+		}
+		if (result.previousState == StateSuspended || result.previousState == StateDegraded) &&
+			(result.state.State == StateObserving || result.state.State == StateRecovering) {
+			enteredObservation = true
+			modelName = result.spec.modelName
+			break
+		}
+	}
+	if !enteredObservation {
+		return
+	}
+	states, err := s.repo.ListPrioritySyncStates(ctx, userID, adminAccountID)
+	if err != nil {
+		log.Printf("[connection-health] list priority states for recovery observation failed target_id=%s err=%v", target.TargetID, err)
+		return
+	}
+	for _, state := range states {
+		groupID, syncTargetID, grouped := parsePrioritySyncTargetID(state.TargetID)
+		if !grouped || syncTargetID != target.TargetID || state.Conflict || state.OriginalPriority == 10000 || state.LastAppliedPriority != 10000 ||
+			!automaticDisableCauseKeyNotifiable(state.NotificationCauseKey) {
+			continue
+		}
+		s.notifyAutomaticRecovery(ctx, AutomaticRecoveryEvent{
+			UserID: userID, AdminAccountID: adminAccountID, Platform: string(session.Platform),
+			GroupID: groupID, GroupName: target.AdminGroupName,
+			AccountID: target.AccountID, AccountName: target.AccountName,
+			EffectiveMultiplier: state.EffectiveMultiplier, ModelName: modelName,
+			Stage: AutomaticRecoveryStageObserving,
+		})
+		return
+	}
+}
+
+// priorityRecoveryNotificationEligible preserves the cause decision made when
+// an account was automatically deprioritized. A recovery probe is successful
+// by definition, so it cannot infer whether the original failure was a hard
+// credential/balance problem or a transient timeout.
+func (s *Service) priorityRecoveryNotificationEligible(ctx context.Context, userID string, adminAccountID string, targetID string) bool {
+	states, err := s.repo.ListPrioritySyncStates(ctx, userID, adminAccountID)
+	if err != nil {
+		log.Printf("[connection-health] list priority states for recovery notification failed target_id=%s err=%v", targetID, err)
+		return false
+	}
+	for _, state := range states {
+		_, syncTargetID, grouped := parsePrioritySyncTargetID(state.TargetID)
+		if grouped && syncTargetID == targetID && !state.Conflict && state.OriginalPriority != 10000 &&
+			state.LastAppliedPriority == 10000 && automaticDisableCauseKeyNotifiable(state.NotificationCauseKey) {
+			return true
+		}
+	}
+	return false
 }
 
 func targetForProbeSpec(target AdminProbeTarget, spec probeModelSpec) AdminProbeTarget {

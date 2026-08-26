@@ -658,6 +658,69 @@ describe('AccountUsageCell', () => {
 		expect(badges.some(node => node.attributes('title') === 'usage.userBilled')).toBe(true)
   })
 
+  it('Key 账号在用量窗口展示当天实际使用分组明细', async () => {
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({ id: 3004, platform: 'anthropic', type: 'apikey' }),
+        todayStats: {
+          requests: 11,
+          tokens: 1500,
+          cost: 1.5,
+          by_group: [
+            { group_id: 19, group_name: '订阅', requests: 8, total_tokens: 1200, standard_cost: 2, account_cost: 1.2, user_cost: 3.4 },
+            { group_id: 2, group_name: 'plus', requests: 3, total_tokens: 300, standard_cost: 0.5, account_cost: 0.3, user_cost: 0.8 }
+          ]
+        }
+      },
+      global: { stubs: { UsageProgressBar: true, AccountQuotaInfo: true } }
+    })
+
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('admin.accounts.usageWindow.todayTotal')
+    expect(wrapper.text()).toContain('11 req')
+    expect(wrapper.text()).toContain('1.5K')
+    expect(wrapper.text()).toContain('A $1.50')
+    expect(wrapper.text()).toContain('U $0.00')
+    expect(wrapper.text()).toContain('admin.accounts.usageWindow.todayGroups')
+    expect(wrapper.text()).toContain('订阅')
+    expect(wrapper.text()).toContain('plus')
+    expect(wrapper.text()).toContain('8 req')
+    expect(wrapper.text()).toContain('A $1.20')
+  })
+
+  it('OAuth 账号在用量窗口展示账号日限额进度', async () => {
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({
+          id: 3005,
+          platform: 'openai',
+          type: 'oauth',
+          quota_daily_limit: 10,
+          quota_daily_used: 2.5,
+          quota_daily_start: '2026-08-25T00:00:00Z',
+          quota_daily_reset_mode: 'fixed',
+          quota_daily_reset_hour: 8,
+          quota_reset_timezone: 'Asia/Shanghai'
+        })
+      },
+      global: {
+        stubs: {
+          UsageProgressBar: {
+            props: ['label', 'utilization'],
+            template: '<div class="usage-bar">{{ label }}|{{ utilization }}</div>'
+          },
+          AccountQuotaInfo: true,
+          OpenAIQuotaResetCell: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('1d|25')
+  })
+
   it('Grok OAuth compact UI drops local chips and header quota bars', async () => {
     getUsage.mockResolvedValue({
       grok_local_usage: {

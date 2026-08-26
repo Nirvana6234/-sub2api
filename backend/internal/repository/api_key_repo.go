@@ -1210,6 +1210,7 @@ func groupEntityToService(g *dbent.Group) *service.Group {
 		KiroCompat:                      g.KiroCompat,
 		FallbackGroupID:                 g.FallbackGroupID,
 		FallbackGroupIDOnInvalidRequest: g.FallbackGroupIDOnInvalidRequest,
+		IsFallbackPool:                  g.IsFallbackPool,
 		ModelRouting:                    g.ModelRouting,
 		ModelRoutingEnabled:             g.ModelRoutingEnabled,
 		MCPXMLInject:                    g.McpXMLInject,

@@ -271,7 +271,7 @@ export default {
       resetQuota: '重置配额',
       quotaLimit: '配额限制',
       quotaLimitPlaceholder: '0 表示不限制',
-      quotaLimitHint: '设置日/周/总使用额度（美元），任一维度达到限额后账号暂停调度。Anthropic API Key 账号还可配置客户端亲和。修改限额不会重置已用额度。',
+      quotaLimitHint: '设置日/周/总账号成本限额（美元）。按账号在所有实际使用分组中的 A 成本累计，任一维度达到限额后账号暂停调度。修改限额不会重置已用额度。',
       quotaLimitToggle: '启用配额限制',
       quotaLimitToggleHint: '开启后，当账号用量达到设定额度时自动暂停调度',
       quotaDailyLimit: '日限额',
@@ -454,6 +454,9 @@ export default {
       usageWindow: {
         statsTitle: '5小时窗口用量统计',
         statsTitleDaily: '每日用量统计',
+        todayTotal: '今日总计',
+        todayGroups: '今日分组（{count}）',
+        ungrouped: '未分组',
         geminiProDaily: 'Pro',
         geminiFlashDaily: 'Flash',
         gemini3Pro: 'G3P',

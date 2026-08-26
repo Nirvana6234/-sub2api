@@ -268,12 +268,14 @@ type PlatformDashboardStats struct {
 
 // UsageLogFilters represents filters for usage log queries
 type UsageLogFilters struct {
-	UserID    int64
-	APIKeyID  int64
-	AccountID int64
-	GroupID   int64
-	RequestID string
-	Model     string
+	UserID int64
+	// ExcludedUserIDs removes selected users from admin usage listings.
+	ExcludedUserIDs []int64
+	APIKeyID        int64
+	AccountID       int64
+	GroupID         int64
+	RequestID       string
+	Model           string
 	// ModelFilterSource controls how Model is matched. Empty preserves raw usage_logs.model semantics.
 	ModelFilterSource     string
 	RequestType           *int16
@@ -376,11 +378,25 @@ type AccountUsageSummary struct {
 	} `json:"highest_request_day"`
 }
 
+// AccountUsageGroupBreakdown attributes an account's usage to the group actually
+// recorded on each request. It is intentionally not derived from account_groups:
+// an account may be bound to many groups, but every usage log belongs to one route.
+type AccountUsageGroupBreakdown struct {
+	GroupID      int64   `json:"group_id"`
+	GroupName    string  `json:"group_name"`
+	Requests     int64   `json:"requests"`
+	TotalTokens  int64   `json:"total_tokens"`
+	StandardCost float64 `json:"standard_cost"`
+	AccountCost  float64 `json:"account_cost"`
+	UserCost     float64 `json:"user_cost"`
+}
+
 // AccountUsageStatsResponse represents the full usage statistics response for an account
 type AccountUsageStatsResponse struct {
-	History           []AccountUsageHistory `json:"history"`
-	Summary           AccountUsageSummary   `json:"summary"`
-	Models            []ModelStat           `json:"models"`
-	Endpoints         []EndpointStat        `json:"endpoints"`
-	UpstreamEndpoints []EndpointStat        `json:"upstream_endpoints"`
+	History           []AccountUsageHistory        `json:"history"`
+	Summary           AccountUsageSummary          `json:"summary"`
+	ByGroup           []AccountUsageGroupBreakdown `json:"by_group"`
+	Models            []ModelStat                  `json:"models"`
+	Endpoints         []EndpointStat               `json:"endpoints"`
+	UpstreamEndpoints []EndpointStat               `json:"upstream_endpoints"`
 }

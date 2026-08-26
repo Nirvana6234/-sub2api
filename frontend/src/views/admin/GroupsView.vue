@@ -122,10 +122,18 @@
           default-sort-order="asc"
           @sort="handleSort"
         >
-          <template #cell-name="{ value }">
-            <span class="font-medium text-gray-900 dark:text-white">{{
-              value
-            }}</span>
+          <template #cell-name="{ value, row }">
+            <div class="flex items-center gap-2">
+              <span class="font-medium text-gray-900 dark:text-white">{{
+                value
+              }}</span>
+              <span
+                v-if="row.is_fallback_pool"
+                class="badge badge-warning whitespace-nowrap"
+              >
+                兜底池
+              </span>
+            </div>
           </template>
 
           <template #cell-id="{ value }">
@@ -704,6 +712,40 @@
                   ? t("admin.groups.exclusive")
                   : t("admin.groups.public")
               }}
+            </span>
+          </div>
+        </div>
+
+        <div
+          v-if="isOpenAICompatibleFallbackPlatform(createForm.platform)"
+          class="border-t pt-4"
+        >
+          <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+            兜底账号池
+          </label>
+          <p class="mb-2 text-xs text-gray-500 dark:text-gray-400">
+            开启后，此分组不会给用户直接选择，只作为其他同平台分组无号时的备用账号池。
+          </p>
+          <div class="flex items-center gap-3">
+            <button
+              type="button"
+              @click="createForm.is_fallback_pool = !createForm.is_fallback_pool"
+              :class="[
+                'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
+                createForm.is_fallback_pool
+                  ? 'bg-primary-500'
+                  : 'bg-gray-300 dark:bg-dark-600',
+              ]"
+            >
+              <span
+                :class="[
+                  'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
+                  createForm.is_fallback_pool ? 'translate-x-6' : 'translate-x-1',
+                ]"
+              />
+            </button>
+            <span class="text-sm text-gray-500 dark:text-gray-400">
+              {{ createForm.is_fallback_pool ? '仅作兜底池' : '普通可选分组' }}
             </span>
           </div>
         </div>
@@ -1448,10 +1490,15 @@
               }}
             </span>
           </div>
-          <!-- 降级分组选择（仅当启用 claude_code_only 时显示） -->
-          <div v-if="createForm.claude_code_only" class="mt-3">
+          <!-- 降级分组选择：Anthropic 走 Claude Code 旧逻辑；OpenAI/Grok 走兜底池逻辑 -->
+          <div
+            v-if="createForm.claude_code_only || isOpenAICompatibleFallbackPlatform(createForm.platform)"
+            class="mt-3"
+          >
             <label class="input-label">{{
-              t("admin.groups.claudeCode.fallbackGroup")
+              isOpenAICompatibleFallbackPlatform(createForm.platform)
+                ? 'OpenAI/Grok 兜底分组'
+                : t("admin.groups.claudeCode.fallbackGroup")
             }}</label>
             <Select
               v-model="createForm.fallback_group_id"
@@ -1459,7 +1506,11 @@
               :placeholder="t('admin.groups.claudeCode.noFallback')"
             />
             <p class="input-hint">
-              {{ t("admin.groups.claudeCode.fallbackHint") }}
+              {{
+                isOpenAICompatibleFallbackPlatform(createForm.platform)
+                  ? '当前分组无可用账号时，会按当前分组的利润门从所选兜底池继续挑号。'
+                  : t("admin.groups.claudeCode.fallbackHint")
+              }}
             </p>
           </div>
         </div>
@@ -2470,6 +2521,39 @@
             </span>
           </div>
         </div>
+        <div
+          v-if="isOpenAICompatibleFallbackPlatform(editForm.platform)"
+          class="border-t pt-4"
+        >
+          <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+            兜底账号池
+          </label>
+          <p class="mb-2 text-xs text-gray-500 dark:text-gray-400">
+            开启后，此分组不会给用户直接选择，只作为其他同平台分组无号时的备用账号池。
+          </p>
+          <div class="flex items-center gap-3">
+            <button
+              type="button"
+              @click="editForm.is_fallback_pool = !editForm.is_fallback_pool"
+              :class="[
+                'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
+                editForm.is_fallback_pool
+                  ? 'bg-primary-500'
+                  : 'bg-gray-300 dark:bg-dark-600',
+              ]"
+            >
+              <span
+                :class="[
+                  'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
+                  editForm.is_fallback_pool ? 'translate-x-6' : 'translate-x-1',
+                ]"
+              />
+            </button>
+            <span class="text-sm text-gray-500 dark:text-gray-400">
+              {{ editForm.is_fallback_pool ? '仅作兜底池' : '普通可选分组' }}
+            </span>
+          </div>
+        </div>
         <div>
           <label class="input-label">{{ t("admin.groups.form.status") }}</label>
           <Select v-model="editForm.status" :options="editStatusOptions" />
@@ -3212,10 +3296,15 @@
               }}
             </span>
           </div>
-          <!-- 降级分组选择（仅当启用 claude_code_only 时显示） -->
-          <div v-if="editForm.claude_code_only" class="mt-3">
+          <!-- 降级分组选择：Anthropic 走 Claude Code 旧逻辑；OpenAI/Grok 走兜底池逻辑 -->
+          <div
+            v-if="editForm.claude_code_only || isOpenAICompatibleFallbackPlatform(editForm.platform)"
+            class="mt-3"
+          >
             <label class="input-label">{{
-              t("admin.groups.claudeCode.fallbackGroup")
+              isOpenAICompatibleFallbackPlatform(editForm.platform)
+                ? 'OpenAI/Grok 兜底分组'
+                : t("admin.groups.claudeCode.fallbackGroup")
             }}</label>
             <Select
               v-model="editForm.fallback_group_id"
@@ -3223,7 +3312,11 @@
               :placeholder="t('admin.groups.claudeCode.noFallback')"
             />
             <p class="input-hint">
-              {{ t("admin.groups.claudeCode.fallbackHint") }}
+              {{
+                isOpenAICompatibleFallbackPlatform(editForm.platform)
+                  ? '当前分组无可用账号时，会按当前分组的利润门从所选兜底池继续挑号。'
+                  : t("admin.groups.claudeCode.fallbackHint")
+              }}
             </p>
           </div>
         </div>
@@ -4592,6 +4685,9 @@ import {
 const supportsLivePlatform = (platform: string): boolean =>
   platform === "openai" || platform === "composite";
 
+const isOpenAICompatibleFallbackPlatform = (platform: string): boolean =>
+  platform === "openai" || platform === "grok";
+
 const emptyGroupPricing = (): PricingFormEntry => ({
   models: [],
   billing_mode: "token",
@@ -4880,16 +4976,27 @@ const subscriptionTypeOptions = computed(() => [
   { value: "subscription", label: t("admin.groups.subscription.subscription") },
 ]);
 
-// 降级分组选项（创建时）- 仅包含 anthropic 平台且未启用 claude_code_only 的分组
+// 降级分组选项（创建时）
 const fallbackGroupOptions = computed(() => {
   const options: { value: number | null; label: string }[] = [
     { value: null, label: t("admin.groups.claudeCode.noFallback") },
   ];
+  const sourcePlatform = createForm.platform;
   const eligibleGroups = groups.value.filter(
-    (g) =>
-      g.platform === "anthropic" &&
-      !g.claude_code_only &&
-      g.status === "active",
+    (g) => {
+      if (isOpenAICompatibleFallbackPlatform(sourcePlatform)) {
+        return (
+          g.platform === sourcePlatform &&
+          g.is_fallback_pool &&
+          g.status === "active"
+        );
+      }
+      return (
+        g.platform === "anthropic" &&
+        !g.claude_code_only &&
+        g.status === "active"
+      );
+    },
   );
   eligibleGroups.forEach((g) => {
     options.push({ value: g.id, label: g.name });
@@ -4903,12 +5010,25 @@ const fallbackGroupOptionsForEdit = computed(() => {
     { value: null, label: t("admin.groups.claudeCode.noFallback") },
   ];
   const currentId = editingGroup.value?.id;
+  const sourcePlatform = editForm.platform;
   const eligibleGroups = groups.value.filter(
-    (g) =>
-      g.platform === "anthropic" &&
-      !g.claude_code_only &&
-      g.status === "active" &&
-      g.id !== currentId,
+    (g) => {
+      if (g.id === currentId) {
+        return false;
+      }
+      if (isOpenAICompatibleFallbackPlatform(sourcePlatform)) {
+        return (
+          g.platform === sourcePlatform &&
+          g.is_fallback_pool &&
+          g.status === "active"
+        );
+      }
+      return (
+        g.platform === "anthropic" &&
+        !g.claude_code_only &&
+        g.status === "active"
+      );
+    },
   );
   eligibleGroups.forEach((g) => {
     options.push({ value: g.id, label: g.name });
@@ -5114,6 +5234,7 @@ const createForm = reactive({
   platform: "anthropic" as GroupPlatform,
   rate_multiplier: 1.0,
   is_exclusive: false,
+  is_fallback_pool: false,
   subscription_type: "standard" as SubscriptionType,
   daily_limit_usd: null as number | null,
   weekly_limit_usd: null as number | null,
@@ -5476,6 +5597,7 @@ const editForm = reactive({
   platform: "anthropic" as GroupPlatform,
   rate_multiplier: 1.0,
   is_exclusive: false,
+  is_fallback_pool: false,
   status: "active" as "active" | "inactive",
   subscription_type: "standard" as SubscriptionType,
   daily_limit_usd: null as number | null,
@@ -5938,6 +6060,7 @@ const closeCreateModal = () => {
   createForm.platform = "anthropic";
   createForm.rate_multiplier = 1.0;
   createForm.is_exclusive = false;
+  createForm.is_fallback_pool = false;
   createForm.subscription_type = "standard";
   createForm.daily_limit_usd = null;
   createForm.weekly_limit_usd = null;
@@ -6180,6 +6303,7 @@ const handleEdit = async (group: AdminGroup) => {
   editForm.platform = group.platform;
   editForm.rate_multiplier = group.rate_multiplier;
   editForm.is_exclusive = group.is_exclusive;
+  editForm.is_fallback_pool = group.is_fallback_pool ?? false;
   editForm.status = group.status;
   editForm.subscription_type = group.subscription_type || "standard";
   editForm.daily_limit_usd = group.daily_limit_usd;
@@ -6732,7 +6856,16 @@ watch(
 
 watch(
   () => createForm.platform,
-  (newVal) => {
+  (newVal, oldVal) => {
+    if (
+      newVal !== oldVal &&
+      (newVal !== "anthropic" || isOpenAICompatibleFallbackPlatform(oldVal))
+    ) {
+      createForm.fallback_group_id = null;
+    }
+    if (!isOpenAICompatibleFallbackPlatform(newVal)) {
+      createForm.is_fallback_pool = false;
+    }
     if (!["anthropic", "antigravity"].includes(newVal)) {
       createForm.fallback_group_id_on_invalid_request = null;
     }
@@ -6782,7 +6915,16 @@ watch(
 
 watch(
   () => editForm.platform,
-  (newVal) => {
+  (newVal, oldVal) => {
+    if (
+      newVal !== oldVal &&
+      (newVal !== "anthropic" || isOpenAICompatibleFallbackPlatform(oldVal))
+    ) {
+      editForm.fallback_group_id = null;
+    }
+    if (!isOpenAICompatibleFallbackPlatform(newVal)) {
+      editForm.is_fallback_pool = false;
+    }
     if (!["anthropic", "antigravity"].includes(newVal)) {
       editForm.fallback_group_id_on_invalid_request = null;
     }

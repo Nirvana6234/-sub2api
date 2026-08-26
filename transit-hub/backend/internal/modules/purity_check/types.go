@@ -108,13 +108,13 @@ type Report struct {
 	// 检测器版本迭代会增减字段，结构化解析等于每次跟版本；原文透传由前端按需取。
 	Payload []byte `json:"-"`
 
-	OverallVerdict          string `json:"overallVerdict"`
-	OutcomeCode             string `json:"outcomeCode"`
-	JuiceVerdictState       string `json:"juiceVerdictState"`
-	FingerprintModel        string `json:"fingerprintModel"`
-	FingerprintVerdictState string `json:"fingerprintVerdictState"`
-	FingerprintClaimMismatch bool  `json:"fingerprintClaimMismatch"`
-	Official                bool   `json:"official"`
+	OverallVerdict           string `json:"overallVerdict"`
+	OutcomeCode              string `json:"outcomeCode"`
+	JuiceVerdictState        string `json:"juiceVerdictState"`
+	FingerprintModel         string `json:"fingerprintModel"`
+	FingerprintVerdictState  string `json:"fingerprintVerdictState"`
+	FingerprintClaimMismatch bool   `json:"fingerprintClaimMismatch"`
+	Official                 bool   `json:"official"`
 
 	// QualityNote 是检测器对结论质量的自评，例如「Juice 身份判定通过，但有效命中
 	// 质量偏低」。有值就该显示——它是"结论没那么硬"的提示。
@@ -134,11 +134,11 @@ type Report struct {
 // Target 是一个可检测的上游账号。BaseURL 在列表阶段可能为空——sub2api 的账号
 // 列表接口不返回 base_url，要到导出凭据那一步才拿得到（见 upstream 模块注释）。
 type Target struct {
-	AccountID string `json:"accountId"`
-	Name      string `json:"name"`
-	Platform  string `json:"platform"`
-	Type      string `json:"type"`
-	BaseURL   string `json:"baseUrl"`
+	AccountID string   `json:"accountId"`
+	Name      string   `json:"name"`
+	Platform  string   `json:"platform"`
+	Type      string   `json:"type"`
+	BaseURL   string   `json:"baseUrl"`
 	GroupIDs  []string `json:"groupIds"`
 
 	// CostRateMultiplier 是 Sub2API 已按「手工值 > 新鲜探测值 > 列值」解析好的
@@ -163,10 +163,10 @@ type TierInfo struct {
 	// retries=2，实测 19 条逻辑任务在全失败时发了 57 次 HTTP。
 	TotalRequests int `json:"totalRequests"`
 	// MaxHTTPRequests = TotalRequests * (retries + 1)，最坏情况下的请求数。
-	MaxHTTPRequests           int    `json:"maxHttpRequests"`
-	ApproximateInputTokens    int    `json:"approximateInputTokens"`
-	Fixed32KRequests          int    `json:"fixed32kRequests"`
-	EstimateDisclaimer        string `json:"estimateDisclaimer"`
+	MaxHTTPRequests        int    `json:"maxHttpRequests"`
+	ApproximateInputTokens int    `json:"approximateInputTokens"`
+	Fixed32KRequests       int    `json:"fixed32kRequests"`
+	EstimateDisclaimer     string `json:"estimateDisclaimer"`
 }
 
 // SubmitInput 是提交检测的请求体。AccountIDs 支持批量。
@@ -176,6 +176,49 @@ type SubmitInput struct {
 	ClaimedModel string   `json:"claimedModel"`
 	// RequestModel 留空时回落到 ClaimedModel。
 	RequestModel string `json:"requestModel"`
+}
+
+// SubmitResult 返回本次真正排队的任务，以及提交瞬间已经失效、因而被跳过的目标数。
+// 账号列表与浏览器选择之间可能发生删除/改类型；这类陈旧目标不能阻断其余账号的检测。
+type SubmitResult struct {
+	Jobs               []Job `json:"jobs"`
+	SkippedTargetCount int   `json:"skippedTargetCount"`
+}
+
+// JobListQuery 是检测历史的分页检索条件。历史可保留数远大于单页容量，查询必须
+// 在数据库侧完成，不能让浏览器一次拉取全部报告摘要再过滤。
+type JobListQuery struct {
+	Limit  int
+	Offset int
+	Search string
+	Status string
+}
+
+type JobPage struct {
+	Jobs  []Job
+	Total int
+}
+
+const (
+	PurityIssueModelMismatch       = "model_mismatch"
+	PurityIssueUpstreamUnreachable = "upstream_unreachable"
+)
+
+// AccountIssue 是一个已确认需要在调价数据源处提示的账号级问题。
+// 它只由最近一次终态检测派生，下一次健康的官方检测会自然清除旧标记。
+type AccountIssue struct {
+	AccountID  string
+	Kind       string
+	DetectedAt time.Time
+}
+
+// SiteIssue is the newest actionable purity finding for an upstream website.
+// It identifies the site rather than a specific account because group-rate rows
+// must not imply that every account in a flagged group is affected.
+type SiteIssue struct {
+	SiteKey    string
+	Kind       string
+	DetectedAt time.Time
 }
 
 // ---- 依赖接口：与 connection_health 保持同一注入模式 ----
@@ -205,21 +248,21 @@ type requestError string
 func (e requestError) Error() string { return string(e) }
 
 const (
-	ErrorRequest          = "admin.purityCheck.errors.request"
-	ErrorUnknown          = "admin.purityCheck.errors.unknown"
-	ErrorNotFound         = "admin.purityCheck.errors.notFound"
-	ErrorNoCurrentAccount = "admin.purityCheck.errors.noCurrentAccount"
+	ErrorRequest             = "admin.purityCheck.errors.request"
+	ErrorUnknown             = "admin.purityCheck.errors.unknown"
+	ErrorNotFound            = "admin.purityCheck.errors.notFound"
+	ErrorNoCurrentAccount    = "admin.purityCheck.errors.noCurrentAccount"
 	ErrorDetectorUnavailable = "admin.purityCheck.errors.detectorUnavailable"
-	ErrorDetectorBusy     = "admin.purityCheck.errors.detectorBusy"
-	ErrorTargetNotFound   = "admin.purityCheck.errors.targetNotFound"
-	ErrorTargetIneligible = "admin.purityCheck.errors.targetIneligible"
-	ErrorInvalidTier      = "admin.purityCheck.errors.invalidTier"
-	ErrorInvalidModel     = "admin.purityCheck.errors.invalidModel"
-	ErrorAccountsFetch    = "admin.purityCheck.errors.accountsFetch"
-	ErrorCredential       = "admin.purityCheck.errors.credential"
-	ErrorNotCancellable   = "admin.purityCheck.errors.notCancellable"
-	ErrorTooManyTargets   = "admin.purityCheck.errors.tooManyTargets"
-	ErrorNotDeletable     = "admin.purityCheck.errors.notDeletable"
+	ErrorDetectorBusy        = "admin.purityCheck.errors.detectorBusy"
+	ErrorTargetNotFound      = "admin.purityCheck.errors.targetNotFound"
+	ErrorTargetIneligible    = "admin.purityCheck.errors.targetIneligible"
+	ErrorInvalidTier         = "admin.purityCheck.errors.invalidTier"
+	ErrorInvalidModel        = "admin.purityCheck.errors.invalidModel"
+	ErrorAccountsFetch       = "admin.purityCheck.errors.accountsFetch"
+	ErrorCredential          = "admin.purityCheck.errors.credential"
+	ErrorNotCancellable      = "admin.purityCheck.errors.notCancellable"
+	ErrorTooManyTargets      = "admin.purityCheck.errors.tooManyTargets"
+	ErrorNotDeletable        = "admin.purityCheck.errors.notDeletable"
 	// ErrorUpstreamUnreachable：探针一条都没打通，这次没有产出任何检测证据。
 	ErrorUpstreamUnreachable = "admin.purityCheck.errors.upstreamUnreachable"
 	// ErrorProxyUnsupported：账号绑的代理检测器用不了（它只认 http://），
@@ -231,11 +274,12 @@ const (
 
 // 目标不合格的原因，前端据此显示置灰提示。
 const (
-	ReasonNotOpenAI    = "not_openai"
-	ReasonNotAPIKey    = "not_api_key"
-	ReasonNoBaseURL    = "no_base_url"
+	ReasonNotOpenAI = "not_openai"
+	ReasonNotAPIKey = "not_api_key"
+	ReasonNoBaseURL = "no_base_url"
 )
 
-// maxTargetsPerSubmit 限制单次批量提交的账号数。串行队列下 12 个高档任务就是
-// 4000 多万输入 token 和几个小时，给个上限免得手滑点全选。
-const maxTargetsPerSubmit = 20
+// maxTargetsPerSubmit 限制单次批量提交的账号数。检测依然严格串行，确认框会完整
+// 展示真实请求量和 token 估算；历史保留容量与一次能花钱排入的任务数是两回事，
+// 绝不能因为保留 3000 条而允许一次提交 3000 个账号。
+const maxTargetsPerSubmit = 100

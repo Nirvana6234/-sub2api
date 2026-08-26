@@ -26,27 +26,39 @@ const siteName = computed(() => appStore.cachedPublicSettings?.site_name || appS
 const siteLogo = computed(() => appStore.siteLogo || '/gongfei-plane.svg')
 const dashboardPath = computed(() => (authStore.isAdmin ? '/admin/dashboard' : '/dashboard'))
 
-// 下载地址由管理员在后台填写。后端 normalizeExternalHTTPURL 已挡掉伪协议，
+// 备用网盘地址由管理员填写。后端 normalizeExternalHTTPURL 已挡掉伪协议，
 // 这里再校验一次，避免绕过后端直接改库的值进到 href。
 function safeExternalUrl(value: string | undefined): string {
   const url = (value || '').trim()
   return /^https?:\/\//i.test(url) ? url : ''
 }
-const directDownloadUrl = computed(() => safeExternalUrl(appStore.cachedPublicSettings?.client_download_direct_url))
+const clientDownloadUrl = '/api/v1/download/client'
+// 从下载直链里解析文件名，而不是写死。
+//
+// 写死过一次，代价是：换客户端版本只需要改一个数据库设置项就能生效，但页面上
+// 这行文字却要跟着重新构建前端、重新部署后端（dist 是 embed 进二进制的）才能更新。
+// 结果就是实际下载 v0.1.2、页面却还写着 v0.1，用户以为下错了。
+const clientFileName = computed(() => {
+  const url = appStore.cachedPublicSettings?.client_download_direct_url || ''
+  const name = url.split('?')[0].split('#')[0].split('/').pop() || ''
+  return /\.zip$/i.test(name) ? name : ''
+})
+const codexDownloadUrl = 'https://codexapp.agentsmirror.com/latest/win-x64'
 const netdiskDownloadUrl = computed(() => safeExternalUrl(appStore.cachedPublicSettings?.client_download_netdisk_url))
-const hasAnyDownloadUrl = computed(() => Boolean(directDownloadUrl.value || netdiskDownloadUrl.value))
 
 const guideSteps: GuideStep[] = [
   {
     number: 1,
     title: '下载、解压并打开客户端',
-    intro: '先把客户端压缩包下载到本地，再解压到一个单独的文件夹。',
+    intro: '页面顶部的两个客户端都要下载：共飞客户端和 Codex 客户端。先把共飞客户端的压缩包下载到本地，再解压到一个单独的文件夹。',
     actions: [
-      '下载客户端压缩包。',
+      '点击“① 下载共飞客户端”，保存压缩包。',
       '右键压缩包，选择解压到一个文件夹。',
-      '进入解压后的目录，双击客户端程序打开。'
+      '进入解压后的目录，双击客户端程序打开。',
+      '再点击“② 下载 Codex 客户端”，同样解压后使用。'
     ],
-    images: [{ src: '/client-guide/g1.png', alt: '双击打开共飞 AI 客户端' }]
+    images: [{ src: '/client-guide/g1.png', alt: '双击打开共飞 AI 客户端' }],
+    note: '两个客户端缺一不可：共飞客户端管账号、分组和余额，Codex 客户端才是实际对话的程序。'
   },
   {
     number: 2,
@@ -171,7 +183,6 @@ const guideSteps: GuideStep[] = [
 
 const modelRows = [
   { model: 'GPT-5.5', feature: '能力强，偏重复杂任务', price: '贵', scene: '编码、研究、深度分析' },
-  { model: 'GPT-5.6 Luna', feature: '最快、最省', price: '便宜', scene: '追求速度和成本的轻量任务' },
   { model: 'GPT-5.6 Terra', feature: '能力、速度、成本更均衡', price: '中', scene: '大多数日常使用' },
   { model: 'GPT-5.6 Sol', feature: '用于更复杂的任务', price: '贵', scene: '编码、研究、深度分析' }
 ]
@@ -226,40 +237,49 @@ function toggleTheme() {
           <p class="mt-4 max-w-2xl text-sm leading-7 text-gray-300 sm:text-base">
             下载客户端，完成注册、登录、ChatGPT 安装、分组切换和充值。下面的操作步骤适合第一次使用的用户。
           </p>
-          <div v-if="directDownloadUrl" class="mt-7 border-t border-white/15 pt-6">
-            <p class="text-xs font-semibold uppercase tracking-[0.16em] text-primary-300">推荐下载方式</p>
-            <p class="mt-2 text-sm font-medium text-white">在线下载地址</p>
-            <a
-              :href="directDownloadUrl"
-              target="_blank"
-              rel="noopener noreferrer"
-              class="mt-2 block break-all text-base leading-7 text-primary-200 underline decoration-primary-300/60 underline-offset-4 hover:text-primary-100 sm:text-lg"
-              title="右键此地址，选择将该链接另存为"
-            >{{ directDownloadUrl }}</a>
-            <p class="mt-3 text-sm leading-6 text-gray-300">
-              右键该地址，选择“将该链接另存为”即可自动下载。下载后先解压，再双击打开客户端。
+          <div class="mt-7 border-t border-white/15 pt-6">
+            <p class="text-xs font-semibold uppercase tracking-[0.16em] text-primary-300">客户端下载</p>
+            <p class="mt-2 text-sm leading-6 text-gray-300">
+              <span class="font-semibold text-white">下面两个客户端都要下载，缺一个用不了。</span>
+              共飞客户端负责注册登录、分组切换、余额和充值；Codex 客户端是实际用来对话的程序。
             </p>
+            <div class="mt-5 grid gap-3 sm:grid-cols-2">
+              <a
+                :href="clientDownloadUrl"
+                download
+                class="btn btn-primary inline-flex items-center justify-center gap-2 px-5 py-3 text-sm"
+              >
+                <Icon name="download" size="sm" />
+                ① 下载共飞客户端
+              </a>
+              <a
+                :href="codexDownloadUrl"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="btn btn-primary inline-flex items-center justify-center gap-2 px-5 py-3 text-sm"
+              >
+                <Icon name="download" size="sm" />
+                ② 下载 Codex 客户端
+                <Icon name="externalLink" size="sm" />
+              </a>
+            </div>
+            <p v-if="clientFileName" class="mt-4 text-xs text-gray-400">
+              共飞客户端文件：<span class="font-mono text-gray-200">{{ clientFileName }}</span>
+            </p>
+            <p class="mt-1 text-xs text-gray-400">两个客户端都是免安装程序，下载后请先解压再打开。</p>
           </div>
-          <div class="mt-6 flex flex-wrap items-center gap-3">
+          <div v-if="netdiskDownloadUrl" class="mt-6 flex flex-wrap items-center gap-3">
             <a
-              v-if="netdiskDownloadUrl"
               :href="netdiskDownloadUrl"
               target="_blank"
               rel="noopener noreferrer"
               class="btn btn-secondary inline-flex items-center gap-2 px-5 py-3 text-sm"
             >
               <Icon name="download" size="sm" />
-              网盘下载
+              共飞客户端备用网盘下载
               <Icon name="externalLink" size="sm" />
             </a>
-            <p v-if="!hasAnyDownloadUrl" class="text-sm text-gray-300">
-              管理员尚未配置下载地址，请稍后再试。
-            </p>
           </div>
-          <p class="mt-4 text-xs text-gray-400">
-            文件：<span class="font-mono text-gray-200">codex-relay-client_v0.1_x64.zip</span>
-          </p>
-          <p class="mt-1 text-xs text-gray-400">客户端为免安装程序，下载后请先解压。</p>
         </div>
         <div class="pointer-events-none absolute -right-6 -top-10 hidden h-72 w-72 rotate-12 opacity-20 sm:block">
           <img src="/gongfei-plane.svg" alt="" class="h-full w-full object-contain" />

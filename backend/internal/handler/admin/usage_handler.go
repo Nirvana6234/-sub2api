@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -73,6 +74,11 @@ func (h *UsageHandler) List(c *gin.Context) {
 
 	// Parse filters
 	var userID, apiKeyID, accountID, groupID int64
+	excludedUserIDs, err := parseExcludedUserIDsFromQuery(c)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
 	if userIDStr := c.Query("user_id"); userIDStr != "" {
 		id, err := strconv.ParseInt(userIDStr, 10, 64)
 		if err != nil {
@@ -184,6 +190,7 @@ func (h *UsageHandler) List(c *gin.Context) {
 	}
 	filters := usagestats.UsageLogFilters{
 		UserID:                userID,
+		ExcludedUserIDs:       excludedUserIDs,
 		APIKeyID:              apiKeyID,
 		AccountID:             accountID,
 		GroupID:               groupID,
@@ -211,6 +218,35 @@ func (h *UsageHandler) List(c *gin.Context) {
 		out = append(out, *dto.UsageLogFromServiceAdmin(&records[i]))
 	}
 	response.Paginated(c, out, result.Total, page, pageSize)
+}
+
+func parseExcludedUserIDsFromQuery(c *gin.Context) ([]int64, error) {
+	values := append([]string{}, c.QueryArray("exclude_user_ids")...)
+	// Axios serializes array query parameters as exclude_user_ids[]=1 by default.
+	values = append(values, c.QueryArray("exclude_user_ids[]")...)
+	return parseExcludedUserIDs(values)
+}
+
+func parseExcludedUserIDs(raw []string) ([]int64, error) {
+	ids := make([]int64, 0, len(raw))
+	seen := make(map[int64]struct{}, len(raw))
+	for _, value := range raw {
+		for _, part := range strings.Split(value, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			id, err := strconv.ParseInt(part, 10, 64)
+			if err != nil || id <= 0 {
+				return nil, fmt.Errorf("Invalid exclude_user_ids value")
+			}
+			if _, ok := seen[id]; !ok {
+				seen[id] = struct{}{}
+				ids = append(ids, id)
+			}
+		}
+	}
+	return ids, nil
 }
 
 // Stats handles getting usage statistics with filters

@@ -355,6 +355,7 @@ const formatSchedulerScore = (value: number | null | undefined): string => value
                         <span>{{ t(`${detailPrefix}.models.weight`, { value: model.currentWeight }) }}</span>
                       </div>
                       <p v-if="model.lastErrorKey" class="mt-2 truncate text-xs text-destructive">{{ readableMessage(model.lastErrorKey) }}</p>
+                      <p v-if="model.lastErrorDetail" :title="model.lastErrorDetail" class="mt-1 break-words text-xs leading-5 text-destructive/80">{{ t(`${detailPrefix}.models.upstreamResponse`, { value: model.lastErrorDetail }) }}</p>
                     </div>
                     <div v-for="model in unprobedModels(account)" :key="`unprobed:${model.modelName}`" class="rounded-lg border border-border/50 bg-background px-3 py-2.5">
                       <div class="flex items-center justify-between gap-3">

@@ -44,17 +44,21 @@ describe('ClientDownloadView', () => {
     localStorage.clear()
   })
 
-  it('renders the client download, manual images, and English ChatGPT controls', () => {
+  it('renders the local client download, manual images, and English ChatGPT controls', () => {
     const wrapper = mountDownloadPage()
 
-    const directLink = wrapper.get('a[href="https://example.com/Release/client_x64.zip"]')
-    expect(directLink.attributes('target')).toBe('_blank')
-    expect(directLink.attributes('download')).toBeUndefined()
-    expect(directLink.text()).toContain('https://example.com/Release/client_x64.zip')
-    expect(wrapper.find('a.btn-primary').exists()).toBe(false)
-    expect(wrapper.text()).toContain('推荐下载方式')
-    expect(wrapper.text()).toContain('右键该地址，选择“将该链接另存为”即可自动下载')
-    expect(wrapper.text()).toContain('右键该地址，选择“将该链接另存为”即可自动下载')
+    const directLink = wrapper.get('a[href="/api/v1/download/client"]')
+    expect(directLink.attributes('download')).toBeDefined()
+    expect(directLink.text()).toContain('下载共飞客户端')
+    expect(wrapper.find('a.btn-primary').exists()).toBe(true)
+    // 两个客户端缺一不可，这句提示是页面的核心口径，掉了用户会只下一个。
+    expect(wrapper.text()).toContain('下面两个客户端都要下载，缺一个用不了')
+    // 文件名从下载直链解析，不再写死在组件里——否则换版本要重新部署整个后端
+    // 才能让这行文字跟上，实测出现过「实际下 v0.1.2、页面写 v0.1」。
+    expect(wrapper.text()).toContain('client_x64.zip')
+    const codexLink = wrapper.get('a[href="https://codexapp.agentsmirror.com/latest/win-x64"]')
+    expect(codexLink.attributes('target')).toBe('_blank')
+    expect(codexLink.text()).toContain('下载 Codex 客户端')
     expect(wrapper.get('a[href="https://pan.example.com/s/abc"]')).toBeTruthy()
     expect(wrapper.text()).toContain('Install')
     expect(wrapper.text()).toContain('Model')
@@ -67,7 +71,7 @@ describe('ClientDownloadView', () => {
 
   })
 
-  it('drops download URLs that are not http(s)', () => {
+  it('drops fallback netdisk URLs that are not http(s)', () => {
     appStore.cachedPublicSettings.client_download_direct_url = 'javascript:alert(1)'
     appStore.cachedPublicSettings.client_download_netdisk_url = ''
 
@@ -75,7 +79,7 @@ describe('ClientDownloadView', () => {
 
     const hrefs = wrapper.findAll('a').map((link) => link.attributes('href'))
     expect(hrefs.some((href) => href?.startsWith('javascript:'))).toBe(false)
-    expect(wrapper.text()).toContain('管理员尚未配置下载地址')
+    expect(wrapper.get('a[href="/api/v1/download/client"]')).toBeTruthy()
 
     appStore.cachedPublicSettings.client_download_direct_url = 'https://example.com/Release/client_x64.zip'
     appStore.cachedPublicSettings.client_download_netdisk_url = 'https://pan.example.com/s/abc'

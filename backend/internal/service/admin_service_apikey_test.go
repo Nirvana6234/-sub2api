@@ -393,6 +393,18 @@ func TestAdminService_AdminUpdateAPIKeyGroupID_GroupNotActive(t *testing.T) {
 	require.Equal(t, "GROUP_NOT_ACTIVE", infraerrors.Reason(err))
 }
 
+func TestAdminService_AdminUpdateAPIKeyGroupID_FallbackGroupNotBindable(t *testing.T) {
+	existing := &APIKey{ID: 1, Key: "sk-test"}
+	apiKeyRepo := &apiKeyRepoStubForGroupUpdate{key: existing}
+	groupRepo := &groupRepoStubForGroupUpdate{group: &Group{ID: 5, Status: StatusActive, IsFallbackPool: true}}
+	svc := &adminServiceImpl{apiKeyRepo: apiKeyRepo, groupRepo: groupRepo}
+
+	_, err := svc.AdminUpdateAPIKeyGroupID(context.Background(), 1, int64Ptr(5))
+	require.Error(t, err)
+	require.Equal(t, "FALLBACK_GROUP_NOT_BINDABLE", infraerrors.Reason(err))
+	require.Nil(t, apiKeyRepo.updated)
+}
+
 func TestAdminService_AdminUpdateAPIKeyGroupID_UpdateFails(t *testing.T) {
 	existing := &APIKey{ID: 1, Key: "sk-test", GroupID: int64Ptr(3)}
 	repo := &apiKeyRepoStubForGroupUpdate{key: existing, updateErr: errors.New("db write error")}

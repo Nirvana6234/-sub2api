@@ -4,6 +4,8 @@ package service
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // TestBuildUsageBillingCommand_SubscriptionAppliesRateMultiplier locks in the fix
@@ -145,4 +147,18 @@ func TestBuildUsageBillingCommand_RoomBudgetUsesRawTokenCost(t *testing.T) {
 	if cmd.BalanceCost != 2.5 {
 		t.Errorf("BalanceCost = %v, want 2.5", cmd.BalanceCost)
 	}
+}
+
+func TestBuildUsageBillingCommand_AccountQuotaUsesAccountStatsCost(t *testing.T) {
+	accountStatsCost := 2.5
+	p := &postUsageBillingParams{
+		Cost:                  &CostBreakdown{TotalCost: 1, ActualCost: 1},
+		Account:               &Account{ID: 3, Type: AccountTypeOAuth, Extra: map[string]any{"quota_daily_limit": 10.0}},
+		AccountRateMultiplier: 1.2,
+		AccountQuotaCost:      accountStatsCost * 1.2,
+	}
+
+	cmd := buildUsageBillingCommand("req-account-quota", &UsageLog{AccountStatsCost: &accountStatsCost}, p, AccountShareRewardRate, AccountOwnUsageFeeRateDefaultPercent/100)
+	require.NotNil(t, cmd)
+	require.InDelta(t, 3.0, cmd.AccountQuotaCost, 1e-12)
 }

@@ -270,11 +270,17 @@ func (r *Repository) EnsureSchema(ctx context.Context) error {
 			effective_multiplier double precision NOT NULL DEFAULT 0,
 			conflict boolean NOT NULL DEFAULT false,
 			last_conflict_priority integer NULL,
+			notification_cause_key text NOT NULL DEFAULT '',
+			notification_cause_detail text NOT NULL DEFAULT '',
+			notification_cause_model_name text NOT NULL DEFAULT '',
 			updated_at timestamptz NOT NULL DEFAULT now(),
 			PRIMARY KEY (user_id, admin_account_id, target_id)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_connection_health_priority_sync_workspace ON connection_health_priority_sync_states (user_id, admin_account_id)`,
 		`ALTER TABLE connection_health_priority_sync_states ADD COLUMN IF NOT EXISTS pending_priority integer NULL`,
+		`ALTER TABLE connection_health_priority_sync_states ADD COLUMN IF NOT EXISTS notification_cause_key text NOT NULL DEFAULT ''`,
+		`ALTER TABLE connection_health_priority_sync_states ADD COLUMN IF NOT EXISTS notification_cause_detail text NOT NULL DEFAULT ''`,
+		`ALTER TABLE connection_health_priority_sync_states ADD COLUMN IF NOT EXISTS notification_cause_model_name text NOT NULL DEFAULT ''`,
 
 		`CREATE TABLE IF NOT EXISTS connection_health_manual_upstream_key_multipliers (
 			user_id text NOT NULL,
@@ -1300,7 +1306,8 @@ func scanGroupTargetExclusions(rows pgx.Rows) ([]GroupTargetExclusion, error) {
 func (r *Repository) ListPrioritySyncStates(ctx context.Context, userID string, adminAccountID string) ([]PrioritySyncState, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT user_id, admin_account_id, target_id, original_priority, last_applied_priority,
-			pending_priority, effective_multiplier, conflict, last_conflict_priority, updated_at
+			pending_priority, effective_multiplier, conflict, last_conflict_priority,
+			notification_cause_key, notification_cause_detail, notification_cause_model_name, updated_at
 		FROM connection_health_priority_sync_states
 		WHERE user_id = $1 AND admin_account_id = $2
 	`, userID, adminAccountID)
@@ -1312,7 +1319,8 @@ func (r *Repository) ListPrioritySyncStates(ctx context.Context, userID string, 
 	for rows.Next() {
 		var state PrioritySyncState
 		if err := rows.Scan(&state.UserID, &state.AdminAccountID, &state.TargetID, &state.OriginalPriority,
-			&state.LastAppliedPriority, &state.PendingPriority, &state.EffectiveMultiplier, &state.Conflict, &state.LastConflictPriority, &state.UpdatedAt); err != nil {
+			&state.LastAppliedPriority, &state.PendingPriority, &state.EffectiveMultiplier, &state.Conflict, &state.LastConflictPriority,
+			&state.NotificationCauseKey, &state.NotificationCauseDetail, &state.NotificationCauseModelName, &state.UpdatedAt); err != nil {
 			return nil, err
 		}
 		states = append(states, state)
@@ -1323,7 +1331,8 @@ func (r *Repository) ListPrioritySyncStates(ctx context.Context, userID string, 
 func (r *Repository) ListAllPrioritySyncStates(ctx context.Context) ([]PrioritySyncState, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT user_id, admin_account_id, target_id, original_priority, last_applied_priority,
-			pending_priority, effective_multiplier, conflict, last_conflict_priority, updated_at
+			pending_priority, effective_multiplier, conflict, last_conflict_priority,
+			notification_cause_key, notification_cause_detail, notification_cause_model_name, updated_at
 		FROM connection_health_priority_sync_states
 	`)
 	if err != nil {
@@ -1334,7 +1343,8 @@ func (r *Repository) ListAllPrioritySyncStates(ctx context.Context) ([]PriorityS
 	for rows.Next() {
 		var state PrioritySyncState
 		if err := rows.Scan(&state.UserID, &state.AdminAccountID, &state.TargetID, &state.OriginalPriority,
-			&state.LastAppliedPriority, &state.PendingPriority, &state.EffectiveMultiplier, &state.Conflict, &state.LastConflictPriority, &state.UpdatedAt); err != nil {
+			&state.LastAppliedPriority, &state.PendingPriority, &state.EffectiveMultiplier, &state.Conflict, &state.LastConflictPriority,
+			&state.NotificationCauseKey, &state.NotificationCauseDetail, &state.NotificationCauseModelName, &state.UpdatedAt); err != nil {
 			return nil, err
 		}
 		states = append(states, state)
@@ -1346,8 +1356,9 @@ func (r *Repository) UpsertPrioritySyncState(ctx context.Context, state Priority
 	_, err := r.db.Exec(ctx, `
 		INSERT INTO connection_health_priority_sync_states (
 			user_id, admin_account_id, target_id, original_priority, last_applied_priority, pending_priority,
-			effective_multiplier, conflict, last_conflict_priority, updated_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,now())
+			effective_multiplier, conflict, last_conflict_priority,
+			notification_cause_key, notification_cause_detail, notification_cause_model_name, updated_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,now())
 		ON CONFLICT (user_id, admin_account_id, target_id) DO UPDATE SET
 			original_priority = EXCLUDED.original_priority,
 			last_applied_priority = EXCLUDED.last_applied_priority,
@@ -1355,9 +1366,13 @@ func (r *Repository) UpsertPrioritySyncState(ctx context.Context, state Priority
 			effective_multiplier = EXCLUDED.effective_multiplier,
 			conflict = EXCLUDED.conflict,
 			last_conflict_priority = EXCLUDED.last_conflict_priority,
+			notification_cause_key = EXCLUDED.notification_cause_key,
+			notification_cause_detail = EXCLUDED.notification_cause_detail,
+			notification_cause_model_name = EXCLUDED.notification_cause_model_name,
 			updated_at = now()
 	`, state.UserID, state.AdminAccountID, state.TargetID, state.OriginalPriority, state.LastAppliedPriority,
-		state.PendingPriority, state.EffectiveMultiplier, state.Conflict, state.LastConflictPriority)
+		state.PendingPriority, state.EffectiveMultiplier, state.Conflict, state.LastConflictPriority,
+		state.NotificationCauseKey, state.NotificationCauseDetail, state.NotificationCauseModelName)
 	return err
 }
 

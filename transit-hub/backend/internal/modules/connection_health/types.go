@@ -180,11 +180,18 @@ type PrioritySyncState struct {
 	// PendingPriority is persisted before an upstream write. If the process dies or the
 	// database write after the upstream call fails, the next tick can confirm the value
 	// instead of treating a successful system write as a manual conflict.
-	PendingPriority      *int      `json:"-"`
-	EffectiveMultiplier  float64   `json:"effectiveMultiplier"`
-	Conflict             bool      `json:"conflict"`
-	LastConflictPriority *int      `json:"lastConflictPriority,omitempty"`
-	UpdatedAt            time.Time `json:"updatedAt"`
+	PendingPriority      *int    `json:"-"`
+	EffectiveMultiplier  float64 `json:"effectiveMultiplier"`
+	Conflict             bool    `json:"conflict"`
+	LastConflictPriority *int    `json:"lastConflictPriority,omitempty"`
+	// NotificationCause* is set only for an automatic priority disable that
+	// warrants an operator alert. It survives while the target is at 10000 so
+	// a later recovery can use the same decision instead of guessing from a
+	// now-successful probe.
+	NotificationCauseKey       string    `json:"-"`
+	NotificationCauseDetail    string    `json:"-"`
+	NotificationCauseModelName string    `json:"-"`
+	UpdatedAt                  time.Time `json:"updatedAt"`
 }
 
 // AutomaticDisableEvent is emitted after TransitHub has successfully moved an
@@ -204,6 +211,9 @@ type AutomaticDisableEvent struct {
 	ActiveAccountCount  int
 	RecentUsageSamples  int
 	Reason              string
+	CauseKey            string
+	CauseDetail         string
+	CauseModelName      string
 	Groups              []AutomaticDisableGroup
 }
 
@@ -228,6 +238,39 @@ type AutomaticDisableNotifier interface {
 type AutomaticDisableNotifyFunc func(ctx context.Context, event AutomaticDisableEvent)
 
 func (f AutomaticDisableNotifyFunc) NotifyAutomaticDisable(ctx context.Context, event AutomaticDisableEvent) {
+	f(ctx, event)
+}
+
+// AutomaticRecoveryEvent reports either a recovery observation after a real
+// generation succeeds or an actual return to automatic scheduling.
+type AutomaticRecoveryEvent struct {
+	UserID              string
+	AdminAccountID      string
+	Platform            string
+	GroupID             string
+	GroupName           string
+	AccountID           string
+	AccountName         string
+	EffectiveMultiplier float64
+	PreviousPriority    int
+	CurrentPriority     int
+	ActiveAccountCount  int
+	ModelName           string
+	Stage               string
+}
+
+const (
+	AutomaticRecoveryStageObserving = "observing"
+	AutomaticRecoveryStageRestored  = "restored"
+)
+
+type AutomaticRecoveryNotifier interface {
+	NotifyAutomaticRecovery(ctx context.Context, event AutomaticRecoveryEvent)
+}
+
+type AutomaticRecoveryNotifyFunc func(ctx context.Context, event AutomaticRecoveryEvent)
+
+func (f AutomaticRecoveryNotifyFunc) NotifyAutomaticRecovery(ctx context.Context, event AutomaticRecoveryEvent) {
 	f(ctx, event)
 }
 

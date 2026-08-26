@@ -2,6 +2,7 @@ package purity_check
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -37,7 +38,12 @@ func (r *fakeRepo) InsertJobs(_ context.Context, jobs []Job) error {
 	return nil
 }
 
-func (r *fakeRepo) ListJobs(context.Context, string, string, int) ([]Job, error) { return nil, nil }
+func (r *fakeRepo) ListJobs(context.Context, string, string, JobListQuery) (JobPage, error) {
+	return JobPage{}, nil
+}
+func (r *fakeRepo) ListLatestAccountIssues(context.Context, string, string, []string) ([]AccountIssue, error) {
+	return []AccountIssue{}, nil
+}
 func (r *fakeRepo) GetJob(_ context.Context, id string, _ string, _ string) (*Job, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -196,10 +202,14 @@ func (fakeSessions) RequireSession(context.Context, string, string) (upstream.Se
 type fakeReader struct {
 	key         string
 	mapping     map[string]string
+	accounts    []upstream.AdminGroupAccountInfo
 	resolveCall int32
 }
 
 func (f *fakeReader) ListAdminAllAccounts(upstream.Session) ([]upstream.AdminGroupAccountInfo, error) {
+	if f.accounts != nil {
+		return f.accounts, nil
+	}
 	return []upstream.AdminGroupAccountInfo{
 		{ID: "acc-1", Name: "relay-a", Platform: "openai", Type: "apikey"},
 		{ID: "acc-2", Name: "claude-b", Platform: "anthropic", Type: "apikey"},
@@ -410,18 +420,73 @@ func TestListTargetsFiltersIneligible(t *testing.T) {
 
 // TestSubmitRejectsIneligibleTarget 确认后端也拦一道：前端置了灰不代表
 // 请求不会被构造出来。
-func TestSubmitRejectsIneligibleTarget(t *testing.T) {
+func TestSubmitSkipsIneligibleTarget(t *testing.T) {
 	repo := newFakeRepo()
 	detector := newFakeDetector(t, fakeDetectorBehaviour{})
 	defer detector.Close()
 	service := newTestService(repo, &fakeReader{key: "sk"}, NewDetectorClient(detector.URL))
 	service.accounts = fakeAdminAccounts{}
 
-	_, err := service.Submit(context.Background(), "u1", SubmitInput{
+	result, err := service.Submit(context.Background(), "u1", SubmitInput{
 		AccountIDs: []string{"acc-2"}, Tier: TierLow, ClaimedModel: ModelSol,
 	})
-	if err == nil || !strings.Contains(err.Error(), ErrorTargetIneligible) {
-		t.Fatalf("提交 anthropic 账号应被拒，实际 %v", err)
+	if err != nil {
+		t.Fatalf("ineligible target should be skipped rather than reject the batch: %v", err)
+	}
+	if len(result.Jobs) != 0 || result.SkippedTargetCount != 1 {
+		t.Fatalf("unexpected skip result: %+v", result)
+	}
+}
+
+func TestSubmitQueuesValidTargetsWhenSelectionContainsStaleTargets(t *testing.T) {
+	repo := newFakeRepo()
+	detector := newFakeDetector(t, fakeDetectorBehaviour{})
+	defer detector.Close()
+	service := newTestService(repo, &fakeReader{key: "sk"}, NewDetectorClient(detector.URL))
+	service.accounts = fakeAdminAccounts{}
+
+	result, err := service.Submit(context.Background(), "u1", SubmitInput{
+		AccountIDs: []string{"acc-1", "deleted-account", "acc-2", "acc-4"}, Tier: TierLow, ClaimedModel: ModelSol,
+	})
+	if err != nil {
+		t.Fatalf("stale selection must not reject valid targets: %v", err)
+	}
+	if len(result.Jobs) != 2 || result.SkippedTargetCount != 2 {
+		t.Fatalf("expected two queued and two skipped targets, got %+v", result)
+	}
+	if len(repo.jobs) != 2 {
+		t.Fatalf("only valid accounts may be inserted, got %d jobs", len(repo.jobs))
+	}
+}
+
+func TestSubmitAcceptsBatchLargerThanLegacyLimit(t *testing.T) {
+	repo := newFakeRepo()
+	detector := newFakeDetector(t, fakeDetectorBehaviour{})
+	defer detector.Close()
+
+	accounts := make([]upstream.AdminGroupAccountInfo, 0, 29)
+	accountIDs := make([]string, 0, 29)
+	for index := 1; index <= 29; index++ {
+		id := fmt.Sprintf("acc-%d", index)
+		accounts = append(accounts, upstream.AdminGroupAccountInfo{ID: id, Name: id, Platform: "openai", Type: "apikey"})
+		accountIDs = append(accountIDs, id)
+	}
+	service := newTestService(repo, &fakeReader{key: "sk", accounts: accounts}, NewDetectorClient(detector.URL))
+	service.accounts = fakeAdminAccounts{}
+
+	result, err := service.Submit(context.Background(), "u1", SubmitInput{
+		AccountIDs: accountIDs, Tier: TierLow, ClaimedModel: ModelSol,
+	})
+	if err != nil {
+		t.Fatalf("29-account batch should be accepted: %v", err)
+	}
+	if len(result.Jobs) != 29 || result.SkippedTargetCount != 0 || len(repo.jobs) != 29 {
+		t.Fatalf("expected all 29 jobs to be queued, response=%d skipped=%d stored=%d", len(result.Jobs), result.SkippedTargetCount, len(repo.jobs))
+	}
+	for _, job := range result.Jobs {
+		if job.Status != StatusQueued {
+			t.Fatalf("batch job must start queued, got %+v", job)
+		}
 	}
 }
 

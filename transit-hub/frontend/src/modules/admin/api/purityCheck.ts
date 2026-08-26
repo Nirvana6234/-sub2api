@@ -4,6 +4,7 @@ import type {
   PurityTarget,
   PurityTierInfo,
   PuritySubmitInput,
+  PuritySubmitResult,
   PurityJob,
 } from '../types/purityCheck'
 import {
@@ -63,18 +64,31 @@ export const listPurityTargets = async (): Promise<PurityTarget[]> =>
 export const listPurityTiers = async (): Promise<PurityTierInfo[]> =>
   requestJson<PurityTierInfo[]>('/purity-check/tiers')
 
-export const listPurityJobs = async (limit = 100): Promise<PurityJobListResponse> =>
-  requestJson<PurityJobListResponse>(`/purity-check/jobs?limit=${limit}`)
+export type PurityJobListQuery = {
+  limit?: number
+  offset?: number
+  search?: string
+  status?: string
+}
+
+export const listPurityJobs = async (query: PurityJobListQuery = {}): Promise<PurityJobListResponse> => {
+  const params = new URLSearchParams()
+  params.set('limit', String(query.limit ?? 100))
+  if (query.offset) params.set('offset', String(query.offset))
+  if (query.search?.trim()) params.set('search', query.search.trim())
+  if (query.status) params.set('status', query.status)
+  return requestJson<PurityJobListResponse>(`/purity-check/jobs?${params.toString()}`)
+}
 
 export const getPurityJob = async (id: string): Promise<PurityJobDetail> =>
   requestJson<PurityJobDetail>(`/purity-check/jobs/${encodeURIComponent(id)}`)
 
-export const submitPurityJobs = async (input: PuritySubmitInput): Promise<PurityJob[]> => {
-  const response = await requestJson<{ jobs: PurityJob[] }>('/purity-check/jobs', {
+export const submitPurityJobs = async (input: PuritySubmitInput): Promise<PuritySubmitResult> => {
+  const response = await requestJson<PuritySubmitResult>('/purity-check/jobs', {
     method: 'POST',
     body: JSON.stringify(input),
   })
-  return response.jobs ?? []
+  return { jobs: response.jobs ?? [], skippedTargetCount: response.skippedTargetCount ?? 0 }
 }
 
 export const cancelPurityJob = async (id: string): Promise<void> => {

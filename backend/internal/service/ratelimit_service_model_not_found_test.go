@@ -525,3 +525,40 @@ func TestRateLimitService_HandleUpstreamError_ModelNotFoundImageModelStillCoolsD
 	require.Len(t, repo.modelRateLimitCalls, 1, "守卫只作用于 codex plan-gated 分支")
 	require.Equal(t, upstreamModelNotFoundReason, repo.modelRateLimitCalls[0].reason)
 }
+
+func TestRateLimitService_HandleUpstreamError_OpenAIInsufficientQuotaDoesNotPersistModelPenalty(t *testing.T) {
+	repo := &modelNotFoundAccountRepoStub{}
+	svc := &RateLimitService{accountRepo: repo}
+	account := openAICodexPlanGatedOAuthAccount()
+
+	handled := svc.HandleUpstreamError(
+		context.Background(),
+		account,
+		http.StatusForbidden,
+		http.Header{},
+		[]byte(`{"error":{"code":"insufficient_quota","message":"当日订阅额度已耗尽，请重置或购买新订阅"}}`),
+		"gpt-5.6-sol",
+	)
+
+	require.False(t, handled, "the current request can fail over without disabling the account")
+	require.Empty(t, repo.modelRateLimitCalls, "recharge must take effect without clearing local state")
+}
+
+func TestRateLimitService_HandleUpstreamError_OpenAIDailyUsageLimitDoesNotPersistAnyPenalty(t *testing.T) {
+	repo := &modelNotFoundAccountRepoStub{}
+	svc := &RateLimitService{accountRepo: repo}
+	account := openAICodexPlanGatedOAuthAccount()
+
+	handled := svc.HandleUpstreamError(
+		context.Background(),
+		account,
+		http.StatusForbidden,
+		http.Header{},
+		[]byte(`{"error":{"message":"daily usage limit exceeded"}}`),
+		"gpt-5.6-sol",
+	)
+
+	require.False(t, handled)
+	require.Zero(t, repo.tempCalls)
+	require.Empty(t, repo.modelRateLimitCalls)
+}

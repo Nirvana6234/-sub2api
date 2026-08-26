@@ -932,3 +932,23 @@ func TestSelectAccountWithLoadAwareness_StickyReadReuse(t *testing.T) {
 		require.Nil(t, result)
 	})
 }
+
+func TestGetAvailableModels_HidesLunaFromMappingsAndWorkspaceCatalog(t *testing.T) {
+	groupID := int64(12)
+	accounts := []Account{{
+		ID:       1,
+		Platform: PlatformOpenAI,
+		Credentials: map[string]any{"model_mapping": map[string]any{
+			"gpt-5.6-luna": "gpt-5.6-luna",
+			"gpt-5.6-sol":  "gpt-5.6-sol",
+		}},
+	}}
+	repo := &modelsListAccountRepoStub{byGroup: map[int64][]Account{groupID: accounts}}
+	svc := &GatewayService{accountRepo: repo, modelsListCache: gocache.New(time.Minute, time.Minute), modelsListCacheTTL: time.Minute}
+
+	require.Equal(t, []string{"gpt-5.6-sol"}, svc.GetAvailableModels(context.Background(), &groupID, PlatformOpenAI))
+	workspace := workspaceAvailableModelsFromAccounts(accounts)
+	require.Equal(t, []string{"gpt-5.6-sol"}, workspace[PlatformOpenAI].ModelIDs)
+	require.False(t, IsPublicModel("gpt-5.6-luna"))
+	require.False(t, IsPublicModel("gpt-5.6-luna-2026-08-01"))
+}

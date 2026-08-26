@@ -543,3 +543,10 @@ func TestIsAnthropicFableModel(t *testing.T) {
 	require.False(t, isAnthropicFableModel("claude-sonnet-4-6"))
 	require.False(t, isAnthropicFableModel(""))
 }
+
+func TestIsOpenAIInsufficientQuota(t *testing.T) {
+	require.True(t, isOpenAIInsufficientQuota("", []byte(`{"error":{"code":"insufficient_quota"}}`)))
+	require.True(t, isOpenAIInsufficientQuota("当日订阅额度已耗尽，请重置或购买新订阅", nil))
+	require.True(t, isOpenAIInsufficientQuota("daily usage limit exceeded", nil))
+	require.False(t, isOpenAIInsufficientQuota("temporary edge rejection", []byte(`{"error":{"code":"forbidden"}}`)))
+}

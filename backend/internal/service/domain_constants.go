@@ -59,18 +59,19 @@ func IsCNProvider(platform string) bool {
 }
 
 const (
-	APIProtocolChatCompletions = domain.APIProtocolChatCompletions
-	APIProtocolAnthropic       = domain.APIProtocolAnthropic
-	APIProtocolResponses       = domain.APIProtocolResponses
-	DefaultKimiPayGBaseURL = "https://api.moonshot.cn/v1"
-	DefaultKimiCodingBaseURL = "https://api.kimi.com/coding/v1"
-	DefaultZhipuPayGBaseURL = "https://open.bigmodel.cn/api/paas/v4"
-	DefaultZhipuCodingBaseURL = "https://open.bigmodel.cn/api/coding/paas/v4"
-	DefaultDeepseekBaseURL = "https://api.deepseek.com"
-	DefaultKimiPayGAnthropicBaseURL = "https://api.moonshot.cn/anthropic"
+	APIProtocolChatCompletions        = domain.APIProtocolChatCompletions
+	APIProtocolAnthropic              = domain.APIProtocolAnthropic
+	APIProtocolResponses              = domain.APIProtocolResponses
+	APIProtocolAdaptive               = domain.APIProtocolAdaptive
+	DefaultKimiPayGBaseURL            = "https://api.moonshot.cn/v1"
+	DefaultKimiCodingBaseURL          = "https://api.kimi.com/coding/v1"
+	DefaultZhipuPayGBaseURL           = "https://open.bigmodel.cn/api/paas/v4"
+	DefaultZhipuCodingBaseURL         = "https://open.bigmodel.cn/api/coding/paas/v4"
+	DefaultDeepseekBaseURL            = "https://api.deepseek.com"
+	DefaultKimiPayGAnthropicBaseURL   = "https://api.moonshot.cn/anthropic"
 	DefaultKimiCodingAnthropicBaseURL = "https://api.kimi.com/coding"
-	DefaultZhipuAnthropicBaseURL = "https://open.bigmodel.cn/api/anthropic"
-	DefaultDeepseekAnthropicBaseURL = "https://api.deepseek.com/anthropic"
+	DefaultZhipuAnthropicBaseURL      = "https://open.bigmodel.cn/api/anthropic"
+	DefaultDeepseekAnthropicBaseURL   = "https://api.deepseek.com/anthropic"
 )
 
 var AllowedSchedulingThresholdPlatforms = []string{PlatformOpenAI, PlatformAnthropic, PlatformGrok, PlatformKimi, PlatformZhipu}
@@ -96,15 +97,15 @@ const (
 	SettingKeyMaxAccountsPerRegisterIP = "max_accounts_per_register_ip"
 	// SettingKeyMaxAdminLoginFailures 同一 IP 在 24 小时窗口内允许的管理员登录失败次数；
 	// 未配置或非正整数时使用 DefaultMaxAdminLoginFailures。
-	SettingKeyMaxAdminLoginFailures = "max_admin_login_failures"
-	SettingKeyTencentCaptchaRegion = "tencent_captcha_region"
-	SettingKeyAccountSchedulingThresholds = "account_scheduling_thresholds"
-	SettingKeyChannelMonitorMode = "channel_monitor_mode"
-	SettingKeyChannelMonitorHideThroughput = "channel_monitor_hide_throughput"
-	SettingKeyChannelMonitorShowQuota = "channel_monitor_show_quota"
-	SettingKeyGrokDefaultTextModel = "grok_default_text_model"
+	SettingKeyMaxAdminLoginFailures          = "max_admin_login_failures"
+	SettingKeyTencentCaptchaRegion           = "tencent_captcha_region"
+	SettingKeyAccountSchedulingThresholds    = "account_scheduling_thresholds"
+	SettingKeyChannelMonitorMode             = "channel_monitor_mode"
+	SettingKeyChannelMonitorHideThroughput   = "channel_monitor_hide_throughput"
+	SettingKeyChannelMonitorShowQuota        = "channel_monitor_show_quota"
+	SettingKeyGrokDefaultTextModel           = "grok_default_text_model"
 	SettingKeyGrokCrossClientModelMapEnabled = "grok_cross_client_model_map_enabled"
-	SettingKeyGrokDefaultBaseURLMode = "grok_default_base_url_mode"
+	SettingKeyGrokDefaultBaseURLMode         = "grok_default_base_url_mode"
 )
 
 // AllowedQuotaPlatforms 是允许设置 user × platform quota 的平台列表（单一权威来源）。
@@ -472,6 +473,34 @@ const (
 	// 为空则对应按钮隐藏；两个都为空时页面只剩图文教程。
 	SettingKeyClientDownloadNetdiskURL = "client_download_netdisk_url"
 	SettingKeyClientDownloadDirectURL  = "client_download_direct_url"
+
+	// ClientDownloadDefaultDirectURL 是客户端安装包的默认直链。
+	//
+	// 安装包刻意不放在应用服务器上，而是放在 icode-xtu.cc.cd（154.9.26.202）上
+	// 由 nginx 以静态文件直接返回。应用服务器上因此不存在这个文件，
+	// /api/v1/download/client 会走 302 分支跳到这里，下载带宽不经过应用服务器。
+	//
+	// 注意别和 icode-xtu.ccwu.cc 混淆：那个域名解析到应用服务器 13.212.118.49，
+	// 用它只会被 SPA 的 fallback 吃掉，返回 index.html 而不是安装包。
+	//
+	// 必须是 HTTPS 且证书域名匹配：下载页本身是 HTTPS，
+	//   - 跳到 IP（https://154.9.26.202/…）会因证书名不匹配被浏览器拦；
+	//   - 跳到明文 HTTP 会被 Chrome 的「阻止不安全下载」拦。
+	// 所以这里只能是一个签了证书的域名，不能图省事写 IP。
+	//
+	// 曾经用过 Gitee 的 raw 地址，那是错的：raw 对大文件强制登录，匿名请求返回
+	// 403，响应体是 55 字节的 "large file require login for access."，用户存下来
+	// 的是改了扩展名的报错文本。实测同仓库 9KB 的 README.md 匿名 200 正常，
+	// 说明这是文件大小触发的限制而非仓库私有。
+	ClientDownloadDefaultDirectURL = "https://icode-xtu.cc.cd/downloads/" + ClientDownloadFileName
+
+	// ClientDownloadFileName 是对外暴露的安装包文件名，同时用于本地直供分支的
+	// 落盘路径。换版本时改这里一处即可。
+	//
+	// 换版本必须换文件名，不要原地覆盖：下载站给这个路径发的是
+	// Cache-Control: public, max-age=3600，同名覆盖会让一小时内的用户继续拿到
+	// 缓存里的旧包，而且从下载结果上看不出拿到的是哪一版。
+	ClientDownloadFileName = "codex-relay-client_v0.1.1_x64.zip"
 
 	// SettingKeyBackupPaymentEnabled 控制充值页的「备用支付通道」入口是否展示。
 	// 与 payment_enabled 相互独立：主通道故障时可以只留备用通道。默认关闭（opt-in）。

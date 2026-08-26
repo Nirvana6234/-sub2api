@@ -664,6 +664,16 @@ export default {
       detailSubtitle: '{count} upstream groups used as pricing sources',
       staleOwnGroup: 'The admin site no longer returns this group. Its configuration is preserved until you confirm cleanup.',
       staleTarget: 'Upstream stale',
+      purityIssue: {
+        label: {
+          model_mismatch: 'Purity issue',
+          upstream_unreachable: 'Upstream unreachable'
+        },
+        detail: {
+          model_mismatch: 'The latest official purity check confirmed a model mismatch ({time}).',
+          upstream_unreachable: 'The latest purity check had no successful upstream response ({time}).'
+        }
+      },
       metrics: {
         ownMultiplier: 'My group multiplier',
         targets: 'Pricing sources',
@@ -930,6 +940,7 @@ export default {
       requestModelHint:
         'Set this when the relay uses a custom alias; leave empty to match the claimed model. A differing name alone never triggers an alert.',
       submit: 'Check {count} selected account(s)',
+      submitSkippedSummary: '{queued} account(s) queued; {skipped} stale or unsupported selection(s) skipped automatically.',
 
       confirmTitle: 'Confirm run',
       confirmBody: 'Each of the {count} selected account(s) will run one {tier} check. These requests really hit the upstream and are billed.',
@@ -945,6 +956,12 @@ export default {
       jobsEmpty: 'No checks yet.',
       queueSummary: '{queued} queued',
       queuePosition: '{ahead} ahead',
+      historySearchPlaceholder: 'Search account name, account ID, or upstream URL',
+      historyStatusLabel: 'Job status',
+      historyAllStatuses: 'All statuses',
+      historySearch: 'Search',
+      historyCount: 'Showing {shown} of {total} record(s)',
+      historyLoadMore: 'Load more',
       statuses: {
         queued: 'Queued',
         running: 'Running',
@@ -991,7 +1008,7 @@ export default {
         upstreamUnreachable: 'The upstream never responded, so no valid probes were collected and no verdict can be drawn.',
         proxyUnsupported:
           'This account is bound to a non-HTTP proxy (e.g. socks5) and the detector only supports HTTP proxies. Set PURITY_CHECK_HTTP_PROXY_URL to an HTTP proxy port on the same egress path as live forwarding.',
-        tooManyTargets: 'At most 20 accounts per submission.',
+        tooManyTargets: 'At most 100 accounts per submission.',
       },
     },
     connectionHealth: {
@@ -1116,7 +1133,8 @@ export default {
           empty: 'This target has no model probe results yet.',
           latency: 'Latency {value} ms',
           lastProbe: 'Last {value}',
-          weight: 'Health weight {value}%'
+          weight: 'Health weight {value}%',
+          upstreamResponse: 'Upstream response: {value}'
         }
       },
       setup: {
@@ -1182,7 +1200,7 @@ export default {
             balanced: 'Balanced',
             speed: 'Fastest'
           },
-          priorityStrategyHelp: 'Lowest Cost uses the real upstream API key multiplier. Balanced uses 70% price + 30% speed. Fastest uses the last hour of real-request TTFT P95, up to 20 samples per account with at least 3 required. Sparse data falls back to existing Gongfei Console probe records; scoring never launches extra probes.',
+          priorityStrategyHelp: 'Lowest Cost uses the real upstream API key multiplier. Balanced uses 70% price + 30% speed. Fastest prioritizes real-request TTFT P95 from the last hour, up to 20 samples per account with at least 3 required. If the current group is sparse, it falls back to cross-group real requests from the last 24 hours, then to existing Gongfei Console probe records; scoring never launches extra probes.',
           multiplierOnlyTitle: 'Sync Multiplier Priority Only',
           multiplierOnlyHelp: 'About every 30 seconds, the scheduler reads the group multiplier of the upstream API key actually linked to each account. Lower multipliers receive higher priority. No probe credentials are required.'
         },
@@ -1434,7 +1452,7 @@ export default {
           balanced: 'Balanced',
           speed: 'Fastest'
         },
-        priorityStrategyHelp: 'Speed uses Sub2API real-request TTFT P95 from the last hour, capped at 20 samples per account with at least 3 required. Sparse data falls back to existing Gongfei Console probe records, and scoring never launches extra probes. Balanced uses 70% price + 30% speed.',
+        priorityStrategyHelp: 'Speed prioritizes Sub2API real-request TTFT P95 from the last hour, capped at 20 samples per account with at least 3 required. If the current group is sparse, it falls back to cross-group real requests from the last 24 hours, then to existing Gongfei Console probe records; scoring never launches extra probes. Balanced uses 70% price + 30% speed.',
         priorityModeHelp: 'Historical upstream priority is used only to detect manual edits, never as a score input. Usable targets follow the selected mode; paused, disabled, unschedulable, or zero-weight targets share the final slot. Sub2API writes priorities independently inside each group.',
         multiplierOnlySummaryTitle: 'Lower Multiplier, Higher Priority',
         multiplierOnlySummary: 'About every 30 seconds, the scheduler reads the group multiplier of the upstream API key actually linked to each account and syncs priority. It never resolves probe credentials, requests models, consumes probe budget, degrades health, or runs remote actions. Manual priority edits stop automatic overwrites.',
@@ -1728,6 +1746,16 @@ export default {
       badge: 'Rate Sync Ledger',
       title: 'Group Rates',
       subtitle: 'Review current upstream group multipliers and recent changes, then inspect multiplier history.',
+      purityIssue: {
+        label: {
+          model_mismatch: 'Site purity issue',
+          upstream_unreachable: 'Site check unreachable'
+        },
+        detail: {
+          model_mismatch: 'At least one account at this site had a latest official purity check confirming a model mismatch ({time}).',
+          upstream_unreachable: 'At least one account at this site had a latest purity check with no successful upstream response ({time}).'
+        }
+      },
       common: {
         placeholder: '—',
         allTypes: 'All Types',

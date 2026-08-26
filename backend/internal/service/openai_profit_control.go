@@ -233,6 +233,11 @@ func (s *OpenAIGatewayService) withOpenAIProfitControlGate(ctx context.Context, 
 	if _, suppressed := ctx.Value(openAIProfitControlSuppressCtxKey{}).(struct{}); suppressed {
 		return ctx
 	}
+	// 兜底分组只切换账号候选来源，利润门必须沿用被兜底的请求分组。
+	// 因此 A→B 递归时不重新按 B 装门；ctx 中已有的 gate.groupID 仍是 A。
+	if isOpenAIFallbackPoolSourcing(ctx) {
+		return ctx
+	}
 	if groupID != nil {
 		if existing, ok := ctx.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate); ok && existing != nil && existing.groupID == *groupID {
 			return ctx
@@ -482,6 +487,9 @@ func (s *OpenAIGatewayService) bindOpenAIStickySessionDuringSelection(ctx contex
 // recovers.
 func (s *OpenAIGatewayService) BindStickySessionAfterProfitAdmission(ctx context.Context, groupID *int64, sessionHash string, accountID int64) error {
 	if sessionHash == "" || accountID <= 0 {
+		return nil
+	}
+	if preserveOpenAIGuardianParentBinding(ctx, sessionHash) {
 		return nil
 	}
 	if preserve, _ := ctx.Value(openAIStickyPreserveCtxKey{}).(bool); preserve {

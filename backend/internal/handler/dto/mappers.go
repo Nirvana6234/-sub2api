@@ -222,6 +222,7 @@ func groupFromServiceBase(g *service.Group) Group {
 		ClaudeCodeOnly:                  g.ClaudeCodeOnly,
 		KiroCompat:                      g.KiroCompat,
 		FallbackGroupID:                 g.FallbackGroupID,
+		IsFallbackPool:                  g.IsFallbackPool,
 		FallbackGroupIDOnInvalidRequest: g.FallbackGroupIDOnInvalidRequest,
 		AllowMessagesDispatch:           g.AllowMessagesDispatch,
 		AllowLive:                       g.AllowLive,

@@ -58,18 +58,19 @@ type healthRepository interface {
 // Service 组装 connection_health 模块的全部业务逻辑：聚合查询、策略管理、手动动作、
 // 真实探活执行。所有对外可见字段都不含 upstream_key，符合任务书的敏感信息约束。
 type Service struct {
-	repo                healthRepository
-	mySites             MySitesReader
-	sites               SiteLookup
-	accounts            AdminAccountResolver
-	dispatcher          RemoteActionRunner
-	probeRunner         *RealProbeRunner
-	modelDiscovery      *ModelDiscoveryRunner
-	platformGroups      PlatformGroupReader
-	groupStatus         PlatformGroupStatusWriter
-	priorityActions     TargetPriorityActioner
-	recoveryActions     Sub2APIRecoveryActioner
-	autoDisableNotifier AutomaticDisableNotifier
+	repo                 healthRepository
+	mySites              MySitesReader
+	sites                SiteLookup
+	accounts             AdminAccountResolver
+	dispatcher           RemoteActionRunner
+	probeRunner          *RealProbeRunner
+	modelDiscovery       *ModelDiscoveryRunner
+	platformGroups       PlatformGroupReader
+	groupStatus          PlatformGroupStatusWriter
+	priorityActions      TargetPriorityActioner
+	recoveryActions      Sub2APIRecoveryActioner
+	autoDisableNotifier  AutomaticDisableNotifier
+	autoRecoveryNotifier AutomaticRecoveryNotifier
 }
 
 func NewService(repo *Repository, mySites MySitesReader, sites SiteLookup, platform PlatformActioner) *Service {
@@ -118,6 +119,16 @@ func (s *Service) notifyAutomaticDisable(ctx context.Context, event AutomaticDis
 func (s *Service) notifyAutomaticDisables(ctx context.Context, events []AutomaticDisableEvent) {
 	for _, event := range aggregateAutomaticDisableEvents(events) {
 		s.notifyAutomaticDisable(ctx, event)
+	}
+}
+
+func (s *Service) SetAutomaticRecoveryNotifier(notifier AutomaticRecoveryNotifier) {
+	s.autoRecoveryNotifier = notifier
+}
+
+func (s *Service) notifyAutomaticRecovery(ctx context.Context, event AutomaticRecoveryEvent) {
+	if s.autoRecoveryNotifier != nil {
+		s.autoRecoveryNotifier.NotifyAutomaticRecovery(ctx, event)
 	}
 }
 
@@ -181,6 +192,7 @@ type EventView struct {
 	ToState           string    `json:"toState"`
 	LatencyMs         *int      `json:"latencyMs"`
 	ErrorKey          string    `json:"errorKey"`
+	ErrorDetail       string    `json:"errorDetail"`
 	RemoteAction      string    `json:"remoteAction"`
 	CreatedAt         time.Time `json:"createdAt"`
 }
@@ -705,6 +717,7 @@ func toEventViews(events []ConnectionHealthEvent) []EventView {
 			ID: e.ID, ConnectionID: e.ConnectionID, ModelName: e.ModelName, OwnGroupName: e.OwnGroupName,
 			UpstreamSiteID: e.UpstreamSiteID, UpstreamGroupName: e.UpstreamGroupName, Result: e.Result,
 			FromState: e.FromState, ToState: e.ToState, LatencyMs: e.LatencyMs, ErrorKey: e.ErrorKey,
+			ErrorDetail:  e.ErrorDetail,
 			RemoteAction: e.RemoteAction, CreatedAt: e.CreatedAt,
 		})
 	}

@@ -171,3 +171,7 @@ deploy/sub2api-auto-group-*.zip
 # Python 字节码（transit-hub 的 detector vendor 目录会生成）
 __pycache__/
 *.pyc
+
+# 预发布构建产物：每次构建都会重新生成，不进仓库
+transit-hub/frontend/dist.predeploy-*/
+frontend/dist.predeploy-*/

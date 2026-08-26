@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"transithub/backend/internal/modules/purity_check"
 	"transithub/backend/internal/modules/upstream"
 )
 
@@ -63,6 +64,12 @@ type BotNotifier interface {
 	SendToBots(ctx context.Context, userID string, botIDs []string, message string)
 }
 
+// PurityIssueReader keeps the pricing-mapping module independent from detector
+// internals: it only receives account ids and a compact current issue summary.
+type PurityIssueReader interface {
+	LatestAccountIssues(ctx context.Context, userID string, adminAccountID string, accountIDs []string) ([]purity_check.AccountIssue, error)
+}
+
 // Service 负责分组映射的查询与保存，以及真实对接的编排。
 // 供仪表盘分组弹窗和分组倍率页面复用。
 type Service struct {
@@ -72,6 +79,7 @@ type Service struct {
 	upstreamLookup  UpstreamSiteLookup
 	botNotifier     BotNotifier
 	accounts        AdminAccountResolver
+	purityIssues    PurityIssueReader
 	// keyTester 提供上游 Key 连通性测试。由 httpserver 注入，为 nil 时
 	// 只有测试接口不可用，其余功能不受影响。
 	keyTester UpstreamKeyTester
@@ -122,6 +130,13 @@ func (s *Service) ListMappedUpstreamGroups(ctx context.Context, userID, adminAcc
 // SetBotNotifier 注入机器人通知发送能力，供自动调价成功后发送通知。
 func (s *Service) SetBotNotifier(notifier BotNotifier) {
 	s.botNotifier = notifier
+}
+
+// SetPurityIssueReader supplies the compact account-level status displayed on
+// mapping targets. It is optional so existing tests and rolling deployments
+// keep working when the purity module is not configured.
+func (s *Service) SetPurityIssueReader(reader PurityIssueReader) {
+	s.purityIssues = reader
 }
 
 func (s *Service) SetAdminAccountResolver(accounts AdminAccountResolver) {
@@ -303,6 +318,7 @@ func (s *Service) MappingOptions(ctx context.Context, userID string) (MappingOpt
 		// 真实对接记录只补偿到本次响应，避免 GET 请求产生持久化副作用。
 		applyMappingsFromRealConnections(viewState, idToName, backfillConnections)
 	}
+	s.applyMappingPurityIssues(ctx, userID, adminAccountID, viewState)
 
 	staleOwnGroups := make([]string, 0)
 	staleOwnSeen := make(map[string]struct{})
@@ -383,6 +399,50 @@ func (s *Service) MappingOptions(ctx context.Context, userID string) (MappingOpt
 		ConnectionCapabilities:    connectionCapabilities(viewState.Session.Platform),
 		CostAccounts:              s.mappingCostAccounts(viewState.Session),
 	}, nil
+}
+
+func (s *Service) applyMappingPurityIssues(ctx context.Context, userID string, adminAccountID string, state *State) {
+	if s.purityIssues == nil || state == nil {
+		return
+	}
+	ids := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, mapping := range state.Mappings {
+		for _, target := range mapping.UpstreamTargets {
+			accountID := normalizeSub2APIAccountID(target.Sub2APIAccountID)
+			if accountID == nil {
+				continue
+			}
+			if _, exists := seen[*accountID]; !exists {
+				seen[*accountID] = struct{}{}
+				ids = append(ids, *accountID)
+			}
+		}
+	}
+	issues, err := s.purityIssues.LatestAccountIssues(ctx, userID, adminAccountID, ids)
+	if err != nil {
+		// A purity-status lookup must never make normal pricing configuration
+		// unavailable. The next page refresh will retry it.
+		log.Printf("[my-sites] read purity issue summary failed: %v", err)
+		return
+	}
+	byAccount := make(map[string]purity_check.AccountIssue, len(issues))
+	for _, issue := range issues {
+		byAccount[issue.AccountID] = issue
+	}
+	for mappingIndex := range state.Mappings {
+		for targetIndex := range state.Mappings[mappingIndex].UpstreamTargets {
+			target := &state.Mappings[mappingIndex].UpstreamTargets[targetIndex]
+			target.PurityIssue = nil
+			accountID := normalizeSub2APIAccountID(target.Sub2APIAccountID)
+			if accountID == nil {
+				continue
+			}
+			if issue, exists := byAccount[*accountID]; exists {
+				target.PurityIssue = &PurityIssue{Kind: issue.Kind, DetectedAt: issue.DetectedAt}
+			}
+		}
+	}
 }
 
 // mappingCostAccounts 拉取本方 Sub2API 账号清单，供前端绑定调价数据源与核算成本。
@@ -1120,7 +1180,7 @@ func hasUpstreamTarget(targets []UpstreamGroupRef, target UpstreamGroupRef) bool
 // addUpstreamMapping 将上游站点+分组添加到用户 my_site_states.mappings 中每个关联的自有分组里。
 // 如果自有分组尚未有映射记录则创建，如果已有则在 upstreamTargets 中追加（去重）。
 // 注意：mappings 中 OwnGroup 存储的是分组名称（非数字 ID），与仪表盘分组关联一致。
-func (s *Service) addUpstreamMapping(ctx context.Context, userID string, adminAccountID string, ownGroupIDs []string, siteID, groupName string) {
+func (s *Service) addUpstreamMapping(ctx context.Context, userID string, adminAccountID string, ownGroupIDs []string, siteID, groupName, adminPlatform, upstreamAccountID string) {
 	state, err := s.repository.Get(ctx, userID, adminAccountID)
 	if err != nil || state == nil {
 		return
@@ -1141,6 +1201,10 @@ func (s *Service) addUpstreamMapping(ctx context.Context, userID string, adminAc
 	}
 
 	target := UpstreamGroupRef{SiteID: siteID, GroupName: groupName}
+	if adminPlatform == string(upstream.PlatformSub2API) && strings.TrimSpace(upstreamAccountID) != "" {
+		accountID := strings.TrimSpace(upstreamAccountID)
+		target.Sub2APIAccountID = &accountID
+	}
 
 	existing := make(map[string]*GroupMapping, len(state.Mappings))
 	for i := range state.Mappings {
@@ -1157,8 +1221,11 @@ func (s *Service) addUpstreamMapping(ctx context.Context, userID string, adminAc
 
 		if m, found := existing[ownName]; found {
 			alreadyHas := false
-			for _, t := range m.UpstreamTargets {
+			for index, t := range m.UpstreamTargets {
 				if t.SiteID == siteID && t.GroupName == groupName {
+					if m.UpstreamTargets[index].Sub2APIAccountID == nil && target.Sub2APIAccountID != nil {
+						m.UpstreamTargets[index].Sub2APIAccountID = target.Sub2APIAccountID
+					}
 					alreadyHas = true
 					break
 				}
@@ -1269,12 +1336,10 @@ func buildAccountPayload(groupType, baseURL, apiKey string, ownGroupIDs []int, a
 	case "openai":
 		payload["platform"] = "openai"
 		credentials["pool_mode"] = true
-		payload["extra"] = map[string]any{"openai_passthrough": true}
 		payload["concurrency"] = 1000
 	case "anthropic":
 		payload["platform"] = "anthropic"
 		credentials["pool_mode"] = true
-		payload["extra"] = map[string]any{"anthropic_passthrough": true}
 		payload["concurrency"] = 1000
 	case "gemini":
 		payload["platform"] = "gemini"

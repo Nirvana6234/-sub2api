@@ -670,6 +670,7 @@ export interface Group {
   claude_code_only: boolean
   kiro_compat?: boolean
   fallback_group_id: number | null
+  is_fallback_pool?: boolean
   fallback_group_id_on_invalid_request: number | null
   // OpenAI Messages 调度开关（用户侧需要此字段判断是否展示 Claude Code 教程）
   allow_messages_dispatch?: boolean
@@ -893,6 +894,7 @@ export interface CreateGroupRequest {
   claude_code_only?: boolean
   kiro_compat?: boolean
   fallback_group_id?: number | null
+  is_fallback_pool?: boolean
   fallback_group_id_on_invalid_request?: number | null
   mcp_xml_inject?: boolean
   supported_model_scopes?: string[]
@@ -957,6 +959,7 @@ export interface UpdateGroupRequest {
   claude_code_only?: boolean
   kiro_compat?: boolean
   fallback_group_id?: number | null
+  is_fallback_pool?: boolean
   fallback_group_id_on_invalid_request?: number | null
   mcp_xml_inject?: boolean
   supported_model_scopes?: string[]
@@ -1362,6 +1365,7 @@ export interface WindowStats {
   cost: number // Account cost (account multiplier)
   standard_cost?: number
   user_cost?: number
+  by_group?: AccountUsageGroupBreakdown[]
 }
 
 export interface UsageProgress {
@@ -2250,9 +2254,20 @@ export interface AccountUsageSummary {
   } | null
 }
 
+export interface AccountUsageGroupBreakdown {
+  group_id: number
+  group_name: string
+  requests: number
+  total_tokens: number
+  standard_cost: number
+  account_cost: number
+  user_cost: number
+}
+
 export interface AccountUsageStatsResponse {
   history: AccountUsageHistory[]
   summary: AccountUsageSummary
+  by_group: AccountUsageGroupBreakdown[]
   models: ModelStat[]
   endpoints: EndpointStat[]
   upstream_endpoints: EndpointStat[]

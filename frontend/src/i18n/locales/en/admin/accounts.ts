@@ -407,7 +407,7 @@ export default {
       resetQuota: 'Reset Quota',
       quotaLimit: 'Quota Limit',
       quotaLimitPlaceholder: '0 means unlimited',
-      quotaLimitHint: 'Set daily/weekly/total spending limits (USD). Anthropic API key accounts can also configure client affinity. Changing limits won\'t reset usage.',
+      quotaLimitHint: 'Set daily/weekly/total account-cost limits (USD). Usage accumulates from the account-cost value across all actual usage groups; reaching any limit pauses the account. Changing limits does not reset usage.',
       quotaLimitToggle: 'Enable Quota Limit',
       quotaLimitToggleHint: 'When enabled, account will be paused when usage reaches the set limit',
       quotaDailyLimit: 'Daily Limit',
@@ -1491,6 +1491,9 @@ export default {
       usageWindow: {
         statsTitle: '5-Hour Window Usage Statistics',
         statsTitleDaily: 'Daily Usage Statistics',
+        todayTotal: 'Today total',
+        todayGroups: 'Today groups ({count})',
+        ungrouped: 'Ungrouped',
         geminiProDaily: 'Pro',
         geminiFlashDaily: 'Flash',
         gemini3Pro: 'G3P',

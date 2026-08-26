@@ -275,6 +275,11 @@ func FallbackGroupIDOnInvalidRequest(v int64) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldFallbackGroupIDOnInvalidRequest, v))
 }
 
+// IsFallbackPool applies equality check predicate on the "is_fallback_pool" field. It's identical to IsFallbackPoolEQ.
+func IsFallbackPool(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldIsFallbackPool, v))
+}
+
 // ModelRoutingEnabled applies equality check predicate on the "model_routing_enabled" field. It's identical to ModelRoutingEnabledEQ.
 func ModelRoutingEnabled(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldModelRoutingEnabled, v))
@@ -2208,6 +2213,16 @@ func FallbackGroupIDOnInvalidRequestIsNil() predicate.Group {
 // FallbackGroupIDOnInvalidRequestNotNil applies the NotNil predicate on the "fallback_group_id_on_invalid_request" field.
 func FallbackGroupIDOnInvalidRequestNotNil() predicate.Group {
 	return predicate.Group(sql.FieldNotNull(FieldFallbackGroupIDOnInvalidRequest))
+}
+
+// IsFallbackPoolEQ applies the EQ predicate on the "is_fallback_pool" field.
+func IsFallbackPoolEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldIsFallbackPool, v))
+}
+
+// IsFallbackPoolNEQ applies the NEQ predicate on the "is_fallback_pool" field.
+func IsFallbackPoolNEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldIsFallbackPool, v))
 }
 
 // ModelRoutingIsNil applies the IsNil predicate on the "model_routing" field.

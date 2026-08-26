@@ -1215,9 +1215,50 @@ func TestAdminService_ValidateFallbackGroup_DetectsCycle(t *testing.T) {
 	}
 	svc := &adminServiceImpl{groupRepo: repo}
 
-	err := svc.validateFallbackGroup(context.Background(), groupID, fallbackID)
+	err := svc.validateFallbackGroup(context.Background(), groupID, PlatformAnthropic, fallbackID)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "fallback group cycle")
+}
+
+func TestAdminService_ValidateFallbackGroup_OpenAIRequiresFallbackPool(t *testing.T) {
+	fallbackID := int64(2)
+	repo := &groupRepoStubForFallbackCycle{
+		groups: map[int64]*Group{
+			fallbackID: {ID: fallbackID, Platform: PlatformOpenAI, Status: StatusActive},
+		},
+	}
+	svc := &adminServiceImpl{groupRepo: repo}
+
+	err := svc.validateFallbackGroup(context.Background(), 0, PlatformOpenAI, fallbackID)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "marked as fallback pool")
+}
+
+func TestAdminService_ValidateFallbackGroup_OpenAIRequiresSamePlatform(t *testing.T) {
+	fallbackID := int64(2)
+	repo := &groupRepoStubForFallbackCycle{
+		groups: map[int64]*Group{
+			fallbackID: {ID: fallbackID, Platform: PlatformGrok, Status: StatusActive, IsFallbackPool: true},
+		},
+	}
+	svc := &adminServiceImpl{groupRepo: repo}
+
+	err := svc.validateFallbackGroup(context.Background(), 0, PlatformOpenAI, fallbackID)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "platform mismatch")
+}
+
+func TestAdminService_ValidateFallbackGroup_OpenAIAcceptsSamePlatformFallbackPool(t *testing.T) {
+	fallbackID := int64(2)
+	repo := &groupRepoStubForFallbackCycle{
+		groups: map[int64]*Group{
+			fallbackID: {ID: fallbackID, Platform: PlatformOpenAI, Status: StatusActive, IsFallbackPool: true},
+		},
+	}
+	svc := &adminServiceImpl{groupRepo: repo}
+
+	err := svc.validateFallbackGroup(context.Background(), 0, PlatformOpenAI, fallbackID)
+	require.NoError(t, err)
 }
 
 type groupRepoStubForFallbackCycle struct {

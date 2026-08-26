@@ -361,6 +361,11 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	imageCount := 0
 	var imageOutputSizes []string
 	for {
+		actualModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
+		if actualModel == "" {
+			actualModel = reqModel
+		}
+		SetOpsUpstreamModel(c, actualModel)
 		upstreamCtx, releaseUpstreamCtx := detachUpstreamRequestContext(ctx)
 		upstreamReq, buildErr := s.buildUpstreamRequestOpenAIPassthrough(upstreamCtx, c, account, body, token)
 		releaseUpstreamCtx()
@@ -758,6 +763,13 @@ func shouldFailoverOpenAIPassthroughResponse(account *Account, statusCode int, r
 	}
 	if isOpenAIContextWindowError("", responseBody) {
 		return false
+	}
+	// A provider daily allowance is request-scoped. Keep it in the gateway
+	// failover loop for every OpenAI credential type; the account-aware
+	// failover constructor decides whether to retry this credential or switch.
+	if account != nil && account.Platform == PlatformOpenAI &&
+		isOpenAIDailyUsageLimitError(statusCode, "", responseBody) {
+		return true
 	}
 	if isOpenAIHTTPUpstreamAccessStateError(statusCode, "", responseBody) {
 		return true
@@ -1475,6 +1487,13 @@ func openAIStreamFailedEventShouldFailover(payload []byte, message string) bool 
 	if isOpenAIContextWindowError(message, payload) {
 		return false
 	}
+	// Provider daily-usage exhaustion is request-scoped. It must enter the
+	// normal failover loop even when the stream payload otherwise resembles a
+	// permission/403 error; account-side cooldown persistence is skipped later
+	// by handleOpenAIAccountUpstreamError.
+	if isOpenAIDailyUsageLimitError(http.StatusForbidden, message, payload) {
+		return true
+	}
 	if isOpenAIUpstreamAccessStateError(message, payload) {
 		return true
 	}
@@ -1526,6 +1545,9 @@ func openAIStreamErrorEventShouldFailover(payload []byte, message string) bool {
 	}
 	if isOpenAIContextWindowError(message, payload) {
 		return false
+	}
+	if isOpenAIDailyUsageLimitError(http.StatusForbidden, message, payload) {
+		return true
 	}
 	if isOpenAIUpstreamAccessStateError(message, payload) {
 		return true
@@ -1582,6 +1604,12 @@ func (s *OpenAIGatewayService) handleOpenAIStreamTerminalAccountSideEffects(
 func openAIStreamFailedEventRetryableOnSameAccount(account *Account, payload []byte, message string) bool {
 	if account == nil {
 		return false
+	}
+	// API/static-key accounts get the same bounded same-account retry budget as
+	// non-streaming requests. OAuth/setup-token accounts skip directly to the
+	// next account because the allowance belongs to the real provider account.
+	if isOpenAIDailyUsageLimitError(http.StatusForbidden, message, payload) {
+		return isOpenAIUpstreamAPIAccount(account)
 	}
 	// 容量降载是请求级信号，不是账号级故障：上游只是让本次请求稍后再试。
 	// 换账号并不改变被降载的因素（客户端身份、模型容量都与账号无关），

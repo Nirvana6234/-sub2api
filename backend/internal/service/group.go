@@ -87,6 +87,16 @@ type Group struct {
 	// 无效请求兜底分组（仅 anthropic 平台使用）
 	FallbackGroupIDOnInvalidRequest *int64
 
+	// IsFallbackPool 标记本分组可作为其它分组指定的兜底账号池。
+	//
+	// 与上面两个 FallbackGroupID 配合使用：每个源分组通过 FallbackGroupID 指向
+	// 自己的兜底池，兜底池可以有多个，普通用户不可直接选择或绑定。
+	//
+	// 入池不等于获得特权：账号被选去兜底某分组时，仍要过那个分组的利润门，
+	// 且成本未声明的账号不参与兜底。计费也始终按用户原本所属的分组，池自身的
+	// 倍率不参与定价。
+	IsFallbackPool bool
+
 	// 模型路由配置
 	// key: 模型匹配模式（支持 * 通配符，如 "claude-opus-*"）
 	// value: 优先账号 ID 列表

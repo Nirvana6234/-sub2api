@@ -108,6 +108,8 @@ const (
 	FieldFallbackGroupID = "fallback_group_id"
 	// FieldFallbackGroupIDOnInvalidRequest holds the string denoting the fallback_group_id_on_invalid_request field in the database.
 	FieldFallbackGroupIDOnInvalidRequest = "fallback_group_id_on_invalid_request"
+	// FieldIsFallbackPool holds the string denoting the is_fallback_pool field in the database.
+	FieldIsFallbackPool = "is_fallback_pool"
 	// FieldModelRouting holds the string denoting the model_routing field in the database.
 	FieldModelRouting = "model_routing"
 	// FieldModelRoutingEnabled holds the string denoting the model_routing_enabled field in the database.
@@ -274,6 +276,7 @@ var Columns = []string{
 	FieldKiroCompat,
 	FieldFallbackGroupID,
 	FieldFallbackGroupIDOnInvalidRequest,
+	FieldIsFallbackPool,
 	FieldModelRouting,
 	FieldModelRoutingEnabled,
 	FieldMcpXMLInject,
@@ -393,6 +396,8 @@ var (
 	DefaultClaudeCodeOnly bool
 	// DefaultKiroCompat holds the default value on creation for the "kiro_compat" field.
 	DefaultKiroCompat bool
+	// DefaultIsFallbackPool holds the default value on creation for the "is_fallback_pool" field.
+	DefaultIsFallbackPool bool
 	// DefaultModelRoutingEnabled holds the default value on creation for the "model_routing_enabled" field.
 	DefaultModelRoutingEnabled bool
 	// DefaultMcpXMLInject holds the default value on creation for the "mcp_xml_inject" field.
@@ -659,6 +664,11 @@ func ByFallbackGroupID(opts ...sql.OrderTermOption) OrderOption {
 // ByFallbackGroupIDOnInvalidRequest orders the results by the fallback_group_id_on_invalid_request field.
 func ByFallbackGroupIDOnInvalidRequest(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldFallbackGroupIDOnInvalidRequest, opts...).ToFunc()
+}
+
+// ByIsFallbackPool orders the results by the is_fallback_pool field.
+func ByIsFallbackPool(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldIsFallbackPool, opts...).ToFunc()
 }
 
 // ByModelRoutingEnabled orders the results by the model_routing_enabled field.

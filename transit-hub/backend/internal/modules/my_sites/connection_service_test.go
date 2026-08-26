@@ -102,6 +102,19 @@ func TestManagedConnectionOperationsUseEachSidePlatform(t *testing.T) {
 	}
 }
 
+func TestBuildAccountPayloadUsesSub2APIDefaultModelMode(t *testing.T) {
+	for _, groupType := range []string{"openai", "anthropic"} {
+		payload := buildAccountPayload(groupType, "https://provider.example", "sk-test", []int{7}, "account")
+		if _, ok := payload["extra"]; ok {
+			t.Fatalf("%s auto-config must leave model mode at Sub2API default; unexpected extra=%v", groupType, payload["extra"])
+		}
+		credentials, ok := payload["credentials"].(map[string]any)
+		if !ok || credentials["pool_mode"] != true {
+			t.Fatalf("%s auto-config must retain pool mode, payload=%+v", groupType, payload)
+		}
+	}
+}
+
 func TestRealConnectCompensatesRemoteResourcesWhenPersistenceFails(t *testing.T) {
 	var deletedAccount bool
 	var deletedKey bool

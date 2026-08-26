@@ -359,8 +359,30 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		}
 	}
 
-	upstreamCtx, releaseUpstreamCtx := detachUpstreamRequestContext(ctx)
-	var upstreamReq *http.Request
+	// 每次重试都要重新构造请求：请求体可能被下面的重试逻辑改写（Grok 补丁、
+	// rejected-field 回退），复用同一个 *http.Request 会把已经读空的 Body 再发一次。
+	//
+	// 这里用 detachUpstreamRequestContext 而不是 detachUpstreamContext：前者对
+	// playground 请求保留原始 ctx，使其仍可被取消，是本仓库的定制行为。
+	// 两者返回的 release 都是空函数，defer 它只是形式上的对称，不会取消上游请求。
+	buildUpstreamRequest := func(requestBody []byte) (*http.Request, error) {
+		upstreamCtx, releaseUpstreamCtx := detachUpstreamRequestContext(ctx)
+		defer releaseUpstreamCtx()
+		var upstreamReq *http.Request
+		var buildErr error
+		if account.Platform == PlatformGrok {
+			upstreamReq, buildErr = buildGrokResponsesRequest(upstreamCtx, c, account, requestBody, token, grokCacheIdentity, s.cfg, s.settingService)
+		} else {
+			upstreamReq, buildErr = s.buildUpstreamRequestOpenAIPassthrough(upstreamCtx, c, account, requestBody, token)
+		}
+		if buildErr != nil {
+			return nil, buildErr
+		}
+		if account.Platform != PlatformGrok && isOpenAIResponsesLiteWebSocketPayload(payload) {
+			upstreamReq.Header.Set(responsesLiteHeader, "true")
+		}
+		return upstreamReq, nil
+	}
 	if account.Platform == PlatformGrok {
 		upstreamModel := resolveGrokWSUpstreamModel(account, body, originalModel)
 		body, err = patchGrokResponsesBody(body, upstreamModel)

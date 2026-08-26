@@ -165,10 +165,12 @@ cost and latency observations.
    lower multipliers first; balanced mode uses 70% price and 30% speed; speed
    mode ranks lower latency first. Conflicting strategies in one ordered group
    fall back deterministically to price mode.
-3. Read real-request TTFT from Sub2API admin `/api/v1/admin/usage`, using a
-   one-hour window, at most 20 newest samples per account, at least three
-   samples, P95, and a 30-second latency normalization ceiling. Paginate the
-   group usage feed so quieter accounts are not hidden behind a busy account.
+3. Read real-request TTFT from Sub2API admin `/api/v1/admin/usage`, preferring
+   the current group's one-hour window. If that group has fewer than three
+   samples, fall back to the same account's cross-group requests from the last
+   24 hours. In both cases use at most 20 newest samples per account, at least
+   three samples, P95, and a 30-second latency normalization ceiling. Paginate
+   the usage feed so quieter accounts are not hidden behind a busy account.
 4. Prefer Sub2API usage P95, then fall back to TransitHub's already persisted
    probe-event P95. Priority scoring must never launch an additional probe.
 5. Put suspended, disabled, unschedulable, and zero-weight managed targets in
