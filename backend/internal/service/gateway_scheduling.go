@@ -740,6 +740,13 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		return nil, ErrNoAvailableAccounts
 	}
 
+	// 稀缺能力保护：候选此时已全部通过模型支持与可调度性筛选，都能服务本次请求，
+	// 在这一档里优先用掉更专精的号。专精那档被限流或耗尽时，它们在上面的循环里就
+	// 已经出局，这里自然只剩更宽的号，无需额外回落逻辑。
+	if s.preferSpecializedAccountsEnabled() {
+		candidates = keepMostSpecialized(candidates, func(a *Account) *Account { return a })
+	}
+
 	accountLoads := make([]AccountWithConcurrency, 0, len(candidates))
 	for _, acc := range candidates {
 		accountLoads = append(accountLoads, AccountWithConcurrency{
@@ -2389,6 +2396,18 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 		if acc.Priority < selected.Priority {
 			selected = acc
 		} else if acc.Priority == selected.Priority {
+			// 稀缺能力保护：同优先级下先比专精度，支持模型集合更窄的账号胜出。必须放在
+			// 「最久未使用」之前——否则一个空闲的多能力账号会持续抢走本该由专精账号承担
+			// 的流量，保护也就无从谈起。
+			if s.preferSpecializedAccountsEnabled() {
+				accBreadth, selBreadth := accountModelBreadth(acc), accountModelBreadth(selected)
+				if accBreadth != selBreadth {
+					if accBreadth < selBreadth {
+						selected = acc
+					}
+					continue
+				}
+			}
 			switch {
 			case acc.LastUsedAt == nil && selected.LastUsedAt != nil:
 				selected = acc
@@ -2656,6 +2675,18 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 		if acc.Priority < selected.Priority {
 			selected = acc
 		} else if acc.Priority == selected.Priority {
+			// 稀缺能力保护：同优先级下先比专精度，支持模型集合更窄的账号胜出。必须放在
+			// 「最久未使用」之前——否则一个空闲的多能力账号会持续抢走本该由专精账号承担
+			// 的流量，保护也就无从谈起。
+			if s.preferSpecializedAccountsEnabled() {
+				accBreadth, selBreadth := accountModelBreadth(acc), accountModelBreadth(selected)
+				if accBreadth != selBreadth {
+					if accBreadth < selBreadth {
+						selected = acc
+					}
+					continue
+				}
+			}
 			switch {
 			case acc.LastUsedAt == nil && selected.LastUsedAt != nil:
 				selected = acc

@@ -1312,6 +1312,15 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 		}
 	}
 
+	// 稀缺能力保护：candidates 此时已通过模型支持与可调度性筛选，都能服务本次请求，
+	// 在这一档里只保留最专精的账号。allCandidates 保持原样——诊断与溢出兜底仍需要看到
+	// 完整候选集。专精那档被限流或耗尽时不会进入 candidates，因此无需额外回落逻辑。
+	if s.service.preferSpecializedAccountsEnabled() {
+		candidates = keepMostSpecialized(candidates, func(c openAIAccountCandidateScore) *Account {
+			return c.account
+		})
+	}
+
 	plan := openAIAccountLoadPlan{
 		allCandidates:             allCandidates,
 		candidates:                candidates,
