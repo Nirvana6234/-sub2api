@@ -133,6 +133,13 @@
               >
                 兜底池
               </span>
+              <span
+                v-if="fallbackBadge(row)"
+                class="badge badge-primary whitespace-nowrap"
+                :title="fallbackBadge(row)?.title"
+              >
+                {{ fallbackBadge(row)?.text }}
+              </span>
             </div>
           </template>
 
@@ -4728,6 +4735,34 @@ import {
 
 const supportsLivePlatform = (platform: string): boolean =>
   platform === "openai" || platform === "composite";
+
+// 分组列表里名字后面的兜底标识。
+//
+// fallback_group_id 这个字段被两套语义复用，标签必须分开写，否则运营会把「降级」
+// 误读成「兜底」：
+// - claude_code_only 分组：非 Claude Code 客户端访问时降级到该分组（旧语义）
+// - 其余分组：运行时兜底池，本组无可用账号时从该池借号
+//
+// 目标分组可能已被删除或不在当前列表里，那种情况退回显示 #id，不静默隐藏——
+// 配置指向了一个不存在的分组，运营更需要看见。
+const fallbackBadge = (
+  row: AdminGroup,
+): { text: string; title: string } | null => {
+  const targetId = row.fallback_group_id;
+  if (!targetId) return null;
+  const target = groups.value.find((g) => g.id === targetId);
+  const name = target?.name ?? `#${targetId}`;
+  if (row.claude_code_only) {
+    return {
+      text: `降级 → ${name}`,
+      title: `非 Claude Code 客户端访问时，降级到「${name}」`,
+    };
+  }
+  return {
+    text: `兜底 → ${name}`,
+    title: `本组无可用账号时，按本组的利润门从「${name}」借号`,
+  };
+};
 
 // 走「运行时兜底池」选择器的平台。anthropic 有自己的选择器（在 ClaudeCode 区块下方），
 // 因为它的 fallback_group_id 还兼着旧的 ClaudeCodeOnly 降级语义，两者要分开呈现。
