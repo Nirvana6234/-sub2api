@@ -40,7 +40,7 @@ func TestSortAccountsByPriorityAndLastUsed_ByPriority(t *testing.T) {
 		{ID: 2, Priority: 1, LastUsedAt: testTimePtr(now)},
 		{ID: 3, Priority: 3, LastUsedAt: testTimePtr(now)},
 	}
-	sortAccountsByPriorityAndLastUsed(accounts, false)
+	sortAccountsByRank(accounts, accountRankPolicy{preferOAuth: false})
 	require.Equal(t, int64(2), accounts[0].ID, "优先级最低的排第一")
 	require.Equal(t, int64(3), accounts[1].ID)
 	require.Equal(t, int64(1), accounts[2].ID)
@@ -53,7 +53,7 @@ func TestSortAccountsByPriorityAndLastUsed_SamePriorityByLastUsed(t *testing.T) 
 		{ID: 2, Priority: 1, LastUsedAt: testTimePtr(now.Add(-1 * time.Hour))},
 		{ID: 3, Priority: 1, LastUsedAt: nil},
 	}
-	sortAccountsByPriorityAndLastUsed(accounts, false)
+	sortAccountsByRank(accounts, accountRankPolicy{preferOAuth: false})
 	require.Equal(t, int64(3), accounts[0].ID, "nil LastUsedAt 排最前")
 	require.Equal(t, int64(2), accounts[1].ID, "更早使用的排前面")
 	require.Equal(t, int64(1), accounts[2].ID)
@@ -64,7 +64,7 @@ func TestSortAccountsByPriorityAndLastUsed_PreferOAuth(t *testing.T) {
 		{ID: 1, Priority: 1, LastUsedAt: nil, Type: AccountTypeAPIKey},
 		{ID: 2, Priority: 1, LastUsedAt: nil, Type: AccountTypeOAuth},
 	}
-	sortAccountsByPriorityAndLastUsed(accounts, true)
+	sortAccountsByRank(accounts, accountRankPolicy{preferOAuth: true})
 	require.Equal(t, int64(2), accounts[0].ID, "preferOAuth 时 OAuth 账号排前面")
 }
 
@@ -82,7 +82,7 @@ func TestSortAccountsByPriorityAndLastUsed_StableSort(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		cpy := make([]*Account, len(accounts))
 		copy(cpy, accounts)
-		sortAccountsByPriorityAndLastUsed(cpy, false)
+		sortAccountsByRank(cpy, accountRankPolicy{preferOAuth: false})
 		seenFirst[cpy[0].ID] = true
 
 		ids := map[int64]bool{}
@@ -102,7 +102,7 @@ func TestSortAccountsByPriorityAndLastUsed_MixedPriorityAndTime(t *testing.T) {
 		{ID: 3, Priority: 1, LastUsedAt: testTimePtr(now.Add(-1 * time.Hour))},
 		{ID: 4, Priority: 2, LastUsedAt: testTimePtr(now.Add(-2 * time.Hour))},
 	}
-	sortAccountsByPriorityAndLastUsed(accounts, false)
+	sortAccountsByRank(accounts, accountRankPolicy{preferOAuth: false})
 	// 优先级1排前：nil < earlier
 	require.Equal(t, int64(3), accounts[0].ID, "优先级1 + 更早")
 	require.Equal(t, int64(2), accounts[1].ID, "优先级1 + 现在")
