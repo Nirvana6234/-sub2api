@@ -124,3 +124,58 @@ func TestGatewaySchedulingPrefersSpecializedAccount(t *testing.T) {
 }
 
 func specializedNowPtr() *time.Time { now := time.Now(); return &now }
+
+// 「优先」不等于「排他」：专精账号不可用时必须能落到更宽的账号上，否则开启这个开关
+// 等于给自己加了一个单点故障。
+func TestGatewaySchedulingFallsBackWhenSpecializedUnavailable(t *testing.T) {
+	groupID := int64(710)
+	group := &Group{ID: groupID, Platform: PlatformAnthropic, Status: StatusActive}
+
+	newService := func(mutate func(narrow *Account)) *GatewayService {
+		onlyFiveFive := specializedAccountWithModels(811, "gpt-5.5")
+		bothModels := specializedAccountWithModels(812, "gpt-5.5", "gpt-5.6")
+		if mutate != nil {
+			mutate(&onlyFiveFive)
+		}
+		return &GatewayService{
+			accountRepo: &anthropicFallbackAccountRepo{
+				byGroup: map[int64][]Account{groupID: {onlyFiveFive, bothModels}},
+			},
+			groupRepo: &anthropicFallbackGroupRepo{groups: map[int64]*Group{groupID: group}},
+			cfg: &config.Config{
+				RunMode: config.RunModeStandard,
+				Gateway: config.GatewayConfig{PreferSpecializedAccounts: true},
+			},
+		}
+	}
+
+	t.Run("专精账号被排除时改用更宽的账号", func(t *testing.T) {
+		// 上游失败后重试会把失败账号放进 excludedIDs，这里模拟那一轮。
+		account, err := newService(nil).SelectAccountForModelWithExclusions(
+			context.Background(), &groupID, "", "gpt-5.5",
+			map[int64]struct{}{811: {}})
+		require.NoError(t, err)
+		require.NotNil(t, account)
+		require.Equal(t, int64(812), account.ID, "专精号被排除后应落到双能力号")
+	})
+
+	t.Run("专精账号不可调度时改用更宽的账号", func(t *testing.T) {
+		account, err := newService(func(narrow *Account) {
+			narrow.Schedulable = false
+		}).SelectAccountForModelWithExclusions(
+			context.Background(), &groupID, "", "gpt-5.5", nil)
+		require.NoError(t, err)
+		require.NotNil(t, account)
+		require.Equal(t, int64(812), account.ID, "专精号不可调度时应落到双能力号")
+	})
+
+	t.Run("专精账号停用时改用更宽的账号", func(t *testing.T) {
+		account, err := newService(func(narrow *Account) {
+			narrow.Status = StatusDisabled
+		}).SelectAccountForModelWithExclusions(
+			context.Background(), &groupID, "", "gpt-5.5", nil)
+		require.NoError(t, err)
+		require.NotNil(t, account)
+		require.Equal(t, int64(812), account.ID, "专精号停用时应落到双能力号")
+	})
+}
