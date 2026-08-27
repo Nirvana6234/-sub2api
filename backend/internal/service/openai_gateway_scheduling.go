@@ -1373,7 +1373,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwarenessOnce(ctx context.Co
 	loadMap, err := s.concurrencyService.GetAccountsLoadBatch(ctx, accountLoads)
 	if err != nil {
 		ordered := append([]*Account(nil), candidates...)
-		sortAccountsByPriorityAndLastUsed(ordered, false)
+		sortAccountsByRank(ordered, accountRankPolicy{})
 		if rateOrder.enabled {
 			sort.SliceStable(ordered, func(i, j int) bool {
 				if workspaceCmp := compareWorkspaceOwnedOpenAIAccounts(ctx, ordered[i], ordered[j]); workspaceCmp != 0 {
@@ -1426,7 +1426,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwarenessOnce(ctx context.Co
 	}
 
 	// ============ Layer 3: Fallback wait ============
-	sortAccountsByPriorityAndLastUsed(candidates, false)
+	sortAccountsByRank(candidates, accountRankPolicy{})
 	if rateOrder.enabled {
 		sort.SliceStable(candidates, func(i, j int) bool {
 			if workspaceCmp := compareWorkspaceOwnedOpenAIAccounts(ctx, candidates[i], candidates[j]); workspaceCmp != 0 {

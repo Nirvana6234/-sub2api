@@ -296,7 +296,7 @@ func TestSortAccountsByPriorityAndLastUsed_WithShuffle(t *testing.T) {
 		for i := 0; i < 100; i++ {
 			cpy := make([]*Account, len(accounts))
 			copy(cpy, accounts)
-			sortAccountsByPriorityAndLastUsed(cpy, false)
+			sortAccountsByRank(cpy, accountRankPolicy{preferOAuth: false})
 			seen[cpy[0].ID] = true
 		}
 		require.GreaterOrEqual(t, len(seen), 2, "identical sort keys should produce different orderings after shuffle")
@@ -310,7 +310,7 @@ func TestSortAccountsByPriorityAndLastUsed_WithShuffle(t *testing.T) {
 			{ID: 2, Priority: 2, LastUsedAt: &now},
 		}
 
-		sortAccountsByPriorityAndLastUsed(accounts, false)
+		sortAccountsByRank(accounts, accountRankPolicy{preferOAuth: false})
 		require.Equal(t, int64(1), accounts[0].ID)
 		require.Equal(t, int64(2), accounts[1].ID)
 		require.Equal(t, int64(3), accounts[2].ID)

@@ -774,21 +774,14 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		for len(available) > 0 {
 			// 1. 取优先级最小的集合
 			candidates := filterByMinPriority(available)
-			// 1.5 （可选）稀缺能力保护：同优先级下先用支持模型集合更窄的账号。
-			// 放在这条分层链里而不是提前砍候选，是为了保证降级：本轮选中的账号若抢不到
-			// 并发槽或撞上会话上限，循环会把它从 available 摘掉再走一遍本链，专精那档
-			// 用尽后自然轮到更宽的账号；负载已满的账号更是早在 available 之外。
-			if s.preferSpecializedAccountsEnabled() {
-				candidates = filterByMostSpecialized(candidates)
-			}
 			// 2. （可选）use-it-or-lose-it：优先选用会话窗口最早重置的账号
 			if cfg.PreferSoonestReset {
 				candidates = filterBySoonestReset(candidates)
 			}
 			// 3. 取负载率最低的集合
 			candidates = filterByMinLoadRate(candidates)
-			// 4. LRU 选择最久未用的账号
-			selected := selectByLRU(candidates, preferOAuth)
+			// 4. 在剩余候选里选最优；并列时随机分散负载
+			selected := pickBestAccountWithRandomTie(candidates, s.gatewayRankPolicy(preferOAuth))
 			if selected == nil {
 				break
 			}
@@ -840,7 +833,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 
 func (s *GatewayService) tryAcquireByLegacyOrder(ctx context.Context, candidates []*Account, groupID *int64, sessionHash string, preferOAuth bool) (*AccountSelectionResult, bool, error) {
 	ordered := append([]*Account(nil), candidates...)
-	sortAccountsByPriorityAndLastUsed(ordered, preferOAuth)
+	sortAccountsByRank(ordered, s.gatewayRankPolicy(preferOAuth))
 
 	for _, acc := range ordered {
 		result, err := s.tryAcquireAccountSlot(ctx, acc.ID, acc.Concurrency)
@@ -1863,13 +1856,6 @@ func (s *GatewayService) newSelectionResult(ctx context.Context, account *Accoun
 	}), nil
 }
 
-// filterByMinPriority 过滤出优先级最小的账号集合
-// filterByMostSpecialized 保留支持模型集合最窄的一档。全部账号宽度相同（最常见）时
-// 原样返回，不产生任何行为变化。
-func filterByMostSpecialized(accounts []accountWithLoad) []accountWithLoad {
-	return keepMostSpecialized(accounts, func(a accountWithLoad) *Account { return a.account })
-}
-
 func filterByMinPriority(accounts []accountWithLoad) []accountWithLoad {
 	if len(accounts) == 0 {
 		return accounts
@@ -1942,87 +1928,14 @@ func filterBySoonestReset(accounts []accountWithLoad) []accountWithLoad {
 	return result
 }
 
-// selectByLRU 从集合中选择最久未用的账号
-// 如果有多个账号具有相同的最小 LastUsedAt，则随机选择一个
-func selectByLRU(accounts []accountWithLoad, preferOAuth bool) *accountWithLoad {
-	if len(accounts) == 0 {
-		return nil
-	}
-	if len(accounts) == 1 {
-		return &accounts[0]
-	}
-
-	// 1. 找到最小的 LastUsedAt（nil 被视为最小）
-	var minTime *time.Time
-	hasNil := false
-	for _, acc := range accounts {
-		if acc.account.LastUsedAt == nil {
-			hasNil = true
-			break
-		}
-		if minTime == nil || acc.account.LastUsedAt.Before(*minTime) {
-			minTime = acc.account.LastUsedAt
-		}
-	}
-
-	// 2. 收集所有具有最小 LastUsedAt 的账号索引
-	var candidateIdxs []int
-	for i, acc := range accounts {
-		if hasNil {
-			if acc.account.LastUsedAt == nil {
-				candidateIdxs = append(candidateIdxs, i)
-			}
-		} else {
-			if acc.account.LastUsedAt != nil && acc.account.LastUsedAt.Equal(*minTime) {
-				candidateIdxs = append(candidateIdxs, i)
-			}
-		}
-	}
-
-	// 3. 如果只有一个候选，直接返回
-	if len(candidateIdxs) == 1 {
-		return &accounts[candidateIdxs[0]]
-	}
-
-	// 4. 如果有多个候选且 preferOAuth，优先选择 OAuth 类型
-	if preferOAuth {
-		var oauthIdxs []int
-		for _, idx := range candidateIdxs {
-			if accounts[idx].account.Type == AccountTypeOAuth {
-				oauthIdxs = append(oauthIdxs, idx)
-			}
-		}
-		if len(oauthIdxs) > 0 {
-			candidateIdxs = oauthIdxs
-		}
-	}
-
-	// 5. 随机选择一个
-	selectedIdx := candidateIdxs[mathrand.Intn(len(candidateIdxs))]
-	return &accounts[selectedIdx]
-}
-
-func sortAccountsByPriorityAndLastUsed(accounts []*Account, preferOAuth bool) {
+// sortAccountsByRank 按给定策略排序。策略由调用方组装，避免把排序绑死在某个 service 上——
+// OpenAI 侧同样复用这个函数。
+func sortAccountsByRank(accounts []*Account, policy accountRankPolicy) {
 	sort.SliceStable(accounts, func(i, j int) bool {
-		a, b := accounts[i], accounts[j]
-		if a.Priority != b.Priority {
-			return a.Priority < b.Priority
-		}
-		switch {
-		case a.LastUsedAt == nil && b.LastUsedAt != nil:
-			return true
-		case a.LastUsedAt != nil && b.LastUsedAt == nil:
-			return false
-		case a.LastUsedAt == nil && b.LastUsedAt == nil:
-			if preferOAuth && a.Type != b.Type {
-				return a.Type == AccountTypeOAuth
-			}
-			return false
-		default:
-			return a.LastUsedAt.Before(*b.LastUsedAt)
-		}
+		return accountRankBetter(accounts[i], accounts[j], policy)
 	})
-	shuffleWithinPriorityAndLastUsed(accounts, preferOAuth)
+	// 组内随机：确定性排序会让并发请求读到同一快照时命中同一个账号。
+	shuffleWithinPriorityAndLastUsed(accounts, policy.preferOAuth)
 }
 
 // shuffleWithinSortGroups 对排序后的 accountWithLoad 切片，按 (Priority, LoadRate, LastUsedAt) 分组后组内随机打乱。
@@ -2127,29 +2040,24 @@ func sameLastUsedAt(a, b *time.Time) bool {
 func (s *GatewayService) sortCandidatesForFallback(accounts []*Account, preferOAuth bool, mode string) {
 	if mode == "random" {
 		// 先按优先级排序，然后在同优先级内随机打乱
-		sortAccountsByPriorityOnly(accounts, preferOAuth)
+		sortAccountsByRank(accounts, s.gatewayRankPolicy(preferOAuth, withoutLastUsed))
 		shuffleWithinPriority(accounts)
 	} else {
 		// 默认按最后使用时间排序
-		sortAccountsByPriorityAndLastUsed(accounts, preferOAuth)
+		sortAccountsByRank(accounts, s.gatewayRankPolicy(preferOAuth))
 	}
 }
 
 // sortAccountsByPriorityOnly 仅按优先级排序
-func sortAccountsByPriorityOnly(accounts []*Account, preferOAuth bool) {
-	sort.SliceStable(accounts, func(i, j int) bool {
-		a, b := accounts[i], accounts[j]
-		if a.Priority != b.Priority {
-			return a.Priority < b.Priority
-		}
-		if preferOAuth && a.Type != b.Type {
-			return a.Type == AccountTypeOAuth
-		}
-		return false
-	})
-}
 
 // shuffleWithinPriority 在同优先级内随机打乱顺序
+
+// selectByLRU 保留为薄封装：实现已统一到 pickBestAccountWithRandomTie，
+// 这里只补上默认策略，供既有调用方与测试继续使用。
+func selectByLRU(accounts []accountWithLoad, preferOAuth bool) *accountWithLoad {
+	return pickBestAccountWithRandomTie(accounts, accountRankPolicy{preferOAuth: preferOAuth})
+}
+
 func shuffleWithinPriority(accounts []*Account) {
 	if len(accounts) <= 1 {
 		return
@@ -2282,23 +2190,8 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 				selected = acc
 				continue
 			}
-			if acc.Priority < selected.Priority {
+			if accountRankBetter(acc, selected, s.gatewayRankPolicy(preferOAuth)) {
 				selected = acc
-			} else if acc.Priority == selected.Priority {
-				switch {
-				case acc.LastUsedAt == nil && selected.LastUsedAt != nil:
-					selected = acc
-				case acc.LastUsedAt != nil && selected.LastUsedAt == nil:
-					// keep selected (never used is preferred)
-				case acc.LastUsedAt == nil && selected.LastUsedAt == nil:
-					if preferOAuth && acc.Type != selected.Type && acc.Type == AccountTypeOAuth {
-						selected = acc
-					}
-				default:
-					if acc.LastUsedAt.Before(*selected.LastUsedAt) {
-						selected = acc
-					}
-				}
 			}
 		}
 
@@ -2399,35 +2292,8 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 			selected = acc
 			continue
 		}
-		if acc.Priority < selected.Priority {
+		if accountRankBetter(acc, selected, s.gatewayRankPolicy(preferOAuth)) {
 			selected = acc
-		} else if acc.Priority == selected.Priority {
-			// 稀缺能力保护：同优先级下先比专精度，支持模型集合更窄的账号胜出。必须放在
-			// 「最久未使用」之前——否则一个空闲的多能力账号会持续抢走本该由专精账号承担
-			// 的流量，保护也就无从谈起。
-			if s.preferSpecializedAccountsEnabled() {
-				accBreadth, selBreadth := accountModelBreadth(acc), accountModelBreadth(selected)
-				if accBreadth != selBreadth {
-					if accBreadth < selBreadth {
-						selected = acc
-					}
-					continue
-				}
-			}
-			switch {
-			case acc.LastUsedAt == nil && selected.LastUsedAt != nil:
-				selected = acc
-			case acc.LastUsedAt != nil && selected.LastUsedAt == nil:
-				// keep selected (never used is preferred)
-			case acc.LastUsedAt == nil && selected.LastUsedAt == nil:
-				if preferOAuth && acc.Type != selected.Type && acc.Type == AccountTypeOAuth {
-					selected = acc
-				}
-			default:
-				if acc.LastUsedAt.Before(*selected.LastUsedAt) {
-					selected = acc
-				}
-			}
 		}
 	}
 
@@ -2560,23 +2426,8 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 				selected = acc
 				continue
 			}
-			if acc.Priority < selected.Priority {
+			if accountRankBetter(acc, selected, s.gatewayRankPolicy(preferOAuth, withGeminiOnlyOAuthPreference)) {
 				selected = acc
-			} else if acc.Priority == selected.Priority {
-				switch {
-				case acc.LastUsedAt == nil && selected.LastUsedAt != nil:
-					selected = acc
-				case acc.LastUsedAt != nil && selected.LastUsedAt == nil:
-					// keep selected (never used is preferred)
-				case acc.LastUsedAt == nil && selected.LastUsedAt == nil:
-					if preferOAuth && acc.Platform == PlatformGemini && selected.Platform == PlatformGemini && acc.Type != selected.Type && acc.Type == AccountTypeOAuth {
-						selected = acc
-					}
-				default:
-					if acc.LastUsedAt.Before(*selected.LastUsedAt) {
-						selected = acc
-					}
-				}
 			}
 		}
 
@@ -2678,35 +2529,8 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 			selected = acc
 			continue
 		}
-		if acc.Priority < selected.Priority {
+		if accountRankBetter(acc, selected, s.gatewayRankPolicy(preferOAuth, withGeminiOnlyOAuthPreference)) {
 			selected = acc
-		} else if acc.Priority == selected.Priority {
-			// 稀缺能力保护：同优先级下先比专精度，支持模型集合更窄的账号胜出。必须放在
-			// 「最久未使用」之前——否则一个空闲的多能力账号会持续抢走本该由专精账号承担
-			// 的流量，保护也就无从谈起。
-			if s.preferSpecializedAccountsEnabled() {
-				accBreadth, selBreadth := accountModelBreadth(acc), accountModelBreadth(selected)
-				if accBreadth != selBreadth {
-					if accBreadth < selBreadth {
-						selected = acc
-					}
-					continue
-				}
-			}
-			switch {
-			case acc.LastUsedAt == nil && selected.LastUsedAt != nil:
-				selected = acc
-			case acc.LastUsedAt != nil && selected.LastUsedAt == nil:
-				// keep selected (never used is preferred)
-			case acc.LastUsedAt == nil && selected.LastUsedAt == nil:
-				if preferOAuth && acc.Platform == PlatformGemini && selected.Platform == PlatformGemini && acc.Type != selected.Type && acc.Type == AccountTypeOAuth {
-					selected = acc
-				}
-			default:
-				if acc.LastUsedAt.Before(*selected.LastUsedAt) {
-					selected = acc
-				}
-			}
 		}
 	}
 
