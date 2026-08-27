@@ -98,6 +98,7 @@ const (
 	// U 的来源标记，供 profit-preview 向管理员解释"这个准入结论按哪个倍率算的"。
 	profitControlRateSourceManualUpstream = "manual_upstream_rate"
 	profitControlRateSourceUpstreamProbe  = "upstream_probe"
+	profitControlRateSourceStaleProbe     = "upstream_probe_stale"
 	profitControlRateSourceAccountColumn  = "account_rate_multiplier"
 	profitControlRateSourceUndeclared     = "undeclared"
 )
@@ -425,6 +426,68 @@ func profitControlAccountUpstreamRate(account *Account, at time.Time) (float64, 
 	return *account.RateMultiplier, profitControlRateSourceAccountColumn, profitControlRateDeclared
 }
 
+// accountCostUpstreamRate 解析记账用的上游成本倍率。
+//
+// 它先复用利润门的严格解析，保证手工倍率、新鲜探测值和列值声明的语义不分叉；
+// 但当严格解析认为探测型账号“未声明”时，记账可以退一步采用已经过期但仍存在的
+// 探测快照，并标记为 probe_stale。这个退路只服务成本记账/展示，利润门与调度
+// 继续调用 profitControlAccountUpstreamRate，因此不会被陈旧低价放行。
+func accountCostUpstreamRate(account *Account, at time.Time) (float64, string, profitControlRateState) {
+	if account == nil {
+		return 0, "", profitControlRateUndeclared
+	}
+	if at.IsZero() {
+		at = timezone.Now()
+	}
+	if rate, ok := upstreamBillingManualRateMultiplier(account.Extra); ok &&
+		!math.IsNaN(rate) && !math.IsInf(rate, 0) && rate >= 0 {
+		return rate, profitControlRateSourceManualUpstream, profitControlRateDeclared
+	}
+	if isUpstreamBillingProbeAccount(account) {
+		if rate, ok := openAIFreshUpstreamBillingRate(account, at); ok &&
+			!math.IsNaN(rate) && !math.IsInf(rate, 0) && rate >= 0 {
+			return rate, profitControlRateSourceUpstreamProbe, profitControlRateDeclared
+		}
+		if staleRate, ok := openAIStaleUpstreamBillingRate(account, at); ok {
+			return staleRate, profitControlRateSourceStaleProbe, profitControlRateDeclared
+		}
+		if upstreamBillingProbeIsRateSource(account) && accountRateMultiplierIsSchemaDefault(account) {
+			return 0, profitControlRateSourceUndeclared, profitControlRateUndeclared
+		}
+	}
+	if account.RateMultiplierUndeclared {
+		return 0, profitControlRateSourceUndeclared, profitControlRateUndeclared
+	}
+	if account.RateMultiplier == nil {
+		return 0, profitControlRateSourceAccountColumn, profitControlRateInvalid
+	}
+	if math.IsNaN(*account.RateMultiplier) ||
+		math.IsInf(*account.RateMultiplier, 0) ||
+		*account.RateMultiplier < 0 {
+		return 0, profitControlRateSourceAccountColumn, profitControlRateInvalid
+	}
+	return *account.RateMultiplier, profitControlRateSourceAccountColumn, profitControlRateDeclared
+}
+
+func openAIStaleUpstreamBillingRate(account *Account, at time.Time) (float64, bool) {
+	if !isUpstreamBillingProbeAccount(account) {
+		return 0, false
+	}
+	if at.IsZero() {
+		at = timezone.Now()
+	}
+	snapshot := decodeUpstreamBillingProbeSnapshot(account.Extra)
+	if snapshot == nil || (snapshot.Status != UpstreamBillingProbeStatusOK && snapshot.Status != UpstreamBillingProbeStatusFailed) ||
+		snapshot.ReceivedAt == nil || snapshot.ReceivedAt.IsZero() || at.Before(*snapshot.ReceivedAt) {
+		return 0, false
+	}
+	rate, ok := upstreamBillingRateAt(snapshot.Data, at)
+	if !ok || math.IsNaN(rate) || math.IsInf(rate, 0) || rate < 0 {
+		return 0, false
+	}
+	return rate, true
+}
+
 // openAIProfitControlVetoReason 报告利润门是否否决该账号。ctx 中没有门
 // （分组未启用利润控制或本请求跳门）或账号为 nil 时一律放行。
 func openAIProfitControlVetoReason(ctx context.Context, account *Account) (bool, string) {
@@ -637,7 +700,7 @@ func AccountCostRateMultiplier(account *Account, at time.Time) *float64 {
 	if account == nil {
 		return nil
 	}
-	rate, _, state := profitControlAccountUpstreamRate(account, at)
+	rate, _, state := accountCostUpstreamRate(account, at)
 	if state != profitControlRateDeclared {
 		return nil
 	}
@@ -652,10 +715,11 @@ func AccountCostRateMultiplier(account *Account, at time.Time) *float64 {
 // 的实现细节，直接塞进 API 会把内部命名固化成对外契约；这里做一层窄映射，
 // 内部改名时只需改这里。
 const (
-	AccountCostRateSourceManual = "manual"
-	AccountCostRateSourceProbe  = "probe"
-	AccountCostRateSourceColumn = "column"
-	AccountCostRateSourceNone   = "none"
+	AccountCostRateSourceManual     = "manual"
+	AccountCostRateSourceProbe      = "probe"
+	AccountCostRateSourceProbeStale = "probe_stale"
+	AccountCostRateSourceColumn     = "column"
+	AccountCostRateSourceNone       = "none"
 )
 
 // AccountCostRateMultiplierWithSource 在 AccountCostRateMultiplier 的基础上一并返回
@@ -669,7 +733,7 @@ func AccountCostRateMultiplierWithSource(account *Account, at time.Time) (*float
 	if account == nil {
 		return nil, AccountCostRateSourceNone
 	}
-	rate, source, state := profitControlAccountUpstreamRate(account, at)
+	rate, source, state := accountCostUpstreamRate(account, at)
 	if state != profitControlRateDeclared {
 		return nil, AccountCostRateSourceNone
 	}
@@ -682,6 +746,8 @@ func AccountCostRateMultiplierWithSource(account *Account, at time.Time) (*float
 		exposed = AccountCostRateSourceManual
 	case profitControlRateSourceUpstreamProbe:
 		exposed = AccountCostRateSourceProbe
+	case profitControlRateSourceStaleProbe:
+		exposed = AccountCostRateSourceProbeStale
 	case profitControlRateSourceAccountColumn:
 		exposed = AccountCostRateSourceColumn
 	default:

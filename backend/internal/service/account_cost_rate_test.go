@@ -36,14 +36,14 @@ func TestAccountCostRateMultiplierMatchesProfitGate(t *testing.T) {
 			"上游自报便宜不得压过运营钉死的成本，否则记账会系统性低估")
 	})
 
-	t.Run("探测过期时回退列值", func(t *testing.T) {
+	t.Run("探测过期时采用陈旧探测值并覆盖列值", func(t *testing.T) {
 		account := profitControlTestAccountWithRate(
 			upstreamCostTestAccount(3, UpstreamBillingProbeStatusOK, 0.045, now.Add(-3*time.Hour), 30*time.Minute),
 			0.9,
 		)
 		got := AccountCostRateMultiplier(account, now)
 		require.NotNil(t, got)
-		require.InDelta(t, 0.9, *got, 1e-9)
+		require.InDelta(t, 0.045, *got, 1e-9)
 	})
 
 	t.Run("未声明时返回nil而不是回退1.0", func(t *testing.T) {
@@ -101,6 +101,17 @@ func TestAccountCostRateMultiplierWithSource(t *testing.T) {
 		require.NotNil(t, rate)
 		require.InDelta(t, 0.16, *rate, 1e-9)
 		require.Equal(t, AccountCostRateSourceProbe, source)
+	})
+
+	t.Run("探测过期时用上一次有效探测值并标记probe_stale", func(t *testing.T) {
+		account := profitControlTestAccountWithRate(
+			upstreamCostTestAccount(109, UpstreamBillingProbeStatusOK, 0.18, now.Add(-3*time.Hour), 30*time.Minute),
+			1.0,
+		)
+		rate, source := AccountCostRateMultiplierWithSource(account, now)
+		require.NotNil(t, rate)
+		require.InDelta(t, 0.18, *rate, 1e-9)
+		require.Equal(t, AccountCostRateSourceProbeStale, source)
 	})
 
 	t.Run("探测失败且列值是建表默认时判为无声明", func(t *testing.T) {

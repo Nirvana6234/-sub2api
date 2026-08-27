@@ -521,3 +521,16 @@ type AdminUsageAccounting struct {
 	// 为 false 时调用方必须回退到上游站点采集，绝不能把成本当成 0。
 	HasAccountCost bool
 }
+
+type FallbackPoolUsageEvent struct {
+	RequestID       string
+	AccountID       string
+	AccountName     string
+	Model           string
+	SourceGroupID   string
+	SourceGroupName string
+	TargetGroupID   string
+	TargetGroupName string
+	CreatedAt       time.Time
+	ActualCost      float64
+}

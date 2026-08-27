@@ -159,4 +159,9 @@ func TestProfitControlRate_StaleProbeWithDefaultColumnIsUndeclared(t *testing.T)
 
 	_, _, state := profitControlAccountUpstreamRate(account, now)
 	require.Equal(t, profitControlRateUndeclared, state)
+
+	costRate, source := AccountCostRateMultiplierWithSource(account, now)
+	require.NotNil(t, costRate, "陈旧探测值只用于成本记账，不参与利润门准入")
+	require.InDelta(t, 0.045, *costRate, 1e-9)
+	require.Equal(t, AccountCostRateSourceProbeStale, source)
 }

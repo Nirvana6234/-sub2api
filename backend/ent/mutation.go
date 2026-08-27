@@ -49503,6 +49503,13 @@ type UsageLogMutation struct {
 	model_mapping_chain          *string
 	billing_tier                 *string
 	billing_mode                 *string
+	fallback_pool_used           *bool
+	fallback_source_group_id     *int64
+	addfallback_source_group_id  *int64
+	fallback_source_group_name   *string
+	fallback_target_group_id     *int64
+	addfallback_target_group_id  *int64
+	fallback_target_group_name   *string
 	input_tokens                 *int
 	addinput_tokens              *int
 	output_tokens                *int
@@ -50358,6 +50365,280 @@ func (m *UsageLogMutation) SubscriptionIDCleared() bool {
 func (m *UsageLogMutation) ResetSubscriptionID() {
 	m.subscription = nil
 	delete(m.clearedFields, usagelog.FieldSubscriptionID)
+}
+
+// SetFallbackPoolUsed sets the "fallback_pool_used" field.
+func (m *UsageLogMutation) SetFallbackPoolUsed(b bool) {
+	m.fallback_pool_used = &b
+}
+
+// FallbackPoolUsed returns the value of the "fallback_pool_used" field in the mutation.
+func (m *UsageLogMutation) FallbackPoolUsed() (r bool, exists bool) {
+	v := m.fallback_pool_used
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldFallbackPoolUsed returns the old "fallback_pool_used" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldFallbackPoolUsed(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldFallbackPoolUsed is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldFallbackPoolUsed requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldFallbackPoolUsed: %w", err)
+	}
+	return oldValue.FallbackPoolUsed, nil
+}
+
+// ResetFallbackPoolUsed resets all changes to the "fallback_pool_used" field.
+func (m *UsageLogMutation) ResetFallbackPoolUsed() {
+	m.fallback_pool_used = nil
+}
+
+// SetFallbackSourceGroupID sets the "fallback_source_group_id" field.
+func (m *UsageLogMutation) SetFallbackSourceGroupID(i int64) {
+	m.fallback_source_group_id = &i
+	m.addfallback_source_group_id = nil
+}
+
+// FallbackSourceGroupID returns the value of the "fallback_source_group_id" field in the mutation.
+func (m *UsageLogMutation) FallbackSourceGroupID() (r int64, exists bool) {
+	v := m.fallback_source_group_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldFallbackSourceGroupID returns the old "fallback_source_group_id" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldFallbackSourceGroupID(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldFallbackSourceGroupID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldFallbackSourceGroupID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldFallbackSourceGroupID: %w", err)
+	}
+	return oldValue.FallbackSourceGroupID, nil
+}
+
+// AddFallbackSourceGroupID adds i to the "fallback_source_group_id" field.
+func (m *UsageLogMutation) AddFallbackSourceGroupID(i int64) {
+	if m.addfallback_source_group_id != nil {
+		*m.addfallback_source_group_id += i
+	} else {
+		m.addfallback_source_group_id = &i
+	}
+}
+
+// AddedFallbackSourceGroupID returns the value that was added to the "fallback_source_group_id" field in this mutation.
+func (m *UsageLogMutation) AddedFallbackSourceGroupID() (r int64, exists bool) {
+	v := m.addfallback_source_group_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearFallbackSourceGroupID clears the value of the "fallback_source_group_id" field.
+func (m *UsageLogMutation) ClearFallbackSourceGroupID() {
+	m.fallback_source_group_id = nil
+	m.addfallback_source_group_id = nil
+	m.clearedFields[usagelog.FieldFallbackSourceGroupID] = struct{}{}
+}
+
+// FallbackSourceGroupIDCleared returns if the "fallback_source_group_id" field was cleared in this mutation.
+func (m *UsageLogMutation) FallbackSourceGroupIDCleared() bool {
+	_, ok := m.clearedFields[usagelog.FieldFallbackSourceGroupID]
+	return ok
+}
+
+// ResetFallbackSourceGroupID resets all changes to the "fallback_source_group_id" field.
+func (m *UsageLogMutation) ResetFallbackSourceGroupID() {
+	m.fallback_source_group_id = nil
+	m.addfallback_source_group_id = nil
+	delete(m.clearedFields, usagelog.FieldFallbackSourceGroupID)
+}
+
+// SetFallbackSourceGroupName sets the "fallback_source_group_name" field.
+func (m *UsageLogMutation) SetFallbackSourceGroupName(s string) {
+	m.fallback_source_group_name = &s
+}
+
+// FallbackSourceGroupName returns the value of the "fallback_source_group_name" field in the mutation.
+func (m *UsageLogMutation) FallbackSourceGroupName() (r string, exists bool) {
+	v := m.fallback_source_group_name
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldFallbackSourceGroupName returns the old "fallback_source_group_name" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldFallbackSourceGroupName(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldFallbackSourceGroupName is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldFallbackSourceGroupName requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldFallbackSourceGroupName: %w", err)
+	}
+	return oldValue.FallbackSourceGroupName, nil
+}
+
+// ClearFallbackSourceGroupName clears the value of the "fallback_source_group_name" field.
+func (m *UsageLogMutation) ClearFallbackSourceGroupName() {
+	m.fallback_source_group_name = nil
+	m.clearedFields[usagelog.FieldFallbackSourceGroupName] = struct{}{}
+}
+
+// FallbackSourceGroupNameCleared returns if the "fallback_source_group_name" field was cleared in this mutation.
+func (m *UsageLogMutation) FallbackSourceGroupNameCleared() bool {
+	_, ok := m.clearedFields[usagelog.FieldFallbackSourceGroupName]
+	return ok
+}
+
+// ResetFallbackSourceGroupName resets all changes to the "fallback_source_group_name" field.
+func (m *UsageLogMutation) ResetFallbackSourceGroupName() {
+	m.fallback_source_group_name = nil
+	delete(m.clearedFields, usagelog.FieldFallbackSourceGroupName)
+}
+
+// SetFallbackTargetGroupID sets the "fallback_target_group_id" field.
+func (m *UsageLogMutation) SetFallbackTargetGroupID(i int64) {
+	m.fallback_target_group_id = &i
+	m.addfallback_target_group_id = nil
+}
+
+// FallbackTargetGroupID returns the value of the "fallback_target_group_id" field in the mutation.
+func (m *UsageLogMutation) FallbackTargetGroupID() (r int64, exists bool) {
+	v := m.fallback_target_group_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldFallbackTargetGroupID returns the old "fallback_target_group_id" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldFallbackTargetGroupID(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldFallbackTargetGroupID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldFallbackTargetGroupID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldFallbackTargetGroupID: %w", err)
+	}
+	return oldValue.FallbackTargetGroupID, nil
+}
+
+// AddFallbackTargetGroupID adds i to the "fallback_target_group_id" field.
+func (m *UsageLogMutation) AddFallbackTargetGroupID(i int64) {
+	if m.addfallback_target_group_id != nil {
+		*m.addfallback_target_group_id += i
+	} else {
+		m.addfallback_target_group_id = &i
+	}
+}
+
+// AddedFallbackTargetGroupID returns the value that was added to the "fallback_target_group_id" field in this mutation.
+func (m *UsageLogMutation) AddedFallbackTargetGroupID() (r int64, exists bool) {
+	v := m.addfallback_target_group_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearFallbackTargetGroupID clears the value of the "fallback_target_group_id" field.
+func (m *UsageLogMutation) ClearFallbackTargetGroupID() {
+	m.fallback_target_group_id = nil
+	m.addfallback_target_group_id = nil
+	m.clearedFields[usagelog.FieldFallbackTargetGroupID] = struct{}{}
+}
+
+// FallbackTargetGroupIDCleared returns if the "fallback_target_group_id" field was cleared in this mutation.
+func (m *UsageLogMutation) FallbackTargetGroupIDCleared() bool {
+	_, ok := m.clearedFields[usagelog.FieldFallbackTargetGroupID]
+	return ok
+}
+
+// ResetFallbackTargetGroupID resets all changes to the "fallback_target_group_id" field.
+func (m *UsageLogMutation) ResetFallbackTargetGroupID() {
+	m.fallback_target_group_id = nil
+	m.addfallback_target_group_id = nil
+	delete(m.clearedFields, usagelog.FieldFallbackTargetGroupID)
+}
+
+// SetFallbackTargetGroupName sets the "fallback_target_group_name" field.
+func (m *UsageLogMutation) SetFallbackTargetGroupName(s string) {
+	m.fallback_target_group_name = &s
+}
+
+// FallbackTargetGroupName returns the value of the "fallback_target_group_name" field in the mutation.
+func (m *UsageLogMutation) FallbackTargetGroupName() (r string, exists bool) {
+	v := m.fallback_target_group_name
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldFallbackTargetGroupName returns the old "fallback_target_group_name" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldFallbackTargetGroupName(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldFallbackTargetGroupName is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldFallbackTargetGroupName requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldFallbackTargetGroupName: %w", err)
+	}
+	return oldValue.FallbackTargetGroupName, nil
+}
+
+// ClearFallbackTargetGroupName clears the value of the "fallback_target_group_name" field.
+func (m *UsageLogMutation) ClearFallbackTargetGroupName() {
+	m.fallback_target_group_name = nil
+	m.clearedFields[usagelog.FieldFallbackTargetGroupName] = struct{}{}
+}
+
+// FallbackTargetGroupNameCleared returns if the "fallback_target_group_name" field was cleared in this mutation.
+func (m *UsageLogMutation) FallbackTargetGroupNameCleared() bool {
+	_, ok := m.clearedFields[usagelog.FieldFallbackTargetGroupName]
+	return ok
+}
+
+// ResetFallbackTargetGroupName resets all changes to the "fallback_target_group_name" field.
+func (m *UsageLogMutation) ResetFallbackTargetGroupName() {
+	m.fallback_target_group_name = nil
+	delete(m.clearedFields, usagelog.FieldFallbackTargetGroupName)
 }
 
 // SetInputTokens sets the "input_tokens" field.
@@ -52241,7 +52522,7 @@ func (m *UsageLogMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UsageLogMutation) Fields() []string {
-	fields := make([]string, 0, 47)
+	fields := make([]string, 0, 52)
 	if m.user != nil {
 		fields = append(fields, usagelog.FieldUserID)
 	}
@@ -52286,6 +52567,21 @@ func (m *UsageLogMutation) Fields() []string {
 	}
 	if m.subscription != nil {
 		fields = append(fields, usagelog.FieldSubscriptionID)
+	}
+	if m.fallback_pool_used != nil {
+		fields = append(fields, usagelog.FieldFallbackPoolUsed)
+	}
+	if m.fallback_source_group_id != nil {
+		fields = append(fields, usagelog.FieldFallbackSourceGroupID)
+	}
+	if m.fallback_source_group_name != nil {
+		fields = append(fields, usagelog.FieldFallbackSourceGroupName)
+	}
+	if m.fallback_target_group_id != nil {
+		fields = append(fields, usagelog.FieldFallbackTargetGroupID)
+	}
+	if m.fallback_target_group_name != nil {
+		fields = append(fields, usagelog.FieldFallbackTargetGroupName)
 	}
 	if m.input_tokens != nil {
 		fields = append(fields, usagelog.FieldInputTokens)
@@ -52421,6 +52717,16 @@ func (m *UsageLogMutation) Field(name string) (ent.Value, bool) {
 		return m.GroupID()
 	case usagelog.FieldSubscriptionID:
 		return m.SubscriptionID()
+	case usagelog.FieldFallbackPoolUsed:
+		return m.FallbackPoolUsed()
+	case usagelog.FieldFallbackSourceGroupID:
+		return m.FallbackSourceGroupID()
+	case usagelog.FieldFallbackSourceGroupName:
+		return m.FallbackSourceGroupName()
+	case usagelog.FieldFallbackTargetGroupID:
+		return m.FallbackTargetGroupID()
+	case usagelog.FieldFallbackTargetGroupName:
+		return m.FallbackTargetGroupName()
 	case usagelog.FieldInputTokens:
 		return m.InputTokens()
 	case usagelog.FieldOutputTokens:
@@ -52524,6 +52830,16 @@ func (m *UsageLogMutation) OldField(ctx context.Context, name string) (ent.Value
 		return m.OldGroupID(ctx)
 	case usagelog.FieldSubscriptionID:
 		return m.OldSubscriptionID(ctx)
+	case usagelog.FieldFallbackPoolUsed:
+		return m.OldFallbackPoolUsed(ctx)
+	case usagelog.FieldFallbackSourceGroupID:
+		return m.OldFallbackSourceGroupID(ctx)
+	case usagelog.FieldFallbackSourceGroupName:
+		return m.OldFallbackSourceGroupName(ctx)
+	case usagelog.FieldFallbackTargetGroupID:
+		return m.OldFallbackTargetGroupID(ctx)
+	case usagelog.FieldFallbackTargetGroupName:
+		return m.OldFallbackTargetGroupName(ctx)
 	case usagelog.FieldInputTokens:
 		return m.OldInputTokens(ctx)
 	case usagelog.FieldOutputTokens:
@@ -52701,6 +53017,41 @@ func (m *UsageLogMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetSubscriptionID(v)
+		return nil
+	case usagelog.FieldFallbackPoolUsed:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetFallbackPoolUsed(v)
+		return nil
+	case usagelog.FieldFallbackSourceGroupID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetFallbackSourceGroupID(v)
+		return nil
+	case usagelog.FieldFallbackSourceGroupName:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetFallbackSourceGroupName(v)
+		return nil
+	case usagelog.FieldFallbackTargetGroupID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetFallbackTargetGroupID(v)
+		return nil
+	case usagelog.FieldFallbackTargetGroupName:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetFallbackTargetGroupName(v)
 		return nil
 	case usagelog.FieldInputTokens:
 		v, ok := value.(int)
@@ -52937,6 +53288,12 @@ func (m *UsageLogMutation) AddedFields() []string {
 	if m.addchannel_id != nil {
 		fields = append(fields, usagelog.FieldChannelID)
 	}
+	if m.addfallback_source_group_id != nil {
+		fields = append(fields, usagelog.FieldFallbackSourceGroupID)
+	}
+	if m.addfallback_target_group_id != nil {
+		fields = append(fields, usagelog.FieldFallbackTargetGroupID)
+	}
 	if m.addinput_tokens != nil {
 		fields = append(fields, usagelog.FieldInputTokens)
 	}
@@ -53007,6 +53364,10 @@ func (m *UsageLogMutation) AddedField(name string) (ent.Value, bool) {
 	switch name {
 	case usagelog.FieldChannelID:
 		return m.AddedChannelID()
+	case usagelog.FieldFallbackSourceGroupID:
+		return m.AddedFallbackSourceGroupID()
+	case usagelog.FieldFallbackTargetGroupID:
+		return m.AddedFallbackTargetGroupID()
 	case usagelog.FieldInputTokens:
 		return m.AddedInputTokens()
 	case usagelog.FieldOutputTokens:
@@ -53062,6 +53423,20 @@ func (m *UsageLogMutation) AddField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddChannelID(v)
+		return nil
+	case usagelog.FieldFallbackSourceGroupID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddFallbackSourceGroupID(v)
+		return nil
+	case usagelog.FieldFallbackTargetGroupID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddFallbackTargetGroupID(v)
 		return nil
 	case usagelog.FieldInputTokens:
 		v, ok := value.(int)
@@ -53241,6 +53616,18 @@ func (m *UsageLogMutation) ClearedFields() []string {
 	if m.FieldCleared(usagelog.FieldSubscriptionID) {
 		fields = append(fields, usagelog.FieldSubscriptionID)
 	}
+	if m.FieldCleared(usagelog.FieldFallbackSourceGroupID) {
+		fields = append(fields, usagelog.FieldFallbackSourceGroupID)
+	}
+	if m.FieldCleared(usagelog.FieldFallbackSourceGroupName) {
+		fields = append(fields, usagelog.FieldFallbackSourceGroupName)
+	}
+	if m.FieldCleared(usagelog.FieldFallbackTargetGroupID) {
+		fields = append(fields, usagelog.FieldFallbackTargetGroupID)
+	}
+	if m.FieldCleared(usagelog.FieldFallbackTargetGroupName) {
+		fields = append(fields, usagelog.FieldFallbackTargetGroupName)
+	}
 	if m.FieldCleared(usagelog.FieldAccountRateMultiplier) {
 		fields = append(fields, usagelog.FieldAccountRateMultiplier)
 	}
@@ -53320,6 +53707,18 @@ func (m *UsageLogMutation) ClearField(name string) error {
 		return nil
 	case usagelog.FieldSubscriptionID:
 		m.ClearSubscriptionID()
+		return nil
+	case usagelog.FieldFallbackSourceGroupID:
+		m.ClearFallbackSourceGroupID()
+		return nil
+	case usagelog.FieldFallbackSourceGroupName:
+		m.ClearFallbackSourceGroupName()
+		return nil
+	case usagelog.FieldFallbackTargetGroupID:
+		m.ClearFallbackTargetGroupID()
+		return nil
+	case usagelog.FieldFallbackTargetGroupName:
+		m.ClearFallbackTargetGroupName()
 		return nil
 	case usagelog.FieldAccountRateMultiplier:
 		m.ClearAccountRateMultiplier()
@@ -53409,6 +53808,21 @@ func (m *UsageLogMutation) ResetField(name string) error {
 		return nil
 	case usagelog.FieldSubscriptionID:
 		m.ResetSubscriptionID()
+		return nil
+	case usagelog.FieldFallbackPoolUsed:
+		m.ResetFallbackPoolUsed()
+		return nil
+	case usagelog.FieldFallbackSourceGroupID:
+		m.ResetFallbackSourceGroupID()
+		return nil
+	case usagelog.FieldFallbackSourceGroupName:
+		m.ResetFallbackSourceGroupName()
+		return nil
+	case usagelog.FieldFallbackTargetGroupID:
+		m.ResetFallbackTargetGroupID()
+		return nil
+	case usagelog.FieldFallbackTargetGroupName:
+		m.ResetFallbackTargetGroupName()
 		return nil
 	case usagelog.FieldInputTokens:
 		m.ResetInputTokens()

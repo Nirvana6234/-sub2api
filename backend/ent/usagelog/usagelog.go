@@ -44,6 +44,16 @@ const (
 	FieldGroupID = "group_id"
 	// FieldSubscriptionID holds the string denoting the subscription_id field in the database.
 	FieldSubscriptionID = "subscription_id"
+	// FieldFallbackPoolUsed holds the string denoting the fallback_pool_used field in the database.
+	FieldFallbackPoolUsed = "fallback_pool_used"
+	// FieldFallbackSourceGroupID holds the string denoting the fallback_source_group_id field in the database.
+	FieldFallbackSourceGroupID = "fallback_source_group_id"
+	// FieldFallbackSourceGroupName holds the string denoting the fallback_source_group_name field in the database.
+	FieldFallbackSourceGroupName = "fallback_source_group_name"
+	// FieldFallbackTargetGroupID holds the string denoting the fallback_target_group_id field in the database.
+	FieldFallbackTargetGroupID = "fallback_target_group_id"
+	// FieldFallbackTargetGroupName holds the string denoting the fallback_target_group_name field in the database.
+	FieldFallbackTargetGroupName = "fallback_target_group_name"
 	// FieldInputTokens holds the string denoting the input_tokens field in the database.
 	FieldInputTokens = "input_tokens"
 	// FieldOutputTokens holds the string denoting the output_tokens field in the database.
@@ -175,6 +185,11 @@ var Columns = []string{
 	FieldBillingMode,
 	FieldGroupID,
 	FieldSubscriptionID,
+	FieldFallbackPoolUsed,
+	FieldFallbackSourceGroupID,
+	FieldFallbackSourceGroupName,
+	FieldFallbackTargetGroupID,
+	FieldFallbackTargetGroupName,
 	FieldInputTokens,
 	FieldOutputTokens,
 	FieldCacheCreationTokens,
@@ -236,6 +251,8 @@ var (
 	BillingTierValidator func(string) error
 	// BillingModeValidator is a validator for the "billing_mode" field. It is called by the builders before save.
 	BillingModeValidator func(string) error
+	// DefaultFallbackPoolUsed holds the default value on creation for the "fallback_pool_used" field.
+	DefaultFallbackPoolUsed bool
 	// DefaultInputTokens holds the default value on creation for the "input_tokens" field.
 	DefaultInputTokens int
 	// DefaultOutputTokens holds the default value on creation for the "output_tokens" field.
@@ -373,6 +390,31 @@ func ByGroupID(opts ...sql.OrderTermOption) OrderOption {
 // BySubscriptionID orders the results by the subscription_id field.
 func BySubscriptionID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldSubscriptionID, opts...).ToFunc()
+}
+
+// ByFallbackPoolUsed orders the results by the fallback_pool_used field.
+func ByFallbackPoolUsed(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldFallbackPoolUsed, opts...).ToFunc()
+}
+
+// ByFallbackSourceGroupID orders the results by the fallback_source_group_id field.
+func ByFallbackSourceGroupID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldFallbackSourceGroupID, opts...).ToFunc()
+}
+
+// ByFallbackSourceGroupName orders the results by the fallback_source_group_name field.
+func ByFallbackSourceGroupName(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldFallbackSourceGroupName, opts...).ToFunc()
+}
+
+// ByFallbackTargetGroupID orders the results by the fallback_target_group_id field.
+func ByFallbackTargetGroupID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldFallbackTargetGroupID, opts...).ToFunc()
+}
+
+// ByFallbackTargetGroupName orders the results by the fallback_target_group_name field.
+func ByFallbackTargetGroupName(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldFallbackTargetGroupName, opts...).ToFunc()
 }
 
 // ByInputTokens orders the results by the input_tokens field.

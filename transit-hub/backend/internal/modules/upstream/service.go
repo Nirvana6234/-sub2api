@@ -57,9 +57,9 @@ type Service struct {
 	groupRateCache  map[string]groupRateCacheEntry
 	groupRateFetch  map[string]*groupRateFetch
 	mu              sync.Mutex
-	// AfterSync 在站点同步成功后被调用，传入同步前后的指标数据。
-	// 由系统设置模块注入，用于余额预警和倍率变更检测。
-	AfterSync func(ctx context.Context, userID, adminAccountID, siteID, siteName string, oldMetrics, newMetrics Metrics)
+	// AfterSync 在站点同步成功后被调用，传入同步前后的指标数据和已刷新会话。
+	// 由系统设置模块注入，用于余额预警、倍率变更检测和兜底使用提醒。
+	AfterSync func(ctx context.Context, userID, adminAccountID, siteID, siteName string, session Session, oldMetrics, newMetrics Metrics)
 	// AfterRemove runs after a site record has been explicitly deleted. It lets
 	// dependent modules remove references without treating sync failures as deletes.
 	AfterRemove func(ctx context.Context, userID, adminAccountID, siteID string) error
@@ -936,7 +936,7 @@ func (s *Service) sync(ctx context.Context, id string) (Response, error) {
 	if refreshErr == nil {
 		s.saveSnapshot(ctx, site)
 		if s.AfterSync != nil {
-			go s.AfterSync(context.Background(), site.UserID, site.AdminAccountID, site.ID, site.Name, oldMetrics, metrics)
+			go s.AfterSync(context.Background(), site.UserID, site.AdminAccountID, site.ID, site.Name, refreshedSession, oldMetrics, metrics)
 		}
 	}
 	return response, nil

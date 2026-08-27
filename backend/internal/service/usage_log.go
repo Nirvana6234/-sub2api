@@ -142,6 +142,14 @@ type UsageLog struct {
 
 	GroupID        *int64
 	SubscriptionID *int64
+	// FallbackPoolUsed marks requests whose account was selected from a configured
+	// fallback-only group. Source is the original request group; target is the
+	// fallback pool that supplied the selected account.
+	FallbackPoolUsed        bool
+	FallbackSourceGroupID   *int64
+	FallbackSourceGroupName *string
+	FallbackTargetGroupID   *int64
+	FallbackTargetGroupName *string
 
 	InputTokens         int
 	OutputTokens        int

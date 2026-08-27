@@ -122,6 +122,10 @@ func (s *Service) ClaimBalanceAlert(ctx context.Context, userID, adminAccountID,
 	return s.repository.ClaimBalanceAlert(ctx, userID, adminAccountID, siteID)
 }
 
+func (s *Service) ClaimFallbackPoolAlert(ctx context.Context, userID, adminAccountID, siteID, sourceGroupID, targetGroupID string, cooldown time.Duration) (bool, error) {
+	return s.repository.ClaimFallbackPoolAlert(ctx, userID, adminAccountID, siteID, sourceGroupID, targetGroupID, cooldown)
+}
+
 func (s *Service) GetNotificationChannels(ctx context.Context, userID string) (NotificationChannelSettings, error) {
 	adminAccountID, err := s.currentAdminAccountID(ctx, userID)
 	if err != nil {
@@ -422,6 +426,13 @@ func (s *Service) SendFormattedToBots(ctx context.Context, userID string, botIDs
 	})
 }
 
+func (s *Service) SendFormattedToBotsForWorkspace(ctx context.Context, userID string, adminAccountID string, botIDs []string, message string, format NotificationTemplateFormat) {
+	s.sendNotificationToBotsForWorkspace(ctx, userID, adminAccountID, botIDs, notificationMessage{
+		Content: message,
+		Format:  normalizeNotificationTemplateFormat(format),
+	})
+}
+
 // sendNotificationToBots 从数据库加载用户的渠道配置，匹配 ID 后逐个发送。
 // 单个渠道失败只记录日志，不中断其他机器人发送（fire-and-forget）。
 func (s *Service) sendNotificationToBots(ctx context.Context, userID string, botIDs []string, message notificationMessage) {
@@ -431,6 +442,13 @@ func (s *Service) sendNotificationToBots(ctx context.Context, userID string, bot
 	adminAccountID, err := s.currentAdminAccountID(ctx, userID)
 	if err != nil {
 		log.Printf("[settings] 当前 admin workspace 缺失 user_id=%s err=%v", userID, err)
+		return
+	}
+	s.sendNotificationToBotsForWorkspace(ctx, userID, adminAccountID, botIDs, message)
+}
+
+func (s *Service) sendNotificationToBotsForWorkspace(ctx context.Context, userID string, adminAccountID string, botIDs []string, message notificationMessage) {
+	if len(botIDs) == 0 || message.Content == "" {
 		return
 	}
 	channels, err := s.repository.GetNotificationChannels(ctx, userID, adminAccountID)

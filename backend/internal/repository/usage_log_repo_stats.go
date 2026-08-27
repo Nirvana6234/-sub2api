@@ -751,7 +751,7 @@ func (r *usageLogRepository) GetStatsWithFilters(ctx context.Context, filters Us
 				cache_read_tokens,
 				total_cost,
 				actual_cost,
-				COALESCE(account_stats_cost, total_cost) * COALESCE(account_rate_multiplier, 1) AS account_cost,
+				COALESCE(account_stats_cost, total_cost) * account_rate_multiplier AS account_cost,
 				duration_ms
 			FROM usage_logs
 			%s

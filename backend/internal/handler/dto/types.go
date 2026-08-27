@@ -604,6 +604,13 @@ type AdminUsageLog struct {
 	// AccountStatsCost 自定义定价规则计算的账号统计费用（nil 表示使用默认公式）
 	AccountStatsCost *float64 `json:"account_stats_cost,omitempty"`
 
+	// FallbackPoolUsed reports that the request selected an account from a configured fallback pool.
+	FallbackPoolUsed        bool    `json:"fallback_pool_used"`
+	FallbackSourceGroupID   *int64  `json:"fallback_source_group_id,omitempty"`
+	FallbackSourceGroupName *string `json:"fallback_source_group_name,omitempty"`
+	FallbackTargetGroupID   *int64  `json:"fallback_target_group_id,omitempty"`
+	FallbackTargetGroupName *string `json:"fallback_target_group_name,omitempty"`
+
 	// IPAddress 用户请求 IP
 	IPAddress *string `json:"ip_address,omitempty"`
 

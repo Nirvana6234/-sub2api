@@ -24,8 +24,19 @@ const fallbackGroupMaxHops = 3
 
 // fallbackGroupState 记录兜底链路已经过的分组与跳数，用于防环和限制深度。
 type fallbackGroupState struct {
-	visited map[int64]struct{}
-	hops    int
+	visited         map[int64]struct{}
+	hops            int
+	originGroupID   int64
+	originGroupName string
+	targetGroupID   int64
+	targetGroupName string
+}
+
+type fallbackPoolUsageTrace struct {
+	SourceGroupID   int64
+	SourceGroupName string
+	TargetGroupID   int64
+	TargetGroupName string
 }
 
 func cloneFallbackVisited(in map[int64]struct{}) map[int64]struct{} {
@@ -103,7 +114,48 @@ func nextFallbackGroupID(
 		return 0, state, false
 	}
 
-	return fallbackID, fallbackGroupState{visited: visited, hops: state.hops + 1}, true
+	originID := state.originGroupID
+	originName := state.originGroupName
+	if originID <= 0 {
+		originID = currentGroup.ID
+		originName = currentGroup.Name
+	}
+
+	return fallbackID, fallbackGroupState{
+		visited:         visited,
+		hops:            state.hops + 1,
+		originGroupID:   originID,
+		originGroupName: originName,
+		targetGroupID:   fallbackGroup.ID,
+		targetGroupName: fallbackGroup.Name,
+	}, true
+}
+
+func fallbackPoolUsageTraceFromState(state fallbackGroupState) (fallbackPoolUsageTrace, bool) {
+	if state.originGroupID <= 0 || state.targetGroupID <= 0 {
+		return fallbackPoolUsageTrace{}, false
+	}
+	return fallbackPoolUsageTrace{
+		SourceGroupID:   state.originGroupID,
+		SourceGroupName: state.originGroupName,
+		TargetGroupID:   state.targetGroupID,
+		TargetGroupName: state.targetGroupName,
+	}, true
+}
+
+func applyFallbackPoolUsageTrace(log *UsageLog, trace fallbackPoolUsageTrace, ok bool) {
+	if log == nil || !ok || trace.SourceGroupID <= 0 || trace.TargetGroupID <= 0 {
+		return
+	}
+	log.FallbackPoolUsed = true
+	log.FallbackSourceGroupID = fallbackPoolInt64Ptr(trace.SourceGroupID)
+	log.FallbackTargetGroupID = fallbackPoolInt64Ptr(trace.TargetGroupID)
+	log.FallbackSourceGroupName = optionalTrimmedStringPtr(trace.SourceGroupName)
+	log.FallbackTargetGroupName = optionalTrimmedStringPtr(trace.TargetGroupName)
+}
+
+func fallbackPoolInt64Ptr(v int64) *int64 {
+	return &v
 }
 
 // fallbackPoolRejectReasonWhenSourcing 报告某账号在兜底取号时是否应被拒绝。

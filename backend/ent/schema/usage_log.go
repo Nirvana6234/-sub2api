@@ -74,6 +74,25 @@ func (UsageLog) Fields() []ent.Field {
 		field.Int64("subscription_id").
 			Optional().
 			Nillable(),
+		field.Bool("fallback_pool_used").
+			Default(false).
+			Comment("Whether this request used a configured fallback account pool"),
+		field.Int64("fallback_source_group_id").
+			Optional().
+			Nillable().
+			Comment("Original request group that triggered fallback pool sourcing"),
+		field.String("fallback_source_group_name").
+			Optional().
+			Nillable().
+			Comment("Snapshot of original request group name for fallback pool alerts"),
+		field.Int64("fallback_target_group_id").
+			Optional().
+			Nillable().
+			Comment("Fallback pool group that supplied the selected account"),
+		field.String("fallback_target_group_name").
+			Optional().
+			Nillable().
+			Comment("Snapshot of fallback pool group name for alerts"),
 
 		// Token 计数字段
 		field.Int("input_tokens").

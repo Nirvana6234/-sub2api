@@ -20,7 +20,7 @@ import (
 	"github.com/lib/pq"
 )
 
-const usageLogSelectColumns = "id, user_id, api_key_id, account_id, request_id, model, requested_model, upstream_model, upstream_response_model, upstream_model_mismatch, group_id, subscription_id, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens, image_output_tokens, image_output_cost, image_input_tokens, image_input_cost, input_cost, output_cost, cache_creation_cost, cache_read_cost, total_cost, actual_cost, rate_multiplier, account_rate_multiplier, billing_type, request_type, stream, openai_ws_mode, duration_ms, first_token_ms, user_agent, ip_address, image_count, image_size, image_input_size, image_output_size, image_size_source, image_size_breakdown, video_count, video_resolution, video_duration_seconds, service_tier, reasoning_effort, inbound_endpoint, upstream_endpoint, cache_ttl_overridden, long_context_billing_applied, channel_id, model_mapping_chain, billing_tier, billing_mode, account_stats_cost, session_id, created_at"
+const usageLogSelectColumns = "id, user_id, api_key_id, account_id, request_id, model, requested_model, upstream_model, upstream_response_model, upstream_model_mismatch, group_id, subscription_id, fallback_pool_used, fallback_source_group_id, fallback_source_group_name, fallback_target_group_id, fallback_target_group_name, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens, image_output_tokens, image_output_cost, image_input_tokens, image_input_cost, input_cost, output_cost, cache_creation_cost, cache_read_cost, total_cost, actual_cost, rate_multiplier, account_rate_multiplier, billing_type, request_type, stream, openai_ws_mode, duration_ms, first_token_ms, user_agent, ip_address, image_count, image_size, image_input_size, image_output_size, image_size_source, image_size_breakdown, video_count, video_resolution, video_duration_seconds, service_tier, reasoning_effort, inbound_endpoint, upstream_endpoint, cache_ttl_overridden, long_context_billing_applied, channel_id, model_mapping_chain, billing_tier, billing_mode, account_stats_cost, session_id, created_at"
 
 func (r *usageLogRepository) GetByID(ctx context.Context, id int64) (log *service.UsageLog, err error) {
 	query := "SELECT " + usageLogSelectColumns + " FROM usage_logs WHERE id = $1"
@@ -456,6 +456,11 @@ func scanUsageLog(scanner interface{ Scan(...any) error }) (*service.UsageLog, e
 		upstreamModelMismatch     sql.NullBool
 		groupID                   sql.NullInt64
 		subscriptionID            sql.NullInt64
+		fallbackPoolUsed          bool
+		fallbackSourceGroupID     sql.NullInt64
+		fallbackSourceGroupName   sql.NullString
+		fallbackTargetGroupID     sql.NullInt64
+		fallbackTargetGroupName   sql.NullString
 		inputTokens               int
 		outputTokens              int
 		cacheCreationTokens       int
@@ -519,6 +524,11 @@ func scanUsageLog(scanner interface{ Scan(...any) error }) (*service.UsageLog, e
 		&upstreamModelMismatch,
 		&groupID,
 		&subscriptionID,
+		&fallbackPoolUsed,
+		&fallbackSourceGroupID,
+		&fallbackSourceGroupName,
+		&fallbackTargetGroupID,
+		&fallbackTargetGroupName,
 		&inputTokens,
 		&outputTokens,
 		&cacheCreationTokens,
@@ -596,6 +606,7 @@ func scanUsageLog(scanner interface{ Scan(...any) error }) (*service.UsageLog, e
 		ActualCost:                actualCost,
 		RateMultiplier:            rateMultiplier,
 		AccountRateMultiplier:     nullFloat64Ptr(accountRateMultiplier),
+		FallbackPoolUsed:          fallbackPoolUsed,
 		BillingType:               int8(billingType),
 		RequestType:               service.RequestTypeFromInt16(requestTypeRaw),
 		ImageCount:                imageCount,
@@ -620,6 +631,20 @@ func scanUsageLog(scanner interface{ Scan(...any) error }) (*service.UsageLog, e
 	if subscriptionID.Valid {
 		value := subscriptionID.Int64
 		log.SubscriptionID = &value
+	}
+	if fallbackSourceGroupID.Valid {
+		value := fallbackSourceGroupID.Int64
+		log.FallbackSourceGroupID = &value
+	}
+	if fallbackSourceGroupName.Valid {
+		log.FallbackSourceGroupName = &fallbackSourceGroupName.String
+	}
+	if fallbackTargetGroupID.Valid {
+		value := fallbackTargetGroupID.Int64
+		log.FallbackTargetGroupID = &value
+	}
+	if fallbackTargetGroupName.Valid {
+		log.FallbackTargetGroupName = &fallbackTargetGroupName.String
 	}
 	if durationMs.Valid {
 		value := int(durationMs.Int64)

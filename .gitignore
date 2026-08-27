@@ -175,3 +175,6 @@ __pycache__/
 # 预发布构建产物：每次构建都会重新生成，不进仓库
 transit-hub/frontend/dist.predeploy-*/
 frontend/dist.predeploy-*/
+
+# transit-hub 后端编译产物（Linux ELF，22MB，不应入库）
+transit-hub/backend/transithub-api

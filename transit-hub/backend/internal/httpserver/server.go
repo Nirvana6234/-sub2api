@@ -327,12 +327,13 @@ func New(cfg config.Config, db *pgxpool.Pool, redisClient *redis.Client) *Server
 	}
 
 	// 站点同步成功后检查余额预警和倍率变更，按配置发送通知。
-	upstreamService.AfterSync = func(ctx context.Context, userID, adminAccountID, siteID, siteName string, oldMetrics, newMetrics upstream.Metrics) {
+	upstreamService.AfterSync = func(ctx context.Context, userID, adminAccountID, siteID, siteName string, session upstream.Session, oldMetrics, newMetrics upstream.Metrics) {
 		strategy, err := settingsService.GetFirstStrategy(ctx)
 		if err != nil {
 			return
 		}
 		checkBalanceWarning(ctx, settingsService, upstreamService, strategy, userID, adminAccountID, siteID, siteName, oldMetrics, newMetrics)
+		checkFallbackPoolUsageAlerts(ctx, settingsService, platformService, strategy, userID, adminAccountID, siteID, siteName, session)
 
 		// 未映射分组也要记录事件，所以映射关系读取不能被即时预警开关短路。
 		mappedGroups, mapErr := mySitesService.ListMappedUpstreamGroups(ctx, userID, adminAccountID)

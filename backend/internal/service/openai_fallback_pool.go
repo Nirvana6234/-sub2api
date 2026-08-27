@@ -47,6 +47,10 @@ func openAIFallbackGroupStateFromContext(ctx context.Context) fallbackGroupState
 	return state
 }
 
+func openAIFallbackPoolUsageTraceFromContext(ctx context.Context) (fallbackPoolUsageTrace, bool) {
+	return fallbackPoolUsageTraceFromState(openAIFallbackGroupStateFromContext(ctx))
+}
+
 func withOpenAIFallbackGroupState(ctx context.Context, state fallbackGroupState) context.Context {
 	if ctx == nil {
 		ctx = context.Background()

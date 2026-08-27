@@ -567,6 +567,86 @@ func (s *PlatformService) FetchSub2APIAdminUsageStats(session Session, startDate
 	return stats.RevenueUSD, nil
 }
 
+const (
+	sub2APIFallbackPoolUsagePageSize = 100
+	sub2APIFallbackPoolUsageMaxPages = 3
+)
+
+func (s *PlatformService) FetchSub2APIFallbackPoolUsageEvents(session Session, since time.Time, now time.Time) ([]FallbackPoolUsageEvent, error) {
+	if session.Platform != PlatformSub2API || !session.IsAuthenticated() {
+		return nil, newRequestError(ErrorAuth, PlatformSub2API)
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	if since.IsZero() {
+		since = now.Add(-3 * time.Hour)
+	}
+	authOptions := adminAuthOptions(session)
+	events := make([]FallbackPoolUsageEvent, 0)
+	query := url.Values{}
+	query.Set("page_size", strconv.Itoa(sub2APIFallbackPoolUsagePageSize))
+	query.Set("sort_by", "created_at")
+	query.Set("sort_order", "desc")
+	for page := 1; page <= sub2APIFallbackPoolUsageMaxPages; page++ {
+		query.Set("page", strconv.Itoa(page))
+		response, err := s.httpClient.requestJSON(session.BaseURL+"/api/v1/admin/usage?"+query.Encode(), authOptions)
+		if err != nil {
+			return events, err
+		}
+		items := dataArray(response.Payload)
+		if len(items) == 0 {
+			break
+		}
+		reachedSince := false
+		for _, item := range items {
+			record := dataRecord(item)
+			createdAt := parseFlexibleTime(firstAny(record, []string{"created_at", "createdAt"}))
+			if createdAt != nil && createdAt.Before(since) {
+				reachedSince = true
+			}
+			fallbackUsed := firstBoolValue(record, []string{"fallback_pool_used", "fallbackPoolUsed"})
+			if fallbackUsed == nil || !*fallbackUsed {
+				continue
+			}
+			if createdAt == nil || createdAt.Before(since) || createdAt.After(now) {
+				continue
+			}
+			event := FallbackPoolUsageEvent{
+				RequestID:       firstStringy(record, []string{"request_id", "requestId"}),
+				AccountID:       firstStringy(record, []string{"account_id", "accountId"}),
+				Model:           firstStringy(record, []string{"model"}),
+				SourceGroupID:   firstStringy(record, []string{"fallback_source_group_id", "fallbackSourceGroupId", "fallbackSourceGroupID"}),
+				SourceGroupName: firstStringy(record, []string{"fallback_source_group_name", "fallbackSourceGroupName"}),
+				TargetGroupID:   firstStringy(record, []string{"fallback_target_group_id", "fallbackTargetGroupId", "fallbackTargetGroupID"}),
+				TargetGroupName: firstStringy(record, []string{"fallback_target_group_name", "fallbackTargetGroupName"}),
+				CreatedAt:       *createdAt,
+			}
+			if account := dataRecord(record["account"]); account != nil {
+				event.AccountName = firstStringy(account, []string{"name"})
+			}
+			if actualCost := firstNumber(record, []string{"actual_cost", "actualCost"}); actualCost != nil {
+				event.ActualCost = *actualCost
+			}
+			if strings.TrimSpace(event.SourceGroupID) == "" || strings.TrimSpace(event.TargetGroupID) == "" {
+				continue
+			}
+			events = append(events, event)
+		}
+		if reachedSince {
+			break
+		}
+		total, hasTotal := paginationTotal(response.Payload)
+		if hasTotal && page*sub2APIFallbackPoolUsagePageSize >= total {
+			break
+		}
+		if !hasTotal && len(items) < sub2APIFallbackPoolUsagePageSize {
+			break
+		}
+	}
+	return events, nil
+}
+
 func (s *PlatformService) fetchSub2APIAdminUsageAccounting(session Session, startDate, endDate string) (AdminUsageAccounting, error) {
 	if session.Platform != PlatformSub2API || !session.IsAuthenticated() {
 		return AdminUsageAccounting{}, newRequestError(ErrorAuth, PlatformSub2API)

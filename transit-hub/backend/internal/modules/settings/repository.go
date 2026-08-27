@@ -69,6 +69,16 @@ func (r *Repository) EnsureSchema(ctx context.Context) error {
 			sent_at timestamptz NOT NULL DEFAULT now(),
 			PRIMARY KEY (user_id, admin_account_id, site_id)
 		)`,
+		`CREATE TABLE IF NOT EXISTS fallback_pool_alert_cooldowns (
+			user_id text NOT NULL,
+			admin_account_id text NOT NULL,
+			site_id text NOT NULL,
+			source_group_id text NOT NULL,
+			target_group_id text NOT NULL,
+			last_notified_at timestamptz NOT NULL DEFAULT now(),
+			cooldown_until timestamptz NOT NULL,
+			PRIMARY KEY (user_id, admin_account_id, site_id, source_group_id, target_group_id)
+		)`,
 		`CREATE TABLE IF NOT EXISTS email_templates (
 			user_id text NOT NULL,
 			admin_account_id text NOT NULL,
@@ -91,6 +101,36 @@ func (r *Repository) EnsureSchema(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// ClaimFallbackPoolAlert claims a fallback-pool notification slot for one
+// source→target pair. It returns true only when no notification is currently
+// cooling down; repeated sightings during cooldown are suppressed.
+func (r *Repository) ClaimFallbackPoolAlert(ctx context.Context, userID, adminAccountID, siteID, sourceGroupID, targetGroupID string, cooldown time.Duration) (bool, error) {
+	if cooldown <= 0 {
+		cooldown = 3 * time.Hour
+	}
+	cooldownSeconds := int64(cooldown.Seconds())
+	var claimed string
+	err := r.db.QueryRow(ctx, `
+		INSERT INTO fallback_pool_alert_cooldowns (
+			user_id, admin_account_id, site_id, source_group_id, target_group_id, last_notified_at, cooldown_until
+		)
+		VALUES ($1, $2, $3, $4, $5, now(), now() + ($6::bigint * interval '1 second'))
+		ON CONFLICT (user_id, admin_account_id, site_id, source_group_id, target_group_id)
+		DO UPDATE SET
+			last_notified_at = now(),
+			cooldown_until = now() + ($6::bigint * interval '1 second')
+		WHERE fallback_pool_alert_cooldowns.cooldown_until <= now()
+		RETURNING target_group_id
+	`, userID, adminAccountID, siteID, sourceGroupID, targetGroupID, cooldownSeconds).Scan(&claimed)
+	if err == pgx.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return claimed != "", nil
 }
 
 // ClaimBalanceAlert 原子地声明某个工作区的某个上游站点已经发送过余额预警。
