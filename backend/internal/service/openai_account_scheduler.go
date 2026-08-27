@@ -1312,15 +1312,6 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 		}
 	}
 
-	// 稀缺能力保护：candidates 此时已通过模型支持与可调度性筛选，都能服务本次请求，
-	// 在这一档里只保留最专精的账号。allCandidates 保持原样——诊断与溢出兜底仍需要看到
-	// 完整候选集。专精那档被限流或耗尽时不会进入 candidates，因此无需额外回落逻辑。
-	if s.service.preferSpecializedAccountsEnabled() {
-		candidates = keepMostSpecialized(candidates, func(c openAIAccountCandidateScore) *Account {
-			return c.account
-		})
-	}
-
 	plan := openAIAccountLoadPlan{
 		allCandidates:             allCandidates,
 		candidates:                candidates,
@@ -1481,7 +1472,7 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 	req OpenAIAccountScheduleRequest,
 	plan openAIAccountLoadPlan,
 ) []openAIAccountCandidateScore {
-	buildSelectionOrder := func(pool []openAIAccountCandidateScore) []openAIAccountCandidateScore {
+	rankPool := func(pool []openAIAccountCandidateScore) []openAIAccountCandidateScore {
 		if len(pool) == 0 || plan.topK <= 0 {
 			return nil
 		}
@@ -1525,6 +1516,33 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 		return append(primary, overflow...)
 	}
 
+	// 稀缺能力保护：把支持模型集合最窄的一档排在前面，其余仍保留在序列尾部。
+	// 这里刻意用「排序」而不是「过滤」——调用方是顺着 selectionOrder 逐个尝试、抢不到
+	// 并发槽就 continue，所以排在前面等于优先，排在后面等于降级可用。若直接砍掉更宽的
+	// 账号，专精那档一旦全部满载或抢不到槽，请求就只能失败，而空闲的宽账号在旁边闲着。
+	buildSelectionOrder := func(pool []openAIAccountCandidateScore) []openAIAccountCandidateScore {
+		if !s.service.preferSpecializedAccountsEnabled() || len(pool) < 2 {
+			return rankPool(pool)
+		}
+		specialized := keepMostSpecialized(append([]openAIAccountCandidateScore(nil), pool...),
+			func(c openAIAccountCandidateScore) *Account { return c.account })
+		if len(specialized) == len(pool) {
+			return rankPool(pool)
+		}
+		inSpecialized := make(map[int64]struct{}, len(specialized))
+		for _, c := range specialized {
+			inSpecialized[c.account.ID] = struct{}{}
+		}
+		rest := make([]openAIAccountCandidateScore, 0, len(pool)-len(specialized))
+		for _, c := range pool {
+			if _, ok := inSpecialized[c.account.ID]; !ok {
+				rest = append(rest, c)
+			}
+		}
+		ordered := rankPool(specialized)
+		return append(ordered, rankPool(rest)...)
+	}
+
 	if req.RequireCompact {
 		supported := make([]openAIAccountCandidateScore, 0, len(plan.candidates))
 		unknown := make([]openAIAccountCandidateScore, 0, len(plan.candidates))
@@ -1536,6 +1554,7 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 				unknown = append(unknown, candidate)
 			}
 		}
+
 		selectionOrder := make([]openAIAccountCandidateScore, 0, len(plan.allCandidates))
 		selectionOrder = append(selectionOrder, buildSelectionOrder(supported)...)
 		selectionOrder = append(selectionOrder, buildSelectionOrder(unknown)...)

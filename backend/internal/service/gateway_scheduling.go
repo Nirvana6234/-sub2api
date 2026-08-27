@@ -740,13 +740,6 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		return nil, ErrNoAvailableAccounts
 	}
 
-	// 稀缺能力保护：候选此时已全部通过模型支持与可调度性筛选，都能服务本次请求，
-	// 在这一档里优先用掉更专精的号。专精那档被限流或耗尽时，它们在上面的循环里就
-	// 已经出局，这里自然只剩更宽的号，无需额外回落逻辑。
-	if s.preferSpecializedAccountsEnabled() {
-		candidates = keepMostSpecialized(candidates, func(a *Account) *Account { return a })
-	}
-
 	accountLoads := make([]AccountWithConcurrency, 0, len(candidates))
 	for _, acc := range candidates {
 		accountLoads = append(accountLoads, AccountWithConcurrency{
@@ -781,6 +774,13 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		for len(available) > 0 {
 			// 1. 取优先级最小的集合
 			candidates := filterByMinPriority(available)
+			// 1.5 （可选）稀缺能力保护：同优先级下先用支持模型集合更窄的账号。
+			// 放在这条分层链里而不是提前砍候选，是为了保证降级：本轮选中的账号若抢不到
+			// 并发槽或撞上会话上限，循环会把它从 available 摘掉再走一遍本链，专精那档
+			// 用尽后自然轮到更宽的账号；负载已满的账号更是早在 available 之外。
+			if s.preferSpecializedAccountsEnabled() {
+				candidates = filterByMostSpecialized(candidates)
+			}
 			// 2. （可选）use-it-or-lose-it：优先选用会话窗口最早重置的账号
 			if cfg.PreferSoonestReset {
 				candidates = filterBySoonestReset(candidates)
@@ -1864,6 +1864,12 @@ func (s *GatewayService) newSelectionResult(ctx context.Context, account *Accoun
 }
 
 // filterByMinPriority 过滤出优先级最小的账号集合
+// filterByMostSpecialized 保留支持模型集合最窄的一档。全部账号宽度相同（最常见）时
+// 原样返回，不产生任何行为变化。
+func filterByMostSpecialized(accounts []accountWithLoad) []accountWithLoad {
+	return keepMostSpecialized(accounts, func(a accountWithLoad) *Account { return a.account })
+}
+
 func filterByMinPriority(accounts []accountWithLoad) []accountWithLoad {
 	if len(accounts) == 0 {
 		return accounts
