@@ -309,6 +309,114 @@ func (_u *UsageLogUpdate) ClearSubscriptionID() *UsageLogUpdate {
 	return _u
 }
 
+// SetFallbackPoolUsed sets the "fallback_pool_used" field.
+func (_u *UsageLogUpdate) SetFallbackPoolUsed(v bool) *UsageLogUpdate {
+	_u.mutation.SetFallbackPoolUsed(v)
+	return _u
+}
+
+// SetNillableFallbackPoolUsed sets the "fallback_pool_used" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableFallbackPoolUsed(v *bool) *UsageLogUpdate {
+	if v != nil {
+		_u.SetFallbackPoolUsed(*v)
+	}
+	return _u
+}
+
+// SetFallbackSourceGroupID sets the "fallback_source_group_id" field.
+func (_u *UsageLogUpdate) SetFallbackSourceGroupID(v int64) *UsageLogUpdate {
+	_u.mutation.ResetFallbackSourceGroupID()
+	_u.mutation.SetFallbackSourceGroupID(v)
+	return _u
+}
+
+// SetNillableFallbackSourceGroupID sets the "fallback_source_group_id" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableFallbackSourceGroupID(v *int64) *UsageLogUpdate {
+	if v != nil {
+		_u.SetFallbackSourceGroupID(*v)
+	}
+	return _u
+}
+
+// AddFallbackSourceGroupID adds value to the "fallback_source_group_id" field.
+func (_u *UsageLogUpdate) AddFallbackSourceGroupID(v int64) *UsageLogUpdate {
+	_u.mutation.AddFallbackSourceGroupID(v)
+	return _u
+}
+
+// ClearFallbackSourceGroupID clears the value of the "fallback_source_group_id" field.
+func (_u *UsageLogUpdate) ClearFallbackSourceGroupID() *UsageLogUpdate {
+	_u.mutation.ClearFallbackSourceGroupID()
+	return _u
+}
+
+// SetFallbackSourceGroupName sets the "fallback_source_group_name" field.
+func (_u *UsageLogUpdate) SetFallbackSourceGroupName(v string) *UsageLogUpdate {
+	_u.mutation.SetFallbackSourceGroupName(v)
+	return _u
+}
+
+// SetNillableFallbackSourceGroupName sets the "fallback_source_group_name" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableFallbackSourceGroupName(v *string) *UsageLogUpdate {
+	if v != nil {
+		_u.SetFallbackSourceGroupName(*v)
+	}
+	return _u
+}
+
+// ClearFallbackSourceGroupName clears the value of the "fallback_source_group_name" field.
+func (_u *UsageLogUpdate) ClearFallbackSourceGroupName() *UsageLogUpdate {
+	_u.mutation.ClearFallbackSourceGroupName()
+	return _u
+}
+
+// SetFallbackTargetGroupID sets the "fallback_target_group_id" field.
+func (_u *UsageLogUpdate) SetFallbackTargetGroupID(v int64) *UsageLogUpdate {
+	_u.mutation.ResetFallbackTargetGroupID()
+	_u.mutation.SetFallbackTargetGroupID(v)
+	return _u
+}
+
+// SetNillableFallbackTargetGroupID sets the "fallback_target_group_id" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableFallbackTargetGroupID(v *int64) *UsageLogUpdate {
+	if v != nil {
+		_u.SetFallbackTargetGroupID(*v)
+	}
+	return _u
+}
+
+// AddFallbackTargetGroupID adds value to the "fallback_target_group_id" field.
+func (_u *UsageLogUpdate) AddFallbackTargetGroupID(v int64) *UsageLogUpdate {
+	_u.mutation.AddFallbackTargetGroupID(v)
+	return _u
+}
+
+// ClearFallbackTargetGroupID clears the value of the "fallback_target_group_id" field.
+func (_u *UsageLogUpdate) ClearFallbackTargetGroupID() *UsageLogUpdate {
+	_u.mutation.ClearFallbackTargetGroupID()
+	return _u
+}
+
+// SetFallbackTargetGroupName sets the "fallback_target_group_name" field.
+func (_u *UsageLogUpdate) SetFallbackTargetGroupName(v string) *UsageLogUpdate {
+	_u.mutation.SetFallbackTargetGroupName(v)
+	return _u
+}
+
+// SetNillableFallbackTargetGroupName sets the "fallback_target_group_name" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableFallbackTargetGroupName(v *string) *UsageLogUpdate {
+	if v != nil {
+		_u.SetFallbackTargetGroupName(*v)
+	}
+	return _u
+}
+
+// ClearFallbackTargetGroupName clears the value of the "fallback_target_group_name" field.
+func (_u *UsageLogUpdate) ClearFallbackTargetGroupName() *UsageLogUpdate {
+	_u.mutation.ClearFallbackTargetGroupName()
+	return _u
+}
+
 // SetInputTokens sets the "input_tokens" field.
 func (_u *UsageLogUpdate) SetInputTokens(v int) *UsageLogUpdate {
 	_u.mutation.ResetInputTokens()
@@ -1192,6 +1300,39 @@ func (_u *UsageLogUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if _u.mutation.BillingModeCleared() {
 		_spec.ClearField(usagelog.FieldBillingMode, field.TypeString)
 	}
+	if value, ok := _u.mutation.FallbackPoolUsed(); ok {
+		_spec.SetField(usagelog.FieldFallbackPoolUsed, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.FallbackSourceGroupID(); ok {
+		_spec.SetField(usagelog.FieldFallbackSourceGroupID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedFallbackSourceGroupID(); ok {
+		_spec.AddField(usagelog.FieldFallbackSourceGroupID, field.TypeInt64, value)
+	}
+	if _u.mutation.FallbackSourceGroupIDCleared() {
+		_spec.ClearField(usagelog.FieldFallbackSourceGroupID, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.FallbackSourceGroupName(); ok {
+		_spec.SetField(usagelog.FieldFallbackSourceGroupName, field.TypeString, value)
+	}
+	if _u.mutation.FallbackSourceGroupNameCleared() {
+		_spec.ClearField(usagelog.FieldFallbackSourceGroupName, field.TypeString)
+	}
+	if value, ok := _u.mutation.FallbackTargetGroupID(); ok {
+		_spec.SetField(usagelog.FieldFallbackTargetGroupID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedFallbackTargetGroupID(); ok {
+		_spec.AddField(usagelog.FieldFallbackTargetGroupID, field.TypeInt64, value)
+	}
+	if _u.mutation.FallbackTargetGroupIDCleared() {
+		_spec.ClearField(usagelog.FieldFallbackTargetGroupID, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.FallbackTargetGroupName(); ok {
+		_spec.SetField(usagelog.FieldFallbackTargetGroupName, field.TypeString, value)
+	}
+	if _u.mutation.FallbackTargetGroupNameCleared() {
+		_spec.ClearField(usagelog.FieldFallbackTargetGroupName, field.TypeString)
+	}
 	if value, ok := _u.mutation.InputTokens(); ok {
 		_spec.SetField(usagelog.FieldInputTokens, field.TypeInt, value)
 	}
@@ -1820,6 +1961,114 @@ func (_u *UsageLogUpdateOne) SetNillableSubscriptionID(v *int64) *UsageLogUpdate
 // ClearSubscriptionID clears the value of the "subscription_id" field.
 func (_u *UsageLogUpdateOne) ClearSubscriptionID() *UsageLogUpdateOne {
 	_u.mutation.ClearSubscriptionID()
+	return _u
+}
+
+// SetFallbackPoolUsed sets the "fallback_pool_used" field.
+func (_u *UsageLogUpdateOne) SetFallbackPoolUsed(v bool) *UsageLogUpdateOne {
+	_u.mutation.SetFallbackPoolUsed(v)
+	return _u
+}
+
+// SetNillableFallbackPoolUsed sets the "fallback_pool_used" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableFallbackPoolUsed(v *bool) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetFallbackPoolUsed(*v)
+	}
+	return _u
+}
+
+// SetFallbackSourceGroupID sets the "fallback_source_group_id" field.
+func (_u *UsageLogUpdateOne) SetFallbackSourceGroupID(v int64) *UsageLogUpdateOne {
+	_u.mutation.ResetFallbackSourceGroupID()
+	_u.mutation.SetFallbackSourceGroupID(v)
+	return _u
+}
+
+// SetNillableFallbackSourceGroupID sets the "fallback_source_group_id" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableFallbackSourceGroupID(v *int64) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetFallbackSourceGroupID(*v)
+	}
+	return _u
+}
+
+// AddFallbackSourceGroupID adds value to the "fallback_source_group_id" field.
+func (_u *UsageLogUpdateOne) AddFallbackSourceGroupID(v int64) *UsageLogUpdateOne {
+	_u.mutation.AddFallbackSourceGroupID(v)
+	return _u
+}
+
+// ClearFallbackSourceGroupID clears the value of the "fallback_source_group_id" field.
+func (_u *UsageLogUpdateOne) ClearFallbackSourceGroupID() *UsageLogUpdateOne {
+	_u.mutation.ClearFallbackSourceGroupID()
+	return _u
+}
+
+// SetFallbackSourceGroupName sets the "fallback_source_group_name" field.
+func (_u *UsageLogUpdateOne) SetFallbackSourceGroupName(v string) *UsageLogUpdateOne {
+	_u.mutation.SetFallbackSourceGroupName(v)
+	return _u
+}
+
+// SetNillableFallbackSourceGroupName sets the "fallback_source_group_name" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableFallbackSourceGroupName(v *string) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetFallbackSourceGroupName(*v)
+	}
+	return _u
+}
+
+// ClearFallbackSourceGroupName clears the value of the "fallback_source_group_name" field.
+func (_u *UsageLogUpdateOne) ClearFallbackSourceGroupName() *UsageLogUpdateOne {
+	_u.mutation.ClearFallbackSourceGroupName()
+	return _u
+}
+
+// SetFallbackTargetGroupID sets the "fallback_target_group_id" field.
+func (_u *UsageLogUpdateOne) SetFallbackTargetGroupID(v int64) *UsageLogUpdateOne {
+	_u.mutation.ResetFallbackTargetGroupID()
+	_u.mutation.SetFallbackTargetGroupID(v)
+	return _u
+}
+
+// SetNillableFallbackTargetGroupID sets the "fallback_target_group_id" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableFallbackTargetGroupID(v *int64) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetFallbackTargetGroupID(*v)
+	}
+	return _u
+}
+
+// AddFallbackTargetGroupID adds value to the "fallback_target_group_id" field.
+func (_u *UsageLogUpdateOne) AddFallbackTargetGroupID(v int64) *UsageLogUpdateOne {
+	_u.mutation.AddFallbackTargetGroupID(v)
+	return _u
+}
+
+// ClearFallbackTargetGroupID clears the value of the "fallback_target_group_id" field.
+func (_u *UsageLogUpdateOne) ClearFallbackTargetGroupID() *UsageLogUpdateOne {
+	_u.mutation.ClearFallbackTargetGroupID()
+	return _u
+}
+
+// SetFallbackTargetGroupName sets the "fallback_target_group_name" field.
+func (_u *UsageLogUpdateOne) SetFallbackTargetGroupName(v string) *UsageLogUpdateOne {
+	_u.mutation.SetFallbackTargetGroupName(v)
+	return _u
+}
+
+// SetNillableFallbackTargetGroupName sets the "fallback_target_group_name" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableFallbackTargetGroupName(v *string) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetFallbackTargetGroupName(*v)
+	}
+	return _u
+}
+
+// ClearFallbackTargetGroupName clears the value of the "fallback_target_group_name" field.
+func (_u *UsageLogUpdateOne) ClearFallbackTargetGroupName() *UsageLogUpdateOne {
+	_u.mutation.ClearFallbackTargetGroupName()
 	return _u
 }
 
@@ -2735,6 +2984,39 @@ func (_u *UsageLogUpdateOne) sqlSave(ctx context.Context) (_node *UsageLog, err 
 	}
 	if _u.mutation.BillingModeCleared() {
 		_spec.ClearField(usagelog.FieldBillingMode, field.TypeString)
+	}
+	if value, ok := _u.mutation.FallbackPoolUsed(); ok {
+		_spec.SetField(usagelog.FieldFallbackPoolUsed, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.FallbackSourceGroupID(); ok {
+		_spec.SetField(usagelog.FieldFallbackSourceGroupID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedFallbackSourceGroupID(); ok {
+		_spec.AddField(usagelog.FieldFallbackSourceGroupID, field.TypeInt64, value)
+	}
+	if _u.mutation.FallbackSourceGroupIDCleared() {
+		_spec.ClearField(usagelog.FieldFallbackSourceGroupID, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.FallbackSourceGroupName(); ok {
+		_spec.SetField(usagelog.FieldFallbackSourceGroupName, field.TypeString, value)
+	}
+	if _u.mutation.FallbackSourceGroupNameCleared() {
+		_spec.ClearField(usagelog.FieldFallbackSourceGroupName, field.TypeString)
+	}
+	if value, ok := _u.mutation.FallbackTargetGroupID(); ok {
+		_spec.SetField(usagelog.FieldFallbackTargetGroupID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedFallbackTargetGroupID(); ok {
+		_spec.AddField(usagelog.FieldFallbackTargetGroupID, field.TypeInt64, value)
+	}
+	if _u.mutation.FallbackTargetGroupIDCleared() {
+		_spec.ClearField(usagelog.FieldFallbackTargetGroupID, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.FallbackTargetGroupName(); ok {
+		_spec.SetField(usagelog.FieldFallbackTargetGroupName, field.TypeString, value)
+	}
+	if _u.mutation.FallbackTargetGroupNameCleared() {
+		_spec.ClearField(usagelog.FieldFallbackTargetGroupName, field.TypeString)
 	}
 	if value, ok := _u.mutation.InputTokens(); ok {
 		_spec.SetField(usagelog.FieldInputTokens, field.TypeInt, value)

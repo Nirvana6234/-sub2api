@@ -83,6 +83,31 @@ const (
 
 	// profitControlActivityLogInterval 是按分组采样输出累计计数的最小间隔。
 	profitControlActivityLogInterval = 5 * time.Minute
+
+	// U 的来源标记，供 profit-preview 向管理员解释"这个准入结论按哪个倍率算的"。
+	profitControlRateSourceManualUpstream = "manual_upstream_rate"
+	profitControlRateSourceUpstreamProbe  = "upstream_probe"
+	profitControlRateSourceStaleProbe     = "upstream_probe_stale"
+	profitControlRateSourceAccountColumn  = "account_rate_multiplier"
+	profitControlRateSourceUndeclared     = "undeclared"
+)
+
+// profitControlRateState 是账号上游成本 U 的三态。区分"未声明"与"声明为 1.0"
+// 是本模块的核心不变量：accounts.rate_multiplier 曾是 NOT NULL DEFAULT 1.0，
+// 两者在库里同形，利润门把没人填过的默认值当成成本声明，据此把整池账号判为
+// 越线否决。migration 202 让该列可空后，"未声明"才成为可表达、可判定的事实。
+type profitControlRateState int
+
+const (
+	// profitControlRateDeclared：运营者给出了明确的成本声明（含 1.0 与 0），
+	// 按声明值严格判定。
+	profitControlRateDeclared profitControlRateState = iota
+	// profitControlRateUndeclared：没有任何人声明过该账号的上游成本。利润门
+	// 没有可依据的事实，按可用性优先放行并告警，不替运营假设成本。
+	profitControlRateUndeclared
+	// profitControlRateInvalid：存在声明但数据非法（负数、NaN、Inf），保守拒绝。
+	// 与"未声明"不同——这是坏数据，不是缺数据。
+	profitControlRateInvalid
 )
 
 type openAIProfitControlGateCtxKey struct{}
@@ -297,6 +322,68 @@ func ContextWithSelectionProfitGate(ctx context.Context, sel *AccountSelectionRe
 	return context.WithValue(ctx, openAIProfitControlGateCtxKey{}, sel.profitGate)
 }
 
+// accountCostUpstreamRate 解析记账用的上游成本倍率。
+//
+// 它先复用利润门的严格解析，保证手工倍率、新鲜探测值和列值声明的语义不分叉；
+// 但当严格解析认为探测型账号“未声明”时，记账可以退一步采用已经过期但仍存在的
+// 探测快照，并标记为 probe_stale。这个退路只服务成本记账/展示，利润门与调度
+// 继续调用 profitControlAccountUpstreamRate，因此不会被陈旧低价放行。
+func accountCostUpstreamRate(account *Account, at time.Time) (float64, string, profitControlRateState) {
+	if account == nil {
+		return 0, "", profitControlRateUndeclared
+	}
+	if at.IsZero() {
+		at = timezone.Now()
+	}
+	if rate, ok := upstreamBillingManualRateMultiplier(account.Extra); ok &&
+		!math.IsNaN(rate) && !math.IsInf(rate, 0) && rate >= 0 {
+		return rate, profitControlRateSourceManualUpstream, profitControlRateDeclared
+	}
+	if isUpstreamBillingProbeAccount(account) {
+		if rate, ok := openAIFreshUpstreamBillingRate(account, at); ok &&
+			!math.IsNaN(rate) && !math.IsInf(rate, 0) && rate >= 0 {
+			return rate, profitControlRateSourceUpstreamProbe, profitControlRateDeclared
+		}
+		if staleRate, ok := openAIStaleUpstreamBillingRate(account, at); ok {
+			return staleRate, profitControlRateSourceStaleProbe, profitControlRateDeclared
+		}
+		if upstreamBillingProbeIsRateSource(account) && accountRateMultiplierIsSchemaDefault(account) {
+			return 0, profitControlRateSourceUndeclared, profitControlRateUndeclared
+		}
+	}
+	if account.RateMultiplierUndeclared {
+		return 0, profitControlRateSourceUndeclared, profitControlRateUndeclared
+	}
+	if account.RateMultiplier == nil {
+		return 0, profitControlRateSourceAccountColumn, profitControlRateInvalid
+	}
+	if math.IsNaN(*account.RateMultiplier) ||
+		math.IsInf(*account.RateMultiplier, 0) ||
+		*account.RateMultiplier < 0 {
+		return 0, profitControlRateSourceAccountColumn, profitControlRateInvalid
+	}
+	return *account.RateMultiplier, profitControlRateSourceAccountColumn, profitControlRateDeclared
+}
+
+func openAIStaleUpstreamBillingRate(account *Account, at time.Time) (float64, bool) {
+	if !isUpstreamBillingProbeAccount(account) {
+		return 0, false
+	}
+	if at.IsZero() {
+		at = timezone.Now()
+	}
+	snapshot := decodeUpstreamBillingProbeSnapshot(account.Extra)
+	if snapshot == nil || (snapshot.Status != UpstreamBillingProbeStatusOK && snapshot.Status != UpstreamBillingProbeStatusFailed) ||
+		snapshot.ReceivedAt == nil || snapshot.ReceivedAt.IsZero() || at.Before(*snapshot.ReceivedAt) {
+		return 0, false
+	}
+	rate, ok := upstreamBillingRateAt(snapshot.Data, at)
+	if !ok || math.IsNaN(rate) || math.IsInf(rate, 0) || rate < 0 {
+		return 0, false
+	}
+	return rate, true
+}
+
 // openAIProfitControlVetoReason 报告利润门是否否决该账号。ctx 中没有门
 // （分组未启用利润控制或本请求跳门）或账号为 nil 时一律放行。
 func openAIProfitControlVetoReason(ctx context.Context, account *Account) (bool, string) {
@@ -457,4 +544,80 @@ func (o *openAIProfitControlObserver) maybeLog(groupID int64, platform string, t
 		"veto_invalid_account_rate_total", s.vetoInvalidRate.Load(),
 		"refresh_failure_total", s.refreshFailures.Load(),
 	)
+}
+
+// AccountCostRateMultiplier 返回记账用的上游成本倍率，nil 表示「无法判定」。
+//
+// 与利润门准入严格同源（profitControlAccountUpstreamRate）：手工上游倍率 →
+// 新鲜探测值 → accounts.rate_multiplier。此前记账直接取
+// Account.BillingRateMultiplier()（只读列值，缺数据回退 1.0），于是同一账号在
+// 两处得到不同成本：利润门按探测到的 0.045 判它合格，usage_logs 却按列上从没
+// 维护过的 1.0 记账，account_cost 虚高约 22 倍，把实际盈利的日子显示成巨亏。
+//
+// 返回 nil 而不是回退 1.0，是刻意的：没有任何人声明过成本时，按标准原价记账
+// 等于凭空替上游编一个最贵的价格——生产上正是这样把三个未标注倍率的账号算出
+// 了 ¥129 / ¥46 / ¥43 的假成本，而它们的真实营收只有 ¥13 / ¥4.6 / ¥3.1。
+// 调用方应把 nil 原样写进 usage_logs.account_rate_multiplier（该列可空），
+// 成本聚合遇到 NULL 会自动跳过该行：宁可少算，也不虚报。运营补上倍率之后，
+// 之后的请求即按标注值计价。
+func AccountCostRateMultiplier(account *Account, at time.Time) *float64 {
+	if account == nil {
+		return nil
+	}
+	rate, _, state := accountCostUpstreamRate(account, at)
+	if state != profitControlRateDeclared {
+		return nil
+	}
+	if math.IsNaN(rate) || math.IsInf(rate, 0) || rate < 0 {
+		return nil
+	}
+	value := rate
+	return &value
+}
+
+// 对外暴露的成本倍率来源名。内部常量（profitControlRateSource*）承载的是利润门
+// 的实现细节，直接塞进 API 会把内部命名固化成对外契约；这里做一层窄映射，
+// 内部改名时只需改这里。
+const (
+	AccountCostRateSourceManual     = "manual"
+	AccountCostRateSourceProbe      = "probe"
+	AccountCostRateSourceProbeStale = "probe_stale"
+	AccountCostRateSourceColumn     = "column"
+	AccountCostRateSourceNone       = "none"
+)
+
+// AccountCostRateMultiplierWithSource 在 AccountCostRateMultiplier 的基础上一并返回
+// 倍率的来源，供管理接口向外披露"这个成本数字是谁声明的"。
+//
+// 它与 AccountCostRateMultiplier 共用 profitControlAccountUpstreamRate，刻意不另写
+// 一套优先级：手工值优先于探测值、探测失败时不拿建表默认 1.0 冒充声明，这些判断
+// 只应存在一处。返回 nil 表示无人声明过成本，调用方不得回退 1.0——理由同
+// AccountCostRateMultiplier 的注释：凭空按原价计价会把盈利的账号显示成巨亏。
+func AccountCostRateMultiplierWithSource(account *Account, at time.Time) (*float64, string) {
+	if account == nil {
+		return nil, AccountCostRateSourceNone
+	}
+	rate, source, state := accountCostUpstreamRate(account, at)
+	if state != profitControlRateDeclared {
+		return nil, AccountCostRateSourceNone
+	}
+	if math.IsNaN(rate) || math.IsInf(rate, 0) || rate < 0 {
+		return nil, AccountCostRateSourceNone
+	}
+	var exposed string
+	switch source {
+	case profitControlRateSourceManualUpstream:
+		exposed = AccountCostRateSourceManual
+	case profitControlRateSourceUpstreamProbe:
+		exposed = AccountCostRateSourceProbe
+	case profitControlRateSourceStaleProbe:
+		exposed = AccountCostRateSourceProbeStale
+	case profitControlRateSourceAccountColumn:
+		exposed = AccountCostRateSourceColumn
+	default:
+		// 未知来源按"无声明"处理：宁可少报，也不把一个说不清出处的数字当成本。
+		return nil, AccountCostRateSourceNone
+	}
+	value := rate
+	return &value, exposed
 }

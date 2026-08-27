@@ -130,6 +130,31 @@ func SubscriptionID(v int64) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldSubscriptionID, v))
 }
 
+// FallbackPoolUsed applies equality check predicate on the "fallback_pool_used" field. It's identical to FallbackPoolUsedEQ.
+func FallbackPoolUsed(v bool) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldFallbackPoolUsed, v))
+}
+
+// FallbackSourceGroupID applies equality check predicate on the "fallback_source_group_id" field. It's identical to FallbackSourceGroupIDEQ.
+func FallbackSourceGroupID(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldFallbackSourceGroupID, v))
+}
+
+// FallbackSourceGroupName applies equality check predicate on the "fallback_source_group_name" field. It's identical to FallbackSourceGroupNameEQ.
+func FallbackSourceGroupName(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldFallbackSourceGroupName, v))
+}
+
+// FallbackTargetGroupID applies equality check predicate on the "fallback_target_group_id" field. It's identical to FallbackTargetGroupIDEQ.
+func FallbackTargetGroupID(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldFallbackTargetGroupID, v))
+}
+
+// FallbackTargetGroupName applies equality check predicate on the "fallback_target_group_name" field. It's identical to FallbackTargetGroupNameEQ.
+func FallbackTargetGroupName(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldFallbackTargetGroupName, v))
+}
+
 // InputTokens applies equality check predicate on the "input_tokens" field. It's identical to InputTokensEQ.
 func InputTokens(v int) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldInputTokens, v))
@@ -1053,6 +1078,266 @@ func SubscriptionIDIsNil() predicate.UsageLog {
 // SubscriptionIDNotNil applies the NotNil predicate on the "subscription_id" field.
 func SubscriptionIDNotNil() predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldNotNull(FieldSubscriptionID))
+}
+
+// FallbackPoolUsedEQ applies the EQ predicate on the "fallback_pool_used" field.
+func FallbackPoolUsedEQ(v bool) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldFallbackPoolUsed, v))
+}
+
+// FallbackPoolUsedNEQ applies the NEQ predicate on the "fallback_pool_used" field.
+func FallbackPoolUsedNEQ(v bool) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldFallbackPoolUsed, v))
+}
+
+// FallbackSourceGroupIDEQ applies the EQ predicate on the "fallback_source_group_id" field.
+func FallbackSourceGroupIDEQ(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldFallbackSourceGroupID, v))
+}
+
+// FallbackSourceGroupIDNEQ applies the NEQ predicate on the "fallback_source_group_id" field.
+func FallbackSourceGroupIDNEQ(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldFallbackSourceGroupID, v))
+}
+
+// FallbackSourceGroupIDIn applies the In predicate on the "fallback_source_group_id" field.
+func FallbackSourceGroupIDIn(vs ...int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldFallbackSourceGroupID, vs...))
+}
+
+// FallbackSourceGroupIDNotIn applies the NotIn predicate on the "fallback_source_group_id" field.
+func FallbackSourceGroupIDNotIn(vs ...int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldFallbackSourceGroupID, vs...))
+}
+
+// FallbackSourceGroupIDGT applies the GT predicate on the "fallback_source_group_id" field.
+func FallbackSourceGroupIDGT(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldFallbackSourceGroupID, v))
+}
+
+// FallbackSourceGroupIDGTE applies the GTE predicate on the "fallback_source_group_id" field.
+func FallbackSourceGroupIDGTE(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldFallbackSourceGroupID, v))
+}
+
+// FallbackSourceGroupIDLT applies the LT predicate on the "fallback_source_group_id" field.
+func FallbackSourceGroupIDLT(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldFallbackSourceGroupID, v))
+}
+
+// FallbackSourceGroupIDLTE applies the LTE predicate on the "fallback_source_group_id" field.
+func FallbackSourceGroupIDLTE(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldFallbackSourceGroupID, v))
+}
+
+// FallbackSourceGroupIDIsNil applies the IsNil predicate on the "fallback_source_group_id" field.
+func FallbackSourceGroupIDIsNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIsNull(FieldFallbackSourceGroupID))
+}
+
+// FallbackSourceGroupIDNotNil applies the NotNil predicate on the "fallback_source_group_id" field.
+func FallbackSourceGroupIDNotNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotNull(FieldFallbackSourceGroupID))
+}
+
+// FallbackSourceGroupNameEQ applies the EQ predicate on the "fallback_source_group_name" field.
+func FallbackSourceGroupNameEQ(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldFallbackSourceGroupName, v))
+}
+
+// FallbackSourceGroupNameNEQ applies the NEQ predicate on the "fallback_source_group_name" field.
+func FallbackSourceGroupNameNEQ(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldFallbackSourceGroupName, v))
+}
+
+// FallbackSourceGroupNameIn applies the In predicate on the "fallback_source_group_name" field.
+func FallbackSourceGroupNameIn(vs ...string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldFallbackSourceGroupName, vs...))
+}
+
+// FallbackSourceGroupNameNotIn applies the NotIn predicate on the "fallback_source_group_name" field.
+func FallbackSourceGroupNameNotIn(vs ...string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldFallbackSourceGroupName, vs...))
+}
+
+// FallbackSourceGroupNameGT applies the GT predicate on the "fallback_source_group_name" field.
+func FallbackSourceGroupNameGT(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldFallbackSourceGroupName, v))
+}
+
+// FallbackSourceGroupNameGTE applies the GTE predicate on the "fallback_source_group_name" field.
+func FallbackSourceGroupNameGTE(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldFallbackSourceGroupName, v))
+}
+
+// FallbackSourceGroupNameLT applies the LT predicate on the "fallback_source_group_name" field.
+func FallbackSourceGroupNameLT(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldFallbackSourceGroupName, v))
+}
+
+// FallbackSourceGroupNameLTE applies the LTE predicate on the "fallback_source_group_name" field.
+func FallbackSourceGroupNameLTE(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldFallbackSourceGroupName, v))
+}
+
+// FallbackSourceGroupNameContains applies the Contains predicate on the "fallback_source_group_name" field.
+func FallbackSourceGroupNameContains(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldContains(FieldFallbackSourceGroupName, v))
+}
+
+// FallbackSourceGroupNameHasPrefix applies the HasPrefix predicate on the "fallback_source_group_name" field.
+func FallbackSourceGroupNameHasPrefix(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldHasPrefix(FieldFallbackSourceGroupName, v))
+}
+
+// FallbackSourceGroupNameHasSuffix applies the HasSuffix predicate on the "fallback_source_group_name" field.
+func FallbackSourceGroupNameHasSuffix(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldHasSuffix(FieldFallbackSourceGroupName, v))
+}
+
+// FallbackSourceGroupNameIsNil applies the IsNil predicate on the "fallback_source_group_name" field.
+func FallbackSourceGroupNameIsNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIsNull(FieldFallbackSourceGroupName))
+}
+
+// FallbackSourceGroupNameNotNil applies the NotNil predicate on the "fallback_source_group_name" field.
+func FallbackSourceGroupNameNotNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotNull(FieldFallbackSourceGroupName))
+}
+
+// FallbackSourceGroupNameEqualFold applies the EqualFold predicate on the "fallback_source_group_name" field.
+func FallbackSourceGroupNameEqualFold(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEqualFold(FieldFallbackSourceGroupName, v))
+}
+
+// FallbackSourceGroupNameContainsFold applies the ContainsFold predicate on the "fallback_source_group_name" field.
+func FallbackSourceGroupNameContainsFold(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldContainsFold(FieldFallbackSourceGroupName, v))
+}
+
+// FallbackTargetGroupIDEQ applies the EQ predicate on the "fallback_target_group_id" field.
+func FallbackTargetGroupIDEQ(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldFallbackTargetGroupID, v))
+}
+
+// FallbackTargetGroupIDNEQ applies the NEQ predicate on the "fallback_target_group_id" field.
+func FallbackTargetGroupIDNEQ(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldFallbackTargetGroupID, v))
+}
+
+// FallbackTargetGroupIDIn applies the In predicate on the "fallback_target_group_id" field.
+func FallbackTargetGroupIDIn(vs ...int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldFallbackTargetGroupID, vs...))
+}
+
+// FallbackTargetGroupIDNotIn applies the NotIn predicate on the "fallback_target_group_id" field.
+func FallbackTargetGroupIDNotIn(vs ...int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldFallbackTargetGroupID, vs...))
+}
+
+// FallbackTargetGroupIDGT applies the GT predicate on the "fallback_target_group_id" field.
+func FallbackTargetGroupIDGT(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldFallbackTargetGroupID, v))
+}
+
+// FallbackTargetGroupIDGTE applies the GTE predicate on the "fallback_target_group_id" field.
+func FallbackTargetGroupIDGTE(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldFallbackTargetGroupID, v))
+}
+
+// FallbackTargetGroupIDLT applies the LT predicate on the "fallback_target_group_id" field.
+func FallbackTargetGroupIDLT(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldFallbackTargetGroupID, v))
+}
+
+// FallbackTargetGroupIDLTE applies the LTE predicate on the "fallback_target_group_id" field.
+func FallbackTargetGroupIDLTE(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldFallbackTargetGroupID, v))
+}
+
+// FallbackTargetGroupIDIsNil applies the IsNil predicate on the "fallback_target_group_id" field.
+func FallbackTargetGroupIDIsNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIsNull(FieldFallbackTargetGroupID))
+}
+
+// FallbackTargetGroupIDNotNil applies the NotNil predicate on the "fallback_target_group_id" field.
+func FallbackTargetGroupIDNotNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotNull(FieldFallbackTargetGroupID))
+}
+
+// FallbackTargetGroupNameEQ applies the EQ predicate on the "fallback_target_group_name" field.
+func FallbackTargetGroupNameEQ(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldFallbackTargetGroupName, v))
+}
+
+// FallbackTargetGroupNameNEQ applies the NEQ predicate on the "fallback_target_group_name" field.
+func FallbackTargetGroupNameNEQ(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldFallbackTargetGroupName, v))
+}
+
+// FallbackTargetGroupNameIn applies the In predicate on the "fallback_target_group_name" field.
+func FallbackTargetGroupNameIn(vs ...string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldFallbackTargetGroupName, vs...))
+}
+
+// FallbackTargetGroupNameNotIn applies the NotIn predicate on the "fallback_target_group_name" field.
+func FallbackTargetGroupNameNotIn(vs ...string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldFallbackTargetGroupName, vs...))
+}
+
+// FallbackTargetGroupNameGT applies the GT predicate on the "fallback_target_group_name" field.
+func FallbackTargetGroupNameGT(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldFallbackTargetGroupName, v))
+}
+
+// FallbackTargetGroupNameGTE applies the GTE predicate on the "fallback_target_group_name" field.
+func FallbackTargetGroupNameGTE(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldFallbackTargetGroupName, v))
+}
+
+// FallbackTargetGroupNameLT applies the LT predicate on the "fallback_target_group_name" field.
+func FallbackTargetGroupNameLT(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldFallbackTargetGroupName, v))
+}
+
+// FallbackTargetGroupNameLTE applies the LTE predicate on the "fallback_target_group_name" field.
+func FallbackTargetGroupNameLTE(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldFallbackTargetGroupName, v))
+}
+
+// FallbackTargetGroupNameContains applies the Contains predicate on the "fallback_target_group_name" field.
+func FallbackTargetGroupNameContains(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldContains(FieldFallbackTargetGroupName, v))
+}
+
+// FallbackTargetGroupNameHasPrefix applies the HasPrefix predicate on the "fallback_target_group_name" field.
+func FallbackTargetGroupNameHasPrefix(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldHasPrefix(FieldFallbackTargetGroupName, v))
+}
+
+// FallbackTargetGroupNameHasSuffix applies the HasSuffix predicate on the "fallback_target_group_name" field.
+func FallbackTargetGroupNameHasSuffix(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldHasSuffix(FieldFallbackTargetGroupName, v))
+}
+
+// FallbackTargetGroupNameIsNil applies the IsNil predicate on the "fallback_target_group_name" field.
+func FallbackTargetGroupNameIsNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIsNull(FieldFallbackTargetGroupName))
+}
+
+// FallbackTargetGroupNameNotNil applies the NotNil predicate on the "fallback_target_group_name" field.
+func FallbackTargetGroupNameNotNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotNull(FieldFallbackTargetGroupName))
+}
+
+// FallbackTargetGroupNameEqualFold applies the EqualFold predicate on the "fallback_target_group_name" field.
+func FallbackTargetGroupNameEqualFold(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEqualFold(FieldFallbackTargetGroupName, v))
+}
+
+// FallbackTargetGroupNameContainsFold applies the ContainsFold predicate on the "fallback_target_group_name" field.
+func FallbackTargetGroupNameContainsFold(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldContainsFold(FieldFallbackTargetGroupName, v))
 }
 
 // InputTokensEQ applies the EQ predicate on the "input_tokens" field.

@@ -37,6 +37,10 @@ func gatewayFallbackGroupStateFromContext(ctx context.Context) fallbackGroupStat
 	return state
 }
 
+func gatewayFallbackPoolUsageTraceFromContext(ctx context.Context) (fallbackPoolUsageTrace, bool) {
+	return fallbackPoolUsageTraceFromState(gatewayFallbackGroupStateFromContext(ctx))
+}
+
 func withGatewayFallbackGroupState(ctx context.Context, state fallbackGroupState) context.Context {
 	if ctx == nil {
 		ctx = context.Background()

@@ -769,6 +769,11 @@ func UsageLogFromServiceAdmin(l *service.UsageLog) *AdminUsageLog {
 		BillingTier:             l.BillingTier,
 		AccountRateMultiplier:   l.AccountRateMultiplier,
 		AccountStatsCost:        l.AccountStatsCost,
+		FallbackPoolUsed:        l.FallbackPoolUsed,
+		FallbackSourceGroupID:   l.FallbackSourceGroupID,
+		FallbackSourceGroupName: l.FallbackSourceGroupName,
+		FallbackTargetGroupID:   l.FallbackTargetGroupID,
+		FallbackTargetGroupName: l.FallbackTargetGroupName,
 		IPAddress:               l.IPAddress,
 		Account:                 AccountSummaryFromService(l.Account),
 	}

@@ -1185,6 +1185,8 @@ func (s *GatewayService) buildRecordUsageLog(
 		SubscriptionID:           optionalSubscriptionID(subscription),
 		CreatedAt:                time.Now(),
 	}
+	trace, traceOK := gatewayFallbackPoolUsageTraceFromContext(ctx)
+	applyFallbackPoolUsageTrace(usageLog, trace, traceOK)
 	if result.ImageCount > 0 && (cost == nil || cost.BillingMode != string(BillingModeToken)) {
 		usageLog.RateMultiplier = imageMultiplier
 	}
