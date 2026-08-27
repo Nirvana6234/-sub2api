@@ -51,15 +51,19 @@ type StrategySettings struct {
 	MultiplierTemplate         string                     `json:"multiplierTemplate"`
 	MultiplierTemplateFormat   NotificationTemplateFormat `json:"multiplierTemplateFormat,omitempty"`
 	EnableAutoChangeMultiplier bool                       `json:"enableAutoChangeMultiplier"`
+	EnableFallbackPoolAlert    bool                       `json:"enableFallbackPoolAlert"`
+	FallbackPoolNotifyBotIDs   []string                   `json:"fallbackPoolNotifyBotIds"`
+	FallbackPoolTemplate       string                     `json:"fallbackPoolTemplate"`
+	FallbackPoolTemplateFormat NotificationTemplateFormat `json:"fallbackPoolTemplateFormat,omitempty"`
 
 	// 每日简报：按 DailyReportTime（Asia/Shanghai 的 HH:MM）定时汇总各站点消费、
 	// 余额、倍率变动与同步健康，推送到 DailyReportBotIDs 指定的机器人。
 	// 这几个字段随 strategy_settings.settings 一起存在 jsonb 里，无需 schema 变更；
 	// 旧记录缺字段时反序列化为零值，等同于「未开启」。
-	EnableDailyReport   bool                       `json:"enableDailyReport"`
-	DailyReportTime     string                     `json:"dailyReportTime"`
-	DailyReportBotIDs   []string                   `json:"dailyReportBotIds"`
-	DailyReportFormat   NotificationTemplateFormat `json:"dailyReportFormat,omitempty"`
+	EnableDailyReport bool                       `json:"enableDailyReport"`
+	DailyReportTime   string                     `json:"dailyReportTime"`
+	DailyReportBotIDs []string                   `json:"dailyReportBotIds"`
+	DailyReportFormat NotificationTemplateFormat `json:"dailyReportFormat,omitempty"`
 }
 
 // StrategyOwner 把策略设置和它归属的工作区绑在一起，供不带 HTTP 上下文的

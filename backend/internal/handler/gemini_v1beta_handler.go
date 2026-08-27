@@ -576,7 +576,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 			longContextThreshold = rule.Threshold
 			longContextMultiplier = rule.Multiplier
 		}
-		h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
+		h.submitUsageRecordTask(service.ContextWithSelectionProfitGate(c.Request.Context(), selection), func(ctx context.Context) {
 			if err := h.gatewayService.RecordUsageWithLongContext(ctx, &service.RecordUsageLongContextInput{
 				Result:                result,
 				QuotaPlatform:         quotaPlatform,

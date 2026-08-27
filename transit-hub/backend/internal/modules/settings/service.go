@@ -369,6 +369,7 @@ func normalizeStrategySettings(settings StrategySettings) StrategySettings {
 	}
 	settings.BalanceTemplateFormat = normalizeNotificationTemplateFormat(settings.BalanceTemplateFormat)
 	settings.MultiplierTemplateFormat = normalizeNotificationTemplateFormat(settings.MultiplierTemplateFormat)
+	settings.FallbackPoolTemplateFormat = normalizeNotificationTemplateFormat(settings.FallbackPoolTemplateFormat)
 	settings.DailyReportTime = normalizeDailyReportTime(settings.DailyReportTime)
 	if settings.DailyReportFormat == "" {
 		settings.DailyReportFormat = NotificationTemplateFormatMarkdown

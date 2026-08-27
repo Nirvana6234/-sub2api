@@ -237,8 +237,12 @@ func TestProbe_OpenAIOAuthUsesCodexResponsesEndpoint(t *testing.T) {
 
 func TestProbe_OpenAIAPIKeyResponsesRouting(t *testing.T) {
 	var gotPath string
+	var gotMaxOutputTokens float64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		gotMaxOutputTokens, _ = body["max_output_tokens"].(float64)
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("data: {\"type\":\"response.completed\"}\n\n"))
@@ -255,6 +259,9 @@ func TestProbe_OpenAIAPIKeyResponsesRouting(t *testing.T) {
 	}
 	if gotPath != "/v1/responses" {
 		t.Fatalf("expected /v1/responses, got %s", gotPath)
+	}
+	if gotMaxOutputTokens != 1 {
+		t.Fatalf("expected max_probe_tokens=1 to propagate as max_output_tokens, got %v", gotMaxOutputTokens)
 	}
 }
 

@@ -31,6 +31,8 @@ services:
       # 缺失不影响应用启动，也不影响 SMTP 之外的功能。用 `openssl rand -base64 32` 生成一个 base64 编码的
       # 32 字节随机值；生成后必须长期稳定保存——更换 key 后，旧的 SMTP 密码密文将无法解密，需要重新填写密码。
       # SMTP_ENCRYPTION_KEY: change-this-to-a-generated-base64-32-byte-key
+      # Shared secret for Sub2API fallback-pool event callbacks.
+      SUB2API_FALLBACK_ALERT_SECRET: ${SUB2API_FALLBACK_ALERT_SECRET:?SUB2API_FALLBACK_ALERT_SECRET is required}
       # GPT-5.6 纯度检测旁路服务地址。注释掉这一行即可整体关闭该功能：
       # 接口会返回「检测器不可用」，后台队列 worker 也不启动。
       PURITY_CHECK_DETECTOR_URL: http://gpt56-detector:8760

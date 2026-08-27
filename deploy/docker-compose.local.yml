@@ -170,6 +170,11 @@ services:
       # Fallbacks mirror Sub2API backend defaults so omitted values preserve behavior.
       - GATEWAY_FORCE_CODEX_CLI=${GATEWAY_FORCE_CODEX_CLI:-false}
       - GATEWAY_OPENAI_COMPACT_MODEL=${GATEWAY_OPENAI_COMPACT_MODEL:-gpt-5.4}
+      # TransitHub fallback alerts are sent over the private Docker network.
+      - FALLBACK_POOL_ALERT_URL=${FALLBACK_POOL_ALERT_URL:-http://transithub:10621/api/internal/fallback-pool-alert}
+      - FALLBACK_POOL_ALERT_SECRET=${FALLBACK_POOL_ALERT_SECRET:-}
+      - FALLBACK_POOL_ALERT_SITE_BASE_URL=${FALLBACK_POOL_ALERT_SITE_BASE_URL:-}
+      - FALLBACK_POOL_ALERT_TIMEOUT_SECONDS=${FALLBACK_POOL_ALERT_TIMEOUT_SECONDS:-3}
       - GATEWAY_OPENAI_RESPONSE_HEADER_TIMEOUT=${GATEWAY_OPENAI_RESPONSE_HEADER_TIMEOUT:-0}
       - GATEWAY_OPENAI_WS_FORCE_HTTP=${GATEWAY_OPENAI_WS_FORCE_HTTP:-false}
       - GATEWAY_OPENAI_HTTP2_ENABLED=${GATEWAY_OPENAI_HTTP2_ENABLED:-true}
@@ -214,6 +219,7 @@ services:
         condition: service_healthy
     networks:
       - sub2api-network
+      - service-integration
     healthcheck:
       test: ["CMD", "wget", "-q", "-T", "5", "-O", "/dev/null", "http://localhost:8080/health"]
       interval: 30s
@@ -296,3 +302,6 @@ services:
 networks:
   sub2api-network:
     driver: bridge
+  service-integration:
+    external: true
+    name: service-integration

@@ -100,6 +100,9 @@ func (s *OpenAIGatewayService) nextOpenAIFallbackGroup(ctx context.Context, curr
 	}
 
 	nextCtx := withOpenAIFallbackGroupState(withOpenAIFallbackPoolSourcing(ctx), nextState)
+	if trace, ok := fallbackPoolUsageTraceFromState(nextState); ok {
+		notifyFallbackPoolSelection(ctx, s.cfg, trace)
+	}
 	return nextCtx, &fallbackID
 }
 

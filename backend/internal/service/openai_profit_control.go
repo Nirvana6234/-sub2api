@@ -321,8 +321,13 @@ func attachSelectionProfitGate(ctx context.Context, sel *AccountSelectionResult)
 	if sel == nil {
 		return nil
 	}
-	if gate, ok := ctx.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate); ok && gate != nil {
-		sel.profitGate = gate
+	if ctx != nil {
+		if gate, ok := ctx.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate); ok && gate != nil {
+			sel.profitGate = gate
+		}
+	}
+	if trace, ok := fallbackPoolUsageTraceFromContext(ctx); ok {
+		sel.fallbackPoolUsageTrace = &trace
 	}
 	return sel
 }
@@ -334,6 +339,9 @@ func attachSelectionProfitGate(ctx context.Context, sel *AccountSelectionResult)
 func ContextWithSelectionProfitGate(ctx context.Context, sel *AccountSelectionResult) context.Context {
 	if sel == nil {
 		return ctx
+	}
+	if sel.fallbackPoolUsageTrace != nil {
+		ctx = withFallbackPoolUsageTrace(ctx, *sel.fallbackPoolUsageTrace)
 	}
 	if sel.profitGate != nil {
 		if existing, ok := ctx.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate); !ok || existing != sel.profitGate {

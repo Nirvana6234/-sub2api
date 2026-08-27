@@ -108,6 +108,9 @@ func (s *GatewayService) nextGatewayFallbackGroup(ctx context.Context, currentGr
 	}
 
 	nextCtx := withGatewayFallbackGroupState(withGatewayFallbackPoolSourcing(ctx), nextState)
+	if trace, ok := fallbackPoolUsageTraceFromState(nextState); ok {
+		notifyFallbackPoolSelection(ctx, s.cfg, trace)
+	}
 	return nextCtx, &fallbackID
 }
 

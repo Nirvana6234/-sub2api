@@ -39,6 +39,8 @@ type fallbackPoolUsageTrace struct {
 	TargetGroupName string
 }
 
+type fallbackPoolUsageTraceContextKey struct{}
+
 func cloneFallbackVisited(in map[int64]struct{}) map[int64]struct{} {
 	out := make(map[int64]struct{}, len(in)+1)
 	for id := range in {
@@ -141,6 +143,41 @@ func fallbackPoolUsageTraceFromState(state fallbackGroupState) (fallbackPoolUsag
 		TargetGroupID:   state.targetGroupID,
 		TargetGroupName: state.targetGroupName,
 	}, true
+}
+
+func fallbackPoolUsageTraceFromContext(ctx context.Context) (fallbackPoolUsageTrace, bool) {
+	if ctx == nil {
+		return fallbackPoolUsageTrace{}, false
+	}
+	if trace, ok := ctx.Value(fallbackPoolUsageTraceContextKey{}).(fallbackPoolUsageTrace); ok {
+		return trace, trace.SourceGroupID > 0 && trace.TargetGroupID > 0
+	}
+	if trace, ok := openAIFallbackPoolUsageTraceFromContext(ctx); ok {
+		return trace, true
+	}
+	if trace, ok := gatewayFallbackPoolUsageTraceFromContext(ctx); ok {
+		return trace, true
+	}
+	return fallbackPoolUsageTrace{}, false
+}
+
+func withFallbackPoolUsageTrace(ctx context.Context, trace fallbackPoolUsageTrace) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, fallbackPoolUsageTraceContextKey{}, trace)
+}
+
+// PropagateFallbackPoolUsageContext copies the immutable fallback fact from a
+// request context into a detached usage-record worker context.
+func PropagateFallbackPoolUsageContext(parent, base context.Context) context.Context {
+	if base == nil {
+		base = context.Background()
+	}
+	if trace, ok := fallbackPoolUsageTraceFromContext(parent); ok {
+		return withFallbackPoolUsageTrace(base, trace)
+	}
+	return base
 }
 
 func applyFallbackPoolUsageTrace(log *UsageLog, trace fallbackPoolUsageTrace, ok bool) {

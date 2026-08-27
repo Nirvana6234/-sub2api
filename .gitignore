@@ -178,3 +178,5 @@ frontend/dist.predeploy-*/
 
 # transit-hub 后端编译产物（Linux ELF，22MB，不应入库）
 transit-hub/backend/transithub-api
+transit-hub/backend/transithub-api-linux-amd64
+transit-hub/backend/backend/

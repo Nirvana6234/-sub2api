@@ -1363,6 +1363,38 @@ func (s *Service) GetSite(ctx context.Context, siteID string) (*Site, error) {
 	return s.cache.Get(ctx, siteID)
 }
 
+// FindSiteByBaseURL resolves a persisted site for internal event callbacks.
+// The callback carries the Sub2API site URL, not a TransitHub site ID.
+func (s *Service) FindSiteByBaseURL(ctx context.Context, rawBaseURL string) (*Site, error) {
+	target := strings.TrimRight(strings.TrimSpace(rawBaseURL), "/")
+	if target == "" {
+		return nil, newRequestError(ErrorInvalidURL, "")
+	}
+	if s.platformService != nil {
+		if normalized, err := s.platformService.NormalizeURL(target); err == nil {
+			target = normalized
+		}
+	}
+
+	sites, err := s.repository.ListSites(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range sites {
+		candidate := strings.TrimRight(strings.TrimSpace(sites[i].BaseURL), "/")
+		if s.platformService != nil {
+			if normalized, err := s.platformService.NormalizeURL(candidate); err == nil {
+				candidate = normalized
+			}
+		}
+		if strings.EqualFold(candidate, target) {
+			site := sites[i]
+			return &site, nil
+		}
+	}
+	return nil, newRequestError(ErrorNotFound, "")
+}
+
 func toResponse(site *Site) Response {
 	return Response{
 		ID:                site.ID,

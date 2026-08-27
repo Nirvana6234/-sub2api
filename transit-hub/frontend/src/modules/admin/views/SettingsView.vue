@@ -62,6 +62,17 @@ const defaultMultiplierTemplate = computed(() => t('admin.settings.sections.temp
   dailyAvgCost: '{dailyAvgCost}',
   costImpact: '{costImpact}',
 }))
+const defaultFallbackPoolTemplate = computed(() => t('admin.settings.sections.templates.fallbackPoolDefaultTemplate', {
+  siteName: '{siteName}',
+  sourceGroup: '{sourceGroup}',
+  targetGroup: '{targetGroup}',
+  accountName: '{accountName}',
+  model: '{model}',
+  createdAt: '{createdAt}',
+  actualCost: '{actualCost}',
+  requestId: '{requestId}',
+  cooldown: '{cooldown}',
+}))
 const normalizeBuiltInTemplate = (template?: string) => (template?.trim() ?? '').replace(/>\s+</g, '><')
 const legacyBalanceTemplates = new Set([
   '【余额预警】{siteName} 站点余额（CNY）已不足 {threshold} 元，当前余额为 {balance} 元。',
@@ -102,6 +113,10 @@ const reportActionSuccess = ref('')
 const reportPreview = ref('')
 const multiplierTemplate = ref(defaultMultiplierTemplate.value)
 const multiplierTemplateFormat = ref<NotificationTemplateFormat>('markdown')
+const enableFallbackPoolAlert = ref(false)
+const fallbackPoolSelectedBots = ref<string[]>([])
+const fallbackPoolTemplate = ref(defaultFallbackPoolTemplate.value)
+const fallbackPoolTemplateFormat = ref<NotificationTemplateFormat>('markdown')
 
 const normalizeTemplateFormat = (format?: string): NotificationTemplateFormat => (
   format === 'markdown' || format === 'html' ? format : 'text'
@@ -143,6 +158,28 @@ const multiplierPreviewValues = computed(() => ({
   '{weeklyCost}': t('admin.settings.templateEditor.samples.weeklyCost'),
   '{dailyAvgCost}': t('admin.settings.templateEditor.samples.dailyAvgCost'),
   '{costImpact}': t('admin.settings.templateEditor.samples.costImpact'),
+}))
+const fallbackPoolTemplateVariables = computed(() => [
+  { token: '{siteName}', label: t('admin.settings.varSiteName') },
+  { token: '{sourceGroup}', label: t('admin.settings.varSourceGroup') },
+  { token: '{targetGroup}', label: t('admin.settings.varTargetGroup') },
+  { token: '{accountName}', label: t('admin.settings.varAccountName') },
+  { token: '{model}', label: t('admin.settings.varModel') },
+  { token: '{createdAt}', label: t('admin.settings.varCreatedAt') },
+  { token: '{actualCost}', label: t('admin.settings.varActualCost') },
+  { token: '{requestId}', label: t('admin.settings.varRequestId') },
+  { token: '{cooldown}', label: t('admin.settings.varCooldown') },
+])
+const fallbackPoolPreviewValues = computed(() => ({
+  '{siteName}': t('admin.settings.templateEditor.samples.siteName'),
+  '{sourceGroup}': t('admin.settings.templateEditor.samples.sourceGroup'),
+  '{targetGroup}': t('admin.settings.templateEditor.samples.targetGroup'),
+  '{accountName}': t('admin.settings.templateEditor.samples.accountName'),
+  '{model}': t('admin.settings.templateEditor.samples.model'),
+  '{createdAt}': t('admin.settings.templateEditor.samples.createdAt'),
+  '{actualCost}': t('admin.settings.templateEditor.samples.actualCost'),
+  '{requestId}': t('admin.settings.templateEditor.samples.requestId'),
+  '{cooldown}': t('admin.settings.templateEditor.samples.cooldown'),
 }))
 // === Tab 2: Channels ===
 const activeChannelTab = ref<NotificationChannel>('dingtalk')
@@ -223,6 +260,12 @@ const applyStrategySettings = (settings: StrategySettings) => {
   const usesDefaultMultiplierTemplate = shouldUseDefaultTemplate(settings.multiplierTemplate, legacyMultiplierTemplates)
   multiplierTemplate.value = usesDefaultMultiplierTemplate ? defaultMultiplierTemplate.value : settings.multiplierTemplate
   multiplierTemplateFormat.value = usesDefaultMultiplierTemplate ? 'markdown' : normalizeTemplateFormat(settings.multiplierTemplateFormat)
+  enableFallbackPoolAlert.value = settings.enableFallbackPoolAlert ?? false
+  fallbackPoolSelectedBots.value = settings.fallbackPoolNotifyBotIds ?? []
+  fallbackPoolTemplate.value = settings.fallbackPoolTemplate?.trim() || defaultFallbackPoolTemplate.value
+  fallbackPoolTemplateFormat.value = settings.fallbackPoolTemplate?.trim()
+    ? normalizeTemplateFormat(settings.fallbackPoolTemplateFormat)
+    : 'markdown'
   enableDailyReport.value = settings.enableDailyReport ?? false
   // 后端对空值不做兜底，这里给一个合理默认，免得开关一打开就是空的推送时刻。
   dailyReportTime.value = settings.dailyReportTime || '09:00'
@@ -244,6 +287,10 @@ const currentStrategySettings = (): StrategySettings => ({
   multiplierNotifyBotIds: multiplierSelectedBots.value,
   multiplierTemplate: multiplierTemplate.value.trim(),
   multiplierTemplateFormat: multiplierTemplateFormat.value,
+  enableFallbackPoolAlert: enableFallbackPoolAlert.value,
+  fallbackPoolNotifyBotIds: fallbackPoolSelectedBots.value,
+  fallbackPoolTemplate: fallbackPoolTemplate.value.trim(),
+  fallbackPoolTemplateFormat: fallbackPoolTemplateFormat.value,
   enableDailyReport: enableDailyReport.value,
   dailyReportTime: dailyReportTime.value,
   dailyReportBotIds: dailyReportSelectedBots.value,
@@ -437,6 +484,11 @@ const toggleDailyReportBot = (botId: string) => {
   const idx = dailyReportSelectedBots.value.indexOf(botId)
   if (idx >= 0) dailyReportSelectedBots.value.splice(idx, 1)
   else dailyReportSelectedBots.value.push(botId)
+}
+const toggleFallbackPoolBot = (botId: string) => {
+  const idx = fallbackPoolSelectedBots.value.indexOf(botId)
+  if (idx >= 0) fallbackPoolSelectedBots.value.splice(idx, 1)
+  else fallbackPoolSelectedBots.value.push(botId)
 }
 
 const previewReport = async () => {
@@ -887,7 +939,51 @@ onMounted(async () => {
             </div>
           </div>
 
-          <!-- Card 4: Daily Operations Report -->
+          <!-- Card 4: Fallback Pool Usage Alert -->
+          <div class="rounded-2xl border border-border/50 bg-card shadow-sm overflow-hidden">
+            <div class="p-5 flex items-start justify-between gap-4">
+              <div class="flex items-start gap-3">
+                <div class="p-2 bg-cyan-500/10 text-cyan-500 rounded-xl shrink-0 mt-0.5">
+                  <AlertTriangle class="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 class="text-sm font-semibold text-foreground">{{ t('admin.settings.sections.thresholds.fallbackPoolUsageWarning') }}</h4>
+                  <p class="text-xs text-muted-foreground mt-0.5">{{ t('admin.settings.sections.thresholds.fallbackPoolUsageWarningHelp') }}</p>
+                </div>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer shrink-0 mt-1">
+                <input type="checkbox" v-model="enableFallbackPoolAlert" class="sr-only peer" :aria-label="t('admin.settings.sections.thresholds.fallbackPoolUsageWarning')">
+                <div class="peer h-6 w-11 rounded-full bg-surface-elevated peer-checked:bg-primary peer-focus-visible:ring-2 peer-focus-visible:ring-primary peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-background after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-border after:bg-white after:transition-transform after:content-[''] peer-checked:after:translate-x-full peer-checked:after:border-white"></div>
+              </label>
+            </div>
+            <div v-if="enableFallbackPoolAlert" class="px-5 pb-5 pt-0">
+              <div class="space-y-4 animate-in slide-in-from-top-2 fade-in duration-200 sm:pl-12">
+                <div class="grid gap-1.5">
+                  <label class="text-xs font-medium text-muted-foreground">{{ t('admin.settings.notifyBots') }} <span class="text-destructive">*</span></label>
+                  <div class="flex flex-wrap gap-2">
+                    <button v-for="bot in allBots" :key="'fallback-' + bot.id" type="button" :aria-pressed="fallbackPoolSelectedBots.includes(bot.id)" @click="toggleFallbackPoolBot(bot.id)" class="flex select-none items-center gap-2 rounded-lg border px-3 py-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" :class="fallbackPoolSelectedBots.includes(bot.id) ? 'border-primary bg-primary/10 text-primary' : 'border-border/50 bg-surface/30 hover:bg-surface/50'">
+                      <MessageSquare class="w-3.5 h-3.5" />
+                      <span class="text-sm">{{ bot.name || t('admin.settings.unnamedBot') }}</span>
+                    </button>
+                    <div v-if="!hasBots" class="text-sm text-muted-foreground italic py-1">
+                      {{ t('admin.settings.noBotsConfigured') }}
+                    </div>
+                  </div>
+                  <p v-if="fallbackPoolSelectedBots.length === 0 && hasBots" class="text-xs text-destructive mt-0.5">{{ t('admin.settings.mustSelectBot') }}</p>
+                </div>
+
+                <NotificationTemplateEditor
+                  v-model="fallbackPoolTemplate"
+                  v-model:format="fallbackPoolTemplateFormat"
+                  :variables="fallbackPoolTemplateVariables"
+                  :preview-values="fallbackPoolPreviewValues"
+                  :placeholder="t('admin.settings.sections.templates.fallbackPoolTemplatePlaceholder', { siteName: '{siteName}', sourceGroup: '{sourceGroup}', targetGroup: '{targetGroup}' })"
+                />
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 5: Daily Operations Report -->
           <div class="rounded-2xl border border-border/50 bg-card shadow-sm overflow-hidden">
             <div class="p-5 flex items-start justify-between gap-4">
               <div class="flex items-start gap-3">

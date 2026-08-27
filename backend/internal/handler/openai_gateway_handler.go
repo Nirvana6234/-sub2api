@@ -164,7 +164,7 @@ func usageRecordContext(parent context.Context, base context.Context) context.Co
 		base = context.Background()
 	}
 	if parent == nil {
-		return base
+		return service.PropagateFallbackPoolUsageContext(parent, base)
 	}
 	if clientRequestID, _ := parent.Value(ctxkey.ClientRequestID).(string); strings.TrimSpace(clientRequestID) != "" {
 		base = context.WithValue(base, ctxkey.ClientRequestID, strings.TrimSpace(clientRequestID))
@@ -172,7 +172,7 @@ func usageRecordContext(parent context.Context, base context.Context) context.Co
 	if requestID, _ := parent.Value(ctxkey.RequestID).(string); strings.TrimSpace(requestID) != "" {
 		base = context.WithValue(base, ctxkey.RequestID, strings.TrimSpace(requestID))
 	}
-	return base
+	return service.PropagateFallbackPoolUsageContext(parent, base)
 }
 
 func wrapUsageRecordTaskContext(parent context.Context, task service.UsageRecordTask) service.UsageRecordTask {
@@ -847,7 +847,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 
 		// 使用量记录通过有界 worker 池提交，避免请求热路径创建无界 goroutine。
 		cyberBlocked := service.GetOpsCyberPolicy(c) != nil
-		h.submitOpenAIUsageRecordTask(c.Request.Context(), result, func(ctx context.Context) {
+		h.submitOpenAIUsageRecordTask(service.ContextWithSelectionProfitGate(c.Request.Context(), selection), result, func(ctx context.Context) {
 			if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 				Result:             result,
 				APIKey:             apiKey,
@@ -1450,7 +1450,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		sessionID := service.ExtractClientSessionID(c)
 
 		cyberBlocked := service.GetOpsCyberPolicy(c) != nil
-		h.submitOpenAIUsageRecordTask(c.Request.Context(), result, func(ctx context.Context) {
+		h.submitOpenAIUsageRecordTask(service.ContextWithSelectionProfitGate(c.Request.Context(), selection), result, func(ctx context.Context) {
 			if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 				Result:             result,
 				APIKey:             apiKey,

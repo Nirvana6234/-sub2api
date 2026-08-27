@@ -2425,7 +2425,15 @@ export default {
           impactDays: '7',
           weeklyCost: '¥700.00',
           dailyAvgCost: '¥100.00',
-          costImpact: '+¥84.00'
+          costImpact: '+¥84.00',
+          sourceGroup: 'Primary group',
+          targetGroup: 'Plus fallback pool',
+          accountName: 'Example account',
+          model: 'plus-0.135x-0618',
+          createdAt: '2026-08-27 12:00:00',
+          actualCost: '0.000471',
+          requestId: 'req_example_123',
+          cooldown: '3 hours'
         }
       },
       balanceTemplateVars: '(Variables: {siteName}, {balance}, {threshold})',
@@ -2446,6 +2454,14 @@ export default {
       varWeeklyCost: 'Recent cost of this channel',
       varDailyAvgCost: 'Daily average cost',
       varCostImpact: 'Estimated cost impact',
+      varSourceGroup: 'Source group',
+      varTargetGroup: 'Fallback pool',
+      varAccountName: 'Account name',
+      varModel: 'Model name',
+      varCreatedAt: 'Event time',
+      varActualCost: 'Actual cost',
+      varRequestId: 'Request ID',
+      varCooldown: 'Deduplication cooldown',
       pricingAmount: 'Adjustment Amount',
       botNameLabel: 'Bot Name',
       botNameDingtalkPlaceholder: 'e.g., DingTalk Main',
@@ -2483,7 +2499,9 @@ export default {
           balanceWarning: 'Balance Warning',
           balanceWarningHelp: 'Send an alert when an upstream site\'s balance (converted to CNY via recharge rate) falls below the configured amount.',
           multiplierChangeWarning: 'Multiplier & Availability Alert',
-          multiplierChangeWarningHelp: 'Send notifications when a mapped group multiplier changes or the scheduler automatically moves an upstream account to last priority.'
+          multiplierChangeWarningHelp: 'Send notifications when a mapped group multiplier changes or the scheduler automatically moves an upstream account to last priority.',
+          fallbackPoolUsageWarning: 'Fallback Pool Usage Alert',
+          fallbackPoolUsageWarningHelp: 'Notify through the selected bots whenever a request enters its fallback pool. It does not depend on usage-query permission, even when both account pools have no available account.'
         },
         dailyReport: {
           title: 'Daily Operations Report',
@@ -2544,8 +2562,10 @@ export default {
         templates: {
           balanceDefaultTemplate: '🔴 **Balance warning**\n\n🏷️ **Site:** {siteName}\n💰 **Current balance:** CNY {balance}\n⚠️ **Warning threshold:** CNY {threshold}\n\nPlease review and recharge the upstream account to avoid service interruption.',
           multiplierDefaultTemplate: '🟠 **Multiplier change warning**\n\n🏷️ **Site:** {siteName}\n📦 **Upstream group:** {groupName}\n📊 **Rate:** {oldRate}x → **{newRate}x** ({changeDirection} {changePercent})\n\n🔗 **Our groups:** {ownGroups}\n📈 **Cost over the last {days} days:** {weeklyCost} (daily avg {dailyAvgCost})\n💸 **Weekly cost change at the same volume:** {costImpact}\n\n🔎 Review the cost change and confirm whether downstream pricing needs adjustment.',
+          fallbackPoolDefaultTemplate: '⚠️ **Fallback pool used**\n\n🏷️ **Site:** {siteName}\n➡️ **Source group:** {sourceGroup}\n🛟 **Fallback pool:** {targetGroup}\n👤 **Account:** {accountName}\n🤖 **Model:** {model}\n🕒 **Time:** {createdAt}\n💵 **Actual cost:** {actualCost}\n🧾 **Request:** {requestId}\n\nNotify only once per combination during the {cooldown} cooldown.',
           balanceTemplatePlaceholder: 'e.g., 🔴 {siteName} has CNY {balance} remaining, below CNY {threshold}.',
-          multiplierTemplatePlaceholder: 'e.g., 🟠 {siteName} / {groupName}: {oldRate}x → {newRate}x.'
+          multiplierTemplatePlaceholder: 'e.g., 🟠 {siteName} / {groupName}: {oldRate}x → {newRate}x.',
+          fallbackPoolTemplatePlaceholder: 'e.g., ⚠️ {siteName} entered {targetGroup} from {sourceGroup}.'
         }
       },
       errors: {

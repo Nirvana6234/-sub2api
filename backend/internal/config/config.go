@@ -104,6 +104,14 @@ type Config struct {
 	BatchImage              BatchImageConfig              `mapstructure:"batch_image"`
 	ImageStorage            ImageStorageConfig            `mapstructure:"image_storage"`
 	Plugins                 PluginConfig                  `mapstructure:"plugins"`
+	FallbackPoolAlert       FallbackPoolAlertConfig       `mapstructure:"fallback_pool_alert"`
+}
+
+type FallbackPoolAlertConfig struct {
+	URL            string `mapstructure:"url"`
+	Secret         string `mapstructure:"secret"`
+	SiteBaseURL    string `mapstructure:"site_base_url"`
+	TimeoutSeconds int    `mapstructure:"timeout_seconds"`
 }
 
 // PluginConfig 控制管理员手动上传的本地进程插件。
@@ -2616,6 +2624,10 @@ func setEnvReachableDefaults() {
 	viper.SetDefault("gateway.session_idle_timeout_minutes", 0)
 	viper.SetDefault("gateway.user_message_queue.mode", "")
 	viper.SetDefault("update.proxy_url", "")
+	viper.SetDefault("fallback_pool_alert.url", "")
+	viper.SetDefault("fallback_pool_alert.secret", "")
+	viper.SetDefault("fallback_pool_alert.site_base_url", "")
+	viper.SetDefault("fallback_pool_alert.timeout_seconds", 3)
 
 	// sticky_escape_enabled is the one exception to the zero-value rule: its
 	// effective default is true, applied post-unmarshal via a viper.IsSet guard.

@@ -2427,7 +2427,15 @@ export default {
           impactDays: '7',
           weeklyCost: '¥700.00',
           dailyAvgCost: '¥100.00',
-          costImpact: '+¥84.00'
+          costImpact: '+¥84.00',
+          sourceGroup: '主力分组',
+          targetGroup: 'Plus 兜底池',
+          accountName: '示例账号',
+          model: 'plus-0.135x-0618',
+          createdAt: '2026-08-27 12:00:00',
+          actualCost: '0.000471',
+          requestId: 'req_example_123',
+          cooldown: '3 小时'
         }
       },
       balanceTemplateVars: '(支持变量: {siteName}, {balance}, {threshold})',
@@ -2448,6 +2456,14 @@ export default {
       varWeeklyCost: '该通道近期成本',
       varDailyAvgCost: '日均成本',
       varCostImpact: '成本影响估算',
+      varSourceGroup: '原分组',
+      varTargetGroup: '兜底池',
+      varAccountName: '账号名称',
+      varModel: '模型名称',
+      varCreatedAt: '发生时间',
+      varActualCost: '实际扣费',
+      varRequestId: '请求 ID',
+      varCooldown: '去重冷却时间',
       pricingAmount: '调价幅度',
       botNameLabel: '机器人名称标识',
       botNameDingtalkPlaceholder: '例如：钉钉主群',
@@ -2485,7 +2501,9 @@ export default {
           balanceWarning: '余额预警',
           balanceWarningHelp: '当某个上游站点的余额（按充值倍率折合人民币）低于设定金额时，通过机器人发送预警通知。',
           multiplierChangeWarning: '倍率与可用性预警',
-          multiplierChangeWarningHelp: '当监控的对接分组倍率发生变化，或调度器将上游账号自动置底时，通过机器人发送通知。'
+          multiplierChangeWarningHelp: '当监控的对接分组倍率发生变化，或调度器将上游账号自动置底时，通过机器人发送通知。',
+          fallbackPoolUsageWarning: '兜底池使用预警',
+          fallbackPoolUsageWarningHelp: '只要请求从原分组切入对应兜底池，就通过机器人发送通知；即使原账号池和兜底池都没有可用账号，也不依赖 usage 查询权限。'
         },
         dailyReport: {
           title: '每日运营报告',
@@ -2546,8 +2564,10 @@ export default {
         templates: {
           balanceDefaultTemplate: '🔴 **余额预警**\n\n🏷️ **站点：** {siteName}\n💰 **当前余额：** ¥{balance}\n⚠️ **预警阈值：** ¥{threshold}\n\n请及时检查并充值，避免服务中断。',
           multiplierDefaultTemplate: '🟠 **倍率变更预警**\n\n🏷️ **站点：** {siteName}\n📦 **上游分组：** {groupName}\n📊 **倍率：** {oldRate}x → **{newRate}x**（{changeDirection} {changePercent}）\n\n🔗 **我方分组：** {ownGroups}\n📈 **近 {days} 天该通道成本：** {weeklyCost}（日均 {dailyAvgCost}）\n💸 **按同等用量估算，每周成本变化：** {costImpact}\n\n🔎 请确认成本变化，并检查下游定价策略。',
+          fallbackPoolDefaultTemplate: '⚠️ **兜底分组已被使用**\n\n🏷️ **站点：** {siteName}\n➡️ **原分组：** {sourceGroup}\n🛟 **兜底池：** {targetGroup}\n👤 **账号：** {accountName}\n🤖 **模型：** {model}\n🕒 **时间：** {createdAt}\n💵 **实际扣费：** ¥{actualCost}\n🧾 **请求：** {requestId}\n\n同一组合 {cooldown} 内只提醒一次。',
           balanceTemplatePlaceholder: '例如：🔴 {siteName} 当前余额 ¥{balance}，已低于 ¥{threshold}。',
-          multiplierTemplatePlaceholder: '例如：🟠 {siteName} / {groupName}：{oldRate}x → {newRate}x。'
+          multiplierTemplatePlaceholder: '例如：🟠 {siteName} / {groupName}：{oldRate}x → {newRate}x。',
+          fallbackPoolTemplatePlaceholder: '例如：⚠️ {siteName} 从 {sourceGroup} 切入 {targetGroup}。'
         }
       },
       errors: {

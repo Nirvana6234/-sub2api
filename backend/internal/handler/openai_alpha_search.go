@@ -200,7 +200,7 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 		if err == nil {
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, requestedModel, false, result), true, nil)
 			if result != nil {
-				h.recordAlphaSearchUsage(c, apiKey, account, subscription, channelMapping, requestedModel, body, result, subject.UserID)
+				h.recordAlphaSearchUsage(c, apiKey, selection, subscription, channelMapping, requestedModel, body, result, subject.UserID)
 			}
 			return
 		}
@@ -289,7 +289,7 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 func (h *OpenAIGatewayHandler) recordAlphaSearchUsage(
 	c *gin.Context,
 	apiKey *service.APIKey,
-	account *service.Account,
+	selection *service.AccountSelectionResult,
 	subscription *service.UserSubscription,
 	channelMapping service.ChannelMappingResult,
 	requestedModel string,
@@ -297,6 +297,10 @@ func (h *OpenAIGatewayHandler) recordAlphaSearchUsage(
 	result *service.OpenAIForwardResult,
 	userID int64,
 ) {
+	if selection == nil || selection.Account == nil {
+		return
+	}
+	account := selection.Account
 	userAgent := c.GetHeader("User-Agent")
 	clientIP := ip.GetClientIP(c)
 	sessionID := service.ExtractClientSessionID(c)
@@ -305,7 +309,7 @@ func (h *OpenAIGatewayHandler) recordAlphaSearchUsage(
 	upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
 	quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 
-	h.submitMandatoryUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
+	h.submitMandatoryUsageRecordTask(service.ContextWithSelectionProfitGate(c.Request.Context(), selection), func(ctx context.Context) {
 		if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 			Result:             result,
 			APIKey:             apiKey,

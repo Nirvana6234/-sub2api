@@ -338,7 +338,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 
 		quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 		sessionID := service.ExtractClientSessionID(c)
-		h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
+		h.submitUsageRecordTask(service.ContextWithSelectionProfitGate(c.Request.Context(), selection), func(ctx context.Context) {
 			if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 				Result:             result,
 				QuotaPlatform:      quotaPlatform,

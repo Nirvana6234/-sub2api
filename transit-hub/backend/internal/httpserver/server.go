@@ -154,6 +154,7 @@ func New(cfg config.Config, db *pgxpool.Pool, redisClient *redis.Client) *Server
 	lottery.RegisterRoutes(server.mux, lotteryService)
 
 	settingsService := settings.NewService(http.DefaultClient, settings.NewRepository(db))
+	registerFallbackPoolAlertWebhook(server.mux, upstreamService, settingsService, cfg.FallbackAlertSecret)
 	settingsService.SetAdminAccountResolver(adminAccountsService)
 	if err := settingsService.EnsureSchema(context.Background()); err != nil {
 		panic(err)

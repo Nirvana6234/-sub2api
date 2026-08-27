@@ -458,10 +458,10 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		if endpoint == service.GrokMediaEndpointVideoStatus || endpoint == service.GrokMediaEndpointVideoContent {
 			taskID := strings.TrimSpace(requestID)
 			if billResult := prepareGrokVideoCompletionBilling(requestCtx, h, reqLog, apiKey, subject, taskID, result); billResult != nil {
-				recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, billResult, billResult.Model, body, taskID)
+				recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, selection, billResult, billResult.Model, body, taskID)
 			}
 		} else if shouldRecordGrokMediaUsage(endpoint, requestModel, result) {
-			recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, result, requestModel, body, requestID)
+			recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, selection, result, requestModel, body, requestID)
 		}
 		reqLog.Debug("grok_media.request_completed",
 			zap.Int64("account_id", account.ID),
@@ -652,12 +652,16 @@ func recordGrokMediaUsage(
 	apiKey *service.APIKey,
 	subject middleware2.AuthSubject,
 	subscription *service.UserSubscription,
-	account *service.Account,
+	selection *service.AccountSelectionResult,
 	result *service.OpenAIForwardResult,
 	requestModel string,
 	body []byte,
 	requestID string,
 ) {
+	if selection == nil || selection.Account == nil {
+		return
+	}
+	account := selection.Account
 	userAgent := c.GetHeader("User-Agent")
 	clientIP := ip.GetClientIP(c)
 	sessionID := service.ExtractClientSessionID(c)
@@ -687,7 +691,7 @@ func recordGrokMediaUsage(
 			payloadForHash = []byte(videoTaskID)
 		}
 	}
-	h.submitOpenAIUsageRecordTask(c.Request.Context(), result, func(ctx context.Context) {
+	h.submitOpenAIUsageRecordTask(service.ContextWithSelectionProfitGate(c.Request.Context(), selection), result, func(ctx context.Context) {
 		if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 			Result:             result,
 			APIKey:             apiKey,

@@ -135,6 +135,33 @@ func TestOpenAIFallbackPoolSourcingMarker(t *testing.T) {
 	}
 }
 
+func TestFallbackUsageTraceSurvivesDetachedUsageWorker(t *testing.T) {
+	state := fallbackGroupState{
+		originGroupID:   10,
+		originGroupName: "primary",
+		targetGroupID:   20,
+		targetGroupName: "pool",
+	}
+	selection := attachSelectionProfitGate(
+		withOpenAIFallbackGroupState(context.Background(), state),
+		&AccountSelectionResult{},
+	)
+	if selection.fallbackPoolUsageTrace == nil {
+		t.Fatal("selection should carry fallback usage trace")
+	}
+
+	parent := ContextWithSelectionProfitGate(context.Background(), selection)
+	worker := PropagateFallbackPoolUsageContext(parent, context.Background())
+	trace, ok := fallbackPoolUsageTraceFromContext(worker)
+	if !ok {
+		t.Fatal("detached worker context should retain fallback usage trace")
+	}
+	if trace.SourceGroupID != 10 || trace.TargetGroupID != 20 ||
+		trace.SourceGroupName != "primary" || trace.TargetGroupName != "pool" {
+		t.Fatalf("unexpected propagated fallback trace: %+v", trace)
+	}
+}
+
 // 防递归：兜底自己失败时不能再兜底自己，否则调度会无限套娃。
 // 这里验证标记是幂等的 —— 已在兜底模式下再标记一次仍是兜底模式，
 // 调度侧据此的 !isOpenAIFallbackPoolSourcing 判断才能可靠地终止递归。

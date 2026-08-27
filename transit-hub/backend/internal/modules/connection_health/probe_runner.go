@@ -203,12 +203,12 @@ func buildProbeRequest(ctx context.Context, req ProbeRequest, prompt string, max
 	switch {
 	case isOpenAIOAuthProbe(platform, accountType):
 		endpoint = buildOpenAIOAuthResponsesEndpoint(req.BaseURL)
-		payload = buildResponsesProbePayload(model, prompt, true)
+		payload = buildResponsesProbePayload(model, prompt, maxTokens, true)
 		headers["Accept"] = "text/event-stream"
 		addCodexHeaders(headers)
 	case isOpenAIAPIKeyProbe(platform, accountType) && shouldUseResponsesAPI(req.Extra):
 		endpoint = buildOpenAIEndpointURL(defaultStringValue(req.BaseURL, "https://api.openai.com"), "/v1/responses")
-		payload = buildResponsesProbePayload(model, prompt, false)
+		payload = buildResponsesProbePayload(model, prompt, maxTokens, false)
 		headers["Accept"] = "text/event-stream"
 		addCodexHeaders(headers)
 		headers["X-Codex-Window-ID"] = fmt.Sprintf("probe-%d", time.Now().UnixNano())
@@ -231,9 +231,10 @@ func buildProbeRequest(ctx context.Context, req ProbeRequest, prompt string, max
 	return httpReq, nil
 }
 
-func buildResponsesProbePayload(model string, prompt string, oauth bool) map[string]any {
+func buildResponsesProbePayload(model string, prompt string, maxTokens int, oauth bool) map[string]any {
 	payload := map[string]any{
-		"model": model,
+		"model":             model,
+		"max_output_tokens": maxTokens,
 		"input": []map[string]any{{
 			"role": "user",
 			"content": []map[string]any{{

@@ -23,14 +23,18 @@ func checkFallbackPoolUsageAlerts(ctx context.Context, svc *settings.Service, pl
 	if session.Platform != upstream.PlatformSub2API {
 		return
 	}
-	if !strategy.EnableMultiplierAlert || len(strategy.MultiplierNotifyBotIDs) == 0 {
+	if !strategy.EnableFallbackPoolAlert || len(strategy.FallbackPoolNotifyBotIDs) == 0 {
 		return
 	}
 	now := time.Now()
 	events, err := platform.FetchSub2APIFallbackPoolUsageEvents(session, now.Add(-fallbackPoolUsageLookback), now)
 	if err != nil {
 		log.Printf("[alert] 读取兜底池使用记录失败 user_id=%s admin_account_id=%s site=%s err=%v", userID, adminAccountID, siteName, err)
-		return
+		// Fetch may have collected events from earlier pages before a later
+		// page failed. Process those events instead of discarding them.
+		if len(events) == 0 {
+			return
+		}
 	}
 	seen := make(map[string]struct{}, len(events))
 	for _, event := range events {
@@ -53,13 +57,13 @@ func checkFallbackPoolUsageAlerts(ctx context.Context, svc *settings.Service, pl
 		if !claimed {
 			continue
 		}
-		msg := formatFallbackPoolUsageAlert(siteName, event, fallbackPoolAlertCooldown)
+		msg := formatFallbackPoolUsageAlert(siteName, event, fallbackPoolAlertCooldown, strategy.FallbackPoolTemplate)
 		log.Printf("[alert] 兜底池使用触发提醒 site=%s source_group=%s target_group=%s account=%s model=%s", siteName, fallbackGroupLabel(event.SourceGroupName, event.SourceGroupID), fallbackGroupLabel(event.TargetGroupName, event.TargetGroupID), event.AccountName, event.Model)
-		svc.SendFormattedToBotsForWorkspace(ctx, userID, adminAccountID, strategy.MultiplierNotifyBotIDs, msg, strategy.MultiplierTemplateFormat)
+		svc.SendFormattedToBotsForWorkspace(ctx, userID, adminAccountID, strategy.FallbackPoolNotifyBotIDs, msg, strategy.FallbackPoolTemplateFormat)
 	}
 }
 
-func formatFallbackPoolUsageAlert(siteName string, event upstream.FallbackPoolUsageEvent, cooldown time.Duration) string {
+func formatFallbackPoolUsageAlert(siteName string, event upstream.FallbackPoolUsageEvent, cooldown time.Duration, customTemplate string) string {
 	account := strings.TrimSpace(event.AccountName)
 	if account == "" {
 		account = strings.TrimSpace(event.AccountID)
@@ -75,17 +79,27 @@ func formatFallbackPoolUsageAlert(siteName string, event upstream.FallbackPoolUs
 	if requestID == "" {
 		requestID = "-"
 	}
-	return fmt.Sprintf("⚠️ 兜底分组已被使用\n🏷️ 站点：%s\n➡️ 原分组：%s\n🛟 兜底池：%s\n👤 账号：%s\n🤖 模型：%s\n🕒 时间：%s\n💵 实际扣费：%.6f\n🧾 请求：%s\n\n同一站点、同一原分组→兜底池组合在 %s 内只提醒一次。",
-		fallbackNonEmpty(siteName, "未知站点"),
-		fallbackGroupLabel(event.SourceGroupName, event.SourceGroupID),
-		fallbackGroupLabel(event.TargetGroupName, event.TargetGroupID),
-		account,
-		model,
-		formatFallbackEventTime(event.CreatedAt),
-		event.ActualCost,
-		requestID,
-		formatFallbackCooldown(cooldown),
-	)
+	site := fallbackNonEmpty(siteName, "未知站点")
+	sourceGroup := fallbackGroupLabel(event.SourceGroupName, event.SourceGroupID)
+	targetGroup := fallbackGroupLabel(event.TargetGroupName, event.TargetGroupID)
+	createdAt := formatFallbackEventTime(event.CreatedAt)
+	actualCost := fmt.Sprintf("%.6f", event.ActualCost)
+	cooldownText := formatFallbackCooldown(cooldown)
+	tpl := strings.TrimSpace(customTemplate)
+	if tpl == "" {
+		tpl = "⚠️ 兜底分组已被使用\n🏷️ 站点：{siteName}\n➡️ 原分组：{sourceGroup}\n🛟 兜底池：{targetGroup}\n👤 账号：{accountName}\n🤖 模型：{model}\n🕒 时间：{createdAt}\n💵 实际扣费：{actualCost}\n🧾 请求：{requestId}\n\n同一站点、同一原分组→兜底池组合在 {cooldown} 内只提醒一次。"
+	}
+	return strings.NewReplacer(
+		"{siteName}", site,
+		"{sourceGroup}", sourceGroup,
+		"{targetGroup}", targetGroup,
+		"{accountName}", account,
+		"{model}", model,
+		"{createdAt}", createdAt,
+		"{actualCost}", actualCost,
+		"{requestId}", requestID,
+		"{cooldown}", cooldownText,
+	).Replace(tpl)
 }
 
 func fallbackGroupLabel(name, id string) string {

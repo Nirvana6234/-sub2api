@@ -991,6 +991,7 @@ func (s *GatewayService) recordUsageWithResolvedMultiplier(ctx context.Context, 
 
 	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple && !isCrossContributorSharedUsage(account, user) {
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
+		notifyFallbackPoolUsage(ctx, s.cfg, usageLog, account)
 		logger.LegacyPrintf("service.gateway", "[SIMPLE MODE] Usage recorded (not billed): user=%d, tokens=%d", usageLog.UserID, usageLog.TotalTokens())
 		s.deferredService.ScheduleLastUsedUpdate(account.ID)
 		return nil
@@ -1027,6 +1028,7 @@ func (s *GatewayService) recordUsageWithResolvedMultiplier(ctx context.Context, 
 		return billingErr
 	}
 	writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
+	notifyFallbackPoolUsage(ctx, s.cfg, usageLog, account)
 
 	return nil
 }
@@ -1361,7 +1363,7 @@ func (s *GatewayService) buildRecordUsageLog(
 		SubscriptionID:        optionalSubscriptionID(subscription),
 		CreatedAt:             time.Now(),
 	}
-	trace, traceOK := gatewayFallbackPoolUsageTraceFromContext(ctx)
+	trace, traceOK := fallbackPoolUsageTraceFromContext(ctx)
 	applyFallbackPoolUsageTrace(usageLog, trace, traceOK)
 	if result.ImageCount > 0 && (cost == nil || cost.BillingMode != string(BillingModeToken)) {
 		usageLog.RateMultiplier = imageMultiplier

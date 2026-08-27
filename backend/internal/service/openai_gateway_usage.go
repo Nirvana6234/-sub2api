@@ -420,7 +420,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if apiKey.GroupID != nil {
 		usageLog.GroupID = apiKey.GroupID
 	}
-	trace, traceOK := openAIFallbackPoolUsageTraceFromContext(ctx)
+	trace, traceOK := fallbackPoolUsageTraceFromContext(ctx)
 	applyFallbackPoolUsageTrace(usageLog, trace, traceOK)
 	if subscription != nil {
 		usageLog.SubscriptionID = &subscription.ID
@@ -441,6 +441,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 
 	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
+		notifyFallbackPoolUsage(ctx, s.cfg, usageLog, account)
 		logger.LegacyPrintf("service.openai_gateway", "[SIMPLE MODE] Usage recorded (not billed): user=%d, tokens=%d", usageLog.UserID, usageLog.TotalTokens())
 		s.deferredService.ScheduleLastUsedUpdate(account.ID)
 		return nil
@@ -476,6 +477,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		return billingErr
 	}
 	writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
+	notifyFallbackPoolUsage(ctx, s.cfg, usageLog, account)
 
 	return nil
 }

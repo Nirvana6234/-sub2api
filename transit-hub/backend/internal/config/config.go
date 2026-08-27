@@ -51,6 +51,9 @@ type Config struct {
 	// 应用启动时是可选项，缺失不影响启动；这里只原样读取环境变量原值，不做任何解析或校验。
 	SMTPEncryptionKey string
 
+	// Sub2API 兜底池事件回调共享密钥。为空时不启用回调接口。
+	FallbackAlertSecret string
+
 	// GPT-5.6 纯度检测旁路服务地址，形如 http://gpt56-detector:8760。
 	// 留空表示没部署检测器：purity_check 的接口一律返回「检测器不可用」，
 	// 也不启动后台 worker。这个旁路服务没有业务鉴权，只能填容器内网地址。
@@ -102,7 +105,8 @@ func Load() Config {
 
 		TicketUploadDir: envOrDefault("TICKET_UPLOAD_DIR", "data/ticket-uploads"),
 
-		SMTPEncryptionKey: os.Getenv("SMTP_ENCRYPTION_KEY"),
+		SMTPEncryptionKey:   os.Getenv("SMTP_ENCRYPTION_KEY"),
+		FallbackAlertSecret: strings.TrimSpace(os.Getenv("SUB2API_FALLBACK_ALERT_SECRET")),
 
 		PurityCheckDetectorURL:     os.Getenv("PURITY_CHECK_DETECTOR_URL"),
 		PurityCheckDetectorRunsDir: os.Getenv("PURITY_CHECK_DETECTOR_RUNS_DIR"),
