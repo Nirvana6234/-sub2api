@@ -33,6 +33,12 @@ on:
         type: boolean
         default: false
 
+# 只给创建 Release 所需的写权限，其余保持只读。
+# 不写这一块时用的是仓库的默认 token 权限：若仓库设为只读，最后一步会以 403
+# 失败 —— 而那是在构建、签名、打包全部跑完之后，最贵的失败位置。
+permissions:
+  contents: write
+
 env:
   # 由 cargo 从 crates.io 安装并校验，版本钉死。
   RCODESIGN_VERSION: '0.29.0'
