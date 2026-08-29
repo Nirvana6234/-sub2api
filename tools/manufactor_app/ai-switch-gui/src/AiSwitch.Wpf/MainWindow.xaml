@@ -1,0 +1,379 @@
+<Window x:Class="LanAi.Workspace.Wpf.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:LanAi.Workspace.Wpf.Controls"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        Title="共飞AI工作台"
+        Width="1420"
+        Height="900"
+        MinWidth="1160"
+        MinHeight="720"
+        WindowStartupLocation="CenterScreen"
+        WindowStyle="None"
+        ResizeMode="CanResize"
+        Background="{StaticResource CanvasBrush}"
+        FontFamily="Segoe UI Variable Text, Microsoft YaHei UI"
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True">
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="0"
+                            ResizeBorderThickness="7"
+                             CornerRadius="18"
+                            GlassFrameThickness="0"
+                            UseAeroCaptionButtons="False" />
+    </shell:WindowChrome.WindowChrome>
+
+    <Border Background="{StaticResource CanvasBrush}"
+            BorderBrush="{StaticResource HairlineBrush}"
+            BorderThickness="1"
+            CornerRadius="18"
+            ClipToBounds="True">
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="232" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0"
+                    Background="{StaticResource SidebarBrush}"
+                    BorderBrush="{StaticResource HairlineBrush}"
+                    BorderThickness="0,0,1,0">
+                <Grid Margin="18,20,16,16">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <Grid Margin="5,3,3,24">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="44" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <Image Width="38"
+                               Height="38"
+                               Source="Assets/gongfei-plane.png"
+                               Stretch="Uniform" />
+
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="12,0,0,0">
+                            <TextBlock Text="共飞AI工作台"
+                                       FontSize="15.5"
+                                       FontWeight="SemiBold"
+                                       Foreground="{StaticResource PrimaryTextBrush}" />
+                        </StackPanel>
+                    </Grid>
+
+                    <TextBlock Grid.Row="1"
+                               Text="工作区"
+                               Margin="10,0,0,10"
+                               Style="{StaticResource EyebrowTextStyle}" />
+
+                    <ItemsControl Grid.Row="2" ItemsSource="{Binding NavigationItems}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Button Style="{StaticResource NavigationButtonStyle}"
+                                        Command="{Binding DataContext.NavigateCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                        CommandParameter="{Binding}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="34" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <controls:AppIcon Kind="{Binding IconKey}"
+                                                          Width="15"
+                                                          Height="15"
+                                                          Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                                          HorizontalAlignment="Center"
+                                                          VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="1"
+                                                   Text="{Binding Label}"
+                                                   Margin="9,0,0,0"
+                                                   VerticalAlignment="Center"
+                                                   FontSize="14"
+                                                   FontWeight="SemiBold" />
+                                    </Grid>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <Button Grid.Row="2"
+                            Margin="2,0,2,14"
+                            Padding="10,9"
+                            VerticalAlignment="Bottom"
+                            Command="{Binding StartCodexInjectionCommand}"
+                            IsEnabled="{Binding CanStartCodexInjection}"
+                            Cursor="Hand"
+                            HorizontalContentAlignment="Stretch"
+                            ToolTip="连接官方 Codex 客户端，启用共飞状态提示和额度用尽自动切换">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="CodexInjectionSurface"
+                                        Background="#FFF7F7F9"
+                                        BorderBrush="{StaticResource HairlineBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="13"
+                                        Padding="{TemplateBinding Padding}">
+                                    <ContentPresenter />
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="CodexInjectionSurface"
+                                                Property="Background"
+                                                Value="{StaticResource AccentSoftBrush}" />
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="34" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <controls:AppIcon Kind="Play"
+                                              Width="14"
+                                              Height="14"
+                                              Foreground="{StaticResource AccentBrush}"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" />
+                            <StackPanel Grid.Column="1" Margin="9,0,0,0" VerticalAlignment="Center">
+                                <TextBlock Text="Codex 注入"
+                                           FontSize="11.5"
+                                           FontWeight="SemiBold"
+                                           TextTrimming="CharacterEllipsis"
+                                           Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="{Binding CodexInjectionStatusLabel}"
+                                           Margin="0,2,0,0"
+                                           FontSize="10.5"
+                                           TextTrimming="CharacterEllipsis"
+                                           Foreground="{StaticResource SecondaryTextBrush}" />
+                            </StackPanel>
+                        </Grid>
+                    </Button>
+
+                    <Button Grid.Row="3"
+                            Margin="2,18,2,0"
+                            Padding="10,9"
+                            Command="{Binding OpenIdentityCommand}"
+                            Cursor="Hand"
+                            HorizontalContentAlignment="Stretch"
+                            ToolTip="查看账号信息或登录">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="IdentityBadgeSurface"
+                                        Background="#BFFFFFFF"
+                                        BorderBrush="{StaticResource HairlineBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="13"
+                                        Padding="{TemplateBinding Padding}">
+                                    <ContentPresenter />
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="IdentityBadgeSurface"
+                                                Property="Background"
+                                                Value="{StaticResource AccentSoftBrush}" />
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="38" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid>
+                                <Ellipse Width="34" Height="34" Fill="{StaticResource AccentBrush}" />
+                                <TextBlock Text="{Binding IdentityInitial}"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"
+                                           FontSize="14"
+                                           FontWeight="SemiBold"
+                                           Foreground="White" />
+                            </Grid>
+                            <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding IdentityDisplayName}"
+                                           FontSize="11.5"
+                                           FontWeight="SemiBold"
+                                           TextTrimming="CharacterEllipsis"
+                                           Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="{Binding IdentityStatusLabel}"
+                                           Margin="0,2,0,0"
+                                           FontSize="10.5"
+                                           TextTrimming="CharacterEllipsis"
+                                           Foreground="{StaticResource SecondaryTextBrush}" />
+                            </StackPanel>
+                        </Grid>
+                    </Button>
+                </Grid>
+            </Border>
+
+            <Grid Grid.Column="1">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="56" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <Border Grid.Row="0"
+                        Background="#FF1D1D1F"
+                        BorderBrush="#FF2C2C2E"
+                        BorderThickness="0,0,0,1"
+                        MouseLeftButtonDown="TitleBar_OnMouseLeftButtonDown">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                    <StackPanel Orientation="Horizontal" Margin="28,0,0,0" VerticalAlignment="Center">
+                        <Border Padding="10,6"
+                                Background="#1AFFFFFF"
+                                BorderBrush="#2EFFFFFF"
+                                BorderThickness="1"
+                                CornerRadius="10">
+                            <StackPanel Orientation="Horizontal">
+                                <Ellipse Width="7" Height="7" Fill="{StaticResource SuccessBrush}" VerticalAlignment="Center" />
+                                <TextBlock Text="{Binding WorkspaceStatus}"
+                                           Margin="8,0,0,0"
+                                           FontSize="12"
+                                           FontWeight="SemiBold"
+                                           Foreground="#E6FFFFFF" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="0,0,10,0" VerticalAlignment="Center">
+                        <Button Style="{StaticResource CaptionButtonStyle}" Foreground="#D1D1D6" Click="Minimize_OnClick" ToolTip="最小化">
+                            <controls:AppIcon Kind="Minimize" Width="10" Height="10" />
+                        </Button>
+                        <Button Style="{StaticResource CaptionButtonStyle}" Foreground="#D1D1D6" Click="Maximize_OnClick" ToolTip="最大化">
+                            <controls:AppIcon Kind="Maximize" Width="10" Height="10" />
+                        </Button>
+                        <Button Style="{StaticResource CloseCaptionButtonStyle}" Foreground="#D1D1D6" Click="Close_OnClick" ToolTip="关闭">
+                            <controls:AppIcon Kind="Close" Width="10" Height="10" />
+                        </Button>
+                    </StackPanel>
+                    </Grid>
+                </Border>
+
+                <ContentControl Grid.Row="1"
+                                Margin="26,20,26,28"
+                                Content="{Binding CurrentPage}" />
+            </Grid>
+
+            <!-- Sign-in card raised from the sidebar identity badge. The workspace
+                 has no standalone dialog window, so it is an in-window overlay. -->
+            <Border Grid.ColumnSpan="2"
+                    Background="#99000000"
+                    Visibility="{Binding SignInPrompt.IsVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <Border Width="420"
+                        Padding="26"
+                        VerticalAlignment="Center"
+                        HorizontalAlignment="Center"
+                        Background="{StaticResource CardBrush}"
+                        BorderBrush="{StaticResource HairlineBrush}"
+                        BorderThickness="1"
+                        CornerRadius="16">
+                    <StackPanel>
+                        <TextBlock Text="登录账号"
+                                   FontSize="16"
+                                   FontWeight="SemiBold"
+                                   Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock Margin="0,8,0,0"
+                                   Text="登录后可查看账号信息与余额。密码只用于本次登录，不会保存。"
+                                   FontSize="12"
+                                   TextWrapping="Wrap"
+                                   Foreground="{StaticResource SecondaryTextBrush}" />
+
+                        <TextBlock Margin="0,18,0,0" Text="账号" FontSize="12"
+                                   Foreground="{StaticResource SecondaryTextBrush}" />
+                        <TextBox Margin="0,6,0,0"
+                                 Padding="10,7"
+                                 Text="{Binding SignInPrompt.Email, UpdateSourceTrigger=PropertyChanged}" />
+
+                        <TextBlock Margin="0,14,0,0" Text="密码" FontSize="12"
+                                   Foreground="{StaticResource SecondaryTextBrush}" />
+                        <PasswordBox x:Name="SignInPasswordBox"
+                                     Margin="0,6,0,0"
+                                     Padding="10,7"
+                                     KeyDown="SignInPasswordBox_OnKeyDown" />
+
+                        <TextBlock Margin="0,12,0,0"
+                                   Text="{Binding SignInPrompt.ErrorMessage}"
+                                   FontSize="12"
+                                   TextWrapping="Wrap"
+                                   Foreground="{StaticResource DangerBrush}"
+                                   Visibility="{Binding SignInPrompt.HasError, Converter={StaticResource BooleanToVisibilityConverter}}" />
+
+                        <StackPanel Orientation="Horizontal" Margin="0,20,0,0" HorizontalAlignment="Right">
+                            <Button Content="取消"
+                                    MinWidth="84"
+                                    Command="{Binding SignInPrompt.CancelCommand}"
+                                    Click="SignInCancel_OnClick" />
+                            <Button Content="登录"
+                                    MinWidth="84"
+                                    Margin="10,0,0,0"
+                                    Click="SignInSubmit_OnClick"
+                                    IsEnabled="{Binding SignInPrompt.CanSubmit}"
+                                    Style="{StaticResource PrimaryButtonStyle}" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </Border>
+
+            <!-- Relay-switch card raised by the Codex injection session when the
+                 official account's allowance runs low or out. Same in-window overlay
+                 pattern as the sign-in card above. -->
+            <Border Grid.ColumnSpan="2"
+                    Background="#99000000"
+                    Visibility="{Binding RelaySwitchPrompt.IsVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <Border Width="440"
+                        Padding="26"
+                        VerticalAlignment="Center"
+                        HorizontalAlignment="Center"
+                        Background="{StaticResource CardBrush}"
+                        BorderBrush="{StaticResource HairlineBrush}"
+                        BorderThickness="1"
+                        CornerRadius="16">
+                    <StackPanel>
+                        <TextBlock Text="{Binding RelaySwitchPrompt.Title}"
+                                   FontSize="16"
+                                   FontWeight="SemiBold"
+                                   Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock Margin="0,8,0,0"
+                                   Text="{Binding RelaySwitchPrompt.Message}"
+                                   FontSize="12"
+                                   TextWrapping="Wrap"
+                                   Foreground="{StaticResource SecondaryTextBrush}" />
+                        <TextBlock Margin="0,10,0,0"
+                                   Text="{Binding RelaySwitchPrompt.ResetHint}"
+                                   FontSize="11.5"
+                                   TextWrapping="Wrap"
+                                   Foreground="{StaticResource SecondaryTextBrush}"
+                                   Visibility="{Binding RelaySwitchPrompt.HasResetHint, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                        <TextBlock Margin="0,12,0,0"
+                                   Text="{Binding RelaySwitchPrompt.OutcomeMessage}"
+                                   FontSize="12"
+                                   TextWrapping="Wrap"
+                                   Foreground="{StaticResource DangerBrush}"
+                                   Visibility="{Binding RelaySwitchPrompt.HasOutcomeMessage, Converter={StaticResource BooleanToVisibilityConverter}}" />
+
+                        <StackPanel Orientation="Horizontal" Margin="0,20,0,0" HorizontalAlignment="Right">
+                            <Button Content="暂不"
+                                    MinWidth="84"
+                                    Command="{Binding RelaySwitchPrompt.DismissCommand}" />
+                            <Button Content="{Binding RelaySwitchPrompt.AcceptLabel}"
+                                    MinWidth="120"
+                                    Margin="10,0,0,0"
+                                    Command="{Binding RelaySwitchPrompt.AcceptCommand}"
+                                    IsEnabled="{Binding RelaySwitchPrompt.CanAccept}"
+                                    Style="{StaticResource PrimaryButtonStyle}" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </Border>
+        </Grid>
+    </Border>
+</Window>

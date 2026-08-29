@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RootNamespace>LanAi.Workspace.Terminal</RootNamespace>
+    <AssemblyName>LanAi.Workspace.Terminal</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AiSwitch.Core\AiSwitch.Core.csproj" />
+    <PackageReference Include="Porta.Pty" Version="1.0.7" />
+    <PackageReference Include="XTerm.NET" Version="1.0.15" />
+  </ItemGroup>
+</Project>

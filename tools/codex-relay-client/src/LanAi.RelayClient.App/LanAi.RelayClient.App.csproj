@@ -1,0 +1,104 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AssemblyName>LanAi.RelayClient.App</AssemblyName>
+    <RootNamespace>LanAi.RelayClient.App</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AssemblyTitle>共飞-ChatGPT助手</AssemblyTitle>
+    <Product>共飞-ChatGPT助手</Product>
+    <ApplicationIcon>Assets\LanAi.RelayClient.ico</ApplicationIcon>
+
+    <!-- The reason this project exists. WPF cannot be trimmed at all, which puts a
+         163 MB floor under the current client; a trimmed Avalonia build measured
+         14 MB zipped for an empty window. Both numbers are from this machine, not
+         from documentation. -->
+    <PublishTrimmed>true</PublishTrimmed>
+    <IsTrimmable>true</IsTrimmable>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+
+    <!-- Bindings resolved at compile time rather than by reflection. Under trimming
+         the reflection kind fails the way this codebase's worst bugs fail: no
+         exception, just an empty pane where the data should be. -->
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+
+    <!-- Required, not optional. CodexAppLauncher activates the MSIX ChatGPT app
+         through IApplicationActivationManager, a COM interface, and that is the whole
+         point of the 启动 ChatGPT button.
+
+         This was switched off first, on the reasoning that COM is not trim friendly
+         and turning it off silenced an IL2026. It cost the client its main feature:
+         the trimmed build issued a relay key, wrote ~/.codex, then died with
+         "Built-in COM has been disabled via a feature switch" — after the config was
+         already swapped. Everything up to the launch looked like it worked.
+
+         Leave it on. If it ever produces a trim warning again, the answer is to
+         suppress that specific warning with a justification, never to disable the
+         feature switch. -->
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+
+    <!-- Enabling COM roots the runtime's ComActivator, which carries a blanket IL2026
+         ("Built-in COM support is not trim compatible"). It is unavoidable and it is
+         about COM *server* activation — publishing managed classes as COM objects.
+         This client only *consumes* one built-in Windows COM class, through a
+         [ComImport] interface with an explicit GUID that is referenced directly and so
+         is rooted by the trimmer.
+
+         Demoted for the ILLink pass only. NoWarn would have been wrong: $(NoWarn)
+         flows into both the compile-time trim analyser and the linker, so silencing
+         IL2026 there would also silence it on this project's own code — and the three
+         worst bugs found during this port were all reflection-JSON IL2026s in our own
+         code, each of which failed silently at runtime rather than crashing.
+
+         The compile-time analyser therefore still errors on our code. What is demoted
+         is only the linker's own framework-level warning, and the publish output must
+         be read: any IL2026 naming a LanAi.* member is a real defect, not this. -->
+    <ILLinkTreatWarningsAsErrors>false</ILLinkTreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="11.3.20" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.3.20" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.20" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\LanAi.RelayClient.Core\LanAi.RelayClient.Core.csproj" />
+  </ItemGroup>
+
+  <!-- Window and tray icon. Same .ico the WPF head ships, so the two builds are
+       recognisably the same product in the taskbar and the notification area. -->
+  <ItemGroup>
+    <AvaloniaResource Include="Assets\**" />
+  </ItemGroup>
+
+  <!-- Same three-tier fallback the WPF head documents, minus the tier that was
+       deleted: the bundled 759 MB msix is gone, CodexInstaller downloads on demand,
+       and this directory is the manual drop point for an offline machine. The
+       README is both the guidance for that step and what makes the directory exist. -->
+  <ItemGroup>
+    <Content Include="..\..\codex-installer\README.txt">
+      <Link>codex-installer\%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+    </Content>
+  </ItemGroup>
+
+
+  <!-- The chart's coordinate maths, compiled into this head rather than referenced
+       from Core. See the header of the file for why it is shared as source. The
+       symbol selects which framework's Point/Rect/Size/Thickness it binds to. -->
+  <PropertyGroup>
+    <DefineConstants>$(DefineConstants);UI_AVALONIA</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\Shared\UsageLineChartLayout.cs" Link="Controls\UsageLineChartLayout.cs" />
+  </ItemGroup>
+
+</Project>

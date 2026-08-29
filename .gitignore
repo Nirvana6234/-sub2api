@@ -180,3 +180,27 @@ frontend/dist.predeploy-*/
 transit-hub/backend/transithub-api
 transit-hub/backend/transithub-api-linux-amd64
 transit-hub/backend/backend/
+
+# ── 共飞直连客户端与工作台（tools/ 下的 .NET 工程）────────────────────────────
+#
+# 刻意只作用于 /tools/。客户端那条血脉自带一份调过的 .gitignore（含 **/bin/、
+# *.dll 等宽泛规则），整体并进来会波及上游的 backend/ 与 frontend/。加前缀限定
+# 作用域，上游原有规则一行不动。
+#
+# 没有这一段，一次 git add 会带进 724 MB 的 Codex-Windows-x64.msix 与全部
+# bin/obj —— 上游的 artifacts/ 规则挡得住发布产物，挡不住这两类。
+/tools/**/bin/
+/tools/**/obj/
+/tools/**/TestResults/
+/tools/**/*.user
+
+/tools/codex-relay-client/artifacts/
+/tools/manufactor_app/ai-switch-gui/artifacts/
+
+# 安装包目录本身要保留（客户端按它是否存在来判断离线安装场景），
+# 但里面几百 MB 的官方安装包不入库；只留说明文件。
+/tools/codex-relay-client/codex-installer/*
+!/tools/codex-relay-client/codex-installer/README.txt
+
+/tools/manufactor_app/ai-switch-gui/runtimes/
+/tools/manufactor_app/ai-switch-gui/third_party/

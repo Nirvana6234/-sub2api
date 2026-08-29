@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ApplicationUseCompatibleTextRendering>false</ApplicationUseCompatibleTextRendering>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>LocalGatewayManager</AssemblyName>
+    <RootNamespace>AiSwitchGui</RootNamespace>
+    <ApplicationIcon>Assets\airplane-app-icon.ico</ApplicationIcon>
+    <AssemblyTitle>本地中转管理工具</AssemblyTitle>
+    <Product>本地中转管理工具</Product>
+    <Company>归年</Company>
+    <Authors>归年</Authors>
+    <Description>用于管理本机 Sub2API、Kiro Gateway 和 Codex/Claude Code 临时配置的图形化工具。</Description>
+    <Version>1.0.0</Version>
+    <FileVersion>1.0.0.0</FileVersion>
+    <InformationalVersion>1.0.0</InformationalVersion>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+    <PublishSingleFile>false</PublishSingleFile>
+    <PublishReadyToRun>false</PublishReadyToRun>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="runtimes\**\*.cs" />
+    <Compile Remove="src\**\*.cs;tests\**\*.cs" />
+    <Content Remove="runtimes\**\*" />
+    <Content Remove="src\**\*;tests\**\*" />
+    <None Remove="runtimes\**\*" />
+    <None Remove="src\**\*;tests\**\*" />
+    <EmbeddedResource Remove="src\**\*;tests\**\*" />
+    <Content Include="Assets\airplane-app-icon.png" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="Assets\airplane-app-icon.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="native-path.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

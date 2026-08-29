@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>LanAi.Workspace.Chat</AssemblyName>
+    <RootNamespace>LanAi.Workspace.Chat</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AiSwitch.Core\AiSwitch.Core.csproj" />
+    <ProjectReference Include="..\AiSwitch.Terminal\AiSwitch.Terminal.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="AiSwitch.Chat.Tests" />
+  </ItemGroup>
+</Project>

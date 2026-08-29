@@ -1,0 +1,104 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AssemblyName>LanAi.RelayClient</AssemblyName>
+    <RootNamespace>LanAi.RelayClient</RootNamespace>
+    <AssemblyTitle>共飞-ChatGPT助手</AssemblyTitle>
+    <Product>共飞-ChatGPT助手</Product>
+    <ApplicationIcon>Assets\LanAi.RelayClient.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <!-- 测试渠道：dotnet publish -p:TestServer=true，客户端改连 test.gongfeiai.com。
+       走这个开关而不是命令行直接传 DefineConstants —— 后者是 MSBuild 全局属性，
+       会覆盖而非追加，把 SDK 隐式定义的 TRACE / RELEASE / NET8_0 一并丢掉。-->
+  <PropertyGroup Condition="'$(TestServer)' == 'true'">
+    <DefineConstants>$(DefineConstants);TEST_SERVER</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <PackageReference Include="Markdig" Version="1.3.2" />
+    <PackageReference Include="QRCoder" Version="1.6.0" />
+  </ItemGroup>
+
+  <!-- Enabling Windows Forms for the tray icon also pulls System.Drawing and
+       System.Windows.Forms in as implicit usings, where Brush, Point, Size,
+       Color, Cursors and MouseEventArgs all collide with their WPF namesakes.
+       Removing them keeps this a WPF project; TrayPresence.cs, the one file that
+       genuinely needs Windows Forms, imports it explicitly. -->
+  <ItemGroup>
+    <Using Remove="System.Drawing" />
+    <Using Remove="System.Windows.Forms" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\LanAi.RelayClient.Core\LanAi.RelayClient.Core.csproj" />
+    <ProjectReference Include="..\LanAi.RelayClient.Server\LanAi.RelayClient.Server.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="LanAi.RelayClient.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\LanAi.RelayClient.CodexBinding\LanAi.RelayClient.CodexBinding.csproj" />
+    <ProjectReference Include="..\..\..\manufactor_app\ai-switch-gui\src\AiSwitch.Injection\AiSwitch.Injection.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\LanAi.RelayClient.ico" />
+  </ItemGroup>
+
+  <!-- 这两个脚本取代了原先的引导安装器。注册桌面和开始菜单快捷方式.cmd 按"同目录下第一个
+       非 Setup 的 exe"来定位客户端，所以必须与 exe 同级、且不能被并进单文件包。-->
+  <ItemGroup>
+    <Content Include="..\..\注册桌面和开始菜单快捷方式.cmd;..\..\删除桌面和开始菜单快捷方式.cmd">
+      <Link>%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+    </Content>
+  </ItemGroup>
+
+  <!-- 只随包发 README.txt，不再内置 ChatGPT 安装包。
+
+       内置那个 759 MB 的 msix 占了发布体积的 92%，而它早已是多余的：CodexInstaller 在
+       7a8b703「客户端改为在线下载chatgpt」之后就具备完整的在线下载能力（含进度回调，
+       已接到 DashboardViewModel.CodexDownloadProgressText），只是 Inspect() 会先在本目录
+       找到内置包，于是下载分支永远走不到。那次改动漏删了这里的打包 glob。
+
+       降级链保持三级不变，只是去掉了第一级：
+         1. ~~内置安装包~~（已删除）
+         2. 自动下载  —— EnsureAndLaunchAsync，未找到包时自动走
+         3. 手工放入本目录 —— 离线或下载受阻时的兜底，README.txt 就是给这一步的引导
+
+       因此 README.txt 必须保留：它既是引导文案，也保证目录存在。 -->
+  <ItemGroup>
+    <Content Include="..\..\codex-installer\README.txt">
+      <Link>codex-installer\%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+    </Content>
+  </ItemGroup>
+
+
+  <!-- The chart's coordinate maths, compiled into this head rather than referenced
+       from Core. See the header of the file for why it is shared as source. The
+       symbol selects which framework's Point/Rect/Size/Thickness it binds to. -->
+  <PropertyGroup>
+    <DefineConstants>$(DefineConstants);UI_WPF</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\Shared\UsageLineChartLayout.cs" Link="Controls\UsageLineChartLayout.cs" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,62 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AssemblyName>LanAi.RelayClient.Core</AssemblyName>
+
+    <!-- Namespaces stay LanAi.RelayClient.* on purpose. This is an extraction, not a
+         redesign: keeping them means the WPF head and the 268 client tests compile
+         against the moved types unchanged, so a failure here is a real regression
+         rather than a rename artefact. -->
+    <RootNamespace>LanAi.RelayClient</RootNamespace>
+
+    <!-- Same guard as LanAi.RelayClient.Server: the whole point of this project is
+         that it can be published trimmed, so reflection that would break trimming
+         must fail the build here, not the publish. -->
+    <IsTrimmable>true</IsTrimmable>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+  </PropertyGroup>
+
+  <!-- The only place this switch is declared. ClientOptions.ServerAddress is compiled
+       here, and because it is a const the heads inline it from this assembly's
+       metadata — so they need no conditional group of their own. Verified on the
+       published App binary for both channels; see the remarks on ClientOptions. -->
+  <PropertyGroup Condition="'$(TestServer)' == 'true'">
+    <DefineConstants>$(DefineConstants);TEST_SERVER</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <PackageReference Include="Markdig" Version="1.3.2" />
+
+    <!-- QR codes for the recharge screen. Rendered to PNG bytes via PngByteQRCode,
+         which is managed code — the System.Drawing-based renderer in the same package
+         is Windows-only and would have put a platform dependency in the payment flow. -->
+    <PackageReference Include="QRCoder" Version="1.6.0" />
+
+    <!-- DPAPI. Not in the base framework on net8.0 — the WPF head got it for free
+         from the Windows Desktop shared framework, which this project does not
+         reference. Verified on this machine to restore, publish trimmed with the
+         analyzer on, and round-trip; the osx-arm64 publish also succeeds, since the
+         package is cross-platform and only its calls are Windows-only. -->
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\LanAi.RelayClient.Server\LanAi.RelayClient.Server.csproj" />
+    <ProjectReference Include="..\LanAi.RelayClient.CodexBinding\LanAi.RelayClient.CodexBinding.csproj" />
+    <!-- Resolves to the net8.0 flavour of the multi-targeted injection project. -->
+    <ProjectReference Include="..\..\..\manufactor_app\ai-switch-gui\src\AiSwitch.Injection\AiSwitch.Injection.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="LanAi.RelayClient" />
+    <InternalsVisibleTo Include="LanAi.RelayClient.App" />
+    <InternalsVisibleTo Include="LanAi.RelayClient.Tests" />
+  </ItemGroup>
+
+</Project>

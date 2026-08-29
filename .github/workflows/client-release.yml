@@ -1,0 +1,246 @@
+# 共飞直连客户端 —— 出包
+#
+#   打 tag：  git tag client-v0.2 && git push origin client-v0.2
+#   或在 Actions 页面手动运行（workflow_dispatch）。
+#
+# 产出
+#   codex-relay-client_v<版本>_x64.zip            Windows 单文件
+#   codex-relay-client_v<版本>_macos-arm64.tar.gz macOS .app（已 ad-hoc 签名）
+#
+# 为什么整条流水线在 windows-latest（2× 计费）
+# --------------------------------------------
+# 方案 §9.5.3 说终局可以全部搬到 ubuntu-latest（1×），Avalonia 头两个目标都能在
+# Linux 上交叉编译。那是对的，但**那条路没有人实测过**；而这里的每一步都在
+# Windows 上端到端验证过（裁剪发布、Mach-O 产物、.app 组装、tar 权限位）。
+# 发布是按 tag 触发的低频任务，省下的分钟数远不值得拿「出包能不能成」去换。
+# 等有人在 ubuntu 上实测通过，再迁移不迟。
+#
+# 没有任何 secret
+# ---------------
+# 不买开发者账号 = 不做公证 = 没有证书、私钥或 API Key 要管（§9.5.2）。
+# ad-hoc 签名不需要任何 Apple 凭据。这是无账号方案少见的正面副作用。
+
+name: client-release
+
+on:
+  push:
+    tags:
+      - 'client-v*'
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: '是否创建 GitHub Release（否则只产出构建工件）'
+        type: boolean
+        default: false
+
+env:
+  # 由 cargo 从 crates.io 安装并校验，版本钉死。
+  RCODESIGN_VERSION: '0.29.0'
+
+defaults:
+  run:
+    working-directory: tools/codex-relay-client
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # -------------------------------------------------------------------
+      # 发布前配置检查（§9.5.5）
+      #
+      # 这三条都是「发出去才发现」的静默事故：连本机地址的包不会报错，只会
+      # 让用户看到「连不上服务器」。用 CI 挡住的成本远低于事后召回。
+      # -------------------------------------------------------------------
+      - name: 读取版本号
+        id: version
+        shell: bash
+        run: |
+          version=$(grep -oE 'CurrentVersion = new\(([0-9]+), *([0-9]+)\)' \
+            src/LanAi.RelayClient.Core/ClientOptions.cs \
+            | grep -oE '[0-9]+, *[0-9]+' | tr -d ' ' | tr ',' '.')
+          if [ -z "$version" ]; then
+            echo "::error::无法从 ClientOptions.cs 读出版本号"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "客户端版本：$version"
+
+      - name: tag 与客户端版本一致
+        if: startsWith(github.ref, 'refs/tags/client-v')
+        shell: bash
+        run: |
+          tag_version="${GITHUB_REF_NAME#client-v}"
+          if [ "$tag_version" != "${{ steps.version.outputs.version }}" ]; then
+            echo "::error::tag 是 $tag_version，而 ClientOptions.CurrentVersion 是 ${{ steps.version.outputs.version }}"
+            exit 1
+          fi
+
+      - name: 服务器地址不是占位符
+        shell: bash
+        run: |
+          if grep -q '127\.0\.0\.1' src/LanAi.RelayClient.Core/ClientOptions.cs; then
+            echo "::error::ClientOptions.cs 里还有 127.0.0.1，这个包会连本机"
+            grep -n '127\.0\.0\.1' src/LanAi.RelayClient.Core/ClientOptions.cs
+            exit 1
+          fi
+
+      - name: 测试
+        run: |
+          dotnet test LanAi.RelayClient.sln -c Release
+
+      # -------------------------------------------------------------------
+      # Windows 产物
+      # -------------------------------------------------------------------
+      - name: 发布 win-x64
+        run: |
+          dotnet publish src/LanAi.RelayClient.App/LanAi.RelayClient.App.csproj `
+            -c Release -r win-x64 --self-contained true `
+            -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+            -o "${{ runner.temp }}/pub-win"
+
+      # 发布渠道绝不能带上 TEST_SERVER。核在出货字节上而不是构建参数上：
+      # 单文件包会把程序集打进 bundle，且 .NET 的字符串字面量是 UTF-16LE，
+      # 普通 grep 找不到。
+      - name: 核对出货字节里的服务器地址
+        shell: bash
+        run: |
+          python packaging/check-server-address.py \
+            "${{ runner.temp }}/pub-win/LanAi.RelayClient.App.exe"
+
+      - name: 打包 Windows zip
+        shell: pwsh
+        run: |
+          $out = "${{ runner.temp }}/artifacts"
+          New-Item -ItemType Directory -Force $out | Out-Null
+          $exe = Join-Path $out "共飞-ChatGPT助手.exe"
+          Copy-Item "${{ runner.temp }}/pub-win/LanAi.RelayClient.App.exe" $exe
+          Compress-Archive -Path $exe `
+            -DestinationPath (Join-Path $out "codex-relay-client_v${{ steps.version.outputs.version }}_x64.zip") `
+            -CompressionLevel Optimal -Force
+
+      # -------------------------------------------------------------------
+      # macOS 产物
+      # -------------------------------------------------------------------
+      - name: 发布 osx-arm64
+        run: |
+          dotnet publish src/LanAi.RelayClient.App/LanAi.RelayClient.App.csproj `
+            -c Release -r osx-arm64 --self-contained true `
+            -o "${{ runner.temp }}/pub-mac"
+
+      - name: 生成图标
+        shell: bash
+        run: python packaging/macos/build-icns.py
+
+      # 组装即断言：CFBundleExecutable 与 Contents/MacOS/ 下的文件必须同名，
+      # 版本必须与 client-version.json 一致。两者写错都不会有任何提示 ——
+      # 前者是双击 App 毫无反应，后者是永远劝用户升级到他已在跑的版本。
+      #
+      # 只组装、不打包：签名要发生在组装与归档之间。归档那一步没有 --allow-unsigned，
+      # 所以漏签会在那里被拦下。
+      - name: 组装 .app
+        shell: bash
+        run: |
+          python packaging/macos/build-app.py \
+            --publish "${{ runner.temp }}/pub-mac" \
+            --out "${{ runner.temp }}/macos" \
+            --assemble-only
+
+      - name: 缓存 rcodesign
+        id: cache-rcodesign
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/rcodesign.exe
+          key: rcodesign-${{ runner.os }}-${{ env.RCODESIGN_VERSION }}
+
+      # 从 crates.io 源码安装：cargo 自带校验和验证，版本钉死，不需要人工核对
+      # 二进制的 sha256。比下载 release 里的预编译包更容易说清来源。
+      - name: 安装 rcodesign
+        if: steps.cache-rcodesign.outputs.cache-hit != 'true'
+        run: cargo install --locked --version ${{ env.RCODESIGN_VERSION }} apple-codesign
+
+      # 强制步骤，不是可选优化（§8.2）。Apple Silicon 要求每个 arm64 可执行文件
+      # 带签名，哪怕只是 ad-hoc；内核不警告，直接杀进程。而 .NET 从 Windows
+      # 交叉编译时不会签名。
+      - name: ad-hoc 签名
+        shell: bash
+        run: |
+          rcodesign sign "${{ runner.temp }}/macos/共飞-ChatGPT助手.app"
+
+      # 漏签的产物在 CI 里完全看不出来，只有到用户的机器上才会被内核杀掉。
+      # 因此签完必须回头验一次，而不是相信上一步的退出码。
+      - name: 核验签名
+        shell: bash
+        run: |
+          app="${{ runner.temp }}/macos/共飞-ChatGPT助手.app"
+          if [ ! -f "$app/Contents/_CodeSignature/CodeResources" ]; then
+            echo "::error::签名后仍找不到 _CodeSignature/CodeResources"
+            exit 1
+          fi
+          rcodesign print-signature-info "$app/Contents/MacOS/LanAi.RelayClient.App" \
+            || { echo "::error::主可执行文件没有可读的签名"; exit 1; }
+
+      - name: 打包 .tar.gz
+        shell: bash
+        run: |
+          python packaging/macos/build-app.py \
+            --publish "${{ runner.temp }}/pub-mac" \
+            --out "${{ runner.temp }}/macos" \
+            --archive-only
+          cp "${{ runner.temp }}/macos"/codex-relay-client_v*_macos-arm64.tar.gz \
+             "${{ runner.temp }}/artifacts/"
+
+      # 安装脚本要和包一起发布：它是用户拿到 mac 版的唯一入口，
+      # 也是更新入口（客户端不自更新，重跑脚本就是升级）。
+      - name: 附带安装与卸载脚本
+        shell: bash
+        run: |
+          cp packaging/macos/install-mac.sh packaging/macos/uninstall-mac.sh \
+             "${{ runner.temp }}/artifacts/"
+
+      - name: 清单
+        shell: bash
+        run: ls -la "${{ runner.temp }}/artifacts"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: client-v${{ steps.version.outputs.version }}
+          path: ${{ runner.temp }}/artifacts/*
+          retention-days: 30
+          if-no-files-found: error
+
+      # -------------------------------------------------------------------
+      # GitHub Release
+      #
+      # tag 触发时自动创建；手动触发时默认只留构建工件，避免误发。
+      # -------------------------------------------------------------------
+      - name: 创建 Release
+        if: startsWith(github.ref, 'refs/tags/client-v') || inputs.publish_release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ runner.temp }}/artifacts/*
+          draft: true
+          name: 共飞-ChatGPT助手 v${{ steps.version.outputs.version }}
+          body: |
+            ## 安装
+
+            **Windows**：下载 `codex-relay-client_v${{ steps.version.outputs.version }}_x64.zip`，解压后运行。
+
+            **macOS（Apple 芯片）**：终端里执行
+
+            ```
+            curl -fsSL https://gongfeiai.com/install-mac.sh | bash
+            ```
+
+            重跑这条命令即可升级。卸载用 `uninstall-mac.sh`。
+
+            > macOS 版本未经过公证（未购买开发者账号），因此用脚本安装而不是双击 .dmg——
+            > 经浏览器下载的文件会被 Gatekeeper 拦截，而 curl 取回的不会。
+          fail_on_unmatched_files: true

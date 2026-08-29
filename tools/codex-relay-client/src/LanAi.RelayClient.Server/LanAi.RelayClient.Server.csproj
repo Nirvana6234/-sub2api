@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AssemblyName>LanAi.RelayClient.Server</AssemblyName>
+    <RootNamespace>LanAi.RelayClient.Server</RootNamespace>
+
+    <!-- Turns "is this still trimmable?" into a build question instead of a
+         discovery made after publishing. With TreatWarningsAsErrors above, any
+         reintroduced reflection (IL2026/IL3050) breaks the build here rather than
+         silently producing a client whose contracts bind to empty objects.
+         This is the guard that keeps the ~20 MB publish target reachable. -->
+    <IsTrimmable>true</IsTrimmable>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Using Include="System.Net.Http" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="LanAi.RelayClient.Server.Tests" />
+  </ItemGroup>
+
+</Project>

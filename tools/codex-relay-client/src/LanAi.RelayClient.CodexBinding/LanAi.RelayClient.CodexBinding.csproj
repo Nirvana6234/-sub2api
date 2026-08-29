@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AssemblyName>LanAi.RelayClient.CodexBinding</AssemblyName>
+    <RootNamespace>LanAi.RelayClient.CodexBinding</RootNamespace>
+
+    <!-- Third project to get this guard. The snapshot manifest below is what restores
+         a user to their own ChatGPT account; reflection-based JSON here fails silently
+         under trimming and takes that recovery with it. -->
+    <IsTrimmable>true</IsTrimmable>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="LanAi.RelayClient.CodexBinding.Tests" />
+  </ItemGroup>
+
+</Project>
