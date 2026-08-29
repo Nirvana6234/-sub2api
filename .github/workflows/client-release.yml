@@ -41,7 +41,12 @@ permissions:
 
 env:
   # 由 cargo 从 crates.io 安装并校验，版本钉死。
-  RCODESIGN_VERSION: '0.29.0'
+  #
+  # 名字**不能**以 RCODESIGN_ 开头。rcodesign 把所有 RCODESIGN_* 环境变量映射成
+  # 自己的配置项，于是 RCODESIGN_VERSION 会被读成 default profile 里的 version，
+  # 而 profile 只认 sign / remote-sign —— rcodesign 会在解析配置阶段就退出，
+  # 报 UnknownField("version", ["sign", "remote-sign"])，根本走不到签名。
+  APPLE_CODESIGN_VERSION: '0.29.0'
 
 defaults:
   run:
@@ -164,13 +169,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/rcodesign.exe
-          key: rcodesign-${{ runner.os }}-${{ env.RCODESIGN_VERSION }}
+          key: rcodesign-${{ runner.os }}-${{ env.APPLE_CODESIGN_VERSION }}
 
       # 从 crates.io 源码安装：cargo 自带校验和验证，版本钉死，不需要人工核对
       # 二进制的 sha256。比下载 release 里的预编译包更容易说清来源。
       - name: 安装 rcodesign
         if: steps.cache-rcodesign.outputs.cache-hit != 'true'
-        run: cargo install --locked --version ${{ env.RCODESIGN_VERSION }} apple-codesign
+        run: cargo install --locked --version ${{ env.APPLE_CODESIGN_VERSION }} apple-codesign
 
       # 强制步骤，不是可选优化（§8.2）。Apple Silicon 要求每个 arm64 可执行文件
       # 带签名，哪怕只是 ad-hoc；内核不警告，直接杀进程。而 .NET 从 Windows
