@@ -34,6 +34,17 @@ import sys
 import tarfile
 from pathlib import Path
 
+# 本脚本会把应用名（含中文）打到 stdout。GitHub 的 Windows runner 上 Python 的
+# stdout 编码是 cp1252，编不出中文，print 会抛 UnicodeEncodeError —— 而这发生在
+# 组装完成之后，表现为「明明干完了却退出码 1」。本机看不出来：中文 Windows 的
+# 控制台代码页是 936，恰好编得出。
+#
+# 不能只靠 CI 里设 PYTHONUTF8：手动跑这个脚本的人不会带上那个环境变量。
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+
 HERE = Path(__file__).resolve().parent
 CLIENT_ROOT = HERE.parent.parent
 REPO_ROOT = CLIENT_ROOT.parent.parent
