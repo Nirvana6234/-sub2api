@@ -66,6 +66,14 @@ const macInstallCommand = computed(() =>
   macInstallScriptUrl.value ? `curl -fsSL ${macInstallScriptUrl.value} | bash` : ''
 )
 
+// 与 Windows 的 clientFileName 对称：把解析出的包名显示出来。地址指错东西
+// （填成 .dmg、填成带版本号的旧名、或是一个报错页）在页面上本来毫无迹象，
+// 而安装脚本要到用户的终端里才会失败。
+const macFileName = computed(() => {
+  const name = macDownloadUrl.value.split('?')[0].split('#')[0].split('/').pop() || ''
+  return /\.tar\.gz$/i.test(name) ? name : ''
+})
+
 // Codex 官方客户端按芯片分两个包。这里不替用户猜：装错芯片的包在 macOS 上
 // 是「装得上、打不开」，没有任何提示。
 const codexMacDownloads = [
@@ -346,6 +354,9 @@ function toggleTheme() {
                 {{ macCommandCopied ? '已复制' : '复制命令' }}
               </button>
             </div>
+            <p v-if="macFileName" class="mt-3 text-xs text-gray-400">
+              mac 安装包：<span class="font-mono text-gray-200">{{ macFileName }}</span>
+            </p>
             <p class="mt-4 text-sm leading-6 text-gray-300">还需要按你的芯片下载 Codex 客户端：</p>
             <div class="mt-3 grid gap-3 sm:grid-cols-2">
               <a
