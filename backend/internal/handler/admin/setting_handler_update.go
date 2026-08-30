@@ -344,6 +344,24 @@ type UpdateSettingsRequest struct {
 	// Available Channels feature switch (user-facing)
 	AvailableChannelsEnabled *bool `json:"available_channels_enabled"`
 
+	ClientDownloadEnabled      *bool   `json:"client_download_enabled"`
+	ClientDownloadNetdiskURL   *string `json:"client_download_netdisk_url"`
+	ClientDownloadDirectURL    *string `json:"client_download_direct_url"`
+	ClientDownloadDirectURLMac *string `json:"client_download_direct_url_mac"`
+	ClientLatestVersion        *string `json:"client_latest_version"`
+	ClientLatestVersionMac     *string `json:"client_latest_version_mac"`
+	BackupPaymentEnabled       *bool   `json:"backup_payment_enabled"`
+	BackupPaymentURL           *string `json:"backup_payment_url"`
+
+	// Playground feature switch (user-facing)
+	PlaygroundEnabled              *bool    `json:"playground_enabled"`
+	PlaygroundDefaultChatModel     *string  `json:"playground_default_chat_model"`
+	PlaygroundDefaultImageModel    *string  `json:"playground_default_image_model"`
+	PlaygroundDefaultChatGroupIDs  *[]int64 `json:"playground_default_chat_group_ids"`
+	PlaygroundDefaultImageGroupIDs *[]int64 `json:"playground_default_image_group_ids"`
+	PlaygroundDefaultChatStrategy  *string  `json:"playground_default_chat_strategy"`
+	PlaygroundDefaultImageStrategy *string  `json:"playground_default_image_strategy"`
+
 	// Model Plaza feature switches + description
 	ModelPlazaEnabled     *bool   `json:"model_plaza_enabled"`
 	ModelPlazaRequireAuth *bool   `json:"model_plaza_require_auth"`
@@ -1937,6 +1955,46 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.AvailableChannelsEnabled
 		}(),
+		ClientDownloadEnabled: func() bool {
+			if req.ClientDownloadEnabled != nil {
+				return *req.ClientDownloadEnabled
+			}
+			return previousSettings.ClientDownloadEnabled
+		}(),
+		BackupPaymentEnabled: func() bool {
+			if req.BackupPaymentEnabled != nil {
+				return *req.BackupPaymentEnabled
+			}
+			return previousSettings.BackupPaymentEnabled
+		}(),
+		ClientDownloadNetdiskURL:   stringSetting(req.ClientDownloadNetdiskURL, previousSettings.ClientDownloadNetdiskURL),
+		ClientDownloadDirectURL:    stringSetting(req.ClientDownloadDirectURL, previousSettings.ClientDownloadDirectURL),
+		ClientDownloadDirectURLMac: stringSetting(req.ClientDownloadDirectURLMac, previousSettings.ClientDownloadDirectURLMac),
+		ClientLatestVersion:        stringSetting(req.ClientLatestVersion, previousSettings.ClientLatestVersion),
+		ClientLatestVersionMac:     stringSetting(req.ClientLatestVersionMac, previousSettings.ClientLatestVersionMac),
+		BackupPaymentURL:           stringSetting(req.BackupPaymentURL, previousSettings.BackupPaymentURL),
+		PlaygroundEnabled: func() bool {
+			if req.PlaygroundEnabled != nil {
+				return *req.PlaygroundEnabled
+			}
+			return previousSettings.PlaygroundEnabled
+		}(),
+		PlaygroundDefaultChatModel:  stringSetting(req.PlaygroundDefaultChatModel, previousSettings.PlaygroundDefaultChatModel),
+		PlaygroundDefaultImageModel: stringSetting(req.PlaygroundDefaultImageModel, previousSettings.PlaygroundDefaultImageModel),
+		PlaygroundDefaultChatGroupIDs: func() []int64 {
+			if req.PlaygroundDefaultChatGroupIDs != nil {
+				return append([]int64(nil), (*req.PlaygroundDefaultChatGroupIDs)...)
+			}
+			return append([]int64(nil), previousSettings.PlaygroundDefaultChatGroupIDs...)
+		}(),
+		PlaygroundDefaultImageGroupIDs: func() []int64 {
+			if req.PlaygroundDefaultImageGroupIDs != nil {
+				return append([]int64(nil), (*req.PlaygroundDefaultImageGroupIDs)...)
+			}
+			return append([]int64(nil), previousSettings.PlaygroundDefaultImageGroupIDs...)
+		}(),
+		PlaygroundDefaultChatStrategy:  stringSetting(req.PlaygroundDefaultChatStrategy, previousSettings.PlaygroundDefaultChatStrategy),
+		PlaygroundDefaultImageStrategy: stringSetting(req.PlaygroundDefaultImageStrategy, previousSettings.PlaygroundDefaultImageStrategy),
 		ModelPlazaEnabled: func() bool {
 			if req.ModelPlazaEnabled != nil {
 				return *req.ModelPlazaEnabled
@@ -2379,7 +2437,22 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		GrokCrossClientModelMapEnabled: updatedSettings.GrokCrossClientModelMapEnabled,
 		GrokDefaultBaseURLMode:         updatedSettings.GrokDefaultBaseURLMode,
 
-		AvailableChannelsEnabled: updatedSettings.AvailableChannelsEnabled,
+		AvailableChannelsEnabled:       updatedSettings.AvailableChannelsEnabled,
+		ClientDownloadEnabled:          updatedSettings.ClientDownloadEnabled,
+		ClientDownloadNetdiskURL:       updatedSettings.ClientDownloadNetdiskURL,
+		ClientDownloadDirectURL:        updatedSettings.ClientDownloadDirectURL,
+		ClientDownloadDirectURLMac:     updatedSettings.ClientDownloadDirectURLMac,
+		ClientLatestVersion:            updatedSettings.ClientLatestVersion,
+		ClientLatestVersionMac:         updatedSettings.ClientLatestVersionMac,
+		BackupPaymentEnabled:           updatedSettings.BackupPaymentEnabled,
+		BackupPaymentURL:               updatedSettings.BackupPaymentURL,
+		PlaygroundEnabled:              updatedSettings.PlaygroundEnabled,
+		PlaygroundDefaultChatModel:     updatedSettings.PlaygroundDefaultChatModel,
+		PlaygroundDefaultImageModel:    updatedSettings.PlaygroundDefaultImageModel,
+		PlaygroundDefaultChatGroupIDs:  updatedSettings.PlaygroundDefaultChatGroupIDs,
+		PlaygroundDefaultImageGroupIDs: updatedSettings.PlaygroundDefaultImageGroupIDs,
+		PlaygroundDefaultChatStrategy:  updatedSettings.PlaygroundDefaultChatStrategy,
+		PlaygroundDefaultImageStrategy: updatedSettings.PlaygroundDefaultImageStrategy,
 
 		ModelPlazaEnabled:       updatedSettings.ModelPlazaEnabled,
 		ModelPlazaRequireAuth:   updatedSettings.ModelPlazaRequireAuth,

@@ -7177,6 +7177,235 @@
           </div>
         </div>
 
+        <!-- 客户端下载页 / 备用支付通道 -->
+        <div class="card">
+          <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+            <h2 class="text-base font-semibold text-gray-900 dark:text-white">
+              {{ localText('页面开关', 'Page switches') }}
+            </h2>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ localText('控制公开的客户端下载页，以及充值页上的备用支付入口。', 'Control the public client download page and the backup payment entry on the top-up page.') }}
+            </p>
+          </div>
+          <div class="space-y-5 p-6">
+            <div class="flex items-center justify-between">
+              <div>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ localText('客户端下载页', 'Client download page') }}
+                </label>
+                <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ localText('关闭后 /download 页面不可访问，首页与侧栏入口一并隐藏。', 'When off, /download is unreachable and its entries are hidden.') }}
+                </p>
+              </div>
+              <Toggle v-model="form.client_download_enabled" />
+            </div>
+            <div v-if="form.client_download_enabled" class="space-y-4 border-t border-gray-100 pt-5 dark:border-dark-700">
+              <div>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ localText('直接下载链接', 'Direct download URL') }}
+                </label>
+                <input
+                  v-model="form.client_download_direct_url"
+                  type="url"
+                  placeholder="https://example.com/Release/client_x64.zip"
+                  class="input mt-2"
+                />
+                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ localText('点了直接开始下载文件。留空则隐藏该按钮。', 'Starts the download immediately. Leave empty to hide the button.') }}
+                </p>
+              </div>
+              <div>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ localText('macOS 安装包直链', 'macOS package URL') }}
+                </label>
+                <input
+                  v-model="form.client_download_direct_url_mac"
+                  type="url"
+                  placeholder="https://example.com/Release/codex-relay-client_macos-arm64.tar.gz"
+                  class="input mt-2"
+                />
+                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ localText('留空表示尚未发布 mac 版，下载页不显示 macOS 区块。地址请用不带版本号的固定名，安装脚本同时是升级器，必须始终取到最新包。', 'Leave empty while no macOS build is published. Use a URL without a version number: the install script doubles as the updater and must always fetch the newest package.') }}
+                </p>
+              </div>
+              <div class="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ localText('Windows 最新版本号', 'Latest Windows version') }}
+                  </label>
+                  <input
+                    v-model="form.client_latest_version"
+                    type="text"
+                    placeholder="0.2"
+                    class="input mt-2"
+                  />
+                </div>
+                <div>
+                  <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ localText('macOS 最新版本号', 'Latest macOS version') }}
+                  </label>
+                  <input
+                    v-model="form.client_latest_version_mac"
+                    type="text"
+                    placeholder="0.2"
+                    class="input mt-2"
+                  />
+                </div>
+              </div>
+              <p class="text-xs text-gray-500 dark:text-gray-400">
+                {{ localText('客户端据此提示更新，两个平台分开填。只写「主版本.次版本」两位，例如 0.3；写成 0.3.0 与写 0.3 等价，不会重复提示。留空则该平台不提示更新。', 'The client compares against these to offer an update; each platform is separate. Use two components such as 0.3 — writing 0.3.0 means the same thing. Leave empty to stop advertising updates for that platform.') }}
+              </p>
+              <div>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ localText('网盘下载链接', 'Cloud drive URL') }}
+                </label>
+                <input
+                  v-model="form.client_download_netdisk_url"
+                  type="url"
+                  placeholder="https://pan.baidu.com/s/XXXX"
+                  class="input mt-2"
+                />
+                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ localText('跳转到网盘页面，用户在网盘里下载。留空则隐藏该按钮。', 'Opens a cloud drive page. Leave empty to hide the button.') }}
+                </p>
+              </div>
+              <p class="text-xs text-gray-500 dark:text-gray-400">
+                {{ localText('两个都只接受 http/https 绝对地址，填了别的会被后端清空。', 'Both accept absolute http/https URLs only; anything else is cleared by the backend.') }}
+              </p>
+            </div>
+            <div class="flex items-center justify-between border-t border-gray-100 pt-5 dark:border-dark-700">
+              <div>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ localText('备用支付通道', 'Backup payment channel') }}
+                </label>
+                <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ localText('在充值页展示一个跳转到外部收款页的备用入口。', 'Show a fallback entry on the top-up page that links to an external checkout.') }}
+                </p>
+              </div>
+              <Toggle v-model="form.backup_payment_enabled" />
+            </div>
+            <div v-if="form.backup_payment_enabled" class="border-t border-gray-100 pt-5 dark:border-dark-700">
+              <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                {{ localText('备用支付地址', 'Backup payment URL') }}
+              </label>
+              <input
+                v-model="form.backup_payment_url"
+                type="url"
+                placeholder="https://pay.example.com/shop/XXXX"
+                class="input mt-2"
+              />
+              <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                {{ localText('只接受 http/https 绝对地址；填了别的会被后端清空，入口随之隐藏。', 'Only absolute http/https URLs are accepted; anything else is cleared by the backend and the entry stays hidden.') }}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+              {{ t('admin.settings.features.playground.title') }}
+            </h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              {{ t('admin.settings.features.playground.description') }}
+            </p>
+          </div>
+          <div class="space-y-5 p-6">
+            <div class="flex items-center justify-between">
+              <div>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t('admin.settings.features.playground.enabled') }}
+                </label>
+                <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('admin.settings.features.playground.enabledHint') }}
+                </p>
+              </div>
+              <Toggle v-model="form.playground_enabled" />
+            </div>
+            <div v-if="form.playground_enabled" class="grid gap-5 border-t border-gray-100 pt-5 dark:border-dark-700 lg:grid-cols-2">
+              <div class="space-y-4">
+                <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
+                  {{ localText('默认对话配置', 'Default chat configuration') }}
+                </h3>
+                <label class="block">
+                  <span class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ localText('默认模型', 'Default model') }}
+                  </span>
+                  <input v-model.trim="form.playground_default_chat_model" type="text" class="input w-full" placeholder="gpt-5.4" />
+                </label>
+                <label class="block">
+                  <span class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ localText('Auto 模式', 'Auto strategy') }}
+                  </span>
+                  <select v-model="form.playground_default_chat_strategy" class="input w-full">
+                    <option value="price">{{ localText('低价优先', 'Price first') }}</option>
+                    <option value="balanced">{{ localText('均衡', 'Balanced') }}</option>
+                    <option value="speed">{{ localText('速度优先', 'Speed first') }}</option>
+                  </select>
+                </label>
+                <fieldset>
+                  <legend class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ localText('新用户对话候选分组', 'New-user chat groups') }}
+                  </legend>
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    {{ localText('不勾选时使用全部可用的 OpenAI 分组。', 'Leave empty to use every available OpenAI group.') }}
+                  </p>
+                  <div class="mt-2 max-h-48 space-y-2 overflow-y-auto rounded border border-gray-200 p-3 dark:border-dark-600">
+                    <label v-for="group in playgroundOpenAIGroups" :key="`chat-${group.id}`" class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+                      <input v-model="form.playground_default_chat_group_ids" type="checkbox" :value="group.id" class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500" />
+                      <span>{{ group.name }}</span>
+                      <span class="text-xs text-gray-400">OpenAI</span>
+                    </label>
+                    <p v-if="playgroundOpenAIGroups.length === 0" class="text-sm text-gray-500">
+                      {{ localText('暂无可用的 OpenAI 分组', 'No active OpenAI groups') }}
+                    </p>
+                  </div>
+                </fieldset>
+              </div>
+
+              <div class="space-y-4">
+                <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
+                  {{ localText('默认生图配置', 'Default image configuration') }}
+                </h3>
+                <label class="block">
+                  <span class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ localText('默认模型', 'Default model') }}
+                  </span>
+                  <input v-model.trim="form.playground_default_image_model" type="text" class="input w-full" placeholder="gpt-image-2" />
+                </label>
+                <label class="block">
+                  <span class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ localText('Auto 模式', 'Auto strategy') }}
+                  </span>
+                  <select v-model="form.playground_default_image_strategy" class="input w-full">
+                    <option value="price">{{ localText('低价优先', 'Price first') }}</option>
+                    <option value="balanced">{{ localText('均衡', 'Balanced') }}</option>
+                    <option value="speed">{{ localText('速度优先', 'Speed first') }}</option>
+                  </select>
+                </label>
+                <fieldset>
+                  <legend class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ localText('新用户生图候选分组', 'New-user image groups') }}
+                  </legend>
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    {{ localText('只显示已开启生图能力的 OpenAI 分组；不勾选时使用全部。', 'Only image-enabled OpenAI groups are shown; leave empty to use all.') }}
+                  </p>
+                  <div class="mt-2 max-h-48 space-y-2 overflow-y-auto rounded border border-gray-200 p-3 dark:border-dark-600">
+                    <label v-for="group in playgroundImageGroups" :key="`image-${group.id}`" class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+                      <input v-model="form.playground_default_image_group_ids" type="checkbox" :value="group.id" class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500" />
+                      <span>{{ group.name }}</span>
+                      <span class="text-xs text-gray-400">OpenAI · Image</span>
+                    </label>
+                    <p v-if="playgroundImageGroups.length === 0" class="text-sm text-gray-500">
+                      {{ localText('暂无可用的生图分组', 'No active image groups') }}
+                    </p>
+                  </div>
+                </fieldset>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div class="card">
           <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
             <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
@@ -9814,6 +10043,23 @@ const form = reactive<SettingsForm>({
   channel_monitor_hide_user_ranking: false,
   // Available Channels feature switch
   available_channels_enabled: false,
+  // 页面开关
+  client_download_enabled: true,
+  client_download_netdisk_url: "",
+  client_download_direct_url: "",
+  client_download_direct_url_mac: "",
+  client_latest_version: "",
+  client_latest_version_mac: "",
+  backup_payment_enabled: false,
+  backup_payment_url: "",
+  // Playground feature switch
+  playground_enabled: false,
+  playground_default_chat_model: "gpt-5.4",
+  playground_default_image_model: "gpt-image-2",
+  playground_default_chat_group_ids: [] as number[],
+  playground_default_image_group_ids: [] as number[],
+  playground_default_chat_strategy: "price" as "price" | "balanced" | "speed",
+  playground_default_image_strategy: "price" as "price" | "balanced" | "speed",
   // Model Plaza feature switches + description
   model_plaza_enabled: false,
   model_plaza_require_auth: false,
@@ -11478,6 +11724,23 @@ async function saveSettings() {
       channel_monitor_hide_user_ranking: Boolean(form.channel_monitor_hide_user_ranking),
       // Available Channels feature switch
       available_channels_enabled: form.available_channels_enabled,
+      // 页面开关
+      client_download_enabled: form.client_download_enabled,
+      client_download_netdisk_url: form.client_download_netdisk_url.trim(),
+      client_download_direct_url: form.client_download_direct_url.trim(),
+      client_download_direct_url_mac: form.client_download_direct_url_mac.trim(),
+      client_latest_version: form.client_latest_version.trim(),
+      client_latest_version_mac: form.client_latest_version_mac.trim(),
+      backup_payment_enabled: form.backup_payment_enabled,
+      backup_payment_url: form.backup_payment_url.trim(),
+      // Playground feature switch
+      playground_enabled: form.playground_enabled,
+      playground_default_chat_model: form.playground_default_chat_model.trim(),
+      playground_default_image_model: form.playground_default_image_model.trim(),
+      playground_default_chat_group_ids: [...form.playground_default_chat_group_ids],
+      playground_default_image_group_ids: [...form.playground_default_image_group_ids],
+      playground_default_chat_strategy: form.playground_default_chat_strategy,
+      playground_default_image_strategy: form.playground_default_image_strategy,
       // Model Plaza feature switches + description
       model_plaza_enabled: form.model_plaza_enabled,
       model_plaza_require_auth: form.model_plaza_require_auth,

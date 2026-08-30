@@ -234,6 +234,17 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		SettingKeyChannelMonitorShowQuota,
 		SettingKeyChannelMonitorHideUserRanking,
 		SettingKeyAvailableChannelsEnabled,
+		SettingKeyClientDownloadEnabled,
+		SettingKeyClientDownloadNetdiskURL,
+		SettingKeyClientDownloadDirectURL,
+		SettingKeyClientDownloadDirectURLMac,
+		SettingKeyClientLatestVersion,
+		SettingKeyClientLatestVersionMac,
+		SettingKeyBackupPaymentEnabled,
+		SettingKeyBackupPaymentURL,
+		SettingKeyPlaygroundEnabled,
+		SettingKeyPlaygroundDefaultChatModel,
+		SettingKeyPlaygroundDefaultImageModel,
 		SettingKeyModelPlazaEnabled,
 		SettingKeyModelPlazaRequireAuth,
 		SettingKeyPluginManagementEnabled,
@@ -362,6 +373,28 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		ChannelMonitorHideUserRanking:        isTrueSettingValue(settings[SettingKeyChannelMonitorHideUserRanking]),
 
 		AvailableChannelsEnabled: settings[SettingKeyAvailableChannelsEnabled] == "true",
+		// 下载页默认开启：只有显式 "false" 才关闭。
+		ClientDownloadEnabled:      !isFalseSettingValue(settings[SettingKeyClientDownloadEnabled]),
+		ClientDownloadNetdiskURL:   strings.TrimSpace(settings[SettingKeyClientDownloadNetdiskURL]),
+		ClientDownloadDirectURL:    strings.TrimSpace(settings[SettingKeyClientDownloadDirectURL]),
+		ClientDownloadDirectURLMac: strings.TrimSpace(settings[SettingKeyClientDownloadDirectURLMac]),
+		ClientLatestVersion:        strings.TrimSpace(settings[SettingKeyClientLatestVersion]),
+		ClientLatestVersionMac:     strings.TrimSpace(settings[SettingKeyClientLatestVersionMac]),
+		BackupPaymentEnabled:       settings[SettingKeyBackupPaymentEnabled] == "true",
+		BackupPaymentURL:           strings.TrimSpace(settings[SettingKeyBackupPaymentURL]),
+		PlaygroundEnabled:          settings[SettingKeyPlaygroundEnabled] == "true",
+		PlaygroundDefaultChatModel: func() string {
+			if value := strings.TrimSpace(settings[SettingKeyPlaygroundDefaultChatModel]); value != "" {
+				return value
+			}
+			return "gpt-5.4"
+		}(),
+		PlaygroundDefaultImageModel: func() string {
+			if value := strings.TrimSpace(settings[SettingKeyPlaygroundDefaultImageModel]); value != "" {
+				return value
+			}
+			return "gpt-image-2"
+		}(),
 
 		ModelPlazaEnabled:       settings[SettingKeyModelPlazaEnabled] == "true",
 		ModelPlazaRequireAuth:   settings[SettingKeyModelPlazaRequireAuth] == "true",
@@ -627,15 +660,26 @@ type PublicSettingsInjectionPayload struct {
 	// monitors; fail-closed (absent/false = hidden). Admin UI always shows it.
 	// ChannelMonitorHideUserRanking hides the user ranking tab and /users payload
 	// from non-admin channel-monitor v2 viewers; default false (visible).
-	ChannelMonitorHideUserRanking bool `json:"channel_monitor_hide_user_ranking"`
-	ChannelMonitorShowQuota       bool `json:"channel_monitor_show_quota"`
-	AvailableChannelsEnabled      bool `json:"available_channels_enabled"`
-	ModelPlazaEnabled             bool `json:"model_plaza_enabled"`
-	ModelPlazaRequireAuth         bool `json:"model_plaza_require_auth"`
-	PluginManagementEnabled       bool `json:"plugin_management_enabled"`
-	AffiliateEnabled              bool `json:"affiliate_enabled"`
-	RiskControlEnabled            bool `json:"risk_control_enabled"`
-	AllowUserViewErrorRequests    bool `json:"allow_user_view_error_requests"`
+	ChannelMonitorHideUserRanking bool   `json:"channel_monitor_hide_user_ranking"`
+	ChannelMonitorShowQuota       bool   `json:"channel_monitor_show_quota"`
+	AvailableChannelsEnabled      bool   `json:"available_channels_enabled"`
+	ClientDownloadEnabled         bool   `json:"client_download_enabled"`
+	ClientDownloadNetdiskURL      string `json:"client_download_netdisk_url"`
+	ClientDownloadDirectURL       string `json:"client_download_direct_url"`
+	ClientDownloadDirectURLMac    string `json:"client_download_direct_url_mac"`
+	ClientLatestVersion           string `json:"client_latest_version"`
+	ClientLatestVersionMac        string `json:"client_latest_version_mac"`
+	BackupPaymentEnabled          bool   `json:"backup_payment_enabled"`
+	BackupPaymentURL              string `json:"backup_payment_url"`
+	PlaygroundEnabled             bool   `json:"playground_enabled"`
+	PlaygroundDefaultChatModel    string `json:"playground_default_chat_model"`
+	PlaygroundDefaultImageModel   string `json:"playground_default_image_model"`
+	ModelPlazaEnabled             bool   `json:"model_plaza_enabled"`
+	ModelPlazaRequireAuth         bool   `json:"model_plaza_require_auth"`
+	PluginManagementEnabled       bool   `json:"plugin_management_enabled"`
+	AffiliateEnabled              bool   `json:"affiliate_enabled"`
+	RiskControlEnabled            bool   `json:"risk_control_enabled"`
+	AllowUserViewErrorRequests    bool   `json:"allow_user_view_error_requests"`
 }
 
 // GetPublicSettingsForInjection returns public settings in a format suitable for HTML injection.
@@ -712,6 +756,17 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		ChannelMonitorShowQuota:              settings.ChannelMonitorShowQuota,
 		ChannelMonitorHideUserRanking:        settings.ChannelMonitorHideUserRanking,
 		AvailableChannelsEnabled:             settings.AvailableChannelsEnabled,
+		ClientDownloadEnabled:                settings.ClientDownloadEnabled,
+		ClientDownloadNetdiskURL:             settings.ClientDownloadNetdiskURL,
+		ClientDownloadDirectURL:              settings.ClientDownloadDirectURL,
+		ClientDownloadDirectURLMac:           settings.ClientDownloadDirectURLMac,
+		ClientLatestVersion:                  settings.ClientLatestVersion,
+		ClientLatestVersionMac:               settings.ClientLatestVersionMac,
+		BackupPaymentEnabled:                 settings.BackupPaymentEnabled,
+		BackupPaymentURL:                     settings.BackupPaymentURL,
+		PlaygroundEnabled:                    settings.PlaygroundEnabled,
+		PlaygroundDefaultChatModel:           settings.PlaygroundDefaultChatModel,
+		PlaygroundDefaultImageModel:          settings.PlaygroundDefaultImageModel,
 		ModelPlazaEnabled:                    settings.ModelPlazaEnabled,
 		ModelPlazaRequireAuth:                settings.ModelPlazaRequireAuth,
 		PluginManagementEnabled:              settings.PluginManagementEnabled,

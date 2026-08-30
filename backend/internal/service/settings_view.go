@@ -212,6 +212,24 @@ type SystemSettings struct {
 	// Available Channels feature (user-facing aggregate view)
 	AvailableChannelsEnabled bool `json:"available_channels_enabled"`
 
+	// 客户端下载页与备用支付通道开关
+	ClientDownloadEnabled      bool   `json:"client_download_enabled"`
+	ClientDownloadNetdiskURL   string `json:"client_download_netdisk_url"`
+	ClientDownloadDirectURL    string `json:"client_download_direct_url"`
+	ClientDownloadDirectURLMac string `json:"client_download_direct_url_mac"`
+	ClientLatestVersion        string `json:"client_latest_version"`
+	ClientLatestVersionMac     string `json:"client_latest_version_mac"`
+	BackupPaymentEnabled       bool   `json:"backup_payment_enabled"`
+	BackupPaymentURL           string `json:"backup_payment_url"`
+
+	PlaygroundEnabled              bool    `json:"playground_enabled"`
+	PlaygroundDefaultChatModel     string  `json:"playground_default_chat_model"`
+	PlaygroundDefaultImageModel    string  `json:"playground_default_image_model"`
+	PlaygroundDefaultChatGroupIDs  []int64 `json:"playground_default_chat_group_ids"`
+	PlaygroundDefaultImageGroupIDs []int64 `json:"playground_default_image_group_ids"`
+	PlaygroundDefaultChatStrategy  string  `json:"playground_default_chat_strategy"`
+	PlaygroundDefaultImageStrategy string  `json:"playground_default_image_strategy"`
+
 	// Model Plaza feature (public group/model pricing showcase)
 	ModelPlazaEnabled       bool   `json:"model_plaza_enabled"`
 	ModelPlazaRequireAuth   bool   `json:"model_plaza_require_auth"`
@@ -392,6 +410,19 @@ type PublicSettings struct {
 
 	// Available Channels feature (user-facing aggregate view)
 	AvailableChannelsEnabled bool `json:"available_channels_enabled"`
+
+	ClientDownloadEnabled      bool   `json:"client_download_enabled"`
+	ClientDownloadNetdiskURL   string `json:"client_download_netdisk_url"`
+	ClientDownloadDirectURL    string `json:"client_download_direct_url"`
+	ClientDownloadDirectURLMac string `json:"client_download_direct_url_mac"`
+	ClientLatestVersion        string `json:"client_latest_version"`
+	ClientLatestVersionMac     string `json:"client_latest_version_mac"`
+	BackupPaymentEnabled       bool   `json:"backup_payment_enabled"`
+	BackupPaymentURL           string `json:"backup_payment_url"`
+
+	PlaygroundEnabled           bool   `json:"playground_enabled"`
+	PlaygroundDefaultChatModel  string `json:"playground_default_chat_model"`
+	PlaygroundDefaultImageModel string `json:"playground_default_image_model"`
 
 	// Model Plaza feature (public group/model pricing showcase)
 	ModelPlazaEnabled       bool `json:"model_plaza_enabled"`

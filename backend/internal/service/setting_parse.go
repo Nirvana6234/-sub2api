@@ -202,6 +202,35 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		// Available channels feature (default disabled; opt-in)
 		SettingKeyAvailableChannelsEnabled: "false",
 
+		// 客户端下载页（默认开启，保持既有行为）
+		SettingKeyClientDownloadEnabled: "true",
+
+		// 客户端下载地址。
+		//
+		// 必须用 Gitee 的发行版附件通道，不能用 raw：raw 对大文件强制登录，
+		// 匿名请求只会拿到 403 "large file require login for access."，
+		// 用户下到的是一个 55 字节的报错文本而不是安装包。
+		SettingKeyClientDownloadNetdiskURL: "https://pan.baidu.com/s/5PT50-jTaOtR8D28OfYnbQQ",
+		SettingKeyClientDownloadDirectURL:  ClientDownloadDefaultDirectURL,
+
+		// mac 版尚未发布：直链与版本号都留空，客户端据此不提示 mac 用户更新。
+		SettingKeyClientDownloadDirectURLMac: "",
+		SettingKeyClientLatestVersion:        "0.2",
+		SettingKeyClientLatestVersionMac:     "",
+
+		// 备用支付通道（默认关闭；opt-in）
+		SettingKeyBackupPaymentEnabled: "false",
+		SettingKeyBackupPaymentURL:     "https://pay.ldxp.cn/shop/IJBZUZDE",
+
+		// Playground feature (default disabled; opt-in)
+		SettingKeyPlaygroundEnabled:              "false",
+		SettingKeyPlaygroundDefaultChatModel:     "gpt-5.4",
+		SettingKeyPlaygroundDefaultImageModel:    "gpt-image-2",
+		SettingKeyPlaygroundDefaultChatGroupIDs:  "[]",
+		SettingKeyPlaygroundDefaultImageGroupIDs: "[]",
+		SettingKeyPlaygroundDefaultChatStrategy:  autoGroupStrategyPrice,
+		SettingKeyPlaygroundDefaultImageStrategy: autoGroupStrategyPrice,
+
 		// Model plaza feature (default disabled; opt-in, public unless require_auth)
 		SettingKeyModelPlazaEnabled:       "false",
 		SettingKeyModelPlazaRequireAuth:   "false",
@@ -819,6 +848,34 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 
 	// Available channels feature (default: disabled; strict true)
 	result.AvailableChannelsEnabled = settings[SettingKeyAvailableChannelsEnabled] == "true"
+
+	// 客户端下载页：默认开启，只有显式 "false" 才关闭。
+	result.ClientDownloadEnabled = settings[SettingKeyClientDownloadEnabled] != "false"
+
+	result.ClientDownloadNetdiskURL = strings.TrimSpace(settings[SettingKeyClientDownloadNetdiskURL])
+	result.ClientDownloadDirectURL = strings.TrimSpace(settings[SettingKeyClientDownloadDirectURL])
+	result.ClientDownloadDirectURLMac = strings.TrimSpace(settings[SettingKeyClientDownloadDirectURLMac])
+	result.ClientLatestVersion = strings.TrimSpace(settings[SettingKeyClientLatestVersion])
+	result.ClientLatestVersionMac = strings.TrimSpace(settings[SettingKeyClientLatestVersionMac])
+
+	// 备用支付通道：默认关闭，严格 true 才开启。
+	result.BackupPaymentEnabled = settings[SettingKeyBackupPaymentEnabled] == "true"
+	result.BackupPaymentURL = strings.TrimSpace(settings[SettingKeyBackupPaymentURL])
+
+	// Playground feature (default: disabled; strict true)
+	result.PlaygroundEnabled = settings[SettingKeyPlaygroundEnabled] == "true"
+	result.PlaygroundDefaultChatModel = strings.TrimSpace(settings[SettingKeyPlaygroundDefaultChatModel])
+	if result.PlaygroundDefaultChatModel == "" {
+		result.PlaygroundDefaultChatModel = "gpt-5.4"
+	}
+	result.PlaygroundDefaultImageModel = strings.TrimSpace(settings[SettingKeyPlaygroundDefaultImageModel])
+	if result.PlaygroundDefaultImageModel == "" {
+		result.PlaygroundDefaultImageModel = "gpt-image-2"
+	}
+	result.PlaygroundDefaultChatGroupIDs = parsePlaygroundGroupIDs(settings[SettingKeyPlaygroundDefaultChatGroupIDs])
+	result.PlaygroundDefaultImageGroupIDs = parsePlaygroundGroupIDs(settings[SettingKeyPlaygroundDefaultImageGroupIDs])
+	result.PlaygroundDefaultChatStrategy = normalizeAutoGroupStrategy(settings[SettingKeyPlaygroundDefaultChatStrategy])
+	result.PlaygroundDefaultImageStrategy = normalizeAutoGroupStrategy(settings[SettingKeyPlaygroundDefaultImageStrategy])
 
 	// Model plaza feature (default: disabled; strict true)
 	result.ModelPlazaEnabled = settings[SettingKeyModelPlazaEnabled] == "true"

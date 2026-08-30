@@ -727,6 +727,23 @@ export interface SystemSettings {
   // Available Channels feature switch
   available_channels_enabled: boolean;
 
+  // Playground feature switch
+  client_download_enabled: boolean;
+  client_download_netdisk_url: string;
+  client_download_direct_url: string;
+  client_download_direct_url_mac: string;
+  client_latest_version: string;
+  client_latest_version_mac: string;
+  backup_payment_enabled: boolean;
+  backup_payment_url: string;
+  playground_enabled: boolean;
+  playground_default_chat_model: string;
+  playground_default_image_model: string;
+  playground_default_chat_group_ids: number[];
+  playground_default_image_group_ids: number[];
+  playground_default_chat_strategy: 'price' | 'balanced' | 'speed';
+  playground_default_image_strategy: 'price' | 'balanced' | 'speed';
+
   // Model Plaza feature switches + description
   model_plaza_enabled: boolean;
   model_plaza_require_auth: boolean;
@@ -1028,6 +1045,23 @@ export interface UpdateSettingsRequest {
 
   // Available Channels feature switch
   available_channels_enabled?: boolean;
+
+  // Playground feature switch
+  client_download_enabled?: boolean;
+  client_download_netdisk_url?: string;
+  client_download_direct_url?: string;
+  client_download_direct_url_mac?: string;
+  client_latest_version?: string;
+  client_latest_version_mac?: string;
+  backup_payment_enabled?: boolean;
+  backup_payment_url?: string;
+  playground_enabled?: boolean;
+  playground_default_chat_model?: string;
+  playground_default_image_model?: string;
+  playground_default_chat_group_ids?: number[];
+  playground_default_image_group_ids?: number[];
+  playground_default_chat_strategy?: 'price' | 'balanced' | 'speed';
+  playground_default_image_strategy?: 'price' | 'balanced' | 'speed';
 
   // Model Plaza feature switches + description
   model_plaza_enabled?: boolean;

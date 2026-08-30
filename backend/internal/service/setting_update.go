@@ -432,6 +432,25 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	// Available channels feature switch
 	updates[SettingKeyAvailableChannelsEnabled] = strconv.FormatBool(settings.AvailableChannelsEnabled)
 
+	// 客户端下载页与备用支付通道
+	updates[SettingKeyClientDownloadEnabled] = strconv.FormatBool(settings.ClientDownloadEnabled)
+	updates[SettingKeyBackupPaymentEnabled] = strconv.FormatBool(settings.BackupPaymentEnabled)
+	updates[SettingKeyBackupPaymentURL] = normalizeExternalHTTPURL(settings.BackupPaymentURL)
+	updates[SettingKeyClientDownloadNetdiskURL] = normalizeExternalHTTPURL(settings.ClientDownloadNetdiskURL)
+	updates[SettingKeyClientDownloadDirectURL] = normalizeExternalHTTPURL(settings.ClientDownloadDirectURL)
+	updates[SettingKeyClientDownloadDirectURLMac] = normalizeExternalHTTPURL(settings.ClientDownloadDirectURLMac)
+	updates[SettingKeyClientLatestVersion] = strings.TrimSpace(settings.ClientLatestVersion)
+	updates[SettingKeyClientLatestVersionMac] = strings.TrimSpace(settings.ClientLatestVersionMac)
+	updates[SettingKeyPlaygroundEnabled] = strconv.FormatBool(settings.PlaygroundEnabled)
+	updates[SettingKeyPlaygroundDefaultChatModel] = strings.TrimSpace(settings.PlaygroundDefaultChatModel)
+	updates[SettingKeyPlaygroundDefaultImageModel] = strings.TrimSpace(settings.PlaygroundDefaultImageModel)
+	chatGroupIDs, _ := json.Marshal(normalizeAutoGroupIDs(settings.PlaygroundDefaultChatGroupIDs))
+	imageGroupIDs, _ := json.Marshal(normalizeAutoGroupIDs(settings.PlaygroundDefaultImageGroupIDs))
+	updates[SettingKeyPlaygroundDefaultChatGroupIDs] = string(chatGroupIDs)
+	updates[SettingKeyPlaygroundDefaultImageGroupIDs] = string(imageGroupIDs)
+	updates[SettingKeyPlaygroundDefaultChatStrategy] = normalizeAutoGroupStrategy(settings.PlaygroundDefaultChatStrategy)
+	updates[SettingKeyPlaygroundDefaultImageStrategy] = normalizeAutoGroupStrategy(settings.PlaygroundDefaultImageStrategy)
+
 	// Model plaza feature switches + description
 	updates[SettingKeyModelPlazaEnabled] = strconv.FormatBool(settings.ModelPlazaEnabled)
 	updates[SettingKeyModelPlazaRequireAuth] = strconv.FormatBool(settings.ModelPlazaRequireAuth)
