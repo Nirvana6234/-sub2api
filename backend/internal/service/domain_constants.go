@@ -477,6 +477,21 @@ const (
 	SettingKeyClientDownloadNetdiskURL = "client_download_netdisk_url"
 	SettingKeyClientDownloadDirectURL  = "client_download_direct_url"
 
+	// macOS 安装包直链。为空表示 mac 版尚未发布，下载页不显示 mac 区块。
+	SettingKeyClientDownloadDirectURLMac = "client_download_direct_url_mac"
+
+	// 客户端最新版本号，按平台分开。
+	//
+	// 放在设置里而不是随前端静态文件发布。原来版本号写在 frontend/public/
+	// client-version.json 里，而那个文件 embed 进后端二进制：改一个版本号要
+	// 重新构建前端 + 后端 + 重新部署，而实际下载地址（client_download_direct_url）
+	// 改这里一个字段就生效。两条通道的生效代价差了几个数量级，结果就是版本号
+	// 和实际包必然不同步 —— 线上第一次发作时，客户端拿到的是 index.html。
+	//
+	// 为空表示该平台不广播更新（mac 未发布时即为此状态）。
+	SettingKeyClientLatestVersion    = "client_latest_version"
+	SettingKeyClientLatestVersionMac = "client_latest_version_mac"
+
 	// ClientDownloadDefaultDirectURL 是客户端安装包的默认直链。
 	//
 	// 安装包刻意不放在应用服务器上，而是放在 icode-xtu.cc.cd（154.9.26.202）上

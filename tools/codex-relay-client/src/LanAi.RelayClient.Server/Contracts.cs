@@ -37,7 +37,10 @@ public sealed record PublicSettings
         bool balanceLowNotifyEnabled = default,
         double balanceLowNotifyThreshold = default,
         string? balanceLowNotifyRechargeUrl = default,
-        string? serverUtcOffset = default)
+        string? serverUtcOffset = default,
+        bool clientDownloadEnabled = default,
+        string? clientLatestVersion = default,
+        string? clientLatestVersionMac = default)
     {
         RegistrationEnabled = registrationEnabled;
         EmailVerifyEnabled = emailVerifyEnabled;
@@ -61,6 +64,9 @@ public sealed record PublicSettings
         BalanceLowNotifyThreshold = balanceLowNotifyThreshold;
         BalanceLowNotifyRechargeUrl = balanceLowNotifyRechargeUrl;
         ServerUtcOffset = serverUtcOffset;
+        ClientDownloadEnabled = clientDownloadEnabled;
+        ClientLatestVersion = clientLatestVersion;
+        ClientLatestVersionMac = clientLatestVersionMac;
     }
 
     [JsonPropertyName("registration_enabled")]
@@ -167,6 +173,38 @@ public sealed record PublicSettings
     /// </remarks>
     [JsonPropertyName("server_utc_offset")]
     public string? ServerUtcOffset { get; init; }
+
+    /// <summary>Whether the site's own /download page is reachable.</summary>
+    /// <remarks>
+    /// Gates the update banner. The route is disabled server-side when this is
+    /// false (<c>router/index.ts</c>), so offering "点击更新" without checking it
+    /// sends the user to a page that refuses to render — an update prompt that
+    /// cannot be acted on is worse than none.
+    /// </remarks>
+    [JsonPropertyName("client_download_enabled")]
+    public bool ClientDownloadEnabled { get; init; }
+
+    /// <summary>Newest client version published for Windows; empty means "do not advertise".</summary>
+    /// <remarks>
+    /// Server-driven for the same reason every other field here is (F1.7), but with
+    /// a sharper edge: this used to live in <c>client-version.json</c>, a static file
+    /// embedded into the backend binary, while the package it advertises is a plain
+    /// settings row. Changing one took a full rebuild and redeploy and the other took
+    /// a form field, so the two drifted — and the failure was silent, because every
+    /// error path in the checker returns "no update".
+    /// </remarks>
+    [JsonPropertyName("client_latest_version")]
+    public string? ClientLatestVersion { get; init; }
+
+    /// <summary>Newest client version published for macOS; empty means "do not advertise".</summary>
+    /// <remarks>
+    /// Separate from <see cref="ClientLatestVersion"/> because the two platforms do
+    /// not ship together. One shared number would tell every Mac user to upgrade the
+    /// moment Windows shipped, and send them to a download page with nothing on it
+    /// for them.
+    /// </remarks>
+    [JsonPropertyName("client_latest_version_mac")]
+    public string? ClientLatestVersionMac { get; init; }
 
     /// <summary>
     /// The safest possible surface, used when <c>/settings/public</c> cannot be read.

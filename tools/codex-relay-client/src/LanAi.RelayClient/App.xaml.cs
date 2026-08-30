@@ -64,7 +64,7 @@ public partial class App : Application
         var session = new RelaySessionManager(relay, SecureStorage.CreateSessionStore(), ClientOptions.ServerAddress);
         var signIn = new SignInViewModel(session, relay.GetPublicSettingsAsync);
         var clientUpdate = new ClientUpdateViewModel(
-            new ClientVersionChecker(_http, ClientOptions.CurrentVersion).CheckAsync);
+            new ClientVersionChecker(relay.GetPublicSettingsAsync, ClientOptions.CurrentVersion).CheckAsync);
         var registration = new RegistrationViewModel(
             session,
             relay,

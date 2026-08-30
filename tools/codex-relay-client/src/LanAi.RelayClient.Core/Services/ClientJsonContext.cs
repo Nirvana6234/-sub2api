@@ -36,7 +36,6 @@ namespace LanAi.RelayClient.Services;
 // called AccountState, and the generator keys properties by short name.
 [JsonSerializable(typeof(CodexAccountStore.AccountState), TypeInfoPropertyName = "CodexAccountState")]
 [JsonSerializable(typeof(GroupPreferenceStore.Preferences), TypeInfoPropertyName = "GroupPreferences")]
-[JsonSerializable(typeof(ClientVersionChecker.VersionManifest))]
 // Every property carries an explicit [JsonPropertyName] in snake_case, so the
 // CamelCase policy above does not reach it — the names on disk are unchanged. That
 // matters more here than elsewhere: this is the signed-in session, and a rename

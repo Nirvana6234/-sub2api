@@ -384,8 +384,11 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 
 		AvailableChannelsEnabled:       settings.AvailableChannelsEnabled,
 		ClientDownloadEnabled:          settings.ClientDownloadEnabled,
-		ClientDownloadNetdiskURL:          settings.ClientDownloadNetdiskURL,
-		ClientDownloadDirectURL:          settings.ClientDownloadDirectURL,
+		ClientDownloadNetdiskURL:       settings.ClientDownloadNetdiskURL,
+		ClientDownloadDirectURL:        settings.ClientDownloadDirectURL,
+		ClientDownloadDirectURLMac:     settings.ClientDownloadDirectURLMac,
+		ClientLatestVersion:            settings.ClientLatestVersion,
+		ClientLatestVersionMac:         settings.ClientLatestVersionMac,
 		BackupPaymentEnabled:           settings.BackupPaymentEnabled,
 		BackupPaymentURL:               settings.BackupPaymentURL,
 		PlaygroundEnabled:              settings.PlaygroundEnabled,

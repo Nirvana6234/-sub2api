@@ -7217,6 +7217,47 @@
               </div>
               <div>
                 <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ localText('macOS 安装包直链', 'macOS package URL') }}
+                </label>
+                <input
+                  v-model="form.client_download_direct_url_mac"
+                  type="url"
+                  placeholder="https://example.com/Release/codex-relay-client_macos-arm64.tar.gz"
+                  class="input mt-2"
+                />
+                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ localText('留空表示尚未发布 mac 版，下载页不显示 macOS 区块。地址请用不带版本号的固定名，安装脚本同时是升级器，必须始终取到最新包。', 'Leave empty while no macOS build is published. Use a URL without a version number: the install script doubles as the updater and must always fetch the newest package.') }}
+                </p>
+              </div>
+              <div class="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ localText('Windows 最新版本号', 'Latest Windows version') }}
+                  </label>
+                  <input
+                    v-model="form.client_latest_version"
+                    type="text"
+                    placeholder="0.2"
+                    class="input mt-2"
+                  />
+                </div>
+                <div>
+                  <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ localText('macOS 最新版本号', 'Latest macOS version') }}
+                  </label>
+                  <input
+                    v-model="form.client_latest_version_mac"
+                    type="text"
+                    placeholder="0.2"
+                    class="input mt-2"
+                  />
+                </div>
+              </div>
+              <p class="text-xs text-gray-500 dark:text-gray-400">
+                {{ localText('客户端据此提示更新，两个平台分开填。只写「主版本.次版本」两位，例如 0.3；写成 0.3.0 与写 0.3 等价，不会重复提示。留空则该平台不提示更新。', 'The client compares against these to offer an update; each platform is separate. Use two components such as 0.3 — writing 0.3.0 means the same thing. Leave empty to stop advertising updates for that platform.') }}
+              </p>
+              <div>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
                   {{ localText('网盘下载链接', 'Cloud drive URL') }}
                 </label>
                 <input
@@ -10013,6 +10054,9 @@ const form = reactive<SettingsForm>({
   client_download_enabled: true,
   client_download_netdisk_url: "",
   client_download_direct_url: "",
+  client_download_direct_url_mac: "",
+  client_latest_version: "",
+  client_latest_version_mac: "",
   backup_payment_enabled: false,
   backup_payment_url: "",
   // Playground feature switch
@@ -11695,6 +11739,9 @@ async function saveSettings() {
       client_download_enabled: form.client_download_enabled,
       client_download_netdisk_url: form.client_download_netdisk_url.trim(),
       client_download_direct_url: form.client_download_direct_url.trim(),
+      client_download_direct_url_mac: form.client_download_direct_url_mac.trim(),
+      client_latest_version: form.client_latest_version.trim(),
+      client_latest_version_mac: form.client_latest_version_mac.trim(),
       backup_payment_enabled: form.backup_payment_enabled,
       backup_payment_url: form.backup_payment_url.trim(),
       // Playground feature switch

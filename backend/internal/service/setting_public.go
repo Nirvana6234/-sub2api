@@ -231,6 +231,9 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		SettingKeyClientDownloadEnabled,
 		SettingKeyClientDownloadNetdiskURL,
 		SettingKeyClientDownloadDirectURL,
+		SettingKeyClientDownloadDirectURLMac,
+		SettingKeyClientLatestVersion,
+		SettingKeyClientLatestVersionMac,
 		SettingKeyBackupPaymentEnabled,
 		SettingKeyBackupPaymentURL,
 		SettingKeyPlaygroundEnabled,
@@ -359,12 +362,15 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 
 		AvailableChannelsEnabled: settings[SettingKeyAvailableChannelsEnabled] == "true",
 		// 下载页默认开启：只有显式 "false" 才关闭。
-		ClientDownloadEnabled: !isFalseSettingValue(settings[SettingKeyClientDownloadEnabled]),
-		ClientDownloadNetdiskURL: strings.TrimSpace(settings[SettingKeyClientDownloadNetdiskURL]),
-		ClientDownloadDirectURL:  strings.TrimSpace(settings[SettingKeyClientDownloadDirectURL]),
-		BackupPaymentEnabled:     settings[SettingKeyBackupPaymentEnabled] == "true",
-		BackupPaymentURL:      strings.TrimSpace(settings[SettingKeyBackupPaymentURL]),
-		PlaygroundEnabled:     settings[SettingKeyPlaygroundEnabled] == "true",
+		ClientDownloadEnabled:      !isFalseSettingValue(settings[SettingKeyClientDownloadEnabled]),
+		ClientDownloadNetdiskURL:   strings.TrimSpace(settings[SettingKeyClientDownloadNetdiskURL]),
+		ClientDownloadDirectURL:    strings.TrimSpace(settings[SettingKeyClientDownloadDirectURL]),
+		ClientDownloadDirectURLMac: strings.TrimSpace(settings[SettingKeyClientDownloadDirectURLMac]),
+		ClientLatestVersion:        strings.TrimSpace(settings[SettingKeyClientLatestVersion]),
+		ClientLatestVersionMac:     strings.TrimSpace(settings[SettingKeyClientLatestVersionMac]),
+		BackupPaymentEnabled:       settings[SettingKeyBackupPaymentEnabled] == "true",
+		BackupPaymentURL:           strings.TrimSpace(settings[SettingKeyBackupPaymentURL]),
+		PlaygroundEnabled:          settings[SettingKeyPlaygroundEnabled] == "true",
 		PlaygroundDefaultChatModel: func() string {
 			if value := strings.TrimSpace(settings[SettingKeyPlaygroundDefaultChatModel]); value != "" {
 				return value
@@ -593,6 +599,9 @@ type PublicSettingsInjectionPayload struct {
 	ClientDownloadEnabled                bool   `json:"client_download_enabled"`
 	ClientDownloadNetdiskURL             string `json:"client_download_netdisk_url"`
 	ClientDownloadDirectURL              string `json:"client_download_direct_url"`
+	ClientDownloadDirectURLMac           string `json:"client_download_direct_url_mac"`
+	ClientLatestVersion                  string `json:"client_latest_version"`
+	ClientLatestVersionMac               string `json:"client_latest_version_mac"`
 	BackupPaymentEnabled                 bool   `json:"backup_payment_enabled"`
 	BackupPaymentURL                     string `json:"backup_payment_url"`
 	PlaygroundEnabled                    bool   `json:"playground_enabled"`
@@ -677,6 +686,9 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		ClientDownloadEnabled:                settings.ClientDownloadEnabled,
 		ClientDownloadNetdiskURL:             settings.ClientDownloadNetdiskURL,
 		ClientDownloadDirectURL:              settings.ClientDownloadDirectURL,
+		ClientDownloadDirectURLMac:           settings.ClientDownloadDirectURLMac,
+		ClientLatestVersion:                  settings.ClientLatestVersion,
+		ClientLatestVersionMac:               settings.ClientLatestVersionMac,
 		BackupPaymentEnabled:                 settings.BackupPaymentEnabled,
 		BackupPaymentURL:                     settings.BackupPaymentURL,
 		PlaygroundEnabled:                    settings.PlaygroundEnabled,

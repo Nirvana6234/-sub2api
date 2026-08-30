@@ -344,11 +344,14 @@ type UpdateSettingsRequest struct {
 	// Available Channels feature switch (user-facing)
 	AvailableChannelsEnabled *bool `json:"available_channels_enabled"`
 
-	ClientDownloadEnabled    *bool   `json:"client_download_enabled"`
-	ClientDownloadNetdiskURL *string `json:"client_download_netdisk_url"`
-	ClientDownloadDirectURL  *string `json:"client_download_direct_url"`
-	BackupPaymentEnabled  *bool   `json:"backup_payment_enabled"`
-	BackupPaymentURL      *string `json:"backup_payment_url"`
+	ClientDownloadEnabled      *bool   `json:"client_download_enabled"`
+	ClientDownloadNetdiskURL   *string `json:"client_download_netdisk_url"`
+	ClientDownloadDirectURL    *string `json:"client_download_direct_url"`
+	ClientDownloadDirectURLMac *string `json:"client_download_direct_url_mac"`
+	ClientLatestVersion        *string `json:"client_latest_version"`
+	ClientLatestVersionMac     *string `json:"client_latest_version_mac"`
+	BackupPaymentEnabled       *bool   `json:"backup_payment_enabled"`
+	BackupPaymentURL           *string `json:"backup_payment_url"`
 
 	// Playground feature switch (user-facing)
 	PlaygroundEnabled              *bool    `json:"playground_enabled"`
@@ -1974,9 +1977,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.BackupPaymentEnabled
 		}(),
-		ClientDownloadNetdiskURL: stringSetting(req.ClientDownloadNetdiskURL, previousSettings.ClientDownloadNetdiskURL),
-		ClientDownloadDirectURL:  stringSetting(req.ClientDownloadDirectURL, previousSettings.ClientDownloadDirectURL),
-		BackupPaymentURL:         stringSetting(req.BackupPaymentURL, previousSettings.BackupPaymentURL),
+		ClientDownloadNetdiskURL:   stringSetting(req.ClientDownloadNetdiskURL, previousSettings.ClientDownloadNetdiskURL),
+		ClientDownloadDirectURL:    stringSetting(req.ClientDownloadDirectURL, previousSettings.ClientDownloadDirectURL),
+		ClientDownloadDirectURLMac: stringSetting(req.ClientDownloadDirectURLMac, previousSettings.ClientDownloadDirectURLMac),
+		ClientLatestVersion:        stringSetting(req.ClientLatestVersion, previousSettings.ClientLatestVersion),
+		ClientLatestVersionMac:     stringSetting(req.ClientLatestVersionMac, previousSettings.ClientLatestVersionMac),
+		BackupPaymentURL:           stringSetting(req.BackupPaymentURL, previousSettings.BackupPaymentURL),
 		PlaygroundEnabled: func() bool {
 			if req.PlaygroundEnabled != nil {
 				return *req.PlaygroundEnabled
@@ -2444,8 +2450,11 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 
 		AvailableChannelsEnabled:       updatedSettings.AvailableChannelsEnabled,
 		ClientDownloadEnabled:          updatedSettings.ClientDownloadEnabled,
-		ClientDownloadNetdiskURL:          updatedSettings.ClientDownloadNetdiskURL,
-		ClientDownloadDirectURL:          updatedSettings.ClientDownloadDirectURL,
+		ClientDownloadNetdiskURL:       updatedSettings.ClientDownloadNetdiskURL,
+		ClientDownloadDirectURL:        updatedSettings.ClientDownloadDirectURL,
+		ClientDownloadDirectURLMac:     updatedSettings.ClientDownloadDirectURLMac,
+		ClientLatestVersion:            updatedSettings.ClientLatestVersion,
+		ClientLatestVersionMac:         updatedSettings.ClientLatestVersionMac,
 		BackupPaymentEnabled:           updatedSettings.BackupPaymentEnabled,
 		BackupPaymentURL:               updatedSettings.BackupPaymentURL,
 		PlaygroundEnabled:              updatedSettings.PlaygroundEnabled,

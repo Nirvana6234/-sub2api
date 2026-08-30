@@ -281,6 +281,18 @@ export interface PublicSettings {
   client_download_netdisk_url: string
   /** 客户端下载页的直连下载地址；为空则隐藏该按钮。 */
   client_download_direct_url: string
+  /** macOS 安装包直链；为空表示尚未发布 mac 版，下载页不显示 mac 区块。 */
+  client_download_direct_url_mac: string
+  /**
+   * Windows 客户端最新版本号；为空表示不广播更新。
+   *
+   * 原先写在 frontend/public/client-version.json 里，而那个文件 embed 进后端
+   * 二进制：改版本号要重建前端 + 重建后端 + 重新部署，改下载地址却只要在后台
+   * 存一次。两条通道生效代价差太远，必然不同步。
+   */
+  client_latest_version: string
+  /** macOS 客户端最新版本号；与 Windows 分开，两个平台不同时发布。 */
+  client_latest_version_mac: string
   /** 充值页是否展示备用支付通道入口（默认关闭）。 */
   backup_payment_enabled: boolean
   /** 备用支付通道地址；后端已校验只允许 http/https，非法值会落成空串。 */

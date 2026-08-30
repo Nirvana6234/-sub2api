@@ -211,6 +211,11 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyClientDownloadNetdiskURL: "https://pan.baidu.com/s/5PT50-jTaOtR8D28OfYnbQQ",
 		SettingKeyClientDownloadDirectURL:  ClientDownloadDefaultDirectURL,
 
+		// mac 版尚未发布：直链与版本号都留空，客户端据此不提示 mac 用户更新。
+		SettingKeyClientDownloadDirectURLMac: "",
+		SettingKeyClientLatestVersion:        "0.2",
+		SettingKeyClientLatestVersionMac:     "",
+
 		// 备用支付通道（默认关闭；opt-in）
 		SettingKeyBackupPaymentEnabled: "false",
 		SettingKeyBackupPaymentURL:     "https://pay.ldxp.cn/shop/IJBZUZDE",
@@ -846,6 +851,9 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 
 	result.ClientDownloadNetdiskURL = strings.TrimSpace(settings[SettingKeyClientDownloadNetdiskURL])
 	result.ClientDownloadDirectURL = strings.TrimSpace(settings[SettingKeyClientDownloadDirectURL])
+	result.ClientDownloadDirectURLMac = strings.TrimSpace(settings[SettingKeyClientDownloadDirectURLMac])
+	result.ClientLatestVersion = strings.TrimSpace(settings[SettingKeyClientLatestVersion])
+	result.ClientLatestVersionMac = strings.TrimSpace(settings[SettingKeyClientLatestVersionMac])
 
 	// 备用支付通道：默认关闭，严格 true 才开启。
 	result.BackupPaymentEnabled = settings[SettingKeyBackupPaymentEnabled] == "true"

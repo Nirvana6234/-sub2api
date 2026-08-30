@@ -126,7 +126,7 @@ public partial class App : Application
 
         var signIn = new SignInViewModel(session, relay.GetPublicSettingsAsync);
         var clientUpdate = new ClientUpdateViewModel(
-            new ClientVersionChecker(_http, ClientOptions.CurrentVersion).CheckAsync);
+            new ClientVersionChecker(relay.GetPublicSettingsAsync, ClientOptions.CurrentVersion).CheckAsync);
 
         var keyNaming = new ManagedKeyNaming(new InstallId());
         var codexConfig = new CodexConfigWriter(

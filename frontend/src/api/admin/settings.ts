@@ -761,6 +761,9 @@ export interface SystemSettings {
   client_download_enabled: boolean;
   client_download_netdisk_url: string;
   client_download_direct_url: string;
+  client_download_direct_url_mac: string;
+  client_latest_version: string;
+  client_latest_version_mac: string;
   backup_payment_enabled: boolean;
   backup_payment_url: string;
   playground_enabled: boolean;
@@ -1077,6 +1080,9 @@ export interface UpdateSettingsRequest {
   client_download_enabled?: boolean;
   client_download_netdisk_url?: string;
   client_download_direct_url?: string;
+  client_download_direct_url_mac?: string;
+  client_latest_version?: string;
+  client_latest_version_mac?: string;
   backup_payment_enabled?: boolean;
   backup_payment_url?: string;
   playground_enabled?: boolean;
