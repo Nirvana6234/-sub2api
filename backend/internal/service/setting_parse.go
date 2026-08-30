@@ -211,9 +211,14 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyClientDownloadNetdiskURL: "https://pan.baidu.com/s/5PT50-jTaOtR8D28OfYnbQQ",
 		SettingKeyClientDownloadDirectURL:  ClientDownloadDefaultDirectURL,
 
-		// mac 版尚未发布：直链与版本号都留空，客户端据此不提示 mac 用户更新。
+		// 三个都默认为空，客户端据此不广播任何更新。
+		//
+		// 刻意不把当前版本号写成默认值：那等于又把版本号钉进第二个地方
+		// （另一个是客户端的 ClientOptions.CurrentVersion），而这正是本次
+		// 要消灭的东西。管理员没填时保持沉默，好过断言一个迟早会过期的数字 ——
+		// 后者在下一次发版时会静默地把所有人卡在旧版本上。
 		SettingKeyClientDownloadDirectURLMac: "",
-		SettingKeyClientLatestVersion:        "0.2",
+		SettingKeyClientLatestVersion:        "",
 		SettingKeyClientLatestVersionMac:     "",
 
 		// 备用支付通道（默认关闭；opt-in）
