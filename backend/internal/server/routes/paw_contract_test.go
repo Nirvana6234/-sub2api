@@ -27,8 +27,9 @@ func TestPawConfigResponseJSONContract(t *testing.T) {
 	require.NoError(t, err)
 	require.JSONEq(t, `{"data":{"user":{"id":42,"name":"user","email":"user@example.com"},"groups":[{"id":7,"name":"Balanced","description":"","models":[{"id":"model-id","name":"Model Name","owned_by":"provider","reasoning":{"supported":true,"values":["low","medium","high"],"default":"medium"},"vision":true,"image_generation":false,"file_input":true}]}],"defaults":{"group_id":7,"model_id":"model-id","reasoning":"medium"}}}`, string(raw))
 
+	literalJSON := `{"data":{"user":{"id":42,"name":"user","email":"user@example.com"},"groups":[{"id":7,"name":"Balanced","description":"","models":[{"id":"model-id","name":"Model Name","owned_by":"provider","reasoning":{"supported":true,"values":["low","medium","high"],"default":"medium"},"vision":true,"image_generation":false,"file_input":true}]}],"defaults":{"group_id":7,"model_id":"model-id","reasoning":"medium"}}}`
 	var got PawConfigResponse
-	require.NoError(t, json.Unmarshal(raw, &got))
+	require.NoError(t, json.Unmarshal([]byte(literalJSON), &got))
 	require.Equal(t, want, got)
 }
 
@@ -45,7 +46,7 @@ func TestPawChatRequestJSONContract(t *testing.T) {
 	require.JSONEq(t, `{"group_id":7,"model_id":"model-id","reasoning":"medium","messages":[{"role":"user","content":"Hello"}],"stream":true,"attachments":[{"id":"attachment-id"}]}`, string(raw))
 
 	var got PawChatRequest
-	require.NoError(t, json.Unmarshal(raw, &got))
+	require.NoError(t, json.Unmarshal([]byte(`{"group_id":7,"model_id":"model-id","reasoning":"medium","messages":[{"role":"user","content":"Hello"}],"stream":true,"attachments":[{"id":"attachment-id"}]}`), &got))
 	require.Equal(t, want, got)
 }
 
@@ -56,28 +57,34 @@ func TestPawAttachmentReferenceJSONContract(t *testing.T) {
 	require.JSONEq(t, `{"id":"attachment-id"}`, string(raw))
 
 	var got PawAttachmentReference
-	require.NoError(t, json.Unmarshal(raw, &got))
+	require.NoError(t, json.Unmarshal([]byte(`{"id":"attachment-id"}`), &got))
 	require.Equal(t, want, got)
 }
 
 func TestPawErrorJSONContract(t *testing.T) {
-	for _, code := range []string{
-		PawErrorCodeConfigUnavailable,
-		PawErrorCodeGroupForbidden,
-		PawErrorCodeModelUnavailable,
-		PawErrorCodeReasoningUnsupported,
-		PawErrorCodeAttachmentInvalid,
-		PawErrorCodeQuotaExceeded,
-		PawErrorCodeUpstreamUnavailable,
-		PawErrorCodeAuthRequired,
-	} {
-		want := PawErrorResponse{Error: PawError{Code: code, Message: "message"}}
+	cases := []struct {
+		literal  string
+		constant string
+	}{
+		{literal: "CONFIG_UNAVAILABLE", constant: PawErrorCodeConfigUnavailable},
+		{literal: "GROUP_FORBIDDEN", constant: PawErrorCodeGroupForbidden},
+		{literal: "MODEL_UNAVAILABLE", constant: PawErrorCodeModelUnavailable},
+		{literal: "REASONING_UNSUPPORTED", constant: PawErrorCodeReasoningUnsupported},
+		{literal: "ATTACHMENT_INVALID", constant: PawErrorCodeAttachmentInvalid},
+		{literal: "QUOTA_EXCEEDED", constant: PawErrorCodeQuotaExceeded},
+		{literal: "UPSTREAM_UNAVAILABLE", constant: PawErrorCodeUpstreamUnavailable},
+		{literal: "AUTH_REQUIRED", constant: PawErrorCodeAuthRequired},
+	}
+
+	for _, tc := range cases {
+		require.Equal(t, tc.literal, tc.constant)
+		want := PawErrorResponse{Error: PawError{Code: tc.literal, Message: "message"}}
 		raw, err := json.Marshal(want)
 		require.NoError(t, err)
 
 		var got PawErrorResponse
-		require.NoError(t, json.Unmarshal(raw, &got))
+		require.NoError(t, json.Unmarshal([]byte(`{"error":{"code":"`+tc.literal+`","message":"message"}}`), &got))
 		require.Equal(t, want, got)
-		require.JSONEq(t, `{"error":{"code":"`+code+`","message":"message"}}`, string(raw))
+		require.JSONEq(t, `{"error":{"code":"`+tc.literal+`","message":"message"}}`, string(raw))
 	}
 }

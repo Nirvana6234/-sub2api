@@ -37,3 +37,20 @@ Output: `ok github.com/Wei-Shaw/sub2api/internal/server/routes 2.133s`.
 The contract uses integer IDs for users/groups and string IDs for models/attachments, matching the specification and existing entity conventions. JSON names are explicit, including `owned_by`, `image_generation`, `file_input`, `group_id`, and the nested `error` envelope. No handler or route behavior was added in this task.
 
 Concern: full package verification is blocked by unrelated route failures and unavailable Redis; the focused Paw test command is independently green.
+
+## Review Round 1 Fix
+
+Addressed both findings in `backend/internal/server/routes/paw_contract_test.go`:
+
+- Required error codes are now supplied as independent literal strings and compared against the exported constants, so incorrect constant values fail the test.
+- Configuration, chat request, attachment reference, and error tests now unmarshal hard-coded API JSON literals rather than JSON produced by the structs under test, so incorrect inbound JSON tags fail the test.
+
+Verification command:
+
+```text
+cd backend
+gofmt -w internal/server/routes/paw_contract_test.go
+go test ./internal/server/routes -run Paw -count=1
+```
+
+Output: `ok github.com/Wei-Shaw/sub2api/internal/server/routes 2.006s`.
