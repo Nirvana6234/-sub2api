@@ -30,9 +30,13 @@ func (s *pawConfigChannelSourceStub) GetChannelForGroup(_ context.Context, group
 type pawConfigDefaultsStoreStub struct {
 	defaults PawDefaults
 	called   int
+	getErr   error
 }
 
 func (s *pawConfigDefaultsStoreStub) GetPawDefaults(context.Context, int64) (PawDefaults, error) {
+	if s.getErr != nil {
+		return PawDefaults{}, s.getErr
+	}
 	return s.defaults, nil
 }
 
@@ -99,6 +103,10 @@ func newPawConfigTestService(store PawDefaultsStore) *PawConfigService {
 			7: {ID: 70, Status: StatusActive, ModelPricing: []ChannelModelPricing{{Platform: PlatformOpenAI, Models: []string{"gpt-5", "gpt-5-mini"}}}},
 		}},
 		store,
+		&PricingService{pricingData: map[string]*LiteLLMModelPricing{
+			"gpt-5":      {SupportsReasoning: true, SupportsMinimalReasoningEffort: true, SupportsXHighReasoningEffort: true, SupportsMaxReasoningEffort: true},
+			"gpt-5-mini": {SupportsReasoning: true, SupportsMinimalReasoningEffort: true, SupportsXHighReasoningEffort: true, SupportsMaxReasoningEffort: true},
+		}},
 	)
 }
 
@@ -161,6 +169,17 @@ func TestPawConfigServiceCanReplaceStalePersistedDefaults(t *testing.T) {
 	require.Equal(t, 1, store.called)
 }
 
+func TestPawConfigServiceCanReplaceMalformedPersistedDefaults(t *testing.T) {
+	store := &pawConfigDefaultsStoreStub{getErr: errors.New("malformed Paw defaults")}
+	want := PawDefaults{GroupID: 7, ModelID: "gpt-5", Reasoning: "low"}
+
+	err := newPawConfigTestService(store).SaveDefaults(context.Background(), 42, want)
+
+	require.NoError(t, err)
+	require.Equal(t, want, store.defaults)
+	require.Equal(t, 1, store.called)
+}
+
 func TestPawConfigServiceSaveDefaultsWithNilStoreReturnsUnavailable(t *testing.T) {
 	err := newPawConfigTestService(nil).SaveDefaults(context.Background(), 42, PawDefaults{GroupID: 7, ModelID: "gpt-5", Reasoning: "low"})
 
@@ -213,6 +232,10 @@ func TestPawConfigServiceMapsGroupAndModelCapabilities(t *testing.T) {
 			}},
 		}},
 		&pawConfigDefaultsStoreStub{},
+		&PricingService{pricingData: map[string]*LiteLLMModelPricing{
+			"gpt-5.4":     {SupportsVision: true, SupportsPDFInput: true, SupportsReasoning: true, SupportsMinimalReasoningEffort: true, SupportsXHighReasoningEffort: true},
+			"gpt-image-2": {Mode: "image_generation", SupportsVision: true, SupportsPDFInput: true, SupportedOutputModalities: []string{"text", "image"}},
+		}},
 	)
 
 	config, err := svc.GetConfig(context.Background(), 42)
@@ -224,6 +247,27 @@ func TestPawConfigServiceMapsGroupAndModelCapabilities(t *testing.T) {
 	require.False(t, config.Groups[0].Models[0].ImageGeneration)
 	require.True(t, config.Groups[0].Models[1].ImageGeneration)
 	require.False(t, config.Groups[1].Models[0].ImageGeneration)
+}
+
+func TestPawConfigServiceUsesModelCatalogForReasoningValues(t *testing.T) {
+	svc := NewPawConfigService(
+		&pawConfigGroupSourceStub{groups: []Group{{ID: 7, Name: "Allowed", Platform: PlatformOpenAI, Status: StatusActive}}},
+		&pawConfigUserSourceStub{user: &User{ID: 42, Username: "user", Email: "user@example.com"}},
+		&pawConfigChannelSourceStub{channels: map[int64]*Channel{
+			7: {ID: 70, Status: StatusActive, ModelPricing: []ChannelModelPricing{{Platform: PlatformOpenAI, Models: []string{"gpt-5.3-codex-spark", "gpt-5.4-mini"}}}},
+		}},
+		&pawConfigDefaultsStoreStub{},
+		&PricingService{pricingData: map[string]*LiteLLMModelPricing{
+			"gpt-5.3-codex-spark": {SupportsReasoning: true, SupportsMinimalReasoningEffort: true, SupportsXHighReasoningEffort: false, SupportsMaxReasoningEffort: false},
+			"gpt-5.4-mini":        {SupportsReasoning: true, SupportsMinimalReasoningEffort: false, SupportsXHighReasoningEffort: true, SupportsMaxReasoningEffort: false},
+		}},
+	)
+
+	config, err := svc.GetConfig(context.Background(), 42)
+
+	require.NoError(t, err)
+	require.Equal(t, []string{"minimal", "low", "medium", "high"}, config.Groups[0].Models[0].Reasoning.Values)
+	require.Equal(t, []string{"low", "medium", "high", "xhigh"}, config.Groups[0].Models[1].Reasoning.Values)
 }
 
 func pawFloatPtr(value float64) *float64 {

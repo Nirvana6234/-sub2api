@@ -139,7 +139,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	tlsFingerprintProfileService := service.NewTLSFingerprintProfileService(tlsFingerprintProfileRepository, tlsFingerprintProfileCache)
 	channelRepository := repository.NewChannelRepository(db)
 	channelService := service.NewChannelService(channelRepository, groupRepository, apiKeyAuthCacheInvalidator, pricingService)
-	pawConfigService := service.NewPawConfigService(service.APIKeyPawGroupSource{Service: apiKeyService}, userService, channelService, service.UserAttributePawDefaultsStore{Service: userAttributeService})
+	pawConfigService := service.NewPawConfigService(service.APIKeyPawGroupSource{Service: apiKeyService}, userService, channelService, service.UserAttributePawDefaultsStore{Service: userAttributeService}, pricingService)
 	modelPricingResolver := service.NewModelPricingResolver(channelService, billingService)
 	compositeModelRouteRepository := repository.NewCompositeModelRouteRepository(client)
 	compositeRouteResolver := service.NewCompositeRouteResolver(compositeModelRouteRepository)

@@ -76,11 +76,11 @@ func TestPawConfigRouteReturnsEnvelopeAndPersistsDefaults(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	require.Contains(t, w.Body.String(), `"groups"`)
 	w = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPut, "/api/v1/paw/config/defaults", strings.NewReader(`{"group_id":7,"model_id":"gpt-5","reasoning":"low"}`))
+	req = httptest.NewRequest(http.MethodPut, "/api/v1/paw/config/defaults", strings.NewReader(`{"group_id":7,"model_id":"gpt-5"}`))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
-	require.Equal(t, service.PawDefaults{GroupID: 7, ModelID: "gpt-5", Reasoning: "low"}, store.defaults)
+	require.Equal(t, service.PawDefaults{GroupID: 7, ModelID: "gpt-5"}, store.defaults)
 }
 
 func TestPawConfigRouteInvalidDefaultsReturnConfigUnavailable(t *testing.T) {
