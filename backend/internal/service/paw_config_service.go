@@ -158,6 +158,21 @@ func (s *PawConfigService) GetConfig(ctx context.Context, userID int64) (*PawCon
 	return s.buildConfig(ctx, user, groups, true, true)
 }
 
+// GetAvailableConfig returns the current selectable groups and models without
+// validating persisted defaults. Chat requests must remain usable while a
+// previously saved default is being replaced.
+func (s *PawConfigService) GetAvailableConfig(ctx context.Context, userID int64) (*PawConfig, error) {
+	user, err := s.users.GetByID(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("get user: %w", err)
+	}
+	groups, err := s.groups.AvailableGroups(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("get available groups: %w", err)
+	}
+	return s.buildConfig(ctx, user, groups, false, false)
+}
+
 func (s *PawConfigService) buildConfig(ctx context.Context, user *User, groups []Group, includeDefaults bool, validateDefaults bool) (*PawConfig, error) {
 	result := &PawConfig{User: PawUser{ID: user.ID, Name: user.Username, Email: user.Email}, Groups: make([]PawGroup, 0, len(groups))}
 	for _, group := range groups {
