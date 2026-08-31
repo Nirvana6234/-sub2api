@@ -53,7 +53,7 @@ Result: `ok github.com/Wei-Shaw/sub2api/cmd/server (cached) [no tests to run]`.
 - Models are derived only from the active channel pricing attached to each authorized group.
 - Invalid defaults are validated before the persistence call, so the previous default is unchanged.
 - Routes use JWT authentication, `BackendModeUserGuard`, and `PanelRateLimiter`.
-- Model capability flags are currently conservative defaults because the current channel pricing model does not expose normalized vision/file capability metadata. Later Paw chat work should extend the same service mapping when those existing capability sources are identified.
+- Model capability flags initially used conservative defaults; the fix round now maps the capability signals available from the current group and channel data.
 - The generated server wiring was updated manually to construct and attach the service.
 
 ## Fix round after review
