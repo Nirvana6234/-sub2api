@@ -313,7 +313,7 @@ describe('playground view model', () => {
 
     const gptImage = buildPlaygroundImageRequest({ ...input, model: 'gpt-image-1' })
     expect(gptImage.body).toMatchObject({ output_format: 'webp', output_compression: 82, background: 'transparent', moderation: 'low', style: 'vivid', input_fidelity: 'high' })
-    expect(gptImage.body).toHaveProperty('response_format', 'b64_json')
+    expect(gptImage.body).not.toHaveProperty('response_format')
   })
 
   it('keeps DALL-E 3 style while forcing one image', () => {

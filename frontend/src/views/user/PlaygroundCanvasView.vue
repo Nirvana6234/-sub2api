@@ -317,6 +317,7 @@
               :plugin-reference-selecting="pluginReferenceTargetId === node.id"
               :mention-references="canvasMentionReferencesByNodeId[node.id] ?? []"
               :incoming-references="canvasReferenceItemsByNodeId[node.id] ?? []"
+              :has-inherited-prompt="canvasNodeHasPromptInput(node)"
               :image-models="models"
               :text-models="textModels"
               :video-models="videoModels"
@@ -338,8 +339,10 @@
               @delete-image="deleteImageVariant"
               @generate-video="generateVideoNode"
               @cancel-video="cancelVideoNode"
-              @generate-audio="generateAudioNode"
-              @transcribe-audio="transcribeAudioNode"
+               @generate-audio="generateAudioNode"
+               @cancel-audio="cancelAudioNode"
+               @retry-generation="retryCanvasGeneration"
+               @transcribe-audio="transcribeAudioNode"
               @download="downloadNode"
               @use-reference="useResultAsReference"
               @edit-image="openImageEditor"
@@ -350,10 +353,13 @@
                @view-image="openImageViewer"
                @mask-image="openImageMask"
               @angle-image="openImageAngle"
-              @toggle-free-resize="toggleFreeResize"
+               @toggle-free-resize="toggleFreeResize"
                @capture-video-frame="captureVideoFrame"
+               @edit-video="openVideoEdit"
                @save-asset="saveNodeAsCanvasAsset"
                @upload-image="uploadImageToNode"
+               @upload-video="uploadVideoToNode"
+               @upload-audio="uploadAudioToNode"
                @show-info="openCanvasNodeInfo"
                @connect-start="startConnection"
               @update-prompt="updateNodePrompt"
@@ -499,6 +505,13 @@
             </select>
             <label class="mt-4 block text-xs font-medium text-gray-700 dark:text-dark-300" for="canvas-text-instruction">{{ t('playground.canvasTextInstruction') }}</label>
             <textarea id="canvas-text-instruction" v-model="textInstruction" rows="4" class="input mt-1.5 min-h-24 w-full resize-y text-sm leading-6" :placeholder="t('playground.canvasTextInstructionPlaceholder')" :disabled="selectedNode.status === 'generating'"></textarea>
+            <label class="mt-4 block text-xs font-medium text-gray-700 dark:text-dark-300" for="canvas-text-reasoning">{{ t('playground.canvasReasoningEffort') }}</label>
+            <select id="canvas-text-reasoning" class="select mt-1.5 h-9 w-full text-xs" :value="selectedNode.config?.reasoningEffort ?? 'medium'" :disabled="selectedNode.status === 'generating'" @change="updateNodeConfig(selectedNode.id, 'reasoningEffort', ($event.target as HTMLSelectElement).value)">
+              <option value="none">{{ t('playground.canvasReasoningNone') }}</option>
+              <option value="low">{{ t('playground.canvasReasoningLow') }}</option>
+              <option value="medium">{{ t('playground.canvasReasoningMedium') }}</option>
+              <option value="high">{{ t('playground.canvasReasoningHigh') }}</option>
+            </select>
             <label class="mt-4 block text-xs font-medium text-gray-700 dark:text-dark-300" for="canvas-text-count">{{ t('playground.canvasTextCount') }}</label>
             <input id="canvas-text-count" :value="selectedNode.textCount ?? 1" type="number" min="1" max="10" step="1" class="input mt-1.5 h-9 w-full text-sm" :disabled="selectedNode.status === 'generating'" data-canvas-text-count @change="updateTextNodeCount(selectedNode.id, Number(($event.target as HTMLInputElement).value))">
           </template>
@@ -537,9 +550,32 @@
           <template v-if="selectedNode.type === 'video' && selectedNode.kind !== 'result'">
             <label class="mt-4 block text-xs font-medium text-gray-700 dark:text-dark-300" for="canvas-video-model">{{ t('playground.canvasVideoModel') }}</label>
             <select id="canvas-video-model" class="select mt-1.5 h-9 w-full text-xs" :value="selectedNode.model || videoModels[0]?.id" :disabled="selectedNode.status === 'generating'" @change="updateVideoNodeModel(selectedNode.id, ($event.target as HTMLSelectElement).value)"><option v-for="model in videoModels" :key="model.id" :value="model.id">{{ model.id }}</option></select>
-            <div class="mt-4 grid grid-cols-2 gap-2">
-              <label class="block text-xs font-medium text-gray-700 dark:text-dark-300">{{ t('playground.canvasVideoResolution') }}<select class="select mt-1.5 h-9 w-full text-xs" :value="selectedNode.config?.resolution ?? '720p'" :disabled="selectedNode.status === 'generating'" @change="updateNodeConfig(selectedNode.id, 'resolution', ($event.target as HTMLSelectElement).value)"><option value="480p">480p</option><option value="720p">720p</option><option value="1080p">1080p</option></select></label>
-              <label class="block text-xs font-medium text-gray-700 dark:text-dark-300">{{ t('playground.canvasVideoDuration') }}<select class="select mt-1.5 h-9 w-full text-xs" :value="selectedNode.config?.duration ?? '8'" :disabled="selectedNode.status === 'generating'" @change="updateNodeConfig(selectedNode.id, 'duration', ($event.target as HTMLSelectElement).value)"><option value="5">5s</option><option value="8">8s</option><option value="10">10s</option></select></label>
+            <div class="mt-4" data-canvas-video-settings-popover>
+              <CanvasConfigSettingsPopover
+                mode="video"
+                :count="selectedNode.config?.count ?? '1'"
+                :resolution="selectedNode.config?.resolution ?? '720p'"
+                :duration="selectedNode.config?.duration ?? '8'"
+                :aspect-ratio="selectedNode.config?.aspectRatio ?? '16:9'"
+                :disabled="selectedNode.status === 'generating'"
+                @update="updateNodeConfig(selectedNode.id, $event.key, $event.value)"
+              />
+            </div>
+          </template>
+          <template v-if="selectedNode.type === 'audio' && selectedNode.kind !== 'result'">
+            <label class="mt-4 block text-xs font-medium text-gray-700 dark:text-dark-300" for="canvas-audio-model">{{ t('playground.canvasTextModel') }}</label>
+            <select id="canvas-audio-model" class="select mt-1.5 h-9 w-full text-xs" :value="selectedNode.model || selectedTextModel" :disabled="selectedNode.status === 'generating'" @change="updateTextNodeModel(selectedNode.id, ($event.target as HTMLSelectElement).value)"><option v-for="model in textModels" :key="model.id" :value="model.id">{{ model.id }}</option></select>
+            <div class="mt-4" data-canvas-audio-settings-popover>
+              <CanvasConfigSettingsPopover
+                mode="audio"
+                :count="selectedNode.config?.count ?? '1'"
+                :audio-voice="selectedNode.config?.audioVoice ?? 'alloy'"
+                :audio-format="selectedNode.config?.audioFormat ?? 'mp3'"
+                :audio-speed="selectedNode.config?.audioSpeed ?? '1'"
+                :audio-instructions="selectedNode.config?.audioInstructions ?? ''"
+                :disabled="selectedNode.status === 'generating'"
+                @update="updateNodeConfig(selectedNode.id, $event.key, $event.value)"
+              />
             </div>
           </template>
           <div v-if="selectedNode.type === 'config'" class="space-y-2">
@@ -553,6 +589,23 @@
                 <option v-for="model in ((selectedNode.config?.mode ?? 'image') === 'image' ? models : (selectedNode.config?.mode ?? 'image') === 'video' ? videoModels : textModels)" :key="model.id" :value="model.id">{{ model.id }}</option>
               </select>
             </label>
+            <CanvasConfigSettingsPopover
+              :mode="selectedNode.config?.mode ?? 'image'"
+              :count="selectedNode.config?.count ?? '1'"
+              :size="selectedNode.config?.size ?? '1024x1024'"
+              :quality="selectedNode.config?.quality ?? 'auto'"
+              :background="selectedNode.config?.background ?? 'auto'"
+              :resolution="selectedNode.config?.resolution ?? '720p'"
+              :duration="selectedNode.config?.duration ?? '8'"
+              :aspect-ratio="selectedNode.config?.aspectRatio ?? '16:9'"
+              :audio-voice="selectedNode.config?.audioVoice ?? 'alloy'"
+              :audio-format="selectedNode.config?.audioFormat ?? 'mp3'"
+              :audio-speed="selectedNode.config?.audioSpeed ?? '1'"
+              :audio-instructions="selectedNode.config?.audioInstructions ?? ''"
+              :reasoning-effort="selectedNode.config?.reasoningEffort ?? 'medium'"
+              :disabled="selectedNode.status === 'generating' || configBusyNodeIds.has(selectedNode.id)"
+              @update="updateNodeConfig(selectedNode.id, $event.key, $event.value)"
+            />
             <p class="text-xs leading-5 text-gray-600 dark:text-dark-300">{{ t('playground.canvasConfigHint') }}</p>
             <CanvasMentionEditor
               :model-value="selectedNode.prompt"
@@ -607,15 +660,27 @@
               {{ t('playground.canvasDownload') }}
             </button>
           </div>
+          <button v-else-if="selectedNode.kind === 'result' && (selectedNode.videoUrl || selectedNode.audioUrl)" type="button" class="btn btn-primary mt-6 w-full gap-1.5" :disabled="downloadingNodeId === selectedNode.id" @click="downloadNode(selectedNode.id)">
+            <Icon name="download" size="sm" />
+            {{ t('playground.canvasDownload') }}
+          </button>
+          <div v-if="selectedNode.kind === 'result' && selectedNode.type === 'video' && selectedNode.videoUrl" class="mt-3 space-y-2 rounded-lg border border-gray-200 p-3 dark:border-dark-700">
+            <label class="block text-xs font-medium text-gray-700 dark:text-dark-300" for="canvas-video-edit-prompt">{{ t('playground.canvasEditVideo') }}</label>
+            <textarea id="canvas-video-edit-prompt" v-model="videoEditPrompt" class="textarea min-h-20 w-full text-xs" :placeholder="t('playground.canvasVideoEditPrompt')" :disabled="videoEditBusy"></textarea>
+            <button type="button" class="btn btn-secondary h-8 w-full gap-1.5 text-xs" :disabled="videoEditBusy || !videoEditPrompt.trim() || !videoModels.length" @click="editVideoNode(selectedNode.id)">
+              <Icon :name="videoEditBusy ? 'refresh' : 'edit'" size="xs" :class="{ 'animate-spin': videoEditBusy }" />
+              {{ videoEditBusy ? t('playground.canvasGenerating') : t('playground.canvasEditVideo') }}
+            </button>
+          </div>
           <button v-else-if="selectedNode.type === 'image'" type="button" class="btn btn-primary mt-6 w-full gap-1.5" :disabled="selectedNode.status === 'generating' || !selectedNode.prompt.trim() || !canGenerate" @click="generateNode(selectedNode.id)">
             <Icon name="sparkles" size="sm" />
             {{ t('playground.generate') }}
           </button>
-          <button v-else-if="selectedNode.type === 'video' && selectedNode.kind !== 'result'" type="button" class="btn btn-primary mt-6 w-full gap-1.5" :disabled="selectedNode.status !== 'generating' && (!selectedNode.prompt.trim() || !videoModels.length)" @click="generateVideoNode(selectedNode.id)">
+          <button v-else-if="selectedNode.type === 'video' && selectedNode.kind !== 'result'" type="button" class="btn btn-primary mt-6 w-full gap-1.5" :disabled="selectedNode.status !== 'generating' && (!canvasNodeHasPromptInput(selectedNode) || !videoModels.length)" @click="generateVideoNode(selectedNode.id)">
             <Icon :name="selectedNode.status === 'generating' ? 'x' : 'play'" size="sm" />
             {{ selectedNode.status === 'generating' ? t('playground.canvasCancelGeneration') : t('playground.canvasGenerateVideo') }}
           </button>
-          <button v-else-if="selectedNode.type === 'audio' && selectedNode.kind !== 'result'" type="button" class="btn btn-primary mt-6 w-full gap-1.5" :disabled="selectedNode.status === 'generating' || !selectedNode.prompt.trim()" @click="generateAudioNode(selectedNode.id)"><Icon name="play" size="sm" />{{ t('playground.canvasGenerateAudio') }}</button>
+          <button v-else-if="selectedNode.type === 'audio' && selectedNode.kind !== 'result'" type="button" class="btn btn-primary mt-6 w-full gap-1.5" :disabled="selectedNode.status !== 'generating' && !canvasNodeHasPromptInput(selectedNode)" @click="selectedNode.status === 'generating' ? cancelAudioNode(selectedNode.id) : generateAudioNode(selectedNode.id)"><Icon :name="selectedNode.status === 'generating' ? 'x' : 'play'" size="sm" />{{ selectedNode.status === 'generating' ? t('playground.canvasCancelGeneration') : t('playground.canvasGenerateAudio') }}</button>
           <button v-else-if="selectedNode.type === 'text' && selectedNode.kind !== 'result'" type="button" class="btn btn-primary mt-6 w-full gap-1.5" :disabled="!canGenerateText(selectedNode)" @click="generateTextNode(selectedNode.id)">
             <Icon :name="selectedNode.status === 'generating' ? 'x' : 'sparkles'" size="sm" />
             {{ selectedNode.status === 'generating' ? t('playground.canvasCancelGeneration') : (selectedNode.textContent || selectedNode.prompt).trim() ? t('playground.canvasRewriteText') : t('playground.canvasGenerateText') }}
@@ -640,7 +705,7 @@ import { Icon } from '@/components/icons'
 import { keysAPI } from '@/api'
 import type { ApiKey } from '@/types'
 import { useAppStore, useAuthStore } from '@/stores'
-import { fetchPlaygroundModels, fetchPlaygroundVideo, fetchPlaygroundVideoContent, sendPlaygroundChat, sendPlaygroundImageGeneration, sendPlaygroundSpeech, sendPlaygroundTranscription, sendPlaygroundVideoGeneration } from '@/features/playground/api'
+import { fetchPlaygroundModels, fetchPlaygroundVideo, fetchPlaygroundVideoContent, sendPlaygroundChat, sendPlaygroundImageGeneration, sendPlaygroundSpeech, sendPlaygroundTranscription, sendPlaygroundVideoEdit, sendPlaygroundVideoGeneration } from '@/features/playground/api'
 import { cachePlaygroundImage, createPlaygroundImageCacheKey, listPlaygroundGalleryImages, readCachedPlaygroundImageBlob, removeCachedPlaygroundImages, restoreCachedPlaygroundImage, type PlaygroundGalleryImage } from '@/features/playground/imageCache'
 import { downloadPlaygroundImage, imageFilenameExtension, playgroundImageUrl } from '@/features/playground/imageDownload'
 import { buildPlaygroundImageRequest, normalizePlaygroundChatModels, normalizePlaygroundImageModels, normalizePlaygroundKeys, normalizePlaygroundVideoModels, formatPlaygroundKeyLabel, resolvePlaygroundDefaultKeyId, resolvePlaygroundDefaultModel, resolveSelectedKeyId, resolveSelectedModel } from '@/features/playground/viewModel'
@@ -651,6 +716,7 @@ import CanvasConnections from '@/features/playground/canvas/CanvasConnections.vu
 import CanvasConnectionContextMenu from '@/features/playground/canvas/CanvasConnectionContextMenu.vue'
 import CanvasMiniMap from '@/features/playground/canvas/CanvasMiniMap.vue'
 import CanvasNode from '@/features/playground/canvas/CanvasNode.vue'
+import CanvasConfigSettingsPopover from '@/features/playground/canvas/CanvasConfigSettingsPopover.vue'
 import CanvasMentionEditor from '@/features/playground/canvas/CanvasMentionEditor.vue'
 import CanvasToolbar from '@/features/playground/canvas/CanvasToolbar.vue'
 import CanvasContextMenu from '@/features/playground/canvas/CanvasContextMenu.vue'
@@ -788,6 +854,9 @@ const canvasInfoNodeId = ref<string | null>(null)
 const reversePromptIds = ref<Set<string>>(new Set())
 const transcribingNodeIds = ref<Set<string>>(new Set())
 const videoControllers = new Map<string, AbortController>()
+const audioControllers = new Map<string, AbortController>()
+const videoEditPrompt = ref('')
+const videoEditBusy = ref(false)
 const runningGenerations = ref(0)
 const MAX_CONCURRENT_GENERATIONS = 4
 const downloadingNodeId = ref<string | null>(null)
@@ -1048,6 +1117,15 @@ function canvasNodeLabel(node: CanvasNodeData): string {
   if (node.prompt.trim()) return node.prompt.trim()
   if (node.kind === 'result') return t('playground.canvasResult', { index: (node.resultIndex ?? 0) + 1 })
   return t(`playground.canvasNodeType.${node.type}`)
+}
+
+function canvasNodeHasPromptInput(node: CanvasNodeData): boolean {
+  const project = activeProject.value
+  if (!project || (node.type !== 'video' && node.type !== 'audio')) return false
+  if (node.prompt.trim()) return true
+  return collectCanvasUpstreamNodes(project, node.id)
+    .flatMap((candidate) => candidate.type === 'group' ? expandCanvasGroupResourceNodes(candidate, project) : [candidate])
+    .some((candidate) => candidate.type === 'text' && Boolean((candidate.textContent || candidate.prompt).trim()))
 }
 
 function canvasNodePreview(node: CanvasNodeData): string {
@@ -2126,6 +2204,53 @@ async function uploadImageToNode(id: string, file: File): Promise<void> {
   }
 }
 
+async function uploadMediaToNode(id: string, file: File, type: 'video' | 'audio'): Promise<void> {
+  const node = activeProject.value?.nodes.find((item) => item.id === id)
+  if (!node || node.type !== type || !file.type.startsWith(`${type}/`)) return
+  try {
+    const owner = userId.value
+    const keyId = selectedKeyId.value
+    const now = Date.now()
+    const cacheKey = owner && keyId
+      ? createCanvasMediaCacheKey(owner, keyId, `${node.id}-${type}-upload-${now}`)
+      : undefined
+    const cachedUrl = cacheKey
+      ? await cacheCanvasMedia(cacheKey, file)
+      : null
+    const mediaUrl = cachedUrl || URL.createObjectURL(file)
+    const persistedCacheKey = cachedUrl ? cacheKey : undefined
+    const previousUrl = type === 'video' ? node.videoUrl : node.audioUrl
+    if (previousUrl && imageObjectUrls.has(previousUrl)) {
+      URL.revokeObjectURL(previousUrl)
+      imageObjectUrls.delete(previousUrl)
+    }
+    imageObjectUrls.add(mediaUrl)
+    canvasStore.checkpoint()
+    canvasStore.updateNode(id, {
+      prompt: node.prompt.trim() || file.name,
+      model: node.model || 'canvas-upload',
+      videoUrl: type === 'video' ? mediaUrl : undefined,
+      videoCacheKey: type === 'video' ? persistedCacheKey : undefined,
+      audioUrl: type === 'audio' ? mediaUrl : undefined,
+      audioCacheKey: type === 'audio' ? persistedCacheKey : undefined,
+      status: 'success',
+      errorMessage: undefined,
+    })
+    selectedNodeId.value = id
+    selectedNodeIds.value = new Set([id])
+  } catch {
+    appStore.showError(t('playground.canvasMediaUploadFailed'))
+  }
+}
+
+async function uploadVideoToNode(id: string, file: File): Promise<void> {
+  return uploadMediaToNode(id, file, 'video')
+}
+
+async function uploadAudioToNode(id: string, file: File): Promise<void> {
+  return uploadMediaToNode(id, file, 'audio')
+}
+
 function serializeSelectedNodes(): string | null {
   const nodes = (activeProject.value?.nodes ?? []).filter((node) => selectedNodeIds.value.has(node.id))
   if (!nodes.length) return null
@@ -2492,6 +2617,8 @@ function addNode(x = 120, y = 120, type: CanvasNodeData['type'] = 'image'): stri
           audioInstructions: '',
           reasoningEffort: 'medium',
         }
+      : type === 'text'
+        ? { mode: 'text', count: '1', reasoningEffort: 'medium' }
       : type === 'video' ? { resolution: '720p', duration: '8', aspectRatio: '16:9' } : undefined,
     status: 'idle',
     createdAt: now,
@@ -2891,11 +3018,126 @@ function cancelVideoNode(id: string): void {
   videoControllers.get(id)?.abort()
 }
 
-async function generateVideoNode(id: string): Promise<void> {
+function cancelAudioNode(id: string): void {
+  audioControllers.get(id)?.abort()
+}
+
+function openVideoEdit(id: string): void {
   const node = activeProject.value?.nodes.find((item) => item.id === id)
+  if (!node || node.type !== 'video' || !node.videoUrl) return
+  selectedNodeId.value = id
+  selectedNodeIds.value = new Set([id])
+  videoEditPrompt.value = node.prompt || ''
+}
+
+function readBlobAsDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('Unable to read video data.'))
+    reader.onerror = () => reject(reader.error ?? new Error('Unable to read video data.'))
+    reader.readAsDataURL(blob)
+  })
+}
+
+async function editVideoNode(id: string): Promise<void> {
+  const node = activeProject.value?.nodes.find((item) => item.id === id)
+  const project = activeProject.value
   const keyId = selectedKeyId.value
   const model = node?.model || videoModels.value[0]?.id
-  if (!node || node.type !== 'video' || node.kind === 'result' || !keyId || !model) return
+  const prompt = videoEditPrompt.value.trim()
+  if (!node || !project || node.type !== 'video' || !node.videoUrl || !keyId || !model || !prompt || videoEditBusy.value) return
+
+  videoEditBusy.value = true
+  const targetId = `video-edit-${id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  const targetIndex = project.nodes.filter((candidate) => candidate.sourceNodeId === id && candidate.type === 'video').length
+  const targetSize = nodeDimensions('video')
+  canvasStore.checkpoint()
+  canvasStore.addNode({
+    id: targetId,
+    type: 'video',
+    kind: 'result',
+    x: node.x + node.width + 120,
+    y: node.y,
+    width: targetSize.width,
+    height: targetSize.height,
+    prompt,
+    model,
+    config: node.config ? { ...node.config } : undefined,
+    status: 'generating',
+    sourceNodeId: id,
+    resultIndex: targetIndex,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  })
+  canvasStore.addConnection({ id: `connection-${id}-${targetId}`, from: id, to: targetId, kind: 'result' })
+  selectedNodeId.value = targetId
+  selectedNodeIds.value = new Set([targetId])
+
+  try {
+    const sourceBlob = node.videoCacheKey
+      ? await readCachedCanvasMediaBlob(node.videoCacheKey)
+      : null
+    const videoBlob: Blob = sourceBlob ?? (await fetch(node.videoUrl).then((response) => {
+      if (!response.ok) throw new Error(t('playground.canvasVideoEditSourceFailed'))
+      return response.blob()
+    }))
+    const dataUrl = await readBlobAsDataUrl(videoBlob)
+    const response = await sendPlaygroundVideoEdit(keyId, {
+      model,
+      prompt,
+      video: { url: dataUrl },
+      resolution: node.config?.resolution ?? '720p',
+      duration: Number(node.config?.duration ?? 8),
+      aspect_ratio: node.config?.aspectRatio ?? '16:9',
+    })
+    canvasStore.updateNode(targetId, { videoRequestId: response.id })
+    let finished: typeof response | null = null
+    for (let attempt = 0; attempt < 90; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 2000))
+      const status = await fetchPlaygroundVideo(keyId, response.id)
+      const normalized = (status.status ?? '').toLowerCase()
+      if (status.video_url || status.url || ['completed', 'done', 'succeeded', 'success'].includes(normalized)) {
+        finished = status
+        break
+      }
+      if (['failed', 'error', 'cancelled', 'canceled'].includes(normalized)) throw new Error(t('playground.canvasVideoGenerationFailed'))
+    }
+    if (!finished) throw new Error(t('playground.canvasVideoTimeout'))
+    const content = await fetchPlaygroundVideoContent(keyId, response.id)
+    const cacheKey = userId.value ? createCanvasMediaCacheKey(userId.value, keyId, targetId) : `canvas-video-${targetId}`
+    const url = await cacheCanvasMedia(cacheKey, content)
+    if (!url) throw new Error(t('playground.canvasVideoGenerationFailed'))
+    imageObjectUrls.add(url)
+    canvasStore.updateNode(targetId, { videoUrl: url, videoCacheKey: cacheKey, prompt, model, status: 'success', errorMessage: undefined })
+  } catch (error) {
+    canvasStore.updateNode(targetId, { status: 'error', errorMessage: error instanceof Error ? error.message : t('playground.canvasVideoGenerationFailed') })
+  } finally {
+    videoEditBusy.value = false
+  }
+}
+
+function retryCanvasGeneration(id: string): void {
+  const node = activeProject.value?.nodes.find((item) => item.id === id)
+  if (!node || node.status !== 'error') return
+  const source = node.kind === 'result' && node.sourceNodeId
+    ? activeProject.value?.nodes.find((item) => item.id === node.sourceNodeId)
+    : node
+  if (!source || source.kind === 'result') return
+  if (node.type === 'video') {
+    void generateVideoNode(source.id, node.kind === 'result' ? node.id : undefined)
+  } else if (node.type === 'audio') {
+    void generateAudioNode(source.id, node.kind === 'result' ? node.id : undefined)
+  } else if (node.type === 'text') {
+    void generateTextNode(source.id)
+  }
+}
+
+async function generateVideoNode(id: string, retryTargetId?: string): Promise<void> {
+  const node = activeProject.value?.nodes.find((item) => item.id === id)
+  const project = activeProject.value
+  const keyId = selectedKeyId.value
+  const model = node?.model || videoModels.value[0]?.id
+  if (!node || !project || node.type !== 'video' || node.kind === 'result' || !keyId || !model) return
   if (node.status === 'generating') {
     cancelVideoNode(id)
     return
@@ -2904,20 +3146,57 @@ async function generateVideoNode(id: string): Promise<void> {
   videoControllers.set(id, controller)
   canvasStore.checkpoint()
   canvasStore.updateNode(id, { status: 'generating', errorMessage: undefined, model })
+  const prompt = composeCanvasPrompt(node, project)
+  if (!prompt) {
+    canvasStore.updateNode(id, { status: 'idle' })
+    videoControllers.delete(id)
+    return
+  }
+  const isEmptyVideoNode = !node.videoUrl && !node.videoCacheKey
+  const targetId = retryTargetId || (isEmptyVideoNode ? id : `video-result-${id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+  const targetIndex = project.nodes.filter((candidate) => candidate.sourceNodeId === id && candidate.type === 'video').length
+  const targetSize = nodeDimensions('video')
+  if (targetId !== id && retryTargetId && project.nodes.some((candidate) => candidate.id === targetId)) {
+    canvasStore.updateNode(targetId, { status: 'generating', errorMessage: undefined, prompt, model, config: node.config ? { ...node.config } : undefined })
+  } else if (targetId !== id) {
+    canvasStore.addNode({
+      id: targetId,
+      type: 'video',
+      kind: 'result',
+      x: node.x + node.width + 120,
+      y: node.y,
+      width: targetSize.width,
+      height: targetSize.height,
+      prompt,
+      model,
+      config: node.config ? { ...node.config } : undefined,
+      status: 'generating',
+      sourceNodeId: id,
+      resultIndex: targetIndex,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    })
+    canvasStore.addConnection({ id: `connection-${id}-${targetId}`, from: id, to: targetId, kind: 'result' })
+  }
   try {
+    const referenceImages = await resolveReferenceAttachments(node)
     const response = await sendPlaygroundVideoGeneration(keyId, {
       model,
-      prompt: node.prompt,
+      prompt,
       resolution: node.config?.resolution ?? '720p',
       duration: Number(node.config?.duration ?? 8),
       aspect_ratio: node.config?.aspectRatio ?? '16:9',
+      ...(referenceImages.length
+        ? { reference_images: referenceImages.slice(0, 7).map((reference) => ({ url: reference.dataUrl })) }
+        : {}),
     }, { signal: controller.signal })
-    canvasStore.updateNode(id, { videoRequestId: response.id })
+    canvasStore.updateNode(targetId, { videoRequestId: response.id })
     let finished: typeof response | null = null
     for (let attempt = 0; attempt < 90; attempt += 1) {
       await new Promise((resolve) => window.setTimeout(resolve, 2000))
       if (controller.signal.aborted) {
-        canvasStore.updateNode(id, { status: 'idle', errorMessage: undefined })
+        canvasStore.updateNode(targetId, { status: 'idle', errorMessage: undefined })
+        if (targetId !== id) canvasStore.updateNode(id, { status: 'success', errorMessage: undefined })
         return
       }
       const status = await fetchPlaygroundVideo(keyId, response.id, { signal: controller.signal })
@@ -2930,25 +3209,66 @@ async function generateVideoNode(id: string): Promise<void> {
     }
     if (!finished) throw new Error(t('playground.canvasVideoTimeout'))
     const content = await fetchPlaygroundVideoContent(keyId, response.id, { signal: controller.signal })
-    const cacheKey = userId.value ? createCanvasMediaCacheKey(userId.value, keyId, id) : `canvas-video-${id}`
+    const cacheKey = userId.value ? createCanvasMediaCacheKey(userId.value, keyId, targetId) : `canvas-video-${targetId}`
     const url = await cacheCanvasMedia(cacheKey, content)
     if (!url) throw new Error(t('playground.canvasVideoGenerationFailed'))
     imageObjectUrls.add(url)
-    canvasStore.updateNode(id, { videoUrl: url, videoCacheKey: cacheKey, status: 'success' })
+    canvasStore.updateNode(targetId, { videoUrl: url, videoCacheKey: cacheKey, prompt, model, status: 'success', errorMessage: undefined })
+    if (targetId !== id) canvasStore.updateNode(id, { status: 'success', errorMessage: undefined })
   } catch (error) {
-    if (!controller.signal.aborted) canvasStore.updateNode(id, { status: 'error', errorMessage: error instanceof Error ? error.message : t('playground.canvasVideoGenerationFailed') })
+    if (controller.signal.aborted) {
+      canvasStore.updateNode(targetId, { status: 'idle', errorMessage: undefined })
+      if (targetId !== id) canvasStore.updateNode(id, { status: 'success', errorMessage: undefined })
+    } else {
+      canvasStore.updateNode(targetId, { status: 'error', errorMessage: error instanceof Error ? error.message : t('playground.canvasVideoGenerationFailed') })
+      if (targetId !== id) canvasStore.updateNode(id, { status: 'success', errorMessage: undefined })
+    }
   } finally {
     if (videoControllers.get(id) === controller) videoControllers.delete(id)
   }
 }
 
-async function generateAudioNode(id: string): Promise<void> {
+async function generateAudioNode(id: string, retryTargetId?: string): Promise<void> {
   const node = activeProject.value?.nodes.find((item) => item.id === id)
+  const project = activeProject.value
   const keyId = selectedTextKeyId.value
   const model = node?.model || selectedTextModel.value || 'grok-voice-latest'
-  if (!node || node.type !== 'audio' || node.kind === 'result' || !keyId || !node.prompt.trim()) return
+  if (!node || !project || node.type !== 'audio' || node.kind === 'result' || !keyId || !composeCanvasPrompt(node, project)) return
+  if (node.status === 'generating') {
+    cancelAudioNode(id)
+    return
+  }
+  const prompt = composeCanvasPrompt(node, project)
+  const isEmptyAudioNode = !node.audioUrl && !node.audioCacheKey
+  const targetId = retryTargetId || (isEmptyAudioNode ? id : `audio-result-${id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+  const targetIndex = project.nodes.filter((candidate) => candidate.sourceNodeId === id && candidate.type === 'audio').length
+  const targetSize = nodeDimensions('audio')
+  const controller = new AbortController()
+  audioControllers.set(id, controller)
   canvasStore.checkpoint()
   canvasStore.updateNode(id, { status: 'generating', errorMessage: undefined, model })
+  if (targetId !== id && retryTargetId && project.nodes.some((candidate) => candidate.id === targetId)) {
+    canvasStore.updateNode(targetId, { status: 'generating', errorMessage: undefined, prompt, model, config: node.config ? { ...node.config } : undefined })
+  } else if (targetId !== id) {
+    canvasStore.addNode({
+      id: targetId,
+      type: 'audio',
+      kind: 'result',
+      x: node.x + node.width + 120,
+      y: node.y + (node.height - targetSize.height) / 2,
+      width: targetSize.width,
+      height: targetSize.height,
+      prompt,
+      model,
+      config: node.config ? { ...node.config } : undefined,
+      status: 'generating',
+      sourceNodeId: id,
+      resultIndex: targetIndex,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    })
+    canvasStore.addConnection({ id: `connection-${id}-${targetId}`, from: id, to: targetId, kind: 'result' })
+  }
   try {
     const audioVoice = node.config?.audioVoice || 'alloy'
     const audioFormat = node.config?.audioFormat || 'mp3'
@@ -2957,21 +3277,35 @@ async function generateAudioNode(id: string): Promise<void> {
     const audioInstructions = node.config?.audioInstructions?.trim()
     const blob = await sendPlaygroundSpeech(keyId, {
       model,
-      input: node.prompt,
+      input: prompt,
       voice: audioVoice,
       response_format: audioFormat,
       speed: audioSpeed,
       ...(audioInstructions ? { instructions: audioInstructions } : {}),
       language: 'en',
     })
+    if (controller.signal.aborted) {
+      canvasStore.updateNode(targetId, { status: 'idle', errorMessage: undefined })
+      if (targetId !== id) canvasStore.updateNode(id, { status: 'success', errorMessage: undefined })
+      return
+    }
     if (!blob.size) throw new Error(t('playground.canvasAudioGenerationFailed'))
-    const cacheKey = userId.value ? createCanvasMediaCacheKey(userId.value, keyId, id) : `canvas-audio-${id}`
+    const cacheKey = userId.value ? createCanvasMediaCacheKey(userId.value, keyId, targetId) : `canvas-audio-${targetId}`
     const url = await cacheCanvasMedia(cacheKey, blob)
     if (!url) throw new Error(t('playground.canvasAudioGenerationFailed'))
     imageObjectUrls.add(url)
-    canvasStore.updateNode(id, { audioUrl: url, audioCacheKey: cacheKey, status: 'success' })
+    canvasStore.updateNode(targetId, { audioUrl: url, audioCacheKey: cacheKey, prompt, model, status: 'success', errorMessage: undefined })
+    if (targetId !== id) canvasStore.updateNode(id, { status: 'success', errorMessage: undefined })
   } catch (error) {
-    canvasStore.updateNode(id, { status: 'error', errorMessage: error instanceof Error ? error.message : t('playground.canvasAudioGenerationFailed') })
+    if (controller.signal.aborted) {
+      canvasStore.updateNode(targetId, { status: 'idle', errorMessage: undefined })
+      if (targetId !== id) canvasStore.updateNode(id, { status: 'success', errorMessage: undefined })
+    } else {
+      canvasStore.updateNode(targetId, { status: 'error', errorMessage: error instanceof Error ? error.message : t('playground.canvasAudioGenerationFailed') })
+      if (targetId !== id) canvasStore.updateNode(id, { status: 'success', errorMessage: undefined })
+    }
+  } finally {
+    if (audioControllers.get(id) === controller) audioControllers.delete(id)
   }
 }
 
@@ -3034,6 +3368,8 @@ async function generateTextNode(id: string): Promise<void> {
   const textCount = Math.min(10, Math.max(1, Math.floor(node.textCount ?? 1)))
   const sourceText = resolveCanvasNodeMentions((node.textContent || node.prompt || '').trim(), project)
   const mentionAttachments = await resolveMentionAttachments(node.textContent || node.prompt || '', project)
+  const upstreamAttachments = await resolveReferenceAttachments(node)
+  const imageAttachments = [...mentionAttachments, ...upstreamAttachments.filter((attachment) => !mentionAttachments.some((item) => item.dataUrl === attachment.dataUrl))]
   const instruction = textInstruction.value.trim() || (sourceText ? t('playground.canvasTextDefaultInstruction') : t('playground.canvasTextInstructionPlaceholder'))
   const incoming = project.connections
     .filter((connection) => connection.to === id)
@@ -3101,10 +3437,10 @@ async function generateTextNode(id: string): Promise<void> {
     })
   }
   try {
-    const userContent = mentionAttachments.length
+    const userContent = imageAttachments.length
       ? [
           { type: 'text', text: `${instruction}${context ? `\n\nContext:\n${context}` : ''}` },
-          ...mentionAttachments.map((attachment) => ({ type: 'image_url' as const, image_url: { url: attachment.dataUrl } })),
+          ...imageAttachments.map((attachment) => ({ type: 'image_url' as const, image_url: { url: attachment.dataUrl } })),
         ]
       : `${instruction}${context ? `\n\nContext:\n${context}` : ''}`
     const generatedErrors: string[] = []
@@ -4255,14 +4591,18 @@ async function applyImageMask(maskDataUrl: string): Promise<void> {
   })
   canvasStore.addConnection({ id: `connection-${node.id}-${resultNodeId}`, from: node.id, to: resultNodeId, kind: 'result' })
   try {
-    const response = await sendPlaygroundImageGeneration(keyId, {
+    const editBody: Record<string, unknown> = {
       model,
       prompt: node.prompt,
       size: node.config?.size ?? '1024x1024',
       quality: node.config?.quality ?? 'auto',
       n: 1,
-      response_format: 'url',
-    }, {
+      output_format: 'png',
+      ...(node.config?.background && node.config.background !== 'auto' ? { background: node.config.background } : {}),
+      // GPT Image always returns base64 and rejects response_format.
+      ...(/^gpt-image-/i.test(model) ? {} : { response_format: 'b64_json' }),
+    }
+    const response = await sendPlaygroundImageGeneration(keyId, editBody, {
       referenceImages: [{ id: `mask-source-${now}`, name: 'source.png', mimeType: blob.type || 'image/png', size: blob.size, dataUrl: sourceDataUrl }],
       mask: { id: `mask-${now}`, name: 'mask.png', mimeType: 'image/png', size: maskDataUrl.length, dataUrl: maskDataUrl },
     })
@@ -4879,6 +5219,17 @@ function collectCanvasUpstreamNodes(project: CanvasProject, targetId: string): C
   return nodes
 }
 
+function composeCanvasPrompt(node: CanvasNodeData, project: CanvasProject): string {
+  const upstreamText = collectCanvasUpstreamNodes(project, node.id)
+    .flatMap((candidate) => candidate.type === 'group' ? expandCanvasGroupResourceNodes(candidate, project) : [candidate])
+    .filter((candidate) => candidate.type === 'text')
+    .map((candidate) => (candidate.textContent || candidate.prompt).trim())
+    .filter(Boolean)
+  const blocks = [...upstreamText, node.prompt.trim()].filter(Boolean)
+  const uniqueBlocks = blocks.filter((block, index) => blocks.indexOf(block) === index)
+  return resolveCanvasNodeMentions(uniqueBlocks.join('\n\n'), project).trim()
+}
+
 // 生图前把参考图从 IndexedDB 还原成接口要的 PlaygroundAttachment 形态。
 async function resolveReferenceAttachments(node: CanvasNodeData): Promise<PlaygroundAttachment[]> {
   const attachments: PlaygroundAttachment[] = []
@@ -4903,6 +5254,22 @@ async function resolveReferenceAttachments(node: CanvasNodeData): Promise<Playgr
     }
   }
   for (const upstream of project ? collectCanvasUpstreamNodes(project, node.id) : []) {
+    if (upstream?.type === 'image') {
+      const blob = await resolveImageBlob(upstream, 0)
+      if (blob) {
+        const dataUrl = await blobToDataUrl(blob)
+        if (dataUrl && !attachments.some((item) => item.dataUrl === dataUrl)) {
+          attachments.push({
+            id: upstream.id,
+            name: `${canvasNodeLabel(upstream)}.png`,
+            mimeType: blob.type || 'image/png',
+            size: blob.size,
+            dataUrl,
+          })
+        }
+      }
+      continue
+    }
     if (upstream?.type === 'group' && project) {
       const urls = expandCanvasGroupResourceNodes(upstream, project)
         .filter((child) => child.type === 'image' || child.pluginRenderer === 'svg' || child.pluginRenderer === 'panorama')
@@ -5274,13 +5641,25 @@ async function captureVideoFrame(id: string, position: CanvasVideoFramePosition,
 
 async function downloadNode(id: string, imageIndex?: number): Promise<void> {
   const node = activeProject.value?.nodes.find((item) => item.id === id)
-  if ((!node?.imageUrl && !node?.audioUrl) || downloadingNodeId.value) return
+  if ((!node?.imageUrl && !node?.videoUrl && !node?.audioUrl) || downloadingNodeId.value) return
   const normalizedImageIndex = Number.isFinite(imageIndex) ? Math.max(0, Math.floor(imageIndex as number)) : 0
   const imageSlot = node?.type === 'image' ? canvasImageSlots(node)[normalizedImageIndex] : undefined
   const imageUrl = imageSlot?.status === 'success' ? imageSlot.url : node.imageUrl
+  const videoUrl = node.videoUrl
   const audioUrl = node.audioUrl
   downloadingNodeId.value = id
   try {
+    if (videoUrl) {
+      const response = await fetch(videoUrl)
+      if (!response.ok) throw new Error(t('playground.imageDownloadFailed'))
+      const url = URL.createObjectURL(await response.blob())
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `sub2api-canvas-${id}.mp4`
+      link.click()
+      URL.revokeObjectURL(url)
+      return
+    }
     if (audioUrl) {
       const response = await fetch(audioUrl)
       if (!response.ok) throw new Error(t('playground.imageDownloadFailed'))
@@ -5379,7 +5758,7 @@ async function loadKeys(): Promise<void> {
     let page = 1
     let pages = 1
     do {
-      const response = await keysAPI.list(page, 100)
+      const response = await keysAPI.list(page, 100, undefined, { includeHidden: true })
       allKeys.push(...response.items)
       pages = response.pages
       page += 1
@@ -5547,6 +5926,7 @@ watch(canvasPanelTab, (tab) => {
 
 onMounted(async () => {
   sidebarCollapsedBeforeCanvas = appStore.sidebarCollapsed
+  document.addEventListener('pointerdown', handleNodeCreateMenuOutsidePointerDown, true)
   // The canvas is rendered inside PlaygroundView's AppLayout with `embedded`,
   // so collapsing only in the standalone variant leaves the main sidebar
   // covering valuable canvas width when users enter the workspace.
@@ -5581,6 +5961,15 @@ onMounted(async () => {
   window.addEventListener('blur', resetTemporaryCanvasTool)
   window.addEventListener('blur', cancelActiveCanvasPointerGesture)
 })
+
+function handleNodeCreateMenuOutsidePointerDown(event: PointerEvent): void {
+  if (!nodeCreatePosition.value) return
+  const target = event.target instanceof Element ? event.target : null
+  if (target?.closest('[data-canvas-create-menu]')) return
+  nodeCreatePosition.value = null
+  pendingConnectionSource.value = null
+  pendingConnectionHandleType.value = 'source'
+}
 
 function resetTemporaryCanvasTool(): void {
   temporaryPanBaseTool.value = null
@@ -5675,6 +6064,7 @@ function clearSelectedNodes(): void {
   for (const id of [...selectedNodeIds.value]) {
     cancelNodeGeneration(id)
     cancelVideoNode(id)
+    cancelAudioNode(id)
     canvasStore.removeNode(id)
   }
   selectedNodeIds.value = new Set()
@@ -5688,6 +6078,7 @@ function clearCanvas(): void {
   for (const node of activeProject.value?.nodes ?? []) {
     cancelNodeGeneration(node.id)
     cancelVideoNode(node.id)
+    cancelAudioNode(node.id)
   }
   canvasStore.clearProject()
   selectedNodeIds.value = new Set()
@@ -5717,9 +6108,12 @@ onBeforeUnmount(() => {
   textGenerationControllers.clear()
   videoControllers.forEach((controller) => controller.abort())
   videoControllers.clear()
+  audioControllers.forEach((controller) => controller.abort())
+  audioControllers.clear()
   window.removeEventListener('keydown', handleKeyDown)
   window.removeEventListener('keyup', handleKeyUp)
   window.removeEventListener('paste', handlePaste)
+  document.removeEventListener('pointerdown', handleNodeCreateMenuOutsidePointerDown, true)
   window.removeEventListener('blur', resetTemporaryCanvasTool)
   window.removeEventListener('blur', cancelActiveCanvasPointerGesture)
   canvasResizeObserver?.disconnect()

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 )
 
 type fallbackPoolAlertEvent struct {
@@ -56,31 +55,6 @@ func notifyFallbackPoolUsage(ctx context.Context, cfg *config.Config, usageLog *
 		usageLog.FallbackTargetGroupID,
 		usageLog.FallbackTargetGroupName,
 	)
-	notifyFallbackPoolAlertEvent(cfg, event)
-}
-
-// notifyFallbackPoolSelection reports the routing decision immediately after
-// A->B fallback traversal succeeds. It intentionally does not require a
-// selected account or a usage log: both pools may be unavailable after the
-// fallback group is activated.
-func notifyFallbackPoolSelection(ctx context.Context, cfg *config.Config, trace fallbackPoolUsageTrace) {
-	if trace.SourceGroupID <= 0 || trace.TargetGroupID <= 0 {
-		return
-	}
-	if cfg == nil {
-		return
-	}
-	event := fallbackPoolAlertEvent{
-		RequestID:        fallbackAlertRequestID(ctx),
-		SiteBaseURL:      fallbackPoolAlertSiteBaseURL(cfg),
-		WorkspaceUserID:  strings.TrimSpace(cfg.FallbackPoolAlert.WorkspaceUserID),
-		WorkspaceAdminID: strings.TrimSpace(cfg.FallbackPoolAlert.WorkspaceAdminID),
-		SourceGroupID:    trace.SourceGroupID,
-		SourceGroupName:  trace.SourceGroupName,
-		TargetGroupID:    trace.TargetGroupID,
-		TargetGroupName:  trace.TargetGroupName,
-		CreatedAt:        time.Now().UTC(),
-	}
 	notifyFallbackPoolAlertEvent(cfg, event)
 }
 
@@ -149,19 +123,6 @@ func fallbackPoolAlertSiteBaseURL(cfg *config.Config) string {
 		return ""
 	}
 	return strings.TrimSpace(cfg.FallbackPoolAlert.SiteBaseURL)
-}
-
-func fallbackAlertRequestID(ctx context.Context) string {
-	if ctx == nil {
-		return ""
-	}
-	if requestID, ok := ctx.Value(ctxkey.RequestID).(string); ok && strings.TrimSpace(requestID) != "" {
-		return strings.TrimSpace(requestID)
-	}
-	if requestID, ok := ctx.Value(ctxkey.ClientRequestID).(string); ok {
-		return strings.TrimSpace(requestID)
-	}
-	return ""
 }
 
 func accountNameForFallbackAlert(account *Account) string {

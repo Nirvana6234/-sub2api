@@ -14,6 +14,7 @@ describe('playground canvas layout integration', () => {
   const mentionEditor = readFileSync(resolve(__dirname, '../canvas/CanvasMentionEditor.vue'), 'utf8')
   const connectionMenu = readFileSync(resolve(__dirname, '../canvas/CanvasConnectionContextMenu.vue'), 'utf8')
   const configSettings = readFileSync(resolve(__dirname, '../canvas/CanvasConfigSettingsPopover.vue'), 'utf8')
+  const contextMenu = readFileSync(resolve(__dirname, '../canvas/CanvasContextMenu.vue'), 'utf8')
 
   it('collapses the main app sidebar when the full canvas workspace opens', () => {
     expect(source).toContain('appStore.setSidebarCollapsed(true)')
@@ -292,6 +293,7 @@ describe('playground canvas layout integration', () => {
     expect(source).toContain("background: node.config?.background ?? 'auto'")
     expect(source).toContain("size: node.config?.size ?? '1024x1024'")
     expect(configSettings).toContain("canvasBackgroundTransparent")
+    expect(source).toContain("...(/^gpt-image-/i.test(model) ? {} : { response_format: 'b64_json' })")
   })
 
   it('exposes the upstream video aspect-ratio control in config and built-in panels', () => {
@@ -301,6 +303,8 @@ describe('playground canvas layout integration', () => {
     expect(source).toContain("aspect_ratio: node.config?.aspectRatio ?? '16:9'")
     expect(source).toContain("aspect_ratio: options?.aspectRatio || '16:9'")
     expect(source).toContain("aspectRatio: typeof composerOptions.aspectRatio === 'string' ? composerOptions.aspectRatio : '16:9'")
+    expect(source).toContain('data-canvas-video-settings-popover')
+    expect(source).toContain(':aspect-ratio="selectedNode.config?.aspectRatio ?? \'16:9\'"')
   })
 
   it('exposes upstream audio voice, format, speed, and instruction settings', () => {
@@ -318,6 +322,8 @@ describe('playground canvas layout integration', () => {
     expect(source).toContain("speed: audioSpeed")
     expect(source).toContain("instructions: audioInstructions")
     expect(source).toContain("key === 'audioSpeed'")
+    expect(source).toContain('data-canvas-audio-settings-popover')
+    expect(source).toContain(':audio-voice="selectedNode.config?.audioVoice ?? \'alloy\'"')
   })
 
   it('keeps chat reasoning controls and a separate config input composer', () => {
@@ -329,6 +335,68 @@ describe('playground canvas layout integration', () => {
     expect(nodeSource).toContain("'reasoningEffort'")
     expect(source).toContain("reasoning_effort: node.config.reasoningEffort")
     expect(source).toContain("reasoningEffort: 'medium'")
+  })
+
+  it('passes connected canvas resources into chat and inherited text into media generation', () => {
+    expect(source).toContain('const upstreamAttachments = await resolveReferenceAttachments(node)')
+    expect(source).toContain('const imageAttachments = [...mentionAttachments')
+    expect(source).toContain('function composeCanvasPrompt')
+    expect(source).toContain('const prompt = composeCanvasPrompt(node, project)')
+    expect(source).toContain('input: prompt')
+    expect(source).toContain('canvasNodeHasPromptInput')
+    expect(source).toContain('if (node.prompt.trim()) return true')
+    expect(nodeSource).toContain('const canGenerateMedia = computed')
+    expect(nodeSource).toContain(':disabled="node.status !== \'generating\' && !canGenerateMedia"')
+    expect(source).toContain('const referenceImages = await resolveReferenceAttachments(node)')
+    expect(source).toContain('reference_images: referenceImages.slice(0, 7).map')
+    expect(source).toContain("if (upstream?.type === 'image')")
+  })
+
+  it('creates separate result nodes when regenerating populated video or audio nodes', () => {
+    expect(source).toContain("const isEmptyVideoNode = !node.videoUrl && !node.videoCacheKey")
+    expect(source).toContain("const targetId = retryTargetId || (isEmptyVideoNode ? id : `video-result-${id}-")
+    expect(source).toContain("kind: 'result'")
+    expect(source).toContain("sourceNodeId: id")
+    expect(source).toContain("canvasStore.addConnection({ id: `connection-${id}-${targetId}`, from: id, to: targetId, kind: 'result' })")
+    expect(source).toContain("const isEmptyAudioNode = !node.audioUrl && !node.audioCacheKey")
+    expect(source).toContain('function retryCanvasGeneration(id: string)')
+    expect(source).toContain('void generateVideoNode(source.id, node.kind === \'result\' ? node.id : undefined)')
+    expect(source).toContain('void generateAudioNode(source.id, node.kind === \'result\' ? node.id : undefined)')
+    expect(nodeSource).toContain("emit('retry-generation', node.id)")
+    expect(source).toContain("const targetId = retryTargetId || (isEmptyAudioNode ? id : `audio-result-${id}-")
+    expect(source).toContain("const cacheKey = userId.value ? createCanvasMediaCacheKey(userId.value, keyId, targetId)")
+    expect(source).toContain('const audioControllers = new Map<string, AbortController>()')
+    expect(source).toContain('function cancelAudioNode(id: string)')
+    expect(source).toContain('@cancel-audio="cancelAudioNode"')
+    expect(nodeSource).toContain("'cancel-audio': [id: string]")
+  })
+
+  it('allows generated video and audio results to be downloaded without exposing non-image reference actions', () => {
+    expect(source).toContain('selectedNode.kind === \'result\' && (selectedNode.videoUrl || selectedNode.audioUrl)')
+    expect(source).toContain('if ((!node?.imageUrl && !node?.videoUrl && !node?.audioUrl) || downloadingNodeId.value) return')
+    expect(source).toContain('const videoUrl = node.videoUrl')
+    expect(source).toContain('if (videoUrl) {')
+    expect(source).toContain('link.download = `sub2api-canvas-${id}.mp4`')
+    expect(nodeSource).toContain("node.kind === 'result' && (node.imageUrl || node.videoUrl || node.audioUrl)")
+    expect(nodeSource).toContain("(node.type === 'video' && node.kind === 'result' && node.videoUrl)")
+    expect(nodeSource).toContain("node.type === 'audio' && node.audioUrl")
+    expect(nodeSource).toContain("emit('save-asset', node.id)")
+    expect(nodeSource).toContain("emit('transcribe-audio', node.id)")
+    expect(nodeSource).toContain('v-if="node.type === \'image\'" type="button" class="btn btn-ghost btn-icon')
+    expect(contextMenu).toContain('props.node.imageUrl || props.node.videoUrl || props.node.audioUrl')
+    expect(contextMenu).toContain("props.node.kind === 'result' && props.node.type === 'image'")
+  })
+
+  it('closes the node creation menu when pointerdown happens outside it', () => {
+    expect(source).toContain('handleNodeCreateMenuOutsidePointerDown')
+    expect(source).toContain("document.addEventListener('pointerdown', handleNodeCreateMenuOutsidePointerDown, true)")
+    expect(source).toContain("target?.closest('[data-canvas-create-menu]')")
+    const mountedAt = source.indexOf('onMounted(async () =>')
+    const listenerAt = source.indexOf("document.addEventListener('pointerdown', handleNodeCreateMenuOutsidePointerDown, true)", mountedAt)
+    const asyncLoadAt = source.indexOf('await loadCanvasPluginRuntimes()', mountedAt)
+    expect(mountedAt).toBeGreaterThanOrEqual(0)
+    expect(listenerAt).toBeGreaterThan(mountedAt)
+    expect(listenerAt).toBeLessThan(asyncLoadAt)
   })
 
   it('treats space and v as temporary pan overrides instead of persistent tool changes', () => {
@@ -414,13 +482,26 @@ describe('playground canvas layout integration', () => {
     expect(referenceBar).toContain("emit('start-selection')")
   })
 
-  it('lets an empty image node accept a direct upload like the reference toolbar', () => {
-    expect(nodeSource).toContain('data-canvas-no-zoom @change="handleImageUpload"')
+  it('lets empty or populated media nodes accept direct uploads like the reference toolbar', () => {
+    expect(nodeSource).toContain('data-canvas-no-zoom @change="handleMediaUpload"')
+    expect(nodeSource).toContain('const canUploadMedia = computed')
+    expect(nodeSource).toContain("(props.node.type !== 'image' || props.node.kind !== 'result')")
+    expect(nodeSource).toContain('const canReplaceMedia = computed')
     expect(nodeSource).toContain("emit('upload-image', props.node.id, file)")
+    expect(nodeSource).toContain("emit('upload-video', props.node.id, file)")
+    expect(nodeSource).toContain("emit('upload-audio', props.node.id, file)")
     expect(nodeSource).toContain("playground.canvasUploadImage")
+    expect(nodeSource).toContain("playground.canvasUploadVideo")
+    expect(nodeSource).toContain("playground.canvasReplaceAudio")
     expect(source).toContain('@upload-image="uploadImageToNode"')
+    expect(source).toContain('@upload-video="uploadVideoToNode"')
+    expect(source).toContain('@upload-audio="uploadAudioToNode"')
     expect(source).toContain('async function uploadImageToNode(id: string, file: File)')
     expect(source).toContain('createPlaygroundImageCacheKey(owner, keyId')
+    expect(source).toContain("async function uploadMediaToNode(id: string, file: File, type: 'video' | 'audio')")
+    expect(source).not.toContain("node.type !== type || node.kind === 'result'")
+    expect(source).toContain('createCanvasMediaCacheKey(owner, keyId, `${node.id}-${type}-upload-${now}`)')
+    expect(source).toContain("t('playground.canvasMediaUploadFailed')")
   })
 
   it('keeps the mention menu anchored to the caret and inside the viewport', () => {
