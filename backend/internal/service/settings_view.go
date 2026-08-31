@@ -280,6 +280,9 @@ type SystemSettings struct {
 
 	// OpenAI 账号调度
 	OpenAILowUpstreamRatePriorityEnabled                   bool
+	OpenAILatencyAwareFallbackEnabled                      bool
+	OpenAILatencyThresholdMs                               int
+	OpenAIFallbackSpeedupRatio                             float64
 	OpenAIOAuthSchedulingRateMultiplier                    float64
 	OpenAIAdvancedSchedulerEnabled                         bool
 	OpenAIAdvancedSchedulerStickyWeightedEnabled           bool

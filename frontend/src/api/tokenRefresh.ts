@@ -97,11 +97,7 @@ function readPeerRefreshResult(
     return storedPair
   }
 
-  if (
-    failedAccessToken &&
-    snapshot.accessToken !== failedAccessToken &&
-    storedPair.access_token === snapshot.accessToken
-  ) {
+  if (failedAccessToken && storedPair.access_token !== failedAccessToken) {
     return storedPair
   }
 

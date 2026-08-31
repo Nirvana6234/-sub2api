@@ -879,7 +879,23 @@ func resolveOpenAIErrorSchedulingModel(billingModel, upstreamModel string) strin
 }
 
 func (s *OpenAIGatewayService) selectAccountForModelWithExclusions(ctx context.Context, groupID *int64, platform string, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, stickyAccountID int64, requiredCapability OpenAIEndpointCapability, preferLowUpstreamRate bool) (*Account, error) {
-	platform = NormalizeOpenAICompatiblePlatform(platform)
+	account, err := s.selectAccountForModelWithExclusionsOnce(ctx, groupID, platform, sessionHash, requestedModel, excludedIDs, requireCompact, stickyAccountID, requiredCapability, preferLowUpstreamRate)
+	if !isNoAvailableOpenAIAccountError(err) {
+		return account, err
+	}
+	fallbackCtx, fallbackGroupID := s.nextOpenAIFallbackGroup(ctx, groupID, platform, requestedModel)
+	if fallbackGroupID == nil {
+		return nil, err
+	}
+	return s.selectAccountForModelWithExclusions(fallbackCtx, fallbackGroupID, platform, "", requestedModel, excludedIDs, requireCompact, 0, requiredCapability, preferLowUpstreamRate)
+}
+
+func (s *OpenAIGatewayService) selectAccountForModelWithExclusionsOnce(ctx context.Context, groupID *int64, platform string, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, stickyAccountID int64, requiredCapability OpenAIEndpointCapability, preferLowUpstreamRate bool) (*Account, error) {
+	platform = normalizeOpenAICompatiblePlatform(platform)
+	if s.hasContributionRoomRoute(ctx) {
+		sessionHash = ""
+		stickyAccountID = 0
+	}
 	if s.checkChannelPricingRestriction(ctx, groupID, requestedModel) {
 		slog.Warn("channel pricing restriction blocked request",
 			"group_id", derefGroupID(groupID),
@@ -1112,7 +1128,22 @@ func (s *OpenAIGatewayService) SelectAccountWithLoadAwareness(ctx context.Contex
 }
 
 func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Context, groupID *int64, platform string, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, requiredCapability OpenAIEndpointCapability, useUpstreamTokenCost bool) (*AccountSelectionResult, error) {
-	platform = NormalizeOpenAICompatiblePlatform(platform)
+	selection, err := s.selectAccountWithLoadAwarenessOnce(ctx, groupID, platform, sessionHash, requestedModel, excludedIDs, requireCompact, requiredCapability, useUpstreamTokenCost)
+	if !isNoAvailableOpenAIAccountError(err) {
+		return selection, err
+	}
+	fallbackCtx, fallbackGroupID := s.nextOpenAIFallbackGroup(ctx, groupID, platform, requestedModel)
+	if fallbackGroupID == nil {
+		return selection, err
+	}
+	return s.selectAccountWithLoadAwareness(fallbackCtx, fallbackGroupID, platform, "", requestedModel, excludedIDs, requireCompact, requiredCapability, useUpstreamTokenCost)
+}
+
+func (s *OpenAIGatewayService) selectAccountWithLoadAwarenessOnce(ctx context.Context, groupID *int64, platform string, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, requiredCapability OpenAIEndpointCapability, useUpstreamTokenCost bool) (*AccountSelectionResult, error) {
+	platform = normalizeOpenAICompatiblePlatform(platform)
+	if s.hasContributionRoomRoute(ctx) {
+		sessionHash = ""
+	}
 	if s.checkChannelPricingRestriction(ctx, groupID, requestedModel) {
 		slog.Warn("channel pricing restriction blocked request",
 			"group_id", derefGroupID(groupID),

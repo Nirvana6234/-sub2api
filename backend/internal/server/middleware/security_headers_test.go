@@ -341,6 +341,21 @@ func TestEnhanceCSPPolicy(t *testing.T) {
 		assert.Equal(t, 1, count)
 	})
 
+	t.Run("allows_blob_esm_for_canvas_plugins", func(t *testing.T) {
+		enhanced := enhanceCSPPolicy("default-src 'self'; script-src 'self' __CSP_NONCE__")
+
+		assert.Equal(t, 1, countDirectiveValue(enhanced, "script-src", "blob:"))
+	})
+
+	t.Run("allows_blob_and_https_media_for_canvas_assets", func(t *testing.T) {
+		enhanced := enhanceCSPPolicy("default-src 'self'; script-src 'self' __CSP_NONCE__")
+
+		assert.Equal(t, 1, countDirectiveValue(enhanced, "media-src", "blob:"))
+		assert.Equal(t, 1, countDirectiveValue(enhanced, "media-src", "https:"))
+		assert.Equal(t, 1, countDirectiveValue(config.DefaultCSPPolicy, "media-src", "blob:"))
+		assert.Equal(t, 1, countDirectiveValue(config.DefaultCSPPolicy, "media-src", "https:"))
+	})
+
 	t.Run("does_not_duplicate_cloudflare_domain", func(t *testing.T) {
 		policy := "default-src 'self'; script-src 'self' https://static.cloudflareinsights.com"
 		enhanced := enhanceCSPPolicy(policy)

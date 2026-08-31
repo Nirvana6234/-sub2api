@@ -170,6 +170,17 @@ func enhanceCSPPolicy(policy string) string {
 	if !strings.Contains(policy, NonceTemplate) && !strings.Contains(policy, "'nonce-") {
 		policy = addToDirective(policy, "script-src", NonceTemplate)
 	}
+	// Canvas plugins are evaluated as ESM Blob URLs after an explicit user install.
+	if !directiveHasValue(policy, "script-src", "blob:") {
+		policy = addToDirective(policy, "script-src", "blob:")
+	}
+	// Cached canvas audio and video are restored through Blob URLs. Explicit media-src
+	// is necessary because it otherwise falls back to default-src and gets blocked.
+	for _, value := range []string{"blob:", "https:"} {
+		if !directiveHasValue(policy, "media-src", value) {
+			policy = addToDirective(policy, "media-src", value)
+		}
+	}
 
 	for _, required := range requiredCSPDirectiveValues {
 		if !directiveHasValue(policy, required.directive, required.value) {

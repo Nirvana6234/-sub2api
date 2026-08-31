@@ -77,10 +77,14 @@
               </div>
             </template>
             <!-- Normal item (no children) -->
-            <router-link
+            <component
+              :is="item.externalUrl ? 'a' : 'router-link'"
               v-else
-              :to="item.path"
-              class="sidebar-link mb-1"
+              :to="item.externalUrl ? undefined : item.path"
+              :href="item.externalUrl || undefined"
+              :target="item.externalUrl ? '_blank' : undefined"
+              :rel="item.externalUrl ? 'noopener noreferrer' : undefined"
+              class="sidebar-link relative mb-1"
               :class="{ 'sidebar-link-active': isActive(item.path), 'sidebar-link-collapsed': sidebarCollapsed }"
               :title="sidebarCollapsed ? item.label : undefined"
               :id="
@@ -97,7 +101,13 @@
               <span v-if="item.iconSvg" class="h-5 w-5 flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
               <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" />
               <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
-            </router-link>
+              <span
+                v-if="ticketUnreadCountFor(item.path) > 0"
+                class="sidebar-notification-dot"
+                :class="{ 'sidebar-notification-dot-collapsed': sidebarCollapsed }"
+                aria-hidden="true"
+              ></span>
+            </component>
           </template>
         </div>
 
@@ -109,11 +119,15 @@
             </span>
           </div>
 
-          <router-link
+          <component
+            :is="item.externalUrl ? 'a' : 'router-link'"
             v-for="item in personalNavItems"
             :key="item.path"
-            :to="item.path"
-            class="sidebar-link mb-1"
+            :to="item.externalUrl ? undefined : item.path"
+            :href="item.externalUrl || undefined"
+            :target="item.externalUrl ? '_blank' : undefined"
+            :rel="item.externalUrl ? 'noopener noreferrer' : undefined"
+            class="sidebar-link relative mb-1"
             :class="{ 'sidebar-link-active': isActive(item.path), 'sidebar-link-collapsed': sidebarCollapsed }"
             :title="sidebarCollapsed ? item.label : undefined"
             :data-tour="item.path === '/keys' ? 'sidebar-my-keys' : undefined"
@@ -122,18 +136,28 @@
             <span v-if="item.iconSvg" class="h-5 w-5 flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
             <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" />
             <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
-          </router-link>
+            <span
+              v-if="ticketUnreadCountFor(item.path) > 0"
+              class="sidebar-notification-dot"
+              :class="{ 'sidebar-notification-dot-collapsed': sidebarCollapsed }"
+              aria-hidden="true"
+            ></span>
+          </component>
         </div>
       </template>
 
       <!-- Regular User View -->
       <template v-else-if="!appStore.backendModeEnabled">
         <div class="sidebar-section">
-          <router-link
+          <component
+            :is="item.externalUrl ? 'a' : 'router-link'"
             v-for="item in userNavItems"
             :key="item.path"
-            :to="item.path"
-            class="sidebar-link mb-1"
+            :to="item.externalUrl ? undefined : item.path"
+            :href="item.externalUrl || undefined"
+            :target="item.externalUrl ? '_blank' : undefined"
+            :rel="item.externalUrl ? 'noopener noreferrer' : undefined"
+            class="sidebar-link relative mb-1"
             :class="{ 'sidebar-link-active': isActive(item.path), 'sidebar-link-collapsed': sidebarCollapsed }"
             :title="sidebarCollapsed ? item.label : undefined"
             :data-tour="item.path === '/keys' ? 'sidebar-my-keys' : undefined"
@@ -142,7 +166,13 @@
             <span v-if="item.iconSvg" class="h-5 w-5 flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
             <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" />
             <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
-          </router-link>
+            <span
+              v-if="ticketUnreadCountFor(item.path) > 0"
+              class="sidebar-notification-dot"
+              :class="{ 'sidebar-notification-dot-collapsed': sidebarCollapsed }"
+              aria-hidden="true"
+            ></span>
+          </component>
         </div>
       </template>
     </nav>
@@ -191,13 +221,12 @@
 import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { useAdminSettingsStore, useAppStore, useAuthStore, useOnboardingStore } from '@/stores'
+import { useAdminSettingsStore, useAppStore, useAuthStore, useOnboardingStore, useTicketStore } from '@/stores'
 import VersionBadge from '@/components/common/VersionBadge.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { sanitizeSvg } from '@/utils/sanitize'
 import { sanitizeUrl } from '@/utils/url'
 import { FeatureFlags, makeSidebarFlag } from '@/utils/featureFlags'
-import { useBatchImageAccess } from '@/composables/useBatchImageAccess'
 
 interface NavItem {
   path: string
@@ -243,7 +272,7 @@ const appStore = useAppStore()
 const authStore = useAuthStore()
 const onboardingStore = useOnboardingStore()
 const adminSettingsStore = useAdminSettingsStore()
-const { canUseBatchImage, refreshBatchImageAccess } = useBatchImageAccess()
+const ticketStore = useTicketStore()
 
 const sidebarCollapsed = computed(() => appStore.sidebarCollapsed)
 const mobileOpen = computed(() => appStore.mobileOpen)
@@ -264,6 +293,10 @@ const siteName = computed(() => appStore.siteName)
 const siteLogo = computed(() => sanitizeUrl(appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }))
 const siteVersion = computed(() => appStore.siteVersion)
 const settingsLoaded = computed(() => appStore.publicSettingsLoaded)
+const ticketUnreadCounts = computed(() => ({
+  user: ticketStore.userUnreadCount,
+  admin: ticketStore.adminUnreadCount
+}))
 
 // SVG Icon Components
 const DashboardIcon = {
@@ -291,26 +324,6 @@ const KeyIcon = {
           'stroke-linecap': 'round',
           'stroke-linejoin': 'round',
           d: 'M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z'
-        })
-      ]
-    )
-}
-
-const BatchImageIcon = {
-  render: () =>
-    h(
-      'svg',
-      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
-      [
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'M6.827 6.175A2.31 2.31 0 015.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 00-1.134-.175 2.31 2.31 0 01-1.64-1.055l-.822-1.316a2.25 2.25 0 00-1.906-1.059H9.554a2.25 2.25 0 00-1.906 1.059l-.821 1.316z'
-        }),
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'M16.5 12.75a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0zM18.75 10.5h.008v.008h-.008V10.5z'
         })
       ]
     )
@@ -696,12 +709,11 @@ const flagRiskControl = makeSidebarFlag(FeatureFlags.riskControl)
 const flagPluginManagement = makeSidebarFlag(FeatureFlags.pluginManagement)
 const flagOpsMonitoring = () => adminSettingsStore.opsMonitoringEnabled
 const flagAdminPayment = () => adminSettingsStore.paymentEnabled
-const flagBatchImageAccess = () => canUseBatchImage.value
 
 // buildSelfNavItems 构造用户自己的导航项（用户端主菜单和管理员的"我的账户"子菜单共享这组声明）。
 // withDashboard=true 时包含仪表盘（用户端），false 时不含（管理员的个人区已经有独立仪表盘入口）。
 //
-// 条目顺序：密钥 → 用量 → 可用渠道 → 渠道状态 → 订阅/支付 → 兑换/资料。
+// 条目顺序：密钥 → 充值/订阅 → 用量 → 可用渠道 → 渠道状态 → 其他账户功能。
 // 可用渠道紧挨渠道状态之上，让用户"先看自己能用什么、再看对应状态"。
 function buildSelfNavItems(withDashboard: boolean): NavItem[] {
   const items: NavItem[] = []
@@ -710,12 +722,20 @@ function buildSelfNavItems(withDashboard: boolean): NavItem[] {
   }
   items.push(
     { path: '/keys', label: t('nav.apiKeys'), icon: KeyIcon },
-    { path: '/batch-image', label: t('nav.batchImage'), icon: BatchImageIcon, hideInSimpleMode: true, featureFlag: flagBatchImageAccess },
+    {
+      path: '/purchase',
+      label: t('nav.buySubscription'),
+      icon: RechargeSubscriptionIcon,
+      hideInSimpleMode: true,
+      featureFlag: flagPurchase,
+    },
+    { path: '/playground', label: t('nav.playground'), icon: PlaygroundIcon, featureFlag: flagPlayground },
+    { path: '/download', label: t('nav.clientDownload'), icon: ClientDownloadIcon, featureFlag: flagClientDownload },
+    { path: '/tickets', label: t('nav.tickets'), icon: BellIcon },
     { path: '/usage', label: t('nav.usage'), icon: ChartIcon, hideInSimpleMode: true },
     { path: '/available-channels', label: t('nav.availableChannels'), icon: ChannelIcon, hideInSimpleMode: true, featureFlag: flagAvailableChannels },
     { path: '/monitor', label: t('nav.channelStatus'), icon: SignalIcon, featureFlag: flagChannelMonitor },
     { path: '/subscriptions', label: t('nav.mySubscriptions'), icon: CreditCardIcon, hideInSimpleMode: true },
-    { path: '/purchase', label: t('nav.buySubscription'), icon: RechargeSubscriptionIcon, hideInSimpleMode: true, featureFlag: flagPayment },
     { path: '/orders', label: t('nav.myOrders'), icon: OrderListIcon, hideInSimpleMode: true, featureFlag: flagPayment },
     { path: '/redeem', label: t('nav.redeem'), icon: GiftIcon, hideInSimpleMode: true },
     { path: '/affiliate', label: t('nav.affiliate'), icon: UsersIcon, hideInSimpleMode: true, featureFlag: flagAffiliate },
@@ -882,6 +902,12 @@ function isActive(path: string): boolean {
   return route.path === path || route.path.startsWith(path + '/')
 }
 
+function ticketUnreadCountFor(path: string): number {
+  if (path === '/admin/tickets') return ticketUnreadCounts.value.admin
+  if (path === '/tickets') return ticketUnreadCounts.value.user
+  return 0
+}
+
 function isGroupActive(item: NavItem): boolean {
   if (!item.children) return false
   return item.children.some(child => route.path === child.path)
@@ -939,7 +965,6 @@ watch(
 )
 
 onMounted(() => {
-  void refreshBatchImageAccess()
   if (isAdmin.value) {
     adminSettingsStore.fetch()
   }
@@ -1075,6 +1100,51 @@ onBeforeUnmount(() => {
   opacity: 0;
   transform: translateX(-4px);
   pointer-events: none;
+}
+
+.sidebar-notification-dot {
+  position: relative;
+  display: inline-flex;
+  width: 0.5rem;
+  height: 0.5rem;
+  flex: 0 0 0.5rem;
+  margin-left: auto;
+  border-radius: 9999px;
+  background: rgb(239 68 68);
+  box-shadow: 0 0 0 2px rgb(255 255 255);
+}
+
+.dark .sidebar-notification-dot {
+  box-shadow: 0 0 0 2px rgb(17 24 39);
+}
+
+.sidebar-notification-dot::after {
+  content: '';
+  position: absolute;
+  inset: -0.2rem;
+  border-radius: inherit;
+  background: rgb(239 68 68 / 0.28);
+  animation: sidebar-notification-ping 1.8s ease-out infinite;
+}
+
+.sidebar-notification-dot-collapsed {
+  position: absolute;
+  right: 0.6rem;
+  top: 0.55rem;
+  margin-left: 0;
+}
+
+@keyframes sidebar-notification-ping {
+  0%,
+  45% {
+    opacity: 0.7;
+    transform: scale(0.8);
+  }
+  75%,
+  100% {
+    opacity: 0;
+    transform: scale(1.8);
+  }
 }
 
 /* Custom SVG icon in sidebar: constrain size without overriding uploaded SVG colors */

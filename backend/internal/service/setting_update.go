@@ -515,6 +515,9 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingPaymentVisibleMethodAlipayEnabled] = strconv.FormatBool(settings.PaymentVisibleMethodAlipayEnabled)
 	updates[SettingPaymentVisibleMethodWxpayEnabled] = strconv.FormatBool(settings.PaymentVisibleMethodWxpayEnabled)
 	updates[SettingKeyOpenAILowUpstreamRatePriorityEnabled] = strconv.FormatBool(settings.OpenAILowUpstreamRatePriorityEnabled)
+	updates[SettingKeyOpenAILatencyAwareFallbackEnabled] = strconv.FormatBool(settings.OpenAILatencyAwareFallbackEnabled)
+	updates[SettingKeyOpenAILatencyThresholdMs] = strconv.Itoa(normalizeOpenAILatencyThresholdMs(settings.OpenAILatencyThresholdMs))
+	updates[SettingKeyOpenAIFallbackSpeedupRatio] = strconv.FormatFloat(normalizeOpenAIFallbackSpeedupRatio(settings.OpenAIFallbackSpeedupRatio), 'f', -1, 64)
 	updates[SettingKeyOpenAIOAuthSchedulingRateMultiplier] = strconv.FormatFloat(settings.OpenAIOAuthSchedulingRateMultiplier, 'f', -1, 64)
 	updates[openAIAdvancedSchedulerSettingKey] = strconv.FormatBool(settings.OpenAIAdvancedSchedulerEnabled)
 	updates[SettingKeyOpenAIAdvancedSchedulerStickyWeightedEnabled] = strconv.FormatBool(settings.OpenAIAdvancedSchedulerStickyWeightedEnabled)
@@ -758,6 +761,9 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 	openAIAdvancedSchedulerSettingSF.Forget(openAIAdvancedSchedulerSettingKey)
 	openAIAdvancedSchedulerSettingCache.Store(&cachedOpenAIAdvancedSchedulerSetting{
 		lowUpstreamRatePriorityEnabled: settings.OpenAILowUpstreamRatePriorityEnabled,
+		latencyAwareFallbackEnabled:    settings.OpenAILatencyAwareFallbackEnabled,
+		latencyThresholdMs:             normalizeOpenAILatencyThresholdMs(settings.OpenAILatencyThresholdMs),
+		fallbackSpeedupRatio:           normalizeOpenAIFallbackSpeedupRatio(settings.OpenAIFallbackSpeedupRatio),
 		oauthSchedulingRateMultiplier:  settings.OpenAIOAuthSchedulingRateMultiplier,
 		enabled:                        settings.OpenAIAdvancedSchedulerEnabled,
 		stickyWeightedEnabled:          settings.OpenAIAdvancedSchedulerStickyWeightedEnabled,

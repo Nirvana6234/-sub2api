@@ -229,6 +229,41 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/playground/images',
+    name: 'PlaygroundImage',
+    component: () => import('@/views/user/PlaygroundView.vue'),
+    props: { mode: 'image' },
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Playground',
+      titleKey: 'playground.title',
+      descriptionKey: 'playground.description'
+    }
+  },
+  {
+    path: '/playground/canvas',
+    name: 'PlaygroundCanvas',
+    redirect: { path: '/playground/images', query: { view: 'canvas' } },
+  },
+  {
+    path: '/playground/gallery',
+    name: 'PlaygroundGallery',
+    component: () => import('@/views/user/PlaygroundGalleryView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Playground',
+      titleKey: 'playground.title',
+      descriptionKey: 'playground.description'
+    }
+  },
+  {
+    path: '/playground/batch-images',
+    alias: ['/batch-image', '/docs/batch-image'],
+    redirect: '/playground/images',
+  },
+  {
     path: '/usage',
     name: 'Usage',
     component: () => import('@/views/user/UsageView.vue'),

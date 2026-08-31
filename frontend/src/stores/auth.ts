@@ -85,6 +85,8 @@ export const useAuthStore = defineStore('auth', () => {
   const pendingAuthSession = ref<PendingAuthSessionSummary | null>(null)
   let refreshIntervalId: ReturnType<typeof setInterval> | null = null
   let tokenRefreshTimeoutId: ReturnType<typeof setTimeout> | null = null
+  let tokenRefreshPromise: Promise<void> | null = null
+  let resumeRefreshListenersActive = false
 
   // ==================== Computed ====================
 
@@ -120,19 +122,20 @@ export const useAuthStore = defineStore('auth', () => {
         refreshTokenValue.value = savedRefreshToken
         tokenExpiresAt.value = savedExpiresAt ? parseInt(savedExpiresAt, 10) : null
 
-        // Immediately refresh user data from backend (async, don't block)
-        refreshUser().catch((error) => {
-          console.error('Failed to refresh user on init:', error)
-        })
-
         // Start auto-refresh interval for user data
         startAutoRefresh()
+        startSessionResumeRefreshListeners()
 
         // Start proactive token refresh if we have refresh token and expiry info
         // Note: use !== null to handle case when tokenExpiresAt.value is 0 (expired)
         if (savedRefreshToken && tokenExpiresAt.value !== null) {
           scheduleTokenRefreshAt(tokenExpiresAt.value)
         }
+
+        // Refresh the session after restore so a sleeping tab does not trip a false logout.
+        refreshSessionAfterIdle().catch((error) => {
+          console.error('Failed to refresh session on init:', error)
+        })
       } catch (error) {
         console.error('Failed to parse saved user data:', error)
         clearAuth({ preservePendingAuthSession: true })
@@ -150,8 +153,8 @@ export const useAuthStore = defineStore('auth', () => {
 
     refreshIntervalId = setInterval(() => {
       if (token.value) {
-        refreshUser().catch((error) => {
-          console.error('Auto-refresh user failed:', error)
+        refreshSessionAfterIdle().catch((error) => {
+          console.error('Auto-refresh session failed:', error)
         })
       }
     }, AUTO_REFRESH_INTERVAL)
@@ -164,6 +167,124 @@ export const useAuthStore = defineStore('auth', () => {
     if (refreshIntervalId) {
       clearInterval(refreshIntervalId)
       refreshIntervalId = null
+    }
+  }
+
+  function getTokenExpiresAt(): number | null {
+    if (tokenExpiresAt.value !== null && Number.isFinite(tokenExpiresAt.value)) {
+      return tokenExpiresAt.value
+    }
+
+    const storedExpiresAt = Number(localStorage.getItem(TOKEN_EXPIRES_AT_KEY))
+    return Number.isFinite(storedExpiresAt) ? storedExpiresAt : null
+  }
+
+  function shouldRefreshTokenSoon(): boolean {
+    if (!refreshTokenValue.value) {
+      return false
+    }
+
+    const expiresAt = getTokenExpiresAt()
+    return expiresAt === null || expiresAt - Date.now() <= TOKEN_REFRESH_BUFFER
+  }
+
+  async function refreshSessionAfterIdle(): Promise<void> {
+    if (!token.value) {
+      return
+    }
+
+    syncAuthSessionFromStorage()
+
+    if (shouldRefreshTokenSoon()) {
+      await performTokenRefresh()
+    }
+
+    if (!token.value) {
+      return
+    }
+
+    await refreshUser()
+  }
+
+  function handleSessionResume(): void {
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+      return
+    }
+
+    syncAuthSessionFromStorage()
+    refreshSessionAfterIdle().catch((error) => {
+      console.error('Resume session refresh failed:', error)
+    })
+  }
+
+  function startSessionResumeRefreshListeners(): void {
+    if (typeof window === 'undefined' || resumeRefreshListenersActive) {
+      return
+    }
+
+    window.addEventListener('focus', handleSessionResume)
+    window.addEventListener('pageshow', handleSessionResume)
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleSessionResume)
+    }
+    window.addEventListener('storage', handleAuthStorageChange)
+    resumeRefreshListenersActive = true
+  }
+
+  function stopSessionResumeRefreshListeners(): void {
+    if (typeof window === 'undefined' || !resumeRefreshListenersActive) {
+      return
+    }
+
+    window.removeEventListener('focus', handleSessionResume)
+    window.removeEventListener('pageshow', handleSessionResume)
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', handleSessionResume)
+    }
+    window.removeEventListener('storage', handleAuthStorageChange)
+    resumeRefreshListenersActive = false
+  }
+
+  function handleAuthStorageChange(event: StorageEvent): void {
+    const relevantKeys = new Set([AUTH_TOKEN_KEY, AUTH_USER_KEY, REFRESH_TOKEN_KEY, TOKEN_EXPIRES_AT_KEY])
+    if (event.key && !relevantKeys.has(event.key)) {
+      return
+    }
+    syncAuthSessionFromStorage()
+  }
+
+  function syncAuthSessionFromStorage(): void {
+    const savedToken = localStorage.getItem(AUTH_TOKEN_KEY)
+    const savedUser = localStorage.getItem(AUTH_USER_KEY)
+    const savedRefreshToken = localStorage.getItem(REFRESH_TOKEN_KEY)
+    const savedExpiresAt = localStorage.getItem(TOKEN_EXPIRES_AT_KEY)
+
+    if (!savedToken || !savedUser) {
+      if (token.value || user.value || refreshTokenValue.value || tokenExpiresAt.value !== null) {
+        clearAuth({ preservePendingAuthSession: pendingAuthSession.value !== null })
+      }
+      return
+    }
+
+    try {
+      const parsed = JSON.parse(savedUser) as User & { run_mode?: unknown }
+      token.value = savedToken
+      refreshTokenValue.value = savedRefreshToken
+      tokenExpiresAt.value = savedExpiresAt ? parseInt(savedExpiresAt, 10) : null
+      if (parsed.run_mode) {
+        runMode.value = parsed.run_mode as 'standard' | 'simple'
+      }
+      const { run_mode: _run_mode, ...userData } = parsed
+      user.value = userData
+
+      if (savedRefreshToken && tokenExpiresAt.value !== null) {
+        scheduleTokenRefreshAt(tokenExpiresAt.value)
+      } else {
+        stopTokenRefresh()
+      }
+    } catch (error) {
+      console.error('Failed to sync auth state from storage:', error)
+      clearAuth({ preservePendingAuthSession: pendingAuthSession.value !== null })
     }
   }
 
@@ -211,19 +332,30 @@ export const useAuthStore = defineStore('auth', () => {
     if (!refreshTokenValue.value) {
       return
     }
+    if (tokenRefreshPromise) {
+      await tokenRefreshPromise
+      return
+    }
 
+    tokenRefreshPromise = (async () => {
+      try {
+        const response = await authAPI.refreshToken()
+
+        // Update state
+        token.value = response.access_token
+        refreshTokenValue.value = response.refresh_token
+
+        // Schedule next refresh (this also updates tokenExpiresAt and localStorage)
+        scheduleTokenRefresh(response.expires_in)
+      } catch (error) {
+        console.error('Token refresh failed:', error)
+        // Don't clear auth here - the interceptor will handle 401 errors
+      }
+    })()
     try {
-      const response = await authAPI.refreshToken()
-
-      // Update state
-      token.value = response.access_token
-      refreshTokenValue.value = response.refresh_token
-
-      // Schedule next refresh (this also updates tokenExpiresAt and localStorage)
-      scheduleTokenRefresh(response.expires_in)
-    } catch (error) {
-      console.error('Token refresh failed:', error)
-      // Don't clear auth here - the interceptor will handle 401 errors
+      await tokenRefreshPromise
+    } finally {
+      tokenRefreshPromise = null
     }
   }
 
@@ -320,6 +452,7 @@ export const useAuthStore = defineStore('auth', () => {
 
     // Start auto-refresh interval for user data
     startAutoRefresh()
+    startSessionResumeRefreshListeners()
 
     // Start proactive token refresh if we have refresh token and expiry info
     // scheduleTokenRefresh will also store the expiry timestamp
@@ -379,6 +512,7 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       const userData = await refreshUser()
       startAutoRefresh()
+      startSessionResumeRefreshListeners()
 
       // Start proactive token refresh if we have refresh token and expiry info
       // Note: use !== null to handle case when tokenExpiresAt.value is 0 (expired)
@@ -467,6 +601,8 @@ export const useAuthStore = defineStore('auth', () => {
     stopAutoRefresh()
     // Stop token refresh
     stopTokenRefresh()
+    stopSessionResumeRefreshListeners()
+    tokenRefreshPromise = null
 
     token.value = null
     refreshTokenValue.value = null
