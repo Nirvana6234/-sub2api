@@ -146,6 +146,7 @@ function normalizeNodeConfig(value: unknown): CanvasNode['config'] | undefined {
   if (typeof source.audioFormat === 'string') config.audioFormat = source.audioFormat.slice(0, 16)
   if (typeof source.audioSpeed === 'string') config.audioSpeed = source.audioSpeed.slice(0, 16)
   if (typeof source.audioInstructions === 'string') config.audioInstructions = source.audioInstructions.slice(0, 4000)
+  if (source.reasoningEffort === 'none' || source.reasoningEffort === 'low' || source.reasoningEffort === 'medium' || source.reasoningEffort === 'high') config.reasoningEffort = source.reasoningEffort
   return Object.keys(config).length ? config : undefined
 }
 

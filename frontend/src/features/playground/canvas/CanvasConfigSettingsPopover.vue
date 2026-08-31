@@ -145,6 +145,18 @@
             ></textarea>
           </label>
         </template>
+
+        <template v-else-if="mode === 'text'">
+          <label class="block text-[11px] font-medium text-gray-500 dark:text-dark-400">
+            {{ t('playground.canvasReasoningEffort') }}
+            <select class="select mt-1 h-8 w-full text-xs" :value="reasoningEffort" :disabled="disabled" @change="emitUpdate('reasoningEffort', ($event.target as HTMLSelectElement).value)">
+              <option value="none">{{ t('playground.canvasReasoningNone') }}</option>
+              <option value="low">{{ t('playground.canvasReasoningLow') }}</option>
+              <option value="medium">{{ t('playground.canvasReasoningMedium') }}</option>
+              <option value="high">{{ t('playground.canvasReasoningHigh') }}</option>
+            </select>
+          </label>
+        </template>
       </div>
     </div>
   </Teleport>
@@ -156,7 +168,7 @@ import { useI18n } from 'vue-i18n'
 import { Icon } from '@/components/icons'
 
 type CanvasConfigMode = 'image' | 'text' | 'video' | 'audio'
-type ConfigKey = 'count' | 'size' | 'quality' | 'background' | 'resolution' | 'duration' | 'aspectRatio' | 'audioVoice' | 'audioFormat' | 'audioSpeed' | 'audioInstructions'
+type ConfigKey = 'count' | 'size' | 'quality' | 'background' | 'resolution' | 'duration' | 'aspectRatio' | 'audioVoice' | 'audioFormat' | 'audioSpeed' | 'audioInstructions' | 'reasoningEffort'
 
 const props = withDefaults(defineProps<{
   mode: CanvasConfigMode
@@ -171,6 +183,7 @@ const props = withDefaults(defineProps<{
   audioFormat?: string
   audioSpeed?: string
   audioInstructions?: string
+  reasoningEffort?: 'none' | 'low' | 'medium' | 'high'
   disabled?: boolean
 }>(), {
   count: '1',
@@ -184,6 +197,7 @@ const props = withDefaults(defineProps<{
   audioFormat: 'mp3',
   audioSpeed: '1',
   audioInstructions: '',
+  reasoningEffort: 'medium',
   disabled: false,
 })
 
@@ -203,7 +217,7 @@ const modeLabel = computed(() => t(`playground.canvasConfigMode${props.mode.char
 const summary = computed(() => {
   if (props.mode === 'image') return `${props.size} · ${props.quality} · ${props.count}`
   if (props.mode === 'video') return `${props.resolution} · ${props.duration}s · ${props.aspectRatio}`
-  if (props.mode === 'text') return `${props.count} ${t('playground.canvasImageCount')}`
+  if (props.mode === 'text') return `${props.reasoningEffort} · ${props.count} ${t('playground.canvasImageCount')}`
   return `${props.audioVoice} · ${props.audioFormat} · ${props.audioSpeed}x`
 })
 

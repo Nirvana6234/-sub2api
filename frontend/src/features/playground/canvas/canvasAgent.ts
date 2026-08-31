@@ -151,6 +151,7 @@ export function agentNodeToCanvasNode(node: Record<string, unknown>, fallbackTyp
       audioFormat: stringValue(metadata.audioFormat),
       audioSpeed: stringValue(metadata.audioSpeed),
       audioInstructions: stringValue(metadata.audioInstructions),
+      reasoningEffort: metadata.reasoningEffort === 'none' || metadata.reasoningEffort === 'low' || metadata.reasoningEffort === 'medium' || metadata.reasoningEffort === 'high' ? metadata.reasoningEffort : undefined,
     } : undefined,
     status: metadata.status === 'success' || metadata.status === 'generating' || metadata.status === 'error' ? metadata.status : 'idle',
     sourceNodeId: typeof metadata.sourceNodeId === 'string' ? metadata.sourceNodeId : undefined,

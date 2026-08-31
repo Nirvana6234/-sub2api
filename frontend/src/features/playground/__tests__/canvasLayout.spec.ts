@@ -320,6 +320,17 @@ describe('playground canvas layout integration', () => {
     expect(source).toContain("key === 'audioSpeed'")
   })
 
+  it('keeps chat reasoning controls and a separate config input composer', () => {
+    expect(configSettings).toContain('canvasReasoningEffort')
+    expect(configSettings).toContain("value=\"high\"")
+    expect(nodeSource).toContain('data-canvas-config-compose-toggle')
+    expect(nodeSource).toContain('data-canvas-config-composer')
+    expect(nodeSource).toContain('canvasInputsLabel')
+    expect(nodeSource).toContain("'reasoningEffort'")
+    expect(source).toContain("reasoning_effort: node.config.reasoningEffort")
+    expect(source).toContain("reasoningEffort: 'medium'")
+  })
+
   it('treats space and v as temporary pan overrides instead of persistent tool changes', () => {
     expect(source).toContain('temporaryPanBaseTool')
     expect(source).toContain('activeCanvasTool')
