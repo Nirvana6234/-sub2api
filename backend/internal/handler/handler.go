@@ -50,6 +50,7 @@ type AdminHandlers struct {
 // Handlers contains all HTTP handlers
 type Handlers struct {
 	PawConfigService    *service.PawConfigService
+	PawChatService      *service.PawChatService
 	Auth                *AuthHandler
 	User                *UserHandler
 	APIKey              *APIKeyHandler
