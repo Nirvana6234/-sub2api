@@ -135,10 +135,15 @@ type PawConfigService struct {
 	users    PawUserSource
 	channels PawChannelSource
 	defaults PawDefaultsStore
+	pricing  *PricingService
 }
 
-func NewPawConfigService(groups PawGroupSource, users PawUserSource, channels PawChannelSource, defaults PawDefaultsStore) *PawConfigService {
-	return &PawConfigService{groups: groups, users: users, channels: channels, defaults: defaults}
+func NewPawConfigService(groups PawGroupSource, users PawUserSource, channels PawChannelSource, defaults PawDefaultsStore, pricing ...*PricingService) *PawConfigService {
+	var pricingService *PricingService
+	if len(pricing) > 0 {
+		pricingService = pricing[0]
+	}
+	return &PawConfigService{groups: groups, users: users, channels: channels, defaults: defaults, pricing: pricingService}
 }
 
 func (s *PawConfigService) GetConfig(ctx context.Context, userID int64) (*PawConfig, error) {
@@ -150,10 +155,10 @@ func (s *PawConfigService) GetConfig(ctx context.Context, userID int64) (*PawCon
 	if err != nil {
 		return nil, fmt.Errorf("get available groups: %w", err)
 	}
-	return s.buildConfig(ctx, user, groups, true)
+	return s.buildConfig(ctx, user, groups, true, true)
 }
 
-func (s *PawConfigService) buildConfig(ctx context.Context, user *User, groups []Group, validateDefaults bool) (*PawConfig, error) {
+func (s *PawConfigService) buildConfig(ctx context.Context, user *User, groups []Group, includeDefaults bool, validateDefaults bool) (*PawConfig, error) {
 	result := &PawConfig{User: PawUser{ID: user.ID, Name: user.Username, Email: user.Email}, Groups: make([]PawGroup, 0, len(groups))}
 	for _, group := range groups {
 		if !group.IsActive() {
@@ -172,15 +177,16 @@ func (s *PawConfigService) buildConfig(ctx context.Context, user *User, groups [
 				continue
 			}
 			for _, modelID := range pricing.Models {
-				values := PawReasoningValues(group.Platform, modelID)
+				modelCatalog := s.modelCatalog(modelID)
+				values := PawReasoningValues(group.Platform, modelID, modelCatalog)
 				defaultValue := pawReasoningDefault(values)
-				vision, imageGeneration, fileInput := pawModelCapabilities(&group, modelID, &pricing)
+				vision, imageGeneration, fileInput := pawModelCapabilities(&group, modelCatalog)
 				models = append(models, PawModel{ID: modelID, Name: modelID, OwnedBy: pricing.Platform, Reasoning: PawReasoningCapability{Supported: len(values) > 0, Values: values, Default: defaultValue}, ReasoningValues: values, ReasoningDefault: defaultValue, Vision: vision, ImageGeneration: imageGeneration, FileInput: fileInput})
 			}
 		}
 		result.Groups = append(result.Groups, PawGroup{ID: group.ID, Name: group.Name, Description: group.Description, Models: models})
 	}
-	if s.defaults != nil {
+	if includeDefaults && s.defaults != nil {
 		defaults, err := s.defaults.GetPawDefaults(ctx, user.ID)
 		if err != nil {
 			return nil, fmt.Errorf("get Paw defaults: %w", err)
@@ -205,7 +211,7 @@ func (s *PawConfigService) SaveDefaults(ctx context.Context, userID int64, defau
 	if err != nil {
 		return fmt.Errorf("get available groups: %w", err)
 	}
-	config, err := s.buildConfig(ctx, user, groups, false)
+	config, err := s.buildConfig(ctx, user, groups, false, false)
 	if err != nil {
 		return err
 	}
@@ -215,41 +221,69 @@ func (s *PawConfigService) SaveDefaults(ctx context.Context, userID int64, defau
 	return s.defaults.SavePawDefaults(ctx, userID, defaults)
 }
 
-func PawReasoningValues(platform, modelID string) []string {
-	if pawModelSupportsReasoning(platform, modelID) {
-		return append([]string(nil), openAIReasoningEffortValues...)
+func (s *PawConfigService) modelCatalog(modelID string) *LiteLLMModelPricing {
+	if s == nil || s.pricing == nil {
+		return nil
 	}
-	return []string{}
+	return s.pricing.GetIdentifiedModelPricing(modelID)
 }
 
 func modelPricingPlatformMatches(groupPlatform, pricingPlatform string) bool {
 	return groupPlatform == PlatformComposite || groupPlatform == pricingPlatform
 }
 
+func PawReasoningValues(platform, modelID string, catalog *LiteLLMModelPricing) []string {
+	if (platform != PlatformOpenAI && platform != PlatformComposite) || catalog == nil || !catalog.SupportsReasoning {
+		return []string{}
+	}
+	values := make([]string, 0, len(openAIReasoningEffortValues))
+	for _, value := range openAIReasoningEffortValues {
+		switch value {
+		case "minimal":
+			if !catalog.SupportsMinimalReasoningEffort {
+				continue
+			}
+		case "xhigh":
+			if !catalog.SupportsXHighReasoningEffort {
+				continue
+			}
+		case "max":
+			if !catalog.SupportsMaxReasoningEffort {
+				continue
+			}
+		}
+		values = append(values, value)
+	}
+	return values
+}
+
 func pawReasoningDefault(values []string) string {
 	if len(values) == 0 {
 		return ""
 	}
+	if len(values) == 1 {
+		return values[0]
+	}
 	return values[1]
 }
 
-func pawModelSupportsReasoning(platform, modelID string) bool {
-	switch platform {
-	case PlatformOpenAI, PlatformComposite:
-		return strings.HasPrefix(strings.ToLower(strings.TrimSpace(modelID)), "gpt-5")
-	default:
-		return false
-	}
-}
-
-func pawModelCapabilities(group *Group, modelID string, pricing *ChannelModelPricing) (bool, bool, bool) {
-	if group == nil || pricing == nil {
+func pawModelCapabilities(group *Group, catalog *LiteLLMModelPricing) (bool, bool, bool) {
+	if group == nil || catalog == nil {
 		return false, false, false
 	}
-	vision := pricing.ImageInputPrice != nil
+	vision := catalog.SupportsVision
 	imageGeneration := group.AllowImageGeneration &&
-		(pricing.BillingMode == BillingModeImage || pricing.ImageOutputPrice != nil || isOpenAIImageGenerationModel(modelID))
-	return vision, imageGeneration, vision
+		(strings.EqualFold(catalog.Mode, "image_generation") || pawContainsStringFold(catalog.SupportedOutputModalities, "image"))
+	return vision, imageGeneration, catalog.SupportsPDFInput
+}
+
+func pawContainsStringFold(values []string, want string) bool {
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), want) {
+			return true
+		}
+	}
+	return false
 }
 
 func pawDefaultsConfigured(defaults PawDefaults) bool {

@@ -139,7 +139,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	channelRepository := repository.NewChannelRepository(db)
 	channelCachePubSub := repository.NewChannelCache(redisClient)
 	channelService := service.NewChannelService(channelRepository, groupRepository, apiKeyAuthCacheInvalidator, pricingService, channelCachePubSub)
-	pawConfigService := service.NewPawConfigService(service.APIKeyPawGroupSource{Service: apiKeyService}, userService, channelService, service.UserAttributePawDefaultsStore{Service: userAttributeService})
+	pawConfigService := service.NewPawConfigService(service.APIKeyPawGroupSource{Service: apiKeyService}, userService, channelService, service.UserAttributePawDefaultsStore{Service: userAttributeService}, pricingService)
 	modelPricingResolver := service.NewModelPricingResolver(channelService, billingService)
 	compositeModelRouteRepository := repository.NewCompositeModelRouteRepository(client)
 	compositeRouteResolver := service.NewCompositeRouteResolver(compositeModelRouteRepository)

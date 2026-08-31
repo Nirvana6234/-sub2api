@@ -166,6 +166,38 @@ func TestPricingServiceBareGPT6AliasUsesAstra(t *testing.T) {
 	}
 }
 
+func TestParsePricingData_ParsesPawModelCapabilities(t *testing.T) {
+	svc := &PricingService{}
+	body := []byte(`{
+		"gpt-5.4": {
+			"input_cost_per_token": 0.0000025,
+			"output_cost_per_token": 0.000015,
+			"supports_reasoning": true,
+			"supports_minimal_reasoning_effort": true,
+			"supports_xhigh_reasoning_effort": true,
+			"supports_max_reasoning_effort": false,
+			"supports_vision": true,
+			"supports_pdf_input": true,
+			"supported_output_modalities": ["text", "image"],
+			"litellm_provider": "openai",
+			"mode": "chat"
+		}
+	}`)
+
+	data, err := svc.parsePricingData(body)
+
+	require.NoError(t, err)
+	pricing := data["gpt-5.4"]
+	require.NotNil(t, pricing)
+	require.True(t, pricing.SupportsReasoning)
+	require.True(t, pricing.SupportsMinimalReasoningEffort)
+	require.True(t, pricing.SupportsXHighReasoningEffort)
+	require.False(t, pricing.SupportsMaxReasoningEffort)
+	require.True(t, pricing.SupportsVision)
+	require.True(t, pricing.SupportsPDFInput)
+	require.Equal(t, []string{"text", "image"}, pricing.SupportedOutputModalities)
+}
+
 func TestBillingService_GPT56CacheWritePricingUsesOfficialMultiplier(t *testing.T) {
 	tests := []struct {
 		model             string
