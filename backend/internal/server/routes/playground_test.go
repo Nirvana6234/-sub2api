@@ -235,6 +235,9 @@ func noopPlaygroundGatewayDispatch() playgroundGatewayDispatch {
 		models:            func(c *gin.Context) { c.Status(http.StatusNoContent) },
 		chatCompletions:   func(c *gin.Context) { c.Status(http.StatusNoContent) },
 		imagesGenerations: func(c *gin.Context) { c.Status(http.StatusNoContent) },
+		videoGeneration:   func(c *gin.Context) { c.Status(http.StatusNoContent) },
+		videoStatus:       func(c *gin.Context) { c.Status(http.StatusNoContent) },
+		videoContent:      func(c *gin.Context) { c.Status(http.StatusNoContent) },
 	}
 }
 

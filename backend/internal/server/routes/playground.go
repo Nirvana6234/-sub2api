@@ -13,6 +13,11 @@ type playgroundGatewayDispatch struct {
 	models            gin.HandlerFunc
 	chatCompletions   gin.HandlerFunc
 	imagesGenerations gin.HandlerFunc
+	videoGeneration   gin.HandlerFunc
+	videoStatus       gin.HandlerFunc
+	videoContent      gin.HandlerFunc
+	voiceTTS          gin.HandlerFunc
+	voiceSTT          gin.HandlerFunc
 	historyGet        gin.HandlerFunc
 	historySave       gin.HandlerFunc
 }
@@ -73,6 +78,46 @@ func RegisterPlaygroundRoutes(
 			}})
 		}
 	}
+	videoGenerationHandler := func(c *gin.Context) {
+		if platform := getGroupPlatform(c); platform == service.PlatformGrok || platform == service.PlatformComposite {
+			h.OpenAIGateway.GrokVideoGeneration(c)
+			return
+		}
+		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
+		c.JSON(404, gin.H{"error": gin.H{"type": "not_found_error", "message": "Videos API is not supported for this platform"}})
+	}
+	videoStatusHandler := func(c *gin.Context) {
+		if platform := getGroupPlatform(c); platform == service.PlatformGrok || platform == service.PlatformComposite {
+			h.OpenAIGateway.GrokVideoStatus(c)
+			return
+		}
+		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
+		c.JSON(404, gin.H{"error": gin.H{"type": "not_found_error", "message": "Videos API is not supported for this platform"}})
+	}
+	videoContentHandler := func(c *gin.Context) {
+		if platform := getGroupPlatform(c); platform == service.PlatformGrok || platform == service.PlatformComposite {
+			h.OpenAIGateway.GrokVideoContent(c)
+			return
+		}
+		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
+		c.JSON(404, gin.H{"error": gin.H{"type": "not_found_error", "message": "Videos API is not supported for this platform"}})
+	}
+	voiceTTSHandler := func(c *gin.Context) {
+		if getGroupPlatform(c) == service.PlatformGrok {
+			h.OpenAIGateway.GrokVoice(c, "tts")
+			return
+		}
+		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
+		c.JSON(404, gin.H{"error": gin.H{"type": "not_found_error", "message": "Voice API is not supported for this platform"}})
+	}
+	voiceSTTHandler := func(c *gin.Context) {
+		if getGroupPlatform(c) == service.PlatformGrok {
+			h.OpenAIGateway.GrokVoice(c, "stt")
+			return
+		}
+		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
+		c.JSON(404, gin.H{"error": gin.H{"type": "not_found_error", "message": "Voice API is not supported for this platform"}})
+	}
 	var historyGet, historySave gin.HandlerFunc
 	if h.PlaygroundHistory != nil {
 		historyGet = h.PlaygroundHistory.Get
@@ -85,6 +130,11 @@ func RegisterPlaygroundRoutes(
 			models:            modelsHandler,
 			chatCompletions:   chatCompletionsHandler,
 			imagesGenerations: imagesGenerationsHandler,
+			videoGeneration:   videoGenerationHandler,
+			videoStatus:       videoStatusHandler,
+			videoContent:      videoContentHandler,
+			voiceTTS:          voiceTTSHandler,
+			voiceSTT:          voiceSTTHandler,
 			historyGet:        historyGet,
 			historySave:       historySave,
 		},
@@ -152,5 +202,18 @@ func registerPlaygroundRoutes(
 		gateway.POST("/chat/completions", middleware.PlaygroundCredentialBodyGuard, compositeTarget, requireGroupAnthropic, dispatch.chatCompletions)
 		gateway.POST("/images/generations", middleware.PlaygroundCredentialBodyGuard, compositeTarget, requireGroupAnthropic, dispatch.imagesGenerations)
 		gateway.POST("/images/edits", middleware.PlaygroundCredentialBodyGuard, compositeTarget, requireGroupAnthropic, dispatch.imagesGenerations)
+		if dispatch.videoGeneration != nil {
+			gateway.POST("/videos/generations", middleware.PlaygroundCredentialBodyGuard, compositeTarget, requireGroupAnthropic, dispatch.videoGeneration)
+		}
+		if dispatch.videoStatus != nil && dispatch.videoContent != nil {
+			gateway.GET("/videos/:request_id", requireGroupAnthropic, dispatch.videoStatus)
+			gateway.GET("/videos/:request_id/content", requireGroupAnthropic, dispatch.videoContent)
+		}
+		if dispatch.voiceTTS != nil {
+			gateway.POST("/audio/speech", middleware.PlaygroundCredentialBodyGuard, compositeTarget, requireGroupAnthropic, dispatch.voiceTTS)
+		}
+		if dispatch.voiceSTT != nil {
+			gateway.POST("/audio/transcriptions", middleware.PlaygroundCredentialBodyGuard, compositeTarget, requireGroupAnthropic, dispatch.voiceSTT)
+		}
 	}
 }

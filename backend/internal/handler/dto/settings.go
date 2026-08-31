@@ -237,6 +237,9 @@ type SystemSettings struct {
 
 	// OpenAI account scheduling
 	OpenAILowUpstreamRatePriorityEnabled                   bool    `json:"openai_low_upstream_rate_priority_enabled"`
+	OpenAILatencyAwareFallbackEnabled                      bool    `json:"openai_latency_aware_fallback_enabled"`
+	OpenAILatencyThresholdMs                               int     `json:"openai_latency_threshold_ms"`
+	OpenAIFallbackSpeedupRatio                             float64 `json:"openai_fallback_speedup_ratio"`
 	OpenAIOAuthSchedulingRateMultiplier                    float64 `json:"openai_oauth_scheduling_rate_multiplier"`
 	OpenAIAdvancedSchedulerEnabled                         bool    `json:"openai_advanced_scheduler_enabled"`
 	OpenAIAdvancedSchedulerStickyWeightedEnabled           bool    `json:"openai_advanced_scheduler_sticky_weighted_enabled"`

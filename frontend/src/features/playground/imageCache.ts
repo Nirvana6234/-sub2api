@@ -151,6 +151,22 @@ export async function restoreCachedPlaygroundImage(cacheKey: string): Promise<st
   }
 }
 
+export async function readCachedPlaygroundImageBlob(cacheKey: string): Promise<Blob | null> {
+  const database = await openDatabase()
+  if (!database) return null
+
+  try {
+    const record = await new Promise<PlaygroundGalleryImage | undefined>((resolve, reject) => {
+      const request = database.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).get(cacheKey)
+      request.onsuccess = () => resolve(request.result as PlaygroundGalleryImage | undefined)
+      request.onerror = () => reject(request.error ?? new Error('Unable to read the generated image cache.'))
+    })
+    return record?.blob instanceof Blob ? record.blob : null
+  } finally {
+    database.close()
+  }
+}
+
 export async function clearCachedPlaygroundImages(userId: number, keyId: number): Promise<void> {
   const database = await openDatabase()
   if (!database) return

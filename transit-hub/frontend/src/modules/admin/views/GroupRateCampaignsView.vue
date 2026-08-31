@@ -2,7 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { AlertCircle, Loader2, Megaphone, Plus, RefreshCw } from 'lucide-vue-next'
+import { AlertCircle, Loader2, Megaphone, Plus, RefreshCw, Repeat2 } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { useGroupRateCampaigns } from '../composables/useGroupRateCampaigns'
 import CampaignEditorDrawer from '../components/group-rate-campaigns/CampaignEditorDrawer.vue'
@@ -29,15 +29,27 @@ const {
   startCampaign,
   endCampaign,
   cancelCampaign,
+  deleteCampaign,
+  stopCampaignRecurrence,
 } = useGroupRateCampaigns()
 
 const isEditorOpen = ref(false)
+const editorCampaign = ref<CampaignDetail | null>(null)
+const editorMode = ref<'create' | 'edit' | 'duplicate'>('create')
 const detailCampaignId = ref<string | null>(null)
 const isDetailOpen = ref(false)
 
-const statusOptions = ['draft', 'scheduled', 'running', 'ending', 'ended', 'partial', 'failed', 'cancelled'] as const
+const statusOptions = ['draft', 'scheduled', 'running', 'ended', 'partial', 'failed', 'cancelled'] as const
 
 const openEditor = () => {
+  editorCampaign.value = null
+  editorMode.value = 'create'
+  isEditorOpen.value = true
+}
+
+const openEditorFor = (campaign: CampaignDetail, mode: 'edit' | 'duplicate') => {
+  editorCampaign.value = campaign
+  editorMode.value = mode
   isEditorOpen.value = true
 }
 
@@ -45,8 +57,9 @@ const closeEditor = () => {
   isEditorOpen.value = false
 }
 
-const handleCreated = async (_detail: CampaignDetail) => {
+const handleSaved = async (_detail: CampaignDetail) => {
   isEditorOpen.value = false
+  editorCampaign.value = null
   await loadCampaigns()
 }
 
@@ -93,6 +106,45 @@ const formatDateTime = (value: string | null): string => {
   }).format(date)
 }
 
+const handleEdit = (campaign: CampaignDetail) => {
+  closeDetail()
+  openEditorFor(campaign, 'edit')
+}
+
+const handleDuplicate = (campaign: CampaignDetail) => {
+  closeDetail()
+  openEditorFor(campaign, 'duplicate')
+}
+
+const handleDelete = async (id: string) => {
+  await deleteCampaign(id)
+  closeDetail()
+}
+
+const handleStopRecurrence = async (id: string) => {
+  await stopCampaignRecurrence(id)
+  closeDetail()
+}
+
+const displayStartAt = (campaign: CampaignListItem): string | null => {
+  if (campaign.status === 'scheduled' || campaign.status === 'draft') return campaign.startAt
+  return campaign.startedAt ?? campaign.startAt
+}
+
+const displayEndAt = (campaign: CampaignListItem): string | null => {
+  if (campaign.status === 'scheduled' || campaign.status === 'draft' || campaign.status === 'running') {
+    return campaign.endAt
+  }
+  return campaign.endedAt ?? campaign.endAt
+}
+
+const formatRecurrence = (campaign: CampaignListItem): string => {
+  const recurrence = campaign.recurrence
+  if (!recurrence || recurrence.frequency === 'none') return t('admin.groupRateCampaigns.recurrence.none')
+  const key = recurrence.frequency === 'daily' ? 'daily' : 'weekly'
+  return t(`admin.groupRateCampaigns.recurrence.${key}`, { interval: recurrence.interval || 1 })
+}
+
 const statusBadgeClass = (status: string): string => {
   switch (status) {
     case 'running':
@@ -102,7 +154,6 @@ const statusBadgeClass = (status: string): string => {
     case 'ended':
       return 'border-border/60 bg-surface-elevated text-muted-foreground'
     case 'partial':
-    case 'ending':
       return 'border-amber-400/30 bg-amber-500/10 text-amber-600 dark:text-amber-300'
     case 'failed':
     case 'cancelled':
@@ -177,13 +228,14 @@ onMounted(() => {
       </div>
 
       <div v-else class="flex-1 overflow-auto">
-        <table class="w-full min-w-[980px] text-left text-sm relative">
+        <table class="w-full min-w-[1080px] text-left text-sm relative">
           <thead class="sticky top-0 z-10 border-b border-border/50 bg-surface-elevated/90 backdrop-blur-sm">
             <tr>
               <th class="px-6 py-3 font-medium text-muted-foreground">{{ t('admin.groupRateCampaigns.fields.name') }}</th>
               <th class="px-6 py-3 font-medium text-muted-foreground">{{ t('admin.groupRateCampaigns.fields.status') }}</th>
               <th class="px-6 py-3 font-medium text-muted-foreground">{{ t('admin.groupRateCampaigns.fields.startAt') }}</th>
               <th class="px-6 py-3 font-medium text-muted-foreground">{{ t('admin.groupRateCampaigns.fields.endAt') }}</th>
+              <th class="px-6 py-3 font-medium text-muted-foreground">{{ t('admin.groupRateCampaigns.fields.recurrence') }}</th>
               <th class="px-6 py-3 font-medium text-muted-foreground">{{ t('admin.groupRateCampaigns.fields.summary') }}</th>
               <th class="px-6 py-3 font-medium text-muted-foreground">{{ t('admin.groupRateCampaigns.fields.createdBy') }}</th>
               <th class="px-6 py-3 text-right font-medium text-muted-foreground">{{ t('admin.groupRateCampaigns.fields.actions') }}</th>
@@ -197,8 +249,14 @@ onMounted(() => {
                   {{ t(`admin.groupRateCampaigns.status.${campaign.status}`) }}
                 </span>
               </td>
-              <td class="px-6 py-2.5 text-muted-foreground">{{ formatDateTime(campaign.startedAt ?? campaign.startAt) }}</td>
-              <td class="px-6 py-2.5 text-muted-foreground">{{ formatDateTime(campaign.endedAt ?? campaign.endAt) }}</td>
+              <td class="px-6 py-2.5 text-muted-foreground">{{ formatDateTime(displayStartAt(campaign)) }}</td>
+              <td class="px-6 py-2.5 text-muted-foreground">{{ formatDateTime(displayEndAt(campaign)) }}</td>
+              <td class="px-6 py-2.5 text-muted-foreground">
+                <span class="inline-flex items-center gap-1.5">
+                  <Repeat2 v-if="campaign.recurrence?.frequency && campaign.recurrence.frequency !== 'none'" class="h-3.5 w-3.5 text-primary" />
+                  {{ formatRecurrence(campaign) }}
+                </span>
+              </td>
               <td class="px-6 py-2.5 text-muted-foreground">
                 {{ t('admin.groupRateCampaigns.format.summary', { applied: campaign.summary.applied, total: campaign.summary.total }) }}
               </td>
@@ -234,8 +292,11 @@ onMounted(() => {
     <CampaignEditorDrawer
       :open="isEditorOpen"
       :notify-defaults="notifyDefaults"
+      :campaign="editorCampaign"
+      :mode="editorMode"
       @close="closeEditor"
-      @created="handleCreated"
+      @created="handleSaved"
+      @saved="handleSaved"
     />
 
     <CampaignDetailDrawer
@@ -245,6 +306,10 @@ onMounted(() => {
       @start="handleStart"
       @end="handleEnd"
       @cancel="handleCancel"
+      @edit="handleEdit"
+      @duplicate="handleDuplicate"
+      @delete="handleDelete"
+      @stop-recurrence="handleStopRecurrence"
     />
   </div>
 </template>

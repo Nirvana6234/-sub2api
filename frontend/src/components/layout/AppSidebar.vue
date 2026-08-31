@@ -84,7 +84,7 @@
               :href="item.externalUrl || undefined"
               :target="item.externalUrl ? '_blank' : undefined"
               :rel="item.externalUrl ? 'noopener noreferrer' : undefined"
-              class="sidebar-link mb-1"
+              class="sidebar-link relative mb-1"
               :class="{ 'sidebar-link-active': isActive(item.path), 'sidebar-link-collapsed': sidebarCollapsed }"
               :title="sidebarCollapsed ? item.label : undefined"
               :id="
@@ -101,6 +101,12 @@
               <span v-if="item.iconSvg" class="h-5 w-5 flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
               <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" />
               <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
+              <span
+                v-if="ticketUnreadCountFor(item.path) > 0"
+                class="sidebar-notification-dot"
+                :class="{ 'sidebar-notification-dot-collapsed': sidebarCollapsed }"
+                aria-hidden="true"
+              ></span>
             </component>
           </template>
         </div>
@@ -121,7 +127,7 @@
             :href="item.externalUrl || undefined"
             :target="item.externalUrl ? '_blank' : undefined"
             :rel="item.externalUrl ? 'noopener noreferrer' : undefined"
-            class="sidebar-link mb-1"
+            class="sidebar-link relative mb-1"
             :class="{ 'sidebar-link-active': isActive(item.path), 'sidebar-link-collapsed': sidebarCollapsed }"
             :title="sidebarCollapsed ? item.label : undefined"
             :data-tour="item.path === '/keys' ? 'sidebar-my-keys' : undefined"
@@ -130,6 +136,12 @@
             <span v-if="item.iconSvg" class="h-5 w-5 flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
             <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" />
             <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
+            <span
+              v-if="ticketUnreadCountFor(item.path) > 0"
+              class="sidebar-notification-dot"
+              :class="{ 'sidebar-notification-dot-collapsed': sidebarCollapsed }"
+              aria-hidden="true"
+            ></span>
           </component>
         </div>
       </template>
@@ -145,7 +157,7 @@
             :href="item.externalUrl || undefined"
             :target="item.externalUrl ? '_blank' : undefined"
             :rel="item.externalUrl ? 'noopener noreferrer' : undefined"
-            class="sidebar-link mb-1"
+            class="sidebar-link relative mb-1"
             :class="{ 'sidebar-link-active': isActive(item.path), 'sidebar-link-collapsed': sidebarCollapsed }"
             :title="sidebarCollapsed ? item.label : undefined"
             :data-tour="item.path === '/keys' ? 'sidebar-my-keys' : undefined"
@@ -154,6 +166,12 @@
             <span v-if="item.iconSvg" class="h-5 w-5 flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
             <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" />
             <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
+            <span
+              v-if="ticketUnreadCountFor(item.path) > 0"
+              class="sidebar-notification-dot"
+              :class="{ 'sidebar-notification-dot-collapsed': sidebarCollapsed }"
+              aria-hidden="true"
+            ></span>
           </component>
         </div>
       </template>
@@ -203,7 +221,7 @@
 import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { useAdminSettingsStore, useAppStore, useAuthStore, useOnboardingStore } from '@/stores'
+import { useAdminSettingsStore, useAppStore, useAuthStore, useOnboardingStore, useTicketStore } from '@/stores'
 import VersionBadge from '@/components/common/VersionBadge.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { sanitizeSvg } from '@/utils/sanitize'
@@ -255,6 +273,7 @@ const appStore = useAppStore()
 const authStore = useAuthStore()
 const onboardingStore = useOnboardingStore()
 const adminSettingsStore = useAdminSettingsStore()
+const ticketStore = useTicketStore()
 
 const sidebarCollapsed = computed(() => appStore.sidebarCollapsed)
 const mobileOpen = computed(() => appStore.mobileOpen)
@@ -272,6 +291,10 @@ const siteName = computed(() => appStore.siteName)
 const siteLogo = computed(() => sanitizeUrl(appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }))
 const siteVersion = computed(() => appStore.siteVersion)
 const settingsLoaded = computed(() => appStore.publicSettingsLoaded)
+const ticketUnreadCounts = computed(() => ({
+  user: ticketStore.userUnreadCount,
+  admin: ticketStore.adminUnreadCount
+}))
 
 // SVG Icon Components
 const DashboardIcon = {
@@ -736,7 +759,7 @@ const flagPurchase = () => flagPayment() || flagBackupPayment()
 // buildSelfNavItems 构造用户自己的导航项（用户端主菜单和管理员的"我的账户"子菜单共享这组声明）。
 // withDashboard=true 时包含仪表盘（用户端），false 时不含（管理员的个人区已经有独立仪表盘入口）。
 //
-// 条目顺序：密钥 → 用量 → 可用渠道 → 渠道状态 → 订阅/支付 → 兑换/资料。
+// 条目顺序：密钥 → 充值/订阅 → 用量 → 可用渠道 → 渠道状态 → 其他账户功能。
 // 可用渠道紧挨渠道状态之上，让用户"先看自己能用什么、再看对应状态"。
 function buildSelfNavItems(withDashboard: boolean): NavItem[] {
   const items: NavItem[] = []
@@ -745,6 +768,13 @@ function buildSelfNavItems(withDashboard: boolean): NavItem[] {
   }
   items.push(
     { path: '/keys', label: t('nav.apiKeys'), icon: KeyIcon },
+    {
+      path: '/purchase',
+      label: t('nav.buySubscription'),
+      icon: RechargeSubscriptionIcon,
+      hideInSimpleMode: true,
+      featureFlag: flagPurchase,
+    },
     { path: '/playground', label: t('nav.playground'), icon: PlaygroundIcon, featureFlag: flagPlayground },
     { path: '/download', label: t('nav.clientDownload'), icon: ClientDownloadIcon, featureFlag: flagClientDownload },
     { path: '/tickets', label: t('nav.tickets'), icon: BellIcon },
@@ -754,13 +784,6 @@ function buildSelfNavItems(withDashboard: boolean): NavItem[] {
     { path: '/available-channels', label: t('nav.availableChannels'), icon: ChannelIcon, hideInSimpleMode: true, featureFlag: flagAvailableChannels },
     { path: '/monitor', label: t('nav.channelStatus'), icon: SignalIcon, featureFlag: flagChannelMonitor },
     { path: '/subscriptions', label: t('nav.mySubscriptions'), icon: CreditCardIcon, hideInSimpleMode: true },
-    {
-      path: '/purchase',
-      label: t('nav.buySubscription'),
-      icon: RechargeSubscriptionIcon,
-      hideInSimpleMode: true,
-      featureFlag: flagPurchase,
-    },
     { path: '/orders', label: t('nav.myOrders'), icon: OrderListIcon, hideInSimpleMode: true, featureFlag: flagPayment },
     { path: '/redeem', label: t('nav.redeem'), icon: GiftIcon, hideInSimpleMode: true },
     { path: '/affiliate', label: t('nav.affiliate'), icon: UsersIcon, hideInSimpleMode: true, featureFlag: flagAffiliate },
@@ -929,6 +952,12 @@ function handleMenuItemClick(itemPath: string) {
 
 function isActive(path: string): boolean {
   return route.path === path || route.path.startsWith(path + '/')
+}
+
+function ticketUnreadCountFor(path: string): number {
+  if (path === '/admin/tickets') return ticketUnreadCounts.value.admin
+  if (path === '/tickets') return ticketUnreadCounts.value.user
+  return 0
 }
 
 function isGroupActive(item: NavItem): boolean {
@@ -1127,6 +1156,51 @@ onBeforeUnmount(() => {
   opacity: 0;
   transform: translateX(-4px);
   pointer-events: none;
+}
+
+.sidebar-notification-dot {
+  position: relative;
+  display: inline-flex;
+  width: 0.5rem;
+  height: 0.5rem;
+  flex: 0 0 0.5rem;
+  margin-left: auto;
+  border-radius: 9999px;
+  background: rgb(239 68 68);
+  box-shadow: 0 0 0 2px rgb(255 255 255);
+}
+
+.dark .sidebar-notification-dot {
+  box-shadow: 0 0 0 2px rgb(17 24 39);
+}
+
+.sidebar-notification-dot::after {
+  content: '';
+  position: absolute;
+  inset: -0.2rem;
+  border-radius: inherit;
+  background: rgb(239 68 68 / 0.28);
+  animation: sidebar-notification-ping 1.8s ease-out infinite;
+}
+
+.sidebar-notification-dot-collapsed {
+  position: absolute;
+  right: 0.6rem;
+  top: 0.55rem;
+  margin-left: 0;
+}
+
+@keyframes sidebar-notification-ping {
+  0%,
+  45% {
+    opacity: 0.7;
+    transform: scale(0.8);
+  }
+  75%,
+  100% {
+    opacity: 0;
+    transform: scale(1.8);
+  }
 }
 
 /* Custom SVG icon in sidebar: constrain size without overriding uploaded SVG colors */

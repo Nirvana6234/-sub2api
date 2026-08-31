@@ -74,6 +74,12 @@ type TicketRepository interface {
 	// ClearUnread 将指定一侧的未读计数清零。role 取 TicketSenderRoleUser / TicketSenderRoleAdmin。
 	ClearUnread(ctx context.Context, ticketID int64, role string) error
 
+	// SetUnreadStatus 批量设置指定一侧的未读状态。unread=true 时将计数设为 1。
+	SetUnreadStatus(ctx context.Context, ticketIDs []int64, role string, unread bool) error
+
+	// DeleteByIDs 批量硬删除工单及其级联消息。
+	DeleteByIDs(ctx context.Context, ticketIDs []int64) error
+
 	// UpdateStatus 更新状态；closedAt 仅在关闭时写入，重开时传 nil 清空。
 	UpdateStatus(ctx context.Context, ticketID int64, status string, closedAt *time.Time) error
 

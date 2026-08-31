@@ -85,10 +85,125 @@ func validateCreateRequest(req CreateCampaignRequest, now time.Time) error {
 		return ErrInvalidSchedule
 	}
 
+	recurrence := normalizeRecurrence(req.Schedule.Recurrence)
+	switch recurrence.Frequency {
+	case RecurrenceNone:
+	case RecurrenceDaily, RecurrenceWeekly:
+		// A repeating campaign needs two fixed boundaries so each occurrence can
+		// be shifted to the next calendar period after it is restored.
+		if req.Schedule.StartMode != StartScheduled ||
+			req.Schedule.EndMode != EndScheduled ||
+			req.Schedule.StartAt == nil ||
+			req.Schedule.EndAt == nil ||
+			req.Schedule.Recurrence.Interval < 1 ||
+			req.Schedule.Recurrence.Interval > 365 {
+			return ErrInvalidSchedule
+		}
+	default:
+		return ErrInvalidSchedule
+	}
+
 	if req.Notify.Enabled && len(req.Notify.BotIDs) == 0 {
 		return ErrNoNotifyBots
 	}
 	return nil
+}
+
+// validateUpdateRequest applies the same static rules as creation while allowing
+// an already-running campaign to retain its past start boundary. Running edits
+// still validate the new end/recurrence configuration against the current time.
+func validateUpdateRequest(req UpdateCampaignRequest, campaign Campaign) error {
+	name := strings.TrimSpace(req.Name)
+	if name == "" || len([]rune(name)) > 80 {
+		return ErrInvalidName
+	}
+	if req.Selection.Mode != SelectionManual {
+		return ErrEmptySelection
+	}
+	if req.Adjustment.Mode != AdjustmentSet {
+		return ErrInvalidAdjustment
+	}
+	if err := validateManualGroupRates(req.Selection.Groups); err != nil {
+		return err
+	}
+	if req.Notify.Enabled && len(req.Notify.BotIDs) == 0 {
+		return ErrNoNotifyBots
+	}
+
+	now := time.Now()
+	if campaign.Status == StatusDraft || campaign.Status == StatusScheduled {
+		return validateCreateRequest(req, now)
+	}
+
+	switch req.Schedule.EndMode {
+	case EndManual:
+	case EndScheduled:
+		if req.Schedule.EndAt == nil || !req.Schedule.EndAt.After(now) {
+			return ErrInvalidSchedule
+		}
+	default:
+		return ErrInvalidSchedule
+	}
+
+	recurrence := normalizeRecurrence(req.Schedule.Recurrence)
+	switch recurrence.Frequency {
+	case RecurrenceNone:
+	case RecurrenceDaily, RecurrenceWeekly:
+		startAt := req.Schedule.StartAt
+		if startAt == nil {
+			startAt = campaign.StartAt
+		}
+		if req.Schedule.EndMode != EndScheduled ||
+			startAt == nil ||
+			req.Schedule.EndAt == nil ||
+			req.Schedule.Recurrence.Interval < 1 ||
+			req.Schedule.Recurrence.Interval > 365 {
+			return ErrInvalidSchedule
+		}
+		if !req.Schedule.EndAt.After(*startAt) {
+			return ErrInvalidSchedule
+		}
+	default:
+		return ErrInvalidSchedule
+	}
+	return nil
+}
+
+func normalizeRecurrence(recurrence Recurrence) Recurrence {
+	if recurrence.Frequency == "" {
+		recurrence.Frequency = RecurrenceNone
+	}
+	if recurrence.Frequency == RecurrenceNone {
+		recurrence.Interval = 0
+	} else if recurrence.Interval < 1 {
+		recurrence.Interval = 1
+	}
+	return recurrence
+}
+
+func nextRecurrenceTimes(campaign Campaign, now time.Time) (*time.Time, *time.Time, bool) {
+	recurrence := normalizeRecurrence(campaign.Recurrence)
+	if recurrence.Frequency == RecurrenceNone || campaign.StartAt == nil || campaign.EndAt == nil {
+		return nil, nil, false
+	}
+
+	nextStart := *campaign.StartAt
+	nextEnd := *campaign.EndAt
+	for {
+		switch recurrence.Frequency {
+		case RecurrenceDaily:
+			nextStart = nextStart.AddDate(0, 0, recurrence.Interval)
+			nextEnd = nextEnd.AddDate(0, 0, recurrence.Interval)
+		case RecurrenceWeekly:
+			nextStart = nextStart.AddDate(0, 0, 7*recurrence.Interval)
+			nextEnd = nextEnd.AddDate(0, 0, 7*recurrence.Interval)
+		default:
+			return nil, nil, false
+		}
+		if nextEnd.After(now) {
+			return &nextStart, &nextEnd, true
+		}
+	}
 }
 
 // validateManualGroupRates 校验手动选择分组请求：分组名不能为空、不能重复，

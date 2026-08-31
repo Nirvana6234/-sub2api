@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { X, ClipboardList, Loader2, Play, Square, Ban } from 'lucide-vue-next'
+import { X, ClipboardList, Loader2, Play, Square, Ban, Repeat2, Pencil, Copy, Trash2, PauseCircle } from 'lucide-vue-next'
 import { getGroupRateCampaign } from '../../api/groupRateCampaigns'
 import type { CampaignDetail } from '../../types/groupRateCampaigns'
 
@@ -15,6 +15,10 @@ const emit = defineEmits<{
   (event: 'start', id: string): void
   (event: 'end', id: string): void
   (event: 'cancel', id: string): void
+  (event: 'edit', campaign: CampaignDetail): void
+  (event: 'duplicate', campaign: CampaignDetail): void
+  (event: 'delete', id: string): void
+  (event: 'stop-recurrence', id: string): void
 }>()
 
 const { t, locale } = useI18n()
@@ -48,6 +52,12 @@ watch(() => [props.open, props.campaignId], ([isOpen]) => {
 const canStart = computed(() => detail.value?.status === 'draft' || detail.value?.status === 'scheduled')
 const canEnd = computed(() => detail.value?.status === 'running' || detail.value?.status === 'partial')
 const canCancel = computed(() => detail.value?.status === 'draft' || detail.value?.status === 'scheduled')
+const canEdit = computed(() => ['draft', 'scheduled', 'running', 'partial'].includes(detail.value?.status ?? ''))
+const canDelete = computed(() => ['draft', 'scheduled', 'ended', 'failed', 'cancelled'].includes(detail.value?.status ?? ''))
+const canStopRecurrence = computed(() => (
+  (detail.value?.status === 'running' || detail.value?.status === 'partial') &&
+  detail.value?.recurrence?.frequency !== 'none'
+))
 
 const handleStart = async () => {
   if (!detail.value) return
@@ -92,6 +102,43 @@ const formatDateTime = (value: string | null): string => {
   return new Intl.DateTimeFormat(locale.value, { dateStyle: 'medium', timeStyle: 'short' }).format(date)
 }
 
+const handleEdit = () => {
+  if (detail.value) emit('edit', detail.value)
+}
+
+const handleDuplicate = () => {
+  if (detail.value) emit('duplicate', detail.value)
+}
+
+const handleDelete = () => {
+  if (!detail.value || !window.confirm(t(`${prefix}.confirmDelete`))) return
+  emit('delete', detail.value.id)
+}
+
+const handleStopRecurrence = () => {
+  if (!detail.value || !window.confirm(t(`${prefix}.confirmStopRecurrence`))) return
+  emit('stop-recurrence', detail.value.id)
+}
+
+const displayStartAt = computed(() => {
+  if (!detail.value) return null
+  if (detail.value.status === 'scheduled' || detail.value.status === 'draft') return detail.value.startAt
+  return detail.value.startedAt ?? detail.value.startAt
+})
+
+const displayEndAt = computed(() => {
+  if (!detail.value) return null
+   if (['scheduled', 'draft', 'running'].includes(detail.value.status)) return detail.value.endAt
+  return detail.value.endedAt ?? detail.value.endAt
+})
+
+const recurrenceLabel = computed(() => {
+  const recurrence = detail.value?.recurrence
+  if (!recurrence || recurrence.frequency === 'none') return t('admin.groupRateCampaigns.recurrence.none')
+  const key = recurrence.frequency === 'daily' ? 'daily' : 'weekly'
+  return t(`admin.groupRateCampaigns.recurrence.${key}`, { interval: recurrence.interval || 1 })
+})
+
 const statusBadgeClass = (status: string): string => {
   switch (status) {
     case 'running':
@@ -101,8 +148,6 @@ const statusBadgeClass = (status: string): string => {
     case 'ended':
       return 'bg-surface-elevated text-muted-foreground'
     case 'partial':
-    case 'ending':
-      return 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
     case 'failed':
     case 'cancelled':
       return 'bg-red-500/10 text-red-600 dark:text-red-400'
@@ -179,14 +224,18 @@ const statusBadgeClass = (status: string): string => {
                       {{ t(`admin.groupRateCampaigns.status.${detail.status}`) }}
                     </span>
                   </div>
+                  <div class="flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-primary">
+                    <Repeat2 class="h-4 w-4 shrink-0" />
+                    <span>{{ recurrenceLabel }}</span>
+                  </div>
                   <div class="grid grid-cols-2 gap-3 text-xs">
                     <div>
                       <p class="text-muted-foreground">{{ t(`admin.groupRateCampaigns.fields.startAt`) }}</p>
-                      <p class="mt-0.5 text-foreground">{{ formatDateTime(detail.startedAt ?? detail.startAt) }}</p>
+                      <p class="mt-0.5 text-foreground">{{ formatDateTime(displayStartAt) }}</p>
                     </div>
                     <div>
                       <p class="text-muted-foreground">{{ t(`admin.groupRateCampaigns.fields.endAt`) }}</p>
-                      <p class="mt-0.5 text-foreground">{{ formatDateTime(detail.endedAt ?? detail.endAt) }}</p>
+                      <p class="mt-0.5 text-foreground">{{ formatDateTime(displayEndAt) }}</p>
                     </div>
                     <div>
                       <p class="text-muted-foreground">{{ t(`admin.groupRateCampaigns.fields.createdBy`) }}</p>
@@ -235,7 +284,47 @@ const statusBadgeClass = (status: string): string => {
               </div>
             </div>
 
-            <div v-if="detail" class="sticky bottom-0 flex items-center justify-end gap-2 border-t border-border/60 bg-card/95 backdrop-blur px-5 py-4">
+            <div v-if="detail" class="sticky bottom-0 flex flex-wrap items-center justify-end gap-2 border-t border-border/60 bg-card/95 backdrop-blur px-5 py-4">
+              <button
+                v-if="canEdit"
+                type="button"
+                class="inline-flex items-center gap-1.5 rounded-lg border border-primary/30 px-3 py-2 text-sm font-medium text-primary transition-colors hover:bg-primary/10 disabled:opacity-50"
+                :disabled="isActionLoading"
+                @click="handleEdit"
+              >
+                <Pencil class="h-3.5 w-3.5" />
+                {{ t('admin.groupRateCampaigns.actions.edit') }}
+              </button>
+              <button
+                v-if="detail.status !== 'running' && detail.status !== 'partial'"
+                type="button"
+                class="inline-flex items-center gap-1.5 rounded-lg border border-border/50 px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-surface-elevated hover:text-foreground disabled:opacity-50"
+                :disabled="isActionLoading"
+                @click="handleDuplicate"
+              >
+                <Copy class="h-3.5 w-3.5" />
+                {{ t('admin.groupRateCampaigns.actions.duplicate') }}
+              </button>
+              <button
+                v-if="canDelete"
+                type="button"
+                class="inline-flex items-center gap-1.5 rounded-lg border border-red-500/30 px-3 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-500/10 disabled:opacity-50 dark:text-red-400"
+                :disabled="isActionLoading"
+                @click="handleDelete"
+              >
+                <Trash2 class="h-3.5 w-3.5" />
+                {{ t('admin.groupRateCampaigns.actions.delete') }}
+              </button>
+              <button
+                v-if="canStopRecurrence"
+                type="button"
+                class="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 px-3 py-2 text-sm font-medium text-amber-700 transition-colors hover:bg-amber-500/10 disabled:opacity-50 dark:text-amber-300"
+                :disabled="isActionLoading"
+                @click="handleStopRecurrence"
+              >
+                <PauseCircle class="h-3.5 w-3.5" />
+                {{ t('admin.groupRateCampaigns.actions.stopRecurrence') }}
+              </button>
               <button
                 v-if="canCancel"
                 type="button"

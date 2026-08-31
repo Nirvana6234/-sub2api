@@ -217,6 +217,8 @@ func New(cfg config.Config, db *pgxpool.Pool, redisClient *redis.Client) *Server
 		panic(err)
 	}
 	campaignsService.SetAdminAccountResolver(adminAccountsService)
+	mySitesService.SetCampaignOverrideGuard(campaignsService)
+	campaignsService.SetAutoPricingReconciler(mySitesService)
 	group_rate_campaigns.RegisterRoutes(server.mux, campaignsService, adminAccountsService)
 
 	// 分组健康探活模块：数据源为 real_connections（通过 mySitesService 只读接口），
@@ -329,12 +331,13 @@ func New(cfg config.Config, db *pgxpool.Pool, redisClient *redis.Client) *Server
 
 	// 站点同步成功后检查余额预警和倍率变更，按配置发送通知。
 	upstreamService.AfterSync = func(ctx context.Context, userID, adminAccountID, siteID, siteName string, session upstream.Session, oldMetrics, newMetrics upstream.Metrics) {
-		strategy, err := settingsService.GetFirstStrategy(ctx)
+		strategy, err := settingsService.GetStrategyForWorkspace(ctx, userID, adminAccountID)
 		if err != nil {
 			return
 		}
 		checkBalanceWarning(ctx, settingsService, upstreamService, strategy, userID, adminAccountID, siteID, siteName, oldMetrics, newMetrics)
 		checkFallbackPoolUsageAlerts(ctx, settingsService, platformService, strategy, userID, adminAccountID, siteID, siteName, session)
+		checkResourceUsageAlert(ctx, settingsService, platformService, strategy, userID, adminAccountID, siteID, siteName, session)
 
 		// 未映射分组也要记录事件，所以映射关系读取不能被即时预警开关短路。
 		mappedGroups, mapErr := mySitesService.ListMappedUpstreamGroups(ctx, userID, adminAccountID)

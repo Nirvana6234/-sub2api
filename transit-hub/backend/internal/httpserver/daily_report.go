@@ -182,8 +182,8 @@ func (s *dailyReportScheduler) tick(ctx context.Context) {
 		log.Printf("[daily-report] 推送简报 user_id=%s admin_account_id=%s date=%s 站点=%d 今日成本条数=%d 周成本条数=%d\n%s",
 			owner.UserID, owner.AdminAccountID, currentDay,
 			len(data.Sites), len(data.TodayCosts), len(data.GroupCosts), report)
-		s.deps.settings.SendFormattedToBots(ctx, owner.UserID, owner.Settings.DailyReportBotIDs,
-			report, owner.Settings.DailyReportFormat)
+		s.deps.settings.SendFormattedToBotsForWorkspace(ctx, owner.UserID, owner.AdminAccountID,
+			owner.Settings.DailyReportBotIDs, report, owner.Settings.DailyReportFormat)
 	}
 }
 
@@ -218,12 +218,27 @@ func (s *dailyReportScheduler) handleSendNow(w http.ResponseWriter, r *http.Requ
 	}
 
 	report := renderDailyReport(collectDailyReportData(r.Context(), s.deps, owner, time.Now().In(dailyReportLocation())))
-	s.deps.settings.SendFormattedToBots(r.Context(), owner.UserID, owner.Settings.DailyReportBotIDs,
-		report, owner.Settings.DailyReportFormat)
+	result, err := s.deps.settings.SendFormattedToBotsForWorkspaceWithResult(r.Context(), owner.UserID, owner.AdminAccountID,
+		owner.Settings.DailyReportBotIDs, report, owner.Settings.DailyReportFormat)
+	if err != nil {
+		log.Printf("[daily-report] 手动发送加载渠道失败 user_id=%s admin_account_id=%s err=%v", owner.UserID, owner.AdminAccountID, err)
+		httpjson.WriteError(w, http.StatusBadGateway, "admin.settings.errors.dailyReportSendFailed")
+		return
+	}
+	if result.Matched < result.Requested {
+		log.Printf("[daily-report] 手动发送未匹配机器人 user_id=%s admin_account_id=%s requested=%d", owner.UserID, owner.AdminAccountID, result.Requested)
+		httpjson.WriteError(w, http.StatusBadRequest, "admin.settings.errors.dailyReportBotsNotSaved")
+		return
+	}
+	if result.Failed > 0 {
+		log.Printf("[daily-report] 手动发送存在投递失败 user_id=%s admin_account_id=%s requested=%d matched=%d delivered=%d failed=%d", owner.UserID, owner.AdminAccountID, result.Requested, result.Matched, result.Delivered, result.Failed)
+		httpjson.WriteError(w, http.StatusBadGateway, "admin.settings.errors.dailyReportSendFailed")
+		return
+	}
 
 	httpjson.Write(w, http.StatusOK, map[string]any{
 		"sent":     true,
-		"botCount": len(owner.Settings.DailyReportBotIDs),
+		"botCount": result.Delivered,
 		"report":   report,
 	})
 }

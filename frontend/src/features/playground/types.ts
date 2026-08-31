@@ -1,7 +1,7 @@
 import type { ApiKey } from '@/types'
 
 export type PlaygroundRole = 'system' | 'user' | 'assistant'
-export type PlaygroundMode = 'chat' | 'image'
+export type PlaygroundMode = 'chat' | 'image' | 'canvas'
 
 export interface PlaygroundAttachment {
   id: string
@@ -97,6 +97,7 @@ export interface PlaygroundKeySummary {
   status: ApiKey['status']
   groupId: number | null
   groupName: string
+  platform?: string
   autoGroup: boolean
   autoGroupStrategy: ApiKey['auto_group_strategy']
 }
@@ -115,6 +116,13 @@ export interface PlaygroundImageResult {
 export interface PlaygroundImageGenerationResponse {
   created?: number
   data: PlaygroundImageResult[]
+}
+
+export interface PlaygroundVideoResponse {
+  id: string
+  status?: string
+  video_url?: string
+  url?: string
 }
 
 export interface PlaygroundPersistedStateV1 {

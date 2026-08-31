@@ -87,6 +87,16 @@ export const createGroupRateCampaign = async (
   })
 )
 
+export const updateGroupRateCampaign = async (
+  id: string,
+  request: CreateGroupRateCampaignRequest,
+): Promise<CampaignDetail> => (
+  requestJson<CampaignDetail>(`/group-rate-campaigns/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(request),
+  })
+)
+
 export const getGroupRateCampaign = async (id: string): Promise<CampaignDetail> => (
   requestJson<CampaignDetail>(`/group-rate-campaigns/${encodeURIComponent(id)}`)
 )
@@ -108,3 +118,15 @@ export const cancelGroupRateCampaign = async (id: string): Promise<CampaignDetai
     method: 'POST',
   })
 )
+
+export const stopGroupRateCampaignRecurrence = async (id: string): Promise<CampaignDetail> => (
+  requestJson<CampaignDetail>(`/group-rate-campaigns/${encodeURIComponent(id)}/stop-recurrence`, {
+    method: 'POST',
+  })
+)
+
+export const deleteGroupRateCampaign = async (id: string): Promise<void> => {
+  await requestJson<unknown>(`/group-rate-campaigns/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  })
+}

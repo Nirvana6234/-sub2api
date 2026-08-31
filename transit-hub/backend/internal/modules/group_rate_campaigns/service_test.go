@@ -88,6 +88,38 @@ func (f *fakeRepository) Insert(ctx context.Context, c Campaign) error {
 	return nil
 }
 
+func (f *fakeRepository) Update(ctx context.Context, c Campaign) error {
+	cp := c
+	f.campaigns[c.ID] = &cp
+	return nil
+}
+
+func (f *fakeRepository) Delete(ctx context.Context, userID, adminAccountID, id string) (bool, error) {
+	c, ok := f.campaigns[id]
+	if !ok || c.UserID != userID || c.AdminAccountID != adminAccountID ||
+		(c.Status == StatusRunning || c.Status == StatusPartial) {
+		return false, nil
+	}
+	delete(f.campaigns, id)
+	return true, nil
+}
+
+func (f *fakeRepository) ListActiveGroupNames(ctx context.Context, userID, adminAccountID string) ([]string, error) {
+	names := make([]string, 0)
+	for _, campaign := range f.campaigns {
+		if campaign.UserID != userID || campaign.AdminAccountID != adminAccountID ||
+			(campaign.Status != StatusRunning && campaign.Status != StatusPartial) {
+			continue
+		}
+		for _, item := range f.items[campaign.ID] {
+			if item.Cycle == campaign.Cycle && item.ApplyStatus == ItemApplied && item.RestoreStatus == ItemPending {
+				names = append(names, item.GroupName)
+			}
+		}
+	}
+	return names, nil
+}
+
 func (f *fakeRepository) SaveItems(ctx context.Context, items []CampaignItem) error {
 	for _, item := range items {
 		cp := item
@@ -121,6 +153,13 @@ func (f *fakeRepository) UpdateItemApply(ctx context.Context, id string, origina
 	return nil
 }
 
+func (f *fakeRepository) UpdateItemCampaignMultiplier(ctx context.Context, id string, multiplier float64) error {
+	if item := f.findItem(id); item != nil {
+		item.CampaignMultiplier = multiplier
+	}
+	return nil
+}
+
 func (f *fakeRepository) UpdateItemRestore(ctx context.Context, id string, restoredMultiplier *float64, status string, reason string, restoredAt *time.Time) error {
 	item := f.findItem(id)
 	if item == nil {
@@ -138,6 +177,17 @@ func (f *fakeRepository) ListItems(ctx context.Context, campaignID string) ([]Ca
 	out := make([]CampaignItem, 0, len(items))
 	for _, item := range items {
 		out = append(out, *item)
+	}
+	return out, nil
+}
+
+func (f *fakeRepository) ListItemsForCycle(ctx context.Context, campaignID string, cycle int) ([]CampaignItem, error) {
+	items := f.items[campaignID]
+	out := make([]CampaignItem, 0)
+	for _, item := range items {
+		if item.Cycle == cycle {
+			out = append(out, *item)
+		}
 	}
 	return out, nil
 }
@@ -207,7 +257,6 @@ func (f *fakeRepository) ClaimForEnding(ctx context.Context, id string) (bool, e
 	if !ok || (c.Status != StatusRunning && c.Status != StatusPartial) {
 		return false, nil
 	}
-	c.Status = StatusEnding
 	return true, nil
 }
 
@@ -221,8 +270,24 @@ func (f *fakeRepository) FinishStart(ctx context.Context, id string, status stri
 func (f *fakeRepository) FinishEnd(ctx context.Context, id string, status string) error {
 	if c, ok := f.campaigns[id]; ok {
 		c.Status = status
+		if status == StatusEnded {
+			now := time.Now()
+			c.EndedAt = &now
+		} else {
+			c.EndedAt = nil
+		}
+	}
+	return nil
+}
+
+func (f *fakeRepository) RescheduleAfterEnd(ctx context.Context, id string, nextStart time.Time, nextEnd time.Time) error {
+	if c, ok := f.campaigns[id]; ok {
+		c.Status = StatusScheduled
+		c.StartAt = &nextStart
+		c.EndAt = &nextEnd
 		now := time.Now()
 		c.EndedAt = &now
+		c.Cycle++
 	}
 	return nil
 }
@@ -430,6 +495,82 @@ func TestCreateStartNowAppliesEachGroupsOwnFixedMultiplier(t *testing.T) {
 	}
 	if restoredByGroup["svip"] != 3.0 {
 		t.Errorf("expected svip restored to 3.0, got %v", restoredByGroup["svip"])
+	}
+}
+
+func TestRecurringCampaignReschedulesAndStartsNextCycle(t *testing.T) {
+	repo := newFakeRepository()
+	operator := &fakeOperator{
+		groups: []upstream.AdminGroupInfo{
+			{ID: "g2", Name: "vip", Multiplier: floatPtr(0.6)},
+		},
+	}
+	svc := &Service{repository: repo, operator: operator, config: Config{}}
+
+	startAt := time.Now().Add(-2 * time.Hour)
+	endAt := time.Now().Add(-time.Hour)
+	campaign := Campaign{
+		ID:             "campaign-recurring",
+		UserID:         "user1",
+		AdminAccountID: "account1",
+		Name:           "daily campaign",
+		Status:         StatusRunning,
+		Selection: Selection{
+			Mode: SelectionManual,
+			Groups: []SelectionGroupRef{
+				{GroupName: "vip", CampaignMultiplier: floatPtr(0.6)},
+			},
+		},
+		StartMode:  StartScheduled,
+		StartAt:    &startAt,
+		EndMode:    EndScheduled,
+		EndAt:      &endAt,
+		Recurrence: Recurrence{Frequency: RecurrenceDaily, Interval: 1},
+	}
+	repo.campaigns[campaign.ID] = &campaign
+	repo.items[campaign.ID] = []*CampaignItem{
+		{
+			ID:                 "item-cycle-0",
+			CampaignID:         campaign.ID,
+			UserID:             campaign.UserID,
+			AdminAccountID:     campaign.AdminAccountID,
+			GroupID:            "g2",
+			GroupName:          "vip",
+			Cycle:              0,
+			OriginalMultiplier: floatPtr(2.0),
+			CampaignMultiplier: 0.6,
+			ApplyStatus:        ItemApplied,
+			RestoreStatus:      ItemPending,
+		},
+	}
+
+	svc.endCampaign(context.Background(), campaign.ID, true)
+
+	rescheduled := repo.campaigns[campaign.ID]
+	if rescheduled.Status != StatusScheduled {
+		t.Fatalf("expected recurring campaign to be scheduled again, got %q", rescheduled.Status)
+	}
+	if rescheduled.Cycle != 1 {
+		t.Fatalf("expected cycle 1 after restore, got %d", rescheduled.Cycle)
+	}
+	if !rescheduled.StartAt.After(startAt) || !rescheduled.EndAt.After(endAt) {
+		t.Fatalf("expected next cycle times after original times, got start=%v end=%v", rescheduled.StartAt, rescheduled.EndAt)
+	}
+	if got := len(repo.items[campaign.ID]); got != 1 {
+		t.Fatalf("expected only completed cycle item before next start, got %d", got)
+	}
+
+	svc.startCampaign(context.Background(), campaign.ID)
+
+	if repo.campaigns[campaign.ID].Status != StatusRunning {
+		t.Fatalf("expected next cycle to start running, got %q", repo.campaigns[campaign.ID].Status)
+	}
+	items, err := repo.ListItemsForCycle(context.Background(), campaign.ID, 1)
+	if err != nil {
+		t.Fatalf("unexpected error listing next cycle: %v", err)
+	}
+	if len(items) != 1 || items[0].Cycle != 1 {
+		t.Fatalf("expected one item in cycle 1, got %+v", items)
 	}
 }
 
@@ -832,7 +973,7 @@ func TestEndingClaimIsIdempotentForPartialCampaigns(t *testing.T) {
 	operator := &fakeOperator{groups: remoteGroupsAfterPartialStart()}
 	svc := &Service{repository: repo, operator: operator, config: Config{}}
 
-	svc.endCampaign(context.Background(), campaignID)
+	svc.endCampaign(context.Background(), campaignID, false)
 	firstCallCount := operator.updateCalls
 	if firstCallCount != 1 {
 		t.Fatalf("expected the first endCampaign call to restore exactly 1 item, got %d", firstCallCount)
@@ -840,7 +981,7 @@ func TestEndingClaimIsIdempotentForPartialCampaigns(t *testing.T) {
 
 	// The campaign is now "ended", so a second invocation must not re-claim it or
 	// perform any further remote writes, even though nothing prevents it from being called again.
-	svc.endCampaign(context.Background(), campaignID)
+	svc.endCampaign(context.Background(), campaignID, false)
 	if operator.updateCalls != firstCallCount {
 		t.Fatalf("expected no additional remote calls on a repeated endCampaign call, got %d (was %d)", operator.updateCalls, firstCallCount)
 	}

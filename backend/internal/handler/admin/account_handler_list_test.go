@@ -144,7 +144,7 @@ func TestAccountHandlerListReturnsSchedulerScoresPerGroup(t *testing.T) {
 	require.Equal(t, "openai", high.SchedulerScores[0].GroupName)
 	require.Equal(t, 100, *high.SchedulerScores[0].GroupPriority)
 	require.Equal(t, 1, *low.SchedulerScores[0].GroupPriority)
-	require.Greater(t, high.SchedulerScores[0].BaseScore, low.SchedulerScores[0].BaseScore)
+	require.Less(t, high.SchedulerScores[0].BaseScore, low.SchedulerScores[0].BaseScore)
 }
 
 func TestAccountHandlerListReturnsGroupPriorityForNonSchedulableAccount(t *testing.T) {
@@ -293,7 +293,8 @@ func TestAccountHandlerListKeepsSchedulerScoreScopedToFilter(t *testing.T) {
 	require.Equal(t, int64(201), item.ID)
 	require.Len(t, item.SchedulerScores, 1)
 	require.Equal(t, groupID, *item.SchedulerScores[0].GroupID)
-	require.Equal(t, item.SchedulerScores[0].BaseScore, item.SchedulerScore.BaseScore)
+	require.NotEqual(t, item.SchedulerScores[0].BaseScore, item.SchedulerScore.BaseScore)
+	require.Greater(t, item.SchedulerScores[0].BaseScore, item.SchedulerScore.BaseScore)
 }
 
 func TestAccountHandlerListSchedulerScoreIgnoresPagination(t *testing.T) {

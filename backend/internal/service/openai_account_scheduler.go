@@ -59,6 +59,9 @@ const (
 
 type cachedOpenAIAdvancedSchedulerSetting struct {
 	lowUpstreamRatePriorityEnabled bool
+	latencyAwareFallbackEnabled    bool
+	latencyThresholdMs             int
+	fallbackSpeedupRatio           float64
 	oauthSchedulingRateMultiplier  float64
 	enabled                        bool
 	stickyWeightedEnabled          bool
@@ -70,6 +73,9 @@ type cachedOpenAIAdvancedSchedulerSetting struct {
 
 type openAIAdvancedSchedulerRuntimeSettings struct {
 	lowUpstreamRatePriorityEnabled bool
+	latencyAwareFallbackEnabled    bool
+	latencyThresholdMs             int
+	fallbackSpeedupRatio           float64
 	oauthSchedulingRateMultiplier  float64
 	enabled                        bool
 	stickyWeightedEnabled          bool
@@ -998,9 +1004,16 @@ func openAIStickyAccountMatchesGroup(account *Account, groupID *int64) bool {
 	return false
 }
 
-func openAIAccountSchedulingPriority(account *Account) int {
+func openAIAccountSchedulingPriority(account *Account, groupID *int64) int {
 	if account == nil {
 		return 0
+	}
+	if groupID != nil && *groupID > 0 {
+		for _, accountGroup := range account.AccountGroups {
+			if accountGroup.GroupID == *groupID {
+				return accountGroup.Priority
+			}
+		}
 	}
 	return account.Priority
 }
@@ -1067,8 +1080,8 @@ func isOpenAIAccountCandidateBetter(left openAIAccountCandidateScore, right open
 	if left.score != right.score {
 		return left.score > right.score
 	}
-	if left.account.Priority != right.account.Priority {
-		return left.account.Priority < right.account.Priority
+	if left.priority != right.priority {
+		return left.priority < right.priority
 	}
 	if left.loadInfo.LoadRate != right.loadInfo.LoadRate {
 		return left.loadInfo.LoadRate < right.loadInfo.LoadRate
@@ -1156,6 +1169,18 @@ func deriveOpenAISelectionSeed(req OpenAIAccountScheduleRequest) uint64 {
 	writeValue(req.RequestedModel)
 	if req.GroupID != nil {
 		_, _ = hasher.Write([]byte(strconv.FormatInt(*req.GroupID, 10)))
+	}
+	// 已失败账号集合参与种子：每换一次号都必须重新抽签。
+	//
+	// 否则种子只由会话锚点决定，一次请求内的多轮选号就是「同一条冻结序列去掉失败者」，
+	// 换号不是重新抽签而是沿着固定名次往下走；客户端重发同一份 body 时会话锚点不变，
+	// 于是每次重试都原样走同一条必败路径，排在后面的高优先级账号永远轮不到。
+	//
+	// 用有序的账号 ID 而不是集合大小：种子因此是「谁失败过」的函数，同一失败集合仍可
+	// 复现，便于排查；失败集合不变的同账号重试（pool 模式）也不会被误判成换号。
+	for _, id := range sortedExcludedAccountIDs(req.ExcludedIDs) {
+		_, _ = hasher.Write([]byte{0xff})
+		_, _ = hasher.Write([]byte(strconv.FormatInt(id, 10)))
 	}
 
 	seed := hasher.Sum64()
@@ -1293,6 +1318,7 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 			account:   account,
 			loadInfo:  loadInfo,
 			loadKnown: loadKnown,
+			priority:  openAIAccountSchedulingPriority(account, req.GroupID),
 			errorRate: errorRate,
 			ttft:      ttft,
 			hasTTFT:   hasTTFT,
@@ -1324,7 +1350,7 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 		return plan
 	}
 
-	minPriority, maxPriority := openAIAccountSchedulingPriority(candidates[0].account), openAIAccountSchedulingPriority(candidates[0].account)
+	minPriority, maxPriority := openAIAccountSchedulingPriority(candidates[0].account, req.GroupID), openAIAccountSchedulingPriority(candidates[0].account, req.GroupID)
 	maxWaiting := 1
 	loadRateSum := 0.0
 	loadRateSumSquares := 0.0
@@ -1332,7 +1358,6 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 	hasTTFTSample := false
 	for i := range candidates {
 		candidate := &candidates[i]
-		candidate.priority = openAIAccountSchedulingPriority(candidate.account)
 		if candidate.priority < minPriority {
 			minPriority = candidate.priority
 		}
@@ -1472,7 +1497,7 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 	req OpenAIAccountScheduleRequest,
 	plan openAIAccountLoadPlan,
 ) []openAIAccountCandidateScore {
-	rankPool := func(pool []openAIAccountCandidateScore) []openAIAccountCandidateScore {
+	rankOriginal := func(pool []openAIAccountCandidateScore) []openAIAccountCandidateScore {
 		if len(pool) == 0 || plan.topK <= 0 {
 			return nil
 		}
@@ -1514,6 +1539,19 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 			return isOpenAIAccountCandidateBetter(overflow[i], overflow[j])
 		})
 		return append(primary, overflow...)
+	}
+	rankPool := func(pool []openAIAccountCandidateScore) []openAIAccountCandidateScore {
+		if len(pool) == 0 || !s.service.isOpenAILatencyAwareFallbackEnabled(context.Background()) {
+			return rankOriginal(pool)
+		}
+		tracker := s.service.getOpenAILatencyTracker()
+		threshold, _, _ := s.service.openAILatencyAwareFallbackSettings(context.Background())
+		healthy, slow := splitOpenAIAccountCandidatesByLatency(pool, tracker, threshold)
+		if len(healthy) == 0 || len(slow) == 0 {
+			return rankOriginal(pool)
+		}
+		ordered := rankOriginal(healthy)
+		return append(ordered, rankOriginal(slow)...)
 	}
 
 	// 稀缺能力保护：把支持模型集合最窄的一档排在前面，其余仍保留在序列尾部。
@@ -1567,6 +1605,28 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 	return buildSelectionOrder(plan.candidates)
 }
 
+func splitOpenAIAccountCandidatesByLatency(
+	pool []openAIAccountCandidateScore,
+	tracker *openAILatencyTracker,
+	threshold int,
+) ([]openAIAccountCandidateScore, []openAIAccountCandidateScore) {
+	healthy := make([]openAIAccountCandidateScore, 0, len(pool))
+	slow := make([]openAIAccountCandidateScore, 0, len(pool))
+	for _, candidate := range pool {
+		if candidate.account == nil {
+			healthy = append(healthy, candidate)
+			continue
+		}
+		tail, ok := tracker.AccountTail(candidate.account.ID)
+		if ok && tail > threshold {
+			slow = append(slow, candidate)
+		} else {
+			healthy = append(healthy, candidate)
+		}
+	}
+	return healthy, slow
+}
+
 func sortOpenAICompactRetryCandidates(pool []openAIAccountCandidateScore) []openAIAccountCandidateScore {
 	if len(pool) == 0 {
 		return nil
@@ -1574,8 +1634,8 @@ func sortOpenAICompactRetryCandidates(pool []openAIAccountCandidateScore) []open
 	ordered := append([]openAIAccountCandidateScore(nil), pool...)
 	sort.SliceStable(ordered, func(i, j int) bool {
 		a, b := ordered[i], ordered[j]
-		if a.account.Priority != b.account.Priority {
-			return a.account.Priority < b.account.Priority
+		if a.priority != b.priority {
+			return a.priority < b.priority
 		}
 		if a.loadInfo.LoadRate != b.loadInfo.LoadRate {
 			return a.loadInfo.LoadRate < b.loadInfo.LoadRate
@@ -2357,6 +2417,9 @@ func (s *OpenAIGatewayService) openAIAdvancedSchedulerRuntimeSettings(ctx contex
 		if time.Now().UnixNano() < cached.expiresAt {
 			return openAIAdvancedSchedulerRuntimeSettings{
 				lowUpstreamRatePriorityEnabled: cached.lowUpstreamRatePriorityEnabled,
+				latencyAwareFallbackEnabled:    cached.latencyAwareFallbackEnabled,
+				latencyThresholdMs:             cached.latencyThresholdMs,
+				fallbackSpeedupRatio:           cached.fallbackSpeedupRatio,
 				oauthSchedulingRateMultiplier:  cached.oauthSchedulingRateMultiplier,
 				enabled:                        cached.enabled,
 				stickyWeightedEnabled:          cached.stickyWeightedEnabled,
@@ -2372,6 +2435,9 @@ func (s *OpenAIGatewayService) openAIAdvancedSchedulerRuntimeSettings(ctx contex
 			if time.Now().UnixNano() < cached.expiresAt {
 				return openAIAdvancedSchedulerRuntimeSettings{
 					lowUpstreamRatePriorityEnabled: cached.lowUpstreamRatePriorityEnabled,
+					latencyAwareFallbackEnabled:    cached.latencyAwareFallbackEnabled,
+					latencyThresholdMs:             cached.latencyThresholdMs,
+					fallbackSpeedupRatio:           cached.fallbackSpeedupRatio,
 					oauthSchedulingRateMultiplier:  cached.oauthSchedulingRateMultiplier,
 					enabled:                        cached.enabled,
 					stickyWeightedEnabled:          cached.stickyWeightedEnabled,
@@ -2383,6 +2449,9 @@ func (s *OpenAIGatewayService) openAIAdvancedSchedulerRuntimeSettings(ctx contex
 		}
 
 		lowUpstreamRatePriorityEnabled := false
+		latencyAwareFallbackEnabled := false
+		latencyThresholdMs := defaultOpenAILatencyThresholdMs
+		fallbackSpeedupRatio := defaultOpenAIFallbackSpeedupRatio
 		oauthSchedulingRateMultiplier := defaultOpenAIOAuthSchedulingRateMultiplier
 		enabled := false
 		stickyWeightedEnabled := false
@@ -2395,6 +2464,9 @@ func (s *OpenAIGatewayService) openAIAdvancedSchedulerRuntimeSettings(ctx contex
 
 			if values, err := repo.GetMultiple(dbCtx, openAIAdvancedSchedulerRuntimeSettingKeys()); err == nil {
 				lowUpstreamRatePriorityEnabled = strings.EqualFold(strings.TrimSpace(values[SettingKeyOpenAILowUpstreamRatePriorityEnabled]), "true")
+				latencyAwareFallbackEnabled = strings.EqualFold(strings.TrimSpace(values[SettingKeyOpenAILatencyAwareFallbackEnabled]), "true")
+				latencyThresholdMs = parseOpenAILatencyThresholdMs(values[SettingKeyOpenAILatencyThresholdMs])
+				fallbackSpeedupRatio = parseOpenAIFallbackSpeedupRatio(values[SettingKeyOpenAIFallbackSpeedupRatio])
 				oauthSchedulingRateMultiplier = parseOpenAIOAuthSchedulingRateMultiplier(values[SettingKeyOpenAIOAuthSchedulingRateMultiplier])
 				enabled = strings.EqualFold(strings.TrimSpace(values[openAIAdvancedSchedulerSettingKey]), "true")
 				stickyWeightedEnabled = strings.EqualFold(strings.TrimSpace(values[SettingKeyOpenAIAdvancedSchedulerStickyWeightedEnabled]), "true")
@@ -2412,6 +2484,9 @@ func (s *OpenAIGatewayService) openAIAdvancedSchedulerRuntimeSettings(ctx contex
 					}
 				}
 				lowUpstreamRatePriorityEnabled = strings.EqualFold(strings.TrimSpace(fallbackValues[SettingKeyOpenAILowUpstreamRatePriorityEnabled]), "true")
+				latencyAwareFallbackEnabled = strings.EqualFold(strings.TrimSpace(fallbackValues[SettingKeyOpenAILatencyAwareFallbackEnabled]), "true")
+				latencyThresholdMs = parseOpenAILatencyThresholdMs(fallbackValues[SettingKeyOpenAILatencyThresholdMs])
+				fallbackSpeedupRatio = parseOpenAIFallbackSpeedupRatio(fallbackValues[SettingKeyOpenAIFallbackSpeedupRatio])
 				oauthSchedulingRateMultiplier = parseOpenAIOAuthSchedulingRateMultiplier(fallbackValues[SettingKeyOpenAIOAuthSchedulingRateMultiplier])
 				enabled = strings.EqualFold(strings.TrimSpace(fallbackValues[openAIAdvancedSchedulerSettingKey]), "true")
 				stickyWeightedEnabled = strings.EqualFold(strings.TrimSpace(fallbackValues[SettingKeyOpenAIAdvancedSchedulerStickyWeightedEnabled]), "true")
@@ -2423,6 +2498,9 @@ func (s *OpenAIGatewayService) openAIAdvancedSchedulerRuntimeSettings(ctx contex
 
 		openAIAdvancedSchedulerSettingCache.Store(&cachedOpenAIAdvancedSchedulerSetting{
 			lowUpstreamRatePriorityEnabled: lowUpstreamRatePriorityEnabled,
+			latencyAwareFallbackEnabled:    latencyAwareFallbackEnabled,
+			latencyThresholdMs:             latencyThresholdMs,
+			fallbackSpeedupRatio:           fallbackSpeedupRatio,
 			oauthSchedulingRateMultiplier:  oauthSchedulingRateMultiplier,
 			enabled:                        enabled,
 			stickyWeightedEnabled:          stickyWeightedEnabled,
@@ -2433,6 +2511,9 @@ func (s *OpenAIGatewayService) openAIAdvancedSchedulerRuntimeSettings(ctx contex
 		})
 		return openAIAdvancedSchedulerRuntimeSettings{
 			lowUpstreamRatePriorityEnabled: lowUpstreamRatePriorityEnabled,
+			latencyAwareFallbackEnabled:    latencyAwareFallbackEnabled,
+			latencyThresholdMs:             latencyThresholdMs,
+			fallbackSpeedupRatio:           fallbackSpeedupRatio,
 			oauthSchedulingRateMultiplier:  oauthSchedulingRateMultiplier,
 			enabled:                        enabled,
 			stickyWeightedEnabled:          stickyWeightedEnabled,
@@ -2448,6 +2529,15 @@ func (s *OpenAIGatewayService) openAIAdvancedSchedulerRuntimeSettings(ctx contex
 
 func (s *OpenAIGatewayService) isOpenAIAdvancedSchedulerEnabled(ctx context.Context) bool {
 	return s.openAIAdvancedSchedulerRuntimeSettings(ctx).enabled
+}
+
+func (s *OpenAIGatewayService) isOpenAILatencyAwareFallbackEnabled(ctx context.Context) bool {
+	return s.openAIAdvancedSchedulerRuntimeSettings(ctx).latencyAwareFallbackEnabled
+}
+
+func (s *OpenAIGatewayService) openAILatencyAwareFallbackSettings(ctx context.Context) (int, float64, bool) {
+	settings := s.openAIAdvancedSchedulerRuntimeSettings(ctx)
+	return settings.latencyThresholdMs, settings.fallbackSpeedupRatio, settings.latencyAwareFallbackEnabled
 }
 
 func (s *OpenAIGatewayService) isOpenAILowUpstreamRatePriorityEnabled(ctx context.Context) bool {
@@ -2472,6 +2562,9 @@ func (s *OpenAIGatewayService) isOpenAIAdvancedSchedulerSubscriptionPriorityEnab
 func openAIAdvancedSchedulerRuntimeSettingKeys() []string {
 	keys := []string{
 		SettingKeyOpenAILowUpstreamRatePriorityEnabled,
+		SettingKeyOpenAILatencyAwareFallbackEnabled,
+		SettingKeyOpenAILatencyThresholdMs,
+		SettingKeyOpenAIFallbackSpeedupRatio,
 		SettingKeyOpenAIOAuthSchedulingRateMultiplier,
 		openAIAdvancedSchedulerSettingKey,
 		SettingKeyOpenAIAdvancedSchedulerStickyWeightedEnabled,
@@ -2547,7 +2640,7 @@ func (s *OpenAIGatewayService) getOpenAIAccountScheduler(ctx context.Context) Op
 	if s == nil {
 		return nil
 	}
-	if !s.isOpenAIAdvancedSchedulerEnabled(ctx) {
+	if !s.isOpenAIAdvancedSchedulerEnabled(ctx) && !s.isOpenAILatencyAwareFallbackEnabled(ctx) {
 		return nil
 	}
 	s.openaiSchedulerOnce.Do(func() {
@@ -2559,6 +2652,44 @@ func (s *OpenAIGatewayService) getOpenAIAccountScheduler(ctx context.Context) Op
 		}
 	})
 	return s.openaiScheduler
+}
+
+func (s *OpenAIGatewayService) getOpenAILatencyTracker() *openAILatencyTracker {
+	if s == nil {
+		return nil
+	}
+	s.openaiLatencyTrackerOnce.Do(func() {
+		if s.openaiLatencyTracker == nil {
+			s.openaiLatencyTracker = newOpenAILatencyTracker()
+		}
+	})
+	return s.openaiLatencyTracker
+}
+
+// observeOpenAILatency 记录一次 TTFT 样本。
+//
+// servingGroupID 必须是**本次请求实际被调度到的分组**。历史实现把样本扇出到
+// account.GroupIDs / account.AccountGroups 里的每一个分组，等于把一次请求的延迟
+// 算到了没有参与本次调度的组头上。只要某个账号同时属于主组和兜底组（管理员的
+// 正常编排），兜底组的画像就会被主组流量污染，两组读数强相关，
+// shouldUseOpenAILatencyFallbackGroup 的 speedup 比较必然判定「兜底组不够快」。
+// 归属跟着真实调度走，才是唯一正确的语义。
+//
+// servingGroupID <= 0 时只记账号维度：宁可缺一个组样本，也不能记到错的组上。
+func (s *OpenAIGatewayService) observeOpenAILatency(account *Account, servingGroupID int64, reasoningEffort string, firstTokenMs *int) {
+	if s == nil || account == nil || firstTokenMs == nil || *firstTokenMs <= 0 {
+		return
+	}
+	if !s.isOpenAILatencyAwareFallbackEnabled(context.Background()) {
+		return
+	}
+	bucket := openAILatencyBucketFor(reasoningEffort)
+	tracker := s.getOpenAILatencyTracker()
+	tracker.ObserveAccount(account.ID, bucket, *firstTokenMs)
+	if servingGroupID > 0 {
+		tracker.ObserveGroup(servingGroupID, bucket, *firstTokenMs)
+		s.markOpenAIStickyProbeResult(servingGroupID, bucket, *firstTokenMs)
+	}
 }
 
 func resetOpenAIAdvancedSchedulerSettingCacheForTest() {
@@ -2644,7 +2775,28 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 	previousResponseCanMove bool,
 	useUpstreamTokenCost bool,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
-	selection, decision, err := s.selectAccountWithSchedulerOnce(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, previousResponseCanMove, useUpstreamTokenCost)
+	originalGroupID := derefGroupID(groupID)
+	effectiveGroupID := groupID
+	stickyRequest := false
+	if originalGroupID > 0 && normalizeOpenAICompatiblePlatform(platform) == PlatformOpenAI && !isOpenAIFallbackPoolSourcing(ctx) {
+		candidateGroupID, probing := s.openAIStickyFallbackCandidate(originalGroupID)
+		if candidateGroupID != originalGroupID {
+			effectiveGroupID = &candidateGroupID
+			ctx = s.withOpenAIGroupPrivacyRequirement(ctx, groupID)
+			ctx = withOpenAIStickyFallbackContext(ctx, originalGroupID, candidateGroupID)
+			stickyRequest = true
+		} else if probing {
+			ctx = s.withOpenAIGroupPrivacyRequirement(ctx, groupID)
+			ctx = context.WithValue(ctx, openAIStickyFallbackCtxKey{}, true)
+		}
+	}
+	selection, decision, err := s.selectAccountWithSchedulerOnce(ctx, effectiveGroupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, previousResponseCanMove, useUpstreamTokenCost)
+	if stickyRequest && isNoAvailableOpenAIAccountError(err) {
+		s.clearOpenAIFallbackSticky(originalGroupID)
+		sourceCtx := withOpenAIFallbackGroupState(ctx, fallbackGroupState{})
+		sourceCtx = context.WithValue(sourceCtx, openAIFallbackPoolSourcingCtxKey{}, false)
+		return s.selectAccountWithSchedulerOnce(sourceCtx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, previousResponseCanMove, useUpstreamTokenCost)
+	}
 	if err == nil || openAIProxyStreamQuarantineBypassed(ctx) {
 		return selection, decision, err
 	}
@@ -2731,14 +2883,50 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 		ctx = s.withOpenAIProfitControlGate(ctx, groupID)
 	}
 	selection, decision, err := s.selectAccountWithSchedulerOnceNoFallback(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, previousResponseCanMove, useUpstreamTokenCost)
+	slowBucket, groupIsSlow := "", false
+	if _, alreadyTriggered := isOpenAILatencyFallbackTrigger(ctx); !alreadyTriggered {
+		slowBucket, groupIsSlow = s.shouldTriggerOpenAILatencyFallback(groupID)
+	}
+	if err == nil && selection != nil && selection.Account != nil && normalizeOpenAICompatiblePlatform(platform) == PlatformOpenAI && groupIsSlow && len(excludedIDs) == 0 && !isOpenAIFallbackPoolSourcing(ctx) && !isOpenAIStickyFallbackRequest(ctx) {
+		fallbackCtx, fallbackGroupID := s.nextOpenAIFallbackGroup(withOpenAILatencyFallbackTrigger(ctx, slowBucket), groupID, platform, requestedModel)
+		if fallbackGroupID != nil {
+			fallbackSelection, fallbackDecision, fallbackErr := s.selectAccountWithSchedulerOnce(withOpenAILatencyFallbackSuppressed(fallbackCtx), fallbackGroupID, "", "", requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, false, useUpstreamTokenCost)
+			if fallbackErr == nil && fallbackSelection != nil && fallbackSelection.Account != nil {
+				s.markOpenAIFallbackSticky(derefGroupID(groupID), *fallbackGroupID, slowBucket)
+				return fallbackSelection, fallbackDecision, nil
+			}
+		}
+	}
 	if !isNoAvailableOpenAIAccountError(err) {
 		return selection, decision, err
 	}
-	fallbackCtx, fallbackGroupID := s.nextOpenAIFallbackGroup(ctx, groupID, platform)
+	fallbackCtx, fallbackGroupID := s.nextOpenAIFallbackGroup(ctx, groupID, platform, requestedModel)
 	if fallbackGroupID == nil {
 		return selection, decision, err
 	}
-	return s.selectAccountWithSchedulerOnce(fallbackCtx, fallbackGroupID, "", "", requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, false, useUpstreamTokenCost)
+	fallbackSelection, fallbackDecision, fallbackErr := s.selectAccountWithSchedulerOnce(fallbackCtx, fallbackGroupID, "", "", requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, false, useUpstreamTokenCost)
+	return fallbackSelection, fallbackDecision, fallbackErr
+}
+
+// shouldTriggerOpenAILatencyFallback 判断分组是否已经慢到需要考虑换池，
+// 并返回触发的强度分桶（供后续同桶对齐比较）。
+//
+// 判据从中位数改为最差分桶的 p90：中位数对长尾免疫——一个组 10% 的请求 200 秒、
+// 中位数 6 秒时它已经病了，但中位数要破阈值得等一半以上请求都变慢，
+// 那时整池已经塌方，兜底也就失去意义了。
+func (s *OpenAIGatewayService) shouldTriggerOpenAILatencyFallback(groupID *int64) (string, bool) {
+	if s == nil || groupID == nil || *groupID <= 0 {
+		return "", false
+	}
+	threshold, _, enabled := s.openAILatencyAwareFallbackSettings(context.Background())
+	if !enabled {
+		return "", false
+	}
+	tail, bucket, ok := s.getOpenAILatencyTracker().GroupTail(*groupID)
+	if !ok || tail <= threshold {
+		return "", false
+	}
+	return bucket, true
 }
 
 func (s *OpenAIGatewayService) selectAccountWithSchedulerOnceNoFallback(
@@ -2913,6 +3101,20 @@ func cloneExcludedAccountIDs(excludedIDs map[int64]struct{}) map[int64]struct{} 
 	return cloned
 }
 
+// sortedExcludedAccountIDs 返回排序后的已失败账号 ID。map 迭代顺序随机，直接喂给
+// hasher 会让同一个失败集合算出不同种子，选号将不可复现。
+func sortedExcludedAccountIDs(excludedIDs map[int64]struct{}) []int64 {
+	if len(excludedIDs) == 0 {
+		return nil
+	}
+	ids := make([]int64, 0, len(excludedIDs))
+	for id := range excludedIDs {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids
+}
+
 func (s *OpenAIGatewayService) isOpenAIAccountTransportCompatible(account *Account, requiredTransport OpenAIUpstreamTransport) bool {
 	if requiredTransport == OpenAIUpstreamTransportAny || requiredTransport == OpenAIUpstreamTransportHTTPSSE {
 		return true
@@ -2935,7 +3137,26 @@ func (s *OpenAIGatewayService) isOpenAIAccountTransportCompatible(account *Accou
 	return s.getOpenAIWSProtocolResolver().Resolve(account).Transport == requiredTransport
 }
 
+// ReportOpenAIAccountScheduleResult 上报一次调度结果。
+//
+// 该重载不携带分组与推理强度，因此只记录账号维度的延迟样本。失败路径（firstTokenMs
+// 为 nil）用它即可；成功且拿到首字耗时的路径请用
+// ReportOpenAIAccountScheduleResultWithLatency，否则分组维度会缺样本。
 func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(account *Account, model string, success bool, firstTokenMs *int, observedErr ...error) bool {
+	return s.ReportOpenAIAccountScheduleResultWithLatency(account, model, success, firstTokenMs, 0, "", observedErr...)
+}
+
+// ReportOpenAIAccountScheduleResultWithLatency 上报调度结果，并把 TTFT 样本
+// 归属到 servingGroupID（本次实际服务的分组）与 reasoningEffort 对应的分桶。
+func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResultWithLatency(
+	account *Account,
+	model string,
+	success bool,
+	firstTokenMs *int,
+	servingGroupID int64,
+	reasoningEffort string,
+	observedErr ...error,
+) bool {
 	if account == nil {
 		return false
 	}
@@ -2952,6 +3173,7 @@ func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(account *Accoun
 		s.openaiOAuth429RetryStartedAt.Delete(accountID)
 		s.clearOpenAIAccountModelTransientState(accountID, normalizeOpenAIAccountModelTransientModel(model))
 	}
+	s.observeOpenAILatency(account, servingGroupID, reasoningEffort, firstTokenMs)
 	scheduler := s.getOpenAIAccountScheduler(context.Background())
 	if scheduler == nil {
 		return healthTripped
@@ -3170,6 +3392,7 @@ func (s *RateLimitService) BuildOpenAIAccountSchedulerScoreSnapshot(
 	ctx context.Context,
 	accounts []*Account,
 	loadMap map[int64]*AccountLoadInfo,
+	groupID *int64,
 ) map[int64]OpenAIAccountSchedulerScoreSnapshot {
 	gateway := &OpenAIGatewayService{cfg: nil, rateLimitService: s}
 	if s != nil {
@@ -3181,6 +3404,7 @@ func (s *RateLimitService) BuildOpenAIAccountSchedulerScoreSnapshot(
 		gateway.openAIWSSchedulerWeightsForRequest(ctx),
 		gateway.isOpenAIAdvancedSchedulerStickyWeightedEnabled(ctx),
 		gateway.openAIOAuthSchedulingRateMultiplier(ctx),
+		groupID,
 	)
 }
 
@@ -3188,8 +3412,16 @@ func BuildOpenAIAccountSchedulerScoreSnapshot(
 	accounts []*Account,
 	loadMap map[int64]*AccountLoadInfo,
 ) map[int64]OpenAIAccountSchedulerScoreSnapshot {
+	return BuildOpenAIAccountSchedulerScoreSnapshotForGroup(accounts, loadMap, nil)
+}
+
+func BuildOpenAIAccountSchedulerScoreSnapshotForGroup(
+	accounts []*Account,
+	loadMap map[int64]*AccountLoadInfo,
+	groupID *int64,
+) map[int64]OpenAIAccountSchedulerScoreSnapshot {
 	gateway := &OpenAIGatewayService{}
-	return buildOpenAIAccountSchedulerScoreSnapshot(accounts, loadMap, gateway.openAIWSSchedulerWeights(), false, defaultOpenAIOAuthSchedulingRateMultiplier)
+	return buildOpenAIAccountSchedulerScoreSnapshot(accounts, loadMap, gateway.openAIWSSchedulerWeights(), false, defaultOpenAIOAuthSchedulingRateMultiplier, groupID)
 }
 
 func buildOpenAIAccountSchedulerScoreSnapshot(
@@ -3198,6 +3430,7 @@ func buildOpenAIAccountSchedulerScoreSnapshot(
 	weights GatewayOpenAIWSSchedulerScoreWeightsView,
 	stickyWeightedEnabled bool,
 	oauthSchedulingRateMultiplier float64,
+	groupID *int64,
 ) map[int64]OpenAIAccountSchedulerScoreSnapshot {
 	if len(accounts) == 0 {
 		return nil
@@ -3223,11 +3456,11 @@ func buildOpenAIAccountSchedulerScoreSnapshot(
 		return nil
 	}
 
-	minPriority, maxPriority := openAIAccountSchedulingPriority(candidates[0].account), openAIAccountSchedulingPriority(candidates[0].account)
+	minPriority, maxPriority := openAIAccountSchedulingPriority(candidates[0].account, groupID), openAIAccountSchedulingPriority(candidates[0].account, groupID)
 	maxWaiting := 1
 	for i := range candidates {
 		candidate := &candidates[i]
-		candidate.priority = openAIAccountSchedulingPriority(candidate.account)
+		candidate.priority = openAIAccountSchedulingPriority(candidate.account, groupID)
 		if candidate.priority < minPriority {
 			minPriority = candidate.priority
 		}

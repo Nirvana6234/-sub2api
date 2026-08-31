@@ -3,6 +3,7 @@ package settings
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -75,6 +76,25 @@ func TestDingtalkHTMLNotificationUsesMarkdownPayload(t *testing.T) {
 	}
 }
 
+func TestFeishuNotificationRejectsApplicationError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"code":19022,"msg":"sign not match"}`))
+	}))
+	defer server.Close()
+
+	service := NewService(server.Client(), nil)
+	err := service.sendFeishuMessage(context.Background(), server.URL, "", notificationMessage{
+		Content: "report",
+		Format:  NotificationTemplateFormatMarkdown,
+	})
+	if !errors.Is(err, ErrSendNotificationFailed) {
+		t.Fatalf("expected Feishu application error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "code=19022") {
+		t.Fatalf("expected Feishu error code in result, got %v", err)
+	}
+}
+
 func TestWecomMarkdownNotificationUsesMarkdownPayload(t *testing.T) {
 	var payload struct {
 		MessageType string `json:"msgtype"`
@@ -115,7 +135,7 @@ func TestFeishuRichNotificationUsesMarkdownCard(t *testing.T) {
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&payload)
-		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"code":0,"msg":"success"}`))
 	}))
 	defer server.Close()
 

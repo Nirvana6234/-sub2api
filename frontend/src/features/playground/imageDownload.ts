@@ -86,11 +86,13 @@ function downloadBlob(blob: Blob, filename: string): void {
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000)
 }
 
-export async function downloadPlaygroundImage(imageUrl: string, filename: string): Promise<void> {
-  const blob = imageUrl.startsWith('data:')
-    ? dataUrlToBlob(imageUrl)
+export async function downloadPlaygroundImage(image: string | Blob, filename: string): Promise<void> {
+  const blob = image instanceof Blob
+    ? image
+    : image.startsWith('data:')
+      ? dataUrlToBlob(image)
     : await (async () => {
-      const response = await fetch(imageUrl)
+      const response = await fetch(image)
       if (!response.ok) {
         throw new Error(`Image download failed with status ${response.status}`)
       }

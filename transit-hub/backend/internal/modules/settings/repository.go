@@ -79,6 +79,15 @@ func (r *Repository) EnsureSchema(ctx context.Context) error {
 			cooldown_until timestamptz NOT NULL,
 			PRIMARY KEY (user_id, admin_account_id, site_id, source_group_id, target_group_id)
 		)`,
+		`CREATE TABLE IF NOT EXISTS resource_usage_alert_state (
+			user_id text NOT NULL,
+			admin_account_id text NOT NULL,
+			site_id text NOT NULL,
+			cpu_high boolean NOT NULL DEFAULT false,
+			memory_high boolean NOT NULL DEFAULT false,
+			updated_at timestamptz NOT NULL DEFAULT now(),
+			PRIMARY KEY (user_id, admin_account_id, site_id)
+		)`,
 		`CREATE TABLE IF NOT EXISTS email_templates (
 			user_id text NOT NULL,
 			admin_account_id text NOT NULL,
@@ -101,6 +110,55 @@ func (r *Repository) EnsureSchema(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// ClaimResourceUsageAlert persists the latest threshold state and returns true
+// only when CPU or memory has just crossed from normal to high.
+func (r *Repository) ClaimResourceUsageAlert(ctx context.Context, userID, adminAccountID, siteID string, cpuHigh, memoryHigh bool) (bool, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1 || '/' || $2 || '/' || $3))`, userID, adminAccountID, siteID); err != nil {
+		return false, err
+	}
+
+	var oldCPUHigh, oldMemoryHigh bool
+	err = tx.QueryRow(ctx, `
+		SELECT cpu_high, memory_high
+		FROM resource_usage_alert_state
+		WHERE user_id = $1 AND admin_account_id = $2 AND site_id = $3
+		FOR UPDATE
+	`, userID, adminAccountID, siteID).Scan(&oldCPUHigh, &oldMemoryHigh)
+	if err == pgx.ErrNoRows {
+		_, err = tx.Exec(ctx, `
+			INSERT INTO resource_usage_alert_state (user_id, admin_account_id, site_id, cpu_high, memory_high, updated_at)
+			VALUES ($1, $2, $3, $4, $5, now())
+		`, userID, adminAccountID, siteID, cpuHigh, memoryHigh)
+		if err != nil {
+			return false, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return false, err
+		}
+		return cpuHigh || memoryHigh, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	_, err = tx.Exec(ctx, `
+		UPDATE resource_usage_alert_state
+		SET cpu_high = $4, memory_high = $5, updated_at = now()
+		WHERE user_id = $1 AND admin_account_id = $2 AND site_id = $3
+	`, userID, adminAccountID, siteID, cpuHigh, memoryHigh)
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return (!oldCPUHigh && cpuHigh) || (!oldMemoryHigh && memoryHigh), nil
 }
 
 // ClaimFallbackPoolAlert claims a fallback-pool notification slot for one

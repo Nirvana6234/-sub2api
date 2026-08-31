@@ -58,6 +58,38 @@ func (r schedulerTestOpenAIAccountRepo) ListSchedulableUngroupedByPlatform(ctx c
 	return r.ListSchedulableByPlatform(ctx, platform)
 }
 
+func (r schedulerTestOpenAIAccountRepo) ListModelAvailabilityCandidates(_ context.Context, groupID *int64, platforms []string, _ bool) ([]Account, error) {
+	platformSet := make(map[string]struct{}, len(platforms))
+	for _, platform := range platforms {
+		platformSet[platform] = struct{}{}
+	}
+	result := make([]Account, 0, len(r.accounts))
+	for _, acc := range r.accounts {
+		if _, ok := platformSet[acc.Platform]; !ok || acc.Status != StatusActive || !acc.Schedulable {
+			continue
+		}
+		if groupID != nil && !accountBelongsToGroupForSchedulerTest(acc, *groupID) {
+			continue
+		}
+		result = append(result, acc)
+	}
+	return result, nil
+}
+
+func accountBelongsToGroupForSchedulerTest(account Account, groupID int64) bool {
+	for _, candidate := range account.GroupIDs {
+		if candidate == groupID {
+			return true
+		}
+	}
+	for _, relation := range account.AccountGroups {
+		if relation.GroupID == groupID {
+			return true
+		}
+	}
+	return false
+}
+
 type schedulerGroupAwareOpenAIAccountRepo struct {
 	schedulerTestOpenAIAccountRepo
 }
@@ -2853,6 +2885,61 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_UsesAccountPriorityWith
 	}
 }
 
+func TestOpenAIAccountSchedulingPriorityUsesGroupPriorityWhenAvailable(t *testing.T) {
+	groupA := int64(29)
+	groupB := int64(2)
+	account := &Account{
+		ID:       195,
+		Priority: 10000,
+		AccountGroups: []AccountGroup{
+			{AccountID: 195, GroupID: groupA, Priority: 1},
+			{AccountID: 195, GroupID: groupB, Priority: 100},
+		},
+	}
+
+	require.Equal(t, 1, openAIAccountSchedulingPriority(account, &groupA))
+	require.Equal(t, 100, openAIAccountSchedulingPriority(account, &groupB))
+	require.Equal(t, 10000, openAIAccountSchedulingPriority(account, nil))
+
+	unknownGroup := int64(999)
+	require.Equal(t, 10000, openAIAccountSchedulingPriority(account, &unknownGroup))
+}
+
+func TestBuildOpenAIAccountLoadPlanScoresByGroupPriority(t *testing.T) {
+	groupID := int64(29)
+	accounts := []*Account{
+		{
+			ID:          1,
+			Priority:    1,
+			Concurrency: 1,
+			AccountGroups: []AccountGroup{
+				{AccountID: 1, GroupID: groupID, Priority: 100},
+			},
+		},
+		{
+			ID:          195,
+			Priority:    10000,
+			Concurrency: 1,
+			AccountGroups: []AccountGroup{
+				{AccountID: 195, GroupID: groupID, Priority: 1},
+			},
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: newSchedulerTestSubscriptionPriorityConfig()}
+	svc.cfg.Gateway.OpenAIWS.SchedulerScoreWeights.Load = 0
+	svc.cfg.Gateway.OpenAIWS.SchedulerScoreWeights.Queue = 0
+	svc.cfg.Gateway.OpenAIWS.SchedulerScoreWeights.ErrorRate = 0
+	svc.cfg.Gateway.OpenAIWS.SchedulerScoreWeights.TTFT = 0
+	scheduler := &defaultOpenAIAccountScheduler{service: svc}
+
+	plan := scheduler.buildOpenAIAccountLoadPlan(context.Background(), OpenAIAccountScheduleRequest{GroupID: &groupID}, accounts, nil)
+	require.Len(t, plan.candidates, 2)
+	top := selectTopKOpenAICandidates(plan.candidates, 1)
+	require.Len(t, top, 1)
+	require.Equal(t, int64(195), top[0].account.ID)
+	require.Equal(t, 1, top[0].priority)
+}
+
 func TestOpenAIAccountScheduler_SkipsAccountBlockedForRequestedModel(t *testing.T) {
 	now := time.Now()
 	account := &Account{ID: 21633, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
@@ -3573,21 +3660,25 @@ func TestSelectTopKOpenAICandidates(t *testing.T) {
 		{
 			account:  &Account{ID: 11, Priority: 2},
 			loadInfo: &AccountLoadInfo{LoadRate: 10, WaitingCount: 1},
+			priority: 2,
 			score:    10.0,
 		},
 		{
 			account:  &Account{ID: 12, Priority: 1},
 			loadInfo: &AccountLoadInfo{LoadRate: 20, WaitingCount: 1},
+			priority: 1,
 			score:    9.5,
 		},
 		{
 			account:  &Account{ID: 13, Priority: 1},
 			loadInfo: &AccountLoadInfo{LoadRate: 30, WaitingCount: 0},
+			priority: 1,
 			score:    10.0,
 		},
 		{
 			account:  &Account{ID: 14, Priority: 0},
 			loadInfo: &AccountLoadInfo{LoadRate: 40, WaitingCount: 0},
+			priority: 0,
 			score:    8.0,
 		},
 	}
@@ -3730,6 +3821,74 @@ func TestDeriveOpenAISelectionSeed_NoAffinityAddsEntropy(t *testing.T) {
 	require.NotZero(t, seed1)
 	require.NotZero(t, seed2)
 	require.NotEqual(t, seed1, seed2)
+}
+
+// 换号必须重新抽签。会话锚点不变时种子曾经完全由锚点决定，于是一次请求内的多轮选号
+// 只是同一条冻结序列往下走，客户端重发同一份 body 也会原样重走必败路径。
+func TestDeriveOpenAISelectionSeed_RerollsWhenFailedAccountsGrow(t *testing.T) {
+	base := OpenAIAccountScheduleRequest{
+		GroupID:        int64PtrForTest(2),
+		SessionHash:    "session_seed_failover",
+		RequestedModel: "gpt-5.5",
+	}
+
+	withExcluded := func(ids ...int64) OpenAIAccountScheduleRequest {
+		req := base
+		req.ExcludedIDs = make(map[int64]struct{}, len(ids))
+		for _, id := range ids {
+			req.ExcludedIDs[id] = struct{}{}
+		}
+		return req
+	}
+
+	seedFresh := deriveOpenAISelectionSeed(base)
+	seedOneFailed := deriveOpenAISelectionSeed(withExcluded(183))
+	seedTwoFailed := deriveOpenAISelectionSeed(withExcluded(183, 97))
+
+	require.NotEqual(t, seedFresh, seedOneFailed)
+	require.NotEqual(t, seedOneFailed, seedTwoFailed)
+	require.NotEqual(t, seedFresh, seedTwoFailed)
+
+	// 同一个失败集合必须复现同一个种子：map 迭代顺序随机，插入顺序不能影响结果，
+	// 否则同账号重试（失败集合不变）会被当成换号，选号也不可复现。
+	require.Equal(t, seedTwoFailed, deriveOpenAISelectionSeed(withExcluded(97, 183)))
+	require.Equal(t, seedFresh, deriveOpenAISelectionSeed(base))
+}
+
+func TestBuildOpenAIWeightedSelectionOrder_FailoverRerollsOrder(t *testing.T) {
+	candidates := make([]openAIAccountCandidateScore, 0, 6)
+	for i, id := range []int64{155, 175, 183, 120, 97, 217} {
+		candidates = append(candidates, openAIAccountCandidateScore{
+			account:  &Account{ID: id},
+			loadInfo: &AccountLoadInfo{},
+			score:    4.0 - 0.5*float64(i),
+		})
+	}
+	base := OpenAIAccountScheduleRequest{
+		GroupID:        int64PtrForTest(2),
+		SessionHash:    "session_order_failover",
+		RequestedModel: "gpt-5.5",
+	}
+
+	orderIDs := func(req OpenAIAccountScheduleRequest) []int64 {
+		order := buildOpenAIWeightedSelectionOrder(candidates, req)
+		require.Len(t, order, len(candidates))
+		ids := make([]int64, 0, len(order))
+		for _, item := range order {
+			ids = append(ids, item.account.ID)
+		}
+		return ids
+	}
+
+	fresh := orderIDs(base)
+
+	afterFailure := base
+	afterFailure.ExcludedIDs = map[int64]struct{}{183: {}}
+	require.NotEqual(t, fresh, orderIDs(afterFailure))
+
+	// 同账号重试不改变失败集合，顺序必须保持稳定。
+	require.Equal(t, orderIDs(afterFailure), orderIDs(afterFailure))
+	require.Equal(t, fresh, orderIDs(base))
 }
 
 func TestBuildOpenAIWeightedSelectionOrder_HandlesInvalidScores(t *testing.T) {

@@ -2,9 +2,11 @@ package group_rate_campaigns
 
 import (
 	"context"
+	"errors"
 	"log"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"transithub/backend/internal/modules/upstream"
@@ -33,16 +35,27 @@ type AdminAccountResolver interface {
 	RequireCurrentID(ctx context.Context, userID string) (string, error)
 }
 
+// AutoPricingReconciler 在活动释放分组控制权时，按最新自动调价目标重新计算倍率。
+// my_sites.Service 通过结构性实现注入，避免两个业务模块互相 import。
+type AutoPricingReconciler interface {
+	ReconcileAutoPricingMultiplier(ctx context.Context, userID, adminAccountID, ownGroup string, fallback float64) (*float64, error)
+}
+
 // campaignRepository 是 Service 对存储层的全部依赖，由 *Repository 结构性满足。
 // 定义为接口而不是直接依赖 *Repository 具体类型，使 startCampaign/endCampaign 等
 // 涉及状态抢占的核心流程可以在不连接真实数据库的情况下用内存假实现单测覆盖。
 type campaignRepository interface {
 	EnsureSchema(ctx context.Context) error
 	Insert(ctx context.Context, c Campaign) error
+	Update(ctx context.Context, c Campaign) error
+	Delete(ctx context.Context, userID, adminAccountID, id string) (bool, error)
+	ListActiveGroupNames(ctx context.Context, userID, adminAccountID string) ([]string, error)
 	SaveItems(ctx context.Context, items []CampaignItem) error
 	UpdateItemApply(ctx context.Context, id string, originalMultiplier *float64, status string, reason string, appliedAt *time.Time) error
+	UpdateItemCampaignMultiplier(ctx context.Context, id string, multiplier float64) error
 	UpdateItemRestore(ctx context.Context, id string, restoredMultiplier *float64, status string, reason string, restoredAt *time.Time) error
 	ListItems(ctx context.Context, campaignID string) ([]CampaignItem, error)
+	ListItemsForCycle(ctx context.Context, campaignID string, cycle int) ([]CampaignItem, error)
 	Get(ctx context.Context, userID string, adminAccountID string, id string) (*Campaign, error)
 	GetByID(ctx context.Context, id string) (*Campaign, error)
 	List(ctx context.Context, userID string, adminAccountID string, query ListQuery) ([]Campaign, int, error)
@@ -52,6 +65,7 @@ type campaignRepository interface {
 	ClaimForEnding(ctx context.Context, id string) (bool, error)
 	FinishStart(ctx context.Context, id string, status string) error
 	FinishEnd(ctx context.Context, id string, status string) error
+	RescheduleAfterEnd(ctx context.Context, id string, nextStart time.Time, nextEnd time.Time) error
 	ClaimForCancel(ctx context.Context, id string) (bool, error)
 }
 
@@ -68,9 +82,11 @@ type Service struct {
 	repository campaignRepository
 	operator   AdminGroupOperator
 	notifier   BotNotifier
+	reconciler AutoPricingReconciler
 	typeLookup GroupTypeLookup
 	accounts   AdminAccountResolver
 	config     Config
+	mu         sync.Mutex
 }
 
 func NewService(repository *Repository, operator AdminGroupOperator, notifier BotNotifier, typeLookup GroupTypeLookup, config Config) *Service {
@@ -83,6 +99,27 @@ func (s *Service) EnsureSchema(ctx context.Context) error {
 
 func (s *Service) SetAdminAccountResolver(accounts AdminAccountResolver) {
 	s.accounts = accounts
+}
+
+func (s *Service) SetAutoPricingReconciler(reconciler AutoPricingReconciler) {
+	s.reconciler = reconciler
+}
+
+// IsGroupRateCampaignActive reports whether a current campaign cycle owns a group.
+// It is called by the automatic-pricing service before it writes a remote multiplier.
+func (s *Service) IsGroupRateCampaignActive(ctx context.Context, userID, adminAccountID, groupName string) bool {
+	names, err := s.repository.ListActiveGroupNames(ctx, userID, adminAccountID)
+	if err != nil {
+		log.Printf("[group-rate-campaigns] scan active group overrides failed user_id=%s admin_account_id=%s err=%v", userID, adminAccountID, err)
+		return false
+	}
+	target := strings.TrimSpace(groupName)
+	for _, name := range names {
+		if strings.EqualFold(strings.TrimSpace(name), target) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) currentAdminAccountID(ctx context.Context, userID string) (string, error) {
@@ -129,6 +166,7 @@ func (s *Service) Preview(ctx context.Context, userID string, adminAccountID str
 func (s *Service) Create(ctx context.Context, userID string, adminAccountID string, req CreateCampaignRequest) (CampaignDetail, error) {
 	now := time.Now()
 	req.Notify = normalizeNotify(req.Notify, s.config)
+	req.Schedule.Recurrence = normalizeRecurrence(req.Schedule.Recurrence)
 	if err := validateCreateRequest(req, now); err != nil {
 		return CampaignDetail{}, err
 	}
@@ -166,6 +204,8 @@ func (s *Service) Create(ctx context.Context, userID string, adminAccountID stri
 		StartAt:        startAt,
 		EndMode:        req.Schedule.EndMode,
 		EndAt:          req.Schedule.EndAt,
+		Recurrence:     req.Schedule.Recurrence,
+		Cycle:          0,
 	}
 	if err := s.repository.Insert(ctx, campaign); err != nil {
 		return CampaignDetail{}, err
@@ -178,6 +218,243 @@ func (s *Service) Create(ctx context.Context, userID string, adminAccountID stri
 	return s.Get(ctx, userID, adminAccountID, id)
 }
 
+// Update 修改活动配置。进行中的活动会在当前轮立即应用分组增删和倍率变化。
+func (s *Service) Update(ctx context.Context, userID, adminAccountID, id string, req UpdateCampaignRequest) (CampaignDetail, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	campaign, err := s.repository.Get(ctx, userID, adminAccountID, id)
+	if err != nil {
+		return CampaignDetail{}, err
+	}
+	if campaign == nil {
+		return CampaignDetail{}, ErrNotFound
+	}
+	req.Notify = normalizeNotify(req.Notify, s.config)
+	req.Schedule.Recurrence = normalizeRecurrence(req.Schedule.Recurrence)
+	if err := validateUpdateRequest(req, *campaign); err != nil {
+		return CampaignDetail{}, err
+	}
+
+	switch campaign.Status {
+	case StatusDraft, StatusScheduled:
+		updated := applyCampaignRequest(*campaign, req)
+		if err := s.repository.Update(ctx, updated); err != nil {
+			return CampaignDetail{}, err
+		}
+	case StatusRunning, StatusPartial:
+		if s.operator == nil {
+			return CampaignDetail{}, ErrInvalidState
+		}
+		updated := applyCampaignRequest(*campaign, req)
+		// A running cycle keeps its actual start boundary. Only its end and
+		// recurrence settings are editable while it is active.
+		updated.StartMode = campaign.StartMode
+		updated.StartAt = campaign.StartAt
+		if err := s.repository.Update(ctx, updated); err != nil {
+			return CampaignDetail{}, err
+		}
+		if err := s.applyRunningCampaignUpdate(ctx, &updated); err != nil {
+			log.Printf("[group-rate-campaigns] apply running campaign update failed id=%s err=%v", id, err)
+			return CampaignDetail{}, err
+		}
+	default:
+		return CampaignDetail{}, ErrInvalidState
+	}
+	return s.Get(ctx, userID, adminAccountID, id)
+}
+
+// StopAfterCurrentCycle cancels only future recurrence. The current running
+// cycle remains active and will be restored normally at its scheduled end.
+func (s *Service) StopAfterCurrentCycle(ctx context.Context, userID, adminAccountID, id string) (CampaignDetail, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	campaign, err := s.repository.Get(ctx, userID, adminAccountID, id)
+	if err != nil {
+		return CampaignDetail{}, err
+	}
+	if campaign == nil {
+		return CampaignDetail{}, ErrNotFound
+	}
+	if campaign.Status != StatusRunning && campaign.Status != StatusPartial {
+		return CampaignDetail{}, ErrInvalidState
+	}
+	campaign.Recurrence = Recurrence{Frequency: RecurrenceNone, Interval: 0}
+	if err := s.repository.Update(ctx, *campaign); err != nil {
+		return CampaignDetail{}, err
+	}
+	return s.Get(ctx, userID, adminAccountID, id)
+}
+
+// Delete hides a completed or not-yet-started campaign while retaining its
+// execution items for operational history.
+func (s *Service) Delete(ctx context.Context, userID, adminAccountID, id string) error {
+	campaign, err := s.repository.Get(ctx, userID, adminAccountID, id)
+	if err != nil {
+		return err
+	}
+	if campaign == nil {
+		return ErrNotFound
+	}
+	if campaign.Status == StatusRunning || campaign.Status == StatusPartial {
+		return ErrInvalidState
+	}
+	ok, err := s.repository.Delete(ctx, userID, adminAccountID, id)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrInvalidState
+	}
+	return nil
+}
+
+func applyCampaignRequest(c Campaign, req CreateCampaignRequest) Campaign {
+	c.Name = strings.TrimSpace(req.Name)
+	c.Description = strings.TrimSpace(req.Description)
+	c.Selection = req.Selection
+	c.Adjustment = req.Adjustment
+	c.Notify = req.Notify
+	c.StartMode = req.Schedule.StartMode
+	c.StartAt = req.Schedule.StartAt
+	c.EndMode = req.Schedule.EndMode
+	c.EndAt = req.Schedule.EndAt
+	c.Recurrence = normalizeRecurrence(req.Schedule.Recurrence)
+	return c
+}
+
+func (s *Service) applyRunningCampaignUpdate(ctx context.Context, campaign *Campaign) error {
+	session, err := s.operator.RequireSession(ctx, campaign.UserID, campaign.AdminAccountID)
+	if err != nil {
+		return err
+	}
+	groups, err := s.operator.FetchAdminGroups(session)
+	if err != nil {
+		return err
+	}
+	targets, err := s.resolveManualSelectionWithRates(campaign.Selection, groups)
+	if err != nil {
+		return err
+	}
+	targetByName := make(map[string]manualGroupTarget, len(targets))
+	for _, target := range targets {
+		targetByName[strings.TrimSpace(target.group.Name)] = target
+	}
+
+	items, err := s.repository.ListItemsForCycle(ctx, campaign.ID, campaign.Cycle)
+	if err != nil {
+		return err
+	}
+	activeByName := make(map[string]CampaignItem, len(items))
+	for _, item := range items {
+		if item.ApplyStatus == ItemApplied && item.RestoreStatus == ItemPending {
+			activeByName[strings.TrimSpace(item.GroupName)] = item
+		}
+	}
+
+	failed := 0
+	for name, item := range activeByName {
+		target, stillSelected := targetByName[name]
+		if !stillSelected {
+			if _, err := s.restoreCampaignItem(ctx, session, groups, item); err != nil {
+				failed++
+			}
+			continue
+		}
+		if multiplierChanged(item.CampaignMultiplier, target.campaignMultiplier) {
+			if err := s.operator.UpdateAdminGroupMultiplier(session, target.group, target.campaignMultiplier); err != nil {
+				_ = s.repository.UpdateItemApply(ctx, item.ID, item.OriginalMultiplier, ItemFailed, err.Error(), nil)
+				failed++
+				continue
+			}
+			if err := s.repository.UpdateItemCampaignMultiplier(ctx, item.ID, target.campaignMultiplier); err != nil {
+				return err
+			}
+		}
+		delete(targetByName, name)
+	}
+
+	newItems := make([]CampaignItem, 0, len(targetByName))
+	for _, target := range targetByName {
+		itemID, err := newID()
+		if err != nil {
+			return err
+		}
+		item := CampaignItem{
+			ID:                 itemID,
+			CampaignID:         campaign.ID,
+			UserID:             campaign.UserID,
+			AdminAccountID:     campaign.AdminAccountID,
+			GroupID:            target.group.ID,
+			GroupName:          target.group.Name,
+			Cycle:              campaign.Cycle,
+			OriginalMultiplier: target.group.Multiplier,
+			CampaignMultiplier: target.campaignMultiplier,
+		}
+		newItems = append(newItems, item)
+	}
+	if err := s.repository.SaveItems(ctx, newItems); err != nil {
+		return err
+	}
+	for _, item := range newItems {
+		target := targetByName[strings.TrimSpace(item.GroupName)]
+		original := floatOrZero(item.OriginalMultiplier)
+		if !multiplierChanged(original, target.campaignMultiplier) {
+			if err := s.repository.UpdateItemApply(ctx, item.ID, item.OriginalMultiplier, ItemApplied, "", timePtr(time.Now())); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := s.operator.UpdateAdminGroupMultiplier(session, target.group, target.campaignMultiplier); err != nil {
+			_ = s.repository.UpdateItemApply(ctx, item.ID, item.OriginalMultiplier, ItemFailed, err.Error(), nil)
+			failed++
+			continue
+		}
+		if err := s.repository.UpdateItemApply(ctx, item.ID, item.OriginalMultiplier, ItemApplied, "", timePtr(time.Now())); err != nil {
+			return err
+		}
+	}
+	if failed > 0 {
+		return s.repository.FinishStart(ctx, campaign.ID, StatusPartial)
+	}
+	return s.repository.FinishStart(ctx, campaign.ID, StatusRunning)
+}
+
+func (s *Service) restoreCampaignItem(ctx context.Context, session upstream.Session, groups []upstream.AdminGroupInfo, item CampaignItem) (float64, error) {
+	target := floatOrZero(item.OriginalMultiplier)
+	if s.reconciler != nil {
+		resolved, err := s.reconciler.ReconcileAutoPricingMultiplier(ctx, item.UserID, item.AdminAccountID, item.GroupName, target)
+		if err != nil {
+			_ = s.repository.UpdateItemRestore(ctx, item.ID, nil, ItemFailed, err.Error(), nil)
+			return 0, err
+		}
+		if resolved != nil {
+			target = *resolved
+		}
+	}
+	groupInfo := findGroup(groups, item.GroupName)
+	if groupInfo == nil {
+		err := errors.New("group not found")
+		_ = s.repository.UpdateItemRestore(ctx, item.ID, nil, ItemFailed, err.Error(), nil)
+		return 0, err
+	}
+	current := floatOrZero(groupInfo.Multiplier)
+	if multiplierChanged(current, target) {
+		if err := s.operator.UpdateAdminGroupMultiplier(session, *groupInfo, target); err != nil {
+			_ = s.repository.UpdateItemRestore(ctx, item.ID, nil, ItemFailed, err.Error(), nil)
+			return 0, err
+		}
+	}
+	status := ItemRestored
+	if !multiplierChanged(current, target) {
+		status = ItemUnchanged
+	}
+	if err := s.repository.UpdateItemRestore(ctx, item.ID, &target, status, "", timePtr(time.Now())); err != nil {
+		return 0, err
+	}
+	return target, nil
+}
+
 func (s *Service) Get(ctx context.Context, userID string, adminAccountID string, id string) (CampaignDetail, error) {
 	campaign, err := s.repository.Get(ctx, userID, adminAccountID, id)
 	if err != nil {
@@ -186,7 +463,7 @@ func (s *Service) Get(ctx context.Context, userID string, adminAccountID string,
 	if campaign == nil {
 		return CampaignDetail{}, ErrNotFound
 	}
-	items, err := s.repository.ListItems(ctx, id)
+	items, err := s.repository.ListItemsForCycle(ctx, id, readCycle(*campaign))
 	if err != nil {
 		return CampaignDetail{}, err
 	}
@@ -201,7 +478,7 @@ func (s *Service) List(ctx context.Context, userID string, adminAccountID string
 	}
 	listItems := make([]CampaignListItem, 0, len(campaigns))
 	for _, c := range campaigns {
-		items, err := s.repository.ListItems(ctx, c.ID)
+		items, err := s.repository.ListItemsForCycle(ctx, c.ID, readCycle(c))
 		if err != nil {
 			return ListResult{}, err
 		}
@@ -229,6 +506,8 @@ func (s *Service) Defaults() NotifyDefaults {
 
 // StartNow 是"立即开始"的 HTTP 入口，只允许 draft/scheduled 活动。
 func (s *Service) StartNow(ctx context.Context, userID string, adminAccountID string, id string) (CampaignDetail, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	campaign, err := s.repository.Get(ctx, userID, adminAccountID, id)
 	if err != nil {
 		return CampaignDetail{}, err
@@ -239,7 +518,7 @@ func (s *Service) StartNow(ctx context.Context, userID string, adminAccountID st
 	if campaign.Status != StatusDraft && campaign.Status != StatusScheduled {
 		return CampaignDetail{}, ErrInvalidState
 	}
-	s.startCampaign(ctx, id)
+	s.startCampaignLocked(ctx, id)
 	return s.Get(ctx, userID, adminAccountID, id)
 }
 
@@ -247,6 +526,8 @@ func (s *Service) StartNow(ctx context.Context, userID string, adminAccountID st
 // partial 活动开启阶段部分分组已经真实改价，必须能通过手动结束恢复这些分组，
 // 否则会遗留未恢复的倍率，与前端详情页允许 partial 点击结束的行为不一致。
 func (s *Service) End(ctx context.Context, userID string, adminAccountID string, id string) (CampaignDetail, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	campaign, err := s.repository.Get(ctx, userID, adminAccountID, id)
 	if err != nil {
 		return CampaignDetail{}, err
@@ -257,7 +538,7 @@ func (s *Service) End(ctx context.Context, userID string, adminAccountID string,
 	if campaign.Status != StatusRunning && campaign.Status != StatusPartial {
 		return CampaignDetail{}, ErrInvalidState
 	}
-	s.endCampaign(ctx, id)
+	s.endCampaignLocked(ctx, id, false)
 	return s.Get(ctx, userID, adminAccountID, id)
 }
 
@@ -303,13 +584,15 @@ func (s *Service) StartScheduler(ctx context.Context) {
 }
 
 func (s *Service) runSchedulerTick(ctx context.Context) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	now := time.Now()
 	dueScheduled, err := s.repository.ListDueScheduled(ctx, now)
 	if err != nil {
 		log.Printf("[group-rate-campaigns] scan due scheduled failed: %v", err)
 	} else {
 		for _, id := range dueScheduled {
-			s.startCampaign(ctx, id)
+			s.startCampaignLocked(ctx, id)
 		}
 	}
 	dueRunning, err := s.repository.ListDueRunning(ctx, now)
@@ -317,7 +600,7 @@ func (s *Service) runSchedulerTick(ctx context.Context) {
 		log.Printf("[group-rate-campaigns] scan due running failed: %v", err)
 	} else {
 		for _, id := range dueRunning {
-			s.endCampaign(ctx, id)
+			s.endCampaignLocked(ctx, id, true)
 		}
 	}
 }
@@ -325,6 +608,12 @@ func (s *Service) runSchedulerTick(ctx context.Context) {
 // startCampaign 执行一个活动的开启动作：抢占状态 -> 拉取会话与自有分组 -> 解析目标 -> 逐个改倍率。
 // 单个分组失败不中断其余分组；调度器和手动"立即开始"共用此逻辑，条件更新保证幂等。
 func (s *Service) startCampaign(ctx context.Context, id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.startCampaignLocked(ctx, id)
+}
+
+func (s *Service) startCampaignLocked(ctx context.Context, id string) {
 	claimed, err := s.repository.ClaimForRunning(ctx, id)
 	if err != nil {
 		log.Printf("[group-rate-campaigns] claim for running failed id=%s err=%v", id, err)
@@ -375,6 +664,7 @@ func (s *Service) startCampaign(ctx context.Context, id string) {
 			AdminAccountID:     campaign.AdminAccountID,
 			GroupID:            target.group.ID,
 			GroupName:          target.group.Name,
+			Cycle:              campaign.Cycle,
 			OriginalMultiplier: target.group.Multiplier,
 			CampaignMultiplier: target.campaignMultiplier,
 		})
@@ -423,9 +713,15 @@ func (s *Service) startCampaign(ctx context.Context, id string) {
 	s.notifyStart(ctx, campaign, applied, failed, len(pendings))
 }
 
-// endCampaign 执行一个活动的恢复动作：抢占状态 -> 拉取会话与自有分组 -> 按 original_multiplier 逐个恢复。
+// endCampaign 执行一个活动的恢复动作：抢占执行权 -> 拉取会话与自有分组 -> 逐个恢复。
 // 通知失败或会话获取失败都不回滚已恢复的分组，也不阻塞活动状态流转到 partial/ended。
-func (s *Service) endCampaign(ctx context.Context, id string) {
+func (s *Service) endCampaign(ctx context.Context, id string, allowReschedule bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.endCampaignLocked(ctx, id, allowReschedule)
+}
+
+func (s *Service) endCampaignLocked(ctx context.Context, id string, allowReschedule bool) {
 	claimed, err := s.repository.ClaimForEnding(ctx, id)
 	if err != nil {
 		log.Printf("[group-rate-campaigns] claim for ending failed id=%s err=%v", id, err)
@@ -441,7 +737,7 @@ func (s *Service) endCampaign(ctx context.Context, id string) {
 		_ = s.repository.FinishEnd(ctx, id, StatusPartial)
 		return
 	}
-	items, err := s.repository.ListItems(ctx, id)
+	items, err := s.repository.ListItemsForCycle(ctx, id, campaign.Cycle)
 	if err != nil {
 		log.Printf("[group-rate-campaigns] list items failed id=%s err=%v", id, err)
 		_ = s.repository.FinishEnd(ctx, id, StatusPartial)
@@ -474,31 +770,26 @@ func (s *Service) endCampaign(ctx context.Context, id string) {
 		if item.RestoreStatus == ItemRestored || item.RestoreStatus == ItemUnchanged {
 			continue
 		}
-		originalValue := floatOrZero(item.OriginalMultiplier)
-		groupInfo := findGroup(groups, item.GroupName)
-		if groupInfo == nil {
-			_ = s.repository.UpdateItemRestore(ctx, item.ID, nil, ItemFailed, "group not found", nil)
+		if _, err := s.restoreCampaignItem(ctx, session, groups, item); err != nil {
 			failed++
 			continue
 		}
-		currentValue := floatOrZero(groupInfo.Multiplier)
-		if !multiplierChanged(currentValue, originalValue) {
-			value := originalValue
-			_ = s.repository.UpdateItemRestore(ctx, item.ID, &value, ItemUnchanged, "", &restoredAt)
-			restored++
-			continue
-		}
-		if err := s.operator.UpdateAdminGroupMultiplier(session, *groupInfo, originalValue); err != nil {
-			_ = s.repository.UpdateItemRestore(ctx, item.ID, nil, ItemFailed, err.Error(), nil)
-			failed++
-			continue
-		}
-		value := originalValue
-		_ = s.repository.UpdateItemRestore(ctx, item.ID, &value, ItemRestored, "", &restoredAt)
 		restored++
 	}
 
-	if err := s.repository.FinishEnd(ctx, id, endStatus(failed)); err != nil {
+	status := endStatus(failed)
+	if allowReschedule && status == StatusEnded {
+		if nextStart, nextEnd, ok := nextRecurrenceTimes(*campaign, restoredAt); ok {
+			if err := s.repository.RescheduleAfterEnd(ctx, id, *nextStart, *nextEnd); err != nil {
+				log.Printf("[group-rate-campaigns] reschedule recurring campaign failed id=%s err=%v", id, err)
+				status = StatusEnded
+			} else {
+				s.notifyEnd(ctx, campaign, restored, failed)
+				return
+			}
+		}
+	}
+	if err := s.repository.FinishEnd(ctx, id, status); err != nil {
 		log.Printf("[group-rate-campaigns] finish end failed id=%s err=%v", id, err)
 	}
 	s.notifyEnd(ctx, campaign, restored, failed)
@@ -727,6 +1018,13 @@ func totalPages(total int, pageSize int) int {
 	return pages
 }
 
+func readCycle(c Campaign) int {
+	if c.Cycle > 0 && (c.Status == StatusScheduled || c.Status == StatusCancelled) {
+		return c.Cycle - 1
+	}
+	return c.Cycle
+}
+
 func toListItem(c Campaign, items []CampaignItem) CampaignListItem {
 	summary := buildSummary(items)
 	lastExecuted := c.StartedAt
@@ -741,6 +1039,7 @@ func toListItem(c Campaign, items []CampaignItem) CampaignListItem {
 		StartAt:        c.StartAt,
 		EndMode:        c.EndMode,
 		EndAt:          c.EndAt,
+		Recurrence:     normalizeRecurrence(c.Recurrence),
 		StartedAt:      c.StartedAt,
 		EndedAt:        c.EndedAt,
 		Summary:        summary,

@@ -1,7 +1,7 @@
 import { authAPI } from '@/api'
 import { clearAuthToken, getAuthToken } from '@/api/auth'
 import { buildApiUrl } from '@/api/url'
-import type { PlaygroundAttachment, PlaygroundCompletionResult, PlaygroundImageGenerationResponse, PlaygroundModel, PlaygroundPersistedState } from './types'
+import type { PlaygroundAttachment, PlaygroundCompletionResult, PlaygroundImageGenerationResponse, PlaygroundModel, PlaygroundPersistedState, PlaygroundVideoResponse } from './types'
 import { extractCompletionResult, extractErrorMessage, extractStreamDelta, parseSSEChunk, parseSSEData } from './sse'
 import { clearAllPlaygroundStates, normalizePersistedState } from './persistence'
 import { normalizePlaygroundModels } from './viewModel'
@@ -275,13 +275,14 @@ export async function sendPlaygroundImageGeneration(
   options: {
     signal?: AbortSignal
     referenceImages?: PlaygroundAttachment[]
+    mask?: PlaygroundAttachment
   } = {},
 ): Promise<PlaygroundImageGenerationResponse> {
   const referenceImages = (options.referenceImages ?? []).filter((attachment) => (
     attachment.mimeType.startsWith('image/') && typeof attachment.dataUrl === 'string' && attachment.dataUrl.startsWith('data:image/')
   ))
   const multipartBody = referenceImages.length > 0
-    ? buildImageEditFormData(body, referenceImages)
+    ? buildImageEditFormData(body, referenceImages, options.mask)
     : null
   const response = await authorizedFetch(buildApiUrl(multipartBody ? '/playground/images/edits' : '/playground/images/generations'), {
     method: 'POST',
@@ -316,13 +317,125 @@ export async function sendPlaygroundImageGeneration(
   }
 }
 
-function buildImageEditFormData(body: Record<string, unknown>, referenceImages: PlaygroundAttachment[]): FormData {
+export async function sendPlaygroundVideoGeneration(
+  keyId: number,
+  body: Record<string, unknown>,
+  options: { signal?: AbortSignal } = {},
+): Promise<PlaygroundVideoResponse> {
+  const response = await authorizedFetch(buildApiUrl('/playground/videos/generations'), {
+    method: 'POST',
+    signal: options.signal,
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      'X-Sub2API-Playground-Key-ID': String(keyId),
+    },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) throw new Error(await parseFailure(response))
+  const payload = await response.json() as Record<string, unknown>
+  const errorMessage = extractErrorMessage(payload)
+  if (errorMessage) throw new Error(errorMessage)
+  const nested = payload.data && typeof payload.data === 'object' ? payload.data as Record<string, unknown> : undefined
+  const id = typeof payload.id === 'string'
+    ? payload.id
+    : typeof payload.request_id === 'string'
+      ? payload.request_id
+      : typeof nested?.id === 'string'
+        ? nested.id
+        : typeof nested?.request_id === 'string' ? nested.request_id : ''
+  if (!id) throw new Error('No video request id was returned.')
+  return {
+    id,
+    status: typeof payload.status === 'string' ? payload.status : undefined,
+    video_url: typeof payload.video_url === 'string' ? payload.video_url : undefined,
+    url: typeof payload.url === 'string' ? payload.url : undefined,
+  }
+}
+
+export async function sendPlaygroundSpeech(
+  keyId: number,
+  body: Record<string, unknown>,
+  options: { signal?: AbortSignal } = {},
+): Promise<Blob> {
+  const response = await authorizedFetch(buildApiUrl('/playground/audio/speech'), {
+    method: 'POST',
+    signal: options.signal,
+    headers: {
+      Accept: 'audio/*',
+      'Content-Type': 'application/json',
+      'X-Sub2API-Playground-Key-ID': String(keyId),
+    },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) throw new Error(await parseFailure(response))
+  return response.blob()
+}
+
+export async function sendPlaygroundTranscription(
+  keyId: number,
+  audio: Blob,
+  fileName = 'audio.webm',
+  options: { model?: string; language?: string; signal?: AbortSignal } = {},
+): Promise<string> {
+  const formData = new FormData()
+  formData.append('file', audio, fileName)
+  if (options.model) formData.append('model', options.model)
+  if (options.language) formData.append('language', options.language)
+  const response = await authorizedFetch(buildApiUrl('/playground/audio/transcriptions'), {
+    method: 'POST',
+    signal: options.signal,
+    headers: {
+      Accept: 'application/json',
+      'X-Sub2API-Playground-Key-ID': String(keyId),
+    },
+    body: formData,
+  })
+  if (!response.ok) throw new Error(await parseFailure(response))
+  const payload = await response.json() as Record<string, unknown>
+  const nested = payload.data && typeof payload.data === 'object' ? payload.data as Record<string, unknown> : undefined
+  const text = typeof payload.text === 'string' ? payload.text : typeof nested?.text === 'string' ? nested.text : ''
+  if (!text.trim()) throw new Error('No transcription text was returned.')
+  return text.trim()
+}
+
+export async function fetchPlaygroundVideo(keyId: number, requestId: string, options: { signal?: AbortSignal } = {}): Promise<PlaygroundVideoResponse> {
+  const response = await authorizedFetch(buildApiUrl(`/playground/videos/${encodeURIComponent(requestId)}`), {
+    signal: options.signal,
+    headers: { Accept: 'application/json', 'X-Sub2API-Playground-Key-ID': String(keyId) },
+  })
+  if (!response.ok) throw new Error(await parseFailure(response))
+  const payload = await response.json() as Record<string, unknown>
+  const errorMessage = extractErrorMessage(payload)
+  if (errorMessage) throw new Error(errorMessage)
+  const video = payload.video && typeof payload.video === 'object' ? payload.video as Record<string, unknown> : undefined
+  return {
+    id: requestId,
+    status: typeof payload.status === 'string' ? payload.status : undefined,
+    video_url: typeof payload.video_url === 'string' ? payload.video_url : typeof video?.url === 'string' ? video.url : undefined,
+    url: typeof payload.url === 'string' ? payload.url : undefined,
+  }
+}
+
+export async function fetchPlaygroundVideoContent(keyId: number, requestId: string, options: { signal?: AbortSignal } = {}): Promise<Blob> {
+  const response = await authorizedFetch(buildApiUrl(`/playground/videos/${encodeURIComponent(requestId)}/content`), {
+    signal: options.signal,
+    headers: { Accept: 'video/*', 'X-Sub2API-Playground-Key-ID': String(keyId) },
+  })
+  if (!response.ok) throw new Error(await parseFailure(response))
+  return response.blob()
+}
+
+function buildImageEditFormData(body: Record<string, unknown>, referenceImages: PlaygroundAttachment[], mask?: PlaygroundAttachment): FormData {
   const formData = new FormData()
   for (const [key, value] of Object.entries(body)) {
     if (value !== undefined && value !== null) formData.append(key, String(value))
   }
   for (const attachment of referenceImages) {
     formData.append('image', dataUrlToBlob(attachment.dataUrl as string, attachment.mimeType), attachment.name)
+  }
+  if (mask?.dataUrl?.startsWith('data:image/')) {
+    formData.append('mask', dataUrlToBlob(mask.dataUrl, mask.mimeType), mask.name || 'mask.png')
   }
   return formData
 }

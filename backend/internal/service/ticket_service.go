@@ -102,6 +102,16 @@ func (s *TicketService) GetForAdmin(ctx context.Context, ticketID int64) (*Ticke
 	return s.loadDetail(ctx, ticket, TicketSenderRoleAdmin)
 }
 
+// SetReadStatusByAdmin 批量设置管理员侧的已读/未读状态。
+func (s *TicketService) SetReadStatusByAdmin(ctx context.Context, ticketIDs []int64, read bool) error {
+	return s.ticketRepo.SetUnreadStatus(ctx, ticketIDs, TicketSenderRoleAdmin, !read)
+}
+
+// DeleteByAdmin 批量删除工单及其全部消息。
+func (s *TicketService) DeleteByAdmin(ctx context.Context, ticketIDs []int64) error {
+	return s.ticketRepo.DeleteByIDs(ctx, ticketIDs)
+}
+
 // loadDetail 装载消息并清除指定一侧的未读标记。
 func (s *TicketService) loadDetail(ctx context.Context, ticket *Ticket, viewerRole string) (*Ticket, error) {
 	messages, err := s.ticketRepo.ListMessages(ctx, ticket.ID)

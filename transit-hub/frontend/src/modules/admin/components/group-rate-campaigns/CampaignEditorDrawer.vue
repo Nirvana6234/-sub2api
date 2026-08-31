@@ -1,17 +1,18 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { X, Megaphone, CircleHelp, Bell, BellOff, Copy, Check, Loader2, Eye } from 'lucide-vue-next'
+import { X, Megaphone, CircleHelp, Bell, BellOff, Copy, Check, Loader2, Eye, Repeat2 } from 'lucide-vue-next'
 import { Tooltip } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
 import { getMySiteMappingOptions } from '../../api/mySites'
 import { getNotificationChannelSettings } from '../../api/settings'
-import { createGroupRateCampaign, previewGroupRateCampaign } from '../../api/groupRateCampaigns'
+import { createGroupRateCampaign, previewGroupRateCampaign, updateGroupRateCampaign } from '../../api/groupRateCampaigns'
 import type {
   CampaignDetail,
   CampaignEndMode,
   CampaignNotifyDefaults,
   CampaignPreviewItem,
+  CampaignRecurrenceFrequency,
   CampaignStartMode,
   CreateGroupRateCampaignRequest,
 } from '../../types/groupRateCampaigns'
@@ -26,11 +27,14 @@ interface BotOption {
 const props = defineProps<{
   open: boolean
   notifyDefaults: CampaignNotifyDefaults | null
+  campaign?: CampaignDetail | null
+  mode?: 'create' | 'edit' | 'duplicate'
 }>()
 
 const emit = defineEmits<{
   (event: 'close'): void
   (event: 'created', campaign: CampaignDetail): void
+  (event: 'saved', campaign: CampaignDetail): void
 }>()
 
 const { t } = useI18n()
@@ -47,6 +51,8 @@ const startMode = ref<CampaignStartMode>('now')
 const startAt = ref('')
 const endMode = ref<CampaignEndMode>('manual')
 const endAt = ref('')
+const recurrenceFrequency = ref<CampaignRecurrenceFrequency>('none')
+const recurrenceInterval = ref(1)
 
 const notifyEnabled = ref(false)
 const notifyBotIds = ref<string[]>([])
@@ -66,6 +72,19 @@ const previewErrorKey = ref<string | null>(null)
 
 const isSubmitting = ref(false)
 const validationError = ref<string | null>(null)
+const editorMode = computed(() => props.mode ?? 'create')
+const isEditing = computed(() => editorMode.value === 'edit' && Boolean(props.campaign))
+const isRunningEdit = computed(() => isEditing.value && (props.campaign?.status === 'running' || props.campaign?.status === 'partial'))
+const editorTitleKey = computed(() => (
+  isEditing.value ? `${prefix}.titleEdit` :
+    editorMode.value === 'duplicate' ? `${prefix}.titleDuplicate` :
+      `${prefix}.titleCreate`
+))
+const submitLabelKey = computed(() => (
+  isEditing.value ? 'admin.groupRateCampaigns.actions.confirmUpdate' :
+    editorMode.value === 'duplicate' ? 'admin.groupRateCampaigns.actions.confirmDuplicate' :
+      'admin.groupRateCampaigns.actions.confirmCreate'
+))
 
 const templateVars = [
   { key: '{activityName}', labelKey: `${prefix}.notifyVarActivityName` },
@@ -128,6 +147,14 @@ const toggleBot = (botId: string) => {
   }
 }
 
+const setRecurrenceFrequency = (frequency: CampaignRecurrenceFrequency) => {
+  recurrenceFrequency.value = frequency
+  if (frequency !== 'none') {
+    startMode.value = 'scheduled'
+    endMode.value = 'scheduled'
+  }
+}
+
 const resetForm = () => {
   name.value = ''
   description.value = ''
@@ -136,6 +163,8 @@ const resetForm = () => {
   startAt.value = ''
   endMode.value = 'manual'
   endAt.value = ''
+  recurrenceFrequency.value = 'none'
+  recurrenceInterval.value = 1
   notifyEnabled.value = props.notifyDefaults?.enabled ?? false
   notifyBotIds.value = [...(props.notifyDefaults?.botIds ?? [])]
   notifyStartTemplate.value = props.notifyDefaults?.startTemplate ?? ''
@@ -146,6 +175,36 @@ const resetForm = () => {
   previewTotal.value = null
   previewErrorKey.value = null
   validationError.value = null
+}
+
+const toDateTimeLocal = (value: string | null | undefined): string => {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const pad = (part: number) => part.toString().padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+const fillFromCampaign = (campaign: CampaignDetail) => {
+  name.value = editorMode.value === 'duplicate' ? `${campaign.name} - copy` : campaign.name
+  description.value = campaign.description
+  const groups = campaign.selection.groups.length > 0
+    ? campaign.selection.groups
+    : campaign.items.map((item) => ({ groupName: item.groupName, campaignMultiplier: item.campaignMultiplier }))
+  selectedGroups.value = groups.map((group) => ({
+    groupName: group.groupName,
+    campaignMultiplier: group.campaignMultiplier,
+  }))
+  startMode.value = editorMode.value === 'duplicate' ? 'now' : campaign.startMode
+  startAt.value = editorMode.value === 'duplicate' ? '' : toDateTimeLocal(campaign.startAt)
+  endMode.value = campaign.endMode
+  endAt.value = toDateTimeLocal(campaign.endAt)
+  recurrenceFrequency.value = campaign.recurrence?.frequency ?? 'none'
+  recurrenceInterval.value = campaign.recurrence?.interval || 1
+  notifyEnabled.value = campaign.notify.enabled
+  notifyBotIds.value = [...campaign.notify.botIds]
+  notifyStartTemplate.value = campaign.notify.startTemplate
+  notifyEndTemplate.value = campaign.notify.endTemplate
 }
 
 const loadOptions = async () => {
@@ -182,6 +241,7 @@ const loadOptions = async () => {
 watch(() => props.open, (isOpen) => {
   if (isOpen) {
     resetForm()
+    if (props.campaign) fillFromCampaign(props.campaign)
     void loadOptions()
   }
 })
@@ -208,6 +268,10 @@ const buildRequest = (): CreateGroupRateCampaignRequest => ({
     startAt: startMode.value === 'scheduled' && startAt.value ? new Date(startAt.value).toISOString() : null,
     endMode: endMode.value,
     endAt: endMode.value === 'scheduled' && endAt.value ? new Date(endAt.value).toISOString() : null,
+    recurrence: {
+      frequency: recurrenceFrequency.value,
+      interval: recurrenceFrequency.value === 'none' ? 0 : recurrenceInterval.value,
+    },
   },
   notify: {
     enabled: notifyEnabled.value,
@@ -244,6 +308,16 @@ const validate = (): boolean => {
     validationError.value = t(`${prefix}.errors.scheduleInvalid`)
     return false
   }
+  if (recurrenceFrequency.value !== 'none') {
+    if (startMode.value !== 'scheduled' || endMode.value !== 'scheduled' || !startAt.value || !endAt.value) {
+      validationError.value = t(`${prefix}.errors.recurrenceRequiresSchedule`)
+      return false
+    }
+    if (!Number.isFinite(recurrenceInterval.value) || recurrenceInterval.value < 1 || recurrenceInterval.value > 365) {
+      validationError.value = t(`${prefix}.errors.recurrenceInvalid`)
+      return false
+    }
+  }
 
   if (notifyEnabled.value && notifyBotIds.value.length === 0) {
     validationError.value = t(`${prefix}.errors.notifyBotsRequired`)
@@ -273,8 +347,12 @@ const handleSubmit = async () => {
   isSubmitting.value = true
   validationError.value = null
   try {
-    const detail = await createGroupRateCampaign(buildRequest())
-    emit('created', detail)
+    const request = buildRequest()
+    const detail = isEditing.value && props.campaign
+      ? await updateGroupRateCampaign(props.campaign.id, request)
+      : await createGroupRateCampaign(request)
+    if (isEditing.value) emit('saved', detail)
+    else emit('created', detail)
   } catch (error) {
     validationError.value = error instanceof Error ? t(error.message) : t('admin.groupRateCampaigns.errors.unknown')
   } finally {
@@ -310,7 +388,7 @@ const formatMultiplier = (value: number): string => `${Number(value.toFixed(4)).
             v-if="open"
             role="dialog"
             aria-modal="true"
-            :aria-label="t(`${prefix}.titleCreate`)"
+            :aria-label="t(editorTitleKey)"
             class="absolute bottom-0 right-0 top-0 w-full max-w-lg overflow-y-auto overscroll-contain border-l border-border/60 bg-card shadow-2xl"
           >
             <div class="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-border/60 bg-card/95 backdrop-blur px-5 py-4">
@@ -318,7 +396,7 @@ const formatMultiplier = (value: number): string => `${Number(value.toFixed(4)).
                 <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
                   <Megaphone class="h-4 w-4" />
                 </div>
-                <h3 class="text-sm font-semibold text-foreground">{{ t(`${prefix}.titleCreate`) }}</h3>
+                <h3 class="text-sm font-semibold text-foreground">{{ t(editorTitleKey) }}</h3>
               </div>
               <button
                 type="button"
@@ -395,14 +473,16 @@ const formatMultiplier = (value: number): string => `${Number(value.toFixed(4)).
 
               <!-- 时间计划 -->
               <div class="space-y-3 border-t border-border/40 pt-5">
-                <p class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{{ t(`${prefix}.sectionSchedule`) }}</p>
+                 <p class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{{ t(`${prefix}.sectionSchedule`) }}</p>
+                 <p v-if="isRunningEdit" class="text-xs text-primary">{{ t(`${prefix}.runningEditHint`) }}</p>
                 <div class="space-y-1.5">
                   <label class="text-xs font-medium text-muted-foreground">{{ t(`${prefix}.startModeLabel`) }}</label>
-                  <div class="flex gap-2">
+                  <div class="flex gap-2" :class="{ 'pointer-events-none opacity-60': isRunningEdit }">
                     <button
                       v-for="mode in (['now', 'scheduled', 'draft'] as const)"
                       :key="mode"
                       type="button"
+                      :disabled="isRunningEdit"
                       class="flex-1 rounded-lg border px-3 py-2 text-sm font-medium transition-colors"
                       :class="startMode === mode ? 'border-primary bg-primary/10 text-primary' : 'border-border/50 bg-surface/30 text-muted-foreground hover:bg-surface/50'"
                       @click="startMode = mode"
@@ -414,7 +494,8 @@ const formatMultiplier = (value: number): string => `${Number(value.toFixed(4)).
                     v-if="startMode === 'scheduled'"
                     v-model="startAt"
                     type="datetime-local"
-                    class="w-full rounded-lg border border-border/50 bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                    :disabled="isRunningEdit"
+                    class="w-full rounded-lg border border-border/50 bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-60"
                   />
                 </div>
                 <div class="space-y-1.5">
@@ -437,6 +518,41 @@ const formatMultiplier = (value: number): string => `${Number(value.toFixed(4)).
                     type="datetime-local"
                     class="w-full rounded-lg border border-border/50 bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                   />
+                </div>
+                <div class="space-y-2 rounded-lg border border-border/40 bg-surface/30 p-3">
+                  <div class="flex items-center gap-2">
+                    <Repeat2 class="h-4 w-4 text-primary" />
+                    <label class="text-xs font-medium text-muted-foreground">{{ t(`${prefix}.recurrenceLabel`) }}</label>
+                  </div>
+                  <div class="flex gap-2" :class="{ 'pointer-events-none opacity-60': isRunningEdit }">
+                    <button
+                      v-for="frequency in (['none', 'daily', 'weekly'] as const)"
+                      :key="frequency"
+                      type="button"
+                      :disabled="isRunningEdit"
+                      class="flex-1 rounded-md border px-2.5 py-2 text-xs font-medium transition-colors"
+                      :class="recurrenceFrequency === frequency ? 'border-primary bg-primary/10 text-primary' : 'border-border/50 bg-background text-muted-foreground hover:bg-surface/50'"
+                      @click="setRecurrenceFrequency(frequency)"
+                    >
+                      {{ t(`${prefix}.recurrence${frequency.charAt(0).toUpperCase()}${frequency.slice(1)}`) }}
+                    </button>
+                  </div>
+                  <div v-if="recurrenceFrequency !== 'none'" class="flex items-center gap-2">
+                    <input
+                      v-model.number="recurrenceInterval"
+                      type="number"
+                      min="1"
+                      max="365"
+                      step="1"
+                      class="w-20 rounded-md border border-border/50 bg-background px-2.5 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                    />
+                    <span class="text-xs text-muted-foreground">
+                      {{ t(`${prefix}.recurrenceInterval${recurrenceFrequency === 'daily' ? 'Days' : 'Weeks'}`) }}
+                    </span>
+                  </div>
+                  <p class="text-[11px] leading-5 text-muted-foreground">
+                    {{ recurrenceFrequency === 'none' ? t(`${prefix}.recurrenceNoneHint`) : t(`${prefix}.recurrenceHint`) }}
+                  </p>
                 </div>
               </div>
 
@@ -583,7 +699,7 @@ const formatMultiplier = (value: number): string => `${Number(value.toFixed(4)).
                 @click="handleSubmit"
               >
                 <Loader2 v-if="isSubmitting" class="h-3.5 w-3.5 animate-spin" />
-                {{ t('admin.groupRateCampaigns.actions.confirmCreate') }}
+                 {{ t(submitLabelKey) }}
               </button>
             </div>
           </div>

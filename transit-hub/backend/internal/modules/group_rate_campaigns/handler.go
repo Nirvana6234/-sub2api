@@ -26,6 +26,8 @@ func RegisterRoutes(mux *http.ServeMux, service *Service, accounts AdminAccountR
 	mux.HandleFunc("POST /api/group-rate-campaigns/preview", handler.preview)
 	mux.HandleFunc("POST /api/group-rate-campaigns", handler.create)
 	mux.HandleFunc("GET /api/group-rate-campaigns/", handler.get)
+	mux.HandleFunc("PUT /api/group-rate-campaigns/", handler.update)
+	mux.HandleFunc("DELETE /api/group-rate-campaigns/", handler.delete)
 	mux.HandleFunc("POST /api/group-rate-campaigns/", handler.action)
 }
 
@@ -126,7 +128,59 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 	httpjson.Write(w, http.StatusOK, response)
 }
 
-// action 分发 {id}/start、{id}/end、{id}/cancel 三个动作类路由。
+func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
+	userID, ok := authctx.UserID(r.Context())
+	if !ok {
+		httpjson.WriteError(w, http.StatusUnauthorized, "auth.errors.unauthorized")
+		return
+	}
+	id, ok := pathID(r.URL.Path, "/api/group-rate-campaigns/", "")
+	if !ok {
+		httpjson.WriteError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	var dto UpdateCampaignRequest
+	if err := httpjson.Decode(r, &dto); err != nil {
+		httpjson.WriteError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	adminAccountID, err := h.currentAdminAccountID(r.Context(), userID)
+	if err != nil {
+		writeDomainError(w, err)
+		return
+	}
+	response, err := h.service.Update(r.Context(), userID, adminAccountID, id, dto)
+	if err != nil {
+		writeDomainError(w, err)
+		return
+	}
+	httpjson.Write(w, http.StatusOK, response)
+}
+
+func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
+	userID, ok := authctx.UserID(r.Context())
+	if !ok {
+		httpjson.WriteError(w, http.StatusUnauthorized, "auth.errors.unauthorized")
+		return
+	}
+	id, ok := pathID(r.URL.Path, "/api/group-rate-campaigns/", "")
+	if !ok {
+		httpjson.WriteError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	adminAccountID, err := h.currentAdminAccountID(r.Context(), userID)
+	if err != nil {
+		writeDomainError(w, err)
+		return
+	}
+	if err := h.service.Delete(r.Context(), userID, adminAccountID, id); err != nil {
+		writeDomainError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// action 分发 {id}/start、{id}/end、{id}/cancel、{id}/stop-recurrence 动作类路由。
 func (h *Handler) action(w http.ResponseWriter, r *http.Request) {
 	userID, ok := authctx.UserID(r.Context())
 	if !ok {
@@ -151,6 +205,9 @@ func (h *Handler) action(w http.ResponseWriter, r *http.Request) {
 	case pathHasID(r.URL.Path, "/cancel"):
 		id, ok = pathID(r.URL.Path, "/api/group-rate-campaigns/", "/cancel")
 		run = h.service.Cancel
+	case pathHasID(r.URL.Path, "/stop-recurrence"):
+		id, ok = pathID(r.URL.Path, "/api/group-rate-campaigns/", "/stop-recurrence")
+		run = h.service.StopAfterCurrentCycle
 	default:
 		ok = false
 	}

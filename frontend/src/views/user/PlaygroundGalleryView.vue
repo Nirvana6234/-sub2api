@@ -106,7 +106,7 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import { Icon } from '@/components/icons'
 import { useAppStore, useAuthStore } from '@/stores'
 import { downloadPlaygroundImage } from '@/features/playground/imageDownload'
-import { listPlaygroundGalleryImages, removeCachedPlaygroundImages, type PlaygroundGalleryImage } from '@/features/playground/imageCache'
+import { listPlaygroundGalleryImages, readCachedPlaygroundImageBlob, removeCachedPlaygroundImages, type PlaygroundGalleryImage } from '@/features/playground/imageCache'
 
 type GalleryImage = PlaygroundGalleryImage & { url: string }
 
@@ -134,7 +134,9 @@ function imageExtension(image: GalleryImage): string {
 
 async function downloadImage(image: GalleryImage): Promise<void> {
   try {
-    await downloadPlaygroundImage(image.url, `playground-${image.createdAt}.${imageExtension(image)}`)
+    const blob = await readCachedPlaygroundImageBlob(image.key)
+    if (!blob) throw new Error(t('playground.imageDownloadMissing'))
+    await downloadPlaygroundImage(blob, `playground-${image.createdAt}.${imageExtension(image)}`)
   } catch (error) {
     appStore.showError(error instanceof Error ? error.message : t('playground.imageDownloadFailed'))
   }

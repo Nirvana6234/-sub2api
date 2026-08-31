@@ -3,6 +3,7 @@ package httpserver
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -13,17 +14,19 @@ import (
 )
 
 type fallbackPoolAlertWebhook struct {
-	RequestID       string    `json:"request_id"`
-	SiteBaseURL     string    `json:"site_base_url"`
-	AccountID       int64     `json:"account_id"`
-	AccountName     string    `json:"account_name"`
-	Model           string    `json:"model"`
-	SourceGroupID   int64     `json:"source_group_id"`
-	SourceGroupName string    `json:"source_group_name"`
-	TargetGroupID   int64     `json:"target_group_id"`
-	TargetGroupName string    `json:"target_group_name"`
-	ActualCost      float64   `json:"actual_cost"`
-	CreatedAt       time.Time `json:"created_at"`
+	RequestID        string    `json:"request_id"`
+	SiteBaseURL      string    `json:"site_base_url"`
+	WorkspaceUserID  string    `json:"workspace_user_id"`
+	WorkspaceAdminID string    `json:"workspace_admin_account_id"`
+	AccountID        int64     `json:"account_id"`
+	AccountName      string    `json:"account_name"`
+	Model            string    `json:"model"`
+	SourceGroupID    int64     `json:"source_group_id"`
+	SourceGroupName  string    `json:"source_group_name"`
+	TargetGroupID    int64     `json:"target_group_id"`
+	TargetGroupName  string    `json:"target_group_name"`
+	ActualCost       float64   `json:"actual_cost"`
+	CreatedAt        time.Time `json:"created_at"`
 }
 
 func registerFallbackPoolAlertWebhook(mux *http.ServeMux, sites *upstream.Service, settingsService *settings.Service, secret string) {
@@ -42,17 +45,38 @@ func registerFallbackPoolAlertWebhook(mux *http.ServeMux, sites *upstream.Servic
 			http.Error(w, "invalid request", http.StatusBadRequest)
 			return
 		}
-		if event.SourceGroupID <= 0 || event.TargetGroupID <= 0 || strings.TrimSpace(event.SiteBaseURL) == "" {
+		if event.SourceGroupID <= 0 || event.TargetGroupID <= 0 ||
+			(strings.TrimSpace(event.SiteBaseURL) == "" &&
+				(strings.TrimSpace(event.WorkspaceUserID) == "" || strings.TrimSpace(event.WorkspaceAdminID) == "")) {
 			http.Error(w, "invalid fallback event", http.StatusBadRequest)
 			return
 		}
 
 		site, err := sites.FindSiteByBaseURL(r.Context(), event.SiteBaseURL)
 		if err != nil || site == nil {
-			http.Error(w, "site not found", http.StatusNotFound)
-			return
+			if strings.TrimSpace(event.WorkspaceUserID) == "" || strings.TrimSpace(event.WorkspaceAdminID) == "" {
+				if err != nil {
+					log.Printf("[fallback-alert] site lookup failed site_base_url=%s err=%v", strings.TrimSpace(event.SiteBaseURL), err)
+				} else {
+					log.Printf("[fallback-alert] site not found site_base_url=%s", strings.TrimSpace(event.SiteBaseURL))
+				}
+				http.Error(w, "site not found", http.StatusNotFound)
+				return
+			}
+			log.Printf("[fallback-alert] site not found, using configured workspace site_base_url=%s user_id=%s admin_account_id=%s",
+				strings.TrimSpace(event.SiteBaseURL), strings.TrimSpace(event.WorkspaceUserID), strings.TrimSpace(event.WorkspaceAdminID))
 		}
-		strategy, err := settingsService.GetStrategyForWorkspace(r.Context(), site.UserID, site.AdminAccountID)
+		userID := strings.TrimSpace(event.WorkspaceUserID)
+		adminAccountID := strings.TrimSpace(event.WorkspaceAdminID)
+		siteID := "workspace:" + adminAccountID
+		siteName := strings.TrimSpace(event.SiteBaseURL)
+		if site != nil {
+			userID = site.UserID
+			adminAccountID = site.AdminAccountID
+			siteID = site.ID
+			siteName = site.Name
+		}
+		strategy, err := settingsService.GetStrategyForWorkspace(r.Context(), userID, adminAccountID)
 		if err != nil {
 			http.Error(w, "settings unavailable", http.StatusServiceUnavailable)
 			return
@@ -62,7 +86,7 @@ func registerFallbackPoolAlertWebhook(mux *http.ServeMux, sites *upstream.Servic
 			return
 		}
 
-		claimed, err := settingsService.ClaimFallbackPoolAlert(r.Context(), site.UserID, site.AdminAccountID, site.ID,
+		claimed, err := settingsService.ClaimFallbackPoolAlert(r.Context(), userID, adminAccountID, siteID,
 			strconvFormatInt64(event.SourceGroupID), strconvFormatInt64(event.TargetGroupID), fallbackPoolAlertCooldown)
 		if err != nil {
 			http.Error(w, "cooldown unavailable", http.StatusServiceUnavailable)
@@ -81,8 +105,8 @@ func registerFallbackPoolAlertWebhook(mux *http.ServeMux, sites *upstream.Servic
 				ActualCost:      event.ActualCost,
 				CreatedAt:       event.CreatedAt,
 			}
-			settingsService.SendFormattedToBotsForWorkspace(r.Context(), site.UserID, site.AdminAccountID,
-				strategy.FallbackPoolNotifyBotIDs, formatFallbackPoolUsageAlert(site.Name, usageEvent, fallbackPoolAlertCooldown, strategy.FallbackPoolTemplate),
+			settingsService.SendFormattedToBotsForWorkspace(r.Context(), userID, adminAccountID,
+				strategy.FallbackPoolNotifyBotIDs, formatFallbackPoolUsageAlert(siteName, usageEvent, fallbackPoolAlertCooldown, strategy.FallbackPoolTemplate),
 				strategy.FallbackPoolTemplateFormat)
 		}
 		w.WriteHeader(http.StatusNoContent)

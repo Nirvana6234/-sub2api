@@ -2,13 +2,13 @@ package group_rate_campaigns
 
 import "time"
 
-// 活动状态机：draft 可编辑/删除；scheduled 等待调度器开始；running 运行中，只能手动结束；
-// ending 正在恢复原倍率（调度器/手动结束的中间态）；ended/partial/failed/cancelled 均为终态，不再被调度器处理。
+// 活动状态机：draft/scheduled 可配置；running 为当前轮执行中；partial 表示仍有
+// 分组待处理，需要重试；ended/failed/cancelled 为终态。恢复过程不写入单独的
+// ending 状态，避免页面出现“结束中”却无法判断是否已经恢复完成的中间状态。
 const (
 	StatusDraft     = "draft"
 	StatusScheduled = "scheduled"
 	StatusRunning   = "running"
-	StatusEnding    = "ending"
 	StatusEnded     = "ended"
 	StatusPartial   = "partial"
 	StatusFailed    = "failed"
@@ -48,6 +48,19 @@ const (
 	EndScheduled EndMode = "scheduled"
 	EndManual    EndMode = "manual"
 )
+
+type RecurrenceFrequency string
+
+const (
+	RecurrenceNone   RecurrenceFrequency = "none"
+	RecurrenceDaily  RecurrenceFrequency = "daily"
+	RecurrenceWeekly RecurrenceFrequency = "weekly"
+)
+
+type Recurrence struct {
+	Frequency RecurrenceFrequency `json:"frequency"`
+	Interval  int                 `json:"interval"`
+}
 
 // 分组开启/恢复的执行状态，落在 group_rate_campaign_items 表的 apply_status/restore_status 列。
 const (
@@ -117,10 +130,11 @@ type Notify struct {
 
 // Schedule 描述活动的开始/结束方式，仅用于请求 DTO，落库时拆分进 campaign 的独立列。
 type Schedule struct {
-	StartMode StartMode  `json:"startMode"`
-	StartAt   *time.Time `json:"startAt"`
-	EndMode   EndMode    `json:"endMode"`
-	EndAt     *time.Time `json:"endAt"`
+	StartMode  StartMode  `json:"startMode"`
+	StartAt    *time.Time `json:"startAt"`
+	EndMode    EndMode    `json:"endMode"`
+	EndAt      *time.Time `json:"endAt"`
+	Recurrence Recurrence `json:"recurrence"`
 }
 
 // CreateCampaignRequest 是创建活动的请求体，字段对齐规划文档中的 JSON 示例。
@@ -132,6 +146,10 @@ type CreateCampaignRequest struct {
 	Schedule    Schedule   `json:"schedule"`
 	Notify      Notify     `json:"notify"`
 }
+
+// UpdateCampaignRequest 更新活动配置。进行中的活动会在当前轮立即把分组差异
+// 应用到远端，未开始活动只更新配置。
+type UpdateCampaignRequest = CreateCampaignRequest
 
 // Campaign 是活动的领域模型，对应 group_rate_campaigns 表的一行。
 type Campaign struct {
@@ -148,6 +166,8 @@ type Campaign struct {
 	StartAt        *time.Time
 	EndMode        EndMode
 	EndAt          *time.Time
+	Recurrence     Recurrence
+	Cycle          int
 	StartedAt      *time.Time
 	EndedAt        *time.Time
 	CreatedAt      time.Time
@@ -162,6 +182,7 @@ type CampaignItem struct {
 	AdminAccountID     string
 	GroupID            string
 	GroupName          string
+	Cycle              int
 	OriginalMultiplier *float64
 	CampaignMultiplier float64
 	RestoredMultiplier *float64
@@ -209,6 +230,7 @@ type CampaignListItem struct {
 	StartAt        *time.Time `json:"startAt"`
 	EndMode        EndMode    `json:"endMode"`
 	EndAt          *time.Time `json:"endAt"`
+	Recurrence     Recurrence `json:"recurrence"`
 	StartedAt      *time.Time `json:"startedAt"`
 	EndedAt        *time.Time `json:"endedAt"`
 	Summary        Summary    `json:"summary"`

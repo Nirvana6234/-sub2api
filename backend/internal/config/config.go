@@ -32,7 +32,7 @@ const (
 
 // DefaultCSPPolicy is the default Content-Security-Policy with nonce support
 // __CSP_NONCE__ will be replaced with actual nonce at request time by the SecurityHeaders middleware
-const DefaultCSPPolicy = "default-src 'self'; worker-src 'self' blob:; script-src 'self' __CSP_NONCE__ https://challenges.cloudflare.com https://*.alicdn.com https://static.cloudflareinsights.com https://turing.captcha.qcloud.com https://turing.captcha.gtimg.com https://ca.turing.captcha.qcloud.com https://global.turing.captcha.gtimg.com https://www.tycaptcha.com https://cloudcache.tencentcs.com https://*.stripe.com https://static.airwallex.com https://checkout.airwallex.com https://static-demo.airwallex.com https://checkout-demo.airwallex.com; style-src 'self' 'unsafe-inline' https://*.captcha.gtimg.com https://fonts.googleapis.com https://*.alicdn.com https://static.airwallex.com https://checkout.airwallex.com https://static-demo.airwallex.com https://checkout-demo.airwallex.com; img-src 'self' data: blob: https:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https://turing.captcha.qcloud.com https://www.tycaptcha.com https://rce.tencentrio.com https:; frame-src 'self' https://challenges.cloudflare.com https://turing.captcha.qcloud.com https://ca.turing.captcha.qcloud.com https://www.tycaptcha.com https://*.stripe.com https://checkout.airwallex.com https://checkout-demo.airwallex.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+const DefaultCSPPolicy = "default-src 'self'; worker-src 'self' blob:; script-src 'self' __CSP_NONCE__ https://challenges.cloudflare.com https://*.alicdn.com https://static.cloudflareinsights.com https://turing.captcha.qcloud.com https://turing.captcha.gtimg.com https://ca.turing.captcha.qcloud.com https://global.turing.captcha.gtimg.com https://www.tycaptcha.com https://cloudcache.tencentcs.com https://*.stripe.com https://static.airwallex.com https://checkout.airwallex.com https://static-demo.airwallex.com https://checkout-demo.airwallex.com; style-src 'self' 'unsafe-inline' https://*.captcha.gtimg.com https://fonts.googleapis.com https://*.alicdn.com https://static.airwallex.com https://checkout.airwallex.com https://static-demo.airwallex.com https://checkout-demo.airwallex.com; img-src 'self' data: blob: https:; media-src 'self' blob: https:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https://turing.captcha.qcloud.com https://www.tycaptcha.com https://rce.tencentrio.com https:; frame-src 'self' https://challenges.cloudflare.com https://turing.captcha.qcloud.com https://ca.turing.captcha.qcloud.com https://www.tycaptcha.com https://*.stripe.com https://checkout.airwallex.com https://checkout-demo.airwallex.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
 
 // UMQ（用户消息队列）模式常量
 const (
@@ -108,10 +108,12 @@ type Config struct {
 }
 
 type FallbackPoolAlertConfig struct {
-	URL            string `mapstructure:"url"`
-	Secret         string `mapstructure:"secret"`
-	SiteBaseURL    string `mapstructure:"site_base_url"`
-	TimeoutSeconds int    `mapstructure:"timeout_seconds"`
+	URL              string `mapstructure:"url"`
+	Secret           string `mapstructure:"secret"`
+	SiteBaseURL      string `mapstructure:"site_base_url"`
+	WorkspaceUserID  string `mapstructure:"workspace_user_id"`
+	WorkspaceAdminID string `mapstructure:"workspace_admin_account_id"`
+	TimeoutSeconds   int    `mapstructure:"timeout_seconds"`
 }
 
 // PluginConfig 控制管理员手动上传的本地进程插件。
@@ -2627,6 +2629,8 @@ func setEnvReachableDefaults() {
 	viper.SetDefault("fallback_pool_alert.url", "")
 	viper.SetDefault("fallback_pool_alert.secret", "")
 	viper.SetDefault("fallback_pool_alert.site_base_url", "")
+	viper.SetDefault("fallback_pool_alert.workspace_user_id", "")
+	viper.SetDefault("fallback_pool_alert.workspace_admin_account_id", "")
 	viper.SetDefault("fallback_pool_alert.timeout_seconds", 3)
 
 	// sticky_escape_enabled is the one exception to the zero-value rule: its

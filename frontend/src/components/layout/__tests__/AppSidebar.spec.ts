@@ -48,6 +48,25 @@ describe('AppSidebar purchase link', () => {
     expect(componentSource).toContain('featureFlag: flagPurchase')
     expect(componentSource).not.toContain('externalUrl: purchaseSubscriptionUrl.value')
   })
+
+  it('places purchase directly below the API keys entry', () => {
+    const apiKeysIndex = componentSource.indexOf("{ path: '/keys', label: t('nav.apiKeys'), icon: KeyIcon }")
+    const purchaseIndex = componentSource.indexOf("path: '/purchase'")
+    const playgroundIndex = componentSource.indexOf("{ path: '/playground', label: t('nav.playground')")
+
+    expect(apiKeysIndex).toBeGreaterThanOrEqual(0)
+    expect(purchaseIndex).toBeGreaterThan(apiKeysIndex)
+    expect(purchaseIndex).toBeLessThan(playgroundIndex)
+  })
+})
+
+describe('AppSidebar ticket notification', () => {
+  it('renders a shared unread indicator for personal and admin ticket links', () => {
+    expect(componentSource).toContain('sidebar-notification-dot')
+    expect(componentSource).toContain('ticketUnreadCountFor')
+    expect(componentSource).toContain('ticketStore.adminUnreadCount')
+    expect(componentSource).toContain('ticketStore.userUnreadCount')
+  })
 })
 
 describe('AppSidebar header styles', () => {

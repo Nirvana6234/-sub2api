@@ -92,7 +92,7 @@ describe('playground view model', () => {
     ])
 
     expect(keys).toEqual([
-      { id: 4, name: 'Key 1', maskedKey: 'Hidden key', status: 'active', groupId: 21, groupName: 'Ops', autoGroup: false, autoGroupStrategy: 'price' },
+      { id: 4, name: 'Key 1', maskedKey: 'Hidden key', status: 'active', groupId: 21, groupName: 'Ops', autoGroup: false, autoGroupStrategy: 'price', platform: 'openai' },
     ])
   })
 

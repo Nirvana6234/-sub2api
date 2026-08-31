@@ -5121,6 +5121,52 @@
                 />
               </div>
 
+              <div class="flex items-center justify-between border-t border-gray-100 pt-5 dark:border-dark-700">
+                <div>
+                  <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ t("admin.settings.openaiExperimentalScheduler.latencyFallbackTitle") }}
+                  </label>
+                  <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.openaiExperimentalScheduler.latencyFallbackDescription") }}
+                  </p>
+                </div>
+                <Toggle v-model="form.openai_latency_aware_fallback_enabled" data-testid="openai-latency-fallback-toggle" />
+              </div>
+
+              <div
+                v-if="form.openai_latency_aware_fallback_enabled"
+                class="grid grid-cols-1 gap-4 border-t border-gray-100 pt-5 md:grid-cols-2 dark:border-dark-700"
+              >
+                <label class="block">
+                  <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ t("admin.settings.openaiExperimentalScheduler.latencyThresholdLabel") }}
+                  </span>
+                  <input
+                    v-model.number="form.openai_latency_threshold_ms"
+                    class="input mt-1"
+                    data-testid="openai-latency-threshold-ms"
+                    min="1000"
+                    max="600000"
+                    step="100"
+                    type="number"
+                  />
+                </label>
+                <label class="block">
+                  <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ t("admin.settings.openaiExperimentalScheduler.speedupRatioLabel") }}
+                  </span>
+                  <input
+                    v-model.number="form.openai_fallback_speedup_ratio"
+                    class="input mt-1"
+                    data-testid="openai-fallback-speedup-ratio"
+                    min="0.1"
+                    max="1"
+                    step="0.05"
+                    type="number"
+                  />
+                </label>
+              </div>
+
               <div
                 v-if="form.openai_advanced_scheduler_enabled"
                 class="flex items-center justify-between border-t border-gray-100 pt-5 dark:border-dark-700"
@@ -9753,6 +9799,9 @@ type SettingsForm = Omit<
   google_oauth_client_secret: string;
   force_email_on_third_party_signup: boolean;
   openai_low_upstream_rate_priority_enabled: boolean;
+  openai_latency_aware_fallback_enabled: boolean;
+  openai_latency_threshold_ms: number;
+  openai_fallback_speedup_ratio: number;
   openai_oauth_scheduling_rate_multiplier: number;
   openai_advanced_scheduler_enabled: boolean;
   openai_advanced_scheduler_sticky_weighted_enabled: boolean;
@@ -9997,6 +10046,9 @@ const form = reactive<SettingsForm>({
   // 分组隔离
   allow_ungrouped_key_scheduling: false,
   openai_low_upstream_rate_priority_enabled: false,
+  openai_latency_aware_fallback_enabled: false,
+  openai_latency_threshold_ms: 30000,
+  openai_fallback_speedup_ratio: 0.6,
   openai_oauth_scheduling_rate_multiplier: 1,
   openai_advanced_scheduler_enabled: false,
   openai_advanced_scheduler_sticky_weighted_enabled: false,
@@ -11685,6 +11737,12 @@ async function saveSettings() {
         form.payment_alipay_mobile_precreate_deep_link,
       openai_low_upstream_rate_priority_enabled:
         form.openai_low_upstream_rate_priority_enabled,
+      openai_latency_aware_fallback_enabled:
+        form.openai_latency_aware_fallback_enabled,
+      openai_latency_threshold_ms:
+        Number(form.openai_latency_threshold_ms) || 30000,
+      openai_fallback_speedup_ratio:
+        Number(form.openai_fallback_speedup_ratio) || 0.6,
       openai_oauth_scheduling_rate_multiplier:
         form.openai_oauth_scheduling_rate_multiplier,
       openai_advanced_scheduler_enabled: form.openai_advanced_scheduler_enabled,

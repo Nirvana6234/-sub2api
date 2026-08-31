@@ -2,7 +2,6 @@ export type CampaignStatus =
   | 'draft'
   | 'scheduled'
   | 'running'
-  | 'ending'
   | 'ended'
   | 'partial'
   | 'failed'
@@ -15,6 +14,13 @@ export type CampaignAdjustmentMode = 'set' | 'multiply' | 'add'
 export type CampaignStartMode = 'now' | 'scheduled' | 'draft'
 
 export type CampaignEndMode = 'scheduled' | 'manual'
+
+export type CampaignRecurrenceFrequency = 'none' | 'daily' | 'weekly'
+
+export interface CampaignRecurrence {
+  frequency: CampaignRecurrenceFrequency
+  interval: number
+}
 
 export interface CampaignSelectionGroupRef {
   groupName: string
@@ -51,6 +57,7 @@ export interface CampaignSchedule {
   startAt: string | null
   endMode: CampaignEndMode
   endAt: string | null
+  recurrence: CampaignRecurrence
 }
 
 export interface CreateGroupRateCampaignRequest {
@@ -91,6 +98,7 @@ export interface CampaignListItem {
   startAt: string | null
   endMode: CampaignEndMode
   endAt: string | null
+  recurrence: CampaignRecurrence
   startedAt: string | null
   endedAt: string | null
   summary: CampaignSummary

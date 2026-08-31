@@ -38,10 +38,13 @@ func (r *Repository) EnsureSchema(ctx context.Context) error {
 			start_at timestamptz,
 			end_mode text NOT NULL,
 			end_at timestamptz,
+			recurrence jsonb NOT NULL DEFAULT '{"frequency":"none","interval":0}'::jsonb,
+			cycle integer NOT NULL DEFAULT 0,
 			started_at timestamptz,
 			ended_at timestamptz,
 			created_at timestamptz NOT NULL DEFAULT now(),
-			updated_at timestamptz NOT NULL DEFAULT now()
+			updated_at timestamptz NOT NULL DEFAULT now(),
+			deleted_at timestamptz
 		)`,
 		`CREATE TABLE IF NOT EXISTS group_rate_campaign_items (
 			id text PRIMARY KEY,
@@ -50,6 +53,7 @@ func (r *Repository) EnsureSchema(ctx context.Context) error {
 			admin_account_id text NOT NULL DEFAULT '',
 			group_id text NOT NULL DEFAULT '',
 			group_name text NOT NULL,
+			cycle integer NOT NULL DEFAULT 0,
 			original_multiplier double precision,
 			campaign_multiplier double precision NOT NULL,
 			restored_multiplier double precision,
@@ -62,8 +66,13 @@ func (r *Repository) EnsureSchema(ctx context.Context) error {
 			created_at timestamptz NOT NULL DEFAULT now(),
 			updated_at timestamptz NOT NULL DEFAULT now()
 		)`,
+		`ALTER TABLE group_rate_campaigns ADD COLUMN IF NOT EXISTS recurrence jsonb NOT NULL DEFAULT '{"frequency":"none","interval":0}'::jsonb`,
+		`ALTER TABLE group_rate_campaigns ADD COLUMN IF NOT EXISTS cycle integer NOT NULL DEFAULT 0`,
+		`ALTER TABLE group_rate_campaigns ADD COLUMN IF NOT EXISTS deleted_at timestamptz`,
+		`ALTER TABLE group_rate_campaign_items ADD COLUMN IF NOT EXISTS cycle integer NOT NULL DEFAULT 0`,
 		`CREATE INDEX IF NOT EXISTS idx_group_rate_campaigns_workspace ON group_rate_campaigns (user_id, admin_account_id, status, start_at, end_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_group_rate_campaign_items_campaign ON group_rate_campaign_items (campaign_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_group_rate_campaign_items_campaign_cycle ON group_rate_campaign_items (campaign_id, cycle)`,
 	}
 	for _, stmt := range statements {
 		if _, err := r.db.Exec(ctx, stmt); err != nil {
@@ -87,12 +96,86 @@ func (r *Repository) Insert(ctx context.Context, c Campaign) error {
 	if err != nil {
 		return err
 	}
+	recurrenceJSON, err := json.Marshal(normalizeRecurrence(c.Recurrence))
+	if err != nil {
+		return err
+	}
 	_, err = r.db.Exec(ctx, `
 		INSERT INTO group_rate_campaigns
-			(id, user_id, admin_account_id, name, description, status, selection, adjustment, notify, start_mode, start_at, end_mode, end_at, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, now(), now())
-	`, c.ID, c.UserID, c.AdminAccountID, c.Name, c.Description, c.Status, selectionJSON, adjustmentJSON, notifyJSON, string(c.StartMode), c.StartAt, string(c.EndMode), c.EndAt)
+			(id, user_id, admin_account_id, name, description, status, selection, adjustment, notify, start_mode, start_at, end_mode, end_at, recurrence, cycle, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now(), now())
+	`, c.ID, c.UserID, c.AdminAccountID, c.Name, c.Description, c.Status, selectionJSON, adjustmentJSON, notifyJSON, string(c.StartMode), c.StartAt, string(c.EndMode), c.EndAt, recurrenceJSON, c.Cycle)
 	return err
+}
+
+// Update 保存活动配置，不改变当前轮的执行明细。
+func (r *Repository) Update(ctx context.Context, c Campaign) error {
+	selectionJSON, err := json.Marshal(c.Selection)
+	if err != nil {
+		return err
+	}
+	adjustmentJSON, err := json.Marshal(c.Adjustment)
+	if err != nil {
+		return err
+	}
+	notifyJSON, err := json.Marshal(c.Notify)
+	if err != nil {
+		return err
+	}
+	recurrenceJSON, err := json.Marshal(normalizeRecurrence(c.Recurrence))
+	if err != nil {
+		return err
+	}
+	_, err = r.db.Exec(ctx, `
+		UPDATE group_rate_campaigns
+		SET name = $4, description = $5, selection = $6, adjustment = $7, notify = $8,
+			start_mode = $9, start_at = $10, end_mode = $11, end_at = $12,
+			recurrence = $13, updated_at = now()
+		WHERE id = $1 AND user_id = $2 AND admin_account_id = $3 AND deleted_at IS NULL
+	`, c.ID, c.UserID, c.AdminAccountID, c.Name, c.Description, selectionJSON, adjustmentJSON, notifyJSON,
+		string(c.StartMode), c.StartAt, string(c.EndMode), c.EndAt, recurrenceJSON)
+	return err
+}
+
+// Delete 隐藏历史活动，保留执行明细用于审计和故障排查。
+func (r *Repository) Delete(ctx context.Context, userID, adminAccountID, id string) (bool, error) {
+	tag, err := r.db.Exec(ctx, `
+		UPDATE group_rate_campaigns
+		SET deleted_at = now(), updated_at = now()
+		WHERE id = $1 AND user_id = $2 AND admin_account_id = $3
+			AND deleted_at IS NULL AND status NOT IN ('running', 'partial')
+	`, id, userID, adminAccountID)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// ListActiveGroupNames 返回当前轮仍由活动接管的自有分组，供自动调价跳过。
+func (r *Repository) ListActiveGroupNames(ctx context.Context, userID, adminAccountID string) ([]string, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT DISTINCT i.group_name
+		FROM group_rate_campaigns c
+		JOIN group_rate_campaign_items i ON i.campaign_id = c.id AND i.cycle = c.cycle
+		WHERE c.user_id = $1 AND c.admin_account_id = $2 AND c.deleted_at IS NULL
+			AND c.status IN ('running', 'partial')
+			AND i.apply_status = 'applied'
+			AND i.restore_status = 'pending'
+		ORDER BY i.group_name
+	`, userID, adminAccountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	names := make([]string, 0)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+	}
+	return names, rows.Err()
 }
 
 // SaveItems 批量插入活动的目标分组明细，初始状态为 pending/pending。
@@ -109,9 +192,9 @@ func (r *Repository) SaveItems(ctx context.Context, items []CampaignItem) error 
 	for _, item := range items {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO group_rate_campaign_items
-				(id, campaign_id, user_id, admin_account_id, group_id, group_name, original_multiplier, campaign_multiplier, apply_status, restore_status, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(), now())
-		`, item.ID, item.CampaignID, item.UserID, item.AdminAccountID, item.GroupID, item.GroupName, item.OriginalMultiplier, item.CampaignMultiplier, ItemPending, ItemPending); err != nil {
+				(id, campaign_id, user_id, admin_account_id, group_id, group_name, cycle, original_multiplier, campaign_multiplier, apply_status, restore_status, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now(), now())
+		`, item.ID, item.CampaignID, item.UserID, item.AdminAccountID, item.GroupID, item.GroupName, item.Cycle, item.OriginalMultiplier, item.CampaignMultiplier, ItemPending, ItemPending); err != nil {
 			return err
 		}
 	}
@@ -128,6 +211,15 @@ func (r *Repository) UpdateItemApply(ctx context.Context, id string, originalMul
 	return err
 }
 
+func (r *Repository) UpdateItemCampaignMultiplier(ctx context.Context, id string, multiplier float64) error {
+	_, err := r.db.Exec(ctx, `
+		UPDATE group_rate_campaign_items
+		SET campaign_multiplier = $2, updated_at = now()
+		WHERE id = $1
+	`, id, multiplier)
+	return err
+}
+
 // UpdateItemRestore 记录一个分组的恢复执行结果。
 func (r *Repository) UpdateItemRestore(ctx context.Context, id string, restoredMultiplier *float64, status string, reason string, restoredAt *time.Time) error {
 	_, err := r.db.Exec(ctx, `
@@ -141,12 +233,27 @@ func (r *Repository) UpdateItemRestore(ctx context.Context, id string, restoredM
 // ListItems 返回一个活动的全部目标分组明细。
 func (r *Repository) ListItems(ctx context.Context, campaignID string) ([]CampaignItem, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT id, campaign_id, user_id, admin_account_id, group_id, group_name, original_multiplier, campaign_multiplier, restored_multiplier,
+		SELECT id, campaign_id, user_id, admin_account_id, group_id, group_name, cycle, original_multiplier, campaign_multiplier, restored_multiplier,
 			apply_status, restore_status, apply_reason, restore_reason, applied_at, restored_at, created_at, updated_at
 		FROM group_rate_campaign_items
 		WHERE campaign_id = $1
-		ORDER BY group_name ASC
+		ORDER BY cycle DESC, group_name ASC
 	`, campaignID)
+	return scanCampaignItems(rows, err)
+}
+
+func (r *Repository) ListItemsForCycle(ctx context.Context, campaignID string, cycle int) ([]CampaignItem, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, campaign_id, user_id, admin_account_id, group_id, group_name, cycle, original_multiplier, campaign_multiplier, restored_multiplier,
+			apply_status, restore_status, apply_reason, restore_reason, applied_at, restored_at, created_at, updated_at
+		FROM group_rate_campaign_items
+		WHERE campaign_id = $1 AND cycle = $2
+		ORDER BY group_name ASC
+	`, campaignID, cycle)
+	return scanCampaignItems(rows, err)
+}
+
+func scanCampaignItems(rows pgx.Rows, err error) ([]CampaignItem, error) {
 	if err != nil {
 		return nil, err
 	}
@@ -156,7 +263,7 @@ func (r *Repository) ListItems(ctx context.Context, campaignID string) ([]Campai
 	for rows.Next() {
 		var item CampaignItem
 		if err := rows.Scan(&item.ID, &item.CampaignID, &item.UserID, &item.AdminAccountID, &item.GroupID, &item.GroupName,
-			&item.OriginalMultiplier, &item.CampaignMultiplier, &item.RestoredMultiplier,
+			&item.Cycle, &item.OriginalMultiplier, &item.CampaignMultiplier, &item.RestoredMultiplier,
 			&item.ApplyStatus, &item.RestoreStatus, &item.ApplyReason, &item.RestoreReason,
 			&item.AppliedAt, &item.RestoredAt, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
@@ -170,9 +277,9 @@ func (r *Repository) ListItems(ctx context.Context, campaignID string) ([]Campai
 func (r *Repository) Get(ctx context.Context, userID string, adminAccountID string, id string) (*Campaign, error) {
 	row := r.db.QueryRow(ctx, `
 		SELECT id, user_id, admin_account_id, name, description, status, selection, adjustment, notify,
-			start_mode, start_at, end_mode, end_at, started_at, ended_at, created_at, updated_at
+			start_mode, start_at, end_mode, end_at, recurrence, cycle, started_at, ended_at, created_at, updated_at
 		FROM group_rate_campaigns
-		WHERE id = $1 AND user_id = $2 AND admin_account_id = $3
+		WHERE id = $1 AND user_id = $2 AND admin_account_id = $3 AND deleted_at IS NULL
 	`, id, userID, adminAccountID)
 	return scanCampaign(row)
 }
@@ -181,19 +288,19 @@ func (r *Repository) Get(ctx context.Context, userID string, adminAccountID stri
 func (r *Repository) GetByID(ctx context.Context, id string) (*Campaign, error) {
 	row := r.db.QueryRow(ctx, `
 		SELECT id, user_id, admin_account_id, name, description, status, selection, adjustment, notify,
-			start_mode, start_at, end_mode, end_at, started_at, ended_at, created_at, updated_at
+			start_mode, start_at, end_mode, end_at, recurrence, cycle, started_at, ended_at, created_at, updated_at
 		FROM group_rate_campaigns
-		WHERE id = $1
+		WHERE id = $1 AND deleted_at IS NULL
 	`, id)
 	return scanCampaign(row)
 }
 
 func scanCampaign(row pgx.Row) (*Campaign, error) {
 	var c Campaign
-	var selectionJSON, adjustmentJSON, notifyJSON []byte
+	var selectionJSON, adjustmentJSON, notifyJSON, recurrenceJSON []byte
 	var startMode, endMode, status string
 	if err := row.Scan(&c.ID, &c.UserID, &c.AdminAccountID, &c.Name, &c.Description, &status, &selectionJSON, &adjustmentJSON, &notifyJSON,
-		&startMode, &c.StartAt, &endMode, &c.EndAt, &c.StartedAt, &c.EndedAt, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		&startMode, &c.StartAt, &endMode, &c.EndAt, &recurrenceJSON, &c.Cycle, &c.StartedAt, &c.EndedAt, &c.CreatedAt, &c.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
@@ -211,6 +318,12 @@ func scanCampaign(row pgx.Row) (*Campaign, error) {
 	if err := json.Unmarshal(notifyJSON, &c.Notify); err != nil {
 		return nil, err
 	}
+	if len(recurrenceJSON) > 0 && string(recurrenceJSON) != "null" {
+		if err := json.Unmarshal(recurrenceJSON, &c.Recurrence); err != nil {
+			return nil, err
+		}
+	}
+	c.Recurrence = normalizeRecurrence(c.Recurrence)
 	return &c, nil
 }
 
@@ -219,10 +332,10 @@ func (r *Repository) List(ctx context.Context, userID string, adminAccountID str
 	offset := (query.Page - 1) * query.PageSize
 	rows, err := r.db.Query(ctx, `
 		SELECT id, user_id, admin_account_id, name, description, status, selection, adjustment, notify,
-			start_mode, start_at, end_mode, end_at, started_at, ended_at, created_at, updated_at,
+			start_mode, start_at, end_mode, end_at, recurrence, cycle, started_at, ended_at, created_at, updated_at,
 			count(*) OVER () AS total
 		FROM group_rate_campaigns
-		WHERE user_id = $1 AND admin_account_id = $2 AND ($3 = '' OR status = $3)
+		WHERE user_id = $1 AND admin_account_id = $2 AND deleted_at IS NULL AND ($3 = '' OR status = $3)
 		ORDER BY created_at DESC
 		LIMIT $4 OFFSET $5
 	`, userID, adminAccountID, query.Status, query.PageSize, offset)
@@ -235,10 +348,10 @@ func (r *Repository) List(ctx context.Context, userID string, adminAccountID str
 	total := 0
 	for rows.Next() {
 		var c Campaign
-		var selectionJSON, adjustmentJSON, notifyJSON []byte
+		var selectionJSON, adjustmentJSON, notifyJSON, recurrenceJSON []byte
 		var startMode, endMode, status string
 		if err := rows.Scan(&c.ID, &c.UserID, &c.AdminAccountID, &c.Name, &c.Description, &status, &selectionJSON, &adjustmentJSON, &notifyJSON,
-			&startMode, &c.StartAt, &endMode, &c.EndAt, &c.StartedAt, &c.EndedAt, &c.CreatedAt, &c.UpdatedAt, &total); err != nil {
+			&startMode, &c.StartAt, &endMode, &c.EndAt, &recurrenceJSON, &c.Cycle, &c.StartedAt, &c.EndedAt, &c.CreatedAt, &c.UpdatedAt, &total); err != nil {
 			return nil, 0, err
 		}
 		c.Status = status
@@ -253,6 +366,12 @@ func (r *Repository) List(ctx context.Context, userID string, adminAccountID str
 		if err := json.Unmarshal(notifyJSON, &c.Notify); err != nil {
 			return nil, 0, err
 		}
+		if len(recurrenceJSON) > 0 && string(recurrenceJSON) != "null" {
+			if err := json.Unmarshal(recurrenceJSON, &c.Recurrence); err != nil {
+				return nil, 0, err
+			}
+		}
+		c.Recurrence = normalizeRecurrence(c.Recurrence)
 		campaigns = append(campaigns, c)
 	}
 	if err := rows.Err(); err != nil {
@@ -263,14 +382,14 @@ func (r *Repository) List(ctx context.Context, userID string, adminAccountID str
 
 // ListDueScheduled 返回所有到达开始时间、尚未开启的活动，供调度器扫描。
 func (r *Repository) ListDueScheduled(ctx context.Context, now time.Time) ([]string, error) {
-	return r.listIDs(ctx, `SELECT id FROM group_rate_campaigns WHERE status = 'scheduled' AND start_at IS NOT NULL AND start_at <= $1`, now)
+	return r.listIDs(ctx, `SELECT id FROM group_rate_campaigns WHERE deleted_at IS NULL AND status = 'scheduled' AND start_at IS NOT NULL AND start_at <= $1`, now)
 }
 
 // ListDueRunning 返回所有到达结束时间、仍需恢复的活动，供调度器扫描。
 // 覆盖 running 和 partial 两种状态：partial 表示开启阶段部分分组失败，
 // 但仍有分组已经真实改价，到期时同样必须恢复。
 func (r *Repository) ListDueRunning(ctx context.Context, now time.Time) ([]string, error) {
-	return r.listIDs(ctx, `SELECT id FROM group_rate_campaigns WHERE status IN ('running', 'partial') AND end_mode = 'scheduled' AND end_at IS NOT NULL AND end_at <= $1`, now)
+	return r.listIDs(ctx, `SELECT id FROM group_rate_campaigns WHERE deleted_at IS NULL AND status IN ('running', 'partial') AND end_mode = 'scheduled' AND end_at IS NOT NULL AND end_at <= $1`, now)
 }
 
 func (r *Repository) listIDs(ctx context.Context, sql string, args ...any) ([]string, error) {
@@ -304,12 +423,12 @@ func (r *Repository) ClaimForRunning(ctx context.Context, id string) (bool, erro
 	return tag.RowsAffected() == 1, nil
 }
 
-// ClaimForEnding 用条件更新把 running/partial 活动抢占为 ending，返回是否抢占成功。
-// partial 活动可能仍有已成功改价、尚未恢复的分组，必须允许进入 ending 才能被恢复。
+// ClaimForEnding 用 updated_at 条件更新抢占恢复执行权，但不写入单独的
+// “ending”状态。页面只展示 running/partial，恢复成功后直接 ended，失败则保留 partial。
 func (r *Repository) ClaimForEnding(ctx context.Context, id string) (bool, error) {
 	tag, err := r.db.Exec(ctx, `
-		UPDATE group_rate_campaigns SET status = 'ending', updated_at = now()
-		WHERE id = $1 AND status IN ('running', 'partial')
+		UPDATE group_rate_campaigns SET updated_at = now()
+		WHERE id = $1 AND deleted_at IS NULL AND status IN ('running', 'partial')
 	`, id)
 	if err != nil {
 		return false, err
@@ -325,7 +444,22 @@ func (r *Repository) FinishStart(ctx context.Context, id string, status string) 
 
 // FinishEnd 在恢复执行完成后写入最终状态（ended/partial）并记录结束时间。
 func (r *Repository) FinishEnd(ctx context.Context, id string, status string) error {
-	_, err := r.db.Exec(ctx, `UPDATE group_rate_campaigns SET status = $2, ended_at = now(), updated_at = now() WHERE id = $1`, id, status)
+	_, err := r.db.Exec(ctx, `
+		UPDATE group_rate_campaigns
+		SET status = $2,
+			ended_at = CASE WHEN $2 = 'ended' THEN now() ELSE NULL END,
+			updated_at = now()
+		WHERE id = $1 AND deleted_at IS NULL
+	`, id, status)
+	return err
+}
+
+func (r *Repository) RescheduleAfterEnd(ctx context.Context, id string, nextStart time.Time, nextEnd time.Time) error {
+	_, err := r.db.Exec(ctx, `
+		UPDATE group_rate_campaigns
+		SET status = 'scheduled', start_at = $2, end_at = $3, ended_at = now(), cycle = cycle + 1, updated_at = now()
+		WHERE id = $1 AND deleted_at IS NULL AND status IN ('running', 'partial')
+	`, id, nextStart, nextEnd)
 	return err
 }
 
@@ -333,7 +467,7 @@ func (r *Repository) FinishEnd(ctx context.Context, id string, status string) er
 func (r *Repository) ClaimForCancel(ctx context.Context, id string) (bool, error) {
 	tag, err := r.db.Exec(ctx, `
 		UPDATE group_rate_campaigns SET status = 'cancelled', updated_at = now()
-		WHERE id = $1 AND status IN ('draft', 'scheduled')
+		WHERE id = $1 AND deleted_at IS NULL AND status IN ('draft', 'scheduled')
 	`, id)
 	if err != nil {
 		return false, err
