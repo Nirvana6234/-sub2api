@@ -474,7 +474,10 @@ export function buildPlaygroundImageRequest(input: PlaygroundImageRequestInput):
     body.style = input.style
   }
 
-  if (supportsNativeOptions || isDallE) body.response_format = 'b64_json'
+  // GPT Image endpoints always return base64 and reject response_format.
+  // DALL-E still requires the explicit response format for the compatible
+  // image route.
+  if (isDallE) body.response_format = 'b64_json'
 
   return {
     body,

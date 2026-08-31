@@ -29,8 +29,8 @@ const actions = computed(() => [
   { id: 'copy' as const, icon: 'clipboard' as const, label: t('playground.canvasCopyNode'), shortcut: 'Ctrl+C' },
   { id: 'front' as const, icon: 'arrowUp' as const, label: t('playground.canvasBringFront') },
   { id: 'back' as const, icon: 'arrowDown' as const, label: t('playground.canvasSendBack') },
-  ...(props.node.imageUrl ? [{ id: 'download' as const, icon: 'download' as const, label: t('playground.canvasDownload') }] : []),
-  ...(props.node.kind === 'result' ? [{ id: 'reference' as const, icon: 'upload' as const, label: t('playground.canvasUseAsReference') }] : []),
+  ...(props.node.imageUrl || props.node.videoUrl || props.node.audioUrl ? [{ id: 'download' as const, icon: 'download' as const, label: t('playground.canvasDownload') }] : []),
+  ...(props.node.kind === 'result' && props.node.type === 'image' ? [{ id: 'reference' as const, icon: 'upload' as const, label: t('playground.canvasUseAsReference') }] : []),
   { id: 'delete' as const, icon: 'trash' as const, label: t('playground.canvasDeleteNode'), shortcut: 'Del', danger: true },
 ])
 

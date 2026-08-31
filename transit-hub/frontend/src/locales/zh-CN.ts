@@ -2535,7 +2535,7 @@ export default {
           multiplierChangeWarning: '倍率与可用性预警',
           multiplierChangeWarningHelp: '当监控的对接分组倍率发生变化，或调度器将上游账号自动置底时，通过机器人发送通知。',
           fallbackPoolUsageWarning: '兜底池使用预警',
-          fallbackPoolUsageWarningHelp: '只要请求从原分组切入对应兜底池，就通过机器人发送通知；即使原账号池和兜底池都没有可用账号，也不依赖 usage 查询权限。',
+          fallbackPoolUsageWarningHelp: '当请求实际选中兜底池账号并写入使用记录后，通过机器人发送通知；不会因为仅进入兜底候选链路就提醒。',
           resourceUsageWarning: '服务器资源占用预警',
           resourceUsageWarningHelp: '通过已配置的 Sub2API 管理员密钥读取 CPU 和内存占用；任一指标首次超过阈值时通知，恢复后再次超过会重新通知。采集频率遵循数据刷新设置。'
         },

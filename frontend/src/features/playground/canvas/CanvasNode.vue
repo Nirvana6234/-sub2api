@@ -54,6 +54,17 @@
       <button type="button" class="btn btn-ghost btn-icon h-7 w-7 p-0" :title="t('playground.canvasCaptureFirstFrame')" @click.stop="emit('capture-video-frame', node.id, 'first')"><Icon name="chevronLeft" size="xs" /><span class="sr-only">{{ t('playground.canvasCaptureFirstFrame') }}</span></button>
       <button type="button" class="btn btn-ghost btn-icon h-7 w-7 p-0" :title="t('playground.canvasCaptureCurrentFrame')" @click.stop="emit('capture-video-frame', node.id, 'current', videoElement?.currentTime ?? 0)"><Icon name="eye" size="xs" /><span class="sr-only">{{ t('playground.canvasCaptureCurrentFrame') }}</span></button>
       <button type="button" class="btn btn-ghost btn-icon h-7 w-7 p-0" :title="t('playground.canvasCaptureLastFrame')" @click.stop="emit('capture-video-frame', node.id, 'last')"><Icon name="chevronRight" size="xs" /><span class="sr-only">{{ t('playground.canvasCaptureLastFrame') }}</span></button>
+      <span class="mx-0.5 h-5 w-px bg-gray-200 dark:bg-dark-600"></span>
+      <button type="button" class="btn btn-ghost btn-icon h-7 w-7 p-0" :title="t('playground.canvasEditVideo')" @click.stop="emit('edit-video', node.id)"><Icon name="edit" size="xs" /><span class="sr-only">{{ t('playground.canvasEditVideo') }}</span></button>
+      <button type="button" class="btn btn-ghost btn-icon h-7 w-7 p-0" :title="t('playground.canvasDownload')" @click.stop="emit('download', node.id)"><Icon name="download" size="xs" /><span class="sr-only">{{ t('playground.canvasDownload') }}</span></button>
+      <button type="button" class="btn btn-ghost btn-icon h-7 w-7 p-0" :title="t('playground.canvasSaveAsset')" @click.stop="emit('save-asset', node.id)"><Icon name="inbox" size="xs" /><span class="sr-only">{{ t('playground.canvasSaveAsset') }}</span></button>
+      <button v-if="canUploadMedia" type="button" class="btn btn-ghost btn-icon h-7 w-7 p-0" :title="t(mediaReplaceLabelKey)" @click.stop="openMediaUpload"><Icon name="upload" size="xs" /><span class="sr-only">{{ t(mediaReplaceLabelKey) }}</span></button>
+    </div>
+    <div v-if="(selected || nodeHovered) && node.type === 'audio' && node.audioUrl" class="absolute left-1/2 z-50 flex h-9 max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-0.5 overflow-x-auto rounded-md border border-gray-200 bg-white px-1 shadow-lg dark:border-dark-600 dark:bg-dark-800" :class="toolbarPlacementClass" data-canvas-hover-toolbar data-canvas-no-zoom @pointerdown.stop>
+      <button type="button" class="btn btn-ghost btn-icon h-7 w-7 p-0" :title="t('playground.canvasDownload')" @click.stop="emit('download', node.id)"><Icon name="download" size="xs" /><span class="sr-only">{{ t('playground.canvasDownload') }}</span></button>
+      <button type="button" class="btn btn-ghost btn-icon h-7 w-7 p-0" :title="t('playground.canvasSaveAsset')" @click.stop="emit('save-asset', node.id)"><Icon name="inbox" size="xs" /><span class="sr-only">{{ t('playground.canvasSaveAsset') }}</span></button>
+      <button v-if="canUploadMedia" type="button" class="btn btn-ghost btn-icon h-7 w-7 p-0" :title="t(mediaReplaceLabelKey)" @click.stop="openMediaUpload"><Icon name="upload" size="xs" /><span class="sr-only">{{ t(mediaReplaceLabelKey) }}</span></button>
+      <button type="button" class="btn btn-ghost btn-icon h-7 w-7 p-0" :title="t('playground.canvasTranscribeAudio')" @click.stop="emit('transcribe-audio', node.id)"><Icon name="document" size="xs" /><span class="sr-only">{{ t('playground.canvasTranscribeAudio') }}</span></button>
     </div>
     <div v-if="(selected || nodeHovered) && remoteToolbarItems.length" class="absolute left-1/2 z-50 flex h-9 max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-0.5 overflow-x-auto rounded-md border border-gray-200 bg-white px-1 shadow-lg dark:border-dark-600 dark:bg-dark-800" :class="toolbarPlacementClass" data-canvas-hover-toolbar data-canvas-no-zoom @pointerdown.stop>
       <button v-for="item in remoteToolbarItems" :key="item.id" type="button" class="btn btn-ghost h-7 gap-1 px-2 text-[11px]" :class="item.danger ? 'text-red-600' : ''" :title="item.title" @click.stop="item.onClick()"><span v-if="item.icon" aria-hidden="true">{{ item.icon }}</span>{{ item.label }}</button>
@@ -108,7 +119,7 @@
         @pointerdown.stop="emit('select', node.id, $event)"
         @change="emit('update-prompt', node.id, ($event.target as HTMLInputElement).value)"
       >
-      <button v-if="node.kind === 'result' && (node.imageUrl || node.audioUrl)" type="button" class="btn btn-ghost btn-icon h-7 w-7 shrink-0 p-0 text-gray-500" :title="t('playground.canvasDownload')" data-canvas-no-zoom @click.stop="emit('download', node.id)">
+      <button v-if="node.kind === 'result' && (node.imageUrl || node.videoUrl || node.audioUrl)" type="button" class="btn btn-ghost btn-icon h-7 w-7 shrink-0 p-0 text-gray-500" :title="t('playground.canvasDownload')" data-canvas-no-zoom @click.stop="emit('download', node.id)">
         <Icon name="download" size="xs" :class="{ 'animate-pulse': downloading }" />
         <span class="sr-only">{{ t('playground.canvasDownload') }}</span>
       </button>
@@ -217,6 +228,25 @@
         <button v-for="mode in (['image', 'text', 'video', 'audio'] as const)" :key="mode" type="button" class="rounded-md px-1 py-1.5 text-[10px] font-medium transition" :class="configMode === mode ? 'bg-white text-teal-700 shadow-sm dark:bg-dark-700 dark:text-teal-200' : 'text-gray-500 hover:text-gray-800 dark:text-dark-400 dark:hover:text-dark-100'" :disabled="node.status === 'generating' || configBusy" @click.stop="emit('update-config', node.id, 'mode', mode)">
           {{ t(`playground.canvasConfigMode${mode.charAt(0).toUpperCase()}${mode.slice(1)}`) }}
         </button>
+      </div>
+      <div class="flex min-w-0 flex-wrap items-center gap-1.5" data-canvas-config-input-summary>
+        <span class="shrink-0 text-[10px] font-medium text-gray-500 dark:text-dark-400">{{ t('playground.canvasInputsLabel') }}</span>
+        <span class="inline-flex h-6 items-center gap-1 rounded-full border border-gray-200 bg-gray-50 px-2 text-[10px] text-gray-600 dark:border-dark-700 dark:bg-dark-800 dark:text-dark-300">
+          <Icon name="document" size="xs" />
+          {{ t('playground.canvasTextCount', { count: configInputSummary.text }) }}
+        </span>
+        <span class="inline-flex h-6 items-center gap-1 rounded-full border border-gray-200 bg-gray-50 px-2 text-[10px] text-gray-600 dark:border-dark-700 dark:bg-dark-800 dark:text-dark-300">
+          <Icon name="sparkles" size="xs" />
+          {{ t('playground.canvasReferences', { count: configInputSummary.image }) }}
+        </span>
+        <span v-if="configInputSummary.video" class="inline-flex h-6 items-center gap-1 rounded-full border border-gray-200 bg-gray-50 px-2 text-[10px] text-gray-600 dark:border-dark-700 dark:bg-dark-800 dark:text-dark-300">
+          <Icon name="play" size="xs" />
+          {{ configInputSummary.video }}
+        </span>
+        <span v-if="configInputSummary.audio" class="inline-flex h-6 items-center gap-1 rounded-full border border-gray-200 bg-gray-50 px-2 text-[10px] text-gray-600 dark:border-dark-700 dark:bg-dark-800 dark:text-dark-300">
+          <Icon name="chatBubble" size="xs" />
+          {{ configInputSummary.audio }}
+        </span>
       </div>
       <div class="grid grid-cols-[minmax(0,1fr)_minmax(0,auto)] items-end gap-2">
         <label class="block min-w-0 text-[11px] font-medium text-gray-500 dark:text-dark-400">{{ t('playground.modelLabel') }}
@@ -398,9 +428,13 @@
       <div v-else class="flex min-h-64 flex-col items-center justify-center gap-2 px-5 text-center text-gray-400 dark:text-dark-400">
         <Icon :name="displayedImageSlot?.status === 'error' || node.status === 'error' ? 'exclamationCircle' : 'sparkles'" size="lg" :class="displayedImageSlot?.status === 'error' || node.status === 'error' ? 'text-red-500' : ''" />
         <span class="text-xs">{{ displayedImageSlot?.status === 'pending' || node.status === 'generating' ? t('playground.canvasGenerating') : displayedImageSlot?.status === 'error' ? (displayedImageSlot.errorMessage || t('playground.canvasGenerationFailed')) : node.status === 'error' ? node.errorMessage : t('playground.canvasEmptyNode') }}</span>
-        <button v-if="node.type === 'image' && node.kind !== 'result' && displayedImageSlot?.status !== 'pending' && node.status !== 'generating'" type="button" class="btn btn-secondary h-7 gap-1 px-2.5 text-[11px]" :title="t('playground.canvasUploadImage')" @click.stop="openImageUpload">
+        <button v-if="canUploadMedia" type="button" class="btn btn-secondary h-7 gap-1 px-2.5 text-[11px]" :title="t(mediaUploadLabelKey)" @click.stop="openMediaUpload">
           <Icon name="upload" size="xs" />
-          {{ t('playground.canvasUploadImage') }}
+          {{ t(mediaUploadLabelKey) }}
+        </button>
+        <button v-if="node.status === 'error' && (node.type === 'video' || node.type === 'audio' || node.type === 'text')" type="button" class="btn btn-secondary h-7 gap-1 px-2.5 text-[11px]" :title="t('playground.canvasRetryGeneration')" @click.stop="emit('retry-generation', node.id)">
+          <Icon name="refresh" size="xs" />
+          {{ t('playground.canvasRetryGeneration') }}
         </button>
         <button v-if="displayedImageSlot?.status === 'error'" type="button" class="btn btn-secondary h-7 gap-1 px-2.5 text-[11px]" @click.stop="emit('retry-image', node.id, imageIndex)"><Icon name="refresh" size="xs" />{{ t('playground.canvasRetryImage') }}</button>
       </div>
@@ -452,8 +486,12 @@
           <Icon name="inbox" size="xs" />
           <span class="sr-only">{{ t('playground.canvasSaveAsset') }}</span>
         </button>
-        <div v-if="(node.type === 'image' && (node.kind === 'result' || node.imageCacheKey || node.imageCacheKeys?.length)) || (node.type === 'audio' && node.kind === 'result' && node.audioUrl)" class="flex shrink-0 items-center gap-1">
-          <button type="button" class="btn btn-ghost btn-icon h-7 w-7 p-0 text-teal-700 dark:text-teal-300" :title="t('playground.canvasUseAsReference')" data-canvas-no-zoom @pointerdown.stop @click.stop="emit('use-reference', node.id, imageIndex)">
+        <button v-if="canReplaceMedia" type="button" class="btn btn-ghost btn-icon h-7 w-7 shrink-0 p-0 text-gray-500" :title="t(mediaReplaceLabelKey)" data-canvas-no-zoom @pointerdown.stop @click.stop="openMediaUpload">
+          <Icon name="upload" size="xs" />
+          <span class="sr-only">{{ t(mediaReplaceLabelKey) }}</span>
+        </button>
+        <div v-if="(node.type === 'image' && (node.kind === 'result' || node.imageCacheKey || node.imageCacheKeys?.length)) || (node.type === 'video' && node.kind === 'result' && node.videoUrl) || (node.type === 'audio' && node.kind === 'result' && node.audioUrl)" class="flex shrink-0 items-center gap-1">
+          <button v-if="node.type === 'image'" type="button" class="btn btn-ghost btn-icon h-7 w-7 p-0 text-teal-700 dark:text-teal-300" :title="t('playground.canvasUseAsReference')" data-canvas-no-zoom @pointerdown.stop @click.stop="emit('use-reference', node.id, imageIndex)">
             <Icon name="upload" size="xs" />
             <span class="sr-only">{{ t('playground.canvasUseAsReference') }}</span>
           </button>
@@ -470,12 +508,12 @@
           <Icon :name="node.status === 'generating' ? 'x' : 'sparkles'" size="xs" />
           {{ node.status === 'generating' ? t('playground.canvasCancelGeneration') : (node.textContent || node.prompt).trim() ? t('playground.canvasRewriteText') : t('playground.canvasGenerateText') }}
         </button>
-        <button v-else-if="node.type === 'video' && node.kind !== 'result'" type="button" class="btn h-8 shrink-0 gap-1 px-2.5 text-xs" :class="node.status === 'generating' ? 'btn-ghost text-red-600' : 'btn-primary'" :disabled="node.status !== 'generating' && !node.prompt.trim()" :title="node.status === 'generating' ? t('playground.canvasCancelGeneration') : t('playground.canvasGenerateVideo')" data-canvas-no-zoom @click.stop="node.status === 'generating' ? emit('cancel-video', node.id) : emit('generate-video', node.id)">
+        <button v-else-if="node.type === 'video' && node.kind !== 'result'" type="button" class="btn h-8 shrink-0 gap-1 px-2.5 text-xs" :class="node.status === 'generating' ? 'btn-ghost text-red-600' : 'btn-primary'" :disabled="node.status !== 'generating' && !canGenerateMedia" :title="node.status === 'generating' ? t('playground.canvasCancelGeneration') : t('playground.canvasGenerateVideo')" data-canvas-no-zoom @click.stop="node.status === 'generating' ? emit('cancel-video', node.id) : emit('generate-video', node.id)">
           <Icon :name="node.status === 'generating' ? 'x' : 'play'" size="xs" />
           {{ node.status === 'generating' ? t('playground.canvasCancelGeneration') : t('playground.canvasGenerateVideo') }}
         </button>
         <div v-else-if="node.type === 'audio' && node.kind !== 'result'" class="flex shrink-0 items-center gap-1">
-          <button type="button" class="btn h-8 shrink-0 gap-1 px-2.5 text-xs" :class="node.status === 'generating' ? 'btn-ghost text-red-600' : 'btn-primary'" :disabled="node.status === 'generating' || !node.prompt.trim()" :title="t('playground.canvasGenerateAudio')" data-canvas-no-zoom @click.stop="emit('generate-audio', node.id)"><Icon :name="node.status === 'generating' ? 'x' : 'play'" size="xs" />{{ node.status === 'generating' ? t('playground.canvasGenerating') : t('playground.canvasGenerateAudio') }}</button>
+          <button type="button" class="btn h-8 shrink-0 gap-1 px-2.5 text-xs" :class="node.status === 'generating' ? 'btn-ghost text-red-600' : 'btn-primary'" :disabled="node.status !== 'generating' && !canGenerateMedia" :title="node.status === 'generating' ? t('playground.canvasCancelGeneration') : t('playground.canvasGenerateAudio')" data-canvas-no-zoom @click.stop="node.status === 'generating' ? emit('cancel-audio', node.id) : emit('generate-audio', node.id)"><Icon :name="node.status === 'generating' ? 'x' : 'play'" size="xs" />{{ node.status === 'generating' ? t('playground.canvasCancelGeneration') : t('playground.canvasGenerateAudio') }}</button>
           <button v-if="node.audioUrl" type="button" class="btn btn-ghost btn-icon h-8 w-8 p-0 text-gray-500" :class="transcribing ? 'text-teal-700' : ''" :disabled="transcribing" :title="t('playground.canvasTranscribeAudio')" data-canvas-no-zoom @click.stop="emit('transcribe-audio', node.id)"><Icon name="document" size="xs" :class="{ 'animate-pulse': transcribing }" /><span class="sr-only">{{ t('playground.canvasTranscribeAudio') }}</span></button>
         </div>
         <button v-else-if="node.type === 'image'" type="button" class="btn btn-primary h-8 shrink-0 gap-1 px-2.5 text-xs" :disabled="node.status === 'generating' || !node.prompt.trim()" data-canvas-no-zoom @click.stop="emit('generate', node.id)">
@@ -527,7 +565,7 @@
       </section>
     </div>
   </Teleport>
-  <input ref="imageUploadInput" type="file" accept="image/*" class="hidden" data-canvas-no-zoom @change="handleImageUpload">
+  <input ref="mediaUploadInput" type="file" :accept="mediaUploadAccept" class="hidden" data-canvas-no-zoom @change="handleMediaUpload">
 </template>
 
 <script setup lang="ts">
@@ -568,6 +606,7 @@ const props = defineProps<{
   pluginReferenceSelecting?: boolean
   mentionReferences?: CanvasMentionReference[]
   incomingReferences?: CanvasReferenceItem[]
+  hasInheritedPrompt?: boolean
   imageModels?: PlaygroundModel[]
   textModels?: PlaygroundModel[]
   videoModels?: PlaygroundModel[]
@@ -583,6 +622,8 @@ const emit = defineEmits<{
   'generate-video': [id: string]
   'cancel-video': [id: string]
   'generate-audio': [id: string]
+  'cancel-audio': [id: string]
+  'retry-generation': [id: string]
   'transcribe-audio': [id: string]
   download: [id: string, imageIndex?: number]
   'use-reference': [id: string, imageIndex?: number]
@@ -600,8 +641,11 @@ const emit = defineEmits<{
   'angle-image': [id: string, imageIndex: number]
   'toggle-free-resize': [id: string]
   'capture-video-frame': [id: string, position: 'first' | 'current' | 'last', currentTime?: number]
+  'edit-video': [id: string]
   'save-asset': [id: string, imageIndex?: number]
   'upload-image': [id: string, file: File]
+  'upload-video': [id: string, file: File]
+  'upload-audio': [id: string, file: File]
   'show-info': [id: string]
   'connect-start': [id: string, handleType: 'source' | 'target']
   'update-prompt': [id: string, prompt: string]
@@ -703,7 +747,7 @@ const imageToolbarToolIds = ref<ImageToolbarToolId[]>([...defaultImageToolbarToo
 const imageToolbarSettingsDraft = ref<ImageToolbarToolId[]>([...defaultImageToolbarToolIds])
 const imageIndex = ref(Math.max(0, props.node.primaryImageIndex ?? 0))
 const imageBatchExpanded = ref(false)
-const imageUploadInput = ref<HTMLInputElement | null>(null)
+const mediaUploadInput = ref<HTMLInputElement | null>(null)
 const textVariantsExpanded = ref(false)
 const configComposerOpen = ref(false)
 const videoElement = ref<HTMLVideoElement | null>(null)
@@ -742,6 +786,18 @@ const configModelOptions = computed(() => {
   return props.textModels ?? []
 })
 const configModel = computed(() => props.node.config?.model || props.node.model || configModelOptions.value[0]?.id || '')
+const canGenerateMedia = computed(() => Boolean(props.node.prompt.trim() || props.hasInheritedPrompt))
+const canUploadMedia = computed(() => ['image', 'video', 'audio'].includes(props.node.type) && (props.node.type !== 'image' || props.node.kind !== 'result') && props.node.status !== 'generating' && displayedImageSlot.value?.status !== 'pending')
+const canReplaceMedia = computed(() => canUploadMedia.value && ((props.node.type === 'image' && Boolean(displayedImageUrl.value || imageUrls.value.length)) || (props.node.type === 'video' && Boolean(props.node.videoUrl)) || (props.node.type === 'audio' && Boolean(props.node.audioUrl))))
+const mediaUploadAccept = computed(() => props.node.type === 'video' ? 'video/*' : props.node.type === 'audio' ? 'audio/*' : 'image/*')
+const mediaUploadLabelKey = computed(() => props.node.type === 'video' ? 'playground.canvasUploadVideo' : props.node.type === 'audio' ? 'playground.canvasUploadAudio' : 'playground.canvasUploadImage')
+const mediaReplaceLabelKey = computed(() => props.node.type === 'video' ? 'playground.canvasReplaceVideo' : props.node.type === 'audio' ? 'playground.canvasReplaceAudio' : 'playground.canvasReplaceImage')
+const configInputSummary = computed(() => ({
+  text: (props.incomingReferences ?? []).filter((reference) => reference.kind === 'text').length,
+  image: (props.incomingReferences ?? []).filter((reference) => reference.kind === 'image').length,
+  video: (props.incomingReferences ?? []).filter((reference) => reference.kind === 'video').length,
+  audio: (props.incomingReferences ?? []).filter((reference) => reference.kind === 'audio').length,
+}))
 const builtinReferenceNodes = computed(() => builtinPanelConfig.value ? props.pluginContext?.getUpstream() ?? [] : [])
 const remotePluginHeight = computed(() => Math.max(176, props.node.height - 104))
 const pluginInteractive = computed(() => {
@@ -900,14 +956,16 @@ function openImageToolbarSettings(): void {
   imageToolbarSettingsOpen.value = true
 }
 
-function openImageUpload(): void {
-  imageUploadInput.value?.click()
+function openMediaUpload(): void {
+  mediaUploadInput.value?.click()
 }
 
-function handleImageUpload(event: Event): void {
+function handleMediaUpload(event: Event): void {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
-  if (file?.type.startsWith('image/')) emit('upload-image', props.node.id, file)
+  if (file?.type.startsWith('image/') && props.node.type === 'image') emit('upload-image', props.node.id, file)
+  else if (file?.type.startsWith('video/') && props.node.type === 'video') emit('upload-video', props.node.id, file)
+  else if (file?.type.startsWith('audio/') && props.node.type === 'audio') emit('upload-audio', props.node.id, file)
   input.value = ''
 }
 

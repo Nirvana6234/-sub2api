@@ -6,12 +6,27 @@
 import { apiClient } from './client'
 import type { ApiKey, CreateApiKeyRequest, UpdateApiKeyRequest, PaginatedResponse } from '@/types'
 
+const MANAGED_CLIENT_API_KEY_PREFIX = '共飞直连客户端-'
+const PLAYGROUND_API_KEY_NAMES = new Set(['Playground Chat', 'Playground Images'])
+const MAX_KEY_LIST_PAGES = 100
+
+/** Website-only filter for system-managed API keys. */
+export function isManagedClientApiKey(key: Pick<ApiKey, 'name'>): boolean {
+  return key.name.trim().startsWith(MANAGED_CLIENT_API_KEY_PREFIX)
+}
+
+export function isWebsiteHiddenApiKey(key: Pick<ApiKey, 'name'>): boolean {
+  const name = key.name.trim()
+  return isManagedClientApiKey(key) || PLAYGROUND_API_KEY_NAMES.has(name)
+}
+
 /**
  * List all API keys for current user
  * @param page - Page number (default: 1)
  * @param pageSize - Items per page (default: 10)
  * @param filters - Optional filter parameters
- * @param options - Optional request options
+ * @param options - Optional request options. `includeHidden` is reserved for
+ *                  website features that need system-managed keys internally.
  * @returns Paginated list of API keys
  */
 export async function list(
@@ -26,13 +41,48 @@ export async function list(
   },
   options?: {
     signal?: AbortSignal
+    includeHidden?: boolean
   }
 ): Promise<PaginatedResponse<ApiKey>> {
-  const { data } = await apiClient.get<PaginatedResponse<ApiKey>>('/keys', {
-    params: { page, page_size: pageSize, ...filters },
-    signal: options?.signal
-  })
-  return data
+  if (options?.includeHidden) {
+    const { data } = await apiClient.get<PaginatedResponse<ApiKey>>('/keys', {
+      params: { page, page_size: pageSize, ...filters },
+      signal: options.signal
+    })
+    return data
+  }
+
+  // The server still returns these keys so clients and the playground can use
+  // them internally. Fetch all pages first, then paginate after hiding them
+  // so website totals and page counts stay correct.
+  const visibleKeys: ApiKey[] = []
+  let serverPage = 1
+  let serverPages = 1
+
+  while (serverPage <= serverPages && serverPage <= MAX_KEY_LIST_PAGES) {
+    const { data } = await apiClient.get<PaginatedResponse<ApiKey>>('/keys', {
+      params: { page: serverPage, page_size: 1000, ...filters },
+      signal: options?.signal
+    })
+
+    visibleKeys.push(...data.items.filter((key) => !isWebsiteHiddenApiKey(key)))
+    serverPages = Math.max(data.pages || 1, 1)
+    if (data.items.length === 0 || serverPage >= serverPages) break
+    serverPage += 1
+  }
+
+  const normalizedPage = Math.max(page, 1)
+  const normalizedPageSize = Math.max(pageSize, 1)
+  const start = (normalizedPage - 1) * normalizedPageSize
+  const total = visibleKeys.length
+
+  return {
+    items: visibleKeys.slice(start, start + normalizedPageSize),
+    total,
+    page: normalizedPage,
+    page_size: normalizedPageSize,
+    pages: Math.max(Math.ceil(total / normalizedPageSize), 1)
+  }
 }
 
 /** Ensure the purpose-bound keys used by the playground exist for this user. */

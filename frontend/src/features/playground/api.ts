@@ -353,6 +353,42 @@ export async function sendPlaygroundVideoGeneration(
   }
 }
 
+export async function sendPlaygroundVideoEdit(
+  keyId: number,
+  body: Record<string, unknown>,
+  options: { signal?: AbortSignal } = {},
+): Promise<PlaygroundVideoResponse> {
+  const response = await authorizedFetch(buildApiUrl('/playground/videos/edits'), {
+    method: 'POST',
+    signal: options.signal,
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      'X-Sub2API-Playground-Key-ID': String(keyId),
+    },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) throw new Error(await parseFailure(response))
+  const payload = await response.json() as Record<string, unknown>
+  const errorMessage = extractErrorMessage(payload)
+  if (errorMessage) throw new Error(errorMessage)
+  const nested = payload.data && typeof payload.data === 'object' ? payload.data as Record<string, unknown> : undefined
+  const id = typeof payload.id === 'string'
+    ? payload.id
+    : typeof payload.request_id === 'string'
+      ? payload.request_id
+      : typeof nested?.id === 'string'
+        ? nested.id
+        : typeof nested?.request_id === 'string' ? nested.request_id : ''
+  if (!id) throw new Error('No video edit request id was returned.')
+  return {
+    id,
+    status: typeof payload.status === 'string' ? payload.status : undefined,
+    video_url: typeof payload.video_url === 'string' ? payload.video_url : undefined,
+    url: typeof payload.url === 'string' ? payload.url : undefined,
+  }
+}
+
 export async function sendPlaygroundSpeech(
   keyId: number,
   body: Record<string, unknown>,

@@ -14,6 +14,7 @@ type playgroundGatewayDispatch struct {
 	chatCompletions   gin.HandlerFunc
 	imagesGenerations gin.HandlerFunc
 	videoGeneration   gin.HandlerFunc
+	videoEdit         gin.HandlerFunc
 	videoStatus       gin.HandlerFunc
 	videoContent      gin.HandlerFunc
 	voiceTTS          gin.HandlerFunc
@@ -86,6 +87,14 @@ func RegisterPlaygroundRoutes(
 		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
 		c.JSON(404, gin.H{"error": gin.H{"type": "not_found_error", "message": "Videos API is not supported for this platform"}})
 	}
+	videoEditHandler := func(c *gin.Context) {
+		if platform := getGroupPlatform(c); platform == service.PlatformGrok || platform == service.PlatformComposite {
+			h.OpenAIGateway.GrokVideoEdit(c)
+			return
+		}
+		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
+		c.JSON(404, gin.H{"error": gin.H{"type": "not_found_error", "message": "Videos API is not supported for this platform"}})
+	}
 	videoStatusHandler := func(c *gin.Context) {
 		if platform := getGroupPlatform(c); platform == service.PlatformGrok || platform == service.PlatformComposite {
 			h.OpenAIGateway.GrokVideoStatus(c)
@@ -131,6 +140,7 @@ func RegisterPlaygroundRoutes(
 			chatCompletions:   chatCompletionsHandler,
 			imagesGenerations: imagesGenerationsHandler,
 			videoGeneration:   videoGenerationHandler,
+			videoEdit:         videoEditHandler,
 			videoStatus:       videoStatusHandler,
 			videoContent:      videoContentHandler,
 			voiceTTS:          voiceTTSHandler,
@@ -204,6 +214,9 @@ func registerPlaygroundRoutes(
 		gateway.POST("/images/edits", middleware.PlaygroundCredentialBodyGuard, compositeTarget, requireGroupAnthropic, dispatch.imagesGenerations)
 		if dispatch.videoGeneration != nil {
 			gateway.POST("/videos/generations", middleware.PlaygroundCredentialBodyGuard, compositeTarget, requireGroupAnthropic, dispatch.videoGeneration)
+		}
+		if dispatch.videoEdit != nil {
+			gateway.POST("/videos/edits", middleware.PlaygroundCredentialBodyGuard, compositeTarget, requireGroupAnthropic, dispatch.videoEdit)
 		}
 		if dispatch.videoStatus != nil && dispatch.videoContent != nil {
 			gateway.GET("/videos/:request_id", requireGroupAnthropic, dispatch.videoStatus)

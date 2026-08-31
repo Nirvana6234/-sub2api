@@ -217,6 +217,26 @@ describe('playground api transport', () => {
     ])
   })
 
+  it('sends video edits through the playground edit route', async () => {
+    const { sendPlaygroundVideoEdit } = await import('../api')
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ request_id: 'video-edit-1', status: 'queued' }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(sendPlaygroundVideoEdit(42, {
+      model: 'grok-imagine-video',
+      prompt: 'change the lighting',
+      video: { url: 'data:video/mp4;base64,AAAA' },
+    })).resolves.toMatchObject({ id: 'video-edit-1' })
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/playground/videos/edits', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'grok-imagine-video',
+        prompt: 'change the lighting',
+        video: { url: 'data:video/mp4;base64,AAAA' },
+      }),
+    }))
+  })
+
   it('sends speech synthesis through the authenticated playground route', async () => {
     const { sendPlaygroundSpeech } = await import('../api')
     const fetchMock = vi.fn(async () => new Response(new Blob(['audio']), { status: 200, headers: { 'Content-Type': 'audio/mpeg' } }))

@@ -152,6 +152,10 @@ export function agentNodeToCanvasNode(node: Record<string, unknown>, fallbackTyp
       audioSpeed: stringValue(metadata.audioSpeed),
       audioInstructions: stringValue(metadata.audioInstructions),
       reasoningEffort: metadata.reasoningEffort === 'none' || metadata.reasoningEffort === 'low' || metadata.reasoningEffort === 'medium' || metadata.reasoningEffort === 'high' ? metadata.reasoningEffort : undefined,
+    } : type === 'text' ? {
+      mode: 'text',
+      count: stringValue(metadata.count) || '1',
+      reasoningEffort: metadata.reasoningEffort === 'none' || metadata.reasoningEffort === 'low' || metadata.reasoningEffort === 'medium' || metadata.reasoningEffort === 'high' ? metadata.reasoningEffort : 'medium',
     } : undefined,
     status: metadata.status === 'success' || metadata.status === 'generating' || metadata.status === 'error' ? metadata.status : 'idle',
     sourceNodeId: typeof metadata.sourceNodeId === 'string' ? metadata.sourceNodeId : undefined,

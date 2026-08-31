@@ -1480,7 +1480,7 @@ async function loadKeys(): Promise<void> {
     let page = 1
     let pages = 1
     do {
-      const response = await keysAPI.list(page, 100, undefined, { signal: controller.signal })
+      const response = await keysAPI.list(page, 100, undefined, { signal: controller.signal, includeHidden: true })
       allKeys.push(...response.items)
       pages = response.pages
       page += 1

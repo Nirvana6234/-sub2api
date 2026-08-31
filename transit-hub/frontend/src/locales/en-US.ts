@@ -2533,7 +2533,7 @@ export default {
           multiplierChangeWarning: 'Multiplier & Availability Alert',
           multiplierChangeWarningHelp: 'Send notifications when a mapped group multiplier changes or the scheduler automatically moves an upstream account to last priority.',
           fallbackPoolUsageWarning: 'Fallback Pool Usage Alert',
-          fallbackPoolUsageWarningHelp: 'Notify through the selected bots whenever a request enters its fallback pool. It does not depend on usage-query permission, even when both account pools have no available account.',
+          fallbackPoolUsageWarningHelp: 'Notify through the selected bots after a request actually selects a fallback-pool account and writes a usage record. Entering the fallback candidate path alone will not alert.',
           resourceUsageWarning: 'Server Resource Usage Alert',
           resourceUsageWarningHelp: 'Reads CPU and memory usage through the configured Sub2API admin key. Sends when either metric first exceeds its threshold, then again only after recovery and a new breach. The check follows the data refresh interval.'
         },

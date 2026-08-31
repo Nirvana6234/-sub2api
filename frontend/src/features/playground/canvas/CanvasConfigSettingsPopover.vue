@@ -37,8 +37,8 @@
       </div>
 
       <div class="space-y-3">
-        <label class="block text-[11px] font-medium text-gray-500 dark:text-dark-400">
-          {{ t('playground.canvasImageCount') }}
+        <label v-if="mode === 'image' || mode === 'text'" class="block text-[11px] font-medium text-gray-500 dark:text-dark-400">
+          {{ t(mode === 'text' ? 'playground.canvasTextCount' : 'playground.canvasImageCount') }}
           <input
             class="input mt-1 h-8 w-full text-xs"
             type="number"
@@ -217,7 +217,7 @@ const modeLabel = computed(() => t(`playground.canvasConfigMode${props.mode.char
 const summary = computed(() => {
   if (props.mode === 'image') return `${props.size} · ${props.quality} · ${props.count}`
   if (props.mode === 'video') return `${props.resolution} · ${props.duration}s · ${props.aspectRatio}`
-  if (props.mode === 'text') return `${props.reasoningEffort} · ${props.count} ${t('playground.canvasImageCount')}`
+  if (props.mode === 'text') return `${props.reasoningEffort} · ${props.count} ${t('playground.canvasTextCount')}`
   return `${props.audioVoice} · ${props.audioFormat} · ${props.audioSpeed}x`
 })
 
