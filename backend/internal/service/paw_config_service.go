@@ -3,8 +3,11 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
+
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
 const PawDefaultsAttributeKey = "paw_defaults"
@@ -70,7 +73,10 @@ func (s UserAttributePawDefaultsStore) GetPawDefaults(ctx context.Context, userI
 	}
 	def, err := s.Service.GetDefinitionByKey(ctx, PawDefaultsAttributeKey)
 	if err != nil {
-		return PawDefaults{}, nil
+		if errors.Is(err, ErrAttributeDefinitionNotFound) {
+			return PawDefaults{}, nil
+		}
+		return PawDefaults{}, err
 	}
 	values, err := s.Service.GetUserAttributes(ctx, userID)
 	if err != nil {
@@ -92,10 +98,13 @@ func (s UserAttributePawDefaultsStore) GetPawDefaults(ctx context.Context, userI
 }
 func (s UserAttributePawDefaultsStore) SavePawDefaults(ctx context.Context, userID int64, defaults PawDefaults) error {
 	if s.Service == nil {
-		return fmt.Errorf("Paw defaults store is unavailable")
+		return pawConfigUnavailableError("Paw defaults store is unavailable")
 	}
 	def, err := s.Service.GetDefinitionByKey(ctx, PawDefaultsAttributeKey)
 	if err != nil {
+		if !errors.Is(err, ErrAttributeDefinitionNotFound) {
+			return err
+		}
 		def, err = s.Service.CreateDefinition(ctx, CreateAttributeDefinitionInput{Key: PawDefaultsAttributeKey, Name: "Paw defaults", Type: AttributeTypeText, Enabled: true})
 		if err != nil {
 			return err
@@ -141,6 +150,10 @@ func (s *PawConfigService) GetConfig(ctx context.Context, userID int64) (*PawCon
 	if err != nil {
 		return nil, fmt.Errorf("get available groups: %w", err)
 	}
+	return s.buildConfig(ctx, user, groups, true)
+}
+
+func (s *PawConfigService) buildConfig(ctx context.Context, user *User, groups []Group, validateDefaults bool) (*PawConfig, error) {
 	result := &PawConfig{User: PawUser{ID: user.ID, Name: user.Username, Email: user.Email}, Groups: make([]PawGroup, 0, len(groups))}
 	for _, group := range groups {
 		if !group.IsActive() {
@@ -159,38 +172,54 @@ func (s *PawConfigService) GetConfig(ctx context.Context, userID int64) (*PawCon
 				continue
 			}
 			for _, modelID := range pricing.Models {
-				values := PawReasoningValues(group.Platform)
+				values := PawReasoningValues(group.Platform, modelID)
 				defaultValue := pawReasoningDefault(values)
-				models = append(models, PawModel{ID: modelID, Name: modelID, OwnedBy: pricing.Platform, Reasoning: PawReasoningCapability{Supported: len(values) > 0, Values: values, Default: defaultValue}, ReasoningValues: values, ReasoningDefault: defaultValue})
+				vision, imageGeneration, fileInput := pawModelCapabilities(&group, modelID, &pricing)
+				models = append(models, PawModel{ID: modelID, Name: modelID, OwnedBy: pricing.Platform, Reasoning: PawReasoningCapability{Supported: len(values) > 0, Values: values, Default: defaultValue}, ReasoningValues: values, ReasoningDefault: defaultValue, Vision: vision, ImageGeneration: imageGeneration, FileInput: fileInput})
 			}
 		}
 		result.Groups = append(result.Groups, PawGroup{ID: group.ID, Name: group.Name, Description: group.Description, Models: models})
 	}
 	if s.defaults != nil {
-		result.Defaults, err = s.defaults.GetPawDefaults(ctx, userID)
+		defaults, err := s.defaults.GetPawDefaults(ctx, user.ID)
 		if err != nil {
 			return nil, fmt.Errorf("get Paw defaults: %w", err)
+		}
+		result.Defaults = defaults
+		if validateDefaults && pawDefaultsConfigured(result.Defaults) && !pawDefaultAvailable(result.Groups, result.Defaults) {
+			return nil, pawConfigUnavailableError("saved Paw defaults are no longer available")
 		}
 	}
 	return result, nil
 }
 
 func (s *PawConfigService) SaveDefaults(ctx context.Context, userID int64, defaults PawDefaults) error {
-	config, err := s.GetConfig(ctx, userID)
+	if s.defaults == nil {
+		return pawConfigUnavailableError("Paw defaults store is unavailable")
+	}
+	user, err := s.users.GetByID(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("get user: %w", err)
+	}
+	groups, err := s.groups.AvailableGroups(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("get available groups: %w", err)
+	}
+	config, err := s.buildConfig(ctx, user, groups, false)
 	if err != nil {
 		return err
 	}
 	if !pawDefaultAvailable(config.Groups, defaults) {
-		return fmt.Errorf("Paw default is unavailable")
+		return pawConfigUnavailableError("Paw defaults are no longer available")
 	}
 	return s.defaults.SavePawDefaults(ctx, userID, defaults)
 }
 
-func PawReasoningValues(platform string) []string {
-	if platform == PlatformOpenAI || platform == PlatformComposite {
+func PawReasoningValues(platform, modelID string) []string {
+	if pawModelSupportsReasoning(platform, modelID) {
 		return append([]string(nil), openAIReasoningEffortValues...)
 	}
-	return nil
+	return []string{}
 }
 
 func modelPricingPlatformMatches(groupPlatform, pricingPlatform string) bool {
@@ -202,6 +231,33 @@ func pawReasoningDefault(values []string) string {
 		return ""
 	}
 	return values[1]
+}
+
+func pawModelSupportsReasoning(platform, modelID string) bool {
+	switch platform {
+	case PlatformOpenAI, PlatformComposite:
+		return strings.HasPrefix(strings.ToLower(strings.TrimSpace(modelID)), "gpt-5")
+	default:
+		return false
+	}
+}
+
+func pawModelCapabilities(group *Group, modelID string, pricing *ChannelModelPricing) (bool, bool, bool) {
+	if group == nil || pricing == nil {
+		return false, false, false
+	}
+	vision := pricing.ImageInputPrice != nil
+	imageGeneration := group.AllowImageGeneration &&
+		(pricing.BillingMode == BillingModeImage || pricing.ImageOutputPrice != nil || isOpenAIImageGenerationModel(modelID))
+	return vision, imageGeneration, vision
+}
+
+func pawDefaultsConfigured(defaults PawDefaults) bool {
+	return defaults.GroupID != 0 || strings.TrimSpace(defaults.ModelID) != "" || strings.TrimSpace(defaults.Reasoning) != ""
+}
+
+func pawConfigUnavailableError(message string) error {
+	return infraerrors.ServiceUnavailable("CONFIG_UNAVAILABLE", message)
 }
 
 func pawDefaultAvailable(groups []PawGroup, defaults PawDefaults) bool {

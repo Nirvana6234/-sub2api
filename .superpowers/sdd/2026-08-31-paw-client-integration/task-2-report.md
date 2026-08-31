@@ -55,3 +55,22 @@ Result: `ok github.com/Wei-Shaw/sub2api/cmd/server (cached) [no tests to run]`.
 - Routes use JWT authentication, `BackendModeUserGuard`, and `PanelRateLimiter`.
 - Model capability flags are currently conservative defaults because the current channel pricing model does not expose normalized vision/file capability metadata. Later Paw chat work should extend the same service mapping when those existing capability sources are identified.
 - The generated server wiring was updated manually to construct and attach the service.
+
+## Fix round after review
+
+- Reasoning values are advertised only for recognized GPT-5 OpenAI models; unknown OpenAI model IDs no longer inherit the full reasoning list.
+- Persisted defaults are validated against the current authorized group/model/reasoning set. Stale defaults make config loading return `CONFIG_UNAVAILABLE`.
+- Saving a replacement default builds the current authorized config without blocking on a stale persisted default, so the user can recover by reselecting.
+- User-attribute definition lookup errors are propagated, while a missing definition still behaves as an unset default.
+- A nil defaults store returns `CONFIG_UNAVAILABLE` instead of panicking.
+- Capability mapping now considers group image-generation permission, channel image pricing, and native image-model identity. Vision and file-input flags are derived only from explicit image-input pricing.
+
+Verification:
+
+```text
+go test ./internal/service -run PawConfig -count=1
+go test ./internal/service ./internal/server/routes -run Paw -count=1
+go test ./cmd/server -run '^$'
+```
+
+All three commands passed on 2026-08-31.
