@@ -2490,6 +2490,7 @@ function addNode(x = 120, y = 120, type: CanvasNodeData['type'] = 'image'): stri
           audioFormat: 'mp3',
           audioSpeed: '1',
           audioInstructions: '',
+          reasoningEffort: 'medium',
         }
       : type === 'video' ? { resolution: '720p', duration: '8', aspectRatio: '16:9' } : undefined,
     status: 'idle',
@@ -3116,6 +3117,7 @@ async function generateTextNode(id: string): Promise<void> {
         const result = await sendPlaygroundChat(keyId, {
           model,
           stream: true,
+          ...(node.config?.reasoningEffort && node.config.reasoningEffort !== 'none' ? { reasoning_effort: node.config.reasoningEffort } : {}),
           messages: [
             { role: 'system', content: t('playground.canvasTextSystemPrompt') },
             { role: 'user', content: userContent },
@@ -3727,7 +3729,7 @@ function updateSelectedPrompt(prompt: string): void {
   if (selectedNode.value) updateNodePrompt(selectedNode.value.id, prompt)
 }
 
-function updateNodeConfig(id: string, key: 'mode' | 'model' | 'count' | 'size' | 'quality' | 'background' | 'resolution' | 'duration' | 'aspectRatio' | 'audioVoice' | 'audioFormat' | 'audioSpeed' | 'audioInstructions', value: string): void {
+function updateNodeConfig(id: string, key: 'mode' | 'model' | 'count' | 'size' | 'quality' | 'background' | 'resolution' | 'duration' | 'aspectRatio' | 'audioVoice' | 'audioFormat' | 'audioSpeed' | 'audioInstructions' | 'reasoningEffort', value: string): void {
   const node = activeProject.value?.nodes.find((item) => item.id === id)
   if (!node) return
   canvasStore.checkpoint()

@@ -225,7 +225,21 @@
             <option v-for="model in configModelOptions" :key="model.id" :value="model.id">{{ model.id }}</option>
           </select>
         </label>
-        <CanvasConfigSettingsPopover
+        <div class="flex min-w-0 items-center justify-end gap-1">
+          <button
+            type="button"
+            class="btn btn-ghost flex h-8 min-w-0 max-w-32 items-center gap-1 rounded-md border border-gray-200 bg-gray-50 px-2 text-[11px] text-gray-700 dark:border-dark-700 dark:bg-dark-800 dark:text-dark-100"
+            :class="configComposerOpen ? 'border-teal-300 bg-teal-50 text-teal-700 dark:border-teal-700 dark:bg-teal-900/40 dark:text-teal-200' : ''"
+            :disabled="node.status === 'generating' || configBusy"
+            :aria-expanded="configComposerOpen"
+            :title="t('playground.canvasComposeInputs')"
+            data-canvas-config-compose-toggle
+            @click.stop="configComposerOpen = !configComposerOpen"
+          >
+            <Icon name="edit" size="xs" />
+            <span class="truncate">{{ t('playground.canvasComposeInputs') }}</span>
+          </button>
+          <CanvasConfigSettingsPopover
           :mode="configMode"
           :count="node.config?.count ?? '1'"
           :size="node.config?.size ?? '1024x1024'"
@@ -238,20 +252,56 @@
           :audio-format="node.config?.audioFormat ?? 'mp3'"
           :audio-speed="node.config?.audioSpeed ?? '1'"
           :audio-instructions="node.config?.audioInstructions ?? ''"
+          :reasoning-effort="node.config?.reasoningEffort ?? 'medium'"
           :disabled="node.status === 'generating' || configBusy"
           @update="emit('update-config', node.id, $event.key, $event.value)"
-        />
+          />
+        </div>
       </div>
-      <label class="block text-[11px] font-medium text-gray-500 dark:text-dark-400">{{ t('playground.canvasPrompt') }}</label>
-      <CanvasMentionEditor
-        :model-value="node.prompt"
-        :references="mentionReferences"
-        :placeholder="t('playground.canvasPrompt')"
-        :aria-label="t('playground.canvasPrompt')"
-        :disabled="node.status === 'generating' || configBusy"
-        class="text-xs"
-        @update:model-value="emit('update-prompt', node.id, $event)"
-      />
+      <div v-if="configComposerOpen" class="overflow-hidden rounded-xl border border-teal-200 bg-teal-50/40 dark:border-teal-900/60 dark:bg-teal-950/20" data-canvas-config-composer data-canvas-no-zoom @pointerdown.stop>
+        <div class="flex items-center justify-between gap-2 border-b border-teal-100 px-3 py-2 dark:border-teal-900/50">
+          <div class="min-w-0">
+            <div class="text-[11px] font-semibold text-teal-800 dark:text-teal-100">{{ t('playground.canvasComposeInputs') }}</div>
+            <div class="truncate text-[10px] text-teal-700/70 dark:text-teal-200/70">{{ t('playground.canvasComposeInputsHint') }}</div>
+          </div>
+          <button type="button" class="btn btn-ghost btn-icon h-6 w-6 shrink-0 p-0 text-teal-700 dark:text-teal-200" :title="t('common.close')" @click.stop="configComposerOpen = false">
+            <Icon name="x" size="xs" /><span class="sr-only">{{ t('common.close') }}</span>
+          </button>
+        </div>
+        <div class="space-y-2 p-2.5">
+          <div v-if="incomingReferences?.length" class="flex min-w-0 flex-wrap items-center gap-1.5" data-canvas-config-input-summary>
+            <span class="shrink-0 text-[10px] font-medium text-gray-500 dark:text-dark-400">{{ t('playground.canvasInputsLabel') }}</span>
+            <span v-for="reference in incomingReferences" :key="`${reference.sourceNodeId}:${reference.nodeId}`" class="inline-flex max-w-44 items-center gap-1 rounded-full border border-gray-200 bg-white px-2 py-1 text-[10px] text-gray-700 shadow-sm dark:border-dark-700 dark:bg-dark-900 dark:text-dark-200" :title="reference.text || reference.label || reference.title">
+              <img v-if="reference.previewUrl && reference.kind === 'image'" :src="reference.previewUrl" alt="" class="h-4 w-4 rounded object-cover">
+              <span class="truncate">{{ reference.label || reference.title }}</span>
+            </span>
+          </div>
+          <CanvasMentionEditor
+            :model-value="node.prompt"
+            :references="mentionReferences"
+            :placeholder="t('playground.canvasPrompt')"
+            :aria-label="t('playground.canvasPrompt')"
+            :disabled="node.status === 'generating' || configBusy"
+            class="text-xs"
+            @update:model-value="emit('update-prompt', node.id, $event)"
+          />
+          <button type="button" class="btn btn-ghost h-7 w-full gap-1 border border-dashed border-teal-300 px-2 text-[10px] text-teal-700 dark:border-teal-800 dark:text-teal-200" :disabled="node.status === 'generating' || configBusy" @click.stop="emit('start-reference-selection')">
+            <Icon name="plus" size="xs" />{{ t('playground.canvasAddReference') }}
+          </button>
+        </div>
+      </div>
+      <template v-else>
+        <label class="block text-[11px] font-medium text-gray-500 dark:text-dark-400">{{ t('playground.canvasPrompt') }}</label>
+        <CanvasMentionEditor
+          :model-value="node.prompt"
+          :references="mentionReferences"
+          :placeholder="t('playground.canvasPrompt')"
+          :aria-label="t('playground.canvasPrompt')"
+          :disabled="node.status === 'generating' || configBusy"
+          class="text-xs"
+          @update:model-value="emit('update-prompt', node.id, $event)"
+        />
+      </template>
       <button type="button" class="btn btn-primary h-8 w-full gap-1 text-xs" :disabled="node.status === 'generating' || configBusy || (!node.prompt.trim() && !(mentionReferences?.length ?? 0) && !configModel)" @click.stop="emit('generate-config', node.id)">
         <Icon :name="node.status === 'generating' || configBusy ? 'x' : 'sparkles'" size="xs" />
         {{ node.status === 'generating' || configBusy ? t('playground.canvasGenerating') : t('playground.generate') }}
@@ -569,7 +619,7 @@ const emit = defineEmits<{
   'focus-reference': [nodeId: string]
   'close-plugin-panel': []
   'double-click': [id: string]
-  'update-config': [id: string, key: 'mode' | 'model' | 'count' | 'size' | 'quality' | 'background' | 'resolution' | 'duration' | 'aspectRatio' | 'audioVoice' | 'audioFormat' | 'audioSpeed' | 'audioInstructions', value: string]
+  'update-config': [id: string, key: 'mode' | 'model' | 'count' | 'size' | 'quality' | 'background' | 'resolution' | 'duration' | 'aspectRatio' | 'audioVoice' | 'audioFormat' | 'audioSpeed' | 'audioInstructions' | 'reasoningEffort', value: string]
   'generate-config': [id: string]
   'resize-start': [id: string, corner: ResizeCorner, event: PointerEvent]
   'context-menu': [id: string, event: MouseEvent]
@@ -655,6 +705,7 @@ const imageIndex = ref(Math.max(0, props.node.primaryImageIndex ?? 0))
 const imageBatchExpanded = ref(false)
 const imageUploadInput = ref<HTMLInputElement | null>(null)
 const textVariantsExpanded = ref(false)
+const configComposerOpen = ref(false)
 const videoElement = ref<HTMLVideoElement | null>(null)
 const imageUrls = computed(() => (props.node.imageUrls ?? []).filter(Boolean))
 const imageSlots = computed<CanvasImageVariant[]>(() => {

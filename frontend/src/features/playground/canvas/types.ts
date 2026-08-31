@@ -104,6 +104,7 @@ export interface CanvasNode {
     audioFormat?: string
     audioSpeed?: string
     audioInstructions?: string
+    reasoningEffort?: 'none' | 'low' | 'medium' | 'high'
   }
   model: string
   imageUrl?: string
