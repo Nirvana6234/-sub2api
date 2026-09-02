@@ -226,6 +226,42 @@ cors:
 
 **验收**：对**真 codex 进程**跑通一轮，拿到 assistant 文本与 `turn/completed`。
 
+#### A2 执行记录（2026-09-02）—— **已完成**
+
+`src/session.rs`。**验收超额**：除了要求的一轮对话，打断与续跑也都对真进程验过了。
+
+| 端到端测试（真 codex 0.144.2 + 真中转站） | 结果 |
+|---|---|
+| `runs_a_real_turn_and_gets_assistant_text` | 拿到 `PONG`，`Completed("completed")`，16 事件 |
+| `resumes_a_thread_and_keeps_talking` | 续跑后答出先前记的数字，上下文没丢 |
+| `interrupts_a_running_turn` | 打断后 13.8s 收束（原本要数到 500） |
+
+端到端全部挂 `#[ignore]`：普通 `cargo test` 会显示 `3 ignored`，**不会出现「一个真进程测试都没跑却全绿」**。真跑用 `cargo test --test e2e -- --ignored`，环境变量缺了直接报错说明缺哪个，不静默跳过。
+
+##### 会话层替上层记住两件它总会忘的事
+
+- **`turn/interrupt` 必须带 `turnId`**，而 turnId 从两条路各来一次（`turn/start` 响应、`turn/started` 通知），**通知可能先到**。谁先到算谁的，否则用户早早点停止会打空。
+- `current_turn()` 是**「此刻」**的状态，不是「消费者读到哪」的状态：翻译任务会跑在事件消费者前面。对「停止」这正是想要的语义（停的是此刻真在跑的那轮），但**别拿它判断某个事件属于哪一轮** —— 那要用事件自带的 `turn_id`。这条是被自己的测试撞出来的。
+
+##### 又两个只有跑真进程才知道的事
+
+**① 被打断的一轮仍然走 `turn/completed`，只是 `status` 是 `"interrupted"`** —— 不是 `turn/failed`。所以「跑完了」和「被停掉了」只能靠这个字符串分辨（`TurnStatus::is_success()` / `is_interrupted()`）。保留原始字符串而不是穷举枚举，因为上游还会加状态。
+
+**② 打断已经结束的轮次，上游回 `-32600 "no active turn to interrupt"`。** 也就是说 codex 会**用标准 JSON-RPC 码表达语义错误**（-32600 本义是 Invalid Request）。所以不能一看到标准码就当协议漂移处理。
+这个是被第一版测试撞出来的：当时用「等 turnId 出现后固定睡 3 秒」来选打断时机，结果那一轮在 3 秒里就跑完了。改成**看到第一个 assistant 增量就立刻打断** —— 那是「确实正在产出」的最早证据。**别用睡眠猜时机。**
+
+##### 只等 `turn/completed` 会挂死
+
+`drive_turn` 的终止条件是 `turn/completed` / 不再重试的错误 / **连续重试超限**。第三条是我们自己的护栏：`bad-credentials` 那份录制里，鉴权失败时上游一直 `Reconnecting... n/5`，`turn/completed` **不会来**。上游最终会不会自己收束、以什么形式收束，我们没观测到，所以按次数兜底。重试通知会**透出给调用方**而不是在等待期间被吞掉 —— 用户要看到「正在重试」。
+
+##### 顺手补上的漂移闸门
+
+新增 `tests/params_schema.rs`：把**每一个**我们会发的方法的参数，对着 `protocol/0.144.2/` 里的 schema 校一遍（必填字段在不在、有没有 schema 不认识的键）。
+
+原因是 A1 那条「比对真实发出去的字节」只能覆盖**录制里恰好出现过**的方法，而这正是两个 bug 溜过去的原因：**`turn/interrupt` 漏了必填的 `turnId`**、**`thread/list` 把 `limit` 写成了 `pageSize`**。两个都编译得过、跑得起来、会被服务端静默拒绝。新闸门不用真跑调用就能抓到，并且自带一条反向测试（故意写错必须被抓住），免得校验逻辑本身失灵还一直绿。
+
+**新增方法必须在 `all_requests()` 里加一行**，有一条测试专门盯着别漏。
+
 ### A3 — `codex-adapter`：审批面
 
 三类 `requestApproval`（commandExecution / fileChange / permissions）的请求与响应、`serverRequest/resolved` 广播、`waitingOnApproval` 状态透出。

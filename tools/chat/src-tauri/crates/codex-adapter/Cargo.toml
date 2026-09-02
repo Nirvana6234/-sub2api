@@ -13,4 +13,5 @@ thiserror = "2.0"
 tokio = { version = "1", features = ["io-util", "sync", "macros", "rt"] }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["io-util", "sync", "macros", "rt-multi-thread", "time"] }
+# `process` 只给端到端测试用：库本身不 spawn 进程，那是宿主（A4）的事。
+tokio = { version = "1", features = ["io-util", "sync", "macros", "rt-multi-thread", "time", "process"] }

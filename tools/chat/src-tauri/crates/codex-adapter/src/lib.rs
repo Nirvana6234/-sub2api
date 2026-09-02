@@ -21,6 +21,7 @@
 
 pub mod error;
 pub mod protocol;
+pub mod session;
 pub mod transport;
 
 pub use error::{AdapterError, RpcError};
@@ -29,6 +30,7 @@ pub use protocol::{
     NotificationPayload, RequestId, SandboxMode, ServerMessage, ServerRequest, ServerRequestPayload,
     ThreadStatus, WorkspaceDir,
 };
+pub use session::{drive_turn, Session, SessionEvent, TurnOutcome, TurnStatus};
 pub use transport::{decode_line, pump, Client, Incoming};
 
 /// 这个 crate 的类型是照着哪个 codex 版本导出的 schema 写的。

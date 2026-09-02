@@ -56,11 +56,13 @@ pub enum ClientRequest {
     /// `cwd` 只能由 [`WorkspaceDir::new`] 构造 —— 因为 codex 自己不校验目录，见那里的说明。
     ThreadStart { cwd: WorkspaceDir, sandbox: SandboxMode, approval_policy: ApprovalPolicy },
     ThreadResume { thread_id: String },
-    ThreadList { page_size: Option<u32> },
+    ThreadList { limit: Option<u32> },
     ThreadArchive { thread_id: String },
     /// 发一轮提问。可以按轮覆盖 model / effort / sandbox / cwd。
     TurnStart { thread_id: String, text: String },
-    TurnInterrupt { thread_id: String },
+    /// 打断一轮。**必须带 `turn_id`** —— 只给 `thread_id` 是不够的，
+    /// 所以会话层必须自己跟踪当前这一轮的 id。
+    TurnInterrupt { thread_id: String, turn_id: String },
 }
 
 /// 一个**已经确认存在、且确实是目录**的工作目录。
@@ -168,8 +170,8 @@ impl ClientRequest {
                 "approvalPolicy": approval_policy,
             }),
             ClientRequest::ThreadResume { thread_id } => serde_json::json!({ "threadId": thread_id }),
-            ClientRequest::ThreadList { page_size } => match page_size {
-                Some(n) => serde_json::json!({ "pageSize": n }),
+            ClientRequest::ThreadList { limit } => match limit {
+                Some(n) => serde_json::json!({ "limit": n }),
                 None => serde_json::json!({}),
             },
             ClientRequest::ThreadArchive { thread_id } => serde_json::json!({ "threadId": thread_id }),
@@ -177,7 +179,10 @@ impl ClientRequest {
                 "threadId": thread_id,
                 "input": [{ "type": "text", "text": text, "text_elements": [] }],
             }),
-            ClientRequest::TurnInterrupt { thread_id } => serde_json::json!({ "threadId": thread_id }),
+            ClientRequest::TurnInterrupt { thread_id, turn_id } => serde_json::json!({
+                "threadId": thread_id,
+                "turnId": turn_id,
+            }),
         }
     }
 }
@@ -292,8 +297,9 @@ pub enum NotificationPayload {
     /// `activeFlags` 里出现 `waitingOnApproval` 就说明这个会话正卡在审批上。
     /// PC 端与手机端都靠它显示同一个状态，不必自己发明机制。
     ThreadStatusChanged { thread_id: String, status: ThreadStatus },
-    TurnStarted { thread_id: String },
-    TurnCompleted { thread_id: String, status: String },
+    /// 一轮开始。**`turn_id` 要留住** —— `turn/interrupt` 必须带它。
+    TurnStarted { thread_id: String, turn_id: Option<String> },
+    TurnCompleted { thread_id: String, turn_id: Option<String>, status: String },
     ItemStarted { thread_id: String, item_type: String, item_id: Option<String> },
     ItemCompleted { thread_id: String, item_type: String, item_id: Option<String> },
     /// assistant 正文的增量。
@@ -408,12 +414,17 @@ impl Notification {
                     _ => NotificationPayload::Other,
                 }
             }
-            "turn/started" => str_field(&raw, "threadId")
-                .map(|thread_id| NotificationPayload::TurnStarted { thread_id })
-                .unwrap_or(NotificationPayload::Other),
+            "turn/started" => match str_field(&raw, "threadId") {
+                Some(thread_id) => NotificationPayload::TurnStarted {
+                    thread_id,
+                    turn_id: raw.get("turn").and_then(|t| str_field(t, "id")),
+                },
+                None => NotificationPayload::Other,
+            },
             "turn/completed" => match str_field(&raw, "threadId") {
                 Some(thread_id) => NotificationPayload::TurnCompleted {
                     thread_id,
+                    turn_id: raw.get("turn").and_then(|t| str_field(t, "id")),
                     status: raw
                         .get("turn")
                         .and_then(|t| str_field(t, "status"))
