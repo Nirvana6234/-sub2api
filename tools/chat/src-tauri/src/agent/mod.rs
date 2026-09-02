@@ -1,0 +1,457 @@
+//! 桥：把 [`codex_host`] 的进程与 [`codex_adapter`] 的会话，接到前端。
+//!
+//! 桥本身**不认识 Tauri** —— 事件通过 [`EventSink`] 出去，Tauri 那一层只是实现了这个
+//! trait 的一个薄壳。这样集成测试能直接驱动整座桥，不用绕 invoke 机制。
+
+pub mod dto;
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use codex_adapter::protocol::{ServerRequest, ServerRequestPayload};
+use codex_adapter::session::{Session, SessionEvent};
+use codex_adapter::{
+    ApprovalDecision, ApprovalPolicy, ErrorNotification, ReasoningKind, RequestId, SandboxMode,
+    WorkspaceDir,
+};
+use codex_host::{Backoff, CodexHome, Engine, EngineConfig, Supervisor};
+use tokio::sync::Mutex;
+
+use dto::{ApprovalKind, ApprovalRequest, StartParams, StartedThread, UiDecision, UiEvent};
+
+/// 事件出口。Tauri 那层实现它，测试自己实现一个收集器。
+pub trait EventSink: Send + Sync + 'static {
+    fn emit(&self, event: UiEvent);
+}
+
+/// 桥这一层会出的错。所有变体都能序列化给前端。
+#[derive(Debug, thiserror::Error, serde::Serialize)]
+#[serde(tag = "kind", content = "message", rename_all = "camelCase")]
+pub enum BridgeError {
+    /// 还没起会话就来发消息 / 停止 / 答复。
+    #[error("还没有正在运行的 agent 会话")]
+    NotRunning,
+    /// 已经有一个在跑了。
+    #[error("已经有一个 agent 会话在运行")]
+    AlreadyRunning,
+    /// 参数不对（沙箱名、审批策略名、目录……）。
+    #[error("参数不合法: {0}")]
+    BadParams(String),
+    /// 宿主侧（进程、笼子、CODEX_HOME）。
+    #[error("宿主: {0}")]
+    Host(String),
+    /// 协议 / 会话侧。
+    #[error("会话: {0}")]
+    Session(String),
+    /// 这条审批已经答过了，或者从来不存在。
+    ///
+    /// **刻意报错而不是静默成功**：界面重渲染导致的重复答复必须能看见，
+    /// 否则会变成「同一条审批被答了两次」这种查不出来的问题。
+    #[error("找不到待答复的审批 {0}（可能已经答过，或引擎重启了）")]
+    NoSuchApproval(String),
+}
+
+/// 待答复的审批表。**键必须是完整的 [`RequestId`]**（`Num` 和 `Str` 是两种东西），
+/// 答复之后立刻移除。
+type Pending = Arc<Mutex<HashMap<RequestId, ServerRequest>>>;
+
+struct Running {
+    session: Arc<Session>,
+    /// 只是持有：笼子在它身上，丢掉就等于杀掉 codex。
+    _engine: Engine,
+    pending: Pending,
+}
+
+/// 一座桥。整个应用一个。
+pub struct AgentBridge {
+    running: Mutex<Option<Running>>,
+    sink: Arc<dyn EventSink>,
+}
+
+impl AgentBridge {
+    pub fn new(sink: Arc<dyn EventSink>) -> Self {
+        AgentBridge {
+            running: Mutex::new(None),
+            sink,
+        }
+    }
+
+    /// 起引擎 + 起会话。返回 threadId。
+    pub async fn start(&self, params: StartParams) -> Result<StartedThread, BridgeError> {
+        let mut slot = self.running.lock().await;
+        if slot.is_some() {
+            return Err(BridgeError::AlreadyRunning);
+        }
+
+        let sandbox = parse_sandbox(&params.sandbox)?;
+        let approval = parse_approval(&params.approval_policy)?;
+        let cwd = WorkspaceDir::new(&params.cwd)
+            .map_err(|e| BridgeError::BadParams(e.to_string()))?;
+        let home = CodexHome::new(&params.codex_home).map_err(|e| BridgeError::Host(e.to_string()))?;
+
+        let config = EngineConfig {
+            binary: params.codex_binary.into(),
+            home,
+            base_url: params.base_url,
+            model: params.model,
+        };
+
+        let sink = Arc::clone(&self.sink);
+        let restarted = Supervisor::new(config, Backoff::default())
+            .start(|failed| {
+                // 起不来的每一次都要看得见。悄悄重试到最后才报错，
+                // 中间那段时间用户只会觉得「卡住了」。
+                sink.emit(UiEvent::Retrying {
+                    message: format!("第 {} 次启动失败: {}", failed.attempt, failed.error),
+                    http_status: None,
+                    auth_failure: false,
+                });
+            })
+            .await
+            .map_err(|e| BridgeError::Host(e.to_string()))?;
+
+        let mut engine = restarted.engine;
+        let attempts = restarted.attempts;
+
+        let (stdout, stdin) = engine.take_stdio().map_err(|e| BridgeError::Host(e.to_string()))?;
+        let (session, events) = Session::connect(stdout, stdin);
+        let session = Arc::new(session);
+
+        session
+            .handshake("cofly-workbench", env!("CARGO_PKG_VERSION"), &params.api_key)
+            .await
+            .map_err(|e| BridgeError::Session(e.to_string()))?;
+
+        let thread_id = session
+            .start_thread(cwd, sandbox, approval)
+            .await
+            .map_err(|e| BridgeError::Session(e.to_string()))?;
+
+        let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
+        spawn_pump(events, Arc::clone(&self.sink), Arc::clone(&pending));
+
+        *slot = Some(Running {
+            session,
+            _engine: engine,
+            pending,
+        });
+
+        Ok(StartedThread { thread_id, attempts })
+    }
+
+    /// 发一轮提问。
+    pub async fn send(&self, text: String) -> Result<(), BridgeError> {
+        let slot = self.running.lock().await;
+        let running = slot.as_ref().ok_or(BridgeError::NotRunning)?;
+        running
+            .session
+            .send_turn(&text)
+            .await
+            .map(|_| ())
+            .map_err(|e| BridgeError::Session(e.to_string()))
+    }
+
+    /// 停止当前这一轮。
+    ///
+    /// 没有正在跑的轮次时会**报错**，不静默成功 —— 「点了停止却还在跑」是最难查的一类问题。
+    pub async fn interrupt(&self) -> Result<(), BridgeError> {
+        let slot = self.running.lock().await;
+        let running = slot.as_ref().ok_or(BridgeError::NotRunning)?;
+        running
+            .session
+            .interrupt()
+            .await
+            .map_err(|e| BridgeError::Session(e.to_string()))
+    }
+
+    /// 答复一条审批。
+    ///
+    /// 前端只给**语义**决定，线上说哪个词由这里照着那条请求决定 ——
+    /// 三类审批的响应形状互不相同，旧方法连决定词汇都是另一套。
+    /// 这个映射只存在于这一个地方。
+    pub async fn answer(
+        &self,
+        request_id: String,
+        decision: UiDecision,
+    ) -> Result<(), BridgeError> {
+        let slot = self.running.lock().await;
+        let running = slot.as_ref().ok_or(BridgeError::NotRunning)?;
+
+        let key = parse_request_id(&request_id);
+        // 取出并**移除** —— 重复答复要能报错，不能悄悄答第二次。
+        let request = running
+            .pending
+            .lock()
+            .await
+            .remove(&key)
+            .ok_or_else(|| BridgeError::NoSuchApproval(request_id.clone()))?;
+
+        let answer = build_answer(&request, decision).map_err(BridgeError::Session)?;
+        running
+            .session
+            .answer(&answer)
+            .await
+            .map_err(|e| BridgeError::Session(e.to_string()))
+    }
+
+    /// 有序停止：关 stdin 让 codex 自己收摊，超时再动手。
+    pub async fn stop(&self) -> Result<(), BridgeError> {
+        let mut slot = self.running.lock().await;
+        let Some(running) = slot.take() else {
+            return Err(BridgeError::NotRunning);
+        };
+        // 待答复的审批随引擎一起作废：那些 id 在新进程里不存在，
+        // 界面上还挂着的话，用户点下去只会拿到 NoSuchApproval。
+        running.pending.lock().await.clear();
+        running
+            ._engine
+            .shutdown(std::time::Duration::from_secs(5))
+            .await
+            .map_err(|e| BridgeError::Host(e.to_string()))
+    }
+
+    pub async fn is_running(&self) -> bool {
+        self.running.lock().await.is_some()
+    }
+}
+
+/// 把会话事件翻成前端事件，顺便维护两张表：待答复审批、itemId → item。
+fn spawn_pump(
+    mut events: tokio::sync::mpsc::Receiver<SessionEvent>,
+    sink: Arc<dyn EventSink>,
+    pending: Pending,
+) {
+    tokio::spawn(async move {
+        // itemId → item：审批请求只给 id，内容要靠这张表补上。
+        let mut items: HashMap<String, serde_json::Value> = HashMap::new();
+        let mut current_turn: Option<String> = None;
+
+        while let Some(event) = events.recv().await {
+            match event {
+                SessionEvent::ThreadStarted { thread_id } => {
+                    sink.emit(UiEvent::ThreadStarted { thread_id });
+                }
+                SessionEvent::TurnStarted { turn_id, .. } => {
+                    current_turn = turn_id.clone();
+                    sink.emit(UiEvent::TurnStarted { turn_id });
+                }
+                SessionEvent::AgentText { item_id, delta } => {
+                    sink.emit(UiEvent::AgentText {
+                        turn_id: current_turn.clone(),
+                        item_id,
+                        delta,
+                    });
+                }
+                SessionEvent::Reasoning { delta, kind } => {
+                    sink.emit(UiEvent::Reasoning {
+                        turn_id: current_turn.clone(),
+                        delta,
+                        kind: match kind {
+                            ReasoningKind::Text => "text",
+                            ReasoningKind::SummaryText => "summaryText",
+                            ReasoningKind::SummaryPart => "summaryPart",
+                        }
+                        .to_owned(),
+                    });
+                }
+                SessionEvent::CommandOutput { item_id, chunk } => {
+                    sink.emit(UiEvent::CommandOutput {
+                        turn_id: current_turn.clone(),
+                        item_id,
+                        chunk,
+                    });
+                }
+                SessionEvent::ItemStarted { item_id, item_type, item } => {
+                    if let Some(id) = &item_id {
+                        items.insert(id.clone(), item.clone());
+                    }
+                    sink.emit(UiEvent::Item {
+                        item_id,
+                        item_type,
+                        status: None,
+                        item,
+                    });
+                }
+                SessionEvent::ItemCompleted { item_id, item_type, item_status, item } => {
+                    if let Some(id) = &item_id {
+                        items.insert(id.clone(), item.clone());
+                    }
+                    sink.emit(UiEvent::Item {
+                        item_id,
+                        item_type,
+                        status: item_status,
+                        item,
+                    });
+                }
+                SessionEvent::StatusChanged { status, .. } => {
+                    sink.emit(UiEvent::Status {
+                        waiting_on_approval: status.is_waiting_on_approval(),
+                        flags: status.active_flags.clone(),
+                    });
+                }
+                SessionEvent::ApprovalRequested(request) => {
+                    let ui = to_ui_approval(&request, &items);
+                    pending.lock().await.insert(request.id.clone(), *request);
+                    sink.emit(UiEvent::ApprovalRequested(ui));
+                }
+                SessionEvent::ApprovalResolved { request_id } => {
+                    // 另一端答了 —— 本地队列里那条也该消失。
+                    pending.lock().await.remove(&request_id);
+                    sink.emit(UiEvent::ApprovalResolved {
+                        request_id: request_id.to_string(),
+                    });
+                }
+                SessionEvent::Retrying(err) => sink.emit(error_event(&err, true)),
+                SessionEvent::Failed(err) => sink.emit(error_event(&err, false)),
+                SessionEvent::TurnCompleted { turn_id, status } => {
+                    current_turn = None;
+                    sink.emit(UiEvent::TurnCompleted {
+                        turn_id,
+                        success: status == "completed",
+                        interrupted: status == "interrupted",
+                        status,
+                    });
+                }
+                SessionEvent::Passthrough { method, raw } => {
+                    sink.emit(UiEvent::Passthrough { method, raw });
+                }
+                SessionEvent::DecodeError { line, error } => {
+                    sink.emit(UiEvent::DecodeError { line, error });
+                }
+            }
+        }
+
+        // 流断了 = 引擎没了。让界面知道，别停在一个永远转圈的状态上。
+        pending.lock().await.clear();
+        sink.emit(UiEvent::EngineStopped {
+            reason: "事件流已结束".to_owned(),
+        });
+    });
+}
+
+fn error_event(err: &ErrorNotification, retrying: bool) -> UiEvent {
+    let message = match &err.details {
+        Some(d) => format!("{}（{d}）", err.message),
+        None => err.message.clone(),
+    };
+    if retrying {
+        UiEvent::Retrying {
+            message,
+            http_status: err.http_status,
+            auth_failure: err.is_auth_failure(),
+        }
+    } else {
+        UiEvent::Failed {
+            message,
+            http_status: err.http_status,
+            auth_failure: err.is_auth_failure(),
+        }
+    }
+}
+
+/// 把一条服务端请求翻成界面能显示的东西 —— **把 item 补上**。
+fn to_ui_approval(
+    request: &ServerRequest,
+    items: &HashMap<String, serde_json::Value>,
+) -> ApprovalRequest {
+    let (kind, reason, command, cwd, item_id, grant_root) = match &request.payload {
+        ServerRequestPayload::CommandApproval(p) => (
+            ApprovalKind::Command,
+            p.reason.clone(),
+            Some(p.command.clone()),
+            Some(p.cwd.clone()),
+            Some(p.item_id.clone()),
+            None,
+        ),
+        ServerRequestPayload::FileChangeApproval(p) => (
+            ApprovalKind::FileChange,
+            p.reason.clone(),
+            None,
+            None,
+            Some(p.item_id.clone()),
+            p.grant_root.clone(),
+        ),
+        ServerRequestPayload::PermissionsApproval(p) => (
+            ApprovalKind::Permissions,
+            p.reason.clone(),
+            None,
+            Some(p.cwd.clone()),
+            Some(p.item_id.clone()),
+            None,
+        ),
+        ServerRequestPayload::Other => (ApprovalKind::Unknown, None, None, None, None, None),
+    };
+
+    ApprovalRequest {
+        request_id: request.id.to_string(),
+        method: request.method.clone(),
+        kind,
+        reason,
+        command,
+        cwd,
+        item: item_id.and_then(|id| items.get(&id).cloned()),
+        grant_root,
+    }
+}
+
+/// 语义决定 → 那条请求自己形状的答复。
+fn build_answer(
+    request: &ServerRequest,
+    decision: UiDecision,
+) -> Result<codex_adapter::Answer, String> {
+    match request.method.as_str() {
+        // 权限申请没有「拒绝」这个值：拒绝＝授空档案，同意＝把它要的原样授出去。
+        "item/permissions/requestApproval" => match decision {
+            UiDecision::Approve | UiDecision::ApproveForSession => {
+                let profile = request
+                    .raw
+                    .get("permissions")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Object(Default::default()));
+                let scope = if matches!(decision, UiDecision::ApproveForSession) {
+                    codex_adapter::GrantScope::Session
+                } else {
+                    codex_adapter::GrantScope::Turn
+                };
+                request.grant_permissions(profile, scope).map_err(|e| e.to_string())
+            }
+            UiDecision::Decline | UiDecision::Cancel => Ok(request.deny()),
+        },
+        _ => match decision {
+            UiDecision::Approve => request.approve(ApprovalDecision::Accept),
+            UiDecision::ApproveForSession => request.approve(ApprovalDecision::AcceptForSession),
+            UiDecision::Decline => request.approve(ApprovalDecision::Decline),
+            UiDecision::Cancel => request.approve(ApprovalDecision::Cancel),
+        }
+        // 不是是/否型的请求（工具调用之类）：同意没有意义，一律给它自己形状的「不」。
+        .or_else(|_| Ok(request.deny()))
+        .map_err(|e: codex_adapter::AdapterError| e.to_string()),
+    }
+}
+
+/// 前端传回来的 id 是字符串。原来是数字的要还原成数字 ——
+/// `RequestId::Num(0)` 和 `RequestId::Str("0")` 在表里是**两个键**。
+fn parse_request_id(raw: &str) -> RequestId {
+    match raw.parse::<i64>() {
+        Ok(n) => RequestId::Num(n),
+        Err(_) => RequestId::Str(raw.to_owned()),
+    }
+}
+
+fn parse_sandbox(value: &str) -> Result<SandboxMode, BridgeError> {
+    match value {
+        "read-only" => Ok(SandboxMode::ReadOnly),
+        "workspace-write" => Ok(SandboxMode::WorkspaceWrite),
+        "danger-full-access" => Ok(SandboxMode::DangerFullAccess),
+        other => Err(BridgeError::BadParams(format!("不认识的沙箱模式: {other}"))),
+    }
+}
+
+fn parse_approval(value: &str) -> Result<ApprovalPolicy, BridgeError> {
+    match value {
+        "untrusted" => Ok(ApprovalPolicy::Untrusted),
+        "on-request" => Ok(ApprovalPolicy::OnRequest),
+        "never" => Ok(ApprovalPolicy::Never),
+        other => Err(BridgeError::BadParams(format!("不认识的审批策略: {other}"))),
+    }
+}

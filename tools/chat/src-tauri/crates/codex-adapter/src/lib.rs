@@ -27,8 +27,8 @@ pub mod transport;
 pub use error::{AdapterError, RpcError};
 pub use protocol::{
     Answer, ApprovalDecision, ApprovalPolicy, ClientRequest, ErrorNotification, GrantScope,
-    Notification, NotificationPayload, RequestId, SandboxMode, ServerMessage, ServerRequest,
-    ServerRequestPayload, ThreadStatus, WorkspaceDir,
+    Notification, NotificationPayload, ReasoningKind, RequestId, SandboxMode, ServerMessage,
+    ServerRequest, ServerRequestPayload, ThreadStatus, WorkspaceDir,
 };
 pub use session::{drive_turn, Session, SessionEvent, TurnOutcome, TurnStatus};
 pub use transport::{decode_line, pump, Client, Incoming};
