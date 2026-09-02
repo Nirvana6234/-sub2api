@@ -1,0 +1,36 @@
+[package]
+name = "codex-host"
+version = "0.1.0"
+description = "共飞 AI 工作台的 agent 宿主：进程笼、生命周期、退避重启。不认识 Tauri。"
+edition = "2021"
+rust-version = "1.77.2"
+license = "MIT"
+
+[dependencies]
+codex-adapter = { path = "../codex-adapter" }
+serde_json = "1.0"
+thiserror = "2.0"
+tokio = { version = "1", features = ["io-util", "process", "sync", "macros", "rt", "time"] }
+
+[target.'cfg(windows)'.dependencies]
+# 只为了 Job Object 那几个调用。选 windows-sys 而不是 windows：MSRV 1.71（对方 1.82），
+# 依赖树也小得多，而我们总共只用四五个 API。
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["io-util", "process", "sync", "macros", "rt-multi-thread", "time"] }
+
+[target.'cfg(windows)'.dev-dependencies]
+# 端到端验收要等某个 pid 死掉。按句柄等而不是轮询「还有没有这个 pid」——
+# 后者会在 PID 被回收再分配时给出错误答案。
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
+
+# 测试用的靶子：它自己把自己关进笼子里再生一个子进程，然后挂着。
+# 测试强杀它，再看那个子进程有没有跟着死 —— 这是 A4 验收的唯一实证方式。
+[[bin]]
+name = "cage-probe"
+path = "src/bin/cage-probe.rs"

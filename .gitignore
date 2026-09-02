@@ -207,6 +207,9 @@ transit-hub/backend/backend/
 # 没有这一段，一次 git add 会带进 724 MB 的 Codex-Windows-x64.msix 与全部
 # bin/obj —— 上游的 artifacts/ 规则挡得住发布产物，挡不住这两类。
 /tools/**/bin/
+# 例外：Rust 的 src/bin/ 是**源码**目录（cargo 的多二进制约定），不是 .NET 的构建产物。
+!tools/chat/src-tauri/crates/*/src/bin/
+!tools/chat/src-tauri/crates/*/src/bin/**
 /tools/**/obj/
 /tools/**/TestResults/
 /tools/**/*.user

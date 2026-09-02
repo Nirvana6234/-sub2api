@@ -340,6 +340,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-host"
+version = "0.1.0"
+dependencies = [
+ "codex-adapter",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "combine"
 version = "4.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"

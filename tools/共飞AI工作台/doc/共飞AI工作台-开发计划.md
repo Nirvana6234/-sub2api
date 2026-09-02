@@ -337,6 +337,62 @@ cors:
 
 **验收**：`turn` 进行中**强杀 Chat**，任务管理器里**没有残留 codex 进程**。这条是 D-4 那句「关掉 Chat 就够不着」的唯一实证。
 
+#### A4 执行记录（2026-09-03）—— **已完成**
+
+**验收原文照做并通过**：真 codex（pid 37168）**正在产出**时 `TerminateProcess` 掉宿主 → codex 随之消失。全工作区 **34 绿 + 5 ignored**，clippy 零 warning。
+
+落位新 crate `crates/codex-host/`，**不引 Tauri**（和 `codex-adapter` 一样能脱开壳单测）。A5 的 IPC 桥才是唯一要碰 Tauri 的地方。
+
+| | 管什么 |
+|---|---|
+| `home::CodexHome` | 私有 `CODEX_HOME`；**拒绝系统 temp** |
+| `cage::Cage` | Windows Job Object，`KILL_ON_JOB_CLOSE` |
+| `engine::Engine` | 起进程、交 stdio、有序停止 |
+| `supervisor::Supervisor` | 退避重试，且**让每次失败都被看见** |
+
+##### 两个机制各管一半，谁也替不了谁
+
+| | 覆盖 | 不覆盖 |
+|---|---|---|
+| `kill_on_drop(true)` | 正常退出、panic 展开 | **`TerminateProcess`** —— 析构函数根本不跑 |
+| Job Object | **任务管理器「结束任务」这种强杀** | —— |
+
+两个都要。以后谁觉得其中一个多余而删掉，删的就是「强杀」这条路上的唯一防线。已写进模块文档。
+
+##### 一个会静默失效的坑
+
+`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` 必须设在 `JOBOBJECT_EXTENDED_LIMIT_INFORMATION.BasicLimitInformation.LimitFlags` 上。**设在外层结构体上不会报错，只是不生效** —— 笼子看着建好了、测试也过了，直到线上强杀才发现根本没关住。
+
+所以建完立刻 `QueryInformationJobObject` 回查一次，`Engine::spawn` 在标志没带上时**直接拒绝启动**。这一条不能降级成警告：笼子失效意味着「关掉 Chat 就够不着」变成一个平时看不出、出事才发现的假承诺，宁可起不来。
+
+##### 明写的取舍：入笼有个窗口
+
+`spawn` 返回到 `AssignProcessToJobObject` 之间，子进程理论上能生出笼外的孙进程。严格做法是 `CREATE_SUSPENDED` 起进程、入笼、再 `ResumeThread`，但拿主线程句柄要绕开 std 的 `Command` 自己调 `CreateProcess`。
+
+选了不绕：app-server 起来后**先读 stdin**，真正生孙进程（命令执行器、沙箱助手）是一轮对话开始以后的事，离入笼已经很远。**这是取舍，不是遗漏**，代码里写明了。
+
+##### 怎么证明的（方法本身值得记）
+
+- **假靶子（`cage.rs`，常驻）**：探针把自己关进笼子、生一个孙进程，**孙进程继承同一根 stdout 管道**。测试强杀探针后去读管道 —— 读到 EOF 说明两个写端都关了，即孙进程也死了。**这样完全绕开 PID 复用**，不需要「查查看还有没有这个 pid」那种不可信的判断。
+- **反向对照**：`--no-cage` 模式下孙进程**必须活下来**。没有这条，主测试可能因为无关原因通过（比如孙进程压根没起来），而我们不会知道 —— 一个永远绿的测试等于没有测试。
+- **真 codex（`e2e_cage.rs`，`#[ignore]`）**：确认 codex **已经在产出**之后才动手，因为真 codex 会再生助手进程，那些才是可能逃出笼子的东西，假靶子测不到。判死活用 `OpenProcess` + `WaitForSingleObject`，**句柄在杀之前就开好** —— 杀完再开可能开到一个复用了同一 pid 的新进程。
+
+##### 一个对产品有直接影响的意外发现
+
+跑完测试查残留时，机器上确实有一个 `codex.exe ... app-server` 在跑 —— **那是用户自己的 Codex 桌面应用**（Store 版，父进程 `ChatGPT.exe`）。
+
+所以：**任何「清理游离 codex 进程」的逻辑都绝不能按镜像名匹配**（`taskkill /IM codex.exe` 会把用户正在用的官方 Codex 一起杀掉）。测试里的清理已经改成按 PID。这条对将来做「上次没退干净」的自愈逻辑同样成立。
+
+##### 健康探测与重启
+
+协议里**没有便宜的心跳原语**，所以不发明一个：存活＝`try_wait()` 是 `None`，可用＝`initialize` 成功。拿 `thread/list` 当心跳要花一次真 RPC，而且它会因为跟健康无关的原因失败 —— 那种探测比不探测更坏。
+
+**重启不是透明的**：新起来的 app-server 是个空进程，之前那些 thread 的内存状态全没了。所以 `Restarted` 带 `#[must_use]`，调用方要么 `thread/resume`（A2 已验过可用），要么如实告诉用户「引擎重启了」。悄悄接上去装作无事发生，会让用户以为上下文还在。
+
+##### 平台
+
+**笼子的保证目前只在 Windows 成立。** 非 Windows 只有 `kill_on_drop`，那是明显更弱的东西（macOS 没有等价物，Linux 的 `PR_SET_PDEATHSIG` 只对直接子进程有效）。`Cage::kills_on_close()` 在非 Windows 上**如实返回 false**，不假装有保证。别把代码里的 `#[cfg]` 当成跨平台对等。
+
 ### A5 — Tauri IPC 桥
 
 Rust 侧命令（起会话/发消息/停止/答复审批）+ 事件推到前端。**前端不认识 codex 协议**，只认识我们的类型。
