@@ -1,6 +1,6 @@
 {
-  "name": "Chat",
-  "short_name": "Chat",
+  "name": "共飞AI工作台",
+  "short_name": "共飞AI工作台",
   "description": "sub2api 的中文 AI 对话客户端",
   "lang": "zh-CN",
   "start_url": "./",

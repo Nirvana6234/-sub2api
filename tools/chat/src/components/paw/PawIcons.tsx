@@ -290,6 +290,16 @@ export function PawLayersIcon(props: IconProps) {
   );
 }
 
+export function PawWalletIcon(props: IconProps) {
+  return icon(
+    <>
+      <path d="M4 7.5A2.5 2.5 0 0 1 6.5 5H18a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6.5A2.5 2.5 0 0 1 4 16.5v-9Z" />
+      <path d="M4 8h14M16 13h4M16.5 13h.01" />
+    </>,
+    props,
+  );
+}
+
 export function PawRobotIcon(props: IconProps) {
   return icon(
     <>

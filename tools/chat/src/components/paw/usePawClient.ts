@@ -9,11 +9,15 @@ import {
 } from "@/client/paw/auth";
 import {
   fetchPawConfig,
+  fetchPawPublicSettings,
   editPawImage,
+  fetchPawCurrentUser,
   generatePawImage,
   loginPaw,
+  registerPaw,
   savePawDefaults,
   sendPawChat,
+  sendPawVerifyCode,
   uploadPawFile,
 } from "@/client/paw/api";
 import { safeLocalStorage } from "@/utils/storage";
@@ -26,6 +30,7 @@ import type {
   PawImageSize,
   PawModel,
   PawPrompt,
+  PawPublicSettings,
   PawSelectionState,
   PawSession,
   PawSubmitKey,
@@ -377,12 +382,40 @@ function cleanSelectionLabel(value: string): string {
   return normalized || "新对话";
 }
 
+function isValidAuthEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
+
+function isAllowedRegistrationEmail(
+  email: string,
+  whitelist: string[] | undefined,
+): boolean {
+  if (!whitelist?.length) return true;
+  const normalized = email.trim().toLowerCase();
+  return whitelist.some((suffix) => {
+    const value = suffix.trim().toLowerCase();
+    return value.length > 0 && normalized.endsWith(value);
+  });
+}
+
 export function usePawClient() {
   const [hydrated, setHydrated] = useState(false);
   const [session, setSession] = useState<PawSession | null>(null);
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [authSettings, setAuthSettings] = useState<PawPublicSettings | null>(null);
+  const [authSettingsBusy, setAuthSettingsBusy] = useState(false);
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
+  const [registerPassword, setRegisterPassword] = useState("");
+  const [registerConfirmPassword, setRegisterConfirmPassword] = useState("");
+  const [registerVerifyCode, setRegisterVerifyCode] = useState("");
+  const [registerInvitationCode, setRegisterInvitationCode] = useState("");
+  const [registerPromoCode, setRegisterPromoCode] = useState("");
+  const [registerCaptchaToken, setRegisterCaptchaToken] = useState("");
   const [loginBusy, setLoginBusy] = useState(false);
+  const [verifyCodeBusy, setVerifyCodeBusy] = useState(false);
+  const [verifyCodeCountdown, setVerifyCodeCountdown] = useState(0);
+  const [captchaResetKey, setCaptchaResetKey] = useState(0);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [config, setConfig] = useState<PawConfigData | null>(null);
   const [configBusy, setConfigBusy] = useState(false);
@@ -953,6 +986,41 @@ export function usePawClient() {
   }, []);
 
   useEffect(() => {
+    if (!hydrated || session) return;
+
+    let active = true;
+    setAuthSettingsBusy(true);
+    void fetchPawPublicSettings()
+      .then((settings) => {
+        if (active) {
+          setAuthSettings(settings);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setAuthSettings(null);
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setAuthSettingsBusy(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [hydrated, session]);
+
+  useEffect(() => {
+    if (verifyCodeCountdown <= 0) return;
+    const timer = window.setInterval(() => {
+      setVerifyCodeCountdown((current) => Math.max(0, current - 1));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [verifyCodeCountdown]);
+
+  useEffect(() => {
     if (!hydrated) return;
     writeJSON(CONVERSATIONS_KEY, conversations);
   }, [conversations, hydrated]);
@@ -1000,8 +1068,14 @@ export function usePawClient() {
     setConfigBusy(true);
     setConfigError(null);
     try {
-      const response = await fetchPawConfig();
-      setConfig(response.data);
+      const [response, user] = await Promise.all([
+        fetchPawConfig(),
+        fetchPawCurrentUser().catch(() => null),
+      ]);
+      setConfig({
+        ...response.data,
+        user: user ? { ...response.data.user, ...user } : response.data.user,
+      });
     } catch (error) {
       setConfigError(
         error instanceof Error ? error.message : "配置加载失败，请重新登录或稍后再试。",
@@ -1371,6 +1445,171 @@ export function usePawClient() {
     [loginEmail, loginPassword],
   );
 
+  const handleAuthModeChange = useCallback(
+    (mode: "login" | "register") => {
+      if (mode === "register" && !authSettings?.registration_enabled) {
+        setLoginError("当前服务端未开放注册");
+        return;
+      }
+      setAuthMode(mode);
+      setLoginError(null);
+    },
+    [authSettings?.registration_enabled],
+  );
+
+  const handleCaptchaTokenChange = useCallback((token: string) => {
+    setRegisterCaptchaToken(token);
+    setLoginError(null);
+  }, []);
+
+  const handleCaptchaError = useCallback(() => {
+    setRegisterCaptchaToken("");
+    setLoginError("安全验证加载失败，请刷新页面后重试");
+  }, []);
+
+  const handleSendVerifyCode = useCallback(async () => {
+    const email = loginEmail.trim();
+    if (!isValidAuthEmail(email)) {
+      setLoginError("请输入有效的邮箱地址");
+      return;
+    }
+    if (!authSettings?.email_verify_enabled) {
+      setLoginError("当前服务端未启用邮箱验证");
+      return;
+    }
+    if (authSettings.turnstile_enabled && !registerCaptchaToken) {
+      setLoginError("请先完成安全验证");
+      return;
+    }
+    if (
+      authSettings.tencent_captcha_enabled === true ||
+      authSettings.aliyun_captcha_enabled === true
+    ) {
+      setLoginError("当前服务端启用了暂未支持的安全验证方式，请使用后台网页注册");
+      return;
+    }
+
+    setVerifyCodeBusy(true);
+    setLoginError(null);
+    try {
+      const response = await sendPawVerifyCode({
+        email,
+        ...(registerCaptchaToken
+          ? { turnstile_token: registerCaptchaToken }
+          : {}),
+      });
+      setVerifyCodeCountdown(Math.max(0, response.countdown));
+      setLoginError(null);
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : "验证码发送失败");
+    } finally {
+      setVerifyCodeBusy(false);
+      setRegisterCaptchaToken("");
+      setCaptchaResetKey((current) => current + 1);
+    }
+  }, [authSettings, loginEmail, registerCaptchaToken]);
+
+  const handleRegister = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      const email = loginEmail.trim();
+      const password = registerPassword;
+      const confirmPassword = registerConfirmPassword;
+
+      if (!authSettings?.registration_enabled) {
+        setLoginError("当前服务端未开放注册");
+        return;
+      }
+      if (!isValidAuthEmail(email)) {
+        setLoginError("请输入有效的邮箱地址");
+        return;
+      }
+      if (!isAllowedRegistrationEmail(
+        email,
+        authSettings.registration_email_suffix_whitelist,
+      )) {
+        setLoginError("该邮箱后缀暂不支持注册");
+        return;
+      }
+      if (password.length < 6) {
+        setLoginError("密码至少需要 6 位");
+        return;
+      }
+      if (password !== confirmPassword) {
+        setLoginError("两次输入的密码不一致");
+        return;
+      }
+      if (authSettings.email_verify_enabled && !registerVerifyCode.trim()) {
+        setLoginError("请输入邮箱验证码");
+        return;
+      }
+      if (
+        authSettings.invitation_code_enabled &&
+        !registerInvitationCode.trim()
+      ) {
+        setLoginError("请输入邀请码");
+        return;
+      }
+      if (authSettings.turnstile_enabled && !registerCaptchaToken) {
+        setLoginError("请先完成安全验证");
+        return;
+      }
+      if (
+        authSettings.tencent_captcha_enabled === true ||
+        authSettings.aliyun_captcha_enabled === true
+      ) {
+        setLoginError("当前服务端启用了暂未支持的安全验证方式，请使用后台网页注册");
+        return;
+      }
+
+      setLoginBusy(true);
+      setLoginError(null);
+      try {
+        const nextSession = await registerPaw({
+          email,
+          password,
+          ...(authSettings.email_verify_enabled
+            ? { verify_code: registerVerifyCode.trim() }
+            : {}),
+          ...(registerCaptchaToken
+            ? { turnstile_token: registerCaptchaToken }
+            : {}),
+          ...(authSettings.invitation_code_enabled
+            ? { invitation_code: registerInvitationCode.trim() }
+            : {}),
+          ...(authSettings.promo_code_enabled && registerPromoCode.trim()
+            ? { promo_code: registerPromoCode.trim() }
+            : {}),
+        });
+        setSession(nextSession);
+        setRegisterPassword("");
+        setRegisterConfirmPassword("");
+        setRegisterVerifyCode("");
+        setRegisterInvitationCode("");
+        setRegisterPromoCode("");
+        setRegisterCaptchaToken("");
+        setVerifyCodeCountdown(0);
+        setNotice("注册成功");
+      } catch (error) {
+        setLoginError(error instanceof Error ? error.message : "注册失败");
+      } finally {
+        setLoginBusy(false);
+        setRegisterCaptchaToken("");
+        setCaptchaResetKey((current) => current + 1);
+      }
+    },
+    [
+      authSettings,
+      loginEmail,
+      registerCaptchaToken,
+      registerConfirmPassword,
+      registerInvitationCode,
+      registerPassword,
+      registerPromoCode,
+      registerVerifyCode,
+    ],
+  );
+
   const handleLogout = useCallback(() => {
     sendAbortRef.current?.abort();
     clearEditState(false);
@@ -1379,7 +1618,17 @@ export function usePawClient() {
     setSession(null);
     setConfig(null);
     setConfigError(null);
+    setAuthMode("login");
     setLoginPassword("");
+    setRegisterPassword("");
+    setRegisterConfirmPassword("");
+    setRegisterVerifyCode("");
+    setRegisterInvitationCode("");
+    setRegisterPromoCode("");
+    setRegisterCaptchaToken("");
+    setCaptchaResetKey((current) => current + 1);
+    setVerifyCodeCountdown(0);
+    setLoginError(null);
     setNotice(null);
     setSelectionInvalid(false);
     setSending(false);
@@ -1471,19 +1720,18 @@ export function usePawClient() {
 
     const text = draft.trim();
     if (!text && attachments.length === 0) {
-      setNotice(imageMode ? "请输入图片描述后再生成。" : "先输入内容再发送。");
+      setNotice(
+        currentModel.image_generation
+          ? "请输入图片描述后再生成。"
+          : "先输入内容再发送。",
+      );
       return;
     }
 
     const submittedDraft = draft;
     const submittedAttachments = attachments.map((item) => ({ ...item }));
 
-    if (imageMode) {
-      if (!currentModel.image_generation) {
-        setSelectionInvalid(true);
-        setNotice("当前模型不支持图片生成，请重新选择模型。");
-        return;
-      }
+    if (currentModel.image_generation) {
       if (editingMessageId) {
         setNotice("图片生成消息暂不支持编辑，请新建一条图片请求。");
         return;
@@ -1574,7 +1822,6 @@ export function usePawClient() {
     selectedGroupId,
     selectedModelId,
     selectedReasoning,
-    imageMode,
     imageSize,
     dispatchConversationSend,
     dispatchImageGeneration,
@@ -1585,12 +1832,33 @@ export function usePawClient() {
   return {
     hydrated,
     session,
+    authMode,
+    authSettings,
+    authSettingsBusy,
     loginEmail,
     setLoginEmail,
     loginPassword,
     setLoginPassword,
+    registerPassword,
+    setRegisterPassword,
+    registerConfirmPassword,
+    setRegisterConfirmPassword,
+    registerVerifyCode,
+    setRegisterVerifyCode,
+    registerInvitationCode,
+    setRegisterInvitationCode,
+    registerPromoCode,
+    setRegisterPromoCode,
     loginBusy,
+    verifyCodeBusy,
+    verifyCodeCountdown,
+    captchaResetKey,
     loginError,
+    handleAuthModeChange,
+    handleCaptchaTokenChange,
+    handleCaptchaError,
+    handleSendVerifyCode,
+    handleRegister,
     config,
     configBusy,
     configError,

@@ -18,7 +18,6 @@ import {
   PawCopyIcon,
   PawDownloadIcon,
   PawEditIcon,
-  PawImageIcon,
   PawKeyboardIcon,
   PawLayersIcon,
   PawMaximizeIcon,
@@ -73,7 +72,6 @@ interface PawChatPaneProps {
   sending: boolean;
   editingMessageId: string | null;
   canSend: boolean;
-  imageMode: boolean;
   imageSize: PawImageSize;
   imageSizes: PawImageSize[];
   theme: PawTheme;
@@ -83,7 +81,6 @@ interface PawChatPaneProps {
   onChangeGroup: (value: number) => void;
   onChangeModel: (value: string) => void;
   onChangeReasoning: (value: string) => void;
-  onToggleImageMode: () => void;
   onChangeImageSize: (value: PawImageSize) => void;
   onRefreshConfig: () => void;
   onSaveDefaults: () => void;
@@ -118,7 +115,7 @@ interface PawChatPaneProps {
 
 function roleLabel(role: PawConversation["messages"][number]["role"]): string {
   if (role === "user") return "你";
-  if (role === "assistant") return "Paw";
+  if (role === "assistant") return "";
   return "系统";
 }
 
@@ -132,7 +129,7 @@ function formatTime(value: number): string {
 }
 
 function avatarLabel(role: PawConversation["messages"][number]["role"]): string {
-  if (role === "assistant") return "P";
+  if (role === "assistant") return "G";
   if (role === "user") return "你";
   return "系";
 }
@@ -188,17 +185,31 @@ function ActionButton({
 type PawSelectorItem = {
   title: string;
   subtitle?: string;
+  description?: string;
+  rateLabel?: string;
+  rateOriginalLabel?: string;
+  rateKind?: "group" | "personal";
+  rateDescription?: string;
+  peakLabel?: string;
   value: string;
 };
 
+function formatGroupMultiplier(value: number | undefined): string | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? `${value.toFixed(3)}x`
+    : undefined;
+}
+
 function PawSelector({
   title,
+  explanation,
   items,
   selectedValue,
   onSelect,
   onClose,
 }: {
   title: string;
+  explanation?: string;
   items: PawSelectorItem[];
   selectedValue?: string;
   onSelect: (value: string) => void;
@@ -231,6 +242,9 @@ function PawSelector({
           <h2>{title}</h2>
           <span>{items.length} 个选项</span>
         </header>
+        {explanation ? (
+          <div className="paw-selector-explanation">{explanation}</div>
+        ) : null}
         <div className="paw-selector-list">
           {items.length === 0 ? (
             <div className="paw-selector-empty">暂无可用选项</div>
@@ -251,9 +265,36 @@ function PawSelector({
                   {item.title.slice(0, 1).toUpperCase()}
                 </span>
                 <span className="paw-selector-item-copy">
-                  <strong>{item.title}</strong>
+                  <span className="paw-selector-item-heading">
+                    <strong>{item.title}</strong>
+                    {item.rateLabel ? (
+                      <span className="paw-selector-item-rate-summary">
+                        {item.rateKind === "personal" ? "专属倍率：" : "分组倍率："}
+                        {item.rateOriginalLabel ? `${item.rateOriginalLabel} → ` : ""}
+                        {item.rateLabel}
+                      </span>
+                    ) : null}
+                  </span>
                   {item.subtitle ? <small>{item.subtitle}</small> : null}
+                  {item.description ? (
+                    <small className="paw-selector-item-description">
+                      {item.description}
+                    </small>
+                  ) : null}
+                  {item.rateDescription ? (
+                    <small className="paw-selector-item-rate-description">
+                      {item.rateDescription}
+                    </small>
+                  ) : null}
+                  {selectedValue === item.value ? (
+                    <small className="paw-selector-item-current">当前使用中</small>
+                  ) : null}
                 </span>
+                {item.peakLabel ? (
+                  <span className="paw-selector-item-rate">
+                    <span className="paw-selector-peak-pill">{item.peakLabel}</span>
+                  </span>
+                ) : null}
                 {selectedValue === item.value ? (
                   <span className="paw-selector-check" aria-label="已选择">
                     <PawCheckIcon width={16} height={16} />
@@ -288,7 +329,6 @@ export function PawChatPane({
   sending,
   editingMessageId,
   canSend,
-  imageMode,
   imageSize,
   imageSizes,
   theme,
@@ -298,7 +338,6 @@ export function PawChatPane({
   onChangeGroup,
   onChangeModel,
   onChangeReasoning,
-  onToggleImageMode,
   onChangeImageSize,
   onRefreshConfig,
   onSaveDefaults,
@@ -355,11 +394,50 @@ export function PawChatPane({
   );
   const selectorItems = useMemo((): PawSelectorItem[] => {
     if (selectorOpen === "group") {
-      return (config?.groups ?? []).map((group) => ({
-        title: group.name,
-        subtitle: group.description || `${group.models.length} 个模型`,
-        value: String(group.id),
-      }));
+      return (config?.groups ?? []).map((group) => {
+        const effectiveMultiplier =
+          group.user_rate_multiplier ?? group.rate_multiplier;
+        const hasPersonalMultiplier = group.user_rate_multiplier != null;
+        const rateLabel =
+          group.subscription_type === "subscription"
+            ? "订阅"
+            : formatGroupMultiplier(effectiveMultiplier);
+        const rateOriginalLabel =
+          group.user_rate_multiplier != null &&
+          group.rate_multiplier != null &&
+          group.user_rate_multiplier !== group.rate_multiplier
+            ? formatGroupMultiplier(group.rate_multiplier)
+            : undefined;
+        const rateDescription =
+          group.subscription_type === "subscription"
+            ? "订阅额度按服务端订阅规则计算"
+            : effectiveMultiplier == null
+              ? "倍率由服务端计费规则决定"
+              : `每 $1 Token 额度扣除 ￥${effectiveMultiplier.toFixed(3)} 账户余额${
+                  hasPersonalMultiplier
+                    ? rateOriginalLabel
+                      ? `（当前为专属倍率，分组默认倍率 ${rateOriginalLabel}）`
+                      : "（当前为专属倍率）"
+                    : "（未设置专属倍率，使用分组默认倍率）"
+                }`;
+        const peakLabel =
+          group.peak_rate_enabled && group.peak_start && group.peak_end
+            ? `高峰时段 ${group.peak_start}-${group.peak_end} 按 ×${(
+                group.peak_rate_multiplier ?? 1
+              ).toFixed(2)} 计费（服务端时区）`
+            : undefined;
+        return {
+          title: group.name,
+          subtitle: `${group.models.length} 个模型`,
+          description: group.description || undefined,
+          rateLabel,
+          rateOriginalLabel,
+          rateKind: hasPersonalMultiplier ? "personal" : "group",
+          rateDescription,
+          peakLabel,
+          value: String(group.id),
+        };
+      });
     }
     if (selectorOpen === "model") {
       return (currentGroup?.models ?? []).map((model) => ({
@@ -396,12 +474,16 @@ export function PawChatPane({
 
   const selectorTitle =
     selectorOpen === "group"
-      ? "选择分组"
+      ? "选择分组与倍率"
       : selectorOpen === "model"
         ? "选择模型"
         : selectorOpen === "reasoning"
           ? "选择推理强度"
           : "选择图片尺寸";
+  const selectorExplanation =
+    selectorOpen === "group"
+      ? "倍率决定 Token 额度如何扣除账户余额。例如 0.500x 表示每 $1 Token 额度扣除 ￥0.500 账户余额；订阅分组按服务端订阅规则计算，高峰时段按服务端时区的高峰倍率计费。"
+      : undefined;
 
   const selectorSelectedValue =
     selectorOpen === "group"
@@ -695,7 +777,9 @@ export function PawChatPane({
               <div className="paw-message">
                 <div className="paw-message-header">
                   <div className="paw-message-identity">
-                    <span className="paw-message-role">{roleLabel(message.role)}</span>
+                    {roleLabel(message.role) ? (
+                      <span className="paw-message-role">{roleLabel(message.role)}</span>
+                    ) : null}
                     {message.role === "assistant" && (message.model || currentModel) ? (
                       <span className="paw-message-model">
                         {message.model || currentModel?.name}
@@ -866,7 +950,7 @@ export function PawChatPane({
                   active={selectorOpen === "reasoning"}
                   disabled={!currentModel?.reasoning.supported}
                 />
-                {imageMode && imageSizes.length > 0 ? (
+                {currentModel?.image_generation && imageSizes.length > 0 ? (
                   <ActionButton
                     label={imageSize}
                     icon={<PawRulerIcon width={16} height={16} />}
@@ -876,12 +960,6 @@ export function PawChatPane({
                 ) : null}
               </div>
             <div className="paw-input-actions-end">
-              <ActionButton
-                label={imageMode ? "聊天模式" : "图片模式"}
-                icon={<PawImageIcon width={16} height={16} />}
-                onClick={onToggleImageMode}
-                active={imageMode}
-              />
               <ActionButton
                 label="提示词"
                 icon={<PawPromptIcon width={16} height={16} />}
@@ -893,10 +971,10 @@ export function PawChatPane({
               />
               <label
                 className="paw-chat-action"
-                title={imageMode ? "上传图片" : "上传附件"}
+                title={currentModel?.image_generation ? "上传图片" : "上传附件"}
                 aria-disabled={
                   fileBusy ||
-                  (imageMode
+                  (currentModel?.image_generation
                     ? !currentModel?.vision && !currentModel?.file_input
                     : !currentModel?.file_input && !currentModel?.vision)
                 }
@@ -906,17 +984,17 @@ export function PawChatPane({
                   <PawPaperclipIcon width={16} height={16} />
                 </span>
                 <span className="paw-chat-action-label">
-                  {fileBusy ? "上传中" : imageMode ? "图片" : "附件"}
+                  {fileBusy ? "上传中" : currentModel?.image_generation ? "图片" : "附件"}
                 </span>
                 <input
                   type="file"
-                  accept={imageMode ? "image/*" : undefined}
+                  accept={currentModel?.image_generation ? "image/*" : undefined}
                   multiple
                   hidden
                   onChange={onFileChange}
                   disabled={
                     fileBusy ||
-                    (imageMode
+                    (currentModel?.image_generation
                       ? !currentModel?.vision && !currentModel?.file_input
                       : !currentModel?.file_input && !currentModel?.vision)
                   }
@@ -1014,6 +1092,7 @@ export function PawChatPane({
       {selectorOpen ? (
         <PawSelector
           title={selectorTitle}
+          explanation={selectorExplanation}
           items={selectorItems}
           selectedValue={selectorSelectedValue}
           onSelect={(value) => {

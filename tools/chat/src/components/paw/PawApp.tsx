@@ -9,6 +9,8 @@ import { PawModal } from "./PawModal";
 import { PawCheckIcon, PawCloseIcon } from "./PawIcons";
 import { PawExportModal } from "./PawExportModal";
 import { PawPromptModal } from "./PawPromptModal";
+import { PawPaymentModal } from "./PawPaymentModal";
+import { PawProfileModal } from "./PawProfileModal";
 import { usePawClient } from "./usePawClient";
 
 const SIDEBAR_WIDTH_KEY = "paw-sidebar-width:v1";
@@ -30,6 +32,8 @@ export function PawApp() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [promptsOpen, setPromptsOpen] = useState(false);
+  const [paymentOpen, setPaymentOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [confirmState, setConfirmState] = useState<{
@@ -174,7 +178,7 @@ export function PawApp() {
       <div className="paw-auth">
         <section className="paw-auth-card">
           <div className="paw-auth-kicker">sub2api</div>
-          <h1 className="paw-auth-title">Chat</h1>
+          <h1 className="paw-auth-title">共飞AI工作台</h1>
           <p className="paw-auth-copy">正在准备本地工作区...</p>
         </section>
       </div>
@@ -184,13 +188,34 @@ export function PawApp() {
   if (!paw.session) {
     return (
       <PawAuthPage
+        mode={paw.authMode}
+        settings={paw.authSettings}
+        settingsBusy={paw.authSettingsBusy}
         email={paw.loginEmail}
         password={paw.loginPassword}
+        registerPassword={paw.registerPassword}
+        registerConfirmPassword={paw.registerConfirmPassword}
+        verifyCode={paw.registerVerifyCode}
+        invitationCode={paw.registerInvitationCode}
+        promoCode={paw.registerPromoCode}
         busy={paw.loginBusy}
+        verifyBusy={paw.verifyCodeBusy}
+        verifyCountdown={paw.verifyCodeCountdown}
+        captchaResetKey={paw.captchaResetKey}
         error={paw.loginError}
         onEmailChange={paw.setLoginEmail}
         onPasswordChange={paw.setLoginPassword}
-        onSubmit={paw.handleLogin}
+        onRegisterPasswordChange={paw.setRegisterPassword}
+        onRegisterConfirmPasswordChange={paw.setRegisterConfirmPassword}
+        onVerifyCodeChange={paw.setRegisterVerifyCode}
+        onInvitationCodeChange={paw.setRegisterInvitationCode}
+        onPromoCodeChange={paw.setRegisterPromoCode}
+        onCaptchaTokenChange={paw.handleCaptchaTokenChange}
+        onCaptchaError={paw.handleCaptchaError}
+        onModeChange={paw.handleAuthModeChange}
+        onSendVerifyCode={paw.handleSendVerifyCode}
+        onLoginSubmit={paw.handleLogin}
+        onRegisterSubmit={paw.handleRegister}
       />
     );
   }
@@ -260,14 +285,35 @@ export function PawApp() {
         }}
         onOpenPrompts={() => setPromptsOpen(true)}
         onOpenSettings={() => setSettingsOpen(true)}
+        onOpenPayment={() => setPaymentOpen(true)}
+        onOpenProfile={() => {
+          setMobileSidebarOpen(false);
+          setProfileOpen(true);
+        }}
         onExportConversation={exportConversation}
-        onLogout={paw.handleLogout}
         onSelectConversation={paw.selectConversation}
         onReorderConversations={paw.reorderConversations}
         onCloseMobile={() => setMobileSidebarOpen(false)}
         onDragStart={handleSidebarDragStart}
       />
 
+      {profileOpen ? (
+        <PawProfileModal
+          config={paw.config}
+          session={paw.session}
+          currentGroup={paw.currentGroup}
+          fullPage
+          onOpenPayment={() => {
+            setProfileOpen(false);
+            setPaymentOpen(true);
+          }}
+          onLogout={() => {
+            setProfileOpen(false);
+            paw.handleLogout();
+          }}
+          onClose={() => setProfileOpen(false)}
+        />
+      ) : (
       <PawChatPane
         config={paw.config}
         configBusy={paw.configBusy}
@@ -280,7 +326,6 @@ export function PawApp() {
         selectedReasoning={paw.selectedReasoning}
         submitKey={paw.submitKey}
         prompts={[...paw.prompts, ...paw.builtinPrompts]}
-        imageMode={paw.imageMode}
         imageSize={paw.imageSize}
         imageSizes={paw.imageSizes}
         currentGroup={paw.currentGroup}
@@ -298,7 +343,6 @@ export function PawApp() {
         onChangeGroup={paw.updateSelection}
         onChangeModel={paw.updateModel}
         onChangeReasoning={paw.updateReasoning}
-        onToggleImageMode={paw.toggleImageMode}
         onChangeImageSize={paw.setImageSize}
         onRefreshConfig={() => {
           void paw.refreshConfig();
@@ -343,6 +387,7 @@ export function PawApp() {
         onRenameConversation={paw.renameConversation}
         getSelectionSummary={paw.getSelectionSummary}
       />
+      )}
       {settingsOpen ? (
         <PawSettingsModal
           config={paw.config}
@@ -384,6 +429,16 @@ export function PawApp() {
             )
           }
           onClose={() => setSettingsOpen(false)}
+        />
+      ) : null}
+      {paymentOpen ? (
+        <PawPaymentModal
+          balance={paw.config?.user.balance}
+          onCompleted={() => {
+            void paw.refreshConfig();
+            paw.setNotice("充值成功，账户余额已刷新。");
+          }}
+          onClose={() => setPaymentOpen(false)}
         />
       ) : null}
       {promptsOpen ? (

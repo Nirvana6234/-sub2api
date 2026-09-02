@@ -1,4 +1,4 @@
-const CACHE_NAME = "paw-shell-v1";
+const CACHE_NAME = "paw-shell-v3";
 const appBase = new URL("./", self.registration.scope).pathname;
 const APP_SHELL = [
   appBase,
@@ -32,6 +32,7 @@ self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
   const url = new URL(event.request.url);
   if (url.origin !== self.location.origin || url.pathname.startsWith("/api/")) return;
+  if (url.pathname.includes("/_next/")) return;
 
   if (event.request.mode === "navigate") {
     event.respondWith(

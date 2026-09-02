@@ -2,6 +2,82 @@ export interface PawUser {
   id: number;
   name: string;
   email: string;
+  balance?: number;
+  frozen_balance?: number;
+  total_recharged?: number;
+}
+
+export interface PawUsageDashboardStats {
+  total_requests: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cache_creation_tokens: number;
+  total_cache_read_tokens: number;
+  total_tokens: number;
+  total_cost: number;
+  total_actual_cost: number;
+  today_requests: number;
+  today_input_tokens: number;
+  today_output_tokens: number;
+  today_cache_creation_tokens: number;
+  today_cache_read_tokens: number;
+  today_tokens: number;
+  today_cost: number;
+  today_actual_cost: number;
+  average_duration_ms: number;
+  rpm: number;
+  tpm: number;
+}
+
+export interface PawUsageTrendPoint {
+  date: string;
+  requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_tokens: number;
+  cache_read_tokens: number;
+  total_tokens: number;
+  cost: number;
+  actual_cost: number;
+}
+
+export interface PawUsageLog {
+  id: number;
+  model: string;
+  group_id: number | null;
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_tokens: number;
+  cache_read_tokens: number;
+  total_cost: number;
+  actual_cost: number;
+  rate_multiplier: number;
+  request_type?: string;
+  stream: boolean;
+  created_at: string;
+}
+
+export interface PawUsageDashboardSnapshot {
+  generated_at: string;
+  start_date: string;
+  end_date: string;
+  granularity: string;
+  trend?: PawUsageTrendPoint[];
+  models?: Array<{
+    model: string;
+    requests: number;
+    total_tokens: number;
+    cost: number;
+    actual_cost: number;
+  }>;
+  groups?: Array<{
+    group_id: number;
+    group_name: string;
+    requests: number;
+    total_tokens: number;
+    cost: number;
+    actual_cost: number;
+  }>;
 }
 
 export interface PawReasoningCapability {
@@ -24,6 +100,14 @@ export interface PawGroup {
   id: number;
   name: string;
   description: string;
+  platform?: string;
+  rate_multiplier?: number;
+  user_rate_multiplier?: number | null;
+  subscription_type?: string;
+  peak_rate_enabled?: boolean;
+  peak_start?: string;
+  peak_end?: string;
+  peak_rate_multiplier?: number;
   models: PawModel[];
 }
 
@@ -144,6 +228,46 @@ export interface PawLoginResponse {
   user?: PawUser;
 }
 
+export interface PawPublicSettings {
+  registration_enabled: boolean;
+  email_verify_enabled: boolean;
+  registration_email_suffix_whitelist?: string[];
+  promo_code_enabled: boolean;
+  invitation_code_enabled: boolean;
+  turnstile_enabled?: boolean;
+  turnstile_site_key?: string;
+  tencent_captcha_enabled?: boolean;
+  tencent_captcha_app_id?: string;
+  aliyun_captcha_enabled?: boolean;
+  aliyun_captcha_scene_id?: string;
+  aliyun_captcha_prefix?: string;
+  site_name?: string;
+}
+
+export interface PawRegisterRequest {
+  email: string;
+  password: string;
+  verify_code?: string;
+  turnstile_token?: string;
+  tencent_captcha_ticket?: string;
+  tencent_captcha_randstr?: string;
+  promo_code?: string;
+  invitation_code?: string;
+  aff_code?: string;
+}
+
+export interface PawSendVerifyCodeRequest {
+  email: string;
+  turnstile_token?: string;
+  tencent_captcha_ticket?: string;
+  tencent_captcha_randstr?: string;
+}
+
+export interface PawSendVerifyCodeResponse {
+  message?: string;
+  countdown: number;
+}
+
 export interface PawRefreshResponse {
   access_token: string;
   refresh_token: string;
@@ -156,6 +280,73 @@ export interface PawSession {
   refreshToken?: string;
   expiresAt?: number;
   user?: PawUser;
+}
+
+export interface PawPaymentMethodLimit {
+  currency: string;
+  display_name: string;
+  single_min: number;
+  single_max: number;
+  fee_rate: number;
+  available: boolean;
+}
+
+export interface PawPaymentCheckoutInfo {
+  methods: Record<string, PawPaymentMethodLimit>;
+  global_min: number;
+  global_max: number;
+  balance_disabled: boolean;
+  balance_recharge_multiplier: number;
+  recharge_fee_rate: number;
+  help_text: string;
+  help_image_url: string;
+}
+
+export type PawPaymentOrderStatus =
+  | "PENDING"
+  | "PAID"
+  | "RECHARGING"
+  | "COMPLETED"
+  | "EXPIRED"
+  | "CANCELLED"
+  | "FAILED"
+  | string;
+
+export interface PawPaymentCreateOrderRequest {
+  amount: number;
+  payment_type: string;
+  order_type: "balance";
+  is_mobile: boolean;
+  payment_source?: string;
+}
+
+export interface PawPaymentOrderCreateResult {
+  order_id: number;
+  amount: number;
+  pay_amount: number;
+  fee_rate: number;
+  currency?: string;
+  payment_type?: string;
+  qr_code?: string;
+  pay_url?: string;
+  out_trade_no?: string;
+  expires_at: string;
+  payment_mode?: string;
+}
+
+export interface PawPaymentOrder {
+  id: number;
+  amount: number;
+  pay_amount: number;
+  fee_rate: number;
+  currency?: string;
+  payment_type: string;
+  out_trade_no: string;
+  status: PawPaymentOrderStatus;
+  order_type: string;
+  expires_at: string;
+  paid_at?: string;
+  completed_at?: string;
 }
 
 export interface PawConversationMessage {

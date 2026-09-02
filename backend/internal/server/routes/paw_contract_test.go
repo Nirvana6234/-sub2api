@@ -26,7 +26,7 @@ func TestPawConfigResponseJSONContract(t *testing.T) {
 
 	raw, err := json.Marshal(want)
 	require.NoError(t, err)
-	require.JSONEq(t, `{"data":{"user":{"id":42,"name":"user","email":"user@example.com"},"groups":[{"id":7,"name":"Balanced","description":"","models":[{"id":"model-id","name":"Model Name","owned_by":"provider","reasoning":{"supported":true,"values":["low","medium","high"],"default":"medium"},"vision":true,"image_generation":false,"file_input":true}]}],"defaults":{"group_id":7,"model_id":"model-id","reasoning":"medium"}}}`, string(raw))
+	require.JSONEq(t, `{"data":{"user":{"id":42,"name":"user","email":"user@example.com"},"groups":[{"id":7,"name":"Balanced","description":"","platform":"","rate_multiplier":0,"subscription_type":"","peak_rate_enabled":false,"peak_start":"","peak_end":"","peak_rate_multiplier":0,"models":[{"id":"model-id","name":"Model Name","owned_by":"provider","reasoning":{"supported":true,"values":["low","medium","high"],"default":"medium"},"vision":true,"image_generation":false,"file_input":true}]}],"defaults":{"group_id":7,"model_id":"model-id","reasoning":"medium"}}}`, string(raw))
 
 	literalJSON := `{"data":{"user":{"id":42,"name":"user","email":"user@example.com"},"groups":[{"id":7,"name":"Balanced","description":"","models":[{"id":"model-id","name":"Model Name","owned_by":"provider","reasoning":{"supported":true,"values":["low","medium","high"],"default":"medium"},"vision":true,"image_generation":false,"file_input":true}]}],"defaults":{"group_id":7,"model_id":"model-id","reasoning":"medium"}}}`
 	var got PawConfigResponse

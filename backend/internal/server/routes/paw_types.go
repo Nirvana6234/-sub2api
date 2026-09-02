@@ -30,10 +30,18 @@ type PawUser struct {
 }
 
 type PawGroup struct {
-	ID          int64      `json:"id"`
-	Name        string     `json:"name"`
-	Description string     `json:"description"`
-	Models      []PawModel `json:"models"`
+	ID                 int64      `json:"id"`
+	Name               string     `json:"name"`
+	Description        string     `json:"description"`
+	Platform           string     `json:"platform"`
+	RateMultiplier     float64    `json:"rate_multiplier"`
+	UserRateMultiplier *float64   `json:"user_rate_multiplier,omitempty"`
+	SubscriptionType   string     `json:"subscription_type"`
+	PeakRateEnabled    bool       `json:"peak_rate_enabled"`
+	PeakStart          string     `json:"peak_start"`
+	PeakEnd            string     `json:"peak_end"`
+	PeakRateMultiplier float64    `json:"peak_rate_multiplier"`
+	Models             []PawModel `json:"models"`
 }
 
 type PawModel struct {

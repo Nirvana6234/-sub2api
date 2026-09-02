@@ -7,13 +7,13 @@ import {
   PawEditIcon,
   PawCheckIcon,
   PawDownloadIcon,
-  PawLogoutIcon,
   PawPlusIcon,
   PawPromptIcon,
   PawRefreshIcon,
   PawSearchIcon,
   PawSettingsIcon,
   PawTrashIcon,
+  PawWalletIcon,
 } from "./PawIcons";
 import { PawModal } from "./PawModal";
 import type { PawConversation, PawConfigData, PawSession } from "@/client/paw/types";
@@ -29,8 +29,9 @@ interface PawSidebarProps {
   onRefreshConfig: () => void;
   onOpenPrompts: () => void;
   onOpenSettings: () => void;
+  onOpenPayment: () => void;
+  onOpenProfile: () => void;
   onExportConversation: () => void;
-  onLogout: () => void;
   onSelectConversation: (id: string) => void;
   onReorderConversations: (sourceId: string, targetId: string) => void;
   onCloseMobile: () => void;
@@ -44,6 +45,12 @@ function formatConversationDate(value: number): string {
   });
 }
 
+function formatAccountMoney(value: number | undefined): string {
+  return typeof value === "number" && Number.isFinite(value)
+    ? `¥${value.toFixed(4)}`
+    : "--";
+}
+
 export function PawSidebar({
   session,
   config,
@@ -55,8 +62,9 @@ export function PawSidebar({
   onRefreshConfig,
   onOpenPrompts,
   onOpenSettings,
+  onOpenPayment,
+  onOpenProfile,
   onExportConversation,
-  onLogout,
   onSelectConversation,
   onReorderConversations,
   onCloseMobile,
@@ -105,8 +113,8 @@ export function PawSidebar({
       <div className="paw-sidebar-header">
         <div className="paw-sidebar-brand">
           <div>
-            <h2 className="paw-brand-title">Chat</h2>
-            <div className="paw-brand-subtitle">sub2api</div>
+            <h2 className="paw-brand-title">共飞AI工作台</h2>
+            <div className="paw-brand-subtitle">ChatGPT/Claude等多家模型一键使用</div>
           </div>
           <button
             className="paw-icon-button paw-mobile-only"
@@ -116,6 +124,36 @@ export function PawSidebar({
           >
             <PawCloseIcon width={16} height={16} />
           </button>
+        </div>
+        <div className="paw-sidebar-account">
+          <div className="paw-sidebar-account-heading">
+            <div className="paw-sidebar-account-copy">
+              <strong>{user?.name || "已登录账户"}</strong>
+              <span>{user?.email || session.user?.email || "sub2api 账户"}</span>
+            </div>
+            <button
+              type="button"
+              className="paw-button primary paw-sidebar-recharge"
+              onClick={onOpenPayment}
+            >
+              <PawWalletIcon width={14} height={14} />
+              充值
+            </button>
+          </div>
+          <div className="paw-sidebar-balance-row">
+            <span>账户余额</span>
+            <strong>{formatAccountMoney(user?.balance)}</strong>
+          </div>
+          <div className="paw-sidebar-balance-row muted">
+            <span>冻结余额</span>
+            <span>{formatAccountMoney(user?.frozen_balance)}</span>
+          </div>
+          {typeof user?.total_recharged === "number" ? (
+            <div className="paw-sidebar-balance-row muted">
+              <span>累计充值</span>
+              <span>{formatAccountMoney(user.total_recharged)}</span>
+            </div>
+          ) : null}
         </div>
         <div className="paw-sidebar-actions">
           <button
@@ -147,6 +185,45 @@ export function PawSidebar({
             aria-label="刷新配置"
           >
             <PawRefreshIcon width={16} height={16} />
+          </button>
+        </div>
+        <div className="paw-sidebar-footer-row paw-sidebar-header-conversation-actions">
+          <button
+            className="paw-icon-button"
+            type="button"
+            onClick={() => onDeleteConversation(activeConversationId)}
+            disabled={conversations.length === 0}
+            title="删除当前对话"
+            aria-label="删除当前对话"
+          >
+            <PawTrashIcon width={16} height={16} />
+          </button>
+          <button
+            className="paw-icon-button"
+            type="button"
+            onClick={onExportConversation}
+            disabled={!activeConversationId}
+            title="导出当前对话"
+            aria-label="导出当前对话"
+          >
+            <PawDownloadIcon width={16} height={16} />
+          </button>
+          <button
+            className="paw-icon-button"
+            type="button"
+            onClick={onOpenSettings}
+            title="设置"
+            aria-label="设置"
+          >
+            <PawSettingsIcon width={16} height={16} />
+          </button>
+          <button
+            className="paw-button primary paw-sidebar-new-button"
+            type="button"
+            onClick={onNewConversation}
+          >
+            <PawPlusIcon width={16} height={16} />
+            新对话
           </button>
         </div>
       </div>
@@ -256,7 +333,37 @@ export function PawSidebar({
       </div>
 
       <div className="paw-sidebar-footer">
-        <div className="paw-sidebar-footer-row">
+        <div className="paw-sidebar-account">
+          <div className="paw-sidebar-account-heading">
+            <div className="paw-sidebar-account-copy">
+              <strong>{user?.name || "已登录账户"}</strong>
+              <span>{user?.email || session.user?.email || "共飞平台账户"}</span>
+            </div>
+            <button
+              type="button"
+              className="paw-button primary paw-sidebar-recharge"
+              onClick={onOpenPayment}
+            >
+              <PawWalletIcon width={14} height={14} />
+              充值
+            </button>
+          </div>
+          <div className="paw-sidebar-balance-row">
+            <span>账户余额</span>
+            <strong>{formatAccountMoney(user?.balance)}</strong>
+          </div>
+          <div className="paw-sidebar-balance-row muted">
+            <span>冻结余额</span>
+            <span>{formatAccountMoney(user?.frozen_balance)}</span>
+          </div>
+          {typeof user?.total_recharged === "number" ? (
+            <div className="paw-sidebar-balance-row muted">
+              <span>累计充值</span>
+              <span>{formatAccountMoney(user.total_recharged)}</span>
+            </div>
+          ) : null}
+        </div>
+        <div className="paw-sidebar-footer-row paw-sidebar-legacy-conversation-actions">
           <button
             className="paw-icon-button"
             type="button"
@@ -286,24 +393,27 @@ export function PawSidebar({
           >
             <PawSettingsIcon width={16} height={16} />
           </button>
-          <button
-            className="paw-icon-button"
-            type="button"
-            onClick={onLogout}
-            title="退出登录"
-            aria-label="退出登录"
-          >
-            <PawLogoutIcon width={16} height={16} />
-          </button>
           <button className="paw-button primary paw-sidebar-new-button" type="button" onClick={onNewConversation}>
             <PawPlusIcon width={16} height={16} />
             新对话
           </button>
         </div>
-        <div className="paw-sidebar-user paw-sidebar-user-footer">
+        <button
+          type="button"
+          className="paw-button paw-sidebar-details-button"
+          onClick={onOpenProfile}
+        >
+          查看详情
+        </button>
+        <button
+          type="button"
+          className="paw-sidebar-user paw-sidebar-user-footer paw-sidebar-legacy-user"
+          onClick={onOpenProfile}
+          title="打开个人信息"
+        >
           <div>{user?.name || "已登录"}</div>
           <div>{user?.email || session.user?.email || "本地会话"}</div>
-        </div>
+        </button>
       </div>
       <div className="paw-sidebar-drag" onPointerDown={onDragStart}>
         <PawDragIcon width={16} height={16} />
