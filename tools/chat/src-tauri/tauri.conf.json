@@ -1,0 +1,70 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/schema.json",
+  "build": {
+    "beforeBuildCommand": "npm run export:desktop",
+    "beforeDevCommand": "npm run dev -- --hostname 127.0.0.1 --port 3100",
+    "devPath": "http://127.0.0.1:3100",
+    "distDir": "../out",
+    "withGlobalTauri": false
+  },
+  "package": {
+      "productName": "Chat",
+    "version": "0.1.0"
+  },
+  "tauri": {
+    "allowlist": {
+      "all": false,
+      "http": {
+        "all": true,
+        "request": true,
+        "scope": [
+          "http://*",
+          "https://*"
+        ]
+      },
+      "shell": {
+        "open": true
+      },
+      "window": {
+        "close": true,
+        "hide": true,
+        "maximize": true,
+        "minimize": true,
+        "show": true,
+        "startDragging": true,
+        "unmaximize": true,
+        "unminimize": true
+      }
+    },
+    "bundle": {
+      "active": true,
+      "category": "DeveloperTool",
+      "identifier": "com.aifly.chat",
+      "shortDescription": "Chat multi-platform app for sub2api",
+      "longDescription": "Chat is a Chinese web, PWA, Windows, and macOS app for sub2api.",
+      "targets": "all",
+      "icon": [
+        "icons/32x32.png",
+        "icons/128x128.png",
+        "icons/128x128@2x.png",
+        "icons/icon.ico",
+        "icons/icon.icns"
+      ]
+    },
+    "security": {
+      "csp": null,
+      "dangerousUseHttpScheme": true
+    },
+    "windows": [
+      {
+        "title": "Chat",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ]
+  }
+}

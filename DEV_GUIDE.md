@@ -243,6 +243,70 @@ git add ent/       # 生成的文件也要提交
 - [ ] 所有 test stub 补全新接口方法（如果改了 interface）
 - [ ] Ent 生成的代码已提交（如果改了 schema）
 
+---
+
+### 坑 12：独立 Paw 开发端口必须配置 sub2api 服务地址
+
+**典型现象**：
+- Paw 页面可以打开；
+- 登录、读取 Paw 配置或聊天时报 `HTTP 404`；
+- Paw 开发服务器运行在 `3101`，后端运行在 `8080`。
+
+**根因**：
+- Paw 的 `PAW_SERVICE_URL` 为空时，会把 `/api/v1/...` 请求发到当前页面所在端口；
+- 独立开发时当前页面是 `http://127.0.0.1:3101`，但 API 实际位于 `http://127.0.0.1:8080`；
+- 因此请求会命中 Next.js 页面服务器并返回 404。
+
+**正确配置**：
+- `tools/chat/.env.local` 必须包含：
+  ```env
+  PAW_SERVICE_URL=http://127.0.0.1:8080
+  ```
+- 修改后必须重启 Paw 开发服务器，Next.js 只在启动时读取该环境变量。
+- Paw 独立开发端启动：
+  ```powershell
+  cd tools/chat
+  npm.cmd run dev -- --hostname 127.0.0.1 --port 3101
+  ```
+
+**后端启动与验证**：
+- 后端必须使用本地数据目录，避免进入 setup 向导：
+  ```powershell
+  $env:DATA_DIR="C:\Work\Git\AI-Fly\-sub2api\.local\sub2api-data"
+  cd backend
+  go run ./cmd/server/
+  ```
+- 健康检查使用 `http://127.0.0.1:8080/health`，预期返回 `{"status":"ok"}`。
+- 后端二进制未必包含网页前端，访问 `http://127.0.0.1:8080/` 或 `/login` 返回 404 不代表后端未启动；Paw 页面使用 `http://127.0.0.1:3101/`。
+
+---
+
+### 坑 13：Paw 分组或模型显示“当前选择已失效”
+
+**典型现象**：
+- Paw 能登录，但聊天区提示“当前选择已失效，请重新选择分组或模型”；
+- `/api/v1/paw/config` 返回 200，但 `groups` 为空或分组没有模型；
+- 后台可以看到用户 API Key 已绑定分组。
+
+**根因**：
+- Paw 配置接口不能用历史 `paw_defaults` 做严格校验，否则旧默认值会阻断当前分组和模型加载；
+- 部分本地数据只有分组的 `models_list_config`，没有 `channels` 记录；如果配置服务无渠道就直接跳过分组，前端只能得到空列表；
+- 修改 Go 源码后如果没有重新构建并重启 `.local/sub2api-paw-server-next.exe`，8080 仍然运行旧逻辑。
+
+**正确行为**：
+- `/api/v1/paw/config` 使用“可用配置”读取路径，保留历史默认值供前端判断，但不因默认值失效而返回错误；
+- 有渠道时使用渠道映射和定价模型，无渠道时回退到分组 `models_list_config`，没有自定义列表时再使用服务端模型目录；
+- Paw 已有选择失效时清空选择并提示用户重新选择，不自动切换到其它分组或模型。
+
+**源码修改后的验证**：
+```powershell
+cd backend
+go test ./internal/service -run PawConfig -count=1
+go test ./internal/server/routes -run PawConfig -count=1
+go build -o ..\.local\sub2api-paw-server-next.exe .\cmd\server
+```
+然后停止旧进程并重新启动后端，再重新加载 `http://127.0.0.1:3101/`。
+
 ## 五、常用命令速查
 
 ### 数据库操作
