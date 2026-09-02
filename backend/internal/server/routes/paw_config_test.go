@@ -83,6 +83,25 @@ func TestPawConfigRouteReturnsEnvelopeAndPersistsDefaults(t *testing.T) {
 	require.Equal(t, service.PawDefaults{GroupID: 7, ModelID: "gpt-5"}, store.defaults)
 }
 
+func TestPawConfigRouteReturnsAvailableGroupsWithStaleDefaults(t *testing.T) {
+	store := &pawRouteStore{defaults: service.PawDefaults{
+		GroupID:   7,
+		ModelID:   "missing-model",
+		Reasoning: "low",
+	}}
+	r := pawRouteEngine(func(c *gin.Context) {
+		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 42})
+		c.Next()
+	}, store)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/paw/config", nil)
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, w.Body.String(), `"missing-model"`)
+	require.Contains(t, w.Body.String(), `"groups"`)
+}
+
 func TestPawConfigRouteInvalidDefaultsReturnConfigUnavailable(t *testing.T) {
 	store := &pawRouteStore{}
 	r := pawRouteEngine(func(c *gin.Context) {

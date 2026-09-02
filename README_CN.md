@@ -498,19 +498,29 @@ pnpm install
 pnpm run build
 # 构建产物输出到 ../backend/internal/web/dist/
 
-# 4. 编译后端（嵌入前端）
+# 4. 构建 Paw 中文客户端并暂存到 Go embed 目录
+cd ../tools/chat
+npm ci
+npm run export
+npm run stage:server
+
+# 5. 编译后端（嵌入管理端和 Paw）
 cd ../backend
 VERSION="$(./scripts/resolve-version.sh)"
 go build -tags embed -ldflags="-X main.Version=${VERSION}" -o sub2api ./cmd/server
 
-# 5. 创建配置文件
+# 6. 创建配置文件
 cp ../deploy/config.example.yaml ./config.yaml
 
-# 6. 编辑配置
+# 7. 编辑配置
 nano config.yaml
 ```
 
 > **注意：** `-tags embed` 参数会将前端嵌入到二进制文件中。不使用此参数编译的程序将不包含前端界面。
+>
+> Paw 发布在 `/paw`，不读取或暴露供应商 API Key；网页端使用当前站点的
+> sub2api JWT 会话。Windows 桌面端需要在构建时提供官方服务地址：
+> `PAW_SERVICE_URL=https://sub2api.example.com npm run app:build`。
 
 **`config.yaml` 关键配置：**
 

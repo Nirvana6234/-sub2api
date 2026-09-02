@@ -78,7 +78,13 @@ assets/
 data/
 skills/
 openspec/
-tools/
+tools/*
+!tools/
+!tools/chat/
+!tools/chat/**
+tools/chat/node_modules/
+tools/chat/.next/
+tools/chat/out/
 
 # Local Windows diagnostic binaries; the image builds its Linux binary from Go source.
 backend/*.exe

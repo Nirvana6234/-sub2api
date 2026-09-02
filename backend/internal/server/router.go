@@ -71,6 +71,9 @@ func SetupRouter(
 	r.Use(middleware2.ServerTiming(cfg.Server.EnableServerTiming))
 
 	// Serve embedded frontend with settings injection if available
+	if web.HasEmbeddedPawFrontend() {
+		r.Use(web.ServeEmbeddedPawFrontend())
+	}
 	if web.HasEmbeddedFrontend() {
 		frontendServer, err := web.NewFrontendServer(settingService) //nolint:staticcheck // SA4023: the !embed stub always errors; embed builds can return nil
 		if err != nil {                                              //nolint:staticcheck // SA4023: see above
@@ -142,9 +145,11 @@ func registerRoutes(
 		}
 		routes.RegisterPawRoutes(v1, h.PawConfigService, jwtAuth, settingService, panelRateLimiter, routes.PawRouteDependencies{
 			ChatService:       h.PawChatService,
+			OpenAIGateway:     h.OpenAIGateway,
 			OpenAIChat:        openAIChat,
 			GatewayChat:       gatewayChat,
 			CompositeResolver: compositeResolver,
+			APIKeyService:     apiKeyService,
 			OpsService:        opsService,
 			Config:            cfg,
 		})

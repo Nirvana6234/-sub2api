@@ -3,6 +3,7 @@ package routes
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -58,6 +59,25 @@ func TestPawAttachmentReferenceJSONContract(t *testing.T) {
 
 	var got PawAttachmentReference
 	require.NoError(t, json.Unmarshal([]byte(`{"id":"attachment-id"}`), &got))
+	require.Equal(t, want, got)
+}
+
+func TestPawAttachmentResponseJSONContract(t *testing.T) {
+	want := PawAttachmentResponse{
+		Data: PawAttachmentData{
+			ID:        "attachment-id",
+			Filename:  "document.pdf",
+			MIMEType:  "application/pdf",
+			Size:      123,
+			ExpiresAt: time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC),
+		},
+	}
+	raw, err := json.Marshal(want)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"data":{"id":"attachment-id","filename":"document.pdf","mime_type":"application/pdf","size":123,"expires_at":"2026-08-31T12:00:00Z"}}`, string(raw))
+
+	var got PawAttachmentResponse
+	require.NoError(t, json.Unmarshal([]byte(`{"data":{"id":"attachment-id","filename":"document.pdf","mime_type":"application/pdf","size":123,"expires_at":"2026-08-31T12:00:00Z"}}`), &got))
 	require.Equal(t, want, got)
 }
 

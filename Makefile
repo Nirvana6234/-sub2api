@@ -1,4 +1,4 @@
-.PHONY: build build-backend build-frontend test test-backend test-frontend test-frontend-critical
+.PHONY: build build-backend build-frontend build-paw test test-backend test-frontend test-frontend-critical
 
 FRONTEND_CRITICAL_VITEST := \
 	src/api/__tests__/client.spec.ts \
@@ -11,7 +11,7 @@ FRONTEND_CRITICAL_VITEST := \
 	src/views/admin/__tests__/SettingsView.spec.ts
 
 # 一键编译前后端
-build: build-backend build-frontend
+build: build-frontend build-paw build-backend
 
 # 编译后端（复用 backend/Makefile）
 build-backend:
@@ -20,6 +20,12 @@ build-backend:
 # 编译前端（需要已安装依赖）
 build-frontend:
 	@pnpm --dir frontend run build
+
+# 构建并暂存 Paw PWA，供 Go embed 构建使用
+build-paw:
+	@npm --prefix tools/chat ci
+	@npm --prefix tools/chat run export
+	@npm --prefix tools/chat run stage:server
 
 # 运行测试（后端 + 前端）
 test: test-backend test-frontend

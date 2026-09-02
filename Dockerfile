@@ -43,6 +43,19 @@ COPY frontend/ ./
 COPY docs/legal/ /app/docs/legal/
 RUN pnpm run build
 
+# ---------------------------------------------------------------------------
+# Stage 1b: Build Paw PWA
+# ---------------------------------------------------------------------------
+FROM --platform=${BUILDPLATFORM} ${NODE_IMAGE} AS chat-builder
+
+WORKDIR /app/tools/chat
+
+COPY tools/chat/package.json tools/chat/package-lock.json ./
+RUN npm ci
+
+COPY tools/chat/ ./
+RUN npm run export
+
 # -----------------------------------------------------------------------------
 # Stage 2: Backend Builder
 # -----------------------------------------------------------------------------
@@ -82,6 +95,8 @@ COPY backend/ ./
 
 # Copy frontend dist from previous stage (must be after backend copy to avoid being overwritten)
 COPY --from=frontend-builder /app/backend/internal/web/dist ./internal/web/dist
+# Paw is served under /paw and uses its own embedded filesystem.
+COPY --from=chat-builder /app/tools/chat/out ./internal/web/paw_dist
 
 # Build the binary (BuildType=release for CI builds, embed frontend)
 # Version precedence: build arg VERSION > exact git tag > cmd/server/VERSION

@@ -120,6 +120,100 @@ func TestPawConfigServiceGetConfigReturnsOnlyAuthorizedGroupsAndScopedModels(t *
 	require.Equal(t, []string{"gpt-5", "gpt-5-mini"}, []string{config.Groups[0].Models[0].ID, config.Groups[0].Models[1].ID})
 }
 
+func TestPawConfigServiceKeepsGroupModelsWhenChannelIsMissing(t *testing.T) {
+	svc := NewPawConfigService(
+		&pawConfigGroupSourceStub{groups: []Group{{
+			ID:               7,
+			Name:             "Configured group",
+			Platform:         PlatformOpenAI,
+			Status:           StatusActive,
+			ModelsListConfig: GroupModelsListConfig{Enabled: true, Models: []string{"gpt-5.6", "gpt-5.6-mini"}},
+		}}},
+		&pawConfigUserSourceStub{user: &User{ID: 42, Username: "user", Email: "user@example.com"}},
+		&pawConfigChannelSourceStub{channels: map[int64]*Channel{}},
+		&pawConfigDefaultsStoreStub{},
+		&PricingService{pricingData: map[string]*LiteLLMModelPricing{
+			"gpt-5.6":      {SupportsReasoning: true, SupportsMinimalReasoningEffort: true},
+			"gpt-5.6-mini": {SupportsReasoning: true, SupportsMinimalReasoningEffort: true},
+		}},
+	)
+
+	config, err := svc.GetAvailableConfig(context.Background(), 42)
+
+	require.NoError(t, err)
+	require.Len(t, config.Groups, 1)
+	require.Equal(t, []string{"gpt-5.6", "gpt-5.6-mini"}, []string{
+		config.Groups[0].Models[0].ID,
+		config.Groups[0].Models[1].ID,
+	})
+	require.True(t, config.Groups[0].Models[0].Reasoning.Supported)
+}
+
+func TestPawConfigServiceAvailableConfigDoesNotRejectStaleDefaults(t *testing.T) {
+	store := &pawConfigDefaultsStoreStub{defaults: PawDefaults{
+		GroupID:   7,
+		ModelID:   "missing-model",
+		Reasoning: "low",
+	}}
+
+	config, err := newPawConfigTestService(store).GetAvailableConfig(context.Background(), 42)
+
+	require.NoError(t, err)
+	require.Equal(t, store.defaults, config.Defaults)
+	require.Len(t, config.Groups, 1)
+}
+
+func TestPawConfigServiceUsesChannelSupportedModels(t *testing.T) {
+	svc := NewPawConfigService(
+		&pawConfigGroupSourceStub{groups: []Group{{ID: 7, Name: "Mapped", Platform: PlatformOpenAI, Status: StatusActive}}},
+		&pawConfigUserSourceStub{user: &User{ID: 42, Username: "user", Email: "user@example.com"}},
+		&pawConfigChannelSourceStub{channels: map[int64]*Channel{
+			7: {
+				ID:             70,
+				Status:         StatusActive,
+				ModelPricing:   []ChannelModelPricing{{Platform: PlatformOpenAI, Models: []string{"gpt-5"}}},
+				ModelMapping:   map[string]map[string]string{PlatformOpenAI: {"gpt-5-chat": "gpt-5"}},
+				RestrictModels: true,
+			},
+		}},
+		&pawConfigDefaultsStoreStub{},
+		&PricingService{pricingData: map[string]*LiteLLMModelPricing{
+			"gpt-5": {SupportsReasoning: true, SupportsMinimalReasoningEffort: true},
+		}},
+	)
+
+	config, err := svc.GetConfig(context.Background(), 42)
+
+	require.NoError(t, err)
+	require.Len(t, config.Groups[0].Models, 2)
+	require.Equal(t, "gpt-5", config.Groups[0].Models[0].ID)
+	require.Equal(t, "gpt-5-chat", config.Groups[0].Models[1].ID)
+	require.True(t, config.Groups[0].Models[1].Reasoning.Supported)
+}
+
+func TestPawConfigServiceListsCatalogForUnrestrictedChannelWithoutModels(t *testing.T) {
+	svc := NewPawConfigService(
+		&pawConfigGroupSourceStub{groups: []Group{{ID: 7, Name: "Open", Platform: PlatformOpenAI, Status: StatusActive}}},
+		&pawConfigUserSourceStub{user: &User{ID: 42, Username: "user", Email: "user@example.com"}},
+		&pawConfigChannelSourceStub{channels: map[int64]*Channel{
+			7: {ID: 70, Status: StatusActive, RestrictModels: false},
+		}},
+		&pawConfigDefaultsStoreStub{},
+		&PricingService{pricingData: map[string]*LiteLLMModelPricing{
+			"gpt-5":      {LiteLLMProvider: PlatformOpenAI},
+			"gpt-5-mini": {LiteLLMProvider: PlatformOpenAI},
+		}},
+	)
+
+	config, err := svc.GetConfig(context.Background(), 42)
+
+	require.NoError(t, err)
+	require.Equal(t, []string{"gpt-5", "gpt-5-mini"}, []string{
+		config.Groups[0].Models[0].ID,
+		config.Groups[0].Models[1].ID,
+	})
+}
+
 func TestPawConfigServiceDoesNotAdvertiseUnsupportedReasoningValues(t *testing.T) {
 	config, err := newPawConfigTestService(&pawConfigDefaultsStoreStub{}).GetConfig(context.Background(), 42)
 

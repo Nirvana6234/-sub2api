@@ -1,5 +1,7 @@
 package routes
 
+import "time"
+
 const (
 	PawErrorCodeConfigUnavailable    = "CONFIG_UNAVAILABLE"
 	PawErrorCodeGroupForbidden       = "GROUP_FORBIDDEN"
@@ -72,6 +74,18 @@ type PawChatMessage struct {
 
 type PawAttachmentReference struct {
 	ID string `json:"id"`
+}
+
+type PawAttachmentResponse struct {
+	Data PawAttachmentData `json:"data"`
+}
+
+type PawAttachmentData struct {
+	ID        string    `json:"id"`
+	Filename  string    `json:"filename"`
+	MIMEType  string    `json:"mime_type"`
+	Size      int64     `json:"size"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
 type PawErrorResponse struct {

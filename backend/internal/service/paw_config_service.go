@@ -170,7 +170,7 @@ func (s *PawConfigService) GetAvailableConfig(ctx context.Context, userID int64)
 	if err != nil {
 		return nil, fmt.Errorf("get available groups: %w", err)
 	}
-	return s.buildConfig(ctx, user, groups, false, false)
+	return s.buildConfig(ctx, user, groups, true, false)
 }
 
 func (s *PawConfigService) buildConfig(ctx context.Context, user *User, groups []Group, includeDefaults bool, validateDefaults bool) (*PawConfig, error) {
@@ -179,25 +179,17 @@ func (s *PawConfigService) buildConfig(ctx context.Context, user *User, groups [
 		if !group.IsActive() {
 			continue
 		}
-		channel, err := s.channels.GetChannelForGroup(ctx, group.ID)
-		if err != nil {
-			return nil, fmt.Errorf("get channel for group %d: %w", group.ID, err)
+		var channel *Channel
+		if s.channels != nil {
+			var err error
+			channel, err = s.channels.GetChannelForGroup(ctx, group.ID)
+			if err != nil {
+				return nil, fmt.Errorf("get channel for group %d: %w", group.ID, err)
+			}
 		}
-		if channel == nil {
+		models := s.buildPawModels(group, channel)
+		if len(models) == 0 {
 			continue
-		}
-		models := make([]PawModel, 0)
-		for _, pricing := range channel.ModelPricing {
-			if !modelPricingPlatformMatches(group.Platform, pricing.Platform) {
-				continue
-			}
-			for _, modelID := range pricing.Models {
-				modelCatalog := s.modelCatalog(modelID)
-				values := PawReasoningValues(group.Platform, modelID, modelCatalog)
-				defaultValue := pawReasoningDefault(values)
-				vision, imageGeneration, fileInput := pawModelCapabilities(&group, modelCatalog)
-				models = append(models, PawModel{ID: modelID, Name: modelID, OwnedBy: pricing.Platform, Reasoning: PawReasoningCapability{Supported: len(values) > 0, Values: values, Default: defaultValue}, ReasoningValues: values, ReasoningDefault: defaultValue, Vision: vision, ImageGeneration: imageGeneration, FileInput: fileInput})
-			}
 		}
 		result.Groups = append(result.Groups, PawGroup{ID: group.ID, Name: group.Name, Description: group.Description, Models: models})
 	}
@@ -212,6 +204,117 @@ func (s *PawConfigService) buildConfig(ctx context.Context, user *User, groups [
 		}
 	}
 	return result, nil
+}
+
+func (s *PawConfigService) buildPawModels(group Group, channel *Channel) []PawModel {
+	entries := make([]SupportedModel, 0)
+	seen := make(map[string]struct{})
+	addSupported := func(modelID, ownedBy string, pricing *ChannelModelPricing) {
+		modelID = strings.TrimSpace(modelID)
+		if modelID == "" || !modelPricingPlatformMatches(group.Platform, ownedBy) {
+			return
+		}
+		key := strings.ToLower(modelID)
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		entries = append(entries, SupportedModel{Name: modelID, Platform: ownedBy, Pricing: pricing})
+	}
+
+	if channel == nil {
+		// Some installations only persist the group's model list and do not
+		// have a channel row yet. Keep those authorized groups selectable.
+		for _, modelID := range group.ModelsListConfig.Models {
+			addSupported(modelID, group.Platform, nil)
+		}
+		for _, pattern := range group.ModelsListConfig.Models {
+			prefix, wildcard := splitWildcardSuffix(strings.TrimSpace(pattern))
+			if !wildcard || s.pricing == nil {
+				continue
+			}
+			for _, candidate := range s.pricing.ListModelNamesByProvider(group.Platform) {
+				if strings.HasPrefix(strings.ToLower(candidate), strings.ToLower(prefix)) {
+					addSupported(candidate, group.Platform, nil)
+				}
+			}
+		}
+		if len(entries) == 0 && !group.CustomModelsListEnabled() && s.pricing != nil && group.Platform != PlatformComposite {
+			for _, candidate := range s.pricing.ListModelNamesByProvider(group.Platform) {
+				addSupported(candidate, group.Platform, nil)
+			}
+		}
+	} else {
+		supported := channel.SupportedModels()
+
+		// Channel.SupportedModels is the canonical view because it includes both
+		// explicit pricing and model mappings. Expand wildcard pricing against the
+		// server catalog so a wildcard does not become an unusable model option.
+		for _, model := range supported {
+			addSupported(model.Name, model.Platform, model.Pricing)
+		}
+		for _, pricing := range channel.ModelPricing {
+			if !modelPricingPlatformMatches(group.Platform, pricing.Platform) || s.pricing == nil {
+				continue
+			}
+			for _, pattern := range pricing.Models {
+				prefix, wildcard := splitWildcardSuffix(strings.TrimSpace(pattern))
+				if !wildcard {
+					continue
+				}
+				for _, candidate := range s.pricing.ListModelNamesByProvider(pricing.Platform) {
+					if strings.HasPrefix(strings.ToLower(candidate), strings.ToLower(prefix)) {
+						addSupported(candidate, pricing.Platform, &pricing)
+					}
+				}
+			}
+		}
+
+		// An unrestricted channel may intentionally have no model list. In that
+		// case expose the provider catalog so the client still has server-owned
+		// choices instead of a disabled model selector.
+		if len(entries) == 0 && !channel.RestrictModels && s.pricing != nil && group.Platform != PlatformComposite {
+			for _, candidate := range s.pricing.ListModelNamesByProvider(group.Platform) {
+				addSupported(candidate, group.Platform, nil)
+			}
+		}
+	}
+
+	models := make([]PawModel, 0, len(entries))
+	for _, model := range entries {
+		modelID := strings.TrimSpace(model.Name)
+		if modelID == "" {
+			continue
+		}
+		modelCatalog := s.modelCatalog(modelID)
+		if modelCatalog == nil && model.Pricing != nil {
+			for _, pricedModel := range model.Pricing.Models {
+				if candidate := s.modelCatalog(pricedModel); candidate != nil {
+					modelCatalog = candidate
+					break
+				}
+			}
+		}
+		values := PawReasoningValues(group.Platform, modelID, modelCatalog)
+		defaultValue := pawReasoningDefault(values)
+		vision, imageGeneration, fileInput := pawModelCapabilities(&group, modelCatalog)
+		models = append(models, PawModel{
+			ID:      modelID,
+			Name:    modelID,
+			OwnedBy: model.Platform,
+			Reasoning: PawReasoningCapability{
+				Supported: len(values) > 0,
+				Values:    values,
+				Default:   defaultValue,
+			},
+			ReasoningValues:  values,
+			ReasoningDefault: defaultValue,
+			Vision:           vision,
+			ImageGeneration:  imageGeneration,
+			FileInput:        fileInput,
+		})
+	}
+	return models
 }
 
 func (s *PawConfigService) SaveDefaults(ctx context.Context, userID int64, defaults PawDefaults) error {

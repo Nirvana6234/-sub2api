@@ -74,3 +74,19 @@ go test ./cmd/server -run '^$'
 ```
 
 All three commands passed on 2026-08-31.
+
+## Additional fix round
+
+- Paw now reads model capabilities from `PricingService` and the bundled LiteLLM model catalog instead of inferring support from model-name prefixes or billing fields.
+- Reasoning values are filtered by the model's explicit reasoning capability flags, including `minimal`, `xhigh`, and `max`.
+- Vision, PDF/file input, and image generation are mapped from their corresponding catalog capabilities. Image generation also requires the group's `AllowImageGeneration` permission and an image-generation mode or image output modality.
+- Saving new defaults builds the current available model list without reading the old persisted defaults first, so malformed or stale saved JSON can be replaced by a valid selection.
+- Added regression coverage for parsing all Paw capability fields and for replacing malformed persisted defaults.
+
+Verification:
+
+```text
+go test ./internal/service -run TestParsePricingData_ParsesPawModelCapabilities -count=1
+```
+
+Result: passed on 2026-08-31.
