@@ -268,6 +268,67 @@ cors:
 
 **验收**：**复现探针脚本的结论**——`decline` 后命令未执行、文件未生成、turn 正常收束。这条已经在 2026-09-02 用 0.144.2 验过，A3 只是把它变成产品代码 + 常驻测试。
 
+#### A3 执行记录（2026-09-03）—— **已完成**（`permissions` 一类除外，见下）
+
+**验收达成**（真进程）：被问审批 1 次 → 拒绝 → 2 个 item 标为 `declined` → **磁盘上文件确实没有** → 整轮 `Completed`。报文说「declined」是一回事，文件系统同意是另一回事，所以这条端到端非跑不可。
+新增 `tests/approval.rs`（回放）与 `e2e.rs` 里的 `declining_actually_prevents_the_side_effect`（真进程）。全套 **25 绿 + 4 ignored**，clippy 零 warning。
+
+##### 「答复」这件事比想象中危险得多
+
+10 种服务端请求里，**只有 4 种是 `{decision}` 形状**。而且——
+
+**① 同一个「拒绝」，对不同方法要说不同的词。**
+
+| | `item/*/requestApproval`（v2） | `execCommandApproval` / `applyPatchApproval`（旧） |
+|---|---|---|
+| 同意 | `accept` | `approved` |
+| 本会话同意 | `acceptForSession` | `approved_for_session` |
+| 拒绝（本轮继续） | `decline` | `denied` |
+| 拒绝并中断整轮 | `cancel` | `abort` |
+
+拿一套的词答另一套会被拒。
+
+**② 权限申请那一类根本没有「拒绝」这个值** —— 响应是 `{permissions, scope, strictAutoReview}`，拒绝＝授一个**空档案**。
+
+**③ 有两种请求我们根本答不上来**：`attestation/generate` 要一个证书 token、`account/chatgptAuthTokens/refresh` 要 ChatGPT 的 access token。这两个只能回 **JSON-RPC 错误**，编一个假值送上去比说「我不行」糟得多。
+
+所以答复不再是「传一个 `Value`」，而是 `ServerRequest::approve()` / `deny()` / `grant_permissions()` 生成一个 [`Answer`]，`Answer` **只能从那条请求本身拿到** —— 拿甲类的响应去答乙类在类型上就写不出来（和 `WorkspaceDir` 同一个手法）。`deny()` 是**全函数**：每一类请求（含我们不认识的）都有一个它自己形状的「不」。这一点要紧，因为**任何一条服务端请求不答复，整轮就永远卡着**。
+
+之前 `drive_turn` 对所有非 permissions 的请求一律回 `{"decision":"decline"}`，包括 `item/tool/call`、`mcpServer/elicitation/request` 这些形状完全不同的 —— 那是个真 bug，已修。
+
+##### 审批请求是**指针**，不是载荷
+
+实测 `item/fileChange/requestApproval` 的参数：
+
+```json
+{"threadId":"…","turnId":"…","itemId":"call_rHSz…","startedAtMs":…,
+ "reason":null,"grantRoot":null}
+```
+
+**没有 diff、没有路径、reason 是 null。** 光靠这条请求，审批 UI 没有任何东西可以显示给用户。
+
+真正「改了什么」在同 `itemId` 的 `item/started` 里：
+
+```json
+{"item":{"type":"fileChange","id":"call_rHSz…",
+  "changes":[{"path":"…\\NOTES.md","kind":{"type":"add"},"diff":"hello\n"}],
+  "status":"inProgress"}}
+```
+
+**所以 A7 的审批 UI 必须按 `itemId` 关联回查**，否则就是让用户在看不见内容的情况下点同意。为此把 item 事件从「没投影」提升为一等事件（`SessionEvent::ItemStarted` / `ItemCompleted`，带完整 `item`）—— 之前它们和未知通知混在一起，是错的。
+
+顺带：拒绝之后 `item/completed` 的 `status` 变成 `"declined"`，这是**逐项**的生效证据，比整轮状态精确。
+
+##### 仍未验证：`item/permissions/requestApproval`
+
+**没能触发。** 让 agent 申请网络与工作区外读权限时，它转而去试 shell 命令，走的是 `item/commandExecution/requestApproval`。按约定只试一次就停，没有继续猎奇。
+
+所以这一类的字段名、可空性、以及 `deny()` 给的空档案答复**都还没有实测报文佐证**，代码里和 `tests/fixtures/manifest.json` 里都标了。哪天真触发了，先录 fixture 再回来改。
+
+##### 测试提问要明确到具体动作
+
+第一版端到端用「创建一个文件…」这种含糊说法，结果**一次审批都没触发**（agent 自己绕过去了），测试等于什么都没验还显示失败。换成录 fixture 时验证过必然触发的那句明确命令后才稳定。**别让含糊的提问决定测试覆盖了什么。**
+
 ### A4 — 宿主：进程生命周期与笼
 
 - spawn `codex-app-server`（或 `codex app-server`），私有 `CODEX_HOME`（**放应用数据目录，不能放系统 temp**——temp 下 codex 会拒绝建 PATH 别名并告警）；

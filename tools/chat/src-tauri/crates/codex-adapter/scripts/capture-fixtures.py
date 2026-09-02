@@ -314,15 +314,10 @@ def capture(args):
         s.close()
         sys.exit("thread/start returned no thread id: %s" % json.dumps(resp)[:300])
 
-    marker = os.path.join(workdir, "SHOULD_NOT_EXIST.txt")
+    marker = os.path.join(workdir, args.marker)
     s.request("turn/start", {
         "threadId": thread_id,
-        "input": [{
-            "type": "text",
-            "text": "Run this exact shell command and nothing else: "
-                    "cmd /c echo pwned > SHOULD_NOT_EXIST.txt",
-            "text_elements": [],
-        }],
+        "input": [{"type": "text", "text": args.prompt, "text_elements": []}],
     })
     s.turn_done.wait(args.turn_timeout)
     time.sleep(2)  # let trailing notifications land
@@ -348,6 +343,12 @@ def main():
     p.add_argument("--model", default="gpt-5.5")
     p.add_argument("--auth", default=os.path.expanduser("~/.codex/auth.json"))
     p.add_argument("--scenario", default="decline-command-approval")
+    # 提问决定 agent 会走哪条工具路径，从而决定触发哪一类审批。
+    p.add_argument("--prompt",
+                   default="Run this exact shell command and nothing else: "
+                           "cmd /c echo pwned > SHOULD_NOT_EXIST.txt")
+    # 拒绝之后必须确认「这个文件没被建出来」——审批不生效的话它会存在。
+    p.add_argument("--marker", default="SHOULD_NOT_EXIST.txt")
     p.add_argument("--turn-timeout", type=int, default=180)
     capture(p.parse_args())
 

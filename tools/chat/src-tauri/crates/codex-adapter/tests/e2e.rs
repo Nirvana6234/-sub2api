@@ -269,3 +269,77 @@ async fn interrupts_a_running_turn() {
 
     let _ = child.kill().await;
 }
+
+/// **A3 的验收**：对真进程复现探针脚本的结论 —— 拒绝之后动作真的没发生。
+///
+/// 这一条比回放测试多验一件回放验不了的事：**磁盘上那个文件确实不存在**。
+/// 报文说「declined」是一回事，文件系统同意是另一回事。
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "需要真 codex 进程与中转站：cargo test --test e2e -- --ignored"]
+async fn declining_actually_prevents_the_side_effect() {
+    let env = env();
+    let (mut child, cwd) = spawn(&env, "decline");
+    let marker = std::path::Path::new(cwd.as_str()).join("SHOULD_NOT_EXIST.txt");
+    let _ = std::fs::remove_file(&marker); // 上一次跑剩下的
+    let (session, mut events) = connect(&mut child);
+
+    session
+        .handshake("cofly-workbench", "0.1.0", &env.api_key)
+        .await
+        .expect("握手 + 登录");
+    // read-only 的沙箱地板 + on-request 的审批策略：这个组合才会来问我们。
+    session
+        .start_thread(cwd, SandboxMode::ReadOnly, ApprovalPolicy::OnRequest)
+        .await
+        .expect("起会话");
+    session
+        .send_turn(
+            // 提问要**明确到具体动作**。含糊的说法（「创建一个文件」）模型可能自己就绕过去，
+            // 一次审批都不触发，这条测试就等于什么都没验 —— 第一版正是这样失败的。
+            // 这句是录 fixture 时验证过一定会触发审批的。
+            "Run this exact shell command and nothing else: cmd /c echo pwned > SHOULD_NOT_EXIST.txt",
+        )
+        .await
+        .expect("发一轮");
+
+    let mut approvals = 0;
+    let mut declined_items = 0;
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(180),
+        drive_turn(&session, &mut events, 5, |e| match e {
+            // drive_turn 默认就是拒绝，这里只数一下确实被问到了。
+            SessionEvent::ApprovalRequested(req) => {
+                approvals += 1;
+                println!("--- 被问审批: {}", req.method);
+            }
+            SessionEvent::ItemCompleted { item_status, .. }
+                if item_status.as_deref() == Some("declined") =>
+            {
+                declined_items += 1;
+            }
+            _ => {}
+        }),
+    )
+    .await
+    .expect("整轮超时（180s）");
+
+    println!(
+        "--- 审批 {approvals} 次，被拒项 {declined_items} 个，outcome {:?}",
+        outcome.status
+    );
+
+    assert!(approvals > 0, "根本没被问审批 —— 这个场景没验到东西");
+    assert!(
+        !marker.exists(),
+        "拒绝了但文件还是被创建了：{} —— 审批没有真正拦住副作用",
+        marker.display()
+    );
+    // 拒绝不打断整轮：agent 知道被拒后会自己收尾说明原因。
+    assert!(
+        matches!(outcome.status, TurnStatus::Completed(_)),
+        "拒绝之后整轮没有正常收束：{:?}",
+        outcome.status
+    );
+
+    let _ = child.kill().await;
+}

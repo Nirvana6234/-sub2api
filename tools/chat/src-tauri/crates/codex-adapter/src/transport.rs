@@ -13,7 +13,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, oneshot, Mutex};
 
 use crate::error::{AdapterError, RpcError};
-use crate::protocol::{ClientRequest, Notification, RequestId, ServerMessage, ServerRequest};
+use crate::protocol::{
+    Answer, ClientRequest, Notification, RequestId, ServerMessage, ServerRequest,
+};
 
 /// 解析一行 JSONL。
 ///
@@ -146,6 +148,14 @@ impl<W: AsyncWrite + Unpin + Send> Client<W> {
             "result": result,
         }))
         .await
+    }
+
+    /// 发一条**已经配好对**的答复。
+    ///
+    /// 比 [`Client::respond`] 好在形状是由请求自己决定的，答不上来的请求会如实回
+    /// JSON-RPC 错误而不是编一个假 result。
+    pub async fn answer(&self, answer: &Answer) -> Result<(), AdapterError> {
+        self.write_frame(&answer.to_frame()).await
     }
 
     async fn write_frame(&self, frame: &Value) -> Result<(), AdapterError> {

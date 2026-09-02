@@ -219,11 +219,15 @@ pub struct ServerRequest {
 
 #[derive(Debug, Clone)]
 pub enum ServerRequestPayload {
-    CommandApproval(CommandApprovalParams),
-    FileChangeApproval(FileChangeApprovalParams),
-    /// 权限申请。响应形状和另外两个**完全不同** —— 没有 `decision` 字段。
-    PermissionsApproval(Value),
-    /// 我们没投影的服务端请求。上层仍然要答复它（一般是拒绝），否则 turn 卡死。
+    CommandApproval(Box<CommandApprovalParams>),
+    FileChangeApproval(Box<FileChangeApprovalParams>),
+    /// 权限申请。响应形状和另外两个**完全不同** —— 没有 `decision` 字段，
+    /// 而且**没有「拒绝」这个值**：拒绝就是授一个空档案。
+    PermissionsApproval(Box<PermissionsApprovalParams>),
+    /// 我们没投影的服务端请求（含 `execCommandApproval` / `applyPatchApproval`
+    /// 这两个旧方法 —— 没观测到它们在 v2 流程里出现，所以只留 `raw`）。
+    ///
+    /// **仍然必须答复**，否则 turn 卡死。[`ServerRequest::deny`] 对它们也给得出答案。
     Other,
 }
 
@@ -249,6 +253,10 @@ pub struct CommandApprovalParams {
 }
 
 /// `item/fileChange/requestApproval` 的参数。
+///
+/// 注意它**没有** `availableDecisions`（命令执行那个才有）。之前照抄过来一个带
+/// `#[serde(default)]` 的空 Vec，看着像数据、实际永远填不上 —— UI 读到零个选项
+/// 会得出错误结论。已删掉。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileChangeApprovalParams {
@@ -257,11 +265,61 @@ pub struct FileChangeApprovalParams {
     pub item_id: String,
     #[serde(default)]
     pub reason: Option<String>,
+    /// agent 在申请「允许写这个根目录之下的东西」。
+    ///
+    /// 有值时这**不是一次性的是/否**，而是一次作用域授权 —— UI 必须把这个路径
+    /// 显示出来，否则用户在不知情的情况下放开了一整棵目录树。
     #[serde(default)]
-    pub available_decisions: Vec<Value>,
+    pub grant_root: Option<String>,
 }
 
-/// 审批决定。命令执行与文件改动共用这套；权限申请是另一套形状。
+/// `item/permissions/requestApproval` 的参数。
+///
+/// # 未经实测
+///
+/// 这个类型是**照 schema 写的，没有录制报文佐证**。试过让 agent 申请网络与工作区外的
+/// 读权限，它转而去试 shell 命令，走的是 `item/commandExecution/requestApproval` ——
+/// 没能把这一类逼出来。所以这里的字段名、可空性、以及 `deny()` 给的空档案答复
+/// **都还没被真实报文验证过**。哪天真触发了，先录一份 fixture 再回来改这里。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionsApprovalParams {
+    pub thread_id: String,
+    pub turn_id: String,
+    pub item_id: String,
+    pub cwd: String,
+    #[serde(default)]
+    pub reason: Option<String>,
+    /// agent 想要的权限档案（文件系统 / 网络）。
+    ///
+    /// 我们**不解释**它的内部结构 —— 那是上游拥有、会增删的一大坨。原样带给 UI 展示，
+    /// 由人来判断。
+    pub permissions: Value,
+}
+
+/// 授权的作用范围。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum GrantScope {
+    /// 只在这一轮有效。
+    Turn,
+    /// 整个会话都有效。
+    Session,
+}
+
+/// 用户做出的审批决定。**这是给人看的语义，不是线上的字面量。**
+///
+/// 线上的字面量有**两套**，取决于是哪个方法在问：
+///
+/// | | `item/*/requestApproval`（v2） | `execCommandApproval` / `applyPatchApproval`（旧） |
+/// |---|---|---|
+/// | Accept | `accept` | `approved` |
+/// | AcceptForSession | `acceptForSession` | `approved_for_session` |
+/// | Decline | `decline` | `denied` |
+/// | Cancel | `cancel` | `abort` |
+///
+/// 拿一套的词去答另一套的请求会被拒。所以**别自己拼 `{"decision": ...}`** ——
+/// 用 [`ServerRequest::approve`] / [`ServerRequest::deny`]，让请求自己决定该说哪个词。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ApprovalDecision {
@@ -275,9 +333,67 @@ pub enum ApprovalDecision {
 }
 
 impl ApprovalDecision {
-    /// 拼成响应体。命令执行与文件改动都是 `{"decision": ...}`。
-    pub fn to_response(self) -> Value {
-        serde_json::json!({ "decision": self })
+    /// v2 的 `item/*/requestApproval` 用的词。
+    fn v2_word(self) -> &'static str {
+        match self {
+            ApprovalDecision::Accept => "accept",
+            ApprovalDecision::AcceptForSession => "acceptForSession",
+            ApprovalDecision::Decline => "decline",
+            ApprovalDecision::Cancel => "cancel",
+        }
+    }
+
+    /// 旧的 `execCommandApproval` / `applyPatchApproval` 用的词。
+    fn legacy_word(self) -> &'static str {
+        match self {
+            ApprovalDecision::Accept => "approved",
+            ApprovalDecision::AcceptForSession => "approved_for_session",
+            ApprovalDecision::Decline => "denied",
+            ApprovalDecision::Cancel => "abort",
+        }
+    }
+}
+
+/// 一条**已经配好对**的答复：它记着自己要答的是哪个请求，形状也已经按那个请求定死。
+///
+/// 只能从 [`ServerRequest`] 上拿到，所以拿 A 类请求的响应去答 B 类请求这件事
+/// 根本无法表达 —— 和 [`WorkspaceDir`] 是同一个手法。
+#[derive(Debug, Clone)]
+pub struct Answer {
+    pub(crate) id: RequestId,
+    pub(crate) body: AnswerBody,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum AnswerBody {
+    Result(Value),
+    /// 有些服务端请求我们**根本答不上来**（要一个证书 token、要 ChatGPT 的
+    /// access token）。那种情况必须回 JSON-RPC 错误，而不是编一个假的 result ——
+    /// 编出来的假值会一路流到上游去，比直接说"我不行"糟得多。
+    Error { code: i64, message: String },
+}
+
+impl Answer {
+    pub fn request_id(&self) -> &RequestId {
+        &self.id
+    }
+
+    /// 拼成真正要发出去的 JSON-RPC 帧。
+    ///
+    /// 公开出来是为了让测试能检查「到底发了什么」，而不是只能相信注释。
+    pub fn to_frame(&self) -> Value {
+        match &self.body {
+            AnswerBody::Result(value) => serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": self.id,
+                "result": value,
+            }),
+            AnswerBody::Error { code, message } => serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": self.id,
+                "error": { "code": code, "message": message },
+            }),
+        }
     }
 }
 
@@ -300,8 +416,22 @@ pub enum NotificationPayload {
     /// 一轮开始。**`turn_id` 要留住** —— `turn/interrupt` 必须带它。
     TurnStarted { thread_id: String, turn_id: Option<String> },
     TurnCompleted { thread_id: String, turn_id: Option<String>, status: String },
-    ItemStarted { thread_id: String, item_type: String, item_id: Option<String> },
-    ItemCompleted { thread_id: String, item_type: String, item_id: Option<String> },
+    /// 一个 item 开始了。
+    ///
+    /// **审批 UI 必须留着这些。** 实测：`item/fileChange/requestApproval` 请求里
+    /// **只有几个 id**，没有 diff、没有路径、`reason` 都是 null —— 真正「改了什么」
+    /// 在这条通知的 `item.changes[]` 里（`{path, kind, diff}`）。
+    /// 也就是说**审批请求是个指针，不是载荷**：UI 得按 `item_id` 回查。
+    ItemStarted { thread_id: String, item_type: String, item_id: Option<String>, item: Value },
+    /// 一个 item 结束了。`item_status` 是**这一项**的结果，
+    /// 拒绝审批之后它会是 `"declined"` —— 这是拒绝确实生效的逐项证据。
+    ItemCompleted {
+        thread_id: String,
+        item_type: String,
+        item_id: Option<String>,
+        item_status: Option<String>,
+        item: Value,
+    },
     /// assistant 正文的增量。
     AgentMessageDelta { thread_id: String, item_id: String, delta: String },
     /// 思考过程的增量（正文 / 摘要 / 摘要分段）。
@@ -437,10 +567,18 @@ impl Notification {
                 match (str_field(&raw, "threadId"), item.and_then(|i| str_field(i, "type"))) {
                     (Some(thread_id), Some(item_type)) => {
                         let item_id = item.and_then(|i| str_field(i, "id"));
+                        // item 整个留着：审批 UI 要靠它显示「到底在批什么」。
+                        let item = item.cloned().unwrap_or(Value::Null);
                         if method == "item/started" {
-                            NotificationPayload::ItemStarted { thread_id, item_type, item_id }
+                            NotificationPayload::ItemStarted { thread_id, item_type, item_id, item }
                         } else {
-                            NotificationPayload::ItemCompleted { thread_id, item_type, item_id }
+                            NotificationPayload::ItemCompleted {
+                                thread_id,
+                                item_type,
+                                item_id,
+                                item_status: str_field(&item, "status"),
+                                item,
+                            }
                         }
                     }
                     _ => NotificationPayload::Other,
@@ -526,22 +664,117 @@ impl ServerRequest {
         let payload = match method.as_str() {
             "item/commandExecution/requestApproval" => {
                 match serde_json::from_value::<CommandApprovalParams>(raw.clone()) {
-                    Ok(p) => ServerRequestPayload::CommandApproval(p),
+                    Ok(p) => ServerRequestPayload::CommandApproval(Box::new(p)),
                     Err(_) => ServerRequestPayload::Other,
                 }
             }
             "item/fileChange/requestApproval" => {
                 match serde_json::from_value::<FileChangeApprovalParams>(raw.clone()) {
-                    Ok(p) => ServerRequestPayload::FileChangeApproval(p),
+                    Ok(p) => ServerRequestPayload::FileChangeApproval(Box::new(p)),
                     Err(_) => ServerRequestPayload::Other,
                 }
             }
             "item/permissions/requestApproval" => {
-                ServerRequestPayload::PermissionsApproval(raw.clone())
+                match serde_json::from_value::<PermissionsApprovalParams>(raw.clone()) {
+                    Ok(p) => ServerRequestPayload::PermissionsApproval(Box::new(p)),
+                    Err(_) => ServerRequestPayload::Other,
+                }
             }
             _ => ServerRequestPayload::Other,
         };
 
         ServerRequest { id, method, raw, payload }
+    }
+
+    /// 批准。
+    ///
+    /// # Errors
+    /// 这个请求不是「是/否」型的（比如权限申请、工具调用）时返回错误 ——
+    /// 那些得用各自专门的方法。
+    pub fn approve(&self, decision: ApprovalDecision) -> Result<Answer, crate::error::AdapterError> {
+        let word = match self.method.as_str() {
+            "item/commandExecution/requestApproval" | "item/fileChange/requestApproval" => {
+                decision.v2_word()
+            }
+            "execCommandApproval" | "applyPatchApproval" => decision.legacy_word(),
+            other => {
+                return Err(crate::error::AdapterError::Protocol(format!(
+                    "{other} 不是是/否型的审批请求，不能用 approve() 答复"
+                )))
+            }
+        };
+        Ok(Answer {
+            id: self.id.clone(),
+            body: AnswerBody::Result(serde_json::json!({ "decision": word })),
+        })
+    }
+
+    /// 授予权限（只对 `item/permissions/requestApproval`）。
+    ///
+    /// # Errors
+    /// 用在别的请求上时返回错误。
+    pub fn grant_permissions(
+        &self,
+        profile: Value,
+        scope: GrantScope,
+    ) -> Result<Answer, crate::error::AdapterError> {
+        if self.method != "item/permissions/requestApproval" {
+            return Err(crate::error::AdapterError::Protocol(format!(
+                "{} 不是权限申请，不能用 grant_permissions() 答复",
+                self.method
+            )));
+        }
+        Ok(Answer {
+            id: self.id.clone(),
+            body: AnswerBody::Result(serde_json::json!({
+                "permissions": profile,
+                "scope": scope,
+            })),
+        })
+    }
+
+    /// 拒绝 —— 对**任何**服务端请求都给得出一个它自己形状的否定答复。
+    ///
+    /// 这个函数是全的（total），这一点很要紧：**任何一个服务端请求不答复，整轮就卡死**。
+    /// 所以哪怕是我们完全不认识的方法，也必须有个说得出口的「不」。
+    ///
+    /// 各类的「不」长得完全不一样：
+    ///
+    /// | 方法 | 拒绝的形状 |
+    /// |---|---|
+    /// | `item/commandExecution/requestApproval`、`item/fileChange/requestApproval` | `{"decision":"decline"}` |
+    /// | `execCommandApproval`、`applyPatchApproval`（旧） | `{"decision":"denied"}` —— **另一套词汇** |
+    /// | `item/permissions/requestApproval` | `{"permissions":{},"scope":"turn"}` —— 这一类**没有「拒绝」这个值**，拒绝就是授一个空档案 |
+    /// | `item/tool/call` | `{"success":false,"contentItems":[]}` |
+    /// | `item/tool/requestUserInput` | `{"answers":[]}` |
+    /// | `mcpServer/elicitation/request` | `{"action":"decline"}` |
+    /// | `attestation/generate`、`account/chatgptAuthTokens/refresh` | **JSON-RPC 错误** —— 这两个要的是我们造不出来的凭证，只能老实说不行 |
+    /// | 其它没见过的 | JSON-RPC 错误 |
+    pub fn deny(&self) -> Answer {
+        let body = match self.method.as_str() {
+            "item/commandExecution/requestApproval" | "item/fileChange/requestApproval" => {
+                AnswerBody::Result(serde_json::json!({ "decision": "decline" }))
+            }
+            "execCommandApproval" | "applyPatchApproval" => {
+                AnswerBody::Result(serde_json::json!({ "decision": "denied" }))
+            }
+            "item/permissions/requestApproval" => AnswerBody::Result(serde_json::json!({
+                "permissions": {},
+                "scope": "turn",
+            })),
+            "item/tool/call" => {
+                AnswerBody::Result(serde_json::json!({ "success": false, "contentItems": [] }))
+            }
+            "item/tool/requestUserInput" => AnswerBody::Result(serde_json::json!({ "answers": [] })),
+            "mcpServer/elicitation/request" => {
+                AnswerBody::Result(serde_json::json!({ "action": "decline" }))
+            }
+            other => AnswerBody::Error {
+                // -32601 Method not found：我们这一侧没有实现这个方法。
+                code: -32601,
+                message: format!("共飞工作台不提供 {other}"),
+            },
+        };
+        Answer { id: self.id.clone(), body }
     }
 }

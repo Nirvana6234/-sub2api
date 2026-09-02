@@ -11,6 +11,23 @@ use codex_adapter::{decode_line, AdapterError, ApprovalDecision, ClientRequest, 
 use serde_json::Value;
 use tokio::sync::mpsc;
 
+/// 造一条只有方法名的服务端请求 —— 用来检查答复的形状，不需要真实参数。
+fn fake_request(method: &str) -> codex_adapter::ServerRequest {
+    codex_adapter::ServerRequest::project(
+        codex_adapter::RequestId::Num(7),
+        method.to_owned(),
+        serde_json::json!({}),
+    )
+}
+
+fn answer_frame(a: &codex_adapter::Answer) -> Value {
+    a.to_frame()
+}
+
+fn answer_value(a: &codex_adapter::Answer) -> Value {
+    a.to_frame().get("result").cloned().expect("这条答复不是 result 形状")
+}
+
 const FIXTURE: &str = include_str!("fixtures/decline-command-approval.jsonl");
 const BAD_CREDENTIALS: &str = include_str!("fixtures/bad-credentials.jsonl");
 const INVALID_CWD: &str = include_str!("fixtures/invalid-cwd.jsonl");
@@ -389,20 +406,71 @@ fn workspace_dir_refuses_what_codex_would_have_accepted() {
     assert!(!ok.as_str().is_empty());
 }
 
+/// 同一个「拒绝」，对不同方法要说不同的词。
+///
+/// v2 的 `item/*/requestApproval` 说 `decline`，旧的 `execCommandApproval` /
+/// `applyPatchApproval` 说 `denied`。发错词会被拒 —— 所以别自己拼 `{"decision":…}`。
 #[test]
-fn decline_and_cancel_are_different_answers() {
-    // decline = 拒绝但这一轮继续；cancel = 拒绝并立即中断整轮。
-    // 审批 UI 必须给用户两个按钮，不能只给一个「拒绝」。
-    assert_eq!(
-        ApprovalDecision::Decline.to_response(),
-        serde_json::json!({ "decision": "decline" })
-    );
-    assert_eq!(
-        ApprovalDecision::Cancel.to_response(),
-        serde_json::json!({ "decision": "cancel" })
-    );
-    assert_eq!(
-        ApprovalDecision::AcceptForSession.to_response(),
-        serde_json::json!({ "decision": "acceptForSession" })
-    );
+fn the_same_decision_serializes_differently_per_method() {
+    let v2 = fake_request("item/commandExecution/requestApproval");
+    let legacy = fake_request("execCommandApproval");
+
+    assert_eq!(answer_value(&v2.approve(ApprovalDecision::Decline).unwrap()),
+               serde_json::json!({ "decision": "decline" }));
+    assert_eq!(answer_value(&legacy.approve(ApprovalDecision::Decline).unwrap()),
+               serde_json::json!({ "decision": "denied" }));
+
+    // decline = 拒绝但这一轮继续；cancel = 拒绝并立即中断整轮。UI 要给两个按钮。
+    assert_eq!(answer_value(&v2.approve(ApprovalDecision::Cancel).unwrap()),
+               serde_json::json!({ "decision": "cancel" }));
+    assert_eq!(answer_value(&legacy.approve(ApprovalDecision::Cancel).unwrap()),
+               serde_json::json!({ "decision": "abort" }));
+    assert_eq!(answer_value(&v2.approve(ApprovalDecision::AcceptForSession).unwrap()),
+               serde_json::json!({ "decision": "acceptForSession" }));
+    assert_eq!(answer_value(&legacy.approve(ApprovalDecision::AcceptForSession).unwrap()),
+               serde_json::json!({ "decision": "approved_for_session" }));
+}
+
+/// `deny()` 必须对**每一种**服务端请求都给得出答案 —— 漏一个，那一轮就永远卡着。
+#[test]
+fn deny_is_total_and_shaped_per_method() {
+    let cases: Vec<(&str, serde_json::Value)> = vec![
+        ("item/commandExecution/requestApproval", serde_json::json!({ "decision": "decline" })),
+        ("item/fileChange/requestApproval", serde_json::json!({ "decision": "decline" })),
+        // 旧方法是另一套词汇。
+        ("execCommandApproval", serde_json::json!({ "decision": "denied" })),
+        ("applyPatchApproval", serde_json::json!({ "decision": "denied" })),
+        // 权限这一类没有「拒绝」这个值：拒绝 = 授一个空档案。
+        ("item/permissions/requestApproval", serde_json::json!({ "permissions": {}, "scope": "turn" })),
+        ("item/tool/call", serde_json::json!({ "success": false, "contentItems": [] })),
+        ("item/tool/requestUserInput", serde_json::json!({ "answers": [] })),
+        ("mcpServer/elicitation/request", serde_json::json!({ "action": "decline" })),
+    ];
+
+    for (method, expected) in cases {
+        let req = fake_request(method);
+        assert_eq!(answer_value(&req.deny()), expected, "{method} 的拒绝形状不对");
+    }
+
+    // 这两个要的是我们造不出来的凭证。老实回错误，不要编一个假 token 送上去。
+    for method in ["attestation/generate", "account/chatgptAuthTokens/refresh", "some/unknown/method"] {
+        let req = fake_request(method);
+        let frame = answer_frame(&req.deny());
+        assert!(frame.get("error").is_some(), "{method} 应当回 JSON-RPC 错误，实际是 {frame}");
+        assert!(frame.get("result").is_none(), "{method} 不该编出一个假 result");
+    }
+}
+
+/// 拿甲类请求的响应去答乙类请求，在类型上就该走不通。
+#[test]
+fn you_cannot_answer_one_approval_with_anothers_shape() {
+    let permissions = fake_request("item/permissions/requestApproval");
+    let err = permissions.approve(ApprovalDecision::Decline).unwrap_err();
+    assert!(err.to_string().contains("不是是/否型"), "{err}");
+
+    let command = fake_request("item/commandExecution/requestApproval");
+    let err = command
+        .grant_permissions(serde_json::json!({}), codex_adapter::GrantScope::Turn)
+        .unwrap_err();
+    assert!(err.to_string().contains("不是权限申请"), "{err}");
 }

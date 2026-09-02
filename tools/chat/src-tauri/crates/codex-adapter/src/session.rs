@@ -16,8 +16,8 @@ use tokio::sync::mpsc;
 
 use crate::error::AdapterError;
 use crate::protocol::{
-    ApprovalPolicy, ClientRequest, ErrorNotification, NotificationPayload, ReasoningKind, RequestId,
-    SandboxMode, ServerRequest, ThreadStatus, WorkspaceDir,
+    Answer, ApprovalPolicy, ClientRequest, ErrorNotification, NotificationPayload, ReasoningKind,
+    RequestId, SandboxMode, ServerRequest, ThreadStatus, WorkspaceDir,
 };
 use crate::transport::{pump, Client, Incoming};
 
@@ -64,6 +64,24 @@ pub enum SessionEvent {
     TurnCompleted {
         turn_id: Option<String>,
         status: String,
+    },
+    /// 一个 item 开始了。
+    ///
+    /// **审批 UI 必须留着这些。** `item/fileChange/requestApproval` 只给 id，
+    /// 真正「改了什么」（路径 + diff）在这里的 `item.changes[]` 里 ——
+    /// 审批请求是个指针，UI 得按 `item_id` 回查。
+    ItemStarted {
+        item_id: Option<String>,
+        item_type: String,
+        item: Value,
+    },
+    /// 一个 item 结束了。`item_status` 在拒绝之后会是 `"declined"`，
+    /// 是「拒绝确实生效」的逐项证据。
+    ItemCompleted {
+        item_id: Option<String>,
+        item_type: String,
+        item_status: Option<String>,
+        item: Value,
     },
     /// 我们没投影的上游通知。**原样带着**，本机链路要能显示上游新事件。
     Passthrough {
@@ -221,8 +239,13 @@ impl Session {
     ///
     /// **每个 [`SessionEvent::ApprovalRequested`] 都必须走到这里**，包括我们不认识的
     /// 那些 —— 不答复 turn 会一直等下去。
-    pub async fn respond(&self, id: &RequestId, result: Value) -> Result<(), AdapterError> {
-        self.client.respond(id, result).await
+    ///
+    /// [`Answer`] 只能从那条请求本身生成（[`ServerRequest::approve`] /
+    /// [`ServerRequest::deny`] / [`ServerRequest::grant_permissions`]），
+    /// 所以「拿 A 类请求的响应去答 B 类请求」在类型上就写不出来。这不是洁癖：
+    /// 三类审批的响应形状**互不相同**，旧的 `execCommandApproval` 连决定词汇都是另一套。
+    pub async fn answer(&self, answer: &Answer) -> Result<(), AdapterError> {
+        self.client.answer(answer).await
     }
 
     pub fn current_thread(&self) -> Option<String> {
@@ -295,9 +318,13 @@ fn translate(incoming: Incoming, state: &Arc<Mutex<SessionState>>) -> SessionEve
                     SessionEvent::Failed(Box::new(err))
                 }
             }
-            NotificationPayload::ItemStarted { .. }
-            | NotificationPayload::ItemCompleted { .. }
-            | NotificationPayload::Other => {
+            NotificationPayload::ItemStarted { item_type, item_id, item, .. } => {
+                SessionEvent::ItemStarted { item_id, item_type, item }
+            }
+            NotificationPayload::ItemCompleted {
+                item_type, item_id, item_status, item, ..
+            } => SessionEvent::ItemCompleted { item_id, item_type, item_status, item },
+            NotificationPayload::Other => {
                 SessionEvent::Passthrough { method: note.method, raw: note.raw }
             }
         },
@@ -379,16 +406,9 @@ pub async fn drive_turn(
                 retries = 0; // 有进展就把重试计数清零
             }
             SessionEvent::ApprovalRequested(req) => {
-                // 不答复就卡死，所以默认给一个安全答复。
-                let answer = match req.method.as_str() {
-                    "item/permissions/requestApproval" => {
-                        // 这一类的响应形状完全不同，没有 decision 字段。
-                        // 给一个空授权 = 什么都不批。
-                        serde_json::json!({ "permissions": {}, "scope": "turn" })
-                    }
-                    _ => crate::protocol::ApprovalDecision::Decline.to_response(),
-                };
-                let _ = session.respond(&req.id, answer).await;
+                // 不答复就卡死，所以默认拒绝。`deny()` 是全的：每一类请求（包括我们
+                // 不认识的）都有一个它自己形状的「不」，不会拿甲的响应去答乙。
+                let _ = session.answer(&req.deny()).await;
             }
             SessionEvent::Retrying(err) => {
                 retries += 1;

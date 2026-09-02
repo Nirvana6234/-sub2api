@@ -1,4 +1,7 @@
 {
+  "_notes": {
+    "permissions-approval": "item/permissions/requestApproval 未能触发：让 agent 申请网络与工作区外读权限时，它转而去试 shell 命令，走的是 item/commandExecution/requestApproval。该类型目前仅有 schema，无实测报文，代码路径未经验证。"
+  },
   "bad-credentials": {
     "codexVersion": "0.144.2",
     "failureNotifications": [
@@ -20,6 +23,17 @@
     "declinedCommandDidNotRun": true,
     "records": 50,
     "scenario": "decline-command-approval"
+  },
+  "decline-file-change": {
+    "approvalMethods": [
+      "item/fileChange/requestApproval"
+    ],
+    "approvalRequestsSeen": 2,
+    "codexBinary": "C:/Users/Borg/AppData/Local/OpenAI/Codex/bin/3135b80b111fd431/codex.exe",
+    "codexVersion": "0.144.2",
+    "declinedCommandDidNotRun": true,
+    "records": 119,
+    "scenario": "decline-file-change"
   },
   "invalid-cwd": {
     "codexVersion": "0.144.2",
