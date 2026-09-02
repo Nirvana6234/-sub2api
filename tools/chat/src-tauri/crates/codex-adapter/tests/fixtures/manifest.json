@@ -1,0 +1,32 @@
+{
+  "bad-credentials": {
+    "codexVersion": "0.144.2",
+    "failureNotifications": [
+      "error"
+    ],
+    "jsonRpcErrorResponses": 0,
+    "records": 20,
+    "scenario": "bad-credentials",
+    "threadStarted": true,
+    "turnStartWasError": false
+  },
+  "decline-command-approval": {
+    "approvalMethods": [
+      "item/commandExecution/requestApproval"
+    ],
+    "approvalRequestsSeen": 1,
+    "codexBinary": "C:/Users/Borg/AppData/Local/OpenAI/Codex/bin/3135b80b111fd431/codex.exe",
+    "codexVersion": "0.144.2",
+    "declinedCommandDidNotRun": true,
+    "records": 50,
+    "scenario": "decline-command-approval"
+  },
+  "invalid-cwd": {
+    "codexVersion": "0.144.2",
+    "errorCode": null,
+    "errorMessage": null,
+    "gotErrorResponse": false,
+    "records": 12,
+    "scenario": "invalid-cwd"
+  }
+}

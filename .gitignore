@@ -125,6 +125,10 @@ backend/.installed
 tests
 !deploy/tests/
 !deploy/tests/**
+# 工作台各 Rust crate 的测试与录制报文：fixture 是对着真 codex 进程录的，
+# 重录一次要花真实中转站调用，必须进版本库。
+!tools/chat/src-tauri/crates/*/tests/
+!tools/chat/src-tauri/crates/*/tests/**
 CLAUDE.md
 .claude
 scripts
@@ -132,6 +136,8 @@ scripts
 !backend/scripts/resolve-version.sh
 !frontend/scripts/
 !frontend/scripts/clean-out-dir.mjs
+!tools/chat/src-tauri/crates/*/scripts/
+!tools/chat/src-tauri/crates/*/scripts/**
 .code-review-state
 #openspec/
 code-reviews/
