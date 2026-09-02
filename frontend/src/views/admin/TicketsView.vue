@@ -2,17 +2,21 @@
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
+import { useTicketStore } from '@/stores'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import Icon from '@/components/icons/Icon.vue'
 import { formatDateTime } from '@/utils/format'
 import type { AdminTicket, TicketStatus } from '@/types'
 
 const { t } = useI18n()
+const ticketStore = useTicketStore()
 
 const tickets = ref<AdminTicket[]>([])
 const selected = ref<AdminTicket | null>(null)
 const loadingList = ref(false)
 const loadingDetail = ref(false)
 const submitting = ref(false)
+const batchOperating = ref(false)
 const errorMessage = ref('')
 
 const page = ref(1)
@@ -21,11 +25,16 @@ const total = ref(0)
 const statusFilter = ref<TicketStatus | ''>('')
 const searchTerm = ref('')
 const unreadOnly = ref(false)
+const selectedIds = ref<Set<number>>(new Set())
 
 const replyContent = ref('')
 
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
 const canReply = computed(() => selected.value !== null && selected.value.status !== 'closed')
+const selectedCount = computed(() => selectedIds.value.size)
+const selectedVisibleCount = computed(() => tickets.value.filter((ticket) => selectedIds.value.has(ticket.id)).length)
+const allVisibleSelected = computed(() => tickets.value.length > 0 && selectedVisibleCount.value === tickets.value.length)
+const someVisibleSelected = computed(() => selectedVisibleCount.value > 0 && !allVisibleSelected.value)
 
 const statusLabels: Record<TicketStatus, string> = {
   open: 'tickets.status.open',
@@ -55,6 +64,7 @@ async function loadList() {
     })
     tickets.value = res.items || []
     total.value = res.total || 0
+    selectedIds.value = new Set(tickets.value.filter((ticket) => selectedIds.value.has(ticket.id)).map((ticket) => ticket.id))
   } catch (error) {
     errorMessage.value = resolveError(error)
   } finally {
@@ -73,6 +83,7 @@ async function openTicket(ticket: AdminTicket) {
     if (row) {
       row.unread_count = 0
     }
+    void ticketStore.refreshUnreadCounts()
   } catch (error) {
     errorMessage.value = resolveError(error)
   } finally {
@@ -112,13 +123,97 @@ async function changeStatus(status: TicketStatus) {
   }
 }
 
+function onSelectionChange(ticketID: number, event: Event) {
+  const checked = (event.target as HTMLInputElement).checked
+  const next = new Set(selectedIds.value)
+  if (checked) {
+    next.add(ticketID)
+  } else {
+    next.delete(ticketID)
+  }
+  selectedIds.value = next
+}
+
+function onSelectAllChange(event: Event) {
+  const checked = (event.target as HTMLInputElement).checked
+  const next = new Set(selectedIds.value)
+  for (const ticket of tickets.value) {
+    if (checked) {
+      next.add(ticket.id)
+    } else {
+      next.delete(ticket.id)
+    }
+  }
+  selectedIds.value = next
+}
+
+function clearSelection() {
+  selectedIds.value = new Set()
+}
+
+async function setSelectedReadStatus(read: boolean) {
+  const ids = [...selectedIds.value]
+  if (ids.length === 0 || batchOperating.value) return
+
+  batchOperating.value = true
+  errorMessage.value = ''
+  try {
+    await adminAPI.tickets.batchReadStatus(ids, read)
+    const selectedSet = new Set(ids)
+    for (const ticket of tickets.value) {
+      if (selectedSet.has(ticket.id)) {
+        ticket.unread_count = read ? 0 : 1
+      }
+    }
+    if (selected.value && selectedSet.has(selected.value.id)) {
+      selected.value = { ...selected.value, unread_count: read ? 0 : 1 }
+    }
+    clearSelection()
+    void ticketStore.refreshUnreadCounts()
+  } catch (error) {
+    errorMessage.value = resolveError(error)
+  } finally {
+    batchOperating.value = false
+  }
+}
+
+async function deleteSelected() {
+  const ids = [...selectedIds.value]
+  if (ids.length === 0 || batchOperating.value) return
+
+  if (!window.confirm(t('tickets.deleteConfirm', { count: ids.length }))) return
+
+  batchOperating.value = true
+  errorMessage.value = ''
+  try {
+    await adminAPI.tickets.batchDelete(ids)
+    const deletedSet = new Set(ids)
+    if (selected.value && deletedSet.has(selected.value.id)) {
+      selected.value = null
+      replyContent.value = ''
+    }
+    clearSelection()
+    if (page.value > 1 && tickets.value.every((ticket) => deletedSet.has(ticket.id))) {
+      page.value -= 1
+    }
+    await loadList()
+    void ticketStore.refreshUnreadCounts()
+  } catch (error) {
+    errorMessage.value = resolveError(error)
+  } finally {
+    batchOperating.value = false
+  }
+}
+
 function changePage(next: number) {
   if (next < 1 || next > totalPages.value) return
+  clearSelection()
   page.value = next
   loadList()
 }
 
 function applyFilters() {
+  clearSelection()
   page.value = 1
   loadList()
 }
@@ -177,41 +272,102 @@ onMounted(loadList)
           <p v-else-if="tickets.length === 0" class="py-8 text-center text-sm text-gray-500 dark:text-dark-400">
             {{ t('tickets.empty') }}
           </p>
-          <ul v-else class="space-y-2">
-            <li v-for="ticket in tickets" :key="ticket.id">
-              <button
-                type="button"
-                class="w-full rounded-lg border px-3 py-2.5 text-left transition-colors"
-                :class="
-                  selected?.id === ticket.id
-                    ? 'border-primary-400 bg-primary-50 dark:border-primary-600 dark:bg-primary-900/20'
-                    : 'border-gray-200 hover:bg-gray-50 dark:border-dark-700 dark:hover:bg-dark-800'
-                "
-                @click="openTicket(ticket)"
-              >
-                <div class="flex items-start justify-between gap-2">
-                  <span class="min-w-0 flex-1 truncate text-sm font-medium text-gray-900 dark:text-white">
-                    {{ ticket.subject }}
-                  </span>
-                  <span
-                    v-if="ticket.unread_count > 0"
-                    class="shrink-0 rounded-full bg-red-500 px-1.5 text-xs font-semibold text-white"
-                  >
-                    {{ ticket.unread_count }}
-                  </span>
-                </div>
-                <p class="mt-0.5 truncate text-xs text-gray-500 dark:text-dark-400">{{ ticket.user_email }}</p>
-                <div class="mt-2 flex items-center justify-between gap-2">
-                  <span class="rounded-full px-2 py-0.5 text-xs font-medium" :class="statusClass(ticket.status)">
-                    {{ t(statusLabels[ticket.status]) }}
-                  </span>
-                  <span class="text-xs text-gray-400 dark:text-dark-500">
-                    {{ formatDateTime(ticket.last_message_at) }}
-                  </span>
-                </div>
-              </button>
-            </li>
-          </ul>
+          <template v-else>
+            <div class="mb-3 flex flex-wrap items-center justify-between gap-2 border-y border-gray-200 py-2 dark:border-dark-700">
+              <label class="flex items-center gap-2 text-sm text-gray-600 dark:text-dark-300">
+                <input
+                  type="checkbox"
+                  class="rounded"
+                  :checked="allVisibleSelected"
+                  :indeterminate="someVisibleSelected"
+                  @change="onSelectAllChange"
+                />
+                {{ t('tickets.selectAll') }}
+              </label>
+              <div v-if="selectedCount > 0" class="flex flex-wrap items-center gap-1.5">
+                <span class="mr-1 text-xs text-gray-500 dark:text-dark-400">
+                  {{ t('tickets.selectedCount', { count: selectedCount }) }}
+                </span>
+                <button
+                  type="button"
+                  class="btn btn-secondary inline-flex items-center gap-1.5 px-2.5 py-1 text-xs"
+                  :disabled="batchOperating"
+                  :title="t('tickets.markRead')"
+                  @click="setSelectedReadStatus(true)"
+                >
+                  <Icon name="checkCircle" size="sm" />
+                  <span>{{ t('tickets.markRead') }}</span>
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-secondary inline-flex items-center gap-1.5 px-2.5 py-1 text-xs"
+                  :disabled="batchOperating"
+                  :title="t('tickets.markUnread')"
+                  @click="setSelectedReadStatus(false)"
+                >
+                  <Icon name="mail" size="sm" />
+                  <span>{{ t('tickets.markUnread') }}</span>
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-danger inline-flex items-center gap-1.5 px-2.5 py-1 text-xs"
+                  :disabled="batchOperating"
+                  :title="t('tickets.deleteSelected')"
+                  @click="deleteSelected"
+                >
+                  <Icon name="trash" size="sm" />
+                  <span>{{ t('tickets.deleteSelected') }}</span>
+                </button>
+              </div>
+            </div>
+
+            <p v-if="batchOperating" class="mb-2 text-xs text-gray-500 dark:text-dark-400">
+              {{ t('tickets.actionInProgress') }}
+            </p>
+            <ul class="space-y-2">
+              <li v-for="ticket in tickets" :key="ticket.id" class="flex items-start gap-2">
+                <label class="flex shrink-0 cursor-pointer items-center px-1 pt-3" @click.stop>
+                  <input
+                    type="checkbox"
+                    class="rounded"
+                    :checked="selectedIds.has(ticket.id)"
+                    @change="onSelectionChange(ticket.id, $event)"
+                  />
+                </label>
+                <button
+                  type="button"
+                  class="min-w-0 flex-1 rounded-lg border px-3 py-2.5 text-left transition-colors"
+                  :class="
+                    selected?.id === ticket.id
+                      ? 'border-primary-400 bg-primary-50 dark:border-primary-600 dark:bg-primary-900/20'
+                      : 'border-gray-200 hover:bg-gray-50 dark:border-dark-700 dark:hover:bg-dark-800'
+                  "
+                  @click="openTicket(ticket)"
+                >
+                  <div class="flex items-start justify-between gap-2">
+                    <span class="min-w-0 flex-1 truncate text-sm font-medium text-gray-900 dark:text-white">
+                      {{ ticket.subject }}
+                    </span>
+                    <span
+                      v-if="ticket.unread_count > 0"
+                      class="shrink-0 rounded-full bg-red-500 px-1.5 text-xs font-semibold text-white"
+                    >
+                      {{ ticket.unread_count }}
+                    </span>
+                  </div>
+                  <p class="mt-0.5 truncate text-xs text-gray-500 dark:text-dark-400">{{ ticket.user_email }}</p>
+                  <div class="mt-2 flex items-center justify-between gap-2">
+                    <span class="rounded-full px-2 py-0.5 text-xs font-medium" :class="statusClass(ticket.status)">
+                      {{ t(statusLabels[ticket.status]) }}
+                    </span>
+                    <span class="text-xs text-gray-400 dark:text-dark-500">
+                      {{ formatDateTime(ticket.last_message_at) }}
+                    </span>
+                  </div>
+                </button>
+              </li>
+            </ul>
+          </template>
 
           <div v-if="totalPages > 1" class="mt-4 flex items-center justify-between text-sm">
             <button type="button" class="btn btn-secondary px-3 py-1" :disabled="page <= 1" @click="changePage(page - 1)">

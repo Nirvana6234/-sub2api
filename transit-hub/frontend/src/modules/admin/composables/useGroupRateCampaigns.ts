@@ -1,11 +1,14 @@
 import { ref } from 'vue'
 import {
   cancelGroupRateCampaign,
+  deleteGroupRateCampaign,
   endGroupRateCampaign,
   listGroupRateCampaigns,
   startGroupRateCampaign,
+  stopGroupRateCampaignRecurrence,
+  updateGroupRateCampaign,
 } from '../api/groupRateCampaigns'
-import type { CampaignListItem, CampaignNotifyDefaults } from '../types/groupRateCampaigns'
+import type { CampaignListItem, CampaignNotifyDefaults, CreateGroupRateCampaignRequest } from '../types/groupRateCampaigns'
 
 export const useGroupRateCampaigns = () => {
   const campaigns = ref<CampaignListItem[]>([])
@@ -102,6 +105,48 @@ export const useGroupRateCampaigns = () => {
     }
   }
 
+  const updateCampaign = async (id: string, request: CreateGroupRateCampaignRequest) => {
+    isActionLoading.value = true
+    errorKey.value = null
+    try {
+      await updateGroupRateCampaign(id, request)
+      await loadCampaigns()
+    } catch (error) {
+      errorKey.value = error instanceof Error ? error.message : 'admin.groupRateCampaigns.errors.unknown'
+      throw error
+    } finally {
+      isActionLoading.value = false
+    }
+  }
+
+  const stopCampaignRecurrence = async (id: string) => {
+    isActionLoading.value = true
+    errorKey.value = null
+    try {
+      await stopGroupRateCampaignRecurrence(id)
+      await loadCampaigns()
+    } catch (error) {
+      errorKey.value = error instanceof Error ? error.message : 'admin.groupRateCampaigns.errors.unknown'
+      throw error
+    } finally {
+      isActionLoading.value = false
+    }
+  }
+
+  const deleteCampaign = async (id: string) => {
+    isActionLoading.value = true
+    errorKey.value = null
+    try {
+      await deleteGroupRateCampaign(id)
+      await loadCampaigns()
+    } catch (error) {
+      errorKey.value = error instanceof Error ? error.message : 'admin.groupRateCampaigns.errors.unknown'
+      throw error
+    } finally {
+      isActionLoading.value = false
+    }
+  }
+
   void loadCampaigns()
 
   return {
@@ -121,5 +166,8 @@ export const useGroupRateCampaigns = () => {
     startCampaign,
     endCampaign,
     cancelCampaign,
+    updateCampaign,
+    stopCampaignRecurrence,
+    deleteCampaign,
   }
 }

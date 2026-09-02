@@ -265,6 +265,78 @@ func (r *ticketRepository) ClearUnread(ctx context.Context, ticketID int64, role
 	return nil
 }
 
+func (r *ticketRepository) SetUnreadStatus(
+	ctx context.Context,
+	ticketIDs []int64,
+	role string,
+	unread bool,
+) error {
+	if len(ticketIDs) == 0 {
+		return nil
+	}
+
+	uniqueIDs := make([]int64, 0, len(ticketIDs))
+	seen := make(map[int64]struct{}, len(ticketIDs))
+	for _, id := range ticketIDs {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		uniqueIDs = append(uniqueIDs, id)
+	}
+	if len(uniqueIDs) == 0 {
+		return nil
+	}
+
+	count := 0
+	if unread {
+		count = 1
+	}
+	update := clientFromContext(ctx, r.client).Ticket.Update().
+		Where(ticket.IDIn(uniqueIDs...))
+	if role == service.TicketSenderRoleUser {
+		update = update.SetUserUnreadCount(count)
+	} else {
+		update = update.SetAdminUnreadCount(count)
+	}
+	if _, err := update.Save(ctx); err != nil {
+		return translatePersistenceError(err, service.ErrTicketNotFound, nil)
+	}
+	return nil
+}
+
+func (r *ticketRepository) DeleteByIDs(ctx context.Context, ticketIDs []int64) error {
+	if len(ticketIDs) == 0 {
+		return nil
+	}
+
+	uniqueIDs := make([]int64, 0, len(ticketIDs))
+	seen := make(map[int64]struct{}, len(ticketIDs))
+	for _, id := range ticketIDs {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		uniqueIDs = append(uniqueIDs, id)
+	}
+	if len(uniqueIDs) == 0 {
+		return nil
+	}
+
+	if _, err := clientFromContext(ctx, r.client).Ticket.Delete().
+		Where(ticket.IDIn(uniqueIDs...)).
+		Exec(ctx); err != nil {
+		return translatePersistenceError(err, service.ErrTicketNotFound, nil)
+	}
+	return nil
+}
+
 func (r *ticketRepository) UpdateStatus(ctx context.Context, ticketID int64, status string, closedAt *time.Time) error {
 	client := clientFromContext(ctx, r.client)
 	update := client.Ticket.UpdateOneID(ticketID).SetStatus(status)

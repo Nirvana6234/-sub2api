@@ -266,6 +266,9 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		// 分组隔离（默认不允许未分组 Key 调度）
 		SettingKeyAllowUngroupedKeyScheduling:                        "false",
 		SettingKeyOpenAILowUpstreamRatePriorityEnabled:               "false",
+		SettingKeyOpenAILatencyAwareFallbackEnabled:                  "false",
+		SettingKeyOpenAILatencyThresholdMs:                            strconv.Itoa(defaultOpenAILatencyThresholdMs),
+		SettingKeyOpenAIFallbackSpeedupRatio:                          strconv.FormatFloat(defaultOpenAIFallbackSpeedupRatio, 'f', -1, 64),
 		SettingKeyOpenAIOAuthSchedulingRateMultiplier:                "1",
 		SettingKeyEnableAnthropicCacheTTL1hInjection:                 "false",
 		SettingKeyRewriteMessageCacheControl:                         strconv.FormatBool(s.defaultRewriteMessageCacheControl()),
@@ -967,6 +970,9 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.PaymentVisibleMethodAlipayEnabled = settings[SettingPaymentVisibleMethodAlipayEnabled] == "true"
 	result.PaymentVisibleMethodWxpayEnabled = settings[SettingPaymentVisibleMethodWxpayEnabled] == "true"
 	result.OpenAILowUpstreamRatePriorityEnabled = settings[SettingKeyOpenAILowUpstreamRatePriorityEnabled] == "true"
+	result.OpenAILatencyAwareFallbackEnabled = settings[SettingKeyOpenAILatencyAwareFallbackEnabled] == "true"
+	result.OpenAILatencyThresholdMs = parseOpenAILatencyThresholdMs(settings[SettingKeyOpenAILatencyThresholdMs])
+	result.OpenAIFallbackSpeedupRatio = parseOpenAIFallbackSpeedupRatio(settings[SettingKeyOpenAIFallbackSpeedupRatio])
 	result.OpenAIOAuthSchedulingRateMultiplier = parseOpenAIOAuthSchedulingRateMultiplier(settings[SettingKeyOpenAIOAuthSchedulingRateMultiplier])
 	result.OpenAIAdvancedSchedulerEnabled = settings[openAIAdvancedSchedulerSettingKey] == "true"
 	result.OpenAIAdvancedSchedulerStickyWeightedEnabled = settings[SettingKeyOpenAIAdvancedSchedulerStickyWeightedEnabled] == "true"
@@ -1130,6 +1136,14 @@ func (s *SettingService) normalizeOpenAIAdvancedSchedulerOverrides(settings *Sys
 	if rate := settings.OpenAIOAuthSchedulingRateMultiplier; rate < 0 || math.IsNaN(rate) || math.IsInf(rate, 0) {
 		return infraerrors.BadRequest("INVALID_OPENAI_OAUTH_SCHEDULING_RATE_MULTIPLIER", "OpenAI OAuth scheduling rate multiplier must be a finite non-negative number")
 	}
+	if settings.OpenAILatencyThresholdMs != 0 && (settings.OpenAILatencyThresholdMs < minOpenAILatencyThresholdMs || settings.OpenAILatencyThresholdMs > maxOpenAILatencyThresholdMs) {
+		return infraerrors.BadRequest("INVALID_OPENAI_LATENCY_THRESHOLD_MS", "OpenAI latency threshold must be between 1000 and 600000 milliseconds")
+	}
+	if settings.OpenAIFallbackSpeedupRatio != 0 && (math.IsNaN(settings.OpenAIFallbackSpeedupRatio) || math.IsInf(settings.OpenAIFallbackSpeedupRatio, 0) || settings.OpenAIFallbackSpeedupRatio < minOpenAIFallbackSpeedupRatio || settings.OpenAIFallbackSpeedupRatio > maxOpenAIFallbackSpeedupRatio) {
+		return infraerrors.BadRequest("INVALID_OPENAI_FALLBACK_SPEEDUP_RATIO", "OpenAI fallback speedup ratio must be between 0.1 and 1.0")
+	}
+	settings.OpenAILatencyThresholdMs = normalizeOpenAILatencyThresholdMs(settings.OpenAILatencyThresholdMs)
+	settings.OpenAIFallbackSpeedupRatio = normalizeOpenAIFallbackSpeedupRatio(settings.OpenAIFallbackSpeedupRatio)
 
 	lbTopK, err := normalizeOptionalPositiveIntString(settings.OpenAIAdvancedSchedulerLBTopK)
 	if err != nil {

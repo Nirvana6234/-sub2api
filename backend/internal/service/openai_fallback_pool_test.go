@@ -13,6 +13,38 @@ type fallbackGroupRepoStub struct {
 	groups map[int64]*Group
 }
 
+type fallbackModelAvailabilityRepo struct {
+	AccountRepository
+	accounts []Account
+	calls    int
+}
+
+func (r *fallbackModelAvailabilityRepo) ListModelAvailabilityCandidates(_ context.Context, _ *int64, _ []string, _ bool) ([]Account, error) {
+	r.calls++
+	return append([]Account(nil), r.accounts...), nil
+}
+
+type fallbackScopedModelAvailabilityRepo struct {
+	AccountRepository
+	accounts []Account
+}
+
+func (r *fallbackScopedModelAvailabilityRepo) ListModelAvailabilityCandidates(_ context.Context, groupID *int64, _ []string, _ bool) ([]Account, error) {
+	if groupID == nil {
+		return append([]Account(nil), r.accounts...), nil
+	}
+	filtered := make([]Account, 0, len(r.accounts))
+	for _, account := range r.accounts {
+		for _, candidateGroupID := range account.GroupIDs {
+			if candidateGroupID == *groupID {
+				filtered = append(filtered, account)
+				break
+			}
+		}
+	}
+	return filtered, nil
+}
+
 func (r *fallbackGroupRepoStub) GetByIDLite(_ context.Context, id int64) (*Group, error) {
 	group := r.groups[id]
 	if group == nil {
@@ -38,6 +70,252 @@ func fallbackTestService(groups ...*Group) *OpenAIGatewayService {
 }
 
 func fallbackIDPtr(id int64) *int64 { return &id }
+
+func TestShouldUseOpenAIFallbackForModel(t *testing.T) {
+	groupID := int64(10)
+	unsupported := Account{
+		ID:          1,
+		Platform:    PlatformOpenAI,
+		Status:      StatusActive,
+		Schedulable: true,
+		GroupIDs:    []int64{groupID},
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{
+				"gpt-5.5": "gpt-5.5",
+			},
+		},
+	}
+	supported := unsupported
+	supported.Credentials = map[string]any{
+		"model_mapping": map[string]any{
+			"gpt-5.6-sol": "gpt-5.6-sol",
+		},
+	}
+
+	tests := []struct {
+		name     string
+		accounts []Account
+		want     bool
+	}{
+		{
+			name:     "源组有账号但模型不支持时禁止兜底",
+			accounts: []Account{unsupported},
+			want:     false,
+		},
+		{
+			name:     "源组有账号支持模型时允许兜底",
+			accounts: []Account{supported},
+			want:     true,
+		},
+		{
+			name: "仅有透传账号时按实际调度语义视为模型支持",
+			accounts: []Account{{
+				ID:          2,
+				Platform:    PlatformOpenAI,
+				Status:      StatusActive,
+				Schedulable: true,
+				Extra:       map[string]any{"openai_passthrough": true},
+			}},
+			want: true,
+		},
+		{
+			name:     "源组没有持久可用账号时保留兜底",
+			accounts: nil,
+			want:     true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := &OpenAIGatewayService{
+				accountRepo: &fallbackModelAvailabilityRepo{accounts: tc.accounts},
+			}
+			if got := svc.shouldUseOpenAIFallbackForModel(context.Background(), &groupID, "gpt-5.6-sol", PlatformOpenAI); got != tc.want {
+				t.Fatalf("shouldUseOpenAIFallbackForModel() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNextOpenAIFallbackGroupBlocksUnsupportedModel(t *testing.T) {
+	const (
+		sourceGroupID   = int64(10)
+		fallbackGroupID = int64(20)
+	)
+	svc := fallbackTestService(
+		&Group{ID: sourceGroupID, Platform: PlatformOpenAI, Status: StatusActive, FallbackGroupID: fallbackIDPtr(fallbackGroupID)},
+		&Group{ID: fallbackGroupID, Platform: PlatformOpenAI, Status: StatusActive, IsFallbackPool: true},
+	)
+	svc.accountRepo = &fallbackModelAvailabilityRepo{
+		accounts: []Account{{
+			ID:          1,
+			Platform:    PlatformOpenAI,
+			Status:      StatusActive,
+			Schedulable: true,
+			Credentials: map[string]any{
+				"model_mapping": map[string]any{
+					"gpt-5.5": "gpt-5.5",
+				},
+			},
+		}},
+	}
+
+	ctx, nextID := svc.nextOpenAIFallbackGroup(
+		context.Background(),
+		fallbackIDPtr(sourceGroupID),
+		PlatformOpenAI,
+		"gpt-5.6-sol",
+	)
+	if nextID != nil {
+		t.Fatalf("unsupported model must not enter fallback group, got %d", *nextID)
+	}
+	if isOpenAIFallbackPoolSourcing(ctx) {
+		t.Fatal("blocked fallback must not mark the request as fallback-sourced")
+	}
+	if _, ok := openAIFallbackPoolUsageTraceFromContext(ctx); ok {
+		t.Fatal("blocked fallback must not create a usage trace")
+	}
+}
+
+func TestNextOpenAIFallbackGroupUsesTargetModelSupport(t *testing.T) {
+	const (
+		sourceGroupID   = int64(10)
+		fallbackGroupID = int64(20)
+	)
+	svc := fallbackTestService(
+		&Group{ID: sourceGroupID, Platform: PlatformOpenAI, Status: StatusActive, FallbackGroupID: fallbackIDPtr(fallbackGroupID)},
+		&Group{ID: fallbackGroupID, Platform: PlatformOpenAI, Status: StatusActive, IsFallbackPool: true},
+	)
+	svc.accountRepo = &fallbackScopedModelAvailabilityRepo{
+		accounts: []Account{
+			{
+				ID:          1,
+				Platform:    PlatformOpenAI,
+				Status:      StatusActive,
+				Schedulable: true,
+				GroupIDs:    []int64{sourceGroupID},
+				Credentials: map[string]any{"model_mapping": map[string]any{"gpt-5.5": "gpt-5.5"}},
+			},
+			{
+				ID:          2,
+				Platform:    PlatformOpenAI,
+				Status:      StatusActive,
+				Schedulable: true,
+				GroupIDs:    []int64{fallbackGroupID},
+				Credentials: map[string]any{"model_mapping": map[string]any{"gpt-5.6-sol": "gpt-5.6-sol"}},
+			},
+		},
+	}
+
+	ctx, nextID := svc.nextOpenAIFallbackGroup(
+		context.Background(),
+		fallbackIDPtr(sourceGroupID),
+		PlatformOpenAI,
+		"gpt-5.6-sol",
+	)
+	if nextID == nil || *nextID != fallbackGroupID {
+		t.Fatalf("target group supports model and should be selected, got %#v", nextID)
+	}
+	if !isOpenAIFallbackPoolSourcing(ctx) {
+		t.Fatal("selected fallback should mark the request as fallback-sourced")
+	}
+}
+
+func TestNextOpenAIFallbackGroupUsesPassthroughModelSupport(t *testing.T) {
+	const (
+		sourceGroupID   = int64(10)
+		fallbackGroupID = int64(20)
+	)
+	svc := fallbackTestService(
+		&Group{ID: sourceGroupID, Platform: PlatformOpenAI, Status: StatusActive, FallbackGroupID: fallbackIDPtr(fallbackGroupID)},
+		&Group{ID: fallbackGroupID, Platform: PlatformOpenAI, Status: StatusActive, IsFallbackPool: true},
+	)
+	svc.accountRepo = &fallbackModelAvailabilityRepo{
+		accounts: []Account{{
+			ID:          2,
+			Platform:    PlatformOpenAI,
+			Status:      StatusActive,
+			Schedulable: true,
+			Extra:       map[string]any{"openai_passthrough": true},
+		}},
+	}
+
+	ctx, nextID := svc.nextOpenAIFallbackGroup(
+		context.Background(),
+		fallbackIDPtr(sourceGroupID),
+		PlatformOpenAI,
+		"gpt-5.6-sol",
+	)
+	if nextID == nil || *nextID != fallbackGroupID {
+		t.Fatalf("passthrough-only fallback should enter fallback group, got %#v", nextID)
+	}
+	if !isOpenAIFallbackPoolSourcing(ctx) {
+		t.Fatal("selected passthrough fallback should mark fallback sourcing")
+	}
+}
+
+func TestShouldUseOpenAIFallbackForModelCachesDiagnosisPerRequest(t *testing.T) {
+	groupID := int64(20)
+	repo := &fallbackModelAvailabilityRepo{accounts: []Account{{
+		ID:          2,
+		Platform:    PlatformOpenAI,
+		Status:      StatusActive,
+		Schedulable: true,
+		Extra:       map[string]any{"openai_passthrough": true},
+	}}}
+	svc := &OpenAIGatewayService{accountRepo: repo}
+	ctx := withOpenAIModelAvailabilityCache(context.Background())
+
+	if !svc.shouldUseOpenAIFallbackForModel(ctx, &groupID, "gpt-5.6-sol", PlatformOpenAI) {
+		t.Fatal("first diagnosis should allow the passthrough account")
+	}
+	if !svc.shouldUseOpenAIFallbackForModel(ctx, &groupID, "gpt-5.6-sol", PlatformOpenAI) {
+		t.Fatal("cached diagnosis should allow the passthrough account")
+	}
+	if repo.calls != 1 {
+		t.Fatalf("expected one repository query per request key, got %d", repo.calls)
+	}
+}
+
+func TestNextOpenAIFallbackGroupNoAvailableTriggerIgnoresLatencyGate(t *testing.T) {
+	const (
+		sourceGroupID   = int64(10)
+		fallbackGroupID = int64(20)
+	)
+	svc := fallbackTestService(
+		&Group{ID: sourceGroupID, Platform: PlatformOpenAI, Status: StatusActive, FallbackGroupID: fallbackIDPtr(fallbackGroupID)},
+		&Group{ID: fallbackGroupID, Platform: PlatformOpenAI, Status: StatusActive, IsFallbackPool: true},
+	)
+	tracker := newOpenAILatencyTracker()
+	for i := 0; i < 5; i++ {
+		tracker.ObserveGroup(sourceGroupID, openAILatencyBucketNormal, 40000)
+		tracker.ObserveGroup(fallbackGroupID, openAILatencyBucketNormal, 30000)
+	}
+	svc.openaiLatencyTracker = tracker
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+	defer resetOpenAIAdvancedSchedulerSettingCacheForTest()
+	openAIAdvancedSchedulerSettingCache.Store(&cachedOpenAIAdvancedSchedulerSetting{
+		latencyAwareFallbackEnabled: true,
+		latencyThresholdMs:          30000,
+		fallbackSpeedupRatio:        0.6,
+		expiresAt:                   1<<63 - 1,
+	})
+
+	_, nextID := svc.nextOpenAIFallbackGroup(context.Background(), fallbackIDPtr(sourceGroupID), PlatformOpenAI, "")
+	if nextID == nil || *nextID != fallbackGroupID {
+		t.Fatalf("no-available fallback must ignore latency gate, got %#v", nextID)
+	}
+
+	_, nextID = svc.nextOpenAIFallbackGroup(
+		withOpenAILatencyFallbackTrigger(context.Background(), openAILatencyBucketNormal),
+		fallbackIDPtr(sourceGroupID),
+		PlatformOpenAI,
+		"",
+	)
+	if nextID != nil {
+		t.Fatalf("latency-triggered fallback must reject a target that is not strictly faster, got %d", *nextID)
+	}
+}
 
 // 兜底比常规调度只多一条规则：成本没被声明过的账号不参与兜底。
 //
@@ -185,15 +463,15 @@ func TestNextOpenAIFallbackGroupFollowsPerGroupChain(t *testing.T) {
 		&Group{ID: groupC, Platform: PlatformOpenAI, Status: StatusActive, IsFallbackPool: true},
 	)
 
-	ctx, nextID := svc.nextOpenAIFallbackGroup(context.Background(), fallbackIDPtr(groupA), PlatformOpenAI)
+	ctx, nextID := svc.nextOpenAIFallbackGroup(context.Background(), fallbackIDPtr(groupA), PlatformOpenAI, "")
 	if nextID == nil || *nextID != groupB {
 		t.Fatalf("第一跳应到 B，实际 %#v", nextID)
 	}
-	ctx, nextID = svc.nextOpenAIFallbackGroup(ctx, nextID, PlatformOpenAI)
+	ctx, nextID = svc.nextOpenAIFallbackGroup(ctx, nextID, PlatformOpenAI, "")
 	if nextID == nil || *nextID != groupC {
 		t.Fatalf("第二跳应到 C，实际 %#v", nextID)
 	}
-	_, nextID = svc.nextOpenAIFallbackGroup(ctx, nextID, PlatformOpenAI)
+	_, nextID = svc.nextOpenAIFallbackGroup(ctx, nextID, PlatformOpenAI, "")
 	if nextID != nil {
 		t.Fatalf("C 未配置兜底，应停止，实际 %#v", nextID)
 	}
@@ -223,7 +501,7 @@ func TestNextOpenAIFallbackGroupRejectsInvalidTarget(t *testing.T) {
 				&Group{ID: 10, Platform: PlatformOpenAI, Status: StatusActive, FallbackGroupID: fallbackIDPtr(20)},
 				&tc.target,
 			)
-			_, nextID := svc.nextOpenAIFallbackGroup(context.Background(), fallbackIDPtr(10), PlatformOpenAI)
+			_, nextID := svc.nextOpenAIFallbackGroup(context.Background(), fallbackIDPtr(10), PlatformOpenAI, "")
 			if nextID != nil {
 				t.Fatalf("非法兜底目标应被拒绝，实际 %#v", nextID)
 			}
@@ -237,11 +515,11 @@ func TestNextOpenAIFallbackGroupStopsCycleAndMaxHops(t *testing.T) {
 			&Group{ID: 10, Platform: PlatformOpenAI, Status: StatusActive, FallbackGroupID: fallbackIDPtr(20)},
 			&Group{ID: 20, Platform: PlatformOpenAI, Status: StatusActive, IsFallbackPool: true, FallbackGroupID: fallbackIDPtr(10)},
 		)
-		ctx, nextID := svc.nextOpenAIFallbackGroup(context.Background(), fallbackIDPtr(10), PlatformOpenAI)
+		ctx, nextID := svc.nextOpenAIFallbackGroup(context.Background(), fallbackIDPtr(10), PlatformOpenAI, "")
 		if nextID == nil || *nextID != 20 {
 			t.Fatalf("第一跳应到 B，实际 %#v", nextID)
 		}
-		_, nextID = svc.nextOpenAIFallbackGroup(ctx, nextID, PlatformOpenAI)
+		_, nextID = svc.nextOpenAIFallbackGroup(ctx, nextID, PlatformOpenAI, "")
 		if nextID != nil {
 			t.Fatalf("循环兜底应停止，实际 %#v", nextID)
 		}
@@ -259,13 +537,13 @@ func TestNextOpenAIFallbackGroupStopsCycleAndMaxHops(t *testing.T) {
 		current := fallbackIDPtr(1)
 		for _, want := range []int64{2, 3, 4} {
 			var nextID *int64
-			ctx, nextID = svc.nextOpenAIFallbackGroup(ctx, current, PlatformOpenAI)
+			ctx, nextID = svc.nextOpenAIFallbackGroup(ctx, current, PlatformOpenAI, "")
 			if nextID == nil || *nextID != want {
 				t.Fatalf("应跳到 %d，实际 %#v", want, nextID)
 			}
 			current = nextID
 		}
-		_, nextID := svc.nextOpenAIFallbackGroup(ctx, current, PlatformOpenAI)
+		_, nextID := svc.nextOpenAIFallbackGroup(ctx, current, PlatformOpenAI, "")
 		if nextID != nil {
 			t.Fatalf("超过最大跳数后应停止，实际 %#v", nextID)
 		}
@@ -292,7 +570,7 @@ func TestOpenAIFallbackKeepsOriginalProfitGate(t *testing.T) {
 	)
 	ctx := context.WithValue(context.Background(), ctxkey.Group, groupAConfig)
 	ctx = svc.withOpenAIProfitControlGate(ctx, fallbackIDPtr(groupA))
-	ctx, fallbackGroupID := svc.nextOpenAIFallbackGroup(ctx, fallbackIDPtr(groupA), PlatformOpenAI)
+	ctx, fallbackGroupID := svc.nextOpenAIFallbackGroup(ctx, fallbackIDPtr(groupA), PlatformOpenAI, "")
 	if fallbackGroupID == nil || *fallbackGroupID != groupB {
 		t.Fatalf("应进入 B 兜底，实际 %#v", fallbackGroupID)
 	}
@@ -330,7 +608,7 @@ func TestOpenAIFallbackKeepsOriginalPrivacyRequirement(t *testing.T) {
 		groupID:  groupA,
 		required: true,
 	})
-	ctx, fallbackGroupID := svc.nextOpenAIFallbackGroup(ctx, fallbackIDPtr(groupA), PlatformOpenAI)
+	ctx, fallbackGroupID := svc.nextOpenAIFallbackGroup(ctx, fallbackIDPtr(groupA), PlatformOpenAI, "")
 	if fallbackGroupID == nil || *fallbackGroupID != groupB {
 		t.Fatalf("应进入 B 兜底，实际 %#v", fallbackGroupID)
 	}

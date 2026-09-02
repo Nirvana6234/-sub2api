@@ -256,6 +256,11 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/playground/canvas',
+    name: 'PlaygroundCanvas',
+    redirect: { path: '/playground/images', query: { view: 'canvas' } },
+  },
+  {
     path: '/playground/gallery',
     name: 'PlaygroundGallery',
     component: () => import('@/views/user/PlaygroundGalleryView.vue'),

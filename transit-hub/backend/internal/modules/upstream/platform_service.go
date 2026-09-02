@@ -567,6 +567,25 @@ func (s *PlatformService) FetchSub2APIAdminUsageStats(session Session, startDate
 	return stats.RevenueUSD, nil
 }
 
+// FetchSub2APIResourceUsage reads current CPU and memory percentages from the
+// Sub2API admin operations overview using the configured admin API key.
+func (s *PlatformService) FetchSub2APIResourceUsage(session Session) (Sub2APIResourceUsage, error) {
+	if session.Platform != PlatformSub2API || !session.IsAuthenticated() {
+		return Sub2APIResourceUsage{}, newRequestError(ErrorAuth, PlatformSub2API)
+	}
+	response, err := s.httpClient.requestJSON(session.BaseURL+"/api/v1/admin/ops/dashboard/overview", adminAuthOptions(session))
+	if err != nil {
+		return Sub2APIResourceUsage{}, err
+	}
+	overview := dataRecord(response.Payload)
+	metricsValue := firstAny(overview, []string{"system_metrics", "systemMetrics"})
+	metrics := dataRecord(metricsValue)
+	return Sub2APIResourceUsage{
+		CPUUsagePercent:    firstNumber(metrics, []string{"cpu_usage_percent", "cpuUsagePercent"}),
+		MemoryUsagePercent: firstNumber(metrics, []string{"memory_usage_percent", "memoryUsagePercent"}),
+	}, nil
+}
+
 const (
 	sub2APIFallbackPoolUsagePageSize = 100
 	sub2APIFallbackPoolUsageMaxPages = 3

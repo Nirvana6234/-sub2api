@@ -43,6 +43,16 @@ describe('Playground image downloads', () => {
     expect(click).toHaveBeenCalledOnce()
   })
 
+  it('downloads an IndexedDB Blob directly without fetching its blob URL', async () => {
+    const blob = new Blob(['cached image'], { type: 'image/png' })
+
+    await downloadPlaygroundImage(blob, 'sub2api-cached-image.png')
+
+    expect(fetch).not.toHaveBeenCalled()
+    expect(createObjectURL).toHaveBeenCalledWith(blob)
+    expect(click).toHaveBeenCalledOnce()
+  })
+
   it('keeps the image format in the suggested filename where available', () => {
     expect(imageFilenameExtension('data:image/jpeg;base64,AA==')).toBe('jpg')
     expect(imageFilenameExtension('https://cdn.example/image.webp?token=abc')).toBe('webp')

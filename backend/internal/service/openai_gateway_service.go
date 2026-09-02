@@ -452,6 +452,9 @@ type OpenAIGatewayService struct {
 	openaiWSPassthroughDialer      openAIWSClientDialer
 	openaiWSSessionPreemptions     openAIWSSessionPreemptRegistry
 	openaiAccountStats             *openAIAccountRuntimeStats
+	openaiLatencyTracker           *openAILatencyTracker
+	openaiLatencyTrackerOnce       sync.Once
+	openaiFallbackStickyStates     sync.Map // key: source group ID, value: *openAIFallbackStickyState
 	openaiModelTransient           *openAIAccountModelTransientState
 	openaiProxyStreamCircuit       *openAIProxyStreamCircuit
 	openaiProxyStreamFailOpenLogAt atomic.Int64

@@ -64,6 +64,12 @@ type BotNotifier interface {
 	SendToBots(ctx context.Context, userID string, botIDs []string, message string)
 }
 
+// CampaignOverrideGuard lets automatic pricing yield to an active group-rate
+// campaign without importing the campaign module.
+type CampaignOverrideGuard interface {
+	IsGroupRateCampaignActive(ctx context.Context, userID, adminAccountID, groupName string) bool
+}
+
 // PurityIssueReader keeps the pricing-mapping module independent from detector
 // internals: it only receives account ids and a compact current issue summary.
 type PurityIssueReader interface {
@@ -73,13 +79,14 @@ type PurityIssueReader interface {
 // Service 负责分组映射的查询与保存，以及真实对接的编排。
 // 供仪表盘分组弹窗和分组倍率页面复用。
 type Service struct {
-	repository      StateRepository
-	connRepository  RealConnectionRepository
-	platformService *upstream.PlatformService
-	upstreamLookup  UpstreamSiteLookup
-	botNotifier     BotNotifier
-	accounts        AdminAccountResolver
-	purityIssues    PurityIssueReader
+	repository       StateRepository
+	connRepository   RealConnectionRepository
+	platformService  *upstream.PlatformService
+	upstreamLookup   UpstreamSiteLookup
+	botNotifier      BotNotifier
+	campaignOverride CampaignOverrideGuard
+	accounts         AdminAccountResolver
+	purityIssues     PurityIssueReader
 	// keyTester 提供上游 Key 连通性测试。由 httpserver 注入，为 nil 时
 	// 只有测试接口不可用，其余功能不受影响。
 	keyTester UpstreamKeyTester
@@ -130,6 +137,10 @@ func (s *Service) ListMappedUpstreamGroups(ctx context.Context, userID, adminAcc
 // SetBotNotifier 注入机器人通知发送能力，供自动调价成功后发送通知。
 func (s *Service) SetBotNotifier(notifier BotNotifier) {
 	s.botNotifier = notifier
+}
+
+func (s *Service) SetCampaignOverrideGuard(guard CampaignOverrideGuard) {
+	s.campaignOverride = guard
 }
 
 // SetPurityIssueReader supplies the compact account-level status displayed on
@@ -1416,6 +1427,54 @@ func (s *Service) UpdateAdminGroupMultiplier(session upstream.Session, group ups
 	return s.platformService.UpdateAdminGroupMultiplier(session, group, multiplier)
 }
 
+// ReconcileAutoPricingMultiplier releases a campaign-owned group using the
+// latest recorded automatic-pricing target. If no target has been recorded,
+// fallback is preserved as the restoration value.
+func (s *Service) ReconcileAutoPricingMultiplier(ctx context.Context, userID, adminAccountID, ownGroup string, fallback float64) (*float64, error) {
+	state, err := s.authenticatedState(ctx, userID, adminAccountID)
+	if err != nil {
+		return nil, err
+	}
+	mapping, found := findMappingByOwnGroup(state.Mappings, ownGroup)
+	if !found || !mapping.EnableAutoPricing || mapping.LastAutoPricingRun == nil ||
+		mapping.LastAutoPricingRun.TargetMultiplier == nil {
+		target := fallback
+		return &target, nil
+	}
+	target := *mapping.LastAutoPricingRun.TargetMultiplier
+	groups, err := s.FetchAdminGroups(state.Session)
+	if err != nil {
+		return nil, err
+	}
+	var group *upstream.AdminGroupInfo
+	for i := range groups {
+		if normalizedOwnGroupKey(groups[i].Name) == normalizedOwnGroupKey(ownGroup) {
+			group = &groups[i]
+			break
+		}
+	}
+	if group == nil {
+		return nil, requestError(ErrorRequest)
+	}
+	if group.Multiplier == nil || math.Abs(*group.Multiplier-target) > 1e-9 {
+		if err := s.UpdateAdminGroupMultiplier(state.Session, *group, target); err != nil {
+			return nil, err
+		}
+	}
+	if _, err := s.mutateState(ctx, userID, adminAccountID, func(latest *State) error {
+		for i := range latest.OwnGroups {
+			if normalizedOwnGroupKey(latest.OwnGroups[i].Name) == normalizedOwnGroupKey(ownGroup) {
+				latest.OwnGroups[i].Multiplier = target
+				break
+			}
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return &target, nil
+}
+
 // validatedState 刷新临期令牌并校验 admin 角色（平台中性）。
 func (s *Service) validatedState(ctx context.Context, state *State) (*State, error) {
 	if !state.Session.IsAuthenticated() {
@@ -2136,6 +2195,12 @@ func (s *Service) processAutoPricing(ctx context.Context, userID string, adminAc
 	}
 	result.OldOwnMultiplier = adminGroup.Multiplier
 
+	if s.campaignOverride != nil && s.campaignOverride.IsGroupRateCampaignActive(ctx, userID, adminAccountID, mapping.OwnGroup) {
+		result.Status = "skipped"
+		result.Reason = "campaign_override"
+		return result
+	}
+
 	// 检查目标倍率是否与当前一致
 	if adminGroup.Multiplier != nil && math.Round(*adminGroup.Multiplier*10000)/10000 == target {
 		result.Status = "skipped"
@@ -2200,6 +2265,12 @@ func (s *Service) processManualAutoPricing(ctx context.Context, userID string, a
 	}
 	oldOwnMultiplier := adminGroup.Multiplier
 	result.OldOwnMultiplier = oldOwnMultiplier
+	if s.campaignOverride != nil && s.campaignOverride.IsGroupRateCampaignActive(ctx, userID, adminAccountID, mapping.OwnGroup) {
+		result.Status = "skipped"
+		result.Reason = "campaign_override"
+		updated, err := s.persistAutoPricingRunStatus(ctx, userID, adminAccountID, result, "manual", nil)
+		return result, updated, err
+	}
 	if adminGroup.Multiplier != nil && math.Round(*adminGroup.Multiplier*10000)/10000 == target {
 		result.Status = "skipped"
 		result.Reason = "target_unchanged"

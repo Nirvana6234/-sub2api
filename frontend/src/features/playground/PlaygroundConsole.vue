@@ -230,6 +230,7 @@
         <nav class="order-3 flex w-full items-center overflow-x-auto rounded-md bg-gray-100 p-1 text-xs dark:bg-dark-800 sm:order-none sm:w-auto sm:shrink-0" :aria-label="t('playground.workspaceLabel')">
           <RouterLink to="/playground/chat" class="rounded px-2.5 py-1.5 font-medium transition-colors" :class="!isImageMode ? 'bg-white text-primary-700 shadow-sm dark:bg-dark-700 dark:text-primary-300' : 'text-gray-500 hover:text-gray-800 dark:text-dark-400 dark:hover:text-dark-100'">{{ t('playground.chatWorkspace') }}</RouterLink>
           <RouterLink to="/playground/images" class="rounded px-2.5 py-1.5 font-medium transition-colors" :class="isImageMode ? 'bg-white text-primary-700 shadow-sm dark:bg-dark-700 dark:text-primary-300' : 'text-gray-500 hover:text-gray-800 dark:text-dark-400 dark:hover:text-dark-100'">{{ t('playground.imageWorkspace') }}</RouterLink>
+          <RouterLink to="/playground/images?view=canvas" class="rounded px-2.5 py-1.5 font-medium text-gray-500 transition-colors hover:text-gray-800 dark:text-dark-400 dark:hover:text-dark-100">{{ t('playground.canvasWorkspace') }}</RouterLink>
           <RouterLink to="/playground/gallery" class="rounded px-2.5 py-1.5 font-medium text-gray-500 transition-colors hover:text-gray-800 dark:text-dark-400 dark:hover:text-dark-100">{{ t('playground.galleryWorkspace') }}</RouterLink>
         </nav>
         <select v-model="selectedKeyId" class="select h-9 w-48 max-w-[38vw] text-xs sm:w-60" :disabled="isGenerating" :aria-label="t('playground.keyLabel')" :title="selectedKey ? playgroundKeyLabel(selectedKey) : ''">
@@ -1479,7 +1480,7 @@ async function loadKeys(): Promise<void> {
     let page = 1
     let pages = 1
     do {
-      const response = await keysAPI.list(page, 100, undefined, { signal: controller.signal })
+      const response = await keysAPI.list(page, 100, undefined, { signal: controller.signal, includeHidden: true })
       allKeys.push(...response.items)
       pages = response.pages
       page += 1

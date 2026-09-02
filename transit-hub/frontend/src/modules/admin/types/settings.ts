@@ -43,6 +43,12 @@ export type StrategySettings = {
   fallbackPoolNotifyBotIds: string[]
   fallbackPoolTemplate: string
   fallbackPoolTemplateFormat?: NotificationTemplateFormat
+  enableResourceUsageAlert: boolean
+  resourceUsageCpuThreshold: number
+  resourceUsageMemoryThreshold: number
+  resourceUsageNotifyBotIds: string[]
+  resourceUsageTemplate: string
+  resourceUsageTemplateFormat?: NotificationTemplateFormat
   /**
    * 每日运营报告。这四个字段后端一直支持，但之前前端没有对应界面，
    * 于是保存设置时会把它们整个丢掉——线上 enableDailyReport 从来没被打开过。

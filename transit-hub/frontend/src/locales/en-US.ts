@@ -1958,6 +1958,12 @@ export default {
         close: 'Close',
         preview: 'Preview Impact',
         confirmCreate: 'Create Campaign',
+        confirmUpdate: 'Save and Apply Now',
+        confirmDuplicate: 'Create Copy',
+        edit: 'Edit Configuration',
+        duplicate: 'Duplicate',
+        delete: 'Delete Record',
+        stopRecurrence: 'Stop After This Cycle',
         cancelEdit: 'Cancel'
       },
       tabs: {
@@ -1967,7 +1973,6 @@ export default {
         draft: 'Draft',
         scheduled: 'Scheduled',
         running: 'Running',
-        ending: 'Ending',
         ended: 'Ended',
         partial: 'Partial',
         failed: 'Failed',
@@ -1979,6 +1984,7 @@ export default {
         status: 'Status',
         startAt: 'Start Time',
         endAt: 'End Time',
+        recurrence: 'Repeat',
         summary: 'Result',
         createdBy: 'Created By',
         actions: 'Actions'
@@ -1997,6 +2003,11 @@ export default {
       format: {
         summary: '{applied}/{total} applied'
       },
+      recurrence: {
+        none: 'Does not repeat',
+        daily: 'Every {interval} day(s)',
+        weekly: 'Every {interval} week(s)'
+      },
       errors: {
         network: 'Network or CORS request failed. Check the API URL and cross-origin settings.',
         request: 'The rate campaigns API request failed. Try again later.',
@@ -2012,6 +2023,8 @@ export default {
       },
       editor: {
         titleCreate: 'New Rate Campaign',
+        titleEdit: 'Edit Rate Campaign',
+        titleDuplicate: 'Duplicate Rate Campaign',
         sectionInfo: 'Campaign Info',
         nameLabel: 'Campaign Name',
         namePlaceholder: 'e.g. Double 11 Sale',
@@ -2022,6 +2035,7 @@ export default {
         groupsEmpty: 'No groups available',
         groupMultiplierPlaceholder: 'Campaign multiplier',
         sectionSchedule: 'Schedule',
+        runningEditHint: 'This campaign is running. Saving will apply group and multiplier changes immediately.',
         startModeLabel: 'Start Mode',
         startNow: 'Start Now',
         startScheduled: 'Scheduled Start',
@@ -2031,6 +2045,14 @@ export default {
         endScheduled: 'Scheduled End',
         endManual: 'Manual End',
         endAtLabel: 'End Time',
+        recurrenceLabel: 'Repeat',
+        recurrenceNone: 'No Repeat',
+        recurrenceDaily: 'Daily',
+        recurrenceWeekly: 'Weekly',
+        recurrenceIntervalDays: 'day(s) per cycle',
+        recurrenceIntervalWeeks: 'week(s) per cycle',
+        recurrenceNoneHint: 'Runs once, then restores original multipliers at the end time.',
+        recurrenceHint: 'After each run is restored, the system schedules the next start and end time automatically.',
         sectionNotify: 'Notifications',
         notifyEnableLabel: 'Enable Bot Notifications',
         notifyBotSelectLabel: 'Select Bots',
@@ -2056,6 +2078,8 @@ export default {
           selectionEmpty: 'Please select at least one group',
           groupMultiplierInvalid: 'Enter a valid campaign multiplier for every group',
           scheduleInvalid: 'Please check the start/end time settings',
+          recurrenceRequiresSchedule: 'Repeating campaigns require both scheduled start and scheduled end',
+          recurrenceInvalid: 'Repeat interval must be an integer between 1 and 365',
           notifyBotsRequired: 'Please select at least one bot when notifications are enabled'
         }
       },
@@ -2071,7 +2095,9 @@ export default {
         itemRestoreStatus: 'Restore Status',
         noReason: '—',
         confirmEnd: 'Are you sure you want to manually end this campaign? All groups will be restored to their original multipliers immediately.',
-        confirmCancel: 'Are you sure you want to cancel this campaign? No pricing changes will be applied.'
+        confirmCancel: 'Are you sure you want to cancel this campaign? No pricing changes will be applied.',
+        confirmDelete: 'Delete this historical record? Its execution details will be hidden from the list.',
+        confirmStopRecurrence: 'Stop repeating after this cycle? The current cycle will finish and restore as scheduled.'
       }
     },
     mySites: {
@@ -2399,6 +2425,8 @@ export default {
       strategyDescription: 'Configure data refresh interval, alert thresholds, and automation strategies.',
       requiresRefresh: 'Enable data refresh interval first so the system can detect changes automatically.',
       balanceWarningAmount: 'Trigger Amount (CNY)',
+      resourceUsageCpuThreshold: 'CPU Threshold',
+      resourceUsageMemoryThreshold: 'Memory Threshold',
       notifyBots: 'Send Notifications To',
       customTemplate: 'Custom Template',
       templateEditor: {
@@ -2462,6 +2490,10 @@ export default {
       varActualCost: 'Actual cost',
       varRequestId: 'Request ID',
       varCooldown: 'Deduplication cooldown',
+      varCPUUsage: 'Current CPU Usage',
+      varCPUThreshold: 'CPU Threshold',
+      varMemoryUsage: 'Current Memory Usage',
+      varMemoryThreshold: 'Memory Threshold',
       pricingAmount: 'Adjustment Amount',
       botNameLabel: 'Bot Name',
       botNameDingtalkPlaceholder: 'e.g., DingTalk Main',
@@ -2501,7 +2533,9 @@ export default {
           multiplierChangeWarning: 'Multiplier & Availability Alert',
           multiplierChangeWarningHelp: 'Send notifications when a mapped group multiplier changes or the scheduler automatically moves an upstream account to last priority.',
           fallbackPoolUsageWarning: 'Fallback Pool Usage Alert',
-          fallbackPoolUsageWarningHelp: 'Notify through the selected bots whenever a request enters its fallback pool. It does not depend on usage-query permission, even when both account pools have no available account.'
+          fallbackPoolUsageWarningHelp: 'Notify through the selected bots after a request actually selects a fallback-pool account and writes a usage record. Entering the fallback candidate path alone will not alert.',
+          resourceUsageWarning: 'Server Resource Usage Alert',
+          resourceUsageWarningHelp: 'Reads CPU and memory usage through the configured Sub2API admin key. Sends when either metric first exceeds its threshold, then again only after recovery and a new breach. The check follows the data refresh interval.'
         },
         dailyReport: {
           title: 'Daily Operations Report',
@@ -2563,9 +2597,11 @@ export default {
           balanceDefaultTemplate: '🔴 **Balance warning**\n\n🏷️ **Site:** {siteName}\n💰 **Current balance:** CNY {balance}\n⚠️ **Warning threshold:** CNY {threshold}\n\nPlease review and recharge the upstream account to avoid service interruption.',
           multiplierDefaultTemplate: '🟠 **Multiplier change warning**\n\n🏷️ **Site:** {siteName}\n📦 **Upstream group:** {groupName}\n📊 **Rate:** {oldRate}x → **{newRate}x** ({changeDirection} {changePercent})\n\n🔗 **Our groups:** {ownGroups}\n📈 **Cost over the last {days} days:** {weeklyCost} (daily avg {dailyAvgCost})\n💸 **Weekly cost change at the same volume:** {costImpact}\n\n🔎 Review the cost change and confirm whether downstream pricing needs adjustment.',
           fallbackPoolDefaultTemplate: '⚠️ **Fallback pool used**\n\n🏷️ **Site:** {siteName}\n➡️ **Source group:** {sourceGroup}\n🛟 **Fallback pool:** {targetGroup}\n👤 **Account:** {accountName}\n🤖 **Model:** {model}\n🕒 **Time:** {createdAt}\n💵 **Actual cost:** {actualCost}\n🧾 **Request:** {requestId}\n\nNotify only once per combination during the {cooldown} cooldown.',
+          resourceUsageDefaultTemplate: '🔴 **Sub2API resource usage alert**\n\n🏷️ **Site:** {siteName}\n🧠 **CPU:** {cpu}% (threshold {cpuThreshold}%)\n💾 **Memory:** {memory}% (threshold {memoryThreshold}%)',
           balanceTemplatePlaceholder: 'e.g., 🔴 {siteName} has CNY {balance} remaining, below CNY {threshold}.',
           multiplierTemplatePlaceholder: 'e.g., 🟠 {siteName} / {groupName}: {oldRate}x → {newRate}x.',
-          fallbackPoolTemplatePlaceholder: 'e.g., ⚠️ {siteName} entered {targetGroup} from {sourceGroup}.'
+          fallbackPoolTemplatePlaceholder: 'e.g., ⚠️ {siteName} entered {targetGroup} from {sourceGroup}.',
+          resourceUsageTemplatePlaceholder: 'e.g., 🔴 {siteName} CPU is {cpu}% and memory is {memory}%.'
         }
       },
       errors: {
@@ -2578,6 +2614,7 @@ export default {
         missingTelegramConfig: 'Enter the Telegram Bot Token and Chat ID first.',
         dailyReportNoBots: 'Select at least one bot for the daily operations report first.',
         dailyReportBotsNotSaved: 'The selected bot has unsaved channel settings. Save it in Channels & Alerts first.',
+        dailyReportSendFailed: 'The operations report was not delivered. Check the bot configuration, Feishu response, and network connectivity.',
         sendFailed: 'Failed to send the test message. Check the robot configuration and network connectivity.'
       },
       smtp: {

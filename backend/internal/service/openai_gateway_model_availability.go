@@ -3,9 +3,49 @@ package service
 import (
 	"context"
 	"strings"
+	"sync"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 )
+
+// openAIModelAvailabilityCache is request-scoped. Fallback traversal can
+// revisit the same target group through different scheduler paths, so keep
+// the persistent model diagnosis for the lifetime of one request instead of
+// issuing the same account query repeatedly. It is deliberately not a
+// process-wide cache: account/group edits must take effect on the next
+// request without an invalidation protocol.
+type openAIModelAvailabilityCache struct {
+	mu      sync.Mutex
+	entries map[openAIModelAvailabilityCacheEntryKey]ModelAvailabilityDiagnosis
+}
+
+type openAIModelAvailabilityCacheEntryKey struct {
+	groupID  int64
+	platform string
+	model    string
+}
+
+type openAIModelAvailabilityCacheContextKey struct{}
+
+func withOpenAIModelAvailabilityCache(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if existing, ok := ctx.Value(openAIModelAvailabilityCacheContextKey{}).(*openAIModelAvailabilityCache); ok && existing != nil {
+		return ctx
+	}
+	return context.WithValue(ctx, openAIModelAvailabilityCacheContextKey{}, &openAIModelAvailabilityCache{
+		entries: make(map[openAIModelAvailabilityCacheEntryKey]ModelAvailabilityDiagnosis),
+	})
+}
+
+func openAIModelAvailabilityCacheFromContext(ctx context.Context) *openAIModelAvailabilityCache {
+	if ctx == nil {
+		return nil
+	}
+	cache, _ := ctx.Value(openAIModelAvailabilityCacheContextKey{}).(*openAIModelAvailabilityCache)
+	return cache
+}
 
 // DiagnoseModelAvailabilityForPlatform reports whether the requested model
 // is configured to be served by any persistently eligible OpenAI-compatible
@@ -58,8 +98,9 @@ func (s *OpenAIGatewayService) DiagnoseModelAvailabilityForPlatform(
 		diag.HasAccountsInPool = true
 		// Mirrors the per-candidate filter used during account selection
 		// (openai_account_scheduler.isAccountRequestCompatible): empty
-		// model_mapping accepts everything; otherwise the explicit / wildcard
-		// mapping must match.
+		// model_mapping accepts everything for ordinary API-key accounts;
+		// passthrough accounts also accept every model because the actual
+		// scheduler uses the same IsModelSupported predicate.
 		if accounts[i].IsModelSupported(requestedModel) {
 			diag.HasModelSupport = true
 			return diag

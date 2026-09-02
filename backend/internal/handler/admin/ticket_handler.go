@@ -30,6 +30,17 @@ type updateTicketStatusRequest struct {
 	Status string `json:"status" binding:"required,oneof=open answered closed"`
 }
 
+type batchTicketReadStatusRequest struct {
+	IDs  []int64 `json:"ids"`
+	Read *bool   `json:"read"`
+}
+
+type batchTicketIDsRequest struct {
+	IDs []int64 `json:"ids"`
+}
+
+const maxBatchTicketIDs = 500
+
 // List handles listing all users' tickets
 // GET /api/v1/admin/tickets
 func (h *TicketHandler) List(c *gin.Context) {
@@ -82,6 +93,40 @@ func (h *TicketHandler) GetByID(c *gin.Context) {
 	}
 
 	response.Success(c, dto.AdminTicketFromService(ticket))
+}
+
+// BatchReadStatus handles marking selected tickets as read or unread.
+// POST /api/v1/admin/tickets/batch-read-status
+func (h *TicketHandler) BatchReadStatus(c *gin.Context) {
+	var req batchTicketReadStatusRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.Read == nil || !validBatchTicketIDs(req.IDs) {
+		response.BadRequest(c, "Invalid ticket IDs")
+		return
+	}
+
+	if err := h.ticketService.SetReadStatusByAdmin(c.Request.Context(), req.IDs, *req.Read); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, gin.H{"message": "ok"})
+}
+
+// BatchDelete handles deleting selected tickets and their messages.
+// POST /api/v1/admin/tickets/batch-delete
+func (h *TicketHandler) BatchDelete(c *gin.Context) {
+	var req batchTicketIDsRequest
+	if err := c.ShouldBindJSON(&req); err != nil || !validBatchTicketIDs(req.IDs) {
+		response.BadRequest(c, "Invalid ticket IDs")
+		return
+	}
+
+	if err := h.ticketService.DeleteByAdmin(c.Request.Context(), req.IDs); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, gin.H{"message": "ok"})
 }
 
 // Reply handles an admin replying to a ticket
@@ -163,4 +208,16 @@ func parseBoolQuery(v string) bool {
 	default:
 		return false
 	}
+}
+
+func validBatchTicketIDs(ids []int64) bool {
+	if len(ids) == 0 || len(ids) > maxBatchTicketIDs {
+		return false
+	}
+	for _, id := range ids {
+		if id <= 0 {
+			return false
+		}
+	}
+	return true
 }

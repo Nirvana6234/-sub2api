@@ -41,6 +41,16 @@ export async function updateStatus(id: number, status: TicketStatus): Promise<{ 
   return data
 }
 
+export async function batchReadStatus(ids: number[], read: boolean): Promise<{ message: string }> {
+  const { data } = await apiClient.post<{ message: string }>('/admin/tickets/batch-read-status', { ids, read })
+  return data
+}
+
+export async function batchDelete(ids: number[]): Promise<{ message: string }> {
+  const { data } = await apiClient.post<{ message: string }>('/admin/tickets/batch-delete', { ids })
+  return data
+}
+
 export async function unreadCount(): Promise<number> {
   const { data } = await apiClient.get<{ count: number }>('/admin/tickets/unread-count')
   return data.count
@@ -51,6 +61,8 @@ const ticketsAPI = {
   getById,
   reply,
   updateStatus,
+  batchReadStatus,
+  batchDelete,
   unreadCount
 }
 

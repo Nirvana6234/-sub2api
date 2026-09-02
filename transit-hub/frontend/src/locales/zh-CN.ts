@@ -1959,6 +1959,12 @@ export default {
         close: '关闭',
         preview: '预览影响',
         confirmCreate: '创建活动',
+        confirmUpdate: '保存并立即应用',
+        confirmDuplicate: '创建副本',
+        edit: '修改配置',
+        duplicate: '复制活动',
+        delete: '删除记录',
+        stopRecurrence: '本轮结束后停止循环',
         cancelEdit: '取消'
       },
       tabs: {
@@ -1968,7 +1974,6 @@ export default {
         draft: '草稿',
         scheduled: '待开始',
         running: '进行中',
-        ending: '结束中',
         ended: '已结束',
         partial: '部分成功',
         failed: '失败',
@@ -1980,6 +1985,7 @@ export default {
         status: '状态',
         startAt: '开始时间',
         endAt: '结束时间',
+        recurrence: '周期',
         summary: '执行结果',
         createdBy: '创建人',
         actions: '操作'
@@ -1998,6 +2004,11 @@ export default {
       format: {
         summary: '{applied}/{total} 已生效'
       },
+      recurrence: {
+        none: '不重复',
+        daily: '每 {interval} 天',
+        weekly: '每 {interval} 周'
+      },
       errors: {
         network: '网络或 CORS 请求失败，请检查接口地址与跨域配置。',
         request: '活动调价接口请求失败，请稍后重试。',
@@ -2013,6 +2024,8 @@ export default {
       },
       editor: {
         titleCreate: '新建活动调价',
+        titleEdit: '修改活动调价',
+        titleDuplicate: '复制活动调价',
         sectionInfo: '活动信息',
         nameLabel: '活动名称',
         namePlaceholder: '例如：双十一活动',
@@ -2023,6 +2036,7 @@ export default {
         groupsEmpty: '暂无可选分组',
         groupMultiplierPlaceholder: '活动倍率',
         sectionSchedule: '时间计划',
+        runningEditHint: '正在进行的活动，保存后会立即应用本轮分组和倍率变化。',
         startModeLabel: '开始方式',
         startNow: '立即开始',
         startScheduled: '定时开始',
@@ -2032,6 +2046,14 @@ export default {
         endScheduled: '定时结束',
         endManual: '手动结束',
         endAtLabel: '结束时间',
+        recurrenceLabel: '周期',
+        recurrenceNone: '不重复',
+        recurrenceDaily: '每天',
+        recurrenceWeekly: '每周',
+        recurrenceIntervalDays: '天循环一次',
+        recurrenceIntervalWeeks: '周循环一次',
+        recurrenceNoneHint: '只执行一次，到结束时间后恢复原倍率。',
+        recurrenceHint: '每轮结束并恢复后，系统会自动顺延到下一次开始和结束时间。',
         sectionNotify: '通知',
         notifyEnableLabel: '开启机器人通知',
         notifyBotSelectLabel: '选择机器人',
@@ -2057,6 +2079,8 @@ export default {
           selectionEmpty: '请至少选择一个分组',
           groupMultiplierInvalid: '请为每个分组填写有效活动倍率',
           scheduleInvalid: '请检查开始/结束时间设置',
+          recurrenceRequiresSchedule: '循环活动必须同时设置定时开始和定时结束',
+          recurrenceInvalid: '周期间隔必须是 1-365 之间的整数',
           notifyBotsRequired: '开启通知后请至少选择一个机器人'
         }
       },
@@ -2072,7 +2096,9 @@ export default {
         itemRestoreStatus: '恢复状态',
         noReason: '—',
         confirmEnd: '确定要手动结束该活动吗？将立即尝试恢复所有分组的原倍率。',
-        confirmCancel: '确定要取消该活动吗？取消后不会执行任何调价操作。'
+        confirmCancel: '确定要取消该活动吗？取消后不会执行任何调价操作。',
+        confirmDelete: '确定要删除这条历史记录吗？执行明细也将从列表中隐藏。',
+        confirmStopRecurrence: '确定本轮结束后停止循环吗？当前轮仍会按计划结束并恢复。'
       }
     },
     mySites: {
@@ -2401,6 +2427,8 @@ export default {
       strategyDescription: '配置数据刷新频率、预警阈值和自动化策略。',
       requiresRefresh: '建议先开启数据刷新频率，以便系统自动检测变化并触发预警。',
       balanceWarningAmount: '触发金额（CNY）',
+      resourceUsageCpuThreshold: 'CPU 触发阈值',
+      resourceUsageMemoryThreshold: '内存触发阈值',
       notifyBots: '发送通知到机器人',
       customTemplate: '自定义通知文案',
       templateEditor: {
@@ -2464,6 +2492,10 @@ export default {
       varActualCost: '实际扣费',
       varRequestId: '请求 ID',
       varCooldown: '去重冷却时间',
+      varCPUUsage: '当前 CPU 占用',
+      varCPUThreshold: 'CPU 阈值',
+      varMemoryUsage: '当前内存占用',
+      varMemoryThreshold: '内存阈值',
       pricingAmount: '调价幅度',
       botNameLabel: '机器人名称标识',
       botNameDingtalkPlaceholder: '例如：钉钉主群',
@@ -2503,7 +2535,9 @@ export default {
           multiplierChangeWarning: '倍率与可用性预警',
           multiplierChangeWarningHelp: '当监控的对接分组倍率发生变化，或调度器将上游账号自动置底时，通过机器人发送通知。',
           fallbackPoolUsageWarning: '兜底池使用预警',
-          fallbackPoolUsageWarningHelp: '只要请求从原分组切入对应兜底池，就通过机器人发送通知；即使原账号池和兜底池都没有可用账号，也不依赖 usage 查询权限。'
+          fallbackPoolUsageWarningHelp: '当请求实际选中兜底池账号并写入使用记录后，通过机器人发送通知；不会因为仅进入兜底候选链路就提醒。',
+          resourceUsageWarning: '服务器资源占用预警',
+          resourceUsageWarningHelp: '通过已配置的 Sub2API 管理员密钥读取 CPU 和内存占用；任一指标首次超过阈值时通知，恢复后再次超过会重新通知。采集频率遵循数据刷新设置。'
         },
         dailyReport: {
           title: '每日运营报告',
@@ -2565,9 +2599,11 @@ export default {
           balanceDefaultTemplate: '🔴 **余额预警**\n\n🏷️ **站点：** {siteName}\n💰 **当前余额：** ¥{balance}\n⚠️ **预警阈值：** ¥{threshold}\n\n请及时检查并充值，避免服务中断。',
           multiplierDefaultTemplate: '🟠 **倍率变更预警**\n\n🏷️ **站点：** {siteName}\n📦 **上游分组：** {groupName}\n📊 **倍率：** {oldRate}x → **{newRate}x**（{changeDirection} {changePercent}）\n\n🔗 **我方分组：** {ownGroups}\n📈 **近 {days} 天该通道成本：** {weeklyCost}（日均 {dailyAvgCost}）\n💸 **按同等用量估算，每周成本变化：** {costImpact}\n\n🔎 请确认成本变化，并检查下游定价策略。',
           fallbackPoolDefaultTemplate: '⚠️ **兜底分组已被使用**\n\n🏷️ **站点：** {siteName}\n➡️ **原分组：** {sourceGroup}\n🛟 **兜底池：** {targetGroup}\n👤 **账号：** {accountName}\n🤖 **模型：** {model}\n🕒 **时间：** {createdAt}\n💵 **实际扣费：** ¥{actualCost}\n🧾 **请求：** {requestId}\n\n同一组合 {cooldown} 内只提醒一次。',
+          resourceUsageDefaultTemplate: '🔴 **Sub2API 资源占用预警**\n\n🏷️ **站点：** {siteName}\n🧠 **CPU：** {cpu}%（阈值 {cpuThreshold}%）\n💾 **内存：** {memory}%（阈值 {memoryThreshold}%）',
           balanceTemplatePlaceholder: '例如：🔴 {siteName} 当前余额 ¥{balance}，已低于 ¥{threshold}。',
           multiplierTemplatePlaceholder: '例如：🟠 {siteName} / {groupName}：{oldRate}x → {newRate}x。',
-          fallbackPoolTemplatePlaceholder: '例如：⚠️ {siteName} 从 {sourceGroup} 切入 {targetGroup}。'
+          fallbackPoolTemplatePlaceholder: '例如：⚠️ {siteName} 从 {sourceGroup} 切入 {targetGroup}。',
+          resourceUsageTemplatePlaceholder: '例如：🔴 {siteName} 的 CPU 为 {cpu}%，内存为 {memory}%。'
         }
       },
       errors: {
@@ -2580,6 +2616,7 @@ export default {
         missingTelegramConfig: '请先填写 Telegram Bot Token 和 Chat ID。',
         dailyReportNoBots: '请先选择至少一个每日运营报告机器人。',
         dailyReportBotsNotSaved: '所选机器人还有未保存的渠道配置，请先到“通知与渠道”保存机器人。',
+        dailyReportSendFailed: '运营报告发送失败，请检查机器人配置、飞书响应和网络连通性。',
         sendFailed: '测试消息发送失败，请检查机器人配置和网络连通性。'
       },
       smtp: {

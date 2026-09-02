@@ -11,21 +11,22 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 )
 
 type fallbackPoolAlertEvent struct {
-	RequestID       string    `json:"request_id"`
-	SiteBaseURL     string    `json:"site_base_url"`
-	AccountID       int64     `json:"account_id"`
-	AccountName     string    `json:"account_name"`
-	Model           string    `json:"model"`
-	SourceGroupID   int64     `json:"source_group_id"`
-	SourceGroupName string    `json:"source_group_name"`
-	TargetGroupID   int64     `json:"target_group_id"`
-	TargetGroupName string    `json:"target_group_name"`
-	ActualCost      float64   `json:"actual_cost"`
-	CreatedAt       time.Time `json:"created_at"`
+	RequestID        string    `json:"request_id"`
+	SiteBaseURL      string    `json:"site_base_url"`
+	WorkspaceUserID  string    `json:"workspace_user_id,omitempty"`
+	WorkspaceAdminID string    `json:"workspace_admin_account_id,omitempty"`
+	AccountID        int64     `json:"account_id"`
+	AccountName      string    `json:"account_name"`
+	Model            string    `json:"model"`
+	SourceGroupID    int64     `json:"source_group_id"`
+	SourceGroupName  string    `json:"source_group_name"`
+	TargetGroupID    int64     `json:"target_group_id"`
+	TargetGroupName  string    `json:"target_group_name"`
+	ActualCost       float64   `json:"actual_cost"`
+	CreatedAt        time.Time `json:"created_at"`
 }
 
 func notifyFallbackPoolUsage(ctx context.Context, cfg *config.Config, usageLog *UsageLog, account *Account) {
@@ -44,6 +45,8 @@ func notifyFallbackPoolUsage(ctx context.Context, cfg *config.Config, usageLog *
 		event.AccountID = account.ID
 	}
 	event.SiteBaseURL = fallbackPoolAlertSiteBaseURL(cfg)
+	event.WorkspaceUserID = strings.TrimSpace(cfg.FallbackPoolAlert.WorkspaceUserID)
+	event.WorkspaceAdminID = strings.TrimSpace(cfg.FallbackPoolAlert.WorkspaceAdminID)
 	event.SourceGroupID, event.SourceGroupName = fallbackPoolAlertGroup(
 		usageLog.FallbackSourceGroupID,
 		usageLog.FallbackSourceGroupName,
@@ -55,28 +58,9 @@ func notifyFallbackPoolUsage(ctx context.Context, cfg *config.Config, usageLog *
 	notifyFallbackPoolAlertEvent(cfg, event)
 }
 
-// notifyFallbackPoolSelection reports the routing decision immediately after
-// A->B fallback traversal succeeds. It intentionally does not require a
-// selected account or a usage log: both pools may be unavailable after the
-// fallback group is activated.
-func notifyFallbackPoolSelection(ctx context.Context, cfg *config.Config, trace fallbackPoolUsageTrace) {
-	if trace.SourceGroupID <= 0 || trace.TargetGroupID <= 0 {
-		return
-	}
-	event := fallbackPoolAlertEvent{
-		RequestID:       fallbackAlertRequestID(ctx),
-		SiteBaseURL:     fallbackPoolAlertSiteBaseURL(cfg),
-		SourceGroupID:   trace.SourceGroupID,
-		SourceGroupName: trace.SourceGroupName,
-		TargetGroupID:   trace.TargetGroupID,
-		TargetGroupName: trace.TargetGroupName,
-		CreatedAt:       time.Now().UTC(),
-	}
-	notifyFallbackPoolAlertEvent(cfg, event)
-}
-
 func notifyFallbackPoolAlertEvent(cfg *config.Config, event fallbackPoolAlertEvent) {
 	if cfg == nil {
+		log.Printf("[fallback-alert] 未发送兜底事件：通知配置为空 request_id=%s", event.RequestID)
 		return
 	}
 	alertCfg := cfg.FallbackPoolAlert
@@ -84,6 +68,8 @@ func notifyFallbackPoolAlertEvent(cfg *config.Config, event fallbackPoolAlertEve
 	secret := strings.TrimSpace(alertCfg.Secret)
 	siteBaseURL := strings.TrimSpace(alertCfg.SiteBaseURL)
 	if endpoint == "" || secret == "" || siteBaseURL == "" {
+		log.Printf("[fallback-alert] 未发送兜底事件：回调配置不完整 request_id=%s endpoint_set=%t secret_set=%t site_base_url_set=%t",
+			event.RequestID, endpoint != "", secret != "", siteBaseURL != "")
 		return
 	}
 
@@ -137,19 +123,6 @@ func fallbackPoolAlertSiteBaseURL(cfg *config.Config) string {
 		return ""
 	}
 	return strings.TrimSpace(cfg.FallbackPoolAlert.SiteBaseURL)
-}
-
-func fallbackAlertRequestID(ctx context.Context) string {
-	if ctx == nil {
-		return ""
-	}
-	if requestID, ok := ctx.Value(ctxkey.RequestID).(string); ok && strings.TrimSpace(requestID) != "" {
-		return strings.TrimSpace(requestID)
-	}
-	if requestID, ok := ctx.Value(ctxkey.ClientRequestID).(string); ok {
-		return strings.TrimSpace(requestID)
-	}
-	return ""
 }
 
 func accountNameForFallbackAlert(account *Account) string {

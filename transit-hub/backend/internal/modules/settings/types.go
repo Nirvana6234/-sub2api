@@ -39,22 +39,28 @@ type NotificationChannelSettings struct {
 }
 
 type StrategySettings struct {
-	EnableRefreshInterval      bool                       `json:"enableRefreshInterval"`
-	RefreshInterval            int                        `json:"refreshInterval"`
-	EnableBalanceWarning       bool                       `json:"enableBalanceWarning"`
-	DefaultBalanceThreshold    float64                    `json:"defaultBalanceThreshold"`
-	BalanceNotifyBotIDs        []string                   `json:"balanceNotifyBotIds"`
-	BalanceTemplate            string                     `json:"balanceTemplate"`
-	BalanceTemplateFormat      NotificationTemplateFormat `json:"balanceTemplateFormat,omitempty"`
-	EnableMultiplierAlert      bool                       `json:"enableMultiplierAlert"`
-	MultiplierNotifyBotIDs     []string                   `json:"multiplierNotifyBotIds"`
-	MultiplierTemplate         string                     `json:"multiplierTemplate"`
-	MultiplierTemplateFormat   NotificationTemplateFormat `json:"multiplierTemplateFormat,omitempty"`
-	EnableAutoChangeMultiplier bool                       `json:"enableAutoChangeMultiplier"`
-	EnableFallbackPoolAlert    bool                       `json:"enableFallbackPoolAlert"`
-	FallbackPoolNotifyBotIDs   []string                   `json:"fallbackPoolNotifyBotIds"`
-	FallbackPoolTemplate       string                     `json:"fallbackPoolTemplate"`
-	FallbackPoolTemplateFormat NotificationTemplateFormat `json:"fallbackPoolTemplateFormat,omitempty"`
+	EnableRefreshInterval        bool                       `json:"enableRefreshInterval"`
+	RefreshInterval              int                        `json:"refreshInterval"`
+	EnableBalanceWarning         bool                       `json:"enableBalanceWarning"`
+	DefaultBalanceThreshold      float64                    `json:"defaultBalanceThreshold"`
+	BalanceNotifyBotIDs          []string                   `json:"balanceNotifyBotIds"`
+	BalanceTemplate              string                     `json:"balanceTemplate"`
+	BalanceTemplateFormat        NotificationTemplateFormat `json:"balanceTemplateFormat,omitempty"`
+	EnableMultiplierAlert        bool                       `json:"enableMultiplierAlert"`
+	MultiplierNotifyBotIDs       []string                   `json:"multiplierNotifyBotIds"`
+	MultiplierTemplate           string                     `json:"multiplierTemplate"`
+	MultiplierTemplateFormat     NotificationTemplateFormat `json:"multiplierTemplateFormat,omitempty"`
+	EnableAutoChangeMultiplier   bool                       `json:"enableAutoChangeMultiplier"`
+	EnableFallbackPoolAlert      bool                       `json:"enableFallbackPoolAlert"`
+	FallbackPoolNotifyBotIDs     []string                   `json:"fallbackPoolNotifyBotIds"`
+	FallbackPoolTemplate         string                     `json:"fallbackPoolTemplate"`
+	FallbackPoolTemplateFormat   NotificationTemplateFormat `json:"fallbackPoolTemplateFormat,omitempty"`
+	EnableResourceUsageAlert     bool                       `json:"enableResourceUsageAlert"`
+	ResourceUsageCPUThreshold    float64                    `json:"resourceUsageCpuThreshold"`
+	ResourceUsageMemoryThreshold float64                    `json:"resourceUsageMemoryThreshold"`
+	ResourceUsageNotifyBotIDs    []string                   `json:"resourceUsageNotifyBotIds"`
+	ResourceUsageTemplate        string                     `json:"resourceUsageTemplate"`
+	ResourceUsageTemplateFormat  NotificationTemplateFormat `json:"resourceUsageTemplateFormat,omitempty"`
 
 	// 每日简报：按 DailyReportTime（Asia/Shanghai 的 HH:MM）定时汇总各站点消费、
 	// 余额、倍率变动与同步健康，推送到 DailyReportBotIDs 指定的机器人。

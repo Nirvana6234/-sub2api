@@ -204,6 +204,7 @@ export function normalizePlaygroundKeys(keys: ApiKey[]): PlaygroundKeySummary[] 
       status: key.status,
       groupId: key.auto_group ? null : key.group_id,
       groupName: key.auto_group ? '' : key.group?.name?.trim() || `Group #${key.group_id}`,
+      platform: key.auto_group ? undefined : key.group?.platform,
       autoGroup: key.auto_group,
       autoGroupStrategy: key.auto_group_strategy || 'price',
     }))
@@ -270,6 +271,10 @@ export function normalizePlaygroundChatModels(models: PlaygroundModel[]): Playgr
   return normalizePlaygroundModels(models)
     .filter((model) => !isPlaygroundImageModel(model))
     .filter((model) => !PLAYGROUND_NON_CHAT_MODEL_PATTERNS.test(model.id))
+}
+
+export function normalizePlaygroundVideoModels(models: PlaygroundModel[]): PlaygroundModel[] {
+  return normalizePlaygroundModels(models).filter((model) => /(?:video|sora|veo|kling|runway|seedance|wan)/i.test(model.id))
 }
 
 export function formatPlaygroundKeyLabel(key: PlaygroundKeySummary, autoGroupLabel = 'Auto'): string {
@@ -469,7 +474,10 @@ export function buildPlaygroundImageRequest(input: PlaygroundImageRequestInput):
     body.style = input.style
   }
 
-  if (supportsNativeOptions || isDallE) body.response_format = 'b64_json'
+  // GPT Image endpoints always return base64 and reject response_format.
+  // DALL-E still requires the explicit response format for the compatible
+  // image route.
+  if (isDallE) body.response_format = 'b64_json'
 
   return {
     body,

@@ -275,6 +275,9 @@ type UpdateSettingsRequest struct {
 
 	// OpenAI account scheduling
 	OpenAILowUpstreamRatePriorityEnabled               *bool    `json:"openai_low_upstream_rate_priority_enabled"`
+	OpenAILatencyAwareFallbackEnabled                  *bool    `json:"openai_latency_aware_fallback_enabled"`
+	OpenAILatencyThresholdMs                           *int     `json:"openai_latency_threshold_ms"`
+	OpenAIFallbackSpeedupRatio                         *float64 `json:"openai_fallback_speedup_ratio"`
 	OpenAIOAuthSchedulingRateMultiplier                *float64 `json:"openai_oauth_scheduling_rate_multiplier"`
 	OpenAIAdvancedSchedulerEnabled                     *bool    `json:"openai_advanced_scheduler_enabled"`
 	OpenAIAdvancedSchedulerStickyWeightedEnabled       *bool    `json:"openai_advanced_scheduler_sticky_weighted_enabled"`
@@ -1840,6 +1843,24 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.OpenAILowUpstreamRatePriorityEnabled
 		}(),
+		OpenAILatencyAwareFallbackEnabled: func() bool {
+			if req.OpenAILatencyAwareFallbackEnabled != nil {
+				return *req.OpenAILatencyAwareFallbackEnabled
+			}
+			return previousSettings.OpenAILatencyAwareFallbackEnabled
+		}(),
+		OpenAILatencyThresholdMs: func() int {
+			if req.OpenAILatencyThresholdMs != nil {
+				return *req.OpenAILatencyThresholdMs
+			}
+			return previousSettings.OpenAILatencyThresholdMs
+		}(),
+		OpenAIFallbackSpeedupRatio: func() float64 {
+			if req.OpenAIFallbackSpeedupRatio != nil {
+				return *req.OpenAIFallbackSpeedupRatio
+			}
+			return previousSettings.OpenAIFallbackSpeedupRatio
+		}(),
 		OpenAIOAuthSchedulingRateMultiplier: func() float64 {
 			if req.OpenAIOAuthSchedulingRateMultiplier != nil {
 				return *req.OpenAIOAuthSchedulingRateMultiplier
@@ -2382,6 +2403,9 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		PaymentVisibleMethodAlipayEnabled:                      updatedSettings.PaymentVisibleMethodAlipayEnabled,
 		PaymentVisibleMethodWxpayEnabled:                       updatedSettings.PaymentVisibleMethodWxpayEnabled,
 		OpenAILowUpstreamRatePriorityEnabled:                   updatedSettings.OpenAILowUpstreamRatePriorityEnabled,
+		OpenAILatencyAwareFallbackEnabled:                      updatedSettings.OpenAILatencyAwareFallbackEnabled,
+		OpenAILatencyThresholdMs:                               updatedSettings.OpenAILatencyThresholdMs,
+		OpenAIFallbackSpeedupRatio:                             updatedSettings.OpenAIFallbackSpeedupRatio,
 		OpenAIOAuthSchedulingRateMultiplier:                    updatedSettings.OpenAIOAuthSchedulingRateMultiplier,
 		OpenAIAdvancedSchedulerEnabled:                         updatedSettings.OpenAIAdvancedSchedulerEnabled,
 		OpenAIAdvancedSchedulerStickyWeightedEnabled:           updatedSettings.OpenAIAdvancedSchedulerStickyWeightedEnabled,

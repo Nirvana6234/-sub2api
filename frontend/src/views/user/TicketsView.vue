@@ -2,12 +2,14 @@
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ticketsAPI } from '@/api'
+import { useTicketStore } from '@/stores'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { formatDateTime } from '@/utils/format'
 import type { Ticket, TicketStatus } from '@/types'
 
 const { t } = useI18n()
+const ticketStore = useTicketStore()
 
 const tickets = ref<Ticket[]>([])
 const selected = ref<Ticket | null>(null)
@@ -73,6 +75,7 @@ async function openTicket(ticket: Ticket) {
     if (row) {
       row.unread_count = 0
     }
+    void ticketStore.refreshUnreadCounts()
   } catch (error) {
     errorMessage.value = resolveError(error)
   } finally {

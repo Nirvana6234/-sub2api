@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Plus, Save, Loader2, CheckCircle2, MessageSquare, Send, Trash2, Timer, AlertTriangle, TrendingUp, Info, Mail, FileBarChart, Eye } from 'lucide-vue-next'
+import { Plus, Save, Loader2, CheckCircle2, MessageSquare, Send, Trash2, Timer, AlertTriangle, TrendingUp, Info, Mail, FileBarChart, Eye, Activity } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import EmailTemplatesPanel from '../components/settings/EmailTemplatesPanel.vue'
@@ -73,6 +73,13 @@ const defaultFallbackPoolTemplate = computed(() => t('admin.settings.sections.te
   requestId: '{requestId}',
   cooldown: '{cooldown}',
 }))
+const defaultResourceUsageTemplate = computed(() => t('admin.settings.sections.templates.resourceUsageDefaultTemplate', {
+  siteName: '{siteName}',
+  cpu: '{cpu}',
+  cpuThreshold: '{cpuThreshold}',
+  memory: '{memory}',
+  memoryThreshold: '{memoryThreshold}',
+}))
 const normalizeBuiltInTemplate = (template?: string) => (template?.trim() ?? '').replace(/>\s+</g, '><')
 const legacyBalanceTemplates = new Set([
   '【余额预警】{siteName} 站点余额（CNY）已不足 {threshold} 元，当前余额为 {balance} 元。',
@@ -117,6 +124,12 @@ const enableFallbackPoolAlert = ref(false)
 const fallbackPoolSelectedBots = ref<string[]>([])
 const fallbackPoolTemplate = ref(defaultFallbackPoolTemplate.value)
 const fallbackPoolTemplateFormat = ref<NotificationTemplateFormat>('markdown')
+const enableResourceUsageAlert = ref(false)
+const resourceUsageCpuThreshold = ref('80')
+const resourceUsageMemoryThreshold = ref('80')
+const resourceUsageSelectedBots = ref<string[]>([])
+const resourceUsageTemplate = ref(defaultResourceUsageTemplate.value)
+const resourceUsageTemplateFormat = ref<NotificationTemplateFormat>('markdown')
 
 const normalizeTemplateFormat = (format?: string): NotificationTemplateFormat => (
   format === 'markdown' || format === 'html' ? format : 'text'
@@ -180,6 +193,20 @@ const fallbackPoolPreviewValues = computed(() => ({
   '{actualCost}': t('admin.settings.templateEditor.samples.actualCost'),
   '{requestId}': t('admin.settings.templateEditor.samples.requestId'),
   '{cooldown}': t('admin.settings.templateEditor.samples.cooldown'),
+}))
+const resourceUsageTemplateVariables = computed(() => [
+  { token: '{siteName}', label: t('admin.settings.varSiteName') },
+  { token: '{cpu}', label: t('admin.settings.varCPUUsage') },
+  { token: '{cpuThreshold}', label: t('admin.settings.varCPUThreshold') },
+  { token: '{memory}', label: t('admin.settings.varMemoryUsage') },
+  { token: '{memoryThreshold}', label: t('admin.settings.varMemoryThreshold') },
+])
+const resourceUsagePreviewValues = computed(() => ({
+  '{siteName}': t('admin.settings.templateEditor.samples.siteName'),
+  '{cpu}': t('admin.settings.templateEditor.samples.cpuUsage'),
+  '{cpuThreshold}': t('admin.settings.templateEditor.samples.cpuThreshold'),
+  '{memory}': t('admin.settings.templateEditor.samples.memoryUsage'),
+  '{memoryThreshold}': t('admin.settings.templateEditor.samples.memoryThreshold'),
 }))
 // === Tab 2: Channels ===
 const activeChannelTab = ref<NotificationChannel>('dingtalk')
@@ -266,6 +293,14 @@ const applyStrategySettings = (settings: StrategySettings) => {
   fallbackPoolTemplateFormat.value = settings.fallbackPoolTemplate?.trim()
     ? normalizeTemplateFormat(settings.fallbackPoolTemplateFormat)
     : 'markdown'
+  enableResourceUsageAlert.value = settings.enableResourceUsageAlert ?? false
+  resourceUsageCpuThreshold.value = String(settings.resourceUsageCpuThreshold || 80)
+  resourceUsageMemoryThreshold.value = String(settings.resourceUsageMemoryThreshold || 80)
+  resourceUsageSelectedBots.value = settings.resourceUsageNotifyBotIds ?? []
+  resourceUsageTemplate.value = settings.resourceUsageTemplate?.trim() || defaultResourceUsageTemplate.value
+  resourceUsageTemplateFormat.value = settings.resourceUsageTemplate?.trim()
+    ? normalizeTemplateFormat(settings.resourceUsageTemplateFormat)
+    : 'markdown'
   enableDailyReport.value = settings.enableDailyReport ?? false
   // 后端对空值不做兜底，这里给一个合理默认，免得开关一打开就是空的推送时刻。
   dailyReportTime.value = settings.dailyReportTime || '09:00'
@@ -291,6 +326,12 @@ const currentStrategySettings = (): StrategySettings => ({
   fallbackPoolNotifyBotIds: fallbackPoolSelectedBots.value,
   fallbackPoolTemplate: fallbackPoolTemplate.value.trim(),
   fallbackPoolTemplateFormat: fallbackPoolTemplateFormat.value,
+  enableResourceUsageAlert: enableResourceUsageAlert.value,
+  resourceUsageCpuThreshold: Number.parseFloat(resourceUsageCpuThreshold.value) || 80,
+  resourceUsageMemoryThreshold: Number.parseFloat(resourceUsageMemoryThreshold.value) || 80,
+  resourceUsageNotifyBotIds: resourceUsageSelectedBots.value,
+  resourceUsageTemplate: resourceUsageTemplate.value.trim(),
+  resourceUsageTemplateFormat: resourceUsageTemplateFormat.value,
   enableDailyReport: enableDailyReport.value,
   dailyReportTime: dailyReportTime.value,
   dailyReportBotIds: dailyReportSelectedBots.value,
@@ -489,6 +530,11 @@ const toggleFallbackPoolBot = (botId: string) => {
   const idx = fallbackPoolSelectedBots.value.indexOf(botId)
   if (idx >= 0) fallbackPoolSelectedBots.value.splice(idx, 1)
   else fallbackPoolSelectedBots.value.push(botId)
+}
+const toggleResourceUsageBot = (botId: string) => {
+  const idx = resourceUsageSelectedBots.value.indexOf(botId)
+  if (idx >= 0) resourceUsageSelectedBots.value.splice(idx, 1)
+  else resourceUsageSelectedBots.value.push(botId)
 }
 
 const previewReport = async () => {
@@ -983,7 +1029,70 @@ onMounted(async () => {
             </div>
           </div>
 
-          <!-- Card 5: Daily Operations Report -->
+          <!-- Card 5: Server Resource Usage Alert -->
+          <div class="rounded-2xl border border-border/50 bg-card shadow-sm overflow-hidden">
+            <div class="p-5 flex items-start justify-between gap-4">
+              <div class="flex items-start gap-3">
+                <div class="p-2 bg-rose-500/10 text-rose-500 rounded-xl shrink-0 mt-0.5">
+                  <Activity class="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 class="text-sm font-semibold text-foreground">{{ t('admin.settings.sections.thresholds.resourceUsageWarning') }}</h4>
+                  <p class="text-xs text-muted-foreground mt-0.5">{{ t('admin.settings.sections.thresholds.resourceUsageWarningHelp') }}</p>
+                  <div v-if="!enableRefreshInterval" class="flex items-center gap-1.5 mt-1.5">
+                    <Info class="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                    <span class="text-xs text-blue-500">{{ t('admin.settings.requiresRefresh') }}</span>
+                  </div>
+                </div>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer shrink-0 mt-1">
+                <input type="checkbox" v-model="enableResourceUsageAlert" class="sr-only peer" :aria-label="t('admin.settings.sections.thresholds.resourceUsageWarning')">
+                <div class="peer h-6 w-11 rounded-full bg-surface-elevated peer-checked:bg-primary peer-focus-visible:ring-2 peer-focus-visible:ring-primary peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-background after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-border after:bg-white after:transition-transform after:content-[''] peer-checked:after:translate-x-full peer-checked:after:border-white"></div>
+              </label>
+            </div>
+            <div v-if="enableResourceUsageAlert" class="px-5 pb-5 pt-0">
+              <div class="space-y-4 animate-in slide-in-from-top-2 fade-in duration-200 sm:pl-12">
+                <div class="grid gap-3 sm:grid-cols-2 sm:max-w-xl">
+                  <div class="grid gap-1.5">
+                    <label for="resource-cpu-threshold" class="text-xs font-medium text-muted-foreground">{{ t('admin.settings.resourceUsageCpuThreshold') }}</label>
+                    <div class="relative">
+                      <Input id="resource-cpu-threshold" v-model="resourceUsageCpuThreshold" type="number" min="1" max="100" step="1" class="pr-8" />
+                      <span class="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">%</span>
+                    </div>
+                  </div>
+                  <div class="grid gap-1.5">
+                    <label for="resource-memory-threshold" class="text-xs font-medium text-muted-foreground">{{ t('admin.settings.resourceUsageMemoryThreshold') }}</label>
+                    <div class="relative">
+                      <Input id="resource-memory-threshold" v-model="resourceUsageMemoryThreshold" type="number" min="1" max="100" step="1" class="pr-8" />
+                      <span class="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">%</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="grid gap-1.5">
+                  <label class="text-xs font-medium text-muted-foreground">{{ t('admin.settings.notifyBots') }} <span class="text-destructive">*</span></label>
+                  <div class="flex flex-wrap gap-2">
+                    <button v-for="bot in allBots" :key="'resource-' + bot.id" type="button" :aria-pressed="resourceUsageSelectedBots.includes(bot.id)" @click="toggleResourceUsageBot(bot.id)" class="flex select-none items-center gap-2 rounded-lg border px-3 py-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" :class="resourceUsageSelectedBots.includes(bot.id) ? 'border-primary bg-primary/10 text-primary' : 'border-border/50 bg-surface/30 hover:bg-surface/50'">
+                      <MessageSquare class="w-3.5 h-3.5" />
+                      <span class="text-sm">{{ bot.name || t('admin.settings.unnamedBot') }}</span>
+                    </button>
+                    <div v-if="!hasBots" class="text-sm text-muted-foreground italic py-1">
+                      {{ t('admin.settings.noBotsConfigured') }}
+                    </div>
+                  </div>
+                  <p v-if="resourceUsageSelectedBots.length === 0 && hasBots" class="text-xs text-destructive mt-0.5">{{ t('admin.settings.mustSelectBot') }}</p>
+                </div>
+                <NotificationTemplateEditor
+                  v-model="resourceUsageTemplate"
+                  v-model:format="resourceUsageTemplateFormat"
+                  :variables="resourceUsageTemplateVariables"
+                  :preview-values="resourceUsagePreviewValues"
+                  :placeholder="t('admin.settings.sections.templates.resourceUsageTemplatePlaceholder', { siteName: '{siteName}', cpu: '{cpu}', memory: '{memory}' })"
+                />
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 6: Daily Operations Report -->
           <div class="rounded-2xl border border-border/50 bg-card shadow-sm overflow-hidden">
             <div class="p-5 flex items-start justify-between gap-4">
               <div class="flex items-start gap-3">

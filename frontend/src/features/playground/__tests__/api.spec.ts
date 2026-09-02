@@ -174,6 +174,13 @@ describe('playground api transport', () => {
         size: 5,
         dataUrl: 'data:image/png;base64,aGVsbG8=',
       }],
+      mask: {
+        id: 'mask-1',
+        name: 'mask.png',
+        mimeType: 'image/png',
+        size: 5,
+        dataUrl: 'data:image/png;base64,aGVsbG8=',
+      },
     })).resolves.toMatchObject({
       data: [{ b64_json: 'aGVsbG8=' }],
     })
@@ -188,6 +195,69 @@ describe('playground api transport', () => {
     expect(form.get('prompt')).toBe('turn this into a watercolor')
     expect(form.get('input_fidelity')).toBe('high')
     expect(form.getAll('image')).toHaveLength(1)
+    expect(form.get('mask')).toBeInstanceOf(Blob)
+    expect((request.headers as Record<string, string>)['Content-Type']).toBeUndefined()
+  })
+
+  it('creates, polls, and downloads video tasks through the playground routes', async () => {
+    const { sendPlaygroundVideoGeneration, fetchPlaygroundVideo, fetchPlaygroundVideoContent } = await import('../api')
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'video-task-1', status: 'queued' }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'video-task-1', status: 'done', video: { url: 'https://cdn.example/video.mp4' } }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(new Blob(['video']), { status: 200, headers: { 'Content-Type': 'video/mp4' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(sendPlaygroundVideoGeneration(42, { model: 'grok-imagine-video-1.5', prompt: 'waves', duration: 8 })).resolves.toMatchObject({ id: 'video-task-1' })
+    await expect(fetchPlaygroundVideo(42, 'video-task-1')).resolves.toMatchObject({ status: 'done', video_url: 'https://cdn.example/video.mp4' })
+    await expect(fetchPlaygroundVideoContent(42, 'video-task-1')).resolves.toBeInstanceOf(Blob)
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      '/api/v1/playground/videos/generations',
+      '/api/v1/playground/videos/video-task-1',
+      '/api/v1/playground/videos/video-task-1/content',
+    ])
+  })
+
+  it('sends video edits through the playground edit route', async () => {
+    const { sendPlaygroundVideoEdit } = await import('../api')
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ request_id: 'video-edit-1', status: 'queued' }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(sendPlaygroundVideoEdit(42, {
+      model: 'grok-imagine-video',
+      prompt: 'change the lighting',
+      video: { url: 'data:video/mp4;base64,AAAA' },
+    })).resolves.toMatchObject({ id: 'video-edit-1' })
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/playground/videos/edits', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'grok-imagine-video',
+        prompt: 'change the lighting',
+        video: { url: 'data:video/mp4;base64,AAAA' },
+      }),
+    }))
+  })
+
+  it('sends speech synthesis through the authenticated playground route', async () => {
+    const { sendPlaygroundSpeech } = await import('../api')
+    const fetchMock = vi.fn(async () => new Response(new Blob(['audio']), { status: 200, headers: { 'Content-Type': 'audio/mpeg' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await sendPlaygroundSpeech(42, { model: 'grok-voice-latest', input: 'hello', voice: 'Ara' })
+    expect(result).toBeInstanceOf(Blob)
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/playground/audio/speech', expect.objectContaining({ method: 'POST' }))
+  })
+
+  it('sends audio files to the transcription route as multipart data', async () => {
+    const { sendPlaygroundTranscription } = await import('../api')
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ text: 'hello from audio' }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await sendPlaygroundTranscription(42, new Blob(['audio'], { type: 'audio/mpeg' }), 'clip.mp3', { model: 'grok-voice-latest', language: 'en' })
+    expect(result).toBe('hello from audio')
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/playground/audio/transcriptions', expect.objectContaining({ method: 'POST', body: expect.any(FormData) }))
+    const request = fetchMock.mock.calls[0][1] as RequestInit
+    const form = request.body as FormData
+    expect(form.get('file')).toBeInstanceOf(Blob)
+    expect(form.get('model')).toBe('grok-voice-latest')
+    expect(form.get('language')).toBe('en')
     expect((request.headers as Record<string, string>)['Content-Type']).toBeUndefined()
   })
 

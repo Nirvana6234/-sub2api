@@ -25,7 +25,7 @@ Run this from Windows. The server is an argument and is not embedded in the
 guard or installer:
 
 ```powershell
-$server = "13.212.118.49"
+$server = "<SERVER_IP>"   # 未绑定固定 IP 的实例，每次重启后都要重新确认
 $key = "G:\path\to\unchanged-private-key.pem"
 .\install-remote.ps1 -Server $server -SshKey $key
 ```

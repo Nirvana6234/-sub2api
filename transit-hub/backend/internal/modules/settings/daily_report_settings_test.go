@@ -47,3 +47,17 @@ func TestNormalizeStrategyKeepsExplicitReportFormat(t *testing.T) {
 		t.Errorf("显式选择的格式被覆盖为 %q", normalized.DailyReportFormat)
 	}
 }
+
+func TestNormalizeStrategyFillsResourceUsageDefaults(t *testing.T) {
+	normalized := normalizeStrategySettings(StrategySettings{
+		ResourceUsageCPUThreshold:    -1,
+		ResourceUsageMemoryThreshold: 101,
+		ResourceUsageTemplateFormat:  "unsupported",
+	})
+	if normalized.ResourceUsageCPUThreshold != 80 || normalized.ResourceUsageMemoryThreshold != 80 {
+		t.Fatalf("unexpected resource thresholds: cpu=%v memory=%v", normalized.ResourceUsageCPUThreshold, normalized.ResourceUsageMemoryThreshold)
+	}
+	if normalized.ResourceUsageTemplateFormat != NotificationTemplateFormatText {
+		t.Fatalf("unexpected resource template format: %q", normalized.ResourceUsageTemplateFormat)
+	}
+}

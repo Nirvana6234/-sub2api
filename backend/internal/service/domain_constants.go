@@ -498,7 +498,7 @@ const (
 	// 由 nginx 以静态文件直接返回。应用服务器上因此不存在这个文件，
 	// /api/v1/download/client 会走 302 分支跳到这里，下载带宽不经过应用服务器。
 	//
-	// 注意别和 icode-xtu.ccwu.cc 混淆：那个域名解析到应用服务器 13.212.118.49，
+	// 注意别和 icode-xtu.ccwu.cc 混淆：那个域名解析到应用服务器（IP 会变，勿写死），
 	// 用它只会被 SPA 的 fallback 吃掉，返回 index.html 而不是安装包。
 	//
 	// 必须是 HTTPS 且证书域名匹配：下载页本身是 HTTPS，
@@ -630,6 +630,9 @@ const (
 	SettingKeyAllowUngroupedKeyScheduling = "allow_ungrouped_key_scheduling"
 	// SettingKeyOpenAILowUpstreamRatePriorityEnabled 旧调度是否按上游 token 倍率优先。
 	SettingKeyOpenAILowUpstreamRatePriorityEnabled = "openai_low_upstream_rate_priority_enabled"
+	SettingKeyOpenAILatencyAwareFallbackEnabled   = "openai_latency_aware_fallback_enabled"
+	SettingKeyOpenAILatencyThresholdMs            = "openai_latency_threshold_ms"
+	SettingKeyOpenAIFallbackSpeedupRatio          = "openai_fallback_speedup_ratio"
 	// SettingKeyOpenAIOAuthSchedulingRateMultiplier OAuth 账号参与成本调度时使用的参考倍率。
 	SettingKeyOpenAIOAuthSchedulingRateMultiplier = "openai_oauth_scheduling_rate_multiplier"
 	// SettingKeyOpenAIAdvancedSchedulerStickyWeightedEnabled OpenAI 高级调度下是否启用粘性加权。

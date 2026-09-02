@@ -66,6 +66,15 @@ type Service struct {
 	qqTokenURL   string
 }
 
+// NotificationDeliveryResult 描述一次通知请求的实际投递情况。它只用于需要向调用方
+// 明确反馈结果的入口（例如手动发送日报）；后台告警仍沿用尽力发送的旧语义。
+type NotificationDeliveryResult struct {
+	Requested int
+	Matched   int
+	Delivered int
+	Failed    int
+}
+
 type AdminAccountResolver interface {
 	RequireCurrentID(ctx context.Context, userID string) (string, error)
 }
@@ -103,10 +112,13 @@ const defaultDailyReportTime = "09:00"
 
 func DefaultStrategySettings() StrategySettings {
 	return StrategySettings{
-		RefreshInterval:          minRefreshIntervalSeconds,
-		BalanceTemplateFormat:    NotificationTemplateFormatText,
-		MultiplierTemplateFormat: NotificationTemplateFormatText,
-		DailyReportTime:          defaultDailyReportTime,
+		RefreshInterval:              minRefreshIntervalSeconds,
+		BalanceTemplateFormat:        NotificationTemplateFormatText,
+		MultiplierTemplateFormat:     NotificationTemplateFormatText,
+		ResourceUsageCPUThreshold:    80,
+		ResourceUsageMemoryThreshold: 80,
+		ResourceUsageTemplateFormat:  NotificationTemplateFormatText,
+		DailyReportTime:              defaultDailyReportTime,
 		// 简报是结构化多段内容，纯文本会把排版全糊在一起，默认走 markdown。
 		DailyReportFormat: NotificationTemplateFormatMarkdown,
 	}
@@ -124,6 +136,10 @@ func (s *Service) ClaimBalanceAlert(ctx context.Context, userID, adminAccountID,
 
 func (s *Service) ClaimFallbackPoolAlert(ctx context.Context, userID, adminAccountID, siteID, sourceGroupID, targetGroupID string, cooldown time.Duration) (bool, error) {
 	return s.repository.ClaimFallbackPoolAlert(ctx, userID, adminAccountID, siteID, sourceGroupID, targetGroupID, cooldown)
+}
+
+func (s *Service) ClaimResourceUsageAlert(ctx context.Context, userID, adminAccountID, siteID string, cpuHigh, memoryHigh bool) (bool, error) {
+	return s.repository.ClaimResourceUsageAlert(ctx, userID, adminAccountID, siteID, cpuHigh, memoryHigh)
 }
 
 func (s *Service) GetNotificationChannels(ctx context.Context, userID string) (NotificationChannelSettings, error) {
@@ -370,6 +386,13 @@ func normalizeStrategySettings(settings StrategySettings) StrategySettings {
 	settings.BalanceTemplateFormat = normalizeNotificationTemplateFormat(settings.BalanceTemplateFormat)
 	settings.MultiplierTemplateFormat = normalizeNotificationTemplateFormat(settings.MultiplierTemplateFormat)
 	settings.FallbackPoolTemplateFormat = normalizeNotificationTemplateFormat(settings.FallbackPoolTemplateFormat)
+	if settings.ResourceUsageCPUThreshold <= 0 || settings.ResourceUsageCPUThreshold > 100 {
+		settings.ResourceUsageCPUThreshold = 80
+	}
+	if settings.ResourceUsageMemoryThreshold <= 0 || settings.ResourceUsageMemoryThreshold > 100 {
+		settings.ResourceUsageMemoryThreshold = 80
+	}
+	settings.ResourceUsageTemplateFormat = normalizeNotificationTemplateFormat(settings.ResourceUsageTemplateFormat)
 	settings.DailyReportTime = normalizeDailyReportTime(settings.DailyReportTime)
 	if settings.DailyReportFormat == "" {
 		settings.DailyReportFormat = NotificationTemplateFormatMarkdown
@@ -412,92 +435,143 @@ func (s *Service) TestNotification(ctx context.Context, dto TestNotificationRequ
 
 // SendToBots 保留历史纯文本入口，活动通知、自动调价等现有调用方无需感知新增格式字段。
 func (s *Service) SendToBots(ctx context.Context, userID string, botIDs []string, message string) {
-	s.sendNotificationToBots(ctx, userID, botIDs, notificationMessage{
-		Content: message,
-		Format:  NotificationTemplateFormatText,
-	})
+	s.SendFormattedToBots(ctx, userID, botIDs, message, NotificationTemplateFormatText)
 }
 
 // SendFormattedToBots 仅供显式选择了模板格式的通知使用。格式会按各平台的原生能力
 // 转换：HTML 在不支持原生 HTML 的渠道转成 Markdown，旧纯文本发送路径保持不变。
 func (s *Service) SendFormattedToBots(ctx context.Context, userID string, botIDs []string, message string, format NotificationTemplateFormat) {
-	s.sendNotificationToBots(ctx, userID, botIDs, notificationMessage{
+	result, err := s.sendNotificationToBotsWithResult(ctx, userID, botIDs, notificationMessage{
 		Content: message,
 		Format:  normalizeNotificationTemplateFormat(format),
 	})
+	if err != nil {
+		log.Printf("[settings] 发送通知失败 user_id=%s err=%v", userID, err)
+		return
+	}
+	if result.Matched == 0 && len(botIDs) > 0 {
+		log.Printf("[settings] 通知机器人未匹配 user_id=%s requested=%d", userID, result.Requested)
+	}
 }
 
 func (s *Service) SendFormattedToBotsForWorkspace(ctx context.Context, userID string, adminAccountID string, botIDs []string, message string, format NotificationTemplateFormat) {
-	s.sendNotificationToBotsForWorkspace(ctx, userID, adminAccountID, botIDs, notificationMessage{
+	result, err := s.sendNotificationToBotsForWorkspaceWithResult(ctx, userID, adminAccountID, botIDs, notificationMessage{
+		Content: message,
+		Format:  normalizeNotificationTemplateFormat(format),
+	})
+	if err != nil {
+		log.Printf("[settings] 发送通知失败 user_id=%s admin_account_id=%s err=%v", userID, adminAccountID, err)
+		return
+	}
+	if result.Matched == 0 && len(botIDs) > 0 {
+		log.Printf("[settings] 通知机器人未匹配 user_id=%s admin_account_id=%s requested=%d", userID, adminAccountID, result.Requested)
+	}
+}
+
+// SendFormattedToBotsForWorkspaceWithResult 给指定工作区的机器人发送消息，并把真实
+// 匹配和投递统计返回给调用方。手动操作使用它，避免「页面提示发送成功但没有机器人收到」。
+func (s *Service) SendFormattedToBotsForWorkspaceWithResult(ctx context.Context, userID string, adminAccountID string, botIDs []string, message string, format NotificationTemplateFormat) (NotificationDeliveryResult, error) {
+	return s.sendNotificationToBotsForWorkspaceWithResult(ctx, userID, adminAccountID, botIDs, notificationMessage{
 		Content: message,
 		Format:  normalizeNotificationTemplateFormat(format),
 	})
 }
 
-// sendNotificationToBots 从数据库加载用户的渠道配置，匹配 ID 后逐个发送。
-// 单个渠道失败只记录日志，不中断其他机器人发送（fire-and-forget）。
-func (s *Service) sendNotificationToBots(ctx context.Context, userID string, botIDs []string, message notificationMessage) {
+func (s *Service) sendNotificationToBotsWithResult(ctx context.Context, userID string, botIDs []string, message notificationMessage) (NotificationDeliveryResult, error) {
+	result := newNotificationDeliveryResult(botIDs)
 	if len(botIDs) == 0 || message.Content == "" {
-		return
+		return result, nil
 	}
 	adminAccountID, err := s.currentAdminAccountID(ctx, userID)
 	if err != nil {
-		log.Printf("[settings] 当前 admin workspace 缺失 user_id=%s err=%v", userID, err)
-		return
+		return result, fmt.Errorf("resolve current admin workspace: %w", err)
 	}
-	s.sendNotificationToBotsForWorkspace(ctx, userID, adminAccountID, botIDs, message)
+	return s.sendNotificationToBotsForWorkspaceWithResult(ctx, userID, adminAccountID, botIDs, message)
 }
 
-func (s *Service) sendNotificationToBotsForWorkspace(ctx context.Context, userID string, adminAccountID string, botIDs []string, message notificationMessage) {
+func (s *Service) sendNotificationToBotsForWorkspaceWithResult(ctx context.Context, userID string, adminAccountID string, botIDs []string, message notificationMessage) (NotificationDeliveryResult, error) {
+	result := newNotificationDeliveryResult(botIDs)
 	if len(botIDs) == 0 || message.Content == "" {
-		return
+		return result, nil
 	}
 	channels, err := s.repository.GetNotificationChannels(ctx, userID, adminAccountID)
 	if err != nil {
-		log.Printf("[settings] 加载通知渠道配置失败 user_id=%s err=%v", userID, err)
-		return
+		return result, fmt.Errorf("load notification channels: %w", err)
 	}
 
 	idSet := make(map[string]struct{}, len(botIDs))
 	for _, id := range botIDs {
-		idSet[id] = struct{}{}
+		if id = strings.TrimSpace(id); id != "" {
+			idSet[id] = struct{}{}
+		}
 	}
 
 	for _, bot := range channels.Dingtalk {
 		if _, ok := idSet[bot.ID]; ok {
+			result.Matched++
 			if err := s.sendDingtalkMessage(ctx, bot.Webhook, bot.Secret, message); err != nil {
+				result.Failed++
 				log.Printf("[settings] 钉钉通知发送失败 bot=%s err=%v", bot.Name, err)
+			} else {
+				result.Delivered++
 			}
 		}
 	}
 	for _, bot := range channels.Feishu {
 		if _, ok := idSet[bot.ID]; ok {
+			result.Matched++
 			if err := s.sendFeishuMessage(ctx, bot.Webhook, bot.Secret, message); err != nil {
+				result.Failed++
 				log.Printf("[settings] 飞书通知发送失败 bot=%s err=%v", bot.Name, err)
+			} else {
+				result.Delivered++
 			}
 		}
 	}
 	for _, bot := range channels.Wecom {
 		if _, ok := idSet[bot.ID]; ok {
+			result.Matched++
 			if err := s.sendWecomMessage(ctx, bot.Webhook, message); err != nil {
+				result.Failed++
 				log.Printf("[settings] 企业微信通知发送失败 bot=%s err=%v", bot.Name, err)
+			} else {
+				result.Delivered++
 			}
 		}
 	}
 	for _, bot := range channels.QQ {
 		if _, ok := idSet[bot.ID]; ok {
+			result.Matched++
 			if err := s.sendQQMessage(ctx, bot.AppID, bot.ClientSecret, bot.UserOpenID, message); err != nil {
+				result.Failed++
 				log.Printf("[settings] QQ 通知发送失败 bot=%s err=%v", bot.Name, err)
+			} else {
+				result.Delivered++
 			}
 		}
 	}
 	for _, bot := range channels.Telegram {
 		if _, ok := idSet[bot.ID]; ok {
+			result.Matched++
 			if err := s.sendTelegramMessage(ctx, bot.BotToken, bot.ChatID, bot.ProxyURL, message); err != nil {
+				result.Failed++
 				log.Printf("[settings] Telegram 通知发送失败 bot=%s err=%v", bot.Name, err)
+			} else {
+				result.Delivered++
 			}
 		}
 	}
+	return result, nil
+}
+
+func newNotificationDeliveryResult(botIDs []string) NotificationDeliveryResult {
+	selected := make(map[string]struct{}, len(botIDs))
+	for _, id := range botIDs {
+		if id = strings.TrimSpace(id); id != "" {
+			selected[id] = struct{}{}
+		}
+	}
+	return NotificationDeliveryResult{Requested: len(selected)}
 }
 
 func (s *Service) sendDingtalk(ctx context.Context, webhook string, secret string, message string) error {
@@ -579,7 +653,24 @@ func (s *Service) sendFeishuMessage(ctx context.Context, webhook string, secret 
 		body["timestamp"] = strconv.FormatInt(timestamp, 10)
 		body["sign"] = feishuSign(timestamp, secret)
 	}
-	return s.postJSON(ctx, webhook, body)
+	responseBody, err := s.postJSONWithClientResponse(ctx, s.client, webhook, body)
+	if err != nil {
+		return err
+	}
+	var response struct {
+		Code *int   `json:"code"`
+		Msg  string `json:"msg"`
+	}
+	if err := json.Unmarshal(responseBody, &response); err != nil {
+		return fmt.Errorf("%w: invalid Feishu response: %v", ErrSendNotificationFailed, err)
+	}
+	if response.Code == nil {
+		return fmt.Errorf("%w: missing Feishu response code", ErrSendNotificationFailed)
+	}
+	if *response.Code != 0 {
+		return fmt.Errorf("%w: feishu code=%d msg=%s", ErrSendNotificationFailed, *response.Code, strings.TrimSpace(response.Msg))
+	}
+	return nil
 }
 
 func (s *Service) sendTelegram(ctx context.Context, botToken string, chatID string, proxyURL string, message string) error {
@@ -612,26 +703,31 @@ func (s *Service) postJSON(ctx context.Context, endpoint string, payload any) er
 }
 
 func (s *Service) postJSONWithClient(ctx context.Context, client *http.Client, endpoint string, payload any) error {
+	_, err := s.postJSONWithClientResponse(ctx, client, endpoint, payload)
+	return err
+}
+
+func (s *Service) postJSONWithClientResponse(ctx context.Context, client *http.Client, endpoint string, payload any) ([]byte, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	response, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrSendNotificationFailed, err)
+		return nil, fmt.Errorf("%w: %v", ErrSendNotificationFailed, err)
 	}
 	defer response.Body.Close()
+	responseBody, _ := io.ReadAll(io.LimitReader(response.Body, 4<<10))
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		responseBody, _ := io.ReadAll(io.LimitReader(response.Body, 512))
-		return fmt.Errorf("%w: status=%d body=%s", ErrSendNotificationFailed, response.StatusCode, strings.TrimSpace(string(responseBody)))
+		return nil, fmt.Errorf("%w: status=%d body=%s", ErrSendNotificationFailed, response.StatusCode, strings.TrimSpace(string(responseBody)))
 	}
-	return nil
+	return responseBody, nil
 }
 
 func (s *Service) telegramClient(proxyURL string) *http.Client {

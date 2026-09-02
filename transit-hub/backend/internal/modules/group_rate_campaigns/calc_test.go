@@ -73,7 +73,7 @@ func TestValidateCreateRequest(t *testing.T) {
 				Groups: []SelectionGroupRef{{GroupName: "vip", CampaignMultiplier: floatPtr(0.6)}},
 			},
 			Adjustment: Adjustment{Mode: AdjustmentSet, Value: 0},
-			Schedule:   Schedule{StartMode: StartNow, EndMode: EndManual},
+			Schedule:   Schedule{StartMode: StartNow, EndMode: EndManual, Recurrence: Recurrence{Frequency: RecurrenceNone}},
 		}
 	}
 
@@ -310,6 +310,45 @@ func TestValidateCreateRequest(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
+
+	t.Run("daily recurrence requires scheduled start/end", func(t *testing.T) {
+		req := baseReq()
+		req.Schedule.StartMode = StartScheduled
+		start := future
+		end := future.Add(2 * time.Hour)
+		req.Schedule.StartAt = &start
+		req.Schedule.EndMode = EndScheduled
+		req.Schedule.EndAt = &end
+		req.Schedule.Recurrence = Recurrence{Frequency: RecurrenceDaily, Interval: 1}
+		if err := validateCreateRequest(req, now); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("daily recurrence without scheduled times rejected", func(t *testing.T) {
+		req := baseReq()
+		req.Schedule.Recurrence = Recurrence{Frequency: RecurrenceDaily, Interval: 1}
+		if err := validateCreateRequest(req, now); err != ErrInvalidSchedule {
+			t.Fatalf("expected ErrInvalidSchedule, got %v", err)
+		}
+	})
+}
+
+func TestNextRecurrenceTimes(t *testing.T) {
+	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	start := time.Date(2026, 8, 29, 8, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 8, 29, 9, 0, 0, 0, time.UTC)
+	campaign := Campaign{StartAt: &start, EndAt: &end, Recurrence: Recurrence{Frequency: RecurrenceDaily, Interval: 1}}
+	gotStart, gotEnd, ok := nextRecurrenceTimes(campaign, now)
+	if !ok {
+		t.Fatal("expected next recurrence times")
+	}
+	if gotStart == nil || gotEnd == nil {
+		t.Fatal("expected non-nil recurrence times")
+	}
+	if !gotStart.Equal(start.AddDate(0, 0, 1)) || !gotEnd.Equal(end.AddDate(0, 0, 1)) {
+		t.Fatalf("unexpected next times: %v %v", gotStart, gotEnd)
+	}
 }
 
 func TestRenderTemplate(t *testing.T) {

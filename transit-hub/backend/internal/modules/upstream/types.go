@@ -522,6 +522,11 @@ type AdminUsageAccounting struct {
 	HasAccountCost bool
 }
 
+type Sub2APIResourceUsage struct {
+	CPUUsagePercent    *float64
+	MemoryUsagePercent *float64
+}
+
 type FallbackPoolUsageEvent struct {
 	RequestID       string
 	AccountID       string

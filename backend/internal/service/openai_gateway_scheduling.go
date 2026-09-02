@@ -826,7 +826,7 @@ func (s *OpenAIGatewayService) selectAccountForModelWithExclusions(ctx context.C
 	if !isNoAvailableOpenAIAccountError(err) {
 		return account, err
 	}
-	fallbackCtx, fallbackGroupID := s.nextOpenAIFallbackGroup(ctx, groupID, platform)
+	fallbackCtx, fallbackGroupID := s.nextOpenAIFallbackGroup(ctx, groupID, platform, requestedModel)
 	if fallbackGroupID == nil {
 		return nil, err
 	}
@@ -1084,7 +1084,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 	if !isNoAvailableOpenAIAccountError(err) {
 		return selection, err
 	}
-	fallbackCtx, fallbackGroupID := s.nextOpenAIFallbackGroup(ctx, groupID, platform)
+	fallbackCtx, fallbackGroupID := s.nextOpenAIFallbackGroup(ctx, groupID, platform, requestedModel)
 	if fallbackGroupID == nil {
 		return selection, err
 	}
