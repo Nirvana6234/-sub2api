@@ -280,9 +280,6 @@ export function PawApp() {
           )
         }
         onRenameConversation={paw.renameConversation}
-        onRefreshConfig={() => {
-          void paw.refreshConfig();
-        }}
         onOpenPrompts={() => setPromptsOpen(true)}
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenPayment={() => setPaymentOpen(true)}
@@ -290,7 +287,6 @@ export function PawApp() {
           setMobileSidebarOpen(false);
           setProfileOpen(true);
         }}
-        onExportConversation={exportConversation}
         onSelectConversation={paw.selectConversation}
         onReorderConversations={paw.reorderConversations}
         onCloseMobile={() => setMobileSidebarOpen(false)}

@@ -6,10 +6,8 @@ import {
   PawDragIcon,
   PawEditIcon,
   PawCheckIcon,
-  PawDownloadIcon,
   PawPlusIcon,
   PawPromptIcon,
-  PawRefreshIcon,
   PawSearchIcon,
   PawSettingsIcon,
   PawTrashIcon,
@@ -26,12 +24,10 @@ interface PawSidebarProps {
   onNewConversation: () => void;
   onDeleteConversation: (id?: string) => void;
   onRenameConversation: (id: string, title: string) => void;
-  onRefreshConfig: () => void;
   onOpenPrompts: () => void;
   onOpenSettings: () => void;
   onOpenPayment: () => void;
   onOpenProfile: () => void;
-  onExportConversation: () => void;
   onSelectConversation: (id: string) => void;
   onReorderConversations: (sourceId: string, targetId: string) => void;
   onCloseMobile: () => void;
@@ -59,12 +55,10 @@ export function PawSidebar({
   onNewConversation,
   onDeleteConversation,
   onRenameConversation,
-  onRefreshConfig,
   onOpenPrompts,
   onOpenSettings,
   onOpenPayment,
   onOpenProfile,
-  onExportConversation,
   onSelectConversation,
   onReorderConversations,
   onCloseMobile,
@@ -176,37 +170,6 @@ export function PawSidebar({
             aria-label="提示词"
           >
             <PawPromptIcon width={16} height={16} />
-          </button>
-          <button
-            className="paw-icon-button"
-            type="button"
-            onClick={onRefreshConfig}
-            title="刷新配置"
-            aria-label="刷新配置"
-          >
-            <PawRefreshIcon width={16} height={16} />
-          </button>
-        </div>
-        <div className="paw-sidebar-footer-row paw-sidebar-header-conversation-actions">
-          <button
-            className="paw-icon-button"
-            type="button"
-            onClick={() => onDeleteConversation(activeConversationId)}
-            disabled={conversations.length === 0}
-            title="删除当前对话"
-            aria-label="删除当前对话"
-          >
-            <PawTrashIcon width={16} height={16} />
-          </button>
-          <button
-            className="paw-icon-button"
-            type="button"
-            onClick={onExportConversation}
-            disabled={!activeConversationId}
-            title="导出当前对话"
-            aria-label="导出当前对话"
-          >
-            <PawDownloadIcon width={16} height={16} />
           </button>
           <button
             className="paw-icon-button"
@@ -362,41 +325,6 @@ export function PawSidebar({
               <span>{formatAccountMoney(user.total_recharged)}</span>
             </div>
           ) : null}
-        </div>
-        <div className="paw-sidebar-footer-row paw-sidebar-legacy-conversation-actions">
-          <button
-            className="paw-icon-button"
-            type="button"
-            onClick={() => onDeleteConversation(activeConversationId)}
-            disabled={conversations.length === 0}
-            title="删除当前对话"
-            aria-label="删除当前对话"
-          >
-            <PawTrashIcon width={16} height={16} />
-          </button>
-          <button
-            className="paw-icon-button"
-            type="button"
-            onClick={onExportConversation}
-            disabled={!activeConversationId}
-            title="导出当前对话"
-            aria-label="导出当前对话"
-          >
-            <PawDownloadIcon width={16} height={16} />
-          </button>
-          <button
-            className="paw-icon-button"
-            type="button"
-            onClick={onOpenSettings}
-            title="设置"
-            aria-label="设置"
-          >
-            <PawSettingsIcon width={16} height={16} />
-          </button>
-          <button className="paw-button primary paw-sidebar-new-button" type="button" onClick={onNewConversation}>
-            <PawPlusIcon width={16} height={16} />
-            新对话
-          </button>
         </div>
         <button
           type="button"

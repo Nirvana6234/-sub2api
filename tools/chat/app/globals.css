@@ -358,14 +358,6 @@ textarea:disabled {
   margin-top: 12px;
 }
 
-.paw-sidebar-header-conversation-actions {
-  justify-content: flex-start;
-}
-
-.paw-sidebar-legacy-conversation-actions {
-  display: none;
-}
-
 .paw-sidebar-legacy-user {
   display: none;
 }
