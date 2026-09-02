@@ -77,7 +77,11 @@ func RegisterPawRoutes(v1 *gin.RouterGroup, svc *service.PawConfigService, jwtAu
 			pawConfigError(c, err)
 			return
 		}
-		c.JSON(http.StatusOK, PawConfigResponse{Data: toPawConfigData(config)})
+		var userRates map[int64]float64
+		if deps.APIKeyService != nil {
+			userRates, _ = deps.APIKeyService.GetUserGroupRates(c.Request.Context(), subject.UserID)
+		}
+		c.JSON(http.StatusOK, PawConfigResponse{Data: toPawConfigData(config, userRates)})
 	})
 
 	paw.PUT("/config/defaults", func(c *gin.Context) {
@@ -511,11 +515,31 @@ func pawChatError(c *gin.Context, status int, code, message string) {
 	c.Abort()
 }
 
-func toPawConfigData(config *service.PawConfig) PawConfigData {
+func toPawConfigData(config *service.PawConfig, userRates ...map[int64]float64) PawConfigData {
 	result := PawConfigData{User: PawUser{ID: config.User.ID, Name: config.User.Name, Email: config.User.Email}, Defaults: PawDefaults{GroupID: config.Defaults.GroupID, ModelID: config.Defaults.ModelID, Reasoning: config.Defaults.Reasoning}}
 	result.Groups = make([]PawGroup, 0, len(config.Groups))
+	var rates map[int64]float64
+	if len(userRates) > 0 {
+		rates = userRates[0]
+	}
 	for _, group := range config.Groups {
-		mapped := PawGroup{ID: group.ID, Name: group.Name, Description: group.Description, Models: make([]PawModel, 0, len(group.Models))}
+		mapped := PawGroup{
+			ID:                 group.ID,
+			Name:               group.Name,
+			Description:        group.Description,
+			Platform:           group.Platform,
+			RateMultiplier:     group.RateMultiplier,
+			SubscriptionType:   group.SubscriptionType,
+			PeakRateEnabled:    group.PeakRateEnabled,
+			PeakStart:          group.PeakStart,
+			PeakEnd:            group.PeakEnd,
+			PeakRateMultiplier: group.PeakRateMultiplier,
+			Models:             make([]PawModel, 0, len(group.Models)),
+		}
+		if rate, ok := rates[group.ID]; ok {
+			rateValue := rate
+			mapped.UserRateMultiplier = &rateValue
+		}
 		for _, model := range group.Models {
 			mapped.Models = append(mapped.Models, PawModel{ID: model.ID, Name: model.Name, OwnedBy: model.OwnedBy, Reasoning: PawReasoningCapability{Supported: model.Reasoning.Supported, Values: model.Reasoning.Values, Default: model.Reasoning.Default}, Vision: model.Vision, ImageGeneration: model.ImageGeneration, FileInput: model.FileInput})
 		}

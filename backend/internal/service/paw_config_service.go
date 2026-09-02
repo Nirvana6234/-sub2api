@@ -37,10 +37,18 @@ type PawReasoningCapability struct {
 }
 
 type PawGroup struct {
-	ID          int64
-	Name        string
-	Description string
-	Models      []PawModel
+	ID                 int64
+	Name               string
+	Description        string
+	Platform           string
+	RateMultiplier     float64
+	UserRateMultiplier *float64
+	SubscriptionType   string
+	PeakRateEnabled    bool
+	PeakStart          string
+	PeakEnd            string
+	PeakRateMultiplier float64
+	Models             []PawModel
 }
 
 type PawUser struct {
@@ -191,7 +199,19 @@ func (s *PawConfigService) buildConfig(ctx context.Context, user *User, groups [
 		if len(models) == 0 {
 			continue
 		}
-		result.Groups = append(result.Groups, PawGroup{ID: group.ID, Name: group.Name, Description: group.Description, Models: models})
+		result.Groups = append(result.Groups, PawGroup{
+			ID:                 group.ID,
+			Name:               group.Name,
+			Description:        group.Description,
+			Platform:           group.Platform,
+			RateMultiplier:     group.RateMultiplier,
+			SubscriptionType:   group.SubscriptionType,
+			PeakRateEnabled:    group.PeakRateEnabled,
+			PeakStart:          group.PeakStart,
+			PeakEnd:            group.PeakEnd,
+			PeakRateMultiplier: group.PeakRateMultiplier,
+			Models:             models,
+		})
 	}
 	if includeDefaults && s.defaults != nil {
 		defaults, err := s.defaults.GetPawDefaults(ctx, user.ID)
