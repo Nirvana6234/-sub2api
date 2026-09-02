@@ -1,0 +1,12 @@
+E:\sub2api云服务\枫迹云-154.9.26.202\sub2api\tools\codex-relay-client\src\LanAi.RelayClient.CodexBinding\bin\Debug\net8.0\LanAi.RelayClient.CodexBinding.deps.json
+E:\sub2api云服务\枫迹云-154.9.26.202\sub2api\tools\codex-relay-client\src\LanAi.RelayClient.CodexBinding\bin\Debug\net8.0\LanAi.RelayClient.CodexBinding.dll
+E:\sub2api云服务\枫迹云-154.9.26.202\sub2api\tools\codex-relay-client\src\LanAi.RelayClient.CodexBinding\bin\Debug\net8.0\LanAi.RelayClient.CodexBinding.pdb
+E:\sub2api云服务\枫迹云-154.9.26.202\sub2api\tools\codex-relay-client\src\LanAi.RelayClient.CodexBinding\obj\Debug\net8.0\LanAi.RelayClient.CodexBinding.GeneratedMSBuildEditorConfig.editorconfig
+E:\sub2api云服务\枫迹云-154.9.26.202\sub2api\tools\codex-relay-client\src\LanAi.RelayClient.CodexBinding\obj\Debug\net8.0\LanAi.RelayClient.CodexBinding.AssemblyInfoInputs.cache
+E:\sub2api云服务\枫迹云-154.9.26.202\sub2api\tools\codex-relay-client\src\LanAi.RelayClient.CodexBinding\obj\Debug\net8.0\LanAi.RelayClient.CodexBinding.AssemblyInfo.cs
+E:\sub2api云服务\枫迹云-154.9.26.202\sub2api\tools\codex-relay-client\src\LanAi.RelayClient.CodexBinding\obj\Debug\net8.0\LanAi.RelayClient.CodexBinding.csproj.CoreCompileInputs.cache
+E:\sub2api云服务\枫迹云-154.9.26.202\sub2api\tools\codex-relay-client\src\LanAi.RelayClient.CodexBinding\obj\Debug\net8.0\LanAi.RelayClient.CodexBinding.sourcelink.json
+E:\sub2api云服务\枫迹云-154.9.26.202\sub2api\tools\codex-relay-client\src\LanAi.RelayClient.CodexBinding\obj\Debug\net8.0\LanAi.RelayClient.CodexBinding.dll
+E:\sub2api云服务\枫迹云-154.9.26.202\sub2api\tools\codex-relay-client\src\LanAi.RelayClient.CodexBinding\obj\Debug\net8.0\refint\LanAi.RelayClient.CodexBinding.dll
+E:\sub2api云服务\枫迹云-154.9.26.202\sub2api\tools\codex-relay-client\src\LanAi.RelayClient.CodexBinding\obj\Debug\net8.0\LanAi.RelayClient.CodexBinding.pdb
+E:\sub2api云服务\枫迹云-154.9.26.202\sub2api\tools\codex-relay-client\src\LanAi.RelayClient.CodexBinding\obj\Debug\net8.0\ref\LanAi.RelayClient.CodexBinding.dll

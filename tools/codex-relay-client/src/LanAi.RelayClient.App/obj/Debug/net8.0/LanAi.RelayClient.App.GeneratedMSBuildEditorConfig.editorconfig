@@ -1,0 +1,65 @@
+is_global = true
+build_property.EnableAotAnalyzer = 
+build_property.EnableSingleFileAnalyzer = 
+build_property.EnableTrimAnalyzer = true
+build_property.IncludeAllContentForSelfExtract = 
+build_property.AvaloniaNameGeneratorIsEnabled = true
+build_property.AvaloniaNameGeneratorBehavior = InitializeComponent
+build_property.AvaloniaNameGeneratorDefaultFieldModifier = internal
+build_property.AvaloniaNameGeneratorFilterByPath = *
+build_property.AvaloniaNameGeneratorFilterByNamespace = *
+build_property.AvaloniaNameGeneratorViewFileNamingStrategy = NamespaceAndClassName
+build_property.AvaloniaNameGeneratorAttachDevTools = true
+build_property.AvaloniaUseCompiledBindingsByDefault = true
+build_property.AvaloniaMainPackageVersion = 11.3.20
+build_property.AvaloniaPreviewerNetCoreToolPath = C:\Users\Administrator\.nuget\packages\avalonia\11.3.20\buildTransitive\\..\tools\netstandard2.0\designer\Avalonia.Designer.HostApp.dll
+build_property.AvaloniaResourcePaths = E:\sub2api云服务\枫迹云-154.9.26.202\sub2api\tools\codex-relay-client\src\LanAi.RelayClient.App\Assets\LanAi.RelayClient.ico,E:\sub2api云服务\枫迹云-154.9.26.202\sub2api\tools\codex-relay-client\src\LanAi.RelayClient.App\Assets\LanAi.RelayClient.png,E:\sub2api云服务\枫迹云-154.9.26.202\sub2api\tools\codex-relay-client\src\LanAi.RelayClient.App\Assets\LanAi.RelayClient.ico,E:\sub2api云服务\枫迹云-154.9.26.202\sub2api\tools\codex-relay-client\src\LanAi.RelayClient.App\App.axaml,E:\sub2api云服务\枫迹云-154.9.26.202\sub2api\tools\codex-relay-client\src\LanAi.RelayClient.App\ShellWindow.axaml,E:\sub2api云服务\枫迹云-154.9.26.202\sub2api\tools\codex-relay-client\src\LanAi.RelayClient.App\Views\AnnouncementWindow.axaml,E:\sub2api云服务\枫迹云-154.9.26.202\sub2api\tools\codex-relay-client\src\LanAi.RelayClient.App\Views\ConfirmDialog.axaml,E:\sub2api云服务\枫迹云-154.9.26.202\sub2api\tools\codex-relay-client\src\LanAi.RelayClient.App\Views\DashboardView.axaml,E:\sub2api云服务\枫迹云-154.9.26.202\sub2api\tools\codex-relay-client\src\LanAi.RelayClient.App\Views\ExitConfirmationDialog.axaml,E:\sub2api云服务\枫迹云-154.9.26.202\sub2api\tools\codex-relay-client\src\LanAi.RelayClient.App\Views\NoticeDialog.axaml,E:\sub2api云服务\枫迹云-154.9.26.202\sub2api\tools\codex-relay-client\src\LanAi.RelayClient.App\Views\PaymentWindow.axaml,E:\sub2api云服务\枫迹云-154.9.26.202\sub2api\tools\codex-relay-client\src\LanAi.RelayClient.App\Views\RegistrationView.axaml,E:\sub2api云服务\枫迹云-154.9.26.202\sub2api\tools\codex-relay-client\src\LanAi.RelayClient.App\Views\SignInView.axaml
+build_property.MvvmToolkitEnableINotifyPropertyChangingSupport = true
+build_property._MvvmToolkitIsUsingWindowsRuntimePack = false
+build_property.CsWinRTComponent = 
+build_property.CsWinRTAotOptimizerEnabled = 
+build_property.CsWinRTAotWarningLevel = 
+build_property.TargetFramework = net8.0
+build_property.TargetPlatformMinVersion = 
+build_property.UsingMicrosoftNETSdkWeb = 
+build_property.ProjectTypeGuids = 
+build_property.InvariantGlobalization = 
+build_property.PlatformNeutralAssembly = 
+build_property.EnforceExtendedAnalyzerRules = 
+build_property._SupportedPlatformList = Linux,macOS,Windows
+build_property.RootNamespace = LanAi.RelayClient.App
+build_property.ProjectDir = E:\sub2api云服务\枫迹云-154.9.26.202\sub2api\tools\codex-relay-client\src\LanAi.RelayClient.App\
+build_property.EnableComHosting = 
+build_property.EnableGeneratedComInterfaceComImportInterop = false
+build_property.EffectiveAnalysisLevelStyle = 8.0
+build_property.EnableCodeStyleSeverity = 
+
+[E:/sub2api云服务/枫迹云-154.9.26.202/sub2api/tools/codex-relay-client/src/LanAi.RelayClient.App/App.axaml]
+build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
+
+[E:/sub2api云服务/枫迹云-154.9.26.202/sub2api/tools/codex-relay-client/src/LanAi.RelayClient.App/ShellWindow.axaml]
+build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
+
+[E:/sub2api云服务/枫迹云-154.9.26.202/sub2api/tools/codex-relay-client/src/LanAi.RelayClient.App/Views/AnnouncementWindow.axaml]
+build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
+
+[E:/sub2api云服务/枫迹云-154.9.26.202/sub2api/tools/codex-relay-client/src/LanAi.RelayClient.App/Views/ConfirmDialog.axaml]
+build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
+
+[E:/sub2api云服务/枫迹云-154.9.26.202/sub2api/tools/codex-relay-client/src/LanAi.RelayClient.App/Views/DashboardView.axaml]
+build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
+
+[E:/sub2api云服务/枫迹云-154.9.26.202/sub2api/tools/codex-relay-client/src/LanAi.RelayClient.App/Views/ExitConfirmationDialog.axaml]
+build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
+
+[E:/sub2api云服务/枫迹云-154.9.26.202/sub2api/tools/codex-relay-client/src/LanAi.RelayClient.App/Views/NoticeDialog.axaml]
+build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
+
+[E:/sub2api云服务/枫迹云-154.9.26.202/sub2api/tools/codex-relay-client/src/LanAi.RelayClient.App/Views/PaymentWindow.axaml]
+build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
+
+[E:/sub2api云服务/枫迹云-154.9.26.202/sub2api/tools/codex-relay-client/src/LanAi.RelayClient.App/Views/RegistrationView.axaml]
+build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
+
+[E:/sub2api云服务/枫迹云-154.9.26.202/sub2api/tools/codex-relay-client/src/LanAi.RelayClient.App/Views/SignInView.axaml]
+build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml

@@ -261,6 +261,10 @@ backend/internal/web/dist/
 !backend/internal/web/dist/
 backend/internal/web/dist/*
 !backend/internal/web/dist/.keep
+backend/internal/web/paw_dist/
+!backend/internal/web/paw_dist/
+backend/internal/web/paw_dist/*
+!backend/internal/web/paw_dist/.keep
 
 # 后端运行时缓存数据
 backend/data/
@@ -283,6 +287,8 @@ CLAUDE.md
 scripts
 !backend/scripts/
 !backend/scripts/resolve-version.sh
+!frontend/scripts/
+!frontend/scripts/clean-out-dir.mjs
 .code-review-state
 #openspec/
 code-reviews/

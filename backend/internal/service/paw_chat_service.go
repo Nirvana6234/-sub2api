@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
@@ -12,7 +13,6 @@ var (
 	errPawGroupForbidden       = infraerrors.Forbidden("GROUP_FORBIDDEN", "selected group is not available to this user")
 	errPawModelUnavailable     = infraerrors.BadRequest("MODEL_UNAVAILABLE", "selected model is not available in this group")
 	errPawReasoningUnsupported = infraerrors.BadRequest("REASONING_UNSUPPORTED", "selected reasoning level is not supported by this model")
-	errPawAttachmentInvalid    = infraerrors.BadRequest("ATTACHMENT_INVALID", "attachments are not available for this chat request")
 	errPawKeyUnavailable       = infraerrors.ServiceUnavailable("CONFIG_UNAVAILABLE", "Paw chat credentials are unavailable")
 	errPawQuotaExceeded        = infraerrors.TooManyRequests("QUOTA_EXCEEDED", "Paw quota has been exhausted")
 )
@@ -138,12 +138,17 @@ type PawChatResolution struct {
 }
 
 type PawChatService struct {
-	config    *PawConfigService
-	keySource PawChatKeySource
+	config      *PawConfigService
+	keySource   PawChatKeySource
+	attachments *PawAttachmentService
 }
 
-func NewPawChatService(config *PawConfigService, keySource PawChatKeySource) *PawChatService {
-	return &PawChatService{config: config, keySource: keySource}
+func NewPawChatService(config *PawConfigService, keySource PawChatKeySource, attachments ...*PawAttachmentService) *PawChatService {
+	var attachmentService *PawAttachmentService
+	if len(attachments) > 0 {
+		attachmentService = attachments[0]
+	}
+	return &PawChatService{config: config, keySource: keySource, attachments: attachmentService}
 }
 
 func (s *PawChatService) Prepare(ctx context.Context, userID int64, req PawChatRequest) (*PawChatResolution, error) {
@@ -169,10 +174,6 @@ func (s *PawChatService) Prepare(ctx context.Context, userID int64, req PawChatR
 			return nil, infraerrors.BadRequest("INVALID_REQUEST", "messages must contain a supported role and non-empty content")
 		}
 	}
-	if len(req.Attachments) > 0 {
-		return nil, errPawAttachmentInvalid
-	}
-
 	config, err := s.config.GetAvailableConfig(ctx, userID)
 	if err != nil {
 		return nil, errPawKeyUnavailable.WithCause(err)
@@ -202,14 +203,18 @@ func (s *PawChatService) Prepare(ctx context.Context, userID int64, req PawChatR
 		return nil, errPawKeyUnavailable
 	}
 	resolvedKey := clonePawAPIKeyWithGroup(apiKey, group)
+	messages, err := s.buildPawChatMessages(ctx, userID, req.Messages, req.Attachments)
+	if err != nil {
+		return nil, err
+	}
 	body, err := json.Marshal(struct {
-		Model           string           `json:"model"`
-		Messages        []PawChatMessage `json:"messages"`
-		Stream          bool             `json:"stream"`
-		ReasoningEffort string           `json:"reasoning_effort,omitempty"`
+		Model           string                  `json:"model"`
+		Messages        []apicompat.ChatMessage `json:"messages"`
+		Stream          bool                    `json:"stream"`
+		ReasoningEffort string                  `json:"reasoning_effort,omitempty"`
 	}{
 		Model:           modelID,
-		Messages:        req.Messages,
+		Messages:        messages,
 		Stream:          req.Stream,
 		ReasoningEffort: strings.TrimSpace(req.Reasoning),
 	})
@@ -223,6 +228,59 @@ func (s *PawChatService) Prepare(ctx context.Context, userID int64, req PawChatR
 		Group:        group,
 		Model:        modelID,
 	}, nil
+}
+
+func (s *PawChatService) buildPawChatMessages(ctx context.Context, userID int64, reqMessages []PawChatMessage, attachments []PawAttachmentReference) ([]apicompat.ChatMessage, error) {
+	messages := make([]apicompat.ChatMessage, 0, len(reqMessages))
+	attachmentParts, err := s.buildPawAttachmentParts(ctx, userID, attachments)
+	if err != nil {
+		return nil, err
+	}
+	attachIndex := pawLastUserMessageIndex(reqMessages)
+	if len(attachmentParts) > 0 && attachIndex < 0 {
+		return nil, infraerrors.BadRequest("ATTACHMENT_INVALID", "attachments require a user message")
+	}
+	for i, message := range reqMessages {
+		content := strings.TrimSpace(message.Content)
+		if i == attachIndex && len(attachmentParts) > 0 {
+			parts := make([]apicompat.ChatContentPart, 0, 1+len(attachmentParts))
+			if content != "" {
+				parts = append(parts, apicompat.ChatContentPart{Type: "text", Text: content})
+			}
+			parts = append(parts, attachmentParts...)
+			raw, marshalErr := json.Marshal(parts)
+			if marshalErr != nil {
+				return nil, errPawKeyUnavailable.WithCause(marshalErr)
+			}
+			messages = append(messages, apicompat.ChatMessage{Role: strings.TrimSpace(message.Role), Content: raw})
+			continue
+		}
+		raw, marshalErr := json.Marshal(content)
+		if marshalErr != nil {
+			return nil, errPawKeyUnavailable.WithCause(marshalErr)
+		}
+		messages = append(messages, apicompat.ChatMessage{Role: strings.TrimSpace(message.Role), Content: raw})
+	}
+	return messages, nil
+}
+
+func (s *PawChatService) buildPawAttachmentParts(ctx context.Context, userID int64, refs []PawAttachmentReference) ([]apicompat.ChatContentPart, error) {
+	if len(refs) == 0 {
+		return nil, nil
+	}
+	if s == nil || s.attachments == nil {
+		return nil, infraerrors.ServiceUnavailable("CONFIG_UNAVAILABLE", "Paw attachments are unavailable")
+	}
+	return s.attachments.BuildChatContentParts(ctx, userID, refs)
+}
+
+func pawLastUserMessageIndex(messages []PawChatMessage) int {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if strings.EqualFold(strings.TrimSpace(messages[i].Role), "user") {
+			return i
+		}
+	}
+	return -1
 }
 
 func (s *PawChatService) findPawChatSelection(ctx context.Context, config *PawConfig, groupID int64, modelID string) (*Group, PawModel, bool) {

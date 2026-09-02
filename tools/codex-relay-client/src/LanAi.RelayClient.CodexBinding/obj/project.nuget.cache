@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "dgSpecHash": "W0v3plDdoto=",
+  "success": true,
+  "projectFilePath": "E:\\sub2api云服务\\枫迹云-154.9.26.202\\sub2api\\tools\\codex-relay-client\\src\\LanAi.RelayClient.CodexBinding\\LanAi.RelayClient.CodexBinding.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\Administrator\\.nuget\\packages\\microsoft.net.illink.tasks\\8.0.16\\microsoft.net.illink.tasks.8.0.16.nupkg.sha512",
+    "C:\\Users\\Administrator\\.nuget\\packages\\microsoft.netcore.app.runtime.osx-arm64\\8.0.16\\microsoft.netcore.app.runtime.osx-arm64.8.0.16.nupkg.sha512",
+    "C:\\Users\\Administrator\\.nuget\\packages\\microsoft.aspnetcore.app.runtime.osx-arm64\\8.0.16\\microsoft.aspnetcore.app.runtime.osx-arm64.8.0.16.nupkg.sha512"
+  ],
+  "logs": []
+}
