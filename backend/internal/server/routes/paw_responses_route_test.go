@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -27,15 +28,36 @@ const codexResponsesPayload = `{"model":"gpt-5",` +
 	`"client_metadata":{"unknown_future_field":"must survive"}}`
 
 func newPawResponsesRouteEngine(dispatch gin.HandlerFunc, userID int64) *gin.Engine {
+	return newPawResponsesRouteEngineOn(service.PlatformOpenAI, dispatch, nil, userID)
+}
+
+// pawResponsesPlatformGroups —— 平台可换的分组来源，用来验分派的另一半分支。
+type pawResponsesPlatformGroups struct{ platform string }
+
+func (g pawResponsesPlatformGroups) AvailableGroups(context.Context, int64) ([]service.Group, error) {
+	return []service.Group{{ID: 7, Name: "G", Platform: g.platform, Status: service.StatusActive}}, nil
+}
+
+type pawResponsesPlatformChannels struct{ platform string }
+
+func (c pawResponsesPlatformChannels) GetChannelForGroup(context.Context, int64) (*service.Channel, error) {
+	return &service.Channel{
+		Status:       service.StatusActive,
+		ModelPricing: []service.ChannelModelPricing{{Platform: c.platform, Models: []string{"gpt-5"}}},
+	}, nil
+}
+
+func newPawResponsesRouteEngineOn(platform string, openAIDispatch, gatewayDispatch gin.HandlerFunc, userID int64) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	setting := (*service.SettingService)(nil)
 	config := service.NewPawConfigService(
-		pawChatRouteGroups{},
+		pawResponsesPlatformGroups{platform: platform},
 		pawChatRouteUsers{},
-		pawChatRouteChannels{},
+		pawResponsesPlatformChannels{platform: platform},
 		&pawRouteStore{},
 	)
+	dispatch := openAIDispatch
 	keySource := &pawChatRouteKeySource{apiKey: &service.APIKey{
 		ID:     99,
 		UserID: userID,
@@ -51,8 +73,9 @@ func newPawResponsesRouteEngine(dispatch gin.HandlerFunc, userID int64) *gin.Eng
 		c.Next()
 	}
 	RegisterPawRoutes(r.Group("/api/v1"), config, auth, setting, servermiddleware.NewPanelRateLimiter(nil, setting), PawRouteDependencies{
-		ChatService:     service.NewPawChatService(config, keySource),
-		OpenAIResponses: dispatch,
+		ChatService:      service.NewPawChatService(config, keySource),
+		OpenAIResponses:  dispatch,
+		GatewayResponses: gatewayDispatch,
 	})
 	return r
 }
@@ -167,4 +190,55 @@ func TestPawResponsesRouteDoesNotValidateCodexOwnReasoningEffort(t *testing.T) {
 
 	require.True(t, reached, "codex 自带的 reasoning.effort 把整轮挡下了")
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+}
+
+// 分派的**另一半分支**：非 OpenAI/Grok 的分组要落到通用网关那条，而不是 503。
+//
+// 这条和 gateway.go 里 `/responses` 用的 isOpenAIResponsesCompatibleGatewayPlatform
+// 是同一套判定（OpenAI 或 Grok 走 OpenAI 网关，其余走通用网关）。两边写法不同
+// 却必须给出同样的答案 —— 只测 OpenAI 一种平台的话，分歧了也看不出来。
+func TestPawResponsesRouteSendsNonOpenAIPlatformsToTheGenericGateway(t *testing.T) {
+	for _, platform := range []string{service.PlatformAnthropic, service.PlatformGemini} {
+		var wentToGeneric bool
+		r := newPawResponsesRouteEngineOn(
+			platform,
+			func(c *gin.Context) { t.Fatalf("%s 不该走 OpenAI 网关", platform) },
+			func(c *gin.Context) { wentToGeneric = true; c.Status(http.StatusOK) },
+			42,
+		)
+		w := postResponses(r, codexResponsesPayload, map[string]string{PawGroupHeader: "7"})
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		require.True(t, wentToGeneric, "%s 没落到通用网关", platform)
+	}
+}
+
+// Grok 和 OpenAI 一样走 OpenAI 网关 —— 这半边同样只有一个平台被覆盖过。
+func TestPawResponsesRouteSendsGrokToTheOpenAIGateway(t *testing.T) {
+	var wentToOpenAI bool
+	r := newPawResponsesRouteEngineOn(
+		service.PlatformGrok,
+		func(c *gin.Context) { wentToOpenAI = true; c.Status(http.StatusOK) },
+		func(c *gin.Context) { t.Fatal("Grok 不该走通用网关") },
+		42,
+	)
+	w := postResponses(r, codexResponsesPayload, map[string]string{PawGroupHeader: "7"})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.True(t, wentToOpenAI)
+}
+
+// 这两个常量在 Rust 那侧（crates/codex-host/src/proxy.rs）有一份**字面量的副本**：
+// UPSTREAM_PATH = "/api/v1/paw/responses"、GROUP_HEADER = "X-Paw-Group-Id"。
+// 两边靠肉眼对齐，改名的话两边测试都还是绿的、而产品 404。所以两边各钉一次字面量。
+func TestPawResponsesRouteWireContractMatchesTheRustRelay(t *testing.T) {
+	require.Equal(t, "X-Paw-Group-Id", PawGroupHeader,
+		"改了就得同步改 crates/codex-host/src/proxy.rs 的 GROUP_HEADER")
+
+	var seenPath string
+	r := newPawResponsesRouteEngineOn(service.PlatformOpenAI, func(c *gin.Context) {
+		seenPath = c.Request.URL.Path
+		c.Status(http.StatusOK)
+	}, nil, 42)
+	postResponses(r, codexResponsesPayload, map[string]string{PawGroupHeader: "7"})
+	require.Equal(t, "/api/v1/paw/responses", seenPath,
+		"改了就得同步改 crates/codex-host/src/proxy.rs 的 UPSTREAM_PATH")
 }
