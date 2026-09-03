@@ -48,6 +48,19 @@ impl Collector {
     }
 }
 
+/// 端到端用的路径。**和真实部署同构**：由启动测试的人（环境变量）决定，
+/// 而不是由调用方在参数里点名 —— 这正是把这两条从 `StartParams` 里拿掉的理由。
+fn e2e_paths() -> chat_lib::agent::AgentPaths {
+    let root = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("bridge-app");
+    std::fs::create_dir_all(&root).expect("建程序数据目录");
+    chat_lib::agent::AgentPaths {
+        app_dir: root,
+        codex_binary: std::env::var("CODEX_ADAPTER_BIN")
+            .unwrap_or_else(|_| "never-spawned".to_owned())
+            .into(),
+    }
+}
+
 fn need(var: &str) -> String {
     std::env::var(var).unwrap_or_else(|_| panic!("这条集成测试需要环境变量 {var}"))
 }
@@ -62,8 +75,6 @@ fn params(tag: &str, sandbox: &str, approval: &str) -> StartParams {
     // 这条链路上**已经没有 API key 了**：走的是账号会话那条路。
     // 需要的三样东西各自没有兜底 —— 猜一个只会让失败变得难懂。
     StartParams {
-        codex_binary: need("CODEX_ADAPTER_BIN"),
-        app_dir: app.to_string_lossy().into_owned(),
         relay_base_url: need("CODEX_ADAPTER_RELAY_BASE_URL"),
         group_id: need("CODEX_ADAPTER_GROUP_ID")
             .parse()
@@ -85,8 +96,6 @@ fn offline_params() -> StartParams {
     let work = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("bridge-offline");
     std::fs::create_dir_all(&work).expect("建工作目录");
     StartParams {
-        codex_binary: "never-spawned".to_owned(),
-        app_dir: work.join("app").to_string_lossy().into_owned(),
         relay_base_url: "http://127.0.0.1:1".to_owned(),
         group_id: 1,
         session_token: "unused".to_owned(),
@@ -102,7 +111,7 @@ fn offline_params() -> StartParams {
 #[ignore = "需要真 codex 进程与中转站：cargo test -p chat --test bridge -- --ignored"]
 async fn a_full_turn_reaches_the_frontend_as_ui_events() {
     let collector = Arc::new(Collector::default());
-    let bridge = AgentBridge::new(Arc::clone(&collector) as Arc<dyn EventSink>);
+    let bridge = AgentBridge::new(Arc::clone(&collector) as Arc<dyn EventSink>, e2e_paths());
 
     let started = bridge
         .start(params("turn", "read-only", "never"))
@@ -161,7 +170,7 @@ async fn a_full_turn_reaches_the_frontend_as_ui_events() {
 #[ignore = "需要真 codex 进程与中转站：cargo test -p chat --test bridge -- --ignored"]
 async fn an_approval_round_trip_carries_the_command_and_takes_effect() {
     let collector = Arc::new(Collector::default());
-    let bridge = AgentBridge::new(Arc::clone(&collector) as Arc<dyn EventSink>);
+    let bridge = AgentBridge::new(Arc::clone(&collector) as Arc<dyn EventSink>, e2e_paths());
 
     let p = params("approval", "read-only", "on-request");
     let marker = std::path::Path::new(&p.cwd).join("SHOULD_NOT_EXIST.txt");
@@ -257,7 +266,7 @@ async fn an_approval_round_trip_carries_the_command_and_takes_effect() {
 #[tokio::test(flavor = "multi_thread")]
 async fn bad_params_fail_before_anything_is_spawned() {
     let collector = Arc::new(Collector::default());
-    let bridge = AgentBridge::new(Arc::clone(&collector) as Arc<dyn EventSink>);
+    let bridge = AgentBridge::new(Arc::clone(&collector) as Arc<dyn EventSink>, e2e_paths());
 
     let mut p = offline_params();
     p.sandbox = "wide-open".to_owned();
@@ -277,7 +286,7 @@ async fn bad_params_fail_before_anything_is_spawned() {
 #[tokio::test(flavor = "multi_thread")]
 async fn operating_without_a_session_is_an_error_not_a_panic() {
     let collector = Arc::new(Collector::default());
-    let bridge = AgentBridge::new(Arc::clone(&collector) as Arc<dyn EventSink>);
+    let bridge = AgentBridge::new(Arc::clone(&collector) as Arc<dyn EventSink>, e2e_paths());
 
     assert!(!bridge.is_running().await);
     assert!(matches!(
@@ -343,10 +352,11 @@ fn ui_events_are_tagged_so_the_frontend_can_switch_on_them() {
 #[ignore = "需要真 codex 进程与中转站：cargo test -p chat --test bridge -- --ignored"]
 async fn credentials_stay_inside_our_app_dir_and_are_wiped_on_stop() {
     let collector = Arc::new(Collector::default());
-    let bridge = AgentBridge::new(Arc::clone(&collector) as Arc<dyn EventSink>);
+    let bridge = AgentBridge::new(Arc::clone(&collector) as Arc<dyn EventSink>, e2e_paths());
 
     let p = params("creds", "read-only", "never");
-    let app_dir = std::path::PathBuf::from(&p.app_dir);
+    // 目录来自**桥**而不是参数 —— 前端已经没有说话的份了，这条测试也得从同一处取。
+    let app_dir = e2e_paths().app_dir;
     let auth = app_dir.join("codex-home").join("auth.json");
     // 上一次跑剩下的先清掉，免得「本来就没有」冒充成「被抹掉了」。
     let _ = std::fs::remove_file(&auth);
@@ -385,4 +395,34 @@ async fn credentials_stay_inside_our_app_dir_and_are_wiped_on_stop() {
         "会话都结束了 {} 还在 —— 凭据被留在了盘上",
         auth.display()
     );
+}
+
+/// 前端**不能**再指定 codex 二进制或数据目录 —— 塞回来要当场失败，不是被静默忽略。
+///
+/// A9 把「凭据只落在自己程序目录下」做成了结构性保证（位置由程序推出来）。
+/// 但只要 `StartParams` 还认 `appDir`，那个保证就离一次 `invoke` 只有一步之遥：
+/// 网页那侧能指到哪里，凭据就能落到哪里。静默忽略比报错更糟 —— 那会让人以为
+/// 自己传的值生效了。
+#[test]
+fn the_frontend_can_no_longer_name_a_binary_or_a_data_dir() {
+    let ok = serde_json::json!({
+        "relayBaseUrl": "https://relay.example",
+        "groupId": 7,
+        "sessionToken": "jwt",
+        "model": "gpt-5",
+        "cwd": "C:/work",
+        "sandbox": "read-only",
+        "approvalPolicy": "never",
+    });
+    serde_json::from_value::<StartParams>(ok.clone()).expect("正常参数应当能解出来");
+
+    for smuggled in ["appDir", "codexBinary", "app_dir", "codex_binary"] {
+        let mut bad = ok.clone();
+        bad[smuggled] = serde_json::json!("C:/somewhere/else");
+        let err = serde_json::from_value::<StartParams>(bad).unwrap_err();
+        assert!(
+            err.to_string().contains("unknown field"),
+            "{smuggled} 被静默吃掉了，而不是报错：{err}"
+        );
+    }
 }

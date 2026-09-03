@@ -67,10 +67,27 @@ struct Running {
     relay: LocalRelay,
 }
 
+/// codex 二进制和程序数据目录在哪。
+///
+/// **这两条刻意不由前端传。** A9 把「凭据只落在自己程序目录下」做成了结构性保证
+/// （`CodexHome::under_app_dir`：位置由程序推出来），可只要 `StartParams` 还带着
+/// `appDir`，那个保证就离一次 `invoke` 只有一步之遥 —— 网页那侧能指到哪里，
+/// 凭据就能落到哪里。`codexBinary` 同理：随包发之后，让渲染进程点名一个任意 exe
+/// 没有任何好处，那正是「agent 跑渲染进程说什么就跑什么」的形状。
+///
+/// 于是两条都在 Rust 这侧定：数据目录来自 Tauri 的 `app_data_dir()`，
+/// 二进制来自随包资源。
+#[derive(Debug, Clone)]
+pub struct AgentPaths {
+    pub app_dir: std::path::PathBuf,
+    pub codex_binary: std::path::PathBuf,
+}
+
 /// 一座桥。整个应用一个。
 pub struct AgentBridge {
     running: Mutex<Option<Running>>,
     sink: Arc<dyn EventSink>,
+    paths: AgentPaths,
     /// 当前账号会话。**前端是唯一持有者**，这里只是转交给转发层。
     ///
     /// 刻意不在 Rust 里实现刷新：刷新逻辑已经在前端 `api.ts` 里了，
@@ -79,10 +96,11 @@ pub struct AgentBridge {
 }
 
 impl AgentBridge {
-    pub fn new(sink: Arc<dyn EventSink>) -> Self {
+    pub fn new(sink: Arc<dyn EventSink>, paths: AgentPaths) -> Self {
         AgentBridge {
             running: Mutex::new(None),
             sink,
+            paths,
             session_token: Mutex::new(None),
         }
     }
@@ -108,7 +126,7 @@ impl AgentBridge {
         let approval = parse_approval(&params.approval_policy)?;
         let cwd = WorkspaceDir::new(&params.cwd)
             .map_err(|e| BridgeError::BadParams(e.to_string()))?;
-        let home = CodexHome::under_app_dir(&params.app_dir)
+        let home = CodexHome::under_app_dir(&self.paths.app_dir)
             .map_err(|e| BridgeError::Host(e.to_string()))?;
 
         // 先把转发层起起来，再让 codex 指向它。**codex 只看得见这个回环地址**，
@@ -124,9 +142,9 @@ impl AgentBridge {
             relay.set_session_token(held.clone()).await;
         }
 
-        // 二进制是哪一种按文件名猜（官方 codex.exe 要带 app-server 子命令，
-        // 精简的 codex-app-server.exe 不带）。猫错只会让进程起不来，不会跑错地方。
-        let binary: std::path::PathBuf = params.codex_binary.into();
+        // 二进制是哪一种按文件名判断（官方 codex.exe 要带 app-server 子命令，
+        // 精简的 codex-app-server.exe 不带）。判断错只会让进程起不来，不会跑错地方。
+        let binary = self.paths.codex_binary.clone();
         let config = EngineConfig {
             kind: codex_host::CodexBinaryKind::infer(&binary),
             binary,

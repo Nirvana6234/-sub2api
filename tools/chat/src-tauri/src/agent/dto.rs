@@ -179,17 +179,17 @@ pub enum UiDecision {
 
 /// 起会话要的参数。
 ///
-/// `codex_binary` 与 `api_key` 都由调用方给：**前者归 A10（打包与版本工程）**，
-/// **后者归 A9（凭据托管）**。A5 只负责把它们接上，不越界替它们做决定。
+/// **这里刻意没有 `codexBinary` 和 `appDir`。**
+///
+/// 两条都由 Rust 侧定（见 `AgentPaths`）。A9 把「凭据只落在自己程序目录下」做成了
+/// 结构性保证，可只要这个结构体还带着 `appDir`，那个保证就离一次 `invoke` 只有一步；
+/// `codexBinary` 同理 —— 随包发之后，让渲染进程点名一个任意 exe 没有任何好处。
+///
+/// `deny_unknown_fields` 是这条约定的**执法者**：谁要是又从前端把这两个字段塞回来，
+/// 会当场反序列化失败，而不是被静默忽略然后让人以为它生效了。
 #[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct StartParams {
-    pub codex_binary: String,
-    /// **我们这个程序自己的数据目录**（Tauri 侧的 `app_data_dir()`）。
-    ///
-    /// 传目录本身而不是 `CODEX_HOME` 的完整路径，是因为凭据会落在这下面 ——
-    /// 位置必须由我们推出来，不能让调用方指到别处。见 `CodexHome::under_app_dir`。
-    pub app_dir: String,
     /// **中转站根地址**（例如 `https://relay.example.com`），不是给 codex 的。
     ///
     /// codex 永远看不到它：它拿到的是本地转发层那个回环地址。见 `codex_host::LocalRelay`。

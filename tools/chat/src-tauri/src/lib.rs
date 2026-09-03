@@ -140,11 +140,55 @@ async fn agent_is_running(bridge: tauri::State<'_, Arc<AgentBridge>>) -> Result<
     Ok(bridge.is_running().await)
 }
 
+/// 随包的 codex 在资源里的位置。
+#[cfg(windows)]
+const BUNDLED_CODEX: &str = "codex/bin/codex-app-server.exe";
+#[cfg(not(windows))]
+const BUNDLED_CODEX: &str = "codex/bin/codex-app-server";
+
+/// 定出 codex 二进制和程序数据目录 —— **两条都不经过前端**。
+///
+/// `COFLY_CODEX_BINARY` 这个环境变量是给开发和端到端用的。它能存在，是因为
+/// **环境变量由启动这个进程的人设，网页设不了** —— 这和让渲染进程在
+/// `invoke` 里点名一个路径是两回事。
+///
+/// 这里刻意**不因为找不到二进制就失败**：那会让整个应用起不来，而用户可能只是
+/// 想用 Chat 那一半。真正起 agent 的时候 `Engine::spawn` 会带着路径报错，
+/// 那才是该说这句话的时机。
+fn resolve_agent_paths(app: &tauri::AppHandle) -> agent::AgentPaths {
+    use tauri::Manager;
+
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(std::path::Path::to_path_buf))
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+
+    let app_dir = app
+        .path()
+        .app_data_dir()
+        .unwrap_or_else(|_| exe_dir.join("cofly-workbench"));
+
+    let codex_binary = std::env::var_os("COFLY_CODEX_BINARY")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            app.path()
+                .resolve(BUNDLED_CODEX, tauri::path::BaseDirectory::Resource)
+                .ok()
+        })
+        .unwrap_or_else(|| exe_dir.join(BUNDLED_CODEX));
+
+    agent::AgentPaths {
+        app_dir,
+        codex_binary,
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             let sink = Arc::new(TauriSink(app.handle().clone()));
-            app.manage(Arc::new(AgentBridge::new(sink)));
+            let paths = resolve_agent_paths(app.handle());
+            app.manage(Arc::new(AgentBridge::new(sink, paths)));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
