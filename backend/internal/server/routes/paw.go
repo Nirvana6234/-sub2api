@@ -369,6 +369,19 @@ const PawGroupHeader = "X-Paw-Group-Id"
 //     重拼一份就是惄惄改 agent 的行为。所以这里只把 body 读出来**看一眼**拿 model。
 //   - **分组走请求头**（见 PawGroupHeader），因为请求体不归我们支配。
 //
+// # 为什么不能并进 `/paw/chat/completions`
+//
+// 这个问题被问过一次，答案是一个**硬阻塞**：那条路带不了工具。
+// `PawChatRequest` 没有 tools 字段，`PawChatMessage.Content` 是纯字符串（无
+// tool_calls / tool_call_id），而 `Prepare` 拼给上游的 body 只有
+// `{model, messages, stream, reasoning_effort}`。也就是说，**不管调用方怎么翻译，
+// 工具定义都会在这一层被丢掉** —— codex 拿到一个一个工具都没有的模型，
+// 永远调不出 `exec_command`，agent 只能聊天、不能做事。
+//
+// （顺带澄清一个容易误导的说法：Responses↔ChatCompletions 的互转**本仓库已经有**
+// （`internal/pkg/apicompat/chatcompletions_responses_bridge.go`），不需要重写。
+// 阻塞不在翻译，在 Paw 请求体本身装不下工具。）
+//
 // composite 在 handler 里就地解析，和 pawChatHandler 一致 —— **不能**改成网关那条路的
 // autoGroupModelRouting 中间件：那条是按请求体里的 model 自己选分组的，会把调用方
 // 明确指定的分组覆掉。
