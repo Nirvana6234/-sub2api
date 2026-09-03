@@ -31,6 +31,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -282,5 +283,9 @@ for tag, sandbox, approval, cmd, marker in CASES:
     print(json.dumps(results[tag], ensure_ascii=False, indent=2), flush=True)
     print(flush=True)
 
-io.open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "sandbox-results.json"),
-        "w", encoding="utf-8").write(json.dumps(results, ensure_ascii=False, indent=2))
+# 默认不写进仓库目录（同 probe-local-proxy.py）：转储里有本机绝对路径。
+_dest = os.environ.get("PROBE_OUT") or os.path.join(tempfile.gettempdir(),
+                                                    "sandbox-results.json")
+io.open(_dest, "w", encoding="utf-8").write(json.dumps(results, ensure_ascii=False, indent=2))
+print("
+结果 -> %s" % _dest)
