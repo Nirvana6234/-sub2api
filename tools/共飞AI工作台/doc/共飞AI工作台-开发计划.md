@@ -638,6 +638,90 @@ codex 二进制的分发方式（随包 / 首启下载，取决于 V-13 的体�
 
 ---
 
+#### A10 执行记录（2026-09-03）—— 打包形态定了，**沙箱语义的结论要改 A7/A8**
+
+##### 「325MB 塞不进安装包」这个前提是错的
+
+release profile 里 `strip = false` 且带 line-tables 调试信息（注释写明由打包阶段
+归档符号后再 strip）。但 strip **只省下约三分之一** —— 219MB 才是 app-server 的
+真实体积。真正要看的数是**压缩后**：
+
+| | |
+|---|---|
+| `codex-app-server.exe`（上游已 strip） | 218.4 MB |
+| `.exe.zst` | 53.6 MB |
+| 完整包 `tar.zst` / `tar.gz` | 81.6 / 108.9 MB |
+| 现在的安装包 | 4.8 MB |
+
+##### 不自己编，用上游 release 制品
+
+上游 release **同时发两个包**（`.github/workflows/rust-release-windows.yml`）：
+primary bundle 是多合一 `codex.exe`；**app-server bundle 是 `codex-app-server.exe`**。
+后者本身就是 app-server，是上游的一等公民，不是我们自创的路子。
+
+本地从 main 快照编过一份（29 分钟，175 个工作区 crate + ~1000 依赖；下载只占 212MB，
+不是瓶颈），结论是**和官方 rust-v0.153.0 同一代**：工具集、body 顶层键、请求头集合
+完全相同，只差 195 字提示词，体积 218.9 vs 218.4 MB。
+
+**但仍然用官方那份**，理由只有一条：官方包的 `codex-package.json` 里
+`version=0.153.0`，而 main 快照的 workspace version 写死 `0.0.0`（发布时才打）。
+**一个说不出版本的二进制不该随包发。** 身份记在
+`crates/codex-host/tests/fixtures/bundled-codex.json`（tag + 逐文件 sha256 + 体积）。
+
+包里我们真需要的：
+
+| 文件 | |
+|---|---|
+| `bin/codex-app-server.exe` | 必需 |
+| `codex-resources/codex-command-runner.exe` | 必需 —— 执行链路 |
+| `codex-resources/codex-windows-sandbox-setup.exe` | 必需 —— 执行链路 |
+| `codex-path/rg.exe` | 可选，给 agent 的 shell 用，codex 自己不依赖 |
+| `bin/codex-code-mode-host.exe` | **用不上**，`CodeModeHostTransport::Local` 不 spawn 它，省 69MB |
+
+顺带修掉一个会直接炸的地方：`engine.rs` 写死了 `cmd.arg("app-server")`，而精简二进制
+**自己就是** app-server，多这个参数会被 clap 当未知参数拒掉，我们这侧只看得到「起不来」。
+现按文件名判断（`CodexBinaryKind`）。
+
+##### **沙箱不是安全边界，审批才是** —— 这条改 A7/A8 的做法
+
+用真进程量的（假中转站返回一次 `exec_command` 工具调用，让 agent 真去写文件；
+官方 0.153.0 包与本地构建结果完全一致）：
+
+| sandbox | 决定 | 往**工作区外**写 |
+|---|---|---|
+| `read-only` | accept | **成功** |
+| `workspace-write` | accept | **成功** |
+| `read-only` | decline | 失败，`status: declined`，盘上无痕迹 |
+
+代码侧对得上：`core/src/tools/sandboxing.rs` 里
+`requires_escalated_permissions() -> SandboxOverride::BypassSandboxFirstAttempt`。
+
+推论：
+
+- **`sandbox` 参数只约束「不经审批就跑」的命令。** 一旦有人点了同意，命令就带着
+  Chat 进程的全部权限跑，工作区边界不存在。
+- **A8 的目录白名单没法靠 codex 的沙箱实现。** 要么我们自己在审批那一层检查命令，
+  要么就不要承诺这件事 —— 承诺了又靠沙箱兜底，是个平时看不出来、出事才发现的假承诺。
+- **A7 的审批 UI 不能暗示「同意＝在沙箱里跑一下」**；`acceptForSession` 等于整个
+  会话把整台机器授出去，措辞必须说清。
+
+还有一个容易混的点：`approvalPolicy=never` 时，没被自动放行的命令会在**进沙箱之前**
+就被 `exec_policy` 拒掉（"blocked by policy"）—— 看着像沙箱拦住了，其实沙箱根本没
+被调到。第一版探针正是栽在这里。两个探针都收进了 `crates/codex-host/scripts/`。
+
+##### 欠的账：fixture 与 schema 还停在 0.144.2
+
+0.153.0 的工具集是 `exec_command`/`write_stdin`，0.144.2 是 `shell_command`/`update_plan`，
+**0.144.2 对 `exec_command` 直接回 `unsupported call`**。所以：
+
+- 报文 fixture 已重录到 0.153.0，并**新增一条测试钉住工具集** —— 补的是一个真把我
+  骗过去的缺口（拿 fixture 比对得出「零漂移」，因为 fixture 只存了 body 的顶层**键名**；
+  键名一个没变，内容换了两个工具）。**比对只能证明你真比了的那部分。**
+- **A2/A3 的审批 fixture 与 306 份 JSON schema 仍录自 0.144.2，尚未重录。**
+  schema 导出（`generate-json-schema`）在 `codex` CLI 里而不在 app-server 里，
+  要重录得另外取 CLI 二进制。好消息是审批 fixture 现在可以对着**假中转站**录，
+  不再需要真 key。
+
 ## 3.5 codex 里值得补进 Chat 的能力（超出「最小子集」的部分）
 
 总体规划 §2.0 说了「只用 agent 循环」。但把协议面读完之后，有几样东西**成本极低、对 agent 面几乎是刚需**，值得从「多余」里挑回来。按性价比排：
