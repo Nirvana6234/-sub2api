@@ -5,7 +5,8 @@
 //! 特别难查：agent 起得来、会话建得起来、只是**每一轮都 404 或 403**，
 //! 而错误来自我们自己的转发层，不是上游。
 //!
-//! 报文由 `scripts/probe-local-proxy.py` 录制（codex-cli 0.144.2），
+//! 报文由 `scripts/probe-local-proxy.py` 录制（上游 release rust-v0.153.0 的
+//! app-server bundle，见 fixtures/bundled-codex.json），
 //! 机器标识与令牌已抹掉。**升级 codex 之后要重录一次**：路径、Host 形式、
 //! 有没有多出 Origin，都属于类型检查抓不到的语义漂移。
 
@@ -20,6 +21,8 @@ struct Recorded {
     headers: std::collections::HashMap<String, String>,
     #[serde(rename = "bodyTopLevelKeys")]
     body_top_level_keys: Vec<String>,
+    #[serde(rename = "toolNames")]
+    tool_names: Vec<String>,
 }
 
 fn recorded() -> Recorded {
@@ -133,5 +136,35 @@ fn the_gates_still_bite_when_fed_the_real_headers() {
     assert_eq!(
         check("POST", &r.path, Some(host), None, Some("Bearer nope"), TOKEN, port),
         Err(Rejected::BadToken)
+    );
+}
+
+/// **这条是补上一个真把我骗过去的缺口。**
+///
+/// 升级 codex 时我拿 fixture 比对，得出"零漂移"的结论 —— 因为 fixture 只存了 body 的
+/// **顶层键名**。键名确实一个没变，但 `tools` 的**内容**换掉了两个工具
+/// （0.144.2 是 `shell_command`/`update_plan`，0.153.0 是 `exec_command`/`write_stdin`），
+/// 系统提示词也差了几千字。**比对只能证明你真比了的那部分。**
+///
+/// 工具集决定 agent 会做什么动作，也就决定我们会收到哪些 item 和哪些审批请求。
+/// 它变了而我们不知道，表现是"某类操作的审批界面再也没出现过"。
+#[test]
+fn the_tool_set_is_pinned_because_a_silent_swap_already_fooled_us_once() {
+    let r = recorded();
+    assert_eq!(
+        r.tool_names,
+        vec![
+            "exec_command",
+            "write_stdin",
+            "request_user_input",
+            "view_image",
+            "multi_agent_v1",
+            "get_goal",
+            "create_goal",
+            "update_goal",
+            "web_search",
+        ],
+        "codex {} 的工具集变了 —— 重录 fixture，并确认审批面还覆盖得住新工具",
+        r.codex_version
     );
 }

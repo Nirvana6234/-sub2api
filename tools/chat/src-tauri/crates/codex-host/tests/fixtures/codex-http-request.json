@@ -1,22 +1,22 @@
 {
-  "_notes": "probe-local-proxy.py 录的真实报文（codex-cli 0.144.2）。请求体只留了顶层字段名——正文有 47KB，且里面是 instructions/工具定义，留着没用还容易被当成可以改的东西。",
-  "codexVersion": "0.144.2",
+  "_notes": "probe-local-proxy.py 录的真实报文。二进制是官方 release rust-v0.153.0 的 codex-app-server-package-x86_64-pc-windows-msvc（codex-package.json 里 version=0.153.0）。请求体只留顶层字段名与工具名——正文 47KB，且是 instructions/工具定义，留着没用还容易被当成可以改的东西。升级 codex 必须重录。",
+  "codexVersion": "0.153.0",
   "method": "POST",
   "path": "/v1/responses",
   "headers": {
     "x-codex-beta-features": "remote_compaction_v2",
-    "x-codex-window-id": "01a06698-e53c-7211-ab47-dd1615b133a6:0",
-    "x-codex-turn-metadata": "{\"installation_id\":\"<REDACTED>\",\"session_id\":\"01a06698-e53c-7211-ab47-dd1615b133a6\",\"thread_id\":\"01a06698-e53c-7211-ab47-dd1615b133a6\",\"turn_id\":\"01a06698-e59e-71d0-b1c9-f8407183ca9d\",\"window_id\":\"01a06698-e53c-7211-ab47-dd1615b133a6:0\",\"request_kind\":\"turn\",\"sandbox\":\"none\",\"turn_started_at_unix_ms\":1788427691434}",
-    "x-client-request-id": "01a06698-e53c-7211-ab47-dd1615b133a6",
-    "session-id": "01a06698-e53c-7211-ab47-dd1615b133a6",
-    "thread-id": "01a06698-e53c-7211-ab47-dd1615b133a6",
+    "x-codex-window-id": "01a066f4-5310-72a3-af3a-c0452c34f6c9:0",
+    "x-codex-turn-metadata": "{\"installation_id\":\"<REDACTED>\",\"session_id\":\"01a066f4-5310-72a3-af3a-c0452c34f6c9\",\"thread_id\":\"01a066f4-5310-72a3-af3a-c0452c34f6c9\",\"agent_name\":\"/root\",\"turn_id\":\"01a066f4-53cb-7603-9049-0ea509e3cfa2\",\"window_id\":\"01a066f4-5310-72a3-af3a-c0452c34f6c9:0\",\"window_number\":0,\"context_window_id\":\"01a066f4-5310-72a3-af3a-c05a5bdd9abf\",\"request_kind\":\"turn\",\"root_turn_id\":\"01a066f4-53cb-7603-9049-0ea509e3cfa2\",\"sandbox\":\"none\",\"sandbox_mode\":\"read-only\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"turn_started_at_unix_ms\":1788433683416}",
+    "x-client-request-id": "01a066f4-5310-72a3-af3a-c0452c34f6c9",
+    "session-id": "01a066f4-5310-72a3-af3a-c0452c34f6c9",
+    "thread-id": "01a066f4-5310-72a3-af3a-c0452c34f6c9",
     "accept": "text/event-stream",
     "content-type": "application/json",
     "authorization": "Bearer <LOCAL_TOKEN>",
     "originator": "probe",
-    "user-agent": "probe/0.144.2 (<REDACTED-PLATFORM>)",
-    "host": "127.0.0.1:59054",
-    "content-length": "47748"
+    "user-agent": "probe/0.153.0 (<REDACTED-PLATFORM>)",
+    "host": "127.0.0.1:57096",
+    "content-length": "40984"
   },
   "bodyTopLevelKeys": [
     "client_metadata",
@@ -32,5 +32,16 @@
     "tool_choice",
     "tools"
   ],
-  "bodyBytes": 47748
+  "toolNames": [
+    "exec_command",
+    "write_stdin",
+    "request_user_input",
+    "view_image",
+    "multi_agent_v1",
+    "get_goal",
+    "create_goal",
+    "update_goal",
+    "web_search"
+  ],
+  "bodyBytes": 40984
 }
