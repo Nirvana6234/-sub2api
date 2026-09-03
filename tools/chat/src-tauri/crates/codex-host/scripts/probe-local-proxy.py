@@ -123,9 +123,17 @@ env["CODEX_HOME"] = codex_home
 env.pop("OPENAI_API_KEY", None)
 env.pop("CODEX_API_KEY", None)
 
+# 两种二进制两种命令行：官方 codex(.exe) 要带 app-server 子命令，
+# 上游 app-server bundle 里那个 codex-app-server(.exe) 自己就是 app-server，
+# 多传一个参数会被 clap 当未知参数拒掉。判断规则和 Rust 侧
+# codex_host::CodexBinaryKind::infer 保持一致。
+_stem = os.path.splitext(os.path.basename(CODEX))[0].lower()
+SUBCOMMAND = [] if _stem == "codex-app-server" else ["app-server"]
+print("binary=%s subcommand=%r" % (CODEX, SUBCOMMAND), flush=True)
+
 proc = subprocess.Popen(
-    [CODEX, "app-server",
-     "-c", 'model_provider="custom"',
+    [CODEX] + SUBCOMMAND +
+    ["-c", 'model_provider="custom"',
      "-c", 'model_providers.custom.name="custom"',
      "-c", 'model_providers.custom.wire_api="responses"',
      "-c", "model_providers.custom.requires_openai_auth=true",
@@ -220,7 +228,10 @@ with log_lock:
 proc.kill()
 server.shutdown()
 
-dest = os.path.join(os.path.dirname(os.path.abspath(__file__)), "probe-local-proxy.json")
+# **默认不写进仓库目录。** 这份原始转储里有未脱敏的 installation_id 和完整的
+# 47KB 请求体；仓库里该有的是 tests/fixtures/codex-http-request.json 那份脱敏过的。
+dest = os.environ.get("PROBE_OUT") or os.path.join(tempfile.gettempdir(),
+                                                   "probe-local-proxy.json")
 io.open(dest, "w", encoding="utf-8").write(json.dumps(out, indent=2, ensure_ascii=False))
 print("\n=== HTTP requests codex made: %d ===" % len(out["http"]), flush=True)
 for entry in out["http"]:
