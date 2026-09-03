@@ -472,6 +472,111 @@ export function usePawClient() {
     [],
   );
 
+  /**
+   * agent 会话专用的一组消息拼装函数（配合 `client/agent/useAgentSession.ts`）。
+   *
+   * **故意和 handleSend/dispatchConversationSend 完全分开**：agent 走的是另一条
+   * 通道（Rust 桥 → 本地转发层），不经过 `sendPawChat`，也不占用 `sending` 这个
+   * 状态机——那是"这次 Paw 聊天请求有没有在飞"的信号，语义上不该被 agent 的轮次
+   * 借用（两者互不知道对方，混在一起只会让"发送中"这件事对不上号）。
+   *
+   * 这几个函数只负责把 agent 产生的文本落进对应会话的消息列表，复用现成的气泡
+   * 渲染（Markdown、推理折叠块）——agent 的输出因此和普通对话长得一样，不需要
+   * 一套平行的展示组件。
+   */
+  const ensureActiveConversationId = useCallback((): string => {
+    if (activeConversationId) return activeConversationId;
+    const conversation = createConversation();
+    setConversations((current) => [conversation, ...current]);
+    setActiveConversationId(conversation.id);
+    return conversation.id;
+  }, [activeConversationId]);
+
+  const beginAgentTurn = useCallback(
+    (conversationId: string, text: string) => {
+      const userMessage = createUserMessage(text, []);
+      const assistantMessage = createAssistantMessage();
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        title:
+          conversation.title === "新对话" && text
+            ? cleanSelectionLabel(text.slice(0, 32))
+            : conversation.title,
+        messages: [...conversation.messages, userMessage, assistantMessage],
+        updatedAt: Date.now(),
+      }));
+      return { userMessage, assistantMessage };
+    },
+    [updateConversation],
+  );
+
+  const appendAgentDelta = useCallback(
+    (
+      conversationId: string,
+      messageId: string,
+      delta: { content?: string; reasoning?: string },
+    ) => {
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        messages: conversation.messages.map((message) =>
+          message.id === messageId
+            ? {
+                ...message,
+                content: delta.content ? `${message.content}${delta.content}` : message.content,
+                reasoningContent: delta.reasoning
+                  ? `${message.reasoningContent ?? ""}${delta.reasoning}`
+                  : message.reasoningContent,
+                updatedAt: Date.now(),
+              }
+            : message,
+        ),
+        updatedAt: Date.now(),
+      }));
+    },
+    [updateConversation],
+  );
+
+  const finishAgentTurn = useCallback(
+    (conversationId: string, messageId: string, opts: { error?: boolean } = {}) => {
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        messages: conversation.messages.map((message) =>
+          message.id === messageId
+            ? { ...message, error: opts.error ?? message.error, updatedAt: Date.now() }
+            : message,
+        ),
+        updatedAt: Date.now(),
+      }));
+    },
+    [updateConversation],
+  );
+
+  /**
+   * 独立追加一条通知气泡（不编辑某条已有消息）——用于轮次之间发生的事，
+   * 比如会话意外结束、协议漂移诊断。这些事没有一条"正在写"的助手消息可以挂，
+   * 只能另起一条。
+   */
+  const appendAgentNotice = useCallback(
+    (conversationId: string, text: string) => {
+      const now = Date.now();
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        messages: [
+          ...conversation.messages,
+          {
+            id: createId("assistant"),
+            role: "assistant" as const,
+            content: text,
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+        updatedAt: now,
+      }));
+    },
+    [updateConversation],
+  );
+
   const syncDraft = useCallback(
     (value: string) => {
       setDraftState(value);
@@ -1889,6 +1994,11 @@ export function usePawClient() {
     currentGroup,
     currentModel,
     canSend,
+    ensureActiveConversationId,
+    beginAgentTurn,
+    appendAgentDelta,
+    finishAgentTurn,
+    appendAgentNotice,
     addConversation,
     selectConversation,
     deleteConversation,

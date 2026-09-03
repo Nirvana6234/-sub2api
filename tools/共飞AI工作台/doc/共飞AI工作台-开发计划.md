@@ -478,10 +478,48 @@ A3 的发现是「审批请求是指针不是载荷」。桥的事件泵维护�
 
 **验收**：前端拿不到任何真实绝对路径；给一个没登记的键，宿主拒绝且报错可读。
 
-#### A6 执行记录（2026-09-03）—— 第一版已落地，**桌面端待你实跑**
+#### A6 执行记录（2026-09-03）—— 第一版做错了形状，已按用户反馈重做
 
-界面：选工作目录 → 选分组/模型/沙箱/审批策略 → 起会话 → 逐块渲染正文/推理/命令输出
-→ 停止本轮 / 结束会话 → 最近会话列表。
+##### 第一版错在哪
+
+第一版把 agent 做成了一个**切换进去的独立模式**：右上角一个「agent」按钮，点了之后
+整个界面换成单独一页（选目录、选分组/模型/沙箱/审批、一份平行的转录）。
+
+用户看了截图纠正：agent 不该是模式，而应该是给**当前这个对话**挂一个工作目录——挂上
+之后这个对话的发送就走 codex，界面还是同一个 PawChatPane，同一个消息列表，同一套
+Markdown/气泡渲染，只是多了工具调用产生的正文。沙箱/审批策略是设置，该进设置弹窗，
+不该占聊天工具条的位置；如果需要，工具条那一行（分组/模型/推理 chip 所在的那一行）
+再加一个审批的 chip 就够了。
+
+##### 重做之后的形状
+
+composer 工具条那一行新增两个 chip（`ActionButton`，和分组/模型样式一致）：
+
+- **工作目录**：未挂时点它直接弹系统目录选择器；挂上之后点它弹一个小菜单
+  （复用现成的 `PawSelector` 弹层）——「更换工作目录」/「结束 agent 会话」。
+  **分组、模型直接复用这一行已有的选择器**，不重复造一套。
+- **待批准 N**：只在有待处理审批时出现，点开是个锚定在 chip 下方的小面板，
+  逐条显示 reason/命令原文，两个按钮同意/拒绝。
+
+沙箱与审批策略挪进 `PawSettingsModal`（新挂目录时读取当前设置，已经挂上的对话
+不受后续修改影响）。
+
+**核心实现是 `usePawClient.ts` 里四个新增的纯函数**
+（`beginAgentTurn`/`appendAgentDelta`/`finishAgentTurn`/`appendAgentNotice`，外加
+`ensureActiveConversationId`）：agent 产生的文本通过它们写回**普通的会话消息列表**
+（`PawConversationMessage`），不是一套平行的展示组件——这样 Markdown、推理折叠块全部
+免费复用。它们和 `handleSend`/`sending` 状态机完全分开：agent 走 Rust 桥，不经过
+`sendPawChat`，混在一起会让"发送中"这件事对不上号。
+
+编排逻辑在新文件 `client/agent/useAgentSession.ts`：`bindings`（每个对话的
+目录/沙箱/审批策略）+ `liveConversationId`（哪个对话拥有当前那条线程——
+`AgentBridge` 本来就只支持一条，这里不假装能更多，别的对话想发就提示先结束当前会话）+
+事件订阅（把 `agentText`/`reasoning` 接进对应消息，`commandOutput` 按 itemId 攒够
+一段再落成 fenced code block，不逐字节撒进正文）。
+
+`PawApp.tsx` 用 `agent.armed`（当前对话挂没挂目录）决定 `onSend`/`onStop`/`sending`/
+`canSend` 走哪条路——两条路径合流在同一组 props 上，`PawChatPane` 本身几乎不用感知
+"现在是不是 agent 模式"这件事。
 
 ##### 动手之前先补的一个洞
 
@@ -525,9 +563,10 @@ A9 的文档注释因此写的是一件代码并没有做到的事。
 
 ##### 验收状态
 
-- Rust 72 passed / 8 ignored / 0 failed，clippy 零 warning；`npm run typecheck` 干净；
-  **PWA 静态导出通过**，且验过 Tauri 那几个 chunk 不进首屏。
-- **未做：桌面端实跑。** 和 T0 一样，这条只能由你启动客户端点一遍 —— 选目录、起会话、
+- Rust 72 passed / 8 ignored / 0 failed（本次重做没碰 Rust 侧，数字不变），
+  clippy 零 warning；`npm run typecheck` 干净；**PWA 静态导出通过**，
+  且重新验过 Tauri 那几个 chunk 不进首屏。
+- **未做：桌面端实跑。** 和 T0 一样，这条只能由你启动客户端点一遍 —— 挂目录、起会话、
   看正文是不是逐字出来、停止本轮、结束会话。开发时要先指好二进制：
   `COFLY_CODEX_BINARY=<官方 app-server 包>/bin/codex-app-server.exe`。
 - 顺带仍然欠着：**换分组的端到端验收**（A 组一轮 → 切 B 组 → 新会话确实走 B 组），

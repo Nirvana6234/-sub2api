@@ -2,10 +2,9 @@
 
 import { useCallback, useEffect, useState, type CSSProperties, type PointerEvent } from "react";
 
-import { isTauri } from "../../client/agent/host";
+import { useAgentSession } from "../../client/agent/useAgentSession";
 import { getPawServiceBaseUrl } from "../../client/paw/config";
 import { PawAuthPage } from "./PawAuthPage";
-import { PawAgentPane } from "./PawAgentPane";
 import { PawChatPane } from "./PawChatPane";
 import { PawSidebar } from "./PawSidebar";
 import { PawSettingsModal, PawShortcutsModal } from "./PawSettingsModal";
@@ -40,19 +39,27 @@ export function PawApp() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
-  /// agent 面只在桌面端存在；判断必须在 effect 里做（静态导出会预渲染，
-  /// 模块顶层算出来的答案会被烤进产物）。
-  const [desktop, setDesktop] = useState(false);
-  const [showAgent, setShowAgent] = useState(false);
   const [confirmState, setConfirmState] = useState<{
     title: string;
     message: string;
     onConfirm: () => void;
   } | null>(null);
 
-  useEffect(() => {
-    setDesktop(isTauri());
-  }, []);
+  // agent 不是一个切换进去的"模式"——是给当前这个对话挂一个工作目录。
+  // 挂上之后发送就走 codex，界面还是同一个 PawChatPane，只是消息列表里
+  // 多了工具调用产生的正文。desktop-only（`agent.desktop` 自己在 effect 里判断）。
+  const agent = useAgentSession({
+    activeConversationId: paw.activeConversationId,
+    ensureActiveConversationId: paw.ensureActiveConversationId,
+    groupId: paw.selectedGroupId,
+    modelId: paw.selectedModelId,
+    relayBaseUrl: getPawServiceBaseUrl(),
+    sessionToken: paw.session?.accessToken ?? null,
+    beginTurn: paw.beginAgentTurn,
+    appendDelta: paw.appendAgentDelta,
+    finishTurn: paw.finishAgentTurn,
+    appendNotice: paw.appendAgentNotice,
+  });
 
   useEffect(() => {
     try {
@@ -276,17 +283,6 @@ export function PawApp() {
         onClick={() => setMobileSidebarOpen(false)}
       />
 
-      {/* 只有桌面端有 agent —— PWA 里本机没有 codex，这个开关不该出现。 */}
-      {desktop ? (
-        <button
-          className="paw-agent-toggle"
-          type="button"
-          aria-pressed={showAgent}
-          onClick={() => setShowAgent((v) => !v)}
-        >
-          {showAgent ? "回到对话" : "agent"}
-        </button>
-      ) : null}
       <PawSidebar
         session={paw.session}
         config={paw.config}
@@ -298,6 +294,11 @@ export function PawApp() {
             "删除对话",
             "确定要删除当前对话吗？删除后无法恢复。",
             () => {
+              // 删掉的正是挂着 agent 的那个对话时，先结束会话——否则线程还在跑，
+              // 但已经没有消息列表能接住它产生的正文了。
+              if (id === paw.activeConversationId && agent.armed) {
+                void agent.endSession();
+              }
               paw.deleteConversation(id);
               paw.setNotice("对话已删除。");
             },
@@ -333,14 +334,19 @@ export function PawApp() {
           }}
           onClose={() => setProfileOpen(false)}
         />
-      ) : desktop && showAgent ? (
-        <PawAgentPane
-          config={paw.config}
-          relayBaseUrl={getPawServiceBaseUrl()}
-          sessionToken={paw.session?.accessToken ?? null}
-        />
       ) : (
       <PawChatPane
+        agentDesktop={agent.desktop}
+        agentArmed={agent.armed}
+        agentCwd={agent.cwd}
+        agentBusy={agent.busy}
+        agentApprovals={agent.approvals}
+        agentWaitingOnApproval={agent.waitingOnApproval}
+        agentError={agent.error}
+        onPickAgentDirectory={() => void agent.pickDirectory()}
+        onChangeAgentDirectory={() => void agent.changeDirectory()}
+        onEndAgentSession={() => void agent.endSession()}
+        onAnswerAgentApproval={(id, approve) => void agent.answer(id, approve)}
         config={paw.config}
         configBusy={paw.configBusy}
         configError={paw.configError}
@@ -359,9 +365,9 @@ export function PawApp() {
         activeConversation={paw.activeConversation}
         draft={paw.draft}
         attachments={paw.attachments}
-        sending={paw.sending}
+        sending={agent.armed ? agent.sending : paw.sending}
         editingMessageId={paw.editingMessageId}
-        canSend={paw.canSend}
+        canSend={agent.armed ? !agent.busy && !agent.sending : paw.canSend}
         theme={theme}
         isFullscreen={isFullscreen}
         onNoticeChange={paw.setNotice}
@@ -379,9 +385,25 @@ export function PawApp() {
         onFileChange={paw.handleFileChange}
         onPasteFiles={paw.handlePasteFiles}
         onSend={() => {
+          if (agent.armed) {
+            const text = paw.draft.trim();
+            if (!text) {
+              paw.setNotice("先输入内容再发送。");
+              return;
+            }
+            paw.setDraft("");
+            void agent.send(text);
+            return;
+          }
           void paw.handleSend();
         }}
-        onStop={paw.handleStop}
+        onStop={() => {
+          if (agent.armed) {
+            void agent.interruptTurn();
+            return;
+          }
+          paw.handleStop();
+        }}
         onRemoveAttachment={paw.removeAttachment}
         onOpenSidebar={() => setMobileSidebarOpen(true)}
         onOpenSettings={() => setSettingsOpen(true)}
@@ -434,6 +456,7 @@ export function PawApp() {
             paw.config?.defaults.reasoning ?? "",
           )}
           selectionInvalid={paw.selectionInvalid}
+          agentDesktop={agent.desktop}
           onThemeChange={setTheme}
           onSubmitKeyChange={paw.setSubmitKey}
           onSaveDefaults={() => {

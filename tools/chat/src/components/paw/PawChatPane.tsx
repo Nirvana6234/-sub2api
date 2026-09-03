@@ -18,6 +18,7 @@ import {
   PawCopyIcon,
   PawDownloadIcon,
   PawEditIcon,
+  PawFolderIcon,
   PawKeyboardIcon,
   PawLayersIcon,
   PawMaximizeIcon,
@@ -30,6 +31,7 @@ import {
   PawRefreshIcon,
   PawRobotIcon,
   PawSettingsIcon,
+  PawShieldAlertIcon,
   PawStopIcon,
   PawSunIcon,
   PawTrashIcon,
@@ -39,6 +41,7 @@ import {
   PawVolumeOffIcon,
 } from "./PawIcons";
 import { PawMarkdown } from "./PawMarkdown";
+import type { ApprovalRequest } from "@/client/agent/session";
 import type {
   PawAttachment,
   PawConfigData,
@@ -111,6 +114,27 @@ interface PawChatPaneProps {
     modelId: string,
     reasoning: string,
   ) => string;
+
+  // ── agent（挂在当前对话上的工作目录能力）──────────────────────────
+  // 只在桌面端出现（`agentDesktop`）。这不是一个独立模式：挂上工作目录之后，
+  // 这个对话的发送就走 codex，界面还是这一个 PawChatPane。
+  /** 是不是跑在桌面壳里；PWA 里恒为 false，两个 chip 都不渲染。 */
+  agentDesktop: boolean;
+  /** 当前对话挂没挂工作目录。 */
+  agentArmed: boolean;
+  agentCwd: string | null;
+  /** 正在起会话/结束会话；轮次是否在跑用外面的 `sending`（已经把两条路合并过）。 */
+  agentBusy: boolean;
+  agentApprovals: ApprovalRequest[];
+  agentWaitingOnApproval: boolean;
+  agentError: string | null;
+  /** 未挂目录时点这个 chip：直接弹出系统目录选择器。 */
+  onPickAgentDirectory: () => void;
+  /** 已挂目录时选"更换工作目录"。 */
+  onChangeAgentDirectory: () => void;
+  /** 已挂目录时选"结束 agent 会话"：停线程、抹凭据、解除这个对话的绑定。 */
+  onEndAgentSession: () => void;
+  onAnswerAgentApproval: (requestId: string, approve: boolean) => void;
 }
 
 function roleLabel(role: PawConversation["messages"][number]["role"]): string {
@@ -193,6 +217,13 @@ type PawSelectorItem = {
   peakLabel?: string;
   value: string;
 };
+
+/** 目录的最后一段，给 chip 当标签用——完整路径塞进一个小按钮里没法读。 */
+function shortDirName(path: string): string {
+  const trimmed = path.replace(/[\\/]+$/, "");
+  const segment = trimmed.split(/[\\/]/).pop();
+  return segment || path;
+}
 
 function formatGroupMultiplier(value: number | undefined): string | undefined {
   return typeof value === "number" && Number.isFinite(value)
@@ -363,6 +394,17 @@ export function PawChatPane({
   onCancelEdit,
   onRenameConversation,
   getSelectionSummary,
+  agentDesktop,
+  agentArmed,
+  agentCwd,
+  agentBusy,
+  agentApprovals,
+  agentWaitingOnApproval,
+  agentError,
+  onPickAgentDirectory,
+  onChangeAgentDirectory,
+  onEndAgentSession,
+  onAnswerAgentApproval,
 }: PawChatPaneProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -370,8 +412,9 @@ export function PawChatPane({
   const [promptMenuOpen, setPromptMenuOpen] = useState(false);
   const [promptIndex, setPromptIndex] = useState(0);
   const [selectorOpen, setSelectorOpen] = useState<
-    "group" | "model" | "reasoning" | "size" | null
+    "group" | "model" | "reasoning" | "size" | "agentDir" | null
   >(null);
+  const [approvalMenuOpen, setApprovalMenuOpen] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState(false);
@@ -469,8 +512,21 @@ export function PawChatPane({
         value: size,
       }));
     }
+    if (selectorOpen === "agentDir") {
+      return [
+        { title: "更换工作目录…", subtitle: agentCwd ?? undefined, value: "change" },
+        { title: "结束 agent 会话", subtitle: "停止线程、抹掉本地凭据", value: "end" },
+      ];
+    }
     return [];
-  }, [config?.groups, currentGroup?.models, currentModel?.reasoning.values, imageSizes, selectorOpen]);
+  }, [
+    config?.groups,
+    currentGroup?.models,
+    currentModel?.reasoning.values,
+    imageSizes,
+    selectorOpen,
+    agentCwd,
+  ]);
 
   const selectorTitle =
     selectorOpen === "group"
@@ -479,7 +535,9 @@ export function PawChatPane({
         ? "选择模型"
         : selectorOpen === "reasoning"
           ? "选择推理强度"
-          : "选择图片尺寸";
+          : selectorOpen === "agentDir"
+            ? "工作目录"
+            : "选择图片尺寸";
   const selectorExplanation =
     selectorOpen === "group"
       ? "倍率决定 Token 额度如何扣除账户余额。例如 0.500x 表示每 $1 Token 额度扣除 ￥0.500 账户余额；订阅分组按服务端订阅规则计算，高峰时段按服务端时区的高峰倍率计费。"
@@ -743,6 +801,10 @@ export function PawChatPane({
           {selectionInvalid ? (
             <div className="paw-banner warn">当前选择已失效，请重新选择分组或模型。</div>
           ) : null}
+          {agentError ? <div className="paw-banner warn">{agentError}</div> : null}
+          {agentArmed && agentWaitingOnApproval ? (
+            <div className="paw-banner warn">agent 正在等待你的批准——见工具条上的「待批准」。</div>
+          ) : null}
           {configBusy && !config ? <div className="paw-banner">正在加载分组和模型...</div> : null}
 
           {messages.length === 0 ? (
@@ -958,6 +1020,61 @@ export function PawChatPane({
                     active={selectorOpen === "size"}
                   />
                 ) : null}
+                {/* agent：不是切换进去的模式，是给这个对话挂一个工作目录。
+                    只在桌面端出现——PWA 里本机没有 codex。 */}
+                {agentDesktop ? (
+                  <ActionButton
+                    label={agentArmed && agentCwd ? shortDirName(agentCwd) : "工作目录"}
+                    icon={<PawFolderIcon width={16} height={16} />}
+                    active={agentArmed}
+                    disabled={agentBusy}
+                    onClick={() => {
+                      if (agentArmed) setSelectorOpen("agentDir");
+                      else onPickAgentDirectory();
+                    }}
+                  />
+                ) : null}
+                {agentDesktop && agentApprovals.length > 0 ? (
+                  <span className="paw-agent-approval-anchor">
+                    <ActionButton
+                      label={`待批准 ${agentApprovals.length}`}
+                      icon={<PawShieldAlertIcon width={16} height={16} />}
+                      active={approvalMenuOpen}
+                      onClick={() => setApprovalMenuOpen((open) => !open)}
+                    />
+                    {approvalMenuOpen ? (
+                      <div className="paw-agent-approval-menu" role="dialog" aria-label="待批准的操作">
+                        {agentApprovals.map((request) => (
+                          <div key={request.requestId} className="paw-agent-approval-item">
+                            <p>{request.reason ?? "agent 请求执行一个操作"}</p>
+                            {request.command ? <pre>{request.command}</pre> : null}
+                            {request.grantRoot ? (
+                              <p className="paw-agent-approval-warn">
+                                这不是一次性放行：它要的是「{request.grantRoot}」这个目录的长期写权限。
+                              </p>
+                            ) : null}
+                            <div className="paw-agent-approval-actions">
+                              <button
+                                type="button"
+                                className="paw-button"
+                                onClick={() => onAnswerAgentApproval(request.requestId, false)}
+                              >
+                                拒绝
+                              </button>
+                              <button
+                                type="button"
+                                className="paw-button primary"
+                                onClick={() => onAnswerAgentApproval(request.requestId, true)}
+                              >
+                                同意
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </span>
+                ) : null}
               </div>
             <div className="paw-input-actions-end">
               <ActionButton
@@ -1102,6 +1219,9 @@ export function PawChatPane({
               onChangeModel(value);
             } else if (selectorOpen === "reasoning") {
               onChangeReasoning(value);
+            } else if (selectorOpen === "agentDir") {
+              if (value === "change") onChangeAgentDirectory();
+              else onEndAgentSession();
             } else {
               onChangeImageSize(value as PawImageSize);
             }
