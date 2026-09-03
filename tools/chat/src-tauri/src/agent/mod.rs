@@ -91,7 +91,7 @@ impl AgentBridge {
 
         let config = EngineConfig {
             binary: params.codex_binary.into(),
-            home,
+            home: home.clone(),
             base_url: params.base_url,
             model: params.model,
         };
@@ -121,6 +121,16 @@ impl AgentBridge {
             .handshake("cofly-workbench", env!("CARGO_PKG_VERSION"), &params.api_key)
             .await
             .map_err(|e| BridgeError::Session(e.to_string()))?;
+
+        // **凭据落地的那一瞬间就把它抹掉。**
+        //
+        // 产品承诺是「key 只在内存里传，不落盘」，但这个承诺光靠调用方守不住：
+        // 实测 `account/login/start` 一送进去，codex 自己就把明文 key 写进
+        // CODEX_HOME/auth.json。也实测了删掉之后会话照常跑完、且不会被写回来。
+        //
+        // 抹不掉就**让这次会话起不来** —— 承诺没兑现而用户不知道，比起不来糟得多。
+        home.purge_credentials()
+            .map_err(|e| BridgeError::Host(e.to_string()))?;
 
         let thread_id = session
             .start_thread(cwd, sandbox, approval)

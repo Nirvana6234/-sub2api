@@ -65,6 +65,55 @@ impl CodexHome {
     pub fn as_path(&self) -> &Path {
         &self.0
     }
+
+    /// 凭据在这个目录里的落点。
+    pub fn credentials_file(&self) -> PathBuf {
+        self.0.join("auth.json")
+    }
+
+    /// **握手之后立刻调用**：把 codex 刚写下的凭据从磁盘上抹掉。
+    ///
+    /// # 为什么必须做这件事
+    ///
+    /// 产品约定是「key 在内存里传递，不落盘」。但这个承诺**光靠调用方守不住** ——
+    /// 实测：`account/login/start` 一送进去，codex 自己就把 key 写进
+    /// `CODEX_HOME/auth.json`（96 字节，明文）。不管调用方多小心，文件就在那儿。
+    ///
+    /// 好在也实测了另一半：**登录之后立刻删掉这个文件，会话照常跑完一轮，
+    /// 而且 codex 不会把它写回来**（拿到了 assistant 正文，结束时文件仍不存在）。
+    /// 于是 key 在磁盘上的存活时间被压到毫秒级。
+    ///
+    /// 删之前先用零覆盖同样长度：删除只是摘掉目录项，内容还躺在扇区上。
+    /// 这挡不住取证级恢复，但挡得住「翻一眼硬盘就看见」。
+    ///
+    /// # 尚未验证
+    ///
+    /// 只验过**一条连接上的一轮**。codex 在 401 重试、断线重连、`thread/resume`
+    /// 时会不会回头重读这个文件，**没有验过**。真出现「删了之后长会话中途失效」，
+    /// 第一个要怀疑的就是这里。
+    ///
+    /// # Errors
+    /// 文件存在却删不掉时返回 —— **这一条不能吞**：删不掉就等于承诺没兑现。
+    pub fn purge_credentials(&self) -> Result<bool, HostError> {
+        let path = self.credentials_file();
+        if !path.exists() {
+            return Ok(false);
+        }
+
+        if let Ok(meta) = std::fs::metadata(&path) {
+            let len = meta.len() as usize;
+            // 覆盖失败不算致命（下一步的删除才是），但值得尽力。
+            let _ = std::fs::write(&path, vec![0u8; len]);
+        }
+
+        std::fs::remove_file(&path).map_err(|e| {
+            HostError::CredentialLeak(format!(
+                "删不掉 {}：凭据留在了磁盘上，而我们承诺过不落盘（{e}）",
+                path.display()
+            ))
+        })?;
+        Ok(true)
+    }
 }
 
 /// 这个路径是不是落在系统临时目录之下。

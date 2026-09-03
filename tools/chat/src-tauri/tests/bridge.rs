@@ -340,3 +340,62 @@ fn ui_events_are_tagged_so_the_frontend_can_switch_on_them() {
     .expect("序列化");
     assert_eq!(bad.get("type").and_then(|v| v.as_str()), Some("decodeError"));
 }
+
+/// **A9 的核心验收**：会话跑起来之后，磁盘上不许留下那把 key。
+///
+/// 产品对用户的承诺是「key 只在内存里传，不落盘」。这个承诺**光靠调用方守不住**：
+/// 实测 `account/login/start` 一送进去，codex 自己就把明文 key 写进
+/// `CODEX_HOME/auth.json`。所以桥在握手之后立刻把它抹掉。
+///
+/// 这条测试同时钉住两件事：**文件确实没了**，而且**会话照样能跑完一轮** ——
+/// 只验前者会得到一个「安全但不能用」的实现。
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "需要真 codex 进程与中转站：cargo test -p chat --test bridge -- --ignored"]
+async fn the_key_does_not_survive_on_disk_and_the_session_still_works() {
+    let collector = Arc::new(Collector::default());
+    let bridge = AgentBridge::new(Arc::clone(&collector) as Arc<dyn EventSink>);
+
+    let p = params("nokey", "read-only", "never");
+    let auth = std::path::Path::new(&p.codex_home).join("auth.json");
+    // 上一次跑剩下的，先清掉，免得「本来就没有」冒充成「被抹掉了」。
+    let _ = std::fs::remove_file(&auth);
+
+    bridge.start(p).await.expect("起会话");
+
+    assert!(
+        !auth.exists(),
+        "握手之后 {} 还在 —— key 留在了磁盘上，承诺没兑现",
+        auth.display()
+    );
+
+    // 光删掉不算数：会话得还能用。
+    bridge
+        .send("Reply with exactly one word: PONG".to_owned())
+        .await
+        .expect("发一轮");
+    assert!(
+        collector
+            .wait_for(Duration::from_secs(180), |e| matches!(
+                e,
+                UiEvent::TurnCompleted { .. }
+            ))
+            .await,
+        "抹掉凭据之后这一轮跑不完了 —— 说明 codex 会回头重读那个文件"
+    );
+
+    let text: String = collector
+        .snapshot()
+        .iter()
+        .filter_map(|e| match e {
+            UiEvent::AgentText { delta, .. } => Some(delta.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(!text.trim().is_empty(), "没拿到正文");
+
+    // 跑完一轮之后也不许被写回来。
+    assert!(!auth.exists(), "跑完一轮之后 auth.json 又出现了");
+
+    bridge.stop().await.expect("停止");
+    assert!(!auth.exists(), "停止之后 auth.json 又出现了");
+}
