@@ -3337,3 +3337,196 @@ textarea:disabled {
     justify-content: center;
   }
 }
+
+/* ── agent 会话面（A6） ──────────────────────────────────────────
+   只在桌面端出现。样式刻意保持朴素：这一版的重点是把链路跑通，
+   审批那块的正经视觉留给 A7。 */
+.paw-agent-toggle {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  z-index: 20;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--paw-border, #d0d0d8);
+  background: var(--paw-surface, #fff);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.paw-agent {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 56px 24px 24px;
+  overflow: hidden;
+  height: 100%;
+  min-width: 0;
+}
+
+.paw-agent-error {
+  color: #b42318;
+  background: #fef3f2;
+  border: 1px solid #fecdca;
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin: 0;
+}
+
+.paw-agent-setup {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 560px;
+}
+
+.paw-agent-setup label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.paw-agent-setup select {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+}
+
+.paw-agent-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.paw-agent-cwd {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+/* 这条不是装饰：它说的是"同意"到底意味着什么。 */
+.paw-agent-hint {
+  font-size: 12px;
+  line-height: 1.6;
+  background: #fffaeb;
+  border: 1px solid #fedf89;
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin: 0;
+}
+
+.paw-agent-history ul {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.paw-agent-history button {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--paw-border, #e4e4ea);
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+}
+
+.paw-agent-live {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+}
+
+.paw-agent-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.paw-agent-bar code {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paw-agent-waiting {
+  margin: 0;
+  font-size: 13px;
+  color: #b54708;
+}
+
+.paw-agent-approval {
+  border: 1px solid #fedf89;
+  background: #fffaeb;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+/* 命令必须原样、完整地看得见 —— 截断会让人在没看清的情况下点同意。 */
+.paw-agent-approval pre {
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 12px;
+  margin: 6px 0;
+}
+
+.paw-agent-transcript {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  border: 1px solid var(--paw-border, #e4e4ea);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.paw-agent-line {
+  margin: 0 0 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.paw-agent-user { font-weight: 600; }
+.paw-agent-reasoning { opacity: 0.6; font-style: italic; }
+.paw-agent-command { font-family: ui-monospace, monospace; font-size: 12px; opacity: 0.85; }
+.paw-agent-notice { color: #b54708; }
+/* 诊断必须看得见（协议漂了要有人发现），但绝不能长得像 agent 的正文。 */
+.paw-agent-diagnostic {
+  color: #6941c6;
+  font-size: 11px;
+  border-left: 2px solid #b692f6;
+  padding-left: 8px;
+}
+
+.paw-agent-compose {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.paw-agent-compose textarea {
+  flex: 1;
+  min-height: 60px;
+  resize: vertical;
+  padding: 8px;
+  font: inherit;
+}

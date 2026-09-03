@@ -185,6 +185,9 @@ fn resolve_agent_paths(app: &tauri::AppHandle) -> agent::AgentPaths {
 
 pub fn run() {
     tauri::Builder::default()
+        // 选工作目录用。**只加了它一个** —— v2 里插件命令是要在 capabilities 里
+        // 显式放行的，多放一个就多一个前端能碰的原生能力。
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let sink = Arc::new(TauriSink(app.handle().clone()));
             let paths = resolve_agent_paths(app.handle());

@@ -1,7 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useState, type CSSProperties, type PointerEvent } from "react";
+
+import { isTauri } from "../../client/agent/host";
+import { getPawServiceBaseUrl } from "../../client/paw/config";
 import { PawAuthPage } from "./PawAuthPage";
+import { PawAgentPane } from "./PawAgentPane";
 import { PawChatPane } from "./PawChatPane";
 import { PawSidebar } from "./PawSidebar";
 import { PawSettingsModal, PawShortcutsModal } from "./PawSettingsModal";
@@ -36,11 +40,19 @@ export function PawApp() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  /// agent 面只在桌面端存在；判断必须在 effect 里做（静态导出会预渲染，
+  /// 模块顶层算出来的答案会被烤进产物）。
+  const [desktop, setDesktop] = useState(false);
+  const [showAgent, setShowAgent] = useState(false);
   const [confirmState, setConfirmState] = useState<{
     title: string;
     message: string;
     onConfirm: () => void;
   } | null>(null);
+
+  useEffect(() => {
+    setDesktop(isTauri());
+  }, []);
 
   useEffect(() => {
     try {
@@ -263,6 +275,18 @@ export function PawApp() {
         aria-label="关闭侧栏"
         onClick={() => setMobileSidebarOpen(false)}
       />
+
+      {/* 只有桌面端有 agent —— PWA 里本机没有 codex，这个开关不该出现。 */}
+      {desktop ? (
+        <button
+          className="paw-agent-toggle"
+          type="button"
+          aria-pressed={showAgent}
+          onClick={() => setShowAgent((v) => !v)}
+        >
+          {showAgent ? "回到对话" : "agent"}
+        </button>
+      ) : null}
       <PawSidebar
         session={paw.session}
         config={paw.config}
@@ -308,6 +332,12 @@ export function PawApp() {
             paw.handleLogout();
           }}
           onClose={() => setProfileOpen(false)}
+        />
+      ) : desktop && showAgent ? (
+        <PawAgentPane
+          config={paw.config}
+          relayBaseUrl={getPawServiceBaseUrl()}
+          sessionToken={paw.session?.accessToken ?? null}
         />
       ) : (
       <PawChatPane
