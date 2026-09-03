@@ -46,9 +46,15 @@ use crate::HostError;
 const CODEX_PATH: &str = "/v1/responses";
 
 /// 后端那条只认账号会话的路。
+///
+/// **这两个常量在 Go 那侧有一份副本**（`backend/internal/server/routes/paw.go`
+/// 的 `PawGroupHeader` 与路由注册），两边靠肉眼对齐 —— 改名的话两边测试都还是
+/// 绿的、而产品 404。所以两边各钉一次**字面量**：这侧在 `tests/proxy.rs`，
+/// 那侧在 `TestPawResponsesRouteWireContractMatchesTheRustRelay`。
 const UPSTREAM_PATH: &str = "/api/v1/paw/responses";
 
 /// 分组走请求头，因为请求体必须原样是一份 Responses 载荷。
+/// 同上：改它就要同步改 Go 那侧的 `PawGroupHeader`。
 const GROUP_HEADER: &str = "X-Paw-Group-Id";
 
 type ProxyBody = BoxBody<Bytes, std::io::Error>;

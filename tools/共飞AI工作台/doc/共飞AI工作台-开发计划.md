@@ -613,9 +613,21 @@ codex 拿到 `http://127.0.0.1:<随机端口>/v1` 加一个**随机本地令牌*
 
 不再是「一个分组一把 key」的变通，而是**分组回到按请求选**。代价是 `codex_host::keylease` 与 `client/paw/agentKey.ts` **成了死代码** —— 暂不删，等对真中转站验过一次再单独一版删，万一要回滚也容易。
 
+##### 走 paw 这条路顺带继承的两条限制（查了配置，都不用改，但要知道）
+
+- **请求体上限 256MB**（`gateway.max_body_size` 默认值）。第一轮实测 47KB，历史和工具结果会涨，但离这个数还很远。
+- **`/api/v1/paw/*` 整组挂着按用户限流，默认 240 次/分钟**，而且**和 Chat 界面自己的请求共用一个桶**。一轮带 10 次工具调用就是 10+ 个 `/responses`，按真实节奏（每次都要等模型往返）够用；但这是个天花板，撞上时的表现是**半路 429**，不好查。真撞上了是调设置，不是改代码。
+
+##### 这一版给 A6 留下的两条硬要求
+
+1. **必须调 `agent_set_session_token`。** 命令有了，还没有调用方：前端刷新 token 之后要推一次，登出要推 `null`。不推的话转发层握着一个过期 JWT → 后端 401 → codex 进 `willRetry` 重连循环，界面上只会显示「Reconnecting…」，没有任何解释。
+2. **模型必须从 `/api/v1/paw/config` 里选。** `PrepareResponses` 就是拿这份目录校验的，从别处拿来的模型名会让**每一轮**都以 `MODEL_UNAVAILABLE` 400 掉。
+
 ##### 验收状态
 
-- 后端 6 条、转发层 9 条、真报文闸门 6 条，全绿；工作区 67 passed / 8 ignored / 0 failed，clippy 零 warning。
+- 后端 9 条、转发层 9 条、真报文闸门 6 条，全绿；工作区 67 passed / 8 ignored / 0 failed，clippy 零 warning。
+- 分派的两半都验了：OpenAI/Grok → OpenAI 网关，其余 → 通用网关。和 `gateway.go` 里 `/responses` 用的 `isOpenAIResponsesCompatibleGatewayPlatform` 是同一套判定，写法不同但必须同答案 —— 只测一种平台的话，分歧了也看不出来。
+- 线上契约（`/api/v1/paw/responses` 与 `X-Paw-Group-Id`）在 Go 与 Rust 两侧**各钉了一次字面量**：这两个常量靠肉眼对齐，改名的话两边测试都还是绿的、而产品 404。
 - **未做**：对真中转站跑一次端到端（A 组一轮 → 切 B 组 → 新会话确实走 B 组）。这条要等 A6 有界面才好验。
 
 ### A10 — 打包与版本工程
