@@ -174,35 +174,18 @@ func (s *PawChatService) Prepare(ctx context.Context, userID int64, req PawChatR
 			return nil, infraerrors.BadRequest("INVALID_REQUEST", "messages must contain a supported role and non-empty content")
 		}
 	}
-	config, err := s.config.GetAvailableConfig(ctx, userID)
+	group, model, err := s.selectPawGroupModel(ctx, userID, req.GroupID, modelID)
 	if err != nil {
-		return nil, errPawKeyUnavailable.WithCause(err)
-	}
-	group, model, ok := s.findPawChatSelection(ctx, config, req.GroupID, modelID)
-	if !ok {
-		if pawGroupExists(config, req.GroupID) {
-			return nil, errPawModelUnavailable
-		}
-		return nil, errPawGroupForbidden
+		return nil, err
 	}
 	if reasoning := strings.TrimSpace(req.Reasoning); reasoning != "" && !pawReasoningValueAvailable(model, reasoning) {
 		return nil, errPawReasoningUnsupported
 	}
 
-	apiKey, subscription, err := s.keySource.ResolvePawAPIKey(ctx, userID, group.ID)
-	if err != nil || apiKey == nil {
-		return nil, errPawKeyUnavailable.WithCause(err)
+	resolvedKey, subscription, err := s.resolvePawKeyForGroup(ctx, userID, group)
+	if err != nil {
+		return nil, err
 	}
-	if apiKey.Status == StatusAPIKeyQuotaExhausted || apiKey.IsQuotaExhausted() {
-		return nil, errPawQuotaExceeded
-	}
-	if apiKey.Status != "" && apiKey.Status != StatusActive {
-		return nil, errPawKeyUnavailable
-	}
-	if apiKey.IsExpired() {
-		return nil, errPawKeyUnavailable
-	}
-	resolvedKey := clonePawAPIKeyWithGroup(apiKey, group)
 	messages, err := s.buildPawChatMessages(ctx, userID, req.Messages, req.Attachments)
 	if err != nil {
 		return nil, err
@@ -223,6 +206,111 @@ func (s *PawChatService) Prepare(ctx context.Context, userID int64, req PawChatR
 	}
 	return &PawChatResolution{
 		Body:         body,
+		APIKey:       resolvedKey,
+		Subscription: subscription,
+		Group:        group,
+		Model:        modelID,
+	}, nil
+}
+
+// selectPawGroupModel 校验「这个用户能不能在这个分组里用这个模型」。
+//
+// 分组不可见和分组里没这个模型是**两种不同的错**，不能合并：
+// 后者告诉用户换个模型，前者不能透露这个分组存在。
+func (s *PawChatService) selectPawGroupModel(ctx context.Context, userID, groupID int64, modelID string) (*Group, PawModel, error) {
+	config, err := s.config.GetAvailableConfig(ctx, userID)
+	if err != nil {
+		return nil, PawModel{}, errPawKeyUnavailable.WithCause(err)
+	}
+	group, model, ok := s.findPawChatSelection(ctx, config, groupID, modelID)
+	if !ok {
+		if pawGroupExists(config, groupID) {
+			return nil, PawModel{}, errPawModelUnavailable
+		}
+		return nil, PawModel{}, errPawGroupForbidden
+	}
+	return group, model, nil
+}
+
+// resolvePawKeyForGroup 取服务端自己那把内部 key，并**钉死在这个分组上**。
+//
+// 钉死是关键：那把 key 是 auto_group 的，不钉就会按**请求体里的 model**
+// 自己去选分组，而调用方已经明确选了一个。clonePawAPIKeyWithGroup 会把
+// auto_group 那一排字段全清掉，让分组只能来自调用方的选择。
+func (s *PawChatService) resolvePawKeyForGroup(ctx context.Context, userID int64, group *Group) (*APIKey, *UserSubscription, error) {
+	apiKey, subscription, err := s.keySource.ResolvePawAPIKey(ctx, userID, group.ID)
+	if err != nil || apiKey == nil {
+		return nil, nil, errPawKeyUnavailable.WithCause(err)
+	}
+	if apiKey.Status == StatusAPIKeyQuotaExhausted || apiKey.IsQuotaExhausted() {
+		return nil, nil, errPawQuotaExceeded
+	}
+	if apiKey.Status != "" && apiKey.Status != StatusActive {
+		return nil, nil, errPawKeyUnavailable
+	}
+	if apiKey.IsExpired() {
+		return nil, nil, errPawKeyUnavailable
+	}
+	return clonePawAPIKeyWithGroup(apiKey, group), subscription, nil
+}
+
+// PawResponsesRequest —— Responses 线协议这条的入参。
+//
+// 比 PawChatRequest 少了 Messages，是因为**请求体必须原样透传**：codex 发的是一份
+// 完整的 Responses 载荷（instructions / tools / input 一应俱全，实测 ~47KB），我们没有
+// 资格重新拼一份 —— 漏掉一个字段就是惄惄改变了 agent 的行为，而且不会报错。
+// 所以这条路上我们**只校验，不改写**：分组从请求头来，模型从 body 里读出来看一眼。
+type PawResponsesRequest struct {
+	GroupID int64
+	ModelID string
+}
+
+// PawResponsesResolution 比 PawChatResolution 少一个 Body，同样是因为 body 不经我们的手。
+type PawResponsesResolution struct {
+	APIKey       *APIKey
+	Subscription *UserSubscription
+	Group        *Group
+	Model        string
+}
+
+// PrepareResponses 跟 Prepare 走同一套分组/模型/key 规则，只是不碰请求体。
+//
+// 它存在的理由：工作台里的 codex **只会说 Responses 一种线协议**，而 Paw 面原先
+// 只开了 chat/completions。没有这条，客户端就只能自己握一把 API key 去打网关，
+// 于是分组被绑死在 key 上（网关没有按请求选分组的入口）。走 Paw 这条之后，
+// 分组回到**按请求**选，且客户端一把 key 都不需要拿。
+func (s *PawChatService) PrepareResponses(ctx context.Context, userID int64, req PawResponsesRequest) (*PawResponsesResolution, error) {
+	if s == nil || s.config == nil || s.keySource == nil {
+		return nil, errPawKeyUnavailable
+	}
+	if userID <= 0 {
+		return nil, infraerrors.Unauthorized("AUTH_REQUIRED", "authenticated user is required")
+	}
+	if req.GroupID <= 0 {
+		return nil, errPawGroupForbidden
+	}
+	modelID := strings.TrimSpace(req.ModelID)
+	if modelID == "" {
+		return nil, errPawModelUnavailable
+	}
+
+	group, _, err := s.selectPawGroupModel(ctx, userID, req.GroupID, modelID)
+	if err != nil {
+		return nil, err
+	}
+
+	// 注意这里**没有** reasoning 校验，和 Prepare 不同，是故意的。
+	//
+	// chat 那条的 reasoning 是**用户在界面上选的**，挡下来是在帮用户；这条的
+	// reasoning 是 **codex 自己发的**（每一轮都带 reasoning.effort），是一份我们已经
+	// 承诺原样透传的载荷的一部分。只校验其中一半是矛盾的，而且一旦 Paw 的
+	// 模型目录没列出那个档位，**每一轮**都会被一句「reasoning level not supported」
+	// 退回来 —— 而上游其实接得住。
+	resolvedKey, subscription, err := s.resolvePawKeyForGroup(ctx, userID, group)
+	if err != nil {
+		return nil, err
+	}
+	return &PawResponsesResolution{
 		APIKey:       resolvedKey,
 		Subscription: subscription,
 		Group:        group,
