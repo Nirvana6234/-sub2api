@@ -110,3 +110,51 @@ fn no_workbench_source_file_is_silently_gitignored() {
         ignored.join("\n  ")
     );
 }
+
+/// **每个 `.py` 探针都必须能通过语法检查。**
+///
+/// 这几个脚本没有任何测试盯着 —— 它们的"测试"就是拿真 codex 跑一遍，而那要几十秒
+/// 加一个真二进制，所以平时不会跑。结果是：一个语法错误可以安安静静地被提交进去，
+/// 直到下次有人真去用它才炸。**这已经发生过一次**（heredoc 把 `\n` 折成了真换行，
+/// 字符串 literal 就断了）。
+///
+/// 编译一次比跑一次便宜得多，而它抓的正是最容易犯的那类错。
+#[test]
+fn every_probe_script_at_least_parses() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut scripts = Vec::new();
+    collect(&root, &mut scripts);
+    let scripts: Vec<_> = scripts
+        .into_iter()
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("py"))
+        .collect();
+    assert!(!scripts.is_empty(), "一个 .py 都没找到 —— 这条闸门失效了");
+
+    // 找不到解释器就**失败**，不是跳过。一个静默跳过的闸门等于没有闸门 ——
+    // 这正是它上面那条注释里说的那个教训。
+    let python = ["python", "python3"]
+        .into_iter()
+        .find(|bin| {
+            Command::new(bin)
+                .arg("--version")
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        })
+        .expect("找不到 python/python3 —— 这些探针本来就要 Python 才能跑");
+
+    for script in &scripts {
+        let out = Command::new(python)
+            .arg("-c")
+            .arg("import ast,io,sys; ast.parse(io.open(sys.argv[1],encoding='utf-8').read())")
+            .arg(script)
+            .output()
+            .expect("起不了 python");
+        assert!(
+            out.status.success(),
+            "{} 语法就过不了:\n{}",
+            script.display(),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
