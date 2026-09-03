@@ -136,20 +136,32 @@ export function PawAgentPane({ config, relayBaseUrl, sessionToken }: PawAgentPan
 
   // 分组/模型都得来自 /api/v1/paw/config —— 后端就是拿那份目录校验的，
   // 从别处来的模型名会让**每一轮**都以 MODEL_UNAVAILABLE 400 掉。
+  //
+  // **一律拿实际列表校验，不信任 defaults。** 用户没存过默认值时后端返回的是
+  // `PawDefaults{}` 零值，也就是 `group_id: 0` —— 而 `0` 是个合法的 number，
+  // `??` 不会穿透它。第一版就栽在这：groupId 变成 0，跟任何 option 都不匹配，
+  // 浏览器照样把第一项画出来（看着像选中了），但 activeGroup 是 null，
+  // 于是模型下拉是空的，而且**没有任何报错**。
   useEffect(() => {
     if (!config) return;
-    setGroupId((prev) => prev ?? config.defaults.group_id ?? groups[0]?.id ?? null);
+    setGroupId((prev) => {
+      if (prev != null && groups.some((g) => g.id === prev)) return prev;
+      const preferred = groups.find((g) => g.id === config.defaults.group_id);
+      return preferred?.id ?? groups[0]?.id ?? null;
+    });
   }, [config, groups]);
 
   useEffect(() => {
-    if (!activeGroup) return;
-    setModel((prev) =>
-      activeGroup.models.some((m) => m.id === prev)
-        ? prev
-        : (config?.defaults.model_id && activeGroup.models.some((m) => m.id === config.defaults.model_id)
-            ? config.defaults.model_id
-            : activeGroup.models[0]?.id ?? ""),
-    );
+    const models = activeGroup?.models ?? [];
+    if (models.length === 0) {
+      setModel("");
+      return;
+    }
+    setModel((prev) => {
+      if (models.some((m) => m.id === prev)) return prev;
+      const preferred = models.find((m) => m.id === config?.defaults.model_id);
+      return preferred?.id ?? models[0].id;
+    });
   }, [activeGroup, config]);
 
   const pushLine = useCallback((kind: Line["kind"], text: string) => {
@@ -376,12 +388,24 @@ export function PawAgentPane({ config, relayBaseUrl, sessionToken }: PawAgentPan
 
           <label>
             模型
-            <select value={model} onChange={(e) => setModel(e.target.value)}>
+            <select
+              value={model}
+              disabled={(activeGroup?.models ?? []).length === 0}
+              onChange={(e) => setModel(e.target.value)}
+            >
               {(activeGroup?.models ?? []).map((m) => (
                 <option key={m.id} value={m.id}>{m.name || m.id}</option>
               ))}
             </select>
           </label>
+
+          {/* 空下拉是最难查的一种故障：看着像"还没加载完"，其实是这个分组下就没有
+              可用模型。说出来，别让人对着一个空框猜。 */}
+          {activeGroup && activeGroup.models.length === 0 ? (
+            <p className="paw-agent-error" role="alert">
+              「{activeGroup.name}」这个分组下没有可用模型 —— 到后台给它配上渠道或模型列表再来。
+            </p>
+          ) : null}
 
           <label>
             沙箱
