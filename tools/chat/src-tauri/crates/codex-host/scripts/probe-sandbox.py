@@ -287,5 +287,4 @@ for tag, sandbox, approval, cmd, marker in CASES:
 _dest = os.environ.get("PROBE_OUT") or os.path.join(tempfile.gettempdir(),
                                                     "sandbox-results.json")
 io.open(_dest, "w", encoding="utf-8").write(json.dumps(results, ensure_ascii=False, indent=2))
-print("
-结果 -> %s" % _dest)
+print("结果 -> %s" % _dest)
