@@ -1,0 +1,36 @@
+{
+  "_notes": "probe-local-proxy.py 录的真实报文（codex-cli 0.144.2）。请求体只留了顶层字段名——正文有 47KB，且里面是 instructions/工具定义，留着没用还容易被当成可以改的东西。",
+  "codexVersion": "0.144.2",
+  "method": "POST",
+  "path": "/v1/responses",
+  "headers": {
+    "x-codex-beta-features": "remote_compaction_v2",
+    "x-codex-window-id": "01a06698-e53c-7211-ab47-dd1615b133a6:0",
+    "x-codex-turn-metadata": "{\"installation_id\":\"<REDACTED>\",\"session_id\":\"01a06698-e53c-7211-ab47-dd1615b133a6\",\"thread_id\":\"01a06698-e53c-7211-ab47-dd1615b133a6\",\"turn_id\":\"01a06698-e59e-71d0-b1c9-f8407183ca9d\",\"window_id\":\"01a06698-e53c-7211-ab47-dd1615b133a6:0\",\"request_kind\":\"turn\",\"sandbox\":\"none\",\"turn_started_at_unix_ms\":1788427691434}",
+    "x-client-request-id": "01a06698-e53c-7211-ab47-dd1615b133a6",
+    "session-id": "01a06698-e53c-7211-ab47-dd1615b133a6",
+    "thread-id": "01a06698-e53c-7211-ab47-dd1615b133a6",
+    "accept": "text/event-stream",
+    "content-type": "application/json",
+    "authorization": "Bearer <LOCAL_TOKEN>",
+    "originator": "probe",
+    "user-agent": "probe/0.144.2 (<REDACTED-PLATFORM>)",
+    "host": "127.0.0.1:59054",
+    "content-length": "47748"
+  },
+  "bodyTopLevelKeys": [
+    "client_metadata",
+    "include",
+    "input",
+    "instructions",
+    "model",
+    "parallel_tool_calls",
+    "prompt_cache_key",
+    "reasoning",
+    "store",
+    "stream",
+    "tool_choice",
+    "tools"
+  ],
+  "bodyBytes": 47748
+}
