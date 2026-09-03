@@ -180,6 +180,11 @@ export function useAgentSession(params: UseAgentSessionParams): AgentSessionApi 
           // **不是终态**：codex 会自己重试，别把它当失败呈现。
           if (liveConversationId) appendNotice(liveConversationId, `_正在重试：${event.message}_`);
           break;
+        case "warning":
+          // codex 认识的一句话提醒（比如模型元数据缺失的降级提示）——
+          // 和下面的 passthrough/decodeError 不同，这条**没有**"协议可能漂了"的意味。
+          if (liveConversationId) appendNotice(liveConversationId, `⚠️ ${event.message}`);
+          break;
         case "failed":
           setSendingTurn(false);
           if (pending) finishTurn(pending.conversationId, pending.messageId, { error: true });

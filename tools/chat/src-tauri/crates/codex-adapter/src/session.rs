@@ -88,6 +88,18 @@ pub enum SessionEvent {
         method: String,
         raw: Value,
     },
+    /// codex 主动说给用户听的一句话（见 `NotificationPayload::Warning`）。
+    /// **必须**转给界面——不是我们没见过的协议，是 codex 认为用户该知道。
+    Warning {
+        message: String,
+    },
+    /// 认识、但故意不往上传的方法（见 `NotificationPayload::Ignored`）。
+    /// **不产生任何 UI 事件**——这条和 `Passthrough` 的区别就在这里：
+    /// `Passthrough` 是"看不懂，你们看看要不要处理"，这条是"看懂了，不用管"。
+    Ignored {
+        #[allow(dead_code)]
+        method: String,
+    },
     /// 有一行解不开 —— 基本等于版本漂移。
     DecodeError {
         line: String,
@@ -324,6 +336,8 @@ fn translate(incoming: Incoming, state: &Arc<Mutex<SessionState>>) -> SessionEve
             NotificationPayload::ItemCompleted {
                 item_type, item_id, item_status, item, ..
             } => SessionEvent::ItemCompleted { item_id, item_type, item_status, item },
+            NotificationPayload::Warning { message, .. } => SessionEvent::Warning { message },
+            NotificationPayload::Ignored { method } => SessionEvent::Ignored { method },
             NotificationPayload::Other => {
                 SessionEvent::Passthrough { method: note.method, raw: note.raw }
             }

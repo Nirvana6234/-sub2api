@@ -446,6 +446,37 @@ pub enum NotificationPayload {
     /// API key 发一轮，`turn/start` 正常返回成功，401 是以一串 `error` 通知的形式到达的。
     /// 所以只盯着请求响应做错误处理，会把上游错误整类漏掉。
     Error(ErrorNotification),
+    /// codex 自己判断"用户该看到"的一句话提醒（schema 原文："Concise warning
+    /// message for the user"）。实测撞到的第一条：模型元数据缺失时的降级提示——
+    /// "Model metadata for `gpt-5` not found. Defaulting to fallback metadata;
+    /// this can degrade performance and cause issues."。这条**必须**被界面看见，
+    /// 且不能顶着"未识别的上游通知"那种吓人的样子出现——它是 codex 主动说给用户
+    /// 听的一句话，不是我们没见过的协议。
+    Warning { thread_id: Option<String>, message: String },
+    /// **认识，但故意不投影成 UI 事件**的方法——和 `Other` 不是一回事。
+    ///
+    /// `Other` 意味着"这是什么我们不知道"，该被 UI 当成协议漂移的诊断显示出来；
+    /// `Ignored` 意味着"知道这是什么，就是这台工作台用不上"。目前三个：
+    ///
+    /// - `thread/tokenUsage/updated`、`account/rateLimits/updated`——codex 自己的
+    ///   ChatGPT 订阅套餐记账（`PlanType::free/plus/pro/team/...`、积分余额），
+    ///   而我们走自定义 provider + 账号会话，配额和计费全在 sub2api 后端那一侧。
+    /// - `remoteControl/status/changed`——codex 自己那个 `--remote-control` 功能
+    ///   的连接状态（我们从不传这个参数，永远是 `disabled`）。我们的远程操作
+    ///   方案是另一套，跟这个报的是两码事。
+    /// - `account/login/completed`——**实测过它不携带我们需要的信息**：录到的两份
+    ///   fixture 里，一份用的是真本地令牌、一份是故意错的（`bad-credentials`），
+    ///   两边这条通知都回 `success: true, error: null`。也就是说它只确认"codex
+    ///   收下了 `account/login/start` 这个调用形状、把凭据写进了 auth.json"，
+    ///   不确认凭据是否真的能用——真能不能用要等第一次实际调用，那时候失败会走
+    ///   `error` 通知（见 `NotificationPayload::Error`），我们已经在处理。
+    /// - `account/updated`——账号级的 authMode/planType 广播。实测录到的值是
+    ///   `{"authMode":"apikey","planType":null}`：authMode 是我们自己设的，
+    ///   planType 用不上 ChatGPT 订阅套餐，两个字段都不携带新信息。
+    ///
+    /// 第一次真实使用就在界面上炸出一片黄色的"未识别的上游通知"——协议识别是对的
+    /// （这些方法确实存在），错的是把「用不上」当成了「没见过」。
+    Ignored { method: String },
     Other,
 }
 
@@ -652,6 +683,17 @@ impl Notification {
                     details: err.and_then(|e| str_field(e, "additionalDetails")),
                 })
             }
+            "warning" => NotificationPayload::Warning {
+                thread_id: str_field(&raw, "threadId"),
+                message: str_field(&raw, "message").unwrap_or_default(),
+            },
+            "thread/tokenUsage/updated"
+            | "account/rateLimits/updated"
+            | "remoteControl/status/changed"
+            | "account/login/completed"
+            | "account/updated" => {
+                NotificationPayload::Ignored { method: method.clone() }
+            }
             _ => NotificationPayload::Other,
         };
 
@@ -776,5 +818,32 @@ impl ServerRequest {
             },
         };
         Answer { id: self.id.clone(), body }
+    }
+}
+
+#[cfg(test)]
+mod ignored_notification_tests {
+    use super::*;
+
+    /// 钉住具体是哪两个方法——这是实测撞出来的白名单，不是猜的。
+    /// 撞见经过：0.153.0 每轮之后都推这两条，真实使用第一次就在界面上炸出一片
+    /// "未识别的上游通知"；而 fixture 里其实早就录到了，只是没人拿它们比对过
+    /// `Other`。见 `tests/replay.rs` 里 `every_notification_we_have_ever_recorded_has_a_known_home`。
+    #[test]
+    fn accounting_notifications_are_recognized_and_ignored_not_passthrough() {
+        for method in [
+            "thread/tokenUsage/updated",
+            "account/rateLimits/updated",
+            "remoteControl/status/changed",
+            "account/login/completed",
+            "account/updated",
+        ] {
+            let note = Notification::project(method.to_owned(), serde_json::json!({}));
+            assert!(
+                matches!(&note.payload, NotificationPayload::Ignored { method: m } if m == method),
+                "{method} 没有落进 Ignored：{:?}",
+                note.payload
+            );
+        }
     }
 }

@@ -89,6 +89,12 @@ pub enum UiEvent {
         auth_failure: bool,
     },
 
+    /// codex 主动说给用户听的一句话（比如模型元数据缺失时的降级提示）。
+    /// **必须显示**，但和 `Passthrough`/`DecodeError` 不同——这条是认识、
+    /// 且认为用户该看到的，不该套诊断那种「协议可能漂了」的措辞。
+    #[serde(rename_all = "camelCase")]
+    Warning { message: String },
+
     #[serde(rename_all = "camelCase")]
     Failed {
         message: String,

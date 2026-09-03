@@ -373,6 +373,9 @@ fn spawn_pump(
                         request_id: request_id.to_string(),
                     });
                 }
+                SessionEvent::Warning { message } => {
+                    sink.emit(UiEvent::Warning { message });
+                }
                 SessionEvent::Retrying(err) => sink.emit(error_event(&err, true)),
                 SessionEvent::Failed(err) => sink.emit(error_event(&err, false)),
                 SessionEvent::TurnCompleted { turn_id, status } => {
@@ -387,6 +390,10 @@ fn spawn_pump(
                 SessionEvent::Passthrough { method, raw } => {
                     sink.emit(UiEvent::Passthrough { method, raw });
                 }
+                // 认识、但用不上的记账通知（token 用量、ChatGPT 套餐限额）——
+                // 我们的配额和计费全在 sub2api 后端那一侧，故意不转发给界面。
+                // 见 codex_adapter::protocol::NotificationPayload::Ignored。
+                SessionEvent::Ignored { .. } => {}
                 SessionEvent::DecodeError { line, error } => {
                     sink.emit(UiEvent::DecodeError { line, error });
                 }

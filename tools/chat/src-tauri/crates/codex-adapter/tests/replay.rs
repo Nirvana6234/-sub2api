@@ -31,6 +31,7 @@ fn answer_value(a: &codex_adapter::Answer) -> Value {
 const FIXTURE: &str = include_str!("fixtures/decline-command-approval.jsonl");
 const BAD_CREDENTIALS: &str = include_str!("fixtures/bad-credentials.jsonl");
 const INVALID_CWD: &str = include_str!("fixtures/invalid-cwd.jsonl");
+const FILE_CHANGE: &str = include_str!("fixtures/decline-file-change.jsonl");
 
 /// 一条录制记录：`{t_ms, dir, msg}`，stderr 的那些没有 `msg`。
 fn records_of(fixture: &str) -> Vec<(String, Value)> {
@@ -87,6 +88,37 @@ async fn drain(fixture: &str) -> Vec<Incoming> {
     }
     pump_task.await.unwrap().expect("回放不该以连接级错误结束");
     got
+}
+
+/// **这条本来会在第一次真实使用时才发现**：0.153.0 的 codex 每轮之后都会推
+/// `thread/tokenUsage/updated`、`account/rateLimits/updated` 两条通知，而我们的 fixture 里
+/// 明明就录到了 —— `replays_the_whole_transcript_without_decode_errors` 只检查
+/// "解不解得开"，不检查"认不认识"，于是这两条方法名一直悠悠落在 `Other`
+/// 里，用户第一次真实对话就在界面上看到一片"未识别的上游通知"。
+///
+/// 这条把"认不认识"也钉住：**已经录到的每一条通知都必须有一个明确的归宿** ——
+/// 要么投影成具体的 `NotificationPayload` 变体，要么落进 `NotificationPayload::Ignored`
+/// 那个白名单，不许再悠悠地变成 `Other`。
+#[tokio::test]
+async fn every_notification_we_have_ever_recorded_has_a_known_home() {
+    for fixture in [FIXTURE, BAD_CREDENTIALS, INVALID_CWD, FILE_CHANGE] {
+        for (dir, msg) in records_of(fixture) {
+            if dir != "server->client" || msg.get("id").is_some() {
+                continue;
+            }
+            let Some(method) = msg.get("method").and_then(Value::as_str) else {
+                continue;
+            };
+            let note = codex_adapter::protocol::Notification::project(
+                method.to_owned(),
+                msg.get("params").cloned().unwrap_or(Value::Null),
+            );
+            assert!(
+                !matches!(note.payload, NotificationPayload::Other),
+                "{method} 落进了 Other——要么补一个投影，要么加进 Ignored 白名单"
+            );
+        }
+    }
 }
 
 #[tokio::test]
@@ -203,23 +235,19 @@ async fn resolved_broadcast_carries_the_request_id() {
 
 #[tokio::test]
 async fn unknown_notifications_survive_with_their_raw_payload() {
-    let incoming = drain_fixture().await;
-
-    // 这份录制里就有我们没投影的方法（tokenUsage / rateLimits / remoteControl 之类）。
-    let others: Vec<_> = incoming
-        .iter()
-        .filter_map(|i| match i {
-            Incoming::Notification(n) if matches!(n.payload, NotificationPayload::Other) => Some(n),
-            _ => None,
-        })
-        .collect();
-
-    assert!(!others.is_empty(), "这份报文里本来就有没投影的通知");
-    for note in &others {
-        assert!(!note.method.is_empty());
-        // 没投影不等于丢掉 —— 原始 params 必须还在，本机链路要能显示上游新事件。
-        assert!(!note.raw.is_null(), "{} 的 raw 丢了", note.method);
-    }
+    // **不能再从 fixture 里现捞一个 `Other` 的例子了**：这条测试原来就是这么写的
+    // （旧注释原话点名 tokenUsage/rateLimits/remoteControl 当例子），而那几个
+    // 后来全被证明是我们该认识、只是没认的方法——`every_notification_we_have_ever_recorded_has_a_known_home`
+    // 那道闸把它们转正之后，这份录制里已经一个 `Other` 都不剩，这条测试的前提
+    // 本身就是错的。改成直接造一个**保证不存在**的方法名，测的是"没投影的
+    // 东西会不会被丢掉"这个机制本身，不依赖某份录制恰好还没被我们追上。
+    let note = codex_adapter::protocol::Notification::project(
+        "definitely/not/a/real/method".to_owned(),
+        serde_json::json!({ "some": "payload" }),
+    );
+    assert!(matches!(note.payload, NotificationPayload::Other));
+    // 没投影不等于丢掉——原始 params 必须还在，本机链路要能显示上游新事件。
+    assert_eq!(note.raw, serde_json::json!({ "some": "payload" }));
 }
 
 /// 我们拼的请求参数，必须和当初真的发出去、并且被服务端接受了的那些字节一致。

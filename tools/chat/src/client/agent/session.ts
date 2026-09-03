@@ -31,6 +31,10 @@ export type AgentEvent =
   | { type: "approvalRequested"; [k: string]: unknown }
   | { type: "approvalResolved"; requestId: string }
   | { type: "retrying"; message: string; httpStatus: number | null; authFailure: boolean }
+  /** codex 主动说给用户听的一句话（比如模型元数据缺失时的降级提示）。
+   * 和 passthrough/decodeError 不同——这条是**认识**的，只是内容因情况而异，
+   * 不该套「协议可能漂了」那种诊断措辞。 */
+  | { type: "warning"; message: string }
   | { type: "failed"; message: string; httpStatus: number | null; authFailure: boolean }
   | {
       type: "turnCompleted";
