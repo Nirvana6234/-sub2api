@@ -18,6 +18,7 @@
 //! | [`home::CodexHome`] | 私有 `CODEX_HOME`：不碰用户的 `~/.codex`，且**只能开在我们自己的程序目录下** |
 //! | [`identity::DeviceIdentity`] | 机器名 + 安装 ID：托管 key 的名字要用它 |
 //! | [`keylease`] | 托管 key 的**选择规则**（挑哪把、要不要续期）—— 只碰元数据，不碰密钥 |
+//! | [`proxy::LocalRelay`] | **codex 看得见的唯一网络地址**：只听回环，把请求转发到账号会话那条路 |
 //! | [`cage::Cage`] | 强杀宿主时连坐杀掉 codex（Windows Job Object） |
 //! | [`engine::Engine`] | 起进程、交出 stdio、有序停止 |
 //! | [`supervisor::Supervisor`] | 起不来时退避重试，并且**让失败被看见** |
@@ -27,6 +28,7 @@ pub mod engine;
 pub mod home;
 pub mod identity;
 pub mod keylease;
+pub mod proxy;
 pub mod supervisor;
 
 pub use cage::Cage;
@@ -34,6 +36,7 @@ pub use engine::{Engine, EngineConfig};
 pub use home::CodexHome;
 pub use identity::DeviceIdentity;
 pub use keylease::{key_name, needs_renewal, pick_current, KeyMeta};
+pub use proxy::LocalRelay;
 pub use supervisor::{Backoff, FailedAttempt, Restarted, Supervisor};
 
 /// 宿主这一层会出的错。
@@ -56,6 +59,14 @@ pub enum HostError {
     /// 抹不掉就意味着承诺没兑现，而用户无从知晓。宁可让这次会话起不来。
     #[error("凭据残留: {0}")]
     CredentialLeak(String),
+
+    /// 本地转发层出了问题。
+    ///
+    /// 和 [`HostError::Spawn`] 分开：起不来 codex 是装配没做对，而转发层起不来意味着
+    /// **codex 将没有任何可用的出口** —— 与其让它去连一个不存在的地址然后报一串
+    /// 看不懂的上游错误，不如在这里就停住。
+    #[error("本地转发层: {0}")]
+    Proxy(String),
 
     /// 笼子没建上 —— **这一条不能降级成警告**。
     ///

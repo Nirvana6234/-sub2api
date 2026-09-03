@@ -14,7 +14,7 @@ use codex_adapter::{
     ApprovalDecision, ApprovalPolicy, ErrorNotification, ReasoningKind, RequestId, SandboxMode,
     WorkspaceDir,
 };
-use codex_host::{Backoff, CodexHome, Engine, EngineConfig, Supervisor};
+use codex_host::{Backoff, CodexHome, Engine, EngineConfig, LocalRelay, Supervisor};
 use tokio::sync::Mutex;
 
 use dto::{ApprovalKind, ApprovalRequest, StartParams, StartedThread, UiDecision, UiEvent};
@@ -62,12 +62,20 @@ struct Running {
     pending: Pending,
     /// 会话结束时要把凭据从这里抹掉。
     home: CodexHome,
+    /// 本地转发层。**只是持有** —— 丢掉它就等于关掉那个回环端口，
+    /// codex 从此打不出去任何请求。
+    relay: LocalRelay,
 }
 
 /// 一座桥。整个应用一个。
 pub struct AgentBridge {
     running: Mutex<Option<Running>>,
     sink: Arc<dyn EventSink>,
+    /// 当前账号会话。**前端是唯一持有者**，这里只是转交给转发层。
+    ///
+    /// 刻意不在 Rust 里实现刷新：刷新逻辑已经在前端 `api.ts` 里了，
+    /// 复制一份到这边，两份迟早会对不上（而且对不上的表现是「偶尔要重新登录」）。
+    session_token: Mutex<Option<String>>,
 }
 
 impl AgentBridge {
@@ -75,6 +83,17 @@ impl AgentBridge {
         AgentBridge {
             running: Mutex::new(None),
             sink,
+            session_token: Mutex::new(None),
+        }
+    }
+
+    /// 前端在登录/刷新之后把当前账号会话推下来。传 `None` 表示已登出。
+    ///
+    /// 会话正跑着也能推 —— 转发层下一条请求就用新的，不必重启 codex。
+    pub async fn set_session_token(&self, jwt: Option<String>) {
+        *self.session_token.lock().await = jwt.clone();
+        if let Some(running) = self.running.lock().await.as_ref() {
+            running.relay.set_session_token(jwt).await;
         }
     }
 
@@ -92,10 +111,23 @@ impl AgentBridge {
         let home = CodexHome::under_app_dir(&params.app_dir)
             .map_err(|e| BridgeError::Host(e.to_string()))?;
 
+        // 先把转发层起起来，再让 codex 指向它。**codex 只看得见这个回环地址**，
+        // 中转站地址和账号会话都留在这一侧。
+        let relay = LocalRelay::start(&params.relay_base_url)
+            .await
+            .map_err(|e| BridgeError::Host(e.to_string()))?;
+        {
+            let mut held = self.session_token.lock().await;
+            if held.is_none() && !params.session_token.is_empty() {
+                *held = Some(params.session_token.clone());
+            }
+            relay.set_session_token(held.clone()).await;
+        }
+
         let config = EngineConfig {
             binary: params.codex_binary.into(),
             home: home.clone(),
-            base_url: params.base_url,
+            base_url: relay.base_url(),
             model: params.model,
         };
 
@@ -120,8 +152,10 @@ impl AgentBridge {
         let (session, events) = Session::connect(stdout, stdin);
         let session = Arc::new(session);
 
+        // 交给 codex 的"API key"是转发层那个本地令牌。它照样会被 codex 写进
+        // auth.json，但离开这台机器就一文不值 —— 真正的账号凭据从没进过它的地址空间。
         session
-            .handshake("cofly-workbench", env!("CARGO_PKG_VERSION"), &params.api_key)
+            .handshake("cofly-workbench", env!("CARGO_PKG_VERSION"), relay.token())
             .await
             .map_err(|e| BridgeError::Session(e.to_string()))?;
 
@@ -129,6 +163,10 @@ impl AgentBridge {
             .start_thread(cwd, sandbox, approval)
             .await
             .map_err(|e| BridgeError::Session(e.to_string()))?;
+
+        // 登记这条 thread 的分组。**必须在第一轮之前** —— 转发层认不出的 thread
+        // 会被直接拒掉（宁可报错也不拿别的分组顶上）。
+        relay.bind_thread(&thread_id, params.group_id).await;
 
         let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
         spawn_pump(events, Arc::clone(&self.sink), Arc::clone(&pending));
@@ -138,6 +176,7 @@ impl AgentBridge {
             _engine: engine,
             pending,
             home,
+            relay,
         });
 
         Ok(StartedThread { thread_id, attempts })

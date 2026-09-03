@@ -72,6 +72,22 @@ async fn agent_stop(bridge: tauri::State<'_, Arc<AgentBridge>>) -> Result<(), Br
     bridge.stop().await
 }
 
+/// 把当前账号会话推给转发层。
+///
+/// 前端在登录成功、以及每次刷新拿到新 access token 之后调一次；登出时传 `null`。
+/// **刷新逻辑只留在前端**（`api.ts` 里已经有了）——在 Rust 里再实现一份，
+/// 两份迟早对不上，而对不上的表现是「偶尔莫名其妙要重新登录」。
+///
+/// 会话正跑着也能调：下一条请求就用新的，不必重启 codex。
+#[tauri::command]
+async fn agent_set_session_token(
+    bridge: tauri::State<'_, Arc<AgentBridge>>,
+    token: Option<String>,
+) -> Result<(), BridgeError> {
+    bridge.set_session_token(token).await;
+    Ok(())
+}
+
 /// 这台机器上这一次安装的身份 —— 前端拿它拼托管 key 的名字。
 ///
 /// 命名规则照搬小白端：机器名让一个账号的几台机器各持各的租约，
@@ -137,6 +153,7 @@ pub fn run() {
             agent_interrupt,
             agent_answer,
             agent_stop,
+            agent_set_session_token,
             agent_is_running,
             agent_device_identity,
             agent_pick_key,

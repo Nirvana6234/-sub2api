@@ -59,28 +59,17 @@ fn params(tag: &str, sandbox: &str, approval: &str) -> StartParams {
     std::fs::create_dir_all(&app).expect("建程序数据目录");
     std::fs::create_dir_all(&work).expect("建工作目录");
 
-    let api_key = std::env::var("CODEX_ADAPTER_API_KEY").unwrap_or_else(|_| {
-        let auth = std::path::PathBuf::from(
-            std::env::var("USERPROFILE")
-                .or_else(|_| std::env::var("HOME"))
-                .expect("找不到 home"),
-        )
-        .join(".codex")
-        .join("auth.json");
-        let text = std::fs::read_to_string(&auth).expect("读不到 auth.json");
-        let json: serde_json::Value = serde_json::from_str(&text).expect("auth.json 不是 JSON");
-        json.get("OPENAI_API_KEY")
-            .and_then(|v| v.as_str())
-            .expect("auth.json 里没有 OPENAI_API_KEY")
-            .to_owned()
-    });
-
+    // 这条链路上**已经没有 API key 了**：走的是账号会话那条路。
+    // 需要的三样东西各自没有兜底 —— 猜一个只会让失败变得难懂。
     StartParams {
         codex_binary: need("CODEX_ADAPTER_BIN"),
         app_dir: app.to_string_lossy().into_owned(),
-        base_url: need("CODEX_ADAPTER_BASE_URL"),
+        relay_base_url: need("CODEX_ADAPTER_RELAY_BASE_URL"),
+        group_id: need("CODEX_ADAPTER_GROUP_ID")
+            .parse()
+            .expect("CODEX_ADAPTER_GROUP_ID 得是个数字"),
+        session_token: need("CODEX_ADAPTER_SESSION_TOKEN"),
         model: std::env::var("CODEX_ADAPTER_MODEL").unwrap_or_else(|_| "gpt-5.5".to_owned()),
-        api_key,
         cwd: work.to_string_lossy().into_owned(),
         sandbox: sandbox.to_owned(),
         approval_policy: approval.to_owned(),
@@ -98,9 +87,10 @@ fn offline_params() -> StartParams {
     StartParams {
         codex_binary: "never-spawned".to_owned(),
         app_dir: work.join("app").to_string_lossy().into_owned(),
-        base_url: "http://127.0.0.1:1".to_owned(),
+        relay_base_url: "http://127.0.0.1:1".to_owned(),
+        group_id: 1,
+        session_token: "unused".to_owned(),
         model: "none".to_owned(),
-        api_key: "unused".to_owned(),
         cwd: work.to_string_lossy().into_owned(),
         sandbox: "read-only".to_owned(),
         approval_policy: "never".to_owned(),

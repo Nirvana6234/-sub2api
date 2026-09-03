@@ -190,9 +190,20 @@ pub struct StartParams {
     /// 传目录本身而不是 `CODEX_HOME` 的完整路径，是因为凭据会落在这下面 ——
     /// 位置必须由我们推出来，不能让调用方指到别处。见 `CodexHome::under_app_dir`。
     pub app_dir: String,
-    pub base_url: String,
+    /// **中转站根地址**（例如 `https://relay.example.com`），不是给 codex 的。
+    ///
+    /// codex 永远看不到它：它拿到的是本地转发层那个回环地址。见 `codex_host::LocalRelay`。
+    pub relay_base_url: String,
+    /// 这条会话用哪个分组。
+    ///
+    /// 分组在这里是**每条会话一个**，不再绑在某把 key 上 —— 转发层按 `thread-id`
+    /// 把它翻成后端要的 `X-Paw-Group-Id`。想换分组就开一条新会话，
+    /// 不需要（也不允许）去改任何一把 key。
+    pub group_id: i64,
+    /// 当前账号会话（JWT）。**前端是它唯一的持有者**；刷新之后用
+    /// `agent_set_session_token` 推下来，不必重启 agent。
+    pub session_token: String,
     pub model: String,
-    pub api_key: String,
     /// agent 的工作目录。
     pub cwd: String,
     /// 沙箱地板：`read-only` / `workspace-write` / `danger-full-access`。
