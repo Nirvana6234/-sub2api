@@ -545,7 +545,8 @@ A9 的文档注释因此写的是一件代码并没有做到的事。
 
 A9 原文写「申请/复用托管 key」，但 **Chat PWA 是刻意不要 API key 的**（不存 key 就没有存 key 的问题）。一度想让 codex 也走 JWT 直连，查下来走不通，两条都是实测：
 
-- **codex 的 agent 循环＝它自己调模型。** 不存在「只要 agent 逻辑、模型调用走 Chat 现有通道」这种用法 —— 除非在中间写协议翻译，那正是我们一直躲开的活。
+- **codex 的 agent 循环＝它自己调模型。** 不存在「只要 agent 逻辑、模型调用走 Chat 现有通道」这种用法。
+  （**2026-09-03 更正**：这里原本写「除非在中间写协议翻译，那正是我们一直躲开的活」——**不准确**。Responses↔ChatCompletions 的互转本仓库 `internal/pkg/apicompat/chatcompletions_responses_bridge.go` 里两个方向都现成。真正的阻塞是**Paw 的请求体装不下工具**：`PawChatRequest` 没有 tools 字段、`PawChatMessage.Content` 是纯字符串、`Prepare` 拼给上游的 body 也没有 tools。走那条路 codex 会拿到一个**一个工具都没有的模型**，永远调不出 `exec_command`。见 A9′。）
 - **codex 0.144.2 只会说 Responses 一种线协议。** 从**真二进制**里查的：`chat/completions` 出现 **0 次**。而 Paw 面只有 `/chat/completions`（`paw.go` 明写只认账号会话），后端所有 `/responses` 都挂 `apiKeyAuth`，连 Playground 都没有 `/responses`。
 
 **定下来的形态**：复用小白端那套托管 key 规则（两个端二选一，后端可直接用同一把）；**凭据可以落盘，但只能落在我们自己的程序目录下** —— 我们是 codex 的宿主，这本来就该我们管。
