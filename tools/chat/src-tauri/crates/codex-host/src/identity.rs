@@ -13,7 +13,7 @@ use std::path::Path;
 use crate::HostError;
 
 /// 机器名 + 安装 ID。
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeviceIdentity {
     pub machine_name: String,

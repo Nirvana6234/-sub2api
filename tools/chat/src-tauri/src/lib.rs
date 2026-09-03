@@ -84,6 +84,41 @@ async fn agent_device_identity(
         .map_err(|e| BridgeError::Host(e.to_string()))
 }
 
+/// 从一批 key 的**元数据**里挑出该用的那把，返回它的 id。
+///
+/// **传进来的不含密钥** —— 选择只需要 id / 名字 / 分组 / 过期时间。前端拿到 id
+/// 再去自己那份列表里取值，密钥就少走一趟 IPC，也就少一处可能被日志带出去。
+///
+/// 规则本身（尤其「无过期时间排最后」「分组看数据不看名字」）在
+/// `codex_host::keylease` 里，有测试盯着 —— 那几条写反了不会报错，只会安静地错。
+#[tauri::command]
+async fn agent_pick_key(
+    keys: Vec<codex_host::KeyMeta>,
+    identity: codex_host::DeviceIdentity,
+    group_id: Option<i64>,
+) -> Result<Option<i64>, BridgeError> {
+    Ok(codex_host::pick_current(&keys, &identity, group_id))
+}
+
+/// 这次安装在某个分组下该用的 key 名字。
+#[tauri::command]
+async fn agent_key_name(
+    identity: codex_host::DeviceIdentity,
+    group_id: Option<i64>,
+) -> Result<String, BridgeError> {
+    Ok(codex_host::key_name(&identity, group_id))
+}
+
+/// 这把 key 该不该续期。
+#[tauri::command]
+async fn agent_key_needs_renewal(
+    key: codex_host::KeyMeta,
+    now_ms: i64,
+    renew_when_days_left: i64,
+) -> Result<bool, BridgeError> {
+    Ok(codex_host::needs_renewal(&key, now_ms, renew_when_days_left))
+}
+
 #[tauri::command]
 async fn agent_is_running(bridge: tauri::State<'_, Arc<AgentBridge>>) -> Result<bool, BridgeError> {
     Ok(bridge.is_running().await)
@@ -104,6 +139,9 @@ pub fn run() {
             agent_stop,
             agent_is_running,
             agent_device_identity,
+            agent_pick_key,
+            agent_key_name,
+            agent_key_needs_renewal,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Chat");

@@ -31,6 +31,21 @@
  * 小白端会清理「同机旧安装」的孤儿，我们不清，因为那可能正是另一个端在用的那把，
  * 删掉等于把它悄悄登出。租约本身会到期，让它自己过期比替别人做主稳妥。
  *
+ * # 分组绑在 key 上，不是绑在请求上 —— 所以「一个分组一把 key」
+ *
+ * 网关里**没有任何按请求选分组的入口**：没有 `X-Group` 头、没有查询参数，分组就是
+ * `apiKey.GroupID`（唯一的例外是 `auto_group`，但那是**按请求体里的 model** 自动路由，
+ * 而 Chat 的界面里分组和模型是两个独立选择，覆盖不了）。
+ *
+ * 由此推出一条**绝不能违反**的规矩：
+ *
+ * > **要让不同会话用不同分组，只能换一把 key，绝不能去改某把 key 的分组。**
+ *
+ * 改分组是在改一个**共享租约**：正在跑的那一轮会在中途换到另一个分组去，
+ * 同时用这把 key 的小白端也会跟着变 —— 两处都毫无提示。所以这里**没有**
+ * 「切换分组」这个函数，只有「按分组取 key」。切分组＝取另一把＝下一个会话生效，
+ * 这也正是 codex 那侧的语义（它根本不认识分组）。
+ *
  * # 三条铁律
  *
  * 1. **不要把 key 写进 localStorage / sessionStorage / IndexedDB / cookie。** 取完直接
@@ -38,6 +53,8 @@
  * 2. **不要打日志。** 连长度、前缀都不要 —— 排错时习惯性 `console.log(params)` 就带出去了。
  * 3. **不要放进 React state 或任何会被 devtools 快照到的地方。**
  */
+import { invoke } from "@tauri-apps/api/core";
+
 import { pawRequest } from "./api";
 
 /** 服务端返回的一把 key（只取我们用得到的字段）。 */
@@ -77,14 +94,6 @@ const LEASE_DAYS = 30;
 /** 剩余不足这么多天就续期，别等到过期那一刻才动。 */
 const RENEW_WHEN_DAYS_LEFT = 7;
 
-export function keyName(id: DeviceIdentity): string {
-  return `${PRODUCT}-${id.machineName}-${id.installId}`;
-}
-
-function machinePrefix(id: DeviceIdentity): string {
-  return `${PRODUCT}-${id.machineName}-`;
-}
-
 function unwrap<T>(payload: unknown): T {
   if (payload && typeof payload === "object" && "data" in payload) {
     return (payload as { data: T }).data;
@@ -93,28 +102,47 @@ function unwrap<T>(payload: unknown): T {
 }
 
 /**
- * 从候选里挑一把「当前」的 key。
+ * 送去 Rust 侧做判断的元数据 —— **不含密钥**。
  *
- * 本次安装自己的那把**无条件优先**；只有一把都没有时才放宽到同机旧安装留下的
- * （那些同样授权这个账号访问同一个中转站，可以认领，但绝不能盖过本次安装要用的名字）。
- *
- * 排序里那条 `hasExpiry` 是要点：**没有过期时间的排最后**，理由见文件头。
+ * 密钥每多走一趟 IPC，就多一处可能被日志、被崩溃转储带出去。选哪一把只需要
+ * id / 名字 / 分组 / 过期时间，那就只传这些。
  */
-export function findCurrent(keys: RelayApiKey[], id: DeviceIdentity): RelayApiKey | undefined {
-  const mine = keyName(id);
-  const fromThisMachine = keys.filter((k) => k.name?.startsWith(machinePrefix(id)));
+interface KeyMeta {
+  id: number;
+  name: string;
+  groupId: number | null;
+  expiresAtMs: number | null;
+}
 
-  const best = (candidates: RelayApiKey[]): RelayApiKey | undefined =>
-    [...candidates].sort((a, b) => {
-      const aHas = a.expires_at ? 1 : 0;
-      const bHas = b.expires_at ? 1 : 0;
-      if (aHas !== bHas) return bHas - aHas; // 有过期时间的排前面
-      const at = a.expires_at ? Date.parse(a.expires_at) : 0;
-      const bt = b.expires_at ? Date.parse(b.expires_at) : 0;
-      return bt - at; // 同类里挑到期最晚的
-    })[0];
+function toMeta(k: RelayApiKey): KeyMeta {
+  return {
+    id: k.id,
+    name: k.name ?? "",
+    groupId: k.group_id ?? null,
+    // 在这里把 RFC3339 解析成毫秒，Rust 侧就不必引日期库、也不必猜各种偏移写法。
+    expiresAtMs: k.expires_at ? Date.parse(k.expires_at) : null,
+  };
+}
 
-  return best(fromThisMachine.filter((k) => k.name === mine)) ?? best(fromThisMachine);
+/**
+ * 挑该用的那把。
+ *
+ * **判断规则不在这里，在 Rust 的 `codex_host::keylease`** —— 因为这个仓库的前端没有
+ * 测试运行器，而那几条规则（无过期时间排最后、分组看数据不看名字、不指定分组时
+ * 找绑定为空的那把）**写反了都不会报错**，只会安静地跑在错的分组上或永远续期一把
+ * 永久 key。放在有测试盯着的地方。
+ */
+async function pickCurrent(
+  keys: RelayApiKey[],
+  identity: DeviceIdentity,
+  groupId?: number,
+): Promise<RelayApiKey | undefined> {
+  const chosen = await invoke<number | null>("agent_pick_key", {
+    keys: keys.map(toMeta),
+    identity,
+    groupId: groupId ?? null,
+  });
+  return chosen === null ? undefined : keys.find((k) => k.id === chosen);
 }
 
 async function listKeys(): Promise<RelayApiKey[]> {
@@ -131,26 +159,32 @@ function daysFromNow(days: number): string {
   return new Date(Date.now() + days * 86_400_000).toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
-function needsRenewal(key: RelayApiKey): boolean {
-  if (!key.expires_at) return true; // 没有过期时间本身就是要修的状态
-  const left = Date.parse(key.expires_at) - Date.now();
-  return !Number.isFinite(left) || left < RENEW_WHEN_DAYS_LEFT * 86_400_000;
+/** 该不该续期 —— 同样由 Rust 侧判断（「永不过期」也算要续，那是个要修的状态）。 */
+async function needsRenewal(key: RelayApiKey): Promise<boolean> {
+  return invoke<boolean>("agent_key_needs_renewal", {
+    key: toMeta(key),
+    nowMs: Date.now(),
+    renewWhenDaysLeft: RENEW_WHEN_DAYS_LEFT,
+  });
 }
 
 /**
- * 拿到这次会话要用的 key：认领已有的（必要时续期），没有就新建一把。
+ * 拿到这次会话要用的 key：**按分组**认领已有的（必要时续期），没有就新建一把。
+ *
+ * 每个分组各有各的 key —— 见文件头那条「分组绑在 key 上」。所以换分组时的正确做法是
+ * **拿这个函数再要一把**，然后用新 key 起下一个会话；**不要**去改旧那把的分组。
  *
  * @param identity 由 `invoke("agent_device_identity", { appDir })` 取得。
- * @param groupId 指定分组；不传则由服务端按用户默认分组决定。
+ * @param groupId 这个会话要用的分组；不传表示「服务端按默认分组决定」。
  */
 export async function acquireWorkbenchKey(
   identity: DeviceIdentity,
   groupId?: number,
 ): Promise<WorkbenchKeyLease> {
-  const existing = findCurrent(await listKeys(), identity);
+  const existing = await pickCurrent(await listKeys(), identity, groupId);
 
   if (existing?.key) {
-    const renewed = needsRenewal(existing) ? await renewKey(existing.id) : existing;
+    const renewed = (await needsRenewal(existing)) ? await renewKey(existing.id) : existing;
     return {
       id: renewed.id,
       key: renewed.key || existing.key,
@@ -159,7 +193,8 @@ export async function acquireWorkbenchKey(
     };
   }
 
-  const created = await createKey(keyName(identity), groupId);
+  const name = await invoke<string>("agent_key_name", { identity, groupId: groupId ?? null });
+  const created = await createKey(name, groupId);
   return { id: created.id, key: created.key, expiresAt: created.expires_at, origin: "created" };
 }
 
@@ -210,24 +245,6 @@ async function renewKey(id: number): Promise<RelayApiKey> {
   });
   if (!response.ok) {
     throw new Error(`续期工作台 key 失败（HTTP ${response.status}）`);
-  }
-  return unwrap<RelayApiKey>(await response.json());
-}
-
-/**
- * 换分组：**同样只放 `group_id` 一个字段**，理由见 [`renewKey`] 上那张表。
- *
- * 换组之后**新会话**才会用新分组 —— codex 不认识分组，切换等于换一把 key，
- * 正在跑的那一轮不受影响。
- */
-export async function switchWorkbenchKeyGroup(id: number, groupId: number): Promise<RelayApiKey> {
-  const response = await pawRequest(`/api/v1/keys/${id}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ group_id: groupId }),
-  });
-  if (!response.ok) {
-    throw new Error(`切换分组失败（HTTP ${response.status}）`);
   }
   return unwrap<RelayApiKey>(await response.json());
 }
