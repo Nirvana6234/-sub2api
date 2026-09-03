@@ -325,6 +325,9 @@ export function useAgentSession(params: UseAgentSessionParams): AgentSessionApi 
             relayBaseUrl,
             groupId,
             sessionToken,
+            // 必须是登录那次浏览器请求的 UA——转发层靠它冒充回浏览器身份，
+            // 否则后端的会话指纹校验会把每一轮都当成"换了网络环境"直接 401。
+            clientUserAgent: navigator.userAgent,
             model: modelId,
             cwd: binding.cwd,
             sandbox: binding.sandbox,

@@ -131,7 +131,7 @@ impl AgentBridge {
 
         // 先把转发层起起来，再让 codex 指向它。**codex 只看得见这个回环地址**，
         // 中转站地址和账号会话都留在这一侧。
-        let relay = LocalRelay::start(&params.relay_base_url)
+        let relay = LocalRelay::start(&params.relay_base_url, &params.client_user_agent)
             .await
             .map_err(|e| BridgeError::Host(e.to_string()))?;
         {

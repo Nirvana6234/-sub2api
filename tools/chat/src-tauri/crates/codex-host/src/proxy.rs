@@ -73,6 +73,15 @@ struct RelayState {
     /// 当前账号会话。**前端是它唯一的持有者**，刷新之后推下来一次新的；
     /// 这里从不自己去刷新 —— 那会让刷新逻辑在两处各存一份，迟早对不上。
     session_token: RwLock<Option<String>>,
+    /// 登录那次浏览器请求带的 `User-Agent`，原样转发给上游。
+    ///
+    /// **不是白捡的头，是拆出来的一个真故障**：账号会话的合法性绑着一个
+    /// 「IP + UA」指纹（`enforceSessionBinding`），指纹在登录时随 access token
+    /// 一起签发。登录走的是浏览器直连后端，UA 是浏览器的；这条转发走的是
+    /// `reqwest`，默认 UA 是 `reqwest/x.y.z`——同一个 token，两种指纹，后端把
+    /// 第二次判成会话被搬到了别的网络环境，直接 401 `SESSION_BINDING_MISMATCH`
+    /// 并撤销整个 token family。IP 两边都是回环，对得上，UA 对不上就是全部原因。
+    client_user_agent: String,
     routes: RwLock<HashMap<String, ThreadRoute>>,
     client: reqwest::Client,
     port: u16,
@@ -88,9 +97,15 @@ pub struct LocalRelay {
 impl LocalRelay {
     /// 在 `127.0.0.1` 的一个随机端口上起来。
     ///
+    /// `client_user_agent` 必须是登录那次浏览器请求的 `User-Agent`——它决定了
+    /// 转发出去的请求能不能通过后端的会话指纹校验，见 [`RelayState::client_user_agent`]。
+    ///
     /// # Errors
     /// 绑不上端口、或生不出令牌时返回。
-    pub async fn start(upstream_base: impl Into<String>) -> Result<Self, HostError> {
+    pub async fn start(
+        upstream_base: impl Into<String>,
+        client_user_agent: impl Into<String>,
+    ) -> Result<Self, HostError> {
         // 只听回环。写死而不是配置项：这个值一旦变成 0.0.0.0，
         // 局域网里任何人都能拿这台机器的额度跑 agent，而且从外面看不出来。
         let listener = TcpListener::bind(("127.0.0.1", 0))
@@ -110,6 +125,7 @@ impl LocalRelay {
             token: new_token()?,
             upstream_base: upstream_base.into().trim_end_matches('/').to_owned(),
             session_token: RwLock::new(None),
+            client_user_agent: client_user_agent.into(),
             routes: RwLock::new(HashMap::new()),
             client,
             port: addr.port(),
@@ -387,6 +403,10 @@ async fn handle(
         .header(GROUP_HEADER, group_id.to_string())
         .header("content-type", "application/json")
         .header("accept", "text/event-stream")
+        // 必须和登录那次浏览器请求的 UA 一致，否则后端的会话指纹校验会把这次
+        // 转发判成"换了网络环境"，401 掉并撤销整个 token family。
+        // 见 RelayState::client_user_agent。
+        .header("user-agent", &state.client_user_agent)
         .body(body)
         .send()
         .await;

@@ -113,7 +113,7 @@ const PAYLOAD: &str = r#"{"model":"gpt-5","instructions":"...","tools":[{"type":
 
 async fn relay_with_route() -> (LocalRelay, String, Arc<Mutex<Vec<Seen>>>) {
     let (upstream, seen) = fake_relay(vec!["event: x\ndata: 1\n\n"], Duration::ZERO).await;
-    let relay = LocalRelay::start(&upstream).await.unwrap();
+    let relay = LocalRelay::start(&upstream, "test-agent/1.0").await.unwrap();
     relay.set_session_token(Some("jwt-account-session".to_owned())).await;
     relay.bind_thread("thread-a", 7).await;
     let url = format!("{}/responses", relay.base_url());
@@ -161,11 +161,38 @@ async fn the_local_token_never_reaches_the_relay() {
     );
 }
 
+/// **这条是真出过事故的坑**：转发层默认走 `reqwest` 自己的 UA，跟登录那次浏览器
+/// 请求的 UA 不一样。后端的账号会话绑着一个「IP + UA」指纹，签发时用的是浏览器
+/// 那次的 UA；同一个 token 带着不同的 UA 转发过去，后端会判成会话被搬到了别的
+/// 网络环境，直接 401 `SESSION_BINDING_MISMATCH` 并撤销整个 token family——
+/// 界面上看到的是一直「正在重试」，根因却在这一个头上。
+#[tokio::test]
+async fn the_relay_forwards_the_browsers_user_agent_not_its_own() {
+    let (relay, url, seen) = relay_with_route().await;
+    let response = client()
+        .post(&url)
+        .header("authorization", format!("Bearer {}", relay.token()))
+        .header("thread-id", "thread-a")
+        .body(PAYLOAD)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let _ = response.bytes().await;
+
+    let seen = seen.lock().unwrap();
+    assert_eq!(
+        seen[0].header("user-agent").as_deref(),
+        Some("test-agent/1.0"),
+        "上游收到的 UA 得是登录浏览器的那个，不是转发层自己的 HTTP 客户端"
+    );
+}
+
 /// 分组按 thread 走，并且以请求头告诉后端 —— 这是「不同会话不同分组」的实现方式。
 #[tokio::test]
 async fn the_group_comes_from_the_thread_that_sent_the_request() {
     let (upstream, seen) = fake_relay(vec!["data: 1\n\n"], Duration::ZERO).await;
-    let relay = LocalRelay::start(&upstream).await.unwrap();
+    let relay = LocalRelay::start(&upstream, "test-agent/1.0").await.unwrap();
     relay.set_session_token(Some("jwt".to_owned())).await;
     relay.bind_thread("thread-a", 7).await;
     relay.bind_thread("thread-b", 9).await;
@@ -194,7 +221,7 @@ async fn the_group_comes_from_the_thread_that_sent_the_request() {
 #[tokio::test]
 async fn an_unknown_thread_is_refused_rather_than_routed_somewhere() {
     let (upstream, seen) = fake_relay(vec!["data: 1\n\n"], Duration::ZERO).await;
-    let relay = LocalRelay::start(&upstream).await.unwrap();
+    let relay = LocalRelay::start(&upstream, "test-agent/1.0").await.unwrap();
     relay.set_session_token(Some("jwt".to_owned())).await;
     relay.bind_thread("thread-a", 7).await;
     let url = format!("{}/responses", relay.base_url());
@@ -234,7 +261,7 @@ async fn the_body_is_forwarded_verbatim() {
 #[tokio::test]
 async fn without_an_account_session_nothing_is_forwarded() {
     let (upstream, seen) = fake_relay(vec!["data: 1\n\n"], Duration::ZERO).await;
-    let relay = LocalRelay::start(&upstream).await.unwrap();
+    let relay = LocalRelay::start(&upstream, "test-agent/1.0").await.unwrap();
     relay.bind_thread("thread-a", 7).await;
     let url = format!("{}/responses", relay.base_url());
 
@@ -259,7 +286,7 @@ async fn without_an_account_session_nothing_is_forwarded() {
 async fn the_response_streams_instead_of_being_buffered() {
     let gap = Duration::from_millis(400);
     let (upstream, _) = fake_relay(vec!["data: one\n\n", "data: two\n\n"], gap).await;
-    let relay = LocalRelay::start(&upstream).await.unwrap();
+    let relay = LocalRelay::start(&upstream, "test-agent/1.0").await.unwrap();
     relay.set_session_token(Some("jwt".to_owned())).await;
     relay.bind_thread("thread-a", 7).await;
 

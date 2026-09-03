@@ -74,6 +74,16 @@ export interface StartAgentParams {
   groupId: number;
   /** 当前账号会话。刷新之后要用 `pushSessionToken` 再推一次。 */
   sessionToken: string;
+  /**
+   * 登录那次浏览器请求的 `User-Agent`（一律传 `navigator.userAgent`）。
+   *
+   * 后端的账号会话绑着一个「IP + UA」指纹，指纹在登录时随 `sessionToken` 一起
+   * 签发。转发层转发请求用的是 Rust 的 HTTP 客户端，默认 UA 跟浏览器的不一样——
+   * 同一个 token、两种指纹，后端会当成会话被搬到了别的网络环境，直接 401
+   * `SESSION_BINDING_MISMATCH` 并撤销整个 token family。传错、传空都会导致
+   * **每一轮**都这样炸。
+   */
+  clientUserAgent: string;
   /** 模型 id。**必须来自 `/api/v1/paw/config`** —— 后端就是拿那份目录校验的。 */
   model: string;
   /** agent 的工作目录。 */

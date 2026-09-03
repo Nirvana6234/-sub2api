@@ -80,6 +80,10 @@ fn params(tag: &str, sandbox: &str, approval: &str) -> StartParams {
             .parse()
             .expect("CODEX_ADAPTER_GROUP_ID 得是个数字"),
         session_token: need("CODEX_ADAPTER_SESSION_TOKEN"),
+        // 端到端跑的是真后端：这里必须给一个真会话指纹会认的 UA，
+        // 不然每一轮都会撞上 SESSION_BINDING_MISMATCH（见 proxy.rs 的同名坑）。
+        client_user_agent: std::env::var("CODEX_ADAPTER_USER_AGENT")
+            .unwrap_or_else(|_| "cofly-workbench-e2e/1.0".to_owned()),
         model: std::env::var("CODEX_ADAPTER_MODEL").unwrap_or_else(|_| "gpt-5.5".to_owned()),
         cwd: work.to_string_lossy().into_owned(),
         sandbox: sandbox.to_owned(),
@@ -99,6 +103,7 @@ fn offline_params() -> StartParams {
         relay_base_url: "http://127.0.0.1:1".to_owned(),
         group_id: 1,
         session_token: "unused".to_owned(),
+        client_user_agent: "unused".to_owned(),
         model: "none".to_owned(),
         cwd: work.to_string_lossy().into_owned(),
         sandbox: "read-only".to_owned(),
@@ -409,6 +414,7 @@ fn the_frontend_can_no_longer_name_a_binary_or_a_data_dir() {
         "relayBaseUrl": "https://relay.example",
         "groupId": 7,
         "sessionToken": "jwt",
+        "clientUserAgent": "Mozilla/5.0 (test)",
         "model": "gpt-5",
         "cwd": "C:/work",
         "sandbox": "read-only",

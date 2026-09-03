@@ -203,6 +203,15 @@ pub struct StartParams {
     /// 当前账号会话（JWT）。**前端是它唯一的持有者**；刷新之后用
     /// `agent_set_session_token` 推下来，不必重启 agent。
     pub session_token: String,
+    /// **登录那次浏览器请求的 `User-Agent`**（`navigator.userAgent`）。
+    ///
+    /// 不是随手加的字段：后端的账号会话绑着一个「IP + UA」指纹
+    /// （`enforceSessionBinding`），指纹在登录时随 `session_token` 一起签发。
+    /// 转发层是用 `reqwest` 发请求的，默认 UA 是 `reqwest/x.y.z`，和登录时
+    /// 浏览器发的不一样 —— 同一个 token、两种指纹，后端会判成会话被搬到了
+    /// 别的网络环境，直接 401 `SESSION_BINDING_MISMATCH` 并撤销整个 token
+    /// family。这里必须原样传浏览器自己的 UA，转发层才能在转发时冒充回去。
+    pub client_user_agent: String,
     pub model: String,
     /// agent 的工作目录。
     pub cwd: String,
