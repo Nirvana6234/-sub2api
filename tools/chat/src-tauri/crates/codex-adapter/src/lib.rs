@@ -37,4 +37,4 @@ pub use transport::{decode_line, pump, Client, Incoming};
 ///
 /// bump codex 时：重跑 `scripts/capture-fixtures.py` 重录 fixture，改这里，跑 `cargo test`。
 /// 测试挂了就是协议漂了 —— 类型检查抓不到 JSON-RPC 的语义漂移，只有报文能。
-pub const PINNED_CODEX_VERSION: &str = "0.144.2";
+pub const PINNED_CODEX_VERSION: &str = "0.153.0";

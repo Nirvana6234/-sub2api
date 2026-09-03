@@ -11,7 +11,7 @@
 //! 2. **永远保留 `raw`。** 每条通知和服务端请求都带着原始 `params`，即使我们没投影它。
 //!    本机链路要能显示上游的新事件，而不是等我们发版才认识它。
 //!
-//! 类型形状取自 `protocol/0.144.2/` 下由 `codex app-server generate-json-schema`
+//! 类型形状取自 `protocol/0.153.0/` 下由 `codex app-server generate-json-schema`
 //! 导出的 schema，并用 `tests/fixtures/` 里真实录制的报文校对过。
 
 use serde::{Deserialize, Serialize};
@@ -127,7 +127,7 @@ pub enum SandboxMode {
 
 /// 审批策略，对应 schema 的 `AskForApproval`。
 ///
-/// 只有这三个取值 —— 0.144.2 里**没有** `on-failure`（老版本有过，别照旧文档写）。
+/// 只有这三个取值 —— 0.153.0 里**没有** `on-failure`（老版本有过，别照旧文档写）。
 /// 编码是 kebab-case，写成 camelCase 会被服务端拒掉。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]

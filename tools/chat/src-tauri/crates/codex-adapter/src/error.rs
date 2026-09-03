@@ -66,7 +66,7 @@ impl AdapterError {
     ///
     /// # 先说清楚这个函数管不着什么
     ///
-    /// **模型侧的失败基本不走这里。** 实测（0.144.2）：拿一个无效 API key 发一轮，
+    /// **模型侧的失败基本不走这里。** 实测（0.153.0）：拿一个无效 API key 发一轮，
     /// `turn/start` 会**正常返回成功**，401 是以一串 `error` **通知**送达的，带着
     /// `codexErrorInfo.responseStreamDisconnected.httpStatusCode = 401` 和 `willRetry`。
     /// 那条路见 [`crate::protocol::ErrorNotification`]，别指望这个函数。
