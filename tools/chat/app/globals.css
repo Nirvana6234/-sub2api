@@ -234,6 +234,7 @@ textarea:disabled {
 .paw-sidebar-list {
   padding: 12px;
   overflow: auto;
+  overflow-x: hidden;
   display: grid;
   gap: 8px;
   min-height: 0;
@@ -246,6 +247,7 @@ textarea:disabled {
   position: relative;
   display: block;
   width: 100%;
+  min-width: 0;
   border: 1px solid transparent;
   border-radius: 10px;
   padding: 0;
@@ -267,6 +269,7 @@ textarea:disabled {
   display: grid;
   gap: 4px;
   width: 100%;
+  min-width: 0;
   text-align: left;
   border: 0;
   min-height: 64px;
@@ -274,6 +277,7 @@ textarea:disabled {
   border-radius: 9px;
   background: transparent;
   color: var(--text);
+  overflow: hidden;
 }
 
 .paw-conversation-select:hover {
@@ -311,6 +315,7 @@ textarea:disabled {
 
 .paw-conversation-rename {
   width: 100%;
+  min-width: 0;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--panel);
@@ -325,11 +330,18 @@ textarea:disabled {
 }
 
 .paw-conversation-title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 14px;
   font-weight: 600;
 }
 
 .paw-conversation-preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
@@ -337,10 +349,12 @@ textarea:disabled {
 
 .paw-conversation-info {
   display: flex;
+  min-width: 0;
   justify-content: space-between;
   gap: 8px;
   color: var(--muted);
   font-size: 11px;
+  overflow: hidden;
 }
 
 .paw-conversation-info span {
@@ -3405,4 +3419,13 @@ textarea:disabled {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+/* composer 底部那行摘要里的 agent 状态——发送前最后能看到的地方。 */
+.paw-composer-agent-flag.on {
+  color: #16803d;
+}
+
+.paw-composer-agent-flag.off {
+  color: #b54708;
 }

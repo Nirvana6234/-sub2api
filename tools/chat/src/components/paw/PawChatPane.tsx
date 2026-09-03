@@ -1192,7 +1192,19 @@ export function PawChatPane({
             ) : null}
 
             <div className="paw-composer-footer">
-              <span className="paw-composer-hint">{summary}</span>
+              <span className="paw-composer-hint">
+                {summary}
+                {/* 挂没挂目录只在工具条上有个小 chip 能看出来，容易划过去就直接发了——
+                    发出去之后长得跟普通对话一模一样（同一套气泡），事后根本分不清。
+                    在发送按钮正对面把它点破，是用户看这一眼、按这一下之间必经的地方。 */}
+                {agentDesktop ? (
+                  <strong className={`paw-composer-agent-flag ${agentArmed ? "on" : "off"}`}>
+                    {agentArmed
+                      ? ` · agent：${agentCwd ? shortDirName(agentCwd) : ""}`
+                      : " · 未挂 agent 工作目录，这条会是普通对话"}
+                  </strong>
+                ) : null}
+              </span>
               <button
                 className="paw-button primary paw-chat-send"
                 type="button"
