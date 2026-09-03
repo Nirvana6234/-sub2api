@@ -143,11 +143,22 @@ func registerRoutes(
 		if h.Gateway != nil {
 			gatewayChat = h.Gateway.ChatCompletions
 		}
+		// Responses 这条是工作台里的 codex 走的：它只会说 Responses 一种线协议。
+		var openAIResponses gin.HandlerFunc
+		if h.OpenAIGateway != nil {
+			openAIResponses = h.OpenAIGateway.Responses
+		}
+		var gatewayResponses gin.HandlerFunc
+		if h.Gateway != nil {
+			gatewayResponses = h.Gateway.Responses
+		}
 		routes.RegisterPawRoutes(v1, h.PawConfigService, jwtAuth, settingService, panelRateLimiter, routes.PawRouteDependencies{
 			ChatService:       h.PawChatService,
 			OpenAIGateway:     h.OpenAIGateway,
 			OpenAIChat:        openAIChat,
 			GatewayChat:       gatewayChat,
+			OpenAIResponses:   openAIResponses,
+			GatewayResponses:  gatewayResponses,
 			CompositeResolver: compositeResolver,
 			APIKeyService:     apiKeyService,
 			OpsService:        opsService,
