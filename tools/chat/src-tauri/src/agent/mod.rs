@@ -60,6 +60,8 @@ struct Running {
     /// 只是持有：笼子在它身上，丢掉就等于杀掉 codex。
     _engine: Engine,
     pending: Pending,
+    /// 会话结束时要把凭据从这里抹掉。
+    home: CodexHome,
 }
 
 /// 一座桥。整个应用一个。
@@ -87,7 +89,8 @@ impl AgentBridge {
         let approval = parse_approval(&params.approval_policy)?;
         let cwd = WorkspaceDir::new(&params.cwd)
             .map_err(|e| BridgeError::BadParams(e.to_string()))?;
-        let home = CodexHome::new(&params.codex_home).map_err(|e| BridgeError::Host(e.to_string()))?;
+        let home = CodexHome::under_app_dir(&params.app_dir)
+            .map_err(|e| BridgeError::Host(e.to_string()))?;
 
         let config = EngineConfig {
             binary: params.codex_binary.into(),
@@ -122,16 +125,6 @@ impl AgentBridge {
             .await
             .map_err(|e| BridgeError::Session(e.to_string()))?;
 
-        // **凭据落地的那一瞬间就把它抹掉。**
-        //
-        // 产品承诺是「key 只在内存里传，不落盘」，但这个承诺光靠调用方守不住：
-        // 实测 `account/login/start` 一送进去，codex 自己就把明文 key 写进
-        // CODEX_HOME/auth.json。也实测了删掉之后会话照常跑完、且不会被写回来。
-        //
-        // 抹不掉就**让这次会话起不来** —— 承诺没兑现而用户不知道，比起不来糟得多。
-        home.purge_credentials()
-            .map_err(|e| BridgeError::Host(e.to_string()))?;
-
         let thread_id = session
             .start_thread(cwd, sandbox, approval)
             .await
@@ -144,6 +137,7 @@ impl AgentBridge {
             session,
             _engine: engine,
             pending,
+            home,
         });
 
         Ok(StartedThread { thread_id, attempts })
@@ -213,11 +207,18 @@ impl AgentBridge {
         // 待答复的审批随引擎一起作废：那些 id 在新进程里不存在，
         // 界面上还挂着的话，用户点下去只会拿到 NoSuchApproval。
         running.pending.lock().await.clear();
-        running
+
+        let shutdown = running
             ._engine
             .shutdown(std::time::Duration::from_secs(5))
-            .await
-            .map_err(|e| BridgeError::Host(e.to_string()))
+            .await;
+
+        // 会话结束 = 凭据不该再留在盘上。**先停进程再抹**，否则 codex 可能又写一遍。
+        // 抹不掉要报错，但不能因此吞掉停止过程本身的失败。
+        let wiped = running.home.wipe_credentials();
+
+        shutdown.map_err(|e| BridgeError::Host(e.to_string()))?;
+        wiped.map(|_| ()).map_err(|e| BridgeError::Host(e.to_string()))
     }
 
     pub async fn is_running(&self) -> bool {

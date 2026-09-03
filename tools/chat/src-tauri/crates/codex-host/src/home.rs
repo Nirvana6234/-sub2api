@@ -4,40 +4,49 @@ use std::path::{Path, PathBuf};
 
 use crate::HostError;
 
-/// 一个**已经建好、且不在系统 temp 下**的 `CODEX_HOME`。
+/// codex 的私有工作目录 —— **只能开在我们自己的程序数据目录之下**。
 ///
-/// # 为什么要有这个类型
+/// # 两条规矩，都是实测逼出来的
 ///
-/// 两条都是实测出来的，靠注释提醒会忘：
+/// **① 必须私有，不能用用户的 `~/.codex`。** 指到自己的目录之后，codex 把
+/// `auth.json`/`sessions/`/几个 sqlite 都放进去，用户自己的 `~/.codex` 全程不读不写。
+/// 于是「快照用户登录态 → 替换 → 还回去」那一整套机器都不需要。
+/// 更要紧的是：codex 是**按 `auth.json` 里有什么**选凭据的，OAuth tokens 优先于旁边的
+/// key —— 共用 home 会得到一个「看着正常、其实在扣用户 ChatGPT 套餐」的配置。
 ///
-/// 1. **必须给 codex 一个私有的 `CODEX_HOME`。** 指到自己的目录之后，codex 把
-///    `auth.json` / `sessions/` / 几个 sqlite 都放进去，**用户自己的 `~/.codex`
-///    全程不读不写**。于是「快照用户登录态→替换→还回去」那一整套机器都不需要。
-/// 2. **不能放系统 temp。** 实测 codex 在 temp 下会拒绝创建 PATH 别名并告警：
-///    `Refusing to create helper binaries under temporary dir`。那时它仍然能跑，
-///    但已经是降级状态 —— 这种「能用但不对」最难查，所以直接拒掉。
+/// **② 必须在我们自己的程序目录下。** 凭据落盘是可以接受的（我们是 codex 的宿主，
+/// 这本来就该我们管），但**落在哪儿不能随便**。所以这个类型只提供
+/// [`CodexHome::under_app_dir`] 一个构造函数：位置由程序数据目录推出来，
+/// 调用方没有机会把它指到别处 —— 也就没有机会把凭据写到一个我们管不着的地方。
 ///
-/// 正确位置是应用数据目录（Windows 上是 `%APPDATA%` 一系）。具体给哪个由调用方决定，
-/// 这个类型只负责把明显错的挡住。
+/// 顺带挡掉系统 temp：实测 codex 在 temp 下会拒绝创建 PATH 别名并告警
+/// （`Refusing to create helper binaries under temporary dir`），之后仍然能跑，
+/// 但已是降级状态。这种「能用但不对」最难查。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodexHome(PathBuf);
 
+/// `CODEX_HOME` 在程序数据目录下的固定位置。
+const HOME_SUBDIR: &str = "codex-home";
+
 impl CodexHome {
-    /// 校验并（按需）创建这个目录。
+    /// 在程序数据目录下开一个私有 `CODEX_HOME`（按需创建）。
+    ///
+    /// `app_dir` 是**我们这个程序**的数据目录（Tauri 那边由 `app_data_dir()` 给出）。
     ///
     /// # Errors
-    /// 路径在系统 temp 之下、已存在但不是目录、或者创建失败时返回
-    /// [`HostError::BadCodexHome`]。
-    pub fn new(path: impl AsRef<Path>) -> Result<Self, HostError> {
-        let path = path.as_ref();
+    /// `app_dir` 落在系统 temp 之下、路径被文件占着、创建失败，或路径不是合法 UTF-8。
+    pub fn under_app_dir(app_dir: impl AsRef<Path>) -> Result<Self, HostError> {
+        let app_dir = app_dir.as_ref();
 
-        if is_under_temp(path) {
+        if is_under_temp(app_dir) {
             return Err(HostError::BadCodexHome(format!(
                 "{} 在系统 temp 下 —— codex 会拒绝在那里建 helper 并降级运行，\
-                 请用应用数据目录",
-                path.display()
+                 请传程序自己的数据目录",
+                app_dir.display()
             )));
         }
+
+        let path = app_dir.join(HOME_SUBDIR);
 
         if path.exists() {
             if !path.is_dir() {
@@ -47,14 +56,14 @@ impl CodexHome {
                 )));
             }
         } else {
-            std::fs::create_dir_all(path).map_err(|e| {
+            std::fs::create_dir_all(&path).map_err(|e| {
                 HostError::BadCodexHome(format!("建不出 {}: {e}", path.display()))
             })?;
         }
 
         // 后面要塞进环境变量，非 UTF-8 走不通。
         match path.to_str() {
-            Some(_) => Ok(CodexHome(path.to_path_buf())),
+            Some(_) => Ok(CodexHome(path)),
             None => Err(HostError::BadCodexHome(format!(
                 "路径不是合法 UTF-8: {}",
                 path.display()
@@ -71,46 +80,37 @@ impl CodexHome {
         self.0.join("auth.json")
     }
 
-    /// **握手之后立刻调用**：把 codex 刚写下的凭据从磁盘上抹掉。
+    /// 把凭据从磁盘上抹掉。**会话结束 / 登出时调。**
     ///
-    /// # 为什么必须做这件事
+    /// # 为什么是「结束时」而不是「握手后立刻」
     ///
-    /// 产品约定是「key 在内存里传递，不落盘」。但这个承诺**光靠调用方守不住** ——
-    /// 实测：`account/login/start` 一送进去，codex 自己就把 key 写进
-    /// `CODEX_HOME/auth.json`（96 字节，明文）。不管调用方多小心，文件就在那儿。
+    /// 实测：`account/login/start` 一送进去，codex 自己就把明文 key 写进
+    /// `CODEX_HOME/auth.json`。也实测过**握手后立刻删掉，一轮照样跑得完**，
+    /// codex 不会把它写回来。
     ///
-    /// 好在也实测了另一半：**登录之后立刻删掉这个文件，会话照常跑完一轮，
-    /// 而且 codex 不会把它写回来**（拿到了 assistant 正文，结束时文件仍不存在）。
-    /// 于是 key 在磁盘上的存活时间被压到毫秒级。
+    /// 但那条路只验过**一条连接上的一轮**：codex 在 401 重试、断线重连、
+    /// `thread/resume` 时会不会回头重读这个文件，**没有验过**。既然凭据落在
+    /// 我们自己的程序目录下是可接受的，就没必要为一个不必要的约束去扛那个
+    /// 「长会话中途莫名失效」的风险。
     ///
-    /// 删之前先用零覆盖同样长度：删除只是摘掉目录项，内容还躺在扇区上。
-    /// 这挡不住取证级恢复，但挡得住「翻一眼硬盘就看见」。
-    ///
-    /// # 尚未验证
-    ///
-    /// 只验过**一条连接上的一轮**。codex 在 401 重试、断线重连、`thread/resume`
-    /// 时会不会回头重读这个文件，**没有验过**。真出现「删了之后长会话中途失效」，
-    /// 第一个要怀疑的就是这里。
+    /// 所以：**会话期间留着，结束时抹掉。** 删之前先用等长的零覆盖 ——
+    /// 删除只摘掉目录项，内容还躺在扇区上。挡不住取证级恢复，但挡得住随手一翻。
     ///
     /// # Errors
-    /// 文件存在却删不掉时返回 —— **这一条不能吞**：删不掉就等于承诺没兑现。
-    pub fn purge_credentials(&self) -> Result<bool, HostError> {
+    /// 文件存在却删不掉时返回。
+    pub fn wipe_credentials(&self) -> Result<bool, HostError> {
         let path = self.credentials_file();
         if !path.exists() {
             return Ok(false);
         }
 
         if let Ok(meta) = std::fs::metadata(&path) {
-            let len = meta.len() as usize;
-            // 覆盖失败不算致命（下一步的删除才是），但值得尽力。
-            let _ = std::fs::write(&path, vec![0u8; len]);
+            // 覆盖失败不算致命（真正要紧的是下一步的删除），但值得尽力。
+            let _ = std::fs::write(&path, vec![0u8; meta.len() as usize]);
         }
 
         std::fs::remove_file(&path).map_err(|e| {
-            HostError::CredentialLeak(format!(
-                "删不掉 {}：凭据留在了磁盘上，而我们承诺过不落盘（{e}）",
-                path.display()
-            ))
+            HostError::CredentialLeak(format!("删不掉 {}：凭据留在磁盘上（{e}）", path.display()))
         })?;
         Ok(true)
     }
@@ -120,11 +120,8 @@ impl CodexHome {
 ///
 /// 只做前缀比较，不解析符号链接 —— 目的是挡住「顺手用了 temp」，不是防绕过。
 fn is_under_temp(path: &Path) -> bool {
-    let temp = std::env::temp_dir();
-    // 规范化失败（比如目录还不存在）就退回到原始路径比较，宁可比得糙一点，
-    // 也不要因为路径还没建就漏判。
     let canon = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
-    let temp = canon(&temp);
+    let temp = canon(&std::env::temp_dir());
 
     let mut cursor = path.to_path_buf();
     loop {

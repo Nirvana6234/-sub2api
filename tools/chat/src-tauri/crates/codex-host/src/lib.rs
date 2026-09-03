@@ -15,7 +15,8 @@
 //!
 //! | | 管什么 |
 //! |---|---|
-//! | [`home::CodexHome`] | 私有 `CODEX_HOME`：不碰用户的 `~/.codex`，也不许放系统 temp |
+//! | [`home::CodexHome`] | 私有 `CODEX_HOME`：不碰用户的 `~/.codex`，且**只能开在我们自己的程序目录下** |
+//! | [`identity::DeviceIdentity`] | 机器名 + 安装 ID：托管 key 的名字要用它 |
 //! | [`cage::Cage`] | 强杀宿主时连坐杀掉 codex（Windows Job Object） |
 //! | [`engine::Engine`] | 起进程、交出 stdio、有序停止 |
 //! | [`supervisor::Supervisor`] | 起不来时退避重试，并且**让失败被看见** |
@@ -23,11 +24,13 @@
 pub mod cage;
 pub mod engine;
 pub mod home;
+pub mod identity;
 pub mod supervisor;
 
 pub use cage::Cage;
 pub use engine::{Engine, EngineConfig};
 pub use home::CodexHome;
+pub use identity::DeviceIdentity;
 pub use supervisor::{Backoff, FailedAttempt, Restarted, Supervisor};
 
 /// 宿主这一层会出的错。

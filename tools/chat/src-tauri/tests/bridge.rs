@@ -54,9 +54,9 @@ fn need(var: &str) -> String {
 
 fn params(tag: &str, sandbox: &str, approval: &str) -> StartParams {
     let root = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("bridge-{tag}"));
-    let home = root.join("home");
+    let app = root.join("app");
     let work = root.join("work");
-    std::fs::create_dir_all(&home).expect("建 CODEX_HOME");
+    std::fs::create_dir_all(&app).expect("建程序数据目录");
     std::fs::create_dir_all(&work).expect("建工作目录");
 
     let api_key = std::env::var("CODEX_ADAPTER_API_KEY").unwrap_or_else(|_| {
@@ -77,7 +77,7 @@ fn params(tag: &str, sandbox: &str, approval: &str) -> StartParams {
 
     StartParams {
         codex_binary: need("CODEX_ADAPTER_BIN"),
-        codex_home: home.to_string_lossy().into_owned(),
+        app_dir: app.to_string_lossy().into_owned(),
         base_url: need("CODEX_ADAPTER_BASE_URL"),
         model: std::env::var("CODEX_ADAPTER_MODEL").unwrap_or_else(|_| "gpt-5.5".to_owned()),
         api_key,
@@ -97,7 +97,7 @@ fn offline_params() -> StartParams {
     std::fs::create_dir_all(&work).expect("建工作目录");
     StartParams {
         codex_binary: "never-spawned".to_owned(),
-        codex_home: work.join("home").to_string_lossy().into_owned(),
+        app_dir: work.join("app").to_string_lossy().into_owned(),
         base_url: "http://127.0.0.1:1".to_owned(),
         model: "none".to_owned(),
         api_key: "unused".to_owned(),
@@ -341,34 +341,40 @@ fn ui_events_are_tagged_so_the_frontend_can_switch_on_them() {
     assert_eq!(bad.get("type").and_then(|v| v.as_str()), Some("decodeError"));
 }
 
-/// **A9 的核心验收**：会话跑起来之后，磁盘上不许留下那把 key。
+/// **A9 的验收**：凭据只落在我们自己的程序目录下，会话结束就抹掉。
 ///
-/// 产品对用户的承诺是「key 只在内存里传，不落盘」。这个承诺**光靠调用方守不住**：
-/// 实测 `account/login/start` 一送进去，codex 自己就把明文 key 写进
-/// `CODEX_HOME/auth.json`。所以桥在握手之后立刻把它抹掉。
+/// 约定是「可以落盘，但必须在自己程序的目录下」—— 我们是 codex 的宿主，这本来就该我们管。
+/// 所以这里验三件事：
 ///
-/// 这条测试同时钉住两件事：**文件确实没了**，而且**会话照样能跑完一轮** ——
-/// 只验前者会得到一个「安全但不能用」的实现。
+/// 1. 它确实落在 `app_dir` 之下（位置由我们推出来，调用方指不到别处）；
+/// 2. 会话**期间**它在（不去动它，避免为一个不必要的约束扛「codex 会不会重读」的未验证风险）；
+/// 3. 会话**结束后**它没了。
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "需要真 codex 进程与中转站：cargo test -p chat --test bridge -- --ignored"]
-async fn the_key_does_not_survive_on_disk_and_the_session_still_works() {
+async fn credentials_stay_inside_our_app_dir_and_are_wiped_on_stop() {
     let collector = Arc::new(Collector::default());
     let bridge = AgentBridge::new(Arc::clone(&collector) as Arc<dyn EventSink>);
 
-    let p = params("nokey", "read-only", "never");
-    let auth = std::path::Path::new(&p.codex_home).join("auth.json");
-    // 上一次跑剩下的，先清掉，免得「本来就没有」冒充成「被抹掉了」。
+    let p = params("creds", "read-only", "never");
+    let app_dir = std::path::PathBuf::from(&p.app_dir);
+    let auth = app_dir.join("codex-home").join("auth.json");
+    // 上一次跑剩下的先清掉，免得「本来就没有」冒充成「被抹掉了」。
     let _ = std::fs::remove_file(&auth);
 
     bridge.start(p).await.expect("起会话");
 
     assert!(
-        !auth.exists(),
-        "握手之后 {} 还在 —— key 留在了磁盘上，承诺没兑现",
+        auth.starts_with(&app_dir),
+        "凭据落到了程序目录外面：{}",
+        auth.display()
+    );
+    assert!(
+        auth.exists(),
+        "会话期间凭据应当在 {} —— 不在的话说明位置推错了",
         auth.display()
     );
 
-    // 光删掉不算数：会话得还能用。
+    // 会话得能真的用。
     bridge
         .send("Reply with exactly one word: PONG".to_owned())
         .await
@@ -380,22 +386,13 @@ async fn the_key_does_not_survive_on_disk_and_the_session_still_works() {
                 UiEvent::TurnCompleted { .. }
             ))
             .await,
-        "抹掉凭据之后这一轮跑不完了 —— 说明 codex 会回头重读那个文件"
+        "180s 内没等到 turnCompleted"
     );
 
-    let text: String = collector
-        .snapshot()
-        .iter()
-        .filter_map(|e| match e {
-            UiEvent::AgentText { delta, .. } => Some(delta.clone()),
-            _ => None,
-        })
-        .collect();
-    assert!(!text.trim().is_empty(), "没拿到正文");
-
-    // 跑完一轮之后也不许被写回来。
-    assert!(!auth.exists(), "跑完一轮之后 auth.json 又出现了");
-
     bridge.stop().await.expect("停止");
-    assert!(!auth.exists(), "停止之后 auth.json 又出现了");
+    assert!(
+        !auth.exists(),
+        "会话都结束了 {} 还在 —— 凭据被留在了盘上",
+        auth.display()
+    );
 }

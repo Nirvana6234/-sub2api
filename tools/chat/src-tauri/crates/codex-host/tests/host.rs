@@ -2,38 +2,64 @@
 
 use std::time::Duration;
 
-use codex_host::{Backoff, CodexHome, EngineConfig, HostError, Supervisor};
+use codex_host::{Backoff, CodexHome, DeviceIdentity, EngineConfig, HostError, Supervisor};
 
 #[test]
 fn codex_home_refuses_the_system_temp_dir() {
     // 实测：codex 在 temp 下会拒绝创建 helper 并告警，之后仍然能跑 ——
     // 这种「能用但已降级」最难查，所以直接挡在门口。
-    let bad = std::env::temp_dir().join("cofly-codex-home-should-be-rejected");
-    let err = CodexHome::new(&bad).unwrap_err();
+    let bad = std::env::temp_dir().join("cofly-app-dir-should-be-rejected");
+    let err = CodexHome::under_app_dir(&bad).unwrap_err();
     assert!(matches!(err, HostError::BadCodexHome(_)), "拿到的是 {err:?}");
     assert!(err.to_string().contains("temp"), "报错该说清楚为什么: {err}");
     assert!(!bad.exists(), "被拒的路径不该被建出来");
 }
 
+/// 凭据只会落在**程序数据目录之下**，位置由我们推出来，调用方指不到别处。
 #[test]
-fn codex_home_creates_the_directory_when_missing() {
-    let good = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("home-ok");
-    let _ = std::fs::remove_dir_all(&good);
+fn codex_home_lives_under_the_app_dir_and_nowhere_else() {
+    let app = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("app-dir");
+    let _ = std::fs::remove_dir_all(&app);
 
-    let home = CodexHome::new(&good).expect("target 下的目录应当可用");
-    assert!(good.is_dir(), "应当被建出来");
-    assert_eq!(home.as_path(), good.as_path());
+    let home = CodexHome::under_app_dir(&app).expect("程序数据目录下应当可用");
+    assert!(home.as_path().starts_with(&app), "CODEX_HOME 跑到程序目录外面去了");
+    assert!(home.as_path().is_dir(), "应当被建出来");
+    assert!(
+        home.credentials_file().starts_with(&app),
+        "凭据文件跑到程序目录外面去了"
+    );
 
-    // 再来一次：已存在也要能通过。
-    CodexHome::new(&good).expect("已存在的目录应当可用");
+    // 再来一次：已存在也要能通过，并且落在同一个位置。
+    let again = CodexHome::under_app_dir(&app).expect("已存在也应当可用");
+    assert_eq!(again, home, "同一个程序目录必须推出同一个 CODEX_HOME");
 }
 
 #[test]
-fn codex_home_refuses_a_file() {
-    let path = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("home-is-a-file");
-    std::fs::write(&path, b"x").expect("写文件");
-    let err = CodexHome::new(&path).unwrap_err();
+fn codex_home_refuses_when_a_file_squats_on_the_path() {
+    let app = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("app-dir-squatted");
+    std::fs::create_dir_all(&app).expect("建程序目录");
+    let squatter = app.join("codex-home");
+    let _ = std::fs::remove_dir_all(&squatter);
+    std::fs::write(&squatter, b"x").expect("写文件占位");
+
+    let err = CodexHome::under_app_dir(&app).unwrap_err();
     assert!(matches!(err, HostError::BadCodexHome(_)), "拿到的是 {err:?}");
+    let _ = std::fs::remove_file(&squatter);
+}
+
+/// 会话结束要把凭据抹掉，而且抹之前先覆盖内容。
+#[test]
+fn wiping_credentials_removes_the_file() {
+    let app = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("app-dir-wipe");
+    let _ = std::fs::remove_dir_all(&app);
+    let home = CodexHome::under_app_dir(&app).expect("建 CODEX_HOME");
+
+    // 没有文件时是 no-op，不该报错。
+    assert!(!home.wipe_credentials().expect("空目录抹除"), "本来就没有文件");
+
+    std::fs::write(home.credentials_file(), br#"{"OPENAI_API_KEY":"sk-fake"}"#).expect("造一个凭据");
+    assert!(home.wipe_credentials().expect("抹除"), "应当报告确实抹掉了一个");
+    assert!(!home.credentials_file().exists(), "文件还在");
 }
 
 #[test]
@@ -59,8 +85,8 @@ fn backoff_doubles_and_then_stops_growing() {
 /// 那是最难排查的一种故障表现。
 #[tokio::test(flavor = "multi_thread")]
 async fn failing_to_start_reports_every_attempt_and_then_gives_up() {
-    let home = CodexHome::new(
-        std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("home-supervisor"),
+    let home = CodexHome::under_app_dir(
+        std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("app-dir-supervisor"),
     )
     .expect("建 CODEX_HOME");
 
@@ -104,5 +130,35 @@ fn restarted_is_must_use_so_callers_cannot_ignore_lost_state() {
     assert!(
         src.contains("#[must_use") && src.contains("pub struct Restarted"),
         "Restarted 上的 #[must_use] 不见了 —— 重启会变回「透明」的，那是错的"
+    );
+}
+
+/// 安装 ID 必须**跨进程稳定**（同一次安装每次都读到同一个），
+/// 又必须**跨安装不同**（重装换新的）。
+///
+/// 这两条一起决定了托管 key 的名字对不对：稳定性保证我们能认领上次那把、
+/// 不重复建；差异性保证重装之后不去续期一个说不清来历的旧租约。
+#[test]
+fn install_id_is_stable_within_an_install_and_fresh_across_installs() {
+    let app = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("identity");
+    let _ = std::fs::remove_dir_all(&app);
+
+    let first = DeviceIdentity::load_or_create(&app).expect("生成身份");
+    assert!(!first.install_id.is_empty(), "安装 ID 不该是空的");
+    assert!(!first.machine_name.is_empty(), "机器名不该是空的");
+
+    let second = DeviceIdentity::load_or_create(&app).expect("再读一次");
+    assert_eq!(first, second, "同一次安装每次都该读到同一个身份");
+
+    // 模拟卸载重装：程序数据目录没了。
+    std::fs::remove_dir_all(&app).expect("清掉程序数据目录");
+    let reinstalled = DeviceIdentity::load_or_create(&app).expect("重装后生成");
+    assert_ne!(
+        first.install_id, reinstalled.install_id,
+        "重装之后安装 ID 应当是新的，否则会去续期旧安装留下的租约"
+    );
+    assert_eq!(
+        first.machine_name, reinstalled.machine_name,
+        "机器名不该跟着重装变"
     );
 }

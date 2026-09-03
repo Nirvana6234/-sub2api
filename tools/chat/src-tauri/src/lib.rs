@@ -72,6 +72,18 @@ async fn agent_stop(bridge: tauri::State<'_, Arc<AgentBridge>>) -> Result<(), Br
     bridge.stop().await
 }
 
+/// 这台机器上这一次安装的身份 —— 前端拿它拼托管 key 的名字。
+///
+/// 命名规则照搬小白端：机器名让一个账号的几台机器各持各的租约，
+/// 安装 ID 让重装之后不去续期一个说不清来历的旧租约。
+#[tauri::command]
+async fn agent_device_identity(
+    app_dir: String,
+) -> Result<codex_host::DeviceIdentity, BridgeError> {
+    codex_host::DeviceIdentity::load_or_create(&app_dir)
+        .map_err(|e| BridgeError::Host(e.to_string()))
+}
+
 #[tauri::command]
 async fn agent_is_running(bridge: tauri::State<'_, Arc<AgentBridge>>) -> Result<bool, BridgeError> {
     Ok(bridge.is_running().await)
@@ -91,6 +103,7 @@ pub fn run() {
             agent_answer,
             agent_stop,
             agent_is_running,
+            agent_device_identity,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Chat");

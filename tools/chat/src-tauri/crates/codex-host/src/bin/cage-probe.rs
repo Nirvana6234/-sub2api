@@ -95,7 +95,7 @@ async fn run_real_codex() {
 
     let need = |k: &str| std::env::var(k).unwrap_or_else(|_| panic!("缺环境变量 {k}"));
 
-    let home = CodexHome::new(need("CAGE_PROBE_HOME")).expect("CODEX_HOME 不合法");
+    let home = CodexHome::under_app_dir(need("CAGE_PROBE_HOME")).expect("CODEX_HOME 不合法");
     let workdir = std::path::Path::new(&need("CAGE_PROBE_HOME")).join("work");
     std::fs::create_dir_all(&workdir).expect("建工作目录");
 

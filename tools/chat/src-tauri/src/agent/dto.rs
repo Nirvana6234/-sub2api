@@ -185,8 +185,11 @@ pub enum UiDecision {
 #[serde(rename_all = "camelCase")]
 pub struct StartParams {
     pub codex_binary: String,
-    /// 私有 `CODEX_HOME`。
-    pub codex_home: String,
+    /// **我们这个程序自己的数据目录**（Tauri 侧的 `app_data_dir()`）。
+    ///
+    /// 传目录本身而不是 `CODEX_HOME` 的完整路径，是因为凭据会落在这下面 ——
+    /// 位置必须由我们推出来，不能让调用方指到别处。见 `CodexHome::under_app_dir`。
+    pub app_dir: String,
     pub base_url: String,
     pub model: String,
     pub api_key: String,
