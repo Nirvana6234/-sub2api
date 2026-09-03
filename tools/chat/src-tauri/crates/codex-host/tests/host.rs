@@ -91,6 +91,7 @@ async fn failing_to_start_reports_every_attempt_and_then_gives_up() {
     .expect("建 CODEX_HOME");
 
     let config = EngineConfig {
+        kind: codex_host::CodexBinaryKind::Cli,
         binary: "definitely-not-a-real-codex-binary".into(),
         home,
         base_url: "http://127.0.0.1:1".to_owned(),

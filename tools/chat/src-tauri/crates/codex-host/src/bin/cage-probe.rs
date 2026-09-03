@@ -110,8 +110,10 @@ async fn run_real_codex() {
         json.get("OPENAI_API_KEY").and_then(|v| v.as_str()).expect("没有 OPENAI_API_KEY").to_owned()
     });
 
+    let binary: std::path::PathBuf = need("CAGE_PROBE_BIN").into();
     let config = EngineConfig {
-        binary: need("CAGE_PROBE_BIN").into(),
+        kind: codex_host::CodexBinaryKind::infer(&binary),
+        binary,
         home,
         base_url: need("CAGE_PROBE_BASE_URL"),
         model: std::env::var("CAGE_PROBE_MODEL").unwrap_or_else(|_| "gpt-5.5".to_owned()),

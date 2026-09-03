@@ -1,6 +1,6 @@
 //! 起一个 codex app-server，并把它关进笼子。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use tokio::process::{Child, Command};
@@ -9,11 +9,58 @@ use crate::cage::Cage;
 use crate::home::CodexHome;
 use crate::HostError;
 
+/// 我们能起的两种 codex 二进制。
+///
+/// **这不是可选项，是两种不同的命令行。** 官方那个 `codex.exe` 是个多合一入口，
+/// app-server 是它的一个子命令；上游同时还发一个 `codex-app-server.exe`
+/// （release 流水线里叫 app-server bundle），那一个**自己就是** app-server，
+/// 多传一个 `app-server` 参数会被 clap 当成未知参数拒掉。
+///
+/// 两者的差别只有第一个参数，但传错的表现是进程起来就死、报一句
+/// `unexpected argument`，而我们这一侧只会看到「起不来」。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodexBinaryKind {
+    /// 官方 `codex(.exe)` —— 要带 `app-server` 子命令。
+    Cli,
+    /// 精简的 `codex-app-server(.exe)` —— 本身就是 app-server，不带子命令。
+    AppServer,
+}
+
+impl CodexBinaryKind {
+    /// 按文件名猜。
+    ///
+    /// 猜错只会让进程起不来（不会跑到别的地方去），所以按名字判断是安全的；
+    /// 但**调用方随时可以显式指定**，不必依赖这个猜测。
+    #[must_use]
+    pub fn infer(binary: &Path) -> Self {
+        let stem = binary
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if stem == "codex-app-server" {
+            CodexBinaryKind::AppServer
+        } else {
+            CodexBinaryKind::Cli
+        }
+    }
+
+    /// 这一种二进制要不要在最前面加子命令。
+    fn subcommand(self) -> Option<&'static str> {
+        match self {
+            CodexBinaryKind::Cli => Some("app-server"),
+            CodexBinaryKind::AppServer => None,
+        }
+    }
+}
+
 /// 起 app-server 需要的全部东西。
 #[derive(Debug, Clone)]
 pub struct EngineConfig {
     /// codex 可执行文件。
     pub binary: PathBuf,
+    /// 这个文件是哪一种。见 [`CodexBinaryKind`]。
+    pub kind: CodexBinaryKind,
     /// 私有 `CODEX_HOME`。
     pub home: CodexHome,
     /// 中转站地址（我们自己的服务端）。
@@ -71,7 +118,9 @@ impl Engine {
         }
 
         let mut cmd = Command::new(&config.binary);
-        cmd.arg("app-server");
+        if let Some(subcommand) = config.kind.subcommand() {
+            cmd.arg(subcommand);
+        }
         for over in config.config_overrides() {
             cmd.arg("-c").arg(over);
         }
@@ -154,5 +203,43 @@ impl Engine {
                 Ok(())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_binary_kind_is_inferred_from_the_file_name() {
+        for slim in [
+            "codex-app-server.exe",
+            "codex-app-server",
+            "C:/pkg/bin/CODEX-APP-SERVER.EXE",
+        ] {
+            assert_eq!(
+                CodexBinaryKind::infer(Path::new(slim)),
+                CodexBinaryKind::AppServer,
+                "{slim}"
+            );
+        }
+
+        // 官方那个多合一入口，以及任何叫不出名字的东西，都按「要带子命令」处理 ——
+        // 那是用户机器上更常见的那一个。
+        for cli in ["codex.exe", "codex", "C:/x/codex-cli.exe", ""] {
+            assert_eq!(
+                CodexBinaryKind::infer(Path::new(cli)),
+                CodexBinaryKind::Cli,
+                "{cli}"
+            );
+        }
+    }
+
+    /// 子命令只该出现在 CLI 那一种上。传给精简版会被 clap 当未知参数拒掉，
+    /// 而我们这一侧只看得到「起不来」。
+    #[test]
+    fn only_the_cli_flavour_gets_a_subcommand() {
+        assert_eq!(CodexBinaryKind::Cli.subcommand(), Some("app-server"));
+        assert_eq!(CodexBinaryKind::AppServer.subcommand(), None);
     }
 }

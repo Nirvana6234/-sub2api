@@ -32,7 +32,7 @@ pub mod proxy;
 pub mod supervisor;
 
 pub use cage::Cage;
-pub use engine::{Engine, EngineConfig};
+pub use engine::{CodexBinaryKind, Engine, EngineConfig};
 pub use home::CodexHome;
 pub use identity::DeviceIdentity;
 pub use keylease::{key_name, needs_renewal, pick_current, KeyMeta};

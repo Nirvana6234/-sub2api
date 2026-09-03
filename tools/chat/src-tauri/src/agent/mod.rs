@@ -124,8 +124,12 @@ impl AgentBridge {
             relay.set_session_token(held.clone()).await;
         }
 
+        // 二进制是哪一种按文件名猜（官方 codex.exe 要带 app-server 子命令，
+        // 精简的 codex-app-server.exe 不带）。猫错只会让进程起不来，不会跑错地方。
+        let binary: std::path::PathBuf = params.codex_binary.into();
         let config = EngineConfig {
-            binary: params.codex_binary.into(),
+            kind: codex_host::CodexBinaryKind::infer(&binary),
+            binary,
             home: home.clone(),
             base_url: relay.base_url(),
             model: params.model,
