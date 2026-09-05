@@ -1,0 +1,116 @@
+# =============================================================================
+# Docker Ignore File for Sub2API
+# =============================================================================
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Documentation
+*.md
+!deploy/DOCKER.md
+docs/
+# admin-compliance gate (LegalDocumentView.vue) build-time imports
+# docs/legal/*.md?raw into the frontend bundle; keep that subtree in the
+# Docker build context even though docs/ is otherwise excluded.
+!docs/legal/
+!docs/legal/*.md
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+dist/
+build/
+!backend/internal/web/dist/
+!backend/internal/web/dist/**
+
+# Node modules (will be installed in container)
+frontend/node_modules/
+frontend/node_modules
+frontend/node_modules/**
+**/node_modules/
+**/node_modules/**
+node_modules/
+frontend/.pnpm-store/
+.pnpm-store/
+**/.pnpm-store/
+**/.ignored/
+**/.vite/
+
+# Go build cache (will be built in container)
+backend/vendor/
+
+# TransitHub is deployed separately and is not part of the Sub2API image.
+transit-hub/
+
+# Test files
+*_test.go
+**/*.test.js
+coverage/
+.nyc_output/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Local config
+config.yaml
+config.local.yaml
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Local workspace material not referenced by the production Dockerfile.
+assets/
+data/
+skills/
+openspec/
+tools/*
+!tools/
+!tools/chat/
+!tools/chat/**
+tools/chat/node_modules/
+tools/chat/.next/
+tools/chat/out/
+
+# Local Windows diagnostic binaries; the image builds its Linux binary from Go source.
+backend/*.exe
+backend/.local/
+backend/bin/*
+!backend/bin/sub2api-linux-amd64
+backend/data/
+
+# Deploy files (not needed in image)
+deploy/install.sh
+deploy/sub2api.service
+deploy/sub2api-sudoers
+deploy/data/
+deploy/postgres_data/
+deploy/redis_data/
+
+# GoReleaser
+.goreleaser.yaml
+
+# GitHub
+.github/
+
+# Claude files
+.claude/
+issues/
+CLAUDE.md

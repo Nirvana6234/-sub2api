@@ -1,0 +1,210 @@
+/**
+ * API Keys management endpoints
+ * Handles CRUD operations for user API keys
+ */
+
+import { apiClient } from './client'
+import type { ApiKey, CreateApiKeyRequest, UpdateApiKeyRequest, PaginatedResponse } from '@/types'
+
+const MANAGED_CLIENT_API_KEY_PREFIX = '共飞直连客户端-'
+const PLAYGROUND_API_KEY_NAMES = new Set(['Playground Chat', 'Playground Images'])
+const MAX_KEY_LIST_PAGES = 100
+
+/** Website-only filter for system-managed API keys. */
+export function isManagedClientApiKey(key: Pick<ApiKey, 'name'>): boolean {
+  return key.name.trim().startsWith(MANAGED_CLIENT_API_KEY_PREFIX)
+}
+
+export function isWebsiteHiddenApiKey(key: Pick<ApiKey, 'name'>): boolean {
+  const name = key.name.trim()
+  return isManagedClientApiKey(key) || PLAYGROUND_API_KEY_NAMES.has(name)
+}
+
+/**
+ * List all API keys for current user
+ * @param page - Page number (default: 1)
+ * @param pageSize - Items per page (default: 10)
+ * @param filters - Optional filter parameters
+ * @param options - Optional request options. `includeHidden` is reserved for
+ *                  website features that need system-managed keys internally.
+ * @returns Paginated list of API keys
+ */
+export async function list(
+  page: number = 1,
+  pageSize: number = 10,
+  filters?: {
+    search?: string
+    status?: string
+    group_id?: number | string
+    sort_by?: string
+    sort_order?: 'asc' | 'desc'
+  },
+  options?: {
+    signal?: AbortSignal
+    includeHidden?: boolean
+  }
+): Promise<PaginatedResponse<ApiKey>> {
+  if (options?.includeHidden) {
+    const { data } = await apiClient.get<PaginatedResponse<ApiKey>>('/keys', {
+      params: { page, page_size: pageSize, ...filters },
+      signal: options.signal
+    })
+    return data
+  }
+
+  // The server still returns these keys so clients and the playground can use
+  // them internally. Fetch all pages first, then paginate after hiding them
+  // so website totals and page counts stay correct.
+  const visibleKeys: ApiKey[] = []
+  let serverPage = 1
+  let serverPages = 1
+
+  while (serverPage <= serverPages && serverPage <= MAX_KEY_LIST_PAGES) {
+    const { data } = await apiClient.get<PaginatedResponse<ApiKey>>('/keys', {
+      params: { page: serverPage, page_size: 1000, ...filters },
+      signal: options?.signal
+    })
+
+    visibleKeys.push(...data.items.filter((key) => !isWebsiteHiddenApiKey(key)))
+    serverPages = Math.max(data.pages || 1, 1)
+    if (data.items.length === 0 || serverPage >= serverPages) break
+    serverPage += 1
+  }
+
+  const normalizedPage = Math.max(page, 1)
+  const normalizedPageSize = Math.max(pageSize, 1)
+  const start = (normalizedPage - 1) * normalizedPageSize
+  const total = visibleKeys.length
+
+  return {
+    items: visibleKeys.slice(start, start + normalizedPageSize),
+    total,
+    page: normalizedPage,
+    page_size: normalizedPageSize,
+    pages: Math.max(Math.ceil(total / normalizedPageSize), 1)
+  }
+}
+
+/** Ensure the purpose-bound keys used by the playground exist for this user. */
+export async function ensurePlayground(): Promise<void> {
+  await apiClient.post('/keys/playground/ensure')
+}
+
+/**
+ * Get API key by ID
+ * @param id - API key ID
+ * @returns API key details
+ */
+export async function getById(id: number): Promise<ApiKey> {
+  const { data } = await apiClient.get<ApiKey>(`/keys/${id}`)
+  return data
+}
+
+/**
+ * Create new API key
+ * @param name - Key name
+ * @param groupId - Optional group ID
+ * @param customKey - Optional custom key value
+ * @param ipWhitelist - Optional IP whitelist
+ * @param ipBlacklist - Optional IP blacklist
+ * @param quota - Optional quota limit in USD (0 = unlimited)
+ * @param expiresInDays - Optional days until expiry (undefined = never expires)
+ * @param rateLimitData - Optional rate limit fields
+ * @param autoGroup - Automatically select a currently usable group
+ * @param autoGroupStrategy - Price/latency balance for automatic routing
+ * @param autoGroupIDs - User-selected candidate groups for automatic routing
+ * @returns Created API key
+ */
+export async function create(
+  name: string,
+  groupId?: number | null,
+  customKey?: string,
+  ipWhitelist?: string[],
+  ipBlacklist?: string[],
+  quota?: number,
+  expiresInDays?: number,
+  rateLimitData?: { rate_limit_5h?: number; rate_limit_1d?: number; rate_limit_7d?: number },
+  autoGroup = false,
+	autoGroupStrategy: 'price' | 'balanced' | 'speed' = 'price',
+  autoGroupIDs: number[] = []
+): Promise<ApiKey> {
+  const payload: CreateApiKeyRequest = { name }
+  payload.auto_group = autoGroup
+  if (autoGroup) {
+	payload.auto_group_strategy = autoGroupStrategy
+	payload.auto_group_ids = autoGroupIDs
+  }
+  if (groupId !== undefined) {
+    payload.group_id = groupId
+  }
+  if (customKey) {
+    payload.custom_key = customKey
+  }
+  if (ipWhitelist && ipWhitelist.length > 0) {
+    payload.ip_whitelist = ipWhitelist
+  }
+  if (ipBlacklist && ipBlacklist.length > 0) {
+    payload.ip_blacklist = ipBlacklist
+  }
+  if (quota !== undefined && quota > 0) {
+    payload.quota = quota
+  }
+  if (expiresInDays !== undefined && expiresInDays > 0) {
+    payload.expires_in_days = expiresInDays
+  }
+  if (rateLimitData?.rate_limit_5h && rateLimitData.rate_limit_5h > 0) {
+    payload.rate_limit_5h = rateLimitData.rate_limit_5h
+  }
+  if (rateLimitData?.rate_limit_1d && rateLimitData.rate_limit_1d > 0) {
+    payload.rate_limit_1d = rateLimitData.rate_limit_1d
+  }
+  if (rateLimitData?.rate_limit_7d && rateLimitData.rate_limit_7d > 0) {
+    payload.rate_limit_7d = rateLimitData.rate_limit_7d
+  }
+
+  const { data } = await apiClient.post<ApiKey>('/keys', payload)
+  return data
+}
+
+/**
+ * Update API key
+ * @param id - API key ID
+ * @param updates - Fields to update
+ * @returns Updated API key
+ */
+export async function update(id: number, updates: UpdateApiKeyRequest): Promise<ApiKey> {
+  const { data } = await apiClient.put<ApiKey>(`/keys/${id}`, updates)
+  return data
+}
+
+/**
+ * Delete API key
+ * @param id - API key ID
+ * @returns Success confirmation
+ */
+export async function deleteKey(id: number): Promise<{ message: string }> {
+  const { data } = await apiClient.delete<{ message: string }>(`/keys/${id}`)
+  return data
+}
+
+/**
+ * Toggle API key status (active/inactive)
+ * @param id - API key ID
+ * @param status - New status
+ * @returns Updated API key
+ */
+export async function toggleStatus(id: number, status: 'active' | 'inactive'): Promise<ApiKey> {
+  return update(id, { status })
+}
+
+export const keysAPI = {
+  list,
+  ensurePlayground,
+  getById,
+  create,
+  update,
+  delete: deleteKey,
+  toggleStatus
+}
+
+export default keysAPI

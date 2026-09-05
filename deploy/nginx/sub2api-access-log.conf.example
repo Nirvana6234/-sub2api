@@ -1,0 +1,11 @@
+# Install the map in nginx's http context (conf.d is included from http {}).
+# Then add `if=$sub2api_access_loggable` to the access_log directive in the
+# sub2api server block as shown below. `$uri` excludes the query string, so all
+# pagination variants of /api/v1/admin/usage are filtered.
+map $uri $sub2api_access_loggable {
+    default 1;
+    ~^/api/v1/admin/usage/?$ 0;
+}
+
+# In /etc/nginx/conf.d/sub2api.conf, use:
+# access_log /var/log/nginx/sub2api_access.log main if=$sub2api_access_loggable;

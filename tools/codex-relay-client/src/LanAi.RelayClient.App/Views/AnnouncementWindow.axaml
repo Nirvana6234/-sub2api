@@ -1,0 +1,77 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:LanAi.RelayClient.ViewModels;assembly=LanAi.RelayClient.Core"
+        x:Class="LanAi.RelayClient.App.Views.AnnouncementWindow"
+        x:DataType="vm:AnnouncementsViewModel"
+        Title="公告" Width="860" Height="560"
+        WindowStartupLocation="CenterOwner"
+        Background="#F7F8FA">
+
+  <Grid Margin="16" ColumnDefinitions="270,16,*">
+
+    <!-- The list keeps the server's own ordering: unread first, newest first. -->
+    <Border Grid.Column="0" Background="White" BorderBrush="#E5E7EB" BorderThickness="1">
+      <Grid>
+        <ListBox Name="AnnouncementList"
+                 ItemsSource="{Binding Items}"
+                 SelectedItem="{Binding Selected, Mode=TwoWay}"
+                 SelectionChanged="AnnouncementList_OnSelectionChanged"
+                 BorderThickness="0" Background="Transparent"
+                 HorizontalAlignment="Stretch"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+          <ListBox.ItemTemplate>
+            <DataTemplate x:DataType="vm:AnnouncementItemViewModel">
+              <Grid Margin="4,6" ColumnDefinitions="10,*">
+                <!-- The unread dot, so a glance at the list agrees with the badge on
+                     the button that opened it. -->
+                <Ellipse Grid.Column="0" Width="6" Height="6"
+                         Fill="#2563EB" VerticalAlignment="Top" Margin="0,6,0,0"
+                         IsVisible="{Binding IsUnread}" />
+
+                <StackPanel Grid.Column="1">
+                  <TextBlock Text="{Binding Title}" TextWrapping="Wrap" FontSize="13" />
+                  <TextBlock Text="{Binding PublishedText}"
+                             Foreground="#9CA3AF" FontSize="11" Margin="0,2,0,0" />
+                </StackPanel>
+              </Grid>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+
+        <TextBlock Text="暂时没有公告"
+                   Foreground="#9CA3AF" FontSize="12"
+                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                   IsVisible="{Binding IsEmpty}" />
+      </Grid>
+    </Border>
+
+    <Border Grid.Column="2" Background="White" BorderBrush="#E5E7EB" BorderThickness="1">
+      <Grid IsVisible="{Binding HasSelection}" RowDefinitions="Auto,*,Auto">
+
+        <StackPanel Grid.Row="0" Margin="20,16,20,12">
+          <TextBlock Text="{Binding Selected.Title}"
+                     FontSize="17" FontWeight="SemiBold" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding Selected.PublishedText}"
+                     Foreground="#9CA3AF" FontSize="11" Margin="0,4,0,0" />
+        </StackPanel>
+
+        <!-- Avalonia has no FlowDocumentScrollViewer, and no FlowDocument to put in
+             one. The body is built as ordinary controls by AnnouncementContentBuilder
+             and dropped in here. -->
+        <ScrollViewer Grid.Row="1" Name="ContentViewer"
+                      Margin="20,0,12,0"
+                      VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled" />
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right"
+                    Margin="20,10,20,16">
+          <Button Content="在网页端查看" Click="OpenInBrowser_OnClick"
+                  Padding="12,6" Background="Transparent" BorderBrush="#D1D5DB" BorderThickness="1" />
+          <Button Content="关闭" Click="Close_OnClick"
+                  Padding="16,6" Margin="8,0,0,0"
+                  Background="Transparent" BorderBrush="#D1D5DB" BorderThickness="1" />
+        </StackPanel>
+      </Grid>
+    </Border>
+  </Grid>
+</Window>

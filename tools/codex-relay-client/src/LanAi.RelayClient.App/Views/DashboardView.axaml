@@ -1,0 +1,361 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:LanAi.RelayClient.ViewModels;assembly=LanAi.RelayClient.Core"
+             xmlns:controls="clr-namespace:LanAi.RelayClient.Controls"
+             x:Class="LanAi.RelayClient.App.Views.DashboardView"
+             x:DataType="vm:DashboardPageViewModel">
+
+  <UserControl.Styles>
+    <!-- WPF's Style.Triggers / DataTrigger has no Avalonia counterpart. The
+         replacement is a style class toggled by a boolean binding, which is why the
+         controls below carry Classes.installing / Classes.restart / Classes.low /
+         Classes.unread. Same effect, but the condition lives on the control and the
+         appearance lives here. -->
+    <Style Selector="Button.primary">
+      <Setter Property="Background" Value="#2563EB" />
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="Button.primary.installing">
+      <Setter Property="Background" Value="#6B7280" />
+    </Style>
+    <!-- Restart wins over installing: it is the state the user must act on. Later
+         selectors of equal specificity win in Avalonia, so the order here matters. -->
+    <Style Selector="Button.primary.restart">
+      <Setter Property="Background" Value="#DC2626" />
+    </Style>
+
+    <Style Selector="Button.recharge">
+      <Setter Property="Background" Value="#F3F4F6" />
+      <Setter Property="Foreground" Value="#374151" />
+      <Setter Property="BorderBrush" Value="#D1D5DB" />
+    </Style>
+    <Style Selector="Button.recharge.low">
+      <Setter Property="Background" Value="#DC2626" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="BorderBrush" Value="#DC2626" />
+    </Style>
+
+    <Style Selector="Button.bell">
+      <Setter Property="BorderBrush" Value="#D1D5DB" />
+      <Setter Property="Foreground" Value="#111827" />
+    </Style>
+    <Style Selector="Button.bell.unread">
+      <Setter Property="BorderBrush" Value="#2563EB" />
+      <Setter Property="Foreground" Value="#2563EB" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+
+    <Style Selector="Button.link">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Foreground" Value="#2563EB" />
+      <Setter Property="FontSize" Value="11" />
+    </Style>
+
+    <Style Selector="Border.card">
+      <Setter Property="Background" Value="White" />
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="Padding" Value="16" />
+      <Setter Property="Margin" Value="0,0,0,12" />
+      <Setter Property="BorderBrush" Value="#E5E7EB" />
+      <Setter Property="BorderThickness" Value="1" />
+    </Style>
+  </UserControl.Styles>
+
+  <DockPanel Margin="32">
+
+    <Grid DockPanel.Dock="Top" Margin="0,0,0,16">
+      <StackPanel>
+        <TextBlock Text="{Binding WelcomeText}" FontSize="20" FontWeight="SemiBold" />
+        <TextBlock Text="{Binding Dashboard.CurrentGroupName, StringFormat='当前分组：{0}'}"
+                   Foreground="#6B7280" FontSize="12" Margin="0,2,0,0" />
+        <TextBlock Text="{Binding Dashboard.RefreshMessage}"
+                   Foreground="#B45309" FontSize="12" Margin="0,2,0,0"
+                   IsVisible="{Binding Dashboard.IsRateLimited}" />
+      </StackPanel>
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top">
+        <!-- One of three ways into the reader, alongside the tray menu and the tray
+             balloon. All three read the same view model, so this count cannot
+             disagree with what the list shows. -->
+        <Button Content="{Binding Announcements.BellLabel}"
+                Classes="bell"
+                Classes.unread="{Binding Announcements.HasUnread}"
+                Click="ShowAnnouncements_OnClick"
+                Padding="10,4" Margin="0,0,8,0" Background="Transparent" />
+        <Button Content="刷新" Click="Refresh_OnClick"
+                IsEnabled="{Binding !Dashboard.IsRefreshing}"
+                Padding="10,4" Background="Transparent" BorderBrush="#D1D5DB" />
+        <Button Content="退出" Click="SignOut_OnClick"
+                Padding="10,4" Margin="8,0,0,0"
+                Background="Transparent" BorderBrush="#D1D5DB" />
+      </StackPanel>
+    </Grid>
+
+    <StackPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+        <TextBlock Text="{Binding ClientUpdate.CurrentVersionText}"
+                   Foreground="#9CA3AF" FontSize="11" VerticalAlignment="Center" />
+        <Button Content="检查更新" Click="CheckUpdate_OnClick" Classes="link" Padding="10,0,0,0" />
+        <Button Content="联系我们" Click="OpenContactPage_OnClick" Classes="link" Padding="10,0,0,0" />
+      </StackPanel>
+      <Button Content="{Binding ClientUpdate.UpdateMessage}"
+              Click="OpenUpdatePage_OnClick" Classes="link"
+              HorizontalAlignment="Center" Padding="0,4,0,0"
+              IsVisible="{Binding ClientUpdate.HasUpdate}" />
+    </StackPanel>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+      <StackPanel>
+
+        <!-- The reason this client exists, so it leads. Everything below is
+             information about a session this button starts. -->
+        <Border Classes="card">
+          <StackPanel>
+            <Button Content="{Binding Dashboard.StartCodexLabel}"
+                    Click="StartCodex_OnClick"
+                    IsEnabled="{Binding Dashboard.CanStartCodex}"
+                    Classes="primary"
+                    Classes.installing="{Binding Dashboard.IsInstallingCodex}"
+                    Classes.restart="{Binding Dashboard.RequiresCodexAccountRestart}"
+                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                    Padding="0,12" FontSize="16" FontWeight="SemiBold"
+                    BorderThickness="0" />
+            <TextBlock Text="{Binding Dashboard.CodexMessage}" TextWrapping="Wrap"
+                       Foreground="#6B7280" FontSize="12" Margin="0,8,0,0"
+                       IsVisible="{Binding Dashboard.HasCodexMessage}" />
+            <TextBlock Text="{Binding Dashboard.LeaseStatus}"
+                       Foreground="#059669" FontSize="11" Margin="0,6,0,0"
+                       IsVisible="{Binding Dashboard.HasLeaseStatus}" />
+            <TextBlock Text="保持客户端运行，ChatGPT 才能继续使用共飞额度"
+                       Foreground="#9CA3AF" FontSize="11" Margin="0,6,0,0"
+                       TextWrapping="Wrap" />
+            <CheckBox Content="随系统启动" IsChecked="{Binding Dashboard.StartWithWindows}"
+                      Margin="0,8,0,0" Foreground="#374151" />
+          </StackPanel>
+        </Border>
+
+        <!-- Account card. Greys out on its own; a failure here never touches the
+             other cards or the session. -->
+        <Border Classes="card">
+          <StackPanel>
+            <DockPanel>
+              <TextBlock Text="暂时取不到" Foreground="#9CA3AF" FontSize="12"
+                         DockPanel.Dock="Right" HorizontalAlignment="Right"
+                         IsVisible="{Binding Dashboard.AccountUnavailable}" />
+              <TextBlock Text="账户" FontWeight="SemiBold" />
+            </DockPanel>
+            <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+              <StackPanel>
+                <TextBlock Text="余额" Foreground="#6B7280" FontSize="12" />
+                <TextBlock Text="{Binding Dashboard.BalanceText}" FontSize="22" FontWeight="SemiBold" />
+              </StackPanel>
+              <StackPanel Margin="32,0,0,0">
+                <TextBlock Text="冻结" Foreground="#6B7280" FontSize="12" />
+                <TextBlock Text="{Binding Dashboard.FrozenBalanceText}" FontSize="22" Foreground="#6B7280" />
+              </StackPanel>
+            </StackPanel>
+
+            <!-- The entry is always available when the server supplies a recharge
+                 URL; only the warning treatment follows the threshold. -->
+            <DockPanel Margin="0,10,0,0" IsVisible="{Binding Dashboard.CanRecharge}">
+              <Button Content="去充值" Click="Recharge_OnClick"
+                      Classes="recharge"
+                      Classes.low="{Binding Dashboard.BalanceIsLow}"
+                      DockPanel.Dock="Right" HorizontalAlignment="Right"
+                      Padding="10,4" BorderThickness="1" />
+              <TextBlock Text="余额偏低" Foreground="#DC2626" VerticalAlignment="Center"
+                         IsVisible="{Binding Dashboard.BalanceIsLow}" />
+            </DockPanel>
+          </StackPanel>
+        </Border>
+
+        <!-- Usage card -->
+        <Border Classes="card">
+          <StackPanel>
+            <DockPanel>
+              <TextBlock Text="暂时取不到" Foreground="#9CA3AF" FontSize="12"
+                         DockPanel.Dock="Right" HorizontalAlignment="Right"
+                         IsVisible="{Binding Dashboard.UsageUnavailable}" />
+              <TextBlock Text="今日用量" FontWeight="SemiBold" />
+            </DockPanel>
+            <UniformGrid Columns="3" Margin="0,10,0,0">
+              <StackPanel>
+                <TextBlock Text="请求数" Foreground="#6B7280" FontSize="12" />
+                <TextBlock Text="{Binding Dashboard.TodayRequestsText}" FontSize="16" FontWeight="SemiBold" />
+              </StackPanel>
+              <StackPanel>
+                <TextBlock Text="Token" Foreground="#6B7280" FontSize="12" />
+                <TextBlock Text="{Binding Dashboard.TodayTokensText}" FontSize="16" FontWeight="SemiBold" />
+              </StackPanel>
+              <StackPanel>
+                <TextBlock Text="消费" Foreground="#6B7280" FontSize="12" />
+                <TextBlock Text="{Binding Dashboard.TodayCostText}" FontSize="16" FontWeight="SemiBold" />
+              </StackPanel>
+            </UniformGrid>
+          </StackPanel>
+        </Border>
+
+        <!-- Subscription card is hidden when the server reports none. -->
+        <Border Classes="card" IsVisible="{Binding Dashboard.HasSubscription}">
+          <StackPanel>
+            <TextBlock Text="订阅" FontWeight="SemiBold" />
+            <TextBlock Text="{Binding Dashboard.SubscriptionName}" FontSize="16"
+                       FontWeight="SemiBold" Margin="0,8,0,2" />
+            <TextBlock Text="{Binding Dashboard.SubscriptionProgressText}" Foreground="#6B7280" />
+          </StackPanel>
+        </Border>
+
+        <!-- Group card -->
+        <Border Classes="card">
+          <StackPanel>
+            <DockPanel>
+              <TextBlock Text="暂时取不到" Foreground="#9CA3AF" FontSize="12"
+                         DockPanel.Dock="Right" HorizontalAlignment="Right"
+                         IsVisible="{Binding Dashboard.GroupsUnavailable}" />
+              <TextBlock Text="分组与倍率" FontWeight="SemiBold" />
+            </DockPanel>
+
+            <!-- Says in words which group is in force, so the answer does not depend
+                 on reading the dropdown's state. -->
+            <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+              <TextBlock Text="当前使用：" Foreground="#6B7280" FontSize="12" VerticalAlignment="Center" />
+              <TextBlock Text="{Binding Dashboard.CurrentGroupName}" FontWeight="SemiBold" VerticalAlignment="Center" />
+              <TextBlock Text="{Binding Dashboard.CurrentGroupRate}" Margin="6,0,0,0"
+                         Foreground="#2563EB" FontWeight="SemiBold" FontSize="12" VerticalAlignment="Center" />
+            </StackPanel>
+            <TextBlock Text="{Binding Dashboard.CurrentGroupRateDescription}"
+                       Foreground="#6B7280" FontSize="11" Margin="0,2,0,0" TextWrapping="Wrap"
+                       IsVisible="{Binding Dashboard.HasGroupRateDescription}" />
+
+            <TextBlock Text="切换分组" Foreground="#6B7280" FontSize="12" Margin="0,12,0,4" />
+            <Grid>
+              <ComboBox ItemsSource="{Binding Dashboard.Groups}"
+                        SelectedItem="{Binding Dashboard.SelectedGroup, Mode=TwoWay}"
+                        IsEnabled="{Binding Dashboard.GroupsReady}"
+                        HorizontalAlignment="Stretch" Padding="8,6">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate x:DataType="vm:GroupItemViewModel">
+                    <StackPanel Margin="0,2">
+                      <DockPanel>
+                        <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" HorizontalAlignment="Right">
+                          <!-- The group default, struck through, only when a personal
+                               rate actually differs from it. -->
+                          <TextBlock Text="{Binding StruckThroughRateLabel}"
+                                     Foreground="#9CA3AF" FontSize="12"
+                                     TextDecorations="Strikethrough"
+                                     Margin="8,0,4,0" VerticalAlignment="Center"
+                                     IsVisible="{Binding HasStruckThroughRate}" />
+                          <TextBlock Text="{Binding RateLabel}" FontWeight="SemiBold"
+                                     FontSize="12" VerticalAlignment="Center" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                      </DockPanel>
+                      <TextBlock Text="{Binding CurrentMarker}"
+                                 Foreground="#2563EB" FontSize="11" Margin="0,1,0,0"
+                                 IsVisible="{Binding IsCurrent}" />
+                      <TextBlock Text="{Binding Description}"
+                                 Foreground="#6B7280" FontSize="11" TextWrapping="Wrap"
+                                 Margin="0,1,0,0" MaxWidth="320"
+                                 IsVisible="{Binding HasDescription}" />
+                      <TextBlock Text="{Binding RateDescription}"
+                                 Foreground="#6B7280" FontSize="11" TextWrapping="Wrap"
+                                 Margin="0,1,0,0" MaxWidth="320"
+                                 IsVisible="{Binding HasRateDescription}" />
+                      <!-- Peak window carries the server's timezone, because the
+                           window is judged on the server's clock, not this one. -->
+                      <TextBlock Text="{Binding PeakLabel}"
+                                 Foreground="#B45309" FontSize="11" Margin="0,1,0,0"
+                                 IsVisible="{Binding HasPeak}" />
+                    </StackPanel>
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
+
+              <!-- Sits over the collapsed box, which renders blank when nothing is
+                   selected. Not hit-testable, so it never intercepts the click that
+                   opens the list. -->
+              <TextBlock Text="点击选择分组"
+                         Foreground="#9CA3AF" FontSize="13"
+                         Margin="10,0,0,0" VerticalAlignment="Center"
+                         IsHitTestVisible="False"
+                         IsVisible="{Binding Dashboard.HasNoGroupSelected}" />
+            </Grid>
+
+            <TextBlock Text="{Binding Dashboard.GroupMessage}" TextWrapping="Wrap"
+                       Foreground="#2563EB" FontSize="12" Margin="0,8,0,0"
+                       IsVisible="{Binding Dashboard.HasGroupMessage}" />
+
+            <!-- Claude 模型与思考强度偏好（仅 Claude 分组可见）-->
+            <StackPanel Margin="0,12,0,0" IsVisible="{Binding Dashboard.IsClaudeGroup}">
+              <TextBlock Text="Claude 模型设置" FontWeight="SemiBold" Foreground="#6B7280"
+                         FontSize="12" Margin="0,0,0,6" />
+              <Grid ColumnDefinitions="*,8,*">
+                <ComboBox Grid.Column="0"
+                          ItemsSource="{Binding Dashboard.ClaudeModels}"
+                          SelectedItem="{Binding Dashboard.SelectedClaudeModel, Mode=TwoWay}"
+                          HorizontalAlignment="Stretch" Padding="8,6" />
+                <ComboBox Grid.Column="2"
+                          ItemsSource="{Binding Dashboard.ClaudeThinkingLevels}"
+                          SelectedItem="{Binding Dashboard.SelectedClaudeThinkingLevel, Mode=TwoWay}"
+                          HorizontalAlignment="Stretch" Padding="8,6" />
+              </Grid>
+              <TextBlock Text="思考强度影响回答深度与速度" Foreground="#9CA3AF" FontSize="11" Margin="0,4,0,0" />
+            </StackPanel>
+          </StackPanel>
+        </Border>
+
+        <!-- Recent spend. Deliberately one line and five rows: the workspace app's
+             dashboard has twenty collections, which is the right answer for an
+             operator and the wrong one here.
+
+             Last on purpose. In the WPF window this card was declared before the
+             group card and then moved to the end in the constructor
+             (MoveRecentSpendCardToEnd), so the markup order never matched what a
+             user saw. Declaring it where it actually renders removes the need for
+             that reordering entirely. -->
+        <Border Classes="card" Margin="0">
+          <StackPanel>
+            <DockPanel>
+              <TextBlock Text="暂时取不到" Foreground="#9CA3AF" FontSize="12"
+                         DockPanel.Dock="Right" HorizontalAlignment="Right"
+                         IsVisible="{Binding Dashboard.TrendUnavailable}" />
+              <TextBlock Text="近 7 日消费" FontWeight="SemiBold" />
+            </DockPanel>
+
+            <controls:UsageLineChart ItemsSource="{Binding Dashboard.CostTrend}"
+                                     Height="120" Margin="0,10,0,0"
+                                     Stroke="#2563EB" Fill="#1F2563EB"
+                                     PointBrush="#2563EB" GridBrush="#E5E7EB"
+                                     LabelBrush="#9CA3AF"
+                                     IsVisible="{Binding Dashboard.HasTrend}" />
+
+            <!-- Loaded fine, nothing to show. Said in words, because an empty card
+                 and a broken one look identical. -->
+            <TextBlock Text="最近 7 天还没有用量记录"
+                       Foreground="#9CA3AF" FontSize="12" Margin="0,10,0,0"
+                       IsVisible="{Binding Dashboard.HasNoUsageYet}" />
+
+            <TextBlock Text="按模型" Foreground="#6B7280" FontSize="12" Margin="0,14,0,6"
+                       IsVisible="{Binding Dashboard.HasModelUsage}" />
+            <ItemsControl ItemsSource="{Binding Dashboard.TopModelUsage}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:ModelUsageRowViewModel">
+                  <DockPanel Margin="0,0,0,6">
+                    <TextBlock Text="{Binding CostText}" FontWeight="SemiBold"
+                               FontSize="12" DockPanel.Dock="Right"
+                               HorizontalAlignment="Right" VerticalAlignment="Center" />
+                    <StackPanel>
+                      <TextBlock Text="{Binding Model}" FontSize="12" />
+                      <TextBlock Text="{Binding DetailText}" Foreground="#9CA3AF" FontSize="11" />
+                    </StackPanel>
+                  </DockPanel>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
+        </Border>
+
+      </StackPanel>
+    </ScrollViewer>
+  </DockPanel>
+</UserControl>

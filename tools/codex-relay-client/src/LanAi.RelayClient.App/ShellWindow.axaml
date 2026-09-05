@@ -1,0 +1,14 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="LanAi.RelayClient.App.ShellWindow"
+        Title="共飞-ChatGPT助手"
+        Icon="avares://LanAi.RelayClient.App/Assets/LanAi.RelayClient.png"
+        Width="460" Height="720"
+        WindowStartupLocation="CenterScreen"
+        Background="#F7F8FA">
+
+  <!-- One surface at a time, swapped in code rather than toggled by visibility. The
+       WPF window stacked three panels and flipped Visibility between them, which is
+       what forced the ElementName bindings and the split data contexts. -->
+  <ContentControl Name="Surface" />
+</Window>

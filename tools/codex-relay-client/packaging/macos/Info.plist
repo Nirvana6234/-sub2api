@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  共飞-ChatGPT助手 —— macOS 应用包描述文件
+
+  放进 共飞-ChatGPT助手.app/Contents/Info.plist。
+  构建流程会替换 __VERSION__（见 §9.5.5：CI 断言它与 client-version.json 一致）。
+
+  ⚠️ 未在真机验证。以下键位按 Apple 文档写成，但「弹窗文案是否出现、
+     授权是否被接受」只有在 Mac 上跑过才算数。
+
+  几个不能随手改的地方：
+
+  1. CFBundleIdentifier 必须与 LaunchAgentPlist.Label 一致
+     （com.gongfeiai.chatgpt-assistant）。launchctl 按 label 索引，
+     两者不一致会导致开机自启注册到一个不存在的应用上。
+
+  2. NSAppleEventsUsageDescription 是必需的，不是可选的。
+     客户端用 osascript 发通知、并需要控制官方 ChatGPT 客户端，
+     这两件事都要经过 TCC。缺这个键时的行为不是「用户拒绝」那么温和 ——
+     请求可能直接失败，而且没有任何提示。
+     文案是给小白看的，所以用中文写清楚「为什么要这个权限」。
+
+  3. CFBundleExecutable 必须与 Contents/MacOS/ 下那个文件同名，
+     即 dotnet publish 产出的 LanAi.RelayClient.App（AssemblyName，无扩展名）。
+     写错不会有任何提示，只是双击 App 毫无反应 —— build-app.py 因此把
+     「这个文件存不存在」做成构建期断言。
+     LaunchAgent 那边不受影响：它用 Environment.ProcessPath 自解析，不写死名字。
+
+  4. LSMinimumSystemVersion 定在 12.0：低于此版本的 Apple Silicon 机器
+     基本不存在，而 v1 只出 osx-arm64。
+
+  5. 没有 LSUIElement。客户端有主窗口，不是纯菜单栏应用；
+     设成 true 会让 Dock 图标消失，小白将无法把窗口找回来。
+-->
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.gongfeiai.chatgpt-assistant</string>
+
+    <key>CFBundleName</key>
+    <string>共飞-ChatGPT助手</string>
+
+    <key>CFBundleDisplayName</key>
+    <string>共飞-ChatGPT助手</string>
+
+    <key>CFBundleExecutable</key>
+    <string>LanAi.RelayClient.App</string>
+
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+
+    <key>CFBundleShortVersionString</key>
+    <string>__VERSION__</string>
+
+    <key>CFBundleVersion</key>
+    <string>__VERSION__</string>
+
+    <key>LSMinimumSystemVersion</key>
+    <string>12.0</string>
+
+    <!-- 发送 Apple Events：osascript 通知，以及控制官方 ChatGPT 客户端。 -->
+    <key>NSAppleEventsUsageDescription</key>
+    <string>共飞助手需要这项权限来发送桌面通知，并在你点击"启动 ChatGPT"时唤起官方 ChatGPT 客户端。</string>
+
+    <!-- 高分屏下按矢量渲染，否则界面在 Retina 上会被放大成模糊位图。 -->
+    <key>NSHighResolutionCapable</key>
+    <true/>
+
+    <!-- 应用自带界面语言，跟随系统区域设置即可。 -->
+    <key>CFBundleDevelopmentRegion</key>
+    <string>zh_CN</string>
+</dict>
+</plist>

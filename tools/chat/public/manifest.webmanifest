@@ -1,0 +1,20 @@
+{
+  "name": "Chat",
+  "short_name": "Chat",
+  "description": "sub2api 的中文 AI 对话客户端",
+  "lang": "zh-CN",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "theme_color": "#19c37d",
+  "background_color": "#f7f7f8",
+  "icons": [
+    {
+      "src": "./paw-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

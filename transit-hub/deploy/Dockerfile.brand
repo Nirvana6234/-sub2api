@@ -1,0 +1,3 @@
+FROM deviseo/transithub:v0.1.15
+
+COPY . /app/public

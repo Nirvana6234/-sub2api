@@ -1,0 +1,519 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>局域网 AI 工作台</title>
+  <style>
+    :root {
+      --canvas:#f5f5f7;
+      --sidebar:rgba(246,246,248,.88);
+      --surface:#fff;
+      --surface-soft:rgba(255,255,255,.76);
+      --text:#1d1d1f;
+      --muted:#6e6e73;
+      --quiet:#8e8e93;
+      --line:rgba(60,60,67,.14);
+      --blue:#007aff;
+      --blue-soft:rgba(0,122,255,.10);
+      --green:#34c759;
+      --orange:#ff9f0a;
+      --red:#ff3b30;
+      --terminal:#171719;
+      --shadow:0 1px 2px rgba(0,0,0,.035),0 10px 30px rgba(0,0,0,.055);
+      --radius:16px;
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0;min-height:100%;background:var(--canvas);color:var(--text);font-family:"Segoe UI Variable","Microsoft YaHei UI",sans-serif;-webkit-font-smoothing:antialiased}
+    body{min-width:1120px;overflow-x:auto}
+    button,input,textarea,select{font:inherit}
+    button{color:inherit}
+    .app{min-height:100vh;display:grid;grid-template-columns:238px minmax(880px,1fr);background:radial-gradient(circle at 72% -10%,rgba(255,255,255,.95),transparent 36%),var(--canvas)}
+    .sidebar{height:100vh;position:sticky;top:0;display:flex;flex-direction:column;padding:22px 14px 16px;border-right:1px solid var(--line);background:var(--sidebar);backdrop-filter:blur(26px) saturate(160%);z-index:4}
+    .brand{display:flex;align-items:center;gap:11px;padding:0 10px 20px}
+    .brand-mark{width:38px;height:38px;display:grid;place-items:center;border-radius:11px;background:linear-gradient(145deg,#148aff,#0064dc);box-shadow:0 5px 14px rgba(0,122,255,.24);color:#fff}
+    .brand-mark svg{width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+    .brand strong{display:block;font-size:14px;letter-spacing:.01em}
+    .brand span{display:block;margin-top:3px;color:var(--quiet);font:600 9px/1.2 Bahnschrift,"Segoe UI",sans-serif;letter-spacing:.14em}
+    .nav-scroll{overflow:auto;padding-right:2px;scrollbar-width:none}
+    .nav-scroll::-webkit-scrollbar{display:none}
+    .nav-group{margin-bottom:17px}
+    .nav-label{padding:0 11px 7px;color:var(--quiet);font-size:10px;font-weight:650;letter-spacing:.06em}
+    .nav{display:grid;gap:3px}
+    .nav button{height:36px;border:0;border-radius:9px;background:transparent;display:flex;align-items:center;gap:10px;padding:0 10px;color:#4f4f54;font-size:13px;text-align:left;cursor:pointer;transition:background .18s ease,color .18s ease,transform .18s ease}
+    .nav button:hover{background:rgba(118,118,128,.08)}
+    .nav button.active{background:var(--blue-soft);color:#006ee6;font-weight:650}
+    .nav button:active{transform:scale(.985)}
+    .nav svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round;flex:0 0 auto}
+    .author{margin-top:auto;padding:13px 10px 2px;border-top:1px solid var(--line);display:flex;align-items:center;gap:10px}
+    .author img{width:34px;height:34px;object-fit:cover;border-radius:50%;box-shadow:0 0 0 1px rgba(0,0,0,.08),0 3px 10px rgba(0,0,0,.10)}
+    .author small{display:block;color:var(--quiet);font-size:10px}
+    .author b{display:block;margin-top:2px;font-size:12px;font-weight:600}
+    .main{min-width:0;padding:0 30px 34px}
+    .topbar{height:82px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;background:linear-gradient(to bottom,rgba(245,245,247,.96) 72%,rgba(245,245,247,0));backdrop-filter:blur(16px);z-index:3}
+    .title small{display:block;color:var(--quiet);font-size:11px;margin-bottom:3px}
+    .title h1{margin:0;font-size:25px;line-height:1.15;font-weight:680;letter-spacing:-.035em}
+    .top-actions{display:flex;align-items:center;gap:9px}
+    .connection-pill,.profile-chip{height:34px;border:1px solid var(--line);background:rgba(255,255,255,.72);border-radius:999px;display:flex;align-items:center;gap:8px;padding:0 11px;box-shadow:0 1px 2px rgba(0,0,0,.025)}
+    .connection-pill{color:var(--muted);font-size:11px}
+    .dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 0 4px rgba(52,199,89,.11)}
+    .profile-chip{padding:0 8px 0 6px;font-size:11px;font-weight:600}
+    .profile-glyph{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:#e8f2ff;color:var(--blue);font:700 8px Bahnschrift,sans-serif}
+    .button{height:34px;border:0;border-radius:9px;padding:0 13px;background:#fff;box-shadow:inset 0 0 0 1px var(--line),0 1px 2px rgba(0,0,0,.025);font-size:11px;font-weight:600;cursor:pointer;transition:transform .18s ease,box-shadow .18s ease,background .18s ease}
+    .button:hover{background:#fafafa;box-shadow:inset 0 0 0 1px rgba(60,60,67,.2),0 3px 10px rgba(0,0,0,.05)}
+    .button:active{transform:scale(.97)}
+    .button.primary{color:#fff;background:var(--blue);box-shadow:0 5px 14px rgba(0,122,255,.2)}
+    .button.primary:hover{background:#087ff8}
+    .button.ghost{background:transparent;box-shadow:none;color:var(--blue)}
+    .button.danger{color:var(--red)}
+    .page{display:none;animation:pageIn .22s ease both}
+    .page.active{display:block}
+    @keyframes pageIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+    .card{background:var(--surface);border:1px solid rgba(60,60,67,.10);border-radius:var(--radius);box-shadow:var(--shadow)}
+    .card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+    .card-head h2{margin:0;font-size:15px;line-height:1.3;font-weight:670;letter-spacing:-.012em}
+    .card-head p,.card-head span{display:block;margin:4px 0 0;color:var(--muted);font-size:11px}
+    .eyebrow{color:var(--blue);font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+    .hero{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(300px,.82fr);gap:16px}
+    .node-card{padding:22px 23px;min-height:214px;position:relative;overflow:hidden;background:linear-gradient(145deg,#fff 25%,#f6faff)}
+    .node-card::after{content:"";position:absolute;width:240px;height:240px;border-radius:50%;right:-86px;bottom:-142px;background:radial-gradient(circle,rgba(0,122,255,.12),rgba(0,122,255,0) 67%)}
+    .node-title{display:flex;align-items:center;gap:10px}
+    .status-orb{width:36px;height:36px;border-radius:12px;background:#eaf8ee;display:grid;place-items:center;color:#17893a}
+    .status-orb svg{width:21px;height:21px;stroke:currentColor;fill:none;stroke-width:1.7}
+    .node-title h2{margin:0;font-size:18px;font-weight:680;letter-spacing:-.025em}
+    .node-title span{display:block;color:var(--muted);font:500 11px Bahnschrift,"Segoe UI",sans-serif;margin-top:3px}
+    .latency{font:650 12px Bahnschrift,sans-serif;color:#228b45;background:#effaf2;padding:6px 9px;border-radius:999px}
+    .node-meta{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-top:29px;position:relative;z-index:1}
+    .meta-box{padding:12px 13px;border-radius:12px;background:rgba(255,255,255,.78);border:1px solid rgba(60,60,67,.09)}
+    .meta-box small{display:block;color:var(--quiet);font-size:10px}
+    .meta-box strong{display:block;margin-top:5px;font-size:12px;font-weight:640;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .hero-side{display:grid;grid-template-rows:1fr 1fr;gap:16px}
+    .metric{padding:18px 19px;display:flex;flex-direction:column;justify-content:space-between;min-height:99px}
+    .metric small{color:var(--muted);font-size:10px}
+    .metric strong{font:680 29px/1 Bahnschrift,"Segoe UI",sans-serif;letter-spacing:-.035em}
+    .metric-footer{display:flex;justify-content:space-between;align-items:center;color:var(--quiet);font-size:10px}
+    .positive{color:#1c9543}
+    .dashboard-grid{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(300px,.82fr);gap:16px;margin-top:16px}
+    .chart-card{padding:20px 21px 14px;min-height:286px}
+    .range{display:flex;padding:3px;border-radius:9px;background:#f1f1f3}
+    .range button{height:25px;min-width:43px;padding:0 9px;border:0;border-radius:7px;background:transparent;color:var(--muted);font-size:10px;cursor:pointer}
+    .range button.active{background:#fff;color:var(--text);box-shadow:0 1px 4px rgba(0,0,0,.10)}
+    .chart{width:100%;height:183px;margin-top:20px;overflow:visible}
+    .recent{padding:20px 20px 12px;min-height:286px}
+    .session-list{margin-top:13px;display:grid}
+    .session-row{display:grid;grid-template-columns:34px minmax(0,1fr) auto;align-items:center;gap:10px;padding:11px 0;border-top:1px solid var(--line)}
+    .session-row:first-child{border-top:0}
+    .client-icon{width:31px;height:31px;border-radius:9px;display:grid;place-items:center;font:700 10px Bahnschrift,sans-serif;background:#f1f1f3;color:#555}
+    .client-icon.codex{background:#ececf0;color:#1d1d1f}
+    .client-icon.claude{background:#fff0e7;color:#b65828}
+    .client-icon.gemini{background:#eaf2ff;color:#3876d9}
+    .session-row b{display:block;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .session-row span{display:block;color:var(--quiet);font-size:9px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .session-row time{font-size:9px;color:var(--quiet)}
+    .topology-card{margin-top:16px;padding:20px 22px}
+    .topology{display:grid;grid-template-columns:120px 1fr 140px 1fr repeat(3,106px);align-items:center;gap:8px;margin-top:20px}
+    .topo-node{padding:11px 10px;border:1px solid var(--line);border-radius:12px;text-align:center;background:#fafafa}
+    .topo-node.hub{background:#edf6ff;border-color:rgba(0,122,255,.20)}
+    .topo-node strong{display:block;font-size:11px}
+    .topo-node span{display:block;color:var(--quiet);font-size:9px;margin-top:4px}
+    .topo-line{height:1px;background:linear-gradient(90deg,rgba(0,122,255,.25),rgba(0,122,255,.75));position:relative}
+    .topo-line::after{content:"";width:5px;height:5px;border-radius:50%;background:var(--blue);position:absolute;right:-1px;top:-2px}
+    .section-card{padding:22px;min-height:620px}
+    .project-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:18px}
+    .project-card{padding:18px;border:1px solid var(--line);border-radius:15px;background:#fff;min-width:0;transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease}
+    .project-card:hover{transform:translateY(-2px);box-shadow:0 10px 24px rgba(0,0,0,.065)}
+    .project-card.active{border-color:rgba(0,122,255,.34);box-shadow:0 0 0 3px rgba(0,122,255,.07)}
+    .project-card-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+    .project-symbol{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;background:#eaf4ff;color:var(--blue)}
+    .project-symbol svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+    .project-card h3{font-size:12px;margin:12px 0 0}.project-path{margin-top:5px;color:var(--quiet);font:9px Consolas,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .project-tags{display:flex;gap:5px;flex-wrap:wrap;margin-top:12px}.project-tags span{padding:5px 7px;border-radius:999px;background:#f1f1f3;color:var(--muted);font-size:8px}
+    .project-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:15px 0}.project-stats div{padding:9px;border-radius:9px;background:#f7f7f8}.project-stats small{display:block;color:var(--quiet);font-size:8px}.project-stats b{display:block;margin-top:4px;font:650 11px Bahnschrift,sans-serif}
+    .project-actions{display:flex;gap:6px}.project-actions .button{flex:1}
+    .project-detail{margin-top:16px;padding:19px 20px;border:1px solid var(--line);border-radius:15px;background:#fafafa}
+    .project-detail-head{display:flex;align-items:center;justify-content:space-between;gap:16px}
+    .project-detail-head h3{font-size:13px;margin:0}.project-detail-head p{font:9px Consolas,monospace;color:var(--quiet);margin:5px 0 0}
+    .project-tabs{display:flex;gap:4px;padding:3px;border-radius:9px;background:#ededf0}.project-tabs button{height:27px;border:0;border-radius:7px;background:transparent;padding:0 10px;color:var(--muted);font-size:9px}.project-tabs button.active{background:#fff;color:var(--text);box-shadow:0 1px 4px rgba(0,0,0,.09)}
+    .project-summary{display:grid;grid-template-columns:1.15fr .85fr;gap:14px;margin-top:16px}.project-summary .panel{background:#fff}
+    .notice{display:flex;align-items:center;gap:9px;border-radius:11px;padding:10px 12px;background:#eff7ff;color:#166bc0;font-size:10px}
+    .notice svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8}
+    .chat-shell{display:grid;grid-template-columns:220px minmax(480px,1fr) 245px;gap:14px;margin-top:16px;height:590px}
+    .chat-rail,.inspector{border:1px solid var(--line);border-radius:14px;background:#fafafa;padding:13px;min-width:0}
+    .rail-search,.history-search{height:34px;border:1px solid var(--line);border-radius:9px;background:#fff;display:flex;align-items:center;padding:0 10px;color:var(--quiet);font-size:10px}
+    .rail-title{margin:16px 4px 7px;color:var(--quiet);font-size:9px;font-weight:700;letter-spacing:.05em}
+    .rail-item{padding:10px;border-radius:10px;margin-bottom:3px;cursor:pointer}
+    .rail-item.active{background:#eaf4ff}
+    .rail-item b{display:block;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .rail-item span{display:block;margin-top:4px;color:var(--quiet);font-size:8px}
+    .terminal-wrap{min-width:0;display:flex;flex-direction:column;border-radius:14px;overflow:hidden;background:var(--terminal);box-shadow:0 8px 28px rgba(0,0,0,.14)}
+    .terminal-bar{height:42px;background:#252527;border-bottom:1px solid rgba(255,255,255,.07);display:grid;grid-template-columns:75px 1fr 75px;align-items:center;padding:0 13px;color:#d3d3d8}
+    .traffic{display:flex;gap:6px}.traffic i{width:10px;height:10px;border-radius:50%;display:block}.traffic i:nth-child(1){background:#ff5f57}.traffic i:nth-child(2){background:#febc2e}.traffic i:nth-child(3){background:#28c840}
+    .terminal-title{text-align:center;font:500 10px Bahnschrift,"Segoe UI",sans-serif;color:#bdbdc2}
+    .terminal-state{text-align:right;font-size:8px;color:#74d990}
+    .terminal-output{flex:1;overflow:auto;padding:18px 20px;font:12px/1.75 Consolas,"Cascadia Mono",monospace;color:#d6d6da;scrollbar-color:#4a4a4d transparent}
+    .term-line{margin-bottom:12px;white-space:pre-wrap}
+    .term-line.dim{color:#85858d}.term-line.user{color:#8fc7ff}.term-line.ok{color:#84df9c}.term-prompt{color:#7fc6ff}.term-path{color:#f3d37b}
+    .terminal-input{padding:11px 13px 13px;background:#202022;border-top:1px solid rgba(255,255,255,.07);display:flex;align-items:flex-end;gap:9px}
+    .terminal-input textarea{min-height:44px;max-height:100px;resize:vertical;flex:1;border:1px solid rgba(255,255,255,.11);border-radius:10px;background:#2b2b2e;color:#f5f5f7;padding:12px;outline:none;font:11px/1.5 Consolas,"Cascadia Mono",monospace}
+    .terminal-input textarea:focus{border-color:rgba(0,122,255,.8);box-shadow:0 0 0 3px rgba(0,122,255,.16)}
+    .send{width:44px;height:44px;border:0;border-radius:10px;background:var(--blue);color:#fff;cursor:pointer;display:grid;place-items:center}
+    .send svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:2}
+    .inspector h3{font-size:11px;margin:2px 2px 10px}
+    .inspect-row{padding:11px 2px;border-top:1px solid var(--line)}
+    .inspect-row small{display:block;color:var(--quiet);font-size:8px}
+    .inspect-row b{display:block;margin-top:4px;font-size:10px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .cli-tabs{display:flex;gap:5px;margin-bottom:12px}
+    .cli-tabs button{flex:1;border:0;border-radius:8px;background:#eeeef0;height:29px;font-size:9px;cursor:pointer}
+    .cli-tabs button.active{background:#fff;color:var(--blue);box-shadow:0 1px 5px rgba(0,0,0,.10)}
+    .history-shell{display:grid;grid-template-columns:350px minmax(0,1fr);height:620px;margin-top:16px;border:1px solid var(--line);border-radius:15px;overflow:hidden;background:#fff}
+    .history-sidebar{background:#f7f7f9;border-right:1px solid var(--line);padding:15px;overflow:auto}
+    .history-search input{width:100%;border:0;outline:0;background:transparent;font-size:10px}
+    .filters{display:flex;gap:5px;margin:10px 0 14px;overflow:hidden}
+    .filter{height:26px;border:0;border-radius:8px;background:#ececef;color:var(--muted);padding:0 9px;font-size:9px;white-space:nowrap}
+    .filter.active{background:#e5f1ff;color:#006bd6}
+    .history-group{margin:16px 5px 7px;color:var(--quiet);font-size:9px;font-weight:700}
+    .history-item{display:grid;grid-template-columns:32px minmax(0,1fr);gap:9px;padding:10px;border-radius:11px;cursor:pointer;margin-bottom:3px}
+    .history-item:hover{background:#eeeef1}.history-item.active{background:#e8f3ff}
+    .history-item b{display:block;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .history-item p{margin:4px 0 0;color:var(--quiet);font-size:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .history-preview{display:flex;flex-direction:column;min-width:0}
+    .preview-head{height:64px;display:flex;align-items:center;justify-content:space-between;padding:0 20px;border-bottom:1px solid var(--line)}
+    .preview-head h2{margin:0;font-size:14px}.preview-head p{margin:4px 0 0;color:var(--quiet);font-size:9px}
+    .preview-actions{display:flex;gap:6px}
+    .preview-body{flex:1;overflow:auto;padding:24px 12% 30px;background:#fff}
+    .conversation-meta{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:24px}
+    .tag{padding:5px 8px;border-radius:999px;background:#f1f1f3;color:var(--muted);font-size:8px}
+    .bubble{max-width:82%;padding:11px 13px;border-radius:14px;font-size:10px;line-height:1.65;margin-bottom:12px}
+    .bubble.user{margin-left:auto;background:#007aff;color:#fff;border-bottom-right-radius:5px}
+    .bubble.assistant{background:#f2f2f4;border-bottom-left-radius:5px}
+    .code-block{padding:13px 14px;border-radius:10px;background:#202022;color:#d8d8dc;font:9px/1.7 Consolas,monospace;margin:8px 0 12px;white-space:pre-wrap}
+    .source-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:13px;margin-top:18px}
+    .source-card{border:1px solid var(--line);border-radius:14px;padding:17px;background:#fff;transition:transform .18s ease,box-shadow .18s ease}
+    .source-card:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(0,0,0,.06)}
+    .source-card.current{border-color:rgba(0,122,255,.30);box-shadow:0 0 0 3px rgba(0,122,255,.07)}
+    .source-top{display:flex;justify-content:space-between;gap:9px}.source-top h3{font-size:12px;margin:0}
+    .badge{font-size:8px;padding:4px 7px;border-radius:999px;background:#f1f1f3;color:var(--muted)}
+    .badge.blue{background:#e9f3ff;color:#0872d7}.badge.green{background:#ebf8ef;color:#268d45}
+    .source-url{margin-top:16px;padding:9px 10px;border-radius:9px;background:#f6f6f8;color:#56565b;font:9px Consolas,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .source-state{display:flex;align-items:center;gap:6px;margin:12px 0;color:#298d45;font-size:9px}
+    .source-actions{display:flex;gap:6px}
+    .client-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:18px}
+    .client-card{padding:18px;border:1px solid var(--line);border-radius:14px;background:#fff}
+    .client-card-head{display:flex;align-items:center;gap:10px}.client-card h3{margin:0;font-size:12px}.client-card p{margin:3px 0 0;color:var(--quiet);font-size:9px}
+    .setting-line{display:flex;align-items:center;justify-content:space-between;padding:13px 0;border-top:1px solid var(--line);font-size:10px}.setting-line:first-of-type{margin-top:14px}
+    .toggle{width:36px;height:20px;border-radius:999px;background:#d1d1d6;padding:2px}.toggle i{display:block;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25)}.toggle.on{background:var(--green)}.toggle.on i{margin-left:16px}
+    .usage-metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:18px}
+    .usage-box{padding:16px;border:1px solid var(--line);border-radius:13px;background:#fafafa}.usage-box small{color:var(--muted);font-size:9px}.usage-box strong{display:block;margin-top:10px;font:650 23px Bahnschrift,sans-serif}.usage-box span{display:block;margin-top:6px;color:var(--quiet);font-size:8px}
+    .host-grid,.settings-grid,.diagnostic-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:18px}
+    .panel{padding:18px;border:1px solid var(--line);border-radius:14px;background:#fafafa}
+    .panel h3{margin:0 0 9px;font-size:11px}
+    .panel-row{min-height:43px;display:flex;align-items:center;justify-content:space-between;gap:18px;border-top:1px solid var(--line);font-size:10px}.panel-row:first-of-type{border-top:0}.panel-row span{color:var(--muted)}.panel-row b{font-size:10px;font-weight:600;text-align:right}
+    .ok{color:#268d45}.warn{color:#d47a00}.error{color:var(--red)}
+    .share-address{padding:13px;border-radius:10px;background:#fff;border:1px solid var(--line);font:11px Consolas,monospace;margin:12px 0}
+    .danger-zone{border-color:rgba(255,59,48,.18);background:#fffafa}
+    .settings-note{color:var(--muted);font-size:9px;line-height:1.7;margin:10px 0 0}
+    @media (max-width:1260px){.chat-shell{grid-template-columns:205px minmax(480px,1fr)}.inspector{display:none}.topology{grid-template-columns:105px 1fr 130px 1fr repeat(3,90px)}}
+    @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="2.3"/><circle cx="18.5" cy="6" r="2.3"/><circle cx="18.5" cy="18" r="2.3"/><path d="M7.2 11.2 16.2 7M7.2 12.8l9 4.2"/></svg>
+        </div>
+        <div><strong>局域网 AI 工作台</strong><span>LAN AI WORKSPACE</span></div>
+      </div>
+
+      <div class="nav-scroll">
+        <div class="nav-group">
+          <div class="nav-label">工作台</div>
+          <nav class="nav">
+            <button class="active" data-page="overview"><svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/></svg>总览</button>
+            <button data-page="projects"><svg viewBox="0 0 24 24"><path d="M3.5 6.5h6l2 2h9v10.5a1.5 1.5 0 0 1-1.5 1.5h-14A1.5 1.5 0 0 1 3.5 19V6.5Z"/><path d="M3.5 10.5h17"/></svg>项目中心</button>
+            <button data-page="chat"><svg viewBox="0 0 24 24"><path d="M4 5.5h16v11H9l-5 3v-14Z"/><path d="m8 9 2 2-2 2M12 13h4"/></svg>命令行对话</button>
+            <button data-page="history"><svg viewBox="0 0 24 24"><path d="M4.5 7.5h15v12h-15z"/><path d="M7 4.5h10M8 11h8M8 15h5"/></svg>历史会话</button>
+          </nav>
+        </div>
+        <div class="nav-group">
+          <div class="nav-label">连接</div>
+          <nav class="nav">
+            <button data-page="connections"><svg viewBox="0 0 24 24"><path d="M8.5 15.5 15.5 8.5M6.5 17.5l-1 1a3.5 3.5 0 0 0 5 0l2-2a3.5 3.5 0 0 0 0-5M17.5 6.5l1-1a3.5 3.5 0 0 0-5 0l-2 2a3.5 3.5 0 0 0 0 5"/></svg>连接中心</button>
+            <button data-page="clients"><svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="12" rx="2"/><path d="M8 20h8M12 16.5V20"/></svg>客户端配置</button>
+            <button data-page="usage"><svg viewBox="0 0 24 24"><path d="M4 19.5h16M6.5 17V9M11 17V5M15.5 17v-4M20 17V7"/></svg>用量洞察</button>
+          </nav>
+        </div>
+        <div class="nav-group">
+          <div class="nav-label">系统</div>
+          <nav class="nav">
+            <button data-page="host"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="6" rx="2"/><rect x="4" y="14" width="16" height="6" rx="2"/><path d="M8 7h.01M8 17h.01M12 7h5M12 17h5"/></svg>主机控制台</button>
+            <button data-page="diagnostics"><svg viewBox="0 0 24 24"><path d="M3.5 12h4l2-5 4 10 2-5h5"/><path d="M20 7.5V5a1.5 1.5 0 0 0-1.5-1.5h-13A1.5 1.5 0 0 0 4 5v14a1.5 1.5 0 0 0 1.5 1.5h13A1.5 1.5 0 0 0 20 19v-2.5"/></svg>诊断中心</button>
+            <button data-page="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1.2l2-1.5-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14.2 3h-4.4l-.3 2.7a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.5A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.5 2 3.4 2.4-1a7 7 0 0 0 2 1.2l.3 2.7h4.4l.3-2.7a7 7 0 0 0 2-1.2l2.4 1 2-3.4-2-1.5c.1-.4.1-.8.1-1.2Z"/></svg>设置</button>
+          </nav>
+        </div>
+      </div>
+
+      <div class="author">
+        <img src="../tools/manufactor_app/ai-switch-gui/Assets/app-logo.png" alt="软件作者头像">
+        <div><small>软件作者</small><b>归年 · v1.3</b></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="title"><small>2026 年 7 月 13 日 · 局域网工作区</small><h1 id="pageTitle">总览</h1></div>
+        <div class="top-actions">
+          <div class="connection-pill"><span class="dot"></span>局域网中转 · 32 ms</div>
+          <button class="button" id="syncBtn">同步用量</button>
+          <div class="profile-chip"><span class="profile-glyph">API</span>个人档案</div>
+        </div>
+      </header>
+
+      <section class="page active" id="overview">
+        <div class="hero">
+          <article class="card node-card">
+            <div class="card-head">
+              <div class="node-title">
+                <div class="status-orb"><svg viewBox="0 0 24 24"><path d="M4 17h16M6.5 14.5a7.5 7.5 0 0 1 11 0M9.5 11.5a3.6 3.6 0 0 1 5 0M12 18.5h.01"/></svg></div>
+                <div><h2>局域网主节点</h2><span>http://192.168.31.247:8080</span></div>
+              </div>
+              <div class="latency">在线 · 32 ms</div>
+            </div>
+            <div class="node-meta">
+              <div class="meta-box"><small>当前连接</small><strong>局域网中转</strong></div>
+              <div class="meta-box"><small>个人 Key</small><strong>有效 · A91F</strong></div>
+              <div class="meta-box"><small>最后同步</small><strong>刚刚</strong></div>
+            </div>
+          </article>
+          <div class="hero-side">
+            <article class="card metric"><small>今日实际消费 · USD</small><strong>1.24</strong><div class="metric-footer"><span>128 次 · 2.31M Token</span><span class="positive">+12%</span></div></article>
+            <article class="card metric"><small>个人 Key 剩余额度</small><strong>18.76</strong><div class="metric-footer"><span>已使用 38%</span><span class="positive">状态正常</span></div></article>
+          </div>
+        </div>
+
+        <div class="dashboard-grid">
+          <article class="card chart-card">
+            <div class="card-head"><div><h2>使用趋势</h2><span>实际扣费 · 最近 7 天</span></div><div class="range"><button class="active">7 天</button><button>30 天</button><button>90 天</button></div></div>
+            <svg class="chart" viewBox="0 0 760 205" preserveAspectRatio="none" aria-label="最近七天用量趋势">
+              <g stroke="#e6e6e9" stroke-width="1"><line x1="0" y1="36" x2="760" y2="36"/><line x1="0" y1="91" x2="760" y2="91"/><line x1="0" y1="146" x2="760" y2="146"/></g>
+              <defs><linearGradient id="area" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#007aff" stop-opacity=".20"/><stop offset="1" stop-color="#007aff" stop-opacity="0"/></linearGradient></defs>
+              <path d="M0 170 C70 152,90 108,145 121 S235 164,290 112 S390 64,435 92 S535 150,580 102 S690 42,760 61 L760 205 L0 205 Z" fill="url(#area)"/>
+              <path d="M0 170 C70 152,90 108,145 121 S235 164,290 112 S390 64,435 92 S535 150,580 102 S690 42,760 61" fill="none" stroke="#007aff" stroke-width="2.5" stroke-linecap="round"/>
+              <g fill="#fff" stroke="#007aff" stroke-width="2"><circle cx="145" cy="121" r="4"/><circle cx="290" cy="112" r="4"/><circle cx="435" cy="92" r="4"/><circle cx="580" cy="102" r="4"/><circle cx="760" cy="61" r="4"/></g>
+            </svg>
+          </article>
+          <article class="card recent">
+            <div class="card-head"><div><h2>最近会话</h2><span>跨客户端统一索引</span></div><button class="button ghost" data-go="history">查看全部</button></div>
+            <div class="session-list">
+              <div class="session-row"><div class="client-icon codex">CX</div><div><b>整理 Sub2API 路由逻辑</b><span>Codex · E:\web_transform</span></div><time>14:12</time></div>
+              <div class="session-row"><div class="client-icon claude">CL</div><div><b>检查局域网连接异常</b><span>Claude Code · D:\gateway</span></div><time>昨天</time></div>
+              <div class="session-row"><div class="client-icon gemini">GM</div><div><b>生成使用说明草稿</b><span>Gemini CLI · C:\notes</span></div><time>周六</time></div>
+            </div>
+          </article>
+        </div>
+
+        <article class="card topology-card">
+          <div class="card-head"><div><h2>局域网连接拓扑</h2><span>展示已配置路径，不代表客户端此刻正在请求</span></div></div>
+          <div class="topology">
+            <div class="topo-node"><strong>当前电脑</strong><span>Windows 11</span></div><div class="topo-line"></div>
+            <div class="topo-node hub"><strong>局域网节点</strong><span>192.168.31.247</span></div><div class="topo-line"></div>
+            <div class="topo-node"><strong>Codex</strong><span>已配置</span></div><div class="topo-node"><strong>Claude</strong><span>保持原状</span></div><div class="topo-node"><strong>Gemini</strong><span>已配置</span></div>
+          </div>
+        </article>
+      </section>
+
+      <section class="page" id="projects">
+        <article class="card section-card">
+          <div class="card-head">
+            <div><span class="eyebrow">PROJECT WORKSPACES</span><h2>项目中心</h2><p>每个项目集中管理目录、官方 CLI、连接策略、会话与用量。</p></div>
+            <div style="display:flex;gap:8px"><button class="button">自动发现</button><button class="button primary">添加项目</button></div>
+          </div>
+          <div class="project-grid">
+            <div class="project-card active">
+              <div class="project-card-top"><div class="project-symbol"><svg viewBox="0 0 24 24"><path d="M3.5 6.5h6l2 2h9v10.5a1.5 1.5 0 0 1-1.5 1.5h-14A1.5 1.5 0 0 1 3.5 19V6.5Z"/><path d="M3.5 10.5h17"/></svg></div><span class="badge blue">当前项目</span></div>
+              <h3>Sub2API Workspace</h3><div class="project-path">E:\web_transform</div>
+              <div class="project-tags"><span>Codex</span><span>Claude</span><span>局域网中转</span><span>main</span></div>
+              <div class="project-stats"><div><small>会话</small><b>38</b></div><div><small>本月 Token</small><b>21.4M</b></div><div><small>最近活动</small><b>刚刚</b></div></div>
+              <div class="project-actions"><button class="button primary" data-go="chat">开始对话</button><button class="button">打开目录</button></div>
+            </div>
+            <div class="project-card">
+              <div class="project-card-top"><div class="project-symbol" style="background:#fff1e8;color:#bb642e"><svg viewBox="0 0 24 24"><path d="M3.5 6.5h6l2 2h9v10.5a1.5 1.5 0 0 1-1.5 1.5h-14A1.5 1.5 0 0 1 3.5 19V6.5Z"/><path d="M3.5 10.5h17"/></svg></div><span class="badge">已置顶</span></div>
+              <h3>Local Gateway Manager</h3><div class="project-path">E:\web_transform\tools\manufactor_app\ai-switch-gui</div>
+              <div class="project-tags"><span>Codex</span><span>本机中转</span><span>WPF 迁移</span></div>
+              <div class="project-stats"><div><small>会话</small><b>17</b></div><div><small>本月 Token</small><b>8.7M</b></div><div><small>最近活动</small><b>昨天</b></div></div>
+              <div class="project-actions"><button class="button" data-go="chat">开始对话</button><button class="button">打开目录</button></div>
+            </div>
+            <div class="project-card">
+              <div class="project-card-top"><div class="project-symbol" style="background:#edf8ef;color:#278b46"><svg viewBox="0 0 24 24"><path d="M3.5 6.5h6l2 2h9v10.5a1.5 1.5 0 0 1-1.5 1.5h-14A1.5 1.5 0 0 1 3.5 19V6.5Z"/><path d="M3.5 10.5h17"/></svg></div><span class="badge green">状态正常</span></div>
+              <h3>产品与使用文档</h3><div class="project-path">E:\web_transform\docs</div>
+              <div class="project-tags"><span>Gemini</span><span>Claude</span><span>局域网中转</span></div>
+              <div class="project-stats"><div><small>会话</small><b>9</b></div><div><small>本月 Token</small><b>3.1M</b></div><div><small>最近活动</small><b>周六</b></div></div>
+              <div class="project-actions"><button class="button" data-go="chat">开始对话</button><button class="button">打开目录</button></div>
+            </div>
+          </div>
+          <div class="project-detail">
+            <div class="project-detail-head"><div><h3>Sub2API Workspace</h3><p>E:\web_transform · Git main · 连接策略跟随当前来源</p></div><div class="project-tabs"><button class="active">概览</button><button>会话</button><button>连接策略</button><button>CLI 配置</button><button>用量</button></div></div>
+            <div class="project-summary">
+              <div class="panel"><h3>最近会话</h3><div class="panel-row"><span>整理 Sub2API 路由逻辑 · Codex</span><b>刚刚</b></div><div class="panel-row"><span>Redis Lua 兼容性检查 · Codex</span><b>周五</b></div><div class="panel-row"><span>共享额度验收 · Claude Code</span><b>周四</b></div></div>
+              <div class="panel"><h3>项目默认设置</h3><div class="panel-row"><span>默认 CLI</span><b>Codex</b></div><div class="panel-row"><span>默认连接</span><b>局域网中转</b></div><div class="panel-row"><span>默认模型</span><b>gpt-5.5</b></div><div class="panel-row"><span>恢复策略</span><b>跟随当前连接</b></div></div>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <section class="page" id="chat">
+        <article class="card section-card">
+          <div class="card-head">
+            <div><span class="eyebrow">OFFICIAL CLI RUNTIME</span><h2>命令行对话</h2><p>当前项目：Sub2API Workspace · E:\web_transform</p></div>
+            <div style="display:flex;gap:8px"><div class="notice"><svg viewBox="0 0 24 24"><path d="M12 3.5 20 7v5.5c0 4.5-3 7-8 8-5-1-8-3.5-8-8V7l8-3.5Z"/><path d="m8.5 12 2.2 2.2 4.8-5"/></svg>官方 CLI · 项目级会话</div><button class="button primary">新建会话</button></div>
+          </div>
+          <div class="chat-shell">
+            <aside class="chat-rail">
+              <div class="rail-search">搜索会话</div>
+              <div class="rail-title">正在运行</div>
+              <div class="rail-item active"><b>Sub2API 路由整理</b><span>Codex · 局域网中转</span></div>
+              <div class="rail-title">最近</div>
+              <div class="rail-item"><b>连接异常排查</b><span>Claude Code · 本机中转</span></div>
+              <div class="rail-item"><b>使用文档草稿</b><span>Gemini CLI · 云端来源</span></div>
+              <div class="rail-item"><b>Redis 兼容性检查</b><span>Codex · 局域网中转</span></div>
+            </aside>
+            <div class="terminal-wrap">
+              <div class="terminal-bar"><div class="traffic"><i></i><i></i><i></i></div><div class="terminal-title">Codex · E:\web_transform</div><div class="terminal-state">运行中</div></div>
+              <div class="terminal-output" id="terminalOutput">
+                <div class="term-line dim">LAN AI Workspace · process-scoped profile</div>
+                <div class="term-line"><span class="term-path">E:\web_transform</span> <span class="term-prompt">›</span> codex resume 019f5057… -p lan-relay</div>
+                <div class="term-line ok">✓ 已恢复会话：Sub2API 路由整理</div>
+                <div class="term-line user">你：检查当前修改，先不要动数据库。</div>
+                <div class="term-line">Codex：我会先检查工作区差异与路由实现，保持数据库只读。当前会话仍使用同一个 session ID，连接来源已切换为“局域网中转”。</div>
+              </div>
+              <div class="terminal-input"><textarea id="terminalInput" placeholder="输入消息或命令…  Ctrl+Enter 发送"></textarea><button class="send" id="sendBtn" aria-label="发送"><svg viewBox="0 0 24 24"><path d="m5 12 14-7-4 14-3-5-7-2Z"/><path d="m12 14 7-9"/></svg></button></div>
+            </div>
+            <aside class="inspector">
+              <div class="cli-tabs"><button class="active">Codex</button><button>Claude</button><button>Gemini</button></div>
+              <h3>会话检查器</h3>
+              <div class="inspect-row"><small>当前项目</small><b>Sub2API Workspace</b></div>
+              <div class="inspect-row"><small>连接来源</small><b>局域网中转</b></div>
+              <div class="inspect-row"><small>模型</small><b>gpt-5.5</b></div>
+              <div class="inspect-row"><small>工作目录</small><b>E:\web_transform</b></div>
+              <div class="inspect-row"><small>原始 session ID</small><b>019f5057…a2ac</b></div>
+              <div class="inspect-row"><small>本次用量</small><b>126K Token · 0.18 USD</b></div>
+              <div class="inspect-row"><small>恢复策略</small><b>跟随当前连接</b></div>
+              <button class="button" style="width:100%;margin-top:12px">用原连接继续</button>
+            </aside>
+          </div>
+        </article>
+      </section>
+
+      <section class="page" id="history">
+        <article class="card section-card">
+          <div class="card-head"><div><span class="eyebrow">UNIFIED SESSION INDEX</span><h2>历史会话</h2><p>跨客户端、跨工作目录、跨连接来源统一查看。</p></div><div class="notice"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.5"/><path d="M4 4v4.5h4.5M12 7.5V12l3 2"/></svg>切换 API 不会隐藏历史</div></div>
+          <div class="history-shell">
+            <aside class="history-sidebar">
+              <div class="history-search"><input placeholder="搜索标题或工作目录"></div>
+              <div class="filters"><button class="filter active">全部</button><button class="filter">Codex</button><button class="filter">Claude</button><button class="filter">Gemini</button></div>
+              <div class="history-group">今天</div>
+              <div class="history-item active" data-title="整理 Sub2API 路由逻辑" data-client="Codex" data-workspace="E:\web_transform" data-source="局域网中转"><div class="client-icon codex">CX</div><div><b>整理 Sub2API 路由逻辑</b><p>14:12 · E:\web_transform</p></div></div>
+              <div class="history-item" data-title="连接异常排查" data-client="Claude Code" data-workspace="D:\gateway" data-source="本机中转"><div class="client-icon claude">CL</div><div><b>连接异常排查</b><p>11:38 · D:\gateway</p></div></div>
+              <div class="history-group">最近 7 天</div>
+              <div class="history-item" data-title="使用文档草稿" data-client="Gemini CLI" data-workspace="C:\notes" data-source="云端来源"><div class="client-icon gemini">GM</div><div><b>使用文档草稿</b><p>周六 · C:\notes</p></div></div>
+              <div class="history-item" data-title="Redis Lua 兼容性检查" data-client="Codex" data-workspace="E:\web_transform" data-source="局域网中转"><div class="client-icon codex">CX</div><div><b>Redis Lua 兼容性检查</b><p>周五 · E:\web_transform</p></div></div>
+              <div class="history-item" data-title="代理连接说明" data-client="Claude Code" data-workspace="D:\docs" data-source="已删除来源"><div class="client-icon claude">CL</div><div><b>代理连接说明</b><p>周三 · 来源已删除</p></div></div>
+            </aside>
+            <div class="history-preview">
+              <div class="preview-head"><div><h2 id="previewTitle">整理 Sub2API 路由逻辑</h2><p id="previewSubtitle">Codex · E:\web_transform</p></div><div class="preview-actions"><button class="button">使用原连接</button><button class="button primary">用当前连接继续</button></div></div>
+              <div class="preview-body">
+                <div class="conversation-meta"><span class="tag" id="previewClient">Codex</span><span class="tag" id="previewSource">局域网中转</span><span class="tag">原生会话可恢复</span><span class="tag">今天 14:12</span></div>
+                <div class="bubble user">检查当前 Sub2API 路由修改，先不要动数据库。</div>
+                <div class="bubble assistant">我会先读取工作区差异和路由实现，并保持数据库只读。当前需要重点确认响应接口、鉴权中间件以及 Key 级用量边界。</div>
+                <div class="code-block">codex resume 019f5057-6636-7601-a25a-559794a2a2ac --all
+workspace: E:\web_transform
+connection: lan-relay</div>
+                <div class="bubble assistant">这条记录保留原始 session ID。即使你随后切换 API，它仍会出现在统一历史中；继续时可以选择当前连接或原连接。</div>
+              </div>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <section class="page" id="connections">
+        <article class="card section-card">
+          <div class="card-head"><div><h2>连接中心</h2><span>管理中转地址与个人 API Key；会话历史独立保存。</span></div><button class="button primary">添加云端来源</button></div>
+          <div class="source-grid">
+            <div class="source-card"><div class="source-top"><h3>本机中转</h3><span class="badge">固定来源</span></div><div class="source-url">http://127.0.0.1:8080</div><div class="source-state"><span class="dot"></span>可访问 · 18 ms</div><div class="source-actions"><button class="button">编辑</button><button class="button">测试</button></div></div>
+            <div class="source-card current"><div class="source-top"><h3>局域网中转</h3><span class="badge blue">当前连接</span></div><div class="source-url">http://192.168.31.247:8080</div><div class="source-state"><span class="dot"></span>已连接 · 32 ms</div><div class="source-actions"><button class="button">编辑</button><button class="button">测试</button></div></div>
+            <div class="source-card"><div class="source-top"><h3>授权共享站</h3><span class="badge green">HTTPS</span></div><div class="source-url">https://ai.example.com</div><div class="source-state"><span class="dot"></span>可访问 · 86 ms</div><div class="source-actions"><button class="button">设为当前</button><button class="button">编辑</button></div></div>
+          </div>
+          <div class="notice" style="margin-top:18px"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 10v6M12 7h.01"/></svg>切换连接只改变后续请求的出口，不会删除或隐藏已有会话。旧会话可选择原连接或当前连接继续。</div>
+        </article>
+      </section>
+
+      <section class="page" id="clients">
+        <article class="card section-card">
+          <div class="card-head"><div><h2>客户端配置</h2><span>外部客户端可写入配置；工作台内会话优先使用进程级配置。</span></div><button class="button">预览变更</button></div>
+          <div class="client-grid">
+            <div class="client-card"><div class="client-card-head"><div class="client-icon codex">CX</div><div><h3>Codex</h3><p>检测到 CLI 0.144.1</p></div></div><div class="setting-line"><span>外部客户端配置</span><div class="toggle on"><i></i></div></div><div class="setting-line"><span>会话恢复</span><b class="ok">resume / fork</b></div><div class="setting-line"><span>当前来源</span><b>局域网中转</b></div></div>
+            <div class="client-card"><div class="client-card-head"><div class="client-icon claude">CL</div><div><h3>Claude Code</h3><p>检测到 CLI 2.1.175</p></div></div><div class="setting-line"><span>外部客户端配置</span><div class="toggle"><i></i></div></div><div class="setting-line"><span>会话恢复</span><b class="ok">resume / continue</b></div><div class="setting-line"><span>当前状态</span><b>保持原状</b></div></div>
+            <div class="client-card"><div class="client-card-head"><div class="client-icon gemini">GM</div><div><h3>Gemini CLI</h3><p>检测到 CLI 0.43.0</p></div></div><div class="setting-line"><span>外部客户端配置</span><div class="toggle on"><i></i></div></div><div class="setting-line"><span>会话恢复</span><b class="ok">resume / session</b></div><div class="setting-line"><span>当前来源</span><b>局域网中转</b></div></div>
+          </div>
+        </article>
+      </section>
+
+      <section class="page" id="usage">
+        <article class="card section-card">
+          <div class="card-head"><div><h2>用量洞察</h2><span>个人 API Key · 服务端统计与本地长期趋势</span></div><div class="range"><button>7 天</button><button class="active">30 天</button><button>90 天</button></div></div>
+          <div class="usage-metrics"><div class="usage-box"><small>累计请求</small><strong>4,826</strong><span>本月 +18.2%</span></div><div class="usage-box"><small>累计 Token</small><strong>81.2M</strong><span>输入 63% · 输出 19%</span></div><div class="usage-box"><small>实际费用 · USD</small><strong>42.61</strong><span>日均 1.42</span></div><div class="usage-box"><small>平均响应</small><strong>2.8s</strong><span>P95 6.4s</span></div></div>
+          <div class="dashboard-grid"><div class="panel"><h3>模型使用分布</h3><div class="panel-row"><span>gpt-5.5</span><b>52%</b></div><div class="panel-row"><span>claude-sonnet</span><b>28%</b></div><div class="panel-row"><span>gemini-pro</span><b>20%</b></div></div><div class="panel"><h3>本月洞察</h3><div class="panel-row"><span>使用高峰</span><b>周六 · 22:00</b></div><div class="panel-row"><span>预计月度消费</span><b>36.80 USD</b></div><div class="panel-row"><span>缓存读取占比</span><b>18.4%</b></div></div></div>
+        </article>
+      </section>
+
+      <section class="page" id="host">
+        <article class="card section-card">
+          <div class="card-head"><div><h2>主机控制台</h2><span>运行本机 Sub2API，并向局域网设备或授权使用者提供中转。</span></div><div style="display:flex;gap:7px"><button class="button">打开网站后台</button><button class="button primary">重启服务</button></div></div>
+          <div class="host-grid"><div class="panel"><h3>服务状态</h3><div class="panel-row"><span>Sub2API 服务</span><b class="ok">运行中</b></div><div class="panel-row"><span>监听端口</span><b>8080</b></div><div class="panel-row"><span>本机访问</span><b class="ok">正常 · 18 ms</b></div><div class="panel-row"><span>局域网访问</span><b class="ok">已开启</b></div></div><div class="panel"><h3>共享连接</h3><p class="settings-note">API Key 继续在网站后台为每位使用者单独创建。本工具只复制中转地址。</p><div class="share-address">http://192.168.31.247:8080</div><button class="button primary">复制连接地址</button></div></div>
+        </article>
+      </section>
+
+      <section class="page" id="diagnostics">
+        <article class="card section-card">
+          <div class="card-head"><div><h2>诊断中心</h2><span>连接、CLI、会话索引和客户端配置统一诊断。</span></div><button class="button">导出脱敏摘要</button></div>
+          <div class="diagnostic-grid"><div class="panel"><h3>中转连接</h3><div class="panel-row"><span>中转可达性</span><b class="ok">正常 · 32 ms</b></div><div class="panel-row"><span>API Key</span><b class="ok">有效 · A91F</b></div><div class="panel-row"><span>/v1/models</span><b class="ok">200 OK</b></div><div class="panel-row"><span>/v1/usage</span><b class="ok">安全契约 v1</b></div></div><div class="panel"><h3>命令行与历史</h3><div class="panel-row"><span>Codex CLI</span><b class="ok">支持恢复</b></div><div class="panel-row"><span>Claude Code</span><b class="ok">支持恢复</b></div><div class="panel-row"><span>Gemini CLI</span><b class="ok">支持恢复</b></div><div class="panel-row"><span>会话索引</span><b class="ok">532 条 · 只读</b></div></div></div>
+        </article>
+      </section>
+
+      <section class="page" id="settings">
+        <article class="card section-card">
+          <div class="card-head"><div><h2>设置</h2><span>角色、同步、安全、历史会话与本地数据。</span></div></div>
+          <div class="settings-grid"><div class="panel"><h3>通用</h3><div class="panel-row"><span>当前角色</span><b>使用端 + 主机端</b></div><div class="panel-row"><span>开机启动</span><div class="toggle on"><i></i></div></div><div class="panel-row"><span>用量自动同步</span><b>每 10 分钟</b></div><div class="panel-row"><span>减少动画</span><div class="toggle"><i></i></div></div></div><div class="panel"><h3>会话历史</h3><div class="panel-row"><span>官方会话扫描</span><b class="ok">Codex / Claude / Gemini</b></div><div class="panel-row"><span>默认恢复策略</span><b>跟随当前连接</b></div><div class="panel-row"><span>完整正文导入</span><b>关闭 · 仅元数据</b></div><div class="panel-row"><span>历史保留</span><b>永久，手动清理</b></div></div><div class="panel"><h3>安全与凭据</h3><div class="panel-row"><span>API Key 存储</span><b class="ok">Windows 凭据保险箱</b></div><div class="panel-row"><span>公网连接</span><b class="ok">仅 HTTPS</b></div><div class="panel-row"><span>会话文件访问</span><b>只读</b></div><div class="panel-row"><span>终端输出日志</span><b>不保存</b></div></div><div class="panel danger-zone"><h3>本地数据</h3><p class="settings-note">删除连接不会删除历史会话。清理官方原始会话需要单独确认，并优先调用对应 CLI 的官方删除命令。</p><div style="display:flex;gap:7px;margin-top:16px"><button class="button">清理用量缓存</button><button class="button danger">管理历史数据</button></div></div></div>
+        </article>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const titles={overview:'总览',projects:'项目中心',chat:'命令行对话',history:'历史会话',connections:'连接中心',clients:'客户端配置',usage:'用量洞察',host:'主机控制台',diagnostics:'诊断中心',settings:'设置'};
+    function openPage(id){
+      document.querySelectorAll('.nav button').forEach(x=>x.classList.toggle('active',x.dataset.page===id));
+      document.querySelectorAll('.page').forEach(x=>x.classList.toggle('active',x.id===id));
+      document.getElementById('pageTitle').textContent=titles[id]||'局域网 AI 工作台';
+    }
+    document.querySelectorAll('.nav button').forEach(btn=>btn.addEventListener('click',()=>openPage(btn.dataset.page)));
+    document.querySelectorAll('[data-go]').forEach(btn=>btn.addEventListener('click',()=>openPage(btn.dataset.go)));
+    document.querySelectorAll('.range').forEach(group=>group.querySelectorAll('button').forEach(btn=>btn.addEventListener('click',()=>{group.querySelectorAll('button').forEach(x=>x.classList.remove('active'));btn.classList.add('active')})));
+    document.querySelectorAll('.cli-tabs button').forEach(btn=>btn.addEventListener('click',()=>{document.querySelectorAll('.cli-tabs button').forEach(x=>x.classList.remove('active'));btn.classList.add('active')}));
+    document.querySelectorAll('.project-tabs button').forEach(btn=>btn.addEventListener('click',()=>{btn.parentElement.querySelectorAll('button').forEach(x=>x.classList.remove('active'));btn.classList.add('active')}));
+    document.getElementById('syncBtn').addEventListener('click',e=>{const old=e.currentTarget.textContent;e.currentTarget.textContent='已同步';setTimeout(()=>e.currentTarget.textContent=old,1600)});
+    const input=document.getElementById('terminalInput');
+    function sendMessage(){const value=input.value.trim();if(!value)return;const output=document.getElementById('terminalOutput');const user=document.createElement('div');user.className='term-line user';user.textContent='你：'+value;output.appendChild(user);input.value='';output.scrollTop=output.scrollHeight;setTimeout(()=>{const reply=document.createElement('div');reply.className='term-line';reply.textContent='Codex：已收到。这个原型会通过官方 CLI 子进程继续会话，连接切换不会改变历史索引。';output.appendChild(reply);output.scrollTop=output.scrollHeight},450)}
+    document.getElementById('sendBtn').addEventListener('click',sendMessage);
+    input.addEventListener('keydown',e=>{if(e.ctrlKey&&e.key==='Enter'){e.preventDefault();sendMessage()}});
+    document.querySelectorAll('.history-item').forEach(item=>item.addEventListener('click',()=>{
+      document.querySelectorAll('.history-item').forEach(x=>x.classList.remove('active'));item.classList.add('active');
+      document.getElementById('previewTitle').textContent=item.dataset.title;
+      document.getElementById('previewSubtitle').textContent=item.dataset.client+' · '+item.dataset.workspace;
+      document.getElementById('previewClient').textContent=item.dataset.client;
+      document.getElementById('previewSource').textContent=item.dataset.source;
+    }));
+  </script>
+</body>
+</html>

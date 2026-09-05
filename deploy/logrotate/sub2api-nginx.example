@@ -1,0 +1,8 @@
+# Apply this value to the existing /etc/logrotate.d/nginx rule.
+# Keep its current wildcard and postrotate settings; only change:
+#
+#     rotate 10
+#
+# to:
+#
+#     rotate 20

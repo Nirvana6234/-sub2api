@@ -1,0 +1,519 @@
+<Window x:Class="LanAi.RelayClient.MainWindow" x:Name="RootWindow"
+        Icon="/LanAi.RelayClient;component/Assets/LanAi.RelayClient.ico"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:LanAi.RelayClient"
+        xmlns:controls="clr-namespace:LanAi.RelayClient.Controls"
+        Title="共飞-ChatGPT助手"
+        Height="720" Width="460"
+        WindowStartupLocation="CenterScreen"
+        Background="#F7F8FA">
+
+    <!-- Declared on the window rather than in App.xaml: a window that carries its
+         own resources cannot fail to find them, whatever order startup runs in. -->
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+        <local:InverseBooleanConverter x:Key="InverseBool" />
+    </Window.Resources>
+
+    <Grid Margin="32">
+        <!-- Sign-in is the only entry point: there is no skip, no offline mode,
+             and no way to paste an API key instead. -->
+        <StackPanel x:Name="SignInPanel" VerticalAlignment="Center">
+
+            <TextBlock Text="共飞-ChatGPT助手"
+                       FontSize="24" FontWeight="SemiBold"
+                       HorizontalAlignment="Center" Margin="0,0,0,4" />
+            <TextBlock Text="拒绝高价，拒绝包月，畅快使用 ChatGPT 工作生活"
+                       Foreground="#6B7280" HorizontalAlignment="Center"
+                       TextAlignment="Center" TextWrapping="Wrap" MaxWidth="360"
+                       Margin="0,0,0,6" />
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,6">
+                <TextBlock Text="{Binding ClientUpdate.CurrentVersionText, ElementName=RootWindow}"
+                           Foreground="#9CA3AF" FontSize="11" />
+                <Button Content="{Binding ClientUpdate.UpdateMessage, ElementName=RootWindow}"
+                        Click="OpenUpdatePage_OnClick" Background="Transparent" BorderThickness="0"
+                        Foreground="#2563EB" FontSize="11" Padding="8,0,0,0"
+                        Visibility="{Binding ClientUpdate.HasUpdate, ElementName=RootWindow, Converter={StaticResource BoolToVisibility}}" />
+            </StackPanel>
+            <TextBlock Text="登录后即可使用"
+                       Foreground="#9CA3AF" FontSize="12"
+                       HorizontalAlignment="Center" Margin="0,0,0,24" />
+
+            <!-- Password stage -->
+            <StackPanel Visibility="{Binding IsPasswordStage, Converter={StaticResource BoolToVisibility}}">
+                <TextBlock Text="邮箱" Margin="0,0,0,4" />
+                <TextBox x:Name="EmailInput"
+                         Text="{Binding Email, UpdateSourceTrigger=PropertyChanged}"
+                         Padding="8,6" Margin="0,0,0,12" />
+
+                <TextBlock Text="密码" Margin="0,0,0,4" />
+                <PasswordBox x:Name="PasswordInput"
+                             Padding="8,6" Margin="0,0,0,16"
+                             KeyDown="Password_OnKeyDown" />
+            </StackPanel>
+
+            <!-- Second factor -->
+            <StackPanel Visibility="{Binding IsTwoFactorStage, Converter={StaticResource BoolToVisibility}}">
+                <TextBlock Text="两步验证" FontWeight="SemiBold" Margin="0,0,0,4" />
+                <TextBlock Text="{Binding MaskedEmail}" Foreground="#6B7280" Margin="0,0,0,12" />
+                <TextBox Text="{Binding TotpCode, UpdateSourceTrigger=PropertyChanged}"
+                         MaxLength="6" Padding="8,6" Margin="0,0,0,8"
+                         KeyDown="Password_OnKeyDown" />
+                <Button Content="返回" Click="CancelTwoFactor_OnClick"
+                        Padding="8,4" Margin="0,0,0,8" HorizontalAlignment="Left" />
+            </StackPanel>
+
+            <StackPanel Margin="0,0,0,12"
+                        Visibility="{Binding HasError, Converter={StaticResource BoolToVisibility}}">
+                <TextBlock Text="{Binding ErrorMessage}"
+                           Foreground="#DC2626" TextWrapping="Wrap" />
+                <Button Content="重新获取配置" Click="RetrySurface_OnClick"
+                        IsEnabled="{Binding CanRetrySurface}"
+                        Visibility="{Binding CanRetrySurface, Converter={StaticResource BoolToVisibility}}"
+                        Background="Transparent" BorderThickness="0" Foreground="#2563EB"
+                        Padding="0,6,0,0" HorizontalAlignment="Left" />
+            </StackPanel>
+
+            <Button x:Name="SubmitButton" Content="登录"
+                    Click="Submit_OnClick"
+                    IsEnabled="{Binding CanSubmit}"
+                    Padding="0,10" FontSize="15" Background="#2563EB" Foreground="White"
+                    BorderThickness="0" />
+
+            <!-- Hidden entirely when the server has registration switched off,
+                 rather than shown and then rejected. -->
+            <Button Content="还没有账号？注册"
+                    Click="Register_OnClick"
+                    Visibility="{Binding CanRegister, Converter={StaticResource BoolToVisibility}}"
+                    Background="Transparent" BorderThickness="0" Foreground="#2563EB"
+                    Margin="0,12,0,0" />
+
+            <Button Content="忘记密码"
+                    Click="ResetPassword_OnClick"
+                    Visibility="{Binding CanResetPassword, Converter={StaticResource BoolToVisibility}}"
+                    Background="Transparent" BorderThickness="0" Foreground="#6B7280"
+                    Margin="0,4,0,0" />
+
+        </StackPanel>
+
+        <StackPanel x:Name="RegistrationPanel" Visibility="Collapsed" VerticalAlignment="Center">
+            <TextBlock Text="注册账号" FontSize="24" FontWeight="SemiBold"
+                       HorizontalAlignment="Center" Margin="0,0,0,4" />
+            <TextBlock Text="使用邮箱创建共飞账号"
+                       Foreground="#6B7280" HorizontalAlignment="Center" Margin="0,0,0,24" />
+
+            <TextBlock Text="邮箱" Margin="0,0,0,4" />
+            <TextBox x:Name="RegistrationEmailInput"
+                     Text="{Binding Email, UpdateSourceTrigger=PropertyChanged}"
+                     Padding="8,6" Margin="0,0,0,12" />
+
+            <TextBlock Text="密码" Margin="0,0,0,4" />
+            <PasswordBox x:Name="RegistrationPasswordInput"
+                         Padding="8,6" Margin="0,0,0,12" />
+
+            <TextBlock Text="确认密码" Margin="0,0,0,4" />
+            <PasswordBox x:Name="RegistrationConfirmPasswordInput"
+                         Padding="8,6" Margin="0,0,0,12" />
+
+            <StackPanel Visibility="{Binding ShowVerifyCode, Converter={StaticResource BoolToVisibility}}">
+                <TextBlock Text="邮箱验证码" Margin="0,0,0,4" />
+                <DockPanel Margin="0,0,0,12">
+                    <Button Content="发送验证码" Click="SendVerifyCode_OnClick"
+                            IsEnabled="{Binding CanSendVerifyCode}"
+                            DockPanel.Dock="Right" Padding="8,6" Margin="8,0,0,0" />
+                    <TextBox Text="{Binding VerifyCode, UpdateSourceTrigger=PropertyChanged}"
+                             Padding="8,6" />
+                </DockPanel>
+                <TextBlock Text="{Binding VerifyCodeSecondsRemaining, StringFormat=请等待 {0} 秒后重试}"
+                           Foreground="#6B7280" Margin="0,-8,0,10"
+                           Visibility="{Binding HasVerifyCodeCountdown, Converter={StaticResource BoolToVisibility}}" />
+            </StackPanel>
+
+            <StackPanel Visibility="{Binding ShowInvitationCode, Converter={StaticResource BoolToVisibility}}">
+                <TextBlock Text="邀请码" Margin="0,0,0,4" />
+                <TextBox Text="{Binding InvitationCode, UpdateSourceTrigger=PropertyChanged}"
+                         Padding="8,6" Margin="0,0,0,12" />
+            </StackPanel>
+
+            <StackPanel Visibility="{Binding ShowPromoCode, Converter={StaticResource BoolToVisibility}}">
+                <TextBlock Text="优惠码" Margin="0,0,0,4" />
+                <TextBox Text="{Binding PromoCode, UpdateSourceTrigger=PropertyChanged}"
+                         Padding="8,6" Margin="0,0,0,12" />
+            </StackPanel>
+
+            <TextBlock Text="{Binding ErrorMessage}" Foreground="#DC2626" TextWrapping="Wrap"
+                       Margin="0,0,0,12"
+                       Visibility="{Binding HasError, Converter={StaticResource BoolToVisibility}}" />
+            <TextBlock Text="请使用网页版完成安全验证"
+                       Foreground="#B45309" TextWrapping="Wrap" Margin="0,0,0,12"
+                       Visibility="{Binding TurnstileBlocked, Converter={StaticResource BoolToVisibility}}" />
+            <Button Content="打开网页版注册" Click="OpenRegistrationInBrowser_OnClick"
+                    Padding="0,8" Margin="0,0,0,10" Background="Transparent"
+                    BorderBrush="#D1D5DB" Foreground="#2563EB"
+                    Visibility="{Binding TurnstileBlocked, Converter={StaticResource BoolToVisibility}}" />
+
+            <Button Content="注册" Click="SubmitRegistration_OnClick"
+                    IsEnabled="{Binding IsBusy, Converter={StaticResource InverseBool}}"
+                    Padding="0,10" FontSize="15" Background="#2563EB" Foreground="White"
+                    BorderThickness="0" />
+            <Button Content="返回登录" Click="BackToLogin_OnClick"
+                    Padding="0,8" Margin="0,10,0,0" Background="Transparent"
+                    BorderThickness="0" Foreground="#6B7280" />
+        </StackPanel>
+
+        <!-- The signed-in surface. Its DataContext is the dashboard view model,
+             set in code-behind once a session exists. -->
+        <DockPanel x:Name="SignedInPanel" Visibility="Collapsed">
+
+            <Grid DockPanel.Dock="Top" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock x:Name="WelcomeText" FontSize="20" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding CurrentGroupName, StringFormat=当前分组：{0}}"
+                               Foreground="#6B7280" FontSize="12" Margin="0,2,0,0" />
+                    <TextBlock Text="{Binding RefreshMessage}"
+                               Foreground="#B45309" FontSize="12" Margin="0,2,0,0"
+                               Visibility="{Binding IsRateLimited, Converter={StaticResource BoolToVisibility}}" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top">
+                    <!-- One of three ways into the reader, alongside the tray menu and
+                         the tray balloon. All three read the same view model, so this
+                         count cannot disagree with what the list shows. -->
+                    <Button Content="{Binding Announcements.BellLabel, ElementName=RootWindow}"
+                            Click="ShowAnnouncements_OnClick"
+                            Padding="10,4" Margin="0,0,8,0" Background="Transparent">
+                        <Button.Style>
+                            <Style TargetType="Button">
+                                <Setter Property="BorderBrush" Value="#D1D5DB" />
+                                <Setter Property="Foreground" Value="#111827" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Announcements.HasUnread, ElementName=RootWindow}"
+                                                 Value="True">
+                                        <Setter Property="BorderBrush" Value="#2563EB" />
+                                        <Setter Property="Foreground" Value="#2563EB" />
+                                        <Setter Property="FontWeight" Value="SemiBold" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                    </Button>
+                    <Button Content="刷新" Click="Refresh_OnClick"
+                            IsEnabled="{Binding IsRefreshing, Converter={StaticResource InverseBool}}"
+                            Padding="10,4" Background="Transparent" BorderBrush="#D1D5DB" />
+                    <Button Content="退出" Click="SignOut_OnClick"
+                            Padding="10,4" Margin="8,0,0,0"
+                            Background="Transparent" BorderBrush="#D1D5DB" />
+                </StackPanel>
+            </Grid>
+
+            <StackPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                    <TextBlock Text="{Binding ClientUpdate.CurrentVersionText, ElementName=RootWindow}"
+                               Foreground="#9CA3AF" FontSize="11" VerticalAlignment="Center" />
+                    <Button Content="检查更新" Click="CheckUpdate_OnClick" Background="Transparent"
+                            BorderThickness="0" Foreground="#2563EB" FontSize="11" Padding="10,0,0,0" />
+                    <Button Content="联系我们" Click="OpenContactPage_OnClick" Background="Transparent"
+                            BorderThickness="0" Foreground="#2563EB" FontSize="11" Padding="10,0,0,0" />
+                </StackPanel>
+                <Button Content="{Binding ClientUpdate.UpdateMessage, ElementName=RootWindow}"
+                        Click="OpenUpdatePage_OnClick" Background="Transparent" BorderThickness="0"
+                        Foreground="#2563EB" FontSize="11" Padding="0,4,0,0"
+                        Visibility="{Binding ClientUpdate.HasUpdate, ElementName=RootWindow, Converter={StaticResource BoolToVisibility}}" />
+            </StackPanel>
+
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+
+                    <!-- The reason this client exists, so it leads. Everything
+                         below is information about a session this button starts. -->
+                    <Border Background="White" CornerRadius="8" Padding="16" Margin="0,0,0,12"
+                            BorderBrush="#E5E7EB" BorderThickness="1">
+                        <StackPanel>
+                            <Button Content="{Binding StartCodexLabel}"
+                                    Click="StartCodex_OnClick"
+                                    IsEnabled="{Binding CanStartCodex}"
+                                    Padding="0,12" FontSize="16" FontWeight="SemiBold"
+                                    Foreground="White" BorderThickness="0">
+                                <Button.Style>
+                                    <Style TargetType="Button">
+                                        <Setter Property="Background" Value="#2563EB" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsInstallingCodex}" Value="True">
+                                                <Setter Property="Background" Value="#6B7280" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding RequiresCodexAccountRestart}" Value="True">
+                                                <Setter Property="Background" Value="#DC2626" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+                            <TextBlock Text="{Binding CodexMessage}" TextWrapping="Wrap"
+                                       Foreground="#6B7280" FontSize="12" Margin="0,8,0,0"
+                                       Visibility="{Binding HasCodexMessage, Converter={StaticResource BoolToVisibility}}" />
+                            <TextBlock Text="{Binding LeaseStatus}"
+                                       Foreground="#059669" FontSize="11" Margin="0,6,0,0"
+                                       Visibility="{Binding HasLeaseStatus, Converter={StaticResource BoolToVisibility}}" />
+                            <TextBlock Text="保持客户端运行，ChatGPT 才能继续使用共飞额度"
+                                       Foreground="#9CA3AF" FontSize="11" Margin="0,6,0,0"
+                                       TextWrapping="Wrap" />
+                            <CheckBox Content="随系统启动" IsChecked="{Binding StartWithWindows}"
+                                      Margin="0,8,0,0" Foreground="#374151" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Account card. Greys out on its own; a failure here never
+                         touches the other cards or the session. -->
+                    <Border Background="White" CornerRadius="8" Padding="16" Margin="0,0,0,12"
+                            BorderBrush="#E5E7EB" BorderThickness="1">
+                        <StackPanel>
+                            <DockPanel>
+                                <TextBlock Text="账户" FontWeight="SemiBold" />
+                                <TextBlock Text="暂时取不到" Foreground="#9CA3AF" FontSize="12"
+                                           HorizontalAlignment="Right"
+                                           Visibility="{Binding AccountUnavailable, Converter={StaticResource BoolToVisibility}}" />
+                            </DockPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                                <StackPanel>
+                                    <TextBlock Text="余额" Foreground="#6B7280" FontSize="12" />
+                                    <TextBlock Text="{Binding BalanceText}" FontSize="22" FontWeight="SemiBold" />
+                                </StackPanel>
+                                <StackPanel Margin="32,0,0,0">
+                                    <TextBlock Text="冻结" Foreground="#6B7280" FontSize="12" />
+                                    <TextBlock Text="{Binding FrozenBalanceText}" FontSize="22" Foreground="#6B7280" />
+                                </StackPanel>
+                            </StackPanel>
+
+                            <!-- The entry is always available when the server supplies a
+                                 recharge URL; only the warning treatment follows the threshold. -->
+                            <DockPanel Margin="0,10,0,0"
+                                       Visibility="{Binding CanRecharge, Converter={StaticResource BoolToVisibility}}">
+                                <TextBlock Text="余额偏低" Foreground="#DC2626" VerticalAlignment="Center"
+                                           Visibility="{Binding BalanceIsLow, Converter={StaticResource BoolToVisibility}}" />
+                                <Button Content="去充值" Click="Recharge_OnClick"
+                                        HorizontalAlignment="Right" Padding="10,4"
+                                        BorderThickness="1">
+                                    <Button.Style>
+                                        <Style TargetType="Button">
+                                            <Setter Property="Background" Value="#F3F4F6" />
+                                            <Setter Property="Foreground" Value="#374151" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding BalanceIsLow}" Value="True">
+                                                    <Setter Property="Background" Value="#DC2626" />
+                                                    <Setter Property="Foreground" Value="White" />
+                                                    <Setter Property="BorderBrush" Value="#DC2626" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                </Button>
+                            </DockPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Usage card -->
+                    <Border Background="White" CornerRadius="8" Padding="16" Margin="0,0,0,12"
+                            BorderBrush="#E5E7EB" BorderThickness="1">
+                        <StackPanel>
+                            <DockPanel>
+                                <TextBlock Text="今日用量" FontWeight="SemiBold" />
+                                <TextBlock Text="暂时取不到" Foreground="#9CA3AF" FontSize="12"
+                                           HorizontalAlignment="Right"
+                                           Visibility="{Binding UsageUnavailable, Converter={StaticResource BoolToVisibility}}" />
+                            </DockPanel>
+                            <UniformGrid Columns="3" Margin="0,10,0,0">
+                                <StackPanel>
+                                    <TextBlock Text="请求数" Foreground="#6B7280" FontSize="12" />
+                                    <TextBlock Text="{Binding TodayRequestsText}" FontSize="16" FontWeight="SemiBold" />
+                                </StackPanel>
+                                <StackPanel>
+                                    <TextBlock Text="Token" Foreground="#6B7280" FontSize="12" />
+                                    <TextBlock Text="{Binding TodayTokensText}" FontSize="16" FontWeight="SemiBold" />
+                                </StackPanel>
+                                <StackPanel>
+                                    <TextBlock Text="消费" Foreground="#6B7280" FontSize="12" />
+                                    <TextBlock Text="{Binding TodayCostText}" FontSize="16" FontWeight="SemiBold" />
+                                </StackPanel>
+                            </UniformGrid>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Subscription card is hidden when the server reports none. -->
+                    <Border Background="White" CornerRadius="8" Padding="16" Margin="0,0,0,12"
+                            BorderBrush="#E5E7EB" BorderThickness="1"
+                            Visibility="{Binding HasSubscription, Converter={StaticResource BoolToVisibility}}">
+                        <StackPanel>
+                            <TextBlock Text="订阅" FontWeight="SemiBold" />
+                            <TextBlock Text="{Binding SubscriptionName}" FontSize="16"
+                                       FontWeight="SemiBold" Margin="0,8,0,2" />
+                            <TextBlock Text="{Binding SubscriptionProgressText}" Foreground="#6B7280" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Recent spend. Deliberately one line and five rows: the
+                         workspace app's dashboard has twenty collections, which is
+                         the right answer for an operator and the wrong one here. -->
+                    <Border Background="White" CornerRadius="8" Padding="16" Margin="0,0,0,12"
+                            BorderBrush="#E5E7EB" BorderThickness="1"
+                            x:Name="RecentSpendCard">
+                        <StackPanel>
+                            <DockPanel>
+                                <TextBlock Text="近 7 日消费" FontWeight="SemiBold" />
+                                <TextBlock Text="暂时取不到" Foreground="#9CA3AF" FontSize="12"
+                                           HorizontalAlignment="Right"
+                                           Visibility="{Binding TrendUnavailable, Converter={StaticResource BoolToVisibility}}" />
+                            </DockPanel>
+
+                            <controls:UsageLineChart ItemsSource="{Binding CostTrend}"
+                                                     Height="120" Margin="0,10,0,0"
+                                                     Stroke="#2563EB" Fill="#1F2563EB"
+                                                     PointBrush="#2563EB" GridBrush="#E5E7EB"
+                                                     LabelBrush="#9CA3AF"
+                                                     Visibility="{Binding HasTrend, Converter={StaticResource BoolToVisibility}}" />
+
+                            <!-- Loaded fine, nothing to show. Said in words, because
+                                 an empty card and a broken one look identical. -->
+                            <TextBlock Text="最近 7 天还没有用量记录"
+                                       Foreground="#9CA3AF" FontSize="12" Margin="0,10,0,0"
+                                       Visibility="{Binding HasNoUsageYet, Converter={StaticResource BoolToVisibility}}" />
+
+                            <TextBlock Text="按模型" Foreground="#6B7280" FontSize="12" Margin="0,14,0,6"
+                                       Visibility="{Binding HasModelUsage, Converter={StaticResource BoolToVisibility}}" />
+                            <ItemsControl ItemsSource="{Binding TopModelUsage}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <DockPanel Margin="0,0,0,6">
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding Model}" FontSize="12" />
+                                                <TextBlock Text="{Binding DetailText}"
+                                                           Foreground="#9CA3AF" FontSize="11" />
+                                            </StackPanel>
+                                            <TextBlock Text="{Binding CostText}" FontWeight="SemiBold"
+                                                       FontSize="12" HorizontalAlignment="Right"
+                                                       VerticalAlignment="Center" />
+                                        </DockPanel>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Group card -->
+                    <Border Background="White" CornerRadius="8" Padding="16"
+                            BorderBrush="#E5E7EB" BorderThickness="1">
+                        <StackPanel>
+                            <DockPanel>
+                                <TextBlock Text="分组与倍率" FontWeight="SemiBold" />
+                                <TextBlock Text="暂时取不到" Foreground="#9CA3AF" FontSize="12"
+                                           HorizontalAlignment="Right"
+                                           Visibility="{Binding GroupsUnavailable, Converter={StaticResource BoolToVisibility}}" />
+                            </DockPanel>
+
+                            <!-- Says in words which group is in force, so the answer
+                                 does not depend on reading the dropdown's state. -->
+                            <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                                <TextBlock Text="当前使用：" Foreground="#6B7280" FontSize="12"
+                                           VerticalAlignment="Center" />
+                                <TextBlock Text="{Binding CurrentGroupName}" FontWeight="SemiBold"
+                                           VerticalAlignment="Center" />
+                                <TextBlock Text="{Binding CurrentGroupRate}" Margin="6,0,0,0"
+                                           Foreground="#2563EB" FontWeight="SemiBold" FontSize="12"
+                                           VerticalAlignment="Center" />
+                            </StackPanel>
+                            <TextBlock Text="{Binding CurrentGroupRateDescription}"
+                                       Foreground="#6B7280" FontSize="11" Margin="0,2,0,0"
+                                       TextWrapping="Wrap"
+                                       Visibility="{Binding HasGroupRateDescription, Converter={StaticResource BoolToVisibility}}" />
+
+                            <TextBlock Text="切换分组" Foreground="#6B7280" FontSize="12" Margin="0,12,0,4" />
+                            <Grid>
+                            <ComboBox ItemsSource="{Binding Groups}"
+                                      SelectedItem="{Binding SelectedGroup, Mode=TwoWay}"
+                                      IsEnabled="{Binding GroupsReady}"
+                                      Padding="8,6">
+                                <!-- Collapsed state: name and rate on one line. -->
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Margin="0,2">
+                                            <DockPanel>
+                                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                                    <!-- The group default, struck through, only when a
+                                                         personal rate actually differs from it. -->
+                                                    <TextBlock Text="{Binding StruckThroughRateLabel}"
+                                                               Foreground="#9CA3AF" FontSize="12"
+                                                               Margin="8,0,4,0" VerticalAlignment="Center"
+                                                               Visibility="{Binding HasStruckThroughRate, Converter={StaticResource BoolToVisibility}}">
+                                                        <TextBlock.TextDecorations>
+                                                            <TextDecoration Location="Strikethrough" />
+                                                        </TextBlock.TextDecorations>
+                                                    </TextBlock>
+                                                    <TextBlock Text="{Binding RateLabel}"
+                                                               FontWeight="SemiBold" FontSize="12"
+                                                               VerticalAlignment="Center" />
+                                                </StackPanel>
+                                            </DockPanel>
+                                            <TextBlock Text="{Binding CurrentMarker}"
+                                                       Foreground="#2563EB" FontSize="11" Margin="0,1,0,0"
+                                                       Visibility="{Binding IsCurrent, Converter={StaticResource BoolToVisibility}}" />
+                                            <TextBlock Text="{Binding Description}"
+                                                       Foreground="#6B7280" FontSize="11" TextWrapping="Wrap"
+                                                       Margin="0,1,0,0" MaxWidth="320"
+                                                       Visibility="{Binding HasDescription, Converter={StaticResource BoolToVisibility}}" />
+                                            <TextBlock Text="{Binding RateDescription}"
+                                                       Foreground="#6B7280" FontSize="11" TextWrapping="Wrap"
+                                                       Margin="0,1,0,0" MaxWidth="320"
+                                                       Visibility="{Binding HasRateDescription, Converter={StaticResource BoolToVisibility}}" />
+                                            <!-- Peak window carries the server's timezone, because the
+                                                 window is judged on the server's clock, not this one. -->
+                                            <TextBlock Text="{Binding PeakLabel}"
+                                                       Foreground="#B45309" FontSize="11" Margin="0,1,0,0"
+                                                       Visibility="{Binding HasPeak, Converter={StaticResource BoolToVisibility}}" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+
+                            <!-- Sits over the collapsed box, which renders blank when
+                                 nothing is selected. Not hit-testable, so it never
+                                 intercepts the click that opens the list. -->
+                            <TextBlock Text="点击选择分组"
+                                       Foreground="#9CA3AF" FontSize="13"
+                                       Margin="10,0,0,0" VerticalAlignment="Center"
+                                       IsHitTestVisible="False"
+                                       Visibility="{Binding HasNoGroupSelected, Converter={StaticResource BoolToVisibility}}" />
+                            </Grid>
+
+                            <TextBlock Text="{Binding GroupMessage}" TextWrapping="Wrap"
+                                       Foreground="#2563EB" FontSize="12" Margin="0,8,0,0"
+                                       Visibility="{Binding HasGroupMessage, Converter={StaticResource BoolToVisibility}}" />
+
+                            <!-- Claude 模型与思考强度偏好（仅 Claude 分组可见）-->
+                            <StackPanel Margin="0,12,0,0"
+                                        Visibility="{Binding IsClaudeGroup, Converter={StaticResource BoolToVisibility}}">
+                                <TextBlock Text="Claude 模型设置" FontWeight="SemiBold" Foreground="#6B7280" FontSize="12" Margin="0,0,0,6"/>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="8"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <ComboBox Grid.Column="0"
+                                              ItemsSource="{Binding ClaudeModels}"
+                                              SelectedItem="{Binding SelectedClaudeModel, Mode=TwoWay}"
+                                              Padding="8,6"/>
+                                    <ComboBox Grid.Column="2"
+                                              ItemsSource="{Binding ClaudeThinkingLevels}"
+                                              SelectedItem="{Binding SelectedClaudeThinkingLevel, Mode=TwoWay}"
+                                              Padding="8,6"/>
+                                </Grid>
+                                <TextBlock Text="思考强度影响回答深度与速度" Foreground="#9CA3AF" FontSize="11" Margin="0,4,0,0"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                </StackPanel>
+            </ScrollViewer>
+        </DockPanel>
+    </Grid>
+</Window>

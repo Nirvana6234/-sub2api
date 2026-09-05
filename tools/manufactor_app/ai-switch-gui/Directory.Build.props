@@ -1,0 +1,11 @@
+<Project>
+  <PropertyGroup Condition="'$(PublicRelease)' == 'true'">
+    <DebugSymbols>false</DebugSymbols>
+    <DebugType>None</DebugType>
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+    <EmbedUntrackedSources>false</EmbedUntrackedSources>
+    <PublishRepositoryUrl>false</PublishRepositoryUrl>
+    <PathMap>$(MSBuildThisFileDirectory)=.</PathMap>
+  </PropertyGroup>
+</Project>

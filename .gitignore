@@ -1,0 +1,231 @@
+docs/claude-relay-service/
+.codex
+
+# ===================
+# Go 后端
+# ===================
+# 二进制文件
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+backend/bin/
+backend/server
+backend/sub2api
+backend/main
+
+# Go 测试二进制
+*.test
+
+# 测试覆盖率
+*.out
+coverage.html
+
+# 依赖（使用 go mod）
+vendor/
+# 例外：这不是 Go vendor 目录，而是 GPT-5.6 检测器上游发行版的逐字节副本，
+# 旁路镜像要靠它构建。不入库的话别人克隆下来构建不出来。
+!transit-hub/deploy/gpt56-detector/vendor/
+
+# Go 编译缓存
+backend/.gocache/
+
+# ===================
+# Node.js / Vue 前端
+# ===================
+node_modules/
+frontend/node_modules/
+frontend/dist/
+*.local
+*.tsbuildinfo
+vite.config.d.ts
+vite.config.js.timestamp-*
+
+# 日志
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ===================
+# 环境配置
+# ===================
+.env
+.env.local
+.env.*.local
+*.env
+!.env.example
+docker-compose.override.yml
+
+# ===================
+# IDE / 编辑器
+# ===================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.settings/
+.classpath
+
+# ===================
+# 操作系统
+# ===================
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ===================
+# 临时文件
+# ===================
+tmp/
+temp/
+*.tmp
+*.temp
+*.log
+*.bak
+.cache/
+.dev/
+.serena/
+
+# ===================
+# 构建产物
+# ===================
+dist/
+build/
+release/
+
+# 后端嵌入的前端构建产物
+# Keep a placeholder file so `//go:embed all:dist` always has a match in CI/lint,
+# while still ignoring generated frontend build outputs.
+backend/internal/web/dist/
+!backend/internal/web/dist/
+backend/internal/web/dist/*
+!backend/internal/web/dist/.keep
+backend/internal/web/paw_dist/
+!backend/internal/web/paw_dist/
+backend/internal/web/paw_dist/*
+!backend/internal/web/paw_dist/.keep
+
+# 后端运行时缓存数据
+backend/data/
+
+# ===================
+# 本地配置文件（包含敏感信息）
+# ===================
+backend/config.yaml
+deploy/config.yaml
+backend/.installed
+
+# ===================
+# 其他
+# ===================
+tests
+!deploy/tests/
+!deploy/tests/**
+CLAUDE.md
+.claude
+scripts
+!backend/scripts/
+!backend/scripts/resolve-version.sh
+!frontend/scripts/
+!frontend/scripts/clean-out-dir.mjs
+.code-review-state
+#openspec/
+code-reviews/
+AGENTS.md
+backend/cmd/server/server
+deploy/docker-compose.override.yml
+.gocache/
+vite.config.js
+docs/*
+!docs/PAYMENT.md
+!docs/PAYMENT_CN.md
+!docs/ADMIN_PAYMENT_INTEGRATION_API.md
+!docs/ASYNC_IMAGE_TASKS.md
+!docs/PLAYGROUND.md
+!docs/legal/
+!docs/legal/*.md
+!docs/superpowers/
+!docs/superpowers/specs/
+!docs/superpowers/specs/paw-client-integration.md
+!docs/superpowers/plans/
+!docs/superpowers/plans/2026-08-31-paw-client-integration.md
+.serena/
+.codex/
+frontend/coverage/
+aicodex
+output/
+
+# Local release archives and deployment artifacts
+.omx/
+artifacts/
+# 点号开头的产物目录不会被上面的 artifacts/ 匹配到，需单列
+.artifacts/
+backend/artifacts/
+frontend/.pnpm-store/
+transit-hub/.artifacts/
+transit-hub/.agents/
+frontend/test-results/
+frontend/.codex-probe
+frontend/canvas-*.png
+frontend/canvas-*.py
+backend/*.log.*
+transit-hub/deploy/gpt56-detector/vendor/gpt56_vnext_runs/
+*.sqlite3
+*.sqlite3-*
+deploy/releases/*.tar
+deploy/releases/*.tar.gz
+deploy/releases/*.tar.sha256
+sub2api-*.tar
+sub2api-*.tar.gz
+sub2api-linux-amd64-*
+backend/backend/bin/
+deploy/release-stage-*/backend/bin/
+deploy/sub2api-auto-group-*.zip
+
+# Personal operational notes are local-only and must never be committed.
+管理员信息/
+deploy/DEPLOY-PRODUCTION.md
+transit-hub/HANDOFF-*.md
+transit-hub/docs/UPSTREAM_UPGRADE_CHECKLIST.md
+tools/codex-relay-client/doc/历史设计资料/local-cloud-server-access.md
+
+# Python 字节码（transit-hub 的 detector vendor 目录会生成）
+__pycache__/
+*.pyc
+
+# 预发布构建产物：每次构建都会重新生成，不进仓库
+transit-hub/frontend/dist.predeploy-*/
+frontend/dist.predeploy-*/
+
+# transit-hub 后端编译产物（Linux ELF，22MB，不应入库）
+transit-hub/backend/transithub-api
+transit-hub/backend/transithub-api-linux-amd64
+transit-hub/backend/backend/
+
+# ── 共飞直连客户端与工作台（tools/ 下的 .NET 工程）────────────────────────────
+#
+# 刻意只作用于 /tools/。客户端那条血脉自带一份调过的 .gitignore（含 **/bin/、
+# *.dll 等宽泛规则），整体并进来会波及上游的 backend/ 与 frontend/。加前缀限定
+# 作用域，上游原有规则一行不动。
+#
+# 没有这一段，一次 git add 会带进 724 MB 的 Codex-Windows-x64.msix 与全部
+# bin/obj —— 上游的 artifacts/ 规则挡得住发布产物，挡不住这两类。
+/tools/**/bin/
+/tools/**/obj/
+/tools/**/TestResults/
+/tools/**/*.user
+
+/tools/codex-relay-client/artifacts/
+/tools/manufactor_app/ai-switch-gui/artifacts/
+
+# 安装包目录本身要保留（客户端按它是否存在来判断离线安装场景），
+# 但里面几百 MB 的官方安装包不入库；只留说明文件。
+/tools/codex-relay-client/codex-installer/*
+!/tools/codex-relay-client/codex-installer/README.txt
+
+/tools/manufactor_app/ai-switch-gui/runtimes/
+/tools/manufactor_app/ai-switch-gui/third_party/

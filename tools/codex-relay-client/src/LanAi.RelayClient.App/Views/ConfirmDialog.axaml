@@ -1,0 +1,21 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="LanAi.RelayClient.App.Views.ConfirmDialog"
+        Title="共飞-ChatGPT助手"
+        Width="420" SizeToContent="Height"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="#F7F8FA">
+
+  <StackPanel Margin="24">
+    <TextBlock Name="MessageText" TextWrapping="Wrap" Margin="0,0,0,20" />
+    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+      <Button Name="CancelButton" Content="取消" Click="Cancel_OnClick"
+              Padding="20,6" Margin="0,0,8,0"
+              Background="Transparent" BorderBrush="#D1D5DB" />
+      <Button Name="ConfirmButton" Content="确定" Click="Confirm_OnClick"
+              Padding="20,6"
+              Background="#2563EB" Foreground="White" BorderThickness="0" />
+    </StackPanel>
+  </StackPanel>
+</Window>

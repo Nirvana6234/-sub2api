@@ -1,0 +1,33 @@
+# transit-host-guard configuration. This file contains no secrets.
+
+# The real Docker CLI path. It must not point to /usr/local/bin/docker because
+# that path is reserved for the build-blocking wrapper.
+DOCKER_BIN=/usr/bin/docker
+
+# Scan quickly enough to cancel a bypassed compiler before it exhausts the host.
+SCAN_INTERVAL_SECONDS=1
+PROTECTION_INTERVAL_SECONDS=30
+
+# Stop only BuildKit containers whose names start with buildx_buildkit_. They
+# are stopped after a forbidden Docker build is detected, never removed.
+STOP_BUILDKIT_ON_DETECTION=1
+ENABLE_DOCKER_WRAPPER=1
+
+# SSH and application processes receive lower OOM scores. PostgreSQL and Redis
+# names are rejected by the guard even if accidentally added here.
+SSH_PROCESS_NAMES="sshd"
+SSH_OOM_SCORE_ADJ=-900
+APP_OOM_SCORE_ADJ=-800
+PROTECTED_APP_CONTAINERS="sub2api transithub"
+
+# Health recovery is deliberately limited to named application containers.
+# Format: container|URL;container|URL
+HEALTH_RESTART_ENABLED=1
+HEALTH_INTERVAL_SECONDS=15
+HEALTH_TIMEOUT_SECONDS=3
+HEALTH_FAILURE_THRESHOLD=5
+HEALTH_RESTART_COOLDOWN_SECONDS=300
+HEALTHCHECKS="sub2api|http://127.0.0.1:8080/health;transithub|http://127.0.0.1:10621/api/health"
+
+# Set to 1 to log detections without terminating/restarting anything.
+DRY_RUN=0

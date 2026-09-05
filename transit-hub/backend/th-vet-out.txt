@@ -1,0 +1,3 @@
+# transithub/backend/internal/modules/connection_health
+# [transithub/backend/internal/modules/connection_health]
+vet.exe: internal\modules\connection_health\scheduler.go:251:31: s.recoveryActions.ClearSub2APIAdminAccountError undefined (type Sub2APIRecoveryActioner has no field or method ClearSub2APIAdminAccountError)

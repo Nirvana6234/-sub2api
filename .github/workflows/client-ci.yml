@@ -1,0 +1,88 @@
+# 共飞直连客户端 —— 持续集成
+#
+# 放在仓库根目录，不是 sub2api/.github/workflows/。GitHub Actions 只读取根级的
+# .github/workflows/，子目录里那批（backend-ci.yml 等）从来没有被触发过。
+#
+# runner 选择：windows-latest（2× 计费）。不是偏好，是约束 ——
+# 测试项目与 WPF 头都是 net8.0-windows，在 Linux 上根本不还原。
+# WPF 头退役后这里可以整体搬到 ubuntu-latest，Avalonia 头两个目标都能交叉编译。
+
+name: client-ci
+
+on:
+  push:
+    paths:
+      - 'tools/codex-relay-client/**'
+      - 'tools/manufactor_app/**'
+      - '.github/workflows/client-ci.yml'
+  pull_request:
+    paths:
+      - 'tools/codex-relay-client/**'
+      - 'tools/manufactor_app/**'
+      - '.github/workflows/client-ci.yml'
+  workflow_dispatch:
+
+# 路径过滤是必需的：客户端与 sub2api 后端同仓库，不加过滤时改后端也会触发客户端构建。
+defaults:
+  run:
+    working-directory: tools/codex-relay-client
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: 还原
+        run: dotnet restore LanAi.RelayClient.sln
+
+      - name: 构建（警告即错误）
+        run: dotnet build LanAi.RelayClient.sln -c Release --no-restore
+
+      - name: 测试
+        run: dotnet test LanAi.RelayClient.sln -c Release --no-build --verbosity normal
+
+      # 裁剪发布是本项目最容易静默出错的一环：绑定失效、反射 JSON 被裁掉，
+      # 界面不会报错，只会变成空白。因此两个目标都在 CI 里发一遍。
+      #
+      # win-x64 允许出现且仅允许出现一条 IL2026 —— 来自 BuiltInComInteropSupport
+      # （启动 ChatGPT 依赖的 COM 激活）。任何提到 LanAi.* 的 IL2026 都是真缺陷。
+      - name: 裁剪发布 win-x64
+        run: |
+          dotnet publish src/LanAi.RelayClient.App/LanAi.RelayClient.App.csproj `
+            -c Release -r win-x64 --self-contained true `
+            -o "${{ runner.temp }}/pub-win" 2>&1 | Tee-Object -Variable output
+          $offenders = $output | Select-String 'IL\d+.*LanAi\.'
+          if ($offenders) {
+            Write-Error "裁剪警告指向本项目代码：`n$($offenders -join "`n")"
+            exit 1
+          }
+
+      - name: 裁剪发布 osx-arm64
+        run: |
+          dotnet publish src/LanAi.RelayClient.App/LanAi.RelayClient.App.csproj `
+            -c Release -r osx-arm64 --self-contained true `
+            -o "${{ runner.temp }}/pub-mac" 2>&1 | Tee-Object -Variable output
+          $offenders = $output | Select-String 'warning|error'
+          if ($offenders) {
+            Write-Error "osx-arm64 发布应当零警告：`n$($offenders -join "`n")"
+            exit 1
+          }
+
+      # 图标是生成物。脚本重跑后若与仓库里的不一致，说明有人改了源图却没重新生成，
+      # 而这个不一致在 macOS 上的症状是「图标变成通用应用图标」，没有任何报错。
+      - name: 图标资源是最新的
+        shell: bash
+        run: |
+          python packaging/macos/build-icns.py
+          if ! git diff --quiet -- packaging/macos/LanAi.RelayClient.icns src/LanAi.RelayClient.App/Assets/LanAi.RelayClient.png; then
+            echo "::error::图标生成物与源图不一致，请运行 packaging/macos/build-icns.py 并提交结果"
+            git diff --stat -- packaging/macos/ src/LanAi.RelayClient.App/Assets/
+            exit 1
+          fi

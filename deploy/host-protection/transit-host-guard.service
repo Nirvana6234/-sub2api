@@ -1,0 +1,41 @@
+[Unit]
+Description=Transit production host build guard and application watchdog
+Documentation=file:/usr/share/doc/transit-host-guard/README.md
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/transit-host-guard.conf
+ExecStart=/usr/local/sbin/transit-host-guard run
+Restart=always
+RestartSec=2s
+TimeoutStopSec=10s
+KillMode=mixed
+
+# Keep the guard alive and responsive when an accidental build creates pressure.
+Nice=-10
+OOMScoreAdjust=-1000
+CPUWeight=10000
+CPUQuota=10%
+IOWeight=10000
+MemoryHigh=48M
+MemoryMax=64M
+TasksMax=32
+
+User=root
+Group=root
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=CAP_KILL CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_SYS_NICE CAP_SYS_PTRACE CAP_SYS_RESOURCE
+SystemCallArchitectures=native
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

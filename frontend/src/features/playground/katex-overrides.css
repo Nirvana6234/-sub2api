@@ -1,0 +1,9 @@
+/* KaTeX 每个公式渲染两份并行结构：.katex-html 是纯视觉分支，靠大量 CSS 定位的
+   span 拼出公式，直接拖选复制会得到按视觉顺序打散的文本（下标/上标各自换行）；
+   .katex-mathml 分支才是给复制/屏幕阅读器用的干净 LaTeX 源码，KaTeX 自身用 clip
+   隐藏但仍可被选中。这里禁掉 .katex-html 的选中，逼浏览器拖选/复制落到
+   .katex-mathml 分支，配合 markdown.ts 里放行 DOMPurify 的 annotation 标签，
+   "选中公式并复制"才能拿到干净文本而不是乱码碎片。 */
+.katex .katex-html {
+  user-select: none;
+}

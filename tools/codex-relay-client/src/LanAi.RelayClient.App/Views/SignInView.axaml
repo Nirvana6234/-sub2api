@@ -1,0 +1,99 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:LanAi.RelayClient.ViewModels;assembly=LanAi.RelayClient.Core"
+             x:Class="LanAi.RelayClient.App.Views.SignInView"
+             x:DataType="vm:SignInPageViewModel">
+
+  <!-- Sign-in is the only entry point: there is no skip, no offline mode, and no way
+       to paste an API key instead. -->
+  <StackPanel VerticalAlignment="Center" Margin="32">
+
+    <TextBlock Text="共飞-ChatGPT助手"
+               FontSize="24" FontWeight="SemiBold"
+               HorizontalAlignment="Center" Margin="0,0,0,4" />
+    <TextBlock Text="拒绝高价，拒绝包月，畅快使用 ChatGPT 工作生活"
+               Foreground="#6B7280" HorizontalAlignment="Center"
+               TextAlignment="Center" TextWrapping="Wrap" MaxWidth="360"
+               Margin="0,0,0,6" />
+
+    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,6">
+      <TextBlock Text="{Binding ClientUpdate.CurrentVersionText}"
+                 Foreground="#9CA3AF" FontSize="11" VerticalAlignment="Center" />
+      <Button Content="{Binding ClientUpdate.UpdateMessage}"
+              Click="OpenUpdatePage_OnClick"
+              IsVisible="{Binding ClientUpdate.HasUpdate}"
+              Background="Transparent" BorderThickness="0"
+              Foreground="#2563EB" FontSize="11" Padding="8,0,0,0" />
+    </StackPanel>
+
+    <TextBlock Text="登录后即可使用"
+               Foreground="#9CA3AF" FontSize="12"
+               HorizontalAlignment="Center" Margin="0,0,0,24" />
+
+    <!-- Password stage -->
+    <StackPanel IsVisible="{Binding SignIn.IsPasswordStage}">
+      <TextBlock Text="邮箱" Margin="0,0,0,4" />
+      <TextBox Name="EmailInput"
+               Text="{Binding SignIn.Email}"
+               Padding="8,6" Margin="0,0,0,12" />
+
+      <TextBlock Text="密码" Margin="0,0,0,4" />
+      <!-- Avalonia has no PasswordBox; a masked TextBox is the replacement. Its Text
+           is deliberately NOT bound. SignInViewModel documents that the password
+           never lands in a bindable property, a change notification, or a heap dump
+           of that object, and SubmitAsync takes it as an argument for exactly that
+           reason. Binding it here would compile, look right, pass every test, and
+           quietly undo that guarantee. It is read from this control at submit time
+           instead — see Submit_OnClick. -->
+      <TextBox Name="PasswordInput"
+               PasswordChar="●"
+               Padding="8,6" Margin="0,0,0,16"
+               KeyDown="Password_OnKeyDown" />
+    </StackPanel>
+
+    <!-- Second factor -->
+    <StackPanel IsVisible="{Binding SignIn.IsTwoFactorStage}">
+      <TextBlock Text="两步验证" FontWeight="SemiBold" Margin="0,0,0,4" />
+      <TextBlock Text="{Binding SignIn.MaskedEmail}" Foreground="#6B7280" Margin="0,0,0,12" />
+      <TextBox Text="{Binding SignIn.TotpCode}"
+               MaxLength="6" Padding="8,6" Margin="0,0,0,8"
+               KeyDown="Password_OnKeyDown" />
+      <Button Content="返回" Click="CancelTwoFactor_OnClick"
+              Padding="8,4" Margin="0,0,0,8" HorizontalAlignment="Left" />
+    </StackPanel>
+
+    <StackPanel Margin="0,0,0,12" IsVisible="{Binding SignIn.HasError}">
+      <TextBlock Text="{Binding SignIn.ErrorMessage}"
+                 Foreground="#DC2626" TextWrapping="Wrap" />
+      <Button Content="重新获取配置" Click="RetrySurface_OnClick"
+              IsEnabled="{Binding SignIn.CanRetrySurface}"
+              IsVisible="{Binding SignIn.CanRetrySurface}"
+              Background="Transparent" BorderThickness="0" Foreground="#2563EB"
+              Padding="0,6,0,0" HorizontalAlignment="Left" />
+    </StackPanel>
+
+    <Button Name="SubmitButton" Content="登录"
+            Click="Submit_OnClick"
+            IsEnabled="{Binding SignIn.CanSubmit}"
+            HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+            Padding="0,10" FontSize="15" Background="#2563EB" Foreground="White"
+            BorderThickness="0" />
+
+    <!-- Hidden entirely when the server has registration switched off, rather than
+         shown and then rejected. -->
+    <Button Content="还没有账号？注册"
+            Click="Register_OnClick"
+            IsVisible="{Binding SignIn.CanRegister}"
+            HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+            Background="Transparent" BorderThickness="0" Foreground="#2563EB"
+            Margin="0,12,0,0" />
+
+    <Button Content="忘记密码"
+            Click="ResetPassword_OnClick"
+            IsVisible="{Binding SignIn.CanResetPassword}"
+            HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+            Background="Transparent" BorderThickness="0" Foreground="#6B7280"
+            Margin="0,4,0,0" />
+
+  </StackPanel>
+</UserControl>

@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Claude Code 使用 GPT - UI 示意</title>
+  <style>
+    :root {
+      --bg: #f4f5f7;
+      --panel: #ffffff;
+      --ink: #18191c;
+      --muted: #686b72;
+      --soft: #92959c;
+      --line: #e2e4e8;
+      --blue: #0878f9;
+      --blue-soft: #eaf3ff;
+      --green: #27a45f;
+      --shadow: 0 14px 38px rgba(24, 29, 38, .07);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      width: 1536px;
+      height: 960px;
+      overflow: hidden;
+      color: var(--ink);
+      background: var(--bg);
+      font-family: "Segoe UI Variable", "Microsoft YaHei UI", sans-serif;
+    }
+    .app { display: grid; grid-template-columns: 286px 1fr; width: 100%; height: 100%; }
+    aside {
+      padding: 34px 22px 28px;
+      background: #fafafa;
+      border-right: 1px solid #dedfe3;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; padding: 0 14px 30px; }
+    .brand-mark {
+      width: 38px; height: 38px; display: grid; place-items: center;
+      color: white; background: #15171b; border-radius: 8px; font-size: 18px; font-weight: 700;
+    }
+    .brand strong { font-size: 18px; }
+    .section-label { margin: 8px 14px 12px; color: #9a9ca2; font-size: 12px; font-weight: 700; }
+    nav { display: grid; gap: 5px; }
+    .nav-item {
+      height: 52px; padding: 0 14px; display: flex; align-items: center; gap: 14px;
+      color: #565960; border: 1px solid transparent; border-radius: 8px; font-size: 15px; font-weight: 600;
+    }
+    .nav-item .icon { width: 24px; text-align: center; font-size: 18px; color: #70737a; }
+    .nav-item.active { color: var(--blue); background: var(--blue-soft); border-color: #bfdbff; }
+    .nav-item.active .icon { color: var(--blue); }
+    main { padding: 42px 52px 54px; overflow: hidden; }
+    header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 28px; }
+    h1 { margin: 0; font-size: 34px; line-height: 1.2; letter-spacing: 0; }
+    .subtitle { margin-top: 9px; color: var(--muted); font-size: 14px; }
+    .header-actions { display: flex; gap: 10px; }
+    button {
+      height: 40px; padding: 0 17px; border-radius: 8px; border: 1px solid #d8dbe0;
+      color: #3c3f45; background: white; font: inherit; font-size: 13px; font-weight: 650;
+    }
+    button.primary { color: white; background: var(--blue); border-color: var(--blue); }
+    .panel {
+      background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow);
+    }
+    .client-status {
+      min-height: 108px; padding: 22px 24px; display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 18px;
+    }
+    .client-status h2, .source-title { margin: 0 0 7px; font-size: 16px; }
+    .client-status p { margin: 0; color: var(--muted); font-size: 13px; }
+    .client-pills { display: flex; gap: 8px; }
+    .pill { padding: 8px 11px; border: 1px solid var(--line); border-radius: 8px; color: #4d5057; background: #fafafa; font-size: 12px; }
+    .pill.ready::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 7px; border-radius: 50%; background: var(--green); }
+    .cross-mode {
+      position: relative; min-height: 150px; padding: 24px; display: grid;
+      grid-template-columns: 1fr auto; align-items: center; margin-bottom: 20px;
+      border-color: #cbdff8; box-shadow: 0 16px 40px rgba(8, 120, 249, .08);
+    }
+    .mode-main { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 20px; }
+    .route-icons { display: flex; align-items: center; gap: 8px; }
+    .route-icon {
+      width: 47px; height: 47px; display: grid; place-items: center; border: 1px solid #d7dbe1;
+      border-radius: 8px; background: #f8f8f9; color: #292b30; font-weight: 800; font-size: 14px;
+    }
+    .route-icon.gpt { color: white; background: #1c1e22; border-color: #1c1e22; font-size: 11px; }
+    .arrow { color: #8b8e95; font-size: 19px; }
+    .mode-copy h2 { margin: 0; font-size: 20px; }
+    .mode-copy p { margin: 7px 0 14px; color: var(--muted); font-size: 13px; }
+    .chips { display: flex; gap: 8px; }
+    .chip { padding: 6px 9px; border-radius: 7px; background: #f1f3f6; color: #555961; font-size: 11px; }
+    .mode-action { display: flex; align-items: center; gap: 13px; }
+    .disabled-state { color: #8b8e95; font-size: 12px; }
+    .popover {
+      position: absolute; top: 120px; right: 26px; z-index: 3; width: 334px; padding: 18px;
+      border: 1px solid #d9dce1; border-radius: 8px; background: white; box-shadow: 0 20px 54px rgba(25, 30, 40, .17);
+    }
+    .popover::before {
+      content: ""; position: absolute; right: 48px; top: -7px; width: 12px; height: 12px;
+      transform: rotate(45deg); background: white; border-left: 1px solid #d9dce1; border-top: 1px solid #d9dce1;
+    }
+    .popover h3 { margin: 0 0 16px; font-size: 15px; }
+    .field { margin-bottom: 13px; }
+    .field label { display: block; margin-bottom: 6px; color: #696c73; font-size: 11px; }
+    .select { height: 38px; display: flex; align-items: center; justify-content: space-between; padding: 0 11px; border: 1px solid #d8dbe0; border-radius: 7px; font-size: 12px; }
+    .check { display: flex; align-items: center; gap: 8px; margin: 4px 0 17px; color: #50535a; font-size: 11px; }
+    .box { width: 15px; height: 15px; display: grid; place-items: center; color: white; background: var(--blue); border-radius: 4px; font-size: 10px; }
+    .popover-actions { display: flex; justify-content: flex-end; gap: 8px; }
+    .sources { padding: 24px; margin-top: 90px; }
+    .source-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+    .source-head p { margin: 0; color: var(--muted); font-size: 12px; }
+    .source-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .source-card { padding: 16px; border: 1px solid #e0e2e6; border-radius: 8px; background: #fbfbfc; }
+    .source-card.active { border-color: #9cc7fb; background: #f4f8ff; }
+    .source-name { display: flex; justify-content: space-between; font-size: 13px; font-weight: 700; }
+    .source-meta { margin-top: 10px; color: #777a81; font-size: 11px; line-height: 1.7; }
+    .tag { color: var(--blue); font-size: 10px; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside>
+      <div class="brand"><div class="brand-mark">飞</div><strong>共飞AI工作台</strong></div>
+      <div class="section-label">工作区</div>
+      <nav>
+        <div class="nav-item"><span class="icon">▦</span>工作台</div>
+        <div class="nav-item"><span class="icon">□</span>项目中心</div>
+        <div class="nav-item active"><span class="icon">⌘</span>连接中心</div>
+        <div class="nav-item"><span class="icon">▣</span>中转服务</div>
+        <div class="nav-item"><span class="icon">▥</span>用量仪表盘</div>
+        <div class="nav-item"><span class="icon">#</span>扩展中心</div>
+        <div class="nav-item"><span class="icon">☷</span>设置</div>
+      </nav>
+    </aside>
+    <main>
+      <header>
+        <div><h1>连接中心</h1><div class="subtitle">统一管理来源、客户端路由与跨客户端模式</div></div>
+        <div class="header-actions"><button>重新读取</button><button class="primary">新增远程来源</button></div>
+      </header>
+
+      <section class="panel client-status">
+        <div><h2>客户端准备状态</h2><p>三个客户端均已安装，当前来源已经应用。</p></div>
+        <div class="client-pills"><span class="pill ready">Codex</span><span class="pill ready">Claude Code</span><span class="pill ready">Gemini CLI</span></div>
+      </section>
+
+      <section class="panel cross-mode">
+        <div class="mode-main">
+          <div class="route-icons"><div class="route-icon">Claude</div><span class="arrow">→</span><div class="route-icon gpt">GPT</div></div>
+          <div class="mode-copy">
+            <h2>Claude Code 使用 GPT</h2>
+            <p>通过兼容转换层，让 Claude Code 调用当前来源中的 GPT 模型</p>
+            <div class="chips"><span class="chip">当前来源：远程来源</span><span class="chip">模型：gpt-5.4</span></div>
+          </div>
+        </div>
+        <div class="mode-action"><span class="disabled-state">未启用</span><button class="primary">配置并启用</button></div>
+
+        <div class="popover">
+          <h3>配置 Claude Code 使用 GPT</h3>
+          <div class="field"><label>GPT 来源</label><div class="select"><span>远程来源</span><span>⌄</span></div></div>
+          <div class="field"><label>目标模型</label><div class="select"><span>gpt-5.4</span><span>⌄</span></div></div>
+          <div class="check"><span class="box">✓</span>保留 Claude Code 原配置备份</div>
+          <div class="popover-actions"><button>取消</button><button class="primary">启用</button></div>
+        </div>
+      </section>
+
+      <section class="panel sources">
+        <div class="source-head"><div><h2 class="source-title">来源与客户端路由</h2><p>跨客户端模式不会创建新来源，只改变 Claude Code 的目标协议。</p></div><button>应用组合</button></div>
+        <div class="source-grid">
+          <div class="source-card"><div class="source-name"><span>本机中转</span><span>固定</span></div><div class="source-meta">本机 Sub2API<br>Codex · Claude · Gemini</div></div>
+          <div class="source-card"><div class="source-name"><span>局域网中转</span><span>固定</span></div><div class="source-meta">局域网后台<br>等待连接</div></div>
+          <div class="source-card active"><div class="source-name"><span>远程来源</span><span class="tag">当前使用</span></div><div class="source-meta">云端 Sub2API<br>Codex · Claude · Gemini</div></div>
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

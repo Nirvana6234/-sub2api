@@ -1,0 +1,119 @@
+// Package ctxkey 定义用于 context.Value 的类型安全 key
+package ctxkey
+
+// Key 定义 context key 的类型，避免使用内置 string 类型（staticcheck SA1029）
+type Key string
+
+const (
+	// ForcePlatform 强制平台（用于 /antigravity 路由），由 middleware.ForcePlatform 设置
+	ForcePlatform Key = "ctx_force_platform"
+
+	// ResolvedTargetPlatform 是 composite 分组按请求模型解析出的真实目标平台。
+	ResolvedTargetPlatform Key = "ctx_resolved_target_platform"
+
+	// ResolvedUpstreamModel 是 composite 分组将公开模型名解析到的上游模型名。
+	ResolvedUpstreamModel Key = "ctx_resolved_upstream_model"
+
+	// RequestedPublicModel 是客户端原始请求中的公开模型名。
+	RequestedPublicModel Key = "ctx_requested_public_model"
+
+	// CompositeRouteSource 标识 composite 解析结果来自显式路由还是内置模型探测。
+	CompositeRouteSource Key = "ctx_composite_route_source"
+
+	// RequestID 为服务端生成/透传的请求 ID。
+	RequestID Key = "ctx_request_id"
+
+	// ClientRequestID 客户端请求的唯一标识，用于追踪请求全生命周期（用于 Ops 监控与排障）。
+	ClientRequestID Key = "ctx_client_request_id"
+
+	// PlaygroundRequest marks a panel Playground request. Upstream relay code
+	// keeps this request's cancellation signal so a user-issued stop terminates
+	// the upstream generation.
+	PlaygroundRequest Key = "ctx_playground_request"
+
+	// ClientIP 客户端真实 IP。由认证路由的中间件写入，供注册配额等
+	// 需要按来源 IP 判定、又不便逐层透传参数的服务层逻辑读取。
+	ClientIP Key = "ctx_client_ip"
+
+	// Model 请求模型标识（用于统一请求链路日志字段）。
+	Model Key = "ctx_model"
+
+	// Platform 当前请求最终命中的平台（用于统一请求链路日志字段）。
+	Platform Key = "ctx_platform"
+
+	// AccountID 当前请求最终命中的账号 ID（用于统一请求链路日志字段）。
+	AccountID Key = "ctx_account_id"
+
+	// RetryCount 表示当前请求在网关层的重试次数（用于 Ops 记录与排障）。
+	RetryCount Key = "ctx_retry_count"
+
+	// AccountSwitchCount 表示请求过程中发生的账号切换次数
+	AccountSwitchCount Key = "ctx_account_switch_count"
+
+	// IsClaudeCodeClient 标识当前请求是否来自 Claude Code 客户端
+	IsClaudeCodeClient Key = "ctx_is_claude_code_client"
+
+	// ThinkingEnabled 标识当前请求是否开启 thinking（用于 Antigravity 最终模型名推导与模型维度限流）
+	ThinkingEnabled Key = "ctx_thinking_enabled"
+
+	// OpenAIImageGenerationIntent 标识 OpenAI 请求会触发生图能力（用于图片能力维度限流）
+	OpenAIImageGenerationIntent Key = "ctx_openai_image_generation_intent"
+
+	// OpenAIImagesEndpoint 标识请求是从 /v1/images/* 入站的。
+	// 与 OpenAIImageGenerationIntent 的区别：后者只表示"这次请求会生图"，
+	// /v1/responses 带图片模型时也会置位；本 key 只在专用生图端点置位，
+	// 用于区分"用错端点"与"端点用对了但账号没能力"。
+	OpenAIImagesEndpoint Key = "ctx_openai_images_endpoint"
+
+	// Group 认证后的分组信息，由 API Key 认证中间件设置
+	Group Key = "ctx_group"
+
+	// UserID 认证后的 Sub2API 用户 ID，由 API Key 认证中间件设置。
+	// 供 service 层执行用户级策略，不能使用客户端请求体中的 user 标识替代。
+	UserID Key = "ctx_user_id"
+	// APIKeyID 认证后的 API Key ID。API Key 级策略必须使用该值，避免同一
+	// 用户的多把密钥共享配置互相影响。
+	APIKeyID Key = "ctx_api_key_id"
+	// WorkspaceLocalFallbackRoute marks the desktop app's fixed local relay key.
+	// Its group contains ordered fallback upstreams while the user's ungrouped
+	// contributed accounts remain the primary pool.
+	WorkspaceLocalFallbackRoute Key = "ctx_workspace_local_fallback_route"
+	// ContributionCreditOnly marks requests admitted with a zero cash balance
+	// because the user has contribution credit. Schedulers must route these
+	// requests to a contributed account (their own account is always allowed;
+	// another owner's account must be an eligible shared-pool account).
+	ContributionCreditOnly Key = "ctx_contribution_credit_only"
+	// OwnContributedAccountsOnly marks requests from a user with neither cash
+	// balance nor contribution credit. Such a user may still use accounts they
+	// contributed themselves, but may not consume another contributor's pool.
+	OwnContributedAccountsOnly Key = "ctx_own_contributed_accounts_only"
+	// AllowContributionAccountManagement is an internal capability used only by
+	// the contribution API. It keeps user-contributed accounts out of the
+	// administrator account-management surface while preserving owner actions.
+	AllowContributionAccountManagement Key = "ctx_allow_contribution_account_management"
+	// AdminAccountManagementList marks the paginated account query used by the
+	// regular administrator account-management surface. The repository uses
+	// this narrowly scoped marker to exclude contributed accounts before count
+	// and pagination; contribution governance explicitly opts in via the
+	// AllowContributionAccountManagement capability above.
+	AdminAccountManagementList Key = "ctx_admin_account_management_list"
+
+	// IsMaxTokensOneHaikuRequest 标识当前请求是否为 max_tokens=1 + haiku 模型的探测请求
+	// 用于 ClaudeCodeOnly 验证绕过（绕过 system prompt 检查，但仍需验证 User-Agent）
+	IsMaxTokensOneHaikuRequest Key = "ctx_is_max_tokens_one_haiku"
+
+	// SingleAccountRetry 标识当前请求处于单账号 503 退避重试模式。
+	// 在此模式下，Service 层的模型限流预检查将等待限流过期而非直接切换账号。
+	SingleAccountRetry Key = "ctx_single_account_retry"
+
+	// PrefetchedStickyAccountID 标识上游（通常 handler）预取到的 sticky session 账号 ID。
+	// Service 层可复用该值，避免同请求链路重复读取 Redis。
+	PrefetchedStickyAccountID Key = "ctx_prefetched_sticky_account_id"
+
+	// PrefetchedStickyGroupID 标识上游预取 sticky session 时所使用的分组 ID。
+	// Service 层仅在分组匹配时复用 PrefetchedStickyAccountID，避免分组切换重试误用旧 sticky。
+	PrefetchedStickyGroupID Key = "ctx_prefetched_sticky_group_id"
+
+	// ClaudeCodeVersion stores the extracted Claude Code version from User-Agent (e.g. "2.1.22")
+	ClaudeCodeVersion Key = "ctx_claude_code_version"
+)

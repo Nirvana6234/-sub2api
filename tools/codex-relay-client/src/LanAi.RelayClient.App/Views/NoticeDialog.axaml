@@ -1,0 +1,16 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="LanAi.RelayClient.App.Views.NoticeDialog"
+        Title="共飞-ChatGPT助手"
+        Width="420" SizeToContent="Height"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="#F7F8FA">
+
+  <StackPanel Margin="24">
+    <TextBlock Name="MessageText" TextWrapping="Wrap" Margin="0,0,0,20" />
+    <Button Name="CloseButton" Content="知道了" Click="Close_OnClick"
+            HorizontalAlignment="Right" Padding="20,6"
+            Background="#2563EB" Foreground="White" BorderThickness="0" />
+  </StackPanel>
+</Window>

@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- Multi-targeted rather than retargeted. The Avalonia client needs a plain
+         net8.0 reference (a net8.0 project cannot reference net8.0-windows), while
+         AiSwitch.Wpf, LanAiWorkspace.sln and AiSwitch.Injection.Tests all still
+         resolve the net8.0-windows flavour and are untouched. Nothing here actually
+         requires the Windows TFM — the only platform-specific code is [ComImport]
+         interop in CodexAppLauncher, which plain net8.0 supports; the Windows TFM
+         was simply what it was first written against. -->
+    <TargetFrameworks>net8.0;net8.0-windows</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>LanAi.Workspace.Injection</AssemblyName>
+    <RootNamespace>LanAi.Workspace.Injection</RootNamespace>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="AiSwitch.Injection.Tests" />
+  </ItemGroup>
+</Project>

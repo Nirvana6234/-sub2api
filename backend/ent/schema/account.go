@@ -1,0 +1,309 @@
+// Package schema 定义 Ent ORM 的数据库 schema。
+// 每个文件对应一个数据库实体（表），定义其字段、边（关联）和索引。
+package schema
+
+import (
+	"github.com/Wei-Shaw/sub2api/ent/schema/mixins"
+	"github.com/Wei-Shaw/sub2api/internal/domain"
+
+	"entgo.io/ent"
+	"entgo.io/ent/dialect"
+	"entgo.io/ent/dialect/entsql"
+	"entgo.io/ent/schema"
+	"entgo.io/ent/schema/edge"
+	"entgo.io/ent/schema/field"
+	"entgo.io/ent/schema/index"
+)
+
+// Account 定义 AI API 账户实体的 schema。
+//
+// 账户是系统的核心资源，代表一个可用于调用 AI API 的凭证。
+// 例如：一个 Claude API 账户、一个 Gemini OAuth 账户等。
+//
+// 主要功能：
+//   - 存储不同平台（Claude、Gemini、OpenAI 等）的 API 凭证
+//   - 支持多种认证类型（api_key、oauth、cookie 等）
+//   - 管理账户的调度状态（可调度、速率限制、过载等）
+//   - 通过分组机制实现账户的灵活分配
+type Account struct {
+	ent.Schema
+}
+
+// Annotations 返回 schema 的注解配置。
+// 这里指定数据库表名为 "accounts"。
+func (Account) Annotations() []schema.Annotation {
+	return []schema.Annotation{
+		entsql.Annotation{Table: "accounts"},
+	}
+}
+
+// Mixin 返回该 schema 使用的混入组件。
+// - TimeMixin: 自动管理 created_at 和 updated_at 时间戳
+// - SoftDeleteMixin: 提供软删除功能（deleted_at）
+func (Account) Mixin() []ent.Mixin {
+	return []ent.Mixin{
+		mixins.TimeMixin{},
+		mixins.SoftDeleteMixin{},
+	}
+}
+
+// Fields 定义账户实体的所有字段。
+func (Account) Fields() []ent.Field {
+	return []ent.Field{
+		// name: 账户显示名称，用于在界面中标识账户
+		field.String("name").
+			MaxLen(100).
+			NotEmpty(),
+		// notes: 管理员备注（可为空）
+		field.String("notes").
+			Optional().
+			Nillable().
+			SchemaType(map[string]string{dialect.Postgres: "text"}),
+
+		// platform: 所属平台，如 "claude", "gemini", "openai" 等
+		field.String("platform").
+			MaxLen(50).
+			NotEmpty(),
+
+		// type: 认证类型，如 "api_key", "oauth", "cookie" 等
+		// 不同类型决定了 credentials 中存储的数据结构
+		field.String("type").
+			MaxLen(20).
+			NotEmpty(),
+
+		// credentials: 认证凭证，以 JSONB 格式存储
+		// 结构取决于 type 字段：
+		// - api_key: {"api_key": "sk-xxx"}
+		// - oauth: {"access_token": "...", "refresh_token": "...", "expires_at": "..."}
+		// - cookie: {"session_key": "..."}
+		field.JSON("credentials", map[string]any{}).
+			Default(func() map[string]any { return map[string]any{} }).
+			SchemaType(map[string]string{dialect.Postgres: "jsonb"}),
+
+		// extra: 扩展数据，存储平台特定的额外信息
+		// 如 CRS 账户的 crs_account_id、组织信息等
+		field.JSON("extra", map[string]any{}).
+			Default(func() map[string]any { return map[string]any{} }).
+			SchemaType(map[string]string{dialect.Postgres: "jsonb"}),
+
+		// proxy_id: 关联的代理配置 ID（可选）
+		// 用于需要通过特定代理访问 API 的场景
+		field.Int64("proxy_id").
+			Optional().
+			Nillable(),
+		field.Int64("proxy_fallback_origin_id").
+			Optional().Nillable().
+			Comment("Original proxy id replaced by expiry-fallback; for manual revert. NULL = not in fallback."),
+
+		// concurrency: 账户最大并发请求数
+		// 用于限制同一时间对该账户发起的请求数量
+		field.Int("concurrency").
+			Default(30),
+
+		field.Int("load_factor").Optional().Nillable(),
+
+		// priority: 账户优先级，数值越小优先级越高
+		// 调度器会优先使用高优先级的账户
+		field.Int("priority").
+			Default(50),
+
+		// rate_multiplier: 账号计费倍率（>=0，允许 0 表示该账号计费为 0）
+		// 仅影响账号维度计费口径，不影响用户/API Key 扣费（分组倍率）
+		//
+		// 刻意保持 NOT NULL + Default(1.0)：领域层的 nil 因此只可能来自缓存
+		// 反序列化缺字段，利润门对 nil 保守拒绝（fail-closed）这一安全姿态才
+		// 成立。要表达"尚未声明上游成本"，用 rate_multiplier_undeclared，
+		// 不要把本列改成可空——那会让"未声明"与"快照漏字段"重新同形，并把
+		// 漏字段的后果从保守拒绝变成静默放行。
+		field.Float("rate_multiplier").
+			SchemaType(map[string]string{dialect.Postgres: "decimal(10,4)"}).
+			Default(1.0),
+
+		// rate_multiplier_undeclared: 该账号的上游成本从未被声明过。
+		//
+		// 为什么需要一个独立字段而不是让 rate_multiplier 可空：rate_multiplier
+		// 的默认值 1.0 对计费是中性的（不缩放），对利润准入却是最贵的值，且与
+		// 运营者真的把成本声明为 1.0 完全同形。一次生产故障正源于此——三个从
+		// 没维护过倍率的中转账号被按 1.0 判定越线，整组账号被排除，6 小时内
+		// 1153 次请求返回 no available accounts。
+		//
+		// 语义刻意用否定式，使零值落在安全的一侧：字段缺失或快照漏列时取
+		// false（视为已声明），利润门照常严格判定，维持 fail-closed；只有明确
+		// 写入 true 才表示"没人声明过"。存量账号一律 false，行为逐行不变。
+		// 详见 migrations/202_account_rate_multiplier_undeclared.sql。
+		field.Bool("rate_multiplier_undeclared").
+			Default(false),
+
+		// status: 账户状态，如 "active", "error", "disabled"
+		field.String("status").
+			MaxLen(20).
+			Default(domain.StatusActive),
+
+		// error_message: 错误信息，记录账户异常时的详细信息
+		field.String("error_message").
+			Optional().
+			Nillable().
+			SchemaType(map[string]string{dialect.Postgres: "text"}),
+
+		// last_used_at: 最后使用时间，用于统计和调度
+		field.Time("last_used_at").
+			Optional().
+			Nillable().
+			SchemaType(map[string]string{dialect.Postgres: "timestamptz"}),
+		// expires_at: 账户过期时间（可为空）
+		field.Time("expires_at").
+			Optional().
+			Nillable().
+			Comment("Account expiration time (NULL means no expiration).").
+			SchemaType(map[string]string{dialect.Postgres: "timestamptz"}),
+		// auto_pause_on_expired: 过期后自动暂停调度
+		field.Bool("auto_pause_on_expired").
+			Default(true).
+			Comment("Auto pause scheduling when account expires."),
+
+		// ========== 调度和速率限制相关字段 ==========
+		// 这些字段在 migrations/005_schema_parity.sql 中添加
+
+		// schedulable: 是否可被调度器选中
+		// false 表示账户暂时不参与请求分配（如正在刷新 token）
+		field.Bool("schedulable").
+			Default(true),
+
+		// rate_limited_at: 触发速率限制的时间
+		// 当收到 429 错误时记录
+		field.Time("rate_limited_at").
+			Optional().
+			Nillable().
+			SchemaType(map[string]string{dialect.Postgres: "timestamptz"}),
+
+		// rate_limit_reset_at: 速率限制预计解除的时间
+		// 调度器会在此时间之前避免使用该账户
+		field.Time("rate_limit_reset_at").
+			Optional().
+			Nillable().
+			SchemaType(map[string]string{dialect.Postgres: "timestamptz"}),
+
+		// overload_until: 过载状态解除时间
+		// 当收到 529 错误（API 过载）时设置
+		field.Time("overload_until").
+			Optional().
+			Nillable().
+			SchemaType(map[string]string{dialect.Postgres: "timestamptz"}),
+
+		// temp_unschedulable_until: 临时不可调度状态解除时间
+		// 当命中临时不可调度规则时设置，在此时间前调度器应跳过该账号
+		field.Time("temp_unschedulable_until").
+			Optional().
+			Nillable().
+			SchemaType(map[string]string{dialect.Postgres: "timestamptz"}),
+
+		// temp_unschedulable_reason: 临时不可调度原因，便于排障审计
+		field.String("temp_unschedulable_reason").
+			Optional().
+			Nillable().
+			SchemaType(map[string]string{dialect.Postgres: "text"}),
+
+		// ========== 可调度来源（权威停用所有权）==========
+		// 这些字段在 migrations/201_add_schedulability_source.sql 中添加。
+		//
+		// schedulability_source 是 schedulable 当前取值的所有权标记，用于严格区分
+		// “管理员手动关闭”与“系统自动隔离”：
+		//   - manual：管理员明确关闭可调度。该决定永久优先，任何系统错误处理、
+		//     自动恢复或后台任务都不得覆盖。
+		//   - automatic：系统基于凭据、余额、上游故障、过期等原因自动停止调度，
+		//     允许外部巡检（TransitHub）验证后条件恢复。
+		//   - none：当前没有停用来源，用于正常可调度账号；不得被解释为 automatic。
+		//
+		// 该字段必须与 schedulable 在同一条原子 UPDATE 中写入，禁止先改
+		// schedulable 再异步补来源，否则中间态会被读成来源不明。
+		field.String("schedulability_source").
+			Default("none").
+			MaxLen(16).
+			Comment("Ownership of the current schedulable value: manual | automatic | none."),
+
+		// schedulability_reason: 稳定原因码，便于审计与排障
+		// 例：admin_disabled、credential_error、upstream_error、expired
+		field.String("schedulability_reason").
+			Optional().
+			Nillable().
+			MaxLen(64).
+			Comment("Stable reason code explaining the current schedulability source."),
+
+		// schedulability_changed_at: 本次来源与状态变更时间
+		// 外部恢复请求用它做 compare-and-set，避免迟到请求覆盖管理员决定
+		field.Time("schedulability_changed_at").
+			Optional().
+			Nillable().
+			SchemaType(map[string]string{dialect.Postgres: "timestamptz"}),
+
+		// session_window_*: 会话窗口相关字段
+		// 用于管理某些需要会话时间窗口的 API（如 Claude Pro）
+		field.Time("session_window_start").
+			Optional().
+			Nillable().
+			SchemaType(map[string]string{dialect.Postgres: "timestamptz"}),
+		field.Time("session_window_end").
+			Optional().
+			Nillable().
+			SchemaType(map[string]string{dialect.Postgres: "timestamptz"}),
+		field.String("session_window_status").
+			Optional().
+			Nillable().
+			MaxLen(20),
+
+		field.Int64("parent_account_id").Optional().Nillable().
+			Comment("Parent account id for a linked spark shadow (NULL = normal)."),
+		field.Enum("quota_dimension").Values("global", "spark").Default("global").
+			Comment("'global' (default) or 'spark' (shadow reads codex_bengalfox)."),
+	}
+}
+
+// Edges 定义账户实体的关联关系。
+func (Account) Edges() []ent.Edge {
+	return []ent.Edge{
+		// groups: 账户所属的分组（多对多关系）
+		// 通过 account_groups 中间表实现
+		// 一个账户可以属于多个分组，一个分组可以包含多个账户
+		edge.To("groups", Group.Type).
+			Through("account_groups", AccountGroup.Type),
+		// proxy: 账户使用的代理配置（可选的一对一关系）
+		// 使用已有的 proxy_id 外键字段
+		edge.To("proxy", Proxy.Type).
+			Field("proxy_id").
+			Unique(),
+		// children/parent: linked spark shadow relationship.
+		// parent_account_id is nullable, and the active one-shadow-per-parent rule
+		// is enforced by the partial unique index in migration 154a.
+		edge.To("children", Account.Type).
+			Annotations(entsql.OnDelete(entsql.Restrict)).
+			From("parent").
+			Field("parent_account_id").
+			Unique(),
+		// usage_logs: 该账户的使用日志
+		edge.To("usage_logs", UsageLog.Type),
+	}
+}
+
+// Indexes 定义数据库索引，优化查询性能。
+// 每个索引对应一个常用的查询条件。
+func (Account) Indexes() []ent.Index {
+	return []ent.Index{
+		index.Fields("platform"),            // 按平台筛选
+		index.Fields("type"),                // 按认证类型筛选
+		index.Fields("status"),              // 按状态筛选
+		index.Fields("proxy_id"),            // 按代理筛选
+		index.Fields("priority"),            // 按优先级排序
+		index.Fields("last_used_at"),        // 按最后使用时间排序
+		index.Fields("schedulable"),         // 筛选可调度账户
+		index.Fields("rate_limited_at"),     // 筛选速率限制账户
+		index.Fields("rate_limit_reset_at"), // 筛选速率限制解除时间
+		index.Fields("overload_until"),      // 筛选过载账户
+		// 调度热路径复合索引（线上由 SQL 迁移创建部分索引，schema 仅用于模型可读性对齐）
+		index.Fields("platform", "priority"),
+		index.Fields("priority", "status"),
+		index.Fields("deleted_at"), // 软删除查询优化
+		index.Fields("parent_account_id"),
+		// 恢复候选查询：只捞 source=automatic 且 status=error 的账号
+		index.Fields("schedulability_source", "status"),
+	}
+}
