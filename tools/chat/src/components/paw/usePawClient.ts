@@ -21,8 +21,17 @@ import {
   uploadPawFile,
 } from "@/client/paw/api";
 import { safeLocalStorage } from "@/utils/storage";
+import { persistConversationsWithCompression } from "@/client/paw/conversationCompression";
+import type { AgentApprovalUiMode } from "@/client/agent/session";
 import type {
   PawAttachment,
+  PawAgentFileChange,
+  PawAgentPanels,
+  PawAgentPanelsPatch,
+  PawAgentApprovalReview,
+  PawAgentFileSearch,
+  PawAgentNotification,
+  PawAgentTerminalInteraction,
   PawConfigData,
   PawConversation,
   PawConversationMessage,
@@ -98,6 +107,109 @@ function createId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function normalizeAgentPanels(input: unknown): PawAgentPanels | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const source = input as Record<string, unknown>;
+  const now = Date.now();
+  const result: PawAgentPanels = {};
+
+  if (typeof source.diff === "string") {
+    result.diff = source.diff;
+  }
+
+  if (source.plan && typeof source.plan === "object") {
+    const plan = source.plan as Record<string, unknown>;
+    result.plan = {
+      explanation:
+        typeof plan.explanation === "string" || plan.explanation === null
+          ? plan.explanation
+          : undefined,
+      steps: Array.isArray(plan.steps) ? plan.steps : [],
+      delta: typeof plan.delta === "string" ? plan.delta : undefined,
+    };
+  }
+
+  if (source.fileChanges && typeof source.fileChanges === "object") {
+    const fileChanges: Record<string, PawAgentFileChange> = {};
+    for (const [key, value] of Object.entries(
+      source.fileChanges as Record<string, unknown>,
+    )) {
+      if (!value || typeof value !== "object") continue;
+      const change = value as Record<string, unknown>;
+      fileChanges[key] = {
+        itemId: typeof change.itemId === "string" ? change.itemId : key,
+        changes: change.changes,
+        output: typeof change.output === "string" ? change.output : undefined,
+      };
+    }
+    if (Object.keys(fileChanges).length > 0) result.fileChanges = fileChanges;
+  }
+
+  if (Array.isArray(source.terminalInteractions)) {
+    result.terminalInteractions = source.terminalInteractions.filter(
+      (item): item is PawAgentTerminalInteraction =>
+        Boolean(item) &&
+        typeof item === "object" &&
+        typeof (item as { itemId?: unknown }).itemId === "string" &&
+        typeof (item as { processId?: unknown }).processId === "string" &&
+        typeof (item as { stdin?: unknown }).stdin === "string" &&
+        typeof (item as { createdAt?: unknown }).createdAt === "number",
+    );
+  }
+
+  if (Array.isArray(source.moderationMetadata)) {
+    result.moderationMetadata = source.moderationMetadata;
+  }
+
+  if (Array.isArray(source.notifications)) {
+    result.notifications = source.notifications.filter(
+      (item): item is PawAgentNotification =>
+        Boolean(item) &&
+        typeof item === "object" &&
+        typeof (item as { method?: unknown }).method === "string" &&
+        typeof (item as { message?: unknown }).message === "string" &&
+        typeof (item as { createdAt?: unknown }).createdAt === "number",
+    );
+  }
+
+  if (source.fileSearches && typeof source.fileSearches === "object") {
+    const fileSearches: Record<string, PawAgentFileSearch> = {};
+    for (const [key, value] of Object.entries(
+      source.fileSearches as Record<string, unknown>,
+    )) {
+      if (!value || typeof value !== "object") continue;
+      const search = value as Record<string, unknown>;
+      fileSearches[key] = {
+        sessionId: typeof search.sessionId === "string" ? search.sessionId : key,
+        query: typeof search.query === "string" ? search.query : "",
+        files: Array.isArray(search.files) ? search.files : [],
+        completed: search.completed === true,
+        updatedAt: typeof search.updatedAt === "number" ? search.updatedAt : now,
+      };
+    }
+    if (Object.keys(fileSearches).length > 0) result.fileSearches = fileSearches;
+  }
+
+  if (source.approvalReviews && typeof source.approvalReviews === "object") {
+    const approvalReviews: Record<string, PawAgentApprovalReview> = {};
+    for (const [key, value] of Object.entries(
+      source.approvalReviews as Record<string, unknown>,
+    )) {
+      if (!value || typeof value !== "object") continue;
+      const review = value as Record<string, unknown>;
+      approvalReviews[key] = {
+        reviewId: typeof review.reviewId === "string" ? review.reviewId : key,
+        method: typeof review.method === "string" ? review.method : "autoApprovalReview",
+        raw: review.raw,
+        updatedAt: typeof review.updatedAt === "number" ? review.updatedAt : now,
+      };
+    }
+    if (Object.keys(approvalReviews).length > 0) result.approvalReviews = approvalReviews;
+  }
+
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
 function normalizeConversation(input: Partial<PawConversation>): PawConversation {
   const now = Date.now();
   const messages = Array.isArray(input.messages)
@@ -120,6 +232,7 @@ function normalizeConversation(input: Partial<PawConversation>): PawConversation
             typeof message.reasoningContent === "string"
               ? message.reasoningContent
               : undefined,
+          agentPanels: normalizeAgentPanels(message.agentPanels),
           attachments: Array.isArray(message.attachments)
             ? message.attachments.filter(Boolean).map((item) => ({ ...item }))
             : undefined,
@@ -131,6 +244,11 @@ function normalizeConversation(input: Partial<PawConversation>): PawConversation
             : undefined,
           pinned: Boolean(message.pinned),
           error: Boolean(message.error),
+          turnStatus:
+            message.turnStatus === "active" || message.turnStatus === "complete"
+              ? message.turnStatus
+              : undefined,
+          agentTurn: message.agentTurn === true ? true : undefined,
           createdAt:
             typeof message.createdAt === "number" ? message.createdAt : now,
           updatedAt:
@@ -156,6 +274,13 @@ function normalizeConversation(input: Partial<PawConversation>): PawConversation
         ? Math.min(messages.length, Math.max(0, Math.floor(input.contextStartIndex)))
         : undefined,
     messages,
+    agentCwd:
+      typeof input.agentCwd === "string" && input.agentCwd.trim() ? input.agentCwd : undefined,
+    agentCwdLocked: Boolean(input.agentCwdLocked),
+    agentApprovalMode:
+      input.agentApprovalMode === "review" || input.agentApprovalMode === "full"
+        ? input.agentApprovalMode
+        : undefined,
   };
 }
 
@@ -262,13 +387,15 @@ function createUserMessage(
   };
 }
 
-function createAssistantMessage(model?: string): PawConversationMessage {
+function createAssistantMessage(model?: string, agentTurn?: boolean): PawConversationMessage {
   const now = Date.now();
   return {
     id: createId("assistant"),
     role: "assistant",
     content: "",
     model,
+    turnStatus: "active",
+    agentTurn: agentTurn || undefined,
     createdAt: now,
     updatedAt: now,
   };
@@ -472,6 +599,231 @@ export function usePawClient() {
     [],
   );
 
+  /**
+   * agent 会话专用的一组消息拼装函数（配合 `client/agent/useAgentSession.ts`）。
+   *
+   * **故意和 handleSend/dispatchConversationSend 完全分开**：agent 走的是另一条
+   * 通道（Rust 桥 → 本地转发层），不经过 `sendPawChat`，也不占用 `sending` 这个
+   * 状态机——那是"这次 Paw 聊天请求有没有在飞"的信号，语义上不该被 agent 的轮次
+   * 借用（两者互不知道对方，混在一起只会让"发送中"这件事对不上号）。
+   *
+   * 这几个函数只负责把 agent 产生的文本落进对应会话的消息列表，复用现成的气泡
+   * 渲染（Markdown、推理折叠块）——agent 的输出因此和普通对话长得一样，不需要
+   * 一套平行的展示组件。
+   */
+  const ensureActiveConversationId = useCallback((): string => {
+    if (activeConversationId) return activeConversationId;
+    const conversation = createConversation();
+    setConversations((current) => [conversation, ...current]);
+    setActiveConversationId(conversation.id);
+    return conversation.id;
+  }, [activeConversationId]);
+
+  const beginAgentTurn = useCallback(
+    (conversationId: string, text: string) => {
+      const userMessage = createUserMessage(text, []);
+      const assistantMessage = createAssistantMessage(undefined, true);
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        title:
+          conversation.title === "新对话" && text
+            ? cleanSelectionLabel(text.slice(0, 32))
+            : conversation.title,
+        messages: [...conversation.messages, userMessage, assistantMessage],
+        updatedAt: Date.now(),
+      }));
+      return { userMessage, assistantMessage };
+    },
+    [updateConversation],
+  );
+
+  const appendAgentDelta = useCallback(
+    (
+      conversationId: string,
+      messageId: string,
+      delta: { content?: string; reasoning?: string },
+    ) => {
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        messages: conversation.messages.map((message) =>
+          message.id === messageId
+            ? {
+                ...message,
+                content: delta.content ? `${message.content}${delta.content}` : message.content,
+                reasoningContent: delta.reasoning
+                  ? `${message.reasoningContent ?? ""}${delta.reasoning}`
+                  : message.reasoningContent,
+                updatedAt: Date.now(),
+              }
+            : message,
+        ),
+        updatedAt: Date.now(),
+      }));
+    },
+    [updateConversation],
+  );
+
+  const updateAgentPanel = useCallback(
+    (
+      conversationId: string,
+      messageId: string,
+      patch: PawAgentPanelsPatch,
+    ) => {
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        messages: conversation.messages.map((message) => {
+          if (message.id !== messageId) return message;
+          const current = message.agentPanels ?? {};
+          const nextPanels: PawAgentPanels = {
+            ...current,
+            ...(patch.plan ? { plan: patch.plan } : {}),
+            ...(patch.diff !== undefined ? { diff: patch.diff } : {}),
+            ...(patch.fileChanges
+              ? {
+                  fileChanges: {
+                    ...(current.fileChanges ?? {}),
+                    ...patch.fileChanges,
+                  },
+                }
+              : {}),
+            ...(patch.terminalInteractions?.length
+              ? {
+                  terminalInteractions: [
+                    ...(current.terminalInteractions ?? []),
+                    ...patch.terminalInteractions,
+                  ],
+                }
+              : {}),
+            ...(patch.moderationMetadata?.length
+              ? {
+                  moderationMetadata: [
+                    ...(current.moderationMetadata ?? []),
+                    ...patch.moderationMetadata,
+                  ],
+                }
+              : {}),
+            ...(patch.notifications?.length
+              ? {
+                  notifications: [
+                    ...(current.notifications ?? []),
+                    ...patch.notifications,
+                  ],
+                }
+              : {}),
+            ...(patch.fileSearches
+              ? {
+                  fileSearches: {
+                    ...(current.fileSearches ?? {}),
+                    ...patch.fileSearches,
+                  },
+                }
+              : {}),
+            ...(patch.approvalReviews
+              ? {
+                  approvalReviews: {
+                    ...(current.approvalReviews ?? {}),
+                    ...patch.approvalReviews,
+                  },
+                }
+              : {}),
+          };
+          return {
+            ...message,
+            agentPanels: nextPanels,
+            updatedAt: Date.now(),
+          };
+        }),
+        updatedAt: Date.now(),
+      }));
+    },
+    [updateConversation],
+  );
+
+  const finishAgentTurn = useCallback(
+    (conversationId: string, messageId: string, opts: { error?: boolean } = {}) => {
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        messages: conversation.messages.map((message) =>
+          message.id === messageId
+            ? {
+                ...message,
+                error: opts.error ?? message.error,
+                turnStatus: "complete",
+                updatedAt: Date.now(),
+              }
+            : message,
+        ),
+        updatedAt: Date.now(),
+      }));
+    },
+    [updateConversation],
+  );
+
+  /**
+   * 独立追加一条通知气泡（不编辑某条已有消息）——用于轮次之间发生的事，
+   * 比如会话意外结束、协议漂移诊断。这些事没有一条"正在写"的助手消息可以挂，
+   * 只能另起一条。
+   */
+  const appendAgentNotice = useCallback(
+    (conversationId: string, text: string) => {
+      const now = Date.now();
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        messages: [
+          ...conversation.messages,
+          {
+            id: createId("assistant"),
+            role: "assistant" as const,
+            content: text,
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+        updatedAt: now,
+      }));
+    },
+    [updateConversation],
+  );
+
+  /**
+   * 设置 agent 工作目录——**发消息前可以随便重选**，这里不挡。真正的锁定点是
+   * `lockAgentCwd`：那之前光选目录不算数，没有起真正的会话，改主意的代价是零。
+   * 锁定之后再调这个函数是 no-op——那不是"选目录"，是想绕过锁的 bug。
+   */
+  const setAgentBinding = useCallback(
+    (conversationId: string, cwd: string) => {
+      updateConversation(conversationId, (conversation) =>
+        conversation.agentCwdLocked ? conversation : { ...conversation, agentCwd: cwd },
+      );
+    },
+    [updateConversation],
+  );
+
+  /**
+   * 锁死当前的工作目录——**只在真正起了一条会话（第一次成功发消息）之后才调**，
+   * 不是选完目录就调。落在数据层而不是只在 UI 上挡一下：就算将来哪个界面
+   * 漏了判断，这里也不会被覆盖。已经锁过再调是 no-op。
+   */
+  const lockAgentCwd = useCallback(
+    (conversationId: string) => {
+      updateConversation(conversationId, (conversation) =>
+        conversation.agentCwdLocked ? conversation : { ...conversation, agentCwdLocked: true },
+      );
+    },
+    [updateConversation],
+  );
+
+  /** 审批模式随时可改，不像工作目录那样锁定。 */
+  const setAgentApprovalMode = useCallback(
+    (conversationId: string, mode: AgentApprovalUiMode) => {
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        agentApprovalMode: mode,
+      }));
+    },
+    [updateConversation],
+  );
+
   const syncDraft = useCallback(
     (value: string) => {
       setDraftState(value);
@@ -658,6 +1010,7 @@ export function usePawClient() {
                 ...message,
                 content: response.content || message.content,
                 reasoningContent: response.reasoningContent || message.reasoningContent,
+                turnStatus: "complete",
                 updatedAt: Date.now(),
               }
             : message,
@@ -693,6 +1046,7 @@ export function usePawClient() {
                 ...itemMessage,
                 content: itemMessage.content || message,
                 error: !isAbort,
+                turnStatus: "complete",
                 updatedAt: Date.now(),
               }
             : itemMessage,
@@ -768,6 +1122,7 @@ export function usePawClient() {
                 ...message,
                 content: "已生成图片。",
                 images,
+                turnStatus: "complete",
                 updatedAt: Date.now(),
               }
             : message,
@@ -791,6 +1146,7 @@ export function usePawClient() {
                 ...itemMessage,
                 content: message,
                 error: true,
+                turnStatus: "complete",
                 updatedAt: Date.now(),
               }
             : itemMessage,
@@ -869,6 +1225,7 @@ export function usePawClient() {
                 ...message,
                 content: "已完成图片编辑。",
                 images,
+                turnStatus: "complete",
                 updatedAt: Date.now(),
               }
             : message,
@@ -1022,8 +1379,28 @@ export function usePawClient() {
 
   useEffect(() => {
     if (!hydrated) return;
-    writeJSON(CONVERSATIONS_KEY, conversations);
-  }, [conversations, hydrated]);
+    // 这条真实炸过：长会话（尤其 agent 那些命令输出）把 `paw-conversations`
+    // 写爆了 localStorage 配额，`setItem` 抛出的 QuotaExceededError 没人接，
+    // 直接把整个页面带崩（Next dev 的错误浮层，正式包下就是白屏）。
+    // `safeLocalStorage().setItem` 现在不抛了，但"存失败"本身要让用户知道——
+    // 静默吞掉的话，用户以为记录都在，其实这一轮之后的对话重开就没了。
+    //
+    // 默认写入的就是"completed"档（回合完成后只留最终结果，见
+    // conversationCompression.ts）——这不是异常，不该弹通知。只有连这档都存不下、
+    // 退化到 "aggressive" 或者删掉了整条历史对话，才是真的在告警。
+    const storage = safeLocalStorage();
+    const result = persistConversationsWithCompression(
+      storage,
+      CONVERSATIONS_KEY,
+      conversations,
+      activeConversationId,
+    );
+    if (!result.saved) {
+      setNotice("Local storage is full; the latest conversation may not have been saved.");
+    } else if (result.mode === "aggressive" || result.removedConversationCount > 0) {
+      setNotice("本地存储空间已满，最新的对话记录可能没保存上——建议删掉一些旧对话。");
+    }
+  }, [activeConversationId, conversations, hydrated]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -1757,12 +2134,14 @@ export function usePawClient() {
     }
 
     if (editingMessageId) {
+      const editMessageId = editingMessageId;
       const index = conversation.messages.findIndex((item) => item.id === editingMessageId);
       const original = conversation.messages[index];
       if (index < 0 || !original || original.role !== "user") {
         setNotice("当前编辑目标已失效，请重新选择消息。");
         return;
       }
+      setEditingMessageId(null);
       const prefix = conversation.messages.slice(0, index);
       const editedMessage: PawConversationMessage = {
         ...original,
@@ -1785,7 +2164,7 @@ export function usePawClient() {
         title,
         restoreDraft: text,
         restoreAttachments: submittedAttachments,
-        editMessageId: editingMessageId,
+        editMessageId,
       });
       return;
     }
@@ -1889,6 +2268,15 @@ export function usePawClient() {
     currentGroup,
     currentModel,
     canSend,
+    ensureActiveConversationId,
+    beginAgentTurn,
+    appendAgentDelta,
+    updateAgentPanel,
+    finishAgentTurn,
+    appendAgentNotice,
+    setAgentBinding,
+    lockAgentCwd,
+    setAgentApprovalMode,
     addConversation,
     selectConversation,
     deleteConversation,

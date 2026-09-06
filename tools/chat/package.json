@@ -11,10 +11,13 @@
     "stage:server": "node scripts/stage-server-dist.mjs",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "app:dev": "tauri dev",
+    "codex:vendor": "node scripts/fetch-codex-vendor.mjs",
+    "app:dev": "node scripts/dev-desktop.mjs",
     "app:build": "node scripts/build-tauri.mjs"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-dialog": "^2.7.3",
     "katex": "^0.16.22",
     "mermaid": "^11.12.0",
     "next": "^14.2.30",

@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AssemblyName>LanAi.Paseo.Adapter.Host</AssemblyName>
+    <RootNamespace>LanAi.Paseo.Adapter.Host</RootNamespace>
+    <IsTrimmable>true</IsTrimmable>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+
+    <!-- No PackageReference, same rule as the adapter: a host that drags a
+         dependency graph behind it cannot be dropped into an arbitrary client. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Host depends on Adapter, never the reverse. The narrow client has to stay
+         usable on its own — the server-side consumer talks to a bridge it did not
+         spawn and has no process supervision at all. Allowing this one direction
+         is what keeps every desktop consumer from re-implementing the same
+         channel/token/spawn/connect wiring. -->
+    <ProjectReference Include="..\LanAi.Paseo.Adapter\LanAi.Paseo.Adapter.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="LanAi.Paseo.Adapter.Host.Tests" />
+  </ItemGroup>
+
+</Project>

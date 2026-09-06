@@ -23,11 +23,11 @@
       <Transition name="modal-fade">
         <div
           v-if="isModalOpen"
-          class="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-gradient-to-br from-black/70 via-black/60 to-black/70 p-4 pt-[8vh] backdrop-blur-md"
+          class="announcement-overlay announcement-overlay-list bg-gradient-to-br from-black/70 via-black/60 to-black/70 backdrop-blur-md"
           @click="closeModal"
         >
           <div
-            class="w-full max-w-[620px] overflow-hidden rounded-3xl bg-white shadow-2xl ring-1 ring-black/5 dark:bg-dark-800 dark:ring-white/10"
+            class="announcement-modal-card w-full max-w-[620px] overflow-hidden rounded-3xl bg-white shadow-2xl ring-1 ring-black/5 dark:bg-dark-800 dark:ring-white/10"
             @click.stop
           >
             <!-- Header with Gradient -->
@@ -183,11 +183,11 @@
       <Transition name="modal-fade">
         <div
           v-if="detailModalOpen && selectedAnnouncement"
-          class="fixed inset-0 z-[110] flex items-start justify-center overflow-y-auto bg-gradient-to-br from-black/70 via-black/60 to-black/70 p-4 pt-[6vh] backdrop-blur-md"
+          class="announcement-overlay announcement-overlay-detail bg-gradient-to-br from-black/70 via-black/60 to-black/70 backdrop-blur-md"
           @click="closeDetail"
         >
           <div
-            class="w-full max-w-[780px] overflow-hidden rounded-3xl bg-white shadow-2xl ring-1 ring-black/5 dark:bg-dark-800 dark:ring-white/10"
+            class="announcement-modal-card w-full max-w-[780px] overflow-hidden rounded-3xl bg-white shadow-2xl ring-1 ring-black/5 dark:bg-dark-800 dark:ring-white/10"
             @click.stop
           >
             <!-- Header with Decorative Elements -->
@@ -422,6 +422,23 @@ watch(
 </script>
 
 <style scoped>
+.announcement-overlay {
+  position: fixed !important;
+  z-index: 100 !important;
+  inset: 0 !important;
+  display: grid !important;
+  width: 100vw;
+  height: 100dvh;
+  box-sizing: border-box;
+  place-items: center;
+  overflow-y: auto;
+  padding: 1rem;
+}
+
+.announcement-overlay-detail {
+  z-index: 110 !important;
+}
+
 /* Modal Animations */
 .modal-fade-enter-active {
   transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
@@ -436,12 +453,20 @@ watch(
   opacity: 0;
 }
 
-.modal-fade-enter-from > div {
+.modal-fade-enter-active .announcement-modal-card {
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.modal-fade-leave-active .announcement-modal-card {
+  transition: transform 0.2s cubic-bezier(0.4, 0, 1, 1), opacity 0.2s cubic-bezier(0.4, 0, 1, 1);
+}
+
+.modal-fade-enter-from .announcement-modal-card {
   transform: scale(0.94) translateY(-12px);
   opacity: 0;
 }
 
-.modal-fade-leave-to > div {
+.modal-fade-leave-to .announcement-modal-card {
   transform: scale(0.96) translateY(-8px);
   opacity: 0;
 }

@@ -48,7 +48,23 @@ internal static class ClientLog
 
     public static string FilePath => _overridePath ?? DefaultFilePath();
 
-    internal static string DefaultFilePath() => AppPaths.InData("logs", "client.log");
+    /// <remarks>
+    /// Windows only: next to the exe rather than under <c>%LOCALAPPDATA%</c>, so a user
+    /// who reports "打不开" can be told to open the folder they already have open
+    /// instead of navigating to a hidden profile path. <see cref="AppContext.BaseDirectory"/>
+    /// resolves to the directory of the physical executable even for a single-file
+    /// publish — it is not the temp extraction directory the bundle unpacks into.
+    /// <para>
+    /// macOS keeps the old <see cref="AppPaths"/> location on purpose: the executable
+    /// there lives inside <c>Contents/MacOS</c> of the <c>.app</c> bundle, which is not
+    /// where a user would look and, if the bundle sits under <c>/Applications</c>, is
+    /// not even writable by a standard user.
+    /// </para>
+    /// </remarks>
+    internal static string DefaultFilePath() =>
+        OperatingSystem.IsWindows()
+            ? Path.Combine(AppContext.BaseDirectory, "logs", "client.log")
+            : AppPaths.InData("logs", "client.log");
 
     /// <summary>Redirects the log, for tests that must not touch the user's profile.</summary>
     internal static void UseFile(string? path)

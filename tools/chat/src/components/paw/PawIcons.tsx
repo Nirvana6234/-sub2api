@@ -38,6 +38,16 @@ export function PawRefreshIcon(props: IconProps) {
   );
 }
 
+export function PawBellIcon(props: IconProps) {
+  return icon(
+    <>
+      <path d="M6.5 10.5a5.5 5.5 0 0 1 11 0c0 6 2.5 6 2.5 7H4c0-1 2.5-1 2.5-7Z" />
+      <path d="M10 20h4" />
+    </>,
+    props,
+  );
+}
+
 export function PawSendIcon(props: IconProps) {
   return icon(<path d="M5 12 19 5l-4 14-4-6-6-1z" />, props);
 }
@@ -326,6 +336,23 @@ export function PawRulerIcon(props: IconProps) {
     <>
       <path d="m4 7 3-3 13 13-3 3L4 7Z" />
       <path d="m8 8 2-2M11 11l2-2M14 14l2-2M17 17l2-2" />
+    </>,
+    props,
+  );
+}
+
+export function PawFolderIcon(props: IconProps) {
+  return icon(
+    <path d="M4 6.5A1.5 1.5 0 0 1 5.5 5h4l2 2h7A1.5 1.5 0 0 1 20 8.5v9A1.5 1.5 0 0 1 18.5 19h-13A1.5 1.5 0 0 1 4 17.5v-11Z" />,
+    props,
+  );
+}
+
+export function PawShieldAlertIcon(props: IconProps) {
+  return icon(
+    <>
+      <path d="M12 3.5 5 6.2v5.3c0 4.4 3 7.7 7 9 4-1.3 7-4.6 7-9V6.2L12 3.5Z" />
+      <path d="M12 8.5v4M12 15.5h.01" />
     </>,
     props,
   );
