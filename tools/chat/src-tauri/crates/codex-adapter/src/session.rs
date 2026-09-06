@@ -1,13 +1,24 @@
 //! 会话面：起会话 → 发提问 → 收流 → 停止 → 续跑。
 //!
-//! 这一层把协议报文翻成**上层真正需要的事件**，同时替上层记住两件它总会忘的事：
-//! 当前 `threadId` 和当前 `turnId`。后者尤其重要 —— `turn/interrupt` 必须带 `turnId`，
+//! 这一层把协议报文翻成**上层真正需要的事件**，同时替上层记住它总会忘的事：每条
+//! thread 当前的 `turnId`。这件事尤其重要 —— `turn/interrupt` 必须带 `turnId`，
 //! 而它会从两条路各送来一次（`turn/start` 的响应、`turn/started` 通知），且**通知可能
 //! 先到**。谁先到就用谁，否则用户早早点停止会打不中。
+//!
+//! # 一个 `Session` 现在能同时驱动多条 thread
+//!
+//! 多会话并发改造（见开发计划）之前，这里只跟踪"当前唯一一条" thread/turn。
+//! 探针实测（`codex-host/scripts/probe-multi-thread.py`，真二进制）证明一个 codex
+//! 进程能真的**并发**跑两条 thread 的 turn——两次 `turn/start` 同时发出去，两边的
+//! 出站 HTTP 请求同一毫秒开始、同一毫秒结束，增量事件交替到达，不是排队串行。
+//! 所以状态从单值换成按 `thread_id` 分桶的表，`send_turn`/`interrupt` 都显式要
+//! `thread_id` 参数——**不再有"当前那条 thread"这个隐含概念**，那正是旧设计里
+//! 只能服务一个会话的根源。
 //!
 //! 和 [`crate::transport`] 一样，**这里不 spawn 进程**。给它一对读写半边就行，
 //! 真进程由宿主（A4）提供，测试可以喂内存流或自己起一个 codex。
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
@@ -31,20 +42,65 @@ pub enum SessionEvent {
         thread_id: String,
         turn_id: Option<String>,
     },
-    /// assistant 正文增量。
+    /// assistant 正文增量。**带 `thread_id`**——共享一个 codex 进程时，两条并发的
+    /// thread 会把各自的增量交替送进同一条事件流，不靠这个字段没法认领。
     AgentText {
+        thread_id: String,
         item_id: String,
         delta: String,
     },
     /// 思考过程增量。
     Reasoning {
+        thread_id: String,
         delta: String,
         kind: ReasoningKind,
     },
     /// 命令执行的输出增量。
     CommandOutput {
+        thread_id: String,
         item_id: Option<String>,
         chunk: String,
+    },
+    TurnDiffUpdated {
+        thread_id: String,
+        turn_id: String,
+        diff: String,
+    },
+    FileChangePatchUpdated {
+        thread_id: String,
+        turn_id: String,
+        item_id: String,
+        changes: Value,
+    },
+    FileChangeOutputDelta {
+        thread_id: String,
+        turn_id: String,
+        item_id: String,
+        delta: String,
+    },
+    PlanDelta {
+        thread_id: String,
+        turn_id: String,
+        item_id: String,
+        delta: String,
+    },
+    TurnPlanUpdated {
+        thread_id: String,
+        turn_id: String,
+        plan: Value,
+        explanation: Option<String>,
+    },
+    TerminalInteraction {
+        thread_id: String,
+        turn_id: String,
+        item_id: String,
+        process_id: String,
+        stdin: String,
+    },
+    TurnModerationMetadata {
+        thread_id: String,
+        turn_id: String,
+        metadata: Value,
     },
     /// 会话状态变化，最要紧的是 `waiting_on_approval`。
     StatusChanged {
@@ -55,13 +111,16 @@ pub enum SessionEvent {
     ApprovalRequested(Box<ServerRequest>),
     /// 某个服务端请求已被答复（可能是另一端答的）。用来做「一处响应、另一处队列消失」。
     ApprovalResolved {
+        thread_id: String,
         request_id: RequestId,
     },
     /// 出错了但 codex 会自己重试 —— **这不是终态**，UI 该显示「正在重试」。
+    /// `ErrorNotification` 自己带 `thread_id`，不必在这里再重复一份。
     Retrying(Box<ErrorNotification>),
     /// 出错且不再重试。
     Failed(Box<ErrorNotification>),
     TurnCompleted {
+        thread_id: String,
         turn_id: Option<String>,
         status: String,
     },
@@ -71,6 +130,7 @@ pub enum SessionEvent {
     /// 真正「改了什么」（路径 + diff）在这里的 `item.changes[]` 里 ——
     /// 审批请求是个指针，UI 得按 `item_id` 回查。
     ItemStarted {
+        thread_id: String,
         item_id: Option<String>,
         item_type: String,
         item: Value,
@@ -78,6 +138,7 @@ pub enum SessionEvent {
     /// 一个 item 结束了。`item_status` 在拒绝之后会是 `"declined"`，
     /// 是「拒绝确实生效」的逐项证据。
     ItemCompleted {
+        thread_id: String,
         item_id: Option<String>,
         item_type: String,
         item_status: Option<String>,
@@ -90,8 +151,16 @@ pub enum SessionEvent {
     },
     /// codex 主动说给用户听的一句话（见 `NotificationPayload::Warning`）。
     /// **必须**转给界面——不是我们没见过的协议，是 codex 认为用户该知道。
+    /// `thread_id` 不是每次都有（有些提醒是账号级的，不属于任何一条 thread）。
     Warning {
+        thread_id: Option<String>,
         message: String,
+    },
+    /// 已知的上游通知，保留原始 payload 交给 UI 按方法归类。
+    KnownNotification {
+        method: String,
+        thread_id: Option<String>,
+        raw: Value,
     },
     /// 认识、但故意不往上传的方法（见 `NotificationPayload::Ignored`）。
     /// **不产生任何 UI 事件**——这条和 `Passthrough` 的区别就在这里：
@@ -109,8 +178,9 @@ pub enum SessionEvent {
 
 #[derive(Debug, Default)]
 struct SessionState {
-    thread_id: Option<String>,
-    turn_id: Option<String>,
+    /// 每条活着的 thread → 它此刻正在跑的 turnId（`None` = 没有正在跑的轮次）。
+    /// key 存在即代表这条 thread 是这个 Session 认识的。
+    turns: HashMap<String, Option<String>>,
 }
 
 type BoxedWriter = Box<dyn AsyncWrite + Unpin + Send>;
@@ -188,7 +258,7 @@ impl Session {
         let thread_id = thread_id_of(&result).ok_or_else(|| {
             AdapterError::Protocol(format!("thread/start 响应里没有 thread id: {result}"))
         })?;
-        self.state.lock().unwrap().thread_id = Some(thread_id.clone());
+        self.state.lock().unwrap().turns.entry(thread_id.clone()).or_insert(None);
         Ok(thread_id)
     }
 
@@ -199,51 +269,87 @@ impl Session {
             .request(ClientRequest::ThreadResume { thread_id: thread_id.to_owned() })
             .await?;
         let resumed = thread_id_of(&result).unwrap_or_else(|| thread_id.to_owned());
-        self.state.lock().unwrap().thread_id = Some(resumed.clone());
+        self.state.lock().unwrap().turns.entry(resumed.clone()).or_insert(None);
         Ok(resumed)
+    }
+
+    /// 归档一条 thread：**只影响它自己**，Session 上其它并发的 thread 不受影响。
+    ///
+    /// 多会话并发改造之后，"结束/放弃某个对话"不再等于"关掉整个引擎"——引擎是共享的，
+    /// 关了就把还在用别的对话的人一起断了。这是对应的细粒度操作。
+    pub async fn archive_thread(&self, thread_id: &str) -> Result<(), AdapterError> {
+        self.client
+            .request(ClientRequest::ThreadArchive { thread_id: thread_id.to_owned() })
+            .await?;
+        self.state.lock().unwrap().turns.remove(thread_id);
+        Ok(())
+    }
+
+    /// Ask codex to compact the context of one thread.
+    pub async fn compact_thread(&self, thread_id: &str) -> Result<(), AdapterError> {
+        self.client
+            .request(ClientRequest::ThreadCompactStart { thread_id: thread_id.to_owned() })
+            .await?;
+        Ok(())
     }
 
     /// 发一轮提问。返回 turnId（响应里带的那个）。
     ///
     /// 注意 `turn/started` 通知**可能比这个响应先到**，两条路都会写同一个 turnId，
     /// 谁先到算谁的 —— 见 [`Session::current_turn`]。
-    pub async fn send_turn(&self, text: &str) -> Result<Option<String>, AdapterError> {
-        let thread_id = self.current_thread().ok_or_else(|| {
-            AdapterError::Protocol("还没有会话，先 start_thread 或 resume_thread".to_owned())
-        })?;
+    ///
+    /// `model`/`effort` **必须每轮都传**：共享一个进程之后，模型不再是进程级的常量，
+    /// 由调用方（每条对话记着自己选了什么）在这里按轮覆盖。
+    pub async fn send_turn(
+        &self,
+        thread_id: &str,
+        text: &str,
+        model: Option<&str>,
+        effort: Option<&str>,
+    ) -> Result<Option<String>, AdapterError> {
         let result = self
             .client
-            .request(ClientRequest::TurnStart { thread_id, text: text.to_owned() })
+            .request(ClientRequest::TurnStart {
+                thread_id: thread_id.to_owned(),
+                text: text.to_owned(),
+                model: model.map(str::to_owned),
+                effort: effort.map(str::to_owned),
+            })
             .await?;
 
         let turn_id = result.get("turn").and_then(|t| t.get("id")).and_then(Value::as_str);
         if let Some(id) = turn_id {
             let mut state = self.state.lock().unwrap();
             // 通知先到的话这里就是同一个值，覆盖无害。
-            state.turn_id = Some(id.to_owned());
+            state.turns.insert(thread_id.to_owned(), Some(id.to_owned()));
         }
         Ok(turn_id.map(str::to_owned))
     }
 
-    /// 打断当前这一轮。
+    /// 打断指定 thread 上正在跑的那一轮。
     ///
     /// **没有进行中的轮次时直接报错，不静默成功** —— 悄悄什么都不做会让「点了停止却
-    /// 一直在跑」变成一个查不出来的 bug。
-    pub async fn interrupt(&self) -> Result<(), AdapterError> {
-        let (thread_id, turn_id) = {
+    /// 一直在跑」变成一个查不出来的 bug。**不认识这条 thread** 时也报错，而不是
+    /// 误把它当"没有轮次"——两种失败原因不一样，报错文案要分得开。
+    pub async fn interrupt(&self, thread_id: &str) -> Result<(), AdapterError> {
+        let turn_id = {
             let state = self.state.lock().unwrap();
-            (state.thread_id.clone(), state.turn_id.clone())
+            match state.turns.get(thread_id) {
+                Some(turn_id) => turn_id.clone(),
+                None => return Err(AdapterError::Protocol("没有会话可打断".to_owned())),
+            }
         };
-        let thread_id = thread_id
-            .ok_or_else(|| AdapterError::Protocol("没有会话可打断".to_owned()))?;
         let turn_id = turn_id.ok_or_else(|| {
             AdapterError::Protocol("没有进行中的轮次可打断（turn/interrupt 必须带 turnId）".to_owned())
         })?;
 
         self.client
-            .request(ClientRequest::TurnInterrupt { thread_id, turn_id })
+            .request(ClientRequest::TurnInterrupt {
+                thread_id: thread_id.to_owned(),
+                turn_id,
+            })
             .await?;
-        self.state.lock().unwrap().turn_id = None;
+        self.state.lock().unwrap().turns.insert(thread_id.to_owned(), None);
         Ok(())
     }
 
@@ -260,22 +366,24 @@ impl Session {
         self.client.answer(answer).await
     }
 
-    pub fn current_thread(&self) -> Option<String> {
-        self.state.lock().unwrap().thread_id.clone()
+    /// 这条 thread 是不是这个 Session 认识的（`start_thread`/`resume_thread` 登记过、
+    /// 还没被 `archive_thread` 摘掉）。
+    pub fn known_thread(&self, thread_id: &str) -> bool {
+        self.state.lock().unwrap().turns.contains_key(thread_id)
     }
 
-    /// 当前轮次 id。由 `turn/start` 的响应和 `turn/started` 通知**竞相**填写。
+    /// 这条 thread 此刻的轮次 id。由 `turn/start` 的响应和 `turn/started` 通知**竞相**填写。
     ///
     /// # 这是「此刻」的状态，不是「你读到哪了」的状态
     ///
-    /// 翻译任务会跑在事件消费者前面。所以当上层刚从事件流里取到 `TurnStarted` 时，
-    /// 这里可能**已经**因为 `turn/completed` 而变回 `None` 了。
+    /// 翻译任务会跑在事件消费者前面。所以当上层刚从事件流里取到这条 thread 的
+    /// `TurnStarted` 时，这里可能**已经**因为 `turn/completed` 而变回 `None` 了。
     ///
     /// 对 [`Session::interrupt`] 而言这正是想要的语义 —— 要打断的是此刻真在跑的那一轮，
     /// 而不是界面刚渲染到的那一轮。但**别拿它去判断某个事件属于哪一轮**：
-    /// 那种场景要用事件自己带的 `turn_id`。
-    pub fn current_turn(&self) -> Option<String> {
-        self.state.lock().unwrap().turn_id.clone()
+    /// 那种场景要用事件自己带的 `thread_id`/`turn_id`。
+    pub fn current_turn(&self, thread_id: &str) -> Option<String> {
+        self.state.lock().unwrap().turns.get(thread_id).cloned().flatten()
     }
 }
 
@@ -294,34 +402,104 @@ fn translate(incoming: Incoming, state: &Arc<Mutex<SessionState>>) -> SessionEve
         Incoming::Request(req) => SessionEvent::ApprovalRequested(Box::new(req)),
         Incoming::Notification(note) => match note.payload {
             NotificationPayload::ThreadStarted { thread_id } => {
-                state.lock().unwrap().thread_id = Some(thread_id.clone());
+                state.lock().unwrap().turns.entry(thread_id.clone()).or_insert(None);
                 SessionEvent::ThreadStarted { thread_id }
             }
             NotificationPayload::TurnStarted { thread_id, turn_id } => {
                 if let Some(id) = &turn_id {
-                    // 可能比 turn/start 的响应先到 —— 谁先到算谁的。
-                    state.lock().unwrap().turn_id = Some(id.clone());
+                    // 可能比 turn/start 的响应先到 —— 谁先到算谁的。**只写这一条
+                    // thread 自己的槽位**，不能碰其它并发 thread 的状态。
+                    state.lock().unwrap().turns.insert(thread_id.clone(), Some(id.clone()));
                 }
                 SessionEvent::TurnStarted { thread_id, turn_id }
             }
-            NotificationPayload::TurnCompleted { turn_id, status, .. } => {
-                state.lock().unwrap().turn_id = None;
-                SessionEvent::TurnCompleted { turn_id, status }
+            NotificationPayload::TurnCompleted { thread_id, turn_id, status } => {
+                state.lock().unwrap().turns.insert(thread_id.clone(), None);
+                SessionEvent::TurnCompleted { thread_id, turn_id, status }
             }
-            NotificationPayload::AgentMessageDelta { item_id, delta, .. } => {
-                SessionEvent::AgentText { item_id, delta }
+            NotificationPayload::AgentMessageDelta { thread_id, item_id, delta } => {
+                SessionEvent::AgentText { thread_id, item_id, delta }
             }
-            NotificationPayload::ReasoningDelta { delta, kind, .. } => {
-                SessionEvent::Reasoning { delta, kind }
+            NotificationPayload::ReasoningDelta { thread_id, delta, kind, .. } => {
+                SessionEvent::Reasoning { thread_id, delta, kind }
             }
-            NotificationPayload::CommandOutputDelta { item_id, chunk, .. } => {
-                SessionEvent::CommandOutput { item_id, chunk }
+            NotificationPayload::CommandOutputDelta { thread_id, item_id, chunk } => {
+                SessionEvent::CommandOutput { thread_id, item_id, chunk }
             }
+            NotificationPayload::TurnDiffUpdated { thread_id, turn_id, diff } => {
+                SessionEvent::TurnDiffUpdated { thread_id, turn_id, diff }
+            }
+            NotificationPayload::FileChangePatchUpdated {
+                thread_id,
+                turn_id,
+                item_id,
+                changes,
+            } => SessionEvent::FileChangePatchUpdated {
+                thread_id,
+                turn_id,
+                item_id,
+                changes,
+            },
+            NotificationPayload::FileChangeOutputDelta {
+                thread_id,
+                turn_id,
+                item_id,
+                delta,
+            } => SessionEvent::FileChangeOutputDelta {
+                thread_id,
+                turn_id,
+                item_id,
+                delta,
+            },
+            NotificationPayload::PlanDelta {
+                thread_id,
+                turn_id,
+                item_id,
+                delta,
+            } => SessionEvent::PlanDelta {
+                thread_id,
+                turn_id,
+                item_id,
+                delta,
+            },
+            NotificationPayload::TurnPlanUpdated {
+                thread_id,
+                turn_id,
+                plan,
+                explanation,
+            } => SessionEvent::TurnPlanUpdated {
+                thread_id,
+                turn_id,
+                plan,
+                explanation,
+            },
+            NotificationPayload::TerminalInteraction {
+                thread_id,
+                turn_id,
+                item_id,
+                process_id,
+                stdin,
+            } => SessionEvent::TerminalInteraction {
+                thread_id,
+                turn_id,
+                item_id,
+                process_id,
+                stdin,
+            },
+            NotificationPayload::TurnModerationMetadata {
+                thread_id,
+                turn_id,
+                metadata,
+            } => SessionEvent::TurnModerationMetadata {
+                thread_id,
+                turn_id,
+                metadata,
+            },
             NotificationPayload::ThreadStatusChanged { thread_id, status } => {
                 SessionEvent::StatusChanged { thread_id, status }
             }
-            NotificationPayload::ServerRequestResolved { request_id, .. } => {
-                SessionEvent::ApprovalResolved { request_id }
+            NotificationPayload::ServerRequestResolved { thread_id, request_id } => {
+                SessionEvent::ApprovalResolved { thread_id, request_id }
             }
             NotificationPayload::Error(err) => {
                 if err.will_retry {
@@ -330,13 +508,18 @@ fn translate(incoming: Incoming, state: &Arc<Mutex<SessionState>>) -> SessionEve
                     SessionEvent::Failed(Box::new(err))
                 }
             }
-            NotificationPayload::ItemStarted { item_type, item_id, item, .. } => {
-                SessionEvent::ItemStarted { item_id, item_type, item }
+            NotificationPayload::ItemStarted { thread_id, item_type, item_id, item } => {
+                SessionEvent::ItemStarted { thread_id, item_id, item_type, item }
             }
             NotificationPayload::ItemCompleted {
-                item_type, item_id, item_status, item, ..
-            } => SessionEvent::ItemCompleted { item_id, item_type, item_status, item },
-            NotificationPayload::Warning { message, .. } => SessionEvent::Warning { message },
+                thread_id, item_type, item_id, item_status, item,
+            } => SessionEvent::ItemCompleted { thread_id, item_id, item_type, item_status, item },
+            NotificationPayload::Warning { thread_id, message } => {
+                SessionEvent::Warning { thread_id, message }
+            }
+            NotificationPayload::Known { method, thread_id, raw } => {
+                SessionEvent::KnownNotification { method, thread_id, raw }
+            }
             NotificationPayload::Ignored { method } => SessionEvent::Ignored { method },
             NotificationPayload::Other => {
                 SessionEvent::Passthrough { method: note.method, raw: note.raw }

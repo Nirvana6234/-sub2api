@@ -39,6 +39,12 @@
       "icons/128x128@2x.png",
       "icons/icon.ico",
       "icons/icon.icns"
-    ]
+    ],
+    "resources": {
+      "vendor/codex/bin/codex-app-server.exe": "codex/bin/codex-app-server.exe",
+      "vendor/codex/codex-resources/codex-command-runner.exe": "codex/codex-resources/codex-command-runner.exe",
+      "vendor/codex/codex-resources/codex-windows-sandbox-setup.exe": "codex/codex-resources/codex-windows-sandbox-setup.exe",
+      "vendor/codex/codex-path/rg.exe": "codex/codex-path/rg.exe"
+    }
   }
 }

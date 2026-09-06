@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Platform;
+using Avalonia.Threading;
 using LanAi.RelayClient.Platform;
 using LanAi.RelayClient.Services;
 
@@ -59,16 +60,17 @@ internal sealed class TrayPresence : IDisposable
         // Present even with nothing unread, so the tray is a dependable way in rather
         // than an entry point that appears only when there is news.
         _announcementItem = new NativeMenuItem("公告") { IsEnabled = onShowAnnouncements is not null };
-        _announcementItem.Click += (_, _) => onShowAnnouncements?.Invoke();
+        _announcementItem.Click += (_, _) =>
+            DeferToUi(() => onShowAnnouncements?.Invoke());
 
         var showItem = new NativeMenuItem("显示主界面");
-        showItem.Click += (_, _) => onShowWindow();
+        showItem.Click += (_, _) => DeferToUi(onShowWindow);
 
         var startItem = new NativeMenuItem("启动 ChatGPT");
-        startItem.Click += (_, _) => onStartCodex();
+        startItem.Click += (_, _) => DeferToUi(onStartCodex);
 
         var exitItem = new NativeMenuItem("退出");
-        exitItem.Click += async (_, _) => await onExit().ConfigureAwait(true);
+        exitItem.Click += (_, _) => DeferToUi(() => _ = RunExitAsync(onExit));
 
         var menu = new NativeMenu();
         menu.Add(_statusItem);
@@ -87,7 +89,34 @@ internal sealed class TrayPresence : IDisposable
             IsVisible = true,
         };
 
-        _icon.Clicked += (_, _) => onShowWindow();
+        _icon.Clicked += (_, _) => DeferToUi(onShowWindow);
+    }
+
+    /// <summary>
+    /// Native menu callbacks can happen while macOS still owns the menu tracking
+    /// loop. Queueing the follow-up work lets the menu close before a window is
+    /// activated or a modal dialog is shown.
+    /// </summary>
+    private static void DeferToUi(Action? action)
+    {
+        if (action is null)
+        {
+            return;
+        }
+
+        Dispatcher.UIThread.Post(action);
+    }
+
+    private static async Task RunExitAsync(Func<Task> onExit)
+    {
+        try
+        {
+            await onExit().ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            ClientLog.Error("菜单栏退出操作失败", ex);
+        }
     }
 
     /// <summary>Updates the status line and hover tooltip.</summary>

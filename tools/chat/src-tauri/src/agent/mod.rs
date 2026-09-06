@@ -2,6 +2,23 @@
 //!
 //! 桥本身**不认识 Tauri** —— 事件通过 [`EventSink`] 出去，Tauri 那一层只是实现了这个
 //! trait 的一个薄壳。这样集成测试能直接驱动整座桥，不用绕 invoke 机制。
+//!
+//! # 多会话并发改造：一个引擎，多条 thread
+//!
+//! 这座桥曾经"一次只服务一个会话"：`running: Mutex<Option<Running>>` 是单槽位，
+//! 起第二条会话之前必须先停掉第一条。那条限制**不是 codex 的限制，是这座桥自己的
+//! 简化**——探针实测（`codex-host/scripts/probe-multi-thread.py`，真二进制）证明
+//! 一个 codex 进程能真的**并发**跑两条 thread 的 turn：两次 `turn/start` 同时发出去，
+//! 两边出站请求同一毫秒开始、同一毫秒结束，不是排队串行。
+//!
+//! 所以现在 `engine: Mutex<Option<SharedEngine>>` 装的是**一个共享的引擎**（进程 +
+//! 转发层 + 一条 JSON-RPC 连接），懒起、之后复用；每次 [`AgentBridge::start`] 都是
+//! 在这个共享引擎上**再开一条 thread**，不是再起一个进程。代价换回来的好处很直接：
+//! 一个 218MB 的进程服务 N 个对话，而不是 N 个。
+//!
+//! 引擎级操作（[`AgentBridge::stop`]）和对话级操作（[`AgentBridge::end_thread`]）
+//! 因此彻底分开：前者杀进程、抹凭据，**影响所有对话**；后者只归档一条 thread，
+//! 引擎和其它对话原封不动。混着用的后果是"切一下审批模式，结果把邻座对话的引擎也拔了"。
 
 pub mod dto;
 
@@ -17,7 +34,7 @@ use codex_adapter::{
 use codex_host::{Backoff, CodexHome, Engine, EngineConfig, LocalRelay, Supervisor};
 use tokio::sync::Mutex;
 
-use dto::{ApprovalKind, ApprovalRequest, StartParams, StartedThread, UiDecision, UiEvent};
+use dto::{ApprovalKind, ApprovalRequest, SendParams, StartParams, StartedThread, UiDecision, UiEvent};
 
 /// 事件出口。Tauri 那层实现它，测试自己实现一个收集器。
 pub trait EventSink: Send + Sync + 'static {
@@ -28,12 +45,9 @@ pub trait EventSink: Send + Sync + 'static {
 #[derive(Debug, thiserror::Error, serde::Serialize)]
 #[serde(tag = "kind", content = "message", rename_all = "camelCase")]
 pub enum BridgeError {
-    /// 还没起会话就来发消息 / 停止 / 答复。
-    #[error("还没有正在运行的 agent 会话")]
+    /// 还没起引擎就来发消息 / 停止 / 答复 / 打断。
+    #[error("还没有正在运行的 agent 引擎")]
     NotRunning,
-    /// 已经有一个在跑了。
-    #[error("已经有一个 agent 会话在运行")]
-    AlreadyRunning,
     /// 参数不对（沙箱名、审批策略名、目录……）。
     #[error("参数不合法: {0}")]
     BadParams(String),
@@ -52,19 +66,28 @@ pub enum BridgeError {
 }
 
 /// 待答复的审批表。**键必须是完整的 [`RequestId`]**（`Num` 和 `Str` 是两种东西），
-/// 答复之后立刻移除。
+/// 答复之后立刻移除。**整个引擎共享一张表**——`RequestId` 本身在一条 JSON-RPC
+/// 连接上就是唯一的，不需要再按 thread 分表；`ServerRequest::thread_id()` 已经
+/// 让答复路径按需回查得到归属。
 type Pending = Arc<Mutex<HashMap<RequestId, ServerRequest>>>;
 
-struct Running {
+/// 一个正在跑的共享引擎：进程 + 会话 + 转发层。**整个应用同一时刻只有一份**，
+/// 被 [`AgentBridge`] 的所有对话共用。
+struct SharedEngine {
     session: Arc<Session>,
     /// 只是持有：笼子在它身上，丢掉就等于杀掉 codex。
     _engine: Engine,
     pending: Pending,
-    /// 会话结束时要把凭据从这里抹掉。
+    /// 引擎停止时要把凭据从这里抹掉——**这是全局操作**，不是某条 thread 的事。
     home: CodexHome,
     /// 本地转发层。**只是持有** —— 丢掉它就等于关掉那个回环端口，
     /// codex 从此打不出去任何请求。
     relay: LocalRelay,
+}
+
+struct Spawned {
+    engine: SharedEngine,
+    attempts: u32,
 }
 
 /// codex 二进制和程序数据目录在哪。
@@ -85,7 +108,7 @@ pub struct AgentPaths {
 
 /// 一座桥。整个应用一个。
 pub struct AgentBridge {
-    running: Mutex<Option<Running>>,
+    engine: Mutex<Option<SharedEngine>>,
     sink: Arc<dyn EventSink>,
     paths: AgentPaths,
     /// 当前账号会话。**前端是唯一持有者**，这里只是转交给转发层。
@@ -98,7 +121,7 @@ pub struct AgentBridge {
 impl AgentBridge {
     pub fn new(sink: Arc<dyn EventSink>, paths: AgentPaths) -> Self {
         AgentBridge {
-            running: Mutex::new(None),
+            engine: Mutex::new(None),
             sink,
             paths,
             session_token: Mutex::new(None),
@@ -107,26 +130,56 @@ impl AgentBridge {
 
     /// 前端在登录/刷新之后把当前账号会话推下来。传 `None` 表示已登出。
     ///
-    /// 会话正跑着也能推 —— 转发层下一条请求就用新的，不必重启 codex。
+    /// 引擎正跑着也能推 —— 转发层下一条请求就用新的，不必重启 codex。
     pub async fn set_session_token(&self, jwt: Option<String>) {
         *self.session_token.lock().await = jwt.clone();
-        if let Some(running) = self.running.lock().await.as_ref() {
-            running.relay.set_session_token(jwt).await;
+        if let Some(engine) = self.engine.lock().await.as_ref() {
+            engine.relay.set_session_token(jwt).await;
         }
     }
 
-    /// 起引擎 + 起会话。返回 threadId。
+    /// 起一条新 thread。**引擎懒起、之后复用**：第一次调用会真的 spawn 一个
+    /// codex 进程；后面的调用只是在同一个进程上再开一条 thread，不再排队等旧的先停。
     pub async fn start(&self, params: StartParams) -> Result<StartedThread, BridgeError> {
-        let mut slot = self.running.lock().await;
-        if slot.is_some() {
-            return Err(BridgeError::AlreadyRunning);
-        }
-
+        // 参数校验必须在拿锁、在可能 spawn 进程**之前**——不管引擎是不是已经在跑，
+        // 参数不对就该当场失败，不能先起了进程再发现白起。
         let sandbox = parse_sandbox(&params.sandbox)?;
         let approval = parse_approval(&params.approval_policy)?;
-        let cwd = WorkspaceDir::new(&params.cwd)
-            .map_err(|e| BridgeError::BadParams(e.to_string()))?;
+        let cwd = WorkspaceDir::new(&params.cwd).map_err(|e| BridgeError::BadParams(e.to_string()))?;
+
+        let mut slot = self.engine.lock().await;
+        let attempts = if slot.is_some() {
+            1
+        } else {
+            let spawned = self.spawn_engine(&params).await?;
+            *slot = Some(spawned.engine);
+            spawned.attempts
+        };
+        let engine = slot.as_ref().expect("刚确保过引擎存在");
+
+        let thread_id = engine
+            .session
+            .start_thread(cwd, sandbox, approval)
+            .await
+            .map_err(|e| BridgeError::Session(e.to_string()))?;
+
+        // 登记这条 thread 的分组。**必须在第一轮之前** —— 转发层认不出的 thread
+        // 会被直接拒掉（宁可报错也不拿别的分组顶上）。
+        engine.relay.bind_thread(&thread_id, params.group_id).await;
+
+        Ok(StartedThread { thread_id, attempts })
+    }
+
+    /// 真正 spawn 一个 codex 进程 + 起转发层 + 握手。**只在引擎还不存在时调用一次**。
+    ///
+    /// `params.session_token`/`relay_base_url`/`client_user_agent` 只在这里起作用——
+    /// 复用已有引擎的后续 `start()` 调用会忽略这几个字段（引擎只有一份，
+    /// 这几样东西是它自己的，不是按 thread 变的）。`model` 同理，只当命令行的
+    /// 默认值用，真正每轮用的模型走 [`SendParams::model`]。
+    async fn spawn_engine(&self, params: &StartParams) -> Result<Spawned, BridgeError> {
         let home = CodexHome::under_app_dir(&self.paths.app_dir)
+            .map_err(|e| BridgeError::Host(e.to_string()))?;
+        home.prepare_powershell_utf8_profile()
             .map_err(|e| BridgeError::Host(e.to_string()))?;
 
         // 先把转发层起起来，再让 codex 指向它。**codex 只看得见这个回环地址**，
@@ -150,15 +203,17 @@ impl AgentBridge {
             binary,
             home: home.clone(),
             base_url: relay.base_url(),
-            model: params.model,
+            model: params.model.clone(),
         };
 
         let sink = Arc::clone(&self.sink);
         let restarted = Supervisor::new(config, Backoff::default())
             .start(|failed| {
                 // 起不来的每一次都要看得见。悄悄重试到最后才报错，
-                // 中间那段时间用户只会觉得「卡住了」。
+                // 中间那段时间用户只会觉得「卡住了」。这个阶段还没有 thread，
+                // 报不出归属，`thread_id: None` 如实反映这一点。
                 sink.emit(UiEvent::Retrying {
+                    thread_id: None,
                     message: format!("第 {} 次启动失败: {}", failed.attempt, failed.error),
                     http_status: None,
                     auth_failure: false,
@@ -181,52 +236,36 @@ impl AgentBridge {
             .await
             .map_err(|e| BridgeError::Session(e.to_string()))?;
 
-        let thread_id = session
-            .start_thread(cwd, sandbox, approval)
-            .await
-            .map_err(|e| BridgeError::Session(e.to_string()))?;
-
-        // 登记这条 thread 的分组。**必须在第一轮之前** —— 转发层认不出的 thread
-        // 会被直接拒掉（宁可报错也不拿别的分组顶上）。
-        relay.bind_thread(&thread_id, params.group_id).await;
-
         let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
-        spawn_pump(events, Arc::clone(&self.sink), Arc::clone(&pending));
+        spawn_pump(events, Arc::clone(&self.sink), Arc::clone(&pending), Arc::clone(&session));
 
-        *slot = Some(Running {
-            session,
-            _engine: engine,
-            pending,
-            home,
-            relay,
-        });
-
-        Ok(StartedThread { thread_id, attempts })
+        Ok(Spawned {
+            engine: SharedEngine { session, _engine: engine, pending, home, relay },
+            attempts,
+        })
     }
 
-    /// 发一轮提问。
-    pub async fn send(&self, text: String) -> Result<(), BridgeError> {
-        let slot = self.running.lock().await;
-        let running = slot.as_ref().ok_or(BridgeError::NotRunning)?;
-        running
+    /// 发一轮提问。`model`/`reasoning` 按这一轮传，覆盖引擎起来时的命令行默认值——
+    /// 共享一个进程之后，模型不再是进程级的常量。
+    pub async fn send(&self, params: SendParams) -> Result<(), BridgeError> {
+        let slot = self.engine.lock().await;
+        let engine = slot.as_ref().ok_or(BridgeError::NotRunning)?;
+        // 空字符串＝"标准/不覆盖"，翻成协议层的 None——上游的 effort 字段
+        // 要求非空字符串，传空串会被拒。
+        let reasoning = (!params.reasoning.trim().is_empty()).then_some(params.reasoning.as_str());
+        engine
             .session
-            .send_turn(&text)
+            .send_turn(&params.thread_id, &params.text, Some(params.model.as_str()), reasoning)
             .await
             .map(|_| ())
             .map_err(|e| BridgeError::Session(e.to_string()))
     }
 
-    /// 停止当前这一轮。
-    ///
-    /// 没有正在跑的轮次时会**报错**，不静默成功 —— 「点了停止却还在跑」是最难查的一类问题。
-    pub async fn interrupt(&self) -> Result<(), BridgeError> {
-        let slot = self.running.lock().await;
-        let running = slot.as_ref().ok_or(BridgeError::NotRunning)?;
-        running
-            .session
-            .interrupt()
-            .await
-            .map_err(|e| BridgeError::Session(e.to_string()))
+    /// 打断某条 thread 上正在跑的那一轮。**不影响别的对话**。
+    pub async fn interrupt(&self, thread_id: &str) -> Result<(), BridgeError> {
+        let slot = self.engine.lock().await;
+        let engine = slot.as_ref().ok_or(BridgeError::NotRunning)?;
+        engine.session.interrupt(thread_id).await.map_err(|e| BridgeError::Session(e.to_string()))
     }
 
     /// 答复一条审批。
@@ -239,12 +278,12 @@ impl AgentBridge {
         request_id: String,
         decision: UiDecision,
     ) -> Result<(), BridgeError> {
-        let slot = self.running.lock().await;
-        let running = slot.as_ref().ok_or(BridgeError::NotRunning)?;
+        let slot = self.engine.lock().await;
+        let engine = slot.as_ref().ok_or(BridgeError::NotRunning)?;
 
         let key = parse_request_id(&request_id);
         // 取出并**移除** —— 重复答复要能报错，不能悄悄答第二次。
-        let request = running
+        let request = engine
             .pending
             .lock()
             .await
@@ -252,71 +291,126 @@ impl AgentBridge {
             .ok_or_else(|| BridgeError::NoSuchApproval(request_id.clone()))?;
 
         let answer = build_answer(&request, decision).map_err(BridgeError::Session)?;
-        running
+        engine
             .session
             .answer(&answer)
             .await
             .map_err(|e| BridgeError::Session(e.to_string()))
     }
 
-    /// 有序停止：关 stdin 让 codex 自己收摊，超时再动手。
+    /// 归档一条 thread——**只影响它自己**，引擎和其它对话都还在跑。
+    ///
+    /// 用于"切审批模式""放弃/删除这个对话"这类需要结束一条 thread、但不该把
+    /// 全体对话一起打断的场景。和 [`AgentBridge::stop`]（杀整个进程）是两回事，
+    /// 别把两个混用——混用的后果是切一下审批模式，结果把邻座对话的引擎也拔了。
+    pub async fn end_thread(&self, thread_id: &str) -> Result<(), BridgeError> {
+        let slot = self.engine.lock().await;
+        let engine = slot.as_ref().ok_or(BridgeError::NotRunning)?;
+        engine
+            .session
+            .archive_thread(thread_id)
+            .await
+            .map_err(|e| BridgeError::Session(e.to_string()))?;
+        // 这条 thread 名下还没答复的审批，随它一起作废——那些 id 不会再有人问了，
+        // 界面上还挂着的话，用户点下去只会拿到一个和自己毫不相干的错误。
+        engine.pending.lock().await.retain(|_, req| req.thread_id() != Some(thread_id));
+        self.sink.emit(UiEvent::ThreadEnded { thread_id: thread_id.to_owned() });
+        Ok(())
+    }
+
+    /// Compact one live thread without stopping the shared engine.
+    pub async fn compact(&self, thread_id: &str) -> Result<(), BridgeError> {
+        let slot = self.engine.lock().await;
+        let engine = slot.as_ref().ok_or(BridgeError::NotRunning)?;
+        engine
+            .session
+            .compact_thread(thread_id)
+            .await
+            .map_err(|e| BridgeError::Session(e.to_string()))
+    }
+
+    /// 有序停止**整个引擎**：关 stdin 让 codex 自己收摊，超时再动手，然后抹掉凭据。
+    ///
+    /// **影响所有还挂着的对话**——多会话并发之后这是重家伙，不是"结束当前这个对话"
+    /// 该调的东西（那是 [`AgentBridge::end_thread`]）。这个方法是给"整个应用要
+    /// 退出/登出 agent"这类场景用的。
     pub async fn stop(&self) -> Result<(), BridgeError> {
-        let mut slot = self.running.lock().await;
-        let Some(running) = slot.take() else {
+        let mut slot = self.engine.lock().await;
+        let Some(engine) = slot.take() else {
             return Err(BridgeError::NotRunning);
         };
         // 待答复的审批随引擎一起作废：那些 id 在新进程里不存在，
         // 界面上还挂着的话，用户点下去只会拿到 NoSuchApproval。
-        running.pending.lock().await.clear();
+        engine.pending.lock().await.clear();
 
-        let shutdown = running
-            ._engine
-            .shutdown(std::time::Duration::from_secs(5))
-            .await;
+        let shutdown = engine._engine.shutdown(std::time::Duration::from_secs(5)).await;
 
-        // 会话结束 = 凭据不该再留在盘上。**先停进程再抹**，否则 codex 可能又写一遍。
+        // 引擎结束 = 凭据不该再留在盘上。**先停进程再抹**，否则 codex 可能又写一遍。
         // 抹不掉要报错，但不能因此吞掉停止过程本身的失败。
-        let wiped = running.home.wipe_credentials();
+        let wiped = engine.home.wipe_credentials();
 
         shutdown.map_err(|e| BridgeError::Host(e.to_string()))?;
         wiped.map(|_| ()).map_err(|e| BridgeError::Host(e.to_string()))
     }
 
     pub async fn is_running(&self) -> bool {
-        self.running.lock().await.is_some()
+        self.engine.lock().await.is_some()
     }
 }
 
-/// 把会话事件翻成前端事件，顺便维护两张表：待答复审批、itemId → item。
+/// 把会话事件翻成前端事件，顺便维护两张表：待答复审批（在 [`SharedEngine::pending`]
+/// 里，不在这里）、`(threadId, itemId) → item`。
+///
+/// **这个任务和引擎同寿命，不是和某条 thread 同寿命**——一个引擎现在要服务好几条
+/// 并发的 thread，事件会交替到达，所以这里的表都按 `thread_id` 分桶，
+/// 不能再假设"当前只有一条 thread 在跑"。
+/// 同一条 thread 连续重试超过这个数就主动放弃——数字对齐 codex 自己在
+/// "Reconnecting... N/5" 里用的 5，不是巧合：codex 那个计数器是它自己的重连节奏，
+/// 我们看不见、也拦不住；但如果连续 5 次都没能往前推进一步，跟着它无限等下去
+/// 没有意义，我们自己的判断准绳定在它自己都认为"该数一数"的同一个点上。
+const MAX_CONSECUTIVE_RETRIES: usize = 5;
+
 fn spawn_pump(
     mut events: tokio::sync::mpsc::Receiver<SessionEvent>,
     sink: Arc<dyn EventSink>,
     pending: Pending,
+    session: Arc<Session>,
 ) {
     tokio::spawn(async move {
-        // itemId → item：审批请求只给 id，内容要靠这张表补上。
-        let mut items: HashMap<String, serde_json::Value> = HashMap::new();
-        let mut current_turn: Option<String> = None;
+        // (threadId, itemId) → item：审批请求只给 id，内容要靠这张表补上。
+        // 按 thread 分桶是因为 itemId 只在它所属的 thread 内部保证唯一，
+        // 两条并发的 thread 各自的 id 序列互不相干。
+        let mut items: HashMap<(String, String), serde_json::Value> = HashMap::new();
+        // 每条 thread 此刻在跑哪个 turn——只用来给正文事件补 turn_id 方便前端，
+        // 真相来源是 `Session` 自己那张表，这里只是个跟着事件流走的镜像。
+        let mut current_turn: HashMap<String, Option<String>> = HashMap::new();
+        // 每条 thread 连续收到几次 Retrying——真实撞见过一次网关并发限流连续推了
+        // 4 条以上还没完（账号并发配额被设成了 1）。`Session::drive_turn` 那套
+        // 一次性驱动单轮的护栏在这里够不到：`spawn_pump` 和引擎同寿命、要同时
+        // 服务好几条并发 thread，不是"驱动一轮然后返回"的形状，所以这里另外
+        // 按 thread 记一份，逻辑跟 `drive_turn` 一致（有进展就清零，超限就放弃）。
+        let mut retry_counts: HashMap<String, usize> = HashMap::new();
 
         while let Some(event) = events.recv().await {
             match event {
                 SessionEvent::ThreadStarted { thread_id } => {
                     sink.emit(UiEvent::ThreadStarted { thread_id });
                 }
-                SessionEvent::TurnStarted { turn_id, .. } => {
-                    current_turn = turn_id.clone();
-                    sink.emit(UiEvent::TurnStarted { turn_id });
+                SessionEvent::TurnStarted { thread_id, turn_id } => {
+                    current_turn.insert(thread_id.clone(), turn_id.clone());
+                    retry_counts.remove(&thread_id);
+                    sink.emit(UiEvent::TurnStarted { thread_id, turn_id });
                 }
-                SessionEvent::AgentText { item_id, delta } => {
-                    sink.emit(UiEvent::AgentText {
-                        turn_id: current_turn.clone(),
-                        item_id,
-                        delta,
-                    });
+                SessionEvent::AgentText { thread_id, item_id, delta } => {
+                    retry_counts.remove(&thread_id); // 有进展就把重试计数清零。
+                    let turn_id = current_turn.get(&thread_id).cloned().flatten();
+                    sink.emit(UiEvent::AgentText { thread_id, turn_id, item_id, delta });
                 }
-                SessionEvent::Reasoning { delta, kind } => {
+                SessionEvent::Reasoning { thread_id, delta, kind } => {
+                    let turn_id = current_turn.get(&thread_id).cloned().flatten();
                     sink.emit(UiEvent::Reasoning {
-                        turn_id: current_turn.clone(),
+                        thread_id,
+                        turn_id,
                         delta,
                         kind: match kind {
                             ReasoningKind::Text => "text",
@@ -326,37 +420,118 @@ fn spawn_pump(
                         .to_owned(),
                     });
                 }
-                SessionEvent::CommandOutput { item_id, chunk } => {
-                    sink.emit(UiEvent::CommandOutput {
-                        turn_id: current_turn.clone(),
+                SessionEvent::CommandOutput { thread_id, item_id, chunk } => {
+                    let turn_id = current_turn.get(&thread_id).cloned().flatten();
+                    sink.emit(UiEvent::CommandOutput { thread_id, turn_id, item_id, chunk });
+                }
+                SessionEvent::TurnDiffUpdated { thread_id, turn_id, diff } => {
+                    sink.emit(UiEvent::TurnDiffUpdated { thread_id, turn_id, diff });
+                }
+                SessionEvent::FileChangePatchUpdated {
+                    thread_id,
+                    turn_id,
+                    item_id,
+                    changes,
+                } => {
+                    sink.emit(UiEvent::FileChangePatchUpdated {
+                        thread_id,
+                        turn_id,
                         item_id,
-                        chunk,
+                        changes,
                     });
                 }
-                SessionEvent::ItemStarted { item_id, item_type, item } => {
+                SessionEvent::FileChangeOutputDelta {
+                    thread_id,
+                    turn_id,
+                    item_id,
+                    delta,
+                } => {
+                    sink.emit(UiEvent::FileChangeOutputDelta {
+                        thread_id,
+                        turn_id,
+                        item_id,
+                        delta,
+                    });
+                }
+                SessionEvent::PlanDelta {
+                    thread_id,
+                    turn_id,
+                    item_id,
+                    delta,
+                } => {
+                    sink.emit(UiEvent::PlanDelta {
+                        thread_id,
+                        turn_id,
+                        item_id,
+                        delta,
+                    });
+                }
+                SessionEvent::TurnPlanUpdated {
+                    thread_id,
+                    turn_id,
+                    plan,
+                    explanation,
+                } => {
+                    sink.emit(UiEvent::TurnPlanUpdated {
+                        thread_id,
+                        turn_id,
+                        plan,
+                        explanation,
+                    });
+                }
+                SessionEvent::TerminalInteraction {
+                    thread_id,
+                    turn_id,
+                    item_id,
+                    process_id,
+                    stdin,
+                } => {
+                    sink.emit(UiEvent::TerminalInteraction {
+                        thread_id,
+                        turn_id,
+                        item_id,
+                        process_id,
+                        stdin,
+                    });
+                }
+                SessionEvent::TurnModerationMetadata {
+                    thread_id,
+                    turn_id,
+                    metadata,
+                } => {
+                    sink.emit(UiEvent::TurnModerationMetadata {
+                        thread_id,
+                        turn_id,
+                        metadata,
+                    });
+                }
+                SessionEvent::ItemStarted { thread_id, item_id, item_type, item } => {
                     if let Some(id) = &item_id {
-                        items.insert(id.clone(), item.clone());
+                        items.insert((thread_id.clone(), id.clone()), item.clone());
                     }
                     sink.emit(UiEvent::Item {
+                        thread_id,
                         item_id,
                         item_type,
                         status: None,
                         item,
                     });
                 }
-                SessionEvent::ItemCompleted { item_id, item_type, item_status, item } => {
+                SessionEvent::ItemCompleted { thread_id, item_id, item_type, item_status, item } => {
                     if let Some(id) = &item_id {
-                        items.insert(id.clone(), item.clone());
+                        items.insert((thread_id.clone(), id.clone()), item.clone());
                     }
                     sink.emit(UiEvent::Item {
+                        thread_id,
                         item_id,
                         item_type,
                         status: item_status,
                         item,
                     });
                 }
-                SessionEvent::StatusChanged { status, .. } => {
+                SessionEvent::StatusChanged { thread_id, status } => {
                     sink.emit(UiEvent::Status {
+                        thread_id,
                         waiting_on_approval: status.is_waiting_on_approval(),
                         flags: status.active_flags.clone(),
                     });
@@ -366,21 +541,60 @@ fn spawn_pump(
                     pending.lock().await.insert(request.id.clone(), *request);
                     sink.emit(UiEvent::ApprovalRequested(ui));
                 }
-                SessionEvent::ApprovalResolved { request_id } => {
+                SessionEvent::ApprovalResolved { thread_id, request_id } => {
                     // 另一端答了 —— 本地队列里那条也该消失。
                     pending.lock().await.remove(&request_id);
                     sink.emit(UiEvent::ApprovalResolved {
+                        thread_id,
                         request_id: request_id.to_string(),
                     });
                 }
-                SessionEvent::Warning { message } => {
-                    sink.emit(UiEvent::Warning { message });
+                SessionEvent::Warning { thread_id, message } => {
+                    sink.emit(UiEvent::Warning { thread_id, message });
                 }
-                SessionEvent::Retrying(err) => sink.emit(error_event(&err, true)),
-                SessionEvent::Failed(err) => sink.emit(error_event(&err, false)),
-                SessionEvent::TurnCompleted { turn_id, status } => {
-                    current_turn = None;
+                SessionEvent::KnownNotification { method, thread_id, raw } => {
+                    sink.emit(UiEvent::KnownNotification { method, thread_id, raw });
+                }
+                SessionEvent::Retrying(err) => {
+                    match &err.thread_id {
+                        Some(thread_id) => {
+                            let attempts = retry_counts
+                                .entry(thread_id.clone())
+                                .and_modify(|n| *n += 1)
+                                .or_insert(1);
+                            if *attempts >= MAX_CONSECUTIVE_RETRIES {
+                                let thread_id = thread_id.clone();
+                                let attempts = *attempts;
+                                retry_counts.remove(&thread_id);
+                                // 打断失败也照样报「放弃」——那一轮反正已经没救了，
+                                // 用户等的是一个说法，不是我们打断成不成功。最常见的
+                                // 失败原因是打断指令到的时候轮次自己已经先收场了，
+                                // 那是好消息（不需要我们出手），不是需要拦下的错误。
+                                let _ = session.interrupt(&thread_id).await;
+                                sink.emit(UiEvent::GaveUpRetrying {
+                                    thread_id,
+                                    attempts,
+                                    last_message: err.message.clone(),
+                                });
+                            } else {
+                                sink.emit(error_event(&err, true));
+                            }
+                        }
+                        // 握手阶段等还没有 thread 的重试——没有归属可数，原样透出。
+                        None => sink.emit(error_event(&err, true)),
+                    }
+                }
+                SessionEvent::Failed(err) => {
+                    if let Some(thread_id) = &err.thread_id {
+                        retry_counts.remove(thread_id);
+                    }
+                    sink.emit(error_event(&err, false));
+                }
+                SessionEvent::TurnCompleted { thread_id, turn_id, status } => {
+                    current_turn.insert(thread_id.clone(), None);
+                    retry_counts.remove(&thread_id);
                     sink.emit(UiEvent::TurnCompleted {
+                        thread_id,
                         turn_id,
                         success: status == "completed",
                         interrupted: status == "interrupted",
@@ -400,7 +614,8 @@ fn spawn_pump(
             }
         }
 
-        // 流断了 = 引擎没了。让界面知道，别停在一个永远转圈的状态上。
+        // 流断了 = 引擎没了。这是**全局**事件——所有还挂着的对话都要收到，
+        // 让界面知道，别停在一个永远转圈的状态上。
         pending.lock().await.clear();
         sink.emit(UiEvent::EngineStopped {
             reason: "事件流已结束".to_owned(),
@@ -415,12 +630,14 @@ fn error_event(err: &ErrorNotification, retrying: bool) -> UiEvent {
     };
     if retrying {
         UiEvent::Retrying {
+            thread_id: err.thread_id.clone(),
             message,
             http_status: err.http_status,
             auth_failure: err.is_auth_failure(),
         }
     } else {
         UiEvent::Failed {
+            thread_id: err.thread_id.clone(),
             message,
             http_status: err.http_status,
             auth_failure: err.is_auth_failure(),
@@ -431,8 +648,9 @@ fn error_event(err: &ErrorNotification, retrying: bool) -> UiEvent {
 /// 把一条服务端请求翻成界面能显示的东西 —— **把 item 补上**。
 fn to_ui_approval(
     request: &ServerRequest,
-    items: &HashMap<String, serde_json::Value>,
+    items: &HashMap<(String, String), serde_json::Value>,
 ) -> ApprovalRequest {
+    let thread_id = request.thread_id().map(str::to_owned);
     let (kind, reason, command, cwd, item_id, grant_root) = match &request.payload {
         ServerRequestPayload::CommandApproval(p) => (
             ApprovalKind::Command,
@@ -461,14 +679,20 @@ fn to_ui_approval(
         ServerRequestPayload::Other => (ApprovalKind::Unknown, None, None, None, None, None),
     };
 
+    let item = match (&thread_id, &item_id) {
+        (Some(tid), Some(iid)) => items.get(&(tid.clone(), iid.clone())).cloned(),
+        _ => None,
+    };
+
     ApprovalRequest {
+        thread_id,
         request_id: request.id.to_string(),
         method: request.method.clone(),
         kind,
         reason,
         command,
         cwd,
-        item: item_id.and_then(|id| items.get(&id).cloned()),
+        item,
         grant_root,
     }
 }

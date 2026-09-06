@@ -35,6 +35,37 @@ fn codex_home_lives_under_the_app_dir_and_nowhere_else() {
 }
 
 #[test]
+fn codex_home_prepares_a_private_powershell_utf8_profile() {
+    let app = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("app-dir-powershell");
+    let _ = std::fs::remove_dir_all(&app);
+    let home = CodexHome::under_app_dir(&app).expect("程序数据目录下应当可用");
+
+    home.prepare_powershell_utf8_profile()
+        .expect("应当能创建私有 PowerShell 配置");
+
+    #[cfg(windows)]
+    {
+        let profile = home
+            .as_path()
+            .join("Documents")
+            .join("WindowsPowerShell")
+            .join("Microsoft.PowerShell_profile.ps1");
+        let bytes = std::fs::read(profile).expect("读取 PowerShell 配置");
+        assert!(bytes.starts_with(b"\xEF\xBB\xBF"), "Windows PowerShell 配置应带 UTF-8 BOM");
+        let text = String::from_utf8(bytes[3..].to_vec()).expect("配置应是 UTF-8");
+        assert!(text.contains("[Console]::OutputEncoding"));
+        assert!(text.contains("$OutputEncoding"));
+        // 光管控制台编码不够——`Get-Content` 读文件走的是另一条路（Windows
+        // PowerShell 5.1 里文件 I/O 默认用系统代码页，不是 UTF-8），
+        // 真实撞见过 `Get-Content README.md` 把中文读成乱码。
+        assert!(
+            text.contains("PSDefaultParameterValues") && text.contains("'*:Encoding'"),
+            "只设了控制台编码，没设文件 I/O 的默认编码——Get-Content 读中文文件还是会乱码"
+        );
+    }
+}
+
+#[test]
 fn codex_home_refuses_when_a_file_squats_on_the_path() {
     let app = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("app-dir-squatted");
     std::fs::create_dir_all(&app).expect("建程序目录");

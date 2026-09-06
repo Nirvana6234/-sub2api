@@ -41,12 +41,6 @@ function formatConversationDate(value: number): string {
   });
 }
 
-function formatAccountMoney(value: number | undefined): string {
-  return typeof value === "number" && Number.isFinite(value)
-    ? `¥${value.toFixed(4)}`
-    : "--";
-}
-
 export function PawSidebar({
   session,
   config,
@@ -123,7 +117,6 @@ export function PawSidebar({
           <div className="paw-sidebar-account-heading">
             <div className="paw-sidebar-account-copy">
               <strong>{user?.name || "已登录账户"}</strong>
-              <span>{user?.email || session.user?.email || "sub2api 账户"}</span>
             </div>
             <button
               type="button"
@@ -134,20 +127,6 @@ export function PawSidebar({
               充值
             </button>
           </div>
-          <div className="paw-sidebar-balance-row">
-            <span>账户余额</span>
-            <strong>{formatAccountMoney(user?.balance)}</strong>
-          </div>
-          <div className="paw-sidebar-balance-row muted">
-            <span>冻结余额</span>
-            <span>{formatAccountMoney(user?.frozen_balance)}</span>
-          </div>
-          {typeof user?.total_recharged === "number" ? (
-            <div className="paw-sidebar-balance-row muted">
-              <span>累计充值</span>
-              <span>{formatAccountMoney(user.total_recharged)}</span>
-            </div>
-          ) : null}
         </div>
         <div className="paw-sidebar-actions">
           <button
@@ -296,52 +275,39 @@ export function PawSidebar({
       </div>
 
       <div className="paw-sidebar-footer">
-        <div className="paw-sidebar-account">
+        {/* 整个账户区块可点——点名字/"查看详情"那一块都跳详情页；
+            充值单独是个按钮，逻辑不变，只是要挡住冒泡，不然点充值会
+            连带触发外层的"跳详情页"。 */}
+        <div
+          className="paw-sidebar-account paw-sidebar-account-clickable"
+          role="button"
+          tabIndex={0}
+          onClick={onOpenProfile}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              onOpenProfile();
+            }
+          }}
+        >
           <div className="paw-sidebar-account-heading">
             <div className="paw-sidebar-account-copy">
               <strong>{user?.name || "已登录账户"}</strong>
-              <span>{user?.email || session.user?.email || "共飞平台账户"}</span>
+              <span>查看详情</span>
             </div>
             <button
               type="button"
               className="paw-button primary paw-sidebar-recharge"
-              onClick={onOpenPayment}
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpenPayment();
+              }}
             >
               <PawWalletIcon width={14} height={14} />
               充值
             </button>
           </div>
-          <div className="paw-sidebar-balance-row">
-            <span>账户余额</span>
-            <strong>{formatAccountMoney(user?.balance)}</strong>
-          </div>
-          <div className="paw-sidebar-balance-row muted">
-            <span>冻结余额</span>
-            <span>{formatAccountMoney(user?.frozen_balance)}</span>
-          </div>
-          {typeof user?.total_recharged === "number" ? (
-            <div className="paw-sidebar-balance-row muted">
-              <span>累计充值</span>
-              <span>{formatAccountMoney(user.total_recharged)}</span>
-            </div>
-          ) : null}
         </div>
-        <button
-          type="button"
-          className="paw-button paw-sidebar-details-button"
-          onClick={onOpenProfile}
-        >
-          查看详情
-        </button>
-        <button
-          type="button"
-          className="paw-sidebar-user paw-sidebar-user-footer paw-sidebar-legacy-user"
-          onClick={onOpenProfile}
-          title="打开个人信息"
-        >
-          <div>{user?.name || "已登录"}</div>
-          <div>{user?.email || session.user?.email || "本地会话"}</div>
-        </button>
       </div>
       <div className="paw-sidebar-drag" onPointerDown={onDragStart}>
         <PawDragIcon width={16} height={16} />

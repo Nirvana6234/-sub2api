@@ -304,7 +304,14 @@ async fn client_request_params_match_what_was_actually_sent() {
         ),
         (
             "turn/start",
-            ClientRequest::TurnStart { thread_id: recorded_thread_id, text: recorded_text },
+            // 录制时还没有 model/effort 覆盖这回事，所以两个都传 None——
+            // 这样比对的仍然是「和当初真实发出去的字节一致」。
+            ClientRequest::TurnStart {
+                thread_id: recorded_thread_id,
+                text: recorded_text,
+                model: None,
+                effort: None,
+            },
         ),
     ];
 

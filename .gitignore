@@ -27,6 +27,11 @@ vendor/
 # 例外：这不是 Go vendor 目录，而是 GPT-5.6 检测器上游发行版的逐字节副本，
 # 旁路镜像要靠它构建。不入库的话别人克隆下来构建不出来。
 !transit-hub/deploy/gpt56-detector/vendor/
+# 例外：共飞工作台本地测试用的官方 codex-app-server release 包所在目录。
+# 目录本身放行，是为了让 tools/chat/src-tauri/.gitignore 里那条只挡 *.exe
+# 的规则生效——版本清单（codex-package.json，几百字节）值得进版本库，
+# 229MB 的二进制不该进。
+!tools/chat/src-tauri/vendor/
 
 # Go 编译缓存
 backend/.gocache/
@@ -138,6 +143,14 @@ scripts
 !backend/scripts/resolve-version.sh
 !frontend/scripts/
 !frontend/scripts/clean-out-dir.mjs
+# 例外：Chat 桌面端的打包/取包脚本。这条裸规则一直在悄悄吞掉这个目录——
+# `git ls-files tools/chat/scripts/` 在补这条之前是空的，也就是说
+# build-tauri.mjs / stage-server-dist.mjs 从写出来那天起就没有真的进过 git，
+# `npm run app:build` 在一次干净克隆上会直接报"找不到模块"。跟旁边两条一样
+# 的坑，只是这次是"整个目录"而不是"漏了一个文件"，所以用 `**` 一次性放行，
+# 不再按文件名一个个补。
+!tools/chat/scripts/
+!tools/chat/scripts/**
 !tools/chat/src-tauri/crates/*/scripts/
 !tools/chat/src-tauri/crates/*/scripts/**
 .code-review-state

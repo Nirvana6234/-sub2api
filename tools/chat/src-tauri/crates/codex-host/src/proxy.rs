@@ -395,6 +395,18 @@ async fn handle(
     // **白名单，不是黑名单。** codex 的请求里带着 installation_id、window_id 之类
     // 只对它自己有意义的东西；一条都不往上游带，就不必逐个判断哪条能带。
     let upstream = format!("{}{UPSTREAM_PATH}", state.upstream_base);
+    // TEMP DIAGNOSTIC（验完多会话并发是不是真并行就删）：起点时间戳 + thread_id
+    // 落进 chat.exe 的 stderr（dev 模式下直接进 chat-app-dev.log）。之前靠轮询
+    // `Get-NetTCPConnection` 三次都没抓到过一次连接，怀疑是采样漏掉了瞬时的
+    // 连接，不是没并发——直接在真正发请求的这一行打点，不依赖任何外部轮询。
+    eprintln!(
+        "[relay-probe] START thread={:?} t_ms={}",
+        thread_id,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)
+    );
     let sent = state
         .client
         .post(&upstream)
@@ -420,6 +432,17 @@ async fn handle(
             ))
         }
     };
+    // TEMP DIAGNOSTIC（同上，验完就删）：响应头拿到的时间——两条 thread 的
+    // START/HEADERS 时间戳交叠，就是真并发；一条的 HEADERS 早于另一条的
+    // START，说明是串行的。
+    eprintln!(
+        "[relay-probe] HEADERS thread={:?} t_ms={}",
+        thread_id,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)
+    );
 
     let status = StatusCode::from_u16(sent.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
     let content_type = sent

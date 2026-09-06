@@ -125,7 +125,7 @@ async fn run_real_codex() {
     let (session, mut events) = Session::connect(out, inp);
 
     session.handshake("cofly-cage-probe", "0.1.0", &api_key).await.expect("握手");
-    session
+    let thread_id = session
         .start_thread(
             WorkspaceDir::new(&workdir).expect("工作目录"),
             SandboxMode::ReadOnly,
@@ -134,7 +134,12 @@ async fn run_real_codex() {
         .await
         .expect("起会话");
     session
-        .send_turn("Count slowly from 1 to 500, one number per line, no other text.")
+        .send_turn(
+            &thread_id,
+            "Count slowly from 1 to 500, one number per line, no other text.",
+            None,
+            None,
+        )
         .await
         .expect("发一轮");
 

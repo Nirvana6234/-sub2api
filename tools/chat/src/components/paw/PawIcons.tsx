@@ -38,6 +38,16 @@ export function PawRefreshIcon(props: IconProps) {
   );
 }
 
+export function PawBellIcon(props: IconProps) {
+  return icon(
+    <>
+      <path d="M6.5 10.5a5.5 5.5 0 0 1 11 0c0 6 2.5 6 2.5 7H4c0-1 2.5-1 2.5-7Z" />
+      <path d="M10 20h4" />
+    </>,
+    props,
+  );
+}
+
 export function PawSendIcon(props: IconProps) {
   return icon(<path d="M5 12 19 5l-4 14-4-6-6-1z" />, props);
 }

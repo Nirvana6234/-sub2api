@@ -10,16 +10,14 @@ namespace LanAi.RelayClient.Platform.MacOS;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Written without a Mac to run it on.</b> The decision table that uses it is
-/// tested on Windows; what is unverified here is narrow: the bundle identifier, that
-/// <c>open -b</c> accepts it, and that a quit request through Apple Events is granted.
+    /// <b>Written without a Mac to run it on.</b> The decision table that uses it is
+    /// tested on Windows; what is unverified here is narrow: that <c>open</c> accepts
+    /// the discovered app path and that a quit request through Apple Events is granted.
 /// </para>
 /// <para>
-/// <b>The bundle identifier is the single most likely thing to be wrong</b>, so it is
-/// a constructor parameter rather than a buried constant, and installation is detected
-/// from the app bundle on disk instead of from the identifier — a wrong identifier
-/// then shows up as "ChatGPT 未安装" on a machine where it plainly is, which is a
-/// legible symptom, rather than as a launch that silently does nothing.
+    /// Installation and launch deliberately use the same app bundle paths. Finder opens
+    /// the app by path, so using <c>open &lt;path-to-app&gt;</c> matches the action users
+    /// know works and avoids depending on a hard-coded ChatGPT bundle identifier.
 /// </para>
 /// <para>
 /// Quitting goes through Apple Events (<c>tell application … to quit</c>) rather than
@@ -31,19 +29,15 @@ namespace LanAi.RelayClient.Platform.MacOS;
 [SupportedOSPlatform("macos")]
 internal sealed class MacCodexProcess : IMacCodexProcess
 {
-    /// <remarks>Unverified. See the class remarks — this is the value to check first.</remarks>
-    public const string DefaultBundleIdentifier = "com.openai.chat";
-
+    private const string ApplicationName = "ChatGPT";
     private const string ProcessName = "ChatGPT";
 
     private static readonly TimeSpan QuitTimeout = TimeSpan.FromSeconds(10);
 
-    private readonly string _bundleIdentifier;
     private readonly string[] _bundlePaths;
 
-    public MacCodexProcess(string? bundleIdentifier = null, string[]? bundlePaths = null)
+    public MacCodexProcess(string[]? bundlePaths = null)
     {
-        _bundleIdentifier = bundleIdentifier ?? DefaultBundleIdentifier;
         _bundlePaths = bundlePaths ??
         [
             "/Applications/ChatGPT.app",
@@ -60,7 +54,7 @@ internal sealed class MacCodexProcess : IMacCodexProcess
     /// <c>/Applications</c> installs into their own, and treating that as "not
     /// installed" would send them to download an app they already have.
     /// </remarks>
-    public bool IsInstalled() => _bundlePaths.Any(Directory.Exists);
+    public bool IsInstalled() => FindInstalledBundlePath() is not null;
 
     public bool IsRunning()
     {
@@ -81,7 +75,7 @@ internal sealed class MacCodexProcess : IMacCodexProcess
 
     public bool Quit()
     {
-        if (!RunAndWait("/usr/bin/osascript", ["-e", $"tell application id \"{_bundleIdentifier}\" to quit"]))
+        if (!RunAndWait("/usr/bin/osascript", ["-e", $"tell application \"{ApplicationName}\" to quit"]))
         {
             return false;
         }
@@ -103,12 +97,18 @@ internal sealed class MacCodexProcess : IMacCodexProcess
         return false;
     }
 
-    public bool Launch() => RunAndWait("/usr/bin/open", ["-b", _bundleIdentifier]);
+    public bool Launch()
+    {
+        string? appPath = FindInstalledBundlePath();
+        return appPath is not null && RunAndWait("/usr/bin/open", [appPath]);
+    }
+
+    private string? FindInstalledBundlePath() =>
+        _bundlePaths.FirstOrDefault(Directory.Exists);
 
     /// <remarks>
     /// <c>ArgumentList</c>, never a shell command line, and the exit code is read
-    /// rather than assumed: <c>open</c> reports an unknown bundle identifier by
-    /// failing, and that is the only signal that the identifier is wrong.
+    /// rather than assumed so an OS-level launch failure is surfaced to the caller.
     /// </remarks>
     private static bool RunAndWait(string fileName, string[] arguments)
     {

@@ -80,6 +80,53 @@ impl CodexHome {
         self.0.join("auth.json")
     }
 
+    /// 为 Windows PowerShell 准备一份只属于 Chat 的 UTF-8 profile。
+    ///
+    /// Windows PowerShell 5.1 默认会沿用系统代码页。Codex 的命令执行器会把
+    /// PowerShell 输出当 UTF-8 处理，因此中文文件内容会在进入模型和界面前就变成乱码。
+    /// profile 放在私有 `CODEX_HOME` 下，配合启动时注入的 `USERPROFILE` 使用，不碰用户
+    /// 全局的 `Documents\WindowsPowerShell`。
+    pub fn prepare_powershell_utf8_profile(&self) -> Result<(), HostError> {
+        #[cfg(windows)]
+        {
+            let profile_dir = self.0.join("Documents").join("WindowsPowerShell");
+            std::fs::create_dir_all(&profile_dir).map_err(|e| {
+                HostError::BadCodexHome(format!(
+                    "建不出 PowerShell 私有配置目录 {}: {e}",
+                    profile_dir.display()
+                ))
+            })?;
+
+            let profile = profile_dir.join("Microsoft.PowerShell_profile.ps1");
+            // UTF-8 BOM 让 Windows PowerShell 5.1 正确识别这份脚本的编码。
+            //
+            // 两行分别管两件不同的事，**都要有**，少一行就是一半乱码：
+            // - `[Console]::OutputEncoding` / `$OutputEncoding` 管的是"控制台
+            //   这一层"的编解码——PowerShell 自己往外写字符、以及读取外部命令
+            //   （比如 `git log`）stdout 时用它。
+            // - `$PSDefaultParameterValues['*:Encoding']` 管的是**文件 I/O**——
+            //   `Get-Content`/`Set-Content`/`Out-File` 这些 cmdlet 在 Windows
+            //   PowerShell 5.1 里默认读写用的是系统 ANSI 代码页，不是 UTF-8，
+            //   跟控制台编码毫不相干。第一版只设了前者，实测撞见：
+            //   `Get-Content README.md` 读中文 markdown 文件直接读成乱码，
+            //   而同一轮里模型自己生成的文字（没经过文件读取）显示正常——
+            //   两种编码分别管两条不同的路径，只堵一条另一条照样漏。
+            const PROFILE: &[u8] = b"\xEF\xBB\xBF\
+$utf8 = New-Object System.Text.UTF8Encoding($false)\n\
+[Console]::OutputEncoding = $utf8\n\
+$OutputEncoding = $utf8\n\
+$PSDefaultParameterValues['*:Encoding'] = 'utf8'\n";
+            std::fs::write(&profile, PROFILE).map_err(|e| {
+                HostError::BadCodexHome(format!(
+                    "写不出 PowerShell UTF-8 配置 {}: {e}",
+                    profile.display()
+                ))
+            })?;
+        }
+
+        Ok(())
+    }
+
     /// 把凭据从磁盘上抹掉。**会话结束 / 登出时调。**
     ///
     /// # 为什么是「结束时」而不是「握手后立刻」

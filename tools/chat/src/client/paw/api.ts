@@ -14,6 +14,8 @@ import {
 } from "./sse";
 import type {
   PawAttachmentResponse,
+  PawAnnouncement,
+  PawAnnouncementNotifyMode,
   PawChatRequest,
   PawCompletionResult,
   PawConfigResponse,
@@ -467,6 +469,50 @@ export async function fetchPawCurrentUser(): Promise<PawUser> {
     throw new Error("服务端返回的账户信息无效");
   }
   return user;
+}
+
+export async function fetchPawAnnouncements(): Promise<PawAnnouncement[]> {
+  const response = await pawRequest("/api/v1/announcements", {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+    },
+  });
+  if (!response.ok) {
+    throw new Error(await parsePawFailure(response));
+  }
+
+  const payload = unwrapData(await response.json());
+  if (!Array.isArray(payload)) return [];
+
+  return payload
+    .filter(isRecord)
+    .map((item) => ({
+      id: typeof item.id === "number" ? item.id : 0,
+      title: typeof item.title === "string" ? item.title : "",
+      content: typeof item.content === "string" ? item.content : "",
+      notify_mode: (item.notify_mode === "popup"
+        ? "popup"
+        : "silent") as PawAnnouncementNotifyMode,
+      starts_at: typeof item.starts_at === "string" ? item.starts_at : undefined,
+      ends_at: typeof item.ends_at === "string" ? item.ends_at : undefined,
+      read_at: typeof item.read_at === "string" ? item.read_at : undefined,
+      created_at: typeof item.created_at === "string" ? item.created_at : "",
+      updated_at: typeof item.updated_at === "string" ? item.updated_at : "",
+    }))
+    .filter((item) => item.id > 0 && item.title.trim() && item.content.trim());
+}
+
+export async function markPawAnnouncementRead(id: number): Promise<void> {
+  const response = await pawRequest(`/api/v1/announcements/${id}/read`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+    },
+  });
+  if (!response.ok) {
+    throw new Error(await parsePawFailure(response));
+  }
 }
 
 export async function fetchPawUsageDashboardStats(): Promise<PawUsageDashboardStats> {

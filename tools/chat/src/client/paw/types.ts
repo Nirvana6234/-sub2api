@@ -1,3 +1,5 @@
+import type { AgentApprovalUiMode } from "@/client/agent/session";
+
 export interface PawUser {
   id: number;
   name: string;
@@ -5,6 +7,20 @@ export interface PawUser {
   balance?: number;
   frozen_balance?: number;
   total_recharged?: number;
+}
+
+export type PawAnnouncementNotifyMode = "silent" | "popup";
+
+export interface PawAnnouncement {
+  id: number;
+  title: string;
+  content: string;
+  notify_mode: PawAnnouncementNotifyMode;
+  starts_at?: string;
+  ends_at?: string;
+  read_at?: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface PawUsageDashboardStats {
@@ -355,12 +371,86 @@ export interface PawConversationMessage {
   content: string;
   model?: string;
   reasoningContent?: string;
+  agentPanels?: PawAgentPanels;
   attachments?: PawAttachment[];
   images?: string[];
   pinned?: boolean;
   error?: boolean;
+  /** Runtime-only marker used to decide which messages are safe to compact on disk. */
+  turnStatus?: "active" | "complete";
+  /**
+   * 只有 agent 轮次（`beginAgentTurn`）产生的 assistant 消息才是 `true`。
+   * 用来给持久化压缩把关：普通 Paw 对话/图片消息完成后同样会有
+   * `turnStatus: "complete"`，但它们的 `reasoningContent` 是要保留的正文，不是
+   * 该在回合结束后清掉的 agent 中间数据——`conversationCompression.ts` 的
+   * "completed" 档只在这个字段为 `true` 时才剥离 reasoning/agentPanels。
+   */
+  agentTurn?: boolean;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface PawAgentPlan {
+  explanation?: string | null;
+  steps: unknown[];
+  delta?: string;
+}
+
+export interface PawAgentFileChange {
+  itemId: string;
+  changes?: unknown;
+  output?: string;
+}
+
+export interface PawAgentTerminalInteraction {
+  itemId: string;
+  processId: string;
+  stdin: string;
+  createdAt: number;
+}
+
+export interface PawAgentNotification {
+  method: string;
+  message: string;
+  raw: unknown;
+  createdAt: number;
+}
+
+export interface PawAgentFileSearch {
+  sessionId: string;
+  query: string;
+  files: unknown[];
+  completed: boolean;
+  updatedAt: number;
+}
+
+export interface PawAgentApprovalReview {
+  reviewId: string;
+  method: string;
+  raw: unknown;
+  updatedAt: number;
+}
+
+export interface PawAgentPanels {
+  plan?: PawAgentPlan;
+  diff?: string;
+  fileChanges?: Record<string, PawAgentFileChange>;
+  terminalInteractions?: PawAgentTerminalInteraction[];
+  moderationMetadata?: unknown[];
+  notifications?: PawAgentNotification[];
+  fileSearches?: Record<string, PawAgentFileSearch>;
+  approvalReviews?: Record<string, PawAgentApprovalReview>;
+}
+
+export interface PawAgentPanelsPatch {
+  plan?: PawAgentPlan;
+  diff?: string;
+  fileChanges?: Record<string, PawAgentFileChange>;
+  terminalInteractions?: PawAgentTerminalInteraction[];
+  moderationMetadata?: unknown[];
+  notifications?: PawAgentNotification[];
+  fileSearches?: Record<string, PawAgentFileSearch>;
+  approvalReviews?: Record<string, PawAgentApprovalReview>;
 }
 
 export interface PawConversation {
@@ -371,6 +461,20 @@ export interface PawConversation {
   updatedAt: number;
   contextStartIndex?: number;
   messages: PawConversationMessage[];
+  /**
+   * agent 的工作目录，只在桌面端有意义。**发消息前可以随便重选**——只是个草稿，
+   * 选错了、想换都行，这时候还没起真正的会话，没有任何代价。
+   * 真正锁死看 `agentCwdLocked`。
+   */
+  agentCwd?: string;
+  /**
+   * `agentCwd` 是不是已经锁死了。**真正"开启会话"发生在第一次成功发消息**
+   * （起了一条真的 codex thread）——那一刻起才锁定，之前光选目录不算数、
+   * 可以随时改主意重选。锁定之后没有"更换"入口，想用别的目录就开新对话。
+   */
+  agentCwdLocked?: boolean;
+  /** 审批模式；未设置时按"完全控制"（`full`）处理，是 composer 两态切换的默认值。 */
+  agentApprovalMode?: AgentApprovalUiMode;
 }
 
 export interface PawPrompt {

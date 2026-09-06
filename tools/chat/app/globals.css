@@ -124,6 +124,15 @@ textarea:disabled {
   background: var(--panel-strong);
 }
 
+/* 整块可点，跳账户详情页——充值按钮在里面单独挡住了冒泡，不受影响。 */
+.paw-sidebar-account-clickable {
+  cursor: pointer;
+}
+
+.paw-sidebar-account-clickable:hover {
+  border-color: var(--paw-accent, #2563eb);
+}
+
 .paw-sidebar-account-heading {
   display: flex;
   align-items: flex-start;
@@ -158,26 +167,6 @@ textarea:disabled {
   min-height: 30px;
   padding: 6px 9px;
   font-size: 12px;
-}
-
-.paw-sidebar-balance-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.paw-sidebar-balance-row strong {
-  color: var(--accent);
-  font-size: 18px;
-  font-variant-numeric: tabular-nums;
-}
-
-.paw-sidebar-balance-row.muted {
-  color: var(--muted);
-  opacity: 0.82;
 }
 
 .paw-brand-title {
@@ -367,20 +356,6 @@ textarea:disabled {
   padding: 14px 20px 20px;
   border-top: 1px solid var(--border);
   background: var(--panel-strong);
-}
-
-.paw-sidebar-user-footer {
-  margin-top: 12px;
-}
-
-.paw-sidebar-details-button {
-  width: 100%;
-  justify-content: center;
-  margin-top: 12px;
-}
-
-.paw-sidebar-legacy-user {
-  display: none;
 }
 
 .paw-sidebar-drag {
@@ -1174,6 +1149,238 @@ textarea:disabled {
   flex: 0 0 auto;
 }
 
+.paw-announcement-trigger {
+  position: relative;
+}
+
+.paw-announcement-trigger.has-unread {
+  color: var(--accent);
+}
+
+.paw-announcement-dot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 7px;
+  height: 7px;
+  border: 2px solid var(--bg);
+  border-radius: 50%;
+  background: #d92d20;
+}
+
+.paw-announcement-backdrop {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 120 !important;
+  display: grid;
+  width: 100vw;
+  height: 100dvh;
+  box-sizing: border-box;
+  place-items: center;
+  align-items: center;
+  justify-items: center;
+  overflow: auto;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.48);
+}
+
+.paw-announcement-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(680px, 100%);
+  min-height: min(400px, calc(100dvh - 40px));
+  max-height: min(760px, 90vh);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.24);
+}
+
+.paw-announcement-modal.detail {
+  width: min(820px, 100%);
+  min-height: min(520px, calc(100dvh - 40px));
+}
+
+.paw-announcement-modal.popup {
+  width: min(680px, 100%);
+  min-height: min(440px, calc(100dvh - 40px));
+}
+
+.paw-announcement-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-strong);
+}
+
+.paw-announcement-head.popup {
+  background: color-mix(in srgb, var(--accent) 10%, var(--panel-strong));
+}
+
+.paw-announcement-title-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--accent);
+}
+
+.paw-announcement-title-row h2,
+.paw-announcement-detail-heading h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1.3;
+}
+
+.paw-announcement-head p {
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.paw-announcement-head-actions,
+.paw-announcement-detail-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.paw-announcement-list {
+  min-height: 280px;
+  overflow: auto;
+}
+
+.paw-announcement-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  gap: 12px;
+  padding: 14px 20px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+
+.paw-announcement-item:hover,
+.paw-announcement-item:focus-visible {
+  background: var(--panel-strong);
+  outline: none;
+}
+
+.paw-announcement-item.unread {
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+.paw-announcement-item.unread::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--accent);
+  content: "";
+}
+
+.paw-announcement-item-icon {
+  display: grid;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--muted);
+  background: var(--panel);
+}
+
+.paw-announcement-item.unread .paw-announcement-item-icon {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  color: var(--accent);
+}
+
+.paw-announcement-item-copy {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 5px;
+}
+
+.paw-announcement-item-copy strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+}
+
+.paw-announcement-item-copy span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.paw-announcement-unread-label,
+.paw-announcement-kicker {
+  flex: 0 0 auto;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.paw-announcement-empty {
+  display: grid;
+  place-items: center;
+  min-height: 220px;
+  gap: 6px;
+  padding: 24px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.paw-announcement-empty strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.paw-announcement-detail-heading {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+}
+
+.paw-announcement-detail-heading h2 {
+  overflow-wrap: anywhere;
+}
+
+.paw-announcement-detail-heading > span:last-child {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.paw-announcement-detail-body {
+  min-height: 0;
+  overflow: auto;
+  padding: 24px;
+}
+
+.paw-announcement-detail-body .paw-markdown {
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.paw-announcement-detail-actions {
+  padding: 14px 20px;
+  border-top: 1px solid var(--border);
+  background: var(--panel-strong);
+}
+
 .paw-chat-main {
   min-height: 0;
   flex: 1;
@@ -1183,8 +1390,9 @@ textarea:disabled {
 }
 
 .paw-chat-main .paw-message-list {
-  width: min(100%, 960px);
-  margin: 0 auto;
+  width: 100%;
+  max-width: none;
+  margin: 0;
   padding: 22px 28px 8px;
   position: relative;
   display: flex;
@@ -1529,8 +1737,9 @@ textarea:disabled {
 }
 
 .paw-input-panel {
-  width: min(100%, 960px);
-  margin: 0 auto;
+  width: 100%;
+  max-width: none;
+  margin: 0;
   padding: 8px 28px 18px;
 }
 
@@ -1549,14 +1758,27 @@ textarea:disabled {
 }
 
 .paw-selection-actions .paw-chat-action {
-  width: var(--paw-action-full-width, 96px);
+  width: 112px;
+  flex: 0 0 112px;
+  justify-content: flex-start;
   border: 1px solid var(--border);
   background: var(--panel);
 }
 
 .paw-selection-actions .paw-chat-action-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   opacity: 1;
   transform: none;
+}
+
+.paw-selection-actions .paw-chat-action:hover,
+.paw-selection-actions .paw-chat-action:focus-visible {
+  width: 112px;
+  flex-basis: 112px;
 }
 
 .paw-action-select {
@@ -1734,6 +1956,14 @@ textarea:disabled {
   margin-top: 6px;
 }
 
+.paw-composer-hint-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
 .paw-composer-hint {
   min-width: 0;
   overflow: hidden;
@@ -1883,6 +2113,120 @@ textarea:disabled {
 
 .paw-markdown-code-toggle:hover {
   background: var(--panel-alt);
+}
+
+/* agent 执行命令的输出——不是正文，是过程记录，默认收成一行，别跟
+   .paw-markdown-code（模型写的代码）用同一套视觉，那套是"这是内容"的信号，
+   这里要传达的是"这是可以不看的细节"。 */
+.paw-agent-output {
+  margin: 8px 0;
+}
+
+.paw-agent-output-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 28px;
+  padding: 4px 8px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.paw-agent-output-toggle:hover {
+  background: var(--panel-alt);
+  color: var(--text);
+}
+
+.paw-agent-output-chevron {
+  flex: 0 0 auto;
+  font-size: 10px;
+}
+
+.paw-agent-output-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paw-agent-output-meta {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* "agent 现在到底在干嘛"——批完一个审批之后最容易让人心里没底的一段时间。
+   固定在输入框上方，不随消息列表滚走。 */
+.paw-agent-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.paw-agent-status-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-strong);
+  animation: paw-agent-status-pulse 1.2s ease-in-out infinite;
+}
+
+/* 正在重试——比"正在处理"更要紧（可能是账号/网络出了问题），
+   颜色跟着一起换，别让它看起来跟正常处理一样风平浪静。 */
+.paw-agent-status.warn {
+  color: var(--danger);
+}
+
+.paw-agent-status.warn .paw-agent-status-dot {
+  background: var(--danger);
+}
+
+.paw-agent-status-timer {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  opacity: 0.85;
+}
+
+@keyframes paw-agent-status-pulse {
+  0%, 100% {
+    opacity: 0.35;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.paw-agent-output-body {
+  margin: 4px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-strong);
+  max-height: 400px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 .paw-markdown-code code.hljs,
@@ -2529,7 +2873,7 @@ textarea:disabled {
 
 .paw-account-summary-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -3319,10 +3663,13 @@ textarea:disabled {
 
   .paw-selection-actions .paw-chat-action,
   .paw-input-actions-end .paw-chat-action {
-    width: auto;
-    flex: 0 0 auto;
     background: var(--panel);
     border: 1px solid var(--border);
+  }
+
+  .paw-input-actions-end .paw-chat-action {
+    width: auto;
+    flex: 0 0 auto;
   }
 
   .paw-selection-actions .paw-chat-action-label,
@@ -3365,29 +3712,251 @@ textarea:disabled {
 
 
 /* ── agent（挂在对话上的工作目录能力，A6）──────────────────────────
-   不是独立页面：工具条上的两个 chip（工作目录 / 待批准），复用
-   .paw-chat-action 的视觉语言，只加它们自己需要的那一点点。 */
-.paw-agent-approval-anchor {
-  position: relative;
-  display: inline-flex;
+   工具条上一个 chip（工作目录），复用 .paw-chat-action 的视觉语言。
+   待批准的操作不用 chip——它直接弹在输入框上方、同宽，见下面
+   .paw-agent-approval-panel：审批是会挡住继续对话的事，不该藏在
+   一个要点开才看得到的东西后面。 */
+.paw-agent-panels {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
 }
 
-.paw-agent-approval-menu {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 0;
-  z-index: 30;
+.paw-agent-panel {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-strong);
+}
+
+.paw-agent-panel > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 34px;
+  padding: 7px 10px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  list-style: none;
+}
+
+.paw-agent-panel > summary::-webkit-details-marker {
+  display: none;
+}
+
+.paw-agent-panel > summary::before {
+  content: ">";
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.paw-agent-panel[open] > summary::before {
+  content: "v";
+}
+
+.paw-agent-panel-meta {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.paw-agent-panel-body {
+  display: grid;
+  gap: 9px;
+  padding: 0 10px 10px;
+  border-top: 1px solid var(--border);
+}
+
+.paw-agent-panel-pre {
+  max-height: 260px;
+  margin: 0;
+  overflow: auto;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font: 12px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.paw-agent-plan-explanation {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.paw-agent-plan-list {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.paw-agent-plan-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.paw-agent-plan-status {
+  width: 14px;
+  flex: 0 0 14px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.paw-agent-plan-list li[data-status="completed"] .paw-agent-plan-status {
+  color: #1f9d55;
+}
+
+.paw-agent-plan-list li[data-status="inProgress"] .paw-agent-plan-status {
+  color: var(--accent);
+}
+
+.paw-agent-file-changes,
+.paw-agent-terminal-list {
+  padding-top: 9px;
+}
+
+.paw-agent-file-change,
+.paw-agent-terminal-item,
+.paw-agent-file-change-entry {
+  display: grid;
+  gap: 7px;
+}
+
+.paw-agent-file-change + .paw-agent-file-change,
+.paw-agent-terminal-item + .paw-agent-terminal-item {
+  padding-top: 9px;
+  border-top: 1px solid var(--border);
+}
+
+.paw-agent-file-change-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.paw-agent-file-change-head code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font: 12px ui-monospace, SFMono-Regular, Consolas, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paw-agent-output-text {
+  color: var(--muted);
+}
+
+.paw-agent-notification-list,
+.paw-agent-file-searches,
+.paw-agent-review-list {
+  padding-top: 9px;
+}
+
+.paw-agent-notification-item,
+.paw-agent-file-search,
+.paw-agent-review-item {
+  display: grid;
+  gap: 7px;
+}
+
+.paw-agent-notification-item + .paw-agent-notification-item,
+.paw-agent-file-search + .paw-agent-file-search,
+.paw-agent-review-item + .paw-agent-review-item {
+  padding-top: 9px;
+  border-top: 1px solid var(--border);
+}
+
+.paw-agent-notification-message {
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.paw-agent-file-search-results {
+  display: grid;
+  gap: 5px;
+}
+
+.paw-agent-file-search-result {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.paw-agent-file-search-result code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font: 12px ui-monospace, SFMono-Regular, Consolas, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paw-agent-approval-panel {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  width: min(420px, 90vw);
-  max-height: 60vh;
+  width: 100%;
+  max-height: 42vh;
   overflow-y: auto;
+  margin-bottom: 10px;
   padding: 12px;
   border-radius: 10px;
   border: 1px solid var(--paw-border, #e4e4ea);
   background: var(--paw-surface, #fff);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+}
+
+.paw-agent-approval-panel-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #b54708;
+}
+
+.paw-agent-approval-panel-header > span:first-of-type {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.paw-agent-approval-bulk {
+  display: inline-flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.paw-agent-approval-bulk .paw-button {
+  min-height: 28px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .paw-agent-approval-item {
@@ -3421,11 +3990,61 @@ textarea:disabled {
   gap: 8px;
 }
 
-/* composer 底部那行摘要里的 agent 状态——发送前最后能看到的地方。 */
-.paw-composer-agent-flag.on {
+.paw-agent-approval-queued {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+/* composer 底部那行——发送前最后能看到的地方。工作目录是图标 + 文字：
+   没选时提示"选择工作目录"，选了就显示目录名；锁定之后变纯展示。
+   审批用原生 <select>，两个选项不用自己拼一套弹层。 */
+.paw-composer-dir-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 160px;
+  height: 22px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.paw-composer-dir-button span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.paw-composer-dir-button svg {
+  flex-shrink: 0;
+}
+
+.paw-composer-dir-button:hover:not(:disabled) {
+  background: var(--paw-hover, rgba(0, 0, 0, 0.06));
+  color: var(--text);
+}
+
+.paw-composer-dir-button.active {
   color: #16803d;
 }
 
-.paw-composer-agent-flag.off {
-  color: #b54708;
+.paw-composer-dir-button:disabled {
+  cursor: default;
+  opacity: 0.8;
+}
+
+.paw-composer-mode-select {
+  height: 22px;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 11px;
 }

@@ -122,7 +122,7 @@ async fn runs_a_real_turn_and_gets_assistant_text() {
     assert!(!thread_id.is_empty());
 
     session
-        .send_turn("Reply with exactly one word: PONG")
+        .send_turn(&thread_id, "Reply with exactly one word: PONG", None, None)
         .await
         .expect("发一轮");
 
@@ -164,7 +164,10 @@ async fn resumes_a_thread_and_keeps_talking() {
         .await
         .expect("起会话");
 
-    session.send_turn("Remember the number 41. Reply OK.").await.expect("第一轮");
+    session
+        .send_turn(&thread_id, "Remember the number 41. Reply OK.", None, None)
+        .await
+        .expect("第一轮");
     let first = tokio::time::timeout(
         Duration::from_secs(180),
         drive_turn(&session, &mut events, 5, |_| {}),
@@ -178,7 +181,12 @@ async fn resumes_a_thread_and_keeps_talking() {
     assert_eq!(resumed, thread_id);
 
     session
-        .send_turn("What number did I ask you to remember? Reply with just the number.")
+        .send_turn(
+            &resumed,
+            "What number did I ask you to remember? Reply with just the number.",
+            None,
+            None,
+        )
         .await
         .expect("第二轮");
     let second = tokio::time::timeout(
@@ -206,13 +214,18 @@ async fn interrupts_a_running_turn() {
         .handshake("cofly-workbench", "0.1.0", &env.api_key)
         .await
         .expect("握手 + 登录");
-    session
+    let thread_id = session
         .start_thread(cwd, SandboxMode::ReadOnly, ApprovalPolicy::Never)
         .await
         .expect("起会话");
 
     session
-        .send_turn("Count slowly from 1 to 500, one number per line, no other text.")
+        .send_turn(
+            &thread_id,
+            "Count slowly from 1 to 500, one number per line, no other text.",
+            None,
+            None,
+        )
         .await
         .expect("发一轮");
 
@@ -242,10 +255,10 @@ async fn interrupts_a_running_turn() {
         .expect("驱动任务提前结束了");
 
     let turn = session
-        .current_turn()
+        .current_turn(&thread_id)
         .expect("正在产出却没记住 turnId —— 「停止」会打空");
     println!("--- 正在产出，立刻打断 turn {turn}");
-    session.interrupt().await.expect("打断请求本身不该失败");
+    session.interrupt(&thread_id).await.expect("打断请求本身不该失败");
 
     // 真正要验的是这个：打断之后这一轮**确实收束了**，而不是继续跑。
     let outcome = tokio::time::timeout(Duration::from_secs(30), driver)
@@ -288,16 +301,19 @@ async fn declining_actually_prevents_the_side_effect() {
         .await
         .expect("握手 + 登录");
     // read-only 的沙箱地板 + on-request 的审批策略：这个组合才会来问我们。
-    session
+    let thread_id = session
         .start_thread(cwd, SandboxMode::ReadOnly, ApprovalPolicy::OnRequest)
         .await
         .expect("起会话");
     session
         .send_turn(
+            &thread_id,
             // 提问要**明确到具体动作**。含糊的说法（「创建一个文件」）模型可能自己就绕过去，
             // 一次审批都不触发，这条测试就等于什么都没验 —— 第一版正是这样失败的。
             // 这句是录 fixture 时验证过一定会触发审批的。
             "Run this exact shell command and nothing else: cmd /c echo pwned > SHOULD_NOT_EXIST.txt",
+            None,
+            None,
         )
         .await
         .expect("发一轮");

@@ -517,6 +517,11 @@ composer 工具条那一行新增两个 chip（`ActionButton`，和分组/模型
 事件订阅（把 `agentText`/`reasoning` 接进对应消息，`commandOutput` 按 itemId 攒够
 一段再落成 fenced code block，不逐字节撒进正文）。
 
+**2026-09-04 更正**：「`AgentBridge` 本来就只支持一条」是当时的真话，但**是这座桥
+自己的简化，不是 codex 的限制**——见 A6′ 的多会话并发改造。`bindings`/
+`liveConversationId` 这套单例状态已经被换成按对话 id 分桶，`AgentBridge` 现在是
+一个共享引擎服务多条并发 thread。
+
 `PawApp.tsx` 用 `agent.armed`（当前对话挂没挂目录）决定 `onSend`/`onStop`/`sending`/
 `canSend` 走哪条路——两条路径合流在同一组 props 上，`PawChatPane` 本身几乎不用感知
 "现在是不是 agent 模式"这件事。
@@ -571,6 +576,137 @@ A9 的文档注释因此写的是一件代码并没有做到的事。
   `COFLY_CODEX_BINARY=<官方 app-server 包>/bin/codex-app-server.exe`。
 - 顺带仍然欠着：**换分组的端到端验收**（A 组一轮 → 切 B 组 → 新会话确实走 B 组），
   现在有界面了，可以一并验。
+
+#### A6′ 重做（2026-09-04）—— 工作目录锁定 + 审批两态 chip，顺带牵出多会话并发改造
+
+用户提的原始需求很小：composer 那一行审批方式收成"需要审核"/"完全控制"两态、默认完全
+控制；工作目录只能在第一次绑定时选，之后**永久锁定**、没有"更换/结束"入口；两者都
+跟着对话记录持久化，重开对话不丢。这几条都落了，但过程中问出了一个更大的问题。
+
+##### 一句追问，炸出一个架构假设
+
+设计"锁定工作目录之后怎么处理跨对话切换"时，我提出"对话 A 挂着引擎时，去对话 B
+发送要不要自动挤占"——这个问题本身就建立在"一次只能有一条活的 codex 线程"这个
+**旧假设**上。用户反问："这个引擎不是通用的吗？而且引擎应该默认挂上，不管有没有
+选工作目录。与会话的区分不应该是会话 id 吗？"
+
+查代码证实旧假设确实是 A5 时代自己加的简化，不是 codex 的限制：`AgentBridge.running`
+是 `Mutex<Option<Running>>`，一次只装一个进程/一条 thread；`Session::send_turn`/
+`interrupt`/`SessionState` 也都是单值，不接受 `thread_id`。codex 协议本身是
+thread-based 的（一个进程本可以并发跑多条 thread），但这座桥从没这么用过。
+
+##### 两个探针，两个都是绿的，才敢动手改
+
+跟着"只有跑真进程才能发现的事"这条既有方法论，先验证两件事再重写三个 crate：
+
+**Probe A —— 一个进程能不能真的并发跑两条 thread？**
+新脚本 `crates/codex-host/scripts/probe-multi-thread.py`：起一个真 `codex-app-server.exe`
+（本地从 `codex-main` 编的那份），`thread/start` 两次拿两个 threadId，两个 `turn/start`
+不等对方就都发出去，假后端把每个响应故意分片、每片间隔 0.4s 让"串行 vs 并发"能被
+时间戳分辨。结果：两条 thread 的出站 HTTP 请求**同一毫秒开始、同一毫秒结束**，
+`item/agentMessage/delta` 同一时间戳分别到达——不是排队，是真并发。
+
+**Probe B —— 流式通知里到底有没有 threadId？**
+直接读 0.153.0 的真实录制（`tests/fixtures/decline-command-approval.jsonl`），把
+`msg.method` 全部列出来对参数键名：`item/agentMessage/delta`、
+`item/commandExecution/*`、`turn/started`、`turn/completed` 等**全部**带
+`threadId`。进一步查 `protocol.rs` 才发现这条其实**已经在解析**了——`NotificationPayload`
+的每个变体早就有 `thread_id` 字段，只是 `session.rs` 翻译成 `SessionEvent` 时用
+`..` 把它悄悄丢掉了。协议层不用动，只用把这层丢弃找回来。
+
+两个探针都绿，才定下设计：**一个共享引擎（进程 + 转发层 + 一条 JSON-RPC 连接），
+同时驱动多条 thread**，不是"一个对话一个进程"——A10 量过 `codex-app-server.exe`
+是 218MB，N 个对话开 N 个进程是真金白银的代价，共享一个进程服务多个对话才是
+划算的形状。
+
+##### 顺手翻出的第三件事：model/effort 从来没有按轮传过
+
+翻 `TurnStartParams.json`/`ThreadStartParams.json` 的完整 schema时发现：
+`turn/start` 其实支持 `model`/`effort` 这两个"覆盖这一轮及之后"的参数，但我们的
+最小子集从没投影过——模型和推理强度**只在起进程时**当 `-c model="..."` 命令行参数
+写死。也就是说总体规划里"模型名和 reasoning 每轮随请求传"这句话，实现上从来没有
+兑现过：换模型必须重启整个引擎才生效，`send_turn` 现在实际上只是 `send_turn(text)`。
+共享引擎之后这个洞必须补——不补的话所有对话被迫共用第一个起来时选的那个模型。
+顺手把这条历史欠账还了。
+
+##### 改动清单
+
+**Rust（`tools/chat/src-tauri`）**：
+
+| 文件 | 改动 |
+|---|---|
+| `crates/codex-adapter/src/protocol.rs` | `TurnStart` 加 `model`/`effort`（均 `Option<String>`，`effort` 要求非空字符串）；`ServerRequest::thread_id()` 新方法，从三类已知审批的参数或 `raw.threadId` 尽力挖出归属 |
+| `crates/codex-adapter/src/session.rs` | `SessionState.turns` 从单值换成 `HashMap<thread_id, Option<turn_id>>`；`send_turn`/`interrupt` 都要求显式 `thread_id`；新增 `archive_thread`（归档单条 thread，不碰其它并发 thread）、`known_thread`；`translate()` 按 thread_id 分桶写状态，不再互相覆盖 |
+| `src/agent/mod.rs` | `AgentBridge.running: Mutex<Option<Running>>` → `engine: Mutex<Option<SharedEngine>>`（**懒起、被所有对话共用**）；`start()` 变成"确保引擎存在 + 在它上面开一条新 thread"，不再对已有引擎报 `AlreadyRunning`；新增 `end_thread()`（归档单条 thread，引擎和别的对话不受影响）；`stop()` 语义收紧为"杀整个引擎、影响所有对话"，明确和 `end_thread` 分工；`spawn_pump` 的 `items`/`current_turn` 表都按 `(thread_id, ...)` 分桶 |
+| `src/agent/dto.rs` | 几乎每个 `UiEvent` 变体加 `thread_id`（`EngineStopped` 是唯一例外——它天生全局）；新增 `ThreadEnded`；新增 `SendParams`（`threadId`/`text`/`model`/`reasoning`），`StartParams` 语义改注：只在引擎第一次起来时生效 |
+| `src/lib.rs` | `agent_send` 参数从裸 `text` 换成 `SendParams`；`agent_interrupt` 加 `thread_id` 参数；新增 `agent_end_thread` 命令 |
+
+**测试**：`tests/session.rs` 新增 `concurrent_threads_on_one_session_do_not_clobber_each_others_turn_state`——手写两条 thread 交替到达的报文，A 完成时断言 B 的 turnId **没有**被碰到（旧的单值实现在这一步会把 B 也清空）；`tests/params_schema.rs` 补 `TurnStart` 带 model/effort 的两条闸门用例；`tests/e2e.rs`/`tests/approval.rs`/`tests/replay.rs`/`tests/bridge.rs`/`codex-host/src/bin/cage-probe.rs` 里所有 `send_turn`/`interrupt`/`current_turn` 调用点都改成显式传 `thread_id`。
+
+**前端（`tools/chat/src`）**：
+
+| 文件 | 改动 |
+|---|---|
+| `client/paw/types.ts` | `PawConversation` 加 `agentCwd?`/`agentApprovalMode?`（`"review" \| "full"`），随 `paw-conversations:v2` 落盘 |
+| `components/paw/usePawClient.ts` | `normalizeConversation` 读这两个新字段；新增 `setAgentBinding`（只在未设置时写得进去，锁定在数据层）、`setAgentApprovalMode` |
+| `client/agent/session.ts` | 新增 `AgentApprovalUiMode`/`approvalUiModeToParams`（两态→协议参数的唯一翻译点，`full`＝`never`+`danger-full-access`，`review`＝`on-request`+`workspace-write`）；`AgentEvent`/`ApprovalRequest` 加 `threadId`；`sendToAgent`/`interruptAgent` 要求 `threadId`；新增 `endAgentThread` |
+| `client/agent/useAgentSession.ts` | 整个重写：状态从单例（`liveConversationId` 等）换成按对话 id 分桶（`runtimes: Record<conversationId, {...}>`），维护 `threadId → conversationId` 回查表；`pickDirectory` 锁定后是 no-op；新增 `setApprovalMode`（切换时先归档当前 thread，不影响别的对话）；移除 `changeDirectory`/`endSession` 两个公开方法，新增内部 `discardConversation`（只给删除对话用） |
+| `components/paw/PawApp.tsx` | 删除对话时改调 `agent.discardConversation`；`PawChatPane`/`PawSettingsModal` 的 props 相应增删 |
+| `components/paw/PawChatPane.tsx` | 工作目录 chip 锁定后 `disabled`，去掉"更换/结束"菜单；新增审批模式 chip（复用 `.paw-agent-approval-anchor` 定位，两个选项的小菜单） |
+| `components/paw/PawSettingsModal.tsx` | 删掉"agent 沙箱"/"agent 审批"两个下拉整块 |
+| `client/agent/settings.ts` | **整个文件删除**（全局默认值退场，两态默认写死在 `EMPTY_RUNTIME`/`activeConversation?.agentApprovalMode ?? "full"`） |
+
+##### 验收状态
+
+- Rust：**76 passed / 8 ignored / 0 failed**，clippy 全工作区零 warning。
+- 前端：`npm run typecheck` 干净；`npm run export:desktop` 静态导出通过（Next 自带的
+  lint 一并跑过）。
+- **未做：桌面端实跑。** 没有验证过真实点击流程——挂目录锁定后 chip 是否真的不可点、
+  切审批模式时是否真的先停旧 thread 再起新的、两个挂了不同目录的对话是否真的能
+  同时收发。这条只能启动客户端手动点一遍。
+- **未做：多会话并发的真实端到端**（两个对话各挂一个目录、同时发送、互不阻塞）——
+  Probe A 验的是"协议层能不能并发"，不是"我们这条桥接完整链路之后还能不能并发"，
+  两者都要过一遍才算数。
+
+#### A6 补丁（2026-09-06）—— "回合完成后仅保留最终结果"从没真的生效过
+
+用户运行时观察到：agent 面完成一轮之后，reasoning/plan/diff/命令输出/通知原始数据
+在界面上一直都在，问"这是不是没做完"。查了才发现 `conversationCompression.ts`
+（这次改造里新增、未提交、无测试）从写下来那天起就没起作用，三个问题分开看：
+
+- **触发条件错了**：`persistConversationsWithCompression` 把"原样不剥离"排成第
+  一候选，只有 `localStorage.setItem` 真的因为配额超限抛出/返回失败，才会退化到
+  剥离版本。正常使用（存储没满）下这个功能永远走不到。**改法**：基线直接就是
+  "completed"档（剥离），配额超限时才进一步退化到"aggressive"（连活跃轮次都不放过）
+  或删整条历史对话——量级反过来了，不是常态触发退化，而是退化触发用力更猛。
+- **命令输出根本清不掉**：`useAgentSession.ts` 的 `flushCommandBuffer` 把命令输出
+  拼成 ` ```agent-output ` 围栏**直接塞进 `message.content`**，不在 `agentPanels`
+  里——而这条功能当初就是为了治"agent 那些命令输出把 localStorage 写爆"（见
+  `usePawClient.ts` 那条配额注释），结果它清不到的正是这个元凶。**改法**：新增
+  `stripCommandOutput()`，用固定格式的正则把这段围栏从 `content` 里抠掉，只留模型
+  自己说的话；正则旁边写清楚格式契约钉在 `flushCommandBuffer` 那边，两处没有共享
+  类型，谁改了拼法要记得来改这边。
+- **一度差点误伤普通对话**：`turnStatus: "complete"` 不是 agent 专属——
+  `dispatchConversationSend`/图片生成两条普通路径完成后也会打这个标记，它们的
+  `reasoningContent` 是产品要保留的正文。第一版直接按 `turnStatus !== "active"`
+  剥离会把普通消息的推理过程也删掉，被复核抓住。**改法**：新增
+  `PawConversationMessage.agentTurn` 字段，只有 `beginAgentTurn` 创建的消息才置
+  `true`，"completed"档只清这一类；"aggressive"（配额撑不住的最后手段）不受这条
+  限制，情愿牺牲普通消息的 reasoning 也不去删整条对话历史——但也不能反过来把被
+  "aggressive"剥过的普通消息永久贴上 `agentTurn: true`，那会让它此后每次
+  "completed"档都被误伤，是同一类问题的镜像版本。
+- **历史数据的兜底**：`agentTurn` 只对这次改动之后新建的消息可靠——2026-09-06
+  之前落盘的 agent 消息全都没有这个字段，只认它的话，用户已经攒下的那些超大记录
+  会被永远跳过，等于白修。补了 `looksLikeAgentMessage()`：`agentPanels` 非空、或
+  `content` 里带 agent-output 围栏，任何一个成立都是可靠证据（这两样普通对话/图片
+  路径永远不会产生），兜住旧数据。
+
+**验收方式**：仓库前端没有测试运行器，用一次性 Node 脚本把纯函数逻辑复制一份跑
+断言（21 条，覆盖新建 agent 消息/进行中轮次/普通对话消息/legacy 无标记消息/
+"aggressive"剥离后不得被永久错标 agentTurn 五类交叉），外加 `npm run typecheck`
+与 `npm run export:desktop` 均通过。**未做**：对着真实登录会话跑一轮 agent、
+重新打开客户端，肉眼确认 `paw-conversations:v2` 里那条记录确实只剩最终文本——
+这条要有真实登录态才能验，这次会话里没有（不该代填用户密码）。
 
 ### A9 — 凭据托管
 
@@ -816,6 +952,38 @@ primary bundle 是多合一 `codex.exe`；**app-server bundle 是 `codex-app-ser
   schema 导出（`generate-json-schema`）在 `codex` CLI 里而不在 app-server 里，
   要重录得另外取 CLI 二进制。好消息是审批 fixture 现在可以对着**假中转站**录，
   不再需要真 key。
+
+#### A10 补充（2026-09-05）—— 随包发布与开发启动方式补齐
+
+之前 `vendor/codex/` 是手工下载校验的（结果记在 `bundled-codex.json` 里），
+但**只有校验值可重放，取回的动作本身不是脚本**——新机器、CI 干净 runner，
+都得重新手工走一遍。三处补齐：
+
+- **`scripts/fetch-codex-vendor.mjs`**：照 `bundled-codex.json` 里的
+  tag/来源/sha256 现取，幂等（校验通过就跳过下载），取回后删掉用不上的
+  `bin/codex-code-mode-host.exe`（省 69MB，跟手工版本做的事一样）。挂成
+  `npm run codex:vendor`。
+- **`npm run app:dev` 不再要求手动设 `COFLY_CODEX_BINARY`**：新增
+  `scripts/dev-desktop.mjs`，自动探测 `src-tauri/vendor/codex/bin/` 下的
+  二进制并注入这个环境变量（已经显式设置过的话不覆盖，留给端到端测试指到
+  别的二进制）。找不到就给一句警告，Chat 本体照样能起——跟
+  `resolve_agent_paths` 那条"找不到二进制不该拖累整个应用"的原则一致。
+- **`tauri.conf.json` 补上 `bundle.resources`**：`app.path().resolve(BUNDLED_CODEX,
+  BaseDirectory::Resource)`（`src-tauri/src/lib.rs`）这行代码在这次补丁之前
+  一直没有真正的资源可解——**打包出的安装包里从来没有随包 codex 这回事**，
+  生产环境只会落到 `exe_dir.join(BUNDLED_CODEX)` 那条兜底，而没有任何步骤
+  会把二进制拷到 `chat.exe` 旁边。现在四个必需文件（`codex-app-server.exe`、
+  两个 `codex-resources/` 助手、可选的 `codex-path/rg.exe`）按原始的兄弟目录
+  结构映射进 `$RESOURCES/codex/`，`npm run app:build` 会在打包前自动
+  `codex:vendor`一遍，保证资源文件确实在磁盘上。
+- **新增 `.github/workflows/chat-release.yml`**：按 `chat-v*` tag 或手动触发出包，
+  产出 MSI + NSIS 两个安装包。结构照抄 `client-release.yml`（版本号与 tag
+  一致性检查、服务器地址非占位符检查、draft release），Windows-only（跟
+  §7 表格里"mac 相关不卡开工"是同一个决定）。`vendor/codex` 与 cargo
+  registry/target 都做了 `actions/cache`，前者按 `bundled-codex.json` 的哈希
+  做 key——命中缓存时约 110MB 的下载直接跳过。**需要维护者在仓库 Settings
+  里配一个 `CHAT_SERVICE_URL` 变量**，工作流会在缺失或看着像占位符/本机
+  地址时直接失败，不会静默拿错地址的包发出去。
 
 ## 3.5 codex 里值得补进 Chat 的能力（超出「最小子集」的部分）
 

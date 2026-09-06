@@ -58,8 +58,16 @@ pub enum ClientRequest {
     ThreadResume { thread_id: String },
     ThreadList { limit: Option<u32> },
     ThreadArchive { thread_id: String },
-    /// 发一轮提问。可以按轮覆盖 model / effort / sandbox / cwd。
-    TurnStart { thread_id: String, text: String },
+    ThreadCompactStart { thread_id: String },
+    /// 发一轮提问。
+    ///
+    /// `model`/`effort` **必须每轮都传**（不是只在起会话时传一次）——多会话并发改造
+    /// 之后，一个 codex 进程要同时服务好几个对话，模型不再是起进程时 `-c model=...`
+    /// 定死的进程级常量。schema 原文："Override the model/reasoning effort for this
+    /// turn and subsequent turns"，`effort` 对应的是 `ReasoningEffort`，
+    /// **要求非空字符串**（`minLength: 1`）——所以「标准」挡板要映射成 `None`，
+    /// 不能发一个空串上去。
+    TurnStart { thread_id: String, text: String, model: Option<String>, effort: Option<String> },
     /// 打断一轮。**必须带 `turn_id`** —— 只给 `thread_id` 是不够的，
     /// 所以会话层必须自己跟踪当前这一轮的 id。
     TurnInterrupt { thread_id: String, turn_id: String },
@@ -149,6 +157,7 @@ impl ClientRequest {
             ClientRequest::ThreadResume { .. } => "thread/resume",
             ClientRequest::ThreadList { .. } => "thread/list",
             ClientRequest::ThreadArchive { .. } => "thread/archive",
+            ClientRequest::ThreadCompactStart { .. } => "thread/compact/start",
             ClientRequest::TurnStart { .. } => "turn/start",
             ClientRequest::TurnInterrupt { .. } => "turn/interrupt",
         }
@@ -175,10 +184,22 @@ impl ClientRequest {
                 None => serde_json::json!({}),
             },
             ClientRequest::ThreadArchive { thread_id } => serde_json::json!({ "threadId": thread_id }),
-            ClientRequest::TurnStart { thread_id, text } => serde_json::json!({
-                "threadId": thread_id,
-                "input": [{ "type": "text", "text": text, "text_elements": [] }],
-            }),
+            ClientRequest::ThreadCompactStart { thread_id } => {
+                serde_json::json!({ "threadId": thread_id })
+            }
+            ClientRequest::TurnStart { thread_id, text, model, effort } => {
+                let mut params = serde_json::json!({
+                    "threadId": thread_id,
+                    "input": [{ "type": "text", "text": text, "text_elements": [] }],
+                });
+                if let Some(model) = model {
+                    params["model"] = serde_json::json!(model);
+                }
+                if let Some(effort) = effort {
+                    params["effort"] = serde_json::json!(effort);
+                }
+                params
+            }
             ClientRequest::TurnInterrupt { thread_id, turn_id } => serde_json::json!({
                 "threadId": thread_id,
                 "turnId": turn_id,
@@ -438,6 +459,50 @@ pub enum NotificationPayload {
     ReasoningDelta { thread_id: String, item_id: Option<String>, delta: String, kind: ReasoningKind },
     /// 命令执行的输出增量。
     CommandOutputDelta { thread_id: String, item_id: Option<String>, chunk: String },
+    /// 当前 turn 聚合后的最新 unified diff。
+    TurnDiffUpdated { thread_id: String, turn_id: String, diff: String },
+    /// 文件变更 item 的增量 diff。
+    FileChangePatchUpdated {
+        thread_id: String,
+        turn_id: String,
+        item_id: String,
+        changes: Value,
+    },
+    /// 旧版 apply_patch 文本输出，仍然保留，避免上游偶发发送时静默丢失。
+    FileChangeOutputDelta {
+        thread_id: String,
+        turn_id: String,
+        item_id: String,
+        delta: String,
+    },
+    /// 计划 item 的流式增量。
+    PlanDelta {
+        thread_id: String,
+        turn_id: String,
+        item_id: String,
+        delta: String,
+    },
+    /// turn 当前完整计划快照。
+    TurnPlanUpdated {
+        thread_id: String,
+        turn_id: String,
+        plan: Value,
+        explanation: Option<String>,
+    },
+    /// 交互式命令向 stdin 写入的内容。
+    TerminalInteraction {
+        thread_id: String,
+        turn_id: String,
+        item_id: String,
+        process_id: String,
+        stdin: String,
+    },
+    /// 内容审核元数据。元数据形状由上游决定，因此保留原始 Value。
+    TurnModerationMetadata {
+        thread_id: String,
+        turn_id: String,
+        metadata: Value,
+    },
     /// 某个服务端请求已经被（可能是另一端）答复了 —— 用来做「一处响应、另一处队列消失」。
     ServerRequestResolved { thread_id: String, request_id: RequestId },
     /// 服务端推来的错误通知。
@@ -447,16 +512,22 @@ pub enum NotificationPayload {
     /// 所以只盯着请求响应做错误处理，会把上游错误整类漏掉。
     Error(ErrorNotification),
     /// codex 自己判断"用户该看到"的一句话提醒（schema 原文："Concise warning
-    /// message for the user"）。实测撞到的第一条：模型元数据缺失时的降级提示——
-    /// "Model metadata for `gpt-5` not found. Defaulting to fallback metadata;
-    /// this can degrade performance and cause issues."。这条**必须**被界面看见，
-    /// 且不能顶着"未识别的上游通知"那种吓人的样子出现——它是 codex 主动说给用户
-    /// 听的一句话，不是我们没见过的协议。
+    /// message for the user"）。**不是每一条都值得显示**——见 `is_known_noise_warning`
+    /// 那条特别筛掉的例外。
     Warning { thread_id: Option<String>, message: String },
+    /// 已知但暂时不为其建立强类型结构的通知。
+    ///
+    /// 这些方法属于当前协议，不能再落进 `Other`，但其中一部分 payload
+    /// 仍在变化。保留原始参数，让上层按方法归类展示，同时避免丢字段。
+    Known {
+        method: String,
+        thread_id: Option<String>,
+        raw: Value,
+    },
     /// **认识，但故意不投影成 UI 事件**的方法——和 `Other` 不是一回事。
     ///
     /// `Other` 意味着"这是什么我们不知道"，该被 UI 当成协议漂移的诊断显示出来；
-    /// `Ignored` 意味着"知道这是什么，就是这台工作台用不上"。目前三个：
+    /// `Ignored` 意味着"知道这是什么，就是这台工作台用不上"。目前这些：
     ///
     /// - `thread/tokenUsage/updated`、`account/rateLimits/updated`——codex 自己的
     ///   ChatGPT 订阅套餐记账（`PlanType::free/plus/pro/team/...`、积分余额），
@@ -473,11 +544,37 @@ pub enum NotificationPayload {
     /// - `account/updated`——账号级的 authMode/planType 广播。实测录到的值是
     ///   `{"authMode":"apikey","planType":null}`：authMode 是我们自己设的，
     ///   planType 用不上 ChatGPT 订阅套餐，两个字段都不携带新信息。
+    /// - `thread/archived`——我们自己发 `thread/archive` 之后 codex 回的确认广播
+    ///   （多会话并发改造：`end_thread`/切审批模式都会归档一条 thread）。
+    ///   是我们自己动作的回声，不是需要界面关心的新信息。
+    /// - 文件变更、计划、终端交互和审核元数据已经投影为独立事件，不能放回这里。
     ///
     /// 第一次真实使用就在界面上炸出一片黄色的"未识别的上游通知"——协议识别是对的
     /// （这些方法确实存在），错的是把「用不上」当成了「没见过」。
     Ignored { method: String },
     Other,
+}
+
+/// "warning" 方法里**内容匹配**筛掉的那一条：模型元数据缺失的降级提示。
+///
+/// 单独用一个函数而不是塞进上面 `Ignored` 那批按方法名匹配的白名单，是因为这条
+/// 的方法名（`"warning"`）和别的、**该显示**的提醒（比如别的降级场景）共用同一个
+/// 方法——不能按方法名整体拉黑，只能按内容筛这一条。
+///
+/// 实测撞到的原文（模型名会变，前后缀不变）：
+/// "Model metadata for `gpt-5.6` not found. Defaulting to fallback metadata;
+/// this can degrade performance and cause issues."
+///
+/// **筛掉它是因为它对共飞用户结构性地不可操作**：共飞自己的模型名（`gpt-5.6`
+/// 这类，来自 `/api/v1/paw/config`）永远不会出现在 codex 自带的 OpenAI 型号表里
+/// ——这不是配置漏了，是共飞每一个模型、每一轮都会撞见。原来"warning 必须显示"
+/// 的设计初衷是"codex 主动想说给用户听的话"，但这条对着共飞用户念一百遍也没用，
+/// 跟上面 `Ignored` 那几条"认识但用不上"是同一件事，只是判断依据是内容不是方法名。
+///
+/// 副作用（`context_window` 可能用的是通用兜底值，不是这个模型真实的窗口大小）
+/// 没有被这条筛选处理——真要修，走 `-c model_context_window=<N>` 覆盖，是另一件事。
+fn is_known_noise_warning(message: &str) -> bool {
+    message.starts_with("Model metadata for") && message.contains("Defaulting to fallback metadata")
 }
 
 /// `error` 通知的投影。
@@ -655,6 +752,111 @@ impl Notification {
                 },
                 None => NotificationPayload::Other,
             },
+            "turn/diff/updated" => match (
+                str_field(&raw, "threadId"),
+                str_field(&raw, "turnId"),
+                str_field(&raw, "diff"),
+            ) {
+                (Some(thread_id), Some(turn_id), Some(diff)) => {
+                    NotificationPayload::TurnDiffUpdated { thread_id, turn_id, diff }
+                }
+                _ => NotificationPayload::Other,
+            },
+            "item/fileChange/patchUpdated" => match (
+                str_field(&raw, "threadId"),
+                str_field(&raw, "turnId"),
+                str_field(&raw, "itemId"),
+                raw.get("changes"),
+            ) {
+                (Some(thread_id), Some(turn_id), Some(item_id), Some(changes)) => {
+                    NotificationPayload::FileChangePatchUpdated {
+                        thread_id,
+                        turn_id,
+                        item_id,
+                        changes: changes.clone(),
+                    }
+                }
+                _ => NotificationPayload::Other,
+            },
+            "item/fileChange/outputDelta" => match (
+                str_field(&raw, "threadId"),
+                str_field(&raw, "turnId"),
+                str_field(&raw, "itemId"),
+                str_field(&raw, "delta"),
+            ) {
+                (Some(thread_id), Some(turn_id), Some(item_id), Some(delta)) => {
+                    NotificationPayload::FileChangeOutputDelta {
+                        thread_id,
+                        turn_id,
+                        item_id,
+                        delta,
+                    }
+                }
+                _ => NotificationPayload::Other,
+            },
+            "item/plan/delta" => match (
+                str_field(&raw, "threadId"),
+                str_field(&raw, "turnId"),
+                str_field(&raw, "itemId"),
+                str_field(&raw, "delta"),
+            ) {
+                (Some(thread_id), Some(turn_id), Some(item_id), Some(delta)) => {
+                    NotificationPayload::PlanDelta {
+                        thread_id,
+                        turn_id,
+                        item_id,
+                        delta,
+                    }
+                }
+                _ => NotificationPayload::Other,
+            },
+            "turn/plan/updated" => match (
+                str_field(&raw, "threadId"),
+                str_field(&raw, "turnId"),
+                raw.get("plan"),
+            ) {
+                (Some(thread_id), Some(turn_id), Some(plan)) => {
+                    NotificationPayload::TurnPlanUpdated {
+                        thread_id,
+                        turn_id,
+                        plan: plan.clone(),
+                        explanation: str_field(&raw, "explanation"),
+                    }
+                }
+                _ => NotificationPayload::Other,
+            },
+            "item/commandExecution/terminalInteraction" => match (
+                str_field(&raw, "threadId"),
+                str_field(&raw, "turnId"),
+                str_field(&raw, "itemId"),
+                str_field(&raw, "processId"),
+                str_field(&raw, "stdin"),
+            ) {
+                (Some(thread_id), Some(turn_id), Some(item_id), Some(process_id), Some(stdin)) => {
+                    NotificationPayload::TerminalInteraction {
+                        thread_id,
+                        turn_id,
+                        item_id,
+                        process_id,
+                        stdin,
+                    }
+                }
+                _ => NotificationPayload::Other,
+            },
+            "turn/moderationMetadata" => match (
+                str_field(&raw, "threadId"),
+                str_field(&raw, "turnId"),
+                raw.get("metadata"),
+            ) {
+                (Some(thread_id), Some(turn_id), Some(metadata)) => {
+                    NotificationPayload::TurnModerationMetadata {
+                        thread_id,
+                        turn_id,
+                        metadata: metadata.clone(),
+                    }
+                }
+                _ => NotificationPayload::Other,
+            },
             "serverRequest/resolved" => {
                 match (
                     str_field(&raw, "threadId"),
@@ -683,15 +885,78 @@ impl Notification {
                     details: err.and_then(|e| str_field(e, "additionalDetails")),
                 })
             }
-            "warning" => NotificationPayload::Warning {
+            "warning"
+            | "configWarning"
+            | "deprecationNotice"
+            | "guardianWarning"
+            | "windows/worldWritableWarning" => {
+                let message = warning_message(&method, &raw);
+                if is_known_noise_warning(&message) {
+                    NotificationPayload::Ignored { method: method.clone() }
+                } else {
+                    NotificationPayload::Warning { thread_id: str_field(&raw, "threadId"), message }
+                }
+            }
+            "thread/closed"
+            | "thread/deleted"
+            | "thread/unarchived"
+            | "thread/compacted"
+            | "thread/reverted"
+            | "thread/settings/updated"
+            | "thread/queue/changed"
+            | "thread/name/updated"
+            | "thread/project/updated"
+            | "fuzzyFileSearch/sessionUpdated"
+            | "fuzzyFileSearch/sessionCompleted"
+            | "autoApprovalReview/strictReviewRequired"
+            | "item/autoApprovalReview/started"
+            | "item/autoApprovalReview/completed"
+            | "mcpServer/oauthLogin/completed"
+            | "windowsSandbox/setupCompleted" => NotificationPayload::Known {
+                method: method.clone(),
                 thread_id: str_field(&raw, "threadId"),
-                message: str_field(&raw, "message").unwrap_or_default(),
+                raw: raw.clone(),
             },
             "thread/tokenUsage/updated"
             | "account/rateLimits/updated"
             | "remoteControl/status/changed"
             | "account/login/completed"
-            | "account/updated" => {
+            | "account/updated"
+            | "thread/archived"
+            | "thread/realtime/started"
+            | "thread/realtime/itemAdded"
+            | "thread/realtime/item/started"
+            | "thread/realtime/item/transcript/delta"
+            | "thread/realtime/item/completed"
+            | "thread/realtime/transcript/delta"
+            | "thread/realtime/transcript/done"
+            | "thread/realtime/outputAudio/delta"
+            | "thread/realtime/sdp"
+            | "thread/realtime/error"
+            | "thread/realtime/closed"
+            | "fs/changed"
+            | "process/exited"
+            | "process/outputDelta"
+            | "command/exec/outputDelta"
+            | "item/mcpToolCall/progress"
+            | "mcpServer/startupStatus/updated"
+            | "mcpServer/event/stream/notification"
+            | "hook/started"
+            | "hook/completed"
+            | "skills/changed"
+            | "app/list/updated"
+            | "externalAgentConfig/import/progress"
+            | "externalAgentConfig/import/completed"
+            | "model/rerouted"
+            | "model/safetyBuffering/updated"
+            | "model/verification"
+            | "modelProvider/authRecoveryCompleted"
+            | "modelProvider/authRecoveryStarted"
+            | "project/changed"
+            | "thread/environment/connected"
+            | "thread/environment/disconnected"
+            | "thread/goal/cleared"
+            | "thread/goal/updated" => {
                 NotificationPayload::Ignored { method: method.clone() }
             }
             _ => NotificationPayload::Other,
@@ -701,7 +966,57 @@ impl Notification {
     }
 }
 
+fn warning_message(method: &str, raw: &Value) -> String {
+    match method {
+        "configWarning" => {
+            let summary = str_field(raw, "summary").unwrap_or_else(|| "配置存在警告".to_owned());
+            let details = str_field(raw, "details");
+            let path = str_field(raw, "path");
+            match (path, details) {
+                (Some(path), Some(details)) => format!("{summary} ({path}): {details}"),
+                (Some(path), None) => format!("{summary} ({path})"),
+                (None, Some(details)) => format!("{summary}: {details}"),
+                (None, None) => summary,
+            }
+        }
+        "deprecationNotice" => {
+            let summary = str_field(raw, "summary").unwrap_or_else(|| "上游功能已弃用".to_owned());
+            str_field(raw, "details")
+                .map(|details| format!("{summary}: {details}"))
+                .unwrap_or(summary)
+        }
+        "guardianWarning" => str_field(raw, "message").unwrap_or_else(|| "安全守护提示".to_owned()),
+        "windows/worldWritableWarning" => {
+            let failed = raw.get("failedScan").and_then(Value::as_bool).unwrap_or(false);
+            let count = raw.get("extraCount").and_then(Value::as_u64).unwrap_or(0);
+            if failed {
+                "Windows 工作目录权限扫描失败，请检查工作目录安全性".to_owned()
+            } else if count > 0 {
+                format!("Windows 工作目录发现 {count} 个可被其他用户写入的路径")
+            } else {
+                "Windows 工作目录权限检查发现异常".to_owned()
+            }
+        }
+        _ => str_field(raw, "message").unwrap_or_default(),
+    }
+}
+
 impl ServerRequest {
+    /// 这条服务端请求属于哪条 thread——**尽力而为**，不是所有请求都带得出来。
+    ///
+    /// 三类已知审批的参数结构里都有 `thread_id`，直接取；`Other`（我们不认识的
+    /// 服务端请求，比如 `attestation/generate`）就从 `raw` 里摸一下同名字段，
+    /// 摸不到就是 `None`——多会话并发改造之后，这是把一条审批请求路由回正确
+    /// 对话的唯一依据，宁可摸不到也不要编一个。
+    pub fn thread_id(&self) -> Option<&str> {
+        match &self.payload {
+            ServerRequestPayload::CommandApproval(p) => Some(&p.thread_id),
+            ServerRequestPayload::FileChangeApproval(p) => Some(&p.thread_id),
+            ServerRequestPayload::PermissionsApproval(p) => Some(&p.thread_id),
+            ServerRequestPayload::Other => self.raw.get("threadId").and_then(Value::as_str),
+        }
+    }
+
     pub fn project(id: RequestId, method: String, raw: Value) -> Self {
         let payload = match method.as_str() {
             "item/commandExecution/requestApproval" => {
@@ -837,12 +1152,234 @@ mod ignored_notification_tests {
             "remoteControl/status/changed",
             "account/login/completed",
             "account/updated",
+            "thread/archived",
         ] {
             let note = Notification::project(method.to_owned(), serde_json::json!({}));
             assert!(
                 matches!(&note.payload, NotificationPayload::Ignored { method: m } if m == method),
                 "{method} 没有落进 Ignored：{:?}",
                 note.payload
+            );
+        }
+    }
+
+    /// 模型元数据缺失的降级提示——共飞的模型名结构性地不会出现在 codex 自带的
+    /// OpenAI 型号表里，这条会在**每一轮**都触发，对用户不可操作，筛掉。
+    #[test]
+    fn the_fallback_model_metadata_warning_is_filtered_out() {
+        let note = Notification::project(
+            "warning".to_owned(),
+            serde_json::json!({
+                "threadId": "t-1",
+                "message": "Model metadata for `gpt-5.6` not found. Defaulting to fallback metadata; this can degrade performance and cause issues.",
+            }),
+        );
+        assert!(
+            matches!(&note.payload, NotificationPayload::Ignored { method } if method == "warning"),
+            "没被筛掉：{:?}",
+            note.payload
+        );
+    }
+
+    /// 反过来验一次：别的 warning 内容必须照样显示——筛选是按内容，
+    /// 不是把整个 "warning" 方法拉黑了。没有这条，上面那个测试可能因为
+    /// 校验逻辑本身写错（比如误判了整个方法）而永远绿。
+    #[test]
+    fn other_warnings_still_surface() {
+        let note = Notification::project(
+            "warning".to_owned(),
+            serde_json::json!({
+                "threadId": "t-1",
+                "message": "Something else codex wants the user to know.",
+            }),
+        );
+        assert!(
+            matches!(
+                &note.payload,
+                NotificationPayload::Warning { message, .. }
+                    if message == "Something else codex wants the user to know."
+            ),
+            "被误筛了：{:?}",
+            note.payload
+        );
+    }
+
+    #[test]
+    fn user_facing_server_notifications_are_projected() {
+        let cases = [
+            (
+                "turn/diff/updated",
+                serde_json::json!({
+                    "threadId": "t-1",
+                    "turnId": "turn-1",
+                    "diff": "diff --git a/a.txt b/a.txt",
+                }),
+            ),
+            (
+                "item/fileChange/patchUpdated",
+                serde_json::json!({
+                    "threadId": "t-1",
+                    "turnId": "turn-1",
+                    "itemId": "item-1",
+                    "changes": [],
+                }),
+            ),
+            (
+                "item/plan/delta",
+                serde_json::json!({
+                    "threadId": "t-1",
+                    "turnId": "turn-1",
+                    "itemId": "item-1",
+                    "delta": "Inspect the repository",
+                }),
+            ),
+            (
+                "turn/plan/updated",
+                serde_json::json!({
+                    "threadId": "t-1",
+                    "turnId": "turn-1",
+                    "plan": [],
+                }),
+            ),
+            (
+                "item/commandExecution/terminalInteraction",
+                serde_json::json!({
+                    "threadId": "t-1",
+                    "turnId": "turn-1",
+                    "itemId": "item-1",
+                    "processId": "process-1",
+                    "stdin": "y\n",
+                }),
+            ),
+            (
+                "turn/moderationMetadata",
+                serde_json::json!({
+                    "threadId": "t-1",
+                    "turnId": "turn-1",
+                    "metadata": {"reviewed": true},
+                }),
+            ),
+        ];
+
+        for (method, raw) in cases {
+            assert!(
+                !matches!(
+                    Notification::project(method.to_owned(), raw).payload,
+                    NotificationPayload::Other
+                ),
+                "{method} should have a user-facing projection",
+            );
+        }
+    }
+
+    #[test]
+    fn codex_warnings_are_normalized_to_warning_events() {
+        let cases = [
+            (
+                "configWarning",
+                serde_json::json!({"summary": "Invalid config", "path": "config.toml"}),
+                "Invalid config (config.toml)",
+            ),
+            (
+                "deprecationNotice",
+                serde_json::json!({"summary": "Old option", "details": "Use the new option"}),
+                "Old option: Use the new option",
+            ),
+            (
+                "guardianWarning",
+                serde_json::json!({"threadId": "t-1", "message": "Review this action"}),
+                "Review this action",
+            ),
+        ];
+
+        for (method, raw, expected) in cases {
+            assert!(matches!(
+                Notification::project(method.to_owned(), raw).payload,
+                NotificationPayload::Warning { message, .. } if message == expected
+            ));
+        }
+    }
+
+    #[test]
+    fn unsupported_server_notifications_are_explicitly_ignored() {
+        let methods = [
+            "thread/realtime/started",
+            "thread/realtime/itemAdded",
+            "thread/realtime/item/started",
+            "thread/realtime/item/transcript/delta",
+            "thread/realtime/item/completed",
+            "thread/realtime/transcript/delta",
+            "thread/realtime/transcript/done",
+            "thread/realtime/outputAudio/delta",
+            "thread/realtime/sdp",
+            "thread/realtime/error",
+            "thread/realtime/closed",
+            "fs/changed",
+            "process/exited",
+            "process/outputDelta",
+            "command/exec/outputDelta",
+            "item/mcpToolCall/progress",
+            "mcpServer/startupStatus/updated",
+            "mcpServer/event/stream/notification",
+            "hook/started",
+            "hook/completed",
+            "skills/changed",
+            "app/list/updated",
+            "externalAgentConfig/import/progress",
+            "externalAgentConfig/import/completed",
+            "model/rerouted",
+            "model/safetyBuffering/updated",
+            "model/verification",
+            "modelProvider/authRecoveryCompleted",
+            "modelProvider/authRecoveryStarted",
+            "project/changed",
+            "thread/environment/connected",
+            "thread/environment/disconnected",
+            "thread/goal/cleared",
+            "thread/goal/updated",
+        ];
+
+        for method in methods {
+            let note = Notification::project(method.to_owned(), serde_json::json!({}));
+            assert!(
+                matches!(note.payload, NotificationPayload::Ignored { method: actual } if actual == method),
+                "{method} should be explicitly ignored",
+            );
+        }
+    }
+
+    #[test]
+    fn known_notifications_are_not_reported_as_protocol_drift() {
+        let methods = [
+            "thread/closed",
+            "thread/deleted",
+            "thread/unarchived",
+            "thread/compacted",
+            "thread/reverted",
+            "thread/settings/updated",
+            "thread/queue/changed",
+            "thread/name/updated",
+            "thread/project/updated",
+            "fuzzyFileSearch/sessionUpdated",
+            "fuzzyFileSearch/sessionCompleted",
+            "autoApprovalReview/strictReviewRequired",
+            "item/autoApprovalReview/started",
+            "item/autoApprovalReview/completed",
+            "mcpServer/oauthLogin/completed",
+            "windowsSandbox/setupCompleted",
+        ];
+
+        for method in methods {
+            let note = Notification::project(
+                method.to_owned(),
+                serde_json::json!({ "threadId": "thread-1" }),
+            );
+            assert!(
+                matches!(
+                    note.payload,
+                    NotificationPayload::Known { method: actual, .. } if actual == method
+                ),
+                "{method} should have a known notification projection",
             );
         }
     }

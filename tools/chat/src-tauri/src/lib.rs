@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, Manager};
 
-use agent::dto::{StartParams, StartedThread, UiDecision};
+use agent::dto::{SendParams, StartParams, StartedThread, UiDecision};
 use agent::{AgentBridge, BridgeError, EventSink};
 
 /// 所有 agent 事件都从这一个通道出去。前端 `listen("agent://event")` 收。
@@ -37,6 +37,7 @@ impl EventSink for TauriSink {
     }
 }
 
+/// 起一条新 thread（不是"起会话"了——引擎懒起、之后被所有对话共用）。
 #[tauri::command]
 async fn agent_start(
     bridge: tauri::State<'_, Arc<AgentBridge>>,
@@ -45,17 +46,23 @@ async fn agent_start(
     bridge.start(params).await
 }
 
+/// 发一轮提问。**必须点名 `threadId`**——多会话并发之后不再有"当前那一个"的概念，
+/// `model`/`reasoning` 也每轮都传，见 `SendParams` 的文档。
 #[tauri::command]
 async fn agent_send(
     bridge: tauri::State<'_, Arc<AgentBridge>>,
-    text: String,
+    params: SendParams,
 ) -> Result<(), BridgeError> {
-    bridge.send(text).await
+    bridge.send(params).await
 }
 
+/// 打断某条 thread 上正在跑的那一轮，不影响别的对话。
 #[tauri::command]
-async fn agent_interrupt(bridge: tauri::State<'_, Arc<AgentBridge>>) -> Result<(), BridgeError> {
-    bridge.interrupt().await
+async fn agent_interrupt(
+    bridge: tauri::State<'_, Arc<AgentBridge>>,
+    thread_id: String,
+) -> Result<(), BridgeError> {
+    bridge.interrupt(&thread_id).await
 }
 
 #[tauri::command]
@@ -67,6 +74,26 @@ async fn agent_answer(
     bridge.answer(request_id, decision).await
 }
 
+/// 归档一条 thread——**只影响它自己**，引擎和别的对话都还在跑。
+/// 和 `agent_stop`（杀整个引擎）是两回事，别用混。
+#[tauri::command]
+async fn agent_end_thread(
+    bridge: tauri::State<'_, Arc<AgentBridge>>,
+    thread_id: String,
+) -> Result<(), BridgeError> {
+    bridge.end_thread(&thread_id).await
+}
+
+#[tauri::command]
+async fn agent_compact(
+    bridge: tauri::State<'_, Arc<AgentBridge>>,
+    thread_id: String,
+) -> Result<(), BridgeError> {
+    bridge.compact(&thread_id).await
+}
+
+/// 停掉**整个引擎**：杀进程、抹凭据，**影响所有还挂着的对话**。
+/// 是给"整个应用要退出/登出 agent"这类场景用的，不是"结束当前这个对话"该调的东西。
 #[tauri::command]
 async fn agent_stop(bridge: tauri::State<'_, Arc<AgentBridge>>) -> Result<(), BridgeError> {
     bridge.stop().await
@@ -192,6 +219,22 @@ pub fn run() {
             let sink = Arc::new(TauriSink(app.handle().clone()));
             let paths = resolve_agent_paths(app.handle());
             app.manage(Arc::new(AgentBridge::new(sink, paths)));
+
+            // Windows 上一个有记录的 WebView2 坑：点标题栏最大化按钮（或双击标题栏）
+            // 触发的 resize，WebView2 的内部 HWND 有时不会跟着重绘，要等下一次
+            // 交互（拖动/移动窗口）才会醒过来——表现就是"窗口大了，但内容区还是
+            // 老尺寸"。用同一个尺寸再 `set_size` 一次是社区里报出来能顶住的办法：
+            // 不改变任何正常场景的行为（尺寸没变），只是给 WebView2 一次强制
+            // 重新同步的机会。
+            if let Some(window) = app.get_webview_window("main") {
+                let window_for_resize = window.clone();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::Resized(size) = event {
+                        let _ = window_for_resize.set_size(*size);
+                    }
+                });
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -199,6 +242,8 @@ pub fn run() {
             agent_send,
             agent_interrupt,
             agent_answer,
+            agent_end_thread,
+            agent_compact,
             agent_stop,
             agent_set_session_token,
             agent_is_running,

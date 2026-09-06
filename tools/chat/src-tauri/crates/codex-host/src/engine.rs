@@ -75,15 +75,30 @@ impl EngineConfig {
     /// 全部按调用传，**不碰用户的 `~/.codex/config.toml`** —— 那是别人的配置，
     /// 我们既不该读也不该改。
     fn config_overrides(&self) -> Vec<String> {
-        [
+        let mut overrides = vec![
             "model_provider=\"custom\"".to_owned(),
             "model_providers.custom.name=\"custom\"".to_owned(),
             "model_providers.custom.wire_api=\"responses\"".to_owned(),
             "model_providers.custom.requires_openai_auth=true".to_owned(),
             format!("model_providers.custom.base_url=\"{}\"", self.base_url),
             format!("model=\"{}\"", self.model),
-        ]
-        .into()
+        ];
+
+        #[cfg(windows)]
+        {
+            // 旧版 bundled Codex 支持 set.*，但还没有新版的 use_profile 配置。
+            // 它默认会加载 PowerShell profile，所以把 profile 根目录改到 Chat 私有目录，
+            // 并解除仅对这批子进程的脚本执行限制。
+            let user_profile = self.home.as_path().to_string_lossy().replace('\\', "\\\\");
+            overrides.push(format!(
+                "shell_environment_policy.set.USERPROFILE=\"{user_profile}\""
+            ));
+            overrides.push(
+                "shell_environment_policy.set.PSExecutionPolicyPreference=\"Bypass\"".to_owned(),
+            );
+        }
+
+        overrides
     }
 }
 

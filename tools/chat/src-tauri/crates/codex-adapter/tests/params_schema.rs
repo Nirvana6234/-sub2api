@@ -118,7 +118,27 @@ fn all_requests() -> Vec<(ClientRequest, &'static str)> {
             "v2/ThreadArchiveParams.json",
         ),
         (
-            ClientRequest::TurnStart { thread_id: "t-1".into(), text: "hi".into() },
+            ClientRequest::ThreadCompactStart { thread_id: "t-1".into() },
+            "v2/ThreadCompactStartParams.json",
+        ),
+        (
+            ClientRequest::TurnStart {
+                thread_id: "t-1".into(),
+                text: "hi".into(),
+                model: None,
+                effort: None,
+            },
+            "v2/TurnStartParams.json",
+        ),
+        // model/effort 是多会话并发改造新加的——两条路都要过闸门，
+        // 免得"有值时"的编码单独漂移了没人发现。
+        (
+            ClientRequest::TurnStart {
+                thread_id: "t-1".into(),
+                text: "hi".into(),
+                model: Some("gpt-5.5".into()),
+                effort: Some("high".into()),
+            },
             "v2/TurnStartParams.json",
         ),
         (
@@ -161,6 +181,7 @@ fn the_gate_covers_every_variant() {
         "thread/resume",
         "thread/list",
         "thread/archive",
+        "thread/compact/start",
         "turn/start",
         "turn/interrupt",
     ];

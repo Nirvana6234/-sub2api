@@ -11,6 +11,14 @@
 //! 这些细节一旦漏到前端，就会以「某个按钮偶尔不生效」的形式回来找我们。所以
 //! 前端只发**语义**（同意/拒绝/拒绝并中断），线上说哪个词由 Rust 侧照着那条请求决定。
 //!
+//! # 多会话并发改造：几乎每个事件都多了一个 `thread_id`
+//!
+//! 一个引擎进程现在能同时服务好几个对话（见 `AgentBridge` 模块文档），一条事件流
+//! 里会交替出现属于不同对话的通知。**没有 `thread_id` 的事件前端没法归类** ——
+//! 这不是可选的装饰字段，是这次改造能成立的前提。唯一的例外是 `EngineStopped`：
+//! 它天生就是全局的（进程本身没了），前端要把它广播给**所有**还挂着的对话，
+//! 不能只归到某一个。
+//!
 //! # 这是线格式，不是调试转储
 //!
 //! 每个变体都带显式 tag。`passthrough` 与 `decodeError` 是**诊断**，必须能到达界面，
@@ -26,14 +34,19 @@ pub enum UiEvent {
     ThreadStarted { thread_id: String },
 
     #[serde(rename_all = "camelCase")]
-    TurnStarted { turn_id: Option<String> },
+    TurnStarted {
+        thread_id: String,
+        turn_id: Option<String>,
+    },
 
     /// assistant 正文增量。
     ///
-    /// 带 `turn_id` 是刻意的：会话的 `current_turn()` 是**「此刻」**的状态，
+    /// 带 `turn_id` 是刻意的：会话的「此刻在跑哪个 turn」是**「此刻」**的状态，
     /// 会跑在事件消费者前面，**不能用来判断某个事件属于哪一轮**。归属信息只能在事件里。
+    /// `thread_id` 同理，但归的是"哪个对话"这一层——多会话并发之后这个更要紧。
     #[serde(rename_all = "camelCase")]
     AgentText {
+        thread_id: String,
         turn_id: Option<String>,
         item_id: String,
         delta: String,
@@ -41,6 +54,7 @@ pub enum UiEvent {
 
     #[serde(rename_all = "camelCase")]
     Reasoning {
+        thread_id: String,
         turn_id: Option<String>,
         delta: String,
         /// `text` / `summaryText` / `summaryPart`
@@ -49,14 +63,71 @@ pub enum UiEvent {
 
     #[serde(rename_all = "camelCase")]
     CommandOutput {
+        thread_id: String,
         turn_id: Option<String>,
         item_id: Option<String>,
         chunk: String,
     },
 
+    #[serde(rename_all = "camelCase")]
+    TurnDiffUpdated {
+        thread_id: String,
+        turn_id: String,
+        diff: String,
+    },
+
+    #[serde(rename_all = "camelCase")]
+    FileChangePatchUpdated {
+        thread_id: String,
+        turn_id: String,
+        item_id: String,
+        changes: serde_json::Value,
+    },
+
+    #[serde(rename_all = "camelCase")]
+    FileChangeOutputDelta {
+        thread_id: String,
+        turn_id: String,
+        item_id: String,
+        delta: String,
+    },
+
+    #[serde(rename_all = "camelCase")]
+    PlanDelta {
+        thread_id: String,
+        turn_id: String,
+        item_id: String,
+        delta: String,
+    },
+
+    #[serde(rename_all = "camelCase")]
+    TurnPlanUpdated {
+        thread_id: String,
+        turn_id: String,
+        plan: serde_json::Value,
+        explanation: Option<String>,
+    },
+
+    #[serde(rename_all = "camelCase")]
+    TerminalInteraction {
+        thread_id: String,
+        turn_id: String,
+        item_id: String,
+        process_id: String,
+        stdin: String,
+    },
+
+    #[serde(rename_all = "camelCase")]
+    TurnModerationMetadata {
+        thread_id: String,
+        turn_id: String,
+        metadata: serde_json::Value,
+    },
+
     /// 一个 item 开始/结束。审批要显示「在批什么」全靠它。
     #[serde(rename_all = "camelCase")]
     Item {
+        thread_id: String,
         item_id: Option<String>,
         item_type: String,
         /// 结束时才有；拒绝之后是 `"declined"`。
@@ -68,35 +139,65 @@ pub enum UiEvent {
     /// 会话正卡在审批上（或不卡了）。两端靠它显示同一个状态。
     #[serde(rename_all = "camelCase")]
     Status {
+        thread_id: String,
         waiting_on_approval: bool,
         flags: Vec<String>,
     },
 
-    /// 要人做决定了。
+    /// 要人做决定了。`thread_id` 已经在 `ApprovalRequest` 里带着。
     #[serde(rename_all = "camelCase")]
     ApprovalRequested(ApprovalRequest),
 
     /// 某条审批已经被答复了（可能是另一端答的）—— 界面上该把它从队列里去掉。
     #[serde(rename_all = "camelCase")]
-    ApprovalResolved { request_id: String },
+    ApprovalResolved { thread_id: String, request_id: String },
 
     /// 出错了，但 codex 会自己重试。**这不是终态**，界面该显示「正在重试」而不是「失败」。
     #[serde(rename_all = "camelCase")]
     Retrying {
+        /// 不是所有错误都能确定属于哪条 thread（比如握手阶段的错误）。
+        thread_id: Option<String>,
         message: String,
         http_status: Option<u16>,
         /// 401/403 时该引导重新登录，而不是让用户干等。
         auth_failure: bool,
     },
 
+    /// 同一条 thread 连续重试太多次，**我们自己**放弃了、主动打断了这一轮。
+    ///
+    /// codex 的 `Retrying` 是它自己的重连节奏，理论上可以无限循环下去——真实撞见过
+    /// 一次网关并发限流连续推了 4 条以上还没完（用户账号的并发配额被设成了 1）。
+    /// 界面只显示「正在重试」的话，用户没有任何办法知道"到底还要等多久/是不是
+    /// 该放弃了"。这是**终态**：这一轮已经被 `turn/interrupt` 主动打断，不会再有
+    /// 这条 thread 的后续事件（除了 codex 对打断本身的确认）。
+    #[serde(rename_all = "camelCase")]
+    GaveUpRetrying {
+        thread_id: String,
+        attempts: usize,
+        last_message: String,
+    },
+
     /// codex 主动说给用户听的一句话（比如模型元数据缺失时的降级提示）。
     /// **必须显示**，但和 `Passthrough`/`DecodeError` 不同——这条是认识、
     /// 且认为用户该看到的，不该套诊断那种「协议可能漂了」的措辞。
     #[serde(rename_all = "camelCase")]
-    Warning { message: String },
+    Warning {
+        thread_id: Option<String>,
+        message: String,
+    },
+
+    /// 协议已知、但 payload 仍可能变化的通知。前端按 `method` 展示，
+    /// 同时保留原始参数，避免把上游的新字段静默丢掉。
+    #[serde(rename_all = "camelCase")]
+    KnownNotification {
+        method: String,
+        thread_id: Option<String>,
+        raw: serde_json::Value,
+    },
 
     #[serde(rename_all = "camelCase")]
     Failed {
+        thread_id: Option<String>,
         message: String,
         http_status: Option<u16>,
         auth_failure: bool,
@@ -104,6 +205,7 @@ pub enum UiEvent {
 
     #[serde(rename_all = "camelCase")]
     TurnCompleted {
+        thread_id: String,
         turn_id: Option<String>,
         /// 原样透出：`completed` / `interrupted` / 以后上游可能新增的。
         status: String,
@@ -112,7 +214,13 @@ pub enum UiEvent {
         interrupted: bool,
     },
 
-    /// 引擎没了 —— 事件流断了。
+    /// 一条 thread 被主动归档了（`agent_end_thread` 的结果）——**只影响这一条**，
+    /// 引擎和别的对话都还在跑。和 `EngineStopped`（全局、进程没了）是两回事。
+    #[serde(rename_all = "camelCase")]
+    ThreadEnded { thread_id: String },
+
+    /// 引擎没了 —— 事件流断了。**这是全局事件**：所有挂着的对话都要收到，
+    /// 前端不能只把它归给"当前显示的那个"。
     #[serde(rename_all = "camelCase")]
     EngineStopped { reason: String },
 
@@ -137,6 +245,10 @@ pub enum UiEvent {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApprovalRequest {
+    /// 这条审批属于哪个对话——多会话并发之后，界面必须靠它才能把审批
+    /// 显示在正确的对话下面，而不是随手挂在"当前显示的那个"上。
+    /// 尽力而为（见 `ServerRequest::thread_id`），极少数没挖出来的落 `None`。
+    pub thread_id: Option<String>,
     /// 答复时要原样传回来。
     pub request_id: String,
     /// 上游方法名，仅供显示与排错；**前端不要按它拼响应**。
@@ -183,7 +295,7 @@ pub enum UiDecision {
     Cancel,
 }
 
-/// 起会话要的参数。
+/// 起一条新 thread 要的参数。
 ///
 /// **这里刻意没有 `codexBinary` 和 `appDir`。**
 ///
@@ -193,6 +305,13 @@ pub enum UiDecision {
 ///
 /// `deny_unknown_fields` 是这条约定的**执法者**：谁要是又从前端把这两个字段塞回来，
 /// 会当场反序列化失败，而不是被静默忽略然后让人以为它生效了。
+///
+/// # 多会话并发改造之后，这不再是"起会话"，是"起一条 thread"
+///
+/// 引擎（进程 + 转发层 + 握手）第一次调用时才懒起，之后**复用同一个**——
+/// 这个结构体每次调用都在描述"要在这个共享引擎上再开一条 thread"，`model`
+/// 只在引擎第一次起来时当命令行的默认值用（每一轮真正用的模型走 [`SendParams`]，
+/// 不依赖这里）。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct StartParams {
@@ -200,14 +319,14 @@ pub struct StartParams {
     ///
     /// codex 永远看不到它：它拿到的是本地转发层那个回环地址。见 `codex_host::LocalRelay`。
     pub relay_base_url: String,
-    /// 这条会话用哪个分组。
+    /// 这条 thread 用哪个分组。
     ///
-    /// 分组在这里是**每条会话一个**，不再绑在某把 key 上 —— 转发层按 `thread-id`
-    /// 把它翻成后端要的 `X-Paw-Group-Id`。想换分组就开一条新会话，
+    /// 分组在这里是**每条 thread 一个**，不再绑在某把 key 上 —— 转发层按 `thread-id`
+    /// 把它翻成后端要的 `X-Paw-Group-Id`。想换分组就开一条新 thread，
     /// 不需要（也不允许）去改任何一把 key。
     pub group_id: i64,
     /// 当前账号会话（JWT）。**前端是它唯一的持有者**；刷新之后用
-    /// `agent_set_session_token` 推下来，不必重启 agent。
+    /// `agent_set_session_token` 推下来，不必重启引擎。
     pub session_token: String,
     /// **登录那次浏览器请求的 `User-Agent`**（`navigator.userAgent`）。
     ///
@@ -218,6 +337,8 @@ pub struct StartParams {
     /// 别的网络环境，直接 401 `SESSION_BINDING_MISMATCH` 并撤销整个 token
     /// family。这里必须原样传浏览器自己的 UA，转发层才能在转发时冒充回去。
     pub client_user_agent: String,
+    /// 引擎第一次起来时的命令行默认模型。**不是这条 thread 真正会用的模型** ——
+    /// 那个每轮都从 [`SendParams::model`] 传，覆盖这里的默认值。
     pub model: String,
     /// agent 的工作目录。
     pub cwd: String,
@@ -231,6 +352,22 @@ pub struct StartParams {
 #[serde(rename_all = "camelCase")]
 pub struct StartedThread {
     pub thread_id: String,
-    /// 起了几次才成功。>1 说明前面失败过，界面可以提一句。
+    /// 引擎起了几次才成功。>1 说明前面失败过，界面可以提一句。
+    /// 复用已有引擎时恒为 1。
     pub attempts: u32,
+}
+
+/// 发一轮提问要的参数。
+///
+/// `model`/`reasoning` **必须每轮都传**——多会话并发之后，模型不再是引擎起来时
+/// 定死的常量，一个进程要同时服务好几个用了不同模型的对话。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SendParams {
+    pub thread_id: String,
+    pub text: String,
+    pub model: String,
+    /// 推理强度。**空字符串表示"标准/不覆盖"**，翻成协议层的 `None`——
+    /// 上游的 `effort` 字段要求非空字符串，传空串会被拒。
+    pub reasoning: String,
 }

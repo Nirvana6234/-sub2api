@@ -13,7 +13,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use chat_lib::agent::dto::{StartParams, UiDecision, UiEvent};
+use chat_lib::agent::dto::{SendParams, StartParams, UiDecision, UiEvent};
 use chat_lib::agent::{AgentBridge, BridgeError, EventSink};
 
 /// 把事件收进一个 Vec，测试再回头看。
@@ -118,14 +118,18 @@ async fn a_full_turn_reaches_the_frontend_as_ui_events() {
     let collector = Arc::new(Collector::default());
     let bridge = AgentBridge::new(Arc::clone(&collector) as Arc<dyn EventSink>, e2e_paths());
 
-    let started = bridge
-        .start(params("turn", "read-only", "never"))
-        .await
-        .expect("起会话");
+    let p = params("turn", "read-only", "never");
+    let model = p.model.clone();
+    let started = bridge.start(p).await.expect("起会话");
     assert!(!started.thread_id.is_empty());
 
     bridge
-        .send("Reply with exactly one word: PONG".to_owned())
+        .send(SendParams {
+            thread_id: started.thread_id.clone(),
+            text: "Reply with exactly one word: PONG".to_owned(),
+            model,
+            reasoning: String::new(),
+        })
         .await
         .expect("发一轮");
 
@@ -178,15 +182,19 @@ async fn an_approval_round_trip_carries_the_command_and_takes_effect() {
     let bridge = AgentBridge::new(Arc::clone(&collector) as Arc<dyn EventSink>, e2e_paths());
 
     let p = params("approval", "read-only", "on-request");
+    let model = p.model.clone();
     let marker = std::path::Path::new(&p.cwd).join("SHOULD_NOT_EXIST.txt");
     let _ = std::fs::remove_file(&marker);
 
-    bridge.start(p).await.expect("起会话");
+    let started = bridge.start(p).await.expect("起会话");
     bridge
-        .send(
-            "Run this exact shell command and nothing else: cmd /c echo pwned > SHOULD_NOT_EXIST.txt"
+        .send(SendParams {
+            thread_id: started.thread_id.clone(),
+            text: "Run this exact shell command and nothing else: cmd /c echo pwned > SHOULD_NOT_EXIST.txt"
                 .to_owned(),
-        )
+            model,
+            reasoning: String::new(),
+        })
         .await
         .expect("发一轮");
 
@@ -295,10 +303,18 @@ async fn operating_without_a_session_is_an_error_not_a_panic() {
 
     assert!(!bridge.is_running().await);
     assert!(matches!(
-        bridge.send("hi".to_owned()).await,
+        bridge
+            .send(SendParams {
+                thread_id: "t-1".to_owned(),
+                text: "hi".to_owned(),
+                model: "gpt-5.5".to_owned(),
+                reasoning: String::new(),
+            })
+            .await,
         Err(BridgeError::NotRunning)
     ));
-    assert!(matches!(bridge.interrupt().await, Err(BridgeError::NotRunning)));
+    assert!(matches!(bridge.interrupt("t-1").await, Err(BridgeError::NotRunning)));
+    assert!(matches!(bridge.end_thread("t-1").await, Err(BridgeError::NotRunning)));
     assert!(matches!(bridge.stop().await, Err(BridgeError::NotRunning)));
     assert!(matches!(
         bridge.answer("0".to_owned(), UiDecision::Decline).await,
@@ -321,6 +337,7 @@ fn bridge_errors_serialize_for_the_frontend() {
 #[test]
 fn ui_events_are_tagged_so_the_frontend_can_switch_on_them() {
     let text = serde_json::to_value(UiEvent::AgentText {
+        thread_id: "thread-1".into(),
         turn_id: Some("t1".into()),
         item_id: "i1".into(),
         delta: "hi".into(),
@@ -328,6 +345,7 @@ fn ui_events_are_tagged_so_the_frontend_can_switch_on_them() {
     .expect("序列化");
     assert_eq!(text.get("type").and_then(|v| v.as_str()), Some("agentText"));
     assert_eq!(text.get("turnId").and_then(|v| v.as_str()), Some("t1"));
+    assert_eq!(text.get("threadId").and_then(|v| v.as_str()), Some("thread-1"));
 
     // 诊断类必须有自己的 tag —— 否则 A6 会把一条上游新通知当成 agent 输出画出来。
     let pass = serde_json::to_value(UiEvent::Passthrough {
@@ -360,13 +378,14 @@ async fn credentials_stay_inside_our_app_dir_and_are_wiped_on_stop() {
     let bridge = AgentBridge::new(Arc::clone(&collector) as Arc<dyn EventSink>, e2e_paths());
 
     let p = params("creds", "read-only", "never");
+    let model = p.model.clone();
     // 目录来自**桥**而不是参数 —— 前端已经没有说话的份了，这条测试也得从同一处取。
     let app_dir = e2e_paths().app_dir;
     let auth = app_dir.join("codex-home").join("auth.json");
     // 上一次跑剩下的先清掉，免得「本来就没有」冒充成「被抹掉了」。
     let _ = std::fs::remove_file(&auth);
 
-    bridge.start(p).await.expect("起会话");
+    let started = bridge.start(p).await.expect("起会话");
 
     assert!(
         auth.starts_with(&app_dir),
@@ -381,7 +400,12 @@ async fn credentials_stay_inside_our_app_dir_and_are_wiped_on_stop() {
 
     // 会话得能真的用。
     bridge
-        .send("Reply with exactly one word: PONG".to_owned())
+        .send(SendParams {
+            thread_id: started.thread_id.clone(),
+            text: "Reply with exactly one word: PONG".to_owned(),
+            model,
+            reasoning: String::new(),
+        })
         .await
         .expect("发一轮");
     assert!(

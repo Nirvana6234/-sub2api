@@ -151,7 +151,7 @@ async fn waiting_and_resolved_are_broadcast_so_both_ends_agree() {
     let resolved = seq
         .iter()
         .find_map(|e| match e {
-            SessionEvent::ApprovalResolved { request_id } => Some(request_id.clone()),
+            SessionEvent::ApprovalResolved { request_id, .. } => Some(request_id.clone()),
             _ => None,
         })
         .expect("没有 serverRequest/resolved —— 一处响应后另一处的队列不会消失");

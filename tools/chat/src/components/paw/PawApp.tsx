@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState, type CSSProperties, type PointerEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent,
+} from "react";
 
 import { useAgentSession } from "../../client/agent/useAgentSession";
 import { getPawServiceBaseUrl } from "../../client/paw/config";
@@ -17,6 +24,7 @@ import { PawProfileModal } from "./PawProfileModal";
 import { usePawClient } from "./usePawClient";
 
 const SIDEBAR_WIDTH_KEY = "paw-sidebar-width:v1";
+const SIDEBAR_VIEWPORT_WIDTH_KEY = "paw-sidebar-viewport-width:v1";
 const THEME_KEY = "paw-theme:v1";
 const MIN_SIDEBAR_WIDTH = 260;
 const DEFAULT_SIDEBAR_WIDTH = 316;
@@ -27,9 +35,14 @@ function clampSidebarWidth(width: number): number {
   return Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, width));
 }
 
+function getResponsiveSidebarWidth(viewportWidth: number): number {
+  return clampSidebarWidth(Math.round(viewportWidth * 0.24));
+}
+
 export function PawApp() {
   const paw = usePawClient();
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
+  const sidebarViewportWidthRef = useRef<number | null>(null);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [theme, setTheme] = useState<PawTheme>("auto");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -50,13 +63,19 @@ export function PawApp() {
   // 多了工具调用产生的正文。desktop-only（`agent.desktop` 自己在 effect 里判断）。
   const agent = useAgentSession({
     activeConversationId: paw.activeConversationId,
+    activeConversation: paw.activeConversation,
     ensureActiveConversationId: paw.ensureActiveConversationId,
     groupId: paw.selectedGroupId,
     modelId: paw.selectedModelId,
+    reasoning: paw.selectedReasoning,
     relayBaseUrl: getPawServiceBaseUrl(),
     sessionToken: paw.session?.accessToken ?? null,
+    setAgentBinding: paw.setAgentBinding,
+    lockAgentCwd: paw.lockAgentCwd,
+    setAgentApprovalMode: paw.setAgentApprovalMode,
     beginTurn: paw.beginAgentTurn,
     appendDelta: paw.appendAgentDelta,
+    updateAgentPanel: paw.updateAgentPanel,
     finishTurn: paw.finishAgentTurn,
     appendNotice: paw.appendAgentNotice,
   });
@@ -64,13 +83,53 @@ export function PawApp() {
   useEffect(() => {
     try {
       const stored = window.localStorage.getItem(SIDEBAR_WIDTH_KEY);
+      const storedViewport = Number(
+        window.localStorage.getItem(SIDEBAR_VIEWPORT_WIDTH_KEY),
+      );
       const parsed = stored ? Number(stored) : DEFAULT_SIDEBAR_WIDTH;
-      if (Number.isFinite(parsed)) {
-        setSidebarWidth(clampSidebarWidth(parsed));
+      const viewportWidth = window.innerWidth;
+      sidebarViewportWidthRef.current = viewportWidth;
+
+      if (Number.isFinite(parsed) && Number.isFinite(storedViewport) && storedViewport > 0) {
+        setSidebarWidth(
+          clampSidebarWidth((parsed * viewportWidth) / storedViewport),
+        );
+      } else if (stored) {
+        // Older versions did not record the viewport size, so use the
+        // responsive default instead of keeping a stale fixed width.
+        setSidebarWidth(getResponsiveSidebarWidth(viewportWidth));
+      } else {
+        setSidebarWidth(getResponsiveSidebarWidth(viewportWidth));
       }
     } catch {
-      setSidebarWidth(DEFAULT_SIDEBAR_WIDTH);
+      sidebarViewportWidthRef.current = window.innerWidth;
+      setSidebarWidth(getResponsiveSidebarWidth(window.innerWidth));
     }
+  }, []);
+
+  useEffect(() => {
+    const handleViewportResize = () => {
+      const viewportWidth = window.innerWidth;
+      const previousViewportWidth = sidebarViewportWidthRef.current;
+      sidebarViewportWidthRef.current = viewportWidth;
+
+      if (
+        previousViewportWidth === null ||
+        previousViewportWidth <= 980 ||
+        viewportWidth <= 980
+      ) {
+        return;
+      }
+
+      setSidebarWidth((currentWidth) =>
+        clampSidebarWidth(
+          (currentWidth * viewportWidth) / previousViewportWidth,
+        ),
+      );
+    };
+
+    window.addEventListener("resize", handleViewportResize);
+    return () => window.removeEventListener("resize", handleViewportResize);
   }, []);
 
   useEffect(() => {
@@ -165,6 +224,10 @@ export function PawApp() {
   useEffect(() => {
     try {
       window.localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth));
+      window.localStorage.setItem(
+        SIDEBAR_VIEWPORT_WIDTH_KEY,
+        String(window.innerWidth),
+      );
     } catch {
       // localStorage is optional in embedded shells.
     }
@@ -294,11 +357,9 @@ export function PawApp() {
             "删除对话",
             "确定要删除当前对话吗？删除后无法恢复。",
             () => {
-              // 删掉的正是挂着 agent 的那个对话时，先结束会话——否则线程还在跑，
-              // 但已经没有消息列表能接住它产生的正文了。
-              if (id === paw.activeConversationId && agent.armed) {
-                void agent.endSession();
-              }
+              // 这个对话名下如果还挂着活 thread，先归档掉——否则它变成孤儿，
+              // 还占着引擎里的一个 thread，但已经没有任何界面引用它了。
+              if (id) void agent.discardConversation(id);
               paw.deleteConversation(id);
               paw.setNotice("对话已删除。");
             },
@@ -339,13 +400,17 @@ export function PawApp() {
         agentDesktop={agent.desktop}
         agentArmed={agent.armed}
         agentCwd={agent.cwd}
+        agentCwdLocked={agent.cwdLocked}
+        agentRunningTool={agent.runningTool}
+        agentRetrying={agent.retrying}
+        agentCompacting={agent.compacting}
+        agentApprovalMode={agent.approvalMode}
         agentBusy={agent.busy}
         agentApprovals={agent.approvals}
         agentWaitingOnApproval={agent.waitingOnApproval}
         agentError={agent.error}
         onPickAgentDirectory={() => void agent.pickDirectory()}
-        onChangeAgentDirectory={() => void agent.changeDirectory()}
-        onEndAgentSession={() => void agent.endSession()}
+        onSetAgentApprovalMode={(mode) => void agent.setApprovalMode(mode)}
         onAnswerAgentApproval={(id, approve) => void agent.answer(id, approve)}
         config={paw.config}
         configBusy={paw.configBusy}
@@ -391,6 +456,10 @@ export function PawApp() {
               paw.setNotice("先输入内容再发送。");
               return;
             }
+            // 双保险：agent 会话本不该能进入编辑态（见 PawChatPane 里的判断），
+            // 但万一某个入口漏判了，发送时兜底清掉，别让"正在编辑这条消息"
+            // 那条横幅在 agent.send 完全不知道编辑态存在的情况下永远挂着。
+            if (paw.editingMessageId) paw.clearEditState(false);
             paw.setDraft("");
             void agent.send(text);
             return;
@@ -408,6 +477,13 @@ export function PawApp() {
         onOpenSidebar={() => setMobileSidebarOpen(true)}
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenShortcuts={() => setShortcutsOpen(true)}
+        onCompact={() => {
+          if (agent.armed) {
+            void agent.compact();
+          } else {
+            paw.setNotice("涓婁笅鏂囧帇缂╀粎鍦ㄦ寕杞� agent 鐨勬闈㈢瀵硅瘽涓彲鐢ㄣ€?");
+          }
+        }}
         onToggleTheme={cycleTheme}
         onToggleFullscreen={toggleFullscreen}
         onNewConversation={paw.addConversation}
@@ -456,7 +532,6 @@ export function PawApp() {
             paw.config?.defaults.reasoning ?? "",
           )}
           selectionInvalid={paw.selectionInvalid}
-          agentDesktop={agent.desktop}
           onThemeChange={setTheme}
           onSubmitKeyChange={paw.setSubmitKey}
           onSaveDefaults={() => {

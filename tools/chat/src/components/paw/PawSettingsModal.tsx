@@ -1,13 +1,11 @@
 "use client";
 
-import type { AgentApprovalPolicy, AgentSandbox } from "@/client/agent/session";
-import { loadAgentSettings, saveAgentSettings } from "@/client/agent/settings";
 import type {
   PawConfigData,
   PawSession,
   PawSubmitKey,
 } from "@/client/paw/types";
-import { useRef, useState } from "react";
+import { useRef } from "react";
 import { PawDownloadIcon, PawEditIcon, PawUploadIcon } from "./PawIcons";
 import { PawModal } from "./PawModal";
 
@@ -22,8 +20,6 @@ interface PawSettingsModalProps {
   currentSelection: string;
   defaultSelection: string;
   selectionInvalid: boolean;
-  /** 只在桌面端为 true——这一节是 agent 的设置，PWA 里没有 agent。 */
-  agentDesktop: boolean;
   onThemeChange: (theme: PawTheme) => void;
   onSubmitKeyChange: (submitKey: PawSubmitKey) => void;
   onSaveDefaults: () => void;
@@ -43,7 +39,6 @@ export function PawSettingsModal({
   currentSelection,
   defaultSelection,
   selectionInvalid,
-  agentDesktop,
   onThemeChange,
   onSubmitKeyChange,
   onSaveDefaults,
@@ -55,16 +50,6 @@ export function PawSettingsModal({
 }: PawSettingsModalProps) {
   const user = config?.user ?? session.user;
   const importRef = useRef<HTMLInputElement>(null);
-  // 沙箱/审批策略只在"挂新工作目录时"读一次，不需要接进 usePawClient 的状态机——
-  // 存取都在这两个 setter 里做完，读它的一侧（useAgentSession）会在下次挂目录时
-  // 重新 load。
-  const [agentSettings, setAgentSettings] = useState(() => loadAgentSettings());
-
-  function updateAgentSettings(patch: Partial<typeof agentSettings>) {
-    const next = { ...agentSettings, ...patch };
-    setAgentSettings(next);
-    saveAgentSettings(next);
-  }
 
   return (
     <PawModal title="设置" onClose={onClose}>
@@ -136,49 +121,6 @@ export function PawSettingsModal({
             管理
           </button>
         </div>
-        {agentDesktop ? (
-          <>
-            <div className="paw-settings-item">
-              <div>
-                <strong>agent 沙箱</strong>
-                <p>
-                  只约束<strong>不经审批就跑</strong>的命令——一旦你点同意，那条命令就
-                  带着本程序的全部权限运行，这里的选择挡不住它。
-                </p>
-              </div>
-              <select
-                value={agentSettings.sandbox}
-                onChange={(event) =>
-                  updateAgentSettings({ sandbox: event.currentTarget.value as AgentSandbox })
-                }
-                aria-label="agent 沙箱"
-              >
-                <option value="read-only">只读</option>
-                <option value="workspace-write">可写工作目录</option>
-                <option value="danger-full-access">不设限</option>
-              </select>
-            </div>
-            <div className="paw-settings-item">
-              <div>
-                <strong>agent 审批</strong>
-                <p>新挂工作目录时用这个策略；已经挂上的对话不受这里的修改影响。</p>
-              </div>
-              <select
-                value={agentSettings.approvalPolicy}
-                onChange={(event) =>
-                  updateAgentSettings({
-                    approvalPolicy: event.currentTarget.value as AgentApprovalPolicy,
-                  })
-                }
-                aria-label="agent 审批策略"
-              >
-                <option value="on-request">按需询问</option>
-                <option value="untrusted">只放行可信命令</option>
-                <option value="never">从不询问</option>
-              </select>
-            </div>
-          </>
-        ) : null}
         <div className="paw-settings-item paw-settings-item-stack">
           <div>
             <strong>本地数据</strong>

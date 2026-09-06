@@ -60,19 +60,38 @@ public partial class App : Application
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            if (!TryClaimSingleInstance(desktop))
+            // Everything from here down runs before any window exists, so nothing in
+            // this block can rely on one to report its own failure — that includes
+            // TryClaimSingleInstance's mutex/pipe creation and everything BuildShell
+            // wires up (secure storage, SQLite-backed stores, the HTTP client). Left
+            // unguarded, an exception here used to be indistinguishable from "双击
+            // 完全无反应": the process would end with nothing on screen, and nothing in
+            // the log if it happened before InstallCrashHandlers had even run.
+            try
             {
+                if (!TryClaimSingleInstance(desktop))
+                {
+                    return;
+                }
+
+                InstallCrashHandlers();
+                ClientLog.Info($"客户端启动（跨平台头），服务器 {ClientOptions.ServerAddress}");
+
+                // Without this the process would end the moment the window is hidden,
+                // which is exactly what the tray exists to prevent.
+                desktop.ShutdownMode = Avalonia.Controls.ShutdownMode.OnExplicitShutdown;
+                desktop.MainWindow = BuildShell(desktop);
+                desktop.Exit += (_, _) => OnExit();
+            }
+            catch (Exception ex)
+            {
+                // ClientLog.Error never throws (see its own remarks), so this is safe
+                // even if InstallCrashHandlers above never got to run.
+                ClientLog.Error("启动失败，未能进入主界面", ex);
+                FatalStartupNotice.Show(ex);
+                desktop.Shutdown();
                 return;
             }
-
-            InstallCrashHandlers();
-            ClientLog.Info($"客户端启动（跨平台头），服务器 {ClientOptions.ServerAddress}");
-
-            // Without this the process would end the moment the window is hidden,
-            // which is exactly what the tray exists to prevent.
-            desktop.ShutdownMode = Avalonia.Controls.ShutdownMode.OnExplicitShutdown;
-            desktop.MainWindow = BuildShell(desktop);
-            desktop.Exit += (_, _) => OnExit();
         }
 
         base.OnFrameworkInitializationCompleted();
