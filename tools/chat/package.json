@@ -11,13 +11,17 @@
     "stage:server": "node scripts/stage-server-dist.mjs",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "app:dev": "tauri dev",
+    "codex:vendor": "node scripts/fetch-codex-vendor.mjs",
+    "app:dev": "node scripts/dev-desktop.mjs",
     "app:build": "node scripts/build-tauri.mjs"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-dialog": "^2.7.3",
     "katex": "^0.16.22",
     "mermaid": "^11.12.0",
     "next": "^14.2.30",
+    "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^9.0.1",
@@ -29,8 +33,9 @@
     "zustand": "^5.0.7"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^1.5.11",
+    "@tauri-apps/cli": "^2.11.4",
     "@types/node": "^22.12.0",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "cross-env": "^7.0.3",

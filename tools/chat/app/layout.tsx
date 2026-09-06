@@ -7,7 +7,7 @@ const buildConfig = getBuildConfig();
 const publicPath = (name: string) => `${buildConfig.mountPath}/${name}`;
 
 export const metadata: Metadata = {
-  title: "Chat",
+  title: "共飞AI工作台",
   description: "sub2api 的 Chat 中文多端应用",
   manifest: publicPath("manifest.webmanifest"),
   icons: {

@@ -9,16 +9,29 @@ import {
 } from "@/client/paw/auth";
 import {
   fetchPawConfig,
+  fetchPawPublicSettings,
   editPawImage,
+  fetchPawCurrentUser,
   generatePawImage,
   loginPaw,
+  registerPaw,
   savePawDefaults,
   sendPawChat,
+  sendPawVerifyCode,
   uploadPawFile,
 } from "@/client/paw/api";
 import { safeLocalStorage } from "@/utils/storage";
+import { persistConversationsWithCompression } from "@/client/paw/conversationCompression";
+import type { AgentApprovalUiMode } from "@/client/agent/session";
 import type {
   PawAttachment,
+  PawAgentFileChange,
+  PawAgentPanels,
+  PawAgentPanelsPatch,
+  PawAgentApprovalReview,
+  PawAgentFileSearch,
+  PawAgentNotification,
+  PawAgentTerminalInteraction,
   PawConfigData,
   PawConversation,
   PawConversationMessage,
@@ -26,6 +39,7 @@ import type {
   PawImageSize,
   PawModel,
   PawPrompt,
+  PawPublicSettings,
   PawSelectionState,
   PawSession,
   PawSubmitKey,
@@ -93,6 +107,109 @@ function createId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function normalizeAgentPanels(input: unknown): PawAgentPanels | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const source = input as Record<string, unknown>;
+  const now = Date.now();
+  const result: PawAgentPanels = {};
+
+  if (typeof source.diff === "string") {
+    result.diff = source.diff;
+  }
+
+  if (source.plan && typeof source.plan === "object") {
+    const plan = source.plan as Record<string, unknown>;
+    result.plan = {
+      explanation:
+        typeof plan.explanation === "string" || plan.explanation === null
+          ? plan.explanation
+          : undefined,
+      steps: Array.isArray(plan.steps) ? plan.steps : [],
+      delta: typeof plan.delta === "string" ? plan.delta : undefined,
+    };
+  }
+
+  if (source.fileChanges && typeof source.fileChanges === "object") {
+    const fileChanges: Record<string, PawAgentFileChange> = {};
+    for (const [key, value] of Object.entries(
+      source.fileChanges as Record<string, unknown>,
+    )) {
+      if (!value || typeof value !== "object") continue;
+      const change = value as Record<string, unknown>;
+      fileChanges[key] = {
+        itemId: typeof change.itemId === "string" ? change.itemId : key,
+        changes: change.changes,
+        output: typeof change.output === "string" ? change.output : undefined,
+      };
+    }
+    if (Object.keys(fileChanges).length > 0) result.fileChanges = fileChanges;
+  }
+
+  if (Array.isArray(source.terminalInteractions)) {
+    result.terminalInteractions = source.terminalInteractions.filter(
+      (item): item is PawAgentTerminalInteraction =>
+        Boolean(item) &&
+        typeof item === "object" &&
+        typeof (item as { itemId?: unknown }).itemId === "string" &&
+        typeof (item as { processId?: unknown }).processId === "string" &&
+        typeof (item as { stdin?: unknown }).stdin === "string" &&
+        typeof (item as { createdAt?: unknown }).createdAt === "number",
+    );
+  }
+
+  if (Array.isArray(source.moderationMetadata)) {
+    result.moderationMetadata = source.moderationMetadata;
+  }
+
+  if (Array.isArray(source.notifications)) {
+    result.notifications = source.notifications.filter(
+      (item): item is PawAgentNotification =>
+        Boolean(item) &&
+        typeof item === "object" &&
+        typeof (item as { method?: unknown }).method === "string" &&
+        typeof (item as { message?: unknown }).message === "string" &&
+        typeof (item as { createdAt?: unknown }).createdAt === "number",
+    );
+  }
+
+  if (source.fileSearches && typeof source.fileSearches === "object") {
+    const fileSearches: Record<string, PawAgentFileSearch> = {};
+    for (const [key, value] of Object.entries(
+      source.fileSearches as Record<string, unknown>,
+    )) {
+      if (!value || typeof value !== "object") continue;
+      const search = value as Record<string, unknown>;
+      fileSearches[key] = {
+        sessionId: typeof search.sessionId === "string" ? search.sessionId : key,
+        query: typeof search.query === "string" ? search.query : "",
+        files: Array.isArray(search.files) ? search.files : [],
+        completed: search.completed === true,
+        updatedAt: typeof search.updatedAt === "number" ? search.updatedAt : now,
+      };
+    }
+    if (Object.keys(fileSearches).length > 0) result.fileSearches = fileSearches;
+  }
+
+  if (source.approvalReviews && typeof source.approvalReviews === "object") {
+    const approvalReviews: Record<string, PawAgentApprovalReview> = {};
+    for (const [key, value] of Object.entries(
+      source.approvalReviews as Record<string, unknown>,
+    )) {
+      if (!value || typeof value !== "object") continue;
+      const review = value as Record<string, unknown>;
+      approvalReviews[key] = {
+        reviewId: typeof review.reviewId === "string" ? review.reviewId : key,
+        method: typeof review.method === "string" ? review.method : "autoApprovalReview",
+        raw: review.raw,
+        updatedAt: typeof review.updatedAt === "number" ? review.updatedAt : now,
+      };
+    }
+    if (Object.keys(approvalReviews).length > 0) result.approvalReviews = approvalReviews;
+  }
+
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
 function normalizeConversation(input: Partial<PawConversation>): PawConversation {
   const now = Date.now();
   const messages = Array.isArray(input.messages)
@@ -115,6 +232,7 @@ function normalizeConversation(input: Partial<PawConversation>): PawConversation
             typeof message.reasoningContent === "string"
               ? message.reasoningContent
               : undefined,
+          agentPanels: normalizeAgentPanels(message.agentPanels),
           attachments: Array.isArray(message.attachments)
             ? message.attachments.filter(Boolean).map((item) => ({ ...item }))
             : undefined,
@@ -126,6 +244,11 @@ function normalizeConversation(input: Partial<PawConversation>): PawConversation
             : undefined,
           pinned: Boolean(message.pinned),
           error: Boolean(message.error),
+          turnStatus:
+            message.turnStatus === "active" || message.turnStatus === "complete"
+              ? message.turnStatus
+              : undefined,
+          agentTurn: message.agentTurn === true ? true : undefined,
           createdAt:
             typeof message.createdAt === "number" ? message.createdAt : now,
           updatedAt:
@@ -151,6 +274,13 @@ function normalizeConversation(input: Partial<PawConversation>): PawConversation
         ? Math.min(messages.length, Math.max(0, Math.floor(input.contextStartIndex)))
         : undefined,
     messages,
+    agentCwd:
+      typeof input.agentCwd === "string" && input.agentCwd.trim() ? input.agentCwd : undefined,
+    agentCwdLocked: Boolean(input.agentCwdLocked),
+    agentApprovalMode:
+      input.agentApprovalMode === "review" || input.agentApprovalMode === "full"
+        ? input.agentApprovalMode
+        : undefined,
   };
 }
 
@@ -257,13 +387,15 @@ function createUserMessage(
   };
 }
 
-function createAssistantMessage(model?: string): PawConversationMessage {
+function createAssistantMessage(model?: string, agentTurn?: boolean): PawConversationMessage {
   const now = Date.now();
   return {
     id: createId("assistant"),
     role: "assistant",
     content: "",
     model,
+    turnStatus: "active",
+    agentTurn: agentTurn || undefined,
     createdAt: now,
     updatedAt: now,
   };
@@ -377,12 +509,40 @@ function cleanSelectionLabel(value: string): string {
   return normalized || "新对话";
 }
 
+function isValidAuthEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
+
+function isAllowedRegistrationEmail(
+  email: string,
+  whitelist: string[] | undefined,
+): boolean {
+  if (!whitelist?.length) return true;
+  const normalized = email.trim().toLowerCase();
+  return whitelist.some((suffix) => {
+    const value = suffix.trim().toLowerCase();
+    return value.length > 0 && normalized.endsWith(value);
+  });
+}
+
 export function usePawClient() {
   const [hydrated, setHydrated] = useState(false);
   const [session, setSession] = useState<PawSession | null>(null);
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [authSettings, setAuthSettings] = useState<PawPublicSettings | null>(null);
+  const [authSettingsBusy, setAuthSettingsBusy] = useState(false);
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
+  const [registerPassword, setRegisterPassword] = useState("");
+  const [registerConfirmPassword, setRegisterConfirmPassword] = useState("");
+  const [registerVerifyCode, setRegisterVerifyCode] = useState("");
+  const [registerInvitationCode, setRegisterInvitationCode] = useState("");
+  const [registerPromoCode, setRegisterPromoCode] = useState("");
+  const [registerCaptchaToken, setRegisterCaptchaToken] = useState("");
   const [loginBusy, setLoginBusy] = useState(false);
+  const [verifyCodeBusy, setVerifyCodeBusy] = useState(false);
+  const [verifyCodeCountdown, setVerifyCodeCountdown] = useState(0);
+  const [captchaResetKey, setCaptchaResetKey] = useState(0);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [config, setConfig] = useState<PawConfigData | null>(null);
   const [configBusy, setConfigBusy] = useState(false);
@@ -437,6 +597,231 @@ export function usePawClient() {
       );
     },
     [],
+  );
+
+  /**
+   * agent 会话专用的一组消息拼装函数（配合 `client/agent/useAgentSession.ts`）。
+   *
+   * **故意和 handleSend/dispatchConversationSend 完全分开**：agent 走的是另一条
+   * 通道（Rust 桥 → 本地转发层），不经过 `sendPawChat`，也不占用 `sending` 这个
+   * 状态机——那是"这次 Paw 聊天请求有没有在飞"的信号，语义上不该被 agent 的轮次
+   * 借用（两者互不知道对方，混在一起只会让"发送中"这件事对不上号）。
+   *
+   * 这几个函数只负责把 agent 产生的文本落进对应会话的消息列表，复用现成的气泡
+   * 渲染（Markdown、推理折叠块）——agent 的输出因此和普通对话长得一样，不需要
+   * 一套平行的展示组件。
+   */
+  const ensureActiveConversationId = useCallback((): string => {
+    if (activeConversationId) return activeConversationId;
+    const conversation = createConversation();
+    setConversations((current) => [conversation, ...current]);
+    setActiveConversationId(conversation.id);
+    return conversation.id;
+  }, [activeConversationId]);
+
+  const beginAgentTurn = useCallback(
+    (conversationId: string, text: string) => {
+      const userMessage = createUserMessage(text, []);
+      const assistantMessage = createAssistantMessage(undefined, true);
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        title:
+          conversation.title === "新对话" && text
+            ? cleanSelectionLabel(text.slice(0, 32))
+            : conversation.title,
+        messages: [...conversation.messages, userMessage, assistantMessage],
+        updatedAt: Date.now(),
+      }));
+      return { userMessage, assistantMessage };
+    },
+    [updateConversation],
+  );
+
+  const appendAgentDelta = useCallback(
+    (
+      conversationId: string,
+      messageId: string,
+      delta: { content?: string; reasoning?: string },
+    ) => {
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        messages: conversation.messages.map((message) =>
+          message.id === messageId
+            ? {
+                ...message,
+                content: delta.content ? `${message.content}${delta.content}` : message.content,
+                reasoningContent: delta.reasoning
+                  ? `${message.reasoningContent ?? ""}${delta.reasoning}`
+                  : message.reasoningContent,
+                updatedAt: Date.now(),
+              }
+            : message,
+        ),
+        updatedAt: Date.now(),
+      }));
+    },
+    [updateConversation],
+  );
+
+  const updateAgentPanel = useCallback(
+    (
+      conversationId: string,
+      messageId: string,
+      patch: PawAgentPanelsPatch,
+    ) => {
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        messages: conversation.messages.map((message) => {
+          if (message.id !== messageId) return message;
+          const current = message.agentPanels ?? {};
+          const nextPanels: PawAgentPanels = {
+            ...current,
+            ...(patch.plan ? { plan: patch.plan } : {}),
+            ...(patch.diff !== undefined ? { diff: patch.diff } : {}),
+            ...(patch.fileChanges
+              ? {
+                  fileChanges: {
+                    ...(current.fileChanges ?? {}),
+                    ...patch.fileChanges,
+                  },
+                }
+              : {}),
+            ...(patch.terminalInteractions?.length
+              ? {
+                  terminalInteractions: [
+                    ...(current.terminalInteractions ?? []),
+                    ...patch.terminalInteractions,
+                  ],
+                }
+              : {}),
+            ...(patch.moderationMetadata?.length
+              ? {
+                  moderationMetadata: [
+                    ...(current.moderationMetadata ?? []),
+                    ...patch.moderationMetadata,
+                  ],
+                }
+              : {}),
+            ...(patch.notifications?.length
+              ? {
+                  notifications: [
+                    ...(current.notifications ?? []),
+                    ...patch.notifications,
+                  ],
+                }
+              : {}),
+            ...(patch.fileSearches
+              ? {
+                  fileSearches: {
+                    ...(current.fileSearches ?? {}),
+                    ...patch.fileSearches,
+                  },
+                }
+              : {}),
+            ...(patch.approvalReviews
+              ? {
+                  approvalReviews: {
+                    ...(current.approvalReviews ?? {}),
+                    ...patch.approvalReviews,
+                  },
+                }
+              : {}),
+          };
+          return {
+            ...message,
+            agentPanels: nextPanels,
+            updatedAt: Date.now(),
+          };
+        }),
+        updatedAt: Date.now(),
+      }));
+    },
+    [updateConversation],
+  );
+
+  const finishAgentTurn = useCallback(
+    (conversationId: string, messageId: string, opts: { error?: boolean } = {}) => {
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        messages: conversation.messages.map((message) =>
+          message.id === messageId
+            ? {
+                ...message,
+                error: opts.error ?? message.error,
+                turnStatus: "complete",
+                updatedAt: Date.now(),
+              }
+            : message,
+        ),
+        updatedAt: Date.now(),
+      }));
+    },
+    [updateConversation],
+  );
+
+  /**
+   * 独立追加一条通知气泡（不编辑某条已有消息）——用于轮次之间发生的事，
+   * 比如会话意外结束、协议漂移诊断。这些事没有一条"正在写"的助手消息可以挂，
+   * 只能另起一条。
+   */
+  const appendAgentNotice = useCallback(
+    (conversationId: string, text: string) => {
+      const now = Date.now();
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        messages: [
+          ...conversation.messages,
+          {
+            id: createId("assistant"),
+            role: "assistant" as const,
+            content: text,
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+        updatedAt: now,
+      }));
+    },
+    [updateConversation],
+  );
+
+  /**
+   * 设置 agent 工作目录——**发消息前可以随便重选**，这里不挡。真正的锁定点是
+   * `lockAgentCwd`：那之前光选目录不算数，没有起真正的会话，改主意的代价是零。
+   * 锁定之后再调这个函数是 no-op——那不是"选目录"，是想绕过锁的 bug。
+   */
+  const setAgentBinding = useCallback(
+    (conversationId: string, cwd: string) => {
+      updateConversation(conversationId, (conversation) =>
+        conversation.agentCwdLocked ? conversation : { ...conversation, agentCwd: cwd },
+      );
+    },
+    [updateConversation],
+  );
+
+  /**
+   * 锁死当前的工作目录——**只在真正起了一条会话（第一次成功发消息）之后才调**，
+   * 不是选完目录就调。落在数据层而不是只在 UI 上挡一下：就算将来哪个界面
+   * 漏了判断，这里也不会被覆盖。已经锁过再调是 no-op。
+   */
+  const lockAgentCwd = useCallback(
+    (conversationId: string) => {
+      updateConversation(conversationId, (conversation) =>
+        conversation.agentCwdLocked ? conversation : { ...conversation, agentCwdLocked: true },
+      );
+    },
+    [updateConversation],
+  );
+
+  /** 审批模式随时可改，不像工作目录那样锁定。 */
+  const setAgentApprovalMode = useCallback(
+    (conversationId: string, mode: AgentApprovalUiMode) => {
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        agentApprovalMode: mode,
+      }));
+    },
+    [updateConversation],
   );
 
   const syncDraft = useCallback(
@@ -625,6 +1010,7 @@ export function usePawClient() {
                 ...message,
                 content: response.content || message.content,
                 reasoningContent: response.reasoningContent || message.reasoningContent,
+                turnStatus: "complete",
                 updatedAt: Date.now(),
               }
             : message,
@@ -660,6 +1046,7 @@ export function usePawClient() {
                 ...itemMessage,
                 content: itemMessage.content || message,
                 error: !isAbort,
+                turnStatus: "complete",
                 updatedAt: Date.now(),
               }
             : itemMessage,
@@ -735,6 +1122,7 @@ export function usePawClient() {
                 ...message,
                 content: "已生成图片。",
                 images,
+                turnStatus: "complete",
                 updatedAt: Date.now(),
               }
             : message,
@@ -758,6 +1146,7 @@ export function usePawClient() {
                 ...itemMessage,
                 content: message,
                 error: true,
+                turnStatus: "complete",
                 updatedAt: Date.now(),
               }
             : itemMessage,
@@ -836,6 +1225,7 @@ export function usePawClient() {
                 ...message,
                 content: "已完成图片编辑。",
                 images,
+                turnStatus: "complete",
                 updatedAt: Date.now(),
               }
             : message,
@@ -953,9 +1343,64 @@ export function usePawClient() {
   }, []);
 
   useEffect(() => {
+    if (!hydrated || session) return;
+
+    let active = true;
+    setAuthSettingsBusy(true);
+    void fetchPawPublicSettings()
+      .then((settings) => {
+        if (active) {
+          setAuthSettings(settings);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setAuthSettings(null);
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setAuthSettingsBusy(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [hydrated, session]);
+
+  useEffect(() => {
+    if (verifyCodeCountdown <= 0) return;
+    const timer = window.setInterval(() => {
+      setVerifyCodeCountdown((current) => Math.max(0, current - 1));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [verifyCodeCountdown]);
+
+  useEffect(() => {
     if (!hydrated) return;
-    writeJSON(CONVERSATIONS_KEY, conversations);
-  }, [conversations, hydrated]);
+    // 这条真实炸过：长会话（尤其 agent 那些命令输出）把 `paw-conversations`
+    // 写爆了 localStorage 配额，`setItem` 抛出的 QuotaExceededError 没人接，
+    // 直接把整个页面带崩（Next dev 的错误浮层，正式包下就是白屏）。
+    // `safeLocalStorage().setItem` 现在不抛了，但"存失败"本身要让用户知道——
+    // 静默吞掉的话，用户以为记录都在，其实这一轮之后的对话重开就没了。
+    //
+    // 默认写入的就是"completed"档（回合完成后只留最终结果，见
+    // conversationCompression.ts）——这不是异常，不该弹通知。只有连这档都存不下、
+    // 退化到 "aggressive" 或者删掉了整条历史对话，才是真的在告警。
+    const storage = safeLocalStorage();
+    const result = persistConversationsWithCompression(
+      storage,
+      CONVERSATIONS_KEY,
+      conversations,
+      activeConversationId,
+    );
+    if (!result.saved) {
+      setNotice("Local storage is full; the latest conversation may not have been saved.");
+    } else if (result.mode === "aggressive" || result.removedConversationCount > 0) {
+      setNotice("本地存储空间已满，最新的对话记录可能没保存上——建议删掉一些旧对话。");
+    }
+  }, [activeConversationId, conversations, hydrated]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -1000,8 +1445,14 @@ export function usePawClient() {
     setConfigBusy(true);
     setConfigError(null);
     try {
-      const response = await fetchPawConfig();
-      setConfig(response.data);
+      const [response, user] = await Promise.all([
+        fetchPawConfig(),
+        fetchPawCurrentUser().catch(() => null),
+      ]);
+      setConfig({
+        ...response.data,
+        user: user ? { ...response.data.user, ...user } : response.data.user,
+      });
     } catch (error) {
       setConfigError(
         error instanceof Error ? error.message : "配置加载失败，请重新登录或稍后再试。",
@@ -1371,6 +1822,171 @@ export function usePawClient() {
     [loginEmail, loginPassword],
   );
 
+  const handleAuthModeChange = useCallback(
+    (mode: "login" | "register") => {
+      if (mode === "register" && !authSettings?.registration_enabled) {
+        setLoginError("当前服务端未开放注册");
+        return;
+      }
+      setAuthMode(mode);
+      setLoginError(null);
+    },
+    [authSettings?.registration_enabled],
+  );
+
+  const handleCaptchaTokenChange = useCallback((token: string) => {
+    setRegisterCaptchaToken(token);
+    setLoginError(null);
+  }, []);
+
+  const handleCaptchaError = useCallback(() => {
+    setRegisterCaptchaToken("");
+    setLoginError("安全验证加载失败，请刷新页面后重试");
+  }, []);
+
+  const handleSendVerifyCode = useCallback(async () => {
+    const email = loginEmail.trim();
+    if (!isValidAuthEmail(email)) {
+      setLoginError("请输入有效的邮箱地址");
+      return;
+    }
+    if (!authSettings?.email_verify_enabled) {
+      setLoginError("当前服务端未启用邮箱验证");
+      return;
+    }
+    if (authSettings.turnstile_enabled && !registerCaptchaToken) {
+      setLoginError("请先完成安全验证");
+      return;
+    }
+    if (
+      authSettings.tencent_captcha_enabled === true ||
+      authSettings.aliyun_captcha_enabled === true
+    ) {
+      setLoginError("当前服务端启用了暂未支持的安全验证方式，请使用后台网页注册");
+      return;
+    }
+
+    setVerifyCodeBusy(true);
+    setLoginError(null);
+    try {
+      const response = await sendPawVerifyCode({
+        email,
+        ...(registerCaptchaToken
+          ? { turnstile_token: registerCaptchaToken }
+          : {}),
+      });
+      setVerifyCodeCountdown(Math.max(0, response.countdown));
+      setLoginError(null);
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : "验证码发送失败");
+    } finally {
+      setVerifyCodeBusy(false);
+      setRegisterCaptchaToken("");
+      setCaptchaResetKey((current) => current + 1);
+    }
+  }, [authSettings, loginEmail, registerCaptchaToken]);
+
+  const handleRegister = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      const email = loginEmail.trim();
+      const password = registerPassword;
+      const confirmPassword = registerConfirmPassword;
+
+      if (!authSettings?.registration_enabled) {
+        setLoginError("当前服务端未开放注册");
+        return;
+      }
+      if (!isValidAuthEmail(email)) {
+        setLoginError("请输入有效的邮箱地址");
+        return;
+      }
+      if (!isAllowedRegistrationEmail(
+        email,
+        authSettings.registration_email_suffix_whitelist,
+      )) {
+        setLoginError("该邮箱后缀暂不支持注册");
+        return;
+      }
+      if (password.length < 6) {
+        setLoginError("密码至少需要 6 位");
+        return;
+      }
+      if (password !== confirmPassword) {
+        setLoginError("两次输入的密码不一致");
+        return;
+      }
+      if (authSettings.email_verify_enabled && !registerVerifyCode.trim()) {
+        setLoginError("请输入邮箱验证码");
+        return;
+      }
+      if (
+        authSettings.invitation_code_enabled &&
+        !registerInvitationCode.trim()
+      ) {
+        setLoginError("请输入邀请码");
+        return;
+      }
+      if (authSettings.turnstile_enabled && !registerCaptchaToken) {
+        setLoginError("请先完成安全验证");
+        return;
+      }
+      if (
+        authSettings.tencent_captcha_enabled === true ||
+        authSettings.aliyun_captcha_enabled === true
+      ) {
+        setLoginError("当前服务端启用了暂未支持的安全验证方式，请使用后台网页注册");
+        return;
+      }
+
+      setLoginBusy(true);
+      setLoginError(null);
+      try {
+        const nextSession = await registerPaw({
+          email,
+          password,
+          ...(authSettings.email_verify_enabled
+            ? { verify_code: registerVerifyCode.trim() }
+            : {}),
+          ...(registerCaptchaToken
+            ? { turnstile_token: registerCaptchaToken }
+            : {}),
+          ...(authSettings.invitation_code_enabled
+            ? { invitation_code: registerInvitationCode.trim() }
+            : {}),
+          ...(authSettings.promo_code_enabled && registerPromoCode.trim()
+            ? { promo_code: registerPromoCode.trim() }
+            : {}),
+        });
+        setSession(nextSession);
+        setRegisterPassword("");
+        setRegisterConfirmPassword("");
+        setRegisterVerifyCode("");
+        setRegisterInvitationCode("");
+        setRegisterPromoCode("");
+        setRegisterCaptchaToken("");
+        setVerifyCodeCountdown(0);
+        setNotice("注册成功");
+      } catch (error) {
+        setLoginError(error instanceof Error ? error.message : "注册失败");
+      } finally {
+        setLoginBusy(false);
+        setRegisterCaptchaToken("");
+        setCaptchaResetKey((current) => current + 1);
+      }
+    },
+    [
+      authSettings,
+      loginEmail,
+      registerCaptchaToken,
+      registerConfirmPassword,
+      registerInvitationCode,
+      registerPassword,
+      registerPromoCode,
+      registerVerifyCode,
+    ],
+  );
+
   const handleLogout = useCallback(() => {
     sendAbortRef.current?.abort();
     clearEditState(false);
@@ -1379,7 +1995,17 @@ export function usePawClient() {
     setSession(null);
     setConfig(null);
     setConfigError(null);
+    setAuthMode("login");
     setLoginPassword("");
+    setRegisterPassword("");
+    setRegisterConfirmPassword("");
+    setRegisterVerifyCode("");
+    setRegisterInvitationCode("");
+    setRegisterPromoCode("");
+    setRegisterCaptchaToken("");
+    setCaptchaResetKey((current) => current + 1);
+    setVerifyCodeCountdown(0);
+    setLoginError(null);
     setNotice(null);
     setSelectionInvalid(false);
     setSending(false);
@@ -1471,19 +2097,18 @@ export function usePawClient() {
 
     const text = draft.trim();
     if (!text && attachments.length === 0) {
-      setNotice(imageMode ? "请输入图片描述后再生成。" : "先输入内容再发送。");
+      setNotice(
+        currentModel.image_generation
+          ? "请输入图片描述后再生成。"
+          : "先输入内容再发送。",
+      );
       return;
     }
 
     const submittedDraft = draft;
     const submittedAttachments = attachments.map((item) => ({ ...item }));
 
-    if (imageMode) {
-      if (!currentModel.image_generation) {
-        setSelectionInvalid(true);
-        setNotice("当前模型不支持图片生成，请重新选择模型。");
-        return;
-      }
+    if (currentModel.image_generation) {
       if (editingMessageId) {
         setNotice("图片生成消息暂不支持编辑，请新建一条图片请求。");
         return;
@@ -1509,12 +2134,14 @@ export function usePawClient() {
     }
 
     if (editingMessageId) {
+      const editMessageId = editingMessageId;
       const index = conversation.messages.findIndex((item) => item.id === editingMessageId);
       const original = conversation.messages[index];
       if (index < 0 || !original || original.role !== "user") {
         setNotice("当前编辑目标已失效，请重新选择消息。");
         return;
       }
+      setEditingMessageId(null);
       const prefix = conversation.messages.slice(0, index);
       const editedMessage: PawConversationMessage = {
         ...original,
@@ -1537,7 +2164,7 @@ export function usePawClient() {
         title,
         restoreDraft: text,
         restoreAttachments: submittedAttachments,
-        editMessageId: editingMessageId,
+        editMessageId,
       });
       return;
     }
@@ -1574,7 +2201,6 @@ export function usePawClient() {
     selectedGroupId,
     selectedModelId,
     selectedReasoning,
-    imageMode,
     imageSize,
     dispatchConversationSend,
     dispatchImageGeneration,
@@ -1585,12 +2211,33 @@ export function usePawClient() {
   return {
     hydrated,
     session,
+    authMode,
+    authSettings,
+    authSettingsBusy,
     loginEmail,
     setLoginEmail,
     loginPassword,
     setLoginPassword,
+    registerPassword,
+    setRegisterPassword,
+    registerConfirmPassword,
+    setRegisterConfirmPassword,
+    registerVerifyCode,
+    setRegisterVerifyCode,
+    registerInvitationCode,
+    setRegisterInvitationCode,
+    registerPromoCode,
+    setRegisterPromoCode,
     loginBusy,
+    verifyCodeBusy,
+    verifyCodeCountdown,
+    captchaResetKey,
     loginError,
+    handleAuthModeChange,
+    handleCaptchaTokenChange,
+    handleCaptchaError,
+    handleSendVerifyCode,
+    handleRegister,
     config,
     configBusy,
     configError,
@@ -1621,6 +2268,15 @@ export function usePawClient() {
     currentGroup,
     currentModel,
     canSend,
+    ensureActiveConversationId,
+    beginAgentTurn,
+    appendAgentDelta,
+    updateAgentPanel,
+    finishAgentTurn,
+    appendAgentNotice,
+    setAgentBinding,
+    lockAgentCwd,
+    setAgentApprovalMode,
     addConversation,
     selectConversation,
     deleteConversation,

@@ -1,2 +1,7 @@
 /target
-
+/gen/schemas
+# 官方 codex-app-server release 包，本地测试用——257MB 二进制，不进 git。
+# 来源与校验值见 crates/codex-host/tests/fixtures/bundled-codex.json。
+# 只挡二进制：codex-package.json 是几百字节的版本清单，值得进版本库
+# （repo_hygiene 测试会盯住"源码文件被静默忽略"这件事，别把它一起挡了）。
+/vendor/**/*.exe

@@ -6,14 +6,12 @@ import {
   PawDragIcon,
   PawEditIcon,
   PawCheckIcon,
-  PawDownloadIcon,
-  PawLogoutIcon,
   PawPlusIcon,
   PawPromptIcon,
-  PawRefreshIcon,
   PawSearchIcon,
   PawSettingsIcon,
   PawTrashIcon,
+  PawWalletIcon,
 } from "./PawIcons";
 import { PawModal } from "./PawModal";
 import type { PawConversation, PawConfigData, PawSession } from "@/client/paw/types";
@@ -26,11 +24,10 @@ interface PawSidebarProps {
   onNewConversation: () => void;
   onDeleteConversation: (id?: string) => void;
   onRenameConversation: (id: string, title: string) => void;
-  onRefreshConfig: () => void;
   onOpenPrompts: () => void;
   onOpenSettings: () => void;
-  onExportConversation: () => void;
-  onLogout: () => void;
+  onOpenPayment: () => void;
+  onOpenProfile: () => void;
   onSelectConversation: (id: string) => void;
   onReorderConversations: (sourceId: string, targetId: string) => void;
   onCloseMobile: () => void;
@@ -52,11 +49,10 @@ export function PawSidebar({
   onNewConversation,
   onDeleteConversation,
   onRenameConversation,
-  onRefreshConfig,
   onOpenPrompts,
   onOpenSettings,
-  onExportConversation,
-  onLogout,
+  onOpenPayment,
+  onOpenProfile,
   onSelectConversation,
   onReorderConversations,
   onCloseMobile,
@@ -105,8 +101,8 @@ export function PawSidebar({
       <div className="paw-sidebar-header">
         <div className="paw-sidebar-brand">
           <div>
-            <h2 className="paw-brand-title">Chat</h2>
-            <div className="paw-brand-subtitle">sub2api</div>
+            <h2 className="paw-brand-title">共飞AI工作台</h2>
+            <div className="paw-brand-subtitle">ChatGPT/Claude等多家模型一键使用</div>
           </div>
           <button
             className="paw-icon-button paw-mobile-only"
@@ -116,6 +112,21 @@ export function PawSidebar({
           >
             <PawCloseIcon width={16} height={16} />
           </button>
+        </div>
+        <div className="paw-sidebar-account">
+          <div className="paw-sidebar-account-heading">
+            <div className="paw-sidebar-account-copy">
+              <strong>{user?.name || "已登录账户"}</strong>
+            </div>
+            <button
+              type="button"
+              className="paw-button primary paw-sidebar-recharge"
+              onClick={onOpenPayment}
+            >
+              <PawWalletIcon width={14} height={14} />
+              充值
+            </button>
+          </div>
         </div>
         <div className="paw-sidebar-actions">
           <button
@@ -142,11 +153,19 @@ export function PawSidebar({
           <button
             className="paw-icon-button"
             type="button"
-            onClick={onRefreshConfig}
-            title="刷新配置"
-            aria-label="刷新配置"
+            onClick={onOpenSettings}
+            title="设置"
+            aria-label="设置"
           >
-            <PawRefreshIcon width={16} height={16} />
+            <PawSettingsIcon width={16} height={16} />
+          </button>
+          <button
+            className="paw-button primary paw-sidebar-new-button"
+            type="button"
+            onClick={onNewConversation}
+          >
+            <PawPlusIcon width={16} height={16} />
+            新对话
           </button>
         </div>
       </div>
@@ -256,53 +275,38 @@ export function PawSidebar({
       </div>
 
       <div className="paw-sidebar-footer">
-        <div className="paw-sidebar-footer-row">
-          <button
-            className="paw-icon-button"
-            type="button"
-            onClick={() => onDeleteConversation(activeConversationId)}
-            disabled={conversations.length === 0}
-            title="删除当前对话"
-            aria-label="删除当前对话"
-          >
-            <PawTrashIcon width={16} height={16} />
-          </button>
-          <button
-            className="paw-icon-button"
-            type="button"
-            onClick={onExportConversation}
-            disabled={!activeConversationId}
-            title="导出当前对话"
-            aria-label="导出当前对话"
-          >
-            <PawDownloadIcon width={16} height={16} />
-          </button>
-          <button
-            className="paw-icon-button"
-            type="button"
-            onClick={onOpenSettings}
-            title="设置"
-            aria-label="设置"
-          >
-            <PawSettingsIcon width={16} height={16} />
-          </button>
-          <button
-            className="paw-icon-button"
-            type="button"
-            onClick={onLogout}
-            title="退出登录"
-            aria-label="退出登录"
-          >
-            <PawLogoutIcon width={16} height={16} />
-          </button>
-          <button className="paw-button primary paw-sidebar-new-button" type="button" onClick={onNewConversation}>
-            <PawPlusIcon width={16} height={16} />
-            新对话
-          </button>
-        </div>
-        <div className="paw-sidebar-user paw-sidebar-user-footer">
-          <div>{user?.name || "已登录"}</div>
-          <div>{user?.email || session.user?.email || "本地会话"}</div>
+        {/* 整个账户区块可点——点名字/"查看详情"那一块都跳详情页；
+            充值单独是个按钮，逻辑不变，只是要挡住冒泡，不然点充值会
+            连带触发外层的"跳详情页"。 */}
+        <div
+          className="paw-sidebar-account paw-sidebar-account-clickable"
+          role="button"
+          tabIndex={0}
+          onClick={onOpenProfile}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              onOpenProfile();
+            }
+          }}
+        >
+          <div className="paw-sidebar-account-heading">
+            <div className="paw-sidebar-account-copy">
+              <strong>{user?.name || "已登录账户"}</strong>
+              <span>查看详情</span>
+            </div>
+            <button
+              type="button"
+              className="paw-button primary paw-sidebar-recharge"
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpenPayment();
+              }}
+            >
+              <PawWalletIcon width={14} height={14} />
+              充值
+            </button>
+          </div>
         </div>
       </div>
       <div className="paw-sidebar-drag" onPointerDown={onDragStart}>

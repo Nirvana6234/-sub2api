@@ -132,6 +132,39 @@ function HtmlPreview({ code, onClose }: { code: string; onClose: () => void }) {
   );
 }
 
+/** agent 执行命令产生的输出——不是模型写给人看的正文，是"它读了什么/跑了什么"
+ * 的过程记录。默认收成一行（命令摘要 + 行数），点了才展开看完整输出。第一行是
+ * `flushCommandBuffer` 自己拼的摘要，不是命令真实输出的一部分。 */
+function AgentOutputBlock({ code }: { code: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const newlineIndex = code.indexOf("\n");
+  const label = newlineIndex === -1 ? code : code.slice(0, newlineIndex);
+  const body = newlineIndex === -1 ? "" : code.slice(newlineIndex + 1);
+  const lineCount = body ? body.split("\n").length : 0;
+
+  return (
+    <div className="paw-agent-output">
+      <button
+        type="button"
+        className="paw-agent-output-toggle"
+        onClick={() => setExpanded((value) => !value)}
+        aria-expanded={expanded}
+      >
+        <span className="paw-agent-output-chevron">{expanded ? "▾" : "▸"}</span>
+        <code className="paw-agent-output-label">{label}</code>
+        {lineCount > 0 ? (
+          <span className="paw-agent-output-meta">{lineCount} 行输出</span>
+        ) : null}
+      </button>
+      {expanded && body ? (
+        <pre className="paw-agent-output-body">
+          <code>{body}</code>
+        </pre>
+      ) : null}
+    </div>
+  );
+}
+
 function CodeBlock({
   className,
   children,
@@ -159,6 +192,10 @@ function CodeBlock({
 
   if (language === "mermaid") {
     return <MermaidBlock code={code} />;
+  }
+
+  if (language === "agent-output") {
+    return <AgentOutputBlock code={code} />;
   }
 
   return (
@@ -301,6 +338,20 @@ export function PawMarkdown({ content, loading = false }: PawMarkdownProps) {
                   {children}
                 </video>
               );
+            }
+            // agent 提到它改动/新建的文件时，模型有时会写成 `[README.md](README.md)`
+            // 这样的 markdown 链接。这里没有打开本地文件的能力（没有接
+            // shell-open 之类的插件），点了要么在新标签页弹一个 404，要么
+            // 在 SPA 里跳转到一个不存在的路由——看起来像"点不开"，其实是
+            // "点了会去一个错的地方"。没有协议前缀（`https://`、`mailto:` 等）、
+            // 也不是站内锚点/绝对路径的 href，判定为文件路径而不是真链接，
+            // 按纯文本展示，不做成一个必然失败的点击。
+            const looksLikeRealLink =
+              /^[a-z][a-z0-9+.-]*:/i.test(target) ||
+              target.startsWith("/") ||
+              target.startsWith("#");
+            if (!looksLikeRealLink) {
+              return <span className="paw-markdown-inline-code">{children}</span>;
             }
             return (
               <a href={href} target="_blank" rel="noreferrer" {...props}>

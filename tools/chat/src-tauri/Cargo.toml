@@ -1,3 +1,6 @@
+[workspace]
+members = ["crates/*"]
+
 [package]
 name = "chat"
 version = "0.1.0"
@@ -5,25 +8,26 @@ description = "Chat multi-platform app for sub2api"
 authors = ["AI-Fly"]
 license = "MIT"
 edition = "2021"
-rust-version = "1.60"
+rust-version = "1.77.2"
 
 [build-dependencies]
-tauri-build = { version = "1.5.1", features = [] }
+tauri-build = { version = "2.6", features = [] }
+
+# lib + bin：桥的逻辑放 lib，main.rs 只剩一行。这样集成测试能直接驱动桥，
+# 不必绕过 Tauri 的 invoke 机制 —— 命令函数本身只是三行的转接。
+[lib]
+name = "chat_lib"
+path = "src/lib.rs"
 
 [dependencies]
+codex-adapter = { path = "crates/codex-adapter" }
+codex-host = { path = "crates/codex-host" }
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-tauri = { version = "1.5.4", features = [
-  "http-all",
-  "shell-open",
-  "window-close",
-  "window-hide",
-  "window-maximize",
-  "window-minimize",
-  "window-show",
-  "window-start-dragging",
-  "window-unmaximize",
-  "window-unminimize",
-] }
+tauri = { version = "2.11", features = [] }
+tauri-plugin-dialog = "2"
+thiserror = "2.0"
+tokio = { version = "1", features = ["sync", "rt", "macros", "time"] }
 
-[features]
-custom-protocol = ["tauri/custom-protocol"]
+[dev-dependencies]
+tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros", "time"] }

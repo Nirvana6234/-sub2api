@@ -74,7 +74,11 @@ textarea:disabled {
 .paw-shell {
   position: relative;
   display: flex;
+  height: 100vh;
+  height: 100dvh;
   min-height: 100vh;
+  max-height: 100vh;
+  max-height: 100dvh;
   width: 100%;
   background: var(--bg);
   overflow: hidden;
@@ -84,8 +88,11 @@ textarea:disabled {
   position: relative;
   width: var(--sidebar-width, 316px);
   min-width: var(--sidebar-width, 316px);
+  height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   background: var(--panel-strong);
   box-shadow: inset -1px 0 0 var(--border);
 }
@@ -97,11 +104,69 @@ textarea:disabled {
   gap: 14px;
 }
 
+.paw-sidebar-header > .paw-sidebar-account {
+  display: none;
+}
+
 .paw-sidebar-brand {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+}
+
+.paw-sidebar-account {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-strong);
+}
+
+/* 整块可点，跳账户详情页——充值按钮在里面单独挡住了冒泡，不受影响。 */
+.paw-sidebar-account-clickable {
+  cursor: pointer;
+}
+
+.paw-sidebar-account-clickable:hover {
+  border-color: var(--paw-accent, #2563eb);
+}
+
+.paw-sidebar-account-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.paw-sidebar-account-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.paw-sidebar-account-copy strong,
+.paw-sidebar-account-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paw-sidebar-account-copy strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.paw-sidebar-account-copy span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.paw-sidebar-recharge {
+  min-height: 30px;
+  padding: 6px 9px;
+  font-size: 12px;
 }
 
 .paw-brand-title {
@@ -118,6 +183,8 @@ textarea:disabled {
 
 .paw-sidebar-user {
   display: grid;
+  width: 100%;
+  text-align: left;
   gap: 2px;
   padding: 12px;
   border: 1px solid var(--border);
@@ -125,6 +192,16 @@ textarea:disabled {
   background: var(--panel-strong);
   font-size: 13px;
   color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.paw-sidebar-user:hover,
+.paw-sidebar-user:focus-visible {
+  border-color: var(--accent);
+  background: var(--panel-alt);
+  outline: none;
 }
 
 .paw-sidebar-user div:first-child {
@@ -146,6 +223,7 @@ textarea:disabled {
 .paw-sidebar-list {
   padding: 12px;
   overflow: auto;
+  overflow-x: hidden;
   display: grid;
   gap: 8px;
   min-height: 0;
@@ -158,6 +236,7 @@ textarea:disabled {
   position: relative;
   display: block;
   width: 100%;
+  min-width: 0;
   border: 1px solid transparent;
   border-radius: 10px;
   padding: 0;
@@ -179,6 +258,7 @@ textarea:disabled {
   display: grid;
   gap: 4px;
   width: 100%;
+  min-width: 0;
   text-align: left;
   border: 0;
   min-height: 64px;
@@ -186,6 +266,7 @@ textarea:disabled {
   border-radius: 9px;
   background: transparent;
   color: var(--text);
+  overflow: hidden;
 }
 
 .paw-conversation-select:hover {
@@ -223,6 +304,7 @@ textarea:disabled {
 
 .paw-conversation-rename {
   width: 100%;
+  min-width: 0;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--panel);
@@ -237,11 +319,18 @@ textarea:disabled {
 }
 
 .paw-conversation-title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 14px;
   font-weight: 600;
 }
 
 .paw-conversation-preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
@@ -249,10 +338,12 @@ textarea:disabled {
 
 .paw-conversation-info {
   display: flex;
+  min-width: 0;
   justify-content: space-between;
   gap: 8px;
   color: var(--muted);
   font-size: 11px;
+  overflow: hidden;
 }
 
 .paw-conversation-info span {
@@ -265,10 +356,6 @@ textarea:disabled {
   padding: 14px 20px 20px;
   border-top: 1px solid var(--border);
   background: var(--panel-strong);
-}
-
-.paw-sidebar-user-footer {
-  margin-top: 12px;
 }
 
 .paw-sidebar-drag {
@@ -306,8 +393,11 @@ textarea:disabled {
 .paw-chat {
   flex: 1;
   min-width: 0;
+  min-height: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   background: var(--bg);
 }
 
@@ -722,6 +812,198 @@ textarea:disabled {
   gap: 12px;
 }
 
+.paw-auth-form .paw-banner {
+  margin: 0;
+  box-shadow: none;
+}
+
+.paw-auth-inline {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.paw-auth-inline .paw-button {
+  white-space: nowrap;
+}
+
+.paw-auth-switch {
+  justify-self: center;
+  border: 0;
+  padding: 2px 4px;
+  background: transparent;
+  color: var(--accent-strong);
+  font-size: 13px;
+}
+
+.paw-auth-switch:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.paw-auth-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.paw-auth-install-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--accent-strong);
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.paw-auth-install-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.paw-auth-card small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.paw-install-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--bg);
+}
+
+.paw-install-card {
+  width: min(560px, 100%);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--panel);
+  padding: 30px;
+}
+
+.paw-install-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.paw-install-logo {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.paw-install-kicker {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.paw-install-brand h1 {
+  margin: 4px 0 0;
+  font-size: 24px;
+}
+
+.paw-install-copy {
+  margin: 24px 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.paw-install-action {
+  display: grid;
+  gap: 10px;
+}
+
+.paw-install-action .paw-button {
+  justify-content: center;
+}
+
+.paw-install-action span,
+.paw-install-instructions span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.paw-install-status,
+.paw-install-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  font-size: 13px;
+}
+
+.paw-install-status.success {
+  color: var(--accent-strong);
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+}
+
+.paw-install-instructions {
+  border-top: 1px solid var(--border);
+  padding-top: 20px;
+}
+
+.paw-install-instructions.compact {
+  margin-top: 20px;
+}
+
+.paw-install-instructions h2 {
+  margin: 0 0 12px;
+  font-size: 16px;
+}
+
+.paw-install-instructions p {
+  margin: 0 0 10px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.paw-install-instructions ol {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 10px;
+  padding-left: 20px;
+  color: var(--text);
+  line-height: 1.7;
+}
+
+.paw-install-notice {
+  margin-top: 16px;
+  color: var(--text);
+  background: var(--panel-strong);
+}
+
+.paw-install-back {
+  display: inline-flex;
+  margin-top: 24px;
+  color: var(--accent-strong);
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.paw-install-back:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.paw-turnstile {
+  min-height: 65px;
+  overflow: hidden;
+}
+
 .paw-field {
   display: grid;
   gap: 6px;
@@ -867,16 +1149,250 @@ textarea:disabled {
   flex: 0 0 auto;
 }
 
+.paw-announcement-trigger {
+  position: relative;
+}
+
+.paw-announcement-trigger.has-unread {
+  color: var(--accent);
+}
+
+.paw-announcement-dot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 7px;
+  height: 7px;
+  border: 2px solid var(--bg);
+  border-radius: 50%;
+  background: #d92d20;
+}
+
+.paw-announcement-backdrop {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 120 !important;
+  display: grid;
+  width: 100vw;
+  height: 100dvh;
+  box-sizing: border-box;
+  place-items: center;
+  align-items: center;
+  justify-items: center;
+  overflow: auto;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.48);
+}
+
+.paw-announcement-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(680px, 100%);
+  min-height: min(400px, calc(100dvh - 40px));
+  max-height: min(760px, 90vh);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.24);
+}
+
+.paw-announcement-modal.detail {
+  width: min(820px, 100%);
+  min-height: min(520px, calc(100dvh - 40px));
+}
+
+.paw-announcement-modal.popup {
+  width: min(680px, 100%);
+  min-height: min(440px, calc(100dvh - 40px));
+}
+
+.paw-announcement-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-strong);
+}
+
+.paw-announcement-head.popup {
+  background: color-mix(in srgb, var(--accent) 10%, var(--panel-strong));
+}
+
+.paw-announcement-title-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--accent);
+}
+
+.paw-announcement-title-row h2,
+.paw-announcement-detail-heading h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1.3;
+}
+
+.paw-announcement-head p {
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.paw-announcement-head-actions,
+.paw-announcement-detail-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.paw-announcement-list {
+  min-height: 280px;
+  overflow: auto;
+}
+
+.paw-announcement-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  gap: 12px;
+  padding: 14px 20px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+
+.paw-announcement-item:hover,
+.paw-announcement-item:focus-visible {
+  background: var(--panel-strong);
+  outline: none;
+}
+
+.paw-announcement-item.unread {
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+.paw-announcement-item.unread::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--accent);
+  content: "";
+}
+
+.paw-announcement-item-icon {
+  display: grid;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--muted);
+  background: var(--panel);
+}
+
+.paw-announcement-item.unread .paw-announcement-item-icon {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  color: var(--accent);
+}
+
+.paw-announcement-item-copy {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 5px;
+}
+
+.paw-announcement-item-copy strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+}
+
+.paw-announcement-item-copy span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.paw-announcement-unread-label,
+.paw-announcement-kicker {
+  flex: 0 0 auto;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.paw-announcement-empty {
+  display: grid;
+  place-items: center;
+  min-height: 220px;
+  gap: 6px;
+  padding: 24px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.paw-announcement-empty strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.paw-announcement-detail-heading {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+}
+
+.paw-announcement-detail-heading h2 {
+  overflow-wrap: anywhere;
+}
+
+.paw-announcement-detail-heading > span:last-child {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.paw-announcement-detail-body {
+  min-height: 0;
+  overflow: auto;
+  padding: 24px;
+}
+
+.paw-announcement-detail-body .paw-markdown {
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.paw-announcement-detail-actions {
+  padding: 14px 20px;
+  border-top: 1px solid var(--border);
+  background: var(--panel-strong);
+}
+
 .paw-chat-main {
   min-height: 0;
   flex: 1;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .paw-chat-main .paw-message-list {
-  width: min(100%, 960px);
-  margin: 0 auto;
+  width: 100%;
+  max-width: none;
+  margin: 0;
   padding: 22px 28px 8px;
   position: relative;
   display: flex;
@@ -1221,8 +1737,9 @@ textarea:disabled {
 }
 
 .paw-input-panel {
-  width: min(100%, 960px);
-  margin: 0 auto;
+  width: 100%;
+  max-width: none;
+  margin: 0;
   padding: 8px 28px 18px;
 }
 
@@ -1241,14 +1758,27 @@ textarea:disabled {
 }
 
 .paw-selection-actions .paw-chat-action {
-  width: var(--paw-action-full-width, 96px);
+  width: 112px;
+  flex: 0 0 112px;
+  justify-content: flex-start;
   border: 1px solid var(--border);
   background: var(--panel);
 }
 
 .paw-selection-actions .paw-chat-action-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   opacity: 1;
   transform: none;
+}
+
+.paw-selection-actions .paw-chat-action:hover,
+.paw-selection-actions .paw-chat-action:focus-visible {
+  width: 112px;
+  flex-basis: 112px;
 }
 
 .paw-action-select {
@@ -1426,6 +1956,14 @@ textarea:disabled {
   margin-top: 6px;
 }
 
+.paw-composer-hint-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
 .paw-composer-hint {
   min-width: 0;
   overflow: hidden;
@@ -1575,6 +2113,120 @@ textarea:disabled {
 
 .paw-markdown-code-toggle:hover {
   background: var(--panel-alt);
+}
+
+/* agent 执行命令的输出——不是正文，是过程记录，默认收成一行，别跟
+   .paw-markdown-code（模型写的代码）用同一套视觉，那套是"这是内容"的信号，
+   这里要传达的是"这是可以不看的细节"。 */
+.paw-agent-output {
+  margin: 8px 0;
+}
+
+.paw-agent-output-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 28px;
+  padding: 4px 8px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.paw-agent-output-toggle:hover {
+  background: var(--panel-alt);
+  color: var(--text);
+}
+
+.paw-agent-output-chevron {
+  flex: 0 0 auto;
+  font-size: 10px;
+}
+
+.paw-agent-output-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paw-agent-output-meta {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* "agent 现在到底在干嘛"——批完一个审批之后最容易让人心里没底的一段时间。
+   固定在输入框上方，不随消息列表滚走。 */
+.paw-agent-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.paw-agent-status-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-strong);
+  animation: paw-agent-status-pulse 1.2s ease-in-out infinite;
+}
+
+/* 正在重试——比"正在处理"更要紧（可能是账号/网络出了问题），
+   颜色跟着一起换，别让它看起来跟正常处理一样风平浪静。 */
+.paw-agent-status.warn {
+  color: var(--danger);
+}
+
+.paw-agent-status.warn .paw-agent-status-dot {
+  background: var(--danger);
+}
+
+.paw-agent-status-timer {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  opacity: 0.85;
+}
+
+@keyframes paw-agent-status-pulse {
+  0%, 100% {
+    opacity: 0.35;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.paw-agent-output-body {
+  margin: 4px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-strong);
+  max-height: 400px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 .paw-markdown-code code.hljs,
@@ -1752,6 +2404,15 @@ textarea:disabled {
   font-size: 11px;
 }
 
+.paw-selector-explanation {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent) 6%, var(--panel));
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
 .paw-selector-list {
   max-height: min(620px, calc(90vh - 70px));
   overflow: auto;
@@ -1797,16 +2458,35 @@ textarea:disabled {
 }
 
 .paw-selector-item-copy {
+  flex: 1 1 auto;
   min-width: 0;
   display: grid;
   gap: 3px;
 }
 
+.paw-selector-item-heading {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 8px;
+}
+
 .paw-selector-item-copy strong {
+  min-width: 0;
+  flex: 1 1 auto;
   overflow: hidden;
   font-size: 13px;
   font-weight: 600;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paw-selector-item-rate-summary {
+  flex: 0 0 auto;
+  color: var(--accent-strong);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
   white-space: nowrap;
 }
 
@@ -1816,6 +2496,60 @@ textarea:disabled {
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.paw-selector-item-copy .paw-selector-item-description,
+.paw-selector-item-copy .paw-selector-item-rate-description,
+.paw-selector-item-copy .paw-selector-item-current {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  line-height: 1.4;
+}
+
+.paw-selector-item-rate-description {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.paw-selector-item-current {
+  color: var(--accent-strong) !important;
+  font-weight: 600;
+}
+
+.paw-selector-item-rate {
+  display: grid;
+  flex: 0 0 auto;
+  justify-items: end;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.paw-selector-rate-pill,
+.paw-selector-peak-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+  color: var(--accent-strong);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.paw-selector-rate-original {
+  color: var(--muted);
+  font-weight: 500;
+  text-decoration: line-through;
+}
+
+.paw-selector-peak-pill {
+  background: color-mix(in srgb, #d97706 13%, var(--panel));
+  color: #b45309;
+  font-size: 10px;
 }
 
 .paw-selector-check {
@@ -1901,6 +2635,50 @@ textarea:disabled {
   justify-content: flex-end;
   border-top: 1px solid var(--border);
   border-bottom: 0;
+}
+
+.paw-account-page {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.paw-account-page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 20px 28px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.paw-account-page-head h1 {
+  margin: 0;
+  color: var(--text);
+  font-size: 20px;
+}
+
+.paw-account-page-head p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.paw-account-page-scroll {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 24px 28px 36px;
+}
+
+.paw-account-page-scroll > .paw-account-details {
+  width: min(100%, 960px);
+  margin: 0 auto;
 }
 
 .paw-settings-list,
@@ -2005,6 +2783,436 @@ textarea:disabled {
   color: var(--text);
   font-weight: 600;
   overflow-wrap: anywhere;
+}
+
+.paw-profile {
+  display: grid;
+  gap: 18px;
+}
+
+.paw-profile-identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.paw-profile-avatar {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.paw-profile-identity > div:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.paw-profile-identity strong {
+  overflow: hidden;
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paw-profile-identity span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paw-profile-list {
+  display: grid;
+  gap: 0;
+}
+
+.paw-profile-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.paw-profile-row:last-child {
+  border-bottom: 0;
+}
+
+.paw-profile-row strong,
+.paw-profile-row > span:last-child {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.paw-profile-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.paw-account-details {
+  display: grid;
+  gap: 18px;
+}
+
+.paw-account-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.paw-account-summary-card {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-strong);
+}
+
+.paw-account-summary-card span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.paw-account-summary-card strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paw-account-section {
+  display: grid;
+  gap: 10px;
+}
+
+.paw-account-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.paw-account-section-head h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.paw-account-section-head span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.paw-account-chart {
+  width: 100%;
+  min-height: 180px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-strong);
+}
+
+.paw-account-chart svg {
+  display: block;
+  width: 100%;
+  height: 180px;
+}
+
+.paw-account-chart-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.paw-account-chart-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 3;
+}
+
+.paw-account-chart-label {
+  fill: var(--muted);
+  font-size: 10px;
+}
+
+.paw-account-chart-empty,
+.paw-account-loading,
+.paw-account-error {
+  display: grid;
+  min-height: 180px;
+  place-items: center;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.paw-account-table {
+  display: grid;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.paw-account-table-row {
+  display: grid;
+  grid-template-columns: minmax(92px, 1fr) minmax(110px, 1.4fr) minmax(76px, 0.8fr) minmax(76px, 0.8fr);
+  gap: 10px;
+  align-items: center;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.paw-account-table-row:last-child {
+  border-bottom: 0;
+}
+
+.paw-account-table-row strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paw-account-table-header {
+  color: var(--muted);
+  background: var(--panel-strong);
+  font-weight: 600;
+}
+
+.paw-payment-form,
+.paw-payment-flow {
+  display: grid;
+  gap: 16px;
+}
+
+.paw-payment-loading,
+.paw-payment-empty,
+.paw-payment-success {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 120px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.paw-payment-balance,
+.paw-payment-order-summary,
+.paw-payment-countdown {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-strong);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.paw-payment-balance strong,
+.paw-payment-order-summary strong {
+  color: var(--accent);
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.paw-payment-order-summary strong {
+  color: var(--text);
+}
+
+.paw-payment-field {
+  display: grid;
+  gap: 8px;
+}
+
+.paw-payment-field label,
+.paw-payment-label {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.paw-payment-input {
+  width: 100%;
+  min-height: 40px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+}
+
+.paw-payment-input:focus {
+  outline: 2px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-color: var(--accent);
+}
+
+.paw-payment-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.paw-payment-presets button,
+.paw-payment-method {
+  min-height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+
+.paw-payment-presets button {
+  min-width: 52px;
+  padding: 6px 9px;
+}
+
+.paw-payment-presets button:hover,
+.paw-payment-presets button.active,
+.paw-payment-method:hover,
+.paw-payment-method.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.paw-payment-methods {
+  display: grid;
+  gap: 8px;
+}
+
+.paw-payment-method {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 9px 11px;
+  text-align: left;
+}
+
+.paw-payment-method.active {
+  background: color-mix(in srgb, var(--accent) 9%, var(--panel));
+}
+
+.paw-payment-breakdown {
+  display: grid;
+  gap: 7px;
+  padding: 12px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.paw-payment-breakdown div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.paw-payment-breakdown div:last-child {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.paw-payment-help,
+.paw-payment-error,
+.paw-payment-qr-section p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.paw-payment-error {
+  color: var(--danger);
+}
+
+.paw-payment-submit,
+.paw-payment-pay-link,
+.paw-payment-cancel {
+  justify-content: center;
+}
+
+.paw-payment-status {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.paw-payment-status strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.paw-payment-qr-section {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  text-align: center;
+}
+
+.paw-payment-qr-frame {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.paw-payment-qr-frame canvas {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.paw-payment-success {
+  min-height: auto;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, #1f9d55 35%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, #1f9d55 10%, var(--panel));
+  color: #1f9d55;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.paw-payment-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
 }
 
 .paw-settings-note {
@@ -2383,8 +3591,42 @@ textarea:disabled {
     align-items: stretch;
   }
 
+  .paw-account-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .paw-account-table-row {
+    grid-template-columns: minmax(78px, 0.9fr) minmax(100px, 1.4fr) minmax(54px, 0.7fr) minmax(58px, 0.7fr);
+    gap: 6px;
+    padding-left: 7px;
+    padding-right: 7px;
+    font-size: 10px;
+  }
+
+  .paw-account-table-row strong {
+    font-size: 11px;
+  }
+
   .paw-window-header {
     padding: 10px 14px;
+  }
+
+  .paw-account-page-head {
+    align-items: flex-start;
+    padding: 14px;
+  }
+
+  .paw-account-page-head h1 {
+    font-size: 18px;
+  }
+
+  .paw-account-page-head p {
+    max-width: 210px;
+    line-height: 1.45;
+  }
+
+  .paw-account-page-scroll {
+    padding: 16px 14px 24px;
   }
 
   .paw-window-actions .paw-icon-button {
@@ -2421,10 +3663,13 @@ textarea:disabled {
 
   .paw-selection-actions .paw-chat-action,
   .paw-input-actions-end .paw-chat-action {
-    width: auto;
-    flex: 0 0 auto;
     background: var(--panel);
     border: 1px solid var(--border);
+  }
+
+  .paw-input-actions-end .paw-chat-action {
+    width: auto;
+    flex: 0 0 auto;
   }
 
   .paw-selection-actions .paw-chat-action-label,
@@ -2446,4 +3691,360 @@ textarea:disabled {
   .paw-title-input {
     max-width: 52vw;
   }
+
+  .paw-auth {
+    padding: 14px;
+  }
+
+  .paw-auth-card {
+    padding: 22px 18px;
+  }
+
+  .paw-auth-inline {
+    grid-template-columns: 1fr;
+  }
+
+  .paw-auth-inline .paw-button {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+
+/* ── agent（挂在对话上的工作目录能力，A6）──────────────────────────
+   工具条上一个 chip（工作目录），复用 .paw-chat-action 的视觉语言。
+   待批准的操作不用 chip——它直接弹在输入框上方、同宽，见下面
+   .paw-agent-approval-panel：审批是会挡住继续对话的事，不该藏在
+   一个要点开才看得到的东西后面。 */
+.paw-agent-panels {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.paw-agent-panel {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-strong);
+}
+
+.paw-agent-panel > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 34px;
+  padding: 7px 10px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  list-style: none;
+}
+
+.paw-agent-panel > summary::-webkit-details-marker {
+  display: none;
+}
+
+.paw-agent-panel > summary::before {
+  content: ">";
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.paw-agent-panel[open] > summary::before {
+  content: "v";
+}
+
+.paw-agent-panel-meta {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.paw-agent-panel-body {
+  display: grid;
+  gap: 9px;
+  padding: 0 10px 10px;
+  border-top: 1px solid var(--border);
+}
+
+.paw-agent-panel-pre {
+  max-height: 260px;
+  margin: 0;
+  overflow: auto;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font: 12px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.paw-agent-plan-explanation {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.paw-agent-plan-list {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.paw-agent-plan-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.paw-agent-plan-status {
+  width: 14px;
+  flex: 0 0 14px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.paw-agent-plan-list li[data-status="completed"] .paw-agent-plan-status {
+  color: #1f9d55;
+}
+
+.paw-agent-plan-list li[data-status="inProgress"] .paw-agent-plan-status {
+  color: var(--accent);
+}
+
+.paw-agent-file-changes,
+.paw-agent-terminal-list {
+  padding-top: 9px;
+}
+
+.paw-agent-file-change,
+.paw-agent-terminal-item,
+.paw-agent-file-change-entry {
+  display: grid;
+  gap: 7px;
+}
+
+.paw-agent-file-change + .paw-agent-file-change,
+.paw-agent-terminal-item + .paw-agent-terminal-item {
+  padding-top: 9px;
+  border-top: 1px solid var(--border);
+}
+
+.paw-agent-file-change-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.paw-agent-file-change-head code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font: 12px ui-monospace, SFMono-Regular, Consolas, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paw-agent-output-text {
+  color: var(--muted);
+}
+
+.paw-agent-notification-list,
+.paw-agent-file-searches,
+.paw-agent-review-list {
+  padding-top: 9px;
+}
+
+.paw-agent-notification-item,
+.paw-agent-file-search,
+.paw-agent-review-item {
+  display: grid;
+  gap: 7px;
+}
+
+.paw-agent-notification-item + .paw-agent-notification-item,
+.paw-agent-file-search + .paw-agent-file-search,
+.paw-agent-review-item + .paw-agent-review-item {
+  padding-top: 9px;
+  border-top: 1px solid var(--border);
+}
+
+.paw-agent-notification-message {
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.paw-agent-file-search-results {
+  display: grid;
+  gap: 5px;
+}
+
+.paw-agent-file-search-result {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.paw-agent-file-search-result code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font: 12px ui-monospace, SFMono-Regular, Consolas, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paw-agent-approval-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  max-height: 42vh;
+  overflow-y: auto;
+  margin-bottom: 10px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--paw-border, #e4e4ea);
+  background: var(--paw-surface, #fff);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+}
+
+.paw-agent-approval-panel-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #b54708;
+}
+
+.paw-agent-approval-panel-header > span:first-of-type {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.paw-agent-approval-bulk {
+  display: inline-flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.paw-agent-approval-bulk .paw-button {
+  min-height: 28px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.paw-agent-approval-item {
+  border: 1px solid #fedf89;
+  background: #fffaeb;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.paw-agent-approval-item p {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+
+/* 命令必须原样、完整地看得见——截断会让人在没看清的情况下点同意。 */
+.paw-agent-approval-item pre {
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 12px;
+  margin: 0 0 6px;
+}
+
+.paw-agent-approval-warn {
+  color: #b54708;
+  font-weight: 600;
+}
+
+.paw-agent-approval-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.paw-agent-approval-queued {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+/* composer 底部那行——发送前最后能看到的地方。工作目录是图标 + 文字：
+   没选时提示"选择工作目录"，选了就显示目录名；锁定之后变纯展示。
+   审批用原生 <select>，两个选项不用自己拼一套弹层。 */
+.paw-composer-dir-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 160px;
+  height: 22px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.paw-composer-dir-button span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.paw-composer-dir-button svg {
+  flex-shrink: 0;
+}
+
+.paw-composer-dir-button:hover:not(:disabled) {
+  background: var(--paw-hover, rgba(0, 0, 0, 0.06));
+  color: var(--text);
+}
+
+.paw-composer-dir-button.active {
+  color: #16803d;
+}
+
+.paw-composer-dir-button:disabled {
+  cursor: default;
+  opacity: 0.8;
+}
+
+.paw-composer-mode-select {
+  height: 22px;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 11px;
 }
