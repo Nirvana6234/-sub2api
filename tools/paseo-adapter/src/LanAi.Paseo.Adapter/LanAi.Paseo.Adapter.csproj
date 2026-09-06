@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AssemblyName>LanAi.Paseo.Adapter</AssemblyName>
+    <RootNamespace>LanAi.Paseo.Adapter</RootNamespace>
+
+    <!-- Same guard as LanAi.RelayClient.Server: any reintroduced reflection
+         (IL2026/IL3050) becomes a build error rather than a client whose
+         contracts silently bind to empty objects after trimming. -->
+    <IsTrimmable>true</IsTrimmable>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+
+    <!-- Deliberately no PackageReference. This library must stay droppable into
+         any consumer (novice client, full chat client, future hosts) without
+         dragging a dependency graph behind it. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="LanAi.Paseo.Adapter.Tests" />
+  </ItemGroup>
+
+</Project>

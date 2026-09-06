@@ -1,0 +1,20 @@
+{
+  "name": "cofly-paseo-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The only place in the 共飞 stack that speaks the Paseo protocol.",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@getpaseo/client": "0.7.0-beta.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.9.3"
+  }
+}

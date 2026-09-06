@@ -197,10 +197,6 @@ export function PawProfileModal({
           <strong>{formatMoney(user?.frozen_balance)}</strong>
         </div>
         <div className="paw-account-summary-card">
-          <span>累计充值</span>
-          <strong>{formatMoney(user?.total_recharged)}</strong>
-        </div>
-        <div className="paw-account-summary-card">
           <span>当前分组倍率</span>
           <strong>{formatGroupRate(currentGroup)}</strong>
         </div>
@@ -222,10 +218,6 @@ export function PawProfileModal({
             <div className="paw-account-summary-card">
               <span>今日 Token</span>
               <strong>{formatNumber(stats?.today_tokens)}</strong>
-            </div>
-            <div className="paw-account-summary-card">
-              <span>累计消费</span>
-              <strong>{formatMoney(stats?.total_actual_cost)}</strong>
             </div>
           </div>
 

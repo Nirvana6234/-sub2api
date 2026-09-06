@@ -3,10 +3,10 @@
     <Transition name="popup-fade">
       <div
         v-if="displayedAnnouncement"
-        class="fixed inset-0 z-[120] flex items-start justify-center overflow-y-auto bg-gradient-to-br from-black/70 via-black/60 to-black/70 p-4 pt-[8vh] backdrop-blur-md"
+        class="announcement-popup-overlay bg-gradient-to-br from-black/70 via-black/60 to-black/70 backdrop-blur-md"
       >
         <div
-          class="w-full max-w-[680px] overflow-hidden rounded-3xl bg-white shadow-2xl ring-1 ring-black/5 dark:bg-dark-800 dark:ring-white/10"
+          class="announcement-popup-card w-full max-w-[680px] overflow-hidden rounded-3xl bg-white shadow-2xl ring-1 ring-black/5 dark:bg-dark-800 dark:ring-white/10"
           @click.stop
         >
           <!-- Header with warm gradient -->
@@ -158,6 +158,19 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.announcement-popup-overlay {
+  position: fixed !important;
+  z-index: 120 !important;
+  inset: 0 !important;
+  display: grid !important;
+  width: 100vw;
+  height: 100dvh;
+  box-sizing: border-box;
+  place-items: center;
+  overflow-y: auto;
+  padding: 1rem;
+}
+
 .popup-fade-enter-active {
   transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -171,12 +184,20 @@ onBeforeUnmount(() => {
   opacity: 0;
 }
 
-.popup-fade-enter-from > div {
+.popup-fade-enter-active .announcement-popup-card {
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.popup-fade-leave-active .announcement-popup-card {
+  transition: transform 0.2s cubic-bezier(0.4, 0, 1, 1), opacity 0.2s cubic-bezier(0.4, 0, 1, 1);
+}
+
+.popup-fade-enter-from .announcement-popup-card {
   transform: scale(0.94) translateY(-12px);
   opacity: 0;
 }
 
-.popup-fade-leave-to > div {
+.popup-fade-leave-to .announcement-popup-card {
   transform: scale(0.96) translateY(-8px);
   opacity: 0;
 }
