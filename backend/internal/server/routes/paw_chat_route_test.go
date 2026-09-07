@@ -103,6 +103,22 @@ func TestPawChatRouteBindsSelectedGroupAndPreservesOpenAISSE(t *testing.T) {
 	require.Contains(t, w.Body.String(), "[DONE]")
 }
 
+func TestPawResponsesRouteIsRegisteredAndUsesSelectedGroup(t *testing.T) {
+	r := newPawChatRouteEngine(nil, 42)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/paw/responses", strings.NewReader(`{"model":"gpt-5","input":[]}`))
+	req.Header.Set(PawGroupHeader, "7")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	// The test engine deliberately has no upstream Responses gateway. Reaching
+	// this service-unavailable branch proves the Paw route parsed the group,
+	// validated the model, and did not fall through to Gin's 404.
+	require.Equal(t, http.StatusServiceUnavailable, w.Code)
+	require.Contains(t, w.Body.String(), PawErrorCodeUpstreamUnavailable)
+}
+
 func readRequestBody(t *testing.T, c *gin.Context) string {
 	t.Helper()
 	body, err := c.GetRawData()

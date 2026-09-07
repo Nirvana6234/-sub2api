@@ -100,6 +100,24 @@ func ProvideBatchImageModelPricingResolver(resolver *ModelPricingResolver) *Batc
 	return &BatchImageModelPricingResolver{Resolver: resolver}
 }
 
+// ProvidePawConfigService wires the account-session-backed Paw configuration
+// used by the desktop Chat client.
+func ProvidePawConfigService(
+	apiKeyService *APIKeyService,
+	userService *UserService,
+	channelService *ChannelService,
+	userAttributeService *UserAttributeService,
+	pricingService *PricingService,
+) *PawConfigService {
+	return NewPawConfigService(
+		APIKeyPawGroupSource{Service: apiKeyService},
+		userService,
+		channelService,
+		UserAttributePawDefaultsStore{Service: userAttributeService},
+		pricingService,
+	)
+}
+
 func ProvideBatchImageCleanupService(repo BatchImageRepository, accountRepo AccountRepository, cfg *config.Config) *BatchImageCleanupService {
 	svc := NewBatchImageCleanupService(repo, accountRepo, cfg)
 	svc.Start()

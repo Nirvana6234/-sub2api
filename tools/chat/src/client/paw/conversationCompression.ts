@@ -20,7 +20,7 @@ export interface ConversationCompressionResult {
  */
 const AGENT_OUTPUT_BLOCK = /\n{0,2}```agent-output\n[\s\S]*?\n```\n?/g;
 
-function stripCommandOutput(content: string): string {
+export function stripAgentOutput(content: string): string {
   return content.replace(AGENT_OUTPUT_BLOCK, "\n\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
@@ -64,10 +64,21 @@ function durableMessage(
     // 消息也会被剥离（配额撑不住的最后手段），把它们也标成 agentTurn=true 会让
     // 它们此后每次都被"completed"档误伤——这正是加这个字段要防的问题。
     agentTurn: isAgentMessage ? true : message.agentTurn,
-    content: stripCommandOutput(message.content),
+    content: stripAgentOutput(message.content),
     reasoningContent: undefined,
     agentPanels: undefined,
+    attachments: message.attachments?.map(({ previewUrl: _previewUrl, ...attachment }) => attachment),
   };
+}
+
+/** 将已结束的 Agent assistant 消息压缩为可长期保留的最终正文。 */
+export function compactAgentMessageForRuntime(
+  message: PawConversationMessage,
+): PawConversationMessage {
+  const completed = message.turnStatus === "active"
+    ? { ...message, turnStatus: "complete" as const }
+    : message;
+  return durableMessage(completed, "completed");
 }
 
 export function projectConversationsForStorage(

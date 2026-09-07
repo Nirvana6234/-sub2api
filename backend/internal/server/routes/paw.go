@@ -35,6 +35,7 @@ type pawImageGenerationRequest struct {
 type PawRouteDependencies struct {
 	ChatService       *service.PawChatService
 	OpenAIGateway     *handler.OpenAIGatewayHandler
+	Gateway           *handler.GatewayHandler
 	OpenAIChat        gin.HandlerFunc
 	GatewayChat       gin.HandlerFunc
 	OpenAIResponses   gin.HandlerFunc
@@ -44,6 +45,10 @@ type PawRouteDependencies struct {
 	OpsService        *service.OpsService
 	Config            *config.Config
 }
+
+// PawGroupHeader is set by the desktop relay because the Responses payload
+// must remain byte-for-byte a Codex payload and cannot carry routing metadata.
+const PawGroupHeader = "X-Paw-Group-Id"
 
 func RegisterPawRoutes(v1 *gin.RouterGroup, svc *service.PawConfigService, jwtAuth middleware.JWTAuthMiddleware, settingService *service.SettingService, panelRateLimiter *middleware.PanelRateLimiter, dependencies ...PawRouteDependencies) {
 	if v1 == nil || svc == nil {
@@ -351,12 +356,6 @@ func pawChatHandler(primaryChat *service.PawChatService, localChat *service.PawC
 		}
 	}
 }
-
-// PawGroupHeader 是 Responses 这条路上选分组的入口。
-//
-// 为什么是请求头而不是请求体：**请求体必须原样是一份 Responses 载荷**，
-// 它是 codex 生成的，我们往里面塞自己的字段就可能被上游当成非法参数退回来。
-const PawGroupHeader = "X-Paw-Group-Id"
 
 // pawResponsesHandler —— 工作台里的 codex 走这条。
 //
