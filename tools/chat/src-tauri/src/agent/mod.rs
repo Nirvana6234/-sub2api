@@ -34,7 +34,10 @@ use codex_adapter::{
 use codex_host::{Backoff, CodexHome, Engine, EngineConfig, LocalRelay, Supervisor};
 use tokio::sync::Mutex;
 
-use dto::{ApprovalKind, ApprovalRequest, SendParams, StartParams, StartedThread, UiDecision, UiEvent};
+use dto::{
+    ApprovalKind, ApprovalRequest, ResumeParams, SendParams, StartParams, StartedThread,
+    UiDecision, UiEvent,
+};
 
 /// 事件出口。Tauri 那层实现它，测试自己实现一个收集器。
 pub trait EventSink: Send + Sync + 'static {
@@ -166,6 +169,40 @@ impl AgentBridge {
         // 登记这条 thread 的分组。**必须在第一轮之前** —— 转发层认不出的 thread
         // 会被直接拒掉（宁可报错也不拿别的分组顶上）。
         engine.relay.bind_thread(&thread_id, params.group_id).await;
+
+        Ok(StartedThread { thread_id, attempts })
+    }
+
+    /// 恢复一条已经存在于 codex home 中的 thread。
+    ///
+    /// 如果引擎尚未启动，先按恢复参数建立引擎；如果引擎已经存在，只复用现有
+    /// 进程。thread 恢复成功后重新绑定 relay 的 group。
+    pub async fn resume(&self, params: ResumeParams) -> Result<StartedThread, BridgeError> {
+        if params.thread_id.trim().is_empty() {
+            return Err(BridgeError::BadParams("threadId 不能为空".to_owned()));
+        }
+        let start = params.start_params();
+        parse_sandbox(&start.sandbox)?;
+        parse_approval(&start.approval_policy)?;
+        let _cwd = WorkspaceDir::new(&start.cwd)
+            .map_err(|e| BridgeError::BadParams(e.to_string()))?;
+
+        let mut slot = self.engine.lock().await;
+        let attempts = if slot.is_some() {
+            1
+        } else {
+            let spawned = self.spawn_engine(&start).await?;
+            *slot = Some(spawned.engine);
+            spawned.attempts
+        };
+        let engine = slot.as_ref().expect("引擎应当已经存在");
+
+        let thread_id = engine
+            .session
+            .resume_thread(&params.thread_id)
+            .await
+            .map_err(|e| BridgeError::Session(e.to_string()))?;
+        engine.relay.bind_thread(&thread_id, start.group_id).await;
 
         Ok(StartedThread { thread_id, attempts })
     }

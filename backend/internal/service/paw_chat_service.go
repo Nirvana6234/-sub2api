@@ -151,6 +151,24 @@ func NewPawChatService(config *PawConfigService, keySource PawChatKeySource, att
 	return &PawChatService{config: config, keySource: keySource, attachments: attachmentService}
 }
 
+// PrepareResponses validates the group/model selected by the desktop relay and
+// resolves the authenticated internal key without rewriting the Responses body.
+// Codex sends a Responses payload whose input shape is not interchangeable with
+// the chat-completions payload handled by Prepare.
+func (s *PawChatService) PrepareResponses(ctx context.Context, userID, groupID int64, modelID string) (*PawChatResolution, error) {
+	if s == nil || s.config == nil || s.keySource == nil {
+		return nil, errPawKeyUnavailable
+	}
+	if userID <= 0 {
+		return nil, infraerrors.Unauthorized("AUTH_REQUIRED", "authenticated user is required")
+	}
+	resolution, _, err := s.resolvePawSelection(ctx, userID, groupID, modelID)
+	if err != nil {
+		return nil, err
+	}
+	return resolution, nil
+}
+
 func (s *PawChatService) Prepare(ctx context.Context, userID int64, req PawChatRequest) (*PawChatResolution, error) {
 	if s == nil || s.config == nil || s.keySource == nil {
 		return nil, errPawKeyUnavailable
@@ -174,35 +192,13 @@ func (s *PawChatService) Prepare(ctx context.Context, userID int64, req PawChatR
 			return nil, infraerrors.BadRequest("INVALID_REQUEST", "messages must contain a supported role and non-empty content")
 		}
 	}
-	config, err := s.config.GetAvailableConfig(ctx, userID)
+	resolution, model, err := s.resolvePawSelection(ctx, userID, req.GroupID, modelID)
 	if err != nil {
-		return nil, errPawKeyUnavailable.WithCause(err)
-	}
-	group, model, ok := s.findPawChatSelection(ctx, config, req.GroupID, modelID)
-	if !ok {
-		if pawGroupExists(config, req.GroupID) {
-			return nil, errPawModelUnavailable
-		}
-		return nil, errPawGroupForbidden
+		return nil, err
 	}
 	if reasoning := strings.TrimSpace(req.Reasoning); reasoning != "" && !pawReasoningValueAvailable(model, reasoning) {
 		return nil, errPawReasoningUnsupported
 	}
-
-	apiKey, subscription, err := s.keySource.ResolvePawAPIKey(ctx, userID, group.ID)
-	if err != nil || apiKey == nil {
-		return nil, errPawKeyUnavailable.WithCause(err)
-	}
-	if apiKey.Status == StatusAPIKeyQuotaExhausted || apiKey.IsQuotaExhausted() {
-		return nil, errPawQuotaExceeded
-	}
-	if apiKey.Status != "" && apiKey.Status != StatusActive {
-		return nil, errPawKeyUnavailable
-	}
-	if apiKey.IsExpired() {
-		return nil, errPawKeyUnavailable
-	}
-	resolvedKey := clonePawAPIKeyWithGroup(apiKey, group)
 	messages, err := s.buildPawChatMessages(ctx, userID, req.Messages, req.Attachments)
 	if err != nil {
 		return nil, err
@@ -221,13 +217,49 @@ func (s *PawChatService) Prepare(ctx context.Context, userID int64, req PawChatR
 	if err != nil {
 		return nil, errPawKeyUnavailable.WithCause(err)
 	}
+	resolution.Body = body
+	return resolution, nil
+}
+
+func (s *PawChatService) resolvePawSelection(ctx context.Context, userID, groupID int64, modelID string) (*PawChatResolution, PawModel, error) {
+	if groupID <= 0 {
+		return nil, PawModel{}, errPawGroupForbidden
+	}
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" {
+		return nil, PawModel{}, errPawModelUnavailable
+	}
+	config, err := s.config.GetAvailableConfig(ctx, userID)
+	if err != nil {
+		return nil, PawModel{}, errPawKeyUnavailable.WithCause(err)
+	}
+	group, model, ok := s.findPawChatSelection(ctx, config, groupID, modelID)
+	if !ok {
+		if pawGroupExists(config, groupID) {
+			return nil, PawModel{}, errPawModelUnavailable
+		}
+		return nil, PawModel{}, errPawGroupForbidden
+	}
+
+	apiKey, subscription, err := s.keySource.ResolvePawAPIKey(ctx, userID, group.ID)
+	if err != nil || apiKey == nil {
+		return nil, PawModel{}, errPawKeyUnavailable.WithCause(err)
+	}
+	if apiKey.Status == StatusAPIKeyQuotaExhausted || apiKey.IsQuotaExhausted() {
+		return nil, PawModel{}, errPawQuotaExceeded
+	}
+	if apiKey.Status != "" && apiKey.Status != StatusActive {
+		return nil, PawModel{}, errPawKeyUnavailable
+	}
+	if apiKey.IsExpired() {
+		return nil, PawModel{}, errPawKeyUnavailable
+	}
 	return &PawChatResolution{
-		Body:         body,
-		APIKey:       resolvedKey,
+		APIKey:       clonePawAPIKeyWithGroup(apiKey, group),
 		Subscription: subscription,
 		Group:        group,
 		Model:        modelID,
-	}, nil
+	}, model, nil
 }
 
 func (s *PawChatService) buildPawChatMessages(ctx context.Context, userID int64, reqMessages []PawChatMessage, attachments []PawAttachmentReference) ([]apicompat.ChatMessage, error) {

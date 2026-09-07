@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, Manager};
 
-use agent::dto::{SendParams, StartParams, StartedThread, UiDecision};
+use agent::dto::{ResumeParams, SendParams, StartParams, StartedThread, UiDecision};
 use agent::{AgentBridge, BridgeError, EventSink};
 
 /// 所有 agent 事件都从这一个通道出去。前端 `listen("agent://event")` 收。
@@ -44,6 +44,14 @@ async fn agent_start(
     params: StartParams,
 ) -> Result<StartedThread, BridgeError> {
     bridge.start(params).await
+}
+
+#[tauri::command]
+async fn agent_resume(
+    bridge: tauri::State<'_, Arc<AgentBridge>>,
+    params: ResumeParams,
+) -> Result<StartedThread, BridgeError> {
+    bridge.resume(params).await
 }
 
 /// 发一轮提问。**必须点名 `threadId`**——多会话并发之后不再有"当前那一个"的概念，
@@ -239,6 +247,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             agent_start,
+            agent_resume,
             agent_send,
             agent_interrupt,
             agent_answer,

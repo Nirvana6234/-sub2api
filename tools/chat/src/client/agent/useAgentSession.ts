@@ -47,6 +47,7 @@ import {
   describeAgentError,
   endAgentThread,
   interruptAgent,
+  resumeAgent,
   sendToAgent,
   startAgent,
   subscribeToAgent,
@@ -96,6 +97,31 @@ interface ConversationBookkeeping {
   planDelta: string;
   fileChangeOutputs: Map<string, string>;
   fileSearches: Map<string, { query: string; files: unknown[] }>;
+}
+
+const REPLACEMENT_CHAR = "�";
+
+/**
+ * 命令输出偶尔是二进制文件被当文本读出来的结果——比如 agent 对一个用二进制
+ * 序列化的 Unity `.unity` 场景文件跑了 `Get-Content`，字节流转 UTF-8 时任何
+ * 不合法的字节序列都会变成 U+FFFD。真实的文本输出（哪怕是进度条、颜色方块
+ * 这类正常使用 Unicode 字符的场景）几乎不会出现 U+FFFD，所以拿它的占比当
+ * 信号，不容易误伤正常输出。
+ *
+ * 命中就不把原始乱码塞进消息——省的不只是好看：这段内容还会原样存进
+ * localStorage，一大坨解码失败的字节除了占地方什么用都没有。
+ */
+function sanitizeCommandOutput(text: string): string {
+  if (!text) return text;
+  const replacementCount = text.split(REPLACEMENT_CHAR).length - 1;
+  if (replacementCount === 0) return text;
+  // 偶尔一两个替换字符可能只是输出里混了个别读不出来的字节，不代表整段都是
+  // 垃圾；只有占比明显偏高才当成"这整段就是二进制"处理。
+  if (replacementCount < 20 && replacementCount / text.length < 0.02) return text;
+  return (
+    `[无法解码为文本的输出已省略——原始输出 ${text.length} 字符中有 ${replacementCount} ` +
+    "个是解码失败的字节，大概率是命令读到了二进制文件]"
+  );
 }
 
 /** `item.command` 是协议里唯一告诉我们"这条命令到底是什么"的地方——`item` 是
@@ -207,6 +233,8 @@ export interface UseAgentSessionParams {
   activeConversationId: string | null;
   /** 当前显示的这个对话记录——cwd/审批模式从这里读。 */
   activeConversation: PawConversation | null;
+  /** 按 id 读取对话的持久化 Agent thread，供删除/切换模式等非当前对话操作使用。 */
+  getAgentThreadId: (conversationId: string) => string | null;
   /** 没有活跃会话时，先建一个再返回它的 id（同步）。 */
   ensureActiveConversationId: () => string;
   groupId: number | null;
@@ -216,6 +244,7 @@ export interface UseAgentSessionParams {
   sessionToken: string | null;
   /** 设置/重选工作目录——发消息前可以随便调，数据层只在锁定后才挡写入。 */
   setAgentBinding: (conversationId: string, cwd: string) => void;
+  setAgentThreadId: (conversationId: string, threadId: string | null) => void;
   /** 锁死当前工作目录——只在真正起了一条会话（第一次成功发消息）之后才调。 */
   lockAgentCwd: (conversationId: string) => void;
   setAgentApprovalMode: (conversationId: string, mode: AgentApprovalUiMode) => void;
@@ -267,6 +296,7 @@ export interface UseAgentSessionParams {
     },
   ) => void;
   finishTurn: (conversationId: string, messageId: string, opts?: { error?: boolean }) => void;
+  compactAgentMessage: (conversationId: string, messageId: string) => void;
   appendNotice: (conversationId: string, text: string) => void;
 }
 
@@ -325,6 +355,7 @@ export function useAgentSession(params: UseAgentSessionParams): AgentSessionApi 
   const {
     activeConversationId,
     activeConversation,
+    getAgentThreadId,
     ensureActiveConversationId,
     groupId,
     modelId,
@@ -332,12 +363,14 @@ export function useAgentSession(params: UseAgentSessionParams): AgentSessionApi 
     relayBaseUrl,
     sessionToken,
     setAgentBinding,
+    setAgentThreadId,
     lockAgentCwd,
     setAgentApprovalMode,
     beginTurn,
     appendDelta,
     updateAgentPanel,
     finishTurn,
+    compactAgentMessage,
     appendNotice,
   } = params;
 
@@ -356,6 +389,7 @@ export function useAgentSession(params: UseAgentSessionParams): AgentSessionApi 
   // threadId → conversationId：事件流只带 threadId，这张表是唯一的回查路径。
   const threadOwnerRef = useRef<Map<string, string>>(new Map());
   const bookkeepingRef = useRef<Map<string, ConversationBookkeeping>>(new Map());
+  const sendingConversationsRef = useRef<Set<string>>(new Set());
 
   // 同样是给事件订阅那个 effect 用的镜像——切对话很频繁，不想每次都重新订阅一次
   // agent 事件流，所以用 ref 而不是把 activeConversationId 放进依赖数组。
@@ -394,6 +428,25 @@ export function useAgentSession(params: UseAgentSessionParams): AgentSessionApi 
     return entry;
   }, []);
 
+  const finalizeAgentTurn = useCallback(
+    (conversationId: string, opts: { error?: boolean } = {}) => {
+      const book = bookkeepingRef.current.get(conversationId);
+      if (book?.pendingAssistant) {
+        finishTurn(conversationId, book.pendingAssistant.messageId, opts);
+        compactAgentMessage(conversationId, book.pendingAssistant.messageId);
+        book.pendingAssistant = null;
+      }
+      book?.commandBuffers.clear();
+      book?.commandMeta.clear();
+      if (book) {
+        book.planDelta = "";
+        book.fileChangeOutputs.clear();
+        book.fileSearches.clear();
+      }
+    },
+    [compactAgentMessage, finishTurn],
+  );
+
   const flushCommandBuffer = useCallback(
     (conversationId: string, itemId: string | null | undefined) => {
       if (!itemId) return;
@@ -410,7 +463,7 @@ export function useAgentSession(params: UseAgentSessionParams): AgentSessionApi 
       // 是我们自己拼的格式，不会跟真实输出的第一行混。
       const label = command ? `$ ${command}` : "命令输出";
       appendDelta(conversationId, pending.messageId, {
-        content: `\n\n\`\`\`agent-output\n${label}\n${buffered}\n\`\`\`\n`,
+        content: `\n\n\`\`\`agent-output\n${label}\n${sanitizeCommandOutput(buffered)}\n\`\`\`\n`,
       });
     },
     [appendDelta],
@@ -438,8 +491,9 @@ export function useAgentSession(params: UseAgentSessionParams): AgentSessionApi 
             compacting: false,
           });
           if (book?.pendingAssistant) {
-            finishTurn(conversationId, book.pendingAssistant.messageId, { error: true });
-            book.pendingAssistant = null;
+            finalizeAgentTurn(conversationId, { error: true });
+          } else {
+            finalizeAgentTurn(conversationId);
           }
           appendNotice(conversationId, `引擎已停止：${event.reason}`);
         }
@@ -450,6 +504,7 @@ export function useAgentSession(params: UseAgentSessionParams): AgentSessionApi 
         const conversationId = threadOwnerRef.current.get(event.threadId);
         threadOwnerRef.current.delete(event.threadId);
         if (conversationId) {
+          finalizeAgentTurn(conversationId, { error: true });
           patchRuntime(conversationId, {
             threadId: null,
             sending: false,
@@ -458,6 +513,7 @@ export function useAgentSession(params: UseAgentSessionParams): AgentSessionApi 
             runningCommands: 0,
             compacting: false,
           });
+          setAgentThreadId(conversationId, null);
         }
         return;
       }
@@ -491,12 +547,31 @@ export function useAgentSession(params: UseAgentSessionParams): AgentSessionApi 
         event.type === "approvalRequested"
           ? (event as unknown as ApprovalRequest).threadId
           : event.threadId ?? null;
-      const conversationId = threadId
-        ? threadOwnerRef.current.get(threadId) ??
-          (event.type === "knownNotification" ? activeConversationIdRef.current : undefined)
+      let conversationId = threadId
+        ? threadOwnerRef.current.get(threadId)
         : event.type === "warning" || event.type === "knownNotification"
           ? activeConversationIdRef.current
           : undefined;
+      if (!conversationId && event.type === "approvalRequested") {
+        const approval = event as unknown as ApprovalRequest;
+        const candidates = Array.from(bookkeepingRef.current.entries())
+          .filter(([id, entry]) => entry.pendingAssistant && runtimesRef.current[id]?.sending)
+          .map(([id]) => id);
+        if (candidates.length === 1) {
+          conversationId = candidates[0];
+        } else {
+          const fallback = activeConversationIdRef.current;
+          if (fallback) {
+            appendNotice(
+              fallback,
+              `无法确定审批请求 ${approval.requestId} 所属对话，已自动拒绝以避免 Agent 挂起。`,
+            );
+          }
+          void answerApproval(approval.requestId, "decline").catch((error) => {
+            setError(describeAgentError(error));
+          });
+        }
+      }
       if (!conversationId) return; // 挖不出归属，没地方放，只能丢——极少数边界情况。
 
       const book = bookkeepingFor(conversationId);
@@ -523,16 +598,17 @@ export function useAgentSession(params: UseAgentSessionParams): AgentSessionApi 
         return;
       }
       if (event.type === "fileChangeOutputDelta") {
+        const itemId = String(event.itemId);
         book.fileChangeOutputs.set(
-          event.itemId,
-          (book.fileChangeOutputs.get(event.itemId) ?? "") + event.delta,
+          itemId,
+          (book.fileChangeOutputs.get(itemId) ?? "") + event.delta,
         );
         if (pending) {
           updateAgentPanel(conversationId, pending.messageId, {
             fileChanges: {
-              [event.itemId]: {
-                itemId: event.itemId,
-                output: book.fileChangeOutputs.get(event.itemId),
+              [itemId]: {
+                itemId,
+                output: book.fileChangeOutputs.get(itemId),
               },
             },
           });
@@ -671,6 +747,8 @@ export function useAgentSession(params: UseAgentSessionParams): AgentSessionApi 
             runningCommands: 0,
             compacting: false,
           });
+          finalizeAgentTurn(conversationId, { error: true });
+          setAgentThreadId(conversationId, null);
         }
         if (event.method === "thread/compacted") {
           patchRuntime(conversationId, { compacting: false });
@@ -829,12 +907,19 @@ export function useAgentSession(params: UseAgentSessionParams): AgentSessionApi 
           // 不是上游直接判了死刑，用户看到时才知道该做什么（比如去查一下
           // 账号/网络，而不是以为模型本身坏了）。
           patchRuntime(conversationId, {
+            threadId: null,
             sending: false,
             runningCommands: 0,
             retrying: null,
             compacting: false,
           });
-          if (pending) finishTurn(conversationId, pending.messageId, { error: true });
+          if (event.threadId) threadOwnerRef.current.delete(event.threadId);
+          setAgentThreadId(conversationId, null);
+          if (pending) {
+            finalizeAgentTurn(conversationId, { error: true });
+          } else {
+            finalizeAgentTurn(conversationId);
+          }
           appendNotice(
             conversationId,
             `❌ 连续重试 ${event.attempts} 次仍未成功，已停止本轮：${event.lastMessage}`,
@@ -845,31 +930,35 @@ export function useAgentSession(params: UseAgentSessionParams): AgentSessionApi 
           // 保险丝：正常情况下每条命令的 item/completed 都会把计数器减回去，
           // 但轮次都失败了，别让一个漏减的命令让下一轮一开始就顶着假的"正在执行"。
           patchRuntime(conversationId, {
+            threadId: null,
             sending: false,
             runningCommands: 0,
             retrying: null,
             compacting: false,
           });
-          if (pending) finishTurn(conversationId, pending.messageId, { error: true });
+          if (event.threadId) threadOwnerRef.current.delete(event.threadId);
+          setAgentThreadId(conversationId, null);
+          if (pending) {
+            finalizeAgentTurn(conversationId, { error: true });
+          } else {
+            finalizeAgentTurn(conversationId);
+          }
           appendNotice(conversationId, `失败：${event.message}`);
-          book.pendingAssistant = null;
           break;
         case "turnCompleted":
+          const interrupted = Boolean(pending?.messageId && event.interrupted);
           patchRuntime(conversationId, {
             sending: false,
             runningCommands: 0,
             retrying: null,
             compacting: false,
           });
-          if (pending) {
-            finishTurn(conversationId, pending.messageId, {
-              error: !event.success && !event.interrupted,
-            });
-          }
-          if (pending && event.interrupted) {
+          finalizeAgentTurn(conversationId, {
+            error: !event.success && !event.interrupted,
+          });
+          if (interrupted) {
             appendNotice(conversationId, "_已停止。_");
           }
-          book.pendingAssistant = null;
           break;
         default:
           break;
@@ -892,6 +981,9 @@ export function useAgentSession(params: UseAgentSessionParams): AgentSessionApi 
     updateAgentPanel,
     appendNotice,
     finishTurn,
+    compactAgentMessage,
+    finalizeAgentTurn,
+    setAgentThreadId,
     flushCommandBuffer,
     bookkeepingFor,
     patchRuntime,
@@ -923,14 +1015,19 @@ export function useAgentSession(params: UseAgentSessionParams): AgentSessionApi 
   /** 内部用：归档某个对话正挂着的 thread（如果有），不影响引擎或别的对话。 */
   const endLiveThread = useCallback(
     async (conversationId: string) => {
-      const threadId = runtimesRef.current[conversationId]?.threadId;
-      if (!threadId) return;
+      const threadId =
+        runtimesRef.current[conversationId]?.threadId ??
+        getAgentThreadId(conversationId);
+      finalizeAgentTurn(conversationId, { error: true });
       try {
-        await endAgentThread(threadId);
+        if (threadId) {
+          await endAgentThread(threadId);
+        }
       } catch (e) {
         setError(describeAgentError(e));
       }
-      threadOwnerRef.current.delete(threadId);
+      if (threadId) threadOwnerRef.current.delete(threadId);
+      setAgentThreadId(conversationId, null);
       patchRuntime(conversationId, {
         threadId: null,
         sending: false,
@@ -939,7 +1036,7 @@ export function useAgentSession(params: UseAgentSessionParams): AgentSessionApi 
         compacting: false,
       });
     },
-    [patchRuntime],
+    [finalizeAgentTurn, getAgentThreadId, patchRuntime, setAgentThreadId],
   );
 
   const setApprovalModeApi = useCallback(
@@ -969,7 +1066,14 @@ export function useAgentSession(params: UseAgentSessionParams): AgentSessionApi 
         setError("还没登录 —— agent 要用账号会话去中转站取额度。");
         return;
       }
+      if (
+        sendingConversationsRef.current.has(conversationId) ||
+        runtimesRef.current[conversationId]?.sending
+      ) {
+        return;
+      }
       setError(null);
+      sendingConversationsRef.current.add(conversationId);
 
       const { assistantMessage } = beginTurn(conversationId, text);
       const book = bookkeepingFor(conversationId);
@@ -978,11 +1082,48 @@ export function useAgentSession(params: UseAgentSessionParams): AgentSessionApi 
       book.fileChangeOutputs.clear();
       book.fileSearches.clear();
 
+      let threadId = runtimesRef.current[conversationId]?.threadId ?? null;
       try {
-        let threadId = runtimesRef.current[conversationId]?.threadId ?? null;
         let attempts = 1;
+        patchRuntime(conversationId, { sending: true });
+        const persistedThreadId = activeConversation.agentThreadId ?? null;
+        if (!threadId && persistedThreadId) {
+          threadId = persistedThreadId;
+          threadOwnerRef.current.set(threadId, conversationId);
+          patchRuntime(conversationId, { threadId });
+          const { sandbox, approvalPolicy } = approvalUiModeToParams(approvalMode);
+          try {
+            const resumed = await resumeAgent({
+              threadId,
+              relayBaseUrl,
+              groupId,
+              sessionToken,
+              clientUserAgent: navigator.userAgent,
+              model: modelId,
+              cwd: activeConversation.agentCwd,
+              sandbox,
+              approvalPolicy,
+            });
+          if (resumed.threadId !== threadId) {
+            threadOwnerRef.current.delete(threadId);
+            threadId = resumed.threadId;
+            threadOwnerRef.current.set(threadId, conversationId);
+            patchRuntime(conversationId, { threadId });
+          }
+            setAgentThreadId(conversationId, threadId);
+            attempts = resumed.attempts;
+          } catch (resumeError) {
+            threadOwnerRef.current.delete(threadId);
+            patchRuntime(conversationId, { threadId: null });
+            setAgentThreadId(conversationId, null);
+            appendNotice(
+              conversationId,
+              `旧 Agent 会话恢复失败，将新建会话：${describeAgentError(resumeError)}`,
+            );
+            threadId = null;
+          }
+        }
         if (!threadId) {
-          patchRuntime(conversationId, { sending: true });
           const { sandbox, approvalPolicy } = approvalUiModeToParams(approvalMode);
           const started = await startAgent({
             relayBaseUrl,
@@ -1000,6 +1141,7 @@ export function useAgentSession(params: UseAgentSessionParams): AgentSessionApi 
           attempts = started.attempts;
           threadOwnerRef.current.set(threadId, conversationId);
           patchRuntime(conversationId, { threadId });
+          setAgentThreadId(conversationId, threadId);
           // **这才是真正"开启会话"的那一刻**——之前光选目录不算数。
           // 起会话成功了，工作目录才锁死，不能再重选。
           lockAgentCwd(conversationId);
@@ -1010,10 +1152,15 @@ export function useAgentSession(params: UseAgentSessionParams): AgentSessionApi 
         patchRuntime(conversationId, { sending: true });
         await sendToAgent({ threadId, text, model: modelId, reasoning });
       } catch (e) {
-        patchRuntime(conversationId, { sending: false });
+        if (threadId) threadOwnerRef.current.delete(threadId);
+        setAgentThreadId(conversationId, null);
+        patchRuntime(conversationId, { threadId: null, sending: false });
         finishTurn(conversationId, assistantMessage.id, { error: true });
         appendDelta(conversationId, assistantMessage.id, { content: describeAgentError(e) });
+        compactAgentMessage(conversationId, assistantMessage.id);
         book.pendingAssistant = null;
+      } finally {
+        sendingConversationsRef.current.delete(conversationId);
       }
     },
     [
@@ -1029,10 +1176,13 @@ export function useAgentSession(params: UseAgentSessionParams): AgentSessionApi 
       lockAgentCwd,
       beginTurn,
       finishTurn,
+      compactAgentMessage,
       appendDelta,
       appendNotice,
       bookkeepingFor,
       patchRuntime,
+      setAgentThreadId,
+      finalizeAgentTurn,
     ],
   );
 

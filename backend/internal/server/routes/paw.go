@@ -5,6 +5,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,6 +35,7 @@ type pawImageGenerationRequest struct {
 type PawRouteDependencies struct {
 	ChatService       *service.PawChatService
 	OpenAIGateway     *handler.OpenAIGatewayHandler
+	Gateway           *handler.GatewayHandler
 	OpenAIChat        gin.HandlerFunc
 	GatewayChat       gin.HandlerFunc
 	CompositeResolver *service.CompositeRouteResolver
@@ -41,6 +43,10 @@ type PawRouteDependencies struct {
 	OpsService        *service.OpsService
 	Config            *config.Config
 }
+
+// PawGroupHeader is set by the desktop relay because the Responses payload
+// must remain byte-for-byte a Codex payload and cannot carry routing metadata.
+const PawGroupHeader = "X-Paw-Group-Id"
 
 func RegisterPawRoutes(v1 *gin.RouterGroup, svc *service.PawConfigService, jwtAuth middleware.JWTAuthMiddleware, settingService *service.SettingService, panelRateLimiter *middleware.PanelRateLimiter, dependencies ...PawRouteDependencies) {
 	if v1 == nil || svc == nil {
@@ -53,6 +59,10 @@ func RegisterPawRoutes(v1 *gin.RouterGroup, svc *service.PawConfigService, jwtAu
 	}
 	attachmentService := service.NewPawAttachmentService(service.NewPawAttachmentMemoryRepository(), 24*time.Hour, 20<<20)
 	chatService := service.NewPawChatService(svc, service.APIKeyPawChatKeySource{Service: deps.APIKeyService}, attachmentService)
+	responsesChat := deps.ChatService
+	if responsesChat == nil {
+		responsesChat = chatService
+	}
 	imageService := service.NewPawImageService(svc, service.APIKeyPawChatKeySource{Service: deps.APIKeyService}, attachmentService)
 
 	paw := v1.Group("/paw")
@@ -101,6 +111,7 @@ func RegisterPawRoutes(v1 *gin.RouterGroup, svc *service.PawConfigService, jwtAu
 	paw.POST("/images/generations", pawImageGenerationHandler(imageService, deps))
 	paw.POST("/images/edits", pawImageEditHandler(imageService, deps))
 	paw.POST("/chat/completions", pawChatHandler(deps.ChatService, chatService, deps))
+	paw.POST("/responses", pawResponsesHandler(responsesChat, deps))
 }
 
 func pawUploadHandler(attachments *service.PawAttachmentService) gin.HandlerFunc {
@@ -340,6 +351,80 @@ func pawChatHandler(primaryChat *service.PawChatService, localChat *service.PawC
 			deps.GatewayChat(c)
 		default:
 			pawChatError(c, http.StatusServiceUnavailable, PawErrorCodeUpstreamUnavailable, "Paw chat gateway is unavailable")
+		}
+	}
+}
+
+func pawResponsesHandler(chat *service.PawChatService, deps PawRouteDependencies) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if pawCredentialSelectorPresent(c) {
+			pawChatError(c, http.StatusBadRequest, PawErrorCodeAuthRequired, "Paw accepts only the authenticated account session")
+			return
+		}
+		subject, ok := middleware.GetAuthSubjectFromContext(c)
+		if !ok || subject.UserID <= 0 {
+			pawChatError(c, http.StatusUnauthorized, PawErrorCodeAuthRequired, "authenticated user is required")
+			return
+		}
+		if chat == nil {
+			pawChatError(c, http.StatusServiceUnavailable, PawErrorCodeConfigUnavailable, "Paw chat configuration is unavailable")
+			return
+		}
+
+		groupID, err := strconv.ParseInt(strings.TrimSpace(c.GetHeader(PawGroupHeader)), 10, 64)
+		if err != nil || groupID <= 0 {
+			pawChatError(c, http.StatusBadRequest, PawErrorCodeGroupForbidden, "a valid Paw group is required")
+			return
+		}
+		body, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			pawChatError(c, http.StatusBadRequest, "INVALID_REQUEST", "failed to read request body")
+			return
+		}
+		resetRequestBody(c, body)
+		if pawBodyCredentialSelectorPresent(body) {
+			pawChatError(c, http.StatusBadRequest, PawErrorCodeAuthRequired, "Paw accepts only the authenticated account session")
+			return
+		}
+		var request struct {
+			Model string `json:"model"`
+		}
+		if err := json.Unmarshal(body, &request); err != nil || strings.TrimSpace(request.Model) == "" {
+			pawChatError(c, http.StatusBadRequest, "INVALID_REQUEST", "a Responses model is required")
+			return
+		}
+
+		resolution, err := chat.PrepareResponses(c.Request.Context(), subject.UserID, groupID, request.Model)
+		if err != nil {
+			pawChatServiceError(c, err)
+			return
+		}
+		middleware.ReplaceAuthenticatedAPIKey(c, resolution.APIKey, resolution.Subscription)
+		resetRequestBody(c, body)
+
+		if deps.CompositeResolver != nil && resolution.Group != nil && resolution.Group.Platform == service.PlatformComposite {
+			decision, resolveErr := deps.CompositeResolver.Resolve(c.Request.Context(), resolution.Group.ID, resolution.Model, service.CompositeRouteEndpointResponses)
+			if resolveErr != nil {
+				pawChatError(c, http.StatusServiceUnavailable, PawErrorCodeUpstreamUnavailable, "failed to resolve the selected model route")
+				return
+			}
+			if decision.Matched {
+				c.Request = c.Request.WithContext(service.WithCompositeRouteDecision(c.Request.Context(), decision))
+			}
+		}
+
+		platform := resolution.Group.Platform
+		if resolved, ok := service.ResolvedTargetPlatformFromContext(c.Request.Context()); ok {
+			platform = resolved
+		}
+		switch {
+		case (platform == service.PlatformOpenAI || platform == service.PlatformGrok) && deps.OpenAIGateway != nil:
+			deps.OpenAIGateway.Responses(c)
+		case deps.Gateway != nil:
+			// Responses for non-OpenAI platforms is handled by the generic gateway.
+			deps.Gateway.Responses(c)
+		default:
+			pawChatError(c, http.StatusServiceUnavailable, PawErrorCodeUpstreamUnavailable, "Paw Responses gateway is unavailable")
 		}
 	}
 }

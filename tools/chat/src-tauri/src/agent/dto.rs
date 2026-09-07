@@ -348,6 +348,37 @@ pub struct StartParams {
     pub approval_policy: String,
 }
 
+/// 恢复一条已经落盘的 thread。除 threadId 外，其余字段用于在引擎尚未启动时
+/// 重新建立本地 relay 和 codex 进程。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResumeParams {
+    pub thread_id: String,
+    pub relay_base_url: String,
+    pub group_id: i64,
+    pub session_token: String,
+    pub client_user_agent: String,
+    pub model: String,
+    pub cwd: String,
+    pub sandbox: String,
+    pub approval_policy: String,
+}
+
+impl ResumeParams {
+    pub fn start_params(&self) -> StartParams {
+        StartParams {
+            relay_base_url: self.relay_base_url.clone(),
+            group_id: self.group_id,
+            session_token: self.session_token.clone(),
+            client_user_agent: self.client_user_agent.clone(),
+            model: self.model.clone(),
+            cwd: self.cwd.clone(),
+            sandbox: self.sandbox.clone(),
+            approval_policy: self.approval_policy.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StartedThread {

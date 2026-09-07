@@ -223,6 +223,10 @@ export interface StartAgentParams {
   approvalPolicy: AgentApprovalPolicy;
 }
 
+export interface ResumeAgentParams extends StartAgentParams {
+  threadId: string;
+}
+
 export interface StartedThread {
   threadId: string;
   /** 引擎起了几次才成功。>1 说明前面失败过，界面可以提一句。复用已有引擎恒为 1。 */
@@ -264,6 +268,10 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
  */
 export async function startAgent(params: StartAgentParams): Promise<StartedThread> {
   return call<StartedThread>("agent_start", { params });
+}
+
+export async function resumeAgent(params: ResumeAgentParams): Promise<StartedThread> {
+  return call<StartedThread>("agent_resume", { params });
 }
 
 export async function sendToAgent(params: SendAgentParams): Promise<void> {

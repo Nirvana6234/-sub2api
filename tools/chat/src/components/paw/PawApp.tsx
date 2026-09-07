@@ -64,6 +64,7 @@ export function PawApp() {
   const agent = useAgentSession({
     activeConversationId: paw.activeConversationId,
     activeConversation: paw.activeConversation,
+    getAgentThreadId: paw.getAgentThreadId,
     ensureActiveConversationId: paw.ensureActiveConversationId,
     groupId: paw.selectedGroupId,
     modelId: paw.selectedModelId,
@@ -71,12 +72,14 @@ export function PawApp() {
     relayBaseUrl: getPawServiceBaseUrl(),
     sessionToken: paw.session?.accessToken ?? null,
     setAgentBinding: paw.setAgentBinding,
+    setAgentThreadId: paw.setAgentThreadId,
     lockAgentCwd: paw.lockAgentCwd,
     setAgentApprovalMode: paw.setAgentApprovalMode,
     beginTurn: paw.beginAgentTurn,
     appendDelta: paw.appendAgentDelta,
     updateAgentPanel: paw.updateAgentPanel,
     finishTurn: paw.finishAgentTurn,
+    compactAgentMessage: paw.compactAgentMessage,
     appendNotice: paw.appendAgentNotice,
   });
 

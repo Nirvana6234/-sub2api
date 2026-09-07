@@ -146,6 +146,7 @@ func registerRoutes(
 		routes.RegisterPawRoutes(v1, h.PawConfigService, jwtAuth, settingService, panelRateLimiter, routes.PawRouteDependencies{
 			ChatService:       h.PawChatService,
 			OpenAIGateway:     h.OpenAIGateway,
+			Gateway:           h.Gateway,
 			OpenAIChat:        openAIChat,
 			GatewayChat:       gatewayChat,
 			CompositeResolver: compositeResolver,

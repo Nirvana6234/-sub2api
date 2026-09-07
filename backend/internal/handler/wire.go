@@ -197,11 +197,13 @@ func ProvideHandlers(
 	batchImageHandler *BatchImageHandler,
 	accountContributionHandler *AccountContributionHandler,
 	playgroundHistoryHandler *PlaygroundHistoryHandler,
+	pawConfigService *service.PawConfigService,
 	_ *service.IdempotencyCoordinator,
 	_ *service.IdempotencyCleanupService,
 	_ *service.OpenAIQuotaAutoResetService,
 ) *Handlers {
 	return &Handlers{
+		PawConfigService:    pawConfigService,
 		Auth:                authHandler,
 		User:                userHandler,
 		APIKey:              apiKeyHandler,

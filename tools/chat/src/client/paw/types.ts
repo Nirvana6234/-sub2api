@@ -199,6 +199,8 @@ export interface PawAttachment {
   size: number;
   expires_at: string;
   previewUrl?: string;
+  /** Whether the original local File can be restored after a reload. */
+  localCacheStatus?: "available" | "unavailable";
 }
 
 export interface PawAttachmentResponse {
@@ -467,6 +469,8 @@ export interface PawConversation {
    * 真正锁死看 `agentCwdLocked`。
    */
   agentCwd?: string;
+  /** codex thread 的持久化标识；引擎重启后用它调用 thread/resume。 */
+  agentThreadId?: string;
   /**
    * `agentCwd` 是不是已经锁死了。**真正"开启会话"发生在第一次成功发消息**
    * （起了一条真的 codex thread）——那一刻起才锁定，之前光选目录不算数、
