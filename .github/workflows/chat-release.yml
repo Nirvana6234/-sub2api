@@ -102,6 +102,17 @@ jobs:
       - name: typecheck
         run: npm run typecheck
 
+      # `chat` 这个 crate 的 build.rs 调 tauri_build::build()，它会校验
+      # tauri.conf.json 的 bundle.resources 里每条路径在磁盘上真实存在——
+      # 这个校验在**任何** cargo 操作（build/check/test）上都会跑，不是只在
+      # `tauri build` 时才跑。所以随包 codex 二进制必须在第一次 cargo 命令
+      # 之前就取到位，否则在一台干净的 runner 上（本地机器踩不到这个坑，
+      # 因为 vendor 目录早就在盘上了）会在这里报
+      # "resource path `vendor\codex\bin\codex-app-server.exe` doesn't exist"，
+      # 看起来跟 cargo test 本身毫无关系。
+      - name: 获取随包 codex 二进制
+        run: npm run codex:vendor
+
       - name: cargo test（工作台 Rust 侧）
         working-directory: tools/chat/src-tauri
         run: cargo test --workspace
