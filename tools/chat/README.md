@@ -36,7 +36,19 @@ engine to talk to (it prints a warning telling you to run `codex:vendor`).
 npm run app:build   # packaged install: fetches codex + bundles it as a resource
 ```
 
-`app:build` also requires `PAW_SERVICE_URL`, same as the web/PWA build:
+`app:build` also requires `PAW_SERVICE_URL`, same as the web/PWA build. Login and
+the agent relay both read this single value (`getPawServiceBaseUrl()`) — there is
+no way for one build to log in against one server and talk to the agent on
+another. Two named wrappers pin the two addresses that actually get used, so
+nobody has to type the URL by hand and risk a typo:
+
+```bash
+npm run app:build:local     # PAW_SERVICE_URL=http://127.0.0.1:8080 — local backend
+npm run app:build:release   # PAW_SERVICE_URL=https://gongfeiai.com — production, same host as the 小白端 client
+```
+
+CI (`.github/workflows/chat-release.yml`) always calls `app:build:release`. For
+any other target server, fall back to the plain form:
 
 ```bash
 PAW_SERVICE_URL=https://sub2api.example.com npm run app:build

@@ -1,0 +1,135 @@
+# Chat 桌面端（tools/chat，Tauri）—— 出包
+#
+#   打 tag：  git tag chat-v0.1.0 && git push origin chat-v0.1.0
+#   或在 Actions 页面手动运行（workflow_dispatch）。
+#
+# 产出
+#   Chat_<版本>_x64_en-US.msi   （tauri.conf.json 的 bundle.targets = "all"，
+#   Chat_<版本>_x64-setup.exe    Windows 上产出 msi + nsis 两种安装器）
+#
+# 随包 codex-app-server 不进 git
+# --------------------------------
+# `src-tauri/vendor/codex/` 里的 codex-app-server.exe（~220MB）从不提交。
+# `npm run app:build`（= scripts/build-tauri.mjs）第一步会自动跑
+# scripts/fetch-codex-vendor.mjs：按
+# src-tauri/crates/codex-host/tests/fixtures/bundled-codex.json 里记的上游
+# GitHub Release 地址下载，逐文件校验 sha256，对不上就让构建直接失败。
+# 这一步在这里原样重放，是公开下载，不需要任何 secret。
+#
+# 服务器地址
+# ----------
+# 跟小白端（tools/codex-relay-client）用同一个终端域名：`gongfeiai.com`，见
+# ClientOptions.cs 的 ServerAddress。登录和 agent 连接读的是同一个
+# PAW_SERVICE_URL（src/client/paw/config.ts 的 getPawServiceBaseUrl()），
+# 两者不会分叉。这里跑的是 `npm run app:build:release`，把
+# "release = gongfeiai.com" 这句话钉死在 package.json 里唯一一处——本地手动
+# 出包用同一条命令，不会再有人手打错这个域名。dev 对应的是 `npm run app:dev`，
+# 固定读 .env.local 里的本地后端地址，两条路径不共用任何一处硬编码。
+#
+# 为什么在 windows-latest
+# -----------------------
+# Chat 桌面端目前只随包 x86_64-pc-windows-msvc 的 codex-app-server（见
+# bundled-codex.json 的 target 字段），tauri.conf.json 的 bundle.resources
+# 也只映射了 Windows 可执行文件。macOS/Linux 出包要等随包的 codex 二进制补齐
+# 对应平台再加。
+
+name: chat-release
+
+on:
+  push:
+    tags:
+      - 'chat-v*'
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: '是否创建 GitHub Release（否则只产出构建工件）'
+        type: boolean
+        default: false
+
+# 只给创建 Release 所需的写权限，其余保持只读。
+permissions:
+  contents: write
+
+defaults:
+  run:
+    working-directory: tools/chat
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: 读取版本号
+        id: version
+        shell: bash
+        run: |
+          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          if [ -z "$version" ]; then
+            echo "::error::读不出 src-tauri/tauri.conf.json 的 version 字段"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "桌面端版本：$version"
+
+      - name: tag 与 tauri.conf.json 版本一致
+        if: startsWith(github.ref, 'refs/tags/chat-v')
+        shell: bash
+        run: |
+          tag_version="${GITHUB_REF_NAME#chat-v}"
+          if [ "$tag_version" != "${{ steps.version.outputs.version }}" ]; then
+            echo "::error::tag 是 chat-v$tag_version，而 tauri.conf.json 的 version 是 ${{ steps.version.outputs.version }}"
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: tools/chat/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tools/chat/src-tauri
+
+      - name: 安装 Node 依赖
+        run: npm ci
+
+      - name: typecheck
+        run: npm run typecheck
+
+      - name: cargo test（工作台 Rust 侧）
+        working-directory: tools/chat/src-tauri
+        run: cargo test --workspace
+
+      - name: 出包
+        run: npm run app:build:release
+
+      - name: 收集产物
+        shell: bash
+        run: |
+          mkdir -p "${{ runner.temp }}/artifacts"
+          find src-tauri/target/release/bundle -type f \( -name '*.msi' -o -name '*.exe' \) \
+            -exec cp {} "${{ runner.temp }}/artifacts/" \;
+          ls -la "${{ runner.temp }}/artifacts"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: chat-v${{ steps.version.outputs.version }}
+          path: ${{ runner.temp }}/artifacts/*
+          retention-days: 30
+          if-no-files-found: error
+
+      # tag 触发时自动创建；手动触发时默认只留构建工件，避免误发。
+      - name: 创建 Release
+        if: startsWith(github.ref, 'refs/tags/chat-v') || inputs.publish_release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ runner.temp }}/artifacts/*
+          draft: true
+          name: Chat v${{ steps.version.outputs.version }}
+          fail_on_unmatched_files: true

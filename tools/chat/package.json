@@ -13,7 +13,9 @@
     "typecheck": "tsc --noEmit",
     "codex:vendor": "node scripts/fetch-codex-vendor.mjs",
     "app:dev": "node scripts/dev-desktop.mjs",
-    "app:build": "node scripts/build-tauri.mjs"
+    "app:build": "node scripts/build-tauri.mjs",
+    "app:build:local": "cross-env PAW_SERVICE_URL=http://127.0.0.1:8080 node scripts/build-tauri.mjs",
+    "app:build:release": "cross-env PAW_SERVICE_URL=https://gongfeiai.com node scripts/build-tauri.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",
