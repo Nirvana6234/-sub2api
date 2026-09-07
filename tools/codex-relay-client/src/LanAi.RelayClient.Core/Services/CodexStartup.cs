@@ -234,6 +234,21 @@ internal sealed class CodexStartup : ICodexStartup
                 return new CodexStartupResult(CodexStartupStatus.Ready, "ChatGPT 已就绪，可以开始对话了。");
             }
 
+            if (launch.Outcome == CodexLaunchOutcome.DebugPortUnavailable)
+            {
+                // Activation returned a process id, so the app did start — only its
+                // DevTools endpoint never came up in time. Newer builds increasingly
+                // ignore or block --remote-debugging-port, which used to surface here
+                // as "ChatGPT 已启动但没有响应" even though routing was already applied
+                // and the app was perfectly usable. Configuration is done by this
+                // point, so treat it as a plain launch and simply skip the overlay
+                // and limit sentinel rather than blocking the user behind a failure.
+                ClientLog.Warning("调试端口未在超时前打开，按无增强功能的普通启动处理");
+                return new CodexStartupResult(
+                    CodexStartupStatus.Ready,
+                    "ChatGPT 已启动，可以开始对话了（状态条与限额检测暂不可用）。");
+            }
+
             return launch.Outcome switch
             {
                 CodexLaunchOutcome.BlockedByRunningInstance =>

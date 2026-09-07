@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Linq;
 using System.Runtime.InteropServices;
 using LanAi.Workspace.Injection.Cdp;
 
@@ -69,7 +70,7 @@ public sealed class CodexAppLauncher
     private const string ProcessName = "ChatGPT";
 
     private readonly CdpTargetLocator _locator;
-    private readonly string _packageFamilyName;
+    private readonly string _configuredPackageFamilyName;
     private readonly string _applicationId;
 
     public CodexAppLauncher(
@@ -78,20 +79,72 @@ public sealed class CodexAppLauncher
         string applicationId = DefaultApplicationId)
     {
         _locator = locator ?? new CdpTargetLocator();
-        _packageFamilyName = packageFamilyName;
+        _configuredPackageFamilyName = packageFamilyName;
         _applicationId = applicationId;
     }
 
-    public string ApplicationUserModelId => $"{_packageFamilyName}!{_applicationId}";
+    public string ApplicationUserModelId => $"{PackageFamilyName}!{_applicationId}";
+
+    private static string PackagesRoot => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "Packages");
+
+    /// <summary>
+    /// The package family name actually present on this machine.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DefaultPackageFamilyName"/> is a snapshot of one build's package
+    /// identity, taken from the app installed when this was written. OpenAI can
+    /// change it on a repackage (rename, new publisher certificate, a different
+    /// distribution channel) without the app the user has actually changing, so a
+    /// hard-coded exact match would then report a perfectly installed app as
+    /// missing. The configured name is tried first — it is the common case and
+    /// needs no directory scan — and only when it is not there does this fall
+    /// back to searching for anything under <c>OpenAI.*</c> that looks like this
+    /// app, rather than giving up immediately.
+    /// </remarks>
+    private string PackageFamilyName
+    {
+        get
+        {
+            if (Directory.Exists(Path.Combine(PackagesRoot, _configuredPackageFamilyName)))
+            {
+                return _configuredPackageFamilyName;
+            }
+
+            return FindInstalledPackageFamilyName() ?? _configuredPackageFamilyName;
+        }
+    }
+
+    private static string? FindInstalledPackageFamilyName()
+    {
+        if (!Directory.Exists(PackagesRoot))
+        {
+            return null;
+        }
+
+        try
+        {
+            return Directory.EnumerateDirectories(PackagesRoot, "OpenAI.*")
+                .Select(Path.GetFileName)
+                .FirstOrDefault(name =>
+                    name is not null &&
+                    (name.Contains("Codex", StringComparison.OrdinalIgnoreCase) ||
+                        name.Contains("ChatGPT", StringComparison.OrdinalIgnoreCase)));
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
 
     /// <summary>
     /// The per-user package data directory, which exists only while the package is
-    /// installed. Keyed on the package family name so it survives version upgrades.
+    /// installed. Keyed on the resolved package family name so it survives both
+    /// version upgrades and a changed package identity.
     /// </summary>
-    public string PackageDataDirectory => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "Packages",
-        _packageFamilyName);
+    public string PackageDataDirectory => Path.Combine(PackagesRoot, PackageFamilyName);
 
     public bool IsInstalled => Directory.Exists(PackageDataDirectory);
 
