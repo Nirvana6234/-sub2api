@@ -1,5 +1,5 @@
 {
-  "version": "0.2",
+  "version": "0.3",
   "download_page": "/download",
-  "release_notes": "0.2：客户端全面重写，安装包从 163 MB 降到 38 MB；新增应用内注册、公告与低余额桌面通知；退出时可选择完全退出或最小化到托盘。"
+  "release_notes": "0.3：修复部分电脑上启动 ChatGPT 桌面版失败或无响应的问题（跟官方客户端更新有关）。"
 }
