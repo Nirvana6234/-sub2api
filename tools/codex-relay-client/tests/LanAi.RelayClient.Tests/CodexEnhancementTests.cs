@@ -45,6 +45,44 @@ public sealed class CodexEnhancementTests : IDisposable
         Assert.Equal(1, enhancement.StartCallCount);
     }
 
+    [Fact]
+    public async Task ADebugPortThatNeverOpensStillCountsAsAPlainLaunch()
+    {
+        // Newer ChatGPT builds can ignore or block --remote-debugging-port. The
+        // process still starts and routing is already applied by this point, so
+        // this must not be reported to the user as "拉不起 ChatGPT" — only the
+        // overlay/sentinel are skipped.
+        var relay = new FakeRelayClient();
+        var session = new RelaySessionManager(relay, new FakeSessionStore(), "https://relay.test/");
+        await session.SignInAsync("a@b.com", "pw");
+        var naming = new ManagedKeyNaming(new FixedInstallId("testinst"));
+        relay.OnListKeys = () =>
+        [
+            new RelayApiKey
+            {
+                Id = 42,
+                Name = naming.KeyName(),
+                Key = "sk-relay",
+                ExpiresAt = DateTimeOffset.UtcNow.AddHours(12),
+            },
+        ];
+
+        var paths = new CodexPaths(Path.Combine(_root, "codex"));
+        var protector = new TestSnapshotProtector();
+        var writer = new CodexConfigWriter(
+            paths,
+            new CodexAuthSnapshot(protector, Path.Combine(_root, "legacy-auth.json")),
+            new CodexFileSnapshot(paths, Path.Combine(_root, "snapshot"), protector));
+        var launcher = new FakeCodexAppLauncher { Outcome = CodexLaunchOutcome.DebugPortUnavailable };
+        var enhancement = new FakeCodexEnhancementHost();
+        var startup = new CodexStartup(relay, session, naming, writer, launcher, enhancement);
+
+        CodexStartupResult result = await startup.RunAsync(null, "https://relay.test/v1");
+
+        Assert.Equal(CodexStartupStatus.Ready, result.Status);
+        Assert.Equal(0, enhancement.StartCallCount);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_root))
@@ -58,6 +96,8 @@ internal sealed class FakeCodexAppLauncher : ICodexAppLauncher
 {
     public bool IsInstalled { get; set; } = true;
 
+    public CodexLaunchOutcome Outcome { get; set; } = CodexLaunchOutcome.Launched;
+
     public int EnsureCallCount { get; private set; }
 
     public Task<CodexLaunchResult> EnsureDebugPortAsync(
@@ -66,7 +106,7 @@ internal sealed class FakeCodexAppLauncher : ICodexAppLauncher
     {
         EnsureCallCount++;
         return Task.FromResult(new CodexLaunchResult(
-            CodexLaunchOutcome.Launched,
+            Outcome,
             request.Port,
             123,
             "ready"));
