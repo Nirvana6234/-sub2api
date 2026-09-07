@@ -265,6 +265,165 @@ function approvalReviewSummary(review: PawAgentApprovalReview): string {
   return `${status}${risk}`;
 }
 
+type NotificationField = {
+  label: string;
+  value: string;
+};
+
+type NotificationTone = "neutral" | "success" | "warning" | "danger";
+
+type NotificationView = {
+  category: string;
+  title: string;
+  summary: string;
+  methodLabel: string;
+  tone: NotificationTone;
+  fields: NotificationField[];
+};
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function stringFromRecord(record: Record<string, unknown>, ...keys: string[]): string | null {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+function notificationCategoryLabel(method: string): string {
+  if (method.startsWith("thread/")) return "浼氳瘽";
+  if (method.startsWith("item/autoApprovalReview/") || method === "autoApprovalReview/strictReviewRequired") {
+    return "瀹℃牳";
+  }
+  if (method.startsWith("mcpServer/")) return "MCP";
+  if (method.startsWith("windowsSandbox/")) return "娌欑";
+  return "閫氱煡";
+}
+
+function notificationTone(method: string, raw: Record<string, unknown>): NotificationTone {
+  if (method === "thread/closed" || method === "thread/deleted" || method === "thread/reverted") {
+    return "warning";
+  }
+  if (method === "autoApprovalReview/strictReviewRequired") {
+    return "danger";
+  }
+  if (method === "mcpServer/oauthLogin/completed" || method === "windowsSandbox/setupCompleted") {
+    return raw.success === true ? "success" : "danger";
+  }
+  if (method === "item/autoApprovalReview/completed") {
+    const review = asRecord(raw.review);
+    return stringFromRecord(review, "status") === "approved" ? "success" : "warning";
+  }
+  return "neutral";
+}
+
+function describeAgentNotification(notification: PawAgentNotification): NotificationView {
+  const raw = asRecord(notification.raw);
+  const fields: NotificationField[] = [];
+  let title = agentNotificationLabel(notification.method);
+  let summary = notification.message;
+
+  switch (notification.method) {
+    case "thread/closed":
+    case "thread/deleted":
+    case "thread/unarchived":
+    case "thread/reverted":
+      fields.push({ label: "浼氳瘽", value: stringFromRecord(raw, "threadId", "thread_id") ?? "鏈煡" });
+      break;
+    case "thread/compacted": {
+      const target = stringFromRecord(raw, "threadId", "thread_id", "turnId", "turn_id");
+      if (target) fields.push({ label: "瀵硅薄", value: target });
+      const reason = stringFromRecord(raw, "reason", "message");
+      if (reason) fields.push({ label: "鍘嬬缉鍘熷洜", value: reason });
+      break;
+    }
+    case "thread/settings/updated": {
+      const settings = asRecord(raw.settings ?? raw.threadSettings ?? raw.data);
+      const keys = Object.keys(settings).filter((key) => settings[key] !== undefined && settings[key] !== null);
+      if (keys.length > 0) fields.push({ label: "鏇存柊椤归", value: keys.slice(0, 4).join(", ") });
+      break;
+    }
+    case "thread/queue/changed": {
+      const count = stringFromRecord(raw, "count", "length", "queueLength", "size");
+      if (count) fields.push({ label: "闃熷垪闀垮害", value: count });
+      break;
+    }
+    case "thread/name/updated": {
+      const name = stringFromRecord(raw, "threadName", "name", "title");
+      if (name) {
+        title = `浼氳瘽鍚嶇О宸叉洿鏂颁负鈥?{name}鈥?`;
+        summary = `鍚嶇О宸叉洿鏂颁负 ${name}`;
+        fields.push({ label: "鏂板悕绉?", value: name });
+      }
+      break;
+    }
+    case "thread/project/updated": {
+      const projectId = stringFromRecord(raw, "projectId", "project_id");
+      const projectName = stringFromRecord(raw, "projectName", "project_name", "name");
+      if (projectId) fields.push({ label: "椤圭洰 ID", value: projectId });
+      if (projectName) fields.push({ label: "椤圭洰鍚嶇О", value: projectName });
+      if (projectId || projectName) {
+        summary = projectName ? `椤圭洰宸叉洿鏂颁负 ${projectName}` : `椤圭洰宸叉洿鏂?`;
+      }
+      break;
+    }
+    case "mcpServer/oauthLogin/completed": {
+      const name = stringFromRecord(raw, "name", "serverName") ?? "MCP 鏈嶅姟";
+      const error = stringFromRecord(raw, "error");
+      const success = raw.success === true;
+      summary = success ? `${name} OAuth 鐧诲綍瀹屾垚` : `${name} OAuth 鐧诲綍澶辫触`;
+      fields.push({ label: "鏈嶅姟", value: name });
+      fields.push({ label: "缁撴灉", value: success ? "瀹屾垚" : "澶辫触" });
+      if (error) fields.push({ label: "閿欒", value: error });
+      break;
+    }
+    case "windowsSandbox/setupCompleted": {
+      const mode = stringFromRecord(raw, "mode") ?? "unknown";
+      const error = stringFromRecord(raw, "error");
+      const success = raw.success === true;
+      summary = success ? `Windows 娌欑宸插畬鎴愯缃�` : `Windows 娌欑璁剧疆澶辫触`;
+      fields.push({ label: "妯″紡", value: mode });
+      fields.push({ label: "缁撴灉", value: success ? "瀹屾垚" : "澶辫触" });
+      if (error) fields.push({ label: "閿欒", value: error });
+      break;
+    }
+    case "autoApprovalReview/strictReviewRequired": {
+      const reason = stringFromRecord(raw, "reason", "message");
+      if (reason) fields.push({ label: "鍘熷洜", value: reason });
+      break;
+    }
+    case "item/autoApprovalReview/started": {
+      const reviewId = stringFromRecord(raw, "reviewId") ?? "鏈煡";
+      fields.push({ label: "reviewId", value: reviewId });
+      break;
+    }
+    case "item/autoApprovalReview/completed": {
+      const review = asRecord(raw.review);
+      const status = stringFromRecord(review, "status") ?? "reviewing";
+      const riskLevel = stringFromRecord(review, "riskLevel");
+      fields.push({ label: "鐘舵€�", value: status });
+      if (riskLevel) fields.push({ label: "椋庨櫓绛夌骇", value: riskLevel });
+      break;
+    }
+    default:
+      break;
+  }
+
+  return {
+    category: notificationCategoryLabel(notification.method),
+    title,
+    summary,
+    methodLabel: notification.method,
+    tone: notificationTone(notification.method, raw),
+    fields,
+  };
+}
+
 function AgentPanels({ panels }: { panels?: PawAgentPanels }) {
   const [planOpen, setPlanOpen] = useState(true);
   if (!panels) return null;
@@ -423,16 +582,41 @@ function AgentPanels({ panels }: { panels?: PawAgentPanels }) {
             <span className="paw-agent-panel-meta">{notifications.length} 条</span>
           </summary>
           <div className="paw-agent-panel-body paw-agent-notification-list">
-            {notifications.map((notification: PawAgentNotification, index) => (
-              <div className="paw-agent-notification-item" key={`${notification.method}-${index}`}>
-                <div className="paw-agent-file-change-head">
-                  <span>{agentNotificationLabel(notification.method)}</span>
-                  <code>{notification.method}</code>
-                </div>
-                <p className="paw-agent-notification-message">{notification.message}</p>
-                <pre className="paw-agent-panel-pre">{stringifyAgentValue(notification.raw)}</pre>
-              </div>
-            ))}
+            {notifications.map((notification: PawAgentNotification, index) => {
+              const view = describeAgentNotification(notification);
+              return (
+                <article
+                  className={`paw-agent-notification-item tone-${view.tone}`}
+                  key={`${notification.method}-${index}`}
+                >
+                  <div className="paw-agent-notification-head">
+                    <div className="paw-agent-notification-title-row">
+                      <span className="paw-agent-notification-category">{view.category}</span>
+                      <strong>{view.title}</strong>
+                    </div>
+                    <div className="paw-agent-notification-meta-row">
+                      <code>{view.methodLabel}</code>
+                      <span>{formatTime(notification.createdAt)}</span>
+                    </div>
+                  </div>
+                  <p className="paw-agent-notification-message">{view.summary}</p>
+                  {view.fields.length > 0 ? (
+                    <dl className="paw-agent-notification-fields">
+                      {view.fields.map((field) => (
+                        <div key={`${notification.method}-${field.label}`}>
+                          <dt>{field.label}</dt>
+                          <dd>{field.value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  ) : null}
+                  <details className="paw-agent-notification-raw">
+                    <summary>原始 payload</summary>
+                    <pre className="paw-agent-panel-pre">{stringifyAgentValue(notification.raw)}</pre>
+                  </details>
+                </article>
+              );
+            })}
           </div>
         </details>
       ) : null}
@@ -981,16 +1165,30 @@ export function PawChatPane({
           ? selectedReasoning
           : imageSize;
 
+  // 切换到别的对话时，滚动条应该落在最新消息那一端，而不是沿用上一个对话
+  // 残留的 scrollTop——旧值相对新对话的 scrollHeight 是随机的，落在中间甚至
+  // 顶部都有可能。用一个 ref 记上一次真正渲染的对话 id：只要这次和上次不一样
+  // 就是"切换"，不管当时滚动条离底部多远都强制拉到底；同一个对话内部的更新
+  // （新增消息、流式输出）还是走原来那条"只有本来就在底部附近才跟着滚"的
+  // 规则，不然正在往上翻看历史消息时会被新到的字硬拽回底部。
+  const lastScrolledConversationIdRef = useRef<string | null>(null);
   useEffect(() => {
     const dom = scrollRef.current;
     if (!dom) return;
+    const conversationId = activeConversation?.id ?? null;
+    const switchedConversation = conversationId !== lastScrolledConversationIdRef.current;
+    lastScrolledConversationIdRef.current = conversationId;
     requestAnimationFrame(() => {
-      if (dom.scrollHeight - dom.scrollTop - dom.clientHeight < 180 || messages.length < 2) {
+      if (
+        switchedConversation ||
+        dom.scrollHeight - dom.scrollTop - dom.clientHeight < 180 ||
+        messages.length < 2
+      ) {
         dom.scrollTop = dom.scrollHeight;
         setNearBottom(true);
       }
     });
-  }, [messages, sending]);
+  }, [messages, sending, activeConversation?.id]);
 
   useEffect(() => {
     const input = inputRef.current;
@@ -1396,13 +1594,28 @@ export function PawChatPane({
                   {message.attachments?.length ? (
                     <div className="paw-message-attachments">
                       {message.attachments.map((attachment) => (
-                        <span className="paw-message-attachment" key={attachment.id}>
+                        <span
+                          className={`paw-message-attachment ${
+                            attachment.localCacheStatus === "unavailable" ? "unavailable" : ""
+                          }`}
+                          key={attachment.id}
+                          title={
+                            attachment.localCacheStatus === "unavailable"
+                              ? "历史附件不可恢复，请重新上传"
+                              : attachment.filename
+                          }
+                        >
                           {attachment.previewUrl ? (
                             <img src={attachment.previewUrl} alt="" />
+                          ) : attachment.localCacheStatus === "unavailable" ? (
+                            <PawShieldAlertIcon width={13} height={13} />
                           ) : (
                             <PawPaperclipIcon width={13} height={13} />
                           )}
                           <span>{attachment.filename}</span>
+                          {attachment.localCacheStatus === "unavailable" ? (
+                            <small className="paw-message-attachment-status">历史附件不可恢复</small>
+                          ) : null}
                         </span>
                       ))}
                     </div>

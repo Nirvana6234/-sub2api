@@ -1606,6 +1606,111 @@ textarea:disabled {
   border-radius: 4px;
 }
 
+.paw-message-attachment.unavailable {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+  color: var(--danger);
+}
+
+.paw-message-attachment-status {
+  color: var(--danger);
+  font-size: 11px;
+}
+
+.paw-agent-notification-list {
+  display: grid;
+  gap: 10px;
+}
+
+.paw-agent-notification-item {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-strong);
+}
+
+.paw-agent-notification-item.tone-warning {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+}
+
+.paw-agent-notification-item.tone-danger {
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
+}
+
+.paw-agent-notification-item.tone-success {
+  border-color: color-mix(in srgb, #1f9d55 30%, var(--border));
+}
+
+.paw-agent-notification-head {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.paw-agent-notification-title-row,
+.paw-agent-notification-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.paw-agent-notification-category {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent-strong);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.paw-agent-notification-title-row strong {
+  min-width: 0;
+}
+
+.paw-agent-notification-meta-row {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.paw-agent-notification-message {
+  margin: 0 0 10px;
+}
+
+.paw-agent-notification-fields {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+
+.paw-agent-notification-fields > div {
+  display: grid;
+  gap: 3px;
+}
+
+.paw-agent-notification-fields dt {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.paw-agent-notification-fields dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.paw-agent-notification-raw {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.paw-agent-notification-raw > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .paw-message-images {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));

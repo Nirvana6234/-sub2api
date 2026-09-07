@@ -5,6 +5,7 @@ import {
   clearPawSession,
   loadPawSession,
   markPawSessionExpired,
+  onPawSessionChange,
   savePawSession,
 } from "@/client/paw/auth";
 import {
@@ -21,7 +22,18 @@ import {
   uploadPawFile,
 } from "@/client/paw/api";
 import { safeLocalStorage } from "@/utils/storage";
-import { persistConversationsWithCompression } from "@/client/paw/conversationCompression";
+import {
+  compactAgentMessageForRuntime,
+  persistConversationsWithCompression,
+  projectConversationsForStorage,
+  stripAgentOutput,
+} from "@/client/paw/conversationCompression";
+import {
+  clearPawAttachmentCache,
+  deletePawAttachmentBlob,
+  loadPawAttachmentBlob,
+  savePawAttachmentBlob,
+} from "@/client/paw/attachmentCache";
 import type { AgentApprovalUiMode } from "@/client/agent/session";
 import type {
   PawAttachment,
@@ -210,6 +222,68 @@ function normalizeAgentPanels(input: unknown): PawAgentPanels | undefined {
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
+function normalizeAttachment(input: unknown): PawAttachment | null {
+  if (!input || typeof input !== "object") return null;
+  const source = input as Record<string, unknown>;
+  const id = typeof source.id === "string" ? source.id.trim() : "";
+  const filename = typeof source.filename === "string" ? source.filename : "";
+  const mimeType = typeof source.mime_type === "string" ? source.mime_type : "";
+  const size =
+    typeof source.size === "number" && Number.isFinite(source.size)
+      ? Math.max(0, source.size)
+      : 0;
+  const expiresAt = typeof source.expires_at === "string" ? source.expires_at : "";
+  if (!id || !filename || !mimeType) return null;
+  return {
+    id,
+    filename,
+    mime_type: mimeType,
+    size,
+    expires_at: expiresAt,
+    localCacheStatus:
+      source.localCacheStatus === "available" || source.localCacheStatus === "unavailable"
+        ? source.localCacheStatus
+        : undefined,
+  };
+}
+
+function conversationAttachments(conversations: PawConversation[]): PawAttachment[] {
+  return conversations.flatMap((conversation) =>
+    conversation.messages.flatMap((message) => message.attachments ?? []),
+  );
+}
+
+function mergePersistedConversationRuntime(
+  current: PawConversation[],
+  persisted: PawConversation[],
+): PawConversation[] {
+  const currentById = new Map(current.map((conversation) => [conversation.id, conversation]));
+  return persisted.map((conversation) => {
+    const previous = currentById.get(conversation.id);
+    if (!previous) return conversation;
+    const previousMessages = new Map(previous.messages.map((message) => [message.id, message]));
+    return {
+      ...conversation,
+      messages: conversation.messages.map((message) => {
+        const previousMessage = previousMessages.get(message.id);
+        if (!previousMessage?.attachments || !message.attachments) return message;
+        const previousAttachments = new Map(
+          previousMessage.attachments.map((attachment) => [attachment.id, attachment]),
+        );
+        return {
+          ...message,
+          attachments: message.attachments.map((attachment) => {
+            const runtime = previousAttachments.get(attachment.id);
+            return runtime?.previewUrl
+              ? { ...attachment, previewUrl: runtime.previewUrl }
+              : attachment;
+          }),
+        };
+      }),
+    };
+  });
+}
+
 function normalizeConversation(input: Partial<PawConversation>): PawConversation {
   const now = Date.now();
   const messages = Array.isArray(input.messages)
@@ -234,7 +308,9 @@ function normalizeConversation(input: Partial<PawConversation>): PawConversation
               : undefined,
           agentPanels: normalizeAgentPanels(message.agentPanels),
           attachments: Array.isArray(message.attachments)
-            ? message.attachments.filter(Boolean).map((item) => ({ ...item }))
+            ? message.attachments.map(normalizeAttachment).filter(
+                (item): item is PawAttachment => Boolean(item),
+              )
             : undefined,
           images: Array.isArray(message.images)
             ? message.images.filter(
@@ -276,6 +352,10 @@ function normalizeConversation(input: Partial<PawConversation>): PawConversation
     messages,
     agentCwd:
       typeof input.agentCwd === "string" && input.agentCwd.trim() ? input.agentCwd : undefined,
+    agentThreadId:
+      typeof input.agentThreadId === "string" && input.agentThreadId.trim()
+        ? input.agentThreadId
+        : undefined,
     agentCwdLocked: Boolean(input.agentCwdLocked),
     agentApprovalMode:
       input.agentApprovalMode === "review" || input.agentApprovalMode === "full"
@@ -528,6 +608,14 @@ function isAllowedRegistrationEmail(
 export function usePawClient() {
   const [hydrated, setHydrated] = useState(false);
   const [session, setSession] = useState<PawSession | null>(null);
+  // 令牌可能在这个组件完全不知情的地方失效——静默刷新失败时
+  // `client/paw/api.ts` 深处直接 `clearPawSession()` 再抛错，调用方十有八九
+  // 只把 error.message 当一条普通提示显示，不会想起来还要 setSession(null)。
+  // 不订阅这个的后果是：localStorage 里的会话已经被清空，这里的 `session`
+  // 却还是失效前的旧对象，`!session` 分支永远不触发，登录页出不来，用户
+  // 卡在一句"会话已过期"的提示上却没有路可退。见 client/paw/auth.ts 里
+  // `onPawSessionChange` 的注释。
+  useEffect(() => onPawSessionChange(setSession), []);
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [authSettings, setAuthSettings] = useState<PawPublicSettings | null>(null);
   const [authSettingsBusy, setAuthSettingsBusy] = useState(false);
@@ -567,7 +655,116 @@ export function usePawClient() {
   const draftBackupRef = useRef("");
   const attachmentsBackupRef = useRef<PawAttachment[]>([]);
   const attachmentFilesRef = useRef<Map<string, File>>(new Map());
+  const attachmentPreviewRefsRef = useRef<Map<string, number>>(new Map());
+  const attachmentRestoreGenerationRef = useRef(0);
   const selectionInitializedRef = useRef(false);
+
+  const retainAttachmentPreviews = useCallback((items: PawAttachment[]) => {
+    for (const item of items) {
+      if (!item.previewUrl?.startsWith("blob:")) continue;
+      const count = attachmentPreviewRefsRef.current.get(item.previewUrl) ?? 0;
+      attachmentPreviewRefsRef.current.set(item.previewUrl, count + 1);
+    }
+  }, []);
+
+  const releaseAttachmentPreviews = useCallback((items: PawAttachment[]) => {
+    for (const item of items) {
+      const url = item.previewUrl;
+      if (!url?.startsWith("blob:")) continue;
+      const count = (attachmentPreviewRefsRef.current.get(url) ?? 0) - 1;
+      if (count > 0) {
+        attachmentPreviewRefsRef.current.set(url, count);
+      } else {
+        attachmentPreviewRefsRef.current.delete(url);
+        URL.revokeObjectURL(url);
+      }
+    }
+  }, []);
+
+  const replaceComposerAttachments = useCallback(
+    (next: PawAttachment[]) => {
+      setAttachments((current) => {
+        releaseAttachmentPreviews(current);
+        retainAttachmentPreviews(next);
+        return next;
+      });
+    },
+    [releaseAttachmentPreviews, retainAttachmentPreviews],
+  );
+
+  const appendComposerAttachments = useCallback(
+    (next: PawAttachment[]) => {
+      if (!next.length) return;
+      retainAttachmentPreviews(next);
+      setAttachments((current) => [...current, ...next]);
+    },
+    [retainAttachmentPreviews],
+  );
+
+  const restoreConversationAttachments = useCallback(
+    async (source: PawConversation[]) => {
+      const generation = attachmentRestoreGenerationRef.current + 1;
+      attachmentRestoreGenerationRef.current = generation;
+      const createdPreviews: PawAttachment[] = [];
+      const restored = await Promise.all(
+        source.map(async (conversation) => ({
+          ...conversation,
+          messages: await Promise.all(
+            conversation.messages.map(async (message) => {
+              if (!message.attachments?.length) return message;
+              const attachments = await Promise.all(
+                message.attachments.map(async (attachment) => {
+                  const blob = await loadPawAttachmentBlob(attachment.id);
+                  if (!blob) {
+                    return { ...attachment, localCacheStatus: "unavailable" as const };
+                  }
+
+                  const file = new File([blob], attachment.filename, {
+                    type: attachment.mime_type,
+                  });
+                  attachmentFilesRef.current.set(attachment.id, file);
+                  if (!attachment.mime_type.startsWith("image/")) {
+                    return { ...attachment, localCacheStatus: "available" as const };
+                  }
+
+                  const previewUrl = URL.createObjectURL(blob);
+                  const restoredAttachment = {
+                    ...attachment,
+                    previewUrl,
+                    localCacheStatus: "available" as const,
+                  };
+                  createdPreviews.push(restoredAttachment);
+                  retainAttachmentPreviews([restoredAttachment]);
+                  return restoredAttachment;
+                }),
+              );
+              return { ...message, attachments };
+            }),
+          ),
+        })),
+      );
+      if (generation !== attachmentRestoreGenerationRef.current) {
+        releaseAttachmentPreviews(createdPreviews);
+        return;
+      }
+      const restoredById = new Map(restored.map((conversation) => [conversation.id, conversation]));
+      setConversations((current) =>
+        current.map((conversation) => restoredById.get(conversation.id) ?? conversation),
+      );
+    },
+    [releaseAttachmentPreviews, retainAttachmentPreviews],
+  );
+
+  useEffect(
+    () => () => {
+      for (const url of attachmentPreviewRefsRef.current.keys()) {
+        URL.revokeObjectURL(url);
+      }
+      attachmentPreviewRefsRef.current.clear();
+      attachmentFilesRef.current.clear();
+    },
+    [],
+  );
 
   const activeConversation = useMemo(
     () =>
@@ -759,6 +956,21 @@ export function usePawClient() {
     [updateConversation],
   );
 
+  const compactAgentMessage = useCallback(
+    (conversationId: string, messageId: string) => {
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        messages: conversation.messages.map((message) =>
+          message.id === messageId
+            ? { ...compactAgentMessageForRuntime(message), updatedAt: Date.now() }
+            : message,
+        ),
+        updatedAt: Date.now(),
+      }));
+    },
+    [updateConversation],
+  );
+
   /**
    * 独立追加一条通知气泡（不编辑某条已有消息）——用于轮次之间发生的事，
    * 比如会话意外结束、协议漂移诊断。这些事没有一条"正在写"的助手消息可以挂，
@@ -797,6 +1009,24 @@ export function usePawClient() {
       );
     },
     [updateConversation],
+  );
+
+  const setAgentThreadId = useCallback(
+    (conversationId: string, threadId: string | null) => {
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        agentThreadId: threadId || undefined,
+        updatedAt: Date.now(),
+      }));
+    },
+    [updateConversation],
+  );
+
+  const getAgentThreadId = useCallback(
+    (conversationId: string) =>
+      conversations.find((conversation) => conversation.id === conversationId)?.agentThreadId ??
+      null,
+    [conversations],
   );
 
   /**
@@ -840,19 +1070,17 @@ export function usePawClient() {
   const removeAttachment = useCallback((id: string) => {
     setAttachments((current) => {
       const removed = current.find((attachment) => attachment.id === id);
-      if (removed?.previewUrl?.startsWith("blob:")) {
-        URL.revokeObjectURL(removed.previewUrl);
-      }
+      if (removed) releaseAttachmentPreviews([removed]);
       attachmentFilesRef.current.delete(id);
       return current.filter((attachment) => attachment.id !== id);
     });
-  }, []);
+  }, [releaseAttachmentPreviews]);
 
   const clearEditState = useCallback((restoreDraft = false) => {
     setEditingMessageId(null);
     if (restoreDraft) {
       setDraftState(draftBackupRef.current);
-      setAttachments(attachmentsBackupRef.current.map((item) => ({ ...item })));
+      replaceComposerAttachments(attachmentsBackupRef.current.map((item) => ({ ...item })));
       if (activeConversationId) {
         updateConversation(activeConversationId, (conversation) => ({
           ...conversation,
@@ -860,13 +1088,40 @@ export function usePawClient() {
           updatedAt: Date.now(),
         }));
       }
+    } else {
+      replaceComposerAttachments([]);
     }
     draftBackupRef.current = "";
     attachmentsBackupRef.current = [];
-  }, [activeConversationId, updateConversation]);
+  }, [
+    activeConversationId,
+    replaceComposerAttachments,
+    updateConversation,
+  ]);
 
   const deleteMessage = useCallback((messageId: string) => {
     if (!activeConversationId) return;
+    const conversation = conversations.find((item) => item.id === activeConversationId);
+    const removed = conversation?.messages.find((message) => message.id === messageId);
+    if (removed?.attachments) {
+      releaseAttachmentPreviews(removed.attachments);
+      const remainingAttachmentIds = new Set(
+        conversations.flatMap((item) =>
+          item.messages
+            .filter((message) => item.id !== activeConversationId || message.id !== messageId)
+            .flatMap((message) => (message.attachments ?? []).map((attachment) => attachment.id)),
+        ),
+      );
+      const protectedAttachmentIds = new Set(
+        [...attachments, ...attachmentsBackupRef.current].map((attachment) => attachment.id),
+      );
+      for (const id of new Set(removed.attachments.map((attachment) => attachment.id))) {
+        if (!remainingAttachmentIds.has(id) && !protectedAttachmentIds.has(id)) {
+          attachmentFilesRef.current.delete(id);
+          void deletePawAttachmentBlob(id);
+        }
+      }
+    }
     updateConversation(activeConversationId, (conversation) => ({
       ...conversation,
       messages: conversation.messages.filter((message) => message.id !== messageId),
@@ -879,7 +1134,13 @@ export function usePawClient() {
             ),
       updatedAt: Date.now(),
     }));
-  }, [activeConversationId, updateConversation]);
+  }, [
+    activeConversationId,
+    attachments,
+    conversations,
+    releaseAttachmentPreviews,
+    updateConversation,
+  ]);
 
   const togglePinMessage = useCallback((messageId: string) => {
     if (!activeConversationId) return;
@@ -924,7 +1185,10 @@ export function usePawClient() {
       return conversation.messages
         .slice(0, endIndex)
         .filter((message, index) => index >= contextStart || message.pinned)
-        .map((message) => ({ role: message.role, content: message.content }));
+        .map((message) => ({
+          role: message.role,
+          content: stripAgentOutput(message.content),
+        }));
     },
     [],
   );
@@ -938,13 +1202,23 @@ export function usePawClient() {
     title: string;
     restoreDraft: string;
     restoreAttachments: PawAttachment[];
+    messageAttachments: PawAttachment[];
     editMessageId?: string | null;
   }): Promise<void> {
     const abortController = new AbortController();
     sendAbortRef.current = abortController;
     setSending(true);
     setDraftState("");
-    setAttachments([]);
+    if (options.editMessageId) {
+      const replacedMessage = options.conversation.messages.find(
+        (message) => message.id === options.editMessageId,
+      );
+      if (replacedMessage?.attachments) {
+        releaseAttachmentPreviews(replacedMessage.attachments);
+      }
+    }
+    retainAttachmentPreviews(options.messageAttachments);
+    replaceComposerAttachments([]);
     setNotice(null);
 
     const nextConversation = normalizeConversation({
@@ -955,6 +1229,10 @@ export function usePawClient() {
       updatedAt: Date.now(),
       contextStartIndex: options.conversation.contextStartIndex,
       messages: options.nextMessages,
+      agentCwd: options.conversation.agentCwd,
+      agentCwdLocked: options.conversation.agentCwdLocked,
+      agentThreadId: options.conversation.agentThreadId,
+      agentApprovalMode: options.conversation.agentApprovalMode,
     });
 
     setConversations((current) => {
@@ -1055,7 +1333,7 @@ export function usePawClient() {
       }));
 
       setDraftState(options.restoreDraft);
-      setAttachments(options.restoreAttachments.map((item) => ({ ...item })));
+      replaceComposerAttachments(options.restoreAttachments.map((item) => ({ ...item })));
       if (options.editMessageId) {
         setEditingMessageId(options.editMessageId);
       }
@@ -1083,11 +1361,16 @@ export function usePawClient() {
       updatedAt: Date.now(),
       contextStartIndex: options.conversation.contextStartIndex,
       messages: [...options.conversation.messages, userMessage, assistantMessage],
+      agentCwd: options.conversation.agentCwd,
+      agentCwdLocked: options.conversation.agentCwdLocked,
+      agentThreadId: options.conversation.agentThreadId,
+      agentApprovalMode: options.conversation.agentApprovalMode,
     });
 
     setSending(true);
     setDraftState("");
-    setAttachments([]);
+    retainAttachmentPreviews(userMessage.attachments ?? []);
+    replaceComposerAttachments([]);
     setNotice(null);
     setConversations((current) => {
       const exists = current.some((item) => item.id === options.conversation.id);
@@ -1154,7 +1437,7 @@ export function usePawClient() {
         updatedAt: Date.now(),
       }));
       setDraftState(options.prompt);
-      setAttachments(options.attachments.map((item) => ({ ...item })));
+      replaceComposerAttachments(options.attachments.map((item) => ({ ...item })));
     } finally {
       setSending(false);
     }
@@ -1185,11 +1468,16 @@ export function usePawClient() {
       updatedAt: Date.now(),
       contextStartIndex: options.conversation.contextStartIndex,
       messages: [...options.conversation.messages, userMessage, assistantMessage],
+      agentCwd: options.conversation.agentCwd,
+      agentCwdLocked: options.conversation.agentCwdLocked,
+      agentThreadId: options.conversation.agentThreadId,
+      agentApprovalMode: options.conversation.agentApprovalMode,
     });
 
     setSending(true);
     setDraftState("");
-    setAttachments([]);
+    retainAttachmentPreviews(userMessage.attachments ?? []);
+    replaceComposerAttachments([]);
     setNotice(null);
     setConversations((current) => {
       const exists = current.some((item) => item.id === options.conversation.id);
@@ -1256,7 +1544,7 @@ export function usePawClient() {
         updatedAt: Date.now(),
       }));
       setDraftState(options.prompt);
-      setAttachments(options.attachments.map((item) => ({ ...item })));
+      replaceComposerAttachments(options.attachments.map((item) => ({ ...item })));
     } finally {
       setSending(false);
     }
@@ -1270,9 +1558,18 @@ export function usePawClient() {
     attachmentsBackupRef.current = attachments.map((item) => ({ ...item }));
     setEditingMessageId(messageId);
     syncDraft(message.content);
-    setAttachments(message.attachments ? message.attachments.map((item) => ({ ...item })) : []);
+    replaceComposerAttachments(
+      message.attachments ? message.attachments.map((item) => ({ ...item })) : [],
+    );
     setNotice("正在编辑这条消息，发送后会重新生成后续内容。");
-  }, [activeConversationId, attachments, conversations, draft, syncDraft]);
+  }, [
+    activeConversationId,
+    attachments,
+    conversations,
+    draft,
+    replaceComposerAttachments,
+    syncDraft,
+  ]);
 
   const retryMessage = useCallback((messageId: string) => {
     const conversation = conversations.find((item) => item.id === activeConversationId);
@@ -1295,6 +1592,7 @@ export function usePawClient() {
       title: conversation.title,
       restoreDraft: draft,
       restoreAttachments: attachments,
+      messageAttachments: [],
     });
   }, [
     activeConversationId,
@@ -1340,7 +1638,8 @@ export function usePawClient() {
       initialConversations[0]?.id ??
       "";
     setActiveConversationId(initialActiveId);
-  }, []);
+    void restoreConversationAttachments(initialConversations);
+  }, [restoreConversationAttachments]);
 
   useEffect(() => {
     if (!hydrated || session) return;
@@ -1395,6 +1694,22 @@ export function usePawClient() {
       conversations,
       activeConversationId,
     );
+    if (result.saved) {
+      const runtimeConversations = mergePersistedConversationRuntime(
+        conversations,
+        result.conversations,
+      );
+      const currentPersistedSnapshot = JSON.stringify(
+        projectConversationsForStorage(conversations, "completed"),
+      );
+      const resultSnapshot = JSON.stringify(result.conversations);
+      if (
+        currentPersistedSnapshot !== resultSnapshot &&
+        JSON.stringify(runtimeConversations) !== JSON.stringify(conversations)
+      ) {
+        setConversations(runtimeConversations);
+      }
+    }
     if (!result.saved) {
       setNotice("Local storage is full; the latest conversation may not have been saved.");
     } else if (result.mode === "aggressive" || result.removedConversationCount > 0) {
@@ -1519,9 +1834,8 @@ export function usePawClient() {
     setConversations((current) => [conversation, ...current]);
     setActiveConversationId(conversation.id);
     setDraftState("");
-    setAttachments([]);
     setNotice(null);
-  }, []);
+  }, [clearEditState]);
 
   const selectConversation = useCallback(
     (conversationId: string) => {
@@ -1530,7 +1844,6 @@ export function usePawClient() {
       clearEditState(false);
       setActiveConversationId(conversationId);
       setDraftState(conversation.draft);
-      setAttachments([]);
     },
     [clearEditState, conversations],
   );
@@ -1539,19 +1852,43 @@ export function usePawClient() {
     (conversationId?: string) => {
       const targetId = conversationId ?? activeConversationId;
       if (!targetId) return;
+      const removedConversation = conversations.find((conversation) => conversation.id === targetId);
+      if (removedConversation) {
+        releaseAttachmentPreviews(
+          removedConversation.messages.flatMap((message) => message.attachments ?? []),
+        );
+        const remainingAttachmentIds = new Set(
+          conversations
+            .filter((conversation) => conversation.id !== targetId)
+            .flatMap((conversation) =>
+              conversation.messages.flatMap((message) =>
+                (message.attachments ?? []).map((attachment) => attachment.id),
+              ),
+            ),
+        );
+        for (const attachment of [...attachments, ...attachmentsBackupRef.current]) {
+          remainingAttachmentIds.add(attachment.id);
+        }
+        for (const id of new Set(
+          removedConversation.messages.flatMap((message) =>
+            (message.attachments ?? []).map((attachment) => attachment.id),
+          ),
+        )) {
+          if (!remainingAttachmentIds.has(id)) void deletePawAttachmentBlob(id);
+        }
+      }
       setConversations((current) => {
         const next = current.filter((conversation) => conversation.id !== targetId);
         const fallback = next[0] ?? null;
         if (targetId === activeConversationId) {
           setActiveConversationId(fallback?.id ?? "");
           setDraftState(fallback?.draft ?? "");
-          setAttachments([]);
         }
         return next;
       });
       clearEditState(false);
     },
-    [activeConversationId, clearEditState],
+    [activeConversationId, clearEditState, conversations, releaseAttachmentPreviews],
   );
 
   const reorderConversations = useCallback((sourceId: string, targetId: string) => {
@@ -1703,10 +2040,12 @@ export function usePawClient() {
               .filter((item): item is PawPrompt => Boolean(item))
           : [];
 
+        releaseAttachmentPreviews(conversationAttachments(conversations));
         setConversations(nextConversations);
         setActiveConversationId(nextActiveId);
         setDraftState(nextConversations.find((item) => item.id === nextActiveId)?.draft ?? "");
-        setAttachments([]);
+        replaceComposerAttachments([]);
+        void restoreConversationAttachments(nextConversations);
         setSelectedGroupId(nextGroupId);
         setSelectedModelId(nextModelId);
         setSelectedReasoning(nextReasoning);
@@ -1722,15 +2061,26 @@ export function usePawClient() {
         setNotice(error instanceof Error ? error.message : "本地数据导入失败。");
       }
     },
-    [],
+    [
+      conversations,
+      releaseAttachmentPreviews,
+      replaceComposerAttachments,
+      restoreConversationAttachments,
+    ],
   );
 
   const resetLocalData = useCallback(() => {
+    releaseAttachmentPreviews(
+      conversations.flatMap((conversation) =>
+        conversation.messages.flatMap((message) => message.attachments ?? []),
+      ),
+    );
     const conversation = createConversation();
     setConversations([conversation]);
     setActiveConversationId(conversation.id);
     setDraftState("");
-    setAttachments([]);
+    replaceComposerAttachments([]);
+    void clearPawAttachmentCache();
     setPrompts([]);
     setSelectedGroupId(null);
     setSelectedModelId("");
@@ -1740,7 +2090,7 @@ export function usePawClient() {
     setImageSize("1024x1024");
     setSelectionInvalid(false);
     setNotice("Chat 本地数据已清空。");
-  }, []);
+  }, [conversations, releaseAttachmentPreviews, replaceComposerAttachments]);
 
   const updateSelection = useCallback(
     (groupId: number) => {
@@ -2009,34 +2359,49 @@ export function usePawClient() {
     setNotice(null);
     setSelectionInvalid(false);
     setSending(false);
-    setAttachments([]);
+    replaceComposerAttachments([]);
     setActiveConversationId("");
     setDraftState("");
-  }, [clearEditState]);
+  }, [clearEditState, replaceComposerAttachments]);
 
   const uploadFiles = useCallback(async (files: File[]) => {
     if (!files.length) return;
-      setFileBusy(true);
-      try {
-        const uploaded: PawAttachment[] = [];
-        for (const file of files) {
-          const response = await uploadPawFile(file);
-          uploaded.push({
-            ...response.data,
-            previewUrl: file.type.startsWith("image/")
-              ? URL.createObjectURL(file)
-              : undefined,
-          });
-          attachmentFilesRef.current.set(response.data.id, file);
-        }
-        setAttachments((current) => [...current, ...uploaded]);
-        setNotice(`${uploaded.length} 个附件已上传。`);
-      } catch (error) {
-        setNotice(error instanceof Error ? error.message : "附件上传失败");
-      } finally {
-        setFileBusy(false);
+    setFileBusy(true);
+    const uploaded: PawAttachment[] = [];
+    try {
+      for (const file of files) {
+        const response = await uploadPawFile(file);
+        const cached = await savePawAttachmentBlob(response.data.id, file);
+        const previewUrl = file.type.startsWith("image/")
+          ? URL.createObjectURL(file)
+          : undefined;
+        uploaded.push({
+          ...response.data,
+          previewUrl,
+          localCacheStatus: cached ? "available" : "unavailable",
+        });
+        attachmentFilesRef.current.set(response.data.id, file);
       }
-  }, []);
+      appendComposerAttachments(uploaded);
+      setNotice(
+        uploaded.some((item) => item.localCacheStatus === "unavailable")
+          ? "附件已上传，但部分附件无法写入本地缓存，刷新后可能不可恢复。"
+          : `${uploaded.length} 个附件已上传。`,
+      );
+    } catch (error) {
+      releaseAttachmentPreviews(uploaded);
+      for (const item of uploaded) {
+        attachmentFilesRef.current.delete(item.id);
+        void deletePawAttachmentBlob(item.id);
+      }
+      setNotice(error instanceof Error ? error.message : "附件上传失败");
+    } finally {
+      setFileBusy(false);
+    }
+  }, [
+    appendComposerAttachments,
+    releaseAttachmentPreviews,
+  ]);
 
   const handleFileChange = useCallback(
     async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -2164,6 +2529,7 @@ export function usePawClient() {
         title,
         restoreDraft: text,
         restoreAttachments: submittedAttachments,
+        messageAttachments: editedMessage.attachments ?? [],
         editMessageId,
       });
       return;
@@ -2189,6 +2555,7 @@ export function usePawClient() {
       title,
       restoreDraft: submittedDraft,
       restoreAttachments: submittedAttachments,
+      messageAttachments: submittedAttachments,
     });
   }, [
     activeConversation,
@@ -2275,8 +2642,11 @@ export function usePawClient() {
     finishAgentTurn,
     appendAgentNotice,
     setAgentBinding,
+    setAgentThreadId,
+    getAgentThreadId,
     lockAgentCwd,
     setAgentApprovalMode,
+    compactAgentMessage,
     addConversation,
     selectConversation,
     deleteConversation,

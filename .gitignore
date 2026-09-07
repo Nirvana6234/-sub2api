@@ -229,3 +229,10 @@ transit-hub/backend/backend/
 
 /tools/manufactor_app/ai-switch-gui/runtimes/
 /tools/manufactor_app/ai-switch-gui/third_party/
+
+# Chat desktop Rust sources intentionally use names covered by the broad
+# repository rules above (tests/, scripts/, vendor/, and tools/**/bin/).
+# Keep the workbench source and protocol fixtures trackable.
+!/tools/chat/src-tauri/
+!/tools/chat/src-tauri/**/
+!/tools/chat/src-tauri/**

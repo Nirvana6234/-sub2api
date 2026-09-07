@@ -51,17 +51,44 @@ function syncSessionToHost(token: string | null): void {
     });
 }
 
+/**
+ * `usePawClient` 里的 `session` React 状态订阅这个。
+ *
+ * 跟上面 `syncSessionToHost` 是同一个问题的另一半：`expirePawSession()`
+ * （401 刷新失败）从 `client/paw/api.ts` 深处的某次请求里抛出，调用方大多
+ * 只是把 `error.message` 当成一条普通提示 `setNotice(...)`——没人会在几十个
+ * 分散的 catch 块里都记得再补一句 `setSession(null)`。漏掉的后果是界面卡在
+ * "会话已过期，请重新登录"这行字上，`session` 却还是那个失效前的对象，
+ * `PawApp` 的 `!session` 分支永远不触发，登录页出不来。
+ *
+ * 所以还是那句话：存储是唯一咽喉，同步动作钉在这里，调用方不需要、也不能
+ * 绕过去。
+ */
+type SessionListener = (session: PawSession | null) => void;
+const sessionListeners = new Set<SessionListener>();
+
+export function onPawSessionChange(listener: SessionListener): () => void {
+  sessionListeners.add(listener);
+  return () => sessionListeners.delete(listener);
+}
+
+function notifySessionListeners(session: PawSession | null): void {
+  for (const listener of sessionListeners) listener(session);
+}
+
 export function savePawSession(session: PawSession): void {
   const storage = getStorage();
   storage.setItem(PAW_SESSION_STORAGE_KEY, JSON.stringify(session));
   storage.removeItem(PAW_SESSION_EXPIRED_KEY);
   syncSessionToHost(session.accessToken ?? null);
+  notifySessionListeners(session);
 }
 
 export function clearPawSession(): void {
   const storage = getStorage();
   storage.removeItem(PAW_SESSION_STORAGE_KEY);
   syncSessionToHost(null);
+  notifySessionListeners(null);
 }
 
 export function markPawSessionExpired(): void {

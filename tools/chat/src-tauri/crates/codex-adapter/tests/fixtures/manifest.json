@@ -1,0 +1,53 @@
+{
+  "_notes": {
+    "permissions-approval": "item/permissions/requestApproval 至今没有实测报文，该类型只有 schema，代码路径未经验证。以前触发不出来是因为要哄真模型去做特定动作；现在采集脚本改成了假中转站按剧本吐工具调用，只要找到能触发它的调用形状就能录 —— 缺的是那个形状，不再是手段。",
+    "recording": "全部录自上游 release rust-v0.153.0 的 app-server bundle，模型那一半由假中转站按剧本替代：不花钱、不要 key、不连网，可复现。验的是协议形状，不是模型判断力。命令审批那条刻意录的是**提权**路径（sandbox_permissions=require_escalated）——批准之后命令完全脱离沙箱，是 A7 最需要渲染对的一条。"
+  },
+  "bad-credentials": {
+    "codexVersion": "0.153.0",
+    "failureNotifications": [
+      "error"
+    ],
+    "jsonRpcErrorResponses": 0,
+    "recordedAgainst": "假中转站直接回 401",
+    "records": 23,
+    "scenario": "bad-credentials",
+    "threadStarted": true
+  },
+  "decline-command-approval": {
+    "approvalMethods": [
+      "item/commandExecution/requestApproval"
+    ],
+    "approvalRequestsSeen": 1,
+    "codexVersion": "0.153.0",
+    "declinedCommandDidNotRun": true,
+    "declinedItems": 1,
+    "recordedAgainst": "假中转站（按剧本吐 exec_command 调用），不连真中转站",
+    "records": 40,
+    "scenario": "decline-command-approval"
+  },
+  "decline-file-change": {
+    "approvalMethods": [
+      "item/fileChange/requestApproval"
+    ],
+    "codexVersion": "0.153.0",
+    "fileWasNotCreated": true,
+    "itemTypesSeen": [
+      "agentMessage",
+      "fileChange",
+      "reasoning",
+      "userMessage"
+    ],
+    "recordedAgainst": "假中转站（剧本里是一条 apply_patch 命令）",
+    "records": 40,
+    "scenario": "decline-file-change"
+  },
+  "invalid-cwd": {
+    "codexVersion": "0.153.0",
+    "cwdExists": false,
+    "recordedAgainst": "假中转站（这条根本不发请求）",
+    "records": 12,
+    "scenario": "invalid-cwd",
+    "threadStartedAnyway": true
+  }
+}
