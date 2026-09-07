@@ -28,13 +28,14 @@ internal static class ClientOptions
 {
     /// <summary>What this build reports itself as.</summary>
     /// <remarks>
-    /// Compared against <c>client-version.json</c> to decide whether to offer an
-    /// update, so it has to move with every release the server advertises — a build
-    /// left behind the manifest tells its own users, forever, that they are out of
-    /// date. Whatever displays it must derive from here rather than restate it; see
+    /// Compared against the relay's <c>/settings/public</c> advertised version
+    /// (<c>ClientVersionChecker</c>) to decide whether to offer an update, so it has
+    /// to move with every release the server advertises — a build left behind the
+    /// setting tells its own users, forever, that they are out of date. Whatever
+    /// displays it must derive from here rather than restate it; see
     /// <see cref="ViewModels.ClientUpdateViewModel.CurrentVersionText"/>.
     /// </remarks>
-    public static readonly Version CurrentVersion = new(0, 2);
+    public static readonly Version CurrentVersion = new(0, 3);
 
     /// <summary>
     /// The relay this build talks to.
