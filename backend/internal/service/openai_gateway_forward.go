@@ -615,12 +615,20 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		!account.IsOpenAIApiKey() && gjson.GetBytes(body, "previous_response_id").Exists() {
 		markPatchDelete("previous_response_id")
 	}
-	if openAIRequestBodyMayContainEmptyBase64InputImage(body) {
+	diagGateStart := time.Now()
+	diagGateHit := openAIRequestBodyMayContainEmptyBase64InputImage(body)
+	if diagGateElapsed := time.Since(diagGateStart); diagGateElapsed > 50*time.Millisecond || diagGateHit {
+		logger.LegacyPrintf("service.openai_gateway", "[DIAG] empty-base64 image gate check (Forward): account=%d body_bytes=%d hit=%v elapsed=%s", account.ID, len(body), diagGateHit, diagGateElapsed)
+	}
+	if diagGateHit {
+		diagSanitizeStart := time.Now()
 		decoded, decodeErr := ensureReqBody()
 		if decodeErr != nil {
 			return nil, decodeErr
 		}
-		if sanitizeEmptyBase64InputImagesInOpenAIRequestBodyMap(decoded) {
+		changed := sanitizeEmptyBase64InputImagesInOpenAIRequestBodyMap(decoded)
+		logger.LegacyPrintf("service.openai_gateway", "[DIAG] empty-base64 image sanitize (Forward): account=%d body_bytes=%d changed=%v elapsed=%s", account.ID, len(body), changed, time.Since(diagSanitizeStart))
+		if changed {
 			markDecodedModified()
 		}
 	}

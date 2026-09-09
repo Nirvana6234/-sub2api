@@ -751,6 +751,23 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		if err == nil && result != nil && result.FirstTokenMs != nil {
 			service.SetOpsLatencyMs(c, service.OpsTimeToFirstTokenMsKey, int64(*result.FirstTokenMs))
 		}
+		// [DIAG] 管线各阶段耗时拆解：定位「每经过一层中转多耗 1~5 秒」具体卡在哪一段。
+		// auth_ms=进请求到选号前的前置处理（读体/审计/校验），routing_ms=选号+槽位等待，
+		// upstream_ms=真正的出站网络调用（httptrace 已单独测过），response_ms=收到响应头
+		// 之后到 Forward 返回的处理耗时。诊断用，定位后可移除。
+		diagAuthMs, _ := getContextInt64(c, service.OpsAuthLatencyMsKey)
+		diagRoutingMs, _ := getContextInt64(c, service.OpsRoutingLatencyMsKey)
+		diagTTFTMs, _ := getContextInt64(c, service.OpsTimeToFirstTokenMsKey)
+		reqLog.Info("[DIAG] pipeline latency breakdown",
+			zap.Int64("account_id", account.ID),
+			zap.Int64("auth_ms", diagAuthMs),
+			zap.Int64("routing_ms", diagRoutingMs),
+			zap.Int64("upstream_ms", upstreamLatencyMs),
+			zap.Int64("response_ms", responseLatencyMs),
+			zap.Int64("ttft_ms", diagTTFTMs),
+			zap.Int64("forward_total_ms", forwardDurationMs),
+			zap.Bool("has_error", err != nil),
+		)
 		// #5148 对齐：错误返回携带的部分 result（流中断前上游已计量的 usage）照常
 		// 入账；failover 错误恒定 result=nil，不会重复计费。
 		submitResponsesUsage := func(res *service.OpenAIForwardResult) {
