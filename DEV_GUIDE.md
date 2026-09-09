@@ -245,39 +245,56 @@ git add ent/       # 生成的文件也要提交
 
 ---
 
-### 坑 12：独立 Paw 开发端口必须配置 sub2api 服务地址
+### 坑 12：本地启动必须区分首次安装和日常启动
 
-**典型现象**：
-- Paw 页面可以打开；
-- 登录、读取 Paw 配置或聊天时报 `HTTP 404`；
-- Paw 开发服务器运行在 `3101`，后端运行在 `8080`。
+本地开发固定使用以下数据目录：
 
-**根因**：
-- Paw 的 `PAW_SERVICE_URL` 为空时，会把 `/api/v1/...` 请求发到当前页面所在端口；
-- 独立开发时当前页面是 `http://127.0.0.1:3101`，但 API 实际位于 `http://127.0.0.1:8080`；
-- 因此请求会命中 Next.js 页面服务器并返回 404。
+```text
+C:\Work\Git\AI-Fly\-sub2api\.local\sub2api-data
+```
 
-**正确配置**：
-- `tools/chat/.env.local` 必须包含：
-  ```env
-  PAW_SERVICE_URL=http://127.0.0.1:8080
-  ```
-- 修改后必须重启 Paw 开发服务器，Next.js 只在启动时读取该环境变量。
-- Paw 独立开发端启动：
-  ```powershell
-  cd tools/chat
-  npm.cmd run dev -- --hostname 127.0.0.1 --port 3101
-  ```
+**日常启动顺序**
 
-**后端启动与验证**：
-- 后端必须使用本地数据目录，避免进入 setup 向导：
-  ```powershell
-  $env:DATA_DIR="C:\Work\Git\AI-Fly\-sub2api\.local\sub2api-data"
-  cd backend
-  go run ./cmd/server/
-  ```
-- 健康检查使用 `http://127.0.0.1:8080/health`，预期返回 `{"status":"ok"}`。
-- 后端二进制未必包含网页前端，访问 `http://127.0.0.1:8080/` 或 `/login` 返回 404 不代表后端未启动；Paw 页面使用 `http://127.0.0.1:3101/`。
+1. 确认 PostgreSQL `5432` 和 Redis `6379` 已启动。
+2. 在独立 PowerShell 窗口启动后端：
+   ```powershell
+   cd C:\Work\Git\AI-Fly\-sub2api\backend
+   $env:DATA_DIR="C:\Work\Git\AI-Fly\-sub2api\.local\sub2api-data"
+   go run ./cmd/server/
+   ```
+3. 在独立窗口启动管理后台：
+   ```powershell
+   cd C:\Work\Git\AI-Fly\-sub2api\frontend
+   pnpm.cmd dev --host 127.0.0.1 --port 3000
+   ```
+4. 启动 Chat 桌面端：
+   ```powershell
+   cd C:\Work\Git\AI-Fly\-sub2api\tools\chat
+   npm.cmd run app:dev
+   ```
+
+Chat 独立页面必须在 `tools/chat/.env.local` 中配置：
+
+```env
+PAW_SERVICE_URL=http://127.0.0.1:8080
+```
+
+修改后必须重启 Chat 开发进程。
+
+**启动检查**
+
+- 后端：`http://127.0.0.1:8080/health` 返回 `{"status":"ok"}`。
+- 安装状态：`http://127.0.0.1:8080/setup/status` 返回 `needs_setup: false`。
+- 管理后台：`http://127.0.0.1:3000`。
+- Chat 页面：由 `npm.cmd run app:dev` 输出的本地地址为准，通常是 `http://127.0.0.1:3100`。
+
+**管理员和数据库规则**
+
+- 管理员账号存储在 PostgreSQL 的 `users` 表中，不会从 `config.yaml` 的 `default.admin_email` 或 `default.admin_password` 自动创建。
+- 日常启动时必须保留 `DATA_DIR`、`config.yaml` 和 `.installed`；不要删除或移动它们。
+- 不要为了绕过迁移错误直接删除或重建 `sub2api` 数据库。这样会删除管理员、渠道、设置和业务数据。
+- 迁移 checksum 不一致时，恢复被修改的迁移文件，或创建新的迁移文件；不要修改已应用迁移。
+- 只有全新安装或明确的本地恢复才使用 setup 向导。空库需要通过向导重新创建管理员，不能只保留已有 `config.yaml` 后直接启动。
 
 ---
 

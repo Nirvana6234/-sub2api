@@ -526,16 +526,19 @@ cd ../backend
 VERSION="$(./scripts/resolve-version.sh)"
 go build -tags embed -ldflags="-X main.Version=${VERSION}" -o sub2api ./cmd/server
 
-# 5. 创建配置文件
-cp ../deploy/config.example.yaml ./config.yaml
-
-# 6. 编辑配置
-nano config.yaml
+# 5. 首次安装不要复制 config.yaml，直接启动并完成 setup 向导
+# 6. 已安装实例必须保留 DATA_DIR/config.yaml 和 DATA_DIR/.installed
 ```
 
 > **注意：** `-tags embed` 参数会将前端嵌入到二进制文件中。不使用此参数编译的程序将不包含前端界面。
 
-**`config.yaml` 关键配置：**
+**配置文件位置：**
+
+- 首次安装完成后，setup 向导会将配置写入 `DATA_DIR/config.yaml`。
+- 已安装实例启动前必须保留 `DATA_DIR/config.yaml` 和 `DATA_DIR/.installed`。
+- 下方内容仅作为配置参考，不要在已有实例上用模板覆盖现有配置。
+
+**`config.yaml` 关键配置示例：**
 
 ```yaml
 server:
@@ -544,14 +547,14 @@ server:
   mode: "release"
 
 database:
-  host: "localhost"
+  host: "127.0.0.1"
   port: 5432
   user: "postgres"
   password: "your_password"
   dbname: "sub2api"
 
 redis:
-  host: "localhost"
+  host: "127.0.0.1"
   port: 6379
   password: ""
 
@@ -636,27 +639,16 @@ Invalid base URL: invalid url scheme: http
 - 强制仅允许 TLS 出站
 - 在反向代理层移除敏感响应头
 
-#### ⚠️ 重要：创建管理员账号
+#### 管理员账号与启动
 
-初始管理员账号**只能通过 setup 向导创建**（首次启动时访问 `http://<host>:8080`）。`config.yaml` 中的 `default.admin_email` / `default.admin_password` 字段**不会被用来创建管理员**——它们只是出于历史原因保留在模板里。
-
-由于上面第 5 步预先创建了 `config.yaml`，**setup 向导在首次启动时会被跳过**：服务检测到 config 已存在，会直接进入正常模式，此时 `users` 表为空，首次登录会返回 `invalid email or password`。
-
-**创建管理员的两种方式：**
-
-1. **推荐——让向导自动生成 `config.yaml`：** 跳过上面的第 5 步（不要执行 `cp`）。直接运行 `./sub2api`，访问 `http://localhost:8080`，向导会引导你完成数据库、Redis 和管理员账号配置，并自动写出 `config.yaml`。
-
-2. **如果你已经创建了 `config.yaml`：** 首次启动前先把它临时移走以触发向导，完成后再恢复：
-   ```bash
-   mv config.yaml config.yaml.bak
-   ./sub2api        # 向导在 http://localhost:8080 启动，并生成新的 config.yaml
-   # 向导完成后 Ctrl+C 停服，再恢复你的配置：
-   mv config.yaml.bak config.yaml
-   ./sub2api        # 重启进入正常模式，用刚创建的管理员登录
-   ```
+- 首次安装：不要预先创建 `config.yaml`，直接启动服务并访问 `http://localhost:8080`，通过 setup 向导配置数据库、Redis 和管理员账号。向导完成后会写入 `config.yaml`。
+- 已安装环境：保留 `config.yaml` 和 `.installed`，直接启动服务。管理员账号来自数据库，`config.yaml` 中的 `default.admin_email` / `default.admin_password` 不会创建账号。
+- 不要为了修复启动问题删除或重建数据库；这会删除管理员和所有业务数据。
+- 如果本地数据库已被重建为空库，必须重新运行 setup 向导创建管理员，不能只恢复 `config.yaml`。
 
 ```bash
-# 6. 运行应用
+# 7. 运行应用
+export DATA_DIR=/var/lib/sub2api
 ./sub2api
 ```
 
