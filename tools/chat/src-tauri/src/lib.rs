@@ -218,6 +218,57 @@ fn resolve_agent_paths(app: &tauri::AppHandle) -> agent::AgentPaths {
     }
 }
 
+/// Whether this launch follows the exe on disk actually changing since the
+/// last time this app ran — an overwrite install (upgrade in place), or a
+/// rebuild during local iteration, not necessarily a version bump.
+///
+/// **Why this exists (2026-09-09, reproduced in a VM):** the very first
+/// launch after overwriting an existing install got stuck forever on the
+/// "正在准备本地工作区" screen — the shell paints fine (title, CSS all
+/// present) but the mount effect that flips `hydrated` never appears to
+/// run. A plain reload (confirmed: WebView2's own right-click "刷新" in its
+/// context menu) fixes it every single time, which points at WebView2
+/// serving something stale from its own cache on that first navigation
+/// rather than at a bug in the mounted React code itself. This automates
+/// exactly that manual workaround instead of leaving a user to discover it.
+///
+/// Keyed on the exe's mtime rather than `tauri.conf.json`'s version field:
+/// a rebuild that ships the same version (routine during local iteration)
+/// still overwrites the file on disk and is exactly the scenario that needs
+/// the same reload, so version-string comparison would miss it.
+fn needs_stale_cache_reload(app: &tauri::AppHandle) -> bool {
+    use tauri::Manager;
+
+    let Ok(exe_path) = std::env::current_exe() else {
+        return false;
+    };
+    let Ok(modified) = std::fs::metadata(&exe_path).and_then(|meta| meta.modified()) else {
+        return false;
+    };
+    let Ok(elapsed) = modified.duration_since(std::time::UNIX_EPOCH) else {
+        return false;
+    };
+    let current = elapsed.as_secs().to_string();
+
+    let Ok(app_dir) = app.path().app_data_dir() else {
+        return false;
+    };
+    if std::fs::create_dir_all(&app_dir).is_err() {
+        return false;
+    }
+    let marker_path = app_dir.join("last-exe-mtime.txt");
+
+    let previous = std::fs::read_to_string(&marker_path).ok();
+    // Recorded unconditionally — including on the very first run, so the
+    // *next* run has something to compare against. Failing to write here
+    // just means this check runs again next launch; not fatal.
+    let _ = std::fs::write(&marker_path, &current);
+
+    // No marker = first run ever on this machine (or the data dir was
+    // cleared): there is no previous install's cache to be stale from.
+    previous.is_some_and(|value| value.trim() != current)
+}
+
 pub fn run() {
     tauri::Builder::default()
         // 选工作目录用。**只加了它一个** —— v2 里插件命令是要在 capabilities 里
@@ -252,6 +303,23 @@ pub fn run() {
                         let _ = window_for_resize.set_size(*size);
                     }
                 });
+
+                // See `needs_stale_cache_reload` — first launch after an
+                // overwrite install gets one automatic reload so the user
+                // never has to find the right-click menu themselves. The
+                // delay is a pragmatic wait for the initial navigation to
+                // actually finish (there is no page-load hook available on
+                // a window built from `tauri.conf.json`'s declarative
+                // config rather than a `WebviewWindowBuilder`); the failure
+                // this works around is a permanent hang, so being a few
+                // hundred ms late costs nothing a user would notice.
+                if needs_stale_cache_reload(app.handle()) {
+                    let window_for_reload = window.clone();
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                        let _ = window_for_reload.eval("location.reload()");
+                    });
+                }
             }
 
             Ok(())
