@@ -1,4 +1,5 @@
 import { getPawLoginPath, resolvePawUrl } from "./config";
+import { pawFetch } from "./httpFetch";
 import {
   clearPawSession,
   loadPawSession,
@@ -196,7 +197,7 @@ function setStoredSessionFromAuthResponse(response: PawLoginResponse | PawRefres
 }
 
 export async function loginPaw(email: string, password: string): Promise<PawSession> {
-  const response = await fetch(resolvePawUrl("/api/v1/auth/login"), {
+  const response = await pawFetch(resolvePawUrl("/api/v1/auth/login"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -224,7 +225,7 @@ export async function loginPaw(email: string, password: string): Promise<PawSess
 }
 
 export async function registerPaw(request: PawRegisterRequest): Promise<PawSession> {
-  const response = await fetch(resolvePawUrl("/api/v1/auth/register"), {
+  const response = await pawFetch(resolvePawUrl("/api/v1/auth/register"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -252,7 +253,7 @@ export async function registerPaw(request: PawRegisterRequest): Promise<PawSessi
 }
 
 export async function fetchPawPublicSettings(): Promise<PawPublicSettings> {
-  const response = await fetch(resolvePawUrl("/api/v1/settings/public"), {
+  const response = await pawFetch(resolvePawUrl("/api/v1/settings/public"), {
     method: "GET",
     headers: {
       Accept: "application/json",
@@ -304,7 +305,7 @@ export async function fetchPawPublicSettings(): Promise<PawPublicSettings> {
 export async function sendPawVerifyCode(
   request: PawSendVerifyCodeRequest,
 ): Promise<PawSendVerifyCodeResponse> {
-  const response = await fetch(resolvePawUrl("/api/v1/auth/send-verify-code"), {
+  const response = await pawFetch(resolvePawUrl("/api/v1/auth/send-verify-code"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -334,7 +335,7 @@ async function refreshPawSession(): Promise<PawSession | null> {
         return null;
       }
 
-      const response = await fetch(resolvePawUrl("/api/v1/auth/refresh"), {
+      const response = await pawFetch(resolvePawUrl("/api/v1/auth/refresh"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -417,7 +418,7 @@ async function pawRequest(input: string, init: PawRequestInit = {}): Promise<Res
     headers.set("Authorization", authHeader);
   }
 
-  const execute = async (): Promise<Response> => fetch(resolvePawUrl(input), { ...init, headers });
+  const execute = async (): Promise<Response> => pawFetch(resolvePawUrl(input), { ...init, headers });
   let response = await execute();
   if (response.status !== 401) {
     return response;

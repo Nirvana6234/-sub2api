@@ -223,6 +223,17 @@ pub fn run() {
         // 选工作目录用。**只加了它一个** —— v2 里插件命令是要在 capabilities 里
         // 显式放行的，多放一个就多一个前端能碰的原生能力。
         .plugin(tauri_plugin_dialog::init())
+        // 前端复用的是网页那份代码，登录/对话走的是普通 `fetch()`——在桌面端这
+        // 意味着请求由 WebView2 的浏览器网络栈发出，会被当成从
+        // `https://tauri.localhost` 发起的跨域请求，服务端 CORS 白名单没配这个
+        // origin 就直接在预检那一步被拦，症状是登录报 "Failed to fetch"。这个
+        // 插件把 `@tauri-apps/plugin-http` 的 `fetch` 换成走 Rust 侧 reqwest 转发，
+        // 不经过浏览器的同源策略，跟小白端的 HttpClient 是一回事——网页版/PWA
+        // 不受影响，因为它们走的还是原生 `window.fetch`（见
+        // src/client/paw/httpFetch.ts 的运行时判断）。允许访问的地址在
+        // capabilities/default.json 里显式列了两个：正式服和本地联调后端，
+        // 不是放开任意地址。
+        .plugin(tauri_plugin_http::init())
         .setup(|app| {
             let sink = Arc::new(TauriSink(app.handle().clone()));
             let paths = resolve_agent_paths(app.handle());
