@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -33,7 +34,12 @@ func TestPluginPackageInstallerInstallUnsignedDevelopmentPackage(t *testing.T) {
 	assert.FileExists(t, installation.ArtifactPath)
 	info, statErr := os.Stat(installation.BinaryPath)
 	require.NoError(t, statErr)
-	assert.NotZero(t, info.Mode()&0o100)
+	if runtime.GOOS != "windows" {
+		// NTFS 没有 POSIX 可执行位的概念，Go 在 Windows 上无论请求的 mode 是
+		// 什么，os.Stat 汇报的权限永远是 0666/0444，这里的执行位断言只在有
+		// 该语义的平台上有意义。
+		assert.NotZero(t, info.Mode()&0o100)
+	}
 	assert.Contains(t, installation.InstallPath, filepath.Join("installed", "com.example.openai-transport"))
 }
 

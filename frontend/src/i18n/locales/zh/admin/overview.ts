@@ -586,7 +586,9 @@ export default {
         accountManagementEnabled: '允许用户账号管理',
         accountManagementEnabledHint: '可提交、管理本人账号和自建贡献房间。',
         contributionRoomsEnabled: '允许用户贡献房间',
-        contributionRoomsEnabledHint: '可查看并选择共享贡献房间。'
+        contributionRoomsEnabledHint: '可查看并选择共享贡献房间。',
+        headroomCompressionEnabled: '启用上下文压缩',
+        headroomCompressionEnabledHint: '转发请求时通过压缩代理精简上下文以节省 token；代理未配置或异常时自动直连上游，不影响可用性。'
       },
       adjustBalance: '调整余额',
       adjustConcurrency: '调整并发数',

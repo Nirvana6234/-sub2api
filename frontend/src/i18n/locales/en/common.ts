@@ -215,6 +215,7 @@ export default {
     promptAudit: 'Prompt Audit',
     auditLogs: 'Audit Logs',
     accessBlacklist: 'Access Blacklist',
+    latencyCompensation: 'Latency Compensation',
   },
 
   // Auth
@@ -1033,6 +1034,12 @@ export default {
     presencePenaltyDescription: 'Encourages new topics',
     seedLabel: 'Seed',
     seedDescription: 'Attempts to reproduce sampling results',
+    reasoningEffortLabel: 'Reasoning effort',
+    reasoningEffortDescription: 'Only applies to reasoning-capable models; Off means the field is not sent',
+    reasoningEffortNone: 'Off',
+    reasoningEffortLow: 'Low',
+    reasoningEffortMedium: 'Medium',
+    reasoningEffortHigh: 'High',
     resetParameters: 'Reset parameters',
     stream: 'Stream response',
     streamHint: 'When enabled, the assistant output renders token-by-token.',

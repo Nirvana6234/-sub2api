@@ -213,6 +213,23 @@ export async function deleteAccountContribution(id: number): Promise<void> {
   await apiClient.delete(`/account-contributions/${id}`)
 }
 
+export interface ContributionModelOption {
+  id: string
+  object: string
+  created: number
+  owned_by: string
+  type: string
+  display_name: string
+}
+
+// Backed by GetAvailableModels: reflects the account's own model mapping when
+// configured, falling back to the platform's default catalog otherwise — so
+// this list should be re-fetched per account rather than cached globally.
+export async function getAccountContributionModels(id: number): Promise<ContributionModelOption[]> {
+  const { data } = await apiClient.get<ContributionModelOption[]>(`/account-contributions/${id}/models`)
+  return data
+}
+
 export async function testAccountContribution(id: number, modelId = ''): Promise<{ status: string; error_message?: string; latency_ms?: number }> {
   const { data } = await apiClient.post<{ status: string; error_message?: string; latency_ms?: number }>(
     `/account-contributions/${id}/test`,
@@ -259,6 +276,7 @@ export default {
   update: updateAccountContribution,
   getUsageSummary: getContributionAccountUsageSummary,
   delete: deleteAccountContribution,
+  getModels: getAccountContributionModels,
   test: testAccountContribution,
   listProxies: listContributionProxies,
   createProxy: createContributionProxy,

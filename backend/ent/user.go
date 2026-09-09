@@ -73,6 +73,8 @@ type User struct {
 	AccountManagementEnabled bool `json:"account_management_enabled,omitempty"`
 	// ContributionRoomsEnabled holds the value of the "contribution_rooms_enabled" field.
 	ContributionRoomsEnabled bool `json:"contribution_rooms_enabled,omitempty"`
+	// HeadroomCompressionEnabled holds the value of the "headroom_compression_enabled" field.
+	HeadroomCompressionEnabled bool `json:"headroom_compression_enabled,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
 	// The values are being populated by the UserQuery when eager-loading is set.
 	Edges        UserEdges `json:"edges"`
@@ -256,7 +258,7 @@ func (*User) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case user.FieldTotpEnabled, user.FieldRestrictPublicGroups, user.FieldBalanceNotifyEnabled, user.FieldAccountManagementEnabled, user.FieldContributionRoomsEnabled:
+		case user.FieldTotpEnabled, user.FieldRestrictPublicGroups, user.FieldBalanceNotifyEnabled, user.FieldAccountManagementEnabled, user.FieldContributionRoomsEnabled, user.FieldHeadroomCompressionEnabled:
 			values[i] = new(sql.NullBool)
 		case user.FieldBalance, user.FieldFrozenBalance, user.FieldBalanceNotifyThreshold, user.FieldTotalRecharged:
 			values[i] = new(sql.NullFloat64)
@@ -461,6 +463,12 @@ func (_m *User) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field contribution_rooms_enabled", values[i])
 			} else if value.Valid {
 				_m.ContributionRoomsEnabled = value.Bool
+			}
+		case user.FieldHeadroomCompressionEnabled:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field headroom_compression_enabled", values[i])
+			} else if value.Valid {
+				_m.HeadroomCompressionEnabled = value.Bool
 			}
 		default:
 			_m.selectValues.Set(columns[i], values[i])
@@ -670,6 +678,9 @@ func (_m *User) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("contribution_rooms_enabled=")
 	builder.WriteString(fmt.Sprintf("%v", _m.ContributionRoomsEnabled))
+	builder.WriteString(", ")
+	builder.WriteString("headroom_compression_enabled=")
+	builder.WriteString(fmt.Sprintf("%v", _m.HeadroomCompressionEnabled))
 	builder.WriteByte(')')
 	return builder.String()
 }

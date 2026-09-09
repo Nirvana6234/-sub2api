@@ -752,6 +752,9 @@ func registerUsageRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		usage.GET("/cleanup-tasks", h.Admin.Usage.ListCleanupTasks)
 		usage.POST("/cleanup-tasks", h.Admin.Usage.CreateCleanupTask)
 		usage.POST("/cleanup-tasks/:id/cancel", h.Admin.Usage.CancelCleanupTask)
+		usage.GET("/latency-compensation/preview", h.Admin.Usage.PreviewLatencyCompensation)
+		usage.POST("/latency-compensation/apply", h.Admin.Usage.ApplyLatencyCompensation)
+		usage.POST("/latency-compensation/revoke", h.Admin.Usage.RevokeLatencyCompensation)
 	}
 }
 

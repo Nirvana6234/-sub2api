@@ -16,6 +16,9 @@ type GuideStep = {
   actions: string[]
   images?: GuideImage[]
   note?: string
+  // 这几步的操作因平台而异（Mac 版走终端命令自动安装，没有解压/快捷方式这些
+  // 概念）。只在 macOS 区块出现时才显示，避免在 mac 未发布时提前剧透。
+  macNote?: string
 }
 
 const appStore = useAppStore()
@@ -25,6 +28,9 @@ const isDark = ref(document.documentElement.classList.contains('dark'))
 const siteName = computed(() => appStore.cachedPublicSettings?.site_name || appStore.siteName || '共飞 AI')
 const siteLogo = computed(() => appStore.siteLogo || '/gongfei-plane.svg')
 const dashboardPath = computed(() => (authStore.isAdmin ? '/admin/dashboard' : '/dashboard'))
+// 后台「联系方式」设置项，已经是全站通用的公开配置（AppHeader 也在用），
+// 不用为这个页面单独加设置项。管理员没填时这块直接不显示 QQ。
+const contactInfo = computed(() => appStore.contactInfo)
 
 // 备用网盘地址由管理员填写。后端 normalizeExternalHTTPURL 已挡掉伪协议，
 // 这里再校验一次，避免绕过后端直接改库的值进到 href。
@@ -44,7 +50,23 @@ const clientFileName = computed(() => {
   return /\.zip$/i.test(name) ? name : ''
 })
 const codexDownloadUrl = 'https://codexapp.agentsmirror.com/latest/win-x64'
+
+// 跳转链接而不是内嵌播放：直接用管理员填的原始视频页地址，不用再解析 BV 号
+// 拼播放器 iframe 地址。
+const tutorialVideoUrl = computed(() => safeExternalUrl(appStore.cachedPublicSettings?.client_tutorial_video_url))
 const netdiskDownloadUrl = computed(() => safeExternalUrl(appStore.cachedPublicSettings?.client_download_netdisk_url))
+
+// Chat 桌面客户端：独立产品，跟上面的共飞直连客户端无关。管理员没开启或没填地址时整块不出现。
+const chatAppDownloadUrl = computed(() =>
+  appStore.cachedPublicSettings?.chat_app_download_enabled
+    ? safeExternalUrl(appStore.cachedPublicSettings?.chat_app_download_direct_url)
+    : ''
+)
+const chatAppFileName = computed(() => {
+  const name = chatAppDownloadUrl.value.split('?')[0].split('#')[0].split('/').pop() || ''
+  return /\.(exe|msi)$/i.test(name) ? name : ''
+})
+const chatAppLatestVersion = computed(() => appStore.cachedPublicSettings?.chat_app_latest_version || '')
 
 // macOS 安装包直链，由管理员填写。为空表示 mac 版尚未发布，整个 macOS 区块不出现——
 // 而不是显示一个点了没反应的按钮。
@@ -80,6 +102,8 @@ const codexMacDownloads = [
   { label: 'Apple 芯片（M 系列）', url: 'https://codexapp.agentsmirror.com/latest/mac-arm64' },
   { label: 'Intel 芯片', url: 'https://codexapp.agentsmirror.com/latest/mac-intel' }
 ]
+
+const platformBadge = computed(() => (macDownloadUrl.value ? 'Windows x64 · macOS（Apple 芯片）' : 'Windows x64'))
 
 const macCommandCopied = ref(false)
 
@@ -127,7 +151,8 @@ const guideSteps: GuideStep[] = [
       '再点击“② 下载 Codex 客户端”，同样解压后使用。'
     ],
     images: [{ src: '/client-guide/g1.png', alt: '双击打开共飞 AI 客户端' }],
-    note: '两个客户端缺一不可：共飞客户端管账号、分组和余额，Codex 客户端才是实际对话的程序。'
+    note: '两个客户端缺一不可：共飞客户端管账号、分组和余额，Codex 客户端才是实际对话的程序。',
+    macNote: '请忽略上面的下载解压步骤，改用页面顶部 macOS 区块里的终端命令——它会自动下载、安装到「应用程序」并启动，不需要解压。Codex 客户端仍需按你的芯片单独下载。'
   },
   {
     number: 2,
@@ -246,7 +271,8 @@ const guideSteps: GuideStep[] = [
       '以后可以从桌面或开始菜单快速打开客户端。'
     ],
     images: [{ src: '/client-guide/g21.png', alt: '注册桌面和开始菜单快捷方式' }],
-    note: '切记不要删除此目录。程序是免安装的，这就是你的程序目录，删除后将无法使用。'
+    note: '切记不要删除此目录。程序是免安装的，这就是你的程序目录，删除后将无法使用。',
+    macNote: '此步骤仅适用于 Windows 版。Mac 版安装后已经在「应用程序」里，可以直接拖到 Dock 上，不需要额外注册快捷方式。'
   }
 ]
 
@@ -301,7 +327,7 @@ function toggleTheme() {
     <main class="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-12">
       <section class="relative overflow-hidden rounded-3xl bg-gray-900 px-6 py-8 text-white shadow-xl sm:px-10 sm:py-12 dark:bg-dark-800">
         <div class="relative z-10 max-w-3xl">
-          <p class="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-primary-300">Windows x64</p>
+          <p class="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-primary-300">{{ platformBadge }}</p>
           <h1 class="text-3xl font-bold tracking-tight sm:text-5xl">共飞 ChatGPT 助手</h1>
           <p class="mt-4 max-w-2xl text-sm leading-7 text-gray-300 sm:text-base">
             下载客户端，完成注册、登录、ChatGPT 安装、分组切换和充值。下面的操作步骤适合第一次使用的用户。
@@ -394,6 +420,52 @@ function toggleTheme() {
         </div>
       </section>
 
+      <section
+        v-if="chatAppDownloadUrl"
+        class="mt-10 rounded-3xl border border-gray-200 bg-white px-6 py-8 shadow-sm sm:px-10 dark:border-dark-800 dark:bg-dark-900"
+      >
+        <p class="text-xs font-semibold uppercase tracking-[0.16em] text-primary-600 dark:text-primary-300">新产品</p>
+        <h2 class="mt-2 text-xl font-bold tracking-tight sm:text-2xl">共飞 Chat（桌面版）</h2>
+        <p class="mt-3 max-w-2xl text-sm leading-6 text-gray-600 dark:text-gray-300">
+          独立的桌面聊天客户端，跟上面的共飞 ChatGPT 助手是两个不同的程序，按需下载。
+        </p>
+        <div class="mt-5 flex flex-wrap items-center gap-3">
+          <a
+            :href="chatAppDownloadUrl"
+            download
+            class="btn btn-primary inline-flex items-center justify-center gap-2 px-5 py-3 text-sm"
+          >
+            <Icon name="download" size="sm" />
+            下载共飞 Chat{{ chatAppLatestVersion ? ` v${chatAppLatestVersion}` : '' }}
+          </a>
+          <span v-if="chatAppFileName" class="text-xs text-gray-500 dark:text-gray-400">
+            文件：<span class="font-mono">{{ chatAppFileName }}</span>
+          </span>
+        </div>
+      </section>
+
+      <section
+        v-if="tutorialVideoUrl"
+        class="mt-10 flex flex-wrap items-center justify-between gap-4 rounded-3xl border border-gray-200 bg-white p-6 shadow-sm sm:p-8 dark:border-dark-800 dark:bg-dark-900"
+      >
+        <div>
+          <p class="text-xs font-semibold uppercase tracking-[0.16em] text-primary-600 dark:text-primary-300">视频教程</p>
+          <h2 class="mt-2 text-xl font-bold tracking-tight sm:text-2xl">跟着视频一步步操作</h2>
+          <p class="mt-3 max-w-2xl text-sm leading-6 text-gray-600 dark:text-gray-300">
+            不想看文字教程？点右边按钮去 B 站看这段视频，从下载到充值完整走一遍。下面还有图文步骤可以对照。
+          </p>
+        </div>
+        <a
+          :href="tutorialVideoUrl"
+          target="_blank"
+          rel="noopener"
+          class="btn btn-primary inline-flex shrink-0 items-center justify-center gap-2 px-5 py-3 text-sm"
+        >
+          <Icon name="chat" size="sm" />
+          去 B 站观看
+        </a>
+      </section>
+
       <section class="mt-10 grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)] lg:items-start">
         <aside class="hidden lg:sticky lg:top-6 lg:block">
           <div class="rounded-2xl border border-gray-200 bg-white p-4 dark:border-dark-800 dark:bg-dark-900">
@@ -472,6 +544,7 @@ function toggleTheme() {
             </div>
 
             <p v-if="step.note" class="mt-5 rounded-xl border-l-4 border-amber-400 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900 dark:border-amber-500 dark:bg-amber-950/30 dark:text-amber-200">{{ step.note }}</p>
+            <p v-if="macDownloadUrl && step.macNote" class="mt-3 rounded-xl border-l-4 border-primary-400 bg-primary-50 px-4 py-3 text-sm leading-6 text-primary-900 dark:border-primary-500 dark:bg-primary-950/30 dark:text-primary-200">Mac 用户：{{ step.macNote }}</p>
           </article>
 
           <section class="rounded-2xl border border-gray-200 bg-white p-5 sm:p-7 dark:border-dark-800 dark:bg-dark-900">
@@ -503,6 +576,31 @@ function toggleTheme() {
               <div>
                 <h3 class="text-sm font-semibold text-gray-900 dark:text-white">充值二维码无法显示？</h3>
                 <p class="mt-1 text-sm leading-6 text-gray-600 dark:text-dark-300">检查网络连接和系统时间；仍无法解决时，通过客户端“联系我们”反馈订单号和问题时间。</p>
+              </div>
+              <div v-if="macDownloadUrl">
+                <h3 class="text-sm font-semibold text-gray-900 dark:text-white">Mac 安装命令提示"当前是 Intel 芯片，本版本只支持 Apple 芯片"？</h3>
+                <p class="mt-1 text-sm leading-6 text-gray-600 dark:text-dark-300">目前只发布了 Apple 芯片（M 系列）版本。可在左上角苹果菜单 →「关于本机」确认芯片型号；Intel Mac 暂不支持，请联系客服了解进展。</p>
+              </div>
+            </div>
+          </section>
+
+          <section class="rounded-2xl border border-primary-200 bg-primary-50/60 p-5 sm:p-7 dark:border-primary-900 dark:bg-primary-950/20">
+            <h2 class="text-xl font-semibold text-gray-900 dark:text-white">还是没解决？</h2>
+            <p class="mt-1 text-sm leading-6 text-gray-600 dark:text-dark-300">上面的教程没能解决你的问题，直接找人工帮你看。</p>
+            <div class="mt-4 flex flex-wrap items-center gap-3">
+              <router-link
+                to="/tickets"
+                class="btn btn-primary inline-flex items-center justify-center gap-2 px-5 py-2.5 text-sm"
+              >
+                <Icon name="bell" size="sm" />
+                提交工单
+              </router-link>
+              <div
+                v-if="contactInfo"
+                class="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2.5 text-sm text-gray-700 dark:border-dark-700 dark:bg-dark-900 dark:text-dark-200"
+              >
+                <Icon name="chat" size="sm" />
+                客服{{ contactInfo }}
               </div>
             </div>
           </section>

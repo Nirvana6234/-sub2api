@@ -623,3 +623,277 @@ func (r *Repository) RemoveUpstreamMappingAndDeleteConnection(ctx context.Contex
 	committed = true
 	return nil
 }
+
+// RecordLatencyCompensationPayout persists one payout event. See
+// LatencyCompensationPayoutRepository's doc comment for why this exists.
+func (r *Repository) RecordLatencyCompensationPayout(ctx context.Context, payout LatencyCompensationPayout) error {
+	usersJSON, err := json.Marshal(payout.Users)
+	if err != nil {
+		return fmt.Errorf("marshal payout users: %w", err)
+	}
+	_, err = r.db.Exec(ctx, `
+		INSERT INTO latency_compensation_payouts
+			(id, user_id, admin_account_id, site_base_url, from_time, to_time,
+			 threshold_ms, profit_ratio, users_compensated, amount_usd, users_json,
+			 task_id, task_name)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13)
+	`, payout.ID, payout.UserID, payout.AdminAccountID, payout.SiteBaseURL,
+		payout.FromTime.UTC(), payout.ToTime.UTC(), payout.ThresholdMs, payout.ProfitRatio,
+		payout.UsersCompensated, payout.AmountUSD, string(usersJSON), payout.TaskID, payout.TaskName)
+	return err
+}
+
+// ListLatencyCompensationPayouts returns past payout batches newest first,
+// each with its full per-user breakdown, for the history view.
+func (r *Repository) ListLatencyCompensationPayouts(ctx context.Context, userID, adminAccountID string, limit int) ([]LatencyCompensationPayout, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT id, user_id, admin_account_id, site_base_url, from_time, to_time,
+		       threshold_ms, profit_ratio, users_compensated, amount_usd, users_json, created_at,
+		       task_id, task_name, revoked_at
+		FROM latency_compensation_payouts
+		WHERE user_id = $1 AND admin_account_id = $2
+		ORDER BY created_at DESC
+		LIMIT $3
+	`, userID, adminAccountID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]LatencyCompensationPayout, 0)
+	for rows.Next() {
+		var payout LatencyCompensationPayout
+		var usersJSON []byte
+		if err := rows.Scan(&payout.ID, &payout.UserID, &payout.AdminAccountID, &payout.SiteBaseURL,
+			&payout.FromTime, &payout.ToTime, &payout.ThresholdMs, &payout.ProfitRatio,
+			&payout.UsersCompensated, &payout.AmountUSD, &usersJSON, &payout.CreatedAt,
+			&payout.TaskID, &payout.TaskName, &payout.RevokedAt); err != nil {
+			return nil, err
+		}
+		if len(usersJSON) > 0 {
+			if err := json.Unmarshal(usersJSON, &payout.Users); err != nil {
+				return nil, fmt.Errorf("unmarshal payout users: %w", err)
+			}
+		}
+		result = append(result, payout)
+	}
+	return result, rows.Err()
+}
+
+// GetLatencyCompensationPayout loads one payout by id, scoped to its owning
+// workspace so a caller can't revoke a payout that isn't theirs.
+func (r *Repository) GetLatencyCompensationPayout(ctx context.Context, id, userID, adminAccountID string) (LatencyCompensationPayout, error) {
+	row := r.db.QueryRow(ctx, `
+		SELECT id, user_id, admin_account_id, site_base_url, from_time, to_time,
+		       threshold_ms, profit_ratio, users_compensated, amount_usd, users_json, created_at,
+		       task_id, task_name, revoked_at
+		FROM latency_compensation_payouts
+		WHERE id = $1 AND user_id = $2 AND admin_account_id = $3
+	`, id, userID, adminAccountID)
+	var payout LatencyCompensationPayout
+	var usersJSON []byte
+	if err := row.Scan(&payout.ID, &payout.UserID, &payout.AdminAccountID, &payout.SiteBaseURL,
+		&payout.FromTime, &payout.ToTime, &payout.ThresholdMs, &payout.ProfitRatio,
+		&payout.UsersCompensated, &payout.AmountUSD, &usersJSON, &payout.CreatedAt,
+		&payout.TaskID, &payout.TaskName, &payout.RevokedAt); err != nil {
+		if err == pgx.ErrNoRows {
+			return LatencyCompensationPayout{}, requestError(ErrorRequest)
+		}
+		return LatencyCompensationPayout{}, err
+	}
+	if len(usersJSON) > 0 {
+		if err := json.Unmarshal(usersJSON, &payout.Users); err != nil {
+			return LatencyCompensationPayout{}, fmt.Errorf("unmarshal payout users: %w", err)
+		}
+	}
+	return payout, nil
+}
+
+// MarkLatencyCompensationPayoutRevoked flags a payout as undone. This is the
+// only place "revoked" is recorded — deliberately local-only, see
+// RevokeLatencyCompensationPayout's doc comment for why Sub2API's side must
+// stay silent.
+func (r *Repository) MarkLatencyCompensationPayoutRevoked(ctx context.Context, id, userID, adminAccountID string) error {
+	commandTag, err := r.db.Exec(ctx, `
+		UPDATE latency_compensation_payouts SET revoked_at = now()
+		WHERE id = $1 AND user_id = $2 AND admin_account_id = $3 AND revoked_at IS NULL
+	`, id, userID, adminAccountID)
+	if err != nil {
+		return err
+	}
+	if commandTag.RowsAffected() == 0 {
+		return requestError(ErrorRequest)
+	}
+	return nil
+}
+
+// SumLatencyCompensationPayoutsUSD totals payouts recorded in [from, to) for
+// one admin account, for the daily/weekly report to subtract from profit.
+// Sums by created_at (when the payout happened), not the compensated
+// window's from/to — a report for "today" should include a payout run today
+// covering last week's slow requests, not exclude it because the requests
+// themselves were old. Revoked payouts are excluded — the money's been
+// clawed back, so it's no longer a cost.
+func (r *Repository) SumLatencyCompensationPayoutsUSD(ctx context.Context, userID, adminAccountID string, from, to time.Time) (float64, error) {
+	var total float64
+	err := r.db.QueryRow(ctx, `
+		SELECT COALESCE(SUM(amount_usd), 0) FROM latency_compensation_payouts
+		WHERE user_id = $1 AND admin_account_id = $2 AND created_at >= $3 AND created_at < $4
+		  AND revoked_at IS NULL
+	`, userID, adminAccountID, from.UTC(), to.UTC()).Scan(&total)
+	return total, err
+}
+
+func (r *Repository) CreateLatencySubsidyTask(ctx context.Context, task LatencySubsidyTask) error {
+	days := make([]int16, len(task.RecurrenceDaysOfWeek))
+	for i, d := range task.RecurrenceDaysOfWeek {
+		days[i] = int16(d)
+	}
+	_, err := r.db.Exec(ctx, `
+		INSERT INTO latency_subsidy_tasks
+			(id, user_id, admin_account_id, name, threshold_ms, profit_ratio,
+			 auto_enabled, window_start, window_end,
+			 recurrence_type, recurrence_days_of_week, valid_from, valid_until,
+			 created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+	`, task.ID, task.UserID, task.AdminAccountID, task.Name, task.ThresholdMs, task.ProfitRatio,
+		task.AutoEnabled, task.WindowStart, task.WindowEnd,
+		task.RecurrenceType, days, task.ValidFrom, task.ValidUntil,
+		task.CreatedAt, task.UpdatedAt)
+	return err
+}
+
+func scanLatencySubsidyTask(row pgx.Row) (LatencySubsidyTask, error) {
+	var task LatencySubsidyTask
+	var days []int16
+	err := row.Scan(&task.ID, &task.UserID, &task.AdminAccountID, &task.Name,
+		&task.ThresholdMs, &task.ProfitRatio, &task.AutoEnabled, &task.WindowStart, &task.WindowEnd,
+		&task.RecurrenceType, &days, &task.ValidFrom, &task.ValidUntil,
+		&task.LastAutoRunDate, &task.CreatedAt, &task.UpdatedAt)
+	if err != nil {
+		return task, err
+	}
+	if len(days) > 0 {
+		task.RecurrenceDaysOfWeek = make([]int, len(days))
+		for i, d := range days {
+			task.RecurrenceDaysOfWeek[i] = int(d)
+		}
+	}
+	return task, nil
+}
+
+const latencySubsidyTaskColumns = `id, user_id, admin_account_id, name, threshold_ms, profit_ratio,
+	auto_enabled, window_start, window_end,
+	recurrence_type, recurrence_days_of_week, valid_from, valid_until,
+	last_auto_run_date, created_at, updated_at`
+
+func (r *Repository) ListLatencySubsidyTasks(ctx context.Context, userID, adminAccountID string) ([]LatencySubsidyTask, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT `+latencySubsidyTaskColumns+`
+		FROM latency_subsidy_tasks
+		WHERE user_id = $1 AND admin_account_id = $2
+		ORDER BY created_at DESC
+	`, userID, adminAccountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]LatencySubsidyTask, 0)
+	for rows.Next() {
+		task, err := scanLatencySubsidyTask(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, task)
+	}
+	return result, rows.Err()
+}
+
+func (r *Repository) GetLatencySubsidyTask(ctx context.Context, id, userID, adminAccountID string) (LatencySubsidyTask, error) {
+	row := r.db.QueryRow(ctx, `
+		SELECT `+latencySubsidyTaskColumns+`
+		FROM latency_subsidy_tasks
+		WHERE id = $1 AND user_id = $2 AND admin_account_id = $3
+	`, id, userID, adminAccountID)
+	task, err := scanLatencySubsidyTask(row)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return LatencySubsidyTask{}, requestError(ErrorRequest)
+		}
+		return LatencySubsidyTask{}, err
+	}
+	return task, nil
+}
+
+func (r *Repository) UpdateLatencySubsidyTask(ctx context.Context, task LatencySubsidyTask) error {
+	days := make([]int16, len(task.RecurrenceDaysOfWeek))
+	for i, d := range task.RecurrenceDaysOfWeek {
+		days[i] = int16(d)
+	}
+	commandTag, err := r.db.Exec(ctx, `
+		UPDATE latency_subsidy_tasks
+		SET name = $1, threshold_ms = $2, profit_ratio = $3,
+		    auto_enabled = $4, window_start = $5, window_end = $6,
+		    recurrence_type = $7, recurrence_days_of_week = $8, valid_from = $9, valid_until = $10,
+		    updated_at = $11
+		WHERE id = $12 AND user_id = $13 AND admin_account_id = $14
+	`, task.Name, task.ThresholdMs, task.ProfitRatio, task.AutoEnabled, task.WindowStart, task.WindowEnd,
+		task.RecurrenceType, days, task.ValidFrom, task.ValidUntil, task.UpdatedAt,
+		task.ID, task.UserID, task.AdminAccountID)
+	if err != nil {
+		return err
+	}
+	if commandTag.RowsAffected() == 0 {
+		return requestError(ErrorRequest)
+	}
+	return nil
+}
+
+func (r *Repository) DeleteLatencySubsidyTask(ctx context.Context, id, userID, adminAccountID string) error {
+	commandTag, err := r.db.Exec(ctx, `
+		DELETE FROM latency_subsidy_tasks WHERE id = $1 AND user_id = $2 AND admin_account_id = $3
+	`, id, userID, adminAccountID)
+	if err != nil {
+		return err
+	}
+	if commandTag.RowsAffected() == 0 {
+		return requestError(ErrorRequest)
+	}
+	return nil
+}
+
+// ListAutoEnabledLatencySubsidyTasks returns every task with auto-run on,
+// across all workspaces — used by the scheduler, which has no per-request
+// context to scope this to one owner.
+func (r *Repository) ListAutoEnabledLatencySubsidyTasks(ctx context.Context) ([]LatencySubsidyTask, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT `+latencySubsidyTaskColumns+`
+		FROM latency_subsidy_tasks
+		WHERE auto_enabled = true
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]LatencySubsidyTask, 0)
+	for rows.Next() {
+		task, err := scanLatencySubsidyTask(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, task)
+	}
+	return result, rows.Err()
+}
+
+func (r *Repository) MarkLatencySubsidyTaskAutoRun(ctx context.Context, id, day string) error {
+	_, err := r.db.Exec(ctx, `
+		UPDATE latency_subsidy_tasks SET last_auto_run_date = $1, updated_at = now() WHERE id = $2
+	`, day, id)
+	return err
+}

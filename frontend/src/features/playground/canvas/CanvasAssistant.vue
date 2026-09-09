@@ -30,7 +30,15 @@
     </div>
 
     <footer class="shrink-0 border-t border-gray-100 p-3 dark:border-dark-700">
-      <select :value="model" class="select mb-2 h-8 w-full text-xs" :disabled="loading || !models.length" @change="emit('update:model', ($event.target as HTMLSelectElement).value)"><option v-if="!models.length" value="">{{ t('playground.noModels') }}</option><option v-for="item in models" :key="item.id" :value="item.id">{{ item.id }}</option></select>
+      <div class="mb-2 flex gap-1.5">
+        <select :value="model" class="select h-8 min-w-0 flex-1 text-xs" :disabled="loading || !models.length" @change="emit('update:model', ($event.target as HTMLSelectElement).value)"><option v-if="!models.length" value="">{{ t('playground.noModels') }}</option><option v-for="item in models" :key="item.id" :value="item.id">{{ item.id }}</option></select>
+        <select :value="reasoningEffort" class="select h-8 w-20 shrink-0 text-xs" :disabled="loading" :title="t('playground.canvasReasoningEffort')" @change="emit('update:reasoningEffort', ($event.target as HTMLSelectElement).value)">
+          <option value="none">{{ t('playground.canvasReasoningNone') }}</option>
+          <option value="low">{{ t('playground.canvasReasoningLow') }}</option>
+          <option value="medium">{{ t('playground.canvasReasoningMedium') }}</option>
+          <option value="high">{{ t('playground.canvasReasoningHigh') }}</option>
+        </select>
+      </div>
       <div class="relative rounded-lg border border-gray-200 bg-white focus-within:border-teal-400 dark:border-dark-600 dark:bg-dark-950">
         <CanvasMentionEditor
           v-model="draft"
@@ -57,8 +65,8 @@ import CanvasMentionEditor from './CanvasMentionEditor.vue'
 import CanvasMentionContent from './CanvasMentionContent.vue'
 import type { CanvasMentionReference } from './canvasReferences'
 
-const props = defineProps<{ messages: CanvasAssistantMessage[]; contextCount: number; models: PlaygroundModel[]; model: string; loading: boolean; references?: CanvasMentionReference[] }>()
-const emit = defineEmits<{ 'update:model': [value: string]; send: [value: string]; cancel: []; insert: [id: string]; activate: [nodeId: string]; clear: []; close: [] }>()
+const props = defineProps<{ messages: CanvasAssistantMessage[]; contextCount: number; models: PlaygroundModel[]; model: string; reasoningEffort: string; loading: boolean; references?: CanvasMentionReference[] }>()
+const emit = defineEmits<{ 'update:model': [value: string]; 'update:reasoningEffort': [value: string]; send: [value: string]; cancel: []; insert: [id: string]; activate: [nodeId: string]; clear: []; close: [] }>()
 const { t } = useI18n()
 const draft = ref('')
 const references = computed(() => props.references ?? [])

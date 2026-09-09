@@ -71,7 +71,7 @@ func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context
 		if !gatewayPlatformSupportsFallbackPool(platform) {
 			return nil, nil, false
 		}
-		fallbackCtx, fallbackGroupID := s.nextGatewayFallbackGroup(ctx, groupID)
+		fallbackCtx, fallbackGroupID := s.nextGatewayFallbackGroup(ctx, groupID, requestedModel)
 		if fallbackGroupID == nil {
 			return nil, nil, false
 		}
@@ -257,7 +257,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		if !gatewayPlatformSupportsFallbackPool(platform) {
 			return nil, nil, false
 		}
-		fallbackCtx, fallbackGroupID := s.nextGatewayFallbackGroup(ctx, groupID)
+		fallbackCtx, fallbackGroupID := s.nextGatewayFallbackGroup(ctx, groupID, requestedModel)
 		if fallbackGroupID == nil {
 			return nil, nil, false
 		}

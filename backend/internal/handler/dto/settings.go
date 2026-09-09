@@ -328,8 +328,21 @@ type SystemSettings struct {
 	ClientDownloadDirectURLMac string `json:"client_download_direct_url_mac"`
 	ClientLatestVersion        string `json:"client_latest_version"`
 	ClientLatestVersionMac     string `json:"client_latest_version_mac"`
-	BackupPaymentEnabled       bool   `json:"backup_payment_enabled"`
-	BackupPaymentURL           string `json:"backup_payment_url"`
+	ClientTutorialVideoURL     string `json:"client_tutorial_video_url"`
+
+	// Chat 桌面客户端下载（tools/chat，独立产品，默认关闭）
+	ChatAppDownloadEnabled   bool   `json:"chat_app_download_enabled"`
+	ChatAppDownloadDirectURL string `json:"chat_app_download_direct_url"`
+	ChatAppLatestVersion     string `json:"chat_app_latest_version"`
+
+	// 延迟补偿慢请求阈值（毫秒）与退款比例（0~1）
+	LatencyCompensationThresholdMs int     `json:"latency_compensation_threshold_ms"`
+	LatencyCompensationProfitRatio float64 `json:"latency_compensation_profit_ratio"`
+
+	HeadroomBaseURL string `json:"headroom_base_url"`
+
+	BackupPaymentEnabled bool   `json:"backup_payment_enabled"`
+	BackupPaymentURL     string `json:"backup_payment_url"`
 
 	// Playground feature switch
 	PlaygroundEnabled              bool    `json:"playground_enabled"`
@@ -450,8 +463,14 @@ type PublicSettings struct {
 	ClientDownloadDirectURLMac string `json:"client_download_direct_url_mac"`
 	ClientLatestVersion        string `json:"client_latest_version"`
 	ClientLatestVersionMac     string `json:"client_latest_version_mac"`
-	BackupPaymentEnabled       bool   `json:"backup_payment_enabled"`
-	BackupPaymentURL           string `json:"backup_payment_url"`
+	ClientTutorialVideoURL     string `json:"client_tutorial_video_url"`
+
+	ChatAppDownloadEnabled   bool   `json:"chat_app_download_enabled"`
+	ChatAppDownloadDirectURL string `json:"chat_app_download_direct_url"`
+	ChatAppLatestVersion     string `json:"chat_app_latest_version"`
+
+	BackupPaymentEnabled bool   `json:"backup_payment_enabled"`
+	BackupPaymentURL     string `json:"backup_payment_url"`
 
 	PlaygroundEnabled           bool   `json:"playground_enabled"`
 	PlaygroundDefaultChatModel  string `json:"playground_default_chat_model"`

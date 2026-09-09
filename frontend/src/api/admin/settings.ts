@@ -771,6 +771,13 @@ export interface SystemSettings {
   client_download_direct_url_mac: string;
   client_latest_version: string;
   client_latest_version_mac: string;
+  client_tutorial_video_url: string;
+  chat_app_download_enabled: boolean;
+  chat_app_download_direct_url: string;
+  chat_app_latest_version: string;
+  latency_compensation_threshold_ms: number;
+  latency_compensation_profit_ratio: number;
+  headroom_base_url: string;
   backup_payment_enabled: boolean;
   backup_payment_url: string;
   playground_enabled: boolean;
@@ -1097,6 +1104,13 @@ export interface UpdateSettingsRequest {
   client_download_direct_url_mac?: string;
   client_latest_version?: string;
   client_latest_version_mac?: string;
+  client_tutorial_video_url?: string;
+  chat_app_download_enabled?: boolean;
+  chat_app_download_direct_url?: string;
+  chat_app_latest_version?: string;
+  latency_compensation_threshold_ms?: number;
+  latency_compensation_profit_ratio?: number;
+  headroom_base_url?: string;
   backup_payment_enabled?: boolean;
   backup_payment_url?: string;
   playground_enabled?: boolean;

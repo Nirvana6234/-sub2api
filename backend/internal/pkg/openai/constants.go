@@ -43,12 +43,17 @@ func DefaultModelIDs() []string {
 	return ids
 }
 
-// DefaultTestModel default model for testing OpenAI accounts
-const DefaultTestModel = "gpt-5.4"
+// DefaultTestModel default model for testing OpenAI accounts, used only when
+// the caller doesn't pick one explicitly (see contributionVerificationTestModel
+// and AccountTestModal's model picker). OpenAI's lineup moves — gpt-5.4 was
+// retired and this constant went stale silently until a user hit a hard
+// upstream 400; review it periodically rather than assuming it stays valid.
+const DefaultTestModel = "gpt-5.6"
 
-// FreeTestModel is used for known ChatGPT Free accounts during verification.
-// The full GPT-5.4 model is not available to that plan.
-const FreeTestModel = "gpt-5.4-mini"
+// FreeTestModel is used for known ChatGPT Free accounts during verification,
+// when the caller doesn't pick a model explicitly. The full paid-tier model
+// above is not available to that plan.
+const FreeTestModel = "gpt-5.6-terra"
 
 // DefaultInstructions default instructions for non-Codex CLI requests.
 // 内容为真实 Codex CLI 的 GPT-5-Codex base prompt（codex 系模型默认）。

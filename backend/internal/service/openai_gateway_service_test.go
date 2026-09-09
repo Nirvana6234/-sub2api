@@ -708,6 +708,22 @@ func (c stubConcurrencyCache) GetAccountWaitingCount(ctx context.Context, accoun
 type stubGatewayCache struct {
 	sessionBindings map[string]int64
 	deletedSessions map[string]int
+	failureCounts   map[string]int64
+}
+
+func (c *stubGatewayCache) IncrementStickySessionFailure(ctx context.Context, groupID int64, sessionHash string, ttl time.Duration) (int64, error) {
+	if c.failureCounts == nil {
+		c.failureCounts = make(map[string]int64)
+	}
+	c.failureCounts[sessionHash]++
+	return c.failureCounts[sessionHash], nil
+}
+
+func (c *stubGatewayCache) ResetStickySessionFailure(ctx context.Context, groupID int64, sessionHash string) error {
+	if c.failureCounts != nil {
+		delete(c.failureCounts, sessionHash)
+	}
+	return nil
 }
 
 func (c *stubGatewayCache) GetSessionAccountID(ctx context.Context, groupID int64, sessionHash string) (int64, error) {

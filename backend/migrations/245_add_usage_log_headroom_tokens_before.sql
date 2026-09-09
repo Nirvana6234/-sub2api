@@ -1,0 +1,2 @@
+ALTER TABLE usage_logs
+    ADD COLUMN IF NOT EXISTS headroom_tokens_before INTEGER NOT NULL DEFAULT 0;

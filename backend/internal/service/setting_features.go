@@ -700,6 +700,18 @@ func (s *SettingService) GetAdminAPIKey(ctx context.Context) (string, error) {
 	return key, nil
 }
 
+// GetHeadroomBaseURL 获取 headroom 压缩代理的内网地址，未配置返回空字符串。
+func (s *SettingService) GetHeadroomBaseURL(ctx context.Context) (string, error) {
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyHeadroomBaseURL)
+	if err != nil {
+		if errors.Is(err, ErrSettingNotFound) {
+			return "", nil
+		}
+		return "", err
+	}
+	return strings.TrimSpace(value), nil
+}
+
 // DeleteAdminAPIKey 删除管理员 API Key
 func (s *SettingService) DeleteAdminAPIKey(ctx context.Context) error {
 	return s.settingRepo.Delete(ctx, SettingKeyAdminAPIKey)

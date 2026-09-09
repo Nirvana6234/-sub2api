@@ -254,6 +254,47 @@ type UserDashboardStats struct {
 
 	// 按"有效平台"维度拆分（与 ops 路径口径一致：group.platform 优先，否则 account.platform）
 	ByPlatform []PlatformDashboardStats `json:"by_platform,omitempty"`
+
+	// headroom 上下文压缩累计节省（未开启该功能的用户恒为 0；是否展示由前端按
+	// 用户的 headroom_compression_enabled 开关决定，接口本身不做隐藏）。
+	// 节省比例前端用 saved / (saved + HeadroomActualTokens) 反推，两点设计取舍：
+	//   1) 不用 headroom 自己上报的压缩前/后 token 头——那两个头在响应头阶段对
+	//      OpenAI/Gemini 流量只有粗估值，经常是 0，2026-09-09 生产上因此算出过
+	//      离谱的节省百分比（18 亿 %）。
+	//   2) HeadroomActualTokens 只统计 headroom_tokens_saved > 0（真正被压缩命中）
+	//      的请求，不是用户全部历史流量——用全部流量做分母会被开压缩之前的历史
+	//      用量稀释成没有意义的小数字（同样是 2026-09-09 生产反馈），只看命中过
+	//      压缩的请求范围才是"压缩本身效果"的稳定指标。
+	HeadroomTokensSaved       int64   `json:"headroom_tokens_saved"`
+	HeadroomSavingsUSD        float64 `json:"headroom_savings_usd"`        // 标准价（倍率固定为1）
+	HeadroomSavingsActualUSD  float64 `json:"headroom_savings_actual_usd"` // 实际价（按各请求的真实 rate_multiplier 折算）
+	HeadroomActualTokens      int64   `json:"headroom_actual_tokens"`
+	TodayHeadroomTokensSaved  int64   `json:"today_headroom_tokens_saved"`
+	TodayHeadroomActualTokens int64   `json:"today_headroom_actual_tokens"`
+	// 按模型拆分的压缩节省明细（只含 headroom_tokens_saved > 0 的请求，按节省 token
+	// 数降序），供前端画"模型分布"风格的甜甜圈图 + 表格。
+	HeadroomByModel []HeadroomModelStat `json:"headroom_by_model,omitempty"`
+}
+
+// HeadroomModelStat 单个模型的压缩节省明细。
+// SavingsUSD 是标准价（倍率固定为1），SavingsActualUSD 是按各请求真实 rate_multiplier
+// 折算的实际到手金额——两者的关系是 SavingsActualUSD = SUM(单行 saved_usd * 该行 rate_multiplier)，
+// 因为 actual_cost = total_cost * rate_multiplier 这个关系在计费管道里对所有请求恒成立
+// （2026-09-09 用生产数据验证过，不需要为此单独加列重新采集）。
+type HeadroomModelStat struct {
+	Model            string  `json:"model"`
+	Requests         int64   `json:"requests"`
+	TokensSaved      int64   `json:"tokens_saved"`
+	SavingsUSD       float64 `json:"savings_usd"`
+	SavingsActualUSD float64 `json:"savings_actual_usd"`
+}
+
+// HeadroomTrendPoint 压缩节省的分时趋势单点。
+type HeadroomTrendPoint struct {
+	Date             string  `json:"date"`
+	TokensSaved      int64   `json:"tokens_saved"`
+	SavingsUSD       float64 `json:"savings_usd"`
+	SavingsActualUSD float64 `json:"savings_actual_usd"`
 }
 
 // PlatformDashboardStats 单个平台的用量明细。

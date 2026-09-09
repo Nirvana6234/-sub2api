@@ -202,6 +202,7 @@ func (r *userRepository) create(ctx context.Context, userIn *service.User, guard
 		SetRpmLimit(userIn.RPMLimit).
 		SetAccountManagementEnabled(userIn.AccountManagementEnabled).
 		SetContributionRoomsEnabled(userIn.ContributionRoomsEnabled).
+		SetHeadroomCompressionEnabled(userIn.HeadroomCompressionEnabled).
 		SetRestrictPublicGroups(userIn.RestrictPublicGroups).
 		Save(txCtx)
 	if err != nil {
@@ -368,6 +369,9 @@ func (r *userRepository) Update(ctx context.Context, userIn *service.User, field
 	}
 	if fields.ContributionRoomsEnabled {
 		updateOp = updateOp.SetContributionRoomsEnabled(userIn.ContributionRoomsEnabled)
+	}
+	if fields.HeadroomCompressionEnabled {
+		updateOp = updateOp.SetHeadroomCompressionEnabled(userIn.HeadroomCompressionEnabled)
 	}
 	if fields.Status {
 		updateOp = updateOp.SetStatus(userIn.Status)
@@ -1640,6 +1644,7 @@ func applyUserEntityToService(dst *service.User, src *dbent.User) {
 	dst.UpdatedAt = src.UpdatedAt
 	dst.AccountManagementEnabled = src.AccountManagementEnabled
 	dst.ContributionRoomsEnabled = src.ContributionRoomsEnabled
+	dst.HeadroomCompressionEnabled = src.HeadroomCompressionEnabled
 }
 
 func userSignupSourceOrDefault(signupSource string) string {

@@ -514,6 +514,50 @@ func (h *UsageHandler) DashboardModels(c *gin.Context) {
 	})
 }
 
+// DashboardHeadroomModels handles getting per-model compression-savings stats.
+// GET /api/v1/usage/dashboard/headroom-models
+func (h *UsageHandler) DashboardHeadroomModels(c *gin.Context) {
+	parsed, ok := h.parseUserUsageFilters(c, true)
+	if !ok {
+		return
+	}
+
+	stats, err := h.usageService.GetHeadroomModelStats(c.Request.Context(), parsed.Filters.UserID, parsed.StartTime, parsed.EndTime)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, gin.H{
+		"models":     stats,
+		"start_date": parsed.StartTime.Format("2006-01-02"),
+		"end_date":   parsed.EndTime.Add(-24 * time.Hour).Format("2006-01-02"),
+	})
+}
+
+// DashboardHeadroomTrend handles getting compression-savings trend data.
+// GET /api/v1/usage/dashboard/headroom-trend
+func (h *UsageHandler) DashboardHeadroomTrend(c *gin.Context) {
+	parsed, ok := h.parseUserUsageFilters(c, true)
+	if !ok {
+		return
+	}
+	granularity := c.DefaultQuery("granularity", "day")
+
+	trend, err := h.usageService.GetHeadroomTrend(c.Request.Context(), parsed.Filters.UserID, parsed.StartTime, parsed.EndTime, granularity)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, gin.H{
+		"trend":       trend,
+		"start_date":  parsed.StartTime.Format("2006-01-02"),
+		"end_date":    parsed.EndTime.Add(-24 * time.Hour).Format("2006-01-02"),
+		"granularity": granularity,
+	})
+}
+
 // DashboardSnapshotV2 returns usage-page chart data scoped to the current user.
 // GET /api/v1/usage/dashboard/snapshot-v2
 func (h *UsageHandler) DashboardSnapshotV2(c *gin.Context) {

@@ -480,6 +480,22 @@
                 >
               </section>
 
+              <section class="rounded-lg border border-gray-200 p-3 dark:border-dark-700">
+                <label for="playground-reasoning-effort" class="text-sm font-medium text-gray-800 dark:text-gray-100">{{ t('playground.reasoningEffortLabel') }}</label>
+                <p class="mt-0.5 text-xs leading-5 text-gray-500 dark:text-dark-400">{{ t('playground.reasoningEffortDescription') }}</p>
+                <select
+                  id="playground-reasoning-effort"
+                  v-model="parameters.reasoning_effort"
+                  class="select mt-3 h-9 w-full text-sm"
+                  :disabled="isGenerating"
+                >
+                  <option value="none">{{ t('playground.reasoningEffortNone') }}</option>
+                  <option value="low">{{ t('playground.reasoningEffortLow') }}</option>
+                  <option value="medium">{{ t('playground.reasoningEffortMedium') }}</option>
+                  <option value="high">{{ t('playground.reasoningEffortHigh') }}</option>
+                </select>
+              </section>
+
               <label class="flex items-center justify-between gap-3 rounded-lg border border-gray-200 p-3 dark:border-dark-700">
                 <span>
                   <span class="block text-sm font-medium text-gray-800 dark:text-gray-100">{{ t('playground.stream') }}</span>
@@ -996,7 +1012,8 @@ const conversationAttachmentCount = computed(() => (
   (activeConversation.value?.messages ?? []).reduce((total, message) => total + (message.attachments?.length ?? 0), 0)
   + pendingAttachments.value.length
 ))
-const enabledParameterCount = computed(() => Object.values(parameters.value.enabled).filter(Boolean).length)
+const enabledParameterCount = computed(() => Object.values(parameters.value.enabled).filter(Boolean).length
+  + (parameters.value.reasoning_effort !== 'none' ? 1 : 0))
 const activeProjectName = computed(() => {
   const projectId = activeConversation.value?.projectId
   return projects.value.find((project) => project.id === projectId)?.name ?? t('playground.ungrouped')

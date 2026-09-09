@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"log/slog"
+	"strings"
 )
 
 // GatewayService 这一侧的分组兜底池：Anthropic 与 Gemini。
@@ -73,7 +75,7 @@ func gatewayFallbackPoolRejectReason(ctx context.Context, account *Account) stri
 // 它刻意不跟随旧的 ClaudeCodeOnly 降级：那条链路复用了同一个 fallback_group_id
 // 字段，但只在 group.ClaudeCodeOnly 为真时才走（见 resolveGatewayGroup）。这里要求
 // 目标显式标记为 is_fallback_pool，两条链路因此互不干扰。
-func (s *GatewayService) nextGatewayFallbackGroup(ctx context.Context, currentGroupID *int64) (context.Context, *int64) {
+func (s *GatewayService) nextGatewayFallbackGroup(ctx context.Context, currentGroupID *int64, requestedModel string) (context.Context, *int64) {
 	if s == nil || currentGroupID == nil || *currentGroupID <= 0 {
 		return ctx, nil
 	}
@@ -106,9 +108,57 @@ func (s *GatewayService) nextGatewayFallbackGroup(ctx context.Context, currentGr
 	if !ok {
 		return ctx, nil
 	}
+	// Model support is checked on both ends now. It's not enough that the
+	// fallback pool (fallbackID) supports the model — without this, a fallback
+	// pool with zero accounts for the requested model still gets selected, and
+	// the request dies later with no account ever chosen. But the source group
+	// (currentGroupID) must support it too: 2026-09-08, a "plus" group with
+	// zero gpt-6-astra accounts silently served it from a fallback pool by
+	// misconfiguration, not by design. A source group that was never
+	// configured with a model gets model_not_found instead of borrowing it
+	// from an unrelated pool; extending a group's catalog via its fallback
+	// pool has to be an explicit per-group choice, not a side effect of this
+	// traversal.
+	if !s.shouldUseGatewayFallbackForModel(ctx, currentGroupID, requestedModel) {
+		return ctx, nil
+	}
+	if !s.shouldUseGatewayFallbackForModel(ctx, &fallbackID, requestedModel) {
+		return ctx, nil
+	}
 
 	nextCtx := withGatewayFallbackGroupState(withGatewayFallbackPoolSourcing(ctx), nextState)
 	return nextCtx, &fallbackID
+}
+
+// shouldUseGatewayFallbackForModel reports whether *groupID has at least one
+// persistently eligible account that supports requestedModel. Generic over
+// which group is passed — nextGatewayFallbackGroup calls it once for the
+// source group and once for the candidate fallback group, and both must pass
+// for the fallback to proceed. Anthropic/Gemini counterpart to
+// OpenAIGatewayService.shouldUseOpenAIFallbackForModel.
+func (s *GatewayService) shouldUseGatewayFallbackForModel(ctx context.Context, groupID *int64, requestedModel string) bool {
+	if s == nil || groupID == nil || *groupID <= 0 || strings.TrimSpace(requestedModel) == "" {
+		return true
+	}
+	requestedModel = strings.TrimSpace(requestedModel)
+
+	group := s.resolveFallbackGroup(ctx, *groupID)
+	if group == nil {
+		return true
+	}
+
+	diagnosis := s.DiagnoseModelAvailabilityForPlatform(ctx, groupID, requestedModel, group.Platform)
+	if !diagnosis.HasAccountsInPool || diagnosis.HasModelSupport {
+		return true
+	}
+
+	slog.Warn(
+		"gateway_fallback_blocked_model_unsupported",
+		"group_id", *groupID,
+		"platform", group.Platform,
+		"model", requestedModel,
+	)
+	return false
 }
 
 // resolveFallbackGroup 优先用请求上下文里已有的分组，避免兜底链路上重复查库。

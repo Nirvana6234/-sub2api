@@ -392,6 +392,9 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
 			}
+			if upstreamReq.Header.Get(HeadroomBaseURLHeader) != "" {
+				markHeadroomTransportFailure()
+			}
 			return nil, s.handleUpstreamTransportError(ctx, c, account, err, OpsUpstreamErrorEvent{
 				UpstreamURL: safeUpstreamURL(upstreamReq.URL.String()),
 			})
@@ -872,6 +875,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		Duration:                      time.Since(startTime),
 		FirstTokenMs:                  firstTokenMs,
 		ClientDisconnect:              clientDisconnect,
+		HeadroomTokensSaved:           parseHeadroomTokensSavedHeader(resp.Header),
 	}, nil
 }
 

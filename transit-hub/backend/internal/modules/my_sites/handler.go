@@ -3,7 +3,9 @@ package my_sites
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"transithub/backend/internal/shared/authctx"
 	"transithub/backend/internal/shared/httpjson"
@@ -30,6 +32,14 @@ func RegisterRoutes(mux *http.ServeMux, service *Service) {
 	mux.HandleFunc("GET /api/my-sites/admin-resources", handler.listAdminResources)
 	mux.HandleFunc("GET /api/my-sites/real-connections", handler.listRealConnections)
 	mux.HandleFunc("POST /api/my-sites/real-disconnect", handler.realDisconnect)
+	mux.HandleFunc("GET /api/my-sites/latency-subsidy-tasks", handler.listLatencySubsidyTasks)
+	mux.HandleFunc("POST /api/my-sites/latency-subsidy-tasks", handler.createLatencySubsidyTask)
+	mux.HandleFunc("PUT /api/my-sites/latency-subsidy-tasks/{id}", handler.updateLatencySubsidyTask)
+	mux.HandleFunc("DELETE /api/my-sites/latency-subsidy-tasks/{id}", handler.deleteLatencySubsidyTask)
+	mux.HandleFunc("GET /api/my-sites/latency-subsidy-tasks/{id}/preview", handler.previewLatencySubsidyTask)
+	mux.HandleFunc("POST /api/my-sites/latency-subsidy-tasks/{id}/apply", handler.applyLatencySubsidyTask)
+	mux.HandleFunc("GET /api/my-sites/latency-subsidy-tasks-history", handler.listLatencyCompensationHistory)
+	mux.HandleFunc("POST /api/my-sites/latency-subsidy-tasks-history/{id}/revoke", handler.revokeLatencyCompensationPayout)
 }
 
 // removeMapping 显式删除一个自有分组的映射配置，主要用于清理已失效分组。
@@ -297,6 +307,214 @@ func (h *Handler) realDisconnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpjson.Write(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// listLatencySubsidyTasks lists every 延迟补贴任务 for the caller's current workspace.
+func (h *Handler) listLatencySubsidyTasks(w http.ResponseWriter, r *http.Request) {
+	userID, ok := authctx.UserID(r.Context())
+	if !ok {
+		httpjson.WriteError(w, http.StatusUnauthorized, "auth.errors.unauthorized")
+		return
+	}
+	tasks, err := h.service.ListLatencySubsidyTasks(r.Context(), userID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	views := make([]LatencySubsidyTaskView, 0, len(tasks))
+	for _, t := range tasks {
+		views = append(views, toLatencySubsidyTaskView(t))
+	}
+	httpjson.Write(w, http.StatusOK, views)
+}
+
+// createLatencySubsidyTask saves a new task. Creating it does not run
+// anything — running is a separate, explicit action.
+func (h *Handler) createLatencySubsidyTask(w http.ResponseWriter, r *http.Request) {
+	userID, ok := authctx.UserID(r.Context())
+	if !ok {
+		httpjson.WriteError(w, http.StatusUnauthorized, "auth.errors.unauthorized")
+		return
+	}
+	var req LatencySubsidyTaskInput
+	if err := httpjson.Decode(r, &req); err != nil {
+		httpjson.WriteError(w, http.StatusBadRequest, ErrorRequest)
+		return
+	}
+	task, err := h.service.CreateLatencySubsidyTask(r.Context(), userID, req)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	httpjson.Write(w, http.StatusOK, toLatencySubsidyTaskView(task))
+}
+
+// updateLatencySubsidyTask replaces a task's config in place (same id).
+func (h *Handler) updateLatencySubsidyTask(w http.ResponseWriter, r *http.Request) {
+	userID, ok := authctx.UserID(r.Context())
+	if !ok {
+		httpjson.WriteError(w, http.StatusUnauthorized, "auth.errors.unauthorized")
+		return
+	}
+	taskID := r.PathValue("id")
+	var req LatencySubsidyTaskInput
+	if err := httpjson.Decode(r, &req); err != nil {
+		httpjson.WriteError(w, http.StatusBadRequest, ErrorRequest)
+		return
+	}
+	task, err := h.service.UpdateLatencySubsidyTask(r.Context(), userID, taskID, req)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	httpjson.Write(w, http.StatusOK, toLatencySubsidyTaskView(task))
+}
+
+// deleteLatencySubsidyTask removes a task. Past payouts it triggered stay in
+// history under the name the task had at the time.
+func (h *Handler) deleteLatencySubsidyTask(w http.ResponseWriter, r *http.Request) {
+	userID, ok := authctx.UserID(r.Context())
+	if !ok {
+		httpjson.WriteError(w, http.StatusUnauthorized, "auth.errors.unauthorized")
+		return
+	}
+	taskID := r.PathValue("id")
+	if err := h.service.DeleteLatencySubsidyTask(r.Context(), userID, taskID); err != nil {
+		writeError(w, err)
+		return
+	}
+	httpjson.Write(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// parseTimeWindow parses "from"/"to" RFC3339 query params, shared by the
+// task preview endpoint. Unlike the old ad-hoc preview, threshold/ratio are
+// no longer caller-supplied here — they come from the task itself.
+func parseTimeWindow(from, to string) (time.Time, time.Time, error) {
+	fromTime, err := time.Parse(time.RFC3339, strings.TrimSpace(from))
+	if err != nil {
+		return time.Time{}, time.Time{}, errors.New("invalid from")
+	}
+	toTime, err := time.Parse(time.RFC3339, strings.TrimSpace(to))
+	if err != nil {
+		return time.Time{}, time.Time{}, errors.New("invalid to")
+	}
+	if !toTime.After(fromTime) {
+		return time.Time{}, time.Time{}, errors.New("to must be after from")
+	}
+	return fromTime, toTime, nil
+}
+
+// previewLatencySubsidyTask reports what running this task over [from, to)
+// would pay out, without crediting anyone.
+func (h *Handler) previewLatencySubsidyTask(w http.ResponseWriter, r *http.Request) {
+	userID, ok := authctx.UserID(r.Context())
+	if !ok {
+		httpjson.WriteError(w, http.StatusUnauthorized, "auth.errors.unauthorized")
+		return
+	}
+	from, to, err := parseTimeWindow(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
+	if err != nil {
+		httpjson.WriteError(w, http.StatusBadRequest, ErrorRequest)
+		return
+	}
+	taskID := r.PathValue("id")
+	summary, _, err := h.service.RunLatencySubsidyTaskPreview(r.Context(), userID, taskID, from, to)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	httpjson.Write(w, http.StatusOK, toLatencyCompensationSummary(summary))
+}
+
+// RunLatencySubsidyTaskRequest is the POST body for actually running a task.
+type RunLatencySubsidyTaskRequest struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+// applyLatencySubsidyTask actually pays out this task's compensation over
+// [from, to). Irreversible — the frontend must have shown the operator a
+// preview and gotten explicit confirmation before calling this.
+func (h *Handler) applyLatencySubsidyTask(w http.ResponseWriter, r *http.Request) {
+	userID, ok := authctx.UserID(r.Context())
+	if !ok {
+		httpjson.WriteError(w, http.StatusUnauthorized, "auth.errors.unauthorized")
+		return
+	}
+	var req RunLatencySubsidyTaskRequest
+	if err := httpjson.Decode(r, &req); err != nil {
+		httpjson.WriteError(w, http.StatusBadRequest, ErrorRequest)
+		return
+	}
+	from, to, err := parseTimeWindow(req.From, req.To)
+	if err != nil {
+		httpjson.WriteError(w, http.StatusBadRequest, ErrorRequest)
+		return
+	}
+	taskID := r.PathValue("id")
+	summary, err := h.service.RunLatencySubsidyTaskApply(r.Context(), userID, taskID, from, to)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	httpjson.Write(w, http.StatusOK, toLatencyCompensationSummary(summary))
+}
+
+// listLatencyCompensationHistory returns past payout batches (newest
+// first), each with its full per-user breakdown, so an operator can see
+// what was already refunded and when without digging through raw records.
+func (h *Handler) listLatencyCompensationHistory(w http.ResponseWriter, r *http.Request) {
+	userID, ok := authctx.UserID(r.Context())
+	if !ok {
+		httpjson.WriteError(w, http.StatusUnauthorized, "auth.errors.unauthorized")
+		return
+	}
+	limit := 50
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, parseErr := strconv.Atoi(raw); parseErr == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	payouts, err := h.service.ListLatencyCompensationPayouts(r.Context(), userID, limit)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	views := make([]LatencyCompensationPayoutView, 0, len(payouts))
+	for _, p := range payouts {
+		views = append(views, toLatencyCompensationPayoutView(p))
+	}
+	httpjson.Write(w, http.StatusOK, views)
+}
+
+// RevokeLatencyCompensationPayoutResponse is the wire shape for a revoke
+// result — camelCase, mirroring upstream.RevokeLatencyCompensationResult.
+type RevokeLatencyCompensationPayoutResponse struct {
+	RevokedUserIDs []int64 `json:"revokedUserIds"`
+	SkippedUserIDs []int64 `json:"skippedUserIds"`
+	TotalRevoked   float64 `json:"totalRevoked"`
+}
+
+// revokeLatencyCompensationPayout undoes an entire past payout batch — every
+// user in it. Irreversible in the other direction (there's no "un-revoke");
+// the frontend must confirm with the operator before calling this.
+func (h *Handler) revokeLatencyCompensationPayout(w http.ResponseWriter, r *http.Request) {
+	userID, ok := authctx.UserID(r.Context())
+	if !ok {
+		httpjson.WriteError(w, http.StatusUnauthorized, "auth.errors.unauthorized")
+		return
+	}
+	payoutID := r.PathValue("id")
+	result, err := h.service.RevokeLatencyCompensationPayout(r.Context(), userID, payoutID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	httpjson.Write(w, http.StatusOK, RevokeLatencyCompensationPayoutResponse{
+		RevokedUserIDs: result.RevokedUserIDs,
+		SkippedUserIDs: result.SkippedUserIDs,
+		TotalRevoked:   result.TotalRevoked,
+	})
 }
 
 func writeError(w http.ResponseWriter, err error) {

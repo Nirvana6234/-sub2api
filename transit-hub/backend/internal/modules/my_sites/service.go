@@ -38,6 +38,35 @@ type AtomicRealDisconnectRepository interface {
 	RemoveUpstreamMappingAndDeleteConnection(ctx context.Context, userID string, adminAccountID string, connectionID string, siteID string, groupName string) error
 }
 
+// LatencyCompensationPayoutRepository persists a record of each successful
+// latency-compensation payout so the daily/weekly report can subtract it
+// from profit — Sub2API's own revenue figures never reflect a payout (it's
+// a balance credit, not a sale reversal), so this local record is the only
+// place that knowledge exists.
+type LatencyCompensationPayoutRepository interface {
+	RecordLatencyCompensationPayout(ctx context.Context, payout LatencyCompensationPayout) error
+	SumLatencyCompensationPayoutsUSD(ctx context.Context, userID, adminAccountID string, from, to time.Time) (float64, error)
+	ListLatencyCompensationPayouts(ctx context.Context, userID, adminAccountID string, limit int) ([]LatencyCompensationPayout, error)
+	GetLatencyCompensationPayout(ctx context.Context, id, userID, adminAccountID string) (LatencyCompensationPayout, error)
+	MarkLatencyCompensationPayoutRevoked(ctx context.Context, id, userID, adminAccountID string) error
+}
+
+// LatencySubsidyTaskRepository persists 延迟补贴任务 (LatencySubsidyTask) CRUD
+// plus the two queries the scheduler needs: which tasks are due to run
+// automatically, and marking one as having run today.
+type LatencySubsidyTaskRepository interface {
+	CreateLatencySubsidyTask(ctx context.Context, task LatencySubsidyTask) error
+	ListLatencySubsidyTasks(ctx context.Context, userID, adminAccountID string) ([]LatencySubsidyTask, error)
+	GetLatencySubsidyTask(ctx context.Context, id, userID, adminAccountID string) (LatencySubsidyTask, error)
+	UpdateLatencySubsidyTask(ctx context.Context, task LatencySubsidyTask) error
+	DeleteLatencySubsidyTask(ctx context.Context, id, userID, adminAccountID string) error
+	// ListAutoEnabledLatencySubsidyTasks returns every task with auto-run on,
+	// across all workspaces — the scheduler has no per-request context to
+	// scope this to one owner, same reason ListStrategyOwners exists.
+	ListAutoEnabledLatencySubsidyTasks(ctx context.Context) ([]LatencySubsidyTask, error)
+	MarkLatencySubsidyTaskAutoRun(ctx context.Context, id, day string) error
+}
+
 // AtomicRealConnectionRepository is implemented by the PostgreSQL repository.
 // Keeping it optional preserves lightweight test repositories and rolling code
 // paths while production gets one local transaction for connection + pricing.
@@ -90,6 +119,22 @@ type Service struct {
 	// keyTester 提供上游 Key 连通性测试。由 httpserver 注入，为 nil 时
 	// 只有测试接口不可用，其余功能不受影响。
 	keyTester UpstreamKeyTester
+	// payoutRepository 记录延迟补偿发放。由 httpserver 注入，为 nil 时补偿仍会
+	// 正常发放，只是不会被日报/周报计入成本——不阻塞既有功能。
+	payoutRepository LatencyCompensationPayoutRepository
+	// taskRepository 存取延迟补贴任务。为 nil 时任务相关接口返回"功能不可用"，
+	// 不影响其它功能。
+	taskRepository LatencySubsidyTaskRepository
+}
+
+// SetLatencyCompensationPayoutRepository 注入延迟补偿发放记录能力。
+func (s *Service) SetLatencyCompensationPayoutRepository(repo LatencyCompensationPayoutRepository) {
+	s.payoutRepository = repo
+}
+
+// SetLatencySubsidyTaskRepository 注入延迟补贴任务的存取能力。
+func (s *Service) SetLatencySubsidyTaskRepository(repo LatencySubsidyTaskRepository) {
+	s.taskRepository = repo
 }
 
 type AdminAccountResolver interface {

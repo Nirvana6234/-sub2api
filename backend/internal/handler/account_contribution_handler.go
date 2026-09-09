@@ -684,9 +684,18 @@ func (h *AccountContributionHandler) createAPIKeyContribution(ctx context.Contex
 	if req.Concurrency != nil {
 		concurrency = *req.Concurrency
 	}
+	// API-key type contributions are always self-use only: unlike an OAuth
+	// contribution, they can never be promoted to share_mode=pool even if the
+	// request carried a pool_group_id. They still go through the normal
+	// contribution bookkeeping (ownership, group binding, priority) — the
+	// account is simply never eligible for the shared pool or a room's
+	// other-member routing (see Account.IsSharedPoolAvailableTo and
+	// contribution_room_routing_repo.go's ResolveRouteForAPIKey).
+	extra := contributionExtra(nil, user, time.Now(), req)
+	applyPrivateContributionPolicy(extra)
 	account, err := h.adminService.CreateAccount(ctx, &service.CreateAccountInput{
 		Name: item.Name, Platform: platform, Type: service.AccountTypeAPIKey,
-		Credentials: credentials, Extra: contributionExtra(nil, user, time.Now(), req),
+		Credentials: credentials, Extra: extra,
 		Concurrency: concurrency, Priority: contributionPriority(req), LoadFactor: contributionLoadFactor(req),
 		GroupIDs: req.GroupIDs, ProxyID: req.ProxyID, SkipDefaultGroupBind: true,
 	})

@@ -19,6 +19,20 @@ type AdminService interface {
 	UpdateUser(ctx context.Context, id int64, input *UpdateUserInput) (*User, error)
 	DeleteUser(ctx context.Context, id int64) error
 	UpdateUserBalance(ctx context.Context, userID int64, balance float64, operation string, notes string) (*User, error)
+	// AdjustUserBalanceSilently changes a user's balance by delta (positive
+	// or negative) without creating a RedeemCode audit row. Only for
+	// reversing an operator-side mistake (e.g. an erroneous latency
+	// compensation payout) where surfacing a second, confusing balance
+	// entry to the user would do more harm than the missing audit trail.
+	// Never negative: if delta would take the balance below zero, returns
+	// ErrBalanceNegative so the caller can decide whether to skip this user.
+	AdjustUserBalanceSilently(ctx context.Context, userID int64, delta float64) (*User, error)
+	// DeleteAdminAdjustmentTrace finds and deletes the RedeemCode audit row a
+	// prior UpdateUserBalance("add", ...) grant created — matched exactly by
+	// (userID, value, notes) — so a revoke can erase the whole "+granted"
+	// line from the user's own balance history, not just avoid adding a new
+	// one. Returns found=false (not an error) when no matching row exists.
+	DeleteAdminAdjustmentTrace(ctx context.Context, userID int64, value float64, notes string) (found bool, err error)
 	BatchUpdateConcurrency(ctx context.Context, userIDs []int64, value int, mode string) (int, error)
 	BatchUpdateLimits(ctx context.Context, userIDs []int64, concurrency, rpmLimit *int) (int, error)
 	GetUserAPIKeys(ctx context.Context, userID int64, page, pageSize int, sortBy, sortOrder string) ([]APIKey, int64, error)
@@ -142,35 +156,37 @@ type AdminService interface {
 
 // CreateUserInput represents input for creating a new user via admin operations.
 type CreateUserInput struct {
-	Email                    string
-	Password                 string
-	Username                 string
-	Notes                    string
-	Role                     string // 空字符串表示使用默认角色(user);合法值 admin/user
-	Balance                  *float64
-	Concurrency              int
-	RPMLimit                 int
-	AllowedGroups            []int64
-	AccountManagementEnabled bool
-	ContributionRoomsEnabled bool
-	RestrictPublicGroups     bool
+	Email                      string
+	Password                   string
+	Username                   string
+	Notes                      string
+	Role                       string // 空字符串表示使用默认角色(user);合法值 admin/user
+	Balance                    *float64
+	Concurrency                int
+	RPMLimit                   int
+	AllowedGroups              []int64
+	AccountManagementEnabled   bool
+	ContributionRoomsEnabled   bool
+	HeadroomCompressionEnabled bool
+	RestrictPublicGroups       bool
 	// ActorAdminID 执行本次操作的管理员ID(来自JWT)，仅用于权限敏感操作的审计日志。
 	ActorAdminID int64
 }
 
 type UpdateUserInput struct {
-	Email                    string
-	Password                 string
-	Username                 *string
-	Notes                    *string
-	Role                     string   // 空字符串表示"未提供"(不修改);合法值 admin/user
-	Balance                  *float64 // 使用指针区分"未提供"和"设置为0"
-	Concurrency              *int     // 使用指针区分"未提供"和"设置为0"
-	RPMLimit                 *int     // 使用指针区分"未提供"和"设置为0"
-	Status                   string
-	AllowedGroups            *[]int64 // 使用指针区分"未提供"和"设置为空数组"
-	AccountManagementEnabled *bool
-	ContributionRoomsEnabled *bool
+	Email                      string
+	Password                   string
+	Username                   *string
+	Notes                      *string
+	Role                       string   // 空字符串表示"未提供"(不修改);合法值 admin/user
+	Balance                    *float64 // 使用指针区分"未提供"和"设置为0"
+	Concurrency                *int     // 使用指针区分"未提供"和"设置为0"
+	RPMLimit                   *int     // 使用指针区分"未提供"和"设置为0"
+	Status                     string
+	AllowedGroups              *[]int64 // 使用指针区分"未提供"和"设置为空数组"
+	AccountManagementEnabled   *bool
+	ContributionRoomsEnabled   *bool
+	HeadroomCompressionEnabled *bool
 	// RestrictPublicGroups 指针区分"未提供"和"显式开关"。
 	RestrictPublicGroups *bool
 	// GroupRates 用户专属分组倍率配置

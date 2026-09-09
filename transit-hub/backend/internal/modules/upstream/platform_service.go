@@ -666,6 +666,135 @@ func (s *PlatformService) FetchSub2APIFallbackPoolUsageEvents(session Session, s
 	return events, nil
 }
 
+// decodeLatencyCompensationSummary converts a generic jsonResponse.Payload
+// into LatencyCompensationSummary via a marshal/unmarshal round trip instead
+// of the dataRecord/firstNumber-style dynamic field extraction used
+// elsewhere in this file. That style exists to tolerate loosely-specified or
+// evolving shapes from different platforms (new-api vs sub2api); this
+// endpoint has neither problem — it's a Sub2API-only, TransitHub-only
+// contract this same change introduced on both ends, so a strict typed
+// decode is less error-prone than hand-picking nested "users[].compensation"
+// fields key by key.
+func decodeLatencyCompensationSummary(payload any) (LatencyCompensationSummary, error) {
+	record := dataRecord(payload)
+	raw, err := jsonMarshal(record)
+	if err != nil {
+		return LatencyCompensationSummary{}, err
+	}
+	var summary LatencyCompensationSummary
+	if err := json.Unmarshal(raw, &summary); err != nil {
+		return LatencyCompensationSummary{}, err
+	}
+	return summary, nil
+}
+
+// FetchSub2APILatencyCompensationPreview previews a latency-compensation
+// payout over [from, to) at thresholdMs, refunding profitRatio (0~1) of the
+// margin on each qualifying slow request, without crediting anyone. Safe to
+// call repeatedly while an admin narrows the window from TransitHub's UI.
+func (s *PlatformService) FetchSub2APILatencyCompensationPreview(
+	session Session, from, to time.Time, thresholdMs int, profitRatio float64,
+) (LatencyCompensationSummary, error) {
+	if session.Platform != PlatformSub2API || !session.IsAuthenticated() {
+		return LatencyCompensationSummary{}, newRequestError(ErrorAuth, PlatformSub2API)
+	}
+	query := url.Values{}
+	query.Set("from", from.UTC().Format(time.RFC3339))
+	query.Set("to", to.UTC().Format(time.RFC3339))
+	query.Set("threshold_ms", strconv.Itoa(thresholdMs))
+	query.Set("profit_ratio", strconv.FormatFloat(profitRatio, 'f', -1, 64))
+	response, err := s.httpClient.requestJSON(
+		session.BaseURL+"/api/v1/admin/usage/latency-compensation/preview?"+query.Encode(),
+		adminAuthOptions(session),
+	)
+	if err != nil {
+		return LatencyCompensationSummary{}, err
+	}
+	return decodeLatencyCompensationSummary(response.Payload)
+}
+
+// ApplySub2APILatencyCompensation pays out a latency-compensation batch:
+// Sub2API credits every qualifying user's margin directly to their balance
+// (via its own AdminService.UpdateUserBalance — the same path a human
+// adjusting one user's balance in the Sub2API admin panel uses, complete
+// with cache invalidation and a redeem_codes audit record) and marks those
+// requests compensated so a later call over an overlapping window skips
+// them. This is the irreversible write; call
+// FetchSub2APILatencyCompensationPreview first and confirm with the operator
+// before calling this.
+func (s *PlatformService) ApplySub2APILatencyCompensation(
+	session Session, from, to time.Time, thresholdMs int, profitRatio float64,
+) (LatencyCompensationSummary, error) {
+	if session.Platform != PlatformSub2API || !session.IsAuthenticated() {
+		return LatencyCompensationSummary{}, newRequestError(ErrorAuth, PlatformSub2API)
+	}
+	options := adminAuthOptions(session)
+	options.Method = http.MethodPost
+	options.Body = map[string]any{
+		"from":         from.UTC().Format(time.RFC3339),
+		"to":           to.UTC().Format(time.RFC3339),
+		"threshold_ms": thresholdMs,
+		"profit_ratio": profitRatio,
+	}
+	response, err := s.httpClient.requestJSON(
+		session.BaseURL+"/api/v1/admin/usage/latency-compensation/apply", options,
+	)
+	if err != nil {
+		return LatencyCompensationSummary{}, err
+	}
+	return decodeLatencyCompensationSummary(response.Payload)
+}
+
+// RevokeSub2APILatencyCompensation undoes a previously applied payout: Sub2API
+// claws back each listed user's amount from their balance WITHOUT creating a
+// redeem_codes audit row (a visible "+补偿/-补偿" pair on the user's own
+// balance history would read as a billing mistake and generate support
+// tickets — this is the operator correcting their own mistake, not something
+// the user needs to see), and reopens the underlying requests so a corrected
+// re-run can compensate them properly. May partially fail — see
+// RevokeLatencyCompensationResult.SkippedUserIDs.
+func (s *PlatformService) RevokeSub2APILatencyCompensation(
+	session Session, from, to time.Time, thresholdMs int, users []LatencyCompensationUserSummary,
+) (RevokeLatencyCompensationResult, error) {
+	if session.Platform != PlatformSub2API || !session.IsAuthenticated() {
+		return RevokeLatencyCompensationResult{}, newRequestError(ErrorAuth, PlatformSub2API)
+	}
+	revokeUsers := make([]map[string]any, 0, len(users))
+	for _, u := range users {
+		if u.Compensation <= 0 {
+			continue
+		}
+		revokeUsers = append(revokeUsers, map[string]any{
+			"user_id": u.UserID,
+			"amount":  u.Compensation,
+		})
+	}
+	options := adminAuthOptions(session)
+	options.Method = http.MethodPost
+	options.Body = map[string]any{
+		"from":         from.UTC().Format(time.RFC3339),
+		"to":           to.UTC().Format(time.RFC3339),
+		"threshold_ms": thresholdMs,
+		"users":        revokeUsers,
+	}
+	response, err := s.httpClient.requestJSON(
+		session.BaseURL+"/api/v1/admin/usage/latency-compensation/revoke", options,
+	)
+	if err != nil {
+		return RevokeLatencyCompensationResult{}, err
+	}
+	record := dataRecord(response.Payload)
+	raw, err := jsonMarshal(record)
+	if err != nil {
+		return RevokeLatencyCompensationResult{}, err
+	}
+	var result RevokeLatencyCompensationResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return RevokeLatencyCompensationResult{}, err
+	}
+	return result, nil
+}
+
 // FetchSub2APIUpstreamErrorEvents reads recent client-visible 502/503 upstream
 // failures. Notification policy and deduplication stay in TransitHub.
 func (s *PlatformService) FetchSub2APIUpstreamErrorEvents(session Session, since time.Time, now time.Time) ([]UpstreamErrorEvent, error) {

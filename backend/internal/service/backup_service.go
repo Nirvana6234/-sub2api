@@ -112,6 +112,8 @@ func SystemConfigBackupSettingKeys() []string {
 		SettingKeyClientDownloadDirectURLMac,
 		SettingKeyClientLatestVersion,
 		SettingKeyClientLatestVersionMac,
+		SettingKeyClientTutorialVideoURL,
+		SettingKeyHeadroomBaseURL,
 		SettingKeyBackupPaymentEnabled,
 		SettingKeyBackupPaymentURL,
 		SettingKeyPlaygroundEnabled,

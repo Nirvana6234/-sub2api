@@ -440,6 +440,34 @@ describe('playground canvas layout integration', () => {
     expect(source).toContain("reasoningEffort: 'medium'")
   })
 
+  // 助手聊天(CanvasAssistant)也是在调用聊天模型，之前只能选模型、选不了推理强度，
+  // 跟"文字"节点的体验不一致。
+  it('lets the canvas assistant chat adjust reasoning effort too', () => {
+    expect(assistant).toContain('reasoningEffort: string')
+    expect(assistant).toContain("'update:reasoningEffort': [value: string]")
+    expect(assistant).toContain(':value="reasoningEffort"')
+    expect(assistant).toContain("emit('update:reasoningEffort'")
+    expect(source).toContain('const assistantReasoningEffort = ref')
+    expect(source).toContain(':reasoning-effort="assistantReasoningEffort"')
+    expect(source).toContain('@update:reasoning-effort="setAssistantReasoningEffort($event)"')
+    expect(source).toContain("assistantReasoningEffort.value !== 'none' ? { reasoning_effort: assistantReasoningEffort.value }")
+  })
+
+  // 反推提示词是一次性自动化动作，没有自己的设置面板，复用助手那一份推理强度设置
+  // 而不是另起一套 UI。插件 SDK 的 generateText 是给插件作者用的编程接口，
+  // 让作者自己决定要不要传，不需要终端用户可见的开关。
+  it('lets reverse-prompt reuse the assistant reasoning effort and exposes it on the plugin SDK', () => {
+    expect(source).toContain("reversePromptImage")
+    expect(source).toContain("t('playground.canvasReversePromptSystem')")
+    const reversePromptFn = source.slice(source.indexOf('async function reversePromptImage'), source.indexOf('async function reversePromptImage') + 3000)
+    expect(reversePromptFn).toContain("assistantReasoningEffort.value !== 'none' ? { reasoning_effort: assistantReasoningEffort.value }")
+
+    const runtime = readFileSync(resolve(__dirname, '../canvas/canvasPluginRuntime.ts'), 'utf8')
+    expect(runtime).toContain("generateText: (prompt: string, options?: { signal?: AbortSignal; model?: string; system?: string; reasoningEffort?: 'none' | 'low' | 'medium' | 'high'; onDelta?: (text: string) => void })")
+    expect(source).toContain("const pluginTextGeneration = async (prompt: string, options?: { signal?: AbortSignal; model?: string; system?: string; reasoningEffort?: 'none' | 'low' | 'medium' | 'high'")
+    expect(source).toContain("reasoningEffort && reasoningEffort !== 'none' ? { reasoning_effort: reasoningEffort }")
+  })
+
   it('passes connected canvas resources into chat and inherited text into media generation', () => {
     expect(source).toContain('const upstreamAttachments = await resolveReferenceAttachments(node)')
     expect(source).toContain('const imageAttachments = [...mentionAttachments')

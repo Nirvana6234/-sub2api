@@ -193,6 +193,15 @@ func (s *stubAdminService) UpdateUserBalance(ctx context.Context, userID int64, 
 	return &user, nil
 }
 
+func (s *stubAdminService) AdjustUserBalanceSilently(ctx context.Context, userID int64, delta float64) (*service.User, error) {
+	user := service.User{ID: userID, Balance: delta, Status: service.StatusActive}
+	return &user, nil
+}
+
+func (s *stubAdminService) DeleteAdminAdjustmentTrace(ctx context.Context, userID int64, value float64, notes string) (bool, error) {
+	return false, nil
+}
+
 func (s *stubAdminService) BatchUpdateConcurrency(ctx context.Context, userIDs []int64, value int, mode string) (int, error) {
 	return len(userIDs), nil
 }

@@ -34,6 +34,7 @@ func UserFromServiceShallow(u *service.User) *User {
 		RPMLimit:                   u.RPMLimit,
 		AccountManagementEnabled:   u.AccountManagementEnabled,
 		ContributionRoomsEnabled:   u.ContributionRoomsEnabled,
+		HeadroomCompressionEnabled: u.HeadroomCompressionEnabled,
 		DeletedAt:                  u.DeletedAt,
 	}
 }

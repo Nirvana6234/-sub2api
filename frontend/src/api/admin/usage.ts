@@ -80,6 +80,27 @@ export interface CreateUsageCleanupTaskRequest {
   timezone?: string
 }
 
+export interface LatencyCompensationUserSummary {
+  user_id: number
+  email: string
+  requests: number
+  actual_cost: number
+  account_cost: number
+  compensation: number
+}
+
+export interface LatencyCompensationSummary {
+  from: string
+  to: string
+  threshold_ms: number
+  profit_ratio: number
+  users: LatencyCompensationUserSummary[]
+  total_requests: number
+  total_actual_cost: number
+  total_account_cost: number
+  total_compensation: number
+}
+
 export interface AdminUsageQueryParams extends UsageQueryParams {
   user_id?: number
   exact_total?: boolean
@@ -208,6 +229,42 @@ export async function cancelCleanupTask(taskId: number): Promise<{ id: number; s
   return data
 }
 
+/**
+ * Preview a latency-compensation payout for a time window without crediting
+ * anyone (admin only). Safe to call repeatedly while adjusting the range.
+ */
+export async function previewLatencyCompensation(params: {
+  from: string
+  to: string
+  threshold_ms: number
+  profit_ratio?: number
+}): Promise<LatencyCompensationSummary> {
+  const { data } = await apiClient.get<LatencyCompensationSummary>(
+    '/admin/usage/latency-compensation/preview',
+    { params }
+  )
+  return data
+}
+
+/**
+ * Pay out a latency-compensation batch (admin only): credits every user's
+ * margin on qualifying slow requests in the window, then marks those
+ * requests compensated so a later call over an overlapping window skips
+ * them.
+ */
+export async function applyLatencyCompensation(payload: {
+  from: string
+  to: string
+  threshold_ms: number
+  profit_ratio?: number
+}): Promise<LatencyCompensationSummary> {
+  const { data } = await apiClient.post<LatencyCompensationSummary>(
+    '/admin/usage/latency-compensation/apply',
+    payload
+  )
+  return data
+}
+
 export const adminUsageAPI = {
   list,
   getStats,
@@ -215,7 +272,9 @@ export const adminUsageAPI = {
   searchApiKeys,
   listCleanupTasks,
   createCleanupTask,
-  cancelCleanupTask
+  cancelCleanupTask,
+  previewLatencyCompensation,
+  applyLatencyCompensation
 }
 
 export default adminUsageAPI

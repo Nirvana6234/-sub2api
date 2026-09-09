@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, onBeforeUnmount, watch, type Component } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { LayoutDashboard, Network, Settings, LogOut, Globe, Moon, Sun, Percent, Megaphone, ChevronDown, ArrowRightLeft, FolderTree, Link2, Activity, MessageSquare, Github, Mail, Menu, X, Trophy, Gift, Boxes, FlaskConical } from 'lucide-vue-next'
+import { LayoutDashboard, Network, Settings, LogOut, Globe, Moon, Sun, Percent, Megaphone, ChevronDown, ArrowRightLeft, FolderTree, Link2, Activity, MessageSquare, Github, Mail, Menu, X, Trophy, Gift, Boxes, FlaskConical, HandCoins } from 'lucide-vue-next'
 import { useDark, useToggle } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { useAdminAccounts } from '../composables/useAdminAccounts'
@@ -151,6 +151,7 @@ const menuItems = computed<MenuEntry[]>(() => [
       { name: t('admin.menu.lottery'), path: '/admin/lottery', icon: Gift },
       { name: t('admin.menu.groupRateCampaigns'), path: '/admin/group-rate-campaigns', icon: Megaphone },
       { name: t('admin.menu.tickets'), path: '/admin/tickets', icon: MessageSquare },
+      { name: t('admin.menu.latencyCompensation'), path: '/admin/latency-compensation', icon: HandCoins },
     ],
   },
   { type: 'leaf', name: t('admin.menu.settings'), path: '/admin/settings', icon: Settings },

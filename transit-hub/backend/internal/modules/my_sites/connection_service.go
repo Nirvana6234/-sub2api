@@ -2,14 +2,33 @@ package my_sites
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"transithub/backend/internal/modules/upstream"
 )
+
+func randomLatencyCompensationPayoutID() (string, error) {
+	bytes := make([]byte, 16)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", fmt.Errorf("generate latency compensation payout id: %w", err)
+	}
+	return "lcp_" + hex.EncodeToString(bytes), nil
+}
+
+func randomLatencySubsidyTaskID() (string, error) {
+	bytes := make([]byte, 16)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", fmt.Errorf("generate latency subsidy task id: %w", err)
+	}
+	return "lst_" + hex.EncodeToString(bytes), nil
+}
 
 // connectionContext contains the two independently authenticated sides of a
 // connection. Their platforms may differ and must never be inferred from one another.
@@ -388,6 +407,400 @@ func (s *Service) ListAdminResources(ctx context.Context, userID, adminGroupID s
 		})
 	}
 	return result, nil
+}
+
+// PreviewLatencyCompensation reports what a latency-compensation payout over
+// [from, to) at thresholdMs would look like on the connected Sub2API site —
+// per user, how much was actually charged for slow requests versus what
+// they cost the platform — without crediting anyone. Safe to call
+// repeatedly while an operator narrows the window in the UI.
+func (s *Service) PreviewLatencyCompensation(
+	ctx context.Context, userID string, from, to time.Time, thresholdMs int, profitRatio float64,
+) (upstream.LatencyCompensationSummary, error) {
+	adminAccountID, err := s.currentAdminAccountID(ctx, userID)
+	if err != nil {
+		return upstream.LatencyCompensationSummary{}, err
+	}
+	state, err := s.authenticatedState(ctx, userID, adminAccountID)
+	if err != nil {
+		return upstream.LatencyCompensationSummary{}, err
+	}
+	return s.platformService.FetchSub2APILatencyCompensationPreview(state.Session, from, to, thresholdMs, profitRatio)
+}
+
+// ApplyLatencyCompensation pays out a latency-compensation batch on the
+// connected Sub2API site. This is the irreversible write — the caller must
+// have already shown the operator a PreviewLatencyCompensation result and
+// gotten explicit confirmation before calling this. taskID/taskName record
+// which 延迟补贴任务 triggered the payout (manual run or the scheduler both
+// always go through a task now).
+func (s *Service) ApplyLatencyCompensation(
+	ctx context.Context, userID string, from, to time.Time, thresholdMs int, profitRatio float64, taskID, taskName string,
+) (upstream.LatencyCompensationSummary, error) {
+	adminAccountID, err := s.currentAdminAccountID(ctx, userID)
+	if err != nil {
+		return upstream.LatencyCompensationSummary{}, err
+	}
+	state, err := s.authenticatedState(ctx, userID, adminAccountID)
+	if err != nil {
+		return upstream.LatencyCompensationSummary{}, err
+	}
+	summary, err := s.platformService.ApplySub2APILatencyCompensation(state.Session, from, to, thresholdMs, profitRatio)
+	if err != nil {
+		return upstream.LatencyCompensationSummary{}, err
+	}
+	// Record even a zero-amount payout: it still marked rows compensated on
+	// the Sub2API side (so a re-run over the same window won't double-count
+	// requests), and the report needs an accurate "no compensation today"
+	// as much as it needs the actual amount. payoutRepository is optional —
+	// see its doc comment for why a nil repo doesn't block the payout itself.
+	if s.payoutRepository != nil {
+		payoutID, idErr := randomLatencyCompensationPayoutID()
+		if idErr != nil {
+			log.Printf("latency compensation: paid %d users $%.8f but failed to generate a payout record id (report will under-count cost): user_id=%s admin_account_id=%s err=%v",
+				len(summary.Users), summary.TotalCompensation, userID, adminAccountID, idErr)
+			return summary, nil
+		}
+		record := LatencyCompensationPayout{
+			ID:               payoutID,
+			UserID:           userID,
+			AdminAccountID:   adminAccountID,
+			SiteBaseURL:      state.Session.BaseURL,
+			FromTime:         from,
+			ToTime:           to,
+			ThresholdMs:      thresholdMs,
+			ProfitRatio:      profitRatio,
+			UsersCompensated: len(summary.Users),
+			AmountUSD:        summary.TotalCompensation,
+			TaskID:           taskID,
+			TaskName:         taskName,
+			Users:            toLatencyCompensationSummary(summary).Users,
+		}
+		if recordErr := s.payoutRepository.RecordLatencyCompensationPayout(ctx, record); recordErr != nil {
+			// The money already moved on the Sub2API side; failing to record
+			// it locally must not roll that back or hide the result from the
+			// operator. Surfacing this loudly (not just a log line) matters
+			// because a missed record means the report will under-count
+			// today's cost — same failure class as the analogous mark-step
+			// warning on the Sub2API side.
+			log.Printf("latency compensation: paid %d users $%.8f but failed to record payout (report will under-count cost): user_id=%s admin_account_id=%s err=%v",
+				len(summary.Users), summary.TotalCompensation, userID, adminAccountID, recordErr)
+		}
+	}
+	return summary, nil
+}
+
+// SumLatencyCompensationPayoutsUSD totals latency-compensation payouts
+// recorded in [from, to) for the daily/weekly report to subtract from
+// profit. Returns 0 (not an error) when no payout repository is configured,
+// so a deployment that hasn't wired one up still gets a report — just one
+// that doesn't know about compensation, same as before this feature existed.
+func (s *Service) SumLatencyCompensationPayoutsUSD(ctx context.Context, userID, adminAccountID string, from, to time.Time) (float64, error) {
+	if s.payoutRepository == nil {
+		return 0, nil
+	}
+	return s.payoutRepository.SumLatencyCompensationPayoutsUSD(ctx, userID, adminAccountID, from, to)
+}
+
+// ListLatencyCompensationPayouts returns past payout batches (newest first),
+// each with its full per-user breakdown, for the operator to review what
+// was actually paid and when. Returns an empty slice (not an error) when no
+// payout repository is configured — same "feature degrades, doesn't break"
+// stance as SumLatencyCompensationPayoutsUSD.
+func (s *Service) ListLatencyCompensationPayouts(ctx context.Context, userID string, limit int) ([]LatencyCompensationPayout, error) {
+	if s.payoutRepository == nil {
+		return []LatencyCompensationPayout{}, nil
+	}
+	adminAccountID, err := s.currentAdminAccountID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	return s.payoutRepository.ListLatencyCompensationPayouts(ctx, userID, adminAccountID, limit)
+}
+
+// RevokeLatencyCompensationPayout undoes an entire past payout batch — every
+// user in it, not a subset — because the batch was a mistake (wrong
+// threshold/ratio, wrong window). It claws the money back on Sub2API without
+// creating a redeem_codes entry there (a visible "+补偿/-补偿" pair on the
+// user's own balance history reads as a billing mistake and generates
+// support tickets, when this is the operator correcting their own mistake),
+// reopens the underlying requests so a corrected re-run can compensate them
+// properly, and flags the payout revoked locally — the only place this undo
+// is ever recorded. Already-revoked or not-found payouts return an error;
+// callers should treat any error as "nothing changed".
+func (s *Service) RevokeLatencyCompensationPayout(ctx context.Context, userID, payoutID string) (upstream.RevokeLatencyCompensationResult, error) {
+	if s.payoutRepository == nil {
+		return upstream.RevokeLatencyCompensationResult{}, requestError(ErrorRequest)
+	}
+	adminAccountID, err := s.currentAdminAccountID(ctx, userID)
+	if err != nil {
+		return upstream.RevokeLatencyCompensationResult{}, err
+	}
+	payout, err := s.payoutRepository.GetLatencyCompensationPayout(ctx, payoutID, userID, adminAccountID)
+	if err != nil {
+		return upstream.RevokeLatencyCompensationResult{}, err
+	}
+	if payout.RevokedAt != nil {
+		return upstream.RevokeLatencyCompensationResult{}, requestError(ErrorRequest)
+	}
+
+	state, err := s.authenticatedState(ctx, userID, adminAccountID)
+	if err != nil {
+		return upstream.RevokeLatencyCompensationResult{}, err
+	}
+	users := make([]upstream.LatencyCompensationUserSummary, 0, len(payout.Users))
+	for _, u := range payout.Users {
+		users = append(users, upstream.LatencyCompensationUserSummary{
+			UserID:       u.UserID,
+			Email:        u.Email,
+			Requests:     u.Requests,
+			ActualCost:   u.ActualCost,
+			AccountCost:  u.AccountCost,
+			Compensation: u.Compensation,
+		})
+	}
+	result, err := s.platformService.RevokeSub2APILatencyCompensation(state.Session, payout.FromTime, payout.ToTime, payout.ThresholdMs, users)
+	if err != nil {
+		return upstream.RevokeLatencyCompensationResult{}, err
+	}
+
+	if markErr := s.payoutRepository.MarkLatencyCompensationPayoutRevoked(ctx, payoutID, userID, adminAccountID); markErr != nil {
+		// 钱已经在 Sub2API 那边扣回了，这一步只影响本地历史列表还显示成"未撤回"，
+		// 不影响撤回本身是否生效，但要响亮地记日志，免得下次误判成还没撤过。
+		log.Printf("latency compensation revoke: reversed on Sub2API but failed to mark locally revoked (history will look stale): payout_id=%s user_id=%s admin_account_id=%s err=%v",
+			payoutID, userID, adminAccountID, markErr)
+	}
+	return result, nil
+}
+
+// normalizeLatencySubsidyTaskInput trims/validates a task input. Name empty
+// after trimming, threshold <= 0, ratio outside [0,1], or an invalid daily
+// window are all rejected here rather than left for the scheduler to
+// silently misbehave on later.
+func normalizeLatencySubsidyTaskInput(input LatencySubsidyTaskInput) (LatencySubsidyTaskInput, error) {
+	input.Name = strings.TrimSpace(input.Name)
+	if input.Name == "" {
+		return input, requestError(ErrorRequest)
+	}
+	if input.ThresholdMs <= 0 {
+		return input, requestError(ErrorRequest)
+	}
+	if input.ProfitRatio < 0 || input.ProfitRatio > 1 {
+		return input, requestError(ErrorRequest)
+	}
+	input.WindowStart = strings.TrimSpace(input.WindowStart)
+	if input.WindowStart == "" {
+		input.WindowStart = "00:00"
+	} else if _, err := time.Parse("15:04", input.WindowStart); err != nil {
+		return input, requestError(ErrorRequest)
+	}
+	input.WindowEnd = strings.TrimSpace(input.WindowEnd)
+	if input.WindowEnd == "" {
+		input.WindowEnd = "23:59"
+	} else if _, err := time.Parse("15:04", input.WindowEnd); err != nil {
+		return input, requestError(ErrorRequest)
+	}
+	// 字符串比较对零填充的 HH:MM 24 小时制是安全的，跟数值比较等价。
+	// v1 只支持当天窗口，跨零点（比如 22:00~02:00）暂不支持。
+	if input.WindowEnd <= input.WindowStart {
+		return input, requestError(ErrorRequest)
+	}
+
+	switch input.RecurrenceType {
+	case "":
+		// 老客户端没有这个字段，按原来的"每天"处理。
+		input.RecurrenceType = LatencySubsidyRecurrenceDaily
+	case LatencySubsidyRecurrenceDaily, LatencySubsidyRecurrenceWeekday:
+		input.RecurrenceDaysOfWeek = nil
+	case LatencySubsidyRecurrenceWeekly:
+		if len(input.RecurrenceDaysOfWeek) == 0 {
+			return input, requestError(ErrorRequest)
+		}
+		seen := make(map[int]bool, len(input.RecurrenceDaysOfWeek))
+		days := make([]int, 0, len(input.RecurrenceDaysOfWeek))
+		for _, d := range input.RecurrenceDaysOfWeek {
+			if d < 0 || d > 6 || seen[d] {
+				continue
+			}
+			seen[d] = true
+			days = append(days, d)
+		}
+		if len(days) == 0 {
+			return input, requestError(ErrorRequest)
+		}
+		sort.Ints(days)
+		input.RecurrenceDaysOfWeek = days
+	default:
+		return input, requestError(ErrorRequest)
+	}
+
+	input.ValidFrom = strings.TrimSpace(input.ValidFrom)
+	input.ValidUntil = strings.TrimSpace(input.ValidUntil)
+	if input.ValidFrom != "" {
+		if _, err := time.Parse("2006-01-02", input.ValidFrom); err != nil {
+			return input, requestError(ErrorRequest)
+		}
+	}
+	if input.ValidUntil != "" {
+		if _, err := time.Parse("2006-01-02", input.ValidUntil); err != nil {
+			return input, requestError(ErrorRequest)
+		}
+	}
+	if input.ValidFrom != "" && input.ValidUntil != "" && input.ValidUntil < input.ValidFrom {
+		return input, requestError(ErrorRequest)
+	}
+	return input, nil
+}
+
+// parseLatencySubsidyDate turns a "2026-01-02" (or "") input-form date into
+// the *time.Time the repository stores — nil means no bound. Caller must
+// have already validated the format via normalizeLatencySubsidyTaskInput.
+func parseLatencySubsidyDate(s string) *time.Time {
+	if s == "" {
+		return nil
+	}
+	t, err := time.Parse("2006-01-02", s)
+	if err != nil {
+		return nil
+	}
+	return &t
+}
+
+// ListLatencySubsidyTasks returns every 延迟补贴任务 for the caller's current
+// workspace. Returns an empty slice (not an error) when no task repository
+// is configured, same "feature degrades, doesn't break" stance used
+// elsewhere in this file.
+func (s *Service) ListLatencySubsidyTasks(ctx context.Context, userID string) ([]LatencySubsidyTask, error) {
+	if s.taskRepository == nil {
+		return []LatencySubsidyTask{}, nil
+	}
+	adminAccountID, err := s.currentAdminAccountID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	return s.taskRepository.ListLatencySubsidyTasks(ctx, userID, adminAccountID)
+}
+
+// CreateLatencySubsidyTask saves a new task. It does not run anything —
+// running (manual or scheduled) is a separate step.
+func (s *Service) CreateLatencySubsidyTask(ctx context.Context, userID string, input LatencySubsidyTaskInput) (LatencySubsidyTask, error) {
+	if s.taskRepository == nil {
+		return LatencySubsidyTask{}, requestError(ErrorRequest)
+	}
+	input, err := normalizeLatencySubsidyTaskInput(input)
+	if err != nil {
+		return LatencySubsidyTask{}, err
+	}
+	adminAccountID, err := s.currentAdminAccountID(ctx, userID)
+	if err != nil {
+		return LatencySubsidyTask{}, err
+	}
+	id, err := randomLatencySubsidyTaskID()
+	if err != nil {
+		return LatencySubsidyTask{}, err
+	}
+	now := time.Now().UTC()
+	task := LatencySubsidyTask{
+		ID:                   id,
+		UserID:               userID,
+		AdminAccountID:       adminAccountID,
+		Name:                 input.Name,
+		ThresholdMs:          input.ThresholdMs,
+		ProfitRatio:          input.ProfitRatio,
+		AutoEnabled:          input.AutoEnabled,
+		WindowStart:          input.WindowStart,
+		WindowEnd:            input.WindowEnd,
+		RecurrenceType:       input.RecurrenceType,
+		RecurrenceDaysOfWeek: input.RecurrenceDaysOfWeek,
+		ValidFrom:            parseLatencySubsidyDate(input.ValidFrom),
+		ValidUntil:           parseLatencySubsidyDate(input.ValidUntil),
+		CreatedAt:            now,
+		UpdatedAt:            now,
+	}
+	if err := s.taskRepository.CreateLatencySubsidyTask(ctx, task); err != nil {
+		return LatencySubsidyTask{}, err
+	}
+	return task, nil
+}
+
+// getOwnedLatencySubsidyTask loads a task and implicitly checks ownership —
+// GetLatencySubsidyTask filters by user_id+admin_account_id, so a task
+// belonging to someone else simply doesn't come back, same as "not found".
+func (s *Service) getOwnedLatencySubsidyTask(ctx context.Context, userID, taskID string) (LatencySubsidyTask, error) {
+	if s.taskRepository == nil {
+		return LatencySubsidyTask{}, requestError(ErrorRequest)
+	}
+	adminAccountID, err := s.currentAdminAccountID(ctx, userID)
+	if err != nil {
+		return LatencySubsidyTask{}, err
+	}
+	return s.taskRepository.GetLatencySubsidyTask(ctx, taskID, userID, adminAccountID)
+}
+
+// UpdateLatencySubsidyTask replaces a task's config. Running it again after
+// this uses the new values — it is not versioned.
+func (s *Service) UpdateLatencySubsidyTask(ctx context.Context, userID, taskID string, input LatencySubsidyTaskInput) (LatencySubsidyTask, error) {
+	existing, err := s.getOwnedLatencySubsidyTask(ctx, userID, taskID)
+	if err != nil {
+		return LatencySubsidyTask{}, err
+	}
+	input, err = normalizeLatencySubsidyTaskInput(input)
+	if err != nil {
+		return LatencySubsidyTask{}, err
+	}
+	existing.Name = input.Name
+	existing.ThresholdMs = input.ThresholdMs
+	existing.ProfitRatio = input.ProfitRatio
+	existing.AutoEnabled = input.AutoEnabled
+	existing.WindowStart = input.WindowStart
+	existing.WindowEnd = input.WindowEnd
+	existing.RecurrenceType = input.RecurrenceType
+	existing.RecurrenceDaysOfWeek = input.RecurrenceDaysOfWeek
+	existing.ValidFrom = parseLatencySubsidyDate(input.ValidFrom)
+	existing.ValidUntil = parseLatencySubsidyDate(input.ValidUntil)
+	existing.UpdatedAt = time.Now().UTC()
+	if err := s.taskRepository.UpdateLatencySubsidyTask(ctx, existing); err != nil {
+		return LatencySubsidyTask{}, err
+	}
+	return existing, nil
+}
+
+// DeleteLatencySubsidyTask removes a task. It does not touch any payout
+// already recorded under it — history keeps the task name it had at the
+// time, even after the task itself is gone.
+func (s *Service) DeleteLatencySubsidyTask(ctx context.Context, userID, taskID string) error {
+	if _, err := s.getOwnedLatencySubsidyTask(ctx, userID, taskID); err != nil {
+		return err
+	}
+	adminAccountID, err := s.currentAdminAccountID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	return s.taskRepository.DeleteLatencySubsidyTask(ctx, taskID, userID, adminAccountID)
+}
+
+// RunLatencySubsidyTaskPreview previews what running this task over [from,
+// to) would pay out, using the task's own threshold/ratio. Returns the
+// task's current name alongside the summary so the caller can label the
+// preview without a second lookup.
+func (s *Service) RunLatencySubsidyTaskPreview(ctx context.Context, userID, taskID string, from, to time.Time) (upstream.LatencyCompensationSummary, string, error) {
+	task, err := s.getOwnedLatencySubsidyTask(ctx, userID, taskID)
+	if err != nil {
+		return upstream.LatencyCompensationSummary{}, "", err
+	}
+	summary, err := s.PreviewLatencyCompensation(ctx, userID, from, to, task.ThresholdMs, task.ProfitRatio)
+	return summary, task.Name, err
+}
+
+// RunLatencySubsidyTaskApply actually pays out this task's compensation
+// over [from, to). Irreversible — the caller must have already shown the
+// operator a RunLatencySubsidyTaskPreview result and gotten confirmation.
+func (s *Service) RunLatencySubsidyTaskApply(ctx context.Context, userID, taskID string, from, to time.Time) (upstream.LatencyCompensationSummary, error) {
+	task, err := s.getOwnedLatencySubsidyTask(ctx, userID, taskID)
+	if err != nil {
+		return upstream.LatencyCompensationSummary{}, err
+	}
+	return s.ApplyLatencyCompensation(ctx, userID, from, to, task.ThresholdMs, task.ProfitRatio, task.ID, task.Name)
 }
 
 func (s *Service) findAdminGroup(ctx context.Context, state *State, groupID string) (upstream.AdminGroupInfo, error) {

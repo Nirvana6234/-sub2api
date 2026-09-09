@@ -671,6 +671,11 @@ type ForwardResult struct {
 	ImageSizeBreakdown map[string]int
 	SearchCount        int
 	AudioUsage         *AudioUsage
+
+	// HeadroomTokensSaved is parsed from the upstream response's
+	// x-headroom-tokens-saved header (present only when the request was
+	// actually routed through and compressed by the headroom proxy).
+	HeadroomTokensSaved int
 }
 
 // GatewayFailureStage identifies which request stage failed. The zero value is

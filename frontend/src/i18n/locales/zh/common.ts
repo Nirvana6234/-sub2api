@@ -215,6 +215,7 @@ export default {
     promptAudit: '提示词审计',
     auditLogs: '操作日志',
     accessBlacklist: '访问黑名单',
+    latencyCompensation: '延迟补偿',
   },
 
   // Auth
@@ -1031,6 +1032,12 @@ export default {
     presencePenaltyDescription: '鼓励讨论新主题',
     seedLabel: '随机种子',
     seedDescription: '尽量复现采样结果',
+    reasoningEffortLabel: '推理强度',
+    reasoningEffortDescription: '仅对支持推理的模型生效，关闭表示不传该参数',
+    reasoningEffortNone: '关闭',
+    reasoningEffortLow: '低',
+    reasoningEffortMedium: '中',
+    reasoningEffortHigh: '高',
     resetParameters: '重置参数',
     stream: '流式返回',
     streamHint: '开启后会逐段渲染助手输出。',

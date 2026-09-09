@@ -684,3 +684,322 @@ func (h *UsageHandler) CancelCleanupTask(c *gin.Context) {
 	logger.LegacyPrintf("handler.admin.usage", "[UsageCleanup] 清理任务已取消: task=%d operator=%d", taskID, subject.UserID)
 	response.Success(c, gin.H{"id": taskID, "status": service.UsageCleanupStatusCanceled})
 }
+
+// parseLatencyCompensationWindow parses the "from"/"to" RFC3339 query
+// parameters shared by the preview and apply endpoints. Day-only pickers
+// (used elsewhere in the dashboard) aren't precise enough here — an incident
+// window is often a few hours, not a whole day — so this takes full
+// timestamps and defaults to "since the start of today" when omitted.
+func parseLatencyCompensationWindow(c *gin.Context) (from, to time.Time, err error) {
+	now := time.Now()
+	from = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	to = now
+
+	if raw := strings.TrimSpace(c.Query("from")); raw != "" {
+		from, err = time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("invalid from: %w", err)
+		}
+	}
+	if raw := strings.TrimSpace(c.Query("to")); raw != "" {
+		to, err = time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("invalid to: %w", err)
+		}
+	}
+	if !to.After(from) {
+		return time.Time{}, time.Time{}, fmt.Errorf("to must be after from")
+	}
+	return from, to, nil
+}
+
+// PreviewLatencyCompensation reports what a latency-compensation payout over
+// the given window would look like — per user, how much was actually
+// charged for slow requests versus what they cost the platform — without
+// crediting anyone. GET so an admin can re-run it freely while narrowing the
+// date range.
+func (h *UsageHandler) PreviewLatencyCompensation(c *gin.Context) {
+	from, to, err := parseLatencyCompensationWindow(c)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	thresholdMs, err := strconv.Atoi(strings.TrimSpace(c.Query("threshold_ms")))
+	if err != nil || thresholdMs <= 0 {
+		response.BadRequest(c, "threshold_ms must be a positive integer")
+		return
+	}
+	profitRatio, err := parseLatencyCompensationProfitRatio(c.Query("profit_ratio"))
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
+	summary, err := h.usageService.PreviewLatencyCompensation(c.Request.Context(), from, to, thresholdMs, profitRatio)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, summary)
+}
+
+// parseLatencyCompensationProfitRatio parses the "how much of the margin to
+// refund" ratio (0~1). An empty string defaults to 1 (refund the full
+// margin) so callers that don't care about partial refunds don't have to
+// pass it.
+func parseLatencyCompensationProfitRatio(raw string) (float64, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 1, nil
+	}
+	ratio, err := strconv.ParseFloat(raw, 64)
+	if err != nil || ratio < 0 || ratio > 1 {
+		return 0, fmt.Errorf("profit_ratio must be a number between 0 and 1")
+	}
+	return ratio, nil
+}
+
+// ApplyLatencyCompensationRequest is the POST body for actually paying out a
+// latency compensation batch.
+type ApplyLatencyCompensationRequest struct {
+	From        string   `json:"from" binding:"required"`
+	To          string   `json:"to" binding:"required"`
+	ThresholdMs int      `json:"threshold_ms" binding:"required,min=1"`
+	ProfitRatio *float64 `json:"profit_ratio"`
+}
+
+// ApplyLatencyCompensation credits every user's margin (actual_cost minus
+// account_cost) on qualifying slow requests in the window, then marks
+// exactly those requests compensated.
+//
+// Rows are fetched once up front and both the payout and the marking use
+// that same row set — not a fresh "WHERE first_token_ms >= threshold"
+// re-query for the mark step — because a request that lands in the window
+// between the fetch and the mark would otherwise get silently marked
+// compensated without ever having been paid for.
+//
+// Per-user crediting goes through AdminService.UpdateUserBalance, the same
+// path the manual admin balance adjustment uses, so cache invalidation and
+// the redeem_codes audit trail behave identically to a human doing this one
+// user at a time in the admin panel.
+func (h *UsageHandler) ApplyLatencyCompensation(c *gin.Context) {
+	subject, ok := middleware.GetAuthSubjectFromContext(c)
+	if !ok || subject.UserID <= 0 {
+		response.Unauthorized(c, "Unauthorized")
+		return
+	}
+
+	var req ApplyLatencyCompensationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	from, err := time.Parse(time.RFC3339, req.From)
+	if err != nil {
+		response.BadRequest(c, "invalid from: "+err.Error())
+		return
+	}
+	to, err := time.Parse(time.RFC3339, req.To)
+	if err != nil {
+		response.BadRequest(c, "invalid to: "+err.Error())
+		return
+	}
+	if !to.After(from) {
+		response.BadRequest(c, "to must be after from")
+		return
+	}
+	profitRatio := 1.0
+	if req.ProfitRatio != nil {
+		if *req.ProfitRatio < 0 || *req.ProfitRatio > 1 {
+			response.BadRequest(c, "profit_ratio must be between 0 and 1")
+			return
+		}
+		profitRatio = *req.ProfitRatio
+	}
+
+	ctx := c.Request.Context()
+	rows, err := h.usageService.FetchPendingLatencyCompensationRows(ctx, from, to, req.ThresholdMs)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	summary := service.SummarizeLatencyCompensationRows(rows, from, to, req.ThresholdMs, profitRatio)
+
+	ids := make([]int64, len(rows))
+	for i, row := range rows {
+		ids[i] = row.ID
+	}
+
+	paidUsers := 0
+	for _, u := range summary.Users {
+		if u.Compensation <= 0 {
+			continue
+		}
+		// notes 会原样出现在用户自己的余额/充值记录里，是用户唯一能看到的解释，
+		// 所以就用这四个字打头，不堆技术细节；日期区间留着方便用户对应是哪天变慢了。
+		// 这串文本同时是撤回时用来定位、删除这条记录的匹配 key，见
+		// RevokeLatencyCompensation 和 latencyCompensationGrantNotes。
+		notes := latencyCompensationGrantNotes(from, to)
+		if _, err := h.adminService.UpdateUserBalance(ctx, u.UserID, u.Compensation, "add", notes); err != nil {
+			logger.LegacyPrintf("handler.admin.usage",
+				"[LatencyCompensation] 补偿到账失败，本次未标记为已补偿: user=%d amount=%.8f err=%v",
+				u.UserID, u.Compensation, err)
+			response.ErrorFrom(c, fmt.Errorf("credited %d of %d users before failing on user %d: %w", paidUsers, len(summary.Users), u.UserID, err))
+			return
+		}
+		paidUsers++
+	}
+
+	if err := h.usageService.MarkLatencyCompensated(ctx, ids); err != nil {
+		// Balances are already credited at this point; failing to mark just
+		// means the same rows could be picked up (and paid again) by the next
+		// apply over an overlapping window — log loudly so an admin notices
+		// before that happens, rather than silently losing the failure.
+		logger.LegacyPrintf("handler.admin.usage",
+			"[LatencyCompensation] 已补偿 %d 位用户但标记 %d 条请求为已补偿失败，存在重复补偿风险: err=%v",
+			paidUsers, len(ids), err)
+		response.ErrorFrom(c, fmt.Errorf("paid %d users but failed to mark rows compensated (retrying will double-pay): %w", paidUsers, err))
+		return
+	}
+
+	logger.LegacyPrintf("handler.admin.usage",
+		"[LatencyCompensation] 补偿发放完成: operator=%d users=%d requests=%d total=%.8f",
+		subject.UserID, paidUsers, len(ids), summary.TotalCompensation)
+	response.Success(c, summary)
+}
+
+// latencyCompensationGrantNotes builds the exact notes text a latency-
+// compensation grant over [from, to) stores via UpdateUserBalance — the only
+// explanation of "+X" the user ever sees, and also the lookup key
+// RevokeLatencyCompensation uses to find and delete that same audit row.
+func latencyCompensationGrantNotes(from, to time.Time) string {
+	return fmt.Sprintf("流量延迟补偿：%s ~ %s", from.Format("2006-01-02 15:04"), to.Format("2006-01-02 15:04"))
+}
+
+// legacyLatencyCompensationGrantNotes reproduces the notes text grants made
+// before 2026-09-09 actually stored: the layout string used "2026-01-02
+// 15:04" instead of Go's real reference year "2006", so Format() didn't
+// recognize a year token there and rendered garbled years (e.g.
+// "7076-09-07 16:00"). Revoking one of those older grants must still match
+// this exact garbled text to find and delete it — this exists only for that
+// fallback lookup, never for new writes.
+func legacyLatencyCompensationGrantNotes(from, to time.Time) string {
+	return fmt.Sprintf("流量延迟补偿：%s ~ %s", from.Format("2026-01-02 15:04"), to.Format("2026-01-02 15:04"))
+}
+
+// RevokeLatencyCompensationUser is one line of the per-user amount to claw
+// back — the caller (TransitHub) already has this from the payout record it
+// stored when the compensation was originally applied.
+type RevokeLatencyCompensationUser struct {
+	UserID int64   `json:"user_id" binding:"required"`
+	Amount float64 `json:"amount" binding:"required,gt=0"`
+}
+
+// RevokeLatencyCompensationRequest identifies the original payout to undo:
+// the same window/threshold that was compensated, plus who got how much.
+type RevokeLatencyCompensationRequest struct {
+	From        string                           `json:"from" binding:"required"`
+	To          string                           `json:"to" binding:"required"`
+	ThresholdMs int                              `json:"threshold_ms" binding:"required,min=1"`
+	Users       []RevokeLatencyCompensationUser `json:"users" binding:"required,min=1"`
+}
+
+// RevokeLatencyCompensationResult reports what actually happened per user —
+// a revoke can partially fail (a user already spent the credited balance),
+// and the caller needs to know which ones so it doesn't silently claim
+// "fully undone" when it wasn't.
+type RevokeLatencyCompensationResult struct {
+	RevokedUsers []int64 `json:"revoked_users"`
+	SkippedUsers []int64 `json:"skipped_users"`
+	TotalRevoked float64 `json:"total_revoked"`
+}
+
+// RevokeLatencyCompensation undoes a mistaken payout: subtracts each user's
+// original amount back off their balance and reopens the underlying
+// usage_logs rows (clears latency_compensated_at) so a corrected re-run can
+// compensate them properly. Deliberately does NOT go through
+// AdminService.UpdateUserBalance — the balance change here has to leave no
+// redeem_codes trail, because a "+补偿 / -补偿" pair on the user's own
+// balance history reads as a billing mistake and generates support tickets,
+// when this is actually the operator correcting their own mistake before
+// the user was ever meant to see it.
+//
+// A user whose balance has since dropped below the amount to claw back is
+// skipped rather than forced negative — reported in skipped_users so the
+// caller (and the operator) knows the revoke was only partial.
+func (h *UsageHandler) RevokeLatencyCompensation(c *gin.Context) {
+	subject, ok := middleware.GetAuthSubjectFromContext(c)
+	if !ok || subject.UserID <= 0 {
+		response.Unauthorized(c, "Unauthorized")
+		return
+	}
+
+	var req RevokeLatencyCompensationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	from, err := time.Parse(time.RFC3339, req.From)
+	if err != nil {
+		response.BadRequest(c, "invalid from: "+err.Error())
+		return
+	}
+	to, err := time.Parse(time.RFC3339, req.To)
+	if err != nil {
+		response.BadRequest(c, "invalid to: "+err.Error())
+		return
+	}
+	if !to.After(from) {
+		response.BadRequest(c, "to must be after from")
+		return
+	}
+
+	ctx := c.Request.Context()
+	result := RevokeLatencyCompensationResult{
+		RevokedUsers: make([]int64, 0, len(req.Users)),
+		SkippedUsers: make([]int64, 0),
+	}
+	notes := latencyCompensationGrantNotes(from, to)
+	legacyNotes := legacyLatencyCompensationGrantNotes(from, to)
+	for _, u := range req.Users {
+		if _, err := h.adminService.AdjustUserBalanceSilently(ctx, u.UserID, -u.Amount); err != nil {
+			logger.LegacyPrintf("handler.admin.usage",
+				"[LatencyCompensation] 撤回失败，跳过该用户（可能余额已不足以扣回）: operator=%d user=%d amount=%.8f err=%v",
+				subject.UserID, u.UserID, u.Amount, err)
+			result.SkippedUsers = append(result.SkippedUsers, u.UserID)
+			continue
+		}
+		result.RevokedUsers = append(result.RevokedUsers, u.UserID)
+		result.TotalRevoked += u.Amount
+
+		// 余额已经扣回；接着把原发放那笔 +补偿 的审计行也删掉，不然用户自己的
+		// 余额记录里会留一条对不上账的"+X"，看起来像系统白送了一笔钱又不明不白
+		// 消失。找不到/删不掉不影响撤回本身是否成功，只响亮记日志。
+		found, scrubErr := h.adminService.DeleteAdminAdjustmentTrace(ctx, u.UserID, u.Amount, notes)
+		if scrubErr == nil && !found {
+			found, scrubErr = h.adminService.DeleteAdminAdjustmentTrace(ctx, u.UserID, u.Amount, legacyNotes)
+		}
+		if scrubErr != nil {
+			logger.LegacyPrintf("handler.admin.usage",
+				"[LatencyCompensation] 撤回成功但清除原发放记录出错，用户余额记录里会留一条对不上账的 +补偿: operator=%d user=%d amount=%.8f err=%v",
+				subject.UserID, u.UserID, u.Amount, scrubErr)
+		} else if !found {
+			logger.LegacyPrintf("handler.admin.usage",
+				"[LatencyCompensation] 撤回成功但没找到匹配的原发放记录，用户余额记录里会留一条对不上账的 +补偿: operator=%d user=%d amount=%.8f",
+				subject.UserID, u.UserID, u.Amount)
+		}
+	}
+
+	if err := h.usageService.UnmarkLatencyCompensated(ctx, from, to, req.ThresholdMs); err != nil {
+		// 余额已经扣回，这一步失败只影响"这批请求能否被重新正确补偿一次"，
+		// 不影响撤回本身，所以照样返回成功，但要响亮地记日志。
+		logger.LegacyPrintf("handler.admin.usage",
+			"[LatencyCompensation] 撤回已扣回 %d 位用户余额，但重新打开慢请求标记失败: operator=%d err=%v",
+			len(result.RevokedUsers), subject.UserID, err)
+	}
+
+	logger.LegacyPrintf("handler.admin.usage",
+		"[LatencyCompensation] 撤回完成: operator=%d revoked=%d skipped=%d total=%.8f",
+		subject.UserID, len(result.RevokedUsers), len(result.SkippedUsers), result.TotalRevoked)
+	response.Success(c, result)
+}

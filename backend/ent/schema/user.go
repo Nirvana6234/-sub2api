@@ -131,6 +131,12 @@ func (User) Fields() []ent.Field {
 			Default(false),
 		field.Bool("contribution_rooms_enabled").
 			Default(false),
+		// headroom 上下文压缩开关：开启后网关转发时会带上 x-headroom-base-url
+		// 头把请求路由到 headroom 压缩代理（地址见全局设置
+		// SettingKeyHeadroomBaseURL），压缩失败/超时/未配置时自动跳过、直连
+		// 原上游，不影响可用性。
+		field.Bool("headroom_compression_enabled").
+			Default(false),
 	}
 }
 

@@ -453,6 +453,8 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyClientDownloadDirectURLMac] = normalizeExternalHTTPURL(settings.ClientDownloadDirectURLMac)
 	updates[SettingKeyClientLatestVersion] = strings.TrimSpace(settings.ClientLatestVersion)
 	updates[SettingKeyClientLatestVersionMac] = strings.TrimSpace(settings.ClientLatestVersionMac)
+	updates[SettingKeyClientTutorialVideoURL] = normalizeExternalHTTPURL(settings.ClientTutorialVideoURL)
+	updates[SettingKeyHeadroomBaseURL] = normalizeExternalHTTPURL(settings.HeadroomBaseURL)
 	updates[SettingKeyPlaygroundEnabled] = strconv.FormatBool(settings.PlaygroundEnabled)
 	updates[SettingKeyPlaygroundDefaultChatModel] = strings.TrimSpace(settings.PlaygroundDefaultChatModel)
 	updates[SettingKeyPlaygroundDefaultImageModel] = strings.TrimSpace(settings.PlaygroundDefaultImageModel)

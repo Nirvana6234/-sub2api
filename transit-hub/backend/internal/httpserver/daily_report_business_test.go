@@ -63,6 +63,45 @@ func TestBusinessResultMarksLoss(t *testing.T) {
 	}
 }
 
+// 延迟补偿是打到 Sub2API 用户余额上的钱，不会让 Sub2API 自己报的营收减少
+// （补偿是独立发放，不是订单冲正），所以必须在这里显式从毛利里扣掉，
+// 否则日报会把它算漏，毛利虚高。
+func TestBusinessResultDeductsLatencyCompensation(t *testing.T) {
+	var sb strings.Builder
+	writeBusinessResult(&sb, dailyReportData{
+		Now: testNow(),
+		Settlement: []dashboard.DailySnapshot{
+			{TodayProfitUSD: 100, TodayPurchaseCNY: 20, USDToCNYRate: 1, IsFinalized: true},
+		},
+		TodayCompensationUSD: 15,
+	})
+	out := sb.String()
+	if !strings.Contains(out, "🎁 其中延迟补偿 ¥15.00") {
+		t.Fatalf("应单独列出补偿金额：\n%s", out)
+	}
+	// 成本 = 20 (采购) + 15 (补偿) = 35；毛利 = 100 - 35 = 65。
+	if !strings.Contains(out, "成本 ¥35.00") {
+		t.Fatalf("成本应包含补偿：\n%s", out)
+	}
+	if !strings.Contains(out, "¥65.00") {
+		t.Fatalf("毛利应扣掉补偿：\n%s", out)
+	}
+}
+
+// 没有补偿发生时（默认值 0），不应该出现补偿那一行——报告不该无中生有。
+func TestBusinessResultOmitsCompensationLineWhenZero(t *testing.T) {
+	var sb strings.Builder
+	writeBusinessResult(&sb, dailyReportData{
+		Now: testNow(),
+		Settlement: []dashboard.DailySnapshot{
+			{TodayProfitUSD: 100, TodayPurchaseCNY: 20, USDToCNYRate: 1, IsFinalized: true},
+		},
+	})
+	if strings.Contains(sb.String(), "延迟补偿") {
+		t.Fatalf("没有补偿时不应显示补偿行：\n%s", sb.String())
+	}
+}
+
 // 营收为 0 时毛利率没有意义，不能显示成 0% 或 -Inf。
 func TestMarginTextZeroRevenue(t *testing.T) {
 	if got := marginText(0, -50); got != "毛利率 —" {

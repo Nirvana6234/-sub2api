@@ -63,6 +63,8 @@ type UsageLogRepository interface {
 	GetAPIKeyDashboardStats(ctx context.Context, apiKeyID int64) (*usagestats.UserDashboardStats, error)
 	GetUserUsageTrendByUserID(ctx context.Context, userID int64, startTime, endTime time.Time, granularity string) ([]usagestats.TrendDataPoint, error)
 	GetUserModelStats(ctx context.Context, userID int64, startTime, endTime time.Time) ([]usagestats.ModelStat, error)
+	GetHeadroomModelStats(ctx context.Context, userID int64, startTime, endTime time.Time) ([]usagestats.HeadroomModelStat, error)
+	GetHeadroomTrend(ctx context.Context, userID int64, startTime, endTime time.Time, granularity string) ([]usagestats.HeadroomTrendPoint, error)
 
 	// Admin usage listing/stats
 	ListWithFilters(ctx context.Context, params pagination.PaginationParams, filters usagestats.UsageLogFilters) ([]UsageLog, *pagination.PaginationResult, error)
@@ -78,6 +80,32 @@ type UsageLogRepository interface {
 	GetAccountStatsAggregated(ctx context.Context, accountID int64, startTime, endTime time.Time) (*usagestats.UsageStats, error)
 	GetModelStatsAggregated(ctx context.Context, modelName string, startTime, endTime time.Time) (*usagestats.UsageStats, error)
 	GetDailyStatsAggregated(ctx context.Context, userID int64, startTime, endTime time.Time) ([]map[string]any, error)
+
+	// Latency compensation: refund the margin (actual_cost - account_cost) on
+	// requests slower than a threshold. FetchPendingLatencyCompensationRows
+	// only returns rows not yet marked by MarkLatencyCompensated, so re-running
+	// a payout over an overlapping range is naturally idempotent.
+	FetchPendingLatencyCompensationRows(ctx context.Context, startTime, endTime time.Time, thresholdMs int) ([]LatencyCompensationRow, error)
+	MarkLatencyCompensated(ctx context.Context, ids []int64) error
+	// UnmarkLatencyCompensated reverses MarkLatencyCompensated's effect for
+	// every row in [startTime, endTime) at or above thresholdMs — used when
+	// revoking a mistaken payout so a corrected re-run can compensate the
+	// same rows again. Matches by the same time/threshold filter rather than
+	// an explicit ID list because a revoke only has the payout's window and
+	// threshold on hand, not the row IDs from the original apply call.
+	UnmarkLatencyCompensated(ctx context.Context, startTime, endTime time.Time, thresholdMs int) error
+}
+
+// LatencyCompensationRow is one usage_logs row that qualifies for a latency
+// refund: its own first-token time was at or above the configured threshold
+// and it has not been compensated yet.
+type LatencyCompensationRow struct {
+	ID           int64
+	UserID       int64
+	Email        string
+	FirstTokenMs int64
+	ActualCost   float64
+	AccountCost  float64 // COALESCE(account_stats_cost, total_cost) * account_rate_multiplier, same formula the dashboard uses
 }
 
 type accountWindowStatsBatchReader interface {

@@ -53,6 +53,14 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 		clientHeaders = c.Request.Header
 	}
 
+	// headroom 上下文压缩：仅当用户开启开关、headroom 已配置、上游不是私有/回环
+	// 地址（自建中转）且熔断器未打开时才生效，否则原样直连，不影响可用性。
+	headroomRealOrigin := ""
+	if compressedURL, realOrigin, ok := resolveHeadroomCompressionTarget(ctx, s.settingService, getAPIKeyFromContext(c), targetURL); ok {
+		targetURL = compressedURL
+		headroomRealOrigin = realOrigin
+	}
+
 	// OAuth账号：应用统一指纹和metadata重写（受设置开关控制）
 	var fingerprint *Fingerprint
 	enableFP, enableMPT := true, false
@@ -120,6 +128,9 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 	req, err := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, nil, err
+	}
+	if headroomRealOrigin != "" {
+		req.Header.Set(HeadroomBaseURLHeader, headroomRealOrigin)
 	}
 
 	// 设置认证头（保持原始大小写）

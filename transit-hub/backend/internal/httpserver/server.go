@@ -102,6 +102,11 @@ func New(cfg config.Config, db *pgxpool.Pool, redisClient *redis.Client) *Server
 	})
 	// 上游 Key 连通性测试：复用 connection_health 的探活实现，见 upstream_key_tester.go。
 	mySitesService.SetUpstreamKeyTester(newUpstreamKeyTester())
+	// 延迟补偿发放记录：供日报/周报把补偿计入成本，见 latency_compensation_payouts 表。
+	mySitesService.SetLatencyCompensationPayoutRepository(my_sites.NewRepository(db))
+	// 延迟补贴任务的存取，供任务 CRUD 接口和下面的自动执行调度器共用。
+	latencySubsidyTaskRepo := my_sites.NewRepository(db)
+	mySitesService.SetLatencySubsidyTaskRepository(latencySubsidyTaskRepo)
 
 	// 工单模块：iframe 嵌入配置 + 工单/回复。公开 iframe 接口鉴权完全依赖 embedToken/Sub2API
 	// token 换取的 embed session，与 TransitHub 登录态无关，因此不加入 protectedPath（见下方）。
@@ -375,6 +380,12 @@ func New(cfg config.Config, db *pgxpool.Pool, redisClient *redis.Client) *Server
 	dailyReportSvc.Start(context.Background())
 	// 手动触发（网页按钮 / 机器人指令）与定时推送共用同一套取数和排版。
 	dailyReportSvc.RegisterRoutes(server.mux)
+
+	// 延迟补贴：每个"任务"是一套阈值/比例配置，开了自动执行的任务每天到点会
+	// 自动跑一遍预览+发放，不需要人工点按钮。没有任何任务开自动执行时同样
+	// 只做空转读表，开销可忽略。
+	latencySubsidySvc := newLatencySubsidyScheduler(latencySubsidyTaskRepo, mySitesService)
+	latencySubsidySvc.Start(context.Background())
 
 	settings.RegisterRoutes(server.mux, settingsService)
 

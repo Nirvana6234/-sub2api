@@ -363,7 +363,7 @@
                     </label>
                     <button class="contribution-icon-button contribution-icon-button--compact" :title="t('common.save')" :disabled="busyId === account.account_id" @click="saveRoomAccountSettings(account)"><Icon name="check" size="sm" /></button>
                     <button class="contribution-icon-button contribution-icon-button--compact" :title="account.enabled ? t('accountContributions.disable') : t('accountContributions.enable')" :disabled="busyId === account.account_id" @click="toggleRoomAccount(account)"><Icon :name="account.enabled ? 'ban' : 'checkCircle'" size="sm" /></button>
-                    <button class="contribution-icon-button contribution-icon-button--compact" :title="t('accountContributions.test')" :disabled="busyId === account.account_id" @click="testAccountById(account.account_id)"><Icon name="play" size="sm" /></button>
+                    <button class="contribution-icon-button contribution-icon-button--compact" :title="t('accountContributions.test')" :disabled="busyId === account.account_id" @click="testingAccount = { id: account.account_id, name: account.name }"><Icon name="play" size="sm" /></button>
                     <button class="contribution-icon-button contribution-icon-button--danger contribution-icon-button--compact" :title="t('common.delete')" :disabled="busyId === account.account_id" @click="removeRoomAccount(account.account_id)"><Icon name="trash" size="sm" /></button>
                   </div>
                 </div>
@@ -552,7 +552,7 @@
 
           <template #cell-actions="{ row }">
             <div class="flex items-center gap-1" @click.stop>
-              <button class="contribution-icon-button contribution-icon-button--compact" :title="t('accountContributions.test')" :disabled="busyId === row.id || batchBusy" @click="testAccount(row)"><Icon name="play" size="sm" /></button>
+              <button class="contribution-icon-button contribution-icon-button--compact" :title="t('accountContributions.test')" :disabled="busyId === row.id || batchBusy" @click="testingAccount = { id: row.id, name: row.name }"><Icon name="play" size="sm" /></button>
               <button class="contribution-icon-button contribution-icon-button--compact" :title="t('common.edit')" :disabled="batchBusy" @click="startEdit(row)"><Icon name="edit" size="sm" /></button>
               <button v-if="row.type === 'apikey'" class="contribution-icon-button contribution-icon-button--compact" :title="t('accountContributions.updateConnection')" :disabled="batchBusy" @click="startConnectionEdit(row)"><Icon name="link" size="sm" /></button>
               <button class="contribution-icon-button contribution-icon-button--compact" :title="String(row.status) === 'active' ? t('accountContributions.disable') : t('accountContributions.enable')" :disabled="busyId === row.id || batchBusy" @click="toggleAccount(row)"><Icon :name="String(row.status) === 'active' ? 'ban' : 'checkCircle'" size="sm" /></button>
@@ -598,6 +598,8 @@
         <div v-if="connectionEditingAccount" class="space-y-3"><p class="text-xs text-gray-500 dark:text-gray-400">{{ t('accountContributions.connectionInfoHint') }}</p><div class="grid gap-3 sm:grid-cols-2"><label><span class="mb-1 block text-sm text-gray-700 dark:text-gray-300">{{ t('accountContributions.newAPIKey') }}</span><input v-model.trim="connectionForm.apiKey" type="password" autocomplete="off" class="input" :placeholder="t('accountContributions.newAPIKeyPlaceholder')" /></label><label><span class="mb-1 block text-sm text-gray-700 dark:text-gray-300">{{ t('accountContributions.newBaseURL') }}</span><input v-model.trim="connectionForm.baseURL" class="input" :placeholder="t('accountContributions.newBaseURLPlaceholder')" /></label></div></div>
         <template #footer><div class="flex justify-end gap-2"><button type="button" class="btn btn-secondary" @click="connectionEditingId = null">{{ t('common.cancel') }}</button><button type="button" class="btn btn-primary" :disabled="!connectionEditingAccount || busyId === connectionEditingAccount.id" @click="connectionEditingAccount && saveConnectionInfo(connectionEditingAccount)">{{ t('accountContributions.saveConnection') }}</button></div></template>
       </BaseDialog>
+
+      <ContributionTestModal :show="testingAccount !== null" :account="testingAccount" @close="testingAccount = null" @tested="refreshWorkspace" />
     </div>
   </AppLayout>
 </template>
@@ -611,6 +613,7 @@ import DataTable from '@/components/common/DataTable.vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import Icon from '@/components/icons/Icon.vue'
 import UsageProgressBar from '@/components/account/UsageProgressBar.vue'
+import ContributionTestModal from '@/components/account/ContributionTestModal.vue'
 import accountContributionsAPI, { type AccountContributionResult, type ContributionAccountUsageSummary, type ContributionMode, type ContributionProxy, type ContributionProxyTestResult, type UpdateAccountContributionRequest } from '@/api/accountContributions'
 import contributionRoomsAPI, { type ContributionRoom, type ContributionRoomAccount } from '@/api/contributionRooms'
 import type { Account, AccountPlatform, Group, ProxyProtocol } from '@/types'
@@ -635,6 +638,7 @@ const accounts = ref<Account[]>([])
 const loading = ref(false)
 const submitting = ref(false)
 const busyId = ref<number | null>(null)
+const testingAccount = ref<{ id: number; name: string } | null>(null)
 const selectedAccountIds = ref<Array<string | number>>([])
 const batchBusy = ref(false)
 const batchEditOpen = ref(false)
@@ -1500,20 +1504,6 @@ async function saveConnectionInfo(account: Account) {
   }
 }
 
-async function testAccount(account: Account) { await testAccountById(account.id) }
-async function testAccountById(accountId: number) {
-  busyId.value = accountId
-  try {
-    const result = await accountContributionsAPI.test(accountId)
-    if (result.status === 'success') appStore.showSuccess(t('accountContributions.testSuccess'))
-    else appStore.showError(result.error_message || t('accountContributions.testFailed'))
-    await refreshWorkspace()
-  } catch (error) {
-    appStore.showError(extractApiErrorMessage(error, t('accountContributions.testFailed')))
-  } finally {
-    busyId.value = null
-  }
-}
 
 async function loadUsageSummary(account: Account, force = false) {
   if (usageLoadingIds.has(account.id)) return

@@ -181,6 +181,7 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 				user.FieldLastLoginAt,
 				user.FieldLastActiveAt,
 				user.FieldRpmLimit,
+				user.FieldHeadroomCompressionEnabled,
 			)
 			q.WithAllowedGroups(func(gq *dbent.GroupQuery) {
 				gq.Select(group.FieldID)
@@ -1150,6 +1151,7 @@ func userEntityToService(u *dbent.User) *service.User {
 		RPMLimit:                   u.RpmLimit,
 		AccountManagementEnabled:   u.AccountManagementEnabled,
 		ContributionRoomsEnabled:   u.ContributionRoomsEnabled,
+		HeadroomCompressionEnabled: u.HeadroomCompressionEnabled,
 		CreatedAt:                  u.CreatedAt,
 		UpdatedAt:                  u.UpdatedAt,
 		DeletedAt:                  u.DeletedAt,

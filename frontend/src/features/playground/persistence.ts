@@ -130,8 +130,13 @@ function normalizeParameters(value: unknown): PlaygroundParameters {
     presence_penalty: clampNumber(source.presence_penalty, -2, 2, DEFAULT_PLAYGROUND_PARAMETERS.presence_penalty),
     seed: parseNullableInt(source.seed),
     stream: typeof source.stream === 'boolean' ? source.stream : DEFAULT_PLAYGROUND_PARAMETERS.stream,
+    reasoning_effort: normalizeReasoningEffort(source.reasoning_effort),
     enabled: normalizeEnabledFlags(source),
   }
+}
+
+function normalizeReasoningEffort(value: unknown): PlaygroundParameters['reasoning_effort'] {
+  return value === 'low' || value === 'medium' || value === 'high' ? value : 'none'
 }
 
 function normalizeMessages(value: unknown): PlaygroundMessage[] {

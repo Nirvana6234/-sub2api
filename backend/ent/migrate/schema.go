@@ -2051,6 +2051,7 @@ var (
 		{Name: "rpm_limit", Type: field.TypeInt, Default: 0},
 		{Name: "account_management_enabled", Type: field.TypeBool, Default: false},
 		{Name: "contribution_rooms_enabled", Type: field.TypeBool, Default: false},
+		{Name: "headroom_compression_enabled", Type: field.TypeBool, Default: false},
 	}
 	// UsersTable holds the schema information for the "users" table.
 	UsersTable = &schema.Table{

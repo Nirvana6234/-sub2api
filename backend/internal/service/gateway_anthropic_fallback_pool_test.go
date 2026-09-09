@@ -21,6 +21,17 @@ func (r *anthropicFallbackAccountRepo) ListSchedulableByGroupIDAndPlatforms(_ co
 	return append([]Account(nil), r.byGroup[groupID]...), nil
 }
 
+func (r *anthropicFallbackAccountRepo) ListModelAvailabilityCandidates(_ context.Context, groupID *int64, _ []string, _ bool) ([]Account, error) {
+	if groupID == nil {
+		var all []Account
+		for _, accounts := range r.byGroup {
+			all = append(all, accounts...)
+		}
+		return all, nil
+	}
+	return append([]Account(nil), r.byGroup[*groupID]...), nil
+}
+
 type anthropicFallbackGroupRepo struct {
 	GroupRepository
 	groups map[int64]*Group
@@ -255,3 +266,57 @@ func TestGatewayPlatformSupportsFallbackPool(t *testing.T) {
 }
 
 func gatewayFallbackFloatPtr(v float64) *float64 { return &v }
+
+// 兜底池里一个账号都不支持请求的模型时，不应该被选中——此前 Anthropic/Gemini 侧
+// 兜底取号完全不看模型，选中一个连模型都不支持的兜底组，请求最终会在没有账号可用的
+// 情况下失败，而不是提前判定为不可用。OpenAI 侧对应的检查是
+// shouldUseOpenAIFallbackForModel，这里补齐同样的规则。
+func TestNextGatewayFallbackGroupBlocksUnsupportedModel(t *testing.T) {
+	t.Parallel()
+
+	sourceID, fallbackID := int64(130), int64(230)
+	source := &Group{ID: sourceID, Platform: PlatformAnthropic, Status: StatusActive, FallbackGroupID: &fallbackID}
+	fallback := &Group{ID: fallbackID, Platform: PlatformAnthropic, Status: StatusActive, IsFallbackPool: true}
+	accountRepo := &anthropicFallbackAccountRepo{
+		byGroup: map[int64][]Account{
+			fallbackID: {{
+				ID: 903, Platform: PlatformAnthropic, Status: StatusActive, Schedulable: true,
+				RateMultiplier: gatewayFallbackFloatPtr(1),
+				Credentials: map[string]any{
+					"model_mapping": map[string]any{"claude-3-opus": "claude-3-opus"},
+				},
+			}},
+		},
+	}
+	groupRepo := &anthropicFallbackGroupRepo{groups: map[int64]*Group{sourceID: source, fallbackID: fallback}}
+	svc := &GatewayService{accountRepo: accountRepo, groupRepo: groupRepo, cfg: &config.Config{RunMode: config.RunModeStandard}}
+
+	_, nextID := svc.nextGatewayFallbackGroup(context.Background(), &sourceID, "claude-3-5-sonnet")
+	require.Nil(t, nextID, "兜底池里没有账号支持请求的模型，不应该进入这个兜底组")
+}
+
+// 兜底池里确实有账号支持请求的模型时，照常放行——确认新加的检查不会误伤正常场景。
+func TestNextGatewayFallbackGroupAllowsSupportedModel(t *testing.T) {
+	t.Parallel()
+
+	sourceID, fallbackID := int64(140), int64(240)
+	source := &Group{ID: sourceID, Platform: PlatformAnthropic, Status: StatusActive, FallbackGroupID: &fallbackID}
+	fallback := &Group{ID: fallbackID, Platform: PlatformAnthropic, Status: StatusActive, IsFallbackPool: true}
+	accountRepo := &anthropicFallbackAccountRepo{
+		byGroup: map[int64][]Account{
+			fallbackID: {{
+				ID: 904, Platform: PlatformAnthropic, Status: StatusActive, Schedulable: true,
+				RateMultiplier: gatewayFallbackFloatPtr(1),
+				Credentials: map[string]any{
+					"model_mapping": map[string]any{"claude-3-5-sonnet": "claude-3-5-sonnet"},
+				},
+			}},
+		},
+	}
+	groupRepo := &anthropicFallbackGroupRepo{groups: map[int64]*Group{sourceID: source, fallbackID: fallback}}
+	svc := &GatewayService{accountRepo: accountRepo, groupRepo: groupRepo, cfg: &config.Config{RunMode: config.RunModeStandard}}
+
+	_, nextID := svc.nextGatewayFallbackGroup(context.Background(), &sourceID, "claude-3-5-sonnet")
+	require.NotNil(t, nextID)
+	require.Equal(t, fallbackID, *nextID)
+}

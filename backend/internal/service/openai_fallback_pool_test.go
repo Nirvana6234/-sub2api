@@ -177,7 +177,15 @@ func TestNextOpenAIFallbackGroupBlocksUnsupportedModel(t *testing.T) {
 	}
 }
 
-func TestNextOpenAIFallbackGroupUsesTargetModelSupport(t *testing.T) {
+// 2026-09-08: this used to assert the opposite — that a fallback pool
+// supporting the model was enough, even when the source group's own accounts
+// never supported it at all. That let a "plus" group with zero gpt-6-astra
+// accounts silently serve it from an unrelated fallback pool by
+// misconfiguration. Per product decision, the source group's own catalog now
+// gates fallback too: if nothing in the source group was ever configured
+// with the model, the request should get model_not_found, not borrow it from
+// a pool the group was never meant to draw that model from.
+func TestNextOpenAIFallbackGroupBlocksWhenSourceNeverSupportedModel(t *testing.T) {
 	const (
 		sourceGroupID   = int64(10)
 		fallbackGroupID = int64(20)
@@ -213,8 +221,55 @@ func TestNextOpenAIFallbackGroupUsesTargetModelSupport(t *testing.T) {
 		PlatformOpenAI,
 		"gpt-5.6-sol",
 	)
+	if nextID != nil {
+		t.Fatalf("source group never supported the model, fallback should be blocked, got %#v", nextID)
+	}
+	if isOpenAIFallbackPoolSourcing(ctx) {
+		t.Fatal("blocked fallback must not mark the request as fallback-sourced")
+	}
+}
+
+// The source group's own accounts support the model (so its catalog does
+// carry it) — this is the transient-unavailability case (rate limited, over
+// quota, etc.) that fallback must still cover.
+func TestNextOpenAIFallbackGroupAllowsWhenSourceSupportsModelButUnavailable(t *testing.T) {
+	const (
+		sourceGroupID   = int64(10)
+		fallbackGroupID = int64(20)
+	)
+	svc := fallbackTestService(
+		&Group{ID: sourceGroupID, Platform: PlatformOpenAI, Status: StatusActive, FallbackGroupID: fallbackIDPtr(fallbackGroupID)},
+		&Group{ID: fallbackGroupID, Platform: PlatformOpenAI, Status: StatusActive, IsFallbackPool: true},
+	)
+	svc.accountRepo = &fallbackScopedModelAvailabilityRepo{
+		accounts: []Account{
+			{
+				ID:          1,
+				Platform:    PlatformOpenAI,
+				Status:      StatusActive,
+				Schedulable: true,
+				GroupIDs:    []int64{sourceGroupID},
+				Credentials: map[string]any{"model_mapping": map[string]any{"gpt-5.6-sol": "gpt-5.6-sol"}},
+			},
+			{
+				ID:          2,
+				Platform:    PlatformOpenAI,
+				Status:      StatusActive,
+				Schedulable: true,
+				GroupIDs:    []int64{fallbackGroupID},
+				Credentials: map[string]any{"model_mapping": map[string]any{"gpt-5.6-sol": "gpt-5.6-sol"}},
+			},
+		},
+	}
+
+	ctx, nextID := svc.nextOpenAIFallbackGroup(
+		context.Background(),
+		fallbackIDPtr(sourceGroupID),
+		PlatformOpenAI,
+		"gpt-5.6-sol",
+	)
 	if nextID == nil || *nextID != fallbackGroupID {
-		t.Fatalf("target group supports model and should be selected, got %#v", nextID)
+		t.Fatalf("source group's catalog supports the model, fallback should proceed, got %#v", nextID)
 	}
 	if !isOpenAIFallbackPoolSourcing(ctx) {
 		t.Fatal("selected fallback should mark the request as fallback-sourced")

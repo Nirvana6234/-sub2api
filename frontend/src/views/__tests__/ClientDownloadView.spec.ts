@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, RouterLinkStub } from '@vue/test-utils'
 
 import ClientDownloadView from '../ClientDownloadView.vue'
@@ -90,5 +90,83 @@ describe('ClientDownloadView', () => {
     const links = wrapper.findAllComponents(RouterLinkStub)
 
     expect(links.some((link) => link.props('to') === '/login')).toBe(true)
+  })
+
+  it('hides the entire macOS section when no mac direct URL is configured', () => {
+    const wrapper = mountDownloadPage()
+
+    expect(wrapper.text()).not.toContain('macOS')
+    expect(wrapper.text()).not.toContain('Apple 芯片')
+  })
+
+  it('hides the tutorial video section when no video URL is configured', () => {
+    const wrapper = mountDownloadPage()
+
+    expect(wrapper.text()).not.toContain('去 B 站观看')
+  })
+
+  describe('with a tutorial video URL configured', () => {
+    beforeEach(() => {
+      appStore.cachedPublicSettings.client_tutorial_video_url = 'https://www.bilibili.com/video/BV1vWYJ6PEhc/'
+    })
+
+    afterEach(() => {
+      delete appStore.cachedPublicSettings.client_tutorial_video_url
+    })
+
+    it('links out to the admin-configured video URL in a new tab instead of embedding it', () => {
+      const wrapper = mountDownloadPage()
+
+      const link = wrapper.get('a[href="https://www.bilibili.com/video/BV1vWYJ6PEhc/"]')
+      expect(link.text()).toContain('去 B 站观看')
+      expect(link.attributes('target')).toBe('_blank')
+      expect(link.attributes('rel')).toBe('noopener')
+      expect(wrapper.find('iframe').exists()).toBe(false)
+    })
+
+    it('drops the video link when the configured URL is not http(s)', () => {
+      appStore.cachedPublicSettings.client_tutorial_video_url = 'javascript:alert(1)'
+
+      const wrapper = mountDownloadPage()
+
+      expect(wrapper.text()).not.toContain('去 B 站观看')
+    })
+  })
+
+  describe('with a macOS direct URL configured', () => {
+    beforeEach(() => {
+      appStore.cachedPublicSettings.client_download_direct_url_mac =
+        'https://download.example.com/downloads/codex-relay-client_v0.2_macos-arm64.tar.gz'
+    })
+
+    afterEach(() => {
+      delete appStore.cachedPublicSettings.client_download_direct_url_mac
+    })
+
+    it('shows the mac install command derived from the same directory as the package', () => {
+      const wrapper = mountDownloadPage()
+
+      // 平台徽章要跟着变，否则页面顶部一直写"Windows x64"，mac 用户会以为找错了页面。
+      expect(wrapper.text()).toContain('Windows x64 · macOS')
+      expect(wrapper.text()).toContain(
+        'curl -fsSL https://download.example.com/downloads/install-mac.sh | bash'
+      )
+      expect(wrapper.text()).toContain('codex-relay-client_v0.2_macos-arm64.tar.gz')
+    })
+
+    it('tells mac users to skip the Windows-only unzip and shortcut steps', () => {
+      const wrapper = mountDownloadPage()
+
+      // 第 1 步的 Windows 解压说明和第 9 步的开始菜单快捷方式对 mac 用户没有意义，
+      // 之前这两步会让 mac 用户误以为自己漏了什么操作。
+      expect(wrapper.text()).toContain('请忽略上面的下载解压步骤')
+      expect(wrapper.text()).toContain('不需要额外注册快捷方式')
+    })
+
+    it('adds the Intel-chip FAQ entry matching the real install script rejection message', () => {
+      const wrapper = mountDownloadPage()
+
+      expect(wrapper.text()).toContain('当前是 Intel 芯片，本版本只支持 Apple 芯片')
+    })
   })
 })

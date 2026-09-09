@@ -2982,6 +2982,10 @@ func (r *oauthPendingFlowRedeemCodeRepo) Delete(context.Context, int64) error {
 	panic("unexpected Delete call")
 }
 
+func (r *oauthPendingFlowRedeemCodeRepo) FindAdminAdjustment(context.Context, int64, float64, string) (*service.RedeemCode, error) {
+	panic("unexpected FindAdminAdjustment call")
+}
+
 func (r *oauthPendingFlowRedeemCodeRepo) Use(ctx context.Context, id, userID int64) error {
 	affected, err := r.client.RedeemCode.Update().
 		Where(redeemcode.IDEQ(id), redeemcode.StatusEQ(service.StatusUnused)).

@@ -217,6 +217,82 @@ func (s *OpenAIGatewayService) BindStickySession(ctx context.Context, groupID *i
 	return s.setStickySessionAccountID(ctx, groupID, sessionHash, accountID, ttl)
 }
 
+// openaiStickySessionFailureUnstickThreshold：粘性会话绑定的账号连续失败达到这个
+// 次数后，主动清掉绑定，让下一次请求重新选号——而不是无限期粘在一个每次都在这一步
+// 失败的账号上（典型场景：上游中转商自己的排队/调度超时，以 response.failed 事件
+// 形式吐出来，这类失败不走账号间的失败切换，只会终结当前请求，参见
+// handleOpenAIStickySessionOutcome 的调用点）。阈值给 2 而不是 1：避免一次性的
+// 偶发抖动就把粘性绑定打散，丢失同账号的上下文/缓存连续性收益。
+const openaiStickySessionFailureUnstickThreshold = 2
+
+// StickySessionFailureTracker is an optional GatewayCache capability. The
+// production Redis cache implements it; cache stubs that don't exercise this
+// self-healing path don't need to implement it for ordinary gateway tests.
+type StickySessionFailureTracker interface {
+	IncrementStickySessionFailure(ctx context.Context, groupID int64, sessionHash string, ttl time.Duration) (int64, error)
+	ResetStickySessionFailure(ctx context.Context, groupID int64, sessionHash string) error
+}
+
+func (s *OpenAIGatewayService) stickySessionFailureTracker() StickySessionFailureTracker {
+	if s == nil || s.cache == nil {
+		return nil
+	}
+	tracker, _ := s.cache.(StickySessionFailureTracker)
+	return tracker
+}
+
+func (s *OpenAIGatewayService) stickySessionTTL() time.Duration {
+	ttl := openaiStickySessionTTL
+	if s != nil && s.cfg != nil && s.cfg.Gateway.OpenAIWS.StickySessionTTLSeconds > 0 {
+		ttl = time.Duration(s.cfg.Gateway.OpenAIWS.StickySessionTTLSeconds) * time.Second
+	}
+	return ttl
+}
+
+// RecordStickySessionFailure 记录一次粘性会话绑定账号请求失败。连续失败次数达到
+// openaiStickySessionFailureUnstickThreshold 时，主动清掉粘性绑定并重置计数，
+// 让该会话下一次请求脱离这个账号重新调度。
+func (s *OpenAIGatewayService) RecordStickySessionFailure(ctx context.Context, groupID *int64, sessionHash string, accountID int64) {
+	tracker := s.stickySessionFailureTracker()
+	if tracker == nil || sessionHash == "" {
+		return
+	}
+	gid := derefGroupID(groupID)
+	if gid <= 0 {
+		return
+	}
+	count, err := tracker.IncrementStickySessionFailure(ctx, gid, sessionHash, s.stickySessionTTL())
+	if err != nil {
+		slog.Warn("sticky_session_failure_increment_failed",
+			"group_id", gid, "account_id", accountID, "error", err)
+		return
+	}
+	if count < openaiStickySessionFailureUnstickThreshold {
+		return
+	}
+	if delErr := s.cache.DeleteSessionAccountID(ctx, gid, sessionHash); delErr != nil {
+		slog.Warn("sticky_session_unstick_after_repeated_failures_failed",
+			"group_id", gid, "account_id", accountID, "failure_count", count, "error", delErr)
+		return
+	}
+	_ = tracker.ResetStickySessionFailure(ctx, gid, sessionHash)
+	slog.Warn("sticky_session_unstuck_after_repeated_failures",
+		"group_id", gid, "account_id", accountID, "failure_count", count)
+}
+
+// RecordStickySessionSuccess 清零粘性会话的连续失败计数，请求成功完成时调用。
+func (s *OpenAIGatewayService) RecordStickySessionSuccess(ctx context.Context, groupID *int64, sessionHash string) {
+	tracker := s.stickySessionFailureTracker()
+	if tracker == nil || sessionHash == "" {
+		return
+	}
+	gid := derefGroupID(groupID)
+	if gid <= 0 {
+		return
+	}
+	_ = tracker.ResetStickySessionFailure(ctx, gid, sessionHash)
+}
+
 // SelectAccount selects an OpenAI account with sticky session support
 func (s *OpenAIGatewayService) SelectAccount(ctx context.Context, groupID *int64, sessionHash string) (*Account, error) {
 	return s.SelectAccountForModel(ctx, groupID, sessionHash, "")

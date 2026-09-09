@@ -404,7 +404,7 @@
           <CanvasMiniMap :nodes="activeProject?.nodes ?? []" :viewport="activeProject?.viewport ?? { x: 0, y: 0, scale: 1 }" @update-viewport="updateCanvasViewportFromMiniMap" />
           <CanvasContextMenu v-if="contextMenu && contextMenuNode" :x="contextMenu.x" :y="contextMenu.y" :node="contextMenuNode" @duplicate="duplicateContextNode" @copy="copyContextNode" @front="bringContextNodeFront" @back="sendContextNodeBack" @download="downloadNode(contextMenu.nodeId); contextMenu = null" @reference="useResultAsReference(contextMenu.nodeId); contextMenu = null" @capture-video-frame="captureVideoFrame(contextMenu.nodeId, $event)" @delete="deleteNode(contextMenu.nodeId); contextMenu = null" />
           <CanvasConnectionContextMenu v-if="connectionContextMenu" :x="connectionContextMenu.x" :y="connectionContextMenu.y" @delete="deleteConnectionFromContextMenu" @close="connectionContextMenu = null" />
-          <CanvasAssistant v-if="assistantOpen" :messages="activeProject?.assistantMessages ?? []" :context-count="assistantContextNodes.length" :references="assistantMentionReferences" :models="textModels" :model="assistantModel" :loading="assistantLoading" @update:model="assistantModel = $event" @send="sendAssistantMessage" @cancel="cancelAssistant" @insert="insertAssistantMessage" @activate="focusCanvasNode" @clear="clearAssistantMessages" @close="assistantOpen = false" />
+          <CanvasAssistant v-if="assistantOpen" :messages="activeProject?.assistantMessages ?? []" :context-count="assistantContextNodes.length" :references="assistantMentionReferences" :models="textModels" :model="assistantModel" :reasoning-effort="assistantReasoningEffort" :loading="assistantLoading" @update:model="assistantModel = $event" @update:reasoning-effort="setAssistantReasoningEffort($event)" @send="sendAssistantMessage" @cancel="cancelAssistant" @insert="insertAssistantMessage" @activate="focusCanvasNode" @clear="clearAssistantMessages" @close="assistantOpen = false" />
           <CanvasAgentDialog v-if="agentOpen" :endpoint="agentEndpoint" :token="agentToken" :connected="agentConnected" :busy="agentBusy" :sending="agentSending" :conversation-status="agentConversation.status" :active-thread-id="agentConversation.threadId" :threads="agentThreads" :skills="agentSkills" :approval="agentApproval" :messages="agentMessages" :error-message="agentError" @connect="connectCanvasAgent" @disconnect="disconnectCanvasAgent" @sync="publishAgentState" @send="sendCanvasAgentTurn" @cancel="cancelCanvasAgentTurn" @resume="resumeCanvasAgentThread" @approve="resolveCanvasAgentApproval" @toggle-skill="toggleCanvasAgentSkill" @close="agentOpen = false" />
           <CanvasPluginManagerDialog v-if="pluginManagerOpen" :plugins="plugins" :official-plugins="officialPlugins" :busy="pluginBusy" :error-message="pluginError" @install="installCanvasPlugin" @toggle="toggleCanvasPlugin" @uninstall="uninstallCanvasPluginEntry" @close="pluginManagerOpen = false" />
           <CanvasPromptLibrary v-if="promptLibraryOpen" :prompts="promptLibraryEntries" :refreshing="promptRegistryLoading" @close="promptLibraryOpen = false" @insert="insertPromptFromLibrary" @add="addCustomPrompt" @remove="removeCustomPrompt" @refresh="refreshPromptRegistry" />
@@ -883,6 +883,10 @@ const textGenerationControllers = new Map<string, AbortController>()
 const assistantOpen = ref(false)
 const assistantLoading = ref(false)
 const assistantModel = ref('')
+const assistantReasoningEffort = ref<'none' | 'low' | 'medium' | 'high'>('none')
+function setAssistantReasoningEffort(value: string): void {
+  if (value === 'none' || value === 'low' || value === 'medium' || value === 'high') assistantReasoningEffort.value = value
+}
 const assistantController = ref<AbortController | null>(null)
 const agentOpen = ref(false)
 const agentConnected = ref(false)
@@ -2655,12 +2659,18 @@ function createCanvasPluginContext(node: CanvasNodeData): CanvasPluginRuntimeCon
     }
     throw new Error('视频生成超时。')
   }
-  const pluginTextGeneration = async (prompt: string, options?: { signal?: AbortSignal; model?: string; system?: string; onDelta?: (text: string) => void }): Promise<{ text: string }> => {
+  const pluginTextGeneration = async (prompt: string, options?: { signal?: AbortSignal; model?: string; system?: string; reasoningEffort?: 'none' | 'low' | 'medium' | 'high'; onDelta?: (text: string) => void }): Promise<{ text: string }> => {
     const keyId = selectedTextKeyId.value
     const model = options?.model?.trim() || selectedTextModel.value
     if (!keyId || !model) throw new Error('未配置可用的文本模型或 API Key。')
     const messages = [...(options?.system?.trim() ? [{ role: 'system', content: options.system.trim() }] : []), { role: 'user', content: prompt }]
-    const result = await sendPlaygroundChat(keyId, { model, messages, stream: true }, { signal: options?.signal ?? new AbortController().signal, onDelta: (delta) => options?.onDelta?.(delta.contentDelta) })
+    const reasoningEffort = options?.reasoningEffort
+    const result = await sendPlaygroundChat(keyId, {
+      model,
+      messages,
+      stream: true,
+      ...(reasoningEffort && reasoningEffort !== 'none' ? { reasoning_effort: reasoningEffort } : {}),
+    }, { signal: options?.signal ?? new AbortController().signal, onDelta: (delta) => options?.onDelta?.(delta.contentDelta) })
     return { text: result.content }
   }
   const pluginAudioGeneration = async (prompt: string, options?: { signal?: AbortSignal; model?: string; voice?: string; language?: string }): Promise<{ url: string; mimeType: string }> => {
@@ -3775,6 +3785,7 @@ async function sendAssistantMessage(content: string): Promise<void> {
     const result = await sendPlaygroundChat(keyId, {
       model,
       stream: true,
+      ...(assistantReasoningEffort.value !== 'none' ? { reasoning_effort: assistantReasoningEffort.value } : {}),
       messages: [
         { role: 'system', content: t('playground.canvasAssistantSystemPrompt') },
         ...history,
@@ -5166,6 +5177,10 @@ async function reversePromptImage(nodeId: string, imageIndex: number): Promise<v
     const result = await sendPlaygroundChat(keyId, {
       model,
       stream: true,
+      // 反推提示词跟 AI 助手共用同一套文本模型选择（selectedTextModel /
+      // assistantModel），推理强度也复用助手那一份设置，不用再单独给这个
+      // 一次性动作起一套独立的 UI。
+      ...(assistantReasoningEffort.value !== 'none' ? { reasoning_effort: assistantReasoningEffort.value } : {}),
       messages: [
         { role: 'system', content: t('playground.canvasReversePromptSystem') },
         { role: 'user', content: [

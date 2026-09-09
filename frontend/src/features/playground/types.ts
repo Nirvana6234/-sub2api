@@ -79,6 +79,8 @@ export interface PlaygroundParameterEnabledState {
   seed: boolean
 }
 
+export type PlaygroundReasoningEffort = 'none' | 'low' | 'medium' | 'high'
+
 export interface PlaygroundParameters {
   temperature: number
   top_p: number
@@ -87,6 +89,9 @@ export interface PlaygroundParameters {
   presence_penalty: number
   seed: number | null
   stream: boolean
+  // 'none' 就是"关闭"，跟其它参数不一样，不需要额外的 enabled 开关
+  // （和无限画布文字节点的推理强度选择器保持同一套约定）。
+  reasoning_effort: PlaygroundReasoningEffort
   enabled: PlaygroundParameterEnabledState
 }
 
@@ -174,6 +179,7 @@ export interface PlaygroundChatPayload {
   stream: boolean
   max_tokens?: number
   seed?: number
+  reasoning_effort?: Exclude<PlaygroundReasoningEffort, 'none'>
 }
 
 export interface PlaygroundCompletionResult {

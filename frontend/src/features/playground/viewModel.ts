@@ -48,6 +48,7 @@ export const DEFAULT_PLAYGROUND_PARAMETERS: PlaygroundParameters = {
   presence_penalty: 0,
   seed: null,
   stream: true,
+  reasoning_effort: 'none',
   enabled: { ...DEFAULT_PLAYGROUND_PARAMETER_ENABLED },
 }
 
@@ -166,6 +167,7 @@ export function cloneParameters(parameters: PlaygroundParameters): PlaygroundPar
     presence_penalty: parameters.presence_penalty,
     seed: parameters.seed,
     stream: parameters.stream,
+    reasoning_effort: parameters.reasoning_effort,
     enabled: {
       temperature: parameters.enabled.temperature,
       top_p: parameters.enabled.top_p,
@@ -533,6 +535,10 @@ export function buildChatPayload(input: {
     && Number.isFinite(input.parameters.seed)
   ) {
     payload.seed = Math.trunc(input.parameters.seed)
+  }
+
+  if (input.parameters.reasoning_effort && input.parameters.reasoning_effort !== 'none') {
+    payload.reasoning_effort = input.parameters.reasoning_effort
   }
 
   return payload

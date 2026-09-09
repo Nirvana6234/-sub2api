@@ -17,7 +17,9 @@ import (
 // v20 必须升版本而不是沿用 v19：v19 期间写入的快照缺少上面那批定价字段，
 // 不失效掉它们的话，缓存里的旧快照会继续按零值计费直到自然过期。v22 追加了
 // group free_openai_fast 字段；v23 合并两次升级，强制刷新所有旧快照。
-const apiKeyAuthSnapshotVersion = 23 // v23: group long-context/model pricing + free_openai_fast fields (force refresh of pre-fix snapshots)
+// v24 补上 User.HeadroomCompressionEnabled——此前快照结构体压根没有这个字段，
+// 导致该开关无论数据库里是什么值，命中缓存后一律读成零值 false，功能全程无效。
+const apiKeyAuthSnapshotVersion = 24 // v24: add User.HeadroomCompressionEnabled (was missing from snapshot entirely)
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -372,6 +374,7 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			BalanceNotifyExtraEmails:   apiKey.User.BalanceNotifyExtraEmails,
 			TotalRecharged:             apiKey.User.TotalRecharged,
 			RPMLimit:                   apiKey.User.RPMLimit,
+			HeadroomCompressionEnabled: apiKey.User.HeadroomCompressionEnabled,
 		},
 	}
 
@@ -488,6 +491,7 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			TotalRecharged:             snapshot.User.TotalRecharged,
 			RPMLimit:                   snapshot.User.RPMLimit,
 			UserGroupRPMOverride:       snapshot.User.UserGroupRPMOverride,
+			HeadroomCompressionEnabled: snapshot.User.HeadroomCompressionEnabled,
 		},
 	}
 	if snapshot.Group != nil {

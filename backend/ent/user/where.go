@@ -195,6 +195,11 @@ func ContributionRoomsEnabled(v bool) predicate.User {
 	return predicate.User(sql.FieldEQ(FieldContributionRoomsEnabled, v))
 }
 
+// HeadroomCompressionEnabled applies equality check predicate on the "headroom_compression_enabled" field. It's identical to HeadroomCompressionEnabledEQ.
+func HeadroomCompressionEnabled(v bool) predicate.User {
+	return predicate.User(sql.FieldEQ(FieldHeadroomCompressionEnabled, v))
+}
+
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.
 func CreatedAtEQ(v time.Time) predicate.User {
 	return predicate.User(sql.FieldEQ(FieldCreatedAt, v))
@@ -1508,6 +1513,16 @@ func ContributionRoomsEnabledEQ(v bool) predicate.User {
 // ContributionRoomsEnabledNEQ applies the NEQ predicate on the "contribution_rooms_enabled" field.
 func ContributionRoomsEnabledNEQ(v bool) predicate.User {
 	return predicate.User(sql.FieldNEQ(FieldContributionRoomsEnabled, v))
+}
+
+// HeadroomCompressionEnabledEQ applies the EQ predicate on the "headroom_compression_enabled" field.
+func HeadroomCompressionEnabledEQ(v bool) predicate.User {
+	return predicate.User(sql.FieldEQ(FieldHeadroomCompressionEnabled, v))
+}
+
+// HeadroomCompressionEnabledNEQ applies the NEQ predicate on the "headroom_compression_enabled" field.
+func HeadroomCompressionEnabledNEQ(v bool) predicate.User {
+	return predicate.User(sql.FieldNEQ(FieldHeadroomCompressionEnabled, v))
 }
 
 // HasAPIKeys applies the HasEdge predicate on the "api_keys" edge.

@@ -1026,6 +1026,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			if headerGuard != nil {
 				headerGuard.close()
 			}
+			if upstreamReq.Header.Get(HeadroomBaseURLHeader) != "" {
+				markHeadroomTransportFailure()
+			}
 			// Transport-level failure (proxy/DNS/TCP/TLS — no HTTP response). Convert to
 			// a failover so the handler switches to a healthy account, and temporarily
 			// unschedule the account on durable faults (e.g. rejected proxy credentials).
@@ -1252,6 +1255,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			OpenAIWSMode:                  false,
 			Duration:                      time.Since(startTime),
 			FirstTokenMs:                  firstTokenMs,
+			HeadroomTokensSaved:           parseHeadroomTokensSavedHeader(resp.Header),
 		}
 		if imageCount > 0 {
 			forwardResult.ImageCount = imageCount
@@ -1322,6 +1326,17 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	}
 	targetURL = appendOpenAIResponsesRequestPathSuffix(targetURL, openAIResponsesRequestPathSuffix(c))
 
+	// headroom 上下文压缩：ChatGPT OAuth/Codex 内部协议账号排除在外——headroom
+	// 对"ChatGPT 会话认证"有自己的一套内置路由逻辑，会无视 x-headroom-base-url
+	// 抢先接管，账号可能被错误路由，不冒这个险，始终直连。
+	headroomRealOrigin := ""
+	if !account.UsesOpenAICodexProtocol() {
+		if compressedURL, realOrigin, ok := resolveHeadroomCompressionTarget(ctx, s.settingService, getAPIKeyFromContext(c), targetURL); ok {
+			targetURL = compressedURL
+			headroomRealOrigin = realOrigin
+		}
+	}
+
 	// DeepSeek / Kimi 原生 Responses 端点为无状态实现：强制 store=false、清除
 	// previous_response_id，避免携带状态字段被上游拒绝。
 	body = normalizeDeepSeekResponsesRequestBody(account, body)
@@ -1329,6 +1344,9 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	req, err := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
+	}
+	if headroomRealOrigin != "" {
+		req.Header.Set(HeadroomBaseURLHeader, headroomRealOrigin)
 	}
 	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
 

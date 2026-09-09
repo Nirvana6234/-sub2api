@@ -91,6 +91,7 @@ export interface User {
   rpm_limit?: number // User-level RPM cap (0 = unlimited); effective as fallback when group has no rpm_limit
   account_management_enabled?: boolean
   contribution_rooms_enabled?: boolean
+  headroom_compression_enabled?: boolean
   status: 'active' | 'disabled' // Account status
   allowed_groups: number[] | null // Allowed group IDs (null = all non-exclusive groups)
   balance_notify_enabled: boolean
@@ -296,6 +297,14 @@ export interface PublicSettings {
   client_latest_version: string
   /** macOS 客户端最新版本号；与 Windows 分开，两个平台不同时发布。 */
   client_latest_version_mac: string
+  /** 客户端下载页展示的视频教程地址（B站视频页链接）；为空则不显示视频区块。 */
+  client_tutorial_video_url: string
+  /** Chat 桌面客户端（独立产品）下载区块是否展示；默认关闭。 */
+  chat_app_download_enabled: boolean
+  /** Chat 桌面客户端安装包直链；为空则隐藏该区块。 */
+  chat_app_download_direct_url: string
+  /** Chat 桌面客户端最新版本号；为空表示不广播更新。 */
+  chat_app_latest_version: string
   /** 充值页是否展示备用支付通道入口（默认关闭）。 */
   backup_payment_enabled: boolean
   /** 备用支付通道地址；后端已校验只允许 http/https，非法值会落成空串。 */

@@ -50,6 +50,10 @@ func (r *redeemRejectRepo) Delete(ctx context.Context, id int64) error {
 	panic("unexpected Delete call")
 }
 
+func (r *redeemRejectRepo) FindAdminAdjustment(ctx context.Context, userID int64, value float64, notes string) (*RedeemCode, error) {
+	panic("unexpected FindAdminAdjustment call")
+}
+
 func (r *redeemRejectRepo) Use(ctx context.Context, id, userID int64) error {
 	r.useCalled = true
 	r.code.Status = StatusUsed

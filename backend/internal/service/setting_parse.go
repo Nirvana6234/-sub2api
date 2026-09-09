@@ -210,6 +210,7 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		// 用户下到的是一个 55 字节的报错文本而不是安装包。
 		SettingKeyClientDownloadNetdiskURL: "https://pan.baidu.com/s/5PT50-jTaOtR8D28OfYnbQQ",
 		SettingKeyClientDownloadDirectURL:  ClientDownloadDefaultDirectURL,
+		SettingKeyClientTutorialVideoURL:   "https://www.bilibili.com/video/BV1vWYJ6PEhc/",
 
 		// 三个都默认为空，客户端据此不广播任何更新。
 		//
@@ -220,6 +221,18 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyClientDownloadDirectURLMac: "",
 		SettingKeyClientLatestVersion:        "",
 		SettingKeyClientLatestVersionMac:     "",
+
+		// 延迟补偿慢请求阈值，默认 30 秒；退款比例默认 1（全退利润）
+		SettingKeyLatencyCompensationThresholdMs: "30000",
+		SettingKeyLatencyCompensationProfitRatio: "1",
+
+		// headroom 压缩代理地址，默认留空（未部署/未配置时不生效）
+		SettingKeyHeadroomBaseURL: "",
+
+		// Chat 桌面客户端下载（新产品，默认关闭，地址留空）
+		SettingKeyChatAppDownloadEnabled:   "false",
+		SettingKeyChatAppDownloadDirectURL: "",
+		SettingKeyChatAppLatestVersion:     "",
 
 		// 备用支付通道（默认关闭；opt-in）
 		SettingKeyBackupPaymentEnabled: "false",
@@ -267,8 +280,8 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyAllowUngroupedKeyScheduling:                        "false",
 		SettingKeyOpenAILowUpstreamRatePriorityEnabled:               "false",
 		SettingKeyOpenAILatencyAwareFallbackEnabled:                  "false",
-		SettingKeyOpenAILatencyThresholdMs:                            strconv.Itoa(defaultOpenAILatencyThresholdMs),
-		SettingKeyOpenAIFallbackSpeedupRatio:                          strconv.FormatFloat(defaultOpenAIFallbackSpeedupRatio, 'f', -1, 64),
+		SettingKeyOpenAILatencyThresholdMs:                           strconv.Itoa(defaultOpenAILatencyThresholdMs),
+		SettingKeyOpenAIFallbackSpeedupRatio:                         strconv.FormatFloat(defaultOpenAIFallbackSpeedupRatio, 'f', -1, 64),
 		SettingKeyOpenAIOAuthSchedulingRateMultiplier:                "1",
 		SettingKeyEnableAnthropicCacheTTL1hInjection:                 "false",
 		SettingKeyRewriteMessageCacheControl:                         strconv.FormatBool(s.defaultRewriteMessageCacheControl()),
@@ -860,8 +873,31 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.ClientDownloadNetdiskURL = strings.TrimSpace(settings[SettingKeyClientDownloadNetdiskURL])
 	result.ClientDownloadDirectURL = strings.TrimSpace(settings[SettingKeyClientDownloadDirectURL])
 	result.ClientDownloadDirectURLMac = strings.TrimSpace(settings[SettingKeyClientDownloadDirectURLMac])
+	result.ClientTutorialVideoURL = strings.TrimSpace(settings[SettingKeyClientTutorialVideoURL])
+	result.HeadroomBaseURL = strings.TrimSpace(settings[SettingKeyHeadroomBaseURL])
 	result.ClientLatestVersion = strings.TrimSpace(settings[SettingKeyClientLatestVersion])
 	result.ClientLatestVersionMac = strings.TrimSpace(settings[SettingKeyClientLatestVersionMac])
+
+	// Chat 桌面客户端下载：默认关闭，严格 true 才开启。
+	result.ChatAppDownloadEnabled = settings[SettingKeyChatAppDownloadEnabled] == "true"
+	result.ChatAppDownloadDirectURL = strings.TrimSpace(settings[SettingKeyChatAppDownloadDirectURL])
+	result.ChatAppLatestVersion = strings.TrimSpace(settings[SettingKeyChatAppLatestVersion])
+
+	// 延迟补偿慢请求阈值（毫秒），非法或缺失时回退默认 30 秒。
+	result.LatencyCompensationThresholdMs = 30000
+	if raw := strings.TrimSpace(settings[SettingKeyLatencyCompensationThresholdMs]); raw != "" {
+		if ms, err := strconv.Atoi(raw); err == nil && ms > 0 {
+			result.LatencyCompensationThresholdMs = ms
+		}
+	}
+
+	// 延迟补偿退款比例（0~1），非法或缺失时回退默认 1（全退）。
+	result.LatencyCompensationProfitRatio = 1
+	if raw := strings.TrimSpace(settings[SettingKeyLatencyCompensationProfitRatio]); raw != "" {
+		if ratio, err := strconv.ParseFloat(raw, 64); err == nil && ratio >= 0 && ratio <= 1 {
+			result.LatencyCompensationProfitRatio = ratio
+		}
+	}
 
 	// 备用支付通道：默认关闭，严格 true 才开启。
 	result.BackupPaymentEnabled = settings[SettingKeyBackupPaymentEnabled] == "true"

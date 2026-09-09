@@ -182,6 +182,21 @@
                   <Icon :name="roomSelected(room.id) ? 'checkCircle' : 'plus'" size="sm" />
                   {{ roomSelected(room.id) ? t('sharedRooms.selected') : t('sharedRooms.selectRoom') }}
                 </span>
+                <button type="button" class="shared-room-toggle-accounts" @click="toggleRoomAccounts(room.id)">
+                  {{ expandedRoomID === room.id ? t('sharedRooms.hideAccounts') : t('sharedRooms.viewAccounts') }}
+                </button>
+                <div v-if="expandedRoomID === room.id" class="shared-room-accounts">
+                  <div v-for="account in room.accounts" :key="account.account_id" class="shared-room-account-item">
+                    <span class="truncate">{{ account.name }}</span>
+                    <span class="shared-room-account-platform">{{ account.platform }}</span>
+                    <span
+                      class="room-status-dot"
+                      :class="!account.needs_attention && account.enabled ? 'room-status-dot--active' : 'room-status-dot--inactive'"
+                      :title="!account.needs_attention && account.enabled ? t('sharedRooms.available') : t('sharedRooms.unavailable')"
+                    />
+                  </div>
+                  <p v-if="room.accounts.length === 0" class="shared-room-accounts-empty">{{ t('sharedRooms.noAccounts') }}</p>
+                </div>
               </article>
             </div>
 
@@ -228,6 +243,7 @@ const keywordInput = ref('')
 const keyword = ref('')
 const apiKeyKeyword = ref('')
 const selectedAPIKeyID = ref(0)
+const expandedRoomID = ref(0)
 const preference = reactive<ContributionRoomPreference>({ api_key_id: 0, room_ids: [], allow_pool_fallback: false, fallback_group_id: null })
 const selectedAPIKeyStorageKey = 'gongfei:shared-rooms:selected-api-key'
 const savedPreferenceSignature = ref('')
@@ -417,6 +433,10 @@ async function clearRoomPreference() {
 
 function roomSelected(roomID: number) {
   return preference.room_ids.includes(roomID)
+}
+
+function toggleRoomAccounts(roomID: number) {
+  expandedRoomID.value = expandedRoomID.value === roomID ? 0 : roomID
 }
 
 function roomConcurrency(room: ContributionRoom) {
@@ -876,6 +896,52 @@ onMounted(() => {
 .shared-room-row:hover { background: rgb(248 250 252 / 0.78); }
 .shared-room-row--selected { border-left-color: #0f9b8e; background: rgb(240 253 250 / 0.72); }
 
+.shared-room-toggle-accounts {
+  grid-column: 1 / -1;
+  justify-self: start;
+  border: none;
+  background: none;
+  padding: 0;
+  margin-top: 0.375rem;
+  color: #0f9b8e;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.shared-room-toggle-accounts:hover { text-decoration: underline; }
+
+.shared-room-accounts {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  margin-top: 0.5rem;
+  padding: 0.625rem 0.75rem;
+  border-radius: 0.5rem;
+  background: #f8fafc;
+}
+
+.shared-room-account-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  color: #334155;
+  font-size: 0.75rem;
+}
+.shared-room-account-item .truncate { flex: 1 1 auto; min-width: 0; }
+
+.shared-room-account-platform {
+  flex: 0 0 auto;
+  color: #94a3b8;
+  font-size: 0.6875rem;
+}
+
+.shared-room-accounts-empty {
+  color: #94a3b8;
+  font-size: 0.75rem;
+}
+
 .shared-room-state {
   display: inline-flex;
   justify-self: end;
@@ -963,6 +1029,11 @@ onMounted(() => {
 :global(.dark .shared-rooms-icon-button){ border-color: rgb(71 85 105 / 0.8); background: rgb(30 41 59); color: #cbd5e1; }
 :global(.dark .shared-rooms-icon-button:hover:not(:disabled) ){ background: rgb(19 78 74 / 0.4); color: #5eead4; }
 :global(.dark .selected-count){ background: rgb(19 78 74 / 0.45); color: #99f6e4; }
+:global(.dark .shared-room-toggle-accounts){ color: #5eead4; }
+:global(.dark .shared-room-accounts){ background: rgb(15 23 42 / 0.6); }
+:global(.dark .shared-room-account-item){ color: #cbd5e1; }
+:global(.dark .shared-room-account-platform),
+:global(.dark .shared-room-accounts-empty){ color: #64748b; }
 
 @media (max-width: 1199px) {
   .shared-rooms-workspace { grid-template-columns: minmax(0, 1fr); }

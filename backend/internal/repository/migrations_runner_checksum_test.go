@@ -161,4 +161,24 @@ func TestIsMigrationChecksumCompatible(t *testing.T) {
 		)
 		require.False(t, ok)
 	})
+
+	// 233 原文件带具体下载直链，"clean public snapshot" 提交把内容替换成占位符
+	// 公开发布，导致文件 checksum 变化，但生产库记的还是发布前的旧 checksum。
+	t.Run("233公开快照清理后仍兼容生产旧checksum", func(t *testing.T) {
+		ok := isMigrationChecksumCompatible(
+			"233_fix_client_download_direct_url.sql",
+			"5dc00174c40d04cca190b15142bcab0c0b1de8765d2dabadfa1f8877df19b5ec",
+			"d1f40bc0de9a875701109554b6cf82f2bed02fb7b2f50c7e5c2f7c75d9001e67",
+		)
+		require.True(t, ok)
+	})
+
+	t.Run("233未知checksum不兼容", func(t *testing.T) {
+		ok := isMigrationChecksumCompatible(
+			"233_fix_client_download_direct_url.sql",
+			"5dc00174c40d04cca190b15142bcab0c0b1de8765d2dabadfa1f8877df19b5ec",
+			"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+		)
+		require.False(t, ok)
+	})
 }

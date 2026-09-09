@@ -444,3 +444,245 @@ type RealConnection struct {
 	CanDeleteRemote         bool     `json:"canDeleteRemote"`
 	CreatedAt               string   `json:"createdAt"`
 }
+
+// LatencyCompensationUserSummary is the frontend-facing (camelCase) shape of
+// one end-user's share of a latency-compensation preview/payout. Kept
+// separate from upstream.LatencyCompensationUserSummary (snake_case,
+// decoded straight from the connected Sub2API site's API response) so this
+// module's JSON convention stays consistent regardless of what the upstream
+// site happens to use on the wire.
+type LatencyCompensationUserSummary struct {
+	UserID       int64   `json:"userId"`
+	Email        string  `json:"email"`
+	Requests     int     `json:"requests"`
+	ActualCost   float64 `json:"actualCost"`
+	AccountCost  float64 `json:"accountCost"`
+	Compensation float64 `json:"compensation"`
+}
+
+// LatencyCompensationSummary is the frontend-facing (camelCase) shape of a
+// full latency-compensation preview/payout result.
+type LatencyCompensationSummary struct {
+	From              string                            `json:"from"`
+	To                string                            `json:"to"`
+	ThresholdMs       int                               `json:"thresholdMs"`
+	ProfitRatio       float64                           `json:"profitRatio"`
+	Users             []LatencyCompensationUserSummary `json:"users"`
+	TotalRequests     int                               `json:"totalRequests"`
+	TotalActualCost   float64                           `json:"totalActualCost"`
+	TotalAccountCost  float64                           `json:"totalAccountCost"`
+	TotalCompensation float64                           `json:"totalCompensation"`
+}
+
+// LatencyCompensationPayout is one recorded payout event — see
+// LatencyCompensationPayoutRepository for why this local record exists.
+type LatencyCompensationPayout struct {
+	ID               string
+	UserID           string
+	AdminAccountID   string
+	SiteBaseURL      string
+	FromTime         time.Time
+	ToTime           time.Time
+	ThresholdMs      int
+	ProfitRatio      float64
+	UsersCompensated int
+	AmountUSD        float64
+	// TaskID/TaskName identify which 延迟补贴任务 (LatencySubsidyTask) triggered
+	// this payout — manual run or the scheduler, both always go through a
+	// task now. Empty for historical rows recorded before tasks existed.
+	TaskID   string
+	TaskName string
+	// Users is the full per-recipient breakdown at the moment this batch was
+	// paid — who got how much, not just the batch total. Persisted so
+	// history can show exactly what a past payout covered without needing
+	// to reconstruct it from Sub2API's usage_logs (which may have since
+	// rolled off any retention window Sub2API applies).
+	Users     []LatencyCompensationUserSummary
+	CreatedAt time.Time
+	// RevokedAt is set once an operator undoes this payout — nil means still
+	// in effect. Revoking claws the money back on Sub2API without leaving a
+	// trace there (see RevokeLatencyCompensationPayout's doc comment), so
+	// this local flag is the only place "this batch was undone" is visible
+	// at all.
+	RevokedAt *time.Time
+}
+
+// LatencyCompensationPayoutView is the frontend-facing (camelCase) shape of
+// one past payout batch, for the history list.
+type LatencyCompensationPayoutView struct {
+	ID               string                            `json:"id"`
+	FromTime         string                            `json:"fromTime"`
+	ToTime           string                            `json:"toTime"`
+	ThresholdMs      int                               `json:"thresholdMs"`
+	ProfitRatio      float64                            `json:"profitRatio"`
+	UsersCompensated int                               `json:"usersCompensated"`
+	AmountUSD        float64                           `json:"amountUsd"`
+	TaskID           string                            `json:"taskId,omitempty"`
+	TaskName         string                            `json:"taskName,omitempty"`
+	Users            []LatencyCompensationUserSummary `json:"users"`
+	CreatedAt        string                            `json:"createdAt"`
+	RevokedAt        string                            `json:"revokedAt,omitempty"`
+}
+
+func toLatencyCompensationPayoutView(p LatencyCompensationPayout) LatencyCompensationPayoutView {
+	view := LatencyCompensationPayoutView{
+		ID:               p.ID,
+		FromTime:         p.FromTime.UTC().Format(time.RFC3339),
+		ToTime:           p.ToTime.UTC().Format(time.RFC3339),
+		ThresholdMs:      p.ThresholdMs,
+		ProfitRatio:      p.ProfitRatio,
+		UsersCompensated: p.UsersCompensated,
+		AmountUSD:        p.AmountUSD,
+		TaskID:           p.TaskID,
+		TaskName:         p.TaskName,
+		Users:            p.Users,
+		CreatedAt:        p.CreatedAt.UTC().Format(time.RFC3339),
+	}
+	if p.RevokedAt != nil {
+		view.RevokedAt = p.RevokedAt.UTC().Format(time.RFC3339)
+	}
+	return view
+}
+
+// Recurrence types for a LatencySubsidyTask's automatic run — which days a
+// due WindowEnd trigger actually fires on. "daily" is the original (and
+// default, for tasks created before this existed) behavior.
+const (
+	LatencySubsidyRecurrenceDaily   = "daily"
+	LatencySubsidyRecurrenceWeekly  = "weekly"
+	LatencySubsidyRecurrenceWeekday = "weekday"
+)
+
+// LatencySubsidyTask is a saved 延迟补贴 configuration: a name, a slow-request
+// threshold, a refund ratio, and an optional daily auto-run schedule.
+// Running a task — manually or via the scheduler — always uses its stored
+// threshold/ratio; only the time window (from/to) is chosen per run, so the
+// task's config can't silently drift between two runs of "the same thing".
+type LatencySubsidyTask struct {
+	ID             string
+	UserID         string
+	AdminAccountID string
+	Name           string
+	ThresholdMs    int
+	ProfitRatio    float64
+	AutoEnabled    bool
+	// WindowStart/WindowEnd are HH:MM in Asia/Shanghai — the daily recurring
+	// window this task covers (e.g. peak hours 18:00~22:00), not just "since
+	// midnight". A manual run defaults to this window applied to today but
+	// can override it; an automatic run always uses it. WindowEnd also
+	// doubles as the automatic run's trigger time: the scheduler fires once
+	// local time reaches WindowEnd, since that's the first moment the
+	// window's data is complete.
+	WindowStart string
+	WindowEnd   string
+	// RecurrenceType picks which days WindowEnd's trigger actually fires on:
+	// every day, only the days.listed in RecurrenceDaysOfWeek, or Mon-Fri.
+	RecurrenceType string
+	// RecurrenceDaysOfWeek holds time.Weekday values (0=Sunday..6=Saturday).
+	// Only meaningful — and only populated — when RecurrenceType is
+	// "weekly"; "workday" derives Mon-Fri directly instead of storing it.
+	RecurrenceDaysOfWeek []int
+	// ValidFrom/ValidUntil optionally bound *which calendar dates* the
+	// schedule above is even considered on, independent of the recurrence
+	// pattern — e.g. a daily 18:00~22:00 task that should only run during a
+	// specific promo week. Both nil (the default) means always valid, same
+	// as before this existed. Dates are day-precision in Asia/Shanghai;
+	// ValidUntil is inclusive (valid through the end of that day).
+	ValidFrom  *time.Time
+	ValidUntil *time.Time
+	// LastAutoRunDate is "2026-01-02", the last business day the scheduler
+	// successfully ran this task automatically. Persisted (not in-memory)
+	// so a process restart doesn't forget and re-run it — re-running is
+	// financially harmless (Sub2API dedupes by latency_compensated_at) but
+	// pointless and noisy.
+	LastAutoRunDate string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+// LatencySubsidyTaskView is the frontend-facing (camelCase) shape of a task.
+type LatencySubsidyTaskView struct {
+	ID                   string  `json:"id"`
+	Name                 string  `json:"name"`
+	ThresholdMs          int     `json:"thresholdMs"`
+	ProfitRatio          float64 `json:"profitRatio"`
+	AutoEnabled          bool    `json:"autoEnabled"`
+	WindowStart          string  `json:"windowStart"`
+	WindowEnd            string  `json:"windowEnd"`
+	RecurrenceType       string  `json:"recurrenceType"`
+	RecurrenceDaysOfWeek []int   `json:"recurrenceDaysOfWeek"`
+	// ValidFrom/ValidUntil are "2026-01-02" or "" when unset.
+	ValidFrom   string `json:"validFrom"`
+	ValidUntil  string `json:"validUntil"`
+	CreatedAt   string `json:"createdAt"`
+	UpdatedAt   string `json:"updatedAt"`
+}
+
+func formatLatencySubsidyDate(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return t.Format("2006-01-02")
+}
+
+func toLatencySubsidyTaskView(t LatencySubsidyTask) LatencySubsidyTaskView {
+	return LatencySubsidyTaskView{
+		ID:                   t.ID,
+		Name:                 t.Name,
+		ThresholdMs:          t.ThresholdMs,
+		ProfitRatio:          t.ProfitRatio,
+		AutoEnabled:          t.AutoEnabled,
+		WindowStart:          t.WindowStart,
+		WindowEnd:            t.WindowEnd,
+		RecurrenceType:       t.RecurrenceType,
+		RecurrenceDaysOfWeek: t.RecurrenceDaysOfWeek,
+		ValidFrom:            formatLatencySubsidyDate(t.ValidFrom),
+		ValidUntil:           formatLatencySubsidyDate(t.ValidUntil),
+		CreatedAt:            t.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:            t.UpdatedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+// LatencySubsidyTaskInput is the create/update request body. Fields are
+// validated and normalized in the service layer, not here — this is just
+// the wire shape.
+type LatencySubsidyTaskInput struct {
+	Name        string  `json:"name"`
+	ThresholdMs int     `json:"thresholdMs"`
+	ProfitRatio float64 `json:"profitRatio"`
+	AutoEnabled bool    `json:"autoEnabled"`
+	WindowStart string  `json:"windowStart"`
+	WindowEnd   string  `json:"windowEnd"`
+	// RecurrenceType is "daily" | "weekly" | "weekday"; empty is treated as
+	// "daily" for callers written before this existed.
+	RecurrenceType       string `json:"recurrenceType"`
+	RecurrenceDaysOfWeek []int  `json:"recurrenceDaysOfWeek"`
+	// ValidFrom/ValidUntil are "2026-01-02" or "" for no bound.
+	ValidFrom  string `json:"validFrom"`
+	ValidUntil string `json:"validUntil"`
+}
+
+func toLatencyCompensationSummary(s upstream.LatencyCompensationSummary) LatencyCompensationSummary {
+	users := make([]LatencyCompensationUserSummary, 0, len(s.Users))
+	for _, u := range s.Users {
+		users = append(users, LatencyCompensationUserSummary{
+			UserID:       u.UserID,
+			Email:        u.Email,
+			Requests:     u.Requests,
+			ActualCost:   u.ActualCost,
+			AccountCost:  u.AccountCost,
+			Compensation: u.Compensation,
+		})
+	}
+	return LatencyCompensationSummary{
+		From:              s.From.UTC().Format(time.RFC3339),
+		To:                s.To.UTC().Format(time.RFC3339),
+		ThresholdMs:       s.ThresholdMs,
+		ProfitRatio:       s.ProfitRatio,
+		Users:             users,
+		TotalRequests:     s.TotalRequests,
+		TotalActualCost:   s.TotalActualCost,
+		TotalAccountCost:  s.TotalAccountCost,
+		TotalCompensation: s.TotalCompensation,
+	}
+}

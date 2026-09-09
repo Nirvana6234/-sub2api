@@ -2584,6 +2584,10 @@ func init() {
 	userDescContributionRoomsEnabled := userFields[24].Descriptor()
 	// user.DefaultContributionRoomsEnabled holds the default value on creation for the contribution_rooms_enabled field.
 	user.DefaultContributionRoomsEnabled = userDescContributionRoomsEnabled.Default.(bool)
+	// userDescHeadroomCompressionEnabled is the schema descriptor for headroom_compression_enabled field.
+	userDescHeadroomCompressionEnabled := userFields[25].Descriptor()
+	// user.DefaultHeadroomCompressionEnabled holds the default value on creation for the headroom_compression_enabled field.
+	user.DefaultHeadroomCompressionEnabled = userDescHeadroomCompressionEnabled.Default.(bool)
 	userallowedgroupFields := schema.UserAllowedGroup{}.Fields()
 	_ = userallowedgroupFields
 	// userallowedgroupDescCreatedAt is the schema descriptor for created_at field.

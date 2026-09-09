@@ -480,6 +480,10 @@ const (
 	// macOS 安装包直链。为空表示 mac 版尚未发布，下载页不显示 mac 区块。
 	SettingKeyClientDownloadDirectURLMac = "client_download_direct_url_mac"
 
+	// SettingKeyClientTutorialVideoURL 是客户端下载页展示的视频教程地址（B站视频页链接）。
+	// 前端渲染成一个跳转按钮，不做内嵌播放。留空则下载页不显示这块。
+	SettingKeyClientTutorialVideoURL = "client_tutorial_video_url"
+
 	// 客户端最新版本号，按平台分开。
 	//
 	// 放在设置里而不是随前端静态文件发布。原来版本号写在 frontend/public/
@@ -491,6 +495,33 @@ const (
 	// 为空表示该平台不广播更新（mac 未发布时即为此状态）。
 	SettingKeyClientLatestVersion    = "client_latest_version"
 	SettingKeyClientLatestVersionMac = "client_latest_version_mac"
+
+	// SettingKeyLatencyCompensationThresholdMs 是延迟补偿功能里"慢请求"的判定
+	// 阈值（首字节耗时 first_token_ms >= 此值才算慢）。管理员在后台按当天实际
+	// 情况调整，不写死在代码里——上游一次波动可能是几秒也可能是几十秒，固定
+	// 阈值迟早会跟不上。默认 30000（30 秒），2026-09-08 那次事故就是照这个数
+	// 手工筛出受影响用户的。
+	SettingKeyLatencyCompensationThresholdMs = "latency_compensation_threshold_ms"
+
+	// SettingKeyLatencyCompensationProfitRatio 是延迟补偿退多少利润的比例
+	// （0~1，1 = 把这笔慢请求的利润全退，0.5 = 只退一半，平台留一半）。
+	// 由管理员自己定，不写死——补多少是运营决策，不是技术参数。默认 1
+	// （全退），保持"不赚这笔钱"这个最初的补偿标准。
+	SettingKeyLatencyCompensationProfitRatio = "latency_compensation_profit_ratio"
+
+	// SettingKeyHeadroomBaseURL 是 headroom 上下文压缩代理的内网地址
+	// （例如 http://172.18.0.1:8787）。运营方只部署一份 headroom 服务供全站
+	// 复用，请求转发时按账号真实上游地址带上 x-headroom-base-url 头动态路由，
+	// 不需要给每个上游账号单独部署一份。留空表示未配置，压缩开关即使打开也
+	// 不生效（直连上游）。
+	SettingKeyHeadroomBaseURL = "headroom_base_url"
+
+	// Chat 桌面客户端（tools/chat，独立于上面的共飞直连客户端）下载设置。
+	// 机制与 ClientDownload* 一致，键名加 chat_app 前缀避免和网关里的
+	// "paw chat" 概念混淆。默认关闭：新产品，包传上去、管理员确认好了再开。
+	SettingKeyChatAppDownloadEnabled   = "chat_app_download_enabled"
+	SettingKeyChatAppDownloadDirectURL = "chat_app_download_direct_url"
+	SettingKeyChatAppLatestVersion     = "chat_app_latest_version"
 
 	// ClientDownloadDefaultDirectURL 是客户端安装包的默认直链。
 	//
@@ -518,7 +549,7 @@ const (
 	// 换版本必须换文件名，不要原地覆盖：下载站给这个路径发的是
 	// Cache-Control: public, max-age=3600，同名覆盖会让一小时内的用户继续拿到
 	// 缓存里的旧包，而且从下载结果上看不出拿到的是哪一版。
-	ClientDownloadFileName = "codex-relay-client_v0.2_x64.zip"
+	ClientDownloadFileName = "codex-relay-client_v0.3_x64.zip"
 
 	// SettingKeyBackupPaymentEnabled 控制充值页的「备用支付通道」入口是否展示。
 	// 与 payment_enabled 相互独立：主通道故障时可以只留备用通道。默认关闭（opt-in）。
@@ -632,9 +663,9 @@ const (
 	SettingKeyAllowUngroupedKeyScheduling = "allow_ungrouped_key_scheduling"
 	// SettingKeyOpenAILowUpstreamRatePriorityEnabled 旧调度是否按上游 token 倍率优先。
 	SettingKeyOpenAILowUpstreamRatePriorityEnabled = "openai_low_upstream_rate_priority_enabled"
-	SettingKeyOpenAILatencyAwareFallbackEnabled   = "openai_latency_aware_fallback_enabled"
-	SettingKeyOpenAILatencyThresholdMs            = "openai_latency_threshold_ms"
-	SettingKeyOpenAIFallbackSpeedupRatio          = "openai_fallback_speedup_ratio"
+	SettingKeyOpenAILatencyAwareFallbackEnabled    = "openai_latency_aware_fallback_enabled"
+	SettingKeyOpenAILatencyThresholdMs             = "openai_latency_threshold_ms"
+	SettingKeyOpenAIFallbackSpeedupRatio           = "openai_fallback_speedup_ratio"
 	// SettingKeyOpenAIOAuthSchedulingRateMultiplier OAuth 账号参与成本调度时使用的参考倍率。
 	SettingKeyOpenAIOAuthSchedulingRateMultiplier = "openai_oauth_scheduling_rate_multiplier"
 	// SettingKeyOpenAIAdvancedSchedulerStickyWeightedEnabled OpenAI 高级调度下是否启用粘性加权。

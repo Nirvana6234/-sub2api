@@ -82,6 +82,13 @@
             <span class="block text-xs text-gray-500 dark:text-gray-400">{{ t('admin.users.form.contributionRoomsEnabledHint') }}</span>
           </span>
         </label>
+        <label class="flex items-start gap-3 text-sm text-gray-700 dark:text-gray-300">
+          <input v-model="form.headroom_compression_enabled" type="checkbox" class="mt-0.5 h-4 w-4" />
+          <span>
+            <span class="block font-medium">{{ t('admin.users.form.headroomCompressionEnabled') }}</span>
+            <span class="block text-xs text-gray-500 dark:text-gray-400">{{ t('admin.users.form.headroomCompressionEnabledHint') }}</span>
+          </span>
+        </label>
       </div>
       <UserAttributeForm v-model="form.customAttributes" :user-id="user?.id" />
     </form>
@@ -122,11 +129,11 @@ const roleOptions = computed(() => [
   { value: 'user', label: t('admin.users.roles.user') },
   { value: 'admin', label: t('admin.users.roles.admin') }
 ])
-const form = reactive({ email: '', password: '', username: '', notes: '', role: 'user', concurrency: 1, rpm_limit: 0, account_management_enabled: false, contribution_rooms_enabled: false, customAttributes: {} as UserAttributeValuesMap })
+const form = reactive({ email: '', password: '', username: '', notes: '', role: 'user', concurrency: 1, rpm_limit: 0, account_management_enabled: false, contribution_rooms_enabled: false, headroom_compression_enabled: false, customAttributes: {} as UserAttributeValuesMap })
 
 watch(() => props.user, (u) => {
   if (u) {
-    Object.assign(form, { email: u.email, password: '', username: u.username || '', notes: u.notes || '', role: u.role || 'user', concurrency: u.concurrency, rpm_limit: u.rpm_limit ?? 0, account_management_enabled: u.account_management_enabled, contribution_rooms_enabled: u.contribution_rooms_enabled, customAttributes: {} })
+    Object.assign(form, { email: u.email, password: '', username: u.username || '', notes: u.notes || '', role: u.role || 'user', concurrency: u.concurrency, rpm_limit: u.rpm_limit ?? 0, account_management_enabled: u.account_management_enabled, contribution_rooms_enabled: u.contribution_rooms_enabled, headroom_compression_enabled: u.headroom_compression_enabled, customAttributes: {} })
     passwordCopied.value = false
   }
 }, { immediate: true })
@@ -157,7 +164,7 @@ const handleUpdateUser = async () => {
   const userId = props.user.id
   submitting.value = true
   try {
-    const data: any = { email: form.email, username: form.username, notes: form.notes, role: form.role, concurrency: form.concurrency, rpm_limit: form.rpm_limit, account_management_enabled: form.account_management_enabled, contribution_rooms_enabled: form.contribution_rooms_enabled }
+    const data: any = { email: form.email, username: form.username, notes: form.notes, role: form.role, concurrency: form.concurrency, rpm_limit: form.rpm_limit, account_management_enabled: form.account_management_enabled, contribution_rooms_enabled: form.contribution_rooms_enabled, headroom_compression_enabled: form.headroom_compression_enabled }
     if (form.password.trim()) data.password = form.password.trim()
     // 提升为管理员属敏感操作：后端返回 STEP_UP_REQUIRED 时弹 TOTP 验证并重试
     await stepUp.run(() => adminAPI.users.update(userId, data))

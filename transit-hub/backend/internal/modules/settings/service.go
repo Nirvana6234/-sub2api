@@ -399,7 +399,7 @@ func normalizeStrategySettings(settings StrategySettings) StrategySettings {
 		settings.ResourceUsageMemoryThreshold = 80
 	}
 	settings.ResourceUsageTemplateFormat = normalizeNotificationTemplateFormat(settings.ResourceUsageTemplateFormat)
-	settings.DailyReportTime = normalizeDailyReportTime(settings.DailyReportTime)
+	settings.DailyReportTime = normalizeTimeOfDay(settings.DailyReportTime, defaultDailyReportTime)
 	if settings.DailyReportFormat == "" {
 		settings.DailyReportFormat = NotificationTemplateFormatMarkdown
 	} else {
@@ -408,18 +408,24 @@ func normalizeStrategySettings(settings StrategySettings) StrategySettings {
 	return settings
 }
 
-// normalizeDailyReportTime 把推送时刻规整成 HH:MM。非法值一律退回默认时刻，
-// 否则调度器会因为永远匹配不上而静默不发 —— 那是最难排查的一种故障。
-func normalizeDailyReportTime(value string) string {
+// normalizeTimeOfDay 把时刻规整成 HH:MM。非法值一律退回调用方给定的默认时刻，
+// 否则调度器会因为永远匹配不上而静默不发/不执行 —— 那是最难排查的一种故障。
+func normalizeTimeOfDay(value, fallback string) string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
-		return defaultDailyReportTime
+		return fallback
 	}
 	parsed, err := time.Parse("15:04", trimmed)
 	if err != nil {
-		return defaultDailyReportTime
+		return fallback
 	}
 	return parsed.Format("15:04")
+}
+
+// normalizeDailyReportTime 是 normalizeTimeOfDay 固定 defaultDailyReportTime 的别名，
+// 保留独立函数名是因为已有测试直接按名字调用它。
+func normalizeDailyReportTime(value string) string {
+	return normalizeTimeOfDay(value, defaultDailyReportTime)
 }
 
 func (s *Service) TestNotification(ctx context.Context, dto TestNotificationRequest) error {

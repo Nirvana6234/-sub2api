@@ -14,6 +14,11 @@ import type {
   UpstreamKeyTestResponse,
   UpstreamKeyModelsResponse,
   AdminResourceOption,
+  LatencyCompensationSummary,
+  LatencyCompensationPayoutView,
+  LatencySubsidyTaskView,
+  LatencySubsidyTaskInput,
+  RevokeLatencyCompensationPayoutResult,
 } from '../types/mySites'
 import {
   authUnauthorizedErrorKey,
@@ -213,6 +218,80 @@ export const saveMySiteMapping = async (mapping: MySiteMapping, currentMappings:
     return saveMySiteMappings(nextMappings)
   }
 }
+
+/**
+ * 延迟补贴任务：一套阈值/退款比例配置，可选每天自动执行。列表、增删改，
+ * 以及对某个任务发起一次运行（预览/实际发放）。
+ */
+export const listLatencySubsidyTasks = async (): Promise<LatencySubsidyTaskView[]> => {
+  const items = await requestJson<LatencySubsidyTaskView[]>('/my-sites/latency-subsidy-tasks')
+  return Array.isArray(items) ? items : []
+}
+
+export const createLatencySubsidyTask = async (input: LatencySubsidyTaskInput): Promise<LatencySubsidyTaskView> => (
+  requestJson<LatencySubsidyTaskView>('/my-sites/latency-subsidy-tasks', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+)
+
+export const updateLatencySubsidyTask = async (id: string, input: LatencySubsidyTaskInput): Promise<LatencySubsidyTaskView> => (
+  requestJson<LatencySubsidyTaskView>(`/my-sites/latency-subsidy-tasks/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(input),
+  })
+)
+
+export const deleteLatencySubsidyTask = async (id: string): Promise<void> => {
+  await requestJson<{ ok: boolean }>(`/my-sites/latency-subsidy-tasks/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  })
+}
+
+/**
+ * 预览：跑一遍这个任务在 [from, to) 这段时间会补贴多少，不动任何用户余额。
+ * 阈值/比例用任务里存的，不接受调用方覆盖——避免预览和实际发放用的是两套配置。
+ */
+export const previewLatencySubsidyTask = async (id: string, from: string, to: string): Promise<LatencyCompensationSummary> => {
+  const query = new URLSearchParams({ from, to })
+  return requestJson<LatencyCompensationSummary>(
+    `/my-sites/latency-subsidy-tasks/${encodeURIComponent(id)}/preview?${query.toString()}`
+  )
+}
+
+/**
+ * 真正发放：连接的 Sub2API 站点会把每个符合条件用户的差价直接加到余额上。
+ * 不可撤销——调用前必须先预览并让操作者确认过。
+ */
+export const applyLatencySubsidyTask = async (id: string, from: string, to: string): Promise<LatencyCompensationSummary> => (
+  requestJson<LatencyCompensationSummary>(`/my-sites/latency-subsidy-tasks/${encodeURIComponent(id)}/apply`, {
+    method: 'POST',
+    body: JSON.stringify({ from, to }),
+  })
+)
+
+/**
+ * 补贴发放历史：按时间倒序列出过往的每一批发放，带触发它的任务名和完整
+ * 按用户明细（谁、多少钱、什么时候）。用来回答"这笔退过没有、什么时候退的"。
+ */
+export const listLatencySubsidyTasksHistory = async (limit = 50): Promise<LatencyCompensationPayoutView[]> => {
+  const items = await requestJson<LatencyCompensationPayoutView[]>(
+    `/my-sites/latency-subsidy-tasks-history?limit=${limit}`
+  )
+  return Array.isArray(items) ? items : []
+}
+
+/**
+ * 撤回一整批已发放的补贴：Sub2API 那边会把这批里每个用户的钱扣回去，且不会
+ * 在 Sub2API 自己的记录里留痕（不是给单个用户撤销，是整批一起撤）。
+ * 可能部分失败——某个用户余额已经不够扣回时会跳过他，不代表整批撤回失败。
+ */
+export const revokeLatencyCompensationPayout = async (id: string): Promise<RevokeLatencyCompensationPayoutResult> => (
+  requestJson<RevokeLatencyCompensationPayoutResult>(
+    `/my-sites/latency-subsidy-tasks-history/${encodeURIComponent(id)}/revoke`,
+    { method: 'POST' }
+  )
+)
 
 export const removeMySiteMapping = async (ownGroup: string, currentMappings: MySiteMapping[]): Promise<MySiteStatus> => {
   try {

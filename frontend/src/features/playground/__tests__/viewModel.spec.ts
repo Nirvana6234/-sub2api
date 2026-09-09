@@ -414,4 +414,30 @@ describe('playground view model', () => {
       stream: true,
     })
   })
+
+  it('includes reasoning_effort in the chat payload when set to a non-none value', () => {
+    const payload = buildChatPayload({
+      model: 'gpt-5.5',
+      messages: [createMessage('user', 'Ping')],
+      parameters: {
+        ...DEFAULT_PLAYGROUND_PARAMETERS,
+        reasoning_effort: 'high',
+      },
+    })
+
+    expect(payload.reasoning_effort).toBe('high')
+  })
+
+  it('omits reasoning_effort from the chat payload when set to none', () => {
+    const payload = buildChatPayload({
+      model: 'gpt-5.5',
+      messages: [createMessage('user', 'Ping')],
+      parameters: {
+        ...DEFAULT_PLAYGROUND_PARAMETERS,
+        reasoning_effort: 'none',
+      },
+    })
+
+    expect(payload.reasoning_effort).toBeUndefined()
+  })
 })

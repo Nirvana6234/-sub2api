@@ -159,6 +159,10 @@ type UsageLog struct {
 	OutputTokens        int
 	CacheCreationTokens int
 	CacheReadTokens     int
+	// HeadroomTokensSaved 本次请求经 headroom 压缩代理节省的输入 token 数（未启用/未生效时为 0）。
+	HeadroomTokensSaved int
+	// HeadroomSavingsUSD 上述节省 token 按模型标准单价（倍率固定为 1）折算的等值美金。
+	HeadroomSavingsUSD float64
 
 	CacheCreation5mTokens int `gorm:"column:cache_creation_5m_tokens"`
 	CacheCreation1hTokens int `gorm:"column:cache_creation_1h_tokens"`

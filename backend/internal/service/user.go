@@ -34,13 +34,13 @@ type User struct {
 	SignupSource         string
 	// RegisterIP 是注册时的客户端 IP，用于「同一 IP 最多注册 N 个账号」配额。
 	// nil 表示未记录（该字段上线前的存量用户），不参与配额计数。
-	RegisterIP  *string
-	LastLoginAt *time.Time
-	LastActiveAt         *time.Time
-	LastUsedAt           *time.Time
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
-	DeletedAt            *time.Time // 非 nil 表示用户已软删除
+	RegisterIP   *string
+	LastLoginAt  *time.Time
+	LastActiveAt *time.Time
+	LastUsedAt   *time.Time
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+	DeletedAt    *time.Time // 非 nil 表示用户已软删除
 
 	// GroupRates 用户专属分组倍率配置
 	// map[groupID]rateMultiplier
@@ -64,6 +64,9 @@ type User struct {
 
 	AccountManagementEnabled bool
 	ContributionRoomsEnabled bool
+	// HeadroomCompressionEnabled 开启后网关转发时通过 headroom 代理压缩上下文
+	// 再转发到真实上游，压缩服务未配置/异常时自动跳过、直连原上游。
+	HeadroomCompressionEnabled bool
 
 	// UserGroupRPMOverride 来自 auth cache snapshot 的 (user, group) RPM 覆盖值。
 	// nil = 该 API Key 对应的 (user, group) 无 override；非 nil 时 checkRPM 直接使用，

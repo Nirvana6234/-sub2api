@@ -64,6 +64,9 @@ func (r *contributionRoomRoutingRepository) ResolveRouteForAPIKey(ctx context.Co
 				dbroomaccount.HasAccountWith(
 					dbaccount.StatusEQ(service.StatusActive),
 					dbaccount.SchedulableEQ(true),
+					// API-key contributions default to self-use only and are never pooled
+					// out to other room members, even if the owner adds them to a room.
+					dbaccount.TypeNEQ(service.AccountTypeAPIKey),
 				),
 			).
 			All(ctx)

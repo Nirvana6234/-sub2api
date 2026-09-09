@@ -132,6 +132,19 @@ describe('playground persistence', () => {
     expect(restoredMessage.imageOutputFormat).toBe('webp')
   })
 
+  it('round-trips an explicit reasoning_effort through save and load', () => {
+    const conversation = createConversation({
+      id: 'reasoning-conversation',
+      mode: 'chat',
+      parameters: { ...defaultParameters, reasoning_effort: 'high' },
+      messages: [createMessage('user', 'Ping')],
+    })
+
+    savePlaygroundState(9, 23, createState({ activeConversationId: conversation.id, conversations: [conversation] }))
+
+    expect(loadPlaygroundState(9, 23).conversations[0].parameters.reasoning_effort).toBe('high')
+  })
+
   it('drops chat conversations older than the 30-day retention window', () => {
     const now = Date.now()
     const expired = createConversation({
@@ -197,6 +210,7 @@ describe('playground persistence', () => {
       presence_penalty: 0.1,
       seed: 42,
       stream: false,
+      reasoning_effort: 'none',
       enabled: {
         temperature: true,
         top_p: true,

@@ -132,18 +132,19 @@ func (s *adminServiceImpl) CreateUser(ctx context.Context, input *CreateUserInpu
 	}
 
 	user := &User{
-		Email:         input.Email,
-		Username:      input.Username,
-		Notes:         input.Notes,
-		Role:          role,
-		Balance:       balance,
-		Concurrency:   input.Concurrency,
-		RPMLimit:      input.RPMLimit,
-		Status:        StatusActive,
-		AllowedGroups: input.AllowedGroups,
-		AccountManagementEnabled: input.AccountManagementEnabled,
-		ContributionRoomsEnabled: input.ContributionRoomsEnabled,
-		RestrictPublicGroups:     input.RestrictPublicGroups,
+		Email:                      input.Email,
+		Username:                   input.Username,
+		Notes:                      input.Notes,
+		Role:                       role,
+		Balance:                    balance,
+		Concurrency:                input.Concurrency,
+		RPMLimit:                   input.RPMLimit,
+		Status:                     StatusActive,
+		AllowedGroups:              input.AllowedGroups,
+		AccountManagementEnabled:   input.AccountManagementEnabled,
+		ContributionRoomsEnabled:   input.ContributionRoomsEnabled,
+		HeadroomCompressionEnabled: input.HeadroomCompressionEnabled,
+		RestrictPublicGroups:       input.RestrictPublicGroups,
 	}
 	if err := user.SetPassword(input.Password); err != nil {
 		return nil, err
@@ -287,6 +288,12 @@ func (s *adminServiceImpl) UpdateUser(ctx context.Context, id int64, input *Upda
 		fields.ContributionRoomsEnabled = true
 	}
 
+	oldHeadroomCompressionEnabled := user.HeadroomCompressionEnabled
+	if input.HeadroomCompressionEnabled != nil {
+		user.HeadroomCompressionEnabled = *input.HeadroomCompressionEnabled
+		fields.HeadroomCompressionEnabled = true
+	}
+
 	if input.AllowedGroups != nil {
 		user.AllowedGroups = *input.AllowedGroups
 		fields.AllowedGroups = true
@@ -321,7 +328,7 @@ func (s *adminServiceImpl) UpdateUser(ctx context.Context, id int64, input *Upda
 	if s.authCacheInvalidator != nil {
 		// RPMLimit 直接参与 billing_cache_service.checkRPM 的三级级联，
 		// allowed_groups 参与 API Key 专属分组授权判断；不失效缓存会让修改在一个 L2 TTL 内失去效果。
-		if groupRatesChanged || user.Concurrency != oldConcurrency || user.Status != oldStatus || user.Role != oldRole || user.RPMLimit != oldRPMLimit || user.RestrictPublicGroups != oldRestrictPublicGroups || !sameInt64Set(user.AllowedGroups, oldAllowedGroups) {
+		if groupRatesChanged || user.Concurrency != oldConcurrency || user.Status != oldStatus || user.Role != oldRole || user.RPMLimit != oldRPMLimit || user.RestrictPublicGroups != oldRestrictPublicGroups || user.HeadroomCompressionEnabled != oldHeadroomCompressionEnabled || !sameInt64Set(user.AllowedGroups, oldAllowedGroups) {
 			s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, user.ID)
 		}
 		if groupRatesChanged || !sameInt64Set(user.AllowedGroups, oldAllowedGroups) {
@@ -598,6 +605,61 @@ func (s *adminServiceImpl) UpdateUserBalance(ctx context.Context, userID int64, 
 	}
 
 	return user, nil
+}
+
+// AdjustUserBalanceSilently changes balance by delta without creating a
+// RedeemCode audit row and without triggering affiliate rebate accrual —
+// deliberately a stripped-down sibling of UpdateUserBalance, not a code path
+// through it, so this stays auditable-by-reading rather than by a flag that
+// silently suppresses behavior deep inside the normal path.
+func (s *adminServiceImpl) AdjustUserBalanceSilently(ctx context.Context, userID int64, delta float64) (*User, error) {
+	change, err := s.userRepo.AdjustBalance(ctx, userID, delta)
+	if errors.Is(err, ErrBalanceNegative) {
+		return nil, fmt.Errorf("balance cannot be negative, current balance: %.2f, requested delta: %.2f", change.Old, delta)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	balanceDiff := change.New - change.Old
+	if s.authCacheInvalidator != nil && balanceDiff != 0 {
+		s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, userID)
+	}
+	if s.billingCacheService != nil {
+		go func() {
+			cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := s.billingCacheService.InvalidateUserBalance(cacheCtx, userID); err != nil {
+				logger.LegacyPrintf("service.admin", "invalidate user balance cache failed: user_id=%d err=%v", userID, err)
+			}
+		}()
+	}
+	return user, nil
+}
+
+// DeleteAdminAdjustmentTrace deletes the exact RedeemCode row that a prior
+// UpdateUserBalance("add", ...) call created for this (user, amount, notes).
+// Deleting it does not touch the user's balance — that's a separate mutation
+// AdjustUserBalanceSilently already reversed; this only removes the audit
+// row so the "+granted" line stops showing up in the user's own history
+// after the money backing it has been silently clawed back.
+func (s *adminServiceImpl) DeleteAdminAdjustmentTrace(ctx context.Context, userID int64, value float64, notes string) (bool, error) {
+	code, err := s.redeemCodeRepo.FindAdminAdjustment(ctx, userID, value, notes)
+	if err != nil {
+		return false, err
+	}
+	if code == nil {
+		return false, nil
+	}
+	if err := s.redeemCodeRepo.Delete(ctx, code.ID); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *adminServiceImpl) tryAccrueAffiliateRebateForAdminRecharge(ctx context.Context, userID int64, operation string, amount float64) {

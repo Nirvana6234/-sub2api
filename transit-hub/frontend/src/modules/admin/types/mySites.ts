@@ -311,3 +311,87 @@ export interface RealDisconnectRequest {
   mode: 'unlink' | 'delete-key'
   removePricingMapping?: boolean
 }
+
+export interface LatencyCompensationUserSummary {
+  userId: number
+  email: string
+  requests: number
+  actualCost: number
+  accountCost: number
+  compensation: number
+}
+
+export interface LatencyCompensationPayoutView {
+  id: string
+  fromTime: string
+  toTime: string
+  thresholdMs: number
+  profitRatio: number
+  usersCompensated: number
+  amountUsd: number
+  taskId?: string
+  taskName?: string
+  users: LatencyCompensationUserSummary[]
+  createdAt: string
+  /** 撤回时间；不存在或为空表示这批补贴仍然生效。 */
+  revokedAt?: string
+}
+
+/** 撤回结果：可能部分失败（某个用户余额已经不够扣回），所以要分开列出。 */
+export interface RevokeLatencyCompensationPayoutResult {
+  revokedUserIds: number[]
+  skippedUserIds: number[]
+  totalRevoked: number
+}
+
+/**
+ * 延迟补贴任务：一套阈值/退款比例配置 + 一段每天固定的补贴时间窗口
+ * （比如晚高峰 18:00~22:00），可选每天自动执行。
+ */
+/** "daily" 每天 / "weekly" 每周(选星期几) / "weekday" 仅工作日(周一到周五)。 */
+export type LatencySubsidyRecurrenceType = 'daily' | 'weekly' | 'weekday'
+
+export interface LatencySubsidyTaskView {
+  id: string
+  name: string
+  thresholdMs: number
+  profitRatio: number
+  autoEnabled: boolean
+  /** Asia/Shanghai 的 HH:MM，窗口起点。 */
+  windowStart: string
+  /** Asia/Shanghai 的 HH:MM，窗口终点；也是自动执行的触发时刻。 */
+  windowEnd: string
+  recurrenceType: LatencySubsidyRecurrenceType
+  /** JS Date.getDay() 数值 (0=周日..6=周六)，只在 recurrenceType 为 weekly 时有意义。 */
+  recurrenceDaysOfWeek: number[]
+  /** "2026-01-02" 或 ""（不限）。 */
+  validFrom: string
+  validUntil: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface LatencySubsidyTaskInput {
+  name: string
+  thresholdMs: number
+  profitRatio: number
+  autoEnabled: boolean
+  windowStart: string
+  windowEnd: string
+  recurrenceType: LatencySubsidyRecurrenceType
+  recurrenceDaysOfWeek: number[]
+  validFrom: string
+  validUntil: string
+}
+
+export interface LatencyCompensationSummary {
+  from: string
+  to: string
+  thresholdMs: number
+  profitRatio: number
+  users: LatencyCompensationUserSummary[]
+  totalRequests: number
+  totalActualCost: number
+  totalAccountCost: number
+  totalCompensation: number
+}

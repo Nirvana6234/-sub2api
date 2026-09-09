@@ -86,6 +86,12 @@ const routes = [
         component: () => import('./modules/admin/views/GroupRateCampaignsView.vue')
       },
       {
+        path: 'latency-compensation',
+        name: 'AdminLatencyCompensation',
+        meta: { requiresWorkspace: true },
+        component: () => import('./modules/admin/views/LatencyCompensationView.vue')
+      },
+      {
         path: 'settings',
         name: 'AdminSettings',
         meta: { requiresWorkspace: true },

@@ -67,6 +67,38 @@ func TestContributionRoomMembershipRequiresVerifiedPlatform(t *testing.T) {
 	require.Equal(t, room.ID, client.ContributionRoomAccount.Query().OnlyX(ctx).RoomID)
 }
 
+// API-key contributions default to self-use only (see contribution_room_routing_repo.go),
+// but the owner can still add them to their own room for visibility/management; they are
+// simply never handed out to other room members at routing time.
+func TestAddOwnRoomAccountAllowsAPIKeyAccountType(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx := context.Background()
+	client := newContributionRoomTestClient(t)
+	owner := createContributionRoomTestUser(t, client, "apikey-owner@example.com")
+	account := createContributionRoomTestAPIKeyAccount(t, client, owner.ID, service.PlatformOpenAI)
+	client.ContributionRoom.Create().
+		SetOwnerUserID(owner.ID).
+		SetName("Owner room").
+		SetConsumerRateMultiplier(1).
+		SetStatus(contributionRoomStatusActive).
+		SetVisibility(contributionRoomVisibilityOpen).
+		SaveX(ctx)
+	client.ContributionAccountVerification.Create().
+		SetAccountID(account.ID).
+		SetPlatform(account.Platform).
+		SetStatus(contributionVerificationStatus).
+		SetModelFamily("gpt").
+		SetTestedAt(time.Now().UTC()).
+		SaveX(ctx)
+	h := newContributionRoomTestHandler(owner.ID, account, client)
+
+	c, recorder := contributionRoomTestContext(http.MethodPost, "/account-contributions/room/accounts", owner.ID, fmt.Sprintf(`{"account_id":%d,"share_budget_usd":5,"share_concurrency":2}`, account.ID))
+	h.AddOwnRoomAccount(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, 1, client.ContributionRoomAccount.Query().CountX(ctx))
+}
+
 func TestCreateContributionRoomRequiresVerifiedAccountsAndCreatesMembersAtomically(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx := context.Background()
@@ -437,7 +469,7 @@ func TestContributionConnectionUpdateInvalidatesRoomVerification(t *testing.T) {
 	ctx := context.Background()
 	client := newContributionRoomTestClient(t)
 	owner := createContributionRoomTestUser(t, client, "connection-owner@example.com")
-	account := createContributionRoomTestAccount(t, client, owner.ID, service.PlatformOpenAI)
+	account := createContributionRoomTestAPIKeyAccount(t, client, owner.ID, service.PlatformOpenAI)
 	verification := client.ContributionAccountVerification.Create().
 		SetAccountID(account.ID).
 		SetPlatform(account.Platform).
@@ -556,7 +588,31 @@ func createContributionRoomTestAPIKey(t *testing.T, client *dbent.Client, userID
 		SaveX(context.Background())
 }
 
+// createContributionRoomTestAccount creates an OAuth-type test account — contribution
+// rooms only accept OAuth-type accounts (api_key/upstream/cookie are rejected at
+// AddOwnRoomAccount/CreateOwnRoom). Tests that specifically exercise api_key-only
+// behavior (e.g. the raw-api_key connection-update endpoint) should use
+// createContributionRoomTestAPIKeyAccount instead.
 func createContributionRoomTestAccount(t *testing.T, client *dbent.Client, contributorID int64, platform string) *dbent.Account {
+	t.Helper()
+	return client.Account.Create().
+		SetName("Verified account").
+		SetPlatform(platform).
+		SetType(service.AccountTypeOAuth).
+		SetConcurrency(3).
+		SetCredentials(map[string]any{"access_token": "secret-access-token", "refresh_token": "secret-refresh-token"}).
+		SetExtra(map[string]any{
+			service.AccountContributionSourceKey: service.AccountContributionSourceValue,
+			service.AccountContributorUserIDKey:  contributorID,
+			"private_extra":                      "private-extra",
+		}).
+		SaveX(context.Background())
+}
+
+// createContributionRoomTestAPIKeyAccount creates an api_key-type test account, for
+// tests that exercise behavior specific to that type (e.g. the raw-api_key
+// connection-update endpoint) rather than the room-membership OAuth-only rule.
+func createContributionRoomTestAPIKeyAccount(t *testing.T, client *dbent.Client, contributorID int64, platform string) *dbent.Account {
 	t.Helper()
 	return client.Account.Create().
 		SetName("Verified account").

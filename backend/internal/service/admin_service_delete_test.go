@@ -458,6 +458,10 @@ func (s *redeemRepoStub) Delete(ctx context.Context, id int64) error {
 	return nil
 }
 
+func (s *redeemRepoStub) FindAdminAdjustment(ctx context.Context, userID int64, value float64, notes string) (*RedeemCode, error) {
+	return nil, nil
+}
+
 func (s *redeemRepoStub) Use(ctx context.Context, id, userID int64) error {
 	panic("unexpected Use call")
 }

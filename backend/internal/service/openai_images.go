@@ -561,7 +561,7 @@ func (s *OpenAIGatewayService) ForwardImages(
 		return nil, fmt.Errorf("parsed images request is required")
 	}
 	switch account.Type {
-	case AccountTypeAPIKey:
+	case AccountTypeAPIKey, AccountTypeUpstream:
 		return s.forwardOpenAIImagesAPIKey(ctx, c, account, body, parsed, channelMappedModel)
 	case AccountTypeOAuth, AccountTypeSetupToken:
 		return s.forwardOpenAIImagesOAuth(ctx, c, account, parsed, channelMappedModel)

@@ -550,3 +550,39 @@ type UpstreamErrorEvent struct {
 	Model      string
 	CreatedAt  time.Time
 }
+
+// LatencyCompensationUserSummary is one end-user's share of a Sub2API
+// latency-compensation preview or payout, mirroring
+// service.LatencyCompensationUserSummary on the Sub2API side.
+type LatencyCompensationUserSummary struct {
+	UserID       int64   `json:"user_id"`
+	Email        string  `json:"email"`
+	Requests     int     `json:"requests"`
+	ActualCost   float64 `json:"actual_cost"`
+	AccountCost  float64 `json:"account_cost"`
+	Compensation float64 `json:"compensation"`
+}
+
+// LatencyCompensationSummary mirrors service.LatencyCompensationSummary on
+// the Sub2API side: the full preview/payout result for a time window and
+// threshold, per-user breakdown plus totals.
+type LatencyCompensationSummary struct {
+	From              time.Time                         `json:"from"`
+	To                time.Time                         `json:"to"`
+	ThresholdMs       int                               `json:"threshold_ms"`
+	ProfitRatio       float64                           `json:"profit_ratio"`
+	Users             []LatencyCompensationUserSummary `json:"users"`
+	TotalRequests     int                               `json:"total_requests"`
+	TotalActualCost   float64                           `json:"total_actual_cost"`
+	TotalAccountCost  float64                           `json:"total_account_cost"`
+	TotalCompensation float64                           `json:"total_compensation"`
+}
+
+// RevokeLatencyCompensationResult mirrors Sub2API's revoke response. A
+// revoke can partially fail (a user already spent the credited balance), so
+// SkippedUserIDs must be surfaced rather than treated as "fully undone".
+type RevokeLatencyCompensationResult struct {
+	RevokedUserIDs []int64 `json:"revoked_users"`
+	SkippedUserIDs []int64 `json:"skipped_users"`
+	TotalRevoked   float64 `json:"total_revoked"`
+}

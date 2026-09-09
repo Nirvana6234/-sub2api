@@ -97,11 +97,12 @@ func isNoAvailableOpenAIAccountError(err error) bool {
 	return err != nil && (errors.Is(err, ErrNoAvailableAccounts) || errors.Is(err, ErrNoAvailableCompactAccounts))
 }
 
-// shouldUseOpenAIFallbackForModel allows fallback only when the candidate
-// group has at least one persistently eligible account that supports the
-// requested model. The caller must pass the group being entered, not the
-// group being left: a source group may legitimately reject a model while its
-// configured fallback pool is the intended provider for that model.
+// shouldUseOpenAIFallbackForModel reports whether groupID has at least one
+// persistently eligible account that supports requestedModel. Generic over
+// which group is passed — nextOpenAIFallbackGroup calls it once for the
+// source group and once for the candidate fallback group, and both must pass
+// for the fallback to proceed (see 2026-09-08 comment there for why the
+// source side is checked too).
 func (s *OpenAIGatewayService) shouldUseOpenAIFallbackForModel(
 	ctx context.Context,
 	groupID *int64,
@@ -195,9 +196,20 @@ func (s *OpenAIGatewayService) nextOpenAIFallbackGroup(ctx context.Context, curr
 	if !ok {
 		return ctx, nil
 	}
-	// Model support is a property of the target pool. Checking currentGroupID
-	// here incorrectly blocks a valid fallback when the source group is only a
-	// routing alias and the fallback pool owns the requested model.
+	// Both ends must support the model. This used to check only the target
+	// pool — deliberately, per the old comment here, to let a source group
+	// that "legitimately" carries zero accounts for a model borrow it from a
+	// shared fallback pool. 2026-09-08: that let a "plus" group with zero
+	// gpt-6-astra accounts silently serve it from puls-兜底 by pure
+	// misconfiguration, with no way to tell that apart from the intentional
+	// case. Per product decision, a source group that was never configured
+	// with a model must get model_not_found instead of borrowing it — if a
+	// pool is meant to extend a group's catalog, that has to be an explicit
+	// per-group opt-in, not a side effect of "no accounts support this model
+	// anywhere in the source group."
+	if !s.shouldUseOpenAIFallbackForModel(ctx, currentGroupID, requestedModel, platform) {
+		return ctx, nil
+	}
 	if !s.shouldUseOpenAIFallbackForModel(ctx, &fallbackID, requestedModel, platform) {
 		return ctx, nil
 	}

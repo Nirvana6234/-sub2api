@@ -15,6 +15,7 @@ import (
 )
 
 const stickySessionPrefix = "sticky_session:"
+const stickySessionFailurePrefix = "sticky_session_fail:"
 const openAIResponsesSessionWindowPrefix = "openai_responses_session_window:"
 const liveCallPrefix = "live:call:"
 
@@ -67,6 +68,34 @@ func (c *gatewayCache) RefreshSessionTTL(ctx context.Context, groupID int64, ses
 // or unschedulable), allowing subsequent requests to select a new available account.
 func (c *gatewayCache) DeleteSessionAccountID(ctx context.Context, groupID int64, sessionHash string) error {
 	key := buildSessionKey(groupID, sessionHash)
+	return c.rdb.Del(ctx, key).Err()
+}
+
+func buildSessionFailureKey(groupID int64, sessionHash string) string {
+	return fmt.Sprintf("%s%d:%s", stickySessionFailurePrefix, groupID, sessionHash)
+}
+
+// IncrementStickySessionFailure 记录粘性会话绑定账号这一轮请求失败一次，返回
+// 递增后的连续失败次数。只在计数器从 0 变成 1（即本次是新窗口的第一次失败）时
+// 设置过期时间，避免持续失败把计数窗口无限推后。
+func (c *gatewayCache) IncrementStickySessionFailure(ctx context.Context, groupID int64, sessionHash string, ttl time.Duration) (int64, error) {
+	key := buildSessionFailureKey(groupID, sessionHash)
+	count, err := c.rdb.Incr(ctx, key).Result()
+	if err != nil {
+		return 0, err
+	}
+	if count == 1 {
+		if err := c.rdb.Expire(ctx, key, ttl).Err(); err != nil {
+			return count, err
+		}
+	}
+	return count, nil
+}
+
+// ResetStickySessionFailure 清零粘性会话的连续失败计数，请求成功或粘性绑定被
+// 主动解除时调用。
+func (c *gatewayCache) ResetStickySessionFailure(ctx context.Context, groupID int64, sessionHash string) error {
+	key := buildSessionFailureKey(groupID, sessionHash)
 	return c.rdb.Del(ctx, key).Err()
 }
 

@@ -291,6 +291,10 @@ type OpenAIForwardResult struct {
 	SearchCount int
 	// AudioUsage carries Voice billing units when present.
 	AudioUsage *AudioUsage
+	// HeadroomTokensSaved is parsed from the upstream response's
+	// x-headroom-tokens-saved header (present only when the request was
+	// actually routed through and compressed by the headroom proxy).
+	HeadroomTokensSaved int
 
 	wsReplayInput                []json.RawMessage
 	wsReplayInputExists          bool
@@ -1246,7 +1250,7 @@ func (s *OpenAIGatewayService) GetAccessToken(ctx context.Context, account *Acco
 			return "", "", errors.New("access_token not found in credentials")
 		}
 		return accessToken, "oauth", nil
-	case AccountTypeAPIKey:
+	case AccountTypeAPIKey, AccountTypeUpstream:
 		if account.Platform == PlatformGrok {
 			apiKey := strings.TrimSpace(account.GetCredential("api_key"))
 			if apiKey == "" {
@@ -1255,6 +1259,9 @@ func (s *OpenAIGatewayService) GetAccessToken(ctx context.Context, account *Acco
 			return apiKey, "apikey", nil
 		}
 		apiKey := strings.TrimSpace(account.GetOpenAIProtocolAPIKey())
+		if account.Type == AccountTypeUpstream {
+			apiKey = strings.TrimSpace(account.GetCredential("api_key"))
+		}
 		if apiKey == "" {
 			return "", "", errors.New("api_key not found in credentials")
 		}

@@ -2,7 +2,7 @@
 #
 # 共飞-ChatGPT助手 —— macOS 安装 / 更新脚本
 #
-#   curl -fsSL https://gongfeiai.com/install-mac.sh | bash
+#   curl -fsSL https://download.gongfeiai.com/downloads/install-mac.sh | bash
 #
 # 这个脚本同时是安装器和更新器：重跑一次就是升级。
 #
@@ -23,10 +23,12 @@ set -euo pipefail
 APP_NAME="共飞-ChatGPT助手"
 APP_PATH="/Applications/${APP_NAME}.app"
 BUNDLE_ID="com.gongfeiai.chatgpt-assistant"
-# 刻意不带版本号。这个脚本同时是更新器，用户手里的那份可能是几个版本以前的，
-# 它必须永远取到最新的包 —— 所以发布流程要把 build-app.py 产出的
-# codex-relay-client_v<版本>_macos-arm64.tar.gz 以这个固定名字对外提供。
-DOWNLOAD_URL="${GONGFEI_DOWNLOAD_URL:-https://gongfeiai.com/download/codex-relay-client_macos-arm64.tar.gz}"
+# 刻意不带版本号：这个脚本同时是更新器，用户手里的那份可能是几个版本以前的，
+# 它必须永远取到最新的包。取的方式是实时问官网要——跟下载页面读的是同一个
+# 设置项（client_download_direct_url_mac），发新版本只需要在后台改一次设置，
+# 这个脚本永远不用跟着改。之前直接把域名和固定文件名硬编码在这里，域名从来
+# 没配过静态文件托管，跑起来会静默下载到一个 HTML 错误页——已改掉。
+SETTINGS_URL="https://gongfeiai.com/api/v1/settings/public"
 
 say() { printf '%s\n' "$*"; }
 fail() { printf '\n错误：%s\n' "$*" >&2; exit 1; }
@@ -74,11 +76,36 @@ if client_running; then
 fi
 
 # ---------------------------------------------------------------------------
-# 3. 下载并解压
+# 3. 确定下载地址，然后下载并解压
 #
-# 先解压到临时目录再整体搬运：直接就地解压时，一旦下载不完整，
-# /Applications 里会留下一个半截的应用，而它看起来和装好的没有区别。
+# GONGFEI_DOWNLOAD_URL 留给手动指定包地址的场景（比如从 GitHub Release 页面
+# 手动下载后本地联调）；没设置时实时问官网要当前发布的地址。
 # ---------------------------------------------------------------------------
+resolve_download_url() {
+    if [ -n "${GONGFEI_DOWNLOAD_URL:-}" ]; then
+        printf '%s' "${GONGFEI_DOWNLOAD_URL}"
+        return
+    fi
+
+    local json url
+    json="$(curl -fsSL "${SETTINGS_URL}")" \
+        || fail "无法连接服务器获取版本信息（${SETTINGS_URL}），请检查网络后重试。"
+
+    # grep -o 的模式把字段名连着结尾的 "_mac": 一起写死，天然避开
+    # client_download_direct_url（不带 _mac 后缀）的前缀歧义；
+    # cut -d'"' -f4 取的是 "client_download_direct_url_mac":"这一段"里第 4 个引号分隔字段，
+    # 也就是值本身。
+    url="$(printf '%s' "${json}" \
+        | grep -o '"client_download_direct_url_mac":"[^"]*"' \
+        | cut -d'"' -f4)"
+
+    [ -n "${url}" ] || fail "服务端暂未发布 macOS 安装包，请稍后重试或联系客服。"
+    printf '%s' "${url}"
+}
+
+say "正在获取版本信息…"
+DOWNLOAD_URL="$(resolve_download_url)"
+
 workdir="$(mktemp -d)"
 trap 'rm -rf "${workdir}"' EXIT
 

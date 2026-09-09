@@ -54362,6 +54362,7 @@ type UserMutation struct {
 	addrpm_limit                  *int
 	account_management_enabled    *bool
 	contribution_rooms_enabled    *bool
+	headroom_compression_enabled  *bool
 	clearedFields                 map[string]struct{}
 	api_keys                      map[int64]struct{}
 	removedapi_keys               map[int64]struct{}
@@ -55728,6 +55729,42 @@ func (m *UserMutation) ResetContributionRoomsEnabled() {
 	m.contribution_rooms_enabled = nil
 }
 
+// SetHeadroomCompressionEnabled sets the "headroom_compression_enabled" field.
+func (m *UserMutation) SetHeadroomCompressionEnabled(b bool) {
+	m.headroom_compression_enabled = &b
+}
+
+// HeadroomCompressionEnabled returns the value of the "headroom_compression_enabled" field in the mutation.
+func (m *UserMutation) HeadroomCompressionEnabled() (r bool, exists bool) {
+	v := m.headroom_compression_enabled
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldHeadroomCompressionEnabled returns the old "headroom_compression_enabled" field's value of the User entity.
+// If the User object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserMutation) OldHeadroomCompressionEnabled(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldHeadroomCompressionEnabled is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldHeadroomCompressionEnabled requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldHeadroomCompressionEnabled: %w", err)
+	}
+	return oldValue.HeadroomCompressionEnabled, nil
+}
+
+// ResetHeadroomCompressionEnabled resets all changes to the "headroom_compression_enabled" field.
+func (m *UserMutation) ResetHeadroomCompressionEnabled() {
+	m.headroom_compression_enabled = nil
+}
+
 // AddAPIKeyIDs adds the "api_keys" edge to the APIKey entity by ids.
 func (m *UserMutation) AddAPIKeyIDs(ids ...int64) {
 	if m.api_keys == nil {
@@ -56518,7 +56555,7 @@ func (m *UserMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UserMutation) Fields() []string {
-	fields := make([]string, 0, 28)
+	fields := make([]string, 0, 29)
 	if m.created_at != nil {
 		fields = append(fields, user.FieldCreatedAt)
 	}
@@ -56603,6 +56640,9 @@ func (m *UserMutation) Fields() []string {
 	if m.contribution_rooms_enabled != nil {
 		fields = append(fields, user.FieldContributionRoomsEnabled)
 	}
+	if m.headroom_compression_enabled != nil {
+		fields = append(fields, user.FieldHeadroomCompressionEnabled)
+	}
 	return fields
 }
 
@@ -56667,6 +56707,8 @@ func (m *UserMutation) Field(name string) (ent.Value, bool) {
 		return m.AccountManagementEnabled()
 	case user.FieldContributionRoomsEnabled:
 		return m.ContributionRoomsEnabled()
+	case user.FieldHeadroomCompressionEnabled:
+		return m.HeadroomCompressionEnabled()
 	}
 	return nil, false
 }
@@ -56732,6 +56774,8 @@ func (m *UserMutation) OldField(ctx context.Context, name string) (ent.Value, er
 		return m.OldAccountManagementEnabled(ctx)
 	case user.FieldContributionRoomsEnabled:
 		return m.OldContributionRoomsEnabled(ctx)
+	case user.FieldHeadroomCompressionEnabled:
+		return m.OldHeadroomCompressionEnabled(ctx)
 	}
 	return nil, fmt.Errorf("unknown User field %s", name)
 }
@@ -56936,6 +56980,13 @@ func (m *UserMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetContributionRoomsEnabled(v)
+		return nil
+	case user.FieldHeadroomCompressionEnabled:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetHeadroomCompressionEnabled(v)
 		return nil
 	}
 	return fmt.Errorf("unknown User field %s", name)
@@ -57189,6 +57240,9 @@ func (m *UserMutation) ResetField(name string) error {
 		return nil
 	case user.FieldContributionRoomsEnabled:
 		m.ResetContributionRoomsEnabled()
+		return nil
+	case user.FieldHeadroomCompressionEnabled:
+		m.ResetHeadroomCompressionEnabled()
 		return nil
 	}
 	return fmt.Errorf("unknown User field %s", name)

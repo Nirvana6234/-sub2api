@@ -926,6 +926,12 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					continue
 				}
 				h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, forwardModel, requireCompact, result), false, nil, err)
+				// 这条分支专收上游以 response.failed 事件形式吐出来的终结性失败（比如
+				// 中转商自己的排队/调度超时），不会像 *service.UpstreamFailoverError
+				// 那样触发换号重试。同一个粘性会话如果连续撞在这里，账号本身又没被
+				// 标记不可调度，就会一直粘着失败——这里记一次失败，连续达到阈值就
+				// 主动解绑，让下一次请求脱离这个账号重新调度。
+				h.gatewayService.RecordStickySessionFailure(c.Request.Context(), apiKey.GroupID, sessionHash, account.ID)
 				upstreamErrorAlreadyCommunicated := openAIForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, err)
 				wroteFallback := false
 				if !upstreamErrorAlreadyCommunicated {
@@ -955,6 +961,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			h.gatewayService.ReportOpenAIAccountScheduleResultWithLatency(account, openAIAccountScheduleModel(c, account, forwardModel, requireCompact, result), openAIForwardSucceededForScheduling(result), result.FirstTokenMs, openAIServingGroupIDForLatency(c), openAIReasoningEffortForLatency(result))
 		} else {
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, forwardModel, requireCompact, result), openAIForwardSucceededForScheduling(result), nil)
+		}
+		if openAIForwardSucceededForScheduling(result) {
+			h.gatewayService.RecordStickySessionSuccess(c.Request.Context(), apiKey.GroupID, sessionHash)
 		}
 
 		submitResponsesUsage(result)

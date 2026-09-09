@@ -1056,7 +1056,10 @@ func (s *RateLimitService) handleOpenAI403(ctx context.Context, account *Account
 		return false
 	}
 
-	if s.applyModelScopedOpenAI403(ctx, account, msg) {
+	// 显式凭据失效（invalid_api_key/token_revoked 等）说明这把凭据本身已经作废，
+	// 会影响账号下的所有模型，不能按上面 model-scoped 的口径收窄成单模型限流——
+	// 那样账号会继续被调度去用同一把坏凭据请求其它模型，反复失败。
+	if !openAIStreamCredentialAuthFailure(responseBody) && s.applyModelScopedOpenAI403(ctx, account, msg) {
 		return false
 	}
 

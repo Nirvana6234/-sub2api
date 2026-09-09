@@ -100,6 +100,14 @@ type dailyReportData struct {
 	WeekAccounting []upstream.GroupAccounting
 	// Yesterday 是昨天的日期字符串，分组毛利那段的口径就是它。
 	Yesterday string
+
+	// TodayCompensationUSD/WeekCompensationUSD 是从 TransitHub 发起、打到
+	// Sub2API 用户余额上的延迟补偿。Sub2API 自己的营收统计（actual_cost 汇总）
+	// 不会因为补偿而减少——补偿是独立的余额发放，不是原始订单的冲正——所以
+	// 这笔钱不会在别处自动体现，必须在这里显式计入成本，否则毛利会虚高。
+	// 单位是 USD：跟营收同源同币种，渲染时按同一个汇率折算成 CNY。
+	TodayCompensationUSD float64
+	WeekCompensationUSD  float64
 }
 
 // dailyReportScheduler 每分钟检查一次是否到了某个工作区配置的推送时刻。
@@ -348,6 +356,18 @@ func collectDailyReportData(ctx context.Context, deps dailyReportDeps, owner set
 	data.GroupAccounting = deps.mySites.GroupAccountingRange(ctx, owner.UserID, owner.AdminAccountID, data.Yesterday, data.Yesterday)
 	data.WeekAccounting = deps.mySites.GroupAccountingRange(ctx, owner.UserID, owner.AdminAccountID, data.CostFrom, data.CostTo)
 
+	if compensation, compErr := deps.mySites.SumLatencyCompensationPayoutsUSD(ctx, owner.UserID, owner.AdminAccountID, dayStart, now); compErr != nil {
+		log.Printf("[daily-report] 读取延迟补偿失败 user_id=%s err=%v", owner.UserID, compErr)
+	} else {
+		data.TodayCompensationUSD = compensation
+	}
+	weekStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).AddDate(0, 0, -(groupCostDays - 1))
+	if compensation, compErr := deps.mySites.SumLatencyCompensationPayoutsUSD(ctx, owner.UserID, owner.AdminAccountID, weekStart, now); compErr != nil {
+		log.Printf("[daily-report] 读取近 %d 日延迟补偿失败 user_id=%s err=%v", groupCostDays, owner.UserID, compErr)
+	} else {
+		data.WeekCompensationUSD = compensation
+	}
+
 	return data
 }
 
@@ -419,7 +439,9 @@ func writeBusinessResult(sb *strings.Builder, data dailyReportData) {
 		period = "今日"
 	}
 	revenue := snapshotRevenueCNY(latest)
-	cost := latest.TodayPurchaseCNY
+	// 延迟补偿是 USD 计价的余额发放，跟营收折算用同一个汇率，保持同口径。
+	todayCompensationCNY := data.TodayCompensationUSD * latest.EffectiveRate()
+	cost := latest.TodayPurchaseCNY + todayCompensationCNY
 	profit := revenue - cost
 
 	fmt.Fprintf(sb, "💰 %s营收 ¥%.2f", period, revenue)
@@ -434,6 +456,11 @@ func writeBusinessResult(sb *strings.Builder, data dailyReportData) {
 		fmt.Fprintf(sb, "%s", ratioSuffix(data.Settlement[len(data.Settlement)-2].TodayPurchaseCNY, cost))
 	}
 	sb.WriteString("\n")
+	// 补偿单列一行：它藏在「成本」这一个数字里不够，运营需要知道这笔钱
+	// 具体是补偿花掉的，不是采购成本涨了。
+	if todayCompensationCNY > 0 {
+		fmt.Fprintf(sb, "🎁 其中延迟补偿 ¥%.2f\n", todayCompensationCNY)
+	}
 
 	// 亏损时用醒目的标记：这是整份报告里最需要立刻反应的一行。
 	marker := "📈"
@@ -448,8 +475,13 @@ func writeBusinessResult(sb *strings.Builder, data dailyReportData) {
 		weekRevenue += snapshotRevenueCNY(snap)
 		weekCost += snap.TodayPurchaseCNY
 	}
-	fmt.Fprintf(sb, "📉 近 %d 日 营收 ¥%.2f ｜ 成本 ¥%.2f ｜ %s\n",
-		len(data.Settlement), weekRevenue, weekCost, marginText(weekRevenue, weekRevenue-weekCost))
+	weekCompensationCNY := data.WeekCompensationUSD * latest.EffectiveRate()
+	weekCost += weekCompensationCNY
+	fmt.Fprintf(sb, "📉 近 %d 日 营收 ¥%.2f ｜ 成本 ¥%.2f", len(data.Settlement), weekRevenue, weekCost)
+	if weekCompensationCNY > 0 {
+		fmt.Fprintf(sb, "（含延迟补偿 ¥%.2f）", weekCompensationCNY)
+	}
+	fmt.Fprintf(sb, " ｜ %s\n", marginText(weekRevenue, weekRevenue-weekCost))
 
 	if !latest.IsFinalized {
 		sb.WriteString(fmt.Sprintf("_注：%s数据尚未结算完毕，数值可能还会调整。_\n", period))

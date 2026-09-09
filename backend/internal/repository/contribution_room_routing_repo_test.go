@@ -59,6 +59,41 @@ func TestContributionRoomRouteExcludesUnschedulableAccounts(t *testing.T) {
 	require.False(t, foundBlocked)
 }
 
+func TestContributionRoomRouteExcludesAPIKeyAccounts(t *testing.T) {
+	ctx := context.Background()
+	client := newContributionRoomRoutingTestClient(t)
+	owner := createContributionRouteUser(t, client, "apikey-route-owner@example.com")
+	consumer := createContributionRouteUser(t, client, "apikey-route-consumer@example.com")
+	apiKey := client.APIKey.Create().SetUserID(consumer.ID).SetKey("sk-apikey-route-consumer").SetName("apikey-route-consumer").SetStatus(service.StatusAPIKeyActive).SaveX(ctx)
+	room := client.ContributionRoom.Create().
+		SetOwnerUserID(owner.ID).SetName("apikey-route-room").SetConsumerRateMultiplier(1).
+		SetStatus("active").SetVisibility("public").SaveX(ctx)
+	client.UserContributionRoomPreference.Create().
+		SetUserID(consumer.ID).SetAPIKeyID(apiKey.ID).SetRoomID(room.ID).
+		SetAllowPoolFallback(false).SaveX(ctx)
+
+	oauthAccount := createContributionRouteAccountOfType(t, client, owner.ID, "oauth-account", true, service.AccountTypeOAuth)
+	apikeyAccount := createContributionRouteAccountOfType(t, client, owner.ID, "apikey-account", true, service.AccountTypeAPIKey)
+	for _, account := range []*dbent.Account{oauthAccount, apikeyAccount} {
+		verifiedAt := time.Now().UTC()
+		client.ContributionAccountVerification.Create().
+			SetAccountID(account.ID).SetPlatform(service.PlatformOpenAI).
+			SetStatus(service.ContributionVerificationStatusVerified).SetModelFamily("gpt").
+			SetTestedAt(verifiedAt).SaveX(ctx)
+		client.ContributionRoomAccount.Create().
+			SetRoomID(room.ID).SetAccountID(account.ID).SetEnabled(true).
+			SetShareConcurrency(2).SetShareBudgetUsd(5).SetVerifiedAt(verifiedAt).SaveX(ctx)
+	}
+
+	route, err := NewContributionRoomRoutingRepository(client).ResolveRouteForAPIKey(ctx, consumer.ID, apiKey.ID)
+	require.NoError(t, err)
+	require.NotNil(t, route)
+	require.Len(t, route.Rooms, 1)
+	require.Equal(t, []int64{oauthAccount.ID}, route.Rooms[0].AccountIDs)
+	_, foundAPIKeyAccount := route.Rooms[0].AccountConcurrencies[apikeyAccount.ID]
+	require.False(t, foundAPIKeyAccount)
+}
+
 func TestNormalGroupSchedulingExcludesContributionRoomMembers(t *testing.T) {
 	ctx := context.Background()
 	client := newContributionRoomRoutingTestClient(t)
@@ -107,9 +142,19 @@ func createContributionRouteUser(t *testing.T, client *dbent.Client, email strin
 
 func createContributionRouteAccount(t *testing.T, client *dbent.Client, ownerID int64, name string, schedulable bool) *dbent.Account {
 	t.Helper()
-	return client.Account.Create().
-		SetName(name).SetPlatform(service.PlatformOpenAI).SetType(service.AccountTypeAPIKey).
-		SetCredentials(map[string]any{"api_key": "test-key"}).
+	return createContributionRouteAccountOfType(t, client, ownerID, name, schedulable, service.AccountTypeOAuth)
+}
+
+func createContributionRouteAccountOfType(t *testing.T, client *dbent.Client, ownerID int64, name string, schedulable bool, accountType string) *dbent.Account {
+	t.Helper()
+	builder := client.Account.Create().
+		SetName(name).SetPlatform(service.PlatformOpenAI).SetType(accountType).
 		SetExtra(map[string]any{service.AccountContributionSourceKey: service.AccountContributionSourceValue, service.AccountContributorUserIDKey: ownerID}).
-		SetSchedulable(schedulable).SaveX(context.Background())
+		SetSchedulable(schedulable)
+	if accountType == service.AccountTypeAPIKey {
+		builder = builder.SetCredentials(map[string]any{"api_key": "test-key"})
+	} else {
+		builder = builder.SetCredentials(map[string]any{"access_token": "test-access", "refresh_token": "test-refresh"})
+	}
+	return builder.SaveX(context.Background())
 }

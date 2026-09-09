@@ -148,7 +148,7 @@ func (h *AccountContributionHandler) GetOwnRoom(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
-	view, err := h.contributionRoomView(c.Request.Context(), room)
+	view, err := h.contributionRoomView(c.Request.Context(), room, false)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -303,7 +303,7 @@ func (h *AccountContributionHandler) CreateOwnRoom(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
-	view, err := h.contributionRoomView(c.Request.Context(), room)
+	view, err := h.contributionRoomView(c.Request.Context(), room, false)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -372,7 +372,7 @@ func (h *AccountContributionHandler) UpdateOwnRoom(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
-	view, err := h.contributionRoomView(c.Request.Context(), updated)
+	view, err := h.contributionRoomView(c.Request.Context(), updated, false)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -467,7 +467,7 @@ func (h *AccountContributionHandler) AddOwnRoomAccount(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
-	view, err := h.contributionRoomAccountView(c.Request.Context(), member, nil)
+	view, err := h.contributionRoomAccountView(c.Request.Context(), member, nil, false)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -561,7 +561,7 @@ func (h *AccountContributionHandler) UpdateOwnRoomAccount(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
-	view, err := h.contributionRoomAccountView(c.Request.Context(), updated, nil)
+	view, err := h.contributionRoomAccountView(c.Request.Context(), updated, nil, false)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -639,7 +639,8 @@ func (h *AccountContributionHandler) ListSelectableContributionRooms(c *gin.Cont
 	}
 	items := make([]ContributionRoomView, 0, len(rooms))
 	for _, room := range rooms {
-		view, err := h.contributionRoomView(c.Request.Context(), room)
+		// 浏览目录：这些房间不属于当前用户，账号名对其脱敏。
+		view, err := h.contributionRoomView(c.Request.Context(), room, true)
 		if err != nil {
 			response.ErrorFrom(c, err)
 			return
@@ -729,7 +730,9 @@ func (h *AccountContributionHandler) UpdateContributionRoomPreference(c *gin.Con
 			response.ErrorFrom(c, err)
 			return
 		}
-		view, err := h.contributionRoomView(c.Request.Context(), room)
+		// 只用于内部校验 view.Selectable，不直接回传给客户端；这里的目标房间也不是
+		// 调用者自己的，脱敏与否不影响校验逻辑，为保持一致仍按非房主口径处理。
+		view, err := h.contributionRoomView(c.Request.Context(), room, true)
 		if err != nil {
 			response.ErrorFrom(c, err)
 			return
@@ -827,7 +830,8 @@ func (h *AccountContributionHandler) ListContributionRoomsForAdmin(c *gin.Contex
 	}
 	items := make([]ContributionRoomView, 0, len(rooms))
 	for _, room := range rooms {
-		view, err := h.contributionRoomView(c.Request.Context(), room)
+		// 管理员视角：需要看到真实账号名以便运维排查，不脱敏。
+		view, err := h.contributionRoomView(c.Request.Context(), room, false)
 		if err != nil {
 			response.ErrorFrom(c, err)
 			return
@@ -857,7 +861,7 @@ func (h *AccountContributionHandler) GetContributionRoomForAdmin(c *gin.Context)
 	if !ok {
 		return
 	}
-	view, err := h.contributionRoomView(c.Request.Context(), room)
+	view, err := h.contributionRoomView(c.Request.Context(), room, false)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -917,7 +921,7 @@ func (h *AccountContributionHandler) UpdateContributionRoomForAdmin(c *gin.Conte
 		response.ErrorFrom(c, err)
 		return
 	}
-	view, err := h.contributionRoomView(c.Request.Context(), updated)
+	view, err := h.contributionRoomView(c.Request.Context(), updated, false)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -953,7 +957,7 @@ func (h *AccountContributionHandler) UpdateContributionRoomAccountForAdmin(c *gi
 		response.ErrorFrom(c, err)
 		return
 	}
-	view, err := h.contributionRoomAccountView(c.Request.Context(), updated, nil)
+	view, err := h.contributionRoomAccountView(c.Request.Context(), updated, nil, false)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -1119,13 +1123,21 @@ func (h *AccountContributionHandler) invalidateContributionVerification(ctx cont
 }
 
 func contributionVerificationTestModel(account *service.Account, requestedModel string) string {
+	trimmed := strings.TrimSpace(requestedModel)
+	if trimmed != "" {
+		return trimmed
+	}
 	if account != nil && account.Platform == service.PlatformOpenAI {
-		// User-contributed OpenAI-compatible credentials must prove a canonical
-		// GPT request before they are eligible for sharing. Free accounts use
-		// the matching lightweight model.
+		// No explicit choice from the caller: fall back to a canonical GPT
+		// request so unattended/legacy callers still get a sane default.
+		// Free accounts use the matching lightweight model. The caller is
+		// expected to offer the account's real available-models list (see
+		// GetAvailableModels) rather than relying on this fallback staying
+		// valid forever — OpenAI's own model lineup moves and a hardcoded
+		// default silently goes stale (e.g. gpt-5.4 was retired).
 		return service.OpenAITestModelForAccount(account)
 	}
-	return strings.TrimSpace(requestedModel)
+	return trimmed
 }
 
 func contributionModelFamily(platform, modelID string) string {
@@ -1248,7 +1260,7 @@ func (h *AccountContributionHandler) verifiedContributionAccount(ctx context.Con
 	return query.Only(ctx)
 }
 
-func (h *AccountContributionHandler) contributionRoomView(ctx context.Context, room *dbent.ContributionRoom) (ContributionRoomView, error) {
+func (h *AccountContributionHandler) contributionRoomView(ctx context.Context, room *dbent.ContributionRoom, maskAccountName bool) (ContributionRoomView, error) {
 	if room == nil {
 		return ContributionRoomView{}, fmt.Errorf("contribution room not found")
 	}
@@ -1259,7 +1271,7 @@ func (h *AccountContributionHandler) contributionRoomView(ctx context.Context, r
 	members := make([]ContributionRoomAccountView, 0, len(room.Edges.Accounts))
 	selectable := false
 	for _, member := range room.Edges.Accounts {
-		view, err := h.contributionRoomAccountView(ctx, member, nil)
+		view, err := h.contributionRoomAccountView(ctx, member, nil, maskAccountName)
 		if err != nil {
 			return ContributionRoomView{}, err
 		}
@@ -1282,7 +1294,17 @@ func (h *AccountContributionHandler) contributionRoomView(ctx context.Context, r
 	}, nil
 }
 
-func (h *AccountContributionHandler) contributionRoomAccountView(ctx context.Context, member *dbent.ContributionRoomAccount, verification *dbent.ContributionAccountVerification) (ContributionRoomAccountView, error) {
+// maskContributionAccountName 把贡献账号的名称脱敏成"首字符+***"，用于非房主/非管理员
+// 视角下的房间浏览（避免把贡献者自己起的、可能带个人标识的账号名原样暴露给房间里的其他成员）。
+func maskContributionAccountName(name string) string {
+	runes := []rune(strings.TrimSpace(name))
+	if len(runes) == 0 {
+		return "***"
+	}
+	return string(runes[:1]) + "***"
+}
+
+func (h *AccountContributionHandler) contributionRoomAccountView(ctx context.Context, member *dbent.ContributionRoomAccount, verification *dbent.ContributionAccountVerification, maskAccountName bool) (ContributionRoomAccountView, error) {
 	if member == nil {
 		return ContributionRoomAccountView{}, fmt.Errorf("contribution room account not found")
 	}
@@ -1306,9 +1328,13 @@ func (h *AccountContributionHandler) contributionRoomAccountView(ctx context.Con
 		}
 	}
 	account := member.Edges.Account
+	accountName := account.Name
+	if maskAccountName {
+		accountName = maskContributionAccountName(accountName)
+	}
 	view := ContributionRoomAccountView{
 		AccountID:        member.AccountID,
-		Name:             account.Name,
+		Name:             accountName,
 		Platform:         account.Platform,
 		Type:             account.Type,
 		Status:           account.Status,
