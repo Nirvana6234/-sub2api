@@ -1,12 +1,19 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "共飞 AI 工作台主窗口的能力集。前端要调 agent_* 那组命令（应用自定义命令，不走 ACL），以及选工作目录用的对话框。**新增能力必须显式加在这里**，每加一条就是多给前端一份原生权限。",
+  "description": "共飞 AI 工作台主窗口的能力集。前端要调 agent_* 那组命令（应用自定义命令，不走 ACL）、选工作目录用的对话框，以及绕开浏览器 CORS 用的 http fetch（见 src/client/paw/httpFetch.ts）。**新增能力必须显式加在这里**，每加一条就是多给前端一份原生权限。http:default 的 allow 只放了正式服和本地联调后端两个地址（跟 package.json 里 app:build:release / app:build:local 的 PAW_SERVICE_URL 一一对应），不是放开任意地址——桌面端不该替用户去访问它没主动要求的第三方地址。",
   "windows": [
     "main"
   ],
   "permissions": [
     "core:default",
-    "dialog:allow-open"
+    "dialog:allow-open",
+    {
+      "identifier": "http:default",
+      "allow": [
+        { "url": "https://gongfeiai.com/*" },
+        { "url": "http://127.0.0.1:8080/*" }
+      ]
+    }
   ]
 }
