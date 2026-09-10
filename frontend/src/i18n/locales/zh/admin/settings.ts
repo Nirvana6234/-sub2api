@@ -45,6 +45,12 @@ export default {
           enabled: '启用可用渠道',
           enabledHint: '关闭后用户端侧边栏入口隐藏，接口返回空数组。',
         },
+        playground: {
+          title: '游乐场',
+          description: '向终端用户开放游乐场入口。默认关闭。',
+          enabled: '启用游乐场',
+          enabledHint: '关闭后游乐场保持隐藏，后端适配器应按关闭状态拒绝访问。',
+        },
         modelPlaza: {
           title: '模型广场',
           description: '以分组为单位向访客展示可用模型与价格的公开页面。默认关闭。',

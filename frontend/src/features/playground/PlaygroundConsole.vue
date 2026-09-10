@@ -346,16 +346,29 @@
                           <p>{{ t('playground.imageLoadFailed') }}</p>
                           <a :href="imageUrl" target="_blank" rel="noreferrer" class="text-primary-600 hover:underline dark:text-primary-300">{{ t('playground.openImage') }}</a>
                         </div>
-                        <button
-                          type="button"
-                          class="btn btn-secondary btn-icon absolute right-2 top-2 h-8 w-8 bg-white/95 p-0 shadow-sm dark:bg-dark-800/95"
-                          :title="t('playground.downloadImage')"
-                          :disabled="isDownloadingImage(message.id, imageIndex)"
-                          @click="downloadGeneratedImage(message, imageUrl, imageIndex)"
-                        >
-                          <Icon :name="isDownloadingImage(message.id, imageIndex) ? 'refresh' : 'download'" size="sm" :class="{ 'animate-spin': isDownloadingImage(message.id, imageIndex) }" />
-                          <span class="sr-only">{{ t('playground.downloadImage') }}</span>
-                        </button>
+                        <div class="absolute right-2 top-2 flex gap-1.5">
+                          <button
+                            v-if="clipboardImageSupported"
+                            type="button"
+                            class="btn btn-secondary btn-icon h-8 w-8 bg-white/95 p-0 shadow-sm dark:bg-dark-800/95"
+                            :title="t('playground.copyImage')"
+                            :disabled="isCopyingImage(message.id, imageIndex)"
+                            @click="copyGeneratedImage(message, imageUrl, imageIndex)"
+                          >
+                            <Icon :name="isCopyingImage(message.id, imageIndex) ? 'refresh' : 'clipboard'" size="sm" :class="{ 'animate-spin': isCopyingImage(message.id, imageIndex) }" />
+                            <span class="sr-only">{{ t('playground.copyImage') }}</span>
+                          </button>
+                          <button
+                            type="button"
+                            class="btn btn-secondary btn-icon h-8 w-8 bg-white/95 p-0 shadow-sm dark:bg-dark-800/95"
+                            :title="t('playground.downloadImage')"
+                            :disabled="isDownloadingImage(message.id, imageIndex)"
+                            @click="downloadGeneratedImage(message, imageUrl, imageIndex)"
+                          >
+                            <Icon :name="isDownloadingImage(message.id, imageIndex) ? 'refresh' : 'download'" size="sm" :class="{ 'animate-spin': isDownloadingImage(message.id, imageIndex) }" />
+                            <span class="sr-only">{{ t('playground.downloadImage') }}</span>
+                          </button>
+                        </div>
                       </div>
                     </div>
                     <p v-if="message.revisedPrompt" class="mt-3 text-xs leading-5 text-gray-500 dark:text-dark-400">{{ message.revisedPrompt }}</p>
@@ -465,6 +478,22 @@
                   :disabled="!parameters.enabled[control.key] || isGenerating"
                   @input="setParameterValue(control.key, $event)"
                 >
+              </section>
+
+              <section class="rounded-lg border border-gray-200 p-3 dark:border-dark-700">
+                <label for="playground-reasoning-effort" class="text-sm font-medium text-gray-800 dark:text-gray-100">{{ t('playground.reasoningEffortLabel') }}</label>
+                <p class="mt-0.5 text-xs leading-5 text-gray-500 dark:text-dark-400">{{ t('playground.reasoningEffortDescription') }}</p>
+                <select
+                  id="playground-reasoning-effort"
+                  v-model="parameters.reasoning_effort"
+                  class="select mt-3 h-9 w-full text-sm"
+                  :disabled="isGenerating"
+                >
+                  <option value="none">{{ t('playground.reasoningEffortNone') }}</option>
+                  <option value="low">{{ t('playground.reasoningEffortLow') }}</option>
+                  <option value="medium">{{ t('playground.reasoningEffortMedium') }}</option>
+                  <option value="high">{{ t('playground.reasoningEffortHigh') }}</option>
+                </select>
               </section>
 
               <label class="flex items-center justify-between gap-3 rounded-lg border border-gray-200 p-3 dark:border-dark-700">
@@ -601,7 +630,6 @@
             :aria-label="t('playground.composerLabel')"
             :disabled="isGenerating"
             @keydown="handleComposerKeydown"
-            @paste="handleComposerPaste"
           ></textarea>
 
           <div v-if="pendingAttachments.length" class="flex flex-wrap gap-1.5 border-t border-gray-100 px-3 py-2 dark:border-dark-700">
@@ -687,10 +715,11 @@ import { Icon } from '@/components/icons'
 import { useAppStore, useAuthStore } from '@/stores'
 import type { ApiKey } from '@/types'
 import { fetchPlaygroundHistory, fetchPlaygroundModels, savePlaygroundHistory, sendPlaygroundChat, sendPlaygroundImageGeneration } from './api'
-import { renderPlaygroundMarkdown } from './markdown'
+import { renderPlaygroundMarkdown, stripMathDelimitersForCopy } from './markdown'
 import { createPlaygroundPersistScheduler, loadPlaygroundState, mergePlaygroundStates, savePlaygroundState, toPersistedState } from './persistence'
 import { cachePlaygroundImage, createPlaygroundImageCacheKey, restoreCachedPlaygroundImage } from './imageCache'
 import { downloadPlaygroundImage, imageFilenameExtension, playgroundImageUrl } from './imageDownload'
+import { copyPlaygroundImageToClipboard, isClipboardImageSupported } from './imageClipboard'
 import type { PlaygroundAttachment, PlaygroundConversation, PlaygroundKeySummary, PlaygroundMessage, PlaygroundMode, PlaygroundModel, PlaygroundParameters, PlaygroundProject, PlaygroundRole } from './types'
 import {
   buildChatPayload,
@@ -746,7 +775,7 @@ const parameterControls: ParameterControl[] = [
   { key: 'top_p', labelKey: 'playground.topPLabel', descriptionKey: 'playground.topPDescription', kind: 'range', min: 0, max: 1, step: 0.05 },
   { key: 'frequency_penalty', labelKey: 'playground.frequencyPenaltyLabel', descriptionKey: 'playground.frequencyPenaltyDescription', kind: 'range', min: -2, max: 2, step: 0.1 },
   { key: 'presence_penalty', labelKey: 'playground.presencePenaltyLabel', descriptionKey: 'playground.presencePenaltyDescription', kind: 'range', min: -2, max: 2, step: 0.1 },
-  { key: 'max_tokens', labelKey: 'playground.maxTokensLabel', descriptionKey: 'playground.maxTokensDescription', kind: 'number', min: 1, max: 32768, step: 1 },
+  { key: 'max_tokens', labelKey: 'playground.maxTokensLabel', descriptionKey: 'playground.maxTokensDescription', kind: 'number', min: 1, max: 65536, step: 1 },
   { key: 'seed', labelKey: 'playground.seedLabel', descriptionKey: 'playground.seedDescription', kind: 'number', min: -2147483648, max: 2147483647, step: 1 },
 ]
 
@@ -798,7 +827,10 @@ const streamingMessageId = ref<string | null>(null)
 const editingMessageId = ref<string | null>(null)
 const editingContent = ref('')
 const downloadingImageIds = ref<Set<string>>(new Set())
+const copyingImageIds = ref<Set<string>>(new Set())
 const failedImageIds = ref<Set<string>>(new Set())
+// 剪贴板写图能力在页面生命周期内不会变，求值一次即可，避免每次渲染都探测。
+const clipboardImageSupported = isClipboardImageSupported()
 const generationImageCount = ref(1)
 const generationElapsedSeconds = ref(0)
 const generatedImageCount = ref(0)
@@ -816,20 +848,25 @@ const persistSource = Math.random().toString(36).slice(2)
 const playgroundStateUpdatedEvent = 'sub2api:playground-state-updated'
 const imageObjectUrls = new Set<string>()
 const persistScheduler = createPlaygroundPersistScheduler(500, async (userId, keyId, state) => {
-  const saved = savePlaygroundState(userId, keyId, state)
+  // Merge with the latest browser snapshot before writing so a second tab
+  // cannot erase conversations that were created in the first tab.
+  const saved = savePlaygroundState(userId, keyId, mergePlaygroundStates([
+    loadPlaygroundState(userId, keyId),
+    state,
+  ]))
   try {
-    await savePlaygroundHistory(userId, saved)
+    const remoteSaved = await savePlaygroundHistory(userId, saved)
+    if (!remoteSaved) return saved
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(playgroundStateUpdatedEvent, {
+        detail: { userId, source: persistSource },
+      }))
+    }
   } catch {
-    // Local state remains available while a history request is temporarily unavailable.
-  }
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent(playgroundStateUpdatedEvent, {
-      detail: { userId, source: persistSource },
-    }))
+    // Local state remains available while history request is temporarily unavailable.
   }
   return saved
 })
-
 function handleBackgroundStateUpdate(event: Event): void {
   const detail = (event as CustomEvent<{ userId?: number; source?: string }>).detail
   if (detail?.source === persistSource || detail?.userId !== userId.value || isGenerating.value) return
@@ -975,7 +1012,8 @@ const conversationAttachmentCount = computed(() => (
   (activeConversation.value?.messages ?? []).reduce((total, message) => total + (message.attachments?.length ?? 0), 0)
   + pendingAttachments.value.length
 ))
-const enabledParameterCount = computed(() => Object.values(parameters.value.enabled).filter(Boolean).length)
+const enabledParameterCount = computed(() => Object.values(parameters.value.enabled).filter(Boolean).length
+  + (parameters.value.reasoning_effort !== 'none' ? 1 : 0))
 const activeProjectName = computed(() => {
   const projectId = activeConversation.value?.projectId
   return projects.value.find((project) => project.id === projectId)?.name ?? t('playground.ungrouped')
@@ -1731,9 +1769,45 @@ async function handleAttachmentChange(event: Event): Promise<void> {
 }
 
 async function handleComposerPaste(event: ClipboardEvent): Promise<void> {
+  // 同时读 files 和 items：截图粘贴两者都会填充，但从部分网页复制图片时
+  // 某些浏览器只给出 items，只看 files 会静默漏掉。
+  const itemFiles = Array.from(event.clipboardData?.items ?? [])
+    .filter((item) => item.kind === 'file')
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => Boolean(file))
   const files = Array.from(event.clipboardData?.files ?? [])
+    .concat(itemFiles)
+    .filter((file, index, all) => all.findIndex((candidate) => candidate.name === file.name && candidate.size === file.size && candidate.type === file.type) === index)
   if (!files.some((file) => file.type.startsWith('image/'))) return
   await addAttachments(files)
+}
+
+// Browsers frequently fail to detect a MIME type for plain-text/code files
+// (empty file.type), which used to fall back to 'application/octet-stream'.
+// The upstream file API rejects that type, but only once the attachment is
+// already baked into conversation history — every later message in that
+// conversation then fails with the same cryptic error. Infer a type from the
+// extension for common text/code files instead, and reject anything we still
+// can't identify so the failure surfaces immediately at upload time.
+const PLAYGROUND_EXTENSION_MIME_TYPES: Record<string, string> = {
+  txt: 'text/plain', md: 'text/markdown', markdown: 'text/markdown', log: 'text/plain',
+  csv: 'text/csv', tsv: 'text/tab-separated-values', json: 'application/json',
+  yaml: 'text/yaml', yml: 'text/yaml', toml: 'text/plain', ini: 'text/plain', conf: 'text/plain', env: 'text/plain',
+  xml: 'application/xml', html: 'text/html', htm: 'text/html', css: 'text/css',
+  js: 'text/javascript', mjs: 'text/javascript', cjs: 'text/javascript', ts: 'text/plain', tsx: 'text/plain', jsx: 'text/plain',
+  py: 'text/x-python', go: 'text/plain', java: 'text/x-java', c: 'text/plain', h: 'text/plain',
+  cpp: 'text/plain', hpp: 'text/plain', rs: 'text/plain', rb: 'text/plain', php: 'text/plain',
+  sh: 'text/plain', bash: 'text/plain', sql: 'text/plain',
+}
+
+function resolvePlaygroundAttachmentMimeType(file: File): string | null {
+  // The browser/OS itself reports 'application/octet-stream' for many
+  // unrecognized extensions (observed for .toml on Windows/Chrome) — it is
+  // not always an empty file.type we need to fall back from, so treat it the
+  // same as "unknown" rather than trusting it as a real, supported type.
+  if (file.type && file.type !== 'application/octet-stream') return file.type
+  const extension = file.name.split('.').pop()?.toLowerCase()
+  return (extension && PLAYGROUND_EXTENSION_MIME_TYPES[extension]) || null
 }
 
 async function addAttachments(files: File[]): Promise<void> {
@@ -1753,17 +1827,26 @@ async function addAttachments(files: File[]): Promise<void> {
       appStore.showError(`${file.name} 超过 8MB，无法上传`)
       continue
     }
+    const mimeType = resolvePlaygroundAttachmentMimeType(file)
+    if (!mimeType) {
+      appStore.showError(`${file.name} 无法识别文件类型，不支持上传`)
+      continue
+    }
     try {
-      const dataUrl = await new Promise<string>((resolve, reject) => {
+      const rawDataUrl = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader()
         reader.onload = () => resolve(String(reader.result))
         reader.onerror = () => reject(reader.error ?? new Error('读取文件失败'))
         reader.readAsDataURL(file)
       })
+      // FileReader embeds the browser's own (possibly empty/octet-stream)
+      // file.type into the data URL, independent of the mimeType resolved
+      // above — rewrite it so the corrected type actually reaches the API.
+      const dataUrl = rawDataUrl.replace(/^data:[^;,]*/, `data:${mimeType}`)
       attachments.push({
         id: `attachment-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         name: file.name,
-        mimeType: file.type || 'application/octet-stream',
+        mimeType,
         size: file.size,
         dataUrl,
       })
@@ -1836,7 +1919,7 @@ async function copyMessage(message: PlaygroundMessage): Promise<void> {
   const text = message.reasoningContent
     ? `${message.reasoningContent}\n\n${message.content}`.trim()
     : message.content
-  await copyToClipboard(text, t('playground.copied'))
+  await copyToClipboard(stripMathDelimitersForCopy(text), t('playground.copied'))
 }
 
 function downloadImageId(messageId: string, imageIndex: number): string {
@@ -1853,6 +1936,27 @@ function markImageLoadFailed(messageId: string, imageIndex: number): void {
 
 function isDownloadingImage(messageId: string, imageIndex: number): boolean {
   return downloadingImageIds.value.has(downloadImageId(messageId, imageIndex))
+}
+
+function isCopyingImage(messageId: string, imageIndex: number): boolean {
+  return copyingImageIds.value.has(downloadImageId(messageId, imageIndex))
+}
+
+async function copyGeneratedImage(message: PlaygroundMessage, imageUrl: string, imageIndex: number): Promise<void> {
+  const imageId = downloadImageId(message.id, imageIndex)
+  if (copyingImageIds.value.has(imageId)) return
+
+  copyingImageIds.value = new Set([...copyingImageIds.value, imageId])
+  try {
+    await copyPlaygroundImageToClipboard(imageUrl)
+    appStore.showSuccess(t('playground.imageCopied'))
+  } catch {
+    appStore.showError(t('playground.imageCopyFailed'))
+  } finally {
+    const nextCopyingIds = new Set(copyingImageIds.value)
+    nextCopyingIds.delete(imageId)
+    copyingImageIds.value = nextCopyingIds
+  }
 }
 
 async function downloadGeneratedImage(message: PlaygroundMessage, imageUrl: string, imageIndex: number): Promise<void> {
@@ -1937,12 +2041,16 @@ watch(
 
 onMounted(async () => {
   window.addEventListener(playgroundStateUpdatedEvent, handleBackgroundStateUpdate)
+  // 全局监听粘贴：原来只绑在输入框上，截完图不先点输入框就按 Ctrl+V 会毫无反应。
+  // 画布视图与本组件是 v-if/v-else 互斥挂载，不会两边同时监听。
+  window.addEventListener('paste', handleComposerPaste)
   await appStore.fetchPublicSettings()
   await loadKeys()
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener(playgroundStateUpdatedEvent, handleBackgroundStateUpdate)
+  window.removeEventListener('paste', handleComposerPaste)
   keyAbortController?.abort()
   modelsAbortController?.abort()
   stopGenerationTimer()

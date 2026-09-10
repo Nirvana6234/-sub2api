@@ -45,6 +45,12 @@ export default {
           enabled: 'Enable Available Channels',
           enabledHint: 'When off, the sidebar entry is hidden and the endpoint returns an empty list.',
         },
+        playground: {
+          title: 'Playground',
+          description: 'Expose the Playground entry points to end users. Disabled by default.',
+          enabled: 'Enable Playground',
+          enabledHint: 'When off, Playground stays hidden and backend adapters should fail closed.',
+        },
         modelPlaza: {
           title: 'Model Plaza',
           description: 'A public page showcasing available models and pricing by group. Disabled by default.',

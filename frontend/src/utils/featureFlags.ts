@@ -104,6 +104,21 @@ export const FeatureFlags = {
     mode: 'opt-in',
     label: 'Available Channels',
   }),
+  playground: defineFlag({
+    key: 'playground_enabled',
+    mode: 'opt-in',
+    label: 'Playground',
+  }),
+  clientDownload: defineFlag({
+    key: 'client_download_enabled',
+    mode: 'opt-out',
+    label: 'Client Download',
+  }),
+  backupPayment: defineFlag({
+    key: 'backup_payment_enabled',
+    mode: 'opt-in',
+    label: 'Backup Payment',
+  }),
   modelPlaza: defineFlag({
     key: 'model_plaza_enabled',
     mode: 'opt-in',

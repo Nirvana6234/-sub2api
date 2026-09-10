@@ -19,7 +19,7 @@ export const PLAYGROUND_LEGACY_STORAGE_VERSION = 1
 export const PLAYGROUND_MAX_PERSIST_BYTES = 96 * 1024
 export const PLAYGROUND_MAX_TOTAL_PERSIST_BYTES = 1024 * 1024
 export const PLAYGROUND_MAX_MESSAGES = 48
-export const PLAYGROUND_MAX_MESSAGE_CHARS = 12000
+export const PLAYGROUND_MAX_MESSAGE_CHARS = 1_000_000
 export const PLAYGROUND_MAX_CONVERSATIONS = 48
 export const PLAYGROUND_MAX_PROJECTS = 24
 export const PLAYGROUND_MAX_PROJECT_NAME_CHARS = 80
@@ -48,6 +48,7 @@ export const DEFAULT_PLAYGROUND_PARAMETERS: PlaygroundParameters = {
   presence_penalty: 0,
   seed: null,
   stream: true,
+  reasoning_effort: 'none',
   enabled: { ...DEFAULT_PLAYGROUND_PARAMETER_ENABLED },
 }
 
@@ -166,6 +167,7 @@ export function cloneParameters(parameters: PlaygroundParameters): PlaygroundPar
     presence_penalty: parameters.presence_penalty,
     seed: parameters.seed,
     stream: parameters.stream,
+    reasoning_effort: parameters.reasoning_effort,
     enabled: {
       temperature: parameters.enabled.temperature,
       top_p: parameters.enabled.top_p,

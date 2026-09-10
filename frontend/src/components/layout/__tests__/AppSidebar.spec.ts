@@ -61,15 +61,6 @@ describe('AppSidebar collapsible groups', () => {
   })
 })
 
-describe('AppSidebar ticket notification', () => {
-  it('renders a shared unread indicator for personal and admin ticket links', () => {
-    expect(componentSource).toContain('sidebar-notification-dot')
-    expect(componentSource).toContain('ticketUnreadCountFor')
-    expect(componentSource).toContain('ticketStore.adminUnreadCount')
-    expect(componentSource).toContain('ticketStore.userUnreadCount')
-  })
-})
-
 describe('AppSidebar header styles', () => {
   it('does not clip the version badge dropdown', () => {
     const sidebarHeaderBlockMatch = styleSource.match(/\.sidebar-header\s*\{[\s\S]*?\n {2}\}/)

@@ -630,6 +630,8 @@ export interface Group {
   claude_code_only: boolean
   fallback_group_id: number | null
   fallback_group_id_on_invalid_request: number | null
+  is_fallback_pool: boolean
+  kiro_compat: boolean
   // OpenAI Messages 调度开关（用户侧需要此字段判断是否展示 Claude Code 教程）
   allow_messages_dispatch?: boolean
   // OpenAI Live 接口开关
@@ -764,6 +766,12 @@ export interface ApiKey {
   updated_at: string
   current_concurrency: number
   group?: Group
+  auto_group: boolean
+  auto_group_strategy: 'price' | 'balanced' | 'speed'
+  auto_group_ids: number[]
+  auto_group_current_group?: Group | null
+  auto_group_current_model?: string
+  auto_group_current_selected_at?: string | null
   rate_limit_5h: number
   rate_limit_1d: number
   rate_limit_7d: number
@@ -789,6 +797,9 @@ export interface CreateApiKeyRequest {
   rate_limit_5h?: number
   rate_limit_1d?: number
   rate_limit_7d?: number
+  auto_group?: boolean
+  auto_group_strategy?: 'price' | 'balanced' | 'speed'
+  auto_group_ids?: number[]
 }
 
 export interface UpdateApiKeyRequest {
@@ -917,6 +928,8 @@ export interface UpdateGroupRequest {
   claude_code_only?: boolean
   fallback_group_id?: number | null
   fallback_group_id_on_invalid_request?: number | null
+  is_fallback_pool?: boolean
+  kiro_compat?: boolean
   mcp_xml_inject?: boolean
   supported_model_scopes?: string[]
   model_allowlist?: ModelAllowlist

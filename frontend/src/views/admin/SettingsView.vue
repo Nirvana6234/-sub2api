@@ -9244,6 +9244,13 @@ const adminApiKeyMasked = ref("");
 const adminApiKeyOperating = ref(false);
 const newAdminApiKey = ref("");
 const subscriptionGroups = ref<AdminGroup[]>([]);
+const playgroundGroups = ref<AdminGroup[]>([]);
+const playgroundOpenAIGroups = computed(() =>
+  playgroundGroups.value.filter((group) => group.platform === "openai" && group.status === "active"),
+);
+const playgroundImageGroups = computed(() =>
+  playgroundOpenAIGroups.value.filter((group) => group.allow_image_generation),
+);
 
 // Upstream billing probe state
 const upstreamBillingProbeLoading = ref(true);
@@ -11254,11 +11261,13 @@ async function loadSettings() {
 async function loadSubscriptionGroups() {
   try {
     const groups = await adminAPI.groups.getAll();
+    playgroundGroups.value = groups;
     subscriptionGroups.value = groups.filter(
       (group) =>
         group.subscription_type === "subscription" && group.status === "active",
     );
   } catch (_error: unknown) {
+    playgroundGroups.value = [];
     subscriptionGroups.value = [];
   }
 }

@@ -86,7 +86,9 @@ function downloadBlob(blob: Blob, filename: string): void {
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000)
 }
 
-export async function downloadPlaygroundImage(image: string | Blob, filename: string): Promise<void> {
+// 把游乐场里的图片来源（data URL、远端 URL 或已有 Blob）统一解析成 Blob。
+// 下载与复制到剪贴板都要走这一步，抽出来避免两处各写一份取值逻辑。
+export async function resolvePlaygroundImageBlob(image: string | Blob): Promise<Blob> {
   const blob = image instanceof Blob
     ? image
     : image.startsWith('data:')
@@ -101,6 +103,11 @@ export async function downloadPlaygroundImage(image: string | Blob, filename: st
   if (blob.size === 0) {
     throw new Error('Image download returned an empty file')
   }
+  return blob
+}
+
+export async function downloadPlaygroundImage(image: string | Blob, filename: string): Promise<void> {
+  const blob = await resolvePlaygroundImageBlob(image)
 
   if (await shareOnMobile(blob, filename)) return
   downloadBlob(blob, filename)

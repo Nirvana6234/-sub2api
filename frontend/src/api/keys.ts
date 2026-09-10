@@ -85,6 +85,11 @@ export async function list(
   }
 }
 
+/** Ensure the purpose-bound keys used by the playground exist for this user. */
+export async function ensurePlayground(): Promise<void> {
+  await apiClient.post('/keys/playground/ensure')
+}
+
 /**
  * Get API key by ID
  * @param id - API key ID
@@ -187,7 +192,8 @@ export const keysAPI = {
   create,
   update,
   delete: deleteKey,
-  toggleStatus
+  toggleStatus,
+  ensurePlayground
 }
 
 export default keysAPI
