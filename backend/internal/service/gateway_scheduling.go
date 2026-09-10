@@ -897,6 +897,12 @@ func (s *GatewayService) resolveGroupByID(ctx context.Context, groupID int64) (*
 	if group := s.groupFromContext(ctx, groupID); group != nil {
 		return group, nil
 	}
+	// 与 groupAllowsContributionPool 同一处遗漏：context 里没有分组、又没有
+	// groupRepo 时，直接调用会 nil deref。这里返回错误而不是 false，因为调用方
+	// 需要区分"查不到"与"分组不允许"。
+	if s.groupRepo == nil {
+		return nil, fmt.Errorf("get group failed: group repository is not configured")
+	}
 	group, err := s.groupRepo.GetByIDLite(ctx, groupID)
 	if err != nil {
 		return nil, fmt.Errorf("get group failed: %w", err)
@@ -1338,6 +1344,13 @@ func (s *GatewayService) groupAllowsContributionPool(ctx context.Context, groupI
 	}
 	if group := s.groupFromContext(ctx, *groupID); group != nil {
 		return group.AllowContributionPool
+	}
+	// 没有 groupRepo 就查不到分组，查不到就不能放行公共贡献池——与下面那行
+	// `err == nil && group != nil` 的保守语义一致：拿不到分组信息时一律 false。
+	// 同文件 2096/2332 行取分组时都写了 `s.groupRepo != nil`，这里漏了，于是
+	// 任何未装配 groupRepo 的调用方（含单测）一进来就 nil deref。
+	if s.groupRepo == nil {
+		return false
 	}
 	group, err := s.groupRepo.GetByIDLite(ctx, *groupID)
 	return err == nil && group != nil && group.AllowContributionPool

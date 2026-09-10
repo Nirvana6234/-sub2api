@@ -213,9 +213,15 @@ func TestOpenAIAccountSchedulerLoadBalanceAppliesGrokFreeQuotaGate(t *testing.T)
 	scheduler := &defaultOpenAIAccountScheduler{service: svc, stats: newOpenAIAccountRuntimeStats()}
 
 	// Warm cache via background refresh so load-balance sees the soft-gate.
-	_ = scheduler.filterGrokFreeQuotaAccounts(context.Background(), accounts)
+	//
+	// 必须走 filterGrokFreeQuotaAccountsForOpenAI：软门有三份互相独立的缓存——
+	// scheduler 实例字段、gatewayGrokFreeQuotaGateCache、openaiGrokFreeQuotaGateCache。
+	// selectByLoadBalance 读的是最后那份（openai_gateway_scheduling.go 的
+	// filterGrokFreeQuotaAccountsForOpenAI），而 scheduler.filterGrokFreeQuotaAccounts
+	// 预热的是实例那份——预热了一份没人读的缓存，被测路径依然看到冷缓存而 fail-open。
+	_ = svc.filterGrokFreeQuotaAccountsForOpenAI(context.Background(), accounts)
 	require.Eventually(t, func() bool {
-		filtered := scheduler.filterGrokFreeQuotaAccounts(context.Background(), accounts)
+		filtered := svc.filterGrokFreeQuotaAccountsForOpenAI(context.Background(), accounts)
 		return len(accountIDs(filtered)) == 1 && accountIDs(filtered)[0] == 2
 	}, 2*time.Second, 10*time.Millisecond)
 

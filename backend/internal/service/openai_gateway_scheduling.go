@@ -1951,6 +1951,15 @@ func (s *OpenAIGatewayService) getSchedulableAccount(ctx context.Context, accoun
 	if err != nil || account == nil {
 		return account, err
 	}
+	// Grok 免费额度软门：会话粘滞取号绕过了列表路径上的过滤
+	// （filterGrokFreeQuotaAccountsForOpenAI 只在 listSchedulable* 里调用），
+	// 于是一个已越过软门的免费账号只要还被某个会话粘住，就能一直被复用。
+	// GatewayService.getSchedulableAccount 早已有这道门，OpenAI 这条漏了。
+	if account.IsGrok() {
+		if gated := s.filterGrokFreeQuotaAccountsForOpenAI(ctx, []Account{*account}); len(gated) == 0 {
+			return nil, nil
+		}
+	}
 	return account, nil
 }
 

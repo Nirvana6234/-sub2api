@@ -250,7 +250,14 @@ func TestResolveAutoGroupDoesNotOverwriteFailureEventObservedDuringQuery(t *test
 	}()
 
 	waitForAutoGroupRaceSignal(t, rates.firstStarted, "first rate query")
-	svc.ObserveAutoGroupRequestResult(apiKey, "gpt-test", 503, nil)
+	// 需要 autoGroupTransientFailureThreshold(=3) 次瞬时失败才会置位 needsEvaluation
+	// ——单次 5xx 只累加 transientFailureStreak，不触发重新评估（见
+	// TestObserveAutoGroupRequestResultRequiresThreeTransientFailures）。本用例验的是
+	// "查询进行中观察到的失败事件不被该查询的提交覆盖"，所以失败必须真的成立，
+	// 否则断言的是一个从未置位过的字段。
+	for i := 0; i < autoGroupTransientFailureThreshold; i++ {
+		svc.ObserveAutoGroupRequestResult(apiKey, "gpt-test", 503, nil)
+	}
 	close(rates.firstRelease)
 	waitForAutoGroupRaceSignal(t, rates.retryStarted, "retry after observed failure")
 
