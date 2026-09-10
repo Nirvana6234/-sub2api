@@ -242,7 +242,15 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		setOpenAIResponsesClientToolMapping(c, mapping)
 	}
 
+	diagSanitizeStart := time.Now()
 	sanitizedBody, sanitized, err := sanitizeEmptyBase64InputImagesInOpenAIBody(body)
+	if diagSanitizeElapsed := time.Since(diagSanitizeStart); diagSanitizeElapsed > 50*time.Millisecond || sanitized {
+		diagAccountID := int64(0)
+		if account != nil {
+			diagAccountID = account.ID
+		}
+		logger.LegacyPrintf("service.openai_gateway", "[DIAG] empty-base64 image sanitize (Passthrough): account=%d body_bytes=%d sanitized=%v elapsed=%s", diagAccountID, len(body), sanitized, diagSanitizeElapsed)
+	}
 	if err != nil {
 		return nil, err
 	}
