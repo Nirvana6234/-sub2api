@@ -631,6 +631,7 @@ export interface Group {
   // Claude Code 客户端限制
   claude_code_only: boolean
   fallback_group_id: number | null
+  fallback_group_ids: number[]
   fallback_group_id_on_invalid_request: number | null
   is_fallback_pool: boolean
   kiro_compat: boolean
@@ -863,6 +864,7 @@ export interface CreateGroupRequest {
   profit_safety_buffer?: number
   claude_code_only?: boolean
   fallback_group_id?: number | null
+  fallback_group_ids?: number[]
   fallback_group_id_on_invalid_request?: number | null
   mcp_xml_inject?: boolean
   supported_model_scopes?: string[]
@@ -929,6 +931,7 @@ export interface UpdateGroupRequest {
   profit_safety_buffer?: number
   claude_code_only?: boolean
   fallback_group_id?: number | null
+  fallback_group_ids?: number[]
   fallback_group_id_on_invalid_request?: number | null
   is_fallback_pool?: boolean
   kiro_compat?: boolean

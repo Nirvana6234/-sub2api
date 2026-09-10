@@ -486,15 +486,16 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		return nil, err
 	}
 
-	// 校验降级分组
-	if input.FallbackGroupID != nil {
-		if err := s.validateFallbackGroup(ctx, 0, *input.FallbackGroupID); err != nil {
+	// 校验降级分组。数组按 UI 顺序保存，旧 scalar 字段作为兼容输入。
+	fallbackGroupIDs := normalizeFallbackGroupIDs(input.FallbackGroupIDs, input.FallbackGroupID)
+	for _, fallbackGroupID := range fallbackGroupIDs {
+		if err := s.validateFallbackGroup(ctx, 0, fallbackGroupID); err != nil {
 			return nil, err
 		}
 		// ClaudeCodeOnly 分组的 fallback_group_id 是旧的降级链路，与运行时兜底池
 		// 复用同一字段但语义不同，这里不施加兜底池的约束。
 		if platformSupportsFallbackPool(platform) && !input.ClaudeCodeOnly {
-			if err := s.validateFallbackPoolTarget(ctx, platform, *input.FallbackGroupID); err != nil {
+			if err := s.validateFallbackPoolTarget(ctx, platform, fallbackGroupID); err != nil {
 				return nil, err
 			}
 		}
@@ -598,7 +599,8 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		AudioTTSPricePerMillionChars:    audioTTSPricePerMillionChars,
 		AudioSTTPricePerHour:            audioSTTPricePerHour,
 		ClaudeCodeOnly:                  input.ClaudeCodeOnly,
-		FallbackGroupID:                 input.FallbackGroupID,
+		FallbackGroupID:                 firstFallbackGroupID(fallbackGroupIDs),
+		FallbackGroupIDs:                fallbackGroupIDs,
 		FallbackGroupIDOnInvalidRequest: fallbackOnInvalidRequest,
 		ModelRouting:                    input.ModelRouting,
 		MCPXMLInject:                    mcpXMLInject,
@@ -733,6 +735,36 @@ func (s *adminServiceImpl) validateFallbackPoolTarget(ctx context.Context, platf
 		return fmt.Errorf("fallback group must be marked as fallback pool")
 	}
 	return nil
+}
+
+// normalizeFallbackGroupIDs 去重、丢弃非正数，保留原始优先级顺序；结果为空时回退到
+// legacy（旧的单值字段），用于兼容仍只传 FallbackGroupID 的调用方。
+func normalizeFallbackGroupIDs(ids []int64, legacy *int64) []int64 {
+	seen := make(map[int64]struct{}, len(ids)+1)
+	out := make([]int64, 0, len(ids)+1)
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	if len(out) == 0 && legacy != nil && *legacy > 0 {
+		out = append(out, *legacy)
+	}
+	return out
+}
+
+// firstFallbackGroupID 取数组首个元素维护旧的单值字段，供尚未升级到数组的调用方读取。
+func firstFallbackGroupID(ids []int64) *int64 {
+	if len(ids) == 0 {
+		return nil
+	}
+	id := ids[0]
+	return &id
 }
 
 // validateFallbackGroupOnInvalidRequest 校验无效请求兜底分组的有效性
@@ -982,27 +1014,35 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	if input.ClaudeCodeOnly != nil {
 		group.ClaudeCodeOnly = *input.ClaudeCodeOnly
 	}
-	if input.FallbackGroupID != nil {
+	switch {
+	case input.FallbackGroupIDs != nil:
+		// 显式传入数组：整体替换，空切片表示清空。
+		group.FallbackGroupIDs = normalizeFallbackGroupIDs(*input.FallbackGroupIDs, nil)
+		group.FallbackGroupID = firstFallbackGroupID(group.FallbackGroupIDs)
+	case input.FallbackGroupID != nil:
+		// 兼容仍只传单值字段的旧调用方；沿用清空哨兵值语义（见 fallbackGroupIDClearSentinel）。
 		switch {
 		case *input.FallbackGroupID > 0:
-			// 校验降级分组
-			if err := s.validateFallbackGroup(ctx, id, *input.FallbackGroupID); err != nil {
-				return nil, err
-			}
-			group.FallbackGroupID = input.FallbackGroupID
+			group.FallbackGroupIDs = normalizeFallbackGroupIDs(nil, input.FallbackGroupID)
+			group.FallbackGroupID = firstFallbackGroupID(group.FallbackGroupIDs)
 		case *input.FallbackGroupID == fallbackGroupIDClearSentinel:
+			group.FallbackGroupIDs = nil
 			group.FallbackGroupID = nil
 		default:
-			// 0 视为没碰这个字段，保留 group.FallbackGroupID 原值。
+			// 0 视为没碰这个字段，保留原值。
 		}
+	default:
+		// 两个字段都没传：保持原值，但补一次归一化，兼容迁移前只写了 scalar 字段的旧行。
+		group.FallbackGroupIDs = normalizeFallbackGroupIDs(group.FallbackGroupIDs, group.FallbackGroupID)
+		group.FallbackGroupID = firstFallbackGroupID(group.FallbackGroupIDs)
 	}
-	if group.FallbackGroupID != nil {
+	for _, fallbackGroupID := range group.FallbackGroupIDs {
 		// 按合并后的最终平台校验，避免修改平台或兜底标记后留下不兼容的旧配置。
-		if err := s.validateFallbackGroup(ctx, id, *group.FallbackGroupID); err != nil {
+		if err := s.validateFallbackGroup(ctx, id, fallbackGroupID); err != nil {
 			return nil, err
 		}
 		if platformSupportsFallbackPool(group.Platform) && !group.ClaudeCodeOnly {
-			if err := s.validateFallbackPoolTarget(ctx, group.Platform, *group.FallbackGroupID); err != nil {
+			if err := s.validateFallbackPoolTarget(ctx, group.Platform, fallbackGroupID); err != nil {
 				return nil, err
 			}
 		}

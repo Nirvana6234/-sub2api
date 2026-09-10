@@ -378,6 +378,7 @@ export const useAppStore = defineStore('app', () => {
         client_download_direct_url_mac: '',
         client_latest_version: '',
         client_latest_version_mac: '',
+        client_tutorial_video_url: '',
         backup_payment_enabled: false,
         backup_payment_url: '',
         playground_enabled: false,

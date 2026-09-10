@@ -102,6 +102,8 @@ const (
 	FieldClaudeCodeOnly = "claude_code_only"
 	// FieldFallbackGroupID holds the string denoting the fallback_group_id field in the database.
 	FieldFallbackGroupID = "fallback_group_id"
+	// FieldFallbackGroupIds holds the string denoting the fallback_group_ids field in the database.
+	FieldFallbackGroupIds = "fallback_group_ids"
 	// FieldFallbackGroupIDOnInvalidRequest holds the string denoting the fallback_group_id_on_invalid_request field in the database.
 	FieldFallbackGroupIDOnInvalidRequest = "fallback_group_id_on_invalid_request"
 	// FieldIsFallbackPool holds the string denoting the is_fallback_pool field in the database.
@@ -270,6 +272,7 @@ var Columns = []string{
 	FieldModelPricing,
 	FieldClaudeCodeOnly,
 	FieldFallbackGroupID,
+	FieldFallbackGroupIds,
 	FieldFallbackGroupIDOnInvalidRequest,
 	FieldIsFallbackPool,
 	FieldKiroCompat,

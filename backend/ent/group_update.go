@@ -861,6 +861,24 @@ func (_u *GroupUpdate) ClearFallbackGroupID() *GroupUpdate {
 	return _u
 }
 
+// SetFallbackGroupIds sets the "fallback_group_ids" field.
+func (_u *GroupUpdate) SetFallbackGroupIds(v []int64) *GroupUpdate {
+	_u.mutation.SetFallbackGroupIds(v)
+	return _u
+}
+
+// AppendFallbackGroupIds appends value to the "fallback_group_ids" field.
+func (_u *GroupUpdate) AppendFallbackGroupIds(v []int64) *GroupUpdate {
+	_u.mutation.AppendFallbackGroupIds(v)
+	return _u
+}
+
+// ClearFallbackGroupIds clears the value of the "fallback_group_ids" field.
+func (_u *GroupUpdate) ClearFallbackGroupIds() *GroupUpdate {
+	_u.mutation.ClearFallbackGroupIds()
+	return _u
+}
+
 // SetFallbackGroupIDOnInvalidRequest sets the "fallback_group_id_on_invalid_request" field.
 func (_u *GroupUpdate) SetFallbackGroupIDOnInvalidRequest(v int64) *GroupUpdate {
 	_u.mutation.ResetFallbackGroupIDOnInvalidRequest()
@@ -1844,6 +1862,17 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.FallbackGroupIDCleared() {
 		_spec.ClearField(group.FieldFallbackGroupID, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.FallbackGroupIds(); ok {
+		_spec.SetField(group.FieldFallbackGroupIds, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedFallbackGroupIds(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, group.FieldFallbackGroupIds, value)
+		})
+	}
+	if _u.mutation.FallbackGroupIdsCleared() {
+		_spec.ClearField(group.FieldFallbackGroupIds, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.FallbackGroupIDOnInvalidRequest(); ok {
 		_spec.SetField(group.FieldFallbackGroupIDOnInvalidRequest, field.TypeInt64, value)
@@ -3089,6 +3118,24 @@ func (_u *GroupUpdateOne) ClearFallbackGroupID() *GroupUpdateOne {
 	return _u
 }
 
+// SetFallbackGroupIds sets the "fallback_group_ids" field.
+func (_u *GroupUpdateOne) SetFallbackGroupIds(v []int64) *GroupUpdateOne {
+	_u.mutation.SetFallbackGroupIds(v)
+	return _u
+}
+
+// AppendFallbackGroupIds appends value to the "fallback_group_ids" field.
+func (_u *GroupUpdateOne) AppendFallbackGroupIds(v []int64) *GroupUpdateOne {
+	_u.mutation.AppendFallbackGroupIds(v)
+	return _u
+}
+
+// ClearFallbackGroupIds clears the value of the "fallback_group_ids" field.
+func (_u *GroupUpdateOne) ClearFallbackGroupIds() *GroupUpdateOne {
+	_u.mutation.ClearFallbackGroupIds()
+	return _u
+}
+
 // SetFallbackGroupIDOnInvalidRequest sets the "fallback_group_id_on_invalid_request" field.
 func (_u *GroupUpdateOne) SetFallbackGroupIDOnInvalidRequest(v int64) *GroupUpdateOne {
 	_u.mutation.ResetFallbackGroupIDOnInvalidRequest()
@@ -4102,6 +4149,17 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	}
 	if _u.mutation.FallbackGroupIDCleared() {
 		_spec.ClearField(group.FieldFallbackGroupID, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.FallbackGroupIds(); ok {
+		_spec.SetField(group.FieldFallbackGroupIds, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedFallbackGroupIds(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, group.FieldFallbackGroupIds, value)
+		})
+	}
+	if _u.mutation.FallbackGroupIdsCleared() {
+		_spec.ClearField(group.FieldFallbackGroupIds, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.FallbackGroupIDOnInvalidRequest(); ok {
 		_spec.SetField(group.FieldFallbackGroupIDOnInvalidRequest, field.TypeInt64, value)

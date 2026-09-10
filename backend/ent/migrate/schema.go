@@ -947,6 +947,7 @@ var (
 		{Name: "model_pricing", Type: field.TypeJSON, Nullable: true, SchemaType: map[string]string{"postgres": "jsonb"}},
 		{Name: "claude_code_only", Type: field.TypeBool, Default: false},
 		{Name: "fallback_group_id", Type: field.TypeInt64, Nullable: true},
+		{Name: "fallback_group_ids", Type: field.TypeJSON, Nullable: true, SchemaType: map[string]string{"postgres": "jsonb"}},
 		{Name: "fallback_group_id_on_invalid_request", Type: field.TypeInt64, Nullable: true},
 		{Name: "is_fallback_pool", Type: field.TypeBool, Default: false},
 		{Name: "kiro_compat", Type: field.TypeBool, Default: false},
@@ -1007,7 +1008,7 @@ var (
 			{
 				Name:    "group_sort_order",
 				Unique:  false,
-				Columns: []*schema.Column{GroupsColumns[51]},
+				Columns: []*schema.Column{GroupsColumns[52]},
 			},
 			{
 				Name:    "idx_groups_duplicate_operation_id_active",
@@ -1020,7 +1021,7 @@ var (
 			{
 				Name:    "idx_groups_is_fallback_pool",
 				Unique:  false,
-				Columns: []*schema.Column{GroupsColumns[45]},
+				Columns: []*schema.Column{GroupsColumns[46]},
 				Annotation: &entsql.IndexAnnotation{
 					Where: "deleted_at IS NULL",
 				},

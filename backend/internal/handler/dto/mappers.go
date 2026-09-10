@@ -217,6 +217,7 @@ func groupFromServiceBase(g *service.Group) Group {
 		AudioSttPricePerHour:            g.AudioSTTPricePerHour,
 		ClaudeCodeOnly:                  g.ClaudeCodeOnly,
 		FallbackGroupID:                 g.FallbackGroupID,
+		FallbackGroupIDs:                g.FallbackGroupIDs,
 		FallbackGroupIDOnInvalidRequest: g.FallbackGroupIDOnInvalidRequest,
 		IsFallbackPool:                  g.IsFallbackPool,
 		KiroCompat:                      g.KiroCompat,

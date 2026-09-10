@@ -108,6 +108,7 @@ const fallbackPoolGroup = {
   peak_rate_multiplier: 1,
   claude_code_only: false,
   fallback_group_id: null,
+  fallback_group_ids: [],
   fallback_group_id_on_invalid_request: null,
   allow_messages_dispatch: false,
   allow_live: false,
@@ -163,6 +164,16 @@ const SelectProbeStub = defineComponent({
     '<div class="select-probe" :data-placeholder="placeholder" :data-value="String(modelValue)"></div>',
 });
 
+// 兜底分组已升级为多选（GroupSelector），同样换成透出 modelValue 的哑元件。
+const GroupSelectorProbeStub = defineComponent({
+  props: {
+    modelValue: { type: Array as () => number[], default: () => [] },
+    label: { type: String, default: "" },
+  },
+  template:
+    '<div class="group-selector-probe" :data-label="label" :data-value="JSON.stringify(modelValue)"></div>',
+});
+
 const mountView = () =>
   mount(GroupsView, {
     global: {
@@ -175,6 +186,7 @@ const mountView = () =>
         ConfirmDialog: true,
         EmptyState: true,
         Select: SelectProbeStub,
+        GroupSelector: GroupSelectorProbeStub,
         PlatformIcon: true,
         Icon: true,
         GroupCapacityBadge: true,
@@ -214,11 +226,13 @@ describe("GroupsView edit dialog preserves fallback_group_id on open", () => {
     await flushPromises();
     await flushPromises();
 
-    const fallbackSelect = wrapper
-      .findAll(".select-probe")
-      .find((el) => el.attributes("data-placeholder") === "不兜底");
-    expect(fallbackSelect).toBeTruthy();
-    expect(fallbackSelect!.attributes("data-value")).toBe("29");
+    const fallbackSelector = wrapper
+      .findAll(".group-selector-probe")
+      .find((el) => el.attributes("data-label") === "兜底分组");
+    expect(fallbackSelector).toBeTruthy();
+    expect(JSON.parse(fallbackSelector!.attributes("data-value")!)).toEqual([
+      29,
+    ]);
 
     wrapper.unmount();
   });

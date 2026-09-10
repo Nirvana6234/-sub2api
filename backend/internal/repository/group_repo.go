@@ -76,6 +76,15 @@ func newGroupRepositoryWithSQL(client *dbent.Client, sqlq sqlExecutor) *groupRep
 	return &groupRepository{client: client, sql: sqlq}
 }
 
+// nonNilInt64Slice 避免 nil 切片被 ent JSON 字段编码成 null——fallback_group_ids 列是
+// NOT NULL DEFAULT '[]'。
+func nonNilInt64Slice(ids []int64) []int64 {
+	if ids == nil {
+		return []int64{}
+	}
+	return ids
+}
+
 func (r *groupRepository) Create(ctx context.Context, groupIn *service.Group) error {
 	if err := createGroupRecord(ctx, r.client, groupIn); err != nil {
 		return err
@@ -131,6 +140,7 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *servi
 		SetDefaultValidityDays(groupIn.DefaultValidityDays).
 		SetClaudeCodeOnly(groupIn.ClaudeCodeOnly).
 		SetNillableFallbackGroupID(groupIn.FallbackGroupID).
+		SetFallbackGroupIds(nonNilInt64Slice(groupIn.FallbackGroupIDs)).
 		SetNillableFallbackGroupIDOnInvalidRequest(groupIn.FallbackGroupIDOnInvalidRequest).
 		SetIsFallbackPool(groupIn.IsFallbackPool).
 		SetKiroCompat(groupIn.KiroCompat).
@@ -418,6 +428,7 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 	} else {
 		builder = builder.ClearFallbackGroupID()
 	}
+	builder = builder.SetFallbackGroupIds(nonNilInt64Slice(groupIn.FallbackGroupIDs))
 	// 处理 FallbackGroupIDOnInvalidRequest：nil 时清除，否则设置
 	if groupIn.FallbackGroupIDOnInvalidRequest != nil {
 		builder = builder.SetFallbackGroupIDOnInvalidRequest(*groupIn.FallbackGroupIDOnInvalidRequest)

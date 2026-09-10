@@ -109,6 +109,7 @@ const sourceGroup = {
   peak_rate_multiplier: 1,
   claude_code_only: false,
   fallback_group_id: null,
+  fallback_group_ids: [],
   fallback_group_id_on_invalid_request: null,
   allow_messages_dispatch: false,
   allow_live: false,

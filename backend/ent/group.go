@@ -106,6 +106,8 @@ type Group struct {
 	ClaudeCodeOnly bool `json:"claude_code_only,omitempty"`
 	// 非 Claude Code 请求降级使用的分组 ID
 	FallbackGroupID *int64 `json:"fallback_group_id,omitempty"`
+	// 按顺序尝试的多个兜底分组 ID；为空时兼容 fallback_group_id
+	FallbackGroupIds []int64 `json:"fallback_group_ids,omitempty"`
 	// 无效请求兜底使用的分组 ID
 	FallbackGroupIDOnInvalidRequest *int64 `json:"fallback_group_id_on_invalid_request,omitempty"`
 	// 是否为兜底账号池：由其他分组通过 fallback_group_id 指定，用户不可直接选择
@@ -262,7 +264,7 @@ func (*Group) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case group.FieldVideoModelPrices, group.FieldModelPricing, group.FieldModelRouting, group.FieldSupportedModelScopes, group.FieldMessagesDispatchModelConfig, group.FieldModelAllowlist, group.FieldCodexModelsManifestConfig, group.FieldReasoningEffortMappings:
+		case group.FieldVideoModelPrices, group.FieldModelPricing, group.FieldFallbackGroupIds, group.FieldModelRouting, group.FieldSupportedModelScopes, group.FieldMessagesDispatchModelConfig, group.FieldModelAllowlist, group.FieldCodexModelsManifestConfig, group.FieldReasoningEffortMappings:
 			values[i] = new([]byte)
 		case group.FieldPeakRateEnabled, group.FieldIsExclusive, group.FieldAllowImageGeneration, group.FieldAllowBatchImageGeneration, group.FieldImageRateIndependent, group.FieldVideoRateIndependent, group.FieldLongContextPricingEnabled, group.FieldClaudeCodeOnly, group.FieldIsFallbackPool, group.FieldKiroCompat, group.FieldModelRoutingEnabled, group.FieldMcpXMLInject, group.FieldAllowMessagesDispatch, group.FieldAllowLive, group.FieldForceOpenaiFast, group.FieldFreeOpenaiFast, group.FieldRequireOauthOnly, group.FieldRequirePrivacySet, group.FieldProfitControlEnabled:
 			values[i] = new(sql.NullBool)
@@ -574,6 +576,14 @@ func (_m *Group) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.FallbackGroupID = new(int64)
 				*_m.FallbackGroupID = value.Int64
+			}
+		case group.FieldFallbackGroupIds:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field fallback_group_ids", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.FallbackGroupIds); err != nil {
+					return fmt.Errorf("unmarshal field fallback_group_ids: %w", err)
+				}
 			}
 		case group.FieldFallbackGroupIDOnInvalidRequest:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
@@ -978,6 +988,9 @@ func (_m *Group) String() string {
 		builder.WriteString("fallback_group_id=")
 		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
+	builder.WriteString(", ")
+	builder.WriteString("fallback_group_ids=")
+	builder.WriteString(fmt.Sprintf("%v", _m.FallbackGroupIds))
 	builder.WriteString(", ")
 	if v := _m.FallbackGroupIDOnInvalidRequest; v != nil {
 		builder.WriteString("fallback_group_id_on_invalid_request=")

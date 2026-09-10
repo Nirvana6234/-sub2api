@@ -76,8 +76,12 @@ type Group struct {
 	ModelPricing              []ChannelModelPricing
 
 	// Claude Code 客户端限制
-	ClaudeCodeOnly  bool
+	ClaudeCodeOnly bool
+	// FallbackGroupID 是旧的单值字段，兼容历史数据和外部调用方，取值恒等于
+	// FallbackGroupIDs 的首个元素（由 firstFallbackGroupID 维护）。
 	FallbackGroupID *int64
+	// FallbackGroupIDs 按优先级顺序列出运行时兜底候选分组，逐个尝试直到找到可用目标。
+	FallbackGroupIDs []int64
 	// 无效请求兜底分组（仅 anthropic 平台使用）
 	FallbackGroupIDOnInvalidRequest *int64
 	// 是否为兜底账号池：由其他分组通过 FallbackGroupID 指定，用户不可直接选择

@@ -275,7 +275,9 @@ type CreateGroupInput struct {
 	AudioTTSPricePerMillionChars *float64
 	AudioSTTPricePerHour         *float64
 	ClaudeCodeOnly               bool   // 仅允许 Claude Code 客户端
-	FallbackGroupID              *int64 // 降级分组 ID
+	FallbackGroupID              *int64 // 降级分组 ID（兼容旧字段，取 FallbackGroupIDs 首个元素）
+	// 降级分组 ID 列表，按优先级顺序尝试；非空时优先于 FallbackGroupID。
+	FallbackGroupIDs []int64
 	// 无效请求兜底分组 ID（仅 anthropic 平台使用）
 	FallbackGroupIDOnInvalidRequest *int64
 	// 模型路由配置（仅 anthropic 平台使用）
@@ -356,7 +358,9 @@ type UpdateGroupInput struct {
 	AudioTTSPricePerMillionChars *float64
 	AudioSTTPricePerHour         *float64
 	ClaudeCodeOnly               *bool  // 仅允许 Claude Code 客户端
-	FallbackGroupID              *int64 // 降级分组 ID
+	FallbackGroupID              *int64 // 降级分组 ID（兼容旧字段；nil 表示不修改，-1 为清空哨兵值）
+	// 降级分组 ID 列表，按优先级顺序尝试；非 nil 时整体替换（空切片表示清空），优先于 FallbackGroupID。
+	FallbackGroupIDs *[]int64
 	// 无效请求兜底分组 ID（仅 anthropic 平台使用）
 	FallbackGroupIDOnInvalidRequest *int64
 	// 是否为兜底账号池：由其他分组通过 FallbackGroupID 指定，用户不可直接选择

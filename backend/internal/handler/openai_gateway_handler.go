@@ -246,7 +246,7 @@ func usageRecordContext(parent context.Context, base context.Context) context.Co
 		base = context.Background()
 	}
 	if parent == nil {
-		return base
+		return service.PropagateFallbackPoolUsageContext(parent, base)
 	}
 	if clientRequestID, _ := parent.Value(ctxkey.ClientRequestID).(string); strings.TrimSpace(clientRequestID) != "" {
 		base = context.WithValue(base, ctxkey.ClientRequestID, strings.TrimSpace(clientRequestID))
@@ -254,7 +254,7 @@ func usageRecordContext(parent context.Context, base context.Context) context.Co
 	if requestID, _ := parent.Value(ctxkey.RequestID).(string); strings.TrimSpace(requestID) != "" {
 		base = context.WithValue(base, ctxkey.RequestID, strings.TrimSpace(requestID))
 	}
-	return base
+	return service.PropagateFallbackPoolUsageContext(parent, base)
 }
 
 func wrapUsageRecordTaskContext(parent context.Context, task service.UsageRecordTask) service.UsageRecordTask {

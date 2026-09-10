@@ -2155,6 +2155,16 @@ func FallbackGroupIDNotNil() predicate.Group {
 	return predicate.Group(sql.FieldNotNull(FieldFallbackGroupID))
 }
 
+// FallbackGroupIdsIsNil applies the IsNil predicate on the "fallback_group_ids" field.
+func FallbackGroupIdsIsNil() predicate.Group {
+	return predicate.Group(sql.FieldIsNull(FieldFallbackGroupIds))
+}
+
+// FallbackGroupIdsNotNil applies the NotNil predicate on the "fallback_group_ids" field.
+func FallbackGroupIdsNotNil() predicate.Group {
+	return predicate.Group(sql.FieldNotNull(FieldFallbackGroupIds))
+}
+
 // FallbackGroupIDOnInvalidRequestEQ applies the EQ predicate on the "fallback_group_id_on_invalid_request" field.
 func FallbackGroupIDOnInvalidRequestEQ(v int64) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldFallbackGroupIDOnInvalidRequest, v))

@@ -39,6 +39,8 @@ type fallbackPoolUsageTrace struct {
 	TargetGroupName string
 }
 
+type fallbackPoolUsageTraceContextKey struct{}
+
 func cloneFallbackVisited(in map[int64]struct{}) map[int64]struct{} {
 	out := make(map[int64]struct{}, len(in)+1)
 	for id := range in {
@@ -87,30 +89,39 @@ func nextFallbackGroupID(
 	if currentGroup == nil || !t.currentGroupOK(currentGroup) {
 		return 0, state, false
 	}
-	if currentGroup.FallbackGroupID == nil || *currentGroup.FallbackGroupID <= 0 {
+	fallbackGroupIDs := normalizeFallbackGroupIDs(currentGroup.FallbackGroupIDs, currentGroup.FallbackGroupID)
+	if len(fallbackGroupIDs) == 0 {
 		return 0, state, false
 	}
 
-	fallbackID := *currentGroup.FallbackGroupID
-	if _, seen := visited[fallbackID]; seen {
-		slog.Warn(t.logNS+"_fallback_group_cycle_detected",
-			"group_id", currentGroupID, "fallback_group_id", fallbackID)
-		return 0, state, false
-	}
-
-	fallbackGroup := t.resolveGroup(ctx, fallbackID)
-	if fallbackGroup == nil {
-		return 0, state, false
-	}
-	if ok, reason := t.fallbackGroupOK(fallbackGroup); !ok {
-		if reason != "" {
-			slog.Warn(t.logNS+"_fallback_group_invalid_target",
-				"group_id", currentGroupID,
-				"fallback_group_id", fallbackID,
-				"reason", reason,
-				"fallback_platform", fallbackGroup.Platform,
-				"is_fallback_pool", fallbackGroup.IsFallbackPool)
+	var fallbackID int64
+	var fallbackGroup *Group
+	for _, candidateID := range fallbackGroupIDs {
+		if _, seen := visited[candidateID]; seen {
+			slog.Warn(t.logNS+"_fallback_group_cycle_detected",
+				"group_id", currentGroupID, "fallback_group_id", candidateID)
+			continue
 		}
+		candidate := t.resolveGroup(ctx, candidateID)
+		if candidate == nil {
+			continue
+		}
+		if ok, reason := t.fallbackGroupOK(candidate); !ok {
+			if reason != "" {
+				slog.Warn(t.logNS+"_fallback_group_invalid_target",
+					"group_id", currentGroupID,
+					"fallback_group_id", candidateID,
+					"reason", reason,
+					"fallback_platform", candidate.Platform,
+					"is_fallback_pool", candidate.IsFallbackPool)
+			}
+			continue
+		}
+		fallbackID = candidateID
+		fallbackGroup = candidate
+		break
+	}
+	if fallbackGroup == nil {
 		return 0, state, false
 	}
 
@@ -141,6 +152,44 @@ func fallbackPoolUsageTraceFromState(state fallbackGroupState) (fallbackPoolUsag
 		TargetGroupID:   state.targetGroupID,
 		TargetGroupName: state.targetGroupName,
 	}, true
+}
+
+// fallbackPoolUsageTraceFromContext 读取本次请求命中的兜底事实。优先读通用 key
+// （由 withFallbackPoolUsageTrace 写入，用于跨 goroutine 的 detached worker context），
+// 否则回退到 OpenAI/Gateway 各自链路在请求 ctx 上挂的 key。
+func fallbackPoolUsageTraceFromContext(ctx context.Context) (fallbackPoolUsageTrace, bool) {
+	if ctx == nil {
+		return fallbackPoolUsageTrace{}, false
+	}
+	if trace, ok := ctx.Value(fallbackPoolUsageTraceContextKey{}).(fallbackPoolUsageTrace); ok {
+		return trace, trace.SourceGroupID > 0 && trace.TargetGroupID > 0
+	}
+	if trace, ok := openAIFallbackPoolUsageTraceFromContext(ctx); ok {
+		return trace, true
+	}
+	if trace, ok := gatewayFallbackPoolUsageTraceFromContext(ctx); ok {
+		return trace, true
+	}
+	return fallbackPoolUsageTrace{}, false
+}
+
+func withFallbackPoolUsageTrace(ctx context.Context, trace fallbackPoolUsageTrace) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, fallbackPoolUsageTraceContextKey{}, trace)
+}
+
+// PropagateFallbackPoolUsageContext copies the immutable fallback fact from a
+// request context into a detached usage-record worker context.
+func PropagateFallbackPoolUsageContext(parent, base context.Context) context.Context {
+	if base == nil {
+		base = context.Background()
+	}
+	if trace, ok := fallbackPoolUsageTraceFromContext(parent); ok {
+		return withFallbackPoolUsageTrace(base, trace)
+	}
+	return base
 }
 
 func applyFallbackPoolUsageTrace(log *UsageLog, trace fallbackPoolUsageTrace, ok bool) {

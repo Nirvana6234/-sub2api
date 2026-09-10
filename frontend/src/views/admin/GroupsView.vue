@@ -1478,11 +1478,11 @@
             v-if="createForm.claude_code_only"
             class="mt-3"
           >
-            <label class="input-label">{{ t("admin.groups.claudeCode.fallbackGroup") }}</label>
-            <Select
-              v-model="createForm.fallback_group_id"
-              :options="fallbackGroupOptions"
-              :placeholder="t('admin.groups.claudeCode.noFallback')"
+            <GroupSelector
+              v-model="createForm.fallback_group_ids"
+              :groups="createFallbackGroupCandidates"
+              :label="t('admin.groups.claudeCode.fallbackGroup')"
+              searchable="auto"
             />
             <p class="input-hint">
               {{ t("admin.groups.claudeCode.fallbackHint") }}
@@ -1492,11 +1492,11 @@
             v-else
             class="mt-3"
           >
-            <label class="input-label">Claude 兜底分组</label>
-            <Select
-              v-model="createForm.fallback_group_id"
-              :options="anthropicFallbackPoolOptions"
-              placeholder="不兜底"
+            <GroupSelector
+              v-model="createForm.fallback_group_ids"
+              :groups="createFallbackGroupCandidates"
+              label="Claude 兜底分组"
+              searchable="auto"
             />
             <p class="input-hint">
               当前 Claude 分组无可用账号时，会从所选兜底池继续挑选账号。
@@ -1509,11 +1509,11 @@
           v-if="usesFallbackPoolSelector(createForm.platform)"
           class="border-t pt-4"
         >
-          <label class="input-label">兜底分组</label>
-          <Select
-            v-model="createForm.fallback_group_id"
-            :options="fallbackGroupOptions"
-            placeholder="不兜底"
+          <GroupSelector
+            v-model="createForm.fallback_group_ids"
+            :groups="createFallbackGroupCandidates"
+            label="兜底分组"
+            searchable="auto"
           />
           <p class="input-hint">
             当前分组无可用账号时，会按当前分组的利润门从所选兜底池继续挑号。
@@ -3220,11 +3220,11 @@
             v-if="editForm.claude_code_only"
             class="mt-3"
           >
-            <label class="input-label">{{ t("admin.groups.claudeCode.fallbackGroup") }}</label>
-            <Select
-              v-model="editForm.fallback_group_id"
-              :options="fallbackGroupOptionsForEdit"
-              :placeholder="t('admin.groups.claudeCode.noFallback')"
+            <GroupSelector
+              v-model="editForm.fallback_group_ids"
+              :groups="editFallbackGroupCandidates"
+              :label="t('admin.groups.claudeCode.fallbackGroup')"
+              searchable="auto"
             />
             <p class="input-hint">{{ t("admin.groups.claudeCode.fallbackHint") }}</p>
           </div>
@@ -3232,11 +3232,11 @@
             v-else
             class="mt-3"
           >
-            <label class="input-label">Claude 兜底分组</label>
-            <Select
-              v-model="editForm.fallback_group_id"
-              :options="anthropicFallbackPoolOptionsForEdit"
-              placeholder="不兜底"
+            <GroupSelector
+              v-model="editForm.fallback_group_ids"
+              :groups="editFallbackGroupCandidates"
+              label="Claude 兜底分组"
+              searchable="auto"
             />
             <p class="input-hint">
               当前 Claude 分组无可用账号时，会从所选兜底池继续挑选账号。
@@ -3249,11 +3249,11 @@
           v-if="usesFallbackPoolSelector(editForm.platform)"
           class="border-t pt-4"
         >
-          <label class="input-label">兜底分组</label>
-          <Select
-            v-model="editForm.fallback_group_id"
-            :options="fallbackGroupOptionsForEdit"
-            placeholder="不兜底"
+          <GroupSelector
+            v-model="editForm.fallback_group_ids"
+            :groups="editFallbackGroupCandidates"
+            label="兜底分组"
+            searchable="auto"
           />
           <p class="input-hint">
             当前分组无可用账号时，会按当前分组的利润门从所选兜底池继续挑号。
@@ -4510,6 +4510,7 @@ import BaseDialog from "@/components/common/BaseDialog.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
 import Select from "@/components/common/Select.vue";
+import GroupSelector from "@/components/common/GroupSelector.vue";
 import PlatformIcon from "@/components/common/PlatformIcon.vue";
 import Icon from "@/components/icons/Icon.vue";
 import GroupRateMultipliersModal from "@/components/admin/group/GroupRateMultipliersModal.vue";
@@ -4604,10 +4605,16 @@ const supportsLivePlatform = (platform: string): boolean =>
 const fallbackBadge = (
   row: AdminGroup,
 ): { text: string; title: string } | null => {
-  const targetId = row.fallback_group_id;
-  if (!targetId) return null;
-  const target = groups.value.find((g) => g.id === targetId);
-  const name = target?.name ?? `#${targetId}`;
+  const targetIds = row.fallback_group_ids?.length
+    ? row.fallback_group_ids
+    : row.fallback_group_id
+      ? [row.fallback_group_id]
+      : [];
+  if (!targetIds.length) return null;
+  const names = targetIds.map(
+    (id) => groups.value.find((g) => g.id === id)?.name ?? `#${id}`,
+  );
+  const name = names.join(" → ");
   if (row.claude_code_only) {
     return {
       text: `降级 → ${name}`,
@@ -4909,98 +4916,36 @@ const subscriptionTypeOptions = computed(() => [
   { value: "subscription", label: t("admin.groups.subscription.subscription") },
 ]);
 
-// 降级分组选项（创建时）- 仅包含 anthropic 平台且未启用 claude_code_only 的分组
-const fallbackGroupOptions = computed(() => {
-  const sourcePlatform = createForm.platform;
-  const options: { value: number | null; label: string }[] = [
-    { value: null, label: t("admin.groups.claudeCode.noFallback") },
-  ];
-  const eligibleGroups = groups.value.filter(
-    (g) => {
-      if (usesFallbackPoolSelector(sourcePlatform)) {
-        return (
-          g.platform === sourcePlatform &&
-          g.is_fallback_pool &&
-          g.status === "active"
-        );
-      }
-      return (
-        g.platform === "anthropic" &&
-        !g.claude_code_only &&
-        g.status === "active"
-      );
-    },
-  );
-  eligibleGroups.forEach((g) => {
-    options.push({ value: g.id, label: g.name });
+// 降级分组候选（多选）：ClaudeCodeOnly 走旧的单跳降级语义（anthropic 平台、未启用
+// claude_code_only 的分组），其余走运行时兜底池语义（同平台、标记为兜底池）。
+// currentId 存在时（编辑场景）排除自身，避免自引用。
+const fallbackGroupCandidates = (
+  sourcePlatform: string,
+  claudeCodeOnly: boolean,
+  currentId?: number,
+) =>
+  groups.value.filter((g) => {
+    if (g.id === currentId || g.status !== "active") return false;
+    if (
+      usesFallbackPoolSelector(sourcePlatform) ||
+      (sourcePlatform === "anthropic" && !claudeCodeOnly)
+    ) {
+      return g.platform === sourcePlatform && g.is_fallback_pool;
+    }
+    return g.platform === "anthropic" && !g.claude_code_only;
   });
-  return options;
-});
 
-// 降级分组选项（编辑时）- 排除自身
-const fallbackGroupOptionsForEdit = computed(() => {
-  const sourcePlatform = editForm.platform;
-  const options: { value: number | null; label: string }[] = [
-    { value: null, label: t("admin.groups.claudeCode.noFallback") },
-  ];
-  const currentId = editingGroup.value?.id;
-  const eligibleGroups = groups.value.filter(
-    (g) => {
-      if (g.id === currentId) {
-        return false;
-      }
-      if (usesFallbackPoolSelector(sourcePlatform)) {
-        return (
-          g.platform === sourcePlatform &&
-          g.is_fallback_pool &&
-          g.status === "active"
-        );
-      }
-      return (
-        g.platform === "anthropic" &&
-        !g.claude_code_only &&
-        g.status === "active"
-      );
-    },
-  );
-  eligibleGroups.forEach((g) => {
-    options.push({ value: g.id, label: g.name });
-  });
-  return options;
-});
+const createFallbackGroupCandidates = computed(() =>
+  fallbackGroupCandidates(createForm.platform, createForm.claude_code_only),
+);
 
-// Claude 运行时兜底池选项：与 OpenAI/Grok 一样，只允许指向同平台兜底池。
-const anthropicFallbackPoolOptions = computed(() => {
-  const options: { value: number | null; label: string }[] = [
-    { value: null, label: "不兜底" },
-  ];
-  groups.value
-    .filter(
-      (g) =>
-        g.platform === "anthropic" &&
-        g.is_fallback_pool &&
-        g.status === "active",
-    )
-    .forEach((g) => options.push({ value: g.id, label: g.name }));
-  return options;
-});
-
-const anthropicFallbackPoolOptionsForEdit = computed(() => {
-  const options: { value: number | null; label: string }[] = [
-    { value: null, label: "不兜底" },
-  ];
-  const currentId = editingGroup.value?.id;
-  groups.value
-    .filter(
-      (g) =>
-        g.id !== currentId &&
-        g.platform === "anthropic" &&
-        g.is_fallback_pool &&
-        g.status === "active",
-    )
-    .forEach((g) => options.push({ value: g.id, label: g.name }));
-  return options;
-});
+const editFallbackGroupCandidates = computed(() =>
+  fallbackGroupCandidates(
+    editForm.platform,
+    editForm.claude_code_only,
+    editingGroup.value?.id,
+  ),
+);
 
 // 无效请求兜底分组选项（创建时）- 仅包含 anthropic 平台、非订阅且未配置兜底的分组
 const invalidRequestFallbackOptions = computed(() => {
@@ -5287,6 +5232,7 @@ const createForm = reactive({
   claude_code_only: false,
   kiro_compat: false,
   fallback_group_id: null as number | null,
+  fallback_group_ids: [] as number[],
   fallback_group_id_on_invalid_request: null as number | null,
   // OpenAI Messages 调度配置（仅 openai 平台使用）
   allow_messages_dispatch: false,
@@ -5654,6 +5600,7 @@ const editForm = reactive({
   claude_code_only: false,
   kiro_compat: false,
   fallback_group_id: null as number | null,
+  fallback_group_ids: [] as number[],
   fallback_group_id_on_invalid_request: null as number | null,
   // OpenAI Messages 调度配置（仅 openai 平台使用）
   allow_messages_dispatch: false,
@@ -6110,6 +6057,7 @@ const closeCreateModal = () => {
   createForm.profit_safety_buffer_percent = 0;
   createForm.claude_code_only = false;
   createForm.fallback_group_id = null;
+  createForm.fallback_group_ids = [];
   createForm.fallback_group_id_on_invalid_request = null;
   resetMessagesDispatchFormState(createForm);
   createForm.allow_live = false;
@@ -6389,6 +6337,15 @@ const handleEdit = async (group: AdminGroup) => {
   );
   editForm.claude_code_only = group.claude_code_only || false;
   editForm.fallback_group_id = group.fallback_group_id;
+  editForm.fallback_group_ids = Array.from(
+    new Set(
+      group.fallback_group_ids?.length
+        ? group.fallback_group_ids
+        : group.fallback_group_id
+          ? [group.fallback_group_id]
+          : [],
+    ),
+  );
   editForm.fallback_group_id_on_invalid_request =
     group.fallback_group_id_on_invalid_request;
   const messagesDispatchFormState = messagesDispatchConfigToFormState(
@@ -6565,8 +6522,10 @@ const handleUpdateGroup = async () => {
       video_model_prices: serializeVideoModelPrices(
         editForm.video_model_prices,
       ),
-      fallback_group_id:
-        editForm.fallback_group_id === null ? -1 : editForm.fallback_group_id,
+      // fallback_group_ids 非空时后端优先读取它，整体替换（[] 表示清空）；
+      // fallback_group_id 只是兼容旧调用方留的镜像，按同一套哨兵值语义兜底。
+      fallback_group_ids: editForm.fallback_group_ids,
+      fallback_group_id: editForm.fallback_group_ids[0] ?? -1,
       fallback_group_id_on_invalid_request:
         editForm.fallback_group_id_on_invalid_request === null
           ? -1
@@ -6975,6 +6934,7 @@ watch(
       (newVal !== "anthropic" || usesFallbackPoolSelector(oldVal))
     ) {
       createForm.fallback_group_id = null;
+      createForm.fallback_group_ids = [];
     }
     if (!supportsFallbackPoolPlatform(newVal)) {
       createForm.is_fallback_pool = false;
@@ -7050,6 +7010,7 @@ watch(
       (newVal !== "anthropic" || usesFallbackPoolSelector(oldVal))
     ) {
       editForm.fallback_group_id = null;
+      editForm.fallback_group_ids = [];
     }
     if (!supportsFallbackPoolPlatform(newVal)) {
       editForm.is_fallback_pool = false;

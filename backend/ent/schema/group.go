@@ -203,6 +203,10 @@ func (Group) Fields() []ent.Field {
 			Optional().
 			Nillable().
 			Comment("非 Claude Code 请求降级使用的分组 ID"),
+		field.JSON("fallback_group_ids", []int64{}).
+			Optional().
+			SchemaType(map[string]string{dialect.Postgres: "jsonb"}).
+			Comment("按顺序尝试的多个兜底分组 ID；为空时兼容 fallback_group_id"),
 		field.Int64("fallback_group_id_on_invalid_request").
 			Optional().
 			Nillable().
