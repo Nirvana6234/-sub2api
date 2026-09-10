@@ -747,3 +747,14 @@ func DefaultOpenAIFastPolicySettings() *OpenAIFastPolicySettings {
 		Rules: []OpenAIFastPolicyRule{},
 	}
 }
+
+// PlaygroundDefaultConfig is the administrator-controlled configuration used
+// when provisioning the built-in Playground API keys for a user.
+type PlaygroundDefaultConfig struct {
+	ChatModel     string
+	ImageModel    string
+	ChatGroupIDs  []int64
+	ImageGroupIDs []int64
+	ChatStrategy  string
+	ImageStrategy string
+}

@@ -268,6 +268,20 @@ func (_u *AccountUpdate) AddRateMultiplier(v float64) *AccountUpdate {
 	return _u
 }
 
+// SetRateMultiplierUndeclared sets the "rate_multiplier_undeclared" field.
+func (_u *AccountUpdate) SetRateMultiplierUndeclared(v bool) *AccountUpdate {
+	_u.mutation.SetRateMultiplierUndeclared(v)
+	return _u
+}
+
+// SetNillableRateMultiplierUndeclared sets the "rate_multiplier_undeclared" field if the given value is not nil.
+func (_u *AccountUpdate) SetNillableRateMultiplierUndeclared(v *bool) *AccountUpdate {
+	if v != nil {
+		_u.SetRateMultiplierUndeclared(*v)
+	}
+	return _u
+}
+
 // SetStatus sets the "status" field.
 func (_u *AccountUpdate) SetStatus(v string) *AccountUpdate {
 	_u.mutation.SetStatus(v)
@@ -868,6 +882,9 @@ func (_u *AccountUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.AddedRateMultiplier(); ok {
 		_spec.AddField(account.FieldRateMultiplier, field.TypeFloat64, value)
 	}
+	if value, ok := _u.mutation.RateMultiplierUndeclared(); ok {
+		_spec.SetField(account.FieldRateMultiplierUndeclared, field.TypeBool, value)
+	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(account.FieldStatus, field.TypeString, value)
 	}
@@ -1405,6 +1422,20 @@ func (_u *AccountUpdateOne) SetNillableRateMultiplier(v *float64) *AccountUpdate
 // AddRateMultiplier adds value to the "rate_multiplier" field.
 func (_u *AccountUpdateOne) AddRateMultiplier(v float64) *AccountUpdateOne {
 	_u.mutation.AddRateMultiplier(v)
+	return _u
+}
+
+// SetRateMultiplierUndeclared sets the "rate_multiplier_undeclared" field.
+func (_u *AccountUpdateOne) SetRateMultiplierUndeclared(v bool) *AccountUpdateOne {
+	_u.mutation.SetRateMultiplierUndeclared(v)
+	return _u
+}
+
+// SetNillableRateMultiplierUndeclared sets the "rate_multiplier_undeclared" field if the given value is not nil.
+func (_u *AccountUpdateOne) SetNillableRateMultiplierUndeclared(v *bool) *AccountUpdateOne {
+	if v != nil {
+		_u.SetRateMultiplierUndeclared(*v)
+	}
 	return _u
 }
 
@@ -2037,6 +2068,9 @@ func (_u *AccountUpdateOne) sqlSave(ctx context.Context) (_node *Account, err er
 	}
 	if value, ok := _u.mutation.AddedRateMultiplier(); ok {
 		_spec.AddField(account.FieldRateMultiplier, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.RateMultiplierUndeclared(); ok {
+		_spec.SetField(account.FieldRateMultiplierUndeclared, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(account.FieldStatus, field.TypeString, value)

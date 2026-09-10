@@ -208,6 +208,14 @@ func (Group) Fields() []ent.Field {
 			Nillable().
 			Comment("无效请求兜底使用的分组 ID"),
 
+		// 兜底账号池标记 (added by migration 238)：由其他分组通过
+		// fallback_group_id 指定，用户不可直接选择或绑定。兜底池可以有多个，
+		// 由每个源分组逐个指定；池中账号不因入池而获得任何特权，被选中兜底
+		// 某分组时仍要通过「被兜底那个分组」的利润门。
+		field.Bool("is_fallback_pool").
+			Default(false).
+			Comment("是否为兜底账号池：由其他分组通过 fallback_group_id 指定，用户不可直接选择"),
+
 		// 模型路由配置 (added by migration 040)
 		field.JSON("model_routing", map[string][]int64{}).
 			Optional().
@@ -336,5 +344,8 @@ func (Group) Indexes() []ent.Index {
 			Unique().
 			StorageKey("idx_groups_duplicate_operation_id_active").
 			Annotations(entsql.IndexWhere("duplicate_operation_id IS NOT NULL AND deleted_at IS NULL")),
+		index.Fields("is_fallback_pool").
+			StorageKey("idx_groups_is_fallback_pool").
+			Annotations(entsql.IndexWhere("deleted_at IS NULL")),
 	}
 }

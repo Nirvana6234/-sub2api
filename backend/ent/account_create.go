@@ -195,6 +195,20 @@ func (_c *AccountCreate) SetNillableRateMultiplier(v *float64) *AccountCreate {
 	return _c
 }
 
+// SetRateMultiplierUndeclared sets the "rate_multiplier_undeclared" field.
+func (_c *AccountCreate) SetRateMultiplierUndeclared(v bool) *AccountCreate {
+	_c.mutation.SetRateMultiplierUndeclared(v)
+	return _c
+}
+
+// SetNillableRateMultiplierUndeclared sets the "rate_multiplier_undeclared" field if the given value is not nil.
+func (_c *AccountCreate) SetNillableRateMultiplierUndeclared(v *bool) *AccountCreate {
+	if v != nil {
+		_c.SetRateMultiplierUndeclared(*v)
+	}
+	return _c
+}
+
 // SetStatus sets the "status" field.
 func (_c *AccountCreate) SetStatus(v string) *AccountCreate {
 	_c.mutation.SetStatus(v)
@@ -565,6 +579,10 @@ func (_c *AccountCreate) defaults() error {
 		v := account.DefaultRateMultiplier
 		_c.mutation.SetRateMultiplier(v)
 	}
+	if _, ok := _c.mutation.RateMultiplierUndeclared(); !ok {
+		v := account.DefaultRateMultiplierUndeclared
+		_c.mutation.SetRateMultiplierUndeclared(v)
+	}
 	if _, ok := _c.mutation.Status(); !ok {
 		v := account.DefaultStatus
 		_c.mutation.SetStatus(v)
@@ -630,6 +648,9 @@ func (_c *AccountCreate) check() error {
 	}
 	if _, ok := _c.mutation.RateMultiplier(); !ok {
 		return &ValidationError{Name: "rate_multiplier", err: errors.New(`ent: missing required field "Account.rate_multiplier"`)}
+	}
+	if _, ok := _c.mutation.RateMultiplierUndeclared(); !ok {
+		return &ValidationError{Name: "rate_multiplier_undeclared", err: errors.New(`ent: missing required field "Account.rate_multiplier_undeclared"`)}
 	}
 	if _, ok := _c.mutation.Status(); !ok {
 		return &ValidationError{Name: "status", err: errors.New(`ent: missing required field "Account.status"`)}
@@ -740,6 +761,10 @@ func (_c *AccountCreate) createSpec() (*Account, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.RateMultiplier(); ok {
 		_spec.SetField(account.FieldRateMultiplier, field.TypeFloat64, value)
 		_node.RateMultiplier = value
+	}
+	if value, ok := _c.mutation.RateMultiplierUndeclared(); ok {
+		_spec.SetField(account.FieldRateMultiplierUndeclared, field.TypeBool, value)
+		_node.RateMultiplierUndeclared = value
 	}
 	if value, ok := _c.mutation.Status(); ok {
 		_spec.SetField(account.FieldStatus, field.TypeString, value)
@@ -1164,6 +1189,18 @@ func (u *AccountUpsert) UpdateRateMultiplier() *AccountUpsert {
 // AddRateMultiplier adds v to the "rate_multiplier" field.
 func (u *AccountUpsert) AddRateMultiplier(v float64) *AccountUpsert {
 	u.Add(account.FieldRateMultiplier, v)
+	return u
+}
+
+// SetRateMultiplierUndeclared sets the "rate_multiplier_undeclared" field.
+func (u *AccountUpsert) SetRateMultiplierUndeclared(v bool) *AccountUpsert {
+	u.Set(account.FieldRateMultiplierUndeclared, v)
+	return u
+}
+
+// UpdateRateMultiplierUndeclared sets the "rate_multiplier_undeclared" field to the value that was provided on create.
+func (u *AccountUpsert) UpdateRateMultiplierUndeclared() *AccountUpsert {
+	u.SetExcluded(account.FieldRateMultiplierUndeclared)
 	return u
 }
 
@@ -1739,6 +1776,20 @@ func (u *AccountUpsertOne) AddRateMultiplier(v float64) *AccountUpsertOne {
 func (u *AccountUpsertOne) UpdateRateMultiplier() *AccountUpsertOne {
 	return u.Update(func(s *AccountUpsert) {
 		s.UpdateRateMultiplier()
+	})
+}
+
+// SetRateMultiplierUndeclared sets the "rate_multiplier_undeclared" field.
+func (u *AccountUpsertOne) SetRateMultiplierUndeclared(v bool) *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetRateMultiplierUndeclared(v)
+	})
+}
+
+// UpdateRateMultiplierUndeclared sets the "rate_multiplier_undeclared" field to the value that was provided on create.
+func (u *AccountUpsertOne) UpdateRateMultiplierUndeclared() *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateRateMultiplierUndeclared()
 	})
 }
 
@@ -2524,6 +2575,20 @@ func (u *AccountUpsertBulk) AddRateMultiplier(v float64) *AccountUpsertBulk {
 func (u *AccountUpsertBulk) UpdateRateMultiplier() *AccountUpsertBulk {
 	return u.Update(func(s *AccountUpsert) {
 		s.UpdateRateMultiplier()
+	})
+}
+
+// SetRateMultiplierUndeclared sets the "rate_multiplier_undeclared" field.
+func (u *AccountUpsertBulk) SetRateMultiplierUndeclared(v bool) *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetRateMultiplierUndeclared(v)
+	})
+}
+
+// UpdateRateMultiplierUndeclared sets the "rate_multiplier_undeclared" field to the value that was provided on create.
+func (u *AccountUpsertBulk) UpdateRateMultiplierUndeclared() *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateRateMultiplierUndeclared()
 	})
 }
 

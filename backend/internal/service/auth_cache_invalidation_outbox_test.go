@@ -23,6 +23,9 @@ type authInvalidationRepoStub struct {
 	statsErr   error
 }
 
+func (r *authInvalidationRepoStub) EnqueueControl(_ context.Context, _ string) error {
+	return nil
+}
 func (r *authInvalidationRepoStub) Claim(_ context.Context, _ string, limit int, _ time.Duration) ([]AuthCacheInvalidationEvent, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

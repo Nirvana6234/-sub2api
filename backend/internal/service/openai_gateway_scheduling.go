@@ -891,7 +891,7 @@ func (s *OpenAIGatewayService) selectAccountForModelWithExclusions(ctx context.C
 }
 
 func (s *OpenAIGatewayService) selectAccountForModelWithExclusionsOnce(ctx context.Context, groupID *int64, platform string, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, stickyAccountID int64, requiredCapability OpenAIEndpointCapability, preferLowUpstreamRate bool) (*Account, error) {
-	platform = normalizeOpenAICompatiblePlatform(platform)
+	platform = NormalizeOpenAICompatiblePlatform(platform)
 	if s.hasContributionRoomRoute(ctx) {
 		sessionHash = ""
 		stickyAccountID = 0
@@ -1140,7 +1140,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 }
 
 func (s *OpenAIGatewayService) selectAccountWithLoadAwarenessOnce(ctx context.Context, groupID *int64, platform string, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, requiredCapability OpenAIEndpointCapability, useUpstreamTokenCost bool) (*AccountSelectionResult, error) {
-	platform = normalizeOpenAICompatiblePlatform(platform)
+	platform = NormalizeOpenAICompatiblePlatform(platform)
 	if s.hasContributionRoomRoute(ctx) {
 		sessionHash = ""
 	}

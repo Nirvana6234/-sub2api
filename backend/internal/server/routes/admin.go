@@ -442,20 +442,6 @@ func registerAnnouncementRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	}
 }
 
-func registerTicketRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
-	tickets := admin.Group("/tickets")
-	{
-		tickets.GET("", h.Admin.Ticket.List)
-		// unread-count 必须注册在 /:id 之前，否则会被当成 id 匹配掉
-		tickets.GET("/unread-count", h.Admin.Ticket.UnreadCount)
-		tickets.POST("/batch-read-status", h.Admin.Ticket.BatchReadStatus)
-		tickets.POST("/batch-delete", h.Admin.Ticket.BatchDelete)
-		tickets.GET("/:id", h.Admin.Ticket.GetByID)
-		tickets.POST("/:id/messages", h.Admin.Ticket.Reply)
-		tickets.PUT("/:id/status", h.Admin.Ticket.UpdateStatus)
-	}
-}
-
 func registerOpenAIOAuthRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	openai := admin.Group("/openai")
 	{

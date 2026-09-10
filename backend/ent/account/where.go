@@ -120,6 +120,11 @@ func RateMultiplier(v float64) predicate.Account {
 	return predicate.Account(sql.FieldEQ(FieldRateMultiplier, v))
 }
 
+// RateMultiplierUndeclared applies equality check predicate on the "rate_multiplier_undeclared" field. It's identical to RateMultiplierUndeclaredEQ.
+func RateMultiplierUndeclared(v bool) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldRateMultiplierUndeclared, v))
+}
+
 // Status applies equality check predicate on the "status" field. It's identical to StatusEQ.
 func Status(v string) predicate.Account {
 	return predicate.Account(sql.FieldEQ(FieldStatus, v))
@@ -843,6 +848,16 @@ func RateMultiplierLT(v float64) predicate.Account {
 // RateMultiplierLTE applies the LTE predicate on the "rate_multiplier" field.
 func RateMultiplierLTE(v float64) predicate.Account {
 	return predicate.Account(sql.FieldLTE(FieldRateMultiplier, v))
+}
+
+// RateMultiplierUndeclaredEQ applies the EQ predicate on the "rate_multiplier_undeclared" field.
+func RateMultiplierUndeclaredEQ(v bool) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldRateMultiplierUndeclared, v))
+}
+
+// RateMultiplierUndeclaredNEQ applies the NEQ predicate on the "rate_multiplier_undeclared" field.
+func RateMultiplierUndeclaredNEQ(v bool) predicate.Account {
+	return predicate.Account(sql.FieldNEQ(FieldRateMultiplierUndeclared, v))
 }
 
 // StatusEQ applies the EQ predicate on the "status" field.

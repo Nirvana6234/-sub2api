@@ -37,6 +37,7 @@ type AuthCacheInvalidationOutboxStats struct {
 }
 
 type AuthCacheInvalidationOutboxRepository interface {
+	EnqueueControl(ctx context.Context, message string) error
 	Claim(ctx context.Context, workerID string, limit int, lease time.Duration) ([]AuthCacheInvalidationEvent, error)
 	DeleteClaimed(ctx context.Context, id int64, workerID string) error
 	ScheduleSecondPass(ctx context.Context, id int64, workerID string, availableAt time.Time) error

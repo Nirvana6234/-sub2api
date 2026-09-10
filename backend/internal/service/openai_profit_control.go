@@ -220,6 +220,11 @@ func (s *OpenAIGatewayService) withOpenAIProfitControlGate(ctx context.Context, 
 	if _, suppressed := ctx.Value(openAIProfitControlSuppressCtxKey{}).(struct{}); suppressed {
 		return ctx
 	}
+	// 兜底分组只切换账号候选来源，利润门必须沿用被兜底的请求分组。
+	// 因此 A→B 递归时不重新按 B 装门；ctx 中已有的 gate.groupID 仍是 A。
+	if isOpenAIFallbackPoolSourcing(ctx) {
+		return ctx
+	}
 	if groupID != nil {
 		if existing, ok := ctx.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate); ok && existing != nil && existing.groupID == *groupID {
 			return ctx
@@ -322,10 +327,53 @@ func ContextWithSelectionProfitGate(ctx context.Context, sel *AccountSelectionRe
 	return context.WithValue(ctx, openAIProfitControlGateCtxKey{}, sel.profitGate)
 }
 
+// profitControlAccountUpstreamRate 解析账号的上游成本倍率 U，是利润门与
+// profit-preview 的唯一实现（两者不得各自解析，否则预览与线上再次分叉）。
+//
+// 优先级：
+//  1. extra.upstream_billing_manual_rate_multiplier（管理员在后台手工填写的
+//     上游倍率，无新鲜度窗口，一直有效直到管理员清除，不受账号形态限制）；
+//  2. 新鲜的上游探测快照（仅探测型账号）；
+//  3. accounts.rate_multiplier（列上的成本声明）——但当探测本就是该账号的
+//     成本来源而这次拿不到值时，列上的建表默认值 1.0 不算声明，判为未声明。
+func profitControlAccountUpstreamRate(account *Account, at time.Time) (float64, string, profitControlRateState) {
+	if account == nil {
+		return 0, "", profitControlRateUndeclared
+	}
+	if at.IsZero() {
+		at = timezone.Now()
+	}
+	if rate, ok := upstreamBillingManualRateMultiplier(account.Extra); ok &&
+		!math.IsNaN(rate) && !math.IsInf(rate, 0) && rate >= 0 {
+		return rate, profitControlRateSourceManualUpstream, profitControlRateDeclared
+	}
+	if isUpstreamBillingProbeAccount(account) {
+		if rate, ok := openAIFreshUpstreamBillingRate(account, at); ok &&
+			!math.IsNaN(rate) && !math.IsInf(rate, 0) && rate >= 0 {
+			return rate, profitControlRateSourceUpstreamProbe, profitControlRateDeclared
+		}
+		if upstreamBillingProbeIsRateSource(account) && accountRateMultiplierIsSchemaDefault(account) {
+			return 0, profitControlRateSourceUndeclared, profitControlRateUndeclared
+		}
+	}
+	if account.RateMultiplierUndeclared {
+		return 0, profitControlRateSourceUndeclared, profitControlRateUndeclared
+	}
+	if account.RateMultiplier == nil {
+		return 0, profitControlRateSourceAccountColumn, profitControlRateInvalid
+	}
+	if math.IsNaN(*account.RateMultiplier) ||
+		math.IsInf(*account.RateMultiplier, 0) ||
+		*account.RateMultiplier < 0 {
+		return 0, profitControlRateSourceAccountColumn, profitControlRateInvalid
+	}
+	return *account.RateMultiplier, profitControlRateSourceAccountColumn, profitControlRateDeclared
+}
+
 // accountCostUpstreamRate 解析记账用的上游成本倍率。
 //
 // 它先复用利润门的严格解析，保证手工倍率、新鲜探测值和列值声明的语义不分叉；
-// 但当严格解析认为探测型账号“未声明”时，记账可以退一步采用已经过期但仍存在的
+// 但当严格解析认为探测型账号”未声明”时，记账可以退一步采用已经过期但仍存在的
 // 探测快照，并标记为 probe_stale。这个退路只服务成本记账/展示，利润门与调度
 // 继续调用 profitControlAccountUpstreamRate，因此不会被陈旧低价放行。
 func accountCostUpstreamRate(account *Account, at time.Time) (float64, string, profitControlRateState) {

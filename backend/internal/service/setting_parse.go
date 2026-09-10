@@ -269,8 +269,8 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyAllowUngroupedKeyScheduling:                        "false",
 		SettingKeyOpenAILowUpstreamRatePriorityEnabled:               "false",
 		SettingKeyOpenAILatencyAwareFallbackEnabled:                  "false",
-		SettingKeyOpenAILatencyThresholdMs:                            strconv.Itoa(defaultOpenAILatencyThresholdMs),
-		SettingKeyOpenAIFallbackSpeedupRatio:                          strconv.FormatFloat(defaultOpenAIFallbackSpeedupRatio, 'f', -1, 64),
+		SettingKeyOpenAILatencyThresholdMs:                           strconv.Itoa(defaultOpenAILatencyThresholdMs),
+		SettingKeyOpenAIFallbackSpeedupRatio:                         strconv.FormatFloat(defaultOpenAIFallbackSpeedupRatio, 'f', -1, 64),
 		SettingKeyOpenAIOAuthSchedulingRateMultiplier:                "1",
 		SettingKeyEnableAnthropicCacheTTL1hInjection:                 "false",
 		SettingKeyRewriteMessageCacheControl:                         strconv.FormatBool(s.defaultRewriteMessageCacheControl()),
@@ -1051,6 +1051,17 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	return result
 }
 
+func parsePlaygroundGroupIDs(raw string) []int64 {
+	if strings.TrimSpace(raw) == "" {
+		return []int64{}
+	}
+	var groupIDs []int64
+	if err := json.Unmarshal([]byte(raw), &groupIDs); err != nil {
+		return []int64{}
+	}
+	return normalizeAutoGroupIDs(groupIDs)
+}
+
 func normalizeOpenAITTFTMode(mode string) string {
 	if strings.EqualFold(strings.TrimSpace(mode), OpenAITTFTModeVisible) {
 		return OpenAITTFTModeVisible
@@ -1404,4 +1415,30 @@ func normalizeTablePreferences(defaultPageSize int, options []int) (int, []int) 
 	}
 
 	return defaultPageSize, normalizedOptions
+}
+
+func clampAccountShareRewardRatePercent(value float64) float64 {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return AccountShareRewardRateDefaultPercent
+	}
+	if value < AccountShareRewardRateMinPercent {
+		return AccountShareRewardRateMinPercent
+	}
+	if value > AccountShareRewardRateMaxPercent {
+		return AccountShareRewardRateMaxPercent
+	}
+	return value
+}
+
+func clampAccountOwnUsageFeeRatePercent(value float64) float64 {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return AccountOwnUsageFeeRateDefaultPercent
+	}
+	if value < AccountOwnUsageFeeRateMinPercent {
+		return AccountOwnUsageFeeRateMinPercent
+	}
+	if value > AccountOwnUsageFeeRateMaxPercent {
+		return AccountOwnUsageFeeRateMaxPercent
+	}
+	return value
 }

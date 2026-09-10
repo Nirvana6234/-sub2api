@@ -152,7 +152,7 @@ func (s *OpenAIGatewayService) shouldUseOpenAIFallbackForModel(
 	slog.Warn(
 		"openai_fallback_blocked_model_unsupported",
 		"group_id", *groupID,
-		"platform", normalizeOpenAICompatiblePlatform(platform),
+		"platform", NormalizeOpenAICompatiblePlatform(platform),
 		"model", strings.TrimSpace(requestedModel),
 	)
 	return false
@@ -163,7 +163,7 @@ func (s *OpenAIGatewayService) nextOpenAIFallbackGroup(ctx context.Context, curr
 		return ctx, nil
 	}
 	ctx = withOpenAIModelAvailabilityCache(ctx)
-	platform = normalizeOpenAICompatiblePlatform(platform)
+	platform = NormalizeOpenAICompatiblePlatform(platform)
 	if platform != PlatformOpenAI && platform != PlatformGrok {
 		return ctx, nil
 	}
@@ -185,7 +185,7 @@ func (s *OpenAIGatewayService) nextOpenAIFallbackGroup(ctx context.Context, curr
 				if !group.IsFallbackPool {
 					return false, "target_not_fallback_pool"
 				}
-				if normalizeOpenAICompatiblePlatform(group.Platform) != platform {
+				if NormalizeOpenAICompatiblePlatform(group.Platform) != platform {
 					return false, "platform_mismatch"
 				}
 				return true, ""

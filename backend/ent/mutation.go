@@ -2304,6 +2304,7 @@ type AccountMutation struct {
 	addpriority                 *int
 	rate_multiplier             *float64
 	addrate_multiplier          *float64
+	rate_multiplier_undeclared  *bool
 	status                      *string
 	error_message               *string
 	last_used_at                *time.Time
@@ -3141,6 +3142,42 @@ func (m *AccountMutation) AddedRateMultiplier() (r float64, exists bool) {
 func (m *AccountMutation) ResetRateMultiplier() {
 	m.rate_multiplier = nil
 	m.addrate_multiplier = nil
+}
+
+// SetRateMultiplierUndeclared sets the "rate_multiplier_undeclared" field.
+func (m *AccountMutation) SetRateMultiplierUndeclared(b bool) {
+	m.rate_multiplier_undeclared = &b
+}
+
+// RateMultiplierUndeclared returns the value of the "rate_multiplier_undeclared" field in the mutation.
+func (m *AccountMutation) RateMultiplierUndeclared() (r bool, exists bool) {
+	v := m.rate_multiplier_undeclared
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRateMultiplierUndeclared returns the old "rate_multiplier_undeclared" field's value of the Account entity.
+// If the Account object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountMutation) OldRateMultiplierUndeclared(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRateMultiplierUndeclared is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRateMultiplierUndeclared requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRateMultiplierUndeclared: %w", err)
+	}
+	return oldValue.RateMultiplierUndeclared, nil
+}
+
+// ResetRateMultiplierUndeclared resets all changes to the "rate_multiplier_undeclared" field.
+func (m *AccountMutation) ResetRateMultiplierUndeclared() {
+	m.rate_multiplier_undeclared = nil
 }
 
 // SetStatus sets the "status" field.
@@ -4138,7 +4175,7 @@ func (m *AccountMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *AccountMutation) Fields() []string {
-	fields := make([]string, 0, 31)
+	fields := make([]string, 0, 32)
 	if m.created_at != nil {
 		fields = append(fields, account.FieldCreatedAt)
 	}
@@ -4183,6 +4220,9 @@ func (m *AccountMutation) Fields() []string {
 	}
 	if m.rate_multiplier != nil {
 		fields = append(fields, account.FieldRateMultiplier)
+	}
+	if m.rate_multiplier_undeclared != nil {
+		fields = append(fields, account.FieldRateMultiplierUndeclared)
 	}
 	if m.status != nil {
 		fields = append(fields, account.FieldStatus)
@@ -4270,6 +4310,8 @@ func (m *AccountMutation) Field(name string) (ent.Value, bool) {
 		return m.Priority()
 	case account.FieldRateMultiplier:
 		return m.RateMultiplier()
+	case account.FieldRateMultiplierUndeclared:
+		return m.RateMultiplierUndeclared()
 	case account.FieldStatus:
 		return m.Status()
 	case account.FieldErrorMessage:
@@ -4341,6 +4383,8 @@ func (m *AccountMutation) OldField(ctx context.Context, name string) (ent.Value,
 		return m.OldPriority(ctx)
 	case account.FieldRateMultiplier:
 		return m.OldRateMultiplier(ctx)
+	case account.FieldRateMultiplierUndeclared:
+		return m.OldRateMultiplierUndeclared(ctx)
 	case account.FieldStatus:
 		return m.OldStatus(ctx)
 	case account.FieldErrorMessage:
@@ -4486,6 +4530,13 @@ func (m *AccountMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetRateMultiplier(v)
+		return nil
+	case account.FieldRateMultiplierUndeclared:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRateMultiplierUndeclared(v)
 		return nil
 	case account.FieldStatus:
 		v, ok := value.(string)
@@ -4860,6 +4911,9 @@ func (m *AccountMutation) ResetField(name string) error {
 		return nil
 	case account.FieldRateMultiplier:
 		m.ResetRateMultiplier()
+		return nil
+	case account.FieldRateMultiplierUndeclared:
+		m.ResetRateMultiplierUndeclared()
 		return nil
 	case account.FieldStatus:
 		m.ResetStatus()
@@ -22149,6 +22203,7 @@ type GroupMutation struct {
 	addfallback_group_id                    *int64
 	fallback_group_id_on_invalid_request    *int64
 	addfallback_group_id_on_invalid_request *int64
+	is_fallback_pool                        *bool
 	model_routing                           *map[string][]int64
 	model_routing_enabled                   *bool
 	mcp_xml_inject                          *bool
@@ -24648,6 +24703,42 @@ func (m *GroupMutation) ResetFallbackGroupIDOnInvalidRequest() {
 	delete(m.clearedFields, group.FieldFallbackGroupIDOnInvalidRequest)
 }
 
+// SetIsFallbackPool sets the "is_fallback_pool" field.
+func (m *GroupMutation) SetIsFallbackPool(b bool) {
+	m.is_fallback_pool = &b
+}
+
+// IsFallbackPool returns the value of the "is_fallback_pool" field in the mutation.
+func (m *GroupMutation) IsFallbackPool() (r bool, exists bool) {
+	v := m.is_fallback_pool
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldIsFallbackPool returns the old "is_fallback_pool" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldIsFallbackPool(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldIsFallbackPool is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldIsFallbackPool requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldIsFallbackPool: %w", err)
+	}
+	return oldValue.IsFallbackPool, nil
+}
+
+// ResetIsFallbackPool resets all changes to the "is_fallback_pool" field.
+func (m *GroupMutation) ResetIsFallbackPool() {
+	m.is_fallback_pool = nil
+}
+
 // SetModelRouting sets the "model_routing" field.
 func (m *GroupMutation) SetModelRouting(value map[string][]int64) {
 	m.model_routing = &value
@@ -25921,7 +26012,7 @@ func (m *GroupMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *GroupMutation) Fields() []string {
-	fields := make([]string, 0, 66)
+	fields := make([]string, 0, 67)
 	if m.created_at != nil {
 		fields = append(fields, group.FieldCreatedAt)
 	}
@@ -26053,6 +26144,9 @@ func (m *GroupMutation) Fields() []string {
 	}
 	if m.fallback_group_id_on_invalid_request != nil {
 		fields = append(fields, group.FieldFallbackGroupIDOnInvalidRequest)
+	}
+	if m.is_fallback_pool != nil {
+		fields = append(fields, group.FieldIsFallbackPool)
 	}
 	if m.model_routing != nil {
 		fields = append(fields, group.FieldModelRouting)
@@ -26216,6 +26310,8 @@ func (m *GroupMutation) Field(name string) (ent.Value, bool) {
 		return m.FallbackGroupID()
 	case group.FieldFallbackGroupIDOnInvalidRequest:
 		return m.FallbackGroupIDOnInvalidRequest()
+	case group.FieldIsFallbackPool:
+		return m.IsFallbackPool()
 	case group.FieldModelRouting:
 		return m.ModelRouting()
 	case group.FieldModelRoutingEnabled:
@@ -26357,6 +26453,8 @@ func (m *GroupMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldFallbackGroupID(ctx)
 	case group.FieldFallbackGroupIDOnInvalidRequest:
 		return m.OldFallbackGroupIDOnInvalidRequest(ctx)
+	case group.FieldIsFallbackPool:
+		return m.OldIsFallbackPool(ctx)
 	case group.FieldModelRouting:
 		return m.OldModelRouting(ctx)
 	case group.FieldModelRoutingEnabled:
@@ -26717,6 +26815,13 @@ func (m *GroupMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetFallbackGroupIDOnInvalidRequest(v)
+		return nil
+	case group.FieldIsFallbackPool:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetIsFallbackPool(v)
 		return nil
 	case group.FieldModelRouting:
 		v, ok := value.(map[string][]int64)
@@ -27514,6 +27619,9 @@ func (m *GroupMutation) ResetField(name string) error {
 		return nil
 	case group.FieldFallbackGroupIDOnInvalidRequest:
 		m.ResetFallbackGroupIDOnInvalidRequest()
+		return nil
+	case group.FieldIsFallbackPool:
+		m.ResetIsFallbackPool()
 		return nil
 	case group.FieldModelRouting:
 		m.ResetModelRouting()

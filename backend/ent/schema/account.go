@@ -113,6 +113,14 @@ func (Account) Fields() []ent.Field {
 			SchemaType(map[string]string{dialect.Postgres: "decimal(10,4)"}).
 			Default(1.0),
 
+		// rate_multiplier_undeclared: 该账号的上游成本从未被声明过 (added by migration 239)。
+		//
+		// 零值 false 落在安全的一侧：字段缺失或快照漏列时视为"已声明"，利润门照常
+		// 严格判定 (fail-closed)；只有明确写入 true 才表示"没人声明过"，此时利润门
+		// 无判定依据、放行并告警。详见 migrations/239_account_rate_multiplier_undeclared.sql。
+		field.Bool("rate_multiplier_undeclared").
+			Default(false),
+
 		// status: 账户状态，如 "active", "error", "disabled"
 		field.String("status").
 			MaxLen(20).

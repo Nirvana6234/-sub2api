@@ -245,10 +245,10 @@ func (s *PawConfigService) buildPawModels(group Group, channel *Channel) []PawMo
 	if channel == nil {
 		// Some installations only persist the group's model list and do not
 		// have a channel row yet. Keep those authorized groups selectable.
-		for _, modelID := range group.ModelsListConfig.Models {
+		for _, modelID := range group.ModelAllowlist.Models {
 			addSupported(modelID, group.Platform, nil)
 		}
-		for _, pattern := range group.ModelsListConfig.Models {
+		for _, pattern := range group.ModelAllowlist.Models {
 			prefix, wildcard := splitWildcardSuffix(strings.TrimSpace(pattern))
 			if !wildcard || s.pricing == nil {
 				continue
@@ -259,7 +259,7 @@ func (s *PawConfigService) buildPawModels(group Group, channel *Channel) []PawMo
 				}
 			}
 		}
-		if len(entries) == 0 && !group.CustomModelsListEnabled() && s.pricing != nil && group.Platform != PlatformComposite {
+		if len(entries) == 0 && !group.ModelAllowlist.Enabled && s.pricing != nil && group.Platform != PlatformComposite {
 			for _, candidate := range s.pricing.ListModelNamesByProvider(group.Platform) {
 				addSupported(candidate, group.Platform, nil)
 			}

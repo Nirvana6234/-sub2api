@@ -359,6 +359,8 @@ type UpdateGroupInput struct {
 	FallbackGroupID              *int64 // 降级分组 ID
 	// 无效请求兜底分组 ID（仅 anthropic 平台使用）
 	FallbackGroupIDOnInvalidRequest *int64
+	// 是否为兜底账号池：由其他分组通过 FallbackGroupID 指定，用户不可直接选择
+	IsFallbackPool *bool
 	// 模型路由配置（仅 anthropic 平台使用）
 	ModelRouting        map[string][]int64
 	ModelRoutingEnabled *bool // 是否启用模型路由

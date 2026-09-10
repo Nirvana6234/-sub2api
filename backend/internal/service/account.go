@@ -35,15 +35,19 @@ type Account struct {
 	Priority                int
 	// RateMultiplier 账号计费倍率（>=0，允许 0 表示该账号计费为 0）。
 	// 使用指针用于兼容旧版本调度缓存（Redis）中缺字段的情况：nil 表示按 1.0 处理。
-	RateMultiplier     *float64
-	LoadFactor         *int // 调度负载因子；nil 表示使用 Concurrency
-	Status             string
-	ErrorMessage       string
-	LastUsedAt         *time.Time
-	ExpiresAt          *time.Time
-	AutoPauseOnExpired bool
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	RateMultiplier *float64
+	// RateMultiplierUndeclared 为 true 表示该账号的上游成本从未被声明过：
+	// 利润准入无判定依据，放行并告警；false（默认）表示 RateMultiplier 是
+	// 运营者的明确声明，参与严格判定。
+	RateMultiplierUndeclared bool
+	LoadFactor               *int // 调度负载因子；nil 表示使用 Concurrency
+	Status                   string
+	ErrorMessage             string
+	LastUsedAt               *time.Time
+	ExpiresAt                *time.Time
+	AutoPauseOnExpired       bool
+	CreatedAt                time.Time
+	UpdatedAt                time.Time
 
 	Schedulable bool
 
@@ -3238,3 +3242,30 @@ func (a *Account) QuotaDimensionOrDefault() string {
 	}
 	return a.QuotaDimension
 }
+
+// PriorityForGroup returns the scheduler priority for the requested group.
+// A group relation overrides the account-wide priority; callers without a
+// concrete group keep the account-wide value.
+func (a *Account) PriorityForGroup(groupID int64) int {
+	if a == nil {
+		return 0
+	}
+	if groupID <= 0 {
+		return a.Priority
+	}
+	for _, relation := range a.AccountGroups {
+		if relation.GroupID == groupID {
+			return relation.Priority
+		}
+	}
+	return a.Priority
+}
+
+const (
+	AccountShareRewardRateDefaultPercent = 80.0
+	AccountShareRewardRateMinPercent     = 0.0
+	AccountShareRewardRateMaxPercent     = 100.0
+	AccountOwnUsageFeeRateDefaultPercent = 1.0
+	AccountOwnUsageFeeRateMinPercent     = 0.0
+	AccountOwnUsageFeeRateMaxPercent     = 100.0
+)

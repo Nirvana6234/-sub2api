@@ -101,12 +101,6 @@
               <span v-if="item.iconSvg" class="h-5 w-5 flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
               <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" />
               <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
-              <span
-                v-if="ticketUnreadCountFor(item.path) > 0"
-                class="sidebar-notification-dot"
-                :class="{ 'sidebar-notification-dot-collapsed': sidebarCollapsed }"
-                aria-hidden="true"
-              ></span>
             </component>
           </template>
         </div>
@@ -136,12 +130,6 @@
             <span v-if="item.iconSvg" class="h-5 w-5 flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
             <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" />
             <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
-            <span
-              v-if="ticketUnreadCountFor(item.path) > 0"
-              class="sidebar-notification-dot"
-              :class="{ 'sidebar-notification-dot-collapsed': sidebarCollapsed }"
-              aria-hidden="true"
-            ></span>
           </component>
         </div>
       </template>
@@ -166,12 +154,6 @@
             <span v-if="item.iconSvg" class="h-5 w-5 flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
             <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" />
             <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
-            <span
-              v-if="ticketUnreadCountFor(item.path) > 0"
-              class="sidebar-notification-dot"
-              :class="{ 'sidebar-notification-dot-collapsed': sidebarCollapsed }"
-              aria-hidden="true"
-            ></span>
           </component>
         </div>
       </template>
@@ -221,7 +203,7 @@
 import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { useAdminSettingsStore, useAppStore, useAuthStore, useOnboardingStore, useTicketStore } from '@/stores'
+import { useAdminSettingsStore, useAppStore, useAuthStore, useOnboardingStore } from '@/stores'
 import VersionBadge from '@/components/common/VersionBadge.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { sanitizeSvg } from '@/utils/sanitize'
@@ -272,7 +254,6 @@ const appStore = useAppStore()
 const authStore = useAuthStore()
 const onboardingStore = useOnboardingStore()
 const adminSettingsStore = useAdminSettingsStore()
-const ticketStore = useTicketStore()
 
 const sidebarCollapsed = computed(() => appStore.sidebarCollapsed)
 const mobileOpen = computed(() => appStore.mobileOpen)
@@ -293,10 +274,6 @@ const siteName = computed(() => appStore.siteName)
 const siteLogo = computed(() => sanitizeUrl(appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }))
 const siteVersion = computed(() => appStore.siteVersion)
 const settingsLoaded = computed(() => appStore.publicSettingsLoaded)
-const ticketUnreadCounts = computed(() => ({
-  user: ticketStore.userUnreadCount,
-  admin: ticketStore.adminUnreadCount
-}))
 
 // SVG Icon Components
 const DashboardIcon = {
@@ -731,7 +708,6 @@ function buildSelfNavItems(withDashboard: boolean): NavItem[] {
     },
     { path: '/playground', label: t('nav.playground'), icon: PlaygroundIcon, featureFlag: flagPlayground },
     { path: '/download', label: t('nav.clientDownload'), icon: ClientDownloadIcon, featureFlag: flagClientDownload },
-    { path: '/tickets', label: t('nav.tickets'), icon: BellIcon },
     { path: '/usage', label: t('nav.usage'), icon: ChartIcon, hideInSimpleMode: true },
     { path: '/available-channels', label: t('nav.availableChannels'), icon: ChannelIcon, hideInSimpleMode: true, featureFlag: flagAvailableChannels },
     { path: '/monitor', label: t('nav.channelStatus'), icon: SignalIcon, featureFlag: flagChannelMonitor },
@@ -900,12 +876,6 @@ function handleMenuItemClick(itemPath: string) {
 
 function isActive(path: string): boolean {
   return route.path === path || route.path.startsWith(path + '/')
-}
-
-function ticketUnreadCountFor(path: string): number {
-  if (path === '/admin/tickets') return ticketUnreadCounts.value.admin
-  if (path === '/tickets') return ticketUnreadCounts.value.user
-  return 0
 }
 
 function isGroupActive(item: NavItem): boolean {

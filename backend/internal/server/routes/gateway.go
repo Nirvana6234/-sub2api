@@ -1,8 +1,13 @@
 package routes
 
 import (
+	"bytes"
 	"errors"
+	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -626,6 +631,9 @@ func compositeGeminiTargetPlatformMiddleware(resolver *service.CompositeRouteRes
 // /custom-voices/audio match /custom-voices/:voice_id, and a raw-path suffix
 // check would rewrite it to custom-voices/audio/audio — turning a profile
 // lookup into an audio download.
+//
+// 目前本地没有注册 Grok Voice 路由（见 TestGatewayRoutesRegisterGrokCustomVoice），
+// 该函数保留以便路由恢复后直接可用，同时让 routes 包的测试能够编译。
 func grokCustomVoiceEndpoint(c *gin.Context) string {
 	endpoint := "custom-voices/" + c.Param("voice_id")
 	if strings.HasSuffix(c.FullPath(), "/:voice_id/audio") {
@@ -675,21 +683,65 @@ func compositeRouteEndpointForPath(path string) string {
 	}
 }
 
-// grokCustomVoiceEndpoint derives the upstream Voice endpoint for the
-// /custom-voices/:voice_id[/audio] routes.
-//
-// The /audio suffix must be decided from the matched route template, not from
-// the raw URL path: a voice literally named "audio" makes GET
-// /custom-voices/audio match /custom-voices/:voice_id, and a raw-path suffix
-// check would rewrite it to custom-voices/audio/audio — turning a profile
-// lookup into an audio download.
-//
-// 目前本地没有注册 Grok Voice 路由（见 TestGatewayRoutesRegisterGrokCustomVoice），
-// 该函数保留以便路由恢复后直接可用，同时让 routes 包的测试能够编译。
-func grokCustomVoiceEndpoint(c *gin.Context) string {
-	endpoint := "custom-voices/" + c.Param("voice_id")
-	if strings.HasSuffix(c.FullPath(), "/:voice_id/audio") {
-		endpoint += "/audio"
+func resetRequestBody(c *gin.Context, body []byte) {
+	c.Request.Body = io.NopCloser(bytes.NewReader(body))
+	c.Request.ContentLength = int64(len(body))
+	c.Request.Header.Set("Content-Length", strconv.Itoa(len(body)))
+}
+
+func compositeRequestModelFromBody(contentType string, body []byte) string {
+	if model, _ := compositeJSONRequestModel(body); model != "" {
+		return model
 	}
-	return endpoint
+	return compositeMultipartModelFromBody(contentType, body)
+}
+
+func compositeJSONRequestModel(body []byte) (string, string) {
+	for _, path := range []string{"model", "session.model"} {
+		model := gjson.GetBytes(body, path)
+		if model.Type != gjson.String {
+			continue
+		}
+		if value := strings.TrimSpace(model.String()); value != "" {
+			return value, path
+		}
+	}
+	return "", ""
+}
+
+func compositeMultipartModelFromBody(contentType string, body []byte) string {
+	mediaType, params, err := mime.ParseMediaType(strings.TrimSpace(contentType))
+	if err != nil || !strings.EqualFold(mediaType, "multipart/form-data") {
+		return ""
+	}
+	boundary := strings.TrimSpace(params["boundary"])
+	if boundary == "" {
+		return ""
+	}
+	reader := multipart.NewReader(bytes.NewReader(body), boundary)
+	for {
+		part, err := reader.NextPart()
+		if errors.Is(err, io.EOF) {
+			return ""
+		}
+		if err != nil {
+			return ""
+		}
+		fieldName := part.FormName()
+		if part.FileName() != "" || (fieldName != "model" && fieldName != "session") {
+			continue
+		}
+		data, err := io.ReadAll(part)
+		if err != nil {
+			return ""
+		}
+		switch fieldName {
+		case "model":
+			return strings.TrimSpace(string(data))
+		case "session":
+			if model, _ := compositeJSONRequestModel(data); model != "" {
+				return model
+			}
+		}
+	}
 }

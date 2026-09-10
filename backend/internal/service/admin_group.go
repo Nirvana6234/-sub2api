@@ -987,7 +987,7 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	}
 	if group.FallbackGroupID != nil {
 		// 按合并后的最终平台校验，避免修改平台或兜底标记后留下不兼容的旧配置。
-		if err := s.validateFallbackGroup(ctx, id, group.Platform, *group.FallbackGroupID); err != nil {
+		if err := s.validateFallbackGroup(ctx, id, *group.FallbackGroupID); err != nil {
 			return nil, err
 		}
 		if platformSupportsFallbackPool(group.Platform) && !group.ClaudeCodeOnly {

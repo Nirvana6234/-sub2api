@@ -43,6 +43,42 @@ func (s *SettingService) IsRegistrationEmailDomainQuotaEnabled(ctx context.Conte
 	return value == "true"
 }
 
+// GetMaxAccountsPerRegisterIP 返回同一客户端 IP 允许注册的账号数上限。
+// 返回 <=0 表示未配置，调用方使用内置默认值（DefaultMaxAccountsPerRegisterIP）。
+// 设置缺失或不可解析时返回 0 而不是报错：注册配额属于加固功能，
+// 配置异常不应让整个注册入口不可用。
+func (s *SettingService) GetMaxAccountsPerRegisterIP(ctx context.Context) int {
+	if s == nil || s.settingRepo == nil {
+		return 0
+	}
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyMaxAccountsPerRegisterIP)
+	if err != nil {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
+}
+
+// GetMaxAdminLoginFailures 返回同一 IP 在 24 小时窗口内允许的管理员登录失败次数。
+// 返回 <=0 表示未配置，调用方使用 DefaultMaxAdminLoginFailures。
+func (s *SettingService) GetMaxAdminLoginFailures(ctx context.Context) int {
+	if s == nil || s.settingRepo == nil {
+		return 0
+	}
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyMaxAdminLoginFailures)
+	if err != nil {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
+}
+
 // GetRegistrationEmailSuffixWhitelist returns normalized registration email suffix whitelist.
 func (s *SettingService) GetRegistrationEmailSuffixWhitelist(ctx context.Context) []string {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyRegistrationEmailSuffixWhitelist)
@@ -88,6 +124,17 @@ func (s *SettingService) IsAffiliateEnabled(ctx context.Context) bool {
 	return value == "true"
 }
 
+func (s *SettingService) IsPlaygroundEnabled(ctx context.Context) bool {
+	if s == nil || s.settingRepo == nil {
+		return false
+	}
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyPlaygroundEnabled)
+	if err != nil {
+		return false
+	}
+	return value == "true"
+}
+
 // IsAffiliateAdminRechargeEnabled reports whether admin balance
 // deposits should participate in the affiliate rebate program.
 func (s *SettingService) IsAffiliateAdminRechargeEnabled(ctx context.Context) bool {
@@ -111,6 +158,38 @@ func (s *SettingService) GetAffiliateRebateRatePercent(ctx context.Context) floa
 		return AffiliateRebateRateDefault
 	}
 	return clampAffiliateRebateRate(rate)
+}
+
+// GetAccountShareRewardRatePercent returns the contribution-credit percentage
+// awarded to the owner of a shared account for each settled shared request.
+func (s *SettingService) GetAccountShareRewardRatePercent(ctx context.Context) float64 {
+	if s == nil || s.settingRepo == nil {
+		return AccountShareRewardRateDefaultPercent
+	}
+	raw, err := s.settingRepo.GetValue(ctx, SettingKeyAccountShareRewardRate)
+	if err != nil {
+		return AccountShareRewardRateDefaultPercent
+	}
+	rate, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil || math.IsNaN(rate) || math.IsInf(rate, 0) {
+		return AccountShareRewardRateDefaultPercent
+	}
+	return clampAccountShareRewardRatePercent(rate)
+}
+
+func (s *SettingService) GetAccountOwnUsageFeeRatePercent(ctx context.Context) float64 {
+	if s == nil || s.settingRepo == nil {
+		return AccountOwnUsageFeeRateDefaultPercent
+	}
+	raw, err := s.settingRepo.GetValue(ctx, SettingKeyAccountOwnUsageFeeRate)
+	if err != nil {
+		return AccountOwnUsageFeeRateDefaultPercent
+	}
+	rate, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil || math.IsNaN(rate) || math.IsInf(rate, 0) {
+		return AccountOwnUsageFeeRateDefaultPercent
+	}
+	return clampAccountOwnUsageFeeRatePercent(rate)
 }
 
 // GetAffiliateRebateFreezeHours 返回返利冻结期（小时）。
@@ -291,7 +370,7 @@ func parseAuditLogRetentionDays(value string) int {
 func (s *SettingService) GetSiteName(ctx context.Context) string {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeySiteName)
 	if err != nil || value == "" {
-		return "Sub2API"
+		return "共飞 AI"
 	}
 	return value
 }
@@ -619,6 +698,18 @@ func (s *SettingService) GetAdminAPIKey(ctx context.Context) (string, error) {
 		return "", err // 数据库错误
 	}
 	return key, nil
+}
+
+// GetHeadroomBaseURL 获取 headroom 压缩代理的内网地址，未配置返回空字符串。
+func (s *SettingService) GetHeadroomBaseURL(ctx context.Context) (string, error) {
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyHeadroomBaseURL)
+	if err != nil {
+		if errors.Is(err, ErrSettingNotFound) {
+			return "", nil
+		}
+		return "", err
+	}
+	return strings.TrimSpace(value), nil
 }
 
 // DeleteAdminAPIKey 删除管理员 API Key
@@ -1016,7 +1107,8 @@ func (s *SettingService) SetOpenAIFastPolicySettings(ctx context.Context, settin
 		BetaPolicyScopeAll: true, BetaPolicyScopeOAuth: true, BetaPolicyScopeAPIKey: true, BetaPolicyScopeBedrock: true,
 	}
 	validTiers := map[string]bool{
-		OpenAIFastTierAny: true, OpenAIFastTierPriority: true, OpenAIFastTierUltrafast: true, OpenAIFastTierFlex: true,
+		OpenAIFastTierAny: true, OpenAIFastTierPriority: true, OpenAIFastTierFlex: true,
+		OpenAIFastTierUltrafast: true,
 	}
 
 	for i, rule := range settings.Rules {

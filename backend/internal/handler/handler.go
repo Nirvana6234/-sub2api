@@ -48,29 +48,30 @@ type AdminHandlers struct {
 
 // Handlers contains all HTTP handlers
 type Handlers struct {
-	PawConfigService *service.PawConfigService
-	PawChatService   *service.PawChatService
-	Auth             *AuthHandler
-	User             *UserHandler
-	APIKey           *APIKeyHandler
-	Usage            *UsageHandler
-	Redeem           *RedeemHandler
-	Subscription     *SubscriptionHandler
-	Announcement     *AnnouncementHandler
-	ChannelMonitor   *ChannelMonitorUserHandler
-	ChannelMonitorV2 *ChannelMonitorV2Handler
-	Admin            *AdminHandlers
-	Gateway          *GatewayHandler
-	OpenAIGateway    *OpenAIGatewayHandler
-	Setting          *SettingHandler
-	Totp             *TotpHandler
-	Passkey          *PasskeyHandler
-	Payment          *PaymentHandler
-	PaymentWebhook   *PaymentWebhookHandler
-	AvailableChannel *AvailableChannelHandler
-	ModelPlaza       *ModelPlazaHandler
-	AsyncImage       *AsyncImageHandler
-	BatchImage       *BatchImageHandler
+	PawConfigService  *service.PawConfigService
+	PawChatService    *service.PawChatService
+	Auth              *AuthHandler
+	User              *UserHandler
+	APIKey            *APIKeyHandler
+	Usage             *UsageHandler
+	Redeem            *RedeemHandler
+	Subscription      *SubscriptionHandler
+	Announcement      *AnnouncementHandler
+	ChannelMonitor    *ChannelMonitorUserHandler
+	ChannelMonitorV2  *ChannelMonitorV2Handler
+	Admin             *AdminHandlers
+	Gateway           *GatewayHandler
+	OpenAIGateway     *OpenAIGatewayHandler
+	Setting           *SettingHandler
+	Totp              *TotpHandler
+	Passkey           *PasskeyHandler
+	Payment           *PaymentHandler
+	PaymentWebhook    *PaymentWebhookHandler
+	AvailableChannel  *AvailableChannelHandler
+	ModelPlaza        *ModelPlazaHandler
+	AsyncImage        *AsyncImageHandler
+	BatchImage        *BatchImageHandler
+	PlaygroundHistory *PlaygroundHistoryHandler
 }
 
 // BuildInfo contains build-time information

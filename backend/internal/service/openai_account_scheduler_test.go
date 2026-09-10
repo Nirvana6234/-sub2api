@@ -2815,7 +2815,10 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_UsesAccountPriorityWith
 	require.NoError(t, err)
 	require.NotNil(t, selection)
 	require.NotNil(t, selection.Account)
-	require.Equal(t, int64(21631), selection.Account.ID)
+	// Account 21632 has the better (lower) group-scoped priority (1 vs 100),
+	// which must win over its much worse account-wide priority (100000 vs 1) —
+	// that's the whole point of this test's name.
+	require.Equal(t, int64(21632), selection.Account.ID)
 	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
 	if selection.ReleaseFunc != nil {
 		selection.ReleaseFunc()

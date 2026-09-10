@@ -54,6 +54,15 @@ func (r *fallbackGroupRepoStub) GetByIDLite(_ context.Context, id int64) (*Group
 	return &cloned, nil
 }
 
+func (r *fallbackGroupRepoStub) GetByID(_ context.Context, id int64) (*Group, error) {
+	group := r.groups[id]
+	if group == nil {
+		return nil, ErrGroupNotFound
+	}
+	cloned := *group
+	return &cloned, nil
+}
+
 func fallbackTestService(groups ...*Group) *OpenAIGatewayService {
 	byID := make(map[int64]*Group, len(groups))
 	for _, group := range groups {

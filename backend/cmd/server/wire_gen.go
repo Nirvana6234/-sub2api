@@ -326,6 +326,9 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	handlers := handler.ProvideHandlers(authHandler, userHandler, apiKeyHandler, usageHandler, redeemHandler, subscriptionHandler, announcementHandler, channelMonitorUserHandler, channelMonitorV2Handler, adminHandlers, gatewayHandler, openAIGatewayHandler, handlerSettingHandler, totpHandler, passkeyHandler, handlerPaymentHandler, paymentWebhookHandler, availableChannelHandler, modelPlazaHandler, asyncImageHandler, batchImageHandler, idempotencyCoordinator, idempotencyCleanupService, openAIQuotaAutoResetService)
 	handlers.PawConfigService = pawConfigService
 	handlers.PawChatService = pawChatService
+	playgroundHistoryRepository := repository.NewPlaygroundHistoryRepository(db)
+	playgroundHistoryService := service.NewPlaygroundHistoryService(playgroundHistoryRepository)
+	handlers.PlaygroundHistory = handler.NewPlaygroundHistoryHandler(playgroundHistoryService)
 	jwtAuthMiddleware := middleware.NewJWTAuthMiddleware(authService, userService, settingService, auditLogService)
 	optionalJWTAuthMiddleware := middleware.NewOptionalJWTAuthMiddleware(authService, userService, settingService, auditLogService)
 	adminAuthMiddleware := middleware.NewAdminAuthMiddleware(authService, userService, settingService, auditLogService)

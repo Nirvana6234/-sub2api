@@ -151,8 +151,12 @@ func createAccountRecord(ctx context.Context, client *dbent.Client, account *ser
 		SetSchedulable(account.Schedulable).
 		SetAutoPauseOnExpired(account.AutoPauseOnExpired)
 
+	// 建号时没给倍率就落"未声明"：此时列上只会是建表默认 1.0，那是缺省值而不
+	// 是运营者对上游成本的判断，利润准入不能拿它当声明去否决账号。
 	if account.RateMultiplier != nil {
 		builder.SetRateMultiplier(*account.RateMultiplier)
+	} else {
+		builder.SetRateMultiplierUndeclared(true)
 	}
 	if account.LoadFactor != nil {
 		builder.SetLoadFactor(*account.LoadFactor)
@@ -545,8 +549,10 @@ func (r *accountRepository) updateLockedAccount(
 		SetSchedulable(schedulable).
 		SetAutoPauseOnExpired(account.AutoPauseOnExpired)
 
+	// 运营显式写入倍率即完成声明，账号从此受利润准入严格判定。
 	if explicitRateMultiplier != nil {
-		builder.SetRateMultiplier(*explicitRateMultiplier)
+		builder.SetRateMultiplier(*explicitRateMultiplier).
+			SetRateMultiplierUndeclared(false)
 	}
 	if account.LoadFactor != nil {
 		builder.SetLoadFactor(*account.LoadFactor)
@@ -3394,37 +3400,38 @@ func accountEntityToService(m *dbent.Account) *service.Account {
 	rateMultiplier := m.RateMultiplier
 
 	return &service.Account{
-		ID:                      m.ID,
-		Name:                    m.Name,
-		Notes:                   m.Notes,
-		Platform:                m.Platform,
-		Type:                    m.Type,
-		Credentials:             copyJSONMap(m.Credentials),
-		Extra:                   copyJSONMap(m.Extra),
-		ProxyID:                 m.ProxyID,
-		ProxyFallbackOriginID:   m.ProxyFallbackOriginID,
-		Concurrency:             m.Concurrency,
-		Priority:                m.Priority,
-		RateMultiplier:          &rateMultiplier,
-		LoadFactor:              m.LoadFactor,
-		Status:                  m.Status,
-		ErrorMessage:            derefString(m.ErrorMessage),
-		LastUsedAt:              m.LastUsedAt,
-		ExpiresAt:               m.ExpiresAt,
-		AutoPauseOnExpired:      m.AutoPauseOnExpired,
-		CreatedAt:               m.CreatedAt,
-		UpdatedAt:               m.UpdatedAt,
-		Schedulable:             m.Schedulable,
-		RateLimitedAt:           m.RateLimitedAt,
-		RateLimitResetAt:        m.RateLimitResetAt,
-		OverloadUntil:           m.OverloadUntil,
-		TempUnschedulableUntil:  m.TempUnschedulableUntil,
-		TempUnschedulableReason: derefString(m.TempUnschedulableReason),
-		SessionWindowStart:      m.SessionWindowStart,
-		SessionWindowEnd:        m.SessionWindowEnd,
-		SessionWindowStatus:     derefString(m.SessionWindowStatus),
-		ParentAccountID:         m.ParentAccountID,
-		QuotaDimension:          string(m.QuotaDimension),
+		ID:                       m.ID,
+		Name:                     m.Name,
+		Notes:                    m.Notes,
+		Platform:                 m.Platform,
+		Type:                     m.Type,
+		Credentials:              copyJSONMap(m.Credentials),
+		Extra:                    copyJSONMap(m.Extra),
+		ProxyID:                  m.ProxyID,
+		ProxyFallbackOriginID:    m.ProxyFallbackOriginID,
+		Concurrency:              m.Concurrency,
+		Priority:                 m.Priority,
+		RateMultiplier:           &rateMultiplier,
+		RateMultiplierUndeclared: m.RateMultiplierUndeclared,
+		LoadFactor:               m.LoadFactor,
+		Status:                   m.Status,
+		ErrorMessage:             derefString(m.ErrorMessage),
+		LastUsedAt:               m.LastUsedAt,
+		ExpiresAt:                m.ExpiresAt,
+		AutoPauseOnExpired:       m.AutoPauseOnExpired,
+		CreatedAt:                m.CreatedAt,
+		UpdatedAt:                m.UpdatedAt,
+		Schedulable:              m.Schedulable,
+		RateLimitedAt:            m.RateLimitedAt,
+		RateLimitResetAt:         m.RateLimitResetAt,
+		OverloadUntil:            m.OverloadUntil,
+		TempUnschedulableUntil:   m.TempUnschedulableUntil,
+		TempUnschedulableReason:  derefString(m.TempUnschedulableReason),
+		SessionWindowStart:       m.SessionWindowStart,
+		SessionWindowEnd:         m.SessionWindowEnd,
+		SessionWindowStatus:      derefString(m.SessionWindowStatus),
+		ParentAccountID:          m.ParentAccountID,
+		QuotaDimension:           string(m.QuotaDimension),
 	}
 }
 

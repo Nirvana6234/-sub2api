@@ -2321,7 +2321,7 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 	originalGroupID := derefGroupID(groupID)
 	effectiveGroupID := groupID
 	stickyRequest := false
-	if originalGroupID > 0 && normalizeOpenAICompatiblePlatform(platform) == PlatformOpenAI && !isOpenAIFallbackPoolSourcing(ctx) {
+	if originalGroupID > 0 && NormalizeOpenAICompatiblePlatform(platform) == PlatformOpenAI && !isOpenAIFallbackPoolSourcing(ctx) {
 		candidateGroupID, probing := s.openAIStickyFallbackCandidate(originalGroupID)
 		if candidateGroupID != originalGroupID {
 			effectiveGroupID = &candidateGroupID
@@ -2366,6 +2366,13 @@ type openAIGroupPrivacyRequirement struct {
 }
 
 func (s *OpenAIGatewayService) withOpenAIGroupPrivacyRequirement(ctx context.Context, groupID *int64) context.Context {
+	// 兜底只切换账号候选来源，分组级隐私要求仍属于原请求分组。
+	// 递归进入 B 组时保留 A 组已经装配好的要求，避免把 B 的策略泄漏到 A 的请求。
+	if isOpenAIFallbackPoolSourcing(ctx) {
+		if _, ok := ctx.Value(openAIGroupPrivacyRequirementContextKey{}).(openAIGroupPrivacyRequirement); ok {
+			return ctx
+		}
+	}
 	return context.WithValue(ctx, openAIGroupPrivacyRequirementContextKey{}, openAIGroupPrivacyRequirement{
 		groupID:  derefGroupID(groupID),
 		required: s.loadOpenAIGroupRequiresPrivacySet(ctx, groupID),
@@ -2373,8 +2380,10 @@ func (s *OpenAIGatewayService) withOpenAIGroupPrivacyRequirement(ctx context.Con
 }
 
 func (s *OpenAIGatewayService) openAIGroupRequiresPrivacySet(ctx context.Context, groupID *int64) bool {
-	if cached, ok := ctx.Value(openAIGroupPrivacyRequirementContextKey{}).(openAIGroupPrivacyRequirement); ok && cached.groupID == derefGroupID(groupID) {
-		return cached.required
+	if cached, ok := ctx.Value(openAIGroupPrivacyRequirementContextKey{}).(openAIGroupPrivacyRequirement); ok {
+		if cached.groupID == derefGroupID(groupID) || isOpenAIFallbackPoolSourcing(ctx) {
+			return cached.required
+		}
 	}
 	return s.loadOpenAIGroupRequiresPrivacySet(ctx, groupID)
 }
@@ -2421,7 +2430,7 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 	if _, alreadyTriggered := isOpenAILatencyFallbackTrigger(ctx); !alreadyTriggered {
 		slowBucket, groupIsSlow = s.shouldTriggerOpenAILatencyFallback(groupID)
 	}
-	if err == nil && selection != nil && selection.Account != nil && normalizeOpenAICompatiblePlatform(platform) == PlatformOpenAI && groupIsSlow && len(excludedIDs) == 0 && !isOpenAIFallbackPoolSourcing(ctx) && !isOpenAIStickyFallbackRequest(ctx) {
+	if err == nil && selection != nil && selection.Account != nil && NormalizeOpenAICompatiblePlatform(platform) == PlatformOpenAI && groupIsSlow && len(excludedIDs) == 0 && !isOpenAIFallbackPoolSourcing(ctx) && !isOpenAIStickyFallbackRequest(ctx) {
 		fallbackCtx, fallbackGroupID := s.nextOpenAIFallbackGroup(withOpenAILatencyFallbackTrigger(ctx, slowBucket), groupID, platform, requestedModel)
 		if fallbackGroupID != nil {
 			fallbackSelection, fallbackDecision, fallbackErr := s.selectAccountWithSchedulerOnce(withOpenAILatencyFallbackSuppressed(fallbackCtx), fallbackGroupID, "", "", requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, false, useUpstreamTokenCost)
@@ -2478,7 +2487,7 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnceNoFallback(
 	previousResponseCanMove bool,
 	useUpstreamTokenCost bool,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
-	platform = normalizeOpenAICompatiblePlatform(platform)
+	platform = NormalizeOpenAICompatiblePlatform(platform)
 	decision := OpenAIAccountScheduleDecision{}
 	preserveGuardianParentBinding := preserveOpenAIGuardianParentBinding(ctx, sessionHash)
 	guardianParentAccountID := int64(0)

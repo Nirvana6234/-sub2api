@@ -127,7 +127,7 @@ func TestPawConfigServiceKeepsGroupModelsWhenChannelIsMissing(t *testing.T) {
 			Name:             "Configured group",
 			Platform:         PlatformOpenAI,
 			Status:           StatusActive,
-			ModelsListConfig: GroupModelsListConfig{Enabled: true, Models: []string{"gpt-5.6", "gpt-5.6-mini"}},
+			ModelAllowlist: GroupModelAllowlist{Enabled: true, Models: []string{"gpt-5.6", "gpt-5.6-mini"}},
 		}}},
 		&pawConfigUserSourceStub{user: &User{ID: 42, Username: "user", Email: "user@example.com"}},
 		&pawConfigChannelSourceStub{channels: map[int64]*Channel{}},

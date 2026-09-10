@@ -22,6 +22,15 @@ const (
 	maxDecompressedBodySize = 64 << 20
 )
 
+// BodyTooLargeMessage formats the shared OpenAI-compatible body-limit error.
+func BodyTooLargeMessage(limit int64) string {
+	const mb = 1024 * 1024
+	if limit >= mb {
+		return fmt.Sprintf("Request body too large, limit is %dMB", limit/mb)
+	}
+	return fmt.Sprintf("Request body too large, limit is %dB", limit)
+}
+
 // PrereadBody 回填已读取完成的请求体：作为 io.ReadCloser 可被再次顺序消费
 // （multipart 流式解析），同时暴露 Bytes() 让 ReadRequestBodyWithPrealloc
 // 直接返回原始切片，避免二次分配与复制。
