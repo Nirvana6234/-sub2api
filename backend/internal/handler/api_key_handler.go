@@ -147,6 +147,24 @@ func (h *APIKeyHandler) List(c *gin.Context) {
 	response.Paginated(c, out, result.Total, page, pageSize)
 }
 
+// EnsurePlayground creates the purpose-bound default keys used by the
+// playground. It is intentionally idempotent so existing users can be
+// repaired when groups become available after signup.
+// POST /api/v1/keys/playground/ensure
+func (h *APIKeyHandler) EnsurePlayground(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+
+	if err := h.apiKeyService.EnsurePlaygroundAPIKeys(c.Request.Context(), subject.UserID); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"ready": true})
+}
+
 // GetByID handles getting a single API key
 // GET /api/v1/api-keys/:id
 func (h *APIKeyHandler) GetByID(c *gin.Context) {
