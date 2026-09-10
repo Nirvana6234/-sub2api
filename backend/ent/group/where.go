@@ -270,6 +270,11 @@ func IsFallbackPool(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldIsFallbackPool, v))
 }
 
+// KiroCompat applies equality check predicate on the "kiro_compat" field. It's identical to KiroCompatEQ.
+func KiroCompat(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldKiroCompat, v))
+}
+
 // ModelRoutingEnabled applies equality check predicate on the "model_routing_enabled" field. It's identical to ModelRoutingEnabledEQ.
 func ModelRoutingEnabled(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldModelRoutingEnabled, v))
@@ -2208,6 +2213,16 @@ func IsFallbackPoolEQ(v bool) predicate.Group {
 // IsFallbackPoolNEQ applies the NEQ predicate on the "is_fallback_pool" field.
 func IsFallbackPoolNEQ(v bool) predicate.Group {
 	return predicate.Group(sql.FieldNEQ(FieldIsFallbackPool, v))
+}
+
+// KiroCompatEQ applies the EQ predicate on the "kiro_compat" field.
+func KiroCompatEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldKiroCompat, v))
+}
+
+// KiroCompatNEQ applies the NEQ predicate on the "kiro_compat" field.
+func KiroCompatNEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldKiroCompat, v))
 }
 
 // ModelRoutingIsNil applies the IsNil predicate on the "model_routing" field.

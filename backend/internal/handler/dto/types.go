@@ -139,6 +139,10 @@ type Group struct {
 	FallbackGroupID *int64 `json:"fallback_group_id"`
 	// 无效请求兜底分组
 	FallbackGroupIDOnInvalidRequest *int64 `json:"fallback_group_id_on_invalid_request"`
+	// 是否为兜底账号池：由其他分组通过 fallback_group_id 指定，用户不可直接选择
+	IsFallbackPool bool `json:"is_fallback_pool"`
+	// 是否使用 Kiro 的 Codex 兼容处理
+	KiroCompat bool `json:"kiro_compat"`
 
 	// OpenAI Messages 调度开关（用户侧需要此字段判断是否展示 Claude Code 教程）
 	AllowMessagesDispatch bool `json:"allow_messages_dispatch"`

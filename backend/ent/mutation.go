@@ -22204,6 +22204,7 @@ type GroupMutation struct {
 	fallback_group_id_on_invalid_request    *int64
 	addfallback_group_id_on_invalid_request *int64
 	is_fallback_pool                        *bool
+	kiro_compat                             *bool
 	model_routing                           *map[string][]int64
 	model_routing_enabled                   *bool
 	mcp_xml_inject                          *bool
@@ -24739,6 +24740,42 @@ func (m *GroupMutation) ResetIsFallbackPool() {
 	m.is_fallback_pool = nil
 }
 
+// SetKiroCompat sets the "kiro_compat" field.
+func (m *GroupMutation) SetKiroCompat(b bool) {
+	m.kiro_compat = &b
+}
+
+// KiroCompat returns the value of the "kiro_compat" field in the mutation.
+func (m *GroupMutation) KiroCompat() (r bool, exists bool) {
+	v := m.kiro_compat
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldKiroCompat returns the old "kiro_compat" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldKiroCompat(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldKiroCompat is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldKiroCompat requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldKiroCompat: %w", err)
+	}
+	return oldValue.KiroCompat, nil
+}
+
+// ResetKiroCompat resets all changes to the "kiro_compat" field.
+func (m *GroupMutation) ResetKiroCompat() {
+	m.kiro_compat = nil
+}
+
 // SetModelRouting sets the "model_routing" field.
 func (m *GroupMutation) SetModelRouting(value map[string][]int64) {
 	m.model_routing = &value
@@ -26012,7 +26049,7 @@ func (m *GroupMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *GroupMutation) Fields() []string {
-	fields := make([]string, 0, 67)
+	fields := make([]string, 0, 68)
 	if m.created_at != nil {
 		fields = append(fields, group.FieldCreatedAt)
 	}
@@ -26147,6 +26184,9 @@ func (m *GroupMutation) Fields() []string {
 	}
 	if m.is_fallback_pool != nil {
 		fields = append(fields, group.FieldIsFallbackPool)
+	}
+	if m.kiro_compat != nil {
+		fields = append(fields, group.FieldKiroCompat)
 	}
 	if m.model_routing != nil {
 		fields = append(fields, group.FieldModelRouting)
@@ -26312,6 +26352,8 @@ func (m *GroupMutation) Field(name string) (ent.Value, bool) {
 		return m.FallbackGroupIDOnInvalidRequest()
 	case group.FieldIsFallbackPool:
 		return m.IsFallbackPool()
+	case group.FieldKiroCompat:
+		return m.KiroCompat()
 	case group.FieldModelRouting:
 		return m.ModelRouting()
 	case group.FieldModelRoutingEnabled:
@@ -26455,6 +26497,8 @@ func (m *GroupMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldFallbackGroupIDOnInvalidRequest(ctx)
 	case group.FieldIsFallbackPool:
 		return m.OldIsFallbackPool(ctx)
+	case group.FieldKiroCompat:
+		return m.OldKiroCompat(ctx)
 	case group.FieldModelRouting:
 		return m.OldModelRouting(ctx)
 	case group.FieldModelRoutingEnabled:
@@ -26822,6 +26866,13 @@ func (m *GroupMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetIsFallbackPool(v)
+		return nil
+	case group.FieldKiroCompat:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetKiroCompat(v)
 		return nil
 	case group.FieldModelRouting:
 		v, ok := value.(map[string][]int64)
@@ -27622,6 +27673,9 @@ func (m *GroupMutation) ResetField(name string) error {
 		return nil
 	case group.FieldIsFallbackPool:
 		m.ResetIsFallbackPool()
+		return nil
+	case group.FieldKiroCompat:
+		m.ResetKiroCompat()
 		return nil
 	case group.FieldModelRouting:
 		m.ResetModelRouting()

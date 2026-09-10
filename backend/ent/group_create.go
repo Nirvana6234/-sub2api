@@ -636,6 +636,20 @@ func (_c *GroupCreate) SetNillableIsFallbackPool(v *bool) *GroupCreate {
 	return _c
 }
 
+// SetKiroCompat sets the "kiro_compat" field.
+func (_c *GroupCreate) SetKiroCompat(v bool) *GroupCreate {
+	_c.mutation.SetKiroCompat(v)
+	return _c
+}
+
+// SetNillableKiroCompat sets the "kiro_compat" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableKiroCompat(v *bool) *GroupCreate {
+	if v != nil {
+		_c.SetKiroCompat(*v)
+	}
+	return _c
+}
+
 // SetModelRouting sets the "model_routing" field.
 func (_c *GroupCreate) SetModelRouting(v map[string][]int64) *GroupCreate {
 	_c.mutation.SetModelRouting(v)
@@ -1145,6 +1159,10 @@ func (_c *GroupCreate) defaults() error {
 		v := group.DefaultIsFallbackPool
 		_c.mutation.SetIsFallbackPool(v)
 	}
+	if _, ok := _c.mutation.KiroCompat(); !ok {
+		v := group.DefaultKiroCompat
+		_c.mutation.SetKiroCompat(v)
+	}
 	if _, ok := _c.mutation.ModelRoutingEnabled(); !ok {
 		v := group.DefaultModelRoutingEnabled
 		_c.mutation.SetModelRoutingEnabled(v)
@@ -1360,6 +1378,9 @@ func (_c *GroupCreate) check() error {
 	}
 	if _, ok := _c.mutation.IsFallbackPool(); !ok {
 		return &ValidationError{Name: "is_fallback_pool", err: errors.New(`ent: missing required field "Group.is_fallback_pool"`)}
+	}
+	if _, ok := _c.mutation.KiroCompat(); !ok {
+		return &ValidationError{Name: "kiro_compat", err: errors.New(`ent: missing required field "Group.kiro_compat"`)}
 	}
 	if _, ok := _c.mutation.ModelRoutingEnabled(); !ok {
 		return &ValidationError{Name: "model_routing_enabled", err: errors.New(`ent: missing required field "Group.model_routing_enabled"`)}
@@ -1645,6 +1666,10 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.IsFallbackPool(); ok {
 		_spec.SetField(group.FieldIsFallbackPool, field.TypeBool, value)
 		_node.IsFallbackPool = value
+	}
+	if value, ok := _c.mutation.KiroCompat(); ok {
+		_spec.SetField(group.FieldKiroCompat, field.TypeBool, value)
+		_node.KiroCompat = value
 	}
 	if value, ok := _c.mutation.ModelRouting(); ok {
 		_spec.SetField(group.FieldModelRouting, field.TypeJSON, value)
@@ -2661,6 +2686,18 @@ func (u *GroupUpsert) SetIsFallbackPool(v bool) *GroupUpsert {
 // UpdateIsFallbackPool sets the "is_fallback_pool" field to the value that was provided on create.
 func (u *GroupUpsert) UpdateIsFallbackPool() *GroupUpsert {
 	u.SetExcluded(group.FieldIsFallbackPool)
+	return u
+}
+
+// SetKiroCompat sets the "kiro_compat" field.
+func (u *GroupUpsert) SetKiroCompat(v bool) *GroupUpsert {
+	u.Set(group.FieldKiroCompat, v)
+	return u
+}
+
+// UpdateKiroCompat sets the "kiro_compat" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateKiroCompat() *GroupUpsert {
+	u.SetExcluded(group.FieldKiroCompat)
 	return u
 }
 
@@ -3906,6 +3943,20 @@ func (u *GroupUpsertOne) SetIsFallbackPool(v bool) *GroupUpsertOne {
 func (u *GroupUpsertOne) UpdateIsFallbackPool() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateIsFallbackPool()
+	})
+}
+
+// SetKiroCompat sets the "kiro_compat" field.
+func (u *GroupUpsertOne) SetKiroCompat(v bool) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetKiroCompat(v)
+	})
+}
+
+// UpdateKiroCompat sets the "kiro_compat" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateKiroCompat() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateKiroCompat()
 	})
 }
 
@@ -5366,6 +5417,20 @@ func (u *GroupUpsertBulk) SetIsFallbackPool(v bool) *GroupUpsertBulk {
 func (u *GroupUpsertBulk) UpdateIsFallbackPool() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateIsFallbackPool()
+	})
+}
+
+// SetKiroCompat sets the "kiro_compat" field.
+func (u *GroupUpsertBulk) SetKiroCompat(v bool) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetKiroCompat(v)
+	})
+}
+
+// UpdateKiroCompat sets the "kiro_compat" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateKiroCompat() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateKiroCompat()
 	})
 }
 

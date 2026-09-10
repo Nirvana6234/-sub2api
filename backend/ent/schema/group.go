@@ -216,6 +216,13 @@ func (Group) Fields() []ent.Field {
 			Default(false).
 			Comment("是否为兜底账号池：由其他分组通过 fallback_group_id 指定，用户不可直接选择"),
 
+		// Kiro 兼容处理 (added by migration 241)：Kiro 中转以 Anthropic 协议对外，
+		// 但不代模型执行 hosted 工具，且 Codex 的通配符模型映射不应覆盖用户显式
+		// 选择的 Claude 模型。
+		field.Bool("kiro_compat").
+			Default(false).
+			Comment("是否使用 Kiro 的 Codex 兼容处理"),
+
 		// 模型路由配置 (added by migration 040)
 		field.JSON("model_routing", map[string][]int64{}).
 			Optional().

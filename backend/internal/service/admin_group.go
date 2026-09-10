@@ -823,6 +823,9 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 		}
 		group.IsFallbackPool = *input.IsFallbackPool
 	}
+	if input.KiroCompat != nil {
+		group.KiroCompat = *input.KiroCompat
+	}
 	if input.Status != "" {
 		group.Status = input.Status
 	}

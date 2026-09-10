@@ -361,6 +361,8 @@ type UpdateGroupInput struct {
 	FallbackGroupIDOnInvalidRequest *int64
 	// 是否为兜底账号池：由其他分组通过 FallbackGroupID 指定，用户不可直接选择
 	IsFallbackPool *bool
+	// 是否使用 Kiro 的 Codex 兼容处理
+	KiroCompat *bool
 	// 模型路由配置（仅 anthropic 平台使用）
 	ModelRouting        map[string][]int64
 	ModelRoutingEnabled *bool // 是否启用模型路由

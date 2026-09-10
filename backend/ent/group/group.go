@@ -106,6 +106,8 @@ const (
 	FieldFallbackGroupIDOnInvalidRequest = "fallback_group_id_on_invalid_request"
 	// FieldIsFallbackPool holds the string denoting the is_fallback_pool field in the database.
 	FieldIsFallbackPool = "is_fallback_pool"
+	// FieldKiroCompat holds the string denoting the kiro_compat field in the database.
+	FieldKiroCompat = "kiro_compat"
 	// FieldModelRouting holds the string denoting the model_routing field in the database.
 	FieldModelRouting = "model_routing"
 	// FieldModelRoutingEnabled holds the string denoting the model_routing_enabled field in the database.
@@ -270,6 +272,7 @@ var Columns = []string{
 	FieldFallbackGroupID,
 	FieldFallbackGroupIDOnInvalidRequest,
 	FieldIsFallbackPool,
+	FieldKiroCompat,
 	FieldModelRouting,
 	FieldModelRoutingEnabled,
 	FieldMcpXMLInject,
@@ -391,6 +394,8 @@ var (
 	DefaultClaudeCodeOnly bool
 	// DefaultIsFallbackPool holds the default value on creation for the "is_fallback_pool" field.
 	DefaultIsFallbackPool bool
+	// DefaultKiroCompat holds the default value on creation for the "kiro_compat" field.
+	DefaultKiroCompat bool
 	// DefaultModelRoutingEnabled holds the default value on creation for the "model_routing_enabled" field.
 	DefaultModelRoutingEnabled bool
 	// DefaultMcpXMLInject holds the default value on creation for the "mcp_xml_inject" field.
@@ -662,6 +667,11 @@ func ByFallbackGroupIDOnInvalidRequest(opts ...sql.OrderTermOption) OrderOption 
 // ByIsFallbackPool orders the results by the is_fallback_pool field.
 func ByIsFallbackPool(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldIsFallbackPool, opts...).ToFunc()
+}
+
+// ByKiroCompat orders the results by the kiro_compat field.
+func ByKiroCompat(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldKiroCompat, opts...).ToFunc()
 }
 
 // ByModelRoutingEnabled orders the results by the model_routing_enabled field.

@@ -82,6 +82,8 @@ type Group struct {
 	FallbackGroupIDOnInvalidRequest *int64
 	// 是否为兜底账号池：由其他分组通过 FallbackGroupID 指定，用户不可直接选择
 	IsFallbackPool bool
+	// 是否使用 Kiro 的 Codex 兼容处理
+	KiroCompat bool
 
 	// 模型路由配置
 	// key: 模型匹配模式（支持 * 通配符，如 "claude-opus-*"）
