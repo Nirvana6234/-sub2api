@@ -327,8 +327,16 @@ type SystemSettings struct {
 	ClientDownloadDirectURLMac string `json:"client_download_direct_url_mac"`
 	ClientLatestVersion        string `json:"client_latest_version"`
 	ClientLatestVersionMac     string `json:"client_latest_version_mac"`
+	ClientTutorialVideoURL     string `json:"client_tutorial_video_url"`
 	BackupPaymentEnabled       bool   `json:"backup_payment_enabled"`
 	BackupPaymentURL           string `json:"backup_payment_url"`
+
+	// headroom 上下文压缩代理地址
+	HeadroomBaseURL string `json:"headroom_base_url"`
+
+	// 延迟补偿阈值(ms)与退款比例(0~1)
+	LatencyCompensationThresholdMs int     `json:"latency_compensation_threshold_ms"`
+	LatencyCompensationProfitRatio float64 `json:"latency_compensation_profit_ratio"`
 
 	// Playground feature switch
 	PlaygroundEnabled              bool    `json:"playground_enabled"`
@@ -450,6 +458,7 @@ type PublicSettings struct {
 	ClientDownloadDirectURLMac string `json:"client_download_direct_url_mac"`
 	ClientLatestVersion        string `json:"client_latest_version"`
 	ClientLatestVersionMac     string `json:"client_latest_version_mac"`
+	ClientTutorialVideoURL     string `json:"client_tutorial_video_url"`
 	BackupPaymentEnabled       bool   `json:"backup_payment_enabled"`
 	BackupPaymentURL           string `json:"backup_payment_url"`
 

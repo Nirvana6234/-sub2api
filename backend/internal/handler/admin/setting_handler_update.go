@@ -353,8 +353,15 @@ type UpdateSettingsRequest struct {
 	ClientDownloadDirectURLMac *string `json:"client_download_direct_url_mac"`
 	ClientLatestVersion        *string `json:"client_latest_version"`
 	ClientLatestVersionMac     *string `json:"client_latest_version_mac"`
-	BackupPaymentEnabled       *bool   `json:"backup_payment_enabled"`
-	BackupPaymentURL           *string `json:"backup_payment_url"`
+	ClientTutorialVideoURL     *string `json:"client_tutorial_video_url"`
+
+	LatencyCompensationThresholdMs *int     `json:"latency_compensation_threshold_ms"`
+	LatencyCompensationProfitRatio *float64 `json:"latency_compensation_profit_ratio"`
+
+	HeadroomBaseURL *string `json:"headroom_base_url"`
+
+	BackupPaymentEnabled *bool   `json:"backup_payment_enabled"`
+	BackupPaymentURL     *string `json:"backup_payment_url"`
 
 	// Playground feature switch (user-facing)
 	PlaygroundEnabled              *bool    `json:"playground_enabled"`
@@ -1993,7 +2000,21 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		ClientDownloadDirectURLMac: stringSetting(req.ClientDownloadDirectURLMac, previousSettings.ClientDownloadDirectURLMac),
 		ClientLatestVersion:        stringSetting(req.ClientLatestVersion, previousSettings.ClientLatestVersion),
 		ClientLatestVersionMac:     stringSetting(req.ClientLatestVersionMac, previousSettings.ClientLatestVersionMac),
-		BackupPaymentURL:           stringSetting(req.BackupPaymentURL, previousSettings.BackupPaymentURL),
+		ClientTutorialVideoURL:     stringSetting(req.ClientTutorialVideoURL, previousSettings.ClientTutorialVideoURL),
+		LatencyCompensationThresholdMs: func() int {
+			if req.LatencyCompensationThresholdMs != nil && *req.LatencyCompensationThresholdMs > 0 {
+				return *req.LatencyCompensationThresholdMs
+			}
+			return previousSettings.LatencyCompensationThresholdMs
+		}(),
+		LatencyCompensationProfitRatio: func() float64 {
+			if req.LatencyCompensationProfitRatio != nil && *req.LatencyCompensationProfitRatio >= 0 && *req.LatencyCompensationProfitRatio <= 1 {
+				return *req.LatencyCompensationProfitRatio
+			}
+			return previousSettings.LatencyCompensationProfitRatio
+		}(),
+		HeadroomBaseURL:  stringSetting(req.HeadroomBaseURL, previousSettings.HeadroomBaseURL),
+		BackupPaymentURL: stringSetting(req.BackupPaymentURL, previousSettings.BackupPaymentURL),
 		PlaygroundEnabled: func() bool {
 			if req.PlaygroundEnabled != nil {
 				return *req.PlaygroundEnabled
@@ -2468,6 +2489,10 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		ClientDownloadDirectURLMac:     updatedSettings.ClientDownloadDirectURLMac,
 		ClientLatestVersion:            updatedSettings.ClientLatestVersion,
 		ClientLatestVersionMac:         updatedSettings.ClientLatestVersionMac,
+		ClientTutorialVideoURL:         updatedSettings.ClientTutorialVideoURL,
+		LatencyCompensationThresholdMs: updatedSettings.LatencyCompensationThresholdMs,
+		LatencyCompensationProfitRatio: updatedSettings.LatencyCompensationProfitRatio,
+		HeadroomBaseURL:                updatedSettings.HeadroomBaseURL,
 		BackupPaymentEnabled:           updatedSettings.BackupPaymentEnabled,
 		BackupPaymentURL:               updatedSettings.BackupPaymentURL,
 		PlaygroundEnabled:              updatedSettings.PlaygroundEnabled,

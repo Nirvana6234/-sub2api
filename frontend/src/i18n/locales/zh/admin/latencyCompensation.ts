@@ -1,0 +1,32 @@
+export default {
+  latencyCompensation: {
+    title: '延迟补偿',
+    description: '给指定时间段内首字节响应过慢的请求退款——按成本价收费，差价退给用户。退款比例由下方设置项控制。',
+    from: '起始时间',
+    to: '结束时间',
+    thresholdMs: '慢请求阈值（毫秒）',
+    thresholdHint: '首字节耗时达到这个数才算慢请求',
+    profitRatio: '退款比例',
+    profitRatioHint: '100% = 这笔请求不赚钱，全额退差价；0% = 不退',
+    saveSettings: '保存设置',
+    saveFailed: '保存失败',
+    preview: '预览',
+    apply: '发放补偿',
+    slowRequests: '慢请求数',
+    actualCost: '实际扣费',
+    accountCost: '成本价',
+    totalCompensation: '应退总额',
+    user: '用户',
+    requests: '请求数',
+    compensation: '补偿金额',
+    noneQualified: '这个时间段和阈值下没有符合条件、且尚未补偿过的请求。',
+    invalidRange: '结束时间必须晚于起始时间',
+    invalidThreshold: '阈值必须是大于 0 的整数',
+    invalidRatio: '退款比例必须在 0% 到 100% 之间',
+    previewFailed: '预览失败',
+    applyFailed: '发放补偿失败',
+    applyConfirmTitle: '确认发放补偿',
+    applyConfirmMessage: '将给 {count} 位用户合计发放 ${amount} 补偿，直接加到余额上，此操作不可撤销。确定继续吗？',
+    applySuccess: '已给 {count} 位用户发放合计 ${amount} 补偿'
+  }
+}

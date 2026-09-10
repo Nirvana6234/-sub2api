@@ -172,6 +172,7 @@ export default {
     clientDownload: 'Client download',
     batchImage: 'Batch Images',
     usage: 'Usage',
+    latencyCompensation: 'Latency Compensation',
     redeem: 'Redeem',
     affiliate: 'Affiliate Rebates',
     affiliateManagement: 'Affiliate Rebates',

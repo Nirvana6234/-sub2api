@@ -742,6 +742,8 @@ export interface SystemSettings {
   client_latest_version_mac: string;
   client_tutorial_video_url: string;
   headroom_base_url: string;
+  latency_compensation_threshold_ms: number;
+  latency_compensation_profit_ratio: number;
   backup_payment_enabled: boolean;
   backup_payment_url: string;
   playground_enabled: boolean;
@@ -1069,6 +1071,8 @@ export interface UpdateSettingsRequest {
   client_latest_version_mac?: string;
   client_tutorial_video_url?: string;
   headroom_base_url?: string;
+  latency_compensation_threshold_ms?: number;
+  latency_compensation_profit_ratio?: number;
   backup_payment_enabled?: boolean;
   backup_payment_url?: string;
   playground_enabled?: boolean;

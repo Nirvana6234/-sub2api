@@ -10137,6 +10137,8 @@ const form = reactive<SettingsForm>({
   client_latest_version: "",
   client_latest_version_mac: "",
   client_tutorial_video_url: "",
+  latency_compensation_threshold_ms: 30000,
+  latency_compensation_profit_ratio: 1,
   headroom_base_url: "",
   backup_payment_enabled: false,
   backup_payment_url: "",

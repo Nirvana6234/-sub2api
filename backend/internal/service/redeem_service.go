@@ -63,6 +63,9 @@ type RedeemCodeRepository interface {
 	BatchUpdate(ctx context.Context, ids []int64, fields RedeemCodeBatchUpdateFields) (int64, error)
 	Delete(ctx context.Context, id int64) error
 	Use(ctx context.Context, id, userID int64) error
+	// FindAdminAdjustment finds an AdjustmentTypeAdminBalance row by exact
+	// (user, value, notes) match — see the repository implementation for why.
+	FindAdminAdjustment(ctx context.Context, userID int64, value float64, notes string) (*RedeemCode, error)
 
 	List(ctx context.Context, params pagination.PaginationParams) ([]RedeemCode, *pagination.PaginationResult, error)
 	ListWithFilters(ctx context.Context, params pagination.PaginationParams, codeType, status, search string) ([]RedeemCode, *pagination.PaginationResult, error)

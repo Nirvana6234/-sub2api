@@ -57,6 +57,10 @@ func (r *redeemRejectRepo) Use(ctx context.Context, id, userID int64) error {
 	return nil
 }
 
+func (r *redeemRejectRepo) FindAdminAdjustment(ctx context.Context, userID int64, value float64, notes string) (*RedeemCode, error) {
+	return nil, nil
+}
+
 func (r *redeemRejectRepo) List(ctx context.Context, params pagination.PaginationParams) ([]RedeemCode, *pagination.PaginationResult, error) {
 	panic("unexpected List call")
 }

@@ -123,6 +123,10 @@ func (r *paymentOrderLifecycleRedeemRepo) Delete(context.Context, int64) error {
 	panic("unexpected call")
 }
 
+func (r *paymentOrderLifecycleRedeemRepo) FindAdminAdjustment(context.Context, int64, float64, string) (*RedeemCode, error) {
+	return nil, nil
+}
+
 func (r *paymentOrderLifecycleRedeemRepo) Use(_ context.Context, id, userID int64) error {
 	for code, redeemCode := range r.codesByCode {
 		if redeemCode.ID != id {

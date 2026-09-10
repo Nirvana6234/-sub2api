@@ -468,6 +468,10 @@ func (s *redeemRepoStub) Use(ctx context.Context, id, userID int64) error {
 	panic("unexpected Use call")
 }
 
+func (s *redeemRepoStub) FindAdminAdjustment(ctx context.Context, userID int64, value float64, notes string) (*RedeemCode, error) {
+	return nil, nil
+}
+
 func (s *redeemRepoStub) List(ctx context.Context, params pagination.PaginationParams) ([]RedeemCode, *pagination.PaginationResult, error) {
 	panic("unexpected List call")
 }

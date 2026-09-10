@@ -670,6 +670,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/latency-compensation',
+    name: 'AdminLatencyCompensation',
+    component: () => import('@/views/admin/LatencyCompensationView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Latency Compensation',
+      titleKey: 'admin.latencyCompensation.title',
+      descriptionKey: 'admin.latencyCompensation.description'
+    }
+  },
+  {
     path: '/admin/affiliates',
     redirect: '/admin/affiliates/invites'
   },

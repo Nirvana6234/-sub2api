@@ -20,6 +20,12 @@ type AdminService interface {
 	UpdateUser(ctx context.Context, id int64, input *UpdateUserInput) (*User, error)
 	DeleteUser(ctx context.Context, id int64) error
 	UpdateUserBalance(ctx context.Context, userID int64, balance float64, operation string, notes string) (*User, error)
+	// AdjustUserBalanceSilently changes balance by delta without creating a
+	// RedeemCode audit row and without triggering affiliate rebate accrual.
+	AdjustUserBalanceSilently(ctx context.Context, userID int64, delta float64) (*User, error)
+	// DeleteAdminAdjustmentTrace deletes the exact RedeemCode row a prior
+	// UpdateUserBalance("add", ...) call created for this (user, amount, notes).
+	DeleteAdminAdjustmentTrace(ctx context.Context, userID int64, value float64, notes string) (bool, error)
 	BatchUpdateConcurrency(ctx context.Context, userIDs []int64, value int, mode string) (int, error)
 	BatchUpdateLimits(ctx context.Context, userIDs []int64, concurrency, rpmLimit *int) (int, error)
 	GetUserAPIKeys(ctx context.Context, userID int64, page, pageSize int, sortBy, sortOrder string) ([]APIKey, int64, error)

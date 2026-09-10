@@ -172,6 +172,7 @@ export default {
     clientDownload: '客户端下载',
     batchImage: '批量生图',
     usage: '使用记录',
+    latencyCompensation: '延迟补偿',
     redeem: '兑换',
     affiliate: '邀请返利',
     affiliateManagement: '邀请返利',

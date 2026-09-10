@@ -86,6 +86,10 @@ func (s *redeemCodeRepoStub) Use(_ context.Context, id, userID int64) error {
 	return ErrRedeemCodeNotFound
 }
 
+func (s *redeemCodeRepoStub) FindAdminAdjustment(context.Context, int64, float64, string) (*RedeemCode, error) {
+	return nil, nil
+}
+
 func (s *redeemCodeRepoStub) List(context.Context, pagination.PaginationParams) ([]RedeemCode, *pagination.PaginationResult, error) {
 	panic("unexpected List call")
 }

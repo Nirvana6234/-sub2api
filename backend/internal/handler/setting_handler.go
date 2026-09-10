@@ -117,6 +117,7 @@ func (h *SettingHandler) GetPublicSettings(c *gin.Context) {
 		ClientDownloadDirectURLMac:  settings.ClientDownloadDirectURLMac,
 		ClientLatestVersion:         settings.ClientLatestVersion,
 		ClientLatestVersionMac:      settings.ClientLatestVersionMac,
+		ClientTutorialVideoURL:      settings.ClientTutorialVideoURL,
 		BackupPaymentEnabled:        settings.BackupPaymentEnabled,
 		BackupPaymentURL:            settings.BackupPaymentURL,
 		PlaygroundEnabled:           settings.PlaygroundEnabled,

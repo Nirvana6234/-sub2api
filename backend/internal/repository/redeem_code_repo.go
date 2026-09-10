@@ -98,6 +98,33 @@ func (r *redeemCodeRepository) Delete(ctx context.Context, id int64) error {
 	return err
 }
 
+// FindAdminAdjustment looks up a specific admin-balance-adjustment row by
+// exact match on who/how much/why — used to find and delete the audit row a
+// prior UpdateUserBalance("add", ...) created, so a later revoke can erase
+// the whole grant from the user's own history instead of leaving it
+// dangling. Newest match wins on the (rare, same-window double-apply) chance
+// of more than one row matching. Returns (nil, nil) when nothing matches —
+// that's an expected outcome (e.g. the grant predates this lookup existing,
+// or was already cleaned up), not an error.
+func (r *redeemCodeRepository) FindAdminAdjustment(ctx context.Context, userID int64, value float64, notes string) (*service.RedeemCode, error) {
+	m, err := r.client.RedeemCode.Query().
+		Where(
+			redeemcode.UsedByEQ(userID),
+			redeemcode.TypeEQ(service.AdjustmentTypeAdminBalance),
+			redeemcode.ValueEQ(value),
+			redeemcode.NotesEQ(notes),
+		).
+		Order(dbent.Desc(redeemcode.FieldCreatedAt)).
+		First(ctx)
+	if err != nil {
+		if dbent.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return redeemCodeEntityToService(m), nil
+}
+
 func (r *redeemCodeRepository) List(ctx context.Context, params pagination.PaginationParams) ([]service.RedeemCode, *pagination.PaginationResult, error) {
 	return r.ListWithFilters(ctx, params, "", "", "")
 }

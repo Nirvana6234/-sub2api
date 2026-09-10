@@ -106,6 +106,15 @@ func (r *usageBatchLogRepoStub) GetHeadroomModelStats(context.Context, int64, ti
 func (r *usageBatchLogRepoStub) GetHeadroomTrend(context.Context, int64, time.Time, time.Time, string) ([]usagestats.HeadroomTrendPoint, error) {
 	return nil, nil
 }
+func (r *usageBatchLogRepoStub) FetchPendingLatencyCompensationRows(context.Context, time.Time, time.Time, int) ([]LatencyCompensationRow, error) {
+	return nil, nil
+}
+func (r *usageBatchLogRepoStub) MarkLatencyCompensated(context.Context, []int64) error {
+	return nil
+}
+func (r *usageBatchLogRepoStub) UnmarkLatencyCompensated(context.Context, time.Time, time.Time, int) error {
+	return nil
+}
 func (r *usageBatchLogRepoStub) ListWithFilters(context.Context, pagination.PaginationParams, usagestats.UsageLogFilters) ([]UsageLog, *pagination.PaginationResult, error) {
 	return nil, nil, nil
 }

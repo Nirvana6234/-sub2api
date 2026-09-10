@@ -2174,6 +2174,10 @@ func (stubRedeemCodeRepo) Use(ctx context.Context, id, userID int64) error {
 	return errors.New("not implemented")
 }
 
+func (stubRedeemCodeRepo) FindAdminAdjustment(ctx context.Context, userID int64, value float64, notes string) (*service.RedeemCode, error) {
+	return nil, errors.New("not implemented")
+}
+
 func (stubRedeemCodeRepo) List(ctx context.Context, params pagination.PaginationParams) ([]service.RedeemCode, *pagination.PaginationResult, error) {
 	return nil, nil, errors.New("not implemented")
 }
@@ -2749,6 +2753,18 @@ func (r *stubUsageLogRepo) GetHeadroomModelStats(ctx context.Context, userID int
 
 func (r *stubUsageLogRepo) GetHeadroomTrend(ctx context.Context, userID int64, startTime, endTime time.Time, granularity string) ([]usagestats.HeadroomTrendPoint, error) {
 	return nil, errors.New("not implemented")
+}
+
+func (r *stubUsageLogRepo) FetchPendingLatencyCompensationRows(ctx context.Context, startTime, endTime time.Time, thresholdMs int) ([]service.LatencyCompensationRow, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (r *stubUsageLogRepo) MarkLatencyCompensated(ctx context.Context, ids []int64) error {
+	return errors.New("not implemented")
+}
+
+func (r *stubUsageLogRepo) UnmarkLatencyCompensated(ctx context.Context, startTime, endTime time.Time, thresholdMs int) error {
+	return errors.New("not implemented")
 }
 
 func (r *stubUsageLogRepo) ListWithFilters(ctx context.Context, params pagination.PaginationParams, filters usagestats.UsageLogFilters) ([]service.UsageLog, *pagination.PaginationResult, error) {
