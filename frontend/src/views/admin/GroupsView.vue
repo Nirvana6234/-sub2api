@@ -6536,7 +6536,9 @@ const handleUpdateGroup = async () => {
 
   submitting.value = true;
   try {
-    // 转换 fallback_group_id: null -> 0 (后端使用 0 表示清除)
+    // 转换 fallback_group_id: null -> -1（后端把 -1 当作"明确清空"，0 现在视为
+    // "没碰这个字段"、不做任何改动——历史上 0 就是清空信号，一个表单初始化时序 bug
+    // 会把刚从服务端回填好的值瞬间冲成 0 再提交，静默清空了生产在用的兜底配置。）
     const payload = {
       ...editForm,
       force_openai_fast: normalizeGroupOpenAIFast(
@@ -6564,10 +6566,10 @@ const handleUpdateGroup = async () => {
         editForm.video_model_prices,
       ),
       fallback_group_id:
-        editForm.fallback_group_id === null ? 0 : editForm.fallback_group_id,
+        editForm.fallback_group_id === null ? -1 : editForm.fallback_group_id,
       fallback_group_id_on_invalid_request:
         editForm.fallback_group_id_on_invalid_request === null
-          ? 0
+          ? -1
           : editForm.fallback_group_id_on_invalid_request,
       model_routing: convertRoutingRulesToApiFormat(
         editModelRoutingRules.value,
@@ -7034,7 +7036,16 @@ watch(
 watch(
   () => editForm.platform,
   (newVal, oldVal) => {
+    // handleEdit() 里先设 editForm.platform 再设 editForm.fallback_group_id（两行相隔
+    // 几十行，但都在同一个同步函数里）。这个 watch 是 post-flush 的，要等这个函数整体
+    // 跑完才触发——那时 fallback_group_id 早就被正确回填过了，如果这里不排除"刚打开
+    // 编辑框、platform 只是从上一次编辑残留的旧值变成这个分组自己的 platform"这种情况，
+    // 就会把刚回填好的值又冲成 null。用 editingGroup（本次编辑打开时锁定的原始分组）
+    // 的 platform 做锚点：只有真的偏离了这个分组本来的 platform，才是用户主动切换，
+    // 才应该清空兜底分组。
+    const isRealPlatformChange = newVal !== editingGroup.value?.platform;
     if (
+      isRealPlatformChange &&
       newVal !== oldVal &&
       (newVal !== "anthropic" || usesFallbackPoolSelector(oldVal))
     ) {

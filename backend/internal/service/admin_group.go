@@ -766,6 +766,12 @@ func (s *adminServiceImpl) validateFallbackGroupOnInvalidRequest(ctx context.Con
 	return nil
 }
 
+// fallbackGroupIDClearSentinel 是前端"明确选择不兜底"时发送的值。UpdateGroup 曾经把
+// 0（含缺省值）也当成"明确清空"，一个编辑表单的时序 bug 会在打开编辑框时把刚回填好的
+// 兜底分组瞬间冲成 0 再提交，静默清空生产在用的配置且没有任何报错。现在只有这个哨兵值
+// 才会真正清空，0 一律视为"没碰这个字段"，保留原值。
+const fallbackGroupIDClearSentinel = -1
+
 func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *UpdateGroupInput) (*Group, error) {
 	group, err := s.groupRepo.GetByID(ctx, id)
 	if err != nil {
@@ -977,15 +983,17 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 		group.ClaudeCodeOnly = *input.ClaudeCodeOnly
 	}
 	if input.FallbackGroupID != nil {
-		// 校验降级分组
-		if *input.FallbackGroupID > 0 {
+		switch {
+		case *input.FallbackGroupID > 0:
+			// 校验降级分组
 			if err := s.validateFallbackGroup(ctx, id, *input.FallbackGroupID); err != nil {
 				return nil, err
 			}
 			group.FallbackGroupID = input.FallbackGroupID
-		} else {
-			// 传入 0 或负数表示清除降级分组
+		case *input.FallbackGroupID == fallbackGroupIDClearSentinel:
 			group.FallbackGroupID = nil
+		default:
+			// 0 视为没碰这个字段，保留 group.FallbackGroupID 原值。
 		}
 	}
 	if group.FallbackGroupID != nil {
@@ -1001,10 +1009,13 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	}
 	fallbackOnInvalidRequest := group.FallbackGroupIDOnInvalidRequest
 	if input.FallbackGroupIDOnInvalidRequest != nil {
-		if *input.FallbackGroupIDOnInvalidRequest > 0 {
+		switch {
+		case *input.FallbackGroupIDOnInvalidRequest > 0:
 			fallbackOnInvalidRequest = input.FallbackGroupIDOnInvalidRequest
-		} else {
+		case *input.FallbackGroupIDOnInvalidRequest == fallbackGroupIDClearSentinel:
 			fallbackOnInvalidRequest = nil
+		default:
+			// 0 视为没碰这个字段，保留原值——同 FallbackGroupID 的理由。
 		}
 	}
 	if fallbackOnInvalidRequest != nil {

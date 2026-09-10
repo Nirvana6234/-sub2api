@@ -1830,7 +1830,7 @@ func TestAdminService_UpdateGroup_InvalidRequestFallbackSubscriptionMismatch(t *
 	require.Nil(t, repo.updated)
 }
 
-func TestAdminService_UpdateGroup_InvalidRequestFallbackClearsOnZero(t *testing.T) {
+func TestAdminService_UpdateGroup_InvalidRequestFallbackClearsOnSentinel(t *testing.T) {
 	fallbackID := int64(10)
 	existing := &Group{
 		ID:                              1,
@@ -1848,7 +1848,8 @@ func TestAdminService_UpdateGroup_InvalidRequestFallbackClearsOnZero(t *testing.
 	}
 	svc := &adminServiceImpl{groupRepo: repo}
 
-	clear := int64(0)
+	// -1 是唯一真正的"清空"信号，见 fallbackGroupIDClearSentinel 的注释。
+	clear := int64(fallbackGroupIDClearSentinel)
 	group, err := svc.UpdateGroup(context.Background(), existing.ID, &UpdateGroupInput{
 		Platform:                        PlatformOpenAI,
 		FallbackGroupIDOnInvalidRequest: &clear,
@@ -1857,6 +1858,92 @@ func TestAdminService_UpdateGroup_InvalidRequestFallbackClearsOnZero(t *testing.
 	require.NotNil(t, group)
 	require.NotNil(t, repo.updated)
 	require.Nil(t, repo.updated.FallbackGroupIDOnInvalidRequest)
+}
+
+// 回归测试：2026-09 生产事故——后台"编辑分组"表单在打开编辑框时，一个 watch 的执行
+// 时序问题会把刚从服务端正确回填的 fallback_group_id 瞬间冲成 0 再提交保存，
+// 静默清空了线上在用的兜底配置，且没有任何报错，运营完全无感知，只能靠"最近兜底池
+// 进得少了"这种模糊现象才察觉。修复分两层：前端那个 watch 加了守卫（不在这个包里),
+// 这里是后端那层防御——0 不再被当作"明确清空"，必须保留原值，真正清空只能用
+// fallbackGroupIDClearSentinel（-1）。
+func TestAdminService_UpdateGroup_FallbackGroupIDZeroIsNoopNotClear(t *testing.T) {
+	fallbackID := int64(10)
+	existing := &Group{
+		ID:                              1,
+		Name:                            "g1",
+		Platform:                        PlatformAnthropic,
+		SubscriptionType:                SubscriptionTypeStandard,
+		Status:                          StatusActive,
+		FallbackGroupIDOnInvalidRequest: &fallbackID,
+	}
+	repo := &groupRepoStubForInvalidRequestFallback{
+		groups: map[int64]*Group{
+			existing.ID: existing,
+			fallbackID:  {ID: fallbackID, Platform: PlatformAnthropic, SubscriptionType: SubscriptionTypeStandard},
+		},
+	}
+	svc := &adminServiceImpl{groupRepo: repo}
+
+	zero := int64(0)
+	group, err := svc.UpdateGroup(context.Background(), existing.ID, &UpdateGroupInput{
+		FallbackGroupIDOnInvalidRequest: &zero,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, group)
+	require.NotNil(t, repo.updated)
+	require.Equal(t, &fallbackID, repo.updated.FallbackGroupIDOnInvalidRequest, "0 必须被当作没碰这个字段，保留原值")
+}
+
+// 同上，但针对真正在生产上出事的那个字段：FallbackGroupID（运行时兜底池），不是
+// FallbackGroupIDOnInvalidRequest。2026-09 那次事故里，一个 openai 分组的 fallback_group_id
+// 被后台编辑表单反复冲成 0，导致该分组的请求失败后再也进不了兜底池，直到有人手动
+// 在后台把值改回去——过几天又被冲掉，如此循环了近两周才被定位到根因。
+func TestAdminService_UpdateGroup_FallbackGroupIDZeroKeepsExistingValue(t *testing.T) {
+	fallbackID := int64(29)
+	existing := &Group{
+		ID:              2,
+		Name:            "plus",
+		Platform:        PlatformOpenAI,
+		Status:          StatusActive,
+		FallbackGroupID: &fallbackID,
+	}
+	fallbackPool := &Group{ID: fallbackID, Platform: PlatformOpenAI, Status: StatusActive, IsFallbackPool: true}
+	repo := &groupRepoStubForAdmin{
+		getByIDByID: map[int64]*Group{existing.ID: existing, fallbackID: fallbackPool},
+	}
+	svc := &adminServiceImpl{groupRepo: repo}
+
+	zero := int64(0)
+	updated, err := svc.UpdateGroup(context.Background(), existing.ID, &UpdateGroupInput{
+		FallbackGroupID: &zero,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, updated)
+	require.Equal(t, &fallbackID, updated.FallbackGroupID, "0 必须被当作没碰这个字段，不能清空线上在用的兜底配置")
+}
+
+func TestAdminService_UpdateGroup_FallbackGroupIDSentinelClears(t *testing.T) {
+	fallbackID := int64(29)
+	existing := &Group{
+		ID:              2,
+		Name:            "plus",
+		Platform:        PlatformOpenAI,
+		Status:          StatusActive,
+		FallbackGroupID: &fallbackID,
+	}
+	fallbackPool := &Group{ID: fallbackID, Platform: PlatformOpenAI, Status: StatusActive, IsFallbackPool: true}
+	repo := &groupRepoStubForAdmin{
+		getByIDByID: map[int64]*Group{existing.ID: existing, fallbackID: fallbackPool},
+	}
+	svc := &adminServiceImpl{groupRepo: repo}
+
+	clear := int64(fallbackGroupIDClearSentinel)
+	updated, err := svc.UpdateGroup(context.Background(), existing.ID, &UpdateGroupInput{
+		FallbackGroupID: &clear,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, updated)
+	require.Nil(t, updated.FallbackGroupID)
 }
 
 func TestAdminService_UpdateGroup_InvalidRequestFallbackRejectsFallbackGroup(t *testing.T) {
