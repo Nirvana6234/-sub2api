@@ -25,7 +25,19 @@
 
 验证：`go build ./...` 与 `go vet -tags=unit ./internal/service ./internal/repository` 干净；新增 12 个用例全绿；三条回归门全绿（见 verification.md 基线表）；`internal/repository` 仍只有那两个既有失败，无新增。
 
-## 2. 请求体分叉
+## 2. 请求体分叉（**押后**，见下）
+
+> **2026-09-11 实测把这一阶段降级了。** 录完 fixture 后用真实 Codex 报文跑
+> `normalizeOpenAIPassthroughOAuthBody`，返回 `changed=false`——**一个字节都没改**。
+> 逐条对：`store` 本来就是 false；8 个待删字段一个都不存在；`input` 本来就是数组；
+> `instructions` 17174 字符。另外 `flatten_namespaces` 与指纹收敛都是账号级 opt-in
+> 且默认关，工具名别名对无 `python` 工具是 no-op。
+>
+> 也就是说：**默认配置的透传账号 + 真实 Codex 请求，今天的 body 链路已经字节保真。**
+> 本阶段全做完，对合规流量的可观测变化是 0；价值只剩「挡住畸形形状带来的意外改写」
+> 这层保险。用户 2026-09-11 拍板先做 §3+§4，本阶段押后。
+
+- [ ] 2.1 `normalizeOpenAIPassthroughOAuthBody` 增加 `strict bool` 参数；strict 时跳过 `store` 的强制写入
 
 - [ ] 2.1 `normalizeOpenAIPassthroughOAuthBody` 增加 `strict bool` 参数；strict 时跳过 `store` 的强制写入
 - [ ] 2.2 strict 时跳过 `openAIChatGPTInternalUnsupportedFields` 的 8 个字段删除
@@ -37,15 +49,20 @@
 - [ ] 2.8 单测：同一份官方 Codex 请求体，strict 与非 strict 分别出站，逐字段 diff 只应出现预期差异
 - [ ] 2.9 单测：strict 下客户端发 `store:true` 时 body 原样保留（由上游拒绝，不在本地改）
 
-## 3. 请求头与传输
+## 3. 请求头与传输 ✅ 已完成
 
-- [ ] 3.1 `buildUpstreamRequestOpenAIPassthrough` 的头过滤按 strict 分叉为 denylist（design §3）
-- [ ] 3.2 **确认 `x-codex-installation-id` 在 denylist 中**——它由指纹收敛生成，不能透传客户端原值
-- [ ] 3.3 补齐 Go 侧逐跳头与来源标识头的排除
-- [ ] 3.4 strict 时出站 body zstd 压缩（level 3）+ `Content-Encoding: zstd`
-- [ ] 3.5 审计出站构造之后是否有任何路径重读 `req.Body`；确认 `request_body_read_log.go` 只读入站体
-- [ ] 3.6 单测：strict 下 `x-codex-routing-hint` / `x-openai-subagent` / `session-id` / `thread-id` 能到达上游请求头
-- [ ] 3.7 单测：strict 下客户端伪造 `authorization` / `cookie` / `chatgpt-account-id` 不会到达上游
+- [x] 3.1 `buildUpstreamRequestOpenAIPassthrough` 的头过滤按 strict 分叉为 denylist（design §3）
+- [x] 3.2 ~~确认 `x-codex-installation-id` 在 denylist 中~~ **结论相反：刻意不放进 denylist**。本仓库只在指纹收敛开启时生成安装标识（默认 off），挡掉它会让上游看到一个没有安装标识的请求，比放行更不像官方。理由与实测见 design §3
+- [x] 3.3 补齐 Go 侧逐跳头与来源标识头的排除
+- [x] 3.4 strict 时出站 body zstd 压缩（level 3）+ `Content-Encoding: zstd`；压不小时退回明文
+- [x] 3.5 审计出站构造之后重读 `req.Body` 的路径：只有 `http_upstream.go` 的 Grok 官方 API 回退（`newGrokOfficialAPIFallbackRequest`）用 `GetBody`，它按 host/`X-XAI-Token-Auth` 判定，与 Codex 路径无交集；`request_body_read_log.go` 只读入站体
+- [x] 3.6 单测：**差集断言**锁死 strict 的全部请求头增量（7 条），而不是逐条复述设计文档——初稿在这里猜错过两条
+- [x] 3.7 单测：两种模式下客户端伪造的 `authorization`/`cookie`/`chatgpt-account-id`/`x-oai-attestation`/`x-forwarded-for` 都不会到达上游
+- [x] 3.8 单测：`x-codex-routing-hint` 是网关自有头，两种模式都不得让客户端值出站
+- [x] 3.9 单测：zstd 往返逐字节相等、小体积不压、空体不压、非 strict 仍明文出站
+- [x] 3.10 ops 记录新增 `ops_openai_passthrough_mode` 与 `ops_openai_strict_degraded_reason`（原 §4.3 提前到此）
+
+验证：`go build ./...`、`go vet -tags=unit ./...`、`go vet -tags=integration ./...` 干净；改动文件 gofmt 干净；三条回归门 614 / 121 / 279 全绿；golden 未变（非 strict 出站字节未动）。
 
 ## 4. failover 与可观测性
 

@@ -18,9 +18,11 @@ package service
 
 import (
 	"context"
+	"sync"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/gin-gonic/gin"
+	"github.com/klauspost/compress/zstd"
 	"go.uber.org/zap"
 )
 
@@ -142,4 +144,165 @@ func OpenAIPassthroughModeForOps(strict bool, passthroughEnabled bool) string {
 	default:
 		return OpenAIPassthroughModeOff
 	}
+}
+
+// openAIStrictPassthroughDecisionContextKey 暂存本 attempt 的 strict 判定。
+//
+// 判定在 forwardOpenAIPassthrough 顶部做一次（含 WARN 日志），出站请求构造器读取
+// 暂存值——否则同一 attempt 里每构造一次请求就会重复告警一次。
+const openAIStrictPassthroughDecisionContextKey = "openai_passthrough_strict_decision"
+
+// stageOpenAIStrictPassthrough 暂存本 attempt 的 strict 判定。
+// 必须无条件覆写：failover 从 strict 账号切到普通账号时，上一账号的判定不得残留。
+func stageOpenAIStrictPassthrough(c *gin.Context, strict bool) {
+	if c != nil {
+		c.Set(openAIStrictPassthroughDecisionContextKey, strict)
+	}
+}
+
+// stagedOpenAIStrictPassthrough 读取暂存判定。
+//
+// 未暂存一律返回 false。这条 fail-closed 语义顺带保住了 Non-goals 里那句「不碰 WS」：
+// `buildUpstreamRequestOpenAIPassthrough` 还有一个来自 openai_ws_http_bridge.go 的
+// 调用方，那条路径不做 strict 判定、因此永远读到 false。
+func stagedOpenAIStrictPassthrough(c *gin.Context) bool {
+	if c == nil {
+		return false
+	}
+	value, exists := c.Get(openAIStrictPassthroughDecisionContextKey)
+	if !exists {
+		return false
+	}
+	strict, ok := value.(bool)
+	return ok && strict
+}
+
+// openAIStrictPassthroughBlockedHeaders 是 strict 下**不**转发的客户端请求头。
+//
+// 与非 strict 的闭合白名单相反：strict 默认放行客户端头，只扣掉网关自管的那些。
+// 依据是门禁——客户端的头就是官方 Codex 那一套，白名单存在的理由（"避免非标准/
+// 环境噪声头触发风控"）此时没有对象，而它反而在吃掉官方确实会发的头：
+// x-codex-routing-hint、x-openai-subagent、x-responsesapi-include-timing-metrics、
+// x-codex-parent-thread-id，以及连字符形式的 session-id / thread-id。
+//
+// 分三类，删任意一条之前先想清楚它属于哪一类：
+//
+//	凭据与账号身份 —— 客户端自报的一律不可信，上游认证由服务端账号产生；
+//	出站身份与传输 —— 由画像/压缩逻辑统一生成，客户端值会与之矛盾；
+//	逐跳与来源标识 —— HTTP 语义上就不该跨跳转发。
+var openAIStrictPassthroughBlockedHeaders = map[string]bool{
+	// —— 凭据与账号身份 ——
+	"authorization":                     true,
+	"cookie":                            true,
+	"cookie2":                           true,
+	"x-api-key":                         true,
+	"x-goog-api-key":                    true,
+	"x-openai-actor-authorization":      true,
+	"chatgpt-account-id":                true,
+	"chatgpt-organization-id":           true,
+	"chatgpt-org-id":                    true,
+	"chatgpt-project-id":                true,
+	"openai-organization":               true,
+	"openai-project":                    true,
+	"x-openai-organization":             true,
+	"x-openai-project":                  true,
+	"x-oai-attestation":                 true,
+	"x-oai-is":                          true,
+	"x-oai-is-update":                   true,
+	"x-openai-internal-codex-residency": true,
+
+	// —— 出站身份与传输 ——
+	// user-agent / originator / version 随后会被 enforceCodexIdentityHeaders 收口，
+	// 这里先挡一道，避免"客户端值曾短暂存在于出站头里"这种中间态。
+	"user-agent":       true,
+	"originator":       true,
+	"version":          true,
+	"host":             true,
+	"content-length":   true,
+	"content-encoding": true,
+
+	// —— 逐跳与来源标识 ——
+	"connection":          true,
+	"keep-alive":          true,
+	"proxy-connection":    true,
+	"proxy-authenticate":  true,
+	"proxy-authorization": true,
+	"te":                  true,
+	"trailer":             true,
+	"transfer-encoding":   true,
+	"upgrade":             true,
+	"forwarded":           true,
+	"x-forwarded-for":     true,
+	"x-forwarded-host":    true,
+	"x-forwarded-proto":   true,
+	"x-forwarded-port":    true,
+	"x-real-ip":           true,
+	"true-client-ip":      true,
+	"cf-connecting-ip":    true,
+	"cf-ray":              true,
+	"cf-ipcountry":        true,
+	"x-request-id":        true,
+}
+
+// isOpenAIStrictPassthroughForwardableHeader 判断 strict 下该客户端头是否转发上游。
+//
+// 超时类头沿用与非 strict 相同的配置门（gateway.openai_passthrough_allow_timeout_headers）：
+// 真实 Codex 不发它们，放行与否与"像不像官方"无关，属于运维策略，strict 不该顺手改。
+//
+// **`x-codex-installation-id` 刻意不在黑名单里**（这里与 codex-proxy-rs 不同）：
+// 它在那边被挡掉是因为那边**总是**按租约生成一个；而本仓库只在指纹收敛开启时生成
+// （codexFingerprintMode 默认 off）。收敛关着时挡掉它，上游会看到一个**没有**安装
+// 标识的请求——比放行更不像官方客户端，与 strict 的目标相反。放行后若收敛开着，
+// applyStagedCodexFingerprintHeaders 会照常覆写它，与今天行为一致。
+func isOpenAIStrictPassthroughForwardableHeader(lowerKey string, allowTimeoutHeaders bool) bool {
+	if lowerKey == "" {
+		return false
+	}
+	if isOpenAIPassthroughTimeoutHeader(lowerKey) {
+		return allowTimeoutHeaders
+	}
+	return !openAIStrictPassthroughBlockedHeaders[lowerKey]
+}
+
+// 官方 Codex app-server 发 /v1/responses 时对请求体做 zstd 压缩（对照实现
+// codex-proxy-rs 的 client_sse.rs 注释写明"与官方 Codex app-server 一致"，压缩级别 3）。
+// 本仓库出站一直是明文 —— 因为非 strict 路径要改写请求体，改完自然没有再压回去。
+// strict 不改请求体，于是这条一致性是纯新增就能拿到的。
+const openAIStrictPassthroughZstdLevel = zstd.SpeedDefault // 对应 zstd level 3
+
+// 编码器无状态且可并发复用（EncodeAll 是线程安全的），按进程建一次即可。
+// 建失败时返回 nil，调用方降级为明文出站——压缩是保真度优化，不值得为它失败一个请求。
+var openAIStrictPassthroughZstdEncoder = sync.OnceValue(func() *zstd.Encoder {
+	encoder, err := zstd.NewWriter(nil,
+		zstd.WithEncoderLevel(openAIStrictPassthroughZstdLevel),
+		zstd.WithEncoderConcurrency(1),
+	)
+	if err != nil {
+		return nil
+	}
+	return encoder
+})
+
+// compressOpenAIStrictPassthroughBody 按官方形态压缩出站请求体。
+//
+// 返回 (压缩后字节, true) 表示调用方需要设置 Content-Encoding: zstd；
+// 返回 (原字节, false) 表示压缩不可用或不划算，按明文出站。
+//
+// **必须在所有请求体改写之后调用** —— 压缩之后再改字节等于把 body 写坏，而且
+// Content-Length 会与实际长度脱节。
+func compressOpenAIStrictPassthroughBody(body []byte) ([]byte, bool) {
+	if len(body) == 0 {
+		return body, false
+	}
+	encoder := openAIStrictPassthroughZstdEncoder()
+	if encoder == nil {
+		return body, false
+	}
+	compressed := encoder.EncodeAll(body, nil)
+	// 压不动就别压：小请求体加上 zstd 帧头反而更大，而"更像官方"并不要求
+	// 每一个请求都带 Content-Encoding —— 官方客户端自己也是按需压。
+	if len(compressed) >= len(body) {
+		return body, false
+	}
+	return compressed, true
 }

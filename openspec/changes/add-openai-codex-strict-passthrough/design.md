@@ -142,9 +142,28 @@ x-codex-turn-id, x-oai-attestation, x-oai-is, x-oai-is-update,
 
 再叠加 Go 侧必须自管的逐跳头：`connection`、`keep-alive`、`transfer-encoding`、`upgrade`、`te`、`trailer`、`host`、`content-length`、`proxy-*`，以及 `x-forwarded-*` / `x-real-ip` / `cf-connecting-ip` 这类来源标识。
 
-**判据**：现有白名单的注释写得很清楚——「避免将非标准/环境噪声头传给上游触发风控」。门禁成立时客户端的头**就是**官方那一套，噪声来源消失，而白名单反而在吃掉官方确实会发的头。今天被吃掉的至少有：`x-codex-routing-hint`、`x-openai-subagent`、`x-responsesapi-include-timing-metrics`、`x-codex-parent-thread-id`，以及连字符形式的 `session-id` / `thread-id`（白名单里只有下划线形式）。
+**判据**：现有白名单的注释写得很清楚——「避免将非标准/环境噪声头传给上游触发风控」。门禁成立时客户端的头**就是**官方那一套，噪声来源消失，而白名单反而在吃掉官方确实会发的头。
 
-**注意 `x-codex-installation-id` 在跳过表里**：它由指纹收敛统一生成（§2.7），不能让客户端原值透过去。这一条不是「传输管辖」，是「身份管辖」，别因为改成黑名单就漏掉。
+**实测增量（2026-09-11，`TestBuildUpstreamRequestOpenAIPassthrough_StrictHeaderDelta`）**。初稿这里是照着 codex-proxy-rs 推的，**猜错了两条**，以下为实际量出的差集：
+
+| header | auth_only | strict |
+|---|---|---|
+| `session-id`（连字符） | 丢弃 | 转发 |
+| `thread-id` | 丢弃 | 转发 |
+| `x-client-request-id` | 丢弃 | 转发 |
+| `x-codex-parent-thread-id` | 丢弃 | 转发 |
+| `x-openai-subagent` | 丢弃 | 转发 |
+| `x-responsesapi-include-timing-metrics` | 丢弃 | 转发 |
+| 任意未知头 | 丢弃 | 转发 |
+
+除此之外两种模式**完全一致**。两处更正：
+
+- **`x-codex-routing-hint` 不在增量里**，它是**网关自有**头：`setOpenAICodexRoutingHint`（`openai_routing_hint.go:19`）先删光客户端的每一种拼写，再按最终上游模型合成。初稿说「白名单在吃掉它」是错的——它压根不是转发来的。两种模式下客户端值都无法出站。
+- **`x-codex-installation-id` 不进黑名单**（与 codex-proxy-rs 分歧）。那边挡掉它是因为**总是**按租约生成一个；本仓库只在指纹收敛开启时生成，而收敛默认 off。收敛关着时挡掉它，上游会看到一个**没有安装标识**的请求——比放行更不像官方客户端，与 strict 的目标相反。实测两种模式今天都在转发它；收敛开启时 `applyStagedCodexFingerprintHeaders` 会照常覆写。
+
+**「任意未知头也透过去」是黑名单的直接后果**，也正是白名单注释担心的那件事。它在 strict 下可接受的唯一理由就是门禁：客户端已被证明是官方 Codex，「非标准噪声头」这个风险来源不存在。这条依赖必须和 §1.2 的硬约束一起看——门禁一旦形同虚设（如 `force_codex_cli`），这条就变成真的风险，所以 strict 对它是显式互斥的。
+
+**方法论**：断言写成**差集**而不是「strict 应转发 X」的逐条清单。后者容易写成对设计文档的复述——而设计文档在这里恰好错了两条。差集会因为任何一侧多出或少掉一条而变红，包括没预料到的那条。
 
 ---
 
