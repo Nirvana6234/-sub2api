@@ -26,8 +26,10 @@ func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL 
 	// [DIAG] httptrace: 精确拆分出站请求的 DNS/连接/TLS/连接复用/首字节耗时，
 	// 用于定位「透传但每条请求仍有 1s+ 固定开销」的问题。诊断用，定位后可移除。
 	diagStart := time.Now()
-	var getConnStart, gotConnAt, dnsStart, dnsDone, connectStart, connectDone, tlsStart, tlsDone, firstByteAt time.Time
+	diagBodyBytes := request.ContentLength
+	var getConnStart, gotConnAt, dnsStart, dnsDone, connectStart, connectDone, tlsStart, tlsDone, wroteRequestAt, firstByteAt time.Time
 	var reused bool
+	var wroteRequestErr error
 	trace := &httptrace.ClientTrace{
 		GetConn:           func(string) { getConnStart = time.Now() },
 		DNSStart:          func(httptrace.DNSStartInfo) { dnsStart = time.Now() },
@@ -39,6 +41,14 @@ func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL 
 		GotConn: func(info httptrace.GotConnInfo) {
 			gotConnAt = time.Now()
 			reused = info.Reused
+		},
+		// WroteRequest 标志着「整个请求体（含大 body）已经写完/发给对端」的时刻。
+		// 用它减去 GotConn，就是「纯粹花在把请求体传出去」的时间，跟「传完之后
+		// 纯等对方响应」的时间彻底分开——这是定位「多跳链路里，大请求体在带宽
+		// 有限的出口上传得慢，被误当成『对方在思考』」这个猜测的关键证据。
+		WroteRequest: func(info httptrace.WroteRequestInfo) {
+			wroteRequestAt = time.Now()
+			wroteRequestErr = info.Err
 		},
 		GotFirstResponseByte: func() { firstByteAt = time.Now() },
 	}
@@ -59,11 +69,16 @@ func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL 
 	connectElapsed := durationIfSet(connectStart, connectDone)
 	tlsElapsed := durationIfSet(tlsStart, tlsDone)
 	getConnElapsed := durationIfSet(diagStart, gotConnAt)
+	// upload: 从连接就绪到请求体真正传完——大 body 在带宽有限的出口上会体现在这里。
+	uploadElapsed := durationIfSet(gotConnAt, wroteRequestAt)
+	// wait_after_upload: 请求体传完之后，纯粹等对方吐出第一个响应字节的时间——
+	// 这才是真正意义上「对方在处理/思考」的时间。
+	waitAfterUploadElapsed := durationIfSet(wroteRequestAt, firstByteAt)
 	ttfb := durationIfSet(diagStart, firstByteAt)
 	logger.LegacyPrintf(
 		"service.openai_gateway",
-		"[DIAG] upstream httptrace: account=%d err=%v total=%s get_conn=%s pool_wait=%s dns=%s connect=%s tls=%s reused=%v ttfb=%s",
-		accountID, err, total, getConnElapsed, poolWaitElapsed, dnsElapsed, connectElapsed, tlsElapsed, reused, ttfb,
+		"[DIAG] upstream httptrace: account=%d body_bytes=%d err=%v total=%s get_conn=%s pool_wait=%s dns=%s connect=%s tls=%s reused=%v upload=%s wrote_request_err=%v wait_after_upload=%s ttfb=%s",
+		accountID, diagBodyBytes, err, total, getConnElapsed, poolWaitElapsed, dnsElapsed, connectElapsed, tlsElapsed, reused, uploadElapsed, wroteRequestErr, waitAfterUploadElapsed, ttfb,
 	)
 
 	return resp, err
