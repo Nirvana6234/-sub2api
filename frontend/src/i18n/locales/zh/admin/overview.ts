@@ -582,7 +582,9 @@ export default {
         concurrencyPlaceholder: '0 表示不限制',
         concurrencyHint: '该用户的最大并发请求数，0 = 不限制',
         rpmLimitPlaceholder: '0 表示不限制',
-        rpmLimitHint: '该用户每分钟最大请求数，0 = 不限制；仅在所用分组未设置 rpm_limit 时作为兜底生效'
+        rpmLimitHint: '该用户每分钟最大请求数，0 = 不限制；仅在所用分组未设置 rpm_limit 时作为兜底生效',
+        headroomCompressionEnabled: '启用上下文压缩',
+        headroomCompressionEnabledHint: '转发请求时通过压缩代理精简上下文以节省 token；代理未配置或异常时自动直连上游，不影响可用性。'
       },
       adjustBalance: '调整余额',
       adjustConcurrency: '调整并发数',

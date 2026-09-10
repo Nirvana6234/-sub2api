@@ -740,6 +740,8 @@ export interface SystemSettings {
   client_download_direct_url_mac: string;
   client_latest_version: string;
   client_latest_version_mac: string;
+  client_tutorial_video_url: string;
+  headroom_base_url: string;
   backup_payment_enabled: boolean;
   backup_payment_url: string;
   playground_enabled: boolean;
@@ -1065,6 +1067,8 @@ export interface UpdateSettingsRequest {
   client_download_direct_url_mac?: string;
   client_latest_version?: string;
   client_latest_version_mac?: string;
+  client_tutorial_video_url?: string;
+  headroom_base_url?: string;
   backup_payment_enabled?: boolean;
   backup_payment_url?: string;
   playground_enabled?: boolean;

@@ -65,6 +65,8 @@ const (
 	FieldTotalRecharged = "total_recharged"
 	// FieldRpmLimit holds the string denoting the rpm_limit field in the database.
 	FieldRpmLimit = "rpm_limit"
+	// FieldHeadroomCompressionEnabled holds the string denoting the headroom_compression_enabled field in the database.
+	FieldHeadroomCompressionEnabled = "headroom_compression_enabled"
 	// EdgeAPIKeys holds the string denoting the api_keys edge name in mutations.
 	EdgeAPIKeys = "api_keys"
 	// EdgeRedeemCodes holds the string denoting the redeem_codes edge name in mutations.
@@ -221,6 +223,7 @@ var Columns = []string{
 	FieldBalanceNotifyExtraEmails,
 	FieldTotalRecharged,
 	FieldRpmLimit,
+	FieldHeadroomCompressionEnabled,
 }
 
 var (
@@ -295,6 +298,8 @@ var (
 	DefaultTotalRecharged float64
 	// DefaultRpmLimit holds the default value on creation for the "rpm_limit" field.
 	DefaultRpmLimit int
+	// DefaultHeadroomCompressionEnabled holds the default value on creation for the "headroom_compression_enabled" field.
+	DefaultHeadroomCompressionEnabled bool
 )
 
 // OrderOption defines the ordering options for the User queries.
@@ -428,6 +433,11 @@ func ByTotalRecharged(opts ...sql.OrderTermOption) OrderOption {
 // ByRpmLimit orders the results by the rpm_limit field.
 func ByRpmLimit(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldRpmLimit, opts...).ToFunc()
+}
+
+// ByHeadroomCompressionEnabled orders the results by the headroom_compression_enabled field.
+func ByHeadroomCompressionEnabled(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldHeadroomCompressionEnabled, opts...).ToFunc()
 }
 
 // ByAPIKeysCount orders the results by api_keys count.

@@ -628,7 +628,9 @@ type ForwardResult struct {
 	Duration                    time.Duration
 	FirstTokenMs                *int // 首字时间（流式请求）
 	ClientDisconnect            bool // 客户端是否在流式传输过程中断开
-	ReasoningEffort             *string
+	// HeadroomTokensSaved 是本次请求经 headroom 压缩代理节省的 token 数（未压缩/未生效为 0）。
+	HeadroomTokensSaved int
+	ReasoningEffort     *string
 	// RequestedReasoningEffort is the client-requested effort before mapping.
 	RequestedReasoningEffort *string
 	// ServiceTier records the tier requested by the client. OpenAI uses

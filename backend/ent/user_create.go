@@ -368,6 +368,20 @@ func (_c *UserCreate) SetNillableRpmLimit(v *int) *UserCreate {
 	return _c
 }
 
+// SetHeadroomCompressionEnabled sets the "headroom_compression_enabled" field.
+func (_c *UserCreate) SetHeadroomCompressionEnabled(v bool) *UserCreate {
+	_c.mutation.SetHeadroomCompressionEnabled(v)
+	return _c
+}
+
+// SetNillableHeadroomCompressionEnabled sets the "headroom_compression_enabled" field if the given value is not nil.
+func (_c *UserCreate) SetNillableHeadroomCompressionEnabled(v *bool) *UserCreate {
+	if v != nil {
+		_c.SetHeadroomCompressionEnabled(*v)
+	}
+	return _c
+}
+
 // AddAPIKeyIDs adds the "api_keys" edge to the APIKey entity by IDs.
 func (_c *UserCreate) AddAPIKeyIDs(ids ...int64) *UserCreate {
 	_c.mutation.AddAPIKeyIDs(ids...)
@@ -674,6 +688,10 @@ func (_c *UserCreate) defaults() error {
 		v := user.DefaultRpmLimit
 		_c.mutation.SetRpmLimit(v)
 	}
+	if _, ok := _c.mutation.HeadroomCompressionEnabled(); !ok {
+		v := user.DefaultHeadroomCompressionEnabled
+		_c.mutation.SetHeadroomCompressionEnabled(v)
+	}
 	return nil
 }
 
@@ -765,6 +783,9 @@ func (_c *UserCreate) check() error {
 	}
 	if _, ok := _c.mutation.RpmLimit(); !ok {
 		return &ValidationError{Name: "rpm_limit", err: errors.New(`ent: missing required field "User.rpm_limit"`)}
+	}
+	if _, ok := _c.mutation.HeadroomCompressionEnabled(); !ok {
+		return &ValidationError{Name: "headroom_compression_enabled", err: errors.New(`ent: missing required field "User.headroom_compression_enabled"`)}
 	}
 	return nil
 }
@@ -892,6 +913,10 @@ func (_c *UserCreate) createSpec() (*User, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.RpmLimit(); ok {
 		_spec.SetField(user.FieldRpmLimit, field.TypeInt, value)
 		_node.RpmLimit = value
+	}
+	if value, ok := _c.mutation.HeadroomCompressionEnabled(); ok {
+		_spec.SetField(user.FieldHeadroomCompressionEnabled, field.TypeBool, value)
+		_node.HeadroomCompressionEnabled = value
 	}
 	if nodes := _c.mutation.APIKeysIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
@@ -1517,6 +1542,18 @@ func (u *UserUpsert) AddRpmLimit(v int) *UserUpsert {
 	return u
 }
 
+// SetHeadroomCompressionEnabled sets the "headroom_compression_enabled" field.
+func (u *UserUpsert) SetHeadroomCompressionEnabled(v bool) *UserUpsert {
+	u.Set(user.FieldHeadroomCompressionEnabled, v)
+	return u
+}
+
+// UpdateHeadroomCompressionEnabled sets the "headroom_compression_enabled" field to the value that was provided on create.
+func (u *UserUpsert) UpdateHeadroomCompressionEnabled() *UserUpsert {
+	u.SetExcluded(user.FieldHeadroomCompressionEnabled)
+	return u
+}
+
 // UpdateNewValues updates the mutable fields using the new values that were set on create.
 // Using this option is equivalent to using:
 //
@@ -1979,6 +2016,20 @@ func (u *UserUpsertOne) AddRpmLimit(v int) *UserUpsertOne {
 func (u *UserUpsertOne) UpdateRpmLimit() *UserUpsertOne {
 	return u.Update(func(s *UserUpsert) {
 		s.UpdateRpmLimit()
+	})
+}
+
+// SetHeadroomCompressionEnabled sets the "headroom_compression_enabled" field.
+func (u *UserUpsertOne) SetHeadroomCompressionEnabled(v bool) *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.SetHeadroomCompressionEnabled(v)
+	})
+}
+
+// UpdateHeadroomCompressionEnabled sets the "headroom_compression_enabled" field to the value that was provided on create.
+func (u *UserUpsertOne) UpdateHeadroomCompressionEnabled() *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateHeadroomCompressionEnabled()
 	})
 }
 
@@ -2610,6 +2661,20 @@ func (u *UserUpsertBulk) AddRpmLimit(v int) *UserUpsertBulk {
 func (u *UserUpsertBulk) UpdateRpmLimit() *UserUpsertBulk {
 	return u.Update(func(s *UserUpsert) {
 		s.UpdateRpmLimit()
+	})
+}
+
+// SetHeadroomCompressionEnabled sets the "headroom_compression_enabled" field.
+func (u *UserUpsertBulk) SetHeadroomCompressionEnabled(v bool) *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.SetHeadroomCompressionEnabled(v)
+	})
+}
+
+// UpdateHeadroomCompressionEnabled sets the "headroom_compression_enabled" field to the value that was provided on create.
+func (u *UserUpsertBulk) UpdateHeadroomCompressionEnabled() *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateHeadroomCompressionEnabled()
 	})
 }
 

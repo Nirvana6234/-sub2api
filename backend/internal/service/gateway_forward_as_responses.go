@@ -146,6 +146,9 @@ func (s *GatewayService) ForwardAsResponses(
 		if resp != nil && resp.Body != nil {
 			_ = resp.Body.Close()
 		}
+		if upstreamReq.Header.Get(HeadroomBaseURLHeader) != "" {
+			markHeadroomTransportFailure()
+		}
 		return nil, s.handleUpstreamTransportError(ctx, c, account, err, OpsUpstreamErrorEvent{
 			UpstreamURL: safeUpstreamURL(upstreamReq.URL.String()),
 		})

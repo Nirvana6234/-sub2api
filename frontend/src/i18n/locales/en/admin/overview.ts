@@ -517,7 +517,9 @@ export default {
         concurrencyPlaceholder: '0 = unlimited',
         concurrencyHint: 'Max concurrent requests for this user; 0 = unlimited.',
         rpmLimitPlaceholder: '0 = unlimited',
-        rpmLimitHint: 'Max requests per minute for this user; 0 = unlimited. Acts as a fallback only when the group has no rpm_limit set.'
+        rpmLimitHint: 'Max requests per minute for this user; 0 = unlimited. Acts as a fallback only when the group has no rpm_limit set.',
+        headroomCompressionEnabled: 'Enable context compression',
+        headroomCompressionEnabledHint: 'Routes forwarded requests through the compression proxy to shrink context and save tokens; falls back to a direct upstream connection automatically if the proxy is unconfigured or unhealthy.'
       },
       columns: {
         user: 'User',

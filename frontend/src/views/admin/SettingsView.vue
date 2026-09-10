@@ -7350,6 +7350,33 @@
         <div class="card">
           <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
             <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+              {{ localText('上下文压缩（headroom）', 'Context compression (headroom)') }}
+            </h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              {{ localText('全站只需部署一份 headroom 压缩代理，这里填它的内网地址；是否给某个用户启用压缩由该用户的编辑页单独开关控制。', 'One headroom compression proxy serves the whole site — set its internal address here. Whether compression applies to a given user is a separate per-user toggle on that user\'s edit page.') }}
+            </p>
+          </div>
+          <div class="space-y-5 p-6">
+            <div>
+              <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                {{ localText('headroom 代理地址', 'headroom proxy base URL') }}
+              </label>
+              <input
+                v-model="form.headroom_base_url"
+                type="url"
+                placeholder="http://172.18.0.1:8787"
+                class="input mt-2"
+              />
+              <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                {{ localText('留空表示未部署/未配置，即使给用户开了压缩开关也不会生效，请求照常直连上游。只接受 http/https 绝对地址。', 'Leave empty if headroom is not deployed — compression stays a no-op even for users with the toggle on, and requests go straight upstream as before. Only absolute http/https URLs are accepted.') }}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
               {{ t('admin.settings.features.playground.title') }}
             </h2>
             <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
@@ -10109,6 +10136,8 @@ const form = reactive<SettingsForm>({
   client_download_direct_url_mac: "",
   client_latest_version: "",
   client_latest_version_mac: "",
+  client_tutorial_video_url: "",
+  headroom_base_url: "",
   backup_payment_enabled: false,
   backup_payment_url: "",
   // Playground feature switch
@@ -11798,6 +11827,8 @@ async function saveSettings() {
       client_download_direct_url_mac: form.client_download_direct_url_mac.trim(),
       client_latest_version: form.client_latest_version.trim(),
       client_latest_version_mac: form.client_latest_version_mac.trim(),
+      client_tutorial_video_url: form.client_tutorial_video_url.trim(),
+      headroom_base_url: form.headroom_base_url.trim(),
       backup_payment_enabled: form.backup_payment_enabled,
       backup_payment_url: form.backup_payment_url.trim(),
       // Playground feature switch

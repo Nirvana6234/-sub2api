@@ -186,6 +186,10 @@ type UsageLog struct {
 	Stream             bool
 	OpenAIWSMode       bool
 	NativeCompactionV2 bool
+	// HeadroomTokensSaved 本次请求经 headroom 压缩代理节省的输入 token 数（未启用/未生效时为 0）。
+	HeadroomTokensSaved int
+	// HeadroomSavingsUSD 上述节省 token 按模型标准单价（倍率固定为 1）折算的等值美金。
+	HeadroomSavingsUSD float64
 	DurationMs         *int
 	FirstTokenMs       *int
 	UserAgent          *string

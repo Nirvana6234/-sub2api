@@ -170,6 +170,8 @@ type CreateUserInput struct {
 	RPMLimit             int
 	AllowedGroups        []int64
 	RestrictPublicGroups bool
+	// HeadroomCompressionEnabled 见 service.User 同名字段注释。
+	HeadroomCompressionEnabled bool
 	// ActorAdminID 执行本次操作的管理员ID(来自JWT)，仅用于权限敏感操作的审计日志。
 	ActorAdminID int64
 }
@@ -187,6 +189,8 @@ type UpdateUserInput struct {
 	AllowedGroups *[]int64 // 使用指针区分"未提供"和"设置为空数组"
 	// RestrictPublicGroups 指针区分"未提供"和"显式开关"。
 	RestrictPublicGroups *bool
+	// HeadroomCompressionEnabled 指针区分"未提供"和"显式开关"。
+	HeadroomCompressionEnabled *bool
 	// GroupRates 用户专属分组倍率配置
 	// map[groupID]*rate，nil 表示删除该分组的专属倍率
 	GroupRates map[int64]*float64

@@ -2743,6 +2743,14 @@ func (r *stubUsageLogRepo) GetUserModelStats(ctx context.Context, userID int64, 
 	return nil, errors.New("not implemented")
 }
 
+func (r *stubUsageLogRepo) GetHeadroomModelStats(ctx context.Context, userID int64, startTime, endTime time.Time) ([]usagestats.HeadroomModelStat, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (r *stubUsageLogRepo) GetHeadroomTrend(ctx context.Context, userID int64, startTime, endTime time.Time, granularity string) ([]usagestats.HeadroomTrendPoint, error) {
+	return nil, errors.New("not implemented")
+}
+
 func (r *stubUsageLogRepo) ListWithFilters(ctx context.Context, params pagination.PaginationParams, filters usagestats.UsageLogFilters) ([]service.UsageLog, *pagination.PaginationResult, error) {
 	logs := r.userLogs[filters.UserID]
 

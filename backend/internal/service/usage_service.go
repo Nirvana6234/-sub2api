@@ -344,6 +344,26 @@ func (s *UsageService) GetUserModelStats(ctx context.Context, userID int64, star
 	return stats, nil
 }
 
+// GetHeadroomModelStats returns the per-model compression-savings breakdown for a
+// user within a time range.
+func (s *UsageService) GetHeadroomModelStats(ctx context.Context, userID int64, startTime, endTime time.Time) ([]usagestats.HeadroomModelStat, error) {
+	stats, err := s.usageRepo.GetHeadroomModelStats(ctx, userID, startTime, endTime)
+	if err != nil {
+		return nil, fmt.Errorf("get headroom model stats: %w", err)
+	}
+	return stats, nil
+}
+
+// GetHeadroomTrend returns the compression-savings trend for a user within a time
+// range at the given granularity.
+func (s *UsageService) GetHeadroomTrend(ctx context.Context, userID int64, startTime, endTime time.Time, granularity string) ([]usagestats.HeadroomTrendPoint, error) {
+	trend, err := s.usageRepo.GetHeadroomTrend(ctx, userID, startTime, endTime, granularity)
+	if err != nil {
+		return nil, fmt.Errorf("get headroom trend: %w", err)
+	}
+	return trend, nil
+}
+
 // GetModelStatsWithFiltersBySource returns model stats using the shared usage filter shape.
 func (s *UsageService) GetModelStatsWithFiltersBySource(ctx context.Context, startTime, endTime time.Time, filters usagestats.UsageLogFilters, modelSource string) ([]usagestats.ModelStat, error) {
 	normalizedSource := usagestats.NormalizeModelSource(modelSource)

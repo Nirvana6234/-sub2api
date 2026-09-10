@@ -815,8 +815,9 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 
 	// 创建使用日志
 	accountRateMultiplier := account.BillingRateMultiplier()
+	headroomSavingsUSD := calculateHeadroomSavingsUSD(ctx, s.billingService, s.resolver, result.HeadroomTokensSaved, apiKey.Group, billingModel, pricingAt)
 	usageLog := s.buildRecordUsageLog(ctx, input, result, apiKey, user, account, subscription,
-		requestedModel, multiplier, imageMultiplier, accountRateMultiplier, billingType, cacheTTLOverridden, cost)
+		requestedModel, multiplier, imageMultiplier, accountRateMultiplier, billingType, cacheTTLOverridden, cost, headroomSavingsUSD)
 
 	// 计算账号统计定价费用（使用最终上游模型匹配自定义规则）
 	if apiKey.GroupID != nil {
@@ -929,6 +930,38 @@ func (s *GatewayService) calculateRecordUsageCost(
 		}
 	}
 	return tokenCost
+}
+
+// calculateHeadroomSavingsUSD 把 headroom 节省的输入 token 数换算成标准美金——
+// 固定按倍率 1 计算（不叠加分组/账号加价），只用于用户仪表盘展示"大概省了多少"，
+// 不参与实际计费。savedTokens<=0 时直接返回 0，不必发起定价查询。
+// 独立函数而非方法：Anthropic/OpenAI 两条网关服务各自持有同名字段但类型不同的
+// billingService/resolver，共享这一小段纯计算逻辑比互相依赖对方类型更干净。
+func calculateHeadroomSavingsUSD(
+	ctx context.Context,
+	billingService *BillingService,
+	resolver *ModelPricingResolver,
+	savedTokens int,
+	group *Group,
+	billingModel string,
+	pricingAt time.Time,
+) float64 {
+	if savedTokens <= 0 || billingService == nil {
+		return 0
+	}
+	cost, err := billingService.CalculateTokenCostForRequest(TokenCostRequest{
+		Ctx:            ctx,
+		Model:          billingModel,
+		Group:          group,
+		Tokens:         UsageTokens{InputTokens: savedTokens},
+		RateMultiplier: 1.0,
+		PricingAt:      pricingAt,
+		Resolver:       resolver,
+	})
+	if err != nil || cost == nil {
+		return 0
+	}
+	return cost.InputCost
 }
 
 // compositeBillableModel 决定 composite 分组请求的计费模型：来源覆盖把计费模型
@@ -1126,6 +1159,7 @@ func (s *GatewayService) buildRecordUsageLog(
 	billingType int8,
 	cacheTTLOverridden bool,
 	cost *CostBreakdown,
+	headroomSavingsUSD float64,
 ) *UsageLog {
 	durationMs := int(result.Duration.Milliseconds())
 	requestID := resolveUsageBillingRequestID(ctx, result.RequestID)
@@ -1183,6 +1217,8 @@ func (s *GatewayService) buildRecordUsageLog(
 		SessionID:                optionalTrimmedStringPtr(input.SessionID),
 		GroupID:                  apiKey.GroupID,
 		SubscriptionID:           optionalSubscriptionID(subscription),
+		HeadroomTokensSaved:      result.HeadroomTokensSaved,
+		HeadroomSavingsUSD:       headroomSavingsUSD,
 		CreatedAt:                time.Now(),
 	}
 	trace, traceOK := gatewayFallbackPoolUsageTraceFromContext(ctx)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
@@ -434,6 +435,74 @@ func (r *usageLogRepository) GetUserDashboardStats(ctx context.Context, userID i
 	}
 	stats.TotalTokens = stats.TotalInputTokens + stats.TotalOutputTokens + stats.TotalCacheCreationTokens + stats.TotalCacheReadTokens
 
+	// headroom 节省（累计 + 今日两档，功能上线前的行 headroom_tokens_saved 恒为 0，
+	// 天然不需要额外过滤）。节省比例前端用 saved / (saved + actual_tokens) 反推：
+	// - 不用 headroom 自己上报的 before/after 头——那两个头对 OpenAI/Gemini 流量在
+	//   响应头阶段只有压缩前的粗估值，经常是 0，算出来的比例离谱（2026-09-09 生产
+	//   实测出现过 18 亿 % 这种数字）。
+	// - actual_tokens 只统计 headroom_tokens_saved > 0（真正被压缩命中）的行，
+	//   不是用户全部历史流量。第一版用全部流量做分母，结果被开压缩之前的历史用量
+	//   稀释成 0.7% 这种没有意义的数字（同样是 2026-09-09 生产反馈）；只看命中过
+	//   压缩的请求范围，才是"压缩本身效果"的稳定指标，不随用户开压缩的早晚变化。
+	if err := scanSingleRow(
+		ctx,
+		r.sql,
+		`SELECT
+			COALESCE(SUM(headroom_tokens_saved), 0),
+			COALESCE(SUM(headroom_savings_usd), 0),
+			COALESCE(SUM(headroom_savings_usd * rate_multiplier), 0),
+			COALESCE(SUM(headroom_tokens_saved) FILTER (WHERE created_at >= $2), 0),
+			COALESCE(SUM(input_tokens + cache_creation_tokens + cache_read_tokens) FILTER (WHERE headroom_tokens_saved > 0), 0),
+			COALESCE(SUM(input_tokens + cache_creation_tokens + cache_read_tokens) FILTER (WHERE headroom_tokens_saved > 0 AND created_at >= $2), 0)
+		FROM usage_logs WHERE user_id = $1`,
+		[]any{userID, today},
+		&stats.HeadroomTokensSaved,
+		&stats.HeadroomSavingsUSD,
+		&stats.HeadroomSavingsActualUSD,
+		&stats.TodayHeadroomTokensSaved,
+		&stats.HeadroomActualTokens,
+		&stats.TodayHeadroomActualTokens,
+	); err != nil {
+		return nil, err
+	}
+
+	// headroom 节省按模型拆分，只统计真正被压缩命中的请求；口径跟 GetUserModelStats
+	// 用同一个"请求模型优先，否则回退计费模型"表达式，跟用户在用量页看到的模型名一致。
+	// savings_actual_usd = SUM(headroom_savings_usd * rate_multiplier)：headroom_savings_usd
+	// 存的是倍率固定为1的"标准价"，而 actual_cost = total_cost * rate_multiplier 这个关系在
+	// 计费管道里对所有请求恒成立（2026-09-09 用生产数据验证过），所以可以直接在 SQL 里按同一
+	// 行的 rate_multiplier 折算实际价，不需要在写入时另存一列。
+	headroomModelQuery := `
+		SELECT
+			` + resolveModelDimensionExpression(usagestats.ModelSourceRequested) + ` as model,
+			COUNT(*) as requests,
+			COALESCE(SUM(headroom_tokens_saved), 0) as tokens_saved,
+			COALESCE(SUM(headroom_savings_usd), 0) as savings_usd,
+			COALESCE(SUM(headroom_savings_usd * rate_multiplier), 0) as savings_actual_usd
+		FROM usage_logs
+		WHERE user_id = $1 AND headroom_tokens_saved > 0
+		GROUP BY ` + resolveModelDimensionExpression(usagestats.ModelSourceRequested) + `
+		ORDER BY tokens_saved DESC
+	`
+	modelRows, err := r.sql.QueryContext(ctx, headroomModelQuery, userID)
+	if err != nil {
+		return nil, err
+	}
+	for modelRows.Next() {
+		var m usagestats.HeadroomModelStat
+		if err := modelRows.Scan(&m.Model, &m.Requests, &m.TokensSaved, &m.SavingsUSD, &m.SavingsActualUSD); err != nil {
+			_ = modelRows.Close()
+			return nil, err
+		}
+		stats.HeadroomByModel = append(stats.HeadroomByModel, m)
+	}
+	if err := modelRows.Close(); err != nil {
+		return nil, err
+	}
+	if err := modelRows.Err(); err != nil {
+		return nil, err
+	}
+
 	// 今日 Token 统计
 	todayStatsQuery := `
 		SELECT
@@ -625,4 +694,75 @@ func (r *usageLogRepository) GetAPIKeyDashboardStats(ctx context.Context, apiKey
 	stats.Tpm = tpm
 
 	return stats, nil
+}
+
+// GetHeadroomModelStats 获取指定时间范围内压缩节省的按模型分布，只统计真正被压缩
+// 命中的请求（headroom_tokens_saved > 0）。跟 GetUserModelStats 用同一套模型口径
+// 表达式，跟用户在用量页看到的模型名一致。
+func (r *usageLogRepository) GetHeadroomModelStats(ctx context.Context, userID int64, startTime, endTime time.Time) ([]usagestats.HeadroomModelStat, error) {
+	query := `
+		SELECT
+			` + resolveModelDimensionExpression(usagestats.ModelSourceRequested) + ` as model,
+			COUNT(*) as requests,
+			COALESCE(SUM(headroom_tokens_saved), 0) as tokens_saved,
+			COALESCE(SUM(headroom_savings_usd), 0) as savings_usd,
+			COALESCE(SUM(headroom_savings_usd * rate_multiplier), 0) as savings_actual_usd
+		FROM usage_logs
+		WHERE user_id = $1 AND headroom_tokens_saved > 0 AND created_at >= $2 AND created_at < $3
+		GROUP BY ` + resolveModelDimensionExpression(usagestats.ModelSourceRequested) + `
+		ORDER BY tokens_saved DESC
+	`
+	rows, err := r.sql.QueryContext(ctx, query, userID, startTime, endTime)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var results []usagestats.HeadroomModelStat
+	for rows.Next() {
+		var m usagestats.HeadroomModelStat
+		if err := rows.Scan(&m.Model, &m.Requests, &m.TokensSaved, &m.SavingsUSD, &m.SavingsActualUSD); err != nil {
+			return nil, err
+		}
+		results = append(results, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
+// GetHeadroomTrend 获取指定时间范围内压缩节省的分时趋势，只统计真正被压缩命中的
+// 请求；分桶粒度跟 GetUserUsageTrendByUserID 用同一套 TO_CHAR 格式。
+func (r *usageLogRepository) GetHeadroomTrend(ctx context.Context, userID int64, startTime, endTime time.Time, granularity string) ([]usagestats.HeadroomTrendPoint, error) {
+	dateFormat := safeDateFormat(granularity)
+	query := fmt.Sprintf(`
+		SELECT
+			TO_CHAR(created_at, '%s') as date,
+			COALESCE(SUM(headroom_tokens_saved), 0) as tokens_saved,
+			COALESCE(SUM(headroom_savings_usd), 0) as savings_usd,
+			COALESCE(SUM(headroom_savings_usd * rate_multiplier), 0) as savings_actual_usd
+		FROM usage_logs
+		WHERE user_id = $1 AND headroom_tokens_saved > 0 AND created_at >= $2 AND created_at < $3
+		GROUP BY date
+		ORDER BY date ASC
+	`, dateFormat)
+	rows, err := r.sql.QueryContext(ctx, query, userID, startTime, endTime)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var results []usagestats.HeadroomTrendPoint
+	for rows.Next() {
+		var p usagestats.HeadroomTrendPoint
+		if err := rows.Scan(&p.Date, &p.TokensSaved, &p.SavingsUSD, &p.SavingsActualUSD); err != nil {
+			return nil, err
+		}
+		results = append(results, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return results, nil
 }

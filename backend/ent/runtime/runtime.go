@@ -2275,6 +2275,10 @@ func init() {
 	userDescRpmLimit := userFields[21].Descriptor()
 	// user.DefaultRpmLimit holds the default value on creation for the rpm_limit field.
 	user.DefaultRpmLimit = userDescRpmLimit.Default.(int)
+	// userDescHeadroomCompressionEnabled is the schema descriptor for headroom_compression_enabled field.
+	userDescHeadroomCompressionEnabled := userFields[22].Descriptor()
+	// user.DefaultHeadroomCompressionEnabled holds the default value on creation for the headroom_compression_enabled field.
+	user.DefaultHeadroomCompressionEnabled = userDescHeadroomCompressionEnabled.Default.(bool)
 	userallowedgroupFields := schema.UserAllowedGroup{}.Fields()
 	_ = userallowedgroupFields
 	// userallowedgroupDescCreatedAt is the schema descriptor for created_at field.
