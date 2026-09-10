@@ -12,14 +12,18 @@
 - [ ] 0.3 录制 Codex `/v1/responses` 请求体 fixture 到 `internal/service/testdata/`（V-2 步骤 0）
 - [ ] 0.4 生成 `codex_responses_upstream_auth_only.golden.json`（V-12 的 golden 基准，必须在动手改代码之前生成）
 
-## 1. 开关与门禁（无行为变化）
+## 1. 开关与门禁（无行为变化）✅ 已完成
 
-- [ ] 1.1 `service/account.go` 新增 `IsOpenAIPassthroughStrictEnabled()`，零值 = false，依赖 `IsOpenAIPassthroughEnabled()`
-- [ ] 1.2 `repository/scheduler_cache.go:1016` 的 extra 投影键表加 `"openai_passthrough_strict"`（见 design §6）
-- [ ] 1.3 新增 `resolveOpenAIStrictPassthrough(c, account) (bool, reason string)`：strict ∧ codex_cli_only ∧ ¬force_codex_cli
-- [ ] 1.4 降级时打 WARN 日志，带 account_id 与缺失条件
-- [ ] 1.5 单测：四种组合（strict off / strict+no cli_only / strict+force_codex_cli / 全满足）各自的返回值与 reason
-- [ ] 1.6 单测：`Extra` 为 nil、键类型为 string/number 时一律 false
+- [x] 1.1 `service/account.go` 新增 `IsOpenAIPassthroughStrictEnabled()`，零值 = false，依赖 `IsOpenAIPassthroughEnabled()`
+- [x] 1.2 `repository/scheduler_cache.go` 的 extra 投影键表加 `"openai_passthrough_strict"`（见 design §6）
+- [x] 1.3 新增 `service/openai_passthrough_strict.go`：`stageCodexClientRestrictionResult` / `stagedCodexClientRestrictionResult` / `resolveOpenAIStrictPassthrough(ctx, c, account) (bool, reason)`。判定读**本次请求实际的门禁结果**而非账号开关，判定缺席即 fail-closed（见 design §1.2）
+- [x] 1.3b `openai_gateway_forward.go:43` 判定算出后立即 stage，failover 每 attempt 无条件覆写
+- [x] 1.4 降级时打 WARN `openai.passthrough_strict_degraded`，带 account_id / account_name / reason
+- [x] 1.5 单测：四种组合（strict off / strict+no cli_only / strict+force_codex_cli / 全满足）各自的返回值与 reason
+- [x] 1.6 单测：`Extra` 为 nil、键类型为 string/number/nil、只开 strict 不开透传、非 OpenAI 平台，一律 false
+- [x] 1.7 单测：fail-closed 三条（判定未 stage / context 为 nil / 判定为「没过门」）+ 跨 attempt 覆写 + 类型不符视同缺席
+
+验证：`go build ./...` 与 `go vet -tags=unit ./internal/service ./internal/repository` 干净；新增 12 个用例全绿；三条回归门全绿（见 verification.md 基线表）；`internal/repository` 仍只有那两个既有失败，无新增。
 
 ## 2. 请求体分叉
 

@@ -49,11 +49,13 @@
 
 2026-09-10 编译修复后用 `go test -tags=unit ./internal/service -list '<pattern>'` 实测：
 
-| pattern | Test 函数数 | 当前状态 |
-|---|---|---|
-| `Passthrough\|Codex` | 587 | ok (33.1s) |
-| `CodexOAuthTransform\|Fingerprint\|TurnState` | 121 | ok (0.6s) |
-| `WS\|Websocket` | 279 | ok (34.1s) |
+| pattern | 修复编译时 | 阶段 1 后 | 状态 |
+|---|---|---|---|
+| `Passthrough\|Codex` | 587 | **599** | ok (33.2s) |
+| `CodexOAuthTransform\|Fingerprint\|TurnState` | 121 | 121 | ok (0.8s) |
+| `WS\|Websocket` | 279 | 279 | ok (34.5s) |
+
+第一条 +12 是阶段 1 新增的 `openai_passthrough_strict_test.go`。**基线只许涨不许跌**——每完成一个阶段把新值写回本表。
 
 断言方式：
 

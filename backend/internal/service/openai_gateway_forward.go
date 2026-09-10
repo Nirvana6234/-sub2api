@@ -41,6 +41,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	canonicalImageIntentBody := body
 
 	restrictionResult := s.detectCodexClientRestriction(c, account, body)
+	// 暂存判定供严格透传使用：strict 取消的那些兜底，唯一依据就是"这一条请求确实
+	// 来自官方 Codex 客户端"。必须无条件覆写（含被拒的结果）：failover 每个 attempt
+	// 重新判定，上一账号的结论不得残留（openai_passthrough_strict.go）。
+	stageCodexClientRestrictionResult(c, restrictionResult)
 	apiKeyID := getAPIKeyIDFromContext(c)
 	logCodexCLIOnlyDetection(ctx, c, account, apiKeyID, restrictionResult, body)
 	if restrictionResult.Enabled && !restrictionResult.Matched {

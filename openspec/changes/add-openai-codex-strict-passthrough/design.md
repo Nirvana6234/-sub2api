@@ -35,25 +35,27 @@ func (a *Account) IsOpenAIPassthroughStrictEnabled() bool {
 
 ### 1.2 strict 的硬前置条件：codex_cli_only
 
-**位置**：新增一处 `resolveOpenAIStrictPassthrough(c, account) (bool, string)`，建议放 `openai_gateway_passthrough.go` 顶部。
+**位置**：`backend/internal/service/openai_passthrough_strict.go`（**已实现**）。
 
-**改法**：
+**改法**（落地形态，比初稿更严）：不读"账号上开没开门"，而读**本次请求实际的门禁判定**。判定由 `Forward` 在最前面算出后 `stageCodexClientRestrictionResult` 暂存进 gin context：
 
 ```
 strict = account.IsOpenAIPassthroughStrictEnabled()
-      && account.IsCodexCLIOnlyEnabled()
-      && !cfg.Gateway.ForceCodexCLI
+      && 暂存的判定存在                       // 否则 client_gate_not_evaluated
+      && restriction.Enabled                  // 否则 codex_cli_only_disabled
+      && restriction.Reason != ForceCodexCLI  // 否则 force_codex_cli_enabled
+      && restriction.Matched                  // 否则 client_gate_not_matched
 ```
 
-不满足时降级为普通透传，并打一条 WARN（含 account_id 与缺失的那个条件），**不拒绝请求**。
+不满足时降级为普通透传，并打一条 WARN `openai.passthrough_strict_degraded`（含 account_id 与降级原因），**不拒绝请求**。
+
+**为什么读暂存判定而不是账号开关**：后者只说明"这个账号的门是开着的"，前者说明"**这一条请求真的过了门**"。两者今天等价，仅仅因为 `forward.go:46` 那个 403 早返回让未过门的请求走不到透传分叉——这是一条没有被断言的控制流依赖，有人重排早返回，strict 就会静默与它的依据脱钩。读暂存判定把这条依赖变成了显式的：**判定缺席即视为没过门**（fail-closed），于是任何新增的、没跑过门禁的入口都不会意外进入 strict。WS 路径的惰性（Non-goals 承诺、tasks §4.6）也由这条性质免费保证。
 
 **判据（三条，都是硬的）**：
 
 1. `OpenAICodexClientRestrictionDetector.Detect()` 的第 1 步就是「账号没开 `codex_cli_only` → 返回 `Disabled`」直接短路。**指纹门和版本门根本不会跑。** 也就是说 strict 想依赖的那层保护，只有 `codex_cli_only` 开着时才存在。这不是「建议配对」，是「没有它 strict 没有依据」。
 2. `gateway.force_codex_cli` 会让 `Detect()` 在第 2 步无条件放行（reason=`ForceCodexCLI`），同时让 `isCodexCLI` 恒为 true。它的本意是「网关未透传 UA 时的兼容兜底」。strict 建立在它上面等于门是假的，所以必须显式互斥。
 3. 降级而不是拒绝：这个开关由运维主动控制，配错时应该退回一个已知安全的行为，而不是让整个账号的流量 403——403 会被误读成「账号坏了」。
-
-**实现上更稳的写法**：上面写的是读 `account.IsCodexCLIOnlyEnabled()`，即「这个账号的门是开着的」。更准确的是读 `forward.go:43` 已经算好并可暂存进 context 的 `restrictionResult`，即「**这个请求真的过了门**」。两者今天等价，只是因为 `forward.go:46` 那个 403 早返回意味着任何走到 245 行的请求都已过门——这是一条**没有被断言的控制流依赖**。有人重排那个早返回，strict 就会静默地与它的依据脱钩。建议直接读 staged 的 `restrictionResult`，并在单测里锁死「未过门的请求不可能进入 strict 分支」。
 
 ### 1.3 建议同时收紧引擎指纹门（配置项，非代码）
 
