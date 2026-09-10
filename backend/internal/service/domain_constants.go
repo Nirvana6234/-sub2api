@@ -531,6 +531,23 @@ const (
 	// macOS 安装包直链。为空表示 mac 版尚未发布，下载页不显示 mac 区块。
 	SettingKeyClientDownloadDirectURLMac = "client_download_direct_url_mac"
 
+	// SettingKeyClientTutorialVideoURL 是客户端下载页展示的视频教程地址（B站视频页链接）。
+	// 前端渲染成一个跳转按钮，不做内嵌播放。留空则下载页不显示这块。
+	SettingKeyClientTutorialVideoURL = "client_tutorial_video_url"
+
+	// SettingKeyLatencyCompensationThresholdMs 是延迟补偿功能里"慢请求"的判定
+	// 阈值（首字节耗时 first_token_ms >= 此值才算慢）。管理员在后台按当天实际
+	// 情况调整，不写死在代码里——上游一次波动可能是几秒也可能是几十秒，固定
+	// 阈值迟早会跟不上。默认 30000（30 秒），2026-09-08 那次事故就是照这个数
+	// 手工筛出受影响用户的。
+	SettingKeyLatencyCompensationThresholdMs = "latency_compensation_threshold_ms"
+
+	// SettingKeyLatencyCompensationProfitRatio 是延迟补偿退多少利润的比例
+	// （0~1，1 = 把这笔慢请求的利润全退，0.5 = 只退一半，平台留一半）。
+	// 由管理员自己定，不写死——补多少是运营决策，不是技术参数。默认 1
+	// （全退），保持"不赚这笔钱"这个最初的补偿标准。
+	SettingKeyLatencyCompensationProfitRatio = "latency_compensation_profit_ratio"
+
 	// 客户端最新版本号，按平台分开。
 	//
 	// 放在设置里而不是随前端静态文件发布。原来版本号写在 frontend/public/
@@ -569,7 +586,7 @@ const (
 	// 换版本必须换文件名，不要原地覆盖：下载站给这个路径发的是
 	// Cache-Control: public, max-age=3600，同名覆盖会让一小时内的用户继续拿到
 	// 缓存里的旧包，而且从下载结果上看不出拿到的是哪一版。
-	ClientDownloadFileName = "codex-relay-client_v0.1.1_x64.zip"
+	ClientDownloadFileName = "codex-relay-client_v0.3_x64.zip"
 
 	// SettingKeyBackupPaymentEnabled 控制充值页的「备用支付通道」入口是否展示。
 	// 与 payment_enabled 相互独立：主通道故障时可以只留备用通道。默认关闭（opt-in）。

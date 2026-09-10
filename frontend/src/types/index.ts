@@ -294,6 +294,8 @@ export interface PublicSettings {
   client_latest_version: string
   /** macOS 客户端最新版本号；与 Windows 分开，两个平台不同时发布。 */
   client_latest_version_mac: string
+  /** 客户端下载页展示的视频教程地址（B站视频页链接）；为空则不显示视频区块。 */
+  client_tutorial_video_url: string
   /** 充值页是否展示备用支付通道入口（默认关闭）。 */
   backup_payment_enabled: boolean
   /** 备用支付通道地址；后端已校验只允许 http/https，非法值会落成空串。 */

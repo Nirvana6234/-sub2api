@@ -240,6 +240,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		SettingKeyClientDownloadDirectURLMac,
 		SettingKeyClientLatestVersion,
 		SettingKeyClientLatestVersionMac,
+		SettingKeyClientTutorialVideoURL,
 		SettingKeyBackupPaymentEnabled,
 		SettingKeyBackupPaymentURL,
 		SettingKeyPlaygroundEnabled,
@@ -380,6 +381,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		ClientDownloadDirectURLMac: strings.TrimSpace(settings[SettingKeyClientDownloadDirectURLMac]),
 		ClientLatestVersion:        strings.TrimSpace(settings[SettingKeyClientLatestVersion]),
 		ClientLatestVersionMac:     strings.TrimSpace(settings[SettingKeyClientLatestVersionMac]),
+		ClientTutorialVideoURL:     strings.TrimSpace(settings[SettingKeyClientTutorialVideoURL]),
 		BackupPaymentEnabled:       settings[SettingKeyBackupPaymentEnabled] == "true",
 		BackupPaymentURL:           strings.TrimSpace(settings[SettingKeyBackupPaymentURL]),
 		PlaygroundEnabled:          settings[SettingKeyPlaygroundEnabled] == "true",
@@ -669,6 +671,7 @@ type PublicSettingsInjectionPayload struct {
 	ClientDownloadDirectURLMac    string `json:"client_download_direct_url_mac"`
 	ClientLatestVersion           string `json:"client_latest_version"`
 	ClientLatestVersionMac        string `json:"client_latest_version_mac"`
+	ClientTutorialVideoURL        string `json:"client_tutorial_video_url"`
 	BackupPaymentEnabled          bool   `json:"backup_payment_enabled"`
 	BackupPaymentURL              string `json:"backup_payment_url"`
 	PlaygroundEnabled             bool   `json:"playground_enabled"`
@@ -762,6 +765,7 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		ClientDownloadDirectURLMac:           settings.ClientDownloadDirectURLMac,
 		ClientLatestVersion:                  settings.ClientLatestVersion,
 		ClientLatestVersionMac:               settings.ClientLatestVersionMac,
+		ClientTutorialVideoURL:               settings.ClientTutorialVideoURL,
 		BackupPaymentEnabled:                 settings.BackupPaymentEnabled,
 		BackupPaymentURL:                     settings.BackupPaymentURL,
 		PlaygroundEnabled:                    settings.PlaygroundEnabled,

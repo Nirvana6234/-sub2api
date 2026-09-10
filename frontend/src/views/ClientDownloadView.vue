@@ -44,6 +44,10 @@ const clientFileName = computed(() => {
   return /\.zip$/i.test(name) ? name : ''
 })
 const codexDownloadUrl = 'https://codexapp.agentsmirror.com/latest/win-x64'
+
+// 跳转链接而不是内嵌播放：直接用管理员填的原始视频页地址，不用再解析 BV 号
+// 拼播放器 iframe 地址。
+const tutorialVideoUrl = computed(() => safeExternalUrl(appStore.cachedPublicSettings?.client_tutorial_video_url))
 const netdiskDownloadUrl = computed(() => safeExternalUrl(appStore.cachedPublicSettings?.client_download_netdisk_url))
 
 // macOS 安装包直链，由管理员填写。为空表示 mac 版尚未发布，整个 macOS 区块不出现——
@@ -392,6 +396,28 @@ function toggleTheme() {
         <div class="pointer-events-none absolute -right-6 -top-10 hidden h-72 w-72 rotate-12 opacity-20 sm:block">
           <img src="/gongfei-plane.svg" alt="" class="h-full w-full object-contain" />
         </div>
+      </section>
+
+      <section
+        v-if="tutorialVideoUrl"
+        class="mt-10 flex flex-wrap items-center justify-between gap-4 rounded-3xl border border-gray-200 bg-white p-6 shadow-sm sm:p-8 dark:border-dark-800 dark:bg-dark-900"
+      >
+        <div>
+          <p class="text-xs font-semibold uppercase tracking-[0.16em] text-primary-600 dark:text-primary-300">视频教程</p>
+          <h2 class="mt-2 text-xl font-bold tracking-tight sm:text-2xl">跟着视频一步步操作</h2>
+          <p class="mt-3 max-w-2xl text-sm leading-6 text-gray-600 dark:text-gray-300">
+            不想看文字教程？点右边按钮去 B 站看这段视频，从下载到充值完整走一遍。下面还有图文步骤可以对照。
+          </p>
+        </div>
+        <a
+          :href="tutorialVideoUrl"
+          target="_blank"
+          rel="noopener"
+          class="btn btn-primary inline-flex shrink-0 items-center justify-center gap-2 px-5 py-3 text-sm"
+        >
+          <Icon name="chat" size="sm" />
+          去 B 站观看
+        </a>
       </section>
 
       <section class="mt-10 grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)] lg:items-start">
