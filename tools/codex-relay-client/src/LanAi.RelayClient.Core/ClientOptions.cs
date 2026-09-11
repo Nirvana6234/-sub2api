@@ -35,7 +35,7 @@ internal static class ClientOptions
     /// displays it must derive from here rather than restate it; see
     /// <see cref="ViewModels.ClientUpdateViewModel.CurrentVersionText"/>.
     /// </remarks>
-    public static readonly Version CurrentVersion = new(0, 3);
+    public static readonly Version CurrentVersion = new(0, 4);
 
     /// <summary>
     /// The relay this build talks to.
