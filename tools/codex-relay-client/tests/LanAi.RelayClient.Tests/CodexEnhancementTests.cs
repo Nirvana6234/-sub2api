@@ -50,8 +50,16 @@ public sealed class CodexEnhancementTests : IDisposable
     {
         // Newer ChatGPT builds can ignore or block --remote-debugging-port. The
         // process still starts and routing is already applied by this point, so
-        // this must not be reported to the user as "拉不起 ChatGPT" — only the
-        // overlay/sentinel are skipped.
+        // this must not be reported to the user as "拉不起 ChatGPT".
+        //
+        // Enhancement still has to start here even though there is no debug port
+        // to attach to: RelayInjectionHost starts its CodexRouteGuard *before* it
+        // ever tries the CDP connection (see RelayInjectionHost.StartAsync), so
+        // the overlay/sentinel go missing but the guard — the thing that notices
+        // an official ChatGPT login rewriting config.toml later and reapplies it
+        // — does not. An earlier version of this fix returned before calling
+        // StartAsync at all in this branch, which silently disabled that guard on
+        // every machine where the debug port never opens.
         var relay = new FakeRelayClient();
         var session = new RelaySessionManager(relay, new FakeSessionStore(), "https://relay.test/");
         await session.SignInAsync("a@b.com", "pw");
@@ -80,7 +88,7 @@ public sealed class CodexEnhancementTests : IDisposable
         CodexStartupResult result = await startup.RunAsync(null, "https://relay.test/v1");
 
         Assert.Equal(CodexStartupStatus.Ready, result.Status);
-        Assert.Equal(0, enhancement.StartCallCount);
+        Assert.Equal(1, enhancement.StartCallCount);
     }
 
     public void Dispose()

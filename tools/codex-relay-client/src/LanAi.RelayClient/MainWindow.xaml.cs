@@ -377,6 +377,16 @@ public partial class MainWindow : Window
         : _dashboard.StartCodexAsync(ConfirmCodexRestartAsync);
 
     /// <remarks>
+    /// Same flow as <see cref="StartCodex_OnClick"/>, minus the install branch — the button
+    /// is disabled while <see cref="DashboardViewModel.CodexNotInstalled"/>, so there is
+    /// nothing to repair yet. Deliberately its own entry point rather than reusing that
+    /// button's handler: this one exists specifically so a user can force a config
+    /// rewrite even when the dashboard has not (yet) flagged anything as broken.
+    /// </remarks>
+    private void RepairCodexLogin_OnClick(object sender, RoutedEventArgs e) =>
+        _ = _safeAsync.RunAsync(() => _dashboard.StartCodexAsync(ConfirmCodexRestartAsync));
+
+    /// <remarks>
     /// Restarting discards whatever the user has in flight in Codex, so it is only
     /// ever done after they say so — and the prompt says what they stand to lose
     /// rather than asking an abstract yes/no.

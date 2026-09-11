@@ -35,7 +35,14 @@ internal sealed record CodexStartupResult(CodexStartupStatus Status, string Mess
 /// <param name="IsInstalled">Whether the official desktop app is present.</param>
 /// <param name="IsRunning">Whether it is up right now.</param>
 /// <param name="LeaseExpiresAt">When the managed lease lapses; null when there is none.</param>
-internal sealed record CodexHealth(bool IsInstalled, bool IsRunning, DateTimeOffset? LeaseExpiresAt);
+/// <param name="ManagedApiKey">
+/// The current lease's key value, when the server round-trip that produced this
+/// health snapshot found one. Passed on to <see cref="ICodexStartup.IsRoutingCurrent"/>
+/// so it can check <c>auth.json</c> too, not just <c>config.toml</c>'s provider
+/// selection — an official ChatGPT login can leave the provider section intact and
+/// only replace the key.
+/// </param>
+internal sealed record CodexHealth(bool IsInstalled, bool IsRunning, DateTimeOffset? LeaseExpiresAt, string? ManagedApiKey = null);
 
 /// <summary>Runs the sequence that gets Codex talking to the relay.</summary>
 /// <remarks>
@@ -56,6 +63,29 @@ internal interface ICodexStartup
 
     /// <summary>Checks only the local installation state without server traffic.</summary>
     Task<bool> CheckInstalledAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Whether Codex's on-disk config still points at the relay, judged from
+    /// disk alone — no server call of its own. Always checks <c>config.toml</c>'s
+    /// <c>model_provider</c>/<c>base_url</c>; also checks <c>auth.json</c>'s key
+    /// against <paramref name="expectedApiKey"/> when the caller has one, since an
+    /// official ChatGPT login can leave <c>[model_providers.gongfei]</c> selected
+    /// and only replace the key — a state the provider-only check would call fine.
+    /// </summary>
+    /// <param name="expectedApiKey">
+    /// The current lease's key, typically <see cref="CodexHealth.ManagedApiKey"/>
+    /// from a preceding <see cref="CheckAsync"/>. Omit to check only the provider
+    /// selection when no key is in hand.
+    /// </param>
+    /// <remarks>
+    /// <see cref="CodexRouteGuard"/> already self-heals this while it is
+    /// running, but it only runs once <see cref="RunAsync"/> has completed at
+    /// least once this session — a machine where Codex kept running across a
+    /// stretch this client was closed can have live routing loss the guard
+    /// never saw. This is what lets the dashboard notice on the next check
+    /// and re-enable the button instead of sitting on a stale "已启动".
+    /// </remarks>
+    bool IsRoutingCurrent(string apiBaseUrl, string? expectedApiKey = null);
 
     /// <summary>
     /// Extends the lease when it is close to lapsing (F3.2.3).
@@ -221,8 +251,30 @@ internal sealed class CodexStartup : ICodexStartup
 
             ClientLog.Info($"拉起 ChatGPT：{launch.Outcome}");
 
-            if (launch.CanAttach)
+            bool debugPortUnavailable = launch.Outcome == CodexLaunchOutcome.DebugPortUnavailable;
+            if (launch.CanAttach || debugPortUnavailable)
             {
+                if (debugPortUnavailable)
+                {
+                    // Activation returned a process id, so the app did start — only
+                    // its DevTools endpoint never came up in time. Newer builds
+                    // increasingly ignore or block --remote-debugging-port, which
+                    // used to surface here as "ChatGPT 已启动但没有响应" even though
+                    // routing was already applied and the app was perfectly usable.
+                    ClientLog.Warning("调试端口未在超时前打开，按无增强功能的普通启动处理");
+                }
+
+                // _enhancement.StartAsync must run even when there is no debug port
+                // to attach to: RelayInjectionHost starts its CodexRouteGuard before
+                // it ever tries the CDP connection, and that guard — not the overlay
+                // — is what notices when an official ChatGPT login later rewrites
+                // config.toml and silently drops [model_providers.gongfei], and
+                // reapplies it without the user doing anything. Returning early here
+                // (as this used to, for the debugPortUnavailable case only) skipped
+                // this call entirely, so on any machine where the debug port never
+                // opens — a growing share, as ChatGPT hardens against it — that
+                // "mandatory" guard (see RelayInjectionHost's own class doc) was
+                // never actually mandatory: nothing was watching config.toml at all.
                 bool enhanced = await _enhancement
                     .StartAsync(key.Key, apiBaseUrl, cancellationToken)
                     .ConfigureAwait(true);
@@ -231,22 +283,11 @@ internal sealed class CodexStartup : ICodexStartup
                     ClientLog.Warning("ChatGPT 已启动，状态条与限额检测暂不可用");
                 }
 
-                return new CodexStartupResult(CodexStartupStatus.Ready, "ChatGPT 已就绪，可以开始对话了。");
-            }
-
-            if (launch.Outcome == CodexLaunchOutcome.DebugPortUnavailable)
-            {
-                // Activation returned a process id, so the app did start — only its
-                // DevTools endpoint never came up in time. Newer builds increasingly
-                // ignore or block --remote-debugging-port, which used to surface here
-                // as "ChatGPT 已启动但没有响应" even though routing was already applied
-                // and the app was perfectly usable. Configuration is done by this
-                // point, so treat it as a plain launch and simply skip the overlay
-                // and limit sentinel rather than blocking the user behind a failure.
-                ClientLog.Warning("调试端口未在超时前打开，按无增强功能的普通启动处理");
                 return new CodexStartupResult(
                     CodexStartupStatus.Ready,
-                    "ChatGPT 已启动，可以开始对话了（状态条与限额检测暂不可用）。");
+                    debugPortUnavailable
+                        ? "ChatGPT 已启动，可以开始对话了（状态条与限额检测暂不可用）。"
+                        : "ChatGPT 已就绪，可以开始对话了。");
             }
 
             return launch.Outcome switch
@@ -281,11 +322,14 @@ internal sealed class CodexStartup : ICodexStartup
         bool running = installed && System.Diagnostics.Process.GetProcessesByName(CodexProcessName).Length > 0;
 
         DateTimeOffset? expiry = null;
+        string? managedApiKey = null;
         try
         {
             string token = await _session.GetAccessTokenAsync(cancellationToken).ConfigureAwait(true);
             IReadOnlyList<RelayApiKey> keys = await _relay.ListApiKeysAsync(token, cancellationToken).ConfigureAwait(true);
-            expiry = _naming.FindCurrent(keys)?.ExpiresAt;
+            RelayApiKey? current = _naming.FindCurrent(keys);
+            expiry = current?.ExpiresAt;
+            managedApiKey = current?.Key;
         }
         catch (RelayApiException ex) when (ex.Failure == RelayFailure.RateLimited)
         {
@@ -298,7 +342,7 @@ internal sealed class CodexStartup : ICodexStartup
             ClientLog.Warning("检查授权状态失败", ex);
         }
 
-        return new CodexHealth(installed, running, expiry);
+        return new CodexHealth(installed, running, expiry, managedApiKey);
     }
 
     public Task<bool> CheckInstalledAsync(CancellationToken cancellationToken = default)
@@ -306,6 +350,10 @@ internal sealed class CodexStartup : ICodexStartup
         cancellationToken.ThrowIfCancellationRequested();
         return Task.FromResult(_launcher.IsInstalled);
     }
+
+    public bool IsRoutingCurrent(string apiBaseUrl, string? expectedApiKey = null) =>
+        !string.IsNullOrWhiteSpace(apiBaseUrl) &&
+        _config.IsRelayRoute(apiBaseUrl, string.IsNullOrWhiteSpace(expectedApiKey) ? null : expectedApiKey);
 
     public async Task<DateTimeOffset?> RenewLeaseIfDueAsync(CancellationToken cancellationToken = default)
     {
