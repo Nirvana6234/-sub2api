@@ -1,0 +1,11 @@
+{
+  "name": "@transithub/backend",
+  "private": true,
+  "scripts": {
+    "start": "go run ./cmd/api",
+    "start:dev": "go run ./cmd/api",
+    "build": "go build -o ./bin/transithub-api ./cmd/api",
+    "test": "go test ./...",
+    "fmt": "gofmt -w cmd internal"
+  }
+}

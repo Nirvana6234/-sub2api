@@ -1,0 +1,16 @@
+# transithub/backend/internal/modules/upstream [transithub/backend/internal/modules/upstream.test]
+internal\modules\upstream\platform_service_sub2api_account_status_test.go:28:20: service.ClearSub2APIAdminAccountError undefined (type *PlatformService has no field or method ClearSub2APIAdminAccountError)
+2026/08/08 12:20:29 [connection-health] admin group accounts fetch failed group_id=g-bad group_name=bad err=upstream 500 secret-detail
+2026/08/08 12:20:29 [connection-health] priority sync group accounts failed group_id=g1 err=temporary upstream failure
+--- FAIL: TestCollectAdminProbeJobs_Sub2APIErrorSchedulesRecoveryOnly (0.00s)
+    scheduler_test.go:200: expected one real-generation recovery job, got []
+--- FAIL: TestRunSub2APIRecoveryProbe_UsesRealGenerationThenClearsRuntimeError (0.00s)
+    scheduler_test.go:243: expected recovery audit marker, got {ConnectionID:sub2api:ws1:17 ModelName:gpt-4o UserID:user1 AdminAccountID:ws1 OwnGroupID: OwnGroupName: UpstreamSiteID: UpstreamGroupID: UpstreamGroupName: State:healthy CurrentWeight:100 ConsecutiveFailures:0 ConsecutiveSuccesses:1 LastProbeAt:2026-08-08 12:20:29.5025617 +0800 CST m=+0.275765101 LastSuccessAt:2026-08-08 12:20:29.5025617 +0800 CST m=+0.275765101 LastFailureAt:<nil> CooldownUntil:<nil> ObservingUntil:<nil> LastLatencyMs:0x518fd41e980 LastErrorKey: LastErrorDetail: LastRemoteAction:sub2api_schedulability_recovered UpdatedAt:0001-01-01 00:00:00 +0000 UTC}
+--- FAIL: TestSub2APIErrorRecoveryEligible_RespectsAdministratorSwitch (0.00s)
+    scheduler_test.go:286: system error on a schedulable account should be recoverable
+--- FAIL: TestReconcileTargetRemoteAction_Sub2APIProtectsPermanentSwitch (0.00s)
+    target_actions_test.go:29: manually disabled account must remain protected, action=""
+FAIL
+FAIL	transithub/backend/internal/modules/connection_health	1.334s
+FAIL	transithub/backend/internal/modules/upstream [build failed]
+FAIL

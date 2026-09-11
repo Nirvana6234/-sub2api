@@ -1,0 +1,6 @@
+# transithub/backend/internal/modules/connection_health [transithub/backend/internal/modules/connection_health.test]
+internal\modules\connection_health\scheduler_test.go:221:82: cannot use recovery (variable of type *fakeSub2APIRecoveryActioner) as Sub2APIRecoveryActioner value in struct literal: *fakeSub2APIRecoveryActioner does not implement Sub2APIRecoveryActioner (missing method ClearSub2APIAdminAccountError)
+internal\modules\connection_health\scheduler_test.go:259:82: cannot use recovery (variable of type *fakeSub2APIRecoveryActioner) as Sub2APIRecoveryActioner value in struct literal: *fakeSub2APIRecoveryActioner does not implement Sub2APIRecoveryActioner (missing method ClearSub2APIAdminAccountError)
+FAIL	transithub/backend/internal/modules/connection_health [build failed]
+ok  	transithub/backend/internal/modules/upstream	(cached)
+FAIL

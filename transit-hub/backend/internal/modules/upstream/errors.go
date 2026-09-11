@@ -1,0 +1,44 @@
+package upstream
+
+import "errors"
+
+type RequestError struct {
+	MessageKey string
+	Platform   Platform
+	// StatusCode 是上游返回的 HTTP 状态码（仅非 2xx 响应错误会填充，其它错误为 0）。
+	// 现有调用方只读 MessageKey，新增此字段向后兼容；需要区分 403/401 等细分场景的调用方
+	// （如 new-api channel key 获取的安全验证判定）可读取它。
+	StatusCode int
+}
+
+func (e *RequestError) Error() string {
+	return e.MessageKey
+}
+
+func newRequestError(messageKey string, platform Platform) *RequestError {
+	return &RequestError{MessageKey: messageKey, Platform: platform}
+}
+
+func newRequestErrorWithStatus(messageKey string, platform Platform, statusCode int) *RequestError {
+	return &RequestError{MessageKey: messageKey, Platform: platform, StatusCode: statusCode}
+}
+
+// IsNotFound reports whether an upstream operation targeted a resource that is
+// already absent. Destructive callers use this to make cleanup idempotent.
+func IsNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	var requestErr *RequestError
+	if !errors.As(err, &requestErr) {
+		return false
+	}
+	return requestErr.StatusCode == 404 || requestErr.MessageKey == ErrorNotFound
+}
+
+func errorKey(err error) string {
+	if requestErr, ok := err.(*RequestError); ok {
+		return requestErr.MessageKey
+	}
+	return ErrorUnknown
+}
