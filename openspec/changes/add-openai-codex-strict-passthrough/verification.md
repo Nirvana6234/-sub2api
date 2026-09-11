@@ -223,8 +223,24 @@ WS 用的是 **upgrade 请求自己的 `*gin.Context`**（`openai_gateway_handle
 ### V-15 全量
 
 ```
-cd backend && go test -tags=unit ./... && golangci-lint run ./...
-cd frontend && pnpm test
+cd backend && go test -tags=unit ./...
+cd frontend && pnpm test:run
 ```
 
-注意：本机 golangci-lint 版本为 **v2.9**，前端**必须用 pnpm**（见 `DEV_GUIDE.md` 与仓库既有约定）。
+**`pnpm test` 是 watch 模式**（package.json 里 `test` 映射到裸 `vitest`，不退出），
+跑一次要用 `pnpm test:run`。初稿写成 `pnpm test`，实测挂了 10 分钟没结束。
+
+`golangci-lint` 这一条**本机跑不了**：本机版本 v2.9 是用 go1.26 构建的，拒绝对
+go.mod 声明 1.27.0 的模块运行（"the Go language version used to build golangci-lint
+is lower than the targeted Go version"）。CI 上是 v2.13，留给 CI 把关。
+
+**2026-09-11 实测结果**：
+
+| 门 | 结果 |
+| --- | --- |
+| `go test -tags=unit ./...` | exit 0，58 包 ok / 0 FAIL |
+| `pnpm test:run` | 279 文件 / 2084 用例全绿 |
+| `vue-tsc --noEmit` | 干净 |
+| `golangci-lint` | 本机不可运行，见上 |
+
+注意统计退出码时别把 `go test` 接管道再读 `$?`——那取到的是管道末端命令的退出码。
