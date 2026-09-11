@@ -2990,10 +2990,10 @@
             />
           </button>
         </div>
-        <!-- 字节保真：嵌在透传之下。可见范围取 codex_cli_only 的账号类别（oauth-based）——
-             其他类别看不到那个父门禁，给它一个永远无法满足的开关只会制造困惑。 -->
+        <!-- 字节保真：嵌在透传之下，可见范围与透传一致（含 API Key）。
+             它与 codex_cli_only 相互独立——那个开关不是 Codex 就 403，这个只是逐请求降级。 -->
         <div
-          v-if="openaiPassthroughEnabled && accountCategory === 'oauth-based'"
+          v-if="openaiPassthroughEnabled"
           class="mt-4 flex items-center justify-between border-l-2 border-gray-200 pl-4 dark:border-dark-600"
         >
           <div>
@@ -5328,11 +5328,7 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
   }
   // 严格模式只在透传开启且账号类别支持 codex_cli_only 时落键；其余情况一律删掉，
   // 免得 extra 里留下一个后端永远判 false、管理端却看不见的孤儿键。
-  if (
-    openaiPassthroughEnabled.value &&
-    openaiPassthroughStrictEnabled.value &&
-    accountCategory.value === 'oauth-based'
-  ) {
+  if (openaiPassthroughEnabled.value && openaiPassthroughStrictEnabled.value) {
     extra.openai_passthrough_strict = true
   } else {
     delete extra.openai_passthrough_strict
@@ -5515,19 +5511,6 @@ const handleVertexServiceAccountDrop = async (event: DragEvent) => {
 
 const handleSubmit = async () => {
   if (!validateCustomHeaders()) return
-
-  // 字节保真取消的那些兜底，唯一的安全依据就是 codex_cli_only 保证请求来自官方客户端。
-  // 放在最前面：OAuth 是两步流程，两个开关都在 step 1，堵在这里才能同时覆盖直连创建
-  // 和「先跳 step 2 再回来创建」两条路径。
-  if (
-    openaiPassthroughStrictEnabled.value &&
-    openaiPassthroughEnabled.value &&
-    accountCategory.value === 'oauth-based' &&
-    !codexCLIOnlyEnabled.value
-  ) {
-    appStore.showError(t('admin.accounts.openai.oauthPassthroughStrictRequiresCLIOnly'))
-    return
-  }
 
   // For OAuth-based type, handle OAuth flow (goes to step 2)
   if (isOAuthFlow.value) {

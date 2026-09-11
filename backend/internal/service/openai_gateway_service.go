@@ -1066,17 +1066,44 @@ func SnapshotOpenAICompatibilityFallbackMetrics() OpenAICompatibilityFallbackMet
 }
 
 func (s *OpenAIGatewayService) detectCodexClientRestriction(c *gin.Context, account *Account, body []byte) CodexClientRestrictionDetectionResult {
-	// 安全默认：即便缺 settingService（仅测试/误配可达）也保持指纹门为默认种子，
-	// 避免零值 policy（nil 信号）让指纹门失败开放。有 settingService 时整体覆盖为全局策略。
-	policy := CodexRestrictionPolicy{EngineFingerprintSignals: openai.DefaultEngineFingerprintSignals}
-	if account != nil && account.IsCodexCLIOnlyEnabled() && s != nil && s.settingService != nil {
-		ctx := context.Background()
-		if c != nil && c.Request != nil {
-			ctx = c.Request.Context()
-		}
-		policy = s.settingService.GetCodexRestrictionPolicy(ctx)
-	}
+	policy := s.resolveCodexRestrictionPolicy(c, account)
 	return s.getCodexClientRestrictionDetector().Detect(c, account, policy, body)
+}
+
+// resolveCodexRestrictionPolicy 取全局门禁策略（白名单/黑名单/版本上下限/指纹信号）。
+//
+// 安全默认：即便缺 settingService（仅测试/误配可达）也保持指纹门为默认种子，
+// 避免零值 policy（nil 信号）让指纹门失败开放。
+//
+// 取数条件里 strict 与 codex_cli_only 并列，缺一不可：严格透传的档位判定同样要吃
+// 这套策略，否则管理员配的黑名单/版本下限在「只开 strict、不开 codex_cli_only」的
+// 账号上形同虚设——而那恰恰是 strict 最常见的用法。
+func (s *OpenAIGatewayService) resolveCodexRestrictionPolicy(c *gin.Context, account *Account) CodexRestrictionPolicy {
+	policy := CodexRestrictionPolicy{EngineFingerprintSignals: openai.DefaultEngineFingerprintSignals}
+	if account == nil || s == nil || s.settingService == nil {
+		return policy
+	}
+	if !account.IsCodexCLIOnlyEnabled() && !account.IsOpenAIPassthroughStrictEnabled() {
+		return policy
+	}
+	ctx := context.Background()
+	if c != nil && c.Request != nil {
+		ctx = c.Request.Context()
+	}
+	return s.settingService.GetCodexRestrictionPolicy(ctx)
+}
+
+// detectCodexClientIdentity 为严格透传判定「这条请求像不像官方 Codex」。
+//
+// 与 detectCodexClientRestriction 的区别只有两点，但都是要害：不看账号的
+// codex_cli_only 开关，也不认 force_codex_cli 旁路。判定本身共用同一份实现。
+//
+// 不走 CodexClientRestrictionDetector 接口：身份判定是 (请求, 账号, 策略, body) 的
+// 纯函数，用不到 detector 的任何状态（那里面只有 cfg，且只服务于 force_codex_cli
+// 这条身份判定明确不认的旁路）。绕开接口还有一个好处——注入执法桩的测试仍然拿到
+// 真实的身份判定，两件事不会被同一个桩一起假掉。
+func (s *OpenAIGatewayService) detectCodexClientIdentity(c *gin.Context, account *Account, body []byte) CodexClientRestrictionDetectionResult {
+	return EvaluateCodexClientIdentity(c, account, s.resolveCodexRestrictionPolicy(c, account), body)
 }
 
 func getAPIKeyIDFromContext(c *gin.Context) int64 {

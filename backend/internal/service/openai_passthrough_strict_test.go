@@ -22,10 +22,10 @@ func newStrictPassthroughAccount(extra map[string]any) *Account {
 	}
 }
 
-func newStrictPassthroughContext(restriction *CodexClientRestrictionDetectionResult) *gin.Context {
+func newStrictPassthroughContext(identity *CodexClientRestrictionDetectionResult) *gin.Context {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	if restriction != nil {
-		stageCodexClientRestrictionResult(c, *restriction)
+	if identity != nil {
+		stageCodexClientIdentity(c, *identity)
 	}
 	return c
 }
@@ -108,54 +108,44 @@ func TestResolveOpenAIStrictPassthrough_Combinations(t *testing.T) {
 	}
 	authOnlyExtra := map[string]any{"openai_passthrough": true}
 
-	passedGate := &CodexClientRestrictionDetectionResult{
+	isCodex := &CodexClientRestrictionDetectionResult{
 		Enabled: true,
 		Matched: true,
 		Reason:  CodexClientRestrictionReasonMatchedUA,
 	}
+	notCodex := &CodexClientRestrictionDetectionResult{
+		Enabled: true,
+		Matched: false,
+		Reason:  CodexClientRestrictionReasonNotMatchedUA,
+	}
 
 	cases := []struct {
-		name        string
-		extra       map[string]any
-		restriction *CodexClientRestrictionDetectionResult
-		wantStrict  bool
-		wantReason  string
+		name       string
+		extra      map[string]any
+		identity   *CodexClientRestrictionDetectionResult
+		wantStrict bool
+		wantReason string
 	}{
 		{
-			name:        "账号没开 strict",
-			extra:       authOnlyExtra,
-			restriction: passedGate,
-			wantStrict:  false,
-			wantReason:  OpenAIStrictPassthroughReasonAccountDisabled,
-		},
-		{
-			name:  "strict 开了但账号没开 codex_cli_only",
-			extra: strictExtra,
-			restriction: &CodexClientRestrictionDetectionResult{
-				Enabled: false,
-				Matched: false,
-				Reason:  CodexClientRestrictionReasonDisabled,
-			},
+			name:       "账号没开 strict",
+			extra:      authOnlyExtra,
+			identity:   isCodex,
 			wantStrict: false,
-			wantReason: OpenAIStrictPassthroughReasonCodexCLIOnlyDisabled,
+			wantReason: OpenAIStrictPassthroughReasonAccountDisabled,
 		},
 		{
-			name:  "门禁被 force_codex_cli 旁路放行",
-			extra: strictExtra,
-			restriction: &CodexClientRestrictionDetectionResult{
-				Enabled: true,
-				Matched: true,
-				Reason:  CodexClientRestrictionReasonForceCodexCLI,
-			},
+			name:       "开了 strict 但这条请求不是 Codex 发的",
+			extra:      strictExtra,
+			identity:   notCodex,
 			wantStrict: false,
-			wantReason: OpenAIStrictPassthroughReasonForceCodexCLIEnabled,
+			wantReason: OpenAIStrictPassthroughReasonGateNotMatched,
 		},
 		{
-			name:        "三者齐备",
-			extra:       strictExtra,
-			restriction: passedGate,
-			wantStrict:  true,
-			wantReason:  "",
+			name:       "开了 strict 且这条请求是 Codex 发的",
+			extra:      strictExtra,
+			identity:   isCodex,
+			wantStrict: true,
+			wantReason: "",
 		},
 	}
 
@@ -164,13 +154,36 @@ func TestResolveOpenAIStrictPassthrough_Combinations(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			strict, reason := svc.resolveOpenAIStrictPassthrough(
 				context.Background(),
-				newStrictPassthroughContext(tc.restriction),
+				newStrictPassthroughContext(tc.identity),
 				newStrictPassthroughAccount(tc.extra),
 			)
 			assert.Equal(t, tc.wantStrict, strict)
 			assert.Equal(t, tc.wantReason, reason)
 		})
 	}
+}
+
+// strict 与 codex_cli_only 是两个独立开关，这是本设计的要害：codex_cli_only 的语义是
+// 「不是 Codex 就 403」，strict 的语义是「是 Codex 就多给保真度，不是就按老样子发」。
+// 账号完全不开 codex_cli_only 时，strict 照样必须能生效。
+func TestResolveOpenAIStrictPassthrough_DoesNotRequireCodexCLIOnly(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	strict, reason := svc.resolveOpenAIStrictPassthrough(
+		context.Background(),
+		newStrictPassthroughContext(&CodexClientRestrictionDetectionResult{
+			Enabled: true,
+			Matched: true,
+			Reason:  CodexClientRestrictionReasonMatchedUA,
+		}),
+		newStrictPassthroughAccount(map[string]any{
+			"openai_passthrough":        true,
+			"openai_passthrough_strict": true,
+			// 刻意不写 codex_cli_only
+		}),
+	)
+
+	assert.True(t, strict, "strict 不得依赖 codex_cli_only —— 那个开关会 403，这个只降级")
+	assert.Empty(t, reason)
 }
 
 // --- fail-closed：门禁判定缺席时绝不能进 strict ---
@@ -188,7 +201,7 @@ func TestResolveOpenAIStrictPassthrough_FailsClosedWithoutStagedGate(t *testing.
 		account,
 	)
 
-	assert.False(t, strict, "没跑过 codex_cli_only 判定的路径不得进 strict")
+	assert.False(t, strict, "没跑过身份判定的路径不得进 strict")
 	assert.Equal(t, OpenAIStrictPassthroughReasonGateNotEvaluated, reason)
 }
 
@@ -205,9 +218,9 @@ func TestResolveOpenAIStrictPassthrough_FailsClosedWithNilContext(t *testing.T) 
 	assert.Equal(t, OpenAIStrictPassthroughReasonGateNotEvaluated, reason)
 }
 
-// 门禁明确判定为「没过」的请求正常会在 Forward 入口 403，走不到 strict 分叉；
-// 这条锁死万一走到了也不会进 strict。
-func TestResolveOpenAIStrictPassthrough_FailsClosedWhenGateRejected(t *testing.T) {
+// 判定为「不是 Codex」是设计内的正常路径（Chat 前端、curl、各类 SDK 都会落在这里），
+// 请求照常按普通透传服务，只是不进 strict。
+func TestResolveOpenAIStrictPassthrough_FallsBackWhenClientIsNotCodex(t *testing.T) {
 	svc := &OpenAIGatewayService{}
 	strict, reason := svc.resolveOpenAIStrictPassthrough(
 		context.Background(),
@@ -228,33 +241,28 @@ func TestResolveOpenAIStrictPassthrough_FailsClosedWhenGateRejected(t *testing.T
 
 // --- 暂存与覆写 ---
 
-func TestStageCodexClientRestrictionResult_OverwritesAcrossAttempts(t *testing.T) {
+func TestStageCodexClientIdentity_OverwritesAcrossAttempts(t *testing.T) {
 	c := newStrictPassthroughContext(&CodexClientRestrictionDetectionResult{
 		Enabled: true,
 		Matched: true,
 		Reason:  CodexClientRestrictionReasonMatchedUA,
 	})
 
-	// failover 换到一个没开 codex_cli_only 的账号：上一账号的结论不得残留。
-	stageCodexClientRestrictionResult(c, CodexClientRestrictionDetectionResult{
-		Enabled: false,
-		Matched: false,
-		Reason:  CodexClientRestrictionReasonDisabled,
-	})
+	// failover 换到一个没开 strict 的账号：Forward 会暂存零值，上一账号的结论不得残留。
+	stageCodexClientIdentity(c, CodexClientRestrictionDetectionResult{})
 
-	got, ok := stagedCodexClientRestrictionResult(c)
+	got, ok := stagedCodexClientIdentity(c)
 	require.True(t, ok)
 	assert.False(t, got.Enabled)
-	assert.Equal(t, CodexClientRestrictionReasonDisabled, got.Reason)
-	assert.Equal(t, OpenAIStrictPassthroughReasonCodexCLIOnlyDisabled,
+	assert.Equal(t, OpenAIStrictPassthroughReasonGateNotEvaluated,
 		openAIStrictPassthroughDegradeReason(c))
 }
 
-func TestStagedCodexClientRestrictionResult_WrongTypeIsTreatedAsAbsent(t *testing.T) {
+func TestStagedCodexClientIdentity_WrongTypeIsTreatedAsAbsent(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	c.Set(codexClientRestrictionResultContextKey, "not-a-result")
+	c.Set(codexClientIdentityContextKey, "not-a-result")
 
-	_, ok := stagedCodexClientRestrictionResult(c)
+	_, ok := stagedCodexClientIdentity(c)
 	assert.False(t, ok)
 	assert.Equal(t, OpenAIStrictPassthroughReasonGateNotEvaluated,
 		openAIStrictPassthroughDegradeReason(c))

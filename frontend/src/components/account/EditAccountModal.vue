@@ -1685,10 +1685,11 @@
             />
           </button>
         </div>
-        <!-- 字节保真：嵌在透传之下。可见范围取 codex_cli_only 的账号类型（oauth/setup-token）——
-             apikey 账号看不到那个父门禁，给它一个永远无法满足的开关只会制造困惑。 -->
+        <!-- 字节保真：嵌在透传之下，可见范围与透传一致（含 apikey）。
+             它与 codex_cli_only 相互独立——那个开关不是 Codex 就 403，这个只是逐请求降级，
+             所以不能拿 codex_cli_only 的账号类型来限制它。 -->
         <div
-          v-if="openaiPassthroughEnabled && (account?.type === 'oauth' || account?.type === 'setup-token')"
+          v-if="openaiPassthroughEnabled"
           class="mt-4 flex items-center justify-between border-l-2 border-gray-200 pl-4 dark:border-dark-600"
         >
           <div>
@@ -4763,14 +4764,6 @@ const handleSubmit = async () => {
 		}
 	}
 
-  // 字节保真取消的那些兜底，唯一的安全依据就是 codex_cli_only 保证请求来自官方客户端。
-  // 运行期已经是硬约束（不满足就降级），管理端如果只给软提示，用户会存出一个
-  // 「看起来开了、实际没生效」的配置——堵在保存期比事后从日志里发现便宜。
-  if (openaiPassthroughStrictEnabled.value && openaiPassthroughEnabled.value && !codexCLIOnlyEnabled.value) {
-    appStore.showError(t('admin.accounts.openai.oauthPassthroughStrictRequiresCLIOnly'))
-    return
-  }
-
   const updatePayload: Record<string, unknown> = { ...form }
   try {
     const existingGroupIDs = props.account.group_ids ?? props.account.groups?.map(group => group.id) ?? []
@@ -5319,11 +5312,7 @@ const handleSubmit = async () => {
       }
       // 严格模式只在透传开启且账号类型支持 codex_cli_only 时落键；其余情况一律删掉，
       // 免得 extra 里留下一个后端永远判 false、管理端却看不见的孤儿键。
-      if (
-        openaiPassthroughEnabled.value &&
-        openaiPassthroughStrictEnabled.value &&
-        (props.account.type === 'oauth' || props.account.type === 'setup-token')
-      ) {
+      if (openaiPassthroughEnabled.value && openaiPassthroughStrictEnabled.value) {
         newExtra.openai_passthrough_strict = true
       } else {
         delete newExtra.openai_passthrough_strict

@@ -96,6 +96,23 @@ func (d *OpenAICodexClientRestrictionDetector) Detect(c *gin.Context, account *A
 		return CodexClientRestrictionDetectionResult{Enabled: true, Matched: true, Reason: CodexClientRestrictionReasonForceCodexCLI}
 	}
 
+	return EvaluateCodexClientIdentity(c, account, policy, body)
+}
+
+// EvaluateCodexClientIdentity 只回答一个问题：**这一条请求看起来是不是官方 Codex 客户端发的**。
+//
+// 它不看任何账号开关，也不看 `force_codex_cli` 旁路——那条旁路是「无条件放行」，
+// 证明不了来路。两个调用方共用这一份实现：
+//
+//   - `codex_cli_only` 拿它当执法依据（不匹配 → 403）；
+//   - 严格透传拿它当档位判定（不匹配 → 回落到普通自动透传，不拒绝）。
+//
+// 共用而不是各写一套，是因为「像不像官方 Codex」在两处必须是同一个答案；
+// 一旦分叉，管理员按其中一个的行为调白名单，另一个就会悄悄不跟。
+//
+// 返回值里的 `Enabled` 在这条路径上表示「判定确实执行过」，用于区分「没过门」
+// 与「压根没判」——后者对严格透传是 fail-closed 的依据。
+func EvaluateCodexClientIdentity(c *gin.Context, account *Account, policy CodexRestrictionPolicy, body []byte) CodexClientRestrictionDetectionResult {
 	userAgent := ""
 	originator := ""
 	var header http.Header

@@ -671,11 +671,9 @@ export default {
         oauthPassthrough: '自动透传（仅替换认证）',
         oauthPassthroughDesc:
           '开启后，该 OpenAI 账号将自动透传请求与响应，仅替换认证并保留计费/并发/审计及必要安全过滤；如遇兼容性问题可随时关闭回滚。',
-        oauthPassthroughStrict: '字节保真模式（仅官方 Codex）',
+        oauthPassthroughStrict: '字节保真模式（仅对 Codex 请求生效）',
         oauthPassthroughStrictDesc:
-          '在自动透传之上再取消网关侧的形状兜底：请求头改为黑名单放行、出站体按官方客户端的方式压缩。这不是「更快的透传」，而是让上游看到的请求尽量贴近官方 Codex 客户端。必须同时开启上面的「仅允许 Codex 官方客户端」，否则非官方客户端会带着自己的头直达上游——这也是保存时会被拦下的原因。计费、并发、审计、身份影射与 turn-state 守卫一律不变。',
-        oauthPassthroughStrictRequiresCLIOnly:
-          '字节保真模式必须同时开启「仅允许 Codex 官方客户端」：前者取消的那些兜底，唯一的安全依据就是后者保证请求确实来自官方客户端。',
+          '在自动透传之上，对**判定为官方 Codex 客户端发出**的请求再取消网关侧的形状兜底：请求头改为黑名单放行、出站体按官方客户端的方式压缩，让上游看到的请求尽量贴近官方 Codex。判定是逐条请求做的——同一个账号上，不是 Codex 发的请求（网页、curl、各类 SDK）会自动回落到普通自动透传照常服务，不会被拒绝。与「仅允许 Codex 官方客户端」相互独立，可以单开：那个开关会把非官方客户端 403 拒掉，这个只是降级。计费、并发、审计、身份影射与 turn-state 守卫一律不变。',
         flattenNamespaces: '摊平 Codex namespace 工具（兼容）',
         flattenNamespacesDesc:
           '默认关闭：/responses 上的 namespace 工具声明原样转发，这正是 ChatGPT Codex 后端期望的形态。仅当该 OAuth 账号指向不认识 namespace 的兼容上游时才开启——摊平会把工具改名为 namespace__tool，使按 functions.<命名空间>.<工具> 寻址的模型（如 gpt-5.6 多智能体）无法调用。压缩（compact）请求不受该开关影响，始终摊平。',

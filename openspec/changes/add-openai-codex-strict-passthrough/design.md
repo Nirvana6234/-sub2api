@@ -33,29 +33,54 @@ func (a *Account) IsOpenAIPassthroughStrictEnabled() bool {
 
 **反例（不要这么做）**：把 `openai_passthrough` 改成 `"off" | "auth_only" | "strict"` 三态字符串。读取点包括 `account.go`、`scheduler_cache.go`、`openai_gateway_forward.go`、`openai_ws_http_bridge.go` 和前端三个 modal，全部要跟着改，且旧数据迁移期间存在两种真值来源。
 
-### 1.2 strict 的硬前置条件：codex_cli_only
+### 1.2 生效判定：逐请求，且与 codex_cli_only 独立
 
-**位置**：`backend/internal/service/openai_passthrough_strict.go`（**已实现**）。
+> **2026-09-11 重写。** 初稿把 strict 绑在账号级 `codex_cli_only` 上，要求「账号开了那个门
+> 且这一条过了门」。需求方指出这条依赖是错的，理由在实际拓扑上成立——见下方「为什么改」。
 
-**改法**（落地形态，比初稿更严）：不读"账号上开没开门"，而读**本次请求实际的门禁判定**。判定由 `Forward` 在最前面算出后 `stageCodexClientRestrictionResult` 暂存进 gin context：
+**位置**：`service/openai_passthrough_strict.go` 的 `resolveOpenAIStrictPassthrough`。
 
-```
-strict = account.IsOpenAIPassthroughStrictEnabled()
-      && 暂存的判定存在                       // 否则 client_gate_not_evaluated
-      && restriction.Enabled                  // 否则 codex_cli_only_disabled
-      && restriction.Reason != ForceCodexCLI  // 否则 force_codex_cli_enabled
-      && restriction.Matched                  // 否则 client_gate_not_matched
-```
+**判定**（两条，缺一不可）：
 
-不满足时降级为普通透传，并打一条 WARN `openai.passthrough_strict_degraded`（含 account_id 与降级原因），**不拒绝请求**。
+1. 账号开了 `openai_passthrough_strict`（它本身叠加在 `openai_passthrough` 之上）；
+2. **这一条请求**被判定为官方 Codex 客户端发出。
 
-**为什么读暂存判定而不是账号开关**：后者只说明"这个账号的门是开着的"，前者说明"**这一条请求真的过了门**"。两者今天等价，仅仅因为 `forward.go:46` 那个 403 早返回让未过门的请求走不到透传分叉——这是一条没有被断言的控制流依赖，有人重排早返回，strict 就会静默与它的依据脱钩。读暂存判定把这条依赖变成了显式的：**判定缺席即视为没过门**（fail-closed），于是任何新增的、没跑过门禁的入口都不会意外进入 strict。WS 路径的惰性（Non-goals 承诺、tasks §4.6）也由这条性质免费保证。
+第 2 条不成立 → **回落到普通自动透传，照常服务**。不是 403，不是报错。
 
-**判据（三条，都是硬的）**：
+**判定实现**：`EvaluateCodexClientIdentity`，与 `codex_cli_only` 共用同一份代码
+（官方 UA → originator → 全局白名单 → app-server，再过版本门与引擎指纹门，黑名单优先拒）。
+共用而不是各写一套：「像不像官方 Codex」在两处必须是同一个答案，否则管理员按其中一个
+调白名单，另一个会悄悄不跟。
 
-1. `OpenAICodexClientRestrictionDetector.Detect()` 的第 1 步就是「账号没开 `codex_cli_only` → 返回 `Disabled`」直接短路。**指纹门和版本门根本不会跑。** 也就是说 strict 想依赖的那层保护，只有 `codex_cli_only` 开着时才存在。这不是「建议配对」，是「没有它 strict 没有依据」。
-2. `gateway.force_codex_cli` 会让 `Detect()` 在第 2 步无条件放行（reason=`ForceCodexCLI`），同时让 `isCodexCLI` 恒为 true。它的本意是「网关未透传 UA 时的兼容兜底」。strict 建立在它上面等于门是假的，所以必须显式互斥。
-3. 降级而不是拒绝：这个开关由运维主动控制，配错时应该退回一个已知安全的行为，而不是让整个账号的流量 403——403 会被误读成「账号坏了」。
+**两处刻意的差异**：
+
+- **不看账号的 `codex_cli_only` 开关**。`Detect` 在那个开关关闭时第一步就短路返回
+  `Disabled`，压根没看客户端——拿它兼任身份判定，等于要求必须先开 `codex_cli_only`。
+- **不认 `gateway.force_codex_cli`**。那条是无条件放行，证明不了来路。
+
+**取策略的条件也要跟着放宽**：`resolveCodexRestrictionPolicy` 原来只在
+`IsCodexCLIOnlyEnabled()` 时才去读全局设置。strict 必须并列进这个条件，否则管理员配的
+黑名单/版本门在「只开 strict、不开 codex_cli_only」的账号上形同虚设——而那恰恰是最常见的用法。
+
+**为什么改**：两个开关的语义根本不同。
+
+| | codex_cli_only | strict |
+| --- | --- | --- |
+| 非 Codex 请求 | **403 拒掉** | **降级为普通透传，照常服务** |
+| 适用账号类型 | 仅 oauth / setup-token | 凡是能开自动透传的（含 apikey） |
+
+真实部署里 strict 最常见的用法是 apikey 账号 + `base_url` 指向另一台 sub2api 中继。
+那台中继自己也在判「流量像不像官方 Codex」，所以字节保真在这条链路上比直连 chatgpt.com
+更有价值。而 `codex_cli_only` 对 apikey 账号根本不开放——绑定它等于把 strict 挡在了
+它最该生效的场景之外。
+
+**告警策略**：只有 `client_gate_not_evaluated` 打 WARN。「不是 Codex 客户端」是设计内的
+正常路径（网页、curl、各类 SDK 打到 strict 账号上都会落在这里），每条请求告警一次只会
+把日志淹掉。
+
+**已接受的残留风险**：判定依据里的 UA / originator 是客户端自报的，可以伪造。伪造的后果
+是该请求的头按黑名单放行（而非白名单裁剪）、body 原样上送；凭据与身份类头仍然一律剥除。
+2026-09-11 与需求方确认后接受，是取舍不是疏漏。
 
 ### 1.3 建议同时收紧引擎指纹门（配置项，非代码）
 
@@ -224,10 +249,12 @@ x-codex-turn-id, x-oai-attestation, x-oai-is, x-oai-is-update,
 **改法**：
 
 1. strict 开关**嵌套**在透传开关下，透传关闭时不可见/不可勾。
-2. 保存期校验：勾了 strict 但没勾 `codex_cli_only` → 阻止保存并说明原因（不是 toast 警告）。
-3. 文案写清楚这是「只给官方 Codex 用的字节保真模式」，不要写成「更快的透传」。
+2. 可见范围**与透传完全一致**（含 apikey）——不跟 `codex_cli_only` 的账号类型走。
+3. 文案写清楚两件事：这是「只对判定为官方 Codex 的请求生效的字节保真模式」，
+   以及「不是 Codex 的请求会自动回落、不会被拒绝」。不要写成「更快的透传」。
 
-**判据**：§1.2 已经把这对开关做成运行期硬约束（不满足就降级）。管理端如果只给软提示，用户会保存出一个「看起来开了、实际没生效」的配置——而这正是 §7 那个降级字段要解决的问题。堵在保存期比事后从日志里发现便宜。
+**没有保存期硬校验**（初稿有，2026-09-11 随 §1.2 一起去掉）：strict 不依赖任何别的开关，
+没有"能存下来但永远不生效"的组合，也就没有需要堵的东西。
 
 ---
 

@@ -1588,22 +1588,38 @@ describe('EditAccountModal OpenAI 自动使用重置卡', () => {
     wrapper.unmount()
   })
 
-  it('blocks saving when byte-fidelity is on without codex_cli_only', async () => {
+  it('persists byte-fidelity without codex_cli_only', async () => {
+    // strict 与 codex_cli_only 相互独立：那个开关不是 Codex 就 403，这个只是逐请求降级。
+    // 所以没有任何理由在保存期要求先开 codex_cli_only。
     updateAccountMock.mockReset()
     checkMixedChannelRiskMock.mockReset()
     checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    const account = buildOpenAIOAuthAccount({ openai_passthrough: true })
+    updateAccountMock.mockResolvedValue(account)
 
-    const wrapper = mountModal(buildOpenAIOAuthAccount({ openai_passthrough: true }))
+    const wrapper = mountModal(account)
     await flushPromises()
     await wrapper.get(STRICT_TOGGLE).trigger('click')
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
     await flushPromises()
 
-    expect(updateAccountMock).not.toHaveBeenCalled()
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    const extra = updateAccountMock.mock.calls[0]?.[1]?.extra as Record<string, unknown>
+    expect(extra.openai_passthrough_strict).toBe(true)
+  })
+
+  it('offers byte-fidelity on API-key accounts too', async () => {
+    // 用户的实际拓扑就是 apikey + base_url 指向另一台 sub2api。
+    const account = { ...buildAccount(), extra: { openai_passthrough: true } } as any
+    const wrapper = mountModal(account)
+    await flushPromises()
+
+    expect(account.type).toBe('apikey')
+    expect(wrapper.find(STRICT_TOGGLE).exists()).toBe(true)
     wrapper.unmount()
   })
 
-  it('persists the strict flag once both parent switches are on', async () => {
+  it('persists the strict flag alongside auto passthrough', async () => {
     updateAccountMock.mockReset()
     checkMixedChannelRiskMock.mockReset()
     checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })

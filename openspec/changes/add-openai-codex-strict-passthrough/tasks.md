@@ -16,7 +16,8 @@
 
 - [x] 1.1 `service/account.go` 新增 `IsOpenAIPassthroughStrictEnabled()`，零值 = false，依赖 `IsOpenAIPassthroughEnabled()`
 - [x] 1.2 `repository/scheduler_cache.go` 的 extra 投影键表加 `"openai_passthrough_strict"`（见 design §6）
-- [x] 1.3 新增 `service/openai_passthrough_strict.go`：`stageCodexClientRestrictionResult` / `stagedCodexClientRestrictionResult` / `resolveOpenAIStrictPassthrough(ctx, c, account) (bool, reason)`。判定读**本次请求实际的门禁结果**而非账号开关，判定缺席即 fail-closed（见 design §1.2）
+- [x] 1.3 新增 `service/openai_passthrough_strict.go`：`stageCodexClientIdentity` / `stagedCodexClientIdentity` / `resolveOpenAIStrictPassthrough(ctx, c, account) (bool, reason)`。判定读**本次请求的 Codex 身份判定结果**而非账号开关，判定缺席即 fail-closed（见 design §1.2）
+- [x] 1.3c **2026-09-11 重做**：解除对 `codex_cli_only` 的依赖。抽出 `EvaluateCodexClientIdentity`（`Detect` 与 strict 共用同一份判定），strict 走「只判定、不执法」的路径，apikey 账号也能用；`resolveCodexRestrictionPolicy` 的取数条件并列加上 strict，否则全局黑名单/版本门在只开 strict 的账号上形同虚设
 - [x] 1.3b `openai_gateway_forward.go:43` 判定算出后立即 stage，failover 每 attempt 无条件覆写
 - [x] 1.4 降级时打 WARN `openai.passthrough_strict_degraded`，带 account_id / account_name / reason
 - [x] 1.5 单测：四种组合（strict off / strict+no cli_only / strict+force_codex_cli / 全满足）各自的返回值与 reason
@@ -93,17 +94,13 @@
 
 - [x] 5.1 三个 modal 增加开关。Create/Edit 用嵌套渲染（`v-if` 挂在透传开关下，样式沿用
       已有的 `codex_cli_only_allow_app_server` 子开关）；Bulk 是三态语义，给了独立区块。
-      可见范围取的是 **codex_cli_only 的账号类型/类别**（oauth / setup-token，Bulk 是
-      `allOpenAIOAuth`）而不是透传的——透传对 apikey 账号也可见，而那类账号看不到
-      codex_cli_only，给它一个永远无法满足的开关只会制造困惑。
-      Bulk 的**写入路径也按同一条件再判一次**（`enableOpenAIPassthroughStrict && allOpenAIOAuth`）：
-      勾选后又把目标筛选放宽到 apikey 时，区块会隐藏但勾选状态还在，只靠 `v-if` 挡不住
-- [x] 5.2 保存期硬校验（`appStore.showError` + `return`，不是 toast 警告）。
-      Create 放在 `handleSubmit` 最前面，早于 OAuth 的跳步分支——两个开关都在 step 1，
-      只有堵在那里才能同时覆盖直连创建和「先跳 step 2 再回来」两条路径。
-      Bulk 的语义与 app-server 子开关**有一处刻意分歧**：只拦开启方向，关闭方向永远放行。
-      strict 是高风险新开关，「批量关掉」必须一步可达，照搬 app-server 的写法会变成
-      「关 strict 要先把 codex_cli_only 打开」，那不成立
+      可见范围**与自动透传完全一致**（含 apikey，Bulk 用 `allOpenAIPassthroughCapable`）。
+      初稿跟的是 codex_cli_only 的账号类型，2026-09-11 随 §1.2 改正——strict 与那个开关无关。
+      Bulk 的**写入路径也按同一条件再判一次**：勾选后又把目标筛选放宽到不支持透传的类型时，
+      区块会隐藏但勾选状态还在，只靠 `v-if` 挡不住
+- [x] 5.2 ~~保存期硬校验~~ **2026-09-11 随 §1.2 一起去掉**。strict 不再依赖任何别的开关，
+      没有「能存下来但永远不生效」的组合，也就没有需要堵的东西。三个 modal 的校验分支、
+      i18n 的 `oauthPassthroughStrictRequiresCLIOnly` 文案一并删除
 - [x] 5.3 文案：中英各三条（`oauthPassthroughStrict` / `Desc` / `RequiresCLIOnly`）。
       措辞明确否掉「更快的透传」这个误读，并写明计费/并发/审计/身份影射/turn-state 不变
 - [x] 5.4 Vitest：Edit 5 条、Create 3 条、Bulk 3 条。Create 那条拦截用例实测在移除校验后变红；

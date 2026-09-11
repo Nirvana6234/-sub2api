@@ -82,8 +82,8 @@
         </div>
       </div>
 
-      <!-- OpenAI 字节保真（仅 OAuth；从属于透传 + codex_cli_only 两个父开关） -->
-      <div v-if="allOpenAIOAuth" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+      <!-- OpenAI 字节保真（从属于自动透传；与 codex_cli_only 无关，逐请求判定） -->
+      <div v-if="allOpenAIPassthroughCapable" class="border-t border-gray-200 pt-4 dark:border-dark-600">
         <div class="mb-3 flex items-center justify-between">
           <label
             id="bulk-edit-openai-passthrough-strict-label"
@@ -2037,9 +2037,9 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
   // 这里只负责落键，写 false 永远放行——strict 是新增的高风险开关，
   // 「批量关掉」必须一步可达，不能反过来要求同一次把 codex_cli_only 也打开。
   // 同时校验可见性（与 openai_responses_flatten_namespaces 同一套路）：勾选后又把目标
-  // 筛选放宽到 apikey，区块会隐藏但勾选状态还在，这个键就会落到看不见它的账号上——
+  // 筛选放宽到非透传账号，区块会隐藏但勾选状态还在，这个键就会落到看不见它的账号上——
   // 正是本变更想避免的那种「后端永远判 false、管理端却看不见」的孤儿键。
-  if (enableOpenAIPassthroughStrict.value && allOpenAIOAuth.value) {
+  if (enableOpenAIPassthroughStrict.value && allOpenAIPassthroughCapable.value) {
     const extra = ensureExtra()
     extra.openai_passthrough_strict = openaiPassthroughStrictEnabled.value
   }
@@ -2293,21 +2293,6 @@ const handleSubmit = async () => {
   if (!hasAnyFieldEnabled) {
     appStore.showError(t('admin.accounts.bulkEdit.noFieldsSelected'))
     return
-  }
-
-  // 字节保真取消的那些兜底，唯一的安全依据就是 codex_cli_only 保证请求来自官方客户端。
-  // 批量编辑看不到每个目标账号的现状，所以要求同一次编辑把两个父开关一并设为开启——
-  // 与 codex_cli_only_allow_app_server 子开关的语义一致。只拦开启方向。
-  if (enableOpenAIPassthroughStrict.value && openaiPassthroughStrictEnabled.value && allOpenAIOAuth.value) {
-    const parentsSatisfied =
-      enableOpenAIPassthrough.value &&
-      openaiPassthroughEnabled.value &&
-      enableCodexCLIOnly.value &&
-      codexCLIOnlyEnabled.value
-    if (!parentsSatisfied) {
-      appStore.showError(t('admin.accounts.openai.oauthPassthroughStrictRequiresCLIOnly'))
-      return
-    }
   }
 
   // base_url 现在也会作用于 Grok OAuth 订阅账号的转发端点；坏值会让请求期

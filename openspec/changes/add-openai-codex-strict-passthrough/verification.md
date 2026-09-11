@@ -243,4 +243,9 @@ is lower than the targeted Go version"）。CI 上是 v2.13，留给 CI 把关�
 | `vue-tsc --noEmit` | 干净 |
 | `golangci-lint` | 本机不可运行，见上 |
 
+**两条已知 flake**（只在 `./...` 全量并行下偶发，单跑与整包重跑均稳定通过）：
+`TestAliyunCaptchaVerifier_TransportError`（`internal/repository`）、
+`TestFilterGrokFreeQuotaAccountsOnlyBlocksExplicitFreeOAuth`（`internal/service`）。
+2026-09-11 各观察到一次；紧接着的全量重跑 58 包 0 失败。遇到时先重跑定性，别当成回归追。
+
 注意统计退出码时别把 `go test` 接管道再读 `$?`——那取到的是管道末端命令的退出码。

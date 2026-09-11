@@ -1029,7 +1029,7 @@ describe('BulkEditAccountModal', () => {
     return mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['oauth'] })
   }
 
-  it('两个父开关同一次一并开启时才写入 openai_passthrough_strict', async () => {
+  it('与自动透传、codex_cli_only 同一次编辑时互不干扰', async () => {
     const wrapper = await mountOpenAIOAuthBulk()
 
     await wrapper.get('#bulk-edit-openai-passthrough-enabled').setValue(true)
@@ -1050,26 +1050,43 @@ describe('BulkEditAccountModal', () => {
     })
   })
 
-  it('父开关没在同一次编辑里开启时拦下保存', async () => {
+  it('不要求同一次编辑开启 codex_cli_only', async () => {
     const wrapper = await mountOpenAIOAuthBulk()
 
-    await wrapper.get('#bulk-edit-openai-passthrough-enabled').setValue(true)
-    await wrapper.get('#bulk-edit-openai-passthrough-toggle').trigger('click')
     await wrapper.get('#bulk-edit-openai-passthrough-strict-enabled').setValue(true)
     await wrapper.get('#bulk-edit-openai-passthrough-strict-toggle').trigger('click')
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
 
-    expect(adminAPI.accounts.bulkUpdate).not.toHaveBeenCalled()
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+      extra: {
+        openai_passthrough_strict: true
+      }
+    })
   })
 
-  // 勾选后又把目标筛选放宽到 apikey：区块会隐藏但勾选状态还在，键不得落到那批账号上。
-  it('目标放宽到非 OAuth 后不再写入 openai_passthrough_strict', async () => {
+  it('apikey 目标同样可以批量开启字节保真', async () => {
+    const wrapper = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['apikey'] })
+
+    await wrapper.get('#bulk-edit-openai-passthrough-strict-enabled').setValue(true)
+    await wrapper.get('#bulk-edit-openai-passthrough-strict-toggle').trigger('click')
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+      extra: {
+        openai_passthrough_strict: true
+      }
+    })
+  })
+
+  // 勾选后又把目标筛选放宽到不支持透传的类型：区块会隐藏但勾选状态还在，键不得落到那批账号上。
+  it('目标放宽到不支持透传的类型后不再写入 openai_passthrough_strict', async () => {
     const wrapper = await mountOpenAIOAuthBulk()
 
     await wrapper.get('#bulk-edit-openai-passthrough-strict-enabled').setValue(true)
     await wrapper.get('#bulk-edit-openai-passthrough-strict-toggle').trigger('click')
-    await wrapper.setProps({ selectedTypes: ['oauth', 'apikey'] })
+    await wrapper.setProps({ selectedTypes: ['oauth', 'service_account'] })
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
 

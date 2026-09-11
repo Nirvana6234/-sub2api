@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -49,19 +50,12 @@ func strictFailoverExtra(strict bool) map[string]any {
 	return extra
 }
 
-// newStrictFailoverService 注入一个恒定「门禁已开且匹配」的 detector：本组用例测的是
-// 跨 attempt 的状态生命周期，不是门禁判定本身（那部分见 *_strict_test.go）。
+// newStrictFailoverService 用**真实**的身份判定：strict 档位由 EvaluateCodexClientIdentity
+// 决定，注入桩只管 codex_cli_only 的执法，两者刻意不共用一个桩。
 func newStrictFailoverService(upstream *httpUpstreamRecorder) *OpenAIGatewayService {
 	return &OpenAIGatewayService{
 		cfg:          &config.Config{},
 		httpUpstream: upstream,
-		codexDetector: &stubCodexRestrictionDetector{
-			result: CodexClientRestrictionDetectionResult{
-				Enabled: true,
-				Matched: true,
-				Reason:  CodexClientRestrictionReasonMatchedUA,
-			},
-		},
 	}
 }
 
@@ -70,6 +64,9 @@ func newStrictFailoverContext(body []byte) *gin.Context {
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Request.Header.Set("User-Agent", "codex_cli_rs/0.98.0 (Windows 10.0.19045; x86_64) unknown")
+	// 默认指纹种子里 `header_prefix: x-codex-` 是 Required：光有官方 UA 过不了指纹门。
+	// 真 Codex 客户端每轮都会带 x-codex-* 头，这里照实模拟。
+	c.Request.Header.Set("x-codex-turn-state", "turn-state-blob")
 	return c
 }
 
@@ -160,7 +157,8 @@ func TestForward_ResetsStrictStateBeforeClientRestrictionRejection(t *testing.T)
 	require.Error(t, err)
 	require.True(t, stagedOpenAIStrictPassthrough(c))
 
-	// 同一个 context 换到一个会被门禁拒掉的账号。
+	// 同一个 context 换到一个会被 codex_cli_only 拒掉的账号（注入执法桩）。
+	// 注意这只影响 403 执法，不影响身份判定——后者始终走真实评估。
 	svc.codexDetector = &stubCodexRestrictionDetector{
 		result: CodexClientRestrictionDetectionResult{
 			Enabled: true,
@@ -200,4 +198,168 @@ func TestWSBridgeContextNeverStagesStrict(t *testing.T) {
 	assert.Empty(t, req.Header.Get("Content-Encoding"), "WS 路径不得触发 strict 的 zstd 出站")
 	assert.Empty(t, req.Header.Get("x-openai-subagent"), "WS 路径应当仍走白名单，strict 增量不得出现")
 	assert.Empty(t, req.Header.Get("x-unknown-noise"))
+}
+
+// --- 用户的实际拓扑：apikey 账号 + 不开 codex_cli_only ---
+
+// TestForward_StrictAppliesToAPIKeyAccountWithoutCodexCLIOnly 锁死本变更 2026-09-11
+// 调整后的核心语义：strict 是**逐请求**判定、与 codex_cli_only **完全独立**的开关。
+//
+// 场景取自真实部署：apikey 账号，base_url 指向另一台 sub2api 中继。那台中继自己也在
+// 判「流量像不像官方 Codex」，所以字节保真在这条链路上比直连 chatgpt.com 更有价值。
+// 账号上没有、也不可能有 codex_cli_only（该开关只对 oauth/setup-token 开放）。
+func TestForward_StrictAppliesToAPIKeyAccountWithoutCodexCLIOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"gpt-5","stream":true,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}]}`)
+	upstream := &httpUpstreamRecorder{err: errors.New("stop after capture")}
+	svc := newStrictFailoverService(upstream)
+	svc.cfg = rawChatCompletionsTestConfig()
+
+	account := &Account{
+		ID:          9501,
+		Name:        "gpt-relay",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-relay",
+			"base_url": "http://relay.example:8080/",
+		},
+		Status:      StatusActive,
+		Schedulable: true,
+		Extra: map[string]any{
+			"openai_passthrough":        true,
+			"openai_passthrough_strict": true,
+			// 刻意不写 codex_cli_only——这正是要证明的那一点
+		},
+	}
+
+	c := newStrictFailoverContext(body)
+	_, err := svc.Forward(context.Background(), c, account, body)
+	require.Error(t, err, "上游桩必然报错，这里只关心出站构造")
+
+	assert.True(t, stagedOpenAIStrictPassthrough(c),
+		"apikey 账号 + 不开 codex_cli_only，只要请求来自 Codex 就该进 strict")
+	mode, reason := opsPassthroughMode(t, c)
+	assert.Equal(t, OpenAIPassthroughModeStrict, mode)
+	assert.Empty(t, reason)
+	require.NotNil(t, upstream.lastReq)
+	assert.Equal(t, "zstd", upstream.lastReq.Header.Get("Content-Encoding"))
+	assert.Equal(t, "http://relay.example:8080/v1/responses", upstream.lastReq.URL.String(),
+		"apikey 走 base_url，不是 chatgpt.com")
+}
+
+// 同一个账号、同一条链路，换一个**不是 Codex** 的客户端：必须回落到普通自动透传
+// 照常服务，不是 403、也不是 strict。这是用户明确要的行为。
+func TestForward_NonCodexClientFallsBackToAuthOnlyPassthrough(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"gpt-5","stream":true,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}]}`)
+	upstream := &httpUpstreamRecorder{err: errors.New("stop after capture")}
+	svc := newStrictFailoverService(upstream)
+	svc.cfg = rawChatCompletionsTestConfig()
+
+	account := &Account{
+		ID:          9502,
+		Name:        "gpt-relay",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-relay",
+			"base_url": "http://relay.example:8080/",
+		},
+		Status:      StatusActive,
+		Schedulable: true,
+		Extra: map[string]any{
+			"openai_passthrough":        true,
+			"openai_passthrough_strict": true,
+		},
+	}
+
+	// 普通 SDK/curl：没有官方 UA，也没有 x-codex-* 指纹。
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("User-Agent", "curl/8.0")
+
+	_, err := svc.Forward(context.Background(), c, account, body)
+	require.Error(t, err, "上游桩报错，不是 403——请求本身必须被照常服务")
+
+	assert.False(t, stagedOpenAIStrictPassthrough(c))
+	mode, reason := opsPassthroughMode(t, c)
+	assert.Equal(t, OpenAIPassthroughModeAuthOnly, mode, "必须回落到普通自动透传")
+	assert.Equal(t, OpenAIStrictPassthroughReasonGateNotMatched, reason)
+	require.NotNil(t, upstream.lastReq)
+	assert.NotEqual(t, "zstd", upstream.lastReq.Header.Get("Content-Encoding"))
+}
+
+// 全局黑名单/版本门等策略对「只开 strict、不开 codex_cli_only」的账号同样要生效。
+// 取策略的条件一旦漏了 strict，这些配置在最常见的用法上就成了摆设。
+func TestEvaluateCodexClientIdentity_HonoursPolicy(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	account := newStrictPassthroughAccount(map[string]any{
+		"openai_passthrough":        true,
+		"openai_passthrough_strict": true,
+	})
+
+	newCtx := func() *gin.Context {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+		c.Request.Header.Set("User-Agent", "codex_cli_rs/0.98.0 (Windows 10.0.19045; x86_64) unknown")
+		c.Request.Header.Set("x-codex-turn-state", "turn-state-blob")
+		return c
+	}
+
+	base := CodexRestrictionPolicy{EngineFingerprintSignals: openai.DefaultEngineFingerprintSignals}
+
+	t.Run("基线放行", func(t *testing.T) {
+		got := EvaluateCodexClientIdentity(newCtx(), account, base, nil)
+		require.True(t, got.Enabled)
+		assert.True(t, got.Matched)
+	})
+
+	t.Run("黑名单命中即拒", func(t *testing.T) {
+		policy := base
+		policy.Blacklist = []openai.AllowedClientEntry{{UAContains: []string{"codex_cli_rs/0.98"}}}
+		got := EvaluateCodexClientIdentity(newCtx(), account, policy, nil)
+		assert.False(t, got.Matched, "黑名单对 strict 路径必须同样生效")
+		assert.Equal(t, CodexClientRestrictionReasonBlacklisted, got.Reason)
+	})
+
+	t.Run("版本下限拦得住", func(t *testing.T) {
+		policy := base
+		policy.MinCodexVersion = "99.0.0"
+		got := EvaluateCodexClientIdentity(newCtx(), account, policy, nil)
+		assert.False(t, got.Matched)
+		assert.Equal(t, CodexClientRestrictionReasonVersionTooLow, got.Reason)
+	})
+
+	t.Run("指纹门拦得住", func(t *testing.T) {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+		c.Request.Header.Set("User-Agent", "codex_cli_rs/0.98.0 (Windows 10.0.19045; x86_64) unknown")
+		// 官方 UA 但没有任何 x-codex-* 头
+		got := EvaluateCodexClientIdentity(c, account, base, nil)
+		assert.False(t, got.Matched)
+		assert.Equal(t, CodexClientRestrictionReasonMissingEngineFingerprint, got.Reason)
+	})
+}
+
+// force_codex_cli 是无条件放行，证明不了来路，因此不得让 strict 生效。
+func TestEvaluateCodexClientIdentity_IgnoresForceCodexCLI(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	account := newStrictPassthroughAccount(map[string]any{
+		"openai_passthrough":        true,
+		"openai_passthrough_strict": true,
+	})
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	c.Request.Header.Set("User-Agent", "curl/8.0")
+
+	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: true}}}
+	got := svc.detectCodexClientIdentity(c, account, nil)
+
+	assert.False(t, got.Matched, "force_codex_cli 只是放行，不能当作「这是 Codex」的证据")
 }

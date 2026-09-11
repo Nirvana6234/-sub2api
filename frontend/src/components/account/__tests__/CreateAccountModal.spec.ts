@@ -573,18 +573,19 @@ describe('CreateAccountModal OpenAI byte-fidelity passthrough', () => {
     wrapper.unmount()
   })
 
-  it('hides the byte-fidelity toggle for API-key accounts', async () => {
-    // API Key 类别看不到 codex_cli_only 那个父门禁，给它一个永远无法满足的开关只会制造困惑。
+  it('offers the byte-fidelity toggle for API-key accounts too', async () => {
+    // 它从属于自动透传，不从属于 codex_cli_only —— 后者只对 oauth-based 开放，
+    // 但 strict 是逐请求降级、与那个开关无关，apikey 账号一样用得上。
     const wrapper = mountModal()
     await selectButtonByText(wrapper, 'OpenAI')
     await selectButtonByText(wrapper, 'API Key')
     await wrapper.get('[data-testid="openai-passthrough-toggle"]').trigger('click')
 
-    expect(wrapper.find(STRICT_TOGGLE).exists()).toBe(false)
+    expect(wrapper.find(STRICT_TOGGLE).exists()).toBe(true)
     wrapper.unmount()
   })
 
-  it('blocks advancing to the OAuth step when codex_cli_only is off', async () => {
+  it('does not block the OAuth step when codex_cli_only is off', async () => {
     const wrapper = await mountOpenAIOAuth()
     await wrapper.get('[data-testid="openai-passthrough-toggle"]').trigger('click')
     await wrapper.get(STRICT_TOGGLE).trigger('click')
@@ -592,9 +593,8 @@ describe('CreateAccountModal OpenAI byte-fidelity passthrough', () => {
     await wrapper.get('form#create-account-form').trigger('submit.prevent')
     await flushPromises()
 
-    // 仍停在 step 1：校验放在 handleSubmit 最前面，早于 OAuth 的跳步分支。
-    expect(wrapper.find(STRICT_TOGGLE).exists()).toBe(true)
-    expect(createAccountMock).not.toHaveBeenCalled()
+    // 进到 step 2：step 1 的开关不再渲染。
+    expect(wrapper.find(STRICT_TOGGLE).exists()).toBe(false)
     wrapper.unmount()
   })
 })
