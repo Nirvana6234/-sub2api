@@ -111,26 +111,15 @@
              information about a session this button starts. -->
         <Border Classes="card">
           <StackPanel>
-            <Grid ColumnDefinitions="*,Auto">
-              <Button Grid.Column="0" Content="{Binding Dashboard.StartCodexLabel}"
-                      Click="StartCodex_OnClick"
-                      IsEnabled="{Binding Dashboard.CanStartCodex}"
-                      Classes="primary"
-                      Classes.installing="{Binding Dashboard.IsInstallingCodex}"
-                      Classes.restart="{Binding Dashboard.RequiresCodexAccountRestart}"
-                      HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
-                      Padding="0,12" FontSize="16" FontWeight="SemiBold"
-                      BorderThickness="0" />
-              <!-- Manual escape hatch: reapplies the relay's ChatGPT config even when
-                   nothing looks broken yet, for the states the automatic poll in
-                   MonitorCodexAsync has not caught (see DashboardViewModel.CanRepairCodexLogin). -->
-              <Button Grid.Column="1" Content="修复登录"
-                      Click="RepairCodexLogin_OnClick"
-                      IsEnabled="{Binding Dashboard.CanRepairCodexLogin}"
-                      ToolTip.Tip="重新写入 ChatGPT 的共飞登录信息"
-                      Margin="8,0,0,0" Padding="10,0" FontSize="12"
-                      Background="Transparent" BorderBrush="#D1D5DB" Foreground="#374151" />
-            </Grid>
+            <Button Content="{Binding Dashboard.StartCodexLabel}"
+                    Click="StartCodex_OnClick"
+                    IsEnabled="{Binding Dashboard.CanStartCodex}"
+                    Classes="primary"
+                    Classes.installing="{Binding Dashboard.IsInstallingCodex}"
+                    Classes.restart="{Binding Dashboard.RequiresCodexAccountRestart}"
+                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                    Padding="0,12" FontSize="16" FontWeight="SemiBold"
+                    BorderThickness="0" />
             <TextBlock Text="{Binding Dashboard.CodexMessage}" TextWrapping="Wrap"
                        Foreground="#6B7280" FontSize="12" Margin="0,8,0,0"
                        IsVisible="{Binding Dashboard.HasCodexMessage}" />
@@ -140,8 +129,22 @@
             <TextBlock Text="保持客户端运行，ChatGPT 才能继续使用共飞额度"
                        Foreground="#9CA3AF" FontSize="11" Margin="0,6,0,0"
                        TextWrapping="Wrap" />
-            <CheckBox Content="随系统启动" IsChecked="{Binding Dashboard.StartWithWindows}"
-                      Margin="0,8,0,0" Foreground="#374151" />
+            <DockPanel Margin="0,8,0,0">
+              <!-- Manual escape hatch: reapplies the relay's ChatGPT config even when
+                   nothing looks broken yet, for the states the automatic poll in
+                   MonitorCodexAsync has not caught (see DashboardViewModel.CanRepairCodexStartup).
+                   Sharing this row with the checkbox rather than the start button keeps it
+                   out of the way of the primary action while still reading as part of this
+                   card, not a footer link. -->
+              <Button DockPanel.Dock="Right" Content="修复 ChatGPT 启动"
+                      Click="RepairCodexStartup_OnClick"
+                      IsEnabled="{Binding Dashboard.CanRepairCodexStartup}"
+                      ToolTip.Tip="重新写入 ChatGPT 的共飞登录信息；如果 ChatGPT 正在运行，会先确认再重启它"
+                      Padding="10,4" FontSize="12"
+                      Background="Transparent" BorderBrush="#D1D5DB" Foreground="#374151" />
+              <CheckBox Content="随系统启动" IsChecked="{Binding Dashboard.StartWithWindows}"
+                        Foreground="#374151" />
+            </DockPanel>
           </StackPanel>
         </Border>
 

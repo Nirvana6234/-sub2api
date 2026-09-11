@@ -373,16 +373,20 @@ internal sealed class FakeCodexStartup : ICodexStartup
 
     public string? LastPreferredModel { get; private set; }
 
+    public bool LastForceNewKey { get; private set; }
+
     public Task<CodexStartupResult> RunAsync(
         long? groupId,
         string apiBaseUrl,
         bool allowRestart = false,
         CancellationToken cancellationToken = default,
-        string? preferredModel = null)
+        string? preferredModel = null,
+        bool forceNewKey = false)
     {
         RunCount++;
         LastAllowRestart = allowRestart;
         LastPreferredModel = preferredModel;
+        LastForceNewKey = forceNewKey;
 
         return Task.FromResult(OnRun?.Invoke(groupId, allowRestart)
             ?? new CodexStartupResult(CodexStartupStatus.Ready, "ChatGPT 已就绪，可以开始对话了。"));
@@ -412,19 +416,6 @@ internal sealed class FakeCodexStartup : ICodexStartup
 
     public Task<bool> CheckInstalledAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult(OnInstalled?.Invoke() ?? IsInstalled);
-
-    /// <summary>Defaults to healthy so existing "Codex is running" tests need no changes.</summary>
-    public bool RoutingIsCurrent { get; set; } = true;
-
-    public Func<string, string?, bool>? OnIsRoutingCurrent { get; set; }
-
-    public string? LastRoutingCheckApiKey { get; private set; }
-
-    public bool IsRoutingCurrent(string apiBaseUrl, string? expectedApiKey = null)
-    {
-        LastRoutingCheckApiKey = expectedApiKey;
-        return OnIsRoutingCurrent?.Invoke(apiBaseUrl, expectedApiKey) ?? RoutingIsCurrent;
-    }
 
     public Task<DateTimeOffset?> RenewLeaseIfDueAsync(CancellationToken cancellationToken = default)
     {

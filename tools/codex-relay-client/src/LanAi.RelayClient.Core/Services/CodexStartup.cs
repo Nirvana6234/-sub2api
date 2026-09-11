@@ -35,14 +35,7 @@ internal sealed record CodexStartupResult(CodexStartupStatus Status, string Mess
 /// <param name="IsInstalled">Whether the official desktop app is present.</param>
 /// <param name="IsRunning">Whether it is up right now.</param>
 /// <param name="LeaseExpiresAt">When the managed lease lapses; null when there is none.</param>
-/// <param name="ManagedApiKey">
-/// The current lease's key value, when the server round-trip that produced this
-/// health snapshot found one. Passed on to <see cref="ICodexStartup.IsRoutingCurrent"/>
-/// so it can check <c>auth.json</c> too, not just <c>config.toml</c>'s provider
-/// selection — an official ChatGPT login can leave the provider section intact and
-/// only replace the key.
-/// </param>
-internal sealed record CodexHealth(bool IsInstalled, bool IsRunning, DateTimeOffset? LeaseExpiresAt, string? ManagedApiKey = null);
+internal sealed record CodexHealth(bool IsInstalled, bool IsRunning, DateTimeOffset? LeaseExpiresAt);
 
 /// <summary>Runs the sequence that gets Codex talking to the relay.</summary>
 /// <remarks>
@@ -51,41 +44,27 @@ internal sealed record CodexHealth(bool IsInstalled, bool IsRunning, DateTimeOff
 /// </remarks>
 internal interface ICodexStartup
 {
+    /// <param name="forceNewKey">
+    /// Skips reusing an existing, unexpired lease and issues a fresh one instead. The
+    /// normal reuse exists so pressing 启动 twice does not litter the key list, but
+    /// that same reuse means a key that is live-but-broken in a way <c>IsSpent</c>
+    /// cannot see (wrong or missing group, revoked from the panel, ...) gets handed
+    /// back forever. Only the manual repair path should set this — a launch that
+    /// isn't trying to fix anything has no reason to churn through keys.
+    /// </param>
     Task<CodexStartupResult> RunAsync(
         long? groupId,
         string apiBaseUrl,
         bool allowRestart = false,
         CancellationToken cancellationToken = default,
-        string? preferredModel = null);
+        string? preferredModel = null,
+        bool forceNewKey = false);
 
     /// <summary>Reports the current state without starting or writing anything.</summary>
     Task<CodexHealth> CheckAsync(CancellationToken cancellationToken = default);
 
     /// <summary>Checks only the local installation state without server traffic.</summary>
     Task<bool> CheckInstalledAsync(CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Whether Codex's on-disk config still points at the relay, judged from
-    /// disk alone — no server call of its own. Always checks <c>config.toml</c>'s
-    /// <c>model_provider</c>/<c>base_url</c>; also checks <c>auth.json</c>'s key
-    /// against <paramref name="expectedApiKey"/> when the caller has one, since an
-    /// official ChatGPT login can leave <c>[model_providers.gongfei]</c> selected
-    /// and only replace the key — a state the provider-only check would call fine.
-    /// </summary>
-    /// <param name="expectedApiKey">
-    /// The current lease's key, typically <see cref="CodexHealth.ManagedApiKey"/>
-    /// from a preceding <see cref="CheckAsync"/>. Omit to check only the provider
-    /// selection when no key is in hand.
-    /// </param>
-    /// <remarks>
-    /// <see cref="CodexRouteGuard"/> already self-heals this while it is
-    /// running, but it only runs once <see cref="RunAsync"/> has completed at
-    /// least once this session — a machine where Codex kept running across a
-    /// stretch this client was closed can have live routing loss the guard
-    /// never saw. This is what lets the dashboard notice on the next check
-    /// and re-enable the button instead of sitting on a stale "已启动".
-    /// </remarks>
-    bool IsRoutingCurrent(string apiBaseUrl, string? expectedApiKey = null);
 
     /// <summary>
     /// Extends the lease when it is close to lapsing (F3.2.3).
@@ -172,7 +151,8 @@ internal sealed class CodexStartup : ICodexStartup
         string apiBaseUrl,
         bool allowRestart = false,
         CancellationToken cancellationToken = default,
-        string? preferredModel = null)
+        string? preferredModel = null,
+        bool forceNewKey = false)
     {
         if (Volatile.Read(ref _releaseRequests) > 0)
         {
@@ -213,7 +193,7 @@ internal sealed class CodexStartup : ICodexStartup
             RelayApiKey key;
             try
             {
-                key = await EnsureLeaseAsync(groupId, cancellationToken).ConfigureAwait(true);
+                key = await EnsureLeaseAsync(groupId, forceNewKey, cancellationToken).ConfigureAwait(true);
             }
             catch (RelayApiException ex)
             {
@@ -322,14 +302,11 @@ internal sealed class CodexStartup : ICodexStartup
         bool running = installed && System.Diagnostics.Process.GetProcessesByName(CodexProcessName).Length > 0;
 
         DateTimeOffset? expiry = null;
-        string? managedApiKey = null;
         try
         {
             string token = await _session.GetAccessTokenAsync(cancellationToken).ConfigureAwait(true);
             IReadOnlyList<RelayApiKey> keys = await _relay.ListApiKeysAsync(token, cancellationToken).ConfigureAwait(true);
-            RelayApiKey? current = _naming.FindCurrent(keys);
-            expiry = current?.ExpiresAt;
-            managedApiKey = current?.Key;
+            expiry = _naming.FindCurrent(keys)?.ExpiresAt;
         }
         catch (RelayApiException ex) when (ex.Failure == RelayFailure.RateLimited)
         {
@@ -342,7 +319,7 @@ internal sealed class CodexStartup : ICodexStartup
             ClientLog.Warning("检查授权状态失败", ex);
         }
 
-        return new CodexHealth(installed, running, expiry, managedApiKey);
+        return new CodexHealth(installed, running, expiry);
     }
 
     public Task<bool> CheckInstalledAsync(CancellationToken cancellationToken = default)
@@ -350,10 +327,6 @@ internal sealed class CodexStartup : ICodexStartup
         cancellationToken.ThrowIfCancellationRequested();
         return Task.FromResult(_launcher.IsInstalled);
     }
-
-    public bool IsRoutingCurrent(string apiBaseUrl, string? expectedApiKey = null) =>
-        !string.IsNullOrWhiteSpace(apiBaseUrl) &&
-        _config.IsRelayRoute(apiBaseUrl, string.IsNullOrWhiteSpace(expectedApiKey) ? null : expectedApiKey);
 
     public async Task<DateTimeOffset?> RenewLeaseIfDueAsync(CancellationToken cancellationToken = default)
     {
@@ -488,22 +461,47 @@ internal sealed class CodexStartup : ICodexStartup
     /// <remarks>
     /// An existing lease is reused rather than replaced, so pressing the button
     /// twice does not litter the user's key list. Only a lease that is missing or
-    /// already spent leads to a new one.
+    /// already spent leads to a new one — unless <paramref name="forceNewKey"/> says
+    /// otherwise: <c>IsSpent</c> only knows about expiry, so a key that is broken in
+    /// some other way (no group bound, revoked from the panel) still looks perfectly
+    /// reusable to it, and the repair path exists precisely for that case.
     /// </remarks>
-    private async Task<RelayApiKey> EnsureLeaseAsync(long? groupId, CancellationToken cancellationToken)
+    private async Task<RelayApiKey> EnsureLeaseAsync(long? groupId, bool forceNewKey, CancellationToken cancellationToken)
     {
         string token = await _session.GetAccessTokenAsync(cancellationToken).ConfigureAwait(true);
 
         IReadOnlyList<RelayApiKey> keys = await _relay.ListApiKeysAsync(token, cancellationToken).ConfigureAwait(true);
         RelayApiKey? existing = _naming.FindCurrent(keys);
 
-        if (existing is not null && !IsSpent(existing))
+        if (!forceNewKey && existing is not null && !IsSpent(existing))
         {
             ClientLog.Info($"复用现有授权 {existing.Id}");
             return existing;
         }
 
-        ClientLog.Info(existing is null ? "签发新授权" : $"授权 {existing.Id} 已过期，重新签发");
+        if (forceNewKey && existing is not null)
+        {
+            // Best-effort: a failed delete must not block the repair itself, since the
+            // new key issued right below is what the user is actually here for. A
+            // duplicate left behind this way is harmless — ManagedKeyNaming.FindCurrent
+            // picks the one with the later expiry, which the fresh key always has — and
+            // it gets swept up as an orphan the next time this installation releases.
+            try
+            {
+                await _relay.DeleteApiKeyAsync(token, existing.Id, cancellationToken).ConfigureAwait(true);
+                ClientLog.Info($"修复：已撤销旧授权 {existing.Id}");
+            }
+            catch (RelayApiException ex)
+            {
+                ClientLog.Warning($"修复：撤销旧授权 {existing.Id} 失败，继续签发新授权", ex);
+            }
+        }
+
+        ClientLog.Info(existing is null
+            ? "签发新授权"
+            : forceNewKey
+            ? $"修复：强制签发新授权替换 {existing.Id}"
+            : $"授权 {existing.Id} 已过期，重新签发");
 
         return await _relay
             .CreateApiKeyAsync(token, _naming.KeyName(), groupId, LeaseDays, cancellationToken)

@@ -157,16 +157,27 @@ public sealed class CodexAppLauncher
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var existing = await _locator
-            .TryGetBrowserAsync(request.Port, cancellationToken)
-            .ConfigureAwait(false);
-        if (existing is not null)
+        // Skipped entirely when the caller is asking for a forced restart: a debug
+        // port left over from a previous session is still just as "already open" as
+        // one from five seconds ago, and attaching to it silently satisfies the
+        // request without ever touching the running process. That turned a
+        // deliberate, user-confirmed "restart ChatGPT now" (the account-switch
+        // restart, and the manual repair button's forced restart) into a no-op
+        // whenever the CDP overlay had already attached earlier — config.toml got
+        // rewritten, but the process that needed to pick it up never did.
+        if (!request.AllowTerminateExisting)
         {
-            return new CodexLaunchResult(
-                CodexLaunchOutcome.AttachedToExisting,
-                request.Port,
-                0,
-                $"已连接到正在运行的实例（{existing.Browser}），未重启应用。");
+            var existing = await _locator
+                .TryGetBrowserAsync(request.Port, cancellationToken)
+                .ConfigureAwait(false);
+            if (existing is not null)
+            {
+                return new CodexLaunchResult(
+                    CodexLaunchOutcome.AttachedToExisting,
+                    request.Port,
+                    0,
+                    $"已连接到正在运行的实例（{existing.Browser}），未重启应用。");
+            }
         }
 
         if (!IsInstalled)
