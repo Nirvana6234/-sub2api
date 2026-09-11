@@ -254,16 +254,44 @@ public partial class DashboardView : UserControl
     }
 
     /// <remarks>
-    /// Same flow as <see cref="StartCodex_OnClick"/>, minus the install branch — the button
-    /// is disabled while <c>Dashboard.CodexNotInstalled</c>, so there is nothing to repair
-    /// yet. Deliberately its own entry point rather than reusing that button's handler:
-    /// this one exists specifically so a user can force a config rewrite even when the
-    /// dashboard has not (yet) flagged anything as broken.
+    /// Deliberately its own entry point rather than reusing <see cref="StartCodex_OnClick"/>'s
+    /// handler: this one exists specifically so a user can force a config rewrite even when
+    /// the dashboard has not (yet) flagged anything as broken. When ChatGPT is already
+    /// running, a plain rewrite would leave the live process holding the old config — it
+    /// does not re-read the file on its own — so this asks first and, once agreed, forces
+    /// the same kill-and-relaunch restart the button's own confirmation flow uses elsewhere.
+    /// It also always forces a fresh key: an unexpired key can still be broken in a way
+    /// the normal reuse check cannot see (missing group, revoked from the panel, ...), and
+    /// reusing it again would just repeat whatever "修复" was supposed to fix.
     /// </remarks>
-    private void RepairCodexLogin_OnClick(object? sender, RoutedEventArgs e) =>
-        _ = _safeAsync?.RunAsync(() => _page is null
-            ? Task.CompletedTask
-            : _page.Dashboard.StartCodexAsync(ConfirmCodexRestartAsync));
+    private void RepairCodexStartup_OnClick(object? sender, RoutedEventArgs e) =>
+        _ = _safeAsync?.RunAsync(RepairCodexStartupAsync);
+
+    private async Task RepairCodexStartupAsync()
+    {
+        if (_page is null)
+        {
+            return;
+        }
+
+        if (!_page.Dashboard.IsCodexRunning)
+        {
+            await _page.Dashboard.StartCodexAsync(ConfirmCodexRestartAsync, forceNewKey: true).ConfigureAwait(true);
+            return;
+        }
+
+        bool confirmed = await ConfirmCodexRestartAsync(
+                "修复 ChatGPT 启动会立即重启 ChatGPT（结束当前进程）。")
+            .ConfigureAwait(true);
+        if (!confirmed)
+        {
+            return;
+        }
+
+        await _page.Dashboard
+            .StartCodexAsync(ConfirmCodexRestartAsync, forceRestart: true, forceNewKey: true)
+            .ConfigureAwait(true);
+    }
 
     /// <remarks>
     /// Restarting discards whatever the user has in flight in Codex, so it is only
