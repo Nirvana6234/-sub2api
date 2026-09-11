@@ -1670,6 +1670,7 @@
           </div>
           <button
             type="button"
+            data-testid="openai-passthrough-toggle"
             @click="openaiPassthroughEnabled = !openaiPassthroughEnabled"
             :class="[
               'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
@@ -1680,6 +1681,36 @@
               :class="[
                 'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
                 openaiPassthroughEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+        <!-- 字节保真：嵌在透传之下，可见范围与透传一致（含 apikey）。
+             它与 codex_cli_only 相互独立——那个开关不是 Codex 就 403，这个只是逐请求降级，
+             所以不能拿 codex_cli_only 的账号类型来限制它。 -->
+        <div
+          v-if="openaiPassthroughEnabled"
+          class="mt-4 flex items-center justify-between border-l-2 border-gray-200 pl-4 dark:border-dark-600"
+        >
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.openai.oauthPassthroughStrict') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.openai.oauthPassthroughStrictDesc') }}
+            </p>
+          </div>
+          <button
+            type="button"
+            data-testid="openai-passthrough-strict-toggle"
+            @click="openaiPassthroughStrictEnabled = !openaiPassthroughStrictEnabled"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              openaiPassthroughStrictEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                openaiPassthroughStrictEnabled ? 'translate-x-5' : 'translate-x-0'
               ]"
             />
           </button>
@@ -3321,6 +3352,7 @@ const customBaseUrl = ref('')
 
 // OpenAI 自动透传开关（OAuth/API Key）
 const openaiPassthroughEnabled = ref(false)
+const openaiPassthroughStrictEnabled = ref(false)
 // OpenAI Codex namespace 工具摊平兼容开关（仅 OAuth），缺省关闭即原样保留
 const openaiFlattenNamespacesEnabled = ref(false)
 const openAILongContextBillingEnabled = ref(false)
@@ -3806,6 +3838,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
 
   // Load OpenAI passthrough toggle (OpenAI OAuth/SetupToken/API Key)
   openaiPassthroughEnabled.value = false
+  openaiPassthroughStrictEnabled.value = false
   openaiFlattenNamespacesEnabled.value = false
   openAILongContextBillingEnabled.value = false
   editPlanType.value = ''
@@ -3824,6 +3857,9 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   webSearchEmulationMode.value = 'default'
   if (newAccount.platform === 'openai' && (newAccount.type === 'oauth' || newAccount.type === 'setup-token' || newAccount.type === 'apikey')) {
     openaiPassthroughEnabled.value = extra?.openai_passthrough === true || extra?.openai_oauth_passthrough === true
+    // 严格模式从属于透传：父开关关着时后端本来就判 false，回显也不该显示成开着
+    openaiPassthroughStrictEnabled.value =
+      openaiPassthroughEnabled.value && extra?.openai_passthrough_strict === true
     openaiFlattenNamespacesEnabled.value =
       newAccount.type === 'oauth' && extra?.openai_responses_flatten_namespaces === true
     const longContextBillingValue = extra?.openai_long_context_billing_enabled
@@ -5273,6 +5309,13 @@ const handleSubmit = async () => {
       } else {
         delete newExtra.openai_passthrough
         delete newExtra.openai_oauth_passthrough
+      }
+      // 严格模式只在透传开启且账号类型支持 codex_cli_only 时落键；其余情况一律删掉，
+      // 免得 extra 里留下一个后端永远判 false、管理端却看不见的孤儿键。
+      if (openaiPassthroughEnabled.value && openaiPassthroughStrictEnabled.value) {
+        newExtra.openai_passthrough_strict = true
+      } else {
+        delete newExtra.openai_passthrough_strict
       }
       // 缺省即保留 namespace，不写空值，避免 extra 里堆积默认项
       if (props.account.type === 'oauth' && openaiFlattenNamespacesEnabled.value) {

@@ -152,7 +152,12 @@ func TestBuildUsageBillingCommand_RoomBudgetUsesRawTokenCost(t *testing.T) {
 func TestBuildUsageBillingCommand_AccountQuotaUsesAccountStatsCost(t *testing.T) {
 	accountStatsCost := 2.5
 	p := &postUsageBillingParams{
-		Cost:                  &CostBreakdown{TotalCost: 1, ActualCost: 1},
+		Cost: &CostBreakdown{TotalCost: 1, ActualCost: 1},
+		// buildUsageBillingCommand 的入口守卫要求 Cost/APIKey/User/Account 四者齐全，
+		// 缺任意一个都返回 nil。本用例只关心 AccountQuotaCost 的换算，但仍须把这四项
+		// 备齐——账号无贡献者标记，不会走到分成分支。
+		User:                  &User{ID: 42},
+		APIKey:                &APIKey{ID: 2},
 		Account:               &Account{ID: 3, Type: AccountTypeOAuth, Extra: map[string]any{"quota_daily_limit": 10.0}},
 		AccountRateMultiplier: 1.2,
 		AccountQuotaCost:      accountStatsCost * 1.2,

@@ -142,6 +142,10 @@ func (r *paymentOrderLifecycleRedeemRepo) Use(_ context.Context, id, userID int6
 	return ErrRedeemCodeNotFound
 }
 
+func (r *paymentOrderLifecycleRedeemRepo) FindAdminAdjustment(context.Context, int64, float64, string) (*RedeemCode, error) {
+	panic("unexpected call")
+}
+
 func (r *paymentOrderLifecycleRedeemRepo) List(context.Context, pagination.PaginationParams) ([]RedeemCode, *pagination.PaginationResult, error) {
 	panic("unexpected call")
 }

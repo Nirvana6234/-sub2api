@@ -1015,6 +1015,11 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		// 走网关报 no available accounts"。
 		"openai_passthrough",
 		"openai_oauth_passthrough",
+		// strict 本身不参与 IsModelSupported，但 IsOpenAIPassthroughStrictEnabled()
+		// 以 IsOpenAIPassthroughEnabled() 为前提，两个键必须同进同出：只投影其中
+		// 一个，落在投影后账号对象上的读取点会静默读到 false —— 不报错，只是开关
+		// 在部分路径上莫名不生效。
+		"openai_passthrough_strict",
 		"codex_fingerprint_mode",
 		"codex_fingerprint_seed",
 		"codex_5h_used_percent",

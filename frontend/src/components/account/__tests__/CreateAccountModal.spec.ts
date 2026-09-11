@@ -545,3 +545,56 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     expect(createOpenAICodexPATMock.mock.calls[0]?.[0]?.extra?.openai_long_context_billing_enabled).toBe(false)
   })
 })
+
+describe('CreateAccountModal OpenAI byte-fidelity passthrough', () => {
+  // 字节保真同时从属于两个父开关：自动透传（嵌套渲染）与 codex_cli_only（保存期硬校验）。
+  // 后端运行期已经是硬约束（不满足就降级），管理端只给软提示的话，
+  // 用户会存出一个「看起来开了、实际没生效」的配置。
+  const STRICT_TOGGLE = '[data-testid="openai-passthrough-strict-toggle"]'
+
+  beforeEach(() => {
+    authIsSimpleMode.value = true
+    createAccountMock.mockReset().mockResolvedValue({ id: 42, platform: 'openai', type: 'oauth' })
+  })
+
+  async function mountOpenAIOAuth() {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await selectButtonByText(wrapper, 'admin.accounts.types.chatgptOauth')
+    return wrapper
+  }
+
+  it('shows the byte-fidelity toggle only after auto passthrough is on', async () => {
+    const wrapper = await mountOpenAIOAuth()
+    expect(wrapper.find(STRICT_TOGGLE).exists()).toBe(false)
+
+    await wrapper.get('[data-testid="openai-passthrough-toggle"]').trigger('click')
+    expect(wrapper.find(STRICT_TOGGLE).exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('offers the byte-fidelity toggle for API-key accounts too', async () => {
+    // 它从属于自动透传，不从属于 codex_cli_only —— 后者只对 oauth-based 开放，
+    // 但 strict 是逐请求降级、与那个开关无关，apikey 账号一样用得上。
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await selectButtonByText(wrapper, 'API Key')
+    await wrapper.get('[data-testid="openai-passthrough-toggle"]').trigger('click')
+
+    expect(wrapper.find(STRICT_TOGGLE).exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('does not block the OAuth step when codex_cli_only is off', async () => {
+    const wrapper = await mountOpenAIOAuth()
+    await wrapper.get('[data-testid="openai-passthrough-toggle"]').trigger('click')
+    await wrapper.get(STRICT_TOGGLE).trigger('click')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('codex-strict')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    // 进到 step 2：step 1 的开关不再渲染。
+    expect(wrapper.find(STRICT_TOGGLE).exists()).toBe(false)
+    wrapper.unmount()
+  })
+})

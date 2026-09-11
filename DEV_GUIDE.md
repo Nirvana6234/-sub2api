@@ -324,6 +324,58 @@ go build -o ..\.local\sub2api-paw-server-next.exe .\cmd\server
 ```
 然后停止旧进程并重新启动后端，再重新加载 `http://127.0.0.1:3101/`。
 
+### 坑 14：OpenAI 字节保真透传"开了但没生效"
+
+**典型现象**：账号上勾了「字节保真模式」，但上游看到的请求和普通自动透传没区别——
+没有 zstd、请求头仍按白名单裁剪。
+
+**先确认一件事：这可能根本不是故障。** strict 是**逐请求**判定的：
+
+- 这条请求判定为官方 Codex 客户端发出 → 走 strict；
+- 不是 → **回落到普通自动透传，照常服务**。
+
+所以同一个账号上，Codex CLI 的请求走 strict、网页/curl/SDK 的请求走 auth_only，
+是设计内的正常行为，不是配置错了。
+
+**判定条件**（与 codex_cli_only **完全独立**，那个开关是"不是 Codex 就 403"，
+这个是"不是 Codex 就降级"，可以单开、也可以都开）：
+
+1. 官方 UA 前缀 / 官方 originator / 全局白名单 / app-server 客户端，四取一；
+2. 官方候选还要过版本门（`codex_cli_only_min/max_version`）；
+3. 再过引擎指纹门。**默认种子只勾了 `header_prefix: x-codex-`，是必需项**——
+   光有官方 UA、不带任何 `x-codex-*` 头，判定不过。
+4. 全局黑名单命中即拒。
+5. `force_codex_cli` **不算数**：那是无条件放行，证明不了来路。
+
+**排查顺序**：
+
+1. 看访问日志（`http request completed`，`component: http.access`）里的 `passthrough_mode`
+   字段：`strict` / `auth_only` / `off`。**2026-09-11 之前这个字段不存在**——
+   `ops_openai_passthrough_mode` 原来只 `c.Set` 进 gin.Context，从没有任何代码把它读出来
+   落地到日志、指标或任何持久化的地方，纯粹写入、没人读。是排查一个真实账号时发现日志里
+   一条相关记录都没有才补上的（`internal/server/middleware/logger.go`）。旧版本二进制
+   上这个字段查不到，不代表 strict 没生效，只代表看不出来。
+2. 不是 `strict` 就看同一条日志的 `strict_degraded_reason` 字段：
+   - `account_strict_disabled` —— 账号没开，或没开父级的自动透传；
+   - `client_gate_not_matched` —— **这条请求不是 Codex 发的**。绝大多数情况就到此为止，
+     属正常。真要让它过，对着上面 1–4 逐条比；
+   - `client_gate_not_evaluated` —— 判定压根没跑，属代码路径缺陷。**只有这一种会打 WARN**
+     （`openai.passthrough_strict_degraded`），该查调用链。
+
+**已知的不生效场景（都是预期行为）**：WebSocket 入站走的是 upgrade 请求自己的
+gin.Context，永不流经 `Forward`，因此 WS 路径上 strict 恒为关闭。
+
+**开启 strict 的部署建议同时收紧引擎指纹门**（全局设置
+`codex_cli_only_engine_fingerprint_signals`，纯配置、不用改代码）：把默认列表里那两条
+`body_path` 信号也设为必需——`client_metadata.x-codex-window-id`、
+`client_metadata.x-codex-installation-id`。默认种子只看头；而 strict 的效果正是把 body
+原样送上去，body 形状才是真正的风险面。头装得像、body 却是个 chat/completions 翻译产物，
+那才会给账号招来上游的注意。
+
+**一条有意接受的残留风险**：判定依据里的 UA / originator 是客户端自报的，可以伪造。
+伪造的后果是该请求的头按黑名单放行、body 原样上送；凭据与身份类头仍然一律剥除。
+2026-09-11 与需求方确认后接受，不是疏漏。
+
 ## 五、常用命令速查
 
 ### 数据库操作

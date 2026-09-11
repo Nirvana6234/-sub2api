@@ -41,6 +41,32 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	canonicalImageIntentBody := body
 
 	restrictionResult := s.detectCodexClientRestriction(c, account, body)
+	// 身份判定与门禁执法是两件事，这里分开做：
+	//
+	//   - restrictionResult 决定要不要 403（只在账号开了 codex_cli_only 时才真判）；
+	//   - identityResult 只回答"这条请求像不像官方 Codex"，供严格透传选档位。
+	//
+	// 不能拿 restrictionResult 兼任身份判定：账号没开 codex_cli_only 时它第一步就
+	// 短路返回 Disabled，压根没看客户端；而 strict 恰恰常在不开 codex_cli_only 的
+	// 账号上使用（那个开关会 403，strict 只降级）。
+	//
+	// 只在账号开了 strict 时才多跑这一次判定，避免给所有流量加无谓开销。
+	// 必须无条件覆写（含未判定的零值）：failover 每个 attempt 重新判定，上一账号的
+	// 结论不得残留（openai_passthrough_strict.go）。
+	identityResult := CodexClientRestrictionDetectionResult{}
+	if account.IsOpenAIPassthroughStrictEnabled() {
+		identityResult = s.detectCodexClientIdentity(c, account, body)
+	}
+	stageCodexClientIdentity(c, identityResult)
+	// strict 判定与 ops 档位一并复位。判定只发生在 forwardOpenAIPassthrough 顶部，
+	// 而 failover 从 strict 账号换到**非透传**账号时那一段根本不执行——上一 attempt
+	// 的 true 会原样残留给出站构造器和 ops 记录。复位放在这里，是因为 Forward 是
+	// 每个 attempt 都必经、且早于任何分叉的唯一入口；套路同下方的
+	// stageCodexFingerprintIDs(c, nil)：先无条件复位，真正的判定随后覆写。
+	stageOpenAIStrictPassthrough(c, false)
+	setOpsOpenAIPassthroughMode(c,
+		OpenAIPassthroughModeForOps(false, account.IsOpenAIPassthroughEnabled()),
+		"")
 	apiKeyID := getAPIKeyIDFromContext(c)
 	logCodexCLIOnlyDetection(ctx, c, account, apiKeyID, restrictionResult, body)
 	if restrictionResult.Enabled && !restrictionResult.Matched {

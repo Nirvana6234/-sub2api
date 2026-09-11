@@ -28,11 +28,27 @@ func newSessionIDUsageLog(sessionID *string) *service.UsageLog {
 	}
 }
 
+const (
+	// usageLogInsertArgCount 是 usageLogInsertArgTypes 的长度。加列时连同下面的
+	// 尾部偏移一起更新——这个断言本来就是为了在加列时变红，强制有人核对
+	// prepareUsageLogInsert().args 与五处 INSERT 列清单是否同步。
+	usageLogInsertArgCount = 68
+
+	// 尾部布局（倒数）：created_at(1)、headroom_savings_usd(2)、
+	// headroom_tokens_saved(3)、native_compaction_v2(4)、session_id(5)。
+	// headroom_* 两列是后加的，加在 native_compaction_v2 与 created_at 之间。
+	sessionIDOffsetFromEnd          = 5
+	nativeCompactionV2OffsetFromEnd = 4
+)
+
+func sessionIDArgIndex() int { return usageLogInsertArgCount - sessionIDOffsetFromEnd }
+
 // TestPrepareUsageLogInsert_SessionIDArgWiring pins the session_id column to the
-// arg slice / arg-type table so the five INSERT column lists stay in sync. session_id
-// is immediately before native_compaction_v2; created_at is always last.
+// arg slice / arg-type table so the five INSERT column lists stay in sync.
+// session_id is immediately before native_compaction_v2; created_at is always last.
 func TestPrepareUsageLogInsert_SessionIDArgWiring(t *testing.T) {
-	require.Len(t, usageLogInsertArgTypes, 66, "arg-type table must include session_id")
+	require.Len(t, usageLogInsertArgTypes, usageLogInsertArgCount,
+		"arg-type table length changed; re-check the tail offsets below and every INSERT column list")
 
 	sessionID := "sess-persisted-123"
 	prepared := prepareUsageLogInsert(newSessionIDUsageLog(&sessionID))
@@ -40,31 +56,34 @@ func TestPrepareUsageLogInsert_SessionIDArgWiring(t *testing.T) {
 	require.Len(t, prepared.args, len(usageLogInsertArgTypes),
 		"prepared args must match the arg-type table length")
 
-	// created_at is last; native_compaction_v2 is penultimate; session_id precedes it.
-	sessionArg := prepared.args[len(prepared.args)-3]
+	sessionArg := prepared.args[sessionIDArgIndex()]
 	ns, ok := sessionArg.(sql.NullString)
 	require.True(t, ok, "session_id arg should be a sql.NullString, got %T", sessionArg)
 	require.True(t, ns.Valid)
 	require.Equal(t, sessionID, ns.String)
 
-	require.Equal(t, "text", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-3],
+	require.Equal(t, "text", usageLogInsertArgTypes[sessionIDArgIndex()],
 		"session_id arg type must be text")
-	require.Equal(t, "boolean", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-2],
+	require.Equal(t, "boolean", usageLogInsertArgTypes[usageLogInsertArgCount-nativeCompactionV2OffsetFromEnd],
 		"native_compaction_v2 arg type must be boolean")
+	require.Equal(t, "timestamptz", usageLogInsertArgTypes[usageLogInsertArgCount-1],
+		"created_at must stay last")
+	require.Equal(t, sessionIDOffsetFromEnd-1, nativeCompactionV2OffsetFromEnd,
+		"session_id must stay immediately before native_compaction_v2")
 }
 
 // TestPrepareUsageLogInsert_SessionIDNullWhenAbsent proves an absent session id is
 // persisted as SQL NULL rather than an empty string.
 func TestPrepareUsageLogInsert_SessionIDNullWhenAbsent(t *testing.T) {
 	prepared := prepareUsageLogInsert(newSessionIDUsageLog(nil))
-	sessionArg := prepared.args[len(prepared.args)-3]
+	sessionArg := prepared.args[sessionIDArgIndex()]
 	ns, ok := sessionArg.(sql.NullString)
 	require.True(t, ok, "session_id arg should be a sql.NullString, got %T", sessionArg)
 	require.False(t, ns.Valid, "absent session id must be NULL, not empty string")
 
 	empty := ""
 	preparedEmpty := prepareUsageLogInsert(newSessionIDUsageLog(&empty))
-	nsEmpty := preparedEmpty.args[len(preparedEmpty.args)-3].(sql.NullString)
+	nsEmpty := preparedEmpty.args[sessionIDArgIndex()].(sql.NullString)
 	require.False(t, nsEmpty.Valid, "empty session id must also be NULL")
 }
 

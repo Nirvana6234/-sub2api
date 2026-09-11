@@ -2276,6 +2276,27 @@ func (a *Account) IsOpenAIPassthroughEnabled() bool {
 	return false
 }
 
+// IsOpenAIPassthroughStrictEnabled 返回 OpenAI 账号是否启用"严格字节保真透传"。
+//
+// 字段：accounts.extra.openai_passthrough_strict。
+//
+// 叠加语义：本开关只在 IsOpenAIPassthroughEnabled() 为 true 时有意义——它取消的
+// 是透传路径上那些为"非官方客户端"兜底的规范化，本身不是一种独立的转发模式。
+//
+// 字段缺失或类型不正确时按 false（关闭）处理：零值必须落在"与今天逐字节一致"
+// 那一侧，否则任何没写过这个键的存量账号都会被静默改变行为。
+//
+// 注意：本方法只回答"账号配置上开没开"。strict 真正生效还要求本次请求确实通过了
+// codex_cli_only 门禁，那个判定在 resolveOpenAIStrictPassthrough——绝不要直接拿
+// 本方法的返回值去决定是否跳过规范化。
+func (a *Account) IsOpenAIPassthroughStrictEnabled() bool {
+	if a == nil || !a.IsOpenAIPassthroughEnabled() || a.Extra == nil {
+		return false
+	}
+	enabled, ok := a.Extra["openai_passthrough_strict"].(bool)
+	return ok && enabled
+}
+
 // IsOpenAIResponsesWebSocketV2Enabled 返回 OpenAI 账号是否开启 Responses WebSocket v2。
 //
 // 分类型新字段：

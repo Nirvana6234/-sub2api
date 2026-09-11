@@ -135,6 +135,14 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	reqStream bool,
 	startTime time.Time,
 ) (*OpenAIForwardResult, error) {
+	// strict 判定每 attempt 做一次：codex_cli_only 是账号级开关，failover 换号后
+	// 结论可能变。判定连同 WARN 日志都只发生在这里，出站构造器读暂存值。
+	strictPassthrough, strictDegradedReason := s.resolveOpenAIStrictPassthrough(ctx, c, account)
+	stageOpenAIStrictPassthrough(c, strictPassthrough)
+	setOpsOpenAIPassthroughMode(c,
+		OpenAIPassthroughModeForOps(strictPassthrough, account.IsOpenAIPassthroughEnabled()),
+		strictDegradedReason)
+
 	requestedModel := reqModel
 	upstreamPassthroughModel := ""
 	if isOpenAIResponsesCompactPath(c) {
@@ -615,24 +623,47 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	// DeepSeek / Kimi 原生 Responses 端点为无状态实现（见 normalizeDeepSeekResponsesRequestBody）。
 	body = normalizeDeepSeekResponsesRequestBody(account, body)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
+	strictPassthrough := stagedOpenAIStrictPassthrough(c)
+
+	// strict：按官方 Codex app-server 的形态 zstd 压缩请求体。
+	// **压缩必须在所有请求体改写之后** —— 到这一行 body 已定稿（归一、身份影射、
+	// 指纹收敛、工具名别名全部发生在 forwardOpenAIPassthrough 里）。
+	outboundBody := body
+	bodyCompressed := false
+	if strictPassthrough {
+		outboundBody, bodyCompressed = compressOpenAIStrictPassthroughBody(body)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(outboundBody))
 	if err != nil {
 		return nil, err
 	}
 	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
 
-	// 透传客户端请求头（安全白名单）。
+	// 透传客户端请求头。非 strict 是闭合白名单（挡住非标准/环境噪声头触发风控）；
+	// strict 是黑名单——门禁成立时客户端的头就是官方那一套，白名单反而在吃掉官方
+	// 确实会发的头（见 openai_passthrough_strict.go 的名单说明）。
 	allowTimeoutHeaders := s.isOpenAIPassthroughTimeoutHeadersAllowed()
 	if c != nil && c.Request != nil {
 		for key, values := range c.Request.Header {
 			lower := strings.ToLower(strings.TrimSpace(key))
-			if !isOpenAIPassthroughAllowedRequestHeader(lower, allowTimeoutHeaders) {
+			forward := isOpenAIPassthroughAllowedRequestHeader(lower, allowTimeoutHeaders)
+			if strictPassthrough {
+				forward = isOpenAIStrictPassthroughForwardableHeader(lower, allowTimeoutHeaders)
+			}
+			if !forward {
 				continue
 			}
 			for _, v := range values {
 				req.Header.Add(key, v)
 			}
 		}
+	}
+
+	// 压缩后才设 Content-Encoding：在头拷贝之后设，客户端同名头已被黑名单挡掉，
+	// 这里是唯一的写入点。Content-Length 由 http 包按 outboundBody 长度自算。
+	if bodyCompressed {
+		req.Header.Set("content-encoding", "zstd")
 	}
 
 	// 客户端回带的 x-codex-turn-state 若已知由其他账号铸造（failover 换号），

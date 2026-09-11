@@ -24,6 +24,14 @@ const (
 	OpsUpstreamLatencyMsKey  = "ops_upstream_latency_ms"
 	OpsResponseLatencyMsKey  = "ops_response_latency_ms"
 	OpsTimeToFirstTokenMsKey = "ops_time_to_first_token_ms"
+	// OpsOpenAIPassthroughModeKey 本次 attempt 的 OpenAI 透传档位：off / auth_only / strict。
+	// OpsOpenAIStrictDegradedReasonKey 账号开了 strict 却没生效时的降级原因（见
+	// openai_passthrough_strict.go）。strict 是个"少做事"的开关，生效与否在请求本身
+	// 上看不出区别，出问题时的现象是"上游 400 而本地一切正常"——没有这两个字段，
+	// 排查只能靠翻账号配置猜；降级原因尤其关键，静默降级会让运维以为 strict 生效了。
+	OpsOpenAIPassthroughModeKey      = "ops_openai_passthrough_mode"
+	OpsOpenAIStrictDegradedReasonKey = "ops_openai_strict_degraded_reason"
+
 	// OpenAI WS 关键观测字段
 	OpsOpenAIWSQueueWaitMsKey = "ops_openai_ws_queue_wait_ms"
 	OpsOpenAIWSConnPickMsKey  = "ops_openai_ws_conn_pick_ms"
@@ -85,6 +93,18 @@ func SetOpsUpstreamModel(c *gin.Context, model string) {
 	if model = strings.TrimSpace(model); model != "" {
 		c.Set(OpsUpstreamModelKey, model)
 	}
+}
+
+// setOpsOpenAIPassthroughMode 记录本 attempt 的透传档位与降级原因。
+//
+// 必须无条件覆写（含空 reason）：failover 从 strict 账号切到普通账号时，上一
+// attempt 的降级原因不得残留下来被当成本次的诊断。
+func setOpsOpenAIPassthroughMode(c *gin.Context, mode string, degradedReason string) {
+	if c == nil {
+		return
+	}
+	c.Set(OpsOpenAIPassthroughModeKey, mode)
+	c.Set(OpsOpenAIStrictDegradedReasonKey, degradedReason)
 }
 
 // ClearOpsUpstreamModel invalidates attempt-scoped model attribution before a
