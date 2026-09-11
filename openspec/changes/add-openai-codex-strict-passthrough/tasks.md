@@ -8,7 +8,7 @@
 
 - [x] 0.1 补四个测试桩缺失的接口方法（两个接口、五个方法），让 `internal/service` 与 `internal/server_test` 能编译。`go vet -tags=unit ./...` 与 `-tags=integration ./...` 均干净（见 verification.md V-0）
 - [x] 0.2 用 `go test -list` 复核三个 pattern 的基线执行数并写回 verification.md（587 / 121 / 279，三条门当前均绿）
-- [ ] 0.2b **清掉编译修好后暴露的既有失败**（V-0 表格）。优先 `internal/service` 那个 nil-pointer panic（`gateway_scheduling.go:1315`）——它中断整包，失败面在修掉它之前不可见
+- [x] 0.2b 清掉编译修好后暴露的既有失败（V-0 表格）。2026-09-11 完成，`go test -tags=unit ./internal/...` 49 包全绿；其中 3 条是生产代码真问题（调度 nil 守卫缺失、Grok 软门漏在粘滞路径、分成比例设置从未被解析）
 - [ ] 0.3 录制 Codex `/v1/responses` 请求体 fixture 到 `internal/service/testdata/`（V-2 步骤 0）
 - [ ] 0.4 生成 `codex_responses_upstream_auth_only.golden.json`（V-12 的 golden 基准，必须在动手改代码之前生成）
 

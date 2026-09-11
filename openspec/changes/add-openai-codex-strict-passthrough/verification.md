@@ -25,18 +25,21 @@
 
 现状：`go vet -tags=unit ./...` 与 `go vet -tags=integration ./...` 均干净。
 
-**但修好编译后暴露出一批既有失败**（与本变更无关，都在编译坏掉期间腐烂的代码里）：
+**修好编译后暴露出一批既有失败，已于 2026-09-11 全部清掉**（分支 `fix/pre-existing-test-failures`，三个提交）。现状：**`go test -tags=unit ./internal/...` 49 个包全绿，退出码 0。**
 
-| 包 | 失败 |
+其中 **3 条是生产代码的真问题**，不是陈旧断言：
+
+| 问题 | 影响 |
 |---|---|
-| `internal/service` | `TestResolveAutoGroupDoesNotOverwriteFailureEventObservedDuringQuery`、`TestGroupIsolation_GroupedKey_ShouldNotScheduleUngroupedAccounts` —— 后者 **panic: nil pointer**，位置 `gateway_scheduling.go:1315`（`applyContributionRoomRouting`）。panic 会中断整包，后面的用例根本没跑 |
-| `internal/handler/admin` | `TestGroupPlatformBinding_AllowedPlatforms`（kimi/zhipu/deepseek 的 create+update 共 6 个子用例）、`TestCompositeRouteTargetPlatform_AllowsCNProviders` |
-| `internal/repository` | `TestPrepareUsageLogInsert_SessionIDArgWiring`、`TestPrepareUsageLogInsert_SessionIDNullWhenAbsent` |
-| `internal/server` | `TestAPIContracts` 多个子用例（响应形状漂移，contract fixture 未更新） |
+| `groupAllowsContributionPool` / `resolveGroupByID` 未守 `s.groupRepo == nil` | 调度热路径 nil deref；同文件 2096/2332 行早有该守卫，这两处漏了 |
+| `OpenAIGatewayService.getSchedulableAccount` 没有 Grok 免费额度软门 | 列表路径会过滤、**粘滞取号不过滤**，越过软门的免费账号只要被会话粘住就能一直复用。Gateway 侧同名方法一直有这道门 |
+| `SystemSettings.AccountShareRewardRate` / `AccountOwnUsageFeeRate` **从未被填充** | 管理端显示 0、计费实际按 80/1 执行；保存设置会把 0 落库，分成比例真的归零。两个 Min 都是 0，clamp 救不回来 |
 
-**这些必须在动 strict 之前清掉**，否则 V-15「全量」永远是红的，本变更没有可信的绿基线可比。尤其 `internal/service` 那个 panic——它让整包的失败清单不可见，先修它才能知道真实的失败面有多大。
+另有 1 处生产缺口属于配置面：group 与 composite-route 的 `oneof` 标签漏了 `kimi`/`zhipu`/`deepseek`，这三个平台在绑定层被拒。
 
-好消息：本变更实际依赖的三条门 **全部是绿的**（2026-09-10 实测）。
+其余是陈旧断言（失败阈值 1 vs 3、缺 `User`/`APIKey`、预热了没人读的那份缓存、插入列表加了两列导致偏移位移）与契约漂移（33 个新增字段，用实际响应重新生成）。
+
+**已知偶发**：`TestAliyunCaptchaVerifier_TransportError` 在一次 `./internal/...` 满载运行中失败过一次，单独跑 5/5、整包 3/3 均绿，与本变更无关，疑似负载敏感。
 
 ---
 
