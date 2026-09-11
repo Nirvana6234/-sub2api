@@ -129,6 +129,8 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyAffiliateRebateFreezeHours:                strconv.Itoa(AffiliateRebateFreezeHoursDefault),
 		SettingKeyAffiliateRebateDurationDays:               strconv.Itoa(AffiliateRebateDurationDaysDefault),
 		SettingKeyAffiliateRebatePerInviteeCap:              strconv.FormatFloat(AffiliateRebatePerInviteeCapDefault, 'f', 2, 64),
+		SettingKeyAccountShareRewardRate:                    strconv.FormatFloat(AccountShareRewardRateDefaultPercent, 'f', 8, 64),
+		SettingKeyAccountOwnUsageFeeRate:                    strconv.FormatFloat(AccountOwnUsageFeeRateDefaultPercent, 'f', 8, 64),
 		SettingKeyDefaultUserRPMLimit:                       "0",
 		SettingKeyDefaultSubscriptions:                      "[]",
 		SettingKeyAuthSourceDefaultEmailBalance:             "0",
@@ -447,6 +449,23 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 		result.AffiliateRebateRate = clampAffiliateRebateRate(rebateRate)
 	} else {
 		result.AffiliateRebateRate = AffiliateRebateRateDefault
+	}
+	// 这两项此前根本没被解析进 SystemSettings —— 字段声明了却没人填，于是展示侧
+	// 恒为零值 0，而计费侧走 GetAccountShareRewardRatePercent（缺失即用默认值）得到
+	// 80 / 1。运维在设置页看到 0、实际按 80 分成；一旦点保存，更新路径会把
+	// previousSettings 里的 0 落库，分成比例真的变成 0。
+	//
+	// 缺失一律回退到默认值，不能像 clamp 那样落到最小值 —— 两个 Min 都是 0，
+	// 那正是上面那个陷阱的来源。
+	if shareRewardRate, err := strconv.ParseFloat(settings[SettingKeyAccountShareRewardRate], 64); err == nil {
+		result.AccountShareRewardRate = clampAccountShareRewardRatePercent(shareRewardRate)
+	} else {
+		result.AccountShareRewardRate = AccountShareRewardRateDefaultPercent
+	}
+	if ownUsageFeeRate, err := strconv.ParseFloat(settings[SettingKeyAccountOwnUsageFeeRate], 64); err == nil {
+		result.AccountOwnUsageFeeRate = clampAccountOwnUsageFeeRatePercent(ownUsageFeeRate)
+	} else {
+		result.AccountOwnUsageFeeRate = AccountOwnUsageFeeRateDefaultPercent
 	}
 	if freezeHours, err := strconv.Atoi(settings[SettingKeyAffiliateRebateFreezeHours]); err == nil && freezeHours >= 0 {
 		if freezeHours > AffiliateRebateFreezeHoursMax {
