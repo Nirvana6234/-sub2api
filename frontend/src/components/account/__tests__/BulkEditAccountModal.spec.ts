@@ -1063,6 +1063,20 @@ describe('BulkEditAccountModal', () => {
     expect(adminAPI.accounts.bulkUpdate).not.toHaveBeenCalled()
   })
 
+  // 勾选后又把目标筛选放宽到 apikey：区块会隐藏但勾选状态还在，键不得落到那批账号上。
+  it('目标放宽到非 OAuth 后不再写入 openai_passthrough_strict', async () => {
+    const wrapper = await mountOpenAIOAuthBulk()
+
+    await wrapper.get('#bulk-edit-openai-passthrough-strict-enabled').setValue(true)
+    await wrapper.get('#bulk-edit-openai-passthrough-strict-toggle').trigger('click')
+    await wrapper.setProps({ selectedTypes: ['oauth', 'apikey'] })
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    const payload = (adminAPI.accounts.bulkUpdate as any).mock.calls[0]?.[1]
+    expect(payload?.extra ?? {}).not.toHaveProperty('openai_passthrough_strict')
+  })
+
   it('关闭 strict 不要求同时开启父开关', async () => {
     const wrapper = await mountOpenAIOAuthBulk()
 

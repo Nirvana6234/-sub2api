@@ -9,8 +9,8 @@
 - [x] 0.1 补四个测试桩缺失的接口方法（两个接口、五个方法），让 `internal/service` 与 `internal/server_test` 能编译。`go vet -tags=unit ./...` 与 `-tags=integration ./...` 均干净（见 verification.md V-0）
 - [x] 0.2 用 `go test -list` 复核三个 pattern 的基线执行数并写回 verification.md（587 / 121 / 279，三条门当前均绿）
 - [x] 0.2b 清掉编译修好后暴露的既有失败（V-0 表格）。2026-09-11 完成，`go test -tags=unit ./internal/...` 49 包全绿；其中 3 条是生产代码真问题（调度 nil 守卫缺失、Grok 软门漏在粘滞路径、分成比例设置从未被解析）
-- [ ] 0.3 录制 Codex `/v1/responses` 请求体 fixture 到 `internal/service/testdata/`（V-2 步骤 0）
-- [ ] 0.4 生成 `codex_responses_upstream_auth_only.golden.json`（V-12 的 golden 基准，必须在动手改代码之前生成）
+- [x] 0.3 录制 Codex `/v1/responses` 请求体 fixture 到 `internal/service/testdata/`（V-2 步骤 0）
+- [x] 0.4 生成 `codex_responses_upstream_auth_only.golden.json`（V-12 的 golden 基准，必须在动手改代码之前生成）
 
 ## 1. 开关与门禁（无行为变化）✅ 已完成
 
@@ -95,7 +95,9 @@
       已有的 `codex_cli_only_allow_app_server` 子开关）；Bulk 是三态语义，给了独立区块。
       可见范围取的是 **codex_cli_only 的账号类型/类别**（oauth / setup-token，Bulk 是
       `allOpenAIOAuth`）而不是透传的——透传对 apikey 账号也可见，而那类账号看不到
-      codex_cli_only，给它一个永远无法满足的开关只会制造困惑
+      codex_cli_only，给它一个永远无法满足的开关只会制造困惑。
+      Bulk 的**写入路径也按同一条件再判一次**（`enableOpenAIPassthroughStrict && allOpenAIOAuth`）：
+      勾选后又把目标筛选放宽到 apikey 时，区块会隐藏但勾选状态还在，只靠 `v-if` 挡不住
 - [x] 5.2 保存期硬校验（`appStore.showError` + `return`，不是 toast 警告）。
       Create 放在 `handleSubmit` 最前面，早于 OAuth 的跳步分支——两个开关都在 step 1，
       只有堵在那里才能同时覆盖直连创建和「先跳 step 2 再回来」两条路径。

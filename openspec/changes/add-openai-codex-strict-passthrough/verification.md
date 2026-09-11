@@ -206,6 +206,20 @@ cd backend && go test -tags=unit ./internal/service -run 'CodexOAuthTransform|Fi
 
 **判据**：本变更的 Non-goals 明确不碰 WS。「不碰」需要一条会因为碰了而变红的用例，而不是一条无论如何都绿的用例。
 
+**2026-09-11 结论：已覆盖，但根因比预想的更硬。**
+`TestWSBridgeContextNeverStagesStrict`（`openai_passthrough_strict_failover_test.go`）：
+未暂存判定的 context + 开着 strict 的账号，出站必须落在 auth_only（无 zstd、无 strict 头增量）。
+
+上面「顺带断言 `c.Set("openai_passthrough", true)`」那句的担心是多余的——
+`resolveOpenAIStrictPassthrough` 从来不读那个键。WS 惰性的真正依据是：
+WS 用的是 **upgrade 请求自己的 `*gin.Context`**（`openai_gateway_handler.go:3020`
+→ `ProxyResponsesWebSocketFromClient`），它永不流经 `Forward`，所以那条路径读到的
+永远是「没暂存」，`stagedOpenAIStrictPassthrough` 的 fail-closed 语义直接兜住。
+这是结构性的，不是巧合。
+
+同一文件另有三条 failover 用例锁死跨 attempt 的状态生命周期（对应 tasks §4），
+其中两条在移除 `Forward` 顶部的复位后实测变红。
+
 ### V-15 全量
 
 ```
