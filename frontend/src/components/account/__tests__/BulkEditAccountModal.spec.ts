@@ -1018,4 +1018,63 @@ describe('BulkEditAccountModal', () => {
       }
     })
   })
+
+  // --- OpenAI 字节保真（openai_passthrough_strict）---
+  //
+  // 批量编辑看不到每个目标账号的现状，所以开启方向要求同一次编辑把两个父开关
+  // （自动透传 + codex_cli_only）一并设为开启；关闭方向永远放行——strict 是高风险
+  // 新开关，「批量关掉」必须一步可达，不能反过来要求同一次把 codex_cli_only 打开。
+
+  async function mountOpenAIOAuthBulk() {
+    return mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['oauth'] })
+  }
+
+  it('两个父开关同一次一并开启时才写入 openai_passthrough_strict', async () => {
+    const wrapper = await mountOpenAIOAuthBulk()
+
+    await wrapper.get('#bulk-edit-openai-passthrough-enabled').setValue(true)
+    await wrapper.get('#bulk-edit-openai-passthrough-toggle').trigger('click')
+    await wrapper.get('#bulk-edit-openai-codex-cli-only-enabled').setValue(true)
+    await wrapper.get('#bulk-edit-openai-codex-cli-only-toggle').trigger('click')
+    await wrapper.get('#bulk-edit-openai-passthrough-strict-enabled').setValue(true)
+    await wrapper.get('#bulk-edit-openai-passthrough-strict-toggle').trigger('click')
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+      extra: {
+        openai_passthrough: true,
+        codex_cli_only: true,
+        openai_passthrough_strict: true
+      }
+    })
+  })
+
+  it('父开关没在同一次编辑里开启时拦下保存', async () => {
+    const wrapper = await mountOpenAIOAuthBulk()
+
+    await wrapper.get('#bulk-edit-openai-passthrough-enabled').setValue(true)
+    await wrapper.get('#bulk-edit-openai-passthrough-toggle').trigger('click')
+    await wrapper.get('#bulk-edit-openai-passthrough-strict-enabled').setValue(true)
+    await wrapper.get('#bulk-edit-openai-passthrough-strict-toggle').trigger('click')
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(adminAPI.accounts.bulkUpdate).not.toHaveBeenCalled()
+  })
+
+  it('关闭 strict 不要求同时开启父开关', async () => {
+    const wrapper = await mountOpenAIOAuthBulk()
+
+    // 只勾「编辑该项」、开关保持关闭 = 批量关掉 strict。回滚必须一步可达。
+    await wrapper.get('#bulk-edit-openai-passthrough-strict-enabled').setValue(true)
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+      extra: {
+        openai_passthrough_strict: false
+      }
+    })
+  })
 })

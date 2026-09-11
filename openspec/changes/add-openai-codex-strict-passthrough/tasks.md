@@ -89,14 +89,29 @@
 
 验证：`go build ./...` 干净；新增 4 个用例全绿，其中 2 个在移除 `Forward` 顶部复位后变红。
 
-## 5. 管理端与文档
+## 5. 管理端与文档 ✅ 已完成
 
-- [ ] 5.1 三个 modal 增加嵌套开关（`CreateAccountModal.vue` / `EditAccountModal.vue` / `BulkEditAccountModal.vue`）
-- [ ] 5.2 保存期硬校验：strict 需要 codex_cli_only，否则阻止保存
-- [ ] 5.3 文案定稿，明确「只给官方 Codex 用的字节保真模式」
-- [ ] 5.4 Vitest 覆盖三个 modal 的开关联动与校验分支
-- [ ] 5.5 在 `DEV_GUIDE.md` 补一条：strict 排查从 `passthrough_mode` 字段看起
-- [ ] 5.6 建议部署文档记录 §1.3 的指纹门配置（勾上两条 body_path 信号）
+- [x] 5.1 三个 modal 增加开关。Create/Edit 用嵌套渲染（`v-if` 挂在透传开关下，样式沿用
+      已有的 `codex_cli_only_allow_app_server` 子开关）；Bulk 是三态语义，给了独立区块。
+      可见范围取的是 **codex_cli_only 的账号类型/类别**（oauth / setup-token，Bulk 是
+      `allOpenAIOAuth`）而不是透传的——透传对 apikey 账号也可见，而那类账号看不到
+      codex_cli_only，给它一个永远无法满足的开关只会制造困惑
+- [x] 5.2 保存期硬校验（`appStore.showError` + `return`，不是 toast 警告）。
+      Create 放在 `handleSubmit` 最前面，早于 OAuth 的跳步分支——两个开关都在 step 1，
+      只有堵在那里才能同时覆盖直连创建和「先跳 step 2 再回来」两条路径。
+      Bulk 的语义与 app-server 子开关**有一处刻意分歧**：只拦开启方向，关闭方向永远放行。
+      strict 是高风险新开关，「批量关掉」必须一步可达，照搬 app-server 的写法会变成
+      「关 strict 要先把 codex_cli_only 打开」，那不成立
+- [x] 5.3 文案：中英各三条（`oauthPassthroughStrict` / `Desc` / `RequiresCLIOnly`）。
+      措辞明确否掉「更快的透传」这个误读，并写明计费/并发/审计/身份影射/turn-state 不变
+- [x] 5.4 Vitest：Edit 5 条、Create 3 条、Bulk 3 条。Create 那条拦截用例实测在移除校验后变红；
+      Edit 的「拦下保存」与「正常落键」是同一套 setup，互为对照，不会双双空过
+- [x] 5.5 `DEV_GUIDE.md` 新增「坑 14」：从 `ops_openai_passthrough_mode` 看起，
+      五种 `strict_degraded_reason` 逐条给出对应的配置问题
+- [x] 5.6 §1.3 的指纹门建议并入了同一节。**本仓库没有部署/运维文档**（docs/ 下全是
+      功能文档，唯一提到 codex_cli_only 的就是 DEV_GUIDE），为这一条新开一个文件不划算
+
+验证：`vue-tsc --noEmit` 干净；`eslint` 改动文件干净；全量 `vitest run` 279 文件 / 2083 用例全绿。
 
 ## 6. 灰度
 

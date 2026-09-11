@@ -2975,6 +2975,7 @@
           </div>
           <button
             type="button"
+            data-testid="openai-passthrough-toggle"
             @click="openaiPassthroughEnabled = !openaiPassthroughEnabled"
             :class="[
               'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
@@ -2985,6 +2986,35 @@
               :class="[
                 'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
                 openaiPassthroughEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+        <!-- 字节保真：嵌在透传之下。可见范围取 codex_cli_only 的账号类别（oauth-based）——
+             其他类别看不到那个父门禁，给它一个永远无法满足的开关只会制造困惑。 -->
+        <div
+          v-if="openaiPassthroughEnabled && accountCategory === 'oauth-based'"
+          class="mt-4 flex items-center justify-between border-l-2 border-gray-200 pl-4 dark:border-dark-600"
+        >
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.openai.oauthPassthroughStrict') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.openai.oauthPassthroughStrictDesc') }}
+            </p>
+          </div>
+          <button
+            type="button"
+            data-testid="openai-passthrough-strict-toggle"
+            @click="openaiPassthroughStrictEnabled = !openaiPassthroughStrictEnabled"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              openaiPassthroughStrictEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                openaiPassthroughStrictEnabled ? 'translate-x-5' : 'translate-x-0'
               ]"
             />
           </button>
@@ -4292,6 +4322,7 @@ const applyGrokOAuthUpstreamConfig = (credentials: Record<string, unknown>) => {
 const interceptWarmupRequests = ref(false)
 const autoPauseOnExpired = ref(true)
 const openaiPassthroughEnabled = ref(false)
+const openaiPassthroughStrictEnabled = ref(false)
 // OpenAI Codex namespace 工具摊平兼容开关（仅 OAuth），缺省关闭即原样保留
 const openaiFlattenNamespacesEnabled = ref(false)
 const openAILongContextBillingEnabled = ref(false)
@@ -4760,6 +4791,7 @@ watch(
     }
     if (newPlatform !== 'openai') {
       openaiPassthroughEnabled.value = false
+      openaiPassthroughStrictEnabled.value = false
       openaiFlattenNamespacesEnabled.value = false
       openAIEndpointCapabilities.value = ['chat_completions', 'embeddings']
       openaiOAuthResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
@@ -5294,6 +5326,17 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
     delete extra.openai_passthrough
     delete extra.openai_oauth_passthrough
   }
+  // 严格模式只在透传开启且账号类别支持 codex_cli_only 时落键；其余情况一律删掉，
+  // 免得 extra 里留下一个后端永远判 false、管理端却看不见的孤儿键。
+  if (
+    openaiPassthroughEnabled.value &&
+    openaiPassthroughStrictEnabled.value &&
+    accountCategory.value === 'oauth-based'
+  ) {
+    extra.openai_passthrough_strict = true
+  } else {
+    delete extra.openai_passthrough_strict
+  }
   // 缺省即保留 namespace，不写空值，避免 extra 里堆积默认项
   if (form.type === 'oauth' && openaiFlattenNamespacesEnabled.value) {
     extra.openai_responses_flatten_namespaces = true
@@ -5472,6 +5515,19 @@ const handleVertexServiceAccountDrop = async (event: DragEvent) => {
 
 const handleSubmit = async () => {
   if (!validateCustomHeaders()) return
+
+  // 字节保真取消的那些兜底，唯一的安全依据就是 codex_cli_only 保证请求来自官方客户端。
+  // 放在最前面：OAuth 是两步流程，两个开关都在 step 1，堵在这里才能同时覆盖直连创建
+  // 和「先跳 step 2 再回来创建」两条路径。
+  if (
+    openaiPassthroughStrictEnabled.value &&
+    openaiPassthroughEnabled.value &&
+    accountCategory.value === 'oauth-based' &&
+    !codexCLIOnlyEnabled.value
+  ) {
+    appStore.showError(t('admin.accounts.openai.oauthPassthroughStrictRequiresCLIOnly'))
+    return
+  }
 
   // For OAuth-based type, handle OAuth flow (goes to step 2)
   if (isOAuthFlow.value) {

@@ -545,3 +545,56 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     expect(createOpenAICodexPATMock.mock.calls[0]?.[0]?.extra?.openai_long_context_billing_enabled).toBe(false)
   })
 })
+
+describe('CreateAccountModal OpenAI byte-fidelity passthrough', () => {
+  // 字节保真同时从属于两个父开关：自动透传（嵌套渲染）与 codex_cli_only（保存期硬校验）。
+  // 后端运行期已经是硬约束（不满足就降级），管理端只给软提示的话，
+  // 用户会存出一个「看起来开了、实际没生效」的配置。
+  const STRICT_TOGGLE = '[data-testid="openai-passthrough-strict-toggle"]'
+
+  beforeEach(() => {
+    authIsSimpleMode.value = true
+    createAccountMock.mockReset().mockResolvedValue({ id: 42, platform: 'openai', type: 'oauth' })
+  })
+
+  async function mountOpenAIOAuth() {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await selectButtonByText(wrapper, 'admin.accounts.types.chatgptOauth')
+    return wrapper
+  }
+
+  it('shows the byte-fidelity toggle only after auto passthrough is on', async () => {
+    const wrapper = await mountOpenAIOAuth()
+    expect(wrapper.find(STRICT_TOGGLE).exists()).toBe(false)
+
+    await wrapper.get('[data-testid="openai-passthrough-toggle"]').trigger('click')
+    expect(wrapper.find(STRICT_TOGGLE).exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('hides the byte-fidelity toggle for API-key accounts', async () => {
+    // API Key 类别看不到 codex_cli_only 那个父门禁，给它一个永远无法满足的开关只会制造困惑。
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await selectButtonByText(wrapper, 'API Key')
+    await wrapper.get('[data-testid="openai-passthrough-toggle"]').trigger('click')
+
+    expect(wrapper.find(STRICT_TOGGLE).exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('blocks advancing to the OAuth step when codex_cli_only is off', async () => {
+    const wrapper = await mountOpenAIOAuth()
+    await wrapper.get('[data-testid="openai-passthrough-toggle"]').trigger('click')
+    await wrapper.get(STRICT_TOGGLE).trigger('click')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('codex-strict')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    // 仍停在 step 1：校验放在 handleSubmit 最前面，早于 OAuth 的跳步分支。
+    expect(wrapper.find(STRICT_TOGGLE).exists()).toBe(true)
+    expect(createAccountMock).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+})

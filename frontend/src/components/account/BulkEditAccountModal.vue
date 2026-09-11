@@ -82,6 +82,52 @@
         </div>
       </div>
 
+      <!-- OpenAI 字节保真（仅 OAuth；从属于透传 + codex_cli_only 两个父开关） -->
+      <div v-if="allOpenAIOAuth" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+        <div class="mb-3 flex items-center justify-between">
+          <label
+            id="bulk-edit-openai-passthrough-strict-label"
+            class="input-label mb-0"
+            for="bulk-edit-openai-passthrough-strict-enabled"
+          >
+            {{ t('admin.accounts.openai.oauthPassthroughStrict') }}
+          </label>
+          <input
+            v-model="enableOpenAIPassthroughStrict"
+            id="bulk-edit-openai-passthrough-strict-enabled"
+            type="checkbox"
+            aria-controls="bulk-edit-openai-passthrough-strict"
+            class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+          />
+        </div>
+        <div
+          id="bulk-edit-openai-passthrough-strict"
+          :class="!enableOpenAIPassthroughStrict && 'pointer-events-none opacity-50'"
+          role="group"
+          aria-labelledby="bulk-edit-openai-passthrough-strict-label"
+        >
+          <p class="mb-3 text-xs text-gray-500 dark:text-gray-400">
+            {{ t('admin.accounts.openai.oauthPassthroughStrictDesc') }}
+          </p>
+          <button
+            id="bulk-edit-openai-passthrough-strict-toggle"
+            type="button"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              openaiPassthroughStrictEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+            @click="openaiPassthroughStrictEnabled = !openaiPassthroughStrictEnabled"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                openaiPassthroughStrictEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+      </div>
+
       <!-- OpenAI Codex namespace 工具摊平（兼容开关，仅 OAuth） -->
       <div
         v-if="allOpenAIOAuthOnly"
@@ -1694,6 +1740,8 @@ const rateMultiplier = ref(1)
 const status = ref<'active' | 'inactive'>('active')
 const groupIds = ref<number[]>([])
 const openaiPassthroughEnabled = ref(false)
+const enableOpenAIPassthroughStrict = ref(false)
+const openaiPassthroughStrictEnabled = ref(false)
 // Codex namespace 工具摊平兼容开关（仅 OAuth），缺省关闭即原样保留
 const openaiFlattenNamespacesEnabled = ref(false)
 const openAILongContextBillingEnabled = ref(false)
@@ -1984,6 +2032,15 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
     }
   }
 
+  // 严格模式从属于透传 + codex_cli_only 两个父开关。开启方向的父开关检查在
+  // handleSubmit 里硬拦（静默丢弃恰恰是设计里要避免的「看起来开了、实际没生效」）；
+  // 这里只负责落键，写 false 永远放行——strict 是新增的高风险开关，
+  // 「批量关掉」必须一步可达，不能反过来要求同一次把 codex_cli_only 也打开。
+  if (enableOpenAIPassthroughStrict.value) {
+    const extra = ensureExtra()
+    extra.openai_passthrough_strict = openaiPassthroughStrictEnabled.value
+  }
+
   // 同时校验可见性：勾选后又改了目标筛选条件时，不应把该键写到非 OAuth 账号上
   if (enableOpenAIFlattenNamespaces.value && allOpenAIOAuthOnly.value) {
     const extra = ensureExtra()
@@ -2203,6 +2260,7 @@ const handleSubmit = async () => {
   const hasAnyFieldEnabled =
     enableBaseUrl.value ||
     enableOpenAIPassthrough.value ||
+    enableOpenAIPassthroughStrict.value ||
     enableOpenAIFlattenNamespaces.value ||
     (enableOpenAILongContextBilling.value && allOpenAIPassthroughCapable.value) ||
     (enableOpenAIEndpointCapabilities.value && allOpenAIAPIKey.value) ||
@@ -2232,6 +2290,21 @@ const handleSubmit = async () => {
   if (!hasAnyFieldEnabled) {
     appStore.showError(t('admin.accounts.bulkEdit.noFieldsSelected'))
     return
+  }
+
+  // 字节保真取消的那些兜底，唯一的安全依据就是 codex_cli_only 保证请求来自官方客户端。
+  // 批量编辑看不到每个目标账号的现状，所以要求同一次编辑把两个父开关一并设为开启——
+  // 与 codex_cli_only_allow_app_server 子开关的语义一致。只拦开启方向。
+  if (enableOpenAIPassthroughStrict.value && openaiPassthroughStrictEnabled.value) {
+    const parentsSatisfied =
+      enableOpenAIPassthrough.value &&
+      openaiPassthroughEnabled.value &&
+      enableCodexCLIOnly.value &&
+      codexCLIOnlyEnabled.value
+    if (!parentsSatisfied) {
+      appStore.showError(t('admin.accounts.openai.oauthPassthroughStrictRequiresCLIOnly'))
+      return
+    }
   }
 
   // base_url 现在也会作用于 Grok OAuth 订阅账号的转发端点；坏值会让请求期

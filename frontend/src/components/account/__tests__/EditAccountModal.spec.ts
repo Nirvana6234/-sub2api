@@ -1543,4 +1543,106 @@ describe('EditAccountModal OpenAI 自动使用重置卡', () => {
     expect(updateAccountMock).not.toHaveBeenCalled()
     wrapper.unmount()
   })
+
+  // --- OpenAI 字节保真（openai_passthrough_strict）---
+  //
+  // 这个开关同时从属于两个父开关：自动透传（嵌套渲染）与 codex_cli_only（保存期硬校验）。
+  // 后端在运行期已经是硬约束——不满足就降级成 auth_only 并打 WARN；管理端如果只给软提示，
+  // 用户会存出一个「看起来开了、实际没生效」的配置。
+
+  function buildOpenAIOAuthAccount(extra: Record<string, unknown> = {}) {
+    return {
+      ...buildAccount(),
+      id: 91,
+      name: 'OpenAI OAuth',
+      type: 'oauth',
+      credentials: { access_token: 'at', refresh_token: 'rt' },
+      extra
+    } as any
+  }
+
+  const STRICT_TOGGLE = '[data-testid="openai-passthrough-strict-toggle"]'
+
+  it('renders the byte-fidelity toggle only while auto passthrough is on', async () => {
+    const wrapper = mountModal(buildOpenAIOAuthAccount({ codex_cli_only: true }))
+    await flushPromises()
+    expect(wrapper.find(STRICT_TOGGLE).exists()).toBe(false)
+
+    // 打开父开关后才出现
+    await wrapper.get('[data-testid="openai-passthrough-toggle"]').trigger('click')
+    expect(wrapper.find(STRICT_TOGGLE).exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('does not echo a stored strict flag back while passthrough is off', async () => {
+    // 后端对这种 extra 组合本来就判 false（strict 依赖 passthrough）。
+    // 回显成「开着」会让管理员以为它生效了。
+    const wrapper = mountModal(
+      buildOpenAIOAuthAccount({ openai_passthrough_strict: true, codex_cli_only: true })
+    )
+    await flushPromises()
+    await wrapper.get('[data-testid="openai-passthrough-toggle"]').trigger('click')
+
+    const toggle = wrapper.get(STRICT_TOGGLE)
+    expect(toggle.classes()).not.toContain('bg-primary-600')
+    wrapper.unmount()
+  })
+
+  it('blocks saving when byte-fidelity is on without codex_cli_only', async () => {
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+
+    const wrapper = mountModal(buildOpenAIOAuthAccount({ openai_passthrough: true }))
+    await flushPromises()
+    await wrapper.get(STRICT_TOGGLE).trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(updateAccountMock).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('persists the strict flag once both parent switches are on', async () => {
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    const account = buildOpenAIOAuthAccount({ openai_passthrough: true, codex_cli_only: true })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    await flushPromises()
+    await wrapper.get(STRICT_TOGGLE).trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    const extra = updateAccountMock.mock.calls[0]?.[1]?.extra as Record<string, unknown>
+    expect(extra.openai_passthrough_strict).toBe(true)
+    expect(extra.openai_passthrough).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('drops the strict key when auto passthrough is switched off', async () => {
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    const account = buildOpenAIOAuthAccount({
+      openai_passthrough: true,
+      openai_passthrough_strict: true,
+      codex_cli_only: true
+    })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    await flushPromises()
+    await wrapper.get('[data-testid="openai-passthrough-toggle"]').trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    const extra = updateAccountMock.mock.calls[0]?.[1]?.extra as Record<string, unknown>
+    expect(extra).not.toHaveProperty('openai_passthrough_strict')
+    wrapper.unmount()
+  })
 })

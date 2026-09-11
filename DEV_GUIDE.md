@@ -324,6 +324,42 @@ go build -o ..\.local\sub2api-paw-server-next.exe .\cmd\server
 ```
 然后停止旧进程并重新启动后端，再重新加载 `http://127.0.0.1:3101/`。
 
+### 坑 14：OpenAI 字节保真透传"开了但没生效"
+
+**典型现象**：账号上勾了「字节保真模式（仅官方 Codex）」，但上游看到的请求和普通自动透传
+没区别——没有 zstd、请求头仍按白名单裁剪。
+
+**根因**：strict 是**运行期判定**，不是"存了就生效"。三个条件缺一不可：
+
+1. 账号开了自动透传（`extra.openai_passthrough`）；
+2. 账号开了「仅允许 Codex 官方客户端」（`extra.codex_cli_only`）；
+3. **这一条请求**真的过了那道门禁，且不是被 `force_codex_cli` 旁路放行的。
+
+第 3 条是重点：strict 取消的那些形状兜底，唯一的安全依据就是"请求确实来自官方 Codex
+客户端"。判定缺席一律 fail-closed 回落到 auth_only。全局 `force_codex_cli` 开着时，
+门禁对所有客户端放行，这个依据就不成立了——所以 strict 在那种配置下永远不生效。
+
+**排查顺序**：
+
+1. 先看 ops 记录的 `ops_openai_passthrough_mode`：`strict` / `auth_only` / `off`；
+2. 不是 `strict` 就看 `ops_openai_strict_degraded_reason`：
+   - `account_strict_disabled` —— 账号没开，或没开父级的自动透传；
+   - `codex_cli_only_disabled` —— 账号没开 codex_cli_only；
+   - `force_codex_cli_enabled` —— 全局旁路开着，见上；
+   - `client_gate_not_matched` —— 这个客户端没过门禁（UA/originator/版本/引擎指纹）；
+   - `client_gate_not_evaluated` —— 判定没 stage 就被读了，属于代码路径问题，该查调用链；
+3. 同时有 WARN 日志 `openai.passthrough_strict_degraded`，带 account_id / account_name / reason。
+
+**已知的不生效场景（都是预期行为）**：WebSocket 入站走的是 upgrade 请求自己的
+gin.Context，永不流经 `Forward`，因此 WS 路径上 strict 恒为关闭。
+
+**开启 strict 的部署建议同时收紧引擎指纹门**（全局设置
+`codex_cli_only_engine_fingerprint_signals`，纯配置、不用改代码）：把默认列表里那两条
+`body_path` 信号也设为必需——`client_metadata.x-codex-window-id`、
+`client_metadata.x-codex-installation-id`。默认种子只勾了 `header_prefix: x-codex-`，
+**只看头**；而 strict 的效果正是把 body 原样送上去，body 形状才是真正的风险面。头装得像、
+body 却是个 chat/completions 翻译产物，那才会给账号招来上游的注意。
+
 ## 五、常用命令速查
 
 ### 数据库操作
