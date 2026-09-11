@@ -38,8 +38,6 @@
 > 这层保险。用户 2026-09-11 拍板先做 §3+§4，本阶段押后。
 
 - [ ] 2.1 `normalizeOpenAIPassthroughOAuthBody` 增加 `strict bool` 参数；strict 时跳过 `store` 的强制写入
-
-- [ ] 2.1 `normalizeOpenAIPassthroughOAuthBody` 增加 `strict bool` 参数；strict 时跳过 `store` 的强制写入
 - [ ] 2.2 strict 时跳过 `openAIChatGPTInternalUnsupportedFields` 的 8 个字段删除
 - [ ] 2.3 strict 时跳过 `input` 归一
 - [ ] 2.4 strict 时跳过 `defaultCodexSynthInstructions` 注入与 `detectOpenAIPassthroughInstructionsRejectReason` 的 403
@@ -64,15 +62,32 @@
 
 验证：`go build ./...`、`go vet -tags=unit ./...`、`go vet -tags=integration ./...` 干净；改动文件 gofmt 干净；三条回归门 614 / 121 / 279 全绿；golden 未变（非 strict 出站字节未动）。
 
-## 4. failover 与可观测性
+## 4. failover 与可观测性 ✅ 已完成
 
-- [ ] 4.1 `openAIPassthroughFailoverState` 增加 `strictSeen`，`deriveOpenAIForwardAttemptBody` 处理 strict→非 strict 的降级派生
-- [ ] 4.2 确认每 attempt 从当前账号重新判定 strict，不复用上一 attempt 的 body
-- [ ] 4.3 ops 记录新增 `passthrough_mode` 与 `strict_degraded_reason`
-- [ ] 4.4 单测：strict 账号首选失败 → 换到非 strict 账号，第二次 attempt 的 body 走完整规范化
-- [ ] 4.5 单测：非 strict → strict 方向同样正确（canonical body 未被上一 attempt 污染）
-- [ ] 4.6 断言 strict 在 WS 路径上惰性：`openai_ws_http_bridge.go:539` 的 `c.Set("openai_passthrough", true)` 不得让 `resolveOpenAIStrictPassthrough` 在 WS 入站返回 true（对应 V-14）
-- [ ] 4.7 新写 V-14 那条对比用例（同账号 strict on/off，经 WS 入站的出站头集合与 body 必须完全相同）
+> **4.1 不做，理由留在这里免得下次被反射式加回来。** strict 从头到尾没有回写过
+> `body`——`forwardOpenAIPassthrough` 只在顶部判定+暂存，出站构造器
+> `buildUpstreamRequestOpenAIPassthrough` 用的是函数内的局部 `outboundBody`。
+> §2（请求体分叉）押后，就没有任何 body 差异需要跨 attempt 派生。等 §2 真正开工时
+> 再评估 `strictSeen`。
+
+- [x] 4.1 ~~`openAIPassthroughFailoverState` 增加 `strictSeen`~~ **不做**，见上
+- [x] 4.2 每 attempt 重新判定：`Forward` 顶部**无条件复位** strict 暂存与 ops 档位，
+      `forwardOpenAIPassthrough` 顶部再用真实判定覆写。复位不能只放在后者——
+      failover 换到**非透传**账号时那一段根本不执行，上一 attempt 的 `true` 会原样残留。
+      位置选在 `Forward` 顶部（`stageCodexClientRestrictionResult` 之后、403 分支之前），
+      套路同下方已有的 `stageCodexFingerprintIDs(c, nil)`
+- [x] 4.3 ops 记录新增 `passthrough_mode` 与 `strict_degraded_reason`（已在 §3.10 落地）
+- [x] 4.4 单测：strict → 非透传账号，第二个 attempt 的暂存值与 ops 档位都必须复位。
+      **去掉复位后这条会红**（实测）。body 派生方向的断言随 §2 一起押后——今天两种模式
+      出站 body 本就相同，写了也是空断言
+- [x] 4.5 单测：非 strict → strict 的升档方向；以及门禁拒绝（403）分支同样先复位
+- [x] 4.6 断言 strict 在 WS 路径上惰性。查清了根因：WS 用的是 upgrade 请求自己的
+      `*gin.Context`（`openai_gateway_handler.go:3020` → `ProxyResponsesWebSocketFromClient`），
+      它永远不流经 `Forward`，所以 `stagedOpenAIStrictPassthrough` 读到的是「没暂存」。
+      惰性是结构性的，不是巧合
+- [x] 4.7 V-14 对比用例：未暂存的 context + 开着 strict 的账号，出站头必须落在 auth_only
+
+验证：`go build ./...` 干净；新增 4 个用例全绿，其中 2 个在移除 `Forward` 顶部复位后变红。
 
 ## 5. 管理端与文档
 

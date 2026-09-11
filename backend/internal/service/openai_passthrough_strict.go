@@ -153,7 +153,10 @@ func OpenAIPassthroughModeForOps(strict bool, passthroughEnabled bool) string {
 const openAIStrictPassthroughDecisionContextKey = "openai_passthrough_strict_decision"
 
 // stageOpenAIStrictPassthrough 暂存本 attempt 的 strict 判定。
+//
 // 必须无条件覆写：failover 从 strict 账号切到普通账号时，上一账号的判定不得残留。
+// 只靠 forwardOpenAIPassthrough 顶部那次覆写还不够——换到**非透传**账号时那一段
+// 压根不执行，所以 `Forward` 顶部另有一次无条件复位（openai_gateway_forward.go）。
 func stageOpenAIStrictPassthrough(c *gin.Context, strict bool) {
 	if c != nil {
 		c.Set(openAIStrictPassthroughDecisionContextKey, strict)
@@ -162,9 +165,10 @@ func stageOpenAIStrictPassthrough(c *gin.Context, strict bool) {
 
 // stagedOpenAIStrictPassthrough 读取暂存判定。
 //
-// 未暂存一律返回 false。这条 fail-closed 语义顺带保住了 Non-goals 里那句「不碰 WS」：
-// `buildUpstreamRequestOpenAIPassthrough` 还有一个来自 openai_ws_http_bridge.go 的
-// 调用方，那条路径不做 strict 判定、因此永远读到 false。
+// 未暂存一律返回 false。这条 fail-closed 语义配合上面那两处复位，保住了 Non-goals
+// 里那句「不碰 WS」：`buildUpstreamRequestOpenAIPassthrough` 还有一个来自
+// openai_ws_http_bridge.go 的调用方，那条路径自己不做 strict 判定，读到的要么是
+// 「没暂存」要么是复位后的 false。
 func stagedOpenAIStrictPassthrough(c *gin.Context) bool {
 	if c == nil {
 		return false
