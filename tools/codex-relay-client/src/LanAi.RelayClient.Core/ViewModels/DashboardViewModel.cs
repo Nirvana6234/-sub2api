@@ -404,8 +404,23 @@ public sealed partial class DashboardViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(StartCodexLabel))]
     private bool requiresCodexAccountRestart;
 
+    /// <summary>
+    /// True when ChatGPT is running but its config.toml no longer points at
+    /// the relay — most commonly an official ChatGPT login silently rewriting
+    /// the file while this client was not around to catch it with
+    /// <see cref="CodexRouteGuard"/>. Modeled exactly like
+    /// <see cref="RequiresCodexAccountRestart"/> on purpose: both are "the
+    /// process looks running, but something about it still needs fixing"
+    /// exceptions to hiding the start button once <see cref="IsCodexRunning"/>.
+    /// </summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanStartCodex))]
+    [NotifyPropertyChangedFor(nameof(StartCodexLabel))]
+    private bool requiresRouteRepair;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanStartCodex))]
+    [NotifyPropertyChangedFor(nameof(CanRepairCodexLogin))]
     [NotifyPropertyChangedFor(nameof(StartCodexLabel))]
     private bool isInstallingCodex;
 
@@ -414,6 +429,7 @@ public sealed partial class DashboardViewModel : ObservableObject
     private string codexDownloadProgressText = string.Empty;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanRepairCodexLogin))]
     [NotifyPropertyChangedFor(nameof(StartCodexLabel))]
     private bool codexNotInstalled;
 
@@ -450,10 +466,31 @@ public sealed partial class DashboardViewModel : ObservableObject
     /// <remarks>
     /// Disabled while starting, and once running: pressing it again would rewrite
     /// the config and re-probe for no benefit, and to a novice a button that stays
-    /// live reads as "it did not work, press again".
+    /// live reads as "it did not work, press again". <see cref="RequiresCodexAccountRestart"/>
+    /// and <see cref="RequiresRouteRepair"/> are both exceptions to that: the
+    /// process is up, but something about it still needs the user's help, so the
+    /// button has to come back rather than sit on a stale "已启动" forever.
     /// </remarks>
     public bool CanStartCodex => !IsStartingCodex && !IsInstallingCodex &&
-        (!IsCodexRunning || RequiresCodexAccountRestart);
+        (!IsCodexRunning || RequiresCodexAccountRestart || RequiresRouteRepair);
+
+    /// <summary>
+    /// Whether the standalone "修复登录" button next to the start button could do
+    /// something useful right now.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately not gated on <see cref="IsCodexRunning"/>, <see cref="RequiresRouteRepair"/>
+    /// or <see cref="RequiresCodexAccountRestart"/> the way <see cref="CanStartCodex"/> is: this
+    /// button exists specifically as a manual escape hatch for the states
+    /// <see cref="MonitorCodexAsync"/>'s automatic detection has not caught yet — most often
+    /// because ChatGPT's own login flow rewrote <c>config.toml</c>/<c>auth.json</c> between
+    /// polls, or because settings had not loaded yet when the first poll ran (see the
+    /// warning logged in <see cref="MonitorCodexAsync"/> for that case). Pressing it runs the
+    /// exact same <see cref="StartCodexAsync"/> that the main button does — it reapplies the
+    /// relay's config unconditionally before it ever asks to restart anything — so it is safe
+    /// to press even when nothing is actually broken.
+    /// </remarks>
+    public bool CanRepairCodexLogin => !IsStartingCodex && !IsInstallingCodex && !CodexNotInstalled;
 
     public string StartCodexLabel => IsInstallingCodex && !string.IsNullOrWhiteSpace(CodexDownloadProgressText)
         ? CodexDownloadProgressText
@@ -461,11 +498,17 @@ public sealed partial class DashboardViewModel : ObservableObject
         ? "正在安装 ChatGPT…"
         : RequiresCodexAccountRestart
         ? "重启 ChatGPT 激活账户"
+        : RequiresRouteRepair
+        ? "重新连接 ChatGPT"
         : IsCodexRunning
         ? "ChatGPT 已启动"
         : CodexNotInstalled ? "安装 ChatGPT" : "启动 ChatGPT";
 
-    partial void OnIsStartingCodexChanged(bool value) => OnPropertyChanged(nameof(CanStartCodex));
+    partial void OnIsStartingCodexChanged(bool value)
+    {
+        OnPropertyChanged(nameof(CanStartCodex));
+        OnPropertyChanged(nameof(CanRepairCodexLogin));
+    }
 
     /// <summary>
     /// Refreshes the Codex state and rolls the lease forward when it is due.
@@ -481,6 +524,28 @@ public sealed partial class DashboardViewModel : ObservableObject
         {
             CodexHealth health = await _codex.CheckAsync(cancellationToken).ConfigureAwait(true);
             IsCodexRunning = health.IsRunning;
+            // Process-alive says nothing about whether config.toml still points at
+            // the relay — an official ChatGPT login can rewrite it out from under a
+            // ChatGPT that never stopped running, and CodexRouteGuard only catches
+            // that while this client itself was open to run it. Checked here too so
+            // a fresh launch (guard not started yet) still notices and offers a way
+            // back in, instead of a start button stuck on "已启动" forever.
+            //
+            // health.ManagedApiKey lets this also catch an official login that only
+            // swaps auth.json's key and leaves [model_providers.gongfei] selected —
+            // a state the provider-only check alone would call fine even though
+            // every request now fails.
+            if (health.IsRunning && string.IsNullOrWhiteSpace(_settings.ApiBaseUrl))
+            {
+                // Settings normally arrive before the first poll; this only fires if
+                // that ordering broke, and it would otherwise look exactly like a
+                // healthy route — worth a log line so it isn't mistaken for one.
+                ClientLog.Warning("ChatGPT 正在运行，但本地尚未取得 api_base_url，无法判断路由是否仍指向共飞");
+            }
+
+            RequiresRouteRepair = health.IsRunning &&
+                !string.IsNullOrWhiteSpace(_settings.ApiBaseUrl) &&
+                !_codex.IsRoutingCurrent(_settings.ApiBaseUrl, health.ManagedApiKey);
             UpdateCodexAccountActivationState();
             CodexNotInstalled = !health.IsInstalled;
             CodexInstallerAvailable = _codexInstaller.Inspect().PackageAvailable;
@@ -626,6 +691,10 @@ public sealed partial class DashboardViewModel : ObservableObject
             {
                 IsCodexRunning = true;
                 CodexNotInstalled = false;
+                // RunAsync just wrote config.toml unconditionally (before it ever
+                // touches the launcher), so routing is correct again regardless of
+                // which branch above produced this Ready.
+                RequiresRouteRepair = false;
                 string currentEmail = _session.UserEmail.Trim();
                 if (!string.IsNullOrWhiteSpace(currentEmail))
                 {

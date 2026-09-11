@@ -413,6 +413,19 @@ internal sealed class FakeCodexStartup : ICodexStartup
     public Task<bool> CheckInstalledAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult(OnInstalled?.Invoke() ?? IsInstalled);
 
+    /// <summary>Defaults to healthy so existing "Codex is running" tests need no changes.</summary>
+    public bool RoutingIsCurrent { get; set; } = true;
+
+    public Func<string, string?, bool>? OnIsRoutingCurrent { get; set; }
+
+    public string? LastRoutingCheckApiKey { get; private set; }
+
+    public bool IsRoutingCurrent(string apiBaseUrl, string? expectedApiKey = null)
+    {
+        LastRoutingCheckApiKey = expectedApiKey;
+        return OnIsRoutingCurrent?.Invoke(apiBaseUrl, expectedApiKey) ?? RoutingIsCurrent;
+    }
+
     public Task<DateTimeOffset?> RenewLeaseIfDueAsync(CancellationToken cancellationToken = default)
     {
         RenewCallCount++;

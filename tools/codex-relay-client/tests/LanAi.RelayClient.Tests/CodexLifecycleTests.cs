@@ -179,6 +179,30 @@ public sealed class CodexLifecycleTests : IDisposable
     }
 
     [Fact]
+    public async Task RoutingIsAlreadyRepairedOnDiskEvenWhenARestartConfirmationIsPending()
+    {
+        // Locks in the ordering DashboardViewModel.StartCodexAsync relies on: when
+        // RunAsync comes back needing a restart the user might decline,
+        // RequiresRouteRepair only clears on a later Ready/poll, but the disk
+        // itself must already be fixed by then — _config.Apply happens before the
+        // launcher is ever asked to attach. If a future refactor moved that write
+        // after the launcher call, a declined restart would leave config.toml
+        // stale with nothing left to notice, since this is the one path that
+        // writes the file without also reporting Ready.
+        Setup setup = await CreateSetupAsync();
+        setup.Relay.OnListKeys = () => [ManagedKey(setup.Naming, 42)];
+        setup.Launcher.Outcome = CodexLaunchOutcome.BlockedByRunningInstance;
+        File.WriteAllText(setup.Paths.ConfigPath, "model_provider = \"openai\"");
+
+        Assert.False(setup.Startup.IsRoutingCurrent("https://relay.test/v1", "sk-relay"));
+
+        CodexStartupResult result = await setup.Startup.RunAsync(null, "https://relay.test/v1");
+
+        Assert.Equal(CodexStartupStatus.NeedsRestartConfirmation, result.Status);
+        Assert.True(setup.Startup.IsRoutingCurrent("https://relay.test/v1", "sk-relay"));
+    }
+
+    [Fact]
     public async Task ReleaseWaitsForAnInFlightStartAndStopsItsEnhancement()
     {
         var enhancement = new BlockingEnhancementHost();

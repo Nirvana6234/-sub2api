@@ -229,25 +229,42 @@
                     <Border Background="White" CornerRadius="8" Padding="16" Margin="0,0,0,12"
                             BorderBrush="#E5E7EB" BorderThickness="1">
                         <StackPanel>
-                            <Button Content="{Binding StartCodexLabel}"
-                                    Click="StartCodex_OnClick"
-                                    IsEnabled="{Binding CanStartCodex}"
-                                    Padding="0,12" FontSize="16" FontWeight="SemiBold"
-                                    Foreground="White" BorderThickness="0">
-                                <Button.Style>
-                                    <Style TargetType="Button">
-                                        <Setter Property="Background" Value="#2563EB" />
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding IsInstallingCodex}" Value="True">
-                                                <Setter Property="Background" Value="#6B7280" />
-                                            </DataTrigger>
-                                            <DataTrigger Binding="{Binding RequiresCodexAccountRestart}" Value="True">
-                                                <Setter Property="Background" Value="#DC2626" />
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </Button.Style>
-                            </Button>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Button Grid.Column="0" Content="{Binding StartCodexLabel}"
+                                        Click="StartCodex_OnClick"
+                                        IsEnabled="{Binding CanStartCodex}"
+                                        Padding="0,12" FontSize="16" FontWeight="SemiBold"
+                                        Foreground="White" BorderThickness="0">
+                                    <Button.Style>
+                                        <Style TargetType="Button">
+                                            <Setter Property="Background" Value="#2563EB" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsInstallingCodex}" Value="True">
+                                                    <Setter Property="Background" Value="#6B7280" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding RequiresCodexAccountRestart}" Value="True">
+                                                    <Setter Property="Background" Value="#DC2626" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                </Button>
+                                <!-- Manual escape hatch: reapplies the relay's ChatGPT config even
+                                     when nothing looks broken yet, for the states the automatic
+                                     poll in MonitorCodexAsync has not caught (see
+                                     DashboardViewModel.CanRepairCodexLogin). -->
+                                <Button Grid.Column="1" Content="修复登录"
+                                        Click="RepairCodexLogin_OnClick"
+                                        IsEnabled="{Binding CanRepairCodexLogin}"
+                                        ToolTip="重新写入 ChatGPT 的共飞登录信息"
+                                        Margin="8,0,0,0" Padding="10,0" FontSize="12"
+                                        Background="Transparent" BorderBrush="#D1D5DB"
+                                        Foreground="#374151" />
+                            </Grid>
                             <TextBlock Text="{Binding CodexMessage}" TextWrapping="Wrap"
                                        Foreground="#6B7280" FontSize="12" Margin="0,8,0,0"
                                        Visibility="{Binding HasCodexMessage, Converter={StaticResource BoolToVisibility}}" />

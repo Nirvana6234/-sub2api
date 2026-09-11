@@ -471,6 +471,34 @@ public sealed class DashboardViewModelTests
         // Disabled afterwards, not re-armed: Codex is now up, and a live button
         // would invite a second launch that only rewrites the config.
         Assert.False(dashboard.CanStartCodex);
+
+        // The standalone repair button stays live even here — it exists precisely
+        // for states MonitorCodexAsync's own detection has not (yet) flagged, so
+        // gating it on the same "already running" condition would defeat its point.
+        Assert.True(dashboard.CanRepairCodexLogin);
+    }
+
+    [Fact]
+    public void TheRepairButtonIsDisabledOnlyWhileNotInstalledOrMidOperation()
+    {
+        var codex = new FakeCodexStartup { IsInstalled = false };
+        DashboardViewModel dashboard = BuildWith(codex);
+
+        Assert.True(dashboard.CanRepairCodexLogin);
+
+        dashboard.CodexNotInstalled = true;
+        Assert.False(dashboard.CanRepairCodexLogin);
+
+        dashboard.CodexNotInstalled = false;
+        dashboard.IsInstallingCodex = true;
+        Assert.False(dashboard.CanRepairCodexLogin);
+
+        dashboard.IsInstallingCodex = false;
+        dashboard.IsStartingCodex = true;
+        Assert.False(dashboard.CanRepairCodexLogin);
+
+        dashboard.IsStartingCodex = false;
+        Assert.True(dashboard.CanRepairCodexLogin);
     }
 
     [Fact]
@@ -601,6 +629,84 @@ public sealed class DashboardViewModelTests
 
         Assert.True(dashboard.CanStartCodex);
         Assert.Equal("启动 ChatGPT", dashboard.StartCodexLabel);
+    }
+
+    [Fact]
+    public async Task TheButtonComesBackWhenRoutingIsLostEvenThoughCodexIsStillRunning()
+    {
+        // An official ChatGPT login can silently rewrite config.toml out from
+        // under a ChatGPT process that never stopped running. Process-alive
+        // alone must not be enough to keep the start button hidden in that
+        // state, or the user has no way back in short of quitting ChatGPT by
+        // hand — see CodexStartup.IsRoutingCurrent's remarks.
+        var codex = new FakeCodexStartup
+        {
+            OnCheck = () => new CodexHealth(true, true, null),
+            RoutingIsCurrent = false,
+        };
+        DashboardViewModel dashboard = BuildWith(codex);
+        dashboard.ApplySettings(PublicSettings.Conservative with { ApiBaseUrl = "https://relay.test/v1" });
+
+        await dashboard.MonitorCodexAsync();
+
+        Assert.True(dashboard.IsCodexRunning);
+        Assert.True(dashboard.RequiresRouteRepair);
+        Assert.True(dashboard.CanStartCodex);
+        Assert.Equal("重新连接 ChatGPT", dashboard.StartCodexLabel);
+    }
+
+    [Fact]
+    public async Task RoutingRepairDetectionPassesTheLeasedKeyThroughSoAnAuthJsonOnlyRewriteIsCaught()
+    {
+        // An official ChatGPT login can leave [model_providers.gongfei] selected
+        // in config.toml and only replace auth.json's key — a state a
+        // provider-only check would call fine even though every request now
+        // fails. CodexHealth.ManagedApiKey exists so the dashboard can hand the
+        // known-good key to IsRoutingCurrent and catch that too.
+        var codex = new FakeCodexStartup
+        {
+            OnCheck = () => new CodexHealth(true, true, null, "sk-current-lease"),
+        };
+        DashboardViewModel dashboard = BuildWith(codex);
+        dashboard.ApplySettings(PublicSettings.Conservative with { ApiBaseUrl = "https://relay.test/v1" });
+
+        await dashboard.MonitorCodexAsync();
+
+        Assert.Equal("sk-current-lease", codex.LastRoutingCheckApiKey);
+    }
+
+    [Fact]
+    public async Task PressingStartWhileRoutingIsLostRepairsItWithoutForcingARestart()
+    {
+        var codex = new FakeCodexStartup
+        {
+            OnCheck = () => new CodexHealth(true, true, null),
+            RoutingIsCurrent = false,
+        };
+        // RunAsync must actually flip the fake's on-disk state, not just be
+        // followed by a hand reset — otherwise this would pass even if
+        // StartCodexAsync's Ready branch cleared the flag for no real reason.
+        codex.OnRun = (_, _) =>
+        {
+            codex.RoutingIsCurrent = true;
+            return new CodexStartupResult(CodexStartupStatus.Ready, "ChatGPT 已就绪，可以开始对话了。");
+        };
+        DashboardViewModel dashboard = BuildWith(codex, new FakeRelayClient(), out RelaySessionManager session);
+        await session.SignInAsync("a@b.com", "pw");
+        dashboard.ApplySettings(PublicSettings.Conservative with { ApiBaseUrl = "https://relay.test/v1" });
+        await dashboard.MonitorCodexAsync();
+        Assert.True(dashboard.RequiresRouteRepair);
+
+        await dashboard.StartCodexAsync(_ => Task.FromResult(false));
+
+        Assert.False(dashboard.RequiresRouteRepair);
+        Assert.Equal(1, codex.RunCount);
+        Assert.False(codex.LastAllowRestart);
+
+        // A follow-up poll re-confirms the repair from the (now-fixed) fake state,
+        // rather than trusting the one-time reset to stay correct forever.
+        await dashboard.MonitorCodexAsync();
+        Assert.False(dashboard.RequiresRouteRepair);
     }
 
     [Fact]
