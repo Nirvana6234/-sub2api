@@ -6,6 +6,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
@@ -77,6 +78,20 @@ func Logger() gin.HandlerFunc {
 		}
 		if model != "" {
 			fields = append(fields, zap.String("model", model))
+		}
+		// OpenAI 透传档位：只在 Forward 跑过的请求上存在（c.Set，不是 request.Context()），
+		// 所以直接读 gin.Context 的键值存储，不存在时静默跳过。这是排查"strict 开了但
+		// 看起来没生效"的唯一日志入口——之前完全没有落地，只暂存在 context 里没人读
+		// （见 DEV_GUIDE 坑 14 与 2026-09-11 的排查）。
+		if mode, ok := c.Get(service.OpsOpenAIPassthroughModeKey); ok {
+			if modeStr, ok := mode.(string); ok && modeStr != "" {
+				fields = append(fields, zap.String("passthrough_mode", modeStr))
+			}
+		}
+		if reason, ok := c.Get(service.OpsOpenAIStrictDegradedReasonKey); ok {
+			if reasonStr, ok := reason.(string); ok && reasonStr != "" {
+				fields = append(fields, zap.String("strict_degraded_reason", reasonStr))
+			}
 		}
 
 		l := logger.FromContext(c.Request.Context()).With(fields...)

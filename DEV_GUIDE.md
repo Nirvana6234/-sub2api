@@ -349,8 +349,13 @@ go build -o ..\.local\sub2api-paw-server-next.exe .\cmd\server
 
 **排查顺序**：
 
-1. 看 ops 记录的 `ops_openai_passthrough_mode`：`strict` / `auth_only` / `off`；
-2. 不是 `strict` 就看 `ops_openai_strict_degraded_reason`：
+1. 看访问日志（`http request completed`，`component: http.access`）里的 `passthrough_mode`
+   字段：`strict` / `auth_only` / `off`。**2026-09-11 之前这个字段不存在**——
+   `ops_openai_passthrough_mode` 原来只 `c.Set` 进 gin.Context，从没有任何代码把它读出来
+   落地到日志、指标或任何持久化的地方，纯粹写入、没人读。是排查一个真实账号时发现日志里
+   一条相关记录都没有才补上的（`internal/server/middleware/logger.go`）。旧版本二进制
+   上这个字段查不到，不代表 strict 没生效，只代表看不出来。
+2. 不是 `strict` 就看同一条日志的 `strict_degraded_reason` 字段：
    - `account_strict_disabled` —— 账号没开，或没开父级的自动透传；
    - `client_gate_not_matched` —— **这条请求不是 Codex 发的**。绝大多数情况就到此为止，
      属正常。真要让它过，对着上面 1–4 逐条比；
