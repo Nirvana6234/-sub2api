@@ -3,9 +3,27 @@
 面向小白用户的中转站瘦客户端。需求见
 [`doc/共飞直连客户端（小白版）需求文档.md`](../../doc/共飞直连客户端（小白版）需求文档.md)。
 
+Codex 接入默认采用本机安全链路：
+
+```text
+Codex → Context Filter（可选）→ 127.0.0.1 Paw Relay → /api/v1/paw/responses
+```
+
+Codex 只接触本机随机 fake key；登录 JWT 和分组 ID 由客户端 Relay 在转发边界注入。
+
+- **账号会话是每请求现取的**，不是启动时的快照——access token 会轮换，快照会在一小时内变成一路 401，而界面看上去一切正常。
+- **分组切换直接推给 Relay**，下一轮即生效；本机链路下没有服务端 key 可改分组。
+- 未选分组时**拒绝启动**，而不是启动后每轮静默失败。
+- **「启用上下文压缩」立即生效并记住选择**，不等下次启动（细节见下方 Context Filter 一节）。
+- **CDP 注入（官方客户端内的状态条与限额检测）已移除**。它在现行 ChatGPT 上基本连不上，每次启动往日志里灌一段栈，而它从来不是必需功能。`config.toml` 路由守护**保留**，并且现在 Windows 和 macOS 都有——它才是防「官方登录把共飞路由冲掉」的那一道。
+
+> **macOS 走同一条链路**——出货头只有一个（Avalonia），两个平台共用同一份接线。
+> 差别只在 Context Filter 是 Windows 二进制：macOS 上找不到它，于是链路退化为
+> `Codex → 本机 Paw Relay`，压缩勾选框置灰。托管 API Key 路径两个平台都只是兼容回退。
+> macOS 上的本机 relay **尚未在真机验证过**（开发机是 Windows）。
+
 > **当前状态：M1/M2 核心链路已跑通，F3/F4/F5/F9 核心可靠性已补齐。**
-> 构建通过、测试全绿（246/246：CodexBinding 51、Server 75、客户端 120）；
-> 共用注入组件另有 65 项测试通过。
+> 构建通过、测试全绿（565/565：CodexBinding 53、Server 92、客户端 420）；
 > 客户端已实机启动并对接本地中转站，
 > 登录页按服务器下发的开关正确渲染。
 > 契约用**真实服务器响应**核对过（本机 relay v0.1.158）。
@@ -21,16 +39,55 @@ tools/codex-relay-client/
 ├── src/
 │   ├── LanAi.RelayClient.Server/       # 中转站 HTTP 客户端（net8.0，零 NuGet 依赖）
 │   ├── LanAi.RelayClient.CodexBinding/ # Codex 配置写入、完整快照与恢复
-│   └── LanAi.RelayClient/              # WPF 主程序 + 会话管理 + 托盘 + 注入宿主
+│   ├── LanAi.RelayClient/              # WPF 头（本机开发用，不出货）
+│   └── LanAi.RelayClient.App/          # Avalonia 头 —— **Windows 与 macOS 的出货头**
 └── tests/
-    ├── LanAi.RelayClient.CodexBinding.Tests/ # 51 个：路由、加密快照、迁移、恢复与 TOML 保留
-    ├── LanAi.RelayClient.Server.Tests/ # 75 个：信封语义、错误分类、面板和 key 契约
-    └── LanAi.RelayClient.Tests/        # 120 个：会话、生命周期、退避、异步、订阅和 UI 状态
+    ├── LanAi.RelayClient.CodexBinding.Tests/ # 53 个：路由、加密快照、迁移、恢复与 TOML 保留
+    ├── LanAi.RelayClient.Server.Tests/ # 92 个：信封语义、错误分类、面板和 key 契约
+    └── LanAi.RelayClient.Tests/        # 420 个：会话、生命周期、本机转发、退避、异步、订阅和 UI 状态
 ```
 
 后续按需求文档分期补：客户端内注册、充值、Codex 安装、项目中心和 `LanAi.RelayClient.Chat`。
 
 ## 构建与测试
+
+### Context Filter（可选但推荐）
+
+小白客户端会优先使用发布目录中的 `context-filter.exe`，形成：
+
+```text
+Codex → Context Filter → 本机 Paw Relay → /api/v1/paw/responses
+```
+
+在发布前运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools/codex-relay-client/fetch-context-filter.ps1 -Version v0.1.1
+```
+
+脚本从 Context Filter GitHub Release 下载 Windows x64 包，并校验 SHA-256。未携带该文件时，客户端自动退回 `Codex → 本机 Paw Relay`，不会退回远程 API Key，界面上的「启用上下文压缩」置灰。
+
+**带了这个文件时，它就常驻链路**——不论压缩开没开。「启用上下文压缩」切的是过滤器自己的 `[filter] enabled`，勾选**立即生效**（在原端口重启过滤器），并缓存在 `context-filter.json` 里，下次启动沿用。
+
+这么设计是因为：把过滤器整个移出链路会改变 Codex 连的地址，而**一个已经在运行的 ChatGPT 会不会重读 `config.toml` 至今没在真机验证过**（macOS 方案文档里的 G-1）。端口在整个会话里固定，这个开关就不依赖那个答案。两条前提都已实测：`enabled = false` 是**透明直通**（照常转发，只是不再加 `x-context-filter-*` 头），同一端口可以干净重绑。
+
+#### 怎么从日志判断压缩有没有真的生效
+
+开关状态只说明**要求**是什么，不说明**实际**发生了什么。所以本机 relay 每轮请求写一行，内容来自 Context Filter 盖在转发请求上的统计头：
+
+```text
+本轮上下文压缩生效：45.2 KB → 11.8 KB（省 33.4 KB，74.0%）
+本轮上下文压缩已启用，未压缩（812 B，无可压缩内容）   # 短轮次的正常结果，不是故障
+本轮未经过上下文压缩
+```
+
+最后那条要小心：实测压缩关闭时过滤器**一个统计头都不盖**，所以「没有头」既可能是压缩关着、也可能是根本没有过滤器——这两种要靠启动时那行 `已启动 Context Filter（压缩开启/关闭，直通）` 来区分。
+
+构建会自动跑一次这个脚本（`EnsureBundledContextFilter`）。它**不会**因为离线或 GitHub 限流而让构建失败——拿不到就只是少打一个可选文件。要完全跳过这次网络请求：
+
+```bash
+dotnet build -p:SkipContextFilterDownload=true
+```
 
 在仓库根目录：
 

@@ -1,4 +1,5 @@
 using System.Net.Http;
+using System.IO;
 using System.Windows;
 using Application = System.Windows.Application;
 using MessageBox = System.Windows.MessageBox;
@@ -8,6 +9,7 @@ using LanAi.RelayClient.Platform;
 using LanAi.RelayClient.Services;
 using LanAi.RelayClient.ViewModels;
 using LanAi.Workspace.Injection;
+using LanAi.RelayClient.Transport;
 
 namespace LanAi.RelayClient;
 
@@ -85,13 +87,20 @@ public partial class App : Application
             SecureStorage.CreateSnapshotProtector(),
             AppPaths.CodexSnapshotRoot,
             AppPaths.CodexAuthSnapshotFile);
+        string contextFilterPath = Path.Combine(AppContext.BaseDirectory, "context-filter.exe");
+        var localRelay = new LocalPawRelay(ClientOptions.ServerAddress, session.GetAccessTokenAsync);
+        ContextFilterProcess? contextFilter = File.Exists(contextFilterPath)
+            ? new ContextFilterProcess(contextFilterPath)
+            : null;
         var codex = new CodexStartup(
             relay,
             session,
             keyNaming,
             codexConfig,
             new CodexAppLauncherAdapter(new CodexAppLauncher()),
-            new RelayInjectionHost(codexConfig));
+            new CodexRouteGuardHost(codexConfig),
+            localRelay,
+            contextFilter);
 
         var dashboard = new DashboardViewModel(
             relay,

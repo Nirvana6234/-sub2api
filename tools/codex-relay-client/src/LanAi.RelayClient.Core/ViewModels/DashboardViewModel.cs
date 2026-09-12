@@ -32,14 +32,78 @@ public sealed partial class DashboardViewModel : ObservableObject
     private readonly ICodexInstaller _codexInstaller;
     private readonly ICodexAccountStore _codexAccountStore;
     private readonly IStartupRegistration _startupRegistration;
+    private readonly IContextFilterPreferenceStore _contextFilterPreferences;
     private readonly PollingBackoff _pollingBackoff;
     private readonly SafeAsyncRunner _safeAsync;
     private readonly SemaphoreSlim _pollGate = new(1, 1);
 
     private PublicSettings _settings = PublicSettings.Conservative;
+
+    /// <summary>
+    /// 启用上下文压缩. Defaults to on, and is restored from disk on the next launch.
+    /// </summary>
+    [ObservableProperty]
+    private bool contextFilterEnabled = true;
+
     private RelayApiKey? _managedKey;
     private bool _refreshHadFailure;
     private bool _refreshWasRateLimited;
+
+    /// <summary>Whether there is a bundled filter to switch; false greys the checkbox out.</summary>
+    public bool CanToggleContextFilter => _codex.HasContextFilter;
+
+    /// <summary>
+    /// True while the value is being set by us rather than by the user.
+    /// </summary>
+    /// <remarks>
+    /// The same distinction the group dropdown needs, for the same reason: restoring
+    /// a saved value and a user ticking the box are indistinguishable at the event
+    /// level. Without this, every launch writes the preference straight back and
+    /// tries to restart a filter that is not running yet.
+    /// </remarks>
+    private bool _applyingKnownContextFilterState;
+
+    partial void OnContextFilterEnabledChanged(bool value)
+    {
+        if (_applyingKnownContextFilterState)
+        {
+            return;
+        }
+
+        _contextFilterPreferences.Save(value);
+
+        // Applied through the safe runner rather than awaited: this is a checkbox
+        // handler, and honouring the switch on a live session restarts the filter
+        // process. A failure there must surface as a notice, not as an unobserved
+        // task that leaves the box showing a state the chain is not in.
+        _ = _safeAsync.RunAsync(async () =>
+        {
+            try
+            {
+                await _codex.SetContextFilterEnabledAsync(value).ConfigureAwait(true);
+            }
+            catch
+            {
+                // Put the box back where the chain actually is, so it never claims
+                // a setting that did not take.
+                SetContextFilterWithoutApplying(!value);
+                throw;
+            }
+        });
+    }
+
+    private void SetContextFilterWithoutApplying(bool value)
+    {
+        _applyingKnownContextFilterState = true;
+        try
+        {
+            ContextFilterEnabled = value;
+        }
+        finally
+        {
+            _applyingKnownContextFilterState = false;
+        }
+    }
 
     /// <summary>Cancels the refresh in flight when the session ends under it.</summary>
     private CancellationTokenSource? _refreshCancellation;
@@ -56,7 +120,8 @@ public sealed partial class DashboardViewModel : ObservableObject
         SafeAsyncRunner? safeAsync = null,
         ICodexInstaller? codexInstaller = null,
         ICodexAccountStore? codexAccountStore = null,
-        IStartupRegistration? startupRegistration = null)
+        IStartupRegistration? startupRegistration = null,
+        IContextFilterPreferenceStore? contextFilterPreferences = null)
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
         _session = session ?? throw new ArgumentNullException(nameof(session));
@@ -68,6 +133,8 @@ public sealed partial class DashboardViewModel : ObservableObject
         _startupRegistration = startupRegistration ?? new UnsupportedStartupRegistration();
         _pollingBackoff = pollingBackoff ?? new PollingBackoff();
         _safeAsync = safeAsync ?? new SafeAsyncRunner();
+        _contextFilterPreferences = contextFilterPreferences ?? new ContextFilterPreferenceStore();
+        SetContextFilterWithoutApplying(_contextFilterPreferences.Load() ?? true);
     }
 
     public ObservableCollection<GroupItemViewModel> Groups { get; } = [];
@@ -142,6 +209,7 @@ public sealed partial class DashboardViewModel : ObservableObject
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(GroupsUnavailable))]
+    [NotifyPropertyChangedFor(nameof(StartCodexLabel))]
     private bool groupsReady;
 
     public bool GroupsUnavailable => !GroupsReady;
@@ -190,6 +258,9 @@ public sealed partial class DashboardViewModel : ObservableObject
     {
         OnPropertyChanged(nameof(HasNoGroupSelected));
         OnPropertyChanged(nameof(IsClaudeGroup));
+        // The start button is gated on having a group; see AwaitingBillingGroup.
+        OnPropertyChanged(nameof(CanStartCodex));
+        OnPropertyChanged(nameof(StartCodexLabel));
 
         if (_applyingKnownState || value is null || value.IsCurrent)
         {
@@ -415,6 +486,7 @@ public sealed partial class DashboardViewModel : ObservableObject
     private string codexDownloadProgressText = string.Empty;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanStartCodex))]
     [NotifyPropertyChangedFor(nameof(CanRepairCodexStartup))]
     [NotifyPropertyChangedFor(nameof(StartCodexLabel))]
     private bool codexNotInstalled;
@@ -458,7 +530,29 @@ public sealed partial class DashboardViewModel : ObservableObject
     /// config-only route problem — the other case where the process is up but wrong — is
     /// deliberately not handled here; see <see cref="CanRepairCodexStartup"/>.
     /// </remarks>
+    /// <summary>
+    /// True while there is no group for the loopback relay to bill to yet.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The group is chosen for the user, not by them: <c>LoadGroupsAsync</c>
+    /// auto-selects the first server-approved one. But that runs over the network,
+    /// and this button used to be live from the moment the dashboard appeared — so
+    /// pressing 启动 in the first couple of seconds reached the relay with no group
+    /// and was refused, telling the user to pick a group they never had to pick and
+    /// which appeared a second later. Seen in a real session: refused at 23:19:21,
+    /// worked at 23:19:29, same account, nothing changed in between.
+    /// </para>
+    /// <para>
+    /// Not applied while Codex is missing: that turns this button into 安装 ChatGPT,
+    /// which has nothing to do with billing and must stay pressable.
+    /// </para>
+    /// </remarks>
+    private bool AwaitingBillingGroup =>
+        _codex.UsesLocalTransport && !CodexNotInstalled && SelectedGroup is null;
+
     public bool CanStartCodex => !IsStartingCodex && !IsInstallingCodex &&
+        !AwaitingBillingGroup &&
         (!IsCodexRunning || RequiresCodexAccountRestart);
 
     /// <summary>
@@ -491,6 +585,10 @@ public sealed partial class DashboardViewModel : ObservableObject
         ? "重启 ChatGPT 激活账户"
         : IsCodexRunning
         ? "ChatGPT 已启动"
+        : AwaitingBillingGroup
+        // A disabled button with no explanation is the "点了没反应" this codebase
+        // keeps designing against, so the reason goes on the button itself.
+        ? (GroupsReady ? "没有可用分组" : "正在加载分组…")
         : CodexNotInstalled ? "安装 ChatGPT" : "启动 ChatGPT";
 
     partial void OnIsStartingCodexChanged(bool value)
@@ -590,6 +688,16 @@ public sealed partial class DashboardViewModel : ObservableObject
 
         if (IsStartingCodex || (IsInstallingCodex && !forceRestart))
         {
+            return;
+        }
+
+        // The tray menu's 启动 does not consult CanStartCodex, so the reason is given
+        // here too rather than relying on the button being disabled.
+        if (AwaitingBillingGroup)
+        {
+            CodexMessage = GroupsReady
+                ? "这个账号还没有可用于 Codex 的分组，请确认后重试。"
+                : "正在加载分组，请稍候再试。";
             return;
         }
 
@@ -1196,6 +1304,19 @@ public sealed partial class DashboardViewModel : ObservableObject
         // (a tray menu later, or a test) rather than from the dropdown itself.
         SelectWithoutSwitching(group);
         GroupMessage = string.Empty;
+
+        if (_codex.UsesLocalTransport)
+        {
+            // There is no server-side key to re-point: the loopback relay stamps the
+            // group on each request, so the switch is a local push and is in force for
+            // the very next turn. Falling through to the branch below instead would
+            // leave the relay on the previous group while telling the user otherwise.
+            _codex.SetActiveGroup(group.Id);
+            _preferences.Save(group.Id);
+            GroupMessage = $"已切换到 {group.Name}。";
+            if (IsClaudeGroup) _ = _safeAsync.RunAsync(LoadClaudePreferenceAsync);
+            return;
+        }
 
         if (_managedKey is null)
         {

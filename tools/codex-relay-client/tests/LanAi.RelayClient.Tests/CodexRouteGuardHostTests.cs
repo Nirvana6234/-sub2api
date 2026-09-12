@@ -7,12 +7,12 @@ using Xunit;
 
 namespace LanAi.RelayClient.Tests;
 
-public sealed class CodexEnhancementTests : IDisposable
+public sealed class CodexRouteGuardHostTests : IDisposable
 {
-    private readonly string _root = Path.Combine(Path.GetTempPath(), $"relay-enhancement-{Guid.NewGuid():N}");
+    private readonly string _root = Path.Combine(Path.GetTempPath(), $"relay-routeguard-{Guid.NewGuid():N}");
 
     [Fact]
-    public async Task AnInjectionFailureDoesNotTurnASuccessfulCodexLaunchIntoAFailure()
+    public async Task ASuccessfulLaunchStartsTheRouteGuard()
     {
         var relay = new FakeRelayClient();
         var session = new RelaySessionManager(relay, new FakeSessionStore(), "https://relay.test/");
@@ -36,13 +36,13 @@ public sealed class CodexEnhancementTests : IDisposable
             new CodexAuthSnapshot(protector, Path.Combine(_root, "legacy-auth.json")),
             new CodexFileSnapshot(paths, Path.Combine(_root, "snapshot"), protector));
         var launcher = new FakeCodexAppLauncher();
-        var enhancement = new FakeCodexEnhancementHost { StartResult = false };
-        var startup = new CodexStartup(relay, session, naming, writer, launcher, enhancement);
+        var guard = new FakeCodexRouteGuardHost();
+        var startup = new CodexStartup(relay, session, naming, writer, launcher, guard);
 
         CodexStartupResult result = await startup.RunAsync(null, "https://relay.test/v1");
 
         Assert.Equal(CodexStartupStatus.Ready, result.Status);
-        Assert.Equal(1, enhancement.StartCallCount);
+        Assert.Equal(1, guard.StartCallCount);
     }
 
     [Fact]
@@ -52,14 +52,12 @@ public sealed class CodexEnhancementTests : IDisposable
         // process still starts and routing is already applied by this point, so
         // this must not be reported to the user as "拉不起 ChatGPT".
         //
-        // Enhancement still has to start here even though there is no debug port
-        // to attach to: RelayInjectionHost starts its CodexRouteGuard *before* it
-        // ever tries the CDP connection (see RelayInjectionHost.StartAsync), so
-        // the overlay/sentinel go missing but the guard — the thing that notices
-        // an official ChatGPT login rewriting config.toml later and reapplies it
-        // — does not. An earlier version of this fix returned before calling
-        // StartAsync at all in this branch, which silently disabled that guard on
-        // every machine where the debug port never opens.
+        // The guard still has to start in this branch. Nothing needs the debug port
+        // any more — the CDP overlay that did is gone — but an earlier version
+        // returned before calling StartAsync at all here, which silently left the
+        // route guard off on every machine where the port never opens. That guard is
+        // the only thing that notices an official ChatGPT sign-in rewriting
+        // config.toml and dropping the relay route.
         var relay = new FakeRelayClient();
         var session = new RelaySessionManager(relay, new FakeSessionStore(), "https://relay.test/");
         await session.SignInAsync("a@b.com", "pw");
@@ -82,13 +80,13 @@ public sealed class CodexEnhancementTests : IDisposable
             new CodexAuthSnapshot(protector, Path.Combine(_root, "legacy-auth.json")),
             new CodexFileSnapshot(paths, Path.Combine(_root, "snapshot"), protector));
         var launcher = new FakeCodexAppLauncher { Outcome = CodexLaunchOutcome.DebugPortUnavailable };
-        var enhancement = new FakeCodexEnhancementHost();
-        var startup = new CodexStartup(relay, session, naming, writer, launcher, enhancement);
+        var guard = new FakeCodexRouteGuardHost();
+        var startup = new CodexStartup(relay, session, naming, writer, launcher, guard);
 
         CodexStartupResult result = await startup.RunAsync(null, "https://relay.test/v1");
 
         Assert.Equal(CodexStartupStatus.Ready, result.Status);
-        Assert.Equal(1, enhancement.StartCallCount);
+        Assert.Equal(1, guard.StartCallCount);
     }
 
     public void Dispose()
@@ -121,18 +119,16 @@ internal sealed class FakeCodexAppLauncher : ICodexAppLauncher
     }
 }
 
-internal sealed class FakeCodexEnhancementHost : ICodexEnhancementHost
+internal sealed class FakeCodexRouteGuardHost : ICodexRouteGuardHost
 {
-    public bool StartResult { get; set; } = true;
-
     public int StartCallCount { get; private set; }
 
     public int StopCallCount { get; private set; }
 
-    public Task<bool> StartAsync(string apiKey, string baseUrl, CancellationToken cancellationToken = default)
+    public Task StartAsync(string apiKey, string baseUrl, CancellationToken cancellationToken = default)
     {
         StartCallCount++;
-        return Task.FromResult(StartResult);
+        return Task.CompletedTask;
     }
 
     public Task StopAsync()

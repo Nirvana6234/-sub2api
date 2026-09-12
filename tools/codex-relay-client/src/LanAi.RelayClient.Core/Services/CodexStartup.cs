@@ -2,6 +2,7 @@ using System.IO;
 using LanAi.RelayClient.CodexBinding;
 using LanAi.RelayClient.Server;
 using LanAi.Workspace.Injection;
+using LanAi.RelayClient.Transport;
 
 namespace LanAi.RelayClient.Services;
 
@@ -44,6 +45,34 @@ internal sealed record CodexHealth(bool IsInstalled, bool IsRunning, DateTimeOff
 /// </remarks>
 internal interface ICodexStartup
 {
+    /// <summary>Whether a bundled context filter exists to be switched at all.</summary>
+    bool HasContextFilter => false;
+
+    /// <summary>
+    /// Turns context compression on or off, taking effect now rather than at the
+    /// next launch.
+    /// </summary>
+    /// <remarks>
+    /// Asynchronous because honouring it while Codex is connected means restarting
+    /// the filter process; a checkbox that only takes effect after a relaunch, with
+    /// nothing on screen saying so, is the behaviour this replaced.
+    /// </remarks>
+    Task SetContextFilterEnabledAsync(bool enabled, CancellationToken cancellationToken = default) =>
+        Task.CompletedTask;
+
+    /// <summary>
+    /// True when Codex is routed through the in-process loopback relay rather than a
+    /// managed API key issued by the server.
+    /// </summary>
+    /// <remarks>
+    /// The dashboard has to know: under the loopback relay there is no key whose group
+    /// can be edited server-side, so switching groups is a local push
+    /// (<see cref="SetActiveGroup"/>) and takes effect at once.
+    /// </remarks>
+    bool UsesLocalTransport => false;
+
+    /// <summary>Rebinds forwarded traffic to <paramref name="groupId"/>, effective immediately.</summary>
+    void SetActiveGroup(long? groupId) { }
     /// <param name="forceNewKey">
     /// Skips reusing an existing, unexpired lease and issues a fresh one instead. The
     /// normal reuse exists so pressing 启动 twice does not litter the key list, but
@@ -116,7 +145,10 @@ internal sealed class CodexStartup : ICodexStartup
     private readonly ManagedKeyNaming _naming;
     private readonly CodexConfigWriter _config;
     private readonly ICodexAppLauncher _launcher;
-    private readonly ICodexEnhancementHost _enhancement;
+    private readonly ICodexRouteGuardHost _routeGuard;
+    private readonly LocalPawRelay? _localRelay;
+    private readonly ContextFilterProcess? _contextFilter;
+    private bool _contextFilterEnabled = true;
     private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
     private int _releaseRequests;
     private bool _released;
@@ -127,15 +159,56 @@ internal sealed class CodexStartup : ICodexStartup
         ManagedKeyNaming naming,
         CodexConfigWriter config,
         ICodexAppLauncher launcher,
-        ICodexEnhancementHost? enhancement = null)
+        ICodexRouteGuardHost? routeGuard = null,
+        LocalPawRelay? localRelay = null,
+        ContextFilterProcess? contextFilter = null)
     {
         _relay = relay ?? throw new ArgumentNullException(nameof(relay));
         _session = session ?? throw new ArgumentNullException(nameof(session));
         _naming = naming ?? throw new ArgumentNullException(nameof(naming));
         _config = config ?? throw new ArgumentNullException(nameof(config));
         _launcher = launcher ?? throw new ArgumentNullException(nameof(launcher));
-        _enhancement = enhancement ?? new NullCodexEnhancementHost();
+        _routeGuard = routeGuard ?? new NullCodexRouteGuardHost();
+        _localRelay = localRelay;
+        _contextFilter = contextFilter;
     }
+
+    public bool HasContextFilter => _contextFilter is not null;
+
+    /// <remarks>
+    /// Takes the lifecycle gate: restarting the filter underneath a launch or a
+    /// release in flight would move the port Codex was just configured with.
+    /// </remarks>
+    public async Task SetContextFilterEnabledAsync(bool enabled, CancellationToken cancellationToken = default)
+    {
+        await _lifecycleGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            _contextFilterEnabled = enabled;
+            if (_contextFilter is null)
+            {
+                return;
+            }
+
+            // Only meaningful while a session is up. With Codex not connected there is
+            // no process to restart, and the next launch reads the field above.
+            if (!_contextFilter.IsRunning)
+            {
+                return;
+            }
+
+            await _contextFilter.ApplyFilterEnabledAsync(enabled, cancellationToken).ConfigureAwait(false);
+            ClientLog.Info(enabled ? "已开启上下文压缩" : "已关闭上下文压缩（仍通过本机转发）");
+        }
+        finally
+        {
+            _lifecycleGate.Release();
+        }
+    }
+
+    public bool UsesLocalTransport => _localRelay is not null;
+
+    public void SetActiveGroup(long? groupId) => _localRelay?.SetGroup(groupId);
 
     /// <param name="groupId">The group to bill against, when a key must be issued.</param>
     /// <param name="apiBaseUrl">The relay's OpenAI-compatible endpoint, from the server.</param>
@@ -179,7 +252,7 @@ internal sealed class CodexStartup : ICodexStartup
                     "还没有检测到 ChatGPT 桌面版。");
             }
 
-            if (string.IsNullOrWhiteSpace(apiBaseUrl))
+            if (_localRelay is null && string.IsNullOrWhiteSpace(apiBaseUrl))
             {
                 // Without the server's own endpoint there is nothing correct to write.
                 // Guessing one from the sign-in address is how a client ends up
@@ -190,36 +263,90 @@ internal sealed class CodexStartup : ICodexStartup
                     "服务器没有提供接口地址，请稍后再试。");
             }
 
-            RelayApiKey key;
-            try
+            if (_localRelay is not null && groupId is null)
             {
-                key = await EnsureLeaseAsync(groupId, forceNewKey, cancellationToken).ConfigureAwait(true);
-            }
-            catch (RelayApiException ex)
-            {
-                ClientLog.Warning("获取授权失败", ex);
-                return new CodexStartupResult(CodexStartupStatus.RelayUnavailable, ex.UserMessage);
-            }
-
-            if (string.IsNullOrWhiteSpace(key.Key))
-            {
-                // The list endpoint returns the secret in full, so an empty one means
-                // the contract changed. Writing it would produce a config that fails
-                // every request with no clue why.
-                ClientLog.Warning($"授权 {key.Id} 没有返回密钥内容");
+                // The loopback relay refuses every request that carries no group, so
+                // launching here would write the config, start Codex, report 就绪 —
+                // and then fail every single turn with nothing on screen to explain it.
+                ClientLog.Warning("未选择分组，拒绝启动本机转发");
                 return new CodexStartupResult(
                     CodexStartupStatus.RelayUnavailable,
-                    "服务器没有返回可用的授权内容。");
+                    "请先选择一个分组，再启动 ChatGPT。");
+            }
+
+            string codexKey;
+            string codexBaseUrl;
+            long? selectedGroup = groupId;
+            RelayApiKey? managedKey = null;
+            if (_localRelay is not null)
+            {
+                try
+                {
+                    // Not kept: the relay fetches the session per request. Asked for here
+                    // only so a signed-out user is told so now, instead of after Codex has
+                    // been restarted and every turn fails.
+                    await _session.GetAccessTokenAsync(cancellationToken).ConfigureAwait(true);
+                    await _localRelay.StartAsync(cancellationToken).ConfigureAwait(true);
+                    _localRelay.SetGroup(selectedGroup);
+                    codexKey = _localRelay.Token;
+                    if (_contextFilter is not null)
+                    {
+                        // In the chain whether or not compression is on. With it off the
+                        // filter is a transparent pass-through (measured), and keeping it
+                        // there is what lets the switch work without moving the address
+                        // Codex was configured with — see ContextFilterProcess.
+                        _contextFilter.SetUpstream(_localRelay.BaseAddress!);
+                        await _contextFilter.StartAsync(_contextFilterEnabled, cancellationToken).ConfigureAwait(true);
+                        codexBaseUrl = _contextFilter.BaseAddress?.GetLeftPart(UriPartial.Authority) + "/v1";
+                        ClientLog.Info(_contextFilterEnabled
+                            ? "已启动 Context Filter（压缩开启）"
+                            : "已启动 Context Filter（压缩关闭，直通）");
+                    }
+                    else
+                    {
+                        codexBaseUrl = _localRelay.BaseAddress?.GetLeftPart(UriPartial.Authority) + "/v1";
+                    }
+                    ClientLog.Info("已启动本机 Paw Relay，Codex 不再使用远程 API Key");
+                }
+                // Deliberately not a list of expected types. The earlier filter named
+                // three and missed two that this path really throws — Win32Exception
+                // from Process.Start, and OperationCanceledException from the context
+                // filter's own five-second port wait — and anything that escapes here
+                // leaves the loopback listener up while it can still reach the user's
+                // account session. Caller cancellation is the one thing that is not
+                // ours to swallow.
+                catch (Exception ex) when (ex is not OperationCanceledException ||
+                                           !cancellationToken.IsCancellationRequested)
+                {
+                    ClientLog.Warning("启动本机 Paw Relay 失败", ex);
+                    await StopLocalTransportAsync().ConfigureAwait(false);
+                    return new CodexStartupResult(CodexStartupStatus.RelayUnavailable, "本机通信组件启动失败，请重试。");
+                }
+                catch (OperationCanceledException)
+                {
+                    await StopLocalTransportAsync().ConfigureAwait(false);
+                    throw;
+                }
+            }
+            else
+            {
+                try { managedKey = await EnsureLeaseAsync(groupId, forceNewKey, cancellationToken).ConfigureAwait(true); }
+                catch (RelayApiException ex) { ClientLog.Warning("获取授权失败", ex); return new CodexStartupResult(CodexStartupStatus.RelayUnavailable, ex.UserMessage); }
+                if (string.IsNullOrWhiteSpace(managedKey.Key))
+                    return new CodexStartupResult(CodexStartupStatus.RelayUnavailable, "服务器没有返回可用的授权内容。");
+                codexKey = managedKey.Key;
+                codexBaseUrl = apiBaseUrl;
             }
 
             try
             {
-                _config.Apply(key.Key, apiBaseUrl, preferredModel);
-                ClientLog.Info($"已写入 ChatGPT 配置，授权 {key.Id}");
+                _config.Apply(codexKey, codexBaseUrl, preferredModel);
+                ClientLog.Info(_localRelay is null ? $"已写入 ChatGPT 配置，授权 {managedKey!.Id}" : "已写入 ChatGPT 本机 Relay 配置");
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 ClientLog.Error("写入 ChatGPT 配置失败", ex);
+                await StopLocalTransportAsync().ConfigureAwait(false);
                 return new CodexStartupResult(
                     CodexStartupStatus.LocalFailure,
                     "无法写入 ChatGPT 的配置文件，请确认它没有被其他程序占用。");
@@ -241,33 +368,26 @@ internal sealed class CodexStartup : ICodexStartup
                     // increasingly ignore or block --remote-debugging-port, which
                     // used to surface here as "ChatGPT 已启动但没有响应" even though
                     // routing was already applied and the app was perfectly usable.
-                    ClientLog.Warning("调试端口未在超时前打开，按无增强功能的普通启动处理");
+                    // Nothing depends on that port any more, so this is a note, not
+                    // a degraded state.
+                    ClientLog.Info("调试端口未打开，按普通启动处理");
                 }
 
-                // _enhancement.StartAsync must run even when there is no debug port
-                // to attach to: RelayInjectionHost starts its CodexRouteGuard before
-                // it ever tries the CDP connection, and that guard — not the overlay
-                // — is what notices when an official ChatGPT login later rewrites
-                // config.toml and silently drops [model_providers.gongfei], and
-                // reapplies it without the user doing anything. Returning early here
-                // (as this used to, for the debugPortUnavailable case only) skipped
-                // this call entirely, so on any machine where the debug port never
-                // opens — a growing share, as ChatGPT hardens against it — that
-                // "mandatory" guard (see RelayInjectionHost's own class doc) was
-                // never actually mandatory: nothing was watching config.toml at all.
-                bool enhanced = await _enhancement
-                    .StartAsync(key.Key, apiBaseUrl, cancellationToken)
+                // Runs on every launch path, including the one above where no debug
+                // port ever opened. This is the watch that notices an official ChatGPT
+                // sign-in rewriting config.toml and dropping [model_providers.gongfei]
+                // — the failure the user cannot see, because the client goes on saying
+                // 就绪 while the traffic has quietly returned to their ChatGPT plan.
+                // An earlier version returned before this call in the no-debug-port
+                // branch, which left that guard off entirely on the growing share of
+                // machines where the port never opens.
+                await _routeGuard
+                    .StartAsync(codexKey, codexBaseUrl, cancellationToken)
                     .ConfigureAwait(true);
-                if (!enhanced)
-                {
-                    ClientLog.Warning("ChatGPT 已启动，状态条与限额检测暂不可用");
-                }
 
                 return new CodexStartupResult(
                     CodexStartupStatus.Ready,
-                    debugPortUnavailable
-                        ? "ChatGPT 已启动，可以开始对话了（状态条与限额检测暂不可用）。"
-                        : "ChatGPT 已就绪，可以开始对话了。");
+                    "ChatGPT 已就绪，可以开始对话了。");
             }
 
             return launch.Outcome switch
@@ -304,9 +424,12 @@ internal sealed class CodexStartup : ICodexStartup
         DateTimeOffset? expiry = null;
         try
         {
-            string token = await _session.GetAccessTokenAsync(cancellationToken).ConfigureAwait(true);
-            IReadOnlyList<RelayApiKey> keys = await _relay.ListApiKeysAsync(token, cancellationToken).ConfigureAwait(true);
-            expiry = _naming.FindCurrent(keys)?.ExpiresAt;
+            if (_localRelay is null)
+            {
+                string token = await _session.GetAccessTokenAsync(cancellationToken).ConfigureAwait(true);
+                IReadOnlyList<RelayApiKey> keys = await _relay.ListApiKeysAsync(token, cancellationToken).ConfigureAwait(true);
+                expiry = _naming.FindCurrent(keys)?.ExpiresAt;
+            }
         }
         catch (RelayApiException ex) when (ex.Failure == RelayFailure.RateLimited)
         {
@@ -330,6 +453,9 @@ internal sealed class CodexStartup : ICodexStartup
 
     public async Task<DateTimeOffset?> RenewLeaseIfDueAsync(CancellationToken cancellationToken = default)
     {
+        if (_localRelay is not null)
+            return null;
+
         try
         {
             string token = await _session.GetAccessTokenAsync(cancellationToken).ConfigureAwait(true);
@@ -383,38 +509,45 @@ internal sealed class CodexStartup : ICodexStartup
 
                 try
                 {
-                    await _enhancement.StopAsync().ConfigureAwait(false);
+                    await _routeGuard.StopAsync().ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {
-                    ClientLog.Warning("停止 Codex 增强会话失败", ex);
+                    ClientLog.Warning("停止 Codex 路由守护失败", ex);
                 }
 
                 bool localReleaseCompleted = false;
                 try
                 {
-                    string token = await _session.GetAccessTokenAsync(cancellationToken).ConfigureAwait(false);
-                    IReadOnlyList<RelayApiKey> keys = await _relay
-                        .ListApiKeysAsync(token, cancellationToken)
-                        .ConfigureAwait(false);
-                    RelayApiKey? managed = _naming.FindCurrent(keys);
-
-                    IEnumerable<RelayApiKey> keysToDelete = _naming.FindOrphans(keys);
-                    if (managed is not null)
+                    if (_localRelay is not null)
                     {
-                        keysToDelete = keysToDelete.Append(managed);
+                        if (_contextFilter is not null)
+                            await _contextFilter.DisposeAsync().ConfigureAwait(false);
+                        await _localRelay.StopAsync().ConfigureAwait(false);
+                        ClientLog.Info("已停止本机 Paw Relay");
                     }
-
-                    foreach (RelayApiKey key in keysToDelete.DistinctBy(key => key.Id))
+                    if (_localRelay is null)
                     {
-                        try
+                        string token = await _session.GetAccessTokenAsync(cancellationToken).ConfigureAwait(false);
+                        IReadOnlyList<RelayApiKey> keys = await _relay
+                            .ListApiKeysAsync(token, cancellationToken)
+                            .ConfigureAwait(false);
+                        RelayApiKey? managed = _naming.FindCurrent(keys);
+                        IEnumerable<RelayApiKey> keysToDelete = _naming.FindOrphans(keys);
+                        if (managed is not null)
+                            keysToDelete = keysToDelete.Append(managed);
+
+                        foreach (RelayApiKey key in keysToDelete.DistinctBy(key => key.Id))
                         {
-                            await _relay.DeleteApiKeyAsync(token, key.Id, cancellationToken).ConfigureAwait(false);
-                            ClientLog.Info($"已撤销托管授权 {key.Id}");
-                        }
-                        catch (RelayApiException ex)
-                        {
-                            ClientLog.Warning($"撤销托管授权 {key.Id} 失败，将由租约自动过期", ex);
+                            try
+                            {
+                                await _relay.DeleteApiKeyAsync(token, key.Id, cancellationToken).ConfigureAwait(false);
+                                ClientLog.Info($"已撤销托管授权 {key.Id}");
+                            }
+                            catch (RelayApiException ex)
+                            {
+                                ClientLog.Warning($"撤销托管授权 {key.Id} 失败，将由租约自动过期", ex);
+                            }
                         }
                     }
                 }
@@ -454,6 +587,14 @@ internal sealed class CodexStartup : ICodexStartup
 
     private static CodexStartupResult ReleaseInProgressResult() =>
         new(CodexStartupStatus.LocalFailure, "正在释放 ChatGPT 配置，请稍后再试。");
+
+    private async Task StopLocalTransportAsync()
+    {
+        if (_contextFilter is not null)
+            await _contextFilter.DisposeAsync().ConfigureAwait(false);
+        if (_localRelay is not null)
+            await _localRelay.StopAsync().ConfigureAwait(false);
+    }
 
     /// <summary>
     /// Returns a usable lease, renewing or issuing as needed (F3.2.1 / F3.2.2).

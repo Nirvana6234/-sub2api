@@ -90,6 +90,34 @@
     </Content>
   </ItemGroup>
 
+  <!-- Optional bundled context filter, Windows only.
+
+       Keyed on the RuntimeIdentifier and not on the build machine's OS: the macOS
+       artifact is cross-compiled from a Windows runner, so an OS test would ship a
+       Windows .exe inside the .app. With no RID (a plain build or the test run) it
+       is included, so the toggle can be exercised locally.
+
+       The <Content> is declared inside the target on purpose — an ItemGroup condition
+       outside one is evaluated before any target runs, so the first build would fetch
+       the file and then not bundle it. ContinueOnError because the fetch reaches the
+       network: offline, or a GitHub rate limit, must not fail the build of a client
+       that is designed to run without this file. -->
+  <Target Name="EnsureBundledContextFilter" BeforeTargets="AssignTargetPaths"
+          Condition="'$(DesignTimeBuild)' != 'true' and ('$(RuntimeIdentifier)' == '' or $(RuntimeIdentifier.StartsWith('win')))">
+    <Exec Condition="'$(SkipContextFilterDownload)' != 'true'"
+          ContinueOnError="WarnAndContinue"
+          Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\..\fetch-context-filter.ps1&quot; -Version latest -OutputDirectory &quot;$(MSBuildProjectDirectory)\bin\context-filter&quot;" />
+    <ItemGroup>
+      <Content Include="bin\context-filter\context-filter.exe"
+               Condition="Exists('$(MSBuildProjectDirectory)\bin\context-filter\context-filter.exe')">
+        <Link>context-filter.exe</Link>
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+        <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+      </Content>
+    </ItemGroup>
+  </Target>
+
 
   <!-- The chart's coordinate maths, compiled into this head rather than referenced
        from Core. See the header of the file for why it is shared as source. The

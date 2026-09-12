@@ -32,6 +32,14 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 30
 
+    # Read by fetch-context-filter.ps1, which the Windows builds run to pull the
+    # bundled filter. Anonymous api.github.com is 60 requests/hour per IP and runner
+    # IPs are shared, so without this the fetch fails intermittently for reasons
+    # unrelated to this repo. Here that only costs a warning; in client-release.yml
+    # it would cost the release.
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -58,7 +66,12 @@ jobs:
           dotnet publish src/LanAi.RelayClient.App/LanAi.RelayClient.App.csproj `
             -c Release -r win-x64 --self-contained true `
             -o "${{ runner.temp }}/pub-win" 2>&1 | Tee-Object -Variable output
-          $offenders = $output | Select-String 'IL\d+.*LanAi\.'
+          # 每行 MSBuild 警告都以 "[<出问题的 csproj 路径>]" 结尾，而那个路径里就有
+          # "LanAi." —— 直接拿 'IL\d+.*LanAi\.' 去匹配整行，会把框架那条已知可接受的
+          # ComActivator IL2026 也判成本项目缺陷。先把行尾那段路径去掉再匹配。
+          $offenders = $output |
+            ForEach-Object { $_ -replace '\s*\[[^\]]*\]\s*$', '' } |
+            Select-String 'IL\d+.*LanAi\.'
           if ($offenders) {
             Write-Error "裁剪警告指向本项目代码：`n$($offenders -join "`n")"
             exit 1
