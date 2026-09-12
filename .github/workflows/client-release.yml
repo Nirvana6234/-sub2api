@@ -57,6 +57,13 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 60
 
+    # Read by fetch-context-filter.ps1. Not optional here: the Windows package is
+    # refused below when the filter is missing, and anonymous api.github.com is rate
+    # limited per (shared) runner IP — unauthenticated, a release would fail on
+    # someone else's traffic.
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -141,16 +148,36 @@ jobs:
           python packaging/check-server-address.py \
             "${{ runner.temp }}/pub-win/LanAi.RelayClient.App.exe"
 
+      # 发布包必须带上 context-filter.exe。它在**构建**里是可选的
+      # （EnsureBundledContextFilter 拿不到就只警告，好让离线开发机能编），
+      # 但在**发布**里不是：少了它，出去的客户端「启用上下文压缩」永久置灰，
+      # 而且没有任何报错——只有用户会发现自己的额度烧得比别人快。
+      - name: 发布包必须带上 context-filter
+        shell: bash
+        run: |
+          if [ ! -f "${{ runner.temp }}/pub-win/context-filter.exe" ]; then
+            echo "::error::win-x64 发布目录里没有 context-filter.exe（fetch 步骤大概被限流或断网了），拒绝出包"
+            ls -la "${{ runner.temp }}/pub-win"
+            exit 1
+          fi
+
+      # zip 里要放齐用户解压后能直接跑的东西，不只是主 exe：
+      # context-filter.exe 是 ExcludeFromSingleFile 的，必须躺在 exe 旁边。
       - name: 打包 Windows zip
         shell: pwsh
         run: |
           $out = "${{ runner.temp }}/artifacts"
           New-Item -ItemType Directory -Force $out | Out-Null
-          $exe = Join-Path $out "共飞-ChatGPT助手.exe"
-          Copy-Item "${{ runner.temp }}/pub-win/LanAi.RelayClient.App.exe" $exe
-          Compress-Archive -Path $exe `
+          $staging = Join-Path $out "win-staging"
+          New-Item -ItemType Directory -Force $staging | Out-Null
+          Copy-Item "${{ runner.temp }}/pub-win/LanAi.RelayClient.App.exe" (Join-Path $staging "共飞-ChatGPT助手.exe")
+          Copy-Item "${{ runner.temp }}/pub-win/context-filter.exe" $staging
+          Copy-Item "${{ runner.temp }}/pub-win/codex-installer" $staging -Recurse
+          Copy-Item "注册桌面和开始菜单快捷方式.cmd","删除桌面和开始菜单快捷方式.cmd" $staging
+          Compress-Archive -Path (Join-Path $staging "*") `
             -DestinationPath (Join-Path $out "codex-relay-client_v${{ steps.version.outputs.version }}_x64.zip") `
             -CompressionLevel Optimal -Force
+          Remove-Item $staging -Recurse -Force
 
       # -------------------------------------------------------------------
       # macOS 产物
