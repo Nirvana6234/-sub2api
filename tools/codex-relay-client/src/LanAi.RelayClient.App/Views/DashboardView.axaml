@@ -145,6 +145,14 @@
               <CheckBox Content="随系统启动" IsChecked="{Binding Dashboard.StartWithWindows}"
                         Foreground="#374151" />
             </DockPanel>
+            <!-- Its own row. The label plus the repair button and 随系统启动 made three
+                 items compete for one line, and this is the one whose meaning a user has
+                 to stop and read. Greys out when no filter is bundled (macOS, or a
+                 Windows build made without it) rather than offering a dead switch. -->
+            <CheckBox Content="启用上下文压缩" IsChecked="{Binding Dashboard.ContextFilterEnabled}"
+                      IsEnabled="{Binding Dashboard.CanToggleContextFilter}"
+                      ToolTip.Tip="压缩历史工具输出和图片，节省额度；改动立即生效，关闭后仍通过共飞中转"
+                      Foreground="#374151" Margin="0,8,0,0" />
           </StackPanel>
         </Border>
 

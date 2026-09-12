@@ -362,6 +362,24 @@ internal sealed class TestClock
     public void Advance(TimeSpan amount) => Now += amount;
 }
 
+/// <summary>An in-memory stand-in for the context-compression preference file.</summary>
+internal sealed class FakeContextFilterPreferenceStore : IContextFilterPreferenceStore
+{
+    public FakeContextFilterPreferenceStore(bool? initial = null) => Saved = initial;
+
+    public bool? Saved { get; private set; }
+
+    public int SaveCount { get; private set; }
+
+    public bool? Load() => Saved;
+
+    public void Save(bool enabled)
+    {
+        Saved = enabled;
+        SaveCount++;
+    }
+}
+
 /// <summary>A Codex startup whose outcome the test dictates.</summary>
 internal sealed class FakeCodexStartup : ICodexStartup
 {
@@ -374,6 +392,32 @@ internal sealed class FakeCodexStartup : ICodexStartup
     public string? LastPreferredModel { get; private set; }
 
     public bool LastForceNewKey { get; private set; }
+
+    public bool UsesLocalTransport { get; set; }
+
+    /// <summary>Every group pushed to the transport, in order.</summary>
+    public List<long?> ActiveGroups { get; } = [];
+
+    public void SetActiveGroup(long? groupId) => ActiveGroups.Add(groupId);
+
+    public bool HasContextFilter { get; set; } = true;
+
+    /// <summary>Every context-filter switch applied, in order.</summary>
+    public List<bool> ContextFilterStates { get; } = [];
+
+    /// <summary>Set to make applying the switch fail, as a filter that will not restart would.</summary>
+    public Exception? OnSetContextFilter { get; set; }
+
+    public Task SetContextFilterEnabledAsync(bool enabled, CancellationToken cancellationToken = default)
+    {
+        if (OnSetContextFilter is not null)
+        {
+            return Task.FromException(OnSetContextFilter);
+        }
+
+        ContextFilterStates.Add(enabled);
+        return Task.CompletedTask;
+    }
 
     public Task<CodexStartupResult> RunAsync(
         long? groupId,

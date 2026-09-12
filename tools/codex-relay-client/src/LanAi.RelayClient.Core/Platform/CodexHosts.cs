@@ -5,19 +5,20 @@ using LanAi.Workspace.Injection;
 
 namespace LanAi.RelayClient.Platform;
 
-/// <summary>Picks how ChatGPT is started, and whether the overlay is available.</summary>
+/// <summary>Picks how ChatGPT is started on this platform.</summary>
 /// <remarks>
 /// <para>
 /// The fifth of these factories, alongside <see cref="SingleInstance"/>,
 /// <see cref="SecureStorage"/>, <see cref="StartupRegistrations"/> and
 /// <see cref="NotificationPresenters"/>. It exists so the composition root stops
-/// naming Windows types directly — it used to construct <c>CodexAppLauncher</c> and
-/// <c>RelayInjectionHost</c> outright, both of which are Windows-only.
+/// naming Windows types directly — it used to construct <c>CodexAppLauncher</c>
+/// outright, which is Windows-only.
 /// </para>
 /// <para>
-/// The two decisions travel together on purpose. The overlay attaches over a DevTools
-/// port that only the Windows launcher negotiates, so a host paired with the wrong
-/// launcher would sit waiting for a port nobody opened.
+/// Only the launcher varies now. This used to also choose whether the CDP status
+/// overlay was available, and the two had to travel together because the overlay
+/// attached over a DevTools port only the Windows launcher negotiated. The overlay is
+/// gone; the route guard that remains is file IO and runs everywhere.
 /// </para>
 /// </remarks>
 internal static class CodexHosts
@@ -43,21 +44,20 @@ internal static class CodexHosts
     }
 
     /// <summary>
-    /// The status overlay and limit sentinel, where the platform has them.
+    /// The watch that keeps <c>config.toml</c> pointed at the relay.
     /// </summary>
     /// <remarks>
-    /// macOS v1 gets <see cref="NullCodexEnhancementHost"/> — a decision, not a gap.
-    /// The overlay drives the official app over CDP, and the client relays through
-    /// <c>~/.codex</c> perfectly well without it; what a Mac user loses is the in-app
-    /// status strip and the automatic switch on hitting a limit, both of which are
-    /// visible on the dashboard instead.
+    /// Every platform now, where macOS used to get a null host. That split existed
+    /// because this host also owned a CDP status overlay, which is Windows-only — the
+    /// guard itself is file IO on <c>~/.codex</c> and always worked anywhere. With the
+    /// overlay gone the split had no reason left, and keeping it would have meant Mac
+    /// users silently kept the one failure the guard exists to catch: an official
+    /// ChatGPT sign-in rewriting the file and dropping the relay route.
     /// </remarks>
-    public static ICodexEnhancementHost CreateEnhancementHost(CodexConfigWriter config)
+    public static ICodexRouteGuardHost CreateRouteGuardHost(CodexConfigWriter config)
     {
         ArgumentNullException.ThrowIfNull(config);
 
-        return OperatingSystem.IsWindows()
-            ? new RelayInjectionHost(config)
-            : new NullCodexEnhancementHost();
+        return new CodexRouteGuardHost(config);
     }
 }

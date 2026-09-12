@@ -207,6 +207,190 @@ public sealed class DashboardViewModelTests
     }
 
     [Fact]
+    public async Task UnderTheLocalTransportTheSwitchIsPushedToTheRelayImmediately()
+    {
+        // Under the loopback relay there is no server-side key to re-point, so this
+        // used to fall into the "no managed key" branch above and promise the user a
+        // switch that nothing ever applied — traffic kept being billed to the group
+        // that was selected when Codex launched.
+        var relay = new FakeRelayClient();
+        var session = new RelaySessionManager(relay, new FakeSessionStore(), "https://relay.test/", new TestClock().Read);
+        var preferences = new FakeGroupPreferenceStore();
+        var codex = new FakeCodexStartup { UsesLocalTransport = true };
+        var dashboard = new DashboardViewModel(
+            relay, session, preferences, new ManagedKeyNaming(new FixedInstallId("testinst")), codex);
+        await session.SignInAsync("a@b.com", "pw");
+
+        relay.OnAvailableGroups = () => [Group(11, "甲"), Group(12, "乙")];
+        relay.OnListKeys = () => [];
+        relay.OnUpdateKeyGroup = _ => throw new InvalidOperationException("the local transport has no key to update");
+
+        await dashboard.RefreshAsync();
+        await dashboard.SwitchGroupAsync(dashboard.Groups.Single(g => g.Id == 12));
+
+        Assert.Equal(12, codex.ActiveGroups.LastOrDefault());
+        Assert.Equal(12, preferences.Saved);
+        Assert.Equal("乙", dashboard.CurrentGroupName);
+        Assert.Equal("已切换到 乙。", dashboard.GroupMessage);
+    }
+
+    [Fact]
+    public async Task TheStartButtonWaitsForTheGroupListInsteadOfBlamingTheUser()
+    {
+        // Replays a real session: the button was live the moment the dashboard
+        // appeared, so 启动 pressed a few seconds in reached the relay with no group
+        // and was refused with "请先选择一个分组" — for a group the client picks
+        // itself and which landed a second later. The account had one all along.
+        var relay = new FakeRelayClient();
+        var session = new RelaySessionManager(relay, new FakeSessionStore(), "https://relay.test/", new TestClock().Read);
+        var codex = new FakeCodexStartup { UsesLocalTransport = true };
+        var dashboard = new DashboardViewModel(
+            relay,
+            session,
+            new FakeGroupPreferenceStore(),
+            new ManagedKeyNaming(new FixedInstallId("testinst")),
+            codex,
+            contextFilterPreferences: new FakeContextFilterPreferenceStore());
+        await session.SignInAsync("a@b.com", "pw");
+
+        // Before the group list has loaded.
+        Assert.False(dashboard.CanStartCodex);
+        Assert.Equal("正在加载分组…", dashboard.StartCodexLabel);
+
+        await dashboard.StartCodexAsync(_ => Task.FromResult(false));
+        Assert.Equal(0, codex.RunCount);
+        Assert.Contains("稍候", dashboard.CodexMessage, StringComparison.Ordinal);
+
+        // Once it lands, the group is selected for the user and the button opens up.
+        relay.OnAvailableGroups = () => [Group(2, "老号分组")];
+        relay.OnListKeys = () => [];
+        await dashboard.RefreshAsync();
+
+        Assert.True(dashboard.CanStartCodex);
+        Assert.Equal("启动 ChatGPT", dashboard.StartCodexLabel);
+
+        await dashboard.StartCodexAsync(_ => Task.FromResult(false));
+        Assert.Equal(1, codex.RunCount);
+    }
+
+    [Fact]
+    public async Task AnAccountWithNoCodexGroupSaysSoRatherThanLookingLikeItIsLoading()
+    {
+        var relay = new FakeRelayClient();
+        var session = new RelaySessionManager(relay, new FakeSessionStore(), "https://relay.test/", new TestClock().Read);
+        var codex = new FakeCodexStartup { UsesLocalTransport = true };
+        var dashboard = new DashboardViewModel(
+            relay,
+            session,
+            new FakeGroupPreferenceStore(),
+            new ManagedKeyNaming(new FixedInstallId("testinst")),
+            codex,
+            contextFilterPreferences: new FakeContextFilterPreferenceStore());
+        await session.SignInAsync("a@b.com", "pw");
+
+        // Loaded successfully, and there is genuinely nothing Codex can bill to.
+        relay.OnAvailableGroups = () => [];
+        relay.OnListKeys = () => [];
+        await dashboard.RefreshAsync();
+
+        Assert.True(dashboard.GroupsReady);
+        Assert.False(dashboard.CanStartCodex);
+        Assert.Equal("没有可用分组", dashboard.StartCodexLabel);
+    }
+
+    // ---- 启用上下文压缩 -------------------------------------------------------
+
+    private static DashboardViewModel BuildForContextFilter(
+        FakeCodexStartup codex,
+        FakeContextFilterPreferenceStore preferences,
+        SafeAsyncRunner? safeAsync = null)
+    {
+        var relay = new FakeRelayClient();
+        var session = new RelaySessionManager(relay, new FakeSessionStore(), "https://relay.test/", new TestClock().Read);
+        return new DashboardViewModel(
+            relay,
+            session,
+            new FakeGroupPreferenceStore(),
+            new ManagedKeyNaming(new FixedInstallId("testinst")),
+            codex,
+            safeAsync: safeAsync,
+            contextFilterPreferences: preferences);
+    }
+
+    [Fact]
+    public void TheCompressionSwitchDefaultsToOnAndIsRestoredFromDisk()
+    {
+        Assert.True(BuildForContextFilter(new FakeCodexStartup(), new FakeContextFilterPreferenceStore()).ContextFilterEnabled);
+        Assert.False(BuildForContextFilter(new FakeCodexStartup(), new FakeContextFilterPreferenceStore(false)).ContextFilterEnabled);
+        Assert.True(BuildForContextFilter(new FakeCodexStartup(), new FakeContextFilterPreferenceStore(true)).ContextFilterEnabled);
+    }
+
+    [Fact]
+    public void RestoringTheSavedValueIsNotTreatedAsTheUserChangingIt()
+    {
+        // Otherwise every launch writes the file straight back and asks the startup to
+        // restart a filter process that is not even running yet.
+        var codex = new FakeCodexStartup();
+        var preferences = new FakeContextFilterPreferenceStore(false);
+
+        DashboardViewModel dashboard = BuildForContextFilter(codex, preferences);
+
+        Assert.False(dashboard.ContextFilterEnabled);
+        Assert.Equal(0, preferences.SaveCount);
+        Assert.Empty(codex.ContextFilterStates);
+    }
+
+    [Fact]
+    public void TogglingCompressionPersistsItAndAppliesItWithoutWaitingForTheNextLaunch()
+    {
+        var codex = new FakeCodexStartup();
+        var preferences = new FakeContextFilterPreferenceStore(true);
+        DashboardViewModel dashboard = BuildForContextFilter(codex, preferences);
+
+        dashboard.ContextFilterEnabled = false;
+
+        Assert.Equal(false, preferences.Saved);
+        Assert.Equal([false], codex.ContextFilterStates);
+
+        dashboard.ContextFilterEnabled = true;
+
+        Assert.Equal(true, preferences.Saved);
+        Assert.Equal([false, true], codex.ContextFilterStates);
+    }
+
+    [Fact]
+    public async Task AFailedSwitchPutsTheCheckboxBackWhereTheChainActuallyIs()
+    {
+        // A box left showing a setting that did not take is worse than the failure
+        // itself: the user has no way to tell the two apart.
+        var reported = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var safeAsync = new SafeAsyncRunner(report: _ =>
+        {
+            reported.TrySetResult();
+            return Task.CompletedTask;
+        });
+        var codex = new FakeCodexStartup { OnSetContextFilter = new InvalidOperationException("filter will not restart") };
+        DashboardViewModel dashboard = BuildForContextFilter(codex, new FakeContextFilterPreferenceStore(true), safeAsync);
+
+        dashboard.ContextFilterEnabled = false;
+        await reported.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.True(dashboard.ContextFilterEnabled);
+    }
+
+    [Fact]
+    public void WithNoBundledFilterTheSwitchIsGreyedOut()
+    {
+        Assert.False(BuildForContextFilter(
+            new FakeCodexStartup { HasContextFilter = false },
+            new FakeContextFilterPreferenceStore()).CanToggleContextFilter);
+
+        Assert.True(BuildForContextFilter(
+            new FakeCodexStartup { HasContextFilter = true },
+            new FakeContextFilterPreferenceStore()).CanToggleContextFilter);
+    }
+
+    [Fact]
     public async Task ClaudeGroupsRemainAvailableForTheClaudeBridge()
     {
         // Claude groups are supported by the relay's Claude-over-Codex bridge;

@@ -16,6 +16,45 @@
     <ApplicationIcon>Assets\LanAi.RelayClient.ico</ApplicationIcon>
   </PropertyGroup>
 
+  <!-- Refreshes the bundled filter when the local VERSION marker differs from the
+       latest GitHub release, then adds the result to Content *inside the target*.
+
+       Both details are load-bearing:
+
+       * The item has to be declared here rather than in a plain ItemGroup with an
+         Exists() condition. Conditions on ItemGroups outside a target are evaluated
+         during project evaluation, which happens before any target runs — so on the
+         first build the file downloads and is then not bundled, and only the *second*
+         build ships it. AssignTargetPaths still runs before content is copied, so
+         adding it here is both correct and early enough.
+       * ContinueOnError, because the fetch reaches the network on every build
+         (this project is also what the test project references). A machine that is
+         offline, or a GitHub API rate limit, must not fail the build of a client that
+         is designed to run without this file at all.
+
+       Use -p:SkipContextFilterDownload=true to skip the network call entirely. -->
+  <Target Name="EnsureBundledContextFilter" BeforeTargets="AssignTargetPaths"
+          Condition="'$(DesignTimeBuild)' != 'true'">
+    <!-- -OutputDirectory is passed explicitly rather than left to the script's own
+         default: the project is the side that knows where it will look for the file,
+         and the two drifted apart once already. -->
+    <Exec Condition="'$(SkipContextFilterDownload)' != 'true'"
+          ContinueOnError="WarnAndContinue"
+          Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\..\fetch-context-filter.ps1&quot; -Version latest -OutputDirectory &quot;$(MSBuildProjectDirectory)\bin\context-filter&quot;" />
+    <!-- VERSION is deliberately not bundled: it is a marker the fetch script reads,
+         the app only ever probes for context-filter.exe, and listing both under one
+         <Link> would point two source files at the same output path. -->
+    <ItemGroup>
+      <Content Include="bin\context-filter\context-filter.exe"
+               Condition="Exists('$(MSBuildProjectDirectory)\bin\context-filter\context-filter.exe')">
+        <Link>context-filter.exe</Link>
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+        <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+      </Content>
+    </ItemGroup>
+  </Target>
+
   <!-- 测试渠道：dotnet publish -p:TestServer=true，客户端改连 test.gongfeiai.com。
        走这个开关而不是命令行直接传 DefineConstants —— 后者是 MSBuild 全局属性，
        会覆盖而非追加，把 SDK 隐式定义的 TRACE / RELEASE / NET8_0 一并丢掉。-->

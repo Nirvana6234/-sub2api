@@ -1,3 +1,4 @@
+using System.IO;
 using System.Net.Http;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
@@ -8,6 +9,7 @@ using LanAi.RelayClient.CodexBinding;
 using LanAi.RelayClient.Platform;
 using LanAi.RelayClient.Server;
 using LanAi.RelayClient.Services;
+using LanAi.RelayClient.Transport;
 using LanAi.RelayClient.ViewModels;
 using LanAi.Workspace.Injection;
 
@@ -154,6 +156,20 @@ public partial class App : Application
             AppPaths.CodexSnapshotRoot,
             AppPaths.CodexAuthSnapshotFile);
 
+        // The account session is handed over as a delegate, not a value: the relay asks
+        // for it per request, so a rotated access token reaches it without anything
+        // pushing an update. See LocalPawRelay's constructor for why that matters.
+        var localRelay = new LocalPawRelay(ClientOptions.ServerAddress, session.GetAccessTokenAsync);
+
+        // Optional and platform-shaped by nothing more than whether the file is there.
+        // The filter is a Windows binary, so the macOS build of this same head finds
+        // nothing, runs Codex → relay directly, and greys out the switch — no OS test
+        // needed here.
+        string contextFilterPath = Path.Combine(AppContext.BaseDirectory, "context-filter.exe");
+        ContextFilterProcess? contextFilter = File.Exists(contextFilterPath)
+            ? new ContextFilterProcess(contextFilterPath)
+            : null;
+
         // Both chosen by platform rather than named here: the Windows launcher and the
         // CDP overlay are Windows-only types, and the head must not know that.
         var codex = new CodexStartup(
@@ -162,7 +178,9 @@ public partial class App : Application
             keyNaming,
             codexConfig,
             CodexHosts.CreateLauncher(),
-            CodexHosts.CreateEnhancementHost(codexConfig));
+            CodexHosts.CreateRouteGuardHost(codexConfig),
+            localRelay,
+            contextFilter);
 
         var dashboard = new DashboardViewModel(
             relay,

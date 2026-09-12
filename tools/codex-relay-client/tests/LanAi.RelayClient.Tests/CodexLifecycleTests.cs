@@ -2,6 +2,7 @@ using System.IO;
 using LanAi.RelayClient.CodexBinding;
 using LanAi.RelayClient.Server;
 using LanAi.RelayClient.Services;
+using LanAi.RelayClient.Transport;
 using LanAi.Workspace.Injection;
 using Xunit;
 
@@ -226,7 +227,7 @@ public sealed class CodexLifecycleTests : IDisposable
     [Fact]
     public async Task ReleaseWaitsForAnInFlightStartAndStopsItsEnhancement()
     {
-        var enhancement = new BlockingEnhancementHost();
+        var enhancement = new BlockingRouteGuardHost();
         Setup setup = await CreateSetupAsync(enhancement);
         setup.Relay.OnListKeys = () => [ManagedKey(setup.Naming, 42)];
 
@@ -249,7 +250,7 @@ public sealed class CodexLifecycleTests : IDisposable
     [Fact]
     public async Task AStartRequestedDuringReleaseCannotReapplyTheRouteAfterwards()
     {
-        var enhancement = new BlockingStopEnhancementHost();
+        var enhancement = new BlockingStopRouteGuardHost();
         Setup setup = await CreateSetupAsync(enhancement);
         setup.Relay.OnListKeys = () => [ManagedKey(setup.Naming, 42)];
 
@@ -277,7 +278,44 @@ public sealed class CodexLifecycleTests : IDisposable
         }
     }
 
-    private async Task<Setup> CreateSetupAsync(ICodexEnhancementHost? enhancement = null)
+    [Fact]
+    public async Task TheLocalTransportRefusesToLaunchBeforeAGroupIsChosen()
+    {
+        // The relay turns away every request that carries no group. Launching anyway
+        // would write the config, restart Codex and report 就绪, and then fail every
+        // single turn with nothing on screen to explain why.
+        await using var loopback = new LocalPawRelay("https://relay.test/", _ => Task.FromResult("jwt"));
+        Setup setup = await CreateSetupAsync(localRelay: loopback);
+
+        CodexStartupResult result = await setup.Startup.RunAsync(groupId: null, "https://relay.test/v1");
+
+        Assert.Equal(CodexStartupStatus.RelayUnavailable, result.Status);
+        Assert.Contains("分组", result.Message, StringComparison.Ordinal);
+        Assert.Equal(0, setup.Launcher.EnsureCallCount);
+        Assert.Null(loopback.BaseAddress);
+    }
+
+    [Fact]
+    public async Task TheLocalTransportBindsTheChosenGroupAndSkipsManagedKeys()
+    {
+        await using var loopback = new LocalPawRelay("https://relay.test/", _ => Task.FromResult("jwt"));
+        Setup setup = await CreateSetupAsync(localRelay: loopback);
+        setup.Relay.OnListKeys = () => throw new InvalidOperationException("the local transport issues no keys");
+
+        CodexStartupResult result = await setup.Startup.RunAsync(groupId: 12, "https://relay.test/v1");
+
+        Assert.Equal(CodexStartupStatus.Ready, result.Status);
+        Assert.True(setup.Startup.UsesLocalTransport);
+        Assert.NotNull(loopback.BaseAddress);
+        // Codex is pointed at the loopback port, never at the server, and is given the
+        // local token rather than anything that means something off this machine.
+        Assert.Contains("127.0.0.1", File.ReadAllText(setup.Paths.ConfigPath), StringComparison.Ordinal);
+        Assert.Contains(loopback.Token, File.ReadAllText(setup.Paths.AuthPath), StringComparison.Ordinal);
+    }
+
+    private async Task<Setup> CreateSetupAsync(
+        ICodexRouteGuardHost? enhancement = null,
+        LocalPawRelay? localRelay = null)
     {
         string home = Path.Combine(_root, "codex");
         string snapshots = Path.Combine(_root, "snapshot");
@@ -304,7 +342,8 @@ public sealed class CodexLifecycleTests : IDisposable
             naming,
             writer,
             launcher,
-            enhancement);
+            enhancement,
+            localRelay);
         return new Setup(relay, naming, startup, paths, launcher, snapshots);
     }
 
@@ -325,7 +364,7 @@ public sealed class CodexLifecycleTests : IDisposable
         FakeCodexAppLauncher Launcher,
         string SnapshotRoot);
 
-    private sealed class BlockingEnhancementHost : ICodexEnhancementHost
+    private sealed class BlockingRouteGuardHost : ICodexRouteGuardHost
     {
         public TaskCompletionSource StartEntered { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -335,7 +374,7 @@ public sealed class CodexLifecycleTests : IDisposable
 
         public bool IsActive { get; private set; }
 
-        public async Task<bool> StartAsync(
+        public async Task StartAsync(
             string apiKey,
             string baseUrl,
             CancellationToken cancellationToken = default)
@@ -343,7 +382,6 @@ public sealed class CodexLifecycleTests : IDisposable
             StartEntered.SetResult();
             await AllowStart.Task.WaitAsync(cancellationToken);
             IsActive = true;
-            return true;
         }
 
         public Task StopAsync()
@@ -353,7 +391,7 @@ public sealed class CodexLifecycleTests : IDisposable
         }
     }
 
-    private sealed class BlockingStopEnhancementHost : ICodexEnhancementHost
+    private sealed class BlockingStopRouteGuardHost : ICodexRouteGuardHost
     {
         public TaskCompletionSource StopEntered { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -363,13 +401,13 @@ public sealed class CodexLifecycleTests : IDisposable
 
         public int StartCallCount { get; private set; }
 
-        public Task<bool> StartAsync(
+        public Task StartAsync(
             string apiKey,
             string baseUrl,
             CancellationToken cancellationToken = default)
         {
             StartCallCount++;
-            return Task.FromResult(true);
+            return Task.CompletedTask;
         }
 
         public async Task StopAsync()
