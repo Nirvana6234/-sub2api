@@ -51,6 +51,15 @@ internal sealed class LocalPawRelay : IAsyncDisposable
     private readonly bool _ownsHttp;
     private readonly string _upstream;
     private readonly Func<CancellationToken, Task<string>> _accessToken;
+
+    /// <summary>
+    /// Told what one request's filter measurement was, whenever there was one to
+    /// report. Not the same question as the log line: this is for a running total
+    /// (see <c>ContextFilterUsageStore</c>) rather than for a human reading one line
+    /// at a time, so it fires only when there are real numbers to add — never for a
+    /// disabled or absent filter, where there is nothing to accumulate.
+    /// </summary>
+    private readonly Action<long, long>? _onCompressionMeasured;
     private readonly object _gate = new();
     private long? _groupId;
     private int _port;
@@ -69,6 +78,7 @@ internal sealed class LocalPawRelay : IAsyncDisposable
     public LocalPawRelay(
         string upstreamBaseUrl,
         Func<CancellationToken, Task<string>> accessTokenProvider,
+        Action<long, long>? onCompressionMeasured = null,
         HttpClient? http = null)
     {
         if (!Uri.TryCreate(upstreamBaseUrl, UriKind.Absolute, out Uri? uri) ||
@@ -76,6 +86,7 @@ internal sealed class LocalPawRelay : IAsyncDisposable
             throw new ArgumentException("upstreamBaseUrl must be an absolute HTTP URL", nameof(upstreamBaseUrl));
         _upstream = upstreamBaseUrl.TrimEnd('/');
         _accessToken = accessTokenProvider ?? throw new ArgumentNullException(nameof(accessTokenProvider));
+        _onCompressionMeasured = onCompressionMeasured;
         _ownsHttp = http is null;
         _http = http ?? new HttpClient(
             // Never follow a redirect: that would carry the account session to
@@ -216,16 +227,9 @@ internal sealed class LocalPawRelay : IAsyncDisposable
             return "本轮经过 Context Filter，但压缩未启用";
         }
 
-        bool parsedBefore = long.TryParse(bytesBefore, out long before);
-        bool parsedAfter = long.TryParse(bytesAfter, out long after);
-        if (!parsedBefore || !parsedAfter)
+        if (TryParseFilterMetrics(enabled, bytesBefore, bytesAfter, bytesSaved) is not (long before, long after, long saved))
         {
             return "本轮上下文压缩已启用（过滤器未报告大小）";
-        }
-
-        if (!long.TryParse(bytesSaved, out long saved))
-        {
-            saved = before - after;
         }
 
         if (saved <= 0 || string.Equals(changed, "false", StringComparison.OrdinalIgnoreCase))
@@ -236,6 +240,51 @@ internal sealed class LocalPawRelay : IAsyncDisposable
 
         double ratio = before > 0 ? (double)saved / before * 100 : 0;
         return $"本轮上下文压缩生效：{Bytes(before)} → {Bytes(after)}（省 {Bytes(saved)}，{ratio:F1}%）";
+    }
+
+    /// <summary>
+    /// Pulls (before, after, saved) out of the filter's headers, or null when there is
+    /// nothing usable — the filter is absent, disabled, or the numbers do not parse.
+    /// </summary>
+    /// <remarks>
+    /// The one place this logic lives. <see cref="DescribeContextFilter"/> uses it to
+    /// decide what to print; <c>HandleAsync</c> uses it to decide what to add to the
+    /// running total in <c>ContextFilterUsageStore</c>. Duplicating the parsing between
+    /// the two would let them drift — one counting a request the other does not.
+    /// </remarks>
+    internal static (long Before, long After, long Saved)? TryParseFilterMetrics(
+        string? enabled,
+        string? bytesBefore,
+        string? bytesAfter,
+        string? bytesSaved)
+    {
+        if (!string.Equals(enabled, "true", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        if (!long.TryParse(bytesBefore, out long before))
+        {
+            return null;
+        }
+
+        bool haveAfter = long.TryParse(bytesAfter, out long after);
+        bool haveSaved = long.TryParse(bytesSaved, out long saved);
+        if (!haveAfter && !haveSaved)
+        {
+            return null;
+        }
+
+        if (!haveSaved)
+        {
+            saved = before - after;
+        }
+        else if (!haveAfter)
+        {
+            after = before - saved;
+        }
+
+        return (before, after, Math.Max(saved, 0));
     }
 
     /// <summary>
@@ -317,14 +366,26 @@ internal sealed class LocalPawRelay : IAsyncDisposable
             // Logged per request, not per session: this is the only place that can see
             // whether compression actually happened, and one line per model turn is a
             // volume the log can carry.
+            string? filterEnabledHeader = context.Request.Headers["X-Context-Filter-Enabled"];
+            string? filterChangedHeader = context.Request.Headers["X-Context-Filter-Changed"];
+            string? filterBeforeHeader = context.Request.Headers["X-Context-Filter-Bytes-Before"];
+            string? filterAfterHeader = context.Request.Headers["X-Context-Filter-Bytes-After"];
+            string? filterSavedHeader = context.Request.Headers["X-Context-Filter-Bytes-Saved"];
             string filterWarnings = context.Request.Headers["X-Context-Filter-Warnings"] ?? string.Empty;
             ClientLog.Info($"本轮转发（分组 {group}）：" + DescribeContextFilter(
-                context.Request.Headers["X-Context-Filter-Enabled"],
-                context.Request.Headers["X-Context-Filter-Changed"],
-                context.Request.Headers["X-Context-Filter-Bytes-Before"],
-                context.Request.Headers["X-Context-Filter-Bytes-After"],
-                context.Request.Headers["X-Context-Filter-Bytes-Saved"])
+                filterEnabledHeader, filterChangedHeader, filterBeforeHeader, filterAfterHeader, filterSavedHeader)
                 + (filterWarnings.Length > 0 ? $"（过滤器提示：{filterWarnings}）" : string.Empty));
+
+            // Fed to the running total (ContextFilterUsageStore) rather than only the
+            // log: a number a user can watch grow is what answers "is this actually
+            // doing anything for me", where a log line only answers it one turn at a
+            // time. Fires only when there is something real to add — see
+            // TryParseFilterMetrics.
+            if (TryParseFilterMetrics(filterEnabledHeader, filterBeforeHeader, filterAfterHeader, filterSavedHeader)
+                is (long measuredBefore, _, long measuredSaved))
+            {
+                _onCompressionMeasured?.Invoke(measuredBefore, measuredSaved);
+            }
 
             byte[] body;
             using (var buffer = new MemoryStream())

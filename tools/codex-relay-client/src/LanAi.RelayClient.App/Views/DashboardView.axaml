@@ -153,6 +153,12 @@
                       IsEnabled="{Binding Dashboard.CanToggleContextFilter}"
                       ToolTip.Tip="压缩历史工具输出和图片，节省额度；改动立即生效，关闭后仍通过共飞中转"
                       Foreground="#374151" Margin="0,8,0,0" />
+            <!-- An estimate, not a bill: the bundled filter only ever reports byte
+                 counts, so this is bytes converted to tokens by a fixed ~4-bytes/token
+                 rule of thumb (see ContextFilterUsageStore). Refreshed on the same poll
+                 that already drives the Codex health check, not live per request. -->
+            <TextBlock Text="{Binding Dashboard.ContextFilterUsageText}"
+                       Foreground="#9CA3AF" FontSize="11" Margin="0,4,0,0" />
           </StackPanel>
         </Border>
 

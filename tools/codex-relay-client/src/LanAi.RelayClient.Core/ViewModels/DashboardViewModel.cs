@@ -33,6 +33,7 @@ public sealed partial class DashboardViewModel : ObservableObject
     private readonly ICodexAccountStore _codexAccountStore;
     private readonly IStartupRegistration _startupRegistration;
     private readonly IContextFilterPreferenceStore _contextFilterPreferences;
+    private readonly IContextFilterUsageStore _contextFilterUsage;
     private readonly PollingBackoff _pollingBackoff;
     private readonly SafeAsyncRunner _safeAsync;
     private readonly SemaphoreSlim _pollGate = new(1, 1);
@@ -51,6 +52,23 @@ public sealed partial class DashboardViewModel : ObservableObject
 
     /// <summary>Whether there is a bundled filter to switch; false greys the checkbox out.</summary>
     public bool CanToggleContextFilter => _codex.HasContextFilter;
+
+    /// <summary>
+    /// The 累计处理/节省 line shown under 启用上下文压缩.
+    /// </summary>
+    /// <remarks>
+    /// Loaded once in the constructor so it is not blank on first paint, then
+    /// refreshed on the same poll <see cref="MonitorCodexAsync"/> already runs —
+    /// there is no event from the transport layer to push it live (see
+    /// <c>LocalPawRelay._onCompressionMeasured</c>), and piggybacking on a poll this
+    /// codebase already has beats adding a second one for a number that only ever
+    /// grows a little between ticks.
+    /// </remarks>
+    [ObservableProperty]
+    private string contextFilterUsageText = string.Empty;
+
+    private void RefreshContextFilterUsageText() =>
+        ContextFilterUsageText = ContextFilterUsageStore.Describe(_contextFilterUsage.Load());
 
     /// <summary>
     /// True while the value is being set by us rather than by the user.
@@ -121,7 +139,8 @@ public sealed partial class DashboardViewModel : ObservableObject
         ICodexInstaller? codexInstaller = null,
         ICodexAccountStore? codexAccountStore = null,
         IStartupRegistration? startupRegistration = null,
-        IContextFilterPreferenceStore? contextFilterPreferences = null)
+        IContextFilterPreferenceStore? contextFilterPreferences = null,
+        IContextFilterUsageStore? contextFilterUsage = null)
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
         _session = session ?? throw new ArgumentNullException(nameof(session));
@@ -134,7 +153,9 @@ public sealed partial class DashboardViewModel : ObservableObject
         _pollingBackoff = pollingBackoff ?? new PollingBackoff();
         _safeAsync = safeAsync ?? new SafeAsyncRunner();
         _contextFilterPreferences = contextFilterPreferences ?? new ContextFilterPreferenceStore();
+        _contextFilterUsage = contextFilterUsage ?? new ContextFilterUsageStore();
         SetContextFilterWithoutApplying(_contextFilterPreferences.Load() ?? true);
+        RefreshContextFilterUsageText();
     }
 
     public ObservableCollection<GroupItemViewModel> Groups { get; } = [];
@@ -607,6 +628,10 @@ public sealed partial class DashboardViewModel : ObservableObject
     /// </remarks>
     public async Task MonitorCodexAsync(CancellationToken cancellationToken = default)
     {
+        // Local file read, never throws (see ContextFilterUsageStore) — safe to run
+        // ahead of the try block that guards the network calls below.
+        RefreshContextFilterUsageText();
+
         try
         {
             CodexHealth health = await _codex.CheckAsync(cancellationToken).ConfigureAwait(true);

@@ -380,6 +380,22 @@ internal sealed class FakeContextFilterPreferenceStore : IContextFilterPreferenc
     }
 }
 
+/// <summary>An in-memory stand-in for the persisted compression-usage totals.</summary>
+internal sealed class FakeContextFilterUsageStore : IContextFilterUsageStore
+{
+    public FakeContextFilterUsageStore(ContextFilterUsage? initial = null) => Current = initial ?? ContextFilterUsage.Zero;
+
+    public ContextFilterUsage Current { get; private set; }
+
+    public ContextFilterUsage Load() => Current;
+
+    public ContextFilterUsage Add(long bytesBefore, long bytesSaved)
+    {
+        Current = new ContextFilterUsage(Current.TotalBytesBefore + bytesBefore, Current.TotalBytesSaved + bytesSaved);
+        return Current;
+    }
+}
+
 /// <summary>A Codex startup whose outcome the test dictates.</summary>
 internal sealed class FakeCodexStartup : ICodexStartup
 {

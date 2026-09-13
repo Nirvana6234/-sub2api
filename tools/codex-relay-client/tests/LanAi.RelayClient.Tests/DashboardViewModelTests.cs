@@ -303,7 +303,8 @@ public sealed class DashboardViewModelTests
     private static DashboardViewModel BuildForContextFilter(
         FakeCodexStartup codex,
         FakeContextFilterPreferenceStore preferences,
-        SafeAsyncRunner? safeAsync = null)
+        SafeAsyncRunner? safeAsync = null,
+        IContextFilterUsageStore? usage = null)
     {
         var relay = new FakeRelayClient();
         var session = new RelaySessionManager(relay, new FakeSessionStore(), "https://relay.test/", new TestClock().Read);
@@ -314,7 +315,8 @@ public sealed class DashboardViewModelTests
             new ManagedKeyNaming(new FixedInstallId("testinst")),
             codex,
             safeAsync: safeAsync,
-            contextFilterPreferences: preferences);
+            contextFilterPreferences: preferences,
+            contextFilterUsage: usage);
     }
 
     [Fact]
@@ -376,6 +378,47 @@ public sealed class DashboardViewModelTests
         await reported.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.True(dashboard.ContextFilterEnabled);
+    }
+
+    [Fact]
+    public void TheUsageLineStartsAsNoDataWhenNothingHasBeenRecorded()
+    {
+        DashboardViewModel dashboard = BuildForContextFilter(
+            new FakeCodexStartup(), new FakeContextFilterPreferenceStore(), usage: new FakeContextFilterUsageStore());
+
+        Assert.Equal("尚无压缩数据", dashboard.ContextFilterUsageText);
+    }
+
+    [Fact]
+    public void TheUsageLineReflectsWhatWasAlreadyOnDiskAtConstruction()
+    {
+        // Loaded synchronously in the constructor (mirrors how ContextFilterEnabled
+        // itself is restored) so the number is not blank on first paint while the
+        // dashboard waits for its first poll.
+        var usage = new FakeContextFilterUsageStore(new ContextFilterUsage(40_000, 10_000));
+
+        DashboardViewModel dashboard = BuildForContextFilter(
+            new FakeCodexStartup(), new FakeContextFilterPreferenceStore(), usage: usage);
+
+        Assert.Contains("25.0%", dashboard.ContextFilterUsageText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheUsageLineAdvancesOnTheNextCodexPoll()
+    {
+        // There is no live event out of the transport layer (see
+        // LocalPawRelay._onCompressionMeasured) — the dashboard has to notice new
+        // usage the same way it notices everything else about Codex, on the next
+        // MonitorCodexAsync tick, not the instant a request completes.
+        var usage = new FakeContextFilterUsageStore();
+        DashboardViewModel dashboard = BuildForContextFilter(
+            new FakeCodexStartup(), new FakeContextFilterPreferenceStore(), usage: usage);
+        Assert.Equal("尚无压缩数据", dashboard.ContextFilterUsageText);
+
+        usage.Add(4000, 1000);
+        await dashboard.MonitorCodexAsync();
+
+        Assert.Contains("25.0%", dashboard.ContextFilterUsageText, StringComparison.Ordinal);
     }
 
     [Fact]

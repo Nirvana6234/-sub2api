@@ -156,10 +156,14 @@ public partial class App : Application
             AppPaths.CodexSnapshotRoot,
             AppPaths.CodexAuthSnapshotFile);
 
+        var contextFilterUsage = new ContextFilterUsageStore();
+
         // The account session is handed over as a delegate, not a value: the relay asks
         // for it per request, so a rotated access token reaches it without anything
         // pushing an update. See LocalPawRelay's constructor for why that matters.
-        var localRelay = new LocalPawRelay(ClientOptions.ServerAddress, session.GetAccessTokenAsync);
+        var localRelay = new LocalPawRelay(
+            ClientOptions.ServerAddress, session.GetAccessTokenAsync,
+            (before, saved) => contextFilterUsage.Add(before, saved));
 
         // Optional and platform-shaped by nothing more than whether the file is there.
         // The filter is a Windows binary, so the macOS build of this same head finds
@@ -191,7 +195,8 @@ public partial class App : Application
             codexInstaller: new CodexInstaller(),
             codexAccountStore: new CodexAccountStore(),
             startupRegistration: StartupRegistrations.Create(),
-            safeAsync: safeAsync);
+            safeAsync: safeAsync,
+            contextFilterUsage: contextFilterUsage);
 
         var announcements = new AnnouncementsViewModel(
             new AnnouncementMonitor(

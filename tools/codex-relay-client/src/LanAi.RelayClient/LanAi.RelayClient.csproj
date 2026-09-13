@@ -41,13 +41,10 @@
     <Exec Condition="'$(SkipContextFilterDownload)' != 'true'"
           ContinueOnError="WarnAndContinue"
           Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\..\fetch-context-filter.ps1&quot; -Version latest -OutputDirectory &quot;$(MSBuildProjectDirectory)\bin\context-filter&quot;" />
-    <!-- VERSION is deliberately not bundled: it is a marker the fetch script reads,
-         the app only ever probes for context-filter.exe, and listing both under one
-         <Link> would point two source files at the same output path. -->
     <ItemGroup>
       <Content Include="bin\context-filter\context-filter.exe"
                Condition="Exists('$(MSBuildProjectDirectory)\bin\context-filter\context-filter.exe')">
-        <Link>context-filter.exe</Link>
+        <Link>context-filter\context-filter.exe</Link>
         <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
         <ExcludeFromSingleFile>true</ExcludeFromSingleFile>

@@ -37,6 +37,7 @@ namespace LanAi.RelayClient.Services;
 [JsonSerializable(typeof(CodexAccountStore.AccountState), TypeInfoPropertyName = "CodexAccountState")]
 [JsonSerializable(typeof(GroupPreferenceStore.Preferences), TypeInfoPropertyName = "GroupPreferences")]
 [JsonSerializable(typeof(ContextFilterPreferenceStore.Preferences), TypeInfoPropertyName = "ContextFilterPreferences")]
+[JsonSerializable(typeof(ContextFilterUsageStore.Totals), TypeInfoPropertyName = "ContextFilterUsageTotals")]
 // Every property carries an explicit [JsonPropertyName] in snake_case, so the
 // CamelCase policy above does not reach it — the names on disk are unchanged. That
 // matters more here than elsewhere: this is the signed-in session, and a rename

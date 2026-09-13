@@ -87,8 +87,11 @@ public partial class App : Application
             SecureStorage.CreateSnapshotProtector(),
             AppPaths.CodexSnapshotRoot,
             AppPaths.CodexAuthSnapshotFile);
-        string contextFilterPath = Path.Combine(AppContext.BaseDirectory, "context-filter.exe");
-        var localRelay = new LocalPawRelay(ClientOptions.ServerAddress, session.GetAccessTokenAsync);
+        string contextFilterPath = Path.Combine(AppContext.BaseDirectory, "context-filter", "context-filter.exe");
+        var contextFilterUsage = new ContextFilterUsageStore();
+        var localRelay = new LocalPawRelay(
+            ClientOptions.ServerAddress, session.GetAccessTokenAsync,
+            (before, saved) => contextFilterUsage.Add(before, saved));
         ContextFilterProcess? contextFilter = File.Exists(contextFilterPath)
             ? new ContextFilterProcess(contextFilterPath)
             : null;
@@ -111,7 +114,8 @@ public partial class App : Application
             codexInstaller: new CodexInstaller(),
             codexAccountStore: new CodexAccountStore(),
             startupRegistration: StartupRegistrations.Create(),
-            safeAsync: safeAsync);
+            safeAsync: safeAsync,
+            contextFilterUsage: contextFilterUsage);
 
         var exitCoordinator = new ClientExitCoordinator(codex, session);
         _shutdownCoordinator = new ClientShutdownCoordinator(
@@ -183,6 +187,7 @@ public partial class App : Application
 
         window.Show();
     }
+
 
     protected override void OnExit(ExitEventArgs e)
     {
