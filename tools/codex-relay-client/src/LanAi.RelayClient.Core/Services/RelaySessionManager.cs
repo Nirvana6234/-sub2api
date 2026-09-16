@@ -265,6 +265,92 @@ internal sealed class RelaySessionManager
         RaiseStateChanged();
     }
 
+    /// <summary>
+    /// Forces a renewal check after a card endpoint rejected an access token whose
+    /// local expiry had not yet come due.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="StoredSession.NeedsRenewal"/> only ever looks at the local clock,
+    /// but the server can invalidate a token before that clock says it is due —
+    /// session-binding revokes the whole token family when the IP/UA fingerprint
+    /// changes (see <c>session_binding.go</c>), an admin can kick a user, a password
+    /// change ends every other session. A card that hits 401 under those conditions
+    /// used to just grey itself out forever, with nothing ever prompting a renewal
+    /// and the client never finding out the session was actually gone.
+    /// </para>
+    /// <para>
+    /// This does not make the card the one deciding to sign out — it still goes
+    /// through the same renewal path <see cref="GetAccessTokenAsync"/> uses, so
+    /// ending the session remains the exclusive result of a renewal actually being
+    /// rejected, not of any one endpoint's opinion.
+    /// </para>
+    /// </remarks>
+    public async Task NotifyAccessTokenRejectedAsync(
+        string rejectedAccessToken,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrEmpty(rejectedAccessToken))
+        {
+            return;
+        }
+
+        try
+        {
+            await _renewalGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        try
+        {
+            StoredSession? session = _session;
+
+            // Already signed out, or renewed since the caller's request went out —
+            // nothing the caller observed is still true.
+            if (session is null ||
+                !string.Equals(session.AccessToken, rejectedAccessToken, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            if (!session.CanRenew)
+            {
+                SignOutLocally(SignOutReason.SessionExpired);
+                return;
+            }
+
+            AuthTokens renewed;
+            try
+            {
+                renewed = await _client.RefreshAsync(session.RefreshToken, cancellationToken).ConfigureAwait(false);
+            }
+            catch (RelayApiException ex) when (ex.Failure == RelayFailure.NetworkUnreachable)
+            {
+                // Can't tell right now whether the token was actually rejected or
+                // the network just dropped the refresh call too.
+                return;
+            }
+            catch (RelayApiException)
+            {
+                SignOutLocally(SignOutReason.SessionExpired);
+                return;
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+
+            Adopt(renewed);
+        }
+        finally
+        {
+            _renewalGate.Release();
+        }
+    }
+
     private void SignOutLocally(SignOutReason reason)
     {
         _session = null;

@@ -17,9 +17,11 @@ namespace LanAi.RelayClient.ViewModels;
 /// has nowhere to propagate to.
 /// </para>
 /// <para>
-/// In particular a 401 from a card endpoint greys that card only. Ending the
-/// session stays the exclusive right of token renewal — a stale card response
-/// must never log the user out.
+/// In particular a 401 from a card endpoint greys that card only — it never signs
+/// the user out directly. But it does report the rejected token to
+/// <see cref="RelaySessionManager.NotifyAccessTokenRejectedAsync"/>, which forces
+/// the renewal check the local clock alone would not have triggered yet; ending
+/// the session remains that renewal's decision, not the card's.
 /// </para>
 /// </remarks>
 public sealed partial class DashboardViewModel : ObservableObject
@@ -49,6 +51,7 @@ public sealed partial class DashboardViewModel : ObservableObject
     private RelayApiKey? _managedKey;
     private bool _refreshHadFailure;
     private bool _refreshWasRateLimited;
+    private bool _refreshSawUnauthenticated;
 
     /// <summary>Whether there is a bundled filter to switch; false greys the checkbox out.</summary>
     public bool CanToggleContextFilter => _codex.HasContextFilter;
@@ -957,6 +960,7 @@ public sealed partial class DashboardViewModel : ObservableObject
 
         _refreshHadFailure = false;
         _refreshWasRateLimited = false;
+        _refreshSawUnauthenticated = false;
 
         // Linked so a sign-out can abandon this refresh; without it the guard above
         // would still be set when the next user signs in, and their load would be
@@ -993,9 +997,17 @@ public sealed partial class DashboardViewModel : ObservableObject
             {
                 return;
             }
+            if (await StopForUnauthenticatedAsync(accessToken, cancellation).ConfigureAwait(true))
+            {
+                return;
+            }
 
             await LoadUsageCardAsync(accessToken, cancellation).ConfigureAwait(true);
             if (StopForRateLimit())
+            {
+                return;
+            }
+            if (await StopForUnauthenticatedAsync(accessToken, cancellation).ConfigureAwait(true))
             {
                 return;
             }
@@ -1005,15 +1017,27 @@ public sealed partial class DashboardViewModel : ObservableObject
             {
                 return;
             }
+            if (await StopForUnauthenticatedAsync(accessToken, cancellation).ConfigureAwait(true))
+            {
+                return;
+            }
 
             await LoadGroupCardAsync(accessToken, cancellation).ConfigureAwait(true);
             if (StopForRateLimit())
             {
                 return;
             }
+            if (await StopForUnauthenticatedAsync(accessToken, cancellation).ConfigureAwait(true))
+            {
+                return;
+            }
 
             await LoadTrendCardAsync(accessToken, cancellation).ConfigureAwait(true);
             if (StopForRateLimit())
+            {
+                return;
+            }
+            if (await StopForUnauthenticatedAsync(accessToken, cancellation).ConfigureAwait(true))
             {
                 return;
             }
@@ -1054,9 +1078,16 @@ public sealed partial class DashboardViewModel : ObservableObject
         }
 
         _refreshHadFailure = true;
-        if (ex is RelayApiException { Failure: RelayFailure.RateLimited })
+        if (ex is RelayApiException relayEx)
         {
-            _refreshWasRateLimited = true;
+            if (relayEx.Failure == RelayFailure.RateLimited)
+            {
+                _refreshWasRateLimited = true;
+            }
+            else if (relayEx.Failure == RelayFailure.Unauthenticated)
+            {
+                _refreshSawUnauthenticated = true;
+            }
         }
 
         return true;
@@ -1070,6 +1101,29 @@ public sealed partial class DashboardViewModel : ObservableObject
         }
 
         ApplyBackoffMessage(_pollingBackoff.RecordRateLimited());
+        return true;
+    }
+
+    /// <summary>
+    /// Reports a token a card just watched get rejected, and ends this refresh
+    /// cycle if so — every remaining card shares the same (now known-bad) token,
+    /// so trying them is only more failed calls before the next poll retries clean.
+    /// </summary>
+    /// <remarks>
+    /// Routed through <see cref="RelaySessionManager.NotifyAccessTokenRejectedAsync"/>
+    /// rather than signing out here: that call forces the renewal check the local
+    /// clock alone would not have triggered yet, and only ends the session if the
+    /// server actually rejects the renewal too (see its remarks for why this
+    /// matters — session-binding revokes a token family before its natural expiry).
+    /// </remarks>
+    private async Task<bool> StopForUnauthenticatedAsync(string accessToken, CancellationToken cancellationToken)
+    {
+        if (!_refreshSawUnauthenticated)
+        {
+            return false;
+        }
+
+        await _session.NotifyAccessTokenRejectedAsync(accessToken, cancellationToken).ConfigureAwait(true);
         return true;
     }
 

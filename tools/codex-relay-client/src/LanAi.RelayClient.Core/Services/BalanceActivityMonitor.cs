@@ -36,9 +36,12 @@ internal sealed class BalanceActivityMonitor
             return BalanceActivityObservation.None;
         }
 
+        // Captured outside the try so the catch below can report a token a card
+        // just watched get rejected — see the remark on that catch clause.
+        string? token = null;
         try
         {
-            string token = await _session.GetAccessTokenAsync(cancellationToken).ConfigureAwait(true);
+            token = await _session.GetAccessTokenAsync(cancellationToken).ConfigureAwait(true);
             DashboardStats stats = await _relay.GetDashboardStatsAsync(token, cancellationToken).ConfigureAwait(true);
 
             bool isActive = _lastRequestCount is long previous && stats.TodayRequests > previous;
@@ -76,6 +79,17 @@ internal sealed class BalanceActivityMonitor
         catch (Exception exception) when (IsBackgroundFailure(exception))
         {
             ClientLog.Warning("活动状态余额监控失败", exception);
+
+            // A 401 here means the token was rejected before the local clock said
+            // it was due for renewal (session-binding revoke, an admin kick, a
+            // password change — see RelaySessionManager.NotifyAccessTokenRejectedAsync).
+            // Reported, not acted on directly: ending the session stays that call's
+            // decision, made only if a forced renewal is itself rejected.
+            if (token is not null && exception is RelayApiException { Failure: RelayFailure.Unauthenticated })
+            {
+                await _session.NotifyAccessTokenRejectedAsync(token, cancellationToken).ConfigureAwait(true);
+            }
+
             return BalanceActivityObservation.None;
         }
         finally

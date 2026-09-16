@@ -88,11 +88,12 @@ public sealed class DashboardViewModelTests
     }
 
     [Fact]
-    public async Task ACardReturningUnauthorizedDoesNotSignTheUserOut()
+    public async Task ACardReturningUnauthorizedDoesNotSignTheUserOutByItself()
     {
-        // F4.2 forbids a card failure from logging anyone out. A 401 from a panel
-        // endpoint is still an explicit rejection, so without deliberate handling
-        // the session rules from M1 would end the session here.
+        // F4.2 forbids a card failure from directly logging anyone out. The card
+        // does report the rejected token (so a genuinely revoked session is still
+        // found — see the next test), but that goes through a forced renewal, and
+        // here the renewal succeeds (the fake's default), so the session survives.
         (DashboardViewModel dashboard, FakeRelayClient relay, _, RelaySessionManager session, _) = Build();
         await session.SignInAsync("a@b.com", "pw");
 
@@ -102,6 +103,28 @@ public sealed class DashboardViewModelTests
 
         Assert.True(session.IsSignedIn);
         Assert.False(dashboard.UsageReady);
+        Assert.Equal(1, relay.RefreshCallCount);
+    }
+
+    [Fact]
+    public async Task ACardReturningUnauthorizedEndsTheSessionWhenTheTokenWasGenuinelyRevoked()
+    {
+        // The gap this closes: session-binding (or an admin kick, or a password
+        // change) can revoke a token before the client's own clock thinks it is due
+        // for renewal — GetAccessTokenAsync would then keep handing out a token the
+        // server already rejects, and every card would grey out forever with the
+        // client still sitting on the signed-in screen. A card's 401 has to be able
+        // to prompt the renewal check that finds this out.
+        (DashboardViewModel dashboard, FakeRelayClient relay, _, RelaySessionManager session, _) = Build();
+        await session.SignInAsync("a@b.com", "pw");
+
+        relay.OnDashboardStats = () => throw new RelayApiException(RelayFailure.Unauthenticated, "过期");
+        relay.OnRefresh = () => throw new RelayApiException(RelayFailure.Unauthenticated, "会话已失效");
+
+        await dashboard.RefreshAsync();
+
+        Assert.False(session.IsSignedIn);
+        Assert.Equal(SignOutReason.SessionExpired, session.LastSignOutReason);
     }
 
     [Fact]

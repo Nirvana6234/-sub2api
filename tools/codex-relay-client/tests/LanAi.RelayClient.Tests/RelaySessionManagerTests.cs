@@ -217,6 +217,84 @@ public sealed class RelaySessionManagerTests
     }
 
     [Fact]
+    public async Task AReportedTokenThatIsStillRenewableEndsTheSessionOnlyIfTheRenewalIsRejected()
+    {
+        // Mirrors the real trigger: session-binding revokes a token before the
+        // local clock thinks it is due, so the client's own renewal schedule never
+        // fires on its own — a card observing the rejection has to be able to ask.
+        (RelaySessionManager manager, FakeRelayClient client, FakeSessionStore store, _) = Build();
+        await manager.SignInAsync("a@b.com", "pw");
+        client.OnRefresh = () => throw new RelayApiException(RelayFailure.Unauthenticated, "revoked");
+
+        await manager.NotifyAccessTokenRejectedAsync("at");
+
+        Assert.False(manager.IsSignedIn);
+        Assert.Equal(SignOutReason.SessionExpired, manager.LastSignOutReason);
+        Assert.Null(store.Current);
+        Assert.Equal(1, client.RefreshCallCount);
+    }
+
+    [Fact]
+    public async Task AReportedTokenThatStillRenewsFineLeavesTheSessionRunning()
+    {
+        // Not every card 401 means the session is actually dead; the renewal is
+        // what decides, and here it succeeds.
+        (RelaySessionManager manager, FakeRelayClient client, _, _) = Build();
+        await manager.SignInAsync("a@b.com", "pw");
+
+        await manager.NotifyAccessTokenRejectedAsync("at");
+
+        Assert.True(manager.IsSignedIn);
+        Assert.Equal(1, client.RefreshCallCount);
+        string token = await manager.GetAccessTokenAsync();
+        Assert.Equal("at-renewed", token);
+    }
+
+    [Fact]
+    public async Task ReportingATokenThatIsNoLongerCurrentDoesNothing()
+    {
+        // A card can be slow to report, or several cards can race, after the token
+        // has already been renewed (by this call or the normal schedule). Reporting
+        // a token that is not the one in force any more must not spend another
+        // refresh or second-guess a session that has already moved on.
+        (RelaySessionManager manager, FakeRelayClient client, _, _) = Build();
+        await manager.SignInAsync("a@b.com", "pw");
+
+        await manager.NotifyAccessTokenRejectedAsync("some-older-token");
+
+        Assert.True(manager.IsSignedIn);
+        Assert.Equal(0, client.RefreshCallCount);
+    }
+
+    [Fact]
+    public async Task ReportingATokenWhileOfflineLeavesTheSessionAsIs()
+    {
+        // Same rule as the normal renewal path: being unable to reach the server
+        // says nothing about whether the token is actually bad.
+        (RelaySessionManager manager, FakeRelayClient client, FakeSessionStore store, _) = Build();
+        await manager.SignInAsync("a@b.com", "pw");
+        client.OnRefresh = () => throw new RelayApiException(RelayFailure.NetworkUnreachable, "offline");
+
+        await manager.NotifyAccessTokenRejectedAsync("at");
+
+        Assert.True(manager.IsSignedIn);
+        Assert.NotNull(store.Current);
+    }
+
+    [Fact]
+    public async Task ReportingATokenAfterSignOutIsANoOp()
+    {
+        (RelaySessionManager manager, FakeRelayClient client, _, _) = Build();
+        await manager.SignInAsync("a@b.com", "pw");
+        await manager.SignOutAsync();
+
+        await manager.NotifyAccessTokenRejectedAsync("at");
+
+        Assert.False(manager.IsSignedIn);
+        Assert.Equal(0, client.RefreshCallCount);
+    }
+
+    [Fact]
     public async Task StateChangesAreAnnouncedOnSignInAndSignOut()
     {
         (RelaySessionManager manager, _, _, _) = Build();
