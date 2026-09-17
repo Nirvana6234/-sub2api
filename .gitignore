@@ -232,6 +232,13 @@ transit-hub/backend/backend/
 /tools/codex-relay-client/codex-installer/*
 !/tools/codex-relay-client/codex-installer/README.txt
 
+# Vendored so a fresh checkout — including every CI runner, which starts from
+# nothing every run — does not need api.github.com to resolve "latest" on every
+# build. See fetch-context-filter.ps1's $bundledDirectory. *.exe above would
+# otherwise catch this one too.
+!/tools/codex-relay-client/bundled-context-filter/context-filter.exe
+!/tools/codex-relay-client/bundled-context-filter/VERSION
+
 /tools/manufactor_app/ai-switch-gui/runtimes/
 /tools/manufactor_app/ai-switch-gui/third_party/
 

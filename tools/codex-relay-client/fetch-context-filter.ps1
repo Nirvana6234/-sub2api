@@ -35,6 +35,46 @@ if (-not [IO.Path]::IsPathRooted($OutputDirectory)) {
 }
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 $OutputDirectory = (Resolve-Path -LiteralPath $OutputDirectory).Path
+
+# A copy checked into this repo, preferred over the network whenever it can
+# satisfy the request. This is what "只有没有这个exe时才去下载" (only hit the
+# network when the exe is not already available) means in practice: a fresh
+# checkout — including every CI runner, which starts from nothing every run —
+# no longer needs api.github.com to answer at all for the common case, so it
+# stops being exposed to that endpoint's per-IP rate limit (60/hour,
+# unauthenticated, shared across every Actions runner on GitHub) or to
+# objects.githubusercontent.com being slow or unreachable.
+#
+# Only engaged for $Version "latest" or an exact match on the vendored
+# version — an explicit request for a *different* tag (testing an upgrade, or
+# rolling back) still goes to the network, on the theory that "give me
+# something specific" is exactly the case where silently substituting the
+# vendored copy would be the wrong kind of quiet.
+#
+# Bumping the vendored copy is deliberate and manual: run this script once
+# against a scratch -OutputDirectory (which does hit the network and verifies
+# SHA256SUMS as usual), then copy its context-filter.exe and VERSION over
+# $bundledDirectory and commit them. See README under "Context Filter".
+$bundledDirectory = Join-Path $PSScriptRoot "bundled-context-filter"
+$bundledExe = Join-Path $bundledDirectory "context-filter.exe"
+$bundledVersionFile = Join-Path $bundledDirectory "VERSION"
+if ((Test-Path $bundledExe) -and (Test-Path $bundledVersionFile)) {
+    $bundledVersion = (Get-Content -LiteralPath $bundledVersionFile -Raw).Trim()
+    if ($Version -eq "latest" -or $Version -eq $bundledVersion) {
+        $versionFile = Join-Path $OutputDirectory "VERSION"
+        $installed = if (Test-Path $versionFile) { (Get-Content -LiteralPath $versionFile -Raw).Trim() } else { "" }
+        if ($installed -eq $bundledVersion -and (Test-Path (Join-Path $OutputDirectory "context-filter.exe"))) {
+            Write-Output "Context Filter $bundledVersion is already installed; skipping."
+        }
+        else {
+            Copy-Item -LiteralPath $bundledExe -Destination (Join-Path $OutputDirectory "context-filter.exe") -Force
+            Set-Content -LiteralPath $versionFile -Value $bundledVersion -NoNewline
+            Write-Output "Installed Windows $bundledVersion to $OutputDirectory from the vendored copy (no network)."
+        }
+        return
+    }
+}
+
 $api = if ($Version -eq "latest") { "https://api.github.com/repos/LiangMu-Studio/context-filter/releases/latest" } else { "https://api.github.com/repos/LiangMu-Studio/context-filter/releases/tags/$Version" }
 # Only the API call is authenticated. The asset and checksum downloads below redirect
 # to objects.githubusercontent.com, which rejects a request carrying someone else's

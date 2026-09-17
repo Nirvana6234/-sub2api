@@ -110,7 +110,7 @@
     <ItemGroup>
       <Content Include="bin\context-filter\context-filter.exe"
                Condition="Exists('$(MSBuildProjectDirectory)\bin\context-filter\context-filter.exe')">
-        <Link>context-filter.exe</Link>
+        <Link>context-filter\context-filter.exe</Link>
         <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
         <ExcludeFromSingleFile>true</ExcludeFromSingleFile>

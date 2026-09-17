@@ -145,7 +145,10 @@ public partial class App : Application
         var safeAsync = new SafeAsyncRunner(
             report: exception => NoticeDialog.ShowFailureAsync(shell, exception));
 
-        var signIn = new SignInViewModel(session, relay.GetPublicSettingsAsync);
+        var signIn = new SignInViewModel(
+            session,
+            relay.GetPublicSettingsAsync,
+            lastAccount: new LastAccountPreferenceStore(ClientOptions.ServerAddress));
         var clientUpdate = new ClientUpdateViewModel(
             new ClientVersionChecker(relay.GetPublicSettingsAsync, ClientOptions.CurrentVersion).CheckAsync);
 
@@ -169,7 +172,7 @@ public partial class App : Application
         // The filter is a Windows binary, so the macOS build of this same head finds
         // nothing, runs Codex → relay directly, and greys out the switch — no OS test
         // needed here.
-        string contextFilterPath = Path.Combine(AppContext.BaseDirectory, "context-filter.exe");
+        string contextFilterPath = Path.Combine(AppContext.BaseDirectory, "context-filter", "context-filter.exe");
         ContextFilterProcess? contextFilter = File.Exists(contextFilterPath)
             ? new ContextFilterProcess(contextFilterPath)
             : null;

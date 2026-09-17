@@ -152,17 +152,22 @@ jobs:
       # （EnsureBundledContextFilter 拿不到就只警告，好让离线开发机能编），
       # 但在**发布**里不是：少了它，出去的客户端「启用上下文压缩」永久置灰，
       # 而且没有任何报错——只有用户会发现自己的额度烧得比别人快。
+      #
+      # 在 context-filter\ 子目录下，不跟主 exe 平铺——App.axaml.cs 按
+      # AppContext.BaseDirectory\context-filter\context-filter.exe 找它。
       - name: 发布包必须带上 context-filter
         shell: bash
         run: |
-          if [ ! -f "${{ runner.temp }}/pub-win/context-filter.exe" ]; then
-            echo "::error::win-x64 发布目录里没有 context-filter.exe（fetch 步骤大概被限流或断网了），拒绝出包"
+          if [ ! -f "${{ runner.temp }}/pub-win/context-filter/context-filter.exe" ]; then
+            echo "::error::win-x64 发布目录里没有 context-filter\\context-filter.exe（fetch 步骤大概被限流或断网了），拒绝出包"
             ls -la "${{ runner.temp }}/pub-win"
             exit 1
           fi
 
       # zip 里要放齐用户解压后能直接跑的东西，不只是主 exe：
-      # context-filter.exe 是 ExcludeFromSingleFile 的，必须躺在 exe 旁边。
+      # context-filter.exe 是 ExcludeFromSingleFile 的，必须放在它自己的
+      # context-filter\ 子目录下（不是跟主 exe 平铺），发布产物已经是这个结构了，
+      # 照搬即可。
       - name: 打包 Windows zip
         shell: pwsh
         run: |
@@ -171,7 +176,7 @@ jobs:
           $staging = Join-Path $out "win-staging"
           New-Item -ItemType Directory -Force $staging | Out-Null
           Copy-Item "${{ runner.temp }}/pub-win/LanAi.RelayClient.App.exe" (Join-Path $staging "共飞-ChatGPT助手.exe")
-          Copy-Item "${{ runner.temp }}/pub-win/context-filter.exe" $staging
+          Copy-Item "${{ runner.temp }}/pub-win/context-filter" (Join-Path $staging "context-filter") -Recurse
           Copy-Item "${{ runner.temp }}/pub-win/codex-installer" $staging -Recurse
           Copy-Item "注册桌面和开始菜单快捷方式.cmd","删除桌面和开始菜单快捷方式.cmd" $staging
           Compress-Archive -Path (Join-Path $staging "*") `

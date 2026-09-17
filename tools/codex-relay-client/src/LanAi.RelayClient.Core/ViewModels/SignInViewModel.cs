@@ -4,6 +4,16 @@ using LanAi.RelayClient.Services;
 
 namespace LanAi.RelayClient.ViewModels;
 
+/// <summary>Remembers nothing. The default when a caller — chiefly a test — has no need of the real store.</summary>
+internal sealed class NullLastAccountPreferenceStore : ILastAccountPreferenceStore
+{
+    public string? Load() => null;
+
+    public void Save(string email)
+    {
+    }
+}
+
 /// <summary>
 /// The sign-in screen: the only way into the application.
 /// </summary>
@@ -27,17 +37,26 @@ public sealed partial class SignInViewModel : ObservableObject
     private readonly RelaySessionManager _session;
     private readonly Func<CancellationToken, Task<PublicSettings>> _loadSettings;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
+    private readonly ILastAccountPreferenceStore _lastAccount;
 
     private string? _twoFactorTempToken;
 
     internal SignInViewModel(
         RelaySessionManager session,
         Func<CancellationToken, Task<PublicSettings>> loadSettings,
-        Func<TimeSpan, CancellationToken, Task>? delay = null)
+        Func<TimeSpan, CancellationToken, Task>? delay = null,
+        ILastAccountPreferenceStore? lastAccount = null)
     {
         _session = session ?? throw new ArgumentNullException(nameof(session));
         _loadSettings = loadSettings ?? throw new ArgumentNullException(nameof(loadSettings));
         _delay = delay ?? Task.Delay;
+        _lastAccount = lastAccount ?? new NullLastAccountPreferenceStore();
+
+        // Loaded synchronously at construction, the same as the other on-disk
+        // preferences (context filter, group) restore themselves before the first
+        // paint — a field that fills itself in a moment after the window already
+        // rendered blank reads as the field having been empty, not as "restoring".
+        Email = _lastAccount.Load() ?? string.Empty;
     }
 
     [ObservableProperty]
@@ -187,9 +206,15 @@ public sealed partial class SignInViewModel : ObservableObject
                 return true;
             }
 
+            string email = Email.Trim();
             LoginOutcome outcome = await _session
-                .SignInAsync(Email.Trim(), password, cancellationToken)
+                .SignInAsync(email, password, cancellationToken)
                 .ConfigureAwait(true);
+
+            // Reaching here means the password was accepted — a 2FA challenge is
+            // still one more correct factor away, not a reason to withhold this.
+            // Saved before the two-factor branch below so both exits cover it.
+            _lastAccount.Save(email);
 
             if (outcome.RequiresTwoFactor)
             {

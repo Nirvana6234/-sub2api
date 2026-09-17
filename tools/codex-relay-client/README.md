@@ -89,6 +89,10 @@ powershell -ExecutionPolicy Bypass -File tools/codex-relay-client/fetch-context-
 dotnet build -p:SkipContextFilterDownload=true
 ```
 
+**`-Version latest` 默认不打网络。** `bundled-context-filter/`（仓库里的 `context-filter.exe` + `VERSION`）会被优先使用——每个全新 checkout（尤其是每次都从零开始的 CI runner）不再需要 `api.github.com` 应答就能拿到这个文件，绕开它每 IP 60 次/小时且 Actions runner 共享出口 IP 的限流（2026-09-17 起，之前正式发布流水线在这条上失败过）。只有显式传一个**跟 vendor 版本不同**的 `-Version` 才会真的去打网络。
+
+要升级 vendor 的版本：对着一个临时目录跑一遍这个脚本（这一步照常验证 `SHA256SUMS`），把新的 `context-filter.exe` 和 `VERSION` 复制进 `bundled-context-filter/` 再提交。`.gitignore` 里 `*.exe` 的全局规则对这两个文件单独开了口子，别忘了同步改。
+
 在仓库根目录：
 
 ```bash
@@ -110,9 +114,9 @@ dotnet publish src/LanAi.RelayClient.App/LanAi.RelayClient.App.csproj `
 python packaging/check-server-address.py <临时目录>/LanAi.RelayClient.App.exe
 ```
 
-`context-filter.exe` 要跟主 exe **平铺**在同一目录（`App.axaml.cs` 按 `AppContext.BaseDirectory` 找它，不是子目录），产物结构照 workflow 里"打包 Windows zip"那一步的 staging 布局来。
+`context-filter.exe` 要放在**子目录** `context-filter\` 下（`App.axaml.cs` 按 `AppContext.BaseDirectory\context-filter\context-filter.exe` 找它，不跟主 exe 平铺），产物结构照 workflow 里"打包 Windows zip"那一步的 staging 布局来。两个头现在用的是同一套子目录约定（WPF 头本来就是子目录，2026-09-17 起 Avalonia 头也改成子目录，不再是两边各一种）。
 
-之前 `packaging/publish-windows.ps1` 想省掉这几步，但发布的是 `LanAi.RelayClient`（WPF 头，仅本机开发用，见上方目录说明）——那个头把 `context-filter.exe` 放在子目录 `context-filter\` 下，跟 Avalonia 头的查找路径对不上，出的包能跑起来但不是应出货的东西，已删除。**不要再写第二个打包脚本**：本地要自动化就直接照上面几行封一个函数，别让它跟 CI 的步骤分叉。
+之前 `packaging/publish-windows.ps1` 想省掉这几步，但发布的是 `LanAi.RelayClient`（WPF 头，仅本机开发用，见上方目录说明），已删除。**不要再写第二个打包脚本**：本地要自动化就直接照上面几行封一个函数，别让它跟 CI 的步骤分叉。
 
 ## 已修的两个真 bug（都由测试/契约核对抓到）
 
