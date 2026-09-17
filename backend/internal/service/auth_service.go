@@ -1747,7 +1747,12 @@ func (s *AuthService) GenerateTokenPair(ctx context.Context, user *User, familyI
 	}
 
 	// 生成Access Token（携带会话ID与绑定指纹）
-	accessToken, err := s.generateAccessToken(user, familyID, sessionBindingHashFromContext(ctx))
+	//
+	// 豁免来源（桌面客户端）不写指纹：写空之后，两处校验点都会因为
+	// 「指纹为空」天然放行（jwt_auth 的 enforceSessionBinding、刷新路径的
+	// BindingHash != "" 判断），不需要在校验侧再加分支。这条路径原本就是给
+	// 功能上线前签发的旧 token 准备的兼容出口。
+	accessToken, err := s.generateAccessToken(user, familyID, s.sessionBindingHashFor(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("generate access token: %w", err)
 	}
@@ -1793,7 +1798,10 @@ func (s *AuthService) generateRefreshToken(ctx context.Context, user *User, fami
 		UserID:       user.ID,
 		TokenVersion: resolvedTokenVersion(user),
 		FamilyID:     familyID,
-		BindingHash:  sessionBindingHashFromContext(ctx),
+		BindingHash:  s.sessionBindingHashFor(ctx),
+		// 随家族保存，轮转时由 RefreshTokenPair 重新注入 context —— 来源只在登录
+		// 时确定一次，刷新请求说什么都改不了它。
+		ClientSource: ClientSourceFromContext(ctx),
 		CreatedAt:    now,
 		ExpiresAt:    now.Add(ttl),
 	}
@@ -1816,6 +1824,16 @@ func (s *AuthService) generateRefreshToken(ctx context.Context, user *User, fami
 	}
 
 	return rawToken, nil
+}
+
+// sessionBindingHashFor 返回本次签发要写入 token 的会话指纹。
+//
+// 豁免的会话返回空串 —— 判据见 skipSessionBinding。
+func (s *AuthService) sessionBindingHashFor(ctx context.Context) string {
+	if skipSessionBinding(ClientSourceFromContext(ctx), SessionBindingFromContext(ctx)) {
+		return ""
+	}
+	return sessionBindingHashFromContext(ctx)
 }
 
 // RefreshTokenPair 使用Refresh Token刷新Token对
@@ -1901,6 +1919,10 @@ func (s *AuthService) RefreshTokenPair(ctx context.Context, refreshToken string)
 	}
 
 	// 生成新的Token对，保持同一个家族ID
+	//
+	// 来源取自家族记录而不是这次刷新请求：来源是登录时凭密码确定的，偷到
+	// refresh token 的人不能靠在刷新请求里声明 desktop 来给自己开会话绑定豁免。
+	ctx = WithClientSource(ctx, data.ClientSource)
 	pair, err := s.GenerateTokenPair(ctx, user, data.FamilyID)
 	if err != nil {
 		return nil, err

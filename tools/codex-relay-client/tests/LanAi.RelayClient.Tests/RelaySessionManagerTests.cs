@@ -84,6 +84,66 @@ public sealed class RelaySessionManagerTests
         Assert.Null(store.Current);
     }
 
+    [Theory]
+    [InlineData(RelayFailure.ServerError)]        // 后端重启 / 网关 502
+    [InlineData(RelayFailure.MalformedResponse)]  // 代理错误页，不是我们的信封
+    [InlineData(RelayFailure.RateLimited)]        // 429
+    public async Task AServerSideProblemDuringRenewalDoesNotThrowTheSessionAway(RelayFailure failure)
+    {
+        // A client left running for days refreshes many times; overlapping one
+        // backend restart must not sign it out while the refresh token is still
+        // perfectly valid. Only a 401 is the server's verdict on the session.
+        (RelaySessionManager manager, FakeRelayClient client, FakeSessionStore store, TestClock clock) = Build();
+        await manager.SignInAsync("a@b.com", "pw");
+        client.OnRefresh = () => throw new RelayApiException(failure, "boom");
+
+        clock.Advance(TimeSpan.FromHours(2));
+
+        await Assert.ThrowsAsync<RelayApiException>(() => manager.GetAccessTokenAsync());
+        Assert.True(manager.IsSignedIn);
+        Assert.Equal(SignOutReason.None, manager.LastSignOutReason);
+        Assert.NotNull(store.Current);
+    }
+
+    [Fact]
+    public async Task ARenewalRetriedAfterATransientFailureSucceeds()
+    {
+        // The point of keeping the session: the next poll, 60 seconds later, tries
+        // again. Without that the outage would be permanent even after it ended.
+        (RelaySessionManager manager, FakeRelayClient client, _, TestClock clock) = Build();
+        await manager.SignInAsync("a@b.com", "pw");
+
+        int attempts = 0;
+        client.OnRefresh = () => ++attempts == 1
+            ? throw new RelayApiException(RelayFailure.ServerError, "backend restarting")
+            : FakeRelayClient.Tokens("at-renewed");
+
+        clock.Advance(TimeSpan.FromHours(2));
+        await Assert.ThrowsAsync<RelayApiException>(() => manager.GetAccessTokenAsync());
+
+        string token = await manager.GetAccessTokenAsync();
+
+        Assert.Equal("at-renewed", token);
+        Assert.True(manager.IsSignedIn);
+        Assert.Equal(2, attempts);
+    }
+
+    [Fact]
+    public async Task AServerSideProblemReportedByACardDoesNotThrowTheSessionAway()
+    {
+        // The same rule on the other entry point: a card reporting a rejected token
+        // triggers a renewal, and that renewal failing for the server's own reasons
+        // must not end the session either.
+        (RelaySessionManager manager, FakeRelayClient client, FakeSessionStore store, _) = Build();
+        await manager.SignInAsync("a@b.com", "pw");
+        client.OnRefresh = () => throw new RelayApiException(RelayFailure.ServerError, "boom");
+
+        await manager.NotifyAccessTokenRejectedAsync("at");
+
+        Assert.True(manager.IsSignedIn);
+        Assert.NotNull(store.Current);
+    }
+
     [Fact]
     public async Task BeingOfflineDoesNotThrowTheSessionAway()
     {

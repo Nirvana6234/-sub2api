@@ -142,6 +142,7 @@ public sealed class RelayServerClient : IRelayServerClient
         {
             ["email"] = request.Email,
             ["password"] = request.Password,
+            ["source"] = ClientSource.Desktop,
         };
         AddIfPresent(body, "verify_code", request.VerifyCode);
         AddIfPresent(body, "invitation_code", request.InvitationCode);
@@ -755,7 +756,11 @@ public sealed class RelayServerClient : IRelayServerClient
         ApiEnvelope<JsonElement> envelope,
         bool verifiesCredentials)
     {
-        string? reason = string.IsNullOrWhiteSpace(envelope.Reason) ? null : envelope.Reason;
+        // The middleware envelope has no reason field — its string code is the reason
+        // (see ApiEnvelope.Code), and it is the only thing that says why a session was
+        // refused, so it is preferred over inventing one from the status alone.
+        string? reason = string.IsNullOrWhiteSpace(envelope.Reason) ? envelope.CodeText : envelope.Reason;
+        reason = string.IsNullOrWhiteSpace(reason) ? null : reason;
         string message = string.IsNullOrWhiteSpace(envelope.Message)
             ? $"请求失败（HTTP {(int)statusCode}）。"
             : envelope.Message!;

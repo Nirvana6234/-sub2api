@@ -190,15 +190,16 @@ internal sealed class RelaySessionManager
             {
                 renewed = await _client.RefreshAsync(session.RefreshToken, cancellationToken).ConfigureAwait(false);
             }
-            catch (RelayApiException ex) when (ex.Failure == RelayFailure.NetworkUnreachable)
+            catch (RelayApiException ex) when (EndsTheSession(ex))
             {
-                // Being offline is not grounds for discarding a session; the token
-                // may well still be valid once the network returns.
+                LogRenewalRejected(ex);
+                SignOutLocally(SignOutReason.SessionExpired);
                 throw;
             }
             catch (RelayApiException)
             {
-                SignOutLocally(SignOutReason.SessionExpired);
+                // The server answered, but with its own problem rather than a verdict
+                // on this session. The refresh token is untouched — see EndsTheSession.
                 throw;
             }
 
@@ -327,15 +328,16 @@ internal sealed class RelaySessionManager
             {
                 renewed = await _client.RefreshAsync(session.RefreshToken, cancellationToken).ConfigureAwait(false);
             }
-            catch (RelayApiException ex) when (ex.Failure == RelayFailure.NetworkUnreachable)
+            catch (RelayApiException ex) when (EndsTheSession(ex))
             {
-                // Can't tell right now whether the token was actually rejected or
-                // the network just dropped the refresh call too.
+                LogRenewalRejected(ex);
+                SignOutLocally(SignOutReason.SessionExpired);
                 return;
             }
             catch (RelayApiException)
             {
-                SignOutLocally(SignOutReason.SessionExpired);
+                // Offline, or the server has a problem of its own. Either way this
+                // says nothing about the session — see EndsTheSession.
                 return;
             }
             catch (OperationCanceledException)
@@ -350,6 +352,42 @@ internal sealed class RelaySessionManager
             _renewalGate.Release();
         }
     }
+
+    /// <summary>
+    /// Whether a failed renewal is the server's verdict on this session, or just
+    /// the server having a bad day.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Only an explicit 401 ends the session. Everything else — a 5xx while the
+    /// backend restarts, a gateway's 502, a rate limit, a proxy error page that is
+    /// not our envelope — leaves the refresh token untouched and therefore still
+    /// usable, so the session is kept and the next poll retries.
+    /// </para>
+    /// <para>
+    /// This used to be the other way round: anything but a transport failure ended
+    /// the session. A client left running for days refreshes many times, so it only
+    /// had to overlap one backend restart to be signed out holding a perfectly valid
+    /// refresh token — and signing back in worked immediately, which is exactly the
+    /// signature of a session that was never actually dead.
+    /// </para>
+    /// </remarks>
+    private static bool EndsTheSession(RelayApiException ex) =>
+        ex.Failure == RelayFailure.Unauthenticated;
+
+    /// <summary>
+    /// Records why a renewal was rejected before the session is dropped.
+    /// </summary>
+    /// <remarks>
+    /// Without this, every rejection looked identical from the outside — the
+    /// stored <see cref="SignOutReason.SessionExpired"/> does not distinguish a
+    /// token that genuinely ran out from one the server revoked for another
+    /// reason (a session-binding IP/UA mismatch, a password change, an admin
+    /// kick), and <c>client.log</c> is the only record a support conversation has
+    /// to go on after the fact.
+    /// </remarks>
+    private static void LogRenewalRejected(RelayApiException ex) =>
+        ClientLog.Warning($"续期被服务器拒绝，本次登出（原因：{ex.Reason ?? ex.Failure.ToString()}）", ex);
 
     private void SignOutLocally(SignOutReason reason)
     {

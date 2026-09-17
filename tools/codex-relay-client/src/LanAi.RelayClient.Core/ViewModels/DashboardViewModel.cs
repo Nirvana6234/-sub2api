@@ -734,6 +734,7 @@ public sealed partial class DashboardViewModel : ObservableObject
         try
         {
             long? groupId = SelectedGroup?.Id;
+            string? groupName = SelectedGroup?.Name;
             string? preferredModel = IsClaudeGroup ? SelectedClaudeModel : null;
             CodexStartupResult result;
             if (forceRestart)
@@ -745,7 +746,8 @@ public sealed partial class DashboardViewModel : ObservableObject
                         allowRestart: true,
                         cancellationToken: cancellationToken,
                         preferredModel: preferredModel,
-                        forceNewKey: forceNewKey)
+                        forceNewKey: forceNewKey,
+                        groupName: groupName)
                     .ConfigureAwait(true);
             }
             else if (RequiresCodexAccountRestart)
@@ -764,7 +766,8 @@ public sealed partial class DashboardViewModel : ObservableObject
                         allowRestart: true,
                         cancellationToken: cancellationToken,
                         preferredModel: preferredModel,
-                        forceNewKey: forceNewKey)
+                        forceNewKey: forceNewKey,
+                        groupName: groupName)
                     .ConfigureAwait(true);
             }
             else
@@ -776,7 +779,8 @@ public sealed partial class DashboardViewModel : ObservableObject
                         allowRestart: false,
                         cancellationToken: cancellationToken,
                         preferredModel: preferredModel,
-                        forceNewKey: forceNewKey)
+                        forceNewKey: forceNewKey,
+                        groupName: groupName)
                     .ConfigureAwait(true);
             }
 
@@ -790,7 +794,8 @@ public sealed partial class DashboardViewModel : ObservableObject
                         allowRestart: true,
                         cancellationToken: cancellationToken,
                         preferredModel: preferredModel,
-                        forceNewKey: forceNewKey)
+                        forceNewKey: forceNewKey,
+                        groupName: groupName)
                     .ConfigureAwait(true);
             }
 
@@ -1390,7 +1395,7 @@ public sealed partial class DashboardViewModel : ObservableObject
             // group on each request, so the switch is a local push and is in force for
             // the very next turn. Falling through to the branch below instead would
             // leave the relay on the previous group while telling the user otherwise.
-            _codex.SetActiveGroup(group.Id);
+            _codex.SetActiveGroup(group.Id, group.Name);
             _preferences.Save(group.Id);
             GroupMessage = $"已切换到 {group.Name}。";
             if (IsClaudeGroup) _ = _safeAsync.RunAsync(LoadClaudePreferenceAsync);

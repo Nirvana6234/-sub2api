@@ -186,6 +186,69 @@ public sealed class RelayServerClientTests
     }
 
     [Fact]
+    public async Task AMiddlewareRejectionIsClassifiedByItsStringCode()
+    {
+        // The relay has two envelope shapes: handlers send a numeric code, middleware
+        // sends its own ErrorResponse whose code is a string. Typed as int, the whole
+        // middleware layer — every auth, token and session refusal — failed to
+        // deserialize and arrived as "malformed", losing both the classification and
+        // the reason. Replays the exact body from a real session log.
+        var handler = StubHandler.Raw(
+            HttpStatusCode.Unauthorized,
+            """{"code":"SESSION_BINDING_MISMATCH","message":"Session network fingerprint changed, please login again"}""");
+
+        RelayApiException error = await Assert.ThrowsAsync<RelayApiException>(
+            () => handler.CreateClient().GetCurrentUserAsync("at"));
+
+        Assert.Equal(RelayFailure.Unauthenticated, error.Failure);
+        Assert.Equal("SESSION_BINDING_MISMATCH", error.Reason);
+        Assert.Equal(401, error.StatusCode);
+    }
+
+    [Fact]
+    public async Task ASuccessEnvelopeWithoutACodeIsStillASuccess()
+    {
+        // Pins the behaviour the int-typed code gave for free: an omitted field read
+        // as 0. Widening the type to accept the middleware's string code must not
+        // turn those replies into failures.
+        var handler = StubHandler.Raw(
+            HttpStatusCode.OK,
+            """{"message":"stub","data":{"username":"ann"}}""");
+
+        RelayUser user = await handler.CreateClient().GetCurrentUserAsync("at");
+
+        Assert.Equal("ann", user.Username);
+    }
+
+    [Fact]
+    public async Task EveryCredentialExchangeDeclaresThisBuildAsTheDesktopClient()
+    {
+        // The relay fixes session policy from this at the moment the password is
+        // presented, so it has to be on all three routes that exchange a credential
+        // for tokens — miss one and a user who has 2FA on, or who registers from
+        // inside the client, silently gets a web session with the stricter rules.
+        //
+        // Asserted on the serialized body rather than on the record: these payloads
+        // are exactly the shape the trimmer is known to strip in a published build,
+        // and it fails silently as a missing field rather than loudly.
+        var login = StubHandler.Envelope(HttpStatusCode.OK, code: 0, dataJson: """{"access_token":"at"}""");
+        await login.CreateClient().LoginAsync("a@b.com", "pw");
+        Assert.Contains("\"source\":\"desktop\"", login.LastRequestBody, StringComparison.Ordinal);
+
+        var twoFactor = StubHandler.Envelope(HttpStatusCode.OK, code: 0, dataJson: """{"access_token":"at"}""");
+        await twoFactor.CreateClient().CompleteTwoFactorAsync("tmp", "123456");
+        Assert.Contains("\"source\":\"desktop\"", twoFactor.LastRequestBody, StringComparison.Ordinal);
+
+        var register = StubHandler.Envelope(HttpStatusCode.OK, code: 0, dataJson: """{"access_token":"at"}""");
+        await register.CreateClient().RegisterAsync(new RegistrationRequest
+        {
+            Email = "a@b.com",
+            Password = "pw",
+        });
+        Assert.Contains("\"source\":\"desktop\"", register.LastRequestBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ABodyThatIsNotTheEnvelopeIsReportedAsMalformed()
     {
         // A proxy error page or captive portal answering instead of the relay.

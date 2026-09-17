@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
+using System.Text;
 using LanAi.RelayClient.Platform.MacOS;
 using LanAi.RelayClient.Services;
 using Xunit;
@@ -274,9 +275,17 @@ public sealed class KeychainSnapshotProtectorTests
     {
         byte[] sealedBytes = new KeychainSnapshotProtector(new FakeMasterKeyStore()).Protect(Snapshot);
 
-        Assert.DoesNotContain("gpt-5"u8.ToArray()[0], sealedBytes.AsSpan(0, 12).ToArray());
+        // Searched as a byte sequence over the whole output. It used to assert that
+        // one byte — 'g', the first of "gpt-5" — was absent from the first twelve,
+        // which is the AES-GCM nonce: a test that never checked the ciphertext at
+        // all, and failed outright whenever that value turned up in twelve random
+        // bytes (1-(255/256)^12, about one run in twenty-two).
+        Assert.DoesNotContain("gpt-5", Latin1.GetString(sealedBytes), StringComparison.Ordinal);
         Assert.NotEqual(Snapshot, sealedBytes);
     }
+
+    /// <summary>Byte-preserving, so a sequence search over bytes can be written as one over text.</summary>
+    private static readonly Encoding Latin1 = Encoding.Latin1;
 
     /// <remarks>
     /// <b>The difference from the session store, and the reason both exist.</b> A lost

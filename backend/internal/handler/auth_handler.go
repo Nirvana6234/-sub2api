@@ -63,6 +63,7 @@ type RegisterRequest struct {
 	PromoCode             string `json:"promo_code"`      // 注册优惠码
 	InvitationCode        string `json:"invitation_code"` // 邀请码
 	AffCode               string `json:"aff_code"`        // 邀请返利码
+	Source                string `json:"source"`          // 注册来源：web（默认）/ desktop，决定会话策略
 }
 
 // SendVerifyCodeRequest 发送验证码请求
@@ -86,6 +87,16 @@ type LoginRequest struct {
 	TurnstileToken        string `json:"turnstile_token"`
 	TencentCaptchaTicket  string `json:"tencent_captcha_ticket"`
 	TencentCaptchaRandstr string `json:"tencent_captcha_randstr"`
+	Source                string `json:"source"` // 登录来源：web（默认）/ desktop，决定会话策略
+}
+
+// adoptClientSource 把本次登录声明的来源放进 request context，供签发 token 的路径
+// 读取（见 service.WithClientSource）。
+//
+// 只有「凭密码换 token」的入口需要调用：来源是跟着这一次身份验证确定下来的，
+// 之后随会话家族走，刷新请求改不了它。认不出来的值按网页端处理。
+func adoptClientSource(c *gin.Context, source string) {
+	c.Request = c.Request.WithContext(service.WithClientSource(c.Request.Context(), source))
 }
 
 func captchaProof(turnstileToken, tencentTicket, tencentRandstr string) service.CaptchaProof {
@@ -254,6 +265,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
+	adoptClientSource(c, req.Source)
 
 	// 验证当前启用的验证码（邮箱验证码注册场景避免重复校验一次性票据）
 	proof := captchaProof(req.TurnstileToken, req.TencentCaptchaTicket, req.TencentCaptchaRandstr)
@@ -314,6 +326,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
+	adoptClientSource(c, req.Source)
 
 	proof := captchaProof(req.TurnstileToken, req.TencentCaptchaTicket, req.TencentCaptchaRandstr)
 	if err := h.authService.VerifyCaptcha(c.Request.Context(), proof, ip.GetClientIP(c)); err != nil {
@@ -366,6 +379,7 @@ type TotpLoginResponse struct {
 type Login2FARequest struct {
 	TempToken string `json:"temp_token" binding:"required"`
 	TotpCode  string `json:"totp_code" binding:"required,len=6"`
+	Source    string `json:"source"` // 登录来源：web（默认）/ desktop，决定会话策略
 }
 
 // Login2FA completes the login with 2FA verification
@@ -376,6 +390,7 @@ func (h *AuthHandler) Login2FA(c *gin.Context) {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
+	adoptClientSource(c, req.Source)
 
 	slog.Debug("login_2fa_request",
 		"temp_token_len", len(req.TempToken),

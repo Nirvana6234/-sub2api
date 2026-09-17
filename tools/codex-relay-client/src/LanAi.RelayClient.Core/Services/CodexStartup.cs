@@ -72,7 +72,7 @@ internal interface ICodexStartup
     bool UsesLocalTransport => false;
 
     /// <summary>Rebinds forwarded traffic to <paramref name="groupId"/>, effective immediately.</summary>
-    void SetActiveGroup(long? groupId) { }
+    void SetActiveGroup(long? groupId, string? groupName = null) { }
     /// <param name="forceNewKey">
     /// Skips reusing an existing, unexpired lease and issues a fresh one instead. The
     /// normal reuse exists so pressing 启动 twice does not litter the key list, but
@@ -87,7 +87,8 @@ internal interface ICodexStartup
         bool allowRestart = false,
         CancellationToken cancellationToken = default,
         string? preferredModel = null,
-        bool forceNewKey = false);
+        bool forceNewKey = false,
+        string? groupName = null);
 
     /// <summary>Reports the current state without starting or writing anything.</summary>
     Task<CodexHealth> CheckAsync(CancellationToken cancellationToken = default);
@@ -208,7 +209,7 @@ internal sealed class CodexStartup : ICodexStartup
 
     public bool UsesLocalTransport => _localRelay is not null;
 
-    public void SetActiveGroup(long? groupId) => _localRelay?.SetGroup(groupId);
+    public void SetActiveGroup(long? groupId, string? groupName = null) => _localRelay?.SetGroup(groupId, groupName);
 
     /// <param name="groupId">The group to bill against, when a key must be issued.</param>
     /// <param name="apiBaseUrl">The relay's OpenAI-compatible endpoint, from the server.</param>
@@ -225,7 +226,8 @@ internal sealed class CodexStartup : ICodexStartup
         bool allowRestart = false,
         CancellationToken cancellationToken = default,
         string? preferredModel = null,
-        bool forceNewKey = false)
+        bool forceNewKey = false,
+        string? groupName = null)
     {
         if (Volatile.Read(ref _releaseRequests) > 0)
         {
@@ -287,7 +289,7 @@ internal sealed class CodexStartup : ICodexStartup
                     // been restarted and every turn fails.
                     await _session.GetAccessTokenAsync(cancellationToken).ConfigureAwait(true);
                     await _localRelay.StartAsync(cancellationToken).ConfigureAwait(true);
-                    _localRelay.SetGroup(selectedGroup);
+                    _localRelay.SetGroup(selectedGroup, groupName);
                     codexKey = _localRelay.Token;
                     if (_contextFilter is not null)
                     {

@@ -19,13 +19,35 @@ namespace LanAi.RelayClient.Server;
 // conditional bodies (registration, key creation, group switch) stay dictionaries
 // on purpose — see the note in RelayJsonContext.
 
+/// <summary>
+/// What this build calls itself when it signs in.
+/// </summary>
+/// <remarks>
+/// The relay decides session policy from this, and it is fixed at the moment the
+/// password is presented — it travels with the session from then on and cannot be
+/// restated on a later call. Sent on every route that exchanges a credential for
+/// tokens: sign-in, the 2FA step that completes it, and registration.
+/// </remarks>
+internal static class ClientSource
+{
+    public const string Desktop = "desktop";
+}
+
 internal sealed record LoginBody(
     [property: JsonPropertyName("email")] string Email,
-    [property: JsonPropertyName("password")] string Password);
+    [property: JsonPropertyName("password")] string Password)
+{
+    [JsonPropertyName("source")]
+    public string Source { get; init; } = ClientSource.Desktop;
+}
 
 internal sealed record TwoFactorBody(
     [property: JsonPropertyName("temp_token")] string TempToken,
-    [property: JsonPropertyName("totp_code")] string TotpCode);
+    [property: JsonPropertyName("totp_code")] string TotpCode)
+{
+    [JsonPropertyName("source")]
+    public string Source { get; init; } = ClientSource.Desktop;
+}
 
 internal sealed record RefreshTokenBody(
     [property: JsonPropertyName("refresh_token")] string RefreshToken);

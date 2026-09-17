@@ -414,7 +414,7 @@ internal sealed class FakeCodexStartup : ICodexStartup
     /// <summary>Every group pushed to the transport, in order.</summary>
     public List<long?> ActiveGroups { get; } = [];
 
-    public void SetActiveGroup(long? groupId) => ActiveGroups.Add(groupId);
+    public void SetActiveGroup(long? groupId, string? groupName = null) => ActiveGroups.Add(groupId);
 
     public bool HasContextFilter { get; set; } = true;
 
@@ -441,7 +441,8 @@ internal sealed class FakeCodexStartup : ICodexStartup
         bool allowRestart = false,
         CancellationToken cancellationToken = default,
         string? preferredModel = null,
-        bool forceNewKey = false)
+        bool forceNewKey = false,
+        string? groupName = null)
     {
         RunCount++;
         LastAllowRestart = allowRestart;

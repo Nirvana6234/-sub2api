@@ -98,6 +98,22 @@ dotnet test tools/codex-relay-client/LanAi.RelayClient.sln
 > PowerShell 里若不在仓库根目录，用绝对路径；`curl` 是 `Invoke-WebRequest` 的别名，
 > 要调真正的 curl 需写 `curl.exe`。
 
+### 打正式包
+
+**唯一权威流程是 [`.github/workflows/client-release.yml`](../../.github/workflows/client-release.yml)**——打 `client-v<version>` tag 推送，或在 Actions 页面手动触发。本地要打一份临时包核对时，照抄它 win-x64 那几步（发布对象是 `src/LanAi.RelayClient.App`，**不是** `src/LanAi.RelayClient`）：
+
+```powershell
+dotnet publish src/LanAi.RelayClient.App/LanAi.RelayClient.App.csproj `
+    -c Release -r win-x64 --self-contained true `
+    -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+    -o <临时目录>
+python packaging/check-server-address.py <临时目录>/LanAi.RelayClient.App.exe
+```
+
+`context-filter.exe` 要跟主 exe **平铺**在同一目录（`App.axaml.cs` 按 `AppContext.BaseDirectory` 找它，不是子目录），产物结构照 workflow 里"打包 Windows zip"那一步的 staging 布局来。
+
+之前 `packaging/publish-windows.ps1` 想省掉这几步，但发布的是 `LanAi.RelayClient`（WPF 头，仅本机开发用，见上方目录说明）——那个头把 `context-filter.exe` 放在子目录 `context-filter\` 下，跟 Avalonia 头的查找路径对不上，出的包能跑起来但不是应出货的东西，已删除。**不要再写第二个打包脚本**：本地要自动化就直接照上面几行封一个函数，别让它跟 CI 的步骤分叉。
+
 ## 已修的两个真 bug（都由测试/契约核对抓到）
 
 1. **令牌响应缺 access_token 却被当成登录成功。**

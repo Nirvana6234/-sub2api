@@ -62,6 +62,7 @@ internal sealed class LocalPawRelay : IAsyncDisposable
     private readonly Action<long, long>? _onCompressionMeasured;
     private readonly object _gate = new();
     private long? _groupId;
+    private string? _groupName;
     private int _port;
     private CancellationTokenSource? _stop;
     private Task? _serve;
@@ -113,9 +114,18 @@ internal sealed class LocalPawRelay : IAsyncDisposable
     /// switch: a relay left on the previous group bills traffic somewhere the user
     /// was told it would not go, and neither end says a word about it.
     /// </remarks>
-    public void SetGroup(long? groupId)
+    public void SetGroup(long? groupId, string? groupName = null)
     {
-        lock (_gate) { _groupId = groupId; }
+        lock (_gate)
+        {
+            _groupId = groupId;
+            _groupName = string.IsNullOrWhiteSpace(groupName) ? null : groupName.Trim();
+        }
+
+        if (groupId is not null)
+        {
+            ClientLog.Info($"本机 Relay 已切换{FormatGroup(groupId, groupName)}");
+        }
     }
 
     public Task StartAsync(CancellationToken cancellationToken = default)
@@ -344,7 +354,12 @@ internal sealed class LocalPawRelay : IAsyncDisposable
             }
 
             long? group;
-            lock (_gate) { group = _groupId; }
+            string? groupName;
+            lock (_gate)
+            {
+                group = _groupId;
+                groupName = _groupName;
+            }
             if (group is null)
             {
                 await WriteErrorAsync(context, 400, "no group is bound to this client").ConfigureAwait(false);
@@ -372,7 +387,7 @@ internal sealed class LocalPawRelay : IAsyncDisposable
             string? filterAfterHeader = context.Request.Headers["X-Context-Filter-Bytes-After"];
             string? filterSavedHeader = context.Request.Headers["X-Context-Filter-Bytes-Saved"];
             string filterWarnings = context.Request.Headers["X-Context-Filter-Warnings"] ?? string.Empty;
-            ClientLog.Info($"本轮转发（分组 {group}）：" + DescribeContextFilter(
+            ClientLog.Info($"本轮转发（{FormatGroup(group, groupName)}）：" + DescribeContextFilter(
                 filterEnabledHeader, filterChangedHeader, filterBeforeHeader, filterAfterHeader, filterSavedHeader)
                 + (filterWarnings.Length > 0 ? $"（过滤器提示：{filterWarnings}）" : string.Empty));
 
@@ -497,6 +512,11 @@ internal sealed class LocalPawRelay : IAsyncDisposable
             catch (Exception ex) when (ex is HttpListenerException or ObjectDisposedException or IOException) { }
         }
     }
+
+    private static string FormatGroup(long? groupId, string? groupName) =>
+        string.IsNullOrWhiteSpace(groupName)
+            ? $"分组 {groupId}"
+            : $"分组 {groupId}「{groupName.Replace("\r", " ").Replace("\n", " ")}」";
 
     /// <remarks>
     /// Shaped like an OpenAI error because Codex recognises that shape and files it as
