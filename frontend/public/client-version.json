@@ -1,5 +1,5 @@
 {
-  "version": "0.4",
+  "version": "0.5",
   "download_page": "/download",
-  "release_notes": "0.4：修复官方 ChatGPT 登录后共飞路由被静默还原、启动按钮无法恢复的问题；新增\"修复登录\"按钮，可随时手动修复。"
+  "release_notes": "0.5：注册与充值改为客户端内完成，无需再跳转浏览器。"
 }
