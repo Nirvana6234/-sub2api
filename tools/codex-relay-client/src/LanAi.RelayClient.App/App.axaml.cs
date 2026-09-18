@@ -166,7 +166,8 @@ public partial class App : Application
         // pushing an update. See LocalPawRelay's constructor for why that matters.
         var localRelay = new LocalPawRelay(
             ClientOptions.ServerAddress, session.GetAccessTokenAsync,
-            (before, saved) => contextFilterUsage.Add(before, saved));
+            (before, saved) => contextFilterUsage.Add(before, saved),
+            onAccessTokenRejected: session.NotifyAccessTokenRejectedAsync);
 
         // Optional and platform-shaped by nothing more than whether the file is there.
         // The filter is a Windows binary, so the macOS build of this same head finds

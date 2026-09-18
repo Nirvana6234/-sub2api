@@ -94,7 +94,8 @@ public partial class App : Application
         var contextFilterUsage = new ContextFilterUsageStore();
         var localRelay = new LocalPawRelay(
             ClientOptions.ServerAddress, session.GetAccessTokenAsync,
-            (before, saved) => contextFilterUsage.Add(before, saved));
+            (before, saved) => contextFilterUsage.Add(before, saved),
+            onAccessTokenRejected: session.NotifyAccessTokenRejectedAsync);
         ContextFilterProcess? contextFilter = File.Exists(contextFilterPath)
             ? new ContextFilterProcess(contextFilterPath)
             : null;

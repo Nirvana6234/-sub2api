@@ -57,9 +57,10 @@ internal sealed class AnnouncementMonitor
             return AnnouncementObservation.None;
         }
 
+        string? token = null;
         try
         {
-            string token = await _session.GetAccessTokenAsync(cancellationToken).ConfigureAwait(true);
+            token = await _session.GetAccessTokenAsync(cancellationToken).ConfigureAwait(true);
 
             // Cheap probe first: most polls find nothing new, and a body can carry
             // embedded base64 images, so pulling the list every time to discover
@@ -136,6 +137,24 @@ internal sealed class AnnouncementMonitor
             // A failed poll must leave the cards and the badge as they were rather
             // than blanking them; the caller distinguishes that by Succeeded.
             ClientLog.Warning("公告拉取失败", exception);
+
+            // The announcement poll is also an authenticated account request. If
+            // the access token was rejected before its local expiry, use the same
+            // forced-renewal path as the dashboard and relay. A successful renewal
+            // keeps the session; an explicit 401 from refresh raises StateChanged
+            // and returns the user to the login surface.
+            if (token is not null && exception is RelayApiException { Failure: RelayFailure.Unauthenticated })
+            {
+                try
+                {
+                    await _session.NotifyAccessTokenRejectedAsync(token, cancellationToken)
+                        .ConfigureAwait(true);
+                }
+                catch (Exception renewalException) when (IsBackgroundFailure(renewalException))
+                {
+                    ClientLog.Warning("处理公告鉴权拒绝时续期失败", renewalException);
+                }
+            }
             return AnnouncementObservation.None;
         }
         finally
@@ -186,7 +205,8 @@ internal sealed class AnnouncementMonitor
         {
             return await _relay.GetAnnouncementHeadAsync(token, cancellationToken).ConfigureAwait(true);
         }
-        catch (RelayApiException exception) when (exception.Failure == RelayFailure.NotFound)
+        catch (RelayApiException exception) when (
+            exception.Failure == RelayFailure.NotFound || exception.StatusCode == 404)
         {
             _headProbeSupported = false;
             ClientLog.Info("服务端没有公告摘要接口，改为每次拉取完整列表");

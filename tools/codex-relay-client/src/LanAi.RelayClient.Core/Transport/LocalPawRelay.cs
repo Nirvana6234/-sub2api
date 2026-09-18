@@ -51,6 +51,7 @@ internal sealed class LocalPawRelay : IAsyncDisposable
     private readonly bool _ownsHttp;
     private readonly string _upstream;
     private readonly Func<CancellationToken, Task<string>> _accessToken;
+    private readonly Func<string, CancellationToken, Task>? _onAccessTokenRejected;
 
     /// <summary>
     /// Told what one request's filter measurement was, whenever there was one to
@@ -80,7 +81,8 @@ internal sealed class LocalPawRelay : IAsyncDisposable
         string upstreamBaseUrl,
         Func<CancellationToken, Task<string>> accessTokenProvider,
         Action<long, long>? onCompressionMeasured = null,
-        HttpClient? http = null)
+        HttpClient? http = null,
+        Func<string, CancellationToken, Task>? onAccessTokenRejected = null)
     {
         if (!Uri.TryCreate(upstreamBaseUrl, UriKind.Absolute, out Uri? uri) ||
             uri.Scheme is not ("http" or "https"))
@@ -88,6 +90,7 @@ internal sealed class LocalPawRelay : IAsyncDisposable
         _upstream = upstreamBaseUrl.TrimEnd('/');
         _accessToken = accessTokenProvider ?? throw new ArgumentNullException(nameof(accessTokenProvider));
         _onCompressionMeasured = onCompressionMeasured;
+        _onAccessTokenRejected = onAccessTokenRejected;
         _ownsHttp = http is null;
         _http = http ?? new HttpClient(
             // Never follow a redirect: that would carry the account session to
@@ -437,6 +440,25 @@ internal sealed class LocalPawRelay : IAsyncDisposable
                 // the log, so "Codex stopped working" had no visible cause on this side.
                 string detail = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
                 ClientLog.Warning($"中转拒绝本轮请求：HTTP {(int)response.StatusCode} {Summarize(detail)}");
+
+                // The account-session middleware answers 401 when the access token
+                // was revoked before its local expiry. Give the session manager the
+                // exact token that was rejected so it can renew it, and only show the
+                // login surface if that renewal is rejected too. A gateway error may
+                // also be 401; in that case renewal succeeds and the session stays.
+                if (response.StatusCode == HttpStatusCode.Unauthorized &&
+                    _onAccessTokenRejected is not null)
+                {
+                    try
+                    {
+                        await _onAccessTokenRejected(jwt, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (Exception callbackException) when (
+                        callbackException is not (OutOfMemoryException or StackOverflowException or ThreadAbortException))
+                    {
+                        ClientLog.Warning("处理中转鉴权拒绝时续期失败", callbackException);
+                    }
+                }
 
                 byte[] payload = Encoding.UTF8.GetBytes(detail);
                 context.Response.StatusCode = (int)response.StatusCode;

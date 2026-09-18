@@ -59,6 +59,14 @@ type UserAnnouncement struct {
 	ReadAt       *time.Time
 }
 
+// AnnouncementHead is the lightweight summary used by long-running clients to
+// decide whether they need to download announcement bodies.
+type AnnouncementHead struct {
+	MaxID       int64 `json:"max_id"`
+	UnreadCount int   `json:"unread_count"`
+	Total       int   `json:"total"`
+}
+
 type AnnouncementUserReadStatus struct {
 	UserID   int64      `json:"user_id"`
 	Email    string     `json:"email"`
@@ -287,6 +295,27 @@ func (s *AnnouncementService) ListForUser(ctx context.Context, userID int64, unr
 	})
 
 	return out, nil
+}
+
+// HeadForUser returns the same visibility and read-state view as ListForUser,
+// without exposing announcement bodies. Keeping this behind the service makes
+// the summary obey the same targeting rules as the list endpoint.
+func (s *AnnouncementService) HeadForUser(ctx context.Context, userID int64) (AnnouncementHead, error) {
+	items, err := s.ListForUser(ctx, userID, false)
+	if err != nil {
+		return AnnouncementHead{}, err
+	}
+
+	head := AnnouncementHead{Total: len(items)}
+	for _, item := range items {
+		if item.Announcement.ID > head.MaxID {
+			head.MaxID = item.Announcement.ID
+		}
+		if item.ReadAt == nil {
+			head.UnreadCount++
+		}
+	}
+	return head, nil
 }
 
 func (s *AnnouncementService) MarkRead(ctx context.Context, userID, announcementID int64) error {

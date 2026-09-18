@@ -163,6 +163,8 @@ func RegisterUserRoutes(
 		// 公告（用户可见）
 		announcements := authenticated.Group("/announcements")
 		{
+			// The summary is a real endpoint; keep it before the parameter route.
+			announcements.GET("/head", h.Announcement.Head)
 			announcements.GET("", h.Announcement.List)
 			announcements.POST("/:id/read", h.Announcement.MarkRead)
 		}
