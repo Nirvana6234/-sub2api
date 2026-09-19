@@ -371,6 +371,7 @@ type UpdateSettingsRequest struct {
 	PlaygroundDefaultImageGroupIDs *[]int64 `json:"playground_default_image_group_ids"`
 	PlaygroundDefaultChatStrategy  *string  `json:"playground_default_chat_strategy"`
 	PlaygroundDefaultImageStrategy *string  `json:"playground_default_image_strategy"`
+	SubscriptionEnabled             *bool    `json:"subscription_enabled"`
 
 	// Model Plaza feature switches + description
 	ModelPlazaEnabled     *bool   `json:"model_plaza_enabled"`
@@ -2037,6 +2038,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		}(),
 		PlaygroundDefaultChatStrategy:  stringSetting(req.PlaygroundDefaultChatStrategy, previousSettings.PlaygroundDefaultChatStrategy),
 		PlaygroundDefaultImageStrategy: stringSetting(req.PlaygroundDefaultImageStrategy, previousSettings.PlaygroundDefaultImageStrategy),
+		SubscriptionEnabled: func() bool {
+			if req.SubscriptionEnabled != nil {
+				return *req.SubscriptionEnabled
+			}
+			return previousSettings.SubscriptionEnabled
+		}(),
 		ModelPlazaEnabled: func() bool {
 			if req.ModelPlazaEnabled != nil {
 				return *req.ModelPlazaEnabled
@@ -2502,6 +2509,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		PlaygroundDefaultImageGroupIDs: updatedSettings.PlaygroundDefaultImageGroupIDs,
 		PlaygroundDefaultChatStrategy:  updatedSettings.PlaygroundDefaultChatStrategy,
 		PlaygroundDefaultImageStrategy: updatedSettings.PlaygroundDefaultImageStrategy,
+		SubscriptionEnabled:            updatedSettings.SubscriptionEnabled,
 
 		ModelPlazaEnabled:       updatedSettings.ModelPlazaEnabled,
 		ModelPlazaRequireAuth:   updatedSettings.ModelPlazaRequireAuth,

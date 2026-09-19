@@ -45,6 +45,21 @@ export default {
           enabled: 'Enable Available Channels',
           enabledHint: 'When off, the sidebar entry is hidden and the endpoint returns an empty list.',
         },
+        siteBillingMode: {
+          title: 'Site Billing Mode',
+          description: 'Controls which purchase options users see.',
+          label: 'Purchase options',
+          options: {
+            rechargeAndSubscription: 'Recharge & Subscription',
+            rechargeOnly: 'Recharge only',
+            subscriptionOnly: 'Subscription only',
+          },
+          hints: {
+            rechargeAndSubscription: 'Users can both top up their balance and buy subscription plans.',
+            rechargeOnly: 'Hides the subscription surface while keeping balance recharge available.',
+            subscriptionOnly: 'Only subscription plans are available for purchase.',
+          },
+        },
         playground: {
           title: 'Playground',
           description: 'Expose the Playground entry points to end users. Disabled by default.',

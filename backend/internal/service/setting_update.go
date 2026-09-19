@@ -432,6 +432,8 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 
 	// Available channels feature switch
 	updates[SettingKeyAvailableChannelsEnabled] = strconv.FormatBool(settings.AvailableChannelsEnabled)
+	// Subscription feature switch
+	updates[SettingKeySubscriptionEnabled] = strconv.FormatBool(settings.SubscriptionEnabled)
 
 	// 客户端下载页与备用支付通道
 	updates[SettingKeyClientDownloadEnabled] = strconv.FormatBool(settings.ClientDownloadEnabled)

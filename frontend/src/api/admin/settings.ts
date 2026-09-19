@@ -733,6 +733,8 @@ export interface SystemSettings {
   // Available Channels feature switch
   available_channels_enabled: boolean;
 
+  subscription_enabled: boolean;
+
   // Playground feature switch
   client_download_enabled: boolean;
   client_download_netdisk_url: string;
@@ -1061,6 +1063,8 @@ export interface UpdateSettingsRequest {
 
   // Available Channels feature switch
   available_channels_enabled?: boolean;
+
+  subscription_enabled?: boolean;
 
   // Playground feature switch
   client_download_enabled?: boolean;

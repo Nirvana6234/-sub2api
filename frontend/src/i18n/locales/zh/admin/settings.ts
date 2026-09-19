@@ -45,6 +45,21 @@ export default {
           enabled: '启用可用渠道',
           enabledHint: '关闭后用户端侧边栏入口隐藏，接口返回空数组。',
         },
+        siteBillingMode: {
+          title: '站点类型',
+          description: '决定用户端提供哪些购买方式。',
+          label: '购买方式',
+          options: {
+            rechargeAndSubscription: '充值 & 订阅',
+            rechargeOnly: '仅充值',
+            subscriptionOnly: '仅订阅',
+          },
+          hints: {
+            rechargeAndSubscription: '用户端同时提供余额充值与订阅套餐。',
+            rechargeOnly: '用户端隐藏订阅入口，但保留余额充值。',
+            subscriptionOnly: '用户端只提供订阅套餐购买。',
+          },
+        },
         playground: {
           title: '游乐场',
           description: '向终端用户开放游乐场入口。默认关闭。',

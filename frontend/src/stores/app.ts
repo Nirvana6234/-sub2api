@@ -371,6 +371,8 @@ export const useAppStore = defineStore('app', () => {
         channel_monitor_enabled: true,
         channel_monitor_default_interval_seconds: 60,
         available_channels_enabled: false,
+        subscription_enabled: true,
+        payment_balance_disabled: false,
         // 下载页默认开启，与后端 client_download_enabled 的默认值保持一致
         client_download_enabled: true,
         client_download_netdisk_url: '',

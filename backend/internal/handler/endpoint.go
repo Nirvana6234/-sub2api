@@ -87,6 +87,8 @@ func NormalizeInboundEndpoint(path string) string {
 		return EndpointModels
 	case trimmedPath == "/api/v1/playground/chat/completions":
 		return EndpointChatCompletions
+	case strings.Contains(path, "/contents/generations/tasks"):
+		return EndpointSeedanceTasks
 	case strings.Contains(path, EndpointResponsesInputTokens) || isResponsesInputTokensAliasPath(path):
 		return EndpointResponsesInputTokens
 	case strings.Contains(path, EndpointEmbeddings):

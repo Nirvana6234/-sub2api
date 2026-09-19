@@ -402,6 +402,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		PlaygroundDefaultImageGroupIDs: settings.PlaygroundDefaultImageGroupIDs,
 		PlaygroundDefaultChatStrategy:  settings.PlaygroundDefaultChatStrategy,
 		PlaygroundDefaultImageStrategy: settings.PlaygroundDefaultImageStrategy,
+		SubscriptionEnabled:            settings.SubscriptionEnabled,
 
 		ModelPlazaEnabled:       settings.ModelPlazaEnabled,
 		ModelPlazaRequireAuth:   settings.ModelPlazaRequireAuth,

@@ -234,6 +234,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		SettingKeyChannelMonitorShowQuota,
 		SettingKeyChannelMonitorHideUserRanking,
 		SettingKeyAvailableChannelsEnabled,
+		SettingKeySubscriptionEnabled,
 		SettingKeyClientDownloadEnabled,
 		SettingKeyClientDownloadNetdiskURL,
 		SettingKeyClientDownloadDirectURL,
@@ -374,6 +375,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		ChannelMonitorHideUserRanking:        isTrueSettingValue(settings[SettingKeyChannelMonitorHideUserRanking]),
 
 		AvailableChannelsEnabled: settings[SettingKeyAvailableChannelsEnabled] == "true",
+		SubscriptionEnabled:     !isFalseSettingValue(settings[SettingKeySubscriptionEnabled]),
 		// 下载页默认开启：只有显式 "false" 才关闭。
 		ClientDownloadEnabled:      !isFalseSettingValue(settings[SettingKeyClientDownloadEnabled]),
 		ClientDownloadNetdiskURL:   strings.TrimSpace(settings[SettingKeyClientDownloadNetdiskURL]),
@@ -665,6 +667,7 @@ type PublicSettingsInjectionPayload struct {
 	ChannelMonitorHideUserRanking bool   `json:"channel_monitor_hide_user_ranking"`
 	ChannelMonitorShowQuota       bool   `json:"channel_monitor_show_quota"`
 	AvailableChannelsEnabled      bool   `json:"available_channels_enabled"`
+	SubscriptionEnabled            bool   `json:"subscription_enabled"`
 	ClientDownloadEnabled         bool   `json:"client_download_enabled"`
 	ClientDownloadNetdiskURL      string `json:"client_download_netdisk_url"`
 	ClientDownloadDirectURL       string `json:"client_download_direct_url"`
@@ -759,6 +762,7 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		ChannelMonitorShowQuota:              settings.ChannelMonitorShowQuota,
 		ChannelMonitorHideUserRanking:        settings.ChannelMonitorHideUserRanking,
 		AvailableChannelsEnabled:             settings.AvailableChannelsEnabled,
+		SubscriptionEnabled:                  settings.SubscriptionEnabled,
 		ClientDownloadEnabled:                settings.ClientDownloadEnabled,
 		ClientDownloadNetdiskURL:             settings.ClientDownloadNetdiskURL,
 		ClientDownloadDirectURL:              settings.ClientDownloadDirectURL,

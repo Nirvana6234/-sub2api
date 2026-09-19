@@ -236,6 +236,7 @@ type SystemSettings struct {
 	PlaygroundDefaultImageGroupIDs []int64 `json:"playground_default_image_group_ids"`
 	PlaygroundDefaultChatStrategy  string  `json:"playground_default_chat_strategy"`
 	PlaygroundDefaultImageStrategy string  `json:"playground_default_image_strategy"`
+	SubscriptionEnabled            bool    `json:"subscription_enabled"`
 
 	// Model Plaza feature (public group/model pricing showcase)
 	ModelPlazaEnabled       bool   `json:"model_plaza_enabled"`
@@ -434,6 +435,7 @@ type PublicSettings struct {
 	PlaygroundEnabled           bool   `json:"playground_enabled"`
 	PlaygroundDefaultChatModel  string `json:"playground_default_chat_model"`
 	PlaygroundDefaultImageModel string `json:"playground_default_image_model"`
+	SubscriptionEnabled        bool   `json:"subscription_enabled"`
 
 	// Model Plaza feature (public group/model pricing showcase)
 	ModelPlazaEnabled       bool `json:"model_plaza_enabled"`

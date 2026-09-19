@@ -518,6 +518,9 @@ const (
 	// user-facing aggregate view. When false: user endpoint returns an empty list and the
 	// sidebar entry is hidden. Defaults to false (opt-in feature).
 	SettingKeyAvailableChannelsEnabled = "available_channels_enabled"
+	// SettingKeySubscriptionEnabled controls the user-facing subscription surface.
+	// It is opt-out: only an explicit false disables it.
+	SettingKeySubscriptionEnabled = "subscription_enabled"
 
 	// SettingKeyClientDownloadEnabled 控制公开的客户端下载页 /download 是否可访问。
 	// 关闭后页面与所有入口都隐藏。默认开启，保持既有行为。

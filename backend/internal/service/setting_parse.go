@@ -201,6 +201,8 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 
 		// Available channels feature (default disabled; opt-in)
 		SettingKeyAvailableChannelsEnabled: "false",
+		// Subscription feature (default enabled; opt-out)
+		SettingKeySubscriptionEnabled: "true",
 
 		// 客户端下载页（默认开启，保持既有行为）
 		SettingKeyClientDownloadEnabled: "true",
@@ -864,6 +866,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 
 	// Available channels feature (default: disabled; strict true)
 	result.AvailableChannelsEnabled = settings[SettingKeyAvailableChannelsEnabled] == "true"
+	result.SubscriptionEnabled = !isFalseSettingValue(settings[SettingKeySubscriptionEnabled])
 
 	// 客户端下载页：默认开启，只有显式 "false" 才关闭。
 	result.ClientDownloadEnabled = settings[SettingKeyClientDownloadEnabled] != "false"

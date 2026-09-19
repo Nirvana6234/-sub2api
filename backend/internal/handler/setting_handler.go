@@ -123,6 +123,7 @@ func (h *SettingHandler) GetPublicSettings(c *gin.Context) {
 		PlaygroundEnabled:           settings.PlaygroundEnabled,
 		PlaygroundDefaultChatModel:  settings.PlaygroundDefaultChatModel,
 		PlaygroundDefaultImageModel: settings.PlaygroundDefaultImageModel,
+		SubscriptionEnabled:         settings.SubscriptionEnabled,
 
 		ModelPlazaEnabled:       settings.ModelPlazaEnabled,
 		ModelPlazaRequireAuth:   settings.ModelPlazaRequireAuth,

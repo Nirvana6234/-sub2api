@@ -277,6 +277,10 @@ export interface PublicSettings {
   /** When true, user monitor hides the user ranking tab and /users payload. */
   channel_monitor_hide_user_ranking?: boolean
   available_channels_enabled: boolean
+  /** When false, the user-facing subscription surface is hidden. */
+  subscription_enabled: boolean
+  /** Mirrors payment config BALANCE_PAYMENT_DISABLED. */
+  payment_balance_disabled: boolean
   /** 公开的客户端下载页 /download 是否可访问（默认开启）。 */
   client_download_enabled: boolean
   /** 客户端下载页的网盘下载地址；为空则隐藏该按钮。 */
