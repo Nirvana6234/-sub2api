@@ -12,6 +12,17 @@ namespace LanAi.RelayClient.ViewModels;
 /// </remarks>
 public sealed partial class GroupItemViewModel : ObservableObject
 {
+    private GroupItemViewModel()
+    {
+        Id = 0;
+        Name = "自动分组";
+        Description = "按模型与所选策略自动选择可用分组";
+        Platform = "openai";
+        RateLabel = "自动";
+        RateDescription = "实际倍率取决于每次请求自动选择的分组";
+        IsAutomatic = true;
+    }
+
     internal GroupItemViewModel(RelayGroup group, GroupRate rate, string? serverUtcOffset)
     {
         Id = group.Id;
@@ -41,6 +52,8 @@ public sealed partial class GroupItemViewModel : ObservableObject
         PeakLabel = rate.Peak?.Format(serverUtcOffset);
     }
 
+    public static GroupItemViewModel CreateAutomatic() => new();
+
     public long Id { get; }
 
     public string Name { get; }
@@ -50,6 +63,11 @@ public sealed partial class GroupItemViewModel : ObservableObject
     public string Platform { get; }
 
     public bool IsSubscription { get; }
+
+    public bool IsAutomatic { get; }
+
+    [ObservableProperty]
+    private bool isAutoGroupCandidateSelected;
 
     /// <summary>The multiplier in force, or "订阅" for subscription groups.</summary>
     public string RateLabel { get; }

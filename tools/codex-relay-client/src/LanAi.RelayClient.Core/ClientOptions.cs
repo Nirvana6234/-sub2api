@@ -40,7 +40,9 @@ internal static class ClientOptions
     /// <summary>
     /// The relay this build talks to.
     /// </summary>
-#if TEST_SERVER
+#if LOCAL_SERVER
+    public const string ServerAddress = "http://127.0.0.1:8080/";
+#elif TEST_SERVER
     // 明文：该域名的证书当前不受信任（SSL/TLS 信任关系建立失败），走 https
     // 连不上。测试渠道接受这个取舍，代价是登录凭据与中转 API Key 明文传输 ——
     // 证书修好后应改回 https。正式渠道不受影响。

@@ -125,10 +125,9 @@ internal sealed class LocalPawRelay : IAsyncDisposable
             _groupName = string.IsNullOrWhiteSpace(groupName) ? null : groupName.Trim();
         }
 
-        if (groupId is not null)
-        {
-            ClientLog.Info($"本机 Relay 已切换{FormatGroup(groupId, groupName)}");
-        }
+        ClientLog.Info(groupId is null
+            ? "本机 Relay 已切换到自动分组"
+            : $"本机 Relay 已切换{FormatGroup(groupId, groupName)}");
     }
 
     public Task StartAsync(CancellationToken cancellationToken = default)
@@ -363,12 +362,6 @@ internal sealed class LocalPawRelay : IAsyncDisposable
                 group = _groupId;
                 groupName = _groupName;
             }
-            if (group is null)
-            {
-                await WriteErrorAsync(context, 400, "no group is bound to this client").ConfigureAwait(false);
-                return;
-            }
-
             string jwt;
             try
             {
@@ -424,7 +417,9 @@ internal sealed class LocalPawRelay : IAsyncDisposable
             // Replaced, not appended: forwarding Codex's local token upstream is the
             // easiest mistake to make on this path.
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", jwt);
-            request.Headers.Add(GroupHeader, group.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            request.Headers.Add(
+                GroupHeader,
+                group?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "auto");
             request.Headers.Accept.ParseAdd("text/event-stream");
 
             using HttpResponseMessage response = await _http
@@ -536,7 +531,9 @@ internal sealed class LocalPawRelay : IAsyncDisposable
     }
 
     private static string FormatGroup(long? groupId, string? groupName) =>
-        string.IsNullOrWhiteSpace(groupName)
+        groupId is null
+            ? "自动分组"
+            : string.IsNullOrWhiteSpace(groupName)
             ? $"分组 {groupId}"
             : $"分组 {groupId}「{groupName.Replace("\r", " ").Replace("\n", " ")}」";
 

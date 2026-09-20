@@ -48,15 +48,19 @@ func TestPawResponsesGroupHeaderOverridesSavedDefaultsAndInternalRoutingState(t 
 	for _, tc := range []struct {
 		name, header string
 		wantGroup    int64
+		wantAuto     bool
 		wantStatus   int
 		wantError    string
 	}{
-		{"initial group", "7", 7, http.StatusServiceUnavailable, PawErrorCodeUpstreamUnavailable},
-		{"switch while default stays A", "8", 8, http.StatusServiceUnavailable, PawErrorCodeUpstreamUnavailable},
-		{"switch back", "7", 7, http.StatusServiceUnavailable, PawErrorCodeUpstreamUnavailable},
-		{"missing header", "", 0, http.StatusBadRequest, PawErrorCodeGroupForbidden},
-		{"invalid header", "invalid", 0, http.StatusBadRequest, PawErrorCodeGroupForbidden},
-		{"unavailable group", "999", 0, http.StatusForbidden, PawErrorCodeGroupForbidden},
+		{"initial group", "7", 7, false, http.StatusServiceUnavailable, PawErrorCodeUpstreamUnavailable},
+		{"switch while default stays A", "8", 8, false, http.StatusServiceUnavailable, PawErrorCodeUpstreamUnavailable},
+		{"switch back", "7", 7, false, http.StatusServiceUnavailable, PawErrorCodeUpstreamUnavailable},
+		{"missing header selects automatically", "", 7, true, http.StatusServiceUnavailable, PawErrorCodeUpstreamUnavailable},
+		{"zero selects automatically", "0", 7, true, http.StatusServiceUnavailable, PawErrorCodeUpstreamUnavailable},
+		{"auto selects automatically", "auto", 7, true, http.StatusServiceUnavailable, PawErrorCodeUpstreamUnavailable},
+		{"invalid header", "invalid", 0, false, http.StatusBadRequest, PawErrorCodeGroupForbidden},
+		{"negative header", "-1", 0, false, http.StatusBadRequest, PawErrorCodeGroupForbidden},
+		{"unavailable group", "999", 0, false, http.StatusForbidden, PawErrorCodeGroupForbidden},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			observed = nil
@@ -77,10 +81,16 @@ func TestPawResponsesGroupHeaderOverridesSavedDefaultsAndInternalRoutingState(t 
 			require.NotNil(t, observed.GroupID)
 			require.Equal(t, tc.wantGroup, *observed.GroupID)
 			require.Equal(t, tc.wantGroup, observed.Group.ID)
-			require.False(t, observed.AutoGroup)
-			require.Empty(t, observed.AutoGroupIDs)
-			require.Nil(t, observed.AutoGroupCurrentGroup)
-			require.Empty(t, observed.AutoGroupCurrentModel)
+			require.Equal(t, tc.wantAuto, observed.AutoGroup)
+			if tc.wantAuto {
+				require.Equal(t, []int64{7, 8}, observed.AutoGroupIDs)
+				require.NotNil(t, observed.AutoGroupCurrentGroup)
+				require.Equal(t, "gpt-5", observed.AutoGroupCurrentModel)
+			} else {
+				require.Empty(t, observed.AutoGroupIDs)
+				require.Nil(t, observed.AutoGroupCurrentGroup)
+				require.Empty(t, observed.AutoGroupCurrentModel)
+			}
 			require.Equal(t, int64(7), defaults.defaults.GroupID)
 			require.Equal(t, int64(7), *internalKey.GroupID)
 			require.True(t, internalKey.AutoGroup)

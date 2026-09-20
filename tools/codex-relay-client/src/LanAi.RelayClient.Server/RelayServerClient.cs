@@ -226,6 +226,22 @@ public sealed class RelayServerClient : IRelayServerClient
             accessToken,
             cancellationToken).ConfigureAwait(false);
 
+    public Task<PawAutoGroupSettings> GetPawAutoGroupAsync(
+        string accessToken,
+        CancellationToken cancellationToken = default) =>
+        SendAsync<PawAutoGroupSettings>(HttpMethod.Get, "paw/auto-group", body: null, accessToken, cancellationToken);
+
+    public Task<PawAutoGroupSettings> SavePawAutoGroupAsync(
+        string accessToken,
+        PawAutoGroupSettings settings,
+        CancellationToken cancellationToken = default) =>
+        SendAsync<PawAutoGroupSettings>(
+            HttpMethod.Put,
+            "paw/auto-group",
+            new PawAutoGroupBody(settings.AutoGroup, settings.AutoGroupIds, settings.AutoGroupStrategy),
+            accessToken,
+            cancellationToken);
+
     /// <remarks>
     /// Tolerates a null payload. The service returns a nil map when the rate
     /// repository is not wired (<c>api_key_service.go:1000</c>), and Go marshals

@@ -23,6 +23,12 @@ type pawDefaultsRequest struct {
 	Reasoning string `json:"reasoning"`
 }
 
+type pawAutoGroupRequest struct {
+	AutoGroup         bool    `json:"auto_group"`
+	AutoGroupIDs      []int64 `json:"auto_group_ids"`
+	AutoGroupStrategy string  `json:"auto_group_strategy"`
+}
+
 type pawImageGenerationRequest struct {
 	GroupID int64  `json:"group_id"`
 	ModelID string `json:"model_id"`
@@ -107,11 +113,79 @@ func RegisterPawRoutes(v1 *gin.RouterGroup, svc *service.PawConfigService, jwtAu
 		c.JSON(http.StatusOK, PawConfigResponse{Data: PawConfigData{Defaults: PawDefaults{GroupID: req.GroupID, ModelID: req.ModelID, Reasoning: req.Reasoning}}})
 	})
 
+	paw.GET("/auto-group", pawGetAutoGroupHandler(deps.APIKeyService))
+	paw.PUT("/auto-group", pawSaveAutoGroupHandler(deps.APIKeyService))
+
 	paw.POST("/files", pawUploadHandler(attachmentService))
 	paw.POST("/images/generations", pawImageGenerationHandler(imageService, deps))
 	paw.POST("/images/edits", pawImageEditHandler(imageService, deps))
 	paw.POST("/chat/completions", pawChatHandler(deps.ChatService, chatService, deps))
 	paw.POST("/responses", pawResponsesHandler(responsesChat, deps))
+}
+
+func pawGetAutoGroupHandler(apiKeys *service.APIKeyService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		subject, ok := middleware.GetAuthSubjectFromContext(c)
+		if !ok || subject.UserID <= 0 {
+			pawChatError(c, http.StatusUnauthorized, PawErrorCodeAuthRequired, "authenticated user is required")
+			return
+		}
+		if apiKeys == nil {
+			pawChatError(c, http.StatusServiceUnavailable, PawErrorCodeConfigUnavailable, "Paw automatic routing is unavailable")
+			return
+		}
+		key, _, err := (service.APIKeyPawChatKeySource{Service: apiKeys}).ResolvePawAPIKey(c.Request.Context(), subject.UserID, 0)
+		if err != nil || key == nil {
+			pawChatServiceError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, PawAutoGroupResponse{Data: PawAutoGroupData{
+			AutoGroup:         key.AutoGroup,
+			AutoGroupIDs:      append([]int64(nil), key.AutoGroupIDs...),
+			AutoGroupStrategy: key.AutoGroupStrategy,
+		}})
+	}
+}
+
+func pawSaveAutoGroupHandler(apiKeys *service.APIKeyService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		subject, ok := middleware.GetAuthSubjectFromContext(c)
+		if !ok || subject.UserID <= 0 {
+			pawChatError(c, http.StatusUnauthorized, PawErrorCodeAuthRequired, "authenticated user is required")
+			return
+		}
+		if apiKeys == nil {
+			pawChatError(c, http.StatusServiceUnavailable, PawErrorCodeConfigUnavailable, "Paw automatic routing is unavailable")
+			return
+		}
+		var req pawAutoGroupRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			pawChatError(c, http.StatusBadRequest, "INVALID_REQUEST", "invalid automatic routing settings")
+			return
+		}
+		key, _, err := (service.APIKeyPawChatKeySource{Service: apiKeys}).ResolvePawAPIKey(c.Request.Context(), subject.UserID, 0)
+		if err != nil || key == nil {
+			pawChatServiceError(c, err)
+			return
+		}
+		update := service.UpdateAPIKeyRequest{AutoGroup: &req.AutoGroup}
+		if req.AutoGroup {
+			ids := append([]int64(nil), req.AutoGroupIDs...)
+			strategy := req.AutoGroupStrategy
+			update.AutoGroupIDs = &ids
+			update.AutoGroupStrategy = &strategy
+		}
+		updated, err := apiKeys.Update(c.Request.Context(), key.ID, subject.UserID, update)
+		if err != nil {
+			pawChatServiceError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, PawAutoGroupResponse{Data: PawAutoGroupData{
+			AutoGroup:         updated.AutoGroup,
+			AutoGroupIDs:      append([]int64(nil), updated.AutoGroupIDs...),
+			AutoGroupStrategy: updated.AutoGroupStrategy,
+		}})
+	}
 }
 
 func pawUploadHandler(attachments *service.PawAttachmentService) gin.HandlerFunc {
@@ -371,8 +445,13 @@ func pawResponsesHandler(chat *service.PawChatService, deps PawRouteDependencies
 			return
 		}
 
-		groupID, err := strconv.ParseInt(strings.TrimSpace(c.GetHeader(PawGroupHeader)), 10, 64)
-		if err != nil || groupID <= 0 {
+		groupHeader := strings.TrimSpace(c.GetHeader(PawGroupHeader))
+		groupID := int64(0)
+		var err error
+		if groupHeader != "" && !strings.EqualFold(groupHeader, "auto") {
+			groupID, err = strconv.ParseInt(groupHeader, 10, 64)
+		}
+		if err != nil || groupID < 0 {
 			pawChatError(c, http.StatusBadRequest, PawErrorCodeGroupForbidden, "a valid Paw group is required")
 			return
 		}
@@ -426,6 +505,7 @@ func pawResponsesHandler(chat *service.PawChatService, deps PawRouteDependencies
 		default:
 			pawChatError(c, http.StatusServiceUnavailable, PawErrorCodeUpstreamUnavailable, "Paw Responses gateway is unavailable")
 		}
+		observeAutoGroupRequestResult(c, deps.APIKeyService, resolution.APIKey, request.Model)
 	}
 }
 

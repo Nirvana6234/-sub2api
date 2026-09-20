@@ -163,6 +163,15 @@ public sealed partial class DashboardViewModel : ObservableObject
 
     public ObservableCollection<GroupItemViewModel> Groups { get; } = [];
 
+    /// <summary>Provided by the UI host to show the automatic-routing modal.</summary>
+    public Func<PawAutoGroupSettings, IReadOnlyList<GroupItemViewModel>, Task<PawAutoGroupSettings?>>?
+        ConfigureAutoGroup { get; set; }
+
+    private PawAutoGroupSettings? _autoGroupSettings;
+    // Automatic routing was added after the original relay API. A 404 here means
+    // an older server, not a failure of the group card itself.
+    private bool _autoGroupSupported = true;
+
     [ObservableProperty]
     private string userDisplayName = string.Empty;
 
@@ -573,7 +582,9 @@ public sealed partial class DashboardViewModel : ObservableObject
     /// </para>
     /// </remarks>
     private bool AwaitingBillingGroup =>
-        _codex.UsesLocalTransport && !CodexNotInstalled && SelectedGroup is null;
+        _codex.UsesLocalTransport && !CodexNotInstalled &&
+        (SelectedGroup is null ||
+         (SelectedGroup.IsAutomatic && (_autoGroupSettings is null || _autoGroupSettings.AutoGroupIds.Count == 0)));
 
     public bool CanStartCodex => !IsStartingCodex && !IsInstallingCodex &&
         !AwaitingBillingGroup &&
@@ -733,7 +744,7 @@ public sealed partial class DashboardViewModel : ObservableObject
         CodexMessage = "正在准备 ChatGPT…";
         try
         {
-            long? groupId = SelectedGroup?.Id;
+            long? groupId = SelectedGroup is { IsAutomatic: false } selected ? selected.Id : null;
             string? groupName = SelectedGroup?.Name;
             string? preferredModel = IsClaudeGroup ? SelectedClaudeModel : null;
             CodexStartupResult result;
@@ -1272,6 +1283,22 @@ public sealed partial class DashboardViewModel : ObservableObject
 
             await IdentifyManagedKeyAsync(token, cancellationToken).ConfigureAwait(true);
 
+            PawAutoGroupSettings? autoSettings = null;
+            if (_codex.UsesLocalTransport && _autoGroupSupported)
+            {
+                try
+                {
+                    autoSettings = await _client.GetPawAutoGroupAsync(token, cancellationToken).ConfigureAwait(true);
+                    _autoGroupSettings = autoSettings;
+                }
+                catch (RelayApiException ex) when (ex.Failure == RelayFailure.NotFound || ex.StatusCode == 404)
+                {
+                    _autoGroupSupported = false;
+                    _autoGroupSettings = null;
+                    ClientLog.Warning("当前服务器未提供自动分组接口，按固定分组模式运行。", ex);
+                }
+            }
+
             long? current = _managedKey?.GroupId ?? _preferences.Load();
 
             Groups.Clear();
@@ -1284,15 +1311,33 @@ public sealed partial class DashboardViewModel : ObservableObject
                 Groups.Add(item);
             }
 
-            GroupItemViewModel? inForce = Groups.FirstOrDefault(g => g.IsCurrent);
+            GroupItemViewModel? automatic = null;
+            if (_codex.UsesLocalTransport && _autoGroupSupported && Groups.Any(g =>
+                    !g.IsAutomatic && string.Equals(g.Platform, "openai", StringComparison.OrdinalIgnoreCase)))
+            {
+                automatic = GroupItemViewModel.CreateAutomatic();
+                Groups.Insert(0, automatic);
+            }
+
+            GroupItemViewModel? inForce;
+            if (autoSettings?.AutoGroup == true && automatic is not null)
+            {
+                automatic.IsCurrent = true;
+                inForce = automatic;
+            }
+            else
+            {
+                inForce = Groups.FirstOrDefault(g => !g.IsAutomatic && g.IsCurrent);
+            }
 
             // A first-time account has neither a managed key nor a local choice.
             // Select the first server-approved group so Codex has a usable billing
             // target immediately after registration, then persist that choice for
             // the next refresh.
-            if (inForce is null && Groups.Count > 0)
+            GroupItemViewModel? firstFixedGroup = Groups.FirstOrDefault(g => !g.IsAutomatic);
+            if (inForce is null && firstFixedGroup is not null)
             {
-                await SwitchGroupAsync(Groups[0], cancellationToken).ConfigureAwait(true);
+                await SwitchGroupAsync(firstFixedGroup, cancellationToken).ConfigureAwait(true);
             }
             else
             {
@@ -1300,10 +1345,16 @@ public sealed partial class DashboardViewModel : ObservableObject
                 // nothing, so the answer to "which one am I on" needs no interaction.
                 SelectWithoutSwitching(inForce);
                 ApplyCurrentLabels(inForce);
+                if (_codex.UsesLocalTransport && inForce is not null)
+                {
+                    _codex.SetActiveGroup(inForce.IsAutomatic ? null : inForce.Id, inForce.Name);
+                }
                 if (IsClaudeGroup) _ = _safeAsync.RunAsync(LoadClaudePreferenceAsync);
             }
 
             GroupsReady = true;
+            OnPropertyChanged(nameof(CanStartCodex));
+            OnPropertyChanged(nameof(StartCodexLabel));
         }
         catch (Exception ex) when (ObserveRefreshFailure(ex))
         {
@@ -1382,6 +1433,30 @@ public sealed partial class DashboardViewModel : ObservableObject
             return;
         }
 
+        if (_codex.UsesLocalTransport && group.IsAutomatic)
+        {
+            await EnableAutomaticRoutingAsync(group, previous, cancellationToken).ConfigureAwait(true);
+            return;
+        }
+
+        if (_codex.UsesLocalTransport && _autoGroupSettings?.AutoGroup == true)
+        {
+            try
+            {
+                string token = await _session.GetAccessTokenAsync(cancellationToken).ConfigureAwait(true);
+                _autoGroupSettings = await _client.SavePawAutoGroupAsync(
+                    token,
+                    new PawAutoGroupSettings(false, _autoGroupSettings.AutoGroupIds, _autoGroupSettings.AutoGroupStrategy),
+                    cancellationToken).ConfigureAwait(true);
+            }
+            catch (RelayApiException ex)
+            {
+                SelectWithoutSwitching(previous);
+                GroupMessage = ex.UserMessage;
+                return;
+            }
+        }
+
         SetCurrent(group);
 
         // Keeps the dropdown in step when the switch was started from elsewhere
@@ -1437,6 +1512,61 @@ public sealed partial class DashboardViewModel : ObservableObject
                 ApplyCurrentLabels(null);
             }
 
+            SelectWithoutSwitching(previous);
+            GroupMessage = ex.UserMessage;
+        }
+    }
+
+    private async Task EnableAutomaticRoutingAsync(
+        GroupItemViewModel automatic,
+        GroupItemViewModel? previous,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            string token = await _session.GetAccessTokenAsync(cancellationToken).ConfigureAwait(true);
+            PawAutoGroupSettings current = await _client
+                .GetPawAutoGroupAsync(token, cancellationToken)
+                .ConfigureAwait(true);
+            IReadOnlyList<GroupItemViewModel> candidates = Groups
+                .Where(g => !g.IsAutomatic && string.Equals(g.Platform, "openai", StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            PawAutoGroupSettings? chosen = ConfigureAutoGroup is null
+                ? null
+                : await ConfigureAutoGroup(current, candidates).ConfigureAwait(true);
+            if (chosen is null)
+            {
+                SelectWithoutSwitching(previous);
+                return;
+            }
+
+            HashSet<long> allowed = candidates.Select(g => g.Id).ToHashSet();
+            long[] ids = chosen.AutoGroupIds.Where(allowed.Contains).Distinct().ToArray();
+            if (ids.Length == 0)
+            {
+                SelectWithoutSwitching(previous);
+                GroupMessage = "请至少选择一个自动分组候选项。";
+                return;
+            }
+
+            PawAutoGroupSettings saved = await _client.SavePawAutoGroupAsync(
+                token,
+                new PawAutoGroupSettings(true, ids, chosen.AutoGroupStrategy),
+                cancellationToken).ConfigureAwait(true);
+
+            // The local mode changes only after the server accepted the complete
+            // candidate set and strategy. This ordering prevents a green UI whose
+            // relay is still sending the previous fixed group.
+            _autoGroupSettings = saved;
+            SetCurrent(automatic);
+            SelectWithoutSwitching(automatic);
+            _codex.SetActiveGroup(null, automatic.Name);
+            GroupMessage = "已启用自动分组。";
+            OnPropertyChanged(nameof(CanStartCodex));
+            OnPropertyChanged(nameof(StartCodexLabel));
+        }
+        catch (RelayApiException ex)
+        {
             SelectWithoutSwitching(previous);
             GroupMessage = ex.UserMessage;
         }
@@ -1501,6 +1631,8 @@ public sealed partial class DashboardViewModel : ObservableObject
 
         IsRefreshing = false;
         _managedKey = null;
+        _autoGroupSettings = null;
+        _autoGroupSupported = true;
         _pollingBackoff.RecordSuccess();
         IsRateLimited = false;
         RefreshMessage = string.Empty;

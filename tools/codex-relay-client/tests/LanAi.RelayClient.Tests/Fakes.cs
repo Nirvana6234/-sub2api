@@ -171,6 +171,31 @@ internal sealed class FakeRelayClient : IRelayServerClient
         return Task.FromResult(OnGroupRates?.Invoke() ?? new Dictionary<long, double>());
     }
 
+    public Func<PawAutoGroupSettings>? OnPawAutoGroup { get; set; }
+
+    public Func<PawAutoGroupSettings, PawAutoGroupSettings>? OnSavePawAutoGroup { get; set; }
+
+    public int PawAutoGroupCallCount { get; private set; }
+
+    public PawAutoGroupSettings? LastSavedPawAutoGroup { get; private set; }
+
+    public Task<PawAutoGroupSettings> GetPawAutoGroupAsync(
+        string accessToken,
+        CancellationToken cancellationToken = default)
+    {
+        PawAutoGroupCallCount++;
+        return Task.FromResult(OnPawAutoGroup?.Invoke() ?? new PawAutoGroupSettings());
+    }
+
+    public Task<PawAutoGroupSettings> SavePawAutoGroupAsync(
+        string accessToken,
+        PawAutoGroupSettings settings,
+        CancellationToken cancellationToken = default)
+    {
+        LastSavedPawAutoGroup = settings;
+        return Task.FromResult(OnSavePawAutoGroup?.Invoke(settings) ?? settings);
+    }
+
     public Task<IReadOnlyList<RelayApiKey>> ListApiKeysAsync(string accessToken, CancellationToken cancellationToken = default)
     {
         ListKeysCallCount++;

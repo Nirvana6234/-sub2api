@@ -279,20 +279,16 @@ public sealed class CodexLifecycleTests : IDisposable
     }
 
     [Fact]
-    public async Task TheLocalTransportRefusesToLaunchBeforeAGroupIsChosen()
+    public async Task TheLocalTransportUsesAutomaticRoutingWhenNoFixedGroupIsChosen()
     {
-        // The relay turns away every request that carries no group. Launching anyway
-        // would write the config, restart Codex and report 就绪, and then fail every
-        // single turn with nothing on screen to explain why.
         await using var loopback = new LocalPawRelay("https://relay.test/", _ => Task.FromResult("jwt"));
         Setup setup = await CreateSetupAsync(localRelay: loopback);
 
         CodexStartupResult result = await setup.Startup.RunAsync(groupId: null, "https://relay.test/v1");
 
-        Assert.Equal(CodexStartupStatus.RelayUnavailable, result.Status);
-        Assert.Contains("分组", result.Message, StringComparison.Ordinal);
-        Assert.Equal(0, setup.Launcher.EnsureCallCount);
-        Assert.Null(loopback.BaseAddress);
+        Assert.Equal(CodexStartupStatus.Ready, result.Status);
+        Assert.Equal(1, setup.Launcher.EnsureCallCount);
+        Assert.NotNull(loopback.BaseAddress);
     }
 
     [Fact]

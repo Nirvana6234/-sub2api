@@ -265,17 +265,6 @@ internal sealed class CodexStartup : ICodexStartup
                     "服务器没有提供接口地址，请稍后再试。");
             }
 
-            if (_localRelay is not null && groupId is null)
-            {
-                // The loopback relay refuses every request that carries no group, so
-                // launching here would write the config, start Codex, report 就绪 —
-                // and then fail every single turn with nothing on screen to explain it.
-                ClientLog.Warning("未选择分组，拒绝启动本机转发");
-                return new CodexStartupResult(
-                    CodexStartupStatus.RelayUnavailable,
-                    "请先选择一个分组，再启动 ChatGPT。");
-            }
-
             string codexKey;
             string codexBaseUrl;
             long? selectedGroup = groupId;

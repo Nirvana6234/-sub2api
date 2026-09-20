@@ -258,6 +258,76 @@ public sealed class DashboardViewModelTests
     }
 
     [Fact]
+    public async Task ChoosingAutomaticGroupOpensPolicyAndSavesBeforeChangingTheRelay()
+    {
+        var relay = new FakeRelayClient();
+        var session = new RelaySessionManager(relay, new FakeSessionStore(), "https://relay.test/", new TestClock().Read);
+        var codex = new FakeCodexStartup { UsesLocalTransport = true };
+        var dashboard = new DashboardViewModel(
+            relay,
+            session,
+            new FakeGroupPreferenceStore(),
+            new ManagedKeyNaming(new FixedInstallId("testinst")),
+            codex);
+        await session.SignInAsync("a@b.com", "pw");
+        relay.OnAvailableGroups = () => [Group(11, "OpenAI 甲"), Group(12, "OpenAI 乙"), Group(13, "Claude", platform: "anthropic")];
+        relay.OnListKeys = () => [];
+        dashboard.ConfigureAutoGroup = (settings, candidates) =>
+        {
+            Assert.False(settings.AutoGroup);
+            Assert.Equal([11L, 12L], candidates.Select(candidate => candidate.Id));
+            Assert.DoesNotContain(candidates, candidate => candidate.Id == 13);
+            Assert.DoesNotContain(null, codex.ActiveGroups);
+            return Task.FromResult<PawAutoGroupSettings?>(new PawAutoGroupSettings(true, [12], "speed"));
+        };
+
+        await dashboard.RefreshAsync();
+        GroupItemViewModel automatic = Assert.Single(dashboard.Groups, group => group.IsAutomatic);
+        await dashboard.SwitchGroupAsync(automatic);
+
+        Assert.True(relay.LastSavedPawAutoGroup?.AutoGroup);
+        Assert.Equal([12L], relay.LastSavedPawAutoGroup?.AutoGroupIds);
+        Assert.Equal("speed", relay.LastSavedPawAutoGroup?.AutoGroupStrategy);
+        Assert.Same(automatic, dashboard.SelectedGroup);
+        Assert.Null(codex.ActiveGroups.Last());
+        Assert.Equal("已启用自动分组。", dashboard.GroupMessage);
+        Assert.Equal(2, relay.PawAutoGroupCallCount);
+    }
+
+    [Fact]
+    public async Task AutomaticGroupSaveFailureKeepsThePreviousFixedGroup()
+    {
+        var relay = new FakeRelayClient
+        {
+            OnAvailableGroups = () => [Group(11, "OpenAI 甲"), Group(12, "OpenAI 乙")],
+            OnListKeys = () => [],
+            OnSavePawAutoGroup = _ => throw new RelayApiException(RelayFailure.ServerError, "保存失败"),
+        };
+        var session = new RelaySessionManager(relay, new FakeSessionStore(), "https://relay.test/", new TestClock().Read);
+        var codex = new FakeCodexStartup { UsesLocalTransport = true };
+        var dashboard = new DashboardViewModel(
+            relay,
+            session,
+            new FakeGroupPreferenceStore(),
+            new ManagedKeyNaming(new FixedInstallId("testinst")),
+            codex)
+        {
+            ConfigureAutoGroup = (_, _) => Task.FromResult<PawAutoGroupSettings?>(
+                new PawAutoGroupSettings(true, [11], "balanced")),
+        };
+        await session.SignInAsync("a@b.com", "pw");
+        await dashboard.RefreshAsync();
+        GroupItemViewModel previous = dashboard.SelectedGroup!;
+
+        await dashboard.SwitchGroupAsync(dashboard.Groups.Single(group => group.IsAutomatic));
+
+        Assert.Same(previous, dashboard.SelectedGroup);
+        Assert.True(previous.IsCurrent);
+        Assert.DoesNotContain(null, codex.ActiveGroups);
+        Assert.Equal("服务器暂时出了点问题，请稍后重试。", dashboard.GroupMessage);
+    }
+
+    [Fact]
     public async Task TheStartButtonWaitsForTheGroupListInsteadOfBlamingTheUser()
     {
         // Replays a real session: the button was live the moment the dashboard

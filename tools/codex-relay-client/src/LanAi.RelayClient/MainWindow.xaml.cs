@@ -99,6 +99,7 @@ public partial class MainWindow : Window
         DataContext = _signIn;
         RegistrationPanel.DataContext = _registration;
         SignedInPanel.DataContext = _dashboard;
+        _dashboard.ConfigureAutoGroup = ShowAutoGroupDialogAsync;
 
         _pollTimer = new DispatcherTimer { Interval = PollInterval };
         _pollTimer.Tick += (_, _) => _ = _safeAsync.RunAsync(RefreshAndMonitorAsync);
@@ -127,6 +128,14 @@ public partial class MainWindow : Window
             _announcementTimer.Stop();
             _balanceActivityMonitor.Reset();
         };
+    }
+
+    private Task<PawAutoGroupSettings?> ShowAutoGroupDialogAsync(
+        PawAutoGroupSettings settings,
+        IReadOnlyList<GroupItemViewModel> candidates)
+    {
+        var dialog = new AutoGroupDialog(settings, candidates) { Owner = this };
+        return Task.FromResult(dialog.ShowDialog() == true ? dialog.Result : null);
     }
 
     private void MoveRecentSpendCardToEnd()

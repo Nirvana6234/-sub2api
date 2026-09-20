@@ -105,6 +105,7 @@ namespace LanAi.RelayClient.Server;
 [JsonSerializable(typeof(PaymentCheckoutInfo))]
 [JsonSerializable(typeof(PaymentOrderCreateResult))]
 [JsonSerializable(typeof(PaymentOrder))]
+[JsonSerializable(typeof(PawAutoGroupSettings))]
 // Per-group rate overrides arrive as a bare map, not a contract object.
 [JsonSerializable(typeof(Dictionary<long, double>))]
 // Requests with a fixed shape.
@@ -113,6 +114,7 @@ namespace LanAi.RelayClient.Server;
 [JsonSerializable(typeof(RefreshTokenBody))]
 [JsonSerializable(typeof(VerifyOrderBody))]
 [JsonSerializable(typeof(BalanceOrderBody))]
+[JsonSerializable(typeof(PawAutoGroupBody))]
 // Requests whose field *presence* is the contract.
 //
 // These stay dictionaries rather than becoming records, and that is a safety

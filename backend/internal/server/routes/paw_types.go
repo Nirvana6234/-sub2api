@@ -17,6 +17,16 @@ type PawConfigResponse struct {
 	Data PawConfigData `json:"data"`
 }
 
+type PawAutoGroupResponse struct {
+	Data PawAutoGroupData `json:"data"`
+}
+
+type PawAutoGroupData struct {
+	AutoGroup         bool    `json:"auto_group"`
+	AutoGroupIDs      []int64 `json:"auto_group_ids"`
+	AutoGroupStrategy string  `json:"auto_group_strategy"`
+}
+
 type PawConfigData struct {
 	User     PawUser     `json:"user"`
 	Groups   []PawGroup  `json:"groups"`

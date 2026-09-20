@@ -67,6 +67,14 @@ func (s *pawChatRouteKeySource) ResolvePawAPIKey(context.Context, int64, int64) 
 	return s.apiKey, nil, nil
 }
 
+func (s *pawChatRouteKeySource) ResolvePawAutoGroupForModel(context.Context, int64, string) (*service.APIKey, *service.UserSubscription, error) {
+	if s.apiKey == nil || !s.apiKey.AutoGroup || s.apiKey.Group == nil {
+		return nil, nil, service.ErrAutoGroupUnavailable
+	}
+	resolved := *s.apiKey
+	return &resolved, nil, nil
+}
+
 func TestPawChatRouteRejectsProviderCredentialHeaders(t *testing.T) {
 	r := newPawChatRouteEngine(func(c *gin.Context) {
 		t.Fatal("chat handler must not run")

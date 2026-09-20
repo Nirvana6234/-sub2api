@@ -66,32 +66,38 @@ func autoGroupModelRoutingMiddleware(apiKeyService *service.APIKeyService, subsc
 			middleware.ReplaceAuthenticatedAPIKey(c, resolved, subscription)
 		}
 		c.Next()
+		observeAutoGroupRequestResult(c, apiKeyService, apiKey, model)
+	}
+}
 
-		status := c.Writer.Status()
-		if streamErr, ok := service.GetOpsStreamError(c); ok && streamErr.IntendedStatus >= http.StatusBadRequest {
-			status = streamErr.IntendedStatus
-		}
-		// Handlers map upstream 529 to a client-facing 503. Preserve the raw
-		// upstream status for auto-group observation so overload is not mistaken
-		// for a confirmed group failure.
-		if rawStatus, ok := c.Get(service.OpsUpstreamStatusCodeKey); ok {
-			switch typed := rawStatus.(type) {
-			case int:
-				if typed > 0 {
-					status = typed
-				}
-			case int32:
-				if typed > 0 {
-					status = int(typed)
-				}
-			case int64:
-				if typed > 0 {
-					status = int(typed)
-				}
+func observeAutoGroupRequestResult(c *gin.Context, apiKeyService *service.APIKeyService, apiKey *service.APIKey, model string) {
+	if c == nil || apiKeyService == nil || apiKey == nil || !apiKey.AutoGroup {
+		return
+	}
+	status := c.Writer.Status()
+	if streamErr, ok := service.GetOpsStreamError(c); ok && streamErr.IntendedStatus >= http.StatusBadRequest {
+		status = streamErr.IntendedStatus
+	}
+	// Handlers map upstream 529 to a client-facing 503. Preserve the raw
+	// upstream status for auto-group observation so overload is not mistaken
+	// for a confirmed group failure.
+	if rawStatus, ok := c.Get(service.OpsUpstreamStatusCodeKey); ok {
+		switch typed := rawStatus.(type) {
+		case int:
+			if typed > 0 {
+				status = typed
+			}
+		case int32:
+			if typed > 0 {
+				status = int(typed)
+			}
+		case int64:
+			if typed > 0 {
+				status = int(typed)
 			}
 		}
-		apiKeyService.ObserveAutoGroupRequestResult(apiKey, model, status, autoGroupFirstTokenMs(c))
 	}
+	apiKeyService.ObserveAutoGroupRequestResult(apiKey, model, status, autoGroupFirstTokenMs(c))
 }
 
 func defaultAutoGroupModelForRequest(path string) string {

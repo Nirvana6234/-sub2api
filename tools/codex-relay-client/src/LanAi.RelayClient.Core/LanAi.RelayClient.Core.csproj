@@ -29,6 +29,12 @@
     <DefineConstants>$(DefineConstants);TEST_SERVER</DefineConstants>
   </PropertyGroup>
 
+  <!-- Local smoke-test channel. LocalServer intentionally wins over TestServer so
+       a developer can pass both inherited properties without leaking to the test host. -->
+  <PropertyGroup Condition="'$(LocalServer)' == 'true'">
+    <DefineConstants>$(DefineConstants);LOCAL_SERVER</DefineConstants>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <PackageReference Include="Markdig" Version="1.3.2" />

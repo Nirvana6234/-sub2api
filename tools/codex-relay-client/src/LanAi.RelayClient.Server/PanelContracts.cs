@@ -128,6 +128,30 @@ public sealed record RelayGroup
     public bool IsSubscription => string.Equals(SubscriptionType, "subscription", StringComparison.Ordinal);
 }
 
+/// <summary>The hidden Playground Chat key's automatic routing configuration.</summary>
+public sealed record PawAutoGroupSettings
+{
+    [JsonConstructor]
+    public PawAutoGroupSettings(
+        bool autoGroup = default,
+        IReadOnlyList<long>? autoGroupIds = null,
+        string? autoGroupStrategy = null)
+    {
+        AutoGroup = autoGroup;
+        AutoGroupIds = autoGroupIds ?? Array.Empty<long>();
+        AutoGroupStrategy = string.IsNullOrWhiteSpace(autoGroupStrategy) ? "price" : autoGroupStrategy;
+    }
+
+    [JsonPropertyName("auto_group")]
+    public bool AutoGroup { get; init; }
+
+    [JsonPropertyName("auto_group_ids")]
+    public IReadOnlyList<long> AutoGroupIds { get; init; } = Array.Empty<long>();
+
+    [JsonPropertyName("auto_group_strategy")]
+    public string AutoGroupStrategy { get; init; } = "price";
+}
+
 /// <summary>
 /// The signed-in user's usage totals.
 /// </summary>

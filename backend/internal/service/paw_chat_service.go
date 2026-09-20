@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
@@ -61,14 +62,16 @@ func (s APIKeyPawChatKeySource) ResolvePawAPIKey(ctx context.Context, userID, gr
 		return nil, nil, err
 	}
 	var selectedGroup *Group
-	for i := range groups {
-		if groups[i].ID == groupID {
-			selectedGroup = &groups[i]
-			break
+	if groupID > 0 {
+		for i := range groups {
+			if groups[i].ID == groupID {
+				selectedGroup = &groups[i]
+				break
+			}
 		}
-	}
-	if selectedGroup == nil {
-		return nil, nil, errPawGroupForbidden
+		if selectedGroup == nil {
+			return nil, nil, errPawGroupForbidden
+		}
 	}
 
 	keys, err := s.Service.SearchAPIKeys(ctx, userID, PlaygroundChatAPIKeyName, 10)
@@ -110,13 +113,41 @@ func (s APIKeyPawChatKeySource) ResolvePawAPIKey(ctx context.Context, userID, gr
 		}
 	}
 	var subscription *UserSubscription
-	if selectedGroup.IsSubscriptionType() {
+	if selectedGroup != nil && selectedGroup.IsSubscriptionType() {
 		subscription, err = s.Service.GetActiveSubscriptionForGroup(ctx, userID, groupID)
 		if err != nil {
 			return nil, nil, err
 		}
 	}
 	return key, subscription, nil
+}
+
+func (s APIKeyPawChatKeySource) ResolvePawAutoGroupForModel(ctx context.Context, userID int64, model string) (*APIKey, *UserSubscription, error) {
+	key, _, err := s.ResolvePawAPIKey(ctx, userID, 0)
+	if err != nil || key == nil {
+		return nil, nil, err
+	}
+	resolver, ok := s.Service.(interface {
+		ResolveAutoGroupForModel(context.Context, *APIKey, string) (*APIKey, error)
+	})
+	if !ok || !key.AutoGroup || len(key.AutoGroupIDs) == 0 {
+		return nil, nil, ErrAutoGroupUnavailable
+	}
+	resolved, err := resolver.ResolveAutoGroupForModel(ctx, key, model)
+	if err != nil {
+		return nil, nil, err
+	}
+	if resolved == nil || resolved.Group == nil {
+		return nil, nil, ErrAutoGroupUnavailable
+	}
+	var subscription *UserSubscription
+	if resolved.Group.IsSubscriptionType() {
+		subscription, err = s.Service.GetActiveSubscriptionForGroup(ctx, userID, resolved.Group.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	return resolved, subscription, nil
 }
 
 func findPawInternalKey(keys []APIKey) *APIKey {
@@ -222,9 +253,6 @@ func (s *PawChatService) Prepare(ctx context.Context, userID int64, req PawChatR
 }
 
 func (s *PawChatService) resolvePawSelection(ctx context.Context, userID, groupID int64, modelID string) (*PawChatResolution, PawModel, error) {
-	if groupID <= 0 {
-		return nil, PawModel{}, errPawGroupForbidden
-	}
 	modelID = strings.TrimSpace(modelID)
 	if modelID == "" {
 		return nil, PawModel{}, errPawModelUnavailable
@@ -232,6 +260,27 @@ func (s *PawChatService) resolvePawSelection(ctx context.Context, userID, groupI
 	config, err := s.config.GetAvailableConfig(ctx, userID)
 	if err != nil {
 		return nil, PawModel{}, errPawKeyUnavailable.WithCause(err)
+	}
+	if groupID <= 0 {
+		autoSource, ok := s.keySource.(interface {
+			ResolvePawAutoGroupForModel(context.Context, int64, string) (*APIKey, *UserSubscription, error)
+		})
+		if !ok {
+			return nil, PawModel{}, errPawKeyUnavailable
+		}
+		apiKey, subscription, autoErr := autoSource.ResolvePawAutoGroupForModel(ctx, userID, modelID)
+		if autoErr != nil || apiKey == nil || apiKey.Group == nil {
+			if errors.Is(autoErr, ErrAutoGroupUnavailable) {
+				return nil, PawModel{}, infraerrors.Forbidden("AUTO_GROUP_UNAVAILABLE", "No available group satisfies the automatic routing requirements")
+			}
+			return nil, PawModel{}, errPawKeyUnavailable.WithCause(autoErr)
+		}
+		if apiKey.Status == StatusAPIKeyQuotaExhausted || apiKey.IsQuotaExhausted() {
+			return nil, PawModel{}, errPawQuotaExceeded
+		}
+		return &PawChatResolution{
+			APIKey: apiKey, Subscription: subscription, Group: apiKey.Group, Model: modelID,
+		}, PawModel{ID: modelID}, nil
 	}
 	group, model, ok := s.findPawChatSelection(ctx, config, groupID, modelID)
 	if !ok {

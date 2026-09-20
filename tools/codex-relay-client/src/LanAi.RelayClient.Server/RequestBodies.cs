@@ -60,3 +60,8 @@ internal sealed record BalanceOrderBody(
     [property: JsonPropertyName("payment_type")] string PaymentType,
     [property: JsonPropertyName("order_type")] string OrderType,
     [property: JsonPropertyName("is_mobile")] bool IsMobile);
+
+internal sealed record PawAutoGroupBody(
+    [property: JsonPropertyName("auto_group")] bool AutoGroup,
+    [property: JsonPropertyName("auto_group_ids")] IReadOnlyList<long> AutoGroupIds,
+    [property: JsonPropertyName("auto_group_strategy")] string AutoGroupStrategy);

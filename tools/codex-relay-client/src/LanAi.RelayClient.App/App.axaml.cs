@@ -227,6 +227,8 @@ public partial class App : Application
             Confirm = message => ConfirmDialog.AskAsync(shell, message),
             Notifications = _notifications,
         };
+        dashboard.ConfigureAutoGroup = (settings, candidates) =>
+            AutoGroupDialog.ShowAsync(shell, settings, candidates);
 
         var signInView = new SignInView(new SignInPageViewModel(signIn, clientUpdate), safeAsync);
 

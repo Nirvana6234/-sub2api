@@ -88,6 +88,15 @@ public interface IRelayServerClient
         string accessToken,
         CancellationToken cancellationToken = default);
 
+    Task<PawAutoGroupSettings> GetPawAutoGroupAsync(
+        string accessToken,
+        CancellationToken cancellationToken = default);
+
+    Task<PawAutoGroupSettings> SavePawAutoGroupAsync(
+        string accessToken,
+        PawAutoGroupSettings settings,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Reads the recent daily usage trend for the chart (F4).</summary>
     /// <param name="days">How many days back to cover, ending today.</param>
     Task<IReadOnlyList<UsageTrendPoint>> GetUsageTrendAsync(
