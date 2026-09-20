@@ -90,10 +90,7 @@ func (s APIKeyPawChatKeySource) ResolvePawAPIKey(ctx context.Context, userID, gr
 		key = findPawInternalKey(keys)
 	}
 	if key == nil {
-		groupIDs := make([]int64, 0, len(groups))
-		for _, group := range groups {
-			groupIDs = append(groupIDs, group.ID)
-		}
+		groupIDs := pawFallbackAutoGroupIDs(groups)
 		key, err = s.Service.Create(ctx, userID, CreateAPIKeyRequest{
 			Name:         PlaygroundChatAPIKeyName,
 			AutoGroup:    true,
@@ -148,6 +145,43 @@ func (s APIKeyPawChatKeySource) ResolvePawAutoGroupForModel(ctx context.Context,
 		}
 	}
 	return resolved, subscription, nil
+}
+
+// pawFallbackAutoGroupIDs picks the candidate set used when the internal Paw key
+// has to be created here rather than by EnsurePlaygroundAPIKeys.
+//
+// Every candidate must share one platform: validateAutoGroupIDs rejects a mixed
+// set with AUTO_GROUP_CANDIDATE_PLATFORM_MISMATCH, which would fail the creation
+// and take the whole Paw path down for that user. This path is only reached when
+// EnsurePlaygroundAPIKeys declined to create the key, which it does when the user
+// has no OpenAI group at all — so a user holding, say, an Anthropic group and a
+// Gemini group used to land here with a mixed set and get no key at all.
+//
+// OpenAI is preferred to match selectPlaygroundGroupIDs; otherwise the first
+// group's platform wins, so a single-platform user still gets a usable key.
+func pawFallbackAutoGroupIDs(groups []Group) []int64 {
+	platform := ""
+	for i := range groups {
+		if groups[i].Platform == PlatformOpenAI {
+			platform = PlatformOpenAI
+			break
+		}
+	}
+	if platform == "" {
+		for i := range groups {
+			if strings.TrimSpace(groups[i].Platform) != "" {
+				platform = groups[i].Platform
+				break
+			}
+		}
+	}
+	groupIDs := make([]int64, 0, len(groups))
+	for i := range groups {
+		if groups[i].Platform == platform {
+			groupIDs = append(groupIDs, groups[i].ID)
+		}
+	}
+	return groupIDs
 }
 
 func findPawInternalKey(keys []APIKey) *APIKey {

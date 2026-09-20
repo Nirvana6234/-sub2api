@@ -24,6 +24,9 @@ type pawDefaultsRequest struct {
 }
 
 type pawAutoGroupRequest struct {
+	// AutoGroup is accepted for wire compatibility but never applied: this
+	// endpoint only ever saves candidates, and the internal key's flag stays on.
+	// See pawSaveAutoGroupHandler for why disabling it is not offered.
 	AutoGroup         bool    `json:"auto_group"`
 	AutoGroupIDs      []int64 `json:"auto_group_ids"`
 	AutoGroupStrategy string  `json:"auto_group_strategy"`
@@ -168,12 +171,23 @@ func pawSaveAutoGroupHandler(apiKeys *service.APIKeyService) gin.HandlerFunc {
 			pawChatServiceError(c, err)
 			return
 		}
-		update := service.UpdateAPIKeyRequest{AutoGroup: &req.AutoGroup}
-		if req.AutoGroup {
-			ids := append([]int64(nil), req.AutoGroupIDs...)
-			strategy := req.AutoGroupStrategy
-			update.AutoGroupIDs = &ids
-			update.AutoGroupStrategy = &strategy
+		// Automatic routing stays enabled on this internal key for its whole life,
+		// so req.AutoGroup is deliberately ignored. Which mode the desktop client
+		// runs in is decided by the X-Paw-Group-Id header it sends on each request,
+		// never by this flag — there is nothing here to switch off.
+		//
+		// Writing false would break two things that are invisible from this handler:
+		// hydrateAutoGroupIDs short-circuits on !AutoGroup, so the candidate list
+		// stops being readable and the client's dialog reopens empty; and the web
+		// Playground's isPlaygroundEligibleKey requires auto_group || group_id > 0,
+		// while this key intentionally never carries a group_id of its own.
+		enabled := true
+		ids := append([]int64(nil), req.AutoGroupIDs...)
+		strategy := req.AutoGroupStrategy
+		update := service.UpdateAPIKeyRequest{
+			AutoGroup:         &enabled,
+			AutoGroupIDs:      &ids,
+			AutoGroupStrategy: &strategy,
 		}
 		updated, err := apiKeys.Update(c.Request.Context(), key.ID, subject.UserID, update)
 		if err != nil {

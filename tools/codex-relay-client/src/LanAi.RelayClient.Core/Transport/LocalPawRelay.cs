@@ -351,6 +351,16 @@ internal sealed class LocalPawRelay : IAsyncDisposable
                     Token,
                     _port) is { } rejection)
             {
+                // Refusals were silent until now, which is why "does Codex ever ask us
+                // for /v1/models?" had no answer: every path but POST /v1/responses is
+                // turned away without a trace. The query string is kept because that is
+                // where Codex puts client_version when it refreshes its model picker.
+                // This also gives the security gates above a voice — a browser probing
+                // the port used to leave nothing behind either.
+                ClientLog.Info(
+                    $"本机 Relay 拒绝 {Sanitize(context.Request.HttpMethod)} " +
+                    $"{Sanitize(context.Request.Url?.PathAndQuery)}" +
+                    $"（HTTP {rejection.Status} {rejection.Message}）");
                 await WriteErrorAsync(context, rejection.Status, rejection.Message).ConfigureAwait(false);
                 return;
             }
@@ -529,6 +539,15 @@ internal sealed class LocalPawRelay : IAsyncDisposable
             catch (Exception ex) when (ex is HttpListenerException or ObjectDisposedException or IOException) { }
         }
     }
+
+    /// <summary>Keeps a caller-controlled string on one log line.</summary>
+    /// <remarks>
+    /// Anything on this port can be reached by any process on the machine, so the
+    /// method and path are untrusted input. Without this a crafted request could
+    /// forge extra log lines.
+    /// </remarks>
+    private static string Sanitize(string? value) =>
+        string.IsNullOrEmpty(value) ? "-" : value.Replace("\r", " ").Replace("\n", " ");
 
     private static string FormatGroup(long? groupId, string? groupName) =>
         groupId is null

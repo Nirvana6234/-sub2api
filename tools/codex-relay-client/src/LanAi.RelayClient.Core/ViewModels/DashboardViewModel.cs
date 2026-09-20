@@ -734,9 +734,13 @@ public sealed partial class DashboardViewModel : ObservableObject
         // here too rather than relying on the button being disabled.
         if (AwaitingBillingGroup)
         {
-            CodexMessage = GroupsReady
-                ? "这个账号还没有可用于 Codex 的分组，请确认后重试。"
-                : "正在加载分组，请稍候再试。";
+            // Automatic mode with no candidates is a different problem from having no
+            // groups at all, and only the first one is something the user can act on.
+            CodexMessage = SelectedGroup is { IsAutomatic: true }
+                ? "自动分组还没有选择候选分组，请先在分组里完成配置。"
+                : GroupsReady
+                    ? "这个账号还没有可用于 Codex 的分组，请确认后重试。"
+                    : "正在加载分组，请稍候再试。";
             return;
         }
 
@@ -1283,13 +1287,13 @@ public sealed partial class DashboardViewModel : ObservableObject
 
             await IdentifyManagedKeyAsync(token, cancellationToken).ConfigureAwait(true);
 
-            PawAutoGroupSettings? autoSettings = null;
             if (_codex.UsesLocalTransport && _autoGroupSupported)
             {
                 try
                 {
-                    autoSettings = await _client.GetPawAutoGroupAsync(token, cancellationToken).ConfigureAwait(true);
-                    _autoGroupSettings = autoSettings;
+                    _autoGroupSettings = await _client
+                        .GetPawAutoGroupAsync(token, cancellationToken)
+                        .ConfigureAwait(true);
                 }
                 catch (RelayApiException ex) when (ex.Failure == RelayFailure.NotFound || ex.StatusCode == 404)
                 {
@@ -1320,7 +1324,10 @@ public sealed partial class DashboardViewModel : ObservableObject
             }
 
             GroupItemViewModel? inForce;
-            if (autoSettings?.AutoGroup == true && automatic is not null)
+            // The mode is the client's own choice, so it is read back from local
+            // preferences. The server's auto_group flag says only that candidates
+            // exist for this account, never which mode this machine is in.
+            if (_preferences.LoadAutomatic() && automatic is not null)
             {
                 automatic.IsCurrent = true;
                 inForce = automatic;
@@ -1439,22 +1446,13 @@ public sealed partial class DashboardViewModel : ObservableObject
             return;
         }
 
-        if (_codex.UsesLocalTransport && _autoGroupSettings?.AutoGroup == true)
+        if (_codex.UsesLocalTransport)
         {
-            try
-            {
-                string token = await _session.GetAccessTokenAsync(cancellationToken).ConfigureAwait(true);
-                _autoGroupSettings = await _client.SavePawAutoGroupAsync(
-                    token,
-                    new PawAutoGroupSettings(false, _autoGroupSettings.AutoGroupIds, _autoGroupSettings.AutoGroupStrategy),
-                    cancellationToken).ConfigureAwait(true);
-            }
-            catch (RelayApiException ex)
-            {
-                SelectWithoutSwitching(previous);
-                GroupMessage = ex.UserMessage;
-                return;
-            }
+            // Leaving automatic routing is purely local: from here on the relay stamps
+            // this group's id instead of "auto". Nothing is written to the server —
+            // the internal key's auto_group flag must stay on for its candidate list
+            // to remain readable, so it cannot double as the mode switch.
+            _preferences.SaveAutomatic(false);
         }
 
         SetCurrent(group);
@@ -1558,6 +1556,7 @@ public sealed partial class DashboardViewModel : ObservableObject
             // candidate set and strategy. This ordering prevents a green UI whose
             // relay is still sending the previous fixed group.
             _autoGroupSettings = saved;
+            _preferences.SaveAutomatic(true);
             SetCurrent(automatic);
             SelectWithoutSwitching(automatic);
             _codex.SetActiveGroup(null, automatic.Name);

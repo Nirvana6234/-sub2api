@@ -294,6 +294,83 @@ public sealed class DashboardViewModelTests
         Assert.Equal(2, relay.PawAutoGroupCallCount);
     }
 
+    /// <summary>
+    /// Leaving automatic routing must not write auto_group=false to the server.
+    /// </summary>
+    /// <remarks>
+    /// That write used to look harmless and broke two things silently: the server
+    /// stops returning the candidate list once the flag is off (hydrateAutoGroupIDs
+    /// short-circuits), so the dialog reopened empty and the user had to re-tick
+    /// every group; and the web Playground drops this key, because it requires
+    /// auto_group or a group_id and this key never has a group_id of its own.
+    /// </remarks>
+    [Fact]
+    public async Task LeavingAutomaticRoutingIsLocalAndNeverDisablesTheServerFlag()
+    {
+        var relay = new FakeRelayClient
+        {
+            OnAvailableGroups = () => [Group(11, "OpenAI 甲"), Group(12, "OpenAI 乙")],
+            OnListKeys = () => [],
+        };
+        var session = new RelaySessionManager(relay, new FakeSessionStore(), "https://relay.test/", new TestClock().Read);
+        var codex = new FakeCodexStartup { UsesLocalTransport = true };
+        var preferences = new FakeGroupPreferenceStore();
+        var dashboard = new DashboardViewModel(
+            relay,
+            session,
+            preferences,
+            new ManagedKeyNaming(new FixedInstallId("testinst")),
+            codex)
+        {
+            ConfigureAutoGroup = (_, _) => Task.FromResult<PawAutoGroupSettings?>(
+                new PawAutoGroupSettings(true, [11, 12], "price")),
+        };
+        await session.SignInAsync("a@b.com", "pw");
+        await dashboard.RefreshAsync();
+
+        await dashboard.SwitchGroupAsync(dashboard.Groups.Single(group => group.IsAutomatic));
+        Assert.True(preferences.SavedAutomatic);
+        int savesWhileEnabling = relay.PawAutoGroupSaveCallCount;
+
+        GroupItemViewModel fixedGroup = dashboard.Groups.First(group => !group.IsAutomatic);
+        await dashboard.SwitchGroupAsync(fixedGroup);
+
+        // The mode moved, but only locally.
+        Assert.Same(fixedGroup, dashboard.SelectedGroup);
+        Assert.False(preferences.SavedAutomatic);
+        Assert.Equal(savesWhileEnabling, relay.PawAutoGroupSaveCallCount);
+        Assert.True(relay.LastSavedPawAutoGroup?.AutoGroup);
+        Assert.Equal([11L, 12L], relay.LastSavedPawAutoGroup?.AutoGroupIds);
+    }
+
+    /// <summary>The mode survives a restart, because the server flag can no longer carry it.</summary>
+    [Fact]
+    public async Task AutomaticRoutingIsRestoredFromLocalPreferencesOnTheNextRefresh()
+    {
+        var relay = new FakeRelayClient
+        {
+            OnAvailableGroups = () => [Group(11, "OpenAI 甲"), Group(12, "OpenAI 乙")],
+            OnListKeys = () => [],
+            OnPawAutoGroup = () => new PawAutoGroupSettings(true, [11, 12], "price"),
+        };
+        var session = new RelaySessionManager(relay, new FakeSessionStore(), "https://relay.test/", new TestClock().Read);
+        var codex = new FakeCodexStartup { UsesLocalTransport = true };
+        var preferences = new FakeGroupPreferenceStore { SavedAutomatic = true };
+        var dashboard = new DashboardViewModel(
+            relay,
+            session,
+            preferences,
+            new ManagedKeyNaming(new FixedInstallId("testinst")),
+            codex);
+        await session.SignInAsync("a@b.com", "pw");
+
+        await dashboard.RefreshAsync();
+
+        Assert.True(dashboard.SelectedGroup?.IsAutomatic);
+        Assert.Null(codex.ActiveGroups.Last());
+        Assert.True(dashboard.CanStartCodex);
+    }
+
     [Fact]
     public async Task AutomaticGroupSaveFailureKeepsThePreviousFixedGroup()
     {
@@ -1658,7 +1735,13 @@ internal sealed class FakeGroupPreferenceStore : IGroupPreferenceStore
 {
     public long? Saved { get; private set; }
 
+    public bool SavedAutomatic { get; set; }
+
     public long? Load() => Saved;
 
     public void Save(long groupId) => Saved = groupId;
+
+    public bool LoadAutomatic() => SavedAutomatic;
+
+    public void SaveAutomatic(bool automatic) => SavedAutomatic = automatic;
 }

@@ -11,6 +11,17 @@ internal interface IGroupPreferenceStore
     long? Load();
 
     void Save(long groupId);
+
+    /// <summary>True when the user last chose automatic routing rather than a fixed group.</summary>
+    /// <remarks>
+    /// The mode lives here rather than on the server because it only decides which
+    /// <c>X-Paw-Group-Id</c> this client sends. The server's <c>auto_group</c> flag
+    /// cannot stand in for it: that flag has to stay on for the internal key's
+    /// candidate list to remain readable at all, so it can never mean "off".
+    /// </remarks>
+    bool LoadAutomatic();
+
+    void SaveAutomatic(bool automatic);
 }
 
 /// <summary>
@@ -53,6 +64,27 @@ internal sealed class GroupPreferenceStore : IGroupPreferenceStore
 
     public long? Load()
     {
+        Preferences? preferences = ReadForThisServer();
+        return preferences?.GroupId is > 0 ? preferences.GroupId : null;
+    }
+
+    public bool LoadAutomatic() => ReadForThisServer()?.Automatic == true;
+
+    public void Save(long groupId) =>
+        Write(current => current with { GroupId = groupId });
+
+    public void SaveAutomatic(bool automatic) =>
+        Write(current => current with { Automatic = automatic });
+
+    /// <summary>
+    /// The stored preferences when they belong to the relay in use, otherwise null.
+    /// </summary>
+    /// <remarks>
+    /// A preference with no server recorded predates this scoping and cannot be
+    /// attributed to any relay, so it is discarded rather than guessed at.
+    /// </remarks>
+    private Preferences? ReadForThisServer()
+    {
         if (!File.Exists(_filePath))
         {
             return null;
@@ -64,15 +96,9 @@ internal sealed class GroupPreferenceStore : IGroupPreferenceStore
                 File.ReadAllBytes(_filePath),
                 ClientJsonContext.Default.GroupPreferences);
 
-            if (preferences?.GroupId is not > 0)
-            {
-                return null;
-            }
-
-            // A preference with no server recorded predates this scoping and cannot
-            // be attributed to any relay, so it is discarded rather than guessed at.
-            return string.Equals(preferences.ServerAddress, _serverAddress, StringComparison.OrdinalIgnoreCase)
-                ? preferences.GroupId
+            return preferences is not null &&
+                   string.Equals(preferences.ServerAddress, _serverAddress, StringComparison.OrdinalIgnoreCase)
+                ? preferences
                 : null;
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
@@ -81,13 +107,22 @@ internal sealed class GroupPreferenceStore : IGroupPreferenceStore
         }
     }
 
-    public void Save(long groupId)
+    /// <summary>
+    /// Applies one change without dropping the other field.
+    /// </summary>
+    /// <remarks>
+    /// Read-modify-write rather than a plain overwrite: the group id and the mode
+    /// are saved by different call sites, and a whole-record write from either one
+    /// would silently reset the other.
+    /// </remarks>
+    private void Write(Func<Preferences, Preferences> change)
     {
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(_filePath)!);
 
-            var preferences = new Preferences { ServerAddress = _serverAddress, GroupId = groupId };
+            Preferences current = ReadForThisServer() ?? new Preferences { ServerAddress = _serverAddress };
+            Preferences preferences = change(current) with { ServerAddress = _serverAddress };
 
             string temporaryPath = _filePath + ".tmp";
             File.WriteAllBytes(
@@ -107,5 +142,8 @@ internal sealed class GroupPreferenceStore : IGroupPreferenceStore
         public string? ServerAddress { get; init; }
 
         public long GroupId { get; init; }
+
+        /// <summary>Absent in files written before automatic routing existed, which reads as false.</summary>
+        public bool Automatic { get; init; }
     }
 }

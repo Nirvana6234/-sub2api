@@ -179,6 +179,8 @@ internal sealed class FakeRelayClient : IRelayServerClient
 
     public PawAutoGroupSettings? LastSavedPawAutoGroup { get; private set; }
 
+    public int PawAutoGroupSaveCallCount { get; private set; }
+
     public Task<PawAutoGroupSettings> GetPawAutoGroupAsync(
         string accessToken,
         CancellationToken cancellationToken = default)
@@ -193,6 +195,7 @@ internal sealed class FakeRelayClient : IRelayServerClient
         CancellationToken cancellationToken = default)
     {
         LastSavedPawAutoGroup = settings;
+        PawAutoGroupSaveCallCount++;
         return Task.FromResult(OnSavePawAutoGroup?.Invoke(settings) ?? settings);
     }
 
