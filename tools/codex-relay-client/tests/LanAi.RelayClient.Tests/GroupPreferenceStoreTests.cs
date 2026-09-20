@@ -53,6 +53,25 @@ public sealed class GroupPreferenceStoreTests : IDisposable
         Assert.False(new GroupPreferenceStore("https://relay.test/", _path).LoadAutomatic());
     }
 
+    /// <summary>
+    /// Automatic mode stands on its own, with no group ever chosen.
+    /// </summary>
+    /// <remarks>
+    /// Moving the <c>GroupId &gt; 0</c> test out of the file read and into
+    /// <see cref="GroupPreferenceStore.Load"/> made this state representable, and it
+    /// is the one a fresh install lands in. The mode must survive it; the group id
+    /// must still read as "never chosen" rather than group 0.
+    /// </remarks>
+    [Fact]
+    public void AutomaticModeIsRememberedEvenWhenNoGroupWasEverChosen()
+    {
+        new GroupPreferenceStore("https://relay.test/", _path).SaveAutomatic(true);
+
+        var reopened = new GroupPreferenceStore("https://relay.test/", _path);
+        Assert.True(reopened.LoadAutomatic());
+        Assert.Null(reopened.Load());
+    }
+
     /// <summary>A file written before automatic routing existed reads as fixed mode.</summary>
     [Fact]
     public void AModeIsNotInheritedFromAnotherRelay()
