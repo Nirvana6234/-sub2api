@@ -499,6 +499,50 @@ public sealed class DashboardViewModelTests
         Assert.Contains("选择「自动分组」", dashboard.GroupMessage);
     }
 
+    /// <summary>
+    /// The button only edits the automatic candidate set, which a fixed group has none
+    /// of — it must disappear the moment the selection leaves 自动分组, even though the
+    /// feature itself (<see cref="DashboardViewModel.CanConfigureAutoGroup"/>) stays
+    /// available so a fixed-group caller (a tray menu, this suite) can still reach it.
+    /// </summary>
+    [Fact]
+    public async Task TheConfigureButtonIsShownOnlyWhileAutomaticRoutingIsSelected()
+    {
+        var relay = new FakeRelayClient
+        {
+            OnAvailableGroups = () => [Group(11, "OpenAI 甲"), Group(12, "OpenAI 乙")],
+            OnListKeys = () => [],
+            OnPawAutoGroup = () => new PawAutoGroupSettings(true, [11], "price"),
+        };
+        var session = new RelaySessionManager(relay, new FakeSessionStore(), "https://relay.test/", new TestClock().Read);
+        var codex = new FakeCodexStartup { UsesLocalTransport = true };
+        var dashboard = new DashboardViewModel(
+            relay,
+            session,
+            new FakeGroupPreferenceStore(),
+            new ManagedKeyNaming(new FixedInstallId("testinst")),
+            codex)
+        {
+            ConfigureAutoGroup = (settings, candidates) =>
+                Task.FromResult<PawAutoGroupSettings?>(new PawAutoGroupSettings(true, [11], "price")),
+        };
+        await session.SignInAsync("a@b.com", "pw");
+        await dashboard.RefreshAsync();
+
+        Assert.True(dashboard.CanConfigureAutoGroup);
+        Assert.False(dashboard.SelectedGroup!.IsAutomatic);
+        Assert.False(dashboard.ShowConfigureAutoGroupButton);
+
+        GroupItemViewModel automatic = Assert.Single(dashboard.Groups, g => g.IsAutomatic);
+        await dashboard.SwitchGroupAsync(automatic);
+
+        Assert.True(dashboard.ShowConfigureAutoGroupButton);
+
+        await dashboard.SwitchGroupAsync(dashboard.Groups.Single(g => g.Id == 12));
+
+        Assert.False(dashboard.ShowConfigureAutoGroupButton);
+    }
+
     [Fact]
     public async Task TheConfigureButtonIsHiddenWhenThereIsNothingToRouteBetween()
     {

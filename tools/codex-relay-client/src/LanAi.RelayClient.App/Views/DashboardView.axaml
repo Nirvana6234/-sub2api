@@ -319,10 +319,12 @@
                          IsVisible="{Binding Dashboard.HasNoGroupSelected}" />
 
               <!-- Reopens the automatic-routing dialog. Choosing 自动分组 only asks
-                   once, while nothing is configured; this is how to change it later. -->
+                   once, while nothing is configured; this is how to change it later.
+                   Shown only while 自动分组 is the selected entry — it edits the
+                   automatic candidate set, which a fixed group has none of. -->
               <Button Grid.Column="1" Content="配置" Margin="8,0,0,0" Padding="12,6"
                       VerticalAlignment="Stretch"
-                      IsVisible="{Binding Dashboard.CanConfigureAutoGroup}"
+                      IsVisible="{Binding Dashboard.ShowConfigureAutoGroupButton}"
                       IsEnabled="{Binding Dashboard.GroupsReady}"
                       ToolTip.Tip="设置自动分组使用哪些分组和选择策略"
                       Click="ConfigureAutoGroup_OnClick" />

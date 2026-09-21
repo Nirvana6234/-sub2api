@@ -171,13 +171,27 @@ public sealed partial class DashboardViewModel : ObservableObject
     public Func<PawAutoGroupSettings, IReadOnlyList<GroupItemViewModel>, Task<PawAutoGroupSettings?>>?
         ConfigureAutoGroup { get; set; }
 
-    /// <summary>Whether the 配置 button beside the group list should be offered.</summary>
+    /// <summary>Whether the automatic-routing feature is available at all.</summary>
     /// <remarks>
     /// True only when the automatic entry is actually in the list, i.e. the server
     /// supports it and the account has at least one OpenAI group to route between.
+    /// This gates whether <see cref="ConfigureAutoGroupAsync"/> may run; it is not,
+    /// by itself, whether the 配置 button is shown — see
+    /// <see cref="ShowConfigureAutoGroupButton"/> for that.
     /// </remarks>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowConfigureAutoGroupButton))]
     private bool canConfigureAutoGroup;
+
+    /// <summary>
+    /// Whether the 配置 button beside the group list should be offered right now.
+    /// </summary>
+    /// <remarks>
+    /// Only while 自动分组 is the selected entry. The dialog edits the automatic
+    /// candidate set and strategy, which is meaningless to a fixed group — showing
+    /// the button there just invites a click that has nothing to configure.
+    /// </remarks>
+    public bool ShowConfigureAutoGroupButton => CanConfigureAutoGroup && SelectedGroup is { IsAutomatic: true };
 
     private PawAutoGroupSettings? _autoGroupSettings;
     // Automatic routing was added after the original relay API. A 404 here means
@@ -303,6 +317,7 @@ public sealed partial class DashboardViewModel : ObservableObject
     {
         OnPropertyChanged(nameof(HasNoGroupSelected));
         OnPropertyChanged(nameof(IsClaudeGroup));
+        OnPropertyChanged(nameof(ShowConfigureAutoGroupButton));
         // The start button is gated on having a group; see AwaitingBillingGroup.
         OnPropertyChanged(nameof(CanStartCodex));
         OnPropertyChanged(nameof(StartCodexLabel));
