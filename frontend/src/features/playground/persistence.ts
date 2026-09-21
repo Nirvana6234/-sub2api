@@ -57,6 +57,46 @@ function indexStorageKey(userId: number): string {
   return `${userStatePrefix(userId)}.index`
 }
 
+function deletedConversationStorageKey(userId: number): string {
+  return `${userStatePrefix(userId)}.deleted`
+}
+
+function filterDeletedConversations(userId: number, state: PlaygroundPersistedState): PlaygroundPersistedState {
+  let deleted: string[] = []
+  try { deleted = JSON.parse(localStorage.getItem(deletedConversationStorageKey(userId)) || '[]') as string[] } catch { /* ignore */ }
+  if (!deleted.length) return state
+  const ids = new Set(deleted)
+  return { ...state, conversations: state.conversations.filter((conversation) => !ids.has(conversation.id)) }
+}
+
+export function markDeletedPlaygroundConversations(userId: number, conversationIds: string[]): void {
+  if (!conversationIds.length) return
+  let existing: string[] = []
+  try { existing = JSON.parse(localStorage.getItem(deletedConversationStorageKey(userId)) || '[]') as string[] } catch { /* ignore */ }
+  const ids = [...new Set([...existing, ...conversationIds])]
+  localStorage.setItem(deletedConversationStorageKey(userId), JSON.stringify(ids))
+  // Remove payloads immediately as well as recording tombstones. This makes a
+  // delete durable even if a queued state write is interrupted.
+  for (const id of conversationIds) localStorage.removeItem(conversationStorageKey(userId, id))
+}
+
+export function deletePlaygroundConversations(userId: number, conversationIds: string[]): void {
+  const ids = new Set(conversationIds)
+  markDeletedPlaygroundConversations(userId, conversationIds)
+  const raw = localStorage.getItem(indexStorageKey(userId))
+  if (!raw) return
+  try {
+    const index = normalizeIndex(JSON.parse(raw) as unknown)
+    index.conversations = index.conversations.filter((conversation) => !ids.has(conversation.id))
+    if (index.activeConversationId && ids.has(index.activeConversationId)) {
+      index.activeConversationId = index.conversations[0]?.id ?? null
+    }
+    localStorage.setItem(indexStorageKey(userId), JSON.stringify(index))
+  } catch {
+    localStorage.removeItem(indexStorageKey(userId))
+  }
+}
+
 function conversationStorageKey(userId: number, conversationId: string): string {
   return `${userStatePrefix(userId)}.conversation.${conversationId}`
 }
@@ -625,7 +665,7 @@ export function createPlaygroundPersistScheduler(
 
 export function loadPlaygroundState(userId: number, keyId: number): PlaygroundPersistedState {
   const v2State = loadV2State(userId)
-  if (v2State) return v2State
+  if (v2State) return filterDeletedConversations(userId, v2State)
 
   const oldV2States = legacyV2KeyIds(userId)
     .map((oldKeyId) => loadLegacyV2State(userId, oldKeyId))
@@ -633,7 +673,7 @@ export function loadPlaygroundState(userId: number, keyId: number): PlaygroundPe
   if (oldV2States.length > 0) {
     const migrated = mergePlaygroundStates(oldV2States)
     savePlaygroundState(userId, keyId, migrated)
-    return migrated
+    return filterDeletedConversations(userId, migrated)
   }
 
   const legacyKey = legacyStateKey(userId, keyId)
@@ -646,7 +686,7 @@ export function loadPlaygroundState(userId: number, keyId: number): PlaygroundPe
     if (localStorage.getItem(indexStorageKey(userId))) {
       localStorage.removeItem(legacyKey)
     }
-    return migrated
+    return filterDeletedConversations(userId, migrated)
   } catch {
     localStorage.removeItem(legacyKey)
     return createEmptyPersistedState()

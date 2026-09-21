@@ -11,7 +11,7 @@
       <!-- Custom Logo or Default Logo -->
       <router-link
         :to="homePath"
-        class="sidebar-logo flex h-10 w-10 items-center justify-center overflow-hidden transition-opacity hover:opacity-80"
+        class="sidebar-logo flex h-9 w-9 items-center justify-center overflow-hidden rounded-xl shadow-glow transition-opacity hover:opacity-80"
         @click="handleMenuItemClick(homePath)"
       >
         <img v-if="settingsLoaded" :src="siteLogo || '/gongfei-plane.svg'" :alt="`${siteName} 标志`" class="h-full w-full object-contain" />
@@ -101,12 +101,6 @@
               <span v-if="item.iconSvg" class="h-5 w-5 flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
               <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" />
               <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
-              <span
-                v-if="ticketUnreadCountFor(item.path) > 0"
-                class="sidebar-notification-dot"
-                :class="{ 'sidebar-notification-dot-collapsed': sidebarCollapsed }"
-                aria-hidden="true"
-              ></span>
             </component>
           </template>
         </div>
@@ -136,12 +130,6 @@
             <span v-if="item.iconSvg" class="h-5 w-5 flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
             <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" />
             <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
-            <span
-              v-if="ticketUnreadCountFor(item.path) > 0"
-              class="sidebar-notification-dot"
-              :class="{ 'sidebar-notification-dot-collapsed': sidebarCollapsed }"
-              aria-hidden="true"
-            ></span>
           </component>
         </div>
       </template>
@@ -166,12 +154,6 @@
             <span v-if="item.iconSvg" class="h-5 w-5 flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
             <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" />
             <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
-            <span
-              v-if="ticketUnreadCountFor(item.path) > 0"
-              class="sidebar-notification-dot"
-              :class="{ 'sidebar-notification-dot-collapsed': sidebarCollapsed }"
-              aria-hidden="true"
-            ></span>
           </component>
         </div>
       </template>
@@ -221,21 +203,24 @@
 import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { useAdminSettingsStore, useAppStore, useAuthStore, useOnboardingStore, useTicketStore } from '@/stores'
+import { useAdminSettingsStore, useAppStore, useAuthStore, useOnboardingStore } from '@/stores'
 import VersionBadge from '@/components/common/VersionBadge.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { sanitizeSvg } from '@/utils/sanitize'
 import { sanitizeUrl } from '@/utils/url'
 import { FeatureFlags, makeSidebarFlag } from '@/utils/featureFlags'
+import { resolveSiteBillingMode } from '@/utils/siteBillingMode'
+import { useBatchImageAccess } from '@/composables/useBatchImageAccess'
 
 interface NavItem {
   path: string
   label: string
   icon: unknown
   iconSvg?: string
-  externalUrl?: string
   hideInSimpleMode?: boolean
   children?: NavItem[]
+  /** External link URL; when set, the item renders as an <a> instead of a router-link. */
+  externalUrl?: string
   /**
    * When true, the parent item only toggles the expand/collapse state and
    * does NOT navigate to its `path`. The `path` is purely a stable key.
@@ -273,7 +258,6 @@ const appStore = useAppStore()
 const authStore = useAuthStore()
 const onboardingStore = useOnboardingStore()
 const adminSettingsStore = useAdminSettingsStore()
-const ticketStore = useTicketStore()
 
 const sidebarCollapsed = computed(() => appStore.sidebarCollapsed)
 const mobileOpen = computed(() => appStore.mobileOpen)
@@ -283,18 +267,17 @@ const isDark = ref(document.documentElement.classList.contains('dark'))
 
 const homePath = computed(() => (isAdmin.value ? '/admin/dashboard' : '/dashboard'))
 
-// Track which parent nav groups are expanded
-const expandedGroups = ref<Set<string>>(new Set())
+// Per-group expand/collapse overrides. A group with no entry follows the
+// automatic behavior (expanded while the active route is one of its children);
+// a chevron click records the user's choice, which wins over the automatic
+// state so an active group can still be collapsed manually.
+const groupExpandOverrides = ref<Map<string, boolean>>(new Map())
 
 // Site settings from appStore (cached, no flicker)
 const siteName = computed(() => appStore.siteName)
 const siteLogo = computed(() => sanitizeUrl(appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }))
 const siteVersion = computed(() => appStore.siteVersion)
 const settingsLoaded = computed(() => appStore.publicSettingsLoaded)
-const ticketUnreadCounts = computed(() => ({
-  user: ticketStore.userUnreadCount,
-  admin: ticketStore.adminUnreadCount
-}))
 
 // SVG Icon Components
 const DashboardIcon = {
@@ -351,6 +334,7 @@ const PlaygroundIcon = {
       ]
     )
 }
+const BatchImageIcon = PlaygroundIcon
 
 const ClientDownloadIcon = {
   render: () =>
@@ -742,6 +726,7 @@ const ChevronDownIcon = {
 const flagChannelMonitor = makeSidebarFlag(FeatureFlags.channelMonitor)
 const flagPayment = makeSidebarFlag(FeatureFlags.payment)
 const flagAvailableChannels = makeSidebarFlag(FeatureFlags.availableChannels)
+const flagSubscription = makeSidebarFlag(FeatureFlags.subscription)
 const flagAffiliate = makeSidebarFlag(FeatureFlags.affiliate)
 const flagRiskControl = makeSidebarFlag(FeatureFlags.riskControl)
 const flagPluginManagement = makeSidebarFlag(FeatureFlags.pluginManagement)
@@ -749,12 +734,23 @@ const flagPlayground = makeSidebarFlag(FeatureFlags.playground)
 const flagClientDownload = makeSidebarFlag(FeatureFlags.clientDownload)
 const flagOpsMonitoring = () => adminSettingsStore.opsMonitoringEnabled
 const flagAdminPayment = () => adminSettingsStore.paymentEnabled
+const flagBackupPayment = makeSidebarFlag(FeatureFlags.backupPayment)
+const { canUseBatchImage, refreshBatchImageAccess } = useBatchImageAccess()
+const flagBatchImageAccess = () => canUseBatchImage.value
+// 主通道关闭但备用开启时，充值入口仍要保留，否则用户够不到备用通道。
+const purchaseNavLabel = computed(() => {
+  switch (resolveSiteBillingMode(appStore.cachedPublicSettings)) {
+    case 'recharge_only': return t('nav.recharge')
+    case 'subscription_only': return t('nav.subscribe')
+    default: return t('nav.buySubscription')
+  }
+})
+// 但被列入充值黑名单的用户一律不显示入口——该判断优先于通道开关，
+// 后端 /payment 路由组同时会拒绝其请求（前端隐藏只是视觉层）。
+const flagPurchase = () =>
+  authStore.user?.recharge_disabled !== true && (flagPayment() || flagBackupPayment())
 const flagAccountManagement = () => authStore.isAdmin || authStore.user?.account_management_enabled === true
 const flagContributionRooms = () => authStore.isAdmin || authStore.user?.contribution_rooms_enabled === true
-
-const flagBackupPayment = makeSidebarFlag(FeatureFlags.backupPayment)
-// 主通道关闭但备用开启时，充值入口仍要保留，否则用户够不到备用通道。
-const flagPurchase = () => flagPayment() || flagBackupPayment()
 
 // buildSelfNavItems 构造用户自己的导航项（用户端主菜单和管理员的"我的账户"子菜单共享这组声明）。
 // withDashboard=true 时包含仪表盘（用户端），false 时不含（管理员的个人区已经有独立仪表盘入口）。
@@ -770,20 +766,21 @@ function buildSelfNavItems(withDashboard: boolean): NavItem[] {
     { path: '/keys', label: t('nav.apiKeys'), icon: KeyIcon },
     {
       path: '/purchase',
-      label: t('nav.buySubscription'),
+      label: purchaseNavLabel.value,
       icon: RechargeSubscriptionIcon,
       hideInSimpleMode: true,
       featureFlag: flagPurchase,
     },
     { path: '/playground', label: t('nav.playground'), icon: PlaygroundIcon, featureFlag: flagPlayground },
     { path: '/download', label: t('nav.clientDownload'), icon: ClientDownloadIcon, featureFlag: flagClientDownload },
-    { path: '/tickets', label: t('nav.tickets'), icon: BellIcon },
+    { path: '/batch-image', label: t('nav.batchImage'), icon: BatchImageIcon, hideInSimpleMode: true, featureFlag: flagBatchImageAccess },
     { path: '/usage', label: t('nav.usage'), icon: ChartIcon, hideInSimpleMode: true },
+    { path: '/tickets', label: t('nav.tickets'), icon: TicketIcon },
     { path: '/account-contributions', label: t('nav.accountContributions'), icon: UsersIcon, featureFlag: flagAccountManagement },
     { path: '/shared-rooms', label: t('nav.sharedRooms'), icon: FolderIcon, featureFlag: flagContributionRooms },
     { path: '/available-channels', label: t('nav.availableChannels'), icon: ChannelIcon, hideInSimpleMode: true, featureFlag: flagAvailableChannels },
     { path: '/monitor', label: t('nav.channelStatus'), icon: SignalIcon, featureFlag: flagChannelMonitor },
-    { path: '/subscriptions', label: t('nav.mySubscriptions'), icon: CreditCardIcon, hideInSimpleMode: true },
+    { path: '/subscriptions', label: t('nav.mySubscriptions'), icon: CreditCardIcon, hideInSimpleMode: true, featureFlag: flagSubscription },
     { path: '/orders', label: t('nav.myOrders'), icon: OrderListIcon, hideInSimpleMode: true, featureFlag: flagPayment },
     { path: '/redeem', label: t('nav.redeem'), icon: GiftIcon, hideInSimpleMode: true },
     { path: '/affiliate', label: t('nav.affiliate'), icon: UsersIcon, hideInSimpleMode: true, featureFlag: flagAffiliate },
@@ -832,7 +829,7 @@ const adminNavItems = computed((): NavItem[] => {
     { path: '/admin/dashboard', label: t('nav.dashboard'), icon: DashboardIcon },
     { path: '/admin/ops', label: t('nav.ops'), icon: ChartIcon, featureFlag: flagOpsMonitoring },
     { path: '/admin/users', label: t('nav.users'), icon: UsersIcon, hideInSimpleMode: true },
-    { path: '/admin/groups', label: t('nav.groups'), icon: FolderIcon, hideInSimpleMode: true },
+    { path: '/admin/groups', label: t('nav.groups'), icon: FolderIcon },
     {
       path: '/admin/channels',
       label: t('nav.channelManagement'),
@@ -844,14 +841,14 @@ const adminNavItems = computed((): NavItem[] => {
         { path: '/admin/channels/monitor', label: t('nav.channelMonitor'), icon: SignalIcon, featureFlag: flagChannelMonitor },
       ],
     },
-    { path: '/admin/subscriptions', label: t('nav.subscriptions'), icon: CreditCardIcon, hideInSimpleMode: true },
+    { path: '/admin/subscriptions', label: t('nav.subscriptions'), icon: CreditCardIcon, hideInSimpleMode: true, featureFlag: flagSubscription },
     { path: '/admin/accounts', label: t('nav.accounts'), icon: GlobeIcon },
     { path: '/admin/plugins', label: t('nav.plugins'), icon: PluginIcon, featureFlag: flagPluginManagement },
     { path: '/admin/contributions', label: t('nav.sharedAccountGovernance'), icon: UsersIcon },
     { path: '/admin/contribution-rooms', label: t('nav.contributionRooms'), icon: FolderIcon },
     { path: '/admin/announcements', label: t('nav.announcements'), icon: BellIcon },
-    { path: '/admin/tickets', label: t('nav.tickets'), icon: BellIcon },
-    { path: '/admin/blacklist', label: t('nav.accessBlacklist'), icon: ShieldIcon },
+    { path: '/admin/tickets', label: t('nav.tickets'), icon: TicketIcon },
+    { path: '/admin/blacklist', label: t('nav.blacklist'), icon: ShieldIcon },
     { path: '/admin/proxies', label: t('nav.proxies'), icon: ServerIcon },
     {
       path: '/admin/security-audit',
@@ -954,27 +951,19 @@ function isActive(path: string): boolean {
   return route.path === path || route.path.startsWith(path + '/')
 }
 
-function ticketUnreadCountFor(path: string): number {
-  if (path === '/admin/tickets') return ticketUnreadCounts.value.admin
-  if (path === '/tickets') return ticketUnreadCounts.value.user
-  return 0
-}
-
 function isGroupActive(item: NavItem): boolean {
   if (!item.children) return false
   return item.children.some(child => route.path === child.path)
 }
 
 function isGroupExpanded(item: NavItem): boolean {
-  return expandedGroups.value.has(item.path) || isGroupActive(item)
+  const override = groupExpandOverrides.value.get(item.path)
+  if (override !== undefined) return override
+  return isGroupActive(item)
 }
 
 function toggleGroup(item: NavItem) {
-  if (expandedGroups.value.has(item.path)) {
-    expandedGroups.value.delete(item.path)
-  } else {
-    expandedGroups.value.add(item.path)
-  }
+  groupExpandOverrides.value.set(item.path, !isGroupExpanded(item))
 }
 
 /**
@@ -994,9 +983,7 @@ function handleGroupClick(item: NavItem) {
   if (route.path !== item.path) {
     router.push(item.path)
   }
-  if (!expandedGroups.value.has(item.path)) {
-    expandedGroups.value.add(item.path)
-  }
+  groupExpandOverrides.value.set(item.path, true)
 }
 
 // Initialize theme
@@ -1021,6 +1008,7 @@ watch(
 )
 
 onMounted(() => {
+  void refreshBatchImageAccess()
   if (isAdmin.value) {
     adminSettingsStore.fetch()
   }
@@ -1043,8 +1031,8 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .sidebar-logo {
-  flex: 0 0 2.5rem;
-  min-width: 2.5rem;
+  flex: 0 0 2.25rem;
+  min-width: 2.25rem;
 }
 
 .sidebar-header-collapsed {

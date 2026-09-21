@@ -1,7 +1,7 @@
 import type { ApiKey } from '@/types'
 
 export type PlaygroundRole = 'system' | 'user' | 'assistant'
-export type PlaygroundMode = 'chat' | 'image' | 'canvas'
+export type PlaygroundMode = 'chat' | 'image' | 'unified' | 'canvas'
 
 export interface PlaygroundAttachment {
   id: string
@@ -140,7 +140,7 @@ export interface PlaygroundPersistedStateV1 {
 }
 
 export interface PlaygroundPersistedState {
-  version: 2
+  version: 2 | 3
   model: string
   parameters: PlaygroundParameters
   activeConversationId: string | null
@@ -149,7 +149,7 @@ export interface PlaygroundPersistedState {
 }
 
 export interface PlaygroundPersistedIndexV2 {
-  version: 2
+  version: 2 | 3
   model: string
   parameters: PlaygroundParameters
   activeConversationId: string | null
@@ -158,10 +158,11 @@ export interface PlaygroundPersistedIndexV2 {
 }
 
 export interface PlaygroundPersistedConversationV2 extends PlaygroundConversation {
-  version: 2
+  version: 2 | 3
 }
 
 export interface PlaygroundChatPayload {
+  [key: string]: unknown
   model: string
   messages: Array<{
     role: PlaygroundRole

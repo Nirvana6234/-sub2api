@@ -1,18 +1,4 @@
 export default {
-  seo: {
-    home: {
-      title: 'Sub2API - AI API 聚合网关与模型 API 服务',
-      description: '统一接入 Claude、GPT、Gemini 等主流 AI 模型，提供兼容 OpenAI 的 API 网关、账号调度与用量管理。'
-    },
-    modelPlaza: {
-      title: 'AI 模型广场 - Claude、GPT、Gemini API',
-      description: '浏览 Claude、GPT、Gemini 等 AI 模型，查看可用模型与价格，选择适合开发和团队使用的 API 服务。'
-    },
-    download: {
-      title: 'Sub2API 客户端下载',
-      description: '下载 Sub2API 客户端，快速配置 AI API 服务，支持 Windows、macOS 等平台。'
-    }
-  },
   batchImageGuide: {
     title: '图片批量生成',
     description: '一次提交多条提示词，任务完成后可统一下载图片结果'
@@ -22,7 +8,6 @@ export default {
     viewOnGithub: '在 GitHub 上查看',
     viewDocs: '查看文档',
     docs: '文档',
-    clientDownload: '客户端下载',
     switchToLight: '切换到浅色模式',
     switchToDark: '切换到深色模式',
     dashboard: '控制台',
@@ -178,6 +163,7 @@ export default {
     usedQuota: '已用额度',
     resetNow: '即将重置',
     subscriptionType: '订阅类型',
+    billingType: '计费方式',
     subscriptionExpires: '订阅到期',
     // Usage stat cells
     todayRequests: '今日请求',
@@ -206,8 +192,8 @@ export default {
 
   // Setup Wizard
   setup: {
-    title: '共飞 AI 安装向导',
-    description: '配置您的共飞 AI 实例',
+    title: 'Sub2API 安装向导',
+    description: '配置您的 Sub2API 实例',
     database: {
       title: '数据库配置',
       description: '连接到您的 PostgreSQL 数据库',

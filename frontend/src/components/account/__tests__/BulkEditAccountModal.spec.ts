@@ -23,7 +23,6 @@ vi.mock('@/api/admin', () => ({
   adminAPI: {
     accounts: {
       bulkUpdate: vi.fn(),
-      updateGroupPriorities: vi.fn(),
       checkMixedChannelRisk: vi.fn()
     }
   }
@@ -84,7 +83,6 @@ function mountModal(extraProps: Record<string, unknown> = {}) {
 describe('BulkEditAccountModal', () => {
   beforeEach(() => {
     vi.mocked(adminAPI.accounts.bulkUpdate).mockReset()
-    vi.mocked(adminAPI.accounts.updateGroupPriorities).mockReset()
     vi.mocked(adminAPI.accounts.checkMixedChannelRisk).mockReset()
     showError.mockReset()
     showSuccess.mockReset()
@@ -98,31 +96,6 @@ describe('BulkEditAccountModal', () => {
     vi.mocked(adminAPI.accounts.checkMixedChannelRisk).mockResolvedValue({
       has_risk: false
     } as any)
-    vi.mocked(adminAPI.accounts.updateGroupPriorities).mockResolvedValue({ updated: 2 } as any)
-  })
-
-  it('updates group priorities for successful accounts in a group-filtered list', async () => {
-    vi.mocked(adminAPI.accounts.bulkUpdate).mockResolvedValueOnce({
-      success: 2,
-      failed: 0,
-      success_ids: [1, 2],
-      results: [
-        { account_id: 1, success: true },
-        { account_id: 2, success: true }
-      ]
-    } as any)
-    const wrapper = mountModal({ priorityGroupId: 12 })
-
-    await wrapper.get('#bulk-edit-priority-enabled').setValue(true)
-    await wrapper.get('#bulk-edit-priority').setValue(300)
-    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
-    await flushPromises()
-
-    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], { priority: 300 })
-    expect(adminAPI.accounts.updateGroupPriorities).toHaveBeenCalledWith([
-      { account_id: 1, group_id: 12, priority: 300 },
-      { account_id: 2, group_id: 12, priority: 300 }
-    ])
   })
 
   it('批量修改倍率时提示自动同步账号需要先关闭同步', async () => {
@@ -244,7 +217,7 @@ describe('BulkEditAccountModal', () => {
     expect(wrapper.findAll('[data-testid="grok-base-url-preset"]').length).toBe(0)
   })
 
-  it.each(['kimi', 'zhipu', 'deepseek'])('全部目标为 %s API Key 时展示请求头覆写', (platform) => {
+  it.each(['kimi', 'zhipu', 'deepseek', 'minimax'])('全部目标为 %s API Key 时展示请求头覆写', (platform) => {
     const wrapper = mountModal({
       selectedPlatforms: [platform],
       selectedTypes: ['apikey']
@@ -253,7 +226,7 @@ describe('BulkEditAccountModal', () => {
     expect(wrapper.find('#bulk-edit-header-override-enabled').exists()).toBe(true)
   })
 
-  it.each(['kimi', 'zhipu', 'deepseek'])('目标为 %s OAuth 时不展示请求头覆写', (platform) => {
+  it.each(['kimi', 'zhipu', 'deepseek', 'minimax'])('目标为 %s OAuth 时不展示请求头覆写', (platform) => {
     const wrapper = mountModal({
       selectedPlatforms: [platform],
       selectedTypes: ['oauth']
@@ -300,23 +273,14 @@ describe('BulkEditAccountModal', () => {
     })
   })
 
-  it('OpenAI 账号批量编辑可开启自动透传', async () => {
+  it('OpenAI OAuth 批量编辑不再展示旧自动透传', async () => {
     const wrapper = mountModal({
       selectedPlatforms: ['openai'],
       selectedTypes: ['oauth']
     })
 
-    await wrapper.get('#bulk-edit-openai-passthrough-enabled').setValue(true)
-    await wrapper.get('#bulk-edit-openai-passthrough-toggle').trigger('click')
-    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
-    await flushPromises()
-
-    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledTimes(1)
-    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
-      extra: {
-        openai_passthrough: true
-      }
-    })
+    expect(wrapper.find('#bulk-edit-openai-passthrough-enabled').exists()).toBe(false)
+    expect(wrapper.find('#bulk-edit-openai-passthrough-toggle').exists()).toBe(false)
   })
 
   it('OpenAI OAuth 批量编辑可开启 namespace 摊平兼容开关', async () => {
@@ -581,6 +545,18 @@ describe('BulkEditAccountModal', () => {
     expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
       credentials: { openai_capabilities: ['embeddings'] },
       extra: { openai_responses_mode: null }
+    })
+  })
+
+  it('persists Seedance in a two-capability bulk update', async () => {
+    const wrapper = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['apikey'] })
+    await wrapper.get('#bulk-edit-openai-endpoint-capabilities-enabled').setValue(true)
+    await wrapper.get('[data-testid="bulk-edit-openai-endpoint-capability-embeddings"]').setValue(false)
+    await wrapper.get('[data-testid="bulk-edit-openai-endpoint-capability-seedance"]').setValue(true)
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+      credentials: { openai_capabilities: ['chat_completions', 'seedance'] }
     })
   })
 
@@ -890,25 +866,22 @@ describe('BulkEditAccountModal', () => {
     })
   })
 
-  it('开启 OpenAI 自动透传时不再同时提交模型限制', async () => {
+  it('OpenAI OAuth 仍可单独编辑模型限制', async () => {
     const wrapper = mountModal({
       selectedPlatforms: ['openai'],
       selectedTypes: ['oauth']
     })
 
-    await wrapper.get('#bulk-edit-openai-passthrough-enabled').setValue(true)
-    await wrapper.get('#bulk-edit-openai-passthrough-toggle').trigger('click')
     await wrapper.get('#bulk-edit-model-restriction-enabled').setValue(true)
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
 
     expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledTimes(1)
     expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
-      extra: {
-        openai_passthrough: true
+      credentials: {
+        model_mapping: {}
       }
     })
-    expect(wrapper.text()).toContain('admin.accounts.openai.modelRestrictionDisabledByPassthrough')
   })
 
   it('filtered-results 模式下应提交 filters 而不是 account_ids', async () => {
@@ -1015,96 +988,6 @@ describe('BulkEditAccountModal', () => {
     expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
       extra: {
         codex_cli_only: true
-      }
-    })
-  })
-
-  // --- OpenAI 字节保真（openai_passthrough_strict）---
-  //
-  // 批量编辑看不到每个目标账号的现状，所以开启方向要求同一次编辑把两个父开关
-  // （自动透传 + codex_cli_only）一并设为开启；关闭方向永远放行——strict 是高风险
-  // 新开关，「批量关掉」必须一步可达，不能反过来要求同一次把 codex_cli_only 打开。
-
-  async function mountOpenAIOAuthBulk() {
-    return mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['oauth'] })
-  }
-
-  it('与自动透传、codex_cli_only 同一次编辑时互不干扰', async () => {
-    const wrapper = await mountOpenAIOAuthBulk()
-
-    await wrapper.get('#bulk-edit-openai-passthrough-enabled').setValue(true)
-    await wrapper.get('#bulk-edit-openai-passthrough-toggle').trigger('click')
-    await wrapper.get('#bulk-edit-openai-codex-cli-only-enabled').setValue(true)
-    await wrapper.get('#bulk-edit-openai-codex-cli-only-toggle').trigger('click')
-    await wrapper.get('#bulk-edit-openai-passthrough-strict-enabled').setValue(true)
-    await wrapper.get('#bulk-edit-openai-passthrough-strict-toggle').trigger('click')
-    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
-    await flushPromises()
-
-    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
-      extra: {
-        openai_passthrough: true,
-        codex_cli_only: true,
-        openai_passthrough_strict: true
-      }
-    })
-  })
-
-  it('不要求同一次编辑开启 codex_cli_only', async () => {
-    const wrapper = await mountOpenAIOAuthBulk()
-
-    await wrapper.get('#bulk-edit-openai-passthrough-strict-enabled').setValue(true)
-    await wrapper.get('#bulk-edit-openai-passthrough-strict-toggle').trigger('click')
-    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
-    await flushPromises()
-
-    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
-      extra: {
-        openai_passthrough_strict: true
-      }
-    })
-  })
-
-  it('apikey 目标同样可以批量开启字节保真', async () => {
-    const wrapper = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['apikey'] })
-
-    await wrapper.get('#bulk-edit-openai-passthrough-strict-enabled').setValue(true)
-    await wrapper.get('#bulk-edit-openai-passthrough-strict-toggle').trigger('click')
-    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
-    await flushPromises()
-
-    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
-      extra: {
-        openai_passthrough_strict: true
-      }
-    })
-  })
-
-  // 勾选后又把目标筛选放宽到不支持透传的类型：区块会隐藏但勾选状态还在，键不得落到那批账号上。
-  it('目标放宽到不支持透传的类型后不再写入 openai_passthrough_strict', async () => {
-    const wrapper = await mountOpenAIOAuthBulk()
-
-    await wrapper.get('#bulk-edit-openai-passthrough-strict-enabled').setValue(true)
-    await wrapper.get('#bulk-edit-openai-passthrough-strict-toggle').trigger('click')
-    await wrapper.setProps({ selectedTypes: ['oauth', 'service_account'] })
-    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
-    await flushPromises()
-
-    const payload = (adminAPI.accounts.bulkUpdate as any).mock.calls[0]?.[1]
-    expect(payload?.extra ?? {}).not.toHaveProperty('openai_passthrough_strict')
-  })
-
-  it('关闭 strict 不要求同时开启父开关', async () => {
-    const wrapper = await mountOpenAIOAuthBulk()
-
-    // 只勾「编辑该项」、开关保持关闭 = 批量关掉 strict。回滚必须一步可达。
-    await wrapper.get('#bulk-edit-openai-passthrough-strict-enabled').setValue(true)
-    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
-    await flushPromises()
-
-    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
-      extra: {
-        openai_passthrough_strict: false
       }
     })
   })

@@ -1,8 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { arrangeCanvasNodes } from '../canvas/canvasLayout'
-import type { CanvasConnection, CanvasNode } from '../canvas/types'
 
 describe('playground canvas layout integration', () => {
   const source = readFileSync(resolve(__dirname, '../../../views/user/PlaygroundCanvasView.vue'), 'utf8')
@@ -17,27 +15,6 @@ describe('playground canvas layout integration', () => {
   const connectionMenu = readFileSync(resolve(__dirname, '../canvas/CanvasConnectionContextMenu.vue'), 'utf8')
   const configSettings = readFileSync(resolve(__dirname, '../canvas/CanvasConfigSettingsPopover.vue'), 'utf8')
   const contextMenu = readFileSync(resolve(__dirname, '../canvas/CanvasContextMenu.vue'), 'utf8')
-  const gallerySource = readFileSync(resolve(__dirname, '../../../views/user/PlaygroundGalleryView.vue'), 'utf8')
-  const maskSource = readFileSync(resolve(__dirname, '../canvas/CanvasImageMaskDialog.vue'), 'utf8')
-
-  it('keeps gallery navigation connected to the infinite canvas workspace', () => {
-    expect(gallerySource).toContain('to="/playground/images?view=canvas"')
-    expect(gallerySource).toContain("t('playground.canvasWorkspace')")
-  })
-
-  it('supports targeted image edits with a prompt, mask tools, and mask history', () => {
-    expect(maskSource).toContain('data-image-mask-prompt')
-    expect(maskSource).toContain("defineEmits<{ close: []; apply: [dataUrl: string, prompt: string] }>()")
-    expect(maskSource).toContain('data-image-mask-erase')
-    expect(maskSource).toContain('data-image-mask-paint')
-    expect(maskSource).toContain('data-image-mask-undo')
-    expect(maskSource).toContain('data-image-mask-redo')
-    expect(maskSource).toContain('globalCompositeOperation = stroke.mode === \'erase\' ? \'destination-out\' : \'source-over\'')
-    expect(source).toContain('async function applyImageMask(maskDataUrl: string, editPrompt: string)')
-    expect(source).toContain('const prompt = editPrompt.trim()')
-    expect(source).toContain('mask: { id: `mask-${now}`')
-    expect(source).toContain('prompt,\n    model,')
-  })
 
   it('collapses the main app sidebar when the full canvas workspace opens', () => {
     expect(source).toContain('appStore.setSidebarCollapsed(true)')
@@ -52,38 +29,6 @@ describe('playground canvas layout integration', () => {
     expect(toolbar).toContain('overflow-x-auto')
     expect(toolbar).toContain('v-if="selectedCount"')
     expect(toolbar).toContain('flex h-14')
-    expect(toolbar).toContain("@click=\"emit('arrange')\"")
-    expect(source).toContain('@arrange="arrangeCanvas"')
-    expect(source).toContain('function arrangeCanvas()')
-  })
-
-  it('preserves previous image generations instead of deleting derived nodes', () => {
-    expect(source).toContain('function archiveImageGeneration(node: CanvasNodeData)')
-    expect(source).not.toContain('canvasStore.removeDerivedNodes(id)')
-  })
-
-  it('arranges connected nodes into stable left-to-right layers', () => {
-    const makeNode = (id: string, x: number, y: number): CanvasNode => ({
-      id, type: 'image', kind: 'generator', x, y, width: 200, height: 120,
-      prompt: id, model: 'test', status: 'idle', createdAt: 1, updatedAt: 1,
-    })
-    const nodes = [makeNode('target', 900, 800), makeNode('source', 500, 100), makeNode('middle', 100, 500)]
-    const connections: CanvasConnection[] = [
-      { id: 'one', from: 'source', to: 'target', kind: 'reference' },
-      { id: 'two', from: 'middle', to: 'source', kind: 'reference' },
-    ]
-    const positions = arrangeCanvasNodes(nodes, connections)
-    expect(positions.middle.x).toBeLessThan(positions.source.x)
-    expect(positions.source.x).toBeLessThan(positions.target.x)
-    expect(positions.middle).toEqual({ x: 48, y: 48 })
-  })
-
-  it('keeps the current viewport when arranging nodes', () => {
-    const arrangeStart = source.indexOf('function arrangeCanvas()')
-    const arrangeEnd = source.indexOf('\nfunction resetCanvasView', arrangeStart)
-    const arrangeSource = source.slice(arrangeStart, arrangeEnd)
-    expect(arrangeSource).not.toContain('fitCanvas(')
-    expect(arrangeSource).toContain('canvasStore.updateNode(node.id, position)')
   })
 
   it('supports collapsing the canvas projects sidebar to maximize workspace space', () => {
@@ -169,17 +114,12 @@ describe('playground canvas layout integration', () => {
 
   it('keeps header navigation and model selectors in non-overlapping responsive regions', () => {
     expect(source).toContain('data-canvas-header')
-    expect(source).toContain('relative z-40 grid gap-4 rounded-2xl border border-gray-200/70 bg-white/70 p-3 shadow-sm backdrop-blur')
     expect(source).toContain('data-canvas-workspace-tabs')
     expect(source).toContain('data-canvas-model-controls')
     expect(source).toContain('2xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.6fr)]')
     expect(source).toContain('2xl:flex-row 2xl:items-center')
     expect(source).toContain('lg:grid-cols-2 2xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]')
     expect(source).toContain('block max-w-full truncate text-left text-lg font-semibold')
-  })
-
-  it('keeps the empty-canvas add button outside canvas gesture handling', () => {
-    expect(source).toContain('class="pointer-events-auto btn btn-primary mt-4 gap-1.5" data-canvas-no-zoom @pointerdown.stop @click="addNodeAtCenter()"')
   })
 
   it('lets text nodes stay editable in place without fighting canvas drag gestures', () => {
@@ -207,17 +147,6 @@ describe('playground canvas layout integration', () => {
     expect(nodeSource).toContain('adjustTextSize')
     expect(nodeSource).toContain("playground.canvasTextSmaller")
     expect(nodeSource).toContain("playground.canvasTextLarger")
-    expect(nodeSource).toContain('v-if="node.type === \'text\'" class="relative bg-white p-3')
-    expect(nodeSource).toContain("v-else-if=\"!pluginNode && (node.type === 'image' || node.type === 'video' || node.type === 'audio')\"")
-    expect(nodeSource).toContain("node.type === 'image' && node.kind !== 'result'")
-    expect(nodeSource).toContain("emit('generate-image-from-text', node.id)")
-    expect(source).toContain("selectedNode.type === 'text' && (selectedNode.textContent || selectedNode.prompt).trim()")
-    expect(source).toContain('function collectCanvasPromptNodes(project: CanvasProject, targetId: string)')
-    expect(source).toContain('if (node.type === \'text\') continue')
-    expect(source).toContain('const currentImageReference = await resolveCurrentImageReference(node)')
-    expect(source).toContain('references.unshift(currentImageReference)')
-    expect(source).toContain("height: type === 'text' ? 240")
-    expect(source).toContain("selectedNode.type === 'image' && selectedNode.kind !== 'result'")
     expect(source).toContain("target?.closest('input,textarea,select,[contenteditable=\"true\"]')")
     expect(source).toContain('@generate-image-from-text="generateImageFromText"')
     expect(source).toContain('function generateImageFromText(id: string)')
@@ -245,30 +174,6 @@ describe('playground canvas layout integration', () => {
     expect(source).toContain('function selectImageVariant(id: string, imageIndex: number)')
     expect(source).toContain('function duplicateImageVariant(id: string, imageIndex: number)')
     expect(source).toContain('function deleteImageVariant(id: string, imageIndex: number)')
-  })
-
-  it('supports configurable batch image revisions, clipboard references, and click-only expansion', () => {
-    expect(source).toContain('imageRevisionCount')
-    expect(source).toContain('function generateImageChildVariants(id: string)')
-    expect(source).toContain('tabindex="0" role="region"')
-    expect(source).toContain('@paste.stop.prevent="handleReferencePaste"')
-    expect(source).toContain('async function handleReferencePaste(event: ClipboardEvent)')
-    expect(source).toContain('const prompt = (slot.revisionPrompt ?? \'\').trim()')
-    expect(source).toContain('if (slot.status !== \'success\' || !slot.url || !isImageVariantRevised(source, index, slot)) continue')
-    expect(source).toContain('const sourceImageIndex = node.kind === \'generator\'')
-    expect(source).toContain('upstream.id === sourceImageNodeId ? sourceImageIndex ?? 0 : 0')
-    // Hovering the batch strip must not toggle it — only the explicit toggle
-    // button click should, since involuntary hover expansion was reported as
-    // disruptive when scanning results.
-    expect(nodeSource).not.toContain('@mouseenter="imageBatchExpanded = true"')
-    expect(nodeSource).not.toContain('@mouseleave="imageBatchExpanded = false"')
-    expect(nodeSource).toContain('@click.stop="imageBatchExpanded = !imageBatchExpanded"')
-    expect(nodeSource).toContain(':value="slot.revisionPrompt ?? \'\'"')
-  })
-
-  it('allows mention lookup after punctuation so multiple assets can be referenced', () => {
-    expect(mentionEditor).toContain('const match = /(^|[\\s\\p{P}\\p{S}])@([^\\s@]*)$/u.exec(textBeforeCaret())')
-    expect(mentionEditor).toContain('const match = /(^|[\\s\\p{P}\\p{S}])@([^\\s@]*)$/u.exec(text)')
   })
 
   it('does not turn node action controls into accidental drags', () => {
@@ -311,13 +216,8 @@ describe('playground canvas layout integration', () => {
     expect(source).toContain("window.addEventListener('paste', handlePaste)")
     expect(source).toContain("window.removeEventListener('paste', handlePaste)")
     expect(source).toContain("if (modifier && event.key.toLowerCase() === 'v') {")
-    expect(source).toContain('await addReferenceFiles(files.filter((file) => file.type.startsWith(\'image/\')))')
-    expect(source).toContain('item.getAsFile()')
-    expect(source).toContain("@copy-image=\"copyImageNode\"")
-    // 写剪贴板的实现收敛在 imageClipboard.ts，画布与对话模式共用同一份。
-    expect(source).toContain('copyPlaygroundImageToClipboard(source)')
-    expect(source).toContain("from '@/features/playground/imageClipboard'")
-    expect(nodeSource).toContain("emit('copy-image', node.id, imageIndex)")
+    expect(source).toContain("event.preventDefault()")
+    expect(source).toContain('void pasteNodes()')
   })
 
   it('adds the reference canvas zoom slider beside the zoom buttons', () => {
@@ -391,10 +291,7 @@ describe('playground canvas layout integration', () => {
     expect(source).toContain("t('playground.canvasBackground')")
     expect(source).toContain("updateNodeConfig(selectedNode.id, 'background'")
     expect(source).toContain("background: node.config?.background ?? 'auto'")
-    expect(source).toContain("resolveCanvasImageSize(node)")
-    expect(source).toContain("customWidth")
-    expect(source).toContain("generateImageChildVariant")
-    expect(nodeSource).toContain("update-image-prompt")
+    expect(source).toContain("size: node.config?.size ?? '1024x1024'")
     expect(configSettings).toContain("canvasBackgroundTransparent")
     expect(source).toContain("...(/^gpt-image-/i.test(model) ? {} : { response_format: 'b64_json' })")
   })
@@ -438,34 +335,6 @@ describe('playground canvas layout integration', () => {
     expect(nodeSource).toContain("'reasoningEffort'")
     expect(source).toContain("reasoning_effort: node.config.reasoningEffort")
     expect(source).toContain("reasoningEffort: 'medium'")
-  })
-
-  // 助手聊天(CanvasAssistant)也是在调用聊天模型，之前只能选模型、选不了推理强度，
-  // 跟"文字"节点的体验不一致。
-  it('lets the canvas assistant chat adjust reasoning effort too', () => {
-    expect(assistant).toContain('reasoningEffort: string')
-    expect(assistant).toContain("'update:reasoningEffort': [value: string]")
-    expect(assistant).toContain(':value="reasoningEffort"')
-    expect(assistant).toContain("emit('update:reasoningEffort'")
-    expect(source).toContain('const assistantReasoningEffort = ref')
-    expect(source).toContain(':reasoning-effort="assistantReasoningEffort"')
-    expect(source).toContain('@update:reasoning-effort="setAssistantReasoningEffort($event)"')
-    expect(source).toContain("assistantReasoningEffort.value !== 'none' ? { reasoning_effort: assistantReasoningEffort.value }")
-  })
-
-  // 反推提示词是一次性自动化动作，没有自己的设置面板，复用助手那一份推理强度设置
-  // 而不是另起一套 UI。插件 SDK 的 generateText 是给插件作者用的编程接口，
-  // 让作者自己决定要不要传，不需要终端用户可见的开关。
-  it('lets reverse-prompt reuse the assistant reasoning effort and exposes it on the plugin SDK', () => {
-    expect(source).toContain("reversePromptImage")
-    expect(source).toContain("t('playground.canvasReversePromptSystem')")
-    const reversePromptFn = source.slice(source.indexOf('async function reversePromptImage'), source.indexOf('async function reversePromptImage') + 3000)
-    expect(reversePromptFn).toContain("assistantReasoningEffort.value !== 'none' ? { reasoning_effort: assistantReasoningEffort.value }")
-
-    const runtime = readFileSync(resolve(__dirname, '../canvas/canvasPluginRuntime.ts'), 'utf8')
-    expect(runtime).toContain("generateText: (prompt: string, options?: { signal?: AbortSignal; model?: string; system?: string; reasoningEffort?: 'none' | 'low' | 'medium' | 'high'; onDelta?: (text: string) => void })")
-    expect(source).toContain("const pluginTextGeneration = async (prompt: string, options?: { signal?: AbortSignal; model?: string; system?: string; reasoningEffort?: 'none' | 'low' | 'medium' | 'high'")
-    expect(source).toContain("reasoningEffort && reasoningEffort !== 'none' ? { reasoning_effort: reasoningEffort }")
   })
 
   it('passes connected canvas resources into chat and inherited text into media generation', () => {
@@ -516,9 +385,6 @@ describe('playground canvas layout integration', () => {
     expect(nodeSource).toContain('v-if="node.type === \'image\'" type="button" class="btn btn-ghost btn-icon')
     expect(contextMenu).toContain('props.node.imageUrl || props.node.videoUrl || props.node.audioUrl')
     expect(contextMenu).toContain("props.node.kind === 'result' && props.node.type === 'image'")
-    expect(contextMenu).toContain("props.node.type === 'video' && props.node.videoUrl")
-    expect(contextMenu).toContain("capture-video-frame")
-    expect(source).toContain('@capture-video-frame="captureVideoFrame(contextMenu.nodeId, $event)"')
   })
 
   it('closes the node creation menu when pointerdown happens outside it', () => {
@@ -551,41 +417,6 @@ describe('playground canvas layout integration', () => {
     expect(clipboardV).toBeGreaterThan(modifierBlock)
     expect(temporaryV).toBeGreaterThan(clipboardV)
     expect(source).toContain('// Handle clipboard/history commands before the temporary V-to-pan')
-  })
-
-  it('never cancels the native paste event from the Ctrl+V keydown branch', () => {
-    // 在 keydown 上 preventDefault 会连浏览器的 paste 事件一起取消，handlePaste 就收不到
-    // 剪贴板图片，截图粘贴会退化成「贴出上次复制的节点」。该分支必须保持无副作用。
-    const branchStart = source.indexOf("if (modifier && event.key.toLowerCase() === 'v') {")
-    expect(branchStart).toBeGreaterThan(-1)
-    const branch = source.slice(branchStart, source.indexOf('\n  }', branchStart))
-    expect(branch).not.toContain('event.preventDefault()')
-    expect(branch).not.toContain('pasteNodes(')
-    // 图片粘贴要真正到达 handlePaste，且它只在拿到内容时才接管默认行为。
-    expect(source).toContain('if (files.length || text) event.preventDefault()')
-  })
-
-  it('imports pasted and dropped files as ordinary generator nodes', () => {
-    // 导入的素材不是生成结果。写死 kind: 'result' 会让它不能连线、提示词框被禁用、
-    // 没有生成按钮，只是一张贴在画布上的死图。
-    const importBlock = source.slice(
-      source.indexOf('async function importCanvasFiles'),
-      source.indexOf('async function uploadImageToNode'),
-    )
-    expect(importBlock).toContain('...createCanvasNode(')
-    expect(importBlock).not.toContain("kind: 'result'")
-    expect(importBlock).not.toContain("status: 'success'")
-    expect(importBlock).not.toContain('resultIndex: 0')
-    // 手动新建与导入共用同一个构造器，属性不会再各写一份而漂移。
-    expect(source).toContain('const node = createCanvasNode(type, x, y)')
-    expect(source).toContain("kind: 'generator'")
-  })
-
-  it('still accepts pasted images while a text input or the mention editor has focus', () => {
-    // CanvasMentionEditor 是 contenteditable，早期守卫会在它有焦点时整个跳过粘贴，
-    // 截图就被它吞掉。文本仍走浏览器默认行为，但文件必须由画布接管。
-    expect(source).toContain("const editable = Boolean(target?.closest('input,textarea,select,[contenteditable=\"true\"]'))")
-    expect(source).toContain('if (editable && !files.length) return')
   })
 
   it('reuses config outputs and suppresses duplicate connection edges while generating', () => {
@@ -635,35 +466,6 @@ describe('playground canvas layout integration', () => {
     expect(connectionMenu).toContain("onMounted(() => window.addEventListener('pointerdown', dismissOnOutsidePointer))")
     expect(connectionMenu).toContain('data-canvas-connection-menu')
     expect(readFileSync(resolve(__dirname, '../canvas/CanvasConnections.vue'), 'utf8')).toContain("@contextmenu.stop.prevent=\"emit('context-menu', connection.id, $event)\"")
-  })
-
-  it('picks the batch image count from a dropdown so it commits on selection', () => {
-    // 数字输入框可以在打字过程中停在半成品状态（比如刚删掉数字还没打新的），批量提示词
-    // 框却已经据此增减——下拉菜单选完即确认，不会有那种中间态。
-    expect(source).toContain('<select id="canvas-node-image-count"')
-    expect(source).not.toContain('<input id="canvas-node-image-count"')
-    expect(source).toContain(':value="String(selectedNode.imageCount ?? 4)"')
-    expect(source).toContain('<option v-for="count in 10" :key="count" :value="String(count)">{{ count }}</option>')
-    expect(source).toContain('@change="updateNodeImageCount(selectedNode.id, Number(($event.target as HTMLSelectElement).value))"')
-  })
-
-  it('lets a batch generation authorize a distinct prompt per planned image slot', () => {
-    // 面板只在 imageCount > 1 时露出，count=1 没有「批量」这回事，不需要多此一举。
-    expect(source).toContain('v-if="(selectedNode.imageCount ?? 4) > 1"')
-    expect(source).toContain('data-canvas-batch-prompts')
-    expect(source).toContain(':value="selectedNode.imagePrompts?.[slotIndex - 1] ?? \'\'"')
-    expect(source).toContain('updateNodeImagePrompt(selectedNode.id, slotIndex - 1,')
-    expect(source).toContain('function updateNodeImagePrompt(id: string, index: number, value: string)')
-    // 解析函数是生成逻辑与面板共用的唯一真源：面板留空 => 这里回落共享 prompt。
-    expect(source).toContain('function resolveCanvasImageSlotPrompt(node: CanvasNodeData, index: number): string {')
-    expect(source).toContain('return node.imagePrompts?.[index]?.trim() || node.prompt')
-    // runGeneration 必须按 slot 各自解析 prompt 后再各自建 request，而不是循环外建一份
-    // 共享 request.body 复用 N 次——那样批量生成的 N 张会退化回同一段提示词。
-    const requestLoop = source.slice(source.indexOf('for (let requestIndex = 0;'), source.indexOf('const successfulVariants ='))
-    expect(requestLoop).toContain('const slotPrompt = resolveCanvasImageSlotPrompt(node, slotStart)')
-    expect(requestLoop).toContain('prompt: slotPrompt,')
-    expect(requestLoop).toContain('prompt: result.revised_prompt?.trim() || slotPrompt,')
-    expect(requestLoop).not.toContain('prompt: node.prompt,')
   })
 
   it('shows connected references inline with add, preview, focus, and disconnect actions', () => {
@@ -745,14 +547,6 @@ describe('playground canvas layout integration', () => {
     expect(nodeSource).toContain('(selected || nodeHovered) && node.type === \'image\'')
     expect(nodeSource).toContain('(selected || nodeHovered) && node.type === \'video\'')
     expect(nodeSource).toContain('data-canvas-hover-toolbar')
-  })
-
-  it('only expands the reference images bar on selection, not on hover', () => {
-    // 悬停就展开参考图缩略图会让鼠标扫过画布时节点不断长高/收缩，体验很糟；
-    // 改成只在点击选中后展开。媒体节点右上角的小工具栏（复制/下载）仍然是悬停展开，
-    // 那类是「贴边浮出」不占用节点高度，跟这里的「撑高节点」是两回事，不能混着改。
-    expect(nodeSource).toContain("node.kind !== 'result' && node.type !== 'group' && selected && !(pluginNode && pluginPanelOpen)")
-    expect(nodeSource).not.toContain("node.kind !== 'result' && node.type !== 'group' && (selected || nodeHovered)")
   })
 
   it('exposes upstream-style node details and a redacted JSON inspector', () => {

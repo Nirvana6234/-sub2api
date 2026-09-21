@@ -80,6 +80,19 @@ export interface CreateUsageCleanupTaskRequest {
   timezone?: string
 }
 
+export interface AdminUsageQueryParams extends UsageQueryParams {
+  user_id?: number
+  exact_total?: boolean
+  billing_mode?: string
+  upstream_model_mismatch?: boolean
+  sort_by?: string
+  sort_order?: 'asc' | 'desc'
+  // 错误请求 tab 专属筛选(仅传给错误列表接口;共用同一 filters 对象)
+  error_phase?: string | null
+  error_category?: string | null
+  status_code?: number | null
+}
+
 export interface LatencyCompensationUserSummary {
   user_id: number
   email: string
@@ -99,20 +112,6 @@ export interface LatencyCompensationSummary {
   total_actual_cost: number
   total_account_cost: number
   total_compensation: number
-}
-
-export interface AdminUsageQueryParams extends UsageQueryParams {
-  user_id?: number
-  exact_total?: boolean
-  billing_mode?: string
-  upstream_model_mismatch?: boolean
-  sort_by?: string
-  sort_order?: 'asc' | 'desc'
-  // 错误请求 tab 专属筛选(仅传给错误列表接口;共用同一 filters 对象)
-  error_phase?: string | null
-  error_category?: string | null
-  status_code?: number | null
-  exclude_user_ids?: number[]
 }
 
 // ==================== API Functions ====================

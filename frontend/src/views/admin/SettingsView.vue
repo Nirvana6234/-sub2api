@@ -3893,46 +3893,6 @@
               </div>
 
               <div class="border-t border-gray-100 pt-4 dark:border-dark-700">
-                <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
-                  {{ t("admin.settings.defaults.accountShareRewardRate") }}
-                </label>
-                <div class="max-w-xs">
-                  <input
-                    v-model.number="form.account_share_reward_rate"
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="0.01"
-                    class="input"
-                    placeholder="80"
-                  />
-                </div>
-                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-                  {{ t("admin.settings.defaults.accountShareRewardRateHint") }}
-                </p>
-              </div>
-
-              <div class="border-t border-gray-100 pt-4 dark:border-dark-700">
-                <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
-                  {{ t("admin.settings.defaults.accountOwnUsageFeeRate") }}
-                </label>
-                <div class="max-w-xs">
-                  <input
-                    v-model.number="form.account_own_usage_fee_rate"
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="0.01"
-                    class="input"
-                    placeholder="1"
-                  />
-                </div>
-                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-                  {{ t("admin.settings.defaults.accountOwnUsageFeeRateHint") }}
-                </p>
-              </div>
-
-              <div class="border-t border-gray-100 pt-4 dark:border-dark-700">
                 <div class="mb-3 flex items-center justify-between">
                   <div>
                     <label class="font-medium text-gray-900 dark:text-white">
@@ -7190,16 +7150,29 @@
                 </p>
               </div>
 
-              <div v-if="form.channel_monitor_mode === 'v2'" class="flex items-start justify-between gap-4">
-                <div class="min-w-0">
-                  <p class="text-sm font-medium text-gray-900 dark:text-white">
-                    {{ t('admin.settings.features.channelMonitor.hideThroughput') }}
-                  </p>
-                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                    {{ t('admin.settings.features.channelMonitor.hideThroughputHint') }}
-                  </p>
+              <div v-if="form.channel_monitor_mode === 'v2'" class="space-y-4">
+                <div class="flex items-start justify-between gap-4">
+                  <div class="min-w-0">
+                    <p class="text-sm font-medium text-gray-900 dark:text-white">
+                      {{ t('admin.settings.features.channelMonitor.hideThroughput') }}
+                    </p>
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      {{ t('admin.settings.features.channelMonitor.hideThroughputHint') }}
+                    </p>
+                  </div>
+                  <Toggle v-model="form.channel_monitor_hide_throughput" />
                 </div>
-                <Toggle v-model="form.channel_monitor_hide_throughput" />
+                <div class="flex items-start justify-between gap-4">
+                  <div class="min-w-0">
+                    <p class="text-sm font-medium text-gray-900 dark:text-white">
+                      {{ t('admin.settings.features.channelMonitor.hideUserRanking') }}
+                    </p>
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      {{ t('admin.settings.features.channelMonitor.hideUserRankingHint') }}
+                    </p>
+                  </div>
+                  <Toggle v-model="form.channel_monitor_hide_user_ranking" />
+                </div>
               </div>
 
               <div v-if="form.channel_monitor_mode === 'v1'" class="flex items-start justify-between gap-4">
@@ -7246,6 +7219,34 @@
                 </p>
               </div>
               <Toggle v-model="form.available_channels_enabled" />
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+              {{ t('admin.settings.features.siteBillingMode.title') }}
+            </h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              {{ t('admin.settings.features.siteBillingMode.description') }}
+            </p>
+          </div>
+          <div class="space-y-5 p-6">
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div class="min-w-0">
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t('admin.settings.features.siteBillingMode.label') }}
+                </label>
+                <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{{ siteBillingModeHint }}</p>
+              </div>
+              <div class="w-full shrink-0 sm:w-56">
+                <Select
+                  :modelValue="siteBillingMode"
+                  :options="siteBillingModeOptions"
+                  @update:modelValue="siteBillingMode = $event as SiteBillingMode"
+                />
+              </div>
             </div>
           </div>
         </div>
@@ -7330,20 +7331,6 @@
               </p>
               <div>
                 <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
-                  {{ localText('视频教程链接（B站）', 'Tutorial video URL (Bilibili)') }}
-                </label>
-                <input
-                  v-model="form.client_tutorial_video_url"
-                  type="url"
-                  placeholder="https://www.bilibili.com/video/BV1vWYJ6PEhc/"
-                  class="input mt-2"
-                />
-                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-                  {{ localText('粘贴 B 站视频页面的普通网址即可，下载页会放一个"去 B 站观看"的跳转按钮，不会内嵌播放。留空则不显示这块。', 'Paste the normal Bilibili video page URL — the download page shows a "Watch on Bilibili" button that links out, it does not embed the player. Leave empty to hide this block.') }}
-                </p>
-              </div>
-              <div>
-                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
                   {{ localText('网盘下载链接', 'Cloud drive URL') }}
                 </label>
                 <input
@@ -7358,47 +7345,6 @@
               </div>
               <p class="text-xs text-gray-500 dark:text-gray-400">
                 {{ localText('两个都只接受 http/https 绝对地址，填了别的会被后端清空。', 'Both accept absolute http/https URLs only; anything else is cleared by the backend.') }}
-              </p>
-            </div>
-            <div class="flex items-center justify-between border-t border-gray-100 pt-5 dark:border-dark-700">
-              <div>
-                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
-                  {{ localText('Chat 桌面客户端下载', 'Chat desktop app download') }}
-                </label>
-                <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                  {{ localText('独立于上面的共飞直连客户端。关闭时下载页不显示这个区块。', 'Separate from the codex-relay client above. When off, the download page hides this block.') }}
-                </p>
-              </div>
-              <Toggle v-model="form.chat_app_download_enabled" />
-            </div>
-            <div v-if="form.chat_app_download_enabled" class="space-y-4 border-t border-gray-100 pt-5 dark:border-dark-700">
-              <div>
-                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
-                  {{ localText('直接下载链接', 'Direct download URL') }}
-                </label>
-                <input
-                  v-model="form.chat_app_download_direct_url"
-                  type="url"
-                  placeholder="https://example.com/downloads/chat_v0.1.0_x64.zip"
-                  class="input mt-2"
-                />
-                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-                  {{ localText('点了直接开始下载文件。留空则隐藏该区块。', 'Starts the download immediately. Leave empty to hide this block.') }}
-                </p>
-              </div>
-              <div>
-                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
-                  {{ localText('最新版本号', 'Latest version') }}
-                </label>
-                <input
-                  v-model="form.chat_app_latest_version"
-                  type="text"
-                  placeholder="0.1.0"
-                  class="input mt-2"
-                />
-              </div>
-              <p class="text-xs text-gray-500 dark:text-gray-400">
-                {{ localText('只接受 http/https 绝对地址，填了别的会被后端清空。', 'Accepts absolute http/https URLs only; anything else is cleared by the backend.') }}
               </p>
             </div>
             <div class="flex items-center justify-between border-t border-gray-100 pt-5 dark:border-dark-700">
@@ -7424,33 +7370,6 @@
               />
               <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
                 {{ localText('只接受 http/https 绝对地址；填了别的会被后端清空，入口随之隐藏。', 'Only absolute http/https URLs are accepted; anything else is cleared by the backend and the entry stays hidden.') }}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
-            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
-              {{ localText('上下文压缩（headroom）', 'Context compression (headroom)') }}
-            </h2>
-            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-              {{ localText('全站只需部署一份 headroom 压缩代理，这里填它的内网地址；是否给某个用户启用压缩由该用户的编辑页单独开关控制。', 'One headroom compression proxy serves the whole site — set its internal address here. Whether compression applies to a given user is a separate per-user toggle on that user\'s edit page.') }}
-            </p>
-          </div>
-          <div class="space-y-5 p-6">
-            <div>
-              <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
-                {{ localText('headroom 代理地址', 'headroom proxy base URL') }}
-              </label>
-              <input
-                v-model="form.headroom_base_url"
-                type="url"
-                placeholder="http://172.18.0.1:8787"
-                class="input mt-2"
-              />
-              <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-                {{ localText('留空表示未部署/未配置，即使给用户开了压缩开关也不会生效，请求照常直连上游。只接受 http/https 绝对地址。', 'Leave empty if headroom is not deployed — compression stays a no-op even for users with the toggle on, and requests go straight upstream as before. Only absolute http/https URLs are accepted.') }}
               </p>
             </div>
           </div>
@@ -8167,7 +8086,7 @@
                       v-model="form.payment_product_name_prefix"
                       type="text"
                       class="input"
-                      placeholder="共飞 AI"
+                      placeholder="Sub2API"
                     />
                   </div>
                   <div>
@@ -8189,7 +8108,7 @@
                       class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-300"
                     >
                       {{
-                        (form.payment_product_name_prefix || "共飞 AI") +
+                        (form.payment_product_name_prefix || "Sub2API") +
                         " 100 " +
                         (form.payment_product_name_suffix || "CNY")
                       }}
@@ -9224,6 +9143,13 @@ import { useAppStore } from "@/stores";
 import { useAdminSettingsStore } from "@/stores/adminSettings";
 import { normalizeVisibleMethod } from "@/components/payment/paymentFlow";
 import {
+  SITE_BILLING_MODE_I18N_KEYS,
+  SITE_BILLING_MODES,
+  billingModeToSettings,
+  resolveSiteBillingMode,
+  type SiteBillingMode,
+} from "@/utils/siteBillingMode";
+import {
   isRegistrationEmailSuffixDomainValid,
   normalizeRegistrationEmailSuffixDomain,
   normalizeRegistrationEmailSuffixDomains,
@@ -9887,6 +9813,7 @@ type SettingsForm = Omit<
   /** Form always binds a concrete boolean (SystemSettings marks this optional). */
   channel_monitor_hide_throughput: boolean;
   channel_monitor_show_quota: boolean;
+  channel_monitor_hide_user_ranking: boolean;
   smtp_password: string;
   turnstile_secret_key: string;
   tencent_captcha_app_secret_key: string;
@@ -9956,20 +9883,22 @@ const form = reactive<SettingsForm>({
   default_balance: 0,
   default_platform_quotas: normalizePlatformQuotasMap() as DefaultPlatformQuotasMap,
   account_scheduling_thresholds: normalizeAccountSchedulingThresholdsMap(),
+  // 延迟补偿的实际编辑入口在独立的 /admin/latency-compensation 页面；这里只需要
+  // 满足 SystemSettings 的字段完整性，提交整表时把当前值原样带回去。
+  latency_compensation_threshold_ms: 30000,
+  latency_compensation_profit_ratio: 1,
   affiliate_rebate_rate: 20,
   affiliate_rebate_freeze_hours: 0,
   affiliate_rebate_duration_days: 0,
   affiliate_rebate_per_invitee_cap: 0,
-  account_share_reward_rate: 80,
-  account_own_usage_fee_rate: 1,
   affiliate_admin_recharge_enabled: false,
   default_concurrency: 1,
   default_subscriptions: [],
   force_email_on_third_party_signup: false,
   default_user_rpm_limit: 0,
-  site_name: "共飞 AI",
+  site_name: "Sub2API",
   site_logo: "",
-  site_subtitle: "一起共享，一起使用 AI",
+  site_subtitle: "Subscription to API Conversion Platform",
   api_base_url: "",
   contact_info: "",
   doc_url: "",
@@ -10209,8 +10138,11 @@ const form = reactive<SettingsForm>({
   channel_monitor_default_interval_seconds: 60,
   channel_monitor_hide_throughput: false,
   channel_monitor_show_quota: false,
+  channel_monitor_hide_user_ranking: false,
   // Available Channels feature switch
   available_channels_enabled: false,
+  // Subscription feature switch (user sidebar "My Subscriptions" entry)
+  subscription_enabled: true,
   // 页面开关
   client_download_enabled: true,
   client_download_netdisk_url: "",
@@ -10219,12 +10151,6 @@ const form = reactive<SettingsForm>({
   client_latest_version: "",
   client_latest_version_mac: "",
   client_tutorial_video_url: "",
-  chat_app_download_enabled: false,
-  chat_app_download_direct_url: "",
-  chat_app_latest_version: "",
-  latency_compensation_threshold_ms: 30000,
-  latency_compensation_profit_ratio: 1,
-  headroom_base_url: "",
   backup_payment_enabled: false,
   backup_payment_url: "",
   // Playground feature switch
@@ -11197,6 +11123,20 @@ const codexSyncedVersionLabel = computed(() => {
   });
 });
 
+const siteBillingModeOptions = computed(() =>
+  SITE_BILLING_MODES.map((mode) => ({
+    value: mode,
+    label: t(`admin.settings.features.siteBillingMode.options.${SITE_BILLING_MODE_I18N_KEYS[mode]}`),
+  })),
+);
+const siteBillingMode = computed<SiteBillingMode>({
+  get: () => resolveSiteBillingMode(form),
+  set: (mode) => Object.assign(form, billingModeToSettings(mode)),
+});
+const siteBillingModeHint = computed(() =>
+  t(`admin.settings.features.siteBillingMode.hints.${SITE_BILLING_MODE_I18N_KEYS[siteBillingMode.value]}`),
+);
+
 async function loadSettings() {
   loading.value = true;
   loadFailed.value = false;
@@ -11238,6 +11178,9 @@ async function loadSettings() {
     );
     form.channel_monitor_show_quota = Boolean(
       settings.channel_monitor_show_quota
+    );
+    form.channel_monitor_hide_user_ranking = Boolean(
+      settings.channel_monitor_hide_user_ranking
     );
     form.login_agreement_updated_at =
       settings.login_agreement_updated_at || "2026-03-31";
@@ -11623,14 +11566,6 @@ async function saveSettings() {
       affiliate_rebate_freeze_hours: Math.max(0, Math.min(720, Number(form.affiliate_rebate_freeze_hours) || 0)),
       affiliate_rebate_duration_days: Math.max(0, Math.min(3650, Math.floor(Number(form.affiliate_rebate_duration_days) || 0))),
       affiliate_rebate_per_invitee_cap: Math.max(0, Number(form.affiliate_rebate_per_invitee_cap) || 0),
-      account_share_reward_rate: Math.min(
-        100,
-        Math.max(0, Number(form.account_share_reward_rate) || 0),
-      ),
-      account_own_usage_fee_rate: Math.min(
-        100,
-        Math.max(0, Number(form.account_own_usage_fee_rate) || 0),
-      ),
       affiliate_admin_recharge_enabled: form.affiliate_admin_recharge_enabled,
       default_concurrency: form.default_concurrency,
       default_subscriptions: normalizedDefaultSubscriptions,
@@ -11909,8 +11844,11 @@ async function saveSettings() {
         Number(form.channel_monitor_default_interval_seconds) || 60,
       channel_monitor_hide_throughput: Boolean(form.channel_monitor_hide_throughput),
       channel_monitor_show_quota: Boolean(form.channel_monitor_show_quota),
+      channel_monitor_hide_user_ranking: Boolean(form.channel_monitor_hide_user_ranking),
       // Available Channels feature switch
       available_channels_enabled: form.available_channels_enabled,
+      // Subscription feature switch
+      subscription_enabled: form.subscription_enabled,
       // 页面开关
       client_download_enabled: form.client_download_enabled,
       client_download_netdisk_url: form.client_download_netdisk_url.trim(),
@@ -11919,10 +11857,6 @@ async function saveSettings() {
       client_latest_version: form.client_latest_version.trim(),
       client_latest_version_mac: form.client_latest_version_mac.trim(),
       client_tutorial_video_url: form.client_tutorial_video_url.trim(),
-      chat_app_download_enabled: form.chat_app_download_enabled,
-      chat_app_download_direct_url: form.chat_app_download_direct_url.trim(),
-      chat_app_latest_version: form.chat_app_latest_version.trim(),
-      headroom_base_url: form.headroom_base_url.trim(),
       backup_payment_enabled: form.backup_payment_enabled,
       backup_payment_url: form.backup_payment_url.trim(),
       // Playground feature switch
@@ -12557,6 +12491,10 @@ const openaiFastPolicyTierOptions = computed(() => [
   {
     value: "priority",
     label: t("admin.settings.openaiFastPolicy.tierPriority"),
+  },
+  {
+    value: "ultrafast",
+    label: t("admin.settings.openaiFastPolicy.tierUltrafast"),
   },
   { value: "flex", label: t("admin.settings.openaiFastPolicy.tierFlex") },
 ]);
@@ -13527,3 +13465,4 @@ watch(
     0 1px 0 rgb(255 255 255 / 0.08) inset;
 }
 </style>
+

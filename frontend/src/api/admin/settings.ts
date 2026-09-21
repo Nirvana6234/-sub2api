@@ -11,41 +11,33 @@ import type {
   NotifyEmailEntry,
 } from "@/types";
 
-export type GlobalBlacklistKind = "account" | "ip"
+export interface DefaultSubscriptionSetting {
+  group_id: number;
+  validity_days: number;
+}
+
+export type GlobalBlacklistKind = 'account' | 'ip'
 export interface GlobalBlacklistEntry {
   id: string
   kind: GlobalBlacklistKind
   value: string
   reason?: string
-  expires_at?: string
-  enabled: boolean
-  created_at: string
-}
-
-export async function getGlobalBlacklist() {
-  const { data } = await apiClient.get<{ entries: GlobalBlacklistEntry[] | null }>("/admin/settings/blacklist")
-  // 黑名单为空时后端返回 null（Go nil slice），调用方按数组用，这里收敛成 []
-  return data.entries ?? []
-}
-
-export async function addGlobalBlacklist(entry: {
-  kind: GlobalBlacklistKind
-  value: string
-  reason?: string
-  expires_at?: string
+  expires_at?: string | null
   enabled?: boolean
-}) {
-  const { data } = await apiClient.post<GlobalBlacklistEntry>("/admin/settings/blacklist", entry)
+}
+
+export async function getGlobalBlacklist(): Promise<GlobalBlacklistEntry[]> {
+  const { data } = await apiClient.get<{ entries: GlobalBlacklistEntry[] }>('/admin/settings/global-blacklist')
+  return data.entries
+}
+
+export async function addGlobalBlacklist(entry: Omit<GlobalBlacklistEntry, 'id'>): Promise<GlobalBlacklistEntry> {
+  const { data } = await apiClient.post<GlobalBlacklistEntry>('/admin/settings/global-blacklist', entry)
   return data
 }
 
-export async function deleteGlobalBlacklist(id: string) {
-  await apiClient.delete(`/admin/settings/blacklist/${encodeURIComponent(id)}`)
-}
-
-export interface DefaultSubscriptionSetting {
-  group_id: number;
-  validity_days: number;
+export async function deleteGlobalBlacklist(id: string): Promise<void> {
+  await apiClient.delete(`/admin/settings/global-blacklist/${encodeURIComponent(id)}`)
 }
 
 // ── 平台限额类型 ──────────────────────────────────────────────────
@@ -70,17 +62,19 @@ export type SchedulingThresholdPlatformType =
   | "grok"
   | "kimi"
   | "zhipu"
+  | "minimax"
 
 export type AccountSchedulingThresholdsMap = Record<SchedulingThresholdPlatformType, number>
 
 // 与后端 AllowedSchedulingThresholdPlatforms 保持一致（deepseek 为余额型，
-// 走余额检测而非用量阈值）。
+// 走余额检测而非用量阈值；minimax Coding/Token Plan 有 5h/weekly 窗口）。
 export const SCHEDULING_THRESHOLD_PLATFORMS: SchedulingThresholdPlatformType[] = [
   "openai",
   "anthropic",
   "grok",
   "kimi",
   "zhipu",
+  "minimax",
 ]
 
 export function normalizeAccountSchedulingThresholdsMap(
@@ -454,8 +448,6 @@ export interface SystemSettings {
   affiliate_rebate_freeze_hours: number;
   affiliate_rebate_duration_days: number;
   affiliate_rebate_per_invitee_cap: number;
-  account_share_reward_rate: number;
-  account_own_usage_fee_rate: number;
   affiliate_admin_recharge_enabled: boolean;
   default_concurrency: number;
   default_user_rpm_limit: number;
@@ -760,9 +752,12 @@ export interface SystemSettings {
   channel_monitor_default_interval_seconds: number;
   channel_monitor_hide_throughput?: boolean;
   channel_monitor_show_quota?: boolean;
+  channel_monitor_hide_user_ranking?: boolean;
 
   // Available Channels feature switch
   available_channels_enabled: boolean;
+
+  subscription_enabled: boolean;
 
   // Playground feature switch
   client_download_enabled: boolean;
@@ -772,12 +767,8 @@ export interface SystemSettings {
   client_latest_version: string;
   client_latest_version_mac: string;
   client_tutorial_video_url: string;
-  chat_app_download_enabled: boolean;
-  chat_app_download_direct_url: string;
-  chat_app_latest_version: string;
   latency_compensation_threshold_ms: number;
   latency_compensation_profit_ratio: number;
-  headroom_base_url: string;
   backup_payment_enabled: boolean;
   backup_payment_url: string;
   playground_enabled: boolean;
@@ -827,8 +818,6 @@ export interface UpdateSettingsRequest {
   affiliate_rebate_freeze_hours?: number;
   affiliate_rebate_duration_days?: number;
   affiliate_rebate_per_invitee_cap?: number;
-  account_share_reward_rate?: number;
-  account_own_usage_fee_rate?: number;
   affiliate_admin_recharge_enabled?: boolean;
   default_concurrency?: number;
   default_user_rpm_limit?: number;
@@ -1093,9 +1082,12 @@ export interface UpdateSettingsRequest {
   channel_monitor_default_interval_seconds?: number;
   channel_monitor_hide_throughput?: boolean;
   channel_monitor_show_quota?: boolean;
+  channel_monitor_hide_user_ranking?: boolean;
 
   // Available Channels feature switch
   available_channels_enabled?: boolean;
+
+  subscription_enabled?: boolean;
 
   // Playground feature switch
   client_download_enabled?: boolean;
@@ -1105,12 +1097,8 @@ export interface UpdateSettingsRequest {
   client_latest_version?: string;
   client_latest_version_mac?: string;
   client_tutorial_video_url?: string;
-  chat_app_download_enabled?: boolean;
-  chat_app_download_direct_url?: string;
-  chat_app_latest_version?: string;
   latency_compensation_threshold_ms?: number;
   latency_compensation_profit_ratio?: number;
-  headroom_base_url?: string;
   backup_payment_enabled?: boolean;
   backup_payment_url?: string;
   playground_enabled?: boolean;
@@ -1525,7 +1513,7 @@ export async function updateRectifierSettings(
  * Matches backend dto.OpenAIFastPolicyRule.
  */
 export interface OpenAIFastPolicyRule {
-  service_tier: "all" | "priority" | "flex";
+  service_tier: "all" | "priority" | "flex" | "ultrafast";
   action: "pass" | "filter" | "block" | "force_priority";
   scope: "all" | "oauth" | "apikey" | "bedrock";
   user_ids?: number[];

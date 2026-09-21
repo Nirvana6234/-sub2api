@@ -129,12 +129,10 @@ describe('playground canvas store', () => {
             imageCacheKeys: Array.from({ length: 12 }, (_, index) => `cache-${index}`),
             imageUrls: Array.from({ length: 12 }, (_, index) => `blob:image-${index}`),
             imageVariants: [
-              { id: 'slot-1', status: 'success', cacheKey: 'cache-1', url: 'blob:image-1', revisionPrompt: 'make it warmer' },
+              { id: 'slot-1', status: 'success', cacheKey: 'cache-1', url: 'blob:image-1' },
               { id: 'slot-2', status: 'error', errorMessage: 'timeout' },
             ],
             primaryImageIndex: 4,
-            imageRevisionCount: 3,
-            imagePrompts: ['keyword one banner', '', 'keyword three banner'],
           }),
         ],
         connections: [],
@@ -154,32 +152,7 @@ describe('playground canvas store', () => {
     expect(batchNode?.imageUrls).toHaveLength(10)
     expect(batchNode?.primaryImageIndex).toBe(4)
     expect(batchNode?.imageVariants).toHaveLength(2)
-    expect(batchNode?.imageVariants?.[0]?.revisionPrompt).toBe('make it warmer')
-    expect(batchNode?.imageRevisionCount).toBe(3)
     expect(batchNode?.imageVariants?.[1]?.errorMessage).toBe('timeout')
-    // 批量生成的逐图提示词要连空位一起原样存回——空位代表「这张回落到共享提示词」，
-    // 不是脏数据，压缩掉会让 index 对不上后面对应的图片槽位。
-    expect(batchNode?.imagePrompts).toEqual(['keyword one banner', '', 'keyword three banner'])
-  })
-
-  it('drops an all-blank imagePrompts array instead of persisting empty noise', () => {
-    localStorage.setItem('sub2api.playground.canvas.v1.user.113', JSON.stringify({
-      version: 1,
-      activeProjectId: 'blank-prompts-project',
-      projects: [{
-        id: 'blank-prompts-project',
-        title: 'Blank prompts',
-        nodes: [node('blank-prompts-node', { imagePrompts: ['', '  ', ''] })],
-        connections: [],
-        viewport: { x: 0, y: 0, scale: 1 },
-        backgroundMode: 'dots',
-        createdAt: 1,
-        updatedAt: 1,
-      }],
-    }))
-
-    const store = useCanvasStore(113)
-    expect(store.activeProject.value!.nodes[0]?.imagePrompts).toBeUndefined()
   })
 
   it('persists the image free-resize preference', () => {

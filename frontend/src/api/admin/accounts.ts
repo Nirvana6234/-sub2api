@@ -6,6 +6,7 @@
 import { apiClient } from '../client'
 import type {
   Account,
+  AccountListItem,
   CreateAccountRequest,
   UpdateAccountRequest,
   PaginatedResponse,
@@ -25,7 +26,9 @@ import type {
   UpstreamBillingProbeSettings,
   UpstreamBillingRatesResponse,
   OllamaCloudUsageSettings,
-  OllamaCloudUsageState
+  OllamaCloudUsageState,
+  GrokMediaEligibilityMode,
+  GrokMediaEligibilityState
 } from '@/types'
 
 /**
@@ -53,8 +56,8 @@ export async function list(
   options?: {
     signal?: AbortSignal
   }
-): Promise<PaginatedResponse<Account>> {
-  const { data } = await apiClient.get<PaginatedResponse<Account>>('/admin/accounts', {
+): Promise<PaginatedResponse<AccountListItem>> {
+  const { data } = await apiClient.get<PaginatedResponse<AccountListItem>>('/admin/accounts', {
     params: {
       page,
       page_size: pageSize,
@@ -68,7 +71,7 @@ export async function list(
 export interface AccountListWithEtagResult {
   notModified: boolean
   etag: string | null
-  data: PaginatedResponse<Account> | null
+  data: PaginatedResponse<AccountListItem> | null
 }
 
 export interface AccountUpstreamBillingRatesWithEtagResult {
@@ -135,7 +138,7 @@ export async function listWithEtag(
     headers['If-None-Match'] = options.etag
   }
 
-  const response = await apiClient.get<PaginatedResponse<Account>>('/admin/accounts', {
+  const response = await apiClient.get<PaginatedResponse<AccountListItem>>('/admin/accounts', {
     params: {
       page,
       page_size: pageSize,
@@ -237,6 +240,46 @@ export async function update(id: number, updates: UpdateAccountRequest): Promise
   return data
 }
 
+export interface AccountGroupPriorityUpdate {
+  account_id: number
+  group_id: number
+  priority: number
+}
+
+export interface AccountGroupPriorityUpdateResult {
+  updated: number
+  requested: number
+}
+
+/** Update account_groups.priority without changing the account-wide priority. */
+export async function updateGroupPriorities(
+  updates: AccountGroupPriorityUpdate[]
+): Promise<AccountGroupPriorityUpdateResult> {
+  const { data } = await apiClient.post<AccountGroupPriorityUpdateResult>(
+    '/admin/accounts/group-priorities',
+    { updates }
+  )
+  return data
+}
+
+export async function getGrokMediaEligibility(id: number): Promise<GrokMediaEligibilityState> {
+  const { data } = await apiClient.get<GrokMediaEligibilityState>(
+    `/admin/accounts/${id}/grok-media-eligibility`
+  )
+  return data
+}
+
+export async function updateGrokMediaEligibility(
+  id: number,
+  mode: GrokMediaEligibilityMode
+): Promise<GrokMediaEligibilityState> {
+  const { data } = await apiClient.put<GrokMediaEligibilityState>(
+    `/admin/accounts/${id}/grok-media-eligibility`,
+    { mode }
+  )
+  return data
+}
+
 /**
  * Check mixed-channel risk for account-group binding.
  */
@@ -290,9 +333,13 @@ export async function testAccount(id: number): Promise<{
  * @param id - Account ID
  * @returns Updated account
  */
-export async function refreshCredentials(id: number): Promise<Account> {
-  const { data } = await apiClient.post<Account>(`/admin/accounts/${id}/refresh`)
-  return data
+export type RefreshCredentialsResult =
+  | { account: Account; message: string; warning: 'missing_project_id_temporary' }
+  | { account: Account; message?: never; warning?: never }
+
+export async function refreshCredentials(id: number): Promise<RefreshCredentialsResult> {
+  const { data } = await apiClient.post<Account | RefreshCredentialsResult>(`/admin/accounts/${id}/refresh`)
+  return 'account' in data ? data : { account: data }
 }
 
 /**
@@ -328,6 +375,54 @@ export async function applyOAuthCredentials(
 export async function getStats(id: number, days: number = 30): Promise<AccountUsageStatsResponse> {
   const { data } = await apiClient.get<AccountUsageStatsResponse>(`/admin/accounts/${id}/stats`, {
     params: { days }
+  })
+  return data
+}
+
+export interface CodexProfileDailyUsage {
+  date: string
+  tokens: number
+}
+
+export interface CodexProfileInvocation {
+  type: string
+  plugin_id?: string
+  plugin_name?: string
+  skill_id?: string
+  skill_name?: string
+  usage_count?: number
+}
+
+export interface CodexProfileStatistics {
+  display_name?: string
+  username?: string
+  avatar_url?: string
+  has_stats_error: boolean
+  lifetime_tokens?: number
+  peak_daily_tokens?: number
+  longest_turn_seconds?: number
+  current_streak_days?: number
+  longest_streak_days?: number
+  daily_usage?: CodexProfileDailyUsage[]
+  fast_mode_percent?: number
+  reasoning_effort?: string
+  reasoning_effort_percent?: number
+  unique_skills_used?: number
+  total_skills_used?: number
+  total_threads?: number
+  top_invocations?: CodexProfileInvocation[]
+  fetched_at: string
+}
+
+/**
+ * Get an OpenAI/Codex OAuth account's user profile statistics (profiles/me).
+ * @param id - Account ID
+ * @param refresh - Bypass the server-side cache and re-fetch from upstream
+ * @returns Codex profile statistics
+ */
+export async function getProfileStatistics(id: number, refresh = false): Promise<CodexProfileStatistics> {
+  const { data } = await apiClient.get<CodexProfileStatistics>(`/admin/accounts/${id}/profile-statistics`, {
+    params: refresh ? { refresh: 'true' } : undefined
   })
   return data
 }
@@ -530,24 +625,6 @@ export async function bulkUpdate(
   return data
 }
 
-export interface AccountGroupPriorityUpdate {
-  account_id: number
-  group_id: number
-  priority: number
-}
-
-/**
- * Update scheduler priorities for existing account-group bindings.
- */
-export async function updateGroupPriorities(
-  updates: AccountGroupPriorityUpdate[]
-): Promise<{ updated: number }> {
-  const { data } = await apiClient.post<{ updated: number }>('/admin/accounts/group-priorities', {
-    updates
-  })
-  return data
-}
-
 /**
  * Get account today statistics
  * @param id - Account ID
@@ -617,6 +694,7 @@ export interface UpstreamModelMetadata {
   supported_reasoning_levels?: string[]
   input_modalities?: string[]
   context_window?: number
+  max_context_window?: number
   max_output_tokens?: number
 }
 
@@ -1078,6 +1156,9 @@ export const accountsAPI = {
   create,
   duplicate,
   update,
+  updateGroupPriorities,
+  getGrokMediaEligibility,
+  updateGrokMediaEligibility,
   checkMixedChannelRisk,
   delete: deleteAccount,
   toggleStatus,
@@ -1085,6 +1166,7 @@ export const accountsAPI = {
   refreshCredentials,
   applyOAuthCredentials,
   getStats,
+  getProfileStatistics,
   clearError,
   getUsage,
   getBatchUsage,
@@ -1105,7 +1187,6 @@ export const accountsAPI = {
   batchCreate,
   batchUpdateCredentials,
   bulkUpdate,
-  updateGroupPriorities,
   previewFromCrs,
   syncFromCrs,
   exportData,

@@ -104,20 +104,15 @@ export const FeatureFlags = {
     mode: 'opt-in',
     label: 'Available Channels',
   }),
+  subscription: defineFlag({
+    key: 'subscription_enabled',
+    mode: 'opt-out',
+    label: 'Subscription',
+  }),
   playground: defineFlag({
     key: 'playground_enabled',
     mode: 'opt-in',
     label: 'Playground',
-  }),
-  modelPlaza: defineFlag({
-    key: 'model_plaza_enabled',
-    mode: 'opt-in',
-    label: 'Model Plaza',
-  }),
-  pluginManagement: defineFlag({
-    key: 'plugin_management_enabled',
-    mode: 'opt-in',
-    label: 'Plugin Management',
   }),
   clientDownload: defineFlag({
     key: 'client_download_enabled',
@@ -128,6 +123,16 @@ export const FeatureFlags = {
     key: 'backup_payment_enabled',
     mode: 'opt-in',
     label: 'Backup Payment',
+  }),
+  modelPlaza: defineFlag({
+    key: 'model_plaza_enabled',
+    mode: 'opt-in',
+    label: 'Model Plaza',
+  }),
+  pluginManagement: defineFlag({
+    key: 'plugin_management_enabled',
+    mode: 'opt-in',
+    label: 'Plugin Management',
   }),
   payment: defineFlag({
     key: 'payment_enabled',
@@ -155,9 +160,15 @@ export type RegisteredFeatureFlag = keyof typeof FeatureFlags
  */
 export function isFeatureFlagEnabled(flag: FeatureFlagDefinition): boolean {
   const appStore = useAppStore()
-  const raw = appStore.cachedPublicSettings?.[flag.key] as
-    | boolean
-    | undefined
+  return resolveFeatureFlag(appStore.cachedPublicSettings, flag)
+}
+
+/** Resolve a feature flag from an already available settings object. */
+export function resolveFeatureFlag(
+  settings: Partial<PublicSettings> | null | undefined,
+  flag: FeatureFlagDefinition,
+): boolean {
+  const raw = settings?.[flag.key] as boolean | undefined
   if (typeof raw === 'boolean') return raw
   // Settings not yet loaded → fall back to the flag's declared mode:
   //   opt-out → visible by default, opt-in → hidden by default.
@@ -216,4 +227,10 @@ export function isChannelMonitorThroughputHidden(): boolean {
 export function isChannelMonitorQuotaVisible(): boolean {
   const appStore = useAppStore()
   return appStore.cachedPublicSettings?.channel_monitor_show_quota === true
+}
+
+/** Hide the user ranking tab on user-facing monitor v2. Admin always keeps it. */
+export function isChannelMonitorUserRankingHidden(): boolean {
+  const appStore = useAppStore()
+  return Boolean(appStore.cachedPublicSettings?.channel_monitor_hide_user_ranking)
 }

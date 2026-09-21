@@ -125,14 +125,14 @@ export async function create(
   expiresInDays?: number,
   rateLimitData?: { rate_limit_5h?: number; rate_limit_1d?: number; rate_limit_7d?: number },
   autoGroup = false,
-	autoGroupStrategy: 'price' | 'balanced' | 'speed' = 'price',
+  autoGroupStrategy: 'price' | 'balanced' | 'speed' = 'price',
   autoGroupIDs: number[] = []
 ): Promise<ApiKey> {
   const payload: CreateApiKeyRequest = { name }
   payload.auto_group = autoGroup
   if (autoGroup) {
-	payload.auto_group_strategy = autoGroupStrategy
-	payload.auto_group_ids = autoGroupIDs
+    payload.auto_group_strategy = autoGroupStrategy
+    payload.auto_group_ids = autoGroupIDs
   }
   if (groupId !== undefined) {
     payload.group_id = groupId
@@ -177,6 +177,32 @@ export async function update(id: number, updates: UpdateApiKeyRequest): Promise<
   return data
 }
 
+export interface BulkUpdateApiKeysResult {
+  succeededIds: number[]
+  failures: Array<{ id: number; error: unknown }>
+}
+
+/** Reuse per-key validation and permissions, with at most five requests in flight. */
+export async function bulkUpdate(
+  ids: number[],
+  updates: UpdateApiKeyRequest
+): Promise<BulkUpdateApiKeysResult> {
+  const uniqueIds = [...new Set(ids)]
+  const result: BulkUpdateApiKeysResult = { succeededIds: [], failures: [] }
+  for (let offset = 0; offset < uniqueIds.length; offset += 5) {
+    const batch = uniqueIds.slice(offset, offset + 5)
+    const responses = await Promise.allSettled(batch.map((id) => update(id, updates)))
+    responses.forEach((response, index) => {
+      if (response.status === 'fulfilled') {
+        result.succeededIds.push(batch[index])
+      } else {
+        result.failures.push({ id: batch[index], error: response.reason })
+      }
+    })
+  }
+  return result
+}
+
 /**
  * Delete API key
  * @param id - API key ID
@@ -199,12 +225,13 @@ export async function toggleStatus(id: number, status: 'active' | 'inactive'): P
 
 export const keysAPI = {
   list,
-  ensurePlayground,
   getById,
   create,
   update,
+  bulkUpdate,
   delete: deleteKey,
-  toggleStatus
+  toggleStatus,
+  ensurePlayground
 }
 
 export default keysAPI

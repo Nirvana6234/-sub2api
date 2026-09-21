@@ -89,7 +89,7 @@ export function useSeo() {
     )
     const noindex = route.meta.noindex ?? !route.meta.seoTitleKey
     const canonical = absoluteUrl(window.location.pathname)
-    const image = route.meta.seoImage ? absoluteUrl(route.meta.seoImage) : ''
+    const image = route.meta.seoImage ? absoluteUrl(String(route.meta.seoImage)) : ''
 
     // Only pages that opt in with seoTitleKey get their <title> driven by this
     // module. Every other route's document.title is already correctly resolved

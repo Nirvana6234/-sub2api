@@ -21,8 +21,8 @@ export * as batchImageAPI from './batchImage'
 export { totpAPI } from './totp'
 export { passkeyAPI, type PasskeyCredentialSummary } from './passkey'
 export { default as announcementsAPI } from './announcements'
-export { default as ticketsAPI } from './tickets'
 export { channelMonitorUserAPI } from './channelMonitor'
+export { default as ticketsAPI } from './tickets'
 
 // Admin APIs
 export { adminAPI } from './admin'

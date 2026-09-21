@@ -56,18 +56,6 @@ const codexDownloadUrl = 'https://codexapp.agentsmirror.com/latest/win-x64'
 const tutorialVideoUrl = computed(() => safeExternalUrl(appStore.cachedPublicSettings?.client_tutorial_video_url))
 const netdiskDownloadUrl = computed(() => safeExternalUrl(appStore.cachedPublicSettings?.client_download_netdisk_url))
 
-// Chat 桌面客户端：独立产品，跟上面的共飞直连客户端无关。管理员没开启或没填地址时整块不出现。
-const chatAppDownloadUrl = computed(() =>
-  appStore.cachedPublicSettings?.chat_app_download_enabled
-    ? safeExternalUrl(appStore.cachedPublicSettings?.chat_app_download_direct_url)
-    : ''
-)
-const chatAppFileName = computed(() => {
-  const name = chatAppDownloadUrl.value.split('?')[0].split('#')[0].split('/').pop() || ''
-  return /\.(exe|msi)$/i.test(name) ? name : ''
-})
-const chatAppLatestVersion = computed(() => appStore.cachedPublicSettings?.chat_app_latest_version || '')
-
 // macOS 安装包直链，由管理员填写。为空表示 mac 版尚未发布，整个 macOS 区块不出现——
 // 而不是显示一个点了没反应的按钮。
 const macDownloadUrl = computed(() =>
@@ -273,6 +261,18 @@ const guideSteps: GuideStep[] = [
     images: [{ src: '/client-guide/g21.png', alt: '注册桌面和开始菜单快捷方式' }],
     note: '切记不要删除此目录。程序是免安装的，这就是你的程序目录，删除后将无法使用。',
     macNote: '此步骤仅适用于 Windows 版。Mac 版安装后已经在「应用程序」里，可以直接拖到 Dock 上，不需要额外注册快捷方式。'
+  },
+  {
+    number: 10,
+    title: '查看用量与节省统计',
+    intro: '客户端首页会展示当前账号累计处理的 Token 数量，以及通过共飞线路节省的 Token 数量和比例。',
+    actions: [
+      '打开共飞客户端并进入首页。',
+      '在首页底部查看“累计处理”和“节省”统计。',
+      '用节省比例了解当前线路相对直接调用的使用效果。'
+    ],
+    images: [{ src: '/client-guide/g22.png', alt: '客户端首页的用量与节省统计' }],
+    note: '统计数据会随客户端使用更新，具体数值以客户端当前显示为准。'
   }
 ]
 
@@ -417,30 +417,6 @@ function toggleTheme() {
         </div>
         <div class="pointer-events-none absolute -right-6 -top-10 hidden h-72 w-72 rotate-12 opacity-20 sm:block">
           <img src="/gongfei-plane.svg" alt="" class="h-full w-full object-contain" />
-        </div>
-      </section>
-
-      <section
-        v-if="chatAppDownloadUrl"
-        class="mt-10 rounded-3xl border border-gray-200 bg-white px-6 py-8 shadow-sm sm:px-10 dark:border-dark-800 dark:bg-dark-900"
-      >
-        <p class="text-xs font-semibold uppercase tracking-[0.16em] text-primary-600 dark:text-primary-300">新产品</p>
-        <h2 class="mt-2 text-xl font-bold tracking-tight sm:text-2xl">共飞 Chat（桌面版）</h2>
-        <p class="mt-3 max-w-2xl text-sm leading-6 text-gray-600 dark:text-gray-300">
-          独立的桌面聊天客户端，跟上面的共飞 ChatGPT 助手是两个不同的程序，按需下载。
-        </p>
-        <div class="mt-5 flex flex-wrap items-center gap-3">
-          <a
-            :href="chatAppDownloadUrl"
-            download
-            class="btn btn-primary inline-flex items-center justify-center gap-2 px-5 py-3 text-sm"
-          >
-            <Icon name="download" size="sm" />
-            下载共飞 Chat{{ chatAppLatestVersion ? ` v${chatAppLatestVersion}` : '' }}
-          </a>
-          <span v-if="chatAppFileName" class="text-xs text-gray-500 dark:text-gray-400">
-            文件：<span class="font-mono">{{ chatAppFileName }}</span>
-          </span>
         </div>
       </section>
 

@@ -119,42 +119,6 @@
                 </button>
               </div>
             </div>
-            <div v-if="activeTab === 'usage'" class="relative" ref="hiddenUsersDropdownRef">
-              <button
-                type="button"
-                class="btn btn-secondary px-2 md:px-3"
-                title="不看用户名单"
-                @click="showHiddenUsersDropdown = !showHiddenUsersDropdown"
-              >
-                <Icon name="eyeOff" size="sm" />
-                <span class="hidden md:inline">不看用户<span v-if="hiddenUserIds.length"> ({{ hiddenUserIds.length }})</span></span>
-              </button>
-              <div v-if="showHiddenUsersDropdown" class="absolute right-0 top-full z-50 mt-1 w-72 rounded-lg border border-gray-200 bg-white p-3 shadow-lg dark:border-dark-600 dark:bg-dark-800">
-                <input
-                  v-model="hiddenUserKeyword"
-                  type="search"
-                  class="input mb-2 w-full"
-                  placeholder="搜索用户后加入名单"
-                  @input="searchHiddenUsers"
-                />
-                <div v-if="hiddenUserResults.length" class="max-h-44 overflow-y-auto">
-                  <button
-                    v-for="user in hiddenUserResults"
-                    :key="user.id"
-                    type="button"
-                    class="flex w-full items-center justify-between px-2 py-1.5 text-left text-sm hover:bg-gray-100 dark:hover:bg-dark-700"
-                    @click="toggleHiddenUser(user)"
-                  >
-                    <span class="truncate">{{ user.email }} <span class="text-xs text-gray-400">#{{ user.id }}</span></span>
-                    <Icon :name="hiddenUserIds.includes(user.id) ? 'eye' : 'eyeOff'" size="sm" />
-                  </button>
-                </div>
-                <div v-if="hiddenUserIds.length" class="mt-2 border-t border-gray-200 pt-2 text-xs dark:border-dark-700">
-                  已隐藏 {{ hiddenUserIds.length }} 个用户
-                  <button type="button" class="ml-2 text-primary-600 hover:underline" @click="clearHiddenUsers">清空</button>
-                </div>
-              </div>
-            </div>
           </template>
         </UsageFilters>
 
@@ -271,57 +235,6 @@ let statsReqSeq = 0
 let modelStatsReqSeq = 0
 const exportProgress = reactive({ show: false, progress: 0, current: 0, total: 0, estimatedTime: '' })
 const cleanupDialogVisible = ref(false)
-const hiddenUserIds = ref<number[]>([])
-const hiddenUserKeyword = ref('')
-const hiddenUserResults = ref<Array<{ id: number; email: string; deleted: boolean }>>([])
-const showHiddenUsersDropdown = ref(false)
-const hiddenUsersDropdownRef = ref<HTMLElement | null>(null)
-const HIDDEN_USERS_KEY = 'admin-usage-hidden-user-ids'
-
-const loadHiddenUsers = () => {
-  try {
-    const value = JSON.parse(localStorage.getItem(HIDDEN_USERS_KEY) || '[]')
-    hiddenUserIds.value = Array.isArray(value)
-      ? value.filter((id): id is number => Number.isInteger(id) && id > 0)
-      : []
-  } catch {
-    hiddenUserIds.value = []
-  }
-}
-
-const persistHiddenUsers = () => localStorage.setItem(HIDDEN_USERS_KEY, JSON.stringify(hiddenUserIds.value))
-
-const searchHiddenUsers = async () => {
-  const keyword = hiddenUserKeyword.value.trim()
-  if (!keyword) {
-    hiddenUserResults.value = []
-    return
-  }
-  try {
-    hiddenUserResults.value = await adminUsageAPI.searchUsers(keyword)
-  } catch {
-    hiddenUserResults.value = []
-  }
-}
-
-const refreshForHiddenUsers = () => {
-  pagination.page = 1
-  loadLogs()
-}
-
-const toggleHiddenUser = (user: { id: number; email: string; deleted: boolean }) => {
-  hiddenUserIds.value = hiddenUserIds.value.includes(user.id)
-    ? hiddenUserIds.value.filter((id) => id !== user.id)
-    : [...hiddenUserIds.value, user.id]
-  persistHiddenUsers()
-  refreshForHiddenUsers()
-}
-
-const clearHiddenUsers = () => {
-  hiddenUserIds.value = []
-  persistHiddenUsers()
-  refreshForHiddenUsers()
-}
 // Balance history modal state
 const showBalanceHistoryModal = ref(false)
 const balanceHistoryUser = ref<AdminUser | null>(null)
@@ -471,8 +384,7 @@ const buildUsageListParams = (
     ...filters.value,
     stream: legacyStream === null ? undefined : legacyStream,
     sort_by: sortState.sort_by,
-    sort_order: sortState.sort_order,
-    exclude_user_ids: hiddenUserIds.value.length ? hiddenUserIds.value : undefined
+    sort_order: sortState.sort_order
   }
 }
 
@@ -677,7 +589,7 @@ const exportToExcel = async () => {
       t('admin.usage.cacheReadCost'), t('admin.usage.cacheCreationCost'),
       t('usage.rate'), t('usage.accountMultiplier'), t('usage.original'), t('usage.userBilled'), t('usage.accountBilled'),
       t('usage.firstToken'), t('usage.duration'),
-      t('admin.usage.requestId'), t('usage.userAgent'), t('admin.usage.ipAddress')
+      t('admin.usage.requestId'), t('admin.usage.upstreamRequestId'), t('usage.userAgent'), t('admin.usage.ipAddress')
     ]
     const ws = XLSX.utils.aoa_to_sheet([headers])
     while (true) {
@@ -696,7 +608,7 @@ const exportToExcel = async () => {
         log.rate_multiplier?.toPrecision(4) || '1.00', (log.account_rate_multiplier ?? 1).toPrecision(4),
         log.total_cost?.toFixed(6) || '0.000000', log.actual_cost?.toFixed(6) || '0.000000',
         ((log.account_stats_cost ?? log.total_cost) * (log.account_rate_multiplier ?? 1)).toFixed(6), log.first_token_ms ?? '', log.duration_ms,
-        log.request_id || '', log.user_agent || '', log.ip_address || ''
+        log.request_id || '', log.upstream_request_id || '', log.user_agent || '', log.ip_address || ''
       ])
       if (rows.length) {
         XLSX.utils.sheet_add_aoa(ws, rows, { origin: -1 })
@@ -718,10 +630,12 @@ const exportToExcel = async () => {
 
 // Column visibility
 const ALWAYS_VISIBLE = ['user', 'created_at']
-const DEFAULT_HIDDEN_COLUMNS = ['reasoning_effort', 'request_id', 'user_agent']
+const DEFAULT_HIDDEN_COLUMNS = ['reasoning_effort', 'request_id', 'upstream_request_id', 'user_agent']
 const HIDDEN_COLUMNS_KEY = 'usage-hidden-columns'
 const HIDDEN_COLUMNS_VERSION_KEY = 'usage-hidden-columns-version'
-const HIDDEN_COLUMNS_CURRENT_VERSION = 'request-id-hidden-by-default'
+// 隐藏列版本链：每级只把当级新增列加入隐藏集，不重置用户已显式打开的列。
+const HIDDEN_COLUMNS_PREV_VERSION = 'request-id-hidden-by-default'
+const HIDDEN_COLUMNS_CURRENT_VERSION = 'upstream-request-id-hidden-by-default'
 
 const allColumns = computed(() => [
   { key: 'user', label: t('admin.usage.user'), sortable: false },
@@ -738,6 +652,7 @@ const allColumns = computed(() => [
   { key: 'latency', label: t('usage.latency'), sortable: false },
   { key: 'created_at', label: t('usage.time'), sortable: true },
   { key: 'request_id', label: t('admin.usage.requestId'), sortable: false },
+  { key: 'upstream_request_id', label: t('admin.usage.upstreamRequestId'), sortable: false },
   { key: 'user_agent', label: t('usage.userAgent'), sortable: false },
   { key: 'ip_address', label: t('admin.usage.ipAddress'), sortable: false }
 ])
@@ -845,8 +760,12 @@ const loadSavedColumns = () => {
       (JSON.parse(saved) as string[]).forEach((key) => {
         hiddenColumns.add(key)
       })
-      if (localStorage.getItem(HIDDEN_COLUMNS_VERSION_KEY) !== HIDDEN_COLUMNS_CURRENT_VERSION) {
-        hiddenColumns.add('request_id')
+      const savedVersion = localStorage.getItem(HIDDEN_COLUMNS_VERSION_KEY)
+      if (savedVersion !== HIDDEN_COLUMNS_CURRENT_VERSION) {
+        if (savedVersion !== HIDDEN_COLUMNS_PREV_VERSION) {
+          hiddenColumns.add('request_id')
+        }
+        hiddenColumns.add('upstream_request_id')
         localStorage.setItem(HIDDEN_COLUMNS_KEY, JSON.stringify([...hiddenColumns]))
         localStorage.setItem(HIDDEN_COLUMNS_VERSION_KEY, HIDDEN_COLUMNS_CURRENT_VERSION)
       }
@@ -943,13 +862,9 @@ const handleColumnClickOutside = (event: MouseEvent) => {
   if (columnDropdownRef.value && !columnDropdownRef.value.contains(event.target as HTMLElement)) {
     showColumnDropdown.value = false
   }
-  if (hiddenUsersDropdownRef.value && !hiddenUsersDropdownRef.value.contains(event.target as HTMLElement)) {
-    showHiddenUsersDropdown.value = false
-  }
 }
 
 onMounted(() => {
-  loadHiddenUsers()
   applyRouteQueryFilters()
   void loadRouteUserFilterLabel()
   loadLogs()

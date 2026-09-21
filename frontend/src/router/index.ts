@@ -36,11 +36,7 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/HomeView.vue'),
     meta: {
       requiresAuth: false,
-      title: 'Home',
-      seoTitleKey: 'seo.home.title',
-      seoDescriptionKey: 'seo.home.description',
-      seoImage: '/gongfei-plane.svg',
-      noindex: false
+      title: 'Home'
     }
   },
   {
@@ -49,13 +45,9 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/ClientDownloadView.vue'),
     meta: {
       requiresAuth: false,
-      requiresClientDownload: true,
-      title: 'Download Client',
-      seoTitleKey: 'seo.download.title',
-      seoDescriptionKey: 'seo.download.description',
-      seoImage: '/gongfei-plane.svg',
-      noindex: false
-    }
+      title: 'Client Download',
+      titleKey: 'nav.clientDownload',
+    },
   },
   {
     path: '/login',
@@ -190,8 +182,7 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/public/LegalDocumentView.vue'),
     meta: {
       requiresAuth: false,
-      title: 'Legal Document',
-      noindex: false
+      title: 'Legal Document'
     }
   },
   {
@@ -201,11 +192,7 @@ const routes: RouteRecordRaw[] = [
     meta: {
       requiresAuth: false,
       title: 'Model Plaza',
-      titleKey: 'modelPlaza.title',
-      seoTitleKey: 'seo.modelPlaza.title',
-      seoDescriptionKey: 'seo.modelPlaza.description',
-      seoImage: '/gongfei-plane.svg',
-      noindex: false
+      titleKey: 'modelPlaza.title'
     }
   },
 
@@ -239,14 +226,41 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/batch-image',
+    name: 'BatchImageGuide',
+    alias: '/docs/batch-image',
+    component: () => import('@/views/user/BatchImageGuideView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Batch Image Guide',
+      titleKey: 'batchImageGuide.title',
+      descriptionKey: 'batchImageGuide.description'
+    }
+  },
+  {
     path: '/playground',
-    redirect: '/playground/chat',
+    name: 'Playground',
+    redirect: '/playground/unified',
+  },
+  {
+    path: '/playground/unified',
+    name: 'PlaygroundUnified',
+    component: () => import('@/views/user/PlaygroundView.vue'),
+    props: { mode: 'unified' },
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Playground',
+      titleKey: 'playground.title',
+      descriptionKey: 'playground.description'
+    }
   },
   {
     path: '/playground/chat',
     name: 'PlaygroundChat',
     component: () => import('@/views/user/PlaygroundView.vue'),
-    props: { mode: 'chat' },
+    props: { mode: 'unified' },
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
@@ -304,13 +318,16 @@ const routes: RouteRecordRaw[] = [
   },
   {
     path: '/tickets',
+    // The desktop client has historically opened /contact. Keep that URL as a
+    // compatibility alias so its "联系我们" action lands in the same user
+    // ticket system instead of the SPA 404 page.
     alias: '/contact',
     name: 'Tickets',
     component: () => import('@/views/user/TicketsView.vue'),
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
-      title: 'Tickets',
+      title: 'My Tickets',
       titleKey: 'tickets.title',
       descriptionKey: 'tickets.description'
     }
@@ -398,7 +415,8 @@ const routes: RouteRecordRaw[] = [
       requiresAdmin: false,
       title: 'My Subscriptions',
       titleKey: 'userSubscriptions.title',
-      descriptionKey: 'userSubscriptions.description'
+      descriptionKey: 'userSubscriptions.description',
+      requiresSubscription: true
     }
   },
   {
@@ -662,18 +680,6 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
-    path: '/admin/tickets',
-    name: 'AdminTickets',
-    component: () => import('@/views/admin/TicketsView.vue'),
-    meta: {
-      requiresAuth: true,
-      requiresAdmin: true,
-      title: 'Tickets',
-      titleKey: 'tickets.adminTitle',
-      descriptionKey: 'tickets.adminDescription'
-    }
-  },
-  {
     path: '/admin/announcements',
     name: 'AdminAnnouncements',
     component: () => import('@/views/admin/AnnouncementsView.vue'),
@@ -683,6 +689,30 @@ const routes: RouteRecordRaw[] = [
       title: 'Announcements',
       titleKey: 'admin.announcements.title',
       descriptionKey: 'admin.announcements.description'
+    }
+  },
+  {
+    path: '/admin/tickets',
+    name: 'AdminTickets',
+    component: () => import('@/views/admin/TicketsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Ticket Management',
+      titleKey: 'tickets.adminTitle',
+      descriptionKey: 'tickets.adminDescription'
+    }
+  },
+  {
+    path: '/admin/blacklist',
+    name: 'AdminBlacklist',
+    component: () => import('@/views/admin/BlacklistView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Access Blacklist',
+      titleKey: 'nav.blacklist',
+      descriptionKey: 'nav.blacklist'
     }
   },
   {
@@ -744,18 +774,6 @@ const routes: RouteRecordRaw[] = [
       titleKey: 'admin.riskControl.title',
       descriptionKey: 'admin.riskControl.description',
       requiresRiskControl: true
-    }
-  },
-  {
-    path: '/admin/blacklist',
-    name: 'AdminBlacklist',
-    component: () => import('@/views/admin/BlacklistView.vue'),
-    meta: {
-      requiresAuth: true,
-      requiresAdmin: true,
-      title: 'Access Blacklist',
-      titleKey: 'nav.accessBlacklist',
-      descriptionKey: 'nav.accessBlacklist'
     }
   },
   {
@@ -927,7 +945,6 @@ function isBackendModePublicRouteAllowed(path: string, hasPendingAuthSession: bo
   return false
 }
 
-
 router.beforeEach(async (to, _from, next) => {
   // 开始导航加载状态
   navigationLoading.startNavigation()
@@ -1050,6 +1067,14 @@ router.beforeEach(async (to, _from, next) => {
     return
   }
 
+  // 充值黑名单：命中的用户不得进入任何充值相关页面，包括直接输 URL。
+  // 与后端 RechargeBlockedGuard 同口径——刻意不豁免管理员，否则名单里的
+  // 管理员账号就成了绕过限制的口子。后端仍是强制层，这里只保证看不到界面。
+  if (to.meta.requiresPayment === true && authStore.user?.recharge_disabled === true) {
+    next('/dashboard')
+    return
+  }
+
   if (requiresAdmin && authStore.isAdmin) {
     const adminComplianceStore = useAdminComplianceStore()
     if (!adminComplianceStore.initialized) {
@@ -1068,7 +1093,7 @@ router.beforeEach(async (to, _from, next) => {
   // 公共设置可能尚未加载（App.vue 的 onMounted 异步拉取晚于首次导航，且纯静态部署
   // 无 __APP_CONFIG__ 注入）。此时 cachedPublicSettings 为空会把 payment/risk_control
   // 误判为“未启用”而错误拦截，故这里先确保设置加载完成。
-  if ((to.meta.requiresPayment || to.meta.requiresRiskControl) && !appStore.publicSettingsLoaded) {
+  if ((to.meta.requiresPayment || to.meta.requiresRiskControl || to.meta.requiresSubscription) && !appStore.publicSettingsLoaded) {
     try {
       await appStore.fetchPublicSettings()
     } catch (error) {
@@ -1076,45 +1101,14 @@ router.beforeEach(async (to, _from, next) => {
     }
   }
 
-  if (to.meta.requiresClientDownload && !appStore.publicSettingsLoaded) {
-    try {
-      await appStore.fetchPublicSettings()
-    } catch (error) {
-      console.warn('Failed to load client download settings in route guard', error)
-    }
-  }
-
-  if (to.path.startsWith('/playground') && !appStore.publicSettingsLoaded) {
-    try {
-      await appStore.fetchPublicSettings()
-    } catch (error) {
-      console.warn('Failed to load playground settings in route guard', error)
-    }
-  }
-
   // Only an explicit value from successfully loaded settings can disable a route.
   // A transient settings failure is unknown state, not a confirmed feature toggle.
-  //
-  // 备用支付通道的入口只长在充值页上。如果主支付一关就把整页拦掉，
-  // 「主通道挂了只留备用」这个场景就永远没法用——所以备用开启时仍放行，
-  // 页面自己会只渲染备用入口。
   if (
     to.meta.requiresPayment &&
     appStore.publicSettingsLoaded &&
-    appStore.cachedPublicSettings?.payment_enabled === false &&
-    appStore.cachedPublicSettings?.backup_payment_enabled !== true
+    appStore.cachedPublicSettings?.payment_enabled === false
   ) {
     next(authStore.isAdmin ? '/admin/dashboard' : '/dashboard')
-    return
-  }
-
-  // 下载页是公开页，关闭后未登录访客也不该看到，统一回首页而不是控制台。
-  if (
-    to.meta.requiresClientDownload &&
-    appStore.publicSettingsLoaded &&
-    appStore.cachedPublicSettings?.client_download_enabled === false
-  ) {
-    next('/home')
     return
   }
 
@@ -1127,10 +1121,11 @@ router.beforeEach(async (to, _from, next) => {
     return
   }
 
+  // 订阅功能是 opt-out 开关：只有显式 false 才拦截「我的订阅」页直达。
   if (
-    to.path.startsWith('/playground') &&
+    to.meta.requiresSubscription &&
     appStore.publicSettingsLoaded &&
-    appStore.cachedPublicSettings?.playground_enabled === false
+    appStore.cachedPublicSettings?.subscription_enabled === false
   ) {
     next(authStore.isAdmin ? '/admin/dashboard' : '/dashboard')
     return
@@ -1139,7 +1134,6 @@ router.beforeEach(async (to, _from, next) => {
   // 简易模式下限制访问某些页面
   if (authStore.isSimpleMode) {
     const restrictedPaths = [
-      '/admin/groups',
       '/admin/subscriptions',
       '/admin/redeem',
       '/subscriptions',

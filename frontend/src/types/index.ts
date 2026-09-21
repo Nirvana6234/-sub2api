@@ -91,7 +91,9 @@ export interface User {
   rpm_limit?: number // User-level RPM cap (0 = unlimited); effective as fallback when group has no rpm_limit
   account_management_enabled?: boolean
   contribution_rooms_enabled?: boolean
-  headroom_compression_enabled?: boolean
+  // 命中充值黑名单（settings.recharge_blocked_user_ids）时为 true，用于隐藏充值入口。
+  // 强制拦截在后端 /payment 路由组，前端隐藏仅为不让用户看到入口。
+  recharge_disabled?: boolean
   status: 'active' | 'disabled' // Account status
   allowed_groups: number[] | null // Allowed group IDs (null = all non-exclusive groups)
   balance_notify_enabled: boolean
@@ -102,6 +104,45 @@ export interface User {
   created_at: string
   updated_at: string
   deleted_at?: string | null
+}
+
+export type TicketStatus = 'open' | 'answered' | 'closed'
+
+export interface TicketMessage {
+  id: number
+  ticket_id: number
+  sender_role: 'user' | 'admin'
+  content: string
+  created_at: string
+}
+
+export interface Ticket {
+  id: number
+  subject: string
+  status: TicketStatus
+  unread_count: number
+  last_message_at: string
+  last_message_preview?: string
+  closed_at?: string | null
+  created_at: string
+  updated_at: string
+  messages?: TicketMessage[]
+}
+
+export interface AdminTicket extends Ticket {
+  user_id: number
+  user_email?: string
+}
+
+export interface TicketListFilters {
+  status?: TicketStatus
+  search?: string
+  unread_only?: boolean
+}
+
+export interface CreateTicketRequest {
+  subject: string
+  content: string
 }
 
 export interface AdminUser extends User {
@@ -194,6 +235,7 @@ export interface CustomMenuItem {
   icon_svg: string
   url: string
   page_slug?: string
+  hide_open_button?: boolean
   visibility: 'user' | 'admin'
   sort_order: number
 }
@@ -243,8 +285,6 @@ export interface PublicSettings {
   home_content: string
   compact_home_enabled: boolean
   hide_ccs_import_button: boolean
-  purchase_subscription_enabled?: boolean
-  purchase_subscription_url?: string
   payment_enabled: boolean
   risk_control_enabled: boolean
   table_default_page_size: number
@@ -278,9 +318,18 @@ export interface PublicSettings {
   channel_monitor_hide_throughput?: boolean
   /** When true, user monitor shows account quota/balance snapshots (default off). */
   channel_monitor_show_quota?: boolean
+  /** When true, user monitor hides the user ranking tab and /users payload. */
+  channel_monitor_hide_user_ranking?: boolean
   available_channels_enabled: boolean
+  /** When false, the user-facing subscription surface is hidden. */
+  subscription_enabled: boolean
+  /** Mirrors payment config BALANCE_PAYMENT_DISABLED. */
+  payment_balance_disabled: boolean
   /** 公开的客户端下载页 /download 是否可访问（默认开启）。 */
   client_download_enabled: boolean
+  chat_app_download_enabled?: boolean
+  chat_app_download_direct_url?: string
+  chat_app_latest_version?: string
   /** 客户端下载页的网盘下载地址；为空则隐藏该按钮。 */
   client_download_netdisk_url: string
   /** 客户端下载页的直连下载地址；为空则隐藏该按钮。 */
@@ -299,12 +348,6 @@ export interface PublicSettings {
   client_latest_version_mac: string
   /** 客户端下载页展示的视频教程地址（B站视频页链接）；为空则不显示视频区块。 */
   client_tutorial_video_url: string
-  /** Chat 桌面客户端（独立产品）下载区块是否展示；默认关闭。 */
-  chat_app_download_enabled: boolean
-  /** Chat 桌面客户端安装包直链；为空则隐藏该区块。 */
-  chat_app_download_direct_url: string
-  /** Chat 桌面客户端最新版本号；为空表示不广播更新。 */
-  chat_app_latest_version: string
   /** 充值页是否展示备用支付通道入口（默认关闭）。 */
   backup_payment_enabled: boolean
   /** 备用支付通道地址；后端已校验只允许 http/https，非法值会落成空串。 */
@@ -412,63 +455,6 @@ export interface UserAnnouncement {
   read_at?: string
   created_at: string
   updated_at: string
-}
-
-// ==================== 工单 ====================
-
-export type TicketStatus = 'open' | 'answered' | 'closed'
-
-export type TicketSenderRole = 'user' | 'admin'
-
-export interface TicketMessage {
-  id: number
-  ticket_id: number
-  sender_role: TicketSenderRole
-  content: string
-  created_at: string
-}
-
-/** 用户侧工单视图。unread_count 是「管理员回复但我还没看」的条数。 */
-export interface Ticket {
-  id: number
-  subject: string
-  status: TicketStatus
-  unread_count: number
-  last_message_at: string
-  last_message_preview?: string
-  closed_at?: string
-  created_at: string
-  updated_at: string
-  messages?: TicketMessage[]
-}
-
-/** 管理端工单视图。unread_count 是「用户发言但管理员还没看」的条数。 */
-export interface AdminTicket {
-  id: number
-  user_id: number
-  user_email?: string
-  subject: string
-  status: TicketStatus
-  unread_count: number
-  last_message_at: string
-  last_message_preview?: string
-  closed_at?: string
-  created_at: string
-  updated_at: string
-  messages?: TicketMessage[]
-}
-
-export interface CreateTicketRequest {
-  subject: string
-  content: string
-}
-
-export interface TicketListFilters {
-  status?: TicketStatus | ''
-  search?: string
-  unread_only?: boolean
-  sort_by?: string
-  sort_order?: 'asc' | 'desc'
 }
 
 export interface CreateAnnouncementRequest {
@@ -626,7 +612,7 @@ export interface PaginationConfig {
 
 // ==================== API Key & Group Types ====================
 
-export type GroupPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok' | 'kimi' | 'zhipu' | 'deepseek' | 'composite'
+export type GroupPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok' | 'kimi' | 'zhipu' | 'deepseek' | 'minimax' | 'opencode_go' | 'composite'
 
 export type VideoModelPrices = Record<string, Record<string, number>>
 
@@ -653,10 +639,10 @@ export interface Group {
   name: string
   description: string | null
   platform: GroupPlatform
-	rate_multiplier: number
-	allow_contribution_pool?: boolean
+  rate_multiplier: number
+  allow_contribution_pool?: boolean
   rpm_limit?: number // Group-level RPM cap (0 = unlimited); overrides user-level rpm_limit when set
-  max_reasoning_effort?: string // OpenAI/Codex reasoning ceiling; empty means unlimited
+  max_reasoning_effort?: string // Anthropic/OpenAI reasoning ceiling; empty means unlimited
   max_reasoning_effort_over_limit?: string // downgrade (default) or deny when over the ceiling
   reasoning_effort_mappings?: ReasoningEffortMapping[]
   is_exclusive: boolean
@@ -697,11 +683,11 @@ export interface Group {
   peak_rate_multiplier: number
   // Claude Code 客户端限制
   claude_code_only: boolean
-  kiro_compat?: boolean
   fallback_group_id: number | null
-  fallback_group_ids?: number[]
-  is_fallback_pool?: boolean
+  fallback_group_ids: number[]
   fallback_group_id_on_invalid_request: number | null
+  is_fallback_pool: boolean
+  kiro_compat: boolean
   // OpenAI Messages 调度开关（用户侧需要此字段判断是否展示 Claude Code 教程）
   allow_messages_dispatch?: boolean
   // OpenAI Live 接口开关
@@ -742,15 +728,23 @@ export interface AdminGroup extends Group {
   // OpenAI Messages 调度配置（仅 openai 平台使用）
   default_mapped_model?: string
   messages_dispatch_model_config?: OpenAIMessagesDispatchModelConfig
-  models_list_config?: ModelsListConfig
+  model_allowlist?: ModelAllowlist
+  codex_models_manifest_config?: CodexModelsManifestConfig
 
   // 分组排序
   sort_order: number
 }
 
-export interface ModelsListConfig {
+export interface ModelAllowlist {
   enabled: boolean
   models: string[]
+}
+
+// 固定账号获取 Codex Model Manifest 配置（仅 openai 分组）
+export interface CodexModelsManifestConfig {
+  enabled: boolean
+  account_ids: number[]
+  fallback_to_scheduler: boolean
 }
 
 export type CompositeRouteMatchType = 'exact' | 'prefix'
@@ -816,12 +810,6 @@ export interface ApiKey {
   key: string
   name: string
   group_id: number | null
-  auto_group: boolean
-  auto_group_strategy: 'price' | 'balanced' | 'speed'
-  auto_group_ids: number[]
-  auto_group_current_group?: Group | null
-  auto_group_current_model?: string
-  auto_group_current_selected_at?: string | null
   status: 'active' | 'inactive' | 'quota_exhausted' | 'expired'
   ip_whitelist: string[]
   ip_blacklist: string[]
@@ -834,6 +822,12 @@ export interface ApiKey {
   updated_at: string
   current_concurrency: number
   group?: Group
+  auto_group: boolean
+  auto_group_strategy: 'price' | 'balanced' | 'speed'
+  auto_group_ids: number[]
+  auto_group_current_group?: Group | null
+  auto_group_current_model?: string
+  auto_group_current_selected_at?: string | null
   rate_limit_5h: number
   rate_limit_1d: number
   rate_limit_7d: number
@@ -851,9 +845,6 @@ export interface ApiKey {
 export interface CreateApiKeyRequest {
   name: string
   group_id?: number | null
-  auto_group?: boolean
-  auto_group_strategy?: 'price' | 'balanced' | 'speed'
-  auto_group_ids?: number[]
   custom_key?: string // Optional custom API Key
   ip_whitelist?: string[]
   ip_blacklist?: string[]
@@ -862,6 +853,9 @@ export interface CreateApiKeyRequest {
   rate_limit_5h?: number
   rate_limit_1d?: number
   rate_limit_7d?: number
+  auto_group?: boolean
+  auto_group_strategy?: 'price' | 'balanced' | 'speed'
+  auto_group_ids?: number[]
 }
 
 export interface UpdateApiKeyRequest {
@@ -886,8 +880,8 @@ export interface CreateGroupRequest {
   name: string
   description?: string | null
   platform?: GroupPlatform
-	rate_multiplier?: number
-	allow_contribution_pool?: boolean
+  rate_multiplier?: number
+  allow_contribution_pool?: boolean
   is_exclusive?: boolean
   subscription_type?: SubscriptionType
   daily_limit_usd?: number | null
@@ -926,14 +920,13 @@ export interface CreateGroupRequest {
   profit_min_margin?: number
   profit_safety_buffer?: number
   claude_code_only?: boolean
-  kiro_compat?: boolean
   fallback_group_id?: number | null
   fallback_group_ids?: number[]
-  is_fallback_pool?: boolean
   fallback_group_id_on_invalid_request?: number | null
   mcp_xml_inject?: boolean
   supported_model_scopes?: string[]
-  models_list_config?: ModelsListConfig
+  model_allowlist?: ModelAllowlist
+  codex_models_manifest_config?: CodexModelsManifestConfig
   allow_messages_dispatch?: boolean
   allow_live?: boolean
   default_mapped_model?: string
@@ -954,8 +947,8 @@ export interface UpdateGroupRequest {
   name?: string
   description?: string | null
   platform?: GroupPlatform
-	rate_multiplier?: number
-	allow_contribution_pool?: boolean
+  rate_multiplier?: number
+  allow_contribution_pool?: boolean
   is_exclusive?: boolean
   status?: 'active' | 'inactive'
   subscription_type?: SubscriptionType
@@ -995,14 +988,15 @@ export interface UpdateGroupRequest {
   profit_min_margin?: number
   profit_safety_buffer?: number
   claude_code_only?: boolean
-  kiro_compat?: boolean
   fallback_group_id?: number | null
   fallback_group_ids?: number[]
-  is_fallback_pool?: boolean
   fallback_group_id_on_invalid_request?: number | null
+  is_fallback_pool?: boolean
+  kiro_compat?: boolean
   mcp_xml_inject?: boolean
   supported_model_scopes?: string[]
-  models_list_config?: ModelsListConfig
+  model_allowlist?: ModelAllowlist
+  codex_models_manifest_config?: CodexModelsManifestConfig
   allow_messages_dispatch?: boolean
   allow_live?: boolean
   default_mapped_model?: string
@@ -1020,7 +1014,7 @@ export interface UpdateGroupRequest {
 
 // ==================== Account & Proxy Types ====================
 
-export type AccountPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok' | 'kimi' | 'zhipu' | 'deepseek'
+export type AccountPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok' | 'kimi' | 'zhipu' | 'deepseek' | 'minimax' | 'opencode_go'
 export type AccountType = 'oauth' | 'setup-token' | 'apikey' | 'upstream' | 'bedrock' | 'service_account'
 export type OAuthAddMethod = 'oauth' | 'setup-token'
 export type ProxyProtocol = 'http' | 'https' | 'socks5' | 'socks5h'
@@ -1269,7 +1263,6 @@ export interface Account {
   // 改为通过 credentials_status.has_<key> 暴露存在性。
   credentials?: Record<string, unknown>
   credentials_status?: Record<string, boolean>
-  custom_headers?: Record<string, string> | null
   ollama_cloud_usage?: OllamaCloudUsageState
   // Extra fields including Codex usage, OpenAI compact capability, and model-level rate limits.
   extra?: (CodexUsageSnapshot & OpenAICompactState & {
@@ -1277,9 +1270,8 @@ export interface Account {
     antigravity_credits_overages?: Record<string, { activated_at: string; active_until: string }>
     upstream_billing_probe_enabled?: boolean
     upstream_billing_rate_sync_enabled?: boolean
-    upstream_billing_manual_rate_multiplier?: number
-    upstream_billing_newapi_group?: string
     upstream_billing_probe?: UpstreamBillingProbeSnapshot
+    upstream_billing_manual_rate_multiplier?: number
     codex_reset_credit_snapshot?: {
       available_count?: number
       credits?: { expires_at?: string }[]
@@ -1310,7 +1302,9 @@ export interface Account {
   } | null
   scheduler_scores?: AccountSchedulerGroupScore[] | null
   priority: number
-  // Returned when the admin list is filtered to a concrete group.
+  // 该账号在当前筛选分组内的优先级（account_groups.priority）。仅当列表按分组
+  // 筛选时后端才返回：账号可属于多个分组，各组排位独立，不筛分组时没有唯一值。
+  // 调度取号与 TransitHub 健康降级用的都是它，而非上面的全局 priority。
   group_priority?: number | null
   rate_multiplier?: number // Account billing multiplier (>=0, 0 means free)
   status: 'active' | 'inactive' | 'error'
@@ -1401,6 +1395,10 @@ export interface Account {
   parent_chatgpt_account_id?: string
 }
 
+// The admin account list may return this compact shape when lite=1. Detail
+// operations still use Account from /admin/accounts/:id.
+export type AccountListItem = Omit<Account, 'groups'>
+
 export interface AccountSchedulerGroupScore {
   group_id?: number | null
   group_name?: string
@@ -1418,7 +1416,6 @@ export interface WindowStats {
   cost: number // Account cost (account multiplier)
   standard_cost?: number
   user_cost?: number
-  by_group?: AccountUsageGroupBreakdown[]
 }
 
 export interface UsageProgress {
@@ -1559,7 +1556,7 @@ export interface CodexUsageSnapshot {
 
 export type OpenAICompactMode = 'auto' | 'force_on' | 'force_off'
 export type OpenAIResponsesMode = 'auto' | 'force_responses' | 'force_chat_completions'
-export type OpenAIEndpointCapability = 'chat_completions' | 'embeddings'
+export type OpenAIEndpointCapability = 'chat_completions' | 'embeddings' | 'seedance'
 
 export interface OpenAICompactState {
   openai_compact_mode?: OpenAICompactMode
@@ -1591,7 +1588,6 @@ export interface CreateAccountRequest {
   auto_pause_on_expired?: boolean
   upstream_billing_probe_enabled?: boolean
   confirm_mixed_channel_risk?: boolean
-  contributor_user_id?: number
 }
 
 export interface UpdateAccountRequest {
@@ -1613,6 +1609,15 @@ export interface UpdateAccountRequest {
   upstream_billing_probe_enabled?: boolean
   upstream_billing_rate_sync_enabled?: boolean
   confirm_mixed_channel_risk?: boolean
+}
+
+export type GrokMediaEligibilityMode = 'auto' | 'enabled' | 'disabled'
+
+export interface GrokMediaEligibilityState {
+  account_id: number
+  mode: GrokMediaEligibilityMode
+  eligible: boolean
+  reason: string
 }
 
 export interface CheckMixedChannelRequest {
@@ -1750,7 +1755,6 @@ export interface OpenAICodexPATCreateRequest {
   extra?: Record<string, unknown>
   skip_default_group_bind?: boolean
   confirm_mixed_channel_risk?: boolean
-  contributor_user_id?: number
 }
 
 export interface CodexSessionImportMessage {
@@ -1865,6 +1869,7 @@ export interface AdminUsageLog extends UsageLog {
   upstream_response_model?: string | null
   upstream_model_mismatch?: boolean | null
   model_mapping_chain?: string | null
+  upstream_request_id?: string | null
 
   // 账号计费倍率（仅管理员可见）
   account_rate_multiplier?: number | null
@@ -2311,20 +2316,9 @@ export interface AccountUsageSummary {
   } | null
 }
 
-export interface AccountUsageGroupBreakdown {
-  group_id: number
-  group_name: string
-  requests: number
-  total_tokens: number
-  standard_cost: number
-  account_cost: number
-  user_cost: number
-}
-
 export interface AccountUsageStatsResponse {
   history: AccountUsageHistory[]
   summary: AccountUsageSummary
-  by_group: AccountUsageGroupBreakdown[]
   models: ModelStat[]
   endpoints: EndpointStat[]
   upstream_endpoints: EndpointStat[]

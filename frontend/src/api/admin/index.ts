@@ -11,7 +11,6 @@ import proxiesAPI from './proxies'
 import redeemAPI from './redeem'
 import promoAPI from './promo'
 import announcementsAPI from './announcements'
-import ticketsAPI from './tickets'
 import settingsAPI from './settings'
 import systemAPI from './system'
 import subscriptionsAPI from './subscriptions'
@@ -39,6 +38,7 @@ import contributionsAPI from './contributions'
 import contributionRoomsAPI from './contributionRooms'
 import auditAPI from './audit'
 import pluginsAPI from './plugins'
+import ticketsAPI from './tickets'
 
 /**
  * Unified admin API object for convenient access
@@ -52,7 +52,6 @@ export const adminAPI = {
   redeem: redeemAPI,
   promo: promoAPI,
   announcements: announcementsAPI,
-  tickets: ticketsAPI,
   settings: settingsAPI,
   system: systemAPI,
   subscriptions: subscriptionsAPI,
@@ -79,7 +78,8 @@ export const adminAPI = {
   contributions: contributionsAPI,
   contributionRooms: contributionRoomsAPI,
   audit: auditAPI,
-  plugins: pluginsAPI
+  plugins: pluginsAPI,
+  tickets: ticketsAPI
 }
 
 export {
@@ -91,7 +91,6 @@ export {
   redeemAPI,
   promoAPI,
   announcementsAPI,
-  ticketsAPI,
   settingsAPI,
   systemAPI,
   subscriptionsAPI,
@@ -118,7 +117,8 @@ export {
   contributionsAPI,
   contributionRoomsAPI,
   auditAPI,
-  pluginsAPI
+  pluginsAPI,
+  ticketsAPI
 }
 
 export type {

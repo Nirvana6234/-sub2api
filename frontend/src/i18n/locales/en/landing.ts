@@ -1,18 +1,4 @@
 export default {
-  seo: {
-    home: {
-      title: 'Sub2API - AI API Gateway and Model API Service',
-      description: 'Connect Claude, GPT, Gemini, and other leading AI models through one OpenAI-compatible API gateway with account routing and usage management.'
-    },
-    modelPlaza: {
-      title: 'AI Model Plaza - Claude, GPT, Gemini API',
-      description: 'Browse available Claude, GPT, and Gemini models, compare pricing, and choose an API service for development and teams.'
-    },
-    download: {
-      title: 'Sub2API Client Download',
-      description: 'Download the Sub2API client and configure your AI API service on Windows, macOS, and other supported platforms.'
-    }
-  },
   batchImageGuide: {
     title: 'Batch Image Generation',
     description: 'Submit multiple prompts in one job and download the generated images when complete'
@@ -22,7 +8,6 @@ export default {
     viewOnGithub: 'View on GitHub',
     viewDocs: 'View Documentation',
     docs: 'Docs',
-    clientDownload: 'Client download',
     switchToLight: 'Switch to Light Mode',
     switchToDark: 'Switch to Dark Mode',
     dashboard: 'Dashboard',
@@ -178,6 +163,7 @@ export default {
     usedQuota: 'Used Quota',
     resetNow: 'Resetting soon',
     subscriptionType: 'Subscription Type',
+    billingType: 'Billing Type',
     subscriptionExpires: 'Subscription Expires',
     // Usage stat cells
     todayRequests: 'Today Requests',
@@ -206,8 +192,8 @@ export default {
 
   // Setup Wizard
   setup: {
-    title: 'Cofly AI Setup',
-    description: 'Configure your Cofly AI instance',
+    title: 'Sub2API Setup',
+    description: 'Configure your Sub2API instance',
     database: {
       title: 'Database Configuration',
       description: 'Connect to your PostgreSQL database',

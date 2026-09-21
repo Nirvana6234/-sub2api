@@ -56,10 +56,24 @@ declare module 'vue-router' {
     requiresRiskControl?: boolean
 
     /**
-     * 是否要求客户端下载页开关已启用。该页为公开页，关闭后访客也不可访问。
+    * 是否要求订阅功能开关（subscription_enabled，opt-out）未被显式关闭
      * @default false
      */
-    requiresClientDownload?: boolean
+    requiresSubscription?: boolean
+
+    /**
+     * Whether this route requires the user's account-management self-service
+     * feature to be enabled
+     * @default false
+     */
+    requiresAccountManagement?: boolean
+
+    /**
+     * Whether this route requires the user's contribution-rooms self-service
+     * feature to be enabled
+     * @default false
+     */
+    requiresContributionRooms?: boolean
 
     /**
      * i18n key for the page title
@@ -70,25 +84,5 @@ declare module 'vue-router' {
      * i18n key for the page description
      */
     descriptionKey?: string
-
-    /**
-     * i18n key for the SEO page title
-     */
-    seoTitleKey?: string
-
-    /**
-     * i18n key for the SEO page description
-     */
-    seoDescriptionKey?: string
-
-    /**
-     * Optional image used by social cards
-     */
-    seoImage?: string
-
-    /**
-     * Whether search engines should exclude this route
-     */
-    noindex?: boolean
   }
 }

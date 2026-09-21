@@ -31,9 +31,9 @@
         </p>
       </div>
 
-      <!-- OpenAI passthrough -->
+      <!-- OpenAI API Key 兼容透传；OAuth/Setup Token 由 STATE Kit 接管。 -->
       <div
-        v-if="allOpenAIPassthroughCapable"
+        v-if="allOpenAIAPIKey"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div class="mb-3 flex items-center justify-between">
@@ -76,52 +76,6 @@
               :class="[
                 'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
                 openaiPassthroughEnabled ? 'translate-x-5' : 'translate-x-0'
-              ]"
-            />
-          </button>
-        </div>
-      </div>
-
-      <!-- OpenAI 字节保真（从属于自动透传；与 codex_cli_only 无关，逐请求判定） -->
-      <div v-if="allOpenAIPassthroughCapable" class="border-t border-gray-200 pt-4 dark:border-dark-600">
-        <div class="mb-3 flex items-center justify-between">
-          <label
-            id="bulk-edit-openai-passthrough-strict-label"
-            class="input-label mb-0"
-            for="bulk-edit-openai-passthrough-strict-enabled"
-          >
-            {{ t('admin.accounts.openai.oauthPassthroughStrict') }}
-          </label>
-          <input
-            v-model="enableOpenAIPassthroughStrict"
-            id="bulk-edit-openai-passthrough-strict-enabled"
-            type="checkbox"
-            aria-controls="bulk-edit-openai-passthrough-strict"
-            class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-          />
-        </div>
-        <div
-          id="bulk-edit-openai-passthrough-strict"
-          :class="!enableOpenAIPassthroughStrict && 'pointer-events-none opacity-50'"
-          role="group"
-          aria-labelledby="bulk-edit-openai-passthrough-strict-label"
-        >
-          <p class="mb-3 text-xs text-gray-500 dark:text-gray-400">
-            {{ t('admin.accounts.openai.oauthPassthroughStrictDesc') }}
-          </p>
-          <button
-            id="bulk-edit-openai-passthrough-strict-toggle"
-            type="button"
-            :class="[
-              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-              openaiPassthroughStrictEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-            ]"
-            @click="openaiPassthroughStrictEnabled = !openaiPassthroughStrictEnabled"
-          >
-            <span
-              :class="[
-                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
-                openaiPassthroughStrictEnabled ? 'translate-x-5' : 'translate-x-0'
               ]"
             />
           </button>
@@ -919,8 +873,8 @@
           <p class="mb-3 text-xs text-gray-500 dark:text-gray-400">
             {{ t('admin.accounts.openai.wsModeDesc') }}
           </p>
-          <p class="mb-3 text-xs text-gray-500 dark:text-gray-400">
-            {{ t(openAIWSModeConcurrencyHintKey) }}
+          <p v-if="openAIWSModeHintKey" class="mb-3 text-xs text-gray-500 dark:text-gray-400">
+            {{ t(openAIWSModeHintKey) }}
           </p>
           <Select
             v-model="openaiOAuthResponsesWebSocketV2Mode"
@@ -1197,8 +1151,8 @@
           <p class="mb-3 text-xs text-gray-500 dark:text-gray-400">
             {{ t('admin.accounts.openai.wsModeDesc') }}
           </p>
-          <p class="mb-3 text-xs text-gray-500 dark:text-gray-400">
-            {{ t(openAIAPIKeyWSModeConcurrencyHintKey) }}
+          <p v-if="openAIAPIKeyWSModeHintKey" class="mb-3 text-xs text-gray-500 dark:text-gray-400">
+            {{ t(openAIAPIKeyWSModeHintKey) }}
           </p>
           <Select
             v-model="openaiAPIKeyResponsesWebSocketV2Mode"
@@ -1559,7 +1513,7 @@ import {
   OPENAI_WS_MODE_PASSTHROUGH,
   OPENAI_WS_MODE_HTTP_BRIDGE,
   isOpenAIWSModeEnabled,
-  resolveOpenAIWSModeConcurrencyHintKey
+  resolveOpenAIWSModeHintKey
 } from '@/utils/openaiWsMode'
 import type { OpenAIWSMode } from '@/utils/openaiWsMode'
 interface Props {
@@ -1576,7 +1530,6 @@ interface Props {
   }
   proxies: ProxyConfig[]
   groups: AdminGroup[]
-  priorityGroupId?: number | null
 }
 
 const props = defineProps<Props>()
@@ -1740,8 +1693,6 @@ const rateMultiplier = ref(1)
 const status = ref<'active' | 'inactive'>('active')
 const groupIds = ref<number[]>([])
 const openaiPassthroughEnabled = ref(false)
-const enableOpenAIPassthroughStrict = ref(false)
-const openaiPassthroughStrictEnabled = ref(false)
 // Codex namespace 工具摊平兼容开关（仅 OAuth），缺省关闭即原样保留
 const openaiFlattenNamespacesEnabled = ref(false)
 const openAILongContextBillingEnabled = ref(false)
@@ -1798,7 +1749,7 @@ const upstreamBillingAutoProbeOptions = computed(() => [
 ])
 const isOpenAIModelRestrictionDisabled = computed(
   () =>
-    allOpenAIPassthroughCapable.value &&
+    allOpenAIAPIKey.value &&
     enableOpenAIPassthrough.value &&
     openaiPassthroughEnabled.value
 )
@@ -1835,7 +1786,8 @@ const openAIEndpointCapabilityOptions = computed<
   Array<{ value: OpenAIEndpointCapability; label: string }>
 >(() => [
   { value: 'chat_completions', label: openAITextEndpointCapabilityLabel.value },
-  { value: 'embeddings', label: t('admin.accounts.openai.capabilityEmbeddings') }
+  { value: 'embeddings', label: t('admin.accounts.openai.capabilityEmbeddings') },
+  { value: 'seedance', label: 'Seedance (Ark)' }
 ])
 const openAITextGenerationCapabilityEnabled = computed(() =>
   openAIEndpointCapabilities.value.includes('chat_completions')
@@ -1845,9 +1797,9 @@ const openAIResponsesModeApplicable = computed(
 )
 
 const normalizeOpenAIEndpointCapabilities = (values: OpenAIEndpointCapability[]) => {
-  const allowed: OpenAIEndpointCapability[] = ['chat_completions', 'embeddings']
+  const allowed: OpenAIEndpointCapability[] = ['chat_completions', 'embeddings', 'seedance']
   const selected = allowed.filter((value) => values.includes(value))
-  return selected.length > 0 ? selected : allowed
+  return selected.length > 0 ? selected : ['chat_completions', 'embeddings'] as OpenAIEndpointCapability[]
 }
 
 const toggleOpenAIEndpointCapability = (
@@ -1873,11 +1825,11 @@ const toggleOpenAIEndpointCapability = (
     capability
   ])
 }
-const openAIWSModeConcurrencyHintKey = computed(() =>
-  resolveOpenAIWSModeConcurrencyHintKey(openaiOAuthResponsesWebSocketV2Mode.value)
+const openAIWSModeHintKey = computed(() =>
+  resolveOpenAIWSModeHintKey(openaiOAuthResponsesWebSocketV2Mode.value)
 )
-const openAIAPIKeyWSModeConcurrencyHintKey = computed(() =>
-  resolveOpenAIWSModeConcurrencyHintKey(openaiAPIKeyResponsesWebSocketV2Mode.value)
+const openAIAPIKeyWSModeHintKey = computed(() =>
+  resolveOpenAIWSModeHintKey(openaiAPIKeyResponsesWebSocketV2Mode.value)
 )
 
 // Model mapping helpers
@@ -2024,24 +1976,12 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
     }
   }
 
-  if (enableOpenAIPassthrough.value) {
+  if (enableOpenAIPassthrough.value && allOpenAIAPIKey.value) {
     const extra = ensureExtra()
     extra.openai_passthrough = openaiPassthroughEnabled.value
     if (!openaiPassthroughEnabled.value) {
       extra.openai_oauth_passthrough = false
     }
-  }
-
-  // 严格模式从属于透传 + codex_cli_only 两个父开关。开启方向的父开关检查在
-  // handleSubmit 里硬拦（静默丢弃恰恰是设计里要避免的「看起来开了、实际没生效」）；
-  // 这里只负责落键，写 false 永远放行——strict 是新增的高风险开关，
-  // 「批量关掉」必须一步可达，不能反过来要求同一次把 codex_cli_only 也打开。
-  // 同时校验可见性（与 openai_responses_flatten_namespaces 同一套路）：勾选后又把目标
-  // 筛选放宽到非透传账号，区块会隐藏但勾选状态还在，这个键就会落到看不见它的账号上——
-  // 正是本变更想避免的那种「后端永远判 false、管理端却看不见」的孤儿键。
-  if (enableOpenAIPassthroughStrict.value && allOpenAIPassthroughCapable.value) {
-    const extra = ensureExtra()
-    extra.openai_passthrough_strict = openaiPassthroughStrictEnabled.value
   }
 
   // 同时校验可见性：勾选后又改了目标筛选条件时，不应把该键写到非 OAuth 账号上
@@ -2057,7 +1997,7 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
 
   if (applyOpenAIEndpointCapabilities) {
     credentials.openai_capabilities =
-      openAIEndpointCapabilities.value.length === 2
+      openAIEndpointCapabilities.value.length === 2 && !openAIEndpointCapabilities.value.includes('seedance')
         ? null
         : [...openAIEndpointCapabilities.value]
     credentialsChanged = true
@@ -2263,7 +2203,6 @@ const handleSubmit = async () => {
   const hasAnyFieldEnabled =
     enableBaseUrl.value ||
     enableOpenAIPassthrough.value ||
-    enableOpenAIPassthroughStrict.value ||
     enableOpenAIFlattenNamespaces.value ||
     (enableOpenAILongContextBilling.value && allOpenAIPassthroughCapable.value) ||
     (enableOpenAIEndpointCapabilities.value && allOpenAIAPIKey.value) ||
@@ -2349,29 +2288,6 @@ const submitBulkUpdate = async (baseUpdates: Record<string, unknown>) => {
     const success = res.success || 0
     const failed = res.failed || 0
     const inherited = res.long_context_inherited_count || 0
-
-    const submittedGroupIDs = Array.isArray(baseUpdates.group_ids)
-      ? baseUpdates.group_ids as number[]
-      : null
-    const keepsPriorityGroup =
-      props.priorityGroupId != null &&
-      (submittedGroupIDs == null || submittedGroupIDs.includes(props.priorityGroupId))
-    if (success > 0 && enablePriority.value && keepsPriorityGroup) {
-      const successfulAccountIDs = res.success_ids?.length
-        ? res.success_ids
-        : (res.results ?? []).filter(result => result.success).map(result => result.account_id)
-      if (successfulAccountIDs.length !== success) {
-        throw new Error('Bulk update response did not include every successful account ID')
-      }
-      const groupPriorityUpdates = successfulAccountIDs.map(accountID => ({
-        account_id: accountID,
-        group_id: props.priorityGroupId!,
-        priority: priority.value
-      }))
-      for (let offset = 0; offset < groupPriorityUpdates.length; offset += 1000) {
-        await adminAPI.accounts.updateGroupPriorities(groupPriorityUpdates.slice(offset, offset + 1000))
-      }
-    }
 
     if (success > 0 && failed === 0) {
       if (inherited > 0) {

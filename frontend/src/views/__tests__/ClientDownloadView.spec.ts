@@ -63,11 +63,14 @@ describe('ClientDownloadView', () => {
     expect(wrapper.text()).toContain('Install')
     expect(wrapper.text()).toContain('Model')
     expect(wrapper.text()).toContain('Extra High')
+    expect(wrapper.text()).not.toContain('共飞 Chat（桌面版）')
+    expect(wrapper.text()).not.toContain('下载共飞 Chat')
 
     const imageSources = wrapper.findAll('img').map((image) => image.attributes('src'))
     expect(imageSources).toContain('/client-guide/g1.png')
     expect(imageSources).toContain('/client-guide/g10.png')
     expect(imageSources).toContain('/client-guide/g21.png')
+    expect(imageSources).toContain('/client-guide/g22.png')
 
   })
 
@@ -136,7 +139,7 @@ describe('ClientDownloadView', () => {
   describe('with a macOS direct URL configured', () => {
     beforeEach(() => {
       appStore.cachedPublicSettings.client_download_direct_url_mac =
-        'https://download.example.com/downloads/codex-relay-client_v0.2_macos-arm64.tar.gz'
+        'https://download.example.com/downloads/codex-relay-client_v0.5_macos-arm64.tar.gz'
     })
 
     afterEach(() => {
@@ -151,7 +154,7 @@ describe('ClientDownloadView', () => {
       expect(wrapper.text()).toContain(
         'curl -fsSL https://download.example.com/downloads/install-mac.sh | bash'
       )
-      expect(wrapper.text()).toContain('codex-relay-client_v0.2_macos-arm64.tar.gz')
+      expect(wrapper.text()).toContain('codex-relay-client_v0.5_macos-arm64.tar.gz')
     })
 
     it('tells mac users to skip the Windows-only unzip and shortcut steps', () => {
