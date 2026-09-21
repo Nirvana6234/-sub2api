@@ -90,19 +90,28 @@ public sealed partial class ClientUpdateViewModel : ObservableObject
     public string DownloadProgressText => $"正在下载… {DownloadProgressPercent:0}%";
 
     /// <summary>
-    /// The passive check behind the sign-in banner. Silent on every outcome, as before —
-    /// this is not something the user asked for, so a network hiccup must not interrupt them.
+    /// The check run once at startup (sign-in surface load). Silent on every outcome except
+    /// finding an update — a network hiccup or "you are current" must not interrupt every
+    /// single launch with a dialog, but an update the user has never been asked about is worth
+    /// one, right away, through the same confirm-and-apply flow 检查更新 uses.
     /// </summary>
     public async Task CheckAsync(CancellationToken cancellationToken = default)
     {
+        ClientCheckResult result;
         try
         {
-            ClientCheckResult result = await _checkForUpdate(cancellationToken).ConfigureAwait(true);
-            Update = result.Status == ClientCheckStatus.Available ? result.Update : null;
+            result = await _checkForUpdate(cancellationToken).ConfigureAwait(true);
         }
         catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException)
         {
-            Update = null;
+            result = new ClientCheckResult(ClientCheckStatus.CheckFailed);
+        }
+
+        Update = result.Status == ClientCheckStatus.Available ? result.Update : null;
+
+        if (result.Status == ClientCheckStatus.Available)
+        {
+            await OfferAsync(result.Update!, cancellationToken).ConfigureAwait(true);
         }
     }
 

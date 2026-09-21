@@ -60,7 +60,7 @@ public sealed class ClientUpdateViewModelTests
     }
 
     [Fact]
-    public async Task ThePassiveCheckNeverShowsADialogOnAnyOutcome()
+    public async Task TheStartupCheckOffersAnAvailableUpdateOnce()
     {
         var rig = new Rig { NextCheck = new ClientCheckResult(ClientCheckStatus.Available, Windows()) };
         ClientUpdateViewModel viewModel = rig.Build();
@@ -68,6 +68,26 @@ public sealed class ClientUpdateViewModelTests
         await viewModel.CheckAsync();
 
         Assert.True(viewModel.HasUpdate);
+        Assert.Equal(["发现新版本 Ver0.9，是否现在更新？"], rig.Confirmations);
+    }
+
+    /// <summary>
+    /// Every other outcome stays silent: this runs on every single launch, and a dialog for
+    /// "you are current" or "the network hiccuped" would be far more annoying than the banner
+    /// it replaced ever was.
+    /// </summary>
+    [Theory]
+    [InlineData((int)ClientCheckStatus.UpToDate)]
+    [InlineData((int)ClientCheckStatus.ChannelDisabled)]
+    [InlineData((int)ClientCheckStatus.CheckFailed)]
+    public async Task TheStartupCheckStaysSilentWhenThereIsNothingToOffer(int status)
+    {
+        var rig = new Rig { NextCheck = new ClientCheckResult((ClientCheckStatus)status) };
+        ClientUpdateViewModel viewModel = rig.Build();
+
+        await viewModel.CheckAsync();
+
+        Assert.False(viewModel.HasUpdate);
         Assert.Empty(rig.Confirmations);
         Assert.Empty(rig.Messages);
         Assert.Equal(0, rig.ApplyCallCount);
