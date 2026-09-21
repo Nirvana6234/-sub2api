@@ -248,3 +248,16 @@ transit-hub/backend/backend/
 !/tools/chat/src-tauri/
 !/tools/chat/src-tauri/**/
 !/tools/chat/src-tauri/**
+
+# 本地构建产物与排查用临时文件（2026-09-21）
+# 这些是在工作副本里直接编译/落盘的，不属于源码。
+# sub2api-playground-auto-keys-linux-amd64 有 165 MB，超过 GitHub 单文件 100 MB 上限，
+# 带上它会让整个 push 被拒。
+/backend/sub2api-playground-auto-keys-linux-amd64
+/transit-hub/transithub-api-priority-group-contract-r2
+/transit-public.tar
+/.handoff-worktree-before-recovery.patch
+/.scheduler-upstream-review.diff
+/.nirvana-diff-names.txt
+/.remote-download.html
+/.prod-download.html
