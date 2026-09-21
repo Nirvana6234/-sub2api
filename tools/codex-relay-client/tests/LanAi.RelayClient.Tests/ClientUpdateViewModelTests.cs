@@ -37,7 +37,7 @@ public sealed class ClientUpdateViewModelTests
         {
             var viewModel = new ClientUpdateViewModel(
                 _ => Task.FromResult(NextCheck),
-                withApply ? (_, _) => { ApplyCallCount++; return Task.FromResult(NextApply); } : null)
+                withApply ? (_, _, _) => { ApplyCallCount++; return Task.FromResult(NextApply); } : null)
             {
                 ConfirmUpdate = message =>
                 {
@@ -140,6 +140,25 @@ public sealed class ClientUpdateViewModelTests
 
         Assert.Equal(1, rig.RestartCallCount);
         Assert.Empty(rig.Messages);
+    }
+
+    /// <summary>
+    /// The button must not stay disabled forever after a failed attempt — that would need a
+    /// restart of the client itself to click 检查更新 again.
+    /// </summary>
+    [Fact]
+    public async Task TheBusyStateClearsAfterEveryOutcomeIncludingAProblem()
+    {
+        var rig = new Rig
+        {
+            NextCheck = new ClientCheckResult(ClientCheckStatus.Available, Windows()),
+            NextApply = new ClientSelfUpdateResult(ClientSelfUpdateOutcome.Problem, "下载失败"),
+        };
+        ClientUpdateViewModel viewModel = rig.Build();
+
+        await viewModel.CheckAndOfferUpdateAsync();
+
+        Assert.False(viewModel.IsApplyingUpdate);
     }
 
     [Theory]

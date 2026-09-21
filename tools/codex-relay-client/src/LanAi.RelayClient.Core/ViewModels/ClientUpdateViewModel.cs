@@ -7,7 +7,7 @@ namespace LanAi.RelayClient.ViewModels;
 public sealed partial class ClientUpdateViewModel : ObservableObject
 {
     private readonly Func<CancellationToken, Task<ClientCheckResult>> _checkForUpdate;
-    private readonly Func<ClientUpdateInfo, CancellationToken, Task<ClientSelfUpdateResult>>? _applyUpdate;
+    private readonly Func<ClientUpdateInfo, IProgress<double>?, CancellationToken, Task<ClientSelfUpdateResult>>? _applyUpdate;
 
     /// <param name="applyUpdate">
     /// Null keeps this view model usable for the passive banner alone — the sign-in surface
@@ -17,7 +17,7 @@ public sealed partial class ClientUpdateViewModel : ObservableObject
     /// </param>
     public ClientUpdateViewModel(
         Func<CancellationToken, Task<ClientCheckResult>> checkForUpdate,
-        Func<ClientUpdateInfo, CancellationToken, Task<ClientSelfUpdateResult>>? applyUpdate = null)
+        Func<ClientUpdateInfo, IProgress<double>?, CancellationToken, Task<ClientSelfUpdateResult>>? applyUpdate = null)
     {
         _checkForUpdate = checkForUpdate ?? throw new ArgumentNullException(nameof(checkForUpdate));
         _applyUpdate = applyUpdate;
@@ -51,15 +51,43 @@ public sealed partial class ClientUpdateViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(HasUpdate))]
     [NotifyPropertyChangedFor(nameof(UpdateMessage))]
     [NotifyPropertyChangedFor(nameof(DownloadPage))]
+    [NotifyPropertyChangedFor(nameof(CheckUpdateButtonLabel))]
     private ClientUpdateInfo? update;
 
     public bool HasUpdate => Update is not null;
+
+    /// <summary>
+    /// One button's label, not two: 检查更新 and "发现新版本…" used to be separate controls
+    /// that did different things — the second only ever opened the download page, so
+    /// clicking what looked like the update banner never went through the confirm-and-apply
+    /// flow the other button had. Same control, same click handler; the label alone says
+    /// whether there is anything to offer yet.
+    /// </summary>
+    public string CheckUpdateButtonLabel => HasUpdate ? UpdateMessage : "检查更新";
 
     public string UpdateMessage => Update is null
         ? string.Empty
         : $"发现新版本 {Update.VersionLabel}，点击更新";
 
     public Uri? DownloadPage => Update?.DownloadPage;
+
+    /// <summary>
+    /// True while an update is being downloaded or applied. Disables the 检查更新 button — a
+    /// second click mid-download would start a second one — and gates the progress line below
+    /// it, which otherwise has nothing to show.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasDownloadProgress))]
+    private bool isApplyingUpdate;
+
+    /// <summary>0–100. Only meaningful for the Windows download; stays 0 for every other channel.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(DownloadProgressText))]
+    private double downloadProgressPercent;
+
+    public bool HasDownloadProgress => IsApplyingUpdate;
+
+    public string DownloadProgressText => $"正在下载… {DownloadProgressPercent:0}%";
 
     /// <summary>
     /// The passive check behind the sign-in banner. Silent on every outcome, as before —
@@ -134,21 +162,35 @@ public sealed partial class ClientUpdateViewModel : ObservableObject
             return;
         }
 
-        ClientSelfUpdateResult result = await _applyUpdate(update, cancellationToken).ConfigureAwait(true);
-        switch (result.Outcome)
+        // Progress<T> captures the calling (UI) SynchronizationContext at construction, so
+        // reports from the download's background read loop still land back here safely.
+        var progress = new Progress<double>(fraction => DownloadProgressPercent = Math.Round(fraction * 100));
+        IsApplyingUpdate = true;
+        DownloadProgressPercent = 0;
+        try
         {
-            case ClientSelfUpdateOutcome.Restarting when RestartForUpdate is not null:
-                await RestartForUpdate().ConfigureAwait(true);
-                break;
-            case ClientSelfUpdateOutcome.OpenedTerminal:
-                await InformAsync("已打开终端，请按提示完成安装。").ConfigureAwait(true);
-                break;
-            case ClientSelfUpdateOutcome.OpenedDownloadPage:
-                await InformAsync("已打开下载页面，请手动下载安装。").ConfigureAwait(true);
-                break;
-            default:
-                await InformAsync(result.Note ?? "更新失败，请稍后重试。").ConfigureAwait(true);
-                break;
+            ClientSelfUpdateResult result = await _applyUpdate(update, progress, cancellationToken).ConfigureAwait(true);
+            switch (result.Outcome)
+            {
+                case ClientSelfUpdateOutcome.Restarting when RestartForUpdate is not null:
+                    await RestartForUpdate().ConfigureAwait(true);
+                    break;
+                case ClientSelfUpdateOutcome.OpenedTerminal:
+                    await InformAsync("已打开终端，请按提示完成安装。").ConfigureAwait(true);
+                    break;
+                case ClientSelfUpdateOutcome.OpenedDownloadPage:
+                    await InformAsync("已打开下载页面，请手动下载安装。").ConfigureAwait(true);
+                    break;
+                default:
+                    await InformAsync(result.Note ?? "更新失败，请稍后重试。").ConfigureAwait(true);
+                    break;
+            }
+        }
+        finally
+        {
+            // A failed download must not leave the button permanently disabled — see
+            // ClientSelfUpdaterTests for what "failed" covers.
+            IsApplyingUpdate = false;
         }
     }
 

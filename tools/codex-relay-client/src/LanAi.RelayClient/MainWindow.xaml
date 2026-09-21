@@ -31,11 +31,17 @@
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,6">
                 <TextBlock Text="{Binding ClientUpdate.CurrentVersionText, ElementName=RootWindow}"
                            Foreground="#9CA3AF" FontSize="11" />
+                <!-- Same click handler as the dashboard's 检查更新: offers the update rather
+                     than only opening the download page. -->
                 <Button Content="{Binding ClientUpdate.UpdateMessage, ElementName=RootWindow}"
-                        Click="OpenUpdatePage_OnClick" Background="Transparent" BorderThickness="0"
+                        Click="CheckUpdate_OnClick" Background="Transparent" BorderThickness="0"
+                        IsEnabled="{Binding ClientUpdate.IsApplyingUpdate, ElementName=RootWindow, Converter={StaticResource InverseBool}}"
                         Foreground="#2563EB" FontSize="11" Padding="8,0,0,0"
                         Visibility="{Binding ClientUpdate.HasUpdate, ElementName=RootWindow, Converter={StaticResource BoolToVisibility}}" />
             </StackPanel>
+            <TextBlock Text="{Binding ClientUpdate.DownloadProgressText, ElementName=RootWindow}"
+                       Visibility="{Binding ClientUpdate.HasDownloadProgress, ElementName=RootWindow, Converter={StaticResource BoolToVisibility}}"
+                       HorizontalAlignment="Center" Foreground="#9CA3AF" FontSize="11" Margin="0,0,0,6" />
             <TextBlock Text="登录后即可使用"
                        Foreground="#9CA3AF" FontSize="12"
                        HorizontalAlignment="Center" Margin="0,0,0,24" />
@@ -210,15 +216,22 @@
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
                     <TextBlock Text="{Binding ClientUpdate.CurrentVersionText, ElementName=RootWindow}"
                                Foreground="#9CA3AF" FontSize="11" VerticalAlignment="Center" />
-                    <Button Content="检查更新" Click="CheckUpdate_OnClick" Background="Transparent"
+                    <!-- One button: 检查更新 until something is found, then the version it
+                         found — both labels trigger the same check-then-offer flow. Disabled
+                         while an update is being downloaded or applied, so a second click
+                         cannot start a second one. -->
+                    <Button Content="{Binding ClientUpdate.CheckUpdateButtonLabel, ElementName=RootWindow}"
+                            Click="CheckUpdate_OnClick" Background="Transparent"
+                            IsEnabled="{Binding ClientUpdate.IsApplyingUpdate, ElementName=RootWindow, Converter={StaticResource InverseBool}}"
                             BorderThickness="0" Foreground="#2563EB" FontSize="11" Padding="10,0,0,0" />
                     <Button Content="联系我们" Click="OpenContactPage_OnClick" Background="Transparent"
                             BorderThickness="0" Foreground="#2563EB" FontSize="11" Padding="10,0,0,0" />
                 </StackPanel>
-                <Button Content="{Binding ClientUpdate.UpdateMessage, ElementName=RootWindow}"
-                        Click="OpenUpdatePage_OnClick" Background="Transparent" BorderThickness="0"
-                        Foreground="#2563EB" FontSize="11" Padding="0,4,0,0"
-                        Visibility="{Binding ClientUpdate.HasUpdate, ElementName=RootWindow, Converter={StaticResource BoolToVisibility}}" />
+                <!-- Windows-only in practice: the mac path opens Terminal and returns almost
+                     at once, so this shows for a moment at 0% at worst. -->
+                <TextBlock Text="{Binding ClientUpdate.DownloadProgressText, ElementName=RootWindow}"
+                           Visibility="{Binding ClientUpdate.HasDownloadProgress, ElementName=RootWindow, Converter={StaticResource BoolToVisibility}}"
+                           HorizontalAlignment="Center" Foreground="#9CA3AF" FontSize="11" Margin="0,4,0,0" />
             </StackPanel>
 
             <ScrollViewer VerticalScrollBarVisibility="Auto">

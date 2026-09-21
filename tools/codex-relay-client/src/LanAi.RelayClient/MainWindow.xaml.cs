@@ -571,14 +571,6 @@ public partial class MainWindow : Window
     private void CheckUpdate_OnClick(object sender, RoutedEventArgs e) =>
         _ = _safeAsync.RunAsync(() => _clientUpdate.CheckAndOfferUpdateAsync());
 
-    private void OpenUpdatePage_OnClick(object sender, RoutedEventArgs e)
-    {
-        if (_clientUpdate.DownloadPage is { } page)
-        {
-            OpenInBrowser(page);
-        }
-    }
-
     private void OpenContactPage_OnClick(object sender, RoutedEventArgs e) =>
         OpenInBrowser(new Uri(new Uri(ClientOptions.ServerAddress), "contact"));
 

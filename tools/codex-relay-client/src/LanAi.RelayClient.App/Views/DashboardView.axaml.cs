@@ -366,12 +366,4 @@ public partial class DashboardView : UserControl
 
     private void OpenContactPage_OnClick(object? sender, RoutedEventArgs e) =>
         BrowserLauncher.TryOpenRelayPage("contact");
-
-    private void OpenUpdatePage_OnClick(object? sender, RoutedEventArgs e)
-    {
-        if (_page?.ClientUpdate.DownloadPage is { } page)
-        {
-            BrowserLauncher.TryOpen(page);
-        }
-    }
 }

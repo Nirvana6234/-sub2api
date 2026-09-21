@@ -39,7 +39,9 @@ internal interface IClientRelaunchHost
     /// exit, copies <paramref name="stagingDirectory"/> over
     /// <paramref name="installDirectory"/>, and relaunches <paramref name="exePath"/>. Returns
     /// once the helper has been started, not once the swap is done — this process is expected
-    /// to have exited by the time it runs.
+    /// to have exited by the time it runs. The helper logs its own steps beside
+    /// <paramref name="stagingDirectory"/>'s parent, so a relaunch that silently fails still
+    /// leaves something to read afterward.
     /// </summary>
     bool StartRelaunchHelper(string stagingDirectory, string installDirectory, string exePath, int currentProcessId);
 
@@ -54,25 +56,60 @@ internal interface IClientRelaunchHost
 /// Applies a <see cref="ClientUpdateInfo"/> the user has already agreed to.
 /// </summary>
 /// <remarks>
+/// <para>
 /// Downloading and unzipping are the parts worth testing directly and can run against a real
 /// temporary directory and a stub server, the same way <c>ClaudeCodeSettingsWriterTests</c>
 /// exercises real files rather than a filesystem abstraction. What happens after — killing this
 /// process, running a shell script — cannot be observed from inside the process doing it, which
 /// is exactly what <see cref="IClientRelaunchHost"/> is for.
+/// </para>
+/// <para>
+/// Windows downloads into <c>&lt;install directory&gt;\update\</c>, not a temp directory. Two
+/// things depend on that: a size-matching zip already there is reused rather than fetched again
+/// (a cheap stand-in for a real range-resume, cheap enough that one was not worth building), and
+/// an already-extracted, never-applied package from an earlier attempt — the helper started but
+/// the relaunch step failed, say — is reused on the next click rather than downloaded and
+/// unzipped from nothing. <see cref="ApplyWindowsAsync"/> only ever hands the helper a directory
+/// that finished extracting cleanly: it extracts into a sibling <c>.tmp</c> directory first and
+/// renames it into place, so a crash mid-extraction never leaves a half-written directory that
+/// a later click would trust.
+/// </para>
 /// </remarks>
-internal sealed class ClientSelfUpdater(HttpClient http, IClientRelaunchHost host)
+internal sealed class ClientSelfUpdater
 {
-    private readonly HttpClient _http = http ?? throw new ArgumentNullException(nameof(http));
-    private readonly IClientRelaunchHost _host = host ?? throw new ArgumentNullException(nameof(host));
+    private readonly HttpClient _http;
+    private readonly IClientRelaunchHost _host;
+    private readonly Func<string?> _currentProcessPath;
 
-    public async Task<ClientSelfUpdateResult> ApplyAsync(ClientUpdateInfo update, CancellationToken cancellationToken = default)
+    public ClientSelfUpdater(HttpClient http, IClientRelaunchHost host)
+        : this(http, host, () => Environment.ProcessPath)
+    {
+    }
+
+    /// <param name="currentProcessPath">
+    /// Stands in for <see cref="Environment.ProcessPath"/>, so a test can point the whole
+    /// download/extract/apply sequence at a throwaway directory instead of wherever the test
+    /// runner's own executable happens to live — writing an "update" folder there would be
+    /// touching a path the test does not own and may not even have permission to.
+    /// </param>
+    internal ClientSelfUpdater(HttpClient http, IClientRelaunchHost host, Func<string?> currentProcessPath)
+    {
+        _http = http ?? throw new ArgumentNullException(nameof(http));
+        _host = host ?? throw new ArgumentNullException(nameof(host));
+        _currentProcessPath = currentProcessPath ?? throw new ArgumentNullException(nameof(currentProcessPath));
+    }
+
+    public async Task<ClientSelfUpdateResult> ApplyAsync(
+        ClientUpdateInfo update,
+        IProgress<double>? progress = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(update);
 
         switch (update.Channel)
         {
             case ClientUpdateChannel.SelfReplace when update.PackageUrl is { } packageUrl:
-                return await ApplyWindowsAsync(packageUrl, cancellationToken).ConfigureAwait(false);
+                return await ApplyWindowsAsync(packageUrl, progress, cancellationToken).ConfigureAwait(false);
 
             case ClientUpdateChannel.RunInTerminal when update.TerminalCommand is { } command:
                 return _host.OpenTerminalWithCommand(command)
@@ -89,61 +126,132 @@ internal sealed class ClientSelfUpdater(HttpClient http, IClientRelaunchHost hos
         }
     }
 
-    private async Task<ClientSelfUpdateResult> ApplyWindowsAsync(Uri packageUrl, CancellationToken cancellationToken)
+    private async Task<ClientSelfUpdateResult> ApplyWindowsAsync(
+        Uri packageUrl,
+        IProgress<double>? progress,
+        CancellationToken cancellationToken)
     {
-        string root = Path.Combine(Path.GetTempPath(), $"gongfei-client-update-{Guid.NewGuid():N}");
-        string zipPath = root + ".zip";
-        string extractDirectory = root;
+        // Not a fixed filename: the shipped exe is renamed at packaging time
+        // (共飞-ChatGPT助手.exe), and a user is free to rename it again. Whatever this
+        // process was actually launched as is what has to come back.
+        string? exePath = _currentProcessPath();
+        string? installDirectory = exePath is null ? null : Path.GetDirectoryName(exePath);
+        if (exePath is null || installDirectory is null)
+        {
+            return new ClientSelfUpdateResult(ClientSelfUpdateOutcome.Problem, "无法确定当前程序的安装目录。");
+        }
+
+        string updateRoot = Path.Combine(installDirectory, "update");
+        string zipPath = Path.Combine(updateRoot, "package.zip");
+        string extractDirectory = Path.Combine(updateRoot, "extracted");
+
         try
         {
-            await using (FileStream file = File.Create(zipPath))
-            using (HttpResponseMessage response = await _http
-                       .GetAsync(packageUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
-                       .ConfigureAwait(false))
-            {
-                response.EnsureSuccessStatusCode();
-                await response.Content.CopyToAsync(file, cancellationToken).ConfigureAwait(false);
-            }
+            Directory.CreateDirectory(updateRoot);
 
-            // The release zip has no top-level wrapper folder (see "打包 Windows zip" in
-            // client-release.yml) — its contents sit directly where AppContext.BaseDirectory's
-            // do, so extracting straight into a staging directory mirrors the install layout
-            // with nothing to strip.
-            ZipFile.ExtractToDirectory(zipPath, extractDirectory);
-
-            // Not a fixed filename: the shipped exe is renamed at packaging time
-            // (共飞-ChatGPT助手.exe), and a user is free to rename it again. Whatever this
-            // process was actually launched as is what has to come back.
-            string? exePath = Environment.ProcessPath;
-            string? installDirectory = exePath is null ? null : Path.GetDirectoryName(exePath);
-            if (exePath is null || installDirectory is null)
+            if (!HasUsableExtraction(extractDirectory))
             {
-                TryDeleteDirectory(extractDirectory);
-                return new ClientSelfUpdateResult(ClientSelfUpdateOutcome.Problem, "无法确定当前程序的安装目录。");
+                await DownloadIfNeededAsync(packageUrl, zipPath, progress, cancellationToken).ConfigureAwait(false);
+                ExtractAtomically(zipPath, extractDirectory);
             }
 
             if (!_host.StartRelaunchHelper(extractDirectory, installDirectory, exePath, Environment.ProcessId))
             {
-                TryDeleteDirectory(extractDirectory);
-                return new ClientSelfUpdateResult(ClientSelfUpdateOutcome.Problem, "无法启动更新助手，请前往下载页手动更新。");
+                // Left in place on purpose: the extraction is still good, so the next click
+                // can retry the helper without downloading or unzipping anything again.
+                return new ClientSelfUpdateResult(ClientSelfUpdateOutcome.Problem, "无法启动更新助手，请稍后重试或前往下载页手动更新。");
             }
 
-            // extractDirectory is deliberately left in place: the helper copies from it after
-            // this process exits, and deletes it once done.
             return new ClientSelfUpdateResult(ClientSelfUpdateOutcome.Restarting);
         }
         catch (Exception ex) when (ex is IOException or HttpRequestException or InvalidDataException or UnauthorizedAccessException)
         {
             ClientLog.Warning("下载或解压更新包失败", ex);
-            TryDeleteDirectory(extractDirectory);
             return new ClientSelfUpdateResult(
                 ClientSelfUpdateOutcome.Problem,
                 "下载或解压更新包失败，请稍后重试或前往下载页手动更新。");
         }
-        finally
+    }
+
+    private static bool HasUsableExtraction(string extractDirectory) =>
+        Directory.Exists(extractDirectory) && Directory.EnumerateFileSystemEntries(extractDirectory).Any();
+
+    /// <summary>
+    /// Fetches <paramref name="packageUrl"/> into <paramref name="zipPath"/>, unless a file of
+    /// exactly the advertised size is already there — an earlier attempt's download that never
+    /// got applied. Reusing it turns a retry into "unzip and hand off" instead of "download 40MB
+    /// again", at the cost of a false negative if a same-sized-but-different package is ever
+    /// published, which republishing a real update (a different size almost always) corrects on
+    /// its own.
+    /// </summary>
+    private async Task DownloadIfNeededAsync(
+        Uri packageUrl,
+        string zipPath,
+        IProgress<double>? progress,
+        CancellationToken cancellationToken)
+    {
+        using HttpResponseMessage response = await _http
+            .GetAsync(packageUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+            .ConfigureAwait(false);
+        response.EnsureSuccessStatusCode();
+
+        long? expectedLength = response.Content.Headers.ContentLength;
+        if (expectedLength is > 0 && File.Exists(zipPath) && new FileInfo(zipPath).Length == expectedLength)
         {
-            TryDeleteFile(zipPath);
+            return;
         }
+
+        await using (FileStream file = File.Create(zipPath))
+        await using (Stream responseStream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false))
+        {
+            byte[] buffer = new byte[81920];
+            long readTotal = 0;
+            int read;
+            while ((read = await responseStream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) > 0)
+            {
+                await file.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
+                readTotal += read;
+                if (expectedLength is > 0)
+                {
+                    progress?.Report((double)readTotal / expectedLength.Value);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Extracts into a sibling <c>.tmp</c> directory and renames it into place only once
+    /// <see cref="ZipFile.ExtractToDirectory(string, string)"/> has returned without throwing —
+    /// so <paramref name="extractDirectory"/> existing is always proof it is complete, never a
+    /// half-written extraction a retry would otherwise trust.
+    /// </summary>
+    private static void ExtractAtomically(string zipPath, string extractDirectory)
+    {
+        string extractingTo = extractDirectory + ".tmp";
+        if (Directory.Exists(extractingTo))
+        {
+            Directory.Delete(extractingTo, recursive: true);
+        }
+
+        try
+        {
+            ZipFile.ExtractToDirectory(zipPath, extractingTo);
+        }
+        catch
+        {
+            // A corrupt zip will never succeed by retrying with the same bytes — forcing a
+            // fresh download is the only way a later click can recover on its own.
+            TryDeleteFile(zipPath);
+            TryDeleteDirectory(extractingTo);
+            throw;
+        }
+
+        if (Directory.Exists(extractDirectory))
+        {
+            Directory.Delete(extractDirectory, recursive: true);
+        }
+
+        Directory.Move(extractingTo, extractDirectory);
     }
 
     private static void TryDeleteFile(string path)
@@ -178,8 +286,13 @@ internal sealed class ClientRelaunchHost : IClientRelaunchHost
     {
         try
         {
+            // Beside stagingDirectory's parent (…\update\), not %TEMP%: it has to survive
+            // this process exiting to be worth reading afterward, and it sits next to the
+            // package it describes rather than scattered into a temp folder nobody would
+            // think to look in.
+            string logPath = Path.Combine(Path.GetDirectoryName(stagingDirectory) ?? Path.GetTempPath(), "helper.log");
             string scriptPath = Path.Combine(Path.GetTempPath(), $"gongfei-client-update-{Guid.NewGuid():N}.ps1");
-            File.WriteAllText(scriptPath, BuildRelaunchScript(stagingDirectory, installDirectory, exePath, currentProcessId));
+            File.WriteAllText(scriptPath, BuildRelaunchScript(stagingDirectory, installDirectory, exePath, currentProcessId, logPath));
 
             var startInfo = new ProcessStartInfo("powershell.exe")
             {
@@ -251,17 +364,48 @@ internal sealed class ClientRelaunchHost : IClientRelaunchHost
     /// gone by the time this runs — <c>Wait-Process</c> otherwise errors immediately on an
     /// unknown id rather than treating "already exited" as done.
     /// </para>
+    /// <para>
+    /// The relaunch is wrapped in its own <c>try/catch</c>, logged either way, and never allowed
+    /// to skip the final cleanup line. The first cut of this script let a relaunch failure (an
+    /// AV product or SmartScreen holding a freshly written, unsigned exe, for one) propagate as
+    /// an uncaught terminating error, which stopped the script cold right there — the files were
+    /// already correctly swapped by that point, but with no relaunch and no log, that looked
+    /// from the user's side exactly like the whole update silently doing nothing.
+    /// </para>
     /// </remarks>
-    private static string BuildRelaunchScript(string staging, string install, string exePath, int processId) => $$"""
+    private static string BuildRelaunchScript(string staging, string install, string exePath, int processId, string logPath) => $$"""
         $ErrorActionPreference = 'Continue'
-        try { Wait-Process -Id {{processId}} -Timeout 60 -ErrorAction SilentlyContinue } catch {}
+        $log = '{{Escape(logPath)}}'
+        function Log($msg) {
+            Add-Content -LiteralPath $log -Value ("[{0}] {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $msg) -ErrorAction SilentlyContinue
+        }
+        Log 'helper started'
+        try {
+            Wait-Process -Id {{processId}} -Timeout 60 -ErrorAction SilentlyContinue
+            Log 'previous process no longer running'
+        } catch {
+            Log "wait-process reported: $_"
+        }
         Start-Sleep -Milliseconds 500
+        Log 'copying staged files over the install directory'
         robocopy '{{Escape(staging)}}' '{{Escape(install)}}' /E /IS /IT /R:5 /W:1 /NFL /NDL /NJH /NJS | Out-Null
+        Log "robocopy exit code: $LASTEXITCODE"
         Start-Sleep -Milliseconds 200
         Remove-Item -LiteralPath '{{Escape(staging)}}' -Recurse -Force -ErrorAction SilentlyContinue
-        Start-Process -FilePath '{{Escape(exePath)}}'
+        try {
+            Start-Process -FilePath '{{Escape(exePath)}}'
+            Log 'relaunched'
+        } catch {
+            Log "relaunch failed: $_"
+        }
+        Log 'helper finished'
         Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
         """;
 
-    private static string Escape(string value) => value.Replace("'", "''");
+    /// <summary>
+    /// Single-quote escaping, and a trailing backslash stripped: one right before the closing
+    /// quote would otherwise escape that quote instead of ending the string — robocopy in
+    /// particular is notorious for exactly this with a path that happens to end in one.
+    /// </summary>
+    private static string Escape(string value) => value.TrimEnd('\\').Replace("'", "''");
 }

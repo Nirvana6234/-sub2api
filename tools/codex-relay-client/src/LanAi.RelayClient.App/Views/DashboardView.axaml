@@ -95,13 +95,19 @@
       <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
         <TextBlock Text="{Binding ClientUpdate.CurrentVersionText}"
                    Foreground="#9CA3AF" FontSize="11" VerticalAlignment="Center" />
-        <Button Content="检查更新" Click="CheckUpdate_OnClick" Classes="link" Padding="10,0,0,0" />
+        <!-- One button: 检查更新 until something is found, then the version it found —
+             both labels trigger the same check-then-offer flow. Disabled while an update is
+             being downloaded or applied, so a second click cannot start a second one. -->
+        <Button Content="{Binding ClientUpdate.CheckUpdateButtonLabel}"
+                Click="CheckUpdate_OnClick" Classes="link" Padding="10,0,0,0"
+                IsEnabled="{Binding !ClientUpdate.IsApplyingUpdate}" />
         <Button Content="联系我们" Click="OpenContactPage_OnClick" Classes="link" Padding="10,0,0,0" />
       </StackPanel>
-      <Button Content="{Binding ClientUpdate.UpdateMessage}"
-              Click="OpenUpdatePage_OnClick" Classes="link"
-              HorizontalAlignment="Center" Padding="0,4,0,0"
-              IsVisible="{Binding ClientUpdate.HasUpdate}" />
+      <!-- Windows-only in practice: the mac path opens Terminal and returns almost at once,
+           so this shows for a moment at 0% at worst. -->
+      <TextBlock Text="{Binding ClientUpdate.DownloadProgressText}"
+                 IsVisible="{Binding ClientUpdate.HasDownloadProgress}"
+                 HorizontalAlignment="Center" Foreground="#9CA3AF" FontSize="11" Margin="0,4,0,0" />
     </StackPanel>
 
     <ScrollViewer VerticalScrollBarVisibility="Auto">
