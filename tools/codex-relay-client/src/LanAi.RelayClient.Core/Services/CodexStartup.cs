@@ -149,6 +149,7 @@ internal sealed class CodexStartup : ICodexStartup
     private readonly ICodexRouteGuardHost _routeGuard;
     private readonly LocalPawRelay? _localRelay;
     private readonly ContextFilterProcess? _contextFilter;
+    private readonly CodexSessionProviderMigrator? _sessions;
     private bool _contextFilterEnabled = true;
     private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
     private int _releaseRequests;
@@ -162,7 +163,8 @@ internal sealed class CodexStartup : ICodexStartup
         ICodexAppLauncher launcher,
         ICodexRouteGuardHost? routeGuard = null,
         LocalPawRelay? localRelay = null,
-        ContextFilterProcess? contextFilter = null)
+        ContextFilterProcess? contextFilter = null,
+        CodexSessionProviderMigrator? sessions = null)
     {
         _relay = relay ?? throw new ArgumentNullException(nameof(relay));
         _session = session ?? throw new ArgumentNullException(nameof(session));
@@ -172,6 +174,7 @@ internal sealed class CodexStartup : ICodexStartup
         _routeGuard = routeGuard ?? new NullCodexRouteGuardHost();
         _localRelay = localRelay;
         _contextFilter = contextFilter;
+        _sessions = sessions;
     }
 
     public bool HasContextFilter => _contextFilter is not null;
@@ -342,6 +345,8 @@ internal sealed class CodexStartup : ICodexStartup
                     CodexStartupStatus.LocalFailure,
                     "无法写入 ChatGPT 的配置文件，请确认它没有被其他程序占用。");
             }
+
+            await MoveSessionsToRelayAsync().ConfigureAwait(false);
 
             CodexLaunchResult launch = await _launcher
                 .EnsureDebugPortAsync(new CodexLaunchRequest { AllowTerminateExisting = allowRestart }, cancellationToken)
@@ -553,6 +558,7 @@ internal sealed class CodexStartup : ICodexStartup
                         if (_config.RestoreOriginalFiles())
                         {
                             ClientLog.Info("已恢复用户原始 Codex 配置");
+                            await ReturnSessionsFromRelayAsync().ConfigureAwait(false);
                         }
 
                         localReleaseCompleted = true;
@@ -578,6 +584,79 @@ internal sealed class CodexStartup : ICodexStartup
 
     private static CodexStartupResult ReleaseInProgressResult() =>
         new(CodexStartupStatus.LocalFailure, "正在释放 ChatGPT 配置，请稍后再试。");
+
+    /// <summary>
+    /// Brings the user's earlier conversations under the relay's provider so Codex
+    /// lists them and resumes them through this client.
+    /// </summary>
+    /// <remarks>
+    /// Never allowed to stop the launch: a conversation list that is out of date is a
+    /// nuisance, a Codex that will not start is the product not working. Every outcome
+    /// that is not success is logged and the launch goes on. The work runs off the
+    /// calling thread because waiting out a database Codex is holding can take seconds.
+    /// </remarks>
+    private async Task MoveSessionsToRelayAsync()
+    {
+        if (_sessions is null)
+        {
+            return;
+        }
+
+        try
+        {
+            SessionMigrationResult result = await Task.Run(_sessions.MoveSessionsToRelay).ConfigureAwait(false);
+            LogSessionMigration("历史会话归入共飞", result);
+        }
+        catch (Exception ex)
+        {
+            ClientLog.Warning("整理历史会话失败，不影响启动", ex);
+        }
+    }
+
+    /// <summary>
+    /// Hands the conversations back once Codex has its own configuration again.
+    /// </summary>
+    /// <remarks>
+    /// Runs only after the original files were restored, so the provider it reads to
+    /// place conversations created in the meantime is the user's own — not ours, which
+    /// is about to stop existing.
+    /// </remarks>
+    private async Task ReturnSessionsFromRelayAsync()
+    {
+        if (_sessions is null)
+        {
+            return;
+        }
+
+        try
+        {
+            string fallback = _config.ReadActiveProvider() ?? CodexConfigWriter.DefaultProviderId;
+            SessionMigrationResult result = await Task
+                .Run(() => _sessions.ReturnSessionsFromRelay(fallback))
+                .ConfigureAwait(false);
+            LogSessionMigration("历史会话还给原提供方", result);
+        }
+        catch (Exception ex)
+        {
+            ClientLog.Warning("还原历史会话失败", ex);
+        }
+    }
+
+    private static void LogSessionMigration(string what, SessionMigrationResult result)
+    {
+        switch (result.Outcome)
+        {
+            case SessionMigrationOutcome.Migrated:
+                ClientLog.Info($"{what}：{result.Changed} 个（数据库已备份到 {result.BackupDirectory}）");
+                break;
+            case SessionMigrationOutcome.Skipped:
+                ClientLog.Info($"{what}：已跳过。{result.Detail}");
+                break;
+            case SessionMigrationOutcome.Failed:
+                ClientLog.Warning($"{what}：失败，未做修改。{result.Detail}");
+                break;
+        }
+    }
 
     private async Task StopLocalTransportAsync()
     {

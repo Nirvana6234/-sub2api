@@ -159,6 +159,12 @@ public partial class App : Application
             AppPaths.CodexSnapshotRoot,
             AppPaths.CodexAuthSnapshotFile);
 
+        // Keeps the user's earlier conversations listed and reachable while Codex is
+        // pointed at the relay. See the class for why Codex loses them otherwise.
+        var codexSessions = new CodexSessionProviderMigrator(
+            new CodexPaths(),
+            AppPaths.CodexSessionBackupRoot);
+
         var contextFilterUsage = new ContextFilterUsageStore();
 
         // The account session is handed over as a delegate, not a value: the relay asks
@@ -188,7 +194,8 @@ public partial class App : Application
             CodexHosts.CreateLauncher(),
             CodexHosts.CreateRouteGuardHost(codexConfig),
             localRelay,
-            contextFilter);
+            contextFilter,
+            codexSessions);
 
         var dashboard = new DashboardViewModel(
             relay,

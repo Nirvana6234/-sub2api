@@ -90,6 +90,12 @@ public partial class App : Application
             SecureStorage.CreateSnapshotProtector(),
             AppPaths.CodexSnapshotRoot,
             AppPaths.CodexAuthSnapshotFile);
+
+        // Keeps the user's earlier conversations listed and reachable while Codex is
+        // pointed at the relay. See the class for why Codex loses them otherwise.
+        var codexSessions = new CodexSessionProviderMigrator(
+            new CodexPaths(),
+            AppPaths.CodexSessionBackupRoot);
         string contextFilterPath = Path.Combine(AppContext.BaseDirectory, "context-filter", "context-filter.exe");
         var contextFilterUsage = new ContextFilterUsageStore();
         var localRelay = new LocalPawRelay(
@@ -107,7 +113,8 @@ public partial class App : Application
             new CodexAppLauncherAdapter(new CodexAppLauncher()),
             new CodexRouteGuardHost(codexConfig),
             localRelay,
-            contextFilter);
+            contextFilter,
+            codexSessions);
 
         var dashboard = new DashboardViewModel(
             relay,
