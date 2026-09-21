@@ -354,6 +354,9 @@ public partial class MainWindow : Window
         }
     }
 
+    private void ConfigureAutoGroup_Click(object sender, RoutedEventArgs e) =>
+        _ = _safeAsync.RunAsync(() => _dashboard.ConfigureAutoGroupAsync());
+
     private void Refresh_OnClick(object sender, RoutedEventArgs e) =>
         _ = _safeAsync.RunAsync(RefreshAndMonitorAsync);
 

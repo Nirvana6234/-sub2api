@@ -238,6 +238,9 @@ public partial class DashboardView : UserControl
     private void Refresh_OnClick(object? sender, RoutedEventArgs e) =>
         _ = _safeAsync?.RunAsync(RefreshAndMonitorAsync);
 
+    private void ConfigureAutoGroup_OnClick(object? sender, RoutedEventArgs e) =>
+        _ = _safeAsync?.RunAsync(() => _page?.Dashboard.ConfigureAutoGroupAsync() ?? Task.CompletedTask);
+
     private void StartCodex_OnClick(object? sender, RoutedEventArgs e) =>
         _ = _safeAsync?.RunAsync(StartOrInstallCodexAsync);
 

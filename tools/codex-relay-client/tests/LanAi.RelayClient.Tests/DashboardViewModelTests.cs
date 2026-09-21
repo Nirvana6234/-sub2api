@@ -371,6 +371,157 @@ public sealed class DashboardViewModelTests
         Assert.True(dashboard.CanStartCodex);
     }
 
+    /// <summary>
+    /// Choosing 自动分组 asks only while nothing is configured.
+    /// </summary>
+    /// <remarks>
+    /// The dialog used to open on every switch, which turned a routine mode change
+    /// into a form. With candidates already saved it must just turn routing on —
+    /// using exactly what is saved, not silently replacing it.
+    /// </remarks>
+    [Fact]
+    public async Task ChoosingAutomaticGroupSkipsTheDialogWhenCandidatesAreAlreadyConfigured()
+    {
+        var relay = new FakeRelayClient
+        {
+            OnAvailableGroups = () => [Group(11, "OpenAI 甲"), Group(12, "OpenAI 乙")],
+            OnListKeys = () => [],
+            OnPawAutoGroup = () => new PawAutoGroupSettings(true, [12], "speed"),
+        };
+        var session = new RelaySessionManager(relay, new FakeSessionStore(), "https://relay.test/", new TestClock().Read);
+        var codex = new FakeCodexStartup { UsesLocalTransport = true };
+        int dialogOpened = 0;
+        var dashboard = new DashboardViewModel(
+            relay,
+            session,
+            new FakeGroupPreferenceStore(),
+            new ManagedKeyNaming(new FixedInstallId("testinst")),
+            codex)
+        {
+            ConfigureAutoGroup = (_, _) =>
+            {
+                dialogOpened++;
+                return Task.FromResult<PawAutoGroupSettings?>(null);
+            },
+        };
+        await session.SignInAsync("a@b.com", "pw");
+        await dashboard.RefreshAsync();
+
+        await dashboard.SwitchGroupAsync(dashboard.Groups.Single(group => group.IsAutomatic));
+
+        Assert.Equal(0, dialogOpened);
+        Assert.True(dashboard.SelectedGroup?.IsAutomatic);
+        Assert.Null(codex.ActiveGroups.Last());
+        Assert.Equal([12L], relay.LastSavedPawAutoGroup?.AutoGroupIds);
+        Assert.Equal("speed", relay.LastSavedPawAutoGroup?.AutoGroupStrategy);
+    }
+
+    /// <summary>
+    /// Candidates the account can no longer use do not count as "configured".
+    /// </summary>
+    /// <remarks>
+    /// A saved list that points only at groups since removed would otherwise skip the
+    /// dialog and then be pruned to nothing, leaving the user with no way to pick.
+    /// </remarks>
+    [Fact]
+    public async Task StaleCandidatesStillCountAsNothingConfigured()
+    {
+        var relay = new FakeRelayClient
+        {
+            OnAvailableGroups = () => [Group(11, "OpenAI 甲")],
+            OnListKeys = () => [],
+            OnPawAutoGroup = () => new PawAutoGroupSettings(true, [999], "price"),
+        };
+        var session = new RelaySessionManager(relay, new FakeSessionStore(), "https://relay.test/", new TestClock().Read);
+        var codex = new FakeCodexStartup { UsesLocalTransport = true };
+        int dialogOpened = 0;
+        var dashboard = new DashboardViewModel(
+            relay,
+            session,
+            new FakeGroupPreferenceStore(),
+            new ManagedKeyNaming(new FixedInstallId("testinst")),
+            codex)
+        {
+            ConfigureAutoGroup = (_, _) =>
+            {
+                dialogOpened++;
+                return Task.FromResult<PawAutoGroupSettings?>(new PawAutoGroupSettings(true, [11], "price"));
+            },
+        };
+        await session.SignInAsync("a@b.com", "pw");
+        await dashboard.RefreshAsync();
+
+        await dashboard.SwitchGroupAsync(dashboard.Groups.Single(group => group.IsAutomatic));
+
+        Assert.Equal(1, dialogOpened);
+        Assert.Equal([11L], relay.LastSavedPawAutoGroup?.AutoGroupIds);
+    }
+
+    /// <summary>The 配置 button edits the saved settings without moving the client between modes.</summary>
+    [Fact]
+    public async Task TheConfigureButtonSavesSettingsWithoutChangingTheMode()
+    {
+        var relay = new FakeRelayClient
+        {
+            OnAvailableGroups = () => [Group(11, "OpenAI 甲"), Group(12, "OpenAI 乙")],
+            OnListKeys = () => [],
+            OnPawAutoGroup = () => new PawAutoGroupSettings(true, [11], "price"),
+        };
+        var session = new RelaySessionManager(relay, new FakeSessionStore(), "https://relay.test/", new TestClock().Read);
+        var codex = new FakeCodexStartup { UsesLocalTransport = true };
+        var preferences = new FakeGroupPreferenceStore();
+        var dashboard = new DashboardViewModel(
+            relay,
+            session,
+            preferences,
+            new ManagedKeyNaming(new FixedInstallId("testinst")),
+            codex)
+        {
+            ConfigureAutoGroup = (settings, candidates) =>
+            {
+                Assert.Equal([11L], settings.AutoGroupIds);
+                Assert.Equal([11L, 12L], candidates.Select(candidate => candidate.Id));
+                return Task.FromResult<PawAutoGroupSettings?>(new PawAutoGroupSettings(true, [11, 12], "balanced"));
+            },
+        };
+        await session.SignInAsync("a@b.com", "pw");
+        await dashboard.RefreshAsync();
+        GroupItemViewModel fixedGroup = dashboard.SelectedGroup!;
+        Assert.False(fixedGroup.IsAutomatic);
+        Assert.True(dashboard.CanConfigureAutoGroup);
+
+        await dashboard.ConfigureAutoGroupAsync();
+
+        Assert.Equal([11L, 12L], relay.LastSavedPawAutoGroup?.AutoGroupIds);
+        Assert.Equal("balanced", relay.LastSavedPawAutoGroup?.AutoGroupStrategy);
+        Assert.Same(fixedGroup, dashboard.SelectedGroup);
+        Assert.False(preferences.SavedAutomatic);
+        Assert.Contains("选择「自动分组」", dashboard.GroupMessage);
+    }
+
+    [Fact]
+    public async Task TheConfigureButtonIsHiddenWhenThereIsNothingToRouteBetween()
+    {
+        var relay = new FakeRelayClient
+        {
+            OnAvailableGroups = () => [Group(13, "Claude", platform: "anthropic")],
+            OnListKeys = () => [],
+        };
+        var session = new RelaySessionManager(relay, new FakeSessionStore(), "https://relay.test/", new TestClock().Read);
+        var dashboard = new DashboardViewModel(
+            relay,
+            session,
+            new FakeGroupPreferenceStore(),
+            new ManagedKeyNaming(new FixedInstallId("testinst")),
+            new FakeCodexStartup { UsesLocalTransport = true });
+        await session.SignInAsync("a@b.com", "pw");
+
+        await dashboard.RefreshAsync();
+
+        Assert.False(dashboard.CanConfigureAutoGroup);
+        Assert.DoesNotContain(dashboard.Groups, group => group.IsAutomatic);
+    }
+
     [Fact]
     public async Task AutomaticGroupSaveFailureKeepsThePreviousFixedGroup()
     {

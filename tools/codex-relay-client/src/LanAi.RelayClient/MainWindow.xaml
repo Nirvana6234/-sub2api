@@ -459,6 +459,10 @@
 
                             <TextBlock Text="切换分组" Foreground="#6B7280" FontSize="12" Margin="0,12,0,4" />
                             <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
                             <ComboBox ItemsSource="{Binding Groups}"
                                       SelectedItem="{Binding SelectedGroup, Mode=TwoWay}"
                                       IsEnabled="{Binding GroupsReady}"
@@ -514,6 +518,16 @@
                                        Margin="10,0,0,0" VerticalAlignment="Center"
                                        IsHitTestVisible="False"
                                        Visibility="{Binding HasNoGroupSelected, Converter={StaticResource BoolToVisibility}}" />
+
+                            <!-- Reopens the automatic-routing dialog. Choosing 自动分组 only
+                                 asks once, while nothing is configured; this is how to
+                                 change it later. -->
+                            <Button Grid.Column="1" Content="配置" Margin="8,0,0,0" Padding="12,6"
+                                    VerticalAlignment="Stretch"
+                                    Visibility="{Binding CanConfigureAutoGroup, Converter={StaticResource BoolToVisibility}}"
+                                    IsEnabled="{Binding GroupsReady}"
+                                    ToolTip="设置自动分组使用哪些分组和选择策略"
+                                    Click="ConfigureAutoGroup_Click" />
                             </Grid>
 
                             <TextBlock Text="{Binding GroupMessage}" TextWrapping="Wrap"

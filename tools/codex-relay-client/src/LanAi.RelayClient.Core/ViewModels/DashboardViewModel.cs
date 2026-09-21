@@ -167,6 +167,14 @@ public sealed partial class DashboardViewModel : ObservableObject
     public Func<PawAutoGroupSettings, IReadOnlyList<GroupItemViewModel>, Task<PawAutoGroupSettings?>>?
         ConfigureAutoGroup { get; set; }
 
+    /// <summary>Whether the 配置 button beside the group list should be offered.</summary>
+    /// <remarks>
+    /// True only when the automatic entry is actually in the list, i.e. the server
+    /// supports it and the account has at least one OpenAI group to route between.
+    /// </remarks>
+    [ObservableProperty]
+    private bool canConfigureAutoGroup;
+
     private PawAutoGroupSettings? _autoGroupSettings;
     // Automatic routing was added after the original relay API. A 404 here means
     // an older server, not a failure of the group card itself.
@@ -1359,6 +1367,7 @@ public sealed partial class DashboardViewModel : ObservableObject
                 if (IsClaudeGroup) _ = _safeAsync.RunAsync(LoadClaudePreferenceAsync);
             }
 
+            CanConfigureAutoGroup = automatic is not null;
             GroupsReady = true;
             OnPropertyChanged(nameof(CanStartCodex));
             OnPropertyChanged(nameof(StartCodexLabel));
@@ -1526,19 +1535,25 @@ public sealed partial class DashboardViewModel : ObservableObject
             PawAutoGroupSettings current = await _client
                 .GetPawAutoGroupAsync(token, cancellationToken)
                 .ConfigureAwait(true);
-            IReadOnlyList<GroupItemViewModel> candidates = Groups
-                .Where(g => !g.IsAutomatic && string.Equals(g.Platform, "openai", StringComparison.OrdinalIgnoreCase))
-                .ToArray();
-            PawAutoGroupSettings? chosen = ConfigureAutoGroup is null
-                ? null
-                : await ConfigureAutoGroup(current, candidates).ConfigureAwait(true);
+            IReadOnlyList<GroupItemViewModel> candidates = AutoGroupCandidates();
+            HashSet<long> allowed = candidates.Select(g => g.Id).ToHashSet();
+
+            // The dialog is only for an account that has nothing configured yet.
+            // Once candidates exist, choosing 自动分组 just turns it on — asking
+            // again on every switch would make a routine mode change feel like a
+            // form to fill in. The 配置 button is the way back into the dialog.
+            long[] configured = current.AutoGroupIds.Where(allowed.Contains).Distinct().ToArray();
+            PawAutoGroupSettings? chosen = configured.Length > 0
+                ? new PawAutoGroupSettings(true, configured, current.AutoGroupStrategy)
+                : ConfigureAutoGroup is null
+                    ? null
+                    : await ConfigureAutoGroup(current, candidates).ConfigureAwait(true);
             if (chosen is null)
             {
                 SelectWithoutSwitching(previous);
                 return;
             }
 
-            HashSet<long> allowed = candidates.Select(g => g.Id).ToHashSet();
             long[] ids = chosen.AutoGroupIds.Where(allowed.Contains).Distinct().ToArray();
             if (ids.Length == 0)
             {
@@ -1567,6 +1582,66 @@ public sealed partial class DashboardViewModel : ObservableObject
         catch (RelayApiException ex)
         {
             SelectWithoutSwitching(previous);
+            GroupMessage = ex.UserMessage;
+        }
+    }
+
+    /// <summary>The OpenAI groups automatic routing may choose between.</summary>
+    private IReadOnlyList<GroupItemViewModel> AutoGroupCandidates() => Groups
+        .Where(g => !g.IsAutomatic && string.Equals(g.Platform, "openai", StringComparison.OrdinalIgnoreCase))
+        .ToArray();
+
+    /// <summary>
+    /// Opens the automatic-routing dialog on demand and saves what the user picks.
+    /// </summary>
+    /// <remarks>
+    /// Saves the candidates and strategy only; it never changes which mode the client
+    /// is in. Someone tidying the list while on a fixed group should not be switched
+    /// over as a side effect, and someone already on automatic routing needs nothing
+    /// pushed to the relay — the server reads the candidates on every request.
+    /// </remarks>
+    public async Task ConfigureAutoGroupAsync(CancellationToken cancellationToken = default)
+    {
+        if (!CanConfigureAutoGroup || ConfigureAutoGroup is null)
+        {
+            return;
+        }
+
+        try
+        {
+            string token = await _session.GetAccessTokenAsync(cancellationToken).ConfigureAwait(true);
+            PawAutoGroupSettings current = await _client
+                .GetPawAutoGroupAsync(token, cancellationToken)
+                .ConfigureAwait(true);
+            IReadOnlyList<GroupItemViewModel> candidates = AutoGroupCandidates();
+
+            PawAutoGroupSettings? chosen = await ConfigureAutoGroup(current, candidates).ConfigureAwait(true);
+            if (chosen is null)
+            {
+                return;
+            }
+
+            HashSet<long> allowed = candidates.Select(g => g.Id).ToHashSet();
+            long[] ids = chosen.AutoGroupIds.Where(allowed.Contains).Distinct().ToArray();
+            if (ids.Length == 0)
+            {
+                GroupMessage = "请至少选择一个自动分组候选项。";
+                return;
+            }
+
+            _autoGroupSettings = await _client.SavePawAutoGroupAsync(
+                token,
+                new PawAutoGroupSettings(true, ids, chosen.AutoGroupStrategy),
+                cancellationToken).ConfigureAwait(true);
+
+            GroupMessage = SelectedGroup is { IsAutomatic: true }
+                ? "自动分组设置已保存。"
+                : "自动分组设置已保存，选择「自动分组」即可使用。";
+            OnPropertyChanged(nameof(CanStartCodex));
+            OnPropertyChanged(nameof(StartCodexLabel));
+        }
+        catch (RelayApiException ex)
+        {
             GroupMessage = ex.UserMessage;
         }
     }
@@ -1632,6 +1707,7 @@ public sealed partial class DashboardViewModel : ObservableObject
         _managedKey = null;
         _autoGroupSettings = null;
         _autoGroupSupported = true;
+        CanConfigureAutoGroup = false;
         _pollingBackoff.RecordSuccess();
         IsRateLimited = false;
         RefreshMessage = string.Empty;
