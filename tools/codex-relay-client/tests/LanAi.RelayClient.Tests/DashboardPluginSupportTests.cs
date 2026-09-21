@@ -209,18 +209,21 @@ public sealed class DashboardPluginSupportTests
         await WaitForAsync(() => rig.Codex.PluginRequests.Any(r => r.Model == "claude-sonnet-5"));
     }
 
+    /// <summary>
+    /// The Claude 模型设置 picker follows only Codex's own group. Picking a Claude group for the
+    /// plug-ins, or ticking 支持插件, must not turn it on — it stays where F5.4 put it.
+    /// </summary>
     [Fact]
-    public async Task TheClaudePreferencePickersFollowEitherPath()
+    public async Task TheClaudePreferencePickerIgnoresThePluginPath()
     {
         Rig rig = await BuildAsync(true, false, null, Group(11, "OpenAI", "openai"), Group(21, "Claude", "anthropic"));
         await rig.Dashboard.RefreshAsync();
 
-        // A Claude group is chosen for the plug-ins but the box is off: nothing to show.
-        Assert.False(rig.Dashboard.ShowClaudePreference);
+        Assert.False(rig.Dashboard.IsClaudeGroup);
 
         rig.Dashboard.PluginSupportEnabled = true;
 
-        Assert.True(rig.Dashboard.ShowClaudePreference);
+        Assert.False(rig.Dashboard.IsClaudeGroup);
     }
 
     [Fact]

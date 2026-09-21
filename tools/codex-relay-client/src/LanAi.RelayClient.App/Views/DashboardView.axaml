@@ -324,6 +324,24 @@
                        Foreground="#2563EB" FontSize="12" Margin="0,8,0,0"
                        IsVisible="{Binding Dashboard.HasGroupMessage}" />
 
+            <!-- Claude 模型与思考强度偏好：只跟随上面 Codex 的分组选择，插件用哪个
+                 Claude 分组（下方）不影响这里。 -->
+            <StackPanel Margin="0,12,0,0" IsVisible="{Binding Dashboard.IsClaudeGroup}">
+              <TextBlock Text="Claude 模型设置" FontWeight="SemiBold" Foreground="#6B7280"
+                         FontSize="12" Margin="0,0,0,6" />
+              <Grid ColumnDefinitions="*,8,*">
+                <ComboBox Grid.Column="0"
+                          ItemsSource="{Binding Dashboard.ClaudeModels}"
+                          SelectedItem="{Binding Dashboard.SelectedClaudeModel, Mode=TwoWay}"
+                          HorizontalAlignment="Stretch" Padding="8,6" />
+                <ComboBox Grid.Column="2"
+                          ItemsSource="{Binding Dashboard.ClaudeThinkingLevels}"
+                          SelectedItem="{Binding Dashboard.SelectedClaudeThinkingLevel, Mode=TwoWay}"
+                          HorizontalAlignment="Stretch" Padding="8,6" />
+              </Grid>
+              <TextBlock Text="思考强度影响回答深度与速度" Foreground="#9CA3AF" FontSize="11" Margin="0,4,0,0" />
+            </StackPanel>
+
             <!-- A second path beside the group above: Claude Code and the VS Code
                  extension built on it get a Claude group of their own, independent of
                  the one Codex is on. Off by default, since it writes files outside
@@ -351,23 +369,6 @@
                          IsVisible="{Binding Dashboard.HasPluginSupportStatus}"
                          TextWrapping="Wrap"
                          Foreground="#9CA3AF" FontSize="11" Margin="0,4,0,0" />
-            </StackPanel>
-
-            <!-- Claude 模型与思考强度偏好（主分组或插件分组是 Claude 时可见）-->
-            <StackPanel Margin="0,12,0,0" IsVisible="{Binding Dashboard.ShowClaudePreference}">
-              <TextBlock Text="Claude 模型设置" FontWeight="SemiBold" Foreground="#6B7280"
-                         FontSize="12" Margin="0,0,0,6" />
-              <Grid ColumnDefinitions="*,8,*">
-                <ComboBox Grid.Column="0"
-                          ItemsSource="{Binding Dashboard.ClaudeModels}"
-                          SelectedItem="{Binding Dashboard.SelectedClaudeModel, Mode=TwoWay}"
-                          HorizontalAlignment="Stretch" Padding="8,6" />
-                <ComboBox Grid.Column="2"
-                          ItemsSource="{Binding Dashboard.ClaudeThinkingLevels}"
-                          SelectedItem="{Binding Dashboard.SelectedClaudeThinkingLevel, Mode=TwoWay}"
-                          HorizontalAlignment="Stretch" Padding="8,6" />
-              </Grid>
-              <TextBlock Text="思考强度影响回答深度与速度" Foreground="#9CA3AF" FontSize="11" Margin="0,4,0,0" />
             </StackPanel>
           </StackPanel>
         </Border>

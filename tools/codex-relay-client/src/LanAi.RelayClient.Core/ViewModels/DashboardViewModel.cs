@@ -317,7 +317,6 @@ public sealed partial class DashboardViewModel : ObservableObject
     {
         OnPropertyChanged(nameof(HasNoGroupSelected));
         OnPropertyChanged(nameof(IsClaudeGroup));
-        OnPropertyChanged(nameof(ShowClaudePreference));
         OnPropertyChanged(nameof(ShowConfigureAutoGroupButton));
         // The start button is gated on having a group; see AwaitingBillingGroup.
         OnPropertyChanged(nameof(CanStartCodex));
@@ -351,20 +350,12 @@ public sealed partial class DashboardViewModel : ObservableObject
 
     partial void OnGroupMessageChanged(string value) => OnPropertyChanged(nameof(HasGroupMessage));
 
-    // ---- Claude preference (visible when the main group, or the plug-ins' own Claude
-    // group, is a Claude-platform one) -------------------------------------------------
+    // ---- Claude preference (visible only when the main — Codex — group is a Claude-platform
+    // one; the plug-ins' own Claude group, below, does not drive this) -----------------------
 
     /// <summary>True when the selected group uses the Anthropic/Claude platform.</summary>
     public bool IsClaudeGroup => SelectedGroup?.Platform?.ToLowerInvariant().Contains("claude") == true
                                || SelectedGroup?.Platform?.ToLowerInvariant().Contains("anthropic") == true;
-
-    /// <summary>
-    /// Whether the Claude 模型/思考强度 pickers have something to apply to: either the main
-    /// group is Claude (F5.4's direct routing), or the plug-ins have their own Claude group
-    /// chosen (支持插件). Both write the same account-level preference — see
-    /// <see cref="LoadClaudePreferenceAsync"/> — so one pair of pickers serves either path.
-    /// </summary>
-    public bool ShowClaudePreference => IsClaudeGroup || (PluginSupportEnabled && SelectedClaudePluginGroup is not null);
 
     public static IReadOnlyList<string> ClaudeModels { get; } =
         ["claude-sonnet-5", "claude-opus-5"];
@@ -450,7 +441,6 @@ public sealed partial class DashboardViewModel : ObservableObject
     /// first launch asks rather than assumes.
     /// </summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(ShowClaudePreference))]
     private bool pluginSupportEnabled;
 
     [ObservableProperty]
@@ -468,7 +458,6 @@ public sealed partial class DashboardViewModel : ObservableObject
     public bool HasClaudePluginGroups => ClaudePluginGroups.Count > 0;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(ShowClaudePreference))]
     private GroupItemViewModel? selectedClaudePluginGroup;
 
     private bool _applyingKnownPluginSupportState;
