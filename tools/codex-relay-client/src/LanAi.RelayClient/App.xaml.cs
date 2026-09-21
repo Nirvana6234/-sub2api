@@ -68,8 +68,12 @@ public partial class App : Application
             session,
             relay.GetPublicSettingsAsync,
             lastAccount: new LastAccountPreferenceStore(ClientOptions.ServerAddress));
+        // A client of its own, not _http: that one is only ever used with the relay's own
+        // base address, while api/v1/download/client answers with a redirect to an
+        // external host that this request has to be free to follow.
         var clientUpdate = new ClientUpdateViewModel(
-            new ClientVersionChecker(relay.GetPublicSettingsAsync, ClientOptions.CurrentVersion).CheckAsync);
+            new ClientVersionChecker(relay.GetPublicSettingsAsync, ClientOptions.CurrentVersion).CheckAsync,
+            new ClientSelfUpdater(new HttpClient(), new ClientRelaunchHost()).ApplyAsync);
         var registration = new RegistrationViewModel(
             session,
             relay,
@@ -185,6 +189,24 @@ public partial class App : Application
                 window.ExitRequested = true;
                 Shutdown();
             });
+
+        clientUpdate.ConfirmUpdate = message => Task.FromResult(
+            MessageBox.Show(window, message, "共飞-ChatGPT助手", MessageBoxButton.YesNo, MessageBoxImage.Question)
+                == MessageBoxResult.Yes);
+        clientUpdate.ShowMessage = message =>
+        {
+            MessageBox.Show(window, message, "共飞-ChatGPT助手", MessageBoxButton.OK, MessageBoxImage.Information);
+            return Task.CompletedTask;
+        };
+        clientUpdate.RestartForUpdate = async () =>
+        {
+            // The same teardown 退出 performs: the managed key, the plug-ins' configuration
+            // and the relay must all be put back before this process disappears out from
+            // under the helper waiting to replace it.
+            await _shutdownCoordinator.ReleaseAsync().ConfigureAwait(true);
+            window.ExitRequested = true;
+            Shutdown();
+        };
 
         window.Tray = _tray;
         _singleInstance.StartListening();

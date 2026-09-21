@@ -362,7 +362,7 @@ public partial class DashboardView : UserControl
         AnnouncementsRequested?.Invoke(this, EventArgs.Empty);
 
     private void CheckUpdate_OnClick(object? sender, RoutedEventArgs e) =>
-        _ = _safeAsync?.RunAsync(() => _page!.ClientUpdate.CheckAsync());
+        _ = _safeAsync?.RunAsync(() => _page!.ClientUpdate.CheckAndOfferUpdateAsync());
 
     private void OpenContactPage_OnClick(object? sender, RoutedEventArgs e) =>
         BrowserLauncher.TryOpenRelayPage("contact");

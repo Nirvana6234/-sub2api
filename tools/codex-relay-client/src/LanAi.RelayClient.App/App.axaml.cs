@@ -149,8 +149,14 @@ public partial class App : Application
             session,
             relay.GetPublicSettingsAsync,
             lastAccount: new LastAccountPreferenceStore(ClientOptions.ServerAddress));
+        // A client of its own, not the one RelayServerClient wraps: that one refuses to
+        // follow a redirect (see LocalPawRelay), which is exactly what
+        // api/v1/download/client answers with. This request also carries no account
+        // session — the download route needs none — so nothing is lost by keeping it
+        // separate.
         var clientUpdate = new ClientUpdateViewModel(
-            new ClientVersionChecker(relay.GetPublicSettingsAsync, ClientOptions.CurrentVersion).CheckAsync);
+            new ClientVersionChecker(relay.GetPublicSettingsAsync, ClientOptions.CurrentVersion).CheckAsync,
+            new ClientSelfUpdater(new HttpClient(), new ClientRelaunchHost()).ApplyAsync);
 
         var keyNaming = new ManagedKeyNaming(new InstallId());
         var codexConfig = new CodexConfigWriter(
@@ -242,6 +248,17 @@ public partial class App : Application
         };
         dashboard.ConfigureAutoGroup = (settings, candidates) =>
             AutoGroupDialog.ShowAsync(shell, settings, candidates);
+
+        clientUpdate.ConfirmUpdate = message => ConfirmDialog.AskAsync(shell, message, confirmLabel: "更新");
+        clientUpdate.ShowMessage = message => NoticeDialog.ShowNoticeAsync(shell, message);
+        clientUpdate.RestartForUpdate = async () =>
+        {
+            // The same teardown 退出 performs: the managed key, the plug-ins'
+            // configuration and the relay must all be put back before this process
+            // disappears out from under the helper waiting to replace it.
+            await _shutdown!.ReleaseAsync().ConfigureAwait(true);
+            desktopLifetime.Shutdown();
+        };
 
         var signInView = new SignInView(new SignInPageViewModel(signIn, clientUpdate), safeAsync);
 

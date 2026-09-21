@@ -569,7 +569,7 @@ public partial class MainWindow : Window
         OpenInBrowser(new Uri(new Uri(ClientOptions.ServerAddress), "forgot-password"));
 
     private void CheckUpdate_OnClick(object sender, RoutedEventArgs e) =>
-        _ = _safeAsync.RunAsync(() => _clientUpdate.CheckAsync());
+        _ = _safeAsync.RunAsync(() => _clientUpdate.CheckAndOfferUpdateAsync());
 
     private void OpenUpdatePage_OnClick(object sender, RoutedEventArgs e)
     {
