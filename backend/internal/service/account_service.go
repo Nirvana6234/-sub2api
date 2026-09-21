@@ -13,37 +13,10 @@ var (
 	ErrAccountNotFound      = infraerrors.NotFound("ACCOUNT_NOT_FOUND", "account not found")
 	ErrAccountNilInput      = infraerrors.BadRequest("ACCOUNT_NIL_INPUT", "account input cannot be nil")
 	ErrAccountNotInFallback = infraerrors.BadRequest("ACCOUNT_NOT_IN_FALLBACK", "account is not in proxy fallback state")
-
-	// ErrSchedulabilityRecoveryConflict 表示条件恢复未命中：账号来源不是 automatic、
-	// 当前不处于 error、或来源变更时间与调用方观测值不一致（探测期间管理员已接管）。
-	// 此时账号状态完全不变，绝不允许迟到的恢复请求覆盖管理员决定。
-	ErrSchedulabilityRecoveryConflict = infraerrors.Conflict(
-		"SCHEDULABILITY_RECOVERY_CONFLICT",
-		"schedulability recovery rejected: account is not system-disabled in the observed state",
-	)
 )
 
 const AccountListGroupUngrouped int64 = -1
 const AccountPrivacyModeUnsetFilter = "__unset__"
-
-// AccountGroupPriorityUpdate changes one account's scheduler priority inside
-// one group without touching the account-wide priority column.
-type AccountGroupPriorityUpdate struct {
-	AccountID int64
-	GroupID   int64
-	Priority  int
-}
-
-// AccountGroupPriorityRepository is an optional admin-only write capability.
-type AccountGroupPriorityRepository interface {
-	UpdateGroupPriorities(ctx context.Context, updates []AccountGroupPriorityUpdate) error
-}
-
-// AccountGroupPriorityUpdater is the service capability exposed to admin
-// integrations that need to reorder account-group bindings.
-type AccountGroupPriorityUpdater interface {
-	UpdateAccountGroupPriorities(ctx context.Context, updates []AccountGroupPriorityUpdate) error
-}
 
 // OAuthRefreshPageOptions describes one bounded, cursor-stable scan of OAuth
 // accounts. Candidate platforms are supplied by TokenRefreshService's refresher
@@ -56,6 +29,9 @@ type OAuthRefreshPageOptions struct {
 	IncludeSetupToken    bool
 	RequireRefreshToken  bool
 	ExcludeRetryCooldown bool
+	// IncludeTempUnschedulable lets the recovery pass revisit accounts that are
+	// temporarily blocked even when their token is not near expiry.
+	IncludeTempUnschedulable bool
 }
 
 // OAuthRefreshCandidatePage keeps cursor metadata from the raw SQL ID page.
@@ -107,14 +83,9 @@ type AccountRepository interface {
 	SetError(ctx context.Context, id int64, errorMsg string) error
 	ClearError(ctx context.Context, id int64) error
 	SetSchedulable(ctx context.Context, id int64, schedulable bool) error
-	// RecoverAutomaticSchedulability 以数据库 compare-and-set 原子恢复一个
-	// 系统自动停用的账号。它只在 schedulability_source=automatic 且
-	// status=error 时命中；expectedChangedAt 非空时还要求
-	// schedulability_changed_at 与外部消费方入队时观测到的值一致。
-	//
-	// 条件不满足一律返回 (false, nil) 且完全不改状态：这是「探测期间管理员
-	// 改为 manual，迟到的恢复请求必须失败」这条要求的唯一执行点。
-	RecoverAutomaticSchedulability(ctx context.Context, id int64, expectedChangedAt *time.Time) (bool, error)
+	// UpdateGroupPriorities 批量更新账号在各自分组内的优先级（account_groups.priority）。
+	// 供 TransitHub 的连接健康探活按健康度/倍率回写调度顺序使用。
+	UpdateGroupPriorities(ctx context.Context, updates []AccountGroupPriorityUpdate) (int, error)
 	AutoPauseExpiredAccounts(ctx context.Context, now time.Time) (int64, error)
 	BindGroups(ctx context.Context, accountID int64, groupIDs []int64) error
 
@@ -200,10 +171,6 @@ type AccountBulkUpdate struct {
 	Status         *string
 	Schedulable    *bool
 	Credentials    map[string]any
-	// SchedulabilitySource/SchedulabilityReason 由批量路径与 Schedulable 一起原子写入。
-	// 调用方只要设置了 Schedulable，就必须同时给出来源，避免出现无来源的停用状态。
-	SchedulabilitySource *string
-	SchedulabilityReason *string
 	Extra          map[string]any
 	ProbeEnabled   *bool
 	// EnsureCodexFingerprintSeed asks the repository to atomically preserve an
@@ -554,8 +521,8 @@ func (s *AccountService) TestCredentials(ctx context.Context, id int64) error {
 	case PlatformGrok:
 		// Grok OAuth credentials are validated via token exchange/refresh and request-path probes.
 		return nil
-	case PlatformKimi, PlatformZhipu, PlatformDeepseek:
-		// 国产 OpenAI 兼容供应商：凭证为 API Key，实际可用性经余额/额度探测与转发路径验证。
+	case PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo:
+		// 国产 OpenAI 兼容供应商与 OpenCode：凭证为 API Key，实际可用性经余额/额度探测与转发路径验证。
 		return nil
 	default:
 		return fmt.Errorf("unsupported platform: %s", account.Platform)

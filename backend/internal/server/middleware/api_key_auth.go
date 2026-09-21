@@ -259,14 +259,14 @@ func authenticateResolvedAPIKey(c *gin.Context, apiKey *service.APIKey, apiKeySe
 				return
 			}
 		} else {
+			// 贡献房间自用（OwnContributedAccountsOnly/ContributionCreditOnly）本应放行
+			// 余额耗尽用户但把调度限定在其自己贡献/信用范围内；但下游调度层
+			// （gateway_scheduling.go 等）目前并未读取这两个 context key 做任何限制，
+			// 放行等于让零余额用户白嫖整个共享账号池。在配套的调度层限制补齐之前，
+			// 维持鉴权层的历史语义：余额耗尽直接拒绝。
 			if apiKeyBalanceBelowAuthThreshold(apiKey.User.Balance, cfg) {
-				contributionBalance, contributionErr := apiKeyService.GetContributionBalance(c.Request.Context(), apiKey.User.ID)
-				accessKey := ctxkey.OwnContributedAccountsOnly
-				if contributionErr == nil && contributionBalance > 0 {
-					accessKey = ctxkey.ContributionCreditOnly
-				}
-				ctx := context.WithValue(c.Request.Context(), accessKey, true)
-				c.Request = c.Request.WithContext(ctx)
+				AbortWithError(c, 403, "INSUFFICIENT_BALANCE", "Insufficient account balance")
+				return
 			}
 		}
 	}

@@ -43,24 +43,6 @@ const (
 	defaultOpenAIOAuthSchedulingRateMultiplier = 1.0
 )
 
-const (
-	defaultOpenAIHealthErrorHalfLife   = 15 * time.Minute
-	defaultOpenAIHealthTTFTStaleAfter  = 30 * time.Minute
-	defaultOpenAIHealthIdleEviction    = 2 * time.Hour
-	defaultOpenAIColdStartProbeAfter   = 2 * time.Minute
-	defaultOpenAIRecoveryProbeAfter    = 30 * time.Minute
-	defaultOpenAIRecoveryProbeCooldown = 10 * time.Minute
-	// 恢复探测按错误率拉长间隔的两个参数：错误率不超过阈值的账号按基础间隔探测，
-	// 阈值之上线性拉长，错误率 100% 时达到倍数上限。
-	defaultOpenAIRecoveryProbeErrorThreshold = 0.2
-	defaultOpenAIRecoveryProbeMaxErrorFactor = 8.0
-	openAIHealthCleanupMinInterval     = time.Minute
-	openAILowCandidateDepthLogInterval = 5 * time.Minute
-	openAILowCandidateDepthEntryTTL    = time.Hour
-	openAILowCandidateDepthMaxEntries  = int64(4096)
-	openAILowCandidateDepthModelMaxLen = 128
-)
-
 type cachedOpenAIAdvancedSchedulerSetting struct {
 	lowUpstreamRatePriorityEnabled bool
 	latencyAwareFallbackEnabled    bool
@@ -101,7 +83,16 @@ type OpenAIAccountScheduleRequest struct {
 	StickyWeighted          bool
 	SubscriptionPriority    bool
 	PreserveStickyBinding   bool
-	ReplaceStickyBinding    bool
+	// EscapedStickyAccountID 是本轮粘性逃逸刚刚判定「当前不可用」的账号。
+	//
+	// 逃逸的语义是换号（坏 TTFT / 高错误率 / 并发满），所以它必须排在选号序列最后，
+	// 否则组内优先级分档会按优先级把它重新提到最前，会话永远卡在坏号上、逃逸判定
+	// 形同虚设。沿用本文件「排序而不过滤」的约定：只降级不剔除，后面的号也都拿不到
+	// 槽位时它仍是最后的出路。
+	EscapedStickyAccountID int64
+	// DisableStickyEscape keeps task-owner lookups on their account even when
+	// generic sticky health or concurrency heuristics would prefer another.
+	DisableStickyEscape     bool
 	RequirePrivacySet       bool
 	PreviousResponseID      string
 	PreviousResponseCanMove bool
@@ -110,8 +101,10 @@ type OpenAIAccountScheduleRequest struct {
 	RequiredTransport       OpenAIUpstreamTransport
 	RequiredCapability      OpenAIEndpointCapability
 	RequiredImageCapability OpenAIImagesCapability
-	RequireCompact          bool
-	ExcludedIDs             map[int64]struct{}
+	// RequireCompact is only for legacy /responses/compact capability filtering
+	// and compact_model_mapping; native remote compaction v2 leaves it false.
+	RequireCompact bool
+	ExcludedIDs    map[int64]struct{}
 }
 
 type OpenAIAccountScheduleDecision struct {
@@ -151,6 +144,7 @@ type openAIAccountSchedulerMetrics struct {
 	selectTotal            atomic.Int64
 	stickyPreviousHitTotal atomic.Int64
 	stickySessionHitTotal  atomic.Int64
+	stickyHitTotal         atomic.Int64
 	loadBalanceSelectTotal atomic.Int64
 	accountSwitchTotal     atomic.Int64
 	latencyMsTotal         atomic.Int64
@@ -192,6 +186,9 @@ func (m *openAIAccountSchedulerMetrics) recordSelect(decision OpenAIAccountSched
 	if decision.StickySessionHit {
 		m.stickySessionHitTotal.Add(1)
 	}
+	if decision.StickyPreviousHit || decision.StickySessionHit {
+		m.stickyHitTotal.Add(1)
+	}
 	if decision.Layer == openAIAccountScheduleLayerLoadBalance {
 		m.loadBalanceSelectTotal.Add(1)
 	}
@@ -205,93 +202,20 @@ func (m *openAIAccountSchedulerMetrics) recordSwitch() {
 }
 
 type openAIAccountRuntimeStats struct {
-	accounts          sync.Map
-	accountCount      atomic.Int64
-	now               func() time.Time
-	errorHalfLife     time.Duration
-	ttftStaleAfter    time.Duration
-	idleEvictionAfter time.Duration
-	coldStartAfter    time.Duration
-	recoveryAfter     time.Duration
-	recoveryCooldown  time.Duration
-	// recoveryErrorThreshold / recoveryMaxErrorFactor 控制恢复探测间隔随错误率拉长的强度。
-	recoveryErrorThreshold float64
-	recoveryMaxErrorFactor float64
-	cleanupMu              sync.Mutex
-	lastCleanupAt          time.Time
+	accounts     sync.Map
+	accountCount atomic.Int64
 }
 
 type openAIAccountRuntimeStat struct {
-	mu             sync.Mutex
-	errorRateEWMA  float64
-	ttftEWMA       float64
-	hasTTFT        bool
-	lastErrorAt    time.Time
-	lastTTFTAt     time.Time
-	lastActivityAt time.Time
-	sampleCount    uint64
-	retired        bool
-	scopes         map[int64]*openAIAccountRecoveryScope
-}
-
-type openAIAccountRecoveryScope struct {
-	firstSeenAt         time.Time
-	lastAttemptAt       time.Time
-	lastRecoveryProbeAt time.Time
+	errorRateEWMABits atomic.Uint64
+	ttftEWMABits      atomic.Uint64
 }
 
 func newOpenAIAccountRuntimeStats() *openAIAccountRuntimeStats {
-	return &openAIAccountRuntimeStats{
-		now:               time.Now,
-		errorHalfLife:     defaultOpenAIHealthErrorHalfLife,
-		ttftStaleAfter:    defaultOpenAIHealthTTFTStaleAfter,
-		idleEvictionAfter: defaultOpenAIHealthIdleEviction,
-		coldStartAfter:    defaultOpenAIColdStartProbeAfter,
-		recoveryAfter:     defaultOpenAIRecoveryProbeAfter,
-		recoveryCooldown:  defaultOpenAIRecoveryProbeCooldown,
-
-		recoveryErrorThreshold: defaultOpenAIRecoveryProbeErrorThreshold,
-		recoveryMaxErrorFactor: defaultOpenAIRecoveryProbeMaxErrorFactor,
-	}
+	return &openAIAccountRuntimeStats{}
 }
 
-func (s *openAIAccountRuntimeStats) currentTime() time.Time {
-	if s != nil && s.now != nil {
-		return s.now()
-	}
-	return time.Now()
-}
-
-func (s *openAIAccountRuntimeStats) configure(cfg config.GatewayOpenAISchedulerConfig) {
-	if s == nil {
-		return
-	}
-	s.errorHalfLife = positiveDurationOrDefault(time.Duration(cfg.HealthErrorHalfLifeSeconds)*time.Second, defaultOpenAIHealthErrorHalfLife)
-	s.ttftStaleAfter = positiveDurationOrDefault(time.Duration(cfg.HealthTTFTStaleSeconds)*time.Second, defaultOpenAIHealthTTFTStaleAfter)
-	s.idleEvictionAfter = positiveDurationOrDefault(time.Duration(cfg.HealthIdleEvictionSeconds)*time.Second, defaultOpenAIHealthIdleEviction)
-	s.coldStartAfter = positiveDurationOrDefault(time.Duration(cfg.ColdStartProbeAfterSeconds)*time.Second, defaultOpenAIColdStartProbeAfter)
-	s.recoveryAfter = positiveDurationOrDefault(time.Duration(cfg.RecoveryProbeAfterSeconds)*time.Second, defaultOpenAIRecoveryProbeAfter)
-	s.recoveryCooldown = positiveDurationOrDefault(time.Duration(cfg.RecoveryProbeCooldownSeconds)*time.Second, defaultOpenAIRecoveryProbeCooldown)
-	// 阈值必须落在 (0,1)、倍数必须 >= 1，否则回退默认值：配置非法时宁可按默认强度
-	// 探测，也不要让缩放公式退化成「任何错误都顶格拉长」或「拉长为负」。
-	s.recoveryErrorThreshold = defaultOpenAIRecoveryProbeErrorThreshold
-	if t := cfg.RecoveryProbeErrorRateThreshold; t > 0 && t < 1 {
-		s.recoveryErrorThreshold = t
-	}
-	s.recoveryMaxErrorFactor = defaultOpenAIRecoveryProbeMaxErrorFactor
-	if m := cfg.RecoveryProbeMaxErrorMultiplier; m >= 1 && !math.IsInf(m, 0) {
-		s.recoveryMaxErrorFactor = m
-	}
-}
-
-func positiveDurationOrDefault(value, fallback time.Duration) time.Duration {
-	if value <= 0 {
-		return fallback
-	}
-	return value
-}
-
-func (s *openAIAccountRuntimeStats) loadOrCreate(accountID int64, now time.Time) *openAIAccountRuntimeStat {
+func (s *openAIAccountRuntimeStats) loadOrCreate(accountID int64) *openAIAccountRuntimeStat {
 	if value, ok := s.accounts.Load(accountID); ok {
 		stat, _ := value.(*openAIAccountRuntimeStat)
 		if stat != nil {
@@ -299,7 +223,8 @@ func (s *openAIAccountRuntimeStats) loadOrCreate(accountID int64, now time.Time)
 		}
 	}
 
-	stat := &openAIAccountRuntimeStat{lastActivityAt: now}
+	stat := &openAIAccountRuntimeStat{}
+	stat.ttftEWMABits.Store(math.Float64bits(math.NaN()))
 	actual, loaded := s.accounts.LoadOrStore(accountID, stat)
 	if !loaded {
 		s.accountCount.Add(1)
@@ -312,14 +237,6 @@ func (s *openAIAccountRuntimeStats) loadOrCreate(accountID int64, now time.Time)
 	return stat
 }
 
-func decayOpenAIErrorRate(value float64, elapsed, halfLife time.Duration) float64 {
-	if value <= 0 || elapsed < time.Second || halfLife <= 0 {
-		return clamp01(value)
-	}
-	return clamp01(value * math.Exp2(-float64(elapsed)/float64(halfLife)))
-}
-
-// updateEWMAAtomic applies one exponentially weighted sample using a CAS loop.
 func updateEWMAAtomic(target *atomic.Uint64, sample float64, alpha float64) {
 	for {
 		oldBits := target.Load()
@@ -336,47 +253,38 @@ func (s *openAIAccountRuntimeStats) report(accountID int64, success bool, firstT
 		return
 	}
 	const alpha = 0.2
-	now := s.currentTime()
-	for {
-		stat := s.loadOrCreate(accountID, now)
-		stat.mu.Lock()
-		if stat.retired {
-			stat.mu.Unlock()
-			continue
-		}
-		if !stat.lastErrorAt.IsZero() {
-			stat.errorRateEWMA = decayOpenAIErrorRate(stat.errorRateEWMA, now.Sub(stat.lastErrorAt), s.errorHalfLife)
-		}
-		errorSample := 1.0
-		if success {
-			errorSample = 0.0
-		}
-		stat.errorRateEWMA = alpha*errorSample + (1-alpha)*stat.errorRateEWMA
-		stat.lastErrorAt = now
-		stat.lastActivityAt = now
-		stat.sampleCount++
+	stat := s.loadOrCreate(accountID)
 
-		if firstTokenMs != nil && *firstTokenMs > 0 {
-			ttft := float64(*firstTokenMs)
-			if !stat.hasTTFT || stat.lastTTFTAt.IsZero() || now.Sub(stat.lastTTFTAt) >= s.ttftStaleAfter {
-				stat.ttftEWMA = ttft
-			} else {
-				stat.ttftEWMA = alpha*ttft + (1-alpha)*stat.ttftEWMA
-			}
-			stat.hasTTFT = true
-			stat.lastTTFTAt = now
-		}
-		stat.mu.Unlock()
-		break
+	errorSample := 1.0
+	if success {
+		errorSample = 0.0
 	}
-	s.maybeCleanup(now)
+	updateEWMAAtomic(&stat.errorRateEWMABits, errorSample, alpha)
+
+	if firstTokenMs != nil && *firstTokenMs > 0 {
+		ttft := float64(*firstTokenMs)
+		ttftBits := math.Float64bits(ttft)
+		for {
+			oldBits := stat.ttftEWMABits.Load()
+			oldValue := math.Float64frombits(oldBits)
+			if math.IsNaN(oldValue) {
+				if stat.ttftEWMABits.CompareAndSwap(oldBits, ttftBits) {
+					break
+				}
+				continue
+			}
+			newValue := alpha*ttft + (1-alpha)*oldValue
+			if stat.ttftEWMABits.CompareAndSwap(oldBits, math.Float64bits(newValue)) {
+				break
+			}
+		}
+	}
 }
 
 func (s *openAIAccountRuntimeStats) snapshot(accountID int64) (errorRate float64, ttft float64, hasTTFT bool) {
 	if s == nil || accountID <= 0 {
 		return 0, 0, false
 	}
-	now := s.currentTime()
 	value, ok := s.accounts.Load(accountID)
 	if !ok {
 		return 0, 0, false
@@ -385,225 +293,12 @@ func (s *openAIAccountRuntimeStats) snapshot(accountID int64) (errorRate float64
 	if stat == nil {
 		return 0, 0, false
 	}
-	stat.mu.Lock()
-	if stat.retired {
-		stat.mu.Unlock()
-		return 0, 0, false
+	errorRate = clamp01(math.Float64frombits(stat.errorRateEWMABits.Load()))
+	ttftValue := math.Float64frombits(stat.ttftEWMABits.Load())
+	if math.IsNaN(ttftValue) {
+		return errorRate, 0, false
 	}
-	if !stat.lastErrorAt.IsZero() {
-		stat.errorRateEWMA = decayOpenAIErrorRate(stat.errorRateEWMA, now.Sub(stat.lastErrorAt), s.errorHalfLife)
-		stat.lastErrorAt = now
-	}
-	errorRate = clamp01(stat.errorRateEWMA)
-	if stat.hasTTFT && !stat.lastTTFTAt.IsZero() && now.Sub(stat.lastTTFTAt) >= s.ttftStaleAfter {
-		stat.hasTTFT = false
-	}
-	if stat.hasTTFT {
-		ttft = stat.ttftEWMA
-		hasTTFT = true
-	}
-	stat.lastActivityAt = now
-	stat.mu.Unlock()
-	s.maybeCleanup(now)
-	return errorRate, ttft, hasTTFT
-}
-
-func (s *openAIAccountRuntimeStats) observeCandidate(accountID, groupID int64) {
-	if s == nil || accountID <= 0 {
-		return
-	}
-	now := s.currentTime()
-	for {
-		stat := s.loadOrCreate(accountID, now)
-		stat.mu.Lock()
-		if stat.retired {
-			stat.mu.Unlock()
-			continue
-		}
-		if stat.scopes == nil {
-			stat.scopes = make(map[int64]*openAIAccountRecoveryScope)
-		}
-		if stat.scopes[groupID] == nil {
-			stat.scopes[groupID] = &openAIAccountRecoveryScope{firstSeenAt: now}
-		}
-		stat.lastActivityAt = now
-		stat.mu.Unlock()
-		break
-	}
-	s.maybeCleanup(now)
-}
-
-func (s *openAIAccountRuntimeStats) markAttempt(accountID, groupID int64) {
-	if s == nil || accountID <= 0 {
-		return
-	}
-	now := s.currentTime()
-	s.observeCandidate(accountID, groupID)
-	value, ok := s.accounts.Load(accountID)
-	if !ok {
-		return
-	}
-	stat, _ := value.(*openAIAccountRuntimeStat)
-	if stat == nil {
-		return
-	}
-	stat.mu.Lock()
-	if !stat.retired {
-		if scope := stat.scopes[groupID]; scope != nil {
-			scope.lastAttemptAt = now
-		}
-		stat.lastActivityAt = now
-	}
-	stat.mu.Unlock()
-}
-
-func (s *openAIAccountRuntimeStats) reserveRecoveryProbe(accountID, groupID int64) (time.Time, bool) {
-	if s == nil || accountID <= 0 {
-		return time.Time{}, false
-	}
-	now := s.currentTime()
-	value, ok := s.accounts.Load(accountID)
-	if !ok {
-		return time.Time{}, false
-	}
-	stat, _ := value.(*openAIAccountRuntimeStat)
-	if stat == nil {
-		return time.Time{}, false
-	}
-	stat.mu.Lock()
-	defer stat.mu.Unlock()
-	if stat.retired {
-		return time.Time{}, false
-	}
-	scope := stat.scopes[groupID]
-	if scope == nil || scope.firstSeenAt.IsZero() {
-		return time.Time{}, false
-	}
-	anchor, due := s.probeDueLocked(stat, scope, now)
-	if !due {
-		return anchor, false
-	}
-	scope.lastRecoveryProbeAt = now
-	stat.lastActivityAt = now
-	return anchor, true
-}
-
-// probeDueLocked 判断该分组下的恢复探测是否到期。调用方必须持有 stat.mu。
-//
-// recoveryProbeDue（只读判断）与 reserveRecoveryProbe（判断并占用）原本各自内联了
-// 一份相同的到期逻辑。错误率缩放要改的正是这段，收敛成一处才不会漏改其中一半。
-func (s *openAIAccountRuntimeStats) probeDueLocked(
-	stat *openAIAccountRuntimeStat,
-	scope *openAIAccountRecoveryScope,
-	now time.Time,
-) (time.Time, bool) {
-	anchor := scope.firstSeenAt
-	if !scope.lastAttemptAt.IsZero() {
-		anchor = scope.lastAttemptAt
-	}
-	// 冷启动探测不按错误率缩放：账号还没有任何样本，没有可依据的错误率。
-	probeAfter := s.coldStartAfter
-	if !scope.lastAttemptAt.IsZero() {
-		probeAfter = scaleRecoveryProbeInterval(
-			s.recoveryAfter,
-			s.decayedErrorRateLocked(stat, now),
-			s.recoveryErrorThreshold,
-			s.recoveryMaxErrorFactor,
-		)
-	}
-	if now.Sub(anchor) < probeAfter {
-		return anchor, false
-	}
-	if !scope.lastRecoveryProbeAt.IsZero() && now.Sub(scope.lastRecoveryProbeAt) < s.recoveryCooldown {
-		return anchor, false
-	}
-	return anchor, true
-}
-
-// decayedErrorRateLocked 返回衰减到当前时刻的错误率，不写回 stat。
-//
-// 刻意不写回：到期判断是只读路径，若在这里顺手更新 lastErrorAt，衰减基准就会被
-// 每次探测检查推到当下，错误率将永远衰减不下去。写回只发生在 report/snapshot。
-func (s *openAIAccountRuntimeStats) decayedErrorRateLocked(stat *openAIAccountRuntimeStat, now time.Time) float64 {
-	if stat.lastErrorAt.IsZero() {
-		return 0
-	}
-	return decayOpenAIErrorRate(stat.errorRateEWMA, now.Sub(stat.lastErrorAt), s.errorHalfLife)
-}
-
-// scaleRecoveryProbeInterval 按错误率拉长恢复探测间隔。
-//
-// 恢复探测花的是一个真实用户请求，不是后台健康检查：命中一个 87.5% 错误率的账号，
-// 就是拿一个用户请求去确认「它还是坏的」。错误率越高，这次确认的代价越高、带回的
-// 信息量越低，探测就该越稀。阈值以下的账号维持基础间隔，保证暂时被冷落的健康账号
-// 仍能快速回到候选。
-//
-// 间隔只被拉长、不会变成永不探测——账号一旦掉出 top-K 就再无新样本，错误率会永远
-// 停在高位，探测是它唯一的翻身通道。
-func scaleRecoveryProbeInterval(base time.Duration, errorRate, threshold, maxMultiplier float64) time.Duration {
-	if base <= 0 || maxMultiplier <= 1 || threshold <= 0 || threshold >= 1 {
-		return base
-	}
-	errorRate = clamp01(errorRate)
-	if errorRate <= threshold {
-		return base
-	}
-	excess := (errorRate - threshold) / (1 - threshold)
-	return time.Duration(float64(base) * (1 + (maxMultiplier-1)*excess))
-}
-
-func (s *openAIAccountRuntimeStats) recoveryProbeDue(accountID, groupID int64) (time.Time, bool) {
-	if s == nil || accountID <= 0 {
-		return time.Time{}, false
-	}
-	now := s.currentTime()
-	value, ok := s.accounts.Load(accountID)
-	if !ok {
-		return time.Time{}, false
-	}
-	stat, _ := value.(*openAIAccountRuntimeStat)
-	if stat == nil {
-		return time.Time{}, false
-	}
-	stat.mu.Lock()
-	defer stat.mu.Unlock()
-	if stat.retired {
-		return time.Time{}, false
-	}
-	scope := stat.scopes[groupID]
-	if scope == nil || scope.firstSeenAt.IsZero() {
-		return time.Time{}, false
-	}
-	return s.probeDueLocked(stat, scope, now)
-}
-
-func (s *openAIAccountRuntimeStats) maybeCleanup(now time.Time) {
-	if s == nil || s.idleEvictionAfter <= 0 {
-		return
-	}
-	s.cleanupMu.Lock()
-	if !s.lastCleanupAt.IsZero() && now.Sub(s.lastCleanupAt) < openAIHealthCleanupMinInterval {
-		s.cleanupMu.Unlock()
-		return
-	}
-	s.lastCleanupAt = now
-	s.cleanupMu.Unlock()
-
-	s.accounts.Range(func(key, value any) bool {
-		stat, _ := value.(*openAIAccountRuntimeStat)
-		if stat == nil {
-			return true
-		}
-		stat.mu.Lock()
-		if !stat.retired && !stat.lastActivityAt.IsZero() && now.Sub(stat.lastActivityAt) >= s.idleEvictionAfter {
-			stat.retired = true
-			if s.accounts.CompareAndDelete(key, stat) {
-				s.accountCount.Add(-1)
-			}
-		}
-		stat.mu.Unlock()
-		return true
-	})
+	return errorRate, ttftValue, true
 }
 
 func (s *openAIAccountRuntimeStats) size() int {
@@ -614,105 +309,17 @@ func (s *openAIAccountRuntimeStats) size() int {
 }
 
 type defaultOpenAIAccountScheduler struct {
-	service                      *OpenAIGatewayService
-	metrics                      openAIAccountSchedulerMetrics
-	stats                        *openAIAccountRuntimeStats
-	grokFreeQuotaGateCache       sync.Map
-	lowCandidateDepthLogTime     sync.Map // group/model key -> *openAILowCandidateDepthLogEntry
-	lowCandidateDepthLogCount    atomic.Int64
-	lowCandidateDepthLogMu       sync.Mutex
-	lowCandidateDepthLastCleanup time.Time
-	lowCandidateDepthEntryLimit  int64
-}
-
-type openAILowCandidateDepthLogEntry struct {
-	lastLogAt  atomic.Int64
-	lastSeenAt atomic.Int64
-}
-
-func (s *defaultOpenAIAccountScheduler) lowCandidateDepthEntry(key string, now time.Time) *openAILowCandidateDepthLogEntry {
-	if value, ok := s.lowCandidateDepthLogTime.Load(key); ok {
-		entry, _ := value.(*openAILowCandidateDepthLogEntry)
-		if entry != nil {
-			entry.lastSeenAt.Store(now.UnixMilli())
-		}
-		return entry
-	}
-
-	s.lowCandidateDepthLogMu.Lock()
-	defer s.lowCandidateDepthLogMu.Unlock()
-	if value, ok := s.lowCandidateDepthLogTime.Load(key); ok {
-		entry, _ := value.(*openAILowCandidateDepthLogEntry)
-		if entry != nil {
-			entry.lastSeenAt.Store(now.UnixMilli())
-		}
-		return entry
-	}
-
-	limit := s.lowCandidateDepthEntryLimit
-	if limit <= 0 {
-		limit = openAILowCandidateDepthMaxEntries
-	}
-	if s.lowCandidateDepthLastCleanup.IsZero() ||
-		now.Sub(s.lowCandidateDepthLastCleanup) >= openAILowCandidateDepthLogInterval ||
-		s.lowCandidateDepthLogCount.Load() >= limit {
-		cutoff := now.Add(-openAILowCandidateDepthEntryTTL).UnixMilli()
-		s.lowCandidateDepthLogTime.Range(func(storedKey, value any) bool {
-			entry, _ := value.(*openAILowCandidateDepthLogEntry)
-			if entry != nil && entry.lastSeenAt.Load() <= cutoff && s.lowCandidateDepthLogTime.CompareAndDelete(storedKey, entry) {
-				s.lowCandidateDepthLogCount.Add(-1)
-			}
-			return true
-		})
-		s.lowCandidateDepthLastCleanup = now
-	}
-	if s.lowCandidateDepthLogCount.Load() >= limit {
-		return nil
-	}
-	entry := &openAILowCandidateDepthLogEntry{}
-	entry.lastSeenAt.Store(now.UnixMilli())
-	s.lowCandidateDepthLogTime.Store(key, entry)
-	s.lowCandidateDepthLogCount.Add(1)
-	return entry
-}
-
-func (s *defaultOpenAIAccountScheduler) warnLowCandidateDepth(req OpenAIAccountScheduleRequest, depth int) {
-	if s == nil || depth >= 2 {
-		return
-	}
-	model := strings.TrimSpace(req.RequestedModel)
-	if len(model) > openAILowCandidateDepthModelMaxLen {
-		model = model[:openAILowCandidateDepthModelMaxLen]
-	}
-	now := time.Now()
-	key := strconv.FormatInt(derefGroupID(req.GroupID), 10) + "\x00" + model
-	entry := s.lowCandidateDepthEntry(key, now)
-	if entry == nil {
-		return
-	}
-	nowMillis := now.UnixMilli()
-	last := entry.lastLogAt.Load()
-	if last != 0 && nowMillis-last < openAILowCandidateDepthLogInterval.Milliseconds() {
-		return
-	}
-	if !entry.lastLogAt.CompareAndSwap(last, nowMillis) {
-		return
-	}
-	slog.Warn("openai_scheduler_candidate_depth_low",
-		"group_id", derefGroupID(req.GroupID),
-		"model", model,
-		"eligible_candidate_depth", depth,
-	)
+	service                *OpenAIGatewayService
+	metrics                openAIAccountSchedulerMetrics
+	stats                  *openAIAccountRuntimeStats
+	grokFreeQuotaGateCache sync.Map // key: int64(accountID), value: grokFreeQuotaGateCacheEntry
 }
 
 type openAISelectionProbeBudget struct {
-	acquires       int
-	rechecks       int
-	limit          int
-	attempted      map[int64]struct{}
-	limited        bool
-	acquireBlocked bool
-	recheckBlocked bool
+	acquires  int
+	rechecks  int
+	attempted map[int64]struct{}
+	limited   bool
 }
 
 func newOpenAISelectionProbeBudget() *openAISelectionProbeBudget {
@@ -722,21 +329,6 @@ func newOpenAISelectionProbeBudget() *openAISelectionProbeBudget {
 func (b *openAISelectionProbeBudget) enableLimit() {
 	if b != nil {
 		b.limited = true
-		if b.limit < openAIAccountSelectionProbeLimit {
-			b.limit = openAIAccountSelectionProbeLimit
-		}
-	}
-}
-
-func (b *openAISelectionProbeBudget) expandForOverflow(candidateCount int) {
-	if b == nil {
-		return
-	}
-	b.enableLimit()
-	// Overflow may scan once with the cached load and once with a fresh load.
-	// Size the bounded budget to the actual finite pool for both passes.
-	if expanded := candidateCount * 2; expanded > b.limit {
-		b.limit = expanded
 	}
 }
 
@@ -747,8 +339,7 @@ func (b *openAISelectionProbeBudget) recordAcquire(accountID int64) bool {
 	if !b.limited {
 		return true
 	}
-	if b.acquires >= b.limit {
-		b.acquireBlocked = true
+	if b.acquires >= openAIAccountSelectionProbeLimit {
 		return false
 	}
 	if b.attempted == nil {
@@ -766,8 +357,7 @@ func (b *openAISelectionProbeBudget) recordRecheck() bool {
 	if !b.limited {
 		return true
 	}
-	if b.rechecks >= b.limit {
-		b.recheckBlocked = true
+	if b.rechecks >= openAIAccountSelectionProbeLimit {
 		return false
 	}
 	b.rechecks++
@@ -775,11 +365,7 @@ func (b *openAISelectionProbeBudget) recordRecheck() bool {
 }
 
 func (b *openAISelectionProbeBudget) acquireExhausted() bool {
-	return b != nil && b.limited && b.acquires >= b.limit
-}
-
-func (b *openAISelectionProbeBudget) truncated() bool {
-	return b != nil && (b.acquireBlocked || b.recheckBlocked)
+	return b != nil && b.limited && b.acquires >= openAIAccountSelectionProbeLimit
 }
 
 func (b *openAISelectionProbeBudget) wasAttempted(accountID int64) bool {
@@ -796,25 +382,9 @@ type openAIStickyEscapeConfig struct {
 	errorRate float64
 }
 
-type openAIStickyEscapeReason string
-
-const (
-	openAIStickyEscapeNone            openAIStickyEscapeReason = ""
-	openAIStickyEscapeHealthTTFT      openAIStickyEscapeReason = "health_ttft"
-	openAIStickyEscapeHealthErrorRate openAIStickyEscapeReason = "health_error"
-	openAIStickyEscapeConcurrencyFull openAIStickyEscapeReason = "concurrency_full"
-)
-
-func (r openAIStickyEscapeReason) permitsRebind() bool {
-	return r == openAIStickyEscapeHealthTTFT || r == openAIStickyEscapeHealthErrorRate
-}
-
 func newDefaultOpenAIAccountScheduler(service *OpenAIGatewayService, stats *openAIAccountRuntimeStats) OpenAIAccountScheduler {
 	if stats == nil {
 		stats = newOpenAIAccountRuntimeStats()
-	}
-	if service != nil && service.cfg != nil {
-		stats.configure(service.cfg.Gateway.OpenAIScheduler)
 	}
 	return &defaultOpenAIAccountScheduler{
 		service: service,
@@ -825,19 +395,20 @@ func newDefaultOpenAIAccountScheduler(service *OpenAIGatewayService, stats *open
 func (s *defaultOpenAIAccountScheduler) Select(
 	ctx context.Context,
 	req OpenAIAccountScheduleRequest,
-) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+) (selection *AccountSelectionResult, decision OpenAIAccountScheduleDecision, err error) {
 	if s != nil && s.service != nil && s.service.openAIGroupRequiresPrivacySet(ctx, req.GroupID) {
 		req.RequirePrivacySet = true
 	}
-	decision := OpenAIAccountScheduleDecision{}
 	start := time.Now()
+	// 命名返回值保证 defer 写入的耗时同时返回给调用方。
 	defer func() {
 		decision.LatencyMs = time.Since(start).Milliseconds()
 		s.metrics.recordSelect(decision)
 	}()
 
 	previousResponseID := strings.TrimSpace(req.PreviousResponseID)
-	if previousResponseID != "" && normalizeOpenAICompatiblePlatform(req.Platform) == PlatformOpenAI {
+	if previousResponseID != "" && NormalizeOpenAICompatiblePlatform(req.Platform) == PlatformOpenAI &&
+		(!req.StickyWeighted || !req.PreviousResponseCanMove) {
 		selection, err := s.service.selectAccountByPreviousResponseIDForCapability(
 			ctx,
 			req.GroupID,
@@ -851,7 +422,14 @@ func (s *defaultOpenAIAccountScheduler) Select(
 			return nil, decision, err
 		}
 		if selection != nil && selection.Account != nil {
-			if !isAccountAccessibleToRequest(ctx, selection.Account) || !s.isAccountTransportCompatible(selection.Account, req.RequiredTransport) {
+			compatible, _ := s.isAccountRequestCompatibleReason(ctx, selection.Account, req)
+			hasGroupMetadata := len(selection.Account.GroupIDs) > 0 || len(selection.Account.AccountGroups) > 0
+			groupCompatible := !hasGroupMetadata || openAIStickyAccountMatchesGroup(selection.Account, req.GroupID)
+			if hasGroupMetadata && s.service != nil {
+				groupCompatible = s.service.openAIAccountMatchesSchedulingGroup(selection.Account, req.GroupID)
+			}
+			if !groupCompatible ||
+				!compatible || !s.isAccountTransportCompatible(selection.Account, req.RequiredTransport) {
 				if selection.ReleaseFunc != nil {
 					selection.ReleaseFunc()
 				}
@@ -865,9 +443,6 @@ func (s *defaultOpenAIAccountScheduler) Select(
 			decision.SelectedAccountType = selection.Account.Type
 			if req.SessionHash != "" {
 				_ = s.service.bindOpenAIStickySessionDuringSelection(ctx, req.GroupID, req.SessionHash, selection.Account.ID)
-			}
-			if s.stats != nil && selection.Acquired {
-				s.stats.markAttempt(selection.Account.ID, derefGroupID(req.GroupID))
 			}
 			return selection, decision, nil
 		}
@@ -891,7 +466,7 @@ func (s *defaultOpenAIAccountScheduler) Select(
 	}
 
 	if !req.StickyWeighted {
-		selection, escapeReason, err := s.selectBySessionHash(ctx, req)
+		selection, escapedSticky, err := s.selectBySessionHash(ctx, req)
 		if err != nil {
 			return nil, decision, err
 		}
@@ -902,19 +477,9 @@ func (s *defaultOpenAIAccountScheduler) Select(
 			decision.SelectedAccountType = selection.Account.Type
 			return selection, decision, nil
 		}
-		if escapeReason != openAIStickyEscapeNone {
-			req.ExcludedIDs = cloneExcludedAccountIDs(req.ExcludedIDs)
-			if req.ExcludedIDs == nil {
-				req.ExcludedIDs = make(map[int64]struct{})
-			}
-			if req.StickyAccountID > 0 {
-				req.ExcludedIDs[req.StickyAccountID] = struct{}{}
-			}
-			if escapeReason.permitsRebind() {
-				req.ReplaceStickyBinding = true
-			} else {
-				req.PreserveStickyBinding = true
-			}
+		if escapedSticky {
+			req.PreserveStickyBinding = true
+			req.EscapedStickyAccountID = s.escapedStickyAccountID(ctx, req)
 		}
 	}
 
@@ -941,13 +506,36 @@ func (s *defaultOpenAIAccountScheduler) Select(
 	return selection, decision, nil
 }
 
+// escapedStickyAccountID 还原本轮粘性逃逸放弃掉的那个账号。
+//
+// 逃逸判定发生在 selectBySessionHash 内部，账号 ID 没有随返回值带出来（该函数另有
+// grok_media 等多处调用，不宜改签名）。这里按它取绑定时同一套顺序还原：先用请求
+// 自带的绑定，否则回读会话粘性绑定。只走逃逸这条冷路径，多一次缓存读可以接受。
+func (s *defaultOpenAIAccountScheduler) escapedStickyAccountID(
+	ctx context.Context,
+	req OpenAIAccountScheduleRequest,
+) int64 {
+	if req.StickyAccountID > 0 {
+		return req.StickyAccountID
+	}
+	sessionHash := strings.TrimSpace(req.SessionHash)
+	if s == nil || s.service == nil || sessionHash == "" {
+		return 0
+	}
+	accountID, err := s.service.getStickySessionAccountID(ctx, req.GroupID, sessionHash)
+	if err != nil || accountID <= 0 {
+		return 0
+	}
+	return accountID
+}
+
 func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 	ctx context.Context,
 	req OpenAIAccountScheduleRequest,
-) (*AccountSelectionResult, openAIStickyEscapeReason, error) {
+) (*AccountSelectionResult, bool, error) {
 	sessionHash := strings.TrimSpace(req.SessionHash)
 	if sessionHash == "" || s == nil || s.service == nil || s.service.cache == nil {
-		return nil, openAIStickyEscapeNone, nil
+		return nil, false, nil
 	}
 
 	accountID := req.StickyAccountID
@@ -960,68 +548,85 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		var err error
 		accountID, err = s.service.getStickySessionAccountID(ctx, req.GroupID, sessionHash)
 		if err != nil || accountID <= 0 {
-			return nil, openAIStickyEscapeNone, nil
+			return nil, false, nil
 		}
 	}
 	if accountID <= 0 {
-		return nil, openAIStickyEscapeNone, nil
+		return nil, false, nil
 	}
 	if req.ExcludedIDs != nil {
 		if _, excluded := req.ExcludedIDs[accountID]; excluded {
-			return nil, openAIStickyEscapeNone, nil
+			return nil, false, nil
 		}
 	}
 
 	account, err := s.service.getSchedulableAccount(ctx, accountID)
 	if err != nil || account == nil {
 		clearBinding()
-		return nil, openAIStickyEscapeNone, nil
+		return nil, false, nil
 	}
-	if shouldClearStickySession(account, req.RequestedModel) || account.Platform != normalizeOpenAICompatiblePlatform(req.Platform) || !account.IsOpenAICompatible() || !account.IsSchedulable() {
+	if shouldClearStickySession(account, req.RequestedModel) || account.Platform != NormalizeOpenAICompatiblePlatform(req.Platform) || !account.IsOpenAICompatible() || !account.IsSchedulable() {
 		clearBinding()
-		return nil, openAIStickyEscapeNone, nil
+		return nil, false, nil
 	}
 	if !s.isAccountRequestCompatible(ctx, account, req) {
-		return nil, openAIStickyEscapeNone, nil
+		return nil, false, nil
 	}
 	if !s.isAccountTransportCompatible(account, req.RequiredTransport) {
 		clearBinding()
-		return nil, openAIStickyEscapeNone, nil
+		return nil, false, nil
 	}
 	account = s.service.recheckSelectedOpenAIAccountFromDB(ctx, account, req.GroupID, req.Platform, req.RequestedModel, req.RequireCompact, req.RequiredCapability)
-	if account == nil || !isAccountAccessibleToRequest(ctx, account) || !s.service.openAIAccountMatchesRequestRoute(ctx, account, req.GroupID) || !s.isAccountTransportCompatible(account, req.RequiredTransport) {
+	if account == nil || !s.service.openAIAccountMatchesSchedulingGroup(account, req.GroupID) || !s.isAccountRequestCompatible(ctx, account, req) || !s.isAccountTransportCompatible(account, req.RequiredTransport) {
 		clearBinding()
-		return nil, openAIStickyEscapeNone, nil
+		return nil, false, nil
+	}
+	// Free-tier soft gate: sticky session must not pin an over-quota free OAuth account.
+	// Admin QueryQuota / import probes do not use this path.
+	if account != nil && len(s.filterGrokFreeQuotaAccounts(ctx, []Account{*account})) == 0 {
+		clearBinding()
+		return nil, false, nil
+	}
+	// Team+model cool: sticky must not pin a sibling under the same team 429 window.
+	now := time.Now()
+	upstreamModel := canonicalOpenAIAccountSchedulingModel(account, req.RequestedModel)
+	if account != nil && isGrokTeamModelRateLimited(account, upstreamModel, now) {
+		clearBinding()
+		return nil, false, nil
+	}
+	if account != nil && isGrokModelQuotaBlocked(account.ID, upstreamModel, now) {
+		clearBinding()
+		return nil, false, nil
 	}
 	escapeCfg := s.service.openAIStickyEscapeConfig()
-	if reason, errorRate, ttft, shouldEscape := s.shouldEscapeStickyAccount(accountID, escapeCfg); shouldEscape {
+	if reason, errorRate, ttft, shouldEscape := s.shouldEscapeStickyAccount(accountID, escapeCfg); shouldEscape && !req.DisableStickyEscape {
 		slog.Info("sticky_escape_triggered",
 			"account_id", accountID,
 			"reason", reason,
 			"error_rate", errorRate,
 			"ttft", ttft,
 		)
-		return nil, openAIStickyEscapeReason(reason), nil
+		return nil, true, nil
 	}
 	result, acquireErr := s.service.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
+	if acquireErr != nil && req.DisableStickyEscape {
+		return nil, false, acquireErr
+	}
 	if acquireErr == nil && result != nil && result.Acquired {
 		if !req.PreserveStickyBinding {
 			_ = s.service.refreshStickySessionTTL(ctx, req.GroupID, sessionHash, s.service.openAIWSSessionStickyTTL())
-		}
-		if s.stats != nil {
-			s.stats.markAttempt(accountID, derefGroupID(req.GroupID))
 		}
 		return attachSelectionProfitGate(ctx, &AccountSelectionResult{
 			Account:     account,
 			Acquired:    true,
 			ReleaseFunc: result.ReleaseFunc,
-		}), openAIStickyEscapeNone, nil
+		}), false, nil
 	}
 
 	cfg := s.service.schedulingConfig()
 	// WaitPlan.MaxConcurrency 使用 Concurrency（非 EffectiveLoadFactor），因为 WaitPlan 控制的是 Redis 实际并发槽位等待。
 	if s.service.concurrencyService != nil {
-		if escapeCfg.enabled && acquireErr == nil && result != nil && !result.Acquired {
+		if escapeCfg.enabled && !req.DisableStickyEscape && acquireErr == nil && result != nil && !result.Acquired {
 			errorRate, ttft, _ := s.stats.snapshot(accountID)
 			slog.Info("sticky_escape_triggered",
 				"account_id", accountID,
@@ -1029,7 +634,7 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 				"error_rate", errorRate,
 				"ttft", ttft,
 			)
-			return nil, openAIStickyEscapeConcurrencyFull, nil
+			return nil, true, nil
 		}
 		return attachSelectionProfitGate(ctx, &AccountSelectionResult{
 			Account: account,
@@ -1039,9 +644,9 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 				Timeout:        cfg.StickySessionWaitTimeout,
 				MaxWaiting:     cfg.StickySessionMaxWaiting,
 			},
-		}), openAIStickyEscapeNone, nil
+		}), false, nil
 	}
-	return nil, openAIStickyEscapeNone, nil
+	return nil, false, nil
 }
 
 func openAIStickyAccountMatchesGroup(account *Account, groupID *int64) bool {
@@ -1078,31 +683,29 @@ func openAIAccountSchedulingPriority(account *Account, groupID *int64) int {
 	return account.Priority
 }
 
-func (s *defaultOpenAIAccountScheduler) shouldEscapeStickyAccount(accountID int64, cfg openAIStickyEscapeConfig) (reason openAIStickyEscapeReason, errorRate float64, ttft float64, shouldEscape bool) {
+func (s *defaultOpenAIAccountScheduler) shouldEscapeStickyAccount(accountID int64, cfg openAIStickyEscapeConfig) (reason string, errorRate float64, ttft float64, shouldEscape bool) {
 	if !cfg.enabled || s == nil || s.stats == nil || accountID <= 0 {
-		return openAIStickyEscapeNone, 0, 0, false
+		return "", 0, 0, false
 	}
 	errorRate, ttft, hasTTFT := s.stats.snapshot(accountID)
 	if hasTTFT && ttft > cfg.ttftMs {
-		return openAIStickyEscapeHealthTTFT, errorRate, ttft, true
+		return "ttft", errorRate, ttft, true
 	}
 	if errorRate > cfg.errorRate {
-		return openAIStickyEscapeHealthErrorRate, errorRate, ttft, true
+		return "error_rate", errorRate, ttft, true
 	}
-	return openAIStickyEscapeNone, errorRate, ttft, false
+	return "", errorRate, ttft, false
 }
 
 type openAIAccountCandidateScore struct {
-	account          *Account
-	loadInfo         *AccountLoadInfo
-	loadKnown        bool
-	score            float64
-	priority         int
-	errorRate        float64
-	ttft             float64
-	hasTTFT          bool
-	recoveryProbe    bool
-	overflowFallback bool
+	account   *Account
+	loadInfo  *AccountLoadInfo
+	loadKnown bool
+	score     float64
+	priority  int
+	errorRate float64
+	ttft      float64
+	hasTTFT   bool
 }
 
 type openAIAccountCandidateHeap []openAIAccountCandidateScore
@@ -1309,53 +912,6 @@ func buildOpenAIWeightedSelectionOrder(
 	return order
 }
 
-func (s *defaultOpenAIAccountScheduler) reserveOpenAIRecoveryCandidate(
-	req OpenAIAccountScheduleRequest,
-	pool []openAIAccountCandidateScore,
-	ranked []openAIAccountCandidateScore,
-) (openAIAccountCandidateScore, bool) {
-	if s == nil || s.stats == nil || len(pool) <= len(ranked) || strings.TrimSpace(req.PreviousResponseID) != "" {
-		return openAIAccountCandidateScore{}, false
-	}
-	rankedIDs := make(map[int64]struct{}, len(ranked))
-	for _, candidate := range ranked {
-		if candidate.account != nil {
-			rankedIDs[candidate.account.ID] = struct{}{}
-		}
-	}
-	groupID := derefGroupID(req.GroupID)
-	var selected openAIAccountCandidateScore
-	var selectedAnchor time.Time
-	found := false
-	for _, candidate := range pool {
-		if candidate.account == nil {
-			continue
-		}
-		if _, alreadyRanked := rankedIDs[candidate.account.ID]; alreadyRanked {
-			continue
-		}
-		if candidate.loadKnown && candidate.account.Concurrency > 0 && candidate.loadInfo != nil &&
-			candidate.loadInfo.CurrentConcurrency >= candidate.account.Concurrency {
-			continue
-		}
-		anchor, due := s.stats.recoveryProbeDue(candidate.account.ID, groupID)
-		if !due || (found && !anchor.Before(selectedAnchor)) {
-			continue
-		}
-		selected = candidate
-		selectedAnchor = anchor
-		found = true
-	}
-	if !found {
-		return openAIAccountCandidateScore{}, false
-	}
-	if _, reserved := s.stats.reserveRecoveryProbe(selected.account.ID, groupID); !reserved {
-		return openAIAccountCandidateScore{}, false
-	}
-	selected.recoveryProbe = true
-	return selected, true
-}
-
 func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 	ctx context.Context,
 	req OpenAIAccountScheduleRequest,
@@ -1371,7 +927,6 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 		}
 		errorRate, ttft, hasTTFT := 0.0, 0.0, false
 		if s.stats != nil {
-			s.stats.observeCandidate(account.ID, derefGroupID(req.GroupID))
 			errorRate, ttft, hasTTFT = s.stats.snapshot(account.ID)
 		}
 		allCandidates = append(allCandidates, openAIAccountCandidateScore{
@@ -1404,7 +959,6 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 		staleSnapshotCompactRetry: staleSnapshotCompactRetry,
 		candidateCount:            len(candidates),
 	}
-	plan.includeOverflowFallback = len(req.ExcludedIDs) > 0
 	if len(candidates) == 0 {
 		plan.selectionOrder = s.buildOpenAISelectionOrder(req, plan)
 		return plan
@@ -1447,6 +1001,23 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 	plan.loadSkew = calcLoadSkewByMoments(loadRateSum, loadRateSumSquares, len(candidates))
 
 	weights := s.service.openAIWSSchedulerWeightsForRequest(ctx)
+	// 整池都慢时把延迟权重顶上去，让"谁没那么慢"重新成为主导因素。
+	//
+	// 排序本来有两层：先按 30 秒阈值把候选粗分成「健康/慢」两档（硬隔离，快的
+	// 整体压过慢的），档内再按加权评分排。主力池有快有慢，第一层就把好账号顶到
+	// 前面，看起来很"聪明"；但兜底池这种整池都超阈值的场景，第一层塌缩成一个档，
+	// 只剩第二层，而第二层里延迟权重只有 0.5，优先级 1.0、错误率 1.5，且各因子都
+	// 是池内归一化的——于是排序被优先级主导。
+	//
+	// 生产实测（2026-09-16，puls-兜底组）：组内优先级最高的 212（priority=100）
+	// 恰好是最慢的一档（p90 103.7 秒），而最快的 220（p90 40 秒）优先级是 10000，
+	// 结果流量长期压在最慢的号上。
+	//
+	// 这里只在"第一层失效"时提权，主力池的行为完全不变。
+	weights.TTFT = openAIBoostTTFTWeightWhenAllSlow(
+		weights.TTFT, weights.Priority,
+		s.service.allOpenAICandidatesSlow(ctx, candidates),
+	)
 	now := time.Now()
 	upstreamCostFactors := map[int64]float64(nil)
 	if req.UseUpstreamTokenCost && weights.UpstreamCost > 0 {
@@ -1463,15 +1034,15 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 		}
 	}
 
-	// Reset 因子（use-it-or-lose-it）：在拥有「未来会话窗口结束时间」的账号中，
+	// Reset 因子（use-it-or-lose-it）：优先读取 Codex 5h 重置时间，回退到会话窗口。
 	// 剩余时间越短 → 因子越接近 1（越早重置越优先用尽）。无活跃窗口的账号因子为 0。
 	// 仅在 weights.Reset > 0 时计算，默认关闭不影响原有行为。
 	minResetRemaining, maxResetRemaining := 0.0, 0.0
 	hasResetSample := false
 	if weights.Reset > 0 {
 		for _, candidate := range candidates {
-			end := candidate.account.SessionWindowEnd
-			if end == nil || !now.Before(*end) {
+			end, ok := openAISchedulingResetWindowEnd(candidate.account, now)
+			if !ok {
 				continue
 			}
 			remaining := end.Sub(now).Seconds()
@@ -1504,7 +1075,7 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 		}
 		resetFactor := 0.0
 		if weights.Reset > 0 && hasResetSample {
-			if end := item.account.SessionWindowEnd; end != nil && now.Before(*end) {
+			if end, ok := openAISchedulingResetWindowEnd(item.account, now); ok {
 				if maxResetRemaining > minResetRemaining {
 					resetFactor = 1 - clamp01((end.Sub(now).Seconds()-minResetRemaining)/(maxResetRemaining-minResetRemaining))
 				} else {
@@ -1566,19 +1137,26 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 			groupTopK = len(pool)
 		}
 		ranked := selectTopKOpenAICandidates(pool, groupTopK)
-		recoveryAccountID := int64(0)
-		if recovery, ok := s.reserveOpenAIRecoveryCandidate(req, pool, ranked); ok && len(ranked) > 0 {
-			ranked[len(ranked)-1] = recovery
-			recoveryAccountID = recovery.account.ID
-		}
-		primary := buildOpenAIWeightedSelectionOrder(ranked, req)
-		if recoveryAccountID > 0 {
-			for i, candidate := range primary {
-				if candidate.account != nil && candidate.account.ID == recoveryAccountID {
-					primary = append([]openAIAccountCandidateScore{candidate}, append(primary[:i], primary[i+1:]...)...)
+		var primary []openAIAccountCandidateScore
+		if req.StickyWeighted {
+			for _, stickyID := range []int64{req.StickyPreviousAccountID, req.StickyAccountID} {
+				if stickyID <= 0 {
+					continue
+				}
+				for i, candidate := range ranked {
+					if candidate.account != nil && candidate.account.ID == stickyID {
+						primary = append([]openAIAccountCandidateScore{candidate}, ranked[:i]...)
+						primary = append(primary, ranked[i+1:]...)
+						break
+					}
+				}
+				if len(primary) > 0 {
 					break
 				}
 			}
+		}
+		if len(primary) == 0 {
+			primary = buildOpenAIWeightedSelectionOrder(ranked, req)
 		}
 		if !plan.includeOverflowFallback || groupTopK >= len(pool) {
 			return primary
@@ -1591,7 +1169,6 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 		overflow := make([]openAIAccountCandidateScore, 0, len(pool)-len(primary))
 		for _, candidate := range pool {
 			if _, ok := selected[candidate.account.ID]; !ok {
-				candidate.overflowFallback = true
 				overflow = append(overflow, candidate)
 			}
 		}
@@ -1647,17 +1224,24 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 	// 高优先级档全部满载或抢不到并发槽时照样能降级用上，不会把请求打失败。
 	buildSelectionOrder := func(pool []openAIAccountCandidateScore) []openAIAccountCandidateScore {
 		tiers := splitOpenAICandidatesByPriorityTier(pool)
-		if len(tiers) < 2 {
-			return rankSpecializedFirst(pool)
-		}
-		// 已绑定会话的账号并入首档一起竞争：分档要解决的是新会话从哪一档起头，
-		// 而换掉一个已绑定的号有真实代价，不该被档位一刀切掉。
-		tiers = promoteOpenAIStickyCandidateToFirstTier(tiers, req)
 		ordered := make([]openAIAccountCandidateScore, 0, len(pool))
-		for _, tier := range tiers {
-			ordered = append(ordered, rankSpecializedFirst(tier)...)
+		if len(tiers) < 2 {
+			ordered = rankSpecializedFirst(pool)
+		} else {
+			for _, tier := range tiers {
+				ordered = append(ordered, rankSpecializedFirst(tier)...)
+			}
+			// 已经绑定的会话不受分档影响，否则 previous_response 链会被前面整档的
+			// 账号挤断，用户直接收到错误。
+			//
+			// 但只认「本来就能进全局 top-K」的绑定：分档给每一档各自留了 top-K 名额，
+			// 合起来比原先的全局 top-K 宽，不能让一个原本就选不中的账号借分档复活
+			// （LBTopK=1 时最明显——全局只留一个名额，绑定账号不在其中就该换号）。
+			ordered = hoistOpenAICandidate(ordered,
+				openAIStickyBoundAccountID(req, globalTopKOpenAICandidates(pool, plan.topK)))
 		}
-		return ordered
+		// 粘性逃逸刚判定不可用的号压到最后：逃逸的语义就是换号，分档不能把它提回来。
+		return demoteOpenAICandidate(ordered, req.EscapedStickyAccountID)
 	}
 
 	if req.RequireCompact {
@@ -1780,7 +1364,7 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrderWithBudget
 		}
 
 		fresh := s.service.resolveFreshSchedulableOpenAIAccount(ctx, candidate.account, req.Platform, req.RequestedModel, false, req.RequiredCapability)
-		if fresh == nil || !isAccountAccessibleToRequest(ctx, fresh) || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) || !s.isAccountRequestCompatible(ctx, fresh, req) {
+		if fresh == nil || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) || !s.isAccountRequestCompatible(ctx, fresh, req) {
 			release(result)
 			continue
 		}
@@ -1789,7 +1373,7 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrderWithBudget
 			break
 		}
 		fresh = s.service.recheckSelectedOpenAIAccountFromDB(ctx, fresh, req.GroupID, req.Platform, req.RequestedModel, false, req.RequiredCapability)
-		if fresh == nil || !isAccountAccessibleToRequest(ctx, fresh) || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) || !s.isAccountRequestCompatible(ctx, fresh, req) {
+		if fresh == nil || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) || !s.isAccountRequestCompatible(ctx, fresh, req) {
 			release(result)
 			continue
 		}
@@ -1812,24 +1396,13 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrderWithBudget
 				continue
 			}
 		}
-		if shouldBindOpenAIWeightedSession(req, fresh.ID) {
+		if req.SessionHash != "" && !req.PreserveStickyBinding {
 			_ = s.service.bindOpenAIStickySessionDuringSelection(ctx, req.GroupID, req.SessionHash, fresh.ID)
 		}
-		if s.stats != nil {
-			s.stats.markAttempt(fresh.ID, derefGroupID(req.GroupID))
-		}
-		if candidate.recoveryProbe {
-			slog.Info("openai_scheduler_recovery_probe_selected", "group_id", derefGroupID(req.GroupID), "account_id", fresh.ID)
-		}
-		if candidate.overflowFallback {
-			slog.Info("openai_scheduler_overflow_fallback_selected", "group_id", derefGroupID(req.GroupID), "account_id", fresh.ID)
-		}
 		return attachSelectionProfitGate(ctx, &AccountSelectionResult{
-			Account:               fresh,
-			Acquired:              true,
-			ReleaseFunc:           result.ReleaseFunc,
-			replaceStickyBinding:  req.ReplaceStickyBinding,
-			preserveStickyBinding: req.PreserveStickyBinding,
+			Account:     fresh,
+			Acquired:    true,
+			ReleaseFunc: result.ReleaseFunc,
 		}), compactBlocked, nil
 	}
 	return nil, compactBlocked, nil
@@ -1879,13 +1452,13 @@ func (s *defaultOpenAIAccountScheduler) tryFallbackToWeightedSticky(
 			continue
 		}
 		account = s.service.recheckSelectedOpenAIAccountFromDB(ctx, account, req.GroupID, req.Platform, req.RequestedModel, req.RequireCompact, req.RequiredCapability)
-		if account == nil || !isAccountAccessibleToRequest(ctx, account) {
+		if account == nil {
 			if accountID == req.StickyAccountID && strings.TrimSpace(req.SessionHash) != "" {
 				_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, req.SessionHash)
 			}
 			continue
 		}
-		if !s.service.openAIAccountMatchesRequestRoute(ctx, account, req.GroupID) {
+		if !s.service.openAIAccountMatchesSchedulingGroup(account, req.GroupID) {
 			if accountID == req.StickyAccountID && strings.TrimSpace(req.SessionHash) != "" {
 				_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, req.SessionHash)
 			}
@@ -1897,31 +1470,36 @@ func (s *defaultOpenAIAccountScheduler) tryFallbackToWeightedSticky(
 		if req.RequireCompact && openAICompactSupportTier(account) == 0 {
 			continue
 		}
+		// Keep weighted sticky fallback subject to the same free-tier gate as the
+		// normal and sticky selection paths. Otherwise an over-quota free account
+		// could be reintroduced after the primary candidate pass.
+		if len(s.filterGrokFreeQuotaAccounts(ctx, []Account{*account})) == 0 {
+			continue
+		}
+		upstreamModel := canonicalOpenAIAccountSchedulingModel(account, req.RequestedModel)
+		now := time.Now()
+		if isGrokTeamModelRateLimited(account, upstreamModel, now) ||
+			isGrokModelQuotaBlocked(account.ID, upstreamModel, now) {
+			continue
+		}
 		result, acquireErr := s.service.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
 		if acquireErr != nil {
 			return nil, acquireErr
 		}
 		if result != nil && result.Acquired {
-			if shouldBindOpenAIWeightedSession(req, account.ID) {
+			if req.SessionHash != "" && !req.PreserveStickyBinding {
 				_ = s.service.bindOpenAIStickySessionDuringSelection(ctx, req.GroupID, req.SessionHash, account.ID)
 			}
-			if s.stats != nil {
-				s.stats.markAttempt(account.ID, derefGroupID(req.GroupID))
-			}
 			return attachSelectionProfitGate(ctx, &AccountSelectionResult{
-				Account:               account,
-				Acquired:              true,
-				ReleaseFunc:           result.ReleaseFunc,
-				replaceStickyBinding:  req.ReplaceStickyBinding,
-				preserveStickyBinding: req.PreserveStickyBinding,
+				Account:     account,
+				Acquired:    true,
+				ReleaseFunc: result.ReleaseFunc,
 			}), nil
 		}
 		if s.service.concurrencyService != nil {
 			cfg := s.service.schedulingConfig()
 			return attachSelectionProfitGate(ctx, &AccountSelectionResult{
-				Account:               account,
-				replaceStickyBinding:  req.ReplaceStickyBinding,
-				preserveStickyBinding: req.PreserveStickyBinding,
+				Account: account,
 				WaitPlan: &AccountWaitPlan{
 					AccountID:      account.ID,
 					MaxConcurrency: account.Concurrency,
@@ -1932,13 +1510,6 @@ func (s *defaultOpenAIAccountScheduler) tryFallbackToWeightedSticky(
 		}
 	}
 	return nil, nil
-}
-
-func shouldBindOpenAIWeightedSession(req OpenAIAccountScheduleRequest, selectedAccountID int64) bool {
-	if strings.TrimSpace(req.SessionHash) == "" || req.PreserveStickyBinding || selectedAccountID <= 0 {
-		return false
-	}
-	return !req.StickyWeighted || req.ReplaceStickyBinding || req.StickyAccountID != selectedAccountID
 }
 
 // openAISelectionFilterStats counts why candidates were dropped by the
@@ -2000,6 +1571,28 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 	if len(accounts) == 0 {
 		return nil, 0, 0, 0, noAvailableOpenAISelectionError(req.RequestedModel, false, openAISelectionFilterStats{}.summary(""))
 	}
+	// Local free-tier soft gate on the Grok scheduling path only (not admin probe).
+	accounts = s.filterGrokFreeQuotaAccounts(ctx, accounts)
+	if len(accounts) == 0 {
+		return nil, 0, 0, 0, noAvailableOpenAISelectionError(req.RequestedModel, false, openAISelectionFilterStats{}.summary("grok_free_quota_soft_gate"))
+	}
+	// Team+model rate-limit cool: siblings of a 429'd team skip the hot model.
+	if req.Platform == PlatformGrok {
+		now := time.Now()
+		filtered := filterGrokTeamModelRateLimitedAccounts(accounts, req.RequestedModel, now)
+		if len(filtered) == 0 && len(accounts) > 0 {
+			return nil, 0, 0, 0, noAvailableOpenAISelectionError(req.RequestedModel, false, openAISelectionFilterStats{}.summary("grok_team_model_rate_limit"))
+		}
+		if filtered != nil {
+			accounts = filtered
+		}
+		// Per-account model free-usage soft-block (other models stay eligible).
+		modelFiltered := filterGrokModelQuotaBlockedAccounts(accounts, req.RequestedModel, now)
+		if len(modelFiltered) == 0 && len(accounts) > 0 {
+			return nil, 0, 0, 0, noAvailableOpenAISelectionError(req.RequestedModel, false, openAISelectionFilterStats{}.summary("grok_model_quota_block"))
+		}
+		accounts = modelFiltered
+	}
 
 	// require_privacy_set: 获取分组信息
 	var schedGroup *Group
@@ -2022,17 +1615,8 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 			filterStats.exclude("not_schedulable")
 			continue
 		}
-		if account.Platform != normalizeOpenAICompatiblePlatform(req.Platform) || !account.IsOpenAICompatible() {
+		if account.Platform != NormalizeOpenAICompatiblePlatform(req.Platform) || !account.IsOpenAICompatible() {
 			filterStats.exclude("platform_mismatch")
-			continue
-		}
-		if !account.IsContributionRoomRouted() && !account.IsSharedPoolAvailableTo(contributorUserIDFromContext(ctx), time.Now()) {
-			continue
-		}
-		if ownContributedAccountsOnly(ctx) && !account.IsContributedBy(contributorUserIDFromContext(ctx)) {
-			continue
-		}
-		if contributionCreditOnly(ctx) && account.ContributorUserID() <= 0 {
 			continue
 		}
 		if s.service.isOpenAIAccountRequestRuntimeBlocked(account, req.RequestedModel) {
@@ -2060,10 +1644,10 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 			MaxConcurrency: account.EffectiveLoadFactor(),
 		})
 	}
-	s.warnLowCandidateDepth(req, len(filtered))
 	if len(filtered) == 0 {
 		return nil, 0, 0, 0, noAvailableOpenAISelectionError(req.RequestedModel, false, filterStats.summary(""))
 	}
+
 	loadMap := map[int64]*AccountLoadInfo{}
 	if s.service.concurrencyService != nil {
 		if batchLoad, loadErr := s.service.concurrencyService.GetAccountsLoadBatch(ctx, loadReq); loadErr == nil {
@@ -2071,10 +1655,7 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 		}
 	}
 
-	// Contributor priority is stronger than subscription-pool preference. When
-	// owned accounts exist, keep one combined pool ordered owner-first so busy
-	// owned accounts can fall through to immediately available shared accounts.
-	if req.SubscriptionPriority && !hasContributorAccounts(ctx, filtered) {
+	if req.SubscriptionPriority {
 		subscriptionAccounts, regularAccounts := partitionOpenAIChatGPTSubscriptionAccounts(filtered)
 		if len(subscriptionAccounts) > 0 {
 			attempt := s.trySelectByLoadBalancePool(ctx, req, subscriptionAccounts, loadMap, budget)
@@ -2145,9 +1726,8 @@ func (s *defaultOpenAIAccountScheduler) trySelectByLoadBalancePool(
 	budget *openAISelectionProbeBudget,
 ) openAIAccountLoadSelectionAttempt {
 	plan := s.buildOpenAIAccountLoadPlan(ctx, req, filtered, loadMap)
-	plan.selectionOrder = prioritizeOpenAIContributorCandidates(ctx, plan.selectionOrder)
 	if openAICostOverflowExpanded(req, plan) {
-		budget.expandForOverflow(len(plan.selectionOrder))
+		budget.enableLimit()
 	}
 	attempt := openAIAccountLoadSelectionAttempt{
 		selectionOrder: plan.selectionOrder,
@@ -2185,9 +1765,8 @@ func (s *defaultOpenAIAccountScheduler) trySelectByLoadBalancePool(
 		loadReq := buildOpenAIAccountLoadRequest(filtered)
 		if freshLoadMap, loadErr := s.service.concurrencyService.GetAccountsLoadBatchFresh(ctx, loadReq); loadErr == nil {
 			freshPlan := s.buildOpenAIAccountLoadPlan(ctx, req, filtered, freshLoadMap)
-			freshPlan.selectionOrder = prioritizeOpenAIContributorCandidates(ctx, freshPlan.selectionOrder)
 			if openAICostOverflowExpanded(req, freshPlan) {
-				budget.expandForOverflow(len(freshPlan.selectionOrder))
+				budget.enableLimit()
 			}
 			if len(freshPlan.selectionOrder) > 0 {
 				freshResult, freshCompactBlocked, freshAcquireErr := s.tryAcquireOpenAISelectionOrderWithBudget(ctx, req, freshPlan.selectionOrder, budget)
@@ -2213,26 +1792,6 @@ func (s *defaultOpenAIAccountScheduler) trySelectByLoadBalancePool(
 	}
 
 	return attempt
-}
-
-func prioritizeOpenAIContributorCandidates(ctx context.Context, candidates []openAIAccountCandidateScore) []openAIAccountCandidateScore {
-	userID := contributorUserIDFromContext(ctx)
-	if userID <= 0 || len(candidates) == 0 {
-		return candidates
-	}
-	preferred := make([]openAIAccountCandidateScore, 0, len(candidates))
-	shared := make([]openAIAccountCandidateScore, 0, len(candidates))
-	for _, candidate := range candidates {
-		if candidate.account != nil && candidate.account.IsContributedBy(userID) {
-			preferred = append(preferred, candidate)
-		} else {
-			shared = append(shared, candidate)
-		}
-	}
-	if len(preferred) == 0 {
-		return candidates
-	}
-	return append(preferred, shared...)
 }
 
 func openAICostOverflowExpanded(req OpenAIAccountScheduleRequest, plan openAIAccountLoadPlan) bool {
@@ -2268,30 +1827,6 @@ func buildOpenAIAccountLoadRequest(accounts []*Account) []AccountWithConcurrency
 	return loadReq
 }
 
-// classifyOpenAIFreshCandidateRejection best-effort explains why a candidate
-// that already passed the initial filter pass was rejected by the later
-// fresh/DB re-check, purely so "no available accounts" errors can name the
-// real reason instead of the generic top_k_exhausted/eligible_pool_exhausted
-// fallback marker. It re-runs the same read-only gates
-// resolveFreshSchedulableOpenAIAccount and recheckSelectedOpenAIAccountFromDB
-// already applied — it never changes the scheduling decision, only labels one
-// that was already made.
-func (s *defaultOpenAIAccountScheduler) classifyOpenAIFreshCandidateRejection(ctx context.Context, account *Account, req OpenAIAccountScheduleRequest) string {
-	if compatible, reason := s.isAccountRequestCompatibleReason(ctx, account, req); !compatible {
-		return reason
-	}
-	if s.service != nil && s.service.isOpenAIAccountBlockedBySchedulingThreshold(ctx, account) {
-		return "scheduling_threshold_blocked"
-	}
-	if vetoed, reason := openAIProfitControlVetoReason(ctx, account); vetoed {
-		if reason != "" {
-			return "profit_control_" + reason
-		}
-		return "profit_control_vetoed"
-	}
-	return "fresh_recheck_failed"
-}
-
 func (s *defaultOpenAIAccountScheduler) finishLoadBalanceSelectionFallback(
 	ctx context.Context,
 	req OpenAIAccountScheduleRequest,
@@ -2302,15 +1837,6 @@ func (s *defaultOpenAIAccountScheduler) finishLoadBalanceSelectionFallback(
 	candidateCount := attempt.candidateCount
 	topK := attempt.topK
 	loadSkew := attempt.loadSkew
-	exhaustionMarker := func() string {
-		if budget != nil && budget.truncated() {
-			return "probe_budget_exhausted"
-		}
-		if topK > 0 && len(attempt.selectionOrder) > topK {
-			return "eligible_pool_exhausted"
-		}
-		return "top_k_exhausted"
-	}
 
 	if len(attempt.selectionOrder) == 0 {
 		return nil, candidateCount, topK, loadSkew, noAvailableOpenAISelectionError(req.RequestedModel, attempt.compactBlocked, filterStats.summary("selection_order_empty"))
@@ -2344,32 +1870,14 @@ func (s *defaultOpenAIAccountScheduler) finishLoadBalanceSelectionFallback(
 				}
 			}
 			fresh := s.service.resolveFreshSchedulableOpenAIAccount(ctx, candidate.account, req.Platform, req.RequestedModel, false, req.RequiredCapability)
-			if fresh == nil {
-				filterStats.exclude(s.classifyOpenAIFreshCandidateRejection(ctx, candidate.account, req))
-				continue
-			}
-			if !s.isAccountTransportCompatible(fresh, req.RequiredTransport) {
-				filterStats.exclude("transport_incompatible")
-				continue
-			}
-			if !s.isAccountRequestCompatible(ctx, fresh, req) {
-				filterStats.exclude(s.classifyOpenAIFreshCandidateRejection(ctx, fresh, req))
+			if fresh == nil || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) || !s.isAccountRequestCompatible(ctx, fresh, req) {
 				continue
 			}
 			if !s.consumeOpenAISelectionDBRecheck(budget) {
-				return nil, candidateCount, topK, loadSkew, noAvailableOpenAISelectionError(req.RequestedModel, compactBlocked, filterStats.summary(exhaustionMarker()))
+				return nil, candidateCount, topK, loadSkew, noAvailableOpenAISelectionError(req.RequestedModel, compactBlocked, filterStats.summary("selection_order_exhausted"))
 			}
 			fresh = s.service.recheckSelectedOpenAIAccountFromDB(ctx, fresh, req.GroupID, req.Platform, req.RequestedModel, false, req.RequiredCapability)
-			if fresh == nil {
-				filterStats.exclude(s.classifyOpenAIFreshCandidateRejection(ctx, candidate.account, req))
-				continue
-			}
-			if !s.isAccountTransportCompatible(fresh, req.RequiredTransport) {
-				filterStats.exclude("transport_incompatible")
-				continue
-			}
-			if !s.isAccountRequestCompatible(ctx, fresh, req) {
-				filterStats.exclude(s.classifyOpenAIFreshCandidateRejection(ctx, fresh, req))
+			if fresh == nil || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) || !s.isAccountRequestCompatible(ctx, fresh, req) {
 				continue
 			}
 			if req.RequireCompact && openAICompactSupportTier(fresh) == 0 {
@@ -2377,9 +1885,7 @@ func (s *defaultOpenAIAccountScheduler) finishLoadBalanceSelectionFallback(
 				continue
 			}
 			return attachSelectionProfitGate(ctx, &AccountSelectionResult{
-				Account:               fresh,
-				replaceStickyBinding:  req.ReplaceStickyBinding,
-				preserveStickyBinding: req.PreserveStickyBinding,
+				Account: fresh,
 				WaitPlan: &AccountWaitPlan{
 					AccountID:      fresh.ID,
 					MaxConcurrency: fresh.Concurrency,
@@ -2390,7 +1896,7 @@ func (s *defaultOpenAIAccountScheduler) finishLoadBalanceSelectionFallback(
 		}
 	}
 
-	return nil, candidateCount, topK, loadSkew, noAvailableOpenAISelectionError(req.RequestedModel, compactBlocked, filterStats.summary(exhaustionMarker()))
+	return nil, candidateCount, topK, loadSkew, noAvailableOpenAISelectionError(req.RequestedModel, compactBlocked, filterStats.summary("selection_order_exhausted"))
 }
 
 func (s *defaultOpenAIAccountScheduler) isAccountTransportCompatible(account *Account, requiredTransport OpenAIUpstreamTransport) bool {
@@ -2504,6 +2010,7 @@ func (s *defaultOpenAIAccountScheduler) SnapshotMetrics() OpenAIAccountScheduler
 	selectTotal := s.metrics.selectTotal.Load()
 	prevHit := s.metrics.stickyPreviousHitTotal.Load()
 	sessionHit := s.metrics.stickySessionHitTotal.Load()
+	stickyHit := s.metrics.stickyHitTotal.Load()
 	switchTotal := s.metrics.accountSwitchTotal.Load()
 	latencyTotal := s.metrics.latencyMsTotal.Load()
 	loadSkewTotal := s.metrics.loadSkewMilliTotal.Load()
@@ -2519,7 +2026,7 @@ func (s *defaultOpenAIAccountScheduler) SnapshotMetrics() OpenAIAccountScheduler
 	}
 	if selectTotal > 0 {
 		snapshot.SchedulerLatencyMsAvg = float64(latencyTotal) / float64(selectTotal)
-		snapshot.StickyHitRatio = float64(prevHit+sessionHit) / float64(selectTotal)
+		snapshot.StickyHitRatio = float64(stickyHit) / float64(selectTotal)
 		snapshot.AccountSwitchRate = float64(switchTotal) / float64(selectTotal)
 		snapshot.LoadSkewAvg = float64(loadSkewTotal) / 1000 / float64(selectTotal)
 	}
@@ -2881,13 +2388,16 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerForImages(
 // zeroing out capacity. The retry re-runs the exact same selection with the
 // quarantine checks bypassed, so healthy proxies always win the first pass
 // and quarantined ones only serve when nothing else can.
-// selectAccountWithScheduler 在原有选号栈之外加一道出口闸门：强制执行"选出的账号
-// 必须属于服务分组"这条不变量。
+// selectAccountWithScheduler 是所有选号入口的唯一汇合点，在这里做一次"选出来的
+// 账号到底属不属于被请求的分组"的事后核对。
 //
-// 闸门放在这里而不是各条选号路径里，是因为该不变量原本散落在多处各查各的，仍然漏
-// 出了非成员账号（2026-09-20 生产实测：gpt-6-astra 请求 plus(2) 落到只属 gpt-pro(34)
-// 的账号 320，共 10 次）。命中越界时作废本次选号，并在排除该账号后重选一次；
-// 重选刻意不带会话锚点，避免同一条越界的粘性绑定再次把它选回来。
+// 加它的起因：2026-09-16 生产上 gpt-pro(34) 的兜底早已断开（fallback_group_ids
+// 为空），可 usage_logs 里仍有大量请求由账号 221/195 承接——而这两个号在 DB、
+// 在账号快照、在分组候选池快照里都不属于 34。静态排查逐一否掉了兜底配置残留、
+// 快照陈旧、认证缓存陈旧、粘性绕过校验、simple 模式短路这五种可能，没有一条能
+// 解释现象，说明还有一条尚未识别的选号路径绕过了分组归属。
+//
+// 这里只观测、不改变任何行为：命中异常才打一条 WARN，正常流量零开销。
 func (s *OpenAIGatewayService) selectAccountWithScheduler(
 	ctx context.Context,
 	groupID *int64,
@@ -2903,19 +2413,23 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 	previousResponseCanMove bool,
 	useUpstreamTokenCost bool,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
-	selection, decision, err := s.selectAccountWithSchedulerInner(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, previousResponseCanMove, useUpstreamTokenCost)
-	if err != nil || selection == nil || selection.Account == nil {
-		return selection, decision, err
+	selection, decision, err := s.selectAccountWithSchedulerInner(
+		ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs,
+		requiredTransport, requiredCapability, requiredImageCapability, requireCompact,
+		platform, previousResponseCanMove, useUpstreamTokenCost,
+	)
+	if s.selectionEscapedRequestedGroup(ctx, groupID, sessionHash, previousResponseID, requestedModel, selection) {
+		// 越界的选号一律作废，并且重选时丢掉 sessionHash：所有粘性入口都以
+		// sessionHash 为前提，清空它就能绕开它们，强制从分组候选池重新出号。
+		selection, decision, err = s.selectAccountWithSchedulerInner(
+			ctx, groupID, previousResponseID, "", requestedModel, excludedIDs,
+			requiredTransport, requiredCapability, requiredImageCapability, requireCompact,
+			platform, previousResponseCanMove, useUpstreamTokenCost,
+		)
+		// 重选结果同样要过一遍闸：这里只观测不再重试，避免无限递归。
+		s.auditSelectedAccountGroupMembership(ctx, groupID, "", previousResponseID, requestedModel, selection)
 	}
-	if !s.selectionEscapedRequestedGroup(ctx, groupID, sessionHash, previousResponseID, requestedModel, selection) {
-		return selection, decision, err
-	}
-	retryExcluded := cloneExcludedAccountIDs(excludedIDs)
-	if retryExcluded == nil {
-		retryExcluded = make(map[int64]struct{})
-	}
-	retryExcluded[selection.Account.ID] = struct{}{}
-	return s.selectAccountWithSchedulerInner(ctx, groupID, previousResponseID, "", requestedModel, retryExcluded, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, previousResponseCanMove, useUpstreamTokenCost)
+	return selection, decision, err
 }
 
 func (s *OpenAIGatewayService) selectAccountWithSchedulerInner(
@@ -2936,8 +2450,8 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerInner(
 	originalGroupID := derefGroupID(groupID)
 	effectiveGroupID := groupID
 	stickyRequest := false
-	if originalGroupID > 0 && normalizeOpenAICompatiblePlatform(platform) == PlatformOpenAI && !isOpenAIFallbackPoolSourcing(ctx) {
-		candidateGroupID, probing := s.openAIStickyFallbackCandidate(originalGroupID)
+	if originalGroupID > 0 && NormalizeOpenAICompatiblePlatform(platform) == PlatformOpenAI && !isOpenAIFallbackPoolSourcing(ctx) {
+		candidateGroupID, probing := s.openAIStickyFallbackCandidate(ctx, originalGroupID)
 		if candidateGroupID != originalGroupID {
 			effectiveGroupID = &candidateGroupID
 			ctx = s.withOpenAIGroupPrivacyRequirement(ctx, groupID)
@@ -2962,7 +2476,7 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerInner(
 		return selection, decision, err
 	}
 	// The circuit only ever quarantines PlatformOpenAI accounts.
-	if normalizeOpenAICompatiblePlatform(platform) != PlatformOpenAI {
+	if NormalizeOpenAICompatiblePlatform(platform) != PlatformOpenAI {
 		return selection, decision, err
 	}
 	blocked := s.getOpenAIProxyStreamCircuit().activeBlockCount(time.Now())
@@ -3043,16 +2557,12 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 	selection, decision, err := s.selectAccountWithSchedulerOnceNoFallback(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, previousResponseCanMove, useUpstreamTokenCost)
 	slowBucket, groupIsSlow := "", false
 	if _, alreadyTriggered := isOpenAILatencyFallbackTrigger(ctx); !alreadyTriggered {
-		slowBucket, groupIsSlow = s.shouldTriggerOpenAILatencyFallback(groupID)
+		slowBucket, groupIsSlow = s.shouldTriggerOpenAILatencyFallback(ctx, groupID)
 	}
-	if err == nil && selection != nil && selection.Account != nil && normalizeOpenAICompatiblePlatform(platform) == PlatformOpenAI && groupIsSlow && len(excludedIDs) == 0 && !isOpenAIFallbackPoolSourcing(ctx) && !isOpenAIStickyFallbackRequest(ctx) {
+	if err == nil && selection != nil && selection.Account != nil && NormalizeOpenAICompatiblePlatform(platform) == PlatformOpenAI && groupIsSlow && len(excludedIDs) == 0 && !isOpenAIFallbackPoolSourcing(ctx) && !isOpenAIStickyFallbackRequest(ctx) {
 		fallbackCtx, fallbackGroupID := s.nextOpenAIFallbackGroup(withOpenAILatencyFallbackTrigger(ctx, slowBucket), groupID, platform, requestedModel)
 		if fallbackGroupID != nil {
-			// previousResponseID 清空是必须的：它属于慢组账号的上下文，换账号后
-			// 上游认不出这个 ID。sessionHash 改传真实值，让延迟兜底组也建立会话
-			// 粘性——它本来就配合 markOpenAIFallbackSticky 的组级粘性使用，两层
-			// 粘性叠加后同一会话能稳定落在兜底组里的同一账号上。
-			fallbackSelection, fallbackDecision, fallbackErr := s.selectAccountWithSchedulerOnce(withOpenAILatencyFallbackSuppressed(fallbackCtx), fallbackGroupID, "", sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, false, useUpstreamTokenCost)
+			fallbackSelection, fallbackDecision, fallbackErr := s.selectAccountWithSchedulerOnce(withOpenAILatencyFallbackSuppressed(fallbackCtx), fallbackGroupID, "", "", requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, false, useUpstreamTokenCost)
 			if fallbackErr == nil && fallbackSelection != nil && fallbackSelection.Account != nil {
 				s.markOpenAIFallbackSticky(derefGroupID(groupID), *fallbackGroupID, slowBucket)
 				return fallbackSelection, fallbackDecision, nil
@@ -3066,7 +2576,6 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 	if fallbackGroupID == nil {
 		return selection, decision, err
 	}
-	// 同上：previousResponseID 清空，sessionHash 透传真实值。
 	fallbackSelection, fallbackDecision, fallbackErr := s.selectAccountWithSchedulerOnce(fallbackCtx, fallbackGroupID, "", sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, false, useUpstreamTokenCost)
 	return fallbackSelection, fallbackDecision, fallbackErr
 }
@@ -3077,16 +2586,24 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 // 判据从中位数改为最差分桶的 p90：中位数对长尾免疫——一个组 10% 的请求 200 秒、
 // 中位数 6 秒时它已经病了，但中位数要破阈值得等一半以上请求都变慢，
 // 那时整池已经塌方，兜底也就失去意义了。
-func (s *OpenAIGatewayService) shouldTriggerOpenAILatencyFallback(groupID *int64) (string, bool) {
+func (s *OpenAIGatewayService) shouldTriggerOpenAILatencyFallback(ctx context.Context, groupID *int64) (string, bool) {
 	if s == nil || groupID == nil || *groupID <= 0 {
 		return "", false
 	}
-	threshold, _, enabled := s.openAILatencyAwareFallbackSettings(context.Background())
+	threshold, _, enabled := s.openAILatencyAwareFallbackSettings(ctx)
 	if !enabled {
 		return "", false
 	}
 	tail, bucket, ok := s.getOpenAILatencyTracker().GroupTail(*groupID)
 	if !ok || tail <= threshold {
+		return "", false
+	}
+	// 分组 p90 说"这个组整体慢"，但调度最终只挑一个账号：组里最慢的成员会把
+	// p90 拉高，使一个仍有快号的分组被整体判为慢，流量被送去别的池子——哪怕
+	// 那个池子里每个账号都比本组最快的账号更慢（生产实测 183 首字 7.5 秒，
+	// 被借的兜底池是 30-38 秒）。源组只要还有健康账号就用它，别去借更慢的。
+	if healthy, accountID, accountTail := s.openAIGroupHasHealthyAccount(ctx, *groupID, threshold); healthy {
+		s.logOpenAILatencyFallbackSkipped(*groupID, tail, accountID, accountTail, threshold)
 		return "", false
 	}
 	return bucket, true
@@ -3107,7 +2624,7 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnceNoFallback(
 	previousResponseCanMove bool,
 	useUpstreamTokenCost bool,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
-	platform = normalizeOpenAICompatiblePlatform(platform)
+	platform = NormalizeOpenAICompatiblePlatform(platform)
 	decision := OpenAIAccountScheduleDecision{}
 	preserveGuardianParentBinding := preserveOpenAIGuardianParentBinding(ctx, sessionHash)
 	guardianParentAccountID := int64(0)
@@ -3222,6 +2739,7 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnceNoFallback(
 	if stickyWeighted && previousResponseCanMove && strings.TrimSpace(previousResponseID) != "" && platform == PlatformOpenAI {
 		stickyPreviousAccountID = s.ResolveAccountIDByPreviousResponseIDForScheduler(ctx, groupID, previousResponseID, requestedModel, excludedIDs, requiredCapability, requireCompact)
 	}
+
 	return scheduler.Select(ctx, OpenAIAccountScheduleRequest{
 		GroupID:                 groupID,
 		Platform:                platform,
@@ -3352,18 +2870,6 @@ func (s *OpenAIGatewayService) ObserveOpenAIAccountHealthFailure(ctx context.Con
 		return false
 	}
 	return s.rateLimitService.ObserveOpenAIAPIKeyHealthFailure(ctx, account, observedErr)
-}
-
-// MarkOpenAIAccountScheduleAttempt records a request admitted after a WaitPlan.
-// Accounts acquired directly by the scheduler are already recorded there.
-func (s *OpenAIGatewayService) MarkOpenAIAccountScheduleAttempt(accountID int64, groupID *int64) {
-	if s == nil || accountID <= 0 {
-		return
-	}
-	scheduler := s.getOpenAIAccountScheduler(context.Background())
-	if schedulerImpl, ok := scheduler.(*defaultOpenAIAccountScheduler); ok && schedulerImpl.stats != nil {
-		schedulerImpl.stats.markAttempt(accountID, derefGroupID(groupID))
-	}
 }
 
 func (s *OpenAIGatewayService) RecordOpenAIAccountSwitch() {
@@ -3648,8 +3154,8 @@ func buildOpenAIAccountSchedulerScoreSnapshot(
 	}
 	if weights.Reset > 0 {
 		for _, candidate := range candidates {
-			end := candidate.account.SessionWindowEnd
-			if end == nil || !now.Before(*end) {
+			end, ok := openAISchedulingResetWindowEnd(candidate.account, now)
+			if !ok {
 				continue
 			}
 			remaining := end.Sub(now).Seconds()
@@ -3679,7 +3185,7 @@ func buildOpenAIAccountSchedulerScoreSnapshot(
 		ttftFactor := 0.5
 		resetFactor := 0.0
 		if weights.Reset > 0 && hasResetSample {
-			if end := candidate.account.SessionWindowEnd; end != nil && now.Before(*end) {
+			if end, ok := openAISchedulingResetWindowEnd(candidate.account, now); ok {
 				if maxResetRemaining > minResetRemaining {
 					resetFactor = 1 - clamp01((end.Sub(now).Seconds()-minResetRemaining)/(maxResetRemaining-minResetRemaining))
 				} else {
@@ -3860,9 +3366,6 @@ func openAIFreshUpstreamBillingRate(account *Account, now time.Time) (float64, b
 	if !isUpstreamBillingProbeAccount(account) {
 		return 0, false
 	}
-	if rate, ok := upstreamBillingManualRateMultiplier(account.Extra); ok {
-		return rate, true
-	}
 	snapshot := decodeUpstreamBillingProbeSnapshot(account.Extra)
 	if snapshot == nil || (snapshot.Status != UpstreamBillingProbeStatusOK && snapshot.Status != UpstreamBillingProbeStatusFailed) ||
 		snapshot.ReceivedAt == nil || snapshot.ReceivedAt.IsZero() {
@@ -3886,20 +3389,87 @@ func openAIQuotaHeadroomFactor(account *Account, now time.Time) float64 {
 	if account == nil || len(account.Extra) == 0 || openAIQuotaHeadroomSnapshotStale(account.Extra, now) {
 		return openAIQuotaHeadroomNeutralFactor
 	}
-	primaryUsedPercent, ok := resolveAccountExtraNumber(account.Extra, "codex_primary_used_percent", "codex_7d_used_percent")
-	if !ok || openAIQuotaWindowResetAny(account.Extra, now, "primary", "7d") {
+	window5h, window7d := openAICanonicalQuotaWindows(account.Extra, now)
+	if !window7d.hasUsed || window7d.reset {
 		return openAIQuotaHeadroomNeutralFactor
 	}
 
-	factor := 1 - clamp01(primaryUsedPercent/100)
-	if secondaryUsedPercent, ok := resolveAccountExtraNumber(account.Extra, "codex_secondary_used_percent", "codex_5h_used_percent"); ok &&
-		!openAIQuotaWindowResetAny(account.Extra, now, "secondary", "5h") {
-		secondaryRemaining := 1 - clamp01(secondaryUsedPercent/100)
-		if secondaryRemaining < openAIQuotaHeadroomSecondaryLowRemain {
+	factor := 1 - clamp01(window7d.usedPercent/100)
+	if window5h.hasUsed && !window5h.reset {
+		remaining := 1 - clamp01(window5h.usedPercent/100)
+		if remaining < openAIQuotaHeadroomSecondaryLowRemain {
 			factor *= openAIQuotaHeadroomNeutralFactor
 		}
 	}
 	return factor
+}
+
+type openAICanonicalQuotaWindow struct {
+	usedPercent float64
+	hasUsed     bool
+	reset       bool
+}
+
+// 规范字段优先；历史原始字段复用写入端 Normalize 的窗口分类，不能固定把 primary 当作 7d。
+func openAICanonicalQuotaWindows(extra map[string]any, now time.Time) (window5h, window7d openAICanonicalQuotaWindow) {
+	if used, ok := resolveAccountExtraNumber(extra, "codex_5h_used_percent"); ok {
+		window5h = openAICanonicalQuotaWindow{usedPercent: used, hasUsed: true, reset: openAIQuotaWindowReset(extra, "5h", now)}
+	}
+	if used, ok := resolveAccountExtraNumber(extra, "codex_7d_used_percent"); ok {
+		window7d = openAICanonicalQuotaWindow{usedPercent: used, hasUsed: true, reset: openAIQuotaWindowReset(extra, "7d", now)}
+	}
+	if window5h.hasUsed && window7d.hasUsed {
+		return window5h, window7d
+	}
+
+	snapshot := &OpenAICodexUsageSnapshot{}
+	if used, ok := resolveAccountExtraNumber(extra, "codex_primary_used_percent"); ok {
+		snapshot.PrimaryUsedPercent = &used
+	}
+	if used, ok := resolveAccountExtraNumber(extra, "codex_secondary_used_percent"); ok {
+		snapshot.SecondaryUsedPercent = &used
+	}
+	if minutes := parseExtraInt(extra["codex_primary_window_minutes"]); minutes > 0 {
+		snapshot.PrimaryWindowMinutes = &minutes
+	}
+	if minutes := parseExtraInt(extra["codex_secondary_window_minutes"]); minutes > 0 {
+		snapshot.SecondaryWindowMinutes = &minutes
+	}
+	normalized := snapshot.Normalize()
+	if normalized == nil {
+		return window5h, window7d
+	}
+	fromRaw := func(used *float64) openAICanonicalQuotaWindow {
+		if used == nil {
+			return openAICanonicalQuotaWindow{}
+		}
+		// Normalize 保留原始字段指针，据此配对同一个窗口的用量和重置时间。
+		window := "secondary"
+		if used == snapshot.PrimaryUsedPercent {
+			window = "primary"
+		}
+		return openAICanonicalQuotaWindow{usedPercent: *used, hasUsed: true, reset: openAIQuotaWindowReset(extra, window, now)}
+	}
+	if !window5h.hasUsed {
+		window5h = fromRaw(normalized.Used5hPercent)
+	}
+	if !window7d.hasUsed {
+		window7d = fromRaw(normalized.Used7dPercent)
+	}
+	return window5h, window7d
+}
+
+func openAISchedulingResetWindowEnd(account *Account, now time.Time) (time.Time, bool) {
+	if account == nil {
+		return time.Time{}, false
+	}
+	if end, ok := openAICodexWindowResetAt(account.Extra, "5h"); ok && now.Before(end) {
+		return end, true
+	}
+	if end := account.SessionWindowEnd; end != nil && now.Before(*end) {
+		return *end, true
+	}
+	return time.Time{}, false
 }
 
 func openAIQuotaHeadroomSnapshotStale(extra map[string]any, now time.Time) bool {
@@ -3912,15 +3482,6 @@ func openAIQuotaHeadroomSnapshotStale(extra map[string]any, now time.Time) bool 
 		return true
 	}
 	return now.Sub(updatedAt) >= openAIQuotaHeadroomSnapshotStaleAfter
-}
-
-func openAIQuotaWindowResetAny(extra map[string]any, now time.Time, windows ...string) bool {
-	for _, window := range windows {
-		if openAIQuotaWindowReset(extra, window, now) {
-			return true
-		}
-	}
-	return false
 }
 
 func clamp01(value float64) float64 {

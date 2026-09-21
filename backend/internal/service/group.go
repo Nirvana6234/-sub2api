@@ -12,7 +12,7 @@ import (
 )
 
 type OpenAIMessagesDispatchModelConfig = domain.OpenAIMessagesDispatchModelConfig
-type GroupModelsListConfig = domain.GroupModelsListConfig
+type GroupCodexModelsManifestConfig = domain.GroupCodexModelsManifestConfig
 type ReasoningEffortMapping = domain.ReasoningEffortMapping
 
 type Group struct {
@@ -21,10 +21,6 @@ type Group struct {
 	Description    string
 	Platform       string
 	RateMultiplier float64
-	// AllowContributionPool is an administrator-owned admission gate for
-	// user-contributed accounts. Accounts admitted here always bill at this
-	// group's multiplier.
-	AllowContributionPool bool
 	// 高峰时段倍率：peak_rate_enabled 为 true 且当前时刻处于 [PeakStart, PeakEnd) 时，
 	// token 计费倍率额外乘以 PeakRateMultiplier。详见 PeakMultiplierAt。
 	PeakRateEnabled    bool
@@ -32,8 +28,10 @@ type Group struct {
 	PeakEnd            string
 	PeakRateMultiplier float64
 	IsExclusive        bool
-	Status             string
-	Hydrated           bool // indicates the group was loaded from a trusted repository source
+	// AllowContributionPool 是否允许用户贡献的账号并入此分组号池。
+	AllowContributionPool bool
+	Status                string
+	Hydrated              bool // indicates the group was loaded from a trusted repository source
 	// DuplicateOperationID is internal persistence metadata used only to recover
 	// an already committed one-click copy. It must never be mapped to API DTOs.
 	DuplicateOperationID string
@@ -81,22 +79,17 @@ type Group struct {
 
 	// Claude Code 客户端限制
 	ClaudeCodeOnly bool
-	// KiroCompat 为该分组启用 Codex 专属兼容处理。
-	KiroCompat       bool
-	FallbackGroupID  *int64
+	// FallbackGroupID 是旧的单值字段，兼容历史数据和外部调用方，取值恒等于
+	// FallbackGroupIDs 的首个元素（由 firstFallbackGroupID 维护）。
+	FallbackGroupID *int64
+	// FallbackGroupIDs 按优先级顺序列出运行时兜底候选分组，逐个尝试直到找到可用目标。
 	FallbackGroupIDs []int64
 	// 无效请求兜底分组（仅 anthropic 平台使用）
 	FallbackGroupIDOnInvalidRequest *int64
-
-	// IsFallbackPool 标记本分组可作为其它分组指定的兜底账号池。
-	//
-	// 与上面两个 FallbackGroupID 配合使用：每个源分组通过 FallbackGroupID 指向
-	// 自己的兜底池，兜底池可以有多个，普通用户不可直接选择或绑定。
-	//
-	// 入池不等于获得特权：账号被选去兜底某分组时，仍要过那个分组的利润门，
-	// 且成本未声明的账号不参与兜底。计费也始终按用户原本所属的分组，池自身的
-	// 倍率不参与定价。
+	// 是否为兜底账号池：由其他分组通过 FallbackGroupID 指定，用户不可直接选择
 	IsFallbackPool bool
+	// 是否使用 Kiro 的 Codex 兼容处理
+	KiroCompat bool
 
 	// 模型路由配置
 	// key: 模型匹配模式（支持 * 通配符，如 "claude-opus-*"）
@@ -123,13 +116,16 @@ type Group struct {
 	RequirePrivacySet           bool // 调度时仅允许 privacy 已成功设置的账号（OpenAI/Antigravity/Anthropic/Gemini）
 	DefaultMappedModel          string
 	MessagesDispatchModelConfig OpenAIMessagesDispatchModelConfig
-	ModelsListConfig            GroupModelsListConfig
+	ModelAllowlist              GroupModelAllowlist
+	// CodexModelsManifestConfig 开启后，普通模型列表与 Codex manifest 优先使用
+	// 固定账号列表拉取并合并，不经过调度器（仅 openai 平台）。
+	CodexModelsManifestConfig GroupCodexModelsManifestConfig
 
 	// RPMLimit 分组级每分钟请求数上限（0 = 不限制）。
 	// 一旦设置即接管该分组用户的限流（覆盖用户级 rpm_limit），可被 user-group rpm_override 进一步覆盖。
 	RPMLimit int
 
-	// MaxReasoningEffort limits the effective OpenAI/Codex reasoning effort.
+	// MaxReasoningEffort limits the effective Anthropic/OpenAI reasoning effort.
 	// Empty means unlimited; supported values are minimal/low/medium/high/xhigh/max.
 	MaxReasoningEffort string
 	// MaxReasoningEffortOverLimit is the access control when an explicit effort
@@ -153,6 +149,12 @@ type Group struct {
 	AccountCount            int64
 	ActiveAccountCount      int64
 	RateLimitedAccountCount int64
+}
+
+// IsGroupBindableInSimpleMode is the shared policy for groups that may be
+// surfaced and bound to accounts while running in simple mode.
+func IsGroupBindableInSimpleMode(group *Group) bool {
+	return group != nil && group.Platform != PlatformComposite
 }
 
 func (g *Group) IsActive() bool {

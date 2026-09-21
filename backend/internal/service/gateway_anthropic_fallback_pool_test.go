@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
@@ -21,20 +22,50 @@ func (r *anthropicFallbackAccountRepo) ListSchedulableByGroupIDAndPlatforms(_ co
 	return append([]Account(nil), r.byGroup[groupID]...), nil
 }
 
-func (r *anthropicFallbackAccountRepo) ListModelAvailabilityCandidates(_ context.Context, groupID *int64, _ []string, _ bool) ([]Account, error) {
-	if groupID == nil {
-		var all []Account
-		for _, accounts := range r.byGroup {
-			all = append(all, accounts...)
+func (r *anthropicFallbackAccountRepo) GetByID(_ context.Context, accountID int64) (*Account, error) {
+	for _, accounts := range r.byGroup {
+		for i := range accounts {
+			if accounts[i].ID == accountID {
+				account := accounts[i]
+				return &account, nil
+			}
 		}
-		return all, nil
 	}
-	return append([]Account(nil), r.byGroup[*groupID]...), nil
+	return nil, ErrAccountNotFound
 }
 
 type anthropicFallbackGroupRepo struct {
 	GroupRepository
 	groups map[int64]*Group
+}
+
+type anthropicFallbackStickyCache struct {
+	GatewayCache
+	bindings map[string]int64
+}
+
+func (c *anthropicFallbackStickyCache) GetSessionAccountID(_ context.Context, _ int64, sessionHash string) (int64, error) {
+	if accountID, ok := c.bindings[sessionHash]; ok {
+		return accountID, nil
+	}
+	return 0, ErrStickySessionNotFound
+}
+
+func (c *anthropicFallbackStickyCache) SetSessionAccountID(_ context.Context, _ int64, sessionHash string, accountID int64, _ time.Duration) error {
+	if c.bindings == nil {
+		c.bindings = make(map[string]int64)
+	}
+	c.bindings[sessionHash] = accountID
+	return nil
+}
+
+func (*anthropicFallbackStickyCache) RefreshSessionTTL(context.Context, int64, string, time.Duration) error {
+	return nil
+}
+
+func (c *anthropicFallbackStickyCache) DeleteSessionAccountID(_ context.Context, _ int64, sessionHash string) error {
+	delete(c.bindings, sessionHash)
+	return nil
 }
 
 func (r *anthropicFallbackGroupRepo) GetByID(_ context.Context, id int64) (*Group, error) {
@@ -96,6 +127,102 @@ func TestGatewayAnthropicFallbackPoolSelectsTargetAccount(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, account)
 	require.Equal(t, int64(901), account.ID)
+}
+
+func TestGatewayAnthropicFallbackPoolKeepsPrimaryPoolPriority(t *testing.T) {
+	t.Parallel()
+
+	sourceID, fallbackID := int64(101), int64(201)
+	source := &Group{
+		ID:              sourceID,
+		Platform:        PlatformAnthropic,
+		Status:          StatusActive,
+		FallbackGroupID: &fallbackID,
+	}
+	fallback := &Group{
+		ID:             fallbackID,
+		Platform:       PlatformAnthropic,
+		Status:         StatusActive,
+		IsFallbackPool: true,
+	}
+	accountRepo := &anthropicFallbackAccountRepo{
+		byGroup: map[int64][]Account{
+			sourceID: {{ID: 911, Platform: PlatformAnthropic, Status: StatusActive, Schedulable: true, Priority: 100}},
+			// 即使兜底账号的优先级更高，也必须等主力池官方选择流程耗尽后才能使用。
+			fallbackID: {{ID: 921, Platform: PlatformAnthropic, Status: StatusActive, Schedulable: true, Priority: -100,
+				RateMultiplier: gatewayFallbackFloatPtr(1)}},
+		},
+	}
+	groupRepo := &anthropicFallbackGroupRepo{
+		groups: map[int64]*Group{sourceID: source, fallbackID: fallback},
+	}
+	svc := &GatewayService{
+		accountRepo: accountRepo,
+		groupRepo:   groupRepo,
+		cfg:         &config.Config{RunMode: config.RunModeStandard},
+	}
+
+	account, err := svc.SelectAccountForModelWithExclusions(
+		context.Background(),
+		&sourceID,
+		"",
+		"",
+		nil,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, account)
+	require.Equal(t, int64(911), account.ID)
+}
+
+func TestGatewayAnthropicFallbackPoolPreservesStickySession(t *testing.T) {
+	t.Parallel()
+
+	sourceID, fallbackID := int64(102), int64(202)
+	source := &Group{
+		ID:              sourceID,
+		Platform:        PlatformAnthropic,
+		Status:          StatusActive,
+		FallbackGroupID: &fallbackID,
+	}
+	fallback := &Group{
+		ID:             fallbackID,
+		Platform:       PlatformAnthropic,
+		Status:         StatusActive,
+		IsFallbackPool: true,
+	}
+	stickyID, otherID := int64(931), int64(932)
+	accountRepo := &anthropicFallbackAccountRepo{
+		byGroup: map[int64][]Account{
+			sourceID: nil,
+			fallbackID: {
+				{ID: stickyID, Platform: PlatformAnthropic, Status: StatusActive, Schedulable: true, Priority: 100,
+					AccountGroups: []AccountGroup{{GroupID: fallbackID}}, RateMultiplier: gatewayFallbackFloatPtr(1)},
+				{ID: otherID, Platform: PlatformAnthropic, Status: StatusActive, Schedulable: true, Priority: -100,
+					AccountGroups: []AccountGroup{{GroupID: fallbackID}}, RateMultiplier: gatewayFallbackFloatPtr(1)},
+			},
+		},
+	}
+	groupRepo := &anthropicFallbackGroupRepo{
+		groups: map[int64]*Group{sourceID: source, fallbackID: fallback},
+	}
+	cache := &anthropicFallbackStickyCache{bindings: map[string]int64{"session-primary": stickyID}}
+	svc := &GatewayService{
+		accountRepo: accountRepo,
+		groupRepo:   groupRepo,
+		cache:       cache,
+		cfg:         &config.Config{RunMode: config.RunModeStandard},
+	}
+
+	account, err := svc.SelectAccountForModelWithExclusions(
+		context.Background(),
+		&sourceID,
+		"session-primary",
+		"",
+		nil,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, account)
+	require.Equal(t, stickyID, account.ID)
 }
 
 func TestGatewayAnthropicFallbackPoolStopsCycle(t *testing.T) {
@@ -266,57 +393,3 @@ func TestGatewayPlatformSupportsFallbackPool(t *testing.T) {
 }
 
 func gatewayFallbackFloatPtr(v float64) *float64 { return &v }
-
-// 兜底池里一个账号都不支持请求的模型时，不应该被选中——此前 Anthropic/Gemini 侧
-// 兜底取号完全不看模型，选中一个连模型都不支持的兜底组，请求最终会在没有账号可用的
-// 情况下失败，而不是提前判定为不可用。OpenAI 侧对应的检查是
-// shouldUseOpenAIFallbackForModel，这里补齐同样的规则。
-func TestNextGatewayFallbackGroupBlocksUnsupportedModel(t *testing.T) {
-	t.Parallel()
-
-	sourceID, fallbackID := int64(130), int64(230)
-	source := &Group{ID: sourceID, Platform: PlatformAnthropic, Status: StatusActive, FallbackGroupID: &fallbackID}
-	fallback := &Group{ID: fallbackID, Platform: PlatformAnthropic, Status: StatusActive, IsFallbackPool: true}
-	accountRepo := &anthropicFallbackAccountRepo{
-		byGroup: map[int64][]Account{
-			fallbackID: {{
-				ID: 903, Platform: PlatformAnthropic, Status: StatusActive, Schedulable: true,
-				RateMultiplier: gatewayFallbackFloatPtr(1),
-				Credentials: map[string]any{
-					"model_mapping": map[string]any{"claude-3-opus": "claude-3-opus"},
-				},
-			}},
-		},
-	}
-	groupRepo := &anthropicFallbackGroupRepo{groups: map[int64]*Group{sourceID: source, fallbackID: fallback}}
-	svc := &GatewayService{accountRepo: accountRepo, groupRepo: groupRepo, cfg: &config.Config{RunMode: config.RunModeStandard}}
-
-	_, nextID := svc.nextGatewayFallbackGroup(context.Background(), &sourceID, "claude-3-5-sonnet")
-	require.Nil(t, nextID, "兜底池里没有账号支持请求的模型，不应该进入这个兜底组")
-}
-
-// 兜底池里确实有账号支持请求的模型时，照常放行——确认新加的检查不会误伤正常场景。
-func TestNextGatewayFallbackGroupAllowsSupportedModel(t *testing.T) {
-	t.Parallel()
-
-	sourceID, fallbackID := int64(140), int64(240)
-	source := &Group{ID: sourceID, Platform: PlatformAnthropic, Status: StatusActive, FallbackGroupID: &fallbackID}
-	fallback := &Group{ID: fallbackID, Platform: PlatformAnthropic, Status: StatusActive, IsFallbackPool: true}
-	accountRepo := &anthropicFallbackAccountRepo{
-		byGroup: map[int64][]Account{
-			fallbackID: {{
-				ID: 904, Platform: PlatformAnthropic, Status: StatusActive, Schedulable: true,
-				RateMultiplier: gatewayFallbackFloatPtr(1),
-				Credentials: map[string]any{
-					"model_mapping": map[string]any{"claude-3-5-sonnet": "claude-3-5-sonnet"},
-				},
-			}},
-		},
-	}
-	groupRepo := &anthropicFallbackGroupRepo{groups: map[int64]*Group{sourceID: source, fallbackID: fallback}}
-	svc := &GatewayService{accountRepo: accountRepo, groupRepo: groupRepo, cfg: &config.Config{RunMode: config.RunModeStandard}}
-
-	_, nextID := svc.nextGatewayFallbackGroup(context.Background(), &sourceID, "claude-3-5-sonnet")
-	require.NotNil(t, nextID)
-	require.Equal(t, fallbackID, *nextID)
-}

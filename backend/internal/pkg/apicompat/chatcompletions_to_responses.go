@@ -384,8 +384,8 @@ func convertChatContentPartsToResponses(parts []ChatContentPart) []ResponsesCont
 			if p.File != nil && (p.File.FileData != "" || p.File.FileID != "") {
 				responseParts = append(responseParts, ResponsesContentPart{
 					Type:     "input_file",
-					FileData: p.File.FileData,
 					Filename: p.File.Filename,
+					FileData: p.File.FileData,
 					FileID:   p.File.FileID,
 				})
 			}

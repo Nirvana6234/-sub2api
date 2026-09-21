@@ -110,10 +110,10 @@ func (m *sessionWindowMockRepo) SetError(context.Context, int64, string) error {
 	panic("unexpected")
 }
 func (m *sessionWindowMockRepo) ClearError(context.Context, int64) error { panic("unexpected") }
-func (m *sessionWindowMockRepo) RecoverAutomaticSchedulability(context.Context, int64, *time.Time) (bool, error) {
+func (m *sessionWindowMockRepo) SetSchedulable(context.Context, int64, bool) error {
 	panic("unexpected")
 }
-func (m *sessionWindowMockRepo) SetSchedulable(context.Context, int64, bool) error {
+func (m *sessionWindowMockRepo) UpdateGroupPriorities(context.Context, []AccountGroupPriorityUpdate) (int, error) {
 	panic("unexpected")
 }
 func (m *sessionWindowMockRepo) AutoPauseExpiredAccounts(context.Context, time.Time) (int64, error) {

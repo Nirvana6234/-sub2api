@@ -283,10 +283,23 @@ func (Group) Fields() []ent.Field {
 			Default(domain.OpenAIMessagesDispatchModelConfig{}).
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}).
 			Comment("OpenAI Messages 调度模型配置：按 Claude 系列/精确模型映射到目标 GPT 模型"),
+		// TODO(upstream-merge): upstream 把此字段重构为 model_allowlist
+		// (domain.GroupModelAllowlist)，结构体字段完全相同(Enabled+Models)，
+		// 但 upstream 注释称新增了"网关准入"约束（不仅过滤 /v1/models 展示，
+		// 还真正拦截请求），本地这版语义是否已覆盖待核实，先保留本地字段名
+		// 避免打断 backend/internal 里 25 处引用，留到后端业务逻辑合并批次处理。
+		field.JSON("model_allowlist", domain.GroupModelAllowlist{}).
+			Default(domain.GroupModelAllowlist{}).
+			SchemaType(map[string]string{dialect.Postgres: "jsonb"}).
+			Comment("group model allowlist for gateway admission"),
 		field.JSON("models_list_config", domain.GroupModelsListConfig{}).
 			Default(domain.GroupModelsListConfig{}).
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}).
-			Comment("自定义 /v1/models 展示列表配置；仅影响模型列表响应，不影响调度"),
+			Comment("controls the optional custom /v1/models response list"),
+		field.JSON("codex_models_manifest_config", domain.GroupCodexModelsManifestConfig{}).
+			Default(domain.GroupCodexModelsManifestConfig{}).
+			SchemaType(map[string]string{dialect.Postgres: "jsonb"}).
+			Comment("固定账号获取 Codex Model Manifest 配置；开启后 /models 请求只用选定账号拉取（仅 openai 平台）"),
 
 		// 分组级每分钟请求数上限（0 = 不限制）。设置后优先于用户级兜底生效。
 		field.Int("rpm_limit").

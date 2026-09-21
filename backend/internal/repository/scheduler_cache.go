@@ -867,16 +867,14 @@ func (c *schedulerCache) mgetChunked(ctx context.Context, keys []string) ([]any,
 
 func buildSchedulerMetadataAccount(account service.Account) service.Account {
 	return service.Account{
-		ID:             account.ID,
-		Name:           account.Name,
-		Platform:       account.Platform,
-		Type:           account.Type,
-		Concurrency:    account.Concurrency,
-		LoadFactor:     account.LoadFactor,
-		Priority:       account.Priority,
-		RateMultiplier: account.RateMultiplier,
-		// 利润准入的三态判定要靠它区分"未声明"与"声明为 1.0"；漏列会让未声明
-		// 账号被按默认 1.0 判成越线，对启用利润控制的分组就是整组不可调度。
+		ID:                       account.ID,
+		Name:                     account.Name,
+		Platform:                 account.Platform,
+		Type:                     account.Type,
+		Concurrency:              account.Concurrency,
+		LoadFactor:               account.LoadFactor,
+		Priority:                 account.Priority,
+		RateMultiplier:           account.RateMultiplier,
 		RateMultiplierUndeclared: account.RateMultiplierUndeclared,
 		Status:                   account.Status,
 		LastUsedAt:               account.LastUsedAt,
@@ -960,7 +958,9 @@ func filterSchedulerCredentials(credentials map[string]any) map[string]any {
 	if len(credentials) == 0 {
 		return nil
 	}
-	keys := []string{"model_mapping", "compact_model_mapping", "api_key", "project_id", "oauth_type", "plan_type"}
+	// Candidate-list admission evaluates the account override before hydrating
+	// the full account. Dropping it silently falls back to the platform threshold.
+	keys := []string{"model_mapping", "compact_model_mapping", "api_key", "project_id", "oauth_type", "plan_type", "account_scheduling_threshold"}
 	filtered := make(map[string]any)
 	for _, key := range keys {
 		if value, ok := credentials[key]; ok && value != nil {
@@ -978,6 +978,13 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		return nil
 	}
 	keys := []string{
+		// Anthropic shared-window and Fable-only threshold checks run on this
+		// projection. UpdateExtra refreshes both payloads without a bucket rebuild.
+		"session_window_utilization",
+		"passive_usage_7d_utilization",
+		"passive_usage_7d_reset",
+		"passive_usage_7d_oi_utilization",
+		"passive_usage_7d_oi_reset",
 		"quota_limit",
 		"quota_used",
 		"quota_daily_limit",
@@ -1015,11 +1022,6 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		// 走网关报 no available accounts"。
 		"openai_passthrough",
 		"openai_oauth_passthrough",
-		// strict 本身不参与 IsModelSupported，但 IsOpenAIPassthroughStrictEnabled()
-		// 以 IsOpenAIPassthroughEnabled() 为前提，两个键必须同进同出：只投影其中
-		// 一个，落在投影后账号对象上的读取点会静默读到 false —— 不报错，只是开关
-		// 在部分路径上莫名不生效。
-		"openai_passthrough_strict",
 		"codex_fingerprint_mode",
 		"codex_fingerprint_seed",
 		"codex_5h_used_percent",
@@ -1034,17 +1036,6 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		"auto_pause_5h_disabled",
 		"auto_pause_7d_disabled",
 		"model_rate_limits",
-		service.AccountContributionSourceKey,
-		service.AccountContributorUserIDKey,
-		service.AccountShareModeKey,
-		service.AccountShareTotalBudgetKey,
-		service.AccountShareDailyBudgetKey,
-		service.AccountShareExpiresAtKey,
-		service.AccountShareUsedTotalKey,
-		service.AccountShareUsedTodayKey,
-		service.AccountShareUsageDayKey,
-		service.AccountContributionGovernanceStateKey,
-		"contribution_unusable_since",
 		service.UpstreamBillingProbeExtraKey,
 		service.GrokMediaEligibleExtraKey,
 		"grok_billing_snapshot",

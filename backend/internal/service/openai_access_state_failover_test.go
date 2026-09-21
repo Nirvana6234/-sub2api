@@ -16,17 +16,11 @@ import (
 
 type openAIStream403AccountRepo struct {
 	AccountRepository
-	setErrorCalls          int
-	setModelRateLimitCalls int
+	setErrorCalls int
 }
 
 func (r *openAIStream403AccountRepo) SetError(context.Context, int64, string) error {
 	r.setErrorCalls++
-	return nil
-}
-
-func (r *openAIStream403AccountRepo) SetModelRateLimit(context.Context, int64, string, time.Time, ...string) error {
-	r.setModelRateLimitCalls++
 	return nil
 }
 
@@ -63,28 +57,6 @@ func (*openAIAuthPolicy403Counter) ResetOpenAI403Count(context.Context, int64) e
 	return nil
 }
 
-type openAIDailyUsageAccountRepo struct {
-	AccountRepository
-	setErrorCalls       int
-	tempCalls           int
-	modelRateLimitCalls int
-}
-
-func (r *openAIDailyUsageAccountRepo) SetError(context.Context, int64, string) error {
-	r.setErrorCalls++
-	return nil
-}
-
-func (r *openAIDailyUsageAccountRepo) SetTempUnschedulable(context.Context, int64, time.Time, string) error {
-	r.tempCalls++
-	return nil
-}
-
-func (r *openAIDailyUsageAccountRepo) SetModelRateLimit(context.Context, int64, string, time.Time, ...string) error {
-	r.modelRateLimitCalls++
-	return nil
-}
-
 func TestOpenAIUpstreamAccessStateClassification(t *testing.T) {
 	tests := []struct {
 		name string
@@ -105,7 +77,7 @@ func TestOpenAIUpstreamAccessStateClassification(t *testing.T) {
 			if !tt.want {
 				return
 			}
-			require.True(t, (&OpenAIGatewayService{}).shouldFailoverOpenAIUpstreamResponse(http.StatusForbidden, "", body))
+			require.True(t, (&OpenAIGatewayService{}).shouldFailoverOpenAIUpstreamResponse(newOpenAIUpstreamErrorTestAccount(), http.StatusForbidden, "", body))
 			require.True(t, shouldFailoverOpenAIPassthroughResponse(&Account{Type: AccountTypeOAuth}, http.StatusForbidden, body))
 
 			err := newOpenAIUpstreamFailoverError(http.StatusForbidden, nil, body, "", true)
@@ -133,7 +105,7 @@ func TestOpenAIHTTPAccessStateDoesNotTrustBadRequestMessage(t *testing.T) {
 
 	require.False(t, isOpenAIUpstreamAccessStateError("", body), "free-form stream messages are not durable account evidence")
 	require.False(t, isOpenAIHTTPUpstreamAccessStateError(http.StatusBadRequest, "", body))
-	require.False(t, svc.shouldFailoverOpenAIUpstreamResponse(http.StatusBadRequest, "", body))
+	require.False(t, svc.shouldFailoverOpenAIUpstreamResponse(newOpenAIUpstreamErrorTestAccount(), http.StatusBadRequest, "", body))
 	require.False(t, shouldFailoverOpenAIPassthroughResponse(&Account{Type: AccountTypeOAuth}, http.StatusBadRequest, body))
 
 	err := newOpenAIUpstreamFailoverError(http.StatusBadRequest, nil, body, "", false)
@@ -176,7 +148,7 @@ func TestOpenAIHTTPAccessStateTrustsStructuredCode(t *testing.T) {
 	body := []byte(`{"error":{"code":"organization_deactivated","message":"request rejected"}}`)
 
 	require.True(t, isOpenAIHTTPUpstreamAccessStateError(http.StatusBadRequest, "", body))
-	require.True(t, svc.shouldFailoverOpenAIUpstreamResponse(http.StatusBadRequest, "", body))
+	require.True(t, svc.shouldFailoverOpenAIUpstreamResponse(newOpenAIUpstreamErrorTestAccount(), http.StatusBadRequest, "", body))
 	require.True(t, svc.handleOpenAIAccountUpstreamError(context.Background(), account, http.StatusBadRequest, nil, body))
 	require.Equal(t, 1, repo.setErrorCalls)
 	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
@@ -214,34 +186,10 @@ func TestOpenAIHTTPAuthMessagesUseExistingStatusPolicies(t *testing.T) {
 	})
 }
 
-func TestOpenAIDailyUsageLimitDoesNotPersistAccountOrModelPenalty(t *testing.T) {
-	repo := &openAIDailyUsageAccountRepo{}
-	svc := &OpenAIGatewayService{rateLimitService: &RateLimitService{accountRepo: repo}}
-	account := &Account{
-		ID:       940,
-		Platform: PlatformOpenAI,
-		Type:     AccountTypeAPIKey,
-		Credentials: map[string]any{
-			"base_url": "https://relay.example/v1",
-		},
-		Status:      StatusActive,
-		Schedulable: true,
-	}
-	body := []byte(`{"error":{"message":"daily usage limit exceeded"}}`)
-
-	disabled := svc.handleOpenAIAccountUpstreamError(context.Background(), account, http.StatusForbidden, nil, body, "gpt-5.6-sol")
-
-	require.False(t, disabled)
-	require.Zero(t, repo.setErrorCalls)
-	require.Zero(t, repo.tempCalls)
-	require.Zero(t, repo.modelRateLimitCalls)
-	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
-}
-
 func TestOpenAICyberPolicyWrapped5xxNeverFailsOver(t *testing.T) {
 	body := []byte(`{"error":{"code":"cyber_policy","message":"blocked"}}`)
 	svc := &OpenAIGatewayService{}
-	require.False(t, svc.shouldFailoverOpenAIUpstreamResponse(http.StatusBadGateway, "wrapped upstream failure", body))
+	require.False(t, svc.shouldFailoverOpenAIUpstreamResponse(newOpenAIUpstreamErrorTestAccount(), http.StatusBadGateway, "wrapped upstream failure", body))
 	require.False(t, shouldFailoverOpenAIPassthroughResponse(&Account{Type: AccountTypeOAuth}, http.StatusBadGateway, body))
 }
 
@@ -252,8 +200,12 @@ func TestOpenAICapacityFailoverCarriesSafeTerminalResponse(t *testing.T) {
 
 	require.True(t, err.IsOpenAICapacityShed())
 	require.Equal(t, http.StatusServiceUnavailable, err.ClientStatusCode)
-	require.Equal(t, message, err.ClientMessage)
+	// 回给用户的是统一的中文文案，不是上游原文：上游 message 里可能夹带
+	// server_is_overloaded 这类内部错误码，不该出现在用户侧。
+	require.Equal(t, OpenAICapacityShedUserMessage, err.ClientMessage)
 	require.NotContains(t, err.ClientMessage, "server_is_overloaded")
+	require.NotContains(t, err.ClientMessage, message,
+		"上游原文不得透传给用户")
 }
 
 func TestOpenAIStreamSemanticStatusesPreservedAcrossTerminalShapes(t *testing.T) {
@@ -323,37 +275,6 @@ func TestOpenAIStream403FailoverRequiresStructuredAccountCredentialSignal(t *tes
 			require.Equal(t, tt.want, openAIStreamErrorEventShouldFailover(payload, message))
 		})
 	}
-}
-
-func TestOpenAIStreamDailyUsageLimitEntersFailoverWithoutAccountPenalty(t *testing.T) {
-	payload := []byte(`{"type":"response.failed","response":{"error":{"type":"permission_error","code":"forbidden","status_code":403,"message":"daily usage limit exceeded"}}}`)
-	message := extractOpenAISSEErrorMessage(payload)
-
-	require.Equal(t, http.StatusForbidden, openAIStreamFailureStatus(payload, message))
-	require.True(t, openAIStreamFailedEventShouldFailover(payload, message))
-	require.True(t, openAIStreamErrorEventShouldFailover(payload, message))
-	require.True(t, openAIStreamFailedEventRetryableOnSameAccount(
-		&Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey},
-		payload,
-		message,
-	))
-	require.False(t, openAIStreamFailedEventRetryableOnSameAccount(
-		&Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth},
-		payload,
-		message,
-	))
-
-	repo := &openAIDailyUsageAccountRepo{}
-	svc := &OpenAIGatewayService{rateLimitService: &RateLimitService{accountRepo: repo}}
-	account := &Account{ID: 941, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true}
-	status, disabled := svc.handleOpenAIStreamTerminalAccountSideEffects(nil, account, payload, message, nil)
-
-	require.Equal(t, http.StatusForbidden, status)
-	require.False(t, disabled)
-	require.Zero(t, repo.setErrorCalls)
-	require.Zero(t, repo.tempCalls)
-	require.Zero(t, repo.modelRateLimitCalls)
-	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
 }
 
 func TestOpenAIStream403PostOutputAccountSideEffectsIgnoreRequestPermissionErrors(t *testing.T) {

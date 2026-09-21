@@ -7,7 +7,7 @@ import (
 )
 
 // PlaygroundAPIKeyProvisioner isolates playground bootstrap from upstream
-// authentication. Implementations must be idempotent and fail open at signup.
+// authentication. Implementations are idempotent and fail open at signup.
 type PlaygroundAPIKeyProvisioner interface {
 	EnsurePlaygroundAPIKeys(ctx context.Context, userID int64) error
 }

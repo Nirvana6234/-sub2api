@@ -91,7 +91,7 @@ func (s *OpenAIGatewayService) ForwardAlphaSearch(ctx context.Context, c *gin.Co
 
 	if resp.StatusCode >= http.StatusBadRequest {
 		upstreamMessage := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
-		if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMessage, respBody) ||
+		if s.shouldFailoverOpenAIUpstreamResponse(account, resp.StatusCode, upstreamMessage, respBody) ||
 			isOpenAIAlphaSearchEndpointUnsupported(account, resp.StatusCode) {
 			resp.Body = io.NopCloser(bytes.NewReader(respBody))
 			// alpha/search 是独立的工具端点，单次 401 不能证明账号的模型调用
@@ -103,23 +103,14 @@ func (s *OpenAIGatewayService) ForwardAlphaSearch(ctx context.Context, c *gin.Co
 			if shouldApplyOpenAIAlphaSearchAccountErrorSideEffects(resp.StatusCode) {
 				shouldDisable = s.handleFailoverSideEffects(ctx, resp, account, respBody, openAIAlphaSearchSchedulingModel(account, requestedModel))
 			}
-			retryableOnSameAccount := openAIRetryableOnSameAccount(account, resp.StatusCode, shouldDisable, upstreamMessage, respBody)
-			// OAuth 类账号的 429 走账号级分类，它会带上同号重试窗口（Retry-After 等）。
-			// 少了这一步，setup token 账号被限流后会被当成普通失败直接换号，
-			// 白白丢掉本可以等待恢复的额度。
+			retryableOnSameAccount := !shouldDisable && account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode)
 			if account.IsOpenAIOAuthLike() && resp.StatusCode == http.StatusTooManyRequests {
 				return nil, s.newOpenAIAccountFailoverError(account, resp.StatusCode, resp.Header, respBody, upstreamMessage, shouldDisable, retryableOnSameAccount)
 			}
-			// 访问态错误（workspace 受限、组织被停用等）要走带响应头的专用失败类型，
-			// 必须先于通用分支返回：调用方靠它拿到分类信息决定是否换号、是否禁用账号。
 			if isOpenAIHTTPUpstreamAccessStateError(resp.StatusCode, upstreamMessage, respBody) {
 				return nil, newOpenAIUpstreamFailoverError(resp.StatusCode, resp.Header, respBody, upstreamMessage, retryableOnSameAccount)
 			}
-			return nil, &UpstreamFailoverError{
-				StatusCode:             resp.StatusCode,
-				ResponseBody:           respBody,
-				RetryableOnSameAccount: retryableOnSameAccount,
-			}
+			return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: respBody, RetryableOnSameAccount: retryableOnSameAccount}
 		}
 	}
 
@@ -137,11 +128,12 @@ func (s *OpenAIGatewayService) ForwardAlphaSearch(ctx context.Context, c *gin.Co
 		return nil, nil
 	}
 	return &OpenAIForwardResult{
-		RequestID:      strings.TrimSpace(resp.Header.Get("x-request-id")),
-		Model:          requestedModel,
-		UpstreamModel:  upstreamModel,
-		Duration:       time.Since(upstreamStart),
-		WebSearchCalls: 1,
+		RequestID:       strings.TrimSpace(resp.Header.Get("x-request-id")),
+		UpstreamHeaders: resp.Header,
+		Model:           requestedModel,
+		UpstreamModel:   upstreamModel,
+		Duration:        time.Since(upstreamStart),
+		WebSearchCalls:  1,
 	}, nil
 }
 
@@ -183,30 +175,21 @@ func (s *OpenAIGatewayService) forwardAlphaSearchViaResponsesWebSearch(
 
 	if resp.StatusCode >= http.StatusBadRequest {
 		upstreamMessage := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
-		if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMessage, respBody) {
+		if s.shouldFailoverOpenAIUpstreamResponse(account, resp.StatusCode, upstreamMessage, respBody) {
 			resp.Body = io.NopCloser(bytes.NewReader(respBody))
 			// 仍按 alpha/search 工具请求处理：PAT 的工具链路失败不能直接永久置错。
 			shouldDisable := false
 			if shouldApplyOpenAIAlphaSearchAccountErrorSideEffects(resp.StatusCode) {
 				shouldDisable = s.handleFailoverSideEffects(ctx, resp, account, respBody, openAIAlphaSearchSchedulingModel(account, requestedModel))
 			}
-			retryableOnSameAccount := openAIRetryableOnSameAccount(account, resp.StatusCode, shouldDisable, upstreamMessage, respBody)
-			// OAuth 类账号的 429 走账号级分类，它会带上同号重试窗口（Retry-After 等）。
-			// 少了这一步，setup token 账号被限流后会被当成普通失败直接换号，
-			// 白白丢掉本可以等待恢复的额度。
+			retryableOnSameAccount := !shouldDisable && account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode)
 			if account.IsOpenAIOAuthLike() && resp.StatusCode == http.StatusTooManyRequests {
 				return nil, s.newOpenAIAccountFailoverError(account, resp.StatusCode, resp.Header, respBody, upstreamMessage, shouldDisable, retryableOnSameAccount)
 			}
-			// 访问态错误（workspace 受限、组织被停用等）要走带响应头的专用失败类型，
-			// 必须先于通用分支返回：调用方靠它拿到分类信息决定是否换号、是否禁用账号。
 			if isOpenAIHTTPUpstreamAccessStateError(resp.StatusCode, upstreamMessage, respBody) {
 				return nil, newOpenAIUpstreamFailoverError(resp.StatusCode, resp.Header, respBody, upstreamMessage, retryableOnSameAccount)
 			}
-			return nil, &UpstreamFailoverError{
-				StatusCode:             resp.StatusCode,
-				ResponseBody:           respBody,
-				RetryableOnSameAccount: retryableOnSameAccount,
-			}
+			return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: respBody, RetryableOnSameAccount: retryableOnSameAccount}
 		}
 	}
 
@@ -230,6 +213,7 @@ func (s *OpenAIGatewayService) forwardAlphaSearchViaResponsesWebSearch(
 	c.Data(http.StatusOK, "application/json", alphaRespBody)
 	return &OpenAIForwardResult{
 		RequestID:        strings.TrimSpace(resp.Header.Get("x-request-id")),
+		UpstreamHeaders:  resp.Header,
 		Model:            requestedModel,
 		UpstreamModel:    upstreamModel,
 		UpstreamEndpoint: "/v1/responses",

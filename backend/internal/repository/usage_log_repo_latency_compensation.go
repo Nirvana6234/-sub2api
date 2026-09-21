@@ -23,7 +23,7 @@ import (
 // one is the contributor's own — and the platform shouldn't subsidize a
 // contributor's own usage of their own account.
 //
-// The exclusion predicate is wrapped in COALESCE(..., '') on both sides
+// The exclusion predicate is wrapped in COALESCE(..., ”) on both sides
 // (acc.type and acc.extra->>'import_source'). Without it, any ordinary
 // (non-contributed) apikey account — which has no "import_source" key in
 // extra at all — makes `acc.extra ->> 'import_source' = 'user_contribution'`

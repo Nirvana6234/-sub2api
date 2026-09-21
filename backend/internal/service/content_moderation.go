@@ -950,7 +950,7 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 					Allowed:         false,
 					Blocked:         true,
 					Flagged:         true,
-					Message:         fmt.Sprintf("%s（命中关键词：%s）", cfg.BlockMessage, keyword),
+					Message:         cfg.BlockMessage,
 					StatusCode:      cfg.BlockStatus,
 					HighestCategory: contentModerationKeywordCategory,
 					HighestScore:    1.0,

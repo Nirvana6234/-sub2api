@@ -15,7 +15,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -35,38 +34,6 @@ import (
 	entsql "entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqljson"
 )
-
-const codexFingerprintSeedCanonicalPattern = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-const codexFingerprintNilSeed = "00000000-0000-0000-0000-000000000000"
-
-func codexFingerprintSeedValidSQL(extraExpr string) string {
-	value := "(" + extraExpr + " ->> 'codex_fingerprint_seed')"
-	return "(" + value + " ~ '" + codexFingerprintSeedCanonicalPattern + "' AND " + value + " <> '" + codexFingerprintNilSeed + "')"
-}
-
-func ensureCodexFingerprintSeedSQL(extraExpr string) string {
-	return "CASE WHEN platform = 'openai' AND type = 'oauth' THEN " +
-		"jsonb_set(" + extraExpr + ", '{codex_fingerprint_seed}', " +
-		"CASE WHEN " + codexFingerprintSeedValidSQL("extra") +
-		" THEN to_jsonb(extra ->> 'codex_fingerprint_seed') ELSE to_jsonb(gen_random_uuid()::text) END, true) " +
-		"ELSE " + extraExpr + " END"
-}
-
-func stripCodexFingerprintSeedFromExtraUpdate(extra map[string]any) map[string]any {
-	if extra == nil {
-		return nil
-	}
-	if _, exists := extra["codex_fingerprint_seed"]; !exists {
-		return extra
-	}
-	stripped := make(map[string]any, len(extra)-1)
-	for key, value := range extra {
-		if key != "codex_fingerprint_seed" {
-			stripped[key] = value
-		}
-	}
-	return stripped
-}
 
 // accountRepository 实现 service.AccountRepository 接口。
 // 提供 AI API 账户的完整数据访问功能。
@@ -104,6 +71,39 @@ var schedulerNeutralExtraKeys = map[string]struct{}{
 }
 
 const postgresParameterBatchSize = 50000
+
+const codexFingerprintSeedCanonicalPattern = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+const codexFingerprintNilSeed = "00000000-0000-0000-0000-000000000000"
+
+func codexFingerprintSeedValidSQL(extraExpr string) string {
+	value := "(" + extraExpr + " ->> 'codex_fingerprint_seed')"
+	return "(" + value + " ~ '" + codexFingerprintSeedCanonicalPattern + "' AND " + value + " <> '" + codexFingerprintNilSeed + "')"
+}
+
+func ensureCodexFingerprintSeedSQL(extraExpr string) string {
+	return "CASE WHEN platform = 'openai' AND type = 'oauth' THEN " +
+		"jsonb_set(" + extraExpr + ", '{codex_fingerprint_seed}', " +
+		"CASE WHEN " + codexFingerprintSeedValidSQL("extra") +
+		" THEN to_jsonb(extra ->> 'codex_fingerprint_seed') ELSE to_jsonb(gen_random_uuid()::text) END, true) " +
+		"ELSE " + extraExpr + " END"
+}
+
+func stripCodexFingerprintSeedFromExtraUpdate(extra map[string]any) map[string]any {
+	if extra == nil {
+		return nil
+	}
+	if _, exists := extra["codex_fingerprint_seed"]; !exists {
+		return extra
+	}
+	stripped := make(map[string]any, len(extra)-1)
+	for key, value := range extra {
+		if key == "codex_fingerprint_seed" {
+			continue
+		}
+		stripped[key] = value
+	}
+	return stripped
+}
 
 // NewAccountRepository 创建账户仓储实例。
 // 这是对外暴露的构造函数，返回接口类型以便于依赖注入。
@@ -226,16 +226,21 @@ func (r *accountRepository) CreateWithAccountGroups(ctx context.Context, account
 		// Reuse a caller-owned transaction when this repository is already transactional.
 		txClient = r.client
 	}
+	groupIDs := make([]int64, 0, len(groups))
+	for i := range groups {
+		groupIDs = append(groupIDs, groups[i].GroupID)
+	}
+	if err := lockLiveGroups(ctx, txClient, groupIDs); err != nil {
+		return err
+	}
 
 	if err := createAccountRecord(ctx, txClient, account); err != nil {
 		return err
 	}
-	groupIDs := make([]int64, 0, len(groups))
 	if len(groups) > 0 {
 		builders := make([]*dbent.AccountGroupCreate, 0, len(groups))
 		for i := range groups {
 			groups[i].AccountID = account.ID
-			groupIDs = append(groupIDs, groups[i].GroupID)
 			builders = append(builders, txClient.AccountGroup.Create().
 				SetAccountID(account.ID).
 				SetGroupID(groups[i].GroupID).
@@ -526,13 +531,6 @@ func (r *accountRepository) updateLockedAccount(
 	}
 	account.Extra = extra
 
-	// 该行已被 lockAndMergeAccountProbeExtra 的 FOR NO KEY UPDATE 锁住，
-	// 同事务内再读来源是安全的，不存在 check-then-write 竞态。
-	currentSource, err := lockedAccountSchedulabilitySource(ctx, client, account.ID)
-	if err != nil {
-		return nil, err
-	}
-
 	schedulable := account.Schedulable
 	if account.Status == service.StatusError {
 		schedulable = false
@@ -551,23 +549,6 @@ func (r *accountRepository) updateLockedAccount(
 		SetErrorMessage(account.ErrorMessage).
 		SetSchedulable(schedulable).
 		SetAutoPauseOnExpired(account.AutoPauseOnExpired)
-
-	// 来源与 schedulable 在同一条 UPDATE 里写入，禁止先改 schedulable 再补来源。
-	switch {
-	case schedulable && currentSource != service.SchedulabilitySourceNone:
-		// 重新可调度的账号不应残留任何停用来源。
-		builder.SetSchedulabilitySource(service.SchedulabilitySourceNone).
-			ClearSchedulabilityReason().
-			SetSchedulabilityChangedAt(time.Now())
-	case !schedulable && currentSource == service.SchedulabilitySourceManual:
-		// 管理员已手动关闭：系统错误只记录 status/error_message，
-		// 不夺走 manual 所有权，因此这里刻意不写来源。
-	case !schedulable && account.Status == service.StatusError &&
-		currentSource != service.SchedulabilitySourceAutomatic:
-		builder.SetSchedulabilitySource(service.SchedulabilitySourceAutomatic).
-			SetSchedulabilityReason(service.SchedulabilityReasonUpstreamError).
-			SetSchedulabilityChangedAt(time.Now())
-	}
 
 	// 运营显式写入倍率即完成声明，账号从此受利润准入严格判定。
 	if explicitRateMultiplier != nil {
@@ -802,35 +783,6 @@ func lockAndMergeAccountProbeExtra(
 		}
 	}
 	return extra, nil
-}
-
-// lockedAccountSchedulabilitySource 读取当前 schedulability_source。
-// 仅允许在 lockAndMergeAccountProbeExtra 已用 FOR NO KEY UPDATE 锁住该行之后、
-// 同一事务内调用，因此读到的值在本事务提交前不会被其他会话改写。
-func lockedAccountSchedulabilitySource(ctx context.Context, client *dbent.Client, id int64) (string, error) {
-	rows, err := client.QueryContext(ctx, `
-		SELECT COALESCE(schedulability_source, '')
-		FROM accounts
-		WHERE id = $1 AND deleted_at IS NULL
-	`, id)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = rows.Close() }()
-	if !rows.Next() {
-		if err := rows.Err(); err != nil {
-			return "", err
-		}
-		return "", service.ErrAccountNotFound
-	}
-	var source string
-	if err := rows.Scan(&source); err != nil {
-		return "", err
-	}
-	if err := rows.Err(); err != nil {
-		return "", err
-	}
-	return service.NormalizeSchedulabilitySource(source), nil
 }
 
 func decodeAccountExtraJSON(raw []byte) (any, bool, error) {
@@ -1090,7 +1042,7 @@ func (r *accountRepository) ListWithFilters(ctx context.Context, params paginati
 	accountsQuery := q.
 		Offset(params.Offset()).
 		Limit(params.Limit())
-	for _, order := range accountListOrder(params, groupID) {
+	for _, order := range accountListOrder(params) {
 		accountsQuery = accountsQuery.Order(order)
 	}
 
@@ -1149,7 +1101,7 @@ func (r *accountRepository) ListOpsAccountsForStats(ctx context.Context, platfor
 	return r.accountsToService(ctx, accounts)
 }
 
-func accountListOrder(params pagination.PaginationParams, groupID int64) []func(*entsql.Selector) {
+func accountListOrder(params pagination.PaginationParams) []func(*entsql.Selector) {
 	sortBy := strings.ToLower(strings.TrimSpace(params.SortBy))
 	sortOrder := params.NormalizedSortOrder(pagination.SortOrderAsc)
 	if sortBy == "upstream_billing_rate" {
@@ -1182,23 +1134,6 @@ func accountListOrder(params pagination.PaginationParams, groupID int64) []func(
 		field = dbaccount.FieldSchedulable
 		defaultOrder = false
 	case "priority":
-		if groupID > 0 {
-			direction := "ASC"
-			tieOrder := entsql.Asc
-			if sortOrder == pagination.SortOrderDesc {
-				direction = "DESC"
-				tieOrder = entsql.Desc
-			}
-			return []func(*entsql.Selector){func(s *entsql.Selector) {
-				accountID := s.C(dbaccount.FieldID)
-				priority := fmt.Sprintf(
-					"COALESCE((SELECT ag.priority FROM account_groups ag WHERE ag.account_id = %s AND ag.group_id = %d), %s)",
-					accountID, groupID, s.C(dbaccount.FieldPriority),
-				)
-				s.OrderExpr(entsql.Expr(priority + " " + direction + " NULLS LAST"))
-				s.OrderBy(tieOrder(accountID))
-			}}
-		}
 		field = dbaccount.FieldPriority
 		defaultOrder = false
 	case "rate_multiplier":
@@ -1298,11 +1233,20 @@ func (r *accountRepository) ListOAuthRefreshCandidatePage(ctx context.Context, o
 	// NOT (a AND b) 在 PG 三值逻辑下会把 a 或 b 为 NULL 的行（即绝大多数
 	// 健康账号：temp_unschedulable_until=NULL）也排除，导致后台 token
 	// 刷新工作器漏掉所有正常账号 → access_token 到期后请求开始 401。
+	//
+	// Deliberately NO `schedulable = TRUE` filter here: paused accounts
+	// (schedulable=false, status=active) still hold valid refresh tokens and
+	// their stored access_token must keep working for the admin usage-window
+	// probe. Excluding them lets the token silently expire, after which the
+	// dashboard reports a false "needs re-auth" even though Test Connection
+	// (which refreshes on demand) succeeds. Permanent rejection is already
+	// covered by the status = 'active' filter (error accounts drop out), and
+	// accounts whose refresh actually fails are rate-limited by the
+	// ExcludeRetryCooldown clause below.
 	query := `
 		SELECT id
 		FROM accounts
 		WHERE deleted_at IS NULL
-			AND schedulable = TRUE
 			AND platform = ANY($1)
 			AND id > $2`
 	if options.ActiveOnly {
@@ -1321,7 +1265,7 @@ func (r *accountRepository) ListOAuthRefreshCandidatePage(ctx context.Context, o
 			AND credentials ? 'refresh_token'
 			AND btrim(credentials->>'refresh_token') <> ''`
 	}
-	if options.ExcludeRetryCooldown {
+	if options.ExcludeRetryCooldown && !options.IncludeTempUnschedulable {
 		query += `
 			AND (
 				temp_unschedulable_until > NOW()
@@ -1448,32 +1392,13 @@ func (r *accountRepository) BatchUpdateLastUsed(ctx context.Context, updates map
 	return nil
 }
 
-// SetError 记录系统运行错误并自动停止调度。
-//
-// 所有权规则：如果账号当前来源已经是 manual（管理员明确关闭），本方法只记录
-// status/error_message，绝不改动 schedulable，也绝不把来源改写成 automatic。
-// 这保证「管理员手动关闭永久优先」——系统错误无法抢走管理员的所有权，
-// 因此这类账号也永远不会进入 TransitHub 的自动恢复队列。
 func (r *accountRepository) SetError(ctx context.Context, id int64, errorMsg string) error {
-	_, err := r.sql.ExecContext(ctx, `
-		UPDATE accounts
-		SET status = $1,
-			error_message = $2,
-			schedulable = CASE WHEN schedulability_source = $3 THEN schedulable ELSE FALSE END,
-			schedulability_source = CASE WHEN schedulability_source = $3 THEN $3 ELSE $4 END,
-			schedulability_reason = CASE WHEN schedulability_source = $3 THEN schedulability_reason ELSE $5 END,
-			schedulability_changed_at = CASE WHEN schedulability_source = $3 THEN schedulability_changed_at ELSE NOW() END,
-			updated_at = NOW()
-		WHERE id = $6
-			AND deleted_at IS NULL
-	`,
-		service.StatusError,
-		errorMsg,
-		service.SchedulabilitySourceManual,
-		service.SchedulabilitySourceAutomatic,
-		service.SchedulabilityReasonUpstreamError,
-		id,
-	)
+	_, err := r.client.Account.Update().
+		Where(dbaccount.IDEQ(id)).
+		SetStatus(service.StatusError).
+		SetErrorMessage(errorMsg).
+		SetSchedulable(false).
+		Save(ctx)
 	if err != nil {
 		return err
 	}
@@ -1495,10 +1420,7 @@ func (r *accountRepository) SetGrokCredentialErrorIfMatch(
 		UPDATE accounts AS a
 		SET status = $1,
 			error_message = $2,
-			schedulable = CASE WHEN a.schedulability_source = $11 THEN a.schedulable ELSE false END,
-			schedulability_source = CASE WHEN a.schedulability_source = $11 THEN a.schedulability_source ELSE $12 END,
-			schedulability_reason = CASE WHEN a.schedulability_source = $11 THEN a.schedulability_reason ELSE $13 END,
-			schedulability_changed_at = CASE WHEN a.schedulability_source = $11 THEN a.schedulability_changed_at ELSE NOW() END,
+			schedulable = false,
 			updated_at = NOW()
 		WHERE a.id = $3
 			AND a.deleted_at IS NULL
@@ -1523,9 +1445,7 @@ func (r *accountRepository) SetGrokCredentialErrorIfMatch(
 		SELECT $10, updated.id, NULL, NULL FROM updated
 	`, service.StatusError, errorMsg, id, service.StatusActive, service.PlatformGrok, service.AccountTypeOAuth,
 		snapshot.CredentialsJSON, snapshot.ProxyID, string(service.GrokCredentialReasonProxyInvalid),
-		service.SchedulerOutboxEventAccountChanged,
-		service.SchedulabilitySourceManual, service.SchedulabilitySourceAutomatic,
-		service.SchedulabilityReasonCredentialError)
+		service.SchedulerOutboxEventAccountChanged)
 	if err != nil {
 		return false, err
 	}
@@ -1560,12 +1480,7 @@ func (r *accountRepository) SetGrokOAuthErrorIfCredentialsUnchanged(
 		UPDATE accounts AS a
 		SET status = $1,
 			error_message = $2,
-			-- 管理员已手动关闭（source=manual）时只记录运行错误，
-			-- 不夺走 manual 所有权，也不改写 schedulable。
-			schedulable = CASE WHEN a.schedulability_source = $9 THEN a.schedulable ELSE FALSE END,
-			schedulability_source = CASE WHEN a.schedulability_source = $9 THEN a.schedulability_source ELSE $10 END,
-			schedulability_reason = CASE WHEN a.schedulability_source = $9 THEN a.schedulability_reason ELSE $11 END,
-			schedulability_changed_at = CASE WHEN a.schedulability_source = $9 THEN a.schedulability_changed_at ELSE NOW() END,
+			schedulable = FALSE,
 			updated_at = NOW()
 		WHERE a.id = $3
 			AND a.deleted_at IS NULL
@@ -1587,9 +1502,6 @@ func (r *accountRepository) SetGrokOAuthErrorIfCredentialsUnchanged(
 		service.StatusActive,
 		string(expectedJSON),
 		service.SchedulerOutboxEventAccountChanged,
-		service.SchedulabilitySourceManual,
-		service.SchedulabilitySourceAutomatic,
-		service.SchedulabilityReasonCredentialError,
 	)
 	if err != nil {
 		return false, err
@@ -1689,12 +1601,7 @@ func (r *accountRepository) SetGrokOAuthRefreshErrorIfCredentialsUnchanged(
 		UPDATE accounts AS a
 		SET status = $1,
 			error_message = $2,
-			-- 管理员已手动关闭（source=manual）时只记录运行错误，
-			-- 不夺走 manual 所有权，也不改写 schedulable。
-			schedulable = CASE WHEN a.schedulability_source = $10 THEN a.schedulable ELSE FALSE END,
-			schedulability_source = CASE WHEN a.schedulability_source = $10 THEN a.schedulability_source ELSE $11 END,
-			schedulability_reason = CASE WHEN a.schedulability_source = $10 THEN a.schedulability_reason ELSE $12 END,
-			schedulability_changed_at = CASE WHEN a.schedulability_source = $10 THEN a.schedulability_changed_at ELSE NOW() END,
+			schedulable = FALSE,
 			updated_at = NOW()
 		WHERE a.id = $3
 			AND a.deleted_at IS NULL
@@ -1717,9 +1624,6 @@ func (r *accountRepository) SetGrokOAuthRefreshErrorIfCredentialsUnchanged(
 		string(expectedJSON),
 		expectedProxyID,
 		service.SchedulerOutboxEventAccountChanged,
-		service.SchedulabilitySourceManual,
-		service.SchedulabilitySourceAutomatic,
-		service.SchedulabilityReasonCredentialError,
 	)
 	if err != nil {
 		return false, err
@@ -1890,70 +1794,20 @@ func (r *accountRepository) ClearError(ctx context.Context, id int64) error {
 	return nil
 }
 
-// RecoverAutomaticSchedulability 用单条条件 UPDATE（compare-and-set）恢复系统
-// 自动停用的账号。所有状态变化都在同一条语句里完成，不存在「先清错再开调度」
-// 的中间态，也不需要调用方拼接多个接口。
-//
-// 只要 schedulability_source 已经不是 automatic（典型情况：探测期间管理员把账号
-// 改成了 manual），或 status 已不是 error，或 changed_at 与入队观测值不一致，
-// 本方法就返回 false 且一行都不改，管理员决定因此无法被迟到的恢复请求覆盖。
-func (r *accountRepository) RecoverAutomaticSchedulability(
-	ctx context.Context,
-	id int64,
-	expectedChangedAt *time.Time,
-) (bool, error) {
-	if r == nil || r.sql == nil {
-		return false, errors.New("account repository SQL executor is not configured")
-	}
-	result, err := r.sql.ExecContext(ctx, `
-		WITH updated AS (
-		UPDATE accounts AS a
-		SET status = $1,
-			error_message = '',
-			schedulable = TRUE,
-			schedulability_source = $2,
-			schedulability_reason = NULL,
-			schedulability_changed_at = NOW(),
-			rate_limited_at = NULL,
-			rate_limit_reset_at = NULL,
-			overload_until = NULL,
-			temp_unschedulable_until = NULL,
-			temp_unschedulable_reason = NULL,
-			updated_at = NOW()
-		WHERE a.id = $3
-			AND a.deleted_at IS NULL
-			AND a.schedulability_source = $4
-			AND a.status = $5
-			AND ($6::timestamptz IS NULL OR a.schedulability_changed_at = $6::timestamptz)
-		RETURNING a.id
-		)
-		INSERT INTO scheduler_outbox (event_type, account_id, group_id, payload)
-		SELECT $7, updated.id, NULL, NULL FROM updated
-	`,
-		service.StatusActive,
-		service.SchedulabilitySourceNone,
-		id,
-		service.SchedulabilitySourceAutomatic,
-		service.StatusError,
-		expectedChangedAt,
-		service.SchedulerOutboxEventAccountChanged,
-	)
-	if err != nil {
-		return false, err
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	if affected == 0 {
-		return false, nil
-	}
-	r.syncSchedulerAccountSnapshotDetached(ctx, id)
-	return true, nil
-}
-
 func (r *accountRepository) AddToGroup(ctx context.Context, accountID, groupID int64, priority int) error {
-	_, err := r.client.AccountGroup.Create().
+	tx, err := r.client.Tx(ctx)
+	if err != nil && !errors.Is(err, dbent.ErrTxStarted) {
+		return err
+	}
+	client := r.client
+	if tx != nil {
+		defer func() { _ = tx.Rollback() }()
+		client = tx.Client()
+	}
+	if err := lockLiveGroups(ctx, client, []int64{groupID}); err != nil {
+		return err
+	}
+	_, err = client.AccountGroup.Create().
 		SetAccountID(accountID).
 		SetGroupID(groupID).
 		SetPriority(priority).
@@ -1961,11 +1815,70 @@ func (r *accountRepository) AddToGroup(ctx context.Context, accountID, groupID i
 	if err != nil {
 		return err
 	}
+	if tx != nil {
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
 	payload := buildSchedulerGroupPayload([]int64{groupID})
 	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountGroupsChanged, &accountID, nil, payload); err != nil {
 		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue add to group failed: account=%d group=%d err=%v", accountID, groupID, err)
 	}
 	return nil
+}
+
+// UpdateGroupPriorities 批量更新 account_groups.priority，返回实际命中的行数。
+//
+// 只更新已存在的关联：不存在的 (account_id, group_id) 组合被静默跳过而不是报错，
+// 因为调用方（TransitHub 探活）持有的是上一轮快照，账号可能刚被移出分组——为这种
+// 常态竞争整批失败并不合理，返回命中行数让调用方自己判断差异即可。
+//
+// 与 AddToGroup 一样，写完必须投递调度器 outbox：分组内优先级直接决定取号顺序，
+// 不刷新快照的话调度器会在一个缓存周期内继续按旧顺序选号。
+func (r *accountRepository) UpdateGroupPriorities(ctx context.Context, updates []service.AccountGroupPriorityUpdate) (int, error) {
+	if len(updates) == 0 {
+		return 0, nil
+	}
+
+	affected := 0
+	groupIDSet := make(map[int64]struct{}, len(updates))
+	accountIDSet := make(map[int64]struct{}, len(updates))
+	for _, update := range updates {
+		if update.AccountID <= 0 || update.GroupID <= 0 || update.Priority < 0 {
+			continue
+		}
+		n, err := r.client.AccountGroup.Update().
+			Where(
+				dbaccountgroup.AccountIDEQ(update.AccountID),
+				dbaccountgroup.GroupIDEQ(update.GroupID),
+			).
+			SetPriority(update.Priority).
+			Save(ctx)
+		if err != nil {
+			return affected, err
+		}
+		if n > 0 {
+			affected += n
+			groupIDSet[update.GroupID] = struct{}{}
+			accountIDSet[update.AccountID] = struct{}{}
+		}
+	}
+	if affected == 0 {
+		return 0, nil
+	}
+
+	groupIDs := make([]int64, 0, len(groupIDSet))
+	for id := range groupIDSet {
+		groupIDs = append(groupIDs, id)
+	}
+	payload := buildSchedulerGroupPayload(groupIDs)
+	for accountID := range accountIDSet {
+		id := accountID
+		if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountGroupsChanged, &id, nil, payload); err != nil {
+			logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue group priority change failed: account=%d err=%v", id, err)
+		}
+	}
+	return affected, nil
 }
 
 func (r *accountRepository) RemoveFromGroup(ctx context.Context, accountID, groupID int64) error {
@@ -2002,55 +1915,6 @@ func (r *accountRepository) GetGroups(ctx context.Context, accountID int64) ([]s
 	return outGroups, nil
 }
 
-// UpdateGroupPriorities updates only existing account-group bindings. The
-// transaction keeps the scheduler from observing a partially reordered batch.
-func (r *accountRepository) UpdateGroupPriorities(ctx context.Context, updates []service.AccountGroupPriorityUpdate) error {
-	if len(updates) == 0 {
-		return nil
-	}
-
-	db, ok := r.sql.(interface {
-		BeginTx(context.Context, *sql.TxOptions) (*sql.Tx, error)
-	})
-	if !ok {
-		return errors.New("account group priority updates require a transactional SQL executor")
-	}
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	groupIDs := make(map[int64]struct{}, len(updates))
-	for _, update := range updates {
-		result, err := tx.ExecContext(ctx,
-			"UPDATE account_groups SET priority = $1 WHERE account_id = $2 AND group_id = $3",
-			update.Priority, update.AccountID, update.GroupID,
-		)
-		if err != nil {
-			return err
-		}
-		affected, err := result.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if affected != 1 {
-			return fmt.Errorf("account %d is not bound to group %d", update.AccountID, update.GroupID)
-		}
-		groupIDs[update.GroupID] = struct{}{}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	for groupID := range groupIDs {
-		if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventGroupChanged, nil, &groupID, nil); err != nil {
-			logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue group priority update failed: group=%d err=%v", groupID, err)
-		}
-	}
-	return nil
-}
-
 func (r *accountRepository) BindGroups(ctx context.Context, accountID int64, groupIDs []int64) error {
 	existingGroupIDs, err := r.loadAccountGroupIDs(ctx, accountID)
 	if err != nil {
@@ -2069,6 +1933,9 @@ func (r *accountRepository) BindGroups(ctx context.Context, accountID int64, gro
 	} else {
 		// 已处于外部事务中（ErrTxStarted），复用当前 client
 		txClient = r.client
+	}
+	if err := lockLiveGroups(ctx, txClient, groupIDs); err != nil {
+		return err
 	}
 
 	if _, err := txClient.AccountGroup.Delete().Where(dbaccountgroup.AccountIDEQ(accountID)).Exec(ctx); err != nil {
@@ -2475,6 +2342,61 @@ func (r *accountRepository) ClearRateLimitIfObserved(ctx context.Context, id int
 	return true, nil
 }
 
+// SetRateLimitedIfUnchanged atomically applies a rate-limit reset only while the
+// account still carries exactly the generation the caller observed: its
+// UpdatedAt row version, its RateLimitedAt and its RateLimitResetAt (nil means
+// that field is currently unset). It is the write-back CAS counterpart to
+// ClearRateLimitIfObserved: an async rate-limit reset (e.g. an Ollama Cloud
+// usage probe) must not overwrite a newer 429, an admin clear, a re-armed
+// generation, or a key/state change observed by another writer between the
+// caller's read and this write. The whole update is a single statement, so the
+// write itself is race-free. updated reports whether the write happened, and the
+// caller must ONLY send its scheduling notification when updated == true (this
+// method already performed the DB update; no further SetRateLimited call is
+// allowed, as a second unconditional write would reintroduce the race). No new
+// migration is required.
+func (r *accountRepository) SetRateLimitedIfUnchanged(
+	ctx context.Context,
+	id int64,
+	expectedUpdatedAt time.Time,
+	expectedLimitedAt, expectedResetAt *time.Time,
+	newResetAt time.Time,
+) (bool, error) {
+	preds := []dbpredicate.Account{dbaccount.IDEQ(id), dbaccount.UpdatedAtEQ(expectedUpdatedAt)}
+	if expectedLimitedAt == nil {
+		preds = append(preds, dbaccount.RateLimitedAtIsNil())
+	} else {
+		preds = append(preds, dbaccount.RateLimitedAtEQ(*expectedLimitedAt))
+	}
+	if expectedResetAt == nil {
+		preds = append(preds, dbaccount.RateLimitResetAtIsNil())
+	} else {
+		preds = append(preds, dbaccount.RateLimitResetAtEQ(*expectedResetAt))
+	}
+
+	now := time.Now()
+	updated, err := r.client.Account.Update().
+		Where(preds...).
+		SetRateLimitedAt(now).
+		SetRateLimitResetAt(newResetAt).
+		Save(ctx)
+	if err != nil {
+		return false, err
+	}
+	if updated == 0 {
+		// The generation changed concurrently (cleared, re-armed, or the account
+		// was otherwise updated elsewhere): do not announce anything, just
+		// refresh the local scheduler snapshot.
+		r.syncSchedulerAccountSnapshot(ctx, id)
+		return false, nil
+	}
+	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
+		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue rate limit failed: account=%d err=%v", id, err)
+	}
+	r.syncSchedulerAccountSnapshot(ctx, id)
+	return true, nil
+}
+
 func (r *accountRepository) SetModelRateLimit(ctx context.Context, id int64, scope string, resetAt time.Time, reason ...string) error {
 	if scope == "" {
 		return nil
@@ -2700,33 +2622,6 @@ func (r *accountRepository) ClearModelRateLimits(ctx context.Context, id int64) 
 	return nil
 }
 
-// HasRuntimeSchedulableAccountForModel reports whether the group currently has
-// at least one account eligible to serve the requested model. It deliberately
-// reuses Account.IsSchedulableForModelWithContext instead of querying a JSON
-// key directly: model limits are stored under each account's mapped upstream
-// model, and some platforms add family-level limit scopes as well. Keeping the
-// check identical to scheduler selection prevents auto routing from treating a
-// cooled account as available merely because the public and upstream model
-// names differ.
-//
-// On any query error the method returns (true, nil) as a conservative fallback
-// so a transient DB issue does not silently drop all candidate groups.
-func (r *accountRepository) HasRuntimeSchedulableAccountForModel(ctx context.Context, groupID int64, platform string, model string) (bool, error) {
-	if r == nil || model == "" || platform == "" {
-		return true, nil
-	}
-	accounts, err := r.ListSchedulableByGroupIDAndPlatform(ctx, groupID, platform)
-	if err != nil {
-		return true, nil
-	}
-	for i := range accounts {
-		if accounts[i].IsSchedulableForModelWithContext(ctx, model) {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
 func (r *accountRepository) UpdateSessionWindow(ctx context.Context, id int64, start, end *time.Time, status string) error {
 	builder := r.client.Account.Update().
 		Where(dbaccount.IDEQ(id)).
@@ -2764,31 +2659,11 @@ func (r *accountRepository) UpdateSessionWindowEnd(ctx context.Context, id int64
 	return nil
 }
 
-// SetSchedulable 是管理员显式开关可调度的唯一入口。
-//
-// 管理员拥有所有权，可无条件覆盖任何系统自动写入的来源：
-//   - 关闭 → source=manual、reason=admin_disabled（此后系统错误不得改动，永不自动恢复）
-//   - 开启 → source=none、reason=NULL（回到正常账号，按健康周期检查）
-//
-// 来源与 schedulable 必须在同一条 UPDATE 中写入，禁止先改 schedulable 再补来源，
-// 否则中间态会被 TransitHub 读到并误判。
 func (r *accountRepository) SetSchedulable(ctx context.Context, id int64, schedulable bool) error {
-	source := service.SchedulabilitySourceNone
-	var reason any
-	if !schedulable {
-		source = service.SchedulabilitySourceManual
-		reason = service.SchedulabilityReasonAdminDisabled
-	}
-	_, err := r.sql.ExecContext(ctx, `
-		UPDATE accounts
-		SET schedulable = $1,
-			schedulability_source = $2,
-			schedulability_reason = $3,
-			schedulability_changed_at = NOW(),
-			updated_at = NOW()
-		WHERE id = $4
-			AND deleted_at IS NULL
-	`, schedulable, source, reason, id)
+	_, err := r.client.Account.Update().
+		Where(dbaccount.IDEQ(id)).
+		SetSchedulable(schedulable).
+		Save(ctx)
 	if err != nil {
 		return err
 	}
@@ -2802,23 +2677,17 @@ func (r *accountRepository) SetSchedulable(ctx context.Context, id int64, schedu
 }
 
 func (r *accountRepository) AutoPauseExpiredAccounts(ctx context.Context, now time.Time) (int64, error) {
-	// 过期自动暂停属于系统自动停用：原子写入 automatic 来源，
-	// 并显式排除 manual——管理员手动关闭的所有权不能被后台任务抢走。
 	rows, err := r.sql.QueryContext(ctx, `
 		UPDATE accounts
 		SET schedulable = FALSE,
-			schedulability_source = $2,
-			schedulability_reason = $3,
-			schedulability_changed_at = NOW(),
 			updated_at = NOW()
 		WHERE deleted_at IS NULL
 			AND schedulable = TRUE
-			AND schedulability_source <> $4
 			AND auto_pause_on_expired = TRUE
 			AND expires_at IS NOT NULL
 			AND expires_at <= $1
 		RETURNING id
-	`, now, service.SchedulabilitySourceAutomatic, service.SchedulabilityReasonExpired, service.SchedulabilitySourceManual)
+	`, now)
 	if err != nil {
 		return 0, err
 	}
@@ -2849,13 +2718,13 @@ func (r *accountRepository) AutoPauseExpiredAccounts(ctx context.Context, now ti
 }
 
 func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates map[string]any) error {
+	updates = stripCodexFingerprintSeedFromExtraUpdate(updates)
 	if len(updates) == 0 {
 		return nil
 	}
 
 	// 使用 JSONB 合并操作实现原子更新，避免读-改-写的并发丢失更新问题
-	ensureCodexFingerprintSeed := service.ShouldEnsureCodexFingerprintSeedForExtraUpdates(updates)
-	payload, err := json.Marshal(stripCodexFingerprintSeedFromExtraUpdate(updates))
+	payload, err := json.Marshal(updates)
 	if err != nil {
 		return err
 	}
@@ -2886,7 +2755,7 @@ func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates m
 	if clearManualRate {
 		extraExpression = "(" + extraExpression + ") - '" + service.UpstreamBillingManualRateMultiplierExtraKey + "'"
 	}
-	if ensureCodexFingerprintSeed {
+	if service.ShouldEnsureCodexFingerprintSeedForExtraUpdates(updates) {
 		extraExpression = ensureCodexFingerprintSeedSQL(extraExpression)
 	}
 	result, err := client.ExecContext(
@@ -3025,20 +2894,8 @@ func (r *accountRepository) updateUpstreamBillingProbeSnapshotInTx(
 				WHEN $10::numeric IS NOT NULL
 					AND extra @> '{"upstream_billing_probe_enabled": true}'::jsonb
 					AND extra @> '{"upstream_billing_rate_sync_enabled": true}'::jsonb
-					AND COALESCE(jsonb_typeof(extra -> 'upstream_billing_manual_rate_multiplier'), '') <> 'number'
 				THEN $10::numeric
 				ELSE rate_multiplier
-			END,
-			-- 与上面同一个条件：自动写回真的落库时，该账号的成本就不再是
-			-- "无人声明"（运营开启 rate sync 即授权用探测值作为声明），利润
-			-- 准入从此对它严格判定；写回没发生时保持原值不动。
-			rate_multiplier_undeclared = CASE
-				WHEN $10::numeric IS NOT NULL
-					AND extra @> '{"upstream_billing_probe_enabled": true}'::jsonb
-					AND extra @> '{"upstream_billing_rate_sync_enabled": true}'::jsonb
-					AND COALESCE(jsonb_typeof(extra -> 'upstream_billing_manual_rate_multiplier'), '') <> 'number'
-				THEN FALSE
-				ELSE rate_multiplier_undeclared
 			END,
 			updated_at = NOW()
 		WHERE id = $2
@@ -3147,6 +3004,7 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 	if len(ids) == 0 {
 		return 0, nil
 	}
+	updates.Extra = stripCodexFingerprintSeedFromExtraUpdate(updates.Extra)
 
 	setClauses := make([]string, 0, 8)
 	args := make([]any, 0, 8)
@@ -3182,8 +3040,7 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 		idx++
 	}
 	if updates.RateMultiplier != nil {
-		// 与 ent 写入路径同语义：批量改倍率同样是一次明确声明。
-		setClauses = append(setClauses, "rate_multiplier = $"+itoa(idx), "rate_multiplier_undeclared = FALSE")
+		setClauses = append(setClauses, "rate_multiplier = $"+itoa(idx))
 		args = append(args, *updates.RateMultiplier)
 		idx++
 	}
@@ -3205,21 +3062,6 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 		setClauses = append(setClauses, "schedulable = $"+itoa(idx))
 		args = append(args, *updates.Schedulable)
 		idx++
-	}
-	// 来源必须和 schedulable 拼进同一条 UPDATE，保证批量关闭与单账号关闭的
-	// 保护强度一致；调用方不显式给来源时这里不写，避免把系统路径误标成管理员操作。
-	if updates.SchedulabilitySource != nil {
-		setClauses = append(setClauses, "schedulability_source = $"+itoa(idx))
-		args = append(args, *updates.SchedulabilitySource)
-		idx++
-		setClauses = append(setClauses, "schedulability_changed_at = NOW()")
-		if updates.SchedulabilityReason != nil {
-			setClauses = append(setClauses, "schedulability_reason = $"+itoa(idx))
-			args = append(args, *updates.SchedulabilityReason)
-			idx++
-		} else {
-			setClauses = append(setClauses, "schedulability_reason = NULL")
-		}
 	}
 	if updates.ProbeEnabled != nil {
 		if updates.Extra == nil {
@@ -3253,7 +3095,7 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 	if len(updates.Extra) > 0 || len(ollamaGroupIdentityChanges) > 0 || ollamaProxyIdentityChanged != "" || updates.EnsureCodexFingerprintSeed {
 		extraExpression := "COALESCE(extra, '{}'::jsonb)"
 		if len(updates.Extra) > 0 {
-			payload, err := json.Marshal(stripCodexFingerprintSeedFromExtraUpdate(updates.Extra))
+			payload, err := json.Marshal(updates.Extra)
 			if err != nil {
 				return 0, err
 			}
@@ -3745,9 +3587,6 @@ func accountEntityToService(m *dbent.Account) *service.Account {
 		OverloadUntil:            m.OverloadUntil,
 		TempUnschedulableUntil:   m.TempUnschedulableUntil,
 		TempUnschedulableReason:  derefString(m.TempUnschedulableReason),
-		SchedulabilitySource:     service.NormalizeSchedulabilitySource(m.SchedulabilitySource),
-		SchedulabilityReason:     derefString(m.SchedulabilityReason),
-		SchedulabilityChangedAt:  m.SchedulabilityChangedAt,
 		SessionWindowStart:       m.SessionWindowStart,
 		SessionWindowEnd:         m.SessionWindowEnd,
 		SessionWindowStatus:      derefString(m.SessionWindowStatus),
@@ -3870,11 +3709,29 @@ func (r *accountRepository) ListDueUpstreamBillingProbeAccounts(ctx context.Cont
 			WHERE deleted_at IS NULL
 				AND status = 'active'
 				AND type = 'apikey'
-				AND COALESCE(jsonb_typeof(extra -> 'upstream_billing_manual_rate_multiplier'), '') <> 'number'
+				-- 候选条件必须镜像 upstreamBillingProbeShouldRun，否则被它跳过的账号
+				-- 会每轮都占满 LIMIT 名额却永远探不动。从没声明过成本的账号同样要
+				-- 自动探测（那条规则只看 rate_multiplier_undeclared，与开关无关）。
 				AND (
 					extra @> '{"upstream_billing_probe_enabled": true}'::jsonb
-					OR rate_multiplier_undeclared = TRUE
+					OR rate_multiplier_undeclared
 				)
+				-- 手工倍率是管理员的权威声明，不需要联网探测。漏掉这条时，生产上
+				-- 37 个候选里有 21 个是填了手工倍率的账号：它们永远拿不到快照，于是
+				-- probe_status 恒为 NULL、恒排在下面 ORDER BY 的优先级 0，把队首长期
+				-- 占死，真正该刷新的账号被饿了三周。
+				-- 只排除"明确是合法数字"的情形，字符串等异常写法留给 Go 侧判定，
+				-- 保证这里始终是 shouldRun 的超集。
+				--
+				-- COALESCE 不能省：键不存在时 extra->'...' 是 SQL NULL，
+				-- jsonb_typeof(NULL)='number' 也是 NULL，NULL AND x 仍是 NULL，
+				-- NOT NULL 还是 NULL——WHERE 只保留 TRUE，于是"没填手工倍率"的
+				-- 账号会被整批排除，正好把唯一需要探测的那批全干掉。
+				-- 2026-09-14 上线时漏了它，自动探测静默停摆，页面上全是"已过期"。
+				AND NOT COALESCE(
+					jsonb_typeof(extra->'upstream_billing_manual_rate_multiplier') = 'number'
+					AND (extra->>'upstream_billing_manual_rate_multiplier')::numeric >= 0
+				, false)
 		), parsed AS MATERIALIZED (
 			SELECT
 				id,

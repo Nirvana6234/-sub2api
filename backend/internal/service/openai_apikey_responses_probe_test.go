@@ -132,9 +132,7 @@ func TestResponsesProbeBodyHasFunctionCall(t *testing.T) {
 
 func TestSelectResponsesProbeModel(t *testing.T) {
 	// No model_mapping -> fall back to DefaultTestModel (OpenAI official APIKey).
-	model, shouldProbe := selectResponsesProbeModel(&Account{})
-	require.True(t, shouldProbe)
-	require.Equal(t, openai.DefaultTestModel, model)
+	require.Equal(t, openai.DefaultTestModel, selectResponsesProbeModel(&Account{}))
 
 	// model_mapping values are upstream models; pick first by sort for reproducibility.
 	acct := &Account{Credentials: map[string]any{
@@ -143,9 +141,7 @@ func TestSelectResponsesProbeModel(t *testing.T) {
 			"client-a": "alpha-model",
 		},
 	}}
-	model, shouldProbe = selectResponsesProbeModel(acct)
-	require.True(t, shouldProbe)
-	require.Equal(t, "alpha-model", model)
+	require.Equal(t, "alpha-model", selectResponsesProbeModel(acct))
 
 	// Wildcard / blank upstream values are skipped.
 	acctWild := &Account{Credentials: map[string]any{
@@ -155,31 +151,11 @@ func TestSelectResponsesProbeModel(t *testing.T) {
 			"c": "real-model",
 		},
 	}}
-	model, shouldProbe = selectResponsesProbeModel(acctWild)
-	require.True(t, shouldProbe)
-	require.Equal(t, "real-model", model)
+	require.Equal(t, "real-model", selectResponsesProbeModel(acctWild))
 
-	// Only wildcard mappings retain the DefaultTestModel fallback.
+	// Only wildcard mappings -> DefaultTestModel.
 	acctAllWild := &Account{Credentials: map[string]any{
 		"model_mapping": map[string]any{"a": "gpt-*"},
 	}}
-	model, shouldProbe = selectResponsesProbeModel(acctAllWild)
-	require.True(t, shouldProbe)
-	require.Equal(t, openai.DefaultTestModel, model)
-
-	// Image-only mappings must not be used to probe the /responses endpoint.
-	imageOnly := &Account{Credentials: map[string]any{
-		"model_mapping": map[string]any{"gpt-image-2": "gpt-image-2", "dall-e-3": "dall-e-3"},
-	}}
-	model, shouldProbe = selectResponsesProbeModel(imageOnly)
-	require.False(t, shouldProbe)
-	require.Empty(t, model)
-
-	// Prefer a text model when an account has both text and image mappings.
-	mixed := &Account{Credentials: map[string]any{
-		"model_mapping": map[string]any{"gpt-image-2": "gpt-image-2", "gpt-5.4": "gpt-5.4"},
-	}}
-	model, shouldProbe = selectResponsesProbeModel(mixed)
-	require.True(t, shouldProbe)
-	require.Equal(t, "gpt-5.4", model)
+	require.Equal(t, openai.DefaultTestModel, selectResponsesProbeModel(acctAllWild))
 }

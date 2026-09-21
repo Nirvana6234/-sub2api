@@ -128,6 +128,7 @@ func provideCleanup(
 	openAIAutoReset *service.OpenAIQuotaAutoResetService,
 	promptAudit *securityaudit.PromptService,
 	pluginManager *service.PluginManager,
+	_ service.ContributionRoomWiring,
 ) func() {
 	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

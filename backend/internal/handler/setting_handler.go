@@ -108,6 +108,7 @@ func (h *SettingHandler) GetPublicSettings(c *gin.Context) {
 		ChannelMonitorDefaultIntervalSeconds: settings.ChannelMonitorDefaultIntervalSeconds,
 		ChannelMonitorHideThroughput:         settings.ChannelMonitorHideThroughput,
 		ChannelMonitorShowQuota:              settings.ChannelMonitorShowQuota,
+		ChannelMonitorHideUserRanking:        settings.ChannelMonitorHideUserRanking,
 
 		AvailableChannelsEnabled:    settings.AvailableChannelsEnabled,
 		ClientDownloadEnabled:       settings.ClientDownloadEnabled,
@@ -117,14 +118,12 @@ func (h *SettingHandler) GetPublicSettings(c *gin.Context) {
 		ClientLatestVersion:         settings.ClientLatestVersion,
 		ClientLatestVersionMac:      settings.ClientLatestVersionMac,
 		ClientTutorialVideoURL:      settings.ClientTutorialVideoURL,
-		ChatAppDownloadEnabled:      settings.ChatAppDownloadEnabled,
-		ChatAppDownloadDirectURL:    settings.ChatAppDownloadDirectURL,
-		ChatAppLatestVersion:        settings.ChatAppLatestVersion,
 		BackupPaymentEnabled:        settings.BackupPaymentEnabled,
 		BackupPaymentURL:            settings.BackupPaymentURL,
 		PlaygroundEnabled:           settings.PlaygroundEnabled,
 		PlaygroundDefaultChatModel:  settings.PlaygroundDefaultChatModel,
 		PlaygroundDefaultImageModel: settings.PlaygroundDefaultImageModel,
+		SubscriptionEnabled:         settings.SubscriptionEnabled,
 
 		ModelPlazaEnabled:       settings.ModelPlazaEnabled,
 		ModelPlazaRequireAuth:   settings.ModelPlazaRequireAuth,

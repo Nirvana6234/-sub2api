@@ -71,6 +71,13 @@ func TestShouldKeepOpenAIResponsesToolCallNamespaces(t *testing.T) {
 		Type:     AccountTypeOAuth,
 		Extra:    map[string]any{"openai_responses_flatten_namespaces": true},
 	}
+	// API Key 指向 Codex 后端中转：namespace 工具由上游注入，客户端 tools 里
+	// 没有声明，自动推断会误剥字段并触发 Missing namespace。
+	keepAPIKey := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Extra:    map[string]any{"openai_responses_keep_tool_call_namespaces": true},
+	}
 
 	tests := []struct {
 		name               string
@@ -98,8 +105,18 @@ func TestShouldKeepOpenAIResponsesToolCallNamespaces(t *testing.T) {
 		{name: "apikey_without_namespace_tool_strips", account: apiKey, transport: OpenAIUpstreamTransportHTTPSSE, want: false},
 		{name: "apikey_with_namespace_tool_keeps", account: apiKey, transport: OpenAIUpstreamTransportHTTPSSE, body: []byte(`{"tools":[{"type":"namespace","name":"mcp__codex_app","tools":[]}]}`), want: true},
 		{name: "apikey_with_mixed_case_namespace_tool_keeps", account: apiKey, transport: OpenAIUpstreamTransportHTTPSSE, body: []byte(`{"tools":[{"type":" Namespace ","name":"mcp__codex_app","tools":[]}]}`), want: true},
+		{name: "apikey_with_lite_additional_namespace_tool_keeps", account: apiKey, transport: OpenAIUpstreamTransportHTTPSSE, body: []byte(`{"input":[{"type":"additional_tools","role":"developer","tools":[{"type":"namespace","name":"mcp__cua_repl","tools":[{"type":"function","name":"js"}]}]}]}`), want: true},
+		{name: "apikey_with_mixed_case_lite_carrier_keeps", account: apiKey, transport: OpenAIUpstreamTransportHTTPSSE, body: []byte(`{"input":[{"type":" Additional_Tools ","tools":[{"type":" Namespace ","name":"mcp__cua_repl","tools":[]}]}]}`), want: true},
+		{name: "apikey_with_lite_function_only_strips", account: apiKey, transport: OpenAIUpstreamTransportHTTPSSE, body: []byte(`{"input":[{"type":"additional_tools","tools":[{"type":"function","name":"js","namespace":"mcp__cua_repl"}]}]}`), want: false},
 		{name: "apikey_function_tool_with_namespace_field_strips", account: apiKey, transport: OpenAIUpstreamTransportHTTPSSE, body: []byte(`{"tools":[{"type":"function","name":"automation_update","namespace":"mcp__codex_app"}]}`), want: false},
 		{name: "apikey_compact_with_namespace_tool_strips", account: apiKey, transport: OpenAIUpstreamTransportHTTPSSE, compactPath: true, body: []byte(`{"tools":[{"type":"namespace","name":"mcp__codex_app","tools":[]}]}`), want: false},
+		// 账号开关跳过"tools 里有无 namespace 声明"的推断，无条件保留调用项 namespace。
+		{name: "apikey_keep_switch_without_namespace_tool_keeps", account: keepAPIKey, transport: OpenAIUpstreamTransportHTTPSSE, want: true},
+		{name: "apikey_keep_switch_with_namespace_tool_keeps", account: keepAPIKey, transport: OpenAIUpstreamTransportHTTPSSE, body: []byte(`{"tools":[{"type":"namespace","name":"multi_agent","tools":[]}]}`), want: true},
+		// compact 端点 schema 不含该字段，开关不得越过 compact 清理。
+		{name: "apikey_keep_switch_compact_strips", account: keepAPIKey, transport: OpenAIUpstreamTransportHTTPSSE, compactPath: true, want: false},
+		// WSv2 由 shouldStrip 提前短路，此处钉住策略取值本身。
+		{name: "apikey_keep_switch_wsv2_keeps", account: keepAPIKey, transport: OpenAIUpstreamTransportResponsesWebsocketV2, want: true},
 		{name: "setup_token_keeps", account: setupToken, transport: OpenAIUpstreamTransportHTTPSSE, want: true},
 		{name: "nil_account", account: nil, transport: OpenAIUpstreamTransportHTTPSSE, want: false},
 	}

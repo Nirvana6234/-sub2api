@@ -76,6 +76,7 @@ func TestOpenAINativeMetadataDoesNotDisarmFirstOutputTimeout(t *testing.T) {
 	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{
 		MaxLineSize:                     defaultMaxLineSize,
 		OpenAIFirstOutputTimeoutSeconds: 1,
+		OpenAIFirstOutputHardCapSeconds: 2,
 	}}}
 	reader, writer := io.Pipe()
 	writerDone := make(chan struct{})
@@ -84,7 +85,9 @@ func TestOpenAINativeMetadataDoesNotDisarmFirstOutputTimeout(t *testing.T) {
 		defer func() { _ = writer.Close() }()
 		_, _ = io.WriteString(writer, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_test\"}}\n\n")
 		_, _ = io.WriteString(writer, "data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"item_test\",\"type\":\"reasoning\",\"summary\":[]}}\n\n")
-		time.Sleep(1200 * time.Millisecond)
+		// 撑过硬上限：元数据事件不算语义输出，所以守卫必须照常在硬上限到点。
+		// （软时限只观测不截断，因此这里要等到 2 秒的硬上限才会有可断言的结果。）
+		time.Sleep(2500 * time.Millisecond)
 	}()
 
 	recorder := httptest.NewRecorder()

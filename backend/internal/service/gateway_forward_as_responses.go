@@ -146,9 +146,6 @@ func (s *GatewayService) ForwardAsResponses(
 		if resp != nil && resp.Body != nil {
 			_ = resp.Body.Close()
 		}
-		if upstreamReq.Header.Get(HeadroomBaseURLHeader) != "" {
-			markHeadroomTransportFailure()
-		}
 		return nil, s.handleUpstreamTransportError(ctx, c, account, err, OpsUpstreamErrorEvent{
 			UpstreamURL: safeUpstreamURL(upstreamReq.URL.String()),
 		})
@@ -166,6 +163,8 @@ func (s *GatewayService) ForwardAsResponses(
 
 		if s.shouldFailoverUpstreamError(resp.StatusCode) {
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+				ProxyID:            opsUpstreamProxyID(account),
+				ProxyName:          opsUpstreamProxyName(account),
 				Platform:           account.Platform,
 				AccountID:          account.ID,
 				AccountName:        account.Name,
@@ -471,6 +470,7 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 
 	return &ForwardResult{
 		RequestID:       requestID,
+		UpstreamHeaders: resp.Header,
 		Usage:           usage,
 		Model:           originalModel,
 		UpstreamModel:   mappedModel,
@@ -519,6 +519,7 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 	resultWithUsage := func() *ForwardResult {
 		return &ForwardResult{
 			RequestID:       requestID,
+			UpstreamHeaders: resp.Header,
 			Usage:           usage,
 			Model:           originalModel,
 			UpstreamModel:   mappedModel,

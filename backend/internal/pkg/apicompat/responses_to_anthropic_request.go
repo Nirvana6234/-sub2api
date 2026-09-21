@@ -1,7 +1,6 @@
 package apicompat
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -485,10 +484,6 @@ func convertResponsesUserToAnthropicContent(raw json.RawMessage) (json.RawMessag
 					Source: src,
 				})
 			}
-		case "input_file":
-			if block := anthropicBlockForResponsesFile(p); block != nil {
-				blocks = append(blocks, *block)
-			}
 		}
 	}
 
@@ -496,41 +491,6 @@ func convertResponsesUserToAnthropicContent(raw json.RawMessage) (json.RawMessag
 		return json.Marshal("")
 	}
 	return json.Marshal(blocks)
-}
-
-// anthropicBlockForResponsesFile converts an OpenAI Responses "input_file"
-// part (inline data: URI) into an Anthropic content block.
-//
-// Anthropic only documents one base64 `document` source: application/pdf
-// (see the PDF-support and Files-API guides). There is no base64+document
-// variant for text/* media types — sending one gets a bare 400
-// "The request was rejected as invalid" with no field-level detail, which is
-// exactly what surfaced when the playground let users attach .md/.txt/code
-// files (frontend already maps those extensions to real MIME types, see
-// PLAYGROUND_EXTENSION_MIME_TYPES in PlaygroundConsole.vue). Anthropic's own
-// docs handle non-PDF text files by inlining the decoded content as a plain
-// text block instead of a document block, so mirror that here rather than
-// standing up Files-API upload+file_id plumbing.
-func anthropicBlockForResponsesFile(p ResponsesContentPart) *AnthropicContentBlock {
-	src := dataURIToAnthropicImageSource(p.FileData)
-	if src == nil {
-		return nil
-	}
-	if src.MediaType == "application/pdf" {
-		return &AnthropicContentBlock{Type: "document", Source: src}
-	}
-	decoded, err := base64.StdEncoding.DecodeString(src.Data)
-	if err != nil || len(decoded) == 0 {
-		return nil
-	}
-	name := strings.TrimSpace(p.Filename)
-	if name == "" {
-		name = "attachment"
-	}
-	return &AnthropicContentBlock{
-		Type: "text",
-		Text: fmt.Sprintf("[%s]\n%s", name, decoded),
-	}
 }
 
 // convertResponsesAssistantToAnthropicContent converts a Responses assistant
@@ -686,6 +646,9 @@ func convertResponsesToAnthropicTools(tools []ResponsesTool) []AnthropicTool {
 }
 
 // normalizeAnthropicInputSchema ensures input_schema is a valid object schema.
+// Codex 会把部分内置工具（例如 codex_app 的 automation_update）的 parameters
+// 根节点声明成对象分支的 oneOf/anyOf，Anthropic 只接受 object 根节点，这里把
+// 顶层联合摊平成单个 object schema。
 func normalizeAnthropicInputSchema(schema json.RawMessage) json.RawMessage {
 	const emptyObjectSchema = `{"type":"object","properties":{}}`
 
@@ -698,6 +661,8 @@ func normalizeAnthropicInputSchema(schema json.RawMessage) json.RawMessage {
 	if err := json.Unmarshal(schema, &m); err != nil {
 		return json.RawMessage(`{"type":"object","properties":{}}`)
 	}
+
+	flattenAnthropicRootUnions(m)
 
 	typeRaw, ok := m["type"]
 	if !ok || strings.TrimSpace(string(typeRaw)) == "" || string(typeRaw) == "null" {

@@ -4,10 +4,14 @@ import "time"
 
 // APIKeyAuthSnapshot API Key 认证缓存快照（仅包含认证所需字段）
 type APIKeyAuthSnapshot struct {
-	Version           int                      `json:"version"`
-	APIKeyID          int64                    `json:"api_key_id"`
-	UserID            int64                    `json:"user_id"`
-	GroupID           *int64                   `json:"group_id,omitempty"`
+	Version  int    `json:"version"`
+	APIKeyID int64  `json:"api_key_id"`
+	UserID   int64  `json:"user_id"`
+	GroupID  *int64 `json:"group_id,omitempty"`
+	// 自动分组 Key 认证时只带候选池，分组由 autoGroupModelRoutingMiddleware
+	// 按本次请求的模型现选。少了这三个字段，认证快照重建出的 Key 恒为
+	// AutoGroup=false 且无分组，选组中间件会直接跳过，请求随即被
+	// RequireGroupAssignment 以 403「未分配分组」拒掉。
 	AutoGroup         bool                     `json:"auto_group"`
 	AutoGroupStrategy string                   `json:"auto_group_strategy"`
 	AutoGroupIDs      []int64                  `json:"auto_group_ids,omitempty"`
@@ -56,9 +60,6 @@ type APIKeyAuthUserSnapshot struct {
 	// UserGroupRPMOverride 该 API Key 对应的 (user, group) 专属 RPM 覆盖值。
 	// nil = 无 override（回退到 group/user 级）；0 = 不限流；>0 = 专属上限。
 	UserGroupRPMOverride *int `json:"user_group_rpm_override,omitempty"`
-
-	// HeadroomCompressionEnabled 是否给该用户启用 headroom 上下文压缩转发。
-	HeadroomCompressionEnabled bool `json:"headroom_compression_enabled"`
 }
 
 // APIKeyAuthGroupSnapshot 分组快照
@@ -94,7 +95,6 @@ type APIKeyAuthGroupSnapshot struct {
 	LongContextPricingEnabled       bool                          `json:"long_context_pricing_enabled"`
 	ModelPricing                    []ChannelModelPricing         `json:"model_pricing,omitempty"`
 	ClaudeCodeOnly                  bool                          `json:"claude_code_only"`
-	KiroCompat                      bool                          `json:"kiro_compat"`
 	FallbackGroupID                 *int64                        `json:"fallback_group_id,omitempty"`
 	FallbackGroupIDs                []int64                       `json:"fallback_group_ids,omitempty"`
 	FallbackGroupIDOnInvalidRequest *int64                        `json:"fallback_group_id_on_invalid_request,omitempty"`
@@ -115,12 +115,15 @@ type APIKeyAuthGroupSnapshot struct {
 	FreeOpenAIFast              bool                              `json:"free_openai_fast"`
 	DefaultMappedModel          string                            `json:"default_mapped_model,omitempty"`
 	MessagesDispatchModelConfig OpenAIMessagesDispatchModelConfig `json:"messages_dispatch_model_config,omitempty"`
-	ModelsListConfig            GroupModelsListConfig             `json:"models_list_config,omitempty"`
+	ModelAllowlist              GroupModelAllowlist               `json:"model_allowlist,omitempty"`
+	// CodexModelsManifestConfig 与 ModelAllowlist 一样在认证快照分组里透传，
+	// Codex /models handler 直接读认证分组对象。
+	CodexModelsManifestConfig GroupCodexModelsManifestConfig `json:"codex_models_manifest_config,omitempty"`
 
 	// RPMLimit 分组级每分钟请求数上限（0 = 不限制）；用于 billing_cache_service.checkRPM 级联判断。
 	RPMLimit int `json:"rpm_limit"`
 
-	// MaxReasoningEffort OpenAI/Codex 请求的推理强度上限，空字符串表示不限制。
+	// MaxReasoningEffort Anthropic/OpenAI 请求的推理强度上限，空字符串表示不限制。
 	MaxReasoningEffort string `json:"max_reasoning_effort,omitempty"`
 	// MaxReasoningEffortOverLimit 超过上限时的访问控制：downgrade（默认）或 deny。
 	MaxReasoningEffortOverLimit string `json:"max_reasoning_effort_over_limit,omitempty"`

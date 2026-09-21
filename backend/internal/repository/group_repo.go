@@ -29,6 +29,39 @@ type groupRepository struct {
 	sql    sqlExecutor
 }
 
+// lockLiveGroups makes account-group inserts participate in the same row-lock
+// protocol as guarded group deletion. FOR SHARE conflicts with the deleter's
+// FOR UPDATE lock, and READ COMMITTED rechecks deleted_at after any wait.
+func lockLiveGroups(ctx context.Context, exec sqlExecutor, groupIDs []int64) error {
+	if len(groupIDs) == 0 {
+		return nil
+	}
+	unique := make(map[int64]struct{}, len(groupIDs))
+	for _, id := range groupIDs {
+		unique[id] = struct{}{}
+	}
+	rows, err := exec.QueryContext(ctx, `/* account_group_live_group_lock */
+		SELECT id FROM groups
+		WHERE id = ANY($1) AND deleted_at IS NULL
+		ORDER BY id
+		FOR SHARE`, pq.Array(groupIDs))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	locked := 0
+	for rows.Next() {
+		locked++
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if locked != len(unique) {
+		return service.ErrGroupNotFound
+	}
+	return nil
+}
+
 func NewGroupRepository(client *dbent.Client, sqlDB *sql.DB) service.GroupRepository {
 	return newGroupRepositoryWithSQL(client, sqlDB)
 }
@@ -41,6 +74,15 @@ func NewAdminGroupRepository(client *dbent.Client, sqlDB *sql.DB) service.AdminG
 
 func newGroupRepositoryWithSQL(client *dbent.Client, sqlq sqlExecutor) *groupRepository {
 	return &groupRepository{client: client, sql: sqlq}
+}
+
+// nonNilInt64Slice 避免 nil 切片被 ent JSON 字段编码成 null——fallback_group_ids 列是
+// NOT NULL DEFAULT '[]'。
+func nonNilInt64Slice(ids []int64) []int64 {
+	if ids == nil {
+		return []int64{}
+	}
+	return ids
 }
 
 func (r *groupRepository) Create(ctx context.Context, groupIn *service.Group) error {
@@ -66,10 +108,9 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *servi
 		SetDescription(groupIn.Description).
 		SetPlatform(groupIn.Platform).
 		SetRateMultiplier(groupIn.RateMultiplier).
-		SetAllowContributionPool(groupIn.AllowContributionPool).
 		SetSortOrder(groupIn.SortOrder).
 		SetIsExclusive(groupIn.IsExclusive).
-		SetIsFallbackPool(groupIn.IsFallbackPool).
+		SetAllowContributionPool(groupIn.AllowContributionPool).
 		SetStatus(groupIn.Status).
 		SetSubscriptionType(groupIn.SubscriptionType).
 		SetNillableDailyLimitUsd(groupIn.DailyLimitUSD).
@@ -99,10 +140,11 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *servi
 		SetModelPricing(modelPricing).
 		SetDefaultValidityDays(groupIn.DefaultValidityDays).
 		SetClaudeCodeOnly(groupIn.ClaudeCodeOnly).
-		SetKiroCompat(groupIn.KiroCompat).
 		SetNillableFallbackGroupID(groupIn.FallbackGroupID).
-		SetFallbackGroupIds(groupIn.FallbackGroupIDs).
+		SetFallbackGroupIds(nonNilInt64Slice(groupIn.FallbackGroupIDs)).
 		SetNillableFallbackGroupIDOnInvalidRequest(groupIn.FallbackGroupIDOnInvalidRequest).
+		SetIsFallbackPool(groupIn.IsFallbackPool).
+		SetKiroCompat(groupIn.KiroCompat).
 		SetModelRoutingEnabled(groupIn.ModelRoutingEnabled).
 		SetMcpXMLInject(groupIn.MCPXMLInject).
 		SetAllowMessagesDispatch(groupIn.AllowMessagesDispatch).
@@ -113,7 +155,8 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *servi
 		SetRequirePrivacySet(groupIn.RequirePrivacySet).
 		SetDefaultMappedModel(groupIn.DefaultMappedModel).
 		SetMessagesDispatchModelConfig(groupIn.MessagesDispatchModelConfig).
-		SetModelsListConfig(groupIn.ModelsListConfig).
+		SetModelAllowlist(service.DomainGroupModelAllowlist(groupIn.ModelAllowlist)).
+		SetCodexModelsManifestConfig(groupIn.CodexModelsManifestConfig).
 		SetRpmLimit(groupIn.RPMLimit).
 		SetMaxReasoningEffort(groupIn.MaxReasoningEffort).
 		SetMaxReasoningEffortOverLimit(groupIn.MaxReasoningEffortOverLimit).
@@ -257,9 +300,8 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		SetDescription(groupIn.Description).
 		SetPlatform(groupIn.Platform).
 		SetRateMultiplier(groupIn.RateMultiplier).
-		SetAllowContributionPool(groupIn.AllowContributionPool).
 		SetIsExclusive(groupIn.IsExclusive).
-		SetIsFallbackPool(groupIn.IsFallbackPool).
+		SetAllowContributionPool(groupIn.AllowContributionPool).
 		SetStatus(groupIn.Status).
 		SetSubscriptionType(groupIn.SubscriptionType).
 		SetNillableDailyLimitUsd(groupIn.DailyLimitUSD).
@@ -284,8 +326,8 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		SetModelPricing(modelPricing).
 		SetDefaultValidityDays(groupIn.DefaultValidityDays).
 		SetClaudeCodeOnly(groupIn.ClaudeCodeOnly).
+		SetIsFallbackPool(groupIn.IsFallbackPool).
 		SetKiroCompat(groupIn.KiroCompat).
-		SetFallbackGroupIds(groupIn.FallbackGroupIDs).
 		SetModelRoutingEnabled(groupIn.ModelRoutingEnabled).
 		SetMcpXMLInject(groupIn.MCPXMLInject).
 		SetAllowMessagesDispatch(groupIn.AllowMessagesDispatch).
@@ -296,7 +338,8 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		SetRequirePrivacySet(groupIn.RequirePrivacySet).
 		SetDefaultMappedModel(groupIn.DefaultMappedModel).
 		SetMessagesDispatchModelConfig(groupIn.MessagesDispatchModelConfig).
-		SetModelsListConfig(groupIn.ModelsListConfig).
+		SetModelAllowlist(service.DomainGroupModelAllowlist(groupIn.ModelAllowlist)).
+		SetCodexModelsManifestConfig(groupIn.CodexModelsManifestConfig).
 		SetRpmLimit(groupIn.RPMLimit).
 		SetMaxReasoningEffort(groupIn.MaxReasoningEffort).
 		SetMaxReasoningEffortOverLimit(groupIn.MaxReasoningEffortOverLimit).
@@ -387,6 +430,7 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 	} else {
 		builder = builder.ClearFallbackGroupID()
 	}
+	builder = builder.SetFallbackGroupIds(nonNilInt64Slice(groupIn.FallbackGroupIDs))
 	// 处理 FallbackGroupIDOnInvalidRequest：nil 时清除，否则设置
 	if groupIn.FallbackGroupIDOnInvalidRequest != nil {
 		builder = builder.SetFallbackGroupIDOnInvalidRequest(*groupIn.FallbackGroupIDOnInvalidRequest)
@@ -432,6 +476,15 @@ func (r *groupRepository) List(ctx context.Context, params pagination.Pagination
 
 func (r *groupRepository) ListWithFilters(ctx context.Context, params pagination.PaginationParams, platform, status, search string, isExclusive *bool) ([]service.Group, *pagination.PaginationResult, error) {
 	q := r.client.Group.Query()
+	return r.listWithFiltersQuery(ctx, q, params, platform, status, search, isExclusive)
+}
+
+func (r *groupRepository) ListBindableWithFilters(ctx context.Context, params pagination.PaginationParams, platform, status, search string, isExclusive *bool) ([]service.Group, *pagination.PaginationResult, error) {
+	q := r.client.Group.Query().Where(group.PlatformNEQ(service.PlatformComposite))
+	return r.listWithFiltersQuery(ctx, q, params, platform, status, search, isExclusive)
+}
+
+func (r *groupRepository) listWithFiltersQuery(ctx context.Context, q *dbent.GroupQuery, params pagination.PaginationParams, platform, status, search string, isExclusive *bool) ([]service.Group, *pagination.PaginationResult, error) {
 
 	if platform != "" {
 		q = q.Where(group.PlatformEQ(platform))
@@ -746,29 +799,22 @@ func (r *groupRepository) ExistsByName(ctx context.Context, name string) (bool, 
 // 是静默的，只在出问题时才被发现，所以宁可在操作时挡住。
 func (r *groupRepository) ListGroupsReferencingFallback(ctx context.Context, groupID int64) ([]string, error) {
 	rows, err := r.client.Group.Query().
-		Where(group.DeletedAtIsNil(), group.IDNEQ(groupID)).
-		Select(group.FieldName, group.FieldFallbackGroupID, group.FieldFallbackGroupIds, group.FieldFallbackGroupIDOnInvalidRequest).
+		Where(
+			group.DeletedAtIsNil(),
+			group.IDNEQ(groupID),
+			group.Or(
+				group.FallbackGroupIDEQ(groupID),
+				group.FallbackGroupIDOnInvalidRequestEQ(groupID),
+			),
+		).
+		Select(group.FieldName).
 		All(ctx)
 	if err != nil {
 		return nil, err
 	}
 	names := make([]string, 0, len(rows))
 	for _, row := range rows {
-		referenced := row.FallbackGroupID != nil && *row.FallbackGroupID == groupID
-		if !referenced && row.FallbackGroupIDOnInvalidRequest != nil && *row.FallbackGroupIDOnInvalidRequest == groupID {
-			referenced = true
-		}
-		if !referenced {
-			for _, id := range row.FallbackGroupIds {
-				if id == groupID {
-					referenced = true
-					break
-				}
-			}
-		}
-		if referenced {
-			names = append(names, row.Name)
-		}
+		names = append(names, row.Name)
 	}
 	return names, nil
 }
@@ -847,12 +893,14 @@ func (r *groupRepository) DeleteAccountGroupsByGroupID(ctx context.Context, grou
 }
 
 func (r *groupRepository) DeleteCascade(ctx context.Context, id int64) ([]int64, error) {
-	g, err := r.client.Group.Query().Where(group.IDEQ(id)).Only(ctx)
-	if err != nil {
-		return nil, translatePersistenceError(err, service.ErrGroupNotFound, nil)
-	}
-	groupSvc := groupEntityToService(g)
+	return r.deleteCascade(ctx, id, false)
+}
 
+func (r *groupRepository) DeleteCascadeIfEmpty(ctx context.Context, id int64) ([]int64, error) {
+	return r.deleteCascade(ctx, id, true)
+}
+
+func (r *groupRepository) deleteCascade(ctx context.Context, id int64, requireEmpty bool) ([]int64, error) {
 	// 使用 ent 事务统一包裹：避免手工基于 *sql.Tx 构造 ent client 带来的驱动断言问题，
 	// 同时保证级联删除的原子性。
 	tx, err := r.client.Tx(ctx)
@@ -870,13 +918,14 @@ func (r *groupRepository) DeleteCascade(ctx context.Context, id int64) ([]int64,
 
 	// Lock the group row to avoid concurrent writes while we cascade.
 	// 这里使用 exec.QueryContext 手动扫描，确保同一事务内加锁并能区分"未找到"与其他错误。
-	rows, err := exec.QueryContext(ctx, "SELECT id FROM groups WHERE id = $1 AND deleted_at IS NULL FOR UPDATE", id)
+	rows, err := exec.QueryContext(ctx, "SELECT id, subscription_type FROM groups WHERE id = $1 AND deleted_at IS NULL FOR UPDATE", id)
 	if err != nil {
 		return nil, err
 	}
 	var lockedID int64
+	var subscriptionType string
 	if rows.Next() {
-		if err := rows.Scan(&lockedID); err != nil {
+		if err := rows.Scan(&lockedID, &subscriptionType); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
@@ -890,9 +939,22 @@ func (r *groupRepository) DeleteCascade(ctx context.Context, id int64) ([]int64,
 	if lockedID == 0 {
 		return nil, service.ErrGroupNotFound
 	}
+	if requireEmpty {
+		var hasAccount bool
+		if err := scanSingleRow(ctx, exec, `SELECT EXISTS (
+			SELECT 1 FROM account_groups ag
+			JOIN accounts a ON a.id = ag.account_id
+			WHERE ag.group_id = $1 AND a.deleted_at IS NULL
+		)`, []any{id}, &hasAccount); err != nil {
+			return nil, err
+		}
+		if hasAccount {
+			return nil, service.ErrGroupNotEmpty
+		}
+	}
 
 	var affectedUserIDs []int64
-	if groupSvc.IsSubscriptionType() {
+	if subscriptionType == service.SubscriptionTypeSubscription {
 		// 只查询未软删除的订阅，避免通知已取消订阅的用户
 		rows, err := exec.QueryContext(ctx, "SELECT user_id FROM user_subscriptions WHERE group_id = $1 AND deleted_at IS NULL", id)
 		if err != nil {
@@ -927,27 +989,6 @@ func (r *groupRepository) DeleteCascade(ctx context.Context, id int64) ([]int64,
 
 	// 3. Delete account_groups join rows.
 	if _, err := exec.ExecContext(ctx, "DELETE FROM account_groups WHERE group_id = $1", id); err != nil {
-		return nil, err
-	}
-
-	// Automatic API keys persist their candidate group IDs in JSON rather than
-	// through a foreign key. Remove the deleted group from those lists in the
-	// same transaction so stale candidates cannot remain visible or be served
-	// from an authentication cache after the group is removed.
-	if _, err := exec.ExecContext(ctx, `
-		UPDATE api_keys AS k
-		SET auto_group_ids = COALESCE(
-			(
-				SELECT jsonb_agg(item.value ORDER BY item.ordinality)
-				FROM jsonb_array_elements(k.auto_group_ids) WITH ORDINALITY AS item(value, ordinality)
-				WHERE item.value <> to_jsonb($1::bigint)
-			),
-			'[]'::jsonb
-		), updated_at = NOW()
-		WHERE k.auto_group = TRUE
-		  AND k.deleted_at IS NULL
-		  AND k.auto_group_ids @> jsonb_build_array($1::bigint)
-	`, id); err != nil {
 		return nil, err
 	}
 
@@ -1081,8 +1122,21 @@ func (r *groupRepository) BindAccountsToGroup(ctx context.Context, groupID int64
 		return nil
 	}
 
+	tx, err := r.client.Tx(ctx)
+	if err != nil && !errors.Is(err, dbent.ErrTxStarted) {
+		return err
+	}
+	exec := sqlExecutor(r.client)
+	if tx != nil {
+		defer func() { _ = tx.Rollback() }()
+		exec = tx.Client()
+	}
+	if err := lockLiveGroups(ctx, exec, []int64{groupID}); err != nil {
+		return err
+	}
+
 	// 使用 INSERT ... ON CONFLICT DO NOTHING 忽略已存在的绑定
-	_, err := r.sql.ExecContext(
+	_, err = exec.ExecContext(
 		ctx,
 		`INSERT INTO account_groups (account_id, group_id, priority, created_at)
 		 SELECT unnest($1::bigint[]), $2, 50, NOW()
@@ -1092,6 +1146,11 @@ func (r *groupRepository) BindAccountsToGroup(ctx context.Context, groupID int64
 	)
 	if err != nil {
 		return err
+	}
+	if tx != nil {
+		if err := tx.Commit(); err != nil {
+			return err
+		}
 	}
 
 	// 发送调度器事件

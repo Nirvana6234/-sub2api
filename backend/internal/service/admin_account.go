@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -22,31 +23,12 @@ import (
 )
 
 // Account management implementations
-func contributionAccountManagementAllowed(ctx context.Context) bool {
-	allowed, _ := ctx.Value(ctxkey.AllowContributionAccountManagement).(bool)
-	return allowed
-}
-
-func ensureAdminAccountManagementAccess(ctx context.Context, account *Account) error {
-	if account == nil || account.ContributorUserID() == 0 || contributionAccountManagementAllowed(ctx) {
-		return nil
-	}
-	return infraerrors.New(http.StatusNotFound, "CONTRIBUTION_ACCOUNT_MANAGED_SEPARATELY",
-		"account is managed through the contribution resource workflow")
-}
-
-func (s *adminServiceImpl) getAccountForManagement(ctx context.Context, id int64) (*Account, error) {
-	account, err := s.accountRepo.GetByID(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	if err := ensureAdminAccountManagementAccess(ctx, account); err != nil {
-		return nil, err
-	}
-	return account, nil
-}
-
 func (s *adminServiceImpl) ListAccounts(ctx context.Context, page, pageSize int, platform, accountType, status, search string, groupID int64, privacyMode string, sortBy, sortOrder string) ([]Account, int64, error) {
+	if groupID > 0 {
+		if err := s.ValidateAccountGroupBindings(ctx, []int64{groupID}); err != nil {
+			return nil, 0, err
+		}
+	}
 	// Keep the regular admin account list separate from contribution governance.
 	// The repository can then apply the exclusion in SQL, before pagination and
 	// total-count calculation, while governance callers opt in explicitly.
@@ -70,29 +52,14 @@ func (s *adminServiceImpl) ListOpenAISchedulableAccountsForSchedulerScore(ctx co
 	if s == nil || s.accountRepo == nil {
 		return nil, nil
 	}
-	var (
-		accounts []Account
-		err      error
-	)
 	if groupID != nil {
-		accounts, err = s.accountRepo.ListSchedulableByGroupIDAndPlatform(ctx, *groupID, PlatformOpenAI)
-	} else {
-		accounts, err = s.accountRepo.ListSchedulableUngroupedByPlatform(ctx, PlatformOpenAI)
+		return s.accountRepo.ListSchedulableByGroupIDAndPlatform(ctx, *groupID, PlatformOpenAI)
 	}
-	if err != nil || contributionAccountManagementAllowed(ctx) {
-		return accounts, err
-	}
-	filtered := make([]Account, 0, len(accounts))
-	for _, account := range accounts {
-		if account.ContributorUserID() == 0 {
-			filtered = append(filtered, account)
-		}
-	}
-	return filtered, nil
+	return s.accountRepo.ListSchedulableUngroupedByPlatform(ctx, PlatformOpenAI)
 }
 
 func (s *adminServiceImpl) GetAccount(ctx context.Context, id int64) (*Account, error) {
-	return s.getAccountForManagement(ctx, id)
+	return s.accountRepo.GetByID(ctx, id)
 }
 
 func (s *adminServiceImpl) GetAccountsByIDs(ctx context.Context, ids []int64) ([]*Account, error) {
@@ -105,11 +72,6 @@ func (s *adminServiceImpl) GetAccountsByIDs(ctx context.Context, ids []int64) ([
 		return nil, fmt.Errorf("failed to get accounts by IDs: %w", err)
 	}
 
-	for _, account := range accounts {
-		if err := ensureAdminAccountManagementAccess(ctx, account); err != nil {
-			return nil, err
-		}
-	}
 	return accounts, nil
 }
 
@@ -334,6 +296,9 @@ func (s *adminServiceImpl) DuplicateAccount(ctx context.Context, id int64, actor
 	}
 	autoPauseOnExpired := source.AutoPauseOnExpired
 	groups, groupIDs := duplicateAccountGroups(source)
+	if err := s.ValidateAccountGroupBindings(ctx, groupIDs); err != nil {
+		return nil, err
+	}
 	proxyID := source.ProxyID
 	if source.ProxyFallbackOriginID != nil {
 		// Proxy fallback is transient runtime state; duplicate the configured origin.
@@ -362,6 +327,9 @@ func (s *adminServiceImpl) DuplicateAccount(ctx context.Context, id int64, actor
 		return nil, fmt.Errorf("normalize duplicate account extra: %w", err)
 	}
 	if err := NormalizeHeaderOverrideCredentials(input.Credentials); err != nil {
+		return nil, err
+	}
+	if err := NormalizeOpenCodeGoProtocolRulesCredentials(input.Credentials); err != nil {
 		return nil, err
 	}
 	duplicate, err := buildAccountForCreate(input, accountExtra)
@@ -449,9 +417,6 @@ func normalizeOpenAILongContextBillingUpdateExtra(account *Account, input *Updat
 // Grok media eligibility helpers live in account_grok_media_eligibility.go.
 
 func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]any) (*Account, error) {
-	if err := ValidateUpstreamBillingNewAPIGroupExtra(accountExtra); err != nil {
-		return nil, err
-	}
 	// Probe/session state is system-managed. New accounts always start with automatic refresh disabled.
 	delete(accountExtra, UpstreamBillingProbeEnabledExtraKey)
 	delete(accountExtra, UpstreamBillingRateSyncEnabledExtraKey)
@@ -528,6 +493,9 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 	if err != nil {
 		return nil, err
 	}
+	if err := ValidateUpstreamRequestIDHeaderExtra(accountExtra); err != nil {
+		return nil, err
+	}
 
 	// 绑定分组
 	groupIDs := input.GroupIDs
@@ -556,11 +524,17 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 	if err := NormalizeHeaderOverrideCredentials(input.Credentials); err != nil {
 		return nil, err
 	}
+	if err := NormalizeOpenCodeGoProtocolRulesCredentials(input.Credentials); err != nil {
+		return nil, err
+	}
 	// Never persist ephemeral SSO/password secrets after OAuth conversion.
 	input.Credentials = SanitizeStoredCredentials(input.Platform, input.Credentials)
 
 	account, err := buildAccountForCreate(input, accountExtra)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.ValidateAccountGroupBindings(ctx, groupIDs); err != nil {
 		return nil, err
 	}
 	if err := s.accountRepo.Create(ctx, account); err != nil {
@@ -603,7 +577,7 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 }
 
 func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *UpdateAccountInput) (*Account, error) {
-	account, err := s.getAccountForManagement(ctx, id)
+	account, err := s.accountRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -623,6 +597,9 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		}
 		normalizedExtra, err = normalizeOpenAIAutoResetCreditExtra(account.Platform, effectiveType, account.IsShadow(), normalizedExtra)
 		if err != nil {
+			return nil, err
+		}
+		if err := ValidateUpstreamRequestIDHeaderExtra(normalizedExtra); err != nil {
 			return nil, err
 		}
 	}
@@ -676,6 +653,9 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		if err := NormalizeHeaderOverrideCredentials(account.Credentials); err != nil {
 			return nil, err
 		}
+		if err := NormalizeOpenCodeGoProtocolRulesCredentials(account.Credentials); err != nil {
+			return nil, err
+		}
 		// Strip SSO/password residue that must never sit next to OAuth tokens.
 		account.Credentials = SanitizeStoredCredentials(account.Platform, account.Credentials)
 	}
@@ -684,9 +664,6 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	requestedProbeEnabledUpdate := input.ProbeEnabled
 	requestedRateSyncEnabledUpdate := input.RateSyncEnabled
 	if input.Extra != nil {
-		if err := ValidateUpstreamBillingNewAPIGroupExtra(input.Extra); err != nil {
-			return nil, err
-		}
 		requestedProbeEnabled, hasRequestedProbeEnabled := normalizedExtra[UpstreamBillingProbeEnabledExtraKey]
 		if hasRequestedProbeEnabled {
 			enabled, ok := requestedProbeEnabled.(bool)
@@ -863,6 +840,9 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		if err := s.validateGroupIDsExist(ctx, *input.GroupIDs); err != nil {
 			return nil, err
 		}
+		if err := s.ValidateAccountGroupBindings(ctx, *input.GroupIDs); err != nil {
+			return nil, err
+		}
 
 		// 检查混合渠道风险（除非用户已确认）
 		if !input.SkipMixedChannelCheck {
@@ -955,16 +935,8 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 			return err
 		}
 	}
-	if _, exists := updates[UpstreamBillingNewAPIGroupExtraKey]; exists {
-		if err := ValidateUpstreamBillingNewAPIGroupExtra(updates); err != nil {
-			return err
-		}
-	}
 	if len(updates) == 0 {
 		return nil
-	}
-	if _, err := s.getAccountForManagement(ctx, id); err != nil {
-		return err
 	}
 	return s.accountRepo.UpdateExtra(ctx, id, updates)
 }
@@ -973,7 +945,7 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 // scheduling reference. It is deliberately separate from account billing rate:
 // this controls upstream-cost selection and survives later probe results.
 func (s *adminServiceImpl) SetAccountUpstreamBillingManualRateMultiplier(ctx context.Context, id int64, rateMultiplier *float64) (*Account, error) {
-	account, err := s.getAccountForManagement(ctx, id)
+	account, err := s.accountRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -994,65 +966,21 @@ func (s *adminServiceImpl) SetAccountUpstreamBillingManualRateMultiplier(ctx con
 	if err := s.accountRepo.UpdateExtra(ctx, id, updates); err != nil {
 		return nil, err
 	}
-	s.invalidateAutoGroupSelectionsForAccount(ctx, account)
+	if s.authCacheInvalidator != nil {
+		seen := make(map[int64]struct{}, len(account.GroupIDs))
+		for _, groupID := range account.GroupIDs {
+			if groupID <= 0 {
+				continue
+			}
+			if _, exists := seen[groupID]; exists {
+				continue
+			}
+			seen[groupID] = struct{}{}
+			s.authCacheInvalidator.InvalidateAuthCacheByGroupID(ctx, groupID)
+			invalidateAutoGroupSelectionsForGroup(ctx, s.authCacheInvalidator, groupID)
+		}
+	}
 	return s.accountRepo.GetByID(ctx, id)
-}
-
-func (s *adminServiceImpl) invalidateAutoGroupSelectionsForAccount(ctx context.Context, account *Account) {
-	if s.authCacheInvalidator == nil || account == nil {
-		return
-	}
-	seen := make(map[int64]struct{}, len(account.GroupIDs))
-	for _, groupID := range account.GroupIDs {
-		if groupID <= 0 {
-			continue
-		}
-		if _, exists := seen[groupID]; exists {
-			continue
-		}
-		seen[groupID] = struct{}{}
-		s.authCacheInvalidator.InvalidateAuthCacheByGroupID(ctx, groupID)
-		invalidateAutoGroupSelectionsForGroup(ctx, s.authCacheInvalidator, groupID)
-	}
-}
-
-// NotifyAccountGroupsChanged is used when account-group membership is changed
-// atomically with data outside the account repository.
-func (s *adminServiceImpl) NotifyAccountGroupsChanged(ctx context.Context, accountID int64, groupIDs []int64) error {
-	notifier, ok := s.accountRepo.(interface {
-		NotifyAccountGroupsChanged(context.Context, int64, []int64) error
-	})
-	if !ok {
-		return nil
-	}
-	return notifier.NotifyAccountGroupsChanged(ctx, accountID, groupIDs)
-}
-
-// UpdateAccountGroupPriorities persists scheduler priority on account_groups,
-// never on the account-wide priority column.
-func (s *adminServiceImpl) UpdateAccountGroupPriorities(ctx context.Context, updates []AccountGroupPriorityUpdate) error {
-	if len(updates) == 0 {
-		return infraerrors.BadRequest("ACCOUNT_GROUP_PRIORITY_EMPTY", "updates cannot be empty")
-	}
-	seen := make(map[[2]int64]struct{}, len(updates))
-	for _, update := range updates {
-		if update.AccountID <= 0 || update.GroupID <= 0 {
-			return infraerrors.BadRequest("ACCOUNT_GROUP_PRIORITY_INVALID_ID", "account_id and group_id must be positive")
-		}
-		if update.Priority < 0 {
-			return infraerrors.BadRequest("ACCOUNT_GROUP_PRIORITY_INVALID_VALUE", "priority must be >= 0")
-		}
-		key := [2]int64{update.AccountID, update.GroupID}
-		if _, exists := seen[key]; exists {
-			return infraerrors.BadRequest("ACCOUNT_GROUP_PRIORITY_DUPLICATE", "duplicate account/group update")
-		}
-		seen[key] = struct{}{}
-	}
-	updater, ok := s.accountRepo.(AccountGroupPriorityRepository)
-	if !ok {
-		return infraerrors.InternalServer("ACCOUNT_GROUP_PRIORITY_UNSUPPORTED", "account group priority updates are unavailable")
-	}
-	return updater.UpdateGroupPriorities(ctx, updates)
 }
 
 // BulkUpdateAccounts updates multiple accounts in one request.
@@ -1086,17 +1014,11 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	if len(input.AccountIDs) == 0 {
 		return result, nil
 	}
-	accounts, err := s.accountRepo.GetByIDs(ctx, input.AccountIDs)
-	if err != nil {
-		return nil, err
-	}
-	for _, account := range accounts {
-		if err := ensureAdminAccountManagementAccess(ctx, account); err != nil {
-			return nil, err
-		}
-	}
 	if input.GroupIDs != nil {
 		if err := s.validateGroupIDsExist(ctx, *input.GroupIDs); err != nil {
+			return nil, err
+		}
+		if err := s.ValidateAccountGroupBindings(ctx, *input.GroupIDs); err != nil {
 			return nil, err
 		}
 	}
@@ -1211,6 +1133,9 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	if err := NormalizeHeaderOverrideCredentials(input.Credentials); err != nil {
 		return nil, err
 	}
+	if err := NormalizeOpenCodeGoProtocolRulesCredentials(input.Credentials); err != nil {
+		return nil, err
+	}
 	// Bulk may mix platforms; always drop ephemeral SSO/password keys (cookie
 	// only when platform is known Grok — empty platform still strips password/*).
 	if input.Credentials != nil {
@@ -1270,31 +1195,11 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	}
 	if input.Schedulable != nil {
 		repoUpdates.Schedulable = input.Schedulable
-		// 批量关闭与单账号关闭享有同样的 manual 所有权保护：
-		// 管理员批量关闭写 manual，批量开启清回 none。
-		source := SchedulabilitySourceNone
-		reason := ""
-		if !*input.Schedulable {
-			source = SchedulabilitySourceManual
-			reason = SchedulabilityReasonAdminDisabled
-		}
-		repoUpdates.SchedulabilitySource = &source
-		repoUpdates.SchedulabilityReason = &reason
 	}
 
 	// Run bulk update for column/jsonb fields first.
 	if _, err := s.accountRepo.BulkUpdate(ctx, input.AccountIDs, repoUpdates); err != nil {
 		return nil, err
-	}
-	if input.Schedulable != nil {
-		for _, account := range accounts {
-			s.invalidateAutoGroupSelectionsForAccount(ctx, account)
-		}
-		if input.GroupIDs != nil {
-			for _, groupID := range *input.GroupIDs {
-				s.invalidateAutoGroupSelectionsForAccount(ctx, &Account{GroupIDs: []int64{groupID}})
-			}
-		}
 	}
 
 	// 将 proxy 变更传播到每个目标账号的 spark 影子账号
@@ -1356,9 +1261,6 @@ func upstreamBillingProbeIdentity(account *Account) map[string]any {
 			identity[key] = value
 		}
 	}
-	if group := upstreamBillingNewAPIGroupOverride(account); group != "" {
-		identity[UpstreamBillingNewAPIGroupExtraKey] = group
-	}
 	return identity
 }
 
@@ -1412,9 +1314,6 @@ func (s *adminServiceImpl) resolveBulkUpdateTargetIDs(ctx context.Context, filte
 }
 
 func (s *adminServiceImpl) DeleteAccount(ctx context.Context, id int64) error {
-	if _, err := s.getAccountForManagement(ctx, id); err != nil {
-		return err
-	}
 	// 级联删除 spark 影子账号（先删影子，再删母账号）
 	shadows, err := s.accountRepo.ListShadowsByParent(ctx, id)
 	if err != nil {
@@ -1432,7 +1331,7 @@ func (s *adminServiceImpl) DeleteAccount(ctx context.Context, id int64) error {
 }
 
 func (s *adminServiceImpl) RefreshAccountCredentials(ctx context.Context, id int64) (*Account, error) {
-	account, err := s.getAccountForManagement(ctx, id)
+	account, err := s.accountRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -1441,9 +1340,6 @@ func (s *adminServiceImpl) RefreshAccountCredentials(ctx context.Context, id int
 }
 
 func (s *adminServiceImpl) ClearAccountError(ctx context.Context, id int64) (*Account, error) {
-	if _, err := s.getAccountForManagement(ctx, id); err != nil {
-		return nil, err
-	}
 	if err := s.accountRepo.ClearError(ctx, id); err != nil {
 		return nil, err
 	}
@@ -1465,54 +1361,21 @@ func (s *adminServiceImpl) ClearAccountError(ctx context.Context, id int64) (*Ac
 	return s.accountRepo.GetByID(ctx, id)
 }
 
-// RecoverAccountSchedulability 是给外部恢复检查（TransitHub）用的唯一恢复入口。
-//
-// 与 ClearAccountError 的关键区别：这里是数据库条件更新（compare-and-set），
-// 只有 schedulability_source=automatic 且 status=error 的账号才会被恢复。
-// 如果探测期间管理员把账号改成 manual，或来源/状态已经变化，迟到的恢复请求
-// 会拿到 conflict 并且完全不改状态——管理员决定不可能被覆盖。
-func (s *adminServiceImpl) RecoverAccountSchedulability(
-	ctx context.Context,
-	id int64,
-	expectedChangedAt *time.Time,
-) (*Account, error) {
-	if _, err := s.getAccountForManagement(ctx, id); err != nil {
-		return nil, err
-	}
-	recovered, err := s.accountRepo.RecoverAutomaticSchedulability(ctx, id, expectedChangedAt)
-	if err != nil {
-		return nil, err
-	}
-	if !recovered {
-		return nil, ErrSchedulabilityRecoveryConflict
-	}
-	if s.runtimeBlocker != nil {
-		s.runtimeBlocker.ClearAccountSchedulingBlock(id)
-	}
-	account, err := s.accountRepo.GetByID(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	s.invalidateAutoGroupSelectionsForAccount(ctx, account)
-	return account, nil
-}
-
 func (s *adminServiceImpl) SetAccountError(ctx context.Context, id int64, errorMsg string) error {
-	if _, err := s.getAccountForManagement(ctx, id); err != nil {
-		return err
-	}
 	return s.accountRepo.SetError(ctx, id, errorMsg)
 }
 
-func (s *adminServiceImpl) SetAccountSchedulable(ctx context.Context, id int64, schedulable bool) (*Account, error) {
-	account, err := s.getAccountForManagement(ctx, id)
-	if err != nil {
-		return nil, err
+func (s *adminServiceImpl) UpdateAccountGroupPriorities(ctx context.Context, updates []AccountGroupPriorityUpdate) (int, error) {
+	if s == nil || s.accountRepo == nil {
+		return 0, fmt.Errorf("account repository is not available")
 	}
+	return s.accountRepo.UpdateGroupPriorities(ctx, updates)
+}
+
+func (s *adminServiceImpl) SetAccountSchedulable(ctx context.Context, id int64, schedulable bool) (*Account, error) {
 	if err := s.accountRepo.SetSchedulable(ctx, id, schedulable); err != nil {
 		return nil, err
 	}
-	s.invalidateAutoGroupSelectionsForAccount(ctx, account)
 	updated, err := s.accountRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -1584,6 +1447,9 @@ func (s *adminServiceImpl) CreateShadow(ctx context.Context, parentID int64, opt
 				}
 			}
 		}
+	}
+	if err := s.ValidateAccountGroupBindings(ctx, groupIDs); err != nil {
+		return nil, err
 	}
 
 	// 4. 构造影子账号（安全不变量：Credentials 恒不含 auth token，仅含 model_mapping）。
@@ -1757,6 +1623,35 @@ func (s *adminServiceImpl) validateGroupIDsExist(ctx context.Context, groupIDs [
 	return nil
 }
 
+// ValidateAccountGroupBindings is the shared fail-closed policy boundary for
+// every account path that accepts explicit group bindings.
+func (s *adminServiceImpl) ValidateAccountGroupBindings(ctx context.Context, groupIDs []int64) error {
+	if len(groupIDs) == 0 || s.cfg == nil || s.cfg.RunMode != config.RunModeSimple {
+		return nil
+	}
+	if s.groupRepo == nil {
+		return errors.New("group repository not configured")
+	}
+	seen := make(map[int64]struct{}, len(groupIDs))
+	for _, groupID := range groupIDs {
+		if groupID <= 0 {
+			return fmt.Errorf("get group: %w", ErrGroupNotFound)
+		}
+		if _, ok := seen[groupID]; ok {
+			continue
+		}
+		seen[groupID] = struct{}{}
+		group, err := s.groupRepo.GetByIDLite(ctx, groupID)
+		if err != nil {
+			return fmt.Errorf("get group: %w", err)
+		}
+		if !IsGroupBindableInSimpleMode(group) {
+			return infraerrors.BadRequest("SIMPLE_MODE_GROUP_NOT_BINDABLE", "composite groups cannot be bound in simple mode")
+		}
+	}
+	return nil
+}
+
 // CheckMixedChannelRisk checks whether target groups contain mixed channels for the current account platform.
 func (s *adminServiceImpl) CheckMixedChannelRisk(ctx context.Context, currentAccountID int64, currentAccountPlatform string, groupIDs []int64) error {
 	return s.checkMixedChannelRisk(ctx, currentAccountID, currentAccountPlatform, groupIDs)
@@ -1788,7 +1683,7 @@ func (e *MixedChannelError) Error() string {
 }
 
 func (s *adminServiceImpl) ResetAccountQuota(ctx context.Context, id int64) error {
-	account, err := s.getAccountForManagement(ctx, id)
+	account, err := s.accountRepo.GetByID(ctx, id)
 	if err != nil {
 		return err
 	}

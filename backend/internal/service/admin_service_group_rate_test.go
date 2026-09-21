@@ -14,9 +14,6 @@ import (
 
 // userGroupRateRepoStubForGroupRate implements UserGroupRateRepository for group rate tests.
 type userGroupRateRepoStubForGroupRate struct {
-	getByUserIDData map[int64]float64
-	getByUserIDErr  error
-
 	getByGroupIDData map[int64][]UserGroupRateEntry
 	getByGroupIDErr  error
 
@@ -27,17 +24,13 @@ type userGroupRateRepoStubForGroupRate struct {
 	syncedEntries []GroupRateMultiplierInput
 	syncGroupErr  error
 
-	syncedUserID    int64
-	syncedUserRates map[int64]*float64
-	syncUserErr     error
-
 	rpmSyncedGroupID int64
 	rpmSyncedEntries []GroupRPMOverrideInput
 	rpmSyncErr       error
 }
 
 func (s *userGroupRateRepoStubForGroupRate) GetByUserID(_ context.Context, _ int64) (map[int64]float64, error) {
-	return s.getByUserIDData, s.getByUserIDErr
+	panic("unexpected GetByUserID call")
 }
 
 func (s *userGroupRateRepoStubForGroupRate) GetByUserAndGroup(_ context.Context, _, _ int64) (*float64, error) {
@@ -55,10 +48,8 @@ func (s *userGroupRateRepoStubForGroupRate) GetByGroupID(_ context.Context, grou
 	return s.getByGroupIDData[groupID], nil
 }
 
-func (s *userGroupRateRepoStubForGroupRate) SyncUserGroupRates(_ context.Context, userID int64, rates map[int64]*float64) error {
-	s.syncedUserID = userID
-	s.syncedUserRates = rates
-	return s.syncUserErr
+func (s *userGroupRateRepoStubForGroupRate) SyncUserGroupRates(_ context.Context, _ int64, _ map[int64]*float64) error {
+	panic("unexpected SyncUserGroupRates call")
 }
 
 func (s *userGroupRateRepoStubForGroupRate) SyncGroupRateMultipliers(_ context.Context, groupID int64, entries []GroupRateMultiplierInput) error {
@@ -144,14 +135,11 @@ func TestAdminService_GetGroupRateMultipliers(t *testing.T) {
 func TestAdminService_ClearGroupRateMultipliers(t *testing.T) {
 	t.Run("deletes by group ID", func(t *testing.T) {
 		repo := &userGroupRateRepoStubForGroupRate{}
-		invalidator := &authCacheInvalidatorStub{}
-		svc := &adminServiceImpl{userGroupRateRepo: repo, authCacheInvalidator: invalidator}
+		svc := &adminServiceImpl{userGroupRateRepo: repo}
 
 		err := svc.ClearGroupRateMultipliers(context.Background(), 42)
 		require.NoError(t, err)
 		require.Equal(t, []int64{42}, repo.deletedGroupIDs)
-		require.Equal(t, []int64{42}, invalidator.groupIDs)
-		require.Equal(t, []int64{42}, invalidator.autoGroupIDs)
 	})
 
 	t.Run("returns nil when repo is nil", func(t *testing.T) {
@@ -176,8 +164,7 @@ func TestAdminService_ClearGroupRateMultipliers(t *testing.T) {
 func TestAdminService_BatchSetGroupRateMultipliers(t *testing.T) {
 	t.Run("syncs entries to repo", func(t *testing.T) {
 		repo := &userGroupRateRepoStubForGroupRate{}
-		invalidator := &authCacheInvalidatorStub{}
-		svc := &adminServiceImpl{userGroupRateRepo: repo, authCacheInvalidator: invalidator}
+		svc := &adminServiceImpl{userGroupRateRepo: repo}
 
 		entries := []GroupRateMultiplierInput{
 			{UserID: 1, RateMultiplier: 1.5},
@@ -187,8 +174,6 @@ func TestAdminService_BatchSetGroupRateMultipliers(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, int64(10), repo.syncedGroupID)
 		require.Equal(t, entries, repo.syncedEntries)
-		require.Equal(t, []int64{10}, invalidator.groupIDs)
-		require.Equal(t, []int64{10}, invalidator.autoGroupIDs)
 	})
 
 	t.Run("returns nil when repo is nil", func(t *testing.T) {

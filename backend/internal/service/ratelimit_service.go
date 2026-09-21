@@ -31,6 +31,11 @@ type RateLimitService struct {
 	settingService        *SettingService
 	tokenCacheInvalidator TokenCacheInvalidator
 	runtimeBlocker        AccountRuntimeBlocker
+	// ollamaCloudUsageProbe is the optional Ollama Cloud usage probe scheduler
+	// injected via SetOllamaCloudUsageProbeScheduler. See
+	// ratelimit_service_ollama_429.go for how real-Ollama 429s schedule an async
+	// probe to learn the true usage-window reset.
+	ollamaCloudUsageProbe ollamaCloudUsageProbeScheduler
 	usageCacheMu          sync.RWMutex
 	usageCache            map[int64]*geminiUsageCacheEntry
 
@@ -296,13 +301,6 @@ const (
 // 自定义错误码开启时覆盖后续所有逻辑（包括临时不可调度）。
 func (s *RateLimitService) CheckErrorPolicy(ctx context.Context, account *Account, statusCode int, responseBody []byte, requestedModel ...string) ErrorPolicyResult {
 	ctx = withTempUnschedulableModel(ctx, requestedModel)
-	// Provider-side daily usage exhaustion is request/upstream scoped. It must
-	// bypass custom temporary-unschedulable rules as well as the default 403
-	// account/model state machine; the gateway owns bounded retry/failover.
-	if account != nil && account.Platform == PlatformOpenAI &&
-		isOpenAIDailyUsageLimitError(statusCode, "", responseBody) {
-		return ErrorPolicySkipped
-	}
 	if account.IsCustomErrorCodesEnabled() {
 		if account.ShouldHandleErrorCode(statusCode) {
 			return ErrorPolicyMatched
@@ -333,14 +331,6 @@ func (s *RateLimitService) CheckErrorPolicy(ctx context.Context, account *Accoun
 // 返回是否应该停止该账号的调度
 func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte, requestedModel ...string) (shouldDisable bool) {
 	ctx = withTempUnschedulableModel(ctx, requestedModel)
-	// Classify this before team linkage, custom policies, temporary rules, and
-	// the 403 account/model handlers. A provider daily allowance is not a local
-	// capability failure and must never persist a cooldown.
-	if account != nil && account.Platform == PlatformOpenAI &&
-		isOpenAIDailyUsageLimitError(statusCode, "", responseBody) {
-		slog.Info("openai_daily_usage_limit_failover_only", "account_id", account.ID, "account_type", account.Type)
-		return false
-	}
 	// Team 联动熔断必须先于池模式/自定义错误码/临时不可调度的各类早退；
 	// 同请求内与 fastpath 调用点的重复触发由方法内去重吸收。
 	s.maybeHandleOpenAITeamLinkedError(ctx, account, statusCode, responseBody)
@@ -381,12 +371,16 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 	// otherwise a broad "rate limit" keyword rule can shorten a multi-hour
 	// cooldown to a local temporary pause.
 	if statusCode == http.StatusTooManyRequests && account.Platform == PlatformAnthropic {
+		// Fable may be rejected because the organization has no usage credits for
+		// this model. Anthropic reports that as 429, but it is a model entitlement
+		// failure rather than a shared account window exhaustion.
+		fableCreditsRequired := s.persistAnthropicFableCreditsRequired(ctx, account, headers, responseBody, firstRequestedModel(requestedModel))
 		// 7d_oi 是 Fable 模型专属的 7d 窗口：只标记模型级限流，账号对其他模型仍可调度。
 		fableLimited := s.persistAnthropicFableWindowLimit(ctx, account, headers)
 		if s.persistAnthropicExhaustedWindowLimit(ctx, account, headers) {
 			return false
 		}
-		if fableLimited {
+		if fableCreditsRequired || fableLimited {
 			return false
 		}
 	}
@@ -523,7 +517,7 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 	case 402:
 		// 国产供应商：余额不足是可恢复状态（充值/检测恢复后由周期任务自动解除），
 		// 不能走 handleAuthError 永久置 status=error。改为可恢复的临时停调。
-		if account.IsCNProvider() {
+		if account.IsCNProvider() || account.IsOpenCodeZen() {
 			s.handleCNProviderInsufficientBalance(ctx, account, upstreamMsg)
 			shouldDisable = true
 			break
@@ -998,10 +992,18 @@ func (s *RateLimitService) handle403(ctx context.Context, account *Account, upst
 		s.handleCNProviderConcurrencyLimit403(ctx, account)
 		return true
 	}
+	// Kimi 等 CN 供应商把 Coding Plan 配额窗口耗尽打成 403
+	// （error.type=access_terminated_error），这是窗口到期后自动恢复的限流
+	// 信号而非封禁：按 429 口径冷却到真实窗口重置点，避免落入下方通用 403
+	// 升级计数后被永久 SetError。
+	if isCNProviderQuotaExhausted403(account, responseBody, upstreamMsg) {
+		s.handleCNProviderQuotaExhausted403(ctx, account, upstreamMsg)
+		return true
+	}
 	// 国产供应商与 openai 同口径:HTML 403(CDN/代理拦截页)不构成账号失效证据,
 	// 且 403 在 failover 状态集里会被逐账号重放——直接 SetError 会让一个坏请求/
 	// 一层坏代理连环永久禁用整组账号。走 HTML 豁免 + N 次累计 + 临时冷却。
-	if account.Platform == PlatformOpenAI || IsCNProvider(account.Platform) {
+	if account.Platform == PlatformOpenAI || IsCNProvider(account.Platform) || account.IsOpenCodeGo() {
 		return s.handleOpenAI403(ctx, account, upstreamMsg, responseBody)
 	}
 	// 非 Antigravity 平台：保持原有行为
@@ -1045,24 +1047,6 @@ func (s *RateLimitService) handleOpenAI403(ctx context.Context, account *Account
 		"account may be suspended or lack permissions",
 	)
 
-	// 能归因到具体模型的 403 只惩罚 (账号, 模型) 这一对，账号对其它模型继续可用。
-	// 上游常以 403 表达"本账号未开通该模型"（如 LUNA_MODEL_UNAVAILABLE），旧逻辑
-	// 一律冻结整个账号，导致同账号上完全正常的模型被连坐、反复被踢出调度。
-	// 若该账号下每个模型最终都因 403 被封，调度器按 model_rate_limits 过滤后该账号
-	// 自然对所有模型不可用，等价于账号级停用，无需在此提前扩大惩罚范围。
-	if isOpenAIInsufficientQuota(upstreamMsg, responseBody) ||
-		isOpenAIDailyUsageLimitError(http.StatusForbidden, upstreamMsg, responseBody) {
-		slog.Warn("openai_insufficient_quota_no_persistent_penalty", "account_id", account.ID)
-		return false
-	}
-
-	// 显式凭据失效（invalid_api_key/token_revoked 等）说明这把凭据本身已经作废，
-	// 会影响账号下的所有模型，不能按上面 model-scoped 的口径收窄成单模型限流——
-	// 那样账号会继续被调度去用同一把坏凭据请求其它模型，反复失败。
-	if !openAIStreamCredentialAuthFailure(responseBody) && s.applyModelScopedOpenAI403(ctx, account, msg) {
-		return false
-	}
-
 	if s.openAI403CounterCache == nil {
 		s.handleAuthError(ctx, account, msg)
 		return true
@@ -1096,70 +1080,6 @@ func (s *RateLimitService) handleOpenAI403(ctx context.Context, account *Account
 		"until", until,
 		"count", count,
 		"threshold", openAI403DisableThreshold,
-	)
-	return true
-}
-
-// openAI403ModelScopedCooldownDefault 是 rate_limit.openai_403_model_scoped_cooldown_mins
-// 未配置时的兜底值。403 既可能是"未开通该模型"这类持久配置，也可能是按日重置的额度耗尽，
-// 具体时长由配置决定（默认 5 分钟），足以中断反复被踢出调度的抖动，又能在上游恢复后
-// 自动放行，不需要人工干预。
-const openAI403ModelScopedCooldownDefault = 5 * time.Minute
-
-// openAI403ModelScopedCooldown 返回单模型 403 的冷却时长，可通过
-// rate_limit.openai_403_model_scoped_cooldown_mins（env: RATE_LIMIT_OPENAI_403_MODEL_SCOPED_COOLDOWN_MINS）调整。
-func (s *RateLimitService) openAI403ModelScopedCooldown() time.Duration {
-	if s == nil || s.cfg == nil || s.cfg.RateLimit.OpenAI403ModelScopedCooldownMins <= 0 {
-		return openAI403ModelScopedCooldownDefault
-	}
-	return time.Duration(s.cfg.RateLimit.OpenAI403ModelScopedCooldownMins) * time.Minute
-}
-
-// openAI403ModelScopedReason 写入 model_rate_limits 的原因标识，便于与
-// upstream_404_model_not_found 等其它模型级封禁来源区分。
-const openAI403ModelScopedReason = "openai_403_model_scoped"
-
-func isOpenAIInsufficientQuota(upstreamMsg string, responseBody []byte) bool {
-	message := strings.ToLower(upstreamMsg + "\n" + string(responseBody))
-	return strings.Contains(message, "insufficient_quota") ||
-		strings.Contains(message, "daily usage limit exceeded") ||
-		strings.Contains(message, "daily subscription quota exhausted") ||
-		strings.Contains(message, "subscription quota exhausted") ||
-		strings.Contains(message, "当日订阅额度已耗尽")
-}
-
-// applyModelScopedOpenAI403 把 403 的惩罚限定在 (账号, 模型) 这一对上。
-// 返回 true 表示已按模型级处理，调用方不应再做任何账号级动作。
-// 无法归因到模型（requestedModel 为空）时返回 false，交回原有账号级逻辑——
-// 那是既有的兜底行为，不属于扩大惩罚范围。
-func (s *RateLimitService) applyModelScopedOpenAI403(ctx context.Context, account *Account, msg string) bool {
-	if s == nil || account == nil || s.accountRepo == nil {
-		return false
-	}
-	model := tempUnschedulableModel(ctx, nil)
-	if model == "" {
-		return false
-	}
-	// 与 HandleUpstreamModelNotFound 共用同一套 key 解析，确保模型映射、
-	// Antigravity 最终模型名等场景下封禁的 key 与调度侧过滤的 key 一致。
-	modelKey := modelRateLimitKeyForUpstreamModelNotFound(ctx, account, model)
-	if modelKey == "" {
-		return false
-	}
-	resetAt := time.Now().Add(s.openAI403ModelScopedCooldown())
-	reason := fmt.Sprintf("%s: %s", openAI403ModelScopedReason, msg)
-	if err := s.accountRepo.SetModelRateLimit(ctx, account.ID, modelKey, resetAt, reason); err != nil {
-		slog.Warn("openai_403_set_model_rate_limit_failed",
-			"account_id", account.ID,
-			"model", modelKey,
-			"error", err,
-		)
-		return false
-	}
-	slog.Warn("openai_403_model_scoped",
-		"account_id", account.ID,
-		"model", modelKey,
-		"reset_at", resetAt,
 	)
 	return true
 }
@@ -1245,9 +1165,17 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 		}
 		return
 	}
+	// 真实 Ollama Cloud 用量账号（credentials base_url 指向 ollama.com）的 429 由
+	// ollama.com 的用量窗口驱动。其响应头不得被当作 OpenAI codex / Anthropic /
+	// CN 限流来解析，故在国产供应商分支之前单独处理：先设置永不缩短的临时冷却，
+	// 再调度异步 probe 学习真实重置点（详见 ratelimit_service_ollama_429.go）。
+	if account != nil && IsOllamaCloudUsageAccount(account) {
+		s.handleOllamaCloudUsage429(ctx, account, headers)
+		return
+	}
 	// 国产供应商（kimi/zhipu/deepseek）的 429 走专用可恢复路径：余额不足 → 临时停调，
 	// Coding Plan 窗口耗尽 → 冷却到快照重置点。未命中则继续默认 429 逻辑。
-	if account.IsCNProvider() {
+	if account.IsCNProvider() || account.IsOpenCodeGo() {
 		if s.applyCNProviderReactive429(ctx, account, headers, responseBody) {
 			return
 		}
@@ -1441,20 +1369,8 @@ func calculateOpenAI429ResetTime(headers http.Header) *time.Time {
 		return &resetAt
 	}
 
-	// 都未达到100%但收到429，使用较长的重置时间
-	var maxResetSecs int
-	if normalized.Reset7dSeconds != nil && *normalized.Reset7dSeconds > maxResetSecs {
-		maxResetSecs = *normalized.Reset7dSeconds
-	}
-	if normalized.Reset5hSeconds != nil && *normalized.Reset5hSeconds > maxResetSecs {
-		maxResetSecs = *normalized.Reset5hSeconds
-	}
-	if maxResetSecs > 0 {
-		resetAt := now.Add(time.Duration(maxResetSecs) * time.Second)
-		slog.Info("openai_429_using_max_reset", "max_reset_seconds", maxResetSecs, "reset_at", resetAt)
-		return &resetAt
-	}
-
+	// 未达到100%时，reset-after 只代表窗口信息，不能证明账号配额耗尽。
+	// 这类瞬时429必须回到可配置的兜底路径，避免未耗尽账号被长时间排除。
 	return nil
 }
 
@@ -1583,7 +1499,59 @@ func (s *RateLimitService) persistAnthropicExhaustedWindowLimit(ctx context.Cont
 	return true
 }
 
-const anthropicFableWindowReason = "anthropic_7d_oi_window_exhausted"
+const (
+	anthropicFableWindowReason          = "anthropic_7d_oi_window_exhausted"
+	anthropicFableCreditsRequiredReason = "anthropic_fable_credits_required"
+)
+
+// persistAnthropicFableCreditsRequired handles Anthropic's credits_required
+// response for Fable. Although the upstream status is 429, this response only
+// says that the organization cannot use Fable; marking the whole account rate
+// limited would unnecessarily stop Sonnet, Opus, and Haiku scheduling.
+func (s *RateLimitService) persistAnthropicFableCreditsRequired(ctx context.Context, account *Account, headers http.Header, responseBody []byte, requestedModel string) bool {
+	if s == nil || s.accountRepo == nil || account == nil {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(gjson.GetBytes(responseBody, "error.details.error_code").String()), "credits_required") {
+		return false
+	}
+
+	model := strings.TrimSpace(gjson.GetBytes(responseBody, "error.details.model").String())
+	if model == "" {
+		model = strings.TrimSpace(requestedModel)
+	}
+	if !isAnthropicFableModel(model) {
+		return false
+	}
+
+	now := time.Now()
+	resetAt, ok := parseAnthropicResetTimestamp(headers.Get("anthropic-ratelimit-unified-reset"), now, 366*24*time.Hour)
+	if !ok {
+		cooldown, enabled := s.get429FallbackCooldown(ctx, account)
+		if !enabled {
+			slog.Info("anthropic_fable_credits_required_cooldown_ignored", "account_id", account.ID)
+			return true
+		}
+		resetAt = now.Add(cooldown)
+	}
+
+	if err := s.accountRepo.SetModelRateLimit(ctx, account.ID, anthropicFableRateLimitKey, resetAt, anthropicFableCreditsRequiredReason); err != nil {
+		slog.Warn("anthropic_fable_credits_required_rate_limit_set_failed",
+			"account_id", account.ID,
+			"scope", anthropicFableRateLimitKey,
+			"reset_at", resetAt,
+			"error", err)
+		// The response is still known to be Fable-specific. Do not widen a
+		// persistence failure into an account-level rate limit.
+		return true
+	}
+	slog.Info("anthropic_fable_credits_required_model_rate_limited",
+		"account_id", account.ID,
+		"scope", anthropicFableRateLimitKey,
+		"reset_at", resetAt,
+		"reset_in", time.Until(resetAt).Truncate(time.Second))
+	return true
+}
 
 // selectAnthropicFableWindowLimit parses the Anthropic 7d_oi per-model window
 // headers (the Fable-only 7d window, e.g. anthropic-ratelimit-unified-7d_oi-*).
@@ -2481,21 +2449,9 @@ func parseOpenAIImageTryAgainCooldown(body []byte) time.Duration {
 	}
 }
 
-// upstreamModelNotFoundCooldown marks an (account, model) pair as
-// permanently unavailable for scheduling. Model-not-found is a deterministic
-// signal from the upstream: the account's configuration does not support the
-// model and will not self-heal. Seven days is long enough to cover the typical
-// gap between discovering an unsupported model and an administrator updating
-// the account's model mapping. The scheduler skips the pair via
-// IsSchedulableForModelWithContext until the cooldown expires or the account's
-// model rate limits are manually cleared.
-const upstreamModelNotFoundCooldown = 7 * 24 * time.Hour
+const upstreamModelNotFoundCooldown = 30 * time.Minute
 const upstreamModelNotFoundReason = "upstream_404_model_not_found"
-
-// upstreamCodexPlanGatedModelCooldown uses the same long duration because the
-// plan-gated rejection is also deterministic: a ChatGPT account on a plan that
-// does not include the requested model cannot serve it until the plan changes.
-const upstreamCodexPlanGatedModelCooldown = 7 * 24 * time.Hour
+const upstreamCodexPlanGatedModelCooldown = 30 * time.Minute
 const upstreamCodexPlanGatedModelReason = "upstream_400_codex_plan_gated_model"
 const tempUnschedBodyMaxBytes = 64 << 10
 const tempUnschedMessageMaxBytes = 2048

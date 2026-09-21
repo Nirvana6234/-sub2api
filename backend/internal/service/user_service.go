@@ -96,20 +96,19 @@ type UserListFilters struct {
 // 注意这里没有 balance / total_recharged：余额只能经由 AdjustBalance、
 // SetBalance、UpdateBalance、DeductBalance 等原子接口修改，Update 永远不碰它们。
 type UserUpdateFields struct {
-	Email                      bool
-	Username                   bool
-	Notes                      bool
-	PasswordHash               bool
-	Role                       bool
-	Status                     bool
-	Concurrency                bool
-	RPMLimit                   bool
-	AccountManagementEnabled   bool
-	ContributionRoomsEnabled   bool
-	HeadroomCompressionEnabled bool
-	SignupSource               bool
-	LastLoginAt                bool
-	LastActiveAt               bool
+	Email                    bool
+	Username                 bool
+	Notes                    bool
+	PasswordHash             bool
+	Role                     bool
+	Status                   bool
+	Concurrency              bool
+	RPMLimit                 bool
+	AccountManagementEnabled bool
+	ContributionRoomsEnabled bool
+	SignupSource             bool
+	LastLoginAt              bool
+	LastActiveAt             bool
 	// BalanceNotifySettings 覆盖 balance_notify_enabled / _threshold_type / _threshold。
 	BalanceNotifySettings bool
 	// BalanceNotifyExtraEmails 与上一项分开，避免"改通知阈值"覆盖并发的"加通知邮箱"。
@@ -191,18 +190,6 @@ type UserRepository interface {
 type RegistrationEmailDomainRepository interface {
 	CountUsersByEmailDomain(ctx context.Context, domain string) (int, error)
 	CreateWithEmailAliasGuardAndDomainLimit(ctx context.Context, user *User, domain string) error
-}
-
-// RegistrationIPQuotaRepository 为「同一 IP 最多注册 N 个账号」提供原子能力。
-// 与 RegistrationEmailDomainRepository 同样是可选能力：只有生产仓储实现，
-// 单元测试的用户仓储桩不必被注册专用方法污染。
-type RegistrationIPQuotaRepository interface {
-	// CountUsersByRegisterIP 统计该 IP 名下未软删除的账号数。
-	// register_ip 为空的存量用户不计入。
-	CountUsersByRegisterIP(ctx context.Context, ip string) (int, error)
-	// CreateWithEmailAliasGuardAndRegisterIPLimit 在写入用户的同一事务内复查 IP 配额，
-	// 超限返回 ErrRegisterIPLimit。
-	CreateWithEmailAliasGuardAndRegisterIPLimit(ctx context.Context, user *User, ip string, maxPerIP int) error
 }
 
 // RedeemUserAdjustmentRepository provides the atomic, floor-at-zero updates

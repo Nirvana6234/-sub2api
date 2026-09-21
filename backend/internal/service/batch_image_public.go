@@ -944,9 +944,10 @@ func (s *BatchImagePublicService) selectProviderAndAccount(ctx context.Context, 
 		if err != nil {
 			return nil, nil, err
 		}
+		// 与普通账号调度一致：priority 数值越小越优先，同优先级按 ID 排序。
 		sort.SliceStable(accounts, func(i, j int) bool {
 			if accounts[i].Priority != accounts[j].Priority {
-				return accounts[i].Priority > accounts[j].Priority
+				return accounts[i].Priority < accounts[j].Priority
 			}
 			return accounts[i].ID < accounts[j].ID
 		})
@@ -1066,7 +1067,9 @@ func (s *BatchImagePublicService) resolvePricingSnapshot(ctx context.Context, ow
 	}
 	accountMultiplier := 1.0
 	if account != nil {
-		accountMultiplier = account.BillingRateMultiplier()
+		// 成本倍率与利润门准入同源：手工倍率 → 探测值 → 列值 → 1.0。
+		// 零值时刻交由解析器回退到当前时间。
+		accountMultiplier = AccountBillingRateMultiplier(account, time.Time{})
 	}
 	if accountMultiplier < 0 {
 		accountMultiplier = 0

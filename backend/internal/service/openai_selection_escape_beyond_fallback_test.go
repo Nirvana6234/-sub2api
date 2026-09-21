@@ -4,8 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Wei-Shaw/sub2api/internal/config"
-
 	"github.com/stretchr/testify/require"
 )
 
@@ -114,24 +112,4 @@ func TestOpenAIAccountOutsideGroupAndFallbacks(t *testing.T) {
 			&Account{ID: 212, AccountGroups: []AccountGroup{{GroupID: 29}}}),
 			"归属可能走 AccountGroups 而不是 GroupIDs，两条都要认")
 	})
-}
-
-// 简单模式下分组归属被刻意忽略（previous_response 绑定的账号即便不属于请求分组
-// 也照用，见 TestOpenAIGatewayService_PreviousResponseSimpleModeIgnoresGroupMembership）。
-// 闸门在该模式下必须整体让开，否则会把那条既有行为打掉。
-func TestSelectionEscapeGuardStandsDownInSimpleMode(t *testing.T) {
-	svc := newProductionFallbackChainService()
-	svc.cfg = &config.Config{RunMode: config.RunModeSimple}
-	group2 := int64(2)
-
-	released := false
-	sel := &AccountSelectionResult{
-		Account:     &Account{ID: 320, GroupIDs: []int64{34}},
-		Acquired:    true,
-		ReleaseFunc: func() { released = true },
-	}
-	require.False(t, svc.selectionEscapedRequestedGroup(
-		context.Background(), &group2, "", "", "gpt-6-astra", sel),
-		"简单模式不按分组归属调度，闸门不得介入")
-	require.False(t, released, "让开时不得释放并发槽")
 }

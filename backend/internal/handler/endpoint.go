@@ -16,8 +16,8 @@ import (
 
 const (
 	EndpointMessages             = "/v1/messages"
-	EndpointChatCompletions      = "/v1/chat/completions"
 	EndpointModels               = "/v1/models"
+	EndpointChatCompletions      = "/v1/chat/completions"
 	EndpointEmbeddings           = "/v1/embeddings"
 	EndpointAlphaSearch          = "/v1/alpha/search"
 	EndpointResponses            = "/v1/responses"
@@ -30,6 +30,7 @@ const (
 	EndpointVideosEdits          = "/v1/videos/edits"
 	EndpointVideosExtensions     = "/v1/videos/extensions"
 	EndpointVideos               = "/v1/videos"
+	EndpointSeedanceTasks        = "/api/v3/contents/generations/tasks"
 	EndpointGeminiModels         = "/v1beta/models"
 )
 
@@ -87,6 +88,8 @@ func NormalizeInboundEndpoint(path string) string {
 		return EndpointModels
 	case trimmedPath == "/api/v1/playground/chat/completions":
 		return EndpointChatCompletions
+	case strings.Contains(path, "/contents/generations/tasks"):
+		return EndpointSeedanceTasks
 	case strings.Contains(path, EndpointResponsesInputTokens) || isResponsesInputTokensAliasPath(path):
 		return EndpointResponsesInputTokens
 	case strings.Contains(path, EndpointEmbeddings):
@@ -203,7 +206,7 @@ func DeriveUpstreamEndpoint(inbound, rawRequestPath, platform string) string {
 
 	switch platform {
 	case service.PlatformOpenAI, service.PlatformGrok:
-		if inbound == EndpointModels || inbound == EndpointEmbeddings || inbound == EndpointAlphaSearch || inbound == EndpointImagesGenerations || inbound == EndpointImagesEdits || inbound == EndpointVideosGenerations || inbound == EndpointVideosEdits || inbound == EndpointVideosExtensions || inbound == EndpointVideos {
+		if inbound == EndpointModels || inbound == EndpointEmbeddings || inbound == EndpointAlphaSearch || inbound == EndpointResponsesInputTokens || inbound == EndpointImagesGenerations || inbound == EndpointImagesEdits || inbound == EndpointVideosGenerations || inbound == EndpointVideosEdits || inbound == EndpointVideosExtensions || inbound == EndpointVideos {
 			return inbound
 		}
 		// OpenAI forwards everything to the Responses API.

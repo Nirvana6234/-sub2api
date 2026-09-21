@@ -1701,6 +1701,9 @@ func lowestAvailableRateGroup(groups []Group, userRates map[int64]float64) *Grou
 		}
 
 		candidateRate := effectiveGroupRate(*candidate, userRates)
+		if candidateRate == math.MaxFloat64 {
+			continue
+		}
 		if best == nil || candidateRate < bestRate ||
 			(candidateRate == bestRate && (candidate.SortOrder < best.SortOrder ||
 				(candidate.SortOrder == best.SortOrder && candidate.ID < best.ID))) {
@@ -1712,10 +1715,18 @@ func lowestAvailableRateGroup(groups []Group, userRates map[int64]float64) *Grou
 }
 
 func effectiveGroupRate(group Group, userRates map[int64]float64) float64 {
+	rate := group.RateMultiplier
 	if userRate, ok := userRates[group.ID]; ok {
-		return userRate
+		rate = userRate
 	}
-	return group.RateMultiplier
+	// Rates are user/admin configuration. Treat NaN, infinities, and negative
+	// values as invalid instead of allowing them to win comparisons and make
+	// the selected route depend on map iteration order. Zero remains valid for
+	// free or promotional groups.
+	if math.IsNaN(rate) || math.IsInf(rate, 0) || rate < 0 {
+		return math.MaxFloat64
+	}
+	return rate
 }
 
 func normalizeAutoGroupStrategy(strategy string) string {
@@ -2279,11 +2290,22 @@ func (s *APIKeyService) invalidateAutoGroupMetrics(userID int64, model string) {
 }
 
 func autoGroupIsGreen(samples []int64) bool {
-	return len(samples) > 0 && percentile95(samples) <= autoGroupMaxP95FirstToken.Milliseconds()
+	positive := positiveAutoGroupSamples(samples)
+	return len(positive) > 0 && percentile95(positive) <= autoGroupMaxP95FirstToken.Milliseconds()
 }
 
 func autoGroupIsReliableGreen(samples []int64) bool {
-	return len(samples) >= autoGroupMinReliableSamples && autoGroupIsGreen(samples)
+	return len(positiveAutoGroupSamples(samples)) >= autoGroupMinReliableSamples && autoGroupIsGreen(samples)
+}
+
+func positiveAutoGroupSamples(samples []int64) []int64 {
+	positive := make([]int64, 0, len(samples))
+	for _, sample := range samples {
+		if sample > 0 {
+			positive = append(positive, sample)
+		}
+	}
+	return positive
 }
 
 func autoGroupProbedSet(groupIDs []int64) map[int64]bool {
@@ -2351,10 +2373,15 @@ func rankMeasuredAutoGroups(groups []Group, userRates map[int64]float64, metrics
 	measured := make([]autoGroupScoredCandidate, 0, len(groups))
 	for _, group := range groups {
 		samples := metrics[group.ID]
-		if !autoGroupIsReliableGreen(samples) {
+		positiveSamples := positiveAutoGroupSamples(samples)
+		if len(positiveSamples) < autoGroupMinReliableSamples || !autoGroupIsGreen(positiveSamples) {
 			continue
 		}
-		measured = append(measured, autoGroupScoredCandidate{group: group, rate: effectiveGroupRate(group, userRates), p95FirstToken: percentile95(samples)})
+		rate := effectiveGroupRate(group, userRates)
+		if rate == math.MaxFloat64 {
+			continue
+		}
+		measured = append(measured, autoGroupScoredCandidate{group: group, rate: rate, p95FirstToken: percentile95(positiveSamples)})
 	}
 	if len(measured) == 0 {
 		return nil
@@ -2368,11 +2395,26 @@ func rankMeasuredAutoGroups(groups []Group, userRates map[int64]float64, metrics
 	}
 	priceWeight, speedWeight := autoGroupWeights(strategy)
 	for i := range measured {
-		priceScore := 0.0
+		// A zero rate is a valid free/promotional route and must win the price
+		// component. The old formula assigned it 0, which made a free group lose
+		// to every paid group in balanced mode despite being the cheapest route.
+		priceScore := 1.0
 		if measured[i].rate > 0 {
-			priceScore = clampAutoGroupScore(lowestRate / measured[i].rate)
+			if lowestRate > 0 {
+				priceScore = clampAutoGroupScore(lowestRate / measured[i].rate)
+			} else {
+				priceScore = 0
+			}
 		}
 		speedScore := clampAutoGroupScore(float64(autoGroupMaxP95FirstToken.Milliseconds()-measured[i].p95FirstToken) / float64(autoGroupMaxP95FirstToken.Milliseconds()))
+		// Three samples are enough to establish a candidate as usable, but are
+		// still noisy for ranking. Shrink sparse speed observations toward a
+		// neutral score so one lucky probe does not cause visible route hopping.
+		confidence := float64(len(positiveAutoGroupSamples(metrics[measured[i].group.ID]))) / float64(autoGroupSampleLimit)
+		if confidence > 1 {
+			confidence = 1
+		}
+		speedScore = 0.5 + confidence*(speedScore-0.5)
 		measured[i].score = priceWeight*priceScore + speedWeight*speedScore
 	}
 	sort.SliceStable(measured, func(i, j int) bool {
@@ -2899,14 +2941,14 @@ func groupMatchesRequestedModel(group *Group, model string) bool {
 			return false
 		}
 	}
-	return !group.CustomModelsListEnabled() || groupCustomModelsListSupports(group, model)
+	return !group.ModelAllowlist.Enabled || groupCustomModelsListSupports(group, model)
 }
 
 func groupCustomModelsListSupports(group *Group, model string) bool {
 	if group == nil {
 		return false
 	}
-	for _, candidate := range group.ModelsListConfig.Models {
+	for _, candidate := range group.ModelAllowlist.Models {
 		candidate = strings.TrimSpace(candidate)
 		if candidate == model || matchModelPattern(candidate, model) {
 			return true

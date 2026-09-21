@@ -13,7 +13,6 @@ type AdminHandlers struct {
 	Group                  *admin.GroupHandler
 	Account                *admin.AccountHandler
 	Announcement           *admin.AnnouncementHandler
-	Ticket                 *admin.TicketHandler
 	DataManagement         *admin.DataManagementHandler
 	Backup                 *admin.BackupHandler
 	OAuth                  *admin.OAuthHandler
@@ -45,6 +44,7 @@ type AdminHandlers struct {
 	Affiliate              *admin.AffiliateHandler
 	Compliance             *admin.ComplianceHandler
 	AuditLog               *admin.AuditLogHandler
+	Ticket                 *admin.TicketHandler
 }
 
 // Handlers contains all HTTP handlers
@@ -58,7 +58,6 @@ type Handlers struct {
 	Redeem              *RedeemHandler
 	Subscription        *SubscriptionHandler
 	Announcement        *AnnouncementHandler
-	Ticket              *TicketHandler
 	ChannelMonitor      *ChannelMonitorUserHandler
 	ChannelMonitorV2    *ChannelMonitorV2Handler
 	Admin               *AdminHandlers
@@ -73,8 +72,9 @@ type Handlers struct {
 	ModelPlaza          *ModelPlazaHandler
 	AsyncImage          *AsyncImageHandler
 	BatchImage          *BatchImageHandler
-	AccountContribution *AccountContributionHandler
 	PlaygroundHistory   *PlaygroundHistoryHandler
+	AccountContribution *AccountContributionHandler
+	Ticket              *TicketHandler
 }
 
 // BuildInfo contains build-time information

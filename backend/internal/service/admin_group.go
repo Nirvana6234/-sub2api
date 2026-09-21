@@ -9,6 +9,7 @@ import (
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -20,9 +21,26 @@ import (
 )
 
 // Group management implementations
+func (s *adminServiceImpl) ValidateSimpleModeGroupOperation(operation AdminGroupOperation) error {
+	return ValidateSimpleModeGroupOperation(s.cfg, operation)
+}
+
 func (s *adminServiceImpl) ListGroups(ctx context.Context, page, pageSize int, platform, status, search string, isExclusive *bool, sortBy, sortOrder string) ([]Group, int64, error) {
 	params := pagination.PaginationParams{Page: page, PageSize: pageSize, SortBy: sortBy, SortOrder: sortOrder}
-	groups, result, err := s.groupRepo.ListWithFilters(ctx, params, platform, status, search, isExclusive)
+	var groups []Group
+	var result *pagination.PaginationResult
+	var err error
+	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
+		repo, ok := s.groupRepo.(interface {
+			ListBindableWithFilters(context.Context, pagination.PaginationParams, string, string, string, *bool) ([]Group, *pagination.PaginationResult, error)
+		})
+		if !ok {
+			return nil, 0, errors.New("group repository does not support simple-mode filtering")
+		}
+		groups, result, err = repo.ListBindableWithFilters(ctx, params, platform, status, search, isExclusive)
+	} else {
+		groups, result, err = s.groupRepo.ListWithFilters(ctx, params, platform, status, search, isExclusive)
+	}
 	if err != nil {
 		return nil, 0, err
 	}
@@ -45,7 +63,21 @@ func (s *adminServiceImpl) GetAllGroupsIncludingInactive(ctx context.Context) ([
 }
 
 func (s *adminServiceImpl) GetGroup(ctx context.Context, id int64) (*Group, error) {
-	return s.groupRepo.GetByID(ctx, id)
+	group, err := s.groupRepo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.validateSimpleModeGroupAccess(group); err != nil {
+		return nil, err
+	}
+	return group, nil
+}
+
+func (s *adminServiceImpl) validateSimpleModeGroupAccess(group *Group) error {
+	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple && !IsGroupBindableInSimpleMode(group) {
+		return infraerrors.BadRequest("SIMPLE_MODE_GROUP_NOT_BINDABLE", "composite groups are not supported in simple mode")
+	}
+	return nil
 }
 
 func (s *adminServiceImpl) GetGroupModelsListCandidates(ctx context.Context, id int64, platform string) ([]string, error) {
@@ -101,6 +133,9 @@ func (s *adminServiceImpl) GetGroupModelsListCandidates(ctx context.Context, id 
 }
 
 func (s *adminServiceImpl) ListCompositeRoutes(ctx context.Context, groupID int64) ([]CompositeModelRoute, error) {
+	if err := s.ValidateSimpleModeGroupOperation(AdminGroupOperationCompositeRoute); err != nil {
+		return nil, err
+	}
 	if err := s.requireCompositeGroup(ctx, groupID); err != nil {
 		return nil, err
 	}
@@ -111,6 +146,9 @@ func (s *adminServiceImpl) ListCompositeRoutes(ctx context.Context, groupID int6
 }
 
 func (s *adminServiceImpl) CreateCompositeRoute(ctx context.Context, groupID int64, input CompositeRouteInput) (*CompositeModelRoute, error) {
+	if err := s.ValidateSimpleModeGroupOperation(AdminGroupOperationCompositeRoute); err != nil {
+		return nil, err
+	}
 	if err := s.requireCompositeGroup(ctx, groupID); err != nil {
 		return nil, err
 	}
@@ -128,6 +166,9 @@ func (s *adminServiceImpl) CreateCompositeRoute(ctx context.Context, groupID int
 }
 
 func (s *adminServiceImpl) UpdateCompositeRoute(ctx context.Context, groupID, routeID int64, input CompositeRouteInput) (*CompositeModelRoute, error) {
+	if err := s.ValidateSimpleModeGroupOperation(AdminGroupOperationCompositeRoute); err != nil {
+		return nil, err
+	}
 	if err := s.requireCompositeGroup(ctx, groupID); err != nil {
 		return nil, err
 	}
@@ -151,6 +192,9 @@ func (s *adminServiceImpl) UpdateCompositeRoute(ctx context.Context, groupID, ro
 }
 
 func (s *adminServiceImpl) DeleteCompositeRoute(ctx context.Context, groupID, routeID int64) error {
+	if err := s.ValidateSimpleModeGroupOperation(AdminGroupOperationCompositeRoute); err != nil {
+		return err
+	}
 	if err := s.requireCompositeGroup(ctx, groupID); err != nil {
 		return err
 	}
@@ -166,6 +210,9 @@ func (s *adminServiceImpl) DeleteCompositeRoute(ctx context.Context, groupID, ro
 }
 
 func (s *adminServiceImpl) PreviewCompositeRoute(ctx context.Context, groupID int64, input CompositeRoutePreviewRequest) (*CompositeRouteDecision, error) {
+	if err := s.ValidateSimpleModeGroupOperation(AdminGroupOperationCompositeRoute); err != nil {
+		return nil, err
+	}
 	if err := s.requireCompositeGroup(ctx, groupID); err != nil {
 		return nil, err
 	}
@@ -247,6 +294,8 @@ func defaultModelsListCandidateIDs(platform string) []string {
 		return ids
 	case PlatformGrok:
 		return xai.DefaultModelIDs()
+	case PlatformOpenCodeGo:
+		return DefaultOpenCodeGoModelIDs()
 	case PlatformComposite:
 		return compositeDefaultModelsListCandidateIDs()
 	default:
@@ -267,7 +316,7 @@ func defaultAllowImageGenerationForPlatform(platform string) bool {
 func compositeDefaultModelsListCandidateIDs() []string {
 	seen := make(map[string]struct{})
 	ids := make([]string, 0)
-	for _, platform := range []string{PlatformAnthropic, PlatformGemini, PlatformOpenAI, PlatformAntigravity, PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek} {
+	for _, platform := range []string{PlatformAnthropic, PlatformGemini, PlatformOpenAI, PlatformAntigravity, PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo} {
 		for _, id := range defaultModelsListCandidateIDs(platform) {
 			if _, ok := seen[id]; ok {
 				continue
@@ -308,12 +357,40 @@ func sanitizeGroupOpenAIFast(group *Group) {
 	}
 }
 
+func normalizeCreateGroupInputForSimpleMode(input *CreateGroupInput) {
+	if input == nil {
+		return
+	}
+	*input = CreateGroupInput{
+		Name: input.Name, Description: input.Description, Platform: input.Platform,
+		RateMultiplier: 1, SubscriptionType: SubscriptionTypeStandard,
+	}
+}
+
+func normalizeUpdateGroupInputForSimpleMode(input *UpdateGroupInput) {
+	if input == nil {
+		return
+	}
+	*input = UpdateGroupInput{Name: input.Name, Description: input.Description}
+}
+
 func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupInput) (*Group, error) {
-	if input.RateMultiplier < 0 {
-		return nil, errors.New("rate_multiplier must be >= 0")
+	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple && NormalizeGroupPlatform(input.Platform) == PlatformComposite {
+		return nil, infraerrors.BadRequest("SIMPLE_MODE_GROUP_NOT_BINDABLE", "composite groups are not supported in simple mode")
+	}
+	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
+		normalizeCreateGroupInputForSimpleMode(input)
+	}
+	if input.RateMultiplier <= 0 {
+		return nil, errors.New("rate_multiplier must be > 0")
 	}
 
 	platform := NormalizeGroupPlatform(input.Platform)
+	// 固定账号 manifest 配置：账号绑定发生在创建之后，创建时无法校验成员关系，
+	// 拒绝开启并在创建后的编辑里配置。
+	if normalizeCodexModelsManifestConfig(platform, input.CodexModelsManifestConfig).Enabled {
+		return nil, infraerrors.New(http.StatusBadRequest, "INVALID_CODEX_MODELS_MANIFEST_CONFIG", "codex models manifest config cannot be enabled at group creation; configure it after creation in the group editor")
+	}
 	modelPricing, err := normalizeGroupModelPricing(platform, input.ModelPricing)
 	if err != nil {
 		return nil, err
@@ -394,7 +471,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 	// 先归一化（非订阅分组清空高峰配置、清洗停用状态下的脏字段）再校验，与 UpdateGroup 同一收口。
 	peakRateEnabled, peakStart, peakEnd, peakRateMultiplier := NormalizePeakRateConfig(subscriptionType, input.PeakRateEnabled, input.PeakStart, input.PeakEnd, peakRateMultiplier)
 	if err := ValidatePeakRateConfig(subscriptionType, peakRateEnabled, peakStart, peakEnd, peakRateMultiplier); err != nil {
-		return nil, err
+		return nil, infraerrors.BadRequest("INVALID_PEAK_RATE_CONFIG", err.Error())
 	}
 
 	profitMinMargin := 0.0
@@ -414,7 +491,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 	// 校验降级分组。数组按 UI 顺序保存，旧 scalar 字段作为兼容输入。
 	fallbackGroupIDs := normalizeFallbackGroupIDs(input.FallbackGroupIDs, input.FallbackGroupID)
 	for _, fallbackGroupID := range fallbackGroupIDs {
-		if err := s.validateFallbackGroup(ctx, 0, platform, fallbackGroupID); err != nil {
+		if err := s.validateFallbackGroup(ctx, 0, fallbackGroupID); err != nil {
 			return nil, err
 		}
 		// ClaudeCodeOnly 分组的 fallback_group_id 是旧的降级链路，与运行时兜底池
@@ -477,14 +554,19 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		}
 	}
 
+	// 白名单在创建路径同样收口：开启但为空、通配位置非法都会 400。
+	modelAllowlist, err := normalizeGroupModelAllowlist(input.ModelAllowlist)
+	if err != nil {
+		return nil, err
+	}
+
 	group := &Group{
 		Name:                            input.Name,
 		Description:                     input.Description,
 		Platform:                        platform,
 		RateMultiplier:                  input.RateMultiplier,
-		AllowContributionPool:           input.AllowContributionPool,
 		IsExclusive:                     input.IsExclusive,
-		IsFallbackPool:                  input.IsFallbackPool,
+		AllowContributionPool:           input.AllowContributionPool,
 		Status:                          StatusActive,
 		SubscriptionType:                subscriptionType,
 		DailyLimitUSD:                   dailyLimit,
@@ -520,7 +602,6 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		AudioTTSPricePerMillionChars:    audioTTSPricePerMillionChars,
 		AudioSTTPricePerHour:            audioSTTPricePerHour,
 		ClaudeCodeOnly:                  input.ClaudeCodeOnly,
-		KiroCompat:                      input.KiroCompat,
 		FallbackGroupID:                 firstFallbackGroupID(fallbackGroupIDs),
 		FallbackGroupIDs:                fallbackGroupIDs,
 		FallbackGroupIDOnInvalidRequest: fallbackOnInvalidRequest,
@@ -535,11 +616,14 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		RequirePrivacySet:               input.RequirePrivacySet,
 		DefaultMappedModel:              input.DefaultMappedModel,
 		MessagesDispatchModelConfig:     normalizeOpenAIMessagesDispatchModelConfig(input.MessagesDispatchModelConfig),
-		ModelsListConfig:                normalizeGroupModelsListConfig(input.ModelsListConfig),
-		RPMLimit:                        input.RPMLimit,
-		MaxReasoningEffort:              maxReasoningEffort,
-		MaxReasoningEffortOverLimit:     maxReasoningEffortOverLimit,
-		ReasoningEffortMappings:         reasoningEffortMappings,
+		ModelAllowlist:                  modelAllowlist,
+		// 固定账号 manifest 配置：账号绑定发生在分组创建之后，创建路径禁止开启，
+		// 成员关系无从校验（前端创建对话框也不展示）。
+		CodexModelsManifestConfig:   normalizeCodexModelsManifestConfig(platform, input.CodexModelsManifestConfig),
+		RPMLimit:                    input.RPMLimit,
+		MaxReasoningEffort:          maxReasoningEffort,
+		MaxReasoningEffortOverLimit: maxReasoningEffortOverLimit,
+		ReasoningEffortMappings:     reasoningEffortMappings,
 	}
 	sanitizeGroupMessagesDispatchFields(group)
 	sanitizeGroupOpenAIFast(group)
@@ -602,13 +686,11 @@ func normalizePrice(price *float64) *float64 {
 // validateFallbackGroup 校验降级分组的有效性
 // currentGroupID: 当前分组 ID（新建时为 0）
 // fallbackGroupID: 降级分组 ID
-func (s *adminServiceImpl) validateFallbackGroup(ctx context.Context, currentGroupID int64, sourcePlatform string, fallbackGroupID int64) error {
+func (s *adminServiceImpl) validateFallbackGroup(ctx context.Context, currentGroupID, fallbackGroupID int64) error {
 	// 不能将自己设置为降级分组
 	if currentGroupID > 0 && currentGroupID == fallbackGroupID {
 		return fmt.Errorf("cannot set self as fallback group")
 	}
-	openAICompatibleSource := sourcePlatform == PlatformOpenAI || sourcePlatform == PlatformGrok
-	normalizedSourcePlatform := normalizeOpenAICompatiblePlatform(sourcePlatform)
 
 	visited := map[int64]struct{}{}
 	nextID := fallbackGroupID
@@ -625,17 +707,6 @@ func (s *adminServiceImpl) validateFallbackGroup(ctx context.Context, currentGro
 		fallbackGroup, err := s.groupRepo.GetByIDLite(ctx, nextID)
 		if err != nil {
 			return fmt.Errorf("fallback group not found: %w", err)
-		}
-		if openAICompatibleSource {
-			if fallbackGroup.Status != StatusActive {
-				return fmt.Errorf("fallback group must be active")
-			}
-			if !fallbackGroup.IsFallbackPool {
-				return fmt.Errorf("fallback group must be marked as fallback pool")
-			}
-			if normalizeOpenAICompatiblePlatform(fallbackGroup.Platform) != normalizedSourcePlatform {
-				return fmt.Errorf("fallback group platform mismatch")
-			}
 		}
 
 		// 降级分组不能启用 claude_code_only，否则会造成死循环
@@ -669,6 +740,8 @@ func (s *adminServiceImpl) validateFallbackPoolTarget(ctx context.Context, platf
 	return nil
 }
 
+// normalizeFallbackGroupIDs 去重、丢弃非正数，保留原始优先级顺序；结果为空时回退到
+// legacy（旧的单值字段），用于兼容仍只传 FallbackGroupID 的调用方。
 func normalizeFallbackGroupIDs(ids []int64, legacy *int64) []int64 {
 	seen := make(map[int64]struct{}, len(ids)+1)
 	out := make([]int64, 0, len(ids)+1)
@@ -688,6 +761,7 @@ func normalizeFallbackGroupIDs(ids []int64, legacy *int64) []int64 {
 	return out
 }
 
+// firstFallbackGroupID 取数组首个元素维护旧的单值字段，供尚未升级到数组的调用方读取。
 func firstFallbackGroupID(ids []int64) *int64 {
 	if len(ids) == 0 {
 		return nil
@@ -727,10 +801,25 @@ func (s *adminServiceImpl) validateFallbackGroupOnInvalidRequest(ctx context.Con
 	return nil
 }
 
+// fallbackGroupIDClearSentinel 是前端"明确选择不兜底"时发送的值。UpdateGroup 曾经把
+// 0（含缺省值）也当成"明确清空"，一个编辑表单的时序 bug 会在打开编辑框时把刚回填好的
+// 兜底分组瞬间冲成 0 再提交，静默清空生产在用的配置且没有任何报错。现在只有这个哨兵值
+// 才会真正清空，0 一律视为"没碰这个字段"，保留原值。
+const fallbackGroupIDClearSentinel = -1
+
 func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *UpdateGroupInput) (*Group, error) {
 	group, err := s.groupRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
+	}
+	if err := s.validateSimpleModeGroupAccess(group); err != nil {
+		return nil, err
+	}
+	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple && input.Platform == PlatformComposite {
+		return nil, infraerrors.BadRequest("SIMPLE_MODE_GROUP_NOT_BINDABLE", "composite groups are not supported in simple mode")
+	}
+	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
+		normalizeUpdateGroupInputForSimpleMode(input)
 	}
 
 	// 渠道缓存里存了 groupID → platform 的映射，改了平台要让它失效（见函数末尾）
@@ -746,16 +835,16 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 		group.Platform = input.Platform
 	}
 	if input.RateMultiplier != nil {
-		if *input.RateMultiplier < 0 {
-			return nil, errors.New("rate_multiplier must be >= 0")
+		if *input.RateMultiplier <= 0 {
+			return nil, errors.New("rate_multiplier must be > 0")
 		}
 		group.RateMultiplier = *input.RateMultiplier
 	}
-	if input.AllowContributionPool != nil {
-		group.AllowContributionPool = *input.AllowContributionPool
-	}
 	if input.IsExclusive != nil {
 		group.IsExclusive = *input.IsExclusive
+	}
+	if input.AllowContributionPool != nil {
+		group.AllowContributionPool = *input.AllowContributionPool
 	}
 	if input.IsFallbackPool != nil {
 		// 取消兜底池标记前先确认没有分组还指着它。
@@ -777,6 +866,9 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 			}
 		}
 		group.IsFallbackPool = *input.IsFallbackPool
+	}
+	if input.KiroCompat != nil {
+		group.KiroCompat = *input.KiroCompat
 	}
 	if input.Status != "" {
 		group.Status = input.Status
@@ -869,7 +961,7 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	// 防止单独修改 start/end 导致最终 start>=end 等非法配置入库。与 CreateGroup 同一收口。
 	group.PeakRateEnabled, group.PeakStart, group.PeakEnd, group.PeakRateMultiplier = NormalizePeakRateConfig(group.SubscriptionType, group.PeakRateEnabled, group.PeakStart, group.PeakEnd, group.PeakRateMultiplier)
 	if err := ValidatePeakRateConfig(group.SubscriptionType, group.PeakRateEnabled, group.PeakStart, group.PeakEnd, group.PeakRateMultiplier); err != nil {
-		return nil, err
+		return nil, infraerrors.BadRequest("INVALID_PEAK_RATE_CONFIG", err.Error())
 	}
 	if input.ProfitControlEnabled != nil {
 		group.ProfitControlEnabled = *input.ProfitControlEnabled
@@ -928,23 +1020,31 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	if input.ClaudeCodeOnly != nil {
 		group.ClaudeCodeOnly = *input.ClaudeCodeOnly
 	}
-	if input.KiroCompat != nil {
-		group.KiroCompat = *input.KiroCompat
-	}
-	if input.FallbackGroupIDs != nil {
+	switch {
+	case input.FallbackGroupIDs != nil:
+		// 显式传入数组：整体替换，空切片表示清空。
 		group.FallbackGroupIDs = normalizeFallbackGroupIDs(*input.FallbackGroupIDs, nil)
 		group.FallbackGroupID = firstFallbackGroupID(group.FallbackGroupIDs)
-	} else if input.FallbackGroupID != nil {
-		// 兼容旧客户端：单值更新会替换整个多目标列表。
-		group.FallbackGroupIDs = normalizeFallbackGroupIDs(nil, input.FallbackGroupID)
-		group.FallbackGroupID = firstFallbackGroupID(group.FallbackGroupIDs)
-	} else {
+	case input.FallbackGroupID != nil:
+		// 兼容仍只传单值字段的旧调用方；沿用清空哨兵值语义（见 fallbackGroupIDClearSentinel）。
+		switch {
+		case *input.FallbackGroupID > 0:
+			group.FallbackGroupIDs = normalizeFallbackGroupIDs(nil, input.FallbackGroupID)
+			group.FallbackGroupID = firstFallbackGroupID(group.FallbackGroupIDs)
+		case *input.FallbackGroupID == fallbackGroupIDClearSentinel:
+			group.FallbackGroupIDs = nil
+			group.FallbackGroupID = nil
+		default:
+			// 0 视为没碰这个字段，保留原值。
+		}
+	default:
+		// 两个字段都没传：保持原值，但补一次归一化，兼容迁移前只写了 scalar 字段的旧行。
 		group.FallbackGroupIDs = normalizeFallbackGroupIDs(group.FallbackGroupIDs, group.FallbackGroupID)
 		group.FallbackGroupID = firstFallbackGroupID(group.FallbackGroupIDs)
 	}
 	for _, fallbackGroupID := range group.FallbackGroupIDs {
 		// 按合并后的最终平台校验，避免修改平台或兜底标记后留下不兼容的旧配置。
-		if err := s.validateFallbackGroup(ctx, id, group.Platform, fallbackGroupID); err != nil {
+		if err := s.validateFallbackGroup(ctx, id, fallbackGroupID); err != nil {
 			return nil, err
 		}
 		if platformSupportsFallbackPool(group.Platform) && !group.ClaudeCodeOnly {
@@ -955,10 +1055,13 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	}
 	fallbackOnInvalidRequest := group.FallbackGroupIDOnInvalidRequest
 	if input.FallbackGroupIDOnInvalidRequest != nil {
-		if *input.FallbackGroupIDOnInvalidRequest > 0 {
+		switch {
+		case *input.FallbackGroupIDOnInvalidRequest > 0:
 			fallbackOnInvalidRequest = input.FallbackGroupIDOnInvalidRequest
-		} else {
+		case *input.FallbackGroupIDOnInvalidRequest == fallbackGroupIDClearSentinel:
 			fallbackOnInvalidRequest = nil
+		default:
+			// 0 视为没碰这个字段，保留原值——同 FallbackGroupID 的理由。
 		}
 	}
 	if fallbackOnInvalidRequest != nil {
@@ -1009,8 +1112,15 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	if input.MessagesDispatchModelConfig != nil {
 		group.MessagesDispatchModelConfig = normalizeOpenAIMessagesDispatchModelConfig(*input.MessagesDispatchModelConfig)
 	}
-	if input.ModelsListConfig != nil {
-		group.ModelsListConfig = normalizeGroupModelsListConfig(*input.ModelsListConfig)
+	if input.ModelAllowlist != nil {
+		modelAllowlist, err := normalizeGroupModelAllowlist(*input.ModelAllowlist)
+		if err != nil {
+			return nil, err
+		}
+		group.ModelAllowlist = modelAllowlist
+	}
+	if input.CodexModelsManifestConfig != nil {
+		group.CodexModelsManifestConfig = *input.CodexModelsManifestConfig
 	}
 	if input.RPMLimit != nil {
 		group.RPMLimit = *input.RPMLimit
@@ -1042,6 +1152,15 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 		group.AllowLive = false
 	}
 	sanitizeGroupReasoningEffortPolicy(group)
+	// 固定账号 manifest 配置：按最终平台归一化（切出 openai 平台时静默归零，
+	// 与 ForceOpenAIFast 同一收口）；校验仅在本次显式携带配置时进行，
+	// 避免脏 ID 阻塞无关字段更新。
+	group.CodexModelsManifestConfig = normalizeCodexModelsManifestConfig(group.Platform, group.CodexModelsManifestConfig)
+	if input.CodexModelsManifestConfig != nil {
+		if err := s.validateCodexModelsManifestConfig(ctx, id, group.CodexModelsManifestConfig); err != nil {
+			return nil, err
+		}
+	}
 
 	if err := s.groupRepo.Update(ctx, group); err != nil {
 		return nil, err
@@ -1049,7 +1168,6 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 
 	if s.authCacheInvalidator != nil {
 		s.authCacheInvalidator.InvalidateAuthCacheByGroupID(ctx, id)
-		invalidateAutoGroupSelectionsForGroup(ctx, s.authCacheInvalidator, id)
 	}
 
 	// 平台变了就失效渠道缓存：该缓存持有 groupID → platform，而渠道定价 / 模型映射 /
@@ -1159,6 +1277,27 @@ func normalizeGroupModelPricing(platform string, pricing []ChannelModelPricing) 
 }
 
 func (s *adminServiceImpl) DeleteGroup(ctx context.Context, id int64) error {
+	return s.deleteGroup(ctx, id, false)
+}
+
+func (s *adminServiceImpl) DeleteGroupIfEmpty(ctx context.Context, id int64) error {
+	return s.deleteGroup(ctx, id, true)
+}
+
+func (s *adminServiceImpl) deleteGroup(ctx context.Context, id int64, requireEmpty bool) error {
+	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
+		group, err := s.groupRepo.GetByIDLite(ctx, id)
+		if err != nil {
+			return err
+		}
+		if err := s.validateSimpleModeGroupAccess(group); err != nil {
+			return err
+		}
+	}
+	if requireEmpty && s.emptyGroupDeleteRepo == nil {
+		return fmt.Errorf("guarded group deletion is unavailable")
+	}
+
 	// 被别的分组当作兜底目标时不允许直接删除。
 	//
 	// fallback_group_id 没有外键约束，删掉之后引用方会留下一个指向不存在分组的
@@ -1184,30 +1323,19 @@ func (s *adminServiceImpl) DeleteGroup(ctx context.Context, id int64) error {
 		if err == nil {
 			groupKeys = keys
 		}
-		// Invalidate before the cascade removes the JSON candidate reference;
-		// after deletion the lookup can no longer discover automatic keys that
-		// used this group.
-		s.authCacheInvalidator.InvalidateAuthCacheByGroupID(ctx, id)
 	}
 
-	affectedUserIDs, err := s.groupRepo.DeleteCascade(ctx, id)
+	var affectedUserIDs []int64
+	var err error
+	if requireEmpty {
+		affectedUserIDs, err = s.emptyGroupDeleteRepo.DeleteCascadeIfEmpty(ctx, id)
+	} else {
+		affectedUserIDs, err = s.groupRepo.DeleteCascade(ctx, id)
+	}
 	if err != nil {
 		return err
 	}
 	// 注意：user_group_rate_multipliers 表通过外键 ON DELETE CASCADE 自动清理
-
-	// 系统设置里的分组引用没有外键保护，必须显式清理。留下悬挂 ID 的代价不是
-	// "那一项配置失效"，而是整个系统设置页面再也保存不了任何东西：保存走整
-	// 文档校验，一个指向已删除分组的 playground 候选项会让邀请返利这类完全无关
-	// 的设置一起失败，而管理台只渲染活跃分组，用户在界面上根本看不到该删哪个。
-	if s.settingService != nil {
-		if err := s.settingService.RemoveGroupReferences(ctx, id); err != nil {
-			// 分组本身已经删除成功，这里失败不回滚，但必须留下可检索的记录：
-			// 残留引用会在下一次保存系统设置时以 PLAYGROUND_DEFAULT_GROUP_INVALID
-			// 的形式浮现。
-			logger.LegacyPrintf("service.admin", "remove group references from settings failed: group_id=%d err=%v", id, err)
-		}
-	}
 
 	// 事务成功后，异步失效受影响用户的订阅缓存
 	if len(affectedUserIDs) > 0 && s.billingCacheService != nil {
@@ -1226,7 +1354,6 @@ func (s *adminServiceImpl) DeleteGroup(ctx context.Context, id int64) error {
 		for _, key := range groupKeys {
 			s.authCacheInvalidator.InvalidateAuthCacheByKey(ctx, key)
 		}
-		invalidateAutoGroupSelectionsForGroup(ctx, s.authCacheInvalidator, id)
 	}
 
 	return nil
@@ -1242,6 +1369,9 @@ func (s *adminServiceImpl) GetGroupAPIKeys(ctx context.Context, groupID int64, p
 }
 
 func (s *adminServiceImpl) GetGroupRateMultipliers(ctx context.Context, groupID int64) ([]UserGroupRateEntry, error) {
+	if err := s.ValidateSimpleModeGroupOperation(AdminGroupOperationMultiplier); err != nil {
+		return nil, err
+	}
 	if s.userGroupRateRepo == nil {
 		return nil, nil
 	}
@@ -1249,20 +1379,19 @@ func (s *adminServiceImpl) GetGroupRateMultipliers(ctx context.Context, groupID 
 }
 
 func (s *adminServiceImpl) ClearGroupRateMultipliers(ctx context.Context, groupID int64) error {
+	if err := s.ValidateSimpleModeGroupOperation(AdminGroupOperationMultiplier); err != nil {
+		return err
+	}
 	if s.userGroupRateRepo == nil {
 		return nil
 	}
-	if err := s.userGroupRateRepo.DeleteByGroupID(ctx, groupID); err != nil {
-		return err
-	}
-	if s.authCacheInvalidator != nil {
-		s.authCacheInvalidator.InvalidateAuthCacheByGroupID(ctx, groupID)
-		invalidateAutoGroupSelectionsForGroup(ctx, s.authCacheInvalidator, groupID)
-	}
-	return nil
+	return s.userGroupRateRepo.DeleteByGroupID(ctx, groupID)
 }
 
 func (s *adminServiceImpl) BatchSetGroupRateMultipliers(ctx context.Context, groupID int64, entries []GroupRateMultiplierInput) error {
+	if err := s.ValidateSimpleModeGroupOperation(AdminGroupOperationMultiplier); err != nil {
+		return err
+	}
 	if s.userGroupRateRepo == nil {
 		return nil
 	}
@@ -1271,17 +1400,13 @@ func (s *adminServiceImpl) BatchSetGroupRateMultipliers(ctx context.Context, gro
 			return fmt.Errorf("rate_multiplier must be > 0 (user_id=%d)", e.UserID)
 		}
 	}
-	if err := s.userGroupRateRepo.SyncGroupRateMultipliers(ctx, groupID, entries); err != nil {
-		return err
-	}
-	if s.authCacheInvalidator != nil {
-		s.authCacheInvalidator.InvalidateAuthCacheByGroupID(ctx, groupID)
-		invalidateAutoGroupSelectionsForGroup(ctx, s.authCacheInvalidator, groupID)
-	}
-	return nil
+	return s.userGroupRateRepo.SyncGroupRateMultipliers(ctx, groupID, entries)
 }
 
 func (s *adminServiceImpl) ClearGroupRPMOverrides(ctx context.Context, groupID int64) error {
+	if err := s.ValidateSimpleModeGroupOperation(AdminGroupOperationRPMOverride); err != nil {
+		return err
+	}
 	if s.userGroupRateRepo == nil {
 		return nil
 	}
@@ -1296,6 +1421,9 @@ func (s *adminServiceImpl) ClearGroupRPMOverrides(ctx context.Context, groupID i
 }
 
 func (s *adminServiceImpl) BatchSetGroupRPMOverrides(ctx context.Context, groupID int64, entries []GroupRPMOverrideInput) error {
+	if err := s.ValidateSimpleModeGroupOperation(AdminGroupOperationRPMOverride); err != nil {
+		return err
+	}
 	if s.userGroupRateRepo == nil {
 		return nil
 	}
@@ -1315,6 +1443,9 @@ func (s *adminServiceImpl) BatchSetGroupRPMOverrides(ctx context.Context, groupI
 }
 
 func (s *adminServiceImpl) UpdateGroupSortOrders(ctx context.Context, updates []GroupSortOrderUpdate) error {
+	if err := s.ValidateSimpleModeGroupOperation(AdminGroupOperationSort); err != nil {
+		return err
+	}
 	return s.groupRepo.UpdateSortOrders(ctx, updates)
 }
 
@@ -1349,9 +1480,6 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 		}
 		if group.Status != StatusActive {
 			return nil, infraerrors.BadRequest("GROUP_NOT_ACTIVE", "target group is not active")
-		}
-		if group.IsFallbackPool {
-			return nil, infraerrors.BadRequest("FALLBACK_GROUP_NOT_BINDABLE", "fallback pool groups cannot be bound to API keys directly")
 		}
 		// 订阅类型分组：用户须持有该分组的有效订阅才可绑定
 		if group.IsSubscriptionType() {
@@ -1389,8 +1517,7 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 			if addErr := s.userRepo.AddGroupToAllowedGroups(opCtx, apiKey.UserID, gid); addErr != nil {
 				return nil, fmt.Errorf("add group to user allowed groups: %w", addErr)
 			}
-			apiKey.AutoGroup = false
-			if err := s.apiKeyRepo.Update(opCtx, apiKey, APIKeyUpdateFields{GroupID: true, AutoGroup: true}); err != nil {
+			if err := s.apiKeyRepo.Update(opCtx, apiKey, APIKeyUpdateFields{GroupID: true}); err != nil {
 				return nil, fmt.Errorf("update api key: %w", err)
 			}
 			if tx != nil {
@@ -1414,8 +1541,7 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 	}
 
 	// 非专属分组 / 解绑：无需事务，单步更新即可
-	apiKey.AutoGroup = false
-	if err := s.apiKeyRepo.Update(ctx, apiKey, APIKeyUpdateFields{GroupID: true, AutoGroup: true}); err != nil {
+	if err := s.apiKeyRepo.Update(ctx, apiKey, APIKeyUpdateFields{GroupID: true}); err != nil {
 		return nil, fmt.Errorf("update api key: %w", err)
 	}
 

@@ -123,11 +123,11 @@ func TestPawConfigServiceGetConfigReturnsOnlyAuthorizedGroupsAndScopedModels(t *
 func TestPawConfigServiceKeepsGroupModelsWhenChannelIsMissing(t *testing.T) {
 	svc := NewPawConfigService(
 		&pawConfigGroupSourceStub{groups: []Group{{
-			ID:               7,
-			Name:             "Configured group",
-			Platform:         PlatformOpenAI,
-			Status:           StatusActive,
-			ModelsListConfig: GroupModelsListConfig{Enabled: true, Models: []string{"gpt-5.6", "gpt-5.6-mini"}},
+			ID:             7,
+			Name:           "Configured group",
+			Platform:       PlatformOpenAI,
+			Status:         StatusActive,
+			ModelAllowlist: GroupModelAllowlist{Enabled: true, Models: []string{"gpt-5.6", "gpt-5.6-mini"}},
 		}}},
 		&pawConfigUserSourceStub{user: &User{ID: 42, Username: "user", Email: "user@example.com"}},
 		&pawConfigChannelSourceStub{channels: map[int64]*Channel{}},

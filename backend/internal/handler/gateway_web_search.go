@@ -125,7 +125,6 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 
 	failedAccounts := make(map[int64]struct{})
 	var account *service.Account
-	var selection *service.AccountSelectionResult
 	var accountReleaseFunc func()
 	var nativeResp *websearch.SearchResponse
 	var providerName string
@@ -163,6 +162,7 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 			}
 			break
 		}
+
 		release, acquireOK, acquireErr := h.acquireWebSearchAccountSlot(c, selected)
 		if !acquireOK {
 			// First hop: surface concurrency errors; later hops try another account.
@@ -174,7 +174,6 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 			continue
 		}
 		account = selected.Account
-		selection = selected
 		accountReleaseFunc = release
 
 		if isXSearch {
@@ -229,7 +228,7 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 			).Info("gateway.web_search.search_price_per_1k_explicit_free")
 		}
 	}
-	h.submitMandatoryUsageRecordTask(service.ContextWithSelectionProfitGate(c.Request.Context(), selection), func(ctx context.Context) {
+	h.submitMandatoryUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 		if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 			Result: &service.ForwardResult{
 				RequestID:   searchRequestID,

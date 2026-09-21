@@ -81,6 +81,10 @@ func (s *AnnouncementService) Create(ctx context.Context, input *CreateAnnouncem
 		return nil, ErrAnnouncementNilInput
 	}
 
+	if !isJSONTimeInRange(input.StartsAt) || !isJSONTimeInRange(input.EndsAt) {
+		return nil, ErrAnnouncementInvalidSchedule
+	}
+
 	title := strings.TrimSpace(input.Title)
 	content := strings.TrimSpace(input.Content)
 	if title == "" || len(title) > 200 {
@@ -140,6 +144,11 @@ func (s *AnnouncementService) Create(ctx context.Context, input *CreateAnnouncem
 func (s *AnnouncementService) Update(ctx context.Context, id int64, input *UpdateAnnouncementInput) (*Announcement, error) {
 	if input == nil {
 		return nil, ErrAnnouncementNilInput
+	}
+
+	if (input.StartsAt != nil && !isJSONTimeInRange(*input.StartsAt)) ||
+		(input.EndsAt != nil && !isJSONTimeInRange(*input.EndsAt)) {
+		return nil, ErrAnnouncementInvalidSchedule
 	}
 
 	a, err := s.announcementRepo.GetByID(ctx, id)
@@ -297,27 +306,6 @@ func (s *AnnouncementService) ListForUser(ctx context.Context, userID int64, unr
 	return out, nil
 }
 
-// HeadForUser returns the same visibility and read-state view as ListForUser,
-// without exposing announcement bodies. Keeping this behind the service makes
-// the summary obey the same targeting rules as the list endpoint.
-func (s *AnnouncementService) HeadForUser(ctx context.Context, userID int64) (AnnouncementHead, error) {
-	items, err := s.ListForUser(ctx, userID, false)
-	if err != nil {
-		return AnnouncementHead{}, err
-	}
-
-	head := AnnouncementHead{Total: len(items)}
-	for _, item := range items {
-		if item.Announcement.ID > head.MaxID {
-			head.MaxID = item.Announcement.ID
-		}
-		if item.ReadAt == nil {
-			head.UnreadCount++
-		}
-	}
-	return head, nil
-}
-
 func (s *AnnouncementService) MarkRead(ctx context.Context, userID, announcementID int64) error {
 	// 安全：仅允许标记当前用户“可见”的公告
 	user, err := s.userRepo.GetByID(ctx, userID)
@@ -432,4 +420,24 @@ func isValidAnnouncementNotifyMode(mode string) bool {
 	default:
 		return false
 	}
+}
+
+// HeadForUser 给长时间运行的客户端一个「要不要去拉正文」的轻量判断依据，
+// 不暴露公告正文。放在 service 里是为了让摘要与列表端点遵循同一套投放规则。
+func (s *AnnouncementService) HeadForUser(ctx context.Context, userID int64) (AnnouncementHead, error) {
+	items, err := s.ListForUser(ctx, userID, false)
+	if err != nil {
+		return AnnouncementHead{}, err
+	}
+
+	head := AnnouncementHead{Total: len(items)}
+	for _, item := range items {
+		if item.Announcement.ID > head.MaxID {
+			head.MaxID = item.Announcement.ID
+		}
+		if item.ReadAt == nil {
+			head.UnreadCount++
+		}
+	}
+	return head, nil
 }

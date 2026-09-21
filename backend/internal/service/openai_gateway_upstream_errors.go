@@ -250,7 +250,7 @@ func (s *OpenAIGatewayService) shouldFailoverUpstreamError(statusCode int) bool 
 	}
 }
 
-func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(statusCode int, upstreamMsg string, upstreamBody []byte) bool {
+func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(account *Account, statusCode int, upstreamMsg string, upstreamBody []byte) bool {
 	// cyber_policy is request-scoped even when an intermediary wraps the
 	// provider response in a retryable 5xx status. Never punish or rotate the
 	// selected credential for it.
@@ -266,10 +266,44 @@ func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(statusCode i
 	if isOpenAIRequestBodyTooLargeError(statusCode, upstreamMsg, upstreamBody) {
 		return true
 	}
+	// A missing model is account/provider availability, not a malformed client
+	// request. Keep this unconditional exception inside the OpenAI-compatible
+	// gateway and require an eligible account so Anthropic/Gemini paths retain
+	// their existing opt-in 400 behavior.
+	// A bare forwarding service has no account-selection owner to consume a
+	// failover sentinel. In that mode (used by direct/single-account callers),
+	// preserve the deterministic upstream 400 instead of returning an unwritten
+	// retry signal. Managed gateway instances always have an account repository;
+	// their handler can exclude this account and actually select another one.
+	if s != nil && s.accountRepo != nil && account != nil && account.IsOpenAICompatible() && statusCode == http.StatusBadRequest &&
+		isOpenAICompatibleModelNotFound400(upstreamBody) {
+		return true
+	}
 	if s.shouldFailoverUpstreamError(statusCode) {
 		return true
 	}
 	return isOpenAITransientProcessingError(statusCode, upstreamMsg, upstreamBody)
+}
+
+func isOpenAICompatibleModelNotFound400(respBody []byte) bool {
+	code := strings.TrimSpace(extractUpstreamErrorCode(respBody))
+	if code != "" {
+		return strings.EqualFold(code, "model_not_found")
+	}
+
+	msg := strings.ToLower(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
+	if msg == "" && !gjson.ValidBytes(respBody) {
+		msg = strings.ToLower(strings.TrimSpace(string(respBody)))
+	}
+	return strings.Contains(msg, "unknown provider for model") ||
+		strings.Contains(msg, "model not found") ||
+		strings.Contains(msg, "model is not supported")
+}
+
+// IsOpenAICompatibleModelNotFound400 reports whether an OpenAI-compatible 400
+// is an account-specific missing-model response eligible for failover.
+func IsOpenAICompatibleModelNotFound400(respBody []byte) bool {
+	return isOpenAICompatibleModelNotFound400(respBody)
 }
 
 // OpenAIRequestBodyTooLargeClientMessage is the fixed downstream message used
@@ -282,138 +316,6 @@ func isOpenAIRequestBodyTooLargeError(statusCode int, upstreamMsg string, upstre
 	return statusCode == http.StatusRequestEntityTooLarge && !isOpenAIContextWindowError(upstreamMsg, upstreamBody)
 }
 
-// openAIPermanentCapability403Markers are substrings (matched case-insensitively
-// against the upstream error message/body) that indicate a deterministic,
-// account-level 403 which will not clear on retry: a capability disabled for
-// the account's group/plan, an exhausted quota, or a suspended/deactivated
-// account. Deliberately narrow — an unmatched 403 keeps today's behavior
-// (treated as possibly transient) since the cost of under-matching is just
-// "one more same-account retry", while over-matching would cut off a retry
-// that might have succeeded.
-var openAIPermanentCapability403Markers = []string{
-	"is not enabled for this group",
-	"insufficient_quota",
-	"account is suspended",
-	"account has been deactivated",
-}
-
-// OpenAIDailyUsageLimitReason identifies the upstream API response that means
-// the provider-side daily allowance is currently exhausted. This is a
-// request/upstream condition, not a local account capability failure: it must
-// never create model_rate_limits or an account cooldown.
-const OpenAIDailyUsageLimitReason = GatewayFailureReason("openai_daily_usage_limit")
-
-// isOpenAIDailyUsageLimitError recognizes the explicit daily-usage responses
-// emitted by OpenAI-compatible upstream APIs. Keep the matcher narrow and
-// inspect structured error fields only so echoed prompt text cannot trigger
-// retry or scheduling changes.
-func isOpenAIDailyUsageLimitError(statusCode int, upstreamMsg string, upstreamBody []byte) bool {
-	if statusCode != http.StatusForbidden {
-		return false
-	}
-	match := func(text string) bool {
-		lower := strings.ToLower(strings.TrimSpace(text))
-		if lower == "" {
-			return false
-		}
-		return strings.Contains(lower, "daily usage limit exceeded") ||
-			strings.Contains(lower, "daily subscription quota exhausted") ||
-			strings.Contains(lower, "subscription quota exhausted") ||
-			strings.Contains(lower, "insufficient_quota") ||
-			strings.Contains(lower, "当日订阅额度已耗尽")
-	}
-	if match(upstreamMsg) {
-		return true
-	}
-	if len(upstreamBody) == 0 {
-		return false
-	}
-	for _, path := range []string{
-		"error.message",
-		"error.code",
-		"response.error.message",
-		"response.error.code",
-		"detail",
-		"message",
-		"code",
-	} {
-		if match(gjson.GetBytes(upstreamBody, path).String()) {
-			return true
-		}
-	}
-	// Plain-text providers have no structured fields to inspect.
-	return !gjson.ValidBytes(upstreamBody) && match(string(upstreamBody))
-}
-
-// isOpenAIUpstreamAPIAccount reports credentials that call an upstream API
-// with a static key. OAuth/setup-token accounts represent real provider
-// accounts and should switch accounts instead of repeatedly retrying one.
-func isOpenAIUpstreamAPIAccount(account *Account) bool {
-	return account != nil && account.Platform == PlatformOpenAI &&
-		(account.Type == AccountTypeAPIKey || account.Type == AccountTypeUpstream)
-}
-
-// isOpenAIPermanentCapability403 reports whether a 403 response is a
-// deterministic account-level restriction rather than a transient block.
-// Same-account retry (pool mode) and the "skip local state" pool-mode
-// default both assume upstream errors are transient; this carves out the
-// narrow set of 403s where retrying the same account is provably pointless,
-// so callers can switch accounts immediately and route the failure into the
-// short-lived circuit breaker even when the account is pool-mode.
-func isOpenAIPermanentCapability403(upstreamMsg string, upstreamBody []byte) bool {
-	match := func(text string) bool {
-		lower := strings.ToLower(strings.TrimSpace(text))
-		if lower == "" {
-			return false
-		}
-		for _, marker := range openAIPermanentCapability403Markers {
-			if strings.Contains(lower, marker) {
-				return true
-			}
-		}
-		return false
-	}
-	if match(upstreamMsg) {
-		return true
-	}
-	if len(upstreamBody) == 0 {
-		return false
-	}
-	if match(gjson.GetBytes(upstreamBody, "error.message").String()) {
-		return true
-	}
-	if match(gjson.GetBytes(upstreamBody, "error.code").String()) {
-		return true
-	}
-	return match(string(upstreamBody))
-}
-
-// openAIRetryableOnSameAccount centralizes OpenAI same-account retry policy
-// across forwarding paths that build *UpstreamFailoverError literals directly
-// (images, alpha-search, embeddings). Daily usage exhaustion is retryable for
-// API/upstream credentials even outside pool mode; OAuth/setup-token accounts
-// skip to another account. Other 403s retain the pool-mode policy and exclude
-// confirmed permanent-capability failures. Intentionally not wired into Grok.
-func openAIRetryableOnSameAccount(account *Account, statusCode int, shouldDisable bool, upstreamMsg string, responseBody []byte) bool {
-	if account == nil || shouldDisable {
-		return false
-	}
-	// Upstream API credentials may recover between requests after a provider
-	// daily allowance rolls over. Give them the normal bounded same-account
-	// retry budget even when pool_mode is not enabled; real OAuth/setup-token
-	// accounts deliberately skip to the next account instead.
-	if isOpenAIUpstreamAPIAccount(account) && isOpenAIDailyUsageLimitError(statusCode, upstreamMsg, responseBody) {
-		return true
-	}
-	if !account.IsPoolMode() || !account.IsPoolModeRetryableStatus(statusCode) {
-		return false
-	}
-	if statusCode == http.StatusForbidden && isOpenAIPermanentCapability403(upstreamMsg, responseBody) {
-		return false
-	}
-	return true
-}
-
 func newOpenAIUpstreamFailoverError(
 	statusCode int,
 	responseHeaders http.Header,
@@ -422,13 +324,12 @@ func newOpenAIUpstreamFailoverError(
 	retryableOnSameAccount bool,
 ) *UpstreamFailoverError {
 	requestScopedCapacity := isOpenAIRequestScopedCapacityShed(upstreamMsg, responseBody)
-	requestScopedUsageLimit := isOpenAIDailyUsageLimitError(statusCode, upstreamMsg, responseBody)
 	failoverErr := &UpstreamFailoverError{
 		StatusCode:             statusCode,
 		ResponseBody:           responseBody,
 		ResponseHeaders:        responseHeaders.Clone(),
 		RetryableOnSameAccount: retryableOnSameAccount || requestScopedCapacity,
-		RequestScopedTransient: requestScopedCapacity || requestScopedUsageLimit,
+		RequestScopedTransient: requestScopedCapacity,
 	}
 	if isOpenAIRequestBodyTooLargeError(statusCode, upstreamMsg, responseBody) {
 		failoverErr.RetryableOnSameAccount = false
@@ -439,9 +340,6 @@ func newOpenAIUpstreamFailoverError(
 		failoverErr.ClientStatusCode = http.StatusRequestEntityTooLarge
 		failoverErr.ClientMessage = OpenAIRequestBodyTooLargeClientMessage
 	}
-	// 访问态错误：上游明确表示这套凭据当前不可用（workspace 受限、组织被停用等）。
-	// 换句话说问题出在账号本身而不是这次请求，所以既不能在同号上重试，也不该被
-	// 当成请求级的临时容量问题——必须换号，并把分类信息交给上层用于告警与展示。
 	if isOpenAIHTTPUpstreamAccessStateError(statusCode, upstreamMsg, responseBody) {
 		failoverErr.RetryableOnSameAccount = false
 		failoverErr.RequestScopedTransient = false
@@ -452,23 +350,35 @@ func newOpenAIUpstreamFailoverError(
 		failoverErr.ClientStatusCode = http.StatusBadGateway
 		failoverErr.ClientMessage = openAIUpstreamAccessUnavailableClientMessage
 	} else if requestScopedCapacity {
-		// 网关重试用尽后，保留上游那句有指导意义的过载文案，但以可重试的
-		// server_error 形态暴露给客户端。
+		// Preserve the provider's actionable overload message after gateway
+		// retries are exhausted, but expose it as a retryable server_error.
 		failoverErr.ClientStatusCode = http.StatusServiceUnavailable
 		failoverErr.ClientMessage = openAICapacityShedClientMessage(upstreamMsg, responseBody)
-	} else if requestScopedUsageLimit {
-		// A provider daily allowance is not an account capability failure.
-		// If the bounded failover budget is exhausted, return a generic
-		// retryable upstream response instead of exposing the raw 403.
-		failoverErr.Scope = GatewayFailureScopeRequest
-		failoverErr.Reason = OpenAIDailyUsageLimitReason
-		failoverErr.ClientStatusCode = http.StatusServiceUnavailable
-		failoverErr.ClientMessage = "Upstream daily usage limit is temporarily unavailable, please retry later"
 	}
-	if statusCode == http.StatusForbidden && isOpenAIPermanentCapability403(upstreamMsg, responseBody) {
-		failoverErr.RetryableOnSameAccount = false
+	// A gateway-layer 5xx describes the provider's own edge (its proxy, or its
+	// link to the model vendor), not the credential we sent. Attributing it to
+	// the account lets one provider wobble breaker every key that shares that
+	// upstream: with a small pool all of them enter cooldown at once and the
+	// group goes dark while the provider is merely flapping. Per-request
+	// failover and the scheduler's error-rate score still route around the
+	// account; only the account-wide health breaker must stay out of it.
+	// Codes that genuinely implicate the credential (401/403 access state,
+	// 429 rate limit, 500 application errors) keep their existing scope.
+	if failoverErr.Scope == "" && isOpenAIUpstreamGatewayLayerStatus(statusCode) {
+		failoverErr.Scope = GatewayFailureScopeProvider
 	}
 	return failoverErr
+}
+
+// isOpenAIUpstreamGatewayLayerStatus reports whether an upstream status came
+// from the provider's gateway rather than from request handling.
+func isOpenAIUpstreamGatewayLayerStatus(statusCode int) bool {
+	switch statusCode {
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *OpenAIGatewayService) newOpenAIAccountFailoverError(
@@ -504,14 +414,6 @@ func (s *OpenAIGatewayService) newOpenAIAccountFailoverErrorWithClassificationHe
 	if oauth429Retry {
 		failoverErr.SameAccountRetryDeadline = s.openAIOAuth429RetryDeadline(account)
 		failoverErr.SameAccountRetryDelay = openAIOAuth429SameAccountRetryDelay(responseHeaders, failoverErr.SameAccountRetryDeadline)
-	}
-	if isOpenAIDailyUsageLimitError(statusCode, upstreamMsg, responseBody) {
-		if isOpenAIUpstreamAPIAccount(account) {
-			failoverErr.RetryableOnSameAccount = true
-		}
-		failoverErr.RequestScopedTransient = true
-		failoverErr.Scope = GatewayFailureScopeRequest
-		failoverErr.Reason = OpenAIDailyUsageLimitReason
 	}
 	return failoverErr
 }
@@ -563,6 +465,14 @@ func isOpenAIHTTPUpstreamAccessStateError(_ int, _ string, body []byte) bool {
 	return isOpenAIUpstreamAccessStateError("", body)
 }
 
+// OpenAICapacityShedUserMessage 是上游过载时回给用户的统一文案。
+//
+// 它刻意不透传上游原文：上游的 message 里可能带 server_is_overloaded 之类的
+// 内部错误码或账号线索，不该出现在用户侧。测试断言请直接引用本常量，不要再
+// 硬编码一份字面量——文案改了而断言没跟上，正是 2026-09-15 之前那几个测试
+// 长期飘红、把真正的新失败盖住的原因。
+const OpenAICapacityShedUserMessage = "OpenAI 官方服务当前过载，请稍后重试。"
+
 func openAICapacityShedClientMessage(upstreamMsg string, body []byte) string {
 	for _, candidate := range []string{
 		upstreamMsg,
@@ -572,10 +482,10 @@ func openAICapacityShedClientMessage(upstreamMsg string, body []byte) string {
 	} {
 		candidate = sanitizeUpstreamErrorMessage(strings.TrimSpace(candidate))
 		if candidate != "" && isOpenAICapacityShedMessage(candidate) {
-			return candidate
+			return OpenAICapacityShedUserMessage
 		}
 	}
-	return "Upstream service is temporarily overloaded, please retry later"
+	return OpenAICapacityShedUserMessage
 }
 
 // IsOpenAIRequestBodyTooLarge reports whether another account may accept the
@@ -704,6 +614,8 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 
 	if isOpenAIRequestBodyTooLargeError(resp.StatusCode, upstreamMsg, body) {
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+			ProxyID:            opsUpstreamProxyID(account),
+			ProxyName:          opsUpstreamProxyName(account),
 			Platform:           account.Platform,
 			AccountID:          account.ID,
 			AccountName:        account.Name,
@@ -751,6 +663,8 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 	// Check custom error codes
 	if !account.ShouldHandleErrorCode(resp.StatusCode) {
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+			ProxyID:            opsUpstreamProxyID(account),
+			ProxyName:          opsUpstreamProxyName(account),
 			Platform:           account.Platform,
 			AccountID:          account.ID,
 			AccountName:        account.Name,
@@ -788,6 +702,8 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		kind = "failover"
 	}
 	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+		ProxyID:            opsUpstreamProxyID(account),
+		ProxyName:          opsUpstreamProxyName(account),
 		Platform:           account.Platform,
 		AccountID:          account.ID,
 		AccountName:        account.Name,
@@ -953,6 +869,8 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 	// return a generic error without exposing upstream details.
 	if !account.ShouldHandleErrorCode(resp.StatusCode) {
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+			ProxyID:            opsUpstreamProxyID(account),
+			ProxyName:          opsUpstreamProxyName(account),
 			Platform:           account.Platform,
 			AccountID:          account.ID,
 			AccountName:        account.Name,
@@ -983,6 +901,8 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 		kind = "failover"
 	}
 	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+		ProxyID:            opsUpstreamProxyID(account),
+		ProxyName:          opsUpstreamProxyName(account),
 		Platform:           account.Platform,
 		AccountID:          account.ID,
 		AccountName:        account.Name,

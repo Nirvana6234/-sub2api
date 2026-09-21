@@ -312,8 +312,10 @@ type ResponsesContentPart struct {
 	Type     string `json:"type"` // "input_text" | "output_text" | "input_image" | "input_file"
 	Text     string `json:"text,omitempty"`
 	ImageURL string `json:"image_url,omitempty"` // data URI for input_image
-	FileData string `json:"file_data,omitempty"`
+
+	// input_file fields.
 	Filename string `json:"filename,omitempty"`
+	FileData string `json:"file_data,omitempty"` // data URI
 	FileID   string `json:"file_id,omitempty"`
 }
 
@@ -640,8 +642,11 @@ type ResponsesStreamEvent struct {
 	Code  string `json:"code,omitempty"`
 	Param string `json:"param,omitempty"`
 
-	// Sequence number for ordering events
-	SequenceNumber int `json:"sequence_number,omitempty"`
+	// SequenceNumber orders streamed events. Strict Responses clients (Grok Build,
+	// Codex CLI) declare it required and abort with `missing field 'sequence_number'`
+	// when it is absent, so it is always emitted — no omitempty. Same rule as
+	// ResponsesResponse.CreatedAt. Zero is a valid first-event value.
+	SequenceNumber int `json:"sequence_number"`
 }
 
 // ---------------------------------------------------------------------------
@@ -705,10 +710,10 @@ type ChatImageURL struct {
 	Detail string `json:"detail,omitempty"` // "auto" | "low" | "high"
 }
 
-// ChatFile is the OpenAI-compatible file content part used by Playground.
+// ChatFile contains the payload of a "file" content part (e.g. PDF input).
 type ChatFile struct {
 	Filename string `json:"filename,omitempty"`
-	FileData string `json:"file_data,omitempty"`
+	FileData string `json:"file_data,omitempty"` // data URI
 	FileID   string `json:"file_id,omitempty"`
 }
 

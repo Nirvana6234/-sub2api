@@ -221,18 +221,41 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		firstOutputCh = firstOutputTimer.C
 		defer firstOutputTimer.Stop()
 	}
+	// 硬上限与 response_headers 阶段同一套语义：软时限到点只代表"偏慢"，
+	// 绝不截断一个还在正常进行的请求；只有硬上限成立才判定这条连接已死。
+	firstOutputHardCap := s.openAIFirstOutputHardCap(firstOutputTimeout)
+	var firstOutputHardTimer *time.Timer
+	var firstOutputHardCh <-chan time.Time
+	if firstOutputTimeout > 0 {
+		remaining := time.Until(startTime.Add(firstOutputHardCap))
+		if remaining <= 0 {
+			remaining = time.Nanosecond
+		}
+		firstOutputHardTimer = time.NewTimer(remaining)
+		firstOutputHardCh = firstOutputHardTimer.C
+		defer firstOutputHardTimer.Stop()
+	}
 	stopFirstOutputTimer := func() {
-		if firstOutputTimer == nil {
-			return
-		}
-		if !firstOutputTimer.Stop() {
-			select {
-			case <-firstOutputTimer.C:
-			default:
+		if firstOutputTimer != nil {
+			if !firstOutputTimer.Stop() {
+				select {
+				case <-firstOutputTimer.C:
+				default:
+				}
 			}
+			firstOutputTimer = nil
+			firstOutputCh = nil
 		}
-		firstOutputTimer = nil
-		firstOutputCh = nil
+		if firstOutputHardTimer != nil {
+			if !firstOutputHardTimer.Stop() {
+				select {
+				case <-firstOutputHardTimer.C:
+				default:
+				}
+			}
+			firstOutputHardTimer = nil
+			firstOutputHardCh = nil
+		}
 	}
 	// Track downstream writes separately from upstream reads: pre-output failover
 	// can buffer response.created / response.in_progress, so keepalive must be
@@ -560,6 +583,12 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 					} else {
 						s.handleOpenAIStreamTerminalAccountSideEffects(c, account, dataBytes, failedMessage, resp.Header, mappedModel)
 						bareErrorAccountSideEffectsPending = false
+					}
+					if eventType == "response.failed" {
+						// Once semantic output is committed, failover replay is unsafe. Keep
+						// the terminal event on the existing stream, but retain the upstream
+						// request ID and payload for operations diagnostics.
+						s.recordOpenAIStreamUpstreamError(c, account, false, upstreamRequestID, "stream_failed", dataBytes, failedMessage)
 					}
 				}
 				if !outputStarted {
@@ -920,13 +949,40 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				_ = resp.Body.Close()
 				return finalizeStream()
 			}
+			// 软时限到点只说明首个语义输出来得慢，连接本身还活着（响应头已回、
+			// 前导事件也在流）。与 response_headers 阶段同一条原则：不截断、
+			// 不换号，继续等它把内容吐出来。真正该放弃由下面的硬上限判定。
+			if firstOutputTimer != nil {
+				if !firstOutputTimer.Stop() {
+					select {
+					case <-firstOutputTimer.C:
+					default:
+					}
+				}
+				firstOutputTimer = nil
+				firstOutputCh = nil
+			}
+			s.observeOpenAISlowFirstOutput(account, startTime, originalModel,
+				reasoningEffort, firstOutputTimeout, "semantic_output")
+			continue
+
+		case <-firstOutputHardCh:
+			if firstOutputProgressObserved {
+				stopFirstOutputTimer()
+				continue
+			}
+			if codexFailureTerminal && sawBareError && !sawResponseFailed && len(events) == 0 {
+				_ = resp.Body.Close()
+				return finalizeStream()
+			}
 			_ = resp.Body.Close()
 			for ev := range events {
 				markEventProcessed(ev)
 			}
 			return resultWithUsage(), s.newOpenAIFirstOutputTimeoutError(
-				ctx, c, account, startTime, originalModel, reasoningEffort,
-				firstOutputTimeout, "semantic_output", resp.Header,
+				ctx, c, account, opsUpstreamProxyID(account), opsUpstreamProxyName(account),
+				startTime, originalModel, reasoningEffort,
+				firstOutputHardCap, "semantic_output", resp.Header,
 			)
 
 		case <-keepaliveCh:
@@ -1232,6 +1288,9 @@ func mergeOpenAIUsageNonZero(dst *OpenAIUsage, src OpenAIUsage) {
 	if src.ImageInputTokens > 0 {
 		dst.ImageInputTokens = src.ImageInputTokens
 	}
+	if src.ImageCacheReadTokens > 0 {
+		dst.ImageCacheReadTokens = src.ImageCacheReadTokens
+	}
 	if src.OutputTokens > 0 {
 		dst.OutputTokens = src.OutputTokens
 	}
@@ -1359,54 +1418,10 @@ func openAIResponsesCompletedEventIsEmpty(data []byte, usage *OpenAIUsage) bool 
 	if gjson.GetBytes(data, "error").Exists() || gjson.GetBytes(data, "response.error").Exists() {
 		return false
 	}
-	// output 数组非空还不足以证明上游真的交付了内容：中转站会返回结构完整但内容
-	// 为空的骨架，例如
-	//   "output":[{"type":"message","content":[{"type":"output_text"}],"status":"completed"}]
-	// —— 有 message、有 content、有 output_text，唯独没有 text 字段。只数数组长度
-	// 会把这种"假成功"当成正常响应放行，用户侧表现为等待数十秒后一个字都没有。
-	// 因此这里下探一层，要求至少有一个 item 携带实质产出。
-	if output := gjson.GetBytes(data, "response.output"); output.Exists() && output.IsArray() &&
-		openAIResponsesOutputHasContent(output) {
+	if output := gjson.GetBytes(data, "response.output"); output.Exists() && output.IsArray() && len(output.Array()) > 0 {
 		return false
 	}
 	return true
-}
-
-// openAIResponsesOutputHasContent 报告 response.output 数组里是否至少有一项
-// 携带了实质产出。
-//
-// 判定放得比较宽：只要出现任何一种可交付给客户端的产出就算数（文本、图片、
-// 音频、退火后的 refusal、函数/工具调用、reasoning 摘要）。宁可漏判也不要误判
-// ——漏判只是维持现状（当成正常响应），误判会把一次真实的成功响应错误地判成
-// 上游故障并触发切换重试，代价高得多。
-func openAIResponsesOutputHasContent(output gjson.Result) bool {
-	hasContent := false
-	output.ForEach(func(_, item gjson.Result) bool {
-		switch strings.TrimSpace(item.Get("type").String()) {
-		case "function_call", "custom_tool_call", "tool_call", "computer_call",
-			"file_search_call", "web_search_call", "code_interpreter_call",
-			"image_generation_call", "local_shell_call", "mcp_call":
-			// 工具类产出本身就是交付物，没有 content 数组。
-			hasContent = true
-			return false
-		}
-		if strings.TrimSpace(item.Get("summary").String()) != "" {
-			hasContent = true
-			return false
-		}
-		item.Get("content").ForEach(func(_, part gjson.Result) bool {
-			// 任一非空的实质字段都算交付。text 为空字符串或字段缺失都不算。
-			for _, key := range []string{"text", "refusal", "transcript", "image_url", "audio", "data"} {
-				if strings.TrimSpace(part.Get(key).String()) != "" {
-					hasContent = true
-					return false
-				}
-			}
-			return true
-		})
-		return !hasContent
-	})
-	return hasContent
 }
 
 func mergeHostedImageGenToolUsage(imageGen gjson.Result, usage *OpenAIUsage) {
@@ -1498,12 +1513,23 @@ func (s *OpenAIGatewayService) bindHTTPResponseAccount(ctx context.Context, c *g
 	if store == nil {
 		return
 	}
+	// The client may close the stream immediately after receiving its terminal
+	// event, canceling the request context before these durable affinity writes
+	// run. Preserve request values, but give all Redis writes one bounded budget
+	// independent of the downstream connection lifecycle.
+	bindBaseCtx := context.Background()
+	if ctx != nil {
+		bindBaseCtx = context.WithoutCancel(ctx)
+	}
+	bindCtx, cancel := context.WithTimeout(bindBaseCtx, openAIWSStateStoreRedisTimeout)
+	defer cancel()
+
 	groupID := getOpenAIGroupIDFromContext(c)
 	ttl := s.openAIWSResponseStickyTTL()
-	logOpenAIWSBindResponseAccountWarn(groupID, account.ID, responseID, store.BindResponseAccount(ctx, groupID, responseID, account.ID, ttl))
+	logOpenAIWSBindResponseAccountWarn(groupID, account.ID, responseID, store.BindResponseAccount(bindCtx, groupID, responseID, account.ID, ttl))
 	if rawOwner, ok := c.Get(openAIHTTPResponseOwnerContextKey); ok {
 		if owner, ok := rawOwner.(openAIHTTPResponseOwner); ok && owner.userID > 0 && owner.apiKeyID > 0 {
-			if err := s.BindOpenAIHTTPResponseOwner(ctx, groupID, responseID, owner.userID, owner.apiKeyID); err != nil {
+			if err := s.BindOpenAIHTTPResponseOwner(bindCtx, groupID, responseID, owner.userID, owner.apiKeyID); err != nil {
 				logger.L().Warn(
 					"openai.http_bind_response_owner_failed",
 					zap.Int64("group_id", groupID),

@@ -21,7 +21,6 @@ type Proxy struct {
 	Port           int
 	Username       string
 	Password       string
-	OwnerUserID    *int64
 	Status         string
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
@@ -29,6 +28,8 @@ type Proxy struct {
 	FallbackMode   string
 	BackupProxyID  *int64
 	ExpiryWarnDays int
+	// OwnerUserID 是贡献者自建私有代理的所有者；nil 表示管理员维护的全局代理。
+	OwnerUserID *int64
 }
 
 func (p *Proxy) IsActive() bool {

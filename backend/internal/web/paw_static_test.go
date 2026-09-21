@@ -7,7 +7,6 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -32,7 +31,7 @@ func TestPawStaticHandlerServesIndexAndAssets(t *testing.T) {
 		{name: "root", path: "/paw", contentType: "text/html; charset=utf-8", body: "Paw"},
 		{name: "slash root", path: "/paw/", contentType: "text/html; charset=utf-8", body: "Paw"},
 		{name: "spa route", path: "/paw/chat", contentType: "text/html; charset=utf-8", body: "Paw"},
-		{name: "asset", path: "/paw/_next/app.js", contentType: "javascript", body: "console.log"},
+		{name: "asset", path: "/paw/_next/app.js", contentType: "application/javascript", body: "console.log"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodGet, test.path, nil)
@@ -71,28 +70,6 @@ func TestPawStaticHandlerLeavesOtherRoutesAlone(t *testing.T) {
 		require.Equal(t, http.StatusOK, response.Code)
 		require.Contains(t, response.Body.String(), test.body)
 	}
-}
-
-func TestPawStaticHandlerAddsNonceToInlineScripts(t *testing.T) {
-	distFS := fstestMapFS(map[string]string{
-		"index.html": `<html><body><script>window.__PAW_CONFIG__={};</script><script src="/paw/app.js"></script><script type="application/json">{"ok":true}</script></body></html>`,
-	})
-
-	engine := gin.New()
-	engine.Use(func(c *gin.Context) {
-		c.Set(middleware.CSPNonceKey, "test-nonce")
-		c.Next()
-	})
-	engine.Use(newPawStaticHandler(distFS))
-
-	response := httptest.NewRecorder()
-	engine.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/paw", nil))
-
-	require.Equal(t, http.StatusOK, response.Code)
-	body := response.Body.String()
-	require.Contains(t, body, `<script nonce="test-nonce">window.__PAW_CONFIG__={};</script>`)
-	require.Contains(t, body, `<script type="application/json" nonce="test-nonce">{"ok":true}</script>`)
-	require.Contains(t, body, `<script src="/paw/app.js"></script>`)
 }
 
 func fstestMapFS(files map[string]string) fs.FS {

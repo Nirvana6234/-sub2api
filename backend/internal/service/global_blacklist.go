@@ -31,7 +31,7 @@ type GlobalBlacklistEntry struct {
 }
 
 type cachedGlobalBlacklist struct {
-	Entries  []GlobalBlacklistEntry
+	Entries   []GlobalBlacklistEntry
 	ExpiresAt time.Time
 }
 

@@ -7,8 +7,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
-
-	"github.com/Wei-Shaw/sub2api/internal/config"
 )
 
 // openAISelectionGroupAuditLogInterval 按 (分组, 账号) 节流告警。异常一旦发生
@@ -21,7 +19,8 @@ const openAISelectionGroupAuditLogInterval = time.Minute
 //
 // 正常情况下这条日志永远不该出现——候选池本身就是按分组取的，粘性命中路径也
 // 各自调用了 openAIAccountMatchesSchedulingGroup。它存在是因为生产上出现了静态
-// 排查无法解释的现象，需要在真实流量上定位究竟是哪条路径把非成员账号交了出来。
+// 排查无法解释的现象（见 selectAccountWithScheduler 的注释），需要在真实流量上
+// 定位究竟是哪条路径把非成员账号交了出来。
 //
 // 走兜底链路时账号本来就该来自兜底组，那是设计内的跨组借号，不算异常，因此这里
 // 跳过；判定用的分组是兜底后真正生效的服务分组。
@@ -36,6 +35,7 @@ func (s *OpenAIGatewayService) auditSelectedAccountGroupMembership(
 	if s == nil || selection == nil || selection.Account == nil || groupID == nil || *groupID <= 0 {
 		return
 	}
+	// 兜底是设计内的跨组借号，用生效后的服务分组来判定。
 	servingGroupID := OpenAIServingGroupID(ctx, *groupID)
 	if servingGroupID <= 0 {
 		return
@@ -44,6 +44,8 @@ func (s *OpenAIGatewayService) auditSelectedAccountGroupMembership(
 	if openAIStickyAccountMatchesGroup(account, &servingGroupID) {
 		return
 	}
+	// 分组归属没随账号带出来时无从判定，不能据此报异常（否则只要某条路径没水合
+	// AccountGroups 就会刷屏，反而盖住真问题）。
 	if len(account.GroupIDs) == 0 && len(account.AccountGroups) == 0 {
 		return
 	}
@@ -104,10 +106,14 @@ func (s *OpenAIGatewayService) shouldLogSelectionGroupAudit(groupID, accountID i
 // 调用方需要重选。
 //
 // 为什么要在汇合点兜一道：这条不变量原本散落在各条选号路径里各查各的
-// （selectBySessionHash / 粘性命中路径各有一次 openAIAccountMatchesSchedulingGroup，
-// 负载均衡路径则依赖 recheckSelectedOpenAIAccountFromDB —— 而后者在
-// schedulerSnapshot 或 accountRepo 为空的早退分支里并不校验分组）。与其继续逐条
-// 排查，不如把不变量收口到唯一出口强制执行。
+// （selectBySessionHash / tryStickySessionHit / tryFallbackToWeightedSticky 各有
+// 一次 openAIAccountMatchesSchedulingGroup，负载均衡路径则完全依赖
+// recheckSelectedOpenAIAccountFromDB —— 而后者在 schedulerSnapshot 或 accountRepo
+// 为空的早退分支里并不校验分组）。2026-09-20 生产实测：gpt-pro(34) 的兜底早已取消、
+// 候选池快照干净（只有 225/227/226）、账号快照分组正确，可 usage_logs 里仍有请求由
+// 212（仅属 29）和 222（属 29/37）承接，审计日志确认 fallback_sourcing=false、
+// sticky_fallback_request=false、has_session_hash=true。逐条路径读下来都带校验，
+// 说明还有出口漏了——与其继续逐条排查，不如把不变量收口到唯一出口强制执行。
 func (s *OpenAIGatewayService) selectionEscapedRequestedGroup(
 	ctx context.Context,
 	groupID *int64,
@@ -117,13 +123,6 @@ func (s *OpenAIGatewayService) selectionEscapedRequestedGroup(
 	selection *AccountSelectionResult,
 ) bool {
 	if s == nil || selection == nil || selection.Account == nil || groupID == nil || *groupID <= 0 {
-		return false
-	}
-	// 简单模式下分组归属本就是被刻意忽略的（见
-	// TestOpenAIGatewayService_PreviousResponseSimpleModeIgnoresGroupMembership：
-	// previous_response 绑定的账号即便不属于请求分组也照用）。这条不变量在该模式
-	// 下不成立，闸门必须整体让开。
-	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
 		return false
 	}
 	account := selection.Account
@@ -140,10 +139,10 @@ func (s *OpenAIGatewayService) selectionEscapedRequestedGroup(
 		// 判不出服务分组时，仍然有一类越界是确定的：账号既不属于请求分组，也不属于
 		// 沿兜底链能到达的任何分组。
 		//
-		// 2026-09-20 生产实测：gpt-6-astra 请求 plus(2)，落到只属 gpt-pro(34) 的
-		// 账号 320（20:30–20:47 共 10 次，横跨两个 auto-group Key）。plus 配了兜底
-		// [29]，若只因"配了兜底"就判定无从判定并放行，这类越界一次都拦不住——而 34
-		// 既不是 2 也不在 2 的兜底链上。
+		// 2026-09-20 生产实测暴露了旧写法的漏洞：gpt-6-astra 请求 plus(2)，落到只属
+		// gpt-pro(34) 的账号 320（20:30–20:47 共 10 次，横跨两个用户）。因为 plus 配了
+		// 兜底 [29]，openAISelectionServingGroupID 一律返回"无从判定"直接放行，而 34
+		// 既不是 2 也不在 2 的兜底列表里——这是确定的越界，却被闸门放过去了。
 		escaped = s.openAIAccountOutsideGroupAndFallbacks(ctx, *groupID, account)
 	}
 	if !escaped {
@@ -166,16 +165,16 @@ func (s *OpenAIGatewayService) selectionEscapedRequestedGroup(
 // openAISelectionServingGroupID 判定本次选号真正的"服务分组"，并报告这个判定
 // 是否可信。
 //
-// 必须优先用 selection.fallbackPoolUsageTrace，不能只读 ctx：兜底状态安装在调度栈
-// 内部的局部 ctx 上（nextOpenAIFallbackGroup 返回的 fallbackCtx 随函数栈一起丢弃），
-// 传不到选号汇合点。该 trace 则由 attachSelectionProfitGate 在选号返回点捕获，是唯一
-// 能跨出调度栈的兜底事实。
+// 必须优先用 selection.fallbackTrace，不能只读 ctx：兜底状态安装在调度栈内部的
+// 局部 ctx 上（nextOpenAIFallbackGroup 返回的 fallbackCtx 随函数栈一起丢弃），
+// 传不到选号汇合点。fallbackTrace 则由 attachSelectionProfitGate 在每个选号返回点
+// 捕获，是唯一能跨出调度栈的兜底事实。
 //
 // 2026-09-20 的教训：第一版闸门只读 ctx，于是每一次合法兜底在汇合点看到的都是
 // 「serving_group == 请求组、fallback_sourcing == false」，被误判成越界并作废重选
 // ——上线后实时打掉了 plus(2) 走兜底池(29) 的正常选号。当时那条"兜底不得误伤"的
-// 测试是用人工构造的 ctx 跑的，而生产里这个 ctx 根本到不了汇合点，测试通过给了
-// 虚假的信心。
+// 测试是用 withOpenAIStickyFallbackContext 人工构造 ctx 的，而生产里这个 ctx 根本
+// 到不了汇合点，测试通过给了虚假的信心。
 //
 // ok=false 表示无从判定，调用方必须放行而不是作废。
 func (s *OpenAIGatewayService) openAISelectionServingGroupID(
@@ -185,8 +184,8 @@ func (s *OpenAIGatewayService) openAISelectionServingGroupID(
 		return 0, false
 	}
 	// 1) 选号结果自带的兜底事实最可信。
-	if selection.fallbackPoolUsageTrace != nil && selection.fallbackPoolUsageTrace.TargetGroupID > 0 {
-		return selection.fallbackPoolUsageTrace.TargetGroupID, true
+	if selection.fallbackTrace != nil && selection.fallbackTrace.TargetGroupID > 0 {
+		return selection.fallbackTrace.TargetGroupID, true
 	}
 	// 2) ctx 上确实带着兜底状态时（同栈内调用）也采信。
 	if serving := OpenAIServingGroupID(ctx, requestedGroupID); serving > 0 && serving != requestedGroupID {
@@ -194,7 +193,7 @@ func (s *OpenAIGatewayService) openAISelectionServingGroupID(
 	}
 	// 3) 没有任何兜底迹象。但"没有迹象"不等于"确实没兜底"——兜底链路若没能带出
 	//    trace，这里就会把合法兜底误判成越界。所以只有在请求分组压根没配兜底时，
-	//    才敢断言服务分组就是请求分组；配了兜底的分组交给调用方的兜底链判定。
+	//    才敢断言服务分组就是请求分组；配了兜底的分组一律放行，宁可漏拦不可误杀。
 	if s.openAIGroupMayFallback(ctx, requestedGroupID) {
 		return 0, false
 	}

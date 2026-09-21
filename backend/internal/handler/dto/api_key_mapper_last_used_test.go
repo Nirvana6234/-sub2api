@@ -46,23 +46,34 @@ func TestAPIKeyFromService_MapsNilLastUsedAt(t *testing.T) {
 	require.Nil(t, out.LastUsedIP)
 }
 
-func TestAPIKeyFromService_MapsAutoGroupScope(t *testing.T) {
+// Regression: the response mapper must surface auto-group state, or a key
+// that successfully enabled automatic routing renders as if it had no group
+// at all once the list reloads (frontend falls through both the auto-group
+// badge and the static group badge).
+func TestAPIKeyFromService_MapsAutoGroupState(t *testing.T) {
+	selectedAt := time.Now().UTC().Truncate(time.Second)
 	src := &service.APIKey{
-		ID:                1,
-		UserID:            2,
-		Key:               "sk-map-auto-group",
-		Name:              "Automatic routing",
-		Status:            service.StatusActive,
-		AutoGroup:         true,
-		AutoGroupStrategy: "balanced",
-		AutoGroupIDs:      []int64{3, 7},
+		ID:                         1,
+		UserID:                     2,
+		Key:                        "sk-map-auto-group",
+		Name:                       "AutoGroupMapper",
+		Status:                     service.StatusActive,
+		AutoGroup:                  true,
+		AutoGroupStrategy:          "speed",
+		AutoGroupIDs:               []int64{10, 20},
+		AutoGroupCurrentGroup:      &service.Group{ID: 20, Name: "fast-pool"},
+		AutoGroupCurrentModel:      "gpt-5.5",
+		AutoGroupCurrentSelectedAt: &selectedAt,
 	}
 
 	out := APIKeyFromService(src)
+	require.NotNil(t, out)
 	require.True(t, out.AutoGroup)
-	require.Equal(t, "balanced", out.AutoGroupStrategy)
-	require.Equal(t, []int64{3, 7}, out.AutoGroupIDs)
-
-	src.AutoGroupIDs[0] = 99
-	require.Equal(t, []int64{3, 7}, out.AutoGroupIDs)
+	require.Equal(t, "speed", out.AutoGroupStrategy)
+	require.Equal(t, []int64{10, 20}, out.AutoGroupIDs)
+	require.NotNil(t, out.AutoGroupCurrentGroup)
+	require.Equal(t, "fast-pool", out.AutoGroupCurrentGroup.Name)
+	require.Equal(t, "gpt-5.5", out.AutoGroupCurrentModel)
+	require.NotNil(t, out.AutoGroupCurrentSelectedAt)
+	require.WithinDuration(t, selectedAt, *out.AutoGroupCurrentSelectedAt, time.Second)
 }

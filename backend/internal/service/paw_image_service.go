@@ -46,8 +46,8 @@ type PawImageResolution struct {
 }
 
 type PawImageService struct {
-	config     *PawConfigService
-	keySource  PawChatKeySource
+	config      *PawConfigService
+	keySource   PawChatKeySource
 	attachments *PawAttachmentService
 }
 

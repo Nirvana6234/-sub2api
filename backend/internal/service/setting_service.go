@@ -135,7 +135,6 @@ type SettingService struct {
 
 	cyberSessionBlockRuntimeCache atomic.Value // *cachedCyberSessionBlockRuntime
 	cyberSessionBlockRuntimeSF    singleflight.Group
-	globalBlacklistCache         atomic.Value // *cachedGlobalBlacklist
 
 	// panelRateLimitCache 面板 API 限流配置进程内缓存（*cachedPanelRateLimitSettings）。
 	// 面板每个认证请求都会读取，禁止在热路径上直接访问 DB。
@@ -151,6 +150,7 @@ type SettingService struct {
 	openAIQuotaAutoPauseSettingsCache atomic.Value // *cachedOpenAIQuotaAutoPauseSettings
 	openAIQuotaAutoPauseSettingsSF    singleflight.Group
 	openAIAPIKeyHealthBreakerCache    atomic.Value // *cachedOpenAIAPIKeyHealthBreakerSettings
+	globalBlacklistCache              atomic.Value // *cachedGlobalBlacklist
 
 	channelMonitorRuntimeListenersMu sync.Mutex
 	channelMonitorRuntimeListeners   []func()
@@ -161,6 +161,11 @@ type DefaultPlatformQuotaSetting struct {
 	DailyLimitUSD   *float64 `json:"daily"`
 	WeeklyLimitUSD  *float64 `json:"weekly"`
 	MonthlyLimitUSD *float64 `json:"monthly"`
+}
+
+// HasAnyLimit 报告是否至少配置了一档限额（0 也算配置）。nil receiver 视为未配置。
+func (q *DefaultPlatformQuotaSetting) HasAnyLimit() bool {
+	return q != nil && (q.DailyLimitUSD != nil || q.WeeklyLimitUSD != nil || q.MonthlyLimitUSD != nil)
 }
 
 type ProviderDefaultGrantSettings struct {
@@ -372,6 +377,8 @@ func (s *SettingService) GetAllSettings(ctx context.Context) (*SystemSettings, e
 	return s.parseSettings(settings), nil
 }
 
+// GetPlaygroundDefaultConfig returns the administrator-controlled defaults
+// used when provisioning the built-in Playground API keys for a user.
 func (s *SettingService) GetPlaygroundDefaultConfig(ctx context.Context) (PlaygroundDefaultConfig, error) {
 	settings, err := s.GetAllSettings(ctx)
 	if err != nil {

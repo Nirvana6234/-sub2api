@@ -452,11 +452,11 @@ func TestLoadDefaultOpenAIWSConfig(t *testing.T) {
 	if !cfg.Gateway.OpenAIWS.DynamicMaxConnsByAccountConcurrencyEnabled {
 		t.Fatalf("Gateway.OpenAIWS.DynamicMaxConnsByAccountConcurrencyEnabled = false, want true")
 	}
-	if cfg.Gateway.OpenAIWS.OAuthMaxConnsFactor != 1.0 {
-		t.Fatalf("Gateway.OpenAIWS.OAuthMaxConnsFactor = %v, want 1.0", cfg.Gateway.OpenAIWS.OAuthMaxConnsFactor)
+	if cfg.Gateway.OpenAIWS.OAuthMaxConnsFactor != 5.0 {
+		t.Fatalf("Gateway.OpenAIWS.OAuthMaxConnsFactor = %v, want 5.0", cfg.Gateway.OpenAIWS.OAuthMaxConnsFactor)
 	}
-	if cfg.Gateway.OpenAIWS.APIKeyMaxConnsFactor != 1.0 {
-		t.Fatalf("Gateway.OpenAIWS.APIKeyMaxConnsFactor = %v, want 1.0", cfg.Gateway.OpenAIWS.APIKeyMaxConnsFactor)
+	if cfg.Gateway.OpenAIWS.APIKeyMaxConnsFactor != 5.0 {
+		t.Fatalf("Gateway.OpenAIWS.APIKeyMaxConnsFactor = %v, want 5.0", cfg.Gateway.OpenAIWS.APIKeyMaxConnsFactor)
 	}
 	if cfg.Gateway.OpenAIWS.StickySessionTTLSeconds != 3600 {
 		t.Fatalf("Gateway.OpenAIWS.StickySessionTTLSeconds = %d, want 3600", cfg.Gateway.OpenAIWS.StickySessionTTLSeconds)
@@ -469,14 +469,6 @@ func TestLoadDefaultOpenAIWSConfig(t *testing.T) {
 	}
 	if cfg.Gateway.OpenAIScheduler.StickyEscapeErrorRate != 0.5 {
 		t.Fatalf("Gateway.OpenAIScheduler.StickyEscapeErrorRate = %v, want 0.5", cfg.Gateway.OpenAIScheduler.StickyEscapeErrorRate)
-	}
-	if cfg.Gateway.OpenAIScheduler.HealthErrorHalfLifeSeconds != 900 ||
-		cfg.Gateway.OpenAIScheduler.HealthTTFTStaleSeconds != 1800 ||
-		cfg.Gateway.OpenAIScheduler.HealthIdleEvictionSeconds != 7200 ||
-		cfg.Gateway.OpenAIScheduler.ColdStartProbeAfterSeconds != 120 ||
-		cfg.Gateway.OpenAIScheduler.RecoveryProbeAfterSeconds != 1800 ||
-		cfg.Gateway.OpenAIScheduler.RecoveryProbeCooldownSeconds != 600 {
-		t.Fatalf("unexpected OpenAI scheduler health defaults: %+v", cfg.Gateway.OpenAIScheduler)
 	}
 	if !cfg.Gateway.OpenAIWS.SessionHashReadOldFallback {
 		t.Fatalf("Gateway.OpenAIWS.SessionHashReadOldFallback = false, want true")
@@ -582,7 +574,7 @@ func TestLoadDefaultOpenAICompactModel(t *testing.T) {
 
 	cfg, err := Load()
 	require.NoError(t, err)
-	require.Equal(t, "gpt-5.4", cfg.Gateway.OpenAICompactModel)
+	require.Equal(t, "gpt-5.5", cfg.Gateway.OpenAICompactModel)
 }
 
 func TestLoadOpenAICompactModelFromEnv(t *testing.T) {
@@ -1196,6 +1188,21 @@ func TestLoadDefaultUsageCleanupConfig(t *testing.T) {
 	}
 	if cfg.UsageCleanup.TaskTimeoutSeconds != 1800 {
 		t.Fatalf("UsageCleanup.TaskTimeoutSeconds = %d, want 1800", cfg.UsageCleanup.TaskTimeoutSeconds)
+	}
+}
+
+func TestLoadDefaultOpsCleanupConfig(t *testing.T) {
+	resetViperWithJWTSecret(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if !cfg.Ops.Cleanup.Enabled {
+		t.Fatal("Ops.Cleanup.Enabled = false, want true")
+	}
+	if cfg.Ops.Cleanup.SystemLogRetentionDays != 30 {
+		t.Fatalf("Ops.Cleanup.SystemLogRetentionDays = %d, want 30", cfg.Ops.Cleanup.SystemLogRetentionDays)
 	}
 }
 
@@ -2144,6 +2151,11 @@ func TestValidateConfigErrors(t *testing.T) {
 			name:    "ops cleanup retention",
 			mutate:  func(c *Config) { c.Ops.Cleanup.ErrorLogRetentionDays = -1 },
 			wantErr: "ops.cleanup.error_log_retention_days",
+		},
+		{
+			name:    "ops cleanup system log retention",
+			mutate:  func(c *Config) { c.Ops.Cleanup.SystemLogRetentionDays = 0 },
+			wantErr: "ops.cleanup.system_log_retention_days",
 		},
 		{
 			name:    "ops cleanup minute retention",

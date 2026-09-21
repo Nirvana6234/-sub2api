@@ -80,7 +80,6 @@ type postUsageBillingParams struct {
 	RequestPayloadHash    string
 	IsSubscriptionBill    bool
 	AccountRateMultiplier float64
-	AccountQuotaCost      float64
 	APIKeyService         APIKeyQuotaUpdater
 	Platform              string // 来自 APIKey 关联 Group 的平台标识
 }
@@ -127,7 +126,7 @@ func (p *postUsageBillingParams) shouldUpdateRateLimits() bool {
 }
 
 func (p *postUsageBillingParams) shouldUpdateAccountQuota() bool {
-	return p.AccountQuotaCost > 0 && !p.Account.IsCredentialShadow() && p.Account.HasAnyQuotaLimit()
+	return p.Cost.TotalCost > 0 && p.Account.IsAPIKeyOrBedrock() && p.Account.HasAnyQuotaLimit()
 }
 
 // postUsageBilling is the legacy fallback billing path used when the unified
@@ -172,8 +171,9 @@ func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *bill
 	}
 
 	if p.shouldUpdateAccountQuota() {
-		if err := deps.accountRepo.IncrementQuotaUsed(billingCtx, p.Account.ID, p.AccountQuotaCost); err != nil {
-			slog.Error("increment account quota used failed", "account_id", p.Account.ID, "cost", p.AccountQuotaCost, "error", err)
+		accountCost := cost.TotalCost * p.AccountRateMultiplier
+		if err := deps.accountRepo.IncrementQuotaUsed(billingCtx, p.Account.ID, accountCost); err != nil {
+			slog.Error("increment account quota used failed", "account_id", p.Account.ID, "cost", accountCost, "error", err)
 		}
 	}
 
@@ -345,7 +345,7 @@ func buildUsageBillingCommand(requestID string, usageLog *UsageLog, p *postUsage
 		cmd.APIKeyRateLimitCost = p.Cost.ActualCost
 	}
 	if p.shouldUpdateAccountQuota() {
-		cmd.AccountQuotaCost = p.AccountQuotaCost
+		cmd.AccountQuotaCost = p.Cost.TotalCost * p.AccountRateMultiplier
 	}
 
 	cmd.Normalize()
@@ -522,25 +522,26 @@ func notifyAccountQuota(p *postUsageBillingParams, deps *billingDeps, result *Us
 			slog.Error("panic in notifyAccountQuota", "recover", r)
 		}
 	}()
-	if p.AccountQuotaCost <= 0 || p.Account == nil || p.Account.IsCredentialShadow() || deps.balanceNotifyService == nil {
+	if p.Cost.TotalCost <= 0 || p.Account == nil || !p.Account.IsAPIKeyOrBedrock() || deps.balanceNotifyService == nil {
 		slog.Debug("notifyAccountQuota: skipped",
-			"account_quota_cost", p.AccountQuotaCost,
+			"total_cost", p.Cost.TotalCost,
 			"account_nil", p.Account == nil,
-			"is_credential_shadow", p.Account != nil && p.Account.IsCredentialShadow(),
+			"is_apikey_or_bedrock", p.Account != nil && p.Account.IsAPIKeyOrBedrock(),
 			"service_nil", deps.balanceNotifyService == nil,
 		)
 		return
 	}
+	accountCost := p.Cost.TotalCost * p.AccountRateMultiplier
 	var quotaState *AccountQuotaState
 	if result != nil {
 		quotaState = result.QuotaState
 	}
 	slog.Debug("notifyAccountQuota: calling CheckAccountQuotaAfterIncrement",
 		"account_id", p.Account.ID,
-		"account_cost", p.AccountQuotaCost,
+		"account_cost", accountCost,
 		"has_quota_state", quotaState != nil,
 	)
-	deps.balanceNotifyService.CheckAccountQuotaAfterIncrement(context.Background(), p.Account, p.AccountQuotaCost, quotaState)
+	deps.balanceNotifyService.CheckAccountQuotaAfterIncrement(context.Background(), p.Account, accountCost, quotaState)
 }
 
 func detachedBillingContext(ctx context.Context) (context.Context, context.CancelFunc) {
@@ -555,20 +556,10 @@ func detachStreamUpstreamContext(ctx context.Context, stream bool) (context.Cont
 	if ctx == nil {
 		return context.Background(), func() {}
 	}
-	if !stream || isPlaygroundRequest(ctx) {
+	if !stream {
 		return ctx, func() {}
 	}
 	return context.WithoutCancel(ctx), func() {}
-}
-
-// detachUpstreamRequestContext keeps a Playground request cancellable so its
-// explicit stop control terminates the active upstream request. Other gateway
-// callers retain the existing detach-on-client-disconnect behavior.
-func detachUpstreamRequestContext(ctx context.Context) (context.Context, context.CancelFunc) {
-	if ctx != nil && isPlaygroundRequest(ctx) {
-		return ctx, func() {}
-	}
-	return detachUpstreamContext(ctx)
 }
 
 func detachUpstreamContext(ctx context.Context) (context.Context, context.CancelFunc) {
@@ -576,14 +567,6 @@ func detachUpstreamContext(ctx context.Context) (context.Context, context.Cancel
 		return context.Background(), func() {}
 	}
 	return context.WithoutCancel(ctx), func() {}
-}
-
-func isPlaygroundRequest(ctx context.Context) bool {
-	if ctx == nil {
-		return false
-	}
-	value, _ := ctx.Value(ctxkey.PlaygroundRequest).(bool)
-	return value
 }
 
 // billingDeps 扣费逻辑依赖的服务（由各 gateway service 提供）
@@ -783,6 +766,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	apiKey := input.APIKey
 	user := input.User
 	account := input.Account
+	subscription := input.Subscription
 	ApplyForwardImageBillingResolution(result)
 	logServiceTierBillingDowngrade("service.gateway", account, result.RequestID, ApplyForwardServiceTierBillingResolution(result))
 
@@ -803,43 +787,30 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		cacheTTLOverridden = (result.Usage.CacheCreation5mTokens + result.Usage.CacheCreation1hTokens) > 0
 	}
 
+	pricingAt := input.PricingAt
+	if pricingAt.IsZero() {
+		pricingAt = timezone.Now()
+	}
+
 	// 房间/公共池在调度时已写入独立的运行时倍率。它覆盖用户、分组和
 	// 高峰倍率，确保消费者支付的就是房间或公共池页面上显示的倍率。
+	var multiplier, imageMultiplier float64
 	if contributionMultiplier, contributionRouted := account.ContributionConsumerRateMultiplier(); contributionRouted {
-		multiplier := contributionMultiplier
-		imageMultiplier := contributionMultiplier
-		return s.recordUsageWithResolvedMultiplier(ctx, input, multiplier, imageMultiplier, cacheTTLOverridden)
-	}
-
-	// 获取费率倍数（优先级：用户专属 > 分组默认 > 系统默认）
-	multiplier := 1.0
-	if s.cfg != nil {
-		multiplier = s.cfg.Default.RateMultiplier
-	}
-	if apiKey.GroupID != nil && apiKey.Group != nil {
-		groupDefault := apiKey.Group.RateMultiplier
-		multiplier = s.ResolveUserGroupRateMultiplier(ctx, user.ID, *apiKey.GroupID, groupDefault)
-	}
-	// token 倍率叠加高峰因子（token 计费含图片 token，图片按次倍率不受影响）。高峰因子按请求时刻现算，
-	// 不并入上面的 getUserGroupRateMultiplier，以免污染 user:group 倍率缓存。
-	pricingAt := input.PricingAt
-	if pricingAt.IsZero() {
-		pricingAt = timezone.Now()
-	}
-	multiplier, imageMultiplier := computePeakAwareMultipliers(apiKey, multiplier, pricingAt)
-
-	return s.recordUsageWithResolvedMultiplier(ctx, input, multiplier, imageMultiplier, cacheTTLOverridden)
-}
-
-func (s *GatewayService) recordUsageWithResolvedMultiplier(ctx context.Context, input *recordUsageCoreInput, multiplier, imageMultiplier float64, cacheTTLOverridden bool) error {
-	result := input.Result
-	apiKey := input.APIKey
-	user := input.User
-	account := input.Account
-	subscription := input.Subscription
-	pricingAt := input.PricingAt
-	if pricingAt.IsZero() {
-		pricingAt = timezone.Now()
+		multiplier = contributionMultiplier
+		imageMultiplier = contributionMultiplier
+	} else {
+		// 获取费率倍数（优先级：用户专属 > 分组默认 > 系统默认）
+		multiplier = 1.0
+		if s.cfg != nil {
+			multiplier = s.cfg.Default.RateMultiplier
+		}
+		if apiKey.GroupID != nil && apiKey.Group != nil {
+			groupDefault := apiKey.Group.RateMultiplier
+			multiplier = s.ResolveUserGroupRateMultiplier(ctx, user.ID, *apiKey.GroupID, groupDefault)
+		}
+		// token 倍率叠加高峰因子（token 计费含图片 token，图片按次倍率不受影响）。高峰因子按请求时刻现算，
+		// 不并入上面的 getUserGroupRateMultiplier，以免污染 user:group 倍率缓存。
+		multiplier, imageMultiplier = computePeakAwareMultipliers(apiKey, multiplier, pricingAt)
 	}
 
 	// 确定计费模型
@@ -900,17 +871,10 @@ func (s *GatewayService) recordUsageWithResolvedMultiplier(ctx context.Context, 
 	}
 
 	// 创建使用日志
-	// 统计口径与配额口径在"倍率未声明"时刻意分叉：
-	//   - usage_logs 写 NULL，成本报表跳过该行，宁可少算也不虚报；
-	//   - 配额扣减回退 1.0，否则未标注倍率的账号配额永远涨不上去，等于绕过限额。
-	accountRateMultiplier := AccountCostRateMultiplier(account, OpenAIPricingAtFromContext(ctx))
-	accountRateForQuota := 1.0
-	if accountRateMultiplier != nil {
-		accountRateForQuota = *accountRateMultiplier
-	}
-	headroomSavingsUSD := calculateHeadroomSavingsUSD(ctx, s.billingService, s.resolver, result.HeadroomTokensSaved, apiKey.Group, billingModel, pricingAt)
+	// 成本倍率与利润门准入同源：手工倍率 → 探测值 → 列值 → 1.0。
+	accountRateMultiplier := AccountBillingRateMultiplier(account, pricingAt)
 	usageLog := s.buildRecordUsageLog(ctx, input, result, apiKey, user, account, subscription,
-		requestedModel, multiplier, imageMultiplier, accountRateMultiplier, billingType, cacheTTLOverridden, cost, headroomSavingsUSD)
+		requestedModel, multiplier, imageMultiplier, accountRateMultiplier, billingType, cacheTTLOverridden, cost)
 
 	// 计算账号统计定价费用（使用最终上游模型匹配自定义规则）
 	if apiKey.GroupID != nil {
@@ -925,18 +889,12 @@ func (s *GatewayService) recordUsageWithResolvedMultiplier(ctx context.Context, 
 				CacheReadTokens:     result.Usage.CacheReadInputTokens,
 				ImageOutputTokens:   result.Usage.ImageOutputTokens,
 			},
-			cost.TotalCost,
+			cost.TotalCost, pricingAt,
 		)
 	}
-	accountQuotaCost := cost.TotalCost
-	if usageLog.AccountStatsCost != nil {
-		accountQuotaCost = *usageLog.AccountStatsCost
-	}
-	accountQuotaCost *= accountRateForQuota
 
 	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple && !isCrossContributorSharedUsage(account, user) {
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
-		notifyFallbackPoolUsage(ctx, s.cfg, usageLog, account)
 		logger.LegacyPrintf("service.gateway", "[SIMPLE MODE] Usage recorded (not billed): user=%d, tokens=%d", usageLog.UserID, usageLog.TotalTokens())
 		s.deferredService.ScheduleLastUsedUpdate(account.ID)
 		return nil
@@ -961,8 +919,7 @@ func (s *GatewayService) recordUsageWithResolvedMultiplier(ctx context.Context, 
 		Subscription:          subscription,
 		RequestPayloadHash:    resolveUsageBillingPayloadFingerprint(ctx, input.RequestPayloadHash),
 		IsSubscriptionBill:    isSubscriptionBilling,
-		AccountRateMultiplier: accountRateForQuota,
-		AccountQuotaCost:      accountQuotaCost,
+		AccountRateMultiplier: accountRateMultiplier,
 		APIKeyService:         input.APIKeyService,
 		Platform:              quotaPlatform,
 	}, s.billingDeps(), s.usageBillingRepo)
@@ -973,7 +930,6 @@ func (s *GatewayService) recordUsageWithResolvedMultiplier(ctx context.Context, 
 		return billingErr
 	}
 	writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
-	notifyFallbackPoolUsage(ctx, s.cfg, usageLog, account)
 
 	return nil
 }
@@ -986,7 +942,7 @@ func isCrossContributorSharedUsage(account *Account, user *User) bool {
 	return contributorID > 0 && contributorID != user.ID && (account.IsSharedPoolAccount() || account.IsContributionRoomRouted())
 }
 
-// calculateRecordUsageCost 根据请求类型和选项计算费用。
+// calculateRecordUsageCost 根据请求类型计算费用。
 func (s *GatewayService) calculateRecordUsageCost(
 	ctx context.Context,
 	result *ForwardResult,
@@ -1041,10 +997,7 @@ func (s *GatewayService) calculateRecordUsageCost(
 	return tokenCost
 }
 
-// compositeBillableModel 决定 composite 分组请求的计费模型：来源覆盖把计费模型
-// 换成公开别名等非具体模型时，只有管理员为该名字显式配置了渠道定价才按其计费
-// （OpenRouter 式自定价），否则回退到实际转发的具体模型，避免别名落入价格表的
-// 家族模糊匹配（错价）或查无价（$0）。未发生来源覆盖时原样返回。
+// compositeBillableModel determines the billing model for composite routes.
 func (s *GatewayService) compositeBillableModel(ctx context.Context, apiKey *APIKey, billingModel, concreteBillingModel string) string {
 	if concreteBillingModel == "" || billingModel == concreteBillingModel {
 		return billingModel
@@ -1202,53 +1155,22 @@ func (s *GatewayService) calculateTokenCost(
 	}
 
 	cost, err := s.billingService.CalculateTokenCostForRequest(TokenCostRequest{
-		Ctx:            ctx,
-		Model:          billingModel,
-		Group:          apiKey.Group,
-		Tokens:         tokens,
-		RateMultiplier: multiplier,
-		PricingAt:      pricingAt,
-		ServiceTier:    optionalStringValue(result.ServiceTier),
-		Resolver:       s.resolver,
-		Resolved:       resolved,
+		Ctx:             ctx,
+		Model:           billingModel,
+		Group:           apiKey.Group,
+		Tokens:          tokens,
+		RateMultiplier:  multiplier,
+		PricingAt:       pricingAt,
+		ServiceTier:     optionalStringValue(result.ServiceTier),
+		ReasoningEffort: optionalStringValue(result.ReasoningEffort),
+		Resolver:        s.resolver,
+		Resolved:        resolved,
 	})
 	if err != nil {
 		logger.LegacyPrintf("service.gateway", "Calculate cost failed: %v", err)
 		return &CostBreakdown{ActualCost: 0}
 	}
 	return cost
-}
-
-// calculateHeadroomSavingsUSD 把 headroom 节省的输入 token 数换算成标准美金——
-// 固定按倍率 1 计算（不叠加分组/账号加价），只用于用户仪表盘展示"大概省了多少"，
-// 不参与实际计费。savedTokens<=0 时直接返回 0，不必发起定价查询。
-// 独立函数而非方法：Anthropic/OpenAI 两条网关服务各自持有同名字段但类型不同的
-// billingService/resolver，共享这一小段纯计算逻辑比互相依赖对方类型更干净。
-func calculateHeadroomSavingsUSD(
-	ctx context.Context,
-	billingService *BillingService,
-	resolver *ModelPricingResolver,
-	savedTokens int,
-	group *Group,
-	billingModel string,
-	pricingAt time.Time,
-) float64 {
-	if savedTokens <= 0 || billingService == nil {
-		return 0
-	}
-	cost, err := billingService.CalculateTokenCostForRequest(TokenCostRequest{
-		Ctx:            ctx,
-		Model:          billingModel,
-		Group:          group,
-		Tokens:         UsageTokens{InputTokens: savedTokens},
-		RateMultiplier: 1.0,
-		PricingAt:      pricingAt,
-		Resolver:       resolver,
-	})
-	if err != nil || cost == nil {
-		return 0
-	}
-	return cost.InputCost
 }
 
 // buildRecordUsageLog 构建使用日志并设置计费模式。
@@ -1263,11 +1185,10 @@ func (s *GatewayService) buildRecordUsageLog(
 	requestedModel string,
 	multiplier float64,
 	imageMultiplier float64,
-	accountRateMultiplier *float64,
+	accountRateMultiplier float64,
 	billingType int8,
 	cacheTTLOverridden bool,
 	cost *CostBreakdown,
-	headroomSavingsUSD float64,
 ) *UsageLog {
 	durationMs := int(result.Duration.Milliseconds())
 	requestID := resolveUsageBillingRequestID(ctx, result.RequestID)
@@ -1286,6 +1207,7 @@ func (s *GatewayService) buildRecordUsageLog(
 		APIKeyID:                 apiKey.ID,
 		AccountID:                account.ID,
 		RequestID:                requestID,
+		UpstreamRequestID:        usageUpstreamRequestIDPtr(account, result.UpstreamHeaders, false),
 		Model:                    result.Model,
 		RequestedModel:           requestedModel,
 		UpstreamModel:            optionalTrimmedStringPtr(result.UpstreamModel),
@@ -1304,7 +1226,7 @@ func (s *GatewayService) buildRecordUsageLog(
 		CacheCreation1hTokens:    result.Usage.CacheCreation1hTokens,
 		ImageOutputTokens:        result.Usage.ImageOutputTokens,
 		RateMultiplier:           multiplier,
-		AccountRateMultiplier:    accountRateMultiplier,
+		AccountRateMultiplier:    &accountRateMultiplier,
 		BillingType:              billingType,
 		BillingMode:              resolveBillingMode(result, cost),
 		Stream:                   result.Stream,
@@ -1324,11 +1246,9 @@ func (s *GatewayService) buildRecordUsageLog(
 		SessionID:                optionalTrimmedStringPtr(input.SessionID),
 		GroupID:                  apiKey.GroupID,
 		SubscriptionID:           optionalSubscriptionID(subscription),
-		HeadroomTokensSaved:      result.HeadroomTokensSaved,
-		HeadroomSavingsUSD:       headroomSavingsUSD,
 		CreatedAt:                time.Now(),
 	}
-	trace, traceOK := fallbackPoolUsageTraceFromContext(ctx)
+	trace, traceOK := gatewayFallbackPoolUsageTraceFromContext(ctx)
 	applyFallbackPoolUsageTrace(usageLog, trace, traceOK)
 	if result.ImageCount > 0 && (cost == nil || cost.BillingMode != string(BillingModeToken)) {
 		usageLog.RateMultiplier = imageMultiplier

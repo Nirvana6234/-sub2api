@@ -223,6 +223,7 @@ func (s *OpenAICodexUsageSnapshot) Normalize() *NormalizedCodexLimits {
 type OpenAIUsage struct {
 	InputTokens              int `json:"input_tokens"`
 	ImageInputTokens         int `json:"image_input_tokens,omitempty"`
+	ImageCacheReadTokens     int `json:"image_cache_read_tokens,omitempty"`
 	OutputTokens             int `json:"output_tokens"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
@@ -233,8 +234,10 @@ type OpenAIUsage struct {
 type OpenAIForwardResult struct {
 	RequestID  string
 	ResponseID string
-	Usage      OpenAIUsage
-	Model      string // 原始模型（用于响应和日志显示）
+	// UpstreamHeaders 是直接上游的响应头，用于按账户配置解析上游请求标识。
+	UpstreamHeaders http.Header
+	Usage           OpenAIUsage
+	Model           string // 原始模型（用于响应和日志显示）
 	// BillingModel is the model used for cost calculation.
 	// When non-empty, CalculateCost uses this instead of Model.
 	// This is set by the Anthropic Messages conversion path where
@@ -291,10 +294,6 @@ type OpenAIForwardResult struct {
 	SearchCount int
 	// AudioUsage carries Voice billing units when present.
 	AudioUsage *AudioUsage
-	// HeadroomTokensSaved is parsed from the upstream response's
-	// x-headroom-tokens-saved header (present only when the request was
-	// actually routed through and compressed by the headroom proxy).
-	HeadroomTokensSaved int
 
 	wsReplayInput                []json.RawMessage
 	wsReplayInputExists          bool
@@ -313,6 +312,21 @@ func (r *OpenAIForwardResult) SucceededForScheduling() bool {
 		return true
 	default:
 		return false
+	}
+}
+
+const openAIResponsesUpstreamEndpoint = "/v1/responses"
+
+// stampOpenAIResponsesUpstreamEndpoint records that this attempt hit the
+// Responses API. OpenCode Go / CN accounts cannot derive that from inbound
+// path (DeriveUpstreamEndpoint falls back to the client URL).
+func stampOpenAIResponsesUpstreamEndpoint(c *gin.Context, result *OpenAIForwardResult) {
+	SetActualOpenAIUpstreamEndpoint(c, openAIResponsesUpstreamEndpoint)
+	if result == nil {
+		return
+	}
+	if strings.TrimSpace(result.UpstreamEndpoint) == "" {
+		result.UpstreamEndpoint = openAIResponsesUpstreamEndpoint
 	}
 }
 
@@ -454,7 +468,6 @@ type OpenAIGatewayService struct {
 	settingService        *SettingService
 	userPlatformQuotaRepo UserPlatformQuotaRepository
 	contributionRoomRepo  ContributionRoomRoutingRepository
-
 	liveAttestation       liveattestation.Provider
 	liveAttestationCipher SecretEncryptor
 
@@ -474,8 +487,13 @@ type OpenAIGatewayService struct {
 	openaiLatencyTracker           *openAILatencyTracker
 	openaiLatencyTrackerOnce       sync.Once
 	openaiFallbackStickyStates     sync.Map // key: source group ID, value: *openAIFallbackStickyState
-	// openaiSelectionGroupAuditLogAt 为越界审计日志做 (分组, 账号) 级节流。
-	// key: "groupID:accountID"，value: *atomic.Int64（上次输出的毫秒时间戳）
+	// openaiGroupAccountIDs 缓存分组的可调度账号清单，供延迟兜底前的
+	// "源组是否还有健康账号" 判断使用（key: group ID, value: *openAIGroupAccountIDsEntry）。
+	openaiGroupAccountIDs sync.Map
+	// openaiLatencyFallbackSkipLogAt 按分组节流跳过日志（key: group ID, value: *atomic.Int64 毫秒时间戳）。
+	openaiLatencyFallbackSkipLogAt sync.Map
+	// openaiSelectionGroupAuditLogAt 按 (分组,账号) 节流"选出的账号不属于该分组"
+	// 的诊断告警（key: "groupID:accountID", value: *atomic.Int64 毫秒时间戳）。
 	openaiSelectionGroupAuditLogAt sync.Map
 	openaiModelTransient           *openAIAccountModelTransientState
 	openaiProxyStreamCircuit       *openAIProxyStreamCircuit
@@ -493,7 +511,7 @@ type OpenAIGatewayService struct {
 	openaiWSRetryMetrics                openAIWSRetryMetrics
 	responseHeaderFilter                *responseheaders.CompiledHeaderFilter
 	codexSnapshotThrottle               *accountWriteThrottle
-	codexModelsManifestCache            codexModelsManifestCache
+	openAIModelsCache                   openAIModelsCache
 	openaiCompatSessionResponses        sync.Map
 	openaiCompatAnthropicDigestSessions sync.Map
 	// openaiCodexTurnStateOrigins: 下游会话 seed → openAICodexTurnStateOrigin，
@@ -915,7 +933,10 @@ func (s *OpenAIGatewayService) writeOpenAIWSFallbackErrorResponse(c *gin.Context
 
 	setOpsUpstreamError(c, statusCode, upstreamMessage, "")
 	if account != nil {
+		proxyID, proxyName := opsUpstreamWSProxyAttribution(account)
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+			ProxyID:            proxyID,
+			ProxyName:          proxyName,
 			Platform:           account.Platform,
 			AccountID:          account.ID,
 			AccountName:        account.Name,
@@ -1069,44 +1090,17 @@ func SnapshotOpenAICompatibilityFallbackMetrics() OpenAICompatibilityFallbackMet
 }
 
 func (s *OpenAIGatewayService) detectCodexClientRestriction(c *gin.Context, account *Account, body []byte) CodexClientRestrictionDetectionResult {
-	policy := s.resolveCodexRestrictionPolicy(c, account)
-	return s.getCodexClientRestrictionDetector().Detect(c, account, policy, body)
-}
-
-// resolveCodexRestrictionPolicy 取全局门禁策略（白名单/黑名单/版本上下限/指纹信号）。
-//
-// 安全默认：即便缺 settingService（仅测试/误配可达）也保持指纹门为默认种子，
-// 避免零值 policy（nil 信号）让指纹门失败开放。
-//
-// 取数条件里 strict 与 codex_cli_only 并列，缺一不可：严格透传的档位判定同样要吃
-// 这套策略，否则管理员配的黑名单/版本下限在「只开 strict、不开 codex_cli_only」的
-// 账号上形同虚设——而那恰恰是 strict 最常见的用法。
-func (s *OpenAIGatewayService) resolveCodexRestrictionPolicy(c *gin.Context, account *Account) CodexRestrictionPolicy {
+	// 安全默认：即便缺 settingService（仅测试/误配可达）也保持指纹门为默认种子，
+	// 避免零值 policy（nil 信号）让指纹门失败开放。有 settingService 时整体覆盖为全局策略。
 	policy := CodexRestrictionPolicy{EngineFingerprintSignals: openai.DefaultEngineFingerprintSignals}
-	if account == nil || s == nil || s.settingService == nil {
-		return policy
+	if account != nil && account.IsCodexCLIOnlyEnabled() && s != nil && s.settingService != nil {
+		ctx := context.Background()
+		if c != nil && c.Request != nil {
+			ctx = c.Request.Context()
+		}
+		policy = s.settingService.GetCodexRestrictionPolicy(ctx)
 	}
-	if !account.IsCodexCLIOnlyEnabled() && !account.IsOpenAIPassthroughStrictEnabled() {
-		return policy
-	}
-	ctx := context.Background()
-	if c != nil && c.Request != nil {
-		ctx = c.Request.Context()
-	}
-	return s.settingService.GetCodexRestrictionPolicy(ctx)
-}
-
-// detectCodexClientIdentity 为严格透传判定「这条请求像不像官方 Codex」。
-//
-// 与 detectCodexClientRestriction 的区别只有两点，但都是要害：不看账号的
-// codex_cli_only 开关，也不认 force_codex_cli 旁路。判定本身共用同一份实现。
-//
-// 不走 CodexClientRestrictionDetector 接口：身份判定是 (请求, 账号, 策略, body) 的
-// 纯函数，用不到 detector 的任何状态（那里面只有 cfg，且只服务于 force_codex_cli
-// 这条身份判定明确不认的旁路）。绕开接口还有一个好处——注入执法桩的测试仍然拿到
-// 真实的身份判定，两件事不会被同一个桩一起假掉。
-func (s *OpenAIGatewayService) detectCodexClientIdentity(c *gin.Context, account *Account, body []byte) CodexClientRestrictionDetectionResult {
-	return EvaluateCodexClientIdentity(c, account, s.resolveCodexRestrictionPolicy(c, account), body)
+	return s.getCodexClientRestrictionDetector().Detect(c, account, policy, body)
 }
 
 func getAPIKeyIDFromContext(c *gin.Context) int64 {
@@ -1280,7 +1274,7 @@ func (s *OpenAIGatewayService) GetAccessToken(ctx context.Context, account *Acco
 			return "", "", errors.New("access_token not found in credentials")
 		}
 		return accessToken, "oauth", nil
-	case AccountTypeAPIKey, AccountTypeUpstream:
+	case AccountTypeAPIKey:
 		if account.Platform == PlatformGrok {
 			apiKey := strings.TrimSpace(account.GetCredential("api_key"))
 			if apiKey == "" {
@@ -1289,9 +1283,6 @@ func (s *OpenAIGatewayService) GetAccessToken(ctx context.Context, account *Acco
 			return apiKey, "apikey", nil
 		}
 		apiKey := strings.TrimSpace(account.GetOpenAIProtocolAPIKey())
-		if account.Type == AccountTypeUpstream {
-			apiKey = strings.TrimSpace(account.GetCredential("api_key"))
-		}
 		if apiKey == "" {
 			return "", "", errors.New("api_key not found in credentials")
 		}

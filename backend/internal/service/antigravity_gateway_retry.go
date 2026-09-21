@@ -289,13 +289,12 @@ func (s *AntigravityGatewayService) handleSmartRetry(p antigravityRetryLoopParam
 			}
 			log.Printf("%s status=%d smart_retry_exhausted_model_capacity attempts=%d model=%s account=%d body=%s (switching account without cooldown)",
 				p.prefix, resp.StatusCode, maxAttempts, modelName, p.account.ID, truncateForLog(retryBody, 200))
-			s.clearStickySession(p.ctx, p.groupID, p.sessionHash)
 			return &smartRetryResult{
 				action: smartRetryActionBreakWithResp,
-				switchError: &AntigravityAccountSwitchError{
-					OriginalAccountID: p.account.ID,
-					RateLimitedModel:  modelName,
-					IsStickySession:   p.isStickySession,
+				resp: &http.Response{
+					StatusCode: resp.StatusCode,
+					Header:     resp.Header.Clone(),
+					Body:       io.NopCloser(bytes.NewReader(retryBody)),
 				},
 			}
 		}
@@ -552,6 +551,8 @@ urlFallbackLoop:
 			if err != nil {
 				safeErr := sanitizeUpstreamErrorMessage(err.Error())
 				appendOpsUpstreamError(p.c, OpsUpstreamErrorEvent{
+					ProxyID:            opsUpstreamProxyID(p.account),
+					ProxyName:          opsUpstreamProxyName(p.account),
 					Platform:           p.account.Platform,
 					AccountID:          p.account.ID,
 					AccountName:        p.account.Name,
@@ -629,6 +630,8 @@ urlFallbackLoop:
 						upstreamMsg := strings.TrimSpace(extractAntigravityErrorMessage(respBody))
 						upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
 						appendOpsUpstreamError(p.c, OpsUpstreamErrorEvent{
+							ProxyID:            opsUpstreamProxyID(p.account),
+							ProxyName:          opsUpstreamProxyName(p.account),
 							Platform:           p.account.Platform,
 							AccountID:          p.account.ID,
 							AccountName:        p.account.Name,
@@ -664,6 +667,8 @@ urlFallbackLoop:
 						upstreamMsg := strings.TrimSpace(extractAntigravityErrorMessage(respBody))
 						upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
 						appendOpsUpstreamError(p.c, OpsUpstreamErrorEvent{
+							ProxyID:            opsUpstreamProxyID(p.account),
+							ProxyName:          opsUpstreamProxyName(p.account),
 							Platform:           p.account.Platform,
 							AccountID:          p.account.ID,
 							AccountName:        p.account.Name,
@@ -1122,15 +1127,10 @@ func (s *AntigravityGatewayService) handleModelRateLimit(p *handleModelRateLimit
 	// MODEL_CAPACITY_EXHAUSTED：容量耗尽是瞬时状态，不记模型限流（原地重试由
 	// handleSmartRetry 负责），但仍然换账号继续这次请求。
 	if info.IsModelCapacityExhausted {
-		log.Printf("%s status=%d model_capacity_exhausted model=%s (switching account without cooldown)",
+		log.Printf("%s status=%d model_capacity_exhausted model=%s (not switching account, retry handled by smart retry)",
 			p.prefix, p.statusCode, info.ModelName)
 		return &handleModelRateLimitResult{
 			Handled: true,
-			SwitchError: &AntigravityAccountSwitchError{
-				OriginalAccountID: p.account.ID,
-				RateLimitedModel:  info.ModelName,
-				IsStickySession:   p.isStickySession,
-			},
 		}
 	}
 

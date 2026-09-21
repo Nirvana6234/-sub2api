@@ -72,6 +72,47 @@ func TestOpenAI429FastPath_BlocksOAuthOnlyAfterRetryWindow(t *testing.T) {
 	require.False(t, svc.shouldRetryOpenAIOAuth429OnSameAccount(account, http.StatusTooManyRequests, false))
 }
 
+func TestOpenAI429FastPath_DoesNotBlockOAuthWhenFallbackDisabled(t *testing.T) {
+	repo := &oauth429RateLimitRepo{}
+	settingRepo := newMockSettingRepo()
+	settingRepo.data[SettingKeyRateLimit429CooldownSettings] = `{"enabled":false,"cooldown_seconds":12}`
+	rateLimitService := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	rateLimitService.SetSettingService(NewSettingService(settingRepo, &config.Config{}))
+	svc := &OpenAIGatewayService{rateLimitService: rateLimitService}
+	rateLimitService.SetAccountRuntimeBlocker(svc)
+	account := &Account{ID: 425, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	svc.openaiOAuth429RetryStartedAt.Store(account.ID, time.Now().Add(-openAIOAuth429RetryWindow-time.Second))
+
+	svc.markOpenAIOAuth429RateLimited(context.Background(), account, http.Header{}, []byte(`{"detail":"Rate limit exceeded"}`))
+
+	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account), "disabled 429 fallback must not create an OAuth runtime cooldown")
+	require.Zero(t, repo.setRateLimitedCalls, "disabled 429 fallback must not persist a scheduler cooldown")
+}
+
+func TestOpenAI429FastPath_DoesNotBlockOAuthWhenQuotaWindowIsNotExhausted(t *testing.T) {
+	repo := &oauth429RateLimitRepo{}
+	settingRepo := newMockSettingRepo()
+	settingRepo.data[SettingKeyRateLimit429CooldownSettings] = `{"enabled":false,"cooldown_seconds":12}`
+	rateLimitService := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	rateLimitService.SetSettingService(NewSettingService(settingRepo, &config.Config{}))
+	svc := &OpenAIGatewayService{rateLimitService: rateLimitService}
+	rateLimitService.SetAccountRuntimeBlocker(svc)
+	account := &Account{ID: 426, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	svc.openaiOAuth429RetryStartedAt.Store(account.ID, time.Now().Add(-openAIOAuth429RetryWindow-time.Second))
+	headers := http.Header{}
+	headers.Set("x-codex-primary-used-percent", "37")
+	headers.Set("x-codex-primary-reset-after-seconds", "604800")
+	headers.Set("x-codex-primary-window-minutes", "10080")
+	headers.Set("x-codex-secondary-used-percent", "20")
+	headers.Set("x-codex-secondary-reset-after-seconds", "3600")
+	headers.Set("x-codex-secondary-window-minutes", "300")
+
+	svc.handleOpenAIAccountUpstreamError(context.Background(), account, http.StatusTooManyRequests, headers, []byte(`{"detail":"Rate limit exceeded"}`))
+
+	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account), "non-exhausted quota headers must use the configurable fallback")
+	require.Zero(t, repo.setRateLimitedCalls, "disabled 429 fallback must not persist a scheduler cooldown")
+}
+
 func TestOpenAI429FastPath_BlocksOAuthImmediatelyWhenSevenDayQuotaIsExhausted(t *testing.T) {
 	repo := &oauth429RateLimitRepo{}
 	rateLimits := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
@@ -307,7 +348,7 @@ func TestOpenAIHTTP429StillUsesQuotaResetHeaders(t *testing.T) {
 	account := &Account{ID: 422, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
 	svc.openaiOAuth429RetryStartedAt.Store(account.ID, time.Now().Add(-openAIOAuth429RetryWindow-time.Second))
 	headers := http.Header{}
-	headers.Set("x-codex-primary-used-percent", "37")
+	headers.Set("x-codex-primary-used-percent", "100")
 	headers.Set("x-codex-primary-reset-after-seconds", "604800")
 	headers.Set("x-codex-primary-window-minutes", "10080")
 
@@ -526,68 +567,6 @@ func TestOpenAIPoolModeNonRetryable5xx_StillCreatesModelTransientBlock(t *testin
 	require.True(t, gateway.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-5.4"))
 }
 
-// 池模式账号的 403 默认完全不进熔断（poolModeRetryable=true，见 handleOpenAIAccountUpstreamError
-// 的 !poolModeRetryable 排除）。但当 403 能被 isOpenAIPermanentCapability403 识别为确定性的
-// 账号级权限问题（重试必然还是失败）时，应该照常进入短时内存熔断——这是本次改动新增的例外。
-func TestOpenAIPoolModePermanentCapability403_CreatesModelTransientBlock(t *testing.T) {
-	repo := &errorPolicyRepoStub{}
-	rateLimitService := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
-	gateway := &OpenAIGatewayService{rateLimitService: rateLimitService}
-	account := &Account{
-		ID:       50,
-		Platform: PlatformOpenAI,
-		Type:     AccountTypeAPIKey,
-		Credentials: map[string]any{
-			"pool_mode": true, // default pool_mode_retry_status_codes includes 403
-		},
-	}
-
-	for i := 0; i < 2; i++ {
-		shouldDisable := gateway.handleOpenAIAccountUpstreamError(
-			context.Background(),
-			account,
-			http.StatusForbidden,
-			http.Header{},
-			[]byte(`{"error":{"message":"Image generation is not enabled for this group"}}`),
-			"gpt-5.4",
-		)
-		require.False(t, shouldDisable, "pool mode must not touch DB schedulable state")
-	}
-
-	require.True(t, gateway.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-5.4"),
-		"a permanent-capability 403 must still trip the short-lived circuit breaker even in pool mode")
-}
-
-// 普通（非永久性）403 在池模式下的既有行为保持不变：不进入熔断，交给请求内的
-// 同账号重试预算处理。
-func TestOpenAIPoolModeOrdinary403_DoesNotCreateModelTransientBlock(t *testing.T) {
-	repo := &errorPolicyRepoStub{}
-	rateLimitService := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
-	gateway := &OpenAIGatewayService{rateLimitService: rateLimitService}
-	account := &Account{
-		ID:       51,
-		Platform: PlatformOpenAI,
-		Type:     AccountTypeAPIKey,
-		Credentials: map[string]any{
-			"pool_mode": true,
-		},
-	}
-
-	for i := 0; i < 2; i++ {
-		shouldDisable := gateway.handleOpenAIAccountUpstreamError(
-			context.Background(),
-			account,
-			http.StatusForbidden,
-			http.Header{},
-			[]byte(`{"error":{"message":"Access forbidden"}}`),
-			"gpt-5.4",
-		)
-		require.False(t, shouldDisable)
-	}
-
-	require.False(t, gateway.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-5.4"))
-}
-
 func TestOpenAINonPoolAPIKey5xx_StillCreatesModelTransientBlock(t *testing.T) {
 	repo := &errorPolicyRepoStub{}
 	rateLimitService := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
@@ -785,6 +764,45 @@ func TestOpenAIRuntimeBlock_ClearAccountSchedulingBlock(t *testing.T) {
 
 	svc.ClearAccountSchedulingBlock(account.ID)
 	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+}
+
+func TestRuntimeBlockHonorsClearedPersistedCooldown(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	account := &Account{ID: 92, Platform: PlatformGrok, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true}
+	svc.BlockAccountScheduling(account, time.Now().Add(30*time.Minute), "grok payment required")
+	require.False(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, "grok-3"))
+	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+}
+
+func TestRuntimeBlockConditionalClearSkipsNewerGeneration(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	account := &Account{ID: 94, Platform: PlatformGrok, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true}
+	firstUntil := time.Now().Add(10 * time.Minute)
+	svc.BlockAccountScheduling(account, firstUntil, "stale")
+	snapshot := svc.peekOpenAIAccountRuntimeBlock(account)
+	require.True(t, snapshot.blocked)
+	newerUntil := time.Now().Add(30 * time.Minute)
+	svc.BlockAccountScheduling(account, newerUntil, "fresh")
+	svc.clearOpenAIAccountRuntimeBlockIfUnchanged(account.ID, snapshot)
+	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
+	require.False(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, "grok-3"))
+	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+}
+
+func TestRuntimeBlockKeepsActivePersistedCooldown(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	until := time.Now().Add(30 * time.Minute)
+	account := &Account{
+		ID:                     93,
+		Platform:               PlatformGrok,
+		Type:                   AccountTypeOAuth,
+		Status:                 StatusActive,
+		Schedulable:            true,
+		TempUnschedulableUntil: &until,
+	}
+	svc.BlockAccountScheduling(account, until, "grok payment required")
+	require.True(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, "grok-3"))
+	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
 }
 
 func TestShouldStopOpenAIOAuth429Failover_AfterBoundedFullWindows(t *testing.T) {

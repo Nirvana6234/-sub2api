@@ -29,6 +29,16 @@ func productionPlusPoolCandidates() []openAIAccountCandidateScore {
 	}
 }
 
+func priorityOfAccountInOrder(t *testing.T, order []openAIAccountCandidateScore) []int {
+	t.Helper()
+	priorities := make([]int, 0, len(order))
+	for _, candidate := range order {
+		require.NotNil(t, candidate.account)
+		priorities = append(priorities, candidate.priority)
+	}
+	return priorities
+}
+
 // 组内优先级必须是档位语义：优先级 1 的号全部排在优先级 2 之前，2 全部排在 3 之前。
 //
 // 可证伪性：把 buildSelectionOrder 改回直接 rankSpecializedFirst(pool)（即回到按总分
@@ -48,11 +58,7 @@ func TestSelectionOrderIsStrictlyPriorityTiered(t *testing.T) {
 		})
 		require.Len(t, order, 7, "第 %d 轮：分档是排序不是过滤，一个都不能少", i)
 
-		priorities := make([]int, 0, len(order))
-		for _, candidate := range order {
-			require.NotNil(t, candidate.account)
-			priorities = append(priorities, candidate.priority)
-		}
+		priorities := priorityOfAccountInOrder(t, order)
 		for j := 1; j < len(priorities); j++ {
 			require.LessOrEqualf(t, priorities[j-1], priorities[j],
 				"第 %d 轮：优先级 %v 出现倒挂——低优先级账号排到了高优先级前面",
@@ -86,6 +92,43 @@ func TestWorstTierAccountRanksLastButStaysAvailable(t *testing.T) {
 		"优先级 50 是运营明确的最后一档，必须排在最末")
 }
 
+// 分档必须让位于粘性：会话已经绑在低优先级账号上时，它仍要排在最前面。
+// 否则 previous_response 链会被前面整档的账号挤断，用户直接收到错误。
+func TestStickyAccountSurvivesPriorityTiering(t *testing.T) {
+	scheduler := &defaultOpenAIAccountScheduler{}
+
+	req := OpenAIAccountScheduleRequest{
+		SessionHash:             "bound-session",
+		RequestedModel:          "gpt-5.6-sol",
+		StickyWeighted:          true,
+		StickyAccountID:         221,
+		PreviousResponseCanMove: false,
+	}
+	order := scheduler.buildOpenAISelectionOrder(req, openAIAccountLoadPlan{
+		candidates: productionPlusPoolCandidates(),
+		topK:       10,
+	})
+
+	require.Equal(t, int64(221), order[0].account.ID,
+		"已绑定的会话不受分档影响，换号就意味着把用户的会话链打断")
+	require.Len(t, order, 7, "置顶只是移动，不得丢账号")
+}
+
+// previous_response 绑定同样要跨档置顶。
+func TestStickyPreviousResponseAccountSurvivesPriorityTiering(t *testing.T) {
+	scheduler := &defaultOpenAIAccountScheduler{}
+
+	order := scheduler.buildOpenAISelectionOrder(OpenAIAccountScheduleRequest{
+		SessionHash:             "prev-session",
+		RequestedModel:          "gpt-5.6-sol",
+		StickyWeighted:          true,
+		StickyPreviousAccountID: 183,
+		PreviousResponseCanMove: true,
+	}, openAIAccountLoadPlan{candidates: productionPlusPoolCandidates(), topK: 10})
+
+	require.Equal(t, int64(183), order[0].account.ID)
+}
+
 // 同一档位内部不分档，完全交回原有的加权随机——负载均衡在档内照常工作。
 func TestSinglePriorityTierKeepsWeightedRandomBehaviour(t *testing.T) {
 	scheduler := &defaultOpenAIAccountScheduler{}
@@ -106,6 +149,50 @@ func TestSinglePriorityTierKeepsWeightedRandomBehaviour(t *testing.T) {
 	}
 	require.Len(t, seen, 3,
 		"同档位内仍应是加权随机：三个号都要有机会排第一，否则档内负载均衡没了")
+}
+
+// 粘性逃逸已经判定某个号当前不可用（TTFT 差 / 错误率高 / 并发满），分档不得按优先级
+// 把它重新提到最前——否则会话永远卡在坏号上，逃逸判定形同虚设。
+//
+// 这条是加分档时真炸出来的：21101 优先级 0（更好）但已被逃逸，21102 优先级 1。
+func TestEscapedStickyAccountIsDemotedDespiteBetterPriority(t *testing.T) {
+	scheduler := &defaultOpenAIAccountScheduler{}
+	candidates := []openAIAccountCandidateScore{
+		{account: &Account{ID: 21101}, loadInfo: &AccountLoadInfo{}, priority: 0, score: 5},
+		{account: &Account{ID: 21102}, loadInfo: &AccountLoadInfo{}, priority: 1, score: 1},
+	}
+
+	order := scheduler.buildOpenAISelectionOrder(OpenAIAccountScheduleRequest{
+		SessionHash:            "escaped",
+		EscapedStickyAccountID: 21101,
+	}, openAIAccountLoadPlan{candidates: candidates, topK: 10})
+
+	require.Equal(t, int64(21102), order[0].account.ID,
+		"被逃逸的号优先级更好也不能排第一，否则换号换了个寂寞")
+	require.Equal(t, int64(21101), order[len(order)-1].account.ID,
+		"只降级不剔除：后面的号都抢不到槽位时它仍是最后的出路")
+}
+
+// top-K 之外的绑定账号不得借分档复活。
+//
+// 分档给每档各留 topK 名额，合起来比全局 topK 宽；LBTopK=1 时全局只有一个名额，
+// 绑定账号不在其中就应该换号。这条同样是加分档时炸出来的。
+func TestStickyAccountOutsideGlobalTopKIsNotHoisted(t *testing.T) {
+	scheduler := &defaultOpenAIAccountScheduler{}
+	candidates := []openAIAccountCandidateScore{
+		{account: &Account{ID: 37111}, loadInfo: &AccountLoadInfo{}, priority: 100, score: 0},
+		{account: &Account{ID: 37112}, loadInfo: &AccountLoadInfo{}, priority: 0, score: 1},
+	}
+
+	order := scheduler.buildOpenAISelectionOrder(OpenAIAccountScheduleRequest{
+		SessionHash:             "unmovable",
+		StickyWeighted:          true,
+		StickyPreviousAccountID: 37111,
+		PreviousResponseCanMove: true,
+	}, openAIAccountLoadPlan{candidates: candidates, topK: 1})
+
+	require.Equal(t, int64(37112), order[0].account.ID,
+		"全局 top-K 只留一个名额，绑定账号 37111 不在其中，分档不该把它救回来")
 }
 
 func TestSplitOpenAICandidatesByPriorityTier(t *testing.T) {
@@ -137,68 +224,44 @@ func TestSplitOpenAICandidatesByPriorityTier(t *testing.T) {
 	})
 }
 
-// 分档与"粘性不得硬绑"这条既有不变量的调和点。
-//
-// 未绑定的请求严格按档走；一旦会话绑在低优先级档的账号上，那个账号要并入首档
-// 参与竞争——既不被档位排除（否则换号代价被一刀切掉），也不垄断首位（否则就成了
-// 硬绑，违反 StickyWeightedSessionInTopKDoesNotForceStickyFirst）。
-func TestStickyBoundAccountJoinsFirstTierCompetition(t *testing.T) {
-	scheduler := &defaultOpenAIAccountScheduler{}
-	candidates := []openAIAccountCandidateScore{
-		{account: &Account{ID: 37102}, loadInfo: &AccountLoadInfo{}, priority: 0, score: 2},
-		{account: &Account{ID: 37101}, loadInfo: &AccountLoadInfo{}, priority: 100, score: 1},
+func TestHoistOpenAICandidate(t *testing.T) {
+	order := []openAIAccountCandidateScore{
+		{account: &Account{ID: 1}}, {account: &Account{ID: 2}}, {account: &Account{ID: 3}},
 	}
 
-	t.Run("没有绑定时低优先级档必排在后面", func(t *testing.T) {
-		for i := 0; i < 40; i++ {
-			order := scheduler.buildOpenAISelectionOrder(
-				OpenAIAccountScheduleRequest{SessionHash: fmt.Sprintf("free-%d", i)},
-				openAIAccountLoadPlan{candidates: candidates, topK: 2},
-			)
-			require.Equal(t, int64(37102), order[0].account.ID,
-				"第 %d 轮：未绑定流量必须严格按档，优先级 100 的号不该起头", i)
-		}
+	t.Run("提到最前其余保序", func(t *testing.T) {
+		hoisted := hoistOpenAICandidate(order, 3)
+		require.Equal(t, []int64{3, 1, 2},
+			[]int64{hoisted[0].account.ID, hoisted[1].account.ID, hoisted[2].account.ID})
 	})
 
-	t.Run("绑定后两个号都要有机会排第一", func(t *testing.T) {
-		seen := map[int64]int{}
-		for i := 0; i < 64; i++ {
-			order := scheduler.buildOpenAISelectionOrder(OpenAIAccountScheduleRequest{
-				SessionHash:     fmt.Sprintf("bound-%d", i),
-				StickyWeighted:  true,
-				StickyAccountID: 37101,
-			}, openAIAccountLoadPlan{candidates: candidates, topK: 2})
-			require.Len(t, order, 2, "并入首档只是换档，不得丢账号")
-			seen[order[0].account.ID]++
-		}
-		require.Positive(t, seen[37101], "绑定账号必须能参与竞争，否则换号代价被档位一刀切掉")
-		require.Positive(t, seen[37102], "但不得垄断首位，否则粘性就成了硬绑")
+	t.Run("不在序列里就原样返回", func(t *testing.T) {
+		require.Len(t, hoistOpenAICandidate(order, 99), 3)
+		require.Equal(t, int64(1), hoistOpenAICandidate(order, 99)[0].account.ID)
+	})
+
+	t.Run("没有绑定时不动", func(t *testing.T) {
+		require.Equal(t, int64(1), hoistOpenAICandidate(order, 0)[0].account.ID)
 	})
 }
 
-func TestPromoteOpenAIStickyCandidateToFirstTier(t *testing.T) {
-	tiers := [][]openAIAccountCandidateScore{
-		{{account: &Account{ID: 1}, priority: 1}},
-		{{account: &Account{ID: 2}, priority: 2}, {account: &Account{ID: 3}, priority: 2}},
-	}
-	req := OpenAIAccountScheduleRequest{StickyWeighted: true, StickyAccountID: 3}
+func TestOpenAIStickyBoundAccountID(t *testing.T) {
+	pool := productionPlusPoolCandidates()
 
-	promoted := promoteOpenAIStickyCandidateToFirstTier(tiers, req)
-	require.Len(t, promoted[0], 2, "绑定账号应并入首档")
-	require.Equal(t, int64(3), promoted[0][1].account.ID)
-	require.Len(t, promoted[1], 1, "原档位里应移除")
-	require.Equal(t, int64(2), promoted[1][0].account.ID)
-
-	require.Len(t, tiers[0], 1, "不得就地改写入参")
-
-	t.Run("没有绑定时原样返回", func(t *testing.T) {
-		require.Equal(t, tiers,
-			promoteOpenAIStickyCandidateToFirstTier(tiers, OpenAIAccountScheduleRequest{}))
+	t.Run("未启用粘性时不返回绑定", func(t *testing.T) {
+		require.Zero(t, openAIStickyBoundAccountID(
+			OpenAIAccountScheduleRequest{StickyAccountID: 221}, pool))
 	})
 
-	t.Run("绑定账号已在首档时不动", func(t *testing.T) {
-		same := promoteOpenAIStickyCandidateToFirstTier(tiers,
-			OpenAIAccountScheduleRequest{StickyWeighted: true, StickyAccountID: 1})
-		require.Len(t, same[0], 1)
+	t.Run("previous_response 绑定优先于会话绑定", func(t *testing.T) {
+		require.Equal(t, int64(183), openAIStickyBoundAccountID(OpenAIAccountScheduleRequest{
+			StickyWeighted: true, StickyPreviousAccountID: 183, StickyAccountID: 221,
+		}, pool))
+	})
+
+	t.Run("绑定的号不在候选池里就不算数", func(t *testing.T) {
+		require.Zero(t, openAIStickyBoundAccountID(OpenAIAccountScheduleRequest{
+			StickyWeighted: true, StickyAccountID: 999,
+		}, pool))
 	})
 }

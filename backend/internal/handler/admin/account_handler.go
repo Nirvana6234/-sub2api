@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
@@ -64,6 +65,8 @@ type AccountHandler struct {
 	grokImportProber        grokImportProber
 	upstreamBillingProbe    *service.UpstreamBillingProbeService
 	ollamaCloudUsage        *service.OllamaCloudUsageService
+	profileStatistics       *service.AccountProfileStatisticsService
+	cfg                     *config.Config
 }
 
 // SetUpstreamBillingProbeService attaches the optional remote billing probe service.
@@ -128,9 +131,6 @@ type CreateAccountRequest struct {
 	AutoPauseOnExpired      *bool          `json:"auto_pause_on_expired"`
 	ProbeEnabled            *bool          `json:"upstream_billing_probe_enabled"`
 	ConfirmMixedChannelRisk *bool          `json:"confirm_mixed_channel_risk"` // 用户确认混合渠道风险
-	// ContributorUserID is set only when an administrator creates an account
-	// on behalf of a user from shared-account governance.
-	ContributorUserID *int64 `json:"contributor_user_id"`
 }
 
 // UpdateAccountRequest represents update account request
@@ -174,16 +174,6 @@ type BulkUpdateAccountsRequest struct {
 	ConfirmMixedChannelRisk *bool                     `json:"confirm_mixed_channel_risk"` // 用户确认混合渠道风险
 }
 
-type AccountGroupPriorityUpdateRequest struct {
-	AccountID int64 `json:"account_id" binding:"required"`
-	GroupID   int64 `json:"group_id" binding:"required"`
-	Priority  int   `json:"priority"`
-}
-
-type AccountGroupPrioritiesRequest struct {
-	Updates []AccountGroupPriorityUpdateRequest `json:"updates" binding:"required,min=1,max=1000"`
-}
-
 type BulkUpdateAccountFilters struct {
 	Platform    string `json:"platform"`
 	Type        string `json:"type"`
@@ -203,7 +193,8 @@ type CheckMixedChannelRequest struct {
 // AccountWithConcurrency extends Account with real-time concurrency info
 type AccountWithConcurrency struct {
 	*dto.Account
-	CurrentConcurrency int `json:"current_concurrency"`
+	simpleMode         bool `json:"-"`
+	CurrentConcurrency int  `json:"current_concurrency"`
 	// CostRateMultiplier 是该账号的上游成本倍率，按"手工值 > 新鲜探测值 > 列值"取值。
 	// null 表示无人声明过成本（含探测失败而列上只有建表默认 1.0 的情况），消费方
 	// 必须把它当"未知"处理，不得回退 1.0 当成本——那等于凭空按原价计价。
@@ -217,6 +208,128 @@ type AccountWithConcurrency struct {
 	CurrentWindowCost *float64 `json:"current_window_cost,omitempty"` // 当前窗口费用
 	ActiveSessions    *int     `json:"active_sessions,omitempty"`     // 当前活跃会话数
 	CurrentRPM        *int     `json:"current_rpm,omitempty"`         // 当前分钟 RPM 计数
+}
+
+// AccountListItemWithConcurrency is the compact account-list envelope used
+// for lite=1. It embeds dto.AccountListItem instead of the full dto.Account,
+// so groups/account_groups never appear in the list payload.
+type AccountListItemWithConcurrency struct {
+	*dto.AccountListItem
+	CurrentConcurrency int `json:"current_concurrency"`
+	// GroupPriority 必须和完整响应一样带上：账号列表页固定以 lite=1 请求，
+	// 漏掉它就等于把"按分组筛选时显示组内优先级"这个功能整个关掉——前端拿到
+	// undefined 后回退显示 accounts.priority（全局值），于是筛到某个分组时看到的
+	// 数字和 TransitHub 管理的组内优先级对不上，像是同步失败。
+	GroupPriority     *int                         `json:"group_priority,omitempty"`
+	SchedulerScore    *AccountSchedulerScore       `json:"scheduler_score,omitempty"`
+	SchedulerScores   []AccountSchedulerGroupScore `json:"scheduler_scores,omitempty"`
+	CurrentWindowCost *float64                     `json:"current_window_cost,omitempty"`
+	ActiveSessions    *int                         `json:"active_sessions,omitempty"`
+	CurrentRPM        *int                         `json:"current_rpm,omitempty"`
+}
+
+type simpleModeGroupReference struct {
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	Platform string `json:"platform"`
+	Status   string `json:"status"`
+}
+
+type simpleModeAccountGroupReference struct {
+	AccountID int64                     `json:"account_id"`
+	GroupID   int64                     `json:"group_id"`
+	Priority  int                       `json:"priority"`
+	CreatedAt time.Time                 `json:"created_at"`
+	Group     *simpleModeGroupReference `json:"group,omitempty"`
+}
+
+func simpleModeGroupReferenceFromDTO(group *dto.Group) *simpleModeGroupReference {
+	if group == nil {
+		return nil
+	}
+	return &simpleModeGroupReference{ID: group.ID, Name: group.Name, Platform: group.Platform, Status: group.Status}
+}
+
+func simpleModeCompositeGroupIDs(account *dto.Account) map[int64]struct{} {
+	hidden := make(map[int64]struct{})
+	if account == nil {
+		return hidden
+	}
+	for _, group := range account.Groups {
+		if group != nil && group.Platform == service.PlatformComposite {
+			hidden[group.ID] = struct{}{}
+		}
+	}
+	for _, accountGroup := range account.AccountGroups {
+		if accountGroup.Group != nil && accountGroup.Group.Platform == service.PlatformComposite {
+			hidden[accountGroup.GroupID] = struct{}{}
+		}
+	}
+	return hidden
+}
+
+func filterSimpleModeGroupIDs(groupIDs []int64, hidden map[int64]struct{}) []int64 {
+	visible := make([]int64, 0, len(groupIDs))
+	for _, groupID := range groupIDs {
+		if _, ok := hidden[groupID]; !ok {
+			visible = append(visible, groupID)
+		}
+	}
+	return visible
+}
+
+func simpleModeCompositeServiceGroupIDs(account *service.Account) map[int64]struct{} {
+	hidden := make(map[int64]struct{})
+	if account == nil {
+		return hidden
+	}
+	for _, group := range account.Groups {
+		if group != nil && group.Platform == service.PlatformComposite {
+			hidden[group.ID] = struct{}{}
+		}
+	}
+	for _, accountGroup := range account.AccountGroups {
+		if accountGroup.Group != nil && accountGroup.Group.Platform == service.PlatformComposite {
+			hidden[accountGroup.GroupID] = struct{}{}
+		}
+	}
+	return hidden
+}
+
+func (a AccountWithConcurrency) MarshalJSON() ([]byte, error) {
+	type alias AccountWithConcurrency
+	if !a.simpleMode || a.Account == nil {
+		return json.Marshal(alias(a))
+	}
+	groups := make([]simpleModeGroupReference, 0, len(a.Groups))
+	compositeIDs := simpleModeCompositeGroupIDs(a.Account)
+	for _, group := range a.Groups {
+		if group != nil && group.Platform == service.PlatformComposite {
+			continue
+		}
+		if ref := simpleModeGroupReferenceFromDTO(group); ref != nil {
+			groups = append(groups, *ref)
+		}
+	}
+	accountGroups := make([]simpleModeAccountGroupReference, 0, len(a.AccountGroups))
+	for _, accountGroup := range a.AccountGroups {
+		if accountGroup.Group != nil && accountGroup.Group.Platform == service.PlatformComposite {
+			continue
+		}
+		if _, hidden := compositeIDs[accountGroup.GroupID]; hidden {
+			continue
+		}
+		accountGroups = append(accountGroups, simpleModeAccountGroupReference{
+			AccountID: accountGroup.AccountID, GroupID: accountGroup.GroupID, Priority: accountGroup.Priority,
+			CreatedAt: accountGroup.CreatedAt, Group: simpleModeGroupReferenceFromDTO(accountGroup.Group),
+		})
+	}
+	return json.Marshal(struct {
+		alias
+		GroupIDs      []int64                           `json:"group_ids,omitempty"`
+		Groups        []simpleModeGroupReference        `json:"groups"`
+		AccountGroups []simpleModeAccountGroupReference `json:"account_groups"`
+	}{alias: alias(a), GroupIDs: filterSimpleModeGroupIDs(a.GroupIDs, compositeIDs), Groups: groups, AccountGroups: accountGroups})
 }
 
 type AccountSchedulerScore struct {
@@ -243,22 +356,30 @@ func (h *AccountHandler) accountResponseFromService(account *service.Account) *d
 	return out
 }
 
-// accountCostRateFields 解析账号成本倍率及其来源。所有响应构造路径共用此处，
-// 避免某条路径漏填导致同一账号在不同接口显示不同成本。
-func accountCostRateFields(account *service.Account) (*float64, string) {
-	return service.AccountCostRateMultiplierWithSource(account, timezone.Now())
+func (h *AccountHandler) accountListResponseFromService(account *service.Account) *dto.Account {
+	out := dto.AccountFromServiceShallow(account)
+	if out != nil && account != nil {
+		out.Proxy = dto.ProxyFromService(account.Proxy)
+	}
+	if h != nil && h.ollamaCloudUsage != nil && out != nil {
+		h.ollamaCloudUsage.EnrichState(out.OllamaCloudUsage)
+	}
+	return out
+}
+
+func (h *AccountHandler) isSimpleMode() bool {
+	return h != nil && h.cfg != nil && h.cfg.RunMode == config.RunModeSimple
 }
 
 func (h *AccountHandler) buildAccountResponseWithRuntime(ctx context.Context, account *service.Account) AccountWithConcurrency {
 	item := AccountWithConcurrency{
 		Account:            h.accountResponseFromService(account),
+		simpleMode:         h.isSimpleMode(),
 		CurrentConcurrency: 0,
-		CostRateSource:     service.AccountCostRateSourceNone,
 	}
 	if account == nil {
 		return item
 	}
-	item.CostRateMultiplier, item.CostRateSource = accountCostRateFields(account)
 
 	if h.concurrencyService != nil {
 		if counts, err := h.concurrencyService.GetAccountConcurrencyBatch(ctx, []int64{account.ID}); err == nil {
@@ -545,7 +666,6 @@ func (h *AccountHandler) List(c *gin.Context) {
 	includeSchedulerScore := parseBoolQueryWithDefault(c.Query("include_scheduler_score"), false)
 
 	var groupID int64
-	groupFilterRequested := false
 	if groupIDStr := c.Query("group"); groupIDStr != "" {
 		if groupIDStr == accountListGroupUngroupedQueryValue {
 			groupID = service.AccountListGroupUngrouped
@@ -560,7 +680,6 @@ func (h *AccountHandler) List(c *gin.Context) {
 				return
 			}
 			groupID = parsedGroupID
-			groupFilterRequested = true
 		}
 	}
 
@@ -686,18 +805,35 @@ func (h *AccountHandler) List(c *gin.Context) {
 	result := make([]AccountWithConcurrency, len(accounts))
 	for i := range accounts {
 		acc := &accounts[i]
+		accountResponse := h.accountResponseFromService(acc)
+		if lite {
+			accountResponse = h.accountListResponseFromService(acc)
+			if h.isSimpleMode() {
+				accountResponse.GroupIDs = filterSimpleModeGroupIDs(accountResponse.GroupIDs, simpleModeCompositeServiceGroupIDs(acc))
+			}
+		}
 		item := AccountWithConcurrency{
-			Account:            h.accountResponseFromService(acc),
+			Account:            accountResponse,
+			simpleMode:         h.isSimpleMode(),
 			CurrentConcurrency: concurrencyCounts[acc.ID],
 			SchedulerScore:     schedulerScores[acc.ID],
 			SchedulerScores:    schedulerGroupScores[acc.ID],
 		}
-		item.CostRateMultiplier, item.CostRateSource = accountCostRateFields(acc)
-		if groupFilterRequested {
-			for _, accountGroup := range acc.AccountGroups {
-				if accountGroup.GroupID == groupID {
-					priority := accountGroup.Priority
-					item.GroupPriority = &priority
+
+		// 按分组筛选时补上该账号在这个分组内的排位（account_groups.priority）。
+		//
+		// 调度取号排的是组内优先级，TransitHub 的健康降级回写的也是它；而账号自身的
+		// accounts.priority 是跨分组的全局值，两者同名但不是一回事。列表页此前只给
+		// 全局值，于是筛到某个分组时看到的数字和 TransitHub 对不上，像是同步失败。
+		//
+		// 只在筛了分组时返回：账号可以同时属于多个分组，各组排位不同（生产上 #221
+		// 在三个组里分别是 3 / 10000 / 10000），没有唯一的"组内优先级"可言。
+		// 数据来自账号已加载的 AccountGroups，不额外查库。
+		if groupID > 0 {
+			for i := range acc.AccountGroups {
+				if acc.AccountGroups[i].GroupID == groupID {
+					groupPriority := acc.AccountGroups[i].Priority
+					item.GroupPriority = &groupPriority
 					break
 				}
 			}
@@ -729,7 +865,35 @@ func (h *AccountHandler) List(c *gin.Context) {
 
 	h.enrichShadowParents(c.Request.Context(), result)
 
-	etag := buildAccountsListETag(result, total, page, pageSize, platform, accountType, status, search, lite)
+	if lite {
+		compact := make([]AccountListItemWithConcurrency, len(result))
+		for i := range result {
+			item := result[i]
+			compact[i] = AccountListItemWithConcurrency{
+				AccountListItem:    dto.AccountListItemFromAccount(item.Account),
+				CurrentConcurrency: item.CurrentConcurrency,
+				GroupPriority:      item.GroupPriority,
+				SchedulerScore:     item.SchedulerScore,
+				SchedulerScores:    item.SchedulerScores,
+				CurrentWindowCost:  item.CurrentWindowCost,
+				ActiveSessions:     item.ActiveSessions,
+				CurrentRPM:         item.CurrentRPM,
+			}
+		}
+		etag := buildAccountsListETag(compact, total, page, pageSize, platform, accountType, status, search, groupID, true)
+		if etag != "" {
+			c.Header("ETag", etag)
+			c.Header("Vary", "If-None-Match")
+			if ifNoneMatchMatched(c.GetHeader("If-None-Match"), etag) {
+				c.Status(http.StatusNotModified)
+				return
+			}
+		}
+		response.Paginated(c, compact, total, page, pageSize)
+		return
+	}
+
+	etag := buildAccountsListETag(result, total, page, pageSize, platform, accountType, status, search, groupID, false)
 	if etag != "" {
 		c.Header("ETag", etag)
 		c.Header("Vary", "If-None-Match")
@@ -742,23 +906,28 @@ func (h *AccountHandler) List(c *gin.Context) {
 	response.Paginated(c, result, total, page, pageSize)
 }
 
-func buildAccountsListETag(
-	items []AccountWithConcurrency,
+// groupID 必须参与 ETag：列表内容随分组筛选而变（组内优先级就是按它取的），
+// 不纳入的话，同一批账号在不同分组下会算出同一个 ETag，客户端可能收到 304
+// 而继续沿用另一个分组的旧数据。
+func buildAccountsListETag[T any](
+	items []T,
 	total int64,
 	page, pageSize int,
 	platform, accountType, status, search string,
+	groupID int64,
 	lite bool,
 ) string {
 	payload := struct {
-		Total       int64                    `json:"total"`
-		Page        int                      `json:"page"`
-		PageSize    int                      `json:"page_size"`
-		Platform    string                   `json:"platform"`
-		AccountType string                   `json:"type"`
-		Status      string                   `json:"status"`
-		Search      string                   `json:"search"`
-		Lite        bool                     `json:"lite"`
-		Items       []AccountWithConcurrency `json:"items"`
+		Total       int64  `json:"total"`
+		Page        int    `json:"page"`
+		PageSize    int    `json:"page_size"`
+		Platform    string `json:"platform"`
+		AccountType string `json:"type"`
+		Status      string `json:"status"`
+		Search      string `json:"search"`
+		GroupID     int64  `json:"group_id"`
+		Lite        bool   `json:"lite"`
+		Items       []T    `json:"items"`
 	}{
 		Total:       total,
 		Page:        page,
@@ -767,6 +936,7 @@ func buildAccountsListETag(
 		AccountType: accountType,
 		Status:      status,
 		Search:      search,
+		GroupID:     groupID,
 		Lite:        lite,
 		Items:       items,
 	}
@@ -881,17 +1051,12 @@ func (h *AccountHandler) Create(c *gin.Context) {
 		response.BadRequest(c, "rate_multiplier must be >= 0")
 		return
 	}
-	ctx := c.Request.Context()
-	extra, err := h.prepareManagedContributionCreate(ctx, req.ContributorUserID, req.Platform, req.Type, req.GroupIDs, req.Extra)
-	if err != nil {
+	// base_rpm 输入校验：负值归零，超过 10000 截断
+	sanitizeExtraBaseRPM(req.Extra)
+	if err := service.ValidateUpstreamRequestIDHeaderExtra(req.Extra); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
-	if req.ContributorUserID != nil {
-		ctx = contributionGovernanceContext(ctx)
-	}
-	// base_rpm 输入校验：负值归零，超过 10000 截断
-	sanitizeExtraBaseRPM(extra)
 
 	// 确定是否跳过混合渠道检查
 	skipCheck := req.ConfirmMixedChannelRisk != nil && *req.ConfirmMixedChannelRisk
@@ -900,14 +1065,14 @@ func (h *AccountHandler) Create(c *gin.Context) {
 	// 幂等重放时闭包不会执行 → createdAccount 为 nil → 不重复调度。
 	var createdAccount *service.Account
 
-	result, err := executeAdminIdempotent(c, "admin.accounts.create", req, service.DefaultWriteIdempotencyTTL(), func(_ context.Context) (any, error) {
+	result, err := executeAdminIdempotent(c, "admin.accounts.create", req, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
 		account, execErr := h.adminService.CreateAccount(ctx, &service.CreateAccountInput{
 			Name:                  req.Name,
 			Notes:                 req.Notes,
 			Platform:              req.Platform,
 			Type:                  req.Type,
 			Credentials:           req.Credentials,
-			Extra:                 extra,
+			Extra:                 req.Extra,
 			ProxyID:               req.ProxyID,
 			Concurrency:           req.Concurrency,
 			Priority:              req.Priority,
@@ -916,7 +1081,6 @@ func (h *AccountHandler) Create(c *gin.Context) {
 			GroupIDs:              req.GroupIDs,
 			ExpiresAt:             req.ExpiresAt,
 			AutoPauseOnExpired:    req.AutoPauseOnExpired,
-			SkipDefaultGroupBind:  req.ContributorUserID != nil,
 			ProbeEnabled:          req.ProbeEnabled,
 			SkipMixedChannelCheck: skipCheck,
 		})
@@ -1026,6 +1190,10 @@ func (h *AccountHandler) Update(c *gin.Context) {
 	}
 	// base_rpm 输入校验：负值归零，超过 10000 截断
 	sanitizeExtraBaseRPM(req.Extra)
+	if err := service.ValidateUpstreamRequestIDHeaderExtra(req.Extra); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 
 	// 确定是否跳过混合渠道检查
 	skipCheck := req.ConfirmMixedChannelRisk != nil && *req.ConfirmMixedChannelRisk
@@ -1422,6 +1590,7 @@ func (h *AccountHandler) Refresh(c *gin.Context) {
 
 	if warning == "missing_project_id_temporary" {
 		response.Success(c, gin.H{
+			"account": h.buildAccountResponseWithRuntime(c.Request.Context(), updatedAccount),
 			"message": "Token refreshed successfully, but project_id could not be retrieved (will retry automatically)",
 			"warning": "missing_project_id_temporary",
 		})
@@ -1477,6 +1646,10 @@ func (h *AccountHandler) ApplyOAuthCredentials(c *gin.Context) {
 		return
 	}
 	if err := service.ValidateOpenAILongContextBillingExtra(existing.Platform, req.Extra); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if err := service.ValidateUpstreamRequestIDHeaderExtra(req.Extra); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
@@ -1594,47 +1767,6 @@ func (h *AccountHandler) ClearError(c *gin.Context) {
 
 	// 清除错误后，同时清除 token 缓存，确保下次请求会获取最新的 token（触发刷新或从 DB 读取）
 	// 这解决了管理员重置账号状态后，旧的失效 token 仍在缓存中导致立即再次 401 的问题
-	if h.tokenCacheInvalidator != nil && account.IsOAuth() {
-		if invalidateErr := h.tokenCacheInvalidator.InvalidateToken(c.Request.Context(), account); invalidateErr != nil {
-			log.Printf("[WARN] Failed to invalidate token cache for account %d: %v", accountID, invalidateErr)
-		}
-	}
-
-	response.Success(c, h.buildAccountResponseWithRuntime(c.Request.Context(), account))
-}
-
-// RecoverSchedulabilityRequest 是自动停用账号恢复请求体。
-// ExpectedChangedAt 可选：带上时，Sub2API 会在条件更新里校验它与入队时观测值一致，
-// 从而拒绝探测期间管理员已改动过状态的迟到恢复请求。
-type RecoverSchedulabilityRequest struct {
-	ExpectedChangedAt *time.Time `json:"expected_changed_at"`
-}
-
-// RecoverSchedulability 只恢复来源为 automatic 的系统自动停用账号。
-// POST /api/v1/admin/accounts/:id/recover-schedulability
-//
-// 与 /clear-error 的区别：本接口是数据库 compare-and-set，条件不满足直接返回 409，
-// 绝不覆盖管理员的 manual 决定。TransitHub 的恢复检查只能走这个入口。
-func (h *AccountHandler) RecoverSchedulability(c *gin.Context) {
-	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
-	if err != nil {
-		response.BadRequest(c, "Invalid account ID")
-		return
-	}
-
-	var req RecoverSchedulabilityRequest
-	// 请求体可以为空（不做 changed_at 校验），因此绑定失败不视为错误。
-	if c.Request.Body != nil {
-		_ = c.ShouldBindJSON(&req)
-	}
-
-	account, err := h.adminService.RecoverAccountSchedulability(c.Request.Context(), accountID, req.ExpectedChangedAt)
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-
-	// 与 ClearError 一致：恢复后失效 token 缓存，避免旧的失效 token 立刻再次 401。
 	if h.tokenCacheInvalidator != nil && account.IsOAuth() {
 		if invalidateErr := h.tokenCacheInvalidator.InvalidateToken(c.Request.Context(), account); invalidateErr != nil {
 			log.Printf("[WARN] Failed to invalidate token cache for account %d: %v", accountID, invalidateErr)
@@ -1796,6 +1928,60 @@ func (h *AccountHandler) BatchDelete(c *gin.Context) {
 
 // BatchClearError handles batch clearing account errors
 // POST /api/v1/admin/accounts/batch-clear-error
+// UpdateGroupPriorities 批量设置账号在分组内的调度优先级。
+// POST /api/v1/admin/accounts/group-priorities
+//
+// 该接口是 TransitHub 连接健康探活的回写入口：它按健康度/倍率算出组内排序后，
+// 通过这里落到 account_groups.priority。契约（字段名与 updates 包裹）由 TransitHub
+// 的 sub2APIAccountGroupPriorityRequest 决定，改动需与其对齐，否则它会因为响应
+// 解析失败而重试不止。
+func (h *AccountHandler) UpdateGroupPriorities(c *gin.Context) {
+	var req struct {
+		Updates []struct {
+			AccountID int64 `json:"account_id"`
+			GroupID   int64 `json:"group_id"`
+			Priority  int   `json:"priority"`
+		} `json:"updates"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	if len(req.Updates) == 0 {
+		response.BadRequest(c, "updates is required")
+		return
+	}
+	const maxGroupPriorityUpdates = 500
+	if len(req.Updates) > maxGroupPriorityUpdates {
+		response.BadRequest(c, fmt.Sprintf("updates length must be <= %d", maxGroupPriorityUpdates))
+		return
+	}
+
+	updates := make([]service.AccountGroupPriorityUpdate, 0, len(req.Updates))
+	for _, item := range req.Updates {
+		if item.AccountID <= 0 || item.GroupID <= 0 {
+			response.BadRequest(c, "account_id and group_id must be positive")
+			return
+		}
+		if item.Priority < 0 {
+			response.BadRequest(c, "priority must be >= 0")
+			return
+		}
+		updates = append(updates, service.AccountGroupPriorityUpdate{
+			AccountID: item.AccountID,
+			GroupID:   item.GroupID,
+			Priority:  item.Priority,
+		})
+	}
+
+	updated, err := h.adminService.UpdateAccountGroupPriorities(c.Request.Context(), updates)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"updated": updated, "requested": len(updates)})
+}
+
 func (h *AccountHandler) BatchClearError(c *gin.Context) {
 	var req struct {
 		AccountIDs []int64 `json:"account_ids"`
@@ -1972,6 +2158,14 @@ func (h *AccountHandler) BatchCreate(c *gin.Context) {
 			return
 		}
 	}
+	groupIDs := make([]int64, 0)
+	for _, item := range req.Accounts {
+		groupIDs = append(groupIDs, item.GroupIDs...)
+	}
+	if err := h.adminService.ValidateAccountGroupBindings(c.Request.Context(), groupIDs); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 
 	executeAdminIdempotentJSON(c, "admin.accounts.batch_create", req, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
 		success := 0
@@ -1994,6 +2188,15 @@ func (h *AccountHandler) BatchCreate(c *gin.Context) {
 
 			// base_rpm 输入校验：负值归零，超过 10000 截断
 			sanitizeExtraBaseRPM(item.Extra)
+			if err := service.ValidateUpstreamRequestIDHeaderExtra(item.Extra); err != nil {
+				failed++
+				results = append(results, gin.H{
+					"name":    item.Name,
+					"success": false,
+					"error":   err.Error(),
+				})
+				continue
+			}
 
 			skipCheck := item.ConfirmMixedChannelRisk != nil && *item.ConfirmMixedChannelRisk
 
@@ -2188,6 +2391,10 @@ func (h *AccountHandler) BulkUpdate(c *gin.Context) {
 	}
 	// base_rpm 输入校验：负值归零，超过 10000 截断
 	sanitizeExtraBaseRPM(req.Extra)
+	if err := service.ValidateUpstreamRequestIDHeaderExtra(req.Extra); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 
 	// 确定是否跳过混合渠道检查
 	skipCheck := req.ConfirmMixedChannelRisk != nil && *req.ConfirmMixedChannelRisk
@@ -2247,34 +2454,6 @@ func (h *AccountHandler) BulkUpdate(c *gin.Context) {
 	}
 
 	response.Success(c, result)
-}
-
-// UpdateGroupPriorities updates per-group scheduler priorities without
-// changing the accounts.priority field.
-func (h *AccountHandler) UpdateGroupPriorities(c *gin.Context) {
-	var req AccountGroupPrioritiesRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
-		return
-	}
-	updater, ok := h.adminService.(service.AccountGroupPriorityUpdater)
-	if !ok {
-		response.ErrorFrom(c, infraerrors.InternalServer("ACCOUNT_GROUP_PRIORITY_UNSUPPORTED", "account group priority updates are unavailable"))
-		return
-	}
-	updates := make([]service.AccountGroupPriorityUpdate, 0, len(req.Updates))
-	for _, update := range req.Updates {
-		updates = append(updates, service.AccountGroupPriorityUpdate{
-			AccountID: update.AccountID,
-			GroupID:   update.GroupID,
-			Priority:  update.Priority,
-		})
-	}
-	if err := updater.UpdateAccountGroupPriorities(c.Request.Context(), updates); err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-	response.Success(c, gin.H{"updated": len(updates)})
 }
 
 func toServiceBulkUpdateAccountFilters(filters *BulkUpdateAccountFilters) *service.BulkUpdateAccountFilters {
@@ -2593,13 +2772,6 @@ func (h *AccountHandler) GetBatchTodayStats(c *gin.Context) {
 		response.Success(c, gin.H{"stats": map[string]any{}})
 		return
 	}
-	// This endpoint accepts IDs in the request body, so it does not pass
-	// through the :id route guard. Validate the entire batch before consulting
-	// the cache to keep contributed-account usage out of the admin surface.
-	if _, err := h.adminService.GetAccountsByIDs(c.Request.Context(), accountIDs); err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
 
 	cacheKey := buildAccountTodayStatsBatchCacheKey(accountIDs)
 	if cached, ok := accountTodayStatsBatchCache.Get(cacheKey); ok {
@@ -2708,6 +2880,14 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 
 	// Handle OpenAI accounts
 	if account.IsOpenAI() {
+		// Prefer the shared, account-keyed upstream catalog. If discovery fails,
+		// retain the legacy local catalog below so the test dialog remains usable.
+		if h.accountTestService != nil {
+			if models, fetchErr := h.accountTestService.FetchOpenAIAccountModels(c.Request.Context(), account); fetchErr == nil {
+				response.Success(c, models)
+				return
+			}
+		}
 		// OpenAI 自动透传会绕过常规模型改写，测试/模型列表也应回落到默认模型集。
 		if account.IsOpenAIPassthroughEnabled() {
 			response.Success(c, openai.DefaultModels)

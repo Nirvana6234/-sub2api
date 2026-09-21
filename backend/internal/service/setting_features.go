@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -375,6 +376,74 @@ func (s *SettingService) GetSiteName(ctx context.Context) string {
 	return value
 }
 
+// GetRechargeBlockedUserIDs 返回被禁止充值的用户 ID 列表。
+//
+// 取值失败、未配置或格式非法时一律返回空列表——充值是正常业务，配置读不出来
+// 时不能把所有人都挡在外面，宁可放行后由管理员发现名单失效。
+func (s *SettingService) GetRechargeBlockedUserIDs(ctx context.Context) []int64 {
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyRechargeBlockedUserIDs)
+	if err != nil || strings.TrimSpace(value) == "" {
+		return nil
+	}
+	var ids []int64
+	if err := json.Unmarshal([]byte(value), &ids); err != nil {
+		return nil
+	}
+	return ids
+}
+
+// IsRechargeBlockedUser 报告该用户是否被禁止充值。
+func (s *SettingService) IsRechargeBlockedUser(ctx context.Context, userID int64) bool {
+	if s == nil || userID <= 0 {
+		return false
+	}
+	for _, id := range s.GetRechargeBlockedUserIDs(ctx) {
+		if id == userID {
+			return true
+		}
+	}
+	return false
+}
+
+// SetUserRechargeBlocked 把用户加入或移出充值黑名单，幂等。
+//
+// 实现是"读—改—写"：黑名单存成一个 JSON 数组，没法在 KV 上做原子的
+// 元素增删。并发写存在后写覆盖先写的理论窗口，这里不加锁——该操作只发生在
+// 管理员手动编辑用户时，频率极低，且两个管理员同时改同一份名单本身就需要人工
+// 对齐；为此引入分布式锁得不偿失。写入后立即回读校验，真被覆盖也能在日志里看出来。
+func (s *SettingService) SetUserRechargeBlocked(ctx context.Context, userID int64, blocked bool) error {
+	if s == nil || userID <= 0 {
+		return nil
+	}
+	current := s.GetRechargeBlockedUserIDs(ctx)
+
+	next := make([]int64, 0, len(current)+1)
+	seen := make(map[int64]struct{}, len(current)+1)
+	for _, id := range current {
+		if id <= 0 || id == userID {
+			continue // 顺带清掉非法值，并先摘掉目标以便后面按需重新加入
+		}
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		next = append(next, id)
+	}
+	if blocked {
+		next = append(next, userID)
+	}
+	sort.Slice(next, func(i, j int) bool { return next[i] < next[j] })
+
+	encoded, err := json.Marshal(next)
+	if err != nil {
+		return fmt.Errorf("encode recharge blocklist: %w", err)
+	}
+	if err := s.settingRepo.Set(ctx, SettingKeyRechargeBlockedUserIDs, string(encoded)); err != nil {
+		return fmt.Errorf("save recharge blocklist: %w", err)
+	}
+	return nil
+}
+
 // GetDefaultConcurrency 获取默认并发量
 func (s *SettingService) GetDefaultConcurrency(ctx context.Context) int {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyDefaultConcurrency)
@@ -698,18 +767,6 @@ func (s *SettingService) GetAdminAPIKey(ctx context.Context) (string, error) {
 		return "", err // 数据库错误
 	}
 	return key, nil
-}
-
-// GetHeadroomBaseURL 获取 headroom 压缩代理的内网地址，未配置返回空字符串。
-func (s *SettingService) GetHeadroomBaseURL(ctx context.Context) (string, error) {
-	value, err := s.settingRepo.GetValue(ctx, SettingKeyHeadroomBaseURL)
-	if err != nil {
-		if errors.Is(err, ErrSettingNotFound) {
-			return "", nil
-		}
-		return "", err
-	}
-	return strings.TrimSpace(value), nil
 }
 
 // DeleteAdminAPIKey 删除管理员 API Key
@@ -1108,6 +1165,7 @@ func (s *SettingService) SetOpenAIFastPolicySettings(ctx context.Context, settin
 	}
 	validTiers := map[string]bool{
 		OpenAIFastTierAny: true, OpenAIFastTierPriority: true, OpenAIFastTierFlex: true,
+		OpenAIFastTierUltrafast: true, OpenAIFastTierMissing: true,
 	}
 
 	for i, rule := range settings.Rules {

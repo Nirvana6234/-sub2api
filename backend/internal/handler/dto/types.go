@@ -32,10 +32,9 @@ type User struct {
 	TotalRecharged             float64            `json:"total_recharged"`
 
 	// RPMLimit 用户级每分钟请求数上限（0 = 不限制），仅在所用分组未设置 rpm_limit 时作为兜底生效。
-	RPMLimit                   int  `json:"rpm_limit"`
-	AccountManagementEnabled   bool `json:"account_management_enabled"`
-	ContributionRoomsEnabled   bool `json:"contribution_rooms_enabled"`
-	HeadroomCompressionEnabled bool `json:"headroom_compression_enabled"`
+	RPMLimit                 int  `json:"rpm_limit"`
+	AccountManagementEnabled bool `json:"account_management_enabled"`
+	ContributionRoomsEnabled bool `json:"contribution_rooms_enabled"`
 
 	APIKeys       []APIKey           `json:"api_keys,omitempty"`
 	Subscriptions []UserSubscription `json:"subscriptions,omitempty"`
@@ -105,8 +104,8 @@ type Group struct {
 	Description           string  `json:"description"`
 	Platform              string  `json:"platform"`
 	RateMultiplier        float64 `json:"rate_multiplier"`
-	AllowContributionPool bool    `json:"allow_contribution_pool"`
 	IsExclusive           bool    `json:"is_exclusive"`
+	AllowContributionPool bool    `json:"allow_contribution_pool"`
 	Status                string  `json:"status"`
 
 	SubscriptionType          string   `json:"subscription_type"`
@@ -145,15 +144,15 @@ type Group struct {
 	AudioSttPricePerHour         *float64 `json:"audio_stt_price_per_hour"`
 
 	// Claude Code 客户端限制
-	ClaudeCodeOnly bool `json:"claude_code_only"`
-	// KiroCompat enables Codex-specific compatibility handling for this group.
-	KiroCompat       bool    `json:"kiro_compat"`
+	ClaudeCodeOnly   bool    `json:"claude_code_only"`
 	FallbackGroupID  *int64  `json:"fallback_group_id"`
 	FallbackGroupIDs []int64 `json:"fallback_group_ids"`
-	// IsFallbackPool marks this group as a fallback-only account pool.
-	IsFallbackPool bool `json:"is_fallback_pool"`
 	// 无效请求兜底分组
 	FallbackGroupIDOnInvalidRequest *int64 `json:"fallback_group_id_on_invalid_request"`
+	// 是否为兜底账号池：由其他分组通过 fallback_group_id 指定，用户不可直接选择
+	IsFallbackPool bool `json:"is_fallback_pool"`
+	// 是否使用 Kiro 的 Codex 兼容处理
+	KiroCompat bool `json:"kiro_compat"`
 
 	// OpenAI Messages 调度开关（用户侧需要此字段判断是否展示 Claude Code 教程）
 	AllowMessagesDispatch bool `json:"allow_messages_dispatch"`
@@ -166,11 +165,11 @@ type Group struct {
 
 	// RPMLimit 分组级每分钟请求数上限（0 = 不限制），设置后覆盖用户级 rpm_limit。
 	RPMLimit int `json:"rpm_limit"`
-	// MaxReasoningEffort OpenAI/Codex 请求的推理强度上限，空字符串表示不限制。
+	// MaxReasoningEffort Anthropic/OpenAI 请求的推理强度上限，空字符串表示不限制。
 	MaxReasoningEffort string `json:"max_reasoning_effort"`
 	// MaxReasoningEffortOverLimit 超过上限时的访问控制：downgrade（默认）或 deny。
 	MaxReasoningEffortOverLimit string `json:"max_reasoning_effort_over_limit"`
-	// ReasoningEffortMappings OpenAI/Codex 推理强度映射，可按模型精确名、前缀或后缀限定。
+	// ReasoningEffortMappings Anthropic/OpenAI 推理强度映射，可按模型精确名、前缀或后缀限定。
 	ReasoningEffortMappings []domain.ReasoningEffortMapping `json:"reasoning_effort_mappings"`
 
 	CreatedAt time.Time `json:"created_at"`
@@ -204,7 +203,9 @@ type AdminGroup struct {
 	// OpenAI Messages 调度配置（仅 openai 平台使用）
 	DefaultMappedModel          string                                   `json:"default_mapped_model"`
 	MessagesDispatchModelConfig domain.OpenAIMessagesDispatchModelConfig `json:"messages_dispatch_model_config"`
-	ModelsListConfig            domain.GroupModelsListConfig             `json:"models_list_config"`
+	ModelAllowlist              service.GroupModelAllowlist              `json:"model_allowlist"`
+	// 固定账号获取 Codex Model Manifest 配置（仅 openai 平台使用）。
+	CodexModelsManifestConfig domain.GroupCodexModelsManifestConfig `json:"codex_models_manifest_config"`
 
 	// 支持的模型系列（仅 antigravity 平台使用）
 	SupportedModelScopes    []string       `json:"supported_model_scopes"`
@@ -236,26 +237,15 @@ type Account struct {
 	LoadFactor              *int                           `json:"load_factor,omitempty"`
 	Priority                int                            `json:"priority"`
 	RateMultiplier          float64                        `json:"rate_multiplier"`
-	// RateMultiplierUndeclared 表示 rate_multiplier 只是建表默认值、从没有人
-	// 声明过该账号的上游成本。启用利润控制的分组据此放行并告警，而不是把默认值
-	// 当成成本声明去否决账号；后台需要能把这些账号显式标出来催运营补填。
-	RateMultiplierUndeclared bool       `json:"rate_multiplier_undeclared"`
-	Status                   string     `json:"status"`
-	ErrorMessage             string     `json:"error_message"`
-	LastUsedAt               *time.Time `json:"last_used_at"`
-	ExpiresAt                *int64     `json:"expires_at"`
-	AutoPauseOnExpired       bool       `json:"auto_pause_on_expired"`
-	CreatedAt                time.Time  `json:"created_at"`
-	UpdatedAt                time.Time  `json:"updated_at"`
+	Status                  string                         `json:"status"`
+	ErrorMessage            string                         `json:"error_message"`
+	LastUsedAt              *time.Time                     `json:"last_used_at"`
+	ExpiresAt               *int64                         `json:"expires_at"`
+	AutoPauseOnExpired      bool                           `json:"auto_pause_on_expired"`
+	CreatedAt               time.Time                      `json:"created_at"`
+	UpdatedAt               time.Time                      `json:"updated_at"`
 
 	Schedulable bool `json:"schedulable"`
-
-	// SchedulabilitySource 是外部消费方（如 TransitHub）区分「管理员手动关闭」与
-	// 「系统自动停用」的唯一权威依据：manual / automatic / none。
-	// 消费方必须失败关闭：取值缺失、未知或非法时不得探测、不得恢复、不得推断。
-	SchedulabilitySource    string     `json:"schedulability_source"`
-	SchedulabilityReason    string     `json:"schedulability_reason,omitempty"`
-	SchedulabilityChangedAt *time.Time `json:"schedulability_changed_at,omitempty"`
 
 	RateLimitedAt    *time.Time `json:"rate_limited_at"`
 	RateLimitResetAt *time.Time `json:"rate_limit_reset_at"`
@@ -304,9 +294,6 @@ type Account struct {
 	CustomBaseURLEnabled *bool   `json:"custom_base_url_enabled,omitempty"`
 	CustomBaseURL        *string `json:"custom_base_url,omitempty"`
 
-	// 自定义出站请求头（任意账号可用，用于接入 Headroom 等本地中转层）
-	CustomHeaders *map[string]string `json:"custom_headers,omitempty"`
-
 	// API Key 账号配额限制
 	QuotaLimit       *float64 `json:"quota_limit,omitempty"`
 	QuotaUsed        *float64 `json:"quota_used,omitempty"`
@@ -349,6 +336,102 @@ type Account struct {
 
 	GroupIDs []int64  `json:"group_ids,omitempty"`
 	Groups   []*Group `json:"groups,omitempty"`
+}
+
+// AccountListItem is the compact representation returned by the admin account
+// list when the lite query parameter is enabled. It contains the fields used
+// by the account table and runtime indicators, but intentionally omits the
+// repeated account_groups and groups object graphs. Fetch /admin/accounts/:id
+// for the complete Account DTO when editing or inspecting an account.
+type AccountListItem struct {
+	ID       int64   `json:"id"`
+	Name     string  `json:"name"`
+	Notes    *string `json:"notes"`
+	Platform string  `json:"platform"`
+	Type     string  `json:"type"`
+
+	Credentials       map[string]any                 `json:"credentials,omitempty"`
+	CredentialsStatus map[string]bool                `json:"credentials_status,omitempty"`
+	Extra             map[string]any                 `json:"extra,omitempty"`
+	OllamaCloudUsage  *service.OllamaCloudUsageState `json:"ollama_cloud_usage,omitempty"`
+
+	ProxyID                 *int64     `json:"proxy_id"`
+	ProxyFallbackOriginID   *int64     `json:"proxy_fallback_origin_id"`
+	ProxyFallbackOriginName *string    `json:"proxy_fallback_origin_name,omitempty"`
+	Concurrency             int        `json:"concurrency"`
+	LoadFactor              *int       `json:"load_factor,omitempty"`
+	Priority                int        `json:"priority"`
+	RateMultiplier          float64    `json:"rate_multiplier"`
+	Status                  string     `json:"status"`
+	ErrorMessage            string     `json:"error_message"`
+	LastUsedAt              *time.Time `json:"last_used_at"`
+	ExpiresAt               *int64     `json:"expires_at"`
+	AutoPauseOnExpired      bool       `json:"auto_pause_on_expired"`
+	CreatedAt               time.Time  `json:"created_at"`
+	UpdatedAt               time.Time  `json:"updated_at"`
+
+	Schedulable bool `json:"schedulable"`
+
+	RateLimitedAt    *time.Time `json:"rate_limited_at"`
+	RateLimitResetAt *time.Time `json:"rate_limit_reset_at"`
+	OverloadUntil    *time.Time `json:"overload_until"`
+
+	TempUnschedulableUntil  *time.Time `json:"temp_unschedulable_until"`
+	TempUnschedulableReason string     `json:"temp_unschedulable_reason"`
+
+	SessionWindowStart  *time.Time `json:"session_window_start"`
+	SessionWindowEnd    *time.Time `json:"session_window_end"`
+	SessionWindowStatus string     `json:"session_window_status"`
+
+	WindowCostLimit         *float64 `json:"window_cost_limit,omitempty"`
+	WindowCostStickyReserve *float64 `json:"window_cost_sticky_reserve,omitempty"`
+	MaxSessions             *int     `json:"max_sessions,omitempty"`
+	SessionIdleTimeoutMin   *int     `json:"session_idle_timeout_minutes,omitempty"`
+	BaseRPM                 *int     `json:"base_rpm,omitempty"`
+	RPMStrategy             *string  `json:"rpm_strategy,omitempty"`
+	RPMStickyBuffer         *int     `json:"rpm_sticky_buffer,omitempty"`
+	UserMsgQueueMode        *string  `json:"user_msg_queue_mode,omitempty"`
+	EnableTLSFingerprint    *bool    `json:"enable_tls_fingerprint,omitempty"`
+	TLSFingerprintProfileID *int64   `json:"tls_fingerprint_profile_id,omitempty"`
+	EnableSessionIDMasking  *bool    `json:"session_id_masking_enabled,omitempty"`
+	CacheTTLOverrideEnabled *bool    `json:"cache_ttl_override_enabled,omitempty"`
+	CacheTTLOverrideTarget  *string  `json:"cache_ttl_override_target,omitempty"`
+	CustomBaseURLEnabled    *bool    `json:"custom_base_url_enabled,omitempty"`
+	CustomBaseURL           *string  `json:"custom_base_url,omitempty"`
+
+	QuotaLimit       *float64 `json:"quota_limit,omitempty"`
+	QuotaUsed        *float64 `json:"quota_used,omitempty"`
+	QuotaDailyLimit  *float64 `json:"quota_daily_limit,omitempty"`
+	QuotaDailyUsed   *float64 `json:"quota_daily_used,omitempty"`
+	QuotaWeeklyLimit *float64 `json:"quota_weekly_limit,omitempty"`
+	QuotaWeeklyUsed  *float64 `json:"quota_weekly_used,omitempty"`
+
+	QuotaDailyResetMode  *string `json:"quota_daily_reset_mode,omitempty"`
+	QuotaDailyResetHour  *int    `json:"quota_daily_reset_hour,omitempty"`
+	QuotaWeeklyResetMode *string `json:"quota_weekly_reset_mode,omitempty"`
+	QuotaWeeklyResetDay  *int    `json:"quota_weekly_reset_day,omitempty"`
+	QuotaWeeklyResetHour *int    `json:"quota_weekly_reset_hour,omitempty"`
+	QuotaResetTimezone   *string `json:"quota_reset_timezone,omitempty"`
+	QuotaDailyResetAt    *string `json:"quota_daily_reset_at,omitempty"`
+	QuotaWeeklyResetAt   *string `json:"quota_weekly_reset_at,omitempty"`
+
+	QuotaNotifyDailyEnabled    *bool    `json:"quota_notify_daily_enabled,omitempty"`
+	QuotaNotifyDailyThreshold  *float64 `json:"quota_notify_daily_threshold,omitempty"`
+	QuotaNotifyWeeklyEnabled   *bool    `json:"quota_notify_weekly_enabled,omitempty"`
+	QuotaNotifyWeeklyThreshold *float64 `json:"quota_notify_weekly_threshold,omitempty"`
+	QuotaNotifyTotalEnabled    *bool    `json:"quota_notify_total_enabled,omitempty"`
+	QuotaNotifyTotalThreshold  *float64 `json:"quota_notify_total_threshold,omitempty"`
+
+	ParentAccountID             *int64 `json:"parent_account_id,omitempty"`
+	QuotaDimension              string `json:"quota_dimension,omitempty"`
+	ParentEmail                 string `json:"parent_email,omitempty"`
+	ParentPlanType              string `json:"parent_plan_type,omitempty"`
+	ParentPrivacyMode           string `json:"parent_privacy_mode,omitempty"`
+	ParentSubscriptionExpiresAt string `json:"parent_subscription_expires_at,omitempty"`
+	ParentChatGPTAccountID      string `json:"parent_chatgpt_account_id,omitempty"`
+
+	Proxy    *Proxy  `json:"proxy,omitempty"`
+	GroupIDs []int64 `json:"group_ids,omitempty"`
 }
 
 type AccountGroup struct {
@@ -617,6 +700,8 @@ type AdminUsageLog struct {
 	ChannelID *int64 `json:"channel_id,omitempty"`
 	// ModelMappingChain 模型映射链，如 "a→b→c"
 	ModelMappingChain *string `json:"model_mapping_chain,omitempty"`
+	// UpstreamRequestID 是直接上游声明的请求标识，仅管理端可见。
+	UpstreamRequestID *string `json:"upstream_request_id,omitempty"`
 	// BillingTier 计费层级标签（per_request/image 模式）
 	BillingTier *string `json:"billing_tier,omitempty"`
 

@@ -43,73 +43,83 @@ const (
 	PlatformGemini      = domain.PlatformGemini
 	PlatformAntigravity = domain.PlatformAntigravity
 	PlatformGrok        = domain.PlatformGrok
-	PlatformKimi        = domain.PlatformKimi
-	PlatformZhipu       = domain.PlatformZhipu
-	PlatformDeepseek    = domain.PlatformDeepseek
-	PlatformComposite   = domain.PlatformComposite
+	// 国产 OpenAI 兼容供应商（与 grok 一样经 OpenAI 网关转发）。
+	PlatformKimi       = domain.PlatformKimi
+	PlatformZhipu      = domain.PlatformZhipu
+	PlatformDeepseek   = domain.PlatformDeepseek
+	PlatformMiniMax    = domain.PlatformMiniMax
+	PlatformOpenCodeGo = domain.PlatformOpenCodeGo
+	PlatformComposite  = domain.PlatformComposite
 	// PlatformKiro is retained for unsupported-platform threshold tests and legacy
 	// account rows. Scheduling-threshold evaluation never pauses kiro accounts.
 	PlatformKiro = "kiro"
 )
 
+// 账号接入模式（国产供应商）：按量付费 vs Coding Plan。
 const (
 	AccountModePayG   = domain.AccountModePayG
 	AccountModeCoding = domain.AccountModeCoding
+	AccountModeZen    = domain.AccountModeZen
+	AccountModeGo     = domain.AccountModeGo
 )
 
-func IsCNProvider(platform string) bool {
-	return platform == PlatformKimi || platform == PlatformZhipu || platform == PlatformDeepseek
-}
-
+// 上游 API 协议（国产供应商）：决定转发端点与格式，与接入模式正交。
 const (
-	APIProtocolChatCompletions        = domain.APIProtocolChatCompletions
-	APIProtocolAnthropic              = domain.APIProtocolAnthropic
-	APIProtocolResponses              = domain.APIProtocolResponses
-	APIProtocolAdaptive               = domain.APIProtocolAdaptive
-	DefaultKimiPayGBaseURL            = "https://api.moonshot.cn/v1"
-	DefaultKimiCodingBaseURL          = "https://api.kimi.com/coding/v1"
-	DefaultZhipuPayGBaseURL           = "https://open.bigmodel.cn/api/paas/v4"
-	DefaultZhipuCodingBaseURL         = "https://open.bigmodel.cn/api/coding/paas/v4"
-	DefaultDeepseekBaseURL            = "https://api.deepseek.com"
+	APIProtocolChatCompletions = domain.APIProtocolChatCompletions
+	APIProtocolAnthropic       = domain.APIProtocolAnthropic
+	APIProtocolResponses       = domain.APIProtocolResponses
+	APIProtocolAdaptive        = domain.APIProtocolAdaptive
+)
+
+// 国产 OpenAI 兼容供应商各模式的默认 base_url。
+// 与前端 credentialsBuilder.ts 中的预设保持一致。
+const (
+	DefaultKimiPayGBaseURL    = "https://api.moonshot.cn/v1"
+	DefaultKimiCodingBaseURL  = "https://api.kimi.com/coding/v1"
+	DefaultZhipuPayGBaseURL   = "https://open.bigmodel.cn/api/paas/v4"
+	DefaultZhipuCodingBaseURL = "https://open.bigmodel.cn/api/coding/paas/v4"
+	DefaultDeepseekBaseURL    = "https://api.deepseek.com"
+	// MiniMax 按量付费与 Coding/Token Plan 共用推理域名，靠 API Key 区分套餐。
+	DefaultMiniMaxBaseURL = "https://api.minimaxi.com/v1"
+	// OpenCode Go：Chat Completions / Responses / models 共用 /v1 基址。
+	DefaultOpenCodeGoBaseURL = "https://opencode.ai/zen/go/v1"
+	// OpenCode Zen：按量付费网关，模型列表为 /zen/v1/models。
+	DefaultOpenCodeZenBaseURL = "https://opencode.ai/zen/v1"
+)
+
+// 国产供应商 Anthropic 协议端点的默认 base_url（上游路径为 {base}/v1/messages）。
+// 与前端 credentialsBuilder.ts 中的预设保持一致。
+const (
 	DefaultKimiPayGAnthropicBaseURL   = "https://api.moonshot.cn/anthropic"
 	DefaultKimiCodingAnthropicBaseURL = "https://api.kimi.com/coding"
 	DefaultZhipuAnthropicBaseURL      = "https://open.bigmodel.cn/api/anthropic"
 	DefaultDeepseekAnthropicBaseURL   = "https://api.deepseek.com/anthropic"
+	DefaultMiniMaxAnthropicBaseURL    = "https://api.minimaxi.com/anthropic"
+	// OpenCode Go Anthropic 基址不含 /v1：nativeAnthropicTargetURL 会再拼 /v1/messages。
+	DefaultOpenCodeGoAnthropicBaseURL  = "https://opencode.ai/zen/go"
+	DefaultOpenCodeZenAnthropicBaseURL = "https://opencode.ai/zen"
 )
 
-var AllowedSchedulingThresholdPlatforms = []string{PlatformOpenAI, PlatformAnthropic, PlatformGrok, PlatformKimi, PlatformZhipu}
-
-const (
-	ChannelMonitorModeV1 = "v1"
-	ChannelMonitorModeV2 = "v2"
-)
-
-func NormalizeOpenAICompatiblePlatform(platform string) string {
+// IsCNProvider 报告 platform 是否为国产 OpenAI 兼容供应商（kimi/zhipu/deepseek/minimax）。
+func IsCNProvider(platform string) bool {
 	switch platform {
-	case PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek:
-		return platform
+	case PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax:
+		return true
 	default:
-		return PlatformOpenAI
+		return false
 	}
 }
 
-const (
-	SettingKeyRegistrationEmailDomainQuotaEnabled = "registration_email_domain_quota_enabled"
-	// SettingKeyMaxAccountsPerRegisterIP 同一客户端 IP 允许注册的账号数上限；
-	// 未配置或非正整数时使用 DefaultMaxAccountsPerRegisterIP。
-	SettingKeyMaxAccountsPerRegisterIP = "max_accounts_per_register_ip"
-	// SettingKeyMaxAdminLoginFailures 同一 IP 在 24 小时窗口内允许的管理员登录失败次数；
-	// 未配置或非正整数时使用 DefaultMaxAdminLoginFailures。
-	SettingKeyMaxAdminLoginFailures          = "max_admin_login_failures"
-	SettingKeyTencentCaptchaRegion           = "tencent_captcha_region"
-	SettingKeyAccountSchedulingThresholds    = "account_scheduling_thresholds"
-	SettingKeyChannelMonitorMode             = "channel_monitor_mode"
-	SettingKeyChannelMonitorHideThroughput   = "channel_monitor_hide_throughput"
-	SettingKeyChannelMonitorShowQuota        = "channel_monitor_show_quota"
-	SettingKeyGrokDefaultTextModel           = "grok_default_text_model"
-	SettingKeyGrokCrossClientModelMapEnabled = "grok_cross_client_model_map_enabled"
-	SettingKeyGrokDefaultBaseURLMode         = "grok_default_base_url_mode"
-)
+// IsOpenCodeGo reports whether the platform is the OpenCode Go gateway.
+func IsOpenCodeGo(platform string) bool {
+	return platform == PlatformOpenCodeGo
+}
+
+// IsMultiProtocolAPIKeyProvider reports providers that support the adaptive
+// multi-protocol API-key gateway.
+func IsMultiProtocolAPIKeyProvider(platform string) bool {
+	return IsCNProvider(platform) || platform == PlatformOpenCodeGo
+}
 
 // AllowedQuotaPlatforms 是允许设置 user × platform quota 的平台列表（单一权威来源）。
 // ent/schema/user_platform_quota.go 的 Validate 函数独立维护（构建期约束），
@@ -120,6 +130,24 @@ var AllowedQuotaPlatforms = []string{
 	PlatformGemini,
 	PlatformAntigravity,
 	PlatformGrok,
+	PlatformKimi,
+	PlatformZhipu,
+	PlatformDeepseek,
+	PlatformMiniMax,
+	PlatformOpenCodeGo,
+}
+
+// AllowedSchedulingThresholdPlatforms 是允许设置账号自动停调阈值的平台列表。
+// openai/anthropic/grok 有原生用量窗口；kimi/zhipu/minimax 的 Coding Plan 同样暴露
+// 5h/weekly 滚动窗口，纳入阈值评估。deepseek 为余额型，走余额检测而非阈值。
+var AllowedSchedulingThresholdPlatforms = []string{
+	PlatformOpenAI,
+	PlatformAnthropic,
+	PlatformGrok,
+	PlatformKimi,
+	PlatformZhipu,
+	PlatformMiniMax,
+	PlatformOpenCodeGo,
 }
 
 // IsAllowedQuotaPlatform 报告 s 是否为合法的 quota platform 标识。
@@ -196,26 +224,33 @@ const (
 	SettingKeyRegistrationEnabled              = "registration_enabled"                // 是否开放注册
 	SettingKeyEmailVerifyEnabled               = "email_verify_enabled"                // 是否开启邮件验证
 	SettingKeyRegistrationEmailSuffixWhitelist = "registration_email_suffix_whitelist" // 注册邮箱后缀白名单（JSON 数组）
-	SettingKeyPromoCodeEnabled                 = "promo_code_enabled"                  // 是否启用优惠码功能
-	SettingKeyPasswordResetEnabled             = "password_reset_enabled"              // 是否启用忘记密码功能（需要先开启邮件验证）
-	SettingKeyFrontendURL                      = "frontend_url"                        // 前端基础URL，用于生成邮件中的重置密码链接
-	SettingKeyInvitationCodeEnabled            = "invitation_code_enabled"             // 是否启用邀请码注册
-	SettingKeyAffiliateEnabled                 = "affiliate_enabled"                   // 邀请返利功能总开关
-	SettingKeyAffiliateRebateRate              = "affiliate_rebate_rate"               // 邀请返利比例（百分比，0-100）
-	SettingKeyAffiliateRebateFreezeHours       = "affiliate_rebate_freeze_hours"       // 返利冻结期（小时，0=不冻结）
-	SettingKeyAffiliateRebateDurationDays      = "affiliate_rebate_duration_days"      // 返利有效期（天，0=永久）
-	SettingKeyAffiliateRebatePerInviteeCap     = "affiliate_rebate_per_invitee_cap"    // 单人返利上限（0=无上限）
-	SettingKeyAccountShareRewardRate           = "account_share_reward_rate"           // 共享账号贡献者奖励比例（百分比，0-100）
-	SettingKeyAccountOwnUsageFeeRate           = "account_own_usage_fee_rate"          // 自用贡献账号的平台抽成比例（百分比，0-100）
-	SettingKeyAffiliateAdminRechargeEnabled    = "affiliate_admin_recharge_enabled"    // 管理员充值是否产生返利
-	SettingKeyRiskControlEnabled               = "risk_control_enabled"                // 是否启用风控中心入口与审计链路
-	SettingKeyContentModerationConfig          = "content_moderation_config"           // 内容审计配置（JSON）
-	SettingKeyCyberSessionBlockEnabled         = "cyber_session_block_enabled"         // cyber 命中后会话级自动屏蔽总开关(默认关)
-	SettingKeyCyberSessionBlockTTLSeconds      = "cyber_session_block_ttl_seconds"     // 会话屏蔽 TTL 秒数(默认 3600)
-	SettingKeyLoginAgreementEnabled            = "login_agreement_enabled"             // 登录前是否要求同意条款
-	SettingKeyLoginAgreementMode               = "login_agreement_mode"                // 条款确认展示模式：modal / checkbox
-	SettingKeyLoginAgreementUpdatedAt          = "login_agreement_updated_at"          // 条款更新日期（展示用）
-	SettingKeyLoginAgreementDocuments          = "login_agreement_documents"           // 条款文档列表（JSON，Markdown 内容）
+	// 白名单非空时，是否放行非白名单域名按主域名限量注册（每域名 1 个账户）。
+	// 默认 false：非白名单域名直接拒绝（白名单严格模式）。
+	SettingKeyRegistrationEmailDomainQuotaEnabled = "registration_email_domain_quota_enabled"
+	// SettingKeyMaxAccountsPerRegisterIP 同一客户端 IP 允许注册的账号数上限；
+	// 未配置或非正整数时使用 DefaultMaxAccountsPerRegisterIP。
+	SettingKeyMaxAccountsPerRegisterIP = "max_accounts_per_register_ip"
+	// SettingKeyMaxAdminLoginFailures 同一 IP 在 24 小时窗口内允许的管理员登录失败次数；
+	// 未配置或非正整数时使用 DefaultMaxAdminLoginFailures。
+	SettingKeyMaxAdminLoginFailures         = "max_admin_login_failures"
+	SettingKeyPromoCodeEnabled              = "promo_code_enabled"               // 是否启用优惠码功能
+	SettingKeyPasswordResetEnabled          = "password_reset_enabled"           // 是否启用忘记密码功能（需要先开启邮件验证）
+	SettingKeyFrontendURL                   = "frontend_url"                     // 前端基础URL，用于生成邮件中的重置密码链接
+	SettingKeyInvitationCodeEnabled         = "invitation_code_enabled"          // 是否启用邀请码注册
+	SettingKeyAffiliateEnabled              = "affiliate_enabled"                // 邀请返利功能总开关
+	SettingKeyAffiliateRebateRate           = "affiliate_rebate_rate"            // 邀请返利比例（百分比，0-100）
+	SettingKeyAffiliateRebateFreezeHours    = "affiliate_rebate_freeze_hours"    // 返利冻结期（小时，0=不冻结）
+	SettingKeyAffiliateRebateDurationDays   = "affiliate_rebate_duration_days"   // 返利有效期（天，0=永久）
+	SettingKeyAffiliateRebatePerInviteeCap  = "affiliate_rebate_per_invitee_cap" // 单人返利上限（0=无上限）
+	SettingKeyAffiliateAdminRechargeEnabled = "affiliate_admin_recharge_enabled" // 管理员充值是否产生返利
+	SettingKeyRiskControlEnabled            = "risk_control_enabled"             // 是否启用风控中心入口与审计链路
+	SettingKeyContentModerationConfig       = "content_moderation_config"        // 内容审计配置（JSON）
+	SettingKeyCyberSessionBlockEnabled      = "cyber_session_block_enabled"      // cyber 命中后会话级自动屏蔽总开关(默认关)
+	SettingKeyCyberSessionBlockTTLSeconds   = "cyber_session_block_ttl_seconds"  // 会话屏蔽 TTL 秒数(默认 3600)
+	SettingKeyLoginAgreementEnabled         = "login_agreement_enabled"          // 登录前是否要求同意条款
+	SettingKeyLoginAgreementMode            = "login_agreement_mode"             // 条款确认展示模式：modal / checkbox
+	SettingKeyLoginAgreementUpdatedAt       = "login_agreement_updated_at"       // 条款更新日期（展示用）
+	SettingKeyLoginAgreementDocuments       = "login_agreement_documents"        // 条款文档列表（JSON，Markdown 内容）
 
 	// 邮件服务设置
 	SettingKeySMTPHost     = "smtp_host"      // SMTP服务器地址
@@ -237,6 +272,7 @@ const (
 	SettingKeyTencentCaptchaAppSecretKey   = "tencent_captcha_app_secret_key"
 	SettingKeyTencentCaptchaCloudSecretID  = "tencent_captcha_cloud_secret_id"
 	SettingKeyTencentCaptchaCloudSecretKey = "tencent_captcha_cloud_secret_key"
+	SettingKeyTencentCaptchaRegion         = "tencent_captcha_region" // 站点："cn"|"intl"，决定前端 SDK 脚本与服务端接入点
 
 	// 阿里云验证码 2.0 设置（与 Turnstile、腾讯天御互斥，同一时间仅可启用一家）
 	SettingKeyAliyunCaptchaEnabled         = "aliyun_captcha_enabled"           // 是否启用阿里云验证码
@@ -362,6 +398,11 @@ const (
 	SettingKeyCustomMenuItems             = "custom_menu_items"             // 自定义菜单项（JSON 数组）
 	SettingKeyCustomEndpoints             = "custom_endpoints"              // 自定义端点列表（JSON 数组）
 
+	// 充值限制：禁止充值的用户 ID 列表（JSON 数组，如 [6]）。
+	// 命中的用户在 /payment 下全部接口被拒（后端强制），前端同时隐藏充值入口。
+	// 用配置而非硬编码，改名单不需要重新发版。
+	SettingKeyRechargeBlockedUserIDs = "recharge_blocked_user_ids"
+
 	// 默认配置
 	SettingKeyDefaultConcurrency   = "default_concurrency"    // 新用户默认并发量
 	SettingKeyDefaultBalance       = "default_balance"        // 新用户默认余额
@@ -459,14 +500,55 @@ const (
 	// When false: runner skips scheduling and user-facing endpoints return an empty list.
 	SettingKeyChannelMonitorEnabled = "channel_monitor_enabled"
 
+	// SettingKeyChannelMonitorMode selects exclusive implementation:
+	// "v1" active probes, "v2" passive aggregation. Default "v1" (opt-in to v2).
+	SettingKeyChannelMonitorMode = "channel_monitor_mode"
+
+	// ChannelMonitorModeV1/V2 are the only accepted mode values.
+	ChannelMonitorModeV1 = "v1"
+	ChannelMonitorModeV2 = "v2"
+
 	// SettingKeyChannelMonitorDefaultIntervalSeconds controls the default interval (seconds)
 	// pre-filled when creating a new channel monitor from the admin UI. Range: [15, 3600].
 	SettingKeyChannelMonitorDefaultIntervalSeconds = "channel_monitor_default_interval_seconds"
+
+	// SettingKeyChannelMonitorHideThroughput hides RPM/TPM (and similar absolute
+	// throughput rates) from non-admin user-facing monitor APIs and UI, so users
+	// cannot reverse-estimate fleet volume from rates × window length.
+	// Default false (show rates). Admin endpoints always keep full metrics.
+	SettingKeyChannelMonitorHideThroughput = "channel_monitor_hide_throughput"
+
+	// SettingKeyChannelMonitorShowQuota controls whether quota/balance snapshots
+	// attached to channel monitors (check_mode=quota/quota_probe) are exposed on
+	// the user-facing monitor APIs and UI. Default false (hidden); parsed
+	// fail-closed (only the literal "true" enables it). Admin endpoints always
+	// keep the full snapshots regardless of this flag.
+	SettingKeyChannelMonitorShowQuota = "channel_monitor_show_quota"
+	// SettingKeyChannelMonitorHideUserRanking hides the user ranking tab and
+	// /users payload from non-admin channel-monitor v2 viewers.
+	// Default false (keep the current ranking tab). Admin endpoints always keep it.
+	SettingKeyChannelMonitorHideUserRanking = "channel_monitor_hide_user_ranking"
+
+	// SettingKeyGrokDefaultTextModel is the fallback Grok text model for empty
+	// request models and built-in Grok aliases (e.g. "grok" → this id). Default grok-4.5.
+	SettingKeyGrokDefaultTextModel = "grok_default_text_model"
+
+	// SettingKeyGrokCrossClientModelMapEnabled, when true, includes gpt-*/codex-*/o*/claude-*
+	// wildcards in the default Grok account model_mapping so foreign client model names
+	// can reach Grok groups. Default false (no silent cross-vendor rewrite).
+	SettingKeyGrokCrossClientModelMapEnabled = "grok_cross_client_model_map_enabled"
+
+	// SettingKeyGrokDefaultBaseURLMode controls the default text upstream for
+	// Grok accounts without an explicit credentials.base_url.
+	SettingKeyGrokDefaultBaseURLMode = "grok_default_base_url_mode"
 
 	// SettingKeyAvailableChannelsEnabled is a DB-backed soft switch for the "Available Channels"
 	// user-facing aggregate view. When false: user endpoint returns an empty list and the
 	// sidebar entry is hidden. Defaults to false (opt-in feature).
 	SettingKeyAvailableChannelsEnabled = "available_channels_enabled"
+	// SettingKeySubscriptionEnabled controls the user-facing subscription surface.
+	// It is opt-out: only an explicit false disables it.
+	SettingKeySubscriptionEnabled = "subscription_enabled"
 
 	// SettingKeyClientDownloadEnabled 控制公开的客户端下载页 /download 是否可访问。
 	// 关闭后页面与所有入口都隐藏。默认开启，保持既有行为。
@@ -484,17 +566,13 @@ const (
 	// 前端渲染成一个跳转按钮，不做内嵌播放。留空则下载页不显示这块。
 	SettingKeyClientTutorialVideoURL = "client_tutorial_video_url"
 
-	// 客户端最新版本号，按平台分开。
-	//
-	// 放在设置里而不是随前端静态文件发布。原来版本号写在 frontend/public/
-	// client-version.json 里，而那个文件 embed 进后端二进制：改一个版本号要
-	// 重新构建前端 + 后端 + 重新部署，而实际下载地址（client_download_direct_url）
-	// 改这里一个字段就生效。两条通道的生效代价差了几个数量级，结果就是版本号
-	// 和实际包必然不同步 —— 线上第一次发作时，客户端拿到的是 index.html。
-	//
-	// 为空表示该平台不广播更新（mac 未发布时即为此状态）。
-	SettingKeyClientLatestVersion    = "client_latest_version"
-	SettingKeyClientLatestVersionMac = "client_latest_version_mac"
+	// SettingKeyChatAppDownloadEnabled 控制客户端下载页上"共飞 AI 助手"（Chat 桌面客户端，
+	// 独立于上面的共飞直连客户端）下载区块是否显示。默认关闭，管理员配好下载地址后再开启。
+	SettingKeyChatAppDownloadEnabled = "chat_app_download_enabled"
+	// SettingKeyChatAppDownloadDirectURL 是 Chat 桌面客户端的安装包直链，为空则下载区块隐藏。
+	SettingKeyChatAppDownloadDirectURL = "chat_app_download_direct_url"
+	// SettingKeyChatAppLatestVersion 是 Chat 桌面客户端的最新版本号，仅用于页面展示。
+	SettingKeyChatAppLatestVersion = "chat_app_latest_version"
 
 	// SettingKeyLatencyCompensationThresholdMs 是延迟补偿功能里"慢请求"的判定
 	// 阈值（首字节耗时 first_token_ms >= 此值才算慢）。管理员在后台按当天实际
@@ -509,23 +587,21 @@ const (
 	// （全退），保持"不赚这笔钱"这个最初的补偿标准。
 	SettingKeyLatencyCompensationProfitRatio = "latency_compensation_profit_ratio"
 
-	// SettingKeyHeadroomBaseURL 是 headroom 上下文压缩代理的内网地址
-	// （例如 http://172.18.0.1:8787）。运营方只部署一份 headroom 服务供全站
-	// 复用，请求转发时按账号真实上游地址带上 x-headroom-base-url 头动态路由，
-	// 不需要给每个上游账号单独部署一份。留空表示未配置，压缩开关即使打开也
-	// 不生效（直连上游）。
-	SettingKeyHeadroomBaseURL = "headroom_base_url"
-
-	// Chat 桌面客户端（tools/chat，独立于上面的共飞直连客户端）下载设置。
-	// 机制与 ClientDownload* 一致，键名加 chat_app 前缀避免和网关里的
-	// "paw chat" 概念混淆。默认关闭：新产品，包传上去、管理员确认好了再开。
-	SettingKeyChatAppDownloadEnabled   = "chat_app_download_enabled"
-	SettingKeyChatAppDownloadDirectURL = "chat_app_download_direct_url"
-	SettingKeyChatAppLatestVersion     = "chat_app_latest_version"
+	// 客户端最新版本号，按平台分开。
+	//
+	// 放在设置里而不是随前端静态文件发布。原来版本号写在 frontend/public/
+	// client-version.json 里，而那个文件 embed 进后端二进制：改一个版本号要
+	// 重新构建前端 + 后端 + 重新部署，而实际下载地址（client_download_direct_url）
+	// 改这里一个字段就生效。两条通道的生效代价差了几个数量级，结果就是版本号
+	// 和实际包必然不同步 —— 线上第一次发作时，客户端拿到的是 index.html。
+	//
+	// 为空表示该平台不广播更新（mac 未发布时即为此状态）。
+	SettingKeyClientLatestVersion    = "client_latest_version"
+	SettingKeyClientLatestVersionMac = "client_latest_version_mac"
 
 	// ClientDownloadDefaultDirectURL 是客户端安装包的默认直链。
 	//
-	// 安装包刻意不放在应用服务器上，而是放在 downloads.example.com（your-server.example.com）上
+	// 安装包刻意不放在应用服务器上，而是放在 icode-xtu.cc.cd（154.9.26.202）上
 	// 由 nginx 以静态文件直接返回。应用服务器上因此不存在这个文件，
 	// /api/v1/download/client 会走 302 分支跳到这里，下载带宽不经过应用服务器。
 	//
@@ -533,7 +609,7 @@ const (
 	// 用它只会被 SPA 的 fallback 吃掉，返回 index.html 而不是安装包。
 	//
 	// 必须是 HTTPS 且证书域名匹配：下载页本身是 HTTPS，
-	//   - 跳到 IP（https://your-server.example.com/…）会因证书名不匹配被浏览器拦；
+	//   - 跳到 IP（https://154.9.26.202/…）会因证书名不匹配被浏览器拦；
 	//   - 跳到明文 HTTP 会被 Chrome 的「阻止不安全下载」拦。
 	// 所以这里只能是一个签了证书的域名，不能图省事写 IP。
 	//
@@ -541,7 +617,7 @@ const (
 	// 403，响应体是 55 字节的 "large file require login for access."，用户存下来
 	// 的是改了扩展名的报错文本。实测同仓库 9KB 的 README.md 匿名 200 正常，
 	// 说明这是文件大小触发的限制而非仓库私有。
-	ClientDownloadDefaultDirectURL = "https://downloads.example.com/downloads/" + ClientDownloadFileName
+	ClientDownloadDefaultDirectURL = "https://download.gongfeiai.com/downloads/" + ClientDownloadFileName
 
 	// ClientDownloadFileName 是对外暴露的安装包文件名，同时用于本地直供分支的
 	// 落盘路径。换版本时改这里一处即可。
@@ -549,7 +625,7 @@ const (
 	// 换版本必须换文件名，不要原地覆盖：下载站给这个路径发的是
 	// Cache-Control: public, max-age=3600，同名覆盖会让一小时内的用户继续拿到
 	// 缓存里的旧包，而且从下载结果上看不出拿到的是哪一版。
-	ClientDownloadFileName = "codex-relay-client_v0.3_x64.zip"
+	ClientDownloadFileName = "codex-relay-client_v0.5_x64.zip"
 
 	// SettingKeyBackupPaymentEnabled 控制充值页的「备用支付通道」入口是否展示。
 	// 与 payment_enabled 相互独立：主通道故障时可以只留备用通道。默认关闭（opt-in）。
@@ -644,8 +720,7 @@ const (
 	SettingKeyMaxCodexVersion = "max_codex_version"
 	// SettingKeyCodexCLIOnlyBlacklist codex_cli_only 全局黑名单（[]AllowedClientEntry JSON，OR deny）。
 	SettingKeyCodexCLIOnlyBlacklist = "codex_cli_only_blacklist"
-	// SettingKeyGlobalBlacklist stores administrator-managed account/IP deny rules.
-	SettingKeyGlobalBlacklist = "global_blacklist_entries"
+	SettingKeyGlobalBlacklist       = "global_blacklist"
 	// SettingKeyCodexCLIOnlyWhitelist codex_cli_only 全局白名单（[]AllowedClientEntry JSON，双因子 AND allow）。
 	SettingKeyCodexCLIOnlyWhitelist = "codex_cli_only_whitelist"
 	// SettingKeyCodexCLIOnlyAllowAppServerClients App Server 开关：对未列名客户端开闸（默认 false；仅显式 "true" 开）。
@@ -757,6 +832,10 @@ const (
 // 值为 map[platform]{daily,weekly,monthly}，null/缺省 = 不限制；0 = 禁用；>0 = USD 上限。
 const SettingKeyDefaultPlatformQuotas = "default_platform_quotas"
 
+// SettingKeyAccountSchedulingThresholds —— 系统全局：按平台自动停调阈值（JSON map）。
+// 值为 map[platform]percent，1..100；100 = 禁用该平台自动停调。
+const SettingKeyAccountSchedulingThresholds = "account_scheduling_thresholds"
+
 // SettingKeyAuthSourcePlatformQuotas 返回某 auth source 的 platform quota JSON key。
 // 形如 auth_source_default_{source}_platform_quotas
 func SettingKeyAuthSourcePlatformQuotas(source string) string {
@@ -775,3 +854,9 @@ const AdminAPIKeyPrefix = "admin-"
 // SettingKeyAllowUserViewErrorRequests controls whether end users can view
 // their own failed requests on the usage page. Default false (opt-in).
 const SettingKeyAllowUserViewErrorRequests = "allow_user_view_error_requests"
+
+// SettingKeyAccountShareRewardRate 共享账号贡献者奖励比例（百分比，0-100）。
+const SettingKeyAccountShareRewardRate = "account_share_reward_rate"
+
+// SettingKeyAccountOwnUsageFeeRate 自用贡献账号的平台抽成比例（百分比，0-100）。
+const SettingKeyAccountOwnUsageFeeRate = "account_own_usage_fee_rate"

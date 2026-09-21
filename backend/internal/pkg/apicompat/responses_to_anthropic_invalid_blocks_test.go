@@ -1,7 +1,6 @@
 package apicompat
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -118,47 +117,6 @@ func TestResponsesToAnthropic_UserMessageWithOnlyUnknownPartsIsDropped(t *testin
 
 	requireAnthropicMessagesAreSendable(t, messages)
 	require.Empty(t, messages)
-}
-
-// 游乐场上传非 PDF 附件（.md/.txt/代码文件——前端已经把这些扩展名映射成真实
-// MIME 类型，见 PlaygroundConsole.vue 的 PLAYGROUND_EXTENSION_MIME_TYPES）时，
-// 以前一律转成 {"type":"document","source":{"type":"base64","media_type":"text/..."}}。
-// Anthropic 只认 application/pdf 的 base64 document source，其它 media_type
-// 直接 400 "The request was rejected as invalid"（无字段级细节，很难定位）。
-// 非 PDF 附件应该退化成一段内联 text block，而不是 document block。
-func TestResponsesToAnthropic_NonPDFFileAttachmentBecomesTextBlock(t *testing.T) {
-	markdown := base64.StdEncoding.EncodeToString([]byte("# heading\nbody"))
-	messages := responsesToAnthropicMessages(t, `[
-		{"type":"message","role":"user","content":[
-			{"type":"input_text","text":"看看这份笔记"},
-			{"type":"input_file","filename":"notes.md","file_data":"data:text/markdown;base64,`+markdown+`"}
-		]}
-	]`)
-
-	requireAnthropicMessagesAreSendable(t, messages)
-	require.Len(t, messages, 1)
-	blocks := parseContentBlocks(messages[0].Content)
-	require.Len(t, blocks, 2)
-	require.Equal(t, "text", blocks[1].Type)
-	require.Contains(t, blocks[1].Text, "notes.md")
-	require.Contains(t, blocks[1].Text, "# heading\nbody")
-}
-
-// PDF 附件是 Anthropic 唯一文档化支持的 base64 document source，行为不能变。
-func TestResponsesToAnthropic_PDFFileAttachmentStaysDocumentBlock(t *testing.T) {
-	pdf := base64.StdEncoding.EncodeToString([]byte("%PDF-1.4 fake"))
-	messages := responsesToAnthropicMessages(t, `[
-		{"type":"message","role":"user","content":[
-			{"type":"input_file","filename":"report.pdf","file_data":"data:application/pdf;base64,`+pdf+`"}
-		]}
-	]`)
-
-	requireAnthropicMessagesAreSendable(t, messages)
-	require.Len(t, messages, 1)
-	blocks := parseContentBlocks(messages[0].Content)
-	require.Len(t, blocks, 1)
-	require.Equal(t, "document", blocks[0].Type)
-	require.Equal(t, "application/pdf", blocks[0].Source.MediaType)
 }
 
 // assistant 侧同理：以前会退化成单个空 text 块，Anthropic 同样拒收。

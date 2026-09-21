@@ -232,7 +232,9 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		SettingKeyChannelMonitorDefaultIntervalSeconds,
 		SettingKeyChannelMonitorHideThroughput,
 		SettingKeyChannelMonitorShowQuota,
+		SettingKeyChannelMonitorHideUserRanking,
 		SettingKeyAvailableChannelsEnabled,
+		SettingKeySubscriptionEnabled,
 		SettingKeyClientDownloadEnabled,
 		SettingKeyClientDownloadNetdiskURL,
 		SettingKeyClientDownloadDirectURL,
@@ -373,8 +375,10 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		ChannelMonitorDefaultIntervalSeconds: parseChannelMonitorInterval(settings[SettingKeyChannelMonitorDefaultIntervalSeconds]),
 		ChannelMonitorHideThroughput:         !isFalseSettingValue(settings[SettingKeyChannelMonitorHideThroughput]),
 		ChannelMonitorShowQuota:              settings[SettingKeyChannelMonitorShowQuota] == "true",
+		ChannelMonitorHideUserRanking:        isTrueSettingValue(settings[SettingKeyChannelMonitorHideUserRanking]),
 
 		AvailableChannelsEnabled: settings[SettingKeyAvailableChannelsEnabled] == "true",
+		SubscriptionEnabled:     !isFalseSettingValue(settings[SettingKeySubscriptionEnabled]),
 		// 下载页默认开启：只有显式 "false" 才关闭。
 		ClientDownloadEnabled:      !isFalseSettingValue(settings[SettingKeyClientDownloadEnabled]),
 		ClientDownloadNetdiskURL:   strings.TrimSpace(settings[SettingKeyClientDownloadNetdiskURL]),
@@ -420,7 +424,20 @@ const (
 	channelMonitorIntervalMin      = 15
 	channelMonitorIntervalMax      = 3600
 	channelMonitorIntervalFallback = 60
+	defaultChannelMonitorMode      = ChannelMonitorModeV1
 )
+
+// normalizeChannelMonitorMode accepts only v1/v2; empty/invalid → v1 (safe default).
+func normalizeChannelMonitorMode(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case ChannelMonitorModeV1, "":
+		return ChannelMonitorModeV1
+	case ChannelMonitorModeV2:
+		return ChannelMonitorModeV2
+	default:
+		return defaultChannelMonitorMode
+	}
+}
 
 // parseChannelMonitorInterval parses the stored string and clamps to [15, 3600].
 // Empty / invalid input falls back to channelMonitorIntervalFallback.
@@ -447,41 +464,58 @@ func clampChannelMonitorInterval(v int) int {
 }
 
 // ChannelMonitorRuntime is the lightweight view of the channel monitor feature
-// consumed by the runner and user-facing handlers.
+// consumed by the runner, V2 aggregator, and user-facing handlers.
 type ChannelMonitorRuntime struct {
 	Enabled                bool
-	Mode                   string
+	Mode                   string // ChannelMonitorModeV1 or ChannelMonitorModeV2
 	DefaultIntervalSeconds int
-	HideThroughput         bool
-	ShowQuota              bool
+	// HideThroughput: when true, user-facing V2 APIs omit RPM/TPM scale signals.
+	HideThroughput bool
+	// ShowQuota: when true, user-facing monitor views keep the quota/balance
+	// snapshots; otherwise the user handler strips them server-side.
+	// Parsed fail-closed (only literal "true" enables). Admin always sees them.
+	ShowQuota bool
+	// HideUserRanking: when true, user-facing V2 views hide the user ranking tab
+	// and the /users payload. Parsed fail-open (only literal "true" hides it).
+	HideUserRanking bool
 }
 
-func normalizeChannelMonitorMode(v string) string {
-	if strings.EqualFold(strings.TrimSpace(v), ChannelMonitorModeV2) {
-		return ChannelMonitorModeV2
-	}
-	return ChannelMonitorModeV1
-}
-
+// ActiveProbesAllowed reports whether V1 active provider probes may run.
 func (r ChannelMonitorRuntime) ActiveProbesAllowed() bool {
 	return r.Enabled && r.Mode == ChannelMonitorModeV1
 }
+
+// PassiveAggregationAllowed reports whether V2 passive aggregation may run.
 func (r ChannelMonitorRuntime) PassiveAggregationAllowed() bool {
 	return r.Enabled && r.Mode == ChannelMonitorModeV2
 }
 
 // GetChannelMonitorRuntime reads the channel monitor feature flags directly from
-// the settings store. Fail-open: on error returns Enabled=true with the default interval.
+// the settings store. Fail-open: on error returns Enabled=true, Mode=v1, default interval.
 func (s *SettingService) GetChannelMonitorRuntime(ctx context.Context) ChannelMonitorRuntime {
+	if s == nil || s.settingRepo == nil {
+		return ChannelMonitorRuntime{
+			Enabled:                true,
+			Mode:                   defaultChannelMonitorMode,
+			DefaultIntervalSeconds: channelMonitorIntervalFallback,
+			HideThroughput:         true,
+		}
+	}
 	vals, err := s.settingRepo.GetMultiple(ctx, []string{
 		SettingKeyChannelMonitorEnabled,
 		SettingKeyChannelMonitorMode,
 		SettingKeyChannelMonitorDefaultIntervalSeconds,
 		SettingKeyChannelMonitorHideThroughput,
 		SettingKeyChannelMonitorShowQuota,
+		SettingKeyChannelMonitorHideUserRanking,
 	})
 	if err != nil {
-		return ChannelMonitorRuntime{Enabled: true, DefaultIntervalSeconds: channelMonitorIntervalFallback}
+		return ChannelMonitorRuntime{
+			Enabled:                true,
+			Mode:                   defaultChannelMonitorMode,
+			DefaultIntervalSeconds: channelMonitorIntervalFallback,
+			HideThroughput:         true,
+		}
 	}
 	return ChannelMonitorRuntime{
 		Enabled:                !isFalseSettingValue(vals[SettingKeyChannelMonitorEnabled]),
@@ -489,6 +523,7 @@ func (s *SettingService) GetChannelMonitorRuntime(ctx context.Context) ChannelMo
 		DefaultIntervalSeconds: parseChannelMonitorInterval(vals[SettingKeyChannelMonitorDefaultIntervalSeconds]),
 		HideThroughput:         !isFalseSettingValue(vals[SettingKeyChannelMonitorHideThroughput]),
 		ShowQuota:              vals[SettingKeyChannelMonitorShowQuota] == "true",
+		HideUserRanking:        isTrueSettingValue(vals[SettingKeyChannelMonitorHideUserRanking]),
 	}
 }
 
@@ -628,30 +663,38 @@ type PublicSettingsInjectionPayload struct {
 	ChannelMonitorEnabled                bool   `json:"channel_monitor_enabled"`
 	ChannelMonitorMode                   string `json:"channel_monitor_mode"`
 	ChannelMonitorDefaultIntervalSeconds int    `json:"channel_monitor_default_interval_seconds"`
-	ChannelMonitorHideThroughput         bool   `json:"channel_monitor_hide_throughput"`
-	ChannelMonitorShowQuota              bool   `json:"channel_monitor_show_quota"`
-	AvailableChannelsEnabled             bool   `json:"available_channels_enabled"`
-	ClientDownloadEnabled                bool   `json:"client_download_enabled"`
-	ClientDownloadNetdiskURL             string `json:"client_download_netdisk_url"`
-	ClientDownloadDirectURL              string `json:"client_download_direct_url"`
-	ClientDownloadDirectURLMac           string `json:"client_download_direct_url_mac"`
-	ClientLatestVersion                  string `json:"client_latest_version"`
-	ClientLatestVersionMac               string `json:"client_latest_version_mac"`
-	ClientTutorialVideoURL               string `json:"client_tutorial_video_url"`
-	ChatAppDownloadEnabled               bool   `json:"chat_app_download_enabled"`
-	ChatAppDownloadDirectURL             string `json:"chat_app_download_direct_url"`
-	ChatAppLatestVersion                 string `json:"chat_app_latest_version"`
-	BackupPaymentEnabled                 bool   `json:"backup_payment_enabled"`
-	BackupPaymentURL                     string `json:"backup_payment_url"`
-	PlaygroundEnabled                    bool   `json:"playground_enabled"`
-	PlaygroundDefaultChatModel           string `json:"playground_default_chat_model"`
-	PlaygroundDefaultImageModel          string `json:"playground_default_image_model"`
-	ModelPlazaEnabled                    bool   `json:"model_plaza_enabled"`
-	ModelPlazaRequireAuth                bool   `json:"model_plaza_require_auth"`
-	PluginManagementEnabled              bool   `json:"plugin_management_enabled"`
-	AffiliateEnabled                     bool   `json:"affiliate_enabled"`
-	RiskControlEnabled                   bool   `json:"risk_control_enabled"`
-	AllowUserViewErrorRequests           bool   `json:"allow_user_view_error_requests"`
+	// ChannelMonitorHideThroughput is public so the user UI can hide RPM/TPM
+	// without waiting for API redaction alone (defense in depth).
+	ChannelMonitorHideThroughput bool `json:"channel_monitor_hide_throughput"`
+	// ChannelMonitorShowQuota gates the user-facing quota/balance display on
+	// monitors; fail-closed (absent/false = hidden). Admin UI always shows it.
+	// ChannelMonitorHideUserRanking hides the user ranking tab and /users payload
+	// from non-admin channel-monitor v2 viewers; default false (visible).
+	ChannelMonitorHideUserRanking bool   `json:"channel_monitor_hide_user_ranking"`
+	ChannelMonitorShowQuota       bool   `json:"channel_monitor_show_quota"`
+	AvailableChannelsEnabled      bool   `json:"available_channels_enabled"`
+	SubscriptionEnabled            bool   `json:"subscription_enabled"`
+	ClientDownloadEnabled         bool   `json:"client_download_enabled"`
+	ClientDownloadNetdiskURL      string `json:"client_download_netdisk_url"`
+	ClientDownloadDirectURL       string `json:"client_download_direct_url"`
+	ClientDownloadDirectURLMac    string `json:"client_download_direct_url_mac"`
+	ClientLatestVersion           string `json:"client_latest_version"`
+	ClientLatestVersionMac        string `json:"client_latest_version_mac"`
+	ClientTutorialVideoURL        string `json:"client_tutorial_video_url"`
+	ChatAppDownloadEnabled        bool   `json:"chat_app_download_enabled"`
+	ChatAppDownloadDirectURL      string `json:"chat_app_download_direct_url"`
+	ChatAppLatestVersion          string `json:"chat_app_latest_version"`
+	BackupPaymentEnabled          bool   `json:"backup_payment_enabled"`
+	BackupPaymentURL              string `json:"backup_payment_url"`
+	PlaygroundEnabled             bool   `json:"playground_enabled"`
+	PlaygroundDefaultChatModel    string `json:"playground_default_chat_model"`
+	PlaygroundDefaultImageModel   string `json:"playground_default_image_model"`
+	ModelPlazaEnabled             bool   `json:"model_plaza_enabled"`
+	ModelPlazaRequireAuth         bool   `json:"model_plaza_require_auth"`
+	PluginManagementEnabled       bool   `json:"plugin_management_enabled"`
+	AffiliateEnabled              bool   `json:"affiliate_enabled"`
+	RiskControlEnabled            bool   `json:"risk_control_enabled"`
+	AllowUserViewErrorRequests    bool   `json:"allow_user_view_error_requests"`
 }
 
 // GetPublicSettingsForInjection returns public settings in a format suitable for HTML injection.
@@ -726,7 +769,9 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		ChannelMonitorDefaultIntervalSeconds: settings.ChannelMonitorDefaultIntervalSeconds,
 		ChannelMonitorHideThroughput:         settings.ChannelMonitorHideThroughput,
 		ChannelMonitorShowQuota:              settings.ChannelMonitorShowQuota,
+		ChannelMonitorHideUserRanking:        settings.ChannelMonitorHideUserRanking,
 		AvailableChannelsEnabled:             settings.AvailableChannelsEnabled,
+		SubscriptionEnabled:                  settings.SubscriptionEnabled,
 		ClientDownloadEnabled:                settings.ClientDownloadEnabled,
 		ClientDownloadNetdiskURL:             settings.ClientDownloadNetdiskURL,
 		ClientDownloadDirectURL:              settings.ClientDownloadDirectURL,

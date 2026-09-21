@@ -135,11 +135,9 @@ func cloneGroupForDuplicate(source *Group, operationID string) *Group {
 		AudioTTSPricePerMillionChars:    cloneGroupValuePointer(source.AudioTTSPricePerMillionChars),
 		AudioSTTPricePerHour:            cloneGroupValuePointer(source.AudioSTTPricePerHour),
 		ClaudeCodeOnly:                  source.ClaudeCodeOnly,
-		KiroCompat:                      source.KiroCompat,
 		FallbackGroupID:                 cloneGroupValuePointer(source.FallbackGroupID),
 		FallbackGroupIDs:                append([]int64(nil), source.FallbackGroupIDs...),
 		FallbackGroupIDOnInvalidRequest: cloneGroupValuePointer(source.FallbackGroupIDOnInvalidRequest),
-		IsFallbackPool:                  source.IsFallbackPool,
 		ModelRouting:                    cloneGroupModelRouting(source.ModelRouting),
 		ModelRoutingEnabled:             source.ModelRoutingEnabled,
 		MCPXMLInject:                    source.MCPXMLInject,
@@ -153,10 +151,12 @@ func cloneGroupForDuplicate(source *Group, operationID string) *Group {
 		RequirePrivacySet:               source.RequirePrivacySet,
 		DefaultMappedModel:              source.DefaultMappedModel,
 		MessagesDispatchModelConfig:     cloneGroupMessagesDispatchModelConfig(source.MessagesDispatchModelConfig),
-		ModelsListConfig: GroupModelsListConfig{
-			Enabled: source.ModelsListConfig.Enabled,
-			Models:  append([]string(nil), source.ModelsListConfig.Models...),
+		ModelAllowlist: GroupModelAllowlist{
+			Enabled: source.ModelAllowlist.Enabled,
+			Models:  append([]string(nil), source.ModelAllowlist.Models...),
 		},
+		// 固定账号 manifest 配置指向源分组的账号 ID，复制后成员关系可能变化，重置为关闭且列表为空。
+		CodexModelsManifestConfig:   GroupCodexModelsManifestConfig{},
 		RPMLimit:                    source.RPMLimit,
 		MaxReasoningEffort:          source.MaxReasoningEffort,
 		MaxReasoningEffortOverLimit: source.MaxReasoningEffortOverLimit,
@@ -167,6 +167,9 @@ func cloneGroupForDuplicate(source *Group, operationID string) *Group {
 // RecoverDuplicateGroup performs a read-only lookup for a copy that was already
 // committed for the same actor, source group, and idempotency key.
 func (s *adminServiceImpl) RecoverDuplicateGroup(ctx context.Context, id int64, actorScope, operationKey string) (*Group, error) {
+	if err := s.ValidateSimpleModeGroupOperation(AdminGroupOperationDuplicate); err != nil {
+		return nil, err
+	}
 	operationID := duplicateGroupOperationID(id, actorScope, operationKey)
 	if operationID == "" {
 		return nil, nil
@@ -192,6 +195,9 @@ func (s *adminServiceImpl) RecoverDuplicateGroup(ctx context.Context, id int64, 
 // account priorities. The repository commits the group, bindings, and outbox
 // event atomically so a failed binding never leaves an orphan group.
 func (s *adminServiceImpl) DuplicateGroup(ctx context.Context, id int64, actorScope, operationKey string) (*Group, error) {
+	if err := s.ValidateSimpleModeGroupOperation(AdminGroupOperationDuplicate); err != nil {
+		return nil, err
+	}
 	existing, err := s.RecoverDuplicateGroup(ctx, id, actorScope, operationKey)
 	if err != nil {
 		return nil, err

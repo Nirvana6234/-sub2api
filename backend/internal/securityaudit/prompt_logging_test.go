@@ -2,10 +2,8 @@ package securityaudit
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"log/slog"
-	"strings"
 	"testing"
 	"time"
 
@@ -65,31 +63,4 @@ func TestPromptGuardFailureLogUsesCompleteAllowlistedContextAndNoSideEffects(t *
 	require.Equal(t, false, entry["upstream_dispatched"])
 	require.Equal(t, false, entry["billing_preconsumed"])
 	require.EqualValues(t, 25, entry["latency_ms"])
-}
-
-func TestConfigManagerReloadLogsOnlyOnConfigVersionChange(t *testing.T) {
-	var output bytes.Buffer
-	previous := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
-	t.Cleanup(func() { slog.SetDefault(previous) })
-
-	storage := DefaultStorageConfig()
-	storage.ConfigVersion = 7
-	raw, err := json.Marshal(storage)
-	require.NoError(t, err)
-	repository := &switchableSettingRepository{staticSettingRepository: staticSettingRepository{values: map[string]string{
-		SettingKeyPromptAuditConfig: string(raw),
-		SettingKeyRiskControl:       "false",
-	}}}
-	manager := NewConfigManager(nil, repository, nil, prefixEncryptor{}, testTotpKeyConfig())
-	require.NoError(t, manager.Reload(context.Background()))
-	require.NoError(t, manager.Reload(context.Background()))
-	require.Equal(t, 1, strings.Count(output.String(), EventConfigLoaded))
-
-	storage.ConfigVersion = 8
-	raw, err = json.Marshal(storage)
-	require.NoError(t, err)
-	repository.values[SettingKeyPromptAuditConfig] = string(raw)
-	require.NoError(t, manager.Reload(context.Background()))
-	require.Equal(t, 2, strings.Count(output.String(), EventConfigLoaded))
 }

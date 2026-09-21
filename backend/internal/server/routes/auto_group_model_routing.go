@@ -66,38 +66,41 @@ func autoGroupModelRoutingMiddleware(apiKeyService *service.APIKeyService, subsc
 			middleware.ReplaceAuthenticatedAPIKey(c, resolved, subscription)
 		}
 		c.Next()
-		observeAutoGroupRequestResult(c, apiKeyService, apiKey, model)
-	}
-}
 
-func observeAutoGroupRequestResult(c *gin.Context, apiKeyService *service.APIKeyService, apiKey *service.APIKey, model string) {
-	if c == nil || apiKeyService == nil || apiKey == nil || !apiKey.AutoGroup {
-		return
-	}
-	status := c.Writer.Status()
-	if streamErr, ok := service.GetOpsStreamError(c); ok && streamErr.IntendedStatus >= http.StatusBadRequest {
-		status = streamErr.IntendedStatus
-	}
-	// Handlers map upstream 529 to a client-facing 503. Preserve the raw
-	// upstream status for auto-group observation so overload is not mistaken
-	// for a confirmed group failure.
-	if rawStatus, ok := c.Get(service.OpsUpstreamStatusCodeKey); ok {
-		switch typed := rawStatus.(type) {
-		case int:
-			if typed > 0 {
-				status = typed
-			}
-		case int32:
-			if typed > 0 {
-				status = int(typed)
-			}
-		case int64:
-			if typed > 0 {
-				status = int(typed)
+		status := c.Writer.Status()
+		if streamErr, ok := service.GetOpsStreamError(c); ok && streamErr.IntendedStatus >= http.StatusBadRequest {
+			status = streamErr.IntendedStatus
+		}
+		// Handlers map upstream 529 to a client-facing 503. Preserve the raw
+		// upstream status for auto-group observation so overload is not mistaken
+		// for a confirmed group failure.
+		if rawStatus, ok := c.Get(service.OpsUpstreamStatusCodeKey); ok {
+			switch typed := rawStatus.(type) {
+			case int:
+				if typed > 0 {
+					status = typed
+				}
+			case int32:
+				if typed > 0 {
+					status = int(typed)
+				}
+			case int64:
+				if typed > 0 {
+					status = int(typed)
+				}
 			}
 		}
+		// A downstream handler may have switched an automatic key to another
+		// candidate group after account failover. Observe the final request
+		// snapshot from the context, otherwise a successful fallback request is
+		// incorrectly recorded against the exhausted group that was selected at
+		// middleware entry and the next request immediately pins it again.
+		observedAPIKey := apiKey
+		if current, ok := middleware.GetAPIKeyFromContext(c); ok && current != nil {
+			observedAPIKey = current
+		}
+		apiKeyService.ObserveAutoGroupRequestResult(observedAPIKey, model, status, autoGroupFirstTokenMs(c))
 	}
-	apiKeyService.ObserveAutoGroupRequestResult(apiKey, model, status, autoGroupFirstTokenMs(c))
 }
 
 func defaultAutoGroupModelForRequest(path string) string {

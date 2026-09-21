@@ -16,7 +16,6 @@ func ProvideAdminHandlers(
 	groupHandler *admin.GroupHandler,
 	accountHandler *admin.AccountHandler,
 	announcementHandler *admin.AnnouncementHandler,
-	ticketHandler *admin.TicketHandler,
 	dataManagementHandler *admin.DataManagementHandler,
 	backupHandler *admin.BackupHandler,
 	oauthHandler *admin.OAuthHandler,
@@ -24,6 +23,7 @@ func ProvideAdminHandlers(
 	geminiOAuthHandler *admin.GeminiOAuthHandler,
 	antigravityOAuthHandler *admin.AntigravityOAuthHandler,
 	grokOAuthHandler *admin.GrokOAuthHandler,
+	cnProviderHandler *admin.CNProviderHandler,
 	proxyHandler *admin.ProxyHandler,
 	redeemHandler *admin.RedeemHandler,
 	promoHandler *admin.PromoHandler,
@@ -47,18 +47,20 @@ func ProvideAdminHandlers(
 	affiliateHandler *admin.AffiliateHandler,
 	complianceHandler *admin.ComplianceHandler,
 	auditLogHandler *admin.AuditLogHandler,
+	ticketHandler *admin.TicketHandler,
 	upstreamBillingProbe *service.UpstreamBillingProbeService,
 	ollamaCloudUsage *service.OllamaCloudUsageService,
+	profileStatistics *service.AccountProfileStatisticsService,
 ) *AdminHandlers {
 	accountHandler.SetUpstreamBillingProbeService(upstreamBillingProbe)
 	accountHandler.SetOllamaCloudUsageService(ollamaCloudUsage)
+	accountHandler.SetAccountProfileStatisticsService(profileStatistics)
 	return &AdminHandlers{
 		Dashboard:              dashboardHandler,
 		User:                   userHandler,
 		Group:                  groupHandler,
 		Account:                accountHandler,
 		Announcement:           announcementHandler,
-		Ticket:                 ticketHandler,
 		DataManagement:         dataManagementHandler,
 		Backup:                 backupHandler,
 		OAuth:                  oauthHandler,
@@ -66,6 +68,7 @@ func ProvideAdminHandlers(
 		GeminiOAuth:            geminiOAuthHandler,
 		AntigravityOAuth:       antigravityOAuthHandler,
 		GrokOAuth:              grokOAuthHandler,
+		CNProvider:             cnProviderHandler,
 		Proxy:                  proxyHandler,
 		Redeem:                 redeemHandler,
 		Promo:                  promoHandler,
@@ -89,6 +92,7 @@ func ProvideAdminHandlers(
 		Affiliate:              affiliateHandler,
 		Compliance:             complianceHandler,
 		AuditLog:               auditLogHandler,
+		Ticket:                 ticketHandler,
 	}
 }
 
@@ -180,7 +184,6 @@ func ProvideHandlers(
 	redeemHandler *RedeemHandler,
 	subscriptionHandler *SubscriptionHandler,
 	announcementHandler *AnnouncementHandler,
-	ticketHandler *TicketHandler,
 	channelMonitorUserHandler *ChannelMonitorUserHandler,
 	channelMonitorV2Handler *ChannelMonitorV2Handler,
 	adminHandlers *AdminHandlers,
@@ -195,15 +198,18 @@ func ProvideHandlers(
 	modelPlazaHandler *ModelPlazaHandler,
 	asyncImageHandler *AsyncImageHandler,
 	batchImageHandler *BatchImageHandler,
-	accountContributionHandler *AccountContributionHandler,
-	playgroundHistoryHandler *PlaygroundHistoryHandler,
 	pawConfigService *service.PawConfigService,
+	pawChatService *service.PawChatService,
+	playgroundHistoryHandler *PlaygroundHistoryHandler,
+	accountContributionHandler *AccountContributionHandler,
+	ticketHandler *TicketHandler,
 	_ *service.IdempotencyCoordinator,
 	_ *service.IdempotencyCleanupService,
 	_ *service.OpenAIQuotaAutoResetService,
 ) *Handlers {
 	return &Handlers{
 		PawConfigService:    pawConfigService,
+		PawChatService:      pawChatService,
 		Auth:                authHandler,
 		User:                userHandler,
 		APIKey:              apiKeyHandler,
@@ -211,7 +217,6 @@ func ProvideHandlers(
 		Redeem:              redeemHandler,
 		Subscription:        subscriptionHandler,
 		Announcement:        announcementHandler,
-		Ticket:              ticketHandler,
 		ChannelMonitor:      channelMonitorUserHandler,
 		ChannelMonitorV2:    channelMonitorV2Handler,
 		Admin:               adminHandlers,
@@ -226,8 +231,9 @@ func ProvideHandlers(
 		ModelPlaza:          modelPlazaHandler,
 		AsyncImage:          asyncImageHandler,
 		BatchImage:          batchImageHandler,
-		AccountContribution: accountContributionHandler,
 		PlaygroundHistory:   playgroundHistoryHandler,
+		AccountContribution: accountContributionHandler,
+		Ticket:              ticketHandler,
 	}
 }
 
@@ -241,7 +247,6 @@ var ProviderSet = wire.NewSet(
 	NewRedeemHandler,
 	NewSubscriptionHandler,
 	NewAnnouncementHandler,
-	NewTicketHandler,
 	NewChannelMonitorUserHandler,
 	NewChannelMonitorV2Handler,
 	ProvideGatewayHandler,
@@ -255,16 +260,16 @@ var ProviderSet = wire.NewSet(
 	NewModelPlazaHandler,
 	NewAsyncImageHandler,
 	ProvideBatchImageHandler,
-	ProvideAccountContributionHandler,
 	NewPlaygroundHistoryHandler,
+	ProvideAccountContributionHandler,
+	NewTicketHandler,
 
 	// Admin handlers
 	admin.NewDashboardHandler,
 	admin.NewUserHandler,
-	admin.NewGroupHandler,
+	admin.NewGroupHandlerWithConfig,
 	admin.ProvideAccountHandler,
 	admin.NewAnnouncementHandler,
-	admin.NewTicketHandler,
 	admin.NewDataManagementHandler,
 	admin.NewBackupHandler,
 	admin.NewOAuthHandler,
@@ -272,6 +277,7 @@ var ProviderSet = wire.NewSet(
 	admin.NewGeminiOAuthHandler,
 	admin.NewAntigravityOAuthHandler,
 	admin.NewGrokOAuthHandler,
+	admin.NewCNProviderHandler,
 	admin.NewProxyHandler,
 	admin.NewRedeemHandler,
 	admin.NewPromoHandler,
@@ -294,6 +300,7 @@ var ProviderSet = wire.NewSet(
 	admin.NewAffiliateHandler,
 	admin.NewComplianceHandler,
 	admin.NewAuditLogHandler,
+	admin.NewTicketHandler,
 
 	// AdminHandlers and Handlers constructors
 	ProvideAdminHandlers,

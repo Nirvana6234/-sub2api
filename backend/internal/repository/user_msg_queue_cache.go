@@ -25,20 +25,23 @@ const (
 )
 
 // Lua 脚本：原子获取串行锁（SET NX PX + 重入安全）
-// ARGV[3] 由 Go 侧传入 Redis 当前毫秒，兼容旧版 Redis Lua。
 // 返回 {是否获取成功, 锁预计过期时间毫秒}，让 Go 侧用同一 Redis 时间源更新索引。
 // 获取失败（锁被他人持有）时也返回观测到的到期时间，供 Go 侧回填锁索引：
 // 这让升级窗口遗留、索引写失败、释放竞态误删索引的存量锁在下一次被争用时自动重新入索引，
 // 是替代旧 SCAN 兜底的自愈机制。PTTL == -1 的异常锁返回当前时间，使其立即成为 reconcile 候选。
 var acquireLockScript = redis.NewScript(`
+redis.replicate_commands()
 local cur = redis.call('GET', KEYS[1])
 local ttl = tonumber(ARGV[2])
-local ms = tonumber(ARGV[3])
 if cur == ARGV[1] then
     redis.call('PEXPIRE', KEYS[1], ttl)
+    local t = redis.call('TIME')
+    local ms = tonumber(t[1])*1000 + math.floor(tonumber(t[2])/1000)
     return {1, ms + ttl}
 end
 if cur ~= false then
+    local t = redis.call('TIME')
+    local ms = tonumber(t[1])*1000 + math.floor(tonumber(t[2])/1000)
     local pttl = redis.call('PTTL', KEYS[1])
     if pttl and pttl > 0 then
         return {0, ms + pttl}
@@ -46,15 +49,21 @@ if cur ~= false then
     return {0, ms}
 end
 redis.call('SET', KEYS[1], ARGV[1], 'PX', ttl)
+local t = redis.call('TIME')
+local ms = tonumber(t[1])*1000 + math.floor(tonumber(t[2])/1000)
 return {1, ms + ttl}
 `)
 
 // Lua 脚本：原子释放锁 + 记录完成时间（使用 Redis TIME 避免时钟偏差）
 var releaseLockScript = redis.NewScript(`
+-- Redis 3.2-4.x compat: opt into effects replication so redis.call('TIME')
+-- replicates correctly. No-op on Redis 5.0+ (effects replication is default).
+redis.replicate_commands()
 local cur = redis.call('GET', KEYS[1])
 if cur == ARGV[1] then
     redis.call('DEL', KEYS[1])
-    local ms = tonumber(ARGV[2])
+    local t = redis.call('TIME')
+    local ms = tonumber(t[1])*1000 + math.floor(tonumber(t[2])/1000)
     redis.call('SET', KEYS[2], ms, 'EX', 60)
     return 1
 end
@@ -99,11 +108,7 @@ func umqLastKey(accountID int64) string {
 // 保证任何被争用的锁都能被后台 reconcile 发现，无需扫描所有锁 key。
 func (c *userMsgQueueCache) AcquireLock(ctx context.Context, accountID int64, requestID string, lockTtlMs int) (bool, error) {
 	key := umqLockKey(accountID)
-	nowMs, err := c.GetCurrentTimeMs(ctx)
-	if err != nil {
-		return false, err
-	}
-	result, err := acquireLockScript.Run(ctx, c.rdb, []string{key}, requestID, lockTtlMs, nowMs).Result()
+	result, err := acquireLockScript.Run(ctx, c.rdb, []string{key}, requestID, lockTtlMs).Result()
 	if err != nil {
 		return false, fmt.Errorf("umq acquire lock: %w", err)
 	}
@@ -131,11 +136,7 @@ func (c *userMsgQueueCache) AcquireLock(ctx context.Context, accountID int64, re
 func (c *userMsgQueueCache) ReleaseLock(ctx context.Context, accountID int64, requestID string) (bool, error) {
 	lockKey := umqLockKey(accountID)
 	lastKey := umqLastKey(accountID)
-	nowMs, err := c.GetCurrentTimeMs(ctx)
-	if err != nil {
-		return false, err
-	}
-	result, err := releaseLockScript.Run(ctx, c.rdb, []string{lockKey, lastKey}, requestID, nowMs).Int()
+	result, err := releaseLockScript.Run(ctx, c.rdb, []string{lockKey, lastKey}, requestID).Int()
 	if err != nil {
 		return false, fmt.Errorf("umq release lock: %w", err)
 	}
@@ -185,10 +186,12 @@ func (c *userMsgQueueCache) ReconcileExpiredLockCandidates(ctx context.Context, 
 	if err != nil {
 		return 0, err
 	}
-	members, err := c.rdb.ZRangeByScore(ctx, umqLockIndexKey, &redis.ZRangeBy{
-		Min:   "-inf",
-		Max:   strconv.FormatInt(nowMs, 10),
-		Count: int64(maxCount),
+	members, err := c.rdb.ZRangeArgs(ctx, redis.ZRangeArgs{
+		Key:     umqLockIndexKey,
+		Start:   "-inf",
+		Stop:    strconv.FormatInt(nowMs, 10),
+		ByScore: true,
+		Count:   int64(maxCount),
 	}).Result()
 	if err != nil {
 		return 0, fmt.Errorf("umq read lock index: %w", err)

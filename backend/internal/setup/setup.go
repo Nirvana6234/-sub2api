@@ -6,9 +6,8 @@ import (
 	"crypto/tls"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
-	"net"
-	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -19,7 +18,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
@@ -29,9 +28,11 @@ import (
 const (
 	ConfigFileName             = "config.yaml"
 	InstallLockFile            = ".installed"
-	defaultUserConcurrency     = 30
+	defaultUserConcurrency     = 5
 	simpleModeAdminConcurrency = 30
 	defaultMigrationTimeout    = 60 * time.Second
+	postgresBootstrapDatabase  = "postgres"
+	databasePingTimeout        = 5 * time.Second
 )
 
 func setupDefaultAdminConcurrency() int {
@@ -181,55 +182,69 @@ func NeedsSetup() bool {
 }
 
 func buildPostgresDSN(cfg *DatabaseConfig, dbName string) string {
-	connectionURL := &url.URL{
-		Scheme: "postgres",
-		Host:   net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)),
-		Path:   "/" + dbName,
-	}
-	if cfg.Password == "" {
-		connectionURL.User = url.User(cfg.User)
-	} else {
-		connectionURL.User = url.UserPassword(cfg.User, cfg.Password)
-	}
-	query := connectionURL.Query()
-	query.Set("sslmode", cfg.SSLMode)
-	connectionURL.RawQuery = query.Encode()
-	return connectionURL.String()
+	return fmt.Sprintf(
+		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+		cfg.Host, cfg.Port, cfg.User, cfg.Password, dbName, cfg.SSLMode,
+	)
 }
 
-func buildDatabaseConnectionDSNs(cfg *DatabaseConfig) (bootstrapDSN, targetDSN string) {
-	return buildPostgresDSN(cfg, "postgres"), buildPostgresDSN(cfg, cfg.DBName)
+func isDatabaseNotFoundError(err error) bool {
+	var pqErr *pq.Error
+	return errors.As(err, &pqErr) && pqErr.Code == "3D000"
 }
+
+func openAndPingPostgresDatabase(cfg *DatabaseConfig, dbName string) (*sql.DB, error) {
+	db, err := sql.Open("postgres", buildPostgresDSN(cfg, dbName))
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), databasePingTimeout)
+	err = db.PingContext(ctx)
+	cancel()
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
+	return db, nil
+}
+
+type postgresDatabaseOpener func(*DatabaseConfig, string) (*sql.DB, error)
 
 // TestDatabaseConnection tests the database connection and creates database if not exists
 func TestDatabaseConnection(cfg *DatabaseConfig) error {
-	// First, connect to the default 'postgres' database to check/create target database.
-	// Connecting to cfg.DBName here fails when the target database has not been
-	// created yet, so the bootstrap connection must use PostgreSQL's maintenance DB.
-	defaultDSN, targetDSN := buildDatabaseConnectionDSNs(cfg)
+	return testDatabaseConnection(cfg, openAndPingPostgresDatabase)
+}
 
-	db, err := sql.Open("postgres", defaultDSN)
-	if err != nil {
-		return fmt.Errorf("failed to connect to PostgreSQL: %w", err)
+func testDatabaseConnection(cfg *DatabaseConfig, openDatabase postgresDatabaseOpener) error {
+	// Prefer the configured database so existing installations remain
+	// independent of any server-specific maintenance database.
+	targetDB, err := openDatabase(cfg, cfg.DBName)
+	if err == nil {
+		if closeErr := targetDB.Close(); closeErr != nil {
+			logger.LegacyPrintf("setup", "failed to close postgres connection: %v", closeErr)
+		}
+		return nil
+	}
+	if !isDatabaseNotFoundError(err) {
+		return fmt.Errorf("ping target database failed: %w", err)
 	}
 
+	// Preserve the existing postgres bootstrap path only when the target is missing.
+	db, err := openDatabase(cfg, postgresBootstrapDatabase)
+	if err != nil {
+		return fmt.Errorf("target database '%s' does not exist; failed to connect to bootstrap database '%s': %w", cfg.DBName, postgresBootstrapDatabase, err)
+	}
 	defer func() {
-		if db == nil {
-			return
-		}
 		if err := db.Close(); err != nil {
-			logger.LegacyPrintf("setup", "failed to close postgres connection: %v", err)
+			logger.LegacyPrintf("setup", "failed to close %s connection: %v", postgresBootstrapDatabase, err)
 		}
 	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), databasePingTimeout)
 	defer cancel()
 
-	if err := db.PingContext(ctx); err != nil {
-		return fmt.Errorf("ping failed: %w", err)
-	}
-
-	// Check if target database exists
 	var exists bool
 	row := db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)", cfg.DBName)
 	if err := row.Scan(&exists); err != nil {
@@ -248,29 +263,16 @@ func TestDatabaseConnection(cfg *DatabaseConfig) error {
 		logger.LegacyPrintf("setup", "Database '%s' created successfully", cfg.DBName)
 	}
 
-	// Now connect to the target database to verify
-	if err := db.Close(); err != nil {
-		logger.LegacyPrintf("setup", "failed to close postgres connection: %v", err)
-	}
-	db = nil
-
-	targetDB, err := sql.Open("postgres", targetDSN)
+	// Now connect to the target database to verify.
+	targetDB, err = openDatabase(cfg, cfg.DBName)
 	if err != nil {
 		return fmt.Errorf("failed to connect to database '%s': %w", cfg.DBName, err)
 	}
-
 	defer func() {
 		if err := targetDB.Close(); err != nil {
 			logger.LegacyPrintf("setup", "failed to close postgres connection: %v", err)
 		}
 	}()
-
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel2()
-
-	if err := targetDB.PingContext(ctx2); err != nil {
-		return fmt.Errorf("ping target database failed: %w", err)
-	}
 
 	return nil
 }
@@ -364,7 +366,11 @@ func createInstallLock() error {
 }
 
 func initializeDatabase(cfg *SetupConfig) error {
-	dsn := buildPostgresDSN(&cfg.Database, cfg.Database.DBName)
+	dsn := fmt.Sprintf(
+		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+		cfg.Database.Host, cfg.Database.Port, cfg.Database.User,
+		cfg.Database.Password, cfg.Database.DBName, cfg.Database.SSLMode,
+	)
 
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
@@ -390,7 +396,11 @@ func (cfg *SetupConfig) migrationTimeout() time.Duration {
 }
 
 func createAdminUser(cfg *SetupConfig) (bool, string, error) {
-	dsn := buildPostgresDSN(&cfg.Database, cfg.Database.DBName)
+	dsn := fmt.Sprintf(
+		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+		cfg.Database.Host, cfg.Database.Port, cfg.Database.User,
+		cfg.Database.Password, cfg.Database.DBName, cfg.Database.SSLMode,
+	)
 
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {

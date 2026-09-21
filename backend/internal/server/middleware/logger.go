@@ -23,9 +23,8 @@ func Logger() gin.HandlerFunc {
 		// 处理请求
 		c.Next()
 
-		// 跳过健康检查和管理用量分页等高频路径的访问日志。
-		// 这只影响日志记录，不影响请求处理或响应。
-		if shouldSkipAccessLog(path) {
+		// 跳过健康检查等高频探针路径的日志
+		if path == "/health" || path == "/setup/status" {
 			return
 		}
 
@@ -79,10 +78,11 @@ func Logger() gin.HandlerFunc {
 		if model != "" {
 			fields = append(fields, zap.String("model", model))
 		}
+
 		// OpenAI 透传档位：只在 Forward 跑过的请求上存在（c.Set，不是 request.Context()），
 		// 所以直接读 gin.Context 的键值存储，不存在时静默跳过。这是排查"strict 开了但
-		// 看起来没生效"的唯一日志入口——之前完全没有落地，只暂存在 context 里没人读
-		// （见 DEV_GUIDE 坑 14 与 2026-09-11 的排查）。
+		// 看起来没生效"的唯一日志入口——strict 是个"少做事"的开关，生效与否在请求本身
+		// 上看不出区别，没有这两个字段只能靠翻账号配置猜。
 		if mode, ok := c.Get(service.OpsOpenAIPassthroughModeKey); ok {
 			if modeStr, ok := mode.(string); ok && modeStr != "" {
 				fields = append(fields, zap.String("passthrough_mode", modeStr))
@@ -101,11 +101,4 @@ func Logger() gin.HandlerFunc {
 			l.Warn("http request contains gin errors", zap.String("errors", c.Errors.String()))
 		}
 	}
-}
-
-func shouldSkipAccessLog(path string) bool {
-	if path == "/health" || path == "/setup/status" {
-		return true
-	}
-	return path == "/api/v1/admin/usage"
 }

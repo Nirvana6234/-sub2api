@@ -54,6 +54,15 @@ func (r *fallbackGroupRepoStub) GetByIDLite(_ context.Context, id int64) (*Group
 	return &cloned, nil
 }
 
+func (r *fallbackGroupRepoStub) GetByID(_ context.Context, id int64) (*Group, error) {
+	group := r.groups[id]
+	if group == nil {
+		return nil, ErrGroupNotFound
+	}
+	cloned := *group
+	return &cloned, nil
+}
+
 func fallbackTestService(groups ...*Group) *OpenAIGatewayService {
 	byID := make(map[int64]*Group, len(groups))
 	for _, group := range groups {
@@ -177,15 +186,7 @@ func TestNextOpenAIFallbackGroupBlocksUnsupportedModel(t *testing.T) {
 	}
 }
 
-// 2026-09-08: this used to assert the opposite — that a fallback pool
-// supporting the model was enough, even when the source group's own accounts
-// never supported it at all. That let a "plus" group with zero gpt-6-astra
-// accounts silently serve it from an unrelated fallback pool by
-// misconfiguration. Per product decision, the source group's own catalog now
-// gates fallback too: if nothing in the source group was ever configured
-// with the model, the request should get model_not_found, not borrow it from
-// a pool the group was never meant to draw that model from.
-func TestNextOpenAIFallbackGroupBlocksWhenSourceNeverSupportedModel(t *testing.T) {
+func TestNextOpenAIFallbackGroupUsesTargetModelSupport(t *testing.T) {
 	const (
 		sourceGroupID   = int64(10)
 		fallbackGroupID = int64(20)
@@ -221,55 +222,8 @@ func TestNextOpenAIFallbackGroupBlocksWhenSourceNeverSupportedModel(t *testing.T
 		PlatformOpenAI,
 		"gpt-5.6-sol",
 	)
-	if nextID != nil {
-		t.Fatalf("source group never supported the model, fallback should be blocked, got %#v", nextID)
-	}
-	if isOpenAIFallbackPoolSourcing(ctx) {
-		t.Fatal("blocked fallback must not mark the request as fallback-sourced")
-	}
-}
-
-// The source group's own accounts support the model (so its catalog does
-// carry it) — this is the transient-unavailability case (rate limited, over
-// quota, etc.) that fallback must still cover.
-func TestNextOpenAIFallbackGroupAllowsWhenSourceSupportsModelButUnavailable(t *testing.T) {
-	const (
-		sourceGroupID   = int64(10)
-		fallbackGroupID = int64(20)
-	)
-	svc := fallbackTestService(
-		&Group{ID: sourceGroupID, Platform: PlatformOpenAI, Status: StatusActive, FallbackGroupID: fallbackIDPtr(fallbackGroupID)},
-		&Group{ID: fallbackGroupID, Platform: PlatformOpenAI, Status: StatusActive, IsFallbackPool: true},
-	)
-	svc.accountRepo = &fallbackScopedModelAvailabilityRepo{
-		accounts: []Account{
-			{
-				ID:          1,
-				Platform:    PlatformOpenAI,
-				Status:      StatusActive,
-				Schedulable: true,
-				GroupIDs:    []int64{sourceGroupID},
-				Credentials: map[string]any{"model_mapping": map[string]any{"gpt-5.6-sol": "gpt-5.6-sol"}},
-			},
-			{
-				ID:          2,
-				Platform:    PlatformOpenAI,
-				Status:      StatusActive,
-				Schedulable: true,
-				GroupIDs:    []int64{fallbackGroupID},
-				Credentials: map[string]any{"model_mapping": map[string]any{"gpt-5.6-sol": "gpt-5.6-sol"}},
-			},
-		},
-	}
-
-	ctx, nextID := svc.nextOpenAIFallbackGroup(
-		context.Background(),
-		fallbackIDPtr(sourceGroupID),
-		PlatformOpenAI,
-		"gpt-5.6-sol",
-	)
 	if nextID == nil || *nextID != fallbackGroupID {
-		t.Fatalf("source group's catalog supports the model, fallback should proceed, got %#v", nextID)
+		t.Fatalf("target group supports model and should be selected, got %#v", nextID)
 	}
 	if !isOpenAIFallbackPoolSourcing(ctx) {
 		t.Fatal("selected fallback should mark the request as fallback-sourced")
@@ -465,33 +419,6 @@ func TestOpenAIFallbackPoolSourcingMarker(t *testing.T) {
 	// nil context 出现在测试替身和部分后台任务里，不能 panic。
 	if isOpenAIFallbackPoolSourcing(nil) {
 		t.Fatal("nil context 不应被判定为兜底取号模式")
-	}
-}
-
-func TestFallbackUsageTraceSurvivesDetachedUsageWorker(t *testing.T) {
-	state := fallbackGroupState{
-		originGroupID:   10,
-		originGroupName: "primary",
-		targetGroupID:   20,
-		targetGroupName: "pool",
-	}
-	selection := attachSelectionProfitGate(
-		withOpenAIFallbackGroupState(context.Background(), state),
-		&AccountSelectionResult{},
-	)
-	if selection.fallbackPoolUsageTrace == nil {
-		t.Fatal("selection should carry fallback usage trace")
-	}
-
-	parent := ContextWithSelectionProfitGate(context.Background(), selection)
-	worker := PropagateFallbackPoolUsageContext(parent, context.Background())
-	trace, ok := fallbackPoolUsageTraceFromContext(worker)
-	if !ok {
-		t.Fatal("detached worker context should retain fallback usage trace")
-	}
-	if trace.SourceGroupID != 10 || trace.TargetGroupID != 20 ||
-		trace.SourceGroupName != "primary" || trace.TargetGroupName != "pool" {
-		t.Fatalf("unexpected propagated fallback trace: %+v", trace)
 	}
 }
 

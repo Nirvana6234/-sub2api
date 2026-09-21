@@ -179,10 +179,8 @@ func (c schedulerTestConcurrencyCache) GetAccountWaitingCount(ctx context.Contex
 }
 
 type schedulerTestGatewayCache struct {
-	sessionBindings   map[string]int64
-	deletedSessions   map[string]int
-	setSessions       map[string]int
-	refreshedSessions map[string]int
+	sessionBindings map[string]int64
+	deletedSessions map[string]int
 }
 
 func (c *schedulerTestGatewayCache) GetSessionAccountID(ctx context.Context, groupID int64, sessionHash string) (int64, error) {
@@ -196,19 +194,11 @@ func (c *schedulerTestGatewayCache) SetSessionAccountID(ctx context.Context, gro
 	if c.sessionBindings == nil {
 		c.sessionBindings = make(map[string]int64)
 	}
-	if c.setSessions == nil {
-		c.setSessions = make(map[string]int)
-	}
-	c.setSessions[sessionHash]++
 	c.sessionBindings[sessionHash] = accountID
 	return nil
 }
 
 func (c *schedulerTestGatewayCache) RefreshSessionTTL(ctx context.Context, groupID int64, sessionHash string, ttl time.Duration) error {
-	if c.refreshedSessions == nil {
-		c.refreshedSessions = make(map[string]int)
-	}
-	c.refreshedSessions[sessionHash]++
 	return nil
 }
 
@@ -1231,7 +1221,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_EnabledUsesAdvancedPrev
 	require.True(t, decision.StickyPreviousHit)
 }
 
-func TestOpenAIGatewayService_SelectAccountWithScheduler_StickyWeightedSessionInTopKDoesNotForceStickyFirst(t *testing.T) {
+func TestOpenAIGatewayService_SelectAccountWithScheduler_StickyWeightedSessionInTopKUsesStickyFirst(t *testing.T) {
 	resetOpenAIAdvancedSchedulerSettingCacheForTest()
 
 	ctx := context.Background()
@@ -1266,11 +1256,9 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_StickyWeightedSessionIn
 	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.ErrorRate = 0.8
 	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.TTFT = 0.5
 	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.SessionSticky = 3
-	bindings := make(map[string]int64, 64)
-	for i := 0; i < 64; i++ {
-		bindings[fmt.Sprintf("openai:session_hash_weighted_topk_%d", i)] = 37101
-	}
-	cache := &schedulerTestGatewayCache{sessionBindings: bindings}
+	cache := &schedulerTestGatewayCache{sessionBindings: map[string]int64{
+		"openai:session_hash_weighted_topk": 37101,
+	}}
 	svc := &OpenAIGatewayService{
 		accountRepo:        schedulerTestOpenAIAccountRepo{accounts: accounts},
 		cache:              cache,
@@ -1279,33 +1267,29 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_StickyWeightedSessionIn
 		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
 	}
 
-	selected := map[int64]int{}
-	for i := 0; i < 64; i++ {
-		selection, decision, err := svc.SelectAccountWithScheduler(
-			ctx,
-			&groupID,
-			"",
-			fmt.Sprintf("session_hash_weighted_topk_%d", i),
-			"gpt-5.1",
-			nil,
-			OpenAIUpstreamTransportAny,
-			false,
-		)
-		require.NoError(t, err)
-		require.NotNil(t, selection)
-		require.NotNil(t, selection.Account)
-		require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
-		require.Equal(t, 2, decision.TopK)
-		selected[selection.Account.ID]++
-		if selection.ReleaseFunc != nil {
-			selection.ReleaseFunc()
-		}
+	selection, decision, err := svc.SelectAccountWithScheduler(
+		ctx,
+		&groupID,
+		"",
+		"session_hash_weighted_topk",
+		"gpt-5.1",
+		nil,
+		OpenAIUpstreamTransportAny,
+		false,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, int64(37101), selection.Account.ID)
+	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
+	require.True(t, decision.StickySessionHit)
+	require.Equal(t, 2, decision.TopK)
+	if selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
 	}
-	require.Positive(t, selected[37101], "session affinity remains a score preference")
-	require.Positive(t, selected[37102], "weighted session affinity must not hard-pin every request")
 }
 
-func TestOpenAIGatewayService_SelectAccountWithScheduler_PreviousResponseAlwaysKeepsProtocolAffinity(t *testing.T) {
+func TestOpenAIGatewayService_SelectAccountWithScheduler_StickyWeightedPreviousRequiresMovableContext(t *testing.T) {
 	resetOpenAIAdvancedSchedulerSettingCacheForTest()
 
 	ctx := context.Background()
@@ -1396,55 +1380,9 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_PreviousResponseAlwaysK
 	require.NoError(t, err)
 	require.NotNil(t, selection)
 	require.NotNil(t, selection.Account)
-	require.Equal(t, int64(37111), selection.Account.ID)
-	require.Equal(t, openAIAccountScheduleLayerPreviousResponse, decision.Layer)
-	require.True(t, decision.StickyPreviousHit)
-	if selection.ReleaseFunc != nil {
-		selection.ReleaseFunc()
-	}
-}
-
-func TestOpenAIGatewayService_SelectAccountWithScheduler_WeightedSessionDoesNotRenewUnchangedBinding(t *testing.T) {
-	resetOpenAIAdvancedSchedulerSettingCacheForTest()
-
-	ctx := context.Background()
-	groupID := int64(101074)
-	account := Account{
-		ID:          37131,
-		Platform:    PlatformOpenAI,
-		Type:        AccountTypeAPIKey,
-		Status:      StatusActive,
-		Schedulable: true,
-		Concurrency: 1,
-		GroupIDs:    []int64{groupID},
-	}
-	cache := &schedulerTestGatewayCache{sessionBindings: map[string]int64{
-		"openai:session_fixed_lifetime": account.ID,
-	}}
-	svc := &OpenAIGatewayService{
-		accountRepo:        schedulerTestOpenAIAccountRepo{accounts: []Account{account}},
-		cache:              cache,
-		cfg:                &config.Config{},
-		rateLimitService:   newOpenAIAdvancedSchedulerRateLimitService("true", "true"),
-		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
-	}
-
-	selection, decision, err := svc.SelectAccountWithScheduler(
-		ctx,
-		&groupID,
-		"",
-		"session_fixed_lifetime",
-		"gpt-5.1",
-		nil,
-		OpenAIUpstreamTransportAny,
-		false,
-	)
-	require.NoError(t, err)
-	require.NotNil(t, selection)
-	require.Equal(t, account.ID, selection.Account.ID)
-	require.True(t, decision.StickySessionHit)
-	require.Zero(t, cache.setSessions["openai:session_fixed_lifetime"], "unchanged weighted binding must keep its original expiry")
-	require.Zero(t, cache.refreshedSessions["openai:session_fixed_lifetime"])
+	require.Equal(t, int64(37112), selection.Account.ID)
+	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
+	require.False(t, decision.StickyPreviousHit)
 	if selection.ReleaseFunc != nil {
 		selection.ReleaseFunc()
 	}
@@ -2532,7 +2470,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionStickyEscapeByTT
 	require.Equal(t, int64(21102), selection.Account.ID)
 	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
 	require.False(t, decision.StickySessionHit)
-	require.Equal(t, int64(21102), cache.sessionBindings["openai:session_hash_sticky_ttft"], "health escape must rebind after fallback admission")
+	require.Equal(t, int64(21101), cache.sessionBindings["openai:session_hash_sticky_ttft"])
 	if selection.ReleaseFunc != nil {
 		selection.ReleaseFunc()
 	}
@@ -2582,7 +2520,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionStickyEscapeByEr
 	require.Equal(t, int64(21202), selection.Account.ID)
 	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
 	require.False(t, decision.StickySessionHit)
-	require.Equal(t, int64(21202), cache.sessionBindings["openai:session_hash_sticky_error_rate"], "health escape must rebind after fallback admission")
+	require.Equal(t, int64(21201), cache.sessionBindings["openai:session_hash_sticky_error_rate"])
 	if selection.ReleaseFunc != nil {
 		selection.ReleaseFunc()
 	}
@@ -2626,7 +2564,6 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionStickyBusyEscape
 	require.Nil(t, selection.WaitPlan)
 	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
 	require.False(t, decision.StickySessionHit)
-	require.Equal(t, int64(21301), cache.sessionBindings["openai:session_hash_sticky_busy_escape"], "concurrency escape must preserve the original binding")
 	if selection.ReleaseFunc != nil {
 		selection.ReleaseFunc()
 	}
@@ -2878,7 +2815,10 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_UsesAccountPriorityWith
 	require.NoError(t, err)
 	require.NotNil(t, selection)
 	require.NotNil(t, selection.Account)
-	require.Equal(t, int64(21632), selection.Account.ID, "group priority must override the account-wide priority")
+	// Account 21632 has the better (lower) group-scoped priority (1 vs 100),
+	// which must win over its much worse account-wide priority (100000 vs 1) —
+	// that's the whole point of this test's name.
+	require.Equal(t, int64(21632), selection.Account.ID)
 	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
 	if selection.ReleaseFunc != nil {
 		selection.ReleaseFunc()
@@ -3448,258 +3388,6 @@ func TestOpenAIAccountRuntimeStats_ReportAndSnapshot(t *testing.T) {
 	require.InDelta(t, 0.36, errorRate, 1e-9)
 	require.InDelta(t, 120.0, ttft, 1e-9)
 	require.Equal(t, 1, stats.size())
-}
-
-func TestOpenAIAccountRuntimeStats_TimeAwareDecayAndTTFTStaleness(t *testing.T) {
-	now := time.Date(2026, 8, 14, 10, 0, 0, 0, time.UTC)
-	stats := newOpenAIAccountRuntimeStats()
-	stats.now = func() time.Time { return now }
-	accountID := int64(1002)
-	ttft := 13660
-	for i := 0; i < 5; i++ {
-		stats.report(accountID, false, &ttft)
-	}
-
-	errorRate, observedTTFT, hasTTFT := stats.snapshot(accountID)
-	require.InDelta(t, 0.67232, errorRate, 1e-9)
-	require.Equal(t, float64(ttft), observedTTFT)
-	require.True(t, hasTTFT)
-
-	now = now.Add(defaultOpenAIHealthErrorHalfLife)
-	errorRate, _, hasTTFT = stats.snapshot(accountID)
-	require.InDelta(t, 0.33616, errorRate, 1e-9, "error EWMA should halve without new failures")
-	require.True(t, hasTTFT)
-
-	now = now.Add(defaultOpenAIHealthTTFTStaleAfter - defaultOpenAIHealthErrorHalfLife)
-	_, _, hasTTFT = stats.snapshot(accountID)
-	require.False(t, hasTTFT, "stale TTFT must become unknown instead of looking artificially fast")
-
-	stats.report(accountID, true, nil)
-	errorRate, _, _ = stats.snapshot(accountID)
-	require.Less(t, errorRate, 0.14, "a successful recovery sample should immediately reduce the decayed penalty")
-}
-
-func TestOpenAIAccountRuntimeStats_ColdStartProbePrecedesRecoveryProbe(t *testing.T) {
-	now := time.Date(2026, 8, 14, 10, 0, 0, 0, time.UTC)
-	stats := newOpenAIAccountRuntimeStats()
-	stats.now = func() time.Time { return now }
-	stats.coldStartAfter = 2 * time.Minute
-	stats.recoveryAfter = 30 * time.Minute
-	groupID := int64(24)
-	accountID := int64(45)
-
-	stats.observeCandidate(accountID, groupID)
-	now = now.Add(2*time.Minute + time.Second)
-	_, due := stats.recoveryProbeDue(accountID, groupID)
-	require.True(t, due, "never-tried account should receive an early cold-start probe")
-
-	stats.markAttempt(accountID, groupID)
-	now = now.Add(2*time.Minute + time.Second)
-	_, due = stats.recoveryProbeDue(accountID, groupID)
-	require.False(t, due, "after the first attempt, the normal recovery interval must apply")
-}
-
-func TestOpenAIAccountRuntimeStats_EvictsIdleEntries(t *testing.T) {
-	now := time.Date(2026, 8, 14, 10, 0, 0, 0, time.UTC)
-	stats := newOpenAIAccountRuntimeStats()
-	stats.now = func() time.Time { return now }
-	stats.report(1003, false, nil)
-	require.Equal(t, 1, stats.size())
-
-	now = now.Add(defaultOpenAIHealthIdleEviction + time.Second)
-	stats.report(1004, true, nil)
-	require.Equal(t, 1, stats.size(), "idle account should be removed while the new account remains")
-	_, _, hasTTFT := stats.snapshot(1003)
-	require.False(t, hasTTFT)
-}
-
-func TestBuildOpenAISelectionOrder_ReservesOneGroupScopedRecoverySlot(t *testing.T) {
-	now := time.Date(2026, 8, 14, 10, 0, 0, 0, time.UTC)
-	stats := newOpenAIAccountRuntimeStats()
-	stats.now = func() time.Time { return now }
-	groupID := int64(2)
-	otherGroupID := int64(12)
-	for accountID := int64(1); accountID <= 3; accountID++ {
-		stats.observeCandidate(accountID, groupID)
-	}
-
-	now = now.Add(20 * time.Minute)
-	stats.markAttempt(1, groupID)
-	stats.markAttempt(2, groupID)
-	stats.markAttempt(3, otherGroupID)
-	now = now.Add(11 * time.Minute)
-
-	scheduler := &defaultOpenAIAccountScheduler{stats: stats}
-	candidates := []openAIAccountCandidateScore{
-		{account: &Account{ID: 1}, loadInfo: &AccountLoadInfo{}, score: 3},
-		{account: &Account{ID: 2}, loadInfo: &AccountLoadInfo{}, score: 2},
-		{account: &Account{ID: 3}, loadInfo: &AccountLoadInfo{}, score: 1},
-	}
-	req := OpenAIAccountScheduleRequest{GroupID: &groupID, SessionHash: "recovery-slot"}
-	order := scheduler.buildOpenAISelectionOrder(req, openAIAccountLoadPlan{candidates: candidates, topK: 2})
-	require.Len(t, order, 2)
-	require.Equal(t, int64(3), order[0].account.ID, "use in another group must not suppress this group's recovery probe")
-	require.True(t, order[0].recoveryProbe)
-
-	order = scheduler.buildOpenAISelectionOrder(req, openAIAccountLoadPlan{candidates: candidates, topK: 2})
-	require.Len(t, order, 2)
-	require.NotEqual(t, int64(3), order[0].account.ID, "probe cooldown must prevent request-by-request recovery traffic")
-}
-
-func TestBuildOpenAISelectionOrder_RecoveryProbeWorksWithStickyWeighted(t *testing.T) {
-	now := time.Date(2026, 8, 14, 10, 0, 0, 0, time.UTC)
-	stats := newOpenAIAccountRuntimeStats()
-	stats.now = func() time.Time { return now }
-	groupID := int64(22)
-	for accountID := int64(1); accountID <= 3; accountID++ {
-		stats.observeCandidate(accountID, groupID)
-	}
-	stats.markAttempt(1, groupID)
-	stats.markAttempt(2, groupID)
-	now = now.Add(defaultOpenAIRecoveryProbeAfter + time.Second)
-
-	scheduler := &defaultOpenAIAccountScheduler{stats: stats}
-	candidates := []openAIAccountCandidateScore{
-		{account: &Account{ID: 1}, loadInfo: &AccountLoadInfo{}, score: 3},
-		{account: &Account{ID: 2}, loadInfo: &AccountLoadInfo{}, score: 2},
-		{account: &Account{ID: 3}, loadInfo: &AccountLoadInfo{}, score: 1},
-	}
-	req := OpenAIAccountScheduleRequest{
-		GroupID:         &groupID,
-		SessionHash:     "sticky-weighted-recovery",
-		StickyWeighted:  true,
-		StickyAccountID: 1,
-	}
-	order := scheduler.buildOpenAISelectionOrder(req, openAIAccountLoadPlan{candidates: candidates, topK: 2})
-	require.Len(t, order, 2)
-	require.Equal(t, int64(3), order[0].account.ID)
-	require.True(t, order[0].recoveryProbe)
-}
-
-func TestMarkOpenAIAccountScheduleAttemptClearsRecoveryEligibility(t *testing.T) {
-	now := time.Date(2026, 8, 14, 10, 0, 0, 0, time.UTC)
-	stats := newOpenAIAccountRuntimeStats()
-	stats.now = func() time.Time { return now }
-	groupID := int64(23)
-	stats.observeCandidate(44, groupID)
-	now = now.Add(defaultOpenAIRecoveryProbeAfter + time.Second)
-	_, due := stats.recoveryProbeDue(44, groupID)
-	require.True(t, due)
-
-	svc := &OpenAIGatewayService{
-		cfg:                &config.Config{},
-		rateLimitService:   newOpenAIAdvancedSchedulerRateLimitService("true"),
-		openaiAccountStats: stats,
-	}
-	svc.MarkOpenAIAccountScheduleAttempt(44, &groupID)
-	_, due = stats.recoveryProbeDue(44, groupID)
-	require.False(t, due)
-}
-
-func TestScaleRecoveryProbeInterval(t *testing.T) {
-	base := 30 * time.Minute
-	const (
-		threshold = defaultOpenAIRecoveryProbeErrorThreshold
-		maxFactor = defaultOpenAIRecoveryProbeMaxErrorFactor
-	)
-
-	require.Equal(t, base, scaleRecoveryProbeInterval(base, 0, threshold, maxFactor),
-		"a healthy account keeps the base interval")
-	require.Equal(t, base, scaleRecoveryProbeInterval(base, threshold, threshold, maxFactor),
-		"at the threshold the interval is still unscaled")
-
-	// 87.5% 错误率（生产上账号 223 的实测值）应当把 30 分钟拉到 3 小时以上。
-	got := scaleRecoveryProbeInterval(base, 0.875, threshold, maxFactor)
-	require.InDelta(t, (3*time.Hour + 27*time.Minute).Seconds(), got.Seconds(), 60,
-		"a 87.5%% error account should be probed roughly every 3.5 hours")
-
-	require.Equal(t, time.Duration(float64(base)*maxFactor), scaleRecoveryProbeInterval(base, 1, threshold, maxFactor),
-		"a fully failing account caps at the multiplier ceiling")
-	require.Greater(t, scaleRecoveryProbeInterval(base, 0.9, threshold, maxFactor),
-		scaleRecoveryProbeInterval(base, 0.5, threshold, maxFactor),
-		"the interval must grow monotonically with the error rate")
-
-	// 非法配置一律退回基础间隔，绝不产生「永不探测」或负间隔。
-	require.Equal(t, base, scaleRecoveryProbeInterval(base, 0.9, 0, maxFactor))
-	require.Equal(t, base, scaleRecoveryProbeInterval(base, 0.9, 1, maxFactor))
-	require.Equal(t, base, scaleRecoveryProbeInterval(base, 0.9, threshold, 1))
-}
-
-func TestOpenAIAccountRuntimeStats_RecoveryProbeIntervalStretchesWithErrorRate(t *testing.T) {
-	now := time.Date(2026, 8, 14, 10, 0, 0, 0, time.UTC)
-	stats := newOpenAIAccountRuntimeStats()
-	stats.now = func() time.Time { return now }
-	stats.errorHalfLife = 6 * time.Hour
-	groupID := int64(7)
-	const healthyID, failingID = int64(101), int64(102)
-
-	for _, accountID := range []int64{healthyID, failingID} {
-		stats.observeCandidate(accountID, groupID)
-		stats.markAttempt(accountID, groupID)
-	}
-	// 让失败账号的错误率 EWMA 爬到 0.5 以上，健康账号保持全绿。
-	for i := 0; i < 6; i++ {
-		stats.report(failingID, false, nil)
-		stats.report(healthyID, true, nil)
-	}
-	failingRate, _, _ := stats.snapshot(failingID)
-	require.Greater(t, failingRate, 0.5, "test setup: the failing account must look unhealthy")
-
-	now = now.Add(defaultOpenAIRecoveryProbeAfter + time.Minute)
-	_, due := stats.recoveryProbeDue(healthyID, groupID)
-	require.True(t, due, "a healthy but idle account still recovers on the base interval")
-	_, due = stats.recoveryProbeDue(failingID, groupID)
-	require.False(t, due, "a failing account must not be probed on the base interval")
-
-	now = now.Add(3 * time.Hour)
-	_, due = stats.recoveryProbeDue(failingID, groupID)
-	require.True(t, due, "the stretched interval must still expire — probing is the only way back")
-}
-
-func TestOpenAIAccountRuntimeStats_RecoveryProbeDueDoesNotResetErrorDecay(t *testing.T) {
-	now := time.Date(2026, 8, 14, 10, 0, 0, 0, time.UTC)
-	stats := newOpenAIAccountRuntimeStats()
-	stats.now = func() time.Time { return now }
-	groupID := int64(9)
-	accountID := int64(103)
-
-	stats.observeCandidate(accountID, groupID)
-	stats.markAttempt(accountID, groupID)
-	stats.report(accountID, false, nil)
-	before, _, _ := stats.snapshot(accountID)
-
-	// 到期检查是只读的：反复调用不应该把衰减基准推到当下，否则错误率永远降不下来。
-	now = now.Add(defaultOpenAIHealthErrorHalfLife)
-	for i := 0; i < 5; i++ {
-		stats.recoveryProbeDue(accountID, groupID)
-	}
-	after, _, _ := stats.snapshot(accountID)
-	require.InDelta(t, before/2, after, 1e-9, "one half-life must still halve the error rate")
-}
-
-func TestLowCandidateDepthLogEntriesAreBoundedAndExpire(t *testing.T) {
-	now := time.Date(2026, 8, 14, 10, 0, 0, 0, time.UTC)
-	scheduler := &defaultOpenAIAccountScheduler{lowCandidateDepthEntryLimit: 2}
-
-	require.NotNil(t, scheduler.lowCandidateDepthEntry("1\x00model-a", now))
-	require.NotNil(t, scheduler.lowCandidateDepthEntry("1\x00model-b", now))
-	require.Nil(t, scheduler.lowCandidateDepthEntry("1\x00model-c", now), "the limiter cache must remain bounded")
-	require.Equal(t, int64(2), scheduler.lowCandidateDepthLogCount.Load())
-
-	now = now.Add(openAILowCandidateDepthEntryTTL + time.Second)
-	require.NotNil(t, scheduler.lowCandidateDepthEntry("1\x00model-c", now), "expired limiter entries should release capacity")
-	require.Equal(t, int64(1), scheduler.lowCandidateDepthLogCount.Load())
-}
-
-func TestWarnLowCandidateDepthUsesGroupModelRateLimit(t *testing.T) {
-	scheduler := &defaultOpenAIAccountScheduler{}
-	groupID := int64(8)
-	req := OpenAIAccountScheduleRequest{GroupID: &groupID, RequestedModel: "gpt-low-depth"}
-
-	scheduler.warnLowCandidateDepth(req, 1)
-	scheduler.warnLowCandidateDepth(req, 1)
-	scheduler.warnLowCandidateDepth(OpenAIAccountScheduleRequest{GroupID: &groupID, RequestedModel: "ignored"}, 2)
-	require.Equal(t, int64(1), scheduler.lowCandidateDepthLogCount.Load())
 }
 
 func TestOpenAIAccountRuntimeStats_ReportConcurrent(t *testing.T) {

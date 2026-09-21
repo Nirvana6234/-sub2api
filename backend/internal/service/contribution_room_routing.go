@@ -128,3 +128,21 @@ func preserveContributionRouteMetadata(from, to *Account) *Account {
 	}
 	return to
 }
+
+// ContributionRoomWiring is a Wire marker type: its sole purpose is to force
+// the DI graph to construct it (and therefore run its provider) after
+// GatewayService/OpenAIGatewayService exist, so the optional contribution-room
+// routing repository gets injected via the setter methods instead of being
+// left nil. See SetContributionRoomRoutingRepository's doc comment for why
+// this is a setter rather than a constructor parameter.
+type ContributionRoomWiring struct{}
+
+// ProvideContributionRoomWiring wires the routing repository into both
+// gateway services after they are constructed. Add ContributionRoomWiring as
+// a dependency of any provider guaranteed to run during startup (e.g.
+// provideCleanup in cmd/server/wire.go) so Wire actually calls this.
+func ProvideContributionRoomWiring(gs *GatewayService, ogs *OpenAIGatewayService, repo ContributionRoomRoutingRepository) ContributionRoomWiring {
+	gs.SetContributionRoomRoutingRepository(repo)
+	ogs.SetContributionRoomRoutingRepository(repo)
+	return ContributionRoomWiring{}
+}

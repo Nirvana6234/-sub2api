@@ -181,7 +181,6 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 				user.FieldLastLoginAt,
 				user.FieldLastActiveAt,
 				user.FieldRpmLimit,
-				user.FieldHeadroomCompressionEnabled,
 			)
 			q.WithAllowedGroups(func(gq *dbent.GroupQuery) {
 				gq.Select(group.FieldID)
@@ -220,9 +219,11 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 				group.FieldLongContextPricingEnabled,
 				group.FieldModelPricing,
 				group.FieldClaudeCodeOnly,
-				group.FieldKiroCompat,
 				group.FieldFallbackGroupID,
+				group.FieldFallbackGroupIds,
 				group.FieldFallbackGroupIDOnInvalidRequest,
+				group.FieldIsFallbackPool,
+				group.FieldKiroCompat,
 				group.FieldModelRoutingEnabled,
 				group.FieldModelRouting,
 				group.FieldMcpXMLInject,
@@ -233,7 +234,8 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 				group.FieldFreeOpenaiFast,
 				group.FieldDefaultMappedModel,
 				group.FieldMessagesDispatchModelConfig,
-				group.FieldModelsListConfig,
+				group.FieldModelAllowlist,
+				group.FieldCodexModelsManifestConfig,
 				group.FieldRpmLimit,
 				group.FieldMaxReasoningEffort,
 				group.FieldMaxReasoningEffortOverLimit,
@@ -262,32 +264,6 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 		return nil, err
 	}
 	return apiKey, nil
-}
-
-// GetContributionBalance is intentionally a lightweight SQL lookup used only
-// when cash balance is exhausted during API-key authentication.
-func (r *apiKeyRepository) GetContributionBalance(ctx context.Context, userID int64) (float64, error) {
-	if r == nil || r.sql == nil {
-		return 0, nil
-	}
-	rows, err := r.sql.QueryContext(ctx, `
-		SELECT balance FROM user_contribution_wallets WHERE user_id = $1
-	`, userID)
-	if err != nil {
-		return 0, err
-	}
-	defer rows.Close()
-	var balance float64
-	if !rows.Next() {
-		if err := rows.Err(); err != nil {
-			return 0, err
-		}
-		return 0, nil
-	}
-	if err := rows.Scan(&balance); err != nil {
-		return 0, err
-	}
-	return balance, nil
 }
 
 func (r *apiKeyRepository) Update(ctx context.Context, key *service.APIKey, fields service.APIKeyUpdateFields) error {
@@ -696,6 +672,38 @@ func (r *apiKeyRepository) hydrateAutoGroupIDsForKeys(ctx context.Context, keys 
 	return rows.Err()
 }
 
+// ListKeysByAutoGroupID returns active automatic credentials whose persisted
+// candidate list references a group. It is used only for cache invalidation;
+// unlike ListKeysByGroupID it must not affect the admin group's key listing.
+func (r *apiKeyRepository) ListKeysByAutoGroupID(ctx context.Context, groupID int64) ([]string, error) {
+	if groupID <= 0 || r.sql == nil {
+		return nil, nil
+	}
+	rows, err := r.sql.QueryContext(ctx, `
+		SELECT key
+		FROM api_keys
+		WHERE auto_group = TRUE
+		  AND deleted_at IS NULL
+		  AND auto_group_ids @> jsonb_build_array($1::bigint)
+	`, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	keys := make([]string, 0)
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, err
+		}
+		keys = append(keys, key)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return keys, nil
+}
+
 func (r *apiKeyRepository) latestUsageLogIPs(ctx context.Context, apiKeyIDs []int64) (result map[int64]string, err error) {
 	if len(apiKeyIDs) == 0 || r.sql == nil {
 		return map[int64]string{}, nil
@@ -928,38 +936,6 @@ func (r *apiKeyRepository) ListKeysByGroupID(ctx context.Context, groupID int64)
 	return keys, nil
 }
 
-// ListKeysByAutoGroupID returns active automatic credentials whose persisted
-// candidate list references a group. It is used only for cache invalidation;
-// unlike ListKeysByGroupID it must not affect the admin group's key listing.
-func (r *apiKeyRepository) ListKeysByAutoGroupID(ctx context.Context, groupID int64) ([]string, error) {
-	if groupID <= 0 || r.sql == nil {
-		return nil, nil
-	}
-	rows, err := r.sql.QueryContext(ctx, `
-		SELECT key
-		FROM api_keys
-		WHERE auto_group = TRUE
-		  AND deleted_at IS NULL
-		  AND auto_group_ids @> jsonb_build_array($1::bigint)
-	`, groupID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	keys := make([]string, 0)
-	for rows.Next() {
-		var key string
-		if err := rows.Scan(&key); err != nil {
-			return nil, err
-		}
-		keys = append(keys, key)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return keys, nil
-}
-
 // IncrementQuotaUsed 使用 Ent 原子递增 quota_used 字段并返回新值
 func (r *apiKeyRepository) IncrementQuotaUsed(ctx context.Context, id int64, amount float64) (float64, error) {
 	updated, err := r.client.APIKey.UpdateOneID(id).
@@ -1151,7 +1127,6 @@ func userEntityToService(u *dbent.User) *service.User {
 		RPMLimit:                   u.RpmLimit,
 		AccountManagementEnabled:   u.AccountManagementEnabled,
 		ContributionRoomsEnabled:   u.ContributionRoomsEnabled,
-		HeadroomCompressionEnabled: u.HeadroomCompressionEnabled,
 		CreatedAt:                  u.CreatedAt,
 		UpdatedAt:                  u.UpdatedAt,
 		DeletedAt:                  u.DeletedAt,
@@ -1181,8 +1156,8 @@ func groupEntityToService(g *dbent.Group) *service.Group {
 		Description:                     derefString(g.Description),
 		Platform:                        g.Platform,
 		RateMultiplier:                  g.RateMultiplier,
-		AllowContributionPool:           g.AllowContributionPool,
 		IsExclusive:                     g.IsExclusive,
+		AllowContributionPool:           g.AllowContributionPool,
 		Status:                          g.Status,
 		Hydrated:                        true,
 		DuplicateOperationID:            derefString(g.DuplicateOperationID),
@@ -1214,11 +1189,11 @@ func groupEntityToService(g *dbent.Group) *service.Group {
 		ModelPricing:                    modelPricing,
 		DefaultValidityDays:             g.DefaultValidityDays,
 		ClaudeCodeOnly:                  g.ClaudeCodeOnly,
-		KiroCompat:                      g.KiroCompat,
 		FallbackGroupID:                 g.FallbackGroupID,
-		FallbackGroupIDs:                append([]int64(nil), g.FallbackGroupIds...),
+		FallbackGroupIDs:                g.FallbackGroupIds,
 		FallbackGroupIDOnInvalidRequest: g.FallbackGroupIDOnInvalidRequest,
 		IsFallbackPool:                  g.IsFallbackPool,
+		KiroCompat:                      g.KiroCompat,
 		ModelRouting:                    g.ModelRouting,
 		ModelRoutingEnabled:             g.ModelRoutingEnabled,
 		MCPXMLInject:                    g.McpXMLInject,
@@ -1232,7 +1207,8 @@ func groupEntityToService(g *dbent.Group) *service.Group {
 		RequirePrivacySet:               g.RequirePrivacySet,
 		DefaultMappedModel:              g.DefaultMappedModel,
 		MessagesDispatchModelConfig:     g.MessagesDispatchModelConfig,
-		ModelsListConfig:                g.ModelsListConfig,
+		ModelAllowlist:                  service.GroupModelAllowlistFromDomain(g.ModelAllowlist),
+		CodexModelsManifestConfig:       g.CodexModelsManifestConfig,
 		RPMLimit:                        g.RpmLimit,
 		MaxReasoningEffort:              g.MaxReasoningEffort,
 		MaxReasoningEffortOverLimit:     g.MaxReasoningEffortOverLimit,

@@ -4,8 +4,6 @@ package service
 
 import (
 	"testing"
-
-	"github.com/stretchr/testify/require"
 )
 
 // TestBuildUsageBillingCommand_SubscriptionAppliesRateMultiplier locks in the fix
@@ -72,7 +70,7 @@ func TestBuildUsageBillingCommand_SubscriptionAppliesRateMultiplier(t *testing.T
 				IsSubscriptionBill: tt.isSubscription,
 			}
 
-			cmd := buildUsageBillingCommand("req-1", nil, p, AccountShareRewardRate, AccountOwnUsageFeeRateDefaultPercent/100)
+			cmd := buildUsageBillingCommand("req-1", nil, p, AccountShareRewardRate, 0)
 			if cmd == nil {
 				t.Fatal("buildUsageBillingCommand returned nil")
 			}
@@ -84,86 +82,4 @@ func TestBuildUsageBillingCommand_SubscriptionAppliesRateMultiplier(t *testing.T
 			}
 		})
 	}
-}
-
-func TestBuildUsageBillingCommand_OwnContributedAccountChargesOnlyPlatformFee(t *testing.T) {
-	groupID := int64(7)
-	p := &postUsageBillingParams{
-		Cost:   &CostBreakdown{TotalCost: 2, ActualCost: 2},
-		User:   &User{ID: 42},
-		APIKey: &APIKey{ID: 2, GroupID: &groupID},
-		Account: &Account{ID: 3, Extra: map[string]any{
-			AccountContributionSourceKey: AccountContributionSourceValue,
-			AccountContributorUserIDKey:  float64(42),
-		}},
-	}
-
-	cmd := buildUsageBillingCommand("req-own", nil, p, AccountShareRewardRate, 0.01)
-	if cmd == nil {
-		t.Fatal("buildUsageBillingCommand returned nil")
-	}
-	if cmd.OwnAccountFeeCost != 0.02 {
-		t.Errorf("OwnAccountFeeCost = %v, want 0.02", cmd.OwnAccountFeeCost)
-	}
-	if cmd.BalanceCost != 0.02 {
-		t.Errorf("BalanceCost = %v, want 0.02", cmd.BalanceCost)
-	}
-	if cmd.SharedCost != 0 {
-		t.Errorf("SharedCost = %v, want 0", cmd.SharedCost)
-	}
-}
-
-func TestBuildUsageBillingCommand_RoomBudgetUsesRawTokenCost(t *testing.T) {
-	roomRate := 2.0
-	p := &postUsageBillingParams{
-		Cost:   &CostBreakdown{TotalCost: 1.25, ActualCost: 2.5},
-		User:   &User{ID: 42},
-		APIKey: &APIKey{ID: 2},
-		Account: &Account{
-			ID:                                 3,
-			ContributionRouteSource:            ContributionRouteSourceRoom,
-			ContributionRoomID:                 15,
-			ContributionRateMultiplierOverride: &roomRate,
-			Extra: map[string]any{
-				AccountContributionSourceKey: AccountContributionSourceValue,
-				AccountContributorUserIDKey:  float64(77),
-			},
-		},
-	}
-
-	cmd := buildUsageBillingCommand("req-room", nil, p, AccountShareRewardRate, 0.01)
-	if cmd == nil {
-		t.Fatal("buildUsageBillingCommand returned nil")
-	}
-	if cmd.SharedRoomID != 15 {
-		t.Errorf("SharedRoomID = %v, want 15", cmd.SharedRoomID)
-	}
-	if cmd.SharedCost != 2.5 {
-		t.Errorf("SharedCost = %v, want 2.5", cmd.SharedCost)
-	}
-	if cmd.SharedBudgetCost != 1.25 {
-		t.Errorf("SharedBudgetCost = %v, want 1.25", cmd.SharedBudgetCost)
-	}
-	if cmd.BalanceCost != 2.5 {
-		t.Errorf("BalanceCost = %v, want 2.5", cmd.BalanceCost)
-	}
-}
-
-func TestBuildUsageBillingCommand_AccountQuotaUsesAccountStatsCost(t *testing.T) {
-	accountStatsCost := 2.5
-	p := &postUsageBillingParams{
-		Cost: &CostBreakdown{TotalCost: 1, ActualCost: 1},
-		// buildUsageBillingCommand 的入口守卫要求 Cost/APIKey/User/Account 四者齐全，
-		// 缺任意一个都返回 nil。本用例只关心 AccountQuotaCost 的换算，但仍须把这四项
-		// 备齐——账号无贡献者标记，不会走到分成分支。
-		User:                  &User{ID: 42},
-		APIKey:                &APIKey{ID: 2},
-		Account:               &Account{ID: 3, Type: AccountTypeOAuth, Extra: map[string]any{"quota_daily_limit": 10.0}},
-		AccountRateMultiplier: 1.2,
-		AccountQuotaCost:      accountStatsCost * 1.2,
-	}
-
-	cmd := buildUsageBillingCommand("req-account-quota", &UsageLog{AccountStatsCost: &accountStatsCost}, p, AccountShareRewardRate, AccountOwnUsageFeeRateDefaultPercent/100)
-	require.NotNil(t, cmd)
-	require.InDelta(t, 3.0, cmd.AccountQuotaCost, 1e-12)
 }

@@ -970,6 +970,16 @@ type GatewayConfig struct {
 	// OpenAIHighEffortFirstOutputTimeoutSeconds: high/xhigh/max 推理的首个语义输出超时（秒）。
 	// 0 表示回退到 OpenAIFirstOutputTimeoutSeconds。
 	OpenAIHighEffortFirstOutputTimeoutSeconds int `mapstructure:"openai_high_effort_first_output_timeout_seconds"`
+	// OpenAIFirstOutputHardCapSeconds: 上游迟迟不出首字时真正放弃的上限（秒）。
+	//
+	// 它与上面两个"首输出超时"的职责完全不同，不要混用：
+	//   - 首输出超时到点 = "这个请求偏慢"，只记观测，绝不截断、绝不换号。请求
+	//     已经发给上游、上游也还在正常处理，慢不构成把用户请求杀掉再回一个错误
+	//     的理由（实测成功请求的首字 p90 就有 35-38 秒、最慢的 73.8 秒也正常返回）。
+	//   - 本上限到点 = "这条连接大概率已经死了"，才取消并走换号。
+	//
+	// 0 表示回退到 defaultOpenAIFirstOutputHardCapSeconds。
+	OpenAIFirstOutputHardCapSeconds int `mapstructure:"openai_first_output_hard_cap_seconds"`
 	// 请求体最大字节数，用于网关请求体大小限制
 	MaxBodySize int64 `mapstructure:"max_body_size"`
 	// TextMaxBodySize limits endpoints that cannot carry inline image/video payloads.
@@ -1288,11 +1298,15 @@ type GatewayOpenAIWSConfig struct {
 	MaxConnsPerAccount int `mapstructure:"max_conns_per_account"`
 	MinIdlePerAccount  int `mapstructure:"min_idle_per_account"`
 	MaxIdlePerAccount  int `mapstructure:"max_idle_per_account"`
-	// DynamicMaxConnsByAccountConcurrencyEnabled: 是否按账号并发动态计算连接池上限
+	// DynamicMaxConnsByAccountConcurrencyEnabled: 是否按账号并发动态计算连接池上限。
+	// 旧版及 mode_router_v2 的 ctx_pool 共用此开关和类型系数；关闭后使用 max_conns_per_account。
+	// mode_router_v2 下并发数 <= 0 的账号仍不可调度。
 	DynamicMaxConnsByAccountConcurrencyEnabled bool `mapstructure:"dynamic_max_conns_by_account_concurrency_enabled"`
-	// OAuthMaxConnsFactor: OAuth 账号连接池系数（effective=ceil(concurrency*factor)）
+	// OAuthMaxConnsFactor: OAuth 账号连接池系数（effective=ceil(concurrency*factor)，再受 max_conns_per_account 封顶）。
+	// ctx_pool 接入下每个客户端会话在整个生命周期（含轮次之间）持有一条上游连接，此上限限制的是同时持有连接的会话数，
+	// 在飞请求数另由账号并发槽限制；系数 1.0 会让存活会话数一到并发数就返回 1013 busy，默认 5.0。
 	OAuthMaxConnsFactor float64 `mapstructure:"oauth_max_conns_factor"`
-	// APIKeyMaxConnsFactor: API Key 账号连接池系数（effective=ceil(concurrency*factor)）
+	// APIKeyMaxConnsFactor: API Key 账号连接池系数，含义与 OAuthMaxConnsFactor 相同，默认 5.0。
 	APIKeyMaxConnsFactor  float64 `mapstructure:"apikey_max_conns_factor"`
 	DialTimeoutSeconds    int     `mapstructure:"dial_timeout_seconds"`
 	ReadTimeoutSeconds    int     `mapstructure:"read_timeout_seconds"`
@@ -1385,24 +1399,6 @@ type GatewayOpenAISchedulerConfig struct {
 	StickyEscapeTTFTMs int `mapstructure:"sticky_escape_ttft_ms"`
 	// StickyEscapeErrorRate: 错误率 EWMA 超过该阈值时跳过 sticky
 	StickyEscapeErrorRate float64 `mapstructure:"sticky_escape_error_rate"`
-	// HealthErrorHalfLifeSeconds: 错误率 EWMA 在无新样本时向健康值衰减的半衰期
-	HealthErrorHalfLifeSeconds int `mapstructure:"health_error_half_life_seconds"`
-	// HealthTTFTStaleSeconds: TTFT 样本超过该时间后按未知中性值处理
-	HealthTTFTStaleSeconds int `mapstructure:"health_ttft_stale_seconds"`
-	// HealthIdleEvictionSeconds: 账号健康记录未再被观测后的内存回收时间
-	HealthIdleEvictionSeconds int `mapstructure:"health_idle_eviction_seconds"`
-	// ColdStartProbeAfterSeconds: 从未被尝试的新账号进入受控探测的等待时间
-	ColdStartProbeAfterSeconds int `mapstructure:"cold_start_probe_after_seconds"`
-	// RecoveryProbeAfterSeconds: 分组内长时间未尝试账号进入受控恢复探测的等待时间
-	RecoveryProbeAfterSeconds int `mapstructure:"recovery_probe_after_seconds"`
-	// RecoveryProbeCooldownSeconds: 同一账号在同一分组内的恢复探测冷却时间
-	RecoveryProbeCooldownSeconds int `mapstructure:"recovery_probe_cooldown_seconds"`
-	// RecoveryProbeErrorRateThreshold: 错误率不超过该阈值的账号按基础间隔探测；
-	// 超出部分线性拉长探测间隔。恢复探测花的是真实用户请求，错误率越高，
-	// 一次探测的代价越高、带回的信息量越低，就该探得越稀。
-	RecoveryProbeErrorRateThreshold float64 `mapstructure:"recovery_probe_error_rate_threshold"`
-	// RecoveryProbeMaxErrorMultiplier: 错误率为 100% 时探测间隔相对基础值的倍数上限
-	RecoveryProbeMaxErrorMultiplier float64 `mapstructure:"recovery_probe_max_error_multiplier"`
 }
 
 // GatewayUsageRecordConfig 使用量记录异步队列配置
@@ -1645,10 +1641,10 @@ type OpsCleanupConfig struct {
 	Enabled  bool   `mapstructure:"enabled"`
 	Schedule string `mapstructure:"schedule"`
 
-	// Retention days (0 disables that cleanup target).
-	//
-	// vNext requirement: default 30 days across ops datasets.
+	// Retention days. Error and metrics targets accept 0 as an explicit truncate;
+	// system logs require a positive value because their runtime setting is bounded.
 	ErrorLogRetentionDays      int `mapstructure:"error_log_retention_days"`
+	SystemLogRetentionDays     int `mapstructure:"system_log_retention_days"`
 	MinuteMetricsRetentionDays int `mapstructure:"minute_metrics_retention_days"`
 	HourlyMetricsRetentionDays int `mapstructure:"hourly_metrics_retention_days"`
 }
@@ -1699,9 +1695,8 @@ type DefaultConfig struct {
 }
 
 type RateLimitConfig struct {
-	OverloadCooldownMinutes          int `mapstructure:"overload_cooldown_minutes"`             // 529过载冷却时间(分钟)
-	OAuth401CooldownMinutes          int `mapstructure:"oauth_401_cooldown_minutes"`             // OAuth 401临时不可调度冷却(分钟)
-	OpenAI403ModelScopedCooldownMins int `mapstructure:"openai_403_model_scoped_cooldown_mins"`  // OpenAI 单模型403冷却时间(分钟)
+	OverloadCooldownMinutes int `mapstructure:"overload_cooldown_minutes"`  // 529过载冷却时间(分钟)
+	OAuth401CooldownMinutes int `mapstructure:"oauth_401_cooldown_minutes"` // OAuth 401临时不可调度冷却(分钟)
 }
 
 // APIKeyAuthCacheConfig API Key 认证缓存配置
@@ -1860,30 +1855,6 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	}
 	if cfg.Gateway.OpenAIScheduler.StickyEscapeErrorRate == 0 {
 		cfg.Gateway.OpenAIScheduler.StickyEscapeErrorRate = 0.5
-	}
-	if cfg.Gateway.OpenAIScheduler.HealthErrorHalfLifeSeconds == 0 {
-		cfg.Gateway.OpenAIScheduler.HealthErrorHalfLifeSeconds = 15 * 60
-	}
-	if cfg.Gateway.OpenAIScheduler.HealthTTFTStaleSeconds == 0 {
-		cfg.Gateway.OpenAIScheduler.HealthTTFTStaleSeconds = 30 * 60
-	}
-	if cfg.Gateway.OpenAIScheduler.HealthIdleEvictionSeconds == 0 {
-		cfg.Gateway.OpenAIScheduler.HealthIdleEvictionSeconds = 2 * 60 * 60
-	}
-	if cfg.Gateway.OpenAIScheduler.ColdStartProbeAfterSeconds == 0 {
-		cfg.Gateway.OpenAIScheduler.ColdStartProbeAfterSeconds = 2 * 60
-	}
-	if cfg.Gateway.OpenAIScheduler.RecoveryProbeAfterSeconds == 0 {
-		cfg.Gateway.OpenAIScheduler.RecoveryProbeAfterSeconds = 30 * 60
-	}
-	if cfg.Gateway.OpenAIScheduler.RecoveryProbeCooldownSeconds == 0 {
-		cfg.Gateway.OpenAIScheduler.RecoveryProbeCooldownSeconds = 10 * 60
-	}
-	if cfg.Gateway.OpenAIScheduler.RecoveryProbeErrorRateThreshold == 0 {
-		cfg.Gateway.OpenAIScheduler.RecoveryProbeErrorRateThreshold = 0.2
-	}
-	if cfg.Gateway.OpenAIScheduler.RecoveryProbeMaxErrorMultiplier == 0 {
-		cfg.Gateway.OpenAIScheduler.RecoveryProbeMaxErrorMultiplier = 8
 	}
 	// Kept as a backstop: setEnvReachableDefaults now registers this key with its
 	// effective default (true), so IsSet always reports true and this branch no
@@ -2103,7 +2074,9 @@ func setDefaults() {
 		"api.moonshot.ai",
 		"api.moonshot.cn",
 		"open.bigmodel.cn",
-		"api.minimaxi.com",
+		"api.minimaxi.com", // MiniMax CN quota + inference
+		"api.minimax.io",   // MiniMax intl; frozen allowlists must add this host to use the intl site
+		"opencode.ai",
 		"generativelanguage.googleapis.com",
 		"cloudcode-pa.googleapis.com",
 		"*.openai.azure.com",
@@ -2307,6 +2280,7 @@ func setDefaults() {
 	viper.SetDefault("ops.cleanup.schedule", "0 2 * * *")
 	// Retention days: vNext defaults to 30 days across ops datasets.
 	viper.SetDefault("ops.cleanup.error_log_retention_days", 30)
+	viper.SetDefault("ops.cleanup.system_log_retention_days", 30)
 	viper.SetDefault("ops.cleanup.minute_metrics_retention_days", 30)
 	viper.SetDefault("ops.cleanup.hourly_metrics_retention_days", 30)
 	viper.SetDefault("ops.aggregation.enabled", true)
@@ -2329,7 +2303,7 @@ func setDefaults() {
 	// Do not ship fixed defaults here to avoid insecure "known credentials" in production.
 	viper.SetDefault("default.admin_email", "")
 	viper.SetDefault("default.admin_password", "")
-	viper.SetDefault("default.user_concurrency", 30)
+	viper.SetDefault("default.user_concurrency", 5)
 	viper.SetDefault("default.user_balance", 0)
 	viper.SetDefault("default.api_key_prefix", "sk-")
 	viper.SetDefault("default.rate_multiplier", 1.0)
@@ -2337,7 +2311,6 @@ func setDefaults() {
 	// RateLimit
 	viper.SetDefault("rate_limit.overload_cooldown_minutes", 10)
 	viper.SetDefault("rate_limit.oauth_401_cooldown_minutes", 10)
-	viper.SetDefault("rate_limit.openai_403_model_scoped_cooldown_mins", 5)
 
 	// Pricing - 从 model-price-repo main 分支同步模型定价和上下文窗口数据
 	viper.SetDefault("pricing.remote_url", "https://raw.githubusercontent.com/Wei-Shaw/model-price-repo/main/model_prices_and_context_window.json")
@@ -2431,7 +2404,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.disable_codex_originator_normalization", false)
 	viper.SetDefault("gateway.codex_image_generation_bridge_enabled", false)
 	viper.SetDefault("gateway.openai_passthrough_allow_timeout_headers", false)
-	viper.SetDefault("gateway.openai_compact_model", "gpt-5.4")
+	viper.SetDefault("gateway.openai_compact_model", "gpt-5.5")
 	viper.SetDefault("gateway.live.max_session_duration_seconds", 3600)
 	// OpenAI Responses WebSocket（默认开启；可通过 force_http 紧急回滚）
 	viper.SetDefault("gateway.openai_ws.enabled", true)
@@ -2457,8 +2430,8 @@ func setDefaults() {
 	viper.SetDefault("gateway.openai_ws.min_idle_per_account", 4)
 	viper.SetDefault("gateway.openai_ws.max_idle_per_account", 12)
 	viper.SetDefault("gateway.openai_ws.dynamic_max_conns_by_account_concurrency_enabled", true)
-	viper.SetDefault("gateway.openai_ws.oauth_max_conns_factor", 1.0)
-	viper.SetDefault("gateway.openai_ws.apikey_max_conns_factor", 1.0)
+	viper.SetDefault("gateway.openai_ws.oauth_max_conns_factor", 5.0)
+	viper.SetDefault("gateway.openai_ws.apikey_max_conns_factor", 5.0)
 	viper.SetDefault("gateway.openai_ws.dial_timeout_seconds", 10)
 	viper.SetDefault("gateway.openai_ws.read_timeout_seconds", 900)
 	viper.SetDefault("gateway.openai_ws.write_timeout_seconds", 120)
@@ -2658,14 +2631,6 @@ func setEnvReachableDefaults() {
 	viper.SetDefault("gateway.openai_scheduler.sticky_escape_enabled", true)
 	viper.SetDefault("gateway.openai_scheduler.sticky_escape_error_rate", 0.0)
 	viper.SetDefault("gateway.openai_scheduler.sticky_escape_ttft_ms", 0)
-	viper.SetDefault("gateway.openai_scheduler.health_error_half_life_seconds", 0)
-	viper.SetDefault("gateway.openai_scheduler.health_ttft_stale_seconds", 0)
-	viper.SetDefault("gateway.openai_scheduler.health_idle_eviction_seconds", 0)
-	viper.SetDefault("gateway.openai_scheduler.cold_start_probe_after_seconds", 0)
-	viper.SetDefault("gateway.openai_scheduler.recovery_probe_after_seconds", 0)
-	viper.SetDefault("gateway.openai_scheduler.recovery_probe_cooldown_seconds", 0)
-	viper.SetDefault("gateway.openai_scheduler.recovery_probe_error_rate_threshold", 0.0)
-	viper.SetDefault("gateway.openai_scheduler.recovery_probe_max_error_multiplier", 0.0)
 
 	// server.trusted_proxies and security.forwarded_client_ip_headers are the
 	// other exception: load() distinguishes explicit configuration from absence
@@ -3371,6 +3336,10 @@ func (c *Config) Validate() error {
 		(c.Gateway.OpenAIHighEffortFirstOutputTimeoutSeconds > 0 && c.Gateway.OpenAIHighEffortFirstOutputTimeoutSeconds < 30) {
 		return fmt.Errorf("gateway.openai_high_effort_first_output_timeout_seconds must be 0 or between 30-1800 seconds")
 	}
+	if c.Gateway.OpenAIFirstOutputHardCapSeconds < 0 || c.Gateway.OpenAIFirstOutputHardCapSeconds > 3600 ||
+		(c.Gateway.OpenAIFirstOutputHardCapSeconds > 0 && c.Gateway.OpenAIFirstOutputHardCapSeconds < 60) {
+		return fmt.Errorf("gateway.openai_first_output_hard_cap_seconds must be 0 or between 60-3600 seconds")
+	}
 	if c.Gateway.Live.MaxSessionDurationSeconds <= 0 {
 		c.Gateway.Live.MaxSessionDurationSeconds = 3600
 	}
@@ -3617,24 +3586,6 @@ func (c *Config) Validate() error {
 	if c.Gateway.OpenAIScheduler.StickyEscapeErrorRate < 0 || c.Gateway.OpenAIScheduler.StickyEscapeErrorRate > 1 {
 		return fmt.Errorf("gateway.openai_scheduler.sticky_escape_error_rate must be between 0 and 1")
 	}
-	for key, value := range map[string]int{
-		"health_error_half_life_seconds":  c.Gateway.OpenAIScheduler.HealthErrorHalfLifeSeconds,
-		"health_ttft_stale_seconds":       c.Gateway.OpenAIScheduler.HealthTTFTStaleSeconds,
-		"health_idle_eviction_seconds":    c.Gateway.OpenAIScheduler.HealthIdleEvictionSeconds,
-		"cold_start_probe_after_seconds":  c.Gateway.OpenAIScheduler.ColdStartProbeAfterSeconds,
-		"recovery_probe_after_seconds":    c.Gateway.OpenAIScheduler.RecoveryProbeAfterSeconds,
-		"recovery_probe_cooldown_seconds": c.Gateway.OpenAIScheduler.RecoveryProbeCooldownSeconds,
-	} {
-		if value <= 0 {
-			return fmt.Errorf("gateway.openai_scheduler.%s must be positive", key)
-		}
-	}
-	if c.Gateway.OpenAIScheduler.RecoveryProbeErrorRateThreshold < 0 || c.Gateway.OpenAIScheduler.RecoveryProbeErrorRateThreshold >= 1 {
-		return fmt.Errorf("gateway.openai_scheduler.recovery_probe_error_rate_threshold must be in [0, 1)")
-	}
-	if c.Gateway.OpenAIScheduler.RecoveryProbeMaxErrorMultiplier < 1 {
-		return fmt.Errorf("gateway.openai_scheduler.recovery_probe_max_error_multiplier must be at least 1")
-	}
 	if c.Gateway.MaxLineSize < 0 {
 		return fmt.Errorf("gateway.max_line_size must be non-negative")
 	}
@@ -3763,6 +3714,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Ops.Cleanup.ErrorLogRetentionDays < 0 {
 		return fmt.Errorf("ops.cleanup.error_log_retention_days must be non-negative")
+	}
+	if c.Ops.Cleanup.Enabled && c.Ops.Cleanup.SystemLogRetentionDays <= 0 {
+		return fmt.Errorf("ops.cleanup.system_log_retention_days must be positive when ops cleanup is enabled")
 	}
 	if c.Ops.Cleanup.MinuteMetricsRetentionDays < 0 {
 		return fmt.Errorf("ops.cleanup.minute_metrics_retention_days must be non-negative")

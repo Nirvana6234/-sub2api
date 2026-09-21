@@ -170,8 +170,6 @@ type SystemSettings struct {
 	AffiliateRebateFreezeHours   int                          `json:"affiliate_rebate_freeze_hours"`
 	AffiliateRebateDurationDays  int                          `json:"affiliate_rebate_duration_days"`
 	AffiliateRebatePerInviteeCap float64                      `json:"affiliate_rebate_per_invitee_cap"`
-	AccountShareRewardRate       float64                      `json:"account_share_reward_rate"`
-	AccountOwnUsageFeeRate       float64                      `json:"account_own_usage_fee_rate"`
 	AdminRechargeRebateEnabled   bool                         `json:"affiliate_admin_recharge_enabled"`
 	DefaultUserRPMLimit          int                          `json:"default_user_rpm_limit"`
 	DefaultSubscriptions         []DefaultSubscriptionSetting `json:"default_subscriptions"`
@@ -312,6 +310,7 @@ type SystemSettings struct {
 	ChannelMonitorDefaultIntervalSeconds int    `json:"channel_monitor_default_interval_seconds"`
 	ChannelMonitorHideThroughput         bool   `json:"channel_monitor_hide_throughput"`
 	ChannelMonitorShowQuota              bool   `json:"channel_monitor_show_quota"`
+	ChannelMonitorHideUserRanking        bool   `json:"channel_monitor_hide_user_ranking"`
 
 	// Grok model mapping policy (admin settings; empty account mapping falls back to these).
 	GrokDefaultTextModel           string `json:"grok_default_text_model"`
@@ -329,20 +328,15 @@ type SystemSettings struct {
 	ClientLatestVersion        string `json:"client_latest_version"`
 	ClientLatestVersionMac     string `json:"client_latest_version_mac"`
 	ClientTutorialVideoURL     string `json:"client_tutorial_video_url"`
+	ChatAppDownloadEnabled     bool   `json:"chat_app_download_enabled"`
+	ChatAppDownloadDirectURL   string `json:"chat_app_download_direct_url"`
+	ChatAppLatestVersion       string `json:"chat_app_latest_version"`
+	BackupPaymentEnabled       bool   `json:"backup_payment_enabled"`
+	BackupPaymentURL           string `json:"backup_payment_url"`
 
-	// Chat 桌面客户端下载（tools/chat，独立产品，默认关闭）
-	ChatAppDownloadEnabled   bool   `json:"chat_app_download_enabled"`
-	ChatAppDownloadDirectURL string `json:"chat_app_download_direct_url"`
-	ChatAppLatestVersion     string `json:"chat_app_latest_version"`
-
-	// 延迟补偿慢请求阈值（毫秒）与退款比例（0~1）
+	// 延迟补偿阈值(ms)与退款比例(0~1)
 	LatencyCompensationThresholdMs int     `json:"latency_compensation_threshold_ms"`
 	LatencyCompensationProfitRatio float64 `json:"latency_compensation_profit_ratio"`
-
-	HeadroomBaseURL string `json:"headroom_base_url"`
-
-	BackupPaymentEnabled bool   `json:"backup_payment_enabled"`
-	BackupPaymentURL     string `json:"backup_payment_url"`
 
 	// Playground feature switch
 	PlaygroundEnabled              bool    `json:"playground_enabled"`
@@ -352,6 +346,7 @@ type SystemSettings struct {
 	PlaygroundDefaultImageGroupIDs []int64 `json:"playground_default_image_group_ids"`
 	PlaygroundDefaultChatStrategy  string  `json:"playground_default_chat_strategy"`
 	PlaygroundDefaultImageStrategy string  `json:"playground_default_image_strategy"`
+	SubscriptionEnabled            bool    `json:"subscription_enabled"`
 
 	// Model Plaza feature (public group/model pricing showcase)
 	ModelPlazaEnabled       bool   `json:"model_plaza_enabled"`
@@ -454,6 +449,7 @@ type PublicSettings struct {
 	ChannelMonitorDefaultIntervalSeconds int    `json:"channel_monitor_default_interval_seconds"`
 	ChannelMonitorHideThroughput         bool   `json:"channel_monitor_hide_throughput"`
 	ChannelMonitorShowQuota              bool   `json:"channel_monitor_show_quota"`
+	ChannelMonitorHideUserRanking        bool   `json:"channel_monitor_hide_user_ranking"`
 
 	AvailableChannelsEnabled bool `json:"available_channels_enabled"`
 
@@ -464,13 +460,11 @@ type PublicSettings struct {
 	ClientLatestVersion        string `json:"client_latest_version"`
 	ClientLatestVersionMac     string `json:"client_latest_version_mac"`
 	ClientTutorialVideoURL     string `json:"client_tutorial_video_url"`
-
-	ChatAppDownloadEnabled   bool   `json:"chat_app_download_enabled"`
-	ChatAppDownloadDirectURL string `json:"chat_app_download_direct_url"`
-	ChatAppLatestVersion     string `json:"chat_app_latest_version"`
-
-	BackupPaymentEnabled bool   `json:"backup_payment_enabled"`
-	BackupPaymentURL     string `json:"backup_payment_url"`
+	ChatAppDownloadEnabled     bool   `json:"chat_app_download_enabled"`
+	ChatAppDownloadDirectURL   string `json:"chat_app_download_direct_url"`
+	ChatAppLatestVersion       string `json:"chat_app_latest_version"`
+	BackupPaymentEnabled       bool   `json:"backup_payment_enabled"`
+	BackupPaymentURL           string `json:"backup_payment_url"`
 
 	PlaygroundEnabled           bool   `json:"playground_enabled"`
 	PlaygroundDefaultChatModel  string `json:"playground_default_chat_model"`
@@ -478,6 +472,7 @@ type PublicSettings struct {
 
 	ModelPlazaEnabled     bool `json:"model_plaza_enabled"`
 	ModelPlazaRequireAuth bool `json:"model_plaza_require_auth"`
+	SubscriptionEnabled   bool `json:"subscription_enabled"`
 
 	PluginManagementEnabled bool `json:"plugin_management_enabled"`
 

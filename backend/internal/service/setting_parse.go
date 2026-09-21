@@ -129,8 +129,6 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyAffiliateRebateFreezeHours:                strconv.Itoa(AffiliateRebateFreezeHoursDefault),
 		SettingKeyAffiliateRebateDurationDays:               strconv.Itoa(AffiliateRebateDurationDaysDefault),
 		SettingKeyAffiliateRebatePerInviteeCap:              strconv.FormatFloat(AffiliateRebatePerInviteeCapDefault, 'f', 2, 64),
-		SettingKeyAccountShareRewardRate:                    strconv.FormatFloat(AccountShareRewardRateDefaultPercent, 'f', 8, 64),
-		SettingKeyAccountOwnUsageFeeRate:                    strconv.FormatFloat(AccountOwnUsageFeeRateDefaultPercent, 'f', 8, 64),
 		SettingKeyDefaultUserRPMLimit:                       "0",
 		SettingKeyDefaultSubscriptions:                      "[]",
 		SettingKeyAuthSourceDefaultEmailBalance:             "0",
@@ -193,14 +191,18 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyChannelMonitorDefaultIntervalSeconds: "60",
 		SettingKeyChannelMonitorHideThroughput:         "true",
 		SettingKeyChannelMonitorShowQuota:              "false",
+		SettingKeyChannelMonitorHideUserRanking:        "false",
 
-		// Grok: safe defaults — no cross-vendor model rewrite unless operators enable it.
+		// Grok compatibility defaults: cross-client mapping stays enabled unless
+		// operators explicitly disable it.
 		SettingKeyGrokDefaultTextModel:           "grok-4.6",
 		SettingKeyGrokCrossClientModelMapEnabled: "true",
 		SettingKeyGrokDefaultBaseURLMode:         GrokDefaultBaseURLModeCLI,
 
 		// Available channels feature (default disabled; opt-in)
 		SettingKeyAvailableChannelsEnabled: "false",
+		// Subscription feature (default enabled; opt-out)
+		SettingKeySubscriptionEnabled: "true",
 
 		// 客户端下载页（默认开启，保持既有行为）
 		SettingKeyClientDownloadEnabled: "true",
@@ -212,7 +214,6 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		// 用户下到的是一个 55 字节的报错文本而不是安装包。
 		SettingKeyClientDownloadNetdiskURL: "https://pan.baidu.com/s/5PT50-jTaOtR8D28OfYnbQQ",
 		SettingKeyClientDownloadDirectURL:  ClientDownloadDefaultDirectURL,
-		SettingKeyClientTutorialVideoURL:   "https://www.bilibili.com/video/BV1vWYJ6PEhc/",
 
 		// 三个都默认为空，客户端据此不广播任何更新。
 		//
@@ -223,18 +224,15 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyClientDownloadDirectURLMac: "",
 		SettingKeyClientLatestVersion:        "",
 		SettingKeyClientLatestVersionMac:     "",
+		SettingKeyClientTutorialVideoURL:     "https://www.bilibili.com/video/BV1vWYJ6PEhc/",
+
+		SettingKeyChatAppDownloadEnabled:   "false",
+		SettingKeyChatAppDownloadDirectURL: "",
+		SettingKeyChatAppLatestVersion:     "",
 
 		// 延迟补偿慢请求阈值，默认 30 秒；退款比例默认 1（全退利润）
 		SettingKeyLatencyCompensationThresholdMs: "30000",
 		SettingKeyLatencyCompensationProfitRatio: "1",
-
-		// headroom 压缩代理地址，默认留空（未部署/未配置时不生效）
-		SettingKeyHeadroomBaseURL: "",
-
-		// Chat 桌面客户端下载（新产品，默认关闭，地址留空）
-		SettingKeyChatAppDownloadEnabled:   "false",
-		SettingKeyChatAppDownloadDirectURL: "",
-		SettingKeyChatAppLatestVersion:     "",
 
 		// 备用支付通道（默认关闭；opt-in）
 		SettingKeyBackupPaymentEnabled: "false",
@@ -298,7 +296,7 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingPaymentVisibleMethodAlipayEnabled:                     "false",
 		SettingPaymentVisibleMethodWxpayEnabled:                      "false",
 		openAIAdvancedSchedulerSettingKey:                            "false",
-		SettingKeyOpenAIAdvancedSchedulerStickyWeightedEnabled:       "true",
+		SettingKeyOpenAIAdvancedSchedulerStickyWeightedEnabled:       "false",
 		SettingKeyOpenAIAdvancedSchedulerSubscriptionPriorityEnabled: "false",
 		SettingKeyOpenAIAdvancedSchedulerLBTopK:                      "",
 		SettingKeyOpenAIAdvancedSchedulerWeightPriority:              "",
@@ -449,23 +447,6 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 		result.AffiliateRebateRate = clampAffiliateRebateRate(rebateRate)
 	} else {
 		result.AffiliateRebateRate = AffiliateRebateRateDefault
-	}
-	// 这两项此前根本没被解析进 SystemSettings —— 字段声明了却没人填，于是展示侧
-	// 恒为零值 0，而计费侧走 GetAccountShareRewardRatePercent（缺失即用默认值）得到
-	// 80 / 1。运维在设置页看到 0、实际按 80 分成；一旦点保存，更新路径会把
-	// previousSettings 里的 0 落库，分成比例真的变成 0。
-	//
-	// 缺失一律回退到默认值，不能像 clamp 那样落到最小值 —— 两个 Min 都是 0，
-	// 那正是上面那个陷阱的来源。
-	if shareRewardRate, err := strconv.ParseFloat(settings[SettingKeyAccountShareRewardRate], 64); err == nil {
-		result.AccountShareRewardRate = clampAccountShareRewardRatePercent(shareRewardRate)
-	} else {
-		result.AccountShareRewardRate = AccountShareRewardRateDefaultPercent
-	}
-	if ownUsageFeeRate, err := strconv.ParseFloat(settings[SettingKeyAccountOwnUsageFeeRate], 64); err == nil {
-		result.AccountOwnUsageFeeRate = clampAccountOwnUsageFeeRatePercent(ownUsageFeeRate)
-	} else {
-		result.AccountOwnUsageFeeRate = AccountOwnUsageFeeRateDefaultPercent
 	}
 	if freezeHours, err := strconv.Atoi(settings[SettingKeyAffiliateRebateFreezeHours]); err == nil && freezeHours >= 0 {
 		if freezeHours > AffiliateRebateFreezeHoursMax {
@@ -872,6 +853,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	// 配额展示默认关闭且 fail-closed：仅字面 "true" 视为开启
 	// （与 setting_public.go 公开读取路径保持一致）。
 	result.ChannelMonitorShowQuota = settings[SettingKeyChannelMonitorShowQuota] == "true"
+	result.ChannelMonitorHideUserRanking = isTrueSettingValue(settings[SettingKeyChannelMonitorHideUserRanking])
 
 	// Grok default mapping policy
 	result.GrokDefaultTextModel = strings.TrimSpace(settings[SettingKeyGrokDefaultTextModel])
@@ -885,6 +867,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 
 	// Available channels feature (default: disabled; strict true)
 	result.AvailableChannelsEnabled = settings[SettingKeyAvailableChannelsEnabled] == "true"
+	result.SubscriptionEnabled = !isFalseSettingValue(settings[SettingKeySubscriptionEnabled])
 
 	// 客户端下载页：默认开启，只有显式 "false" 才关闭。
 	result.ClientDownloadEnabled = settings[SettingKeyClientDownloadEnabled] != "false"
@@ -892,15 +875,9 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.ClientDownloadNetdiskURL = strings.TrimSpace(settings[SettingKeyClientDownloadNetdiskURL])
 	result.ClientDownloadDirectURL = strings.TrimSpace(settings[SettingKeyClientDownloadDirectURL])
 	result.ClientDownloadDirectURLMac = strings.TrimSpace(settings[SettingKeyClientDownloadDirectURLMac])
-	result.ClientTutorialVideoURL = strings.TrimSpace(settings[SettingKeyClientTutorialVideoURL])
-	result.HeadroomBaseURL = strings.TrimSpace(settings[SettingKeyHeadroomBaseURL])
 	result.ClientLatestVersion = strings.TrimSpace(settings[SettingKeyClientLatestVersion])
 	result.ClientLatestVersionMac = strings.TrimSpace(settings[SettingKeyClientLatestVersionMac])
-
-	// Chat 桌面客户端下载：默认关闭，严格 true 才开启。
-	result.ChatAppDownloadEnabled = settings[SettingKeyChatAppDownloadEnabled] == "true"
-	result.ChatAppDownloadDirectURL = strings.TrimSpace(settings[SettingKeyChatAppDownloadDirectURL])
-	result.ChatAppLatestVersion = strings.TrimSpace(settings[SettingKeyChatAppLatestVersion])
+	result.ClientTutorialVideoURL = strings.TrimSpace(settings[SettingKeyClientTutorialVideoURL])
 
 	// 延迟补偿慢请求阈值（毫秒），非法或缺失时回退默认 30 秒。
 	result.LatencyCompensationThresholdMs = 30000
@@ -1137,6 +1114,15 @@ func clampAffiliateRebateRate(value float64) float64 {
 func isFalseSettingValue(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "false", "0", "off", "disabled":
+		return true
+	default:
+		return false
+	}
+}
+
+func isTrueSettingValue(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "true", "1", "on", "enabled":
 		return true
 	default:
 		return false

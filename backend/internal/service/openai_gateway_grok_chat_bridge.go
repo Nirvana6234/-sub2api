@@ -595,8 +595,8 @@ func (s *OpenAIGatewayService) forwardGrokChatCompletionsViaResponses(
 	if err != nil {
 		return nil, fmt.Errorf("get grok access token: %w", err)
 	}
-	upstreamCtx, releaseUpstreamCtx := detachUpstreamRequestContext(ctx)
-	upstreamReq, err := buildGrokResponsesRequest(upstreamCtx, c, account, responsesBody, token, cacheIdentity, s.cfg)
+	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
+	upstreamReq, err := buildGrokResponsesRequest(upstreamCtx, c, account, responsesBody, token, cacheIdentity, s.cfg, s.settingService)
 	releaseUpstreamCtx()
 	if err != nil {
 		return nil, fmt.Errorf("build grok responses bridge request: %w", err)
@@ -623,6 +623,8 @@ func (s *OpenAIGatewayService) forwardGrokChatCompletionsViaResponses(
 			kind = "failover"
 		}
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+			ProxyID:            opsUpstreamProxyID(account),
+			ProxyName:          opsUpstreamProxyName(account),
 			Platform:           account.Platform,
 			AccountID:          account.ID,
 			AccountName:        account.Name,
@@ -631,7 +633,7 @@ func (s *OpenAIGatewayService) forwardGrokChatCompletionsViaResponses(
 			Kind:               kind,
 			Message:            upstreamMsg,
 		})
-		s.handleGrokAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
+		s.handleGrokAccountUpstreamError(withGrokTeamRateLimitModel(ctx, upstreamModel), account, resp.StatusCode, resp.Header, respBody)
 		if s.shouldFailoverGrokUpstreamError(resp.StatusCode, respBody) {
 			retryable, retryDelay, retryDeadline, retryMax := grokSameAccountRetryMetadata(account, resp.StatusCode, respBody)
 			return nil, &UpstreamFailoverError{
@@ -648,7 +650,7 @@ func (s *OpenAIGatewayService) forwardGrokChatCompletionsViaResponses(
 		return s.handleChatCompletionsErrorResponse(resp, c, account, billingModel)
 	}
 
-	s.updateGrokUsageFromResponse(ctx, account, resp.Header, resp.StatusCode)
+	s.updateGrokUsageFromResponse(withGrokTeamRateLimitModel(ctx, upstreamModel), account, resp.Header, resp.StatusCode)
 
 	var result *OpenAIForwardResult
 	if clientStream {

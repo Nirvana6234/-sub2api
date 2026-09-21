@@ -229,43 +229,6 @@ func TestLogger_IngressRejectRemainsInStandardAccessLog(t *testing.T) {
 	}
 }
 
-func TestLogger_AdminUsageAccessLogIsSkipped(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	sink := initMiddlewareTestLogger(t)
-
-	r := gin.New()
-	r.Use(Logger())
-	r.GET("/api/v1/admin/usage", func(c *gin.Context) {
-		c.Status(http.StatusOK)
-	})
-	r.POST("/api/v1/admin/usage", func(c *gin.Context) {
-		c.Status(http.StatusOK)
-	})
-
-	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/usage?page=1", nil)
-	r.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status=%d", w.Code)
-	}
-
-	if events := sink.list(); len(events) != 0 {
-		t.Fatalf("admin usage access log should be skipped, got %d events", len(events))
-	}
-
-	// Keep the rule method-independent so a future mutation endpoint cannot
-	// reintroduce the same high-volume access log.
-	w = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/api/v1/admin/usage", nil)
-	r.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status=%d", w.Code)
-	}
-	if events := sink.list(); len(events) != 0 {
-		t.Fatalf("admin usage POST access log should be skipped, got %d events", len(events))
-	}
-}
-
 func TestLogger_AccessLogUsesForwardedClientIPFromTrustedProxy(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	sink := initMiddlewareTestLogger(t)

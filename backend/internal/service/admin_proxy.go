@@ -48,35 +48,17 @@ func (s *adminServiceImpl) GetAllProxiesWithAccountCount(ctx context.Context) ([
 }
 
 func (s *adminServiceImpl) GetProxy(ctx context.Context, id int64) (*Proxy, error) {
-	return s.getAdminProxy(ctx, id)
+	return s.proxyRepo.GetByID(ctx, id)
 }
 
 func (s *adminServiceImpl) GetProxiesByIDs(ctx context.Context, ids []int64) ([]Proxy, error) {
-	proxies, err := s.proxyRepo.ListByIDs(ctx, ids)
-	if err != nil {
-		return nil, err
-	}
-	filtered := make([]Proxy, 0, len(proxies))
-	for i := range proxies {
-		if proxies[i].OwnerUserID == nil {
-			filtered = append(filtered, proxies[i])
-		}
-	}
-	return filtered, nil
-}
-
-func (s *adminServiceImpl) getAdminProxy(ctx context.Context, id int64) (*Proxy, error) {
-	proxy, err := s.proxyRepo.GetByID(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	if proxy == nil || proxy.OwnerUserID != nil {
-		return nil, ErrProxyNotFound
-	}
-	return proxy, nil
+	return s.proxyRepo.ListByIDs(ctx, ids)
 }
 
 func (s *adminServiceImpl) CreateProxy(ctx context.Context, input *CreateProxyInput) (*Proxy, error) {
+	if !isJSONTimeInRange(input.ExpiresAt) {
+		return nil, infraerrors.BadRequest("PROXY_EXPIRY_INVALID", "proxy expiry year must be between 0 and 9999")
+	}
 	// 规范化 fallback_mode
 	mode := input.FallbackMode
 	if mode == "" {
@@ -112,26 +94,32 @@ func (s *adminServiceImpl) CreateProxy(ctx context.Context, input *CreateProxyIn
 }
 
 func (s *adminServiceImpl) UpdateProxy(ctx context.Context, id int64, input *UpdateProxyInput) (*Proxy, error) {
+	if !isJSONTimeInRange(input.ExpiresAt) {
+		return nil, infraerrors.BadRequest("PROXY_EXPIRY_INVALID", "proxy expiry year must be between 0 and 9999")
+	}
 	// 校验：backup_proxy_id 不能是自身
 	if input.BackupProxyID != nil && *input.BackupProxyID == id {
 		return nil, infraerrors.BadRequest("PROXY_BACKUP_SELF", "backup proxy cannot be itself")
 	}
-	// 规范化 fallback_mode
-	mode := input.FallbackMode
-	if mode == "" {
-		mode = FallbackModeNone
-	}
-	// 校验：mode=proxy 必须有 backup
-	if mode == FallbackModeProxy && input.BackupProxyID == nil {
-		return nil, infraerrors.BadRequest("PROXY_BACKUP_REQUIRED", "backup proxy required when fallback_mode=proxy")
-	}
-	if input.ExpiryWarnDays < 0 {
-		return nil, infraerrors.BadRequest("PROXY_WARN_DAYS_INVALID", "expiry_warn_days must be >= 0")
-	}
-
-	proxy, err := s.getAdminProxy(ctx, id)
+	proxy, err := s.proxyRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
+	}
+
+	// Merge only supplied fields, then validate the resulting fallback configuration.
+	mode := proxy.FallbackMode
+	if input.FallbackMode != "" {
+		mode = input.FallbackMode
+	}
+	backupID := proxy.BackupProxyID
+	if input.BackupProxyID != nil || input.ClearBackupID {
+		backupID = input.BackupProxyID
+	}
+	if mode == FallbackModeProxy && backupID == nil {
+		return nil, infraerrors.BadRequest("PROXY_BACKUP_REQUIRED", "backup proxy required when fallback_mode=proxy")
+	}
+	if input.ExpiryWarnDays != nil && *input.ExpiryWarnDays < 0 {
+		return nil, infraerrors.BadRequest("PROXY_WARN_DAYS_INVALID", "expiry_warn_days must be >= 0")
 	}
 
 	if input.Name != "" {
@@ -146,20 +134,23 @@ func (s *adminServiceImpl) UpdateProxy(ctx context.Context, id int64, input *Upd
 	if input.Port != 0 {
 		proxy.Port = input.Port
 	}
-	if input.Username != "" {
-		proxy.Username = input.Username
+	if input.Username != nil {
+		proxy.Username = *input.Username
 	}
-	if input.Password != "" {
-		proxy.Password = input.Password
+	if input.Password != nil {
+		proxy.Password = *input.Password
 	}
 	if input.Status != "" {
 		proxy.Status = input.Status
 	}
-	// 透传有效期与回退字段
-	proxy.ExpiresAt = input.ExpiresAt
+	if input.ExpiresAt != nil || input.ClearExpiresAt {
+		proxy.ExpiresAt = input.ExpiresAt
+	}
 	proxy.FallbackMode = mode
-	proxy.BackupProxyID = input.BackupProxyID
-	proxy.ExpiryWarnDays = input.ExpiryWarnDays
+	proxy.BackupProxyID = backupID
+	if input.ExpiryWarnDays != nil {
+		proxy.ExpiryWarnDays = *input.ExpiryWarnDays
+	}
 
 	if err := s.proxyRepo.Update(ctx, proxy); err != nil {
 		return nil, err
@@ -168,9 +159,6 @@ func (s *adminServiceImpl) UpdateProxy(ctx context.Context, id int64, input *Upd
 }
 
 func (s *adminServiceImpl) DeleteProxy(ctx context.Context, id int64) error {
-	if _, err := s.getAdminProxy(ctx, id); err != nil {
-		return err
-	}
 	count, err := s.proxyRepo.CountAccountsByProxyID(ctx, id)
 	if err != nil {
 		return err
@@ -188,10 +176,6 @@ func (s *adminServiceImpl) BatchDeleteProxies(ctx context.Context, ids []int64) 
 	}
 
 	for _, id := range ids {
-		if _, err := s.getAdminProxy(ctx, id); err != nil {
-			result.Skipped = append(result.Skipped, ProxyBatchDeleteSkipped{ID: id, Reason: err.Error()})
-			continue
-		}
 		count, err := s.proxyRepo.CountAccountsByProxyID(ctx, id)
 		if err != nil {
 			result.Skipped = append(result.Skipped, ProxyBatchDeleteSkipped{
@@ -221,9 +205,6 @@ func (s *adminServiceImpl) BatchDeleteProxies(ctx context.Context, ids []int64) 
 }
 
 func (s *adminServiceImpl) GetProxyAccounts(ctx context.Context, proxyID int64) ([]ProxyAccountSummary, error) {
-	if _, err := s.getAdminProxy(ctx, proxyID); err != nil {
-		return nil, err
-	}
 	return s.proxyRepo.ListAccountSummariesByProxyID(ctx, proxyID)
 }
 
@@ -232,7 +213,7 @@ func (s *adminServiceImpl) CheckProxyExists(ctx context.Context, host string, po
 }
 
 func (s *adminServiceImpl) TestProxy(ctx context.Context, id int64) (*ProxyTestResult, error) {
-	proxy, err := s.getAdminProxy(ctx, id)
+	proxy, err := s.proxyRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -276,7 +257,7 @@ func (s *adminServiceImpl) TestProxy(ctx context.Context, id int64) (*ProxyTestR
 }
 
 func (s *adminServiceImpl) CheckProxyQuality(ctx context.Context, id int64) (*ProxyQualityCheckResult, error) {
-	proxy, err := s.getAdminProxy(ctx, id)
+	proxy, err := s.proxyRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}

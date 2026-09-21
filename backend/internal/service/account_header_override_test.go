@@ -30,11 +30,13 @@ func TestIsHeaderOverrideEligible(t *testing.T) {
 		{"kimi apikey", PlatformKimi, AccountTypeAPIKey, true},
 		{"zhipu apikey", PlatformZhipu, AccountTypeAPIKey, true},
 		{"deepseek apikey", PlatformDeepseek, AccountTypeAPIKey, true},
+		{"opencode go apikey", PlatformOpenCodeGo, AccountTypeAPIKey, true},
 		{"anthropic oauth", PlatformAnthropic, AccountTypeOAuth, false},
 		{"openai oauth", PlatformOpenAI, AccountTypeOAuth, false},
 		{"kimi oauth", PlatformKimi, AccountTypeOAuth, false},
 		{"zhipu oauth", PlatformZhipu, AccountTypeOAuth, false},
 		{"deepseek oauth", PlatformDeepseek, AccountTypeOAuth, false},
+		{"opencode go oauth", PlatformOpenCodeGo, AccountTypeOAuth, false},
 		{"gemini apikey", PlatformGemini, AccountTypeAPIKey, false},
 		{"grok apikey", PlatformGrok, AccountTypeAPIKey, true},
 		{"grok oauth", PlatformGrok, AccountTypeOAuth, true},
@@ -207,69 +209,6 @@ func TestApplyHeaderOverridesNoOpPaths(t *testing.T) {
 
 	// nil header 不 panic
 	blocked.ApplyHeaderOverrides(nil)
-}
-
-func TestGetCustomHeaders(t *testing.T) {
-	t.Run("map[string]any input", func(t *testing.T) {
-		acc := &Account{Extra: map[string]any{
-			"custom_headers": map[string]any{
-				" X-Test ":      "  one  ",
-				"Authorization": "Bearer evil",
-				"x-empty":       "",
-				"bad name":      "value",
-				"x-num":         42,
-			},
-		}}
-
-		require.Equal(t, map[string]string{"x-test": "one"}, acc.GetCustomHeaders())
-	})
-
-	t.Run("map[string]string input", func(t *testing.T) {
-		acc := &Account{Extra: map[string]any{
-			"custom_headers": map[string]string{
-				"X-Test":    "one",
-				"x-another": "two",
-			},
-		}}
-
-		require.Equal(t, map[string]string{"x-another": "two", "x-test": "one"}, acc.GetCustomHeaders())
-	})
-}
-
-func TestApplyHeaderOverridesCustomHeadersWin(t *testing.T) {
-	for _, tc := range []struct {
-		name     string
-		platform string
-		accType  string
-	}{
-		{"anthropic oauth", PlatformAnthropic, AccountTypeOAuth},
-		{"anthropic setup token", PlatformAnthropic, AccountTypeSetupToken},
-		{"anthropic bedrock", PlatformAnthropic, AccountTypeBedrock},
-		{"openai apikey", PlatformOpenAI, AccountTypeAPIKey},
-		{"gemini service account", PlatformGemini, AccountTypeServiceAccount},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			acc := headerOverrideTestAccount(tc.platform, tc.accType, map[string]any{
-				credKeyHeaderOverrideEnabled: true,
-				credKeyHeaderOverrides: map[string]any{
-					"x-trace": "from-credentials",
-				},
-			})
-			acc.Extra = map[string]any{
-				"custom_headers": map[string]any{
-					"x-trace": "from-extra",
-				},
-			}
-			require.Equal(t, "from-extra", acc.GetCustomHeaders()["x-trace"])
-
-			h := http.Header{}
-			h.Set("X-Trace", "original")
-
-			acc.ApplyHeaderOverrides(h)
-
-			require.Equal(t, "from-extra", getHeaderRaw(h, "x-trace"))
-		})
-	}
 }
 
 func TestNormalizeHeaderOverrideCredentials(t *testing.T) {

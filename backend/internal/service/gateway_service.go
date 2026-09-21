@@ -580,41 +580,21 @@ type AccountSelectionResult struct {
 	Acquired    bool
 	ReleaseFunc func()
 	WaitPlan    *AccountWaitPlan // nil means no wait allowed
-	// fallbackPoolUsageTrace carries the source/target groups across the
-	// scheduler boundary so asynchronous usage recording can preserve the
-	// fallback fact after the request context is detached.
-	fallbackPoolUsageTrace *fallbackPoolUsageTrace
 	// profitGate 携带本次选号真实生效的利润门（无门为 nil）。门安装在调度栈的
 	// 局部 ctx 上，handler 必须经 ContextWithSelectionProfitGate 重放后才能在
 	// 调度栈之外做抢槽后终检与准入后粘性绑定。
 	profitGate *openAIProfitControlGate
-	// replaceStickyBinding 仅用于健康逃逸：备用账号终检准入后
-	// 可替换原 sticky 绑定。并发占满等短暂逃逸不设置该标记。
-	replaceStickyBinding bool
-	// preserveStickyBinding 用于并发占满等短暂逃逸。备用账号即使
-	// 经过 WaitPlan 后才准入，也不应覆盖原会话绑定。
-	preserveStickyBinding bool
+	// fallbackTrace 携带本次选号命中的兜底事实（未走兜底为 nil）。兜底状态同样
+	// 只存在于调度栈内部的局部 ctx 上，不随返回值离开；handler 必须经
+	// ContextWithSelectionFallbackTrace 重放到请求 ctx，记用量的 detached worker
+	// 才能通过 PropagateFallbackPoolUsageContext 把它搬过去。少了这一环，
+	// usage_logs 的 fallback_* 字段恒为空（2026-09-10 起的生产表现）。
+	fallbackTrace *fallbackPoolUsageTrace
 }
 
 // ProfitGateActive 报告本次选号是否处于利润门之下。
 func (r *AccountSelectionResult) ProfitGateActive() bool {
 	return r != nil && r.profitGate != nil
-}
-
-// EffectiveGroupID 返回本次选号实际服务账号所在的分组 ID：命中了兜底池
-// 时是兜底目标组，否则原样返回调用方传入的（请求原始）分组 ID。
-//
-// handler 侧的准入后粘性绑定（BindStickySessionAfterProfitAdmission 等）
-// 必须用这个值而不是 apiKey.GroupID——sticky key 按 groupID 分桶
-// （sticky_session:{groupID}:{sessionHash}），传错组会把绑定写到一个
-// 后续查询压根查不到账号的 key 上，等于每次都在为兜底组重新负载均衡，
-// 无法复用 prompt cache。
-func (r *AccountSelectionResult) EffectiveGroupID(requestedGroupID *int64) *int64 {
-	if r != nil && r.fallbackPoolUsageTrace != nil && r.fallbackPoolUsageTrace.TargetGroupID > 0 {
-		id := r.fallbackPoolUsageTrace.TargetGroupID
-		return &id
-	}
-	return requestedGroupID
 }
 
 // ClaudeUsage 表示Claude API返回的usage信息
@@ -636,8 +616,10 @@ type AudioUsage struct {
 
 type ForwardResult struct {
 	RequestID string
-	Usage     ClaudeUsage
-	Model     string
+	// UpstreamHeaders 是直接上游的响应头，用于按账户配置解析上游请求标识。
+	UpstreamHeaders http.Header
+	Usage           ClaudeUsage
+	Model           string
 	// UpstreamModel is the actual upstream model after mapping.
 	// Prefer empty when it is identical to Model; persistence normalizes equal values away as no-op mappings.
 	UpstreamModel string
@@ -671,11 +653,6 @@ type ForwardResult struct {
 	ImageSizeBreakdown map[string]int
 	SearchCount        int
 	AudioUsage         *AudioUsage
-
-	// HeadroomTokensSaved is parsed from the upstream response's
-	// x-headroom-tokens-saved header (present only when the request was
-	// actually routed through and compressed by the headroom proxy).
-	HeadroomTokensSaved int
 }
 
 // GatewayFailureStage identifies which request stage failed. The zero value is
@@ -1470,9 +1447,7 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 		if len(mapping) > 0 {
 			hasAnyMapping = true
 			for model := range mapping {
-				if IsPublicModel(model) {
-					modelSet[model] = struct{}{}
-				}
+				modelSet[model] = struct{}{}
 			}
 		}
 	}
@@ -1493,105 +1468,15 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 	}
 	sort.Strings(models)
 
+	if platform == PlatformOpenAI {
+		models = supplementUnmappedOpenAIModels(accounts, models)
+	}
+
 	if s.modelsListCache != nil {
 		s.modelsListCache.Set(cacheKey, cloneStringSlice(models), s.modelsListCacheTTL)
 		modelsListCacheStoreTotal.Add(1)
 	}
 	return cloneStringSlice(models)
-}
-
-// GetWorkspaceAvailableModels returns client-visible model IDs grouped by
-// platform for the desktop app's fixed local relay. The local relay schedules
-// personal accounts before the explicitly enabled fallback accounts, so its
-// model catalog must reflect the complete local scheduler instead of the
-// platform attached to one client API key.
-//
-// A nil model slice means that the platform has at least one schedulable
-// account without an explicit model mapping and should therefore advertise
-// that platform's default model list. Explicit mappings from other accounts
-// are still included by the handler alongside those defaults.
-type WorkspacePlatformModels struct {
-	ModelIDs    []string
-	UseDefaults bool
-}
-
-func (s *GatewayService) GetWorkspaceAvailableModels(ctx context.Context) map[string]WorkspacePlatformModels {
-	if s == nil || s.accountRepo == nil {
-		return nil
-	}
-
-	accounts, err := s.accountRepo.ListSchedulable(ctx)
-	if err != nil || len(accounts) == 0 {
-		return nil
-	}
-	return workspaceAvailableModelsFromAccounts(accounts)
-}
-
-// GetWorkspaceAvailableModels is the OpenAI gateway counterpart used by the
-// Codex manifest endpoint. Both gateway stacks expose the same local catalog.
-func (s *OpenAIGatewayService) GetWorkspaceAvailableModels(ctx context.Context) map[string]WorkspacePlatformModels {
-	if s == nil || s.accountRepo == nil {
-		return nil
-	}
-	accounts, err := s.accountRepo.ListSchedulable(ctx)
-	if err != nil || len(accounts) == 0 {
-		return nil
-	}
-	return workspaceAvailableModelsFromAccounts(accounts)
-}
-
-func workspaceAvailableModelsFromAccounts(accounts []Account) map[string]WorkspacePlatformModels {
-	type platformModels struct {
-		useDefaults bool
-		models      map[string]struct{}
-	}
-	byPlatform := make(map[string]*platformModels, 3)
-	for _, account := range accounts {
-		platform := strings.TrimSpace(account.Platform)
-		switch platform {
-		case PlatformOpenAI, PlatformAnthropic, PlatformGrok:
-		default:
-			continue
-		}
-
-		entry := byPlatform[platform]
-		if entry == nil {
-			entry = &platformModels{models: make(map[string]struct{})}
-			byPlatform[platform] = entry
-		}
-		mapping := account.GetModelMapping()
-		if len(mapping) == 0 {
-			entry.useDefaults = true
-			continue
-		}
-		for model := range mapping {
-			model = strings.TrimSpace(model)
-			if model != "" && IsPublicModel(model) {
-				entry.models[model] = struct{}{}
-			}
-		}
-	}
-
-	result := make(map[string]WorkspacePlatformModels, len(byPlatform))
-	for platform, entry := range byPlatform {
-		models := make([]string, 0, len(entry.models))
-		for model := range entry.models {
-			models = append(models, model)
-		}
-		sort.Strings(models)
-		result[platform] = WorkspacePlatformModels{
-			ModelIDs:    models,
-			UseDefaults: entry.useDefaults,
-		}
-	}
-	return result
-}
-
-// IsPublicModel reports whether a model may be advertised in user-facing
-// catalogs. Luna is deliberately excluded even when stale account mappings
-// still contain it.
-func IsPublicModel(model string) bool {
-	return !strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "gpt-5.6-luna")
 }
 
 func (s *GatewayService) resolveCompositeModelOwnership(ctx context.Context, groupID int64, model string) (CompositeModelOwnership, error) {

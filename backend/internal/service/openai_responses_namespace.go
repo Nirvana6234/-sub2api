@@ -78,8 +78,13 @@ func shouldStripOpenAIResponsesInputNamespaces(account *Account, transport OpenA
 //   - compact 端点的 schema 不含该字段，携带即 400 `Unknown parameter:
 //     input[N].namespace`（issue #4761 正文），故 compact 一律清理。
 //   - API Key 出口默认按标准 Responses API 处理并清理该字段；但当请求本身声明
-//     namespace 工具时，上游显然使用了 namespace 扩展，此时必须保留调用项上的
-//     namespace，否则声明与历史调用会失配并触发 Missing namespace。
+//     namespace 工具时（包括 Responses Lite 的 input[].additional_tools），上游显然
+//     使用了 namespace 扩展，此时必须保留调用项上的 namespace，否则声明与历史
+//     调用会失配并触发 Missing namespace。
+//     该推断只覆盖"客户端自己声明 namespace 工具"的情形：当 API Key 指向 Codex
+//     后端中转时，multi_agent 等工具由上游注入、客户端 tools 里并无 namespace 声明，
+//     推断会误判为标准上游而剥掉字段。账号开关
+//     openai_responses_keep_tool_call_namespaces 为这类部署跳过推断、无条件保留。
 //   - 摊平模式下调用项已被改写成平名，残留 namespace 指向的声明已不存在，一律清理。
 func shouldKeepOpenAIResponsesToolCallNamespaces(
 	account *Account,
@@ -95,6 +100,9 @@ func shouldKeepOpenAIResponsesToolCallNamespaces(
 		return false
 	}
 	if account.IsOpenAIApiKey() {
+		if account.IsOpenAIResponsesKeepToolCallNamespacesEnabled() {
+			return true
+		}
 		return hasOpenAIResponsesNamespaceToolDeclaration(body)
 	}
 	if !account.IsOpenAIOAuthLike() {
@@ -104,13 +112,39 @@ func shouldKeepOpenAIResponsesToolCallNamespaces(
 }
 
 func hasOpenAIResponsesNamespaceToolDeclaration(body []byte) bool {
-	tools := gjson.GetBytes(body, "tools")
-	if !tools.IsArray() {
+	hasNamespaceTool := func(tools gjson.Result) bool {
+		if !tools.IsArray() {
+			return false
+		}
+		found := false
+		tools.ForEach(func(_, tool gjson.Result) bool {
+			if strings.EqualFold(strings.TrimSpace(tool.Get("type").String()), "namespace") {
+				found = true
+				return false
+			}
+			return true
+		})
+		return found
+	}
+
+	if hasNamespaceTool(gjson.GetBytes(body, "tools")) {
+		return true
+	}
+
+	// Responses Lite moves private namespace declarations out of top-level
+	// tools and into an input.additional_tools carrier. API-key requests are
+	// intentionally not rewritten by normalizeOpenAIResponsesLiteTools, so the
+	// declaration can arrive here only in this form.
+	input := gjson.GetBytes(body, "input")
+	if !input.IsArray() {
 		return false
 	}
 	found := false
-	tools.ForEach(func(_, tool gjson.Result) bool {
-		if strings.EqualFold(strings.TrimSpace(tool.Get("type").String()), "namespace") {
+	input.ForEach(func(_, item gjson.Result) bool {
+		if !strings.EqualFold(strings.TrimSpace(item.Get("type").String()), "additional_tools") {
+			return true
+		}
+		if hasNamespaceTool(item.Get("tools")) {
 			found = true
 			return false
 		}

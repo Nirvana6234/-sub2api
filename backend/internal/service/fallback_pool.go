@@ -154,6 +154,9 @@ func fallbackPoolUsageTraceFromState(state fallbackGroupState) (fallbackPoolUsag
 	}, true
 }
 
+// fallbackPoolUsageTraceFromContext 读取本次请求命中的兜底事实。优先读通用 key
+// （由 withFallbackPoolUsageTrace 写入，用于跨 goroutine 的 detached worker context），
+// 否则回退到 OpenAI/Gateway 各自链路在请求 ctx 上挂的 key。
 func fallbackPoolUsageTraceFromContext(ctx context.Context) (fallbackPoolUsageTrace, bool) {
 	if ctx == nil {
 		return fallbackPoolUsageTrace{}, false

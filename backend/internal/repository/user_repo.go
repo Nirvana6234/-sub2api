@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"net"
 	"sort"
 	"strings"
 	"time"
@@ -67,13 +66,13 @@ func (r *userRepository) GetContributionWallet(ctx context.Context, userID int64
 }
 
 func (r *userRepository) Create(ctx context.Context, userIn *service.User) error {
-	return r.create(ctx, userIn, false, "", registrationIPQuota{})
+	return r.create(ctx, userIn, false, "")
 }
 
 // CreateWithEmailAliasGuard 见 service.UserRepository：在邮箱唯一性锁内复查收件箱身份，
 // 供注册路径使用。
 func (r *userRepository) CreateWithEmailAliasGuard(ctx context.Context, userIn *service.User) error {
-	return r.create(ctx, userIn, true, "", registrationIPQuota{})
+	return r.create(ctx, userIn, true, "")
 }
 
 // CountUsersByEmailDomain 统计指定可注册主域名及其子域名下的未删除用户。
@@ -84,18 +83,10 @@ func (r *userRepository) CountUsersByEmailDomain(ctx context.Context, domain str
 // CreateWithEmailAliasGuardAndDomainLimit 串行化非白名单域名的注册请求，
 // 并在用户写入的同一事务内复查域名额度。
 func (r *userRepository) CreateWithEmailAliasGuardAndDomainLimit(ctx context.Context, userIn *service.User, domain string) error {
-	return r.create(ctx, userIn, true, normalizeEmailDomain(domain), registrationIPQuota{})
+	return r.create(ctx, userIn, true, normalizeEmailDomain(domain))
 }
 
-// registrationIPQuota 描述一次注册要不要按 IP 限额；max<=0 或 ip=="" 表示不限。
-type registrationIPQuota struct {
-	ip  string
-	max int
-}
-
-func (q registrationIPQuota) active() bool { return q.ip != "" && q.max > 0 }
-
-func (r *userRepository) create(ctx context.Context, userIn *service.User, guardEmailAlias bool, domainLimit string, ipQuota registrationIPQuota) error {
+func (r *userRepository) create(ctx context.Context, userIn *service.User, guardEmailAlias bool, domainLimit string) error {
 	if userIn == nil {
 		return nil
 	}
@@ -137,9 +128,6 @@ func (r *userRepository) create(ctx context.Context, userIn *service.User, guard
 	if domainLimit != "" {
 		lockKeys = append(lockKeys, registrationEmailDomainLockKey(domainLimit))
 	}
-	if ipQuota.active() {
-		lockKeys = append(lockKeys, registrationIPLockKey(ipQuota.ip))
-	}
 	releaseEmailLock, err := lockRepositoryScopedKeys(
 		txCtx,
 		txClient,
@@ -158,17 +146,6 @@ func (r *userRepository) create(ctx context.Context, userIn *service.User, guard
 		}
 		if count > 0 {
 			return service.ErrEmailDomainRegistrationLimit
-		}
-	}
-
-	// 拿到 IP 锁之后在事务内复查：校验阶段的计数可能已被并发注册改写。
-	if ipQuota.active() {
-		count, err := countUsersByRegisterIPWithClient(txCtx, txClient, ipQuota.ip)
-		if err != nil {
-			return err
-		}
-		if count >= ipQuota.max {
-			return service.ErrRegisterIPLimit
 		}
 	}
 
@@ -196,13 +173,11 @@ func (r *userRepository) create(ctx context.Context, userIn *service.User, guard
 		SetConcurrency(userIn.Concurrency).
 		SetStatus(userIn.Status).
 		SetSignupSource(userSignupSourceOrDefault(userIn.SignupSource)).
-		SetNillableRegisterIP(userIn.RegisterIP).
 		SetNillableLastLoginAt(userIn.LastLoginAt).
 		SetNillableLastActiveAt(userIn.LastActiveAt).
 		SetRpmLimit(userIn.RPMLimit).
 		SetAccountManagementEnabled(userIn.AccountManagementEnabled).
 		SetContributionRoomsEnabled(userIn.ContributionRoomsEnabled).
-		SetHeadroomCompressionEnabled(userIn.HeadroomCompressionEnabled).
 		SetRestrictPublicGroups(userIn.RestrictPublicGroups).
 		Save(txCtx)
 	if err != nil {
@@ -369,9 +344,6 @@ func (r *userRepository) Update(ctx context.Context, userIn *service.User, field
 	}
 	if fields.ContributionRoomsEnabled {
 		updateOp = updateOp.SetContributionRoomsEnabled(userIn.ContributionRoomsEnabled)
-	}
-	if fields.HeadroomCompressionEnabled {
-		updateOp = updateOp.SetHeadroomCompressionEnabled(userIn.HeadroomCompressionEnabled)
 	}
 	if fields.Status {
 		updateOp = updateOp.SetStatus(userIn.Status)
@@ -1393,51 +1365,6 @@ func normalizedEmailUniquenessLockKey(email string) string {
 	return "users:normalized-email:" + normalized
 }
 
-// registrationIPLockKey 与域名配额同构：把同一 IP 的并发注册串行化，
-// 否则两个请求可能各自读到 count=2 后双双写入，冲破上限。
-func registrationIPLockKey(ip string) string {
-	ip = normalizeRegisterIP(ip)
-	if ip == "" {
-		return ""
-	}
-	return "users:registration-ip:" + ip
-}
-
-// normalizeRegisterIP 统一大小写与空白，保证计数与写入用的是同一个键。
-// IPv6 的文本形式大小写不敏感，不归一会让 2001:DB8:: 与 2001:db8:: 被当成两个 IP。
-func normalizeRegisterIP(ip string) string {
-	ip = strings.TrimSpace(ip)
-	if ip == "" {
-		return ""
-	}
-	if parsed := net.ParseIP(ip); parsed != nil {
-		return parsed.String()
-	}
-	return strings.ToLower(ip)
-}
-
-// CountUsersByRegisterIP 统计该 IP 名下未软删除的账号数。
-// register_ip 为 NULL 的存量用户天然不会被等值匹配命中，即不占配额。
-func (r *userRepository) CountUsersByRegisterIP(ctx context.Context, ip string) (int, error) {
-	return countUsersByRegisterIPWithClient(ctx, clientFromContext(ctx, r.client), ip)
-}
-
-func countUsersByRegisterIPWithClient(ctx context.Context, client *dbent.Client, ip string) (int, error) {
-	client = clientFromContext(ctx, client)
-	ip = normalizeRegisterIP(ip)
-	if client == nil || ip == "" {
-		return 0, nil
-	}
-	return client.User.Query().
-		Where(dbuser.RegisterIPEQ(ip), dbuser.DeletedAtIsNil()).
-		Count(ctx)
-}
-
-// CreateWithEmailAliasGuardAndRegisterIPLimit 在写入用户的同一事务内复查 IP 配额。
-func (r *userRepository) CreateWithEmailAliasGuardAndRegisterIPLimit(ctx context.Context, userIn *service.User, ip string, maxPerIP int) error {
-	return r.create(ctx, userIn, true, "", registrationIPQuota{ip: normalizeRegisterIP(ip), max: maxPerIP})
-}
-
 func registrationEmailDomainLockKey(domain string) string {
 	domain = normalizeEmailDomain(domain)
 	if domain == "" {
@@ -1637,14 +1564,12 @@ func applyUserEntityToService(dst *service.User, src *dbent.User) {
 	}
 	dst.ID = src.ID
 	dst.SignupSource = src.SignupSource
-	dst.RegisterIP = src.RegisterIP
 	dst.LastLoginAt = src.LastLoginAt
 	dst.LastActiveAt = src.LastActiveAt
 	dst.CreatedAt = src.CreatedAt
 	dst.UpdatedAt = src.UpdatedAt
 	dst.AccountManagementEnabled = src.AccountManagementEnabled
 	dst.ContributionRoomsEnabled = src.ContributionRoomsEnabled
-	dst.HeadroomCompressionEnabled = src.HeadroomCompressionEnabled
 }
 
 func userSignupSourceOrDefault(signupSource string) string {

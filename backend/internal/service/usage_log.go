@@ -159,10 +159,6 @@ type UsageLog struct {
 	OutputTokens        int
 	CacheCreationTokens int
 	CacheReadTokens     int
-	// HeadroomTokensSaved 本次请求经 headroom 压缩代理节省的输入 token 数（未启用/未生效时为 0）。
-	HeadroomTokensSaved int
-	// HeadroomSavingsUSD 上述节省 token 按模型标准单价（倍率固定为 1）折算的等值美金。
-	HeadroomSavingsUSD float64
 
 	CacheCreation5mTokens int `gorm:"column:cache_creation_5m_tokens"`
 	CacheCreation1hTokens int `gorm:"column:cache_creation_1h_tokens"`
@@ -180,8 +176,7 @@ type UsageLog struct {
 	ActualCost                float64
 	RateMultiplier            float64
 	LongContextBillingApplied bool
-	// AccountRateMultiplier 账号成本倍率快照；nil 表示该请求没有可靠成本声明，
-	// 账号成本统计应跳过该行，不能凭空按 1.0 计价。
+	// AccountRateMultiplier 账号计费倍率快照（nil 表示历史数据，按 1.0 处理）
 	AccountRateMultiplier *float64
 	// AccountStatsCost 账号统计定价预计算费用（nil = 使用默认公式 total_cost × account_rate_multiplier）
 	AccountStatsCost *float64
@@ -199,6 +194,10 @@ type UsageLog struct {
 	// (e.g. the session_id / X-Session-Id headers). Nil when the client sent no
 	// valid session header. It is never derived from prompt_cache_key or content.
 	SessionID *string
+	// UpstreamRequestID 是直接上游在响应头中声明的请求标识，只读账户
+	// extra.upstream_request_id_header 指定的头；账户未指定头名、WS 轮次
+	// 与上游没有该头的路径为 nil。
+	UpstreamRequestID *string
 
 	// Cache TTL Override 标记（管理员强制替换了缓存 TTL 计费）
 	CacheTTLOverridden bool

@@ -1,13 +1,16 @@
 package setup
 
 import (
-	"net/url"
+	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/lib/pq"
 )
 
 func TestDecideAdminBootstrap(t *testing.T) {
@@ -200,7 +203,7 @@ func TestWriteConfigFileKeepsDefaultUserConcurrency(t *testing.T) {
 		t.Fatalf("ReadFile() error = %v", err)
 	}
 
-	if !strings.Contains(string(data), "user_concurrency: 30") {
+	if !strings.Contains(string(data), "user_concurrency: 5") {
 		t.Fatalf("config missing default user concurrency, got:\n%s", string(data))
 	}
 }
@@ -228,7 +231,7 @@ func TestWriteConfigFileIncludesRedisUsername(t *testing.T) {
 	}
 }
 
-func TestBuildDatabaseConnectionDSNsUsesPostgresForBootstrap(t *testing.T) {
+func TestDatabaseConnectionDSNsUseConfiguredTargetAndLegacyBootstrapDatabase(t *testing.T) {
 	cfg := &DatabaseConfig{
 		Host:     "db",
 		Port:     5432,
@@ -238,43 +241,117 @@ func TestBuildDatabaseConnectionDSNsUsesPostgresForBootstrap(t *testing.T) {
 		SSLMode:  "disable",
 	}
 
-	bootstrapDSN, targetDSN := buildDatabaseConnectionDSNs(cfg)
+	targetDSN := buildPostgresDSN(cfg, cfg.DBName)
+	bootstrapDSN := buildPostgresDSN(cfg, postgresBootstrapDatabase)
 
-	assertPostgresDSN(t, bootstrapDSN, cfg, "postgres")
-	assertPostgresDSN(t, targetDSN, cfg, "sub2api")
-}
-
-func TestBuildPostgresDSNHandlesEmptyPasswordAndReservedCharacters(t *testing.T) {
-	tests := []DatabaseConfig{
-		{Host: "127.0.0.1", Port: 5433, User: "postgres", Password: "", DBName: "sub2api", SSLMode: "disable"},
-		{Host: "::1", Port: 5432, User: "user@local", Password: "p a:ss/@word", DBName: "local_data", SSLMode: "require"},
+	if !strings.Contains(targetDSN, "dbname=sub2api") {
+		t.Fatalf("target DSN = %q, want configured database", targetDSN)
 	}
-
-	for _, cfg := range tests {
-		assertPostgresDSN(t, buildPostgresDSN(&cfg, cfg.DBName), &cfg, cfg.DBName)
+	if !strings.Contains(bootstrapDSN, "dbname=postgres") {
+		t.Fatalf("bootstrap DSN = %q, want legacy postgres bootstrap database", bootstrapDSN)
 	}
 }
 
-func assertPostgresDSN(t *testing.T, dsn string, cfg *DatabaseConfig, database string) {
-	t.Helper()
-	parsed, err := url.Parse(dsn)
+func TestIsDatabaseNotFoundError(t *testing.T) {
+	if !isDatabaseNotFoundError(&pq.Error{Code: "3D000"}) {
+		t.Fatal("isDatabaseNotFoundError() = false, want true for PostgreSQL invalid_catalog_name")
+	}
+	if isDatabaseNotFoundError(&pq.Error{Code: "28P01"}) {
+		t.Fatal("isDatabaseNotFoundError() = true, want false for invalid_password")
+	}
+	if !isDatabaseNotFoundError(fmt.Errorf("wrapped: %w", &pq.Error{Code: "3D000"})) {
+		t.Fatal("isDatabaseNotFoundError() = false, want true for wrapped PostgreSQL error")
+	}
+}
+
+func TestDatabaseConnectionUsesConfiguredTargetBeforeBootstrapDatabase(t *testing.T) {
+	cfg := &DatabaseConfig{DBName: "customdb"}
+	targetDB, _, err := sqlmock.New()
 	if err != nil {
-		t.Fatalf("url.Parse(%q) error = %v", dsn, err)
+		t.Fatalf("sqlmock.New() error = %v", err)
 	}
-	if parsed.Scheme != "postgres" || parsed.Hostname() != cfg.Host || parsed.Port() != strconv.Itoa(cfg.Port) {
-		t.Fatalf("connection target in %q does not match %+v", dsn, cfg)
+	defer func() { _ = targetDB.Close() }()
+
+	var opened []string
+	openDatabase := func(_ *DatabaseConfig, dbName string) (*sql.DB, error) {
+		opened = append(opened, dbName)
+		return targetDB, nil
 	}
-	if parsed.User.Username() != cfg.User {
-		t.Fatalf("username in %q = %q, want %q", dsn, parsed.User.Username(), cfg.User)
+
+	if err := testDatabaseConnection(cfg, openDatabase); err != nil {
+		t.Fatalf("testDatabaseConnection() error = %v", err)
 	}
-	password, hasPassword := parsed.User.Password()
-	if hasPassword != (cfg.Password != "") || password != cfg.Password {
-		t.Fatalf("password in %q did not round-trip", dsn)
+	if len(opened) != 1 || opened[0] != cfg.DBName {
+		t.Fatalf("opened databases = %v, want only configured target %q", opened, cfg.DBName)
 	}
-	if strings.TrimPrefix(parsed.Path, "/") != database {
-		t.Fatalf("database in %q = %q, want %q", dsn, parsed.Path, database)
+}
+
+func TestDatabaseConnectionUsesLegacyBootstrapOnlyForMissingTarget(t *testing.T) {
+	cfg := &DatabaseConfig{DBName: "customdb"}
+	bootstrapDB, bootstrapMock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() bootstrap error = %v", err)
 	}
-	if parsed.Query().Get("sslmode") != cfg.SSLMode {
-		t.Fatalf("sslmode in %q = %q, want %q", dsn, parsed.Query().Get("sslmode"), cfg.SSLMode)
+	defer func() { _ = bootstrapDB.Close() }()
+	targetDB, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() target error = %v", err)
+	}
+	defer func() { _ = targetDB.Close() }()
+
+	bootstrapMock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM pg_database WHERE datname = \$1\)`).
+		WithArgs(cfg.DBName).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	bootstrapMock.ExpectExec(`CREATE DATABASE customdb`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	var opened []string
+	targetAttempts := 0
+	openDatabase := func(_ *DatabaseConfig, dbName string) (*sql.DB, error) {
+		opened = append(opened, dbName)
+		switch dbName {
+		case cfg.DBName:
+			targetAttempts++
+			if targetAttempts == 1 {
+				return nil, &pq.Error{Code: "3D000"}
+			}
+			return targetDB, nil
+		case postgresBootstrapDatabase:
+			return bootstrapDB, nil
+		default:
+			return nil, fmt.Errorf("unexpected database %q", dbName)
+		}
+	}
+
+	if err := testDatabaseConnection(cfg, openDatabase); err != nil {
+		t.Fatalf("testDatabaseConnection() error = %v", err)
+	}
+	if err := bootstrapMock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("bootstrap database expectations: %v", err)
+	}
+	wantOpened := []string{cfg.DBName, postgresBootstrapDatabase, cfg.DBName}
+	if len(opened) != len(wantOpened) {
+		t.Fatalf("opened databases = %v, want %v", opened, wantOpened)
+	}
+	for i := range wantOpened {
+		if opened[i] != wantOpened[i] {
+			t.Fatalf("opened databases = %v, want %v", opened, wantOpened)
+		}
+	}
+}
+
+func TestDatabaseConnectionDoesNotFallbackForTargetAuthenticationError(t *testing.T) {
+	cfg := &DatabaseConfig{DBName: "customdb"}
+	var opened []string
+	openDatabase := func(_ *DatabaseConfig, dbName string) (*sql.DB, error) {
+		opened = append(opened, dbName)
+		return nil, &pq.Error{Code: "28P01"}
+	}
+
+	if err := testDatabaseConnection(cfg, openDatabase); err == nil {
+		t.Fatal("testDatabaseConnection() error = nil, want authentication error")
+	}
+	if len(opened) != 1 || opened[0] != cfg.DBName {
+		t.Fatalf("opened databases = %v, want only configured target %q", opened, cfg.DBName)
 	}
 }

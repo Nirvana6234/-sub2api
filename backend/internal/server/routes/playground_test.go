@@ -522,12 +522,12 @@ func TestPlaygroundRoutesImagesAutoKeySelectsGroupSupportingRequestedModel(t *te
 				service.Group{
 					ID: 88, Status: service.StatusActive, Platform: service.PlatformOpenAI,
 					RateMultiplier: 0.1, ActiveAccountCount: 1, Hydrated: true,
-					ModelsListConfig: service.GroupModelsListConfig{Enabled: true, Models: []string{"gpt-5.6"}},
+					ModelAllowlist: service.GroupModelAllowlist{Enabled: true, Models: []string{"gpt-5.6"}},
 				},
 				service.Group{
 					ID: 89, Status: service.StatusActive, Platform: service.PlatformOpenAI,
 					RateMultiplier: 0.2, ActiveAccountCount: 1, Hydrated: true, AllowImageGeneration: true,
-					ModelsListConfig: service.GroupModelsListConfig{Enabled: true, Models: []string{"gpt-image-2"}},
+					ModelAllowlist: service.GroupModelAllowlist{Enabled: true, Models: []string{"gpt-image-2"}},
 				},
 			)
 			w := httptest.NewRecorder()

@@ -176,19 +176,11 @@ func (w *AuthCacheInvalidationWorker) processBatch(ctx context.Context) error {
 }
 
 func (w *AuthCacheInvalidationWorker) processEvent(parent context.Context, event AuthCacheInvalidationEvent) {
-	autoGroupMessage := isAutoGroupInvalidationMessage(event.CacheKey)
 	if w.local != nil {
-		if autoGroupMessage {
-			w.local.handleAuthCacheInvalidationMessage(event.CacheKey)
-		} else {
-			w.local.invalidateLocalAuthCache(event.CacheKey)
-		}
+		w.local.invalidateLocalAuthCache(event.CacheKey)
 	}
 	ctx, cancel := context.WithTimeout(parent, authInvalidationRedisTimeout)
-	var err error
-	if !autoGroupMessage {
-		err = w.cache.DeleteAuthCache(ctx, event.CacheKey)
-	}
+	err := w.cache.DeleteAuthCache(ctx, event.CacheKey)
 	if err == nil {
 		err = w.cache.PublishAuthCacheInvalidation(ctx, event.CacheKey)
 	}
@@ -296,7 +288,6 @@ func (w *AuthCacheInvalidationWorker) Health(ctx context.Context) AuthCacheInval
 }
 
 func ProvideAuthCacheInvalidationWorker(repo AuthCacheInvalidationOutboxRepository, cache APIKeyCache, apiKeyService *APIKeyService) *AuthCacheInvalidationWorker {
-	apiKeyService.SetAuthCacheInvalidationOutbox(repo)
 	worker := NewAuthCacheInvalidationWorker(repo, cache, apiKeyService)
 	worker.Start()
 	return worker

@@ -1,9 +1,7 @@
 package middleware
 
 import (
-	"net"
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -13,9 +11,7 @@ import (
 
 func AdminComplianceGuard(settingService *service.SettingService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if settingService == nil ||
-			isAdminComplianceBypassPath(c.Request.URL.Path) ||
-			isLocalDesktopComplianceBypass(c) {
+		if settingService == nil || isAdminComplianceBypassPath(c.Request.URL.Path) {
 			c.Next()
 			return
 		}
@@ -49,20 +45,6 @@ func AdminComplianceGuard(settingService *service.SettingService) gin.HandlerFun
 		})
 		c.Abort()
 	}
-}
-
-func isLocalDesktopComplianceBypass(c *gin.Context) bool {
-	mode := strings.ToLower(strings.TrimSpace(os.Getenv("LOCAL_DESKTOP_MODE")))
-	if mode != "true" && mode != "1" && mode != "yes" {
-		return false
-	}
-
-	host, _, err := net.SplitHostPort(c.Request.RemoteAddr)
-	if err != nil {
-		host = c.Request.RemoteAddr
-	}
-	peer := net.ParseIP(strings.Trim(host, "[]"))
-	return peer != nil && peer.IsLoopback()
 }
 
 func isAdminComplianceBypassPath(path string) bool {

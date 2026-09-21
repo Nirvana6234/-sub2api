@@ -5,7 +5,6 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/middleware"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	servermiddleware "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -29,12 +28,6 @@ func RegisterAuthRoutes(
 	// 公开接口
 	auth := v1.Group("/auth")
 	auth.Use(servermiddleware.BackendModeAuthGuard(settingService))
-	// 把客户端真实 IP 放进请求 context：注册配额需要按来源 IP 判定，
-	// 而 service 层拿不到 *gin.Context，逐层透传参数又会波及所有注册入口。
-	auth.Use(func(c *gin.Context) {
-		c.Request = c.Request.WithContext(service.WithClientIP(c.Request.Context(), ip.GetClientIP(c)))
-		c.Next()
-	})
 	// 认证事件（登录/注册/2FA/token 刷新失败）入审计
 	auth.Use(gin.HandlerFunc(auditLog))
 	{
@@ -45,7 +38,6 @@ func RegisterAuthRoutes(
 		auth.POST("/login", rateLimiter.LimitWithOptions("auth-login", 20, time.Minute, middleware.RateLimitOptions{
 			FailureMode: middleware.RateLimitFailClose,
 		}), h.Auth.Login)
-		auth.POST("/local-control", h.Auth.LocalControlLogin)
 		auth.POST("/login/2fa", rateLimiter.LimitWithOptions("auth-login-2fa", 20, time.Minute, middleware.RateLimitOptions{
 			FailureMode: middleware.RateLimitFailClose,
 		}), h.Auth.Login2FA)
@@ -64,6 +56,9 @@ func RegisterAuthRoutes(
 		}), h.Auth.RefreshToken)
 		// 登出接口（公开，允许未认证用户调用以撤销Refresh Token）
 		auth.POST("/logout", h.Auth.Logout)
+		// 桌面控制端的本地登录入口：未配置高熵令牌时该端点等同不存在，
+		// 且要求对端必须是回环地址（见 AuthHandler.LocalControlLogin）。
+		auth.POST("/local-control", h.Auth.LocalControlLogin)
 		// 优惠码验证接口添加速率限制：每分钟最多 10 次（Redis 故障时 fail-close）
 		auth.POST("/validate-promo-code", rateLimiter.LimitWithOptions("validate-promo", 10, time.Minute, middleware.RateLimitOptions{
 			FailureMode: middleware.RateLimitFailClose,

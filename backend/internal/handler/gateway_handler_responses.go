@@ -182,7 +182,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 	sessionHash := h.gatewayService.GenerateSessionHash(parsedReq)
 
 	// 3. Account selection + failover loop
-	fs := NewFailoverState(maxAccountSwitchesForRequest(requestCtx, h.maxAccountSwitches), false)
+	fs := NewFailoverState(h.maxAccountSwitches, false)
 
 	for {
 		if requestCtx.Err() != nil {
@@ -264,7 +264,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		account = latest
 		selection.Account = latest
 		if selection.ProfitGateActive() {
-			if err := h.gatewayService.BindStickySessionAfterProfitAdmission(admissionCtx, selection.EffectiveGroupID(apiKey.GroupID), sessionHash, account.ID); err != nil {
+			if err := h.gatewayService.BindStickySessionAfterProfitAdmission(admissionCtx, apiKey.GroupID, sessionHash, account.ID); err != nil {
 				reqLog.Warn("gateway.responses.bind_sticky_session_after_profit_admission_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 			}
 		}
@@ -340,7 +340,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 		sessionID := service.ExtractClientSessionID(c)
 		stampForwardRequestedReasoningEffort(result, service.RequestedReasoningEffortFromContext(c.Request.Context()))
-		h.submitUsageRecordTask(service.ContextWithSelectionProfitGate(c.Request.Context(), selection), func(ctx context.Context) {
+		h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 			if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 				Result:             result,
 				QuotaPlatform:      quotaPlatform,
@@ -409,7 +409,7 @@ func (h *GatewayHandler) handleResponsesFailoverExhausted(c *gin.Context, lastEr
 		// generic response.failed.
 		service.MarkOpsStreamError(c, code, message, status)
 		if c != nil && c.Writer != nil && (c.Writer.Size() <= 0 || gatewayStreamHasOnlyHeartbeats(c)) {
-			writeResponsesFailedSSE(c, code, message)
+			writeResponsesFailedSSE(c, code, "", message)
 		}
 		return
 	}

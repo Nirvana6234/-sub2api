@@ -2983,7 +2983,7 @@ func (r *oauthPendingFlowRedeemCodeRepo) Delete(context.Context, int64) error {
 }
 
 func (r *oauthPendingFlowRedeemCodeRepo) FindAdminAdjustment(context.Context, int64, float64, string) (*service.RedeemCode, error) {
-	panic("unexpected FindAdminAdjustment call")
+	return nil, nil
 }
 
 func (r *oauthPendingFlowRedeemCodeRepo) Use(ctx context.Context, id, userID int64) error {

@@ -1161,7 +1161,6 @@ func reconcileCRSUpstreamBillingProbeExtra(
 	extra map[string]any,
 ) {
 	for _, key := range []string{
-		UpstreamBillingNewAPIGroupExtraKey,
 		UpstreamBillingProbeEnabledExtraKey,
 		UpstreamBillingRateSyncEnabledExtraKey,
 		UpstreamBillingProbeExtraKey,
@@ -1176,9 +1175,6 @@ func reconcileCRSUpstreamBillingProbeExtra(
 	}
 	target := &Account{Platform: targetPlatform, Type: targetType, Credentials: targetCredentials}
 	if IsUpstreamBillingProbeIdentity(targetPlatform, targetType) {
-		if group, ok := existing.Extra[UpstreamBillingNewAPIGroupExtraKey].(string); ok && strings.TrimSpace(group) != "" {
-			extra[UpstreamBillingNewAPIGroupExtraKey] = strings.TrimSpace(group)
-		}
 		probeEnabled := false
 		if enabled, ok := existing.Extra[UpstreamBillingProbeEnabledExtraKey]; ok {
 			extra[UpstreamBillingProbeEnabledExtraKey] = enabled

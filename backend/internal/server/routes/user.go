@@ -76,11 +76,11 @@ func RegisterUserRoutes(
 		keys := authenticated.Group("/keys")
 		{
 			keys.GET("", h.APIKey.List)
-			keys.POST("/playground/ensure", h.APIKey.EnsurePlayground)
 			keys.GET("/:id", h.APIKey.GetByID)
 			keys.POST("", h.APIKey.Create)
 			keys.PUT("/:id", h.APIKey.Update)
 			keys.DELETE("/:id", h.APIKey.Delete)
+			keys.POST("/playground/ensure", h.APIKey.EnsurePlayground)
 		}
 
 		// 用户可用分组（非管理员接口）
@@ -154,8 +154,6 @@ func RegisterUserRoutes(
 			usage.GET("/dashboard/stats", h.Usage.DashboardStats)
 			usage.GET("/dashboard/trend", h.Usage.DashboardTrend)
 			usage.GET("/dashboard/models", h.Usage.DashboardModels)
-			usage.GET("/dashboard/headroom-models", h.Usage.DashboardHeadroomModels)
-			usage.GET("/dashboard/headroom-trend", h.Usage.DashboardHeadroomTrend)
 			usage.GET("/dashboard/snapshot-v2", h.Usage.DashboardSnapshotV2)
 			usage.POST("/dashboard/api-keys-usage", h.Usage.DashboardAPIKeysUsage)
 		}
@@ -163,18 +161,17 @@ func RegisterUserRoutes(
 		// 公告（用户可见）
 		announcements := authenticated.Group("/announcements")
 		{
-			// The summary is a real endpoint; keep it before the parameter route.
+			// 摘要是真实端点，必须排在参数路由之前。
 			announcements.GET("/head", h.Announcement.Head)
 			announcements.GET("", h.Announcement.List)
 			announcements.POST("/:id/read", h.Announcement.MarkRead)
 		}
 
-		// 工单（用户只能看到自己的）
+		// 工单
 		tickets := authenticated.Group("/tickets")
 		{
 			tickets.GET("", h.Ticket.List)
 			tickets.POST("", h.Ticket.Create)
-			// unread-count 必须注册在 /:id 之前，否则会被当成 id 匹配掉
 			tickets.GET("/unread-count", h.Ticket.UnreadCount)
 			tickets.GET("/:id", h.Ticket.GetByID)
 			tickets.POST("/:id/messages", h.Ticket.Reply)

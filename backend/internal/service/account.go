@@ -20,48 +20,14 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 )
 
-// 可调度来源（schedulability_source）的权威取值。
+// AccountGroupPriorityUpdate 描述一次「账号在某分组内的优先级」变更。
 //
-// 这三个值是 TransitHub 等外部消费方区分「管理员手动关闭」与「系统自动停用」的唯一依据，
-// 禁止再用 schedulable + status 的组合去推断来源。
-const (
-	// SchedulabilitySourceNone 表示当前没有停用来源（正常可调度账号）。
-	// 绝不能被解释为 automatic。
-	SchedulabilitySourceNone = "none"
-	// SchedulabilitySourceManual 表示管理员明确关闭可调度。
-	// 任何系统错误处理、自动恢复、后台任务都不得覆盖。
-	SchedulabilitySourceManual = "manual"
-	// SchedulabilitySourceAutomatic 表示系统基于错误、凭据、过期等原因自动停止调度，
-	// 允许外部恢复检查在验证成功后请求恢复。
-	SchedulabilitySourceAutomatic = "automatic"
-)
-
-// 稳定的停用原因码，便于审计与排障。
-const (
-	SchedulabilityReasonAdminDisabled   = "admin_disabled"
-	SchedulabilityReasonCredentialError = "credential_error"
-	SchedulabilityReasonUpstreamError   = "upstream_error"
-	SchedulabilityReasonExpired         = "expired"
-)
-
-// IsValidSchedulabilitySource 判断来源取值是否合法。
-// 空值、未知值一律非法，消费方必须失败关闭（不探测、不恢复）。
-func IsValidSchedulabilitySource(source string) bool {
-	switch source {
-	case SchedulabilitySourceNone, SchedulabilitySourceManual, SchedulabilitySourceAutomatic:
-		return true
-	default:
-		return false
-	}
-}
-
-// NormalizeSchedulabilitySource 只做去空格与小写化，**刻意不把空值或未知值补成 none**。
-//
-// 把 "" 归一成 none 等于凭空编造一个「没有停用来源」的结论：字段缺失（例如只选了部分列的
-// 投影查询）或出现非法值时，消费方必须能看出来源不明并失败关闭。这里替它猜一个安全值，
-// 就把审计明确禁止的推断重新引了回来。
-func NormalizeSchedulabilitySource(source string) string {
-	return strings.ToLower(strings.TrimSpace(source))
+// 注意它改的是 account_groups.priority（分组内顺序），不是 accounts.priority
+// （账号全局优先级）——两者同名但语义不同，调度按前者决定组内取号先后。
+type AccountGroupPriorityUpdate struct {
+	AccountID int64
+	GroupID   int64
+	Priority  int
 }
 
 type Account struct {
@@ -80,13 +46,9 @@ type Account struct {
 	// RateMultiplier 账号计费倍率（>=0，允许 0 表示该账号计费为 0）。
 	// 使用指针用于兼容旧版本调度缓存（Redis）中缺字段的情况：nil 表示按 1.0 处理。
 	RateMultiplier *float64
-	// RateMultiplierUndeclared 表示从未有人声明过该账号的上游成本倍率，
-	// RateMultiplier 上的值只是建表默认值而非运营者的判断。利润准入据此放行
-	// 并告警，而不是把默认值当成"声明成本为 1.0"再据此否决整池账号。
-	//
-	// 与 RateMultiplier==nil 是两回事：nil 只可能来自调度缓存漏字段（DB 列非空
-	// 且有默认值），属于坏数据，利润门对它保守拒绝。本字段是零值安全的——快照
-	// 漏列时取 false（视为已声明），fail-closed 姿态不变。
+	// RateMultiplierUndeclared 为 true 表示该账号的上游成本从未被声明过：
+	// 利润准入无判定依据，放行并告警；false（默认）表示 RateMultiplier 是
+	// 运营者的明确声明，参与严格判定。
 	RateMultiplierUndeclared bool
 	LoadFactor               *int // 调度负载因子；nil 表示使用 Concurrency
 	Status                   string
@@ -98,13 +60,6 @@ type Account struct {
 	UpdatedAt                time.Time
 
 	Schedulable bool
-
-	// SchedulabilitySource 记录 schedulable 当前状态的所有权来源：
-	// manual（管理员）/ automatic（系统自动）/ none（无停用来源）。
-	// 与 schedulable 必须在同一条 UPDATE 中原子写入。
-	SchedulabilitySource    string
-	SchedulabilityReason    string
-	SchedulabilityChangedAt *time.Time
 
 	RateLimitedAt    *time.Time
 	RateLimitResetAt *time.Time
@@ -150,24 +105,6 @@ type Account struct {
 	headerOverrideCacheRawPtr         uintptr
 	headerOverrideCacheRawLen         int
 	headerOverrideCacheRawSig         uint64
-}
-
-// PriorityForGroup returns the scheduler priority for the requested group.
-// A group relation overrides the account-wide priority; callers without a
-// concrete group keep the account-wide value.
-func (a *Account) PriorityForGroup(groupID int64) int {
-	if a == nil {
-		return 0
-	}
-	if groupID <= 0 {
-		return a.Priority
-	}
-	for _, relation := range a.AccountGroups {
-		if relation.GroupID == groupID {
-			return relation.Priority
-		}
-	}
-	return a.Priority
 }
 
 type OpenAIEndpointCapability string
@@ -281,9 +218,7 @@ func (a *Account) IsSchedulable() bool {
 	if a.TempUnschedulableUntil != nil && now.Before(*a.TempUnschedulableUntil) {
 		return false
 	}
-	// Account quotas apply to every directly schedulable account. Credential
-	// shadows use their parent account's credentials and do not own a quota.
-	if !a.IsCredentialShadow() && a.IsQuotaExceeded() {
+	if a.IsAPIKeyOrBedrock() && a.IsQuotaExceeded() {
 		return false
 	}
 	return true
@@ -373,17 +308,20 @@ func (a *Account) IsDeepseek() bool {
 	return a.Platform == PlatformDeepseek
 }
 
-// IsCNProvider 报告是否为国产 OpenAI 兼容供应商（kimi/zhipu/deepseek）。
+func (a *Account) IsMiniMax() bool {
+	return a.Platform == PlatformMiniMax
+}
+
+// IsCNProvider 报告是否为国产 OpenAI 兼容供应商（kimi/zhipu/deepseek/minimax）。
 func (a *Account) IsCNProvider() bool {
 	return a != nil && IsCNProvider(a.Platform)
 }
 
 // IsOpenAICompatible 报告账号是否走 OpenAI 网关（OpenAI 协议族）。
-// openai/grok 原生走 OpenAI 网关；kimi/zhipu/deepseek 同为 OpenAI Chat Completions
-// 兼容上游，也经 OpenAI 网关转发。
+// openai/grok 原生走 OpenAI 网关；国产供应商同为 OpenAI Chat Completions
+// 兼容上游，也经 OpenAI 网关转发。OpenCode 同样经 OpenAI 网关按模型分流。
 func (a *Account) IsOpenAICompatible() bool {
-	return a != nil && (a.Platform == PlatformOpenAI || a.Platform == PlatformGrok ||
-		a.Platform == PlatformKimi || a.Platform == PlatformZhipu || a.Platform == PlatformDeepseek)
+	return a != nil && (a.Platform == PlatformOpenAI || a.Platform == PlatformGrok || a.IsCNProvider() || a.IsOpenCodeGo())
 }
 
 func (a *Account) GeminiOAuthType() string {
@@ -750,6 +688,16 @@ func (a *Account) resolveModelMapping(rawMapping map[string]any) map[string]stri
 				"gemini-3.6-flash-low",
 				"gemini-3.6-flash-medium",
 				"gemini-3.6-flash-tiered",
+				"gemini-3.7-flash",
+				"gemini-3.7-flash-high",
+				"gemini-3.7-flash-low",
+				"gemini-3.7-flash-medium",
+				"gemini-3.7-flash-tiered",
+				"gemini-3.8-flash",
+				"gemini-3.8-flash-high",
+				"gemini-3.8-flash-low",
+				"gemini-3.8-flash-medium",
+				"gemini-3.8-flash-tiered",
 			})
 			applyAntigravityGemini31ProAliases(result)
 		}
@@ -923,6 +871,10 @@ func resolveRequestedModelInMapping(mapping map[string]string, requestedModel st
 // 会把未知模型原样透传，Codex 上游对这类模型必然返回不可重试的 400，导致
 // 请求卡死在该账号上、无法 failover 到真正支持该模型的 API Key 账号（#3662）。
 // 未知/自定义别名仍保持允许（兼容渠道级映射），见 isOpenAIOAuthServableModel。
+//
+// 例外：DeepSeek 平台的空映射不再是「允许所有」，改按官方模型白名单判定
+// （isDeepseekServableModel）——未知模型名透传上游只会得到 404/400，并误触发
+// per-(账号,模型) 30 分钟冷却；带 [1m] 上下文后缀的写法先归一化再比对。
 func (a *Account) IsModelSupported(requestedModel string) bool {
 	// 透传模式仅替换认证、模型语义完全交由上游决定，因此放行所有模型。
 	// 该短路必须在 model_mapping 判定之前：账号从"白名单模式"切换到透传后，
@@ -935,6 +887,9 @@ func (a *Account) IsModelSupported(requestedModel string) bool {
 	if len(mapping) == 0 {
 		if a.IsOpenAIOAuth() {
 			return isOpenAIOAuthServableModel(requestedModel)
+		}
+		if a.Platform == PlatformDeepseek {
+			return isDeepseekServableModel(requestedModel)
 		}
 		return true // 无映射 = 允许所有
 	}
@@ -1081,38 +1036,6 @@ func (a *Account) GetExtraString(key string) string {
 	return ""
 }
 
-// GetCustomHeaders returns the account-level outbound headers stored in Extra.
-// JSONB values normally arrive as map[string]any, while tests and in-memory
-// callers may provide map[string]string directly.
-func (a *Account) GetCustomHeaders() map[string]string {
-	if a == nil || a.Extra == nil {
-		return nil
-	}
-
-	raw, ok := a.Extra["custom_headers"]
-	if !ok {
-		return nil
-	}
-
-	rawHeaders := make(map[string]string)
-	switch headers := raw.(type) {
-	case map[string]any:
-		for name, value := range headers {
-			if text, ok := value.(string); ok {
-				rawHeaders[name] = text
-			}
-		}
-	case map[string]string:
-		for name, value := range headers {
-			rawHeaders[name] = value
-		}
-	default:
-		return nil
-	}
-
-	return resolveHeaderOverrides(rawHeaders)
-}
-
 const (
 	AccountContributionSourceKey              = "import_source"
 	AccountContributionSourceValue            = "user_contribution"
@@ -1137,13 +1060,10 @@ const (
 	AccountContributionGovernanceActive       = "active"
 	AccountShareModePrivate                   = "private"
 	AccountShareModePool                      = "pool"
-	AccountShareRewardRateDefaultPercent      = 80.0
-	AccountShareRewardRateMinPercent          = 0.0
-	AccountShareRewardRateMaxPercent          = 100.0
-	AccountShareRewardRate                    = AccountShareRewardRateDefaultPercent / 100
-	AccountOwnUsageFeeRateDefaultPercent      = 1.0
-	AccountOwnUsageFeeRateMinPercent          = 0.0
-	AccountOwnUsageFeeRateMaxPercent          = 100.0
+	// AccountShareRewardRate 是 AccountShareRewardRateDefaultPercent（定义于本文件末尾，
+	// 与 AccountOwnUsageFeeRate* 系列常量放在一起）折算成的小数比例，供未接入 SettingService
+	// 的调用方兜底。
+	AccountShareRewardRate = AccountShareRewardRateDefaultPercent / 100
 )
 
 const (
@@ -1563,13 +1483,13 @@ func (a *Account) IsOpenAIApiKey() bool {
 }
 
 // GetOpenAIBaseURL 解析 OpenAI 协议族账号的上游 base_url。
-// 适用 openai 与国产 OpenAI 兼容供应商（kimi/zhipu/deepseek）；grok 走 GetGrokBaseURL，
-// 此处对 grok 返回 "" 以保持原有行为。
+// 适用 openai、国产 OpenAI 兼容供应商（kimi/zhipu/deepseek）与 OpenCode Go；
+// grok 走 GetGrokBaseURL，此处对 grok 返回 "" 以保持原有行为。
 func (a *Account) GetOpenAIBaseURL() string {
-	if !a.IsOpenAI() && !a.IsCNProvider() {
+	if !a.IsOpenAI() && !a.IsCNProvider() && !a.IsOpenCodeGo() {
 		return ""
 	}
-	if a.IsCNProvider() && a.IsAdaptiveAPIProtocol() {
+	if a.IsMultiProtocolAPIKey() && a.IsAdaptiveAPIProtocol() {
 		if baseURLs, ok := a.Credentials["api_base_urls"].(map[string]any); ok {
 			if baseURL, ok := baseURLs[APIProtocolChatCompletions].(string); ok && strings.TrimSpace(baseURL) != "" {
 				return strings.TrimSpace(baseURL)
@@ -1595,6 +1515,10 @@ func (a *Account) GetOpenAIBaseURL() string {
 		return DefaultZhipuPayGBaseURL
 	case PlatformDeepseek:
 		return DefaultDeepseekBaseURL
+	case PlatformMiniMax:
+		return DefaultMiniMaxBaseURL
+	case PlatformOpenCodeGo:
+		return a.openCodeDefaultChatBaseURL()
 	default:
 		return "https://api.openai.com"
 	}
@@ -1620,10 +1544,10 @@ func (a *Account) IsCodingPlan() bool {
 
 // GetAPIProtocol 返回国产供应商账号的上游 API 协议。存储于
 // credentials["api_protocol"]；缺失或与平台不匹配时回退 chat_completions
-// （与既有行为完全一致）。responses 协议仅 deepseek / kimi 支持（官方原生
+// （与既有行为完全一致）。responses 协议仅 deepseek / kimi / minimax 支持（官方原生
 // Responses 端点，适配 Codex）；zhipu 无此端点。
 func (a *Account) GetAPIProtocol() string {
-	if a == nil || !a.IsCNProvider() {
+	if a == nil || !a.IsMultiProtocolAPIKey() {
 		return APIProtocolChatCompletions
 	}
 	switch strings.TrimSpace(a.GetCredential("api_protocol")) {
@@ -1638,18 +1562,21 @@ func (a *Account) GetAPIProtocol() string {
 	case APIProtocolChatCompletions:
 		return APIProtocolChatCompletions
 	}
+	if a.IsOpenCodeGo() {
+		return APIProtocolAdaptive
+	}
 	return APIProtocolChatCompletions
 }
 
 // SupportsNativeCNResponses 报告该国产供应商是否提供原生 Responses 端点。
 // DeepSeek 官方为 /responses（无 /v1）；Kimi 按量付费与 Coding Plan 均为
-// /v1/responses（moonshot.cn / kimi.com/coding）。
+// /v1/responses（moonshot.cn / kimi.com/coding）；MiniMax 为 /v1/responses。
 func (a *Account) SupportsNativeCNResponses() bool {
 	if a == nil {
 		return false
 	}
 	switch a.Platform {
-	case PlatformDeepseek, PlatformKimi:
+	case PlatformDeepseek, PlatformKimi, PlatformMiniMax, PlatformOpenCodeGo:
 		return true
 	default:
 		return false
@@ -1679,7 +1606,7 @@ func (a *Account) IsAdaptiveAPIProtocol() bool {
 // adaptive 账号优先使用 api_base_urls 中的分协议地址，缺失时按平台和
 // account_mode 使用官方默认端点。base_url 继续作为 Chat Completions 地址兼容旧字段。
 func (a *Account) GetCNProtocolBaseURL(protocol string) string {
-	if a == nil || !a.IsCNProvider() {
+	if a == nil || !a.IsMultiProtocolAPIKey() {
 		return ""
 	}
 	if a.IsAdaptiveAPIProtocol() {
@@ -1710,6 +1637,10 @@ func (a *Account) defaultCNProtocolBaseURL(protocol string) string {
 			return DefaultZhipuAnthropicBaseURL
 		case PlatformDeepseek:
 			return DefaultDeepseekAnthropicBaseURL
+		case PlatformMiniMax:
+			return DefaultMiniMaxAnthropicBaseURL
+		case PlatformOpenCodeGo:
+			return a.openCodeDefaultAnthropicBaseURL()
 		}
 	case APIProtocolChatCompletions, APIProtocolResponses:
 		switch a.Platform {
@@ -1725,6 +1656,10 @@ func (a *Account) defaultCNProtocolBaseURL(protocol string) string {
 			return DefaultZhipuPayGBaseURL
 		case PlatformDeepseek:
 			return DefaultDeepseekBaseURL
+		case PlatformMiniMax:
+			return DefaultMiniMaxBaseURL
+		case PlatformOpenCodeGo:
+			return a.openCodeDefaultChatBaseURL()
 		}
 	}
 	return ""
@@ -1761,6 +1696,10 @@ func (a *Account) GetAnthropicProtocolBaseURL() string {
 		return DefaultZhipuAnthropicBaseURL
 	case PlatformDeepseek:
 		return DefaultDeepseekAnthropicBaseURL
+	case PlatformMiniMax:
+		return DefaultMiniMaxAnthropicBaseURL
+	case PlatformOpenCodeGo:
+		return a.openCodeDefaultAnthropicBaseURL()
 	default:
 		return ""
 	}
@@ -1788,6 +1727,10 @@ func (a *Account) GetOpenAIFormatBaseURL() string {
 		return DefaultZhipuPayGBaseURL
 	case PlatformDeepseek:
 		return DefaultDeepseekBaseURL
+	case PlatformMiniMax:
+		return DefaultMiniMaxBaseURL
+	case PlatformOpenCodeGo:
+		return a.openCodeDefaultChatBaseURL()
 	default:
 		return a.GetOpenAIBaseURL()
 	}
@@ -1796,17 +1739,23 @@ func (a *Account) GetOpenAIFormatBaseURL() string {
 // GetCNAPIKey 返回国产 OpenAI 兼容供应商账号的 api_key 凭据（kimi/zhipu/deepseek）。
 // 与 openai 的 GetOpenAIApiKey 区分：后者仅对 openai 平台返回。
 func (a *Account) GetCNAPIKey() string {
-	if a == nil || !a.IsCNProvider() {
+	if a == nil || !a.IsMultiProtocolAPIKey() {
 		return ""
 	}
 	return a.GetCredential("api_key")
 }
 
-// GetCodingPlanProvider 根据 base_url 识别 Coding Plan 供应商（kimi / zhipu），
+// GetCodingPlanProvider 根据 base_url 识别 Coding Plan 供应商（kimi / zhipu / minimax），
 // 用于路由到对应的额度查询端点。非 coding 模式或无法识别时返回空串。
-// 判定规则与 cc-switch coding_plan.rs::detect_provider 保持一致。
+// 只认官方域名：自定义中转不得把第三方 Key 发往厂商官方额度端点。
 func (a *Account) GetCodingPlanProvider() string {
-	if a == nil || a.GetAccountMode() != AccountModeCoding {
+	if a == nil {
+		return ""
+	}
+	if a.IsOpenCodeGoPlan() {
+		return PlatformOpenCodeGo
+	}
+	if a.GetAccountMode() != AccountModeCoding {
 		return ""
 	}
 	baseURL := strings.ToLower(a.GetOpenAIBaseURL())
@@ -1815,6 +1764,10 @@ func (a *Account) GetCodingPlanProvider() string {
 		return PlatformKimi
 	case strings.Contains(baseURL, "bigmodel.cn"), strings.Contains(baseURL, "api.z.ai"):
 		return PlatformZhipu
+	case strings.Contains(baseURL, "minimax.io"),
+		strings.Contains(baseURL, "minimaxi.com"),
+		strings.Contains(baseURL, "minimax.com"):
+		return PlatformMiniMax
 	default:
 		return ""
 	}
@@ -1931,14 +1884,15 @@ func (a *Account) GetOpenAIApiKey() string {
 }
 
 // GetOpenAIProtocolAPIKey 返回 OpenAI 协议族 APIKey 账号的密钥。
-// 覆盖 openai 原生账号与国产 OpenAI 兼容供应商（kimi/zhipu/deepseek）账号，
-// 供转发鉴权、模型列表同步等协议族共用路径使用。注意 IsOpenAIApiKey 语义上
-// 仅指 openai 平台账号，调度倍率/WS 能力门控继续以其为准，不受本方法影响。
+// 覆盖 openai 原生账号、国产 OpenAI 兼容供应商（kimi/zhipu/deepseek）
+// 以及 OpenCode Go 账号，供转发鉴权、模型列表同步等协议族共用路径使用。
+// 注意 IsOpenAIApiKey 语义上仅指 openai 平台账号，调度倍率/WS 能力门控
+// 继续以其为准，不受本方法影响。
 func (a *Account) GetOpenAIProtocolAPIKey() string {
 	if a == nil {
 		return ""
 	}
-	if a.IsCNProvider() {
+	if a.IsMultiProtocolAPIKey() {
 		if a.Type != AccountTypeAPIKey {
 			return ""
 		}
@@ -2007,6 +1961,11 @@ func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapa
 	if a == nil {
 		return false
 	}
+	if capability == OpenAIEndpointCapabilitySeedance {
+		configured, _ := a.openAIEndpointCapabilitySet()
+		return configured["seedance"] && a.Platform == PlatformOpenAI && a.Type == AccountTypeAPIKey &&
+			strings.TrimSpace(a.GetCredential("base_url")) != ""
+	}
 	if capability == "" {
 		return true
 	}
@@ -2073,9 +2032,10 @@ func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapa
 }
 
 // GrokMediaGenerationEligibility reports whether a Grok account may receive
-// new image/video generation requests. OAuth media fails closed unless billing
-// observations provide positive paid-entitlement evidence. An explicit
-// operator override takes precedence over probe data.
+// new image/video generation requests. Explicit evidence of a forbidden or
+// free account blocks media, while an incomplete successful billing response
+// remains eligible for backwards compatibility. An explicit operator
+// override takes precedence over probe data.
 func (a *Account) GrokMediaGenerationEligibility() (bool, string) {
 	if a == nil || !a.IsGrok() {
 		return false, "not_grok"
@@ -2101,7 +2061,12 @@ func (a *Account) GrokMediaGenerationEligibility() (bool, string) {
 		return false, "billing_free_tier"
 	}
 	if !grokBillingHasAuthoritativeQuota(billing) {
-		return false, "billing_inconclusive"
+		// Billing endpoints can return 200 with an account-specific schema that
+		// omits plan/quota fields (for example, some SuperGrok accounts). An
+		// incomplete observation is not proof of ineligibility; keep the account
+		// routable and expose the reason for diagnostics. Operators can still
+		// quarantine a known-bad account with grok_media_eligible=false.
+		return true, "billing_inconclusive"
 	}
 	return true, "eligible"
 }
@@ -2189,8 +2154,7 @@ func (a *Account) SupportsOpenAIImageCapability(capability OpenAIImagesCapabilit
 	}
 	switch capability {
 	case OpenAIImagesCapabilityBasic, OpenAIImagesCapabilityNative:
-		return a.Type == AccountTypeOAuth || a.Type == AccountTypeSetupToken ||
-			a.Type == AccountTypeAPIKey || a.Type == AccountTypeUpstream
+		return a.Type == AccountTypeOAuth || a.Type == AccountTypeSetupToken || a.Type == AccountTypeAPIKey
 	default:
 		return true
 	}
@@ -2469,6 +2433,22 @@ func (a *Account) IsOpenAIResponsesFlattenNamespacesEnabled() bool {
 		return false
 	}
 	enabled, ok := a.Extra["openai_responses_flatten_namespaces"].(bool)
+	return ok && enabled
+}
+
+// IsOpenAIResponsesKeepToolCallNamespacesEnabled 返回账号级"保留工具调用 namespace"开关。
+// 字段：accounts.extra.openai_responses_keep_tool_call_namespaces，缺省 false（沿用自动判定）。
+//
+// API Key 出口默认按标准 Responses API 处理，靠"请求 tools 里有没有 type==namespace 声明"
+// 推断上游认不认 namespace 扩展（见 shouldKeepOpenAIResponsesToolCallNamespaces）。该推断
+// 对「API Key 指向 Codex 后端中转」的部署不成立：multi_agent 等工具由上游注入，客户端的
+// tools 里根本不会声明 namespace，但上游仍按 namespace 解析历史调用，剥掉字段即 400
+// `Missing namespace for function_call '...'`。打开本开关可跳过推断、无条件保留。
+func (a *Account) IsOpenAIResponsesKeepToolCallNamespacesEnabled() bool {
+	if a == nil || !a.IsOpenAI() || a.Extra == nil {
+		return false
+	}
+	enabled, ok := a.Extra["openai_responses_keep_tool_call_namespaces"].(bool)
 	return ok && enabled
 }
 
@@ -3168,7 +3148,7 @@ func (a *Account) IsWeeklyQuotaPeriodExpired() bool {
 	return isPeriodExpired(start, 7*24*time.Hour)
 }
 
-// IsQuotaExceeded reports whether any configured account quota dimension is exhausted.
+// IsQuotaExceeded 检查 API Key 账号配额是否已超限（任一维度超限即返回 true）
 func (a *Account) IsQuotaExceeded() bool {
 	// 总额度
 	if limit := a.GetQuotaLimit(); limit > 0 && a.GetQuotaUsed() >= limit {
@@ -3470,3 +3450,30 @@ func (a *Account) QuotaDimensionOrDefault() string {
 	}
 	return a.QuotaDimension
 }
+
+// PriorityForGroup returns the scheduler priority for the requested group.
+// A group relation overrides the account-wide priority; callers without a
+// concrete group keep the account-wide value.
+func (a *Account) PriorityForGroup(groupID int64) int {
+	if a == nil {
+		return 0
+	}
+	if groupID <= 0 {
+		return a.Priority
+	}
+	for _, relation := range a.AccountGroups {
+		if relation.GroupID == groupID {
+			return relation.Priority
+		}
+	}
+	return a.Priority
+}
+
+const (
+	AccountShareRewardRateDefaultPercent = 80.0
+	AccountShareRewardRateMinPercent     = 0.0
+	AccountShareRewardRateMaxPercent     = 100.0
+	AccountOwnUsageFeeRateDefaultPercent = 1.0
+	AccountOwnUsageFeeRateMinPercent     = 0.0
+	AccountOwnUsageFeeRateMaxPercent     = 100.0
+)

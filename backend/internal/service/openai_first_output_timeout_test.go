@@ -42,21 +42,129 @@ func (u *blockingOpenAIResponseHeaderUpstream) Do(req *http.Request, _ string, _
 	case <-req.Context().Done():
 		u.once.Do(func() { close(u.canceled) })
 		return nil, req.Context().Err()
-	case <-time.After(1500 * time.Millisecond):
+	case <-time.After(10 * time.Second):
 		return nil, errors.New("test upstream was not canceled before response headers")
 	}
+}
+
+// slowOpenAIResponseHeaderUpstream 模拟"偏慢但完全正常"的上游：响应头迟到，
+// 但请求自始至终没有出问题。这正是生产上被旧逻辑误杀的形态。
+type slowOpenAIResponseHeaderUpstream struct {
+	delay    time.Duration
+	canceled chan struct{}
+	once     sync.Once
+}
+
+func (u *slowOpenAIResponseHeaderUpstream) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+	select {
+	case <-req.Context().Done():
+		u.once.Do(func() { close(u.canceled) })
+		return nil, req.Context().Err()
+	case <-time.After(u.delay):
+	}
+	stream := strings.Join([]string{
+		`data: {"type":"response.created","response":{"id":"resp_slow"}}`,
+		"",
+		`data: {"type":"response.output_text.delta","delta":"hi"}`,
+		"",
+		`data: {"type":"response.completed","response":{"id":"resp_slow","usage":{"input_tokens":1,"output_tokens":1}}}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(stream)),
+	}, nil
+}
+
+func (u *slowOpenAIResponseHeaderUpstream) DoWithTLS(req *http.Request, _ string, _ int64, _ int, _ *tlsfingerprint.Profile) (*http.Response, error) {
+	return u.Do(req, "", 0, 0)
 }
 
 func (u *blockingOpenAIResponseHeaderUpstream) DoWithTLS(req *http.Request, _ string, _ int64, _ int, _ *tlsfingerprint.Profile) (*http.Response, error) {
 	return u.Do(req, "", 0, 0)
 }
 
-func TestOpenAIForwardFirstOutputTimeoutIncludesResponseHeaderWait(t *testing.T) {
+// 慢 ≠ 错：响应头迟到但上游一切正常时，请求必须继续跑完并把结果交给用户。
+//
+// 旧逻辑在软时限到点就 cancel 上游、返回 504 failover；换号链路再失败，用户就
+// 收到 502。生产实测成功请求的首字 p90 是 35-38 秒、最慢 73.8 秒也正常返回，
+// 于是"账号明明能用却疯狂报 504"。把软时限改回截断行为，这个用例必须失败。
+func TestOpenAIForwardSlowResponseHeaderIsNotAborted(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	upstream := &slowOpenAIResponseHeaderUpstream{delay: 900 * time.Millisecond, canceled: make(chan struct{})}
+	svc := &OpenAIGatewayService{
+		cfg: &config.Config{Gateway: config.GatewayConfig{
+			OpenAIFirstOutputTimeoutSeconds: 1, // 软时限，实际由下面的 sleep 越过
+			OpenAIFirstOutputHardCapSeconds: 60,
+			MaxLineSize:                     defaultMaxLineSize,
+		}},
+		httpUpstream: upstream,
+	}
+	body := []byte(`{"model":"gpt-5.5","stream":true,"reasoning":{"effort":"low"},"input":"hello"}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	account := &Account{
+		ID: 1, Name: "oauth-test", Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+		Status: StatusActive, Schedulable: true, Concurrency: 1,
+		Credentials: map[string]any{"access_token": "test-token", "chatgpt_account_id": "test-account"},
+	}
+
+	// 软时限设为 1 秒、上游 900ms 返回，先确认这条链路本身能跑通；
+	// 真正的回归点是下面那条：软时限越过后不得取消上游。
+	_, err := svc.Forward(context.Background(), c, account, body)
+	require.NoError(t, err, "偏慢的正常请求不得被转成错误")
+	select {
+	case <-upstream.canceled:
+		t.Fatal("上游请求不该因为慢而被取消")
+	default:
+	}
+	require.Contains(t, rec.Body.String(), "response.completed", "慢请求的结果必须照常交付给用户")
+}
+
+// 软时限越过之后请求仍然存活：上游在软时限之后才回，结果依然要交付。
+func TestOpenAIForwardSurvivesPastSoftFirstOutputDeadline(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	upstream := &slowOpenAIResponseHeaderUpstream{delay: 1200 * time.Millisecond, canceled: make(chan struct{})}
+	svc := &OpenAIGatewayService{
+		cfg: &config.Config{Gateway: config.GatewayConfig{
+			OpenAIFirstOutputTimeoutSeconds: 1,  // 软时限 1 秒，上游 1.2 秒才回
+			OpenAIFirstOutputHardCapSeconds: 60, // 硬上限远未到
+			MaxLineSize:                     defaultMaxLineSize,
+		}},
+		httpUpstream: upstream,
+	}
+	body := []byte(`{"model":"gpt-5.5","stream":true,"reasoning":{"effort":"low"},"input":"hello"}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	account := &Account{
+		ID: 1, Name: "oauth-test", Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+		Status: StatusActive, Schedulable: true, Concurrency: 1,
+		Credentials: map[string]any{"access_token": "test-token", "chatgpt_account_id": "test-account"},
+	}
+
+	_, err := svc.Forward(context.Background(), c, account, body)
+	require.NoError(t, err, "越过软时限只代表慢，不得截断")
+	select {
+	case <-upstream.canceled:
+		t.Fatal("软时限不得取消上游请求")
+	default:
+	}
+	require.Contains(t, rec.Body.String(), "response.completed")
+}
+
+// 硬上限才是"这条连接已经死了"的判定：到点取消并交给换号链路。
+func TestOpenAIForwardFirstOutputHardCapAbortsDeadConnection(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	upstream := &blockingOpenAIResponseHeaderUpstream{canceled: make(chan struct{})}
 	svc := &OpenAIGatewayService{
 		cfg: &config.Config{Gateway: config.GatewayConfig{
 			OpenAIFirstOutputTimeoutSeconds: 1,
+			OpenAIFirstOutputHardCapSeconds: 2,
 			MaxLineSize:                     defaultMaxLineSize,
 		}},
 		httpUpstream: upstream,
@@ -78,15 +186,29 @@ func TestOpenAIForwardFirstOutputTimeoutIncludesResponseHeaderWait(t *testing.T)
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, http.StatusGatewayTimeout, failoverErr.StatusCode)
-	require.Contains(t, string(failoverErr.ResponseBody), "first_output_timeout")
 	require.True(t, failoverErr.SafeToFailoverAfterWrite)
-	require.Less(t, time.Since(started), 1300*time.Millisecond)
 	require.Empty(t, rec.Body.String())
+	require.GreaterOrEqual(t, time.Since(started), 2*time.Second,
+		"不得在硬上限之前放弃——那正是旧逻辑误杀慢请求的原因")
+	require.Less(t, time.Since(started), 5*time.Second)
 	select {
 	case <-upstream.canceled:
 	default:
-		t.Fatal("response-header timeout did not cancel the upstream request context")
+		t.Fatal("硬上限到点必须取消上游请求")
 	}
+}
+
+// 硬上限永远不得小于软时限，否则"只观测不截断"的语义会被悄悄破坏。
+func TestOpenAIFirstOutputHardCapNeverBelowSoftDeadline(t *testing.T) {
+	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{
+		OpenAIFirstOutputHardCapSeconds: 60,
+	}}}
+	require.Equal(t, 120*time.Second, svc.openAIFirstOutputHardCap(120*time.Second),
+		"配置的硬上限比软时限还小时，必须抬到软时限")
+
+	def := &OpenAIGatewayService{cfg: &config.Config{}}
+	require.Equal(t, time.Duration(defaultOpenAIFirstOutputHardCapSeconds)*time.Second,
+		def.openAIFirstOutputHardCap(30*time.Second))
 }
 
 func TestOpenAINativeFirstOutputTimeoutDisabledPreservesSynchronousStream(t *testing.T) {
@@ -114,6 +236,7 @@ func TestOpenAINativeFirstOutputTimeoutDisabledPreservesSynchronousStream(t *tes
 func TestOpenAINativeFirstOutputTimeoutIgnoresPreambleAndCleansReader(t *testing.T) {
 	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{
 		OpenAIFirstOutputTimeoutSeconds: 1,
+		OpenAIFirstOutputHardCapSeconds: 2,
 		MaxLineSize:                     defaultMaxLineSize,
 	}}}
 	pr, pw := io.Pipe()
@@ -150,6 +273,37 @@ func TestOpenAINativeFirstOutputTimeoutIgnoresPreambleAndCleansReader(t *testing
 	case <-time.After(time.Second):
 		t.Fatal("stream reader/writer goroutine did not exit after first-output timeout")
 	}
+}
+
+func TestNewOpenAIFirstOutputTimeoutErrorRecordsCallerProxyAttribution(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	svc := &OpenAIGatewayService{}
+	proxyID := int64(10060)
+	account := &Account{ID: 1, Name: "acc", Platform: PlatformOpenAI, ProxyID: &proxyID, Proxy: &Proxy{ID: proxyID, Name: "ws-proxy"}}
+
+	// WebSocket callers pass the WS attribution; HTTP callers pass the HTTP one.
+	wsID, wsName := opsUpstreamWSProxyAttribution(&Account{ID: 2, Platform: PlatformOpenAI})
+	wsErr := svc.newOpenAIFirstOutputTimeoutError(context.Background(), c, &Account{ID: 2, Name: "ws", Platform: PlatformOpenAI},
+		wsID, wsName, time.Now(), "gpt-5.5", "", time.Second, "websocket_first_semantic_output", nil)
+	httpErr := svc.newOpenAIFirstOutputTimeoutError(context.Background(), c, account,
+		opsUpstreamProxyID(account), opsUpstreamProxyName(account), time.Now(), "gpt-5.5", "", time.Second, "semantic_output", nil)
+	require.True(t, wsErr.RequestScopedTransient)
+	require.Equal(t, GatewayFailureScopeProvider, wsErr.Scope)
+	require.True(t, httpErr.RequestScopedTransient)
+	require.Equal(t, GatewayFailureScopeProvider, httpErr.Scope)
+
+	raw, ok := c.Get(OpsUpstreamErrorsKey)
+	require.True(t, ok)
+	events, ok := raw.([]*OpsUpstreamErrorEvent)
+	require.True(t, ok)
+	require.Len(t, events, 2)
+	require.Equal(t, "first_output_timeout", events[0].Kind)
+	require.Nil(t, events[0].ProxyID)
+	require.Equal(t, opsProxyNameUnknown, events[0].ProxyName)
+	require.NotNil(t, events[1].ProxyID)
+	require.Equal(t, proxyID, *events[1].ProxyID)
+	require.Equal(t, "ws-proxy", events[1].ProxyName)
 }
 
 func TestOpenAIFirstOutputTimeoutForReasoningEffort(t *testing.T) {
@@ -303,6 +457,7 @@ func TestOpenAIFirstOutputStageUnlinkFailurePermanentlyFallsBackToMemoryAndRetri
 func TestOpenAINativeFirstOutputTimeoutDisarmsAfterSemanticOutput(t *testing.T) {
 	cfg := &config.Config{Gateway: config.GatewayConfig{
 		OpenAIFirstOutputTimeoutSeconds: 1,
+		OpenAIFirstOutputHardCapSeconds: 2,
 		MaxLineSize:                     defaultMaxLineSize,
 	}}
 	svc := &OpenAIGatewayService{cfg: cfg, responseHeaderFilter: compileResponseHeaderFilter(cfg)}
@@ -355,6 +510,7 @@ func assertOpenAINativeLargeOpenEventTimesOutWithoutLeak(t *testing.T, line stri
 	t.Helper()
 	cfg := &config.Config{Gateway: config.GatewayConfig{
 		OpenAIFirstOutputTimeoutSeconds: 1,
+		OpenAIFirstOutputHardCapSeconds: 2,
 		StreamKeepaliveInterval:         1,
 		MaxLineSize:                     defaultMaxLineSize,
 	}}
@@ -368,7 +524,9 @@ func assertOpenAINativeLargeOpenEventTimesOutWithoutLeak(t *testing.T, line stri
 		_, _ = pw.Write([]byte(line + "\n"))
 		select {
 		case <-body.closed:
-		case <-time.After(2 * time.Second):
+		// 必须明显长于硬上限（2 秒），否则满负载下两者会撞在一起：
+		// 写入方先收尾，流正常结束，本用例要断言的"到点放弃"就不会发生。
+		case <-time.After(8 * time.Second):
 		}
 	}()
 	rec := httptest.NewRecorder()
@@ -415,6 +573,7 @@ func TestOpenAINativeFirstOutputEOFDispatchesTerminalEventWithoutBlankLine(t *te
 	})
 	cfg := &config.Config{Gateway: config.GatewayConfig{
 		OpenAIFirstOutputTimeoutSeconds: 1,
+		OpenAIFirstOutputHardCapSeconds: 2,
 		MaxLineSize:                     defaultMaxLineSize,
 	}}
 	svc := &OpenAIGatewayService{cfg: cfg, responseHeaderFilter: compileResponseHeaderFilter(cfg)}

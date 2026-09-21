@@ -20,8 +20,8 @@ func TestOpenAISelectionServingGroupID(t *testing.T) {
 
 	t.Run("兜底事实由选号结果带出时采信目标组", func(t *testing.T) {
 		sel := &AccountSelectionResult{
-			Account:                &Account{ID: 212, GroupIDs: []int64{29}},
-			fallbackPoolUsageTrace: &fallbackPoolUsageTrace{SourceGroupID: 2, TargetGroupID: 29},
+			Account:       &Account{ID: 212, GroupIDs: []int64{29}},
+			fallbackTrace: &fallbackPoolUsageTrace{SourceGroupID: 2, TargetGroupID: 29},
 		}
 		serving, ok := svc.openAISelectionServingGroupID(ctx, 2, sel)
 		require.True(t, ok)
@@ -74,10 +74,10 @@ func TestSelectionEscapeGuardStillCatchesEscapeBeyondFallbackTarget(t *testing.T
 
 	released := false
 	sel := &AccountSelectionResult{
-		Account:                &Account{ID: 999, GroupIDs: []int64{77}}, // 既不属于 2 也不属于 29
-		Acquired:               true,
-		ReleaseFunc:            func() { released = true },
-		fallbackPoolUsageTrace: &fallbackPoolUsageTrace{SourceGroupID: 2, TargetGroupID: 29},
+		Account:       &Account{ID: 999, GroupIDs: []int64{77}}, // 既不属于 2 也不属于 29
+		Acquired:      true,
+		ReleaseFunc:   func() { released = true },
+		fallbackTrace: &fallbackPoolUsageTrace{SourceGroupID: 2, TargetGroupID: 29},
 	}
 	require.True(t, svc.selectionEscapedRequestedGroup(
 		context.Background(), &group2, "", "", "gpt-5.3-codex-spark", sel),

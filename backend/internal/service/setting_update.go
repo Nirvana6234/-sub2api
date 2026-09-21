@@ -103,14 +103,6 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	if err := s.validateDefaultSubscriptionGroups(ctx, settings.DefaultSubscriptions); err != nil {
 		return nil, err
 	}
-	settings.PlaygroundDefaultChatGroupIDs = normalizeAutoGroupIDs(settings.PlaygroundDefaultChatGroupIDs)
-	settings.PlaygroundDefaultImageGroupIDs = normalizeAutoGroupIDs(settings.PlaygroundDefaultImageGroupIDs)
-	if err := s.validatePlaygroundDefaultGroupIDs(ctx, settings.PlaygroundDefaultChatGroupIDs, false); err != nil {
-		return nil, err
-	}
-	if err := s.validatePlaygroundDefaultGroupIDs(ctx, settings.PlaygroundDefaultImageGroupIDs, true); err != nil {
-		return nil, err
-	}
 	normalizedWhitelist, err := NormalizeRegistrationEmailSuffixWhitelist(settings.RegistrationEmailSuffixWhitelist)
 	if err != nil {
 		return nil, infraerrors.BadRequest("INVALID_REGISTRATION_EMAIL_SUFFIX_WHITELIST", err.Error())
@@ -392,10 +384,6 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 		settings.AffiliateRebatePerInviteeCap = AffiliateRebatePerInviteeCapDefault
 	}
 	updates[SettingKeyAffiliateRebatePerInviteeCap] = strconv.FormatFloat(settings.AffiliateRebatePerInviteeCap, 'f', 8, 64)
-	settings.AccountShareRewardRate = clampAccountShareRewardRatePercent(settings.AccountShareRewardRate)
-	updates[SettingKeyAccountShareRewardRate] = strconv.FormatFloat(settings.AccountShareRewardRate, 'f', 8, 64)
-	settings.AccountOwnUsageFeeRate = clampAccountOwnUsageFeeRatePercent(settings.AccountOwnUsageFeeRate)
-	updates[SettingKeyAccountOwnUsageFeeRate] = strconv.FormatFloat(settings.AccountOwnUsageFeeRate, 'f', 8, 64)
 	updates[SettingKeyAffiliateAdminRechargeEnabled] = strconv.FormatBool(settings.AdminRechargeRebateEnabled)
 	updates[SettingKeyDefaultUserRPMLimit] = strconv.Itoa(settings.DefaultUserRPMLimit)
 	defaultSubsJSON, err := json.Marshal(settings.DefaultSubscriptions)
@@ -431,6 +419,7 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	}
 	updates[SettingKeyChannelMonitorHideThroughput] = strconv.FormatBool(settings.ChannelMonitorHideThroughput)
 	updates[SettingKeyChannelMonitorShowQuota] = strconv.FormatBool(settings.ChannelMonitorShowQuota)
+	updates[SettingKeyChannelMonitorHideUserRanking] = strconv.FormatBool(settings.ChannelMonitorHideUserRanking)
 
 	// Grok model mapping policy
 	if v := strings.TrimSpace(settings.GrokDefaultTextModel); v != "" {
@@ -443,6 +432,8 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 
 	// Available channels feature switch
 	updates[SettingKeyAvailableChannelsEnabled] = strconv.FormatBool(settings.AvailableChannelsEnabled)
+	// Subscription feature switch
+	updates[SettingKeySubscriptionEnabled] = strconv.FormatBool(settings.SubscriptionEnabled)
 
 	// 客户端下载页与备用支付通道
 	updates[SettingKeyClientDownloadEnabled] = strconv.FormatBool(settings.ClientDownloadEnabled)
@@ -454,7 +445,11 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyClientLatestVersion] = strings.TrimSpace(settings.ClientLatestVersion)
 	updates[SettingKeyClientLatestVersionMac] = strings.TrimSpace(settings.ClientLatestVersionMac)
 	updates[SettingKeyClientTutorialVideoURL] = normalizeExternalHTTPURL(settings.ClientTutorialVideoURL)
-	updates[SettingKeyHeadroomBaseURL] = normalizeExternalHTTPURL(settings.HeadroomBaseURL)
+	updates[SettingKeyChatAppDownloadEnabled] = strconv.FormatBool(settings.ChatAppDownloadEnabled)
+	updates[SettingKeyChatAppDownloadDirectURL] = normalizeExternalHTTPURL(settings.ChatAppDownloadDirectURL)
+	updates[SettingKeyChatAppLatestVersion] = strings.TrimSpace(settings.ChatAppLatestVersion)
+	updates[SettingKeyLatencyCompensationThresholdMs] = strconv.Itoa(settings.LatencyCompensationThresholdMs)
+	updates[SettingKeyLatencyCompensationProfitRatio] = strconv.FormatFloat(settings.LatencyCompensationProfitRatio, 'f', -1, 64)
 	updates[SettingKeyPlaygroundEnabled] = strconv.FormatBool(settings.PlaygroundEnabled)
 	updates[SettingKeyPlaygroundDefaultChatModel] = strings.TrimSpace(settings.PlaygroundDefaultChatModel)
 	updates[SettingKeyPlaygroundDefaultImageModel] = strings.TrimSpace(settings.PlaygroundDefaultImageModel)
@@ -874,25 +869,6 @@ func (s *SettingService) validateDefaultSubscriptionGroups(ctx context.Context, 
 		}
 	}
 
-	return nil
-}
-
-func (s *SettingService) validatePlaygroundDefaultGroupIDs(ctx context.Context, groupIDs []int64, imageOnly bool) error {
-	if s.defaultSubGroupReader == nil {
-		return nil
-	}
-	for _, groupID := range groupIDs {
-		group, err := s.defaultSubGroupReader.GetByID(ctx, groupID)
-		if err != nil {
-			return infraerrors.BadRequest("PLAYGROUND_DEFAULT_GROUP_INVALID", fmt.Sprintf("playground group %d does not exist", groupID))
-		}
-		if group.Platform != PlatformOpenAI {
-			return infraerrors.BadRequest("PLAYGROUND_DEFAULT_GROUP_PLATFORM_INVALID", "playground default groups must all use the OpenAI model type")
-		}
-		if imageOnly && !group.AllowImageGeneration {
-			return infraerrors.BadRequest("PLAYGROUND_DEFAULT_IMAGE_GROUP_INVALID", fmt.Sprintf("playground image group %d does not allow image generation", groupID))
-		}
-	}
 	return nil
 }
 

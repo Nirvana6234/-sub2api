@@ -837,6 +837,20 @@ func (_c *GroupCreate) SetNillableMessagesDispatchModelConfig(v *domain.OpenAIMe
 	return _c
 }
 
+// SetModelAllowlist sets the "model_allowlist" field.
+func (_c *GroupCreate) SetModelAllowlist(v domain.GroupModelAllowlist) *GroupCreate {
+	_c.mutation.SetModelAllowlist(v)
+	return _c
+}
+
+// SetNillableModelAllowlist sets the "model_allowlist" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableModelAllowlist(v *domain.GroupModelAllowlist) *GroupCreate {
+	if v != nil {
+		_c.SetModelAllowlist(*v)
+	}
+	return _c
+}
+
 // SetModelsListConfig sets the "models_list_config" field.
 func (_c *GroupCreate) SetModelsListConfig(v domain.GroupModelsListConfig) *GroupCreate {
 	_c.mutation.SetModelsListConfig(v)
@@ -847,6 +861,20 @@ func (_c *GroupCreate) SetModelsListConfig(v domain.GroupModelsListConfig) *Grou
 func (_c *GroupCreate) SetNillableModelsListConfig(v *domain.GroupModelsListConfig) *GroupCreate {
 	if v != nil {
 		_c.SetModelsListConfig(*v)
+	}
+	return _c
+}
+
+// SetCodexModelsManifestConfig sets the "codex_models_manifest_config" field.
+func (_c *GroupCreate) SetCodexModelsManifestConfig(v domain.GroupCodexModelsManifestConfig) *GroupCreate {
+	_c.mutation.SetCodexModelsManifestConfig(v)
+	return _c
+}
+
+// SetNillableCodexModelsManifestConfig sets the "codex_models_manifest_config" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableCodexModelsManifestConfig(v *domain.GroupCodexModelsManifestConfig) *GroupCreate {
+	if v != nil {
+		_c.SetCodexModelsManifestConfig(*v)
 	}
 	return _c
 }
@@ -1237,9 +1265,17 @@ func (_c *GroupCreate) defaults() error {
 		v := group.DefaultMessagesDispatchModelConfig
 		_c.mutation.SetMessagesDispatchModelConfig(v)
 	}
+	if _, ok := _c.mutation.ModelAllowlist(); !ok {
+		v := group.DefaultModelAllowlist
+		_c.mutation.SetModelAllowlist(v)
+	}
 	if _, ok := _c.mutation.ModelsListConfig(); !ok {
 		v := group.DefaultModelsListConfig
 		_c.mutation.SetModelsListConfig(v)
+	}
+	if _, ok := _c.mutation.CodexModelsManifestConfig(); !ok {
+		v := group.DefaultCodexModelsManifestConfig
+		_c.mutation.SetCodexModelsManifestConfig(v)
 	}
 	if _, ok := _c.mutation.RpmLimit(); !ok {
 		v := group.DefaultRpmLimit
@@ -1448,8 +1484,14 @@ func (_c *GroupCreate) check() error {
 	if _, ok := _c.mutation.MessagesDispatchModelConfig(); !ok {
 		return &ValidationError{Name: "messages_dispatch_model_config", err: errors.New(`ent: missing required field "Group.messages_dispatch_model_config"`)}
 	}
+	if _, ok := _c.mutation.ModelAllowlist(); !ok {
+		return &ValidationError{Name: "model_allowlist", err: errors.New(`ent: missing required field "Group.model_allowlist"`)}
+	}
 	if _, ok := _c.mutation.ModelsListConfig(); !ok {
 		return &ValidationError{Name: "models_list_config", err: errors.New(`ent: missing required field "Group.models_list_config"`)}
+	}
+	if _, ok := _c.mutation.CodexModelsManifestConfig(); !ok {
+		return &ValidationError{Name: "codex_models_manifest_config", err: errors.New(`ent: missing required field "Group.codex_models_manifest_config"`)}
 	}
 	if _, ok := _c.mutation.RpmLimit(); !ok {
 		return &ValidationError{Name: "rpm_limit", err: errors.New(`ent: missing required field "Group.rpm_limit"`)}
@@ -1753,9 +1795,17 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 		_spec.SetField(group.FieldMessagesDispatchModelConfig, field.TypeJSON, value)
 		_node.MessagesDispatchModelConfig = value
 	}
+	if value, ok := _c.mutation.ModelAllowlist(); ok {
+		_spec.SetField(group.FieldModelAllowlist, field.TypeJSON, value)
+		_node.ModelAllowlist = value
+	}
 	if value, ok := _c.mutation.ModelsListConfig(); ok {
 		_spec.SetField(group.FieldModelsListConfig, field.TypeJSON, value)
 		_node.ModelsListConfig = value
+	}
+	if value, ok := _c.mutation.CodexModelsManifestConfig(); ok {
+		_spec.SetField(group.FieldCodexModelsManifestConfig, field.TypeJSON, value)
+		_node.CodexModelsManifestConfig = value
 	}
 	if value, ok := _c.mutation.RpmLimit(); ok {
 		_spec.SetField(group.FieldRpmLimit, field.TypeInt, value)
@@ -2941,6 +2991,18 @@ func (u *GroupUpsert) UpdateMessagesDispatchModelConfig() *GroupUpsert {
 	return u
 }
 
+// SetModelAllowlist sets the "model_allowlist" field.
+func (u *GroupUpsert) SetModelAllowlist(v domain.GroupModelAllowlist) *GroupUpsert {
+	u.Set(group.FieldModelAllowlist, v)
+	return u
+}
+
+// UpdateModelAllowlist sets the "model_allowlist" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateModelAllowlist() *GroupUpsert {
+	u.SetExcluded(group.FieldModelAllowlist)
+	return u
+}
+
 // SetModelsListConfig sets the "models_list_config" field.
 func (u *GroupUpsert) SetModelsListConfig(v domain.GroupModelsListConfig) *GroupUpsert {
 	u.Set(group.FieldModelsListConfig, v)
@@ -2950,6 +3012,18 @@ func (u *GroupUpsert) SetModelsListConfig(v domain.GroupModelsListConfig) *Group
 // UpdateModelsListConfig sets the "models_list_config" field to the value that was provided on create.
 func (u *GroupUpsert) UpdateModelsListConfig() *GroupUpsert {
 	u.SetExcluded(group.FieldModelsListConfig)
+	return u
+}
+
+// SetCodexModelsManifestConfig sets the "codex_models_manifest_config" field.
+func (u *GroupUpsert) SetCodexModelsManifestConfig(v domain.GroupCodexModelsManifestConfig) *GroupUpsert {
+	u.Set(group.FieldCodexModelsManifestConfig, v)
+	return u
+}
+
+// UpdateCodexModelsManifestConfig sets the "codex_models_manifest_config" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateCodexModelsManifestConfig() *GroupUpsert {
+	u.SetExcluded(group.FieldCodexModelsManifestConfig)
 	return u
 }
 
@@ -4251,6 +4325,20 @@ func (u *GroupUpsertOne) UpdateMessagesDispatchModelConfig() *GroupUpsertOne {
 	})
 }
 
+// SetModelAllowlist sets the "model_allowlist" field.
+func (u *GroupUpsertOne) SetModelAllowlist(v domain.GroupModelAllowlist) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetModelAllowlist(v)
+	})
+}
+
+// UpdateModelAllowlist sets the "model_allowlist" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateModelAllowlist() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateModelAllowlist()
+	})
+}
+
 // SetModelsListConfig sets the "models_list_config" field.
 func (u *GroupUpsertOne) SetModelsListConfig(v domain.GroupModelsListConfig) *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
@@ -4262,6 +4350,20 @@ func (u *GroupUpsertOne) SetModelsListConfig(v domain.GroupModelsListConfig) *Gr
 func (u *GroupUpsertOne) UpdateModelsListConfig() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateModelsListConfig()
+	})
+}
+
+// SetCodexModelsManifestConfig sets the "codex_models_manifest_config" field.
+func (u *GroupUpsertOne) SetCodexModelsManifestConfig(v domain.GroupCodexModelsManifestConfig) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetCodexModelsManifestConfig(v)
+	})
+}
+
+// UpdateCodexModelsManifestConfig sets the "codex_models_manifest_config" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateCodexModelsManifestConfig() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateCodexModelsManifestConfig()
 	})
 }
 
@@ -5746,6 +5848,20 @@ func (u *GroupUpsertBulk) UpdateMessagesDispatchModelConfig() *GroupUpsertBulk {
 	})
 }
 
+// SetModelAllowlist sets the "model_allowlist" field.
+func (u *GroupUpsertBulk) SetModelAllowlist(v domain.GroupModelAllowlist) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetModelAllowlist(v)
+	})
+}
+
+// UpdateModelAllowlist sets the "model_allowlist" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateModelAllowlist() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateModelAllowlist()
+	})
+}
+
 // SetModelsListConfig sets the "models_list_config" field.
 func (u *GroupUpsertBulk) SetModelsListConfig(v domain.GroupModelsListConfig) *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
@@ -5757,6 +5873,20 @@ func (u *GroupUpsertBulk) SetModelsListConfig(v domain.GroupModelsListConfig) *G
 func (u *GroupUpsertBulk) UpdateModelsListConfig() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateModelsListConfig()
+	})
+}
+
+// SetCodexModelsManifestConfig sets the "codex_models_manifest_config" field.
+func (u *GroupUpsertBulk) SetCodexModelsManifestConfig(v domain.GroupCodexModelsManifestConfig) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetCodexModelsManifestConfig(v)
+	})
+}
+
+// UpdateCodexModelsManifestConfig sets the "codex_models_manifest_config" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateCodexModelsManifestConfig() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateCodexModelsManifestConfig()
 	})
 }
 

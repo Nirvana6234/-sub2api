@@ -162,9 +162,25 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		selectionSessionHash = "gemini:" + selectionSessionHash
 	}
 	// 3. Account selection + failover loop
-	fs := NewFailoverState(maxAccountSwitchesForRequest(c.Request.Context(), h.maxAccountSwitches), false)
+	fs := NewFailoverState(h.maxAccountSwitches, false)
 	if groupPlatform == service.PlatformGemini {
-		fs = NewFailoverState(maxAccountSwitchesForRequest(c.Request.Context(), h.maxAccountSwitchesGemini), false)
+		fs = NewFailoverState(h.maxAccountSwitchesGemini, false)
+	}
+	failedGroupIDs := make(map[int64]struct{})
+	resetAutomaticGroup := func() {
+		groupPlatform = effectiveAPIKeyPlatform(c, apiKey)
+		selectionSessionHash = sessionHash
+		if groupPlatform == service.PlatformGemini && selectionSessionHash != "" {
+			selectionSessionHash = "gemini:" + selectionSessionHash
+		}
+		if groupPlatform == service.PlatformGemini {
+			fs = NewFailoverState(h.maxAccountSwitchesGemini, false)
+		} else {
+			fs = NewFailoverState(h.maxAccountSwitches, false)
+		}
+		channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
+		pricingCtx, pricingAt = service.WithGatewayTokenRequestPricing(c.Request.Context())
+		c.Request = c.Request.WithContext(pricingCtx)
 	}
 
 	for {
@@ -173,6 +189,19 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		}
 		selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, selectionSessionHash, reqModel, fs.FailedAccountIDs, "", int64(0))
 		if err != nil {
+			if (len(fs.FailedAccountIDs) > 0 || isAutoGroupSelectionFailoverError(err)) && tryOpenAIAutoGroupFailover(c, h.apiKeyService, &apiKey, reqModel, failedGroupIDs, &subscription) {
+				resetAutomaticGroup()
+				if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
+					reqLog.Warn("gateway.cc.auto_group_failover_billing_check_failed", zap.Error(err))
+					status, code, message, retryAfter := billingErrorDetails(err)
+					if retryAfter > 0 {
+						c.Header("Retry-After", strconv.Itoa(retryAfter))
+					}
+					h.chatCompletionsErrorResponse(c, status, code, message)
+					return
+				}
+				continue
+			}
 			if len(fs.FailedAccountIDs) == 0 {
 				cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, reqModel, reqModel, groupPlatform)
 				cls = classifySelectionFailureError(err, cls)
@@ -194,6 +223,10 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 				failoverClientGone(c)
 				return
 			default:
+				if tryOpenAIAutoGroupFailover(c, h.apiKeyService, &apiKey, reqModel, failedGroupIDs, &subscription) {
+					resetAutomaticGroup()
+					continue
+				}
 				if fs.LastFailoverErr != nil {
 					h.handleCCFailoverExhausted(c, fs.LastFailoverErr, streamStarted)
 				} else {
@@ -245,7 +278,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		account = latest
 		selection.Account = latest
 		if selection.ProfitGateActive() {
-			if err := h.gatewayService.BindStickySessionAfterProfitAdmission(admissionCtx, selection.EffectiveGroupID(apiKey.GroupID), selectionSessionHash, account.ID); err != nil {
+			if err := h.gatewayService.BindStickySessionAfterProfitAdmission(admissionCtx, apiKey.GroupID, selectionSessionHash, account.ID); err != nil {
 				reqLog.Warn("gateway.cc.bind_sticky_session_after_profit_admission_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 			}
 		}
@@ -306,6 +339,10 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 				case FailoverContinue:
 					continue
 				case FailoverExhausted:
+					if tryOpenAIAutoGroupFailover(c, h.apiKeyService, &apiKey, reqModel, failedGroupIDs, &subscription) {
+						resetAutomaticGroup()
+						continue
+					}
 					h.handleCCFailoverExhausted(c, fs.LastFailoverErr, streamStarted)
 					return
 				case FailoverCanceled:
@@ -337,7 +374,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 		sessionID := service.ExtractClientSessionID(c)
 		stampForwardRequestedReasoningEffort(result, service.RequestedReasoningEffortFromContext(c.Request.Context()))
-		h.submitUsageRecordTask(service.ContextWithSelectionProfitGate(c.Request.Context(), selection), func(ctx context.Context) {
+		h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 			if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 				Result:             result,
 				QuotaPlatform:      quotaPlatform,

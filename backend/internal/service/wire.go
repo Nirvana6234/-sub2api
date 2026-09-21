@@ -71,7 +71,6 @@ func ProvideAuthService(
 	affiliateService *AffiliateService,
 	userPlatformQuotaRepo UserPlatformQuotaRepository,
 	apiKeyService *APIKeyService,
-	adminLoginAttempts AdminLoginAttemptCache,
 ) *AuthService {
 	svc := NewAuthService(
 		entClient,
@@ -91,7 +90,6 @@ func ProvideAuthService(
 	svc.SetTencentCaptchaService(tencentCaptchaService)
 	svc.SetAliyunCaptchaService(aliyunCaptchaService)
 	svc.SetPlaygroundAPIKeyProvisioner(apiKeyService)
-	svc.SetAdminLoginAttemptCache(adminLoginAttempts)
 	return svc
 }
 
@@ -120,6 +118,11 @@ func ProvidePawConfigService(
 		UserAttributePawDefaultsStore{Service: userAttributeService},
 		pricingService,
 	)
+}
+
+// ProvidePawChatService wires the Paw chat service used by the desktop Chat client.
+func ProvidePawChatService(pawConfigService *PawConfigService, apiKeyService *APIKeyService) *PawChatService {
+	return NewPawChatService(pawConfigService, APIKeyPawChatKeySource{Service: apiKeyService})
 }
 
 func ProvideBatchImageCleanupService(repo BatchImageRepository, accountRepo AccountRepository, cfg *config.Config) *BatchImageCleanupService {
@@ -289,6 +292,7 @@ func ProvideAccountTestService(
 		tlsFPProfileService,
 	)
 	service.agentIdentityWS = openAIGatewayService
+	service.SetOpenAIGatewayService(openAIGatewayService)
 	service.SetSettingService(settingService)
 	service.SetPluginManager(pluginManager)
 	return service
@@ -507,6 +511,7 @@ func ProvideRateLimitService(
 	openAI403CounterCache OpenAI403CounterCache,
 	settingService *SettingService,
 	tokenCacheInvalidator TokenCacheInvalidator,
+	ollamaCloudUsage *OllamaCloudUsageService,
 ) *RateLimitService {
 	svc := NewRateLimitService(accountRepo, usageRepo, cfg, geminiQuotaService, tempUnschedCache)
 	if healthCache, ok := tempUnschedCache.(OpenAIAPIKeyHealthCache); ok {
@@ -516,6 +521,7 @@ func ProvideRateLimitService(
 	svc.SetOpenAI403CounterCache(openAI403CounterCache)
 	svc.SetSettingService(settingService)
 	svc.SetTokenCacheInvalidator(tokenCacheInvalidator)
+	svc.SetOllamaCloudUsageProbeScheduler(ollamaCloudUsage)
 	return svc
 }
 
@@ -651,10 +657,9 @@ func ProvideScheduledTestRunnerService(
 	scheduledSvc *ScheduledTestService,
 	accountTestSvc *AccountTestService,
 	rateLimitSvc *RateLimitService,
-	accountRepo AccountRepository,
 	cfg *config.Config,
 ) *ScheduledTestRunnerService {
-	svc := NewScheduledTestRunnerService(planRepo, scheduledSvc, accountTestSvc, rateLimitSvc, accountRepo, cfg)
+	svc := NewScheduledTestRunnerService(planRepo, scheduledSvc, accountTestSvc, rateLimitSvc, cfg)
 	svc.Start()
 	return svc
 }
@@ -832,14 +837,17 @@ func ProvideAPIKeyService(
 	cache APIKeyCache,
 	cfg *config.Config,
 	accountRepo AccountRepository,
+	usageLogRepo UsageLogRepository,
 	billingCacheService *BillingCacheService,
 	concurrencyService *ConcurrencyService,
-	usageLogRepo UsageLogRepository,
 	settingService *SettingService,
 ) *APIKeyService {
 	svc := NewAPIKeyService(apiKeyRepo, userRepo, groupRepo, userSubRepo, userGroupRateRepo, cache, cfg)
 	svc.SetRateLimitCacheInvalidator(billingCacheService)
 	svc.SetConcurrencyService(concurrencyService)
+	// 自动分组的选组依据。缺了模型可用性仓储，选组只会比价格，会把请求
+	// 送进一个根本不提供该模型的分组，用户侧表现为 404 model_not_found。
+	// 指标仓储缺失则让 speed/balanced 策略退化成纯价格排序。
 	if metricsRepo, ok := usageLogRepo.(AutoGroupMetricRepository); ok {
 		svc.SetAutoGroupMetricRepository(metricsRepo)
 	}
@@ -873,11 +881,10 @@ var ProviderSet = wire.NewSet(
 	ProvideBillingCacheService,
 	NewAnnouncementService,
 	NewTicketService,
-	NewPlaygroundHistoryService,
-	ProvidePawConfigService,
 	NewAdminService,
 	NewGatewayService,
 	NewOpenAIGatewayService,
+	ProvideContributionRoomWiring,
 	ProvideImageStorageSettingService,
 	ProvideImageTaskService,
 	ProvideBatchImageModelPricingResolver,
@@ -885,9 +892,13 @@ var ProviderSet = wire.NewSet(
 	NewBatchImageDownloadService,
 	ProvideBatchImageCleanupService,
 	ProvideBatchImageWorkerRuntime,
+	ProvidePawConfigService,
+	ProvidePawChatService,
+	NewPlaygroundHistoryService,
 	wire.Bind(new(AccountRuntimeBlocker), new(*OpenAIGatewayService)),
 	NewOAuthService,
 	ProvideOpenAIOAuthService,
+	NewAccountProfileStatisticsService,
 	ProvideGrokOAuthService,
 	wire.Bind(new(GrokOAuthTokenService), new(*GrokOAuthService)),
 	NewGeminiOAuthService,

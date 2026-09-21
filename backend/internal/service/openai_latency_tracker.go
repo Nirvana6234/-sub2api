@@ -188,6 +188,24 @@ func (t *openAILatencyTracker) GroupTailForBucket(groupID int64, bucket string) 
 	return openAILatencyWindowTail(value)
 }
 
+// ResetGroup 丢弃某分组的全部延迟样本，使它必须重新积累才能再次给出读数。
+//
+// 这是打破"被兜底 → 拿不到新样本 → 继续被判慢 → 继续被兜底"这个自锁循环的
+// 唯一手段：observeOpenAILatency 按 servingGroupID 记录样本，分组一旦被兜底，
+// 它的流量就记到兜底组去了，源分组的窗口从此冻结在触发兜底那一刻的慢读数上。
+// 陈旧读数会在粘性刚被解除的下一个请求上立刻重新触发兜底——生产上表现为
+// 每分钟"恢复"一次、每次又被立刻踢回去，流量始终停在兜底池。
+//
+// 因此账号级证据判定源分组已恢复时，必须同时清掉这份过时的分组级判断。
+func (t *openAILatencyTracker) ResetGroup(groupID int64) {
+	if t == nil || groupID <= 0 {
+		return
+	}
+	for _, bucket := range openAILatencyBuckets() {
+		t.groups.Delete(openAILatencyKey{id: groupID, bucket: bucket})
+	}
+}
+
 func (t *openAILatencyTracker) worstTail(windows *sync.Map, id int64) (int, bool) {
 	worst := 0
 	found := false

@@ -176,8 +176,6 @@ type UpdateSettingsRequest struct {
 	AffiliateRebateFreezeHours                *int                              `json:"affiliate_rebate_freeze_hours"`
 	AffiliateRebateDurationDays               *int                              `json:"affiliate_rebate_duration_days"`
 	AffiliateRebatePerInviteeCap              *float64                          `json:"affiliate_rebate_per_invitee_cap"`
-	AccountShareRewardRate                    *float64                          `json:"account_share_reward_rate"`
-	AccountOwnUsageFeeRate                    *float64                          `json:"account_own_usage_fee_rate"`
 	AdminRechargeRebateEnabled                *bool                             `json:"affiliate_admin_recharge_enabled"`
 	DefaultUserRPMLimit                       int                               `json:"default_user_rpm_limit"`
 	DefaultSubscriptions                      []dto.DefaultSubscriptionSetting  `json:"default_subscriptions"`
@@ -339,6 +337,7 @@ type UpdateSettingsRequest struct {
 	ChannelMonitorDefaultIntervalSeconds *int    `json:"channel_monitor_default_interval_seconds"`
 	ChannelMonitorHideThroughput         *bool   `json:"channel_monitor_hide_throughput"`
 	ChannelMonitorShowQuota              *bool   `json:"channel_monitor_show_quota"`
+	ChannelMonitorHideUserRanking        *bool   `json:"channel_monitor_hide_user_ranking"`
 
 	// Grok model mapping policy
 	GrokDefaultTextModel           *string `json:"grok_default_text_model"`
@@ -356,14 +355,8 @@ type UpdateSettingsRequest struct {
 	ClientLatestVersionMac     *string `json:"client_latest_version_mac"`
 	ClientTutorialVideoURL     *string `json:"client_tutorial_video_url"`
 
-	ChatAppDownloadEnabled   *bool   `json:"chat_app_download_enabled"`
-	ChatAppDownloadDirectURL *string `json:"chat_app_download_direct_url"`
-	ChatAppLatestVersion     *string `json:"chat_app_latest_version"`
-
 	LatencyCompensationThresholdMs *int     `json:"latency_compensation_threshold_ms"`
 	LatencyCompensationProfitRatio *float64 `json:"latency_compensation_profit_ratio"`
-
-	HeadroomBaseURL *string `json:"headroom_base_url"`
 
 	BackupPaymentEnabled *bool   `json:"backup_payment_enabled"`
 	BackupPaymentURL     *string `json:"backup_payment_url"`
@@ -376,6 +369,7 @@ type UpdateSettingsRequest struct {
 	PlaygroundDefaultImageGroupIDs *[]int64 `json:"playground_default_image_group_ids"`
 	PlaygroundDefaultChatStrategy  *string  `json:"playground_default_chat_strategy"`
 	PlaygroundDefaultImageStrategy *string  `json:"playground_default_image_strategy"`
+	SubscriptionEnabled             *bool    `json:"subscription_enabled"`
 
 	// Model Plaza feature switches + description
 	ModelPlazaEnabled     *bool   `json:"model_plaza_enabled"`
@@ -601,26 +595,6 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	}
 	if affiliateRebateRate > service.AffiliateRebateRateMax {
 		affiliateRebateRate = service.AffiliateRebateRateMax
-	}
-	accountShareRewardRate := previousSettings.AccountShareRewardRate
-	if req.AccountShareRewardRate != nil {
-		accountShareRewardRate = *req.AccountShareRewardRate
-	}
-	if accountShareRewardRate < service.AccountShareRewardRateMinPercent {
-		accountShareRewardRate = service.AccountShareRewardRateMinPercent
-	}
-	if accountShareRewardRate > service.AccountShareRewardRateMaxPercent {
-		accountShareRewardRate = service.AccountShareRewardRateMaxPercent
-	}
-	accountOwnUsageFeeRate := previousSettings.AccountOwnUsageFeeRate
-	if req.AccountOwnUsageFeeRate != nil {
-		accountOwnUsageFeeRate = *req.AccountOwnUsageFeeRate
-	}
-	if accountOwnUsageFeeRate < service.AccountOwnUsageFeeRateMinPercent {
-		accountOwnUsageFeeRate = service.AccountOwnUsageFeeRateMinPercent
-	}
-	if accountOwnUsageFeeRate > service.AccountOwnUsageFeeRateMaxPercent {
-		accountOwnUsageFeeRate = service.AccountOwnUsageFeeRateMaxPercent
 	}
 	affiliateRebateFreezeHours := previousSettings.AffiliateRebateFreezeHours
 	if req.AffiliateRebateFreezeHours != nil {
@@ -1688,8 +1662,6 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		AffiliateRebateFreezeHours:             affiliateRebateFreezeHours,
 		AffiliateRebateDurationDays:            affiliateRebateDurationDays,
 		AffiliateRebatePerInviteeCap:           affiliateRebatePerInviteeCap,
-		AccountShareRewardRate:                 accountShareRewardRate,
-		AccountOwnUsageFeeRate:                 accountOwnUsageFeeRate,
 		AdminRechargeRebateEnabled:             adminRechargeRebateEnabled,
 		DefaultUserRPMLimit:                    req.DefaultUserRPMLimit,
 		DefaultSubscriptions:                   defaultSubscriptions,
@@ -1980,6 +1952,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.ChannelMonitorShowQuota
 		}(),
+		ChannelMonitorHideUserRanking: func() bool {
+			if req.ChannelMonitorHideUserRanking != nil {
+				return *req.ChannelMonitorHideUserRanking
+			}
+			return previousSettings.ChannelMonitorHideUserRanking
+		}(),
 		GrokDefaultTextModel: func() string {
 			if req.GrokDefaultTextModel != nil {
 				return *req.GrokDefaultTextModel
@@ -2022,14 +2000,6 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		ClientLatestVersion:        stringSetting(req.ClientLatestVersion, previousSettings.ClientLatestVersion),
 		ClientLatestVersionMac:     stringSetting(req.ClientLatestVersionMac, previousSettings.ClientLatestVersionMac),
 		ClientTutorialVideoURL:     stringSetting(req.ClientTutorialVideoURL, previousSettings.ClientTutorialVideoURL),
-		ChatAppDownloadEnabled: func() bool {
-			if req.ChatAppDownloadEnabled != nil {
-				return *req.ChatAppDownloadEnabled
-			}
-			return previousSettings.ChatAppDownloadEnabled
-		}(),
-		ChatAppDownloadDirectURL: stringSetting(req.ChatAppDownloadDirectURL, previousSettings.ChatAppDownloadDirectURL),
-		ChatAppLatestVersion:     stringSetting(req.ChatAppLatestVersion, previousSettings.ChatAppLatestVersion),
 		LatencyCompensationThresholdMs: func() int {
 			if req.LatencyCompensationThresholdMs != nil && *req.LatencyCompensationThresholdMs > 0 {
 				return *req.LatencyCompensationThresholdMs
@@ -2042,7 +2012,6 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.LatencyCompensationProfitRatio
 		}(),
-		HeadroomBaseURL:  stringSetting(req.HeadroomBaseURL, previousSettings.HeadroomBaseURL),
 		BackupPaymentURL: stringSetting(req.BackupPaymentURL, previousSettings.BackupPaymentURL),
 		PlaygroundEnabled: func() bool {
 			if req.PlaygroundEnabled != nil {
@@ -2066,6 +2035,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		}(),
 		PlaygroundDefaultChatStrategy:  stringSetting(req.PlaygroundDefaultChatStrategy, previousSettings.PlaygroundDefaultChatStrategy),
 		PlaygroundDefaultImageStrategy: stringSetting(req.PlaygroundDefaultImageStrategy, previousSettings.PlaygroundDefaultImageStrategy),
+		SubscriptionEnabled: func() bool {
+			if req.SubscriptionEnabled != nil {
+				return *req.SubscriptionEnabled
+			}
+			return previousSettings.SubscriptionEnabled
+		}(),
 		ModelPlazaEnabled: func() bool {
 			if req.ModelPlazaEnabled != nil {
 				return *req.ModelPlazaEnabled
@@ -2398,8 +2373,6 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		AffiliateRebateFreezeHours:                             updatedSettings.AffiliateRebateFreezeHours,
 		AffiliateRebateDurationDays:                            updatedSettings.AffiliateRebateDurationDays,
 		AffiliateRebatePerInviteeCap:                           updatedSettings.AffiliateRebatePerInviteeCap,
-		AccountShareRewardRate:                                 updatedSettings.AccountShareRewardRate,
-		AccountOwnUsageFeeRate:                                 updatedSettings.AccountOwnUsageFeeRate,
 		AdminRechargeRebateEnabled:                             updatedSettings.AdminRechargeRebateEnabled,
 		DefaultUserRPMLimit:                                    updatedSettings.DefaultUserRPMLimit,
 		DefaultSubscriptions:                                   updatedDefaultSubscriptions,
@@ -2507,6 +2480,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		ChannelMonitorDefaultIntervalSeconds: updatedSettings.ChannelMonitorDefaultIntervalSeconds,
 		ChannelMonitorHideThroughput:         updatedSettings.ChannelMonitorHideThroughput,
 		ChannelMonitorShowQuota:              updatedSettings.ChannelMonitorShowQuota,
+		ChannelMonitorHideUserRanking:        updatedSettings.ChannelMonitorHideUserRanking,
 
 		GrokDefaultTextModel:           updatedSettings.GrokDefaultTextModel,
 		GrokCrossClientModelMapEnabled: updatedSettings.GrokCrossClientModelMapEnabled,
@@ -2520,12 +2494,8 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		ClientLatestVersion:            updatedSettings.ClientLatestVersion,
 		ClientLatestVersionMac:         updatedSettings.ClientLatestVersionMac,
 		ClientTutorialVideoURL:         updatedSettings.ClientTutorialVideoURL,
-		ChatAppDownloadEnabled:         updatedSettings.ChatAppDownloadEnabled,
-		ChatAppDownloadDirectURL:       updatedSettings.ChatAppDownloadDirectURL,
-		ChatAppLatestVersion:           updatedSettings.ChatAppLatestVersion,
 		LatencyCompensationThresholdMs: updatedSettings.LatencyCompensationThresholdMs,
 		LatencyCompensationProfitRatio: updatedSettings.LatencyCompensationProfitRatio,
-		HeadroomBaseURL:                updatedSettings.HeadroomBaseURL,
 		BackupPaymentEnabled:           updatedSettings.BackupPaymentEnabled,
 		BackupPaymentURL:               updatedSettings.BackupPaymentURL,
 		PlaygroundEnabled:              updatedSettings.PlaygroundEnabled,
@@ -2535,6 +2505,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		PlaygroundDefaultImageGroupIDs: updatedSettings.PlaygroundDefaultImageGroupIDs,
 		PlaygroundDefaultChatStrategy:  updatedSettings.PlaygroundDefaultChatStrategy,
 		PlaygroundDefaultImageStrategy: updatedSettings.PlaygroundDefaultImageStrategy,
+		SubscriptionEnabled:            updatedSettings.SubscriptionEnabled,
 
 		ModelPlazaEnabled:       updatedSettings.ModelPlazaEnabled,
 		ModelPlazaRequireAuth:   updatedSettings.ModelPlazaRequireAuth,

@@ -250,15 +250,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		setOpenAIResponsesClientToolMapping(c, mapping)
 	}
 
-	diagSanitizeStart := time.Now()
 	sanitizedBody, sanitized, err := sanitizeEmptyBase64InputImagesInOpenAIBody(body)
-	if diagSanitizeElapsed := time.Since(diagSanitizeStart); diagSanitizeElapsed > 50*time.Millisecond || sanitized {
-		diagAccountID := int64(0)
-		if account != nil {
-			diagAccountID = account.ID
-		}
-		logger.LegacyPrintf("service.openai_gateway", "[DIAG] empty-base64 image sanitize (Passthrough): account=%d body_bytes=%d sanitized=%v elapsed=%s", diagAccountID, len(body), sanitized, diagSanitizeElapsed)
-	}
 	if err != nil {
 		return nil, err
 	}
@@ -382,7 +374,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			actualModel = reqModel
 		}
 		SetOpsUpstreamModel(c, actualModel)
-		upstreamCtx, releaseUpstreamCtx := detachUpstreamRequestContext(ctx)
+		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 		upstreamReq, buildErr := s.buildUpstreamRequestOpenAIPassthrough(upstreamCtx, c, account, body, token)
 		releaseUpstreamCtx()
 		if buildErr != nil {
@@ -535,6 +527,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 
 	forwardResult := &OpenAIForwardResult{
 		RequestID:                     resp.Header.Get("x-request-id"),
+		UpstreamHeaders:               resp.Header,
 		ResponseID:                    responseID,
 		Usage:                         *usage,
 		Model:                         reqModel,
@@ -640,13 +633,13 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	}
 	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
 
-	// 透传客户端请求头。非 strict 是闭合白名单（挡住非标准/环境噪声头触发风控）；
-	// strict 是黑名单——门禁成立时客户端的头就是官方那一套，白名单反而在吃掉官方
-	// 确实会发的头（见 openai_passthrough_strict.go 的名单说明）。
+	// 透传客户端请求头（安全白名单）。
 	allowTimeoutHeaders := s.isOpenAIPassthroughTimeoutHeadersAllowed()
 	if c != nil && c.Request != nil {
 		for key, values := range c.Request.Header {
 			lower := strings.ToLower(strings.TrimSpace(key))
+			// strict 是黑名单——门禁成立时客户端的头就是官方那一套，白名单反而在吃掉
+			// 官方确实会发的头（见 openai_passthrough_strict.go 的名单说明）。
 			forward := isOpenAIPassthroughAllowedRequestHeader(lower, allowTimeoutHeaders)
 			if strictPassthrough {
 				forward = isOpenAIStrictPassthroughForwardableHeader(lower, allowTimeoutHeaders)
@@ -759,6 +752,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 
 	// 账号级请求头覆写（仅 openai api_key 账号启用时生效；OAuth 路径 no-op）
 	account.ApplyHeaderOverrides(req.Header)
+	applyOpenCodeSessionHeader(c, account, targetURL, req.Header, body)
 	// x-codex-beta-features：按真实 Codex 的会话级行为补注（在账号级覆写之后，
 	// 保证不被覆盖丢失）。
 	applyOpenAICodexBetaFeatures(c, account, req.Header)
@@ -805,13 +799,6 @@ func shouldFailoverOpenAIPassthroughResponse(account *Account, statusCode int, r
 	}
 	if isOpenAIContextWindowError("", responseBody) {
 		return false
-	}
-	// A provider daily allowance is request-scoped. Keep it in the gateway
-	// failover loop for every OpenAI credential type; the account-aware
-	// failover constructor decides whether to retry this credential or switch.
-	if account != nil && account.Platform == PlatformOpenAI &&
-		isOpenAIDailyUsageLimitError(statusCode, "", responseBody) {
-		return true
 	}
 	if isOpenAIHTTPUpstreamAccessStateError(statusCode, "", responseBody) {
 		return true
@@ -940,6 +927,8 @@ func (s *OpenAIGatewayService) handleFailoverErrorResponsePassthrough(
 	canonicalModel := canonicalOpenAIAccountSchedulingModel(account, reqModel)
 	shouldDisable := s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, body, canonicalModel)
 	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+		ProxyID:              opsUpstreamProxyID(account),
+		ProxyName:            opsUpstreamProxyName(account),
 		Platform:             account.Platform,
 		AccountID:            account.ID,
 		AccountName:          account.Name,
@@ -1006,6 +995,8 @@ func (s *OpenAIGatewayService) handleErrorResponsePassthrough(
 		_ = s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, body, canonicalModel)
 	}
 	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+		ProxyID:              opsUpstreamProxyID(account),
+		ProxyName:            opsUpstreamProxyName(account),
 		Platform:             account.Platform,
 		AccountID:            account.ID,
 		AccountName:          account.Name,
@@ -1570,13 +1561,6 @@ func openAIStreamFailedEventShouldFailover(payload []byte, message string) bool 
 	if isOpenAIContextWindowError(message, payload) {
 		return false
 	}
-	// Provider daily-usage exhaustion is request-scoped. It must enter the
-	// normal failover loop even when the stream payload otherwise resembles a
-	// permission/403 error; account-side cooldown persistence is skipped later
-	// by handleOpenAIAccountUpstreamError.
-	if isOpenAIDailyUsageLimitError(http.StatusForbidden, message, payload) {
-		return true
-	}
 	if isOpenAIUpstreamAccessStateError(message, payload) {
 		return true
 	}
@@ -1628,9 +1612,6 @@ func openAIStreamErrorEventShouldFailover(payload []byte, message string) bool {
 	}
 	if isOpenAIContextWindowError(message, payload) {
 		return false
-	}
-	if isOpenAIDailyUsageLimitError(http.StatusForbidden, message, payload) {
-		return true
 	}
 	if isOpenAIUpstreamAccessStateError(message, payload) {
 		return true
@@ -1692,12 +1673,6 @@ func openAIStreamFailedEventRetryableOnSameAccount(account *Account, payload []b
 	if account == nil {
 		return false
 	}
-	// API/static-key accounts get the same bounded same-account retry budget as
-	// non-streaming requests. OAuth/setup-token accounts skip directly to the
-	// next account because the allowance belongs to the real provider account.
-	if isOpenAIDailyUsageLimitError(http.StatusForbidden, message, payload) {
-		return isOpenAIUpstreamAPIAccount(account)
-	}
 	// 容量降载是请求级信号，不是账号级故障：上游只是让本次请求稍后再试。
 	// 换账号并不改变被降载的因素（客户端身份、模型容量都与账号无关），
 	// 只会让单个请求把整池账号逐个消耗掉，最终仍以同一个错误告终。
@@ -1738,6 +1713,8 @@ func (s *OpenAIGatewayService) recordOpenAIStreamUpstreamError(
 	if c != nil {
 		setOpsUpstreamError(c, statusCode, message, detail)
 		event := OpsUpstreamErrorEvent{
+			ProxyID:            opsUpstreamProxyID(account),
+			ProxyName:          opsUpstreamProxyName(account),
 			Platform:           PlatformOpenAI,
 			UpstreamStatusCode: statusCode,
 			UpstreamRequestID:  strings.TrimSpace(upstreamRequestID),
@@ -2132,6 +2109,11 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 					} else {
 						s.handleOpenAIStreamTerminalAccountSideEffects(c, account, dataBytes, failedMessage, resp.Header, mappedModel)
 						bareErrorAccountSideEffectsPending = false
+					}
+					if eventType == "response.failed" {
+						// The stream cannot be replayed after semantic output. Preserve the
+						// terminal event, while making the upstream failure queryable.
+						s.recordOpenAIStreamUpstreamError(c, account, true, upstreamRequestID, "stream_failed", dataBytes, failedMessage)
 					}
 				}
 				if !outputStarted {

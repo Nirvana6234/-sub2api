@@ -1,81 +1,157 @@
 package repository
 
 import (
-	"encoding/json"
-	"strings"
+	"context"
+	"errors"
+	"io"
+	"os/exec"
+	"regexp"
 	"testing"
-	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
-func TestPSQLArgsHaveNoDestructiveFlags(t *testing.T) {
-	args := psqlArgs(&config.DatabaseConfig{Host: "db", Port: 5432, User: "app", DBName: "sub2api"})
-	require.Equal(t, []string{"-X", "-h", "db", "-p", "5432", "-U", "app", "-d", "sub2api"}, args)
-	require.NotContains(t, args, "--clean")
-	require.NotContains(t, args, "--if-exists")
-}
-
-func TestSystemConfigSnapshotQueryHasOnlyApprovedReadTargets(t *testing.T) {
-	query := systemConfigSnapshotQuery([]string{"site_name", "account_share_reward_rate"})
-
-	require.Contains(t, query, "'sub2api-system-config-v1'")
-	require.Contains(t, query, "public.error_passthrough_rules")
-	require.Contains(t, query, "public.tls_fingerprint_profiles")
-	require.Contains(t, query, "public.settings")
-	require.Contains(t, query, "'site_name'")
-	require.Contains(t, query, "'account_share_reward_rate'")
-	for _, forbidden := range []string{
-		"public.users",
-		"public.accounts",
-		"public.api_keys",
-		"public.account_groups",
-		"public.contribution_rooms",
-		"public.contribution_room_accounts",
-		"public.contribution_account_verifications",
-		"public.user_contribution_room_preferences",
-		"public.usage_logs",
-		"public.payment_orders",
-		"public.payment_provider_instances",
-		"public.security_secrets",
-	} {
-		require.NotContains(t, query, forbidden)
-	}
-}
-
-func TestReadSystemConfigSnapshotRejectsLegacyAndUnapprovedData(t *testing.T) {
-	_, err := readSystemConfigSnapshot(strings.NewReader("-- PostgreSQL database dump"))
-	require.Error(t, err)
-
-	_, err = readSystemConfigSnapshot(strings.NewReader(`{"format":"sub2api-system-config-v1","settings":[{"key":"admin_api_key","value":"secret","updated_at":"2026-07-13T00:00:00Z"}]}`))
-	require.Error(t, err)
-}
-
-func TestSystemConfigSnapshotRestoreSQLHasOnlyApprovedWriteTargets(t *testing.T) {
-	snapshot := &systemConfigSnapshot{
-		Format: systemConfigBackupFormat,
-		Settings: []systemConfigKV{{
-			Key:       "site_name",
-			Value:     "O'Reilly API",
-			UpdatedAt: time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC),
-		}},
-		ErrorPassthroughRules:  []json.RawMessage{json.RawMessage(`{"id":7,"name":"retry","enabled":true}`)},
-		TLSFingerprintProfiles: []json.RawMessage{json.RawMessage(`{"id":8,"name":"chrome"}`)},
-	}
-
-	script, err := snapshot.restoreSQL()
+func newTestPgDumper(t *testing.T, commandContext func(context.Context, string, ...string) *exec.Cmd) (*PgDumper, sqlmock.Sqlmock) {
+	t.Helper()
+	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	require.Contains(t, script, "BEGIN;")
-	require.Contains(t, script, "COMMIT;")
-	require.Contains(t, script, "DELETE FROM public.error_passthrough_rules;")
-	require.Contains(t, script, "DELETE FROM public.tls_fingerprint_profiles;")
-	require.Contains(t, script, "'O''Reilly API'")
-	for _, forbidden := range []string{"public.users", "public.accounts", "public.api_keys", "public.contribution_rooms", "public.usage_logs", "public.payment_orders"} {
-		require.NotContains(t, script, forbidden)
-	}
+	t.Cleanup(func() { _ = db.Close() })
+	return &PgDumper{
+		cfg: &config.DatabaseConfig{
+			Host:     "db.example.test",
+			Port:     5432,
+			User:     "sub2api",
+			Password: "secret",
+			DBName:   "sub2api",
+			SSLMode:  "require",
+		},
+		db:             db,
+		commandContext: commandContext,
+	}, mock
 }
 
-func TestSQLStringLiteralEscapesSingleQuotes(t *testing.T) {
-	require.Equal(t, "'owner''s setting'", sqlStringLiteral("owner's setting"))
+func expectBackupMigrationLock(mock sqlmock.Sqlmock) {
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_lock($1)")).
+		WithArgs(migrationsAdvisoryLockID).
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_lock"}).AddRow(true))
+}
+
+func expectBackupMigrationUnlock(mock sqlmock.Sqlmock) {
+	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_unlock($1)")).
+		WithArgs(migrationsAdvisoryLockID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+}
+
+func TestPgDumperHoldsMigrationLockThroughReaderClose(t *testing.T) {
+	var mock sqlmock.Sqlmock
+	commandCreated := false
+	dumper, createdMock := newTestPgDumper(t, func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		commandCreated = true
+		require.Equal(t, "pg_dump", name)
+		require.Contains(t, args, "--clean")
+		require.NoError(t, mock.ExpectationsWereMet(), "migration lock must be acquired before pg_dump is created")
+		return exec.CommandContext(ctx, "sh", "-c", "printf backup-data")
+	})
+	mock = createdMock
+	expectBackupMigrationLock(mock)
+
+	reader, err := dumper.Dump(context.Background())
+	require.NoError(t, err)
+	require.True(t, commandCreated)
+	data, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	require.Equal(t, "backup-data", string(data))
+
+	expectBackupMigrationUnlock(mock)
+	require.Error(t, mock.ExpectationsWereMet(), "migration lock was released before the reader closed")
+	require.NoError(t, reader.Close())
+	require.NoError(t, mock.ExpectationsWereMet())
+	require.NoError(t, reader.Close(), "reader close must be idempotent")
+}
+
+func TestPgDumperReleasesMigrationLockWhenStdoutPipeSetupFails(t *testing.T) {
+	dumper, mock := newTestPgDumper(t, func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		cmd := exec.CommandContext(ctx, "sh", "-c", "true")
+		cmd.Stdout = io.Discard
+		return cmd
+	})
+	expectBackupMigrationLock(mock)
+	expectBackupMigrationUnlock(mock)
+
+	reader, err := dumper.Dump(context.Background())
+	require.Nil(t, reader)
+	require.ErrorContains(t, err, "create stdout pipe")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPgDumperReleasesMigrationLockWhenProcessStartFails(t *testing.T) {
+	dumper, mock := newTestPgDumper(t, func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, "/path/that/does/not/exist/pg_dump")
+	})
+	expectBackupMigrationLock(mock)
+	expectBackupMigrationUnlock(mock)
+
+	reader, err := dumper.Dump(context.Background())
+	require.Nil(t, reader)
+	require.ErrorContains(t, err, "start pg_dump")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPgDumperReleasesMigrationLockWhenProcessFails(t *testing.T) {
+	dumper, mock := newTestPgDumper(t, func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, "sh", "-c", "printf partial-backup; exit 7")
+	})
+	expectBackupMigrationLock(mock)
+
+	reader, err := dumper.Dump(context.Background())
+	require.NoError(t, err)
+	data, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	require.Equal(t, "partial-backup", string(data))
+	expectBackupMigrationUnlock(mock)
+	require.ErrorContains(t, reader.Close(), "pg_dump exited with error")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPgDumperReportsUnlockFailureAndDiscardsConnection(t *testing.T) {
+	dumper, mock := newTestPgDumper(t, func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, "sh", "-c", "printf backup-data")
+	})
+	expectBackupMigrationLock(mock)
+
+	reader, err := dumper.Dump(context.Background())
+	require.NoError(t, err)
+	_, err = io.ReadAll(reader)
+	require.NoError(t, err)
+	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_unlock($1)")).
+		WithArgs(migrationsAdvisoryLockID).
+		WillReturnError(errors.New("unlock unavailable"))
+	require.ErrorContains(t, reader.Close(), "release backup migration lock")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPgDumperDoesNotStartProcessWhenMigrationLockFails(t *testing.T) {
+	commandCreated := false
+	dumper, mock := newTestPgDumper(t, func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		commandCreated = true
+		return exec.CommandContext(ctx, "sh", "-c", "true")
+	})
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_lock($1)")).
+		WithArgs(migrationsAdvisoryLockID).
+		WillReturnError(errors.New("database unavailable"))
+
+	reader, err := dumper.Dump(context.Background())
+	require.Nil(t, reader)
+	require.ErrorContains(t, err, "acquire backup migration lock")
+	require.False(t, commandCreated)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPgDumperRejectsNilDatabase(t *testing.T) {
+	dumper := &PgDumper{cfg: &config.DatabaseConfig{}}
+	reader, err := dumper.Dump(context.Background())
+	require.Nil(t, reader)
+	require.ErrorContains(t, err, "nil sql db")
 }

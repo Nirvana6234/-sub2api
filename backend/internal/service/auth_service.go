@@ -42,16 +42,6 @@ var (
 		"EMAIL_DOMAIN_REGISTRATION_LIMIT",
 		"this email domain cannot register another account; use a mainstream email or contact support to add the enterprise domain",
 	)
-	// ErrRegisterIPLimit 同一客户端 IP 的注册账号数已达上限。
-	ErrRegisterIPLimit = infraerrors.BadRequest(
-		"REGISTER_IP_LIMIT",
-		"too many accounts registered from this network; contact support if you need another account",
-	)
-	// ErrAdminLoginAttemptsExceeded 管理员登录失败次数超限，该 IP 已被临时封禁。
-	ErrAdminLoginAttemptsExceeded = infraerrors.TooManyRequests(
-		"ADMIN_LOGIN_ATTEMPTS_EXCEEDED",
-		"too many failed admin login attempts from this address; try again later",
-	)
 	ErrRegDisabled             = infraerrors.Forbidden("REGISTRATION_DISABLED", "registration is currently disabled")
 	ErrServiceUnavailable      = infraerrors.ServiceUnavailable("SERVICE_UNAVAILABLE", "service temporarily unavailable")
 	ErrInvitationCodeRequired  = infraerrors.BadRequest("INVITATION_CODE_REQUIRED", "invitation code is required")
@@ -97,22 +87,10 @@ type AuthService struct {
 	defaultSubAssigner    DefaultSubscriptionAssigner
 	userPlatformQuotaRepo UserPlatformQuotaRepository
 	playgroundAPIKeys     PlaygroundAPIKeyProvisioner
-	// adminLoginAttempts 管理员登录失败计数；为 nil 时该防护静默关闭
-	// （单元测试桩不必强制提供 Redis 依赖）。
-	adminLoginAttempts AdminLoginAttemptCache
-}
-
-// SetAdminLoginAttemptCache 注入管理员登录失败计数器。
-// 与 RateLimitService.SetOpenAI403CounterCache 同样采用 setter 注入，
-// 避免改动 NewAuthService 的长参数列表波及所有装配点与测试。
-func (s *AuthService) SetAdminLoginAttemptCache(cache AdminLoginAttemptCache) {
-	if s == nil {
-		return
-	}
-	s.adminLoginAttempts = cache
 }
 
 type CaptchaProof struct {
+	// TurnstileToken 承载 Cloudflare Turnstile token；阿里云验证码复用该字段承载 captchaVerifyParam
 	TurnstileToken string
 	TencentTicket  string
 	TencentRandstr string
@@ -169,6 +147,7 @@ func (s *AuthService) EntClient() *dbent.Client {
 	return s.entClient
 }
 
+// SetPlaygroundAPIKeyProvisioner wires the idempotent playground key bootstrap.
 func (s *AuthService) SetPlaygroundAPIKeyProvisioner(provisioner PlaygroundAPIKeyProvisioner) {
 	if s == nil {
 		return
@@ -424,6 +403,9 @@ func (s *AuthService) SendVerifyCodeAsync(ctx context.Context, email string, loc
 	}, nil
 }
 
+// VerifyCaptchaForRegister 在注册场景下验证当前启用的验证码。
+// 当邮箱验证开启且已提交验证码时，说明验证码发送阶段已完成验证码校验，
+// 此处跳过二次校验，避免一次性 token 在注册提交时重复使用导致误报失败。
 func (s *AuthService) VerifyCaptchaForRegister(ctx context.Context, proof CaptchaProof, remoteIP, verifyCode string) error {
 	if s.IsEmailVerifyEnabled(ctx) && strings.TrimSpace(verifyCode) != "" {
 		logger.LegacyPrintf("service.auth", "%s", "[Auth] Email verify flow detected, skip duplicate captcha check on register")
@@ -440,6 +422,7 @@ func (s *AuthService) VerifyCaptcha(ctx context.Context, proof CaptchaProof, rem
 		}
 		return nil
 	}
+
 	providerConfig, err := s.settingService.GetCaptchaProviderConfig(ctx)
 	if err != nil {
 		logger.LegacyPrintf("service.auth", "%s", "[Auth] Failed to read captcha provider settings")
@@ -475,20 +458,24 @@ func (s *AuthService) VerifyCaptcha(ctx context.Context, proof CaptchaProof, rem
 	return nil
 }
 
+// captchaProvidersConflict 同一时间仅允许启用一家人机验证服务商
 func captchaProvidersConflict(enabled ...bool) bool {
 	count := 0
-	for _, enabled := range enabled {
-		if enabled {
+	for _, e := range enabled {
+		if e {
 			count++
 		}
 	}
 	return count > 1
 }
 
+// VerifyActionCaptchaIfEnabled 仅保护动作触发的扩展入口（OAuth 登录启动、passkey 登录），
+// 腾讯天御与阿里云验证码启用时拦截；不扩大 Cloudflare Turnstile 的既有覆盖范围。
 func (s *AuthService) VerifyActionCaptchaIfEnabled(ctx context.Context, proof CaptchaProof, remoteIP string) error {
 	if s == nil || s.settingService == nil {
 		return ErrServiceUnavailable
 	}
+
 	providerConfig, err := s.settingService.GetCaptchaProviderConfig(ctx)
 	if err != nil {
 		logger.LegacyPrintf("service.auth", "%s", "[Auth] Failed to read captcha provider settings")
@@ -511,13 +498,21 @@ func (s *AuthService) VerifyActionCaptchaIfEnabled(ctx context.Context, proof Ca
 	if s.tencentCaptchaService == nil {
 		return ErrTencentCaptchaNotConfigured
 	}
-	return s.tencentCaptchaService.VerifyTicketWithConfig(ctx, providerConfig.Tencent, proof.TencentTicket, proof.TencentRandstr, remoteIP)
+	return s.tencentCaptchaService.VerifyTicketWithConfig(
+		ctx,
+		providerConfig.Tencent,
+		proof.TencentTicket,
+		proof.TencentRandstr,
+		remoteIP,
+	)
 }
 
+// VerifyTurnstileForRegister 保留旧内部接口，生产 handler 使用 VerifyCaptchaForRegister。
 func (s *AuthService) VerifyTurnstileForRegister(ctx context.Context, token, remoteIP, verifyCode string) error {
 	return s.VerifyCaptchaForRegister(ctx, CaptchaProof{TurnstileToken: token}, remoteIP, verifyCode)
 }
 
+// VerifyTurnstile 保留旧内部接口，生产 handler 使用 VerifyCaptcha。
 func (s *AuthService) VerifyTurnstile(ctx context.Context, token string, remoteIP string) error {
 	return s.VerifyCaptcha(ctx, CaptchaProof{TurnstileToken: token}, remoteIP)
 }
@@ -559,32 +554,14 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (string
 		return "", nil, ErrServiceUnavailable
 	}
 
-	// 管理员账号：同一 IP 在窗口内失败次数超限则直接拒绝，不再比对密码。
-	// 必须放在 CheckPassword 之前，否则爆破者仍可无限次试密码。
-	isAdmin := user.Role == RoleAdmin
-	if isAdmin {
-		if err := s.ensureAdminLoginAllowed(ctx); err != nil {
-			return "", nil, err
-		}
-	}
-
 	// 验证密码
 	if !s.CheckPassword(password, user.PasswordHash) {
-		if isAdmin {
-			s.recordAdminLoginFailure(ctx)
-		}
 		return "", nil, ErrInvalidCredentials
 	}
 
 	// 检查用户状态
 	if !user.IsActive() {
 		return "", nil, ErrUserNotActive
-	}
-
-	// 密码正确即视为该 IP 的合法来源，清零失败计数，
-	// 避免管理员偶尔输错几次后被自己的防护挡住。
-	if isAdmin {
-		s.resetAdminLoginFailures(ctx)
 	}
 
 	// 生成JWT token
@@ -1243,12 +1220,6 @@ func (s *AuthService) validateRegistrationEmailPolicy(ctx context.Context, email
 // 非白名单域名默认直接拒绝（严格白名单模式）；仅当域名限量注册开关开启时，
 // 非白名单域名每个最多允许一个账户。
 func (s *AuthService) validateRegistrationEmailQuota(ctx context.Context, email string) error {
-	// 每 IP 注册配额与邮箱域名配额相互独立，任一超限都拒绝。
-	// 放在这里而不是各个调用点，是为了让邮箱注册与三条 OAuth 注册路径
-	// （auth_oauth_email_flow.go 的 45/143/227 行）自动获得同一道闸门。
-	if err := s.validateRegisterIPQuota(ctx); err != nil {
-		return err
-	}
 	if s.settingService == nil {
 		return nil
 	}
@@ -1294,9 +1265,7 @@ func (s *AuthService) createUserWithRegistrationEmailGuard(ctx context.Context, 
 	}
 	domain := RegistrationEmailDomain(user.Email)
 	if !IsRegistrationEmailSuffixLimited(user.Email, whitelist) {
-		// 不受域名配额约束的注册仍要受 IP 配额约束：走带 IP 锁的原子创建，
-		// 拿不到 IP 或仓储不支持时回落到原有路径，行为不变。
-		return s.createUserWithRegisterIPQuota(ctx, user, s.userRepo.CreateWithEmailAliasGuard)
+		return s.userRepo.CreateWithEmailAliasGuard(ctx, user)
 	}
 	// 开关关闭时非白名单域名在校验阶段已被拒绝；此处兜底防御设置竞态变更。
 	if s.settingService == nil || !s.settingService.IsRegistrationEmailDomainQuotaEnabled(ctx) {
@@ -1747,12 +1716,7 @@ func (s *AuthService) GenerateTokenPair(ctx context.Context, user *User, familyI
 	}
 
 	// 生成Access Token（携带会话ID与绑定指纹）
-	//
-	// 豁免来源（桌面客户端）不写指纹：写空之后，两处校验点都会因为
-	// 「指纹为空」天然放行（jwt_auth 的 enforceSessionBinding、刷新路径的
-	// BindingHash != "" 判断），不需要在校验侧再加分支。这条路径原本就是给
-	// 功能上线前签发的旧 token 准备的兼容出口。
-	accessToken, err := s.generateAccessToken(user, familyID, s.sessionBindingHashFor(ctx))
+	accessToken, err := s.generateAccessToken(user, familyID, sessionBindingHashFromContext(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("generate access token: %w", err)
 	}
@@ -1798,10 +1762,7 @@ func (s *AuthService) generateRefreshToken(ctx context.Context, user *User, fami
 		UserID:       user.ID,
 		TokenVersion: resolvedTokenVersion(user),
 		FamilyID:     familyID,
-		BindingHash:  s.sessionBindingHashFor(ctx),
-		// 随家族保存，轮转时由 RefreshTokenPair 重新注入 context —— 来源只在登录
-		// 时确定一次，刷新请求说什么都改不了它。
-		ClientSource: ClientSourceFromContext(ctx),
+		BindingHash:  sessionBindingHashFromContext(ctx),
 		CreatedAt:    now,
 		ExpiresAt:    now.Add(ttl),
 	}
@@ -1824,16 +1785,6 @@ func (s *AuthService) generateRefreshToken(ctx context.Context, user *User, fami
 	}
 
 	return rawToken, nil
-}
-
-// sessionBindingHashFor 返回本次签发要写入 token 的会话指纹。
-//
-// 豁免的会话返回空串 —— 判据见 skipSessionBinding。
-func (s *AuthService) sessionBindingHashFor(ctx context.Context) string {
-	if skipSessionBinding(ClientSourceFromContext(ctx), SessionBindingFromContext(ctx)) {
-		return ""
-	}
-	return sessionBindingHashFromContext(ctx)
 }
 
 // RefreshTokenPair 使用Refresh Token刷新Token对
@@ -1900,15 +1851,9 @@ func (s *AuthService) RefreshTokenPair(ctx context.Context, refreshToken string)
 	// data.BindingHash 为空表示功能开启前签发的旧会话，放行并在轮转时补齐绑定。
 	if s.settingService != nil && s.settingService.IsSessionBindingEnabled(ctx) && data.BindingHash != "" {
 		if current := sessionBindingHashFromContext(ctx); current != "" && current != data.BindingHash {
-			// 绑定哈希从「精确 IP」改成了「IP 网段」，改算法前签发的会话存的是旧哈希，
-			// 直接判定不匹配等于把全体在线用户登出一次。这里回退比一次旧算法：命中
-			// 说明只是算法换了、指纹并没变，放行即可 —— 下面的轮转会写入新哈希，
-			// 所以每个会话最多走一次这条兼容路径。
-			if legacy := sessionBindingLegacyHashFromContext(ctx); legacy == "" || legacy != data.BindingHash {
-				_ = s.refreshTokenCache.DeleteTokenFamily(ctx, data.FamilyID)
-				logger.LegacyPrintf("service.auth", "[Auth] Session binding mismatch on refresh for user %d, family revoked", data.UserID)
-				return nil, ErrSessionBindingMismatch
-			}
+			_ = s.refreshTokenCache.DeleteTokenFamily(ctx, data.FamilyID)
+			logger.LegacyPrintf("service.auth", "[Auth] Session binding mismatch on refresh for user %d, family revoked", data.UserID)
+			return nil, ErrSessionBindingMismatch
 		}
 	}
 
@@ -1919,10 +1864,6 @@ func (s *AuthService) RefreshTokenPair(ctx context.Context, refreshToken string)
 	}
 
 	// 生成新的Token对，保持同一个家族ID
-	//
-	// 来源取自家族记录而不是这次刷新请求：来源是登录时凭密码确定的，偷到
-	// refresh token 的人不能靠在刷新请求里声明 desktop 来给自己开会话绑定豁免。
-	ctx = WithClientSource(ctx, data.ClientSource)
 	pair, err := s.GenerateTokenPair(ctx, user, data.FamilyID)
 	if err != nil {
 		return nil, err
@@ -2002,7 +1943,7 @@ func resolvedTokenVersion(user *User) int64 {
 	return user.TokenVersion ^ fingerprint
 }
 
-// snapshotPlatformQuotaDefaults 把 plan.PlatformQuotas（platform × 3 window）以
+// snapshotPlatformQuotaDefaults 把 plan.PlatformQuotas 中至少配置了一档限额的平台以
 // BulkInsertInitial 形式写入 user_platform_quotas 表。失败 fail-open（仅 warn log）。
 func (s *AuthService) snapshotPlatformQuotaDefaults(ctx context.Context, userID int64, plan *signupGrantPlan) error {
 	if s.userPlatformQuotaRepo == nil || plan == nil || len(plan.PlatformQuotas) == 0 {
@@ -2013,18 +1954,23 @@ func (s *AuthService) snapshotPlatformQuotaDefaults(ctx context.Context, userID 
 	// 整个调用方事务被 Postgres 标记 aborted，把"无关紧要的默认配额快照"放大成
 	// "整笔注册失败"（OAuth pending 路径曾因此 500 → 清 cookie → 404）。
 	ctx = dbent.WithoutTx(ctx)
+	// 仅为至少配置了一档限额的平台建行：user_platform_quotas 中不存在的行等价于不限额，
+	// 三档全空的记录不携带任何可执行的限额。
 	records := make([]UserPlatformQuotaRecord, 0, len(plan.PlatformQuotas))
 	for platform, q := range plan.PlatformQuotas {
-		rec := UserPlatformQuotaRecord{
-			UserID:   userID,
-			Platform: platform,
+		if !q.HasAnyLimit() {
+			continue
 		}
-		if q != nil {
-			rec.DailyLimitUSD = q.DailyLimitUSD
-			rec.WeeklyLimitUSD = q.WeeklyLimitUSD
-			rec.MonthlyLimitUSD = q.MonthlyLimitUSD
-		}
-		records = append(records, rec)
+		records = append(records, UserPlatformQuotaRecord{
+			UserID:          userID,
+			Platform:        platform,
+			DailyLimitUSD:   q.DailyLimitUSD,
+			WeeklyLimitUSD:  q.WeeklyLimitUSD,
+			MonthlyLimitUSD: q.MonthlyLimitUSD,
+		})
+	}
+	if len(records) == 0 {
+		return nil
 	}
 	if err := s.userPlatformQuotaRepo.BulkInsertInitial(ctx, records); err != nil {
 		logger.LegacyPrintf("service.auth", "[Auth] Warning: snapshot platform quota failed user=%d: %v (fail-open)", userID, err)

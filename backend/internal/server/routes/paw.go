@@ -44,6 +44,8 @@ type PawRouteDependencies struct {
 	Gateway           *handler.GatewayHandler
 	OpenAIChat        gin.HandlerFunc
 	GatewayChat       gin.HandlerFunc
+	OpenAIResponses   gin.HandlerFunc
+	GatewayResponses  gin.HandlerFunc
 	CompositeResolver *service.CompositeRouteResolver
 	APIKeyService     *service.APIKeyService
 	OpsService        *service.OpsService
@@ -65,10 +67,6 @@ func RegisterPawRoutes(v1 *gin.RouterGroup, svc *service.PawConfigService, jwtAu
 	}
 	attachmentService := service.NewPawAttachmentService(service.NewPawAttachmentMemoryRepository(), 24*time.Hour, 20<<20)
 	chatService := service.NewPawChatService(svc, service.APIKeyPawChatKeySource{Service: deps.APIKeyService}, attachmentService)
-	responsesChat := deps.ChatService
-	if responsesChat == nil {
-		responsesChat = chatService
-	}
 	imageService := service.NewPawImageService(svc, service.APIKeyPawChatKeySource{Service: deps.APIKeyService}, attachmentService)
 
 	paw := v1.Group("/paw")
@@ -93,7 +91,11 @@ func RegisterPawRoutes(v1 *gin.RouterGroup, svc *service.PawConfigService, jwtAu
 			pawConfigError(c, err)
 			return
 		}
-		c.JSON(http.StatusOK, PawConfigResponse{Data: toPawConfigData(config)})
+		var userRates map[int64]float64
+		if deps.APIKeyService != nil {
+			userRates, _ = deps.APIKeyService.GetUserGroupRates(c.Request.Context(), subject.UserID)
+		}
+		c.JSON(http.StatusOK, PawConfigResponse{Data: toPawConfigData(config, userRates)})
 	})
 
 	paw.PUT("/config/defaults", func(c *gin.Context) {
@@ -120,7 +122,7 @@ func RegisterPawRoutes(v1 *gin.RouterGroup, svc *service.PawConfigService, jwtAu
 	paw.POST("/images/generations", pawImageGenerationHandler(imageService, deps))
 	paw.POST("/images/edits", pawImageEditHandler(imageService, deps))
 	paw.POST("/chat/completions", pawChatHandler(deps.ChatService, chatService, deps))
-	paw.POST("/responses", pawResponsesHandler(responsesChat, deps))
+	paw.POST("/responses", pawResponsesHandler(deps.ChatService, chatService, deps))
 }
 
 func pawGetAutoGroupHandler(apiKeys *service.APIKeyService) gin.HandlerFunc {
@@ -429,8 +431,39 @@ func pawChatHandler(primaryChat *service.PawChatService, localChat *service.PawC
 	}
 }
 
-func pawResponsesHandler(chat *service.PawChatService, deps PawRouteDependencies) gin.HandlerFunc {
+// pawResponsesHandler —— 工作台里的 codex 走这条。
+//
+// 形状和 pawChatHandler 一样：JWT 进来 → 校验分组/模型 → 就地换上服务端自己的 key
+// → 交给同一个网关 handler。**客户端全程拿不到任何 API key**。
+//
+// 两处和 chat 那条不同，都是被 codex 逼出来的：
+//
+//   - **请求体原样透传**。codex 发的是完整载荷（instructions / tools / input，实测 ~47KB），
+//     重拼一份就是惄惄改 agent 的行为。所以这里只把 body 读出来**看一眼**拿 model。
+//   - **分组走请求头**（见 PawGroupHeader），因为请求体不归我们支配。
+//
+// # 为什么不能并进 `/paw/chat/completions`
+//
+// 这个问题被问过一次，答案是一个**硬阻塞**：那条路带不了工具。
+// `PawChatRequest` 没有 tools 字段，`PawChatMessage.Content` 是纯字符串（无
+// tool_calls / tool_call_id），而 `Prepare` 拼给上游的 body 只有
+// `{model, messages, stream, reasoning_effort}`。也就是说，**不管调用方怎么翻译，
+// 工具定义都会在这一层被丢掉** —— codex 拿到一个一个工具都没有的模型，
+// 永远调不出 `exec_command`，agent 只能聊天、不能做事。
+//
+// （顺带澄清一个容易误导的说法：Responses↔ChatCompletions 的互转**本仓库已经有**
+// （`internal/pkg/apicompat/chatcompletions_responses_bridge.go`），不需要重写。
+// 阻塞不在翻译，在 Paw 请求体本身装不下工具。）
+//
+// composite 在 handler 里就地解析，和 pawChatHandler 一致 —— **不能**改成网关那条路的
+// autoGroupModelRouting 中间件：那条是按请求体里的 model 自己选分组的，会把调用方
+// 明确指定的分组覆掉。
+func pawResponsesHandler(primaryChat, localChat *service.PawChatService, deps PawRouteDependencies) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		chat := primaryChat
+		if chat == nil {
+			chat = localChat
+		}
 		if pawCredentialSelectorPresent(c) {
 			pawChatError(c, http.StatusBadRequest, PawErrorCodeAuthRequired, "Paw accepts only the authenticated account session")
 			return
@@ -445,16 +478,12 @@ func pawResponsesHandler(chat *service.PawChatService, deps PawRouteDependencies
 			return
 		}
 
-		groupHeader := strings.TrimSpace(c.GetHeader(PawGroupHeader))
-		groupID := int64(0)
-		var err error
-		if groupHeader != "" && !strings.EqualFold(groupHeader, "auto") {
-			groupID, err = strconv.ParseInt(groupHeader, 10, 64)
-		}
-		if err != nil || groupID < 0 {
-			pawChatError(c, http.StatusBadRequest, PawErrorCodeGroupForbidden, "a valid Paw group is required")
+		groupID, err := strconv.ParseInt(strings.TrimSpace(c.GetHeader(PawGroupHeader)), 10, 64)
+		if err != nil || groupID <= 0 {
+			pawChatError(c, http.StatusBadRequest, "INVALID_REQUEST", PawGroupHeader+" header is required")
 			return
 		}
+
 		body, err := io.ReadAll(c.Request.Body)
 		if err != nil {
 			pawChatError(c, http.StatusBadRequest, "INVALID_REQUEST", "failed to read request body")
@@ -465,21 +494,22 @@ func pawResponsesHandler(chat *service.PawChatService, deps PawRouteDependencies
 			pawChatError(c, http.StatusBadRequest, PawErrorCodeAuthRequired, "Paw accepts only the authenticated account session")
 			return
 		}
-		var request struct {
-			Model string `json:"model"`
-		}
-		if err := json.Unmarshal(body, &request); err != nil || strings.TrimSpace(request.Model) == "" {
-			pawChatError(c, http.StatusBadRequest, "INVALID_REQUEST", "a Responses model is required")
+
+		var payload pawResponsesPayload
+		if err := json.Unmarshal(body, &payload); err != nil {
+			pawChatError(c, http.StatusBadRequest, "INVALID_REQUEST", "invalid Responses payload")
 			return
 		}
 
-		resolution, err := chat.PrepareResponses(c.Request.Context(), subject.UserID, groupID, request.Model)
+		resolution, err := chat.PrepareResponses(c.Request.Context(), subject.UserID, service.PawResponsesRequest{
+			GroupID: groupID,
+			ModelID: payload.Model,
+		})
 		if err != nil {
 			pawChatServiceError(c, err)
 			return
 		}
 		middleware.ReplaceAuthenticatedAPIKey(c, resolution.APIKey, resolution.Subscription)
-		resetRequestBody(c, body)
 
 		if deps.CompositeResolver != nil && resolution.Group != nil && resolution.Group.Platform == service.PlatformComposite {
 			decision, resolveErr := deps.CompositeResolver.Resolve(c.Request.Context(), resolution.Group.ID, resolution.Model, service.CompositeRouteEndpointResponses)
@@ -497,16 +527,20 @@ func pawResponsesHandler(chat *service.PawChatService, deps PawRouteDependencies
 			platform = resolved
 		}
 		switch {
-		case (platform == service.PlatformOpenAI || platform == service.PlatformGrok) && deps.OpenAIGateway != nil:
-			deps.OpenAIGateway.Responses(c)
-		case deps.Gateway != nil:
-			// Responses for non-OpenAI platforms is handled by the generic gateway.
-			deps.Gateway.Responses(c)
+		case (platform == service.PlatformOpenAI || platform == service.PlatformGrok) && deps.OpenAIResponses != nil:
+			deps.OpenAIResponses(c)
+		case deps.GatewayResponses != nil:
+			deps.GatewayResponses(c)
 		default:
-			pawChatError(c, http.StatusServiceUnavailable, PawErrorCodeUpstreamUnavailable, "Paw Responses gateway is unavailable")
+			pawChatError(c, http.StatusServiceUnavailable, PawErrorCodeUpstreamUnavailable, "Paw responses gateway is unavailable")
 		}
-		observeAutoGroupRequestResult(c, deps.APIKeyService, resolution.APIKey, request.Model)
 	}
+}
+
+// pawResponsesPayload 只描述我们要**读**的那几个字段。故意不写全：写全了就会有人
+// 想把它序列化回去，而序列化回去就会丢掉 codex 发的、我们不认识的字段。
+type pawResponsesPayload struct {
+	Model string `json:"model"`
 }
 
 func pawDispatchImageRoute(c *gin.Context, deps PawRouteDependencies, resolution *service.PawImageResolution) {
@@ -676,11 +710,31 @@ func pawChatError(c *gin.Context, status int, code, message string) {
 	c.Abort()
 }
 
-func toPawConfigData(config *service.PawConfig) PawConfigData {
+func toPawConfigData(config *service.PawConfig, userRates ...map[int64]float64) PawConfigData {
 	result := PawConfigData{User: PawUser{ID: config.User.ID, Name: config.User.Name, Email: config.User.Email}, Defaults: PawDefaults{GroupID: config.Defaults.GroupID, ModelID: config.Defaults.ModelID, Reasoning: config.Defaults.Reasoning}}
 	result.Groups = make([]PawGroup, 0, len(config.Groups))
+	var rates map[int64]float64
+	if len(userRates) > 0 {
+		rates = userRates[0]
+	}
 	for _, group := range config.Groups {
-		mapped := PawGroup{ID: group.ID, Name: group.Name, Description: group.Description, Models: make([]PawModel, 0, len(group.Models))}
+		mapped := PawGroup{
+			ID:                 group.ID,
+			Name:               group.Name,
+			Description:        group.Description,
+			Platform:           group.Platform,
+			RateMultiplier:     group.RateMultiplier,
+			SubscriptionType:   group.SubscriptionType,
+			PeakRateEnabled:    group.PeakRateEnabled,
+			PeakStart:          group.PeakStart,
+			PeakEnd:            group.PeakEnd,
+			PeakRateMultiplier: group.PeakRateMultiplier,
+			Models:             make([]PawModel, 0, len(group.Models)),
+		}
+		if rate, ok := rates[group.ID]; ok {
+			rateValue := rate
+			mapped.UserRateMultiplier = &rateValue
+		}
 		for _, model := range group.Models {
 			mapped.Models = append(mapped.Models, PawModel{ID: model.ID, Name: model.Name, OwnedBy: model.OwnedBy, Reasoning: PawReasoningCapability{Supported: model.Reasoning.Supported, Values: model.Reasoning.Values, Default: model.Reasoning.Default}, Vision: model.Vision, ImageGeneration: model.ImageGeneration, FileInput: model.FileInput})
 		}

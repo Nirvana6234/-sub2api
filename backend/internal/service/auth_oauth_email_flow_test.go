@@ -87,7 +87,7 @@ func (s *redeemCodeRepoStub) Use(_ context.Context, id, userID int64) error {
 }
 
 func (s *redeemCodeRepoStub) FindAdminAdjustment(context.Context, int64, float64, string) (*RedeemCode, error) {
-	panic("unexpected FindAdminAdjustment call")
+	return nil, nil
 }
 
 func (s *redeemCodeRepoStub) List(context.Context, pagination.PaginationParams) ([]RedeemCode, *pagination.PaginationResult, error) {
@@ -543,6 +543,7 @@ func TestFinalizeOAuthEmailAccount_SnapshotsPlatformQuotaDefaults(t *testing.T) 
 	require.Len(t, quotaRepo.bulkInsertCalls, 1, "snapshotPlatformQuotaDefaults must call BulkInsertInitial once on successful OAuth signup")
 
 	records := quotaRepo.bulkInsertCalls[0]
+	require.Len(t, records, 1, "only platforms with a configured limit get a row")
 	var anthropicRecord *UserPlatformQuotaRecord
 	for i := range records {
 		if records[i].Platform == "anthropic" {

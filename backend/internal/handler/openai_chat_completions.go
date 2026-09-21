@@ -116,6 +116,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 
 	// 解析渠道级模型映射
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
+	forwardModel := openAIChannelForwardModel(channelMapping, reqModel)
 
 	if h.errorPassthroughService != nil {
 		service.BindErrorPassthroughService(c, h.errorPassthroughService)
@@ -148,7 +149,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	sessionHash := h.gatewayService.GenerateSessionHash(c, body)
 	promptCacheKey := h.gatewayService.ExtractSessionID(c, body)
 
-	maxAccountSwitches := maxAccountSwitchesForRequest(c.Request.Context(), h.maxAccountSwitches)
+	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
@@ -171,7 +172,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			apiKey.GroupID,
 			"",
 			sessionHash,
-			reqModel,
+			forwardModel,
 			failedAccountIDs,
 			service.OpenAIUpstreamTransportAny,
 			service.OpenAIEndpointCapabilityChatCompletions,
@@ -189,18 +190,15 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 				zap.Error(openAICompatibleSelectionErrorForLog(err, requestPlatform)),
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
-			if isAutoGroupSelectionFailoverError(err) && tryOpenAIAutoGroupFailover(c, h.apiKeyService, &apiKey, reqModel, failedGroupIDs, &subscription) {
-				channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
-				requestPlatform = openAICompatibleRequestPlatform(c.Request.Context(), apiKey)
-				ccPricingCtx, _ := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
-				c.Request = c.Request.WithContext(ccPricingCtx)
-				failedAccountIDs = make(map[int64]struct{})
-				sameAccountRetryCount = make(map[int64]int)
-				switchCount = 0
-				oauth429FailoverState = service.OpenAIOAuth429FailoverState{}
-				continue
-			}
-			if len(failedAccountIDs) == 0 && lastFailoverErr == nil {
+			if len(failedAccountIDs) == 0 {
+				if isAutoGroupSelectionFailoverError(err) && tryOpenAIAutoGroupFailover(c, h.apiKeyService, &apiKey, reqModel, failedGroupIDs, &subscription) {
+					channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
+					forwardModel = openAIChannelForwardModel(channelMapping, reqModel)
+					requestPlatform = openAICompatibleRequestPlatform(c.Request.Context(), apiKey)
+					ccPricingCtx, pricingAt = h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
+					c.Request = c.Request.WithContext(ccPricingCtx)
+					continue
+				}
 				cls := classifyOpenAICompatibleNoAccountErrorFromGin(c, h.gatewayService, apiKey, reqModel, reqModel)
 				cls = classifySelectionFailureError(err, cls)
 				if !cls.ModelNotFound {
@@ -209,6 +207,29 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 				h.handleStreamingAwareError(c, cls.Status, cls.ErrType, cls.Message, streamStarted)
 				return
 			} else {
+				if tryOpenAIAutoGroupFailover(c, h.apiKeyService, &apiKey, reqModel, failedGroupIDs, &subscription) {
+					failedAccountIDs = make(map[int64]struct{})
+					sameAccountRetryCount = make(map[int64]int)
+					switchCount = 0
+					profitVetoCount = 0
+					lastFailoverErr = nil
+					oauth429FailoverState = service.OpenAIOAuth429FailoverState{}
+					channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
+					forwardModel = openAIChannelForwardModel(channelMapping, reqModel)
+					requestPlatform = openAICompatibleRequestPlatform(c.Request.Context(), apiKey)
+					ccPricingCtx, pricingAt = h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
+					c.Request = c.Request.WithContext(ccPricingCtx)
+					if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
+						reqLog.Warn("openai_chat_completions.auto_group_failover_billing_check_failed", zap.Error(err))
+						status, code, message, retryAfter := billingErrorDetails(err)
+						if retryAfter > 0 {
+							c.Header("Retry-After", strconv.Itoa(retryAfter))
+						}
+						h.handleStreamingAwareError(c, status, code, message, streamStarted)
+						return
+					}
+					continue
+				}
 				if lastFailoverErr != nil {
 					h.handleFailoverExhausted(c, lastFailoverErr, streamStarted)
 				} else {
@@ -290,7 +311,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 			sessionID := service.ExtractClientSessionID(c)
 			cyberBlocked := service.GetOpsCyberPolicy(c) != nil
-			h.submitOpenAIUsageRecordTask(service.ContextWithSelectionProfitGate(c.Request.Context(), selection), res, func(ctx context.Context) {
+			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
 				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 					Result:             res,
 					APIKey:             apiKey,
@@ -336,27 +357,27 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 						)
 						return
 					}
-					if failoverErr.ShouldReportAccountScheduleFailure() {
-						h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, reqModel, false, nil), false, nil, err)
-					}
 					if c.Writer.Size() != writerSizeBeforeForward {
-						reqLog.Warn("openai_chat_completions.post_stream_interruption",
-							zap.Int64("account_id", account.ID),
-							zap.Int("upstream_status", failoverErr.StatusCode),
-						)
+						h.gatewayService.ObserveOpenAIAccountHealthFailure(c.Request.Context(), account, err)
 						h.handleFailoverExhausted(c, failoverErr, true)
 						return
 					}
+					if failoverErr.ShouldReportAccountScheduleFailure() {
+						h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, reqModel, false, nil), false, nil, err)
+					}
 					if !failoverErr.ShouldRetryNextAccount() {
 						if shouldTryOpenAIAutoGroupAfterTerminalFailover(failoverErr) && tryOpenAIAutoGroupFailover(c, h.apiKeyService, &apiKey, reqModel, failedGroupIDs, &subscription) {
-							channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
-							requestPlatform = openAICompatibleRequestPlatform(c.Request.Context(), apiKey)
-							ccPricingCtx, _ := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
-							c.Request = c.Request.WithContext(ccPricingCtx)
 							failedAccountIDs = make(map[int64]struct{})
 							sameAccountRetryCount = make(map[int64]int)
 							switchCount = 0
+							profitVetoCount = 0
+							lastFailoverErr = nil
 							oauth429FailoverState = service.OpenAIOAuth429FailoverState{}
+							channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
+							forwardModel = openAIChannelForwardModel(channelMapping, reqModel)
+							requestPlatform = openAICompatibleRequestPlatform(c.Request.Context(), apiKey)
+							ccPricingCtx, pricingAt = h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
+							c.Request = c.Request.WithContext(ccPricingCtx)
 							continue
 						}
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
@@ -367,16 +388,18 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 						retryLimit := effectiveSameAccountRetryLimit(failoverErr, account)
 						if sameAccountRetryAllowed(failoverErr, sameAccountRetryCount[account.ID], retryLimit) {
 							sameAccountRetryCount[account.ID]++
+							retryDelay := sameAccountRetryDelayFor(failoverErr, sameAccountRetryCount[account.ID])
 							reqLog.Warn("openai_chat_completions.pool_mode_same_account_retry",
 								zap.Int64("account_id", account.ID),
 								zap.Int("upstream_status", failoverErr.StatusCode),
 								zap.Int("retry_limit", retryLimit),
 								zap.Int("retry_count", sameAccountRetryCount[account.ID]),
+								zap.Duration("retry_delay", retryDelay),
 							)
 							select {
 							case <-c.Request.Context().Done():
 								return
-							case <-time.After(sameAccountRetryDelay):
+							case <-time.After(retryDelay):
 							}
 							continue
 						}
@@ -386,14 +409,17 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 					lastFailoverErr = failoverErr
 					if switchCount >= maxAccountSwitches {
 						if tryOpenAIAutoGroupFailover(c, h.apiKeyService, &apiKey, reqModel, failedGroupIDs, &subscription) {
-							channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
-							requestPlatform = openAICompatibleRequestPlatform(c.Request.Context(), apiKey)
-							ccPricingCtx, _ := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
-							c.Request = c.Request.WithContext(ccPricingCtx)
 							failedAccountIDs = make(map[int64]struct{})
 							sameAccountRetryCount = make(map[int64]int)
 							switchCount = 0
+							profitVetoCount = 0
+							lastFailoverErr = nil
 							oauth429FailoverState = service.OpenAIOAuth429FailoverState{}
+							channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
+							forwardModel = openAIChannelForwardModel(channelMapping, reqModel)
+							requestPlatform = openAICompatibleRequestPlatform(c.Request.Context(), apiKey)
+							ccPricingCtx, pricingAt = h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
+							c.Request = c.Request.WithContext(ccPricingCtx)
 							continue
 						}
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
@@ -401,17 +427,6 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 					}
 					switchCount++
 					if h.gatewayService.ShouldStopOpenAIOAuth429Failover(account, failoverErr.StatusCode, switchCount, &oauth429FailoverState) {
-						if tryOpenAIAutoGroupFailover(c, h.apiKeyService, &apiKey, reqModel, failedGroupIDs, &subscription) {
-							channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
-							requestPlatform = openAICompatibleRequestPlatform(c.Request.Context(), apiKey)
-							ccPricingCtx, _ := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
-							c.Request = c.Request.WithContext(ccPricingCtx)
-							failedAccountIDs = make(map[int64]struct{})
-							sameAccountRetryCount = make(map[int64]int)
-							switchCount = 0
-							oauth429FailoverState = service.OpenAIOAuth429FailoverState{}
-							continue
-						}
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
@@ -449,9 +464,6 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		}
 
 		submitChatUsage(result)
-		if switchCount > 0 {
-			reqLog.Info("openai_chat_completions.pre_stream_failover_recovered", zap.Int64("account_id", account.ID), zap.Int("switch_count", switchCount))
-		}
 		reqLog.Debug("openai_chat_completions.request_completed",
 			zap.Int64("account_id", account.ID),
 			zap.Int("switch_count", switchCount),

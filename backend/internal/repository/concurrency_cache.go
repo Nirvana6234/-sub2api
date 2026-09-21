@@ -67,8 +67,11 @@ var (
 	// ARGV[1] = maxConcurrency
 	// ARGV[2] = TTL（秒）
 	// ARGV[3] = requestID
-	// 返回 {是否成功, Redis 当前秒}。
+	// 返回 {是否成功, Redis 当前秒}，Go 侧复用同一时间源写活跃索引，省去额外 TIME 往返。
 	acquireScript = redis.NewScript(`
+		-- Redis 3.2-4.x compat: opt into effects replication so redis.call('TIME')
+		-- replicates correctly. No-op on Redis 5.0+ (effects replication is default).
+		redis.replicate_commands()
 		local key = KEYS[1]
 		local liveKey = KEYS[2]
 		local maxConcurrency = tonumber(ARGV[1])
@@ -76,7 +79,8 @@ var (
 		local requestID = ARGV[3]
 
 		-- 使用 Redis 服务器时间，确保多实例时钟一致
-		local now = tonumber(ARGV[4])
+		local timeResult = redis.call('TIME')
+		local now = tonumber(timeResult[1])
 		local expireBefore = now - ttl
 
 		-- 清理过期槽位
@@ -107,12 +111,16 @@ var (
 	// KEYS[1] = 普通槽位键，KEYS[2] = 对应 Live 槽位键
 	// ARGV[1] = TTL（秒）
 	getCountScript = redis.NewScript(`
+		-- Redis 3.2-4.x compat: opt into effects replication so redis.call('TIME')
+		-- replicates correctly. No-op on Redis 5.0+ (effects replication is default).
+		redis.replicate_commands()
 		local key = KEYS[1]
 		local liveKey = KEYS[2]
 		local ttl = tonumber(ARGV[1])
 
 		-- 使用 Redis 服务器时间
-		local now = tonumber(ARGV[2])
+		local timeResult = redis.call('TIME')
+		local now = tonumber(timeResult[1])
 		local expireBefore = now - ttl
 
 		redis.call('ZREMRANGEBYSCORE', key, '-inf', expireBefore)
@@ -121,6 +129,7 @@ var (
 	`)
 
 	acquireLiveLeaseScript = redis.NewScript(`
+		redis.replicate_commands()
 		local accountRegular = KEYS[1]
 		local accountLive = KEYS[2]
 		local userRegular = KEYS[3]
@@ -131,7 +140,7 @@ var (
 		local ttl = tonumber(ARGV[3])
 		local leaseID = ARGV[4]
 		local replacing = tonumber(ARGV[5])
-		local now = tonumber(ARGV[6])
+		local now = tonumber(redis.call('TIME')[1])
 		local liveExpireBefore = now - ttl
 		redis.call('ZREMRANGEBYSCORE', accountLive, '-inf', liveExpireBefore)
 		redis.call('ZREMRANGEBYSCORE', userLive, '-inf', liveExpireBefore)
@@ -155,9 +164,10 @@ var (
 	`)
 
 	refreshLiveLeaseScript = redis.NewScript(`
+		redis.replicate_commands()
 		local ttl = tonumber(ARGV[1])
 		local leaseID = ARGV[2]
-		local now = tonumber(ARGV[3])
+		local now = tonumber(redis.call('TIME')[1])
 		local expireBefore = now - ttl
 		for _, key in ipairs(KEYS) do
 			redis.call('ZREMRANGEBYSCORE', key, '-inf', expireBefore)
@@ -175,11 +185,15 @@ var (
 	// ARGV[1] = TTL（秒）
 	// ARGV[2] = requestID
 	trackSlotScript = redis.NewScript(`
+		-- Redis 3.2-4.x compat: opt into effects replication so redis.call('TIME')
+		-- replicates correctly. No-op on Redis 5.0+ (effects replication is default).
+		redis.replicate_commands()
 		local key = KEYS[1]
 		local ttl = tonumber(ARGV[1])
 		local requestID = ARGV[2]
 
-		local now = tonumber(ARGV[3])
+		local timeResult = redis.call('TIME')
+		local now = tonumber(timeResult[1])
 		local expireBefore = now - ttl
 
 		redis.call('ZREMRANGEBYSCORE', key, '-inf', expireBefore)
@@ -191,11 +205,12 @@ var (
 	// acquireOpenAIWSIngressLeaseScript atomically reaps crashed members and
 	// acquires or refreshes one API-key-scoped ingress lease using Redis TIME.
 	acquireOpenAIWSIngressLeaseScript = redis.NewScript(`
+		redis.replicate_commands()
 		local key = KEYS[1]
 		local maxConnections = tonumber(ARGV[1])
 		local ttl = tonumber(ARGV[2])
 		local leaseID = ARGV[3]
-		local now = tonumber(ARGV[4])
+		local now = tonumber(redis.call('TIME')[1])
 		local expireBefore = now - ttl
 		redis.call('ZREMRANGEBYSCORE', key, '-inf', expireBefore)
 		if redis.call('ZSCORE', key, leaseID) ~= false then
@@ -215,10 +230,11 @@ var (
 	// process that lost its lease must terminate its local WebSocket instead of
 	// silently continuing beyond the distributed cap.
 	refreshOpenAIWSIngressLeaseScript = redis.NewScript(`
+		redis.replicate_commands()
 		local key = KEYS[1]
 		local ttl = tonumber(ARGV[1])
 		local leaseID = ARGV[2]
-		local now = tonumber(ARGV[3])
+		local now = tonumber(redis.call('TIME')[1])
 		local expireBefore = now - ttl
 		redis.call('ZREMRANGEBYSCORE', key, '-inf', expireBefore)
 		if redis.call('ZSCORE', key, leaseID) == false then
@@ -233,15 +249,18 @@ var (
 	// KEYS[1] = wait queue key
 	// ARGV[1] = maxWait
 	// ARGV[2] = TTL in seconds
-	// 返回 {是否成功, Redis 当前秒}。
+	// 返回 {是否成功, Redis 当前秒}，供 Go 侧免额外 TIME 往返写活跃索引。
 	incrementWaitScript = redis.NewScript(`
+		-- Redis 3.2-4.x compat: opt into effects replication so redis.call('TIME')
+		-- replicates correctly. No-op on Redis 5.0+ (effects replication is default).
+		redis.replicate_commands()
 		local current = redis.call('GET', KEYS[1])
 		if current == false then
 			current = 0
 		else
 			current = tonumber(current)
 		end
-		local now = tonumber(ARGV[3])
+		local now = tonumber(redis.call('TIME')[1])
 
 		if current >= tonumber(ARGV[1]) then
 			return {0, now}
@@ -258,13 +277,16 @@ var (
 	// incrementAccountWaitScript - account-level wait queue count (refresh TTL on each increment)
 	// 返回值同 incrementWaitScript：{是否成功, Redis 当前秒}。
 	incrementAccountWaitScript = redis.NewScript(`
+		-- Redis 3.2-4.x compat: opt into effects replication so redis.call('TIME')
+		-- replicates correctly. No-op on Redis 5.0+ (effects replication is default).
+		redis.replicate_commands()
 		local current = redis.call('GET', KEYS[1])
 		if current == false then
 			current = 0
 		else
 			current = tonumber(current)
 		end
-		local now = tonumber(ARGV[3])
+		local now = tonumber(redis.call('TIME')[1])
 
 		if current >= tonumber(ARGV[1]) then
 			return {0, now}
@@ -291,9 +313,13 @@ var (
 	// KEYS[1] = 有序集合键
 	// ARGV[1] = TTL（秒）
 	cleanupExpiredSlotsScript = redis.NewScript(`
+		-- Redis 3.2-4.x compat: opt into effects replication so redis.call('TIME')
+		-- replicates correctly. No-op on Redis 5.0+ (effects replication is default).
+		redis.replicate_commands()
 		local key = KEYS[1]
 		local ttl = tonumber(ARGV[1])
-		local now = tonumber(ARGV[2])
+		local timeResult = redis.call('TIME')
+		local now = tonumber(timeResult[1])
 		local expireBefore = now - ttl
 		redis.call('ZREMRANGEBYSCORE', key, '-inf', expireBefore)
 		if redis.call('ZCARD', key) == 0 then
@@ -604,17 +630,14 @@ func runScriptInt64Pair(ctx context.Context, rdb *redis.Client, script *redis.Sc
 
 func (c *concurrencyCache) AcquireAccountSlot(ctx context.Context, accountID int64, maxConcurrency int, requestID string) (bool, error) {
 	key := accountSlotKey(accountID)
-	now, err := c.redisUnixSeconds(ctx)
-	if err != nil {
-		return false, err
-	}
-	result, scriptNow, err := runScriptInt64Pair(ctx, c.rdb, acquireScript, []string{key, liveAccountSlotKey(accountID)}, maxConcurrency, c.slotTTLSeconds, requestID, now)
+	// 时间戳在 Lua 脚本内使用 Redis TIME 命令获取，确保多实例时钟一致
+	result, now, err := runScriptInt64Pair(ctx, c.rdb, acquireScript, []string{key, liveAccountSlotKey(accountID)}, maxConcurrency, c.slotTTLSeconds, requestID)
 	if err != nil {
 		return false, err
 	}
 	if result == 1 {
 		// 成功占槽后标记活跃账号，后台清理即可从索引定位候选账号。
-		c.touchActiveIndexAt(ctx, accountActiveIndexKey, accountID, scriptNow+int64(c.slotTTLSeconds))
+		c.touchActiveIndexAt(ctx, accountActiveIndexKey, accountID, now+int64(c.slotTTLSeconds))
 	}
 	return result == 1, nil
 }
@@ -631,11 +654,8 @@ func (c *concurrencyCache) ReleaseAccountSlot(ctx context.Context, accountID int
 
 func (c *concurrencyCache) GetAccountConcurrency(ctx context.Context, accountID int64) (int, error) {
 	key := accountSlotKey(accountID)
-	now, err := c.redisUnixSeconds(ctx)
-	if err != nil {
-		return 0, err
-	}
-	result, err := getCountScript.Run(ctx, c.rdb, []string{key, liveAccountSlotKey(accountID)}, c.slotTTLSeconds, now).Int()
+	// 时间戳在 Lua 脚本内使用 Redis TIME 命令获取
+	result, err := getCountScript.Run(ctx, c.rdb, []string{key, liveAccountSlotKey(accountID)}, c.slotTTLSeconds).Int()
 	if err != nil {
 		return 0, err
 	}
@@ -687,17 +707,14 @@ func (c *concurrencyCache) GetAccountConcurrencyBatch(ctx context.Context, accou
 
 func (c *concurrencyCache) AcquireUserSlot(ctx context.Context, userID int64, maxConcurrency int, requestID string) (bool, error) {
 	key := userSlotKey(userID)
-	now, err := c.redisUnixSeconds(ctx)
-	if err != nil {
-		return false, err
-	}
-	result, scriptNow, err := runScriptInt64Pair(ctx, c.rdb, acquireScript, []string{key, liveUserSlotKey(userID)}, maxConcurrency, c.slotTTLSeconds, requestID, now)
+	// 时间戳在 Lua 脚本内使用 Redis TIME 命令获取，确保多实例时钟一致
+	result, now, err := runScriptInt64Pair(ctx, c.rdb, acquireScript, []string{key, liveUserSlotKey(userID)}, maxConcurrency, c.slotTTLSeconds, requestID)
 	if err != nil {
 		return false, err
 	}
 	if result == 1 {
 		// 成功占槽后标记活跃用户，避免启动清理依赖全量 SCAN。
-		c.touchActiveIndexAt(ctx, userActiveIndexKey, userID, scriptNow+int64(c.slotTTLSeconds))
+		c.touchActiveIndexAt(ctx, userActiveIndexKey, userID, now+int64(c.slotTTLSeconds))
 	}
 	return result == 1, nil
 }
@@ -714,11 +731,8 @@ func (c *concurrencyCache) ReleaseUserSlot(ctx context.Context, userID int64, re
 
 func (c *concurrencyCache) GetUserConcurrency(ctx context.Context, userID int64) (int, error) {
 	key := userSlotKey(userID)
-	now, err := c.redisUnixSeconds(ctx)
-	if err != nil {
-		return 0, err
-	}
-	result, err := getCountScript.Run(ctx, c.rdb, []string{key, liveUserSlotKey(userID)}, c.slotTTLSeconds, now).Int()
+	// 时间戳在 Lua 脚本内使用 Redis TIME 命令获取
+	result, err := getCountScript.Run(ctx, c.rdb, []string{key, liveUserSlotKey(userID)}, c.slotTTLSeconds).Int()
 	if err != nil {
 		return 0, err
 	}
@@ -727,11 +741,7 @@ func (c *concurrencyCache) GetUserConcurrency(ctx context.Context, userID int64)
 
 func (c *concurrencyCache) TrackAPIKeySlot(ctx context.Context, apiKeyID int64, requestID string) error {
 	key := apiKeySlotKey(apiKeyID)
-	now, err := c.redisUnixSeconds(ctx)
-	if err != nil {
-		return err
-	}
-	_, err = trackSlotScript.Run(ctx, c.rdb, []string{key}, c.slotTTLSeconds, requestID, now).Result()
+	_, err := trackSlotScript.Run(ctx, c.rdb, []string{key}, c.slotTTLSeconds, requestID).Result()
 	return err
 }
 
@@ -744,10 +754,6 @@ func (c *concurrencyCache) AcquireOpenAIWSIngressLease(ctx context.Context, apiK
 	if c == nil || c.rdb == nil || apiKeyID <= 0 || maxConnections <= 0 || leaseID == "" {
 		return false, nil
 	}
-	now, err := c.redisUnixSeconds(ctx)
-	if err != nil {
-		return false, err
-	}
 	result, err := acquireOpenAIWSIngressLeaseScript.Run(
 		ctx,
 		c.rdb,
@@ -755,7 +761,6 @@ func (c *concurrencyCache) AcquireOpenAIWSIngressLease(ctx context.Context, apiK
 		maxConnections,
 		openAIWSIngressLeaseTTLSeconds,
 		leaseID,
-		now,
 	).Int()
 	if err != nil {
 		return false, err
@@ -767,17 +772,12 @@ func (c *concurrencyCache) RefreshOpenAIWSIngressLease(ctx context.Context, apiK
 	if c == nil || c.rdb == nil || apiKeyID <= 0 || leaseID == "" {
 		return false, nil
 	}
-	now, err := c.redisUnixSeconds(ctx)
-	if err != nil {
-		return false, err
-	}
 	result, err := refreshOpenAIWSIngressLeaseScript.Run(
 		ctx,
 		c.rdb,
 		[]string{openAIWSIngressLeaseKey(apiKeyID)},
 		openAIWSIngressLeaseTTLSeconds,
 		leaseID,
-		now,
 	).Int()
 	if err != nil {
 		return false, err
@@ -809,17 +809,13 @@ func (c *concurrencyCache) AcquireLiveLease(
 	if replacingRegularSlots {
 		replacing = 1
 	}
-	now, err := c.redisUnixSeconds(ctx)
-	if err != nil {
-		return false, err
-	}
 	result, err := acquireLiveLeaseScript.Run(ctx, c.rdb, []string{
 		accountSlotKey(accountID),
 		liveAccountSlotKey(accountID),
 		userSlotKey(userID),
 		liveUserSlotKey(userID),
 		liveAPIKeySlotKey(apiKeyID),
-	}, accountMax, userMax, liveLeaseTTLSeconds, leaseID, replacing, now).Int()
+	}, accountMax, userMax, liveLeaseTTLSeconds, leaseID, replacing).Int()
 	return result == 1, err
 }
 
@@ -827,15 +823,11 @@ func (c *concurrencyCache) RefreshLiveLease(ctx context.Context, accountID, user
 	if c == nil || c.rdb == nil || leaseID == "" {
 		return false, nil
 	}
-	now, err := c.redisUnixSeconds(ctx)
-	if err != nil {
-		return false, err
-	}
 	result, err := refreshLiveLeaseScript.Run(ctx, c.rdb, []string{
 		liveAccountSlotKey(accountID),
 		liveUserSlotKey(userID),
 		liveAPIKeySlotKey(apiKeyID),
-	}, liveLeaseTTLSeconds, leaseID, now).Int()
+	}, liveLeaseTTLSeconds, leaseID).Int()
 	return result == 1, err
 }
 
@@ -896,17 +888,13 @@ func (c *concurrencyCache) GetAPIKeyConcurrencyBatch(ctx context.Context, apiKey
 
 func (c *concurrencyCache) IncrementWaitCount(ctx context.Context, userID int64, maxWait int) (bool, error) {
 	key := waitQueueKey(userID)
-	now, err := c.redisUnixSeconds(ctx)
-	if err != nil {
-		return false, err
-	}
-	result, scriptNow, err := runScriptInt64Pair(ctx, c.rdb, incrementWaitScript, []string{key}, maxWait, c.waitQueueTTLSeconds, now)
+	result, now, err := runScriptInt64Pair(ctx, c.rdb, incrementWaitScript, []string{key}, maxWait, c.waitQueueTTLSeconds)
 	if err != nil {
 		return false, err
 	}
 	if result == 1 {
 		// 等待队列也会让用户保持“活跃”，否则槽位为 0 时后台任务可能漏看等待计数。
-		c.touchActiveIndexAt(ctx, userActiveIndexKey, userID, scriptNow+int64(c.waitQueueTTLSeconds))
+		c.touchActiveIndexAt(ctx, userActiveIndexKey, userID, now+int64(c.waitQueueTTLSeconds))
 	}
 	return result == 1, nil
 }
@@ -925,17 +913,13 @@ func (c *concurrencyCache) DecrementWaitCount(ctx context.Context, userID int64)
 
 func (c *concurrencyCache) IncrementAccountWaitCount(ctx context.Context, accountID int64, maxWait int) (bool, error) {
 	key := accountWaitKey(accountID)
-	now, err := c.redisUnixSeconds(ctx)
-	if err != nil {
-		return false, err
-	}
-	result, scriptNow, err := runScriptInt64Pair(ctx, c.rdb, incrementAccountWaitScript, []string{key}, maxWait, c.waitQueueTTLSeconds, now)
+	result, now, err := runScriptInt64Pair(ctx, c.rdb, incrementAccountWaitScript, []string{key}, maxWait, c.waitQueueTTLSeconds)
 	if err != nil {
 		return false, err
 	}
 	if result == 1 {
 		// 账号级等待队列同样写入账号活跃索引，供负载查询和清理任务使用。
-		c.touchActiveIndexAt(ctx, accountActiveIndexKey, accountID, scriptNow+int64(c.waitQueueTTLSeconds))
+		c.touchActiveIndexAt(ctx, accountActiveIndexKey, accountID, now+int64(c.waitQueueTTLSeconds))
 	}
 	return result == 1, nil
 }
@@ -1093,11 +1077,7 @@ func (c *concurrencyCache) GetUsersLoadBatch(ctx context.Context, users []servic
 
 func (c *concurrencyCache) CleanupExpiredAccountSlots(ctx context.Context, accountID int64) error {
 	key := accountSlotKey(accountID)
-	now, err := c.redisUnixSeconds(ctx)
-	if err != nil {
-		return err
-	}
-	_, err = cleanupExpiredSlotsScript.Run(ctx, c.rdb, []string{key}, c.slotTTLSeconds, now).Result()
+	_, err := cleanupExpiredSlotsScript.Run(ctx, c.rdb, []string{key}, c.slotTTLSeconds).Result()
 	if err == nil {
 		// 单账号清理后同步索引，保持后台批量清理的候选集准确。
 		c.refreshAccountActiveIndex(ctx, accountID)
@@ -1122,10 +1102,12 @@ func (c *concurrencyCache) reconcileExpiredIndexCandidates(ctx context.Context, 
 	if err != nil {
 		return err
 	}
-	members, err := c.rdb.ZRangeByScore(ctx, spec.indexKey, &redis.ZRangeBy{
-		Min:   "-inf",
-		Max:   strconv.FormatInt(now, 10),
-		Count: activeIndexCleanupBatchSize,
+	members, err := c.rdb.ZRangeArgs(ctx, redis.ZRangeArgs{
+		Key:     spec.indexKey,
+		Start:   "-inf",
+		Stop:    strconv.FormatInt(now, 10),
+		ByScore: true,
+		Count:   activeIndexCleanupBatchSize,
 	}).Result()
 	if err != nil {
 		return fmt.Errorf("read expired index %s: %w", spec.indexKey, err)

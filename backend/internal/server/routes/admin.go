@@ -138,6 +138,19 @@ func RegisterAdminRoutes(
 	}
 }
 
+func registerTicketRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	tickets := admin.Group("/tickets")
+	{
+		tickets.GET("", h.Admin.Ticket.List)
+		tickets.GET("/unread-count", h.Admin.Ticket.UnreadCount)
+		tickets.POST("/batch-read-status", h.Admin.Ticket.BatchReadStatus)
+		tickets.POST("/batch-delete", h.Admin.Ticket.BatchDelete)
+		tickets.GET("/:id", h.Admin.Ticket.GetByID)
+		tickets.POST("/:id/messages", h.Admin.Ticket.Reply)
+		tickets.PUT("/:id/status", h.Admin.Ticket.UpdateStatus)
+	}
+}
+
 func registerPromptAuditRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	promptAudit := admin.Group("/prompt-audit")
 	{
@@ -338,7 +351,7 @@ func registerGroupRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		groups.GET("/capacity-summary", h.Admin.Group.GetCapacitySummary)
 		groups.GET("/live-capability", h.Admin.Group.GetLiveCapability)
 		groups.PUT("/sort-order", h.Admin.Group.UpdateSortOrder)
-		groups.GET("/:id/models-list-candidates", h.Admin.Group.GetModelsListCandidates)
+		groups.GET("/:id/model-allowlist-candidates", h.Admin.Group.GetGroupModelAllowlistCandidates)
 		groups.GET("/:id/composite-routes", h.Admin.Group.ListCompositeRoutes)
 		groups.POST("/:id/composite-routes", h.Admin.Group.CreateCompositeRoute)
 		groups.POST("/:id/composite-routes/preview", h.Admin.Group.PreviewCompositeRoute)
@@ -377,6 +390,8 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.POST("/sync/crs", h.Admin.Account.SyncFromCRS)
 		accounts.POST("/sync/crs/preview", h.Admin.Account.PreviewFromCRS)
 		accounts.PUT("/:id", h.Admin.Account.Update)
+		accounts.GET("/:id/grok-media-eligibility", h.Admin.Account.GetGrokMediaEligibility)
+		accounts.PUT("/:id/grok-media-eligibility", h.Admin.Account.UpdateGrokMediaEligibility)
 		accounts.PUT("/:id/upstream-billing-probe", h.Admin.Account.SetUpstreamBillingProbeEnabled)
 		accounts.PUT("/:id/upstream-billing-probe/manual-rate", h.Admin.Account.SetUpstreamBillingManualRate)
 		accounts.POST("/:id/upstream-billing-probe", h.Admin.Account.ProbeUpstreamBilling)
@@ -393,10 +408,8 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.POST("/:id/set-privacy", h.Admin.Account.SetPrivacy)
 		accounts.POST("/:id/refresh-tier", h.Admin.Account.RefreshTier)
 		accounts.GET("/:id/stats", h.Admin.Account.GetStats)
+		accounts.GET("/:id/profile-statistics", h.Admin.Account.GetAccountProfileStatistics)
 		accounts.POST("/:id/clear-error", h.Admin.Account.ClearError)
-		// 供外部恢复检查（TransitHub）使用的条件恢复接口：只恢复 source=automatic
-		// 的系统自动停用账号，管理员的 manual 决定无法被迟到的恢复请求覆盖。
-		accounts.POST("/:id/recover-schedulability", h.Admin.Account.RecoverSchedulability)
 		accounts.POST("/:id/revert-proxy-fallback", h.Admin.Account.RevertProxyFallback)
 		accounts.GET("/:id/usage", h.Admin.Account.GetUsage)
 		accounts.GET("/:id/today-stats", h.Admin.Account.GetTodayStats)
@@ -417,9 +430,10 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.POST("/batch-update-credentials", h.Admin.Account.BatchUpdateCredentials)
 		accounts.POST("/batch-refresh-tier", h.Admin.Account.BatchRefreshTier)
 		accounts.POST("/bulk-update", h.Admin.Account.BulkUpdate)
-		accounts.POST("/group-priorities", h.Admin.Account.UpdateGroupPriorities)
 		accounts.POST("/batch-delete", h.Admin.Account.BatchDelete)
 		accounts.POST("/batch-clear-error", h.Admin.Account.BatchClearError)
+		// TransitHub 连接健康探活的优先级回写入口（account_groups.priority）。
+		accounts.POST("/group-priorities", h.Admin.Account.UpdateGroupPriorities)
 		accounts.POST("/batch-refresh", h.Admin.Account.BatchRefresh)
 
 		// Antigravity 默认模型映射
@@ -474,20 +488,6 @@ func registerAnnouncementRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		announcements.PUT("/:id", h.Admin.Announcement.Update)
 		announcements.DELETE("/:id", h.Admin.Announcement.Delete)
 		announcements.GET("/:id/read-status", h.Admin.Announcement.ListReadStatus)
-	}
-}
-
-func registerTicketRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
-	tickets := admin.Group("/tickets")
-	{
-		tickets.GET("", h.Admin.Ticket.List)
-		// unread-count 必须注册在 /:id 之前，否则会被当成 id 匹配掉
-		tickets.GET("/unread-count", h.Admin.Ticket.UnreadCount)
-		tickets.POST("/batch-read-status", h.Admin.Ticket.BatchReadStatus)
-		tickets.POST("/batch-delete", h.Admin.Ticket.BatchDelete)
-		tickets.GET("/:id", h.Admin.Ticket.GetByID)
-		tickets.POST("/:id/messages", h.Admin.Ticket.Reply)
-		tickets.PUT("/:id/status", h.Admin.Ticket.UpdateStatus)
 	}
 }
 
@@ -608,10 +608,6 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	{
 		adminSettings.GET("", h.Admin.Setting.GetSettings)
 		adminSettings.PUT("", h.Admin.Setting.UpdateSettings)
-		adminSettings.GET("/blacklist", h.Admin.Setting.GetGlobalBlacklist)
-		adminSettings.POST("/blacklist", h.Admin.Setting.AddGlobalBlacklist)
-		adminSettings.PUT("/blacklist", h.Admin.Setting.ReplaceGlobalBlacklist)
-		adminSettings.DELETE("/blacklist/:id", h.Admin.Setting.DeleteGlobalBlacklist)
 		adminSettings.POST("/test-smtp", h.Admin.Setting.TestSMTPConnection)
 		adminSettings.POST("/send-test-email", h.Admin.Setting.SendTestEmail)
 		adminSettings.GET("/email-templates", h.Admin.Setting.ListEmailTemplates)
@@ -649,6 +645,9 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		adminSettings.PUT("/web-search-emulation", h.Admin.Setting.UpdateWebSearchEmulationConfig)
 		adminSettings.POST("/web-search-emulation/test", h.Admin.Setting.TestWebSearchEmulation)
 		adminSettings.POST("/web-search-emulation/reset-usage", h.Admin.Setting.ResetWebSearchUsage)
+		adminSettings.GET("/global-blacklist", h.Admin.Setting.GetGlobalBlacklist)
+		adminSettings.POST("/global-blacklist", h.Admin.Setting.AddGlobalBlacklist)
+		adminSettings.DELETE("/global-blacklist/:id", h.Admin.Setting.DeleteGlobalBlacklist)
 	}
 }
 
@@ -728,6 +727,7 @@ func registerSubscriptionRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		subscriptions.GET("/:id/progress", h.Admin.Subscription.GetProgress)
 		subscriptions.POST("/assign", h.Admin.Subscription.Assign)
 		subscriptions.POST("/bulk-assign", h.Admin.Subscription.BulkAssign)
+		subscriptions.POST("/bulk-action", h.Admin.Subscription.BulkAction)
 		subscriptions.POST("/:id/extend", h.Admin.Subscription.Extend)
 		subscriptions.POST("/:id/reset-quota", h.Admin.Subscription.ResetQuota)
 		subscriptions.POST("/:id/revoke", h.Admin.Subscription.Revoke)
@@ -814,6 +814,7 @@ func registerPluginRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAut
 		plugins.POST("/:id/disable", gin.HandlerFunc(stepUpAuth), h.Admin.Plugin.Disable)
 		plugins.DELETE("/:id", gin.HandlerFunc(stepUpAuth), h.Admin.Plugin.Delete)
 		plugins.GET("/:id/config", h.Admin.Plugin.GetConfig)
+		plugins.GET("/:id/status", h.Admin.Plugin.Status)
 		plugins.PUT("/:id/config", gin.HandlerFunc(stepUpAuth), h.Admin.Plugin.SaveConfig)
 		plugins.POST("/:id/test", gin.HandlerFunc(stepUpAuth), h.Admin.Plugin.Test)
 		plugins.POST("/:id/ui-session", h.Admin.Plugin.CreateUISession)

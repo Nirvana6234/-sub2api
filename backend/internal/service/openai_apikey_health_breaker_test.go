@@ -76,6 +76,21 @@ func TestClassifyOpenAIAPIKeyHealthFailureExclusions(t *testing.T) {
 		eligible bool
 	}{
 		{name: "account attributed 502", err: &UpstreamFailoverError{StatusCode: http.StatusBadGateway}, eligible: true},
+		{name: "first output timeout is provider scoped", err: &UpstreamFailoverError{
+			StatusCode: http.StatusGatewayTimeout, RequestScopedTransient: true, Scope: GatewayFailureScopeProvider,
+		}, eligible: false},
+		{name: "upstream gateway 502 is provider scoped", err: newOpenAIUpstreamFailoverError(
+			http.StatusBadGateway, http.Header{}, nil, "", false,
+		), eligible: false},
+		{name: "upstream gateway 503 is provider scoped", err: newOpenAIUpstreamFailoverError(
+			http.StatusServiceUnavailable, http.Header{}, nil, "", false,
+		), eligible: false},
+		{name: "upstream gateway 504 is provider scoped", err: newOpenAIUpstreamFailoverError(
+			http.StatusGatewayTimeout, http.Header{}, nil, "", false,
+		), eligible: false},
+		{name: "upstream 500 stays account attributed", err: newOpenAIUpstreamFailoverError(
+			http.StatusInternalServerError, http.Header{}, nil, "", false,
+		), eligible: true},
 		{name: "request scoped capacity", err: &UpstreamFailoverError{StatusCode: 529, RequestScopedTransient: true}},
 		{name: "provider scoped overload", err: &UpstreamFailoverError{StatusCode: 529, Scope: GatewayFailureScopeProvider}},
 		{name: "dedicated same account retry", err: &UpstreamFailoverError{StatusCode: http.StatusTooManyRequests, RetryableOnSameAccount: true}},

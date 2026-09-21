@@ -175,8 +175,6 @@ type SystemSettings struct {
 	AffiliateRebateFreezeHours   int
 	AffiliateRebateDurationDays  int
 	AffiliateRebatePerInviteeCap float64
-	AccountShareRewardRate       float64
-	AccountOwnUsageFeeRate       float64
 	AdminRechargeRebateEnabled   bool
 	DefaultUserRPMLimit          int
 	DefaultSubscriptions         []DefaultSubscriptionSetting
@@ -204,6 +202,7 @@ type SystemSettings struct {
 	ChannelMonitorDefaultIntervalSeconds int    `json:"channel_monitor_default_interval_seconds"`
 	ChannelMonitorHideThroughput         bool   `json:"channel_monitor_hide_throughput"`
 	ChannelMonitorShowQuota              bool   `json:"channel_monitor_show_quota"`
+	ChannelMonitorHideUserRanking        bool   `json:"channel_monitor_hide_user_ranking"`
 
 	// Grok model mapping policy (admin settings; empty mapping falls back to these).
 	GrokDefaultTextModel           string `json:"grok_default_text_model"`
@@ -229,8 +228,6 @@ type SystemSettings struct {
 	LatencyCompensationThresholdMs int     `json:"latency_compensation_threshold_ms"`
 	LatencyCompensationProfitRatio float64 `json:"latency_compensation_profit_ratio"`
 
-	HeadroomBaseURL string `json:"headroom_base_url"`
-
 	BackupPaymentEnabled bool   `json:"backup_payment_enabled"`
 	BackupPaymentURL     string `json:"backup_payment_url"`
 
@@ -241,6 +238,7 @@ type SystemSettings struct {
 	PlaygroundDefaultImageGroupIDs []int64 `json:"playground_default_image_group_ids"`
 	PlaygroundDefaultChatStrategy  string  `json:"playground_default_chat_strategy"`
 	PlaygroundDefaultImageStrategy string  `json:"playground_default_image_strategy"`
+	SubscriptionEnabled            bool    `json:"subscription_enabled"`
 
 	// Model Plaza feature (public group/model pricing showcase)
 	ModelPlazaEnabled       bool   `json:"model_plaza_enabled"`
@@ -416,6 +414,7 @@ type PublicSettings struct {
 	ChannelMonitorDefaultIntervalSeconds int    `json:"channel_monitor_default_interval_seconds"`
 	ChannelMonitorHideThroughput         bool   `json:"channel_monitor_hide_throughput"`
 	ChannelMonitorShowQuota              bool   `json:"channel_monitor_show_quota"`
+	ChannelMonitorHideUserRanking        bool   `json:"channel_monitor_hide_user_ranking"`
 
 	// Grok model mapping policy (admin settings).
 	GrokDefaultTextModel           string `json:"grok_default_text_model"`
@@ -432,17 +431,16 @@ type PublicSettings struct {
 	ClientLatestVersion        string `json:"client_latest_version"`
 	ClientLatestVersionMac     string `json:"client_latest_version_mac"`
 	ClientTutorialVideoURL     string `json:"client_tutorial_video_url"`
-
-	ChatAppDownloadEnabled   bool   `json:"chat_app_download_enabled"`
-	ChatAppDownloadDirectURL string `json:"chat_app_download_direct_url"`
-	ChatAppLatestVersion     string `json:"chat_app_latest_version"`
-
-	BackupPaymentEnabled bool   `json:"backup_payment_enabled"`
-	BackupPaymentURL     string `json:"backup_payment_url"`
+	ChatAppDownloadEnabled     bool   `json:"chat_app_download_enabled"`
+	ChatAppDownloadDirectURL   string `json:"chat_app_download_direct_url"`
+	ChatAppLatestVersion       string `json:"chat_app_latest_version"`
+	BackupPaymentEnabled       bool   `json:"backup_payment_enabled"`
+	BackupPaymentURL           string `json:"backup_payment_url"`
 
 	PlaygroundEnabled           bool   `json:"playground_enabled"`
 	PlaygroundDefaultChatModel  string `json:"playground_default_chat_model"`
 	PlaygroundDefaultImageModel string `json:"playground_default_image_model"`
+	SubscriptionEnabled         bool   `json:"subscription_enabled"`
 
 	// Model Plaza feature (public group/model pricing showcase)
 	ModelPlazaEnabled       bool `json:"model_plaza_enabled"`
@@ -457,17 +455,6 @@ type PublicSettings struct {
 
 	// 允许终端用户在用量页查看自己的失败请求
 	AllowUserViewErrorRequests bool `json:"allow_user_view_error_requests"`
-}
-
-// PlaygroundDefaultConfig is the administrator-controlled configuration used
-// when provisioning the built-in Playground API keys for a user.
-type PlaygroundDefaultConfig struct {
-	ChatModel     string
-	ImageModel    string
-	ChatGroupIDs  []int64
-	ImageGroupIDs []int64
-	ChatStrategy  string
-	ImageStrategy string
 }
 
 type LoginAgreementDocument struct {
@@ -733,15 +720,18 @@ func DefaultBetaPolicySettings() *BetaPolicySettings {
 // OpenAI Fast Policy 策略常量
 // OpenAI 的 "fast 模式" 通过请求体中的 service_tier 字段识别：
 //   - "priority"（客户端可传 "fast"，归一化为 "priority"）：fast 模式
+//   - "ultrafast"：Codex/API 的 Ultrafast 档位
 //   - "flex"：低优先级模式
 //   - 省略：normal 默认
 //
 // 本策略复用 BetaPolicyAction*/BetaPolicyScope* 常量语义，只是匹配键从
 // anthropic-beta header 换成 body 的 service_tier 字段。
 const (
-	OpenAIFastTierAny      = "all"      // 匹配任意已识别的 service_tier
-	OpenAIFastTierPriority = "priority" // 仅匹配 fast（priority）
-	OpenAIFastTierFlex     = "flex"     // 仅匹配 flex
+	OpenAIFastTierAny       = "all"       // 匹配任意已识别的 service_tier
+	OpenAIFastTierPriority  = "priority"  // 仅匹配 fast（priority）
+	OpenAIFastTierUltrafast = "ultrafast" // 仅匹配 ultrafast
+	OpenAIFastTierFlex      = "flex"      // 仅匹配 flex
+	OpenAIFastTierMissing   = "missing"   // 仅匹配省略 service_tier 的请求
 
 	// OpenAIFastPolicyActionForcePriority 会保留 service_tier 字段并强制写成
 	// priority，用于把 flex/auto/default/scale 等已识别 tier 收敛为 fast。
@@ -750,7 +740,7 @@ const (
 
 // OpenAIFastPolicyRule 单条 OpenAI fast/flex 策略规则
 type OpenAIFastPolicyRule struct {
-	ServiceTier          string   `json:"service_tier"`                     // "priority" | "flex" | "auto" | "default" | "scale" | "all"
+	ServiceTier          string   `json:"service_tier"`                     // "priority" | "ultrafast" | "flex" | "auto" | "default" | "scale" | "all"
 	Action               string   `json:"action"`                           // "pass" | "filter" | "block" | "force_priority"
 	Scope                string   `json:"scope"`                            // "all" | "oauth" | "apikey" | "bedrock"
 	UserIDs              []int64  `json:"user_ids,omitempty"`               // 空=所有 Sub2API 用户；非空=仅指定 API Key 所属用户
@@ -772,4 +762,15 @@ func DefaultOpenAIFastPolicySettings() *OpenAIFastPolicySettings {
 	return &OpenAIFastPolicySettings{
 		Rules: []OpenAIFastPolicyRule{},
 	}
+}
+
+// PlaygroundDefaultConfig is the administrator-controlled configuration used
+// when provisioning the built-in Playground API keys for a user.
+type PlaygroundDefaultConfig struct {
+	ChatModel     string
+	ImageModel    string
+	ChatGroupIDs  []int64
+	ImageGroupIDs []int64
+	ChatStrategy  string
+	ImageStrategy string
 }

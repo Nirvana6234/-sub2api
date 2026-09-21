@@ -78,7 +78,7 @@ func (a *Account) IsHeaderOverrideEligible() bool {
 		return false
 	}
 	switch a.Platform {
-	case PlatformAnthropic, PlatformOpenAI, PlatformKimi, PlatformZhipu, PlatformDeepseek:
+	case PlatformAnthropic, PlatformOpenAI, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo:
 		return a.Type == AccountTypeAPIKey
 	case PlatformGrok:
 		return a.Type == AccountTypeAPIKey || a.Type == AccountTypeOAuth
@@ -177,30 +177,21 @@ func (a *Account) ApplyHeaderOverrides(h http.Header) {
 	if h == nil {
 		return
 	}
-
 	overrides := a.GetHeaderOverrides()
-	for name, value := range overrides {
-		applyHeaderOverrideValue(h, name, value)
+	if len(overrides) == 0 {
+		return
 	}
-
-	// custom_headers is intentionally independent from credentials.header_overrides
-	// and applies to every account type. Apply it last so an explicit account-level
-	// value wins when the two configurations use the same header name.
-	for name, value := range a.GetCustomHeaders() {
-		applyHeaderOverrideValue(h, name, value)
-	}
-}
-
-func applyHeaderOverrideValue(h http.Header, name, value string) {
 	// 覆写名两两不同（大小写不敏感）且各自只操作同名键，应用顺序不影响结果。
 	// 全量 EqualFold 扫描兜底删除任意 casing 的既有键：透传链路可能保留客户端
 	// 原始 casing，非 canonical/wire casing 的键 deleteHeaderAllForms 覆盖不到。
-	for existing := range h {
-		if strings.EqualFold(existing, name) {
-			delete(h, existing)
+	for name, value := range overrides {
+		for existing := range h {
+			if strings.EqualFold(existing, name) {
+				delete(h, existing)
+			}
 		}
+		h[resolveWireCasing(name)] = []string{value}
 	}
-	h[resolveWireCasing(name)] = []string{value}
 }
 
 // NormalizeHeaderOverrideCredentials 校验并原地规范化 credentials 中的请求头覆写字段。

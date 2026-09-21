@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"math"
 	"strings"
 	"testing"
 
@@ -84,6 +85,34 @@ func TestSelectPlaygroundGroupsWithoutImageGroup(t *testing.T) {
 
 	require.NotNil(t, chat)
 	require.Nil(t, image)
+}
+
+func TestRankMeasuredAutoGroupsTreatsZeroRateAsFreeRoute(t *testing.T) {
+	groups := []Group{
+		{ID: 1, SortOrder: 1, RateMultiplier: 0, ActiveAccountCount: 1},
+		{ID: 2, SortOrder: 2, RateMultiplier: 0.5, ActiveAccountCount: 1},
+	}
+	metrics := map[int64][]int64{
+		1: {1000, 1000, 1000},
+		2: {1000, 1000, 1000},
+	}
+
+	ranked := rankMeasuredAutoGroups(groups, nil, metrics, autoGroupStrategyBalanced)
+
+	require.NotEmpty(t, ranked)
+	require.Equal(t, int64(1), ranked[0].group.ID)
+}
+
+func TestLowestAvailableRateGroupSkipsInvalidRates(t *testing.T) {
+	groups := []Group{
+		{ID: 1, ActiveAccountCount: 1, RateMultiplier: math.NaN()},
+		{ID: 2, ActiveAccountCount: 1, RateMultiplier: 0.5},
+	}
+
+	selected := lowestAvailableRateGroup(groups, nil)
+
+	require.NotNil(t, selected)
+	require.Equal(t, int64(2), selected.ID)
 }
 
 func TestAPIKeyServiceGetByIDForAuthResolvesAutomaticGroup(t *testing.T) {

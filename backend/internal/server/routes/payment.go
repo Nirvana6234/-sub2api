@@ -26,6 +26,9 @@ func RegisterPaymentRoutes(
 	authenticated := v1.Group("/payment")
 	authenticated.Use(gin.HandlerFunc(jwtAuth))
 	authenticated.Use(middleware.BackendModeUserGuard(settingService))
+	// 充值黑名单：名单内用户对 /payment 下全部接口返回 403（前端隐藏入口只是视觉，
+	// 直接调用 API 必须也挡住）。
+	authenticated.Use(middleware.RechargeBlockedGuard(settingService))
 	// 面板全局按用户限流
 	authenticated.Use(panelRateLimiter.Global())
 	{

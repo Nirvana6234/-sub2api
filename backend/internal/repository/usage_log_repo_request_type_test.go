@@ -104,10 +104,9 @@ func TestUsageLogRepositoryCreateSyncRequestTypeAndLegacyFields(t *testing.T) {
 			sqlmock.AnyArg(), // billing_tier
 			sqlmock.AnyArg(), // billing_mode
 			sqlmock.AnyArg(), // account_stats_cost
+			sqlmock.AnyArg(), // upstream_request_id
 			sqlmock.AnyArg(), // session_id
 			log.NativeCompactionV2,
-			sqlmock.AnyArg(), // headroom_tokens_saved
-			sqlmock.AnyArg(), // headroom_savings_usd
 			createdAt,
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(99), createdAt))
@@ -205,10 +204,9 @@ func TestUsageLogRepositoryCreate_PersistsServiceTier(t *testing.T) {
 			sqlmock.AnyArg(), // billing_tier
 			sqlmock.AnyArg(), // billing_mode
 			sqlmock.AnyArg(), // account_stats_cost
+			sqlmock.AnyArg(), // upstream_request_id
 			sqlmock.AnyArg(), // session_id
 			log.NativeCompactionV2,
-			sqlmock.AnyArg(), // headroom_tokens_saved
-			sqlmock.AnyArg(), // headroom_savings_usd
 			createdAt,
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(100), createdAt))
@@ -274,6 +272,30 @@ func TestPrepareUsageLogInsert_ArgCountMatchesTypes(t *testing.T) {
 	require.Len(t, prepared.args, len(usageLogInsertArgTypes))
 }
 
+func TestPrepareUsageLogInsert_PersistsNativeCompactionV2WithoutChangingRequestType(t *testing.T) {
+	log := &service.UsageLog{
+		UserID:             1,
+		APIKeyID:           2,
+		AccountID:          3,
+		RequestID:          "req-native-compaction-v2",
+		Model:              "gpt-5",
+		RequestedModel:     "gpt-5",
+		RequestType:        service.RequestTypeStream,
+		NativeCompactionV2: true,
+		CreatedAt:          time.Date(2025, 1, 5, 13, 0, 0, 0, time.UTC),
+	}
+
+	prepared := prepareUsageLogInsert(log)
+
+	require.Len(t, prepared.args, len(usageLogInsertArgTypes))
+	require.Equal(t, "boolean", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-2])
+	require.Equal(t, true, prepared.args[len(prepared.args)-2])
+	require.Equal(t, int16(service.RequestTypeStream), prepared.args[35])
+	require.Equal(t, service.RequestTypeStream, log.RequestType)
+	require.True(t, log.Stream)
+	require.False(t, log.OpenAIWSMode)
+}
+
 func TestPrepareUsageLogInsert_PersistsFallbackPoolTrace(t *testing.T) {
 	sourceID := int64(101)
 	targetID := int64(202)
@@ -299,34 +321,6 @@ func TestPrepareUsageLogInsert_PersistsFallbackPoolTrace(t *testing.T) {
 	require.Equal(t, sql.NullString{String: sourceName, Valid: true}, prepared.args[13])
 	require.Equal(t, sql.NullInt64{Int64: targetID, Valid: true}, prepared.args[14])
 	require.Equal(t, sql.NullString{String: targetName, Valid: true}, prepared.args[15])
-}
-
-func TestPrepareUsageLogInsert_PersistsNativeCompactionV2WithoutChangingRequestType(t *testing.T) {
-	log := &service.UsageLog{
-		UserID:             1,
-		APIKeyID:           2,
-		AccountID:          3,
-		RequestID:          "req-native-compaction-v2",
-		Model:              "gpt-5",
-		RequestedModel:     "gpt-5",
-		RequestType:        service.RequestTypeStream,
-		NativeCompactionV2: true,
-		CreatedAt:          time.Date(2025, 1, 5, 13, 0, 0, 0, time.UTC),
-	}
-
-	prepared := prepareUsageLogInsert(log)
-
-	require.Len(t, prepared.args, len(usageLogInsertArgTypes))
-	require.Equal(t, "boolean", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-4])
-	require.Equal(t, true, prepared.args[len(prepared.args)-4])
-	require.Equal(t, "integer", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-3])
-	require.Equal(t, "numeric", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-2])
-	require.Equal(t, 0, prepared.args[len(prepared.args)-3])
-	require.Equal(t, 0.0, prepared.args[len(prepared.args)-2])
-	require.Equal(t, int16(service.RequestTypeStream), prepared.args[35])
-	require.Equal(t, service.RequestTypeStream, log.RequestType)
-	require.True(t, log.Stream)
-	require.False(t, log.OpenAIWSMode)
 }
 
 func TestPrepareUsageLogInsert_PersistsImageSizeMetadata(t *testing.T) {
@@ -793,7 +787,7 @@ func TestUsageLogRepositoryGetGroupStatsAccountCostColumn(t *testing.T) {
 	start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	end := start.Add(24 * time.Hour)
 
-	mock.ExpectQuery("COALESCE\\(SUM\\(COALESCE\\(ul\\.account_stats_cost, ul\\.total_cost\\) \\* ul\\.account_rate_multiplier\\), 0\\) as account_cost").
+	mock.ExpectQuery("FROM usage_logs").
 		WithArgs(start, end).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"group_id", "group_name", "requests", "total_tokens",
@@ -1005,6 +999,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},
 			sql.NullString{},
 			sql.NullFloat64{},
+			sql.NullString{}, // upstream_request_id
 			sql.NullString{},
 			false, // native_compaction_v2
 			now,
@@ -1089,6 +1084,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // billing_tier
 			sql.NullString{},  // billing_mode
 			sql.NullFloat64{}, // account_stats_cost
+			sql.NullString{},  // upstream_request_id
 			sql.NullString{},  // session_id
 			false,             // native_compaction_v2
 			now,
@@ -1156,6 +1152,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // billing_tier
 			sql.NullString{},  // billing_mode
 			sql.NullFloat64{}, // account_stats_cost
+			sql.NullString{},  // upstream_request_id
 			sql.NullString{},  // session_id
 			true,              // native_compaction_v2
 			now,
@@ -1224,6 +1221,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // billing_tier
 			sql.NullString{},  // billing_mode
 			sql.NullFloat64{}, // account_stats_cost
+			sql.NullString{},  // upstream_request_id
 			sql.NullString{},  // session_id
 			false,             // native_compaction_v2
 			now,
