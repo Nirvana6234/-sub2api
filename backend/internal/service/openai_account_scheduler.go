@@ -2881,7 +2881,44 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerForImages(
 // zeroing out capacity. The retry re-runs the exact same selection with the
 // quarantine checks bypassed, so healthy proxies always win the first pass
 // and quarantined ones only serve when nothing else can.
+// selectAccountWithScheduler 在原有选号栈之外加一道出口闸门：强制执行"选出的账号
+// 必须属于服务分组"这条不变量。
+//
+// 闸门放在这里而不是各条选号路径里，是因为该不变量原本散落在多处各查各的，仍然漏
+// 出了非成员账号（2026-09-20 生产实测：gpt-6-astra 请求 plus(2) 落到只属 gpt-pro(34)
+// 的账号 320，共 10 次）。命中越界时作废本次选号，并在排除该账号后重选一次；
+// 重选刻意不带会话锚点，避免同一条越界的粘性绑定再次把它选回来。
 func (s *OpenAIGatewayService) selectAccountWithScheduler(
+	ctx context.Context,
+	groupID *int64,
+	previousResponseID string,
+	sessionHash string,
+	requestedModel string,
+	excludedIDs map[int64]struct{},
+	requiredTransport OpenAIUpstreamTransport,
+	requiredCapability OpenAIEndpointCapability,
+	requiredImageCapability OpenAIImagesCapability,
+	requireCompact bool,
+	platform string,
+	previousResponseCanMove bool,
+	useUpstreamTokenCost bool,
+) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+	selection, decision, err := s.selectAccountWithSchedulerInner(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, previousResponseCanMove, useUpstreamTokenCost)
+	if err != nil || selection == nil || selection.Account == nil {
+		return selection, decision, err
+	}
+	if !s.selectionEscapedRequestedGroup(ctx, groupID, sessionHash, previousResponseID, requestedModel, selection) {
+		return selection, decision, err
+	}
+	retryExcluded := cloneExcludedAccountIDs(excludedIDs)
+	if retryExcluded == nil {
+		retryExcluded = make(map[int64]struct{})
+	}
+	retryExcluded[selection.Account.ID] = struct{}{}
+	return s.selectAccountWithSchedulerInner(ctx, groupID, previousResponseID, "", requestedModel, retryExcluded, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, previousResponseCanMove, useUpstreamTokenCost)
+}
+
+func (s *OpenAIGatewayService) selectAccountWithSchedulerInner(
 	ctx context.Context,
 	groupID *int64,
 	previousResponseID string,

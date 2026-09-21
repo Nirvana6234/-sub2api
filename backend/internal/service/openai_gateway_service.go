@@ -474,6 +474,9 @@ type OpenAIGatewayService struct {
 	openaiLatencyTracker           *openAILatencyTracker
 	openaiLatencyTrackerOnce       sync.Once
 	openaiFallbackStickyStates     sync.Map // key: source group ID, value: *openAIFallbackStickyState
+	// openaiSelectionGroupAuditLogAt 为越界审计日志做 (分组, 账号) 级节流。
+	// key: "groupID:accountID"，value: *atomic.Int64（上次输出的毫秒时间戳）
+	openaiSelectionGroupAuditLogAt sync.Map
 	openaiModelTransient           *openAIAccountModelTransientState
 	openaiProxyStreamCircuit       *openAIProxyStreamCircuit
 	openaiProxyStreamFailOpenLogAt atomic.Int64
