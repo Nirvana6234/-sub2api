@@ -3759,6 +3759,21 @@ func openAISchedulingRate(account *Account, now time.Time, oauthSchedulingRateMu
 	if account != nil && account.IsOpenAIOAuthLike() {
 		return oauthSchedulingRateMultiplier, true
 	}
+	// 手工上游倍率是管理员的权威声明，优先于探测——记账（AccountCostRateMultiplier）
+	// 和兜底准入（fallbackPoolRejectReasonWhenSourcing）都是这个口径，调度的成本
+	// 因子必须同源，否则"按哪个号便宜来调度"和"按哪个号便宜来扣费"会各说各话。
+	//
+	// 2026-09-20 生产实测：plus(2) 的 7 个候选里 6 个自营号都填了手工倍率
+	// （0.04~0.075），而"填了手工倍率就不再探测"是 upstreamBillingProbeShouldRun
+	// 的既定规则，于是它们永远没有探测快照，只有中转号 221 有。
+	// openAIUpstreamCostFactors 要求至少两个样本，样本不足就全员中性——管理员标注
+	// 的便宜号一分加成都拿不到；而只要再多一个中转号探测成功，成本权重就变成只在
+	// 中转号之间分配，等于把流量往中转号上推。
+	if account != nil {
+		if rate, ok := upstreamBillingManualRateMultiplier(account.Extra); ok {
+			return rate, true
+		}
+	}
 	return openAIFreshUpstreamBillingRate(account, now)
 }
 
