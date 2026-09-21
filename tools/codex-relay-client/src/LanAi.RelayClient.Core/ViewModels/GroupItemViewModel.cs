@@ -19,7 +19,7 @@ public sealed partial class GroupItemViewModel : ObservableObject
         Description = "按模型与所选策略自动选择可用分组";
         Platform = "openai";
         RateLabel = "自动";
-        RateDescription = "倍率相当于官方计价的比例，实际数值取决于每次请求自动选择的分组";
+        RateDescription = "实际倍率取决于每次请求自动选择的分组";
         IsAutomatic = true;
     }
 
@@ -39,8 +39,8 @@ public sealed partial class GroupItemViewModel : ObservableObject
             ? "订阅"
             : FormatMultiplier(rate.EffectiveMultiplier);
         RateDescription = group.IsSubscription
-            ? "订阅额度按服务端订阅规则计算"
-            : $"相当于官方计价的倍率：每 $1 官方计价的 Token 额度，扣除 ￥{rate.EffectiveMultiplier.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture)} 账户余额";
+            ? "订阅分组：消耗订阅额度，不按倍率扣账户余额"
+            : $"1 Token 计价相当于官方标准计价的 {rate.EffectiveMultiplier.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)} 倍";
 
         // Only shown when a user-specific rate actually differs from the group's
         // own; the panel strikes the default through in that case and shows a
