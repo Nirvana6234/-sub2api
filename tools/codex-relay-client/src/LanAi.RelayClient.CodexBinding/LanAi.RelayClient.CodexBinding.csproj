@@ -16,6 +16,14 @@
     <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
   </PropertyGroup>
 
+  <!-- Same package and version as AiSwitch.Infrastructure, so it is already restored
+       and there is one SQLite build to reason about rather than two. Only the session
+       migrator uses it: Codex keeps each conversation's provider in its own state
+       database, and there is no other way to reach it. -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.28" />
+  </ItemGroup>
+
   <ItemGroup>
     <InternalsVisibleTo Include="LanAi.RelayClient.CodexBinding.Tests" />
   </ItemGroup>

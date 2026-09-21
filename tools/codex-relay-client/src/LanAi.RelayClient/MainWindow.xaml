@@ -31,11 +31,17 @@
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,6">
                 <TextBlock Text="{Binding ClientUpdate.CurrentVersionText, ElementName=RootWindow}"
                            Foreground="#9CA3AF" FontSize="11" />
+                <!-- Same click handler as the dashboard's 检查更新: offers the update rather
+                     than only opening the download page. -->
                 <Button Content="{Binding ClientUpdate.UpdateMessage, ElementName=RootWindow}"
-                        Click="OpenUpdatePage_OnClick" Background="Transparent" BorderThickness="0"
+                        Click="CheckUpdate_OnClick" Background="Transparent" BorderThickness="0"
+                        IsEnabled="{Binding ClientUpdate.IsApplyingUpdate, ElementName=RootWindow, Converter={StaticResource InverseBool}}"
                         Foreground="#2563EB" FontSize="11" Padding="8,0,0,0"
                         Visibility="{Binding ClientUpdate.HasUpdate, ElementName=RootWindow, Converter={StaticResource BoolToVisibility}}" />
             </StackPanel>
+            <TextBlock Text="{Binding ClientUpdate.DownloadProgressText, ElementName=RootWindow}"
+                       Visibility="{Binding ClientUpdate.HasDownloadProgress, ElementName=RootWindow, Converter={StaticResource BoolToVisibility}}"
+                       HorizontalAlignment="Center" Foreground="#9CA3AF" FontSize="11" Margin="0,0,0,6" />
             <TextBlock Text="登录后即可使用"
                        Foreground="#9CA3AF" FontSize="12"
                        HorizontalAlignment="Center" Margin="0,0,0,24" />
@@ -210,15 +216,22 @@
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
                     <TextBlock Text="{Binding ClientUpdate.CurrentVersionText, ElementName=RootWindow}"
                                Foreground="#9CA3AF" FontSize="11" VerticalAlignment="Center" />
-                    <Button Content="检查更新" Click="CheckUpdate_OnClick" Background="Transparent"
+                    <!-- One button: 检查更新 until something is found, then the version it
+                         found — both labels trigger the same check-then-offer flow. Disabled
+                         while an update is being downloaded or applied, so a second click
+                         cannot start a second one. -->
+                    <Button Content="{Binding ClientUpdate.CheckUpdateButtonLabel, ElementName=RootWindow}"
+                            Click="CheckUpdate_OnClick" Background="Transparent"
+                            IsEnabled="{Binding ClientUpdate.IsApplyingUpdate, ElementName=RootWindow, Converter={StaticResource InverseBool}}"
                             BorderThickness="0" Foreground="#2563EB" FontSize="11" Padding="10,0,0,0" />
                     <Button Content="联系我们" Click="OpenContactPage_OnClick" Background="Transparent"
                             BorderThickness="0" Foreground="#2563EB" FontSize="11" Padding="10,0,0,0" />
                 </StackPanel>
-                <Button Content="{Binding ClientUpdate.UpdateMessage, ElementName=RootWindow}"
-                        Click="OpenUpdatePage_OnClick" Background="Transparent" BorderThickness="0"
-                        Foreground="#2563EB" FontSize="11" Padding="0,4,0,0"
-                        Visibility="{Binding ClientUpdate.HasUpdate, ElementName=RootWindow, Converter={StaticResource BoolToVisibility}}" />
+                <!-- Windows-only in practice: the mac path opens Terminal and returns almost
+                     at once, so this shows for a moment at 0% at worst. -->
+                <TextBlock Text="{Binding ClientUpdate.DownloadProgressText, ElementName=RootWindow}"
+                           Visibility="{Binding ClientUpdate.HasDownloadProgress, ElementName=RootWindow, Converter={StaticResource BoolToVisibility}}"
+                           HorizontalAlignment="Center" Foreground="#9CA3AF" FontSize="11" Margin="0,4,0,0" />
             </StackPanel>
 
             <ScrollViewer VerticalScrollBarVisibility="Auto">
@@ -459,9 +472,14 @@
 
                             <TextBlock Text="切换分组" Foreground="#6B7280" FontSize="12" Margin="0,12,0,4" />
                             <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
                             <ComboBox ItemsSource="{Binding Groups}"
                                       SelectedItem="{Binding SelectedGroup, Mode=TwoWay}"
                                       IsEnabled="{Binding GroupsReady}"
+                                      PreviewMouseWheel="DisableComboBoxWheel"
                                       Padding="8,6">
                                 <!-- Collapsed state: name and rate on one line. -->
                                 <ComboBox.ItemTemplate>
@@ -469,6 +487,25 @@
                                         <StackPanel Margin="0,2">
                                             <DockPanel>
                                                 <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                                                <!-- Except 自动分组: it has no single account pool of its
+                                                     own to list, only whichever candidate a request
+                                                     happens to land on. -->
+                                                <Button Content="模型" Click="ShowGroupModels_OnClick"
+                                                        Background="Transparent" BorderThickness="0"
+                                                        Foreground="#2563EB" FontSize="11"
+                                                        Padding="6,0,0,0" Margin="6,0,0,0"
+                                                        VerticalAlignment="Center">
+                                                    <Button.Style>
+                                                        <Style TargetType="Button">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsAutomatic}" Value="True">
+                                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Button.Style>
+                                                </Button>
                                                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                                                     <!-- The group default, struck through, only when a
                                                          personal rate actually differs from it. -->
@@ -514,13 +551,26 @@
                                        Margin="10,0,0,0" VerticalAlignment="Center"
                                        IsHitTestVisible="False"
                                        Visibility="{Binding HasNoGroupSelected, Converter={StaticResource BoolToVisibility}}" />
+
+                            <!-- Reopens the automatic-routing dialog. Choosing 自动分组 only
+                                 asks once, while nothing is configured; this is how to
+                                 change it later. Shown only while 自动分组 is the selected
+                                 entry — it edits the automatic candidate set, which a
+                                 fixed group has none of. -->
+                            <Button Grid.Column="1" Content="配置" Margin="8,0,0,0" Padding="12,6"
+                                    VerticalAlignment="Stretch"
+                                    Visibility="{Binding ShowConfigureAutoGroupButton, Converter={StaticResource BoolToVisibility}}"
+                                    IsEnabled="{Binding GroupsReady}"
+                                    ToolTip="设置自动分组使用哪些分组和选择策略"
+                                    Click="ConfigureAutoGroup_Click" />
                             </Grid>
 
                             <TextBlock Text="{Binding GroupMessage}" TextWrapping="Wrap"
                                        Foreground="#2563EB" FontSize="12" Margin="0,8,0,0"
                                        Visibility="{Binding HasGroupMessage, Converter={StaticResource BoolToVisibility}}" />
 
-                            <!-- Claude 模型与思考强度偏好（仅 Claude 分组可见）-->
+                            <!-- Claude 模型与思考强度偏好：只跟随上面 Codex 的分组选择，插件用哪个
+                                 Claude 分组（下方）不影响这里。 -->
                             <StackPanel Margin="0,12,0,0"
                                         Visibility="{Binding IsClaudeGroup, Converter={StaticResource BoolToVisibility}}">
                                 <TextBlock Text="Claude 模型设置" FontWeight="SemiBold" Foreground="#6B7280" FontSize="12" Margin="0,0,0,6"/>
@@ -540,6 +590,39 @@
                                               Padding="8,6"/>
                                 </Grid>
                                 <TextBlock Text="思考强度影响回答深度与速度" Foreground="#9CA3AF" FontSize="11" Margin="0,4,0,0"/>
+                            </StackPanel>
+
+                            <!-- A second path beside the group above: Claude Code and the VS
+                                 Code extension built on it get a Claude group of their own,
+                                 independent of the one Codex is on. Off by default, since it
+                                 writes files outside this client; put back on exit. -->
+                            <CheckBox Content="支持插件（VS Code）等" IsChecked="{Binding PluginSupportEnabled}"
+                                      IsEnabled="{Binding CanConfigurePluginSupport}"
+                                      ToolTip="同时配置 Claude Code 及其 VS Code 插件走共飞，可单独选择 Claude 分组；仅客户端运行期间有效，退出时自动还原"
+                                      Foreground="#374151" Margin="0,12,0,0" />
+                            <StackPanel Margin="0,6,0,0"
+                                        Visibility="{Binding PluginSupportEnabled, Converter={StaticResource BoolToVisibility}}">
+                                <TextBlock Text="插件使用的 Claude 分组" FontWeight="SemiBold" Foreground="#6B7280" FontSize="12" Margin="0,0,0,6"/>
+                                <ComboBox ItemsSource="{Binding ClaudePluginGroups}"
+                                          SelectedItem="{Binding SelectedClaudePluginGroup, Mode=TwoWay}"
+                                          DisplayMemberPath="DisplayText" Padding="8,6"
+                                          PreviewMouseWheel="DisableComboBoxWheel"
+                                          Visibility="{Binding HasClaudePluginGroups, Converter={StaticResource BoolToVisibility}}"/>
+                                <TextBlock Text="该账号没有可用的 Claude 分组" Foreground="#9CA3AF" FontSize="12">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding HasClaudePluginGroups}" Value="True">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <TextBlock Text="{Binding PluginSupportStatus}" TextWrapping="Wrap"
+                                           Foreground="#9CA3AF" FontSize="11" Margin="0,4,0,0"
+                                           Visibility="{Binding HasPluginSupportStatus, Converter={StaticResource BoolToVisibility}}"/>
                             </StackPanel>
                         </StackPanel>
                     </Border>

@@ -149,8 +149,14 @@ public partial class App : Application
             session,
             relay.GetPublicSettingsAsync,
             lastAccount: new LastAccountPreferenceStore(ClientOptions.ServerAddress));
+        // A client of its own, not the one RelayServerClient wraps: that one refuses to
+        // follow a redirect (see LocalPawRelay), which is exactly what
+        // api/v1/download/client answers with. This request also carries no account
+        // session — the download route needs none — so nothing is lost by keeping it
+        // separate.
         var clientUpdate = new ClientUpdateViewModel(
-            new ClientVersionChecker(relay.GetPublicSettingsAsync, ClientOptions.CurrentVersion).CheckAsync);
+            new ClientVersionChecker(relay.GetPublicSettingsAsync, ClientOptions.CurrentVersion).CheckAsync,
+            new ClientSelfUpdater(new HttpClient(), new ClientRelaunchHost()).ApplyAsync);
 
         var keyNaming = new ManagedKeyNaming(new InstallId());
         var codexConfig = new CodexConfigWriter(
@@ -158,6 +164,12 @@ public partial class App : Application
             SecureStorage.CreateSnapshotProtector(),
             AppPaths.CodexSnapshotRoot,
             AppPaths.CodexAuthSnapshotFile);
+
+        // Keeps the user's earlier conversations listed and reachable while Codex is
+        // pointed at the relay. See the class for why Codex loses them otherwise.
+        var codexSessions = new CodexSessionProviderMigrator(
+            new CodexPaths(),
+            AppPaths.CodexSessionBackupRoot);
 
         var contextFilterUsage = new ContextFilterUsageStore();
 
@@ -167,7 +179,12 @@ public partial class App : Application
         var localRelay = new LocalPawRelay(
             ClientOptions.ServerAddress, session.GetAccessTokenAsync,
             (before, saved) => contextFilterUsage.Add(before, saved),
-            onAccessTokenRejected: session.NotifyAccessTokenRejectedAsync);
+            onAccessTokenRejected: session.NotifyAccessTokenRejectedAsync,
+            endpointStore: new RelayEndpointStore());
+        // Claude Code's settings.json and the editor's own settings, put back on exit.
+        var pluginBinding = new ClaudePluginBinding(
+            new ClaudeCodeSettingsWriter(Path.Combine(AppPaths.PluginConfigRoot, "claude-settings-journal.json")),
+            new VsCodeSettingsEditor(Path.Combine(AppPaths.PluginConfigRoot, "vscode")));
 
         // Optional and platform-shaped by nothing more than whether the file is there.
         // The filter is a Windows binary, so the macOS build of this same head finds
@@ -188,7 +205,9 @@ public partial class App : Application
             CodexHosts.CreateLauncher(),
             CodexHosts.CreateRouteGuardHost(codexConfig),
             localRelay,
-            contextFilter);
+            contextFilter,
+            codexSessions,
+            pluginBinding);
 
         var dashboard = new DashboardViewModel(
             relay,
@@ -229,6 +248,18 @@ public partial class App : Application
         };
         dashboard.ConfigureAutoGroup = (settings, candidates) =>
             AutoGroupDialog.ShowAsync(shell, settings, candidates);
+        dashboard.ShowGroupModels = message => NoticeDialog.ShowNoticeAsync(shell, message);
+
+        clientUpdate.ConfirmUpdate = message => ConfirmDialog.AskAsync(shell, message, confirmLabel: "更新");
+        clientUpdate.ShowMessage = message => NoticeDialog.ShowNoticeAsync(shell, message);
+        clientUpdate.RestartForUpdate = async () =>
+        {
+            // The same teardown 退出 performs: the managed key, the plug-ins'
+            // configuration and the relay must all be put back before this process
+            // disappears out from under the helper waiting to replace it.
+            await _shutdown!.ReleaseAsync().ConfigureAwait(true);
+            desktopLifetime.Shutdown();
+        };
 
         var signInView = new SignInView(new SignInPageViewModel(signIn, clientUpdate), safeAsync);
 

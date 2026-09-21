@@ -39,8 +39,8 @@ public sealed partial class GroupItemViewModel : ObservableObject
             ? "订阅"
             : FormatMultiplier(rate.EffectiveMultiplier);
         RateDescription = group.IsSubscription
-            ? "订阅额度按服务端订阅规则计算"
-            : $"每 $1 Token 额度扣除 ￥{rate.EffectiveMultiplier.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture)} 账户余额";
+            ? "订阅分组：消耗订阅额度，不按倍率扣账户余额"
+            : $"1 Token 计价相当于官方标准计价的 {rate.EffectiveMultiplier.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)} 倍";
 
         // Only shown when a user-specific rate actually differs from the group's
         // own; the panel strikes the default through in that case and shows a
@@ -72,7 +72,10 @@ public sealed partial class GroupItemViewModel : ObservableObject
     /// <summary>The multiplier in force, or "订阅" for subscription groups.</summary>
     public string RateLabel { get; }
 
-    /// <summary>Explains the account-balance deduction for one dollar of Token quota.</summary>
+    /// <summary>
+    /// Explains what the multiplier means: a ratio against official pricing, plus the concrete
+    /// account-balance deduction for one dollar of official-priced Token quota.
+    /// </summary>
     public string RateDescription { get; }
 
     public bool HasRateDescription => !string.IsNullOrWhiteSpace(RateDescription);

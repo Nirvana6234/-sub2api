@@ -1,6 +1,5 @@
 using LanAi.RelayClient.Server;
 using LanAi.RelayClient.Services;
-using LanAi.RelayClient.ViewModels;
 using Xunit;
 
 namespace LanAi.RelayClient.Tests;
@@ -8,26 +7,88 @@ namespace LanAi.RelayClient.Tests;
 public sealed class ClientVersionCheckerTests
 {
     private const string DownloadPage = ClientOptions.ServerAddress + "download";
+    private const string WindowsPackagePage = ClientOptions.ServerAddress + "api/v1/download/client";
 
     private static Func<CancellationToken, Task<PublicSettings>> Serving(
         string? windows = null,
         string? mac = null,
+        string? macPackageUrl = null,
         bool downloadEnabled = true) =>
         _ => Task.FromResult(new PublicSettings(
             clientDownloadEnabled: downloadEnabled,
             clientLatestVersion: windows,
-            clientLatestVersionMac: mac));
+            clientLatestVersionMac: mac,
+            clientDownloadDirectUrlMac: macPackageUrl));
 
     [Fact]
     public async Task OffersTheWindowsVersionWhenItIsNewer()
     {
         var checker = new ClientVersionChecker(Serving(windows: "0.2"), new Version(0, 1), isMacOS: false);
 
-        ClientUpdateInfo? update = await checker.CheckAsync();
+        ClientCheckResult result = await checker.CheckAsync();
 
-        Assert.NotNull(update);
-        Assert.Equal("Ver0.2", update.VersionLabel);
-        Assert.Equal(new Uri(DownloadPage), update.DownloadPage);
+        Assert.Equal(ClientCheckStatus.Available, result.Status);
+        Assert.Equal("Ver0.2", result.Update?.VersionLabel);
+        Assert.Equal(new Uri(DownloadPage), result.Update?.DownloadPage);
+    }
+
+    /// <summary>
+    /// Windows gets a channel it can act on by itself — a package URL, and nothing more is
+    /// needed to try a self-replace.
+    /// </summary>
+    [Fact]
+    public async Task WindowsGetsASelfReplaceChannelPointedAtTheDownloadProxy()
+    {
+        var checker = new ClientVersionChecker(Serving(windows: "0.2"), new Version(0, 1), isMacOS: false);
+
+        ClientUpdateInfo? update = (await checker.CheckAsync()).Update;
+
+        Assert.Equal(ClientUpdateChannel.SelfReplace, update?.Channel);
+        Assert.Equal(new Uri(WindowsPackagePage), update?.PackageUrl);
+        Assert.Null(update?.TerminalCommand);
+    }
+
+    /// <summary>
+    /// The install script is derived from the package link's own directory — same convention
+    /// as ClientDownloadView.vue's macInstallScriptUrl, since the release pipeline publishes
+    /// both under one path.
+    /// </summary>
+    [Fact]
+    public async Task MacGetsATerminalCommandDerivedFromThePackageDirectory()
+    {
+        var checker = new ClientVersionChecker(
+            Serving(mac: "0.2", macPackageUrl: "https://download.example.com/downloads/client_v0.2_macos-arm64.tar.gz"),
+            new Version(0, 1),
+            isMacOS: true);
+
+        ClientUpdateInfo? update = (await checker.CheckAsync()).Update;
+
+        Assert.Equal(ClientUpdateChannel.RunInTerminal, update?.Channel);
+        Assert.Equal(
+            "curl -fsSL https://download.example.com/downloads/install-mac.sh | bash",
+            update?.TerminalCommand);
+        Assert.Null(update?.PackageUrl);
+    }
+
+    /// <summary>
+    /// No package link means mac has not shipped yet — offering a command that 404s is worse
+    /// than sending the user to the download page, which says so.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("not-a-url")]
+    [InlineData("javascript:alert(1)")]
+    public async Task MacFallsBackToTheDownloadPageWithoutAUsablePackageLink(string? macPackageUrl)
+    {
+        var checker = new ClientVersionChecker(
+            Serving(mac: "0.2", macPackageUrl: macPackageUrl), new Version(0, 1), isMacOS: true);
+
+        ClientUpdateInfo? update = (await checker.CheckAsync()).Update;
+
+        Assert.Equal(ClientUpdateChannel.OpenDownloadPage, update?.Channel);
+        Assert.Null(update?.TerminalCommand);
+        Assert.Null(update?.PackageUrl);
     }
 
     /// <remarks>
@@ -42,11 +103,11 @@ public sealed class ClientVersionCheckerTests
     public async Task EachPlatformReadsItsOwnField(bool isMacOS, string expected)
     {
         var checker = new ClientVersionChecker(
-            Serving(windows: "0.5", mac: "0.3"), new Version(0, 1), isMacOS);
+            Serving(windows: "0.5", mac: "0.3", macPackageUrl: "https://d.example/x.tar.gz"), new Version(0, 1), isMacOS);
 
-        ClientUpdateInfo? update = await checker.CheckAsync();
+        ClientCheckResult result = await checker.CheckAsync();
 
-        Assert.Equal(expected, update?.VersionLabel);
+        Assert.Equal(expected, result.Update?.VersionLabel);
     }
 
     /// <remarks>
@@ -66,7 +127,7 @@ public sealed class ClientVersionCheckerTests
     {
         var checker = new ClientVersionChecker(Serving(windows: advertised), new Version(0, 2), isMacOS: false);
 
-        Assert.Null(await checker.CheckAsync());
+        Assert.Equal(ClientCheckStatus.UpToDate, (await checker.CheckAsync()).Status);
     }
 
     [Theory]
@@ -79,7 +140,9 @@ public sealed class ClientVersionCheckerTests
     {
         var checker = new ClientVersionChecker(Serving(windows: advertised), new Version(0, 2), isMacOS: false);
 
-        Assert.Null(await checker.CheckAsync());
+        ClientCheckResult result = await checker.CheckAsync();
+        Assert.Equal(ClientCheckStatus.UpToDate, result.Status);
+        Assert.Null(result.Update);
     }
 
     /// <remarks>
@@ -93,46 +156,28 @@ public sealed class ClientVersionCheckerTests
         var checker = new ClientVersionChecker(
             Serving(windows: "9.9", downloadEnabled: false), new Version(0, 2), isMacOS: false);
 
-        Assert.Null(await checker.CheckAsync());
+        Assert.Equal(ClientCheckStatus.ChannelDisabled, (await checker.CheckAsync()).Status);
     }
 
     /// <remarks>
-    /// Deliberately silent: this feeds a non-blocking banner, and a client that cannot
-    /// reach the relay has worse things to report. The cost of that choice is that a
-    /// broken version channel is indistinguishable from being up to date — which is
-    /// exactly how the previous one stayed broken in production unnoticed.
+    /// Distinct from <see cref="NoUpdateIsOfferedWhileTheDownloadPageIsDisabled"/> and
+    /// <see cref="ATrailingZeroDoesNotOutrankTheSameVersion"/> on purpose: a button the user
+    /// just pressed must not describe a network failure the same way it describes "you are
+    /// current" or "downloads are off" — that silence is exactly how the previous version
+    /// channel stayed broken in production, unnoticed, because every failure path answered
+    /// "no update" and nothing distinguished them.
     /// </remarks>
     [Fact]
-    public async Task AFailedSettingsFetchIsTreatedAsNoUpdate()
+    public async Task AFailedSettingsFetchIsToldApartFromNoUpdate()
     {
         var checker = new ClientVersionChecker(
             _ => throw new RelayApiException(RelayFailure.NetworkUnreachable, "网络不可用"),
             new Version(0, 2),
             isMacOS: false);
 
-        Assert.Null(await checker.CheckAsync());
-    }
-
-    /// <remarks>
-    /// The displayed version is asserted against <see cref="ClientOptions.CurrentVersion"/>
-    /// rather than a literal. It used to read <c>"Ver0.1"</c>, which pinned the
-    /// hardcoded string the view model returned — so the test passed for exactly as
-    /// long as nobody released anything. Written this way it fails only if the screen
-    /// and the update check disagree, which is the thing worth catching.
-    /// </remarks>
-    [Fact]
-    public async Task UpdateViewModelShowsThisBuildsVersionAndTheOfferedOne()
-    {
-        var update = new ClientUpdateInfo(new Version(0, 3), new Uri(DownloadPage));
-        var viewModel = new ClientUpdateViewModel(_ => Task.FromResult<ClientUpdateInfo?>(update));
-
-        await viewModel.CheckAsync();
-
-        Version current = ClientOptions.CurrentVersion;
-        Assert.Equal($"Ver{current.Major}.{current.Minor}", viewModel.CurrentVersionText);
-        Assert.True(viewModel.HasUpdate);
-        Assert.Equal("发现新版本 Ver0.3，点击更新", viewModel.UpdateMessage);
-        Assert.Equal(update.DownloadPage, viewModel.DownloadPage);
+        ClientCheckResult result = await checker.CheckAsync();
+        Assert.Equal(ClientCheckStatus.CheckFailed, result.Status);
+        Assert.Null(result.Update);
     }
 
     /// <remarks>
@@ -147,6 +192,6 @@ public sealed class ClientVersionCheckerTests
         var checker = new ClientVersionChecker(
             Serving(windows: $"{current.Major}.{current.Minor}"), current, isMacOS: false);
 
-        Assert.Null(await checker.CheckAsync());
+        Assert.Equal(ClientCheckStatus.UpToDate, (await checker.CheckAsync()).Status);
     }
 }

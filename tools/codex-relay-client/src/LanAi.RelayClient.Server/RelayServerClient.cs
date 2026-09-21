@@ -226,6 +226,16 @@ public sealed class RelayServerClient : IRelayServerClient
             accessToken,
             cancellationToken).ConfigureAwait(false);
 
+    public Task<ModelPlazaResponse> GetModelPlazaAsync(
+        string? accessToken,
+        CancellationToken cancellationToken = default) =>
+        SendAsync<ModelPlazaResponse>(
+            HttpMethod.Get,
+            "model-plaza",
+            body: null,
+            accessToken,
+            cancellationToken);
+
     public Task<PawAutoGroupSettings> GetPawAutoGroupAsync(
         string accessToken,
         CancellationToken cancellationToken = default) =>

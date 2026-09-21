@@ -238,6 +238,19 @@ public partial class DashboardView : UserControl
     private void Refresh_OnClick(object? sender, RoutedEventArgs e) =>
         _ = _safeAsync?.RunAsync(RefreshAndMonitorAsync);
 
+    private void ConfigureAutoGroup_OnClick(object? sender, RoutedEventArgs e) =>
+        _ = _safeAsync?.RunAsync(() => _page?.Dashboard.ConfigureAutoGroupAsync() ?? Task.CompletedTask);
+
+    private void ShowGroupModels_OnClick(object? sender, RoutedEventArgs e)
+    {
+        if ((sender as Control)?.DataContext is not GroupItemViewModel group)
+        {
+            return;
+        }
+
+        _ = _safeAsync?.RunAsync(() => _page?.Dashboard.ShowGroupModelsAsync(group) ?? Task.CompletedTask);
+    }
+
     private void StartCodex_OnClick(object? sender, RoutedEventArgs e) =>
         _ = _safeAsync?.RunAsync(StartOrInstallCodexAsync);
 
@@ -359,16 +372,8 @@ public partial class DashboardView : UserControl
         AnnouncementsRequested?.Invoke(this, EventArgs.Empty);
 
     private void CheckUpdate_OnClick(object? sender, RoutedEventArgs e) =>
-        _ = _safeAsync?.RunAsync(() => _page!.ClientUpdate.CheckAsync());
+        _ = _safeAsync?.RunAsync(() => _page!.ClientUpdate.CheckAndOfferUpdateAsync());
 
     private void OpenContactPage_OnClick(object? sender, RoutedEventArgs e) =>
         BrowserLauncher.TryOpenRelayPage("contact");
-
-    private void OpenUpdatePage_OnClick(object? sender, RoutedEventArgs e)
-    {
-        if (_page?.ClientUpdate.DownloadPage is { } page)
-        {
-            BrowserLauncher.TryOpen(page);
-        }
-    }
 }

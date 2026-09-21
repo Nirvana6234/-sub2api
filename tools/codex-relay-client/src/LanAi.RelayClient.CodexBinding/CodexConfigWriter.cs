@@ -260,6 +260,88 @@ public sealed class CodexConfigWriter
         }
     }
 
+    /// <summary>The provider Codex falls back to when <c>config.toml</c> selects none.</summary>
+    public const string DefaultProviderId = "openai";
+
+    /// <summary>
+    /// The provider <c>config.toml</c> selects at top level, or null when it selects none.
+    /// </summary>
+    /// <remarks>
+    /// Read from the live file, so after a restore it names the user's own provider.
+    /// That is the point: conversations created while this client was in charge have no
+    /// earlier provider to go back to, and the only sensible home for them is whatever
+    /// the restored configuration will now list.
+    /// </remarks>
+    public string? ReadActiveProvider()
+    {
+        if (!File.Exists(_paths.ConfigPath))
+        {
+            return null;
+        }
+
+        foreach (string rawLine in SplitLines(File.ReadAllText(_paths.ConfigPath)))
+        {
+            string trimmed = rawLine.Trim();
+
+            // Top-level keys end at the first table header; a model_provider under a
+            // table belongs to that table, not to the file.
+            if (trimmed.StartsWith('[') && trimmed.EndsWith(']'))
+            {
+                return null;
+            }
+
+            if (IsAssignmentTo(rawLine, "model_provider"))
+            {
+                string value = trimmed.Substring(trimmed.IndexOf('=') + 1).TrimStart();
+                return ParseTomlString(value);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Reads one quoted TOML string off the front of <paramref name="value"/>; a trailing comment is ignored.</summary>
+    private static string? ParseTomlString(string value)
+    {
+        if (value.Length < 2)
+        {
+            return null;
+        }
+
+        char quote = value[0];
+        if (quote == '\'')
+        {
+            // Literal string: no escapes at all.
+            int end = value.IndexOf('\'', 1);
+            return end > 0 ? value[1..end] : null;
+        }
+
+        if (quote != '"')
+        {
+            return null;
+        }
+
+        var builder = new StringBuilder();
+        for (int i = 1; i < value.Length; i++)
+        {
+            char c = value[i];
+            if (c == '\\' && i + 1 < value.Length)
+            {
+                builder.Append(value[++i]);
+            }
+            else if (c == '"')
+            {
+                return builder.ToString();
+            }
+            else
+            {
+                builder.Append(c);
+            }
+        }
+
+        return null;
+    }
+
     private JsonObject ReadAuth()
     {
         if (!File.Exists(_paths.AuthPath))

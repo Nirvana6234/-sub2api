@@ -15,6 +15,7 @@ Codex 只接触本机随机 fake key；登录 JWT 和分组 ID 由客户端 Rela
 - **分组切换直接推给 Relay**，下一轮即生效；本机链路下没有服务端 key 可改分组。
 - 未选分组时**拒绝启动**，而不是启动后每轮静默失败。
 - **「启用上下文压缩」立即生效并记住选择**，不等下次启动（细节见下方 Context Filter 一节）。
+- **历史会话跟随共飞**：Codex 给每个会话记下创建时的 provider，列表和恢复都认这个标记。启动前把旧会话归入 `gongfei`，退出时按记录还回去，详见下方「历史会话归属」。
 - **CDP 注入（官方客户端内的状态条与限额检测）已移除**。它在现行 ChatGPT 上基本连不上，每次启动往日志里灌一段栈，而它从来不是必需功能。`config.toml` 路由守护**保留**，并且现在 Windows 和 macOS 都有——它才是防「官方登录把共飞路由冲掉」的那一道。
 
 > **macOS 走同一条链路**——出货头只有一个（Avalonia），两个平台共用同一份接线。
@@ -117,6 +118,38 @@ python packaging/check-server-address.py <临时目录>/LanAi.RelayClient.App.ex
 `context-filter.exe` 要放在**子目录** `context-filter\` 下（`App.axaml.cs` 按 `AppContext.BaseDirectory\context-filter\context-filter.exe` 找它，不跟主 exe 平铺），产物结构照 workflow 里"打包 Windows zip"那一步的 staging 布局来。两个头现在用的是同一套子目录约定（WPF 头本来就是子目录，2026-09-17 起 Avalonia 头也改成子目录，不再是两边各一种）。
 
 之前 `packaging/publish-windows.ps1` 想省掉这几步，但发布的是 `LanAi.RelayClient`（WPF 头，仅本机开发用，见上方目录说明），已删除。**不要再写第二个打包脚本**：本地要自动化就直接照上面几行封一个函数，别让它跟 CI 的步骤分叉。
+
+## 历史会话归属
+
+**问题**：Codex 在 `~/.codex/state_N.sqlite` 的 `threads.model_provider` 里记下每个会话创建时的 provider id。这个标记有两个后果（用本机 `codex-app-server 0.153.0` 对真实会话库实测）：
+
+- 会话列表**只显示标记与当前 `model_provider` 一致的会话**。同一份库，config 指向 `gongfei` 只看到 3 个，回落到默认 `openai` 是 0 个，全部是 63 个。
+- 恢复会话时**用会话自己的标记**，而不是当前的：走的是那个 provider 自己那一节的 `base_url`（绕过本客户端），那一节被删了就直接报 `Model provider ... not found`。
+
+所以只把默认 provider 改成 `gongfei`，旧会话要么看不见，要么继续连着旧地址。
+
+**做法**（`CodexSessionProviderMigrator`）：
+
+| 时机 | 动作 |
+|---|---|
+| 写入配置之后、拉起 Codex 之前 | 把标记不是 `gongfei` 的会话改成 `gongfei` |
+| 还原用户原始配置之后 | 按记录把它们改回去；在共飞下新建的会话没有"原来"，交给还原后配置所选的 provider（没选则 `openai`） |
+
+- **只改数据库**。实测恢复以库里的标记为准，rollout 文件里重复的那份不参与，所以不动磁盘上的会话文件。
+- **只动侧边栏看得见的**：不碰已归档、子代理、内部会话和 ambient 建议。还原时不加这个限制——归档会话之后被恢复也得能打开。
+- **可精确还原**：每个被改动会话的原标记在改之前先写入 `journal.json`，还原按记录逐个改回，而不是猜。
+- **不改时间戳**：只更新 `model_provider` 一列，列表顺序不变。
+- **先备份**：用 SQLite 自己的备份接口（WAL 下一致），只保留最新 1 份。**提交成功后才裁剪旧备份；没有改动就不留备份。**
+- **绝不阻止启动或退出**：没有会话库、结构不认识、Codex 正占着库（等待 3 秒后放弃）、库损坏，都只记日志并跳过，下次启动再试。
+
+位置：`%LOCALAPPDATA%\LanAi\RelayClient\codex-session-backup\`（`AppPaths.CodexSessionBackupRoot`），里面是最新一份 `state_N.sqlite` 备份和 `journal.json`。**不要放进 `codex-snapshot`**：那个目录在还原用户配置时会被清空，日记要活到还回去的那一刻。
+
+**手动恢复**：备份是完整的 SQLite 文件。要回到迁移之前，先退出 Codex，再用备份文件替换 `~/.codex/state_N.sqlite`（连同同名的 `-wal`、`-shm` 一并删除）。
+
+**已知边界**：
+- 不处理 Codex 运行期间新建的会话——它们在下次启动时才被归入。路由守护重写配置时也不触发迁移。
+- 只认 `state_数字.sqlite`，取数字最大的一份。Codex 若改了文件命名，会记为「没找到会话库」而跳过，不会误改别的文件。
+- 恢复行为是在 `codex-app-server 0.153.0` 上测的，桌面版内嵌的版本可能不同。
 
 ## 已修的两个真 bug（都由测试/契约核对抓到）
 

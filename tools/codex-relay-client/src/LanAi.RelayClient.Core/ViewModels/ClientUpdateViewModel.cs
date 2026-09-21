@@ -6,12 +6,36 @@ namespace LanAi.RelayClient.ViewModels;
 
 public sealed partial class ClientUpdateViewModel : ObservableObject
 {
-    private readonly Func<CancellationToken, Task<ClientUpdateInfo?>> _checkForUpdate;
+    private readonly Func<CancellationToken, Task<ClientCheckResult>> _checkForUpdate;
+    private readonly Func<ClientUpdateInfo, IProgress<double>?, CancellationToken, Task<ClientSelfUpdateResult>>? _applyUpdate;
 
-    public ClientUpdateViewModel(Func<CancellationToken, Task<ClientUpdateInfo?>> checkForUpdate)
+    /// <param name="applyUpdate">
+    /// Null keeps this view model usable for the passive banner alone — the sign-in surface
+    /// constructs one of these before the rest of the app exists to supply an updater.
+    /// <see cref="CheckAndOfferUpdateAsync"/> falls back to only informing the user when this
+    /// is absent, rather than offering a confirm dialog that would do nothing.
+    /// </param>
+    public ClientUpdateViewModel(
+        Func<CancellationToken, Task<ClientCheckResult>> checkForUpdate,
+        Func<ClientUpdateInfo, IProgress<double>?, CancellationToken, Task<ClientSelfUpdateResult>>? applyUpdate = null)
     {
         _checkForUpdate = checkForUpdate ?? throw new ArgumentNullException(nameof(checkForUpdate));
+        _applyUpdate = applyUpdate;
     }
+
+    /// <summary>Asks 是否更新, yes/no. Provided by the host, which owns the dialog APIs.</summary>
+    public Func<string, Task<bool>>? ConfirmUpdate { get; set; }
+
+    /// <summary>Shows a message with only an acknowledgement — the outcome of a check or an apply.</summary>
+    public Func<string, Task>? ShowMessage { get; set; }
+
+    /// <summary>
+    /// Releases this session's own state (the managed key, the plug-ins' configuration, the
+    /// managed relay) and ends the process — the same teardown 退出 already performs. Called
+    /// only once a Windows update has staged itself and is waiting for this process to exit; a
+    /// mac or fallback outcome never touches this, since nothing here needs the process gone.
+    /// </summary>
+    public Func<Task>? RestartForUpdate { get; set; }
 
     /// <summary>The version shown under the sign-in title.</summary>
     /// <remarks>
@@ -27,9 +51,19 @@ public sealed partial class ClientUpdateViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(HasUpdate))]
     [NotifyPropertyChangedFor(nameof(UpdateMessage))]
     [NotifyPropertyChangedFor(nameof(DownloadPage))]
+    [NotifyPropertyChangedFor(nameof(CheckUpdateButtonLabel))]
     private ClientUpdateInfo? update;
 
     public bool HasUpdate => Update is not null;
+
+    /// <summary>
+    /// One button's label, not two: 检查更新 and "发现新版本…" used to be separate controls
+    /// that did different things — the second only ever opened the download page, so
+    /// clicking what looked like the update banner never went through the confirm-and-apply
+    /// flow the other button had. Same control, same click handler; the label alone says
+    /// whether there is anything to offer yet.
+    /// </summary>
+    public string CheckUpdateButtonLabel => HasUpdate ? UpdateMessage : "检查更新";
 
     public string UpdateMessage => Update is null
         ? string.Empty
@@ -37,15 +71,138 @@ public sealed partial class ClientUpdateViewModel : ObservableObject
 
     public Uri? DownloadPage => Update?.DownloadPage;
 
+    /// <summary>
+    /// True while an update is being downloaded or applied. Disables the 检查更新 button — a
+    /// second click mid-download would start a second one — and gates the progress line below
+    /// it, which otherwise has nothing to show.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasDownloadProgress))]
+    private bool isApplyingUpdate;
+
+    /// <summary>0–100. Only meaningful for the Windows download; stays 0 for every other channel.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(DownloadProgressText))]
+    private double downloadProgressPercent;
+
+    public bool HasDownloadProgress => IsApplyingUpdate;
+
+    public string DownloadProgressText => $"正在下载… {DownloadProgressPercent:0}%";
+
+    /// <summary>
+    /// The check run once at startup (sign-in surface load). Silent on every outcome except
+    /// finding an update — a network hiccup or "you are current" must not interrupt every
+    /// single launch with a dialog, but an update the user has never been asked about is worth
+    /// one, right away, through the same confirm-and-apply flow 检查更新 uses.
+    /// </summary>
     public async Task CheckAsync(CancellationToken cancellationToken = default)
     {
+        ClientCheckResult result;
         try
         {
-            Update = await _checkForUpdate(cancellationToken).ConfigureAwait(true);
+            result = await _checkForUpdate(cancellationToken).ConfigureAwait(true);
         }
         catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException)
         {
-            Update = null;
+            result = new ClientCheckResult(ClientCheckStatus.CheckFailed);
+        }
+
+        Update = result.Status == ClientCheckStatus.Available ? result.Update : null;
+
+        if (result.Status == ClientCheckStatus.Available)
+        {
+            await OfferAsync(result.Update!, cancellationToken).ConfigureAwait(true);
         }
     }
+
+    /// <summary>
+    /// The 检查更新 button's own flow. Unlike <see cref="CheckAsync"/>, every outcome gets a
+    /// word — a check the user just asked for must not answer a network failure with silence,
+    /// the one thing that let a broken update channel go unnoticed in production before.
+    /// </summary>
+    public async Task CheckAndOfferUpdateAsync(CancellationToken cancellationToken = default)
+    {
+        ClientCheckResult result;
+        try
+        {
+            result = await _checkForUpdate(cancellationToken).ConfigureAwait(true);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException)
+        {
+            result = new ClientCheckResult(ClientCheckStatus.CheckFailed);
+        }
+
+        Update = result.Status == ClientCheckStatus.Available ? result.Update : null;
+
+        switch (result.Status)
+        {
+            case ClientCheckStatus.CheckFailed:
+                await InformAsync("检查更新失败，请稍后重试。").ConfigureAwait(true);
+                break;
+
+            // Both read the same to the user: there is nothing they can do about a switch the
+            // operator turned off, and offering to explain the difference is not worth a
+            // second message for what is, from here, one outcome — "nothing to install".
+            case ClientCheckStatus.ChannelDisabled:
+            case ClientCheckStatus.UpToDate:
+                await InformAsync("当前已经是最新版本。").ConfigureAwait(true);
+                break;
+
+            case ClientCheckStatus.Available:
+                await OfferAsync(result.Update!, cancellationToken).ConfigureAwait(true);
+                break;
+        }
+    }
+
+    private async Task OfferAsync(ClientUpdateInfo update, CancellationToken cancellationToken)
+    {
+        if (_applyUpdate is null)
+        {
+            // No updater wired up for this instance. Confirming would lead nowhere, so this
+            // says so instead of asking a question that does nothing on "yes".
+            await InformAsync($"发现新版本 {update.VersionLabel}，请前往下载页面手动更新。").ConfigureAwait(true);
+            return;
+        }
+
+        bool confirmed = ConfirmUpdate is not null &&
+            await ConfirmUpdate($"发现新版本 {update.VersionLabel}，是否现在更新？").ConfigureAwait(true);
+        if (!confirmed)
+        {
+            return;
+        }
+
+        // Progress<T> captures the calling (UI) SynchronizationContext at construction, so
+        // reports from the download's background read loop still land back here safely.
+        var progress = new Progress<double>(fraction => DownloadProgressPercent = Math.Round(fraction * 100));
+        IsApplyingUpdate = true;
+        DownloadProgressPercent = 0;
+        try
+        {
+            ClientSelfUpdateResult result = await _applyUpdate(update, progress, cancellationToken).ConfigureAwait(true);
+            switch (result.Outcome)
+            {
+                case ClientSelfUpdateOutcome.Restarting when RestartForUpdate is not null:
+                    await RestartForUpdate().ConfigureAwait(true);
+                    break;
+                case ClientSelfUpdateOutcome.OpenedTerminal:
+                    await InformAsync("已打开终端，请按提示完成安装。").ConfigureAwait(true);
+                    break;
+                case ClientSelfUpdateOutcome.OpenedDownloadPage:
+                    await InformAsync("已打开下载页面，请手动下载安装。").ConfigureAwait(true);
+                    break;
+                default:
+                    await InformAsync(result.Note ?? "更新失败，请稍后重试。").ConfigureAwait(true);
+                    break;
+            }
+        }
+        finally
+        {
+            // A failed download must not leave the button permanently disabled — see
+            // ClientSelfUpdaterTests for what "failed" covers.
+            IsApplyingUpdate = false;
+        }
+    }
+
+    private Task InformAsync(string message) =>
+        ShowMessage is not null ? ShowMessage(message) : Task.CompletedTask;
 }

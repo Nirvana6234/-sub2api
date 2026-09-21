@@ -128,6 +128,58 @@ public sealed record RelayGroup
     public bool IsSubscription => string.Equals(SubscriptionType, "subscription", StringComparison.Ordinal);
 }
 
+/// <summary>
+/// One model a group's pricing table lists — the group's whitelist, in practice: a model this
+/// client shows is one the account pool behind that group actually serves.
+/// </summary>
+/// <remarks>
+/// Deliberately thin. The full <c>PlazaModel</c> the web panel reads also carries pricing
+/// (<c>pricing</c>, <c>official_pricing</c>, time-of-day multipliers, ...) — none of which this
+/// client's "什么模型能用" tip needs, so only the name is mapped.
+/// </remarks>
+public sealed record PlazaModel
+{
+    [JsonConstructor]
+    public PlazaModel(string? name = null) => Name = name ?? string.Empty;
+
+    [JsonPropertyName("name")]
+    public string Name { get; init; } = string.Empty;
+}
+
+/// <summary>One group's entry in the model plaza: its id, and the models it serves.</summary>
+public sealed record ModelPlazaGroup
+{
+    [JsonConstructor]
+    public ModelPlazaGroup(long id = default, IReadOnlyList<PlazaModel>? models = null)
+    {
+        Id = id;
+        Models = models ?? Array.Empty<PlazaModel>();
+    }
+
+    [JsonPropertyName("id")]
+    public long Id { get; init; }
+
+    [JsonPropertyName("models")]
+    public IReadOnlyList<PlazaModel> Models { get; init; } = Array.Empty<PlazaModel>();
+}
+
+/// <summary>
+/// The relay's public, group-centred model price list (<c>GET /model-plaza</c>) — read here
+/// only for which models each group serves, the same data the web panel's model plaza page
+/// shows. 404s when the operator has not turned the model plaza on; see
+/// <c>DashboardViewModel.LoadGroupModelsAsync</c> for how that is told apart from every other
+/// reason the request could fail.
+/// </summary>
+public sealed record ModelPlazaResponse
+{
+    [JsonConstructor]
+    public ModelPlazaResponse(IReadOnlyList<ModelPlazaGroup>? groups = null) =>
+        Groups = groups ?? Array.Empty<ModelPlazaGroup>();
+
+    [JsonPropertyName("groups")]
+    public IReadOnlyList<ModelPlazaGroup> Groups { get; init; } = Array.Empty<ModelPlazaGroup>();
+}
+
 /// <summary>The hidden Playground Chat key's automatic routing configuration.</summary>
 public sealed record PawAutoGroupSettings
 {

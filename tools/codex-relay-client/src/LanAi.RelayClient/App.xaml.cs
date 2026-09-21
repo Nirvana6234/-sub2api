@@ -68,8 +68,12 @@ public partial class App : Application
             session,
             relay.GetPublicSettingsAsync,
             lastAccount: new LastAccountPreferenceStore(ClientOptions.ServerAddress));
+        // A client of its own, not _http: that one is only ever used with the relay's own
+        // base address, while api/v1/download/client answers with a redirect to an
+        // external host that this request has to be free to follow.
         var clientUpdate = new ClientUpdateViewModel(
-            new ClientVersionChecker(relay.GetPublicSettingsAsync, ClientOptions.CurrentVersion).CheckAsync);
+            new ClientVersionChecker(relay.GetPublicSettingsAsync, ClientOptions.CurrentVersion).CheckAsync,
+            new ClientSelfUpdater(new HttpClient(), new ClientRelaunchHost()).ApplyAsync);
         var registration = new RegistrationViewModel(
             session,
             relay,
@@ -90,12 +94,23 @@ public partial class App : Application
             SecureStorage.CreateSnapshotProtector(),
             AppPaths.CodexSnapshotRoot,
             AppPaths.CodexAuthSnapshotFile);
+
+        // Keeps the user's earlier conversations listed and reachable while Codex is
+        // pointed at the relay. See the class for why Codex loses them otherwise.
+        var codexSessions = new CodexSessionProviderMigrator(
+            new CodexPaths(),
+            AppPaths.CodexSessionBackupRoot);
         string contextFilterPath = Path.Combine(AppContext.BaseDirectory, "context-filter", "context-filter.exe");
         var contextFilterUsage = new ContextFilterUsageStore();
         var localRelay = new LocalPawRelay(
             ClientOptions.ServerAddress, session.GetAccessTokenAsync,
             (before, saved) => contextFilterUsage.Add(before, saved),
-            onAccessTokenRejected: session.NotifyAccessTokenRejectedAsync);
+            onAccessTokenRejected: session.NotifyAccessTokenRejectedAsync,
+            endpointStore: new RelayEndpointStore());
+        // Claude Code's settings.json and the editor's own settings, put back on exit.
+        var pluginBinding = new ClaudePluginBinding(
+            new ClaudeCodeSettingsWriter(Path.Combine(AppPaths.PluginConfigRoot, "claude-settings-journal.json")),
+            new VsCodeSettingsEditor(Path.Combine(AppPaths.PluginConfigRoot, "vscode")));
         ContextFilterProcess? contextFilter = File.Exists(contextFilterPath)
             ? new ContextFilterProcess(contextFilterPath)
             : null;
@@ -107,7 +122,9 @@ public partial class App : Application
             new CodexAppLauncherAdapter(new CodexAppLauncher()),
             new CodexRouteGuardHost(codexConfig),
             localRelay,
-            contextFilter);
+            contextFilter,
+            codexSessions,
+            pluginBinding);
 
         var dashboard = new DashboardViewModel(
             relay,
@@ -172,6 +189,24 @@ public partial class App : Application
                 window.ExitRequested = true;
                 Shutdown();
             });
+
+        clientUpdate.ConfirmUpdate = message => Task.FromResult(
+            MessageBox.Show(window, message, "共飞-ChatGPT助手", MessageBoxButton.YesNo, MessageBoxImage.Question)
+                == MessageBoxResult.Yes);
+        clientUpdate.ShowMessage = message =>
+        {
+            MessageBox.Show(window, message, "共飞-ChatGPT助手", MessageBoxButton.OK, MessageBoxImage.Information);
+            return Task.CompletedTask;
+        };
+        clientUpdate.RestartForUpdate = async () =>
+        {
+            // The same teardown 退出 performs: the managed key, the plug-ins' configuration
+            // and the relay must all be put back before this process disappears out from
+            // under the helper waiting to replace it.
+            await _shutdownCoordinator.ReleaseAsync().ConfigureAwait(true);
+            window.ExitRequested = true;
+            Shutdown();
+        };
 
         window.Tray = _tray;
         _singleInstance.StartListening();
