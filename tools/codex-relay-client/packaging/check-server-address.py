@@ -14,11 +14,23 @@ Two reasons a plain grep finds nothing even when the string is there:
 single-file publishes embed the managed assemblies in a bundle, and .NET stores
 string literals as UTF-16LE. So the search has to be encoding-aware.
 
-Usage:
-    python check-server-address.py <path-to-exe-or-dll> [...]
+Channels
+--------
+A build talks to exactly one of three servers, chosen by a publish property
+(never by editing source), and this script checks the bytes against the channel
+you say you built:
 
-Exit code is non-zero if the production address is missing, or if the test or
-placeholder address is present.
+    --channel production   (default)   dotnet publish ...                      https://gongfeiai.com/
+    --channel test                     dotnet publish ... -p:TestServer=true   http://test.gongfeiai.com/
+    --channel local                    dotnet publish ... -p:LocalServer=true  http://127.0.0.1:8080/
+
+The expected address must be present and the other two absent. Anything else is a
+build that would talk to a server nobody meant it to.
+
+Usage:
+    python check-server-address.py [--channel production|test|local] <path-to-exe-or-dll> [...]
+
+Exit code is non-zero if the channel's address is missing, or another channel's is present.
 """
 
 import sys
@@ -35,10 +47,10 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 
-PRODUCTION = "https://gongfeiai.com/"
-FORBIDDEN = {
-    "test server": "http://test.gongfeiai.com/",
-    "placeholder": "http://127.0.0.1:8080/",
+CHANNELS = {
+    "production": "https://gongfeiai.com/",
+    "test": "http://test.gongfeiai.com/",
+    "local": "http://127.0.0.1:8080/",
 }
 
 
@@ -46,43 +58,49 @@ def count(blob, text):
     return blob.count(text.encode("utf-16-le")) + blob.count(text.encode("utf-8"))
 
 
-def check(path):
+def check(path, channel):
     blob = path.read_bytes()
-    print(f"== {path.name} ({len(blob):,} bytes)")
-
-    production = count(blob, PRODUCTION)
-    print(f"   production {PRODUCTION}: {production}")
+    print(f"== {path.name} ({len(blob):,} bytes), channel: {channel}")
 
     problems = []
-    if production < 1:
-        problems.append(f"{path.name} does not contain the production address")
-
-    for label, address in FORBIDDEN.items():
+    for name, address in CHANNELS.items():
         hits = count(blob, address)
-        print(f"   {label} {address}: {hits}")
-        if hits:
-            problems.append(f"{path.name} contains the {label} address {address}")
+        marker = "expected" if name == channel else "forbidden"
+        print(f"   {name} {address}: {hits} ({marker})")
+        if name == channel and hits < 1:
+            problems.append(f"{path.name} does not contain the {name} address {address}")
+        if name != channel and hits:
+            problems.append(f"{path.name} contains the {name} address {address}, but was built for the {channel} channel")
 
     return problems
 
 
 def main(argv):
-    if len(argv) < 2:
+    args = argv[1:]
+    channel = "production"
+    if "--channel" in args:
+        i = args.index("--channel")
+        if i + 1 >= len(args) or args[i + 1] not in CHANNELS:
+            raise SystemExit(f"--channel must be one of: {', '.join(CHANNELS)}")
+        channel = args[i + 1]
+        del args[i:i + 2]
+
+    if not args:
         raise SystemExit(__doc__)
 
     problems = []
-    for name in argv[1:]:
+    for name in args:
         path = Path(name)
         if not path.is_file():
             raise SystemExit(f"not a file: {path}")
-        problems.extend(check(path))
+        problems.extend(check(path, channel))
 
     if problems:
         for problem in problems:
             print(f"::error::{problem}")
         return 1
 
-    print("server address OK")
+    print(f"server address OK ({channel})")
     return 0
 
 

@@ -149,7 +149,7 @@ jobs:
       - name: 核对出货字节里的服务器地址
         shell: bash
         run: |
-          python packaging/check-server-address.py \
+          python packaging/check-server-address.py --channel production \
             "${{ runner.temp }}/pub-win/LanAi.RelayClient.App.exe"
 
       # 发布包必须带上 context-filter.exe。它在**构建**里是可选的
