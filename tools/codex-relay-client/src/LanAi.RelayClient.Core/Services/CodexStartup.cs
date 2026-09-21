@@ -534,6 +534,19 @@ internal sealed class CodexStartup : ICodexStartup
                     ClientLog.Warning("停止 Codex 路由守护失败", ex);
                 }
 
+                // First and on its own, so nothing below that throws can leave context-filter.exe
+                // running after the client is gone. Stopping it before the local relay is what the
+                // later block also does; DisposeAsync is idempotent.
+                try
+                {
+                    if (_contextFilter is not null)
+                        await _contextFilter.DisposeAsync().ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    ClientLog.Warning("停止 Context Filter 失败", ex);
+                }
+
                 // Before the relay stops: whatever the plug-ins were pointed at should not outlive
                 // the thing answering there.
                 await RestorePluginsAsync().ConfigureAwait(false);

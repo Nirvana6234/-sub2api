@@ -65,7 +65,8 @@ public sealed record RelayGroup
         string? peakStart = null,
         string? peakEnd = null,
         double peakRateMultiplier = default,
-        string? status = null)
+        string? status = null,
+        GroupModelAllowlist? modelAllowlist = null)
     {
         Id = id;
         Name = name ?? string.Empty;
@@ -78,6 +79,7 @@ public sealed record RelayGroup
         PeakEnd = peakEnd ?? string.Empty;
         PeakRateMultiplier = peakRateMultiplier;
         Status = status ?? string.Empty;
+        ModelAllowlist = modelAllowlist ?? new GroupModelAllowlist();
     }
 
     [JsonPropertyName("id")]
@@ -118,6 +120,13 @@ public sealed record RelayGroup
     [JsonPropertyName("status")]
     public string Status { get; init; } = string.Empty;
 
+    /// <summary>
+    /// The group's model whitelist. Absent from older servers, which reads as "off" — the
+    /// 模型 button stays hidden rather than guessing.
+    /// </summary>
+    [JsonPropertyName("model_allowlist")]
+    public GroupModelAllowlist ModelAllowlist { get; init; } = new();
+
     /// <summary>Whether this group bills by subscription, which is what enables peak pricing.</summary>
     /// <remarks>
     /// Compared case-sensitively to match the server exactly
@@ -126,6 +135,24 @@ public sealed record RelayGroup
     /// never charge a peak rate on.
     /// </remarks>
     public bool IsSubscription => string.Equals(SubscriptionType, "subscription", StringComparison.Ordinal);
+}
+
+/// <summary>The group's model whitelist: when <see cref="Enabled"/>, only <see cref="Models"/> may be requested.</summary>
+/// <remarks>Entries may end in <c>*</c> (a prefix wildcard); they are shown as written.</remarks>
+public sealed record GroupModelAllowlist
+{
+    [JsonConstructor]
+    public GroupModelAllowlist(bool enabled = default, IReadOnlyList<string>? models = null)
+    {
+        Enabled = enabled;
+        Models = models ?? Array.Empty<string>();
+    }
+
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; init; }
+
+    [JsonPropertyName("models")]
+    public IReadOnlyList<string> Models { get; init; } = Array.Empty<string>();
 }
 
 /// <summary>

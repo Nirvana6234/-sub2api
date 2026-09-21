@@ -1,7 +1,10 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Text;
+using LanAi.RelayClient.Services;
 
 namespace LanAi.RelayClient.Transport;
 
@@ -94,6 +97,7 @@ internal sealed class ContextFilterProcess : IAsyncDisposable
         start.ArgumentList.Add("-config");
         start.ArgumentList.Add(configPath);
         _process = Process.Start(start) ?? throw new InvalidOperationException("无法启动 Context Filter");
+        ChildProcessJob.TryAdopt(_process);
         BaseAddress = new Uri($"http://127.0.0.1:{_port}/v1/");
         try
         {
@@ -190,4 +194,133 @@ internal sealed class ContextFilterProcess : IAsyncDisposable
     }
 
     private static string EscapeToml(string value) => value.Replace("\\", "\\\\").Replace("\"", "\\\"");
+}
+
+/// <summary>
+/// Ties a child process's life to this one, so the filter cannot outlive the client.
+/// </summary>
+/// <remarks>
+/// <para>
+/// The orderly exit already stops the filter (<c>CodexStartup.ReleaseAsync</c>), but that
+/// only helps when the client gets to run it. A crash, a task-manager kill or an
+/// installer replacing the exe skips it and leaves <c>context-filter.exe</c> holding its
+/// port with nothing to talk to. A job object with kill-on-close has no such gap: Windows
+/// closes the handle when this process dies, however it dies, and takes every process in
+/// the job with it.
+/// </para>
+/// <para>
+/// Best effort. If the job cannot be created or the child cannot be assigned (for
+/// instance it is already in a job that forbids breakaway on an old Windows), the orderly
+/// exit is still the fallback — it was the only mechanism before this.
+/// </para>
+/// </remarks>
+internal static class ChildProcessJob
+{
+    private const uint JobObjectLimitKillOnJobClose = 0x2000;
+    private const int ExtendedLimitInformationClass = 9;
+
+    private static readonly object Gate = new();
+    private static IntPtr _job;
+    private static bool _failed;
+
+    public static void TryAdopt(Process process)
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        try
+        {
+            lock (Gate)
+            {
+                if (_failed) return;
+                if (_job == IntPtr.Zero && !TryCreateJob()) { _failed = true; return; }
+                if (!AssignProcessToJobObject(_job, process.Handle))
+                    ClientLog.Warning($"无法把 Context Filter 绑定到客户端的作业对象（错误 {Marshal.GetLastWin32Error()}），退出时仍会主动结束它");
+            }
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or DllNotFoundException or EntryPointNotFoundException)
+        {
+            ClientLog.Warning("绑定 Context Filter 到作业对象失败，退出时仍会主动结束它", ex);
+        }
+    }
+
+    private static bool TryCreateJob()
+    {
+        IntPtr job = CreateJobObject(IntPtr.Zero, null);
+        if (job == IntPtr.Zero) return false;
+
+        var info = new JobObjectExtendedLimitInformation
+        {
+            BasicLimitInformation = new JobObjectBasicLimitInformation { LimitFlags = JobObjectLimitKillOnJobClose },
+        };
+        int length = Marshal.SizeOf<JobObjectExtendedLimitInformation>();
+        IntPtr buffer = Marshal.AllocHGlobal(length);
+        try
+        {
+            Marshal.StructureToPtr(info, buffer, fDeleteOld: false);
+            if (!SetInformationJobObject(job, ExtendedLimitInformationClass, buffer, (uint)length))
+            {
+                CloseHandle(job);
+                return false;
+            }
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
+
+        // Deliberately never closed: closing it is what kills the children, and that is to
+        // happen when the process ends, not before.
+        _job = job;
+        return true;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr CreateJobObject(IntPtr attributes, string? name);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetInformationJobObject(IntPtr job, int infoClass, IntPtr info, uint length);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CloseHandle(IntPtr handle);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct JobObjectBasicLimitInformation
+    {
+        public long PerProcessUserTimeLimit;
+        public long PerJobUserTimeLimit;
+        public uint LimitFlags;
+        public UIntPtr MinimumWorkingSetSize;
+        public UIntPtr MaximumWorkingSetSize;
+        public uint ActiveProcessLimit;
+        public UIntPtr Affinity;
+        public uint PriorityClass;
+        public uint SchedulingClass;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct IoCounters
+    {
+        public ulong ReadOperationCount;
+        public ulong WriteOperationCount;
+        public ulong OtherOperationCount;
+        public ulong ReadTransferCount;
+        public ulong WriteTransferCount;
+        public ulong OtherTransferCount;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct JobObjectExtendedLimitInformation
+    {
+        public JobObjectBasicLimitInformation BasicLimitInformation;
+        public IoCounters IoInfo;
+        public UIntPtr ProcessMemoryLimit;
+        public UIntPtr JobMemoryLimit;
+        public UIntPtr PeakProcessMemoryUsed;
+        public UIntPtr PeakJobMemoryUsed;
+    }
 }

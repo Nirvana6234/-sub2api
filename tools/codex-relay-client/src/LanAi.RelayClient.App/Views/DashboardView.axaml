@@ -168,77 +168,6 @@
           </StackPanel>
         </Border>
 
-        <!-- Account card. Greys out on its own; a failure here never touches the
-             other cards or the session. -->
-        <Border Classes="card">
-          <StackPanel>
-            <DockPanel>
-              <TextBlock Text="暂时取不到" Foreground="#9CA3AF" FontSize="12"
-                         DockPanel.Dock="Right" HorizontalAlignment="Right"
-                         IsVisible="{Binding Dashboard.AccountUnavailable}" />
-              <TextBlock Text="账户" FontWeight="SemiBold" />
-            </DockPanel>
-            <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
-              <StackPanel>
-                <TextBlock Text="余额" Foreground="#6B7280" FontSize="12" />
-                <TextBlock Text="{Binding Dashboard.BalanceText}" FontSize="22" FontWeight="SemiBold" />
-              </StackPanel>
-              <StackPanel Margin="32,0,0,0">
-                <TextBlock Text="冻结" Foreground="#6B7280" FontSize="12" />
-                <TextBlock Text="{Binding Dashboard.FrozenBalanceText}" FontSize="22" Foreground="#6B7280" />
-              </StackPanel>
-            </StackPanel>
-
-            <!-- The entry is always available when the server supplies a recharge
-                 URL; only the warning treatment follows the threshold. -->
-            <DockPanel Margin="0,10,0,0" IsVisible="{Binding Dashboard.CanRecharge}">
-              <Button Content="去充值" Click="Recharge_OnClick"
-                      Classes="recharge"
-                      Classes.low="{Binding Dashboard.BalanceIsLow}"
-                      DockPanel.Dock="Right" HorizontalAlignment="Right"
-                      Padding="10,4" BorderThickness="1" />
-              <TextBlock Text="余额偏低" Foreground="#DC2626" VerticalAlignment="Center"
-                         IsVisible="{Binding Dashboard.BalanceIsLow}" />
-            </DockPanel>
-          </StackPanel>
-        </Border>
-
-        <!-- Usage card -->
-        <Border Classes="card">
-          <StackPanel>
-            <DockPanel>
-              <TextBlock Text="暂时取不到" Foreground="#9CA3AF" FontSize="12"
-                         DockPanel.Dock="Right" HorizontalAlignment="Right"
-                         IsVisible="{Binding Dashboard.UsageUnavailable}" />
-              <TextBlock Text="今日用量" FontWeight="SemiBold" />
-            </DockPanel>
-            <UniformGrid Columns="3" Margin="0,10,0,0">
-              <StackPanel>
-                <TextBlock Text="请求数" Foreground="#6B7280" FontSize="12" />
-                <TextBlock Text="{Binding Dashboard.TodayRequestsText}" FontSize="16" FontWeight="SemiBold" />
-              </StackPanel>
-              <StackPanel>
-                <TextBlock Text="Token" Foreground="#6B7280" FontSize="12" />
-                <TextBlock Text="{Binding Dashboard.TodayTokensText}" FontSize="16" FontWeight="SemiBold" />
-              </StackPanel>
-              <StackPanel>
-                <TextBlock Text="消费" Foreground="#6B7280" FontSize="12" />
-                <TextBlock Text="{Binding Dashboard.TodayCostText}" FontSize="16" FontWeight="SemiBold" />
-              </StackPanel>
-            </UniformGrid>
-          </StackPanel>
-        </Border>
-
-        <!-- Subscription card is hidden when the server reports none. -->
-        <Border Classes="card" IsVisible="{Binding Dashboard.HasSubscription}">
-          <StackPanel>
-            <TextBlock Text="订阅" FontWeight="SemiBold" />
-            <TextBlock Text="{Binding Dashboard.SubscriptionName}" FontSize="16"
-                       FontWeight="SemiBold" Margin="0,8,0,2" />
-            <TextBlock Text="{Binding Dashboard.SubscriptionProgressText}" Foreground="#6B7280" />
-          </StackPanel>
-        </Border>
-
         <!-- Group card -->
         <Border Classes="card">
           <StackPanel>
@@ -284,10 +213,11 @@
                                      FontSize="12" VerticalAlignment="Center" />
                         </StackPanel>
                         <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
-                        <!-- Except 自动分组: it has no single account pool of its own to
-                             list, only whichever candidate a request happens to land on. -->
+                        <!-- Only for a group whose model whitelist is switched on:
+                             without one there is no definite list to show (and
+                             自动分组 never has one). -->
                         <Button Content="模型" Click="ShowGroupModels_OnClick"
-                                IsVisible="{Binding !IsAutomatic}"
+                                IsVisible="{Binding HasModelAllowlist}"
                                 Classes="link" Padding="6,0,0,0" FontSize="11"
                                 VerticalAlignment="Center" Margin="6,0,0,0" />
                       </DockPanel>
@@ -384,6 +314,77 @@
                          TextWrapping="Wrap"
                          Foreground="#9CA3AF" FontSize="11" Margin="0,4,0,0" />
             </StackPanel>
+          </StackPanel>
+        </Border>
+
+        <!-- Account card. Greys out on its own; a failure here never touches the
+             other cards or the session. -->
+        <Border Classes="card">
+          <StackPanel>
+            <DockPanel>
+              <TextBlock Text="暂时取不到" Foreground="#9CA3AF" FontSize="12"
+                         DockPanel.Dock="Right" HorizontalAlignment="Right"
+                         IsVisible="{Binding Dashboard.AccountUnavailable}" />
+              <TextBlock Text="账户" FontWeight="SemiBold" />
+            </DockPanel>
+            <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+              <StackPanel>
+                <TextBlock Text="余额" Foreground="#6B7280" FontSize="12" />
+                <TextBlock Text="{Binding Dashboard.BalanceText}" FontSize="22" FontWeight="SemiBold" />
+              </StackPanel>
+              <StackPanel Margin="32,0,0,0">
+                <TextBlock Text="冻结" Foreground="#6B7280" FontSize="12" />
+                <TextBlock Text="{Binding Dashboard.FrozenBalanceText}" FontSize="22" Foreground="#6B7280" />
+              </StackPanel>
+            </StackPanel>
+
+            <!-- The entry is always available when the server supplies a recharge
+                 URL; only the warning treatment follows the threshold. -->
+            <DockPanel Margin="0,10,0,0" IsVisible="{Binding Dashboard.CanRecharge}">
+              <Button Content="去充值" Click="Recharge_OnClick"
+                      Classes="recharge"
+                      Classes.low="{Binding Dashboard.BalanceIsLow}"
+                      DockPanel.Dock="Right" HorizontalAlignment="Right"
+                      Padding="10,4" BorderThickness="1" />
+              <TextBlock Text="余额偏低" Foreground="#DC2626" VerticalAlignment="Center"
+                         IsVisible="{Binding Dashboard.BalanceIsLow}" />
+            </DockPanel>
+          </StackPanel>
+        </Border>
+
+        <!-- Usage card -->
+        <Border Classes="card">
+          <StackPanel>
+            <DockPanel>
+              <TextBlock Text="暂时取不到" Foreground="#9CA3AF" FontSize="12"
+                         DockPanel.Dock="Right" HorizontalAlignment="Right"
+                         IsVisible="{Binding Dashboard.UsageUnavailable}" />
+              <TextBlock Text="今日用量" FontWeight="SemiBold" />
+            </DockPanel>
+            <UniformGrid Columns="3" Margin="0,10,0,0">
+              <StackPanel>
+                <TextBlock Text="请求数" Foreground="#6B7280" FontSize="12" />
+                <TextBlock Text="{Binding Dashboard.TodayRequestsText}" FontSize="16" FontWeight="SemiBold" />
+              </StackPanel>
+              <StackPanel>
+                <TextBlock Text="Token" Foreground="#6B7280" FontSize="12" />
+                <TextBlock Text="{Binding Dashboard.TodayTokensText}" FontSize="16" FontWeight="SemiBold" />
+              </StackPanel>
+              <StackPanel>
+                <TextBlock Text="消费" Foreground="#6B7280" FontSize="12" />
+                <TextBlock Text="{Binding Dashboard.TodayCostText}" FontSize="16" FontWeight="SemiBold" />
+              </StackPanel>
+            </UniformGrid>
+          </StackPanel>
+        </Border>
+
+        <!-- Subscription card is hidden when the server reports none. -->
+        <Border Classes="card" IsVisible="{Binding Dashboard.HasSubscription}">
+          <StackPanel>
+            <TextBlock Text="订阅" FontWeight="SemiBold" />
+            <TextBlock Text="{Binding Dashboard.SubscriptionName}" FontSize="16"
+                       FontWeight="SemiBold" Margin="0,8,0,2" />
+            <TextBlock Text="{Binding Dashboard.SubscriptionProgressText}" Foreground="#6B7280" />
           </StackPanel>
         </Border>
 

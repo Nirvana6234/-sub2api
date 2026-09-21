@@ -30,6 +30,13 @@ public sealed partial class GroupItemViewModel : ObservableObject
         Description = group.Description;
         Platform = group.Platform;
         IsSubscription = group.IsSubscription;
+        AllowedModels = group.ModelAllowlist.Enabled
+            ? group.ModelAllowlist.Models
+                .Where(m => !string.IsNullOrWhiteSpace(m))
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(m => m, StringComparer.Ordinal)
+                .ToArray()
+            : [];
 
         // Subscription groups show the word "订阅" where standard groups show a
         // number — matching GroupBadge, which returns t('groups.subscription')
@@ -63,6 +70,16 @@ public sealed partial class GroupItemViewModel : ObservableObject
     public string Platform { get; }
 
     public bool IsSubscription { get; }
+
+    /// <summary>The group's whitelisted models; empty when the group has no whitelist switched on.</summary>
+    public IReadOnlyList<string> AllowedModels { get; } = [];
+
+    /// <summary>
+    /// Whether to offer the 模型 button. Only a switched-on whitelist gives the group a
+    /// definite list of its own; without one every model the pool serves is fair game and
+    /// there is nothing meaningful to list. Always false for 自动分组.
+    /// </summary>
+    public bool HasModelAllowlist => AllowedModels.Count > 0;
 
     public bool IsAutomatic { get; }
 

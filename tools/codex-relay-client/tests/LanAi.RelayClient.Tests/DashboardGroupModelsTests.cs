@@ -5,12 +5,10 @@ using Xunit;
 
 namespace LanAi.RelayClient.Tests;
 
-/// <summary>The 模型 tip beside each fixed group: what it shows, and when it asks the server.</summary>
+/// <summary>The 模型 tip beside each fixed group: shown only for a whitelisted group, listing the whitelist.</summary>
 public sealed class DashboardGroupModelsTests
 {
-    private sealed record Rig(DashboardViewModel Dashboard, FakeRelayClient Relay);
-
-    private static async Task<Rig> BuildAsync(params RelayGroup[] groups)
+    private static async Task<DashboardViewModel> BuildAsync(params RelayGroup[] groups)
     {
         var relay = new FakeRelayClient();
         var session = new RelaySessionManager(relay, new FakeSessionStore(), "https://relay.test/", new TestClock().Read);
@@ -20,24 +18,28 @@ public sealed class DashboardGroupModelsTests
         relay.OnAvailableGroups = () => groups;
         relay.OnListKeys = () => [];
         await dashboard.RefreshAsync();
-        return new Rig(dashboard, relay);
+        return dashboard;
     }
 
-    private static RelayGroup Group(long id, string name, string platform = "openai") =>
-        new() { Id = id, Name = name, RateMultiplier = 1, SubscriptionType = "standard", Platform = platform };
-
-    private static ModelPlazaGroup PlazaGroup(long id, params string[] models) =>
-        new(id, models.Select(m => new PlazaModel(m)).ToArray());
+    private static RelayGroup Group(long id, string name, bool allowlistEnabled, params string[] models) =>
+        new()
+        {
+            Id = id,
+            Name = name,
+            RateMultiplier = 1,
+            SubscriptionType = "standard",
+            Platform = "openai",
+            ModelAllowlist = new GroupModelAllowlist(allowlistEnabled, models),
+        };
 
     [Fact]
-    public async Task ShowsTheModelsTheGroupSupports()
+    public async Task ShowsTheWhitelistedModels()
     {
-        Rig rig = await BuildAsync(Group(11, "OpenAI 甲"));
-        rig.Relay.OnModelPlaza = () => new ModelPlazaResponse([PlazaGroup(11, "gpt-5", "gpt-5-mini")]);
+        DashboardViewModel dashboard = await BuildAsync(Group(11, "OpenAI 甲", true, "gpt-5", "gpt-5-mini"));
         var messages = new List<string>();
-        rig.Dashboard.ShowGroupModels = message => { messages.Add(message); return Task.CompletedTask; };
+        dashboard.ShowGroupModels = message => { messages.Add(message); return Task.CompletedTask; };
 
-        await rig.Dashboard.ShowGroupModelsAsync(rig.Dashboard.Groups.Single(g => g.Id == 11));
+        await dashboard.ShowGroupModelsAsync(dashboard.Groups.Single(g => g.Id == 11));
 
         Assert.Equal(["OpenAI 甲 支持的模型：\n\ngpt-5\ngpt-5-mini"], messages);
     }
@@ -45,96 +47,53 @@ public sealed class DashboardGroupModelsTests
     [Fact]
     public async Task DeduplicatesAndSortsTheModelList()
     {
-        Rig rig = await BuildAsync(Group(11, "OpenAI 甲"));
-        rig.Relay.OnModelPlaza = () => new ModelPlazaResponse([PlazaGroup(11, "gpt-5", "gpt-4", "gpt-5", "")]);
+        DashboardViewModel dashboard = await BuildAsync(Group(11, "OpenAI 甲", true, "gpt-5", "gpt-4", "gpt-5", ""));
         var messages = new List<string>();
-        rig.Dashboard.ShowGroupModels = message => { messages.Add(message); return Task.CompletedTask; };
+        dashboard.ShowGroupModels = message => { messages.Add(message); return Task.CompletedTask; };
 
-        await rig.Dashboard.ShowGroupModelsAsync(rig.Dashboard.Groups.Single(g => g.Id == 11));
+        await dashboard.ShowGroupModelsAsync(dashboard.Groups.Single(g => g.Id == 11));
 
         Assert.Equal(["OpenAI 甲 支持的模型：\n\ngpt-4\ngpt-5"], messages);
     }
 
-    /// <summary>自动分组 has no single account pool of its own to list — see the type's own remarks.</summary>
+    /// <summary>Wildcard entries are shown as written — the client has no source list to expand them against.</summary>
     [Fact]
-    public async Task DoesNothingForTheAutomaticEntry()
+    public async Task WildcardEntriesAreShownAsWritten()
     {
-        Rig rig = await BuildAsync(Group(11, "OpenAI 甲"), Group(12, "OpenAI 乙"));
-        var automatic = GroupItemViewModel.CreateAutomatic();
-        int calls = 0;
-        rig.Dashboard.ShowGroupModels = _ => { calls++; return Task.CompletedTask; };
+        DashboardViewModel dashboard = await BuildAsync(Group(11, "OpenAI 甲", true, "gpt-5*"));
+        var messages = new List<string>();
+        dashboard.ShowGroupModels = message => { messages.Add(message); return Task.CompletedTask; };
 
-        await rig.Dashboard.ShowGroupModelsAsync(automatic);
+        await dashboard.ShowGroupModelsAsync(dashboard.Groups.Single(g => g.Id == 11));
+
+        Assert.Equal(["OpenAI 甲 支持的模型：\n\ngpt-5*"], messages);
+    }
+
+    [Fact]
+    public async Task TheButtonIsOfferedOnlyWhenTheWhitelistIsOn()
+    {
+        DashboardViewModel dashboard = await BuildAsync(
+            Group(11, "开", true, "gpt-5"),
+            Group(12, "关", false, "gpt-5"),
+            Group(13, "无", false));
+
+        Assert.True(dashboard.Groups.Single(g => g.Id == 11).HasModelAllowlist);
+        Assert.False(dashboard.Groups.Single(g => g.Id == 12).HasModelAllowlist);
+        Assert.False(dashboard.Groups.Single(g => g.Id == 13).HasModelAllowlist);
+        Assert.False(GroupItemViewModel.CreateAutomatic().HasModelAllowlist);
+    }
+
+    [Fact]
+    public async Task DoesNothingWhenTheWhitelistIsOff()
+    {
+        DashboardViewModel dashboard = await BuildAsync(Group(12, "关", false, "gpt-5"));
+        int calls = 0;
+        dashboard.ShowGroupModels = _ => { calls++; return Task.CompletedTask; };
+
+        await dashboard.ShowGroupModelsAsync(dashboard.Groups.Single(g => g.Id == 12));
+        await dashboard.ShowGroupModelsAsync(GroupItemViewModel.CreateAutomatic());
+        await dashboard.ShowGroupModelsAsync(null);
 
         Assert.Equal(0, calls);
-        Assert.Equal(0, rig.Relay.ModelPlazaCallCount);
-    }
-
-    [Fact]
-    public async Task ANullGroupIsIgnored()
-    {
-        Rig rig = await BuildAsync(Group(11, "OpenAI 甲"));
-        int calls = 0;
-        rig.Dashboard.ShowGroupModels = _ => { calls++; return Task.CompletedTask; };
-
-        await rig.Dashboard.ShowGroupModelsAsync(null);
-
-        Assert.Equal(0, calls);
-    }
-
-    [Theory]
-    [InlineData(RelayFailure.NotFound)]
-    [InlineData(RelayFailure.NetworkUnreachable)]
-    public async Task AnUnreadablePlazaIsWordedTheSameAsGenuinelyNothingToShow(RelayFailure failure)
-    {
-        Rig rig = await BuildAsync(Group(11, "OpenAI 甲"));
-        rig.Relay.OnModelPlazaThrow = new RelayApiException(failure, "unavailable");
-        var messages = new List<string>();
-        rig.Dashboard.ShowGroupModels = message => { messages.Add(message); return Task.CompletedTask; };
-
-        await rig.Dashboard.ShowGroupModelsAsync(rig.Dashboard.Groups.Single(g => g.Id == 11));
-
-        Assert.Equal(["OpenAI 甲 暂时没有可显示的模型信息。"], messages);
-    }
-
-    /// <summary>
-    /// One request answers for every group — GET /model-plaza returns the whole list at once —
-    /// so a second button, for a different group, must not ask again.
-    /// </summary>
-    [Fact]
-    public async Task TheSecondGroupsTipReusesTheFirstsFetch()
-    {
-        Rig rig = await BuildAsync(Group(11, "OpenAI 甲"), Group(12, "OpenAI 乙"));
-        rig.Relay.OnModelPlaza = () => new ModelPlazaResponse([PlazaGroup(11, "gpt-5"), PlazaGroup(12, "gpt-5-mini")]);
-        var messages = new List<string>();
-        rig.Dashboard.ShowGroupModels = message => { messages.Add(message); return Task.CompletedTask; };
-
-        await rig.Dashboard.ShowGroupModelsAsync(rig.Dashboard.Groups.Single(g => g.Id == 11));
-        await rig.Dashboard.ShowGroupModelsAsync(rig.Dashboard.Groups.Single(g => g.Id == 12));
-
-        Assert.Equal(1, rig.Relay.ModelPlazaCallCount);
-        Assert.Equal(
-            ["OpenAI 甲 支持的模型：\n\ngpt-5", "OpenAI 乙 支持的模型：\n\ngpt-5-mini"],
-            messages);
-    }
-
-    /// <summary>
-    /// The cache is account-scoped, not process-scoped: signing out and back in as someone else
-    /// must not hand the new account the previous one's model list.
-    /// </summary>
-    [Fact]
-    public async Task SigningOutForgetsTheCachedPlazaResponse()
-    {
-        Rig rig = await BuildAsync(Group(11, "OpenAI 甲"));
-        rig.Relay.OnModelPlaza = () => new ModelPlazaResponse([PlazaGroup(11, "gpt-5")]);
-        rig.Dashboard.ShowGroupModels = _ => Task.CompletedTask;
-        await rig.Dashboard.ShowGroupModelsAsync(rig.Dashboard.Groups.Single(g => g.Id == 11));
-        Assert.Equal(1, rig.Relay.ModelPlazaCallCount);
-
-        rig.Dashboard.Reset();
-        await rig.Dashboard.RefreshAsync();
-        await rig.Dashboard.ShowGroupModelsAsync(rig.Dashboard.Groups.Single(g => g.Id == 11));
-
-        Assert.Equal(2, rig.Relay.ModelPlazaCallCount);
     }
 }

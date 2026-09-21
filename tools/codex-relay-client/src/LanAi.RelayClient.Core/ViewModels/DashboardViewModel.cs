@@ -1882,74 +1882,28 @@ public sealed partial class DashboardViewModel : ObservableObject
     public Func<string, Task>? ShowGroupModels { get; set; }
 
     /// <summary>
-    /// The model plaza response, fetched once and reused for every group's button —
-    /// <c>GET /model-plaza</c> already answers for every group in one call, so asking again per
-    /// click would just be the same data over and over. Null until the first attempt; absent
-    /// from the dictionary after that only if the fetch itself failed or the switch is off.
+    /// Opens the 白名单模型 tip for one group. A no-op for 自动分组 and for a group with no
+    /// whitelist switched on — neither has a definite list of its own, and the button is
+    /// hidden for both (<see cref="GroupItemViewModel.HasModelAllowlist"/>).
     /// </summary>
-    private IReadOnlyDictionary<long, IReadOnlyList<string>>? _groupModelsByGroupId;
-
-    /// <summary>
-    /// Opens the 白名单模型 tip for one group. A no-op for 自动分组 — it has no single account
-    /// pool of its own to list, only whichever candidate a request happens to land on.
-    /// </summary>
-    public async Task ShowGroupModelsAsync(GroupItemViewModel? group, CancellationToken cancellationToken = default)
+    /// <remarks>
+    /// The list comes with the group itself (<c>/groups/available</c>), so there is nothing
+    /// to fetch and nothing that can fail at click time.
+    /// </remarks>
+    public async Task ShowGroupModelsAsync(GroupItemViewModel? group)
     {
-        if (group is null || group.IsAutomatic || ShowGroupModels is null)
+        if (group is null || !group.HasModelAllowlist || ShowGroupModels is null)
         {
             return;
         }
 
-        IReadOnlyList<string> models = await LoadGroupModelsAsync(group.Id, cancellationToken).ConfigureAwait(true);
-        await ShowGroupModels(DescribeGroupModels(group.Name, models)).ConfigureAwait(true);
+        await ShowGroupModels(DescribeGroupModels(group.Name, group.AllowedModels)).ConfigureAwait(true);
     }
 
-    /// <summary>
-    /// Worded the same whether the plaza is switched off, unreachable, or genuinely lists
-    /// nothing for this group — see <see cref="LoadGroupModelsAsync"/> for why the three are
-    /// not told apart.
-    /// </summary>
     internal static string DescribeGroupModels(string groupName, IReadOnlyList<string> models) =>
         models.Count == 0
             ? $"{groupName} 暂时没有可显示的模型信息。"
             : $"{groupName} 支持的模型：\n\n" + string.Join('\n', models);
-
-    /// <summary>
-    /// The models <paramref name="groupId"/> serves, per the model plaza — empty when the
-    /// switch is off, the request failed, or the plaza genuinely lists nothing for that group.
-    /// The three are not told apart: whatever the reason, there is nothing to show, and the
-    /// wording <see cref="ShowGroupModelsAsync"/>'s caller uses for an empty list already says
-    /// so without needing to know which.
-    /// </summary>
-    private async Task<IReadOnlyList<string>> LoadGroupModelsAsync(long groupId, CancellationToken cancellationToken)
-    {
-        if (_groupModelsByGroupId is null)
-        {
-            try
-            {
-                string? token = await _session.GetAccessTokenAsync(cancellationToken).ConfigureAwait(true);
-                ModelPlazaResponse response = await _client.GetModelPlazaAsync(token, cancellationToken).ConfigureAwait(true);
-                _groupModelsByGroupId = response.Groups.ToDictionary(
-                    g => g.Id,
-                    IReadOnlyList<string> (g) => g.Models
-                        .Select(m => m.Name)
-                        .Where(name => !string.IsNullOrWhiteSpace(name))
-                        .Distinct(StringComparer.Ordinal)
-                        .OrderBy(name => name, StringComparer.Ordinal)
-                        .ToArray());
-            }
-            catch (RelayApiException)
-            {
-                // Feature switched off (404) or unreachable: either way, nothing to cache and
-                // nothing worth distinguishing for a tip the user opened out of curiosity.
-                _groupModelsByGroupId = new Dictionary<long, IReadOnlyList<string>>();
-            }
-        }
-
-        return _groupModelsByGroupId.TryGetValue(groupId, out IReadOnlyList<string>? models)
-            ? models
-            : Array.Empty<string>();
-    }
 
     private void SetCurrent(GroupItemViewModel group)
     {
@@ -2013,7 +1967,6 @@ public sealed partial class DashboardViewModel : ObservableObject
         _autoGroupSettings = null;
         _autoGroupSupported = true;
         CanConfigureAutoGroup = false;
-        _groupModelsByGroupId = null;
         _lastPluginRequest = null;
         _claudePreferenceLoaded = false;
         PluginSupportStatus = string.Empty;
