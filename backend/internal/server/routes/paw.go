@@ -24,6 +24,8 @@ type pawDefaultsRequest struct {
 }
 
 type pawAutoGroupRequest struct {
+	// AutoGroup 只为线上协议兼容而保留，永远不会被应用：这个端点只保存候选集，
+	// 内部 key 的自动分组标志始终开着。为什么不提供关闭，见 pawSaveAutoGroupHandler。
 	AutoGroup         bool    `json:"auto_group"`
 	AutoGroupIDs      []int64 `json:"auto_group_ids"`
 	AutoGroupStrategy string  `json:"auto_group_strategy"`
@@ -170,12 +172,21 @@ func pawSaveAutoGroupHandler(apiKeys *service.APIKeyService) gin.HandlerFunc {
 			pawChatServiceError(c, err)
 			return
 		}
-		update := service.UpdateAPIKeyRequest{AutoGroup: &req.AutoGroup}
-		if req.AutoGroup {
-			ids := append([]int64(nil), req.AutoGroupIDs...)
-			strategy := req.AutoGroupStrategy
-			update.AutoGroupIDs = &ids
-			update.AutoGroupStrategy = &strategy
+		// 这把内部 key 的自动分组标志终身开着，所以 req.AutoGroup 被刻意忽略。
+		// 桌面端跑在哪种模式，由它每次请求发的 X-Paw-Group-Id 决定，不由这个标志
+		// 决定——这里根本没有什么可关的。
+		//
+		// 写 false 会打断两件从这个 handler 里看不见的事：hydrateAutoGroupIDs 在
+		// !AutoGroup 时直接短路，候选集就读不出来了，客户端的对话框下次打开是空的；
+		// 而网页版 Playground 的 isPlaygroundEligibleKey 要求 auto_group || group_id > 0，
+		// 这把 key 又刻意不带自己的 group_id。
+		enabled := true
+		ids := append([]int64(nil), req.AutoGroupIDs...)
+		strategy := req.AutoGroupStrategy
+		update := service.UpdateAPIKeyRequest{
+			AutoGroup:         &enabled,
+			AutoGroupIDs:      &ids,
+			AutoGroupStrategy: &strategy,
 		}
 		updated, err := apiKeys.Update(c.Request.Context(), key.ID, subject.UserID, update)
 		if err != nil {

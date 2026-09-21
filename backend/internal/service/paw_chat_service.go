@@ -88,10 +88,7 @@ func (s APIKeyPawChatKeySource) ResolvePawAPIKey(ctx context.Context, userID, gr
 		key = findPawInternalKey(keys)
 	}
 	if key == nil {
-		groupIDs := make([]int64, 0, len(groups))
-		for _, group := range groups {
-			groupIDs = append(groupIDs, group.ID)
-		}
+		groupIDs := pawFallbackAutoGroupIDs(groups)
 		key, err = s.Service.Create(ctx, userID, CreateAPIKeyRequest{
 			Name:         PlaygroundChatAPIKeyName,
 			AutoGroup:    true,
@@ -118,6 +115,41 @@ func (s APIKeyPawChatKeySource) ResolvePawAPIKey(ctx context.Context, userID, gr
 		}
 	}
 	return key, subscription, nil
+}
+
+// pawFallbackAutoGroupIDs 决定「内部 Paw key 不得不在这里创建」时用哪一批候选分组。
+//
+// 候选集必须同平台：validateAutoGroupIDs 对混平台的集合会报
+// AUTO_GROUP_CANDIDATE_PLATFORM_MISMATCH，创建直接失败，那个用户的整条 Paw 通路
+// 就断了。而走到这里的前提恰恰是 EnsurePlaygroundAPIKeys 拒绝创建——它在用户
+// 一个 OpenAI 分组都没有时就会拒绝。于是手里只有 Anthropic 分组和 Gemini 分组的
+// 用户，以前会带着一个混平台集合落到这里，最后一把 key 都拿不到。
+//
+// 优先取 OpenAI 以便与 selectPlaygroundGroupIDs 一致；没有 OpenAI 时取第一个
+// 分组的平台，保证单平台用户仍能拿到可用的 key。
+func pawFallbackAutoGroupIDs(groups []Group) []int64 {
+	platform := ""
+	for i := range groups {
+		if groups[i].Platform == PlatformOpenAI {
+			platform = PlatformOpenAI
+			break
+		}
+	}
+	if platform == "" {
+		for i := range groups {
+			if strings.TrimSpace(groups[i].Platform) != "" {
+				platform = groups[i].Platform
+				break
+			}
+		}
+	}
+	groupIDs := make([]int64, 0, len(groups))
+	for i := range groups {
+		if groups[i].Platform == platform {
+			groupIDs = append(groupIDs, groups[i].ID)
+		}
+	}
+	return groupIDs
 }
 
 func findPawInternalKey(keys []APIKey) *APIKey {
