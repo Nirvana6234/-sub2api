@@ -57,6 +57,17 @@ type PawRouteDependencies struct {
 // must remain byte-for-byte a Codex payload and cannot carry routing metadata.
 const PawGroupHeader = "X-Paw-Group-Id"
 
+// PawClientUserAgentHeader carries the editor client's own User-Agent on the
+// Messages routes.
+//
+// It cannot travel as User-Agent: the account session is bound to the network
+// fingerprint it was issued under, IP and User-Agent together, and a mismatch
+// revokes the whole session family. The desktop client therefore keeps its own
+// User-Agent on the wire and sends the editor's separately, and the handler puts
+// it back after that check has passed. Groups restricted to Claude Code look at
+// exactly this value.
+const PawClientUserAgentHeader = "X-Paw-Client-User-Agent"
+
 func RegisterPawRoutes(v1 *gin.RouterGroup, svc *service.PawConfigService, jwtAuth middleware.JWTAuthMiddleware, settingService *service.SettingService, panelRateLimiter *middleware.PanelRateLimiter, dependencies ...PawRouteDependencies) {
 	if v1 == nil || svc == nil {
 		return
@@ -124,6 +135,8 @@ func RegisterPawRoutes(v1 *gin.RouterGroup, svc *service.PawConfigService, jwtAu
 	paw.POST("/images/edits", pawImageEditHandler(imageService, deps))
 	paw.POST("/chat/completions", pawChatHandler(deps.ChatService, chatService, deps))
 	paw.POST("/responses", pawResponsesHandler(responsesChat, deps))
+	paw.POST("/messages", pawMessagesHandler(responsesChat, deps, false))
+	paw.POST("/messages/count_tokens", pawMessagesHandler(responsesChat, deps, true))
 }
 
 func pawGetAutoGroupHandler(apiKeys *service.APIKeyService) gin.HandlerFunc {
@@ -520,6 +533,201 @@ func pawResponsesHandler(chat *service.PawChatService, deps PawRouteDependencies
 			pawChatError(c, http.StatusServiceUnavailable, PawErrorCodeUpstreamUnavailable, "Paw Responses gateway is unavailable")
 		}
 		observeAutoGroupRequestResult(c, deps.APIKeyService, resolution.APIKey, request.Model)
+	}
+}
+
+// pawMessagesHandler serves the Anthropic Messages protocol for a signed-in
+// desktop client, so Claude Code and the editor extensions built on it can use the
+// account without ever holding a key.
+//
+// Everything after group resolution is the API-key gateway, unchanged: the
+// dispatch below is the one gateway.go makes for /v1/messages and
+// /v1/messages/count_tokens, and it reads the group from the same place, so a
+// request here is handled exactly like one made with a key for that group. What
+// differs is only how the caller was authenticated and how the group was chosen —
+// by the X-Paw-Group-Id header, because the body must stay a verbatim Anthropic
+// request.
+//
+// There is deliberately no automatic routing here: it is defined over OpenAI
+// candidates, and a Messages caller names its group explicitly.
+func pawMessagesHandler(chat *service.PawChatService, deps PawRouteDependencies, countTokens bool) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if pawCredentialSelectorPresent(c) {
+			pawMessagesError(c, http.StatusBadRequest, "invalid_request_error", "Paw accepts only the authenticated account session")
+			return
+		}
+		subject, ok := middleware.GetAuthSubjectFromContext(c)
+		if !ok || subject.UserID <= 0 {
+			pawMessagesError(c, http.StatusUnauthorized, "authentication_error", "authenticated user is required")
+			return
+		}
+		if chat == nil {
+			pawMessagesError(c, http.StatusServiceUnavailable, "api_error", "Paw messages gateway is unavailable")
+			return
+		}
+
+		groupID, err := strconv.ParseInt(strings.TrimSpace(c.GetHeader(PawGroupHeader)), 10, 64)
+		if err != nil || groupID <= 0 {
+			pawMessagesError(c, http.StatusBadRequest, "invalid_request_error", "a valid Paw group is required")
+			return
+		}
+		body, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			pawMessagesError(c, http.StatusBadRequest, "invalid_request_error", "failed to read request body")
+			return
+		}
+		if pawBodyCredentialSelectorPresent(body) {
+			pawMessagesError(c, http.StatusBadRequest, "invalid_request_error", "Paw accepts only the authenticated account session")
+			return
+		}
+		var request struct {
+			Model string `json:"model"`
+		}
+		_ = json.Unmarshal(body, &request)
+
+		resolution, err := chat.PrepareMessages(c.Request.Context(), subject.UserID, groupID)
+		if err != nil {
+			pawMessagesServiceError(c, err)
+			return
+		}
+		middleware.ReplaceAuthenticatedAPIKey(c, resolution.APIKey, resolution.Subscription)
+		resetRequestBody(c, body)
+		restorePawClientUserAgent(c)
+
+		if deps.CompositeResolver != nil && resolution.Group != nil && resolution.Group.Platform == service.PlatformComposite {
+			endpoint := service.CompositeRouteEndpointMessages
+			if countTokens {
+				endpoint = service.CompositeRouteEndpointCountTokens
+			}
+			decision, resolveErr := deps.CompositeResolver.Resolve(c.Request.Context(), resolution.Group.ID, strings.TrimSpace(request.Model), endpoint)
+			if resolveErr != nil {
+				pawMessagesError(c, http.StatusServiceUnavailable, "api_error", "failed to resolve the selected model route")
+				return
+			}
+			if decision.Matched {
+				c.Request = c.Request.WithContext(service.WithCompositeRouteDecision(c.Request.Context(), decision))
+			}
+		}
+
+		platform := resolution.Group.Platform
+		if resolved, ok := service.ResolvedTargetPlatformFromContext(c.Request.Context()); ok {
+			platform = resolved
+		}
+		switch pawMessagesTargetFor(platform, countTokens) {
+		case pawCountTokensOpenAI:
+			if deps.OpenAIGateway != nil {
+				deps.OpenAIGateway.CountTokens(c)
+				return
+			}
+		case pawCountTokensGrok:
+			if deps.OpenAIGateway != nil {
+				deps.OpenAIGateway.GrokCountTokens(c)
+				return
+			}
+		case pawCountTokensAnthropic:
+			if deps.Gateway != nil {
+				deps.Gateway.CountTokens(c)
+				return
+			}
+		case pawMessagesOpenAI:
+			if deps.OpenAIGateway != nil {
+				deps.OpenAIGateway.Messages(c)
+				return
+			}
+		case pawMessagesAnthropic:
+			if deps.Gateway != nil {
+				deps.Gateway.Messages(c)
+				return
+			}
+		}
+		pawMessagesError(c, http.StatusServiceUnavailable, "api_error", "Paw messages gateway is unavailable")
+	}
+}
+
+// pawMessagesTarget names which gateway handler serves a Messages request.
+type pawMessagesTarget int
+
+const (
+	pawMessagesAnthropic pawMessagesTarget = iota
+	pawMessagesOpenAI
+	pawCountTokensAnthropic
+	pawCountTokensOpenAI
+	pawCountTokensGrok
+)
+
+// pawMessagesTargetFor is the choice gateway.go makes for /v1/messages and
+// /v1/messages/count_tokens, kept as one function so a test can hold it to that:
+// OpenAI and Grok groups take Messages through the OpenAI gateway's bridge, every
+// other platform through the Anthropic-compatible one, and count_tokens has its own
+// three-way split — bridged upstream for OpenAI, estimated locally for Grok.
+func pawMessagesTargetFor(platform string, countTokens bool) pawMessagesTarget {
+	if countTokens {
+		switch platform {
+		case service.PlatformOpenAI:
+			return pawCountTokensOpenAI
+		case service.PlatformGrok:
+			return pawCountTokensGrok
+		default:
+			return pawCountTokensAnthropic
+		}
+	}
+	switch platform {
+	case service.PlatformOpenAI, service.PlatformGrok:
+		return pawMessagesOpenAI
+	default:
+		return pawMessagesAnthropic
+	}
+}
+
+// restorePawClientUserAgent puts the editor client's User-Agent back where the
+// gateway reads it. See PawClientUserAgentHeader for why it could not simply
+// arrive as one. Only a plain printable value is accepted: this is a string the
+// caller controls, and it ends up in logs and in the Claude Code check.
+func restorePawClientUserAgent(c *gin.Context) {
+	forwarded := strings.TrimSpace(c.GetHeader(PawClientUserAgentHeader))
+	c.Request.Header.Del(PawClientUserAgentHeader)
+	if forwarded == "" || len(forwarded) > 512 {
+		return
+	}
+	for _, r := range forwarded {
+		if r < 0x20 || r == 0x7f {
+			return
+		}
+	}
+	c.Request.Header.Set("User-Agent", forwarded)
+}
+
+// pawMessagesError answers in the shape Anthropic clients parse. The paw error
+// envelope is not one they recognise, and Claude Code would show its raw JSON.
+func pawMessagesError(c *gin.Context, status int, errorType, message string) {
+	if c == nil {
+		return
+	}
+	c.JSON(status, gin.H{"type": "error", "error": gin.H{"type": errorType, "message": message}})
+	c.Abort()
+}
+
+func pawMessagesServiceError(c *gin.Context, err error) {
+	status := serviceErrorStatus(err)
+	pawMessagesError(c, status, anthropicErrorTypeForStatus(status), serviceErrorMessage(err))
+}
+
+func anthropicErrorTypeForStatus(status int) string {
+	switch status {
+	case http.StatusBadRequest:
+		return "invalid_request_error"
+	case http.StatusUnauthorized:
+		return "authentication_error"
+	case http.StatusForbidden:
+		return "permission_error"
+	case http.StatusNotFound:
+		return "not_found_error"
+	case http.StatusRequestEntityTooLarge:
+		return "request_too_large"
+	case http.StatusTooManyRequests:
+		return "rate_limit_error"
+	default:
+		return "api_error"
 	}
 }
 

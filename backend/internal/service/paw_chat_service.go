@@ -53,13 +53,17 @@ type APIKeyPawChatKeySource struct {
 	Service PawAPIKeyLookup
 }
 
-func (s APIKeyPawChatKeySource) ResolvePawAPIKey(ctx context.Context, userID, groupID int64) (*APIKey, *UserSubscription, error) {
+// ResolvePawGroupKey is ResolvePawAPIKey that also hands back the group it
+// resolved. Callers that dispatch on the group's platform need it, and taking it
+// from the same lookup avoids a second query per request. The group is nil when
+// groupID is not positive, which is the automatic-routing case.
+func (s APIKeyPawChatKeySource) ResolvePawGroupKey(ctx context.Context, userID, groupID int64) (*APIKey, *UserSubscription, *Group, error) {
 	if s.Service == nil {
-		return nil, nil, errPawKeyUnavailable
+		return nil, nil, nil, errPawKeyUnavailable
 	}
 	groups, err := s.Service.GetAvailableGroups(ctx, userID)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	var selectedGroup *Group
 	if groupID > 0 {
@@ -70,22 +74,22 @@ func (s APIKeyPawChatKeySource) ResolvePawAPIKey(ctx context.Context, userID, gr
 			}
 		}
 		if selectedGroup == nil {
-			return nil, nil, errPawGroupForbidden
+			return nil, nil, nil, errPawGroupForbidden
 		}
 	}
 
 	keys, err := s.Service.SearchAPIKeys(ctx, userID, PlaygroundChatAPIKeyName, 10)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	key := findPawInternalKey(keys)
 	if key == nil {
 		if err := s.Service.EnsurePlaygroundAPIKeys(ctx, userID); err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		keys, err = s.Service.SearchAPIKeys(ctx, userID, PlaygroundChatAPIKeyName, 10)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		key = findPawInternalKey(keys)
 	}
@@ -97,13 +101,13 @@ func (s APIKeyPawChatKeySource) ResolvePawAPIKey(ctx context.Context, userID, gr
 			AutoGroupIDs: groupIDs,
 		})
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 	}
 	if key.ID > 0 {
 		loaded, loadErr := s.Service.GetByID(ctx, key.ID)
 		if loadErr != nil {
-			return nil, nil, loadErr
+			return nil, nil, nil, loadErr
 		}
 		if loaded != nil {
 			key = loaded
@@ -113,10 +117,15 @@ func (s APIKeyPawChatKeySource) ResolvePawAPIKey(ctx context.Context, userID, gr
 	if selectedGroup != nil && selectedGroup.IsSubscriptionType() {
 		subscription, err = s.Service.GetActiveSubscriptionForGroup(ctx, userID, groupID)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 	}
-	return key, subscription, nil
+	return key, subscription, selectedGroup, nil
+}
+
+func (s APIKeyPawChatKeySource) ResolvePawAPIKey(ctx context.Context, userID, groupID int64) (*APIKey, *UserSubscription, error) {
+	key, subscription, _, err := s.ResolvePawGroupKey(ctx, userID, groupID)
+	return key, subscription, err
 }
 
 func (s APIKeyPawChatKeySource) ResolvePawAutoGroupForModel(ctx context.Context, userID int64, model string) (*APIKey, *UserSubscription, error) {
@@ -232,6 +241,62 @@ func (s *PawChatService) PrepareResponses(ctx context.Context, userID, groupID i
 		return nil, err
 	}
 	return resolution, nil
+}
+
+// pawGroupKeySource is what PrepareMessages needs beyond PawChatKeySource: the
+// resolved group as well as the key. Asserted rather than added to the interface
+// so existing stubs keep compiling.
+type pawGroupKeySource interface {
+	ResolvePawGroupKey(ctx context.Context, userID, groupID int64) (*APIKey, *UserSubscription, *Group, error)
+}
+
+// PrepareMessages resolves the group and internal key for an Anthropic Messages
+// request coming from a desktop client (Claude Code and its editor extensions).
+//
+// Unlike PrepareResponses it does not check the model against the group's catalog.
+// A Claude Code session names models the catalog has no reason to list — the small
+// model it uses for background work, or an alias the account maps — and refusing
+// them here would break the session while the same request through an API key is
+// accepted. Which models a group can serve is decided where it is for an API key:
+// by its accounts.
+func (s *PawChatService) PrepareMessages(ctx context.Context, userID, groupID int64) (*PawChatResolution, error) {
+	if s == nil || s.keySource == nil {
+		return nil, errPawKeyUnavailable
+	}
+	if userID <= 0 {
+		return nil, infraerrors.Unauthorized("AUTH_REQUIRED", "authenticated user is required")
+	}
+	if groupID <= 0 {
+		return nil, errPawGroupForbidden
+	}
+	source, ok := s.keySource.(pawGroupKeySource)
+	if !ok {
+		return nil, errPawKeyUnavailable
+	}
+	apiKey, subscription, group, err := source.ResolvePawGroupKey(ctx, userID, groupID)
+	if err != nil {
+		if infraerrors.Reason(err) == errPawGroupForbidden.Reason {
+			return nil, errPawGroupForbidden
+		}
+		return nil, errPawKeyUnavailable.WithCause(err)
+	}
+	if apiKey == nil || group == nil {
+		return nil, errPawKeyUnavailable
+	}
+	if apiKey.Status == StatusAPIKeyQuotaExhausted || apiKey.IsQuotaExhausted() {
+		return nil, errPawQuotaExceeded
+	}
+	if apiKey.Status != "" && apiKey.Status != StatusActive {
+		return nil, errPawKeyUnavailable
+	}
+	if apiKey.IsExpired() {
+		return nil, errPawKeyUnavailable
+	}
+	return &PawChatResolution{
+		APIKey:       clonePawAPIKeyWithGroup(apiKey, group),
+		Subscription: subscription,
+		Group:        group,
+	}, nil
 }
 
 func (s *PawChatService) Prepare(ctx context.Context, userID int64, req PawChatRequest) (*PawChatResolution, error) {
