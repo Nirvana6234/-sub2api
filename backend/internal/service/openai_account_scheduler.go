@@ -1618,7 +1618,7 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 	// 这里刻意用「排序」而不是「过滤」——调用方是顺着 selectionOrder 逐个尝试、抢不到
 	// 并发槽就 continue，所以排在前面等于优先，排在后面等于降级可用。若直接砍掉更宽的
 	// 账号，专精那档一旦全部满载或抢不到槽，请求就只能失败，而空闲的宽账号在旁边闲着。
-	buildSelectionOrder := func(pool []openAIAccountCandidateScore) []openAIAccountCandidateScore {
+	rankSpecializedFirst := func(pool []openAIAccountCandidateScore) []openAIAccountCandidateScore {
 		if !s.service.preferSpecializedAccountsEnabled() || len(pool) < 2 {
 			return rankPool(pool)
 		}
@@ -1639,6 +1639,25 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 		}
 		ordered := rankPool(specialized)
 		return append(ordered, rankPool(rest)...)
+	}
+
+	// 组内优先级分档，排在稀缺能力保护之外：管理员填的优先级是档位语义
+	// （"优先级 1 的没压满就别碰 2"），必须先决定用哪一档，档内才轮到专精/延迟/
+	// 负载去排序。沿用同一套「排序而不过滤」的约定——低优先级档仍留在序列尾部，
+	// 高优先级档全部满载或抢不到并发槽时照样能降级用上，不会把请求打失败。
+	buildSelectionOrder := func(pool []openAIAccountCandidateScore) []openAIAccountCandidateScore {
+		tiers := splitOpenAICandidatesByPriorityTier(pool)
+		if len(tiers) < 2 {
+			return rankSpecializedFirst(pool)
+		}
+		// 已绑定会话的账号并入首档一起竞争：分档要解决的是新会话从哪一档起头，
+		// 而换掉一个已绑定的号有真实代价，不该被档位一刀切掉。
+		tiers = promoteOpenAIStickyCandidateToFirstTier(tiers, req)
+		ordered := make([]openAIAccountCandidateScore, 0, len(pool))
+		for _, tier := range tiers {
+			ordered = append(ordered, rankSpecializedFirst(tier)...)
+		}
+		return ordered
 	}
 
 	if req.RequireCompact {
