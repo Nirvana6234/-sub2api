@@ -22,6 +22,14 @@ internal interface IGroupPreferenceStore
     bool LoadAutomatic();
 
     void SaveAutomatic(bool automatic);
+
+    /// <summary>
+    /// The Claude group last chosen for the editor plug-ins (支持插件), independent of
+    /// whichever group Codex is on. Null when the user has never chosen one.
+    /// </summary>
+    long? LoadClaudeGroup();
+
+    void SaveClaudeGroup(long groupId);
 }
 
 /// <summary>
@@ -75,6 +83,15 @@ internal sealed class GroupPreferenceStore : IGroupPreferenceStore
 
     public void SaveAutomatic(bool automatic) =>
         Write(current => current with { Automatic = automatic });
+
+    public long? LoadClaudeGroup()
+    {
+        Preferences? preferences = ReadForThisServer();
+        return preferences?.ClaudeGroupId is > 0 ? preferences.ClaudeGroupId : null;
+    }
+
+    public void SaveClaudeGroup(long groupId) =>
+        Write(current => current with { ClaudeGroupId = groupId });
 
     /// <summary>
     /// The stored preferences when they belong to the relay in use, otherwise null.
@@ -145,5 +162,8 @@ internal sealed class GroupPreferenceStore : IGroupPreferenceStore
 
         /// <summary>Absent in files written before automatic routing existed, which reads as false.</summary>
         public bool Automatic { get; init; }
+
+        /// <summary>Absent in files written before the editor plug-ins had their own group, reads as 0/none.</summary>
+        public long ClaudeGroupId { get; init; }
     }
 }

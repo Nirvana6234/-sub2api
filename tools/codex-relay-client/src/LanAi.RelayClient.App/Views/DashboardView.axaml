@@ -159,16 +159,6 @@
                  that already drives the Codex health check, not live per request. -->
             <TextBlock Text="{Binding Dashboard.ContextFilterUsageText}"
                        Foreground="#9CA3AF" FontSize="11" Margin="0,4,0,0" />
-            <!-- Points Claude Code (and the VS Code extension built on it) at the local
-                 relay while a Claude group is in use; put back on exit. -->
-            <CheckBox Content="支持插件（VS Code）等" IsChecked="{Binding Dashboard.PluginSupportEnabled}"
-                      IsEnabled="{Binding Dashboard.CanConfigurePluginSupport}"
-                      ToolTip.Tip="选择 Claude 分组时，同时配置 Claude Code 及其 VS Code 插件走共飞；仅客户端运行期间有效，退出时自动还原"
-                      Foreground="#374151" Margin="0,8,0,0" />
-            <TextBlock Text="{Binding Dashboard.PluginSupportStatus}"
-                       IsVisible="{Binding Dashboard.HasPluginSupportStatus}"
-                       TextWrapping="Wrap"
-                       Foreground="#9CA3AF" FontSize="11" Margin="0,4,0,0" />
           </StackPanel>
         </Border>
 
@@ -334,8 +324,37 @@
                        Foreground="#2563EB" FontSize="12" Margin="0,8,0,0"
                        IsVisible="{Binding Dashboard.HasGroupMessage}" />
 
-            <!-- Claude 模型与思考强度偏好（仅 Claude 分组可见）-->
-            <StackPanel Margin="0,12,0,0" IsVisible="{Binding Dashboard.IsClaudeGroup}">
+            <!-- A second path beside the group above: Claude Code and the VS Code
+                 extension built on it get a Claude group of their own, independent of
+                 the one Codex is on. Off by default, since it writes files outside
+                 this client; put back on exit. -->
+            <CheckBox Content="支持插件（VS Code）等" IsChecked="{Binding Dashboard.PluginSupportEnabled}"
+                      IsEnabled="{Binding Dashboard.CanConfigurePluginSupport}"
+                      ToolTip.Tip="同时配置 Claude Code 及其 VS Code 插件走共飞，可单独选择 Claude 分组；仅客户端运行期间有效，退出时自动还原"
+                      Foreground="#374151" Margin="0,12,0,0" />
+            <StackPanel IsVisible="{Binding Dashboard.PluginSupportEnabled}" Margin="0,6,0,0">
+              <TextBlock Text="插件使用的 Claude 分组" FontWeight="SemiBold" Foreground="#6B7280"
+                         FontSize="12" Margin="0,0,0,6" />
+              <ComboBox ItemsSource="{Binding Dashboard.ClaudePluginGroups}"
+                        SelectedItem="{Binding Dashboard.SelectedClaudePluginGroup, Mode=TwoWay}"
+                        IsVisible="{Binding Dashboard.HasClaudePluginGroups}"
+                        HorizontalAlignment="Stretch" Padding="8,6" PlaceholderText="点击选择 Claude 分组">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate>
+                    <TextBlock Text="{Binding DisplayText}" />
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
+              <TextBlock Text="该账号没有可用的 Claude 分组" Foreground="#9CA3AF" FontSize="12"
+                         IsVisible="{Binding !Dashboard.HasClaudePluginGroups}" />
+              <TextBlock Text="{Binding Dashboard.PluginSupportStatus}"
+                         IsVisible="{Binding Dashboard.HasPluginSupportStatus}"
+                         TextWrapping="Wrap"
+                         Foreground="#9CA3AF" FontSize="11" Margin="0,4,0,0" />
+            </StackPanel>
+
+            <!-- Claude 模型与思考强度偏好（主分组或插件分组是 Claude 时可见）-->
+            <StackPanel Margin="0,12,0,0" IsVisible="{Binding Dashboard.ShowClaudePreference}">
               <TextBlock Text="Claude 模型设置" FontWeight="SemiBold" Foreground="#6B7280"
                          FontSize="12" Margin="0,0,0,6" />
               <Grid ColumnDefinitions="*,8,*">

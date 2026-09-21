@@ -291,25 +291,6 @@
                                  request. -->
                             <TextBlock Text="{Binding ContextFilterUsageText}"
                                        Foreground="#9CA3AF" FontSize="11" Margin="0,4,0,0" />
-                            <!-- Points Claude Code (and the VS Code extension built on it) at
-                                 the local relay while a Claude group is in use; put back on exit. -->
-                            <CheckBox Content="支持插件（VS Code）等" IsChecked="{Binding PluginSupportEnabled}"
-                                      IsEnabled="{Binding CanConfigurePluginSupport}"
-                                      ToolTip="选择 Claude 分组时，同时配置 Claude Code 及其 VS Code 插件走共飞；仅客户端运行期间有效，退出时自动还原"
-                                      Foreground="#374151" Margin="0,8,0,0" />
-            <TextBlock Text="{Binding PluginSupportStatus}" TextWrapping="Wrap"
-                       Foreground="#9CA3AF" FontSize="11" Margin="0,4,0,0">
-                <TextBlock.Style>
-                    <Style TargetType="TextBlock">
-                        <Setter Property="Visibility" Value="Collapsed" />
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding HasPluginSupportStatus}" Value="True">
-                                <Setter Property="Visibility" Value="Visible" />
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </TextBlock.Style>
-            </TextBlock>
                         </StackPanel>
                     </Border>
 
@@ -555,9 +536,41 @@
                                        Foreground="#2563EB" FontSize="12" Margin="0,8,0,0"
                                        Visibility="{Binding HasGroupMessage, Converter={StaticResource BoolToVisibility}}" />
 
-                            <!-- Claude 模型与思考强度偏好（仅 Claude 分组可见）-->
+                            <!-- A second path beside the group above: Claude Code and the VS
+                                 Code extension built on it get a Claude group of their own,
+                                 independent of the one Codex is on. Off by default, since it
+                                 writes files outside this client; put back on exit. -->
+                            <CheckBox Content="支持插件（VS Code）等" IsChecked="{Binding PluginSupportEnabled}"
+                                      IsEnabled="{Binding CanConfigurePluginSupport}"
+                                      ToolTip="同时配置 Claude Code 及其 VS Code 插件走共飞，可单独选择 Claude 分组；仅客户端运行期间有效，退出时自动还原"
+                                      Foreground="#374151" Margin="0,12,0,0" />
+                            <StackPanel Margin="0,6,0,0"
+                                        Visibility="{Binding PluginSupportEnabled, Converter={StaticResource BoolToVisibility}}">
+                                <TextBlock Text="插件使用的 Claude 分组" FontWeight="SemiBold" Foreground="#6B7280" FontSize="12" Margin="0,0,0,6"/>
+                                <ComboBox ItemsSource="{Binding ClaudePluginGroups}"
+                                          SelectedItem="{Binding SelectedClaudePluginGroup, Mode=TwoWay}"
+                                          DisplayMemberPath="DisplayText" Padding="8,6"
+                                          Visibility="{Binding HasClaudePluginGroups, Converter={StaticResource BoolToVisibility}}"/>
+                                <TextBlock Text="该账号没有可用的 Claude 分组" Foreground="#9CA3AF" FontSize="12">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding HasClaudePluginGroups}" Value="True">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <TextBlock Text="{Binding PluginSupportStatus}" TextWrapping="Wrap"
+                                           Foreground="#9CA3AF" FontSize="11" Margin="0,4,0,0"
+                                           Visibility="{Binding HasPluginSupportStatus, Converter={StaticResource BoolToVisibility}}"/>
+                            </StackPanel>
+
+                            <!-- Claude 模型与思考强度偏好（主分组或插件分组是 Claude 时可见）-->
                             <StackPanel Margin="0,12,0,0"
-                                        Visibility="{Binding IsClaudeGroup, Converter={StaticResource BoolToVisibility}}">
+                                        Visibility="{Binding ShowClaudePreference, Converter={StaticResource BoolToVisibility}}">
                                 <TextBlock Text="Claude 模型设置" FontWeight="SemiBold" Foreground="#6B7280" FontSize="12" Margin="0,0,0,6"/>
                                 <Grid>
                                     <Grid.ColumnDefinitions>

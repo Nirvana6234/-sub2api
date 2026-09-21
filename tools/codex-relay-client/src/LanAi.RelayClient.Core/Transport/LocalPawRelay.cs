@@ -118,8 +118,10 @@ internal sealed class LocalPawRelay : IAsyncDisposable
     private readonly IRelayEndpointStore? _endpointStore;
     private readonly int? _preferredPort;
     private readonly object _gate = new();
-    private long? _groupId;
-    private string? _groupName;
+    private long? _codexGroupId;
+    private string? _codexGroupName;
+    private long? _claudeGroupId;
+    private string? _claudeGroupName;
     private int _port;
     private CancellationTokenSource? _stop;
     private Task? _serve;
@@ -182,7 +184,7 @@ internal sealed class LocalPawRelay : IAsyncDisposable
     public string? Origin => BaseAddress is null ? null : $"http://127.0.0.1:{_port}";
 
     /// <summary>
-    /// Binds forwarded traffic to a billing group.
+    /// Binds Codex's (<c>/v1/responses</c>) forwarded traffic to a billing group.
     /// </summary>
     /// <remarks>
     /// Pushed rather than pulled, because the group is a decision the user makes in
@@ -190,17 +192,40 @@ internal sealed class LocalPawRelay : IAsyncDisposable
     /// switch: a relay left on the previous group bills traffic somewhere the user
     /// was told it would not go, and neither end says a word about it.
     /// </remarks>
+    /// <remarks>
+    /// Independent of <see cref="SetClaudeGroup"/>: Codex and the editor plug-ins are
+    /// two callers of the same relay, on two different routes, and each names its own
+    /// group. Sharing one slot between them would re-bill whichever caller set it last
+    /// to a group it never chose.
+    /// </remarks>
     public void SetGroup(long? groupId, string? groupName = null)
     {
         lock (_gate)
         {
-            _groupId = groupId;
-            _groupName = string.IsNullOrWhiteSpace(groupName) ? null : groupName.Trim();
+            _codexGroupId = groupId;
+            _codexGroupName = string.IsNullOrWhiteSpace(groupName) ? null : groupName.Trim();
         }
 
         ClientLog.Info(groupId is null
-            ? "本机 Relay 已切换到自动分组"
-            : $"本机 Relay 已切换{FormatGroup(groupId, groupName)}");
+            ? "本机 Relay（ChatGPT）已切换到自动分组"
+            : $"本机 Relay（ChatGPT）已切换{FormatGroup(groupId, groupName)}");
+    }
+
+    /// <summary>
+    /// Binds Claude Code's (<c>/v1/messages</c>) forwarded traffic to a billing group.
+    /// </summary>
+    /// <remarks>See <see cref="SetGroup"/> for why this is a slot of its own.</remarks>
+    public void SetClaudeGroup(long? groupId, string? groupName = null)
+    {
+        lock (_gate)
+        {
+            _claudeGroupId = groupId;
+            _claudeGroupName = string.IsNullOrWhiteSpace(groupName) ? null : groupName.Trim();
+        }
+
+        ClientLog.Info(groupId is null
+            ? "本机 Relay（Claude Code）已清除分组"
+            : $"本机 Relay（Claude Code）已切换{FormatGroup(groupId, groupName)}");
     }
 
     public Task StartAsync(CancellationToken cancellationToken = default)
@@ -490,15 +515,23 @@ internal sealed class LocalPawRelay : IAsyncDisposable
             string? groupName;
             lock (_gate)
             {
-                group = _groupId;
-                groupName = _groupName;
+                if (protocol == RelayProtocol.Messages)
+                {
+                    group = _claudeGroupId;
+                    groupName = _claudeGroupName;
+                }
+                else
+                {
+                    group = _codexGroupId;
+                    groupName = _codexGroupName;
+                }
             }
             if (protocol == RelayProtocol.Messages && group is null)
             {
-                // Automatic routing is defined over OpenAI candidates, so a Messages call has
-                // no group to fall back to. Said here, in words, rather than by letting the
+                // The Claude Code binding is its own selection, independent of whatever
+                // group Codex is on — said here, in words, rather than by letting the
                 // server answer a request that names no group with a bare 400.
-                ClientLog.Warning("Claude 请求没有可用的分组，已拒绝（自动分组只用于 OpenAI）");
+                ClientLog.Warning("Claude 请求没有可用的分组，已拒绝（尚未选择 Claude 分组）");
                 await WriteErrorAsync(
                     context,
                     400,
@@ -882,6 +915,7 @@ internal sealed class LocalPawRelay : IAsyncDisposable
         _serve = null;
         BaseAddress = null;
         SetGroup(null);
+        SetClaudeGroup(null);
     }
 
     private static bool IsWellFormedToken(string? token) =>

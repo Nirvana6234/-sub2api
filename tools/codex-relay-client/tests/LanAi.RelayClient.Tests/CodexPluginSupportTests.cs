@@ -32,7 +32,7 @@ public sealed class CodexPluginSupportTests : IDisposable
     }
 
     private static PluginSupportRequest Wanted(string? model = "claude-opus-5") =>
-        new(Enabled: true, GroupId: 5, GroupName: "claude", GroupIsClaude: true, Model: model);
+        new(Enabled: true, GroupId: 5, GroupName: "claude", Model: model);
 
     // ---- Turning it on ---------------------------------------------------------------------
 
@@ -92,26 +92,33 @@ public sealed class CodexPluginSupportTests : IDisposable
     }
 
     [Fact]
-    public async Task ANonClaudeGroupSetsNothingUp()
+    public async Task NoGroupChosenLeavesNothingSetUp()
     {
         Setup setup = await CreateSetupAsync();
 
-        PluginSupportResult result = await setup.Startup.SyncPluginSupportAsync(Wanted() with { GroupIsClaude = false });
+        PluginSupportResult result = await setup.Startup.SyncPluginSupportAsync(Wanted() with { GroupId = null });
 
-        Assert.Equal(PluginSupportState.WrongGroup, result.State);
+        Assert.Equal(PluginSupportState.NoGroupChosen, result.State);
         Assert.Equal(0, setup.Binding.ApplyCalls);
         Assert.Equal(1, setup.Binding.RestoreCalls);
     }
 
+    /// <summary>
+    /// Codex still on the relay keeps it, but the Claude binding must not outlive the box:
+    /// a straggling Claude Code request is refused rather than billed to the old group.
+    /// </summary>
     [Fact]
-    public async Task AutomaticRoutingHasNoGroupToPointThePluginsAt()
+    public async Task TurningThePluginsOffClearsTheClaudeGroupEvenWhenCodexKeepsTheRelay()
     {
         Setup setup = await CreateSetupAsync();
+        await setup.Startup.RunAsync(groupId: 5, "https://relay.test/v1");
+        await setup.Startup.SyncPluginSupportAsync(Wanted());
+        Assert.NotEqual(400, await PostMessagesAsync(setup.Relay));
 
-        PluginSupportResult result = await setup.Startup.SyncPluginSupportAsync(Wanted() with { GroupId = null, GroupIsClaude = false });
+        await setup.Startup.SyncPluginSupportAsync(Wanted() with { Enabled = false });
 
-        Assert.Equal(PluginSupportState.WrongGroup, result.State);
-        Assert.Equal(0, setup.Binding.ApplyCalls);
+        Assert.NotNull(setup.Relay.Origin);
+        Assert.Equal(400, await PostMessagesAsync(setup.Relay));
     }
 
     /// <summary>
@@ -308,6 +315,19 @@ public sealed class CodexPluginSupportTests : IDisposable
 
         Assert.Equal(PluginSupportState.NotApplicable, result.State);
         Assert.Null(setup.Relay.Origin);
+    }
+
+    /// <summary>The status a Claude Code turn gets from the relay; 400 means no Claude group is bound.</summary>
+    private static async Task<int> PostMessagesAsync(LocalPawRelay relay)
+    {
+        using var client = new System.Net.Http.HttpClient();
+        using var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, relay.Origin + "/v1/messages")
+        {
+            Content = new System.Net.Http.StringContent("{}", System.Text.Encoding.UTF8, "application/json"),
+        };
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + relay.Token);
+        using System.Net.Http.HttpResponseMessage response = await client.SendAsync(request);
+        return (int)response.StatusCode;
     }
 
     // ---- Fixture -----------------------------------------------------------------------------

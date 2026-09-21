@@ -1932,6 +1932,8 @@ internal sealed class FakeGroupPreferenceStore : IGroupPreferenceStore
 
     public bool SavedAutomatic { get; set; }
 
+    public long? SavedClaudeGroup { get; private set; }
+
     public long? Load() => Saved;
 
     public void Save(long groupId) => Saved = groupId;
@@ -1939,4 +1941,8 @@ internal sealed class FakeGroupPreferenceStore : IGroupPreferenceStore
     public bool LoadAutomatic() => SavedAutomatic;
 
     public void SaveAutomatic(bool automatic) => SavedAutomatic = automatic;
+
+    public long? LoadClaudeGroup() => SavedClaudeGroup;
+
+    public void SaveClaudeGroup(long groupId) => SavedClaudeGroup = groupId;
 }

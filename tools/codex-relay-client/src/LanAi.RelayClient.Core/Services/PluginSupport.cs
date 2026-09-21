@@ -7,17 +7,15 @@ namespace LanAi.RelayClient.Services;
 
 /// <summary>What the dashboard wants the editor plug-ins set up as, right now.</summary>
 /// <param name="Enabled">The 支持插件 checkbox.</param>
-/// <param name="GroupId">The group in use; null for automatic routing.</param>
-/// <param name="GroupIsClaude">
-/// Only a Claude group is worth pointing Claude Code at. Automatic routing is defined over
-/// OpenAI candidates, and an OpenAI group would need the server's Messages bridge switched on.
+/// <param name="GroupId">
+/// The Claude group chosen for the plug-ins — a selection of its own, independent of whatever
+/// group Codex is routed through. Null when the checkbox is on but nothing has been chosen yet.
 /// </param>
-/// <param name="Model">The Claude model chosen in the client, when the group is a Claude one.</param>
+/// <param name="Model">The Claude model chosen in the client.</param>
 internal sealed record PluginSupportRequest(
     bool Enabled,
     long? GroupId,
     string? GroupName,
-    bool GroupIsClaude,
     string? Model);
 
 internal enum PluginSupportState
@@ -28,8 +26,8 @@ internal enum PluginSupportState
     /// <summary>The checkbox is off. Anything this client set earlier has been put back.</summary>
     Off,
 
-    /// <summary>The box is on but the group is not a Claude one, so nothing is set.</summary>
-    WrongGroup,
+    /// <summary>The box is on but no Claude group has been chosen yet, so nothing is set.</summary>
+    NoGroupChosen,
 
     /// <summary>Claude Code is pointed at the relay.</summary>
     Active,

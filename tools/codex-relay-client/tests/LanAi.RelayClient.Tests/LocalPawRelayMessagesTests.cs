@@ -18,6 +18,41 @@ public sealed class LocalPawRelayMessagesTests
 {
     private const string EditorUserAgent = "claude-cli/2.1.258 (external, claude-vscode)";
 
+    /// <summary>
+    /// Codex and Claude Code each name their own group; setting one never moves the other.
+    /// </summary>
+    [Fact]
+    public async Task CodexAndClaudeGroupsAreIndependentBindings()
+    {
+        await using var upstream = await MessagesUpstream.StartAsync();
+        await using var relay = new LocalPawRelay(upstream.BaseAddress, _ => Task.FromResult("jwt-1"));
+        await relay.StartAsync();
+        relay.SetGroup(11);
+        relay.SetClaudeGroup(22);
+
+        await PostAsync(relay, "/v1/responses", "{}");
+        await PostAsync(relay, "/v1/messages", "{}");
+        relay.SetGroup(33);
+        await PostAsync(relay, "/v1/messages", "{}");
+        await PostAsync(relay, "/v1/responses", "{}");
+
+        Assert.Equal(["11", "22", "22", "33"], upstream.Requests.Select(r => r.Header(LocalPawRelay.GroupHeader)));
+    }
+
+    [Fact]
+    public async Task AClaudeTurnWithNoClaudeGroupIsRefusedEvenWhenCodexHasOne()
+    {
+        await using var upstream = await MessagesUpstream.StartAsync();
+        await using var relay = new LocalPawRelay(upstream.BaseAddress, _ => Task.FromResult("jwt-1"));
+        await relay.StartAsync();
+        relay.SetGroup(11);
+
+        using HttpResponseMessage response = await PostAsync(relay, "/v1/messages", "{}");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Empty(upstream.Requests);
+    }
+
     // ---- Which paths are served ------------------------------------------------------
 
     [Theory]
@@ -60,7 +95,7 @@ public sealed class LocalPawRelayMessagesTests
         await using var upstream = await MessagesUpstream.StartAsync();
         await using var relay = new LocalPawRelay(upstream.BaseAddress, _ => Task.FromResult("jwt-1"));
         await relay.StartAsync();
-        relay.SetGroup(5);
+        relay.SetClaudeGroup(5);
 
         using HttpResponseMessage response = await PostAsync(relay, "/v1/messages?beta=true", "{\"model\":\"claude-opus-5\"}");
 
@@ -82,7 +117,7 @@ public sealed class LocalPawRelayMessagesTests
         await using var upstream = await MessagesUpstream.StartAsync();
         await using var relay = new LocalPawRelay(upstream.BaseAddress, _ => Task.FromResult("jwt"));
         await relay.StartAsync();
-        relay.SetGroup(5);
+        relay.SetClaudeGroup(5);
 
         using HttpResponseMessage _ = await PostAsync(relay, "/v1/messages/count_tokens", "{}");
 
@@ -95,7 +130,7 @@ public sealed class LocalPawRelayMessagesTests
         await using var upstream = await MessagesUpstream.StartAsync();
         await using var relay = new LocalPawRelay(upstream.BaseAddress, _ => Task.FromResult("jwt"));
         await relay.StartAsync();
-        relay.SetGroup(5);
+        relay.SetClaudeGroup(5);
 
         using HttpResponseMessage _ = await PostAsync(relay, "/v1/messages?beta=true", "{}", headers:
         [
@@ -140,7 +175,7 @@ public sealed class LocalPawRelayMessagesTests
         await using var upstream = await MessagesUpstream.StartAsync();
         await using var relay = new LocalPawRelay(upstream.BaseAddress, _ => Task.FromResult("jwt"));
         await relay.StartAsync();
-        relay.SetGroup(5);
+        relay.SetClaudeGroup(5);
 
         using HttpResponseMessage _ = await PostAsync(relay, "/v1/messages", "{}", userAgent: EditorUserAgent);
 
@@ -156,7 +191,7 @@ public sealed class LocalPawRelayMessagesTests
         await using var upstream = await MessagesUpstream.StartAsync();
         await using var relay = new LocalPawRelay(upstream.BaseAddress, _ => Task.FromResult("jwt"));
         await relay.StartAsync();
-        relay.SetGroup(5);
+        relay.SetClaudeGroup(5);
 
         using HttpResponseMessage _ = await PostAsync(relay, "/v1/messages", "{}");
 
@@ -173,7 +208,7 @@ public sealed class LocalPawRelayMessagesTests
         await using var upstream = await MessagesUpstream.StartAsync();
         await using var relay = new LocalPawRelay(upstream.BaseAddress, _ => Task.FromResult("jwt"));
         await relay.StartAsync();
-        relay.SetGroup(5);
+        relay.SetClaudeGroup(5);
 
         using HttpResponseMessage _ = await PostAsync(relay, "/v1/messages", "{}", headers: [("Accept", "application/json")]);
 
@@ -211,7 +246,7 @@ public sealed class LocalPawRelayMessagesTests
         await using var upstream = await MessagesUpstream.StartAsync();
         await using var relay = new LocalPawRelay(upstream.BaseAddress, _ => Task.FromResult("jwt"));
         await relay.StartAsync();
-        relay.SetGroup(5);
+        relay.SetClaudeGroup(5);
 
         using HttpResponseMessage response = await PostAsync(relay, "/v1/messages", "{}", token: "not-the-token");
 
@@ -227,7 +262,7 @@ public sealed class LocalPawRelayMessagesTests
         await using var upstream = await MessagesUpstream.StartAsync();
         await using var relay = new LocalPawRelay(upstream.BaseAddress, _ => Task.FromResult("jwt"));
         await relay.StartAsync();
-        relay.SetGroup(5);
+        relay.SetClaudeGroup(5);
 
         using HttpResponseMessage response = await PostAsync(relay, "/v1/responses", "{}", token: "not-the-token");
 
@@ -275,7 +310,7 @@ public sealed class LocalPawRelayMessagesTests
             ]);
         await using var relay = new LocalPawRelay(upstream.BaseAddress, _ => Task.FromResult("jwt"));
         await relay.StartAsync();
-        relay.SetGroup(5);
+        relay.SetClaudeGroup(5);
 
         using HttpResponseMessage response = await PostAsync(relay, "/v1/messages", "{}");
 
@@ -299,7 +334,7 @@ public sealed class LocalPawRelayMessagesTests
         await using var upstream = await MessagesUpstream.StartAsync(body: reply, contentType: "application/json");
         await using var relay = new LocalPawRelay(upstream.BaseAddress, _ => Task.FromResult("jwt"));
         await relay.StartAsync();
-        relay.SetGroup(5);
+        relay.SetClaudeGroup(5);
 
         using HttpResponseMessage response = await PostAsync(relay, "/v1/messages", "{}");
 
@@ -314,7 +349,7 @@ public sealed class LocalPawRelayMessagesTests
         await using var upstream = await MessagesUpstream.StartAsync(body: sse, contentType: "text/event-stream");
         await using var relay = new LocalPawRelay(upstream.BaseAddress, _ => Task.FromResult("jwt"));
         await relay.StartAsync();
-        relay.SetGroup(5);
+        relay.SetClaudeGroup(5);
 
         using HttpResponseMessage response = await PostAsync(relay, "/v1/messages", "{\"stream\":true}");
 

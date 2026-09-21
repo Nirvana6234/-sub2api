@@ -651,20 +651,26 @@ internal sealed class CodexStartup : ICodexStartup
                 return new PluginSupportResult(PluginSupportState.NotApplicable);
             }
 
-            bool wanted = request.Enabled && request.GroupIsClaude && request.GroupId is > 0;
+            bool wanted = request.Enabled && request.GroupId is > 0;
             if (!wanted)
             {
                 await RestorePluginsAsync().ConfigureAwait(false);
 
                 // The relay was started for the plug-ins alone, so it goes with them — unless
-                // Codex is on it, in which case it is not this call's to stop.
+                // Codex is on it, in which case it is not this call's to stop. Either way the
+                // Claude binding itself is cleared: a stale group left on it would let a
+                // straggling Claude Code request through after the box says otherwise.
                 if (_pluginsUseRelay && !_codexUsesRelay)
                 {
                     await _localRelay.StopAsync().ConfigureAwait(false);
                 }
+                else
+                {
+                    _localRelay.SetClaudeGroup(null);
+                }
 
                 _pluginsUseRelay = false;
-                return new PluginSupportResult(request.Enabled ? PluginSupportState.WrongGroup : PluginSupportState.Off);
+                return new PluginSupportResult(request.Enabled ? PluginSupportState.NoGroupChosen : PluginSupportState.Off);
             }
 
             try
@@ -689,7 +695,7 @@ internal sealed class CodexStartup : ICodexStartup
                 return new PluginSupportResult(PluginSupportState.Problem, "本机通信组件启动失败，Claude Code 没有配置。");
             }
 
-            _localRelay.SetGroup(request.GroupId, request.GroupName);
+            _localRelay.SetClaudeGroup(request.GroupId, request.GroupName);
             _pluginsUseRelay = true;
 
             PluginBindingReport report;
