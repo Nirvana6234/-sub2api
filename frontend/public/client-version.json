@@ -1,5 +1,5 @@
 {
-  "version": "0.5",
+  "version": "0.6",
   "download_page": "/download",
-  "release_notes": "0.5：注册与充值改为客户端内完成，无需再跳转浏览器。"
+  "release_notes": "0.6：新增自动分组、支持插件（Claude Code）、检查更新与分组模型白名单提示。"
 }
