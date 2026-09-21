@@ -19,12 +19,18 @@
     <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,6">
       <TextBlock Text="{Binding ClientUpdate.CurrentVersionText}"
                  Foreground="#9CA3AF" FontSize="11" VerticalAlignment="Center" />
+      <!-- Same click handler as the dashboard's 检查更新: offers the update rather than
+           only opening the download page. -->
       <Button Content="{Binding ClientUpdate.UpdateMessage}"
-              Click="OpenUpdatePage_OnClick"
+              Click="CheckUpdate_OnClick"
               IsVisible="{Binding ClientUpdate.HasUpdate}"
+              IsEnabled="{Binding !ClientUpdate.IsApplyingUpdate}"
               Background="Transparent" BorderThickness="0"
               Foreground="#2563EB" FontSize="11" Padding="8,0,0,0" />
     </StackPanel>
+    <TextBlock Text="{Binding ClientUpdate.DownloadProgressText}"
+               IsVisible="{Binding ClientUpdate.HasDownloadProgress}"
+               HorizontalAlignment="Center" Foreground="#9CA3AF" FontSize="11" Margin="0,0,0,6" />
 
     <TextBlock Text="登录后即可使用"
                Foreground="#9CA3AF" FontSize="12"

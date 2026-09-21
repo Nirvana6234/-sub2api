@@ -40,7 +40,8 @@ public sealed record PublicSettings
         string? serverUtcOffset = default,
         bool clientDownloadEnabled = default,
         string? clientLatestVersion = default,
-        string? clientLatestVersionMac = default)
+        string? clientLatestVersionMac = default,
+        string? clientDownloadDirectUrlMac = default)
     {
         RegistrationEnabled = registrationEnabled;
         EmailVerifyEnabled = emailVerifyEnabled;
@@ -67,6 +68,7 @@ public sealed record PublicSettings
         ClientDownloadEnabled = clientDownloadEnabled;
         ClientLatestVersion = clientLatestVersion;
         ClientLatestVersionMac = clientLatestVersionMac;
+        ClientDownloadDirectUrlMac = clientDownloadDirectUrlMac;
     }
 
     [JsonPropertyName("registration_enabled")]
@@ -205,6 +207,20 @@ public sealed record PublicSettings
     /// </remarks>
     [JsonPropertyName("client_latest_version_mac")]
     public string? ClientLatestVersionMac { get; init; }
+
+    /// <summary>
+    /// Direct download link for the macOS package (the .tar.gz), admin-set; empty means "no mac
+    /// build published". Used only to derive where the install script lives — see
+    /// <c>ClientVersionChecker</c> — never rendered or opened as-is.
+    /// </summary>
+    /// <remarks>
+    /// The install script is published alongside the package by the release pipeline, same
+    /// directory, fixed name — the same convention <c>ClientDownloadView.vue</c>'s
+    /// <c>macInstallScriptUrl</c> already relies on for the same reason: one admin-set field is
+    /// one fewer thing to keep in sync than two.
+    /// </remarks>
+    [JsonPropertyName("client_download_direct_url_mac")]
+    public string? ClientDownloadDirectUrlMac { get; init; }
 
     /// <summary>
     /// The safest possible surface, used when <c>/settings/public</c> cannot be read.

@@ -164,11 +164,6 @@ public partial class SignInView : UserControl
     private void ResetPassword_OnClick(object? sender, RoutedEventArgs e) =>
         BrowserLauncher.TryOpenRelayPage("forgot-password");
 
-    private void OpenUpdatePage_OnClick(object? sender, RoutedEventArgs e)
-    {
-        if (_page?.ClientUpdate.DownloadPage is { } page)
-        {
-            BrowserLauncher.TryOpen(page);
-        }
-    }
+    private void CheckUpdate_OnClick(object? sender, RoutedEventArgs e) =>
+        _ = _safeAsync?.RunAsync(() => _page!.ClientUpdate.CheckAndOfferUpdateAsync());
 }

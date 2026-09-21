@@ -205,3 +205,55 @@ func TestPawChatServiceRejectsExhaustedInternalKey(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, "QUOTA_EXCEEDED", infraerrors.Reason(err))
 }
+
+// A user with no OpenAI group used to reach the fallback creation with a mixed
+// candidate set, which validateAutoGroupIDs rejects with
+// AUTO_GROUP_CANDIDATE_PLATFORM_MISMATCH — taking the whole Paw path down for
+// that account rather than just declining one group.
+func TestPawFallbackAutoGroupIDsNeverMixesPlatforms(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		groups []Group
+		want   []int64
+	}{
+		{
+			name:   "prefers OpenAI when the user has one",
+			groups: []Group{{ID: 1, Platform: PlatformAnthropic}, {ID: 2, Platform: PlatformOpenAI}, {ID: 3, Platform: PlatformOpenAI}},
+			want:   []int64{2, 3},
+		},
+		{
+			name:   "falls back to the first platform when there is no OpenAI group",
+			groups: []Group{{ID: 4, Platform: PlatformAnthropic}, {ID: 5, Platform: PlatformGemini}, {ID: 6, Platform: PlatformAnthropic}},
+			want:   []int64{4, 6},
+		},
+		{
+			name:   "a single-platform user keeps every group",
+			groups: []Group{{ID: 7, Platform: PlatformAnthropic}, {ID: 8, Platform: PlatformAnthropic}},
+			want:   []int64{7, 8},
+		},
+		{
+			name:   "no groups yields no candidates",
+			groups: nil,
+			want:   []int64{},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := pawFallbackAutoGroupIDs(tc.groups)
+			require.Equal(t, tc.want, got)
+			require.True(t, autoGroupCandidatesSharePlatform(groupsByIDsForTest(tc.groups, got)))
+		})
+	}
+}
+
+func groupsByIDsForTest(groups []Group, ids []int64) []Group {
+	selected := make([]Group, 0, len(ids))
+	for _, id := range ids {
+		for i := range groups {
+			if groups[i].ID == id {
+				selected = append(selected, groups[i])
+				break
+			}
+		}
+	}
+	return selected
+}

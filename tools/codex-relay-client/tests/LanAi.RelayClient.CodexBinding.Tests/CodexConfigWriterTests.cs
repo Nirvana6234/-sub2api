@@ -704,4 +704,55 @@ public sealed class CodexConfigWriterTests : IDisposable
 
         return count;
     }
+
+    // ---- ReadActiveProvider ----------------------------------------------------------
+
+    [Theory]
+    [InlineData("model_provider = \"custom\"\n", "custom")]
+    [InlineData("model = \"x\"\nmodel_provider = 'literal'\n", "literal")]
+    [InlineData("model_provider = \"custom\" # the one I use\n", "custom")]
+    [InlineData("  model_provider   =   \"spaced\"  \n", "spaced")]
+    [InlineData("model_provider = \"with \\\"quote\\\"\"\n", "with \"quote\"")]
+    public void ReadActiveProviderReturnsWhatTheTopLevelKeySelects(string toml, string expected)
+    {
+        GivenConfig(toml);
+
+        Assert.Equal(expected, _writer.ReadActiveProvider());
+    }
+
+    [Fact]
+    public void ReadActiveProviderIsNullWhenNothingIsSelected()
+    {
+        GivenConfig("model = \"gpt-5\"\n");
+
+        Assert.Null(_writer.ReadActiveProvider());
+    }
+
+    /// <summary>
+    /// A <c>model_provider</c> under a table belongs to that table. Reading it as the
+    /// file's own would hand conversations to a provider nothing had selected.
+    /// </summary>
+    [Fact]
+    public void ReadActiveProviderIgnoresAKeyThatLivesUnderATable()
+    {
+        GivenConfig("model = \"gpt-5\"\n\n[profiles.work]\nmodel_provider = \"elsewhere\"\n");
+
+        Assert.Null(_writer.ReadActiveProvider());
+    }
+
+    [Fact]
+    public void ReadActiveProviderIsNullWhenThereIsNoConfigFile()
+    {
+        Assert.Null(_writer.ReadActiveProvider());
+    }
+
+    [Fact]
+    public void ReadActiveProviderSeesWhatTheWriterJustSelected()
+    {
+        GivenConfig("model_provider = \"custom\"\n");
+
+        _writer.Apply("sk-relay", "https://relay.test/v1");
+
+        Assert.Equal("gongfei", _writer.ReadActiveProvider());
+    }
 }

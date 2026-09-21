@@ -36,6 +36,7 @@ public sealed partial class DashboardViewModel : ObservableObject
     private readonly IStartupRegistration _startupRegistration;
     private readonly IContextFilterPreferenceStore _contextFilterPreferences;
     private readonly IContextFilterUsageStore _contextFilterUsage;
+    private readonly IPluginSupportPreferenceStore _pluginSupportPreferences;
     private readonly PollingBackoff _pollingBackoff;
     private readonly SafeAsyncRunner _safeAsync;
     private readonly SemaphoreSlim _pollGate = new(1, 1);
@@ -143,7 +144,8 @@ public sealed partial class DashboardViewModel : ObservableObject
         ICodexAccountStore? codexAccountStore = null,
         IStartupRegistration? startupRegistration = null,
         IContextFilterPreferenceStore? contextFilterPreferences = null,
-        IContextFilterUsageStore? contextFilterUsage = null)
+        IContextFilterUsageStore? contextFilterUsage = null,
+        IPluginSupportPreferenceStore? pluginSupportPreferences = null)
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
         _session = session ?? throw new ArgumentNullException(nameof(session));
@@ -159,6 +161,8 @@ public sealed partial class DashboardViewModel : ObservableObject
         _contextFilterUsage = contextFilterUsage ?? new ContextFilterUsageStore();
         SetContextFilterWithoutApplying(_contextFilterPreferences.Load() ?? true);
         RefreshContextFilterUsageText();
+        _pluginSupportPreferences = pluginSupportPreferences ?? new PluginSupportPreferenceStore();
+        SetPluginSupportWithoutApplying(_pluginSupportPreferences.Load() ?? false);
     }
 
     public ObservableCollection<GroupItemViewModel> Groups { get; } = [];
@@ -166,6 +170,28 @@ public sealed partial class DashboardViewModel : ObservableObject
     /// <summary>Provided by the UI host to show the automatic-routing modal.</summary>
     public Func<PawAutoGroupSettings, IReadOnlyList<GroupItemViewModel>, Task<PawAutoGroupSettings?>>?
         ConfigureAutoGroup { get; set; }
+
+    /// <summary>Whether the automatic-routing feature is available at all.</summary>
+    /// <remarks>
+    /// True only when the automatic entry is actually in the list, i.e. the server
+    /// supports it and the account has at least one OpenAI group to route between.
+    /// This gates whether <see cref="ConfigureAutoGroupAsync"/> may run; it is not,
+    /// by itself, whether the 配置 button is shown — see
+    /// <see cref="ShowConfigureAutoGroupButton"/> for that.
+    /// </remarks>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowConfigureAutoGroupButton))]
+    private bool canConfigureAutoGroup;
+
+    /// <summary>
+    /// Whether the 配置 button beside the group list should be offered right now.
+    /// </summary>
+    /// <remarks>
+    /// Only while 自动分组 is the selected entry. The dialog edits the automatic
+    /// candidate set and strategy, which is meaningless to a fixed group — showing
+    /// the button there just invites a click that has nothing to configure.
+    /// </remarks>
+    public bool ShowConfigureAutoGroupButton => CanConfigureAutoGroup && SelectedGroup is { IsAutomatic: true };
 
     private PawAutoGroupSettings? _autoGroupSettings;
     // Automatic routing was added after the original relay API. A 404 here means
@@ -291,6 +317,7 @@ public sealed partial class DashboardViewModel : ObservableObject
     {
         OnPropertyChanged(nameof(HasNoGroupSelected));
         OnPropertyChanged(nameof(IsClaudeGroup));
+        OnPropertyChanged(nameof(ShowConfigureAutoGroupButton));
         // The start button is gated on having a group; see AwaitingBillingGroup.
         OnPropertyChanged(nameof(CanStartCodex));
         OnPropertyChanged(nameof(StartCodexLabel));
@@ -323,7 +350,8 @@ public sealed partial class DashboardViewModel : ObservableObject
 
     partial void OnGroupMessageChanged(string value) => OnPropertyChanged(nameof(HasGroupMessage));
 
-    // ---- Claude preference (visible only when a Claude-platform group is selected) -----
+    // ---- Claude preference (visible only when the main — Codex — group is a Claude-platform
+    // one; the plug-ins' own Claude group, below, does not drive this) -----------------------
 
     /// <summary>True when the selected group uses the Anthropic/Claude platform.</summary>
     public bool IsClaudeGroup => SelectedGroup?.Platform?.ToLowerInvariant().Contains("claude") == true
@@ -344,8 +372,16 @@ public sealed partial class DashboardViewModel : ObservableObject
     [ObservableProperty]
     private string selectedClaudeModel = "claude-sonnet-5";
 
-    partial void OnSelectedClaudeModelChanged(string value) =>
-        _ = _loadingClaudePreference ? Task.CompletedTask : _safeAsync.RunAsync(SaveClaudePreferenceAsync);
+    partial void OnSelectedClaudeModelChanged(string value)
+    {
+        if (_loadingClaudePreference)
+        {
+            return;
+        }
+
+        _ = _safeAsync.RunAsync(SaveClaudePreferenceAsync);
+        RequestPluginSync();
+    }
 
     [ObservableProperty]
     private string selectedClaudeThinkingLevel = ClaudeThinkingLevels[DefaultClaudeThinkingLevelIndex];
@@ -370,7 +406,10 @@ public sealed partial class DashboardViewModel : ObservableObject
         finally
         {
             _loadingClaudePreference = false;
+            _claudePreferenceLoaded = true;
         }
+
+        RequestPluginSync();
     }
 
     private async Task SaveClaudePreferenceAsync()
@@ -388,6 +427,191 @@ public sealed partial class DashboardViewModel : ObservableObject
         }
         catch { /* best-effort */ }
     }
+
+    // ---- Editor plug-ins (Claude Code / VS Code) ------------------------------
+    //
+    // A path of its own, entirely separate from the Codex group above: the plug-ins get
+    // their own Claude group, chosen here, and their own binding on the relay
+    // (LocalPawRelay.SetClaudeGroup). Codex keeps routing through whatever group the
+    // dropdown above is on — including a Claude one; F5.4's direct routing is untouched.
+
+    /// <summary>
+    /// 支持插件（VS Code）等. Off by default: unlike the Codex group, this writes to files
+    /// outside this client (~/.claude/settings.json and the editor's own settings), so the
+    /// first launch asks rather than assumes.
+    /// </summary>
+    [ObservableProperty]
+    private bool pluginSupportEnabled;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasPluginSupportStatus))]
+    private string pluginSupportStatus = string.Empty;
+
+    public bool HasPluginSupportStatus => !string.IsNullOrEmpty(PluginSupportStatus);
+
+    /// <summary>Only the loopback relay can serve an editor; greys the box out otherwise.</summary>
+    public bool CanConfigurePluginSupport => _codex.UsesLocalTransport;
+
+    /// <summary>The Claude groups the plug-ins may be pointed at — every Claude-platform group.</summary>
+    public ObservableCollection<GroupItemViewModel> ClaudePluginGroups { get; } = [];
+
+    public bool HasClaudePluginGroups => ClaudePluginGroups.Count > 0;
+
+    [ObservableProperty]
+    private GroupItemViewModel? selectedClaudePluginGroup;
+
+    private bool _applyingKnownPluginSupportState;
+    private bool _applyingKnownClaudePluginGroupState;
+
+    /// <summary>The request last applied successfully, so an unchanged input does no file work.</summary>
+    private PluginSupportRequest? _lastPluginRequest;
+
+    /// <summary>
+    /// The Claude model comes from the server, as an account-level preference shared with F5.4's
+    /// direct routing. Until it has been read once, syncing would write the placeholder default
+    /// into the user's settings and then rewrite it a moment later.
+    /// </summary>
+    private bool _claudePreferenceLoaded;
+
+    partial void OnPluginSupportEnabledChanged(bool value)
+    {
+        if (_applyingKnownPluginSupportState)
+        {
+            return;
+        }
+
+        _pluginSupportPreferences.Save(value);
+        RequestPluginSync();
+    }
+
+    private void SetPluginSupportWithoutApplying(bool value)
+    {
+        _applyingKnownPluginSupportState = true;
+        try
+        {
+            PluginSupportEnabled = value;
+        }
+        finally
+        {
+            _applyingKnownPluginSupportState = false;
+        }
+    }
+
+    partial void OnSelectedClaudePluginGroupChanged(GroupItemViewModel? value)
+    {
+        if (!_applyingKnownClaudePluginGroupState && value is not null)
+        {
+            _preferences.SaveClaudeGroup(value.Id);
+        }
+
+        if (value is not null)
+        {
+            // Loads the account's Claude model/thinking-level preference and, once that
+            // completes, calls RequestPluginSync itself — see LoadClaudePreferenceAsync.
+            _ = _safeAsync.RunAsync(LoadClaudePreferenceAsync);
+        }
+        else
+        {
+            RequestPluginSync();
+        }
+    }
+
+    private void SelectClaudePluginGroupWithoutApplying(GroupItemViewModel? group)
+    {
+        _applyingKnownClaudePluginGroupState = true;
+        try
+        {
+            SelectedClaudePluginGroup = group;
+        }
+        finally
+        {
+            _applyingKnownClaudePluginGroupState = false;
+        }
+    }
+
+    /// <summary>
+    /// Rebuilds the Claude-group candidate list from <see cref="Groups"/> and restores the
+    /// remembered choice — or, failing that, the only candidate there is, so the picker is
+    /// never left empty for an account with just one Claude group.
+    /// </summary>
+    private void RebuildClaudePluginGroups()
+    {
+        ClaudePluginGroups.Clear();
+        foreach (GroupItemViewModel candidate in Groups.Where(g => !g.IsAutomatic && IsClaudePlatform(g.Platform)))
+        {
+            ClaudePluginGroups.Add(candidate);
+        }
+        OnPropertyChanged(nameof(HasClaudePluginGroups));
+
+        long? saved = _preferences.LoadClaudeGroup();
+        GroupItemViewModel? restored = saved is > 0
+            ? ClaudePluginGroups.FirstOrDefault(g => g.Id == saved)
+            : null;
+        restored ??= ClaudePluginGroups.Count == 1 ? ClaudePluginGroups[0] : null;
+        SelectClaudePluginGroupWithoutApplying(restored);
+    }
+
+    private void RequestPluginSync()
+    {
+        if (!_codex.UsesLocalTransport)
+        {
+            return;
+        }
+
+        _ = _safeAsync.RunAsync(SyncPluginSupportAsync);
+    }
+
+    internal async Task SyncPluginSupportAsync()
+    {
+        if (!_codex.UsesLocalTransport)
+        {
+            return;
+        }
+
+        GroupItemViewModel? claudeGroup = SelectedClaudePluginGroup;
+        if (claudeGroup is not null && !_claudePreferenceLoaded)
+        {
+            return;
+        }
+
+        var request = new PluginSupportRequest(
+            PluginSupportEnabled,
+            claudeGroup?.Id,
+            claudeGroup?.Name,
+            claudeGroup is not null ? SelectedClaudeModel : null);
+        if (request == _lastPluginRequest)
+        {
+            return;
+        }
+
+        PluginSupportResult result = await _codex.SyncPluginSupportAsync(request).ConfigureAwait(true);
+
+        // Only settled outcomes are remembered. A problem or a not-yet-applicable answer must be
+        // retried by the next trigger rather than trusted.
+        _lastPluginRequest = result.State is PluginSupportState.Off
+            or PluginSupportState.NoGroupChosen
+            or PluginSupportState.Active
+            ? request
+            : null;
+        PluginSupportStatus = DescribePluginSupport(result, hasClaudeGroup: HasClaudePluginGroups);
+    }
+
+    private static bool IsClaudePlatform(string? platform)
+    {
+        string p = platform?.ToLowerInvariant() ?? string.Empty;
+        return p.Contains("claude") || p.Contains("anthropic");
+    }
+
+    internal static string DescribePluginSupport(PluginSupportResult result, bool hasClaudeGroup) =>
+        result.State switch
+        {
+            PluginSupportState.Active => "Claude Code 已接入，客户端运行期间可用，退出时自动还原。",
+            PluginSupportState.NoGroupChosen => hasClaudeGroup
+                ? "请选择一个 Claude 分组以接入 Claude Code。"
+                : "该账号没有可用的 Claude 分组。",
+            PluginSupportState.Problem => result.Note ?? "Claude Code 接入失败。",
+            _ => string.Empty,
+        };
 
     // ---- Usage trend and models (F4) -----------------------------------------
 
@@ -734,9 +958,13 @@ public sealed partial class DashboardViewModel : ObservableObject
         // here too rather than relying on the button being disabled.
         if (AwaitingBillingGroup)
         {
-            CodexMessage = GroupsReady
-                ? "这个账号还没有可用于 Codex 的分组，请确认后重试。"
-                : "正在加载分组，请稍候再试。";
+            // Automatic mode with no candidates is a different problem from having no
+            // groups at all, and only the first one is something the user can act on.
+            CodexMessage = SelectedGroup is { IsAutomatic: true }
+                ? "自动分组还没有选择候选分组，请先在分组里完成配置。"
+                : GroupsReady
+                    ? "这个账号还没有可用于 Codex 的分组，请确认后重试。"
+                    : "正在加载分组，请稍候再试。";
             return;
         }
 
@@ -1283,13 +1511,13 @@ public sealed partial class DashboardViewModel : ObservableObject
 
             await IdentifyManagedKeyAsync(token, cancellationToken).ConfigureAwait(true);
 
-            PawAutoGroupSettings? autoSettings = null;
             if (_codex.UsesLocalTransport && _autoGroupSupported)
             {
                 try
                 {
-                    autoSettings = await _client.GetPawAutoGroupAsync(token, cancellationToken).ConfigureAwait(true);
-                    _autoGroupSettings = autoSettings;
+                    _autoGroupSettings = await _client
+                        .GetPawAutoGroupAsync(token, cancellationToken)
+                        .ConfigureAwait(true);
                 }
                 catch (RelayApiException ex) when (ex.Failure == RelayFailure.NotFound || ex.StatusCode == 404)
                 {
@@ -1320,7 +1548,10 @@ public sealed partial class DashboardViewModel : ObservableObject
             }
 
             GroupItemViewModel? inForce;
-            if (autoSettings?.AutoGroup == true && automatic is not null)
+            // The mode is the client's own choice, so it is read back from local
+            // preferences. The server's auto_group flag says only that candidates
+            // exist for this account, never which mode this machine is in.
+            if (_preferences.LoadAutomatic() && automatic is not null)
             {
                 automatic.IsCurrent = true;
                 inForce = automatic;
@@ -1350,8 +1581,21 @@ public sealed partial class DashboardViewModel : ObservableObject
                     _codex.SetActiveGroup(inForce.IsAutomatic ? null : inForce.Id, inForce.Name);
                 }
                 if (IsClaudeGroup) _ = _safeAsync.RunAsync(LoadClaudePreferenceAsync);
+                RequestPluginSync();
             }
 
+            // Independent of inForce above: the plug-ins' Claude group is its own selection,
+            // not derived from whichever group Codex just landed on.
+            RebuildClaudePluginGroups();
+
+            // RebuildClaudePluginGroups only triggers a sync itself when the restored group
+            // actually changes SelectedClaudePluginGroup (null -> null is not a change). A
+            // checkbox already on at launch, with no group to restore, would otherwise sit
+            // there saying nothing until something else nudges it — explicitly asked for here
+            // so a fresh launch applies (or explains) an already-ticked box, not just a switch.
+            RequestPluginSync();
+
+            CanConfigureAutoGroup = automatic is not null;
             GroupsReady = true;
             OnPropertyChanged(nameof(CanStartCodex));
             OnPropertyChanged(nameof(StartCodexLabel));
@@ -1439,22 +1683,13 @@ public sealed partial class DashboardViewModel : ObservableObject
             return;
         }
 
-        if (_codex.UsesLocalTransport && _autoGroupSettings?.AutoGroup == true)
+        if (_codex.UsesLocalTransport)
         {
-            try
-            {
-                string token = await _session.GetAccessTokenAsync(cancellationToken).ConfigureAwait(true);
-                _autoGroupSettings = await _client.SavePawAutoGroupAsync(
-                    token,
-                    new PawAutoGroupSettings(false, _autoGroupSettings.AutoGroupIds, _autoGroupSettings.AutoGroupStrategy),
-                    cancellationToken).ConfigureAwait(true);
-            }
-            catch (RelayApiException ex)
-            {
-                SelectWithoutSwitching(previous);
-                GroupMessage = ex.UserMessage;
-                return;
-            }
+            // Leaving automatic routing is purely local: from here on the relay stamps
+            // this group's id instead of "auto". Nothing is written to the server —
+            // the internal key's auto_group flag must stay on for its candidate list
+            // to remain readable, so it cannot double as the mode switch.
+            _preferences.SaveAutomatic(false);
         }
 
         SetCurrent(group);
@@ -1474,6 +1709,7 @@ public sealed partial class DashboardViewModel : ObservableObject
             _preferences.Save(group.Id);
             GroupMessage = $"已切换到 {group.Name}。";
             if (IsClaudeGroup) _ = _safeAsync.RunAsync(LoadClaudePreferenceAsync);
+            RequestPluginSync();
             return;
         }
 
@@ -1528,19 +1764,25 @@ public sealed partial class DashboardViewModel : ObservableObject
             PawAutoGroupSettings current = await _client
                 .GetPawAutoGroupAsync(token, cancellationToken)
                 .ConfigureAwait(true);
-            IReadOnlyList<GroupItemViewModel> candidates = Groups
-                .Where(g => !g.IsAutomatic && string.Equals(g.Platform, "openai", StringComparison.OrdinalIgnoreCase))
-                .ToArray();
-            PawAutoGroupSettings? chosen = ConfigureAutoGroup is null
-                ? null
-                : await ConfigureAutoGroup(current, candidates).ConfigureAwait(true);
+            IReadOnlyList<GroupItemViewModel> candidates = AutoGroupCandidates();
+            HashSet<long> allowed = candidates.Select(g => g.Id).ToHashSet();
+
+            // The dialog is only for an account that has nothing configured yet.
+            // Once candidates exist, choosing 自动分组 just turns it on — asking
+            // again on every switch would make a routine mode change feel like a
+            // form to fill in. The 配置 button is the way back into the dialog.
+            long[] configured = current.AutoGroupIds.Where(allowed.Contains).Distinct().ToArray();
+            PawAutoGroupSettings? chosen = configured.Length > 0
+                ? new PawAutoGroupSettings(true, configured, current.AutoGroupStrategy)
+                : ConfigureAutoGroup is null
+                    ? null
+                    : await ConfigureAutoGroup(current, candidates).ConfigureAwait(true);
             if (chosen is null)
             {
                 SelectWithoutSwitching(previous);
                 return;
             }
 
-            HashSet<long> allowed = candidates.Select(g => g.Id).ToHashSet();
             long[] ids = chosen.AutoGroupIds.Where(allowed.Contains).Distinct().ToArray();
             if (ids.Length == 0)
             {
@@ -1558,9 +1800,11 @@ public sealed partial class DashboardViewModel : ObservableObject
             // candidate set and strategy. This ordering prevents a green UI whose
             // relay is still sending the previous fixed group.
             _autoGroupSettings = saved;
+            _preferences.SaveAutomatic(true);
             SetCurrent(automatic);
             SelectWithoutSwitching(automatic);
             _codex.SetActiveGroup(null, automatic.Name);
+            RequestPluginSync();
             GroupMessage = "已启用自动分组。";
             OnPropertyChanged(nameof(CanStartCodex));
             OnPropertyChanged(nameof(StartCodexLabel));
@@ -1570,6 +1814,141 @@ public sealed partial class DashboardViewModel : ObservableObject
             SelectWithoutSwitching(previous);
             GroupMessage = ex.UserMessage;
         }
+    }
+
+    /// <summary>The OpenAI groups automatic routing may choose between.</summary>
+    private IReadOnlyList<GroupItemViewModel> AutoGroupCandidates() => Groups
+        .Where(g => !g.IsAutomatic && string.Equals(g.Platform, "openai", StringComparison.OrdinalIgnoreCase))
+        .ToArray();
+
+    /// <summary>
+    /// Opens the automatic-routing dialog on demand and saves what the user picks.
+    /// </summary>
+    /// <remarks>
+    /// Saves the candidates and strategy only; it never changes which mode the client
+    /// is in. Someone tidying the list while on a fixed group should not be switched
+    /// over as a side effect, and someone already on automatic routing needs nothing
+    /// pushed to the relay — the server reads the candidates on every request.
+    /// </remarks>
+    public async Task ConfigureAutoGroupAsync(CancellationToken cancellationToken = default)
+    {
+        if (!CanConfigureAutoGroup || ConfigureAutoGroup is null)
+        {
+            return;
+        }
+
+        try
+        {
+            string token = await _session.GetAccessTokenAsync(cancellationToken).ConfigureAwait(true);
+            PawAutoGroupSettings current = await _client
+                .GetPawAutoGroupAsync(token, cancellationToken)
+                .ConfigureAwait(true);
+            IReadOnlyList<GroupItemViewModel> candidates = AutoGroupCandidates();
+
+            PawAutoGroupSettings? chosen = await ConfigureAutoGroup(current, candidates).ConfigureAwait(true);
+            if (chosen is null)
+            {
+                return;
+            }
+
+            HashSet<long> allowed = candidates.Select(g => g.Id).ToHashSet();
+            long[] ids = chosen.AutoGroupIds.Where(allowed.Contains).Distinct().ToArray();
+            if (ids.Length == 0)
+            {
+                GroupMessage = "请至少选择一个自动分组候选项。";
+                return;
+            }
+
+            _autoGroupSettings = await _client.SavePawAutoGroupAsync(
+                token,
+                new PawAutoGroupSettings(true, ids, chosen.AutoGroupStrategy),
+                cancellationToken).ConfigureAwait(true);
+
+            GroupMessage = SelectedGroup is { IsAutomatic: true }
+                ? "自动分组设置已保存。"
+                : "自动分组设置已保存，选择「自动分组」即可使用。";
+            OnPropertyChanged(nameof(CanStartCodex));
+            OnPropertyChanged(nameof(StartCodexLabel));
+        }
+        catch (RelayApiException ex)
+        {
+            GroupMessage = ex.UserMessage;
+        }
+    }
+
+    // ---- Which models a group supports (F5.x) ---------------------------------------
+
+    /// <summary>Shows a ready-made message — see <see cref="DescribeGroupModels"/> — in whatever way the host presents a tip.</summary>
+    public Func<string, Task>? ShowGroupModels { get; set; }
+
+    /// <summary>
+    /// The model plaza response, fetched once and reused for every group's button —
+    /// <c>GET /model-plaza</c> already answers for every group in one call, so asking again per
+    /// click would just be the same data over and over. Null until the first attempt; absent
+    /// from the dictionary after that only if the fetch itself failed or the switch is off.
+    /// </summary>
+    private IReadOnlyDictionary<long, IReadOnlyList<string>>? _groupModelsByGroupId;
+
+    /// <summary>
+    /// Opens the 白名单模型 tip for one group. A no-op for 自动分组 — it has no single account
+    /// pool of its own to list, only whichever candidate a request happens to land on.
+    /// </summary>
+    public async Task ShowGroupModelsAsync(GroupItemViewModel? group, CancellationToken cancellationToken = default)
+    {
+        if (group is null || group.IsAutomatic || ShowGroupModels is null)
+        {
+            return;
+        }
+
+        IReadOnlyList<string> models = await LoadGroupModelsAsync(group.Id, cancellationToken).ConfigureAwait(true);
+        await ShowGroupModels(DescribeGroupModels(group.Name, models)).ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// Worded the same whether the plaza is switched off, unreachable, or genuinely lists
+    /// nothing for this group — see <see cref="LoadGroupModelsAsync"/> for why the three are
+    /// not told apart.
+    /// </summary>
+    internal static string DescribeGroupModels(string groupName, IReadOnlyList<string> models) =>
+        models.Count == 0
+            ? $"{groupName} 暂时没有可显示的模型信息。"
+            : $"{groupName} 支持的模型：\n\n" + string.Join('\n', models);
+
+    /// <summary>
+    /// The models <paramref name="groupId"/> serves, per the model plaza — empty when the
+    /// switch is off, the request failed, or the plaza genuinely lists nothing for that group.
+    /// The three are not told apart: whatever the reason, there is nothing to show, and the
+    /// wording <see cref="ShowGroupModelsAsync"/>'s caller uses for an empty list already says
+    /// so without needing to know which.
+    /// </summary>
+    private async Task<IReadOnlyList<string>> LoadGroupModelsAsync(long groupId, CancellationToken cancellationToken)
+    {
+        if (_groupModelsByGroupId is null)
+        {
+            try
+            {
+                string? token = await _session.GetAccessTokenAsync(cancellationToken).ConfigureAwait(true);
+                ModelPlazaResponse response = await _client.GetModelPlazaAsync(token, cancellationToken).ConfigureAwait(true);
+                _groupModelsByGroupId = response.Groups.ToDictionary(
+                    g => g.Id,
+                    IReadOnlyList<string> (g) => g.Models
+                        .Select(m => m.Name)
+                        .Where(name => !string.IsNullOrWhiteSpace(name))
+                        .Distinct(StringComparer.Ordinal)
+                        .OrderBy(name => name, StringComparer.Ordinal)
+                        .ToArray());
+            }
+            catch (RelayApiException)
+            {
+                // Feature switched off (404) or unreachable: either way, nothing to cache and
+                // nothing worth distinguishing for a tip the user opened out of curiosity.
+                _groupModelsByGroupId = new Dictionary<long, IReadOnlyList<string>>();
+            }
+        }
+
+        return _groupModelsByGroupId.TryGetValue(groupId, out IReadOnlyList<string>? models)
+            ? models
+            : Array.Empty<string>();
     }
 
     private void SetCurrent(GroupItemViewModel group)
@@ -1633,6 +2012,11 @@ public sealed partial class DashboardViewModel : ObservableObject
         _managedKey = null;
         _autoGroupSettings = null;
         _autoGroupSupported = true;
+        CanConfigureAutoGroup = false;
+        _groupModelsByGroupId = null;
+        _lastPluginRequest = null;
+        _claudePreferenceLoaded = false;
+        PluginSupportStatus = string.Empty;
         _pollingBackoff.RecordSuccess();
         IsRateLimited = false;
         RefreshMessage = string.Empty;
@@ -1652,6 +2036,9 @@ public sealed partial class DashboardViewModel : ObservableObject
         RequiresCodexAccountRestart = false;
 
         Groups.Clear();
+        ClaudePluginGroups.Clear();
+        OnPropertyChanged(nameof(HasClaudePluginGroups));
+        SelectClaudePluginGroupWithoutApplying(null);
         CostTrend.Clear();
         TopModelUsage.Clear();
         TrendReady = false;

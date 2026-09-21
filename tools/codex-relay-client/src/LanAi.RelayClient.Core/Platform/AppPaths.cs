@@ -72,6 +72,32 @@ public static class AppPaths
     /// single-segment root — another reason not to assume the two are related.</remarks>
     public static string CodexAuthSnapshotFile { get; } = InData("codex-auth-original.json");
 
+    /// <summary>
+    /// The newest backup of Codex's conversation database, and the journal that records
+    /// which conversations were moved to the relay's provider and where each came from.
+    /// </summary>
+    /// <remarks>
+    /// A sibling of <see cref="CodexSnapshotRoot"/>, never inside it: that directory is
+    /// cleared when the user's own configuration is restored, and the journal has to
+    /// survive that long enough to be read when the conversations are handed back.
+    /// </remarks>
+    public static string CodexSessionBackupRoot { get; } =
+        Path.Combine(Root(), "LanAi", "RelayClient", "codex-session-backup");
+
+    /// <summary>
+    /// The records that let the client put the editor plug-ins' configuration back: which of
+    /// Claude Code's settings it changed and what they were, and the same for each editor's
+    /// user settings, with a copy of the original file.
+    /// </summary>
+    /// <remarks>
+    /// Its own directory, and not the Codex snapshot's: those are cleared when the user's Codex
+    /// files are restored, and these have to outlive a restart of the client — they are the only
+    /// thing that knows what to put back, and the plug-ins are not launched by this client, so
+    /// they can still be pointing at the relay when it is next started.
+    /// </remarks>
+    public static string PluginConfigRoot { get; } =
+        Path.Combine(Root(), "LanAi", "RelayClient", "plugin-config");
+
     private static string Root()
     {
         if (OperatingSystem.IsMacOS())

@@ -27,6 +27,60 @@ public sealed class GroupPreferenceStoreTests : IDisposable
         Assert.Equal(7, new GroupPreferenceStore("https://relay.test/", _path).Load());
     }
 
+    /// <summary>
+    /// Saving one field must not reset the other.
+    /// </summary>
+    /// <remarks>
+    /// The group id and the automatic-routing mode are written by different call
+    /// sites in the dashboard. A whole-record write from either one would quietly
+    /// undo the other, and neither the UI nor the relay would report anything.
+    /// </remarks>
+    [Fact]
+    public void TheModeAndTheGroupIdDoNotOverwriteEachOther()
+    {
+        var store = new GroupPreferenceStore("https://relay.test/", _path);
+
+        store.Save(7);
+        store.SaveAutomatic(true);
+        Assert.Equal(7, new GroupPreferenceStore("https://relay.test/", _path).Load());
+        Assert.True(new GroupPreferenceStore("https://relay.test/", _path).LoadAutomatic());
+
+        store.Save(9);
+        Assert.True(new GroupPreferenceStore("https://relay.test/", _path).LoadAutomatic());
+
+        store.SaveAutomatic(false);
+        Assert.Equal(9, new GroupPreferenceStore("https://relay.test/", _path).Load());
+        Assert.False(new GroupPreferenceStore("https://relay.test/", _path).LoadAutomatic());
+    }
+
+    /// <summary>
+    /// Automatic mode stands on its own, with no group ever chosen.
+    /// </summary>
+    /// <remarks>
+    /// Moving the <c>GroupId &gt; 0</c> test out of the file read and into
+    /// <see cref="GroupPreferenceStore.Load"/> made this state representable, and it
+    /// is the one a fresh install lands in. The mode must survive it; the group id
+    /// must still read as "never chosen" rather than group 0.
+    /// </remarks>
+    [Fact]
+    public void AutomaticModeIsRememberedEvenWhenNoGroupWasEverChosen()
+    {
+        new GroupPreferenceStore("https://relay.test/", _path).SaveAutomatic(true);
+
+        var reopened = new GroupPreferenceStore("https://relay.test/", _path);
+        Assert.True(reopened.LoadAutomatic());
+        Assert.Null(reopened.Load());
+    }
+
+    /// <summary>A file written before automatic routing existed reads as fixed mode.</summary>
+    [Fact]
+    public void AModeIsNotInheritedFromAnotherRelay()
+    {
+        new GroupPreferenceStore("http://127.0.0.1:8080/", _path).SaveAutomatic(true);
+
+        Assert.False(new GroupPreferenceStore("https://relay.example.com/", _path).LoadAutomatic());
+    }
+
     [Fact]
     public void APreferenceFromAnotherRelayIsNotApplied()
     {

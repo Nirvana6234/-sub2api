@@ -163,6 +163,23 @@ internal sealed class FakeRelayClient : IRelayServerClient
         return Task.FromResult(OnAvailableGroups?.Invoke() ?? Array.Empty<RelayGroup>());
     }
 
+    public Func<ModelPlazaResponse>? OnModelPlaza { get; set; }
+
+    public Exception? OnModelPlazaThrow { get; set; }
+
+    public int ModelPlazaCallCount { get; private set; }
+
+    public Task<ModelPlazaResponse> GetModelPlazaAsync(string? accessToken, CancellationToken cancellationToken = default)
+    {
+        ModelPlazaCallCount++;
+        if (OnModelPlazaThrow is not null)
+        {
+            return Task.FromException<ModelPlazaResponse>(OnModelPlazaThrow);
+        }
+
+        return Task.FromResult(OnModelPlaza?.Invoke() ?? new ModelPlazaResponse());
+    }
+
     public int GroupRatesCallCount { get; private set; }
 
     public Task<IReadOnlyDictionary<long, double>> GetUserGroupRatesAsync(string accessToken, CancellationToken cancellationToken = default)
@@ -179,6 +196,8 @@ internal sealed class FakeRelayClient : IRelayServerClient
 
     public PawAutoGroupSettings? LastSavedPawAutoGroup { get; private set; }
 
+    public int PawAutoGroupSaveCallCount { get; private set; }
+
     public Task<PawAutoGroupSettings> GetPawAutoGroupAsync(
         string accessToken,
         CancellationToken cancellationToken = default)
@@ -193,6 +212,7 @@ internal sealed class FakeRelayClient : IRelayServerClient
         CancellationToken cancellationToken = default)
     {
         LastSavedPawAutoGroup = settings;
+        PawAutoGroupSaveCallCount++;
         return Task.FromResult(OnSavePawAutoGroup?.Invoke(settings) ?? settings);
     }
 
@@ -443,6 +463,17 @@ internal sealed class FakeCodexStartup : ICodexStartup
 
     public bool HasContextFilter { get; set; } = true;
 
+    /// <summary>Every plug-in request applied, in order.</summary>
+    public List<PluginSupportRequest> PluginRequests { get; } = [];
+
+    public PluginSupportResult PluginResult { get; set; } = new(PluginSupportState.Active);
+
+    public Task<PluginSupportResult> SyncPluginSupportAsync(PluginSupportRequest request, CancellationToken cancellationToken = default)
+    {
+        PluginRequests.Add(request);
+        return Task.FromResult(PluginResult);
+    }
+
     /// <summary>Every context-filter switch applied, in order.</summary>
     public List<bool> ContextFilterStates { get; } = [];
 
@@ -568,5 +599,23 @@ internal sealed class FakeCodexInstaller : ICodexInstaller
 
         progress?.Report(new CodexDownloadProgress(1, 1));
         return Task.FromResult(EnsureAndLaunchResult);
+    }
+}
+
+/// <summary>An in-memory stand-in for the plug-in support preference file.</summary>
+internal sealed class FakePluginSupportPreferenceStore : IPluginSupportPreferenceStore
+{
+    public FakePluginSupportPreferenceStore(bool? initial = null) => Saved = initial;
+
+    public bool? Saved { get; private set; }
+
+    public int SaveCount { get; private set; }
+
+    public bool? Load() => Saved;
+
+    public void Save(bool enabled)
+    {
+        Saved = enabled;
+        SaveCount++;
     }
 }
