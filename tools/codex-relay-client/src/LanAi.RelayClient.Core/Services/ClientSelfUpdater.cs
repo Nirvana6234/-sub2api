@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO.Compression;
+using System.Text;
 using LanAi.RelayClient.Platform;
 
 namespace LanAi.RelayClient.Services;
@@ -292,7 +293,17 @@ internal sealed class ClientRelaunchHost : IClientRelaunchHost
             // think to look in.
             string logPath = Path.Combine(Path.GetDirectoryName(stagingDirectory) ?? Path.GetTempPath(), "helper.log");
             string scriptPath = Path.Combine(Path.GetTempPath(), $"gongfei-client-update-{Guid.NewGuid():N}.ps1");
-            File.WriteAllText(scriptPath, BuildRelaunchScript(stagingDirectory, installDirectory, exePath, currentProcessId, logPath));
+
+            // Encoding.UTF8, not File.WriteAllText's own no-BOM default: every path here can
+            // carry Chinese characters — the install directory alone routinely does, on top of
+            // whatever the release names itself — and Windows PowerShell 5.1 has no way to know
+            // a BOM-less file is UTF-8. Without one it falls back to the system codepage and
+            // silently mangles every non-ASCII character it reads, including inside this very
+            // script's own $log path — which is exactly why a broken run leaves no log to read.
+            File.WriteAllText(
+                scriptPath,
+                BuildRelaunchScript(stagingDirectory, installDirectory, exePath, currentProcessId, logPath),
+                Encoding.UTF8);
 
             var startInfo = new ProcessStartInfo("powershell.exe")
             {
