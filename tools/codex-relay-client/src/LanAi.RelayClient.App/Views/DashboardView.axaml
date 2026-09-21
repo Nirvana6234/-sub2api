@@ -159,6 +159,16 @@
                  that already drives the Codex health check, not live per request. -->
             <TextBlock Text="{Binding Dashboard.ContextFilterUsageText}"
                        Foreground="#9CA3AF" FontSize="11" Margin="0,4,0,0" />
+            <!-- Points Claude Code (and the VS Code extension built on it) at the local
+                 relay while a Claude group is in use; put back on exit. -->
+            <CheckBox Content="支持插件（VS Code）等" IsChecked="{Binding Dashboard.PluginSupportEnabled}"
+                      IsEnabled="{Binding Dashboard.CanConfigurePluginSupport}"
+                      ToolTip.Tip="选择 Claude 分组时，同时配置 Claude Code 及其 VS Code 插件走共飞；仅客户端运行期间有效，退出时自动还原"
+                      Foreground="#374151" Margin="0,8,0,0" />
+            <TextBlock Text="{Binding Dashboard.PluginSupportStatus}"
+                       IsVisible="{Binding Dashboard.HasPluginSupportStatus}"
+                       TextWrapping="Wrap"
+                       Foreground="#9CA3AF" FontSize="11" Margin="0,4,0,0" />
           </StackPanel>
         </Border>
 

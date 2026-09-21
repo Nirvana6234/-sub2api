@@ -36,6 +36,7 @@ public sealed partial class DashboardViewModel : ObservableObject
     private readonly IStartupRegistration _startupRegistration;
     private readonly IContextFilterPreferenceStore _contextFilterPreferences;
     private readonly IContextFilterUsageStore _contextFilterUsage;
+    private readonly IPluginSupportPreferenceStore _pluginSupportPreferences;
     private readonly PollingBackoff _pollingBackoff;
     private readonly SafeAsyncRunner _safeAsync;
     private readonly SemaphoreSlim _pollGate = new(1, 1);
@@ -143,7 +144,8 @@ public sealed partial class DashboardViewModel : ObservableObject
         ICodexAccountStore? codexAccountStore = null,
         IStartupRegistration? startupRegistration = null,
         IContextFilterPreferenceStore? contextFilterPreferences = null,
-        IContextFilterUsageStore? contextFilterUsage = null)
+        IContextFilterUsageStore? contextFilterUsage = null,
+        IPluginSupportPreferenceStore? pluginSupportPreferences = null)
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
         _session = session ?? throw new ArgumentNullException(nameof(session));
@@ -159,6 +161,8 @@ public sealed partial class DashboardViewModel : ObservableObject
         _contextFilterUsage = contextFilterUsage ?? new ContextFilterUsageStore();
         SetContextFilterWithoutApplying(_contextFilterPreferences.Load() ?? true);
         RefreshContextFilterUsageText();
+        _pluginSupportPreferences = pluginSupportPreferences ?? new PluginSupportPreferenceStore();
+        SetPluginSupportWithoutApplying(_pluginSupportPreferences.Load() ?? true);
     }
 
     public ObservableCollection<GroupItemViewModel> Groups { get; } = [];
@@ -352,8 +356,16 @@ public sealed partial class DashboardViewModel : ObservableObject
     [ObservableProperty]
     private string selectedClaudeModel = "claude-sonnet-5";
 
-    partial void OnSelectedClaudeModelChanged(string value) =>
-        _ = _loadingClaudePreference ? Task.CompletedTask : _safeAsync.RunAsync(SaveClaudePreferenceAsync);
+    partial void OnSelectedClaudeModelChanged(string value)
+    {
+        if (_loadingClaudePreference)
+        {
+            return;
+        }
+
+        _ = _safeAsync.RunAsync(SaveClaudePreferenceAsync);
+        RequestPluginSync();
+    }
 
     [ObservableProperty]
     private string selectedClaudeThinkingLevel = ClaudeThinkingLevels[DefaultClaudeThinkingLevelIndex];
@@ -378,7 +390,10 @@ public sealed partial class DashboardViewModel : ObservableObject
         finally
         {
             _loadingClaudePreference = false;
+            _claudePreferenceLoaded = true;
         }
+
+        RequestPluginSync();
     }
 
     private async Task SaveClaudePreferenceAsync()
@@ -396,6 +411,120 @@ public sealed partial class DashboardViewModel : ObservableObject
         }
         catch { /* best-effort */ }
     }
+
+    // ---- Editor plug-ins (Claude Code / VS Code) ------------------------------
+
+    /// <summary>
+    /// 支持插件（VS Code）等. On by default; a saved choice wins on the next launch.
+    /// </summary>
+    [ObservableProperty]
+    private bool pluginSupportEnabled = true;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasPluginSupportStatus))]
+    private string pluginSupportStatus = string.Empty;
+
+    public bool HasPluginSupportStatus => !string.IsNullOrEmpty(PluginSupportStatus);
+
+    /// <summary>Only the loopback relay can serve an editor; greys the box out otherwise.</summary>
+    public bool CanConfigurePluginSupport => _codex.UsesLocalTransport;
+
+    private bool _applyingKnownPluginSupportState;
+
+    /// <summary>The request last applied successfully, so an unchanged input does no file work.</summary>
+    private PluginSupportRequest? _lastPluginRequest;
+
+    /// <summary>
+    /// A Claude group's model comes from the server. Until it has been read once, syncing would
+    /// write the placeholder default into the user's settings and then rewrite it a moment later.
+    /// </summary>
+    private bool _claudePreferenceLoaded;
+
+    partial void OnPluginSupportEnabledChanged(bool value)
+    {
+        if (_applyingKnownPluginSupportState)
+        {
+            return;
+        }
+
+        _pluginSupportPreferences.Save(value);
+        RequestPluginSync();
+    }
+
+    private void SetPluginSupportWithoutApplying(bool value)
+    {
+        _applyingKnownPluginSupportState = true;
+        try
+        {
+            PluginSupportEnabled = value;
+        }
+        finally
+        {
+            _applyingKnownPluginSupportState = false;
+        }
+    }
+
+    private void RequestPluginSync()
+    {
+        if (!_codex.UsesLocalTransport)
+        {
+            return;
+        }
+
+        _ = _safeAsync.RunAsync(SyncPluginSupportAsync);
+    }
+
+    internal async Task SyncPluginSupportAsync()
+    {
+        if (!_codex.UsesLocalTransport)
+        {
+            return;
+        }
+
+        GroupItemViewModel? group = Groups.FirstOrDefault(g => g.IsCurrent);
+        bool claude = group is not null && !group.IsAutomatic && IsClaudeGroup;
+        if (claude && !_claudePreferenceLoaded)
+        {
+            return;
+        }
+
+        var request = new PluginSupportRequest(
+            PluginSupportEnabled,
+            group is null || group.IsAutomatic ? null : group.Id,
+            group?.Name,
+            claude,
+            claude ? SelectedClaudeModel : null);
+        if (request == _lastPluginRequest)
+        {
+            return;
+        }
+
+        PluginSupportResult result = await _codex.SyncPluginSupportAsync(request).ConfigureAwait(true);
+
+        // Only settled outcomes are remembered. A problem or a not-yet-applicable answer must be
+        // retried by the next trigger rather than trusted.
+        _lastPluginRequest = result.State is PluginSupportState.Off
+            or PluginSupportState.WrongGroup
+            or PluginSupportState.Active
+            ? request
+            : null;
+        PluginSupportStatus = DescribePluginSupport(result, hasClaudeGroup: Groups.Any(g => !g.IsAutomatic && IsClaudePlatform(g.Platform)));
+    }
+
+    private static bool IsClaudePlatform(string? platform)
+    {
+        string p = platform?.ToLowerInvariant() ?? string.Empty;
+        return p.Contains("claude") || p.Contains("anthropic");
+    }
+
+    internal static string DescribePluginSupport(PluginSupportResult result, bool hasClaudeGroup) =>
+        result.State switch
+        {
+            PluginSupportState.Active => "Claude Code 已接入，客户端运行期间可用，退出时自动还原。",
+            PluginSupportState.WrongGroup => hasClaudeGroup ? "当前分组不是 Claude 分组，选择 Claude 分组后自动接入 Claude Code。" : string.Empty,
+            PluginSupportState.Problem => result.Note ?? "Claude Code 接入失败。",
+            _ => string.Empty,
+        };
 
     // ---- Usage trend and models (F4) -----------------------------------------
 
@@ -1365,6 +1494,7 @@ public sealed partial class DashboardViewModel : ObservableObject
                     _codex.SetActiveGroup(inForce.IsAutomatic ? null : inForce.Id, inForce.Name);
                 }
                 if (IsClaudeGroup) _ = _safeAsync.RunAsync(LoadClaudePreferenceAsync);
+                RequestPluginSync();
             }
 
             CanConfigureAutoGroup = automatic is not null;
@@ -1481,6 +1611,7 @@ public sealed partial class DashboardViewModel : ObservableObject
             _preferences.Save(group.Id);
             GroupMessage = $"已切换到 {group.Name}。";
             if (IsClaudeGroup) _ = _safeAsync.RunAsync(LoadClaudePreferenceAsync);
+            RequestPluginSync();
             return;
         }
 
@@ -1575,6 +1706,7 @@ public sealed partial class DashboardViewModel : ObservableObject
             SetCurrent(automatic);
             SelectWithoutSwitching(automatic);
             _codex.SetActiveGroup(null, automatic.Name);
+            RequestPluginSync();
             GroupMessage = "已启用自动分组。";
             OnPropertyChanged(nameof(CanStartCodex));
             OnPropertyChanged(nameof(StartCodexLabel));
@@ -1708,6 +1840,9 @@ public sealed partial class DashboardViewModel : ObservableObject
         _autoGroupSettings = null;
         _autoGroupSupported = true;
         CanConfigureAutoGroup = false;
+        _lastPluginRequest = null;
+        _claudePreferenceLoaded = false;
+        PluginSupportStatus = string.Empty;
         _pollingBackoff.RecordSuccess();
         IsRateLimited = false;
         RefreshMessage = string.Empty;

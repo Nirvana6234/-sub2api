@@ -291,6 +291,25 @@
                                  request. -->
                             <TextBlock Text="{Binding ContextFilterUsageText}"
                                        Foreground="#9CA3AF" FontSize="11" Margin="0,4,0,0" />
+                            <!-- Points Claude Code (and the VS Code extension built on it) at
+                                 the local relay while a Claude group is in use; put back on exit. -->
+                            <CheckBox Content="支持插件（VS Code）等" IsChecked="{Binding PluginSupportEnabled}"
+                                      IsEnabled="{Binding CanConfigurePluginSupport}"
+                                      ToolTip="选择 Claude 分组时，同时配置 Claude Code 及其 VS Code 插件走共飞；仅客户端运行期间有效，退出时自动还原"
+                                      Foreground="#374151" Margin="0,8,0,0" />
+            <TextBlock Text="{Binding PluginSupportStatus}" TextWrapping="Wrap"
+                       Foreground="#9CA3AF" FontSize="11" Margin="0,4,0,0">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding HasPluginSupportStatus}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
                         </StackPanel>
                     </Border>
 

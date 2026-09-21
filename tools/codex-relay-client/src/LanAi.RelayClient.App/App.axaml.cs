@@ -173,7 +173,12 @@ public partial class App : Application
         var localRelay = new LocalPawRelay(
             ClientOptions.ServerAddress, session.GetAccessTokenAsync,
             (before, saved) => contextFilterUsage.Add(before, saved),
-            onAccessTokenRejected: session.NotifyAccessTokenRejectedAsync);
+            onAccessTokenRejected: session.NotifyAccessTokenRejectedAsync,
+            endpointStore: new RelayEndpointStore());
+        // Claude Code's settings.json and the editor's own settings, put back on exit.
+        var pluginBinding = new ClaudePluginBinding(
+            new ClaudeCodeSettingsWriter(Path.Combine(AppPaths.PluginConfigRoot, "claude-settings-journal.json")),
+            new VsCodeSettingsEditor(Path.Combine(AppPaths.PluginConfigRoot, "vscode")));
 
         // Optional and platform-shaped by nothing more than whether the file is there.
         // The filter is a Windows binary, so the macOS build of this same head finds
@@ -195,7 +200,8 @@ public partial class App : Application
             CodexHosts.CreateRouteGuardHost(codexConfig),
             localRelay,
             contextFilter,
-            codexSessions);
+            codexSessions,
+            pluginBinding);
 
         var dashboard = new DashboardViewModel(
             relay,

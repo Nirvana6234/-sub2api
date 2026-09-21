@@ -446,6 +446,17 @@ internal sealed class FakeCodexStartup : ICodexStartup
 
     public bool HasContextFilter { get; set; } = true;
 
+    /// <summary>Every plug-in request applied, in order.</summary>
+    public List<PluginSupportRequest> PluginRequests { get; } = [];
+
+    public PluginSupportResult PluginResult { get; set; } = new(PluginSupportState.Active);
+
+    public Task<PluginSupportResult> SyncPluginSupportAsync(PluginSupportRequest request, CancellationToken cancellationToken = default)
+    {
+        PluginRequests.Add(request);
+        return Task.FromResult(PluginResult);
+    }
+
     /// <summary>Every context-filter switch applied, in order.</summary>
     public List<bool> ContextFilterStates { get; } = [];
 
@@ -571,5 +582,23 @@ internal sealed class FakeCodexInstaller : ICodexInstaller
 
         progress?.Report(new CodexDownloadProgress(1, 1));
         return Task.FromResult(EnsureAndLaunchResult);
+    }
+}
+
+/// <summary>An in-memory stand-in for the plug-in support preference file.</summary>
+internal sealed class FakePluginSupportPreferenceStore : IPluginSupportPreferenceStore
+{
+    public FakePluginSupportPreferenceStore(bool? initial = null) => Saved = initial;
+
+    public bool? Saved { get; private set; }
+
+    public int SaveCount { get; private set; }
+
+    public bool? Load() => Saved;
+
+    public void Save(bool enabled)
+    {
+        Saved = enabled;
+        SaveCount++;
     }
 }

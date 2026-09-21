@@ -84,6 +84,20 @@ public static class AppPaths
     public static string CodexSessionBackupRoot { get; } =
         Path.Combine(Root(), "LanAi", "RelayClient", "codex-session-backup");
 
+    /// <summary>
+    /// The records that let the client put the editor plug-ins' configuration back: which of
+    /// Claude Code's settings it changed and what they were, and the same for each editor's
+    /// user settings, with a copy of the original file.
+    /// </summary>
+    /// <remarks>
+    /// Its own directory, and not the Codex snapshot's: those are cleared when the user's Codex
+    /// files are restored, and these have to outlive a restart of the client — they are the only
+    /// thing that knows what to put back, and the plug-ins are not launched by this client, so
+    /// they can still be pointing at the relay when it is next started.
+    /// </remarks>
+    public static string PluginConfigRoot { get; } =
+        Path.Combine(Root(), "LanAi", "RelayClient", "plugin-config");
+
     private static string Root()
     {
         if (OperatingSystem.IsMacOS())
