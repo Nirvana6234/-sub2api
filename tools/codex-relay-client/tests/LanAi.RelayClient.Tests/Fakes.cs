@@ -163,6 +163,23 @@ internal sealed class FakeRelayClient : IRelayServerClient
         return Task.FromResult(OnAvailableGroups?.Invoke() ?? Array.Empty<RelayGroup>());
     }
 
+    public Func<ModelPlazaResponse>? OnModelPlaza { get; set; }
+
+    public Exception? OnModelPlazaThrow { get; set; }
+
+    public int ModelPlazaCallCount { get; private set; }
+
+    public Task<ModelPlazaResponse> GetModelPlazaAsync(string? accessToken, CancellationToken cancellationToken = default)
+    {
+        ModelPlazaCallCount++;
+        if (OnModelPlazaThrow is not null)
+        {
+            return Task.FromException<ModelPlazaResponse>(OnModelPlazaThrow);
+        }
+
+        return Task.FromResult(OnModelPlaza?.Invoke() ?? new ModelPlazaResponse());
+    }
+
     public int GroupRatesCallCount { get; private set; }
 
     public Task<IReadOnlyDictionary<long, double>> GetUserGroupRatesAsync(string accessToken, CancellationToken cancellationToken = default)

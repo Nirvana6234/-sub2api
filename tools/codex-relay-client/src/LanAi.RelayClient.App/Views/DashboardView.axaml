@@ -284,6 +284,12 @@
                                      FontSize="12" VerticalAlignment="Center" />
                         </StackPanel>
                         <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                        <!-- Except 自动分组: it has no single account pool of its own to
+                             list, only whichever candidate a request happens to land on. -->
+                        <Button Content="模型" Click="ShowGroupModels_OnClick"
+                                IsVisible="{Binding !IsAutomatic}"
+                                Classes="link" Padding="6,0,0,0" FontSize="11"
+                                VerticalAlignment="Center" Margin="6,0,0,0" />
                       </DockPanel>
                       <TextBlock Text="{Binding CurrentMarker}"
                                  Foreground="#2563EB" FontSize="11" Margin="0,1,0,0"

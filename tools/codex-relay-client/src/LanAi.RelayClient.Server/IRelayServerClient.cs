@@ -78,6 +78,16 @@ public interface IRelayServerClient
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// The public, group-centred model price list — read only for which models each group
+    /// serves (F5.x "该分组支持哪些模型" tip). Throws <see cref="RelayApiException"/> with
+    /// <see cref="RelayApiException.StatusCode"/> 404 when the operator has not turned the
+    /// model plaza on.
+    /// </summary>
+    Task<ModelPlazaResponse> GetModelPlazaAsync(
+        string? accessToken,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Reads this user's per-group multiplier overrides, keyed by group id (F5.2).
     /// </summary>
     /// <remarks>

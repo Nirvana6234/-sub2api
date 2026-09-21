@@ -100,6 +100,11 @@ public partial class MainWindow : Window
         RegistrationPanel.DataContext = _registration;
         SignedInPanel.DataContext = _dashboard;
         _dashboard.ConfigureAutoGroup = ShowAutoGroupDialogAsync;
+        _dashboard.ShowGroupModels = message =>
+        {
+            MessageBox.Show(this, message, "共飞-ChatGPT助手", MessageBoxButton.OK, MessageBoxImage.Information);
+            return Task.CompletedTask;
+        };
 
         _pollTimer = new DispatcherTimer { Interval = PollInterval };
         _pollTimer.Tick += (_, _) => _ = _safeAsync.RunAsync(RefreshAndMonitorAsync);
@@ -356,6 +361,16 @@ public partial class MainWindow : Window
 
     private void ConfigureAutoGroup_Click(object sender, RoutedEventArgs e) =>
         _ = _safeAsync.RunAsync(() => _dashboard.ConfigureAutoGroupAsync());
+
+    private void ShowGroupModels_OnClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not GroupItemViewModel group)
+        {
+            return;
+        }
+
+        _ = _safeAsync.RunAsync(() => _dashboard.ShowGroupModelsAsync(group));
+    }
 
     /// <summary>
     /// Keeps a mouse wheel passing over a closed group ComboBox from changing its selection.

@@ -487,6 +487,25 @@
                                         <StackPanel Margin="0,2">
                                             <DockPanel>
                                                 <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                                                <!-- Except 自动分组: it has no single account pool of its
+                                                     own to list, only whichever candidate a request
+                                                     happens to land on. -->
+                                                <Button Content="模型" Click="ShowGroupModels_OnClick"
+                                                        Background="Transparent" BorderThickness="0"
+                                                        Foreground="#2563EB" FontSize="11"
+                                                        Padding="6,0,0,0" Margin="6,0,0,0"
+                                                        VerticalAlignment="Center">
+                                                    <Button.Style>
+                                                        <Style TargetType="Button">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsAutomatic}" Value="True">
+                                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Button.Style>
+                                                </Button>
                                                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                                                     <!-- The group default, struck through, only when a
                                                          personal rate actually differs from it. -->

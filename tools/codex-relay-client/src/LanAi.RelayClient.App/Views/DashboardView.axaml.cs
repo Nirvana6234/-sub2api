@@ -241,6 +241,16 @@ public partial class DashboardView : UserControl
     private void ConfigureAutoGroup_OnClick(object? sender, RoutedEventArgs e) =>
         _ = _safeAsync?.RunAsync(() => _page?.Dashboard.ConfigureAutoGroupAsync() ?? Task.CompletedTask);
 
+    private void ShowGroupModels_OnClick(object? sender, RoutedEventArgs e)
+    {
+        if ((sender as Control)?.DataContext is not GroupItemViewModel group)
+        {
+            return;
+        }
+
+        _ = _safeAsync?.RunAsync(() => _page?.Dashboard.ShowGroupModelsAsync(group) ?? Task.CompletedTask);
+    }
+
     private void StartCodex_OnClick(object? sender, RoutedEventArgs e) =>
         _ = _safeAsync?.RunAsync(StartOrInstallCodexAsync);
 

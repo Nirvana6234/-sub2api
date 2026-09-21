@@ -95,6 +95,7 @@ namespace LanAi.RelayClient.Server;
 [JsonSerializable(typeof(AnnouncementHead))]
 [JsonSerializable(typeof(RelayAnnouncement[]))]
 [JsonSerializable(typeof(RelayGroup[]))]
+[JsonSerializable(typeof(ModelPlazaResponse))]
 [JsonSerializable(typeof(DashboardStats))]
 [JsonSerializable(typeof(RelayApiKey))]
 [JsonSerializable(typeof(PagedResult<RelayApiKey>))]
