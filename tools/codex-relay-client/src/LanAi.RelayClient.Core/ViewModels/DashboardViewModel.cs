@@ -1588,6 +1588,13 @@ public sealed partial class DashboardViewModel : ObservableObject
             // not derived from whichever group Codex just landed on.
             RebuildClaudePluginGroups();
 
+            // RebuildClaudePluginGroups only triggers a sync itself when the restored group
+            // actually changes SelectedClaudePluginGroup (null -> null is not a change). A
+            // checkbox already on at launch, with no group to restore, would otherwise sit
+            // there saying nothing until something else nudges it — explicitly asked for here
+            // so a fresh launch applies (or explains) an already-ticked box, not just a switch.
+            RequestPluginSync();
+
             CanConfigureAutoGroup = automatic is not null;
             GroupsReady = true;
             OnPropertyChanged(nameof(CanStartCodex));

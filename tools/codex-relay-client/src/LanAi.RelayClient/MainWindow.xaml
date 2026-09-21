@@ -466,6 +466,7 @@
                             <ComboBox ItemsSource="{Binding Groups}"
                                       SelectedItem="{Binding SelectedGroup, Mode=TwoWay}"
                                       IsEnabled="{Binding GroupsReady}"
+                                      PreviewMouseWheel="DisableComboBoxWheel"
                                       Padding="8,6">
                                 <!-- Collapsed state: name and rate on one line. -->
                                 <ComboBox.ItemTemplate>
@@ -573,6 +574,7 @@
                                 <ComboBox ItemsSource="{Binding ClaudePluginGroups}"
                                           SelectedItem="{Binding SelectedClaudePluginGroup, Mode=TwoWay}"
                                           DisplayMemberPath="DisplayText" Padding="8,6"
+                                          PreviewMouseWheel="DisableComboBoxWheel"
                                           Visibility="{Binding HasClaudePluginGroups, Converter={StaticResource BoolToVisibility}}"/>
                                 <TextBlock Text="该账号没有可用的 Claude 分组" Foreground="#9CA3AF" FontSize="12">
                                     <TextBlock.Style>

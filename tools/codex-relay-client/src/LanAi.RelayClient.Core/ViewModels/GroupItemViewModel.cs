@@ -19,7 +19,7 @@ public sealed partial class GroupItemViewModel : ObservableObject
         Description = "按模型与所选策略自动选择可用分组";
         Platform = "openai";
         RateLabel = "自动";
-        RateDescription = "实际倍率取决于每次请求自动选择的分组";
+        RateDescription = "倍率相当于官方计价的比例，实际数值取决于每次请求自动选择的分组";
         IsAutomatic = true;
     }
 
@@ -40,7 +40,7 @@ public sealed partial class GroupItemViewModel : ObservableObject
             : FormatMultiplier(rate.EffectiveMultiplier);
         RateDescription = group.IsSubscription
             ? "订阅额度按服务端订阅规则计算"
-            : $"每 $1 Token 额度扣除 ￥{rate.EffectiveMultiplier.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture)} 账户余额";
+            : $"相当于官方计价的倍率：每 $1 官方计价的 Token 额度，扣除 ￥{rate.EffectiveMultiplier.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture)} 账户余额";
 
         // Only shown when a user-specific rate actually differs from the group's
         // own; the panel strikes the default through in that case and shows a
@@ -72,7 +72,10 @@ public sealed partial class GroupItemViewModel : ObservableObject
     /// <summary>The multiplier in force, or "订阅" for subscription groups.</summary>
     public string RateLabel { get; }
 
-    /// <summary>Explains the account-balance deduction for one dollar of Token quota.</summary>
+    /// <summary>
+    /// Explains what the multiplier means: a ratio against official pricing, plus the concrete
+    /// account-balance deduction for one dollar of official-priced Token quota.
+    /// </summary>
     public string RateDescription { get; }
 
     public bool HasRateDescription => !string.IsNullOrWhiteSpace(RateDescription);

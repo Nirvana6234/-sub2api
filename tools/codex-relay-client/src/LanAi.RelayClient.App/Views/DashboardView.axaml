@@ -260,6 +260,7 @@
               <ComboBox ItemsSource="{Binding Dashboard.Groups}"
                         SelectedItem="{Binding Dashboard.SelectedGroup, Mode=TwoWay}"
                         IsEnabled="{Binding Dashboard.GroupsReady}"
+                        controls:ComboBoxWheelBehavior.DisableMouseWheel="True"
                         HorizontalAlignment="Stretch" Padding="8,6">
                 <ComboBox.ItemTemplate>
                   <DataTemplate x:DataType="vm:GroupItemViewModel">
@@ -356,6 +357,7 @@
               <ComboBox ItemsSource="{Binding Dashboard.ClaudePluginGroups}"
                         SelectedItem="{Binding Dashboard.SelectedClaudePluginGroup, Mode=TwoWay}"
                         IsVisible="{Binding Dashboard.HasClaudePluginGroups}"
+                        controls:ComboBoxWheelBehavior.DisableMouseWheel="True"
                         HorizontalAlignment="Stretch" Padding="8,6" PlaceholderText="点击选择 Claude 分组">
                 <ComboBox.ItemTemplate>
                   <DataTemplate>

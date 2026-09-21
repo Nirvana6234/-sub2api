@@ -155,7 +155,7 @@ public sealed class DashboardViewModelTests
 
         Assert.True(dashboard.GroupsReady);
         Assert.Equal("1.500x", Assert.Single(dashboard.Groups).RateLabel);
-        Assert.Equal("每 $1 Token 额度扣除 ￥1.500 账户余额", Assert.Single(dashboard.Groups).RateDescription);
+        Assert.Equal("相当于官方计价的倍率：每 $1 官方计价的 Token 额度，扣除 ￥1.500 账户余额", Assert.Single(dashboard.Groups).RateDescription);
     }
 
     [Fact]
@@ -182,7 +182,7 @@ public sealed class DashboardViewModelTests
         GroupItemViewModel item = Assert.Single(dashboard.Groups);
         Assert.Equal("0.800x", item.RateLabel);
         Assert.Equal("2.000x", item.StruckThroughRateLabel);
-        Assert.Equal("每 $1 Token 额度扣除 ￥0.800 账户余额", item.RateDescription);
+        Assert.Equal("相当于官方计价的倍率：每 $1 官方计价的 Token 额度，扣除 ￥0.800 账户余额", item.RateDescription);
         Assert.True(item.HasStruckThroughRate);
     }
 

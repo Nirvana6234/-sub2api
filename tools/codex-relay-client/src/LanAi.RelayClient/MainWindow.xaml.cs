@@ -357,6 +357,18 @@ public partial class MainWindow : Window
     private void ConfigureAutoGroup_Click(object sender, RoutedEventArgs e) =>
         _ = _safeAsync.RunAsync(() => _dashboard.ConfigureAutoGroupAsync());
 
+    /// <summary>
+    /// Keeps a mouse wheel passing over a closed group ComboBox from changing its selection.
+    /// </summary>
+    /// <remarks>
+    /// A ComboBox that still has focus from an earlier click answers MouseWheel itself — with
+    /// no dropdown open, no click, and often no attention from the user, who is just scrolling
+    /// past it in this tall, scrollable window. Handled here, on the tunnelling preview event,
+    /// before that class handler ever sees it. The page still does not scroll while the pointer
+    /// is over the box; that is the same trade-off a native dropdown makes.
+    /// </remarks>
+    private void DisableComboBoxWheel(object sender, MouseWheelEventArgs e) => e.Handled = true;
+
     private void Refresh_OnClick(object sender, RoutedEventArgs e) =>
         _ = _safeAsync.RunAsync(RefreshAndMonitorAsync);
 

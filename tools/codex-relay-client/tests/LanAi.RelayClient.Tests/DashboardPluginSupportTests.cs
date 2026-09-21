@@ -68,6 +68,35 @@ public sealed class DashboardPluginSupportTests
         Assert.True((await BuildAsync(saved: true)).Dashboard.PluginSupportEnabled);
     }
 
+    /// <summary>
+    /// A box already ticked from a previous launch must apply (or explain) itself on this
+    /// launch too — not just sit there until the user touches the group dropdown.
+    /// </summary>
+    [Fact]
+    public async Task ABoxAlreadyOnAtLaunchIsAppliedWithoutAnyUserAction()
+    {
+        Rig rig = await BuildAsync(true, true, null, Group(21, "Claude", "anthropic"));
+
+        await rig.Dashboard.RefreshAsync();
+
+        await WaitForAsync(() => rig.Codex.PluginRequests.Any(r => r.Enabled && r.GroupId == 21));
+    }
+
+    /// <summary>
+    /// Same launch-time guarantee when there is nothing to restore: the sync still runs, so the
+    /// startup actually asked whether it could apply — not staying blank because nothing did.
+    /// </summary>
+    [Fact]
+    public async Task ABoxAlreadyOnAtLaunchWithNoClaudeGroupStillAsks()
+    {
+        Rig rig = await BuildAsync(true, true, null, Group(11, "OpenAI", "openai"));
+
+        await rig.Dashboard.RefreshAsync();
+        await WaitForAsync(() => rig.Codex.PluginRequests.Count > 0);
+
+        Assert.Contains(rig.Codex.PluginRequests, r => r.Enabled && r.GroupId is null);
+    }
+
     [Fact]
     public async Task RestoringTheSavedChoiceIsNotTheUserChangingIt()
     {
