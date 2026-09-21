@@ -154,6 +154,7 @@ internal sealed class ClientSelfUpdater
             {
                 await DownloadIfNeededAsync(packageUrl, zipPath, progress, cancellationToken).ConfigureAwait(false);
                 ExtractAtomically(zipPath, extractDirectory);
+                RenameExtractedExeToMatch(extractDirectory, exePath);
             }
 
             if (!_host.StartRelaunchHelper(extractDirectory, installDirectory, exePath, Environment.ProcessId))
@@ -253,6 +254,47 @@ internal sealed class ClientSelfUpdater
         }
 
         Directory.Move(extractingTo, extractDirectory);
+    }
+
+    /// <summary>
+    /// Renames the package's own exe, inside the extraction, to whatever this process is
+    /// actually running as.
+    /// </summary>
+    /// <remarks>
+    /// The relaunch that follows is a plain mirror copy by <c>robocopy</c>, matched by
+    /// filename — it has no other way to know "this is the app". The shipped name is not
+    /// fixed (packaging renames it to 共飞-ChatGPT助手.exe; a user is free to rename it again
+    /// after installing), so a package whose exe is named differently from the one actually
+    /// running would otherwise land as an extra, unrelated file beside the real one, which
+    /// robocopy never touches — the update silently does nothing, and the "relaunch" step
+    /// reopens the same old exe it just closed. Renamed here, once, right after extraction,
+    /// so every step after this trusts the extraction already matches.
+    /// </remarks>
+    private static void RenameExtractedExeToMatch(string extractDirectory, string exePath)
+    {
+        string targetName = Path.GetFileName(exePath);
+        string[] topLevelExes = Directory.GetFiles(extractDirectory, "*.exe", SearchOption.TopDirectoryOnly);
+        if (topLevelExes.Length != 1)
+        {
+            // Nothing found (not a Windows package — should never happen) or more than one
+            // (an unrecognised layout): guessing wrong here would rename the wrong file over
+            // the app, so this leaves the extraction exactly as published instead.
+            return;
+        }
+
+        string extractedExe = topLevelExes[0];
+        if (string.Equals(Path.GetFileName(extractedExe), targetName, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        string renamedPath = Path.Combine(extractDirectory, targetName);
+        if (File.Exists(renamedPath))
+        {
+            File.Delete(renamedPath);
+        }
+
+        File.Move(extractedExe, renamedPath);
     }
 
     private static void TryDeleteFile(string path)

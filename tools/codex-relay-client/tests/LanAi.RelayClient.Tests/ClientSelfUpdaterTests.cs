@@ -66,6 +66,59 @@ public sealed class ClientSelfUpdaterTests : IAsyncDisposable
         Assert.False(Directory.Exists(Path.Combine(UpdateRoot, "extracted.tmp")));
     }
 
+    /// <summary>
+    /// The package's own exe is never named after the process running it — packaging renames it
+    /// to 共飞-ChatGPT助手.exe, and a user may rename it again after installing. robocopy matches
+    /// by filename alone, so without this the new exe would land as an unrelated extra file and
+    /// the real, running one would never be touched at all.
+    /// </summary>
+    [Fact]
+    public async Task TheShippedExeIsRenamedToMatchWhateverThisProcessIsRunningAs()
+    {
+        Directory.CreateDirectory(_installDirectory);
+        await using var upstream = await ZipUpstream.StartAsync(BuildZip(("共飞-ChatGPT助手.exe", "new build"), ("readme.txt", "hi")));
+        var host = new FakeRelaunchHost { RelaunchHelperResult = true };
+        ClientSelfUpdater updater = Updater(host);
+        var update = new ClientUpdateInfo(
+            new Version(0, 9), new Uri("https://example.test/download"), ClientUpdateChannel.SelfReplace,
+            PackageUrl: new Uri(upstream.BaseAddress));
+
+        ClientSelfUpdateResult result = await updater.ApplyAsync(update);
+
+        Assert.Equal(ClientSelfUpdateOutcome.Restarting, result.Outcome);
+        FakeRelaunchHost.RelaunchCall call = Assert.Single(host.RelaunchCalls);
+        // Renamed to match ExePath's own basename ("app.exe"), not left under the shipped name.
+        Assert.False(File.Exists(Path.Combine(call.StagingDirectory, "共飞-ChatGPT助手.exe")));
+        Assert.True(File.Exists(Path.Combine(call.StagingDirectory, "app.exe")));
+        Assert.Equal("new build", await File.ReadAllTextAsync(Path.Combine(call.StagingDirectory, "app.exe")));
+        // Untouched: renaming the exe must not disturb anything else in the package.
+        Assert.True(File.Exists(Path.Combine(call.StagingDirectory, "readme.txt")));
+    }
+
+    /// <summary>
+    /// An ambiguous package (no top-level exe found, or more than one) is left exactly as
+    /// published rather than guessing which file to rename — a wrong guess would rename the
+    /// wrong file over the real app.
+    /// </summary>
+    [Fact]
+    public async Task AnAmbiguousPackageIsLeftAsPublished()
+    {
+        Directory.CreateDirectory(_installDirectory);
+        await using var upstream = await ZipUpstream.StartAsync(BuildZip(("one.exe", "a"), ("two.exe", "b")));
+        var host = new FakeRelaunchHost { RelaunchHelperResult = true };
+        ClientSelfUpdater updater = Updater(host);
+        var update = new ClientUpdateInfo(
+            new Version(0, 9), new Uri("https://example.test/download"), ClientUpdateChannel.SelfReplace,
+            PackageUrl: new Uri(upstream.BaseAddress));
+
+        await updater.ApplyAsync(update);
+
+        FakeRelaunchHost.RelaunchCall call = Assert.Single(host.RelaunchCalls);
+        Assert.True(File.Exists(Path.Combine(call.StagingDirectory, "one.exe")));
+        Assert.True(File.Exists(Path.Combine(call.StagingDirectory, "two.exe")));
+        Assert.False(File.Exists(Path.Combine(call.StagingDirectory, "app.exe")));
+    }
+
     [Fact]
     public async Task ASecondCallReusesTheDownloadedZipInsteadOfFetchingItAgain()
     {
