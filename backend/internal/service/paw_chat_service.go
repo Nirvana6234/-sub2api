@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
@@ -286,12 +287,19 @@ func (s *PawChatService) PrepareResponses(ctx context.Context, userID int64, req
 	if userID <= 0 {
 		return nil, infraerrors.Unauthorized("AUTH_REQUIRED", "authenticated user is required")
 	}
-	if req.GroupID <= 0 {
-		return nil, errPawGroupForbidden
-	}
 	modelID := strings.TrimSpace(req.ModelID)
 	if modelID == "" {
 		return nil, errPawModelUnavailable
+	}
+	// 没给分组 = 按 Key 上保存的自动分组设置来选，而不是报错。
+	//
+	// 只有这条路径这样：chat 那条的分组是用户在界面上选的，缺失就是请求有问题；
+	// 这条的调用方是桌面端转发的 codex，开了自动分组之后它本来就不该自己挑组。
+	//
+	// 这条分支刻意不校验模型是否在分组目录里——分组就是按「哪个组支持这个模型」
+	// 选出来的，再回头拿目录校一遍是重复的，也会和选组结果自相矛盾。
+	if req.GroupID <= 0 {
+		return s.prepareResponsesByAutoGroup(ctx, userID, modelID)
 	}
 
 	group, _, err := s.selectPawGroupModel(ctx, userID, req.GroupID, modelID)
@@ -451,4 +459,69 @@ func clonePawAPIKeyWithGroup(apiKey *APIKey, group *Group) *APIKey {
 	clone.AutoGroupCurrentModel = ""
 	clone.AutoGroupCurrentSelectedAt = nil
 	return &clone
+}
+
+// prepareResponsesByAutoGroup 按 API Key 上保存的自动分组设置解析出本次该用的分组。
+//
+// 与 selectPawGroupModel 那条的分工：那条回答「用户能不能在这个指定分组里用这个
+// 模型」，这条回答「哪个分组能接这个模型」。后者的结果本身就蕴含了前者的答案，
+// 所以不再重复校验模型目录。
+func (s *PawChatService) prepareResponsesByAutoGroup(ctx context.Context, userID int64, modelID string) (*PawResponsesResolution, error) {
+	autoSource, ok := s.keySource.(interface {
+		ResolvePawAutoGroupForModel(context.Context, int64, string) (*APIKey, *UserSubscription, error)
+	})
+	if !ok {
+		return nil, errPawGroupForbidden
+	}
+	apiKey, subscription, err := autoSource.ResolvePawAutoGroupForModel(ctx, userID, modelID)
+	if err != nil || apiKey == nil || apiKey.Group == nil {
+		if errors.Is(err, ErrAutoGroupUnavailable) {
+			return nil, infraerrors.Forbidden("AUTO_GROUP_UNAVAILABLE", "No available group satisfies the automatic routing requirements")
+		}
+		if err != nil {
+			return nil, errPawKeyUnavailable.WithCause(err)
+		}
+		return nil, errPawGroupForbidden
+	}
+	if apiKey.Status == StatusAPIKeyQuotaExhausted || apiKey.IsQuotaExhausted() {
+		return nil, errPawQuotaExceeded
+	}
+	return &PawResponsesResolution{
+		APIKey:       apiKey,
+		Subscription: subscription,
+		Group:        apiKey.Group,
+		Model:        modelID,
+	}, nil
+}
+
+// ResolvePawAutoGroupForModel 按 Key 上保存的自动分组设置为该模型解析分组。
+//
+// 走的是和网关 auto-group 中间件同一个 ResolveAutoGroupForModel，保证桌面端
+// 自动分组的选组结果与普通 API Key 的自动分组一致。
+func (s APIKeyPawChatKeySource) ResolvePawAutoGroupForModel(ctx context.Context, userID int64, model string) (*APIKey, *UserSubscription, error) {
+	key, _, err := s.ResolvePawAPIKey(ctx, userID, 0)
+	if err != nil || key == nil {
+		return nil, nil, err
+	}
+	resolver, ok := s.Service.(interface {
+		ResolveAutoGroupForModel(context.Context, *APIKey, string) (*APIKey, error)
+	})
+	if !ok || !key.AutoGroup || len(key.AutoGroupIDs) == 0 {
+		return nil, nil, ErrAutoGroupUnavailable
+	}
+	resolved, err := resolver.ResolveAutoGroupForModel(ctx, key, model)
+	if err != nil {
+		return nil, nil, err
+	}
+	if resolved == nil || resolved.Group == nil {
+		return nil, nil, ErrAutoGroupUnavailable
+	}
+	var subscription *UserSubscription
+	if resolved.Group.IsSubscriptionType() {
+		subscription, err = s.Service.GetActiveSubscriptionForGroup(ctx, userID, resolved.Group.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	return resolved, subscription, nil
 }

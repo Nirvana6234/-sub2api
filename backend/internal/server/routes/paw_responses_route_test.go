@@ -80,6 +80,53 @@ func newPawResponsesRouteEngineOn(platform string, openAIDispatch, gatewayDispat
 	return r
 }
 
+// newPawResponsesRouteEngineWithAutoGroup 的 key 源能解析出自动分组（落在组 7）。
+func newPawResponsesRouteEngineWithAutoGroup(dispatch gin.HandlerFunc, userID int64) *gin.Engine {
+	return newPawResponsesRouteEngineWithKeySource(dispatch, userID, true)
+}
+
+// newPawResponsesRouteEngineWithoutAutoGroup 的 key 源解析不出任何可用分组。
+func newPawResponsesRouteEngineWithoutAutoGroup(dispatch gin.HandlerFunc, userID int64) *gin.Engine {
+	return newPawResponsesRouteEngineWithKeySource(dispatch, userID, false)
+}
+
+func newPawResponsesRouteEngineWithKeySource(dispatch gin.HandlerFunc, userID int64, autoGroupResolves bool) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	setting := (*service.SettingService)(nil)
+	groups := pawResponsesPlatformGroups{platform: service.PlatformOpenAI}
+	config := service.NewPawConfigService(
+		groups,
+		pawChatRouteUsers{},
+		pawResponsesPlatformChannels{platform: service.PlatformOpenAI},
+		&pawRouteStore{},
+	)
+	group := service.Group{ID: 7, Name: "G", Platform: service.PlatformOpenAI, Status: service.StatusActive}
+	groupID := group.ID
+	keySource := &pawChatRouteKeySource{apiKey: &service.APIKey{
+		ID: 99, UserID: userID, Status: service.StatusActive,
+		AutoGroup: true, AutoGroupIDs: []int64{7},
+		User: &service.User{ID: userID, Status: service.StatusActive},
+	}}
+	if autoGroupResolves {
+		keySource.autoGroupKey = &service.APIKey{
+			ID: 99, UserID: userID, Status: service.StatusActive,
+			GroupID: &groupID, Group: &group,
+			AutoGroup: true, AutoGroupIDs: []int64{7},
+			User: &service.User{ID: userID, Status: service.StatusActive},
+		}
+	}
+	auth := func(c *gin.Context) {
+		c.Set(string(servermiddleware.ContextKeyUser), servermiddleware.AuthSubject{UserID: userID})
+		c.Next()
+	}
+	RegisterPawRoutes(r.Group("/api/v1"), config, auth, setting, servermiddleware.NewPanelRateLimiter(nil, setting), PawRouteDependencies{
+		ChatService:     service.NewPawChatService(config, keySource),
+		OpenAIResponses: dispatch,
+	})
+	return r
+}
+
 func postResponses(r *gin.Engine, body string, headers map[string]string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/paw/responses", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -124,13 +171,15 @@ func TestPawResponsesRoutePinsTheHeaderGroupOntoTheKey(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 }
 
-// 没带分组头就得明着报错。**绝不能**退而求其次替用户挑一个 ——
+// 分组头写错了就得明着报错。**绝不能**退而求其次替用户挑一个 ——
 // 那会让这一轮悄悄跑在用户没选的分组上，账单和限额都记到别处去。
+//
+// 注意「写错」和「没写」是两回事：没写（不发头 / 空串 / "0" / "auto"）表示
+// 「交给自动分组决定」，见 TestPawResponsesRouteAcceptsAutoGroupSentinels。
+// 桌面端开了自动分组之后本来就不知道该填哪个组，而 Responses 的载荷必须逐字节
+// 保持 Codex 原样、带不了路由元数据，缺省一律 400 会把这类客户端整个挡在门外。
 func TestPawResponsesRouteRefusesToGuessTheGroup(t *testing.T) {
 	for _, header := range []map[string]string{
-		{},
-		{PawGroupHeader: ""},
-		{PawGroupHeader: "0"},
 		{PawGroupHeader: "-1"},
 		{PawGroupHeader: "abc"},
 	} {
@@ -241,4 +290,48 @@ func TestPawResponsesRouteWireContractMatchesTheRustRelay(t *testing.T) {
 	postResponses(r, codexResponsesPayload, map[string]string{PawGroupHeader: "7"})
 	require.Equal(t, "/api/v1/paw/responses", seenPath,
 		"改了就得同步改 crates/codex-host/src/proxy.rs 的 UPSTREAM_PATH")
+}
+
+// 缺省的分组头（不发 / 空串 / "0" / "auto"）= 「交给自动分组决定」，不是错误。
+//
+// 桌面端开了自动分组之后本来就不知道该填哪个组；而 Responses 的载荷必须逐字节
+// 保持 Codex 原样、带不了路由元数据，客户端只能靠这个头表达分组。缺省一律 400
+// 会把这类客户端每一轮都挡在门外。
+//
+// 与 TestPawResponsesRouteRefusesToGuessTheGroup 的分工：那条管「写错了」
+// （负数、非数字），这条管「没写」。
+func TestPawResponsesRouteAcceptsAutoGroupSentinels(t *testing.T) {
+	for _, headers := range []map[string]string{
+		{},
+		{PawGroupHeader: ""},
+		{PawGroupHeader: "0"},
+		{PawGroupHeader: "auto"},
+		{PawGroupHeader: "AUTO"},
+	} {
+		reached := false
+		r := newPawResponsesRouteEngineWithAutoGroup(func(c *gin.Context) {
+			key, ok := servermiddleware.GetAPIKeyFromContext(c)
+			require.True(t, ok)
+			require.NotNil(t, key.GroupID)
+			require.Equal(t, int64(7), *key.GroupID, "应落在自动分组选出的组上")
+			reached = true
+			c.Status(http.StatusOK)
+		}, 42)
+
+		w := postResponses(r, codexResponsesPayload, headers)
+		require.Equal(t, http.StatusOK, w.Code, "headers=%v body=%s", headers, w.Body.String())
+		require.True(t, reached, "headers=%v：自动分组这轮没打到上游", headers)
+	}
+}
+
+// 自动分组解析不出可用分组时，要明着报 AUTO_GROUP_UNAVAILABLE，
+// 而不是悄悄退回某个默认组。
+func TestPawResponsesRouteSurfacesAutoGroupUnavailable(t *testing.T) {
+	r := newPawResponsesRouteEngineWithoutAutoGroup(func(c *gin.Context) {
+		t.Fatal("解析不出分组就不该打到上游")
+	}, 42)
+
+	w := postResponses(r, codexResponsesPayload, map[string]string{PawGroupHeader: "auto"})
+	require.Equal(t, http.StatusForbidden, w.Code)
+	require.Contains(t, w.Body.String(), "AUTO_GROUP_UNAVAILABLE")
 }

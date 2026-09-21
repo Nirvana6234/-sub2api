@@ -478,9 +478,22 @@ func pawResponsesHandler(primaryChat, localChat *service.PawChatService, deps Pa
 			return
 		}
 
-		groupID, err := strconv.ParseInt(strings.TrimSpace(c.GetHeader(PawGroupHeader)), 10, 64)
-		if err != nil || groupID <= 0 {
-			pawChatError(c, http.StatusBadRequest, "INVALID_REQUEST", PawGroupHeader+" header is required")
+		// 分组头缺省（不发、空串、"0"、"auto"）= 交给自动分组解析。
+		//
+		// 桌面端开了自动分组之后本来就不知道该填哪个组，而 Responses 的载荷必须
+		// 逐字节保持 Codex 原样、带不了路由元数据，客户端只能用这个头表达分组。
+		// 缺省一律 400 的话，自动分组的客户端每一轮都被挡在门外。
+		//
+		// 写错的值仍然是错：负数和非数字照旧 400，绝不静默回退到某个默认组——
+		// 那等于替用户猜，也会把「这个分组 ID 有效」泄露出去。
+		groupHeader := strings.TrimSpace(c.GetHeader(PawGroupHeader))
+		groupID := int64(0)
+		var err error
+		if groupHeader != "" && !strings.EqualFold(groupHeader, "auto") {
+			groupID, err = strconv.ParseInt(groupHeader, 10, 64)
+		}
+		if err != nil || groupID < 0 {
+			pawChatError(c, http.StatusBadRequest, "INVALID_REQUEST", PawGroupHeader+" header is invalid")
 			return
 		}
 
