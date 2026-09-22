@@ -151,6 +151,7 @@ docs/*
 !docs/ADMIN_PAYMENT_INTEGRATION_API.md
 !docs/ASYNC_IMAGE_TASKS.md
 !docs/PLAYGROUND.md
+!docs/MASTER_RELAY_NODES.md
 !docs/legal/
 !docs/legal/*.md
 !docs/superpowers/
