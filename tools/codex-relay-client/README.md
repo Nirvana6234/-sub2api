@@ -112,8 +112,18 @@ dotnet publish src/LanAi.RelayClient.App/LanAi.RelayClient.App.csproj `
     -c Release -r win-x64 --self-contained true `
     -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
     -o <临时目录>
-python packaging/check-server-address.py <临时目录>/LanAi.RelayClient.App.exe
+python packaging/check-server-address.py --channel production <临时目录>/LanAi.RelayClient.App.exe
 ```
+
+**三个渠道，靠发布参数区分，绝不改源码**——包连哪台服务器，只由下面这个参数决定，出包后必须用 `--channel` 核对出货字节：
+
+| 渠道 | 发布参数 | 连接地址 | 核对 |
+|---|---|---|---|
+| 正式（默认） | 不带任何渠道参数 | `https://gongfeiai.com/` | `--channel production` |
+| 测试服 | `-p:TestServer=true` | `http://test.gongfeiai.com/` | `--channel test` |
+| 本机联调 | `-p:LocalServer=true` | `http://127.0.0.1:8080/` | `--channel local` |
+
+脚本要求本渠道的地址存在、另外两个不存在，任何一项不符都退出码非 0。**产物目录名只是标签，不是证据**——命名成“正式”而没跑 `--channel production` 的包不算正式包。发布流水线只走 `production`，不带渠道参数。
 
 `context-filter.exe` 要放在**子目录** `context-filter\` 下（`App.axaml.cs` 按 `AppContext.BaseDirectory\context-filter\context-filter.exe` 找它，不跟主 exe 平铺），产物结构照 workflow 里"打包 Windows zip"那一步的 staging 布局来。两个头现在用的是同一套子目录约定（WPF 头本来就是子目录，2026-09-17 起 Avalonia 头也改成子目录，不再是两边各一种）。
 

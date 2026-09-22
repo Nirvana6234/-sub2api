@@ -119,9 +119,13 @@ jobs:
       - name: 服务器地址不是占位符
         shell: bash
         run: |
-          if grep -q '127\.0\.0\.1' src/LanAi.RelayClient.Core/ClientOptions.cs; then
-            echo "::error::ClientOptions.cs 里还有 127.0.0.1，这个包会连本机"
-            grep -n '127\.0\.0\.1' src/LanAi.RelayClient.Core/ClientOptions.cs
+          # 本机冒烟通道（#if LOCAL_SERVER）里合法地写着 127.0.0.1，正式发布不带
+          # -p:LocalServer，编不进包里；所以只在这个块之外查。包本身的地址由下面的
+          # check-server-address.py 在二进制上再验一遍。
+          leftover=$(awk '/^#if LOCAL_SERVER/{skip=1;next} /^#(elif|else|endif)/{skip=0} !skip'             src/LanAi.RelayClient.Core/ClientOptions.cs | grep -n '127\.0\.0\.1' || true)
+          if [ -n "$leftover" ]; then
+            echo "::error::ClientOptions.cs 里还有 127.0.0.1（本机通道之外），这个包会连本机"
+            echo "$leftover"
             exit 1
           fi
 
@@ -145,7 +149,7 @@ jobs:
       - name: 核对出货字节里的服务器地址
         shell: bash
         run: |
-          python packaging/check-server-address.py \
+          python packaging/check-server-address.py --channel production \
             "${{ runner.temp }}/pub-win/LanAi.RelayClient.App.exe"
 
       # 发布包必须带上 context-filter.exe。它在**构建**里是可选的
