@@ -1,5 +1,5 @@
 {
-  "version": "0.5",
+  "version": "0.6",
   "download_page": "/download",
-  "release_notes": "0.5：注册与充值改为客户端内完成，无需再跳转浏览器。"
+  "release_notes": "0.6：支持在本地中继上接入 Claude Code 及编辑器插件；固定分组按模型白名单显示「模型」按钮；启动时可直接应用更新。"
 }
