@@ -1,5 +1,5 @@
 {
-  "version": "0.6",
+  "version": "0.8",
   "download_page": "/download",
-  "release_notes": "0.6：新增自动分组、支持插件（Claude Code）、检查更新与分组模型白名单提示。"
+  "release_notes": "0.8：左侧页签改版（仪表盘 / Codex / Claude / 本地代理 / 账户 / 设置）；新增本地代理，可用自己的 ChatGPT / Claude 订阅账号直连官方。"
 }
