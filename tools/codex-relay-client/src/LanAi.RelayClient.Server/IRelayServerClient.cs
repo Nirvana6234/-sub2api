@@ -204,6 +204,21 @@ public interface IRelayServerClient
         string accessToken,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// The user's own accounts on the relay (contributions). Fails with
+    /// <see cref="RelayFailure.Forbidden"/> when the account-management feature is not
+    /// enabled for this user.
+    /// </summary>
+    Task<IReadOnlyList<ContributionAccount>> ListContributionAccountsAsync(
+        string accessToken,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>A short-lived access token for one of the user's own OAuth accounts.</summary>
+    Task<LocalProxyCredential> GetLocalProxyCredentialAsync(
+        string accessToken,
+        long accountId,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Saves the user Claude preference.</summary>
     Task SetClaudePreferenceAsync(
         string accessToken,
