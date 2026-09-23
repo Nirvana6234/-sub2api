@@ -45,10 +45,23 @@ tools/codex-relay-client/
 └── tests/
     ├── LanAi.RelayClient.CodexBinding.Tests/ # 239 个：路由、加密快照、迁移、恢复与 TOML 保留
     ├── LanAi.RelayClient.Server.Tests/ # 95 个：信封语义、错误分类、面板和 key 契约
-    └── LanAi.RelayClient.Tests/        # 618 个：会话、生命周期、本机转发、退避、异步、订阅和 UI 状态
+    └── LanAi.RelayClient.Tests/        # 625 个：会话、生命周期、本机转发、退避、异步、订阅和 UI 状态
 ```
 
 后续按需求文档分期补：客户端内注册、充值、Codex 安装、项目中心和 `LanAi.RelayClient.Chat`。
+
+### 登录后界面的结构（2026-09-23 改为左侧页签）
+
+左侧页签：仪表盘 / Codex / Claude / Kimi（占位，等 Kimi Code CLI 调研）/ 账户，底部是设置。
+改版计划与各项决定见 [`doc/小白端左侧页签改版任务计划.md`](doc/小白端左侧页签改版任务计划.md)。
+
+- `DashboardView` 是登录后的外壳：左侧导航 + 按 `ClientPage` 切换的页面（`Views/Pages/`，构造时显式 new 出来，不靠命名反射，裁剪安全）。
+  三个轮询计时器挂在外壳上，**不随切页停止**——托盘状态、健康检查、余额提醒在窗口隐藏时也要数据。
+- 页面的按钮统一经 `IDashboardActions` 回到外壳，同一个动作（例如「启动 ChatGPT」）在两页上走同一条路。
+- 视图模型：`DashboardViewModel`（Codex 页：启动/分组/自动分组/压缩）持有 `RefreshState`（每轮刷新的限流/401 记账）、
+  `Account`、`Usage`、`Catalog`（未过滤的分组列表，每个工具自己筛）、`ClaudePreference`（账号级 Claude 模型，**全应用唯一实例**）、
+  `ClaudeCode`（Claude Code / VS Code 插件）。子对象**没有在父级留转发属性**：谁要用就绑 `Dashboard.Account.BalanceText` 这样的完整路径，
+  漏改的消费者编译期就报错，而不是运行时悄悄不更新。
 
 ## 构建与测试
 
