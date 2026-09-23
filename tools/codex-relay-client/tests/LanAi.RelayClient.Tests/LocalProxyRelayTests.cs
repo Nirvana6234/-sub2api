@@ -278,6 +278,74 @@ public sealed class LocalProxyRelayTests
         public void Clear() => Cleared = true;
     }
 
+    private const string InvalidEncrypted =
+        """{"error":{"message":"The encrypted content gAAA could not be verified.","type":"invalid_request_error","code":"invalid_encrypted_content"}}""";
+
+    private const string TurnFromTheServer =
+        """{"model":"gpt-5.5","store":false,"stream":true,"input":[{"type":"message","role":"user","content":"hi"},{"type":"reasoning","id":"rs_1","summary":[],"encrypted_content":"FROM-SERVER"},{"type":"message","role":"user","content":"again"}]}""";
+
+    [Fact]
+    public async Task HistoryFromAnotherAccountIsStrippedAndTheTurnRetriedOnce()
+    {
+        await using Rig rig = await Rig.StartAsync((400, InvalidEncrypted), (200, CodexCompleted));
+        rig.Relay.SetLocalProxy(LocalProxyKind.Codex, Mine);
+
+        using HttpResponseMessage response = await rig.PostAsync("/v1/responses", TurnFromTheServer);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(2, rig.Official.Requests.Count);
+        string retried = rig.Official.Requests.ToArray()[1].Body;
+        Assert.DoesNotContain("FROM-SERVER", retried);
+        Assert.Contains("\"rs_1\"", retried);
+        Assert.Contains("again", retried);
+        Assert.True(Assert.Single(rig.Outcomes).Succeeded);
+    }
+
+    [Fact]
+    public async Task ARefusedItemIsStrippedUpFrontOnLaterTurnsButNewOnesAreKept()
+    {
+        await using Rig rig = await Rig.StartAsync((400, InvalidEncrypted), (200, CodexCompleted));
+        rig.Relay.SetLocalProxy(LocalProxyKind.Codex, Mine);
+        (await rig.PostAsync("/v1/responses", TurnFromTheServer)).Dispose();
+
+        string nextTurn = TurnFromTheServer.Replace(
+            "]}", "," + """{"type":"reasoning","id":"rs_2","summary":[],"encrypted_content":"OWN"}]}""");
+        (await rig.PostAsync("/v1/responses", nextTurn)).Dispose();
+
+        Assert.Equal(3, rig.Official.Requests.Count);
+        string third = rig.Official.Requests.ToArray()[2].Body;
+        Assert.DoesNotContain("FROM-SERVER", third);
+        Assert.Contains("OWN", third);
+    }
+
+    [Fact]
+    public async Task AnyOther400IsPassedThroughWithoutRetrying()
+    {
+        const string Other = """{"error":{"message":"Unsupported parameter: foo","code":"unsupported_parameter"}}""";
+        await using Rig rig = await Rig.StartAsync((400, Other), (200, CodexCompleted));
+        rig.Relay.SetLocalProxy(LocalProxyKind.Codex, Mine);
+
+        using HttpResponseMessage response = await rig.PostAsync("/v1/responses", TurnFromTheServer);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("unsupported_parameter", await response.Content.ReadAsStringAsync());
+        Assert.Single(rig.Official.Requests);
+        Assert.False(Assert.Single(rig.Outcomes).Succeeded);
+    }
+
+    [Fact]
+    public async Task StillRefusedAfterStrippingIsPassedThroughAfterOneRetry()
+    {
+        await using Rig rig = await Rig.StartAsync((400, InvalidEncrypted));
+        rig.Relay.SetLocalProxy(LocalProxyKind.Codex, Mine);
+
+        using HttpResponseMessage response = await rig.PostAsync("/v1/responses", TurnFromTheServer);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("invalid_encrypted_content", await response.Content.ReadAsStringAsync());
+        Assert.Equal(2, rig.Official.Requests.Count);
+    }
+
     internal sealed record Received(string Path, string Query, string Body, IReadOnlyDictionary<string, string> Headers)
     {
         public string? Header(string name) =>
