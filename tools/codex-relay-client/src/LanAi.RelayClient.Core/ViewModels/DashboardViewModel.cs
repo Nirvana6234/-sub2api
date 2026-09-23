@@ -152,6 +152,8 @@ public sealed partial class DashboardViewModel : ObservableObject
         _codexAccountStore = codexAccountStore ?? new CodexAccountStore();
         _startupRegistration = startupRegistration ?? new UnsupportedStartupRegistration();
         RefreshState = new RefreshState(pollingBackoff ?? new PollingBackoff(), _session);
+        Account = new AccountCardViewModel(_client, RefreshState);
+        Usage = new UsageCardViewModel(_client, RefreshState);
         _safeAsync = safeAsync ?? new SafeAsyncRunner();
         _contextFilterPreferences = contextFilterPreferences ?? new ContextFilterPreferenceStore();
         _contextFilterUsage = contextFilterUsage ?? new ContextFilterUsageStore();
@@ -163,6 +165,12 @@ public sealed partial class DashboardViewModel : ObservableObject
 
     /// <summary>The refresh cycle's shared bookkeeping: backoff, rate-limit banner, 401s.</summary>
     public RefreshState RefreshState { get; }
+
+    /// <summary>Balance, recharge and subscription.</summary>
+    public AccountCardViewModel Account { get; }
+
+    /// <summary>Today's usage and the seven-day trend.</summary>
+    public UsageCardViewModel Usage { get; }
 
     public ObservableCollection<GroupItemViewModel> Groups { get; } = [];
 
@@ -196,66 +204,6 @@ public sealed partial class DashboardViewModel : ObservableObject
     // Automatic routing was added after the original relay API. A 404 here means
     // an older server, not a failure of the group card itself.
     private bool _autoGroupSupported = true;
-
-    [ObservableProperty]
-    private string userDisplayName = string.Empty;
-
-    // ---- Account card -------------------------------------------------------
-
-    [ObservableProperty]
-    private string balanceText = "—";
-
-    [ObservableProperty]
-    private string frozenBalanceText = "—";
-
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(AccountUnavailable))]
-    private bool accountReady;
-
-    /// <summary>True when this card could not be loaded and should be greyed out.</summary>
-    public bool AccountUnavailable => !AccountReady;
-
-    [ObservableProperty]
-    private bool balanceIsLow;
-
-    /// <summary>Where the top-up button should send the user; supplied by the server.</summary>
-    [ObservableProperty]
-    private string rechargeUrl = string.Empty;
-
-    public bool CanRecharge => _settings.PaymentEnabled || !string.IsNullOrWhiteSpace(RechargeUrl);
-
-    // ---- Usage card ---------------------------------------------------------
-
-    [ObservableProperty]
-    private string todayRequestsText = "—";
-
-    [ObservableProperty]
-    private string todayTokensText = "—";
-
-    [ObservableProperty]
-    private string todayCostText = "—";
-
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(UsageUnavailable))]
-    private bool usageReady;
-
-    public bool UsageUnavailable => !UsageReady;
-
-    // ---- Subscription card --------------------------------------------------
-
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(SubscriptionUnavailable))]
-    private bool subscriptionReady;
-
-    public bool SubscriptionUnavailable => !SubscriptionReady;
-
-    [ObservableProperty]
-    private string subscriptionName = string.Empty;
-
-    [ObservableProperty]
-    private string subscriptionProgressText = string.Empty;
-
-    public bool HasSubscription => SubscriptionReady && !string.IsNullOrWhiteSpace(SubscriptionName);
 
     // ---- Group card ---------------------------------------------------------
 
@@ -610,102 +558,6 @@ public sealed partial class DashboardViewModel : ObservableObject
             PluginSupportState.Problem => result.Note ?? "Claude Code 接入失败。",
             _ => string.Empty,
         };
-
-    // ---- Usage trend and models (F4) -----------------------------------------
-
-    /// <summary>Days covered by the trend chart and the model breakdown.</summary>
-    private const int TrendDays = 7;
-
-    /// <summary>How many models the breakdown lists.</summary>
-    /// <remarks>
-    /// Five. The point of this card is "where is my money going", and a list long
-    /// enough to need scrolling stops answering that at a glance.
-    /// </remarks>
-    private const int TopModels = 5;
-
-    public ObservableCollection<UsageLineChartPoint> CostTrend { get; } = [];
-
-    public ObservableCollection<ModelUsageRowViewModel> TopModelUsage { get; } = [];
-
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(TrendUnavailable))]
-    private bool trendReady;
-
-    public bool TrendUnavailable => !TrendReady;
-
-    public bool HasTrend => CostTrend.Count > 0;
-
-    public bool HasModelUsage => TopModelUsage.Count > 0;
-
-    /// <summary>
-    /// True when the card loaded fine and there is simply nothing to show yet.
-    /// </summary>
-    /// <remarks>
-    /// Distinct from the failure state, and it needs words of its own: an account
-    /// that has not sent any traffic gets an empty chart, and to a novice an empty
-    /// card is indistinguishable from a broken one. The same omission already
-    /// caught us once with the group dropdown.
-    /// </remarks>
-    public bool HasNoUsageYet => TrendReady && CostTrend.Count == 0;
-
-    /// <remarks>
-    /// Its own card, loaded on its own, for the same reason as the others (F4.2) —
-    /// and the chart is the most likely of them to fail, since it asks for the
-    /// widest date range.
-    /// </remarks>
-    private async Task LoadTrendCardAsync(string accessToken, CancellationToken cancellationToken)
-    {
-        try
-        {
-            IReadOnlyList<UsageTrendPoint> trend =
-                await _client.GetUsageTrendAsync(accessToken, TrendDays, cancellationToken).ConfigureAwait(true);
-
-            CostTrend.Clear();
-            foreach (UsageTrendPoint point in trend)
-            {
-                // Labelled by day-of-month alone: seven full dates will not fit
-                // under a chart this narrow, and the year is never in question.
-                string label = point.Date.Length >= 10 ? point.Date[8..10] : point.Date;
-                CostTrend.Add(new UsageLineChartPoint(
-                    label,
-                    point.ActualCost,
-                    $"{point.Date}  ${point.ActualCost:0.####}  {point.Requests} 次"));
-            }
-
-            // Fails on its own inside the same card: the chart is still worth
-            // showing when the per-model split is unavailable.
-            try
-            {
-                IReadOnlyList<ModelUsage> models =
-                    await _client.GetModelUsageAsync(accessToken, TrendDays, cancellationToken).ConfigureAwait(true);
-
-                TopModelUsage.Clear();
-                foreach (ModelUsage model in models
-                    .OrderByDescending(m => m.ActualCost)
-                    .ThenByDescending(m => m.Requests)
-                    .Take(TopModels))
-                {
-                    TopModelUsage.Add(new ModelUsageRowViewModel(model));
-                }
-            }
-            catch (Exception ex) when (RefreshState.Observe(ex))
-            {
-                TopModelUsage.Clear();
-                ClientLog.Warning("按模型用量取数失败", ex);
-            }
-
-            TrendReady = true;
-            OnPropertyChanged(nameof(HasTrend));
-            OnPropertyChanged(nameof(HasModelUsage));
-            OnPropertyChanged(nameof(HasNoUsageYet));
-        }
-        catch (Exception ex) when (RefreshState.Observe(ex))
-        {
-            TrendReady = false;
-            OnPropertyChanged(nameof(HasNoUsageYet));
-            ClientLog.Warning("用量趋势取数失败", ex);
-        }
-    }
 
     // ---- Codex ---------------------------------------------------------------
 
@@ -1170,8 +1022,7 @@ public sealed partial class DashboardViewModel : ObservableObject
     public void ApplySettings(PublicSettings settings)
     {
         _settings = settings ?? PublicSettings.Conservative;
-        RechargeUrl = _settings.BalanceLowNotifyRechargeUrl ?? string.Empty;
-        OnPropertyChanged(nameof(CanRecharge));
+        Account.ApplySettings(_settings);
     }
 
     /// <summary>
@@ -1209,7 +1060,7 @@ public sealed partial class DashboardViewModel : ObservableObject
         RefreshState.IsRefreshing = true;
         try
         {
-            UserDisplayName = _session.UserDisplayName;
+            Account.UserDisplayName = _session.UserDisplayName;
 
             string accessToken;
             try
@@ -1250,114 +1101,11 @@ public sealed partial class DashboardViewModel : ObservableObject
     /// <summary>The cards, in the order a refresh loads them.</summary>
     private IEnumerable<Func<string, CancellationToken, Task>> CardLoaders()
     {
-        yield return LoadAccountCardAsync;
-        yield return LoadUsageCardAsync;
-        yield return LoadSubscriptionCardAsync;
+        yield return Account.LoadAccountAsync;
+        yield return Usage.LoadTodayAsync;
+        yield return Account.LoadSubscriptionAsync;
         yield return LoadGroupCardAsync;
-        yield return LoadTrendCardAsync;
-    }
-
-    private async Task LoadAccountCardAsync(string token, CancellationToken cancellationToken)
-    {
-        try
-        {
-            RelayUser user = await _client.GetCurrentUserAsync(token, cancellationToken).ConfigureAwait(true);
-
-            UserDisplayName = user.DisplayName;
-            BalanceText = FormatBalance(user.Balance);
-            FrozenBalanceText = FormatBalance(user.FrozenBalance);
-
-            // The threshold is the server's to decide (F4.3); the client must not
-            // invent one, or operators changing it would need a client release.
-            BalanceIsLow = _settings.BalanceLowNotifyEnabled &&
-                           user.Balance < _settings.BalanceLowNotifyThreshold;
-
-            AccountReady = true;
-        }
-        catch (Exception ex) when (RefreshState.Observe(ex))
-        {
-            BalanceText = "—";
-            FrozenBalanceText = "—";
-            BalanceIsLow = false;
-            AccountReady = false;
-            ClientLog.Warning("账户卡取数失败", ex);
-        }
-    }
-
-    private async Task LoadUsageCardAsync(string token, CancellationToken cancellationToken)
-    {
-        try
-        {
-            DashboardStats stats = await _client.GetDashboardStatsAsync(token, cancellationToken).ConfigureAwait(true);
-
-            TodayRequestsText = stats.TodayRequests.ToString("N0");
-            TodayTokensText = stats.TodayTokens.ToString("N0");
-            TodayCostText = FormatMoney(stats.TodayActualCost);
-            UsageReady = true;
-        }
-        catch (Exception ex) when (RefreshState.Observe(ex))
-        {
-            TodayRequestsText = "—";
-            TodayTokensText = "—";
-            TodayCostText = "—";
-            UsageReady = false;
-            ClientLog.Warning("用量卡取数失败", ex);
-        }
-    }
-
-    private async Task LoadSubscriptionCardAsync(string token, CancellationToken cancellationToken)
-    {
-        try
-        {
-            IReadOnlyList<SubscriptionSummaryItem> subscriptions = await _client
-                .GetSubscriptionSummaryAsync(token, cancellationToken)
-                .ConfigureAwait(true);
-            SubscriptionSummaryItem? subscription = subscriptions.FirstOrDefault();
-
-            if (subscription is null)
-            {
-                SubscriptionName = string.Empty;
-                SubscriptionProgressText = string.Empty;
-            }
-            else
-            {
-                SubscriptionName = string.IsNullOrWhiteSpace(subscription.GroupName)
-                    ? "订阅"
-                    : subscription.GroupName;
-                SubscriptionProgressText = FormatSubscriptionProgress(subscription);
-            }
-
-            SubscriptionReady = true;
-            OnPropertyChanged(nameof(HasSubscription));
-        }
-        catch (Exception ex) when (RefreshState.Observe(ex))
-        {
-            SubscriptionName = string.Empty;
-            SubscriptionProgressText = string.Empty;
-            SubscriptionReady = false;
-            OnPropertyChanged(nameof(HasSubscription));
-            ClientLog.Warning("订阅卡取数失败", ex);
-        }
-    }
-
-    private static string FormatSubscriptionProgress(SubscriptionSummaryItem subscription)
-    {
-        if (subscription.MonthlyLimitUsd > 0)
-        {
-            return $"{FormatMoney(subscription.MonthlyUsedUsd)} / {FormatMoney(subscription.MonthlyLimitUsd)} 本月";
-        }
-
-        if (subscription.WeeklyLimitUsd > 0)
-        {
-            return $"{FormatMoney(subscription.WeeklyUsedUsd)} / {FormatMoney(subscription.WeeklyLimitUsd)} 本周";
-        }
-
-        if (subscription.DailyLimitUsd > 0)
-        {
-            return $"{FormatMoney(subscription.DailyUsedUsd)} / {FormatMoney(subscription.DailyLimitUsd)} 今日";
-        }
-
-        return "使用中";
+        yield return Usage.LoadTrendAsync;
     }
 
     private async Task LoadGroupCardAsync(string token, CancellationToken cancellationToken)
@@ -1861,8 +1609,8 @@ public sealed partial class DashboardViewModel : ObservableObject
 
     private void MarkAllUnavailable()
     {
-        AccountReady = false;
-        UsageReady = false;
+        Account.MarkUnavailable();
+        Usage.MarkUnavailable();
         GroupsReady = false;
     }
 
@@ -1909,17 +1657,8 @@ public sealed partial class DashboardViewModel : ObservableObject
         PluginSupportActive = false;
         RefreshState.Reset();
 
-        UserDisplayName = string.Empty;
-        BalanceText = "—";
-        FrozenBalanceText = "—";
-        BalanceIsLow = false;
-        TodayRequestsText = "—";
-        TodayTokensText = "—";
-        TodayCostText = "—";
-        SubscriptionName = string.Empty;
-        SubscriptionProgressText = string.Empty;
-        SubscriptionReady = false;
-        OnPropertyChanged(nameof(HasSubscription));
+        Account.Reset();
+        Usage.Reset();
         GroupMessage = string.Empty;
         RequiresCodexAccountRestart = false;
 
@@ -1927,17 +1666,8 @@ public sealed partial class DashboardViewModel : ObservableObject
         ClaudePluginGroups.Clear();
         OnPropertyChanged(nameof(HasClaudePluginGroups));
         SelectClaudePluginGroupWithoutApplying(null);
-        CostTrend.Clear();
-        TopModelUsage.Clear();
-        TrendReady = false;
         SelectWithoutSwitching(null);
         ApplyCurrentLabels(null);
         MarkAllUnavailable();
     }
-
-    private static string FormatBalance(double value) =>
-        "￥" + value.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture);
-
-    private static string FormatMoney(double value) =>
-        "$" + value.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture);
 }

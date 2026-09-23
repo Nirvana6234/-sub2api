@@ -81,9 +81,9 @@ public sealed class DashboardViewModelTests
 
         await dashboard.RefreshAsync();
 
-        Assert.True(dashboard.AccountReady);
-        Assert.False(dashboard.UsageReady);
-        Assert.True(dashboard.UsageUnavailable);
+        Assert.True(dashboard.Account.AccountReady);
+        Assert.False(dashboard.Usage.UsageReady);
+        Assert.True(dashboard.Usage.UsageUnavailable);
         Assert.True(dashboard.GroupsReady);
     }
 
@@ -102,7 +102,7 @@ public sealed class DashboardViewModelTests
         await dashboard.RefreshAsync();
 
         Assert.True(session.IsSignedIn);
-        Assert.False(dashboard.UsageReady);
+        Assert.False(dashboard.Usage.UsageReady);
         Assert.Equal(1, relay.RefreshCallCount);
     }
 
@@ -1032,8 +1032,8 @@ public sealed class DashboardViewModelTests
 
         await dashboard.RefreshAsync();
 
-        Assert.True(dashboard.BalanceIsLow);
-        Assert.True(dashboard.CanRecharge);
+        Assert.True(dashboard.Account.BalanceIsLow);
+        Assert.True(dashboard.Account.CanRecharge);
     }
 
     [Fact]
@@ -1049,7 +1049,7 @@ public sealed class DashboardViewModelTests
 
         await dashboard.RefreshAsync();
 
-        Assert.False(dashboard.BalanceIsLow);
+        Assert.False(dashboard.Account.BalanceIsLow);
     }
 
     [Fact]
@@ -1065,7 +1065,7 @@ public sealed class DashboardViewModelTests
 
         await dashboard.RefreshAsync();
 
-        Assert.False(dashboard.BalanceIsLow);
+        Assert.False(dashboard.Account.BalanceIsLow);
     }
 
     [Fact]
@@ -1096,8 +1096,8 @@ public sealed class DashboardViewModelTests
 
         await dashboard.RefreshAsync();
 
-        Assert.True(dashboard.AccountReady);
-        Assert.False(dashboard.UsageReady);
+        Assert.True(dashboard.Account.AccountReady);
+        Assert.False(dashboard.Usage.UsageReady);
         Assert.True(dashboard.GroupsReady);
     }
 
@@ -1111,13 +1111,13 @@ public sealed class DashboardViewModelTests
         relay.OnAvailableGroups = () => [Group(11, "甲")];
 
         await dashboard.RefreshAsync();
-        Assert.Equal("￥42", dashboard.BalanceText);
+        Assert.Equal("￥42", dashboard.Account.BalanceText);
 
         dashboard.Reset();
 
-        Assert.Equal("—", dashboard.BalanceText);
-        Assert.Equal("—", dashboard.TodayRequestsText);
-        Assert.Empty(dashboard.UserDisplayName);
+        Assert.Equal("—", dashboard.Account.BalanceText);
+        Assert.Equal("—", dashboard.Usage.TodayRequestsText);
+        Assert.Empty(dashboard.Account.UserDisplayName);
         Assert.Empty(dashboard.Groups);
         Assert.Null(dashboard.SelectedGroup);
         Assert.Equal("未选择", dashboard.CurrentGroupName);
@@ -1136,8 +1136,8 @@ public sealed class DashboardViewModelTests
 
         await dashboard.RefreshAsync();
 
-        Assert.Equal("￥7", dashboard.BalanceText);
-        Assert.True(dashboard.AccountReady);
+        Assert.Equal("￥7", dashboard.Account.BalanceText);
+        Assert.True(dashboard.Account.AccountReady);
     }
 
     [Fact]
@@ -1586,13 +1586,13 @@ public sealed class DashboardViewModelTests
 
         await dashboard.RefreshAsync();
 
-        Assert.True(dashboard.TrendReady);
-        Assert.Equal(2, dashboard.CostTrend.Count);
-        Assert.Equal(2.25, dashboard.CostTrend[1].Value);
+        Assert.True(dashboard.Usage.TrendReady);
+        Assert.Equal(2, dashboard.Usage.CostTrend.Count);
+        Assert.Equal(2.25, dashboard.Usage.CostTrend[1].Value);
 
         // Labelled by day only: seven full dates do not fit under a chart this
         // narrow, and the year is never in question.
-        Assert.Equal("31", dashboard.CostTrend[1].Label);
+        Assert.Equal("31", dashboard.Usage.CostTrend[1].Label);
     }
 
     [Fact]
@@ -1608,8 +1608,8 @@ public sealed class DashboardViewModelTests
 
         await dashboard.RefreshAsync();
 
-        Assert.Equal(["big", "mid", "small"], dashboard.TopModelUsage.Select(m => m.Model));
-        Assert.Equal("$9", dashboard.TopModelUsage[0].CostText);
+        Assert.Equal(["big", "mid", "small"], dashboard.Usage.TopModelUsage.Select(m => m.Model));
+        Assert.Equal("$9", dashboard.Usage.TopModelUsage[0].CostText);
     }
 
     [Fact]
@@ -1624,7 +1624,7 @@ public sealed class DashboardViewModelTests
 
         await dashboard.RefreshAsync();
 
-        Assert.Equal(5, dashboard.TopModelUsage.Count);
+        Assert.Equal(5, dashboard.Usage.TopModelUsage.Count);
     }
 
     [Fact]
@@ -1638,9 +1638,9 @@ public sealed class DashboardViewModelTests
 
         await dashboard.RefreshAsync();
 
-        Assert.True(dashboard.TrendReady);
-        Assert.Single(dashboard.CostTrend);
-        Assert.Empty(dashboard.TopModelUsage);
+        Assert.True(dashboard.Usage.TrendReady);
+        Assert.Single(dashboard.Usage.CostTrend);
+        Assert.Empty(dashboard.Usage.TopModelUsage);
     }
 
     [Fact]
@@ -1653,9 +1653,9 @@ public sealed class DashboardViewModelTests
 
         await dashboard.RefreshAsync();
 
-        Assert.True(dashboard.TrendReady);
-        Assert.False(dashboard.HasTrend);
-        Assert.True(dashboard.HasNoUsageYet);
+        Assert.True(dashboard.Usage.TrendReady);
+        Assert.False(dashboard.Usage.HasTrend);
+        Assert.True(dashboard.Usage.HasNoUsageYet);
     }
 
     [Fact]
@@ -1668,8 +1668,8 @@ public sealed class DashboardViewModelTests
 
         await dashboard.RefreshAsync();
 
-        Assert.True(dashboard.TrendUnavailable);
-        Assert.False(dashboard.HasNoUsageYet);
+        Assert.True(dashboard.Usage.TrendUnavailable);
+        Assert.False(dashboard.Usage.HasNoUsageYet);
     }
 
     [Fact]
@@ -1680,10 +1680,10 @@ public sealed class DashboardViewModelTests
 
         await dashboard.RefreshAsync();
 
-        Assert.False(dashboard.TrendReady);
-        Assert.True(dashboard.TrendUnavailable);
-        Assert.True(dashboard.AccountReady);
-        Assert.True(dashboard.UsageReady);
+        Assert.False(dashboard.Usage.TrendReady);
+        Assert.True(dashboard.Usage.TrendUnavailable);
+        Assert.True(dashboard.Account.AccountReady);
+        Assert.True(dashboard.Usage.UsageReady);
     }
 
     [Fact]
@@ -1704,10 +1704,10 @@ public sealed class DashboardViewModelTests
 
         await dashboard.RefreshAsync();
 
-        Assert.True(dashboard.SubscriptionReady);
-        Assert.True(dashboard.HasSubscription);
-        Assert.Equal("专业订阅", dashboard.SubscriptionName);
-        Assert.Contains("$5 / $10", dashboard.SubscriptionProgressText, StringComparison.Ordinal);
+        Assert.True(dashboard.Account.SubscriptionReady);
+        Assert.True(dashboard.Account.HasSubscription);
+        Assert.Equal("专业订阅", dashboard.Account.SubscriptionName);
+        Assert.Contains("$5 / $10", dashboard.Account.SubscriptionProgressText, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1717,8 +1717,8 @@ public sealed class DashboardViewModelTests
 
         await dashboard.RefreshAsync();
 
-        Assert.True(dashboard.SubscriptionReady);
-        Assert.False(dashboard.HasSubscription);
+        Assert.True(dashboard.Account.SubscriptionReady);
+        Assert.False(dashboard.Account.HasSubscription);
     }
 
     [Fact]
@@ -1729,10 +1729,10 @@ public sealed class DashboardViewModelTests
 
         await dashboard.RefreshAsync();
 
-        Assert.False(dashboard.SubscriptionReady);
-        Assert.False(dashboard.HasSubscription);
-        Assert.True(dashboard.AccountReady);
-        Assert.True(dashboard.UsageReady);
+        Assert.False(dashboard.Account.SubscriptionReady);
+        Assert.False(dashboard.Account.HasSubscription);
+        Assert.True(dashboard.Account.AccountReady);
+        Assert.True(dashboard.Usage.UsageReady);
     }
 
     private static DashboardViewModel BuildWith(FakeCodexStartup codex, FakeCodexAccountStore? account = null) =>
@@ -1802,8 +1802,8 @@ public sealed class DashboardViewModelTests
         await dashboard.RefreshAsync();
 
         Assert.True(session.IsSignedIn);
-        Assert.True(dashboard.AccountUnavailable);
-        Assert.True(dashboard.UsageUnavailable);
+        Assert.True(dashboard.Account.AccountUnavailable);
+        Assert.True(dashboard.Usage.UsageUnavailable);
         Assert.True(dashboard.GroupsUnavailable);
     }
 

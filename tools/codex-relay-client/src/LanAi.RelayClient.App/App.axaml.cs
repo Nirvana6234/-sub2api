@@ -265,7 +265,7 @@ public partial class App : Application
 
         dashboardView.RechargeRequested += (_, _) => _ = safeAsync.RunAsync(async () =>
         {
-            var payment = new PaymentViewModel(relay, session, new QRCoderRenderer(), dashboard.BalanceText);
+            var payment = new PaymentViewModel(relay, session, new QRCoderRenderer(), dashboard.Account.BalanceText);
             var window = new PaymentWindow(payment);
             await window.ShowDialog(shell);
 
@@ -436,15 +436,24 @@ public partial class App : Application
         };
 
         // The tray's status line is the only thing a user sees while the window is
-        // hidden, so it tracks the same values the group card shows.
+        // hidden, so it tracks the same values the pages show. The group lives on the
+        // dashboard and the balance on its account card, so both are watched: listening
+        // to one alone would leave the line stale whenever only the other changed.
+        void UpdateTrayStatus() => _tray?.UpdateStatus(
+            $"共飞 · {dashboard.CurrentGroupName} {dashboard.CurrentGroupRate} · 余额 {dashboard.Account.BalanceText}");
         dashboard.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName is nameof(DashboardViewModel.CurrentGroupName)
-                or nameof(DashboardViewModel.CurrentGroupRate)
-                or nameof(DashboardViewModel.BalanceText))
+                or nameof(DashboardViewModel.CurrentGroupRate))
             {
-                _tray?.UpdateStatus(
-                    $"共飞 · {dashboard.CurrentGroupName} {dashboard.CurrentGroupRate} · 余额 {dashboard.BalanceText}");
+                UpdateTrayStatus();
+            }
+        };
+        dashboard.Account.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(AccountCardViewModel.BalanceText))
+            {
+                UpdateTrayStatus();
             }
         };
 

@@ -45,14 +45,18 @@ public sealed partial class DashboardPageViewModel : ObservableObject
                 case nameof(DashboardViewModel.IsInstallingCodex):
                     UpdateCodexStatus();
                     break;
-                case nameof(DashboardViewModel.BalanceIsLow):
-                    Navigation.Item(ClientPage.Account).HasBadge = Dashboard.BalanceIsLow;
-                    break;
                 case nameof(DashboardViewModel.PluginSupportEnabled):
                 case nameof(DashboardViewModel.PluginSupportStatus):
                 case nameof(DashboardViewModel.PluginSupportActive):
                     OnPropertyChanged(nameof(ClaudeStatusText));
                     break;
+            }
+        };
+        Dashboard.Account.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(AccountCardViewModel.BalanceIsLow))
+            {
+                Navigation.Item(ClientPage.Account).HasBadge = Dashboard.Account.BalanceIsLow;
             }
         };
         UpdateCodexStatus();

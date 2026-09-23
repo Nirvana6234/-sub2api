@@ -13,39 +13,39 @@
         <StackPanel>
           <DockPanel>
             <TextBlock Text="暂时取不到" Classes="unavailable" DockPanel.Dock="Right"
-                       IsVisible="{Binding Dashboard.AccountUnavailable}" />
+                       IsVisible="{Binding Dashboard.Account.AccountUnavailable}" />
             <TextBlock Text="{Binding WelcomeText}" Classes="cardTitle" />
           </DockPanel>
           <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
             <StackPanel>
               <TextBlock Text="余额" Classes="label" />
-              <TextBlock Text="{Binding Dashboard.BalanceText}" FontSize="22" FontWeight="SemiBold" />
+              <TextBlock Text="{Binding Dashboard.Account.BalanceText}" FontSize="22" FontWeight="SemiBold" />
             </StackPanel>
             <StackPanel Margin="32,0,0,0">
               <TextBlock Text="冻结" Classes="label" />
-              <TextBlock Text="{Binding Dashboard.FrozenBalanceText}" FontSize="22" Foreground="#6B7280" />
+              <TextBlock Text="{Binding Dashboard.Account.FrozenBalanceText}" FontSize="22" Foreground="#6B7280" />
             </StackPanel>
           </StackPanel>
 
-          <DockPanel Margin="0,10,0,0" IsVisible="{Binding Dashboard.CanRecharge}">
+          <DockPanel Margin="0,10,0,0" IsVisible="{Binding Dashboard.Account.CanRecharge}">
             <Button Content="去充值" Click="Recharge_OnClick"
                     Classes="recharge"
-                    Classes.low="{Binding Dashboard.BalanceIsLow}"
+                    Classes.low="{Binding Dashboard.Account.BalanceIsLow}"
                     DockPanel.Dock="Right" HorizontalAlignment="Right"
                     Padding="10,4" BorderThickness="1" />
             <TextBlock Text="余额偏低" Foreground="#DC2626" VerticalAlignment="Center"
-                       IsVisible="{Binding Dashboard.BalanceIsLow}" />
+                       IsVisible="{Binding Dashboard.Account.BalanceIsLow}" />
           </DockPanel>
         </StackPanel>
       </Border>
 
       <!-- Hidden when the server reports none. -->
-      <Border Classes="card" IsVisible="{Binding Dashboard.HasSubscription}">
+      <Border Classes="card" IsVisible="{Binding Dashboard.Account.HasSubscription}">
         <StackPanel>
           <TextBlock Text="订阅" Classes="cardTitle" />
-          <TextBlock Text="{Binding Dashboard.SubscriptionName}" FontSize="16"
+          <TextBlock Text="{Binding Dashboard.Account.SubscriptionName}" FontSize="16"
                      FontWeight="SemiBold" Margin="0,8,0,2" />
-          <TextBlock Text="{Binding Dashboard.SubscriptionProgressText}" Foreground="#6B7280" />
+          <TextBlock Text="{Binding Dashboard.Account.SubscriptionProgressText}" Foreground="#6B7280" />
         </StackPanel>
       </Border>
 
@@ -55,13 +55,13 @@
         <StackPanel>
           <DockPanel>
             <TextBlock Text="暂时取不到" Classes="unavailable" DockPanel.Dock="Right"
-                       IsVisible="{Binding Dashboard.TrendUnavailable}" />
+                       IsVisible="{Binding Dashboard.Usage.TrendUnavailable}" />
             <TextBlock Text="近 7 日按模型消费" Classes="cardTitle" />
           </DockPanel>
           <TextBlock Text="最近 7 天还没有用量记录"
                      Foreground="#9CA3AF" FontSize="12" Margin="0,10,0,0"
-                     IsVisible="{Binding Dashboard.HasNoUsageYet}" />
-          <ItemsControl ItemsSource="{Binding Dashboard.TopModelUsage}" Margin="0,10,0,0">
+                     IsVisible="{Binding Dashboard.Usage.HasNoUsageYet}" />
+          <ItemsControl ItemsSource="{Binding Dashboard.Usage.TopModelUsage}" Margin="0,10,0,0">
             <ItemsControl.ItemTemplate>
               <DataTemplate x:DataType="vm:ModelUsageRowViewModel">
                 <DockPanel Margin="0,0,0,6">
