@@ -20,7 +20,11 @@ internal enum RelayProtocol
 }
 
 /// <summary>One path the relay serves, and where it goes upstream.</summary>
-internal sealed record RelayRoute(string ClientPath, string UpstreamPath, RelayProtocol Protocol);
+/// <param name="LocalProxyOnly">
+/// Served only while that tool's local proxy is on. The account-session endpoint on the
+/// server has no such sub-path, so in relay mode it is refused exactly as before.
+/// </param>
+internal sealed record RelayRoute(string ClientPath, string UpstreamPath, RelayProtocol Protocol, bool LocalProxyOnly = false);
 
 /// <summary>
 /// A loopback-only relay: the only network address Codex, and Claude Code with it, ever see.
@@ -80,6 +84,8 @@ internal sealed class LocalPawRelay : IAsyncDisposable
     private static readonly RelayRoute[] Routes =
     [
         new(CodexPath, UpstreamPath, RelayProtocol.Responses),
+        new(CodexPath + "/compact", string.Empty, RelayProtocol.Responses, LocalProxyOnly: true),
+        new(CodexPath + "/input_tokens", string.Empty, RelayProtocol.Responses, LocalProxyOnly: true),
         new("/v1/messages", "/api/v1/paw/messages", RelayProtocol.Messages),
         new("/v1/messages/count_tokens", "/api/v1/paw/messages/count_tokens", RelayProtocol.Messages),
     ];
@@ -117,6 +123,17 @@ internal sealed class LocalPawRelay : IAsyncDisposable
     private readonly Action<long, long>? _onCompressionMeasured;
     private readonly IRelayEndpointStore? _endpointStore;
     private readonly int? _preferredPort;
+
+    // The local proxy: straight to the official API with one of the user's own accounts.
+    private readonly ILocalProxyCredentialSource? _localProxyCredentials;
+    private readonly LocalProxyEndpoints _localProxyEndpoints;
+    private readonly HttpClient _directHttp;
+    private readonly bool _ownsDirectHttp;
+    private readonly Action<LocalProxyOutcome>? _onLocalProxyOutcome;
+    private readonly Action<LocalProxyUsage>? _onLocalProxyUsage;
+    private LocalProxyTarget? _codexLocalProxy;
+    private LocalProxyTarget? _claudeLocalProxy;
+
     private readonly object _gate = new();
     private long? _codexGroupId;
     private string? _codexGroupName;
@@ -141,7 +158,12 @@ internal sealed class LocalPawRelay : IAsyncDisposable
         Action<long, long>? onCompressionMeasured = null,
         HttpClient? http = null,
         Func<string, CancellationToken, Task>? onAccessTokenRejected = null,
-        IRelayEndpointStore? endpointStore = null)
+        IRelayEndpointStore? endpointStore = null,
+        ILocalProxyCredentialSource? localProxyCredentials = null,
+        LocalProxyEndpoints? localProxyEndpoints = null,
+        HttpClient? directHttp = null,
+        Action<LocalProxyOutcome>? onLocalProxyOutcome = null,
+        Action<LocalProxyUsage>? onLocalProxyUsage = null)
     {
         if (!Uri.TryCreate(upstreamBaseUrl, UriKind.Absolute, out Uri? uri) ||
             uri.Scheme is not ("http" or "https"))
@@ -157,6 +179,26 @@ internal sealed class LocalPawRelay : IAsyncDisposable
             new HttpClientHandler { AllowAutoRedirect = false })
         {
             // No timeout: a single Responses turn legitimately streams for minutes.
+            Timeout = Timeout.InfiniteTimeSpan,
+        };
+
+        _localProxyCredentials = localProxyCredentials;
+        _localProxyEndpoints = localProxyEndpoints ?? LocalProxyEndpoints.Official;
+        _onLocalProxyOutcome = onLocalProxyOutcome;
+        _onLocalProxyUsage = onLocalProxyUsage;
+        _ownsDirectHttp = directHttp is null;
+        // Its own client, so nothing about it can disturb the account session's
+        // fingerprint on the server side. Uses the system proxy (the default): the
+        // official hosts are often reachable only through one. Never follows a redirect,
+        // which would carry the account's token to whatever host it names. Decompresses
+        // itself so the stream can be read for its usage; accept-encoding is therefore
+        // not forwarded, and no content-encoding goes back to the tool.
+        _directHttp = directHttp ?? new HttpClient(new HttpClientHandler
+        {
+            AllowAutoRedirect = false,
+            AutomaticDecompression = DecompressionMethods.All,
+        })
+        {
             Timeout = Timeout.InfiniteTimeSpan,
         };
 
@@ -226,6 +268,37 @@ internal sealed class LocalPawRelay : IAsyncDisposable
         ClientLog.Info(groupId is null
             ? "本机 Relay（Claude Code）已清除分组"
             : $"本机 Relay（Claude Code）已切换{FormatGroup(groupId, groupName)}");
+    }
+
+    /// <summary>
+    /// Sends one tool's traffic straight to the official API with one of the user's own
+    /// accounts, or — with null — back to the relay server. Takes effect on the next request.
+    /// </summary>
+    /// <remarks>
+    /// Independent per tool, like the groups: Codex on a local proxy does not move Claude Code,
+    /// and neither touches the tool's own configuration (it keeps pointing at this relay).
+    /// </remarks>
+    public void SetLocalProxy(LocalProxyKind kind, LocalProxyTarget? target)
+    {
+        lock (_gate)
+        {
+            switch (kind)
+            {
+                case LocalProxyKind.Codex:
+                    _codexLocalProxy = target;
+                    break;
+                case LocalProxyKind.ClaudeCode:
+                    _claudeLocalProxy = target;
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(kind), kind, "Not a local proxy kind.");
+            }
+        }
+
+        string tool = kind == LocalProxyKind.Codex ? "ChatGPT" : "Claude Code";
+        ClientLog.Info(target is null
+            ? $"本机 Relay（{tool}）改回经中转站转发"
+            : $"本机 Relay（{tool}）改为本地代理：账号 {target.AccountId}「{Sanitize(target.Name)}」直连官方");
     }
 
     public Task StartAsync(CancellationToken cancellationToken = default)
@@ -511,6 +584,27 @@ internal sealed class LocalPawRelay : IAsyncDisposable
             // places below cannot drift from that.
             RelayRoute served = route ?? throw new InvalidOperationException("Reject let an unrouted path through.");
 
+            LocalProxyTarget? localProxy;
+            lock (_gate)
+            {
+                localProxy = protocol == RelayProtocol.Messages ? _claudeLocalProxy : _codexLocalProxy;
+            }
+
+            if (localProxy is not null)
+            {
+                responseStarted = await HandleLocalProxyAsync(context, served, localProxy, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            if (served.LocalProxyOnly)
+            {
+                ClientLog.Info(
+                    $"本机 Relay 拒绝 {Sanitize(context.Request.HttpMethod)} {Sanitize(context.Request.Url?.PathAndQuery)}" +
+                    "（HTTP 404 仅本地代理模式提供）");
+                await WriteErrorAsync(context, 404, "no such endpoint", protocol).ConfigureAwait(false);
+                return;
+            }
+
             long? group;
             string? groupName;
             lock (_gate)
@@ -560,29 +654,7 @@ internal sealed class LocalPawRelay : IAsyncDisposable
             }
             else
             {
-                // Logged per request, not per session: this is the only place that can see
-                // whether compression actually happened, and one line per model turn is a
-                // volume the log can carry.
-                string? filterEnabledHeader = context.Request.Headers["X-Context-Filter-Enabled"];
-                string? filterChangedHeader = context.Request.Headers["X-Context-Filter-Changed"];
-                string? filterBeforeHeader = context.Request.Headers["X-Context-Filter-Bytes-Before"];
-                string? filterAfterHeader = context.Request.Headers["X-Context-Filter-Bytes-After"];
-                string? filterSavedHeader = context.Request.Headers["X-Context-Filter-Bytes-Saved"];
-                string filterWarnings = context.Request.Headers["X-Context-Filter-Warnings"] ?? string.Empty;
-                ClientLog.Info($"本轮转发（{FormatGroup(group, groupName)}）：" + DescribeContextFilter(
-                    filterEnabledHeader, filterChangedHeader, filterBeforeHeader, filterAfterHeader, filterSavedHeader)
-                    + (filterWarnings.Length > 0 ? $"（过滤器提示：{filterWarnings}）" : string.Empty));
-
-                // Fed to the running total (ContextFilterUsageStore) rather than only the
-                // log: a number a user can watch grow is what answers "is this actually
-                // doing anything for me", where a log line only answers it one turn at a
-                // time. Fires only when there is something real to add — see
-                // TryParseFilterMetrics.
-                if (TryParseFilterMetrics(filterEnabledHeader, filterBeforeHeader, filterAfterHeader, filterSavedHeader)
-                    is (long measuredBefore, _, long measuredSaved))
-                {
-                    _onCompressionMeasured?.Invoke(measuredBefore, measuredSaved);
-                }
+                ObserveContextFilter(context, FormatGroup(group, groupName));
             }
 
             byte[] body;
@@ -639,34 +711,8 @@ internal sealed class LocalPawRelay : IAsyncDisposable
             }
 
             CopyResponseHeaders(response, context.Response, protocol);
-            context.Response.StatusCode = (int)response.StatusCode;
-            context.Response.ContentType =
-                response.Content.Headers.ContentType?.ToString() ?? "text/event-stream";
-            // Chunked, and flushed per read: buffering the stream would break two
-            // things at once — the answer stops appearing word by word, and the stop
-            // button does not take effect until the turn has finished anyway.
-            context.Response.SendChunked = true;
             responseStarted = true;
-
-            await using Stream upstream = await response.Content
-                .ReadAsStreamAsync(cancellationToken)
-                .ConfigureAwait(false);
-            byte[] chunk = ArrayPool<byte>.Shared.Rent(16 * 1024);
-            try
-            {
-                int read;
-                while ((read = await upstream.ReadAsync(chunk, cancellationToken).ConfigureAwait(false)) > 0)
-                {
-                    await context.Response.OutputStream
-                        .WriteAsync(chunk.AsMemory(0, read), cancellationToken)
-                        .ConfigureAwait(false);
-                    await context.Response.OutputStream.FlushAsync(cancellationToken).ConfigureAwait(false);
-                }
-            }
-            finally
-            {
-                ArrayPool<byte>.Shared.Return(chunk);
-            }
+            await PumpAsync(response, context, observe: null, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -705,6 +751,263 @@ internal sealed class LocalPawRelay : IAsyncDisposable
             catch (Exception ex) when (ex is HttpListenerException or ObjectDisposedException or IOException) { }
         }
     }
+
+    /// <summary>
+    /// Writes a successful upstream answer through to the tool as it arrives.
+    /// </summary>
+    /// <remarks>
+    /// Chunked, and flushed per read: buffering the stream would break two things at
+    /// once — the answer stops appearing word by word, and the stop button does not take
+    /// effect until the turn has finished anyway. <paramref name="observe"/> sees every
+    /// chunk as it passes, never the whole body.
+    /// </remarks>
+    private static async Task PumpAsync(
+        HttpResponseMessage response,
+        HttpListenerContext context,
+        Action<ReadOnlyMemory<byte>>? observe,
+        CancellationToken cancellationToken)
+    {
+        context.Response.StatusCode = (int)response.StatusCode;
+        context.Response.ContentType =
+            response.Content.Headers.ContentType?.ToString() ?? "text/event-stream";
+        context.Response.SendChunked = true;
+
+        await using Stream upstream = await response.Content
+            .ReadAsStreamAsync(cancellationToken)
+            .ConfigureAwait(false);
+        byte[] chunk = ArrayPool<byte>.Shared.Rent(16 * 1024);
+        try
+        {
+            int read;
+            while ((read = await upstream.ReadAsync(chunk, cancellationToken).ConfigureAwait(false)) > 0)
+            {
+                observe?.Invoke(chunk.AsMemory(0, read));
+                await context.Response.OutputStream
+                    .WriteAsync(chunk.AsMemory(0, read), cancellationToken)
+                    .ConfigureAwait(false);
+                await context.Response.OutputStream.FlushAsync(cancellationToken).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(chunk);
+        }
+    }
+
+    /// <summary>
+    /// Logs what the context filter did to this request and feeds the running total.
+    /// </summary>
+    /// <remarks>
+    /// Logged per request, not per session: this is the only place that can see whether
+    /// compression actually happened, and one line per model turn is a volume the log can
+    /// carry. Fed to the running total (ContextFilterUsageStore) rather than only the log:
+    /// a number a user can watch grow is what answers "is this actually doing anything for
+    /// me". Fires only when there is something real to add — see TryParseFilterMetrics.
+    /// </remarks>
+    private void ObserveContextFilter(HttpListenerContext context, string route)
+    {
+        string? filterEnabledHeader = context.Request.Headers["X-Context-Filter-Enabled"];
+        string? filterChangedHeader = context.Request.Headers["X-Context-Filter-Changed"];
+        string? filterBeforeHeader = context.Request.Headers["X-Context-Filter-Bytes-Before"];
+        string? filterAfterHeader = context.Request.Headers["X-Context-Filter-Bytes-After"];
+        string? filterSavedHeader = context.Request.Headers["X-Context-Filter-Bytes-Saved"];
+        string filterWarnings = context.Request.Headers["X-Context-Filter-Warnings"] ?? string.Empty;
+        ClientLog.Info($"本轮转发（{route}）：" + DescribeContextFilter(
+            filterEnabledHeader, filterChangedHeader, filterBeforeHeader, filterAfterHeader, filterSavedHeader)
+            + (filterWarnings.Length > 0 ? $"（过滤器提示：{Sanitize(filterWarnings)}）" : string.Empty));
+
+        if (TryParseFilterMetrics(filterEnabledHeader, filterBeforeHeader, filterAfterHeader, filterSavedHeader)
+            is (long measuredBefore, _, long measuredSaved))
+        {
+            _onCompressionMeasured?.Invoke(measuredBefore, measuredSaved);
+        }
+    }
+
+    /// <summary>
+    /// Serves one request straight from the official API with one of the user's own
+    /// accounts. Returns whether anything was written to the tool.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// No fallback to the relay server, ever: the local proxy is the user's own choice, and
+    /// quietly sending the turn to the server instead would start spending their balance
+    /// without their knowing. A failure is answered to the tool as the official API gave it
+    /// and reported through <see cref="LocalProxyOutcome"/> for the client to show.
+    /// </para>
+    /// <para>
+    /// One retry, only for an official 401 and only before anything reached the tool: the
+    /// cached token may have been rotated server-side, so a fresh one is asked for once.
+    /// </para>
+    /// </remarks>
+    private async Task<bool> HandleLocalProxyAsync(
+        HttpListenerContext context,
+        RelayRoute route,
+        LocalProxyTarget target,
+        CancellationToken cancellationToken)
+    {
+        RelayProtocol protocol = route.Protocol;
+        LocalProxyKind kind = protocol == RelayProtocol.Messages ? LocalProxyKind.ClaudeCode : LocalProxyKind.Codex;
+        string label = $"本地代理「{Sanitize(target.Name)}」";
+
+        if (protocol == RelayProtocol.Messages)
+        {
+            ClientLog.Info($"本轮转发（Claude，{label}）：{Sanitize(route.ClientPath)}");
+        }
+        else
+        {
+            ObserveContextFilter(context, label);
+        }
+
+        if (_localProxyCredentials is null)
+        {
+            Report(kind, target, false, "本地代理未就绪。");
+            await WriteErrorAsync(context, 503, "local proxy is not available", protocol).ConfigureAwait(false);
+            return true;
+        }
+
+        byte[] body;
+        using (var buffer = new MemoryStream())
+        {
+            await context.Request.InputStream.CopyToAsync(buffer, cancellationToken).ConfigureAwait(false);
+            body = buffer.ToArray();
+        }
+
+        HttpResponseMessage? response = null;
+        try
+        {
+            for (int attempt = 0; ; attempt++)
+            {
+                LocalProxyCredential credential;
+                try
+                {
+                    credential = await _localProxyCredentials
+                        .GetAsync(target.AccountId, forceRefresh: attempt > 0, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (RelayApiException ex)
+                {
+                    ClientLog.Warning($"取本地代理凭据失败（账号 {target.AccountId}）", ex);
+                    Report(kind, target, false, "无法从中转站取得该账号的授权：" + ex.UserMessage);
+                    await WriteErrorAsync(context, 502, "local proxy: could not obtain the account's token", protocol)
+                        .ConfigureAwait(false);
+                    return true;
+                }
+
+                using HttpRequestMessage request = BuildLocalProxyRequest(context, route, body, credential);
+                try
+                {
+                    response = await _directHttp
+                        .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (HttpRequestException ex)
+                {
+                    ClientLog.Warning("本地代理连接官方失败", ex);
+                    Report(kind, target, false, "无法连接官方服务器：" + ex.Message);
+                    await WriteErrorAsync(context, 502, "local proxy: official API unreachable", protocol)
+                        .ConfigureAwait(false);
+                    return true;
+                }
+
+                if (response.StatusCode == HttpStatusCode.Unauthorized && attempt == 0)
+                {
+                    response.Dispose();
+                    response = null;
+                    continue;
+                }
+
+                break;
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                string detail = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                ClientLog.Warning($"官方拒绝本轮请求（{label}）：HTTP {(int)response.StatusCode} {Summarize(detail)}");
+                Report(kind, target, false, DescribeOfficialRefusal((int)response.StatusCode));
+
+                byte[] payload = Encoding.UTF8.GetBytes(detail);
+                CopyResponseHeaders(response, context.Response, protocol, localProxy: true);
+                context.Response.StatusCode = (int)response.StatusCode;
+                context.Response.ContentType = response.Content.Headers.ContentType?.ToString() ?? "application/json";
+                context.Response.ContentLength64 = payload.Length;
+                await context.Response.OutputStream.WriteAsync(payload, cancellationToken).ConfigureAwait(false);
+                return true;
+            }
+
+            Report(kind, target, true, null);
+            CopyResponseHeaders(response, context.Response, protocol, localProxy: true);
+            var meter = new LocalProxyUsageMeter(protocol);
+            try
+            {
+                await PumpAsync(response, context, meter.Observe, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                if (meter.Finish() is { } usage)
+                {
+                    _onLocalProxyUsage?.Invoke(new LocalProxyUsage(
+                        kind, target.AccountId, usage.InputTokens, usage.OutputTokens, usage.CachedTokens));
+                }
+            }
+            return true;
+        }
+        finally
+        {
+            response?.Dispose();
+        }
+    }
+
+    private HttpRequestMessage BuildLocalProxyRequest(
+        HttpListenerContext context,
+        RelayRoute route,
+        byte[] body,
+        LocalProxyCredential credential)
+    {
+        if (route.Protocol == RelayProtocol.Messages)
+        {
+            // Claude Code calls /v1/messages?beta=true; the query selects the API surface.
+            string query = context.Request.Url?.Query is { Length: > 0 } q ? q : "?beta=true";
+            return LocalProxyRequests.BuildClaude(
+                _localProxyEndpoints.ClaudeBaseUrl.TrimEnd('/') + route.ClientPath + query,
+                context.Request.Headers,
+                body,
+                context.Request.ContentType,
+                credential,
+                countTokens: route.ClientPath.EndsWith("/count_tokens", StringComparison.Ordinal));
+        }
+
+        string suffix = route.ClientPath[CodexPath.Length..];
+        return LocalProxyRequests.BuildCodex(
+            _localProxyEndpoints.CodexResponsesUrl.TrimEnd('/') + suffix,
+            context.Request.Headers,
+            body,
+            context.Request.ContentType,
+            credential,
+            compact: suffix == "/compact");
+    }
+
+    private void Report(LocalProxyKind kind, LocalProxyTarget target, bool succeeded, string? message)
+    {
+        try
+        {
+            _onLocalProxyOutcome?.Invoke(new LocalProxyOutcome(kind, target.AccountId, succeeded, message));
+        }
+        catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException or ThreadAbortException))
+        {
+            ClientLog.Warning("通知本地代理状态失败", ex);
+        }
+    }
+
+    /// <summary>What an official refusal means, in the words the user is shown.</summary>
+    internal static string DescribeOfficialRefusal(int status) => status switch
+    {
+        401 => "官方拒绝了该账号的授权（HTTP 401），可能已失效，请在中转站检查这个账号。",
+        403 => "官方不允许该账号这样使用（HTTP 403），可能被限制或订阅不支持。",
+        404 => "官方找不到这个接口或模型（HTTP 404）。",
+        429 => "该账号的额度已用完或请求过快（HTTP 429），请稍后再试。",
+        >= 500 => $"官方服务暂时不可用（HTTP {status}）。",
+        _ => $"官方拒绝了本轮请求（HTTP {status}）。",
+    };
 
     /// <summary>
     /// The request sent upstream, built fresh rather than copied from the client's.
@@ -784,22 +1087,29 @@ internal sealed class LocalPawRelay : IAsyncDisposable
     /// Without them it falls back to its own guesses, which turns a 429 that said "wait ten
     /// seconds" into an immediate retry.
     /// </remarks>
-    private static void CopyResponseHeaders(HttpResponseMessage from, HttpListenerResponse to, RelayProtocol protocol)
+    /// <remarks>
+    /// Codex straight from the official API also reads headers: its rate-limit meter comes
+    /// from <c>x-codex-*</c>, so in local-proxy mode those travel back as well.
+    /// </remarks>
+    private static void CopyResponseHeaders(
+        HttpResponseMessage from,
+        HttpListenerResponse to,
+        RelayProtocol protocol,
+        bool localProxy = false)
     {
-        if (protocol != RelayProtocol.Messages)
+        if (protocol != RelayProtocol.Messages && !localProxy)
         {
             return;
         }
 
         foreach (KeyValuePair<string, IEnumerable<string>> header in from.Headers)
         {
-            bool wanted =
-                header.Key.StartsWith("anthropic-", StringComparison.OrdinalIgnoreCase) ||
-                header.Key.Equals("retry-after", StringComparison.OrdinalIgnoreCase) ||
-                header.Key.Equals("retry-after-ms", StringComparison.OrdinalIgnoreCase) ||
-                header.Key.Equals("x-should-retry", StringComparison.OrdinalIgnoreCase) ||
-                header.Key.Equals("request-id", StringComparison.OrdinalIgnoreCase) ||
-                header.Key.Equals("x-request-id", StringComparison.OrdinalIgnoreCase);
+            bool wanted = protocol == RelayProtocol.Messages
+                ? IsWantedAnthropicHeader(header.Key)
+                : header.Key.StartsWith("x-codex-", StringComparison.OrdinalIgnoreCase) ||
+                  header.Key.StartsWith("openai-", StringComparison.OrdinalIgnoreCase) ||
+                  header.Key.Equals("retry-after", StringComparison.OrdinalIgnoreCase) ||
+                  header.Key.Equals("x-request-id", StringComparison.OrdinalIgnoreCase);
             if (!wanted)
             {
                 continue;
@@ -819,6 +1129,14 @@ internal sealed class LocalPawRelay : IAsyncDisposable
             }
         }
     }
+
+    private static bool IsWantedAnthropicHeader(string name) =>
+        name.StartsWith("anthropic-", StringComparison.OrdinalIgnoreCase) ||
+        name.Equals("retry-after", StringComparison.OrdinalIgnoreCase) ||
+        name.Equals("retry-after-ms", StringComparison.OrdinalIgnoreCase) ||
+        name.Equals("x-should-retry", StringComparison.OrdinalIgnoreCase) ||
+        name.Equals("request-id", StringComparison.OrdinalIgnoreCase) ||
+        name.Equals("x-request-id", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Keeps a caller-controlled string on one log line.</summary>
     /// <remarks>
@@ -899,6 +1217,7 @@ internal sealed class LocalPawRelay : IAsyncDisposable
         await StopAsync().ConfigureAwait(false);
         _listener.Close();
         if (_ownsHttp) _http.Dispose();
+        if (_ownsDirectHttp) _directHttp.Dispose();
     }
 
     /// <summary>
@@ -916,6 +1235,14 @@ internal sealed class LocalPawRelay : IAsyncDisposable
         BaseAddress = null;
         SetGroup(null);
         SetClaudeGroup(null);
+
+        // Per account, like the groups: the next person to sign in chooses their own.
+        lock (_gate)
+        {
+            _codexLocalProxy = null;
+            _claudeLocalProxy = null;
+        }
+        _localProxyCredentials?.Clear();
     }
 
     private static bool IsWellFormedToken(string? token) =>
