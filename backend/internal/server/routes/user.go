@@ -128,6 +128,8 @@ func RegisterUserRoutes(
 			contributions.DELETE("/:id", h.AccountContribution.Delete)
 			contributions.POST("/:id/test", h.AccountContribution.Test)
 			contributions.POST("/:id/test-stream", h.AccountContribution.TestStream)
+			// 本地代理：只给所有者下发 OAuth 账号的短期 access token，刷新仍只在服务端。
+			contributions.POST("/:id/local-proxy-token", h.AccountContribution.IssueLocalProxyToken)
 		}
 
 		// Room selection is independent from group selection and is persisted per
