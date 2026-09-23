@@ -160,6 +160,12 @@ func (h *UsageHandler) List(c *gin.Context) {
 		upstreamModelMismatch = &value
 	}
 
+	accountSource, err := service.ParseUsageLogAccountSourceFilter(c.Query("account_source"))
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
 	// Parse date range
 	var startTime, endTime *time.Time
 	userTZ := c.Query("timezone") // Get user's timezone from request
@@ -203,6 +209,7 @@ func (h *UsageHandler) List(c *gin.Context) {
 		BillingType:           billingType,
 		BillingMode:           billingMode,
 		UpstreamModelMismatch: upstreamModelMismatch,
+		AccountSource:         accountSource,
 		StartTime:             startTime,
 		EndTime:               endTime,
 		ExactTotal:            exactTotal,
@@ -311,6 +318,12 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 		upstreamModelMismatch = &value
 	}
 
+	accountSource, err := service.ParseUsageLogAccountSourceFilter(c.Query("account_source"))
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
 	// Parse date range
 	userTZ := c.Query("timezone")
 	now := timezone.NowInUserLocation(userTZ)
@@ -362,6 +375,7 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 		BillingType:           billingType,
 		BillingMode:           billingMode,
 		UpstreamModelMismatch: upstreamModelMismatch,
+		AccountSource:         accountSource,
 		StartTime:             &startTime,
 		EndTime:               &endTime,
 	}

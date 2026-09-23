@@ -646,8 +646,10 @@ type UsageLog struct {
 	// NativeCompactionV2 is true only for requests positively identified at
 	// runtime as the native OpenAI remote compaction v2 wire.
 	NativeCompactionV2 bool `json:"native_compaction_v2"`
-	DurationMs         *int `json:"duration_ms"`
-	FirstTokenMs       *int `json:"first_token_ms"`
+	// AccountSource 请求由哪类账号承接：pool（管理员号池）/ own（自己贡献的账号）/ room（贡献房间）。
+	AccountSource string `json:"account_source"`
+	DurationMs    *int   `json:"duration_ms"`
+	FirstTokenMs  *int   `json:"first_token_ms"`
 
 	// 图片生成字段
 	ImageCount         int            `json:"image_count"`

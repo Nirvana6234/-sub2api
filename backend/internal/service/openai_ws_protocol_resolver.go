@@ -42,6 +42,9 @@ func (r *defaultOpenAIWSProtocolResolver) Resolve(account *Account) OpenAIWSProt
 	if !account.IsOpenAI() {
 		return openAIWSHTTPDecision("platform_not_openai")
 	}
+	if requiresHTTPUpstreamPublicPolicy(account) {
+		return openAIWSHTTPDecision("public_upstream_requires_http_bridge")
+	}
 	if account.IsOpenAIWSForceHTTPEnabled() {
 		return openAIWSHTTPDecision("account_force_http")
 	}

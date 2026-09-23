@@ -212,6 +212,28 @@ func appendNativeCompactionV2WhereCondition(conditions []string, args []any, nat
 	return conditions, args
 }
 
+func appendUsageLogAccountSourceWhereCondition(conditions []string, args []any, accountSource string) ([]string, []any) {
+	if accountSource == "" {
+		return conditions, args
+	}
+	conditions = append(conditions, fmt.Sprintf("account_source = $%d", len(args)+1))
+	args = append(args, accountSource)
+	return conditions, args
+}
+
+func appendUsageLogAccountSourceQueryFilter(query string, args []any, accountSource string, alias string) (string, []any) {
+	if accountSource == "" {
+		return query, args
+	}
+	column := "account_source"
+	if alias != "" {
+		column = alias + "." + column
+	}
+	query += fmt.Sprintf(" AND %s = $%d", column, len(args)+1)
+	args = append(args, accountSource)
+	return query, args
+}
+
 func appendNativeCompactionV2QueryFilter(query string, args []any, nativeCompactionV2 *bool, alias string) (string, []any) {
 	conditions, args := appendNativeCompactionV2WhereCondition(nil, args, nativeCompactionV2, alias)
 	if len(conditions) == 0 {

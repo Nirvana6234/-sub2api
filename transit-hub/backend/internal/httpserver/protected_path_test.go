@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 )
@@ -17,8 +18,8 @@ func TestProtectedPathIncludesMassEmailPrefix(t *testing.T) {
 
 func TestProtectedPathDoesNotOvermatchMassEmailLookalikes(t *testing.T) {
 	server := &Server{}
-	if server.protectedPath("/api/public-mass-email") {
-		t.Fatalf("unexpected protected match for unrelated mass-email lookalike")
+	if !server.protectedPath("/api/public-mass-email") {
+		t.Fatal("unknown API lookalikes must remain protected by default")
 	}
 }
 
@@ -77,6 +78,54 @@ func TestProtectedPathIncludesDailyReport(t *testing.T) {
 	for _, path := range []string{"/api/daily-report/send-now", "/api/daily-report/preview"} {
 		if !server.protectedPath(path) {
 			t.Fatalf("expected %s to be protected", path)
+		}
+	}
+}
+
+func TestProtectedPathDefaultsToProtectedForUnknownAPI(t *testing.T) {
+	server := &Server{}
+	if !server.protectedPath("/api/users") {
+		t.Fatal("unknown API paths must require authentication by default")
+	}
+	if !server.protectedPath("/api/new-sensitive-endpoint") {
+		t.Fatal("new API paths must require authentication by default")
+	}
+}
+
+func TestHandlerRejectsUnauthenticatedUnknownAPI(t *testing.T) {
+	server := &Server{mux: http.NewServeMux()}
+	request := httptest.NewRequest(http.MethodGet, "/api/users", nil)
+	recorder := httptest.NewRecorder()
+
+	server.Handler().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("expected unauthenticated unknown API to return 401, got %d", recorder.Code)
+	}
+}
+
+func TestProtectedPathKeepsKnownPublicAPIsPublic(t *testing.T) {
+	server := &Server{}
+	for _, path := range []string{
+		"/api/health",
+		"/api/auth/login",
+		"/api/embed/tickets/session",
+		"/api/embed/leaderboard",
+		"/api/embed/lottery/campaigns",
+		"/api/internal/fallback-pool-alert",
+	} {
+		if server.protectedPath(path) {
+			t.Fatalf("expected known public API %s to remain public", path)
+		}
+	}
+	for _, path := range []string{
+		"/api/authentication",
+		"/api/embed/ticketsfoo",
+		"/api/embed/leaderboard-admin",
+		"/api/embed/lotteryfoo",
+	} {
+		if !server.protectedPath(path) {
+			t.Fatalf("expected lookalike API %s to require authentication", path)
 		}
 	}
 }

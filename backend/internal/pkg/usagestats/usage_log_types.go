@@ -192,6 +192,7 @@ type UserBreakdownDimension struct {
 	RequestType        *int16 // filter by request_type (non-nil to enable)
 	Stream             *bool  // filter by stream flag (non-nil to enable)
 	NativeCompactionV2 *bool  // filter by native compaction v2 flag (non-nil to enable)
+	AccountSource      string // filter by account_source (non-empty to enable)
 	BillingType        *int8  // filter by billing_type (non-nil to enable)
 	// SortBy 指定排序列(空 = 默认按 actual_cost)。合法值由 repo 层 allowlist 校验。
 	SortBy string
@@ -283,8 +284,10 @@ type UsageLogFilters struct {
 	BillingType           *int8
 	BillingMode           string
 	UpstreamModelMismatch *bool
-	StartTime             *time.Time
-	EndTime               *time.Time
+	// AccountSource filters usage_logs.account_source (pool / own / room); empty means all.
+	AccountSource string
+	StartTime     *time.Time
+	EndTime       *time.Time
 	// ExactTotal requests exact COUNT(*) for pagination. Default false for fast large-table paging.
 	ExactTotal bool
 }

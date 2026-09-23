@@ -895,7 +895,8 @@ func (s *OpenAIGatewayService) selectAccountForModelWithExclusions(ctx context.C
 
 func (s *OpenAIGatewayService) selectAccountForModelWithExclusionsOnce(ctx context.Context, groupID *int64, platform string, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, stickyAccountID int64, requiredCapability OpenAIEndpointCapability, preferLowUpstreamRate bool) (*Account, error) {
 	platform = NormalizeOpenAICompatiblePlatform(platform)
-	if s.hasContributionRoomRoute(ctx) {
+	explicitRoomRoute := s.hasContributionRoomRoute(ctx)
+	if explicitRoomRoute {
 		sessionHash = ""
 		stickyAccountID = 0
 	}
@@ -906,17 +907,33 @@ func (s *OpenAIGatewayService) selectAccountForModelWithExclusionsOnce(ctx conte
 		return nil, fmt.Errorf("%w supporting model: %s (channel pricing restriction)", ErrNoAvailableAccounts, requestedModel)
 	}
 
-	// 1. 尝试粘性会话命中
-	// Try sticky session hit
-	if account := s.tryStickySessionHit(ctx, groupID, platform, sessionHash, requestedModel, excludedIDs, requireCompact, stickyAccountID, requiredCapability); account != nil {
-		return account, nil
-	}
-
-	// 2. 获取可调度的 OpenAI 账号
-	// Get schedulable OpenAI accounts
+	// 1. 获取可调度的 OpenAI 账号（含贡献路由展开：显式房间选择或隐式自有账号置顶）
+	// Get schedulable OpenAI accounts (contribution routing already applied: explicit
+	// room selection, or the caller's own contributed account moved to the front)
 	accounts, err := s.listSchedulableAccounts(ctx, groupID, platform)
 	if err != nil {
 		return nil, fmt.Errorf("query accounts failed: %w", err)
+	}
+
+	// 贡献者自己健康可用的账号必须优先使用，粘性会话的延续性在这条业务规则面前
+	// 让位——否则一个更早建立、指向公共池账号的粘性绑定会一直挡住刚贡献/刚恢复
+	// 可用的自有账号，直到会话自然过期。显式房间选择已经在上面禁用过粘性了。
+	//
+	// The contributor's own healthy account must win over sticky-session continuity;
+	// otherwise an older sticky binding pointing at a pool account keeps blocking a
+	// newly available (or just-recovered) own account until the session's TTL lapses
+	// on its own. Explicit room selection already disabled sticky above.
+	if !explicitRoomRoute && sessionHash != "" {
+		if userID := contributorUserIDFromContext(ctx); userID > 0 && len(accounts) > 0 && accounts[0].IsContributedBy(userID) {
+			sessionHash = ""
+			stickyAccountID = 0
+		}
+	}
+
+	// 2. 尝试粘性会话命中
+	// Try sticky session hit
+	if account := s.tryStickySessionHit(ctx, groupID, platform, sessionHash, requestedModel, excludedIDs, requireCompact, stickyAccountID, requiredCapability); account != nil {
+		return account, nil
 	}
 
 	// 3. 按优先级 + LRU 选择最佳账号
@@ -1205,6 +1222,22 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwarenessOnce(ctx context.Co
 		}
 		_, excluded := excludedIDs[accountID]
 		return excluded
+	}
+
+	// 贡献者自己健康可用的账号必须优先使用：listSchedulableAccounts 已经把调用者
+	// 隐式偏好的自有贡献账号置于候选列表最前（见 applyContributionRoomRouting /
+	// prependImplicitOwnContributionAccounts）。若最前面确实是自己的账号，粘性会话
+	// 的延续性就该让位，否则一个更早建立、指向公共池账号的粘性绑定会一直挡住刚
+	// 贡献/刚恢复可用的自有账号，直到会话自然过期。
+	//
+	// The contributor's own healthy account must win over sticky-session continuity.
+	// listSchedulableAccounts already moves the caller's own implicitly-preferred
+	// contribution to the front of the list. If it's there, sticky must step aside —
+	// otherwise an older sticky binding pointing at a pool account keeps blocking a
+	// newly available (or just-recovered) own account until the session's TTL lapses.
+	if userID := contributorUserIDFromContext(ctx); userID > 0 && accounts[0].IsContributedBy(userID) {
+		sessionHash = ""
+		stickyAccountID = 0
 	}
 
 	// ============ Layer 1: Sticky session ============

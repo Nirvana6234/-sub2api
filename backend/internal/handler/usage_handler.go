@@ -153,6 +153,25 @@ func (h *UsageHandler) parseUserUsageFilters(c *gin.Context, requireRange bool) 
 		return nil, false
 	}
 
+	accountSource, err := service.ParseUsageLogAccountSourceFilter(c.Query("account_source"))
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return nil, false
+	}
+
+	// 用户侧按账号查只开放给自己贡献的账号：强制 own + 当前用户，
+	// 传入别人的账号 ID 只会查到空结果，不需要额外的归属校验。
+	var accountID int64
+	if accountIDStr := strings.TrimSpace(c.Query("account_id")); accountIDStr != "" {
+		id, err := strconv.ParseInt(accountIDStr, 10, 64)
+		if err != nil || id <= 0 {
+			response.BadRequest(c, "Invalid account_id")
+			return nil, false
+		}
+		accountID = id
+		accountSource = service.UsageLogAccountSourceOwn
+	}
+
 	userTZ := c.Query("timezone")
 	now := timezone.NowInUserLocation(userTZ)
 	var startTime, endTime time.Time
@@ -207,6 +226,8 @@ func (h *UsageHandler) parseUserUsageFilters(c *gin.Context, requireRange bool) 
 		Filters: usagestats.UsageLogFilters{
 			UserID:             subject.UserID,
 			APIKeyID:           apiKeyID,
+			AccountID:          accountID,
+			AccountSource:      accountSource,
 			GroupID:            groupID,
 			Model:              strings.TrimSpace(c.Query("model")),
 			ModelFilterSource:  usagestats.ModelSourceRequested,

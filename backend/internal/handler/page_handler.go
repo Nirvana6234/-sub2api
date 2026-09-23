@@ -19,6 +19,21 @@ var validSlugPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
 
 const maxPageFileSize = 1 << 20 // 1MB
 
+var pageImageExtensions = map[string]struct{}{
+	".apng": {},
+	".avif": {},
+	".bmp":  {},
+	".gif":  {},
+	".ico":  {},
+	".jpeg": {},
+	".jpg":  {},
+	".png":  {},
+	".svg":  {},
+	".tif":  {},
+	".tiff": {},
+	".webp": {},
+}
+
 type PageHandler struct {
 	pagesDir       string
 	settingService *service.SettingService
@@ -69,6 +84,7 @@ func (h *PageHandler) GetPageContent(c *gin.Context) {
 		return
 	}
 
+	c.Header("Cache-Control", "private, no-store")
 	c.Data(http.StatusOK, "text/markdown; charset=utf-8", content)
 }
 
@@ -96,7 +112,7 @@ func (h *PageHandler) ListPages(c *gin.Context) {
 
 // ServePageImage serves images from data/pages/{slug}/ directory.
 // GET /api/v1/pages/:slug/images/*filename
-// No JWT required (browser img tags can't carry tokens), but visibility is checked.
+// Requires JWT because page assets can contain private page content.
 func (h *PageHandler) ServePageImage(c *gin.Context) {
 	slug := c.Param("slug")
 	filename := c.Param("filename")
@@ -107,7 +123,7 @@ func (h *PageHandler) ServePageImage(c *gin.Context) {
 		return
 	}
 
-	if !h.checkImageSlugVisibility(c, slug) {
+	if !h.checkSlugVisibility(c, slug) {
 		c.Status(http.StatusNotFound)
 		return
 	}
@@ -124,8 +140,18 @@ func (h *PageHandler) ServePageImage(c *gin.Context) {
 		c.Status(http.StatusNotFound)
 		return
 	}
+	if !isAllowedPageImagePath(cleaned) {
+		c.Status(http.StatusNotFound)
+		return
+	}
 
+	c.Header("Cache-Control", "private, no-store")
 	c.File(cleaned)
+}
+
+func isAllowedPageImagePath(path string) bool {
+	_, ok := pageImageExtensions[strings.ToLower(filepath.Ext(path))]
+	return ok
 }
 
 func resolvePageImagePath(pagesDir, imagesDir, filename string) (string, bool) {
@@ -247,16 +273,6 @@ func (h *PageHandler) checkSlugVisibility(c *gin.Context, slug string) bool {
 	return true
 }
 
-// checkImageSlugVisibility checks visibility for image requests (no JWT available).
-// Only allows user-visible pages; admin-only pages are blocked.
-func (h *PageHandler) checkImageSlugVisibility(c *gin.Context, slug string) bool {
-	visibility, found := h.findSlugVisibility(c, slug)
-	if !found {
-		return false
-	}
-	return visibility != "admin"
-}
-
 // RegisterPageRoutes registers page routes on a router group.
 func RegisterPageRoutes(v1 *gin.RouterGroup, dataDir string, jwtAuth gin.HandlerFunc, adminAuth gin.HandlerFunc, settingService *service.SettingService) {
 	h := NewPageHandler(dataDir, settingService)
@@ -268,8 +284,9 @@ func RegisterPageRoutes(v1 *gin.RouterGroup, dataDir string, jwtAuth gin.Handler
 		pages.GET("/:slug", h.GetPageContent)
 	}
 
-	// Images: no JWT (browser img tags can't carry tokens), visibility check in handler
+	// Images use the same authenticated visibility boundary as page content.
 	pageImages := v1.Group("/pages")
+	pageImages.Use(jwtAuth)
 	{
 		pageImages.GET("/:slug/images/*filename", h.ServePageImage)
 	}

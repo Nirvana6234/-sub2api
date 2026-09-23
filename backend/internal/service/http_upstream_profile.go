@@ -16,6 +16,7 @@ const (
 type httpUpstreamProfileContextKey struct{}
 type httpUpstreamDisableRedirectsContextKey struct{}
 type httpUpstreamPublicHostsOnlyContextKey struct{}
+type httpUpstreamPublicProxyOnlyContextKey struct{}
 
 // WithHTTPUpstreamProfile injects an upstream transport profile into ctx.
 func WithHTTPUpstreamProfile(ctx context.Context, profile HTTPUpstreamProfile) context.Context {
@@ -71,4 +72,49 @@ func WithHTTPUpstreamPublicHostsOnly(ctx context.Context) context.Context {
 
 func HTTPUpstreamPublicHostsOnly(ctx context.Context) bool {
 	return ctx != nil && ctx.Value(httpUpstreamPublicHostsOnlyContextKey{}) == true
+}
+
+// WithHTTPUpstreamPublicProxyOnly marks requests that must use a proxy whose
+// endpoint resolves to a public address. This is separate from the upstream
+// destination policy because an operator-managed proxy may intentionally be
+// private while a user-owned proxy must not become an internal pivot.
+func WithHTTPUpstreamPublicProxyOnly(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, httpUpstreamPublicProxyOnlyContextKey{}, true)
+}
+
+func HTTPUpstreamPublicProxyOnly(ctx context.Context) bool {
+	return ctx != nil && ctx.Value(httpUpstreamPublicProxyOnlyContextKey{}) == true
+}
+
+// requiresHTTPUpstreamPublicPolicy reports whether an account's outbound
+// request must use the shared HTTPUpstream public-address policy. Both
+// contributor accounts and user-owned proxies are untrusted request pivots.
+func requiresHTTPUpstreamPublicPolicy(account *Account) bool {
+	if account == nil {
+		return false
+	}
+	if account.ContributorUserID() > 0 {
+		return true
+	}
+	return account.Proxy != nil && account.Proxy.OwnerUserID != nil && *account.Proxy.OwnerUserID > 0
+}
+
+// WithHTTPUpstreamPublicHostsOnlyForAccount applies the public-destination
+// policy to user-contributed accounts. Administrator-managed accounts may
+// intentionally use private endpoints and proxies and retain the existing
+// behavior.
+func WithHTTPUpstreamPublicHostsOnlyForAccount(ctx context.Context, account *Account) context.Context {
+	if account == nil {
+		return ctx
+	}
+	if account.ContributorUserID() > 0 {
+		ctx = WithHTTPUpstreamPublicHostsOnly(ctx)
+	}
+	if account.Proxy != nil && account.Proxy.OwnerUserID != nil && *account.Proxy.OwnerUserID > 0 {
+		ctx = WithHTTPUpstreamPublicProxyOnly(ctx)
+	}
+	return ctx
 }
