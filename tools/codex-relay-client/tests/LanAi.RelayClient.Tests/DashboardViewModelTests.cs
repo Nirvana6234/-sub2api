@@ -2014,6 +2014,30 @@ public sealed class DashboardViewModelTests
 
         Assert.Equal(1, codex.CheckCallCount);
     }
+
+    [Fact]
+    public async Task TheCatalogKeepsEveryGroupWhileEachToolSeesOnlyItsOwn()
+    {
+        (DashboardViewModel dashboard, FakeRelayClient relay, _) = await SignedInAsync();
+        relay.OnAvailableGroups = () =>
+        [
+            Group(11, "GPT", platform: "openai"),
+            Group(21, "Claude", platform: "anthropic"),
+            Group(31, "Kimi", platform: "kimi"),
+        ];
+
+        await dashboard.RefreshAsync();
+
+        // A later Kimi page reads the catalog; a list derived from Codex's would never
+        // have the Kimi group in it.
+        Assert.Equal([11L, 21L, 31L], dashboard.Catalog.Groups.Select(g => g.Id));
+        Assert.DoesNotContain(dashboard.Groups, g => g.Id == 31);
+        Assert.Equal([21L], dashboard.ClaudePluginGroups.Select(g => g.Id));
+
+        dashboard.Reset();
+
+        Assert.Empty(dashboard.Catalog.Groups);
+    }
 }
 
 /// <summary>A preference store the test can read back.</summary>

@@ -154,6 +154,7 @@ public sealed partial class DashboardViewModel : ObservableObject
         RefreshState = new RefreshState(pollingBackoff ?? new PollingBackoff(), _session);
         Account = new AccountCardViewModel(_client, RefreshState);
         Usage = new UsageCardViewModel(_client, RefreshState);
+        Catalog = new GroupCatalog(_client, RefreshState);
         _safeAsync = safeAsync ?? new SafeAsyncRunner();
         _contextFilterPreferences = contextFilterPreferences ?? new ContextFilterPreferenceStore();
         _contextFilterUsage = contextFilterUsage ?? new ContextFilterUsageStore();
@@ -171,6 +172,9 @@ public sealed partial class DashboardViewModel : ObservableObject
 
     /// <summary>Today's usage and the seven-day trend.</summary>
     public UsageCardViewModel Usage { get; }
+
+    /// <summary>Every group the account may use, unfiltered; each tool narrows it itself.</summary>
+    public GroupCatalog Catalog { get; }
 
     public ObservableCollection<GroupItemViewModel> Groups { get; } = [];
 
@@ -475,16 +479,20 @@ public sealed partial class DashboardViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Rebuilds the Claude-group candidate list from <see cref="Groups"/> and restores the
-    /// remembered choice — or, failing that, the only candidate there is, so the picker is
-    /// never left empty for an account with just one Claude group.
+    /// Rebuilds the Claude-group candidate list from the <see cref="Catalog"/> and restores
+    /// the remembered choice — or, failing that, the only candidate there is, so the picker
+    /// is never left empty for an account with just one Claude group.
     /// </summary>
+    /// <remarks>
+    /// From the catalog, not from the Codex list: which groups Codex can use is a
+    /// different question from which the plug-ins can.
+    /// </remarks>
     private void RebuildClaudePluginGroups()
     {
         ClaudePluginGroups.Clear();
-        foreach (GroupItemViewModel candidate in Groups.Where(g => !g.IsAutomatic && IsClaudePlatform(g.Platform)))
+        foreach (RelayGroup group in Catalog.Groups.Where(g => GroupCatalog.IsClaudePlatform(g.Platform)))
         {
-            ClaudePluginGroups.Add(candidate);
+            ClaudePluginGroups.Add(Catalog.CreateItem(group, _settings.ServerUtcOffset));
         }
         OnPropertyChanged(nameof(HasClaudePluginGroups));
 
@@ -540,12 +548,6 @@ public sealed partial class DashboardViewModel : ObservableObject
             : null;
         PluginSupportStatus = DescribePluginSupport(result, hasClaudeGroup: HasClaudePluginGroups);
         PluginSupportActive = result.State == PluginSupportState.Active;
-    }
-
-    private static bool IsClaudePlatform(string? platform)
-    {
-        string p = platform?.ToLowerInvariant() ?? string.Empty;
-        return p.Contains("claude") || p.Contains("anthropic");
     }
 
     internal static string DescribePluginSupport(PluginSupportResult result, bool hasClaudeGroup) =>
@@ -1112,23 +1114,7 @@ public sealed partial class DashboardViewModel : ObservableObject
     {
         try
         {
-            IReadOnlyList<RelayGroup> groups =
-                await _client.GetAvailableGroupsAsync(token, cancellationToken).ConfigureAwait(true);
-
-            // The rates call is allowed to fail on its own: without it every group
-            // simply shows its default multiplier, which is still true for anyone
-            // without a personal deal. Losing the whole group list instead would
-            // also cost the user the ability to switch.
-            IReadOnlyDictionary<long, double> rates;
-            try
-            {
-                rates = await _client.GetUserGroupRatesAsync(token, cancellationToken).ConfigureAwait(true);
-            }
-            catch (Exception ex) when (RefreshState.Observe(ex))
-            {
-                rates = new Dictionary<long, double>();
-                ClientLog.Warning("专属倍率取数失败，按分组默认倍率显示", ex);
-            }
+            await Catalog.LoadAsync(token, cancellationToken).ConfigureAwait(true);
 
             if (RefreshState.WasRateLimited)
             {
@@ -1180,12 +1166,10 @@ public sealed partial class DashboardViewModel : ObservableObject
             }
 
             Groups.Clear();
-            foreach (RelayGroup group in groups.Where(g => IsSelectable(g, current)))
+            foreach (RelayGroup group in Catalog.Groups.Where(g => IsSelectable(g, current)))
             {
-                var item = new GroupItemViewModel(group, GroupRate.Resolve(group, rates), _settings.ServerUtcOffset)
-                {
-                    IsCurrent = current == group.Id,
-                };
+                GroupItemViewModel item = Catalog.CreateItem(group, _settings.ServerUtcOffset);
+                item.IsCurrent = current == group.Id;
                 Groups.Add(item);
             }
 
@@ -1662,6 +1646,7 @@ public sealed partial class DashboardViewModel : ObservableObject
         GroupMessage = string.Empty;
         RequiresCodexAccountRestart = false;
 
+        Catalog.Reset();
         Groups.Clear();
         ClaudePluginGroups.Clear();
         OnPropertyChanged(nameof(HasClaudePluginGroups));
