@@ -22,29 +22,28 @@ public sealed class LocalProxyUsageStoreTests : IDisposable
     }
 
     [Fact]
-    public void TurnsAddUpPerDayToolAndAccountAndSurviveARestart()
+    public void TurnsAddUpPerDayAndAccountAndSurviveARestart()
     {
         LocalProxyUsageStore store = NewStore();
-        store.Add(new LocalProxyUsage(LocalProxyKind.Codex, 7, 100, 10, 60));
-        store.Add(new LocalProxyUsage(LocalProxyKind.Codex, 7, 50, 5, 0));
-        store.Add(new LocalProxyUsage(LocalProxyKind.ClaudeCode, 8, 30, 3, 20));
+        store.Add(new LocalProxyUsage(7, 100, 10, 60));
+        store.Add(new LocalProxyUsage(7, 50, 5, 0));
+        store.Add(new LocalProxyUsage(8, 30, 3, 20));
 
         IReadOnlyList<LocalProxyUsageDay> days = NewStore().Load();
 
         Assert.Equal(2, days.Count);
-        LocalProxyUsageTotals codex = LocalProxyUsageStore.Sum(days, LocalProxyKind.Codex, "2026-09-23");
-        Assert.Equal(new LocalProxyUsageTotals(2, 150, 15, 60), codex);
-        Assert.Equal(new LocalProxyUsageTotals(3, 180, 18, 80), LocalProxyUsageStore.Sum(days, null, "2026-09-23"));
+        Assert.Equal(new LocalProxyUsageTotals(3, 180, 18, 80), LocalProxyUsageStore.Sum(days, "2026-09-23"));
+        Assert.Equal(new LocalProxyUsageTotals(0, 0, 0, 0), LocalProxyUsageStore.Sum(days, "2026-09-24"));
     }
 
     [Fact]
     public void OnlyTheLastMonthIsKept()
     {
         LocalProxyUsageStore store = NewStore();
-        store.Add(new LocalProxyUsage(LocalProxyKind.Codex, 7, 1, 1, 0));
+        store.Add(new LocalProxyUsage(7, 1, 1, 0));
 
         _now = _now.AddDays(LocalProxyUsageStore.KeepDays);
-        store.Add(new LocalProxyUsage(LocalProxyKind.Codex, 7, 2, 2, 0));
+        store.Add(new LocalProxyUsage(7, 2, 2, 0));
 
         LocalProxyUsageDay day = Assert.Single(store.Load());
         Assert.Equal(LocalProxyUsageStore.DateKey(_now), day.Date);
@@ -57,7 +56,7 @@ public sealed class LocalProxyUsageStoreTests : IDisposable
         File.WriteAllText(Path.Combine(_directory, "usage.json"), "{not json");
 
         LocalProxyUsageStore store = NewStore();
-        store.Add(new LocalProxyUsage(LocalProxyKind.Codex, 7, 1, 1, 0));
+        store.Add(new LocalProxyUsage(7, 1, 1, 0));
 
         Assert.Single(store.Load());
     }
@@ -67,7 +66,7 @@ public sealed class LocalProxyUsageStoreTests : IDisposable
     {
         LocalProxyUsageStore store = NewStore();
 
-        Parallel.For(0, 40, _ => store.Add(new LocalProxyUsage(LocalProxyKind.Codex, 7, 1, 1, 0)));
+        Parallel.For(0, 40, _ => store.Add(new LocalProxyUsage(7, 1, 1, 0)));
 
         Assert.Equal(40, Assert.Single(store.Load()).Requests);
     }

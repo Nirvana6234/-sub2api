@@ -32,7 +32,7 @@ public sealed class LocalProxyEndpointTests
         Assert.Equal("plus", accounts[0].Credentials?.PlanType);
         Assert.True(accounts[0].IsActive);
         Assert.Equal(
-            [LocalProxyKind.Codex, LocalProxyKind.ClaudeCode, LocalProxyKind.Unsupported,
+            [LocalProxyKind.Codex, LocalProxyKind.Unsupported, LocalProxyKind.Unsupported,
              LocalProxyKind.Unsupported, LocalProxyKind.Unsupported, LocalProxyKind.Unsupported],
             accounts.Select(a => a.LocalProxyKind));
         Assert.Equal("401", accounts[3].ErrorMessage);
@@ -70,21 +70,5 @@ public sealed class LocalProxyEndpointTests
         Assert.Equal("acct-1", credential.ChatGptAccountId);
         Assert.True(credential.FedRamp);
         Assert.DoesNotContain("at-openai", credential.ToString());
-    }
-
-    [Fact]
-    public async Task LocalProxyCredentialForClaudeHasNoOpenAIFields()
-    {
-        var handler = StubHandler.Envelope(
-            HttpStatusCode.OK,
-            code: 0,
-            """{"account_id":2,"name":"Max","platform":"anthropic","access_token":"sk-ant-oat"}""");
-
-        LocalProxyCredential credential = await handler.CreateClient().GetLocalProxyCredentialAsync("at", 2);
-
-        Assert.Equal("anthropic", credential.Platform);
-        Assert.Null(credential.ExpiresAt);
-        Assert.Equal(string.Empty, credential.ChatGptAccountId);
-        Assert.False(credential.FedRamp);
     }
 }

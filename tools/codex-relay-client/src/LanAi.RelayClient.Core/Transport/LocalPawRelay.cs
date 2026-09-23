@@ -132,7 +132,6 @@ internal sealed class LocalPawRelay : IAsyncDisposable
     private readonly Action<LocalProxyOutcome>? _onLocalProxyOutcome;
     private readonly Action<LocalProxyUsage>? _onLocalProxyUsage;
     private LocalProxyTarget? _codexLocalProxy;
-    private LocalProxyTarget? _claudeLocalProxy;
 
     private readonly object _gate = new();
     private long? _codexGroupId;
@@ -271,42 +270,35 @@ internal sealed class LocalPawRelay : IAsyncDisposable
     }
 
     /// <summary>
-    /// Sends one tool's traffic straight to the official API with one of the user's own
+    /// Sends Codex's traffic straight to the official API with one of the user's own ChatGPT
     /// accounts, or — with null — back to the relay server. Takes effect on the next request.
     /// </summary>
     /// <remarks>
-    /// Independent per tool, like the groups: Codex on a local proxy does not move Claude Code,
-    /// and neither touches the tool's own configuration (it keeps pointing at this relay).
+    /// Codex's own configuration does not change: it keeps pointing at this relay with its
+    /// local placeholder key, and the account's real token stays inside this process. Claude
+    /// Code is not affected — it always goes through the relay server.
     /// </remarks>
-    public void SetLocalProxy(LocalProxyKind kind, LocalProxyTarget? target)
+    public void SetLocalProxy(LocalProxyTarget? target)
     {
         lock (_gate)
         {
-            switch (kind)
-            {
-                case LocalProxyKind.Codex:
-                    _codexLocalProxy = target;
-                    break;
-                case LocalProxyKind.ClaudeCode:
-                    _claudeLocalProxy = target;
-                    break;
-                default:
-                    throw new ArgumentOutOfRangeException(nameof(kind), kind, "Not a local proxy kind.");
-            }
+            _codexLocalProxy = target;
         }
 
-        string tool = kind == LocalProxyKind.Codex ? "ChatGPT" : "Claude Code";
         ClientLog.Info(target is null
-            ? $"本机 Relay（{tool}）改回经中转站转发"
-            : $"本机 Relay（{tool}）改为本地代理：账号 {target.AccountId}「{Sanitize(target.Name)}」直连官方");
+            ? "本机 Relay（ChatGPT）改回经中转站转发"
+            : $"本机 Relay（ChatGPT）改为本地代理：账号 {target.AccountId}「{Sanitize(target.Name)}」直连官方");
     }
 
-    /// <summary>The local-proxy target currently in force for <paramref name="kind"/>, if any.</summary>
-    internal LocalProxyTarget? LocalProxyFor(LocalProxyKind kind)
+    /// <summary>The local-proxy target currently in force for Codex, if any.</summary>
+    internal LocalProxyTarget? LocalProxy
     {
-        lock (_gate)
+        get
         {
-            return kind == LocalProxyKind.ClaudeCode ? _claudeLocalProxy : _codexLocalProxy;
+            lock (_gate)
+            {
+                return _codexLocalProxy;
+            }
         }
     }
 
@@ -593,12 +585,8 @@ internal sealed class LocalPawRelay : IAsyncDisposable
             // places below cannot drift from that.
             RelayRoute served = route ?? throw new InvalidOperationException("Reject let an unrouted path through.");
 
-            LocalProxyTarget? localProxy;
-            lock (_gate)
-            {
-                localProxy = protocol == RelayProtocol.Messages ? _claudeLocalProxy : _codexLocalProxy;
-            }
-
+            // Codex only: Claude Code always goes through the relay server.
+            LocalProxyTarget? localProxy = protocol == RelayProtocol.Responses ? LocalProxy : null;
             if (localProxy is not null)
             {
                 responseStarted = await HandleLocalProxyAsync(context, served, localProxy, cancellationToken).ConfigureAwait(false);
@@ -855,21 +843,12 @@ internal sealed class LocalPawRelay : IAsyncDisposable
         CancellationToken cancellationToken)
     {
         RelayProtocol protocol = route.Protocol;
-        LocalProxyKind kind = protocol == RelayProtocol.Messages ? LocalProxyKind.ClaudeCode : LocalProxyKind.Codex;
         string label = $"本地代理「{Sanitize(target.Name)}」";
-
-        if (protocol == RelayProtocol.Messages)
-        {
-            ClientLog.Info($"本轮转发（Claude，{label}）：{Sanitize(route.ClientPath)}");
-        }
-        else
-        {
-            ObserveContextFilter(context, label);
-        }
+        ObserveContextFilter(context, label);
 
         if (_localProxyCredentials is null)
         {
-            Report(kind, target, false, "本地代理未就绪。");
+            Report(target, false, "本地代理未就绪。");
             await WriteErrorAsync(context, 503, "local proxy is not available", protocol).ConfigureAwait(false);
             return true;
         }
@@ -896,7 +875,7 @@ internal sealed class LocalPawRelay : IAsyncDisposable
                 catch (RelayApiException ex)
                 {
                     ClientLog.Warning($"取本地代理凭据失败（账号 {target.AccountId}）", ex);
-                    Report(kind, target, false, "无法从中转站取得该账号的授权：" + ex.UserMessage);
+                    Report(target, false, "无法从中转站取得该账号的授权：" + ex.UserMessage);
                     await WriteErrorAsync(context, 502, "local proxy: could not obtain the account's token", protocol)
                         .ConfigureAwait(false);
                     return true;
@@ -912,7 +891,7 @@ internal sealed class LocalPawRelay : IAsyncDisposable
                 catch (HttpRequestException ex)
                 {
                     ClientLog.Warning("本地代理连接官方失败", ex);
-                    Report(kind, target, false, "无法连接官方服务器：" + ex.Message);
+                    Report(target, false, "无法连接官方服务器：" + ex.Message);
                     await WriteErrorAsync(context, 502, "local proxy: official API unreachable", protocol)
                         .ConfigureAwait(false);
                     return true;
@@ -932,7 +911,7 @@ internal sealed class LocalPawRelay : IAsyncDisposable
             {
                 string detail = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
                 ClientLog.Warning($"官方拒绝本轮请求（{label}）：HTTP {(int)response.StatusCode} {Summarize(detail)}");
-                Report(kind, target, false, DescribeOfficialRefusal((int)response.StatusCode));
+                Report(target, false, DescribeOfficialRefusal((int)response.StatusCode));
 
                 byte[] payload = Encoding.UTF8.GetBytes(detail);
                 CopyResponseHeaders(response, context.Response, protocol, localProxy: true);
@@ -943,9 +922,9 @@ internal sealed class LocalPawRelay : IAsyncDisposable
                 return true;
             }
 
-            Report(kind, target, true, null);
+            Report(target, true, null);
             CopyResponseHeaders(response, context.Response, protocol, localProxy: true);
-            var meter = new LocalProxyUsageMeter(protocol);
+            var meter = new LocalProxyUsageMeter();
             try
             {
                 await PumpAsync(response, context, meter.Observe, cancellationToken).ConfigureAwait(false);
@@ -955,7 +934,7 @@ internal sealed class LocalPawRelay : IAsyncDisposable
                 if (meter.Finish() is { } usage)
                 {
                     _onLocalProxyUsage?.Invoke(new LocalProxyUsage(
-                        kind, target.AccountId, usage.InputTokens, usage.OutputTokens, usage.CachedTokens));
+                        target.AccountId, usage.InputTokens, usage.OutputTokens, usage.CachedTokens));
                 }
             }
             return true;
@@ -972,19 +951,6 @@ internal sealed class LocalPawRelay : IAsyncDisposable
         byte[] body,
         LocalProxyCredential credential)
     {
-        if (route.Protocol == RelayProtocol.Messages)
-        {
-            // Claude Code calls /v1/messages?beta=true; the query selects the API surface.
-            string query = context.Request.Url?.Query is { Length: > 0 } q ? q : "?beta=true";
-            return LocalProxyRequests.BuildClaude(
-                _localProxyEndpoints.ClaudeBaseUrl.TrimEnd('/') + route.ClientPath + query,
-                context.Request.Headers,
-                body,
-                context.Request.ContentType,
-                credential,
-                countTokens: route.ClientPath.EndsWith("/count_tokens", StringComparison.Ordinal));
-        }
-
         string suffix = route.ClientPath[CodexPath.Length..];
         return LocalProxyRequests.BuildCodex(
             _localProxyEndpoints.CodexResponsesUrl.TrimEnd('/') + suffix,
@@ -995,11 +961,11 @@ internal sealed class LocalPawRelay : IAsyncDisposable
             compact: suffix == "/compact");
     }
 
-    private void Report(LocalProxyKind kind, LocalProxyTarget target, bool succeeded, string? message)
+    private void Report(LocalProxyTarget target, bool succeeded, string? message)
     {
         try
         {
-            _onLocalProxyOutcome?.Invoke(new LocalProxyOutcome(kind, target.AccountId, succeeded, message));
+            _onLocalProxyOutcome?.Invoke(new LocalProxyOutcome(target.AccountId, succeeded, message));
         }
         catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException or ThreadAbortException))
         {
@@ -1249,7 +1215,6 @@ internal sealed class LocalPawRelay : IAsyncDisposable
         lock (_gate)
         {
             _codexLocalProxy = null;
-            _claudeLocalProxy = null;
         }
         _localProxyCredentials?.Clear();
     }

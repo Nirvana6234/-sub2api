@@ -4,16 +4,12 @@ using LanAi.RelayClient.Platform;
 
 namespace LanAi.RelayClient.Services;
 
-/// <summary>Which of the user's own accounts each tool's local proxy is on, if any.</summary>
+/// <summary>Which of the user's own ChatGPT accounts Codex's local proxy is on, if any.</summary>
 internal sealed record LocalProxyChoice
 {
     public long? CodexAccountId { get; init; }
 
     public string? CodexAccountName { get; init; }
-
-    public long? ClaudeAccountId { get; init; }
-
-    public string? ClaudeAccountName { get; init; }
 
     public static LocalProxyChoice None { get; } = new();
 }

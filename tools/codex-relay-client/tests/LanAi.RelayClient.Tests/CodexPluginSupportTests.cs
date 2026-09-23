@@ -158,33 +158,20 @@ public sealed class CodexPluginSupportTests : IDisposable
     {
         Setup setup = await CreateSetupAsync();
         var target = new LanAi.RelayClient.Transport.LocalProxyTarget(7, "我的 Plus");
-        setup.Startup.SetLocalProxy(LanAi.RelayClient.Server.LocalProxyKind.Codex, target);
+        setup.Startup.SetLocalProxy(target);
 
         await setup.Startup.SyncPluginSupportAsync(Wanted());
-        Assert.Equal(target, setup.Relay.LocalProxyFor(LanAi.RelayClient.Server.LocalProxyKind.Codex));
+        Assert.Equal(target, setup.Relay.LocalProxy);
 
         await setup.Startup.SyncPluginSupportAsync(Wanted() with { Enabled = false });
         Assert.Null(setup.Relay.Origin);
 
         await setup.Startup.SyncPluginSupportAsync(Wanted());
-        Assert.Equal(target, setup.Relay.LocalProxyFor(LanAi.RelayClient.Server.LocalProxyKind.Codex));
+        Assert.Equal(target, setup.Relay.LocalProxy);
 
         CodexStartupResult started = await setup.Startup.RunAsync(groupId: 5, "https://relay.test/v1");
         Assert.Equal(CodexStartupStatus.Ready, started.Status);
-        Assert.Equal(target, setup.Relay.LocalProxyFor(LanAi.RelayClient.Server.LocalProxyKind.Codex));
-    }
-
-    /// <summary>A Claude Code local-proxy account stands in for a Claude group.</summary>
-    [Fact]
-    public async Task AClaudeLocalProxyAccountIsEnoughToSetUpThePlugins()
-    {
-        Setup setup = await CreateSetupAsync();
-
-        PluginSupportResult result = await setup.Startup.SyncPluginSupportAsync(
-            Wanted() with { GroupId = null, GroupName = null, LocalProxyAccountId = 8 });
-
-        Assert.Equal(PluginSupportState.Active, result.State);
-        Assert.NotNull(setup.Relay.Origin);
+        Assert.Equal(target, setup.Relay.LocalProxy);
     }
 
     /// <summary>

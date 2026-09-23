@@ -482,10 +482,9 @@ internal sealed class FakeCodexStartup : ICodexStartup
 
     public void SetActiveGroup(long? groupId, string? groupName = null) => ActiveGroups.Add(groupId);
 
-    public List<(LanAi.RelayClient.Server.LocalProxyKind Kind, LanAi.RelayClient.Transport.LocalProxyTarget? Target)> LocalProxies { get; } = [];
+    public List<LanAi.RelayClient.Transport.LocalProxyTarget?> LocalProxies { get; } = [];
 
-    public void SetLocalProxy(LanAi.RelayClient.Server.LocalProxyKind kind, LanAi.RelayClient.Transport.LocalProxyTarget? target) =>
-        LocalProxies.Add((kind, target));
+    public void SetLocalProxy(LanAi.RelayClient.Transport.LocalProxyTarget? target) => LocalProxies.Add(target);
 
     public bool HasContextFilter { get; set; } = true;
 

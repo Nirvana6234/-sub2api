@@ -107,10 +107,10 @@
               <TextBlock Text="本地代理（今日）" Classes="cardTitle" />
               <!-- Straight to the official API with the user's own accounts: never on the
                    relay server's usage above, so it is shown here, from this machine. -->
-              <TextBlock Text="{Binding Dashboard.LocalProxy.CodexUsageText, StringFormat='Codex：{0}'}"
+              <TextBlock Text="{Binding Dashboard.LocalProxy.StatusText}"
                          Margin="0,8,0,0" FontSize="12" TextWrapping="Wrap" />
-              <TextBlock Text="{Binding Dashboard.LocalProxy.ClaudeUsageText, StringFormat='Claude：{0}'}"
-                         Margin="0,2,0,0" FontSize="12" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding Dashboard.LocalProxy.UsageText}"
+                         Classes="label" Margin="0,2,0,0" TextWrapping="Wrap" />
             </StackPanel>
           </DockPanel>
         </Border>

@@ -24,14 +24,11 @@ func (s *localProxyTokenStub) get(context.Context, *service.Account) (string, er
 	return s.token, s.err
 }
 
-func localProxyTestHandler(account *service.Account, openAI, claude *localProxyTokenStub) *AccountContributionHandler {
+func localProxyTestHandler(account *service.Account, openAI *localProxyTokenStub) *AccountContributionHandler {
 	h := newContributionHandlerForTest(&contributionAdminServiceStub{account: account})
 	h.accountTestRunner = &contributionTestRunnerStub{}
 	if openAI != nil {
 		h.openAILocalProxyToken = openAI.get
-	}
-	if claude != nil {
-		h.claudeLocalProxyToken = claude.get
 	}
 	return h
 }
@@ -62,7 +59,7 @@ func TestLocalProxyTokenIssuesOpenAIAccessTokenToTheOwner(t *testing.T) {
 		"chatgpt_account_is_fedramp": true,
 	}
 	openAI := &localProxyTokenStub{token: "at-fresh"}
-	h := localProxyTestHandler(account, openAI, nil)
+	h := localProxyTestHandler(account, openAI)
 
 	code, body, headers := callIssueLocalProxyToken(h, "81")
 
@@ -84,29 +81,12 @@ func TestLocalProxyTokenIssuesOpenAIAccessTokenToTheOwner(t *testing.T) {
 	require.Equal(t, 1, openAI.calls)
 }
 
-func TestLocalProxyTokenIssuesClaudeAccessTokenWithoutOpenAIFields(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	account := ownedOAuthAccount(82, service.PlatformAnthropic)
-	account.Credentials = map[string]any{"refresh_token": "rt-claude"}
-	claude := &localProxyTokenStub{token: "sk-ant-oat-fresh"}
-	h := localProxyTestHandler(account, &localProxyTokenStub{token: "wrong-provider"}, claude)
-
-	code, body, _ := callIssueLocalProxyToken(h, "82")
-
-	require.Equal(t, http.StatusOK, code, body)
-	require.Contains(t, body, `"platform":"anthropic"`)
-	require.Contains(t, body, "sk-ant-oat-fresh")
-	require.NotContains(t, body, "rt-claude")
-	require.NotContains(t, body, "chatgpt_account_id")
-	require.Equal(t, 1, claude.calls)
-}
-
 func TestLocalProxyTokenRejectsAnotherUsersAccount(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	account := ownedOAuthAccount(83, service.PlatformOpenAI)
 	account.Extra = contributionExtra(nil, &service.User{ID: 99}, accountContributionTZNow())
 	openAI := &localProxyTokenStub{token: "at"}
-	h := localProxyTestHandler(account, openAI, nil)
+	h := localProxyTestHandler(account, openAI)
 
 	code, _, _ := callIssueLocalProxyToken(h, "83")
 
@@ -121,6 +101,7 @@ func TestLocalProxyTokenRejectsAccountsThatAreNotShortLivedOAuth(t *testing.T) {
 		"openai setup token": {Platform: service.PlatformOpenAI, Type: service.AccountTypeSetupToken},
 		"claude setup token": {Platform: service.PlatformAnthropic, Type: service.AccountTypeSetupToken},
 		"api key":            {Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey},
+		"claude oauth":       {Platform: service.PlatformAnthropic, Type: service.AccountTypeOAuth},
 		"gemini oauth":       {Platform: service.PlatformGemini, Type: service.AccountTypeOAuth},
 		"spark shadow":       {Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, ParentAccountID: &parent},
 	}
@@ -130,7 +111,7 @@ func TestLocalProxyTokenRejectsAccountsThatAreNotShortLivedOAuth(t *testing.T) {
 			account.Status = service.StatusActive
 			account.Extra = contributionExtra(nil, &service.User{ID: 42}, accountContributionTZNow())
 			stub := &localProxyTokenStub{token: "at"}
-			h := localProxyTestHandler(account, stub, stub)
+			h := localProxyTestHandler(account, stub)
 
 			code, body, _ := callIssueLocalProxyToken(h, "84")
 
@@ -145,7 +126,7 @@ func TestLocalProxyTokenRejectsAnInactiveAccount(t *testing.T) {
 	account := ownedOAuthAccount(85, service.PlatformOpenAI)
 	account.Status = "error"
 	openAI := &localProxyTokenStub{token: "at"}
-	h := localProxyTestHandler(account, openAI, nil)
+	h := localProxyTestHandler(account, openAI)
 
 	code, _, _ := callIssueLocalProxyToken(h, "85")
 
@@ -156,7 +137,7 @@ func TestLocalProxyTokenRejectsAnInactiveAccount(t *testing.T) {
 func TestLocalProxyTokenFailureDoesNotEchoTheProvidersError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	account := ownedOAuthAccount(86, service.PlatformOpenAI)
-	h := localProxyTestHandler(account, &localProxyTokenStub{err: errors.New("refresh with rt-secret failed")}, nil)
+	h := localProxyTestHandler(account, &localProxyTokenStub{err: errors.New("refresh with rt-secret failed")})
 
 	code, body, _ := callIssueLocalProxyToken(h, "86")
 
@@ -166,7 +147,7 @@ func TestLocalProxyTokenFailureDoesNotEchoTheProvidersError(t *testing.T) {
 
 func TestLocalProxyTokenIsUnavailableWithoutAProvider(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	h := localProxyTestHandler(ownedOAuthAccount(87, service.PlatformAnthropic), nil, nil)
+	h := localProxyTestHandler(ownedOAuthAccount(87, service.PlatformOpenAI), nil)
 
 	code, _, _ := callIssueLocalProxyToken(h, "87")
 

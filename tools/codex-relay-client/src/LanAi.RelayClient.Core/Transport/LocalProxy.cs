@@ -3,27 +3,24 @@ using LanAi.RelayClient.Services;
 
 namespace LanAi.RelayClient.Transport;
 
-/// <summary>The account one tool's traffic goes to while its local proxy is on.</summary>
+/// <summary>The account Codex's traffic goes to while the local proxy is on.</summary>
 public sealed record LocalProxyTarget(long AccountId, string Name);
 
-/// <summary>Where the local proxy sends each tool's traffic.</summary>
-/// <remarks>Settable so tests can point both at a loopback server.</remarks>
-internal sealed record LocalProxyEndpoints(string CodexResponsesUrl, string ClaudeBaseUrl)
+/// <summary>Where the local proxy sends Codex's traffic.</summary>
+/// <remarks>Settable so tests can point it at a loopback server.</remarks>
+internal sealed record LocalProxyEndpoints(string CodexResponsesUrl)
 {
-    /// <summary>The official endpoints, as the relay's server uses them (<c>chatgptCodexURL</c>, <c>claudeAPIURL</c>).</summary>
-    public static LocalProxyEndpoints Official { get; } = new(
-        "https://chatgpt.com/backend-api/codex/responses",
-        "https://api.anthropic.com");
+    /// <summary>The official endpoint, as the relay's server uses it (<c>chatgptCodexURL</c>).</summary>
+    public static LocalProxyEndpoints Official { get; } = new("https://chatgpt.com/backend-api/codex/responses");
 }
 
 /// <summary>What happened on one local-proxy request, for the client to show.</summary>
 /// <param name="Succeeded">False for anything the user should hear about.</param>
 /// <param name="Message">Why, in Chinese, when it failed.</param>
-internal sealed record LocalProxyOutcome(LocalProxyKind Kind, long AccountId, bool Succeeded, string? Message);
+internal sealed record LocalProxyOutcome(long AccountId, bool Succeeded, string? Message);
 
 /// <summary>Usage the official API reported for one local-proxy request.</summary>
 internal sealed record LocalProxyUsage(
-    LocalProxyKind Kind,
     long AccountId,
     long InputTokens,
     long OutputTokens,

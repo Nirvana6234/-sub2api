@@ -15,9 +15,6 @@ public sealed class LocalProxyRequestsTests
     private static readonly LocalProxyCredential OpenAICredential =
         new(accountId: 1, platform: "openai", accessToken: "at-official", chatgptAccountId: "acct-9");
 
-    private static readonly LocalProxyCredential ClaudeCredential =
-        new(accountId: 2, platform: "anthropic", accessToken: "sk-ant-oat");
-
     private static NameValueCollection CodexHeaders(params (string Name, string Value)[] extra)
     {
         var headers = new NameValueCollection
@@ -168,47 +165,5 @@ public sealed class LocalProxyRequestsTests
         byte[] body = "not json"u8.ToArray();
 
         Assert.Same(body, LocalProxyRequests.NormalizeCodexBody(body, compact: false));
-    }
-
-    // ---- Claude Code --------------------------------------------------------------------
-
-    [Theory]
-    [InlineData(null, false, LocalProxyRequests.DefaultClaudeBeta)]
-    [InlineData("claude-code-20250219,interleaved-thinking-2025-05-14", false,
-        "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14")]
-    [InlineData("interleaved-thinking-2025-05-14", false, "oauth-2025-04-20,interleaved-thinking-2025-05-14")]
-    [InlineData("oauth-2025-04-20, x", false, "oauth-2025-04-20,x")]
-    [InlineData("claude-code-20250219", true, "claude-code-20250219,oauth-2025-04-20,token-counting-2024-11-01")]
-    public void TheOAuthBetaIsAddedWhereTheServerPutsIt(string? client, bool countTokens, string expected)
-    {
-        Assert.Equal(expected, LocalProxyRequests.WithOAuthBeta(client, countTokens));
-    }
-
-    [Fact]
-    public void ClaudeCodeKeepsItsFingerprintAndGetsTheAccountsToken()
-    {
-        var headers = new NameValueCollection
-        {
-            ["Authorization"] = "Bearer local-relay-token",
-            ["x-api-key"] = "local-relay-token",
-            ["User-Agent"] = "claude-cli/2.1.258 (external, claude-vscode)",
-            ["x-app"] = "cli",
-            ["X-Stainless-Os"] = "Windows",
-            ["anthropic-beta"] = "claude-code-20250219",
-            ["Accept-Encoding"] = "gzip, br",
-        };
-
-        using HttpRequestMessage request = LocalProxyRequests.BuildClaude(
-            "https://api/v1/messages?beta=true", headers, "{}"u8.ToArray(), "application/json", ClaudeCredential, countTokens: false);
-
-        Assert.Equal("Bearer sk-ant-oat", Header(request, "Authorization"));
-        Assert.Null(Header(request, "x-api-key"));
-        Assert.Equal("claude-cli/2.1.258 (external, claude-vscode)", Header(request, "User-Agent"));
-        Assert.Equal("cli", Header(request, "x-app"));
-        Assert.Equal("Windows", Header(request, "X-Stainless-Os"));
-        Assert.Equal("claude-code-20250219,oauth-2025-04-20", Header(request, "anthropic-beta"));
-        Assert.Equal("2023-06-01", Header(request, "anthropic-version"));
-        Assert.Null(Header(request, "Accept-Encoding"));
-        Assert.DoesNotContain("local-relay-token", request.Headers.ToString());
     }
 }

@@ -75,11 +75,11 @@ internal interface ICodexStartup
     void SetActiveGroup(long? groupId, string? groupName = null) { }
 
     /// <summary>
-    /// Sends one tool straight to the official API with one of the user's own accounts, or —
-    /// with null — back through the relay server. Effective from the next request, and kept
-    /// across relay restarts until changed or until the client releases.
+    /// Sends Codex straight to the official API with one of the user's own ChatGPT accounts,
+    /// or — with null — back through the relay server. Effective from the next request, and
+    /// kept across relay restarts until changed or until the client releases.
     /// </summary>
-    void SetLocalProxy(LanAi.RelayClient.Server.LocalProxyKind kind, LanAi.RelayClient.Transport.LocalProxyTarget? target) { }
+    void SetLocalProxy(LanAi.RelayClient.Transport.LocalProxyTarget? target) { }
 
     /// <summary>
     /// Brings the editor plug-ins' configuration in line with <paramref name="request"/>: pointed
@@ -185,7 +185,6 @@ internal sealed class CodexStartup : ICodexStartup
     // can never quietly send a tool back to the relay server.
     private readonly object _localProxyGate = new();
     private LocalProxyTarget? _codexLocalProxy;
-    private LocalProxyTarget? _claudeLocalProxy;
     private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
     private int _releaseRequests;
     private bool _released;
@@ -251,44 +250,26 @@ internal sealed class CodexStartup : ICodexStartup
 
     public void SetActiveGroup(long? groupId, string? groupName = null) => _localRelay?.SetGroup(groupId, groupName);
 
-    public void SetLocalProxy(LocalProxyKind kind, LocalProxyTarget? target)
+    public void SetLocalProxy(LocalProxyTarget? target)
     {
         lock (_localProxyGate)
         {
-            if (kind == LocalProxyKind.Codex)
-            {
-                _codexLocalProxy = target;
-            }
-            else if (kind == LocalProxyKind.ClaudeCode)
-            {
-                _claudeLocalProxy = target;
-            }
-            else
-            {
-                return;
-            }
+            _codexLocalProxy = target;
         }
 
-        _localRelay?.SetLocalProxy(kind, target);
+        _localRelay?.SetLocalProxy(target);
     }
 
-    /// <summary>Puts the chosen targets back on the relay after it (re)started.</summary>
+    /// <summary>Puts the chosen target back on the relay after it (re)started.</summary>
     private void ApplyLocalProxies()
     {
-        if (_localRelay is null)
-        {
-            return;
-        }
-
-        LocalProxyTarget? codex, claude;
+        LocalProxyTarget? codex;
         lock (_localProxyGate)
         {
             codex = _codexLocalProxy;
-            claude = _claudeLocalProxy;
         }
 
-        _localRelay.SetLocalProxy(LocalProxyKind.Codex, codex);
-        _localRelay.SetLocalProxy(LocalProxyKind.ClaudeCode, claude);
+        _localRelay?.SetLocalProxy(codex);
     }
 
     /// <param name="groupId">The group to bill against, when a key must be issued.</param>
@@ -612,7 +593,6 @@ internal sealed class CodexStartup : ICodexStartup
                 lock (_localProxyGate)
                 {
                     _codexLocalProxy = null;
-                    _claudeLocalProxy = null;
                 }
 
                 bool localReleaseCompleted = false;
@@ -728,9 +708,7 @@ internal sealed class CodexStartup : ICodexStartup
                 return new PluginSupportResult(PluginSupportState.NotApplicable);
             }
 
-            // A Claude group, or a local-proxy account in its place: either gives Claude Code
-            // somewhere to go.
-            bool wanted = request.Enabled && (request.GroupId is > 0 || request.LocalProxyAccountId is > 0);
+            bool wanted = request.Enabled && request.GroupId is > 0;
             if (!wanted)
             {
                 await RestorePluginsAsync().ConfigureAwait(false);

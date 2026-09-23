@@ -179,12 +179,10 @@ public sealed partial class DashboardViewModel : ObservableObject
             localProxyCredentials ?? new LocalProxyCredentialCache(_client, _session.GetAccessTokenAsync),
             localProxyPreferences ?? new LocalProxyPreferenceStore(),
             localProxyUsage ?? new LocalProxyUsageStore(),
-            ClaudeCode,
-            ClaudePreference,
             () => IsClaudeGroup);
         LocalProxy.PropertyChanged += (_, args) =>
         {
-            if (args.PropertyName == nameof(LocalProxyViewModel.CodexTarget))
+            if (args.PropertyName == nameof(LocalProxyViewModel.Target))
             {
                 // On a local proxy Codex needs no billing group, and the group no longer
                 // decides where its traffic goes.
@@ -213,11 +211,11 @@ public sealed partial class DashboardViewModel : ObservableObject
     /// <summary>Claude Code and its editor extension.</summary>
     public ClaudeCodeViewModel ClaudeCode { get; }
 
-    /// <summary>The 本地代理 page: each tool straight to the official API with one of the user's own accounts.</summary>
+    /// <summary>The 本地代理 page: Codex straight to the official API with one of the user's own ChatGPT accounts.</summary>
     public LocalProxyViewModel LocalProxy { get; }
 
     /// <summary>Whether the Codex group picker means anything right now: not while Codex is on a local proxy.</summary>
-    public bool CanChooseGroup => GroupsReady && !LocalProxy.IsCodexActive;
+    public bool CanChooseGroup => GroupsReady && !LocalProxy.IsActive;
 
     public ObservableCollection<GroupItemViewModel> Groups { get; } = [];
 
@@ -446,7 +444,7 @@ public sealed partial class DashboardViewModel : ObservableObject
     /// </para>
     /// </remarks>
     private bool AwaitingBillingGroup =>
-        _codex.UsesLocalTransport && !CodexNotInstalled && !LocalProxy.IsCodexActive &&
+        _codex.UsesLocalTransport && !CodexNotInstalled && !LocalProxy.IsActive &&
         (SelectedGroup is null ||
          (SelectedGroup.IsAutomatic && (_autoGroupSettings is null || _autoGroupSettings.AutoGroupIds.Count == 0)));
 

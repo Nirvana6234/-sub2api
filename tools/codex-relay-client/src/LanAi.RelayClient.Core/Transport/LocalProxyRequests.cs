@@ -9,23 +9,23 @@ using LanAi.RelayClient.Server;
 namespace LanAi.RelayClient.Transport;
 
 /// <summary>
-/// Builds the request the local proxy sends to the official API. Pure, so every rule
-/// is testable without a socket.
+/// Builds the request the local proxy sends to the official Codex API. Pure, so every
+/// rule is testable without a socket.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Forwarded, not re-wrapped.</b> The request is what Codex or Claude Code already
-/// sent; the tools are official clients. What is added is only what the tool leaves out
-/// because it is running against a custom endpoint rather than signed in to its vendor:
-/// the account's token and, for Codex, the ChatGPT account id; for Claude Code, the OAuth
-/// beta. Every rule here mirrors a line in the relay server's own forwarder, named in the
-/// remarks, and nothing the server does only because many users share one account is
-/// copied (session isolation, fingerprint convergence, identity unification, failover).
+/// <b>Forwarded, not re-wrapped.</b> The request is what Codex already sent; it is the
+/// official client. What is added is only what Codex leaves out because it is running
+/// against a custom endpoint rather than signed in to ChatGPT: the account's token and the
+/// ChatGPT account id. Every rule here mirrors a line in the relay server's own forwarder
+/// (<c>openai_gateway_passthrough.go</c>), and nothing the server does only because many
+/// users share one account is copied (session isolation, fingerprint convergence, identity
+/// unification, failover).
 /// </para>
 /// <para>
-/// Headers are a whitelist, not "everything the tool sent": the tool's request also
-/// carries this relay's local token and the context filter's statistics headers, neither
-/// of which may leave this machine.
+/// Headers are a whitelist, not "everything Codex sent": its request also carries this
+/// relay's local token and the context filter's statistics headers, neither of which may
+/// leave this machine.
 /// </para>
 /// </remarks>
 internal static class LocalProxyRequests
@@ -43,32 +43,8 @@ internal static class LocalProxyRequests
         "x-openai-internal-codex-responses-lite",
     ];
 
-    /// <summary>
-    /// Claude Code headers forwarded as-is: the server's <c>allowedHeaders</c> minus
-    /// <c>accept-encoding</c>, so the answer comes back uncompressed and its usage can be read.
-    /// </summary>
-    internal static readonly string[] ClaudeForwardedHeaders =
-    [
-        "accept", "accept-language", "anthropic-beta", "anthropic-dangerous-direct-browser-access",
-        "anthropic-version", "sec-fetch-mode", "user-agent", "x-app", "x-claude-code-session-id",
-        "x-client-request-id", "x-stainless-arch", "x-stainless-helper-method", "x-stainless-lang",
-        "x-stainless-os", "x-stainless-package-version", "x-stainless-retry-count",
-        "x-stainless-runtime", "x-stainless-runtime-version", "x-stainless-timeout",
-    ];
-
     /// <summary>Server <c>openAIRemoteCompactionV2Feature</c>.</summary>
     internal const string RemoteCompactionV2 = "remote_compaction_v2";
-
-    /// <summary>Server <c>claude.BetaOAuth</c>: without it a subscription token is refused.</summary>
-    internal const string ClaudeOAuthBeta = "oauth-2025-04-20";
-
-    internal const string ClaudeCodeBeta = "claude-code-20250219";
-
-    internal const string TokenCountingBeta = "token-counting-2024-11-01";
-
-    /// <summary>Server <c>claude.DefaultBetaHeader</c>, for a client that sent none.</summary>
-    internal const string DefaultClaudeBeta =
-        "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14";
 
     /// <summary>Server <c>openAIChatGPTInternalUnsupportedFields</c>: the ChatGPT backend 400s on these.</summary>
     private static readonly string[] CodexUnsupportedFields =
@@ -133,58 +109,6 @@ internal static class LocalProxyRequests
         }
 
         return request;
-    }
-
-    internal static HttpRequestMessage BuildClaude(
-        string targetUrl,
-        NameValueCollection clientHeaders,
-        byte[] body,
-        string? contentType,
-        LocalProxyCredential credential,
-        bool countTokens)
-    {
-        var request = new HttpRequestMessage(HttpMethod.Post, targetUrl)
-        {
-            Content = new ByteArrayContent(body),
-        };
-        request.Content.Headers.ContentType = MediaTypeHeaderValue.Parse(contentType ?? "application/json");
-        Forward(clientHeaders, ClaudeForwardedHeaders, request);
-
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", credential.AccessToken);
-
-        request.Headers.Remove("anthropic-beta");
-        request.Headers.TryAddWithoutValidation("anthropic-beta", WithOAuthBeta(clientHeaders["anthropic-beta"], countTokens));
-
-        if (string.IsNullOrWhiteSpace(clientHeaders["anthropic-version"]))
-        {
-            request.Headers.TryAddWithoutValidation("anthropic-version", "2023-06-01");
-        }
-
-        return request;
-    }
-
-    /// <summary>
-    /// The client's <c>anthropic-beta</c> with the OAuth beta added — after the Claude Code
-    /// beta when present, first otherwise (server <c>getBetaHeader</c>) — and the token
-    /// counting beta on a count (<c>computeFinalCountTokensAnthropicBeta</c>).
-    /// </summary>
-    internal static string WithOAuthBeta(string? clientBeta, bool countTokens)
-    {
-        List<string> parts = string.IsNullOrWhiteSpace(clientBeta)
-            ? [.. DefaultClaudeBeta.Split(',')]
-            : [.. clientBeta.Split(',').Select(p => p.Trim()).Where(p => p.Length > 0)];
-
-        if (!parts.Contains(ClaudeOAuthBeta))
-        {
-            int claudeCode = parts.IndexOf(ClaudeCodeBeta);
-            parts.Insert(claudeCode >= 0 ? claudeCode + 1 : 0, ClaudeOAuthBeta);
-        }
-        if (countTokens && !parts.Contains(TokenCountingBeta))
-        {
-            parts.Add(TokenCountingBeta);
-        }
-
-        return string.Join(",", parts);
     }
 
     /// <summary>Removes only <c>responses=experimental</c>, keeping any other beta negotiation.</summary>

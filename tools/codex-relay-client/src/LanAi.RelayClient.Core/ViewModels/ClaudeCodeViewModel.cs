@@ -2,7 +2,6 @@ using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using LanAi.RelayClient.Server;
 using LanAi.RelayClient.Services;
-using LanAi.RelayClient.Transport;
 
 namespace LanAi.RelayClient.ViewModels;
 
@@ -28,9 +27,6 @@ public sealed partial class ClaudeCodeViewModel : ObservableObject
 
     /// <summary>The request last applied successfully, so an unchanged input does no file work.</summary>
     private PluginSupportRequest? _lastPluginRequest;
-
-    /// <summary>Set while Claude Code goes straight to Anthropic with one of the user's own accounts.</summary>
-    private LocalProxyTarget? _localProxy;
 
     internal ClaudeCodeViewModel(
         ICodexStartup codex,
@@ -160,23 +156,6 @@ public sealed partial class ClaudeCodeViewModel : ObservableObject
         SelectClaudePluginGroupWithoutApplying(restored);
     }
 
-    /// <summary>
-    /// Claude Code's local proxy, or null for the relay server. With one set, Claude Code is
-    /// ready without a Claude group — the group picker no longer decides where it goes.
-    /// </summary>
-    internal void SetLocalProxy(LocalProxyTarget? target)
-    {
-        _localProxy = target;
-        OnPropertyChanged(nameof(UsesLocalProxy));
-        OnPropertyChanged(nameof(CanChooseGroup));
-        RequestSync();
-    }
-
-    public bool UsesLocalProxy => _localProxy is not null;
-
-    /// <summary>The Claude group only matters while Claude Code goes through the relay server.</summary>
-    public bool CanChooseGroup => _localProxy is null;
-
     internal void RequestSync()
     {
         if (!_codex.UsesLocalTransport)
@@ -195,9 +174,7 @@ public sealed partial class ClaudeCodeViewModel : ObservableObject
         }
 
         GroupItemViewModel? claudeGroup = SelectedClaudePluginGroup;
-        LocalProxyTarget? localProxy = _localProxy;
-        bool routed = claudeGroup is not null || localProxy is not null;
-        if (routed && !_preference.IsLoaded)
+        if (claudeGroup is not null && !_preference.IsLoaded)
         {
             return;
         }
@@ -206,8 +183,7 @@ public sealed partial class ClaudeCodeViewModel : ObservableObject
             PluginSupportEnabled,
             claudeGroup?.Id,
             claudeGroup?.Name,
-            routed ? _preference.SelectedClaudeModel : null,
-            localProxy?.AccountId);
+            claudeGroup is not null ? _preference.SelectedClaudeModel : null);
         if (request == _lastPluginRequest)
         {
             return;
@@ -222,9 +198,7 @@ public sealed partial class ClaudeCodeViewModel : ObservableObject
             or PluginSupportState.Active
             ? request
             : null;
-        PluginSupportStatus = localProxy is not null && result.State == PluginSupportState.Active
-            ? $"Claude Code 已接入，正在使用本地代理「{localProxy.Name}」，客户端运行期间可用，退出时自动还原。"
-            : DescribePluginSupport(result, hasClaudeGroup: HasClaudePluginGroups);
+        PluginSupportStatus = DescribePluginSupport(result, hasClaudeGroup: HasClaudePluginGroups);
         PluginSupportActive = result.State == PluginSupportState.Active;
     }
 
@@ -244,9 +218,6 @@ public sealed partial class ClaudeCodeViewModel : ObservableObject
     internal void Reset()
     {
         _lastPluginRequest = null;
-        _localProxy = null;
-        OnPropertyChanged(nameof(UsesLocalProxy));
-        OnPropertyChanged(nameof(CanChooseGroup));
         PluginSupportStatus = string.Empty;
         PluginSupportActive = false;
         ClaudePluginGroups.Clear();
