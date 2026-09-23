@@ -330,7 +330,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	playgroundHistoryRepository := repository.NewPlaygroundHistoryRepository(db)
 	playgroundHistoryService := service.NewPlaygroundHistoryService(playgroundHistoryRepository)
 	playgroundHistoryHandler := handler.NewPlaygroundHistoryHandler(playgroundHistoryService)
-	accountContributionHandler := handler.ProvideAccountContributionHandler(userService, adminService, accountUsageService, accountTestService, rateLimitService, apiKeyService, proxyExitInfoProber, client, oAuthService, openAIOAuthService, openAITokenProvider)
+	accountContributionHandler := handler.ProvideAccountContributionHandler(userService, adminService, accountUsageService, accountTestService, rateLimitService, apiKeyService, proxyExitInfoProber, client, oAuthService, openAIOAuthService, openAITokenProvider, claudeTokenProvider)
 	handlerTicketHandler := handler.NewTicketHandler(ticketService)
 	idempotencyCoordinator := service.ProvideIdempotencyCoordinator(idempotencyRepository, configConfig)
 	idempotencyCleanupService := service.ProvideIdempotencyCleanupService(idempotencyRepository, configConfig)

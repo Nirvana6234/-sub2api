@@ -6,7 +6,7 @@ using Xunit;
 
 namespace LanAi.RelayClient.Tests;
 
-/// <summary>The 本地代理 page: listing, switching Codex, remembering, and never falling back quietly.</summary>
+/// <summary>The 本地代理 page: listing, switching, remembering, and never falling back quietly.</summary>
 public sealed class LocalProxyViewModelTests
 {
     private sealed class MemoryChoiceStore : ILocalProxyPreferenceStore
@@ -20,7 +20,9 @@ public sealed class LocalProxyViewModelTests
 
     private sealed class MemoryUsageStore : ILocalProxyUsageStore
     {
-        public IReadOnlyList<LocalProxyUsageDay> Load() => [];
+        public List<LocalProxyUsageDay> Days { get; } = [];
+
+        public IReadOnlyList<LocalProxyUsageDay> Load() => Days;
 
         public void Add(LocalProxyUsage usage) { }
     }
@@ -81,13 +83,14 @@ public sealed class LocalProxyViewModelTests
     }
 
     [Fact]
-    public async Task OnlyChatGptSubscriptionAccountsCanBeChosenAndTheRestAreStillListed()
+    public async Task AccountsAreSortedByWhichToolTheyCanServe()
     {
         Rig rig = await SignedInAsync();
 
-        Assert.Equal([7L], rig.LocalProxy.Accounts.Select(a => a.Id));
-        Assert.Equal([8L, 9L], rig.LocalProxy.OtherAccounts.Select(a => a.Id));
-        Assert.Equal("plus", rig.LocalProxy.Accounts[0].PlanText);
+        Assert.Equal([7L], rig.LocalProxy.CodexAccounts.Select(a => a.Id));
+        Assert.Equal([8L], rig.LocalProxy.ClaudeAccounts.Select(a => a.Id));
+        Assert.Equal([9L], rig.LocalProxy.OtherAccounts.Select(a => a.Id));
+        Assert.Equal("plus", rig.LocalProxy.CodexAccounts[0].PlanText);
         Assert.False(rig.LocalProxy.HasAccountsMessage);
     }
 
@@ -97,19 +100,19 @@ public sealed class LocalProxyViewModelTests
         Rig rig = await SignedInAsync(accounts: () => throw new RelayApiException(RelayFailure.Forbidden, "nope"));
 
         Assert.Contains("未开通", rig.LocalProxy.AccountsMessage);
-        Assert.Empty(rig.LocalProxy.Accounts);
+        Assert.Empty(rig.LocalProxy.CodexAccounts);
         Assert.False(rig.Dashboard.RefreshState.IsRateLimited);
     }
 
     [Fact]
-    public async Task SwitchingOnReachesTheRelayIsRememberedAndFreesCodexFromTheGroup()
+    public async Task SwitchingCodexOnReachesTheRelayIsRememberedAndFreesItFromTheGroup()
     {
         Rig rig = await SignedInAsync();
 
-        await rig.LocalProxy.ToggleAsync(rig.LocalProxy.Accounts[0]);
+        await rig.LocalProxy.ToggleAsync(rig.LocalProxy.CodexAccounts[0]);
 
-        Assert.Equal(new LocalProxyTarget(7, "我的 Plus"), rig.Codex.LocalProxies[^1]);
-        Assert.True(rig.LocalProxy.Accounts[0].IsActive);
+        Assert.Equal((LocalProxyKind.Codex, new LocalProxyTarget(7, "我的 Plus")), rig.Codex.LocalProxies[^1]);
+        Assert.True(rig.LocalProxy.CodexAccounts[0].IsActive);
         Assert.Equal(7, rig.Choice.Saved.CodexAccountId);
         Assert.False(rig.Dashboard.CanChooseGroup);
         Assert.Contains(7L, rig.Relay.LocalProxyCredentialRequests);
@@ -119,11 +122,11 @@ public sealed class LocalProxyViewModelTests
     public async Task SwitchingOffGoesBackToTheRelayServer()
     {
         Rig rig = await SignedInAsync();
-        await rig.LocalProxy.ToggleAsync(rig.LocalProxy.Accounts[0]);
+        await rig.LocalProxy.ToggleAsync(rig.LocalProxy.CodexAccounts[0]);
 
-        await rig.LocalProxy.ToggleAsync(rig.LocalProxy.Accounts[0]);
+        await rig.LocalProxy.ToggleAsync(rig.LocalProxy.CodexAccounts[0]);
 
-        Assert.Null(rig.Codex.LocalProxies[^1]);
+        Assert.Equal((LocalProxyKind.Codex, (LocalProxyTarget?)null), rig.Codex.LocalProxies[^1]);
         Assert.Null(rig.Choice.Saved.CodexAccountId);
         Assert.True(rig.Dashboard.CanChooseGroup);
     }
@@ -134,41 +137,59 @@ public sealed class LocalProxyViewModelTests
         Rig rig = await SignedInAsync();
         await rig.Dashboard.SwitchGroupAsync(rig.Dashboard.Groups.Single(g => g.Id == 12));
 
-        await rig.LocalProxy.ToggleAsync(rig.LocalProxy.Accounts[0]);
+        await rig.LocalProxy.ToggleAsync(rig.LocalProxy.CodexAccounts[0]);
 
-        Assert.Empty(rig.Codex.LocalProxies);
+        Assert.DoesNotContain(rig.Codex.LocalProxies, p => p.Kind == LocalProxyKind.Codex);
         Assert.Contains("Claude 分组", rig.LocalProxy.ActionMessage);
     }
 
     [Fact]
-    public async Task ARefusedTokenLeavesCodexWhereItWas()
+    public async Task ARefusedTokenLeavesTheToolWhereItWas()
     {
         Rig rig = await SignedInAsync();
         rig.Relay.OnLocalProxyCredential = _ => throw new RelayApiException(RelayFailure.Forbidden, "账号已停用");
 
-        await rig.LocalProxy.ToggleAsync(rig.LocalProxy.Accounts[0]);
+        await rig.LocalProxy.ToggleAsync(rig.LocalProxy.CodexAccounts[0]);
 
         Assert.Empty(rig.Codex.LocalProxies);
         Assert.Contains("开启失败", rig.LocalProxy.ActionMessage);
     }
 
     [Fact]
-    public async Task AFailureIsShownAndNotifiedOncePerNewProblemAndCodexStaysPut()
+    public async Task ClaudeCodeOnALocalProxyIsSwitchedOnAndNeedsNoGroup()
     {
         Rig rig = await SignedInAsync();
-        await rig.LocalProxy.ToggleAsync(rig.LocalProxy.Accounts[0]);
+        Assert.False(rig.Dashboard.ClaudeCode.PluginSupportEnabled);
+
+        await rig.LocalProxy.ToggleAsync(rig.LocalProxy.ClaudeAccounts[0]);
+        await rig.Dashboard.ClaudePreference.LoadAsync();
+        await rig.Dashboard.ClaudeCode.SyncPluginSupportAsync();
+
+        Assert.True(rig.Dashboard.ClaudeCode.PluginSupportEnabled);
+        Assert.False(rig.Dashboard.ClaudeCode.CanChooseGroup);
+        PluginSupportRequest request = rig.Codex.PluginRequests[^1];
+        Assert.Equal(8, request.LocalProxyAccountId);
+        Assert.True(request.Enabled);
+        Assert.Contains(rig.Codex.LocalProxies, p => p.Kind == LocalProxyKind.ClaudeCode && p.Target?.AccountId == 8);
+    }
+
+    [Fact]
+    public async Task AFailureIsShownAndNotifiedOncePerNewProblemAndTheToolStaysPut()
+    {
+        Rig rig = await SignedInAsync();
+        await rig.LocalProxy.ToggleAsync(rig.LocalProxy.CodexAccounts[0]);
         var notified = new List<string>();
         rig.LocalProxy.FailureRaised += notified.Add;
 
-        rig.LocalProxy.ApplyOutcome(new LocalProxyOutcome(7, false, "额度用完"));
-        rig.LocalProxy.ApplyOutcome(new LocalProxyOutcome(7, false, "额度用完"));
+        rig.LocalProxy.ApplyOutcome(new LocalProxyOutcome(LocalProxyKind.Codex, 7, false, "额度用完"));
+        rig.LocalProxy.ApplyOutcome(new LocalProxyOutcome(LocalProxyKind.Codex, 7, false, "额度用完"));
 
         Assert.Single(notified);
         Assert.Contains("未切回中转站", notified[0]);
         Assert.True(rig.LocalProxy.HasError);
-        Assert.True(rig.LocalProxy.IsActive);
+        Assert.True(rig.LocalProxy.IsCodexActive);
 
-        rig.LocalProxy.ApplyOutcome(new LocalProxyOutcome(7, true, null));
+        rig.LocalProxy.ApplyOutcome(new LocalProxyOutcome(LocalProxyKind.Codex, 7, true, null));
         Assert.False(rig.LocalProxy.HasError);
     }
 
@@ -176,9 +197,9 @@ public sealed class LocalProxyViewModelTests
     public async Task AReportAboutAnotherAccountIsIgnored()
     {
         Rig rig = await SignedInAsync();
-        await rig.LocalProxy.ToggleAsync(rig.LocalProxy.Accounts[0]);
+        await rig.LocalProxy.ToggleAsync(rig.LocalProxy.CodexAccounts[0]);
 
-        rig.LocalProxy.ApplyOutcome(new LocalProxyOutcome(999, false, "x"));
+        rig.LocalProxy.ApplyOutcome(new LocalProxyOutcome(LocalProxyKind.Codex, 999, false, "x"));
 
         Assert.False(rig.LocalProxy.HasError);
     }
@@ -188,8 +209,8 @@ public sealed class LocalProxyViewModelTests
     {
         Rig rig = await SignedInAsync(new LocalProxyChoice { CodexAccountId = 7, CodexAccountName = "我的 Plus" });
 
-        Assert.Equal(new LocalProxyTarget(7, "我的 Plus"), rig.LocalProxy.Target);
-        Assert.Contains(new LocalProxyTarget(7, "我的 Plus"), rig.Codex.LocalProxies);
+        Assert.Equal(new LocalProxyTarget(7, "我的 Plus"), rig.LocalProxy.CodexTarget);
+        Assert.Contains((LocalProxyKind.Codex, new LocalProxyTarget(7, "我的 Plus")), rig.Codex.LocalProxies);
         Assert.False(rig.LocalProxy.HasError);
     }
 
@@ -198,32 +219,20 @@ public sealed class LocalProxyViewModelTests
     {
         Rig rig = await SignedInAsync(new LocalProxyChoice { CodexAccountId = 70, CodexAccountName = "旧账号" });
 
-        Assert.Equal(new LocalProxyTarget(70, "旧账号"), rig.LocalProxy.Target);
-        Assert.True(rig.LocalProxy.HasError);
+        Assert.Equal(new LocalProxyTarget(70, "旧账号"), rig.LocalProxy.CodexTarget);
+        Assert.True(rig.LocalProxy.HasCodexError);
     }
 
     [Fact]
     public async Task SigningOutForgetsTheChoice()
     {
         Rig rig = await SignedInAsync();
-        await rig.LocalProxy.ToggleAsync(rig.LocalProxy.Accounts[0]);
+        await rig.LocalProxy.ToggleAsync(rig.LocalProxy.CodexAccounts[0]);
 
         rig.Dashboard.Reset();
 
-        Assert.Null(rig.LocalProxy.Target);
+        Assert.Null(rig.LocalProxy.CodexTarget);
         Assert.Equal(LocalProxyChoice.None, rig.Choice.Saved);
-        Assert.Empty(rig.LocalProxy.Accounts);
-    }
-
-    [Fact]
-    public async Task ClaudeCodeIsNotTouchedByTheLocalProxy()
-    {
-        Rig rig = await SignedInAsync();
-        int before = rig.Codex.PluginRequests.Count;
-
-        await rig.LocalProxy.ToggleAsync(rig.LocalProxy.Accounts[0]);
-
-        Assert.False(rig.Dashboard.ClaudeCode.PluginSupportEnabled);
-        Assert.Equal(before, rig.Codex.PluginRequests.Count);
+        Assert.Empty(rig.LocalProxy.CodexAccounts);
     }
 }

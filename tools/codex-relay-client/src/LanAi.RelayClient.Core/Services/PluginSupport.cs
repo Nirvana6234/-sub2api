@@ -12,11 +12,16 @@ namespace LanAi.RelayClient.Services;
 /// group Codex is routed through. Null when the checkbox is on but nothing has been chosen yet.
 /// </param>
 /// <param name="Model">The Claude model chosen in the client.</param>
+/// <param name="LocalProxyAccountId">
+/// Set when Claude Code goes straight to Anthropic with one of the user's own accounts; then no
+/// Claude group is needed for it to be set up.
+/// </param>
 internal sealed record PluginSupportRequest(
     bool Enabled,
     long? GroupId,
     string? GroupName,
-    string? Model);
+    string? Model,
+    long? LocalProxyAccountId = null);
 
 internal enum PluginSupportState
 {

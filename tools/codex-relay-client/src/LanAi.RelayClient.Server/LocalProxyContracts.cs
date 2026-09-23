@@ -2,8 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace LanAi.RelayClient.Server;
 
-/// <summary>Whether an account can serve the local proxy.</summary>
-/// <remarks>Codex only: Claude Code keeps going through the relay server.</remarks>
+/// <summary>Which tool an account can serve through the local proxy, if any.</summary>
 public enum LocalProxyKind
 {
     /// <summary>Not usable by the local proxy (API key, setup token, another platform…).</summary>
@@ -11,6 +10,9 @@ public enum LocalProxyKind
 
     /// <summary>An OpenAI (ChatGPT) OAuth account — serves Codex.</summary>
     Codex,
+
+    /// <summary>An Anthropic (Claude) OAuth account — serves Claude Code.</summary>
+    ClaudeCode,
 }
 
 /// <summary>
@@ -72,15 +74,18 @@ public sealed record ContributionAccount
     public bool IsActive => string.Equals(Status, "active", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Mirrors the server's rule (<c>supportsLocalProxy</c>): a ChatGPT OAuth account, never a
-    /// shadow. Setup tokens are long-lived secrets the server will not hand out.
+    /// Mirrors the server's rule (<c>localProxyPlatform</c>): OAuth only, never a shadow.
+    /// Setup tokens are long-lived secrets the server will not hand out.
     /// </summary>
     public LocalProxyKind LocalProxyKind =>
-        string.Equals(Type, "oauth", StringComparison.OrdinalIgnoreCase) &&
-        ParentAccountId is null &&
-        string.Equals(Platform, "openai", StringComparison.OrdinalIgnoreCase)
-            ? LocalProxyKind.Codex
-            : LocalProxyKind.Unsupported;
+        !string.Equals(Type, "oauth", StringComparison.OrdinalIgnoreCase) || ParentAccountId is not null
+            ? LocalProxyKind.Unsupported
+            : Platform.ToLowerInvariant() switch
+            {
+                "openai" => LocalProxyKind.Codex,
+                "anthropic" => LocalProxyKind.ClaudeCode,
+                _ => LocalProxyKind.Unsupported,
+            };
 }
 
 /// <summary>The non-secret credential sub-keys the listing keeps after redaction.</summary>
@@ -111,7 +116,7 @@ public sealed record ContributionAccountList
 }
 
 /// <summary>
-/// A short-lived access token for one of the user's own ChatGPT accounts, from
+/// A short-lived access token for one of the user's own OAuth accounts, from
 /// <c>POST /api/v1/account-contributions/:id/local-proxy-token</c>.
 /// </summary>
 /// <remarks>

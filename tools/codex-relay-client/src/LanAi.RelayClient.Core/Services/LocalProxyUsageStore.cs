@@ -6,10 +6,13 @@ using LanAi.RelayClient.Transport;
 
 namespace LanAi.RelayClient.Services;
 
-/// <summary>Codex's local-proxy use on one account on one (local) day.</summary>
+/// <summary>One tool's local-proxy use on one account on one (local) day.</summary>
 internal sealed record LocalProxyUsageDay
 {
     public string Date { get; init; } = string.Empty;
+
+    /// <summary><c>codex</c> or <c>claude</c>.</summary>
+    public string Tool { get; init; } = string.Empty;
 
     public long AccountId { get; init; }
 
@@ -65,6 +68,8 @@ internal sealed class LocalProxyUsageStore : ILocalProxyUsageStore
         _clock = clock ?? (() => DateTimeOffset.Now);
     }
 
+    internal static string ToolKey(LocalProxyKind kind) => kind == LocalProxyKind.ClaudeCode ? "claude" : "codex";
+
     internal static string DateKey(DateTimeOffset moment) => moment.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
 
     public IReadOnlyList<LocalProxyUsageDay> Load()
@@ -81,14 +86,15 @@ internal sealed class LocalProxyUsageStore : ILocalProxyUsageStore
         DateTimeOffset now = _clock();
         string today = DateKey(now);
         string oldest = DateKey(now.AddDays(-(KeepDays - 1)));
+        string tool = ToolKey(usage.Kind);
 
         lock (_gate)
         {
             List<LocalProxyUsageDay> days = [.. LoadUnlocked().Where(d => string.CompareOrdinal(d.Date, oldest) >= 0)];
-            int index = days.FindIndex(d => d.Date == today && d.AccountId == usage.AccountId);
+            int index = days.FindIndex(d => d.Date == today && d.Tool == tool && d.AccountId == usage.AccountId);
             LocalProxyUsageDay current = index >= 0
                 ? days[index]
-                : new LocalProxyUsageDay { Date = today, AccountId = usage.AccountId };
+                : new LocalProxyUsageDay { Date = today, Tool = tool, AccountId = usage.AccountId };
             LocalProxyUsageDay updated = current with
             {
                 Requests = SaturatingAdd(current.Requests, 1),
@@ -109,13 +115,17 @@ internal sealed class LocalProxyUsageStore : ILocalProxyUsageStore
         }
     }
 
-    /// <summary>Totals over the days from <paramref name="since"/> on.</summary>
-    internal static LocalProxyUsageTotals Sum(IEnumerable<LocalProxyUsageDay> days, string since)
+    /// <summary>Totals for one tool (or both, with null) over the days from <paramref name="since"/> on.</summary>
+    internal static LocalProxyUsageTotals Sum(
+        IEnumerable<LocalProxyUsageDay> days,
+        LocalProxyKind? kind,
+        string since)
     {
+        string? tool = kind is { } k ? ToolKey(k) : null;
         long requests = 0, input = 0, output = 0, cached = 0;
         foreach (LocalProxyUsageDay day in days)
         {
-            if (string.CompareOrdinal(day.Date, since) < 0)
+            if ((tool is not null && day.Tool != tool) || string.CompareOrdinal(day.Date, since) < 0)
             {
                 continue;
             }

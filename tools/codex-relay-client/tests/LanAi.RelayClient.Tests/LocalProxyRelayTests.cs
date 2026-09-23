@@ -32,7 +32,7 @@ public sealed class LocalProxyRelayTests
                 server.BaseAddress,
                 _ => Task.FromResult("jwt"),
                 localProxyCredentials: Credentials,
-                localProxyEndpoints: new LocalProxyEndpoints(official.BaseAddress + "/backend-api/codex/responses"),
+                localProxyEndpoints: new LocalProxyEndpoints(official.BaseAddress + "/backend-api/codex/responses", official.BaseAddress),
                 onLocalProxyOutcome: Outcomes.Enqueue,
                 onLocalProxyUsage: Usage.Enqueue);
         }
@@ -88,7 +88,7 @@ public sealed class LocalProxyRelayTests
     {
         await using Rig rig = await Rig.StartAsync();
         rig.Relay.SetGroup(11);
-        rig.Relay.SetLocalProxy(Mine);
+        rig.Relay.SetLocalProxy(LocalProxyKind.Codex, Mine);
 
         using HttpResponseMessage response = await rig.PostAsync(
             "/v1/responses", """{"model":"gpt-5.5","store":false,"stream":true}""", ("originator", "codex_cli_rs"));
@@ -109,12 +109,12 @@ public sealed class LocalProxyRelayTests
     public async Task UsageAndSuccessAreReported()
     {
         await using Rig rig = await Rig.StartAsync();
-        rig.Relay.SetLocalProxy(Mine);
+        rig.Relay.SetLocalProxy(LocalProxyKind.Codex, Mine);
 
         (await rig.PostAsync("/v1/responses")).Dispose();
 
         LocalProxyUsage usage = Assert.Single(rig.Usage);
-        Assert.Equal(new LocalProxyUsage(7, 100, 7, 0), usage);
+        Assert.Equal(new LocalProxyUsage(LocalProxyKind.Codex, 7, 100, 7, 0), usage);
         Assert.True(Assert.Single(rig.Outcomes).Succeeded);
     }
 
@@ -123,10 +123,10 @@ public sealed class LocalProxyRelayTests
     {
         await using Rig rig = await Rig.StartAsync();
         rig.Relay.SetGroup(11);
-        rig.Relay.SetLocalProxy(Mine);
+        rig.Relay.SetLocalProxy(LocalProxyKind.Codex, Mine);
         (await rig.PostAsync("/v1/responses")).Dispose();
 
-        rig.Relay.SetLocalProxy(null);
+        rig.Relay.SetLocalProxy(LocalProxyKind.Codex, null);
         (await rig.PostAsync("/v1/responses")).Dispose();
 
         Assert.Single(rig.Official.Requests);
@@ -135,23 +135,44 @@ public sealed class LocalProxyRelayTests
     }
 
     [Fact]
-    public async Task ClaudeCodeAlwaysGoesThroughTheServer()
+    public async Task CodexAndClaudeCodeSwitchIndependently()
     {
-        await using Rig rig = await Rig.StartAsync();
+        await using Rig rig = await Rig.StartAsync((200, "{}"), (200, "{}"));
         rig.Relay.SetClaudeGroup(22);
-        rig.Relay.SetLocalProxy(Mine);
+        rig.Relay.SetLocalProxy(LocalProxyKind.Codex, Mine);
 
         (await rig.PostAsync("/v1/messages?beta=true")).Dispose();
+        (await rig.PostAsync("/v1/responses")).Dispose();
 
         Assert.Equal("/api/v1/paw/messages", Assert.Single(rig.Server.Requests).Path);
-        Assert.Empty(rig.Official.Requests);
+        Assert.Equal("/backend-api/codex/responses", Assert.Single(rig.Official.Requests).Path);
+    }
+
+    [Fact]
+    public async Task ClaudeCodeGoesStraightToAnthropicWithoutNeedingAGroup()
+    {
+        await using Rig rig = await Rig.StartAsync((200, "{\"type\":\"message\",\"usage\":{\"input_tokens\":3,\"output_tokens\":4}}"));
+        rig.Relay.SetLocalProxy(LocalProxyKind.ClaudeCode, new LocalProxyTarget(8, "Max"));
+
+        using HttpResponseMessage response = await rig.PostAsync(
+            "/v1/messages?beta=true", "{}", ("anthropic-beta", "claude-code-20250219"), ("User-Agent", "claude-cli/2.1.258 (external, claude-vscode)"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Received sent = Assert.Single(rig.Official.Requests);
+        Assert.Equal("/v1/messages", sent.Path);
+        Assert.Equal("?beta=true", sent.Query);
+        Assert.Equal("Bearer at-8", sent.Header("Authorization"));
+        Assert.Equal("claude-code-20250219,oauth-2025-04-20", sent.Header("anthropic-beta"));
+        Assert.Equal("claude-cli/2.1.258 (external, claude-vscode)", sent.Header("User-Agent"));
+        Assert.Null(sent.Header("chatgpt-account-id"));
+        Assert.Equal(new LocalProxyUsage(LocalProxyKind.ClaudeCode, 8, 3, 4, 0), Assert.Single(rig.Usage));
     }
 
     [Fact]
     public async Task AnOfficial401IsRetriedOnceWithAFreshToken()
     {
         await using Rig rig = await Rig.StartAsync((401, "{\"error\":\"expired\"}"), (200, CodexCompleted));
-        rig.Relay.SetLocalProxy(Mine);
+        rig.Relay.SetLocalProxy(LocalProxyKind.Codex, Mine);
 
         using HttpResponseMessage response = await rig.PostAsync("/v1/responses");
 
@@ -165,7 +186,7 @@ public sealed class LocalProxyRelayTests
     {
         await using Rig rig = await Rig.StartAsync((429, "{\"error\":{\"type\":\"usage_limit_reached\"}}"));
         rig.Relay.SetGroup(11);
-        rig.Relay.SetLocalProxy(Mine);
+        rig.Relay.SetLocalProxy(LocalProxyKind.Codex, Mine);
 
         using HttpResponseMessage response = await rig.PostAsync("/v1/responses");
 
@@ -182,7 +203,7 @@ public sealed class LocalProxyRelayTests
     {
         await using Rig rig = await Rig.StartAsync();
         rig.Credentials.Fail = new RelayApiException(RelayFailure.Forbidden, "not yours");
-        rig.Relay.SetLocalProxy(Mine);
+        rig.Relay.SetLocalProxy(LocalProxyKind.Codex, Mine);
 
         using HttpResponseMessage response = await rig.PostAsync("/v1/responses");
 
@@ -202,7 +223,7 @@ public sealed class LocalProxyRelayTests
         Assert.Equal(HttpStatusCode.NotFound, refused.StatusCode);
         Assert.Empty(rig.Server.Requests);
 
-        rig.Relay.SetLocalProxy(Mine);
+        rig.Relay.SetLocalProxy(LocalProxyKind.Codex, Mine);
         using HttpResponseMessage served = await rig.PostAsync("/v1/responses/compact", """{"model":"m","store":false,"stream":true}""");
 
         Assert.Equal(HttpStatusCode.OK, served.StatusCode);
@@ -216,7 +237,7 @@ public sealed class LocalProxyRelayTests
     public async Task StoppingForgetsTheLocalProxyAndItsTokens()
     {
         await using Rig rig = await Rig.StartAsync();
-        rig.Relay.SetLocalProxy(Mine);
+        rig.Relay.SetLocalProxy(LocalProxyKind.Codex, Mine);
 
         await rig.Relay.StopAsync();
         await rig.Relay.StartAsync();

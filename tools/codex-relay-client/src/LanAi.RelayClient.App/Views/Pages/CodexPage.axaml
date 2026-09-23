@@ -147,9 +147,9 @@
           <TextBlock Text="{Binding Dashboard.GroupMessage}" TextWrapping="Wrap"
                      Foreground="#2563EB" FontSize="12" Margin="0,8,0,0"
                      IsVisible="{Binding Dashboard.HasGroupMessage}" />
-          <TextBlock Text="{Binding Dashboard.LocalProxy.StatusText, StringFormat='{}{0}：分组暂不生效，可在「本地代理」页改回经中转站。'}"
+          <TextBlock Text="{Binding Dashboard.LocalProxy.CodexStatusText, StringFormat='{}{0}：分组暂不生效，可在「本地代理」页改回经中转站。'}"
                      TextWrapping="Wrap" Foreground="#B45309" FontSize="12" Margin="0,8,0,0"
-                     IsVisible="{Binding Dashboard.LocalProxy.IsActive}" />
+                     IsVisible="{Binding Dashboard.LocalProxy.IsCodexActive}" />
 
           <!-- The Claude model preference is one account-level setting; this shows it
                when Codex itself is on a Claude group. The Claude page binds the very

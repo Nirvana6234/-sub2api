@@ -29,6 +29,7 @@
             <ComboBox ItemsSource="{Binding Dashboard.ClaudeCode.ClaudePluginGroups}"
                       SelectedItem="{Binding Dashboard.ClaudeCode.SelectedClaudePluginGroup, Mode=TwoWay}"
                       IsVisible="{Binding Dashboard.ClaudeCode.HasClaudePluginGroups}"
+                      IsEnabled="{Binding Dashboard.ClaudeCode.CanChooseGroup}"
                       controls:ComboBoxWheelBehavior.DisableMouseWheel="True"
                       HorizontalAlignment="Stretch" Padding="8,6" PlaceholderText="点击选择 Claude 分组">
               <ComboBox.ItemTemplate>
@@ -39,6 +40,9 @@
             </ComboBox>
             <TextBlock Text="该账号没有可用的 Claude 分组" Foreground="#9CA3AF" FontSize="12"
                        IsVisible="{Binding !Dashboard.ClaudeCode.HasClaudePluginGroups}" />
+            <TextBlock Text="{Binding Dashboard.LocalProxy.ClaudeStatusText, StringFormat='{}{0}：分组暂不生效，可在「本地代理」页改回经中转站。'}"
+                       TextWrapping="Wrap" Foreground="#B45309" FontSize="12" Margin="0,4,0,0"
+                       IsVisible="{Binding Dashboard.LocalProxy.IsClaudeActive}" />
             <TextBlock Text="{Binding Dashboard.ClaudeCode.PluginSupportStatus}"
                        IsVisible="{Binding Dashboard.ClaudeCode.HasPluginSupportStatus}"
                        Classes="hint" Margin="0,4,0,0" />

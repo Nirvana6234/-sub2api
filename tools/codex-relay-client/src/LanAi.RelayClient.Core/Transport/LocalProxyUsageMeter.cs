@@ -19,9 +19,11 @@ internal sealed record MeteredUsage(long InputTokens, long OutputTokens, long Ca
 /// <c>usage</c> is parsed, so the per-token deltas cost a byte search and nothing more.
 /// </para>
 /// <para>
-/// <c>response.completed</c> carries <c>response.usage</c> (<c>input_tokens</c> includes
-/// <c>input_tokens_details.cached_tokens</c>). A non-streamed JSON answer (compact) is read
-/// whole, up to a cap, from its top-level <c>usage</c>.
+/// Codex: <c>response.completed</c> carries <c>response.usage</c> (<c>input_tokens</c>
+/// includes <c>input_tokens_details.cached_tokens</c>). Claude: <c>message_start</c>
+/// carries the input side, <c>message_delta</c> the running output count — the same
+/// reading as the server's <c>parseSSEUsagePassthrough</c>. A non-streamed JSON answer is
+/// read whole, up to a cap, from its top-level <c>usage</c>.
 /// </para>
 /// </remarks>
 internal sealed class LocalProxyUsageMeter
@@ -30,6 +32,7 @@ internal sealed class LocalProxyUsageMeter
     private const int MaxJsonBodyBytes = 4 * 1024 * 1024;
     private static readonly byte[] UsageMarker = "\"usage\""u8.ToArray();
 
+    private readonly RelayProtocol _protocol;
     private readonly MemoryStream _line = new();
     private bool _lineOverflowed;
     private bool _sawEvents;
@@ -40,6 +43,8 @@ internal sealed class LocalProxyUsageMeter
     private long _output;
     private long _cached;
     private bool _found;
+
+    internal LocalProxyUsageMeter(RelayProtocol protocol) => _protocol = protocol;
 
     internal void Observe(ReadOnlyMemory<byte> chunk)
     {
@@ -133,11 +138,26 @@ internal sealed class LocalProxyUsageMeter
                 ? t.GetString() ?? string.Empty
                 : string.Empty;
 
-            if (type == "response.completed" &&
-                root.TryGetProperty("response", out JsonElement response) &&
-                response.TryGetProperty("usage", out JsonElement usage))
+            if (_protocol == RelayProtocol.Responses)
             {
-                ReadOpenAIUsage(usage);
+                if (type == "response.completed" &&
+                    root.TryGetProperty("response", out JsonElement response) &&
+                    response.TryGetProperty("usage", out JsonElement usage))
+                {
+                    ReadOpenAIUsage(usage);
+                }
+                return;
+            }
+
+            if (type == "message_start" &&
+                root.TryGetProperty("message", out JsonElement message) &&
+                message.TryGetProperty("usage", out JsonElement startUsage))
+            {
+                ReadAnthropicUsage(startUsage);
+            }
+            else if (type == "message_delta" && root.TryGetProperty("usage", out JsonElement deltaUsage))
+            {
+                ReadAnthropicUsage(deltaUsage);
             }
         }
         catch (JsonException)
@@ -157,7 +177,14 @@ internal sealed class LocalProxyUsageMeter
                 return;
             }
 
-            ReadOpenAIUsage(usage);
+            if (_protocol == RelayProtocol.Responses)
+            {
+                ReadOpenAIUsage(usage);
+            }
+            else
+            {
+                ReadAnthropicUsage(usage);
+            }
         }
         catch (JsonException)
         {
@@ -171,6 +198,35 @@ internal sealed class LocalProxyUsageMeter
         _cached = usage.TryGetProperty("input_tokens_details", out JsonElement details)
             ? Number(details, "cached_tokens")
             : 0;
+        _found = true;
+    }
+
+    /// <summary>
+    /// Anthropic counts cache writes and cache reads apart from <c>input_tokens</c>; all
+    /// three are input. Fields absent from a delta keep what the start reported, and the
+    /// output count in a delta is cumulative, so the last one wins.
+    /// </summary>
+    private void ReadAnthropicUsage(JsonElement usage)
+    {
+        bool hasInput = usage.TryGetProperty("input_tokens", out _);
+        bool hasCacheWrite = usage.TryGetProperty("cache_creation_input_tokens", out _);
+        bool hasCacheRead = usage.TryGetProperty("cache_read_input_tokens", out _);
+        if (hasInput || hasCacheWrite || hasCacheRead)
+        {
+            long cacheRead = Number(usage, "cache_read_input_tokens");
+            long total = Number(usage, "input_tokens") + Number(usage, "cache_creation_input_tokens") + cacheRead;
+            if (total > 0 || !_found)
+            {
+                _input = total;
+                _cached = cacheRead;
+            }
+        }
+
+        if (usage.TryGetProperty("output_tokens", out _))
+        {
+            _output = Number(usage, "output_tokens");
+        }
+
         _found = true;
     }
 

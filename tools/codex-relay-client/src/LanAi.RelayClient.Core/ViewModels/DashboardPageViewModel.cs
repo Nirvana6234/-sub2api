@@ -55,8 +55,12 @@ public sealed partial class DashboardPageViewModel : ObservableObject
         {
             switch (args.PropertyName)
             {
-                case nameof(LocalProxyViewModel.Target):
+                case nameof(LocalProxyViewModel.CodexTarget):
+                    OnPropertyChanged(nameof(CodexStatusText));
                     OnPropertyChanged(nameof(CodexRouteText));
+                    break;
+                case nameof(LocalProxyViewModel.ClaudeTarget):
+                    OnPropertyChanged(nameof(ClaudeStatusText));
                     break;
                 case nameof(LocalProxyViewModel.HasError):
                     Navigation.Item(ClientPage.LocalProxy).HasBadge = Dashboard.LocalProxy.HasError;
@@ -92,7 +96,7 @@ public sealed partial class DashboardPageViewModel : ObservableObject
     /// Where Codex's turns go, for the overview card and the tray: the group while they go
     /// through the relay server, the account while it is on a local proxy.
     /// </summary>
-    public string CodexRouteText => Dashboard.LocalProxy.Target is { } t
+    public string CodexRouteText => Dashboard.LocalProxy.CodexTarget is { } t
         ? $"本地代理：{t.Name}"
         : $"{Dashboard.CurrentGroupName} {Dashboard.CurrentGroupRate}".Trim();
 
@@ -111,6 +115,7 @@ public sealed partial class DashboardPageViewModel : ObservableObject
     /// </remarks>
     public string ClaudeStatusText =>
         !Dashboard.ClaudeCode.PluginSupportEnabled ? "未开启"
+        : Dashboard.ClaudeCode.PluginSupportActive && Dashboard.LocalProxy.ClaudeTarget is { } t ? $"已接入 · 本地代理：{t.Name}"
         : Dashboard.ClaudeCode.PluginSupportActive ? "已接入"
         : "待完成设置";
 

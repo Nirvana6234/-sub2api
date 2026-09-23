@@ -13,7 +13,7 @@ public sealed partial class LocalProxyAccountItem : ObservableObject
     {
         Id = account.Id;
         Name = account.Name;
-        IsSupported = account.LocalProxyKind == LocalProxyKind.Codex;
+        Kind = account.LocalProxyKind;
         PlatformLabel = account.Platform.ToLowerInvariant() switch
         {
             "openai" => "ChatGPT",
@@ -39,8 +39,7 @@ public sealed partial class LocalProxyAccountItem : ObservableObject
 
     public string Name { get; }
 
-    /// <summary>A ChatGPT subscription account: the only kind the local proxy serves.</summary>
-    public bool IsSupported { get; }
+    internal LocalProxyKind Kind { get; }
 
     public string PlatformLabel { get; }
 
@@ -54,6 +53,10 @@ public sealed partial class LocalProxyAccountItem : ObservableObject
 
     public string StatusText { get; }
 
+    public string UnsupportedReason => Kind == LocalProxyKind.Unsupported
+        ? "暂不支持：只支持订阅登录的 ChatGPT / Claude 账号"
+        : string.Empty;
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ActionLabel))]
     private bool isActive;
@@ -62,19 +65,18 @@ public sealed partial class LocalProxyAccountItem : ObservableObject
 }
 
 /// <summary>
-/// The 本地代理 page: the user's own accounts on the relay, and which ChatGPT account, if any,
-/// Codex goes straight to the official API with.
+/// The 本地代理 page: the user's own accounts on the relay, and which of them, if any, each
+/// tool goes straight to the official API with.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Codex only. Its configuration keeps the local placeholder key; the account's real token
-/// lives inside the relay and is fetched per request, so token expiry never touches a Codex
-/// session. Claude Code is not part of this and always goes through the relay server.
+/// Each tool is its own either/or with the relay server: Codex on a local proxy leaves
+/// Claude Code where it was, and the reverse.
 /// </para>
 /// <para>
 /// <b>Never a silent way back.</b> A local proxy is the user's own choice. When it fails the
 /// failure is shown — an error on the page, a badge, one notification per new problem — and
-/// Codex stays on the local proxy until the user switches it off. Falling back to the relay
+/// the tool stays on the local proxy until the user switches it off. Falling back to the relay
 /// server on its own would start spending the user's balance without their knowing.
 /// </para>
 /// </remarks>
@@ -89,6 +91,8 @@ public sealed partial class LocalProxyViewModel : ObservableObject
     private readonly ILocalProxyCredentialSource _credentials;
     private readonly ILocalProxyPreferenceStore _preferences;
     private readonly ILocalProxyUsageStore _usage;
+    private readonly ClaudeCodeViewModel _claudeCode;
+    private readonly ClaudePreferenceViewModel _claudePreference;
     private readonly Func<bool> _codexOnClaudeGroup;
     private readonly Func<DateTimeOffset> _clock;
 
@@ -102,6 +106,8 @@ public sealed partial class LocalProxyViewModel : ObservableObject
         ILocalProxyCredentialSource credentials,
         ILocalProxyPreferenceStore preferences,
         ILocalProxyUsageStore usage,
+        ClaudeCodeViewModel claudeCode,
+        ClaudePreferenceViewModel claudePreference,
         Func<bool> codexOnClaudeGroup,
         Func<DateTimeOffset>? clock = null)
     {
@@ -111,6 +117,8 @@ public sealed partial class LocalProxyViewModel : ObservableObject
         _credentials = credentials ?? throw new ArgumentNullException(nameof(credentials));
         _preferences = preferences ?? throw new ArgumentNullException(nameof(preferences));
         _usage = usage ?? throw new ArgumentNullException(nameof(usage));
+        _claudeCode = claudeCode ?? throw new ArgumentNullException(nameof(claudeCode));
+        _claudePreference = claudePreference ?? throw new ArgumentNullException(nameof(claudePreference));
         _codexOnClaudeGroup = codexOnClaudeGroup ?? throw new ArgumentNullException(nameof(codexOnClaudeGroup));
         _clock = clock ?? (() => DateTimeOffset.Now);
         RefreshUsage();
@@ -119,13 +127,15 @@ public sealed partial class LocalProxyViewModel : ObservableObject
     /// <summary>Raised with a message the first time a new problem appears; the host shows a notification.</summary>
     public event Action<string>? FailureRaised;
 
-    /// <summary>ChatGPT subscription accounts: the ones Codex can use.</summary>
-    public ObservableCollection<LocalProxyAccountItem> Accounts { get; } = [];
+    public ObservableCollection<LocalProxyAccountItem> CodexAccounts { get; } = [];
 
-    /// <summary>Everything else the user owns, listed so nothing looks lost.</summary>
+    public ObservableCollection<LocalProxyAccountItem> ClaudeAccounts { get; } = [];
+
     public ObservableCollection<LocalProxyAccountItem> OtherAccounts { get; } = [];
 
-    public bool HasAccounts => Accounts.Count > 0;
+    public bool HasCodexAccounts => CodexAccounts.Count > 0;
+
+    public bool HasClaudeAccounts => ClaudeAccounts.Count > 0;
 
     public bool HasOtherAccounts => OtherAccounts.Count > 0;
 
@@ -137,23 +147,45 @@ public sealed partial class LocalProxyViewModel : ObservableObject
     public bool HasAccountsMessage => AccountsMessage.Length > 0;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsActive))]
-    [NotifyPropertyChangedFor(nameof(StatusText))]
-    private LocalProxyTarget? target;
-
-    public bool IsActive => Target is not null;
-
-    public string StatusText => Target is { } t ? $"正在使用本地代理：{t.Name}" : "经中转站（未开启本地代理）";
+    [NotifyPropertyChangedFor(nameof(IsCodexActive))]
+    [NotifyPropertyChangedFor(nameof(CodexStatusText))]
+    private LocalProxyTarget? codexTarget;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsClaudeActive))]
+    [NotifyPropertyChangedFor(nameof(ClaudeStatusText))]
+    private LocalProxyTarget? claudeTarget;
+
+    public bool IsCodexActive => CodexTarget is not null;
+
+    public bool IsClaudeActive => ClaudeTarget is not null;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasCodexError))]
     [NotifyPropertyChangedFor(nameof(HasError))]
-    private string error = string.Empty;
+    private string codexError = string.Empty;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasClaudeError))]
+    [NotifyPropertyChangedFor(nameof(HasError))]
+    private string claudeError = string.Empty;
+
+    public bool HasCodexError => CodexError.Length > 0;
+
+    public bool HasClaudeError => ClaudeError.Length > 0;
 
     /// <summary>Anything the user should look at — drives the page's badge.</summary>
-    public bool HasError => Error.Length > 0;
+    public bool HasError => HasCodexError || HasClaudeError;
+
+    public string CodexStatusText => CodexTarget is { } t ? $"正在使用本地代理：{t.Name}" : "经中转站（未开启本地代理）";
+
+    public string ClaudeStatusText => ClaudeTarget is { } t ? $"正在使用本地代理：{t.Name}" : "经中转站（未开启本地代理）";
 
     [ObservableProperty]
-    private string usageText = string.Empty;
+    private string codexUsageText = string.Empty;
+
+    [ObservableProperty]
+    private string claudeUsageText = string.Empty;
 
     /// <summary>A one-line message about the last action, e.g. why a switch was refused.</summary>
     [ObservableProperty]
@@ -201,13 +233,16 @@ public sealed partial class LocalProxyViewModel : ObservableObject
         }
     }
 
-    /// <summary>Switches Codex to <paramref name="item"/>, or — when it is the active one — back to the relay server.</summary>
+    /// <summary>Re-reads the account list now, whatever its age.</summary>
+    internal void InvalidateAccounts() => _accountsLoadedAt = null;
+
+    /// <summary>Switches <paramref name="item"/>'s tool to it, or — when it is the active one — back to the relay server.</summary>
     public async Task ToggleAsync(LocalProxyAccountItem item)
     {
         ArgumentNullException.ThrowIfNull(item);
         if (item.IsActive)
         {
-            Disable();
+            Disable(item.Kind);
             return;
         }
 
@@ -217,13 +252,13 @@ public sealed partial class LocalProxyViewModel : ObservableObject
     internal async Task EnableAsync(LocalProxyAccountItem item)
     {
         ActionMessage = string.Empty;
-        if (!item.IsSupported)
+        if (item.Kind == LocalProxyKind.Unsupported)
         {
-            ActionMessage = "本地代理只支持订阅登录的 ChatGPT 账号。";
+            ActionMessage = item.UnsupportedReason;
             return;
         }
 
-        if (_codexOnClaudeGroup())
+        if (item.Kind == LocalProxyKind.Codex && _codexOnClaudeGroup())
         {
             ActionMessage = "Codex 现在用的是 Claude 分组，ChatGPT 账号跑不了 Claude 模型。请先在 Codex 页切到 GPT 分组，再开启本地代理。";
             return;
@@ -240,48 +275,67 @@ public sealed partial class LocalProxyViewModel : ObservableObject
             return;
         }
 
-        Apply(new LocalProxyTarget(item.Id, item.Name));
+        Apply(item.Kind, new LocalProxyTarget(item.Id, item.Name));
         Save();
-        ActionMessage = $"Codex 已改为本地代理「{item.Name}」，下一轮对话起生效，不再经过中转站、不扣余额。";
+        ActionMessage = item.Kind == LocalProxyKind.Codex
+            ? $"Codex 已改为本地代理「{item.Name}」，下一轮对话起生效，不再经过中转站、不扣余额。"
+            : $"Claude Code 已改为本地代理「{item.Name}」，下一轮对话起生效，不再经过中转站、不扣余额。";
     }
 
-    internal void Disable()
+    internal void Disable(LocalProxyKind kind)
     {
-        Apply(null);
+        Apply(kind, null);
         Save();
-        ActionMessage = "Codex 已改回经中转站。";
+        ActionMessage = kind == LocalProxyKind.Codex
+            ? "Codex 已改回经中转站。"
+            : "Claude Code 已改回经中转站。";
     }
 
     /// <summary>Takes a report from the relay. Call on the UI thread.</summary>
     internal void ApplyOutcome(LocalProxyOutcome outcome)
     {
-        LocalProxyTarget? current = Target;
+        LocalProxyTarget? current = outcome.Kind == LocalProxyKind.Codex ? CodexTarget : ClaudeTarget;
         if (current is null || current.AccountId != outcome.AccountId)
         {
             return;
         }
 
         string message = outcome.Succeeded ? string.Empty : outcome.Message ?? "本地代理出错。";
-        string previous = Error;
-        Error = message;
+        string previous = outcome.Kind == LocalProxyKind.Codex ? CodexError : ClaudeError;
+        if (outcome.Kind == LocalProxyKind.Codex)
+        {
+            CodexError = message;
+        }
+        else
+        {
+            ClaudeError = message;
+        }
 
         // Once per new problem, not once per failed request.
         if (message.Length > 0 && message != previous)
         {
-            FailureRaised?.Invoke($"Codex 本地代理「{current.Name}」出错：{message}\n未切回中转站，可在「本地代理」页关闭。");
+            string tool = outcome.Kind == LocalProxyKind.Codex ? "Codex" : "Claude Code";
+            FailureRaised?.Invoke($"{tool} 本地代理「{current.Name}」出错：{message}\n未切回中转站，可在「本地代理」页关闭。");
         }
     }
 
     /// <summary>Re-reads today's local-proxy usage from this machine's store.</summary>
-    public void RefreshUsage() =>
-        UsageText = LocalProxyUsageStore.Describe(
-            LocalProxyUsageStore.Sum(_usage.Load(), LocalProxyUsageStore.DateKey(_clock())));
+    public void RefreshUsage()
+    {
+        IReadOnlyList<LocalProxyUsageDay> days = _usage.Load();
+        string today = LocalProxyUsageStore.DateKey(_clock());
+        CodexUsageText = LocalProxyUsageStore.Describe(LocalProxyUsageStore.Sum(days, LocalProxyKind.Codex, today));
+        ClaudeUsageText = LocalProxyUsageStore.Describe(LocalProxyUsageStore.Sum(days, LocalProxyKind.ClaudeCode, today));
+    }
 
     /// <summary>Drops everything belonging to the account that just signed out, including the saved choice.</summary>
     internal void Reset()
     {
-        Target = null;
-        Error = string.Empty;
+        CodexTarget = null;
+        ClaudeTarget = null;
+        _claudeCode.SetLocalProxy(null);
+        CodexError = string.Empty;
+        ClaudeError = string.Empty;
         ActionMessage = string.Empty;
         _accountsLoadedAt = null;
         _restored = false;
@@ -299,53 +353,101 @@ public sealed partial class LocalProxyViewModel : ObservableObject
     private void RestoreChoice()
     {
         LocalProxyChoice saved = _preferences.Load();
-        if (saved.CodexAccountId is not long id)
+        if (saved.CodexAccountId is long codexId)
         {
-            return;
+            Apply(LocalProxyKind.Codex, new LocalProxyTarget(codexId, NameOf(CodexAccounts, codexId, saved.CodexAccountName)));
+            if (CodexAccounts.All(a => a.Id != codexId) && AccountsMessage.Length == 0)
+            {
+                CodexError = "上次选择的账号已不在你的账号列表中，本地代理无法使用。";
+            }
         }
-
-        LocalProxyAccountItem? item = Accounts.FirstOrDefault(a => a.Id == id);
-        Apply(new LocalProxyTarget(id, item?.Name ?? saved.CodexAccountName ?? $"账号 {id}"));
-        if (item is null && AccountsMessage.Length == 0)
+        if (saved.ClaudeAccountId is long claudeId)
         {
-            Error = "上次选择的账号已不在你的账号列表中，本地代理无法使用。";
+            Apply(LocalProxyKind.ClaudeCode, new LocalProxyTarget(claudeId, NameOf(ClaudeAccounts, claudeId, saved.ClaudeAccountName)));
+            if (ClaudeAccounts.All(a => a.Id != claudeId) && AccountsMessage.Length == 0)
+            {
+                ClaudeError = "上次选择的账号已不在你的账号列表中，本地代理无法使用。";
+            }
         }
     }
 
-    private void Apply(LocalProxyTarget? target)
+    private static string NameOf(IEnumerable<LocalProxyAccountItem> items, long id, string? fallback) =>
+        items.FirstOrDefault(a => a.Id == id)?.Name ?? fallback ?? $"账号 {id}";
+
+    private void Apply(LocalProxyKind kind, LocalProxyTarget? target)
     {
-        Target = target;
-        Error = string.Empty;
-        _codex.SetLocalProxy(target);
+        if (kind == LocalProxyKind.Codex)
+        {
+            CodexTarget = target;
+            CodexError = string.Empty;
+        }
+        else
+        {
+            ClaudeTarget = target;
+            ClaudeError = string.Empty;
+        }
+
+        _codex.SetLocalProxy(kind, target);
         MarkActive();
+
+        if (kind == LocalProxyKind.ClaudeCode)
+        {
+            _claudeCode.SetLocalProxy(target);
+            if (target is not null)
+            {
+                // Claude Code has to be pointed at this relay for the local proxy to reach it,
+                // and its model comes from the account preference.
+                if (!_claudeCode.PluginSupportEnabled)
+                {
+                    _claudeCode.PluginSupportEnabled = true;
+                }
+                if (!_claudePreference.IsLoaded)
+                {
+                    _ = _claudePreference.LoadAsync();
+                }
+            }
+        }
     }
 
     private void Save() => _preferences.Save(new LocalProxyChoice
     {
-        CodexAccountId = Target?.AccountId,
-        CodexAccountName = Target?.Name,
+        CodexAccountId = CodexTarget?.AccountId,
+        CodexAccountName = CodexTarget?.Name,
+        ClaudeAccountId = ClaudeTarget?.AccountId,
+        ClaudeAccountName = ClaudeTarget?.Name,
     });
 
     private void Populate(IReadOnlyList<ContributionAccount> accounts)
     {
-        Accounts.Clear();
+        CodexAccounts.Clear();
+        ClaudeAccounts.Clear();
         OtherAccounts.Clear();
         foreach (ContributionAccount account in accounts)
         {
             var item = new LocalProxyAccountItem(account);
-            (item.IsSupported ? Accounts : OtherAccounts).Add(item);
+            (item.Kind switch
+            {
+                LocalProxyKind.Codex => CodexAccounts,
+                LocalProxyKind.ClaudeCode => ClaudeAccounts,
+                _ => OtherAccounts,
+            }).Add(item);
         }
 
-        OnPropertyChanged(nameof(HasAccounts));
+        OnPropertyChanged(nameof(HasCodexAccounts));
+        OnPropertyChanged(nameof(HasClaudeAccounts));
         OnPropertyChanged(nameof(HasOtherAccounts));
         MarkActive();
     }
 
     private void MarkActive()
     {
-        foreach (LocalProxyAccountItem item in Accounts)
+        foreach (LocalProxyAccountItem item in CodexAccounts)
         {
-            item.IsActive = Target?.AccountId == item.Id;
+            item.IsActive = CodexTarget?.AccountId == item.Id;
+        }
+        foreach (LocalProxyAccountItem item in ClaudeAccounts)
+        {
+            item.IsActive = ClaudeTarget?.AccountId == item.Id;
         }
     }
 }

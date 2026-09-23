@@ -49,8 +49,9 @@ type AccountContributionHandler struct {
 	openaiOAuthService  *service.OpenAIOAuthService
 	entClient           *dbent.Client
 
-	// Local proxy: the server-side token provider, the accounts' only refresher.
+	// Local proxy: server-side token providers, the accounts' only refreshers.
 	openAILocalProxyToken localProxyAccessTokenFunc
+	claudeLocalProxyToken localProxyAccessTokenFunc
 }
 
 // ProvideAccountContributionHandler supplies the user contribution surface with
@@ -67,12 +68,16 @@ func ProvideAccountContributionHandler(
 	oauthService *service.OAuthService,
 	openaiOAuthService *service.OpenAIOAuthService,
 	openAITokenProvider *service.OpenAITokenProvider,
+	claudeTokenProvider *service.ClaudeTokenProvider,
 ) *AccountContributionHandler {
 	h := NewAccountContributionHandler(userService, adminService, accountUsageService, accountTestService, rateLimitService, apiKeyService, proxyProber, entClient)
 	h.oauthService = oauthService
 	h.openaiOAuthService = openaiOAuthService
 	if openAITokenProvider != nil {
 		h.openAILocalProxyToken = openAITokenProvider.GetAccessToken
+	}
+	if claudeTokenProvider != nil {
+		h.claudeLocalProxyToken = claudeTokenProvider.GetAccessToken
 	}
 	return h
 }

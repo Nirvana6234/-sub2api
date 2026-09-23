@@ -18,9 +18,8 @@ import (
 // refresher (the client) would invalidate this server's copy and break the account.
 type localProxyAccessTokenFunc func(ctx context.Context, account *service.Account) (string, error)
 
-// LocalProxyCredential is what the novice client needs to send Codex's traffic
-// straight to the official API with one of the user's own ChatGPT accounts. The
-// client keeps it in memory; Codex itself only ever sees a local placeholder key.
+// LocalProxyCredential is what the novice client needs to send its own tool's
+// traffic straight to the official API with one of the user's own accounts.
 //
 // It deliberately never carries a refresh token, and only OAuth accounts qualify:
 // their access tokens are short-lived. Setup tokens are long-lived secrets and are
@@ -35,14 +34,24 @@ type LocalProxyCredential struct {
 	FedRAMP          bool       `json:"fedramp,omitempty"`
 }
 
-// supportsLocalProxy reports whether an account can serve the client's local
-// proxy: a ChatGPT (OpenAI OAuth) account of its own, never a shadow.
-func supportsLocalProxy(account *service.Account) bool {
-	return account != nil && account.Type == service.AccountTypeOAuth && !account.IsShadow() && account.IsOpenAI()
+// localProxyPlatform reports which local-proxy flavour an account supports, or ""
+// when it supports none.
+func localProxyPlatform(account *service.Account) string {
+	if account == nil || account.Type != service.AccountTypeOAuth || account.IsShadow() {
+		return ""
+	}
+	switch {
+	case account.IsOpenAI():
+		return service.PlatformOpenAI
+	case account.Platform == service.PlatformAnthropic:
+		return service.PlatformAnthropic
+	default:
+		return ""
+	}
 }
 
-// IssueLocalProxyToken hands the owner of a ChatGPT OAuth contribution a short-lived
-// access token so the novice client can send Codex straight to the official API.
+// IssueLocalProxyToken hands the owner of an OAuth contribution a short-lived access
+// token so the novice client can talk to the official API directly.
 //
 // POST so nothing on the way caches it; the response is marked no-store as well.
 // Ownership is enforced by ownedAccount. The route's audit middleware records who
@@ -55,11 +64,17 @@ func (h *AccountContributionHandler) IssueLocalProxyToken(c *gin.Context) {
 		return
 	}
 
-	if !supportsLocalProxy(account) {
-		response.BadRequest(c, "Local proxy supports only OpenAI (ChatGPT) OAuth accounts")
+	platform := localProxyPlatform(account)
+	var tokenOf localProxyAccessTokenFunc
+	switch platform {
+	case service.PlatformOpenAI:
+		tokenOf = h.openAILocalProxyToken
+	case service.PlatformAnthropic:
+		tokenOf = h.claudeLocalProxyToken
+	default:
+		response.BadRequest(c, "Local proxy supports only OpenAI (Codex) or Anthropic (Claude) OAuth accounts")
 		return
 	}
-	tokenOf := h.openAILocalProxyToken
 	if tokenOf == nil {
 		response.Error(c, http.StatusServiceUnavailable, "Local proxy is unavailable on this server")
 		return
@@ -74,7 +89,7 @@ func (h *AccountContributionHandler) IssueLocalProxyToken(c *gin.Context) {
 	if err != nil || strings.TrimSpace(token) == "" {
 		// The provider's reason stays in the server log; the client gets a stable
 		// message that cannot echo anything credential-shaped.
-		slog.Warn("local_proxy_token_failed", "account_id", account.ID, "error", err)
+		slog.Warn("local_proxy_token_failed", "account_id", account.ID, "platform", platform, "error", err)
 		response.Error(c, http.StatusBadGateway, "Could not obtain an access token for this account")
 		return
 	}
@@ -87,15 +102,17 @@ func (h *AccountContributionHandler) IssueLocalProxyToken(c *gin.Context) {
 	}
 
 	credential := LocalProxyCredential{
-		AccountID:        account.ID,
-		Name:             account.Name,
-		Platform:         service.PlatformOpenAI,
-		AccessToken:      token,
-		ChatGPTAccountID: current.GetChatGPTAccountID(),
-		FedRAMP:          current.IsChatGPTAccountFedRAMP(),
+		AccountID:   account.ID,
+		Name:        account.Name,
+		Platform:    platform,
+		AccessToken: token,
 	}
 	if expiresAt := current.GetCredentialAsTime("expires_at"); expiresAt != nil && expiresAt.After(time.Now()) {
 		credential.ExpiresAt = expiresAt
+	}
+	if platform == service.PlatformOpenAI {
+		credential.ChatGPTAccountID = current.GetChatGPTAccountID()
+		credential.FedRAMP = current.IsChatGPTAccountFedRAMP()
 	}
 	response.Success(c, credential)
 }
