@@ -184,6 +184,16 @@ public sealed partial class DashboardViewModel : ObservableObject
             ClaudePreference,
             () => IsClaudeGroup,
             reachability: localProxyReachability);
+        // Switching Codex onto a local proxy starts ChatGPT when it is not running yet. Only
+        // a plain start: a ChatGPT that would need restarting is never restarted from here.
+        LocalProxy.CodexNeedsLaunch = () =>
+            !IsCodexRunning && !IsStartingCodex && !IsInstallingCodex && !CodexNotInstalled &&
+            !RequiresCodexAccountRestart;
+        LocalProxy.LaunchCodex = async () =>
+        {
+            await StartCodexAsync(_ => Task.FromResult(false)).ConfigureAwait(true);
+            return IsCodexRunning ? null : (HasCodexMessage ? CodexMessage : "请到 Codex 页查看。");
+        };
         LocalProxy.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName == nameof(LocalProxyViewModel.CodexTarget))

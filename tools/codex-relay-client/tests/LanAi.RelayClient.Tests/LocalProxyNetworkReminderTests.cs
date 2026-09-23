@@ -129,6 +129,59 @@ public sealed class LocalProxyNetworkReminderTests
     }
 
     [Fact]
+    public async Task SwitchingCodexOnStartsChatGptWhenItIsNotRunning()
+    {
+        Rig rig = await SignedInAsync(reachable: true, userSaysYes: true);
+
+        await rig.Dashboard.LocalProxy.ToggleAsync(rig.Dashboard.LocalProxy.CodexAccounts[0]);
+
+        Assert.Contains("确定后会自动启动", rig.Asked[0].Message);
+        Assert.Equal(1, rig.Codex.RunCount);
+        Assert.False(rig.Codex.LastAllowRestart);
+        Assert.True(rig.Dashboard.IsCodexRunning);
+        Assert.EndsWith("ChatGPT 已启动。", rig.Dashboard.LocalProxy.ActionMessage);
+    }
+
+    [Fact]
+    public async Task ARunningChatGptIsLeftAlone()
+    {
+        Rig rig = await SignedInAsync(reachable: true, userSaysYes: true);
+        rig.Dashboard.IsCodexRunning = true;
+
+        await rig.Dashboard.LocalProxy.ToggleAsync(rig.Dashboard.LocalProxy.CodexAccounts[0]);
+
+        Assert.DoesNotContain("自动启动", rig.Asked[0].Message);
+        Assert.Equal(0, rig.Codex.RunCount);
+        Assert.DoesNotContain("ChatGPT", rig.Dashboard.LocalProxy.ActionMessage.Replace("ChatGPT 账号", string.Empty));
+    }
+
+    [Fact]
+    public async Task DecliningOrSwitchingClaudeCodeOnStartsNothing()
+    {
+        Rig rig = await SignedInAsync(reachable: true, userSaysYes: false);
+        await rig.Dashboard.LocalProxy.ToggleAsync(rig.Dashboard.LocalProxy.CodexAccounts[0]);
+
+        Rig claude = await SignedInAsync(reachable: true, userSaysYes: true);
+        await claude.Dashboard.LocalProxy.ToggleAsync(claude.Dashboard.LocalProxy.ClaudeAccounts[0]);
+
+        Assert.Equal(0, rig.Codex.RunCount);
+        Assert.Equal(0, claude.Codex.RunCount);
+        Assert.DoesNotContain("自动启动", claude.Asked[0].Message);
+    }
+
+    [Fact]
+    public async Task AFailedStartIsSaidOnThePage()
+    {
+        Rig rig = await SignedInAsync(reachable: true, userSaysYes: true);
+        rig.Codex.OnRun = (_, _) => new CodexStartupResult(CodexStartupStatus.RelayUnavailable, "本机 Relay 启动失败。");
+
+        await rig.Dashboard.LocalProxy.ToggleAsync(rig.Dashboard.LocalProxy.CodexAccounts[0]);
+
+        Assert.True(rig.Dashboard.LocalProxy.IsCodexActive);
+        Assert.EndsWith("ChatGPT 没有启动：本机 Relay 启动失败。", rig.Dashboard.LocalProxy.ActionMessage);
+    }
+
+    [Fact]
     public async Task ARestoredChoiceThatCannotReachTheOfficialHostSaysSoOnce()
     {
         Rig rig = await SignedInAsync(
