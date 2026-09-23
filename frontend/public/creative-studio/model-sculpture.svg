@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="480" viewBox="0 0 480 480" fill="none">
+  <title>A sculptural cobalt ribbon in a sunlit studio</title>
+  <defs>
+    <linearGradient id="room" x1="32" y1="0" x2="402" y2="480" gradientUnits="userSpaceOnUse"><stop stop-color="#F0F6F8"/><stop offset=".6" stop-color="#E8EFF4"/><stop offset="1" stop-color="#CDDCE9"/></linearGradient>
+    <linearGradient id="plinth" x1="211" y1="357" x2="246" y2="441" gradientUnits="userSpaceOnUse"><stop stop-color="#DCE8EE"/><stop offset="1" stop-color="#A8BCCD"/></linearGradient>
+    <linearGradient id="ribbon" x1="130" y1="112" x2="336" y2="331" gradientUnits="userSpaceOnUse"><stop stop-color="#75B7FC"/><stop offset=".2" stop-color="#2E6FF4"/><stop offset=".51" stop-color="#214DD5"/><stop offset=".78" stop-color="#123697"/><stop offset="1" stop-color="#367FF2"/></linearGradient>
+    <linearGradient id="front" x1="172" y1="173" x2="297" y2="327" gradientUnits="userSpaceOnUse"><stop stop-color="#74B7FF"/><stop offset=".32" stop-color="#3C86FA"/><stop offset=".72" stop-color="#2056E1"/><stop offset="1" stop-color="#143593"/></linearGradient>
+    <linearGradient id="shine" x1="189" y1="96" x2="294" y2="303" gradientUnits="userSpaceOnUse"><stop stop-color="#B9DEFF" stop-opacity=".9"/><stop offset=".47" stop-color="#7CBFFF" stop-opacity=".42"/><stop offset="1" stop-color="#91C4FF" stop-opacity="0"/></linearGradient>
+    <radialGradient id="light" cx="0" cy="0" r="1" gradientTransform="translate(104 97) rotate(51) scale(396 252)" gradientUnits="userSpaceOnUse"><stop stop-color="#FFF" stop-opacity=".83"/><stop offset="1" stop-color="#FFF" stop-opacity="0"/></radialGradient>
+    <filter id="shadow" x="-50%" y="-100%" width="200%" height="300%"><feGaussianBlur stdDeviation="12"/></filter>
+    <filter id="soft" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="3"/></filter>
+  </defs>
+  <path fill="url(#room)" d="M0 0h480v480H0z"/>
+  <path fill="url(#light)" d="M0 0h480v480H0z"/>
+  <path d="M0 321h480" stroke="#C7D6E0" stroke-opacity=".45"/>
+  <path d="m44 0 132 0L0 288V73L44 0Zm175 0h29L0 405v-44L219 0Z" fill="#FFF" opacity=".19"/>
+  <ellipse cx="257" cy="423" rx="139" ry="20" fill="#667D99" opacity=".22" filter="url(#shadow)"/>
+  <path d="M114 373c0-22 57-40 128-40s128 18 128 40v30c0 22-57 40-128 40s-128-18-128-40v-30Z" fill="url(#plinth)"/>
+  <ellipse cx="242" cy="373" rx="128" ry="40" fill="#F1F6F9"/>
+  <ellipse cx="245" cy="370" rx="69" ry="14" fill="#537AA5" opacity=".3" filter="url(#shadow)"/>
+  <path d="M242 126c48-50 100-6 95 39-6 51-72 79-113 109-66 49-29 90 12 65 47-28 24-80-12-120-33-37-74-65-70-107 4-42 56-55 79-26 20 26 3 51-19 75" stroke="#12358D" stroke-width="61" stroke-linecap="round" stroke-linejoin="round" transform="translate(5 8)"/>
+  <path d="M242 126c48-50 100-6 95 39-6 51-72 79-113 109-66 49-29 90 12 65 47-28 24-80-12-120-33-37-74-65-70-107 4-42 56-55 79-26 20 26 3 51-19 75" stroke="url(#ribbon)" stroke-width="61" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M238 124c44-44 86-11 82 32-4 44-65 72-109 104" stroke="#8EC8FF" stroke-opacity=".29" stroke-width="7" stroke-linecap="round" filter="url(#soft)"/>
+  <path d="M205 278c24-17 52-37 71-51" stroke="#0B2883" stroke-opacity=".58" stroke-width="45" filter="url(#soft)"/>
+  <path d="M156 130c8 31 40 57 68 89 36 40 59 92 12 120" stroke="url(#front)" stroke-width="61" stroke-linecap="round"/>
+  <path d="M165 102c-9 41 34 74 70 116 34 39 44 70 28 94" stroke="url(#shine)" stroke-width="10" stroke-linecap="round" filter="url(#soft)"/>
+  <path d="M174 94c8-13 23-19 37-13" stroke="#B9DDFF" stroke-opacity=".62" stroke-width="4" stroke-linecap="round"/>
+  <path d="M315 124c6 8 10 19 9 31" stroke="#C3E4FF" stroke-opacity=".58" stroke-width="3" stroke-linecap="round"/>
+  <ellipse cx="181" cy="370" rx="13" ry="4" fill="#FFF" opacity=".75"/>
+</svg>

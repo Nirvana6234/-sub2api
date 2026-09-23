@@ -61,10 +61,10 @@ export default {
           },
         },
         playground: {
-          title: '游乐场',
-          description: '向终端用户开放游乐场入口。默认关闭。',
-          enabled: '启用游乐场',
-          enabledHint: '关闭后游乐场保持隐藏，后端适配器应按关闭状态拒绝访问。',
+          title: '网页工作台',
+          description: '向终端用户开放网页工作台入口。默认关闭。',
+          enabled: '启用网页工作台',
+          enabledHint: '关闭后网页工作台保持隐藏，后端适配器应按关闭状态拒绝访问。',
         },
         modelPlaza: {
           title: '模型广场',

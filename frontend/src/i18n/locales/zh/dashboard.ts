@@ -12,6 +12,7 @@ export default {
     performance: '性能指标',
     avgResponse: '平均响应',
     averageTime: '平均时间',
+    usageAnalysis: '用量分析',
     timeRange: '时间范围',
     granularity: '粒度',
     day: '按天',
@@ -48,6 +49,37 @@ export default {
     noUsageRecords: '暂无使用记录',
     startUsingApi: '开始使用 API 后，您的使用历史将显示在这里。',
     viewAllUsage: '查看全部',
+    serviceEntry: {
+      title: '开始使用',
+      subtitle: '几种用法共用同一个账户余额，按需选择，也可以同时用。',
+      subtitleSingle: '把共飞接到你常用的工具里。',
+      recommended: '推荐',
+      web: {
+        title: '网页工作台',
+        description: '浏览器打开就能对话、生图，免安装。',
+        meta: '无需安装任何软件',
+        action: '开始对话'
+      },
+      api: {
+        title: 'API 接入',
+        description: '接到 Codex CLI、Cursor 等工具里用。',
+        endpoint: '接口地址',
+        copy: '复制',
+        copied: '已复制',
+        meta: '{total} 个密钥 · {active} 个启用',
+        docs: '接入文档',
+        action: '管理密钥'
+      },
+      client: {
+        title: '共飞助手客户端',
+        description: '一键启动 Codex 桌面版，免配置，还能帮你节省 Token。',
+        windows: 'Windows 64 位',
+        mac: 'macOS · Apple 芯片',
+        meta: '最新版 v{version}',
+        guide: '安装教程',
+        action: '下载'
+      }
+    },
     quickActions: '快捷操作',
     createApiKey: '创建 API 密钥',
     generateNewKey: '生成新的 API 密钥',
@@ -163,6 +195,7 @@ export default {
     quota: '额度',
     lastUsedAt: '上次使用时间',
     lastUsedIP: '最近使用 IP',
+    accessHint: '在列表里点「使用密钥」，一键生成 Codex、Claude Code 等工具的配置。',
     useKey: '使用密钥',
     useKeyModal: {
       title: '使用 API 密钥',
@@ -408,6 +441,15 @@ export default {
     compactionFilter: '请求类别',
     allCompactionTypes: '全部请求',
     compactionOnly: '仅原生压缩',
+    accountSource: {
+      filter: '账号来源',
+      all: '全部来源',
+      pool: '号池',
+      own: '自有账号',
+      room: '贡献房间',
+      ownCostHint: '这条请求使用的是你自己贡献的账号，此处金额按模型价计算，余额只扣自有账号手续费。',
+      ownCostTag: '非实扣',
+    },
     cyber: '安全策略',
     live: 'Live',
     unknown: '未知',
@@ -1057,6 +1099,15 @@ export default {
   },
 
   accountContributions: {
+    usageRecords: '使用记录',
+    usageModalTitle: '自有账号使用记录',
+    usageModalHint: '只统计你自己的请求经由这个账号处理的记录。金额按模型价计算，余额实际只扣自有账号手续费。',
+    usagePeriodToday: '今天',
+    usagePeriod7d: '近 7 天',
+    usagePeriod30d: '近 30 天',
+    usageRequests: '请求数',
+    usageTokens: 'Token 总量',
+    usageModelCost: '按模型价折算',
     accountType: '账号类型',
     title: '账号管理',
     description: '提交并管理你的账号；账号默认仅本人使用，放入贡献房间并验证通过后才会供房间使用者调用。',

@@ -51,7 +51,7 @@ describe('AppSidebar collapsible groups', () => {
   })
 
   it('places purchase directly below the API keys entry', () => {
-    const apiKeysIndex = componentSource.indexOf("{ path: '/keys', label: t('nav.apiKeys'), icon: KeyIcon }")
+    const apiKeysIndex = componentSource.indexOf("{ path: '/keys', label: t('nav.apiKeys'), icon: KeyIcon, accent: 'api' }")
     const purchaseIndex = componentSource.indexOf("path: '/purchase'")
     const playgroundIndex = componentSource.indexOf("{ path: '/playground', label: t('nav.playground')")
 

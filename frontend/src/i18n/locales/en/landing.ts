@@ -4,6 +4,85 @@ export default {
     description: 'Submit multiple prompts in one job and download the generated images when complete'
   },
   // Home Page
+  homeIntro: {
+    eyebrow: 'AI gateway · Web AI',
+    eyebrowGatewayOnly: 'AI gateway · Many models',
+    title: 'Many models,',
+    titleAccent: 'all inside Codex.',
+    description: 'We are an AI gateway: GPT, Claude, Gemini and more reach Codex through a single endpoint, and work in Claude Code, Cursor, Cline, Cherry Studio and other plugins.',
+    descriptionWeb: ' Prefer not to install anything? Chat, generate and edit images right in your browser.',
+    ctaStart: 'Sign in / Sign up',
+    ctaStartWork: 'Start working',
+    ctaConsole: 'Open console',
+    ctaWeb: 'Open Web Workspace',
+    ctaClient: 'Download client',
+    ctaClientPrimary: 'Download the client',
+    beginnerNote: 'One account, one key, one balance for every option.',
+    ideaNote: 'GPT, Claude, Gemini: one key connects them all.',
+    purpose: 'We connect the models and handle your account and billing; you describe what you need in Codex, a plugin, or the Web Workspace.',
+    purposeNoWeb: 'We connect the models and handle your account and billing; you describe what you need in Codex or a plugin.',
+    map: {
+      title: 'How it connects',
+      hint: 'One endpoint brings every model to the tools you already use',
+      models: 'MODELS',
+      more: 'and more',
+      gateway: '{name} gateway',
+      protocols: 'OpenAI · Anthropic · Gemini compatible',
+      targets: 'USE IT IN',
+      codexHint: 'CLI · desktop',
+      webHint: 'In your browser',
+      fact1: 'One endpoint',
+      fact2: 'One key for every model',
+      fact3: 'One balance, pay as you go'
+    },
+    ways: {
+      eyebrow: 'How to use it',
+      title: 'Pick the way\nthat suits you',
+      note: 'Every option shares the same account and balance. Use them together if you like.',
+      api: {
+        title: 'Codex and other plugins',
+        p1: 'Switch between GPT, Claude and more in Codex CLI or Codex desktop.',
+        p2: 'Claude Code, Cursor, Cline, Cherry Studio and any tool that speaks the OpenAI, Anthropic or Gemini API.',
+        action: 'Create a key'
+      },
+      web: {
+        title: 'Web AI',
+        p1: 'Runs in your browser. Nothing to install.',
+        p2: 'Chat, generate images, upload one and edit it, plus an infinite canvas and gallery.',
+        action: 'Open Web Workspace'
+      },
+      client: {
+        title: 'Desktop Assistant',
+        badge: 'Recommended',
+        p1: 'The download page has both Codex and our client. Install them and you are ready, no config files to edit.',
+        p2: 'See your account, group and balance at a glance. It also saves tokens, and shows your usage and savings.',
+        action: 'Download client',
+        guide: 'Install guide'
+      }
+    },
+    codex: {
+      eyebrow: 'Use it in Codex',
+      title: 'Three steps to connect Codex.',
+      step1Title: 'Create a key',
+      step1: 'Sign in and create one under API Keys. One key works for every model.',
+      step2Title: 'Add it to your Codex config',
+      step2: 'Put this in config.toml. The full version is under Use Key on the keys page, ready to copy.',
+      step3Title: 'Open Codex and get to work',
+      step3: 'Switch between GPT, Claude and more in the model list, then describe what you want.',
+      comment: 'Endpoint filled in for this site',
+      action: 'Create a key',
+      clientTitle: 'Three steps to start working in Codex.',
+      clientStep1Title: 'Download two apps',
+      clientStep1: 'The download page has both our client and Codex. Pick the version for your computer.',
+      clientStep2Title: 'Sign in to the client',
+      clientStep2: 'Once you sign in, the client connects Codex for you. No config files to edit.',
+      clientStep3Title: 'Open Codex and get to work',
+      clientStep3: 'Describe what you want. The client saves tokens and keeps your usage visible.',
+      clientAction: 'Download the client',
+      guide: 'Install guide',
+      manualToggle: 'Prefer manual setup? See the config.toml'
+    }
+  },
   home: {
     viewOnGithub: 'View on GitHub',
     viewDocs: 'View Documentation',
@@ -13,14 +92,31 @@ export default {
     dashboard: 'Dashboard',
     login: 'Login',
     getStarted: 'Get Started',
+    register: 'Sign up',
     goToDashboard: 'Go to Dashboard',
+    downloadClient: 'Download the app',
+    loginExisting: 'Already have an account? Log in',
     // User-focused value proposition
-    heroSubtitle: 'One Key, All AI Models',
-    heroDescription: 'No need to manage multiple subscriptions. Access Claude, GPT, Gemini and more with a single API key',
+    heroSubtitle: 'One app for Claude, GPT, and Gemini',
+    heroDescription: 'Sign up, switch groups, and top up your balance — all inside the app, ready to go',
     tags: {
-      subscriptionToApi: 'Subscription to API',
-      stickySession: 'Session Persistence',
-      realtimeBilling: 'Pay As You Go'
+      allInOne: 'Sign up and top up in the app',
+      groupSwitch: 'Reliable group switching',
+      payAsYouGo: 'Pay as you go'
+    },
+    benefits: {
+      compression: {
+        title: 'Built-in context compression',
+        desc: 'Trims redundant context automatically to cut token usage — the more you use, the more you save'
+      },
+      pricing: {
+        title: 'A fraction of official pricing',
+        desc: 'Claude / GPT / Gemini all supported, save up to 97%'
+      },
+      groupSwitch: {
+        title: 'Reliable multi-route switching',
+        desc: 'Account pool auto-scheduling keeps you online even if one account gets rate-limited'
+      }
     },
     // Pain points section
     painPoints: {
@@ -48,14 +144,6 @@ export default {
     solutions: {
       title: 'We Solve These Problems',
       subtitle: 'Three simple steps to stress-free AI access'
-    },
-    features: {
-      unifiedGateway: 'One-Click Access',
-      unifiedGatewayDesc: 'Get a single API key to call all connected AI models. No separate applications needed.',
-      multiAccount: 'Always Reliable',
-      multiAccountDesc: 'Smart routing across multiple upstream accounts with automatic failover. Say goodbye to errors.',
-      balanceQuota: 'Pay What You Use',
-      balanceQuotaDesc: 'Usage-based billing with quota limits. Full visibility into team consumption.'
     },
     // Comparison section
     comparison: {
@@ -95,19 +183,20 @@ export default {
     },
     providers: {
       title: 'Supported AI Models',
-      description: 'One API, Multiple Choices',
+      description: 'One app, multiple choices, at a fraction of official pricing',
       supported: 'Supported',
       soon: 'Soon',
+      priceFrom: 'From {rate}x official',
       claude: 'Claude',
+      gpt: 'GPT',
       gemini: 'Gemini',
-      antigravity: 'Antigravity',
       more: 'More'
     },
     // CTA section
     cta: {
-      title: 'Ready to Get Started?',
-      description: 'Sign up now and get free trial credits to experience seamless AI access',
-      button: 'Sign Up Free'
+      title: 'Get started in minutes',
+      description: 'Download the app — sign up, switch groups, and top up, all in one place',
+      button: 'Download the app'
     },
     footer: {
       allRightsReserved: 'All rights reserved.'

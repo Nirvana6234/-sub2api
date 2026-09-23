@@ -491,7 +491,7 @@
           <template #cell-status="{ row }">
             <div class="space-y-1.5">
               <span :class="String(row.status) === 'active' ? 'badge badge-success' : 'badge badge-gray'">{{ accountStatusLabel(row.status) }}</span>
-              <p class="text-xs text-gray-500 dark:text-dark-400">{{ accountInOwnRoom(row.id) ? t('accountContributions.inRoom') : t('accountContributions.privateMode') }}</p>
+              <p class="text-xs text-gray-500 dark:text-dark-400">{{ accountInOwnRoom(row.id) ? t('accountContributions.inRoom') : isPoolAccount(row) ? t('accountContributions.joinPool') : t('accountContributions.privateMode') }}</p>
             </div>
           </template>
 
@@ -553,6 +553,7 @@
           <template #cell-actions="{ row }">
             <div class="flex items-center gap-1" @click.stop>
               <button class="contribution-icon-button contribution-icon-button--compact" :title="t('accountContributions.test')" :disabled="busyId === row.id || batchBusy" @click="testingAccount = { id: row.id, name: row.name }"><Icon name="play" size="sm" /></button>
+              <button class="contribution-icon-button contribution-icon-button--compact" :title="t('accountContributions.usageRecords')" data-testid="contribution-usage-button" @click="usageAccount = { id: row.id, name: row.name }"><Icon name="chartBar" size="sm" /></button>
               <button class="contribution-icon-button contribution-icon-button--compact" :title="t('common.edit')" :disabled="batchBusy" @click="startEdit(row)"><Icon name="edit" size="sm" /></button>
               <button v-if="row.type === 'apikey'" class="contribution-icon-button contribution-icon-button--compact" :title="t('accountContributions.updateConnection')" :disabled="batchBusy" @click="startConnectionEdit(row)"><Icon name="link" size="sm" /></button>
               <button class="contribution-icon-button contribution-icon-button--compact" :title="String(row.status) === 'active' ? t('accountContributions.disable') : t('accountContributions.enable')" :disabled="busyId === row.id || batchBusy" @click="toggleAccount(row)"><Icon :name="String(row.status) === 'active' ? 'ban' : 'checkCircle'" size="sm" /></button>
@@ -579,7 +580,7 @@
         <div v-if="editingAccount" class="space-y-4">
           <div class="grid gap-3 sm:grid-cols-2">
             <label class="block"><span class="mb-1 block text-sm text-gray-700 dark:text-gray-300">{{ t('accountContributions.name') }}</span><input v-model.trim="editForm.name" class="input" :placeholder="t('accountContributions.namePlaceholder')" /></label>
-            <div class="block"><span class="mb-1 block text-sm text-gray-700 dark:text-gray-300">{{ t('accountContributions.accountScope') }}</span><div class="inline-flex overflow-hidden rounded-md border border-gray-200 dark:border-dark-600"><button type="button" class="scope-option" :class="editForm.shareScope === 'private' ? 'scope-option--active' : ''" @click="editForm.shareScope = 'private'; editForm.poolGroupId = 0; editForm.groupIds = []">{{ t('accountContributions.privateMode') }}</button><button type="button" class="scope-option" :class="editForm.shareScope === 'room' ? 'scope-option--active' : ''" :disabled="!ownRoom" @click="editForm.shareScope = 'room'; editForm.poolGroupId = 0; editForm.groupIds = []">{{ t('accountContributions.shareToRoom') }}</button><button type="button" class="scope-option" :class="editForm.shareScope === 'pool' ? 'scope-option--active' : ''" @click="editForm.shareScope = 'pool'; editForm.groupIds = []; editForm.priority = Math.max(editForm.priority, 20)">{{ t('accountContributions.joinPool') }}</button></div><span v-if="!ownRoom" class="mt-1 block text-xs text-gray-500 dark:text-gray-400">{{ t('accountContributions.roomRequiredForShare') }}</span></div>
+            <div class="block"><span class="mb-1 block text-sm text-gray-700 dark:text-gray-300">{{ t('accountContributions.accountScope') }}</span><div class="inline-flex overflow-hidden rounded-md border border-gray-200 dark:border-dark-600"><button type="button" class="scope-option" :class="editForm.shareScope === 'private' ? 'scope-option--active' : ''" @click="switchEditToPrivateScope()">{{ t('accountContributions.privateMode') }}</button><button type="button" class="scope-option" :class="editForm.shareScope === 'room' ? 'scope-option--active' : ''" :disabled="!ownRoom" @click="editForm.shareScope = 'room'; editForm.poolGroupId = 0; editForm.groupIds = []">{{ t('accountContributions.shareToRoom') }}</button><button type="button" class="scope-option" :class="editForm.shareScope === 'pool' ? 'scope-option--active' : ''" @click="editForm.shareScope = 'pool'; editForm.groupIds = []; editForm.priority = Math.max(editForm.priority, 20)">{{ t('accountContributions.joinPool') }}</button></div><span v-if="!ownRoom" class="mt-1 block text-xs text-gray-500 dark:text-gray-400">{{ t('accountContributions.roomRequiredForShare') }}</span></div>
           </div>
           <label v-if="editForm.shareScope === 'pool'" class="block"><span class="mb-1 block text-sm text-gray-700 dark:text-gray-300">{{ t('accountContributions.poolGroup') }}</span><select v-model.number="editForm.poolGroupId" class="input" :disabled="groupsLoading"><option :value="0">{{ t('accountContributions.poolGroupPlaceholder') }}</option><option v-for="group in accountPoolGroups(editingAccount)" :key="group.id" :value="group.id">{{ group.name }} ({{ group.rate_multiplier }}x)</option></select><span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">{{ t('accountContributions.poolGroupHint') }}</span></label>
           <div v-else-if="editForm.shareScope === 'room'" class="grid gap-3 sm:grid-cols-2"><label class="block"><span class="mb-1 block text-sm text-gray-700 dark:text-gray-300">{{ t('accountContributions.roomShareConcurrency') }}</span><input v-model.number="editForm.roomShareConcurrency" type="number" min="1" :max="editingAccount.concurrency" class="input" /><span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">{{ t('accountContributions.roomShareConcurrencyPlaceholder', { count: editingAccount.concurrency }) }}</span></label><label class="block"><span class="mb-1 block text-sm text-gray-700 dark:text-gray-300">{{ t('accountContributions.shareBudget') }}</span><input v-model.number="editForm.roomShareBudgetUSD" type="number" min="0.000001" max="1000000" step="0.000001" class="input" :placeholder="t('accountContributions.shareBudgetPlaceholder')" /><span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">{{ t('accountContributions.shareBudgetCandidateHint') }}</span></label></div>
@@ -600,6 +601,7 @@
       </BaseDialog>
 
       <ContributionTestModal :show="testingAccount !== null" :account="testingAccount" @close="testingAccount = null" @tested="refreshWorkspace" />
+      <ContributionUsageModal :show="usageAccount !== null" :account="usageAccount" @close="usageAccount = null" />
     </div>
   </AppLayout>
 </template>
@@ -614,6 +616,7 @@ import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import Icon from '@/components/icons/Icon.vue'
 import UsageProgressBar from '@/components/account/UsageProgressBar.vue'
 import ContributionTestModal from '@/components/account/ContributionTestModal.vue'
+import ContributionUsageModal from '@/components/account/ContributionUsageModal.vue'
 import accountContributionsAPI, { type AccountContributionResult, type ContributionAccountUsageSummary, type ContributionMode, type ContributionProxy, type ContributionProxyTestResult, type UpdateAccountContributionRequest } from '@/api/accountContributions'
 import contributionRoomsAPI, { type ContributionRoom, type ContributionRoomAccount } from '@/api/contributionRooms'
 import type { Account, AccountPlatform, Group, ProxyProtocol } from '@/types'
@@ -639,6 +642,7 @@ const loading = ref(false)
 const submitting = ref(false)
 const busyId = ref<number | null>(null)
 const testingAccount = ref<{ id: number; name: string } | null>(null)
+const usageAccount = ref<{ id: number; name: string } | null>(null)
 const selectedAccountIds = ref<Array<string | number>>([])
 const batchBusy = ref(false)
 const batchEditOpen = ref(false)
@@ -1330,6 +1334,17 @@ async function saveEdit(account: Account) {
 
 function isPoolAccount(account: Account): boolean {
 	return String(account.extra?.share_mode || '').toLowerCase() === 'pool'
+}
+
+// 从"并入管理员号池"切回"仅自己使用"时，把当前号池分组带过去，而不是直接清空
+// group_ids——号池账号本来就没有 group_ids（走的是 pool_group_id），如果这里也清空，
+// 保存后这个账号会变成不属于任何分组、谁都调度不到它，包括贡献者自己。
+function switchEditToPrivateScope() {
+  if (editForm.shareScope === 'pool' && editForm.poolGroupId > 0 && editForm.groupIds.length === 0) {
+    editForm.groupIds = [editForm.poolGroupId]
+  }
+  editForm.shareScope = 'private'
+  editForm.poolGroupId = 0
 }
 
 function normalizePoolPriority(target: { shareScope: 'private' | 'room' | 'pool'; priority: number }) {

@@ -118,10 +118,22 @@
         </template>
 
         <template #cell-group="{ row }">
-          <span v-if="row.group" class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200">
-            {{ row.group.name }}
-          </span>
-          <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
+          <div class="flex flex-wrap items-center gap-1">
+            <span v-if="row.group" class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200">
+              {{ row.group.name }}
+            </span>
+            <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
+            <span
+              v-if="row.account_source === 'own' || row.account_source === 'room'"
+              data-testid="account-source-badge"
+              class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium"
+              :class="row.account_source === 'own'
+                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200'
+                : 'bg-sky-100 text-sky-800 dark:bg-sky-900 dark:text-sky-200'"
+            >
+              {{ t(`usage.accountSource.${row.account_source}`) }}
+            </span>
+          </div>
         </template>
 
         <template #cell-stream="{ row }">
@@ -208,7 +220,16 @@
         <template #cell-cost="{ row }">
           <div class="text-sm">
             <div class="flex items-center gap-1.5">
-              <span class="font-medium text-green-600 dark:text-green-400">${{ row.actual_cost?.toFixed(6) || '0.000000' }}</span>
+              <span
+                class="font-medium"
+                :class="row.account_source === 'own' ? 'text-gray-400 dark:text-gray-500' : 'text-green-600 dark:text-green-400'"
+              >${{ row.actual_cost?.toFixed(6) || '0.000000' }}</span>
+              <span
+                v-if="row.account_source === 'own'"
+                data-testid="own-account-cost-marker"
+                :title="t('usage.accountSource.ownCostHint')"
+                class="inline-flex cursor-help items-center rounded px-1 py-px text-[10px] font-semibold leading-tight bg-emerald-100 text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/20 dark:text-emerald-300 dark:ring-emerald-500/30"
+              >{{ t('usage.accountSource.ownCostTag') }}</span>
               <span
                 v-if="row.long_context_billing_applied"
                 data-testid="long-context-billing-marker"

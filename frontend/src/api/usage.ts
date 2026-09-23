@@ -13,6 +13,7 @@ import type {
   ModelStat,
   GroupStat,
   UsageRequestType,
+  UsageAccountSource,
   UserErrorRequest,
   UserErrorRequestDetail,
   UserErrorListParams
@@ -66,6 +67,7 @@ export interface TrendParams {
   request_type?: UsageRequestType
   stream?: boolean
   native_compaction_v2?: boolean | null
+  account_source?: UsageAccountSource | null
   billing_type?: number | null
   billing_mode?: string | null
   timezone?: string
@@ -289,6 +291,7 @@ export async function getDashboardModels(params?: {
   request_type?: UsageRequestType
   stream?: boolean
   native_compaction_v2?: boolean | null
+  account_source?: UsageAccountSource | null
   billing_type?: number | null
   billing_mode?: string | null
   timezone?: string

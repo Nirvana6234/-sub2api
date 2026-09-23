@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, RouterLinkStub } from '@vue/test-utils'
+import { createI18n } from 'vue-i18n'
+import onboarding from '@/i18n/locales/zh/onboarding'
 
 import ClientDownloadView from '../ClientDownloadView.vue'
 
@@ -27,6 +29,13 @@ vi.mock('@/stores', () => ({
 function mountDownloadPage() {
   return mount(ClientDownloadView, {
     global: {
+      plugins: [createI18n({
+        legacy: false,
+        locale: 'zh',
+        messages: { zh: onboarding },
+        // The test alias uses the runtime-only build; these messages are plain text.
+        messageCompiler: (message) => () => typeof message === 'string' ? message : '',
+      })],
       stubs: {
         RouterLink: RouterLinkStub,
         LocaleSwitcher: { template: '<div data-testid="locale-switcher" />' },
@@ -42,6 +51,28 @@ describe('ClientDownloadView', () => {
     authStore.isAdmin = false
     document.documentElement.classList.remove('dark')
     localStorage.clear()
+  })
+
+  it('drops the recharge step and recharge FAQ when recharge is turned off', () => {
+    const settings = appStore.cachedPublicSettings as Record<string, unknown>
+    settings.payment_enabled = false
+    settings.backup_payment_enabled = false
+    try {
+      const text = mountDownloadPage().text()
+      expect(text).not.toContain('查看余额，不够时再充值')
+      expect(text).not.toContain('充值二维码无法显示')
+      // 后面的步骤顺延编号，不留空号。
+      expect(text).toContain('6. 发出你的第一个问题')
+    } finally {
+      delete settings.payment_enabled
+      delete settings.backup_payment_enabled
+    }
+  })
+
+  it('keeps the recharge step when recharge is available', () => {
+    const text = mountDownloadPage().text()
+    expect(text).toContain('查看余额，不够时再充值')
+    expect(text).toContain('7. 发出你的第一个问题')
   })
 
   it('renders the local client download, manual images, and English ChatGPT controls', () => {
@@ -88,11 +119,20 @@ describe('ClientDownloadView', () => {
     appStore.cachedPublicSettings.client_download_netdisk_url = 'https://pan.example.com/s/abc'
   })
 
-  it('links unauthenticated visitors to login', () => {
+  it.each([
+    { role: 'guest', authenticated: false, admin: false, destination: '/login' },
+    { role: 'user', authenticated: true, admin: false, destination: '/dashboard' },
+    { role: 'admin', authenticated: true, admin: true, destination: '/admin/dashboard' },
+  ])('offers a console destination and a download shortcut for $role', ({ authenticated, admin, destination }) => {
+    authStore.isAuthenticated = authenticated
+    authStore.isAdmin = admin
     const wrapper = mountDownloadPage()
-    const links = wrapper.findAllComponents(RouterLinkStub)
+    const header = wrapper.get('header')
+    const consoleLink = header.findAllComponents(RouterLinkStub).find((link) => link.text() === '控制台')
 
-    expect(links.some((link) => link.props('to') === '/login')).toBe(true)
+    expect(consoleLink?.props('to')).toBe(destination)
+    expect(header.get('a[href="#downloads"]').text()).toBe('客户端下载')
+    expect(wrapper.find('#downloads').exists()).toBe(true)
   })
 
   it('hides the entire macOS section when no mac direct URL is configured', () => {
@@ -149,8 +189,8 @@ describe('ClientDownloadView', () => {
     it('shows the mac install command derived from the same directory as the package', () => {
       const wrapper = mountDownloadPage()
 
-      // 平台徽章要跟着变，否则页面顶部一直写"Windows x64"，mac 用户会以为找错了页面。
-      expect(wrapper.text()).toContain('Windows x64 · macOS')
+      expect(wrapper.get('#windows-title').text()).toContain('Windows 64 位')
+      expect(wrapper.get('#mac-title').text()).toContain('Apple 芯片')
       expect(wrapper.text()).toContain(
         'curl -fsSL https://download.example.com/downloads/install-mac.sh | bash'
       )
@@ -170,6 +210,40 @@ describe('ClientDownloadView', () => {
       const wrapper = mountDownloadPage()
 
       expect(wrapper.text()).toContain('当前是 Intel 芯片，本版本只支持 Apple 芯片')
+      expect(wrapper.get('#downloads').text()).toContain('Intel Mac 暂不支持')
+      expect(wrapper.find('a[href$="mac-intel"]').exists()).toBe(false)
+      expect(wrapper.get('a[href$="mac-arm64"]').text()).toContain('Codex')
     })
+
+    it('copies the configured Mac install command', async () => {
+      const writeText = vi.fn().mockResolvedValue(undefined)
+      vi.stubGlobal('isSecureContext', true)
+      const originalClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+      try {
+        const wrapper = mountDownloadPage()
+        await wrapper.findAll('button').find((button) => button.text() === '复制命令')!.trigger('click')
+        expect(writeText).toHaveBeenCalledWith('curl -fsSL https://download.example.com/downloads/install-mac.sh | bash')
+        expect(wrapper.text()).toContain('已复制')
+        wrapper.unmount()
+      } finally {
+        vi.unstubAllGlobals()
+        if (originalClipboard) Object.defineProperty(navigator, 'clipboard', originalClipboard)
+        else Reflect.deleteProperty(navigator, 'clipboard')
+      }
+    })
+  })
+
+  it('introduces the product and prerequisites before downloads, with working guide anchors', () => {
+    const wrapper = mountDownloadPage()
+    const text = wrapper.text()
+    expect(text).toContain('共飞把 GPT 等 AI 能力接到你的电脑上')
+    expect(text.indexOf('共飞把 GPT 等 AI 能力接到你的电脑上')).toBeLessThan(text.indexOf('选你的电脑，下载这两个软件'))
+    expect(text.indexOf('开始前，准备好这 4 样')).toBeLessThan(text.indexOf('选你的电脑，下载这两个软件'))
+    expect(wrapper.get('#downloads').text()).toContain('不用再找第三个软件')
+    expect(wrapper.get('#guide-step-7').text()).toContain('保持共飞客户端运行')
+    for (const link of wrapper.findAll('a[href^="#"]')) {
+      expect(wrapper.find(link.attributes('href')!).exists()).toBe(true)
+    }
   })
 })

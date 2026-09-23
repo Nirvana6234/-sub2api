@@ -160,6 +160,9 @@ const tocItems = ref<TocItem[]>([])
 const tocVisible = ref(typeof window !== 'undefined' ? window.innerWidth > 768 : true)
 const activeHeadingId = ref('')
 let themeObserver: MutationObserver | null = null
+let markdownRequestId = 0
+let pageImageAbortController: AbortController | null = null
+const pageImageObjectUrls = new Set<string>()
 
 const embedShell = ref<HTMLElement | null>(null)
 const openButton = ref<HTMLAnchorElement | null>(null)
@@ -289,14 +292,107 @@ function buildPageImageUrl(slug: string, src: string): string {
   return buildApiUrl(`/pages/${encodeURIComponent(slug)}/images/${encodedPath}${suffix}`)
 }
 
+function resetPageImageState() {
+  pageImageAbortController?.abort()
+  pageImageAbortController = null
+  pageImageObjectUrls.forEach((url) => URL.revokeObjectURL(url))
+  pageImageObjectUrls.clear()
+}
+
+function trustedPageImageUrl(slug: string, rawUrl: string): string | null {
+  if (typeof window === 'undefined') return null
+
+  try {
+    const expectedPrefix = new URL(
+      buildApiUrl(`/pages/${encodeURIComponent(slug)}/images/`),
+      window.location.origin
+    )
+    const candidate = new URL(rawUrl, window.location.origin)
+    if (candidate.origin !== expectedPrefix.origin) {
+      return null
+    }
+    if (!candidate.pathname.startsWith(expectedPrefix.pathname)) return null
+    return candidate.toString()
+  } catch {
+    return null
+  }
+}
+
+function protectPageImageSources(html: string, slug: string): string {
+  if (typeof DOMParser === 'undefined') return html
+
+  const document = new DOMParser().parseFromString(html, 'text/html')
+  document.querySelectorAll<HTMLImageElement>('img').forEach((image) => {
+    image.removeAttribute('data-page-image-url')
+    const src = image.getAttribute('src')
+    if (!src) return
+    const trustedUrl = trustedPageImageUrl(slug, src)
+    if (!trustedUrl) return
+    image.setAttribute('data-page-image-url', trustedUrl)
+    image.removeAttribute('src')
+  })
+  return document.body.innerHTML
+}
+
+async function loadProtectedPageImages(requestId: number, signal: AbortSignal, slug: string) {
+  const container = markdownContainer.value
+  if (!container) return
+
+  const images = Array.from(
+    container.querySelectorAll<HTMLImageElement>('img[data-page-image-url]')
+  )
+  await Promise.all(images.map(async (image) => {
+    const imageUrl = image.dataset.pageImageUrl
+    if (!imageUrl) return
+    const trustedUrl = trustedPageImageUrl(slug, imageUrl)
+    if (!trustedUrl) {
+      image.removeAttribute('data-page-image-url')
+      return
+    }
+
+    try {
+      const response = await fetch(trustedUrl, {
+        headers: authStore.token ? { Authorization: `Bearer ${authStore.token}` } : {},
+        signal,
+        redirect: 'error',
+      })
+      if (!response.ok) throw new Error(`Image request failed with ${response.status}`)
+
+      const blob = await response.blob()
+      if (!blob.type.toLowerCase().startsWith('image/')) {
+        throw new Error('Protected page asset is not an image')
+      }
+
+      const objectUrl = URL.createObjectURL(blob)
+      if (signal.aborted || requestId !== markdownRequestId || !image.isConnected) {
+        URL.revokeObjectURL(objectUrl)
+        return
+      }
+
+      pageImageObjectUrls.add(objectUrl)
+      image.src = objectUrl
+      image.removeAttribute('data-page-image-url')
+    } catch (error) {
+      if ((error as { name?: string }).name === 'AbortError') return
+      image.removeAttribute('data-page-image-url')
+    }
+  }))
+}
+
 async function fetchAndRenderMarkdown(slug: string) {
+  const requestId = ++markdownRequestId
+  resetPageImageState()
+  const abortController = new AbortController()
+  pageImageAbortController = abortController
   loading.value = true
   tocItems.value = []
   activeHeadingId.value = ''
   try {
     const resp = await fetch(buildApiUrl(`/pages/${encodeURIComponent(slug)}`), {
       headers: authStore.token ? { Authorization: `Bearer ${authStore.token}` } : {},
+      signal: abortController.signal,
     })
+    if (requestId !== markdownRequestId) return
     if (!resp.ok) {
       renderedHtml.value = `<p class="text-red-500">${t('common.pageNotFound')}</p>`
       return
@@ -313,11 +409,12 @@ async function fetchAndRenderMarkdown(slug: string) {
       ADD_TAGS: ['iframe'],
       ADD_ATTR: ['allowfullscreen', 'frameborder', 'src'],
     })
+    const protectedHtml = protectPageImageSources(sanitized, slug)
 
     // Inject IDs into headings and build TOC
     const toc: TocItem[] = []
     let headingIndex = 0
-    const withIds = sanitized.replace(
+    const withIds = protectedHtml.replace(
       /<(h[1-4])[^>]*>(.*?)<\/h[1-4]>/gi,
       (_, tag: string, content: string) => {
         const level = parseInt(tag[1])
@@ -328,15 +425,25 @@ async function fetchAndRenderMarkdown(slug: string) {
       }
     )
 
+    if (requestId !== markdownRequestId) return
     renderedHtml.value = withIds
     tocItems.value = toc
   } catch {
+    if (abortController.signal.aborted || requestId !== markdownRequestId) return
     renderedHtml.value = '<p class="text-red-500">Failed to load page</p>'
   } finally {
-    loading.value = false
-    await nextTick()
-    await nextTick()
-    injectCopyButtons()
+    if (requestId === markdownRequestId) {
+      loading.value = false
+      await nextTick()
+      await nextTick()
+      if (requestId === markdownRequestId) {
+        await loadProtectedPageImages(requestId, abortController.signal, slug)
+        injectCopyButtons()
+        if (pageImageAbortController === abortController) {
+          pageImageAbortController = null
+        }
+      }
+    }
   }
 }
 
@@ -406,6 +513,8 @@ watch(markdownSlug, (slug) => {
   if (slug) {
     fetchAndRenderMarkdown(slug)
   } else {
+    markdownRequestId++
+    resetPageImageState()
     renderedHtml.value = ''
     tocItems.value = []
   }
@@ -434,6 +543,8 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  markdownRequestId++
+  resetPageImageState()
   if (themeObserver) {
     themeObserver.disconnect()
     themeObserver = null

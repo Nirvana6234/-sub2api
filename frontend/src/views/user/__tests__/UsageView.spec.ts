@@ -561,4 +561,29 @@ describe('UsageView subscription feature flag', () => {
     expect(wrapper.text()).not.toContain('Billing type')
     wrapper.unmount()
   })
+
+  it('defaults the account source filter to pool and restores it on reset', async () => {
+    const wrapper = mountUsageView()
+    await flushPromises()
+
+    expect((wrapper.vm as any).filters.account_source).toBe('pool')
+    expect(query).toHaveBeenCalledWith(expect.objectContaining({ account_source: 'pool' }), expect.anything())
+    expect(getStats).toHaveBeenCalledWith(expect.objectContaining({ account_source: 'pool' }))
+    expect(getDashboardModels).toHaveBeenCalledWith(expect.objectContaining({ account_source: 'pool' }))
+    expect(getDashboardSnapshotV2).toHaveBeenCalledWith(expect.objectContaining({ account_source: 'pool' }))
+
+    query.mockClear()
+    getStats.mockClear()
+    ;(wrapper.vm as any).filters.account_source = 'own'
+    ;(wrapper.vm as any).applyFilters()
+    await flushPromises()
+    expect(query).toHaveBeenCalledWith(expect.objectContaining({ account_source: 'own' }), expect.anything())
+    expect(getStats).toHaveBeenCalledWith(expect.objectContaining({ account_source: 'own' }))
+
+    query.mockClear()
+    ;(wrapper.vm as any).resetFilters()
+    await flushPromises()
+    expect((wrapper.vm as any).filters.account_source).toBe('pool')
+    expect(query).toHaveBeenCalledWith(expect.objectContaining({ account_source: 'pool' }), expect.anything())
+  })
 })

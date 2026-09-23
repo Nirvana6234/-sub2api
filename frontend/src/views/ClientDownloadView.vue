@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useAuthStore, useAppStore } from '@/stores'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import Icon from '@/components/icons/Icon.vue'
+import ClientIntroduction from '@/components/client/ClientIntroduction.vue'
+import { useServiceAvailability } from '@/composables/useServiceAvailability'
 
 type GuideImage = {
   src: string
@@ -23,6 +26,7 @@ type GuideStep = {
 
 const appStore = useAppStore()
 const authStore = useAuthStore()
+const { t } = useI18n()
 const isDark = ref(document.documentElement.classList.contains('dark'))
 
 const siteName = computed(() => appStore.cachedPublicSettings?.site_name || appStore.siteName || '共飞 AI')
@@ -84,14 +88,8 @@ const macFileName = computed(() => {
   return /\.tar\.gz$/i.test(name) ? name : ''
 })
 
-// Codex 官方客户端按芯片分两个包。这里不替用户猜：装错芯片的包在 macOS 上
-// 是「装得上、打不开」，没有任何提示。
-const codexMacDownloads = [
-  { label: 'Apple 芯片（M 系列）', url: 'https://codexapp.agentsmirror.com/latest/mac-arm64' },
-  { label: 'Intel 芯片', url: 'https://codexapp.agentsmirror.com/latest/mac-intel' }
-]
-
-const platformBadge = computed(() => (macDownloadUrl.value ? 'Windows x64 · macOS（Apple 芯片）' : 'Windows x64'))
+// 共飞 Mac 版仅发布了 Apple 芯片版本，因此只提供配套的 Codex 下载。
+const codexMacDownloadUrl = 'https://codexapp.agentsmirror.com/latest/mac-arm64'
 
 const macCommandCopied = ref(false)
 
@@ -131,16 +129,16 @@ const guideSteps: GuideStep[] = [
   {
     number: 1,
     title: '下载、解压并打开客户端',
-    intro: '页面顶部的两个客户端都要下载：共飞客户端和 Codex 客户端。先把共飞客户端的压缩包下载到本地，再解压到一个单独的文件夹。',
+    intro: '在上面的下载区选择与你电脑对应的版本。Windows 用户先下载共飞客户端和 Codex 客户端，再把压缩包分别解压到文件夹。',
     actions: [
-      '点击“① 下载共飞客户端”，保存压缩包。',
+      '点击“下载共飞客户端”，保存压缩包。',
       '右键压缩包，选择解压到一个文件夹。',
       '进入解压后的目录，双击客户端程序打开。',
-      '再点击“② 下载 Codex 客户端”，同样解压后使用。'
+      '再点击“下载 Codex 客户端”，同样解压后使用。'
     ],
     images: [{ src: '/client-guide/g1.png', alt: '双击打开共飞 AI 客户端' }],
     note: '两个客户端缺一不可：共飞客户端管账号、分组和余额，Codex 客户端才是实际对话的程序。',
-    macNote: '请忽略上面的下载解压步骤，改用页面顶部 macOS 区块里的终端命令——它会自动下载、安装到「应用程序」并启动，不需要解压。Codex 客户端仍需按你的芯片单独下载。'
+    macNote: '请忽略上面的下载解压步骤，改用上方 macOS 下载区的安装命令。它会自动下载、安装到「应用程序」并启动，不需要解压。然后下载配套的 Apple 芯片版 Codex。'
   },
   {
     number: 2,
@@ -176,8 +174,8 @@ const guideSteps: GuideStep[] = [
   },
   {
     number: 4,
-    title: '安装 ChatGPT',
-    intro: '如果电脑上还没有 ChatGPT，请先从客户端内安装。',
+    title: '安装并启动对话软件',
+    intro: '对话软件叫 Codex，下面截图和共飞里的按钮仍可能写着“ChatGPT”。它们指的是这里的同一个对话软件，不需要再下载第三个。',
     actions: [
       '在主界面点击“安装 ChatGPT”。',
       '等待客户端下载 ChatGPT 安装包。',
@@ -191,12 +189,12 @@ const guideSteps: GuideStep[] = [
       { src: '/client-guide/g10.png', alt: 'ChatGPT 安装程序中的 Install 按钮' },
       { src: '/client-guide/g11.png', alt: 'ChatGPT 安装完成并自动启动' }
     ],
-    note: '如果你已经安装过 ChatGPT，按钮通常会显示为“启动 ChatGPT”。'
+    note: '已经安装好 Codex 时，直接点击“启动 ChatGPT”或对应的启动按钮即可。对话时请保持共飞客户端运行。'
   },
   {
     number: 5,
-    title: '切换分组',
-    intro: '分组可以理解为当前账号使用的线路或策略。',
+    title: '查看当前分组（可以先用默认的）',
+    intro: '“分组”就是连接 AI 的线路，不同线路的价格和可用模型可能不同。第一次使用可以先保留默认选择，需要时再切换。',
     actions: [
       '在主界面找到“当前分组”或“切换分组”。',
       '点击下拉框，选择要使用的分组。',
@@ -210,8 +208,8 @@ const guideSteps: GuideStep[] = [
   },
   {
     number: 6,
-    title: '充值',
-    intro: '余额不足时，可以直接在客户端内充值。',
+    title: '查看余额，不够时再充值',
+    intro: '先确认账号有可用余额或额度。使用 AI 会产生费用；余额不足时，可以直接在客户端内充值。',
     actions: [
       '点击“去充值”。',
       '选择充值金额，或手动输入金额。',
@@ -228,24 +226,24 @@ const guideSteps: GuideStep[] = [
   },
   {
     number: 7,
-    title: '在 ChatGPT 中切换模型和推理强度',
-    intro: 'ChatGPT 启动后，可以在对话顶部切换模型。英文界面请找同一位置的“Model”入口。',
+    title: '发出你的第一个问题',
+    intro: '打开 Codex，在对话输入框里用中文写下你想做的事，点击发送。比如：“帮我写一份请假条”。下面的模型选项按需要再调整。',
     actions: [
-      '打开 ChatGPT。',
-      '点击对话顶部的模型按钮（英文界面显示为“Model”）。',
-      '选择需要的模型和推理强度。',
-      '开始对话。'
+      '保持共飞客户端运行，打开 Codex 的对话窗口。',
+      '在输入框里写下问题，点击发送，等待回答。',
+      '回答不够清楚，就继续说“再简单一点”或补充你的要求。',
+      '需要更换模型时，点击输入框附近的模型名称（英文界面可能显示为“Model”），再选择模型和推理强度。'
     ],
     images: [
-      { src: '/client-guide/g18.png', alt: 'ChatGPT 对话顶部的模型按钮' },
-      { src: '/client-guide/g19.png', alt: 'ChatGPT 模型下拉列表' },
-      { src: '/client-guide/g20.png', alt: '选择模型和推理强度后的对话界面' }
+      { src: '/client-guide/g18.png', alt: 'Codex 输入框附近的模型按钮' },
+      { src: '/client-guide/g19.png', alt: 'Codex 模型下拉列表' },
+      { src: '/client-guide/g20.png', alt: '在 Codex 输入框里提问并查看回答' }
     ],
-    note: '模型入口就是 ChatGPT 里的“模型”按钮；英文界面请找同一位置的“Model”入口。'
+    note: '“模型”可以理解为不同的 AI 帮手；“推理强度”就是让它思考得多一些还是少一些。第一次可以先用默认设置。'
   },
   {
     number: 8,
-    title: 'ChatGPT 推理强度说明',
+    title: '想让 AI 多想一会儿？（选看）',
     intro: '部分模型支持设置推理强度，也就是思考深度。挡位旁边的英文按钮名如下：',
     actions: [],
     note: '推理强度入口就是 ChatGPT 里的“推理强度”；英文界面请找 Instant、Medium、High、Extra High。'
@@ -276,6 +274,15 @@ const guideSteps: GuideStep[] = [
   }
 ]
 
+// 关闭充值的部署版本：去掉"查看余额，不够时再充值"这一步，后面的步骤顺延编号。
+const { rechargeEnabled } = useServiceAvailability()
+const RECHARGE_STEP_NUMBER = 6
+const visibleGuideSteps = computed(() =>
+  (rechargeEnabled.value ? guideSteps : guideSteps.filter((step) => step.number !== RECHARGE_STEP_NUMBER)).map(
+    (step, index) => ({ ...step, number: index + 1 }),
+  ),
+)
+
 const modelRows = [
   { model: 'GPT-5.5', feature: '能力强，偏重复杂任务', price: '贵', scene: '编码、研究、深度分析' },
   { model: 'GPT-5.6 Terra', feature: '能力、速度、成本更均衡', price: '中', scene: '大多数日常使用' },
@@ -297,126 +304,118 @@ function toggleTheme() {
 </script>
 
 <template>
-  <div class="client-download-page min-h-screen bg-gray-50 text-gray-900 dark:bg-dark-950 dark:text-white">
+  <div class="client-download-page min-h-screen bg-[#f7f8f5] text-gray-900 dark:bg-dark-950 dark:text-white">
     <header class="border-b border-gray-200/80 bg-white/90 px-4 py-4 backdrop-blur sm:px-6 dark:border-dark-800 dark:bg-dark-950/90">
-      <nav class="mx-auto flex max-w-6xl items-center justify-between gap-4">
+      <nav class="mx-auto grid max-w-7xl grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-3 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
         <router-link to="/home" class="flex min-w-0 items-center gap-3">
           <img :src="siteLogo" :alt="`${siteName} logo`" class="h-9 w-9 shrink-0 object-contain" />
-          <span class="truncate text-sm font-semibold sm:text-base">{{ siteName }}</span>
+          <span class="truncate text-base font-semibold">{{ siteName }}</span>
         </router-link>
-        <div class="flex items-center gap-1.5 sm:gap-2">
+        <div class="flex items-center gap-1">
           <LocaleSwitcher />
           <button
             type="button"
-            class="flex h-9 w-9 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-dark-400 dark:hover:bg-dark-800 dark:hover:text-white"
+            class="flex h-10 w-10 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-dark-400 dark:hover:bg-dark-800 dark:hover:text-white"
             :title="isDark ? '切换到浅色模式' : '切换到深色模式'"
             @click="toggleTheme"
           >
-            <Icon :name="isDark ? 'sun' : 'moon'" size="sm" />
+            <Icon :name="isDark ? 'sun' : 'moon'" size="md" />
           </button>
+        </div>
+        <div class="col-span-2 flex items-center gap-2 sm:col-span-1">
           <router-link
             :to="authStore.isAuthenticated ? dashboardPath : '/login'"
-            class="inline-flex min-h-9 items-center justify-center rounded-lg bg-gray-900 px-3 text-xs font-medium text-white transition-colors hover:bg-gray-800 sm:px-4 sm:text-sm dark:bg-white dark:text-gray-900 dark:hover:bg-gray-200"
+            class="inline-flex min-h-11 flex-1 items-center justify-center whitespace-nowrap rounded-xl px-4 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 sm:flex-none dark:text-dark-200 dark:hover:bg-dark-800 dark:hover:text-white"
           >
-            {{ authStore.isAuthenticated ? '进入控制台' : '登录' }}
+            {{ t('clientIntroduction.console') }}
           </router-link>
+          <a
+            href="#downloads"
+            class="inline-flex min-h-11 flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-[#2864dc] px-5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#174bba] sm:flex-none dark:bg-[#376bdd] dark:hover:bg-[#285bc5]"
+          >
+            <Icon name="download" size="sm" aria-hidden="true" />
+            {{ t('clientIntroduction.clientDownload') }}
+          </a>
         </div>
       </nav>
     </header>
 
-    <main class="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-12">
-      <section class="relative overflow-hidden rounded-3xl bg-gray-900 px-6 py-8 text-white shadow-xl sm:px-10 sm:py-12 dark:bg-dark-800">
-        <div class="relative z-10 max-w-3xl">
-          <p class="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-primary-300">{{ platformBadge }}</p>
-          <h1 class="text-3xl font-bold tracking-tight sm:text-5xl">共飞 ChatGPT 助手</h1>
-          <p class="mt-4 max-w-2xl text-sm leading-7 text-gray-300 sm:text-base">
-            下载客户端，完成注册、登录、ChatGPT 安装、分组切换和充值。下面的操作步骤适合第一次使用的用户。
-          </p>
-          <div class="mt-7 border-t border-white/15 pt-6">
-            <p class="text-xs font-semibold uppercase tracking-[0.16em] text-primary-300">客户端下载</p>
-            <p class="mt-2 text-sm leading-6 text-gray-300">
-              <span class="font-semibold text-white">下面两个客户端都要下载，缺一个用不了。</span>
-              共飞客户端负责注册登录、分组切换、余额和充值；Codex 客户端是实际用来对话的程序。
-            </p>
-            <div class="mt-5 grid gap-3 sm:grid-cols-2">
-              <a
-                :href="clientDownloadUrl"
-                download
-                class="btn btn-primary inline-flex items-center justify-center gap-2 px-5 py-3 text-sm"
-              >
-                <Icon name="download" size="sm" />
-                ① 下载共飞客户端
-              </a>
-              <a
-                :href="codexDownloadUrl"
-                target="_blank"
-                rel="noopener noreferrer"
-                class="btn btn-primary inline-flex items-center justify-center gap-2 px-5 py-3 text-sm"
-              >
-                <Icon name="download" size="sm" />
-                ② 下载 Codex 客户端
-                <Icon name="externalLink" size="sm" />
-              </a>
+    <main class="mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-12">
+      <ClientIntroduction download-page />
+
+      <section id="downloads" aria-labelledby="downloads-title" class="mt-12 scroll-mt-6 sm:mt-16">
+        <p class="text-sm font-semibold text-primary-700 dark:text-primary-300">准备好了，就从这里下载</p>
+        <h2 id="downloads-title" class="mt-2 text-2xl font-bold">选你的电脑，下载这两个软件</h2>
+        <p class="mt-3 text-base leading-7 text-gray-600 dark:text-dark-300">
+          下面两个客户端都要下载，缺一个用不了。<strong class="font-semibold text-gray-900 dark:text-white">共飞负责账号、连接和费用，Codex 负责提问和回答。</strong>
+        </p>
+        <p class="mt-2 text-sm leading-7 text-gray-600 dark:text-dark-300">
+          教程截图中的“安装 ChatGPT”“启动 ChatGPT”，指的就是这里的 Codex 对话软件，不用再找第三个软件。
+        </p>
+        <div class="mt-6 grid items-start gap-5" :class="macDownloadUrl ? 'lg:grid-cols-2' : ''">
+          <section aria-labelledby="windows-title" class="min-w-0 rounded-3xl border border-gray-200 bg-white p-5 sm:p-7 dark:border-dark-800 dark:bg-dark-900">
+            <p class="text-sm font-medium text-primary-700 dark:text-primary-300">Windows 电脑</p>
+            <h3 id="windows-title" class="mt-2 text-xl font-bold">Windows 64 位（x64）</h3>
+            <p class="mt-2 text-sm leading-7 text-gray-600 dark:text-dark-300">建议使用更新后的 Windows 10 或 Windows 11。32 位、ARM 电脑不适用这个下载包。</p>
+            <div class="mt-5 space-y-5">
+              <div>
+                <p class="mb-2 text-sm font-semibold">① 共飞：登录账号、看余额、连接服务</p>
+                <a :href="clientDownloadUrl" download class="btn btn-primary flex min-h-12 w-full items-center justify-center gap-2 px-4 py-3 text-base">
+                  <Icon name="download" size="sm" />
+                  下载共飞客户端
+                </a>
+                <p v-if="clientFileName" class="mt-2 break-all text-xs leading-5 text-gray-500 dark:text-dark-400">文件：{{ clientFileName }}</p>
+              </div>
+              <div>
+                <p class="mb-2 text-sm font-semibold">② Codex：输入问题、查看 AI 回答</p>
+                <a :href="codexDownloadUrl" target="_blank" rel="noopener noreferrer" class="btn btn-secondary flex min-h-12 w-full items-center justify-center gap-2 px-4 py-3 text-base">
+                  <Icon name="download" size="sm" />
+                  下载 Codex 客户端
+                  <Icon name="externalLink" size="sm" />
+                </a>
+              </div>
             </div>
-            <p v-if="clientFileName" class="mt-4 text-xs text-gray-400">
-              共飞客户端文件：<span class="font-mono text-gray-200">{{ clientFileName }}</span>
-            </p>
-            <p class="mt-1 text-xs text-gray-400">两个客户端都是免安装程序，下载后请先解压再打开。</p>
-          </div>
-          <div v-if="macDownloadUrl" class="mt-7 border-t border-white/15 pt-6">
-            <p class="text-xs font-semibold uppercase tracking-[0.16em] text-primary-300">macOS</p>
-            <p class="mt-2 text-sm leading-6 text-gray-300">
-              <span class="font-semibold text-white">Mac 版请在「终端」里执行下面这条命令安装，不要用浏览器下载。</span>
-              mac 版未经过苹果公证，浏览器下载的文件会被系统拦下打不开；这条命令取回的不会。以后升级重跑同一条命令即可。
-            </p>
-            <div class="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
-              <code class="flex-1 overflow-x-auto rounded-lg bg-black/40 px-4 py-3 font-mono text-xs text-gray-100">{{ macInstallCommand }}</code>
-              <button
-                type="button"
-                class="btn btn-primary inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm"
-                @click="copyMacInstallCommand"
-              >
-                <Icon name="copy" size="sm" />
-                {{ macCommandCopied ? '已复制' : '复制命令' }}
+            <p class="mt-5 border-t border-gray-100 pt-4 text-sm leading-7 text-gray-600 dark:border-dark-800 dark:text-dark-300">下载后先解压，再打开文件夹里的程序。不要直接在压缩包里双击运行，也不要删除解压后的文件夹。</p>
+          </section>
+
+          <section v-if="macDownloadUrl" aria-labelledby="mac-title" class="min-w-0 rounded-3xl border border-gray-200 bg-white p-5 sm:p-7 dark:border-dark-800 dark:bg-dark-900">
+            <p class="text-sm font-medium text-primary-700 dark:text-primary-300">苹果电脑 · macOS</p>
+            <h3 id="mac-title" class="mt-2 text-xl font-bold">Apple 芯片（M 系列）</h3>
+            <p class="mt-2 text-sm leading-7 text-gray-600 dark:text-dark-300">先点左上角苹果菜单 →「关于本机」，确认芯片名称以 Apple M 开头。<strong class="text-gray-900 dark:text-white">Intel Mac 暂不支持。</strong></p>
+            <div class="mt-5">
+              <p class="text-sm font-semibold">① 安装共飞：把下面的命令粘贴到「终端」</p>
+              <ol class="mt-2 list-decimal space-y-1 pl-5 text-sm leading-7 text-gray-600 dark:text-dark-300">
+                <li>同时按 Command（⌘）和空格键，搜索“终端”并打开。</li>
+                <li>点击“复制命令”，回到终端按 Command（⌘）+ V 粘贴，再按回车。</li>
+                <li>等安装完成，共飞会自动打开。以后更新也用这条命令。</li>
+              </ol>
+              <code class="mt-3 block whitespace-pre-wrap break-all rounded-xl bg-gray-900 p-4 font-mono text-xs leading-6 text-gray-100">{{ macInstallCommand }}</code>
+              <button type="button" class="btn btn-secondary mt-3 inline-flex min-h-11 items-center gap-2 px-4 py-2.5 text-sm" @click="copyMacInstallCommand">
+                <Icon :name="macCommandCopied ? 'check' : 'clipboard'" size="sm" />
+                <span aria-live="polite">{{ macCommandCopied ? '已复制' : '复制命令' }}</span>
               </button>
+              <p v-if="macFileName" class="mt-2 break-all text-xs leading-5 text-gray-500 dark:text-dark-400">安装包：{{ macFileName }}</p>
+              <p class="mt-2 text-sm leading-6 text-gray-600 dark:text-dark-300">共飞 Mac 版尚未经过苹果公证，请使用上面的安装命令。浏览器直接下载的文件可能被系统拦截。</p>
             </div>
-            <p v-if="macFileName" class="mt-3 text-xs text-gray-400">
-              mac 安装包：<span class="font-mono text-gray-200">{{ macFileName }}</span>
-            </p>
-            <p class="mt-4 text-sm leading-6 text-gray-300">还需要按你的芯片下载 Codex 客户端：</p>
-            <div class="mt-3 grid gap-3 sm:grid-cols-2">
-              <a
-                v-for="item in codexMacDownloads"
-                :key="item.url"
-                :href="item.url"
-                target="_blank"
-                rel="noopener noreferrer"
-                class="btn btn-secondary inline-flex items-center justify-center gap-2 px-5 py-3 text-sm"
-              >
+            <div class="mt-5 border-t border-gray-100 pt-4 dark:border-dark-800">
+              <p class="mb-2 text-sm font-semibold">② 下载 Codex：用来提问和看回答</p>
+              <a :href="codexMacDownloadUrl" target="_blank" rel="noopener noreferrer" class="btn btn-primary flex min-h-12 w-full items-center justify-center gap-2 px-4 py-3 text-base">
                 <Icon name="download" size="sm" />
-                {{ item.label }}
+                下载 Codex（Apple 芯片）
                 <Icon name="externalLink" size="sm" />
               </a>
             </div>
-            <p class="mt-3 text-xs text-gray-400">
-              不确定芯片型号：左上角苹果菜单 →「关于本机」，「芯片」一行写 Apple M 开头就选 Apple 芯片。
-            </p>
-          </div>
-          <div v-if="netdiskDownloadUrl" class="mt-6 flex flex-wrap items-center gap-3">
-            <a
-              :href="netdiskDownloadUrl"
-              target="_blank"
-              rel="noopener noreferrer"
-              class="btn btn-secondary inline-flex items-center gap-2 px-5 py-3 text-sm"
-            >
-              <Icon name="download" size="sm" />
-              共飞客户端备用网盘下载
-              <Icon name="externalLink" size="sm" />
-            </a>
-          </div>
+          </section>
         </div>
-        <div class="pointer-events-none absolute -right-6 -top-10 hidden h-72 w-72 rotate-12 opacity-20 sm:block">
-          <img src="/gongfei-plane.svg" alt="" class="h-full w-full object-contain" />
+        <div class="mt-5 flex flex-wrap items-center gap-x-6 gap-y-3 text-sm">
+          <a href="#guide-step-1" class="inline-flex min-h-11 items-center gap-2 font-semibold text-primary-700 hover:underline dark:text-primary-300">
+            已经下载好了？继续看图文操作
+            <Icon name="arrowDown" size="sm" />
+          </a>
+          <a v-if="netdiskDownloadUrl" :href="netdiskDownloadUrl" target="_blank" rel="noopener noreferrer" class="inline-flex min-h-11 items-center gap-2 text-gray-600 underline underline-offset-4 dark:text-dark-300">
+            共飞客户端备用网盘下载
+            <Icon name="externalLink" size="sm" />
+          </a>
         </div>
       </section>
 
@@ -428,7 +427,7 @@ function toggleTheme() {
           <p class="text-xs font-semibold uppercase tracking-[0.16em] text-primary-600 dark:text-primary-300">视频教程</p>
           <h2 class="mt-2 text-xl font-bold tracking-tight sm:text-2xl">跟着视频一步步操作</h2>
           <p class="mt-3 max-w-2xl text-sm leading-6 text-gray-600 dark:text-gray-300">
-            不想看文字教程？点右边按钮去 B 站看这段视频，从下载到充值完整走一遍。下面还有图文步骤可以对照。
+            不想看文字教程？点右边按钮去 B 站看这段视频，{{ rechargeEnabled ? '从下载到充值完整走一遍' : '从下载到使用完整走一遍' }}。下面还有图文步骤可以对照。
           </p>
         </div>
         <a
@@ -448,7 +447,7 @@ function toggleTheme() {
             <p class="mb-3 text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-dark-500">操作目录</p>
             <nav class="space-y-1">
               <a
-                v-for="step in guideSteps"
+                v-for="step in visibleGuideSteps"
                 :key="step.number"
                 :href="`#guide-step-${step.number}`"
                 class="block rounded-lg px-3 py-2 text-sm text-gray-600 transition-colors hover:bg-primary-50 hover:text-primary-700 dark:text-dark-300 dark:hover:bg-primary-900/20 dark:hover:text-primary-300"
@@ -461,7 +460,7 @@ function toggleTheme() {
 
         <div class="min-w-0 space-y-6">
           <article
-            v-for="step in guideSteps"
+            v-for="step in visibleGuideSteps"
             :id="`guide-step-${step.number}`"
             :key="step.number"
             class="scroll-mt-6 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm sm:p-7 dark:border-dark-800 dark:bg-dark-900"
@@ -542,6 +541,24 @@ function toggleTheme() {
                 <p class="mt-1 text-sm leading-6 text-gray-600 dark:text-dark-300">确认从完整的版本目录启动，并检查 Windows 安全软件是否拦截程序。必要时重新解压一份完整版本。</p>
               </div>
               <div>
+                <h3 class="text-sm font-semibold text-gray-900 dark:text-white">ChatGPT 一直安装不上？</h3>
+                <p class="mt-1 text-sm leading-6 text-gray-600 dark:text-dark-300">
+                  常见原因是系统版本过旧，早期 Windows 10 版本无法安装 ChatGPT。任选其一升级系统后重新安装即可：
+                  <a
+                    href="https://go.microsoft.com/fwlink/?linkid=2171764"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="font-medium text-primary-600 hover:underline dark:text-primary-400"
+                  >升级到 Windows 11</a>，或
+                  <a
+                    href="https://go.microsoft.com/fwlink/?LinkID=799445"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="font-medium text-primary-600 hover:underline dark:text-primary-400"
+                  >下载 Windows 10 升级助手</a>。
+                </p>
+              </div>
+              <div>
                 <h3 class="text-sm font-semibold text-gray-900 dark:text-white">余额没有及时更新？</h3>
                 <p class="mt-1 text-sm leading-6 text-gray-600 dark:text-dark-300">客户端默认每 60 秒刷新一次，也可以重新进入主界面触发刷新。</p>
               </div>
@@ -549,7 +566,7 @@ function toggleTheme() {
                 <h3 class="text-sm font-semibold text-gray-900 dark:text-white">ChatGPT 没有切换到当前账号？</h3>
                 <p class="mt-1 text-sm leading-6 text-gray-600 dark:text-dark-300">先退出正在运行的 ChatGPT，再回到客户端点击重启 ChatGPT 激活当前账号。</p>
               </div>
-              <div>
+              <div v-if="rechargeEnabled">
                 <h3 class="text-sm font-semibold text-gray-900 dark:text-white">充值二维码无法显示？</h3>
                 <p class="mt-1 text-sm leading-6 text-gray-600 dark:text-dark-300">检查网络连接和系统时间；仍无法解决时，通过客户端“联系我们”反馈订单号和问题时间。</p>
               </div>
