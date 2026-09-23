@@ -87,7 +87,7 @@ public partial class DashboardView : UserControl, IDashboardActions
         _pages[ClientPage.Overview] = new Pages.OverviewPage(this);
         _pages[ClientPage.Codex] = new Pages.CodexPage(this);
         _pages[ClientPage.Claude] = new Pages.ClaudePage();
-        _pages[ClientPage.Kimi] = new Pages.KimiPage();
+        _pages[ClientPage.LocalProxy] = new Pages.LocalProxyPage(this);
         _pages[ClientPage.Account] = new Pages.AccountPage(this);
         _pages[ClientPage.Settings] = new Pages.SettingsPage(this);
         foreach (Control view in _pages.Values)
@@ -209,6 +209,9 @@ public partial class DashboardView : UserControl, IDashboardActions
         _ = _safeAsync?.RunAsync(() => _page!.ClientUpdate.CheckAndOfferUpdateAsync());
 
     void IDashboardActions.OpenContactPage() => BrowserLauncher.TryOpenRelayPage("contact");
+
+    void IDashboardActions.ToggleLocalProxy(LocalProxyAccountItem item) =>
+        _ = _safeAsync?.RunAsync(() => _page?.Dashboard.LocalProxy.ToggleAsync(item) ?? Task.CompletedTask);
 
     /// <summary>Starts the polling loops and does the first refresh.</summary>
     /// <remarks>

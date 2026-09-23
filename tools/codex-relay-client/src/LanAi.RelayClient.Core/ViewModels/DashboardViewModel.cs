@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using LanAi.RelayClient.Server;
 using LanAi.RelayClient.Services;
+using LanAi.RelayClient.Transport;
 using LanAi.RelayClient.Controls;
 
 namespace LanAi.RelayClient.ViewModels;
@@ -140,7 +141,10 @@ public sealed partial class DashboardViewModel : ObservableObject
         IStartupRegistration? startupRegistration = null,
         IContextFilterPreferenceStore? contextFilterPreferences = null,
         IContextFilterUsageStore? contextFilterUsage = null,
-        IPluginSupportPreferenceStore? pluginSupportPreferences = null)
+        IPluginSupportPreferenceStore? pluginSupportPreferences = null,
+        ILocalProxyCredentialSource? localProxyCredentials = null,
+        ILocalProxyPreferenceStore? localProxyPreferences = null,
+        ILocalProxyUsageStore? localProxyUsage = null)
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
         _session = session ?? throw new ArgumentNullException(nameof(session));
@@ -166,6 +170,29 @@ public sealed partial class DashboardViewModel : ObservableObject
             pluginSupportPreferences ?? new PluginSupportPreferenceStore(),
             ClaudePreference,
             _safeAsync);
+        // The credential source must be the very instance the relay reads from, so a token
+        // checked on switch-on is the one the next turn uses; the host passes it in.
+        LocalProxy = new LocalProxyViewModel(
+            _client,
+            RefreshState,
+            _codex,
+            localProxyCredentials ?? new LocalProxyCredentialCache(_client, _session.GetAccessTokenAsync),
+            localProxyPreferences ?? new LocalProxyPreferenceStore(),
+            localProxyUsage ?? new LocalProxyUsageStore(),
+            ClaudeCode,
+            ClaudePreference,
+            () => IsClaudeGroup);
+        LocalProxy.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(LocalProxyViewModel.CodexTarget))
+            {
+                // On a local proxy Codex needs no billing group, and the group no longer
+                // decides where its traffic goes.
+                OnPropertyChanged(nameof(CanChooseGroup));
+                OnPropertyChanged(nameof(CanStartCodex));
+                OnPropertyChanged(nameof(StartCodexLabel));
+            }
+        };
     }
 
     /// <summary>The refresh cycle's shared bookkeeping: backoff, rate-limit banner, 401s.</summary>
@@ -185,6 +212,12 @@ public sealed partial class DashboardViewModel : ObservableObject
 
     /// <summary>Claude Code and its editor extension.</summary>
     public ClaudeCodeViewModel ClaudeCode { get; }
+
+    /// <summary>The 本地代理 page: each tool straight to the official API with one of the user's own accounts.</summary>
+    public LocalProxyViewModel LocalProxy { get; }
+
+    /// <summary>Whether the Codex group picker means anything right now: not while Codex is on a local proxy.</summary>
+    public bool CanChooseGroup => GroupsReady && !LocalProxy.IsCodexActive;
 
     public ObservableCollection<GroupItemViewModel> Groups { get; } = [];
 
@@ -224,6 +257,7 @@ public sealed partial class DashboardViewModel : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(GroupsUnavailable))]
     [NotifyPropertyChangedFor(nameof(StartCodexLabel))]
+    [NotifyPropertyChangedFor(nameof(CanChooseGroup))]
     private bool groupsReady;
 
     public bool GroupsUnavailable => !GroupsReady;
@@ -412,7 +446,7 @@ public sealed partial class DashboardViewModel : ObservableObject
     /// </para>
     /// </remarks>
     private bool AwaitingBillingGroup =>
-        _codex.UsesLocalTransport && !CodexNotInstalled &&
+        _codex.UsesLocalTransport && !CodexNotInstalled && !LocalProxy.IsCodexActive &&
         (SelectedGroup is null ||
          (SelectedGroup.IsAutomatic && (_autoGroupSettings is null || _autoGroupSettings.AutoGroupIds.Count == 0)));
 
@@ -475,6 +509,7 @@ public sealed partial class DashboardViewModel : ObservableObject
         // Local file read, never throws (see ContextFilterUsageStore) — safe to run
         // ahead of the try block that guards the network calls below.
         RefreshContextFilterUsageText();
+        LocalProxy.RefreshUsage();
 
         try
         {
@@ -862,6 +897,7 @@ public sealed partial class DashboardViewModel : ObservableObject
         yield return Account.LoadSubscriptionAsync;
         yield return LoadGroupCardAsync;
         yield return Usage.LoadTrendAsync;
+        yield return LocalProxy.LoadAccountsAsync;
     }
 
     private async Task LoadGroupCardAsync(string token, CancellationToken cancellationToken)
@@ -1391,6 +1427,7 @@ public sealed partial class DashboardViewModel : ObservableObject
         CanConfigureAutoGroup = false;
         ClaudeCode.Reset();
         ClaudePreference.Reset();
+        LocalProxy.Reset();
         RefreshState.Reset();
 
         Account.Reset();

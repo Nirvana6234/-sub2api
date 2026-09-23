@@ -42,7 +42,7 @@
             <DockPanel>
               <TextBlock Text="暂时取不到" Classes="unavailable" DockPanel.Dock="Right"
                          IsVisible="{Binding Dashboard.Usage.UsageUnavailable}" />
-              <TextBlock Text="今日用量" Classes="cardTitle" />
+              <TextBlock Text="今日用量（中转站）" Classes="cardTitle" />
             </DockPanel>
             <!-- Rows rather than three columns: token counts run to seven digits and
                  collided with the cost at the narrowest window width. -->
@@ -79,11 +79,8 @@
                 <TextBlock Text="Codex" Classes="cardTitle" />
               </DockPanel>
               <TextBlock Text="{Binding CodexStatusText}" Margin="0,8,0,0" />
-              <TextBlock Classes="label" Margin="0,2,0,0" TextTrimming="CharacterEllipsis">
-                <Run Text="{Binding Dashboard.CurrentGroupName}" />
-                <Run Text=" " />
-                <Run Text="{Binding Dashboard.CurrentGroupRate}" />
-              </TextBlock>
+              <TextBlock Text="{Binding CodexRouteText}" Classes="label" Margin="0,2,0,0"
+                         TextTrimming="CharacterEllipsis" />
             </StackPanel>
           </DockPanel>
         </Border>
@@ -103,12 +100,17 @@
 
         <Border Grid.Column="4" Classes="card">
           <DockPanel>
-            <Button DockPanel.Dock="Bottom" Content="查看" Click="OpenKimi_OnClick"
+            <Button DockPanel.Dock="Bottom" Content="管理" Click="OpenLocalProxy_OnClick"
                     Classes="secondary" HorizontalAlignment="Stretch"
                     HorizontalContentAlignment="Center" Padding="0,8" Margin="0,10,0,0" />
             <StackPanel>
-              <TextBlock Text="Kimi Code" Classes="cardTitle" />
-              <TextBlock Text="即将支持" Margin="0,8,0,0" Foreground="#9CA3AF" />
+              <TextBlock Text="本地代理（今日）" Classes="cardTitle" />
+              <!-- Straight to the official API with the user's own accounts: never on the
+                   relay server's usage above, so it is shown here, from this machine. -->
+              <TextBlock Text="{Binding Dashboard.LocalProxy.CodexUsageText, StringFormat='Codex：{0}'}"
+                         Margin="0,8,0,0" FontSize="12" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding Dashboard.LocalProxy.ClaudeUsageText, StringFormat='Claude：{0}'}"
+                         Margin="0,2,0,0" FontSize="12" TextWrapping="Wrap" />
             </StackPanel>
           </DockPanel>
         </Border>

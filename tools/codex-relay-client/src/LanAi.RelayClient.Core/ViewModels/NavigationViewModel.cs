@@ -9,7 +9,7 @@ public enum ClientPage
     Overview,
     Codex,
     Claude,
-    Kimi,
+    LocalProxy,
     Account,
     Settings,
 }
@@ -58,8 +58,8 @@ public sealed partial class NavigationViewModel : ObservableObject
         [
             new NavItemViewModel(ClientPage.Overview, "仪表盘", "▦"),
             new NavItemViewModel(ClientPage.Codex, "Codex", "◉"),
-            new NavItemViewModel(ClientPage.Claude, "Claude", "✳"),
-            new NavItemViewModel(ClientPage.Kimi, "Kimi", "☾"),
+            new NavItemViewModel(ClientPage.Claude, "Claude", "✱"),
+            new NavItemViewModel(ClientPage.LocalProxy, "本地代理", "⇄"),
             new NavItemViewModel(ClientPage.Account, "账户", "◎"),
         ];
         SettingsItem = new NavItemViewModel(ClientPage.Settings, "设置", "⚙");

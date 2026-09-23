@@ -28,4 +28,6 @@ internal interface IDashboardActions
     void CheckUpdate();
 
     void OpenContactPage();
+
+    void ToggleLocalProxy(LocalProxyAccountItem item);
 }

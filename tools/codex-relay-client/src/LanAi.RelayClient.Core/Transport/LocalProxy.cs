@@ -4,7 +4,7 @@ using LanAi.RelayClient.Services;
 namespace LanAi.RelayClient.Transport;
 
 /// <summary>The account one tool's traffic goes to while its local proxy is on.</summary>
-internal sealed record LocalProxyTarget(long AccountId, string Name);
+public sealed record LocalProxyTarget(long AccountId, string Name);
 
 /// <summary>Where the local proxy sends each tool's traffic.</summary>
 /// <remarks>Settable so tests can point both at a loopback server.</remarks>

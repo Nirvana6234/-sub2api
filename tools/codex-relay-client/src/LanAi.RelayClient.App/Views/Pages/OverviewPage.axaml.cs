@@ -31,5 +31,5 @@ public partial class OverviewPage : UserControl
 
     private void OpenClaude_OnClick(object? sender, RoutedEventArgs e) => _actions?.Navigate(ClientPage.Claude);
 
-    private void OpenKimi_OnClick(object? sender, RoutedEventArgs e) => _actions?.Navigate(ClientPage.Kimi);
+    private void OpenLocalProxy_OnClick(object? sender, RoutedEventArgs e) => _actions?.Navigate(ClientPage.LocalProxy);
 }

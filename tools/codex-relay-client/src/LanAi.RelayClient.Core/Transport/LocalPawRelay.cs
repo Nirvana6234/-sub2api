@@ -301,6 +301,15 @@ internal sealed class LocalPawRelay : IAsyncDisposable
             : $"本机 Relay（{tool}）改为本地代理：账号 {target.AccountId}「{Sanitize(target.Name)}」直连官方");
     }
 
+    /// <summary>The local-proxy target currently in force for <paramref name="kind"/>, if any.</summary>
+    internal LocalProxyTarget? LocalProxyFor(LocalProxyKind kind)
+    {
+        lock (_gate)
+        {
+            return kind == LocalProxyKind.ClaudeCode ? _claudeLocalProxy : _codexLocalProxy;
+        }
+    }
+
     public Task StartAsync(CancellationToken cancellationToken = default)
     {
         if (_disposed) throw new ObjectDisposedException(nameof(LocalPawRelay));

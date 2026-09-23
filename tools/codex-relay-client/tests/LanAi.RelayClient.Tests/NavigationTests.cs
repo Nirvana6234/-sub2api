@@ -14,7 +14,7 @@ public sealed class NavigationTests
         var navigation = new NavigationViewModel();
 
         Assert.Equal(
-            [ClientPage.Overview, ClientPage.Codex, ClientPage.Claude, ClientPage.Kimi, ClientPage.Account],
+            [ClientPage.Overview, ClientPage.Codex, ClientPage.Claude, ClientPage.LocalProxy, ClientPage.Account],
             navigation.Items.Select(i => i.Page));
         Assert.Equal(ClientPage.Overview, navigation.CurrentPage);
         Assert.Equal("仪表盘", navigation.Title);
