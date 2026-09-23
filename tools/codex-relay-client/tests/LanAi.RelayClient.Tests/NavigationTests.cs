@@ -88,7 +88,29 @@ public sealed class NavigationTests
         Assert.Contains(nameof(DashboardPageViewModel.ClaudeStatusText), changed);
     }
 
-    private static async Task<(DashboardPageViewModel Page, DashboardViewModel Dashboard, FakeRelayClient Relay, RelaySessionManager Session)> SignedInPageAsync()
+    [Fact]
+    public async Task AClaudeCodeSetupThatDidNotTakeMarksTheClaudePage()
+    {
+        var codex = new FakeCodexStartup
+        {
+            UsesLocalTransport = true,
+            PluginResult = new PluginSupportResult(PluginSupportState.Problem, "写入失败"),
+        };
+        (DashboardPageViewModel page, DashboardViewModel dashboard, _, _) = await SignedInPageAsync(codex);
+
+        dashboard.ClaudeCode.PluginSupportEnabled = true;
+        await dashboard.ClaudeCode.SyncPluginSupportAsync();
+
+        Assert.True(page.Navigation.Item(ClientPage.Claude).HasBadge);
+
+        codex.PluginResult = new PluginSupportResult(PluginSupportState.Off);
+        dashboard.ClaudeCode.PluginSupportEnabled = false;
+        await dashboard.ClaudeCode.SyncPluginSupportAsync();
+
+        Assert.False(page.Navigation.Item(ClientPage.Claude).HasBadge);
+    }
+
+    private static async Task<(DashboardPageViewModel Page, DashboardViewModel Dashboard, FakeRelayClient Relay, RelaySessionManager Session)> SignedInPageAsync(FakeCodexStartup? codex = null)
     {
         var relay = new FakeRelayClient();
         var clock = new TestClock();
@@ -98,7 +120,7 @@ public sealed class NavigationTests
             session,
             new FakeGroupPreferenceStore(),
             new ManagedKeyNaming(new FixedInstallId("testinst")),
-            new FakeCodexStartup(),
+            codex ?? new FakeCodexStartup(),
             pluginSupportPreferences: new FakePluginSupportPreferenceStore());
         var clientUpdate = new ClientUpdateViewModel(_ => Task.FromResult(new ClientCheckResult(ClientCheckStatus.UpToDate)));
         var announcements = new AnnouncementsViewModel(

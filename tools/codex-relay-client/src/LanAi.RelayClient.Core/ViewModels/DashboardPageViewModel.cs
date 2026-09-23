@@ -50,9 +50,11 @@ public sealed partial class DashboardPageViewModel : ObservableObject
         Dashboard.ClaudeCode.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName is nameof(ClaudeCodeViewModel.PluginSupportEnabled)
-                or nameof(ClaudeCodeViewModel.PluginSupportActive))
+                or nameof(ClaudeCodeViewModel.PluginSupportActive)
+                or nameof(ClaudeCodeViewModel.PluginSupportStatus))
             {
                 OnPropertyChanged(nameof(ClaudeStatusText));
+                UpdateClaudeBadge();
             }
         };
         Dashboard.Account.PropertyChanged += (_, args) =>
@@ -87,6 +89,19 @@ public sealed partial class DashboardPageViewModel : ObservableObject
         !Dashboard.ClaudeCode.PluginSupportEnabled ? "未开启"
         : Dashboard.ClaudeCode.PluginSupportActive ? "已接入"
         : "待完成设置";
+
+    /// <summary>
+    /// Marks the Claude page when the user switched Claude Code on and the last sync
+    /// answered with something other than 已接入 — a group still to choose, or a
+    /// problem. Keyed on the sync having answered at all, so the dot does not flash
+    /// during the moment between launch and the first sync.
+    /// </summary>
+    private void UpdateClaudeBadge()
+    {
+        ClaudeCodeViewModel claude = Dashboard.ClaudeCode;
+        Navigation.Item(ClientPage.Claude).HasBadge =
+            claude.PluginSupportEnabled && claude.HasPluginSupportStatus && !claude.PluginSupportActive;
+    }
 
     private void UpdateCodexStatus()
     {
