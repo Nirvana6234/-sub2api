@@ -1,0 +1,20 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="LanAi.RelayClient.App.Views.Pages.KimiPage">
+
+  <!-- A placeholder until the Kimi Code CLI investigation (T8 in the redesign plan)
+       settles which CLI, which protocol and which config file. Says so plainly rather
+       than showing a switch that would do nothing. -->
+  <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <StackPanel>
+      <Border Classes="card" Margin="0">
+        <StackPanel>
+          <TextBlock Text="Kimi Code CLI" Classes="cardTitle" />
+          <TextBlock Text="即将支持" Foreground="#2563EB" FontWeight="SemiBold" Margin="0,10,0,0" />
+          <TextBlock Classes="hint" Margin="0,6,0,0"
+                     Text="支持后，Kimi Code 命令行可以通过共飞使用你账号里的 Kimi 分组。与 Claude Code 一样，只在客户端运行期间有效，退出时自动还原你原来的配置。" />
+        </StackPanel>
+      </Border>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

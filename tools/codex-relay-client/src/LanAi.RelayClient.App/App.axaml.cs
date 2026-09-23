@@ -461,8 +461,8 @@ public partial class App : Application
         announcements.Arrived += (_, arrival) => Avalonia.Threading.Dispatcher.UIThread.Post(() =>
             _notifications?.Show(new NotificationRequest(
                 arrival.Count > 1
-                    ? $"共飞-ChatGPT助手有 {arrival.Count} 条新公告"
-                    : "共飞-ChatGPT助手有新公告",
+                    ? $"共飞 AI 助手有 {arrival.Count} 条新公告"
+                    : "共飞 AI 助手有新公告",
                 string.IsNullOrWhiteSpace(arrival.LatestTitle)
                     ? "点击查看。"
                     : arrival.LatestTitle + Environment.NewLine + "点击查看。",

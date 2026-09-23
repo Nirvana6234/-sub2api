@@ -1,0 +1,173 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:LanAi.RelayClient.ViewModels;assembly=LanAi.RelayClient.Core"
+             xmlns:controls="clr-namespace:LanAi.RelayClient.Controls"
+             x:Class="LanAi.RelayClient.App.Views.Pages.CodexPage"
+             x:DataType="vm:DashboardPageViewModel">
+
+  <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <StackPanel>
+
+      <!-- The reason this client exists, so it leads. Everything below is information
+           about a session this button starts. -->
+      <Border Classes="card">
+        <StackPanel>
+          <Button Content="{Binding Dashboard.StartCodexLabel}"
+                  Click="StartCodex_OnClick"
+                  IsEnabled="{Binding Dashboard.CanStartCodex}"
+                  Classes="primary"
+                  Classes.installing="{Binding Dashboard.IsInstallingCodex}"
+                  Classes.restart="{Binding Dashboard.RequiresCodexAccountRestart}"
+                  HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                  Padding="0,12" FontSize="16" FontWeight="SemiBold"
+                  BorderThickness="0" />
+          <TextBlock Text="{Binding Dashboard.CodexMessage}" TextWrapping="Wrap"
+                     Foreground="#6B7280" FontSize="12" Margin="0,8,0,0"
+                     IsVisible="{Binding Dashboard.HasCodexMessage}" />
+          <TextBlock Text="{Binding Dashboard.LeaseStatus}"
+                     Foreground="#059669" FontSize="11" Margin="0,6,0,0"
+                     IsVisible="{Binding Dashboard.HasLeaseStatus}" />
+          <DockPanel Margin="0,8,0,0">
+            <!-- Manual escape hatch: reapplies the relay's ChatGPT config even when
+                 nothing looks broken yet, for the states the automatic poll in
+                 MonitorCodexAsync has not caught (see DashboardViewModel.CanRepairCodexStartup). -->
+            <Button DockPanel.Dock="Right" Content="修复 ChatGPT 启动"
+                    Click="RepairCodexStartup_OnClick"
+                    IsEnabled="{Binding Dashboard.CanRepairCodexStartup}"
+                    ToolTip.Tip="重新写入 ChatGPT 的共飞登录信息；如果 ChatGPT 正在运行，会先确认再重启它"
+                    Classes="secondary" FontSize="12" />
+            <TextBlock Text="保持客户端运行，ChatGPT 才能继续使用共飞额度"
+                       Classes="hint" VerticalAlignment="Center" />
+          </DockPanel>
+          <!-- Greys out when no filter is bundled (macOS, or a Windows build made
+               without it) rather than offering a dead switch. -->
+          <CheckBox Content="启用上下文压缩" IsChecked="{Binding Dashboard.ContextFilterEnabled}"
+                    IsEnabled="{Binding Dashboard.CanToggleContextFilter}"
+                    ToolTip.Tip="压缩历史工具输出和图片，节省额度；改动立即生效，关闭后仍通过共飞中转"
+                    Foreground="#374151" Margin="0,10,0,0" />
+          <!-- An estimate, not a bill: the bundled filter only ever reports byte
+               counts, so this is bytes converted to tokens by a fixed ~4-bytes/token
+               rule of thumb (see ContextFilterUsageStore). Refreshed on the same poll
+               that already drives the Codex health check, not live per request. -->
+          <TextBlock Text="{Binding Dashboard.ContextFilterUsageText}" Classes="hint" Margin="0,4,0,0" />
+        </StackPanel>
+      </Border>
+
+      <Border Classes="card" Margin="0">
+        <StackPanel>
+          <DockPanel>
+            <TextBlock Text="暂时取不到" Classes="unavailable" DockPanel.Dock="Right"
+                       IsVisible="{Binding Dashboard.GroupsUnavailable}" />
+            <TextBlock Text="分组与倍率" Classes="cardTitle" />
+          </DockPanel>
+
+          <!-- Says in words which group is in force, so the answer does not depend on
+               reading the dropdown's state. -->
+          <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+            <TextBlock Text="当前使用：" Classes="label" VerticalAlignment="Center" />
+            <TextBlock Text="{Binding Dashboard.CurrentGroupName}" FontWeight="SemiBold" VerticalAlignment="Center" />
+            <TextBlock Text="{Binding Dashboard.CurrentGroupRate}" Margin="6,0,0,0"
+                       Foreground="#2563EB" FontWeight="SemiBold" FontSize="12" VerticalAlignment="Center" />
+          </StackPanel>
+          <TextBlock Text="{Binding Dashboard.CurrentGroupRateDescription}"
+                     Foreground="#6B7280" FontSize="11" Margin="0,2,0,0" TextWrapping="Wrap"
+                     IsVisible="{Binding Dashboard.HasGroupRateDescription}" />
+
+          <TextBlock Text="切换分组" Classes="label" Margin="0,12,0,4" />
+          <Grid ColumnDefinitions="*,Auto">
+            <ComboBox ItemsSource="{Binding Dashboard.Groups}"
+                      SelectedItem="{Binding Dashboard.SelectedGroup, Mode=TwoWay}"
+                      IsEnabled="{Binding Dashboard.GroupsReady}"
+                      controls:ComboBoxWheelBehavior.DisableMouseWheel="True"
+                      HorizontalAlignment="Stretch" Padding="8,6">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:GroupItemViewModel">
+                  <StackPanel Margin="0,2">
+                    <DockPanel>
+                      <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" HorizontalAlignment="Right">
+                        <!-- The group default, struck through, only when a personal rate
+                             actually differs from it. -->
+                        <TextBlock Text="{Binding StruckThroughRateLabel}"
+                                   Foreground="#9CA3AF" FontSize="12"
+                                   TextDecorations="Strikethrough"
+                                   Margin="8,0,4,0" VerticalAlignment="Center"
+                                   IsVisible="{Binding HasStruckThroughRate}" />
+                        <TextBlock Text="{Binding RateLabel}" FontWeight="SemiBold"
+                                   FontSize="12" VerticalAlignment="Center" />
+                      </StackPanel>
+                      <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                      <!-- Only for a group whose model whitelist is switched on: without
+                           one there is no definite list to show (and 自动分组 never has one). -->
+                      <Button Content="模型" Click="ShowGroupModels_OnClick"
+                              IsVisible="{Binding HasModelAllowlist}"
+                              Classes="link" Padding="6,0,0,0" FontSize="11"
+                              VerticalAlignment="Center" Margin="6,0,0,0" />
+                    </DockPanel>
+                    <TextBlock Text="{Binding CurrentMarker}"
+                               Foreground="#2563EB" FontSize="11" Margin="0,1,0,0"
+                               IsVisible="{Binding IsCurrent}" />
+                    <TextBlock Text="{Binding Description}"
+                               Foreground="#6B7280" FontSize="11" TextWrapping="Wrap"
+                               Margin="0,1,0,0" MaxWidth="480" HorizontalAlignment="Left"
+                               IsVisible="{Binding HasDescription}" />
+                    <TextBlock Text="{Binding RateDescription}"
+                               Foreground="#6B7280" FontSize="11" TextWrapping="Wrap"
+                               Margin="0,1,0,0" MaxWidth="480" HorizontalAlignment="Left"
+                               IsVisible="{Binding HasRateDescription}" />
+                    <!-- Peak window carries the server's timezone, because the window is
+                         judged on the server's clock, not this one. -->
+                    <TextBlock Text="{Binding PeakLabel}"
+                               Foreground="#B45309" FontSize="11" Margin="0,1,0,0"
+                               IsVisible="{Binding HasPeak}" />
+                  </StackPanel>
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+
+            <!-- Sits over the collapsed box, which renders blank when nothing is
+                 selected. Not hit-testable, so it never intercepts the click that opens
+                 the list. -->
+            <TextBlock Text="点击选择分组"
+                       Foreground="#9CA3AF" FontSize="13"
+                       Margin="10,0,0,0" VerticalAlignment="Center"
+                       IsHitTestVisible="False"
+                       IsVisible="{Binding Dashboard.HasNoGroupSelected}" />
+
+            <!-- Reopens the automatic-routing dialog. Shown only while 自动分组 is the
+                 selected entry — it edits the automatic candidate set, which a fixed
+                 group has none of. -->
+            <Button Grid.Column="1" Content="配置" Margin="8,0,0,0" Padding="12,6"
+                    VerticalAlignment="Stretch"
+                    IsVisible="{Binding Dashboard.ShowConfigureAutoGroupButton}"
+                    IsEnabled="{Binding Dashboard.GroupsReady}"
+                    ToolTip.Tip="设置自动分组使用哪些分组和选择策略"
+                    Click="ConfigureAutoGroup_OnClick" />
+          </Grid>
+
+          <TextBlock Text="{Binding Dashboard.GroupMessage}" TextWrapping="Wrap"
+                     Foreground="#2563EB" FontSize="12" Margin="0,8,0,0"
+                     IsVisible="{Binding Dashboard.HasGroupMessage}" />
+
+          <!-- The Claude model preference is one account-level setting; this shows it
+               when Codex itself is on a Claude group. The Claude page binds the very
+               same properties, so the two can never disagree. -->
+          <StackPanel Margin="0,12,0,0" IsVisible="{Binding Dashboard.IsClaudeGroup}">
+            <TextBlock Text="Claude 模型设置" FontWeight="SemiBold" Classes="label" Margin="0,0,0,6" />
+            <Grid ColumnDefinitions="*,8,*">
+              <ComboBox Grid.Column="0"
+                        ItemsSource="{Binding Dashboard.ClaudeModels}"
+                        SelectedItem="{Binding Dashboard.SelectedClaudeModel, Mode=TwoWay}"
+                        HorizontalAlignment="Stretch" Padding="8,6" />
+              <ComboBox Grid.Column="2"
+                        ItemsSource="{Binding Dashboard.ClaudeThinkingLevels}"
+                        SelectedItem="{Binding Dashboard.SelectedClaudeThinkingLevel, Mode=TwoWay}"
+                        HorizontalAlignment="Stretch" Padding="8,6" />
+            </Grid>
+            <TextBlock Text="思考强度影响回答深度与速度；与 Claude 页的设置是同一份" Classes="hint" Margin="0,4,0,0" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

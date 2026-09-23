@@ -6,7 +6,7 @@ namespace LanAi.RelayClient.Tests;
 public sealed class BrandingTests
 {
     [Fact]
-    public void VisibleBrandingUsesTheChatGptAssistantNameAndCopy()
+    public void VisibleBrandingUsesTheAssistantNameAndKeepsChatGptCopy()
     {
         string shell = AppSource.Read("ShellWindow.axaml");
         string signIn = AppSource.Read("Views", "SignInView.axaml");
@@ -14,12 +14,16 @@ public sealed class BrandingTests
         string tray = AppSource.Read("Services", "TrayPresence.cs");
         string app = AppSource.Read("App.axaml.cs");
 
-        Assert.Contains("Title=\"共飞-ChatGPT助手\"", shell, StringComparison.Ordinal);
+        Assert.Contains("Title=\"共飞 AI 助手\"", shell, StringComparison.Ordinal);
         Assert.Contains("拒绝高价，拒绝包月，畅快使用 ChatGPT 工作生活", signIn, StringComparison.Ordinal);
         Assert.Contains("登录后即可使用", signIn, StringComparison.Ordinal);
+        Assert.Contains("Text=\"共飞 AI 助手\"", signIn, StringComparison.Ordinal);
+
+        // File properties stay as shipped: the exe and shortcut names are what the
+        // self-updater and the installed shortcuts already point at.
         Assert.Contains("<AssemblyTitle>共飞-ChatGPT助手</AssemblyTitle>", project, StringComparison.Ordinal);
         Assert.Contains("<Product>共飞-ChatGPT助手</Product>", project, StringComparison.Ordinal);
-        Assert.Contains("ToolTipText = \"共飞-ChatGPT助手\"", tray, StringComparison.Ordinal);
+        Assert.Contains("ToolTipText = \"共飞 AI 助手\"", tray, StringComparison.Ordinal);
         Assert.Contains("new NativeMenuItem(\"启动 ChatGPT\")", tray, StringComparison.Ordinal);
         Assert.Contains("保持运行，ChatGPT 才能继续使用共飞额度。", app, StringComparison.Ordinal);
         Assert.DoesNotContain("共飞直连客户端", shell, StringComparison.Ordinal);

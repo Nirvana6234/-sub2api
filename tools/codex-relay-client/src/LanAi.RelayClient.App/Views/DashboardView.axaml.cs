@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Globalization;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
@@ -9,23 +10,22 @@ using LanAi.RelayClient.ViewModels;
 
 namespace LanAi.RelayClient.App.Views;
 
-/// <summary>The signed-in surface.</summary>
+/// <summary>The signed-in surface: the left rail, and whichever page it has selected.</summary>
 /// <remarks>
 /// <para>
-/// Carries the three polling loops the WPF window ran, because they belong to this
-/// screen rather than to the application: they start when the dashboard appears and
-/// stop when it goes away. In the WPF version they lived on the window alongside the
-/// sign-in form, which is why sign-out had to remember to stop each one by hand.
+/// Carries the three polling loops, because they belong to the signed-in surface as a
+/// whole rather than to any one page: they start when the user signs in and stop when
+/// they sign out, whichever page is showing and whether or not the window is. The
+/// tray line, the ChatGPT health check and the low-balance reminder all depend on
+/// them while the window is hidden.
 /// </para>
 /// <para>
-/// Three buttons here lead to screens that are not ported yet — recharge,
-/// announcements, and the tray behind sign-out's "minimise" choice. They raise events
-/// rather than doing nothing, so the composition root decides what a click means while
-/// the port is in progress. A visible button that silently does nothing is the failure
-/// this codebase keeps producing; it is not repeated here.
+/// Pages are built once, here, and swapped by <see cref="ClientPage"/>. They forward
+/// every click to this class through <see cref="IDashboardActions"/>, so recharge,
+/// announcements and 退出 still raise the events the composition root decides about.
 /// </para>
 /// </remarks>
-public partial class DashboardView : UserControl
+public partial class DashboardView : UserControl, IDashboardActions
 {
     /// <summary>How often the cards are refreshed.</summary>
     /// <remarks>
@@ -61,6 +61,8 @@ public partial class DashboardView : UserControl
     private readonly DispatcherTimer? _activityTimer;
     private readonly DispatcherTimer? _announcementTimer;
     private bool _isRunning;
+    private readonly Dictionary<ClientPage, Control> _pages = [];
+    private bool _mirroringSelection;
 
     /// <summary>Design-time constructor. Not used at runtime.</summary>
     public DashboardView()
@@ -81,6 +83,20 @@ public partial class DashboardView : UserControl
 
         InitializeComponent();
         DataContext = page;
+
+        _pages[ClientPage.Overview] = new Pages.OverviewPage(this);
+        _pages[ClientPage.Codex] = new Pages.CodexPage(this);
+        _pages[ClientPage.Claude] = new Pages.ClaudePage();
+        _pages[ClientPage.Kimi] = new Pages.KimiPage();
+        _pages[ClientPage.Account] = new Pages.AccountPage(this);
+        _pages[ClientPage.Settings] = new Pages.SettingsPage(this);
+        foreach (Control view in _pages.Values)
+        {
+            view.DataContext = page;
+        }
+
+        page.Navigation.PropertyChanged += Navigation_OnPropertyChanged;
+        ShowSelectedPage();
 
         _pollTimer = new DispatcherTimer { Interval = PollInterval };
         _pollTimer.Tick += (_, _) => _ = _safeAsync.RunAsync(RefreshAndMonitorAsync);
@@ -125,6 +141,74 @@ public partial class DashboardView : UserControl
     internal Func<bool, Task<ExitChoice>>? AskExitChoice { get; set; }
 
     private void InitializeComponent() => AvaloniaXamlLoader.Load(this);
+
+    private void Navigation_OnPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(NavigationViewModel.Selected))
+        {
+            ShowSelectedPage();
+        }
+    }
+
+    private void ShowSelectedPage()
+    {
+        if (_page is null)
+        {
+            return;
+        }
+
+        NavigationViewModel navigation = _page.Navigation;
+        this.FindControl<ContentControl>("PageHost")!.Content = _pages[navigation.CurrentPage];
+
+        _mirroringSelection = true;
+        try
+        {
+            this.FindControl<ListBox>("NavList")!.SelectedItem =
+                navigation.Items.Contains(navigation.Selected) ? navigation.Selected : null;
+        }
+        finally
+        {
+            _mirroringSelection = false;
+        }
+    }
+
+    private void NavList_OnSelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (!_mirroringSelection && (sender as ListBox)?.SelectedItem is NavItemViewModel item)
+        {
+            _page?.Navigation.Navigate(item.Page);
+        }
+    }
+
+    private void Settings_OnClick(object? sender, RoutedEventArgs e) =>
+        _page?.Navigation.Navigate(ClientPage.Settings);
+
+    void IDashboardActions.Navigate(ClientPage page) => _page?.Navigation.Navigate(page);
+
+    void IDashboardActions.StartOrInstallCodex() => _ = _safeAsync?.RunAsync(StartOrInstallCodexAsync);
+
+    void IDashboardActions.RepairCodexStartup() => _ = _safeAsync?.RunAsync(RepairCodexStartupAsync);
+
+    void IDashboardActions.ConfigureAutoGroup() =>
+        _ = _safeAsync?.RunAsync(() => _page?.Dashboard.ConfigureAutoGroupAsync() ?? Task.CompletedTask);
+
+    void IDashboardActions.ShowGroupModels(GroupItemViewModel group) =>
+        _ = _safeAsync?.RunAsync(() => _page?.Dashboard.ShowGroupModelsAsync(group) ?? Task.CompletedTask);
+
+    void IDashboardActions.Recharge()
+    {
+        if (_session?.IsSignedIn == true)
+        {
+            RechargeRequested?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    void IDashboardActions.ShowAnnouncements() => AnnouncementsRequested?.Invoke(this, EventArgs.Empty);
+
+    void IDashboardActions.CheckUpdate() =>
+        _ = _safeAsync?.RunAsync(() => _page!.ClientUpdate.CheckAndOfferUpdateAsync());
+
+    void IDashboardActions.OpenContactPage() => BrowserLauncher.TryOpenRelayPage("contact");
 
     /// <summary>Starts the polling loops and does the first refresh.</summary>
     /// <remarks>
@@ -213,7 +297,7 @@ public partial class DashboardView : UserControl
         {
             string balance = observation.Balance.ToString("0.####", CultureInfo.InvariantCulture);
             Notifications?.Show(new NotificationRequest(
-                "共飞-ChatGPT助手余额提醒",
+                "共飞 AI 助手余额提醒",
                 $"检测到 ChatGPT 正在使用，当前余额仅 ¥{balance}，请及时充值。",
                 NotificationSeverity.Warning));
         }
@@ -228,31 +312,19 @@ public partial class DashboardView : UserControl
     /// <remarks>
     /// Routed through here rather than reaching into the view model from the tray, so
     /// the two entry points cannot diverge — including the restart confirmation, which
-    /// the tray would otherwise skip.
+    /// the tray would otherwise skip. Opens the Codex page, where the outcome is shown.
     /// </remarks>
-    internal void StartCodexFromTray() => _ = _safeAsync?.RunAsync(StartOrInstallCodexAsync);
+    internal void StartCodexFromTray()
+    {
+        _page?.Navigation.Navigate(ClientPage.Codex);
+        _ = _safeAsync?.RunAsync(StartOrInstallCodexAsync);
+    }
 
     /// <summary>Opens the announcement reader from the tray.</summary>
     internal void RequestAnnouncements() => AnnouncementsRequested?.Invoke(this, EventArgs.Empty);
 
     private void Refresh_OnClick(object? sender, RoutedEventArgs e) =>
         _ = _safeAsync?.RunAsync(RefreshAndMonitorAsync);
-
-    private void ConfigureAutoGroup_OnClick(object? sender, RoutedEventArgs e) =>
-        _ = _safeAsync?.RunAsync(() => _page?.Dashboard.ConfigureAutoGroupAsync() ?? Task.CompletedTask);
-
-    private void ShowGroupModels_OnClick(object? sender, RoutedEventArgs e)
-    {
-        if ((sender as Control)?.DataContext is not GroupItemViewModel group)
-        {
-            return;
-        }
-
-        _ = _safeAsync?.RunAsync(() => _page?.Dashboard.ShowGroupModelsAsync(group) ?? Task.CompletedTask);
-    }
-
-    private void StartCodex_OnClick(object? sender, RoutedEventArgs e) =>
-        _ = _safeAsync?.RunAsync(StartOrInstallCodexAsync);
 
     private Task StartOrInstallCodexAsync()
     {
@@ -267,8 +339,8 @@ public partial class DashboardView : UserControl
     }
 
     /// <remarks>
-    /// Deliberately its own entry point rather than reusing <see cref="StartCodex_OnClick"/>'s
-    /// handler: this one exists specifically so a user can force a config rewrite even when
+    /// Deliberately its own entry point rather than reusing the start button's route:
+    /// this one exists specifically so a user can force a config rewrite even when
     /// the dashboard has not (yet) flagged anything as broken. When ChatGPT is already
     /// running, a plain rewrite would leave the live process holding the old config — it
     /// does not re-read the file on its own — so this asks first and, once agreed, forces
@@ -277,9 +349,6 @@ public partial class DashboardView : UserControl
     /// the normal reuse check cannot see (missing group, revoked from the panel, ...), and
     /// reusing it again would just repeat whatever "修复" was supposed to fix.
     /// </remarks>
-    private void RepairCodexStartup_OnClick(object? sender, RoutedEventArgs e) =>
-        _ = _safeAsync?.RunAsync(RepairCodexStartupAsync);
-
     private async Task RepairCodexStartupAsync()
     {
         if (_page is null)
@@ -360,20 +429,7 @@ public partial class DashboardView : UserControl
         }
     }
 
-    private void Recharge_OnClick(object? sender, RoutedEventArgs e)
-    {
-        if (_session?.IsSignedIn == true)
-        {
-            RechargeRequested?.Invoke(this, EventArgs.Empty);
-        }
-    }
-
     private void ShowAnnouncements_OnClick(object? sender, RoutedEventArgs e) =>
         AnnouncementsRequested?.Invoke(this, EventArgs.Empty);
 
-    private void CheckUpdate_OnClick(object? sender, RoutedEventArgs e) =>
-        _ = _safeAsync?.RunAsync(() => _page!.ClientUpdate.CheckAndOfferUpdateAsync());
-
-    private void OpenContactPage_OnClick(object? sender, RoutedEventArgs e) =>
-        BrowserLauncher.TryOpenRelayPage("contact");
 }

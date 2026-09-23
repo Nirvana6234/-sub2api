@@ -449,6 +449,10 @@ public sealed partial class DashboardViewModel : ObservableObject
 
     public bool HasPluginSupportStatus => !string.IsNullOrEmpty(PluginSupportStatus);
 
+    /// <summary>Whether the last sync left Claude Code pointed at the relay.</summary>
+    [ObservableProperty]
+    private bool pluginSupportActive;
+
     /// <summary>Only the loopback relay can serve an editor; greys the box out otherwise.</summary>
     public bool CanConfigurePluginSupport => _codex.UsesLocalTransport;
 
@@ -594,6 +598,7 @@ public sealed partial class DashboardViewModel : ObservableObject
             ? request
             : null;
         PluginSupportStatus = DescribePluginSupport(result, hasClaudeGroup: HasClaudePluginGroups);
+        PluginSupportActive = result.State == PluginSupportState.Active;
     }
 
     private static bool IsClaudePlatform(string? platform)
@@ -2028,6 +2033,7 @@ public sealed partial class DashboardViewModel : ObservableObject
         _lastPluginRequest = null;
         _claudePreferenceLoaded = false;
         PluginSupportStatus = string.Empty;
+        PluginSupportActive = false;
         _pollingBackoff.RecordSuccess();
         IsRateLimited = false;
         RefreshMessage = string.Empty;

@@ -6,9 +6,9 @@
 
   <!-- Sign-in is the only entry point: there is no skip, no offline mode, and no way
        to paste an API key instead. -->
-  <StackPanel VerticalAlignment="Center" Margin="32">
+  <StackPanel VerticalAlignment="Center" Margin="32" MaxWidth="420">
 
-    <TextBlock Text="共飞-ChatGPT助手"
+    <TextBlock Text="共飞 AI 助手"
                FontSize="24" FontWeight="SemiBold"
                HorizontalAlignment="Center" Margin="0,0,0,4" />
     <TextBlock Text="拒绝高价，拒绝包月，畅快使用 ChatGPT 工作生活"

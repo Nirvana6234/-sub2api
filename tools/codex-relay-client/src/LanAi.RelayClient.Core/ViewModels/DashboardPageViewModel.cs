@@ -34,9 +34,58 @@ public sealed partial class DashboardPageViewModel : ObservableObject
         ClientUpdate = clientUpdate ?? throw new ArgumentNullException(nameof(clientUpdate));
         Announcements = announcements ?? throw new ArgumentNullException(nameof(announcements));
         _session = session ?? throw new ArgumentNullException(nameof(session));
+
+        Dashboard.PropertyChanged += (_, args) =>
+        {
+            switch (args.PropertyName)
+            {
+                case nameof(DashboardViewModel.RequiresCodexAccountRestart):
+                case nameof(DashboardViewModel.IsCodexRunning):
+                case nameof(DashboardViewModel.CodexNotInstalled):
+                case nameof(DashboardViewModel.IsInstallingCodex):
+                    UpdateCodexStatus();
+                    break;
+                case nameof(DashboardViewModel.BalanceIsLow):
+                    Navigation.Item(ClientPage.Account).HasBadge = Dashboard.BalanceIsLow;
+                    break;
+                case nameof(DashboardViewModel.PluginSupportEnabled):
+                case nameof(DashboardViewModel.PluginSupportStatus):
+                case nameof(DashboardViewModel.PluginSupportActive):
+                    OnPropertyChanged(nameof(ClaudeStatusText));
+                    break;
+            }
+        };
+        UpdateCodexStatus();
     }
 
     public DashboardViewModel Dashboard { get; }
+
+    /// <summary>Which page of the signed-in surface is showing.</summary>
+    public NavigationViewModel Navigation { get; } = new();
+
+    /// <summary>One line on the overview's Codex card.</summary>
+    public string CodexStatusText =>
+        Dashboard.RequiresCodexAccountRestart ? "需要重启 ChatGPT"
+        : Dashboard.IsInstallingCodex ? "正在安装"
+        : Dashboard.CodexNotInstalled ? "未安装"
+        : Dashboard.IsCodexRunning ? "运行中"
+        : "未启动";
+
+    /// <summary>One line on the overview's Claude Code card.</summary>
+    /// <remarks>
+    /// Short on purpose: the card is a third of the width. Anything other than 已接入 is
+    /// explained in full on the Claude page, where the card's button leads.
+    /// </remarks>
+    public string ClaudeStatusText =>
+        !Dashboard.PluginSupportEnabled ? "未开启"
+        : Dashboard.PluginSupportActive ? "已接入"
+        : "待完成设置";
+
+    private void UpdateCodexStatus()
+    {
+        OnPropertyChanged(nameof(CodexStatusText));
+        Navigation.Item(ClientPage.Codex).HasBadge = Dashboard.RequiresCodexAccountRestart;
+    }
 
     public ClientUpdateViewModel ClientUpdate { get; }
 
@@ -46,6 +95,16 @@ public sealed partial class DashboardPageViewModel : ObservableObject
     private string welcomeText = string.Empty;
 
     /// <summary>Re-reads the signed-in identity. Call on sign-in and on sign-out.</summary>
-    public void Refresh() =>
+    /// <remarks>
+    /// Also returns the rail to the overview, so the next account to sign in starts on
+    /// the same page every account does rather than wherever the last one left off.
+    /// </remarks>
+    public void Refresh()
+    {
         WelcomeText = _session.IsSignedIn ? $"你好，{_session.UserDisplayName}" : string.Empty;
+        if (!_session.IsSignedIn)
+        {
+            Navigation.Navigate(ClientPage.Overview);
+        }
+    }
 }

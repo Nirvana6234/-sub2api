@@ -1,7 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="LanAi.RelayClient.App.Views.ConfirmDialog"
-        Title="共飞-ChatGPT助手"
+        Title="共飞 AI 助手"
         Width="420" SizeToContent="Height"
         CanResize="False"
         WindowStartupLocation="CenterOwner"
