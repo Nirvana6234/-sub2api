@@ -163,9 +163,9 @@
       <Grid DockPanel.Dock="Top" Margin="0,0,0,16">
         <StackPanel>
           <TextBlock Text="{Binding Navigation.Title}" FontSize="20" FontWeight="SemiBold" />
-          <TextBlock Text="{Binding Dashboard.RefreshMessage}"
+          <TextBlock Text="{Binding Dashboard.RefreshState.RefreshMessage}"
                      Foreground="#B45309" FontSize="12" Margin="0,2,0,0"
-                     IsVisible="{Binding Dashboard.IsRateLimited}" />
+                     IsVisible="{Binding Dashboard.RefreshState.IsRateLimited}" />
         </StackPanel>
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top">
           <!-- One of three ways into the reader, alongside the tray menu and the tray
@@ -177,7 +177,7 @@
                   Click="ShowAnnouncements_OnClick"
                   Padding="10,4" Margin="0,0,8,0" Background="Transparent" />
           <Button Content="刷新" Click="Refresh_OnClick"
-                  IsEnabled="{Binding !Dashboard.IsRefreshing}"
+                  IsEnabled="{Binding !Dashboard.RefreshState.IsRefreshing}"
                   Classes="secondary" />
         </StackPanel>
       </Grid>

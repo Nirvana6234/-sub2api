@@ -1829,8 +1829,8 @@ public sealed class DashboardViewModelTests
         await dashboard.RefreshAsync();
 
         Assert.Equal(1, relay.CurrentUserCallCount);
-        Assert.True(dashboard.IsRateLimited);
-        Assert.Contains("请求频繁", dashboard.RefreshMessage, StringComparison.Ordinal);
+        Assert.True(dashboard.RefreshState.IsRateLimited);
+        Assert.Contains("请求频繁", dashboard.RefreshState.RefreshMessage, StringComparison.Ordinal);
 
         clock.Advance(TimeSpan.FromMinutes(1));
         await dashboard.RefreshAsync();
@@ -1969,8 +1969,8 @@ public sealed class DashboardViewModelTests
 
         Assert.Equal(1, codex.CheckCallCount);
         Assert.Equal(0, codex.RenewCallCount);
-        Assert.True(dashboard.IsRateLimited);
-        Assert.Contains("请求频繁", dashboard.RefreshMessage, StringComparison.Ordinal);
+        Assert.True(dashboard.RefreshState.IsRateLimited);
+        Assert.Contains("请求频繁", dashboard.RefreshState.RefreshMessage, StringComparison.Ordinal);
     }
 
     [Fact]

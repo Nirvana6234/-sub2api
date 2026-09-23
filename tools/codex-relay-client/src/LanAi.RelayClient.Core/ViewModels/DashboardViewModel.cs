@@ -37,7 +37,6 @@ public sealed partial class DashboardViewModel : ObservableObject
     private readonly IContextFilterPreferenceStore _contextFilterPreferences;
     private readonly IContextFilterUsageStore _contextFilterUsage;
     private readonly IPluginSupportPreferenceStore _pluginSupportPreferences;
-    private readonly PollingBackoff _pollingBackoff;
     private readonly SafeAsyncRunner _safeAsync;
     private readonly SemaphoreSlim _pollGate = new(1, 1);
 
@@ -50,9 +49,6 @@ public sealed partial class DashboardViewModel : ObservableObject
     private bool contextFilterEnabled = true;
 
     private RelayApiKey? _managedKey;
-    private bool _refreshHadFailure;
-    private bool _refreshWasRateLimited;
-    private bool _refreshSawUnauthenticated;
 
     /// <summary>Whether there is a bundled filter to switch; false greys the checkbox out.</summary>
     public bool CanToggleContextFilter => _codex.HasContextFilter;
@@ -155,7 +151,7 @@ public sealed partial class DashboardViewModel : ObservableObject
         _codexInstaller = codexInstaller ?? new CodexInstaller();
         _codexAccountStore = codexAccountStore ?? new CodexAccountStore();
         _startupRegistration = startupRegistration ?? new UnsupportedStartupRegistration();
-        _pollingBackoff = pollingBackoff ?? new PollingBackoff();
+        RefreshState = new RefreshState(pollingBackoff ?? new PollingBackoff(), _session);
         _safeAsync = safeAsync ?? new SafeAsyncRunner();
         _contextFilterPreferences = contextFilterPreferences ?? new ContextFilterPreferenceStore();
         _contextFilterUsage = contextFilterUsage ?? new ContextFilterUsageStore();
@@ -164,6 +160,9 @@ public sealed partial class DashboardViewModel : ObservableObject
         _pluginSupportPreferences = pluginSupportPreferences ?? new PluginSupportPreferenceStore();
         SetPluginSupportWithoutApplying(_pluginSupportPreferences.Load() ?? false);
     }
+
+    /// <summary>The refresh cycle's shared bookkeeping: backoff, rate-limit banner, 401s.</summary>
+    public RefreshState RefreshState { get; }
 
     public ObservableCollection<GroupItemViewModel> Groups { get; } = [];
 
@@ -224,12 +223,6 @@ public sealed partial class DashboardViewModel : ObservableObject
     private string rechargeUrl = string.Empty;
 
     public bool CanRecharge => _settings.PaymentEnabled || !string.IsNullOrWhiteSpace(RechargeUrl);
-
-    [ObservableProperty]
-    private bool isRateLimited;
-
-    [ObservableProperty]
-    private string refreshMessage = string.Empty;
 
     // ---- Usage card ---------------------------------------------------------
 
@@ -695,7 +688,7 @@ public sealed partial class DashboardViewModel : ObservableObject
                     TopModelUsage.Add(new ModelUsageRowViewModel(model));
                 }
             }
-            catch (Exception ex) when (ObserveRefreshFailure(ex))
+            catch (Exception ex) when (RefreshState.Observe(ex))
             {
                 TopModelUsage.Clear();
                 ClientLog.Warning("按模型用量取数失败", ex);
@@ -706,7 +699,7 @@ public sealed partial class DashboardViewModel : ObservableObject
             OnPropertyChanged(nameof(HasModelUsage));
             OnPropertyChanged(nameof(HasNoUsageYet));
         }
-        catch (Exception ex) when (ObserveRefreshFailure(ex))
+        catch (Exception ex) when (RefreshState.Observe(ex))
         {
             TrendReady = false;
             OnPropertyChanged(nameof(HasNoUsageYet));
@@ -892,10 +885,10 @@ public sealed partial class DashboardViewModel : ObservableObject
         }
         catch (RelayApiException ex) when (ex.Failure == RelayFailure.RateLimited)
         {
-            ApplyBackoffMessage(_pollingBackoff.RecordRateLimited());
+            RefreshState.RecordRateLimited();
             ClientLog.Warning("Codex 状态监控触发限流，已暂停轮询", ex);
         }
-        catch (Exception ex) when (IsCardFailure(ex))
+        catch (Exception ex) when (RefreshState.IsCardFailure(ex))
         {
             // Monitoring is background work; it must never be able to interrupt the
             // user or take the panel down.
@@ -914,7 +907,7 @@ public sealed partial class DashboardViewModel : ObservableObject
         try
         {
             await RefreshAsync(cancellationToken).ConfigureAwait(true);
-            if (_pollingBackoff.CanAttempt)
+            if (RefreshState.CanAttempt)
             {
                 await MonitorCodexAsync(cancellationToken).ConfigureAwait(true);
             }
@@ -1063,7 +1056,7 @@ public sealed partial class DashboardViewModel : ObservableObject
                 }
             }
         }
-        catch (Exception ex) when (IsCardFailure(ex))
+        catch (Exception ex) when (RefreshState.IsCardFailure(ex))
         {
             // Same rule as the cards: pressing this button must not be able to end
             // the session or take the window down.
@@ -1128,7 +1121,7 @@ public sealed partial class DashboardViewModel : ObservableObject
             CodexNotInstalled = true;
             CodexMessage = "ChatGPT 安装已取消，可以重新点击安装。";
         }
-        catch (Exception ex) when (IsCardFailure(ex))
+        catch (Exception ex) when (RefreshState.IsCardFailure(ex))
         {
             CodexNotInstalled = true;
             CodexMessage = "ChatGPT 安装状态检查失败，可以重新点击安装。";
@@ -1173,9 +1166,6 @@ public sealed partial class DashboardViewModel : ObservableObject
 
     // ---- Whole-panel state --------------------------------------------------
 
-    [ObservableProperty]
-    private bool isRefreshing;
-
     /// <summary>Reads the server-driven settings the cards depend on.</summary>
     public void ApplySettings(PublicSettings settings)
     {
@@ -1196,20 +1186,18 @@ public sealed partial class DashboardViewModel : ObservableObject
     /// </remarks>
     public async Task RefreshAsync(CancellationToken cancellationToken = default)
     {
-        if (IsRefreshing)
+        if (RefreshState.IsRefreshing)
         {
             return;
         }
 
-        if (!_pollingBackoff.CanAttempt)
+        if (!RefreshState.CanAttempt)
         {
-            ApplyBackoffMessage(_pollingBackoff.Remaining);
+            RefreshState.ShowBackoff();
             return;
         }
 
-        _refreshHadFailure = false;
-        _refreshWasRateLimited = false;
-        _refreshSawUnauthenticated = false;
+        RefreshState.BeginCycle();
 
         // Linked so a sign-out can abandon this refresh; without it the guard above
         // would still be set when the next user signs in, and their load would be
@@ -1218,7 +1206,7 @@ public sealed partial class DashboardViewModel : ObservableObject
         _refreshCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         CancellationToken cancellation = _refreshCancellation.Token;
 
-        IsRefreshing = true;
+        RefreshState.IsRefreshing = true;
         try
         {
             UserDisplayName = _session.UserDisplayName;
@@ -1234,153 +1222,39 @@ public sealed partial class DashboardViewModel : ObservableObject
                 // raised its event), the network is down, or a sign-out cancelled
                 // us. Cards stay greyed; nothing here decides to sign anyone out.
                 MarkAllUnavailable();
-                ObserveRefreshFailure(ex);
+                RefreshState.Observe(ex);
                 return;
             }
 
             // Sequential rather than concurrent: the panel endpoints share a
             // per-user rate limiter, and four simultaneous calls every 60 seconds
             // is the pattern most likely to trip it. Each still fails alone.
-            await LoadAccountCardAsync(accessToken, cancellation).ConfigureAwait(true);
-            if (StopForRateLimit())
+            foreach (Func<string, CancellationToken, Task> loadCard in CardLoaders())
             {
-                return;
-            }
-            if (await StopForUnauthenticatedAsync(accessToken, cancellation).ConfigureAwait(true))
-            {
-                return;
-            }
-
-            await LoadUsageCardAsync(accessToken, cancellation).ConfigureAwait(true);
-            if (StopForRateLimit())
-            {
-                return;
-            }
-            if (await StopForUnauthenticatedAsync(accessToken, cancellation).ConfigureAwait(true))
-            {
-                return;
+                await loadCard(accessToken, cancellation).ConfigureAwait(true);
+                if (RefreshState.StopForRateLimit() ||
+                    await RefreshState.StopForUnauthenticatedAsync(accessToken, cancellation).ConfigureAwait(true))
+                {
+                    return;
+                }
             }
 
-            await LoadSubscriptionCardAsync(accessToken, cancellation).ConfigureAwait(true);
-            if (StopForRateLimit())
-            {
-                return;
-            }
-            if (await StopForUnauthenticatedAsync(accessToken, cancellation).ConfigureAwait(true))
-            {
-                return;
-            }
-
-            await LoadGroupCardAsync(accessToken, cancellation).ConfigureAwait(true);
-            if (StopForRateLimit())
-            {
-                return;
-            }
-            if (await StopForUnauthenticatedAsync(accessToken, cancellation).ConfigureAwait(true))
-            {
-                return;
-            }
-
-            await LoadTrendCardAsync(accessToken, cancellation).ConfigureAwait(true);
-            if (StopForRateLimit())
-            {
-                return;
-            }
-            if (await StopForUnauthenticatedAsync(accessToken, cancellation).ConfigureAwait(true))
-            {
-                return;
-            }
-
-            if (!_refreshHadFailure)
-            {
-                _pollingBackoff.RecordSuccess();
-                IsRateLimited = false;
-                RefreshMessage = string.Empty;
-            }
+            RefreshState.CompleteCycle();
         }
         finally
         {
-            IsRefreshing = false;
+            RefreshState.IsRefreshing = false;
         }
     }
 
-    /// <summary>
-    /// Whether a card's failure is one the panel absorbs by greying that card.
-    /// </summary>
-    /// <remarks>
-    /// F4.2 forbids one card taking down the page, and a <c>catch</c> narrowed to
-    /// <see cref="RelayApiException"/> does not deliver that: any other escape —
-    /// a cancellation, a serialization fault, a bug in a mapper — would propagate
-    /// out of the loader and abandon the cards queued behind it. The filter is
-    /// deliberately broad, and deliberately still excludes the exceptions that
-    /// indicate the process itself is unsound.
-    /// </remarks>
-    private static bool IsCardFailure(Exception ex) =>
-        ex is not (OutOfMemoryException or StackOverflowException or ThreadAbortException);
-
-    private bool ObserveRefreshFailure(Exception ex)
+    /// <summary>The cards, in the order a refresh loads them.</summary>
+    private IEnumerable<Func<string, CancellationToken, Task>> CardLoaders()
     {
-        bool isCardFailure = IsCardFailure(ex);
-        if (!isCardFailure)
-        {
-            return false;
-        }
-
-        _refreshHadFailure = true;
-        if (ex is RelayApiException relayEx)
-        {
-            if (relayEx.Failure == RelayFailure.RateLimited)
-            {
-                _refreshWasRateLimited = true;
-            }
-            else if (relayEx.Failure == RelayFailure.Unauthenticated)
-            {
-                _refreshSawUnauthenticated = true;
-            }
-        }
-
-        return true;
-    }
-
-    private bool StopForRateLimit()
-    {
-        if (!_refreshWasRateLimited)
-        {
-            return false;
-        }
-
-        ApplyBackoffMessage(_pollingBackoff.RecordRateLimited());
-        return true;
-    }
-
-    /// <summary>
-    /// Reports a token a card just watched get rejected, and ends this refresh
-    /// cycle if so — every remaining card shares the same (now known-bad) token,
-    /// so trying them is only more failed calls before the next poll retries clean.
-    /// </summary>
-    /// <remarks>
-    /// Routed through <see cref="RelaySessionManager.NotifyAccessTokenRejectedAsync"/>
-    /// rather than signing out here: that call forces the renewal check the local
-    /// clock alone would not have triggered yet, and only ends the session if the
-    /// server actually rejects the renewal too (see its remarks for why this
-    /// matters — session-binding revokes a token family before its natural expiry).
-    /// </remarks>
-    private async Task<bool> StopForUnauthenticatedAsync(string accessToken, CancellationToken cancellationToken)
-    {
-        if (!_refreshSawUnauthenticated)
-        {
-            return false;
-        }
-
-        await _session.NotifyAccessTokenRejectedAsync(accessToken, cancellationToken).ConfigureAwait(true);
-        return true;
-    }
-
-    private void ApplyBackoffMessage(TimeSpan remaining)
-    {
-        int minutes = Math.Max(1, (int)Math.Ceiling(remaining.TotalMinutes));
-        IsRateLimited = true;
-        RefreshMessage = $"请求频繁，请在约 {minutes} 分钟后重试。";
+        yield return LoadAccountCardAsync;
+        yield return LoadUsageCardAsync;
+        yield return LoadSubscriptionCardAsync;
+        yield return LoadGroupCardAsync;
+        yield return LoadTrendCardAsync;
     }
 
     private async Task LoadAccountCardAsync(string token, CancellationToken cancellationToken)
@@ -1400,7 +1274,7 @@ public sealed partial class DashboardViewModel : ObservableObject
 
             AccountReady = true;
         }
-        catch (Exception ex) when (ObserveRefreshFailure(ex))
+        catch (Exception ex) when (RefreshState.Observe(ex))
         {
             BalanceText = "—";
             FrozenBalanceText = "—";
@@ -1421,7 +1295,7 @@ public sealed partial class DashboardViewModel : ObservableObject
             TodayCostText = FormatMoney(stats.TodayActualCost);
             UsageReady = true;
         }
-        catch (Exception ex) when (ObserveRefreshFailure(ex))
+        catch (Exception ex) when (RefreshState.Observe(ex))
         {
             TodayRequestsText = "—";
             TodayTokensText = "—";
@@ -1456,7 +1330,7 @@ public sealed partial class DashboardViewModel : ObservableObject
             SubscriptionReady = true;
             OnPropertyChanged(nameof(HasSubscription));
         }
-        catch (Exception ex) when (ObserveRefreshFailure(ex))
+        catch (Exception ex) when (RefreshState.Observe(ex))
         {
             SubscriptionName = string.Empty;
             SubscriptionProgressText = string.Empty;
@@ -1502,13 +1376,13 @@ public sealed partial class DashboardViewModel : ObservableObject
             {
                 rates = await _client.GetUserGroupRatesAsync(token, cancellationToken).ConfigureAwait(true);
             }
-            catch (Exception ex) when (ObserveRefreshFailure(ex))
+            catch (Exception ex) when (RefreshState.Observe(ex))
             {
                 rates = new Dictionary<long, double>();
                 ClientLog.Warning("专属倍率取数失败，按分组默认倍率显示", ex);
             }
 
-            if (_refreshWasRateLimited)
+            if (RefreshState.WasRateLimited)
             {
                 GroupsReady = false;
                 return;
@@ -1628,7 +1502,7 @@ public sealed partial class DashboardViewModel : ObservableObject
             OnPropertyChanged(nameof(CanStartCodex));
             OnPropertyChanged(nameof(StartCodexLabel));
         }
-        catch (Exception ex) when (ObserveRefreshFailure(ex))
+        catch (Exception ex) when (RefreshState.Observe(ex))
         {
             GroupsReady = false;
             ClientLog.Warning("分组卡取数失败", ex);
@@ -1680,7 +1554,7 @@ public sealed partial class DashboardViewModel : ObservableObject
             IReadOnlyList<RelayApiKey> keys = await _client.ListApiKeysAsync(token, cancellationToken).ConfigureAwait(true);
             _managedKey = _keyNaming.FindCurrent(keys);
         }
-        catch (Exception ex) when (ObserveRefreshFailure(ex))
+        catch (Exception ex) when (RefreshState.Observe(ex))
         {
             _managedKey = null;
             ClientLog.Warning("托管 key 识别失败，分组切换将只记录在本地", ex);
@@ -2025,7 +1899,6 @@ public sealed partial class DashboardViewModel : ObservableObject
         _refreshCancellation?.Dispose();
         _refreshCancellation = null;
 
-        IsRefreshing = false;
         _managedKey = null;
         _autoGroupSettings = null;
         _autoGroupSupported = true;
@@ -2034,9 +1907,7 @@ public sealed partial class DashboardViewModel : ObservableObject
         _claudePreferenceLoaded = false;
         PluginSupportStatus = string.Empty;
         PluginSupportActive = false;
-        _pollingBackoff.RecordSuccess();
-        IsRateLimited = false;
-        RefreshMessage = string.Empty;
+        RefreshState.Reset();
 
         UserDisplayName = string.Empty;
         BalanceText = "—";
