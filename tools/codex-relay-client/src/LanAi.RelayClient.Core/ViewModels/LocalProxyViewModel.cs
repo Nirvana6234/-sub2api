@@ -138,6 +138,15 @@ public sealed partial class LocalProxyViewModel : ObservableObject
     /// </summary>
     public Func<string, string, Task<bool>>? ConfirmEnable { get; set; }
 
+    /// <summary>
+    /// Whether ChatGPT is installed but not running, so switching Codex on should start it.
+    /// Supplied by the dashboard; without one nothing is started.
+    /// </summary>
+    internal Func<bool>? CodexNeedsLaunch { get; set; }
+
+    /// <summary>Starts ChatGPT; returns why it did not start, or null when it did.</summary>
+    internal Func<Task<string?>>? LaunchCodex { get; set; }
+
     /// <summary>The official host a tool's local proxy connects to.</summary>
     internal static Uri OfficialEndpoint(LocalProxyKind kind) => new(kind == LocalProxyKind.ClaudeCode
         ? LocalProxyEndpoints.Official.ClaudeBaseUrl
@@ -150,19 +159,20 @@ public sealed partial class LocalProxyViewModel : ObservableObject
     /// only through a proxy/VPN, and a local proxy that cannot reach them simply stops the
     /// tool working — with no way back to the relay server unless the user switches it off.
     /// </summary>
-    internal static string DescribeSwitchOn(LocalProxyKind kind, Reachability check)
+    internal static string DescribeSwitchOn(LocalProxyKind kind, Reachability check, bool launchesCodex = false)
     {
         string tool = ToolName(kind);
         string host = OfficialEndpoint(kind).Host;
+        string launch = launchesCodex ? "ChatGPT 还没有启动，确定后会自动启动它。\n\n" : string.Empty;
         return check.Reachable
             ? $"开启后，{tool} 将不再经过中转站，而是由本机直接连接官方服务器（{host}）。\n\n" +
               $"当前网络：{check.ProxyDescription}，已能连上官方。\n\n" +
               "请注意：使用期间请保持代理/VPN 一直开启且节点可用。代理断开或节点失效时，" +
-              $"{tool} 会无法使用（客户端会提醒），但不会自动切回中转站。\n\n确定开启吗？"
+              $"{tool} 会无法使用（客户端会提醒），但不会自动切回中转站。\n\n{launch}确定开启吗？"
             : $"现在连不上官方服务器（{host}）：{check.Problem}\n\n" +
               $"当前网络：{check.ProxyDescription}。\n\n" +
               "本地代理需要本机能直接访问官方，国内通常要先打开代理/VPN（系统代理或 TUN 模式）。" +
-              $"建议先开好代理再开启；现在开启的话，{tool} 在连上官方之前都无法使用。\n\n仍要开启吗？";
+              $"建议先开好代理再开启；现在开启的话，{tool} 在连上官方之前都无法使用。\n\n{launch}仍要开启吗？";
     }
 
     public ObservableCollection<LocalProxyAccountItem> CodexAccounts { get; } = [];
@@ -342,8 +352,9 @@ public sealed partial class LocalProxyViewModel : ObservableObject
 
         ActionMessage = "正在检测能否连上官方服务器…";
         Reachability check = await _reachability.CheckAsync(OfficialEndpoint(item.Kind)).ConfigureAwait(true);
+        bool launchesCodex = item.Kind == LocalProxyKind.Codex && LaunchCodex is not null && CodexNeedsLaunch?.Invoke() == true;
         bool confirmed = ConfirmEnable is { } confirm
-            ? await confirm(DescribeSwitchOn(item.Kind, check), check.Reachable ? "开启" : "仍然开启").ConfigureAwait(true)
+            ? await confirm(DescribeSwitchOn(item.Kind, check, launchesCodex), check.Reachable ? "开启" : "仍然开启").ConfigureAwait(true)
             : check.Reachable;
         if (!confirmed)
         {
@@ -370,6 +381,17 @@ public sealed partial class LocalProxyViewModel : ObservableObject
         if (!check.Reachable)
         {
             SetError(item.Kind, $"连不上官方服务器（{check.Problem}），请打开代理/VPN。开启后下一轮对话会自动使用。");
+        }
+
+        // Checked again: ChatGPT may have been started while the dialog was open.
+        if (launchesCodex && CodexNeedsLaunch?.Invoke() == true && LaunchCodex is { } launch)
+        {
+            string switched = ActionMessage;
+            ActionMessage = switched + " 正在启动 ChatGPT…";
+            string? problem = await launch().ConfigureAwait(true);
+            ActionMessage = problem is null
+                ? switched + " ChatGPT 已启动。"
+                : switched + $" ChatGPT 没有启动：{problem}";
         }
     }
 
