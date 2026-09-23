@@ -136,6 +136,9 @@ internal sealed class LocalPawRelay : IAsyncDisposable
     /// a turn still streaming through one would be cut off. Disposed with the relay.
     /// </summary>
     private readonly List<HttpClient> _retiredDirectHttp = [];
+
+    /// <summary>Encrypted Codex history each local-proxy account has refused. See <see cref="EncryptedContentRecovery"/>.</summary>
+    private readonly RejectedEncryptedContent _rejectedEncrypted = new();
     private readonly Action<LocalProxyOutcome>? _onLocalProxyOutcome;
     private readonly Action<LocalProxyUsage>? _onLocalProxyUsage;
     private LocalProxyTarget? _codexLocalProxy;
@@ -896,6 +899,12 @@ internal sealed class LocalPawRelay : IAsyncDisposable
     /// One retry, only for an official 401 and only before anything reached the tool: the
     /// cached token may have been rotated server-side, so a fresh one is asked for once.
     /// </para>
+    /// <para>
+    /// And one for Codex history this account cannot decrypt (400
+    /// <c>invalid_encrypted_content</c>), with the encrypted items stripped — see
+    /// <see cref="EncryptedContentRecovery"/>. Items already refused are stripped before the
+    /// first attempt.
+    /// </para>
     /// </remarks>
     private async Task<bool> HandleLocalProxyAsync(
         HttpListenerContext context,
@@ -930,16 +939,26 @@ internal sealed class LocalPawRelay : IAsyncDisposable
             body = buffer.ToArray();
         }
 
+        bool codex = protocol != RelayProtocol.Messages;
+        if (codex && EncryptedContentRecovery.StripKnown(body, _rejectedEncrypted.For(target.AccountId)) is { } known)
+        {
+            ClientLog.Info($"{label}：剥离该账号已拒收过的加密历史");
+            body = known;
+        }
+
         HttpResponseMessage? response = null;
+        string? refusal = null;
         try
         {
-            for (int attempt = 0; ; attempt++)
+            bool tokenRetried = false;
+            bool encryptedRetried = false;
+            while (true)
             {
                 LocalProxyCredential credential;
                 try
                 {
                     credential = await _localProxyCredentials
-                        .GetAsync(target.AccountId, forceRefresh: attempt > 0, cancellationToken)
+                        .GetAsync(target.AccountId, forceRefresh: tokenRetried, cancellationToken)
                         .ConfigureAwait(false);
                 }
                 catch (RelayApiException ex)
@@ -977,11 +996,30 @@ internal sealed class LocalPawRelay : IAsyncDisposable
                     return true;
                 }
 
-                if (response.StatusCode == HttpStatusCode.Unauthorized && attempt == 0)
+                if (response.StatusCode == HttpStatusCode.Unauthorized && !tokenRetried)
                 {
+                    tokenRetried = true;
                     response.Dispose();
                     response = null;
                     continue;
+                }
+
+                if (codex && !encryptedRetried && response.StatusCode == HttpStatusCode.BadRequest)
+                {
+                    refusal = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                    if (EncryptedContentRecovery.IsInvalidEncryptedContent(400, refusal) &&
+                        EncryptedContentRecovery.StripAll(body) is { } stripped)
+                    {
+                        // Collected before stripping: these are what this account refused.
+                        _rejectedEncrypted.Remember(target.AccountId, EncryptedContentRecovery.CollectDigests(body));
+                        ClientLog.Info($"{label}：官方解不开对话里的加密历史（多半来自中转站的账号），剥离后重试一次");
+                        encryptedRetried = true;
+                        body = stripped;
+                        refusal = null;
+                        response.Dispose();
+                        response = null;
+                        continue;
+                    }
                 }
 
                 break;
@@ -989,7 +1027,7 @@ internal sealed class LocalPawRelay : IAsyncDisposable
 
             if (!response.IsSuccessStatusCode)
             {
-                string detail = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                string detail = refusal ?? await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
                 ClientLog.Warning($"官方拒绝本轮请求（{label}）：HTTP {(int)response.StatusCode} {Summarize(detail)}");
                 Report(kind, target, false, DescribeOfficialRefusal((int)response.StatusCode));
 
