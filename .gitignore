@@ -152,6 +152,7 @@ docs/*
 !docs/ASYNC_IMAGE_TASKS.md
 !docs/PLAYGROUND.md
 !docs/MASTER_RELAY_NODES.md
+!docs/MASTER_RELAY_NODES_PLAN.md
 !docs/legal/
 !docs/legal/*.md
 !docs/superpowers/
