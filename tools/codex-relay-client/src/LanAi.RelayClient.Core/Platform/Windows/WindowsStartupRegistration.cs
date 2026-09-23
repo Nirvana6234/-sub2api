@@ -5,7 +5,7 @@ namespace LanAi.RelayClient.Services;
 
 /// <summary>Manages the current user's Windows startup entry without elevation.</summary>
 /// <remarks>
-/// Moved out of the WPF head so both heads can reach it. <c>Microsoft.Win32.Registry</c>
+/// Lives in Core, which targets plain <c>net8.0</c>. <c>Microsoft.Win32.Registry</c>
 /// needs no package reference on plain <c>net8.0</c> — it is in the shared framework,
 /// and an <c>osx-arm64</c> publish succeeds — so only the calls are Windows-only, which
 /// the attribute below states rather than leaves to a runtime surprise.

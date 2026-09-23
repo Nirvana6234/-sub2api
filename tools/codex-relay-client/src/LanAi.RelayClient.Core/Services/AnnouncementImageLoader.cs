@@ -96,7 +96,7 @@ internal sealed class AnnouncementImageLoader : IAnnouncementImageLoader
         }
     }
 
-    /// <summary>Whether the bytes begin with a signature of a format both heads can draw.</summary>
+    /// <summary>Whether the bytes begin with a signature of a format the client can draw.</summary>
     /// <remarks>
     /// <para>
     /// This check exists because the decode moved out of this class. The loader used to

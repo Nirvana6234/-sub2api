@@ -1,4 +1,3 @@
-using System.Windows.Media.Imaging;
 using System.Reflection;
 using LanAi.RelayClient.Server;
 using LanAi.RelayClient.Services;

@@ -1,35 +1,16 @@
-// Shared source, not a shared assembly.
+// The chart's coordinate maths, kept apart from the drawing so it can be unit tested
+// without a window. Written against Avalonia's Point / Rect / Size / Thickness.
 //
-// This file is compiled into each UI head rather than into LanAi.RelayClient.Core,
-// because it is written against Point / Rect / Size / Thickness — types that WPF and
-// Avalonia both define, with the same names, the same double-based members, and the
-// same constructor shapes, in their own namespaces. Core references neither
-// framework, so it cannot host the file; duplicating the arithmetic into each head
-// would be worse.
-//
-// The alternative was to invent Core-owned geometry primitives and rewrite every line
-// against them. That was rejected deliberately: this code carried no tests at all
-// until UsageLineChartLayoutTests was written for it, and rewriting untested
-// arithmetic to enable a port means the new tests would pin the rewrite rather than
-// the behaviour users have today.
-//
-// One consequence to be aware of: the tests exercise the copy compiled into the WPF
-// head. The Avalonia head compiles the same source against Avalonia's geometry types,
-// so a divergence between the two frameworks' semantics — not merely their names —
-// would not be caught here. The members used are deliberately kept to the plainest
-// ones for that reason.
+// The test project compiles this same file in (a <Compile Link>), rather than
+// referencing this WinExe, so the tests exercise exactly the source that ships.
 
-#if UI_AVALONIA
 using Avalonia;
-#else
-using System.Windows;
-#endif
 
 namespace LanAi.RelayClient.Controls;
 
 /// <summary>
 /// Pure coordinate calculator used by <see cref="UsageLineChart"/>.  Keeping
-/// scaling here makes the visual behavior unit-testable without a WPF window or
+/// scaling here makes the visual behavior unit-testable without a window or
 /// a third-party chart package.
 /// </summary>
 internal static class UsageLineChartLayout

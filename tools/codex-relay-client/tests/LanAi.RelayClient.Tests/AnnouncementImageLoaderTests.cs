@@ -97,7 +97,7 @@ public sealed class AnnouncementImageLoaderTests
     /// <remarks>
     /// The counterpart of the test above. Rejecting everything would also make that one
     /// pass, so this pins that real images still get through — one signature per format
-    /// both heads can draw.
+    /// the client can draw.
     /// </remarks>
     [Theory]
     [InlineData(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0 })]

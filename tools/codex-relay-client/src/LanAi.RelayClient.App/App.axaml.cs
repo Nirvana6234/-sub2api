@@ -20,7 +20,7 @@ namespace LanAi.RelayClient.App;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Wired by hand, like the WPF head it will replace: the graph is small, and writing
+/// Wired by hand: the graph is small, and writing
 /// it out makes the lifetime of the credential-holding services visible at a glance.
 /// </para>
 /// <para>
@@ -101,8 +101,8 @@ public partial class App : Application
 
     private bool TryClaimSingleInstance(IClassicDesktopStyleApplicationLifetime desktop)
     {
-        // The names are shared with the WPF head on purpose: the two builds must
-        // exclude each other, not merely each exclude itself. Two clients running at
+        // The same names every earlier build used (the retired WPF head included), so
+        // an old copy still running and this one exclude each other. Two clients running at
         // once would both write ~/.codex and both try to own the managed key.
         ISingleInstanceCoordinator singleInstance = SingleInstance.Create(
             @"Global\LanAi.RelayClient.SingleInstance",

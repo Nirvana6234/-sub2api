@@ -12,8 +12,8 @@ namespace LanAi.RelayClient.Platform;
 /// whole purpose is to explain where the window went.
 /// </para>
 /// <para>
-/// A property rather than a compile-time constant because both heads build from one
-/// source and the same assembly runs on both targets.
+/// A property rather than a compile-time constant because the Windows and macOS builds
+/// share one source and the same assembly runs on both targets.
 /// </para>
 /// </remarks>
 internal static class PlatformWords

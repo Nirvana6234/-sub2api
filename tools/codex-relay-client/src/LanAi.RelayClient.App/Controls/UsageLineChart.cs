@@ -14,8 +14,8 @@ namespace LanAi.RelayClient.Controls;
 /// <remarks>
 /// <para>
 /// A rewrite of the WPF control's drawing half, not a namespace swap. The coordinate
-/// arithmetic is <b>not</b> rewritten — it lives in <c>src/Shared/UsageLineChartLayout.cs</c>,
-/// compiled into both heads from one source, and is covered by
+/// arithmetic is <b>not</b> rewritten — it lives in <see cref="UsageLineChartLayout"/>,
+/// which the test project compiles in as source, and is covered by
 /// <c>UsageLineChartLayoutTests</c>. Only the painting below is new, because the two
 /// frameworks genuinely differ here:
 /// </para>

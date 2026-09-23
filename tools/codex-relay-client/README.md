@@ -40,12 +40,12 @@ tools/codex-relay-client/
 ├── src/
 │   ├── LanAi.RelayClient.Server/       # 中转站 HTTP 客户端（net8.0，零 NuGet 依赖）
 │   ├── LanAi.RelayClient.CodexBinding/ # Codex 配置写入、完整快照与恢复
-│   ├── LanAi.RelayClient/              # WPF 头（本机开发用，不出货）
-│   └── LanAi.RelayClient.App/          # Avalonia 头 —— **Windows 与 macOS 的出货头**
+│   ├── LanAi.RelayClient.Core/         # 视图模型、服务、本机 relay（net8.0，不引用任何 UI 框架）
+│   └── LanAi.RelayClient.App/          # Avalonia —— **唯一的 UI 头**，Windows 与 macOS 共用
 └── tests/
-    ├── LanAi.RelayClient.CodexBinding.Tests/ # 53 个：路由、加密快照、迁移、恢复与 TOML 保留
-    ├── LanAi.RelayClient.Server.Tests/ # 92 个：信封语义、错误分类、面板和 key 契约
-    └── LanAi.RelayClient.Tests/        # 420 个：会话、生命周期、本机转发、退避、异步、订阅和 UI 状态
+    ├── LanAi.RelayClient.CodexBinding.Tests/ # 239 个：路由、加密快照、迁移、恢复与 TOML 保留
+    ├── LanAi.RelayClient.Server.Tests/ # 95 个：信封语义、错误分类、面板和 key 契约
+    └── LanAi.RelayClient.Tests/        # 618 个：会话、生命周期、本机转发、退避、异步、订阅和 UI 状态
 ```
 
 后续按需求文档分期补：客户端内注册、充值、Codex 安装、项目中心和 `LanAi.RelayClient.Chat`。
@@ -125,9 +125,9 @@ python packaging/check-server-address.py --channel production <临时目录>/Lan
 
 脚本要求本渠道的地址存在、另外两个不存在，任何一项不符都退出码非 0。**产物目录名只是标签，不是证据**——命名成“正式”而没跑 `--channel production` 的包不算正式包。发布流水线只走 `production`，不带渠道参数。
 
-`context-filter.exe` 要放在**子目录** `context-filter\` 下（`App.axaml.cs` 按 `AppContext.BaseDirectory\context-filter\context-filter.exe` 找它，不跟主 exe 平铺），产物结构照 workflow 里"打包 Windows zip"那一步的 staging 布局来。两个头现在用的是同一套子目录约定（WPF 头本来就是子目录，2026-09-17 起 Avalonia 头也改成子目录，不再是两边各一种）。
+`context-filter.exe` 要放在**子目录** `context-filter\` 下（`App.axaml.cs` 按 `AppContext.BaseDirectory\context-filter\context-filter.exe` 找它，不跟主 exe 平铺），产物结构照 workflow 里"打包 Windows zip"那一步的 staging 布局来。（WPF 头已于 2026-09-23 删除，只剩这一种约定。）
 
-之前 `packaging/publish-windows.ps1` 想省掉这几步，但发布的是 `LanAi.RelayClient`（WPF 头，仅本机开发用，见上方目录说明），已删除。**不要再写第二个打包脚本**：本地要自动化就直接照上面几行封一个函数，别让它跟 CI 的步骤分叉。
+之前 `packaging/publish-windows.ps1` 想省掉这几步，但发布的是早已不出货的 WPF 头，已删除。**不要再写第二个打包脚本**：本地要自动化就直接照上面几行封一个函数，别让它跟 CI 的步骤分叉。
 
 ## 历史会话归属
 

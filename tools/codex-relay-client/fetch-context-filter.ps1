@@ -9,7 +9,7 @@ param(
     # under MSBuild $PSScriptRoot came out empty, making the whole thing relative to
     # the drive root: the download landed in C:\src\. Between the two, the bundled
     # filter had never once reached the output directory.
-    [string]$OutputDirectory = (Join-Path $PSScriptRoot "src\LanAi.RelayClient\bin\context-filter"),
+    [string]$OutputDirectory = (Join-Path $PSScriptRoot "src\LanAi.RelayClient.App\bin\context-filter"),
 
     # GitHub API token. Optional locally, close to mandatory on CI: the anonymous
     # API allows 60 requests/hour **per IP**, and Actions runners share their egress

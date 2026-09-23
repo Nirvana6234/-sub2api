@@ -3,7 +3,7 @@ namespace LanAi.RelayClient;
 /// <summary>Build-time client configuration.</summary>
 /// <remarks>
 /// <para>
-/// Lives here rather than beside a window because two heads now need it, and the one
+/// Lives in Core rather than beside a window because the tests need it too, and the one
 /// thing worse than duplicating a constant is duplicating this one: a copy that drifts
 /// sends a build at the wrong relay, and nothing about the running client says which
 /// one it is talking to.

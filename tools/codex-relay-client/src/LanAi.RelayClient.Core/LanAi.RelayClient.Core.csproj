@@ -9,7 +9,7 @@
     <AssemblyName>LanAi.RelayClient.Core</AssemblyName>
 
     <!-- Namespaces stay LanAi.RelayClient.* on purpose. This is an extraction, not a
-         redesign: keeping them means the WPF head and the 268 client tests compile
+         redesign: keeping them meant the client tests compiled
          against the moved types unchanged, so a failure here is a real regression
          rather than a rename artefact. -->
     <RootNamespace>LanAi.RelayClient</RootNamespace>
@@ -44,7 +44,7 @@
          is Windows-only and would have put a platform dependency in the payment flow. -->
     <PackageReference Include="QRCoder" Version="1.6.0" />
 
-    <!-- DPAPI. Not in the base framework on net8.0 — the WPF head got it for free
+    <!-- DPAPI. Not in the base framework on net8.0 — a WPF build would get it for free
          from the Windows Desktop shared framework, which this project does not
          reference. Verified on this machine to restore, publish trimmed with the
          analyzer on, and round-trip; the osx-arm64 publish also succeeds, since the
@@ -60,7 +60,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <InternalsVisibleTo Include="LanAi.RelayClient" />
     <InternalsVisibleTo Include="LanAi.RelayClient.App" />
     <InternalsVisibleTo Include="LanAi.RelayClient.Tests" />
   </ItemGroup>

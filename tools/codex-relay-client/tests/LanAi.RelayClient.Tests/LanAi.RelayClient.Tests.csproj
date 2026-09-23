@@ -1,8 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0-windows</TargetFramework>
-    <UseWPF>true</UseWPF>
+    <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
@@ -19,10 +18,28 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
+    <!-- Only for Point / Rect / Size / Thickness in the chart layout compiled in below.
+         Same version as the App head, so the tests bind to the geometry that ships. -->
+    <PackageReference Include="Avalonia" Version="11.3.20" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\LanAi.RelayClient\LanAi.RelayClient.csproj" />
+    <ProjectReference Include="..\..\src\LanAi.RelayClient.Core\LanAi.RelayClient.Core.csproj" />
+  </ItemGroup>
+
+  <!-- The App head is a WinExe, so the one piece of it under test is compiled in as
+       source instead of referenced: the file that ships, not a copy of it. -->
+  <ItemGroup>
+    <Compile Include="..\..\src\LanAi.RelayClient.App\Controls\UsageLineChartLayout.cs"
+             Link="Controls\UsageLineChartLayout.cs" />
+  </ItemGroup>
+
+  <!-- The vendored filter binary, next to the test assembly where
+       ContextFilterProcessTests looks for it. Those tests no-op without it. -->
+  <ItemGroup Condition="Exists('..\..\bundled-context-filter\context-filter.exe')">
+    <None Include="..\..\bundled-context-filter\context-filter.exe"
+          Link="context-filter.exe"
+          CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
