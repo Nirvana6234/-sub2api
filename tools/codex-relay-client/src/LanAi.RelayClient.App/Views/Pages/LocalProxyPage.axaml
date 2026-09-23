@@ -34,6 +34,9 @@
           <TextBlock Text="本地代理" Classes="cardTitle" />
           <TextBlock Classes="hint" Margin="0,4,0,0"
                      Text="用你在中转站上自己的账号，让 Codex 或 Claude Code 直接连官方：不经过中转站、不扣余额。每个工具各自选择，出错时只提醒、不会自动切回中转站。" />
+          <!-- The one thing most likely to go wrong: the official hosts usually need a proxy/VPN. -->
+          <TextBlock Classes="hint" Foreground="#B45309" Margin="0,4,0,0"
+                     Text="需要本机能直接访问官方（国内通常要开启代理/VPN）。开启时会先检测网络；使用期间请保持代理开启，代理断开时工具会无法使用。" />
           <TextBlock Text="{Binding Dashboard.LocalProxy.ActionMessage}" Foreground="#2563EB" FontSize="12"
                      TextWrapping="Wrap" Margin="0,8,0,0"
                      IsVisible="{Binding Dashboard.LocalProxy.HasActionMessage}" />

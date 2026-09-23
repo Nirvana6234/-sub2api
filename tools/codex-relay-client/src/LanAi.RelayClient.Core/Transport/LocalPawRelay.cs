@@ -4,6 +4,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
+using LanAi.RelayClient.Platform;
 using LanAi.RelayClient.Server;
 using LanAi.RelayClient.Services;
 
@@ -127,8 +128,14 @@ internal sealed class LocalPawRelay : IAsyncDisposable
     // The local proxy: straight to the official API with one of the user's own accounts.
     private readonly ILocalProxyCredentialSource? _localProxyCredentials;
     private readonly LocalProxyEndpoints _localProxyEndpoints;
-    private readonly HttpClient _directHttp;
+    private HttpClient _directHttp;
     private readonly bool _ownsDirectHttp;
+
+    /// <summary>
+    /// Clients replaced by <see cref="RefreshDirectConnection"/>. Not disposed on the spot:
+    /// a turn still streaming through one would be cut off. Disposed with the relay.
+    /// </summary>
+    private readonly List<HttpClient> _retiredDirectHttp = [];
     private readonly Action<LocalProxyOutcome>? _onLocalProxyOutcome;
     private readonly Action<LocalProxyUsage>? _onLocalProxyUsage;
     private LocalProxyTarget? _codexLocalProxy;
@@ -187,20 +194,7 @@ internal sealed class LocalPawRelay : IAsyncDisposable
         _onLocalProxyOutcome = onLocalProxyOutcome;
         _onLocalProxyUsage = onLocalProxyUsage;
         _ownsDirectHttp = directHttp is null;
-        // Its own client, so nothing about it can disturb the account session's
-        // fingerprint on the server side. Uses the system proxy (the default): the
-        // official hosts are often reachable only through one. Never follows a redirect,
-        // which would carry the account's token to whatever host it names. Decompresses
-        // itself so the stream can be read for its usage; accept-encoding is therefore
-        // not forwarded, and no content-encoding goes back to the tool.
-        _directHttp = directHttp ?? new HttpClient(new HttpClientHandler
-        {
-            AllowAutoRedirect = false,
-            AutomaticDecompression = DecompressionMethods.All,
-        })
-        {
-            Timeout = Timeout.InfiniteTimeSpan,
-        };
+        _directHttp = directHttp ?? CreateDirectHttp(_localProxyEndpoints);
 
         // The port and token from last time, when there is somewhere they were kept. An
         // editor's configuration outlives this process, so both have to survive it; see
@@ -299,6 +293,61 @@ internal sealed class LocalPawRelay : IAsyncDisposable
         ClientLog.Info(target is null
             ? $"本机 Relay（{tool}）改回经中转站转发"
             : $"本机 Relay（{tool}）改为本地代理：账号 {target.AccountId}「{Sanitize(target.Name)}」直连官方");
+
+        // Switching on is when the user has just been told to have their proxy on; pick up
+        // the proxy as it is now, not as it was when the client started.
+        if (target is not null)
+        {
+            RefreshDirectConnection();
+        }
+    }
+
+    /// <summary>
+    /// The client for the official API: its own, so nothing about it can disturb the account
+    /// session's fingerprint on the server side.
+    /// </summary>
+    /// <remarks>
+    /// Uses the proxy as it is set <em>now</em> (<see cref="SystemProxyReader"/>) — .NET's own
+    /// default is a snapshot from process start, and the official hosts are often reachable
+    /// only through a proxy the user turns on later. Never follows a redirect, which would
+    /// carry the account's token to whatever host it names. Decompresses itself so the stream
+    /// can be read for its usage; accept-encoding is therefore not forwarded, and no
+    /// content-encoding goes back to the tool.
+    /// </remarks>
+    private static HttpClient CreateDirectHttp(LocalProxyEndpoints endpoints)
+    {
+        SystemProxy proxy = SystemProxyReader.Current(new Uri(endpoints.CodexResponsesUrl));
+        return new HttpClient(new HttpClientHandler
+        {
+            AllowAutoRedirect = false,
+            AutomaticDecompression = DecompressionMethods.All,
+            UseProxy = proxy.Proxy is not null,
+            Proxy = proxy.Proxy,
+        })
+        {
+            Timeout = Timeout.InfiniteTimeSpan,
+        };
+    }
+
+    /// <summary>
+    /// Rebuilds the connection to the official API with the proxy as it is set now. Called
+    /// when a local proxy is switched on and after a connection failure, so a proxy turned on
+    /// afterwards is used from the next turn without restarting the client.
+    /// </summary>
+    internal void RefreshDirectConnection()
+    {
+        if (!_ownsDirectHttp)
+        {
+            return;
+        }
+
+        HttpClient fresh = CreateDirectHttp(_localProxyEndpoints);
+        ClientLog.Info($"本地代理连接官方改用当前网络设置：{SystemProxyReader.Current(new Uri(_localProxyEndpoints.CodexResponsesUrl)).Description}");
+        lock (_gate)
+        {
+            _retiredDirectHttp.Add(_directHttp);
+            _directHttp = fresh;
+        }
     }
 
     /// <summary>The local-proxy target currently in force for <paramref name="kind"/>, if any.</summary>
@@ -905,14 +954,24 @@ internal sealed class LocalPawRelay : IAsyncDisposable
                 using HttpRequestMessage request = BuildLocalProxyRequest(context, route, body, credential);
                 try
                 {
-                    response = await _directHttp
+                    HttpClient direct;
+                    lock (_gate)
+                    {
+                        direct = _directHttp;
+                    }
+                    response = await direct
                         .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
                         .ConfigureAwait(false);
                 }
                 catch (HttpRequestException ex)
                 {
                     ClientLog.Warning("本地代理连接官方失败", ex);
-                    Report(kind, target, false, "无法连接官方服务器：" + ex.Message);
+                    // The next turn reads the proxy settings afresh: the user may be turning
+                    // their proxy on right now.
+                    RefreshDirectConnection();
+                    Report(kind, target, false,
+                        "无法连接官方服务器，请检查代理/VPN 是否开启、能否访问官方（" + ex.Message + "）。" +
+                        "开启代理后下一轮对话会自动使用，无需重启客户端。");
                     await WriteErrorAsync(context, 502, "local proxy: official API unreachable", protocol)
                         .ConfigureAwait(false);
                     return true;
@@ -1226,7 +1285,14 @@ internal sealed class LocalPawRelay : IAsyncDisposable
         await StopAsync().ConfigureAwait(false);
         _listener.Close();
         if (_ownsHttp) _http.Dispose();
-        if (_ownsDirectHttp) _directHttp.Dispose();
+        if (_ownsDirectHttp)
+        {
+            _directHttp.Dispose();
+            foreach (HttpClient retired in _retiredDirectHttp)
+            {
+                retired.Dispose();
+            }
+        }
     }
 
     /// <summary>

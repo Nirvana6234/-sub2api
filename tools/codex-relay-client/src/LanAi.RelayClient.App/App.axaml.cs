@@ -256,6 +256,11 @@ public partial class App : Application
         // window whose procedure receives the click callback on its creating thread.
         _notifications = NotificationPresenters.Create();
 
+        // Switching a tool onto a local proxy is confirmed, with the network check's result and
+        // a reminder to keep the proxy/VPN on: the official hosts are often reachable only through one.
+        dashboard.LocalProxy.ConfirmEnable = (message, confirmLabel) =>
+            ConfirmDialog.AskAsync(shell, message, confirmLabel: confirmLabel);
+
         // A local proxy that fails is only ever reported, never rerouted; this is the report.
         dashboard.LocalProxy.FailureRaised += message => _notifications?.Show(new NotificationRequest(
             "共飞 AI 助手 · 本地代理出错",

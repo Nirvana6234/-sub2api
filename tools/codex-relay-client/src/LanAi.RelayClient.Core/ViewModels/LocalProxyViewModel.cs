@@ -109,8 +109,10 @@ public sealed partial class LocalProxyViewModel : ObservableObject
         ClaudeCodeViewModel claudeCode,
         ClaudePreferenceViewModel claudePreference,
         Func<bool> codexOnClaudeGroup,
-        Func<DateTimeOffset>? clock = null)
+        Func<DateTimeOffset>? clock = null,
+        IOfficialReachability? reachability = null)
     {
+        _reachability = reachability ?? new OfficialReachability();
         _client = client ?? throw new ArgumentNullException(nameof(client));
         _refresh = refresh ?? throw new ArgumentNullException(nameof(refresh));
         _codex = codex ?? throw new ArgumentNullException(nameof(codex));
@@ -124,8 +126,44 @@ public sealed partial class LocalProxyViewModel : ObservableObject
         RefreshUsage();
     }
 
+    private readonly IOfficialReachability _reachability;
+
     /// <summary>Raised with a message the first time a new problem appears; the host shows a notification.</summary>
     public event Action<string>? FailureRaised;
+
+    /// <summary>
+    /// Asks the user to confirm switching on, with the network check's result: (message,
+    /// confirm-button label) → whether to go ahead. Supplied by the host, which owns a window.
+    /// Without one, a reachable host goes ahead and an unreachable one is refused.
+    /// </summary>
+    public Func<string, string, Task<bool>>? ConfirmEnable { get; set; }
+
+    /// <summary>The official host a tool's local proxy connects to.</summary>
+    internal static Uri OfficialEndpoint(LocalProxyKind kind) => new(kind == LocalProxyKind.ClaudeCode
+        ? LocalProxyEndpoints.Official.ClaudeBaseUrl
+        : LocalProxyEndpoints.Official.CodexResponsesUrl);
+
+    private static string ToolName(LocalProxyKind kind) => kind == LocalProxyKind.ClaudeCode ? "Claude Code" : "Codex";
+
+    /// <summary>
+    /// What the user is told before switching on. The official hosts are often reachable
+    /// only through a proxy/VPN, and a local proxy that cannot reach them simply stops the
+    /// tool working — with no way back to the relay server unless the user switches it off.
+    /// </summary>
+    internal static string DescribeSwitchOn(LocalProxyKind kind, Reachability check)
+    {
+        string tool = ToolName(kind);
+        string host = OfficialEndpoint(kind).Host;
+        return check.Reachable
+            ? $"开启后，{tool} 将不再经过中转站，而是由本机直接连接官方服务器（{host}）。\n\n" +
+              $"当前网络：{check.ProxyDescription}，已能连上官方。\n\n" +
+              "请注意：使用期间请保持代理/VPN 一直开启且节点可用。代理断开或节点失效时，" +
+              $"{tool} 会无法使用（客户端会提醒），但不会自动切回中转站。\n\n确定开启吗？"
+            : $"现在连不上官方服务器（{host}）：{check.Problem}\n\n" +
+              $"当前网络：{check.ProxyDescription}。\n\n" +
+              "本地代理需要本机能直接访问官方，国内通常要先打开代理/VPN（系统代理或 TUN 模式）。" +
+              $"建议先开好代理再开启；现在开启的话，{tool} 在连上官方之前都无法使用。\n\n仍要开启吗？";
+    }
 
     public ObservableCollection<LocalProxyAccountItem> CodexAccounts { get; } = [];
 
@@ -230,6 +268,44 @@ public sealed partial class LocalProxyViewModel : ObservableObject
         {
             _restored = true;
             RestoreChoice();
+            await WarnIfRestoredToolsCannotReachOfficialAsync().ConfigureAwait(true);
+        }
+    }
+
+    /// <summary>
+    /// After a restart the choice comes back without the user clicking anything, so nobody
+    /// has just been reminded about the proxy. Checked once; an unreachable host is said on
+    /// the page and in one notification.
+    /// </summary>
+    private async Task WarnIfRestoredToolsCannotReachOfficialAsync()
+    {
+        foreach ((LocalProxyKind kind, LocalProxyTarget? target) in
+                 new[] { (LocalProxyKind.Codex, CodexTarget), (LocalProxyKind.ClaudeCode, ClaudeTarget) })
+        {
+            if (target is null)
+            {
+                continue;
+            }
+
+            Reachability check = await _reachability.CheckAsync(OfficialEndpoint(kind)).ConfigureAwait(true);
+            if (!check.Reachable)
+            {
+                string message = $"连不上官方服务器（{check.Problem}；当前网络：{check.ProxyDescription}），请打开代理/VPN。开启后下一轮对话会自动使用。";
+                SetError(kind, message);
+                FailureRaised?.Invoke($"{ToolName(kind)} 正在使用本地代理「{target.Name}」，但{message}\n未切回中转站，可在「本地代理」页关闭。");
+            }
+        }
+    }
+
+    private void SetError(LocalProxyKind kind, string message)
+    {
+        if (kind == LocalProxyKind.Codex)
+        {
+            CodexError = message;
+        }
+        else
+        {
+            ClaudeError = message;
         }
     }
 
@@ -264,7 +340,20 @@ public sealed partial class LocalProxyViewModel : ObservableObject
             return;
         }
 
-        // Asked for once now, so a refusal is shown on this click rather than on Codex's next turn.
+        ActionMessage = "正在检测能否连上官方服务器…";
+        Reachability check = await _reachability.CheckAsync(OfficialEndpoint(item.Kind)).ConfigureAwait(true);
+        bool confirmed = ConfirmEnable is { } confirm
+            ? await confirm(DescribeSwitchOn(item.Kind, check), check.Reachable ? "开启" : "仍然开启").ConfigureAwait(true)
+            : check.Reachable;
+        if (!confirmed)
+        {
+            ActionMessage = check.Reachable
+                ? "已取消，仍经中转站。"
+                : $"连不上官方服务器（{check.Problem}），未开启。请先打开代理/VPN 再试。";
+            return;
+        }
+
+        // Asked for once now, so a refusal is shown on this click rather than on the tool's next turn.
         try
         {
             await _credentials.GetAsync(item.Id, forceRefresh: true, CancellationToken.None).ConfigureAwait(true);
@@ -277,9 +366,11 @@ public sealed partial class LocalProxyViewModel : ObservableObject
 
         Apply(item.Kind, new LocalProxyTarget(item.Id, item.Name));
         Save();
-        ActionMessage = item.Kind == LocalProxyKind.Codex
-            ? $"Codex 已改为本地代理「{item.Name}」，下一轮对话起生效，不再经过中转站、不扣余额。"
-            : $"Claude Code 已改为本地代理「{item.Name}」，下一轮对话起生效，不再经过中转站、不扣余额。";
+        ActionMessage = $"{ToolName(item.Kind)} 已改为本地代理「{item.Name}」，下一轮对话起生效，不再经过中转站、不扣余额。请保持代理/VPN 开启。";
+        if (!check.Reachable)
+        {
+            SetError(item.Kind, $"连不上官方服务器（{check.Problem}），请打开代理/VPN。开启后下一轮对话会自动使用。");
+        }
     }
 
     internal void Disable(LocalProxyKind kind)

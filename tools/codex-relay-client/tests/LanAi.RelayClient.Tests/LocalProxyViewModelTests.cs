@@ -27,8 +27,28 @@ public sealed class LocalProxyViewModelTests
         public void Add(LocalProxyUsage usage) { }
     }
 
+    internal sealed class FakeReachability : IOfficialReachability
+    {
+        public bool Reachable { get; set; } = true;
+
+        public List<Uri> Checked { get; } = [];
+
+        public Task<Reachability> CheckAsync(Uri officialEndpoint, CancellationToken cancellationToken = default)
+        {
+            lock (Checked)
+            {
+                Checked.Add(officialEndpoint);
+            }
+            return Task.FromResult(Reachable
+                ? new Reachability(true, "系统代理 127.0.0.1:7897", null)
+                : new Reachability(false, "直连（未检测到系统代理）", "10 秒内没有响应"));
+        }
+    }
+
     private sealed class Rig
     {
+        public required FakeReachability Network { get; init; }
+
         public required DashboardViewModel Dashboard { get; init; }
 
         public required FakeRelayClient Relay { get; init; }
@@ -52,8 +72,10 @@ public sealed class LocalProxyViewModelTests
 
     private static async Task<Rig> SignedInAsync(
         LocalProxyChoice? saved = null,
-        Func<IReadOnlyList<ContributionAccount>>? accounts = null)
+        Func<IReadOnlyList<ContributionAccount>>? accounts = null,
+        bool reachable = true)
     {
+        var network = new FakeReachability { Reachable = reachable };
         var relay = new FakeRelayClient
         {
             OnListContributionAccounts = accounts ?? (() => [Plus, Max, Key]),
@@ -76,10 +98,11 @@ public sealed class LocalProxyViewModelTests
             pluginSupportPreferences: new FakePluginSupportPreferenceStore(),
             localProxyCredentials: new LocalProxyCredentialCache(relay, _ => Task.FromResult("jwt")),
             localProxyPreferences: choice,
-            localProxyUsage: new MemoryUsageStore());
+            localProxyUsage: new MemoryUsageStore(),
+            localProxyReachability: network);
         await session.SignInAsync("a@b.com", "pw");
         await dashboard.RefreshAsync();
-        return new Rig { Dashboard = dashboard, Relay = relay, Codex = codex, Choice = choice };
+        return new Rig { Dashboard = dashboard, Relay = relay, Codex = codex, Choice = choice, Network = network };
     }
 
     [Fact]

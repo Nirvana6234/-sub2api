@@ -144,7 +144,8 @@ public sealed partial class DashboardViewModel : ObservableObject
         IPluginSupportPreferenceStore? pluginSupportPreferences = null,
         ILocalProxyCredentialSource? localProxyCredentials = null,
         ILocalProxyPreferenceStore? localProxyPreferences = null,
-        ILocalProxyUsageStore? localProxyUsage = null)
+        ILocalProxyUsageStore? localProxyUsage = null,
+        IOfficialReachability? localProxyReachability = null)
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
         _session = session ?? throw new ArgumentNullException(nameof(session));
@@ -181,7 +182,8 @@ public sealed partial class DashboardViewModel : ObservableObject
             localProxyUsage ?? new LocalProxyUsageStore(),
             ClaudeCode,
             ClaudePreference,
-            () => IsClaudeGroup);
+            () => IsClaudeGroup,
+            reachability: localProxyReachability);
         LocalProxy.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName == nameof(LocalProxyViewModel.CodexTarget))
