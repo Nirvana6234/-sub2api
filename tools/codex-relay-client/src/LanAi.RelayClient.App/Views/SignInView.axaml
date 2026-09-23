@@ -5,10 +5,15 @@
              x:DataType="vm:SignInPageViewModel">
 
   <!-- Sign-in is the only entry point: there is no skip, no offline mode, and no way
-       to paste an API key instead. -->
-  <StackPanel VerticalAlignment="Center" Margin="32">
+       to paste an API key instead.
 
-    <TextBlock Text="共飞-ChatGPT助手"
+       Scrolls, like the registration form: the window can be as short as 520, and with
+       an update notice, an error with its retry button and both links showing, the form
+       is about that tall. -->
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+  <StackPanel VerticalAlignment="Center" Margin="32" MaxWidth="420">
+
+    <TextBlock Text="共飞 AI 助手"
                FontSize="24" FontWeight="SemiBold"
                HorizontalAlignment="Center" Margin="0,0,0,4" />
     <TextBlock Text="拒绝高价，拒绝包月，畅快使用 ChatGPT 工作生活"
@@ -102,4 +107,5 @@
             Margin="0,4,0,0" />
 
   </StackPanel>
+  </ScrollViewer>
 </UserControl>

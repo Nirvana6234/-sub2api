@@ -40,15 +40,28 @@ tools/codex-relay-client/
 ├── src/
 │   ├── LanAi.RelayClient.Server/       # 中转站 HTTP 客户端（net8.0，零 NuGet 依赖）
 │   ├── LanAi.RelayClient.CodexBinding/ # Codex 配置写入、完整快照与恢复
-│   ├── LanAi.RelayClient/              # WPF 头（本机开发用，不出货）
-│   └── LanAi.RelayClient.App/          # Avalonia 头 —— **Windows 与 macOS 的出货头**
+│   ├── LanAi.RelayClient.Core/         # 视图模型、服务、本机 relay（net8.0，不引用任何 UI 框架）
+│   └── LanAi.RelayClient.App/          # Avalonia —— **唯一的 UI 头**，Windows 与 macOS 共用
 └── tests/
-    ├── LanAi.RelayClient.CodexBinding.Tests/ # 53 个：路由、加密快照、迁移、恢复与 TOML 保留
-    ├── LanAi.RelayClient.Server.Tests/ # 92 个：信封语义、错误分类、面板和 key 契约
-    └── LanAi.RelayClient.Tests/        # 420 个：会话、生命周期、本机转发、退避、异步、订阅和 UI 状态
+    ├── LanAi.RelayClient.CodexBinding.Tests/ # 239 个：路由、加密快照、迁移、恢复与 TOML 保留
+    ├── LanAi.RelayClient.Server.Tests/ # 95 个：信封语义、错误分类、面板和 key 契约
+    └── LanAi.RelayClient.Tests/        # 625 个：会话、生命周期、本机转发、退避、异步、订阅和 UI 状态
 ```
 
 后续按需求文档分期补：客户端内注册、充值、Codex 安装、项目中心和 `LanAi.RelayClient.Chat`。
+
+### 登录后界面的结构（2026-09-23 改为左侧页签）
+
+左侧页签：仪表盘 / Codex / Claude / Kimi（占位，等 Kimi Code CLI 调研）/ 账户，底部是设置。
+改版计划与各项决定见 [`doc/小白端左侧页签改版任务计划.md`](doc/小白端左侧页签改版任务计划.md)。
+
+- `DashboardView` 是登录后的外壳：左侧导航 + 按 `ClientPage` 切换的页面（`Views/Pages/`，构造时显式 new 出来，不靠命名反射，裁剪安全）。
+  三个轮询计时器挂在外壳上，**不随切页停止**——托盘状态、健康检查、余额提醒在窗口隐藏时也要数据。
+- 页面的按钮统一经 `IDashboardActions` 回到外壳，同一个动作（例如「启动 ChatGPT」）在两页上走同一条路。
+- 视图模型：`DashboardViewModel`（Codex 页：启动/分组/自动分组/压缩）持有 `RefreshState`（每轮刷新的限流/401 记账）、
+  `Account`、`Usage`、`Catalog`（未过滤的分组列表，每个工具自己筛）、`ClaudePreference`（账号级 Claude 模型，**全应用唯一实例**）、
+  `ClaudeCode`（Claude Code / VS Code 插件）。子对象**没有在父级留转发属性**：谁要用就绑 `Dashboard.Account.BalanceText` 这样的完整路径，
+  漏改的消费者编译期就报错，而不是运行时悄悄不更新。
 
 ## 构建与测试
 
@@ -125,9 +138,9 @@ python packaging/check-server-address.py --channel production <临时目录>/Lan
 
 脚本要求本渠道的地址存在、另外两个不存在，任何一项不符都退出码非 0。**产物目录名只是标签，不是证据**——命名成“正式”而没跑 `--channel production` 的包不算正式包。发布流水线只走 `production`，不带渠道参数。
 
-`context-filter.exe` 要放在**子目录** `context-filter\` 下（`App.axaml.cs` 按 `AppContext.BaseDirectory\context-filter\context-filter.exe` 找它，不跟主 exe 平铺），产物结构照 workflow 里"打包 Windows zip"那一步的 staging 布局来。两个头现在用的是同一套子目录约定（WPF 头本来就是子目录，2026-09-17 起 Avalonia 头也改成子目录，不再是两边各一种）。
+`context-filter.exe` 要放在**子目录** `context-filter\` 下（`App.axaml.cs` 按 `AppContext.BaseDirectory\context-filter\context-filter.exe` 找它，不跟主 exe 平铺），产物结构照 workflow 里"打包 Windows zip"那一步的 staging 布局来。（WPF 头已于 2026-09-23 删除，只剩这一种约定。）
 
-之前 `packaging/publish-windows.ps1` 想省掉这几步，但发布的是 `LanAi.RelayClient`（WPF 头，仅本机开发用，见上方目录说明），已删除。**不要再写第二个打包脚本**：本地要自动化就直接照上面几行封一个函数，别让它跟 CI 的步骤分叉。
+之前 `packaging/publish-windows.ps1` 想省掉这几步，但发布的是早已不出货的 WPF 头，已删除。**不要再写第二个打包脚本**：本地要自动化就直接照上面几行封一个函数，别让它跟 CI 的步骤分叉。
 
 ## 历史会话归属
 

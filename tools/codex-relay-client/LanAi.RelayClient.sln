@@ -7,8 +7,6 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "LanAi.RelayClient.Server", 
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "LanAi.RelayClient.Server.Tests", "tests\LanAi.RelayClient.Server.Tests\LanAi.RelayClient.Server.Tests.csproj", "{A1B2C3D4-2001-4000-8000-000000002001}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "LanAi.RelayClient", "src\LanAi.RelayClient\LanAi.RelayClient.csproj", "{A1B2C3D4-1002-4000-8000-000000001002}"
-EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "LanAi.RelayClient.Tests", "tests\LanAi.RelayClient.Tests\LanAi.RelayClient.Tests.csproj", "{A1B2C3D4-2002-4000-8000-000000002002}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{827E0CD3-B72D-47B6-A68D-7590B98EB39B}"
@@ -55,18 +53,6 @@ Global
 		{A1B2C3D4-2001-4000-8000-000000002001}.Release|x64.Build.0 = Release|Any CPU
 		{A1B2C3D4-2001-4000-8000-000000002001}.Release|x86.ActiveCfg = Release|Any CPU
 		{A1B2C3D4-2001-4000-8000-000000002001}.Release|x86.Build.0 = Release|Any CPU
-		{A1B2C3D4-1002-4000-8000-000000001002}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{A1B2C3D4-1002-4000-8000-000000001002}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{A1B2C3D4-1002-4000-8000-000000001002}.Debug|x64.ActiveCfg = Debug|Any CPU
-		{A1B2C3D4-1002-4000-8000-000000001002}.Debug|x64.Build.0 = Debug|Any CPU
-		{A1B2C3D4-1002-4000-8000-000000001002}.Debug|x86.ActiveCfg = Debug|Any CPU
-		{A1B2C3D4-1002-4000-8000-000000001002}.Debug|x86.Build.0 = Debug|Any CPU
-		{A1B2C3D4-1002-4000-8000-000000001002}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{A1B2C3D4-1002-4000-8000-000000001002}.Release|Any CPU.Build.0 = Release|Any CPU
-		{A1B2C3D4-1002-4000-8000-000000001002}.Release|x64.ActiveCfg = Release|Any CPU
-		{A1B2C3D4-1002-4000-8000-000000001002}.Release|x64.Build.0 = Release|Any CPU
-		{A1B2C3D4-1002-4000-8000-000000001002}.Release|x86.ActiveCfg = Release|Any CPU
-		{A1B2C3D4-1002-4000-8000-000000001002}.Release|x86.Build.0 = Release|Any CPU
 		{A1B2C3D4-2002-4000-8000-000000002002}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{A1B2C3D4-2002-4000-8000-000000002002}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A1B2C3D4-2002-4000-8000-000000002002}.Debug|x64.ActiveCfg = Debug|Any CPU

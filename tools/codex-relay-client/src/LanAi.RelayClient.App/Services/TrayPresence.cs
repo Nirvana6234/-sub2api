@@ -84,7 +84,7 @@ internal sealed class TrayPresence : IDisposable
         _icon = new TrayIcon
         {
             Icon = LoadIcon(),
-            ToolTipText = "共飞-ChatGPT助手",
+            ToolTipText = "共飞 AI 助手",
             Menu = menu,
             IsVisible = true,
         };

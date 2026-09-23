@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using LanAi.RelayClient.Server;
 using LanAi.RelayClient.Services;
+using LanAi.RelayClient.Transport;
 using LanAi.RelayClient.Controls;
 
 namespace LanAi.RelayClient.ViewModels;
@@ -36,8 +37,6 @@ public sealed partial class DashboardViewModel : ObservableObject
     private readonly IStartupRegistration _startupRegistration;
     private readonly IContextFilterPreferenceStore _contextFilterPreferences;
     private readonly IContextFilterUsageStore _contextFilterUsage;
-    private readonly IPluginSupportPreferenceStore _pluginSupportPreferences;
-    private readonly PollingBackoff _pollingBackoff;
     private readonly SafeAsyncRunner _safeAsync;
     private readonly SemaphoreSlim _pollGate = new(1, 1);
 
@@ -50,9 +49,6 @@ public sealed partial class DashboardViewModel : ObservableObject
     private bool contextFilterEnabled = true;
 
     private RelayApiKey? _managedKey;
-    private bool _refreshHadFailure;
-    private bool _refreshWasRateLimited;
-    private bool _refreshSawUnauthenticated;
 
     /// <summary>Whether there is a bundled filter to switch; false greys the checkbox out.</summary>
     public bool CanToggleContextFilter => _codex.HasContextFilter;
@@ -145,7 +141,11 @@ public sealed partial class DashboardViewModel : ObservableObject
         IStartupRegistration? startupRegistration = null,
         IContextFilterPreferenceStore? contextFilterPreferences = null,
         IContextFilterUsageStore? contextFilterUsage = null,
-        IPluginSupportPreferenceStore? pluginSupportPreferences = null)
+        IPluginSupportPreferenceStore? pluginSupportPreferences = null,
+        ILocalProxyCredentialSource? localProxyCredentials = null,
+        ILocalProxyPreferenceStore? localProxyPreferences = null,
+        ILocalProxyUsageStore? localProxyUsage = null,
+        IOfficialReachability? localProxyReachability = null)
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
         _session = session ?? throw new ArgumentNullException(nameof(session));
@@ -155,15 +155,71 @@ public sealed partial class DashboardViewModel : ObservableObject
         _codexInstaller = codexInstaller ?? new CodexInstaller();
         _codexAccountStore = codexAccountStore ?? new CodexAccountStore();
         _startupRegistration = startupRegistration ?? new UnsupportedStartupRegistration();
-        _pollingBackoff = pollingBackoff ?? new PollingBackoff();
+        RefreshState = new RefreshState(pollingBackoff ?? new PollingBackoff(), _session);
+        Account = new AccountCardViewModel(_client, RefreshState);
+        Usage = new UsageCardViewModel(_client, RefreshState);
+        Catalog = new GroupCatalog(_client, RefreshState);
         _safeAsync = safeAsync ?? new SafeAsyncRunner();
         _contextFilterPreferences = contextFilterPreferences ?? new ContextFilterPreferenceStore();
         _contextFilterUsage = contextFilterUsage ?? new ContextFilterUsageStore();
         SetContextFilterWithoutApplying(_contextFilterPreferences.Load() ?? true);
         RefreshContextFilterUsageText();
-        _pluginSupportPreferences = pluginSupportPreferences ?? new PluginSupportPreferenceStore();
-        SetPluginSupportWithoutApplying(_pluginSupportPreferences.Load() ?? false);
+        ClaudePreference = new ClaudePreferenceViewModel(_client, _session, _safeAsync);
+        ClaudeCode = new ClaudeCodeViewModel(
+            _codex,
+            _preferences,
+            pluginSupportPreferences ?? new PluginSupportPreferenceStore(),
+            ClaudePreference,
+            _safeAsync);
+        // The credential source must be the very instance the relay reads from, so a token
+        // checked on switch-on is the one the next turn uses; the host passes it in.
+        LocalProxy = new LocalProxyViewModel(
+            _client,
+            RefreshState,
+            _codex,
+            localProxyCredentials ?? new LocalProxyCredentialCache(_client, _session.GetAccessTokenAsync),
+            localProxyPreferences ?? new LocalProxyPreferenceStore(),
+            localProxyUsage ?? new LocalProxyUsageStore(),
+            ClaudeCode,
+            ClaudePreference,
+            () => IsClaudeGroup,
+            reachability: localProxyReachability);
+        LocalProxy.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(LocalProxyViewModel.CodexTarget))
+            {
+                // On a local proxy Codex needs no billing group, and the group no longer
+                // decides where its traffic goes.
+                OnPropertyChanged(nameof(CanChooseGroup));
+                OnPropertyChanged(nameof(CanStartCodex));
+                OnPropertyChanged(nameof(StartCodexLabel));
+            }
+        };
     }
+
+    /// <summary>The refresh cycle's shared bookkeeping: backoff, rate-limit banner, 401s.</summary>
+    public RefreshState RefreshState { get; }
+
+    /// <summary>Balance, recharge and subscription.</summary>
+    public AccountCardViewModel Account { get; }
+
+    /// <summary>Today's usage and the seven-day trend.</summary>
+    public UsageCardViewModel Usage { get; }
+
+    /// <summary>Every group the account may use, unfiltered; each tool narrows it itself.</summary>
+    public GroupCatalog Catalog { get; }
+
+    /// <summary>The account's Claude model and thinking level. One instance for every page.</summary>
+    public ClaudePreferenceViewModel ClaudePreference { get; }
+
+    /// <summary>Claude Code and its editor extension.</summary>
+    public ClaudeCodeViewModel ClaudeCode { get; }
+
+    /// <summary>The 本地代理 page: each tool straight to the official API with one of the user's own accounts.</summary>
+    public LocalProxyViewModel LocalProxy { get; }
+
+    /// <summary>Whether the Codex group picker means anything right now: not while Codex is on a local proxy.</summary>
+    public bool CanChooseGroup => GroupsReady && !LocalProxy.IsCodexActive;
 
     public ObservableCollection<GroupItemViewModel> Groups { get; } = [];
 
@@ -198,77 +254,12 @@ public sealed partial class DashboardViewModel : ObservableObject
     // an older server, not a failure of the group card itself.
     private bool _autoGroupSupported = true;
 
-    [ObservableProperty]
-    private string userDisplayName = string.Empty;
-
-    // ---- Account card -------------------------------------------------------
-
-    [ObservableProperty]
-    private string balanceText = "—";
-
-    [ObservableProperty]
-    private string frozenBalanceText = "—";
-
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(AccountUnavailable))]
-    private bool accountReady;
-
-    /// <summary>True when this card could not be loaded and should be greyed out.</summary>
-    public bool AccountUnavailable => !AccountReady;
-
-    [ObservableProperty]
-    private bool balanceIsLow;
-
-    /// <summary>Where the top-up button should send the user; supplied by the server.</summary>
-    [ObservableProperty]
-    private string rechargeUrl = string.Empty;
-
-    public bool CanRecharge => _settings.PaymentEnabled || !string.IsNullOrWhiteSpace(RechargeUrl);
-
-    [ObservableProperty]
-    private bool isRateLimited;
-
-    [ObservableProperty]
-    private string refreshMessage = string.Empty;
-
-    // ---- Usage card ---------------------------------------------------------
-
-    [ObservableProperty]
-    private string todayRequestsText = "—";
-
-    [ObservableProperty]
-    private string todayTokensText = "—";
-
-    [ObservableProperty]
-    private string todayCostText = "—";
-
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(UsageUnavailable))]
-    private bool usageReady;
-
-    public bool UsageUnavailable => !UsageReady;
-
-    // ---- Subscription card --------------------------------------------------
-
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(SubscriptionUnavailable))]
-    private bool subscriptionReady;
-
-    public bool SubscriptionUnavailable => !SubscriptionReady;
-
-    [ObservableProperty]
-    private string subscriptionName = string.Empty;
-
-    [ObservableProperty]
-    private string subscriptionProgressText = string.Empty;
-
-    public bool HasSubscription => SubscriptionReady && !string.IsNullOrWhiteSpace(SubscriptionName);
-
     // ---- Group card ---------------------------------------------------------
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(GroupsUnavailable))]
     [NotifyPropertyChangedFor(nameof(StartCodexLabel))]
+    [NotifyPropertyChangedFor(nameof(CanChooseGroup))]
     private bool groupsReady;
 
     public bool GroupsUnavailable => !GroupsReady;
@@ -350,364 +341,15 @@ public sealed partial class DashboardViewModel : ObservableObject
 
     partial void OnGroupMessageChanged(string value) => OnPropertyChanged(nameof(HasGroupMessage));
 
-    // ---- Claude preference (visible only when the main — Codex — group is a Claude-platform
-    // one; the plug-ins' own Claude group, below, does not drive this) -----------------------
+    // ---- Claude ------------------------------------------------------------------------
+    //
+    // The account's Claude model preference and the editor plug-ins live in their own view
+    // models (ClaudePreference, ClaudeCode). What stays here is only what the Codex
+    // selection itself decides.
 
     /// <summary>True when the selected group uses the Anthropic/Claude platform.</summary>
     public bool IsClaudeGroup => SelectedGroup?.Platform?.ToLowerInvariant().Contains("claude") == true
                                || SelectedGroup?.Platform?.ToLowerInvariant().Contains("anthropic") == true;
-
-    public static IReadOnlyList<string> ClaudeModels { get; } =
-        ["claude-sonnet-5", "claude-opus-5"];
-
-    public static IReadOnlyList<string> ClaudeThinkingLevels { get; } =
-        ["关闭", "低", "中", "高", "极高"];
-
-    private static readonly string[] _thinkingLevelKeys = ["off", "low", "medium", "high", "max"];
-
-    private const int DefaultClaudeThinkingLevelIndex = 2;
-
-    private bool _loadingClaudePreference;
-
-    [ObservableProperty]
-    private string selectedClaudeModel = "claude-sonnet-5";
-
-    partial void OnSelectedClaudeModelChanged(string value)
-    {
-        if (_loadingClaudePreference)
-        {
-            return;
-        }
-
-        _ = _safeAsync.RunAsync(SaveClaudePreferenceAsync);
-        RequestPluginSync();
-    }
-
-    [ObservableProperty]
-    private string selectedClaudeThinkingLevel = ClaudeThinkingLevels[DefaultClaudeThinkingLevelIndex];
-
-    partial void OnSelectedClaudeThinkingLevelChanged(string value) =>
-        _ = _loadingClaudePreference ? Task.CompletedTask : _safeAsync.RunAsync(SaveClaudePreferenceAsync);
-
-    internal async Task LoadClaudePreferenceAsync()
-    {
-        _loadingClaudePreference = true;
-        try
-        {
-            var token = await _session.GetAccessTokenAsync().ConfigureAwait(true);
-            var pref = await _client.GetClaudePreferenceAsync(token);
-            SelectedClaudeModel = pref.Model;
-            var idx = System.Array.IndexOf(_thinkingLevelKeys, pref.ThinkingLevel);
-            SelectedClaudeThinkingLevel = idx >= 0
-                ? ClaudeThinkingLevels[idx]
-                : ClaudeThinkingLevels[DefaultClaudeThinkingLevelIndex];
-        }
-        catch { /* best-effort */ }
-        finally
-        {
-            _loadingClaudePreference = false;
-            _claudePreferenceLoaded = true;
-        }
-
-        RequestPluginSync();
-    }
-
-    private async Task SaveClaudePreferenceAsync()
-    {
-        try
-        {
-            var token = await _session.GetAccessTokenAsync().ConfigureAwait(true);
-            var modelIdx = System.Array.IndexOf(ClaudeModels.ToArray(), SelectedClaudeModel);
-            if (modelIdx < 0) modelIdx = 0;
-            var levelIdx = System.Array.IndexOf(
-                ClaudeThinkingLevels.ToArray(),
-                SelectedClaudeThinkingLevel);
-            if (levelIdx < 0) levelIdx = 0;
-            await _client.SetClaudePreferenceAsync(token, ClaudeModels[modelIdx], _thinkingLevelKeys[levelIdx]);
-        }
-        catch { /* best-effort */ }
-    }
-
-    // ---- Editor plug-ins (Claude Code / VS Code) ------------------------------
-    //
-    // A path of its own, entirely separate from the Codex group above: the plug-ins get
-    // their own Claude group, chosen here, and their own binding on the relay
-    // (LocalPawRelay.SetClaudeGroup). Codex keeps routing through whatever group the
-    // dropdown above is on — including a Claude one; F5.4's direct routing is untouched.
-
-    /// <summary>
-    /// 支持插件（VS Code）等. Off by default: unlike the Codex group, this writes to files
-    /// outside this client (~/.claude/settings.json and the editor's own settings), so the
-    /// first launch asks rather than assumes.
-    /// </summary>
-    [ObservableProperty]
-    private bool pluginSupportEnabled;
-
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(HasPluginSupportStatus))]
-    private string pluginSupportStatus = string.Empty;
-
-    public bool HasPluginSupportStatus => !string.IsNullOrEmpty(PluginSupportStatus);
-
-    /// <summary>Only the loopback relay can serve an editor; greys the box out otherwise.</summary>
-    public bool CanConfigurePluginSupport => _codex.UsesLocalTransport;
-
-    /// <summary>The Claude groups the plug-ins may be pointed at — every Claude-platform group.</summary>
-    public ObservableCollection<GroupItemViewModel> ClaudePluginGroups { get; } = [];
-
-    public bool HasClaudePluginGroups => ClaudePluginGroups.Count > 0;
-
-    [ObservableProperty]
-    private GroupItemViewModel? selectedClaudePluginGroup;
-
-    private bool _applyingKnownPluginSupportState;
-    private bool _applyingKnownClaudePluginGroupState;
-
-    /// <summary>The request last applied successfully, so an unchanged input does no file work.</summary>
-    private PluginSupportRequest? _lastPluginRequest;
-
-    /// <summary>
-    /// The Claude model comes from the server, as an account-level preference shared with F5.4's
-    /// direct routing. Until it has been read once, syncing would write the placeholder default
-    /// into the user's settings and then rewrite it a moment later.
-    /// </summary>
-    private bool _claudePreferenceLoaded;
-
-    partial void OnPluginSupportEnabledChanged(bool value)
-    {
-        if (_applyingKnownPluginSupportState)
-        {
-            return;
-        }
-
-        _pluginSupportPreferences.Save(value);
-        RequestPluginSync();
-    }
-
-    private void SetPluginSupportWithoutApplying(bool value)
-    {
-        _applyingKnownPluginSupportState = true;
-        try
-        {
-            PluginSupportEnabled = value;
-        }
-        finally
-        {
-            _applyingKnownPluginSupportState = false;
-        }
-    }
-
-    partial void OnSelectedClaudePluginGroupChanged(GroupItemViewModel? value)
-    {
-        if (!_applyingKnownClaudePluginGroupState && value is not null)
-        {
-            _preferences.SaveClaudeGroup(value.Id);
-        }
-
-        if (value is not null)
-        {
-            // Loads the account's Claude model/thinking-level preference and, once that
-            // completes, calls RequestPluginSync itself — see LoadClaudePreferenceAsync.
-            _ = _safeAsync.RunAsync(LoadClaudePreferenceAsync);
-        }
-        else
-        {
-            RequestPluginSync();
-        }
-    }
-
-    private void SelectClaudePluginGroupWithoutApplying(GroupItemViewModel? group)
-    {
-        _applyingKnownClaudePluginGroupState = true;
-        try
-        {
-            SelectedClaudePluginGroup = group;
-        }
-        finally
-        {
-            _applyingKnownClaudePluginGroupState = false;
-        }
-    }
-
-    /// <summary>
-    /// Rebuilds the Claude-group candidate list from <see cref="Groups"/> and restores the
-    /// remembered choice — or, failing that, the only candidate there is, so the picker is
-    /// never left empty for an account with just one Claude group.
-    /// </summary>
-    private void RebuildClaudePluginGroups()
-    {
-        ClaudePluginGroups.Clear();
-        foreach (GroupItemViewModel candidate in Groups.Where(g => !g.IsAutomatic && IsClaudePlatform(g.Platform)))
-        {
-            ClaudePluginGroups.Add(candidate);
-        }
-        OnPropertyChanged(nameof(HasClaudePluginGroups));
-
-        long? saved = _preferences.LoadClaudeGroup();
-        GroupItemViewModel? restored = saved is > 0
-            ? ClaudePluginGroups.FirstOrDefault(g => g.Id == saved)
-            : null;
-        restored ??= ClaudePluginGroups.Count == 1 ? ClaudePluginGroups[0] : null;
-        SelectClaudePluginGroupWithoutApplying(restored);
-    }
-
-    private void RequestPluginSync()
-    {
-        if (!_codex.UsesLocalTransport)
-        {
-            return;
-        }
-
-        _ = _safeAsync.RunAsync(SyncPluginSupportAsync);
-    }
-
-    internal async Task SyncPluginSupportAsync()
-    {
-        if (!_codex.UsesLocalTransport)
-        {
-            return;
-        }
-
-        GroupItemViewModel? claudeGroup = SelectedClaudePluginGroup;
-        if (claudeGroup is not null && !_claudePreferenceLoaded)
-        {
-            return;
-        }
-
-        var request = new PluginSupportRequest(
-            PluginSupportEnabled,
-            claudeGroup?.Id,
-            claudeGroup?.Name,
-            claudeGroup is not null ? SelectedClaudeModel : null);
-        if (request == _lastPluginRequest)
-        {
-            return;
-        }
-
-        PluginSupportResult result = await _codex.SyncPluginSupportAsync(request).ConfigureAwait(true);
-
-        // Only settled outcomes are remembered. A problem or a not-yet-applicable answer must be
-        // retried by the next trigger rather than trusted.
-        _lastPluginRequest = result.State is PluginSupportState.Off
-            or PluginSupportState.NoGroupChosen
-            or PluginSupportState.Active
-            ? request
-            : null;
-        PluginSupportStatus = DescribePluginSupport(result, hasClaudeGroup: HasClaudePluginGroups);
-    }
-
-    private static bool IsClaudePlatform(string? platform)
-    {
-        string p = platform?.ToLowerInvariant() ?? string.Empty;
-        return p.Contains("claude") || p.Contains("anthropic");
-    }
-
-    internal static string DescribePluginSupport(PluginSupportResult result, bool hasClaudeGroup) =>
-        result.State switch
-        {
-            PluginSupportState.Active => "Claude Code 已接入，客户端运行期间可用，退出时自动还原。",
-            PluginSupportState.NoGroupChosen => hasClaudeGroup
-                ? "请选择一个 Claude 分组以接入 Claude Code。"
-                : "该账号没有可用的 Claude 分组。",
-            PluginSupportState.Problem => result.Note ?? "Claude Code 接入失败。",
-            _ => string.Empty,
-        };
-
-    // ---- Usage trend and models (F4) -----------------------------------------
-
-    /// <summary>Days covered by the trend chart and the model breakdown.</summary>
-    private const int TrendDays = 7;
-
-    /// <summary>How many models the breakdown lists.</summary>
-    /// <remarks>
-    /// Five. The point of this card is "where is my money going", and a list long
-    /// enough to need scrolling stops answering that at a glance.
-    /// </remarks>
-    private const int TopModels = 5;
-
-    public ObservableCollection<UsageLineChartPoint> CostTrend { get; } = [];
-
-    public ObservableCollection<ModelUsageRowViewModel> TopModelUsage { get; } = [];
-
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(TrendUnavailable))]
-    private bool trendReady;
-
-    public bool TrendUnavailable => !TrendReady;
-
-    public bool HasTrend => CostTrend.Count > 0;
-
-    public bool HasModelUsage => TopModelUsage.Count > 0;
-
-    /// <summary>
-    /// True when the card loaded fine and there is simply nothing to show yet.
-    /// </summary>
-    /// <remarks>
-    /// Distinct from the failure state, and it needs words of its own: an account
-    /// that has not sent any traffic gets an empty chart, and to a novice an empty
-    /// card is indistinguishable from a broken one. The same omission already
-    /// caught us once with the group dropdown.
-    /// </remarks>
-    public bool HasNoUsageYet => TrendReady && CostTrend.Count == 0;
-
-    /// <remarks>
-    /// Its own card, loaded on its own, for the same reason as the others (F4.2) —
-    /// and the chart is the most likely of them to fail, since it asks for the
-    /// widest date range.
-    /// </remarks>
-    private async Task LoadTrendCardAsync(string accessToken, CancellationToken cancellationToken)
-    {
-        try
-        {
-            IReadOnlyList<UsageTrendPoint> trend =
-                await _client.GetUsageTrendAsync(accessToken, TrendDays, cancellationToken).ConfigureAwait(true);
-
-            CostTrend.Clear();
-            foreach (UsageTrendPoint point in trend)
-            {
-                // Labelled by day-of-month alone: seven full dates will not fit
-                // under a chart this narrow, and the year is never in question.
-                string label = point.Date.Length >= 10 ? point.Date[8..10] : point.Date;
-                CostTrend.Add(new UsageLineChartPoint(
-                    label,
-                    point.ActualCost,
-                    $"{point.Date}  ${point.ActualCost:0.####}  {point.Requests} 次"));
-            }
-
-            // Fails on its own inside the same card: the chart is still worth
-            // showing when the per-model split is unavailable.
-            try
-            {
-                IReadOnlyList<ModelUsage> models =
-                    await _client.GetModelUsageAsync(accessToken, TrendDays, cancellationToken).ConfigureAwait(true);
-
-                TopModelUsage.Clear();
-                foreach (ModelUsage model in models
-                    .OrderByDescending(m => m.ActualCost)
-                    .ThenByDescending(m => m.Requests)
-                    .Take(TopModels))
-                {
-                    TopModelUsage.Add(new ModelUsageRowViewModel(model));
-                }
-            }
-            catch (Exception ex) when (ObserveRefreshFailure(ex))
-            {
-                TopModelUsage.Clear();
-                ClientLog.Warning("按模型用量取数失败", ex);
-            }
-
-            TrendReady = true;
-            OnPropertyChanged(nameof(HasTrend));
-            OnPropertyChanged(nameof(HasModelUsage));
-            OnPropertyChanged(nameof(HasNoUsageYet));
-        }
-        catch (Exception ex) when (ObserveRefreshFailure(ex))
-        {
-            TrendReady = false;
-            OnPropertyChanged(nameof(HasNoUsageYet));
-            ClientLog.Warning("用量趋势取数失败", ex);
-        }
-    }
 
     // ---- Codex ---------------------------------------------------------------
 
@@ -806,7 +448,7 @@ public sealed partial class DashboardViewModel : ObservableObject
     /// </para>
     /// </remarks>
     private bool AwaitingBillingGroup =>
-        _codex.UsesLocalTransport && !CodexNotInstalled &&
+        _codex.UsesLocalTransport && !CodexNotInstalled && !LocalProxy.IsCodexActive &&
         (SelectedGroup is null ||
          (SelectedGroup.IsAutomatic && (_autoGroupSettings is null || _autoGroupSettings.AutoGroupIds.Count == 0)));
 
@@ -869,6 +511,7 @@ public sealed partial class DashboardViewModel : ObservableObject
         // Local file read, never throws (see ContextFilterUsageStore) — safe to run
         // ahead of the try block that guards the network calls below.
         RefreshContextFilterUsageText();
+        LocalProxy.RefreshUsage();
 
         try
         {
@@ -887,10 +530,10 @@ public sealed partial class DashboardViewModel : ObservableObject
         }
         catch (RelayApiException ex) when (ex.Failure == RelayFailure.RateLimited)
         {
-            ApplyBackoffMessage(_pollingBackoff.RecordRateLimited());
+            RefreshState.RecordRateLimited();
             ClientLog.Warning("Codex 状态监控触发限流，已暂停轮询", ex);
         }
-        catch (Exception ex) when (IsCardFailure(ex))
+        catch (Exception ex) when (RefreshState.IsCardFailure(ex))
         {
             // Monitoring is background work; it must never be able to interrupt the
             // user or take the panel down.
@@ -909,7 +552,7 @@ public sealed partial class DashboardViewModel : ObservableObject
         try
         {
             await RefreshAsync(cancellationToken).ConfigureAwait(true);
-            if (_pollingBackoff.CanAttempt)
+            if (RefreshState.CanAttempt)
             {
                 await MonitorCodexAsync(cancellationToken).ConfigureAwait(true);
             }
@@ -974,7 +617,7 @@ public sealed partial class DashboardViewModel : ObservableObject
         {
             long? groupId = SelectedGroup is { IsAutomatic: false } selected ? selected.Id : null;
             string? groupName = SelectedGroup?.Name;
-            string? preferredModel = IsClaudeGroup ? SelectedClaudeModel : null;
+            string? preferredModel = IsClaudeGroup ? ClaudePreference.SelectedClaudeModel : null;
             CodexStartupResult result;
             if (forceRestart)
             {
@@ -1058,7 +701,7 @@ public sealed partial class DashboardViewModel : ObservableObject
                 }
             }
         }
-        catch (Exception ex) when (IsCardFailure(ex))
+        catch (Exception ex) when (RefreshState.IsCardFailure(ex))
         {
             // Same rule as the cards: pressing this button must not be able to end
             // the session or take the window down.
@@ -1123,7 +766,7 @@ public sealed partial class DashboardViewModel : ObservableObject
             CodexNotInstalled = true;
             CodexMessage = "ChatGPT 安装已取消，可以重新点击安装。";
         }
-        catch (Exception ex) when (IsCardFailure(ex))
+        catch (Exception ex) when (RefreshState.IsCardFailure(ex))
         {
             CodexNotInstalled = true;
             CodexMessage = "ChatGPT 安装状态检查失败，可以重新点击安装。";
@@ -1168,15 +811,11 @@ public sealed partial class DashboardViewModel : ObservableObject
 
     // ---- Whole-panel state --------------------------------------------------
 
-    [ObservableProperty]
-    private bool isRefreshing;
-
     /// <summary>Reads the server-driven settings the cards depend on.</summary>
     public void ApplySettings(PublicSettings settings)
     {
         _settings = settings ?? PublicSettings.Conservative;
-        RechargeUrl = _settings.BalanceLowNotifyRechargeUrl ?? string.Empty;
-        OnPropertyChanged(nameof(CanRecharge));
+        Account.ApplySettings(_settings);
     }
 
     /// <summary>
@@ -1191,20 +830,18 @@ public sealed partial class DashboardViewModel : ObservableObject
     /// </remarks>
     public async Task RefreshAsync(CancellationToken cancellationToken = default)
     {
-        if (IsRefreshing)
+        if (RefreshState.IsRefreshing)
         {
             return;
         }
 
-        if (!_pollingBackoff.CanAttempt)
+        if (!RefreshState.CanAttempt)
         {
-            ApplyBackoffMessage(_pollingBackoff.Remaining);
+            RefreshState.ShowBackoff();
             return;
         }
 
-        _refreshHadFailure = false;
-        _refreshWasRateLimited = false;
-        _refreshSawUnauthenticated = false;
+        RefreshState.BeginCycle();
 
         // Linked so a sign-out can abandon this refresh; without it the guard above
         // would still be set when the next user signs in, and their load would be
@@ -1213,10 +850,10 @@ public sealed partial class DashboardViewModel : ObservableObject
         _refreshCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         CancellationToken cancellation = _refreshCancellation.Token;
 
-        IsRefreshing = true;
+        RefreshState.IsRefreshing = true;
         try
         {
-            UserDisplayName = _session.UserDisplayName;
+            Account.UserDisplayName = _session.UserDisplayName;
 
             string accessToken;
             try
@@ -1229,281 +866,49 @@ public sealed partial class DashboardViewModel : ObservableObject
                 // raised its event), the network is down, or a sign-out cancelled
                 // us. Cards stay greyed; nothing here decides to sign anyone out.
                 MarkAllUnavailable();
-                ObserveRefreshFailure(ex);
+                RefreshState.Observe(ex);
                 return;
             }
 
             // Sequential rather than concurrent: the panel endpoints share a
             // per-user rate limiter, and four simultaneous calls every 60 seconds
             // is the pattern most likely to trip it. Each still fails alone.
-            await LoadAccountCardAsync(accessToken, cancellation).ConfigureAwait(true);
-            if (StopForRateLimit())
+            foreach (Func<string, CancellationToken, Task> loadCard in CardLoaders())
             {
-                return;
-            }
-            if (await StopForUnauthenticatedAsync(accessToken, cancellation).ConfigureAwait(true))
-            {
-                return;
-            }
-
-            await LoadUsageCardAsync(accessToken, cancellation).ConfigureAwait(true);
-            if (StopForRateLimit())
-            {
-                return;
-            }
-            if (await StopForUnauthenticatedAsync(accessToken, cancellation).ConfigureAwait(true))
-            {
-                return;
+                await loadCard(accessToken, cancellation).ConfigureAwait(true);
+                if (RefreshState.StopForRateLimit() ||
+                    await RefreshState.StopForUnauthenticatedAsync(accessToken, cancellation).ConfigureAwait(true))
+                {
+                    return;
+                }
             }
 
-            await LoadSubscriptionCardAsync(accessToken, cancellation).ConfigureAwait(true);
-            if (StopForRateLimit())
-            {
-                return;
-            }
-            if (await StopForUnauthenticatedAsync(accessToken, cancellation).ConfigureAwait(true))
-            {
-                return;
-            }
-
-            await LoadGroupCardAsync(accessToken, cancellation).ConfigureAwait(true);
-            if (StopForRateLimit())
-            {
-                return;
-            }
-            if (await StopForUnauthenticatedAsync(accessToken, cancellation).ConfigureAwait(true))
-            {
-                return;
-            }
-
-            await LoadTrendCardAsync(accessToken, cancellation).ConfigureAwait(true);
-            if (StopForRateLimit())
-            {
-                return;
-            }
-            if (await StopForUnauthenticatedAsync(accessToken, cancellation).ConfigureAwait(true))
-            {
-                return;
-            }
-
-            if (!_refreshHadFailure)
-            {
-                _pollingBackoff.RecordSuccess();
-                IsRateLimited = false;
-                RefreshMessage = string.Empty;
-            }
+            RefreshState.CompleteCycle();
         }
         finally
         {
-            IsRefreshing = false;
+            RefreshState.IsRefreshing = false;
         }
     }
 
-    /// <summary>
-    /// Whether a card's failure is one the panel absorbs by greying that card.
-    /// </summary>
-    /// <remarks>
-    /// F4.2 forbids one card taking down the page, and a <c>catch</c> narrowed to
-    /// <see cref="RelayApiException"/> does not deliver that: any other escape —
-    /// a cancellation, a serialization fault, a bug in a mapper — would propagate
-    /// out of the loader and abandon the cards queued behind it. The filter is
-    /// deliberately broad, and deliberately still excludes the exceptions that
-    /// indicate the process itself is unsound.
-    /// </remarks>
-    private static bool IsCardFailure(Exception ex) =>
-        ex is not (OutOfMemoryException or StackOverflowException or ThreadAbortException);
-
-    private bool ObserveRefreshFailure(Exception ex)
+    /// <summary>The cards, in the order a refresh loads them.</summary>
+    private IEnumerable<Func<string, CancellationToken, Task>> CardLoaders()
     {
-        bool isCardFailure = IsCardFailure(ex);
-        if (!isCardFailure)
-        {
-            return false;
-        }
-
-        _refreshHadFailure = true;
-        if (ex is RelayApiException relayEx)
-        {
-            if (relayEx.Failure == RelayFailure.RateLimited)
-            {
-                _refreshWasRateLimited = true;
-            }
-            else if (relayEx.Failure == RelayFailure.Unauthenticated)
-            {
-                _refreshSawUnauthenticated = true;
-            }
-        }
-
-        return true;
-    }
-
-    private bool StopForRateLimit()
-    {
-        if (!_refreshWasRateLimited)
-        {
-            return false;
-        }
-
-        ApplyBackoffMessage(_pollingBackoff.RecordRateLimited());
-        return true;
-    }
-
-    /// <summary>
-    /// Reports a token a card just watched get rejected, and ends this refresh
-    /// cycle if so — every remaining card shares the same (now known-bad) token,
-    /// so trying them is only more failed calls before the next poll retries clean.
-    /// </summary>
-    /// <remarks>
-    /// Routed through <see cref="RelaySessionManager.NotifyAccessTokenRejectedAsync"/>
-    /// rather than signing out here: that call forces the renewal check the local
-    /// clock alone would not have triggered yet, and only ends the session if the
-    /// server actually rejects the renewal too (see its remarks for why this
-    /// matters — session-binding revokes a token family before its natural expiry).
-    /// </remarks>
-    private async Task<bool> StopForUnauthenticatedAsync(string accessToken, CancellationToken cancellationToken)
-    {
-        if (!_refreshSawUnauthenticated)
-        {
-            return false;
-        }
-
-        await _session.NotifyAccessTokenRejectedAsync(accessToken, cancellationToken).ConfigureAwait(true);
-        return true;
-    }
-
-    private void ApplyBackoffMessage(TimeSpan remaining)
-    {
-        int minutes = Math.Max(1, (int)Math.Ceiling(remaining.TotalMinutes));
-        IsRateLimited = true;
-        RefreshMessage = $"请求频繁，请在约 {minutes} 分钟后重试。";
-    }
-
-    private async Task LoadAccountCardAsync(string token, CancellationToken cancellationToken)
-    {
-        try
-        {
-            RelayUser user = await _client.GetCurrentUserAsync(token, cancellationToken).ConfigureAwait(true);
-
-            UserDisplayName = user.DisplayName;
-            BalanceText = FormatBalance(user.Balance);
-            FrozenBalanceText = FormatBalance(user.FrozenBalance);
-
-            // The threshold is the server's to decide (F4.3); the client must not
-            // invent one, or operators changing it would need a client release.
-            BalanceIsLow = _settings.BalanceLowNotifyEnabled &&
-                           user.Balance < _settings.BalanceLowNotifyThreshold;
-
-            AccountReady = true;
-        }
-        catch (Exception ex) when (ObserveRefreshFailure(ex))
-        {
-            BalanceText = "—";
-            FrozenBalanceText = "—";
-            BalanceIsLow = false;
-            AccountReady = false;
-            ClientLog.Warning("账户卡取数失败", ex);
-        }
-    }
-
-    private async Task LoadUsageCardAsync(string token, CancellationToken cancellationToken)
-    {
-        try
-        {
-            DashboardStats stats = await _client.GetDashboardStatsAsync(token, cancellationToken).ConfigureAwait(true);
-
-            TodayRequestsText = stats.TodayRequests.ToString("N0");
-            TodayTokensText = stats.TodayTokens.ToString("N0");
-            TodayCostText = FormatMoney(stats.TodayActualCost);
-            UsageReady = true;
-        }
-        catch (Exception ex) when (ObserveRefreshFailure(ex))
-        {
-            TodayRequestsText = "—";
-            TodayTokensText = "—";
-            TodayCostText = "—";
-            UsageReady = false;
-            ClientLog.Warning("用量卡取数失败", ex);
-        }
-    }
-
-    private async Task LoadSubscriptionCardAsync(string token, CancellationToken cancellationToken)
-    {
-        try
-        {
-            IReadOnlyList<SubscriptionSummaryItem> subscriptions = await _client
-                .GetSubscriptionSummaryAsync(token, cancellationToken)
-                .ConfigureAwait(true);
-            SubscriptionSummaryItem? subscription = subscriptions.FirstOrDefault();
-
-            if (subscription is null)
-            {
-                SubscriptionName = string.Empty;
-                SubscriptionProgressText = string.Empty;
-            }
-            else
-            {
-                SubscriptionName = string.IsNullOrWhiteSpace(subscription.GroupName)
-                    ? "订阅"
-                    : subscription.GroupName;
-                SubscriptionProgressText = FormatSubscriptionProgress(subscription);
-            }
-
-            SubscriptionReady = true;
-            OnPropertyChanged(nameof(HasSubscription));
-        }
-        catch (Exception ex) when (ObserveRefreshFailure(ex))
-        {
-            SubscriptionName = string.Empty;
-            SubscriptionProgressText = string.Empty;
-            SubscriptionReady = false;
-            OnPropertyChanged(nameof(HasSubscription));
-            ClientLog.Warning("订阅卡取数失败", ex);
-        }
-    }
-
-    private static string FormatSubscriptionProgress(SubscriptionSummaryItem subscription)
-    {
-        if (subscription.MonthlyLimitUsd > 0)
-        {
-            return $"{FormatMoney(subscription.MonthlyUsedUsd)} / {FormatMoney(subscription.MonthlyLimitUsd)} 本月";
-        }
-
-        if (subscription.WeeklyLimitUsd > 0)
-        {
-            return $"{FormatMoney(subscription.WeeklyUsedUsd)} / {FormatMoney(subscription.WeeklyLimitUsd)} 本周";
-        }
-
-        if (subscription.DailyLimitUsd > 0)
-        {
-            return $"{FormatMoney(subscription.DailyUsedUsd)} / {FormatMoney(subscription.DailyLimitUsd)} 今日";
-        }
-
-        return "使用中";
+        yield return Account.LoadAccountAsync;
+        yield return Usage.LoadTodayAsync;
+        yield return Account.LoadSubscriptionAsync;
+        yield return LoadGroupCardAsync;
+        yield return Usage.LoadTrendAsync;
+        yield return LocalProxy.LoadAccountsAsync;
     }
 
     private async Task LoadGroupCardAsync(string token, CancellationToken cancellationToken)
     {
         try
         {
-            IReadOnlyList<RelayGroup> groups =
-                await _client.GetAvailableGroupsAsync(token, cancellationToken).ConfigureAwait(true);
+            await Catalog.LoadAsync(token, cancellationToken).ConfigureAwait(true);
 
-            // The rates call is allowed to fail on its own: without it every group
-            // simply shows its default multiplier, which is still true for anyone
-            // without a personal deal. Losing the whole group list instead would
-            // also cost the user the ability to switch.
-            IReadOnlyDictionary<long, double> rates;
-            try
-            {
-                rates = await _client.GetUserGroupRatesAsync(token, cancellationToken).ConfigureAwait(true);
-            }
-            catch (Exception ex) when (ObserveRefreshFailure(ex))
-            {
-                rates = new Dictionary<long, double>();
-                ClientLog.Warning("专属倍率取数失败，按分组默认倍率显示", ex);
-            }
-
-            if (_refreshWasRateLimited)
+            if (RefreshState.WasRateLimited)
             {
                 GroupsReady = false;
                 return;
@@ -1527,15 +932,36 @@ public sealed partial class DashboardViewModel : ObservableObject
                 }
             }
 
-            long? current = _managedKey?.GroupId ?? _preferences.Load();
+            // Under the local transport, the managed key's group id (if a key exists
+            // at all — a leftover from before this installation moved to the loopback
+            // relay, or one recorded by another installation of the same account, see
+            // SwitchGroupAsync below) is only ever a *default*: something to seed a
+            // client that has not made its own choice yet. Once this installation has
+            // a local preference, that preference is authoritative for as long as it
+            // runs — a refresh must never drag the group back to the server's record,
+            // and neither may some other device's later switch, which is why the
+            // server default is written into the local preference immediately below
+            // rather than re-read on every poll.
+            long? localGroup = _preferences.Load();
+            long? current;
+            if (_codex.UsesLocalTransport)
+            {
+                current = localGroup ?? _managedKey?.GroupId;
+                if (localGroup is null && current is not null)
+                {
+                    _preferences.Save(current.Value);
+                }
+            }
+            else
+            {
+                current = _managedKey?.GroupId ?? localGroup;
+            }
 
             Groups.Clear();
-            foreach (RelayGroup group in groups.Where(g => IsSelectable(g, current)))
+            foreach (RelayGroup group in Catalog.Groups.Where(g => IsSelectable(g, current)))
             {
-                var item = new GroupItemViewModel(group, GroupRate.Resolve(group, rates), _settings.ServerUtcOffset)
-                {
-                    IsCurrent = current == group.Id,
-                };
+                GroupItemViewModel item = Catalog.CreateItem(group, _settings.ServerUtcOffset);
+                item.IsCurrent = current == group.Id;
                 Groups.Add(item);
             }
 
@@ -1580,27 +1006,27 @@ public sealed partial class DashboardViewModel : ObservableObject
                 {
                     _codex.SetActiveGroup(inForce.IsAutomatic ? null : inForce.Id, inForce.Name);
                 }
-                if (IsClaudeGroup) _ = _safeAsync.RunAsync(LoadClaudePreferenceAsync);
-                RequestPluginSync();
+                if (IsClaudeGroup) _ = _safeAsync.RunAsync(ClaudePreference.LoadAsync);
+                ClaudeCode.RequestSync();
             }
 
             // Independent of inForce above: the plug-ins' Claude group is its own selection,
             // not derived from whichever group Codex just landed on.
-            RebuildClaudePluginGroups();
+            ClaudeCode.RebuildGroups(Catalog, _settings.ServerUtcOffset);
 
-            // RebuildClaudePluginGroups only triggers a sync itself when the restored group
+            // RebuildGroups only triggers a sync itself when the restored group
             // actually changes SelectedClaudePluginGroup (null -> null is not a change). A
             // checkbox already on at launch, with no group to restore, would otherwise sit
             // there saying nothing until something else nudges it — explicitly asked for here
             // so a fresh launch applies (or explains) an already-ticked box, not just a switch.
-            RequestPluginSync();
+            ClaudeCode.RequestSync();
 
             CanConfigureAutoGroup = automatic is not null;
             GroupsReady = true;
             OnPropertyChanged(nameof(CanStartCodex));
             OnPropertyChanged(nameof(StartCodexLabel));
         }
-        catch (Exception ex) when (ObserveRefreshFailure(ex))
+        catch (Exception ex) when (RefreshState.Observe(ex))
         {
             GroupsReady = false;
             ClientLog.Warning("分组卡取数失败", ex);
@@ -1652,7 +1078,7 @@ public sealed partial class DashboardViewModel : ObservableObject
             IReadOnlyList<RelayApiKey> keys = await _client.ListApiKeysAsync(token, cancellationToken).ConfigureAwait(true);
             _managedKey = _keyNaming.FindCurrent(keys);
         }
-        catch (Exception ex) when (ObserveRefreshFailure(ex))
+        catch (Exception ex) when (RefreshState.Observe(ex))
         {
             _managedKey = null;
             ClientLog.Warning("托管 key 识别失败，分组切换将只记录在本地", ex);
@@ -1708,8 +1134,19 @@ public sealed partial class DashboardViewModel : ObservableObject
             _codex.SetActiveGroup(group.Id, group.Name);
             _preferences.Save(group.Id);
             GroupMessage = $"已切换到 {group.Name}。";
-            if (IsClaudeGroup) _ = _safeAsync.RunAsync(LoadClaudePreferenceAsync);
-            RequestPluginSync();
+            if (IsClaudeGroup) _ = _safeAsync.RunAsync(ClaudePreference.LoadAsync);
+            ClaudeCode.RequestSync();
+
+            // Best-effort record for another installation of the same account to pick
+            // up as its own bootstrap default (see LoadGroupCardAsync) — never
+            // load-bearing for this switch, which already took effect locally above.
+            // Only written onto a key that already exists: this client does not issue
+            // one itself under the local transport, so an account with none yet simply
+            // has no cross-device record, same as before this existed.
+            if (_managedKey is not null)
+            {
+                _ = _safeAsync.RunAsync(() => RecordGroupOnManagedKeyAsync(_managedKey.Id, group.Id, cancellationToken));
+            }
             return;
         }
 
@@ -1717,7 +1154,7 @@ public sealed partial class DashboardViewModel : ObservableObject
         {
             _preferences.Save(group.Id);
             GroupMessage = $"已选择 {group.Name}，将在授权生效时套用。";
-            if (IsClaudeGroup) _ = _safeAsync.RunAsync(LoadClaudePreferenceAsync);
+            if (IsClaudeGroup) _ = _safeAsync.RunAsync(ClaudePreference.LoadAsync);
             return;
         }
 
@@ -1731,7 +1168,7 @@ public sealed partial class DashboardViewModel : ObservableObject
             _managedKey = updated;
             _preferences.Save(group.Id);
             GroupMessage = $"已切换到 {group.Name}。";
-            if (IsClaudeGroup) _ = _safeAsync.RunAsync(LoadClaudePreferenceAsync);
+            if (IsClaudeGroup) _ = _safeAsync.RunAsync(ClaudePreference.LoadAsync);
         }
         catch (RelayApiException ex)
         {
@@ -1750,6 +1187,30 @@ public sealed partial class DashboardViewModel : ObservableObject
 
             SelectWithoutSwitching(previous);
             GroupMessage = ex.UserMessage;
+        }
+    }
+
+    /// <summary>
+    /// Stamps the group just switched to onto the managed key, purely so another
+    /// installation of this account has something to bootstrap from later.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately quiet: a failure here means only that the cross-device default
+    /// is momentarily stale, not that anything about this switch failed — the caller
+    /// runs it through <c>_safeAsync</c> and does not await it inline.
+    /// </remarks>
+    private async Task RecordGroupOnManagedKeyAsync(long keyId, long groupId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            string token = await _session.GetAccessTokenAsync(cancellationToken).ConfigureAwait(true);
+            _managedKey = await _client
+                .UpdateApiKeyGroupAsync(token, keyId, groupId, cancellationToken)
+                .ConfigureAwait(true);
+        }
+        catch (RelayApiException ex)
+        {
+            ClientLog.Warning("记录最近使用的分组失败（不影响本机切换，仅影响其他设备的默认分组）", ex);
         }
     }
 
@@ -1804,7 +1265,7 @@ public sealed partial class DashboardViewModel : ObservableObject
             SetCurrent(automatic);
             SelectWithoutSwitching(automatic);
             _codex.SetActiveGroup(null, automatic.Name);
-            RequestPluginSync();
+            ClaudeCode.RequestSync();
             GroupMessage = "已启用自动分组。";
             OnPropertyChanged(nameof(CanStartCodex));
             OnPropertyChanged(nameof(StartCodexLabel));
@@ -1924,8 +1385,8 @@ public sealed partial class DashboardViewModel : ObservableObject
 
     private void MarkAllUnavailable()
     {
-        AccountReady = false;
-        UsageReady = false;
+        Account.MarkUnavailable();
+        Usage.MarkUnavailable();
         GroupsReady = false;
     }
 
@@ -1962,47 +1423,24 @@ public sealed partial class DashboardViewModel : ObservableObject
         _refreshCancellation?.Dispose();
         _refreshCancellation = null;
 
-        IsRefreshing = false;
         _managedKey = null;
         _autoGroupSettings = null;
         _autoGroupSupported = true;
         CanConfigureAutoGroup = false;
-        _lastPluginRequest = null;
-        _claudePreferenceLoaded = false;
-        PluginSupportStatus = string.Empty;
-        _pollingBackoff.RecordSuccess();
-        IsRateLimited = false;
-        RefreshMessage = string.Empty;
+        ClaudeCode.Reset();
+        ClaudePreference.Reset();
+        LocalProxy.Reset();
+        RefreshState.Reset();
 
-        UserDisplayName = string.Empty;
-        BalanceText = "—";
-        FrozenBalanceText = "—";
-        BalanceIsLow = false;
-        TodayRequestsText = "—";
-        TodayTokensText = "—";
-        TodayCostText = "—";
-        SubscriptionName = string.Empty;
-        SubscriptionProgressText = string.Empty;
-        SubscriptionReady = false;
-        OnPropertyChanged(nameof(HasSubscription));
+        Account.Reset();
+        Usage.Reset();
         GroupMessage = string.Empty;
         RequiresCodexAccountRestart = false;
 
+        Catalog.Reset();
         Groups.Clear();
-        ClaudePluginGroups.Clear();
-        OnPropertyChanged(nameof(HasClaudePluginGroups));
-        SelectClaudePluginGroupWithoutApplying(null);
-        CostTrend.Clear();
-        TopModelUsage.Clear();
-        TrendReady = false;
         SelectWithoutSwitching(null);
         ApplyCurrentLabels(null);
         MarkAllUnavailable();
     }
-
-    private static string FormatBalance(double value) =>
-        "￥" + value.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture);
-
-    private static string FormatMoney(double value) =>
-        "$" + value.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture);
 }

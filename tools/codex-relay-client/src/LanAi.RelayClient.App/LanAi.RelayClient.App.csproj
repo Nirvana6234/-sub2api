@@ -71,15 +71,13 @@
     <ProjectReference Include="..\LanAi.RelayClient.Core\LanAi.RelayClient.Core.csproj" />
   </ItemGroup>
 
-  <!-- Window and tray icon. Same .ico the WPF head ships, so the two builds are
-       recognisably the same product in the taskbar and the notification area. -->
+  <!-- Window and tray icon. -->
   <ItemGroup>
     <AvaloniaResource Include="Assets\**" />
   </ItemGroup>
 
-  <!-- Same three-tier fallback the WPF head documents, minus the tier that was
-       deleted: the bundled 759 MB msix is gone, CodexInstaller downloads on demand,
-       and this directory is the manual drop point for an offline machine. The
+  <!-- The bundled 759 MB msix is gone: CodexInstaller downloads on demand, and this
+       directory is the manual drop point for an offline machine. The
        README is both the guidance for that step and what makes the directory exist. -->
   <ItemGroup>
     <Content Include="..\..\codex-installer\README.txt">
@@ -117,16 +115,5 @@
       </Content>
     </ItemGroup>
   </Target>
-
-
-  <!-- The chart's coordinate maths, compiled into this head rather than referenced
-       from Core. See the header of the file for why it is shared as source. The
-       symbol selects which framework's Point/Rect/Size/Thickness it binds to. -->
-  <PropertyGroup>
-    <DefineConstants>$(DefineConstants);UI_AVALONIA</DefineConstants>
-  </PropertyGroup>
-  <ItemGroup>
-    <Compile Include="..\Shared\UsageLineChartLayout.cs" Link="Controls\UsageLineChartLayout.cs" />
-  </ItemGroup>
 
 </Project>

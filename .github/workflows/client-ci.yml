@@ -4,8 +4,8 @@
 # .github/workflows/，子目录里那批（backend-ci.yml 等）从来没有被触发过。
 #
 # runner 选择：windows-latest（2× 计费）。不是偏好，是约束 ——
-# 测试项目与 WPF 头都是 net8.0-windows，在 Linux 上根本不还原。
-# WPF 头退役后这里可以整体搬到 ubuntu-latest，Avalonia 头两个目标都能交叉编译。
+# WPF 头已于 2026-09-23 删除，测试项目也改成了 net8.0；但 App 的构建会调
+# powershell.exe 拉 Context Filter，发布步骤也按 Windows 写，所以暂时仍留在 Windows。
 
 name: client-ci
 

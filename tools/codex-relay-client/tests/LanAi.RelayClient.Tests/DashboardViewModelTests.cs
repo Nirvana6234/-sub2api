@@ -50,9 +50,9 @@ public sealed class DashboardViewModelTests
             ThinkingLevel = string.Empty,
         };
 
-        await dashboard.LoadClaudePreferenceAsync();
+        await dashboard.ClaudePreference.LoadAsync();
 
-        Assert.Equal(DashboardViewModel.ClaudeThinkingLevels[2], dashboard.SelectedClaudeThinkingLevel);
+        Assert.Equal(ClaudePreferenceViewModel.ClaudeThinkingLevels[2], dashboard.ClaudePreference.SelectedClaudeThinkingLevel);
     }
 
     [Fact]
@@ -66,9 +66,9 @@ public sealed class DashboardViewModelTests
             ThinkingLevel = "off",
         };
 
-        await dashboard.LoadClaudePreferenceAsync();
+        await dashboard.ClaudePreference.LoadAsync();
 
-        Assert.Equal(DashboardViewModel.ClaudeThinkingLevels[0], dashboard.SelectedClaudeThinkingLevel);
+        Assert.Equal(ClaudePreferenceViewModel.ClaudeThinkingLevels[0], dashboard.ClaudePreference.SelectedClaudeThinkingLevel);
     }
 
     [Fact]
@@ -81,9 +81,9 @@ public sealed class DashboardViewModelTests
 
         await dashboard.RefreshAsync();
 
-        Assert.True(dashboard.AccountReady);
-        Assert.False(dashboard.UsageReady);
-        Assert.True(dashboard.UsageUnavailable);
+        Assert.True(dashboard.Account.AccountReady);
+        Assert.False(dashboard.Usage.UsageReady);
+        Assert.True(dashboard.Usage.UsageUnavailable);
         Assert.True(dashboard.GroupsReady);
     }
 
@@ -102,7 +102,7 @@ public sealed class DashboardViewModelTests
         await dashboard.RefreshAsync();
 
         Assert.True(session.IsSignedIn);
-        Assert.False(dashboard.UsageReady);
+        Assert.False(dashboard.Usage.UsageReady);
         Assert.Equal(1, relay.RefreshCallCount);
     }
 
@@ -255,6 +255,97 @@ public sealed class DashboardViewModelTests
         Assert.Equal(12, preferences.Saved);
         Assert.Equal("乙", dashboard.CurrentGroupName);
         Assert.Equal("已切换到 乙。", dashboard.GroupMessage);
+    }
+
+    [Fact]
+    public async Task ALeftoverManagedKeyDoesNotDragTheGroupBackOnTheNextRefresh()
+    {
+        // An account can still have a managed key on the server — left over from
+        // before this installation moved to the loopback relay, or created for some
+        // other reason — even while running under the local transport. The switch
+        // does record the new group onto that key (so another installation can
+        // bootstrap from it — see the test below), but once this installation has
+        // its own local preference, LoadGroupCardAsync must not read the key back
+        // as anything more than that: it used to prefer the server value outright,
+        // so the ~60s poll that runs after every switch would silently drag the
+        // active group back to whatever the key said.
+        var relay = new FakeRelayClient();
+        var session = new RelaySessionManager(relay, new FakeSessionStore(), "https://relay.test/", new TestClock().Read);
+        var preferences = new FakeGroupPreferenceStore();
+        var codex = new FakeCodexStartup { UsesLocalTransport = true };
+        var dashboard = new DashboardViewModel(
+            relay, session, preferences, new ManagedKeyNaming(new FixedInstallId("testinst")), codex);
+        await session.SignInAsync("a@b.com", "pw");
+
+        relay.OnAvailableGroups = () => [Group(11, "甲"), Group(12, "乙")];
+        relay.OnListKeys = () =>
+        [
+            new RelayApiKey { Id = 5, Name = ManagedKeyNaming.MachinePrefix() + "abc", GroupId = 11 },
+        ];
+
+        await dashboard.RefreshAsync();
+        await dashboard.SwitchGroupAsync(dashboard.Groups.Single(g => g.Id == 12));
+        Assert.Equal(12, dashboard.SelectedGroup!.Id);
+
+        // The poll that runs on the same cadence as MonitorCodexAsync after the switch.
+        await dashboard.RefreshAsync();
+
+        Assert.Equal(12, dashboard.SelectedGroup!.Id);
+        Assert.Equal("乙", dashboard.CurrentGroupName);
+        Assert.Equal(12, codex.ActiveGroups.LastOrDefault());
+    }
+
+    [Fact]
+    public async Task ASwitchRecordsTheGroupSoAnotherInstallationBootstrapsFromIt()
+    {
+        // The server-side record exists purely for a client with no opinion of its
+        // own yet — a reinstall on this machine (ManagedKeyNaming adopts an earlier
+        // install's key as an orphan), or the very first launch. It must never be
+        // read back once the reading installation already has a local preference
+        // (that is the test above); here it is the only thing a fresh one has to
+        // go on.
+        long serverGroupId = 11;
+        var relay = new FakeRelayClient
+        {
+            OnAvailableGroups = () => [Group(11, "甲"), Group(12, "乙")],
+            OnListKeys = () =>
+            [
+                new RelayApiKey { Id = 5, Name = ManagedKeyNaming.MachinePrefix() + "old-install", GroupId = serverGroupId },
+            ],
+            OnUpdateKeyGroup = groupId =>
+            {
+                serverGroupId = groupId;
+                return new RelayApiKey { Id = 5, GroupId = groupId };
+            },
+        };
+
+        var sessionA = new RelaySessionManager(relay, new FakeSessionStore(), "https://relay.test/", new TestClock().Read);
+        var dashboardA = new DashboardViewModel(
+            relay,
+            sessionA,
+            new FakeGroupPreferenceStore(),
+            new ManagedKeyNaming(new FixedInstallId("old-install")),
+            new FakeCodexStartup { UsesLocalTransport = true });
+        await sessionA.SignInAsync("a@b.com", "pw");
+        await dashboardA.RefreshAsync();
+        await dashboardA.SwitchGroupAsync(dashboardA.Groups.Single(g => g.Id == 12));
+
+        Assert.Equal(12, serverGroupId);
+
+        // A second installation on the same machine — a reinstall — with no local
+        // preference of its own.
+        var sessionB = new RelaySessionManager(relay, new FakeSessionStore(), "https://relay.test/", new TestClock().Read);
+        var dashboardB = new DashboardViewModel(
+            relay,
+            sessionB,
+            new FakeGroupPreferenceStore(),
+            new ManagedKeyNaming(new FixedInstallId("new-install")),
+            new FakeCodexStartup { UsesLocalTransport = true });
+        await sessionB.SignInAsync("a@b.com", "pw");
+        await dashboardB.RefreshAsync();
+
+        Assert.Equal(12, dashboardB.SelectedGroup!.Id);
+        Assert.Equal("乙", dashboardB.CurrentGroupName);
     }
 
     [Fact]
@@ -941,8 +1032,8 @@ public sealed class DashboardViewModelTests
 
         await dashboard.RefreshAsync();
 
-        Assert.True(dashboard.BalanceIsLow);
-        Assert.True(dashboard.CanRecharge);
+        Assert.True(dashboard.Account.BalanceIsLow);
+        Assert.True(dashboard.Account.CanRecharge);
     }
 
     [Fact]
@@ -958,7 +1049,7 @@ public sealed class DashboardViewModelTests
 
         await dashboard.RefreshAsync();
 
-        Assert.False(dashboard.BalanceIsLow);
+        Assert.False(dashboard.Account.BalanceIsLow);
     }
 
     [Fact]
@@ -974,7 +1065,7 @@ public sealed class DashboardViewModelTests
 
         await dashboard.RefreshAsync();
 
-        Assert.False(dashboard.BalanceIsLow);
+        Assert.False(dashboard.Account.BalanceIsLow);
     }
 
     [Fact]
@@ -1005,8 +1096,8 @@ public sealed class DashboardViewModelTests
 
         await dashboard.RefreshAsync();
 
-        Assert.True(dashboard.AccountReady);
-        Assert.False(dashboard.UsageReady);
+        Assert.True(dashboard.Account.AccountReady);
+        Assert.False(dashboard.Usage.UsageReady);
         Assert.True(dashboard.GroupsReady);
     }
 
@@ -1020,13 +1111,13 @@ public sealed class DashboardViewModelTests
         relay.OnAvailableGroups = () => [Group(11, "甲")];
 
         await dashboard.RefreshAsync();
-        Assert.Equal("￥42", dashboard.BalanceText);
+        Assert.Equal("￥42", dashboard.Account.BalanceText);
 
         dashboard.Reset();
 
-        Assert.Equal("—", dashboard.BalanceText);
-        Assert.Equal("—", dashboard.TodayRequestsText);
-        Assert.Empty(dashboard.UserDisplayName);
+        Assert.Equal("—", dashboard.Account.BalanceText);
+        Assert.Equal("—", dashboard.Usage.TodayRequestsText);
+        Assert.Empty(dashboard.Account.UserDisplayName);
         Assert.Empty(dashboard.Groups);
         Assert.Null(dashboard.SelectedGroup);
         Assert.Equal("未选择", dashboard.CurrentGroupName);
@@ -1045,8 +1136,8 @@ public sealed class DashboardViewModelTests
 
         await dashboard.RefreshAsync();
 
-        Assert.Equal("￥7", dashboard.BalanceText);
-        Assert.True(dashboard.AccountReady);
+        Assert.Equal("￥7", dashboard.Account.BalanceText);
+        Assert.True(dashboard.Account.AccountReady);
     }
 
     [Fact]
@@ -1172,7 +1263,7 @@ public sealed class DashboardViewModelTests
         DashboardViewModel dashboard = BuildWith(codex, relay, out RelaySessionManager session);
         await session.SignInAsync("a@b.com", "pw");
         await dashboard.RefreshAsync();
-        dashboard.SelectedClaudeModel = "claude-opus-5";
+        dashboard.ClaudePreference.SelectedClaudeModel = "claude-opus-5";
 
         await dashboard.StartCodexAsync(_ => Task.FromResult(false));
 
@@ -1495,13 +1586,13 @@ public sealed class DashboardViewModelTests
 
         await dashboard.RefreshAsync();
 
-        Assert.True(dashboard.TrendReady);
-        Assert.Equal(2, dashboard.CostTrend.Count);
-        Assert.Equal(2.25, dashboard.CostTrend[1].Value);
+        Assert.True(dashboard.Usage.TrendReady);
+        Assert.Equal(2, dashboard.Usage.CostTrend.Count);
+        Assert.Equal(2.25, dashboard.Usage.CostTrend[1].Value);
 
         // Labelled by day only: seven full dates do not fit under a chart this
         // narrow, and the year is never in question.
-        Assert.Equal("31", dashboard.CostTrend[1].Label);
+        Assert.Equal("31", dashboard.Usage.CostTrend[1].Label);
     }
 
     [Fact]
@@ -1517,8 +1608,8 @@ public sealed class DashboardViewModelTests
 
         await dashboard.RefreshAsync();
 
-        Assert.Equal(["big", "mid", "small"], dashboard.TopModelUsage.Select(m => m.Model));
-        Assert.Equal("$9", dashboard.TopModelUsage[0].CostText);
+        Assert.Equal(["big", "mid", "small"], dashboard.Usage.TopModelUsage.Select(m => m.Model));
+        Assert.Equal("$9", dashboard.Usage.TopModelUsage[0].CostText);
     }
 
     [Fact]
@@ -1533,7 +1624,7 @@ public sealed class DashboardViewModelTests
 
         await dashboard.RefreshAsync();
 
-        Assert.Equal(5, dashboard.TopModelUsage.Count);
+        Assert.Equal(5, dashboard.Usage.TopModelUsage.Count);
     }
 
     [Fact]
@@ -1547,9 +1638,9 @@ public sealed class DashboardViewModelTests
 
         await dashboard.RefreshAsync();
 
-        Assert.True(dashboard.TrendReady);
-        Assert.Single(dashboard.CostTrend);
-        Assert.Empty(dashboard.TopModelUsage);
+        Assert.True(dashboard.Usage.TrendReady);
+        Assert.Single(dashboard.Usage.CostTrend);
+        Assert.Empty(dashboard.Usage.TopModelUsage);
     }
 
     [Fact]
@@ -1562,9 +1653,9 @@ public sealed class DashboardViewModelTests
 
         await dashboard.RefreshAsync();
 
-        Assert.True(dashboard.TrendReady);
-        Assert.False(dashboard.HasTrend);
-        Assert.True(dashboard.HasNoUsageYet);
+        Assert.True(dashboard.Usage.TrendReady);
+        Assert.False(dashboard.Usage.HasTrend);
+        Assert.True(dashboard.Usage.HasNoUsageYet);
     }
 
     [Fact]
@@ -1577,8 +1668,8 @@ public sealed class DashboardViewModelTests
 
         await dashboard.RefreshAsync();
 
-        Assert.True(dashboard.TrendUnavailable);
-        Assert.False(dashboard.HasNoUsageYet);
+        Assert.True(dashboard.Usage.TrendUnavailable);
+        Assert.False(dashboard.Usage.HasNoUsageYet);
     }
 
     [Fact]
@@ -1589,10 +1680,10 @@ public sealed class DashboardViewModelTests
 
         await dashboard.RefreshAsync();
 
-        Assert.False(dashboard.TrendReady);
-        Assert.True(dashboard.TrendUnavailable);
-        Assert.True(dashboard.AccountReady);
-        Assert.True(dashboard.UsageReady);
+        Assert.False(dashboard.Usage.TrendReady);
+        Assert.True(dashboard.Usage.TrendUnavailable);
+        Assert.True(dashboard.Account.AccountReady);
+        Assert.True(dashboard.Usage.UsageReady);
     }
 
     [Fact]
@@ -1613,10 +1704,10 @@ public sealed class DashboardViewModelTests
 
         await dashboard.RefreshAsync();
 
-        Assert.True(dashboard.SubscriptionReady);
-        Assert.True(dashboard.HasSubscription);
-        Assert.Equal("专业订阅", dashboard.SubscriptionName);
-        Assert.Contains("$5 / $10", dashboard.SubscriptionProgressText, StringComparison.Ordinal);
+        Assert.True(dashboard.Account.SubscriptionReady);
+        Assert.True(dashboard.Account.HasSubscription);
+        Assert.Equal("专业订阅", dashboard.Account.SubscriptionName);
+        Assert.Contains("$5 / $10", dashboard.Account.SubscriptionProgressText, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1626,8 +1717,8 @@ public sealed class DashboardViewModelTests
 
         await dashboard.RefreshAsync();
 
-        Assert.True(dashboard.SubscriptionReady);
-        Assert.False(dashboard.HasSubscription);
+        Assert.True(dashboard.Account.SubscriptionReady);
+        Assert.False(dashboard.Account.HasSubscription);
     }
 
     [Fact]
@@ -1638,10 +1729,10 @@ public sealed class DashboardViewModelTests
 
         await dashboard.RefreshAsync();
 
-        Assert.False(dashboard.SubscriptionReady);
-        Assert.False(dashboard.HasSubscription);
-        Assert.True(dashboard.AccountReady);
-        Assert.True(dashboard.UsageReady);
+        Assert.False(dashboard.Account.SubscriptionReady);
+        Assert.False(dashboard.Account.HasSubscription);
+        Assert.True(dashboard.Account.AccountReady);
+        Assert.True(dashboard.Usage.UsageReady);
     }
 
     private static DashboardViewModel BuildWith(FakeCodexStartup codex, FakeCodexAccountStore? account = null) =>
@@ -1711,8 +1802,8 @@ public sealed class DashboardViewModelTests
         await dashboard.RefreshAsync();
 
         Assert.True(session.IsSignedIn);
-        Assert.True(dashboard.AccountUnavailable);
-        Assert.True(dashboard.UsageUnavailable);
+        Assert.True(dashboard.Account.AccountUnavailable);
+        Assert.True(dashboard.Usage.UsageUnavailable);
         Assert.True(dashboard.GroupsUnavailable);
     }
 
@@ -1738,8 +1829,8 @@ public sealed class DashboardViewModelTests
         await dashboard.RefreshAsync();
 
         Assert.Equal(1, relay.CurrentUserCallCount);
-        Assert.True(dashboard.IsRateLimited);
-        Assert.Contains("请求频繁", dashboard.RefreshMessage, StringComparison.Ordinal);
+        Assert.True(dashboard.RefreshState.IsRateLimited);
+        Assert.Contains("请求频繁", dashboard.RefreshState.RefreshMessage, StringComparison.Ordinal);
 
         clock.Advance(TimeSpan.FromMinutes(1));
         await dashboard.RefreshAsync();
@@ -1878,8 +1969,8 @@ public sealed class DashboardViewModelTests
 
         Assert.Equal(1, codex.CheckCallCount);
         Assert.Equal(0, codex.RenewCallCount);
-        Assert.True(dashboard.IsRateLimited);
-        Assert.Contains("请求频繁", dashboard.RefreshMessage, StringComparison.Ordinal);
+        Assert.True(dashboard.RefreshState.IsRateLimited);
+        Assert.Contains("请求频繁", dashboard.RefreshState.RefreshMessage, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1922,6 +2013,30 @@ public sealed class DashboardViewModelTests
         }
 
         Assert.Equal(1, codex.CheckCallCount);
+    }
+
+    [Fact]
+    public async Task TheCatalogKeepsEveryGroupWhileEachToolSeesOnlyItsOwn()
+    {
+        (DashboardViewModel dashboard, FakeRelayClient relay, _) = await SignedInAsync();
+        relay.OnAvailableGroups = () =>
+        [
+            Group(11, "GPT", platform: "openai"),
+            Group(21, "Claude", platform: "anthropic"),
+            Group(31, "Kimi", platform: "kimi"),
+        ];
+
+        await dashboard.RefreshAsync();
+
+        // A later Kimi page reads the catalog; a list derived from Codex's would never
+        // have the Kimi group in it.
+        Assert.Equal([11L, 21L, 31L], dashboard.Catalog.Groups.Select(g => g.Id));
+        Assert.DoesNotContain(dashboard.Groups, g => g.Id == 31);
+        Assert.Equal([21L], dashboard.ClaudeCode.ClaudePluginGroups.Select(g => g.Id));
+
+        dashboard.Reset();
+
+        Assert.Empty(dashboard.Catalog.Groups);
     }
 }
 

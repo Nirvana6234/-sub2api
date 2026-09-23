@@ -107,6 +107,8 @@ namespace LanAi.RelayClient.Server;
 [JsonSerializable(typeof(PaymentOrderCreateResult))]
 [JsonSerializable(typeof(PaymentOrder))]
 [JsonSerializable(typeof(PawAutoGroupSettings))]
+[JsonSerializable(typeof(ContributionAccountList))]
+[JsonSerializable(typeof(LocalProxyCredential))]
 // Per-group rate overrides arrive as a bare map, not a contract object.
 [JsonSerializable(typeof(Dictionary<long, double>))]
 // Requests with a fixed shape.

@@ -287,6 +287,27 @@ internal sealed class FakeRelayClient : IRelayServerClient
 
     public int ClaudePreferenceSetCallCount { get; private set; }
 
+    public Func<IReadOnlyList<ContributionAccount>>? OnListContributionAccounts { get; set; }
+
+    public Task<IReadOnlyList<ContributionAccount>> ListContributionAccountsAsync(string accessToken, CancellationToken cancellationToken = default) =>
+        Task.FromResult(OnListContributionAccounts?.Invoke() ?? Array.Empty<ContributionAccount>());
+
+    public Func<long, LocalProxyCredential>? OnLocalProxyCredential { get; set; }
+
+    public List<long> LocalProxyCredentialRequests { get; } = [];
+
+    public Task<LocalProxyCredential> GetLocalProxyCredentialAsync(string accessToken, long accountId, CancellationToken cancellationToken = default)
+    {
+        lock (LocalProxyCredentialRequests)
+        {
+            LocalProxyCredentialRequests.Add(accountId);
+        }
+
+        return OnLocalProxyCredential is null
+            ? Task.FromException<LocalProxyCredential>(new RelayApiException(RelayFailure.NotFound, "no credential"))
+            : Task.FromResult(OnLocalProxyCredential(accountId));
+    }
+
     public Task<ClaudePreferenceDto> GetClaudePreferenceAsync(string accessToken, CancellationToken cancellationToken = default)
     {
         ClaudePreferenceGetCallCount++;
@@ -460,6 +481,11 @@ internal sealed class FakeCodexStartup : ICodexStartup
     public List<long?> ActiveGroups { get; } = [];
 
     public void SetActiveGroup(long? groupId, string? groupName = null) => ActiveGroups.Add(groupId);
+
+    public List<(LanAi.RelayClient.Server.LocalProxyKind Kind, LanAi.RelayClient.Transport.LocalProxyTarget? Target)> LocalProxies { get; } = [];
+
+    public void SetLocalProxy(LanAi.RelayClient.Server.LocalProxyKind kind, LanAi.RelayClient.Transport.LocalProxyTarget? target) =>
+        LocalProxies.Add((kind, target));
 
     public bool HasContextFilter { get; set; } = true;
 

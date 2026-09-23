@@ -20,7 +20,7 @@ namespace LanAi.RelayClient.App;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Wired by hand, like the WPF head it will replace: the graph is small, and writing
+/// Wired by hand: the graph is small, and writing
 /// it out makes the lifetime of the credential-holding services visible at a glance.
 /// </para>
 /// <para>
@@ -101,8 +101,8 @@ public partial class App : Application
 
     private bool TryClaimSingleInstance(IClassicDesktopStyleApplicationLifetime desktop)
     {
-        // The names are shared with the WPF head on purpose: the two builds must
-        // exclude each other, not merely each exclude itself. Two clients running at
+        // The same names every earlier build used (the retired WPF head included), so
+        // an old copy still running and this one exclude each other. Two clients running at
         // once would both write ~/.codex and both try to own the managed key.
         ISingleInstanceCoordinator singleInstance = SingleInstance.Create(
             @"Global\LanAi.RelayClient.SingleInstance",
@@ -173,6 +173,14 @@ public partial class App : Application
 
         var contextFilterUsage = new ContextFilterUsageStore();
 
+        // Local proxy: one credential cache for the relay and the page alike, so the token
+        // checked when the user switches it on is the one the next turn uses. The relay
+        // reports from its own threads; the page is told on the UI thread. The dashboard does
+        // not exist yet, so the callbacks reach it through this variable.
+        var localProxyCredentials = new LocalProxyCredentialCache(relay, session.GetAccessTokenAsync);
+        var localProxyUsage = new LocalProxyUsageStore();
+        DashboardViewModel? dashboardForRelay = null;
+
         // The account session is handed over as a delegate, not a value: the relay asks
         // for it per request, so a rotated access token reaches it without anything
         // pushing an update. See LocalPawRelay's constructor for why that matters.
@@ -180,7 +188,15 @@ public partial class App : Application
             ClientOptions.ServerAddress, session.GetAccessTokenAsync,
             (before, saved) => contextFilterUsage.Add(before, saved),
             onAccessTokenRejected: session.NotifyAccessTokenRejectedAsync,
-            endpointStore: new RelayEndpointStore());
+            endpointStore: new RelayEndpointStore(),
+            localProxyCredentials: localProxyCredentials,
+            onLocalProxyOutcome: outcome => Avalonia.Threading.Dispatcher.UIThread.Post(
+                () => dashboardForRelay?.LocalProxy.ApplyOutcome(outcome)),
+            onLocalProxyUsage: usage =>
+            {
+                localProxyUsage.Add(usage);
+                Avalonia.Threading.Dispatcher.UIThread.Post(() => dashboardForRelay?.LocalProxy.RefreshUsage());
+            });
         // Claude Code's settings.json and the editor's own settings, put back on exit.
         var pluginBinding = new ClaudePluginBinding(
             new ClaudeCodeSettingsWriter(Path.Combine(AppPaths.PluginConfigRoot, "claude-settings-journal.json")),
@@ -219,7 +235,10 @@ public partial class App : Application
             codexAccountStore: new CodexAccountStore(),
             startupRegistration: StartupRegistrations.Create(),
             safeAsync: safeAsync,
-            contextFilterUsage: contextFilterUsage);
+            contextFilterUsage: contextFilterUsage,
+            localProxyCredentials: localProxyCredentials,
+            localProxyUsage: localProxyUsage);
+        dashboardForRelay = dashboard;
 
         var announcements = new AnnouncementsViewModel(
             new AnnouncementMonitor(
@@ -236,6 +255,17 @@ public partial class App : Application
         // Created here, on the UI thread, because the Windows implementation owns a
         // window whose procedure receives the click callback on its creating thread.
         _notifications = NotificationPresenters.Create();
+
+        // Switching a tool onto a local proxy is confirmed, with the network check's result and
+        // a reminder to keep the proxy/VPN on: the official hosts are often reachable only through one.
+        dashboard.LocalProxy.ConfirmEnable = (message, confirmLabel) =>
+            ConfirmDialog.AskAsync(shell, message, confirmLabel: confirmLabel);
+
+        // A local proxy that fails is only ever reported, never rerouted; this is the report.
+        dashboard.LocalProxy.FailureRaised += message => _notifications?.Show(new NotificationRequest(
+            "共飞 AI 助手 · 本地代理出错",
+            message,
+            NotificationSeverity.Warning));
 
         var dashboardView = new DashboardView(
             dashboardPage,
@@ -265,7 +295,7 @@ public partial class App : Application
 
         dashboardView.RechargeRequested += (_, _) => _ = safeAsync.RunAsync(async () =>
         {
-            var payment = new PaymentViewModel(relay, session, new QRCoderRenderer(), dashboard.BalanceText);
+            var payment = new PaymentViewModel(relay, session, new QRCoderRenderer(), dashboard.Account.BalanceText);
             var window = new PaymentWindow(payment);
             await window.ShowDialog(shell);
 
@@ -436,15 +466,25 @@ public partial class App : Application
         };
 
         // The tray's status line is the only thing a user sees while the window is
-        // hidden, so it tracks the same values the group card shows.
-        dashboard.PropertyChanged += (_, args) =>
+        // hidden, so it tracks the same values the pages show. The group lives on the
+        // dashboard and the balance on its account card, so both are watched: listening
+        // to one alone would leave the line stale whenever only the other changed.
+        // Where Codex goes (group, or local proxy) lives on the page view model, which
+        // already combines the two.
+        void UpdateTrayStatus() => _tray?.UpdateStatus(
+            $"共飞 · {dashboardPage.CodexRouteText} · 余额 {dashboard.Account.BalanceText}");
+        dashboardPage.PropertyChanged += (_, args) =>
         {
-            if (args.PropertyName is nameof(DashboardViewModel.CurrentGroupName)
-                or nameof(DashboardViewModel.CurrentGroupRate)
-                or nameof(DashboardViewModel.BalanceText))
+            if (args.PropertyName == nameof(DashboardPageViewModel.CodexRouteText))
             {
-                _tray?.UpdateStatus(
-                    $"共飞 · {dashboard.CurrentGroupName} {dashboard.CurrentGroupRate} · 余额 {dashboard.BalanceText}");
+                UpdateTrayStatus();
+            }
+        };
+        dashboard.Account.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(AccountCardViewModel.BalanceText))
+            {
+                UpdateTrayStatus();
             }
         };
 
@@ -461,8 +501,8 @@ public partial class App : Application
         announcements.Arrived += (_, arrival) => Avalonia.Threading.Dispatcher.UIThread.Post(() =>
             _notifications?.Show(new NotificationRequest(
                 arrival.Count > 1
-                    ? $"共飞-ChatGPT助手有 {arrival.Count} 条新公告"
-                    : "共飞-ChatGPT助手有新公告",
+                    ? $"共飞 AI 助手有 {arrival.Count} 条新公告"
+                    : "共飞 AI 助手有新公告",
                 string.IsNullOrWhiteSpace(arrival.LatestTitle)
                     ? "点击查看。"
                     : arrival.LatestTitle + Environment.NewLine + "点击查看。",

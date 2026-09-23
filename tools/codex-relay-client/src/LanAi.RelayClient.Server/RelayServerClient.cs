@@ -818,6 +818,36 @@ public sealed class RelayServerClient : IRelayServerClient
         _ => RelayFailure.Rejected,
     };
 
+    /// <remarks>
+    /// One page of 100, the server's cap. An account list longer than that is not a
+    /// novice's; the rest simply do not appear in the local proxy page.
+    /// </remarks>
+    public async Task<IReadOnlyList<ContributionAccount>> ListContributionAccountsAsync(
+        string accessToken,
+        CancellationToken cancellationToken = default)
+    {
+        ContributionAccountList list = await SendAsync<ContributionAccountList>(
+                HttpMethod.Get,
+                "account-contributions?page=1&limit=100",
+                body: null,
+                accessToken,
+                cancellationToken)
+            .ConfigureAwait(false);
+        return list.Items;
+    }
+
+    /// <remarks>POST, with no body: the server marks the answer no-store as well.</remarks>
+    public Task<LocalProxyCredential> GetLocalProxyCredentialAsync(
+        string accessToken,
+        long accountId,
+        CancellationToken cancellationToken = default) =>
+        SendAsync<LocalProxyCredential>(
+            HttpMethod.Post,
+            $"account-contributions/{accountId}/local-proxy-token",
+            body: null,
+            accessToken,
+            cancellationToken);
+
     public Task<ClaudePreferenceDto> GetClaudePreferenceAsync(
         string accessToken,
         CancellationToken cancellationToken = default) =>
