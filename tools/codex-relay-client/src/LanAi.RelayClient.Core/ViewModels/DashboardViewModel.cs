@@ -1527,7 +1527,30 @@ public sealed partial class DashboardViewModel : ObservableObject
                 }
             }
 
-            long? current = _managedKey?.GroupId ?? _preferences.Load();
+            // Under the local transport, the managed key's group id (if a key exists
+            // at all — a leftover from before this installation moved to the loopback
+            // relay, or one recorded by another installation of the same account, see
+            // SwitchGroupAsync below) is only ever a *default*: something to seed a
+            // client that has not made its own choice yet. Once this installation has
+            // a local preference, that preference is authoritative for as long as it
+            // runs — a refresh must never drag the group back to the server's record,
+            // and neither may some other device's later switch, which is why the
+            // server default is written into the local preference immediately below
+            // rather than re-read on every poll.
+            long? localGroup = _preferences.Load();
+            long? current;
+            if (_codex.UsesLocalTransport)
+            {
+                current = localGroup ?? _managedKey?.GroupId;
+                if (localGroup is null && current is not null)
+                {
+                    _preferences.Save(current.Value);
+                }
+            }
+            else
+            {
+                current = _managedKey?.GroupId ?? localGroup;
+            }
 
             Groups.Clear();
             foreach (RelayGroup group in groups.Where(g => IsSelectable(g, current)))
@@ -1710,6 +1733,17 @@ public sealed partial class DashboardViewModel : ObservableObject
             GroupMessage = $"已切换到 {group.Name}。";
             if (IsClaudeGroup) _ = _safeAsync.RunAsync(LoadClaudePreferenceAsync);
             RequestPluginSync();
+
+            // Best-effort record for another installation of the same account to pick
+            // up as its own bootstrap default (see LoadGroupCardAsync) — never
+            // load-bearing for this switch, which already took effect locally above.
+            // Only written onto a key that already exists: this client does not issue
+            // one itself under the local transport, so an account with none yet simply
+            // has no cross-device record, same as before this existed.
+            if (_managedKey is not null)
+            {
+                _ = _safeAsync.RunAsync(() => RecordGroupOnManagedKeyAsync(_managedKey.Id, group.Id, cancellationToken));
+            }
             return;
         }
 
@@ -1750,6 +1784,30 @@ public sealed partial class DashboardViewModel : ObservableObject
 
             SelectWithoutSwitching(previous);
             GroupMessage = ex.UserMessage;
+        }
+    }
+
+    /// <summary>
+    /// Stamps the group just switched to onto the managed key, purely so another
+    /// installation of this account has something to bootstrap from later.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately quiet: a failure here means only that the cross-device default
+    /// is momentarily stale, not that anything about this switch failed — the caller
+    /// runs it through <c>_safeAsync</c> and does not await it inline.
+    /// </remarks>
+    private async Task RecordGroupOnManagedKeyAsync(long keyId, long groupId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            string token = await _session.GetAccessTokenAsync(cancellationToken).ConfigureAwait(true);
+            _managedKey = await _client
+                .UpdateApiKeyGroupAsync(token, keyId, groupId, cancellationToken)
+                .ConfigureAwait(true);
+        }
+        catch (RelayApiException ex)
+        {
+            ClientLog.Warning("记录最近使用的分组失败（不影响本机切换，仅影响其他设备的默认分组）", ex);
         }
     }
 

@@ -258,6 +258,97 @@ public sealed class DashboardViewModelTests
     }
 
     [Fact]
+    public async Task ALeftoverManagedKeyDoesNotDragTheGroupBackOnTheNextRefresh()
+    {
+        // An account can still have a managed key on the server — left over from
+        // before this installation moved to the loopback relay, or created for some
+        // other reason — even while running under the local transport. The switch
+        // does record the new group onto that key (so another installation can
+        // bootstrap from it — see the test below), but once this installation has
+        // its own local preference, LoadGroupCardAsync must not read the key back
+        // as anything more than that: it used to prefer the server value outright,
+        // so the ~60s poll that runs after every switch would silently drag the
+        // active group back to whatever the key said.
+        var relay = new FakeRelayClient();
+        var session = new RelaySessionManager(relay, new FakeSessionStore(), "https://relay.test/", new TestClock().Read);
+        var preferences = new FakeGroupPreferenceStore();
+        var codex = new FakeCodexStartup { UsesLocalTransport = true };
+        var dashboard = new DashboardViewModel(
+            relay, session, preferences, new ManagedKeyNaming(new FixedInstallId("testinst")), codex);
+        await session.SignInAsync("a@b.com", "pw");
+
+        relay.OnAvailableGroups = () => [Group(11, "甲"), Group(12, "乙")];
+        relay.OnListKeys = () =>
+        [
+            new RelayApiKey { Id = 5, Name = ManagedKeyNaming.MachinePrefix() + "abc", GroupId = 11 },
+        ];
+
+        await dashboard.RefreshAsync();
+        await dashboard.SwitchGroupAsync(dashboard.Groups.Single(g => g.Id == 12));
+        Assert.Equal(12, dashboard.SelectedGroup!.Id);
+
+        // The poll that runs on the same cadence as MonitorCodexAsync after the switch.
+        await dashboard.RefreshAsync();
+
+        Assert.Equal(12, dashboard.SelectedGroup!.Id);
+        Assert.Equal("乙", dashboard.CurrentGroupName);
+        Assert.Equal(12, codex.ActiveGroups.LastOrDefault());
+    }
+
+    [Fact]
+    public async Task ASwitchRecordsTheGroupSoAnotherInstallationBootstrapsFromIt()
+    {
+        // The server-side record exists purely for a client with no opinion of its
+        // own yet — a reinstall on this machine (ManagedKeyNaming adopts an earlier
+        // install's key as an orphan), or the very first launch. It must never be
+        // read back once the reading installation already has a local preference
+        // (that is the test above); here it is the only thing a fresh one has to
+        // go on.
+        long serverGroupId = 11;
+        var relay = new FakeRelayClient
+        {
+            OnAvailableGroups = () => [Group(11, "甲"), Group(12, "乙")],
+            OnListKeys = () =>
+            [
+                new RelayApiKey { Id = 5, Name = ManagedKeyNaming.MachinePrefix() + "old-install", GroupId = serverGroupId },
+            ],
+            OnUpdateKeyGroup = groupId =>
+            {
+                serverGroupId = groupId;
+                return new RelayApiKey { Id = 5, GroupId = groupId };
+            },
+        };
+
+        var sessionA = new RelaySessionManager(relay, new FakeSessionStore(), "https://relay.test/", new TestClock().Read);
+        var dashboardA = new DashboardViewModel(
+            relay,
+            sessionA,
+            new FakeGroupPreferenceStore(),
+            new ManagedKeyNaming(new FixedInstallId("old-install")),
+            new FakeCodexStartup { UsesLocalTransport = true });
+        await sessionA.SignInAsync("a@b.com", "pw");
+        await dashboardA.RefreshAsync();
+        await dashboardA.SwitchGroupAsync(dashboardA.Groups.Single(g => g.Id == 12));
+
+        Assert.Equal(12, serverGroupId);
+
+        // A second installation on the same machine — a reinstall — with no local
+        // preference of its own.
+        var sessionB = new RelaySessionManager(relay, new FakeSessionStore(), "https://relay.test/", new TestClock().Read);
+        var dashboardB = new DashboardViewModel(
+            relay,
+            sessionB,
+            new FakeGroupPreferenceStore(),
+            new ManagedKeyNaming(new FixedInstallId("new-install")),
+            new FakeCodexStartup { UsesLocalTransport = true });
+        await sessionB.SignInAsync("a@b.com", "pw");
+        await dashboardB.RefreshAsync();
+
+        Assert.Equal(12, dashboardB.SelectedGroup!.Id);
+        Assert.Equal("乙", dashboardB.CurrentGroupName);
+    }
+
+    [Fact]
     public async Task ChoosingAutomaticGroupOpensPolicyAndSavesBeforeChangingTheRelay()
     {
         var relay = new FakeRelayClient();
