@@ -18,17 +18,17 @@
                      Text="开启后，Claude Code 命令行及其 VS Code 插件通过共飞使用你账号里的 Claude 分组。只在客户端运行期间有效，退出时自动还原你原来的配置。" />
 
           <CheckBox Content="接入 Claude Code（支持 VS Code 插件等）"
-                    IsChecked="{Binding Dashboard.PluginSupportEnabled}"
-                    IsEnabled="{Binding Dashboard.CanConfigurePluginSupport}"
+                    IsChecked="{Binding Dashboard.ClaudeCode.PluginSupportEnabled}"
+                    IsEnabled="{Binding Dashboard.ClaudeCode.CanConfigurePluginSupport}"
                     Foreground="#374151" Margin="0,12,0,0" />
           <TextBlock Text="当前连接方式不支持接入 Claude Code" Classes="hint" Margin="0,4,0,0"
-                     IsVisible="{Binding !Dashboard.CanConfigurePluginSupport}" />
+                     IsVisible="{Binding !Dashboard.ClaudeCode.CanConfigurePluginSupport}" />
 
-          <StackPanel IsVisible="{Binding Dashboard.PluginSupportEnabled}" Margin="0,12,0,0">
+          <StackPanel IsVisible="{Binding Dashboard.ClaudeCode.PluginSupportEnabled}" Margin="0,12,0,0">
             <TextBlock Text="插件使用的 Claude 分组" FontWeight="SemiBold" Classes="label" Margin="0,0,0,6" />
-            <ComboBox ItemsSource="{Binding Dashboard.ClaudePluginGroups}"
-                      SelectedItem="{Binding Dashboard.SelectedClaudePluginGroup, Mode=TwoWay}"
-                      IsVisible="{Binding Dashboard.HasClaudePluginGroups}"
+            <ComboBox ItemsSource="{Binding Dashboard.ClaudeCode.ClaudePluginGroups}"
+                      SelectedItem="{Binding Dashboard.ClaudeCode.SelectedClaudePluginGroup, Mode=TwoWay}"
+                      IsVisible="{Binding Dashboard.ClaudeCode.HasClaudePluginGroups}"
                       controls:ComboBoxWheelBehavior.DisableMouseWheel="True"
                       HorizontalAlignment="Stretch" Padding="8,6" PlaceholderText="点击选择 Claude 分组">
               <ComboBox.ItemTemplate>
@@ -38,9 +38,9 @@
               </ComboBox.ItemTemplate>
             </ComboBox>
             <TextBlock Text="该账号没有可用的 Claude 分组" Foreground="#9CA3AF" FontSize="12"
-                       IsVisible="{Binding !Dashboard.HasClaudePluginGroups}" />
-            <TextBlock Text="{Binding Dashboard.PluginSupportStatus}"
-                       IsVisible="{Binding Dashboard.HasPluginSupportStatus}"
+                       IsVisible="{Binding !Dashboard.ClaudeCode.HasClaudePluginGroups}" />
+            <TextBlock Text="{Binding Dashboard.ClaudeCode.PluginSupportStatus}"
+                       IsVisible="{Binding Dashboard.ClaudeCode.HasPluginSupportStatus}"
                        Classes="hint" Margin="0,4,0,0" />
 
             <!-- The account's Claude model preference. Shown only once a Claude group is
@@ -48,16 +48,16 @@
                  it before then would save the untouched thinking level over the real one.
                  The Codex page binds the same properties. -->
             <StackPanel Margin="0,12,0,0"
-                        IsVisible="{Binding Dashboard.SelectedClaudePluginGroup, Converter={x:Static ObjectConverters.IsNotNull}}">
+                        IsVisible="{Binding Dashboard.ClaudeCode.SelectedClaudePluginGroup, Converter={x:Static ObjectConverters.IsNotNull}}">
               <TextBlock Text="Claude 模型" FontWeight="SemiBold" Classes="label" Margin="0,0,0,6" />
               <Grid ColumnDefinitions="*,8,*">
                 <ComboBox Grid.Column="0"
-                          ItemsSource="{Binding Dashboard.ClaudeModels}"
-                          SelectedItem="{Binding Dashboard.SelectedClaudeModel, Mode=TwoWay}"
+                          ItemsSource="{x:Static vm:ClaudePreferenceViewModel.ClaudeModels}"
+                          SelectedItem="{Binding Dashboard.ClaudePreference.SelectedClaudeModel, Mode=TwoWay}"
                           HorizontalAlignment="Stretch" Padding="8,6" />
                 <ComboBox Grid.Column="2"
-                          ItemsSource="{Binding Dashboard.ClaudeThinkingLevels}"
-                          SelectedItem="{Binding Dashboard.SelectedClaudeThinkingLevel, Mode=TwoWay}"
+                          ItemsSource="{x:Static vm:ClaudePreferenceViewModel.ClaudeThinkingLevels}"
+                          SelectedItem="{Binding Dashboard.ClaudePreference.SelectedClaudeThinkingLevel, Mode=TwoWay}"
                           HorizontalAlignment="Stretch" Padding="8,6" />
               </Grid>
               <TextBlock Classes="hint" Margin="0,4,0,0"

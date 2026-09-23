@@ -64,8 +64,8 @@ public sealed class DashboardPluginSupportTests
     [Fact]
     public async Task TheBoxIsOffByDefaultAndTheSavedChoiceWins()
     {
-        Assert.False((await BuildAsync()).Dashboard.PluginSupportEnabled);
-        Assert.True((await BuildAsync(saved: true)).Dashboard.PluginSupportEnabled);
+        Assert.False((await BuildAsync()).Dashboard.ClaudeCode.PluginSupportEnabled);
+        Assert.True((await BuildAsync(saved: true)).Dashboard.ClaudeCode.PluginSupportEnabled);
     }
 
     /// <summary>
@@ -113,10 +113,10 @@ public sealed class DashboardPluginSupportTests
 
         await rig.Dashboard.RefreshAsync();
 
-        GroupItemViewModel offered = Assert.Single(rig.Dashboard.ClaudePluginGroups);
+        GroupItemViewModel offered = Assert.Single(rig.Dashboard.ClaudeCode.ClaudePluginGroups);
         Assert.Equal(21, offered.Id);
-        Assert.Same(offered, rig.Dashboard.SelectedClaudePluginGroup);
-        Assert.True(rig.Dashboard.HasClaudePluginGroups);
+        Assert.Same(offered, rig.Dashboard.ClaudeCode.SelectedClaudePluginGroup);
+        Assert.True(rig.Dashboard.ClaudeCode.HasClaudePluginGroups);
     }
 
     [Fact]
@@ -126,7 +126,7 @@ public sealed class DashboardPluginSupportTests
 
         await rig.Dashboard.RefreshAsync();
 
-        Assert.Equal(22, rig.Dashboard.SelectedClaudePluginGroup?.Id);
+        Assert.Equal(22, rig.Dashboard.ClaudeCode.SelectedClaudePluginGroup?.Id);
     }
 
     [Fact]
@@ -136,7 +136,7 @@ public sealed class DashboardPluginSupportTests
 
         await rig.Dashboard.RefreshAsync();
 
-        Assert.Null(rig.Dashboard.SelectedClaudePluginGroup);
+        Assert.Null(rig.Dashboard.ClaudeCode.SelectedClaudePluginGroup);
     }
 
     /// <summary>
@@ -163,7 +163,7 @@ public sealed class DashboardPluginSupportTests
         Rig rig = await BuildAsync(true, true, null, Group(21, "Claude 甲", "anthropic"), Group(22, "Claude 乙", "anthropic"));
         await rig.Dashboard.RefreshAsync();
 
-        rig.Dashboard.SelectedClaudePluginGroup = rig.Dashboard.ClaudePluginGroups.Single(g => g.Id == 22);
+        rig.Dashboard.ClaudeCode.SelectedClaudePluginGroup = rig.Dashboard.ClaudeCode.ClaudePluginGroups.Single(g => g.Id == 22);
         await WaitForAsync(() => rig.Codex.PluginRequests.Any(r => r.GroupId == 22));
 
         Assert.Equal(22, rig.Groups.SavedClaudeGroup);
@@ -175,11 +175,11 @@ public sealed class DashboardPluginSupportTests
         Rig rig = await BuildAsync(false, null, null, Group(21, "Claude", "anthropic"));
 
         await rig.Dashboard.RefreshAsync();
-        rig.Dashboard.PluginSupportEnabled = true;
-        await rig.Dashboard.SyncPluginSupportAsync();
+        rig.Dashboard.ClaudeCode.PluginSupportEnabled = true;
+        await rig.Dashboard.ClaudeCode.SyncPluginSupportAsync();
 
         Assert.Empty(rig.Codex.PluginRequests);
-        Assert.False(rig.Dashboard.CanConfigurePluginSupport);
+        Assert.False(rig.Dashboard.ClaudeCode.CanConfigurePluginSupport);
     }
 
     [Fact]
@@ -189,7 +189,7 @@ public sealed class DashboardPluginSupportTests
         await rig.Dashboard.RefreshAsync();
         await WaitForAsync(() => rig.Codex.PluginRequests.Count >= 1);
 
-        rig.Dashboard.PluginSupportEnabled = true;
+        rig.Dashboard.ClaudeCode.PluginSupportEnabled = true;
         await WaitForAsync(() => rig.Codex.PluginRequests.Any(r => r.Enabled));
 
         Assert.Equal(true, rig.Preferences.Saved);
@@ -204,8 +204,8 @@ public sealed class DashboardPluginSupportTests
         await Task.Delay(100);
         int before = rig.Codex.PluginRequests.Count;
 
-        await rig.Dashboard.SyncPluginSupportAsync();
-        await rig.Dashboard.SyncPluginSupportAsync();
+        await rig.Dashboard.ClaudeCode.SyncPluginSupportAsync();
+        await rig.Dashboard.ClaudeCode.SyncPluginSupportAsync();
 
         Assert.Equal(before, rig.Codex.PluginRequests.Count);
     }
@@ -220,11 +220,11 @@ public sealed class DashboardPluginSupportTests
         await Task.Delay(100);
         int before = rig.Codex.PluginRequests.Count;
 
-        await rig.Dashboard.SyncPluginSupportAsync();
+        await rig.Dashboard.ClaudeCode.SyncPluginSupportAsync();
 
         Assert.Equal(before + 1, rig.Codex.PluginRequests.Count);
-        Assert.Equal("写入失败", rig.Dashboard.PluginSupportStatus);
-        Assert.True(rig.Dashboard.HasPluginSupportStatus);
+        Assert.Equal("写入失败", rig.Dashboard.ClaudeCode.PluginSupportStatus);
+        Assert.True(rig.Dashboard.ClaudeCode.HasPluginSupportStatus);
     }
 
     [Fact]
@@ -234,7 +234,7 @@ public sealed class DashboardPluginSupportTests
         await rig.Dashboard.RefreshAsync();
         await WaitForAsync(() => rig.Codex.PluginRequests.Any(r => r.Model == "claude-opus-5"));
 
-        rig.Dashboard.SelectedClaudeModel = "claude-sonnet-5";
+        rig.Dashboard.ClaudePreference.SelectedClaudeModel = "claude-sonnet-5";
         await WaitForAsync(() => rig.Codex.PluginRequests.Any(r => r.Model == "claude-sonnet-5"));
     }
 
@@ -250,7 +250,7 @@ public sealed class DashboardPluginSupportTests
 
         Assert.False(rig.Dashboard.IsClaudeGroup);
 
-        rig.Dashboard.PluginSupportEnabled = true;
+        rig.Dashboard.ClaudeCode.PluginSupportEnabled = true;
 
         Assert.False(rig.Dashboard.IsClaudeGroup);
     }
@@ -263,9 +263,9 @@ public sealed class DashboardPluginSupportTests
 
         rig.Dashboard.Reset();
 
-        Assert.Empty(rig.Dashboard.ClaudePluginGroups);
-        Assert.Null(rig.Dashboard.SelectedClaudePluginGroup);
-        Assert.False(rig.Dashboard.HasClaudePluginGroups);
+        Assert.Empty(rig.Dashboard.ClaudeCode.ClaudePluginGroups);
+        Assert.Null(rig.Dashboard.ClaudeCode.SelectedClaudePluginGroup);
+        Assert.False(rig.Dashboard.ClaudeCode.HasClaudePluginGroups);
     }
 
     [Theory]
@@ -276,7 +276,7 @@ public sealed class DashboardPluginSupportTests
     [InlineData((int)PluginSupportState.NotApplicable, true, "")]
     public void TheStatusLineSaysOnlyWhatIsUseful(int state, bool hasClaudeGroup, string expected)
     {
-        string text = DashboardViewModel.DescribePluginSupport(new PluginSupportResult((PluginSupportState)state), hasClaudeGroup);
+        string text = ClaudeCodeViewModel.DescribePluginSupport(new PluginSupportResult((PluginSupportState)state), hasClaudeGroup);
 
         if (expected.Length == 0)
         {

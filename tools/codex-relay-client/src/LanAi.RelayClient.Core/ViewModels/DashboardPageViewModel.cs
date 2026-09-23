@@ -45,11 +45,14 @@ public sealed partial class DashboardPageViewModel : ObservableObject
                 case nameof(DashboardViewModel.IsInstallingCodex):
                     UpdateCodexStatus();
                     break;
-                case nameof(DashboardViewModel.PluginSupportEnabled):
-                case nameof(DashboardViewModel.PluginSupportStatus):
-                case nameof(DashboardViewModel.PluginSupportActive):
-                    OnPropertyChanged(nameof(ClaudeStatusText));
-                    break;
+            }
+        };
+        Dashboard.ClaudeCode.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName is nameof(ClaudeCodeViewModel.PluginSupportEnabled)
+                or nameof(ClaudeCodeViewModel.PluginSupportActive))
+            {
+                OnPropertyChanged(nameof(ClaudeStatusText));
             }
         };
         Dashboard.Account.PropertyChanged += (_, args) =>
@@ -81,8 +84,8 @@ public sealed partial class DashboardPageViewModel : ObservableObject
     /// explained in full on the Claude page, where the card's button leads.
     /// </remarks>
     public string ClaudeStatusText =>
-        !Dashboard.PluginSupportEnabled ? "未开启"
-        : Dashboard.PluginSupportActive ? "已接入"
+        !Dashboard.ClaudeCode.PluginSupportEnabled ? "未开启"
+        : Dashboard.ClaudeCode.PluginSupportActive ? "已接入"
         : "待完成设置";
 
     private void UpdateCodexStatus()

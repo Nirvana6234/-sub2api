@@ -80,7 +80,7 @@ public sealed class NavigationTests
         Assert.Equal("未开启", page.ClaudeStatusText);
 
         dashboard.IsCodexRunning = true;
-        dashboard.PluginSupportEnabled = true;
+        dashboard.ClaudeCode.PluginSupportEnabled = true;
 
         Assert.Equal("运行中", page.CodexStatusText);
         Assert.NotEqual("未开启", page.ClaudeStatusText);

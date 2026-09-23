@@ -50,9 +50,9 @@ public sealed class DashboardViewModelTests
             ThinkingLevel = string.Empty,
         };
 
-        await dashboard.LoadClaudePreferenceAsync();
+        await dashboard.ClaudePreference.LoadAsync();
 
-        Assert.Equal(DashboardViewModel.ClaudeThinkingLevels[2], dashboard.SelectedClaudeThinkingLevel);
+        Assert.Equal(ClaudePreferenceViewModel.ClaudeThinkingLevels[2], dashboard.ClaudePreference.SelectedClaudeThinkingLevel);
     }
 
     [Fact]
@@ -66,9 +66,9 @@ public sealed class DashboardViewModelTests
             ThinkingLevel = "off",
         };
 
-        await dashboard.LoadClaudePreferenceAsync();
+        await dashboard.ClaudePreference.LoadAsync();
 
-        Assert.Equal(DashboardViewModel.ClaudeThinkingLevels[0], dashboard.SelectedClaudeThinkingLevel);
+        Assert.Equal(ClaudePreferenceViewModel.ClaudeThinkingLevels[0], dashboard.ClaudePreference.SelectedClaudeThinkingLevel);
     }
 
     [Fact]
@@ -1263,7 +1263,7 @@ public sealed class DashboardViewModelTests
         DashboardViewModel dashboard = BuildWith(codex, relay, out RelaySessionManager session);
         await session.SignInAsync("a@b.com", "pw");
         await dashboard.RefreshAsync();
-        dashboard.SelectedClaudeModel = "claude-opus-5";
+        dashboard.ClaudePreference.SelectedClaudeModel = "claude-opus-5";
 
         await dashboard.StartCodexAsync(_ => Task.FromResult(false));
 
@@ -2032,7 +2032,7 @@ public sealed class DashboardViewModelTests
         // have the Kimi group in it.
         Assert.Equal([11L, 21L, 31L], dashboard.Catalog.Groups.Select(g => g.Id));
         Assert.DoesNotContain(dashboard.Groups, g => g.Id == 31);
-        Assert.Equal([21L], dashboard.ClaudePluginGroups.Select(g => g.Id));
+        Assert.Equal([21L], dashboard.ClaudeCode.ClaudePluginGroups.Select(g => g.Id));
 
         dashboard.Reset();
 

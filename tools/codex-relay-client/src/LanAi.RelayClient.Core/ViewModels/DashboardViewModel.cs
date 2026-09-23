@@ -36,7 +36,6 @@ public sealed partial class DashboardViewModel : ObservableObject
     private readonly IStartupRegistration _startupRegistration;
     private readonly IContextFilterPreferenceStore _contextFilterPreferences;
     private readonly IContextFilterUsageStore _contextFilterUsage;
-    private readonly IPluginSupportPreferenceStore _pluginSupportPreferences;
     private readonly SafeAsyncRunner _safeAsync;
     private readonly SemaphoreSlim _pollGate = new(1, 1);
 
@@ -160,8 +159,13 @@ public sealed partial class DashboardViewModel : ObservableObject
         _contextFilterUsage = contextFilterUsage ?? new ContextFilterUsageStore();
         SetContextFilterWithoutApplying(_contextFilterPreferences.Load() ?? true);
         RefreshContextFilterUsageText();
-        _pluginSupportPreferences = pluginSupportPreferences ?? new PluginSupportPreferenceStore();
-        SetPluginSupportWithoutApplying(_pluginSupportPreferences.Load() ?? false);
+        ClaudePreference = new ClaudePreferenceViewModel(_client, _session, _safeAsync);
+        ClaudeCode = new ClaudeCodeViewModel(
+            _codex,
+            _preferences,
+            pluginSupportPreferences ?? new PluginSupportPreferenceStore(),
+            ClaudePreference,
+            _safeAsync);
     }
 
     /// <summary>The refresh cycle's shared bookkeeping: backoff, rate-limit banner, 401s.</summary>
@@ -175,6 +179,12 @@ public sealed partial class DashboardViewModel : ObservableObject
 
     /// <summary>Every group the account may use, unfiltered; each tool narrows it itself.</summary>
     public GroupCatalog Catalog { get; }
+
+    /// <summary>The account's Claude model and thinking level. One instance for every page.</summary>
+    public ClaudePreferenceViewModel ClaudePreference { get; }
+
+    /// <summary>Claude Code and its editor extension.</summary>
+    public ClaudeCodeViewModel ClaudeCode { get; }
 
     public ObservableCollection<GroupItemViewModel> Groups { get; } = [];
 
@@ -295,271 +305,15 @@ public sealed partial class DashboardViewModel : ObservableObject
 
     partial void OnGroupMessageChanged(string value) => OnPropertyChanged(nameof(HasGroupMessage));
 
-    // ---- Claude preference (visible only when the main — Codex — group is a Claude-platform
-    // one; the plug-ins' own Claude group, below, does not drive this) -----------------------
+    // ---- Claude ------------------------------------------------------------------------
+    //
+    // The account's Claude model preference and the editor plug-ins live in their own view
+    // models (ClaudePreference, ClaudeCode). What stays here is only what the Codex
+    // selection itself decides.
 
     /// <summary>True when the selected group uses the Anthropic/Claude platform.</summary>
     public bool IsClaudeGroup => SelectedGroup?.Platform?.ToLowerInvariant().Contains("claude") == true
                                || SelectedGroup?.Platform?.ToLowerInvariant().Contains("anthropic") == true;
-
-    public static IReadOnlyList<string> ClaudeModels { get; } =
-        ["claude-sonnet-5", "claude-opus-5"];
-
-    public static IReadOnlyList<string> ClaudeThinkingLevels { get; } =
-        ["关闭", "低", "中", "高", "极高"];
-
-    private static readonly string[] _thinkingLevelKeys = ["off", "low", "medium", "high", "max"];
-
-    private const int DefaultClaudeThinkingLevelIndex = 2;
-
-    private bool _loadingClaudePreference;
-
-    [ObservableProperty]
-    private string selectedClaudeModel = "claude-sonnet-5";
-
-    partial void OnSelectedClaudeModelChanged(string value)
-    {
-        if (_loadingClaudePreference)
-        {
-            return;
-        }
-
-        _ = _safeAsync.RunAsync(SaveClaudePreferenceAsync);
-        RequestPluginSync();
-    }
-
-    [ObservableProperty]
-    private string selectedClaudeThinkingLevel = ClaudeThinkingLevels[DefaultClaudeThinkingLevelIndex];
-
-    partial void OnSelectedClaudeThinkingLevelChanged(string value) =>
-        _ = _loadingClaudePreference ? Task.CompletedTask : _safeAsync.RunAsync(SaveClaudePreferenceAsync);
-
-    internal async Task LoadClaudePreferenceAsync()
-    {
-        _loadingClaudePreference = true;
-        try
-        {
-            var token = await _session.GetAccessTokenAsync().ConfigureAwait(true);
-            var pref = await _client.GetClaudePreferenceAsync(token);
-            SelectedClaudeModel = pref.Model;
-            var idx = System.Array.IndexOf(_thinkingLevelKeys, pref.ThinkingLevel);
-            SelectedClaudeThinkingLevel = idx >= 0
-                ? ClaudeThinkingLevels[idx]
-                : ClaudeThinkingLevels[DefaultClaudeThinkingLevelIndex];
-        }
-        catch { /* best-effort */ }
-        finally
-        {
-            _loadingClaudePreference = false;
-            _claudePreferenceLoaded = true;
-        }
-
-        RequestPluginSync();
-    }
-
-    private async Task SaveClaudePreferenceAsync()
-    {
-        try
-        {
-            var token = await _session.GetAccessTokenAsync().ConfigureAwait(true);
-            var modelIdx = System.Array.IndexOf(ClaudeModels.ToArray(), SelectedClaudeModel);
-            if (modelIdx < 0) modelIdx = 0;
-            var levelIdx = System.Array.IndexOf(
-                ClaudeThinkingLevels.ToArray(),
-                SelectedClaudeThinkingLevel);
-            if (levelIdx < 0) levelIdx = 0;
-            await _client.SetClaudePreferenceAsync(token, ClaudeModels[modelIdx], _thinkingLevelKeys[levelIdx]);
-        }
-        catch { /* best-effort */ }
-    }
-
-    // ---- Editor plug-ins (Claude Code / VS Code) ------------------------------
-    //
-    // A path of its own, entirely separate from the Codex group above: the plug-ins get
-    // their own Claude group, chosen here, and their own binding on the relay
-    // (LocalPawRelay.SetClaudeGroup). Codex keeps routing through whatever group the
-    // dropdown above is on — including a Claude one; F5.4's direct routing is untouched.
-
-    /// <summary>
-    /// 支持插件（VS Code）等. Off by default: unlike the Codex group, this writes to files
-    /// outside this client (~/.claude/settings.json and the editor's own settings), so the
-    /// first launch asks rather than assumes.
-    /// </summary>
-    [ObservableProperty]
-    private bool pluginSupportEnabled;
-
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(HasPluginSupportStatus))]
-    private string pluginSupportStatus = string.Empty;
-
-    public bool HasPluginSupportStatus => !string.IsNullOrEmpty(PluginSupportStatus);
-
-    /// <summary>Whether the last sync left Claude Code pointed at the relay.</summary>
-    [ObservableProperty]
-    private bool pluginSupportActive;
-
-    /// <summary>Only the loopback relay can serve an editor; greys the box out otherwise.</summary>
-    public bool CanConfigurePluginSupport => _codex.UsesLocalTransport;
-
-    /// <summary>The Claude groups the plug-ins may be pointed at — every Claude-platform group.</summary>
-    public ObservableCollection<GroupItemViewModel> ClaudePluginGroups { get; } = [];
-
-    public bool HasClaudePluginGroups => ClaudePluginGroups.Count > 0;
-
-    [ObservableProperty]
-    private GroupItemViewModel? selectedClaudePluginGroup;
-
-    private bool _applyingKnownPluginSupportState;
-    private bool _applyingKnownClaudePluginGroupState;
-
-    /// <summary>The request last applied successfully, so an unchanged input does no file work.</summary>
-    private PluginSupportRequest? _lastPluginRequest;
-
-    /// <summary>
-    /// The Claude model comes from the server, as an account-level preference shared with F5.4's
-    /// direct routing. Until it has been read once, syncing would write the placeholder default
-    /// into the user's settings and then rewrite it a moment later.
-    /// </summary>
-    private bool _claudePreferenceLoaded;
-
-    partial void OnPluginSupportEnabledChanged(bool value)
-    {
-        if (_applyingKnownPluginSupportState)
-        {
-            return;
-        }
-
-        _pluginSupportPreferences.Save(value);
-        RequestPluginSync();
-    }
-
-    private void SetPluginSupportWithoutApplying(bool value)
-    {
-        _applyingKnownPluginSupportState = true;
-        try
-        {
-            PluginSupportEnabled = value;
-        }
-        finally
-        {
-            _applyingKnownPluginSupportState = false;
-        }
-    }
-
-    partial void OnSelectedClaudePluginGroupChanged(GroupItemViewModel? value)
-    {
-        if (!_applyingKnownClaudePluginGroupState && value is not null)
-        {
-            _preferences.SaveClaudeGroup(value.Id);
-        }
-
-        if (value is not null)
-        {
-            // Loads the account's Claude model/thinking-level preference and, once that
-            // completes, calls RequestPluginSync itself — see LoadClaudePreferenceAsync.
-            _ = _safeAsync.RunAsync(LoadClaudePreferenceAsync);
-        }
-        else
-        {
-            RequestPluginSync();
-        }
-    }
-
-    private void SelectClaudePluginGroupWithoutApplying(GroupItemViewModel? group)
-    {
-        _applyingKnownClaudePluginGroupState = true;
-        try
-        {
-            SelectedClaudePluginGroup = group;
-        }
-        finally
-        {
-            _applyingKnownClaudePluginGroupState = false;
-        }
-    }
-
-    /// <summary>
-    /// Rebuilds the Claude-group candidate list from the <see cref="Catalog"/> and restores
-    /// the remembered choice — or, failing that, the only candidate there is, so the picker
-    /// is never left empty for an account with just one Claude group.
-    /// </summary>
-    /// <remarks>
-    /// From the catalog, not from the Codex list: which groups Codex can use is a
-    /// different question from which the plug-ins can.
-    /// </remarks>
-    private void RebuildClaudePluginGroups()
-    {
-        ClaudePluginGroups.Clear();
-        foreach (RelayGroup group in Catalog.Groups.Where(g => GroupCatalog.IsClaudePlatform(g.Platform)))
-        {
-            ClaudePluginGroups.Add(Catalog.CreateItem(group, _settings.ServerUtcOffset));
-        }
-        OnPropertyChanged(nameof(HasClaudePluginGroups));
-
-        long? saved = _preferences.LoadClaudeGroup();
-        GroupItemViewModel? restored = saved is > 0
-            ? ClaudePluginGroups.FirstOrDefault(g => g.Id == saved)
-            : null;
-        restored ??= ClaudePluginGroups.Count == 1 ? ClaudePluginGroups[0] : null;
-        SelectClaudePluginGroupWithoutApplying(restored);
-    }
-
-    private void RequestPluginSync()
-    {
-        if (!_codex.UsesLocalTransport)
-        {
-            return;
-        }
-
-        _ = _safeAsync.RunAsync(SyncPluginSupportAsync);
-    }
-
-    internal async Task SyncPluginSupportAsync()
-    {
-        if (!_codex.UsesLocalTransport)
-        {
-            return;
-        }
-
-        GroupItemViewModel? claudeGroup = SelectedClaudePluginGroup;
-        if (claudeGroup is not null && !_claudePreferenceLoaded)
-        {
-            return;
-        }
-
-        var request = new PluginSupportRequest(
-            PluginSupportEnabled,
-            claudeGroup?.Id,
-            claudeGroup?.Name,
-            claudeGroup is not null ? SelectedClaudeModel : null);
-        if (request == _lastPluginRequest)
-        {
-            return;
-        }
-
-        PluginSupportResult result = await _codex.SyncPluginSupportAsync(request).ConfigureAwait(true);
-
-        // Only settled outcomes are remembered. A problem or a not-yet-applicable answer must be
-        // retried by the next trigger rather than trusted.
-        _lastPluginRequest = result.State is PluginSupportState.Off
-            or PluginSupportState.NoGroupChosen
-            or PluginSupportState.Active
-            ? request
-            : null;
-        PluginSupportStatus = DescribePluginSupport(result, hasClaudeGroup: HasClaudePluginGroups);
-        PluginSupportActive = result.State == PluginSupportState.Active;
-    }
-
-    internal static string DescribePluginSupport(PluginSupportResult result, bool hasClaudeGroup) =>
-        result.State switch
-        {
-            PluginSupportState.Active => "Claude Code 已接入，客户端运行期间可用，退出时自动还原。",
-            PluginSupportState.NoGroupChosen => hasClaudeGroup
-                ? "请选择一个 Claude 分组以接入 Claude Code。"
-                : "该账号没有可用的 Claude 分组。",
-            PluginSupportState.Problem => result.Note ?? "Claude Code 接入失败。",
-            _ => string.Empty,
-        };
 
     // ---- Codex ---------------------------------------------------------------
 
@@ -826,7 +580,7 @@ public sealed partial class DashboardViewModel : ObservableObject
         {
             long? groupId = SelectedGroup is { IsAutomatic: false } selected ? selected.Id : null;
             string? groupName = SelectedGroup?.Name;
-            string? preferredModel = IsClaudeGroup ? SelectedClaudeModel : null;
+            string? preferredModel = IsClaudeGroup ? ClaudePreference.SelectedClaudeModel : null;
             CodexStartupResult result;
             if (forceRestart)
             {
@@ -1214,20 +968,20 @@ public sealed partial class DashboardViewModel : ObservableObject
                 {
                     _codex.SetActiveGroup(inForce.IsAutomatic ? null : inForce.Id, inForce.Name);
                 }
-                if (IsClaudeGroup) _ = _safeAsync.RunAsync(LoadClaudePreferenceAsync);
-                RequestPluginSync();
+                if (IsClaudeGroup) _ = _safeAsync.RunAsync(ClaudePreference.LoadAsync);
+                ClaudeCode.RequestSync();
             }
 
             // Independent of inForce above: the plug-ins' Claude group is its own selection,
             // not derived from whichever group Codex just landed on.
-            RebuildClaudePluginGroups();
+            ClaudeCode.RebuildGroups(Catalog, _settings.ServerUtcOffset);
 
-            // RebuildClaudePluginGroups only triggers a sync itself when the restored group
+            // RebuildGroups only triggers a sync itself when the restored group
             // actually changes SelectedClaudePluginGroup (null -> null is not a change). A
             // checkbox already on at launch, with no group to restore, would otherwise sit
             // there saying nothing until something else nudges it — explicitly asked for here
             // so a fresh launch applies (or explains) an already-ticked box, not just a switch.
-            RequestPluginSync();
+            ClaudeCode.RequestSync();
 
             CanConfigureAutoGroup = automatic is not null;
             GroupsReady = true;
@@ -1342,8 +1096,8 @@ public sealed partial class DashboardViewModel : ObservableObject
             _codex.SetActiveGroup(group.Id, group.Name);
             _preferences.Save(group.Id);
             GroupMessage = $"已切换到 {group.Name}。";
-            if (IsClaudeGroup) _ = _safeAsync.RunAsync(LoadClaudePreferenceAsync);
-            RequestPluginSync();
+            if (IsClaudeGroup) _ = _safeAsync.RunAsync(ClaudePreference.LoadAsync);
+            ClaudeCode.RequestSync();
 
             // Best-effort record for another installation of the same account to pick
             // up as its own bootstrap default (see LoadGroupCardAsync) — never
@@ -1362,7 +1116,7 @@ public sealed partial class DashboardViewModel : ObservableObject
         {
             _preferences.Save(group.Id);
             GroupMessage = $"已选择 {group.Name}，将在授权生效时套用。";
-            if (IsClaudeGroup) _ = _safeAsync.RunAsync(LoadClaudePreferenceAsync);
+            if (IsClaudeGroup) _ = _safeAsync.RunAsync(ClaudePreference.LoadAsync);
             return;
         }
 
@@ -1376,7 +1130,7 @@ public sealed partial class DashboardViewModel : ObservableObject
             _managedKey = updated;
             _preferences.Save(group.Id);
             GroupMessage = $"已切换到 {group.Name}。";
-            if (IsClaudeGroup) _ = _safeAsync.RunAsync(LoadClaudePreferenceAsync);
+            if (IsClaudeGroup) _ = _safeAsync.RunAsync(ClaudePreference.LoadAsync);
         }
         catch (RelayApiException ex)
         {
@@ -1473,7 +1227,7 @@ public sealed partial class DashboardViewModel : ObservableObject
             SetCurrent(automatic);
             SelectWithoutSwitching(automatic);
             _codex.SetActiveGroup(null, automatic.Name);
-            RequestPluginSync();
+            ClaudeCode.RequestSync();
             GroupMessage = "已启用自动分组。";
             OnPropertyChanged(nameof(CanStartCodex));
             OnPropertyChanged(nameof(StartCodexLabel));
@@ -1635,10 +1389,8 @@ public sealed partial class DashboardViewModel : ObservableObject
         _autoGroupSettings = null;
         _autoGroupSupported = true;
         CanConfigureAutoGroup = false;
-        _lastPluginRequest = null;
-        _claudePreferenceLoaded = false;
-        PluginSupportStatus = string.Empty;
-        PluginSupportActive = false;
+        ClaudeCode.Reset();
+        ClaudePreference.Reset();
         RefreshState.Reset();
 
         Account.Reset();
@@ -1648,9 +1400,6 @@ public sealed partial class DashboardViewModel : ObservableObject
 
         Catalog.Reset();
         Groups.Clear();
-        ClaudePluginGroups.Clear();
-        OnPropertyChanged(nameof(HasClaudePluginGroups));
-        SelectClaudePluginGroupWithoutApplying(null);
         SelectWithoutSwitching(null);
         ApplyCurrentLabels(null);
         MarkAllUnavailable();

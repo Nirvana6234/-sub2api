@@ -155,12 +155,12 @@
             <TextBlock Text="Claude 模型设置" FontWeight="SemiBold" Classes="label" Margin="0,0,0,6" />
             <Grid ColumnDefinitions="*,8,*">
               <ComboBox Grid.Column="0"
-                        ItemsSource="{Binding Dashboard.ClaudeModels}"
-                        SelectedItem="{Binding Dashboard.SelectedClaudeModel, Mode=TwoWay}"
+                        ItemsSource="{x:Static vm:ClaudePreferenceViewModel.ClaudeModels}"
+                        SelectedItem="{Binding Dashboard.ClaudePreference.SelectedClaudeModel, Mode=TwoWay}"
                         HorizontalAlignment="Stretch" Padding="8,6" />
               <ComboBox Grid.Column="2"
-                        ItemsSource="{Binding Dashboard.ClaudeThinkingLevels}"
-                        SelectedItem="{Binding Dashboard.SelectedClaudeThinkingLevel, Mode=TwoWay}"
+                        ItemsSource="{x:Static vm:ClaudePreferenceViewModel.ClaudeThinkingLevels}"
+                        SelectedItem="{Binding Dashboard.ClaudePreference.SelectedClaudeThinkingLevel, Mode=TwoWay}"
                         HorizontalAlignment="Stretch" Padding="8,6" />
             </Grid>
             <TextBlock Text="思考强度影响回答深度与速度；与 Claude 页的设置是同一份" Classes="hint" Margin="0,4,0,0" />
