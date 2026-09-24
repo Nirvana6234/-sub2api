@@ -5,6 +5,7 @@ using System.Net.Http;
 using System.Net.Sockets;
 using LanAi.RelayClient.Services;
 using Xunit;
+using LanAi.RelayClient.Transport;
 
 namespace LanAi.RelayClient.Tests;
 
@@ -329,7 +330,7 @@ public sealed class ClientSelfUpdaterTests : IAsyncDisposable
     /// <summary>Serves fixed bytes, standing in for the download proxy; counts requests received.</summary>
     private sealed class ZipUpstream : IAsyncDisposable
     {
-        private readonly HttpListener _listener = new();
+        private readonly HttpListener _listener;
         private readonly CancellationTokenSource _stop = new();
         private readonly Task _serve;
         private readonly byte[] _body;
@@ -340,23 +341,18 @@ public sealed class ClientSelfUpdaterTests : IAsyncDisposable
 
         public int RequestCount => _requestCount;
 
-        private ZipUpstream(int port, byte[] body, int status)
+        private ZipUpstream(byte[] body, int status)
         {
+            _listener = LoopbackHttpListener.Start(null, out int port);
             BaseAddress = $"http://127.0.0.1:{port}/package.zip";
             _body = body;
             _status = status;
-            _listener.Prefixes.Add($"http://127.0.0.1:{port}/");
-            _listener.Start();
             _serve = ServeAsync(_stop.Token);
         }
 
         public static Task<ZipUpstream> StartAsync(byte[] body, int status = 200)
         {
-            using var probe = new TcpListener(IPAddress.Loopback, 0);
-            probe.Start();
-            int port = ((IPEndPoint)probe.LocalEndpoint).Port;
-            probe.Stop();
-            return Task.FromResult(new ZipUpstream(port, body, status));
+            return Task.FromResult(new ZipUpstream(body, status));
         }
 
         private async Task ServeAsync(CancellationToken cancellationToken)

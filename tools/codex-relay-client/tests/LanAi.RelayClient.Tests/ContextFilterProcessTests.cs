@@ -85,11 +85,16 @@ public sealed class ContextFilterProcessTests
     public async Task TheLogSaysWhetherCompressionActuallyRanOnThisTurn()
     {
         // The whole chain, as it ships: filter in front, relay behind. Asserted through
-        // the real log file because "can I tell from the log afterwards" is the
-        // question this is here to answer, and a unit test of the formatter alone
-        // would not notice the header names drifting.
+        // what the relay really logs because "can I tell from the log afterwards" is
+        // the question this is here to answer, and a unit test of the formatter alone
+        // would not notice the header names drifting. Captured rather than read back
+        // from the file: other tests' relays log 「本轮未经过上下文压缩」 into the same
+        // file at the same time. Opened before the relay starts, so its request loop
+        // inherits the capture.
         if (ExecutablePath() is not { } exe) return;
 
+        var log = new StringBuilder();
+        using IDisposable capture = ClientLog.Capture(log);
         await using var upstream = await EchoUpstream.StartAsync();
         await using var relay = new LocalPawRelay(upstream.BaseAddress, _ => Task.FromResult("jwt"));
         await relay.StartAsync();
@@ -99,7 +104,7 @@ public sealed class ContextFilterProcessTests
         filter.SetUpstream(relay.BaseAddress!);
         await filter.StartAsync(filterEnabled: true);
 
-        string before = ReadLog();
+        int before = log.Length;
         using (var client = new HttpClient())
         using (var request = new HttpRequestMessage(
             HttpMethod.Post,
@@ -113,7 +118,7 @@ public sealed class ContextFilterProcessTests
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         }
 
-        string written = ReadLog()[before.Length..];
+        string written = log.ToString(before, log.Length - before);
         Assert.Contains("上下文压缩", written, StringComparison.Ordinal);
         // Reached the relay through the filter, so it must not read as "not filtered".
         Assert.DoesNotContain("本轮未经过上下文压缩", written, StringComparison.Ordinal);
@@ -175,15 +180,6 @@ public sealed class ContextFilterProcessTests
 
     private readonly string _scratchDir = Path.Combine(Path.GetTempPath(), $"cf-usage-e2e-{Guid.NewGuid():N}");
 
-    private static string ReadLog()
-    {
-        string path = ClientLog.FilePath;
-        if (!File.Exists(path)) return string.Empty;
-        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-        using var reader = new StreamReader(stream);
-        return reader.ReadToEnd();
-    }
-
     [Fact]
     public async Task AppliedBeforeAnythingIsRunningItOnlyRecordsTheChoice()
     {
@@ -201,7 +197,7 @@ public sealed class ContextFilterProcessTests
     /// <summary>Answers anything, recording the path and credential it was given.</summary>
     private sealed class EchoUpstream : IAsyncDisposable
     {
-        private readonly HttpListener _listener = new();
+        private readonly HttpListener _listener;
         private readonly CancellationTokenSource _stop = new();
         private readonly Task _serve;
 
@@ -209,21 +205,16 @@ public sealed class ContextFilterProcessTests
 
         public string BaseAddress { get; }
 
-        private EchoUpstream(int port)
+        private EchoUpstream()
         {
+            _listener = LoopbackHttpListener.Start(null, out int port);
             BaseAddress = $"http://127.0.0.1:{port}";
-            _listener.Prefixes.Add($"http://127.0.0.1:{port}/");
-            _listener.Start();
             _serve = ServeAsync(_stop.Token);
         }
 
         public static Task<EchoUpstream> StartAsync()
         {
-            using var probe = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
-            probe.Start();
-            int port = ((IPEndPoint)probe.LocalEndpoint).Port;
-            probe.Stop();
-            return Task.FromResult(new EchoUpstream(port));
+            return Task.FromResult(new EchoUpstream());
         }
 
         private async Task ServeAsync(CancellationToken cancellationToken)

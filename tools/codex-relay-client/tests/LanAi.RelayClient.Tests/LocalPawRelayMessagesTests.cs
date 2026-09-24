@@ -542,7 +542,7 @@ public sealed class LocalPawRelayMessagesTests
     /// <summary>A stand-in for the server that records exactly what arrived and answers as told.</summary>
     private sealed class MessagesUpstream : IAsyncDisposable
     {
-        private readonly HttpListener _listener = new();
+        private readonly HttpListener _listener;
         private readonly CancellationTokenSource _stop = new();
         private readonly Task _serve;
         private readonly int _status;
@@ -554,15 +554,14 @@ public sealed class LocalPawRelayMessagesTests
 
         public string BaseAddress { get; }
 
-        private MessagesUpstream(int port, int status, string body, string contentType, (string, string)[] responseHeaders)
+        private MessagesUpstream(int status, string body, string contentType, (string, string)[] responseHeaders)
         {
+            _listener = LoopbackHttpListener.Start(null, out int port);
             BaseAddress = $"http://127.0.0.1:{port}";
             _status = status;
             _body = body;
             _contentType = contentType;
             _responseHeaders = responseHeaders;
-            _listener.Prefixes.Add($"http://127.0.0.1:{port}/");
-            _listener.Start();
             _serve = ServeAsync(_stop.Token);
         }
 
@@ -572,11 +571,7 @@ public sealed class LocalPawRelayMessagesTests
             string contentType = "application/json",
             (string, string)[]? responseHeaders = null)
         {
-            using var probe = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
-            probe.Start();
-            int port = ((IPEndPoint)probe.LocalEndpoint).Port;
-            probe.Stop();
-            return Task.FromResult(new MessagesUpstream(port, status, body, contentType, responseHeaders ?? []));
+            return Task.FromResult(new MessagesUpstream(status, body, contentType, responseHeaders ?? []));
         }
 
         private async Task ServeAsync(CancellationToken cancellationToken)

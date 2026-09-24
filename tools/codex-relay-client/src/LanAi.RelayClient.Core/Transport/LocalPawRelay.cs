@@ -107,7 +107,8 @@ internal sealed class LocalPawRelay : IAsyncDisposable
     internal static RelayRoute? FindRoute(string? path) =>
         Routes.FirstOrDefault(route => string.Equals(route.ClientPath, path, StringComparison.Ordinal));
 
-    private readonly HttpListener _listener = new();
+    // Replaced on each start: a listener whose Start failed cannot be started again.
+    private HttpListener _listener = new();
     private readonly HttpClient _http;
     private readonly bool _ownsHttp;
     private readonly string _upstream;
@@ -369,63 +370,27 @@ internal sealed class LocalPawRelay : IAsyncDisposable
         _serve = null;
         BaseAddress = null;
         _stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        int port = ReservePort();
+        // The remembered port if it is free, otherwise any free one. Falling back is the
+        // normal outcome when something else took the port, not a failure: whoever holds
+        // a configuration naming the old port is told through Origin and rewrites it.
+        HttpListener listener = LoopbackHttpListener.Start(_preferredPort, out int port);
+        _listener.Close();
+        _listener = listener;
         _port = port;
         BaseAddress = new Uri($"http://127.0.0.1:{port}/v1/");
-        _listener.Prefixes.Clear();
-        _listener.Prefixes.Add($"http://127.0.0.1:{port}/");
-        _listener.Start();
-        _serve = ServeAsync(_stop.Token);
+        _serve = ServeAsync(listener, _stop.Token);
 
         // Kept only once it is actually bound, so what is remembered is what worked.
         _endpointStore?.Save(port, Token);
         return Task.CompletedTask;
     }
 
-    /// <summary>
-    /// The remembered port if it is free, otherwise any free one.
-    /// </summary>
-    /// <remarks>
-    /// Falling back is the normal outcome when something else took the port, not a
-    /// failure: the relay starts on a different one, and whoever holds a configuration
-    /// naming the old port is told through <see cref="Origin"/> and rewrites it.
-    /// </remarks>
-    private int ReservePort()
-    {
-        if (_preferredPort is int preferred && TryReserve(preferred, out int reserved))
-        {
-            return reserved;
-        }
-
-        // HttpListener cannot bind port 0 portably; reserve an OS port first.
-        return TryReserve(0, out int any)
-            ? any
-            : throw new InvalidOperationException("No free loopback port is available for the local relay.");
-    }
-
-    private static bool TryReserve(int port, out int bound)
-    {
-        try
-        {
-            using var probe = new System.Net.Sockets.TcpListener(IPAddress.Loopback, port);
-            probe.Start();
-            bound = ((IPEndPoint)probe.LocalEndpoint).Port;
-            probe.Stop();
-            return true;
-        }
-        catch (System.Net.Sockets.SocketException)
-        {
-            bound = 0;
-            return false;
-        }
-    }
-
-    private async Task ServeAsync(CancellationToken cancellationToken)
+    private async Task ServeAsync(HttpListener listener, CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)
         {
             HttpListenerContext context;
-            try { context = await _listener.GetContextAsync().WaitAsync(cancellationToken); }
+            try { context = await listener.GetContextAsync().WaitAsync(cancellationToken); }
             catch (OperationCanceledException) { break; }
             catch (HttpListenerException) when (cancellationToken.IsCancellationRequested) { break; }
             catch (ObjectDisposedException) { break; }

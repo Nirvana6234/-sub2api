@@ -46,6 +46,8 @@ internal static class ClientLog
 
     private static string? _overridePath;
 
+    private static readonly AsyncLocal<StringBuilder?> Captured = new();
+
     public static string FilePath => _overridePath ?? DefaultFilePath();
 
     /// <remarks>
@@ -75,6 +77,21 @@ internal static class ClientLog
         }
     }
 
+    /// <summary>
+    /// For tests: lines written from this async flow, and from work it starts, are also
+    /// appended to <paramref name="into"/> until the result is disposed.
+    /// </summary>
+    /// <remarks>
+    /// The file is one per process, so tests running in parallel write into each other's
+    /// stretch of it; a test asserting on what its own code logged reads this instead.
+    /// </remarks>
+    internal static IDisposable Capture(StringBuilder into)
+    {
+        StringBuilder? previous = Captured.Value;
+        Captured.Value = into;
+        return new CaptureScope(previous);
+    }
+
     public static void Info(string message) => Write(LogLevel.Info, message, exception: null);
 
     public static void Warning(string message, Exception? exception = null) =>
@@ -102,6 +119,8 @@ internal static class ClientLog
 
         lock (Gate)
         {
+            // Under the gate: the flow may have started several tasks that log at once.
+            Captured.Value?.Append(line);
             try
             {
                 string path = FilePath;
@@ -114,6 +133,11 @@ internal static class ClientLog
                 // Diagnostics must never become the fault they were added to explain.
             }
         }
+    }
+
+    private sealed class CaptureScope(StringBuilder? previous) : IDisposable
+    {
+        public void Dispose() => Captured.Value = previous;
     }
 
     private static void RollIfOversized(string path)
