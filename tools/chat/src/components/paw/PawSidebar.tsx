@@ -10,10 +10,11 @@ import {
   PawPromptIcon,
   PawSearchIcon,
   PawSettingsIcon,
-  PawComputerIcon,
   PawTrashIcon,
   PawWalletIcon,
 } from "./PawIcons";
+import type { StoredPairing } from "../../client/remote/store";
+import { PawRemoteSidebar } from "./PawRemoteSidebar";
 import { PawModal } from "./PawModal";
 import type { PawConversation, PawConfigData, PawSession } from "@/client/paw/types";
 
@@ -27,6 +28,9 @@ interface PawSidebarProps {
   onRenameConversation: (id: string, title: string) => void;
   onOpenPrompts: () => void;
   onOpenRemote: () => void;
+  onOpenRemoteSession: (pairing: StoredPairing, threadId: string, title: string) => void;
+  activeRemoteKey: string | null;
+  remoteReloadToken: number;
   onOpenSettings: () => void;
   onOpenPayment: () => void;
   onOpenProfile: () => void;
@@ -53,6 +57,9 @@ export function PawSidebar({
   onRenameConversation,
   onOpenPrompts,
   onOpenRemote,
+  onOpenRemoteSession,
+  activeRemoteKey,
+  remoteReloadToken,
   onOpenSettings,
   onOpenPayment,
   onOpenProfile,
@@ -156,15 +163,6 @@ export function PawSidebar({
           <button
             className="paw-icon-button"
             type="button"
-            onClick={onOpenRemote}
-            title="电脑：查看并接着操作电脑上的 Codex 会话"
-            aria-label="电脑"
-          >
-            <PawComputerIcon width={16} height={16} />
-          </button>
-          <button
-            className="paw-icon-button"
-            type="button"
             onClick={onOpenSettings}
             title="设置"
             aria-label="设置"
@@ -183,6 +181,18 @@ export function PawSidebar({
       </div>
 
       <div className="paw-sidebar-list">
+        <PawRemoteSidebar
+          activeKey={activeRemoteKey}
+          reloadToken={remoteReloadToken}
+          onOpenSession={(pairing, threadId, title) => {
+            onOpenRemoteSession(pairing, threadId, title);
+            onCloseMobile();
+          }}
+          onManage={() => {
+            onOpenRemote();
+            onCloseMobile();
+          }}
+        />
         {conversations.length === 0 ? (
           <div className="paw-empty-state sidebar-empty">
             <div>

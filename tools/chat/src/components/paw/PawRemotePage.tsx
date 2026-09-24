@@ -64,6 +64,25 @@ export function PawRemotePage({ onClose }: PawRemotePageProps) {
     void reload();
   }, [reload]);
 
+  // Straight into the computer when there is only one, or when one has just been
+  // confirmed: stopping on a one-row list after pairing looked like nothing happened.
+  const autoOpened = useRef(false);
+  const previousActive = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const active = devices.filter((d) => d.pairing.status === "active").map((d) => d.pairing.deviceId);
+    const justConfirmed = active.find((id) => !previousActive.current.has(id));
+    const firstLoad = !autoOpened.current;
+    previousActive.current = new Set(active);
+    if (deviceId !== null || active.length === 0) return;
+    if (firstLoad && active.length === 1) {
+      autoOpened.current = true;
+      setDeviceId(active[0]);
+    } else if (!firstLoad && justConfirmed) {
+      setDeviceId(justConfirmed);
+    }
+    autoOpened.current = true;
+  }, [devices, deviceId]);
+
   const selected = devices.find((d) => d.pairing.deviceId === deviceId) ?? null;
 
   let title = "电脑";
@@ -123,6 +142,41 @@ export function PawRemotePage({ onClose }: PawRemotePageProps) {
         <div className="paw-remote-content">
           {notice ? <div className="paw-remote-notice">{notice}</div> : null}
           {body}
+        </div>
+      </div>
+    </main>
+  );
+}
+
+/**
+ * One shared conversation in the main pane, opened from the sidebar group. Same look as
+ * the full page; 返回对话 goes back to this app's own conversations.
+ */
+export function PawRemoteSessionPage({
+  pairing,
+  threadId,
+  onClose,
+  onRevoked,
+}: {
+  pairing: StoredPairing;
+  threadId: string;
+  onClose: () => void;
+  onRevoked: (message: string) => void;
+}) {
+  return (
+    <main className="paw-account-page paw-remote-page">
+      <header className="paw-account-page-head">
+        <div>
+          <h1>{pairing.deviceName}</h1>
+          <p>电脑上的 Codex 会话</p>
+        </div>
+        <button type="button" className="paw-button" onClick={onClose}>
+          返回对话
+        </button>
+      </header>
+      <div className="paw-account-page-scroll">
+        <div className="paw-remote-content">
+          <RemoteConversation key={`${pairing.deviceId}|${threadId}`} pairing={pairing} threadId={threadId} onBack={null} onRevoked={onRevoked} />
         </div>
       </div>
     </main>
@@ -350,7 +404,8 @@ function RemoteConversation({
 }: {
   pairing: StoredPairing;
   threadId: string;
-  onBack: () => void;
+  /** Null hides the in-page back button, e.g. when opened from the sidebar. */
+  onBack: (() => void) | null;
   onRevoked: (message: string) => void;
 }) {
   const [header, setHeader] = useState<RemoteSessionHeader | null>(null);
@@ -508,7 +563,7 @@ function RemoteConversation({
   return (
     <div className="paw-remote-conversation">
       <div className="paw-remote-toolbar">
-        <button type="button" className="paw-button" onClick={onBack}>‹ 会话列表</button>
+        {onBack ? <button type="button" className="paw-button" onClick={onBack}>‹ 会话列表</button> : <span />}
         <button type="button" className="paw-button" onClick={() => void navigateOnComputer(pairing, threadId).catch((err) => setError(errorText(err)))}>
           在电脑上打开
         </button>

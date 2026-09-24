@@ -21,7 +21,8 @@ import { PawExportModal } from "./PawExportModal";
 import { PawPromptModal } from "./PawPromptModal";
 import { PawPaymentModal } from "./PawPaymentModal";
 import { PawProfileModal } from "./PawProfileModal";
-import { PawRemotePage } from "./PawRemotePage";
+import { PawRemotePage, PawRemoteSessionPage } from "./PawRemotePage";
+import type { StoredPairing } from "../../client/remote/store";
 import { usePawClient } from "./usePawClient";
 
 const SIDEBAR_WIDTH_KEY = "paw-sidebar-width:v1";
@@ -52,6 +53,9 @@ export function PawApp() {
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [remoteOpen, setRemoteOpen] = useState(false);
+  // A shared desktop conversation open in the main pane, picked from the sidebar group.
+  const [remoteSession, setRemoteSession] = useState<{ pairing: StoredPairing; threadId: string } | null>(null);
+  const [remoteReload, setRemoteReload] = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [confirmState, setConfirmState] = useState<{
@@ -374,9 +378,17 @@ export function PawApp() {
         onOpenPrompts={() => setPromptsOpen(true)}
         onOpenRemote={() => {
           setProfileOpen(false);
+          setRemoteSession(null);
           setRemoteOpen(true);
           setMobileSidebarOpen(false);
         }}
+        onOpenRemoteSession={(pairing, threadId) => {
+          setProfileOpen(false);
+          setRemoteOpen(false);
+          setRemoteSession({ pairing, threadId });
+        }}
+        activeRemoteKey={remoteSession ? `${remoteSession.pairing.deviceId}|${remoteSession.threadId}` : null}
+        remoteReloadToken={remoteReload}
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenPayment={() => setPaymentOpen(true)}
         onOpenProfile={() => {
@@ -389,8 +401,23 @@ export function PawApp() {
         onDragStart={handleSidebarDragStart}
       />
 
-      {remoteOpen ? (
-        <PawRemotePage onClose={() => setRemoteOpen(false)} />
+      {remoteSession ? (
+        <PawRemoteSessionPage
+          pairing={remoteSession.pairing}
+          threadId={remoteSession.threadId}
+          onClose={() => setRemoteSession(null)}
+          onRevoked={() => {
+            setRemoteSession(null);
+            setRemoteReload((n) => n + 1);
+          }}
+        />
+      ) : remoteOpen ? (
+        <PawRemotePage
+          onClose={() => {
+            setRemoteOpen(false);
+            setRemoteReload((n) => n + 1);
+          }}
+        />
       ) : profileOpen ? (
         <PawProfileModal
           config={paw.config}

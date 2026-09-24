@@ -4505,3 +4505,106 @@ textarea:disabled {
     max-width: 94%;
   }
 }
+
+/* 「电脑 · 同步会话」: a collapsible group above the conversation list, same item look. */
+.paw-remote-sidebar {
+  display: grid;
+  gap: 6px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.paw-remote-sidebar-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.paw-remote-sidebar-head .paw-icon-button {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+}
+
+.paw-remote-sidebar-toggle {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  border: 0;
+  border-radius: 8px;
+  padding: 6px 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.paw-remote-sidebar-toggle:hover {
+  color: var(--text);
+}
+
+.paw-remote-sidebar-caret {
+  display: inline-block;
+  width: 12px;
+  font-size: 14px;
+  line-height: 1;
+  transition: transform 0.15s ease;
+}
+
+.paw-remote-sidebar-caret.open {
+  transform: rotate(90deg);
+}
+
+.paw-remote-sidebar-body {
+  display: grid;
+  gap: 8px;
+}
+
+.paw-remote-sidebar-computer {
+  display: grid;
+  gap: 4px;
+}
+
+.paw-remote-sidebar-computer-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.paw-remote-sidebar-computer-name small {
+  font-size: 11px;
+}
+
+.paw-remote-sidebar .paw-conversation-select {
+  min-height: 0;
+  padding: 8px 12px;
+}
+
+.paw-remote-sidebar-note {
+  padding: 2px 4px 2px 20px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.paw-remote-sidebar-empty {
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.paw-remote-sidebar-empty:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
