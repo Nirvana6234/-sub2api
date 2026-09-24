@@ -225,7 +225,7 @@ func (s *OpenAIGatewayService) openAIAccountOutsideGroupAndFallbacks(
 			continue
 		}
 		allowed[current] = struct{}{}
-		group, err := s.schedulerSnapshot.GetGroupByID(ctx, current)
+		group, err := s.schedulerSnapshot.GetGroupByIDLite(ctx, current)
 		if err != nil || group == nil {
 			return false
 		}
@@ -246,7 +246,7 @@ func (s *OpenAIGatewayService) openAIGroupMayFallback(ctx context.Context, group
 	if s == nil || s.schedulerSnapshot == nil || groupID <= 0 {
 		return true
 	}
-	group, err := s.schedulerSnapshot.GetGroupByID(ctx, groupID)
+	group, err := s.schedulerSnapshot.GetGroupByIDLite(ctx, groupID)
 	if err != nil || group == nil {
 		return true
 	}

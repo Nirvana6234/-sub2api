@@ -21,6 +21,10 @@ func (r *fallbackChainGroupRepo) GetByID(_ context.Context, id int64) (*Group, e
 	return nil, nil
 }
 
+func (r *fallbackChainGroupRepo) GetByIDLite(ctx context.Context, id int64) (*Group, error) {
+	return r.GetByID(ctx, id)
+}
+
 func newProductionFallbackChainService() *OpenAIGatewayService {
 	group29 := int64(29)
 	repo := &fallbackChainGroupRepo{groups: map[int64]*Group{
