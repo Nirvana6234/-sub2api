@@ -4363,11 +4363,10 @@ textarea:disabled {
   cursor: pointer;
 }
 
-.paw-remote-thinking p {
-  margin: 6px 0 0;
+.paw-remote-thinking-body {
+  margin-top: 6px;
   color: var(--muted);
   font-size: 12px;
-  white-space: pre-wrap;
 }
 
 .paw-remote-card {

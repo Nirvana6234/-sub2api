@@ -113,6 +113,11 @@ internal static class SyncJson
             w.WriteString("origin", fromPhone ? "phone" : origin == UserMessageOrigin.Desktop ? "desktop" : "delegated");
         }
 
+        if (item.PhaseMissing)
+        {
+            w.WriteBoolean("phase_missing", true);
+        }
+
         if (item.ImageCount > 0)
         {
             w.WriteNumber("image_count", item.ImageCount);

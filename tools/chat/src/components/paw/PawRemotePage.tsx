@@ -21,7 +21,7 @@ import {
   revokePairing,
   sendMessage,
 } from "../../client/remote/api";
-import { mergeItems, type RemoteDevice, type RemoteSessionHeader, type SyncItem } from "../../client/remote/protocol";
+import { mergeItems, presentItems, type RemoteDevice, type RemoteSessionHeader, type SyncItem } from "../../client/remote/protocol";
 import { deleteSession, loadSession, saveSession, type StoredPairing } from "../../client/remote/store";
 import { PawMarkdown } from "./PawMarkdown";
 import { PawModal } from "./PawModal";
@@ -387,6 +387,8 @@ function RemoteConversation({
   const now = useTicker(runningSince !== null);
   const running = runningSince !== null;
 
+  const shown = useMemo(() => presentItems(items), [items]);
+
   const olderTurn = useMemo(() => items.find((i) => i.turnId)?.turnId ?? null, [items]);
 
   const loadOlder = async () => {
@@ -462,7 +464,7 @@ function RemoteConversation({
       ) : null}
 
       <div className="paw-remote-items">
-        {items.map((item) => (
+        {shown.map((item) => (
           <RemoteItem key={item.seq} item={item} onDetail={openDetail} />
         ))}
         <div ref={endRef} />
@@ -526,7 +528,11 @@ function RemoteItem({ item, onDetail }: { item: SyncItem; onDetail: (item: SyncI
         </div>
       );
     case "progress":
-      return <p className="paw-remote-progress">{item.text}</p>;
+      return (
+        <div className="paw-remote-progress">
+          <PawMarkdown content={item.text ?? ""} />
+        </div>
+      );
     case "reply":
       return (
         <div className="paw-remote-reply">
@@ -537,7 +543,9 @@ function RemoteItem({ item, onDetail }: { item: SyncItem; onDetail: (item: SyncI
       return (
         <details className="paw-remote-thinking">
           <summary>思考</summary>
-          <p>{item.text}</p>
+          <div className="paw-remote-thinking-body">
+            <PawMarkdown content={item.text ?? ""} />
+          </div>
         </details>
       );
     case "command":

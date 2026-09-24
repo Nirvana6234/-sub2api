@@ -24,6 +24,19 @@ export function parsePawSSEChunk(buffer: string): { frames: string[]; remainder:
   };
 }
 
+/**
+ * The payload of one SSE frame: its `data:` lines joined, or null when it has none.
+ * `event:`, `id:`, `retry:` and `: keepalive` comment lines are not part of it.
+ * Expects `\n` line ends; normalise `\r\n` before splitting into frames.
+ */
+export function readPawSSEFrameData(frame: string): string | null {
+  const data = frame
+    .split("\n")
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).replace(/^ /, ""));
+  return data.length > 0 ? data.join("\n") : null;
+}
+
 export function parsePawSSEData(payload: string): "[DONE]" | PawStreamPayload {
   const normalized = payload.trim();
   if (normalized === "[DONE]") return "[DONE]";

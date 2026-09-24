@@ -97,6 +97,18 @@ interface ConversationBookkeeping {
   planDelta: string;
   fileChangeOutputs: Map<string, string>;
   fileSearches: Map<string, { query: string; files: unknown[] }>;
+  /**
+   * 这一轮上一段正文属于哪个 agentMessage item。一轮里模型常说好几段话
+   * （"我先看看文件" → 改文件 → 最终回答），增量本身不带分隔，换 item 时
+   * 不补一个空行就会首尾粘成一句。
+   */
+  lastAgentItemId: string | null;
+  /**
+   * 这一轮的思考用哪一路：推理摘要（summaryText/summaryPart）还是原始推理（text）。
+   * 两路同时来时混进同一个 `reasoningContent` 会交错成读不通的一段——先到的那路
+   * 胜出，另一路丢掉。手机端只显示摘要，两边同时有摘要时看到的是同一份。
+   */
+  reasoningSource: "summary" | "raw" | null;
 }
 
 const REPLACEMENT_CHAR = "�";
@@ -422,6 +434,8 @@ export function useAgentSession(params: UseAgentSessionParams): AgentSessionApi 
         planDelta: "",
         fileChangeOutputs: new Map(),
         fileSearches: new Map(),
+        lastAgentItemId: null,
+        reasoningSource: null,
       };
       bookkeepingRef.current.set(conversationId, entry);
     }
@@ -442,6 +456,8 @@ export function useAgentSession(params: UseAgentSessionParams): AgentSessionApi 
         book.planDelta = "";
         book.fileChangeOutputs.clear();
         book.fileSearches.clear();
+        book.lastAgentItemId = null;
+        book.reasoningSource = null;
       }
     },
     [compactAgentMessage, finishTurn],
@@ -758,16 +774,35 @@ export function useAgentSession(params: UseAgentSessionParams): AgentSessionApi 
 
       switch (event.type) {
         case "agentText":
-          if (pending) appendDelta(conversationId, pending.messageId, { content: event.delta });
+          if (pending) {
+            const newItem = book.lastAgentItemId !== null && book.lastAgentItemId !== event.itemId;
+            book.lastAgentItemId = event.itemId;
+            appendDelta(conversationId, pending.messageId, {
+              content: newItem ? `\n\n${event.delta}` : event.delta,
+            });
+          }
           // 有新文字流回来了，之前挂着的"正在重试"就是过时信息——清掉，
           // 别让它跟正文一起留在界面上误导人。
           if (runtimesRef.current[conversationId]?.retrying) {
             patchRuntime(conversationId, { retrying: null });
           }
           break;
-        case "reasoning":
-          if (pending) appendDelta(conversationId, pending.messageId, { reasoning: event.delta });
+        case "reasoning": {
+          if (!pending) break;
+          const source = event.kind === "text" ? "raw" : "summary";
+          if (book.reasoningSource !== null && book.reasoningSource !== source) break;
+          if (event.kind === "summaryPart") {
+            // 新的一段摘要开始；增量本身不带分隔。第一段之前什么都没有，不用补。
+            if (book.reasoningSource === "summary") {
+              appendDelta(conversationId, pending.messageId, { reasoning: "\n\n" });
+            }
+            break;
+          }
+          if (!event.delta) break;
+          book.reasoningSource = source;
+          appendDelta(conversationId, pending.messageId, { reasoning: event.delta });
           break;
+        }
         case "commandOutput": {
           const key = event.itemId ?? "_";
           book.commandBuffers.set(key, (book.commandBuffers.get(key) ?? "") + event.chunk);
@@ -849,7 +884,7 @@ export function useAgentSession(params: UseAgentSessionParams): AgentSessionApi 
           if (event.itemType === "contextCompaction") {
             patchRuntime(conversationId, { compacting: !event.status });
             if (event.status) {
-              appendNotice(conversationId, "涓婁笅鏂囧帇缂╁凡瀹屾垚");
+              appendNotice(conversationId, "上下文压缩已完成");
             }
             break;
           }
@@ -1079,6 +1114,8 @@ export function useAgentSession(params: UseAgentSessionParams): AgentSessionApi 
       const book = bookkeepingFor(conversationId);
       book.pendingAssistant = { messageId: assistantMessage.id };
       book.planDelta = "";
+      book.lastAgentItemId = null;
+      book.reasoningSource = null;
       book.fileChangeOutputs.clear();
       book.fileSearches.clear();
 
@@ -1198,7 +1235,7 @@ export function useAgentSession(params: UseAgentSessionParams): AgentSessionApi 
 
   const compact = useCallback(async () => {
     if (!desktop) {
-      setError("涓婁笅鏂囧帇缂╀粎鍦ㄦ闈㈢ agent 涓彲鐢ㄣ€?");
+      setError("上下文压缩仅在桌面端 agent 中可用。");
       return;
     }
     const conversationId = activeConversationId;

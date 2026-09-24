@@ -79,6 +79,13 @@ public sealed record SyncItem(long Seq, string? TurnId, string ItemId, SyncItemK
 
     public UserMessageOrigin? Origin { get; init; }
 
+    /// <summary>
+    /// A <see cref="SyncItemKind.Progress"/> message with no <c>phase</c> at all, so it may
+    /// well be the answer (older rollouts, and some messages of current ones). Which one
+    /// is only known once the turn ends; the phone decides then.
+    /// </summary>
+    public bool PhaseMissing { get; init; }
+
     /// <summary>For a delegated message, the conversation named as its caller.</summary>
     public string? SourceThreadId { get; init; }
 
