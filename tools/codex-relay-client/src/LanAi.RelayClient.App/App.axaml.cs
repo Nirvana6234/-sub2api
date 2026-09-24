@@ -248,12 +248,34 @@ public partial class App : Application
         var codexState = new CodexStateDatabase(new CodexPaths());
         var desktopTools = new DesktopAppToolsClient(new NamedPipeAppToolsTransport(), codexState.FindCallerThread);
         var syncAudit = new SyncAuditLog();
+        var selfCheck = new DesktopSelfCheck(
+            new HttpClient(),
+            () => localRelay.Origin,
+            new Uri(ClientOptions.ServerAddress),
+            async cancellationToken =>
+            {
+                try
+                {
+                    await session.GetAccessTokenAsync(cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is not OutOfMemoryException)
+                {
+                    // A network failure is not a signed-out session; IsSignedIn says which.
+                }
+
+                return session.IsSignedIn;
+            });
         var syncAgent = new DesktopSyncAgent(
             desktopTools,
             new SessionContentSync(codexState.FindThread, PhoneImageShrinker.Shrink),
             codexState.FindThread,
             new DesktopSyncStateStore(),
-            syncAudit);
+            syncAudit,
+            // The dashboard's own start, on its thread: only when ChatGPT is not running,
+            // never an install, never a restart (see StartCodexForPhoneAsync).
+            startDesktop: cancellationToken => Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(
+                () => dashboard.StartCodexForPhoneAsync(cancellationToken)),
+            selfCheck: selfCheck.RunAsync);
         syncAgent.Start();
         var syncLink = new DesktopSyncLink(
             new Uri(ClientOptions.ServerAddress),

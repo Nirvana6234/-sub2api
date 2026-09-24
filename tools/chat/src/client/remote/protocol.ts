@@ -340,6 +340,32 @@ export function presentItems(items: SyncItem[]): SyncItem[] {
     : items.map((item) => (promoted.has(item.seq) ? { ...item, kind: "reply" } : item));
 }
 
+/** What a failed turn's error most likely was, from its text alone. */
+export type TurnFailureKind = "login" | "rate_limit" | "local_relay" | "upstream";
+
+export function classifyTurnFailure(text: string | null): TurnFailureKind {
+  const t = text ?? "";
+  // Checked before the loopback address: a 401 from the relay names 127.0.0.1 too.
+  if (/\b(401|403)\b|unauthori[sz]ed|forbidden/i.test(t)) return "login";
+  if (/\b429\b|rate.?limit|too many requests/i.test(t)) return "rate_limit";
+  if (/127\.0\.0\.1|localhost/i.test(t)) return "local_relay";
+  return "upstream";
+}
+
+export const TURN_FAILURE_HINT: Record<TurnFailureKind, string> = {
+  login: "登录或授权失效：请在电脑上确认共飞助手已登录，仍不行再点「修复 ChatGPT 启动」。",
+  rate_limit: "请求太频繁或额度受限，稍等一会儿再重发。",
+  local_relay: "经电脑上的本机中转时出错，多半是服务端临时故障。可以先做电脑自检，再决定是否重发。",
+  upstream: "模型服务出错，可以重发；反复失败请到电脑上查看。",
+};
+
+/** The message that started a turn, for sending it again; null when there is none to send. */
+export function turnMessage(items: SyncItem[], turnId: string | null): string | null {
+  if (!turnId) return null;
+  const user = items.find((i) => i.turnId === turnId && i.kind === "user" && i.text?.trim());
+  return user?.text ?? null;
+}
+
 export const REMOTE_ERROR_TEXT: Record<string, string> = {
   disabled: "电脑上的手机同步已关闭",
   not_approved: "这台手机还没有在电脑上确认",
@@ -349,4 +375,5 @@ export const REMOTE_ERROR_TEXT: Record<string, string> = {
   desktop_unavailable: "电脑上的 Codex 桌面版没有运行",
   missing: "找不到这个会话的记录",
   refused: "电脑拒绝了这个请求",
+  unconfirmed: "电脑没有回应，这条消息可能已经发出：请先看会话里有没有，再决定是否重发",
 };

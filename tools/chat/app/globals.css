@@ -4383,6 +4383,17 @@ textarea:disabled {
   border-left-color: var(--danger);
 }
 
+.paw-remote-confirm {
+  display: grid;
+  gap: 6px;
+}
+
+.paw-remote-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .paw-remote-card.running {
   grid-template-columns: auto 1fr;
   align-items: center;

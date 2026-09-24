@@ -37,6 +37,19 @@ internal sealed class DesktopSyncAgent : IDisposable
 
     internal static readonly TimeSpan ConfirmPollInterval = TimeSpan.FromMilliseconds(250);
 
+    /// <summary>How long a message waits for a desktop app that is not running before it is dropped.</summary>
+    public static readonly TimeSpan DesktopWaitTimeout = TimeSpan.FromMinutes(3);
+
+    /// <summary>Starts are not asked for again within this long of the last one.</summary>
+    public static readonly TimeSpan StartRetryInterval = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// How long a send waits to hear how a start went before answering the phone. The
+    /// refusals (not installed, no group) come back at once; the launch itself does not,
+    /// and the server gives the whole command 15 s.
+    /// </summary>
+    internal TimeSpan StartAnswerWait { get; init; } = TimeSpan.FromSeconds(4);
+
     private readonly IDesktopAppTools _tools;
     private readonly SessionContentSync _content;
     private readonly Func<string, CodexThreadRecord?> _findThread;
@@ -44,6 +57,10 @@ internal sealed class DesktopSyncAgent : IDisposable
     private readonly SyncAuditLog _audit;
     private readonly SignedSendVerifier _verifier;
     private readonly Func<DateTimeOffset> _clock;
+    private readonly Func<CancellationToken, Task<DesktopStartResult>>? _startDesktop;
+    private readonly Func<CancellationToken, Task<DesktopSelfCheckResult>>? _selfCheck;
+    private Task<DesktopStartResult>? _start;
+    private DateTimeOffset _startAt;
     private readonly object _gate = new();
     private readonly Dictionary<long, Queue<DateTimeOffset>> _sendTimes = [];
     private readonly List<QueuedSend> _queue = [];
@@ -59,8 +76,12 @@ internal sealed class DesktopSyncAgent : IDisposable
         IDesktopSyncStateStore store,
         SyncAuditLog audit,
         SignedSendVerifier? verifier = null,
-        Func<DateTimeOffset>? clock = null)
+        Func<DateTimeOffset>? clock = null,
+        Func<CancellationToken, Task<DesktopStartResult>>? startDesktop = null,
+        Func<CancellationToken, Task<DesktopSelfCheckResult>>? selfCheck = null)
     {
+        _startDesktop = startDesktop;
+        _selfCheck = selfCheck;
         _tools = tools;
         _content = content;
         _findThread = findThread;
@@ -207,6 +228,7 @@ internal sealed class DesktopSyncAgent : IDisposable
                     DesktopSyncCommands.Detail => Detail(threadId!, root),
                     DesktopSyncCommands.SendMessage => await SendAsync(phone!, threadId!, root, cancellationToken).ConfigureAwait(false),
                     DesktopSyncCommands.Navigate => await NavigateAsync(phone!, threadId!, cancellationToken).ConfigureAwait(false),
+                    DesktopSyncCommands.SelfCheck => await SelfCheckAsync(cancellationToken).ConfigureAwait(false),
                     _ => SyncJson.Error("refused", "不支持的指令"),
                 };
             }
@@ -387,7 +409,16 @@ internal sealed class DesktopSyncAgent : IDisposable
 
         if (mode == "queue")
         {
-            DesktopThreadStatus status = await _tools.GetThreadStatusAsync(threadId, cancellationToken).ConfigureAwait(false);
+            DesktopThreadStatus status;
+            try
+            {
+                status = await _tools.GetThreadStatusAsync(threadId, cancellationToken).ConfigureAwait(false);
+            }
+            catch (DesktopAppToolsException ex) when (ex.Failure == DesktopAppToolsFailure.Unavailable)
+            {
+                return await WaitForDesktopAsync(phone, threadId, text, cancellationToken).ConfigureAwait(false);
+            }
+
             if (status.Type == "active")
             {
                 lock (_gate)
@@ -405,6 +436,12 @@ internal sealed class DesktopSyncAgent : IDisposable
         {
             await DeliverAsync(threadId, text, cancellationToken).ConfigureAwait(false);
         }
+        catch (DesktopAppToolsException ex) when (ex.Failure == DesktopAppToolsFailure.Unavailable)
+        {
+            // Nothing went out (see DesktopAppToolsFailure.Unavailable). There is no running
+            // turn to insert into either, so an insert waits like any other message.
+            return await WaitForDesktopAsync(phone, threadId, text, cancellationToken).ConfigureAwait(false);
+        }
         catch (DesktopAppToolsException ex)
         {
             Audit(phone.PairingId, phone.PhoneLabel, DesktopSyncCommands.SendMessage, threadId, SyncAuditLog.SummaryOf(text), FailureOutcome(ex));
@@ -413,6 +450,139 @@ internal sealed class DesktopSyncAgent : IDisposable
 
         Audit(phone.PairingId, phone.PhoneLabel, DesktopSyncCommands.SendMessage, threadId, SyncAuditLog.SummaryOf(text), "ok");
         return SyncJson.Ok(w => w.WriteBoolean("queued", false));
+    }
+
+    /// <summary>
+    /// The desktop app is not answering: the message waits in the queue while ChatGPT is
+    /// started, and goes out once it answers — or is dropped after <see cref="DesktopWaitTimeout"/>.
+    /// </summary>
+    /// <remarks>
+    /// Starting is only ever a start: the host checks that ChatGPT is not running and
+    /// never confirms a restart, so nothing the user has open is stopped. It never installs.
+    /// </remarks>
+    private async Task<byte[]> WaitForDesktopAsync(ApprovedPhone phone, string threadId, string text, CancellationToken cancellationToken)
+    {
+        string summary = SyncAuditLog.SummaryOf(text);
+        if (_startDesktop is null)
+        {
+            Audit(phone.PairingId, phone.PhoneLabel, DesktopSyncCommands.SendMessage, threadId, summary, "unavailable");
+            return SyncJson.Error("desktop_unavailable", "电脑上的 Codex 桌面版没有运行");
+        }
+
+        Task<DesktopStartResult> start = StartDesktop();
+        Task finished = await Task.WhenAny(start, Task.Delay(StartAnswerWait, cancellationToken)).ConfigureAwait(false);
+        DesktopStartResult? result = finished == start ? await start.ConfigureAwait(false) : null;
+
+        if (result is { Outcome: DesktopStartOutcome.Refused })
+        {
+            string reason = result.Message ?? "电脑上的 ChatGPT 没有启动";
+            Audit(phone.PairingId, phone.PhoneLabel, DesktopSyncCommands.SendMessage, threadId, summary, $"unavailable: {reason}");
+
+            // Its own code so that the phone shows this reason rather than its fixed text
+            // for desktop_unavailable, which would be wrong when ChatGPT is running.
+            return SyncJson.Error("desktop_start_refused", reason);
+        }
+
+        lock (_gate)
+        {
+            _queue.Add(new QueuedSend(phone.PairingId, phone.PhoneLabel, threadId, text, _clock(), _clock() + DesktopWaitTimeout));
+        }
+
+        Audit(phone.PairingId, phone.PhoneLabel, DesktopSyncCommands.SendMessage, threadId, summary, "queued_for_desktop");
+        StateChanged?.Invoke();
+        return SyncJson.Ok(w =>
+        {
+            w.WriteBoolean("queued", true);
+            w.WriteBoolean("waiting_for_desktop", true);
+            w.WriteBoolean("starting_desktop", result?.Outcome != DesktopStartOutcome.AlreadyRunning);
+        });
+    }
+
+    /// <summary>The start under way, or a new one when the last is old enough or was refused.</summary>
+    private Task<DesktopStartResult> StartDesktop()
+    {
+        lock (_gate)
+        {
+            bool reuse = _start is not null &&
+                         (!_start.IsCompleted ||
+                          (_start.Result.Outcome != DesktopStartOutcome.Refused && _clock() - _startAt < StartRetryInterval));
+            if (!reuse)
+            {
+                _startAt = _clock();
+                _start = RunStartAsync();
+            }
+
+            return _start!;
+        }
+    }
+
+    private async Task<DesktopStartResult> RunStartAsync()
+    {
+        DesktopStartResult result;
+        try
+        {
+            result = await _startDesktop!(CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            ClientLog.Warning("为手机启动 ChatGPT 失败", ex);
+            result = new DesktopStartResult(DesktopStartOutcome.Refused, "启动电脑上的 ChatGPT 时出错");
+        }
+
+        if (result.Outcome == DesktopStartOutcome.Refused)
+        {
+            // Refused after the phone was already told it is starting: those messages
+            // would only wait out their time, so they go now, with the reason.
+            List<QueuedSend> dropped;
+            lock (_gate)
+            {
+                dropped = _queue.Where(q => q.ExpiresAt is not null).ToList();
+                _queue.RemoveAll(q => q.ExpiresAt is not null);
+            }
+
+            foreach (QueuedSend q in dropped)
+            {
+                Audit(q.PairingId, q.PhoneLabel, DesktopSyncCommands.SendMessage, q.ThreadId, SyncAuditLog.SummaryOf(q.Text), $"unavailable: {result.Message}");
+            }
+
+            if (dropped.Count > 0)
+            {
+                StateChanged?.Invoke();
+            }
+        }
+
+        return result;
+    }
+
+    private async Task<byte[]> SelfCheckAsync(CancellationToken cancellationToken)
+    {
+        bool desktop = true;
+        try
+        {
+            await _tools.ListThreadsAsync(1, cancellationToken).ConfigureAwait(false);
+        }
+        catch (DesktopAppToolsException)
+        {
+            desktop = false;
+        }
+
+        DesktopSelfCheckResult? check = _selfCheck is null ? null : await _selfCheck(cancellationToken).ConfigureAwait(false);
+        return SyncJson.Ok(w =>
+        {
+            w.WriteBoolean("desktop_running", desktop);
+            if (check is not null)
+            {
+                w.WriteBoolean("relay_listening", check.RelayListening);
+                w.WriteBoolean("signed_in", check.SignedIn);
+                w.WriteBoolean("server_reachable", check.ServerReachable);
+            }
+
+            bool problem = check is { SignedIn: false } or { RelayListening: false } or { ServerReachable: false };
+            w.WriteString("summary",
+                problem ? check!.Summary
+                : !desktop ? "电脑上的 ChatGPT 没有运行，从手机发消息时会自动启动。"
+                : check?.Summary ?? "电脑上的 ChatGPT 在运行。");
+        });
     }
 
     /// <summary>
@@ -532,9 +702,23 @@ internal sealed class DesktopSyncAgent : IDisposable
         try
         {
             List<QueuedSend> pending;
+            List<QueuedSend> expired;
             lock (_gate)
             {
+                DateTimeOffset now = _clock();
+                expired = _queue.Where(q => q.ExpiresAt <= now).ToList();
+                _queue.RemoveAll(q => q.ExpiresAt <= now);
                 pending = _queue.GroupBy(q => q.ThreadId).Select(g => g.First()).ToList();
+            }
+
+            foreach (QueuedSend q in expired)
+            {
+                Audit(q.PairingId, q.PhoneLabel, DesktopSyncCommands.SendMessage, q.ThreadId, SyncAuditLog.SummaryOf(q.Text), "expired");
+            }
+
+            if (expired.Count > 0)
+            {
+                StateChanged?.Invoke();
             }
 
             foreach (QueuedSend next in pending)
@@ -607,7 +791,8 @@ internal sealed class DesktopSyncAgent : IDisposable
         }
     }
 
-    private sealed record QueuedSend(long PairingId, string PhoneLabel, string ThreadId, string Text, DateTimeOffset QueuedAt);
+    /// <param name="ExpiresAt">Set for a message waiting for the desktop app to come up; a running turn is waited for without limit.</param>
+    private sealed record QueuedSend(long PairingId, string PhoneLabel, string ThreadId, string Text, DateTimeOffset QueuedAt, DateTimeOffset? ExpiresAt = null);
 
     // ---- Following a conversation ----------------------------------------------------
 

@@ -11,11 +11,13 @@ import {
   canonicalSend,
   fingerprint,
   generateSigningKey,
+  classifyTurnFailure,
   mergeItems,
   presentItems,
   readItem,
   readStreamEvent,
   signSend,
+  turnMessage,
   type SyncItem,
 } from "./protocol.ts";
 
@@ -126,4 +128,19 @@ test("nothing is promoted while the turn runs, when it has a reply, or when its 
 
   const tagged = [msg(1, "t", "progress", true), msg(2, "t", "progress"), msg(3, "t", "turn_ended")];
   assert.equal(presentItems(tagged), tagged);
+});
+
+test("a failed turn is classified from its error text", () => {
+  assert.equal(classifyTurnFailure("unexpected status 502 Bad Gateway: Unknown error, url: http://127.0.0.1:63577/v1/responses"), "local_relay");
+  assert.equal(classifyTurnFailure("unexpected status 401 Unauthorized, url: http://127.0.0.1:63577/v1/responses"), "login");
+  assert.equal(classifyTurnFailure("429 Too Many Requests"), "rate_limit");
+  assert.equal(classifyTurnFailure("stream disconnected before completion"), "upstream");
+  assert.equal(classifyTurnFailure(null), "upstream");
+});
+
+test("a turn's message is found for sending again", () => {
+  const items = [msg(1, "t", "turn_started"), { ...msg(2, "t", "user"), text: "改一下标题" }, msg(3, "t", "turn_ended")];
+  assert.equal(turnMessage(items, "t"), "改一下标题");
+  assert.equal(turnMessage(items, "other"), null);
+  assert.equal(turnMessage([{ ...msg(2, "t", "user"), text: "  " }], "t"), null);
 });
