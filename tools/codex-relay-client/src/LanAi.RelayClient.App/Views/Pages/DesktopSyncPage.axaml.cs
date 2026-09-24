@@ -45,9 +45,11 @@ public partial class DesktopSyncPage : UserControl
         {
             // The box shows the stored choice, not the click: a refused or cancelled
             // selection must not leave it ticked.
+            // SetCurrentValue, not assignment: assigning sets a local value that replaces the
+            // binding for good, and the box would stop following the stored choice.
             if (sender is CheckBox box)
             {
-                box.IsChecked = item.IsSelected;
+                box.SetCurrentValue(CheckBox.IsCheckedProperty, item.IsSelected);
             }
 
             Run(vm => vm.ToggleAsync(item));

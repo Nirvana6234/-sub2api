@@ -49,7 +49,11 @@ public sealed partial class SyncSessionItem : ObservableObject
 
     /// <summary>Enabled unless the selection is full and this one is not in it.</summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(DisabledReason))]
     private bool canToggle = true;
+
+    /// <summary>Why the box is disabled, as a tooltip; null (no tooltip) while it is enabled.</summary>
+    public string? DisabledReason => CanToggle ? null : $"最多同步 {DesktopSyncAgent.MaxSyncedSessions} 个会话，请先取消一个";
 }
 
 /// <summary>One approved phone.</summary>

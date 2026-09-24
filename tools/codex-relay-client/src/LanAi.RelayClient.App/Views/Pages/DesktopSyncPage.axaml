@@ -42,48 +42,6 @@
       <Border Classes="card">
         <StackPanel>
           <DockPanel>
-            <Button DockPanel.Dock="Right" Content="刷新" Click="Refresh_OnClick" Classes="secondary" VerticalAlignment="Center" />
-            <TextBlock DockPanel.Dock="Right" Text="{Binding SelectedCountText}" Classes="label"
-                       VerticalAlignment="Center" Margin="0,0,12,0" />
-            <StackPanel Orientation="Horizontal">
-              <TextBlock Text="同步哪些会话" Classes="cardTitle" VerticalAlignment="Center" />
-              <!-- Claude Code comes later (design §5.7); the choice is shown so it is expected. -->
-              <TextBlock Text="Codex" Classes="label" Margin="12,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold" />
-              <TextBlock Text="Claude Code（即将支持）" Classes="label" Margin="8,0,0,0" VerticalAlignment="Center" Opacity="0.5" />
-            </StackPanel>
-          </DockPanel>
-          <TextBlock Text="{Binding DesktopStatus}" Classes="hint" Margin="0,4,0,0" />
-          <ItemsControl ItemsSource="{Binding Sessions}" Margin="0,6,0,0">
-            <ItemsControl.ItemTemplate>
-              <DataTemplate x:DataType="vm:SyncSessionItem">
-                <Border BorderBrush="#E5E7EB" BorderThickness="0,1,0,0" Padding="0,8">
-                  <DockPanel>
-                    <CheckBox DockPanel.Dock="Left" IsChecked="{Binding IsSelected, Mode=OneWay}"
-                              IsEnabled="{Binding CanToggle}" Click="Toggle_OnClick"
-                              VerticalAlignment="Top" Margin="0,0,8,0"
-                              ToolTip.Tip="最多同步 5 个会话，请先取消一个" ToolTip.IsEnabled="{Binding !CanToggle}" />
-                    <StackPanel>
-                      <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                      <TextBlock Text="{Binding Cwd}" Classes="hint" TextTrimming="CharacterEllipsis" />
-                      <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
-                        <TextBlock Text="{Binding Detail}" Classes="label" />
-                        <TextBlock Text="{Binding PermissionText}" Classes="danger" Margin="12,0,0,0"
-                                   IsVisible="{Binding IsFullAccess}" />
-                        <TextBlock Text="{Binding PermissionText}" Classes="calm" Margin="12,0,0,0"
-                                   IsVisible="{Binding !IsFullAccess}" />
-                      </StackPanel>
-                    </StackPanel>
-                  </DockPanel>
-                </Border>
-              </DataTemplate>
-            </ItemsControl.ItemTemplate>
-          </ItemsControl>
-        </StackPanel>
-      </Border>
-
-      <Border Classes="card">
-        <StackPanel>
-          <DockPanel>
             <Button DockPanel.Dock="Right" Content="配对新手机" Click="Pair_OnClick" Classes="secondary" VerticalAlignment="Center" />
             <TextBlock Text="已配对的手机" Classes="cardTitle" VerticalAlignment="Center" />
           </DockPanel>
@@ -107,6 +65,54 @@
             </ItemsControl.ItemTemplate>
           </ItemsControl>
           <TextBlock Text="还没有配对的手机" Classes="hint" Margin="0,6,0,0" IsVisible="{Binding !HasPhones}" />
+        </StackPanel>
+      </Border>
+
+      <Border Classes="card">
+        <StackPanel>
+          <DockPanel>
+            <Button DockPanel.Dock="Right" Content="刷新" Click="Refresh_OnClick" Classes="secondary" VerticalAlignment="Center" />
+            <TextBlock DockPanel.Dock="Right" Text="{Binding SelectedCountText}" Classes="label"
+                       VerticalAlignment="Center" Margin="0,0,12,0" />
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="同步哪些会话" Classes="cardTitle" VerticalAlignment="Center" />
+              <!-- Claude Code comes later (design §5.7); the choice is shown so it is expected. -->
+              <TextBlock Text="Codex" Classes="label" Margin="12,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold" />
+              <TextBlock Text="Claude Code（即将支持）" Classes="label" Margin="8,0,0,0" VerticalAlignment="Center" Opacity="0.5" />
+            </StackPanel>
+          </DockPanel>
+          <TextBlock Text="{Binding DesktopStatus}" Classes="hint" Margin="0,4,0,0" />
+          <!-- The desktop app keeps every conversation ever had; the list scrolls on its
+               own so the rest of the page stays within reach. -->
+          <ScrollViewer MaxHeight="360" VerticalScrollBarVisibility="Auto" Margin="0,6,0,0">
+            <ItemsControl ItemsSource="{Binding Sessions}" Margin="0,0,14,0">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:SyncSessionItem">
+                  <Border BorderBrush="#E5E7EB" BorderThickness="0,1,0,0" Padding="0,8">
+                    <DockPanel>
+                      <CheckBox DockPanel.Dock="Left" IsChecked="{Binding IsSelected, Mode=OneWay}"
+                                IsEnabled="{Binding CanToggle}" Click="Toggle_OnClick"
+                                VerticalAlignment="Top" Margin="0,0,8,0"
+                                ToolTip.Tip="{Binding DisabledReason}" ToolTip.ShowOnDisabled="True" />
+                      <!-- Not ToolTip.IsEnabled: no such attached property exists, so the compiler
+                           binds the check box's own IsEnabled instead and disables every box. -->
+                      <StackPanel>
+                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{Binding Cwd}" Classes="hint" TextTrimming="CharacterEllipsis" />
+                        <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                          <TextBlock Text="{Binding Detail}" Classes="label" />
+                          <TextBlock Text="{Binding PermissionText}" Classes="danger" Margin="12,0,0,0"
+                                     IsVisible="{Binding IsFullAccess}" />
+                          <TextBlock Text="{Binding PermissionText}" Classes="calm" Margin="12,0,0,0"
+                                     IsVisible="{Binding !IsFullAccess}" />
+                        </StackPanel>
+                      </StackPanel>
+                    </DockPanel>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
         </StackPanel>
       </Border>
 
