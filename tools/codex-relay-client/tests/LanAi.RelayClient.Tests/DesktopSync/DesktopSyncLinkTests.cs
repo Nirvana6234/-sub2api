@@ -6,6 +6,7 @@ using System.Threading.Channels;
 using LanAi.RelayClient.CodexBinding.DesktopSync;
 using LanAi.RelayClient.DesktopSync;
 using Xunit;
+using LanAi.RelayClient.Transport;
 
 namespace LanAi.RelayClient.Tests.DesktopSync;
 
@@ -183,20 +184,15 @@ public sealed class DesktopSyncLinkTests : IAsyncDisposable
     /// <summary>A WebSocket endpoint at /api/v1/remote/agent, like the backend's.</summary>
     private sealed class FakeRemoteServer : IAsyncDisposable
     {
-        private readonly HttpListener _listener = new();
+        private readonly HttpListener _listener;
         private readonly Channel<Connection> _connections = Channel.CreateUnbounded<Connection>();
         private readonly CancellationTokenSource _stop = new();
         private readonly Task _serve;
 
         public FakeRemoteServer()
         {
-            using var probe = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
-            probe.Start();
-            int port = ((IPEndPoint)probe.LocalEndpoint).Port;
-            probe.Stop();
+            _listener = LoopbackHttpListener.Start(null, out int port);
             BaseAddress = $"http://127.0.0.1:{port}/";
-            _listener.Prefixes.Add(BaseAddress);
-            _listener.Start();
             _serve = ServeAsync();
         }
 

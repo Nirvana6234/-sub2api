@@ -423,7 +423,7 @@ public sealed class LocalPawRelayTests
     /// <summary>A stand-in for the server, recording exactly what arrived.</summary>
     private sealed class FakeUpstream : IAsyncDisposable
     {
-        private readonly HttpListener _listener = new();
+        private readonly HttpListener _listener;
         private readonly CancellationTokenSource _stop = new();
         private readonly Task _serve;
 
@@ -433,21 +433,16 @@ public sealed class LocalPawRelayTests
 
         public string BaseAddress { get; }
 
-        private FakeUpstream(int port)
+        private FakeUpstream()
         {
+            _listener = LoopbackHttpListener.Start(null, out int port);
             BaseAddress = $"http://127.0.0.1:{port}";
-            _listener.Prefixes.Add($"http://127.0.0.1:{port}/");
-            _listener.Start();
             _serve = ServeAsync(_stop.Token);
         }
 
         public static Task<FakeUpstream> StartAsync()
         {
-            using var probe = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
-            probe.Start();
-            int port = ((IPEndPoint)probe.LocalEndpoint).Port;
-            probe.Stop();
-            return Task.FromResult(new FakeUpstream(port));
+            return Task.FromResult(new FakeUpstream());
         }
 
         private async Task ServeAsync(CancellationToken cancellationToken)

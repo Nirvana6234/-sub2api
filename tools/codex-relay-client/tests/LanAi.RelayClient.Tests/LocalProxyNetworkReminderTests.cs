@@ -254,10 +254,7 @@ public sealed class OfficialReachabilityTests
     [Fact]
     public async Task AnyHttpAnswerCountsAsReachable()
     {
-        using var listener = new HttpListener();
-        int port = FreePort();
-        listener.Prefixes.Add($"http://127.0.0.1:{port}/");
-        listener.Start();
+        using HttpListener listener = LoopbackHttpListener.Start(null, out int port);
         Task answer = Task.Run(async () =>
         {
             HttpListenerContext context = await listener.GetContextAsync();
@@ -283,10 +280,5 @@ public sealed class OfficialReachabilityTests
         Assert.False(string.IsNullOrEmpty(result.Problem));
     }
 
-    private static int FreePort()
-    {
-        using var probe = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
-        probe.Start();
-        return ((IPEndPoint)probe.LocalEndpoint).Port;
-    }
+    private static int FreePort() => LoopbackHttpListener.ProbeFreePort();
 }

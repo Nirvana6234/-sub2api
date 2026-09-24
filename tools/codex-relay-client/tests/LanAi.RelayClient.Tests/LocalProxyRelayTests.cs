@@ -355,18 +355,17 @@ public sealed class LocalProxyRelayTests
     /// <summary>Records what arrived and answers each request with the next scripted reply (the last repeats).</summary>
     internal sealed class Upstream : IAsyncDisposable
     {
-        private readonly HttpListener _listener = new();
+        private readonly HttpListener _listener;
         private readonly CancellationTokenSource _stop = new();
         private readonly Task _serve;
         private readonly (int Status, string Body)[] _answers;
         private int _next;
 
-        private Upstream(int port, (int, string)[] answers)
+        private Upstream((int, string)[] answers)
         {
+            _listener = LoopbackHttpListener.Start(null, out int port);
             BaseAddress = $"http://127.0.0.1:{port}";
             _answers = answers;
-            _listener.Prefixes.Add($"http://127.0.0.1:{port}/");
-            _listener.Start();
             _serve = ServeAsync(_stop.Token);
         }
 
@@ -376,11 +375,7 @@ public sealed class LocalProxyRelayTests
 
         public static Upstream Start((int, string)[] answers)
         {
-            using var probe = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
-            probe.Start();
-            int port = ((IPEndPoint)probe.LocalEndpoint).Port;
-            probe.Stop();
-            return new Upstream(port, answers);
+            return new Upstream(answers);
         }
 
         private async Task ServeAsync(CancellationToken cancellationToken)
