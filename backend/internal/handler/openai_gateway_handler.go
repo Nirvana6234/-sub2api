@@ -1791,6 +1791,9 @@ func (h *OpenAIGatewayHandler) validateFunctionCallOutputRequest(c *gin.Context,
 }
 
 func normalizeCodexDelegationBootstrap(body []byte) ([]byte, bool) {
+	if !hasCodexCallOutputForTool(body, isCodexDelegationTool) {
+		return body, false
+	}
 	// 已有任务通过 send_message_to_thread 唤醒时会携带 previous_response_id；
 	// 完整历史回放还会带有已配对的调用项。delegation 仍是客户端注入的用户输入，
 	// 不属于这些历史调用的结果，因此允许它与可明确配对的历史上下文共存。
@@ -1798,7 +1801,32 @@ func normalizeCodexDelegationBootstrap(body []byte) ([]byte, bool) {
 }
 
 func normalizeCodexAutomationBootstrap(body []byte) ([]byte, bool) {
+	if !hasCodexCallOutputForTool(body, isCodexAutomationTool) {
+		return body, false
+	}
 	return normalizeCodexCallOutputBootstrap(body, isCodexAutomationCandidate, false)
+}
+
+// hasCodexCallOutputForTool reports whether input holds a function_call_output
+// of the given tool, which every bootstrap candidate must be. Such outputs are
+// rare, while the uniqueness check and full decode in
+// normalizeCodexCallOutputBootstrap cost time proportional to the body size on
+// every request at every relay hop, so this scan lets most requests skip them.
+func hasCodexCallOutputForTool(body []byte, isTool func(namespace, name string) bool) bool {
+	input := gjson.GetBytes(body, "input")
+	if !input.IsArray() {
+		return false
+	}
+	found := false
+	input.ForEach(func(_, item gjson.Result) bool {
+		if item.IsObject() && item.Get("type").String() == "function_call_output" &&
+			isTool(item.Get("namespace").String(), item.Get("name").String()) {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
 }
 
 func normalizeCodexCallOutputBootstrap(body []byte, isCandidate func(map[string]any) bool, allowHistoricalContext bool) ([]byte, bool) {
@@ -1953,8 +1981,7 @@ func isCodexDelegationCandidate(item map[string]any) bool {
 
 func isCodexAutomationCandidate(item map[string]any) bool {
 	if stringField(item, "type") != "function_call_output" ||
-		stringField(item, "namespace") != "codex_app" ||
-		stringField(item, "name") != "automation_update" {
+		!isCodexAutomationTool(stringField(item, "namespace"), stringField(item, "name")) {
 		return false
 	}
 	output, ok := item["output"].(string)
@@ -1964,6 +1991,10 @@ func isCodexAutomationCandidate(item map[string]any) bool {
 func stringField(item map[string]any, key string) string {
 	value, _ := item[key].(string)
 	return value
+}
+
+func isCodexAutomationTool(namespace, name string) bool {
+	return namespace == "codex_app" && name == "automation_update"
 }
 
 func isCodexDelegationTool(namespace, name string) bool {
