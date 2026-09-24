@@ -39,6 +39,22 @@ public enum DesktopAppToolsFailure
     BadResponse,
 }
 
+/// <summary>The four things phone sync asks of the desktop app. A seam for tests.</summary>
+public interface IDesktopAppTools
+{
+    AppToolsCapabilities Capabilities { get; }
+
+    Task<AppToolsCapabilities> ConnectAsync(CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<DesktopThread>> ListThreadsAsync(int limit, CancellationToken cancellationToken);
+
+    Task<DesktopThreadStatus> GetThreadStatusAsync(string threadId, CancellationToken cancellationToken);
+
+    Task SendMessageAsync(string threadId, string prompt, CancellationToken cancellationToken);
+
+    Task NavigateToAsync(string threadId, CancellationToken cancellationToken);
+}
+
 public sealed class DesktopAppToolsException(DesktopAppToolsFailure failure, string message, Exception? inner = null)
     : Exception(message, inner)
 {
@@ -61,7 +77,7 @@ public sealed class DesktopAppToolsException(DesktopAppToolsFailure failure, str
 /// out, the message may already be running, and sending it again would run it twice.
 /// </para>
 /// </remarks>
-public sealed class DesktopAppToolsClient : IAsyncDisposable
+public sealed class DesktopAppToolsClient : IDesktopAppTools, IAsyncDisposable
 {
     private static readonly TimeSpan CallTimeout = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(2);
