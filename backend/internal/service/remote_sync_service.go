@@ -111,6 +111,7 @@ var remoteCommandTypes = map[string]bool{
 	"message.send":    true,
 	"thread.navigate": true,
 	"desktop.check":   true,
+	"desktop.repair":  true,
 }
 
 // RemoteSyncService pairs phones with computers and relays between them.

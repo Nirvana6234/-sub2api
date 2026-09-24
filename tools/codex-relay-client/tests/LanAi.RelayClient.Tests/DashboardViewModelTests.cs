@@ -1225,6 +1225,53 @@ public sealed class DashboardViewModelTests
         Assert.False(codex.LastAllowRestart);
     }
 
+    // ---- 远程修复 from the phone: the repair button, without the dialog -------------------
+
+    /// <summary>Restarts, and keeps the key: replacing it is the computer's button's call.</summary>
+    [Fact]
+    public async Task ARemoteRepairRestartsAndKeepsTheKey()
+    {
+        var codex = new FakeCodexStartup { OnCheck = () => new CodexHealth(true, true, null) };
+        DashboardViewModel dashboard = BuildWith(codex);
+
+        string? failure = await dashboard.RepairCodexForPhoneAsync();
+
+        Assert.Null(failure);
+        Assert.Equal(1, codex.RunCount);
+        Assert.True(codex.LastAllowRestart);
+        Assert.False(codex.LastForceNewKey);
+    }
+
+    [Fact]
+    public async Task ARemoteRepairNeverInstalls()
+    {
+        var codex = new FakeCodexStartup { OnCheck = () => new CodexHealth(false, false, null) };
+        DashboardViewModel dashboard = BuildWith(codex);
+
+        string? failure = await dashboard.RepairCodexForPhoneAsync();
+
+        Assert.Contains("安装", failure);
+        Assert.Equal(0, codex.RunCount);
+    }
+
+    /// <summary>A forced restart would get through an install in progress; the repair must not.</summary>
+    [Fact]
+    public async Task ARemoteRepairWaitsForAnInstallOrStart()
+    {
+        var codex = new FakeCodexStartup();
+        DashboardViewModel dashboard = BuildWith(codex);
+
+        dashboard.IsInstallingCodex = true;
+        string? whileInstalling = await dashboard.RepairCodexForPhoneAsync();
+        dashboard.IsInstallingCodex = false;
+        dashboard.IsStartingCodex = true;
+        string? whileStarting = await dashboard.RepairCodexForPhoneAsync();
+
+        Assert.NotNull(whileInstalling);
+        Assert.NotNull(whileStarting);
+        Assert.Equal(0, codex.RunCount);
+    }
+
     /// <summary>Launched but slow to answer: still starting, so the messages waiting for it are kept.</summary>
     [Fact]
     public async Task AChatGptThatIsSlowToAnswerIsStillStarting()
