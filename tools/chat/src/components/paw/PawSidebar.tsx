@@ -10,6 +10,7 @@ import {
   PawPromptIcon,
   PawSearchIcon,
   PawSettingsIcon,
+  PawComputerIcon,
   PawTrashIcon,
   PawWalletIcon,
 } from "./PawIcons";
@@ -25,6 +26,7 @@ interface PawSidebarProps {
   onDeleteConversation: (id?: string) => void;
   onRenameConversation: (id: string, title: string) => void;
   onOpenPrompts: () => void;
+  onOpenRemote: () => void;
   onOpenSettings: () => void;
   onOpenPayment: () => void;
   onOpenProfile: () => void;
@@ -50,6 +52,7 @@ export function PawSidebar({
   onDeleteConversation,
   onRenameConversation,
   onOpenPrompts,
+  onOpenRemote,
   onOpenSettings,
   onOpenPayment,
   onOpenProfile,
@@ -149,6 +152,15 @@ export function PawSidebar({
             aria-label="提示词"
           >
             <PawPromptIcon width={16} height={16} />
+          </button>
+          <button
+            className="paw-icon-button"
+            type="button"
+            onClick={onOpenRemote}
+            title="电脑：查看并接着操作电脑上的 Codex 会话"
+            aria-label="电脑"
+          >
+            <PawComputerIcon width={16} height={16} />
           </button>
           <button
             className="paw-icon-button"

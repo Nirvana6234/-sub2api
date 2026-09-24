@@ -4153,3 +4153,355 @@ textarea:disabled {
   color: var(--text);
   font-size: 11px;
 }
+
+/* ---- 「电脑」: phone sync of desktop Codex conversations ---------------------------- */
+
+.paw-remote-content {
+  width: min(100%, 760px);
+  margin: 0 auto;
+  display: grid;
+  gap: 18px;
+}
+
+.paw-remote-page .paw-account-section {
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.paw-remote-heading {
+  margin: 0;
+  font-size: 15px;
+  color: var(--text);
+}
+
+.paw-remote-muted,
+.paw-remote-page small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.paw-remote-danger {
+  color: var(--danger);
+}
+
+.paw-remote-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 13px;
+}
+
+.paw-remote-warn {
+  margin: 0;
+  color: #b45309;
+  font-size: 13px;
+}
+
+.paw-remote-notice {
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--panel-alt);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.paw-remote-page input,
+.paw-remote-page textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+}
+
+.paw-remote-page textarea {
+  resize: vertical;
+  min-height: 72px;
+}
+
+.paw-remote-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 4px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.paw-remote-row-main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.paw-remote-row-main strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paw-remote-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paw-remote-chevron {
+  color: var(--muted);
+  font-size: 20px;
+}
+
+.paw-remote-dot {
+  width: 9px;
+  height: 9px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+
+.paw-remote-dot.on,
+.paw-remote-dot.status-idle {
+  background: #16a34a;
+}
+
+.paw-remote-dot.status-active {
+  background: #2563eb;
+}
+
+.paw-remote-dot.status-systemError,
+.paw-remote-dot.status-missing {
+  background: var(--danger);
+}
+
+.paw-remote-fingerprint {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: 4px;
+  color: var(--text);
+}
+
+.paw-remote-claim {
+  display: flex;
+  gap: 10px;
+}
+
+.paw-remote-claim input {
+  flex: 1;
+  font-size: 18px;
+  letter-spacing: 3px;
+}
+
+.paw-remote-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.paw-remote-status {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.paw-remote-status.running {
+  color: #2563eb;
+}
+
+.paw-remote-status.waiting {
+  color: #b45309;
+  font-weight: 600;
+}
+
+.paw-remote-items {
+  display: grid;
+  gap: 10px;
+}
+
+.paw-remote-user {
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+}
+
+.paw-remote-bubble {
+  max-width: 88%;
+  padding: 10px 12px;
+  border-radius: 14px 14px 4px 14px;
+  background: var(--accent);
+  color: #fff;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.paw-remote-progress {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.paw-remote-reply {
+  padding: 2px 0;
+  color: var(--text);
+}
+
+.paw-remote-thinking summary {
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.paw-remote-thinking p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+.paw-remote-card {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  background: var(--panel-strong);
+}
+
+.paw-remote-card.failed {
+  border-left-color: var(--danger);
+}
+
+.paw-remote-card.running {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  border-left-color: #2563eb;
+}
+
+.paw-remote-card code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  color: var(--text);
+  word-break: break-all;
+}
+
+.paw-remote-pre {
+  margin: 0;
+  max-height: 60vh;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.paw-remote-file {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text);
+  word-break: break-all;
+}
+
+.paw-remote-added {
+  color: #16a34a;
+}
+
+.paw-remote-removed {
+  color: var(--danger);
+}
+
+.paw-remote-small {
+  justify-self: start;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.paw-remote-older {
+  justify-self: center;
+}
+
+.paw-remote-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.paw-remote-divider::before,
+.paw-remote-divider::after {
+  content: "";
+  flex: 1;
+  border-top: 1px dashed var(--border);
+}
+
+.paw-remote-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border-strong);
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: paw-remote-spin 0.9s linear infinite;
+}
+
+@keyframes paw-remote-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.paw-remote-compose {
+  position: sticky;
+  bottom: 0;
+  display: grid;
+  gap: 8px;
+  padding: 12px 0 4px;
+  background: var(--bg);
+}
+
+.paw-remote-compose-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.paw-remote-compose-actions > div {
+  display: flex;
+  gap: 8px;
+}
+
+.paw-remote-image {
+  display: block;
+  max-width: 100%;
+  border-radius: 8px;
+}
+
+@media (max-width: 600px) {
+  .paw-remote-page .paw-account-page-head {
+    padding: 14px 16px;
+  }
+
+  .paw-remote-page .paw-account-page-scroll {
+    padding: 14px 12px 24px;
+  }
+
+  .paw-remote-bubble {
+    max-width: 94%;
+  }
+}

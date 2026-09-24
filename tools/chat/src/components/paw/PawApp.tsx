@@ -21,6 +21,7 @@ import { PawExportModal } from "./PawExportModal";
 import { PawPromptModal } from "./PawPromptModal";
 import { PawPaymentModal } from "./PawPaymentModal";
 import { PawProfileModal } from "./PawProfileModal";
+import { PawRemotePage } from "./PawRemotePage";
 import { usePawClient } from "./usePawClient";
 
 const SIDEBAR_WIDTH_KEY = "paw-sidebar-width:v1";
@@ -50,6 +51,7 @@ export function PawApp() {
   const [promptsOpen, setPromptsOpen] = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [remoteOpen, setRemoteOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [confirmState, setConfirmState] = useState<{
@@ -370,6 +372,11 @@ export function PawApp() {
         }
         onRenameConversation={paw.renameConversation}
         onOpenPrompts={() => setPromptsOpen(true)}
+        onOpenRemote={() => {
+          setProfileOpen(false);
+          setRemoteOpen(true);
+          setMobileSidebarOpen(false);
+        }}
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenPayment={() => setPaymentOpen(true)}
         onOpenProfile={() => {
@@ -382,7 +389,9 @@ export function PawApp() {
         onDragStart={handleSidebarDragStart}
       />
 
-      {profileOpen ? (
+      {remoteOpen ? (
+        <PawRemotePage onClose={() => setRemoteOpen(false)} />
+      ) : profileOpen ? (
         <PawProfileModal
           config={paw.config}
           session={paw.session}

@@ -56,6 +56,7 @@ import type {
   PawSession,
   PawSubmitKey,
 } from "@/client/paw/types";
+import { clearRemoteData } from "../../client/remote/store";
 
 const CONVERSATIONS_KEY = "paw-conversations:v2";
 const ACTIVE_CONVERSATION_KEY = "paw-active-conversation:v2";
@@ -2339,6 +2340,8 @@ export function usePawClient() {
 
   const handleLogout = useCallback(() => {
     sendAbortRef.current?.abort();
+    // The next account must not inherit this one's paired computers or their conversations.
+    void clearRemoteData();
     clearEditState(false);
     clearPawSession();
     markPawSessionExpired();
