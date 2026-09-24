@@ -10,6 +10,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   RemoteError,
+  checkComputer,
   claimPairing,
   followSession,
   listDevices,
@@ -20,8 +21,19 @@ import {
   refreshPairingStatus,
   revokePairing,
   sendMessage,
+  type SelfCheck,
+  type SendResult,
 } from "../../client/remote/api";
-import { mergeItems, presentItems, type RemoteDevice, type RemoteSessionHeader, type SyncItem } from "../../client/remote/protocol";
+import {
+  TURN_FAILURE_HINT,
+  classifyTurnFailure,
+  mergeItems,
+  presentItems,
+  turnMessage,
+  type RemoteDevice,
+  type RemoteSessionHeader,
+  type SyncItem,
+} from "../../client/remote/protocol";
 import { deleteSession, loadSession, saveSession, type StoredPairing } from "../../client/remote/store";
 import { PawMarkdown } from "./PawMarkdown";
 import { PawModal } from "./PawModal";
@@ -403,20 +415,24 @@ function RemoteConversation({
     }
   };
 
-  const send = async (mode: "queue" | "insert") => {
-    const text = draft.trim();
-    if (!text) return;
+  /** Returns whether the computer took it. */
+  const deliver = async (text: string, mode: "queue" | "insert"): Promise<boolean> => {
     setSending(true);
     setError(null);
     try {
-      const result = await sendMessage(pairing, threadId, text, mode);
-      setDraft("");
-      setSent(result.queued ? "已排队：这一轮结束后发送" : "已送达电脑");
+      setSent(sentText(await sendMessage(pairing, threadId, text, mode)));
+      return true;
     } catch (err) {
       setError(errorText(err));
+      return false;
     } finally {
       setSending(false);
     }
+  };
+
+  const send = async (mode: "queue" | "insert") => {
+    const text = draft.trim();
+    if (text && (await deliver(text, mode))) setDraft("");
   };
 
   const openDetail = async (item: SyncItem, part: "output" | "diff" | "image", index = 0) => {
@@ -464,9 +480,21 @@ function RemoteConversation({
       ) : null}
 
       <div className="paw-remote-items">
-        {shown.map((item) => (
-          <RemoteItem key={item.seq} item={item} onDetail={openDetail} />
-        ))}
+        {shown.map((item) =>
+          item.kind === "turn_ended" && item.outcome === "failed" ? (
+            <FailedTurn
+              key={item.seq}
+              error={item.text}
+              message={turnMessage(shown, item.turnId)}
+              fullAccess={header?.permission === "full_access"}
+              busy={sending}
+              onResend={(text) => deliver(text, "queue")}
+              onCheck={() => checkComputer(pairing, threadId)}
+            />
+          ) : (
+            <RemoteItem key={item.seq} item={item} onDetail={openDetail} />
+          ),
+        )}
         <div ref={endRef} />
       </div>
 
@@ -507,6 +535,88 @@ function RemoteConversation({
           {detail.truncated ? <p className="paw-remote-muted">内容过长，只显示了一部分，完整内容请在电脑上查看。</p> : null}
         </PawModal>
       ) : null}
+    </div>
+  );
+}
+
+function sentText(result: SendResult): string {
+  if (result.waitingForDesktop) {
+    return result.startingDesktop
+      ? "电脑上的 ChatGPT 没开：正在启动，启动后自动发送（3 分钟内）"
+      : "电脑上的 ChatGPT 还没就绪：就绪后自动发送（3 分钟内）";
+  }
+  return result.queued ? "已排队：这一轮结束后发送" : "已送达电脑";
+}
+
+/**
+ * A turn that ended in an error, after the message had reached the computer. Nothing is
+ * sent again by itself: the message ran once already, and running it again is the
+ * user's call. Repairing ChatGPT restarts it, which stops every conversation, so that
+ * stays a button on the computer; the phone only checks and says so.
+ */
+function FailedTurn({
+  error,
+  message,
+  fullAccess,
+  busy,
+  onResend,
+  onCheck,
+}: {
+  error: string | null;
+  message: string | null;
+  fullAccess: boolean;
+  busy: boolean;
+  onResend: (text: string) => Promise<boolean>;
+  onCheck: () => Promise<SelfCheck>;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [check, setCheck] = useState<string | null>(null);
+
+  const runCheck = async () => {
+    setChecking(true);
+    try {
+      setCheck((await onCheck()).summary || "电脑没有给出结果");
+    } catch (err) {
+      setCheck(errorText(err));
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const resend = async () => {
+    if (message && (await onResend(message))) setConfirming(false);
+  };
+
+  return (
+    <div className="paw-remote-card failed">
+      <p className="paw-remote-error">这一轮出错：{error}</p>
+      <small className="paw-remote-muted">{TURN_FAILURE_HINT[classifyTurnFailure(error)]}</small>
+      {check ? <p className="paw-remote-progress">电脑自检：{check}</p> : null}
+      {confirming && message ? (
+        <div className="paw-remote-confirm">
+          <small className={fullAccess ? "paw-remote-danger" : "paw-remote-muted"}>
+            {fullAccess
+              ? "这条消息会在电脑上以完全访问权限再执行一次：上一次如果已经改了文件或跑了命令，会再做一遍。"
+              : "这条消息会在电脑上再执行一次。"}
+          </small>
+          <div className="paw-remote-actions">
+            <button type="button" className="paw-button paw-remote-small" disabled={busy} onClick={() => setConfirming(false)}>取消</button>
+            <button type="button" className="paw-button primary paw-remote-small" disabled={busy} onClick={() => void resend()}>
+              {busy ? "发送中…" : "确认重发"}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="paw-remote-actions">
+          <button type="button" className="paw-button paw-remote-small" disabled={checking} onClick={() => void runCheck()}>
+            {checking ? "自检中…" : "电脑自检"}
+          </button>
+          {message ? (
+            <button type="button" className="paw-button paw-remote-small" disabled={busy} onClick={() => setConfirming(true)}>重发这一条</button>
+          ) : null}
+        </div>
+      )}
     </div>
   );
 }

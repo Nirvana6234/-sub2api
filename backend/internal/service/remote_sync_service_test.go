@@ -324,6 +324,10 @@ func TestRemoteSync_OnlyKnownCommandsAreRelayed(t *testing.T) {
 		_, err := svc.Forward(context.Background(), pairing, json.RawMessage(body))
 		require.ErrorIs(t, err, ErrRemoteCommandRefused, body)
 	}
+
+	// The phone's 电脑自检 after a failed turn: let through (and then refused as offline here).
+	_, err := svc.Forward(context.Background(), pairing, json.RawMessage(`{"type":"desktop.check","thread_id":"t"}`))
+	require.NotErrorIs(t, err, ErrRemoteCommandRefused)
 }
 
 func TestRemoteSync_ABadPublicKeyIsRefusedBeforeTheCodeIsSpent(t *testing.T) {

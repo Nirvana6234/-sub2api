@@ -724,6 +724,48 @@ public sealed partial class DashboardViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// Starts ChatGPT for a message from the phone, only when it is not running.
+    /// </summary>
+    /// <remarks>
+    /// The phone is not at this computer, so this does only what cannot cost the user
+    /// anything: it never installs, and it never restarts — a running ChatGPT is left as it
+    /// is (its pipe may simply not be up yet), and a restart the start asks for is declined.
+    /// Health is read fresh rather than from <see cref="IsCodexRunning"/>, which only moves
+    /// on the dashboard's poll.
+    /// </remarks>
+    public async Task<DesktopSync.DesktopStartResult> StartCodexForPhoneAsync(CancellationToken cancellationToken = default)
+    {
+        if (IsStartingCodex)
+        {
+            return new DesktopSync.DesktopStartResult(DesktopSync.DesktopStartOutcome.Starting);
+        }
+
+        CodexHealth health = await _codex.CheckAsync(cancellationToken).ConfigureAwait(true);
+        IsCodexRunning = health.IsRunning;
+        if (health.IsRunning)
+        {
+            return new DesktopSync.DesktopStartResult(DesktopSync.DesktopStartOutcome.AlreadyRunning);
+        }
+
+        if (!health.IsInstalled || IsInstallingCodex)
+        {
+            return new DesktopSync.DesktopStartResult(DesktopSync.DesktopStartOutcome.Refused, "电脑上还没有安装 ChatGPT，请在电脑上安装。");
+        }
+
+        await StartCodexAsync(_ => Task.FromResult(false), cancellationToken).ConfigureAwait(true);
+        if (!IsCodexRunning)
+        {
+            // Launched but not answering in time (CodexUnresponsive) is not a refusal: the
+            // app may come up a moment later, and the messages waiting for it with it.
+            IsCodexRunning = (await _codex.CheckAsync(cancellationToken).ConfigureAwait(true)).IsRunning;
+        }
+
+        return IsCodexRunning
+            ? new DesktopSync.DesktopStartResult(DesktopSync.DesktopStartOutcome.Starting)
+            : new DesktopSync.DesktopStartResult(DesktopSync.DesktopStartOutcome.Refused, CodexMessage ?? "电脑上的 ChatGPT 没有启动");
+    }
+
     public async Task InstallCodexAsync(CancellationToken cancellationToken = default)
     {
         if (IsInstallingCodex)

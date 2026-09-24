@@ -80,7 +80,7 @@ public sealed class SyncAuditItem
     {
         Text = $"{entry.At.ToLocalTime():MM-dd HH:mm:ss}  {entry.PhoneLabel ?? "手机"}  {CommandName(entry.Command)}  {Outcome(entry.Outcome)}"
             + (entry.Summary is null ? string.Empty : $"：{entry.Summary}");
-        IsRefusal = entry.Outcome is not ("ok" or "queued");
+        IsRefusal = entry.Outcome is not ("ok" or "queued" or "queued_for_desktop");
     }
 
     public string Text { get; }
@@ -95,6 +95,7 @@ public sealed class SyncAuditItem
         DesktopSyncCommands.Detail => "查看详情",
         DesktopSyncCommands.SendMessage => "发送消息",
         DesktopSyncCommands.Navigate => "在电脑上打开",
+        DesktopSyncCommands.SelfCheck => "电脑自检",
         _ => command,
     };
 
@@ -106,6 +107,12 @@ public sealed class SyncAuditItem
         "not_approved" => "已拒绝（未确认的手机）",
         "not_selected" => "已拒绝（会话未勾选）",
         "rate_limited" => "已拒绝（太频繁）",
+        "queued_for_desktop" => "排队中（等 ChatGPT 启动）",
+        "expired" => "已丢弃（ChatGPT 没有及时就绪）",
+        "unavailable" => "未发送（ChatGPT 没有运行）",
+        "unconfirmed" => "未确认（可能已发出）",
+        _ when outcome.StartsWith("unavailable: ", StringComparison.Ordinal) => $"未发送（{outcome["unavailable: ".Length..]}）",
+        _ when outcome.StartsWith("failed: ", StringComparison.Ordinal) => $"失败（{outcome["failed: ".Length..]}）",
         _ => $"已拒绝（{outcome}）",
     };
 }

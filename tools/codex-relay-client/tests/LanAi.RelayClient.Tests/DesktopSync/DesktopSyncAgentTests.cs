@@ -25,6 +25,8 @@ public sealed class DesktopSyncAgentTests : IDisposable
     private readonly ECDsa _phoneKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
     private DateTimeOffset _now = DateTimeOffset.UtcNow;
     private readonly DesktopSyncAgent _agent;
+    private readonly Func<string, CodexThreadRecord?> _find;
+    private readonly List<DesktopSyncAgent> _extraAgents = [];
 
     public DesktopSyncAgentTests()
     {
@@ -34,6 +36,7 @@ public sealed class DesktopSyncAgentTests : IDisposable
 
         var record = new CodexThreadRecord(Thread, _rollout, @"C:\Work\p", "测试会话", "gpt-5.5", """{"type":"disabled"}""", "never", false);
         CodexThreadRecord? Find(string id) => id == Thread ? record : null;
+        _find = Find;
         _agent = new DesktopSyncAgent(_tools, new SessionContentSync(Find), Find, _store, _audit, clock: () => _now)
         {
             ConfirmTimeout = TimeSpan.FromMilliseconds(300),
@@ -47,6 +50,7 @@ public sealed class DesktopSyncAgentTests : IDisposable
     public void Dispose()
     {
         _agent.Dispose();
+        _extraAgents.ForEach(a => a.Dispose());
         _phoneKey.Dispose();
         Directory.Delete(_dir, recursive: true);
     }
@@ -294,6 +298,197 @@ public sealed class DesktopSyncAgentTests : IDisposable
         Assert.Equal("unconfirmed", _audit.Recent(1)[0].Outcome);
     }
 
+    // ---- The desktop app is not running ----------------------------------------------
+
+    /// <summary>Same state as <see cref="_agent"/>, plus a way to start ChatGPT and to check this computer.</summary>
+    private DesktopSyncAgent AgentWith(
+        Func<CancellationToken, Task<DesktopStartResult>>? start = null,
+        Func<CancellationToken, Task<DesktopSelfCheckResult>>? check = null,
+        TimeSpan? answerWait = null)
+    {
+        var agent = new DesktopSyncAgent(_tools, new SessionContentSync(_find), _find, _store, _audit, clock: () => _now,
+            startDesktop: start, selfCheck: check)
+        {
+            ConfirmTimeout = TimeSpan.FromMilliseconds(300),
+            StartAnswerWait = answerWait ?? TimeSpan.FromSeconds(2),
+        };
+        _extraAgents.Add(agent);
+        return agent;
+    }
+
+    private static async Task<JsonElement> Handle(DesktopSyncAgent agent, object command)
+    {
+        byte[] answer = await agent.HandleAsync(PairingId, JsonSerializer.SerializeToUtf8Bytes(command), CancellationToken.None);
+        using JsonDocument document = JsonDocument.Parse(answer);
+        return document.RootElement.Clone();
+    }
+
+    /// <summary>
+    /// The phone's message waits while ChatGPT is started for it, and goes out once the
+    /// app answers. A second message does not start it again.
+    /// </summary>
+    [Fact]
+    public async Task AMessageToAClosedDesktopWaitsWhileChatGptIsStarted()
+    {
+        int starts = 0;
+        DesktopSyncAgent agent = AgentWith(start: _ =>
+        {
+            starts++;
+            return Task.FromResult(new DesktopStartResult(DesktopStartOutcome.Starting));
+        });
+        _tools.Unavailable = true;
+
+        JsonElement first = await Handle(agent, Signed("第一条"));
+        JsonElement second = await Handle(agent, Signed("第二条", mode: "insert"));
+
+        Assert.True(first.GetProperty("queued").GetBoolean());
+        Assert.True(first.GetProperty("waiting_for_desktop").GetBoolean());
+        Assert.True(first.GetProperty("starting_desktop").GetBoolean());
+        Assert.True(second.GetProperty("waiting_for_desktop").GetBoolean());
+        Assert.Equal(1, starts);
+        Assert.Empty(_tools.Sent);
+
+        await agent.PumpAsync();
+        Assert.Equal(2, agent.QueuedCount);
+
+        _tools.Unavailable = false;
+        await agent.PumpAsync();
+        await agent.PumpAsync();
+
+        Assert.Equal([(Thread, "第一条"), (Thread, "第二条")], _tools.Sent);
+        Assert.Equal(0, agent.QueuedCount);
+    }
+
+    /// <summary>Without a way to start ChatGPT, a closed desktop is still just reported.</summary>
+    [Fact]
+    public async Task WithoutAStarterAClosedDesktopIsReported()
+    {
+        _tools.Unavailable = true;
+
+        JsonElement answer = await Handle(Signed("在吗"));
+
+        Assert.Equal("desktop_unavailable", answer.GetProperty("error").GetString());
+        Assert.Equal(0, _agent.QueuedCount);
+    }
+
+    [Fact]
+    public async Task ARefusedStartIsReportedWithItsReasonAndNothingWaits()
+    {
+        DesktopSyncAgent agent = AgentWith(start: _ => Task.FromResult(new DesktopStartResult(DesktopStartOutcome.Refused, "这个账号还没有可用于 Codex 的分组")));
+        _tools.Unavailable = true;
+
+        JsonElement answer = await Handle(agent, Signed("在吗"));
+
+        Assert.Equal("desktop_start_refused", answer.GetProperty("error").GetString());
+        Assert.Contains("分组", answer.GetProperty("message").GetString());
+        Assert.Equal(0, agent.QueuedCount);
+    }
+
+    /// <summary>A refusal is not remembered: once the user fixes it on the computer, the next message starts again.</summary>
+    [Fact]
+    public async Task AfterARefusalTheNextMessageAsksAgain()
+    {
+        int starts = 0;
+        DesktopSyncAgent agent = AgentWith(start: _ =>
+        {
+            starts++;
+            return Task.FromResult(new DesktopStartResult(starts == 1 ? DesktopStartOutcome.Refused : DesktopStartOutcome.Starting, "没有分组"));
+        });
+        _tools.Unavailable = true;
+
+        await Handle(agent, Signed("一"));
+        JsonElement second = await Handle(agent, Signed("二"));
+
+        Assert.Equal(2, starts);
+        Assert.True(second.GetProperty("queued").GetBoolean());
+    }
+
+    /// <summary>ChatGPT is running but its pipe is not up yet: wait, and say it is not being started.</summary>
+    [Fact]
+    public async Task ARunningChatGptWithoutItsPipeIsWaitedFor()
+    {
+        DesktopSyncAgent agent = AgentWith(start: _ => Task.FromResult(new DesktopStartResult(DesktopStartOutcome.AlreadyRunning)));
+        _tools.Unavailable = true;
+
+        JsonElement answer = await Handle(agent, Signed("在吗"));
+
+        Assert.True(answer.GetProperty("queued").GetBoolean());
+        Assert.False(answer.GetProperty("starting_desktop").GetBoolean());
+    }
+
+    /// <summary>A message is not sent long after it was written because the desktop app turned up late.</summary>
+    [Fact]
+    public async Task AMessageWaitingForTheDesktopExpires()
+    {
+        DesktopSyncAgent agent = AgentWith(start: _ => Task.FromResult(new DesktopStartResult(DesktopStartOutcome.Starting)));
+        _tools.Unavailable = true;
+        await Handle(agent, Signed("在吗"));
+
+        _now += DesktopSyncAgent.DesktopWaitTimeout + TimeSpan.FromSeconds(1);
+        _tools.Unavailable = false;
+        await agent.PumpAsync();
+
+        Assert.Empty(_tools.Sent);
+        Assert.Equal(0, agent.QueuedCount);
+        Assert.Equal("expired", _audit.Recent(1)[0].Outcome);
+    }
+
+    /// <summary>The start answered after the phone was told it was starting, and refused: nothing is left waiting.</summary>
+    [Fact]
+    public async Task ASlowRefusalDropsWhatWasWaiting()
+    {
+        var start = new TaskCompletionSource<DesktopStartResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        DesktopSyncAgent agent = AgentWith(start: _ => start.Task, answerWait: TimeSpan.FromMilliseconds(20));
+        _tools.Unavailable = true;
+
+        JsonElement answer = await Handle(agent, Signed("在吗"));
+        Assert.True(answer.GetProperty("queued").GetBoolean());
+        Assert.Equal(1, agent.QueuedCount);
+
+        start.SetResult(new DesktopStartResult(DesktopStartOutcome.Refused, "没有分组"));
+        DateTime deadline = DateTime.UtcNow.AddSeconds(5);
+        while (agent.QueuedCount > 0 && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+        }
+
+        Assert.Equal(0, agent.QueuedCount);
+        Assert.Contains("没有分组", _audit.Recent(1)[0].Outcome);
+    }
+
+    // ---- Checking this computer after a failed turn -----------------------------------
+
+    [Fact]
+    public async Task TheSelfCheckReportsWhatItFound()
+    {
+        DesktopSyncAgent agent = AgentWith(check: _ => Task.FromResult(new DesktopSelfCheckResult(RelayListening: true, SignedIn: false, ServerReachable: true)));
+
+        JsonElement answer = await Handle(agent, new { type = "desktop.check", thread_id = Thread });
+
+        Assert.True(answer.GetProperty("ok").GetBoolean());
+        Assert.False(answer.GetProperty("signed_in").GetBoolean());
+        Assert.True(answer.GetProperty("relay_listening").GetBoolean());
+        Assert.Contains("重新登录", answer.GetProperty("summary").GetString());
+    }
+
+    [Fact]
+    public async Task TheSelfCheckIsOnlyForASelectedConversation()
+    {
+        DesktopSyncAgent agent = AgentWith(check: _ => throw new InvalidOperationException("must not run"));
+
+        JsonElement answer = await Handle(agent, new { type = "desktop.check", thread_id = "not-selected" });
+
+        Assert.Equal("not_selected", answer.GetProperty("error").GetString());
+    }
+
+    [Theory]
+    [InlineData(true, true, true, "一切正常")]
+    [InlineData(false, true, true, "修复 ChatGPT 启动")]
+    [InlineData(true, true, false, "网络")]
+    [InlineData(false, false, false, "重新登录")]
+    public void TheSummaryNamesTheFirstProblem(bool relay, bool signedIn, bool server, string expected) =>
+        Assert.Contains(expected, new DesktopSelfCheckResult(relay, signedIn, server).Summary);
+
     // ---- Reading ---------------------------------------------------------------------
 
     [Fact]
@@ -482,10 +677,18 @@ public sealed class DesktopSyncAgentTests : IDisposable
                 : Task.FromResult<IReadOnlyList<DesktopThread>>(Threads);
 
         public Task<DesktopThreadStatus> GetThreadStatusAsync(string threadId, CancellationToken cancellationToken) =>
-            Task.FromResult(Status.TryGetValue(threadId, out DesktopThreadStatus? status) ? status : new DesktopThreadStatus("idle", []));
+            Unavailable
+                ? throw new DesktopAppToolsException(DesktopAppToolsFailure.Unavailable, "not running")
+                : Task.FromResult(Status.TryGetValue(threadId, out DesktopThreadStatus? status) ? status : new DesktopThreadStatus("idle", []));
 
         public Task SendMessageAsync(string threadId, string prompt, CancellationToken cancellationToken)
         {
+            if (Unavailable)
+            {
+                // A write that failed: nothing reached the desktop app.
+                throw new DesktopAppToolsException(DesktopAppToolsFailure.Unavailable, "not running");
+            }
+
             lock (Sent)
             {
                 Sent.Add((threadId, prompt));

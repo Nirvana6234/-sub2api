@@ -351,7 +351,7 @@ v1 只实现 Codex，但要把「会话来源」抽象出来，免得以后接 C
 | `GET  /api/v1/remote/devices/:device_id/sessions/:thread_id/stream?cursor=`（SSE） | 手机 | 跟读一条会话；连上时服务端向助手发 `subscribe`，断开时发 `unsubscribe` |
 | `GET  /api/v1/remote/agent?device_id=`（WebSocket） | 助手 | 助手的长连接 |
 
-服务端对 `cmd` 只检查信封：`type` 必须是 `sessions.list` / `session.open` / `session.history` / `session.detail` / `message.send` / `thread.navigate` 之一，体积 ≤ 64 KB。这是第二道防线，第一道在助手本地（§5.2）。
+服务端对 `cmd` 只检查信封：`type` 必须是 `sessions.list` / `session.open` / `session.history` / `session.detail` / `message.send` / `thread.navigate` / `desktop.check` 之一，体积 ≤ 64 KB。这是第二道防线，第一道在助手本地（§5.2）。
 
 ### 7.2 与助手之间的帧
 
@@ -393,12 +393,13 @@ WebSocket 文本帧，JSON：
 | `session.open` | `thread_id`，`turns`（默认 10） | `session`（`thread_id`、`title`、`cwd`、`model`、`permission`、`open_turn_id`）、`items[]`、`has_older`、`truncated_turn_id`、`cursor` |
 | `session.history` | `thread_id`，`before_turn_id`，`turns` | `items[]`、`has_older`、`truncated_turn_id` |
 | `session.detail` | `thread_id`，`turn_id`，`item_id`，`part`（`output` / `diff` / `image`），`index` | `text`，或 `media_type` + `data`（base64）；`truncated` |
-| `message.send` | `thread_id`，`text`（≤ 8000 字），`mode`（`queue` 默认 / `insert`），`ts`（毫秒），`nonce`，`sig` | `queued`：`true` 表示会话正忙，助手会在这一轮结束后再发 |
+| `message.send` | `thread_id`，`text`（≤ 8000 字），`mode`（`queue` 默认 / `insert`），`ts`（毫秒），`nonce`，`sig` | `queued`：`true` 表示会话正忙，助手会在这一轮结束后再发；`waiting_for_desktop`：`true` 表示桌面版没有回应，消息排队等它就绪（3 分钟内不就绪即丢弃并记审计）；`starting_desktop`：`true` 表示助手正为此启动 ChatGPT（只在 ChatGPT 未运行时启动，不安装、不重启；启动被拒（没装、没有分组、需要重启等）时回 `desktop_start_refused`，`message` 是原因，手机原样显示） |
 | `thread.navigate` | `thread_id` | — |
+| `desktop.check` | `thread_id`（须是已勾选会话） | 只读自检，不重启任何东西：`desktop_running`、`relay_listening`（本机中转能否应答）、`signed_in`、`server_reachable`（服务器 `/health`）、`summary`（给手机的一句话）。轮次失败后由用户在手机上点「电脑自检」触发；重启 ChatGPT 的修复只提示到电脑上做 |
 
 `items[]` 每项：`seq`、`turn_id`、`item_id`、`kind`（`user` / `progress` / `reply` / `thinking` / `command` / `file_change` / `tool` / `image` / `running` / `notice` / `turn_started` / `turn_ended` / `unknown`），按需带 `text`、`origin`（`desktop` / `phone` / `delegated`）、`phase_missing`（`progress` 消息在 rollout 里没有 `phase`，可能其实是最终回答；手机在该轮结束且没有 `reply` 时，把这一轮最后一条这样的消息当 `reply` 显示）、`image_count`、`command`、`exit_code`、`status`、`duration_ms`、`output_preview`、`output_truncated`、`files[]`（`path`、`change`、`added`、`removed`）、`outcome`（`completed` / `failed` / `aborted`）。`running` 卡片在同一轮出现任何后续条目时由手机收起。
 
-常见错误码：`disabled`（电脑上关着）、`not_approved`（这台手机没在电脑上确认）、`not_selected`（会话没勾选）、`bad_signature`、`rate_limited`（每分钟 6 条）、`desktop_unavailable`（桌面版没开）、`unconfirmed`（请求已发出但桌面版没回应，且 5 秒内会话里没出现这条消息；可能仍会执行，助手不会重发，由用户看会话再决定）、`desktop_error`、`missing`、`refused`。
+常见错误码：`disabled`（电脑上关着）、`not_approved`（这台手机没在电脑上确认）、`not_selected`（会话没勾选）、`bad_signature`、`rate_limited`（每分钟 6 条）、`desktop_unavailable`（桌面版没开）、`desktop_start_refused`（为消息启动 ChatGPT 被拒，见 `message`）、`unconfirmed`（请求已发出但桌面版没回应，且 5 秒内会话里没出现这条消息；可能仍会执行，助手不会重发，由用户看会话再决定）、`desktop_error`、`missing`、`refused`。
 
 **跟读**（SSE，`?cursor=` 取自 `session.open` 的 `cursor`）：每行 `data:` 是一个事件：
 
