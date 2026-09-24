@@ -641,6 +641,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	// token 计费部分仍受利润门保护，独立图片/视频端点才在门外。
 	pricingCtx, pricingAt := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
 	c.Request = c.Request.WithContext(pricingCtx)
+	hashRequestPayload := usagePayloadHasher(body)
 
 	for {
 		// Streaming Forward intentionally detaches the upstream request so usage can
@@ -812,11 +813,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			}()
 			return h.gatewayService.Forward(c.Request.Context(), c, account, attemptBody)
 		}()
-		var cyberBlockBodyHTTP []byte
 		if service.GetOpsCyberPolicy(c) != nil {
-			cyberBlockBodyHTTP = sessionHashBody
+			h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil, sessionHashBody, clientRequestedUsageFields(c, channelMapping, reqModel, ""), hashRequestPayload())
 		}
-		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil, cyberBlockBodyHTTP, clientRequestedUsageFields(c, channelMapping, reqModel, ""), service.HashUsageRequestPayload(body))
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
 		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)
 		responseLatencyMs := forwardDurationMs
@@ -853,7 +852,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			stampOpenAIRequestedReasoningEffort(res, c)
 			userAgent := c.GetHeader("User-Agent")
 			clientIP := ip.GetClientIP(c)
-			requestPayloadHash := service.HashUsageRequestPayload(body)
+			requestPayloadHash := hashRequestPayload()
 			inboundEndpoint := GetInboundEndpoint(c)
 			upstreamEndpoint := resolveOpenAIUpstreamEndpoint(c, account, res)
 			quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
@@ -1351,6 +1350,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	// 分组利润控制：Messages 文本入口同样请求级装门并固定 pricingAt。
 	msgPricingCtx, pricingAt := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
 	c.Request = c.Request.WithContext(msgPricingCtx)
+	hashRequestPayload := usagePayloadHasher(body)
 
 	for {
 		if failoverClientGone(c) {
@@ -1476,11 +1476,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			}()
 			return h.gatewayService.ForwardAsAnthropic(c.Request.Context(), c, account, forwardBody, promptCacheKey, defaultMappedModel)
 		}()
-		var cyberBlockBodyMsg []byte
 		if service.GetOpsCyberPolicy(c) != nil {
-			cyberBlockBodyMsg = body
+			h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil, body, clientRequestedUsageFields(c, channelMappingMsg, reqModel, ""), hashRequestPayload())
 		}
-		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil, cyberBlockBodyMsg, clientRequestedUsageFields(c, channelMappingMsg, reqModel, ""), service.HashUsageRequestPayload(body))
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
 		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)
 		responseLatencyMs := forwardDurationMs
@@ -1501,7 +1499,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			stampOpenAIRequestedReasoningEffort(res, c)
 			userAgent := c.GetHeader("User-Agent")
 			clientIP := ip.GetClientIP(c)
-			requestPayloadHash := service.HashUsageRequestPayload(body)
+			requestPayloadHash := hashRequestPayload()
 			inboundEndpoint := GetInboundEndpoint(c)
 			upstreamEndpoint := resolveOpenAIUpstreamEndpoint(c, account, res)
 			quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
@@ -4307,6 +4305,18 @@ func (h *OpenAIGatewayHandler) enqueueCyberSessionBlockedOpsEntry(c *gin.Context
 		meta.UserID = apiKey.User.ID
 	}
 	enqueueOpsErrorLog(h.opsService, buildCyberSessionBlockedOpsEntry(meta))
+}
+
+// usagePayloadHasher 返回请求体 hash 的惰性求值函数：首次调用才计算，之后复用结果。
+// 请求体可能有数 MB，每一跳中转都整包 sha256 一次；cyber 记录只在命中标记时才需要它，
+// 用量记录与 cyber 记录又需要同一个值，因此每个请求至多计算一次。
+func usagePayloadHasher(body []byte) func() string {
+	var once sync.Once
+	var hash string
+	return func() string {
+		once.Do(func() { hash = service.HashUsageRequestPayload(body) })
+		return hash
+	}
 }
 
 // recordCyberPolicyIfMarked 在 gateway forward 返回后检查 cyber 标记，异步写风控日志/邮件，
