@@ -11,7 +11,7 @@
     "stage:server": "node scripts/stage-server-dist.mjs",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "node --test \"src/client/remote/*.test.ts\"",
+    "test": "node --test \"src/client/remote/*.test.ts\" \"src/client/paw/*.test.ts\"",
     "codex:vendor": "node scripts/fetch-codex-vendor.mjs",
     "app:dev": "node scripts/dev-desktop.mjs",
     "app:build": "node scripts/build-tauri.mjs",

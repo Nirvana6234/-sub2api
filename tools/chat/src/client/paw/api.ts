@@ -12,6 +12,7 @@ import {
   extractPawStreamDelta,
   parsePawSSEChunk,
   parsePawSSEData,
+  readPawSSEFrameData,
 } from "./sse";
 import type {
   PawAttachmentResponse,
@@ -739,58 +740,56 @@ export async function sendPawChat(
     finishReason: null,
   };
 
+  // Returns true on [DONE].
+  const handleFrame = (frame: string): boolean => {
+    // A body that is plain JSON rather than SSE (an error answered without streaming)
+    // has no data: lines; it is still read so its error message is not lost.
+    const data = readPawSSEFrameData(frame) ?? (frame.trim().startsWith("{") ? frame : null);
+    if (data === null) return false;
+
+    let payload;
+    try {
+      payload = parsePawSSEData(data);
+    } catch {
+      throw new Error("流式响应格式错误");
+    }
+
+    if (payload === "[DONE]") {
+      return true;
+    }
+
+    const errorMessage = extractPawErrorMessage(payload);
+    if (errorMessage) {
+      throw new Error(errorMessage);
+    }
+
+    const delta = extractPawStreamDelta(payload);
+    result = accumulatePawCompletion(result, delta);
+    options.onDelta?.({
+      contentDelta: delta.contentDelta,
+      reasoningDelta: delta.reasoningDelta,
+    });
+    return false;
+  };
+
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
+    buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
     const parsed = parsePawSSEChunk(buffer);
     buffer = parsed.remainder;
 
     for (const frame of parsed.frames) {
-      let payload;
-      try {
-        payload = parsePawSSEData(frame.replace(/^data:\s*/gm, "").trim());
-      } catch {
-        throw new Error("流式响应格式错误");
-      }
-
-      if (payload === "[DONE]") {
-        return result;
-      }
-
-      const errorMessage = extractPawErrorMessage(payload);
-      if (errorMessage) {
-        throw new Error(errorMessage);
-      }
-
-      const delta = extractPawStreamDelta(payload);
-      result = accumulatePawCompletion(result, delta);
-      options.onDelta?.({
-        contentDelta: delta.contentDelta,
-        reasoningDelta: delta.reasoningDelta,
-      });
+      if (handleFrame(frame)) return result;
     }
   }
 
-  buffer += decoder.decode();
+  buffer += decoder.decode().replace(/\r\n/g, "\n");
   if (buffer.trim()) {
     const parsed = parsePawSSEChunk(`${buffer}\n\n`);
     for (const frame of parsed.frames) {
-      const payload = parsePawSSEData(frame.replace(/^data:\s*/gm, "").trim());
-      if (payload === "[DONE]") {
-        return result;
-      }
-      const errorMessage = extractPawErrorMessage(payload);
-      if (errorMessage) {
-        throw new Error(errorMessage);
-      }
-      const delta = extractPawStreamDelta(payload);
-      result = accumulatePawCompletion(result, delta);
-      options.onDelta?.({
-        contentDelta: delta.contentDelta,
-        reasoningDelta: delta.reasoningDelta,
-      });
+      if (handleFrame(frame)) return result;
     }
   }
 
