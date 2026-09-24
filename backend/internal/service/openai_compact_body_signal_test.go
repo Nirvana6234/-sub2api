@@ -77,6 +77,14 @@ func TestNormalizeCompactionTriggerInputOrder_MovesAndCollapsesTriggers(t *testi
 	require.Equal(t, "compaction_trigger", items[1].Get("type").String())
 }
 
+func TestNormalizeCompactionTriggerInputOrder_NoTriggerReturnsSameBody(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.5","input":[{"type":"message","role":"user","content":"hello"},{"type":"function_call_output","call_id":"call_1","output":"ok","sequence":9007199254740993}]}`)
+	normalized, changed, err := NormalizeCompactionTriggerInputOrder(body)
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, &body[0], &normalized[0], "a body without a trigger must be returned as is, without a rebuild")
+}
+
 func TestNormalizeCompactionTriggerInputOrder_AlreadyFinalPreservesBytes(t *testing.T) {
 	body := []byte(`{"input":[{"type":"message"},{"type":"compaction_trigger"}]}`)
 	normalized, changed, err := NormalizeCompactionTriggerInputOrder(body)
