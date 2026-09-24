@@ -29,6 +29,14 @@ internal sealed class DesktopSyncAgent : IDisposable
     public static readonly TimeSpan QueuePumpInterval = TimeSpan.FromSeconds(2);
     public static readonly TimeSpan StatusPollInterval = TimeSpan.FromSeconds(5);
 
+    /// <summary>
+    /// How long an unconfirmed send is looked for in the conversation. Measured: the
+    /// delegated message is in the rollout 0.6 s after the send returns.
+    /// </summary>
+    internal TimeSpan ConfirmTimeout { get; init; } = TimeSpan.FromSeconds(5);
+
+    internal static readonly TimeSpan ConfirmPollInterval = TimeSpan.FromMilliseconds(250);
+
     private readonly IDesktopAppTools _tools;
     private readonly SessionContentSync _content;
     private readonly Func<string, CodexThreadRecord?> _findThread;
@@ -204,7 +212,12 @@ internal sealed class DesktopSyncAgent : IDisposable
             }
             catch (DesktopAppToolsException ex)
             {
-                return SyncJson.Error(ex.Failure == DesktopAppToolsFailure.Unavailable ? "desktop_unavailable" : "desktop_error", ex.Message);
+                return ex.Failure switch
+                {
+                    DesktopAppToolsFailure.Unavailable => SyncJson.Error("desktop_unavailable", ex.Message),
+                    DesktopAppToolsFailure.Unconfirmed => SyncJson.Error("unconfirmed", "电脑没有回应，这条消息可能已经发出：请先看会话里有没有，再决定是否重发"),
+                    _ => SyncJson.Error("desktop_error", ex.Message),
+                };
             }
         }
     }
@@ -388,10 +401,78 @@ internal sealed class DesktopSyncAgent : IDisposable
             }
         }
 
-        await _tools.SendMessageAsync(threadId, text, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await DeliverAsync(threadId, text, cancellationToken).ConfigureAwait(false);
+        }
+        catch (DesktopAppToolsException ex)
+        {
+            Audit(phone.PairingId, phone.PhoneLabel, DesktopSyncCommands.SendMessage, threadId, SyncAuditLog.SummaryOf(text), FailureOutcome(ex));
+            throw;
+        }
+
         Audit(phone.PairingId, phone.PhoneLabel, DesktopSyncCommands.SendMessage, threadId, SyncAuditLog.SummaryOf(text), "ok");
         return SyncJson.Ok(w => w.WriteBoolean("queued", false));
     }
+
+    /// <summary>
+    /// Sends; when the desktop app took the message and then went quiet, looks for it in
+    /// the conversation before calling it lost. Never sends twice.
+    /// </summary>
+    /// <exception cref="DesktopAppToolsException">
+    /// <see cref="DesktopAppToolsFailure.Unconfirmed"/> when it did not show up in time.
+    /// It may still, so it is not sent again.
+    /// </exception>
+    private async Task DeliverAsync(string threadId, string text, CancellationToken cancellationToken)
+    {
+        SyncCursor? before = _findThread(threadId) is CodexThreadRecord record
+            ? new SyncCursor(record.RolloutPath, RolloutFile.LengthOf(record.RolloutPath))
+            : null;
+        try
+        {
+            await _tools.SendMessageAsync(threadId, text, cancellationToken).ConfigureAwait(false);
+        }
+        catch (DesktopAppToolsException ex) when (ex.Failure == DesktopAppToolsFailure.Unconfirmed && before is not null)
+        {
+            if (!await AppearsAsync(threadId, text, before, cancellationToken).ConfigureAwait(false))
+            {
+                throw;
+            }
+        }
+    }
+
+    private async Task<bool> AppearsAsync(string threadId, string text, SyncCursor before, CancellationToken cancellationToken)
+    {
+        string expected = text.Trim();
+        DateTimeOffset deadline = DateTimeOffset.UtcNow + ConfirmTimeout;
+        while (true)
+        {
+            SessionDelta? delta = _content.ReadSince(threadId, before);
+            if (delta is null || delta.Resync)
+            {
+                return false;
+            }
+
+            if (delta.Items.Any(i => i.Kind == SyncItemKind.User && i.Origin == UserMessageOrigin.Delegated && i.Text?.Trim() == expected))
+            {
+                return true;
+            }
+
+            if (DateTimeOffset.UtcNow >= deadline)
+            {
+                return false;
+            }
+
+            await Task.Delay(ConfirmPollInterval, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static string FailureOutcome(DesktopAppToolsException ex) => ex.Failure switch
+    {
+        DesktopAppToolsFailure.Unavailable => "unavailable",
+        DesktopAppToolsFailure.Unconfirmed => "unconfirmed",
+        _ => $"failed: {ex.Message}",
+    };
 
     private async Task<byte[]> NavigateAsync(ApprovedPhone phone, string threadId, CancellationToken cancellationToken)
     {
@@ -466,21 +547,45 @@ internal sealed class DesktopSyncAgent : IDisposable
                         continue;
                     }
 
+                    // Taken off before sending, so that nothing else sends it meanwhile.
+                    int index;
                     lock (_gate)
                     {
-                        if (!_queue.Remove(next))
+                        index = _queue.IndexOf(next);
+                        if (index < 0)
                         {
                             continue;
                         }
+
+                        _queue.RemoveAt(index);
                     }
 
-                    await _tools.SendMessageAsync(next.ThreadId, next.Text, CancellationToken.None).ConfigureAwait(false);
+                    try
+                    {
+                        await DeliverAsync(next.ThreadId, next.Text, CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (DesktopAppToolsException ex) when (ex.Failure == DesktopAppToolsFailure.Unavailable)
+                    {
+                        // Not sent: the desktop app went away between the status check and
+                        // the send. Back in its place, to go out when the app is back.
+                        lock (_gate)
+                        {
+                            if (IsSelected(_state, next.ThreadId))
+                            {
+                                _queue.Insert(Math.Min(index, _queue.Count), next);
+                            }
+                        }
+
+                        continue;
+                    }
+
                     Audit(next.PairingId, next.PhoneLabel, DesktopSyncCommands.SendMessage, next.ThreadId, SyncAuditLog.SummaryOf(next.Text), "ok");
                     StateChanged?.Invoke();
                 }
                 catch (DesktopAppToolsException ex)
                 {
-                    // Left queued when the desktop app is merely away; dropped when the send itself failed.
+                    // Left queued when the desktop app is merely away; dropped when the send
+                    // itself failed or may have gone out (sending again could run it twice).
                     if (ex.Failure != DesktopAppToolsFailure.Unavailable)
                     {
                         lock (_gate)
@@ -488,7 +593,8 @@ internal sealed class DesktopSyncAgent : IDisposable
                             _queue.Remove(next);
                         }
 
-                        Audit(next.PairingId, next.PhoneLabel, DesktopSyncCommands.SendMessage, next.ThreadId, SyncAuditLog.SummaryOf(next.Text), $"failed: {ex.Message}");
+                        Audit(next.PairingId, next.PhoneLabel, DesktopSyncCommands.SendMessage, next.ThreadId, SyncAuditLog.SummaryOf(next.Text), FailureOutcome(ex));
+                        StateChanged?.Invoke();
                     }
                 }
             }

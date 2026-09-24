@@ -398,7 +398,7 @@ WebSocket 文本帧，JSON：
 
 `items[]` 每项：`seq`、`turn_id`、`item_id`、`kind`（`user` / `progress` / `reply` / `thinking` / `command` / `file_change` / `tool` / `image` / `running` / `notice` / `turn_started` / `turn_ended` / `unknown`），按需带 `text`、`origin`（`desktop` / `phone` / `delegated`）、`phase_missing`（`progress` 消息在 rollout 里没有 `phase`，可能其实是最终回答；手机在该轮结束且没有 `reply` 时，把这一轮最后一条这样的消息当 `reply` 显示）、`image_count`、`command`、`exit_code`、`status`、`duration_ms`、`output_preview`、`output_truncated`、`files[]`（`path`、`change`、`added`、`removed`）、`outcome`（`completed` / `failed` / `aborted`）。`running` 卡片在同一轮出现任何后续条目时由手机收起。
 
-常见错误码：`disabled`（电脑上关着）、`not_approved`（这台手机没在电脑上确认）、`not_selected`（会话没勾选）、`bad_signature`、`rate_limited`（每分钟 6 条）、`desktop_unavailable`（桌面版没开）、`missing`、`refused`。
+常见错误码：`disabled`（电脑上关着）、`not_approved`（这台手机没在电脑上确认）、`not_selected`（会话没勾选）、`bad_signature`、`rate_limited`（每分钟 6 条）、`desktop_unavailable`（桌面版没开）、`unconfirmed`（请求已发出但桌面版没回应，且 5 秒内会话里没出现这条消息；可能仍会执行，助手不会重发，由用户看会话再决定）、`desktop_error`、`missing`、`refused`。
 
 **跟读**（SSE，`?cursor=` 取自 `session.open` 的 `cursor`）：每行 `data:` 是一个事件：
 
