@@ -14,6 +14,7 @@ import {
   claimPairing,
   followSession,
   listDevices,
+  listSessions,
   loadDetail,
   loadHistory,
   navigateOnComputer,
@@ -24,6 +25,7 @@ import {
   type SelfCheck,
   type SendResult,
 } from "../../client/remote/api";
+import { takePendingPairCode } from "../../client/remote/handoff";
 import {
   TURN_FAILURE_HINT,
   classifyTurnFailure,
@@ -42,6 +44,11 @@ interface PawRemotePageProps {
   onClose: () => void;
   /** A computer was paired or unpaired: the sidebar group reloads. */
   onChanged: () => void;
+  /**
+   * Opens one shared conversation. Used after a pairing that arrived from the main site's
+   * dashboard is confirmed on the computer, so the user lands straight in the controls.
+   */
+  onOpenSession?: (pairing: StoredPairing, threadId: string) => void;
 }
 
 const PERMISSION_TEXT: Record<string, string> = {
@@ -54,10 +61,30 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : "出错了";
 }
 
-export function PawRemotePage({ onClose, onChanged }: PawRemotePageProps) {
+export function PawRemotePage({ onClose, onChanged, onOpenSession }: PawRemotePageProps) {
   const [devices, setDevices] = useState<Array<{ pairing: StoredPairing; device: RemoteDevice | null }>>([]);
+  const [arrival, setArrival] = useState<string | null>(null);
   const onChangedRef = useRef(onChanged);
   onChangedRef.current = onChanged;
+  const onOpenSessionRef = useRef(onOpenSession);
+  onOpenSessionRef.current = onOpenSession;
+
+  // The computer confirmed a pairing that came in from the dashboard: open its most
+  // recently active shared conversation, or say why there is nothing to open yet.
+  const paired = useCallback(async (pairing: StoredPairing) => {
+    setArrival(`已连接「${pairing.deviceName}」，正在打开同步的会话…`);
+    try {
+      const { sessions } = await listSessions(pairing);
+      const latest = [...sessions].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))[0];
+      if (latest && onOpenSessionRef.current) {
+        onOpenSessionRef.current(pairing, latest.threadId);
+        return;
+      }
+      setArrival(`已连接「${pairing.deviceName}」。电脑上还没有勾选要同步的会话：请在共飞助手「同步会话」里勾选，勾选后会出现在左侧「电脑 · 同步会话」里。`);
+    } catch (err) {
+      setArrival(`已连接「${pairing.deviceName}」，但暂时读不到它的会话：${errorText(err)}`);
+    }
+  }, []);
 
   const reload = useCallback(async () => {
     setDevices(await listDevices());
@@ -85,7 +112,8 @@ export function PawRemotePage({ onClose, onChanged }: PawRemotePageProps) {
       </header>
       <div className="paw-account-page-scroll">
         <div className="paw-remote-content">
-          <RemoteDevices devices={devices} onChanged={changed} />
+          {arrival ? <p className="paw-remote-arrival">{arrival}</p> : null}
+          <RemoteDevices devices={devices} onChanged={changed} onPaired={paired} />
         </div>
       </div>
     </main>
@@ -132,14 +160,22 @@ export function PawRemoteSessionPage({
 function RemoteDevices({
   devices,
   onChanged,
+  onPaired,
 }: {
   devices: Array<{ pairing: StoredPairing; device: RemoteDevice | null }>;
   onChanged: () => Promise<void>;
+  /** A pairing claimed from a dashboard hand-off was confirmed on the computer. */
+  onPaired: (pairing: StoredPairing) => void;
 }) {
   const [forgetting, setForgetting] = useState<StoredPairing | null>(null);
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Device claimed with a code handed over from the dashboard; confirming it jumps
+  // into its conversations instead of leaving the user on this page.
+  const handoffDeviceRef = useRef<string | null>(null);
+  const onPairedRef = useRef(onPaired);
+  onPairedRef.current = onPaired;
   const pending = devices.filter((d) => d.pairing.status === "claimed");
   const pendingRef = useRef(pending);
   pendingRef.current = pending;
@@ -153,6 +189,10 @@ function RemoteDevices({
         try {
           const updated = await refreshPairingStatus(pairing);
           if (!updated || updated.status !== pairing.status) await onChanged();
+          if (updated?.status === "active" && updated.deviceId === handoffDeviceRef.current) {
+            handoffDeviceRef.current = null;
+            onPairedRef.current(updated);
+          }
         } catch {
           // Try again on the next tick.
         }
@@ -161,19 +201,32 @@ function RemoteDevices({
     return () => window.clearInterval(timer);
   }, [pendingKey, onChanged]);
 
-  const claim = async () => {
+  const claim = async (value: string = code, handoff = false) => {
     setBusy(true);
     setError(null);
     try {
-      await claimPairing(code);
+      const claimed = await claimPairing(value);
+      if (handoff) handoffDeviceRef.current = claimed.deviceId;
       setCode("");
       await onChanged();
     } catch (err) {
+      setCode(value);
       setError(errorText(err));
     } finally {
       setBusy(false);
     }
   };
+
+  // A code handed over from the main site's dashboard (/paw/?pair=123456) is claimed
+  // straight away; the user only has to confirm on the computer.
+  const handoffTakenRef = useRef(false);
+  useEffect(() => {
+    if (handoffTakenRef.current) return;
+    handoffTakenRef.current = true;
+    const pending = takePendingPairCode();
+    if (pending) void claim(pending, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <>
@@ -234,7 +287,7 @@ function RemoteDevices({
             value={code}
             onChange={(event) => setCode(event.target.value)}
           />
-          <button type="button" className="paw-button primary" disabled={busy || code.replace(/\s/g, "").length !== 6} onClick={claim}>
+          <button type="button" className="paw-button primary" disabled={busy || code.replace(/\s/g, "").length !== 6} onClick={() => void claim()}>
             {busy ? "提交中…" : "配对"}
           </button>
         </div>

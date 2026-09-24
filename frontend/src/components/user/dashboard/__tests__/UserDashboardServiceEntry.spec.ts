@@ -62,6 +62,29 @@ describe('UserDashboardServiceEntry', () => {
     expect(wrapper.get('[data-testid="service-api-endpoint"]').text()).toBe('https://api.example.com/v1')
   })
 
+  it('hands a 6-digit pairing code from the client card to the mobile app', async () => {
+    const assign = vi.fn()
+    const original = window.location
+    Object.defineProperty(window, 'location', { configurable: true, value: { ...original, assign } })
+    try {
+      const wrapper = mountEntry({ playground_enabled: true, client_download_enabled: true })
+      const card = wrapper.get('[data-testid="service-card-client"]')
+      expect(card.get('[data-testid="service-remote-open"]').attributes('href')).toBe('/paw/')
+
+      const input = card.get('[data-testid="service-remote-code"]')
+      const connect = card.get('[data-testid="service-remote-connect"]')
+      await input.setValue('12345')
+      expect(connect.attributes('disabled')).toBeDefined()
+
+      await input.setValue(' 123 456 ')
+      expect(connect.attributes('disabled')).toBeUndefined()
+      await card.get('[data-testid="service-client-remote"]').trigger('submit')
+      expect(assign).toHaveBeenCalledWith('/paw/?pair=123456')
+    } finally {
+      Object.defineProperty(window, 'location', { configurable: true, value: original })
+    }
+  })
+
   it('does not mention recharging anywhere', () => {
     const wrapper = mountEntry({ playground_enabled: true, client_download_enabled: true })
     expect(wrapper.html()).not.toMatch(/recharge|purchase|充值/)

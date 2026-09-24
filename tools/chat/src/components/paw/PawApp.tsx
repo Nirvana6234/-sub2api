@@ -23,6 +23,7 @@ import { PawPaymentModal } from "./PawPaymentModal";
 import { PawProfileModal } from "./PawProfileModal";
 import { PawRemotePage, PawRemoteSessionPage } from "./PawRemotePage";
 import type { StoredPairing } from "../../client/remote/store";
+import { hasPendingPairCode } from "../../client/remote/handoff";
 import { usePawClient } from "./usePawClient";
 
 const SIDEBAR_WIDTH_KEY = "paw-sidebar-width:v1";
@@ -242,6 +243,14 @@ export function PawApp() {
     }
   }, [sidebarWidth]);
 
+  // 从主站带配对码进来（/paw/?pair=123456）：登录好就打开「电脑」页，由那边接着认领。
+  const sessionToken = paw.session?.accessToken ?? null;
+  useEffect(() => {
+    if (!sessionToken || !hasPendingPairCode()) return;
+    setRemoteSession(null);
+    setRemoteOpen(true);
+  }, [sessionToken]);
+
   const handleSidebarDragStart = useCallback(
     (event: PointerEvent<HTMLDivElement>) => {
       if (window.matchMedia("(max-width: 980px)").matches) return;
@@ -412,7 +421,15 @@ export function PawApp() {
           }}
         />
       ) : remoteOpen ? (
-        <PawRemotePage onClose={() => setRemoteOpen(false)} onChanged={() => setRemoteReload((n) => n + 1)} />
+        <PawRemotePage
+          onClose={() => setRemoteOpen(false)}
+          onChanged={() => setRemoteReload((n) => n + 1)}
+          onOpenSession={(pairing, threadId) => {
+            setRemoteOpen(false);
+            setRemoteSession({ pairing, threadId });
+            setRemoteReload((n) => n + 1);
+          }}
+        />
       ) : profileOpen ? (
         <PawProfileModal
           config={paw.config}

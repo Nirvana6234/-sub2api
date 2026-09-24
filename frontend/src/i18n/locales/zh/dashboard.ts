@@ -77,7 +77,14 @@ export default {
         mac: 'macOS · Apple 芯片',
         meta: '最新版 v{version}',
         guide: '安装教程',
-        action: '下载'
+        action: '下载',
+        remote: {
+          title: '用手机遥控电脑上的 Codex',
+          hint: '在电脑上的共飞助手打开「同步会话」→「配对新手机」，把显示的 6 位码填在这里，再到电脑上确认。',
+          placeholder: '6 位配对码',
+          connect: '连接',
+          open: '打开手机版'
+        }
       }
     },
     quickActions: '快捷操作',
