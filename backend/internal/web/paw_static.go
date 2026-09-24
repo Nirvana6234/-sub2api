@@ -1,12 +1,15 @@
 package web
 
 import (
+	"bytes"
 	"io"
 	"io/fs"
 	"net/http"
 	"strings"
 
+	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/gin-gonic/gin"
+	"golang.org/x/net/html"
 )
 
 const pawFrontendPrefix = "/paw"
@@ -33,6 +36,10 @@ func newPawStaticHandler(distFS fs.FS) gin.HandlerFunc {
 		}
 
 		if pawFileExists(distFS, cleanPath) {
+			if strings.HasSuffix(strings.ToLower(cleanPath), ".html") {
+				servePawHTML(c, distFS, cleanPath)
+				return
+			}
 			request := c.Request.Clone(c.Request.Context())
 			request.URL.Path = "/" + cleanPath
 			applyPawStaticAssetCacheHeaders(c.Writer.Header(), cleanPath)
@@ -65,7 +72,11 @@ func pawFileExists(distFS fs.FS, path string) bool {
 }
 
 func servePawIndex(c *gin.Context, distFS fs.FS) {
-	file, err := distFS.Open("index.html")
+	servePawHTML(c, distFS, "index.html")
+}
+
+func servePawHTML(c *gin.Context, distFS fs.FS, path string) {
+	file, err := distFS.Open(path)
 	if err != nil {
 		c.String(http.StatusNotFound, "Paw frontend not found")
 		c.Abort()
@@ -80,6 +91,48 @@ func servePawIndex(c *gin.Context, distFS fs.FS) {
 		return
 	}
 
+	// Next's exported HTML includes inline configuration and hydration scripts.
+	// Their nonce must match this response's SecurityHeaders middleware nonce.
+	content = pawHTMLWithNonce(content, middleware.GetNonceFromContext(c))
+	c.Header("Cache-Control", "no-store")
 	c.Data(http.StatusOK, "text/html; charset=utf-8", content)
 	c.Abort()
+}
+
+// Only rewrite script start tags in trusted, embedded build output. Tokenizing
+// preserves script bodies and avoids rewriting tag-like text inside scripts.
+func pawHTMLWithNonce(content []byte, nonce string) []byte {
+	if nonce == "" {
+		return content
+	}
+	var output bytes.Buffer
+	output.Grow(len(content))
+	tokenizer := html.NewTokenizer(bytes.NewReader(content))
+	for {
+		kind := tokenizer.Next()
+		raw := tokenizer.Raw()
+		if kind == html.ErrorToken {
+			output.Write(raw)
+			return output.Bytes()
+		}
+		if kind == html.StartTagToken || kind == html.SelfClosingTagToken {
+			name, _ := tokenizer.TagName()
+			if bytes.Equal(name, []byte("script")) {
+				// Parse this opening tag separately; TagName advances the tokenizer.
+				tagParser := html.NewTokenizer(bytes.NewReader(raw))
+				tagParser.Next()
+				tag := tagParser.Token()
+				attrs := tag.Attr[:0]
+				for _, attr := range tag.Attr {
+					if attr.Key != "nonce" {
+						attrs = append(attrs, attr)
+					}
+				}
+				tag.Attr = append(attrs, html.Attribute{Key: "nonce", Val: nonce})
+				output.WriteString(tag.String())
+				continue
+			}
+		}
+		output.Write(raw)
+	}
 }
