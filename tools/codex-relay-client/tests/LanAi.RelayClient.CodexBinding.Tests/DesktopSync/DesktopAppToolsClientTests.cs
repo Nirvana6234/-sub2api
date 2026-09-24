@@ -239,18 +239,58 @@ public sealed class DesktopAppToolsClientTests
 
     /// <summary>
     /// If the pipe dies after a send went out, the message may already be running.
-    /// Sending it again could run it twice, so the send is reported, not retried.
+    /// Sending it again could run it twice, so the send is reported as unconfirmed, not retried.
     /// </summary>
     [Fact]
-    public async Task ASendIsNeverRetried()
+    public async Task ASendThatWentOutIsNeverRetried()
     {
         _transport.Add("codex-browser-use-a", FakeAppToolsTransport.AppTools((_, _) => new PipeReply.Hangup()));
 
         await using DesktopAppToolsClient client = Client();
         var failure = await Assert.ThrowsAsync<DesktopAppToolsException>(() => client.SendMessageAsync(Target, "hi", CancellationToken.None));
 
-        Assert.Equal(DesktopAppToolsFailure.Unavailable, failure.Failure);
+        Assert.Equal(DesktopAppToolsFailure.Unconfirmed, failure.Failure);
         Assert.Single(_transport.Requests, r => r.Tool == "send_message_to_thread");
+    }
+
+    /// <summary>
+    /// The usual failure: the desktop app restarted, and the connection kept from before
+    /// fails on write. Nothing went out, so the send goes once, on the renamed pipe.
+    /// </summary>
+    [Fact]
+    public async Task ASendOnAConnectionFromBeforeARestartGoesOutOnceOnTheNewPipe()
+    {
+        _transport.Add("codex-browser-use-old", FakeAppToolsTransport.AppTools((_, request) => FakeAppToolsTransport.ToolResult(request, "{}")));
+
+        await using DesktopAppToolsClient client = Client();
+        await client.ConnectAsync(CancellationToken.None);
+
+        _transport.Break("codex-browser-use-old");
+        _transport.Remove("codex-browser-use-old");
+        _transport.Add("codex-browser-use-new", FakeAppToolsTransport.AppTools((_, request) => FakeAppToolsTransport.ToolResult(request, "{}")));
+
+        await client.SendMessageAsync(Target, "hi", CancellationToken.None);
+
+        Assert.Equal([("codex-browser-use-new", "tools/call", "send_message_to_thread")],
+            _transport.Requests.Where(r => r.Tool == "send_message_to_thread"));
+    }
+
+    /// <summary>The write failed and no desktop app answers: nothing was sent, which is what unavailable means.</summary>
+    [Fact]
+    public async Task ASendOnAConnectionFromBeforeTheDesktopAppClosedIsUnavailable()
+    {
+        _transport.Add("codex-browser-use-old", FakeAppToolsTransport.AppTools((_, request) => FakeAppToolsTransport.ToolResult(request, "{}")));
+
+        await using DesktopAppToolsClient client = Client();
+        await client.ConnectAsync(CancellationToken.None);
+
+        _transport.Break("codex-browser-use-old");
+        _transport.Remove("codex-browser-use-old");
+
+        var failure = await Assert.ThrowsAsync<DesktopAppToolsException>(() => client.SendMessageAsync(Target, "hi", CancellationToken.None));
+
+        Assert.Equal(DesktopAppToolsFailure.Unavailable, failure.Failure);
+        Assert.DoesNotContain(_transport.Requests, r => r.Tool == "send_message_to_thread");
     }
 
     // ---- Framing ---------------------------------------------------------------------
