@@ -55,6 +55,8 @@ export interface SyncItem {
   kind: SyncItemKind;
   text: string | null;
   origin?: "desktop" | "phone" | "delegated";
+  /** A "progress" message the desktop wrote without saying whether it was the answer. */
+  phaseMissing?: boolean;
   imageCount?: number;
   command?: string | null;
   exitCode?: number;
@@ -211,6 +213,7 @@ export function readItem(value: unknown): SyncItem | null {
     text: str(value.text),
   };
   if (value.origin === "desktop" || value.origin === "phone" || value.origin === "delegated") item.origin = value.origin;
+  if (value.phase_missing === true) item.phaseMissing = true;
   if (num(value.image_count) !== undefined) item.imageCount = num(value.image_count);
   if ("command" in value) item.command = str(value.command);
   if (num(value.exit_code) !== undefined) item.exitCode = num(value.exit_code);
@@ -308,6 +311,33 @@ export function mergeItems(current: SyncItem[], incoming: SyncItem[]): SyncItem[
   return ordered.filter(
     (item) => item.kind !== "running" || !item.turnId || lastSeqInTurn.get(item.turnId) === item.seq,
   );
+}
+
+/**
+ * What to show for a conversation. A turn that has ended without a "reply" (the
+ * desktop left the answer untagged, as ~7% of its messages are) shows its last
+ * message as the reply when that message is one of the untagged ones.
+ */
+export function presentItems(items: SyncItem[]): SyncItem[] {
+  const ended = new Set<string>();
+  const answered = new Set<string>();
+  const lastMessage = new Map<string, SyncItem>();
+  for (const item of items) {
+    if (!item.turnId) continue;
+    if (item.kind === "turn_ended") ended.add(item.turnId);
+    if (item.kind === "reply") answered.add(item.turnId);
+    if (item.kind === "progress" || item.kind === "reply") lastMessage.set(item.turnId, item);
+  }
+
+  const promoted = new Set<number>();
+  for (const [turnId, item] of lastMessage) {
+    if (ended.has(turnId) && !answered.has(turnId) && item.kind === "progress" && item.phaseMissing) {
+      promoted.add(item.seq);
+    }
+  }
+  return promoted.size === 0
+    ? items
+    : items.map((item) => (promoted.has(item.seq) ? { ...item, kind: "reply" } : item));
 }
 
 export const REMOTE_ERROR_TEXT: Record<string, string> = {

@@ -163,9 +163,11 @@ public static class RolloutProjector
                 return entry with { Kind = SyncItemKind.Tool, Text = Str(item, "name") ?? "tool" };
 
             case "AgentMessage":
+                string? phase = Str(item, "phase");
                 return entry with
                 {
-                    Kind = Str(item, "phase") == "final_answer" ? SyncItemKind.Reply : SyncItemKind.Progress,
+                    Kind = phase == "final_answer" ? SyncItemKind.Reply : SyncItemKind.Progress,
+                    PhaseMissing = phase is null,
                     Text = JoinText(item, "content", "Text", "text"),
                 };
 

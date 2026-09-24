@@ -75,6 +75,22 @@ public sealed class RolloutProjectorTests
             .Agent(Turn, "m2", "改好了。", phase: "final_answer"));
 
         Assert.Equal([SyncItemKind.TurnStarted, SyncItemKind.Progress, SyncItemKind.Reply], items.Select(i => i.Kind));
+        Assert.All(items, i => Assert.False(i.PhaseMissing));
+    }
+
+    /// <summary>
+    /// A message without a phase may be the answer; only the end of the turn tells, so it
+    /// is sent as progress and flagged for the phone to decide.
+    /// </summary>
+    [Fact]
+    public void AMessageWithoutAPhaseIsFlagged()
+    {
+        List<SyncItem> items = Project(new RolloutBuilder().TurnStarted(Turn)
+            .Agent(Turn, "m1", "改好了。", phase: null));
+
+        SyncItem message = Assert.Single(items, i => i.ItemId == "m1");
+        Assert.Equal(SyncItemKind.Progress, message.Kind);
+        Assert.True(message.PhaseMissing);
     }
 
     /// <summary>Only the summary leaves; the encrypted reasoning never does, and empty summaries are noise.</summary>

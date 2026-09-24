@@ -54,8 +54,11 @@ internal sealed class RolloutBuilder
     public RolloutBuilder ToolOutput(string turn, string id, string name, string output) =>
         Item(turn, $$"""{"type":"FunctionCallOutput","id":{{Q(id)}},"name":{{Q(name)}},"namespace":"codex_app","output":{{Q(output)}}}""");
 
-    public RolloutBuilder Agent(string turn, string id, string text, string phase = "commentary") =>
-        Item(turn, $$"""{"type":"AgentMessage","id":{{Q(id)}},"content":[{"type":"Text","text":{{Q(text)}}}],"phase":{{Q(phase)}}}""");
+    /// <param name="phase">Null writes no <c>phase</c> at all, as older rollouts do.</param>
+    public RolloutBuilder Agent(string turn, string id, string text, string? phase = "commentary") =>
+        Item(turn, phase is null
+            ? $$"""{"type":"AgentMessage","id":{{Q(id)}},"content":[{"type":"Text","text":{{Q(text)}}}]}"""
+            : $$"""{"type":"AgentMessage","id":{{Q(id)}},"content":[{"type":"Text","text":{{Q(text)}}}],"phase":{{Q(phase)}}}""");
 
     public RolloutBuilder Reasoning(string turn, string id, params string[] summary) =>
         Item(turn, $$"""{"type":"Reasoning","id":{{Q(id)}},"summary_text":[{{string.Join(',', summary.Select(Q))}}],"raw_content":[]}""")

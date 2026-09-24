@@ -12,6 +12,8 @@ import {
   fingerprint,
   generateSigningKey,
   mergeItems,
+  presentItems,
+  readItem,
   readStreamEvent,
   signSend,
   type SyncItem,
@@ -91,4 +93,37 @@ test("a refusal carried on the stream is surfaced", () => {
     error: "not_selected",
     message: "没勾选",
   });
+});
+
+function msg(seq: number, turnId: string, kind: SyncItem["kind"], phaseMissing = false): SyncItem {
+  const item: SyncItem = { seq, turnId, itemId: `i${seq}`, kind, text: `m${seq}` };
+  if (phaseMissing) item.phaseMissing = true;
+  return item;
+}
+
+test("the untagged flag is read off the wire", () => {
+  assert.equal(readItem({ seq: 1, turn_id: "t", item_id: "a", kind: "progress", phase_missing: true })?.phaseMissing, true);
+  assert.equal(readItem({ seq: 1, turn_id: "t", item_id: "a", kind: "progress" })?.phaseMissing, undefined);
+});
+
+test("an ended turn without a reply shows its last untagged message as the reply", () => {
+  const shown = presentItems([
+    msg(1, "t", "turn_started"),
+    msg(2, "t", "progress", true),
+    msg(3, "t", "command"),
+    msg(4, "t", "progress", true),
+    msg(5, "t", "turn_ended"),
+  ]);
+  assert.deepEqual(shown.map((i) => i.kind), ["turn_started", "progress", "command", "reply", "turn_ended"]);
+});
+
+test("nothing is promoted while the turn runs, when it has a reply, or when its last message is tagged", () => {
+  const running = [msg(1, "t", "turn_started"), msg(2, "t", "progress", true)];
+  assert.equal(presentItems(running), running);
+
+  const replied = [msg(1, "t", "progress", true), msg(2, "t", "reply"), msg(3, "t", "turn_ended")];
+  assert.equal(presentItems(replied), replied);
+
+  const tagged = [msg(1, "t", "progress", true), msg(2, "t", "progress"), msg(3, "t", "turn_ended")];
+  assert.equal(presentItems(tagged), tagged);
 });

@@ -396,7 +396,7 @@ WebSocket 文本帧，JSON：
 | `message.send` | `thread_id`，`text`（≤ 8000 字），`mode`（`queue` 默认 / `insert`），`ts`（毫秒），`nonce`，`sig` | `queued`：`true` 表示会话正忙，助手会在这一轮结束后再发 |
 | `thread.navigate` | `thread_id` | — |
 
-`items[]` 每项：`seq`、`turn_id`、`item_id`、`kind`（`user` / `progress` / `reply` / `thinking` / `command` / `file_change` / `tool` / `image` / `running` / `notice` / `turn_started` / `turn_ended` / `unknown`），按需带 `text`、`origin`（`desktop` / `phone` / `delegated`）、`image_count`、`command`、`exit_code`、`status`、`duration_ms`、`output_preview`、`output_truncated`、`files[]`（`path`、`change`、`added`、`removed`）、`outcome`（`completed` / `failed` / `aborted`）。`running` 卡片在同一轮出现任何后续条目时由手机收起。
+`items[]` 每项：`seq`、`turn_id`、`item_id`、`kind`（`user` / `progress` / `reply` / `thinking` / `command` / `file_change` / `tool` / `image` / `running` / `notice` / `turn_started` / `turn_ended` / `unknown`），按需带 `text`、`origin`（`desktop` / `phone` / `delegated`）、`phase_missing`（`progress` 消息在 rollout 里没有 `phase`，可能其实是最终回答；手机在该轮结束且没有 `reply` 时，把这一轮最后一条这样的消息当 `reply` 显示）、`image_count`、`command`、`exit_code`、`status`、`duration_ms`、`output_preview`、`output_truncated`、`files[]`（`path`、`change`、`added`、`removed`）、`outcome`（`completed` / `failed` / `aborted`）。`running` 卡片在同一轮出现任何后续条目时由手机收起。
 
 常见错误码：`disabled`（电脑上关着）、`not_approved`（这台手机没在电脑上确认）、`not_selected`（会话没勾选）、`bad_signature`、`rate_limited`（每分钟 6 条）、`desktop_unavailable`（桌面版没开）、`missing`、`refused`。
 
