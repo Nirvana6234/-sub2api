@@ -73,6 +73,49 @@ func contributorAPIKeyIDFromContext(ctx context.Context) int64 {
 	return apiKeyID
 }
 
+// filterContributionAccountsForCaller removes other users' self-use
+// contributions from a group's default candidate list. Such accounts stay bound
+// to the contributor's groups so the contributor can reach them, which also
+// puts them in every other member's group listing.
+func filterContributionAccountsForCaller(ctx context.Context, accounts []Account) []Account {
+	return filterContributionAccountsForUser(contributorUserIDFromContext(ctx), accounts)
+}
+
+// filterContributionAccountsForUser is filterContributionAccountsForCaller for
+// work that runs without the request context, such as batch image jobs.
+func filterContributionAccountsForUser(userID int64, accounts []Account) []Account {
+	var filtered []Account
+	for i := range accounts {
+		if accounts[i].IsContributionAvailableTo(userID) {
+			if filtered != nil {
+				filtered = append(filtered, accounts[i])
+			}
+			continue
+		}
+		if filtered == nil {
+			filtered = make([]Account, i, len(accounts))
+			copy(filtered, accounts[:i])
+		}
+	}
+	if filtered == nil {
+		return accounts
+	}
+	return filtered
+}
+
+// contributionAccountBlockedForCaller guards selection paths that load an
+// account by ID (sticky sessions, previous_response_id bindings, fresh
+// rechecks) instead of taking it from the filtered candidate list. A caller who
+// explicitly selected a contribution room may legitimately reach another
+// user's contribution; the reloaded copy has lost its room marker, so the room
+// route itself is the authorization.
+func contributionAccountBlockedForCaller(ctx context.Context, account *Account, repo ContributionRoomRoutingRepository) bool {
+	if account.IsContributionAvailableTo(contributorUserIDFromContext(ctx)) {
+		return false
+	}
+	return !hasContributionRoomRoute(ctx, repo)
+}
+
 func (s *GatewayService) hasContributionRoomRoute(ctx context.Context) bool {
 	return s != nil && hasContributionRoomRoute(ctx, s.contributionRoomRepo)
 }

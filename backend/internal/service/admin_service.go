@@ -482,12 +482,20 @@ type BulkUpdateAccountsInput struct {
 	Status         string
 	Schedulable    *bool
 	GroupIDs       *[]int64
-	Credentials    map[string]any
-	Extra          map[string]any
-	ProbeEnabled   *bool
+	// GroupPriority sets account_groups.priority in one group for every target
+	// account bound to it; accounts outside the group are left untouched.
+	GroupPriority *BulkGroupPriorityUpdate
+	Credentials   map[string]any
+	Extra         map[string]any
+	ProbeEnabled  *bool
 	// SkipMixedChannelCheck skips the mixed channel risk check when binding groups.
 	// This should only be set when the caller has explicitly confirmed the risk.
 	SkipMixedChannelCheck bool
+}
+
+type BulkGroupPriorityUpdate struct {
+	GroupID  int64
+	Priority int
 }
 
 type BulkUpdateAccountFilters struct {

@@ -33,6 +33,8 @@ func (s *GatewayService) SelectAccountForModel(ctx context.Context, groupID *int
 
 // SelectAccountForModelWithExclusions selects an account supporting the requested model while excluding specified accounts.
 func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}) (*Account, error) {
+	// 兜底尝试账本在本次选号的最外层装一次，递归进兜底池的各层共用它。
+	ctx = withFallbackAttemptLedger(ctx)
 	// 优先检查 context 中的强制平台（/antigravity 路由）
 	var platform string
 	forcePlatform, hasForcePlatform := ctx.Value(ctxkey.ForcePlatform).(string)
@@ -71,18 +73,31 @@ func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context
 		if !gatewayPlatformSupportsFallbackPool(platform) {
 			return nil, nil, false
 		}
-		fallbackCtx, fallbackGroupID := s.nextGatewayFallbackGroup(ctx, groupID)
-		if fallbackGroupID == nil {
-			return nil, nil, false
+		// 按配置顺序逐个试兜底池：前一个（连同它的下游链路）没号才试下一个。
+		// 都没号时报信息量最大的那个错误（见 preferNoAccountError）。
+		var account *Account
+		var err, noAccountErr error
+		used, resolved := false, false
+		s.eachGatewayFallbackAttempt(ctx, groupID, func(attempt gatewayFallbackAttempt) bool {
+			used = true
+			account, err = s.SelectAccountForModelWithExclusions(
+				attempt.ctx,
+				attempt.groupID,
+				sessionHash,
+				requestedModel,
+				excludedIDs,
+			)
+			if errors.Is(err, ErrNoAvailableAccounts) {
+				noAccountErr = preferNoAccountError(noAccountErr, err)
+				return false
+			}
+			resolved = true
+			return true
+		})
+		if resolved {
+			return account, err, true
 		}
-		account, err := s.SelectAccountForModelWithExclusions(
-			fallbackCtx,
-			fallbackGroupID,
-			sessionHash,
-			requestedModel,
-			excludedIDs,
-		)
-		return account, err, true
+		return nil, noAccountErr, used
 	}
 
 	// Claude Code 限制可能已将 groupID 解析为 fallback group，
@@ -127,6 +142,8 @@ func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context
 // metadataUserID: 用于客户端亲和调度，从中提取客户端 ID
 // sub2apiUserID: 系统用户 ID，用于二维亲和调度
 func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, metadataUserID string, sub2apiUserID int64) (*AccountSelectionResult, error) {
+	// 兜底尝试账本在本次选号的最外层装一次，递归进兜底池的各层共用它。
+	ctx = withFallbackAttemptLedger(ctx)
 	// 调试日志：记录调度入口参数
 	excludedIDsList := make([]int64, 0, len(excludedIDs))
 	for id := range excludedIDs {
@@ -253,20 +270,33 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		if !gatewayPlatformSupportsFallbackPool(platform) {
 			return nil, nil, false
 		}
-		fallbackCtx, fallbackGroupID := s.nextGatewayFallbackGroup(ctx, groupID)
-		if fallbackGroupID == nil {
-			return nil, nil, false
+		// 按配置顺序逐个试兜底池：前一个（连同它的下游链路）没号才试下一个。
+		// 都没号时报信息量最大的那个错误（见 preferNoAccountError）。
+		var result *AccountSelectionResult
+		var err, noAccountErr error
+		used, resolved := false, false
+		s.eachGatewayFallbackAttempt(ctx, groupID, func(attempt gatewayFallbackAttempt) bool {
+			used = true
+			result, err = s.SelectAccountWithLoadAwareness(
+				attempt.ctx,
+				attempt.groupID,
+				sessionHash,
+				requestedModel,
+				excludedIDs,
+				metadataUserID,
+				sub2apiUserID,
+			)
+			if errors.Is(err, ErrNoAvailableAccounts) {
+				noAccountErr = preferNoAccountError(noAccountErr, err)
+				return false
+			}
+			resolved = true
+			return true
+		})
+		if resolved {
+			return result, err, true
 		}
-		result, err := s.SelectAccountWithLoadAwareness(
-			fallbackCtx,
-			fallbackGroupID,
-			sessionHash,
-			requestedModel,
-			excludedIDs,
-			metadataUserID,
-			sub2apiUserID,
-		)
-		return result, err, true
+		return nil, noAccountErr, used
 	}
 
 	accounts, useMixed, err := s.listSchedulableAccounts(ctx, groupID, platform, hasForcePlatform)
@@ -1221,6 +1251,7 @@ func preferContributedAccount(account *Account) {
 // contributed accounts within the default pool, with the group's public
 // contribution pool appended as an extra source either way.
 func (s *GatewayService) applyContributionRoomRouting(ctx context.Context, defaultAccounts []Account, groupID *int64, platform string, useMixed bool) ([]Account, error) {
+	defaultAccounts = filterContributionAccountsForCaller(ctx, defaultAccounts)
 	if s == nil || s.contributionRoomRepo == nil {
 		return s.appendPublicContributionPoolAccounts(ctx, defaultAccounts, groupID, platform, useMixed)
 	}
@@ -1811,6 +1842,9 @@ func (s *GatewayService) getSchedulableAccount(ctx context.Context, accountID in
 	if s.isAccountBlockedBySchedulingThreshold(ctx, account) {
 		return nil, nil
 	}
+	if contributionAccountBlockedForCaller(ctx, account, s.contributionRoomRepo) {
+		return nil, nil
+	}
 	// Sticky / non-list selection must honor free soft-gate (same as listSchedulableAccounts).
 	if account.IsGrok() {
 		if gated := s.filterGrokFreeQuotaAccountsForGateway(ctx, []Account{*account}); len(gated) == 0 {
@@ -1859,6 +1893,11 @@ func (s *GatewayService) hydrateSelectedAccount(ctx context.Context, account *Ac
 func (s *GatewayService) newSelectionResult(ctx context.Context, account *Account, acquired bool, release func(), waitPlan *AccountWaitPlan) (*AccountSelectionResult, error) {
 	hydrated, err := s.hydrateSelectedAccount(ctx, account)
 	if err != nil {
+		// 槽位已经抢到却交不出选号结果，必须就地归还；调用方拿到的只有错误，
+		// 没有 ReleaseFunc 可调。与 OpenAI 侧 newAcquiredSelectionResult 同一保障。
+		if acquired && release != nil {
+			release()
+		}
 		return nil, err
 	}
 	return attachSelectionProfitGate(ctx, &AccountSelectionResult{

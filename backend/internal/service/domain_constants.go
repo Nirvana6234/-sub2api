@@ -826,6 +826,9 @@ const (
 
 	// Web Search Emulation
 	SettingKeyWebSearchEmulationConfig = "web_search_emulation_config" // JSON 配置
+
+	// SettingKeyGuestTrialConfig 未注册访客网页版试用配置（JSON，见 guest_trial_config.go）
+	SettingKeyGuestTrialConfig = "guest_trial_config"
 )
 
 // SettingKeyDefaultPlatformQuotas —— 系统全局：每用户 × 平台日/周/月 USD 上限（JSON）。

@@ -3025,17 +3025,8 @@
             @input="form.load_factor = (form.load_factor &amp;&amp; form.load_factor >= 1) ? form.load_factor : null" />
           <p class="input-hint">{{ t('admin.accounts.loadFactorHint') }}</p>
         </div>
-        <div>
-          <label class="input-label">{{ t('admin.accounts.priority') }}</label>
-          <input
-            v-model.number="form.priority"
-            type="number"
-            min="1"
-            class="input"
-            data-tour="account-form-priority"
-          />
-          <p class="input-hint">{{ t('admin.accounts.priorityHint') }}</p>
-        </div>
+        <!-- No account-wide priority input: scheduling ranks accounts by their
+             in-group priority, set after creation in the edit dialog or the list. -->
         <div>
           <label class="input-label">{{ t('admin.accounts.billingRateMultiplier') }}</label>
           <input v-model.number="form.rate_multiplier" type="number" min="0" step="0.001" class="input" />

@@ -40,14 +40,6 @@ func RegisterPlaygroundRoutes(
 		return
 	}
 
-	isOpenAIResponsesCompatibleGatewayPlatform := func(c *gin.Context) bool {
-		switch getGroupPlatform(c) {
-		case service.PlatformOpenAI, service.PlatformGrok:
-			return true
-		default:
-			return false
-		}
-	}
 	isOpenAIGatewayPlatform := func(c *gin.Context) bool {
 		return getGroupPlatform(c) == service.PlatformOpenAI
 	}
@@ -58,13 +50,7 @@ func RegisterPlaygroundRoutes(
 		}
 		h.Gateway.Models(c)
 	}
-	chatCompletionsHandler := func(c *gin.Context) {
-		if isOpenAIResponsesCompatibleGatewayPlatform(c) {
-			h.OpenAIGateway.ChatCompletions(c)
-			return
-		}
-		h.Gateway.ChatCompletions(c)
-	}
+	chatCompletionsHandler := newPanelChatCompletionsHandler(h)
 	imagesGenerationsHandler := func(c *gin.Context) {
 		switch getGroupPlatform(c) {
 		case service.PlatformOpenAI:
@@ -227,6 +213,19 @@ func registerPlaygroundRoutes(
 		}
 		if dispatch.voiceSTT != nil {
 			gateway.POST("/audio/transcriptions", middleware.PlaygroundCredentialBodyGuard, compositeTarget, requireGroupAnthropic, dispatch.voiceSTT)
+		}
+	}
+}
+
+// newPanelChatCompletionsHandler 面板聊天（网页工作台、访客试用）共用的分发：
+// OpenAI / Grok 分组走 Responses 兼容网关，其余平台走通用网关。
+func newPanelChatCompletionsHandler(h *handler.Handlers) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		switch getGroupPlatform(c) {
+		case service.PlatformOpenAI, service.PlatformGrok:
+			h.OpenAIGateway.ChatCompletions(c)
+		default:
+			h.Gateway.ChatCompletions(c)
 		}
 	}
 }

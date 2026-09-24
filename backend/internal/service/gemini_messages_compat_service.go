@@ -424,10 +424,24 @@ func (s *GeminiMessagesCompatService) GetAntigravityGatewayService() *Antigravit
 }
 
 func (s *GeminiMessagesCompatService) getSchedulableAccount(ctx context.Context, accountID int64) (*Account, error) {
+	var (
+		account *Account
+		err     error
+	)
 	if s.schedulerSnapshot != nil {
-		return s.schedulerSnapshot.GetAccount(ctx, accountID)
+		account, err = s.schedulerSnapshot.GetAccount(ctx, accountID)
+	} else {
+		account, err = s.accountRepo.GetByID(ctx, accountID)
 	}
-	return s.accountRepo.GetByID(ctx, accountID)
+	if err != nil || account == nil {
+		return account, err
+	}
+	// This gateway has no contribution-room routing, so another user's
+	// self-use contribution is never reachable here.
+	if contributionAccountBlockedForCaller(ctx, account, nil) {
+		return nil, nil
+	}
+	return account, nil
 }
 
 func (s *GeminiMessagesCompatService) hydrateSelectedAccount(ctx context.Context, account *Account) (*Account, error) {
@@ -445,6 +459,14 @@ func (s *GeminiMessagesCompatService) hydrateSelectedAccount(ctx context.Context
 }
 
 func (s *GeminiMessagesCompatService) listSchedulableAccountsOnce(ctx context.Context, groupID *int64, platform string, hasForcePlatform bool) ([]Account, error) {
+	accounts, err := s.listGroupSchedulableAccounts(ctx, groupID, platform, hasForcePlatform)
+	if err != nil {
+		return accounts, err
+	}
+	return filterContributionAccountsForCaller(ctx, accounts), nil
+}
+
+func (s *GeminiMessagesCompatService) listGroupSchedulableAccounts(ctx context.Context, groupID *int64, platform string, hasForcePlatform bool) ([]Account, error) {
 	if s.schedulerSnapshot != nil {
 		accounts, _, err := s.schedulerSnapshot.ListSchedulableAccounts(ctx, groupID, platform, hasForcePlatform)
 		return accounts, err

@@ -93,6 +93,12 @@ export default {
       invalidGroupPriority: '请输入不小于 0 的整数优先级',
       groupPrioritySaved: '组内优先级已保存',
       groupPrioritySaveFailed: '保存组内优先级失败',
+      groupPriorities: '组内优先级',
+      groupPrioritiesHint: '数值越小越优先。每个分组单独排位，调度取号和 TransitHub 健康降级都按这里的值；新加入的分组留空时按默认顺序分配。',
+      groupPriorityNewPlaceholder: '默认',
+      bulkGroupPriority: '组内优先级（{group}）',
+      bulkGroupPriorityNeedsGroupFilter: '请先在列表中按分组筛选，批量修改的是账号在该分组内的优先级',
+      priorityNeedsGroupFilter: '按分组筛选后查看组内优先级',
       // Schedulable toggle
       schedulable: '参与调度',
       schedulableHint: '开启后账号参与API请求调度',
@@ -111,7 +117,7 @@ export default {
         priority: '优先级',
         priorityInGroup: '组内',
         priorityHint:
-          '默认显示账号的全局优先级。按分组筛选时改为显示该账号在这个分组内的优先级（标有「组内」），调度取号和 TransitHub 健康降级用的都是组内值——两者同名但不是一个字段。账号可属于多个分组，各组排位互不影响。',
+          '按分组筛选后显示账号在该分组内的优先级（标有「组内」），调度取号和 TransitHub 健康降级用的都是这个值。账号可属于多个分组、各组排位互不影响，所以未筛选分组时不显示。',
         billingRateMultiplier: '账号倍率',
         upstreamBillingRate: '上游声明倍率',
         weight: '权重',

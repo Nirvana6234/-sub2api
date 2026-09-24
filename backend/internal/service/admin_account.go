@@ -1236,6 +1236,21 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 		result.Results = append(result.Results, entry)
 	}
 
+	// After any rebinding, so a group the accounts just joined is covered too.
+	if input.GroupPriority != nil && len(result.SuccessIDs) > 0 {
+		updates := make([]AccountGroupPriorityUpdate, 0, len(result.SuccessIDs))
+		for _, accountID := range result.SuccessIDs {
+			updates = append(updates, AccountGroupPriorityUpdate{
+				AccountID: accountID,
+				GroupID:   input.GroupPriority.GroupID,
+				Priority:  input.GroupPriority.Priority,
+			})
+		}
+		if _, err := s.accountRepo.UpdateGroupPriorities(ctx, updates); err != nil {
+			return nil, err
+		}
+	}
+
 	return result, nil
 }
 

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { flushPromises } from '@vue/test-utils'
 import { mount, RouterLinkStub } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import zh from '@/i18n/locales/zh'
@@ -9,6 +10,9 @@ const { appStore, authStore } = vi.hoisted(() => ({
   authStore: { isAuthenticated: false, isAdmin: false, user: null as null | { recharge_disabled?: boolean } },
 }))
 vi.mock('@/stores', () => ({ useAppStore: () => appStore, useAuthStore: () => authStore }))
+
+const { trialState } = vi.hoisted(() => ({ trialState: { enabled: false } }))
+vi.mock('@/api/trial', () => ({ fetchGuestTrialState: vi.fn(async () => ({ ...trialState })) }))
 
 function render(settings: Record<string, unknown>) {
   appStore.cachedPublicSettings = { site_name: '共飞 AI', api_base_url: 'https://api.example.com', ...settings }
@@ -34,6 +38,7 @@ const wayIds = (wrapper: ReturnType<typeof render>) =>
 describe('ClientIntroduction home variant', () => {
   beforeEach(() => {
     authStore.isAuthenticated = false
+    trialState.enabled = false
   })
 
   it('tells the gateway story: many models inside Codex, plugins and the web workspace', () => {
@@ -85,5 +90,33 @@ describe('ClientIntroduction home variant', () => {
 
   it('does not mention recharging on the home page', () => {
     expect(render({ playground_enabled: true, client_download_enabled: true }).text()).not.toContain('充值')
+  })
+
+  it('offers the no-sign-up trial to guests when the admin opened it', async () => {
+    trialState.enabled = true
+    const wrapper = render({ playground_enabled: true, client_download_enabled: true })
+    await flushPromises()
+    const cta = wrapper.get('[data-testid="home-trial-cta"]')
+    expect(cta.text()).toContain('免费试用')
+    expect(cta.text()).toContain('免注册')
+    const trialLink = wrapper.findAllComponents(RouterLinkStub).find((link) => link.text().includes('免费试用'))
+    expect(trialLink?.props('to')).toBe('/trial')
+    const webWay = wrapper.get('[data-testid="home-way-web"]').findComponent(RouterLinkStub)
+    expect(webWay.props('to')).toBe('/trial')
+  })
+
+  it('keeps the full workspace entry for signed-in users even when the trial is open', async () => {
+    trialState.enabled = true
+    authStore.isAuthenticated = true
+    const wrapper = render({ playground_enabled: true })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="home-trial-cta"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('打开网页工作台')
+  })
+
+  it('falls back to the workspace link when the trial is closed', async () => {
+    const wrapper = render({ playground_enabled: true })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="home-trial-cta"]').exists()).toBe(false)
   })
 })

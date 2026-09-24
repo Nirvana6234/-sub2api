@@ -1042,7 +1042,7 @@ func (r *accountRepository) ListWithFilters(ctx context.Context, params paginati
 	accountsQuery := q.
 		Offset(params.Offset()).
 		Limit(params.Limit())
-	for _, order := range accountListOrder(params) {
+	for _, order := range accountListOrder(params, groupID) {
 		accountsQuery = accountsQuery.Order(order)
 	}
 
@@ -1101,9 +1101,12 @@ func (r *accountRepository) ListOpsAccountsForStats(ctx context.Context, platfor
 	return r.accountsToService(ctx, accounts)
 }
 
-func accountListOrder(params pagination.PaginationParams) []func(*entsql.Selector) {
+func accountListOrder(params pagination.PaginationParams, groupID int64) []func(*entsql.Selector) {
 	sortBy := strings.ToLower(strings.TrimSpace(params.SortBy))
 	sortOrder := params.NormalizedSortOrder(pagination.SortOrderAsc)
+	if sortBy == "priority" && groupID > 0 {
+		return accountGroupPriorityOrder(groupID, sortOrder)
+	}
 	if sortBy == "upstream_billing_rate" {
 		direction := "ASC"
 		tieOrder := entsql.Asc
@@ -1157,6 +1160,24 @@ func accountListOrder(params pagination.PaginationParams) []func(*entsql.Selecto
 		return []func(*entsql.Selector){dbent.Asc(dbaccount.FieldName), dbent.Asc(dbaccount.FieldID)}
 	}
 	return []func(*entsql.Selector){dbent.Asc(field), dbent.Asc(dbaccount.FieldID)}
+}
+
+// accountGroupPriorityOrder sorts a group-filtered list by the in-group
+// priority (account_groups.priority) that scheduling actually uses, instead of
+// the account-wide accounts.priority fallback.
+func accountGroupPriorityOrder(groupID int64, sortOrder string) []func(*entsql.Selector) {
+	direction := "ASC"
+	tieOrder := entsql.Asc
+	if sortOrder == pagination.SortOrderDesc {
+		direction = "DESC"
+		tieOrder = entsql.Desc
+	}
+	return []func(*entsql.Selector){func(s *entsql.Selector) {
+		expression := "(SELECT ag.priority FROM account_groups ag WHERE ag.account_id = " +
+			s.C(dbaccount.FieldID) + " AND ag.group_id = " + strconv.FormatInt(groupID, 10) + ")"
+		s.OrderExpr(entsql.Expr(expression + " " + direction + " NULLS LAST"))
+		s.OrderBy(tieOrder(s.C(dbaccount.FieldID)))
+	}}
 }
 
 func upstreamBillingRateSortExpression(extra string) string {
@@ -1938,6 +1959,15 @@ func (r *accountRepository) BindGroups(ctx context.Context, accountID int64, gro
 		return err
 	}
 
+	current, err := txClient.AccountGroup.Query().Where(dbaccountgroup.AccountIDEQ(accountID)).All(ctx)
+	if err != nil {
+		return err
+	}
+	currentPriorities := make(map[int64]int, len(current))
+	for _, ag := range current {
+		currentPriorities[ag.GroupID] = ag.Priority
+	}
+
 	if _, err := txClient.AccountGroup.Delete().Where(dbaccountgroup.AccountIDEQ(accountID)).Exec(ctx); err != nil {
 		return err
 	}
@@ -1949,12 +1979,13 @@ func (r *accountRepository) BindGroups(ctx context.Context, accountID int64, gro
 		return nil
 	}
 
+	priorities := bindGroupPriorities(groupIDs, currentPriorities)
 	builders := make([]*dbent.AccountGroupCreate, 0, len(groupIDs))
 	for i, groupID := range groupIDs {
 		builders = append(builders, txClient.AccountGroup.Create().
 			SetAccountID(accountID).
 			SetGroupID(groupID).
-			SetPriority(i+1),
+			SetPriority(priorities[i]),
 		)
 	}
 
@@ -1972,6 +2003,24 @@ func (r *accountRepository) BindGroups(ctx context.Context, accountID int64, gro
 		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue bind groups failed: account=%d err=%v", accountID, err)
 	}
 	return nil
+}
+
+// bindGroupPriorities returns the in-group priority for each group in a
+// rebinding. Scheduling ranks accounts by account_groups.priority and
+// TransitHub writes its health demotions there, so a group the account stays in
+// keeps its current value; only a newly joined group gets the positional
+// default. Rebinding runs on every account edit that submits group_ids, which
+// used to reset every in-group priority to 1, 2, 3, ...
+func bindGroupPriorities(groupIDs []int64, current map[int64]int) []int {
+	priorities := make([]int, len(groupIDs))
+	for i, groupID := range groupIDs {
+		if priority, ok := current[groupID]; ok {
+			priorities[i] = priority
+			continue
+		}
+		priorities[i] = i + 1
+	}
+	return priorities
 }
 
 func (r *accountRepository) ListSchedulable(ctx context.Context) ([]service.Account, error) {

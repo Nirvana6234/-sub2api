@@ -645,6 +645,9 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		adminSettings.PUT("/web-search-emulation", h.Admin.Setting.UpdateWebSearchEmulationConfig)
 		adminSettings.POST("/web-search-emulation/test", h.Admin.Setting.TestWebSearchEmulation)
 		adminSettings.POST("/web-search-emulation/reset-usage", h.Admin.Setting.ResetWebSearchUsage)
+		// 未注册访客网页版试用
+		adminSettings.GET("/guest-trial", h.Admin.Setting.GetGuestTrialConfig)
+		adminSettings.PUT("/guest-trial", h.Admin.Setting.UpdateGuestTrialConfig)
 		adminSettings.GET("/global-blacklist", h.Admin.Setting.GetGlobalBlacklist)
 		adminSettings.POST("/global-blacklist", h.Admin.Setting.AddGlobalBlacklist)
 		adminSettings.DELETE("/global-blacklist/:id", h.Admin.Setting.DeleteGlobalBlacklist)

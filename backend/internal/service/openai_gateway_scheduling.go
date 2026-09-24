@@ -882,15 +882,29 @@ func resolveOpenAIErrorSchedulingModel(billingModel, upstreamModel string) strin
 }
 
 func (s *OpenAIGatewayService) selectAccountForModelWithExclusions(ctx context.Context, groupID *int64, platform string, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, stickyAccountID int64, requiredCapability OpenAIEndpointCapability, preferLowUpstreamRate bool) (*Account, error) {
+	ctx = withFallbackAttemptLedger(ctx)
 	account, err := s.selectAccountForModelWithExclusionsOnce(ctx, groupID, platform, sessionHash, requestedModel, excludedIDs, requireCompact, stickyAccountID, requiredCapability, preferLowUpstreamRate)
 	if !isNoAvailableOpenAIAccountError(err) {
 		return account, err
 	}
-	fallbackCtx, fallbackGroupID := s.nextOpenAIFallbackGroup(ctx, groupID, platform, requestedModel)
-	if fallbackGroupID == nil {
-		return nil, err
+	// 按配置顺序逐个试兜底池：前一个（连同它的下游链路）没号才试下一个。
+	noAccountErr := err
+	var fallbackAccount *Account
+	var fallbackErr error
+	resolved := false
+	s.eachOpenAIFallbackAttempt(ctx, groupID, platform, requestedModel, func(attempt openAIFallbackAttempt) bool {
+		fallbackAccount, fallbackErr = s.selectAccountForModelWithExclusions(attempt.ctx, attempt.groupID, platform, sessionHash, requestedModel, excludedIDs, requireCompact, 0, requiredCapability, preferLowUpstreamRate)
+		if isNoAvailableOpenAIAccountError(fallbackErr) {
+			noAccountErr = preferNoAccountError(noAccountErr, fallbackErr)
+			return false
+		}
+		resolved = true
+		return true
+	})
+	if resolved {
+		return fallbackAccount, fallbackErr
 	}
-	return s.selectAccountForModelWithExclusions(fallbackCtx, fallbackGroupID, platform, sessionHash, requestedModel, excludedIDs, requireCompact, 0, requiredCapability, preferLowUpstreamRate)
+	return nil, noAccountErr
 }
 
 func (s *OpenAIGatewayService) selectAccountForModelWithExclusionsOnce(ctx context.Context, groupID *int64, platform string, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, stickyAccountID int64, requiredCapability OpenAIEndpointCapability, preferLowUpstreamRate bool) (*Account, error) {
@@ -1148,15 +1162,29 @@ func (s *OpenAIGatewayService) SelectAccountWithLoadAwareness(ctx context.Contex
 }
 
 func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Context, groupID *int64, platform string, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, requiredCapability OpenAIEndpointCapability, useUpstreamTokenCost bool) (*AccountSelectionResult, error) {
+	ctx = withFallbackAttemptLedger(ctx)
 	selection, err := s.selectAccountWithLoadAwarenessOnce(ctx, groupID, platform, sessionHash, requestedModel, excludedIDs, requireCompact, requiredCapability, useUpstreamTokenCost)
 	if !isNoAvailableOpenAIAccountError(err) {
 		return selection, err
 	}
-	fallbackCtx, fallbackGroupID := s.nextOpenAIFallbackGroup(ctx, groupID, platform, requestedModel)
-	if fallbackGroupID == nil {
-		return selection, err
+	// 按配置顺序逐个试兜底池：前一个（连同它的下游链路）没号才试下一个。
+	noAccountSelection, noAccountErr := selection, err
+	var fallbackSelection *AccountSelectionResult
+	var fallbackErr error
+	resolved := false
+	s.eachOpenAIFallbackAttempt(ctx, groupID, platform, requestedModel, func(attempt openAIFallbackAttempt) bool {
+		fallbackSelection, fallbackErr = s.selectAccountWithLoadAwareness(attempt.ctx, attempt.groupID, platform, sessionHash, requestedModel, excludedIDs, requireCompact, requiredCapability, useUpstreamTokenCost)
+		if isNoAvailableOpenAIAccountError(fallbackErr) {
+			noAccountErr = preferNoAccountError(noAccountErr, fallbackErr)
+			return false
+		}
+		resolved = true
+		return true
+	})
+	if resolved {
+		return fallbackSelection, fallbackErr
 	}
-	return s.selectAccountWithLoadAwareness(fallbackCtx, fallbackGroupID, platform, sessionHash, requestedModel, excludedIDs, requireCompact, requiredCapability, useUpstreamTokenCost)
+	return noAccountSelection, noAccountErr
 }
 
 func (s *OpenAIGatewayService) selectAccountWithLoadAwarenessOnce(ctx context.Context, groupID *int64, platform string, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, requiredCapability OpenAIEndpointCapability, useUpstreamTokenCost bool) (*AccountSelectionResult, error) {
@@ -1582,6 +1610,7 @@ func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, grou
 // variant that also appends the group's public contribution pool; the OpenAI
 // gateway does not do that append, matching production's current behavior.
 func (s *OpenAIGatewayService) applyContributionRoomRouting(ctx context.Context, defaultAccounts []Account, platform string) ([]Account, error) {
+	defaultAccounts = filterContributionAccountsForCaller(ctx, defaultAccounts)
 	if s == nil || s.contributionRoomRepo == nil {
 		return defaultAccounts, nil
 	}
@@ -1826,6 +1855,9 @@ func (s *OpenAIGatewayService) getSchedulableAccount(ctx context.Context, accoun
 		return account, err
 	}
 	if s.isOpenAIAccountBlockedBySchedulingThreshold(ctx, account) {
+		return nil, nil
+	}
+	if contributionAccountBlockedForCaller(ctx, account, s.contributionRoomRepo) {
 		return nil, nil
 	}
 	// Legacy sticky (advanced scheduler off) must still free-gate Grok OAuth.

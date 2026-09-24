@@ -168,10 +168,18 @@ type BulkUpdateAccountsRequest struct {
 	Status                  string                    `json:"status" binding:"omitempty,oneof=active inactive error"`
 	Schedulable             *bool                     `json:"schedulable"`
 	GroupIDs                *[]int64                  `json:"group_ids"`
+	GroupPriority           *BulkGroupPriorityRequest `json:"group_priority"`
 	Credentials             map[string]any            `json:"credentials"`
 	Extra                   map[string]any            `json:"extra"`
 	ProbeEnabled            *bool                     `json:"upstream_billing_probe_enabled"`
 	ConfirmMixedChannelRisk *bool                     `json:"confirm_mixed_channel_risk"` // 用户确认混合渠道风险
+}
+
+// BulkGroupPriorityRequest sets the in-group priority (account_groups.priority)
+// of the target accounts within one group.
+type BulkGroupPriorityRequest struct {
+	GroupID  int64 `json:"group_id"`
+	Priority int   `json:"priority"`
 }
 
 type BulkUpdateAccountFilters struct {
@@ -2389,6 +2397,18 @@ func (h *AccountHandler) BulkUpdate(c *gin.Context) {
 		response.BadRequest(c, "account_ids or filters is required")
 		return
 	}
+	var groupPriority *service.BulkGroupPriorityUpdate
+	if req.GroupPriority != nil {
+		if req.GroupPriority.GroupID <= 0 {
+			response.BadRequest(c, "group_priority.group_id must be positive")
+			return
+		}
+		if req.GroupPriority.Priority < 0 {
+			response.BadRequest(c, "group_priority.priority must be >= 0")
+			return
+		}
+		groupPriority = &service.BulkGroupPriorityUpdate{GroupID: req.GroupPriority.GroupID, Priority: req.GroupPriority.Priority}
+	}
 	// base_rpm 输入校验：负值归零，超过 10000 截断
 	sanitizeExtraBaseRPM(req.Extra)
 	if err := service.ValidateUpstreamRequestIDHeaderExtra(req.Extra); err != nil {
@@ -2408,6 +2428,7 @@ func (h *AccountHandler) BulkUpdate(c *gin.Context) {
 		req.Status != "" ||
 		req.Schedulable != nil ||
 		req.GroupIDs != nil ||
+		groupPriority != nil ||
 		len(req.Credentials) > 0 ||
 		len(req.Extra) > 0 ||
 		req.ProbeEnabled != nil
@@ -2429,6 +2450,7 @@ func (h *AccountHandler) BulkUpdate(c *gin.Context) {
 		Status:                req.Status,
 		Schedulable:           req.Schedulable,
 		GroupIDs:              req.GroupIDs,
+		GroupPriority:         groupPriority,
 		Credentials:           req.Credentials,
 		Extra:                 req.Extra,
 		ProbeEnabled:          req.ProbeEnabled,

@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore, useAuthStore } from '@/stores'
 import Icon from '@/components/icons/Icon.vue'
 import { useServiceAvailability } from '@/composables/useServiceAvailability'
+import { fetchGuestTrialState } from '@/api/trial'
 
 // variant="home"：首页用同一套视觉，只换成"AI 网关 + Codex + 网页版 AI"的文案；
 // 下载页保持 client 原样。首页按后台开关决定是否提网页工作台和客户端。
@@ -14,6 +15,17 @@ const appStore = useAppStore()
 const authStore = useAuthStore()
 const { rechargeEnabled, webEnabled, clientEnabled, apiEndpoint } = useServiceAvailability()
 const isHome = computed(() => props.variant === 'home')
+// 免注册试用只对未登录访客展示；登录用户直接用完整的网页工作台。
+const trialEnabled = ref(false)
+const trialAvailable = computed(() => isHome.value && trialEnabled.value && !authStore.isAuthenticated)
+onMounted(async () => {
+  if (!isHome.value) return
+  try {
+    trialEnabled.value = (await fetchGuestTrialState()).enabled === true
+  } catch {
+    trialEnabled.value = false
+  }
+})
 // 开了客户端走客户端三步（下载 → 登录 → 用），没开才讲手动写配置。
 const codexStepKey = (step: number, suffix = '') => `homeIntro.codex.${clientEnabled.value ? 'clientStep' : 'step'}${step}${suffix}`
 const siteName = computed(() => appStore.cachedPublicSettings?.site_name || '共飞 AI')
@@ -27,7 +39,7 @@ const ways = computed(() => {
   const list: { id: 'api' | 'web' | 'client'; to: ReturnType<typeof authedPath> }[] = []
   if (clientEnabled.value) list.push({ id: 'client', to: '/download' })
   list.push({ id: 'api', to: authedPath('/keys') })
-  if (webEnabled.value) list.push({ id: 'web', to: authedPath('/playground') })
+  if (webEnabled.value) list.push({ id: 'web', to: trialAvailable.value ? '/trial' : authedPath('/playground') })
   return list
 })
 const macAvailable = computed(() =>
@@ -62,9 +74,13 @@ const activeScene = computed(() => scenes.find((scene) => scene.id === selectedS
             <router-link :to="consoleTo" class="studio-button" :class="{ 'studio-button-outline': clientEnabled }" data-testid="home-start-work">
               {{ t('homeIntro.ctaStartWork') }}<Icon name="arrowRight" size="sm" aria-hidden="true" />
             </router-link>
-            <router-link v-if="webEnabled" :to="authedPath('/playground')" class="studio-link"><Icon name="chat" size="xs" aria-hidden="true" />{{ t('homeIntro.ctaWeb') }}</router-link>
+            <!-- 未登录且开放了免注册试用：换成试用入口，让访客知道可以直接聊天 -->
+            <router-link v-if="trialAvailable" to="/trial" class="studio-button studio-button-soft" data-testid="home-trial-cta">
+              <Icon name="chat" size="xs" aria-hidden="true" />{{ t('homeIntro.ctaTrial') }}<span class="trial-badge">{{ t('homeIntro.ctaTrialBadge') }}</span>
+            </router-link>
+            <router-link v-else-if="webEnabled" :to="authedPath('/playground')" class="studio-link"><Icon name="chat" size="xs" aria-hidden="true" />{{ t('homeIntro.ctaWeb') }}</router-link>
           </div>
-          <p class="beginner-note"><Icon name="key" size="sm" aria-hidden="true" />{{ t('homeIntro.beginnerNote') }}</p>
+          <p class="beginner-note"><Icon :name="trialAvailable ? 'chat' : 'key'" size="sm" aria-hidden="true" />{{ trialAvailable ? t('homeIntro.trialHint') : t('homeIntro.beginnerNote') }}</p>
         </template>
         <template v-else>
         <p class="eyebrow"><span class="brand-spark" aria-hidden="true">✳</span>{{ t('clientIntroduction.eyebrow') }}</p>
@@ -251,7 +267,16 @@ h1 > span { display: block; color: var(--blue); white-space: pre-line; }
 .studio-button:hover { background: #174bba; transform: translateY(-2px); }
 .studio-button-outline { background: var(--paper); color: var(--blue); border: 1.5px solid var(--blue); box-shadow: 0 6px 16px -10px #2864dc55; }
 .studio-button-outline:hover { background: var(--soft); color: var(--blue); }
-.dark .studio-button-outline { background: transparent; color: var(--blue); }.dark .studio-button-outline:hover { background: var(--soft); }
+.dark .studio-button-outline { background: transparent; color: var(--blue); }
+/* 免注册试用按钮：和另外两个按钮一样大，浅蓝底区别于实心/描边两档 */
+/* 首页三个按钮并排时收紧间距和内边距，保证一行放得下 */
+.hero-actions:has(.studio-button-soft) { gap: 12px; }
+.hero-actions:has(.studio-button-soft) .studio-button { padding: 13px 18px; gap: 12px; }
+.studio-button-soft { gap: 10px; background: var(--soft); color: var(--blue); box-shadow: inset 0 0 0 1px #c9d8f5; }
+.studio-button-soft:hover { background: #e2ebfa; color: var(--blue); }
+.trial-badge { padding: 1px 8px; border-radius: 999px; background: var(--blue); color: #fff; font-size: 11px; font-weight: 600; }
+.dark .studio-button-soft { background: var(--soft); color: var(--blue); box-shadow: inset 0 0 0 1px #2c4468; }
+.dark .trial-badge { color: #0f1720; }.dark .studio-button-outline:hover { background: var(--soft); }
 .studio-link { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; color: var(--ink); font-size: 13px; }
 .studio-link:hover { color: var(--blue); }
 .beginner-note { display: flex; align-items: flex-start; gap: 7px; margin-top: 19px; color: var(--muted); font-size: 12px; line-height: 1.8; }

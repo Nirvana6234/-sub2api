@@ -1,4 +1,27 @@
 export default {
+  guestTrial: {
+    title: '网页版试用（免注册）',
+    description: '未注册访客可以直接在网页上文字聊天。流量走下面指定的密钥，只开放白名单里的模型，不能上传文件、不能生图。',
+    openPage: '打开试用页',
+    enabled: '开放免注册试用',
+    enabledHint: '首页会出现「免费试用」按钮，访客无需登录即可聊天。',
+    apiKey: '承担试用流量的密钥',
+    apiKeyPlaceholder: '请选择一把密钥',
+    apiKeyHint: '列出的是当前管理员自己的密钥。试用的用量和费用都记在这把密钥上，它的分组决定走哪个上游；建议单独建一把「试用」密钥并设好额度。',
+    models: '试用模型',
+    modelsHint: '用逗号分隔，第一个是默认模型；访客只能在这些模型里选。',
+    dailyPerVisitor: '每位访客每天可发消息数',
+    dailyPerVisitorHint: '按浏览器设备计数；同一 IP 最多为它的 {multiplier} 倍，兼顾公司 / 学校共用出口。',
+    dailyGlobal: '全站每天试用总次数',
+    dailyGlobalHint: '达到上限后当天试用暂停，访客会看到注册提示。',
+    maxInputChars: '单次对话字数上限',
+    maxOutputTokens: '单次回复输出 token 上限',
+    requireCaptcha: '首条消息前人机验证',
+    requireCaptchaHint: '使用站点已启用的验证码服务商；未启用任何验证码时此项不生效。验证一次后 24 小时内同一设备不再验证。',
+    loadFailed: '读取试用配置失败',
+    saveFailed: '保存失败',
+    saved: '试用配置已保存'
+  },
     settings: {
       title: '系统设置',
       description: '管理注册、邮箱验证、默认值和 SMTP 设置',

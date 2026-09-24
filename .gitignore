@@ -263,3 +263,6 @@ transit-hub/backend/backend/
 /.nirvana-diff-names.txt
 /.remote-download.html
 /.prod-download.html
+
+# TransitHub 本地构建出的二进制
+transit-hub/transithub-api-*

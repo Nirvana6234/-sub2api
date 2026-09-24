@@ -1671,17 +1671,6 @@
           <p class="input-hint">{{ t('admin.accounts.loadFactorHint') }}</p>
         </div>
         <div>
-          <label class="input-label">{{ t('admin.accounts.priority') }}</label>
-          <input
-            v-model.number="form.priority"
-            type="number"
-            min="1"
-            class="input"
-            data-tour="account-form-priority"
-          />
-          <p class="input-hint">{{ t('admin.accounts.priorityHint') }}</p>
-        </div>
-        <div>
           <label class="input-label">{{ t('admin.accounts.billingRateMultiplier') }}</label>
           <input
             v-model.number="form.rate_multiplier"
@@ -3001,6 +2990,27 @@
         data-tour="account-form-groups"
       />
 
+      <div v-if="form.group_ids.length > 0" data-testid="account-group-priorities">
+        <label class="input-label">{{ t('admin.accounts.groupPriorities') }}</label>
+        <div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <div v-for="groupID in form.group_ids" :key="groupID">
+            <label class="mb-1 block truncate text-xs text-gray-500 dark:text-gray-400" :title="groupNameOf(groupID)">
+              {{ groupNameOf(groupID) }}
+            </label>
+            <input
+              v-model.number="groupPriorities[groupID]"
+              type="number"
+              min="0"
+              step="1"
+              class="input"
+              :placeholder="t('admin.accounts.groupPriorityNewPlaceholder')"
+              :data-testid="`group-priority-${groupID}`"
+            />
+          </div>
+        </div>
+        <p class="input-hint">{{ t('admin.accounts.groupPrioritiesHint') }}</p>
+      </div>
+
     </form>
 
     <template #footer>
@@ -3885,12 +3895,41 @@ const form = reactive({
   proxy_id: null as number | null,
   concurrency: 1,
   load_factor: null as number | null,
-  priority: 1,
   rate_multiplier: 1,
   status: 'active' as 'active' | 'inactive' | 'error',
   group_ids: [] as number[],
   expires_at: null as number | null
 })
+
+// In-group priorities (account_groups.priority) are what scheduling and
+// TransitHub use; the account-wide priority is no longer edited here.
+const groupPriorities = reactive<Record<number, number | '' | null>>({})
+let originalGroupPriorities: Record<number, number> = {}
+
+const resetGroupPriorities = (account: Account | null | undefined) => {
+  for (const key of Object.keys(groupPriorities)) delete groupPriorities[Number(key)]
+  originalGroupPriorities = {}
+  for (const binding of account?.account_groups ?? []) {
+    originalGroupPriorities[binding.group_id] = binding.priority
+    groupPriorities[binding.group_id] = binding.priority
+  }
+}
+
+const groupNameOf = (groupID: number) =>
+  props.groups.find((group) => group.id === groupID)?.name ?? `#${groupID}`
+
+// Returns null when an entered value is invalid; empty means "keep / default".
+const collectGroupPriorityUpdates = (accountID: number) => {
+  const updates: { account_id: number; group_id: number; priority: number }[] = []
+  for (const groupID of form.group_ids) {
+    const value = groupPriorities[groupID]
+    if (value === '' || value == null) continue
+    if (!Number.isSafeInteger(value) || value < 0) return null
+    if (originalGroupPriorities[groupID] === value) continue
+    updates.push({ account_id: accountID, group_id: groupID, priority: value })
+  }
+  return updates
+}
 
 const handleUpstreamBillingRateSyncChange = (enabled: boolean) => {
   upstreamBillingRateSyncEnabled.value = enabled
@@ -3993,7 +4032,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   form.proxy_id = newAccount.proxy_id
   form.concurrency = newAccount.concurrency
   form.load_factor = newAccount.load_factor ?? null
-  form.priority = newAccount.priority
+  resetGroupPriorities(newAccount)
   form.rate_multiplier = newAccount.rate_multiplier ?? 1
   form.status = (newAccount.status === 'active' || newAccount.status === 'inactive' || newAccount.status === 'error')
     ? newAccount.status
@@ -4972,10 +5011,33 @@ const persistGrokMediaEligibility = async (accountID: number, updatedAccount: Ac
   return updatedAccount
 }
 
+// Set by handleSubmit after validation; written once the account itself saved,
+// so newly selected groups are already bound.
+let pendingGroupPriorityUpdates: { account_id: number; group_id: number; priority: number }[] = []
+
+const applyGroupPriorityUpdates = async (account: Account): Promise<Account> => {
+  const updates = pendingGroupPriorityUpdates
+  if (updates.length === 0) return account
+  await adminAPI.accounts.updateGroupPriorities(updates)
+  const byGroup = new Map(updates.map((update) => [update.group_id, update.priority]))
+  const bindings = account.account_groups ?? (account.group_ids ?? []).map((groupID) => ({
+    account_id: account.id,
+    group_id: groupID,
+    priority: originalGroupPriorities[groupID] ?? 0
+  }))
+  return {
+    ...account,
+    account_groups: bindings.map((binding) =>
+      byGroup.has(binding.group_id) ? { ...binding, priority: byGroup.get(binding.group_id)! } : binding
+    )
+  }
+}
+
 const submitUpdateAccount = async (accountID: number, updatePayload: Record<string, unknown>) => {
   submitting.value = true
   try {
     let updatedAccount = await adminAPI.accounts.update(accountID, withAntigravityConfirmFlag(updatePayload))
+    updatedAccount = await applyGroupPriorityUpdates(updatedAccount)
     updatedAccount = await persistGrokMediaEligibility(accountID, updatedAccount)
     appStore.showSuccess(t('admin.accounts.accountUpdated'))
     emit('updated', updatedAccount)
@@ -5012,6 +5074,13 @@ const handleSubmit = async () => {
 			return
 		}
 	}
+
+  const groupPriorityUpdates = collectGroupPriorityUpdates(accountID)
+  if (groupPriorityUpdates === null) {
+    appStore.showError(t('admin.accounts.invalidGroupPriority'))
+    return
+  }
+  pendingGroupPriorityUpdates = groupPriorityUpdates
 
   const updatePayload: Record<string, unknown> = { ...form }
   try {

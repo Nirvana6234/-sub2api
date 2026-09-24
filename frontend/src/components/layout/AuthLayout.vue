@@ -23,6 +23,16 @@
         <slot name="footer" />
       </div>
 
+      <!-- 还没想好注册？可以先回去继续免注册试用，或者回主页看看 -->
+      <div v-if="showGuestActions" class="gongfei-guest-actions" data-testid="auth-guest-actions">
+        <router-link v-if="trialEnabled" to="/trial" class="gongfei-guest-action is-trial" data-testid="auth-continue-trial">
+          <Icon name="chat" size="sm" aria-hidden="true" />{{ t('guestTrial.continueTrial') }}<span class="gongfei-guest-badge">{{ t('guestTrial.noSignup') }}</span>
+        </router-link>
+        <router-link to="/home" class="gongfei-guest-action" data-testid="auth-back-home">
+          <Icon name="home" size="sm" aria-hidden="true" />{{ t('guestTrial.backHome') }}
+        </router-link>
+      </div>
+
       <!-- Copyright -->
       <div class="mt-8 text-center text-xs text-gray-400 dark:text-dark-500">
         &copy; {{ currentYear }} {{ siteName }}. All rights reserved.
@@ -32,9 +42,18 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores'
 import { sanitizeUrl } from '@/utils/url'
+import Icon from '@/components/icons/Icon.vue'
+import { fetchGuestTrialState } from '@/api/trial'
+
+// 登录 / 注册 / 找回密码页打开：提供「继续试用」「返回主页」两个出口；回调类中间页不显示。
+const props = withDefaults(defineProps<{ showGuestActions?: boolean }>(), { showGuestActions: false })
+
+const { t } = useI18n()
+const trialEnabled = ref(false)
 
 const appStore = useAppStore()
 
@@ -44,8 +63,14 @@ const siteSubtitle = computed(() => appStore.cachedPublicSettings?.site_subtitle
 
 const currentYear = computed(() => new Date().getFullYear())
 
-onMounted(() => {
+onMounted(async () => {
   appStore.fetchPublicSettings()
+  if (!props.showGuestActions) return
+  try {
+    trialEnabled.value = (await fetchGuestTrialState()).enabled === true
+  } catch {
+    trialEnabled.value = false
+  }
 })
 </script>
 
@@ -161,6 +186,70 @@ onMounted(() => {
 
 :global(.dark) .gongfei-subtitle {
   color: #a3bed0;
+}
+
+.gongfei-guest-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.gongfei-guest-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 40px;
+  padding: 0 16px;
+  border: 1px solid rgba(23, 43, 57, 0.12);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.9);
+  color: #172b39;
+  font-size: 14px;
+  font-weight: 550;
+  transition: border-color 0.15s, background-color 0.15s, color 0.15s;
+}
+
+.gongfei-guest-action:hover {
+  border-color: rgba(23, 43, 57, 0.24);
+  background: #fff;
+}
+
+.gongfei-guest-action.is-trial {
+  border-color: #c9d8f5;
+  background: #eef3fb;
+  color: #2864dc;
+}
+
+.gongfei-guest-action.is-trial:hover {
+  background: #e2ebfa;
+}
+
+.gongfei-guest-badge {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #2864dc;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+:global(.dark) .gongfei-guest-action {
+  border-color: #30414c;
+  background: rgba(23, 35, 46, 0.9);
+  color: #e5ebef;
+}
+
+:global(.dark) .gongfei-guest-action.is-trial {
+  border-color: #2c4468;
+  background: #1c2c40;
+  color: #91b6ff;
+}
+
+:global(.dark) .gongfei-guest-badge {
+  background: #91b6ff;
+  color: #0f1720;
 }
 
 @keyframes flight-hover {

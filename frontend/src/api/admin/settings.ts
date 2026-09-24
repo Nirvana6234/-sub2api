@@ -1638,6 +1638,28 @@ export async function resetWebSearchUsage(payload: {
   );
 }
 
+/** 未注册访客网页版试用配置（后端 GuestTrialConfig）。 */
+export interface GuestTrialConfig {
+  enabled: boolean;
+  api_key_id: number;
+  models: string[];
+  daily_per_visitor: number;
+  daily_global: number;
+  max_input_chars: number;
+  max_output_tokens: number;
+  require_captcha: boolean;
+}
+
+export async function getGuestTrialConfig(): Promise<GuestTrialConfig> {
+  const { data } = await apiClient.get<GuestTrialConfig>("/admin/settings/guest-trial");
+  return data;
+}
+
+export async function updateGuestTrialConfig(config: GuestTrialConfig): Promise<GuestTrialConfig> {
+  const { data } = await apiClient.put<GuestTrialConfig>("/admin/settings/guest-trial", config);
+  return data;
+}
+
 export const settingsAPI = {
   getSettings,
   updateSettings,
@@ -1667,6 +1689,8 @@ export const settingsAPI = {
   updateWebSearchEmulationConfig,
   testWebSearchEmulation,
   resetWebSearchUsage,
+  getGuestTrialConfig,
+  updateGuestTrialConfig,
 };
 
 export default settingsAPI;

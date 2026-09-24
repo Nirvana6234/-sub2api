@@ -203,6 +203,7 @@ func ProvideHandlers(
 	playgroundHistoryHandler *PlaygroundHistoryHandler,
 	accountContributionHandler *AccountContributionHandler,
 	ticketHandler *TicketHandler,
+	guestTrialHandler *GuestTrialHandler,
 	remoteHandler *RemoteHandler,
 	_ *service.IdempotencyCoordinator,
 	_ *service.IdempotencyCleanupService,
@@ -235,6 +236,7 @@ func ProvideHandlers(
 		PlaygroundHistory:   playgroundHistoryHandler,
 		AccountContribution: accountContributionHandler,
 		Ticket:              ticketHandler,
+		GuestTrial:          guestTrialHandler,
 		Remote:              remoteHandler,
 	}
 }
@@ -265,6 +267,7 @@ var ProviderSet = wire.NewSet(
 	NewPlaygroundHistoryHandler,
 	ProvideAccountContributionHandler,
 	NewTicketHandler,
+	NewGuestTrialHandler,
 	NewRemoteHandler,
 
 	// Admin handlers

@@ -721,6 +721,25 @@ func (s *AccountRepoSuite) TestGroupBinding_And_BindGroups() {
 	s.Require().Len(groups, 2, "expected 2 groups after bind")
 }
 
+func (s *AccountRepoSuite) TestBindGroups_KeepsInGroupPriorityOfRetainedGroups() {
+	g1 := mustCreateGroup(s.T(), s.client, &service.Group{Name: "g-keep"})
+	g2 := mustCreateGroup(s.T(), s.client, &service.Group{Name: "g-drop"})
+	g3 := mustCreateGroup(s.T(), s.client, &service.Group{Name: "g-new"})
+	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-keep-priority", Priority: 50})
+	mustBindAccountToGroup(s.T(), s.client, account.ID, g1.ID, 10000)
+	mustBindAccountToGroup(s.T(), s.client, account.ID, g2.ID, 7)
+
+	s.Require().NoError(s.repo.BindGroups(s.ctx, account.ID, []int64{g1.ID, g3.ID}))
+
+	rows, err := s.client.AccountGroup.Query().Where(accountgroup.AccountIDEQ(account.ID)).All(s.ctx)
+	s.Require().NoError(err)
+	priorities := map[int64]int{}
+	for _, row := range rows {
+		priorities[row.GroupID] = row.Priority
+	}
+	s.Require().Equal(map[int64]int{g1.ID: 10000, g3.ID: 2}, priorities)
+}
+
 func (s *AccountRepoSuite) TestBindGroups_EmptyList() {
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-empty"})
 	group := mustCreateGroup(s.T(), s.client, &service.Group{Name: "g-empty"})

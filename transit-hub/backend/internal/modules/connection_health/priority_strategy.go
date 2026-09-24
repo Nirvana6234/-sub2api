@@ -260,9 +260,10 @@ func (s *Service) syncWorkspacePriorities(
 
 	candidates := make([]managedPriorityCandidate, 0, len(managed))
 	for targetID, item := range managed {
-		if stored, exists := storedByTarget[targetID]; exists && stored.Conflict && item.currentPriority != stored.LastAppliedPriority {
-			continue
-		}
+		// 人工改过的目标同样参与排序。此前这里会跳过它们，等于把控制权永久交还
+		// 给人工，TransitHub 再也不管——运营侧的期望恰好相反：分组策略是唯一
+		// 事实来源，人工值只是一次临时覆盖，下一轮照常被接管。
+		_ = targetID
 		activeModels := make(map[string]struct{})
 		for _, spec := range candidateModelSpecs(item.target.Models, item.policies) {
 			// Priority ranking consumes persisted probe state regardless of whether
@@ -354,26 +355,14 @@ func (s *Service) syncWorkspacePriorities(
 			stored.LastAppliedPriority = *stored.PendingPriority
 			stored.PendingPriority = nil
 		}
-		if exists && item.currentPriority != stored.LastAppliedPriority && stored.PendingPriority == nil {
+		// 上游值与上次写入不一致只说明有人手工改过，不再据此停止管理：
+		// 记下观测值供审计，然后照常按分组策略收敛回去。
+		if exists && item.currentPriority != stored.LastAppliedPriority {
 			current := item.currentPriority
-			stored.Conflict = true
 			stored.LastConflictPriority = &current
-			stored.EffectiveMultiplier = multiplier
-			if err := s.repo.UpsertPrioritySyncState(ctx, stored); err != nil {
-				log.Printf("[connection-health] priority conflict state save failed target_id=%s err=%v", targetID, err)
-			}
-			continue
-		}
-		if exists && stored.PendingPriority != nil && item.currentPriority != stored.LastAppliedPriority {
-			current := item.currentPriority
-			stored.Conflict = true
 			stored.PendingPriority = nil
-			stored.LastConflictPriority = &current
-			stored.EffectiveMultiplier = multiplier
-			if err := s.repo.UpsertPrioritySyncState(ctx, stored); err != nil {
-				log.Printf("[connection-health] priority pending conflict state save failed target_id=%s err=%v", targetID, err)
-			}
-			continue
+			log.Printf("[connection-health] priority manual change reclaimed target_id=%s manual_priority=%d last_applied=%d",
+				targetID, current, stored.LastAppliedPriority)
 		}
 		var automaticDisableEvent *AutomaticDisableEvent
 		var automaticRecoveryEvent *AutomaticRecoveryEvent
@@ -477,13 +466,6 @@ func (s *Service) syncWorkspacePriorities(
 			if !inventoryComplete {
 				// 分组读取失败时无法证明目标已经消失，保留当前优先级和同步快照，
 				// 等下一次完整扫描再决定是否恢复。
-				continue
-			}
-			if stored.Conflict {
-				// 已确认目标不再受策略管理，但人工修改过的值不能被原始快照覆盖。
-				if err := s.repo.DeletePrioritySyncState(ctx, userID, adminAccountID, targetID); err != nil {
-					log.Printf("[connection-health] missing conflicted target priority state delete failed target_id=%s err=%v", targetID, err)
-				}
 				continue
 			}
 			_, rawTargetID, grouped := parsePrioritySyncTargetID(targetID)

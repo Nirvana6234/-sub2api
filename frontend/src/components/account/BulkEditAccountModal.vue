@@ -760,26 +760,33 @@
               class="input-label mb-0"
               for="bulk-edit-priority-enabled"
             >
-              {{ t('admin.accounts.priority') }}
+              {{ groupPriorityGroupName
+                ? t('admin.accounts.bulkGroupPriority', { group: groupPriorityGroupName })
+                : t('admin.accounts.groupPriorities') }}
             </label>
             <input
               v-model="enablePriority"
               id="bulk-edit-priority-enabled"
               type="checkbox"
               aria-controls="bulk-edit-priority"
-              class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+              :disabled="groupPriorityGroupId == null"
+              class="rounded border-gray-300 text-primary-600 focus:ring-primary-500 disabled:cursor-not-allowed disabled:opacity-50"
             />
           </div>
           <input
             v-model.number="priority"
             id="bulk-edit-priority"
             type="number"
-            min="1"
-            :disabled="!enablePriority"
+            min="0"
+            step="1"
+            :disabled="!enablePriority || groupPriorityGroupId == null"
             class="input"
-            :class="!enablePriority && 'cursor-not-allowed opacity-50'"
+            :class="(!enablePriority || groupPriorityGroupId == null) && 'cursor-not-allowed opacity-50'"
             aria-labelledby="bulk-edit-priority-label"
           />
+          <p v-if="groupPriorityGroupId == null" class="input-hint" data-testid="bulk-group-priority-needs-filter">
+            {{ t('admin.accounts.bulkGroupPriorityNeedsGroupFilter') }}
+          </p>
         </div>
         <div>
           <div class="mb-3 flex items-center justify-between">
@@ -1530,9 +1537,16 @@ interface Props {
   }
   proxies: ProxyConfig[]
   groups: AdminGroup[]
+  // Group the list is filtered by; bulk priority edits apply within it only.
+  groupPriorityGroupId?: number | null
 }
 
 const props = defineProps<Props>()
+const groupPriorityGroupName = computed(() => {
+  const groupID = props.groupPriorityGroupId
+  if (groupID == null) return ''
+  return props.groups.find((group) => group.id === groupID)?.name ?? `#${groupID}`
+})
 const emit = defineEmits<{
   close: []
   updated: []
@@ -1952,8 +1966,10 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
     updates.load_factor = (lf != null && !Number.isNaN(lf) && lf > 0) ? lf : 0
   }
 
-  if (enablePriority.value) {
-    updates.priority = priority.value
+  // Only the in-group priority is editable; the account-wide priority is not
+  // used by in-group scheduling and is no longer sent from here.
+  if (enablePriority.value && props.groupPriorityGroupId != null) {
+    updates.group_priority = { group_id: props.groupPriorityGroupId, priority: priority.value }
   }
 
   if (enableRateMultiplier.value) {
@@ -2231,6 +2247,12 @@ const handleSubmit = async () => {
 
   if (!hasAnyFieldEnabled) {
     appStore.showError(t('admin.accounts.bulkEdit.noFieldsSelected'))
+    return
+  }
+
+  if (enablePriority.value && props.groupPriorityGroupId != null &&
+    (!Number.isSafeInteger(priority.value) || priority.value < 0)) {
+    appStore.showError(t('admin.accounts.invalidGroupPriority'))
     return
   }
 

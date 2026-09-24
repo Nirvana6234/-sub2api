@@ -143,16 +143,6 @@ export const getAdminSteps = (t: (key: string) => string, isSimpleMode = false):
     }
   },
   {
-    element: '[data-tour="account-form-priority"]',
-    popover: {
-      title: t('onboarding.admin.accountPriority.title'),
-      description: t('onboarding.admin.accountPriority.description'),
-      side: 'top',
-      align: 'start',
-      showButtons: ['next', 'previous']
-    }
-  },
-  {
     element: '[data-tour="account-form-groups"]',
     popover: {
       title: t('onboarding.admin.accountGroups.title'),

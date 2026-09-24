@@ -7480,6 +7480,9 @@
           </div>
         </div>
 
+        <!-- 未注册访客网页版试用：独立接口保存，不走上面的整页设置表单 -->
+        <GuestTrialSettingsCard />
+
         <div class="card">
           <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
             <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
@@ -9124,6 +9127,7 @@ import PaymentProviderDialog from "@/components/payment/PaymentProviderDialog.vu
 import GroupBadge from "@/components/common/GroupBadge.vue";
 import GroupOptionItem from "@/components/common/GroupOptionItem.vue";
 import Toggle from "@/components/common/Toggle.vue";
+import GuestTrialSettingsCard from "@/components/admin/settings/GuestTrialSettingsCard.vue";
 import ProxySelector from "@/components/common/ProxySelector.vue";
 import ImageUpload from "@/components/common/ImageUpload.vue";
 import BackupSettings from "@/views/admin/BackupView.vue";

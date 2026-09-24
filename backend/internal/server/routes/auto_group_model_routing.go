@@ -74,7 +74,13 @@ func autoGroupModelRoutingMiddleware(apiKeyService *service.APIKeyService, subsc
 		// Handlers map upstream 529 to a client-facing 503. Preserve the raw
 		// upstream status for auto-group observation so overload is not mistaken
 		// for a confirmed group failure.
-		if rawStatus, ok := c.Get(service.OpsUpstreamStatusCodeKey); ok {
+		//
+		// Only a failed request may take the raw upstream status. The key is
+		// written by every upstream attempt and is not cleared when a later
+		// attempt (often on another group after auto-group failover) succeeds;
+		// letting it override a final 2xx would record the earlier group's 503
+		// against the group that actually served the request.
+		if rawStatus, ok := c.Get(service.OpsUpstreamStatusCodeKey); ok && status >= http.StatusBadRequest {
 			switch typed := rawStatus.(type) {
 			case int:
 				if typed > 0 {

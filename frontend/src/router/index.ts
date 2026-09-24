@@ -40,6 +40,17 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    // 未注册访客的网页版试用：只能文字聊天，模型和额度由管理员配置
+    path: '/trial',
+    name: 'GuestTrial',
+    component: () => import('@/views/TrialChatView.vue'),
+    meta: {
+      requiresAuth: false,
+      title: 'Free Trial',
+      titleKey: 'guestTrial.pageTitle',
+    },
+  },
+  {
     path: '/download',
     name: 'ClientDownload',
     component: () => import('@/views/ClientDownloadView.vue'),

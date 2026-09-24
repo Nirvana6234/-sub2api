@@ -1251,6 +1251,12 @@ export interface OllamaCloudUsageSettings {
   debounce_minutes: number
 }
 
+export interface AccountGroupBinding {
+  account_id: number
+  group_id: number
+  priority: number
+}
+
 export interface Account {
   id: number
   name: string
@@ -1317,6 +1323,9 @@ export interface Account {
   proxy?: Proxy
   group_ids?: number[] // Groups this account belongs to
   groups?: Group[] // Preloaded group objects
+  // In-group priorities (account_groups.priority). Only the account detail
+  // endpoint returns them; the lite list sends group_priority instead.
+  account_groups?: AccountGroupBinding[]
 
   // Rate limit & scheduling fields
   schedulable: boolean

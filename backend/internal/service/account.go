@@ -1146,6 +1146,19 @@ func (a *Account) IsSharedPoolAvailableTo(userID int64, _ time.Time) bool {
 	return a.IsContributedBy(userID)
 }
 
+// IsContributionAvailableTo reports whether an account may serve userID from a
+// group's ordinary candidate list or a sticky/response binding. A contribution
+// kept for self-use is bound to the contributor's groups only so the
+// contributor can reach it; other members of those groups must never be
+// scheduled onto it. Room-routed clones carry the room's authorization and are
+// always allowed.
+func (a *Account) IsContributionAvailableTo(userID int64) bool {
+	if a == nil || a.ContributorUserID() == 0 || a.IsContributionRoomRouted() {
+		return true
+	}
+	return a.IsSharedPoolAvailableTo(userID, time.Time{})
+}
+
 func (a *Account) GetClaudeUserID() string {
 	if v := strings.TrimSpace(a.GetExtraString("claude_user_id")); v != "" {
 		return v

@@ -883,6 +883,8 @@ var ProviderSet = wire.NewSet(
 	NewTicketService,
 	NewRemoteHub,
 	NewRemoteSyncService,
+	NewGuestTrialService,
+	wire.Bind(new(GuestTrialCaptchaVerifier), new(*AuthService)),
 	NewAdminService,
 	NewGatewayService,
 	NewOpenAIGatewayService,

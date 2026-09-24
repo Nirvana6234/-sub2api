@@ -1214,6 +1214,15 @@ func (s *APIKeyService) finalizeAPIKeyForAuth(ctx context.Context, apiKey *APIKe
 // as a safe cold-start choice; handlers call this method before routing so the
 // final choice can use model-specific latency data.
 func (s *APIKeyService) ResolveAutoGroupForModel(ctx context.Context, apiKey *APIKey, model string) (*APIKey, error) {
+	return s.resolveAutoGroupForModel(ctx, apiKey, model, nil)
+}
+
+// resolveAutoGroupForModel is the shared resolver. excludedGroupIDs is a
+// request-local blacklist: it only removes candidates from this evaluation and
+// never changes the key's configured candidate list, so the committed
+// selection keeps the key's own config fingerprint and survives into the next
+// request.
+func (s *APIKeyService) resolveAutoGroupForModel(ctx context.Context, apiKey *APIKey, model string, excludedGroupIDs map[int64]struct{}) (*APIKey, error) {
 	if apiKey == nil || !apiKey.AutoGroup {
 		return apiKey, nil
 	}
@@ -1227,7 +1236,15 @@ func (s *APIKeyService) ResolveAutoGroupForModel(ctx context.Context, apiKey *AP
 		if current.configFingerprint != "" && current.configFingerprint != configFingerprint {
 			current = autoGroupSelection{}
 		}
-		if current.selectedGroup != nil && current.configFingerprint == configFingerprint {
+		// A settled choice that already failed in this request must go through
+		// full selection; the fast paths below would otherwise hand it back.
+		_, currentExcluded := excludedGroupIDs[current.groupID]
+		if current.selectedGroup != nil {
+			if _, excluded := excludedGroupIDs[current.selectedGroup.ID]; excluded {
+				currentExcluded = true
+			}
+		}
+		if current.selectedGroup != nil && current.configFingerprint == configFingerprint && !currentExcluded {
 			// Validate the settled choice against the same account-level capability
 			// and runtime model-cooldown filters used during a full selection. A
 			// group can retain the right image flag while its account pool no longer
@@ -1240,7 +1257,7 @@ func (s *APIKeyService) ResolveAutoGroupForModel(ctx context.Context, apiKey *AP
 				current = autoGroupSelection{}
 			}
 		}
-		if current.selectedGroup != nil && current.configFingerprint == configFingerprint && !current.needsEvaluation {
+		if current.selectedGroup != nil && current.configFingerprint == configFingerprint && !current.needsEvaluation && !currentExcluded {
 			fallbackCoolingDown := !current.fallbackUntil.IsZero() && now.Before(current.fallbackUntil)
 			priceReviewDue := current.priceReviewAt.IsZero() || !now.Before(current.priceReviewAt)
 			if current.settled && (current.fallbackUntil.IsZero() || fallbackCoolingDown) && !priceReviewDue {
@@ -1255,7 +1272,7 @@ func (s *APIKeyService) ResolveAutoGroupForModel(ctx context.Context, apiKey *AP
 
 		fallbackCoolingDown := !current.fallbackUntil.IsZero() && now.Before(current.fallbackUntil)
 		priceReviewOnly := current.selectedGroup != nil && current.configFingerprint == configFingerprint &&
-			!current.needsEvaluation && current.settled &&
+			!current.needsEvaluation && current.settled && !currentExcluded &&
 			(current.fallbackUntil.IsZero() || fallbackCoolingDown) &&
 			(current.priceReviewAt.IsZero() || !now.Before(current.priceReviewAt))
 
@@ -1270,6 +1287,7 @@ func (s *APIKeyService) ResolveAutoGroupForModel(ctx context.Context, apiKey *AP
 			return nil, fmt.Errorf("list available groups for auto mode: %w", err)
 		}
 		groups = filterAutoGroupCandidates(groups, apiKey.AutoGroupIDs)
+		groups = excludeAutoGroups(groups, excludedGroupIDs)
 		groups, err = s.filterAutoGroupCandidatesForModel(ctx, groups, model)
 		if err != nil {
 			return nil, fmt.Errorf("filter automatic groups for model %q: %w", model, err)
@@ -1365,35 +1383,22 @@ func (s *APIKeyService) ResolveAutoGroupForModel(ctx context.Context, apiKey *AP
 // the persisted in-memory selection advances through the same state machine as
 // the normal post-request observer. The exclusion set is request-local and is
 // never persisted on the API key itself.
+//
+// Excluded groups are filtered inside the resolver rather than by rewriting
+// AutoGroupIDs on a working copy of the key. The candidate list is part of the
+// selection's config fingerprint, so a rewritten copy used to commit the
+// failover choice under a fingerprint the real key never matches: the next
+// request discarded it and went straight back to the group that just failed.
 func (s *APIKeyService) ResolveAutoGroupForModelExcluding(ctx context.Context, apiKey *APIKey, model string, excludedGroupIDs map[int64]struct{}) (*APIKey, error) {
 	if apiKey == nil || !apiKey.AutoGroup || len(excludedGroupIDs) == 0 {
 		return s.ResolveAutoGroupForModel(ctx, apiKey, model)
 	}
 
-	// Failed groups must be removed before ranking candidates. The previous
-	// retry loop allowed the price strategy to pick an already failed cheap
-	// group again, which could exhaust the loop before a viable higher-priced
-	// image group was ever considered.
-	working := *apiKey
-	if apiKey.AutoGroupIDs == nil {
-		available, err := s.GetAvailableGroups(ctx, apiKey.UserID)
-		if err != nil {
-			return nil, fmt.Errorf("list available groups for auto mode: %w", err)
-		}
-		working.AutoGroupIDs = availableAutoGroupIDsExcluding(available, excludedGroupIDs)
-	} else {
-		working.AutoGroupIDs = autoGroupIDsExcluding(apiKey.AutoGroupIDs, excludedGroupIDs)
-	}
-	if len(working.AutoGroupIDs) == 0 {
-		return nil, ErrAutoGroupUnavailable
-	}
-
 	// The native account scheduler has exhausted every candidate in the current
-	// group for this request. Force the full-candidate snapshot to re-evaluate
-	// before the next request while this call resolves only among the remaining
-	// groups.
+	// group for this request. Mark it as a confirmed failure so the switch is
+	// immediate and does not consume the voluntary switch budget.
 	s.markAutoGroupSelectionForImmediateFailure(apiKey, model)
-	resolved, err := s.ResolveAutoGroupForModel(ctx, &working, model)
+	resolved, err := s.resolveAutoGroupForModel(ctx, apiKey, model, excludedGroupIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -1406,25 +1411,21 @@ func (s *APIKeyService) ResolveAutoGroupForModelExcluding(ctx context.Context, a
 	return resolved, nil
 }
 
-func autoGroupIDsExcluding(groupIDs []int64, excluded map[int64]struct{}) []int64 {
-	candidates := normalizeAutoGroupIDs(groupIDs)
-	remaining := make([]int64, 0, len(candidates))
-	for _, groupID := range candidates {
-		if _, failed := excluded[groupID]; !failed {
-			remaining = append(remaining, groupID)
+// excludeAutoGroups drops groups that already failed in the current request.
+// Failed groups must be removed before ranking: otherwise the price strategy
+// keeps picking the same cheap failed group and exhausts the retry loop before
+// a viable higher-priced group is ever considered.
+func excludeAutoGroups(groups []Group, excluded map[int64]struct{}) []Group {
+	if len(excluded) == 0 {
+		return groups
+	}
+	remaining := make([]Group, 0, len(groups))
+	for _, group := range groups {
+		if _, failed := excluded[group.ID]; !failed {
+			remaining = append(remaining, group)
 		}
 	}
 	return remaining
-}
-
-func availableAutoGroupIDsExcluding(groups []Group, excluded map[int64]struct{}) []int64 {
-	remaining := make([]int64, 0, len(groups))
-	for _, group := range groups {
-		if _, failed := excluded[group.ID]; !failed {
-			remaining = append(remaining, group.ID)
-		}
-	}
-	return normalizeAutoGroupIDs(remaining)
 }
 
 // markAutoGroupSelectionForImmediateFailure records a request-local hard
@@ -1443,11 +1444,19 @@ func (s *APIKeyService) markAutoGroupSelectionForImmediateFailure(apiKey *APIKey
 	if !ok || !valid || selection.configFingerprint != autoGroupConfigFingerprint(apiKey) {
 		return false
 	}
+	if !autoGroupEventBelongsToSelection(apiKey, selection) {
+		return false
+	}
 	if selection.groupID == 0 && apiKey.GroupID != nil {
 		selection.groupID = *apiKey.GroupID
 	}
 	if selection.groupID == 0 {
 		return false
+	}
+	// 同一分组的确认故障只需标记一次。重复标记若再推进 revision，会让正在处理
+	// 这次故障的解析器乐观提交一再失败，最终报「选择反复变化」而放弃切组。
+	if selection.needsEvaluation && selection.failureTriggered && selection.eventGroupID == selection.groupID {
+		return true
 	}
 
 	now := time.Now()
@@ -2193,8 +2202,13 @@ func (s *APIKeyService) ObserveAutoGroupRequestResult(apiKey *APIKey, model stri
 		s.autoGroupSelectionMu.Unlock()
 		return
 	}
+	if !autoGroupEventBelongsToSelection(apiKey, selection) {
+		s.autoGroupSelectionMu.Unlock()
+		return
+	}
 
 	changed := false
+	routingBefore := autoGroupRoutingState{selection.needsEvaluation, selection.eventGroupID, selection.failureTriggered}
 	now := time.Now()
 	// 529 is an upstream overload signal, not evidence that this account or
 	// group is broken. Do not turn it into an automatic group switch event.
@@ -2266,13 +2280,42 @@ func (s *APIKeyService) ObserveAutoGroupRequestResult(apiKey *APIKey, model stri
 		s.autoGroupSelectionMu.Unlock()
 		return
 	}
-	selection.revision++
+	// revision 只随路由决策推进。故障/慢请求计数是统计量，解析器提交新选择时会
+	// 整体重置它们；若每次计数都推进 revision，同组请求持续完成时正在进行的
+	// 重新评估会一直提交失败，直到用尽重试次数。
+	if (autoGroupRoutingState{selection.needsEvaluation, selection.eventGroupID, selection.failureTriggered}) != routingBefore {
+		selection.revision++
+	}
 	selection.expiresAt = time.Now().Add(autoGroupSelectionTTL)
 	s.autoGroupSelections.Store(key, selection)
 	s.autoGroupSelectionMu.Unlock()
 	if selection.needsEvaluation {
 		s.invalidateAutoGroupMetrics(apiKey.UserID, model)
 	}
+}
+
+// autoGroupRoutingState 是选择里决定下一次路由的那部分状态，用来区分
+// 「路由决策变了」与「只是统计计数变了」。
+type autoGroupRoutingState struct {
+	needsEvaluation  bool
+	eventGroupID     int64
+	failureTriggered bool
+}
+
+// autoGroupEventBelongsToSelection 报告一次请求事件是否属于当前存储的选择。
+//
+// 事件按请求实际使用的分组归属，请求快照上的 GroupID 就是它被路由到的分组。
+// 同一个 key 常有多个请求在途：其中一个已把选择从 A 切到 B 后，其余仍在 A 上的
+// 请求会陆续报告失败或成功。那些都是 A 的事，记到 B 头上会把刚换上的健康分组
+// 误判为故障（或者清掉 B 真实的故障计数）。
+//
+// 已知局限：选择经 A→B→A 回到 A 后，第一段 A 期间迟到的事件仍会记到 A 上。
+// 那是同一个分组的真实表现，且回切本身受切换额度约束，窗口很小，不再额外区分。
+func autoGroupEventBelongsToSelection(apiKey *APIKey, selection autoGroupSelection) bool {
+	if apiKey == nil || apiKey.GroupID == nil || *apiKey.GroupID <= 0 || selection.groupID == 0 {
+		return true
+	}
+	return *apiKey.GroupID == selection.groupID
 }
 
 func (s *APIKeyService) invalidateAutoGroupMetrics(userID int64, model string) {

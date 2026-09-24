@@ -364,7 +364,12 @@ func TestMultiplierPrioritySync_Sub2APIMigratesLegacyGlobalCheckpoint(t *testing
 	}
 }
 
-func TestMultiplierPrioritySyncAndManualConflict(t *testing.T) {
+// 分组策略是优先级的唯一事实来源：管理员在上游手工改过的值，下一轮必须被重新
+// 接管收敛回策略计算值，而不是让 TransitHub 就此放手。
+//
+// 旧行为是「检测到人工修改 → 标记冲突 → 永久停止管理该目标」，运营侧的期望恰好
+// 相反（2026-09-16 确认）：人工值只是一次临时覆盖，不应该让自动管理失效。
+func TestMultiplierPrioritySyncReclaimsManualChange(t *testing.T) {
 	repo := newFakeRepository()
 	priorityActions := &fakeTargetPriorityActioner{}
 	accountPriority := 7
@@ -397,7 +402,7 @@ func TestMultiplierPrioritySyncAndManualConflict(t *testing.T) {
 		t.Fatalf("unexpected stored priority state: %+v", stored)
 	}
 
-	// 模拟管理员在上游把系统写入值手动改为 23；下一轮只能标记冲突，不能再次覆盖。
+	// 模拟管理员在上游把系统写入值手动改为 23；下一轮必须重新写回策略值。
 	manualPriority := 23
 	reader.accountsByGrp["g1"] = []upstream.AdminGroupAccountInfo{{
 		ID: "100", Name: "channel", Priority: &manualPriority, BaseURL: "https://up", Models: "gpt-4o",
@@ -405,12 +410,20 @@ func TestMultiplierPrioritySyncAndManualConflict(t *testing.T) {
 	service.platformGroups = reader
 	priorityActions.calls = nil
 	service.syncMultiplierPriorities(context.Background(), policies, nil, groupAssignments, nil, []PrioritySyncState{stored})
-	if len(priorityActions.calls) != 0 {
-		t.Fatalf("manual priority change must not be overwritten, calls=%+v", priorityActions.calls)
+	if len(priorityActions.calls) != 1 || priorityActions.calls[0].priority != 9900 {
+		t.Fatalf("manual priority change must be reclaimed by the group policy, calls=%+v", priorityActions.calls)
 	}
 	stored = repo.priorityStates["user1|ws1|newapi:ws1:100"]
-	if !stored.Conflict || stored.LastConflictPriority == nil || *stored.LastConflictPriority != manualPriority {
-		t.Fatalf("manual change should be recorded as conflict: %+v", stored)
+	if stored.Conflict {
+		t.Fatalf("reclaiming must not leave the target flagged as conflicted: %+v", stored)
+	}
+	if stored.LastAppliedPriority != 9900 {
+		t.Fatalf("last applied priority must track the reclaimed value: %+v", stored)
+	}
+	// 收敛成功后不保留"冲突值"：它已经不是冲突，留在状态里只会让语义含混。
+	// 人工改动的审计痕迹由 priority_manual_change_reclaimed 日志承载。
+	if stored.LastConflictPriority != nil {
+		t.Fatalf("a reclaimed target must not keep a conflict marker: %+v", stored)
 	}
 }
 
@@ -1053,7 +1066,9 @@ func TestPreferredTransitHubLatency_UsesSub2APIUsageBeforeProbeFallback(t *testi
 	}
 }
 
-func TestMultiplierPrioritySync_MissingConflictedTargetIsNotOverwritten(t *testing.T) {
+// 目标不再受任何分组策略管理时，应当还原成 TransitHub 接管之前的原始优先级，
+// 曾经被人工改过也不例外——人工值不再享有"不可覆盖"的豁免（2026-09-16 契约变更）。
+func TestMultiplierPrioritySync_MissingTargetRestoresOriginalPriority(t *testing.T) {
 	repo := newFakeRepository()
 	priorityActions := &fakeTargetPriorityActioner{}
 	service := &Service{
@@ -1067,11 +1082,11 @@ func TestMultiplierPrioritySync_MissingConflictedTargetIsNotOverwritten(t *testi
 	repo.priorityStates["user1|ws1|"+stored.TargetID] = stored
 
 	service.syncMultiplierPriorities(context.Background(), nil, nil, nil, nil, []PrioritySyncState{stored})
-	if len(priorityActions.calls) != 0 {
-		t.Fatalf("missing target with a manual conflict must not be overwritten: %+v", priorityActions.calls)
+	if len(priorityActions.calls) != 1 || priorityActions.calls[0].priority != stored.OriginalPriority {
+		t.Fatalf("an unmanaged target must be restored to the priority it had before TransitHub took over: %+v", priorityActions.calls)
 	}
 	if _, exists := repo.priorityStates["user1|ws1|"+stored.TargetID]; exists {
-		t.Fatal("unmanaged conflicted target should release its stale checkpoint without a remote write")
+		t.Fatal("restored target should release its stale checkpoint")
 	}
 }
 

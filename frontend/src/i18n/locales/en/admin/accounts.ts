@@ -93,6 +93,12 @@ export default {
       invalidGroupPriority: 'Enter a non-negative integer priority',
       groupPrioritySaved: 'In-group priority saved',
       groupPrioritySaveFailed: 'Failed to save in-group priority',
+      groupPriorities: 'In-group priority',
+      groupPrioritiesHint: 'Lower values are used first. Each group ranks its accounts separately, and both scheduling and TransitHub health demotion use these values; leave a newly added group empty to get the default order.',
+      groupPriorityNewPlaceholder: 'Default',
+      bulkGroupPriority: 'In-group priority ({group})',
+      bulkGroupPriorityNeedsGroupFilter: 'Filter the list by a group first; bulk edit changes the priority within that group',
+      priorityNeedsGroupFilter: 'Filter by a group to see in-group priority',
       setupToken: 'Setup Token',
       apiKey: 'API Key',
       // Schedulable toggle
@@ -235,7 +241,7 @@ export default {
         priority: 'Priority',
         priorityInGroup: 'in group',
         priorityHint:
-          "Shows the account's global priority by default. When filtered by group it switches to that account's priority within the group (marked \"in group\") — group priority is what scheduling and TransitHub health demotion actually use. The two share a name but are different fields, and an account can sit in several groups with independent ranks.",
+          "When the list is filtered by a group, shows the account's priority within that group (marked \"in group\"), which is what scheduling and TransitHub health demotion use. An account can sit in several groups with independent ranks, so nothing is shown without a group filter.",
         billingRateMultiplier: 'Billing Rate',
         upstreamBillingRate: 'Upstream Declared Rate',
         weight: 'Weight',

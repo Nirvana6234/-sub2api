@@ -75,6 +75,7 @@ type Handlers struct {
 	PlaygroundHistory   *PlaygroundHistoryHandler
 	AccountContribution *AccountContributionHandler
 	Ticket              *TicketHandler
+	GuestTrial          *GuestTrialHandler
 	Remote              *RemoteHandler
 }
 

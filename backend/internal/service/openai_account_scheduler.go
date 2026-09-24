@@ -2543,6 +2543,8 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 	previousResponseCanMove bool,
 	useUpstreamTokenCost bool,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+	// 兜底尝试账本在本次选号的最外层装一次，递归进兜底池的各层共用它。
+	ctx = withFallbackAttemptLedger(ctx)
 	ctx = s.withOpenAIQuotaAutoPauseContext(ctx)
 	ctx = s.withOpenAIGroupPrivacyRequirement(ctx, groupID)
 	// 分组利润控制：唯一文本调度入口的防御性装门。handler 文本
@@ -2560,24 +2562,66 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 		slowBucket, groupIsSlow = s.shouldTriggerOpenAILatencyFallback(ctx, groupID)
 	}
 	if err == nil && selection != nil && selection.Account != nil && NormalizeOpenAICompatiblePlatform(platform) == PlatformOpenAI && groupIsSlow && len(excludedIDs) == 0 && !isOpenAIFallbackPoolSourcing(ctx) && !isOpenAIStickyFallbackRequest(ctx) {
-		fallbackCtx, fallbackGroupID := s.nextOpenAIFallbackGroup(withOpenAILatencyFallbackTrigger(ctx, slowBucket), groupID, platform, requestedModel)
-		if fallbackGroupID != nil {
-			fallbackSelection, fallbackDecision, fallbackErr := s.selectAccountWithSchedulerOnce(withOpenAILatencyFallbackSuppressed(fallbackCtx), fallbackGroupID, "", "", requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, false, useUpstreamTokenCost)
+		// 源组已有可用账号，这里只是「换个更快的池子」：逐个试够快的兜底池，
+		// 都取不到号就留在源组已选好的账号上。触发标记随链路一直向下传：
+		// 下游不会再次触发延迟兜底，但每个下游候选都要和最初变慢的源组比快慢。
+		var switched *AccountSelectionResult
+		var switchedDecision OpenAIAccountScheduleDecision
+		switchedGroupID := int64(0)
+		s.eachOpenAIFallbackAttempt(withOpenAILatencyFallbackTrigger(ctx, slowBucket), groupID, platform, requestedModel, func(attempt openAIFallbackAttempt) bool {
+			fallbackSelection, fallbackDecision, fallbackErr := s.selectAccountWithSchedulerOnce(attempt.ctx, attempt.groupID, "", "", requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, false, useUpstreamTokenCost)
 			if fallbackErr == nil && fallbackSelection != nil && fallbackSelection.Account != nil {
-				s.markOpenAIFallbackSticky(derefGroupID(groupID), *fallbackGroupID, slowBucket)
-				return fallbackSelection, fallbackDecision, nil
+				switched, switchedDecision, switchedGroupID = fallbackSelection, fallbackDecision, *attempt.groupID
+				return true
 			}
+			releaseUnusedSelection(fallbackSelection)
+			// 只有「没号」才值得换下一个池子。其他错误（查库失败等）说明兜底链路
+			// 本身有问题，继续扩展只会放大故障；源组手里已经有号，停下来用它。
+			return fallbackErr != nil && !isNoAvailableOpenAIAccountError(fallbackErr)
+		})
+		if switched != nil {
+			// 源组那次选号已经占了并发槽，改用兜底池的号就必须把它还回去，
+			// 否则这个槽要等 Redis 过期才释放，源组账号被白白少算一路并发。
+			releaseUnusedSelection(selection)
+			// 粘性要记在真正供号的池子上。A→B 没号、B→D 供号时，记成 B 会让下个
+			// 请求进入 B：粘性上下文已把 B 记为走过，B→D 走不通，只能退回慢源组。
+			if switched.fallbackTrace != nil && switched.fallbackTrace.TargetGroupID > 0 {
+				switchedGroupID = switched.fallbackTrace.TargetGroupID
+			}
+			s.markOpenAIFallbackSticky(derefGroupID(groupID), switchedGroupID, slowBucket)
+			return switched, switchedDecision, nil
 		}
 	}
 	if !isNoAvailableOpenAIAccountError(err) {
 		return selection, decision, err
 	}
-	fallbackCtx, fallbackGroupID := s.nextOpenAIFallbackGroup(ctx, groupID, platform, requestedModel)
-	if fallbackGroupID == nil {
-		return selection, decision, err
+	// 按配置顺序逐个试兜底池：前一个（连同它的下游链路）没号才试下一个。
+	// 都没号时报信息量最大的那个错误（见 preferNoAccountError）。
+	noAccountErr := err
+	var fallbackSelection *AccountSelectionResult
+	var fallbackDecision OpenAIAccountScheduleDecision
+	var fallbackErr error
+	resolved := false
+	s.eachOpenAIFallbackAttempt(ctx, groupID, platform, requestedModel, func(attempt openAIFallbackAttempt) bool {
+		fallbackSelection, fallbackDecision, fallbackErr = s.selectAccountWithSchedulerOnce(attempt.ctx, attempt.groupID, "", sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, false, useUpstreamTokenCost)
+		if isNoAvailableOpenAIAccountError(fallbackErr) {
+			noAccountErr = preferNoAccountError(noAccountErr, fallbackErr)
+			return false
+		}
+		resolved = true
+		return true
+	})
+	if resolved {
+		return fallbackSelection, fallbackDecision, fallbackErr
 	}
-	fallbackSelection, fallbackDecision, fallbackErr := s.selectAccountWithSchedulerOnce(fallbackCtx, fallbackGroupID, "", sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, false, useUpstreamTokenCost)
-	return fallbackSelection, fallbackDecision, fallbackErr
+	return selection, decision, noAccountErr
+}
+
+// releaseUnusedSelection 归还一个被放弃的选号结果占着的并发槽。
+func releaseUnusedSelection(selection *AccountSelectionResult) {
+	if selection != nil && selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
+	}
 }
 
 // shouldTriggerOpenAILatencyFallback 判断分组是否已经慢到需要考虑换池，
