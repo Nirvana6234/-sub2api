@@ -521,5 +521,5 @@ message.send
 | R2 | **已完成。** `SessionContentSync`：找 rollout 文件、轮次索引、`SyncItem` 投影、跟读与游标、按需取详情（含路径防护）；用真实 rollout 片段做 fixture，覆盖每一种 item 类型、半行、`resync` | R0 |
 | R3 | 服务端 `remote` 模块：WS hub、配对（含令牌与公钥转交）、命令路由、SSE、白名单、配对表、token 过期断开。**已完成**（§7） | D-5 D-8 |
 | R4 | 助手 `RemoteLink` + `RemoteCommandPolicy`（含已批准配对名单、验签）+ 已勾选名单（上限 5）+ 审计 + 「同步会话」页签。**已完成**（`Core/DesktopSync/`、`DesktopSyncPage`） | R1 R2 R3 |
-| R5 | Paw「电脑」页签：设备列表、已同步会话列表、会话详情（`SyncItem` 渲染、按需详情、上滑翻历史）、增量订阅与续传、IndexedDB 缓存与清理、输入框、配对（含密钥生成与签名） | R3 |
+| R5 | **已完成**（`tools/chat/src/client/remote/`、`PawRemotePage.tsx`；签名/指纹由两端共用的已知答案向量钉住）。Paw「电脑」页签：设备列表、已同步会话列表、会话详情（`SyncItem` 渲染、按需详情、上滑翻历史）、增量订阅与续传、IndexedDB 缓存与清理、输入框、配对（含密钥生成与签名） | R3 |
 | R6 | 端到端：真手机 → 真服务端 → 真助手 → 真桌面版，走一遍改文件；做一次安全自查 | R4 R5 |
