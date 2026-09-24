@@ -203,6 +203,7 @@ func ProvideHandlers(
 	playgroundHistoryHandler *PlaygroundHistoryHandler,
 	accountContributionHandler *AccountContributionHandler,
 	ticketHandler *TicketHandler,
+	remoteHandler *RemoteHandler,
 	_ *service.IdempotencyCoordinator,
 	_ *service.IdempotencyCleanupService,
 	_ *service.OpenAIQuotaAutoResetService,
@@ -234,6 +235,7 @@ func ProvideHandlers(
 		PlaygroundHistory:   playgroundHistoryHandler,
 		AccountContribution: accountContributionHandler,
 		Ticket:              ticketHandler,
+		Remote:              remoteHandler,
 	}
 }
 
@@ -263,6 +265,7 @@ var ProviderSet = wire.NewSet(
 	NewPlaygroundHistoryHandler,
 	ProvideAccountContributionHandler,
 	NewTicketHandler,
+	NewRemoteHandler,
 
 	// Admin handlers
 	admin.NewDashboardHandler,

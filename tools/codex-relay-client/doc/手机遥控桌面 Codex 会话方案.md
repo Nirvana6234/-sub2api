@@ -334,28 +334,52 @@ v1 只实现 Codex，但要把「会话来源」抽象出来，免得以后接 C
 
 ## 7. 服务端设计（Go）
 
-新模块 `remote`，挂在 JWT 路由组下。在线状态放在内存；配对关系落一张小表（D-5）。
+已实现（R3）：`backend/internal/service/remote_hub.go`（长连接与转发）、`remote_sync_service.go`（配对）、`repository/remote_pairing_repo.go`（raw SQL，不走 Ent）、`handler/remote_handler.go`、`server/routes/remote.go`，迁移 `258_remote_pairings.sql`。在线状态在进程内存；配对关系落 `remote_pairings` 表（D-5）。
+
+### 7.1 接口
+
+全部挂在账号会话（JWT）之下。访问某台电脑还要带 `X-Remote-Pairing: <配对令牌>`：只登录同一账号不够。
 
 | 接口 | 调用方 | 作用 |
 |---|---|---|
-| `GET  /api/v1/remote/agent`（WS 升级） | 助手 | 注册设备、保持长连接 |
-| `POST /api/v1/remote/pair/start` | 助手 | 生成 6 位配对码（5 分钟有效） |
-| `POST /api/v1/remote/pair/claim` | 手机 | 用配对码认领。手机随请求提交自己生成的公钥（D-8），服务端转给助手等电脑确认；确认后手机拿到 `pairingId` 和一个配对令牌，存进 IndexedDB，以后每次请求都在 `X-Remote-Pairing` 头里带上 |
-| `GET  /api/v1/remote/devices` | 手机 | 我的电脑列表与在线状态 |
-| `POST /api/v1/remote/devices/:id/cmd` | 手机 | 请求 / 应答类命令：会话列表、`session.open` / `history` / `detail`、发送消息。同步等 `result`，带超时 |
-| `GET  /api/v1/remote/devices/:id/sessions/:threadId/stream?seq=`（SSE） | 手机 | 订阅一条会话的增量（§6.4）。连接建立时服务端代发 `subscribe`，断开时代发 `unsubscribe`。只在手机停留在会话页时存在，不是通知 |
-| `DELETE /api/v1/remote/pairings/:id` | 手机 / 助手 | 吊销 |
+| `POST /api/v1/remote/pair/start` `{device_id, device_name}` | 助手 | 发一个 6 位码（5 分钟有效），同时作废这台电脑之前未完成的码和认领 |
+| `POST /api/v1/remote/pair/claim` `{code, phone_label, public_key}` | 手机 | 认领。返回 `pairing_id` 与**配对令牌**（明文只出现这一次，库里只存 SHA-256）。此时状态是 `claimed`，还不能用 |
+| `GET  /api/v1/remote/pairings/:id` | 手机 | 等电脑确认：`claimed` → `active` |
+| `DELETE /api/v1/remote/pairings/:id` | 手机 / 助手 | 吊销；在线的电脑会收到 `pair.revoked` |
+| `GET  /api/v1/remote/devices` | 手机 | 已配对的电脑、是否在线、助手最近上报的状态 |
+| `POST /api/v1/remote/devices/:device_id/cmd` | 手机 | 请求 / 应答类命令，原样转给助手，原样返回；15 秒超时（504），电脑不在线 503 |
+| `GET  /api/v1/remote/devices/:device_id/sessions/:thread_id/stream?cursor=`（SSE） | 手机 | 跟读一条会话；连上时服务端向助手发 `subscribe`，断开时发 `unsubscribe` |
+| `GET  /api/v1/remote/agent?device_id=`（WebSocket） | 助手 | 助手的长连接 |
 
-规则：
+服务端对 `cmd` 只检查信封：`type` 必须是 `sessions.list` / `session.open` / `session.history` / `session.detail` / `message.send` / `thread.navigate` 之一，体积 ≤ 64 KB。这是第二道防线，第一道在助手本地（§5.2）。
 
-- **只能遥控自己账号下的设备。** 设备 id 绑定在注册它的用户上，跨用户一律 404。
-- **服务端也做一遍工具白名单**，但只是第二道防线；第一道在助手本地（§5.2）。
-- **不落内容。** 命令和事件只在内存里转发；日志只记元数据（设备、会话 id、工具名、字节数、耗时），不记 `prompt`、回复、命令输出和 diff。
-- **不做内容缓存。** 断线续传靠 rollout 的字节偏移（§6.4），服务端不需要替任何一方暂存事件。
-- WebSocket 用 `gorilla/websocket`，与现有的 `ops_ws_handler.go` 保持一致。
-- 配对关系需要持久化，否则服务端重启后得重新配对（D-5）。配对令牌在库里只存哈希。
-- **多实例**：主节点如果不止一个实例，手机的请求可能落到没有持有助手长连接的那个实例上，需要用 Redis 发布订阅把命令转到正确的实例。只有一个实例时不需要，但接口按可扩展的方式写。
-- **SSE 过反向代理**：响应头带 `X-Accel-Buffering: no`，并且每 15 秒发一次心跳注释行，防止被 nginx 缓冲或者被判空闲断开。
+### 7.2 与助手之间的帧
+
+WebSocket 文本帧，JSON：
+
+| 方向 | 帧 | 含义 |
+|---|---|---|
+| 服务端 → 助手 | `{"kind":"cmd","id":"r12","pairing_id":5,"body":{…手机原文…}}` | 手机的命令；`pairing_id` 让助手按**自己确认过的**配对名单和公钥判定 |
+| 助手 → 服务端 | `{"kind":"result","id":"r12","body":{…}}` | 应答，原样回给手机 |
+| 服务端 → 助手 | `{"kind":"subscribe","subscription":"s13","pairing_id":5,"body":{"type":"session.subscribe","thread_id":…,"cursor":…}}` | 开始跟读 |
+| 助手 → 服务端 | `{"kind":"event","subscription":"s13","body":{…}}` | 一条增量，写成一行 SSE `data:` |
+| 服务端 → 助手 | `{"kind":"unsubscribe","subscription":"s13"}` | 手机离开，或手机跟不上被切断（缓冲 64 条满即切断，手机凭游标续传） |
+| 服务端 → 助手 | `{"kind":"event","type":"pair.request","body":{"pairing_id","phone_label","public_key"}}` | 有手机认领了码。助手**重连时会补发**所有未确认的认领 |
+| 助手 → 服务端 | `{"kind":"pair.confirm","pairing_id":5}` / `{"kind":"pair.reject",…}` | 用户在电脑上确认或拒绝 |
+| 服务端 → 助手 | `{"kind":"event","type":"pair.revoked","body":{"pairing_id"}}` | 配对被吊销 |
+| 助手 → 服务端 | `{"kind":"hello","body":{…}}` | 状态（桌面版在不在、管道能力），`devices` 列表里原样给手机看 |
+| 双向 | `{"kind":"ping"}` / `pong`，外加 WebSocket 自己的 ping（30 秒） | 保活；75 秒收不到任何东西断开 |
+
+### 7.3 规则
+
+- **只能访问自己账号下、且配对已确认的电脑。** 令牌必须属于这个账号、这台电脑、状态 `active` 的配对，三者缺一返回 403。同一个设备 id 在不同账号下互不相干。
+- **配对码防猜**：6 位数字；同一账号累计 5 次错码，该账号所有未完成的码全部作废。码一次性，认领即清除。
+- **长连接不会比 token 活得久**：JWT 中间件新写入 `token_expires_at`，助手的 WebSocket 到期即以 `1008 token expired` 关闭；助手刷新 token 后重连。
+- **浏览器打不开助手的 WebSocket**：带 `Origin` 头的握手一律拒绝（助手是桌面程序，不发 `Origin`）。
+- **不落内容**：命令和事件只在内存里转发；日志只记元数据，不记 `prompt`、回复、命令输出和 diff。续传靠 rollout 的字节偏移（§6.4），服务端不暂存事件。
+- **限流**：配对与命令接口走面板限流；两条长连接（助手 WebSocket、手机 SSE）不计入。
+- **SSE 过反向代理**：`X-Accel-Buffering: no`，每 15 秒一行心跳注释。
+- **多实例（未实现）**：主节点若多实例部署，手机请求可能落到没持有该助手长连接的实例上，需要 Redis 发布订阅转发。v1 按单实例部署。
 
 ## 8. 手机端（Paw）
 
@@ -443,9 +467,9 @@ v1 只实现 Codex，但要把「会话来源」抽象出来，免得以后接 C
 | 编号 | 内容 | 依赖 |
 |---|---|---|
 | R0 | 跑完 V-1 ~ V-12，把结论回填本文。**已完成**（§12） | — |
-| R1 | `DesktopAppToolsClient`：管道发现、帧格式、签名闸门、假管道服务端与 fixture 测试 | R0 |
-| R2 | `SessionContentSync`：找 rollout 文件、轮次索引、`SyncItem` 投影、跟读与游标、按需取详情（含路径防护）；用真实 rollout 片段做 fixture，覆盖每一种 item 类型、半行、`resync` | R0 |
-| R3 | 服务端 `remote` 模块：WS hub、配对（含令牌与公钥转交）、命令路由、SSE、白名单、配对表、token 过期断开 | D-5 D-8 |
+| R1 | `DesktopAppToolsClient`：管道发现、帧格式、签名闸门、假管道服务端与 fixture 测试。**已完成**，并对真桌面版实测通过 | R0 |
+| R2 | **已完成。** `SessionContentSync`：找 rollout 文件、轮次索引、`SyncItem` 投影、跟读与游标、按需取详情（含路径防护）；用真实 rollout 片段做 fixture，覆盖每一种 item 类型、半行、`resync` | R0 |
+| R3 | 服务端 `remote` 模块：WS hub、配对（含令牌与公钥转交）、命令路由、SSE、白名单、配对表、token 过期断开。**已完成**（§7） | D-5 D-8 |
 | R4 | 助手 `RemoteLink` + `RemoteCommandPolicy`（含已批准配对名单、验签）+ 已勾选名单（上限 5）+ 审计 + 「同步会话」页签 | R1 R2 R3 |
 | R5 | Paw「电脑」页签：设备列表、已同步会话列表、会话详情（`SyncItem` 渲染、按需详情、上滑翻历史）、增量订阅与续传、IndexedDB 缓存与清理、输入框、配对（含密钥生成与签名） | R3 |
 | R6 | 端到端：真手机 → 真服务端 → 真助手 → 真桌面版，走一遍改文件；做一次安全自查 | R4 R5 |

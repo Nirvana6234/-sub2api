@@ -177,5 +177,7 @@ func registerRoutes(
 		})
 	}
 
+	routes.RegisterRemoteRoutes(v1, h.Remote, jwtAuth, settingService, panelRateLimiter)
+
 	handler.RegisterPageRoutes(v1, cfg.Pricing.DataDir, gin.HandlerFunc(jwtAuth), gin.HandlerFunc(adminAuth), settingService)
 }
