@@ -1,0 +1,142 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:LanAi.RelayClient.ViewModels;assembly=LanAi.RelayClient.Core"
+             x:Class="LanAi.RelayClient.App.Views.Pages.DesktopSyncPage"
+             x:DataType="vm:DesktopSyncViewModel">
+
+  <UserControl.Styles>
+    <Style Selector="TextBlock.warn">
+      <Setter Property="Foreground" Value="#B45309" />
+      <Setter Property="FontSize" Value="12" />
+    </Style>
+    <Style Selector="TextBlock.danger">
+      <Setter Property="Foreground" Value="#DC2626" />
+      <Setter Property="FontSize" Value="12" />
+    </Style>
+    <Style Selector="TextBlock.calm">
+      <Setter Property="Foreground" Value="#059669" />
+      <Setter Property="FontSize" Value="12" />
+    </Style>
+  </UserControl.Styles>
+
+  <!-- What the phone may reach is decided only here, on this computer: the switch,
+       at most five conversations, and phones confirmed with a matching fingerprint. -->
+  <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <StackPanel>
+
+      <Border Classes="card">
+        <StackPanel>
+          <DockPanel>
+            <ToggleSwitch DockPanel.Dock="Right" IsChecked="{Binding IsEnabled}"
+                          OnContent="已开启" OffContent="已关闭" VerticalAlignment="Center" />
+            <TextBlock Text="允许手机同步" Classes="cardTitle" VerticalAlignment="Center" />
+          </DockPanel>
+          <TextBlock Text="{Binding StatusText}" Classes="label" Margin="0,6,0,0" />
+          <TextBlock Classes="hint" Margin="0,6,0,0" TextWrapping="Wrap"
+                     Text="手机上可以查看下面勾选的 Codex 会话，并接着发指令，由电脑上的 Codex 桌面版执行。只有勾选的会话、在这里确认过的手机才能访问。" />
+          <TextBlock Text="{Binding Message}" Foreground="#2563EB" FontSize="12" TextWrapping="Wrap"
+                     Margin="0,8,0,0" IsVisible="{Binding HasMessage}" />
+        </StackPanel>
+      </Border>
+
+      <Border Classes="card">
+        <StackPanel>
+          <DockPanel>
+            <Button DockPanel.Dock="Right" Content="配对新手机" Click="Pair_OnClick" Classes="secondary" VerticalAlignment="Center" />
+            <TextBlock Text="已配对的手机" Classes="cardTitle" VerticalAlignment="Center" />
+          </DockPanel>
+          <StackPanel IsVisible="{Binding HasPairingCode}" Margin="0,10,0,0">
+            <TextBlock Text="{Binding PairingCode}" FontSize="28" FontWeight="Bold" LetterSpacing="4" />
+            <TextBlock Text="{Binding PairingHint}" Classes="hint" TextWrapping="Wrap" />
+          </StackPanel>
+          <ItemsControl ItemsSource="{Binding Phones}" Margin="0,6,0,0">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:SyncPhoneItem">
+                <Border BorderBrush="#E5E7EB" BorderThickness="0,1,0,0" Padding="0,8">
+                  <DockPanel>
+                    <Button DockPanel.Dock="Right" Content="解除配对" Click="Revoke_OnClick" Classes="link" VerticalAlignment="Center" />
+                    <StackPanel>
+                      <TextBlock Text="{Binding Label}" FontWeight="SemiBold" />
+                      <TextBlock Text="{Binding ApprovedText}" Classes="hint" />
+                    </StackPanel>
+                  </DockPanel>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+          <TextBlock Text="还没有配对的手机" Classes="hint" Margin="0,6,0,0" IsVisible="{Binding !HasPhones}" />
+        </StackPanel>
+      </Border>
+
+      <Border Classes="card">
+        <StackPanel>
+          <DockPanel>
+            <Button DockPanel.Dock="Right" Content="刷新" Click="Refresh_OnClick" Classes="secondary" VerticalAlignment="Center" />
+            <TextBlock DockPanel.Dock="Right" Text="{Binding SelectedCountText}" Classes="label"
+                       VerticalAlignment="Center" Margin="0,0,12,0" />
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="同步哪些会话" Classes="cardTitle" VerticalAlignment="Center" />
+              <!-- Claude Code comes later (design §5.7); the choice is shown so it is expected. -->
+              <TextBlock Text="Codex" Classes="label" Margin="12,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold" />
+              <TextBlock Text="Claude Code（即将支持）" Classes="label" Margin="8,0,0,0" VerticalAlignment="Center" Opacity="0.5" />
+            </StackPanel>
+          </DockPanel>
+          <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,4,0,0">
+            <TextBlock Text="{Binding DesktopStatus}" Classes="hint" VerticalAlignment="Center" />
+            <Button Content="{Binding LaunchDesktopLabel}" Click="LaunchDesktop_OnClick" Classes="secondary"
+                    IsVisible="{Binding IsDesktopOffline}" IsEnabled="{Binding !IsWaitingForDesktop}"
+                    VerticalAlignment="Center" />
+          </StackPanel>
+          <!-- The desktop app keeps every conversation ever had; the list scrolls on its
+               own so the rest of the page stays within reach. -->
+          <ScrollViewer MaxHeight="360" VerticalScrollBarVisibility="Auto" Margin="0,6,0,0">
+            <ItemsControl ItemsSource="{Binding Sessions}" Margin="0,0,14,0">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:SyncSessionItem">
+                  <Border BorderBrush="#E5E7EB" BorderThickness="0,1,0,0" Padding="0,8">
+                    <DockPanel>
+                      <CheckBox DockPanel.Dock="Left" IsChecked="{Binding IsSelected, Mode=OneWay}"
+                                IsEnabled="{Binding CanToggle}" Click="Toggle_OnClick"
+                                VerticalAlignment="Top" Margin="0,0,8,0"
+                                ToolTip.Tip="{Binding DisabledReason}" ToolTip.ShowOnDisabled="True" />
+                      <!-- Not ToolTip.IsEnabled: no such attached property exists, so the compiler
+                           binds the check box's own IsEnabled instead and disables every box. -->
+                      <StackPanel>
+                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{Binding Cwd}" Classes="hint" TextTrimming="CharacterEllipsis" />
+                        <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                          <TextBlock Text="{Binding Detail}" Classes="label" />
+                          <TextBlock Text="{Binding PermissionText}" Classes="danger" Margin="12,0,0,0"
+                                     IsVisible="{Binding IsFullAccess}" />
+                          <TextBlock Text="{Binding PermissionText}" Classes="calm" Margin="12,0,0,0"
+                                     IsVisible="{Binding !IsFullAccess}" />
+                        </StackPanel>
+                      </StackPanel>
+                    </DockPanel>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+        </StackPanel>
+      </Border>
+
+      <Border Classes="card" Margin="0">
+        <StackPanel>
+          <TextBlock Text="最近的同步记录" Classes="cardTitle" />
+          <ItemsControl ItemsSource="{Binding Audit}" Margin="0,6,0,0">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:SyncAuditItem">
+                <Panel>
+                  <TextBlock Text="{Binding Text}" Classes="label" TextWrapping="Wrap" IsVisible="{Binding !IsRefusal}" />
+                  <TextBlock Text="{Binding Text}" Classes="warn" TextWrapping="Wrap" IsVisible="{Binding IsRefusal}" />
+                </Panel>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </Border>
+
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

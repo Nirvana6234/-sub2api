@@ -10,6 +10,7 @@ public enum ClientPage
     Codex,
     Claude,
     LocalProxy,
+    DesktopSync,
     Account,
     Settings,
 }
@@ -60,6 +61,7 @@ public sealed partial class NavigationViewModel : ObservableObject
             new NavItemViewModel(ClientPage.Codex, "Codex", "◉"),
             new NavItemViewModel(ClientPage.Claude, "Claude", "✱"),
             new NavItemViewModel(ClientPage.LocalProxy, "本地代理", "⇄"),
+            new NavItemViewModel(ClientPage.DesktopSync, "同步会话", "⇅"),
             new NavItemViewModel(ClientPage.Account, "账户", "◎"),
         ];
         SettingsItem = new NavItemViewModel(ClientPage.Settings, "设置", "⚙");

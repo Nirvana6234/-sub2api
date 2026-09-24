@@ -75,6 +75,7 @@ type Handlers struct {
 	PlaygroundHistory   *PlaygroundHistoryHandler
 	AccountContribution *AccountContributionHandler
 	Ticket              *TicketHandler
+	Remote              *RemoteHandler
 }
 
 // BuildInfo contains build-time information

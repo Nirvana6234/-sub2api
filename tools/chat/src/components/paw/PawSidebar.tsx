@@ -13,6 +13,8 @@ import {
   PawTrashIcon,
   PawWalletIcon,
 } from "./PawIcons";
+import type { StoredPairing } from "../../client/remote/store";
+import { PawRemoteSidebar } from "./PawRemoteSidebar";
 import { PawModal } from "./PawModal";
 import type { PawConversation, PawConfigData, PawSession } from "@/client/paw/types";
 
@@ -25,6 +27,10 @@ interface PawSidebarProps {
   onDeleteConversation: (id?: string) => void;
   onRenameConversation: (id: string, title: string) => void;
   onOpenPrompts: () => void;
+  onOpenRemote: () => void;
+  onOpenRemoteSession: (pairing: StoredPairing, threadId: string, title: string) => void;
+  activeRemoteKey: string | null;
+  remoteReloadToken: number;
   onOpenSettings: () => void;
   onOpenPayment: () => void;
   onOpenProfile: () => void;
@@ -50,6 +56,10 @@ export function PawSidebar({
   onDeleteConversation,
   onRenameConversation,
   onOpenPrompts,
+  onOpenRemote,
+  onOpenRemoteSession,
+  activeRemoteKey,
+  remoteReloadToken,
   onOpenSettings,
   onOpenPayment,
   onOpenProfile,
@@ -171,6 +181,18 @@ export function PawSidebar({
       </div>
 
       <div className="paw-sidebar-list">
+        <PawRemoteSidebar
+          activeKey={activeRemoteKey}
+          reloadToken={remoteReloadToken}
+          onOpenSession={(pairing, threadId, title) => {
+            onOpenRemoteSession(pairing, threadId, title);
+            onCloseMobile();
+          }}
+          onManage={() => {
+            onOpenRemote();
+            onCloseMobile();
+          }}
+        />
         {conversations.length === 0 ? (
           <div className="paw-empty-state sidebar-empty">
             <div>

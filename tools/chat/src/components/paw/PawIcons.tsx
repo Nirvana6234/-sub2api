@@ -202,6 +202,16 @@ export function PawSettingsIcon(props: IconProps) {
   );
 }
 
+export function PawComputerIcon(props: IconProps) {
+  return icon(
+    <>
+      <rect x="3.5" y="4.5" width="17" height="11" rx="1.8" />
+      <path d="M9 19.5h6M12 15.5v4" />
+    </>,
+    props,
+  );
+}
+
 export function PawDownloadIcon(props: IconProps) {
   return icon(
     <>
