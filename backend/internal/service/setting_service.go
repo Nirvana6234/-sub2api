@@ -152,6 +152,10 @@ type SettingService struct {
 	openAIAPIKeyHealthBreakerCache    atomic.Value // *cachedOpenAIAPIKeyHealthBreakerSettings
 	globalBlacklistCache              atomic.Value // *cachedGlobalBlacklist
 
+	// hotValues caches settings read on every gateway request; see hotSettings.
+	hotValuesOnce sync.Once
+	hotValues     *settingValueCache
+
 	channelMonitorRuntimeListenersMu sync.Mutex
 	channelMonitorRuntimeListeners   []func()
 }

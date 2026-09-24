@@ -167,7 +167,7 @@ func (s *SettingService) GetAccountShareRewardRatePercent(ctx context.Context) f
 	if s == nil || s.settingRepo == nil {
 		return AccountShareRewardRateDefaultPercent
 	}
-	raw, err := s.settingRepo.GetValue(ctx, SettingKeyAccountShareRewardRate)
+	raw, err := s.hotSettings().GetValue(ctx, SettingKeyAccountShareRewardRate)
 	if err != nil {
 		return AccountShareRewardRateDefaultPercent
 	}
@@ -182,7 +182,7 @@ func (s *SettingService) GetAccountOwnUsageFeeRatePercent(ctx context.Context) f
 	if s == nil || s.settingRepo == nil {
 		return AccountOwnUsageFeeRateDefaultPercent
 	}
-	raw, err := s.settingRepo.GetValue(ctx, SettingKeyAccountOwnUsageFeeRate)
+	raw, err := s.hotSettings().GetValue(ctx, SettingKeyAccountOwnUsageFeeRate)
 	if err != nil {
 		return AccountOwnUsageFeeRateDefaultPercent
 	}
@@ -1125,7 +1125,9 @@ func (s *SettingService) SetBetaPolicySettings(ctx context.Context, settings *Be
 
 // GetOpenAIFastPolicySettings 获取 OpenAI fast 策略配置
 func (s *SettingService) GetOpenAIFastPolicySettings(ctx context.Context) (*OpenAIFastPolicySettings, error) {
-	value, err := s.settingRepo.GetValue(ctx, SettingKeyOpenAIFastPolicySettings)
+	// Every forwarded OpenAI request consults this policy, so the raw value is
+	// cached; each call still decodes its own copy.
+	value, err := s.hotSettings().GetValue(ctx, SettingKeyOpenAIFastPolicySettings)
 	if err != nil {
 		if errors.Is(err, ErrSettingNotFound) {
 			return DefaultOpenAIFastPolicySettings(), nil
@@ -1210,7 +1212,11 @@ func (s *SettingService) SetOpenAIFastPolicySettings(ctx context.Context, settin
 		return fmt.Errorf("marshal openai fast policy settings: %w", err)
 	}
 
-	return s.settingRepo.Set(ctx, SettingKeyOpenAIFastPolicySettings, string(data))
+	if err := s.settingRepo.Set(ctx, SettingKeyOpenAIFastPolicySettings, string(data)); err != nil {
+		return err
+	}
+	s.invalidateHotSettings()
+	return nil
 }
 
 // SetStreamTimeoutSettings 设置流超时处理配置
