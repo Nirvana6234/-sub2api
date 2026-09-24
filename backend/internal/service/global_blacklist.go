@@ -56,6 +56,9 @@ func (s *SettingService) GlobalBlacklistSnapshot(ctx context.Context) ([]GlobalB
 	raw, err := s.settingRepo.GetValue(ctx, SettingKeyGlobalBlacklist)
 	if err != nil {
 		if errors.Is(err, ErrSettingNotFound) {
+			// Cache the absence too: both blacklist middlewares ask on every
+			// gateway request, and most deployments never configure rules.
+			s.globalBlacklistCache.Store(&cachedGlobalBlacklist{ExpiresAt: time.Now().Add(5 * time.Second)})
 			return nil, nil
 		}
 		return nil, err
