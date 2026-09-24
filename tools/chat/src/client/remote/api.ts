@@ -62,6 +62,7 @@ async function serverFailure(response: Response): Promise<RemoteError> {
     REMOTE_DEVICE_GONE: "电脑刚刚断开了连接",
     REMOTE_PAIRING_NOT_ACTIVE: "这台手机和那台电脑的配对已失效",
     REMOTE_PAIRING_CODE_INVALID: "配对码错误或已过期",
+    REMOTE_COMMAND_REFUSED: "服务器还不支持这个操作，需要先更新服务端",
   };
   return new RemoteError(reason, text[reason] ?? message);
 }
@@ -260,10 +261,43 @@ export async function sendMessage(
   threadId: string,
   text: string,
   mode: "queue" | "insert" = "queue",
-): Promise<{ queued: boolean }> {
+): Promise<SendResult> {
   const signed = await signSend(pairing.keyPair.privateKey, pairing.pairingId, threadId, mode, text);
   const answer = await command(pairing, { type: "message.send", thread_id: threadId, text, mode, ...signed });
-  return { queued: answer.queued === true };
+  return {
+    queued: answer.queued === true,
+    waitingForDesktop: answer.waiting_for_desktop === true,
+    startingDesktop: answer.starting_desktop === true,
+  };
+}
+
+export interface SendResult {
+  queued: boolean;
+  /** ChatGPT was not answering on the computer; the message goes out once it does (within 3 minutes). */
+  waitingForDesktop: boolean;
+  /** …and the computer is starting it for this message. */
+  startingDesktop: boolean;
+}
+
+export interface SelfCheck {
+  summary: string;
+  desktopRunning: boolean;
+  relayListening: boolean | null;
+  signedIn: boolean | null;
+  serverReachable: boolean | null;
+}
+
+/** Read-only checks on the computer after a failed turn. Restarts nothing. */
+export async function checkComputer(pairing: StoredPairing, threadId: string): Promise<SelfCheck> {
+  const answer = await command(pairing, { type: "desktop.check", thread_id: threadId });
+  const flag = (value: unknown) => (typeof value === "boolean" ? value : null);
+  return {
+    summary: typeof answer.summary === "string" ? answer.summary : "",
+    desktopRunning: answer.desktop_running === true,
+    relayListening: flag(answer.relay_listening),
+    signedIn: flag(answer.signed_in),
+    serverReachable: flag(answer.server_reachable),
+  };
 }
 
 export async function navigateOnComputer(pairing: StoredPairing, threadId: string): Promise<void> {

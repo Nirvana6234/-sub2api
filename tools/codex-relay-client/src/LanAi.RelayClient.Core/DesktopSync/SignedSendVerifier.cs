@@ -14,7 +14,10 @@ internal static class DesktopSyncCommands
     public const string Navigate = "thread.navigate";
     public const string Subscribe = "session.subscribe";
 
-    public static bool IsKnown(string? type) => type is ListSessions or OpenSession or History or Detail or SendMessage or Navigate;
+    /// <summary>Read-only checks after a failed turn; touches nothing (see <see cref="DesktopSelfCheck"/>).</summary>
+    public const string SelfCheck = "desktop.check";
+
+    public static bool IsKnown(string? type) => type is ListSessions or OpenSession or History or Detail or SendMessage or Navigate or SelfCheck;
 }
 
 /// <summary>

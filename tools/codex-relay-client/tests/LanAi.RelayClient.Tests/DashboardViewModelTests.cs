@@ -1184,6 +1184,84 @@ public sealed class DashboardViewModelTests
         Assert.True(dashboard.CanRepairCodexStartup);
     }
 
+    // ---- Starting for the phone: a start, never a restart or an install ------------------
+
+    [Fact]
+    public async Task ThePhoneLeavesARunningChatGptAlone()
+    {
+        var codex = new FakeCodexStartup { OnCheck = () => new CodexHealth(true, true, null) };
+        DashboardViewModel dashboard = BuildWith(codex);
+
+        LanAi.RelayClient.DesktopSync.DesktopStartResult result = await dashboard.StartCodexForPhoneAsync();
+
+        Assert.Equal(LanAi.RelayClient.DesktopSync.DesktopStartOutcome.AlreadyRunning, result.Outcome);
+        Assert.Equal(0, codex.RunCount);
+    }
+
+    [Fact]
+    public async Task ThePhoneNeverInstallsChatGpt()
+    {
+        var codex = new FakeCodexStartup { OnCheck = () => new CodexHealth(false, false, null) };
+        DashboardViewModel dashboard = BuildWith(codex);
+
+        LanAi.RelayClient.DesktopSync.DesktopStartResult result = await dashboard.StartCodexForPhoneAsync();
+
+        Assert.Equal(LanAi.RelayClient.DesktopSync.DesktopStartOutcome.Refused, result.Outcome);
+        Assert.Contains("安装", result.Message);
+        Assert.Equal(0, codex.RunCount);
+        Assert.False(dashboard.IsInstallingCodex);
+    }
+
+    [Fact]
+    public async Task ThePhoneStartsAChatGptThatIsNotRunning()
+    {
+        var codex = new FakeCodexStartup();
+        DashboardViewModel dashboard = BuildWith(codex);
+
+        LanAi.RelayClient.DesktopSync.DesktopStartResult result = await dashboard.StartCodexForPhoneAsync();
+
+        Assert.Equal(LanAi.RelayClient.DesktopSync.DesktopStartOutcome.Starting, result.Outcome);
+        Assert.Equal(1, codex.RunCount);
+        Assert.False(codex.LastAllowRestart);
+    }
+
+    /// <summary>Launched but slow to answer: still starting, so the messages waiting for it are kept.</summary>
+    [Fact]
+    public async Task AChatGptThatIsSlowToAnswerIsStillStarting()
+    {
+        int checks = 0;
+        var codex = new FakeCodexStartup
+        {
+            OnCheck = () => new CodexHealth(true, checks++ > 0, null),
+            OnRun = (_, _) => new CodexStartupResult(CodexStartupStatus.CodexUnresponsive, "ChatGPT 没有响应"),
+        };
+        DashboardViewModel dashboard = BuildWith(codex);
+
+        LanAi.RelayClient.DesktopSync.DesktopStartResult result = await dashboard.StartCodexForPhoneAsync();
+
+        Assert.Equal(LanAi.RelayClient.DesktopSync.DesktopStartOutcome.Starting, result.Outcome);
+    }
+
+    /// <summary>A start that turns out to need a restart is declined, and the phone told why.</summary>
+    [Fact]
+    public async Task ThePhoneNeverAgreesToARestart()
+    {
+        var codex = new FakeCodexStartup
+        {
+            OnRun = (_, allowRestart) => allowRestart
+                ? new CodexStartupResult(CodexStartupStatus.Ready, "好了")
+                : new CodexStartupResult(CodexStartupStatus.NeedsRestartConfirmation, "需要重启"),
+        };
+        DashboardViewModel dashboard = BuildWith(codex);
+
+        LanAi.RelayClient.DesktopSync.DesktopStartResult result = await dashboard.StartCodexForPhoneAsync();
+
+        Assert.Equal(LanAi.RelayClient.DesktopSync.DesktopStartOutcome.Refused, result.Outcome);
+        Assert.Equal("需要重启", result.Message);
+        Assert.Equal(1, codex.RunCount);
+        Assert.False(codex.LastAllowRestart);
+    }
+
     [Fact]
     public async Task ARunningCodexIsNotRestartedWithoutTheUsersConsent()
     {
