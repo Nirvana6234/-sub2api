@@ -361,6 +361,8 @@ func (h *APIKeyHandler) GetAvailableGroups(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	// 只在这个面向客户端的列表里补自动白名单；自动分组选路等内部调用方拿到的仍是原始配置。
+	h.apiKeyService.ApplyAutoModelAllowlists(c.Request.Context(), groups)
 
 	out := make([]dto.Group, 0, len(groups))
 	for i := range groups {

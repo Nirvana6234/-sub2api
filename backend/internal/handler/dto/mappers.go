@@ -238,6 +238,7 @@ func groupFromServiceBase(g *service.Group) Group {
 		MaxReasoningEffortOverLimit:     g.MaxReasoningEffortOverLimit,
 		ReasoningEffortMappings:         g.ReasoningEffortMappings,
 		ModelAllowlist:                  g.ModelAllowlist,
+		ModelAllowlistSource:            g.ModelAllowlistSource,
 		CreatedAt:                       g.CreatedAt,
 		UpdatedAt:                       g.UpdatedAt,
 	}

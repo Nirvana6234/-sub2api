@@ -389,6 +389,7 @@ type APIKeyService struct {
 	autoGroupAllGroupsEpoch    uint64           // guarded by autoGroupSelectionMu
 	autoGroupCacheOperations   atomic.Uint64
 	authInvalidationOutbox     AuthCacheInvalidationOutboxRepository
+	groupAutoModels            *groupAutoModelAllowlist
 	cfg                        *config.Config
 	authCacheL1                *ristretto.Cache
 	authNegativeCacheL1        *ristretto.Cache

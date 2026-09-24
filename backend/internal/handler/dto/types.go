@@ -175,6 +175,8 @@ type Group struct {
 	// ModelAllowlist 分组模型白名单。用户侧也需要（客户端据此决定是否展示「模型」按钮并列出可用模型），
 	// 与网关 /v1/models 对该分组返回的内容同源，不含内部信息。
 	ModelAllowlist service.GroupModelAllowlist `json:"model_allowlist"`
+	// ModelAllowlistSource manual=管理员手动开启；auto=按分组内账号支持的模型自动推导（只用于展示，不参与准入）。
+	ModelAllowlistSource string `json:"model_allowlist_source,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
