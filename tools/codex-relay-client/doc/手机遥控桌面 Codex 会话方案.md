@@ -381,6 +381,56 @@ WebSocket 文本帧，JSON：
 - **SSE 过反向代理**：`X-Accel-Buffering: no`，每 15 秒一行心跳注释。
 - **多实例（未实现）**：主节点若多实例部署，手机请求可能落到没持有该助手长连接的实例上，需要 Redis 发布订阅转发。v1 按单实例部署。
 
+### 7.4 手机与助手之间的内容（R5 照此实现）
+
+服务端对下面这些只看 `type`、原样转发。所有应答都是 `{"ok":true,…}` 或 `{"ok":false,"error":"<code>","message":"<中文说明>"}`。
+
+**命令**（`POST /api/v1/remote/devices/:device_id/cmd`，请求体即命令）：
+
+| `type` | 其余字段 | 成功时的应答 |
+|---|---|---|
+| `sessions.list` | — | `desktop_running`；`sessions[]`：`thread_id`、`provider`、`title`、`cwd`、`status`（`idle` / `active` / `notLoaded` / `systemError` / `unknown` / `missing`）、`permission`（`full_access` / `auto` / `sandboxed`）、`updated_at` |
+| `session.open` | `thread_id`，`turns`（默认 10） | `session`（`thread_id`、`title`、`cwd`、`model`、`permission`、`open_turn_id`）、`items[]`、`has_older`、`truncated_turn_id`、`cursor` |
+| `session.history` | `thread_id`，`before_turn_id`，`turns` | `items[]`、`has_older`、`truncated_turn_id` |
+| `session.detail` | `thread_id`，`turn_id`，`item_id`，`part`（`output` / `diff` / `image`），`index` | `text`，或 `media_type` + `data`（base64）；`truncated` |
+| `message.send` | `thread_id`，`text`（≤ 8000 字），`mode`（`queue` 默认 / `insert`），`ts`（毫秒），`nonce`，`sig` | `queued`：`true` 表示会话正忙，助手会在这一轮结束后再发 |
+| `thread.navigate` | `thread_id` | — |
+
+`items[]` 每项：`seq`、`turn_id`、`item_id`、`kind`（`user` / `progress` / `reply` / `thinking` / `command` / `file_change` / `tool` / `image` / `running` / `notice` / `turn_started` / `turn_ended` / `unknown`），按需带 `text`、`origin`（`desktop` / `phone` / `delegated`）、`image_count`、`command`、`exit_code`、`status`、`duration_ms`、`output_preview`、`output_truncated`、`files[]`（`path`、`change`、`added`、`removed`）、`outcome`（`completed` / `failed` / `aborted`）。`running` 卡片在同一轮出现任何后续条目时由手机收起。
+
+常见错误码：`disabled`（电脑上关着）、`not_approved`（这台手机没在电脑上确认）、`not_selected`（会话没勾选）、`bad_signature`、`rate_limited`（每分钟 6 条）、`desktop_unavailable`（桌面版没开）、`missing`、`refused`。
+
+**跟读**（SSE，`?cursor=` 取自 `session.open` 的 `cursor`）：每行 `data:` 是一个事件：
+
+| `type` | 含义 |
+|---|---|
+| `items` | 新条目 `items[]` 与新的 `cursor`，手机保存它，重连时带上 |
+| `status` | `status` 与 `waiting_on_approval`；为 `true` 时显示「等待电脑批准」 |
+| `resync` | 游标失效，重新 `session.open` |
+| `revoked` | 这个会话在电脑上被取消勾选，或这台手机被解除配对：关闭页面、删缓存 |
+
+另有服务端自己的 `event: end`（电脑断开或手机跟不上），带着最后的 `cursor` 重连即可。
+
+**游标** 形如 `123456.ab12cd34`：字节偏移加上 rollout 路径哈希的前 8 位。手机当它不透明的字符串用。
+
+**签名（D-8）**：配对时手机用 WebCrypto 生成 **ECDSA P-256** 密钥对（私钥设为不可导出），把公钥的 **SPKI 的 base64** 作为 `public_key` 提交。每条 `message.send` 对下面这个 UTF-8 字符串签名（`
+` 为换行，各段之间没有空格），签名格式是 WebCrypto 的原生 r‖s（64 字节），base64 后放进 `sig`：
+
+```
+cofly-remote/1
+message.send
+{pairing_id}
+{thread_id}
+{mode}
+{text 的 UTF-8 做 SHA-256 后的小写十六进制}
+{ts}
+{nonce}
+```
+
+`nonce` 为 16～128 个字符的随机串（建议 18 字节随机数的 base64）。助手拒绝 5 分钟以前的 `ts`，以及用过的 `nonce`。
+
+**指纹**：对 `public_key` 这个 base64 **字符串本身**的 UTF-8 做 SHA-256，取前 3 字节，写成大写十六进制并在第 3 位后空一格（例如 `A1B 2C3`）。手机配对后显示它，电脑的确认框也显示它，两边一致才点确认。
+
 ## 8. 手机端（Paw）
 
 ### 8.1 页面
@@ -470,6 +520,6 @@ WebSocket 文本帧，JSON：
 | R1 | `DesktopAppToolsClient`：管道发现、帧格式、签名闸门、假管道服务端与 fixture 测试。**已完成**，并对真桌面版实测通过 | R0 |
 | R2 | **已完成。** `SessionContentSync`：找 rollout 文件、轮次索引、`SyncItem` 投影、跟读与游标、按需取详情（含路径防护）；用真实 rollout 片段做 fixture，覆盖每一种 item 类型、半行、`resync` | R0 |
 | R3 | 服务端 `remote` 模块：WS hub、配对（含令牌与公钥转交）、命令路由、SSE、白名单、配对表、token 过期断开。**已完成**（§7） | D-5 D-8 |
-| R4 | 助手 `RemoteLink` + `RemoteCommandPolicy`（含已批准配对名单、验签）+ 已勾选名单（上限 5）+ 审计 + 「同步会话」页签 | R1 R2 R3 |
+| R4 | 助手 `RemoteLink` + `RemoteCommandPolicy`（含已批准配对名单、验签）+ 已勾选名单（上限 5）+ 审计 + 「同步会话」页签。**已完成**（`Core/DesktopSync/`、`DesktopSyncPage`） | R1 R2 R3 |
 | R5 | Paw「电脑」页签：设备列表、已同步会话列表、会话详情（`SyncItem` 渲染、按需详情、上滑翻历史）、增量订阅与续传、IndexedDB 缓存与清理、输入框、配对（含密钥生成与签名） | R3 |
 | R6 | 端到端：真手机 → 真服务端 → 真助手 → 真桌面版，走一遍改文件；做一次安全自查 | R4 R5 |
