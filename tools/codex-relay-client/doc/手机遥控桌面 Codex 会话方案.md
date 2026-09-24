@@ -133,7 +133,7 @@ v1 不做的：
 
 - **发现管道**：枚举 `\\.\pipe\` 下 `codex-browser-use-*`，逐个发送 `tools/list`，谁能正常回应就用谁；应该恰好有一个，多于一个时当作异常上报。桌面版重启后管道名会变，所以**每次连接失败都要重新发现**，不能缓存名字。
 - **版本闸门**：连上后对 `tools/list` 的结果做签名比对，比对范围是本方案用到的工具名及其 `inputSchema` 的必填字段。签名不在已知清单里时，进入**只读降级**：列表和阅读照常，发送关闭；手机端提示「桌面版已更新，遥控暂不可用」。桌面版本号从 AppX 包读取，一起上报。
-- **接口**：v1 包装四个工具：`ListThreads` / `SendMessage` / `NavigateTo` / `GetThreadStatus`。最后一个用 `wait_threads` 的 `timeoutMs:0` 立刻取快照，因为只有它（和 `read_thread`）能给出 `activeFlags:["waitingOnApproval"]`，`list_threads` 只说 `active`（V-6）。内容仍走 rollout（§6）。**不提供通用的 `CallTool(name, args)`**，白名单写死在类型里，想绕也绕不过去。版本闸门只比对这四个工具的签名，其余工具怎么变都不影响 v1。
+- **接口**：v1 包装四个工具：`ListThreads` / `SendMessage` / `NavigateTo` / `GetThreadStatus`。最后一个用 `read_thread`（`turnLimit:1`）取 `thread.status`：它和 `wait_threads` 都能给出 `activeFlags:["waitingOnApproval"]`，`list_threads` 只说 `active`（V-6）；选 `read_thread` 是因为空闲、等审批、未加载三种状态它都实测过，`wait_threads` 只见过等审批这一种返回形状。内容仍走 rollout（§6）。**不提供通用的 `CallTool(name, args)`**，白名单写死在类型里，想绕也绕不过去。版本闸门只比对这四个工具的签名，其余工具怎么变都不影响 v1。
 - **调用方会话**：见 §10 的 D-3。
 - **测试**：做一个假管道服务端（同样的帧格式），录制真实报文作为 fixture，和 chat 工作台 `codex-adapter` 的做法一致。
 
@@ -260,7 +260,9 @@ v1 只实现 Codex，但要把「会话来源」抽象出来，免得以后接 C
 | 其余的 `FunctionCallOutput`（例如这条会话里的 agent 自己调工具得到的返回值） | `tool` | 一行摘要：工具名 | 结果不外发 |
 | `McpToolCall` / `WebSearch` / `Extension` | `tool` | 一行摘要：`server.tool` 或搜索词，外加状态 | 结果不外发 |
 | `ImageView` | `image` | 图片引用 | 按需取 |
-| `response_item` · `function_call`（`name=exec_command`）或 `custom_tool_call`（`name=exec`，code mode 的会话） | `running` | 「正在执行：<命令>」卡片。命令取 `arguments.cmd`；code mode 的会话要从 `input` 的 JS 里取 `cmd:` 字段，取不到就显示「正在执行脚本」 | 这是唯一要读的 `response_item`，只取命令文本 |
+| `response_item` · `function_call`（`name=exec_command` 或 `shell_command`）或 `custom_tool_call`（`name=exec`，code mode 的会话） | `running` | 「正在执行：<命令>」卡片。命令取 `arguments.cmd` / `arguments.command`；code mode 的会话从 `input` 的 JS 里取 `cmd:` 或 `command:` 字段，取不到就显示「正在执行脚本」 | 只取命令文本 |
+| `response_item` · `function_call_output`，且对应一条 `shell_command` 调用 | `command` | **`shell_command` 从不产生 `CommandExecution`**（本机 9,432 次调用里 0 次，当前 0.153.4 仍在用它），结果只能由调用行加这一行拼出来：`Exit code: N` / `Wall time` / `Output:` 之后是输出；`exec command rejected by user` 记为拒绝，`execution error:` 记为失败。跟读时调用和输出常在两次读里，助手保留跟读状态，换一个游标就从这一轮开头重放 | 同 `CommandExecution` |
+| `SubAgentActivity` | `tool` | 「子代理 <kind>：<agent_path>」 | — |
 | `ContextCompaction` / `compacted` | `notice` | 分隔线「上下文已压缩」 | — |
 | `task_started` / `task_complete` / `turn_aborted` | 轮次边界 | 开始 / 结束、耗时、`error` **原文** | — |
 | `token_count`、`token_usage_record`、`turn_context`、`world_state`、`session_meta`、`thread_settings_applied` | 不同步 | — | — |
