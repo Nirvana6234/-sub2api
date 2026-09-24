@@ -331,7 +331,8 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 
 	// Create usage log
 	durationMs := int(result.Duration.Milliseconds())
-	accountRateMultiplier := account.BillingRateMultiplier()
+	// 成本倍率与利润门准入同源：手工倍率 → 探测值 → 列值 → 1.0。
+	accountRateMultiplier := AccountBillingRateMultiplier(account, openAIUsagePricingAt(input))
 	requestID := resolveUsageBillingRequestID(ctx, result.RequestID)
 	if result.OpenAIWSMode {
 		if upstreamRequestID := strings.TrimSpace(result.RequestID); upstreamRequestID != "" {
@@ -379,6 +380,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		UserID:                   user.ID,
 		APIKeyID:                 apiKey.ID,
 		AccountID:                account.ID,
+		AccountSource:            UsageLogAccountSourceFor(account, user.ID),
 		RequestID:                requestID,
 		UpstreamRequestID:        usageUpstreamRequestIDPtr(account, result.UpstreamHeaders, result.OpenAIWSMode),
 		Model:                    result.Model,
@@ -404,8 +406,6 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		ImageSizeSource:          optionalTrimmedStringPtr(result.ImageSizeSource),
 		ImageSizeBreakdown:       imageSizeBreakdown,
 		NativeCompactionV2:       input.NativeCompactionV2,
-		HeadroomTokensSaved:      result.HeadroomTokensSaved,
-		HeadroomSavingsUSD:       calculateHeadroomSavingsUSD(ctx, s.billingService, s.resolver, result.HeadroomTokensSaved, apiKey.Group, baselineBillingModel, pricingAt),
 	}
 	isVideoUsage := isGrokVideoUsageResult(result, billingModels)
 	if isVideoUsage {

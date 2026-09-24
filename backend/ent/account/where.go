@@ -180,6 +180,21 @@ func TempUnschedulableReason(v string) predicate.Account {
 	return predicate.Account(sql.FieldEQ(FieldTempUnschedulableReason, v))
 }
 
+// SchedulabilitySource applies equality check predicate on the "schedulability_source" field. It's identical to SchedulabilitySourceEQ.
+func SchedulabilitySource(v string) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldSchedulabilitySource, v))
+}
+
+// SchedulabilityReason applies equality check predicate on the "schedulability_reason" field. It's identical to SchedulabilityReasonEQ.
+func SchedulabilityReason(v string) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldSchedulabilityReason, v))
+}
+
+// SchedulabilityChangedAt applies equality check predicate on the "schedulability_changed_at" field. It's identical to SchedulabilityChangedAtEQ.
+func SchedulabilityChangedAt(v time.Time) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldSchedulabilityChangedAt, v))
+}
+
 // SessionWindowStart applies equality check predicate on the "session_window_start" field. It's identical to SessionWindowStartEQ.
 func SessionWindowStart(v time.Time) predicate.Account {
 	return predicate.Account(sql.FieldEQ(FieldSessionWindowStart, v))
@@ -1393,6 +1408,196 @@ func TempUnschedulableReasonEqualFold(v string) predicate.Account {
 // TempUnschedulableReasonContainsFold applies the ContainsFold predicate on the "temp_unschedulable_reason" field.
 func TempUnschedulableReasonContainsFold(v string) predicate.Account {
 	return predicate.Account(sql.FieldContainsFold(FieldTempUnschedulableReason, v))
+}
+
+// SchedulabilitySourceEQ applies the EQ predicate on the "schedulability_source" field.
+func SchedulabilitySourceEQ(v string) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldSchedulabilitySource, v))
+}
+
+// SchedulabilitySourceNEQ applies the NEQ predicate on the "schedulability_source" field.
+func SchedulabilitySourceNEQ(v string) predicate.Account {
+	return predicate.Account(sql.FieldNEQ(FieldSchedulabilitySource, v))
+}
+
+// SchedulabilitySourceIn applies the In predicate on the "schedulability_source" field.
+func SchedulabilitySourceIn(vs ...string) predicate.Account {
+	return predicate.Account(sql.FieldIn(FieldSchedulabilitySource, vs...))
+}
+
+// SchedulabilitySourceNotIn applies the NotIn predicate on the "schedulability_source" field.
+func SchedulabilitySourceNotIn(vs ...string) predicate.Account {
+	return predicate.Account(sql.FieldNotIn(FieldSchedulabilitySource, vs...))
+}
+
+// SchedulabilitySourceGT applies the GT predicate on the "schedulability_source" field.
+func SchedulabilitySourceGT(v string) predicate.Account {
+	return predicate.Account(sql.FieldGT(FieldSchedulabilitySource, v))
+}
+
+// SchedulabilitySourceGTE applies the GTE predicate on the "schedulability_source" field.
+func SchedulabilitySourceGTE(v string) predicate.Account {
+	return predicate.Account(sql.FieldGTE(FieldSchedulabilitySource, v))
+}
+
+// SchedulabilitySourceLT applies the LT predicate on the "schedulability_source" field.
+func SchedulabilitySourceLT(v string) predicate.Account {
+	return predicate.Account(sql.FieldLT(FieldSchedulabilitySource, v))
+}
+
+// SchedulabilitySourceLTE applies the LTE predicate on the "schedulability_source" field.
+func SchedulabilitySourceLTE(v string) predicate.Account {
+	return predicate.Account(sql.FieldLTE(FieldSchedulabilitySource, v))
+}
+
+// SchedulabilitySourceContains applies the Contains predicate on the "schedulability_source" field.
+func SchedulabilitySourceContains(v string) predicate.Account {
+	return predicate.Account(sql.FieldContains(FieldSchedulabilitySource, v))
+}
+
+// SchedulabilitySourceHasPrefix applies the HasPrefix predicate on the "schedulability_source" field.
+func SchedulabilitySourceHasPrefix(v string) predicate.Account {
+	return predicate.Account(sql.FieldHasPrefix(FieldSchedulabilitySource, v))
+}
+
+// SchedulabilitySourceHasSuffix applies the HasSuffix predicate on the "schedulability_source" field.
+func SchedulabilitySourceHasSuffix(v string) predicate.Account {
+	return predicate.Account(sql.FieldHasSuffix(FieldSchedulabilitySource, v))
+}
+
+// SchedulabilitySourceEqualFold applies the EqualFold predicate on the "schedulability_source" field.
+func SchedulabilitySourceEqualFold(v string) predicate.Account {
+	return predicate.Account(sql.FieldEqualFold(FieldSchedulabilitySource, v))
+}
+
+// SchedulabilitySourceContainsFold applies the ContainsFold predicate on the "schedulability_source" field.
+func SchedulabilitySourceContainsFold(v string) predicate.Account {
+	return predicate.Account(sql.FieldContainsFold(FieldSchedulabilitySource, v))
+}
+
+// SchedulabilityReasonEQ applies the EQ predicate on the "schedulability_reason" field.
+func SchedulabilityReasonEQ(v string) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldSchedulabilityReason, v))
+}
+
+// SchedulabilityReasonNEQ applies the NEQ predicate on the "schedulability_reason" field.
+func SchedulabilityReasonNEQ(v string) predicate.Account {
+	return predicate.Account(sql.FieldNEQ(FieldSchedulabilityReason, v))
+}
+
+// SchedulabilityReasonIn applies the In predicate on the "schedulability_reason" field.
+func SchedulabilityReasonIn(vs ...string) predicate.Account {
+	return predicate.Account(sql.FieldIn(FieldSchedulabilityReason, vs...))
+}
+
+// SchedulabilityReasonNotIn applies the NotIn predicate on the "schedulability_reason" field.
+func SchedulabilityReasonNotIn(vs ...string) predicate.Account {
+	return predicate.Account(sql.FieldNotIn(FieldSchedulabilityReason, vs...))
+}
+
+// SchedulabilityReasonGT applies the GT predicate on the "schedulability_reason" field.
+func SchedulabilityReasonGT(v string) predicate.Account {
+	return predicate.Account(sql.FieldGT(FieldSchedulabilityReason, v))
+}
+
+// SchedulabilityReasonGTE applies the GTE predicate on the "schedulability_reason" field.
+func SchedulabilityReasonGTE(v string) predicate.Account {
+	return predicate.Account(sql.FieldGTE(FieldSchedulabilityReason, v))
+}
+
+// SchedulabilityReasonLT applies the LT predicate on the "schedulability_reason" field.
+func SchedulabilityReasonLT(v string) predicate.Account {
+	return predicate.Account(sql.FieldLT(FieldSchedulabilityReason, v))
+}
+
+// SchedulabilityReasonLTE applies the LTE predicate on the "schedulability_reason" field.
+func SchedulabilityReasonLTE(v string) predicate.Account {
+	return predicate.Account(sql.FieldLTE(FieldSchedulabilityReason, v))
+}
+
+// SchedulabilityReasonContains applies the Contains predicate on the "schedulability_reason" field.
+func SchedulabilityReasonContains(v string) predicate.Account {
+	return predicate.Account(sql.FieldContains(FieldSchedulabilityReason, v))
+}
+
+// SchedulabilityReasonHasPrefix applies the HasPrefix predicate on the "schedulability_reason" field.
+func SchedulabilityReasonHasPrefix(v string) predicate.Account {
+	return predicate.Account(sql.FieldHasPrefix(FieldSchedulabilityReason, v))
+}
+
+// SchedulabilityReasonHasSuffix applies the HasSuffix predicate on the "schedulability_reason" field.
+func SchedulabilityReasonHasSuffix(v string) predicate.Account {
+	return predicate.Account(sql.FieldHasSuffix(FieldSchedulabilityReason, v))
+}
+
+// SchedulabilityReasonIsNil applies the IsNil predicate on the "schedulability_reason" field.
+func SchedulabilityReasonIsNil() predicate.Account {
+	return predicate.Account(sql.FieldIsNull(FieldSchedulabilityReason))
+}
+
+// SchedulabilityReasonNotNil applies the NotNil predicate on the "schedulability_reason" field.
+func SchedulabilityReasonNotNil() predicate.Account {
+	return predicate.Account(sql.FieldNotNull(FieldSchedulabilityReason))
+}
+
+// SchedulabilityReasonEqualFold applies the EqualFold predicate on the "schedulability_reason" field.
+func SchedulabilityReasonEqualFold(v string) predicate.Account {
+	return predicate.Account(sql.FieldEqualFold(FieldSchedulabilityReason, v))
+}
+
+// SchedulabilityReasonContainsFold applies the ContainsFold predicate on the "schedulability_reason" field.
+func SchedulabilityReasonContainsFold(v string) predicate.Account {
+	return predicate.Account(sql.FieldContainsFold(FieldSchedulabilityReason, v))
+}
+
+// SchedulabilityChangedAtEQ applies the EQ predicate on the "schedulability_changed_at" field.
+func SchedulabilityChangedAtEQ(v time.Time) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldSchedulabilityChangedAt, v))
+}
+
+// SchedulabilityChangedAtNEQ applies the NEQ predicate on the "schedulability_changed_at" field.
+func SchedulabilityChangedAtNEQ(v time.Time) predicate.Account {
+	return predicate.Account(sql.FieldNEQ(FieldSchedulabilityChangedAt, v))
+}
+
+// SchedulabilityChangedAtIn applies the In predicate on the "schedulability_changed_at" field.
+func SchedulabilityChangedAtIn(vs ...time.Time) predicate.Account {
+	return predicate.Account(sql.FieldIn(FieldSchedulabilityChangedAt, vs...))
+}
+
+// SchedulabilityChangedAtNotIn applies the NotIn predicate on the "schedulability_changed_at" field.
+func SchedulabilityChangedAtNotIn(vs ...time.Time) predicate.Account {
+	return predicate.Account(sql.FieldNotIn(FieldSchedulabilityChangedAt, vs...))
+}
+
+// SchedulabilityChangedAtGT applies the GT predicate on the "schedulability_changed_at" field.
+func SchedulabilityChangedAtGT(v time.Time) predicate.Account {
+	return predicate.Account(sql.FieldGT(FieldSchedulabilityChangedAt, v))
+}
+
+// SchedulabilityChangedAtGTE applies the GTE predicate on the "schedulability_changed_at" field.
+func SchedulabilityChangedAtGTE(v time.Time) predicate.Account {
+	return predicate.Account(sql.FieldGTE(FieldSchedulabilityChangedAt, v))
+}
+
+// SchedulabilityChangedAtLT applies the LT predicate on the "schedulability_changed_at" field.
+func SchedulabilityChangedAtLT(v time.Time) predicate.Account {
+	return predicate.Account(sql.FieldLT(FieldSchedulabilityChangedAt, v))
+}
+
+// SchedulabilityChangedAtLTE applies the LTE predicate on the "schedulability_changed_at" field.
+func SchedulabilityChangedAtLTE(v time.Time) predicate.Account {
+	return predicate.Account(sql.FieldLTE(FieldSchedulabilityChangedAt, v))
+}
+
+// SchedulabilityChangedAtIsNil applies the IsNil predicate on the "schedulability_changed_at" field.
+func SchedulabilityChangedAtIsNil() predicate.Account {
+	return predicate.Account(sql.FieldIsNull(FieldSchedulabilityChangedAt))
+}
+
+// SchedulabilityChangedAtNotNil applies the NotNil predicate on the "schedulability_changed_at" field.
+func SchedulabilityChangedAtNotNil() predicate.Account {
+	return predicate.Account(sql.FieldNotNull(FieldSchedulabilityChangedAt))
 }
 
 // SessionWindowStartEQ applies the EQ predicate on the "session_window_start" field.

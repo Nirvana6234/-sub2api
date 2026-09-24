@@ -96,6 +96,8 @@ function normalizeImageVariants(value: unknown): CanvasImageVariant[] | undefine
       status,
       url,
       cacheKey,
+      prompt: typeof source.prompt === 'string' ? source.prompt.slice(0, 12000) : undefined,
+      revisionPrompt: typeof source.revisionPrompt === 'string' ? source.revisionPrompt.slice(0, 12000) : undefined,
       errorMessage: typeof source.errorMessage === 'string' ? source.errorMessage.slice(0, 1000) : undefined,
     } satisfies CanvasImageVariant]
   }).slice(0, 10)
@@ -129,6 +131,12 @@ function normalizePluginMetadata(value: unknown): Record<string, unknown> | unde
   return Object.keys(metadata).length ? metadata : undefined
 }
 
+function normalizeImagePrompts(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const prompts = value.map((entry) => typeof entry === 'string' ? entry.slice(0, 12000) : '').slice(0, 10)
+  return prompts.some((entry) => entry.trim()) ? prompts : undefined
+}
+
 function normalizeNodeConfig(value: unknown): CanvasNode['config'] | undefined {
   if (!value || typeof value !== 'object') return undefined
   const source = value as NonNullable<CanvasNode['config']>
@@ -137,6 +145,8 @@ function normalizeNodeConfig(value: unknown): CanvasNode['config'] | undefined {
   if (typeof source.model === 'string') config.model = source.model.slice(0, 200)
   if (typeof source.count === 'string') config.count = source.count.slice(0, 8)
   if (typeof source.size === 'string') config.size = source.size.slice(0, 32)
+  if (typeof source.customWidth === 'string') config.customWidth = source.customWidth.slice(0, 8)
+  if (typeof source.customHeight === 'string') config.customHeight = source.customHeight.slice(0, 8)
   if (typeof source.quality === 'string') config.quality = source.quality.slice(0, 32)
   if (typeof source.background === 'string') config.background = source.background.slice(0, 32)
   if (typeof source.resolution === 'string') config.resolution = source.resolution.slice(0, 32)
@@ -210,6 +220,8 @@ function normalizeNode(value: unknown): CanvasNode | null {
     imageVariants: normalizeImageVariants(source.imageVariants),
     primaryImageIndex: Number.isFinite(source.primaryImageIndex) ? Math.min(9, Math.max(0, Math.floor(Number(source.primaryImageIndex)))) : 0,
     imageCount: Number.isFinite(source.imageCount) ? Math.min(10, Math.max(1, Math.floor(Number(source.imageCount)))) : 4,
+    imagePrompts: normalizeImagePrompts(source.imagePrompts),
+    imageRevisionCount: Number.isFinite(source.imageRevisionCount) ? Math.min(10, Math.max(1, Math.floor(Number(source.imageRevisionCount)))) : 1,
     outputFormat: typeof source.outputFormat === 'string' ? source.outputFormat.slice(0, 16) : undefined,
     sourceNodeId: typeof source.sourceNodeId === 'string' ? source.sourceNodeId : undefined,
     groupId: typeof source.groupId === 'string' && source.groupId ? source.groupId : undefined,

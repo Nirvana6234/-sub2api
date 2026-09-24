@@ -14,7 +14,7 @@
         class="sidebar-logo flex h-9 w-9 items-center justify-center overflow-hidden rounded-xl shadow-glow transition-opacity hover:opacity-80"
         @click="handleMenuItemClick(homePath)"
       >
-        <img v-if="settingsLoaded" :src="siteLogo || '/logo.svg'" alt="Logo" class="h-full w-full object-contain" />
+        <img v-if="settingsLoaded" :src="siteLogo || '/gongfei-plane.svg'" :alt="`${siteName} 标志`" class="h-full w-full object-contain" />
       </router-link>
       <div class="sidebar-brand" :class="{ 'sidebar-brand-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">
         <router-link
@@ -128,7 +128,7 @@
             @click="handleMenuItemClick(item.path)"
           >
             <span v-if="item.iconSvg" class="h-5 w-5 flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
-            <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" />
+            <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" :class="item.accent ? serviceAccentClass[item.accent] : undefined" />
             <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
           </component>
         </div>
@@ -152,7 +152,7 @@
             @click="handleMenuItemClick(item.path)"
           >
             <span v-if="item.iconSvg" class="h-5 w-5 flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
-            <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" />
+            <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" :class="item.accent ? serviceAccentClass[item.accent] : undefined" />
             <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
           </component>
         </div>
@@ -212,6 +212,14 @@ import { FeatureFlags, makeSidebarFlag } from '@/utils/featureFlags'
 import { resolveSiteBillingMode } from '@/utils/siteBillingMode'
 import { useBatchImageAccess } from '@/composables/useBatchImageAccess'
 
+type ServiceAccent = 'web' | 'api' | 'client'
+
+const serviceAccentClass: Record<ServiceAccent, string> = {
+  web: 'text-primary-500 dark:text-primary-400',
+  api: 'text-violet-500 dark:text-violet-400',
+  client: 'text-teal-500 dark:text-teal-400',
+}
+
 interface NavItem {
   path: string
   label: string
@@ -233,6 +241,8 @@ interface NavItem {
    * 开关切换时菜单自动更新。
    */
   featureFlag?: () => boolean | undefined
+  /** 三种用法（网页工作台 / API / 客户端）的识别色，只给图标上色，不改结构。 */
+  accent?: ServiceAccent
 }
 
 // applyFeatureFlags 递归过滤掉 featureFlag() === false 的节点（含子节点）。
@@ -735,9 +745,9 @@ const flagClientDownload = makeSidebarFlag(FeatureFlags.clientDownload)
 const flagOpsMonitoring = () => adminSettingsStore.opsMonitoringEnabled
 const flagAdminPayment = () => adminSettingsStore.paymentEnabled
 const flagBackupPayment = makeSidebarFlag(FeatureFlags.backupPayment)
-const flagBatchImageAccess = () => useBatchImageAccess().canAccess.value
+const { canUseBatchImage, refreshBatchImageAccess } = useBatchImageAccess()
+const flagBatchImageAccess = () => canUseBatchImage.value
 // 主通道关闭但备用开启时，充值入口仍要保留，否则用户够不到备用通道。
-const flagPurchase = () => flagPayment() || flagBackupPayment()
 const purchaseNavLabel = computed(() => {
   switch (resolveSiteBillingMode(appStore.cachedPublicSettings)) {
     case 'recharge_only': return t('nav.recharge')
@@ -745,6 +755,12 @@ const purchaseNavLabel = computed(() => {
     default: return t('nav.buySubscription')
   }
 })
+// 但被列入充值黑名单的用户一律不显示入口——该判断优先于通道开关，
+// 后端 /payment 路由组同时会拒绝其请求（前端隐藏只是视觉层）。
+const flagPurchase = () =>
+  authStore.user?.recharge_disabled !== true && (flagPayment() || flagBackupPayment())
+const flagAccountManagement = () => authStore.isAdmin || authStore.user?.account_management_enabled === true
+const flagContributionRooms = () => authStore.isAdmin || authStore.user?.contribution_rooms_enabled === true
 
 // buildSelfNavItems 构造用户自己的导航项（用户端主菜单和管理员的"我的账户"子菜单共享这组声明）。
 // withDashboard=true 时包含仪表盘（用户端），false 时不含（管理员的个人区已经有独立仪表盘入口）。
@@ -757,7 +773,7 @@ function buildSelfNavItems(withDashboard: boolean): NavItem[] {
     items.push({ path: '/dashboard', label: t('nav.dashboard'), icon: DashboardIcon })
   }
   items.push(
-    { path: '/keys', label: t('nav.apiKeys'), icon: KeyIcon },
+    { path: '/keys', label: t('nav.apiKeys'), icon: KeyIcon, accent: 'api' },
     {
       path: '/purchase',
       label: purchaseNavLabel.value,
@@ -765,10 +781,13 @@ function buildSelfNavItems(withDashboard: boolean): NavItem[] {
       hideInSimpleMode: true,
       featureFlag: flagPurchase,
     },
-    { path: '/playground', label: t('nav.playground'), icon: PlaygroundIcon, featureFlag: flagPlayground },
-    { path: '/download', label: t('nav.clientDownload'), icon: ClientDownloadIcon, featureFlag: flagClientDownload },
+    { path: '/playground', label: t('nav.playground'), icon: PlaygroundIcon, featureFlag: flagPlayground, accent: 'web' },
+    { path: '/download', label: t('nav.clientDownload'), icon: ClientDownloadIcon, featureFlag: flagClientDownload, accent: 'client' },
     { path: '/batch-image', label: t('nav.batchImage'), icon: BatchImageIcon, hideInSimpleMode: true, featureFlag: flagBatchImageAccess },
     { path: '/usage', label: t('nav.usage'), icon: ChartIcon, hideInSimpleMode: true },
+    { path: '/tickets', label: t('nav.tickets'), icon: TicketIcon },
+    { path: '/account-contributions', label: t('nav.accountContributions'), icon: UsersIcon, featureFlag: flagAccountManagement },
+    { path: '/shared-rooms', label: t('nav.sharedRooms'), icon: FolderIcon, featureFlag: flagContributionRooms },
     { path: '/available-channels', label: t('nav.availableChannels'), icon: ChannelIcon, hideInSimpleMode: true, featureFlag: flagAvailableChannels },
     { path: '/monitor', label: t('nav.channelStatus'), icon: SignalIcon, featureFlag: flagChannelMonitor },
     { path: '/subscriptions', label: t('nav.mySubscriptions'), icon: CreditCardIcon, hideInSimpleMode: true, featureFlag: flagSubscription },
@@ -835,7 +854,11 @@ const adminNavItems = computed((): NavItem[] => {
     { path: '/admin/subscriptions', label: t('nav.subscriptions'), icon: CreditCardIcon, hideInSimpleMode: true, featureFlag: flagSubscription },
     { path: '/admin/accounts', label: t('nav.accounts'), icon: GlobeIcon },
     { path: '/admin/plugins', label: t('nav.plugins'), icon: PluginIcon, featureFlag: flagPluginManagement },
+    { path: '/admin/contributions', label: t('nav.sharedAccountGovernance'), icon: UsersIcon },
+    { path: '/admin/contribution-rooms', label: t('nav.contributionRooms'), icon: FolderIcon },
     { path: '/admin/announcements', label: t('nav.announcements'), icon: BellIcon },
+    { path: '/admin/tickets', label: t('nav.tickets'), icon: TicketIcon },
+    { path: '/admin/blacklist', label: t('nav.blacklist'), icon: ShieldIcon },
     { path: '/admin/proxies', label: t('nav.proxies'), icon: ServerIcon },
     {
       path: '/admin/security-audit',
@@ -877,7 +900,6 @@ const adminNavItems = computed((): NavItem[] => {
       ],
     },
     { path: '/admin/usage', label: t('nav.usage'), icon: ChartIcon },
-    { path: '/admin/latency-compensation', label: t('nav.latencyCompensation'), icon: ChartIcon },
     { path: '/admin/audit-logs', label: t('nav.auditLogs'), icon: ShieldIcon, hideInSimpleMode: true }
   ]
 
@@ -996,6 +1018,7 @@ watch(
 )
 
 onMounted(() => {
+  void refreshBatchImageAccess()
   if (isAdmin.value) {
     adminSettingsStore.fetch()
   }

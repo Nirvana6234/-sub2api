@@ -59,6 +59,14 @@ type UserAnnouncement struct {
 	ReadAt       *time.Time
 }
 
+// AnnouncementHead is the lightweight summary used by long-running clients to
+// decide whether they need to download announcement bodies.
+type AnnouncementHead struct {
+	MaxID       int64 `json:"max_id"`
+	UnreadCount int   `json:"unread_count"`
+	Total       int   `json:"total"`
+}
+
 type AnnouncementUserReadStatus struct {
 	UserID   int64      `json:"user_id"`
 	Email    string     `json:"email"`
@@ -412,4 +420,24 @@ func isValidAnnouncementNotifyMode(mode string) bool {
 	default:
 		return false
 	}
+}
+
+// HeadForUser 给长时间运行的客户端一个「要不要去拉正文」的轻量判断依据，
+// 不暴露公告正文。放在 service 里是为了让摘要与列表端点遵循同一套投放规则。
+func (s *AnnouncementService) HeadForUser(ctx context.Context, userID int64) (AnnouncementHead, error) {
+	items, err := s.ListForUser(ctx, userID, false)
+	if err != nil {
+		return AnnouncementHead{}, err
+	}
+
+	head := AnnouncementHead{Total: len(items)}
+	for _, item := range items {
+		if item.Announcement.ID > head.MaxID {
+			head.MaxID = item.Announcement.ID
+		}
+		if item.ReadAt == nil {
+			head.UnreadCount++
+		}
+	}
+	return head, nil
 }

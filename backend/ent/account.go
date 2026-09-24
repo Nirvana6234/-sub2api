@@ -73,6 +73,12 @@ type Account struct {
 	TempUnschedulableUntil *time.Time `json:"temp_unschedulable_until,omitempty"`
 	// TempUnschedulableReason holds the value of the "temp_unschedulable_reason" field.
 	TempUnschedulableReason *string `json:"temp_unschedulable_reason,omitempty"`
+	// Ownership of the current schedulable value: manual | automatic | none.
+	SchedulabilitySource string `json:"schedulability_source,omitempty"`
+	// Stable reason code explaining the current schedulability source.
+	SchedulabilityReason *string `json:"schedulability_reason,omitempty"`
+	// SchedulabilityChangedAt holds the value of the "schedulability_changed_at" field.
+	SchedulabilityChangedAt *time.Time `json:"schedulability_changed_at,omitempty"`
 	// SessionWindowStart holds the value of the "session_window_start" field.
 	SessionWindowStart *time.Time `json:"session_window_start,omitempty"`
 	// SessionWindowEnd holds the value of the "session_window_end" field.
@@ -179,9 +185,9 @@ func (*Account) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullFloat64)
 		case account.FieldID, account.FieldProxyID, account.FieldProxyFallbackOriginID, account.FieldConcurrency, account.FieldLoadFactor, account.FieldPriority, account.FieldParentAccountID:
 			values[i] = new(sql.NullInt64)
-		case account.FieldName, account.FieldNotes, account.FieldPlatform, account.FieldType, account.FieldStatus, account.FieldErrorMessage, account.FieldTempUnschedulableReason, account.FieldSessionWindowStatus, account.FieldQuotaDimension:
+		case account.FieldName, account.FieldNotes, account.FieldPlatform, account.FieldType, account.FieldStatus, account.FieldErrorMessage, account.FieldTempUnschedulableReason, account.FieldSchedulabilitySource, account.FieldSchedulabilityReason, account.FieldSessionWindowStatus, account.FieldQuotaDimension:
 			values[i] = new(sql.NullString)
-		case account.FieldCreatedAt, account.FieldUpdatedAt, account.FieldDeletedAt, account.FieldLastUsedAt, account.FieldExpiresAt, account.FieldRateLimitedAt, account.FieldRateLimitResetAt, account.FieldOverloadUntil, account.FieldTempUnschedulableUntil, account.FieldSessionWindowStart, account.FieldSessionWindowEnd:
+		case account.FieldCreatedAt, account.FieldUpdatedAt, account.FieldDeletedAt, account.FieldLastUsedAt, account.FieldExpiresAt, account.FieldRateLimitedAt, account.FieldRateLimitResetAt, account.FieldOverloadUntil, account.FieldTempUnschedulableUntil, account.FieldSchedulabilityChangedAt, account.FieldSessionWindowStart, account.FieldSessionWindowEnd:
 			values[i] = new(sql.NullTime)
 		default:
 			values[i] = new(sql.UnknownType)
@@ -382,6 +388,26 @@ func (_m *Account) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.TempUnschedulableReason = new(string)
 				*_m.TempUnschedulableReason = value.String
+			}
+		case account.FieldSchedulabilitySource:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field schedulability_source", values[i])
+			} else if value.Valid {
+				_m.SchedulabilitySource = value.String
+			}
+		case account.FieldSchedulabilityReason:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field schedulability_reason", values[i])
+			} else if value.Valid {
+				_m.SchedulabilityReason = new(string)
+				*_m.SchedulabilityReason = value.String
+			}
+		case account.FieldSchedulabilityChangedAt:
+			if value, ok := values[i].(*sql.NullTime); !ok {
+				return fmt.Errorf("unexpected type %T for field schedulability_changed_at", values[i])
+			} else if value.Valid {
+				_m.SchedulabilityChangedAt = new(time.Time)
+				*_m.SchedulabilityChangedAt = value.Time
 			}
 		case account.FieldSessionWindowStart:
 			if value, ok := values[i].(*sql.NullTime); !ok {
@@ -588,6 +614,19 @@ func (_m *Account) String() string {
 	if v := _m.TempUnschedulableReason; v != nil {
 		builder.WriteString("temp_unschedulable_reason=")
 		builder.WriteString(*v)
+	}
+	builder.WriteString(", ")
+	builder.WriteString("schedulability_source=")
+	builder.WriteString(_m.SchedulabilitySource)
+	builder.WriteString(", ")
+	if v := _m.SchedulabilityReason; v != nil {
+		builder.WriteString("schedulability_reason=")
+		builder.WriteString(*v)
+	}
+	builder.WriteString(", ")
+	if v := _m.SchedulabilityChangedAt; v != nil {
+		builder.WriteString("schedulability_changed_at=")
+		builder.WriteString(v.Format(time.ANSIC))
 	}
 	builder.WriteString(", ")
 	if v := _m.SessionWindowStart; v != nil {

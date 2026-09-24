@@ -70,7 +70,7 @@ func TestBuildUsageBillingCommand_SubscriptionAppliesRateMultiplier(t *testing.T
 				IsSubscriptionBill: tt.isSubscription,
 			}
 
-			cmd := buildUsageBillingCommand("req-1", nil, p)
+			cmd := buildUsageBillingCommand("req-1", nil, p, AccountShareRewardRate, 0)
 			if cmd == nil {
 				t.Fatal("buildUsageBillingCommand returned nil")
 			}

@@ -276,17 +276,15 @@ type OpenAIForwardResult struct {
 	Duration              time.Duration
 	FirstTokenMs          *int
 	ClientDisconnect      bool
-	// HeadroomTokensSaved 是本次请求经 headroom 压缩代理节省的 token 数（未压缩/未生效为 0）。
-	HeadroomTokensSaved int
-	ImageCount          int
-	ImageSize           string
-	ImageInputSize      string
-	ImageOutputSize     string
-	ImageOutputSizes    []string
-	ImageSizeSource     string
-	ImageSizeBreakdown  map[string]int
-	VideoCount          int
-	VideoResolution     string
+	ImageCount            int
+	ImageSize             string
+	ImageInputSize        string
+	ImageOutputSize       string
+	ImageOutputSizes      []string
+	ImageSizeSource       string
+	ImageSizeBreakdown    map[string]int
+	VideoCount            int
+	VideoResolution       string
 	// VideoDurationSeconds 是提交时请求的生成时长（xAI 按输出秒数计费），已归一化到 1-15 秒。
 	VideoDurationSeconds int
 	// WebSearchCalls 是 Codex alpha/search 网页搜索调用次数（每次成功请求为 1）。
@@ -469,6 +467,7 @@ type OpenAIGatewayService struct {
 	balanceNotifyService  *BalanceNotifyService
 	settingService        *SettingService
 	userPlatformQuotaRepo UserPlatformQuotaRepository
+	contributionRoomRepo  ContributionRoomRoutingRepository
 	liveAttestation       liveattestation.Provider
 	liveAttestationCipher SecretEncryptor
 
@@ -488,6 +487,14 @@ type OpenAIGatewayService struct {
 	openaiLatencyTracker           *openAILatencyTracker
 	openaiLatencyTrackerOnce       sync.Once
 	openaiFallbackStickyStates     sync.Map // key: source group ID, value: *openAIFallbackStickyState
+	// openaiGroupAccountIDs 缓存分组的可调度账号清单，供延迟兜底前的
+	// "源组是否还有健康账号" 判断使用（key: group ID, value: *openAIGroupAccountIDsEntry）。
+	openaiGroupAccountIDs sync.Map
+	// openaiLatencyFallbackSkipLogAt 按分组节流跳过日志（key: group ID, value: *atomic.Int64 毫秒时间戳）。
+	openaiLatencyFallbackSkipLogAt sync.Map
+	// openaiSelectionGroupAuditLogAt 按 (分组,账号) 节流"选出的账号不属于该分组"
+	// 的诊断告警（key: "groupID:accountID", value: *atomic.Int64 毫秒时间戳）。
+	openaiSelectionGroupAuditLogAt sync.Map
 	openaiModelTransient           *openAIAccountModelTransientState
 	openaiProxyStreamCircuit       *openAIProxyStreamCircuit
 	openaiProxyStreamFailOpenLogAt atomic.Int64
@@ -512,6 +519,14 @@ type OpenAIGatewayService struct {
 	// 剥离跨账号回带（openai_codex_turn_state.go）。
 	openaiCodexTurnStateOrigins sync.Map
 	openaiCodexTurnStateWrites  atomic.Uint64
+}
+
+// SetContributionRoomRoutingRepository wires the optional, credential-free
+// contribution-room policy source after construction.
+func (s *OpenAIGatewayService) SetContributionRoomRoutingRepository(repo ContributionRoomRoutingRepository) {
+	if s != nil {
+		s.contributionRoomRepo = repo
+	}
 }
 
 // NewOpenAIGatewayService creates a new OpenAIGatewayService
@@ -695,6 +710,9 @@ func (s *OpenAIGatewayService) billingDeps() *billingDeps {
 		deferredService:       s.deferredService,
 		balanceNotifyService:  s.balanceNotifyService,
 		userPlatformQuotaRepo: s.userPlatformQuotaRepo,
+		cfg:                   s.cfg,
+		schedulerSnapshot:     s.schedulerSnapshot,
+		settingService:        s.settingService,
 	}
 }
 

@@ -110,6 +110,9 @@ export async function getById(id: number): Promise<ApiKey> {
  * @param quota - Optional quota limit in USD (0 = unlimited)
  * @param expiresInDays - Optional days until expiry (undefined = never expires)
  * @param rateLimitData - Optional rate limit fields
+ * @param autoGroup - Automatically select a currently usable group
+ * @param autoGroupStrategy - Price/latency balance for automatic routing
+ * @param autoGroupIDs - User-selected candidate groups for automatic routing
  * @returns Created API key
  */
 export async function create(
@@ -120,9 +123,17 @@ export async function create(
   ipBlacklist?: string[],
   quota?: number,
   expiresInDays?: number,
-  rateLimitData?: { rate_limit_5h?: number; rate_limit_1d?: number; rate_limit_7d?: number }
+  rateLimitData?: { rate_limit_5h?: number; rate_limit_1d?: number; rate_limit_7d?: number },
+  autoGroup = false,
+  autoGroupStrategy: 'price' | 'balanced' | 'speed' = 'price',
+  autoGroupIDs: number[] = []
 ): Promise<ApiKey> {
   const payload: CreateApiKeyRequest = { name }
+  payload.auto_group = autoGroup
+  if (autoGroup) {
+    payload.auto_group_strategy = autoGroupStrategy
+    payload.auto_group_ids = autoGroupIDs
+  }
   if (groupId !== undefined) {
     payload.group_id = groupId
   }

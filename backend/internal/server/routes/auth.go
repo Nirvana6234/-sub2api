@@ -56,6 +56,9 @@ func RegisterAuthRoutes(
 		}), h.Auth.RefreshToken)
 		// 登出接口（公开，允许未认证用户调用以撤销Refresh Token）
 		auth.POST("/logout", h.Auth.Logout)
+		// 桌面控制端的本地登录入口：未配置高熵令牌时该端点等同不存在，
+		// 且要求对端必须是回环地址（见 AuthHandler.LocalControlLogin）。
+		auth.POST("/local-control", h.Auth.LocalControlLogin)
 		// 优惠码验证接口添加速率限制：每分钟最多 10 次（Redis 故障时 fail-close）
 		auth.POST("/validate-promo-code", rateLimiter.LimitWithOptions("validate-promo", 10, time.Minute, middleware.RateLimitOptions{
 			FailureMode: middleware.RateLimitFailClose,

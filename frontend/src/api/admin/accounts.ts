@@ -240,6 +240,28 @@ export async function update(id: number, updates: UpdateAccountRequest): Promise
   return data
 }
 
+export interface AccountGroupPriorityUpdate {
+  account_id: number
+  group_id: number
+  priority: number
+}
+
+export interface AccountGroupPriorityUpdateResult {
+  updated: number
+  requested: number
+}
+
+/** Update account_groups.priority without changing the account-wide priority. */
+export async function updateGroupPriorities(
+  updates: AccountGroupPriorityUpdate[]
+): Promise<AccountGroupPriorityUpdateResult> {
+  const { data } = await apiClient.post<AccountGroupPriorityUpdateResult>(
+    '/admin/accounts/group-priorities',
+    { updates }
+  )
+  return data
+}
+
 export async function getGrokMediaEligibility(id: number): Promise<GrokMediaEligibilityState> {
   const { data } = await apiClient.get<GrokMediaEligibilityState>(
     `/admin/accounts/${id}/grok-media-eligibility`
@@ -353,6 +375,54 @@ export async function applyOAuthCredentials(
 export async function getStats(id: number, days: number = 30): Promise<AccountUsageStatsResponse> {
   const { data } = await apiClient.get<AccountUsageStatsResponse>(`/admin/accounts/${id}/stats`, {
     params: { days }
+  })
+  return data
+}
+
+export interface CodexProfileDailyUsage {
+  date: string
+  tokens: number
+}
+
+export interface CodexProfileInvocation {
+  type: string
+  plugin_id?: string
+  plugin_name?: string
+  skill_id?: string
+  skill_name?: string
+  usage_count?: number
+}
+
+export interface CodexProfileStatistics {
+  display_name?: string
+  username?: string
+  avatar_url?: string
+  has_stats_error: boolean
+  lifetime_tokens?: number
+  peak_daily_tokens?: number
+  longest_turn_seconds?: number
+  current_streak_days?: number
+  longest_streak_days?: number
+  daily_usage?: CodexProfileDailyUsage[]
+  fast_mode_percent?: number
+  reasoning_effort?: string
+  reasoning_effort_percent?: number
+  unique_skills_used?: number
+  total_skills_used?: number
+  total_threads?: number
+  top_invocations?: CodexProfileInvocation[]
+  fetched_at: string
+}
+
+/**
+ * Get an OpenAI/Codex OAuth account's user profile statistics (profiles/me).
+ * @param id - Account ID
+ * @param refresh - Bypass the server-side cache and re-fetch from upstream
+ * @returns Codex profile statistics
+ */
+export async function getProfileStatistics(id: number, refresh = false): Promise<CodexProfileStatistics> {
+  const { data } = await apiClient.get<CodexProfileStatistics>(`/admin/accounts/${id}/profile-statistics`, {
+    params: refresh ? { refresh: 'true' } : undefined
   })
   return data
 }
@@ -1014,6 +1084,13 @@ export async function setUpstreamBillingProbeEnabled(id: number, enabled: boolea
   await apiClient.put(`/admin/accounts/${id}/upstream-billing-probe`, { enabled })
 }
 
+export async function setUpstreamBillingManualRate(id: number, rateMultiplier: number | null): Promise<Account> {
+  const { data } = await apiClient.put<Account>(`/admin/accounts/${id}/upstream-billing-probe/manual-rate`, {
+    rate_multiplier: rateMultiplier
+  })
+  return data
+}
+
 export async function probeUpstreamBilling(id: number): Promise<UpstreamBillingProbeResult> {
   const { data } = await apiClient.post<UpstreamBillingProbeResult>(`/admin/accounts/${id}/upstream-billing-probe`)
   return data
@@ -1079,6 +1156,7 @@ export const accountsAPI = {
   create,
   duplicate,
   update,
+  updateGroupPriorities,
   getGrokMediaEligibility,
   updateGrokMediaEligibility,
   checkMixedChannelRisk,
@@ -1088,6 +1166,7 @@ export const accountsAPI = {
   refreshCredentials,
   applyOAuthCredentials,
   getStats,
+  getProfileStatistics,
   clearError,
   getUsage,
   getBatchUsage,
@@ -1126,6 +1205,7 @@ export const accountsAPI = {
   getUpstreamBillingProbeSettings,
   updateUpstreamBillingProbeSettings,
   setUpstreamBillingProbeEnabled,
+  setUpstreamBillingManualRate,
   probeUpstreamBilling,
   probeUpstreamBillingBatch,
   getOllamaCloudUsageSettings,

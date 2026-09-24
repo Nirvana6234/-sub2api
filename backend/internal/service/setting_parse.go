@@ -226,12 +226,13 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyClientLatestVersionMac:     "",
 		SettingKeyClientTutorialVideoURL:     "https://www.bilibili.com/video/BV1vWYJ6PEhc/",
 
+		SettingKeyChatAppDownloadEnabled:   "false",
+		SettingKeyChatAppDownloadDirectURL: "",
+		SettingKeyChatAppLatestVersion:     "",
+
 		// 延迟补偿慢请求阈值，默认 30 秒；退款比例默认 1（全退利润）
 		SettingKeyLatencyCompensationThresholdMs: "30000",
 		SettingKeyLatencyCompensationProfitRatio: "1",
-
-		// headroom 压缩代理地址，默认留空（未部署/未配置时不生效）
-		SettingKeyHeadroomBaseURL: "",
 
 		// 备用支付通道（默认关闭；opt-in）
 		SettingKeyBackupPaymentEnabled: "false",
@@ -877,7 +878,6 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.ClientLatestVersion = strings.TrimSpace(settings[SettingKeyClientLatestVersion])
 	result.ClientLatestVersionMac = strings.TrimSpace(settings[SettingKeyClientLatestVersionMac])
 	result.ClientTutorialVideoURL = strings.TrimSpace(settings[SettingKeyClientTutorialVideoURL])
-	result.HeadroomBaseURL = strings.TrimSpace(settings[SettingKeyHeadroomBaseURL])
 
 	// 延迟补偿慢请求阈值（毫秒），非法或缺失时回退默认 30 秒。
 	result.LatencyCompensationThresholdMs = 30000

@@ -47,6 +47,9 @@ func (Group) Fields() []ent.Field {
 		field.Float("rate_multiplier").
 			SchemaType(map[string]string{dialect.Postgres: "decimal(10,4)"}).
 			Default(1.0),
+		field.Bool("allow_contribution_pool").
+			Default(false).
+			Comment("是否允许用户贡献的账号并入此分组号池"),
 		// 高峰时段倍率（added by migration 158）
 		field.Bool("peak_rate_enabled").
 			Default(false).
@@ -199,6 +202,9 @@ func (Group) Fields() []ent.Field {
 		field.Bool("claude_code_only").
 			Default(false).
 			Comment("是否仅允许 Claude Code 客户端"),
+		field.Bool("kiro_compat").
+			Default(false).
+			Comment("是否使用 Kiro 的 Codex 兼容处理"),
 		field.Int64("fallback_group_id").
 			Optional().
 			Nillable().
@@ -212,20 +218,16 @@ func (Group) Fields() []ent.Field {
 			Nillable().
 			Comment("无效请求兜底使用的分组 ID"),
 
-		// 兜底账号池标记 (added by migration 238)：由其他分组通过
-		// fallback_group_id 指定，用户不可直接选择或绑定。兜底池可以有多个，
-		// 由每个源分组逐个指定；池中账号不因入池而获得任何特权，被选中兜底
-		// 某分组时仍要通过「被兜底那个分组」的利润门。
+		// 刻意不叫 is_fallback：fallback_group_id 是「某个分组自己指定的
+		// 降级目标」，可链式跳转；这里表示该分组是否可作为其它分组的兜底账号池。
+		// 兜底池可以有多个，由每个源分组逐个指定；普通用户不可直接选择或绑定。
+		//
+		// 池中账号并不因此获得特权：被选中兜底某分组时，仍要通过「被兜底那个分组」
+		// 的利润门（账号倍率 ≤ 分组倍率 ×(1−利润率−缓冲)），且成本未声明的账号
+		// 一律不参与兜底。
 		field.Bool("is_fallback_pool").
 			Default(false).
 			Comment("是否为兜底账号池：由其他分组通过 fallback_group_id 指定，用户不可直接选择"),
-
-		// Kiro 兼容处理 (added by migration 241)：Kiro 中转以 Anthropic 协议对外，
-		// 但不代模型执行 hosted 工具，且 Codex 的通配符模型映射不应覆盖用户显式
-		// 选择的 Claude 模型。
-		field.Bool("kiro_compat").
-			Default(false).
-			Comment("是否使用 Kiro 的 Codex 兼容处理"),
 
 		// 模型路由配置 (added by migration 040)
 		field.JSON("model_routing", map[string][]int64{}).
@@ -260,7 +262,7 @@ func (Group) Fields() []ent.Field {
 			Comment("是否允许 /v1/messages 调度到此 OpenAI 分组"),
 		field.Bool("allow_live").
 			Default(false).
-			Comment("是否允许此 OpenAI 分组访问 Live 接口"),
+			Comment("是否允许 OpenAI Live/WebRTC 调度到此 OpenAI 分组"),
 		field.Bool("force_openai_fast").
 			Default(false).
 			Comment("是否强制此 OpenAI/Composite 分组请求使用 service_tier=priority"),
@@ -281,10 +283,19 @@ func (Group) Fields() []ent.Field {
 			Default(domain.OpenAIMessagesDispatchModelConfig{}).
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}).
 			Comment("OpenAI Messages 调度模型配置：按 Claude 系列/精确模型映射到目标 GPT 模型"),
+		// TODO(upstream-merge): upstream 把此字段重构为 model_allowlist
+		// (domain.GroupModelAllowlist)，结构体字段完全相同(Enabled+Models)，
+		// 但 upstream 注释称新增了"网关准入"约束（不仅过滤 /v1/models 展示，
+		// 还真正拦截请求），本地这版语义是否已覆盖待核实，先保留本地字段名
+		// 避免打断 backend/internal 里 25 处引用，留到后端业务逻辑合并批次处理。
 		field.JSON("model_allowlist", domain.GroupModelAllowlist{}).
 			Default(domain.GroupModelAllowlist{}).
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}).
-			Comment("分组模型白名单：同时约束模型列表接口与请求准入"),
+			Comment("group model allowlist for gateway admission"),
+		field.JSON("models_list_config", domain.GroupModelsListConfig{}).
+			Default(domain.GroupModelsListConfig{}).
+			SchemaType(map[string]string{dialect.Postgres: "jsonb"}).
+			Comment("controls the optional custom /v1/models response list"),
 		field.JSON("codex_models_manifest_config", domain.GroupCodexModelsManifestConfig{}).
 			Default(domain.GroupCodexModelsManifestConfig{}).
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}).
@@ -294,12 +305,10 @@ func (Group) Fields() []ent.Field {
 		field.Int("rpm_limit").
 			Default(0).
 			Comment("分组 RPM 上限，0 表示不限制；设置后接管该分组用户的限流"),
-
-		// OpenAI/Codex 请求的推理强度上限（空字符串表示不限制）。
 		field.String("max_reasoning_effort").
 			MaxLen(20).
 			Default("").
-			Comment("OpenAI reasoning effort 上限；可选 minimal/low/medium/high/xhigh/max"),
+			Comment("OpenAI/Codex 请求推理强度上限，空字符串表示不限制；可选 minimal/low/medium/high/xhigh/max"),
 		field.String("max_reasoning_effort_over_limit").
 			MaxLen(20).
 			Default("downgrade").
@@ -307,21 +316,21 @@ func (Group) Fields() []ent.Field {
 		field.JSON("reasoning_effort_mappings", []domain.ReasoningEffortMapping{}).
 			Default([]domain.ReasoningEffortMapping{}).
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}).
-			Comment("OpenAI reasoning effort 自定义映射；可按模型精确名、前缀或后缀限定，先映射再应用上限"),
+			Comment("OpenAI/Codex reasoning effort 自定义映射；可按模型精确名、前缀或后缀限定，先映射再应用上限"),
 
 		// 分组利润控制（migration 192/193）：openai/anthropic/gemini/grok/antigravity
 		// 的 token 分组可启用，composite 分组不能直接启用。
 		field.Bool("profit_control_enabled").
 			Default(false).
-			Comment("是否启用利润控制：调度时仅允许账号计费倍率满足毛利率要求的账号进入候选池"),
+			Comment("是否启用利润控制"),
 		field.Float("profit_min_margin").
 			SchemaType(map[string]string{dialect.Postgres: "decimal(10,4)"}).
 			Default(0).
-			Comment("最低毛利率，小数（0.30=30%）；账号准入条件为 U <= D*(1-margin-buffer)"),
+			Comment("最低毛利率"),
 		field.Float("profit_safety_buffer").
 			SchemaType(map[string]string{dialect.Postgres: "decimal(10,4)"}).
 			Default(0).
-			Comment("安全缓冲，小数；与 margin 相加后从下游倍率中扣除，默认 0"),
+			Comment("利润控制安全缓冲"),
 	}
 }
 
@@ -337,6 +346,7 @@ func (Group) Edges() []ent.Edge {
 		edge.From("allowed_users", User.Type).
 			Ref("allowed_groups").
 			Through("user_allowed_groups", UserAllowedGroup.Type),
+		edge.To("composite_model_routes", CompositeModelRoute.Type),
 		// 注意：fallback_group_id 直接作为字段使用，不定义 edge
 		// 这样允许多个分组指向同一个降级分组（M2O 关系）
 	}
@@ -355,6 +365,8 @@ func (Group) Indexes() []ent.Index {
 			Unique().
 			StorageKey("idx_groups_duplicate_operation_id_active").
 			Annotations(entsql.IndexWhere("duplicate_operation_id IS NOT NULL AND deleted_at IS NULL")),
+		// 兜底池可以有多个，由源分组逐个通过 fallback_group_id 指定；这里只保留
+		// 普通查询索引，不能再使用旧的全局唯一约束。
 		index.Fields("is_fallback_pool").
 			StorageKey("idx_groups_is_fallback_pool").
 			Annotations(entsql.IndexWhere("deleted_at IS NULL")),

@@ -26,6 +26,9 @@ func RegisterPaymentRoutes(
 	authenticated := v1.Group("/payment")
 	authenticated.Use(gin.HandlerFunc(jwtAuth))
 	authenticated.Use(middleware.BackendModeUserGuard(settingService))
+	// 充值黑名单：名单内用户对 /payment 下全部接口返回 403（前端隐藏入口只是视觉，
+	// 直接调用 API 必须也挡住）。
+	authenticated.Use(middleware.RechargeBlockedGuard(settingService))
 	// 面板全局按用户限流
 	authenticated.Use(panelRateLimiter.Global())
 	{
@@ -46,15 +49,21 @@ func RegisterPaymentRoutes(
 		}
 	}
 
-	// --- Public payment endpoints (no auth) ---
-	// Signed resume-token recovery is the preferred public lookup path.
-	// The legacy anonymous out_trade_no verify endpoint remains available as a
-	// persisted-state compatibility path for staggered upgrades.
+	// --- Public payment endpoints ---
+	// Signed resume-token recovery is intentionally anonymous: possession of the
+	// short-lived signed token is the checkout capability.
 	public := v1.Group("/payment/public")
-	{
-		public.POST("/orders/verify", paymentHandler.VerifyOrderPublic)
-		public.POST("/orders/resolve", paymentHandler.ResolveOrderPublicByResumeToken)
-	}
+	public.POST("/orders/resolve", paymentHandler.ResolveOrderPublicByResumeToken)
+
+	// Keep the legacy URL for staggered frontend upgrades, but never allow an
+	// out_trade_no alone to disclose an order. The handler also repeats the
+	// ownership check so direct handler calls cannot bypass this boundary.
+	legacyVerify := public.Group("/orders")
+	legacyVerify.Use(gin.HandlerFunc(jwtAuth))
+	legacyVerify.Use(middleware.BackendModeUserGuard(settingService))
+	legacyVerify.Use(middleware.RechargeBlockedGuard(settingService))
+	legacyVerify.Use(panelRateLimiter.Global())
+	legacyVerify.POST("/verify", paymentHandler.VerifyOrderPublic)
 
 	// --- Webhook endpoints (no auth) ---
 	webhook := v1.Group("/payment/webhook")

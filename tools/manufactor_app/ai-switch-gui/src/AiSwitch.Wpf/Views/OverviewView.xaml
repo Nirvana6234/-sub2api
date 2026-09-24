@@ -1,0 +1,265 @@
+<UserControl x:Class="LanAi.Workspace.Wpf.Views.OverviewView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:LanAi.Workspace.Wpf.Controls"
+             UseLayoutRounding="True"
+             SnapsToDevicePixels="True">
+    <UserControl.Resources>
+        <Style x:Key="DashboardMetricCardStyle" TargetType="Border" BasedOn="{StaticResource CardBorderStyle}">
+            <Setter Property="MinHeight" Value="132" />
+            <Setter Property="Padding" Value="21,19" />
+        </Style>
+        <Style x:Key="DashboardLabelStyle" TargetType="TextBlock" BasedOn="{StaticResource EyebrowTextStyle}">
+            <Setter Property="FontSize" Value="11.5" />
+        </Style>
+        <Style x:Key="DashboardDetailStyle" TargetType="TextBlock">
+            <Setter Property="Margin" Value="0,7,0,0" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="{StaticResource SecondaryTextBrush}" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+        <Style x:Key="DashboardStatusPillStyle" TargetType="Border">
+            <Setter Property="Padding" Value="12,7" />
+            <Setter Property="Background" Value="#F2FFFFFF" />
+            <Setter Property="BorderBrush" Value="#D6FFFFFF" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="12" />
+        </Style>
+        <Style x:Key="NetworkHealthSurfaceStyle" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource SuccessSoftBrush}" />
+            <Setter Property="BorderBrush" Value="#FFD9EFDF" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="16" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsNetworkHealthy}" Value="False">
+                    <Setter Property="Background" Value="{StaticResource WarningSoftBrush}" />
+                    <Setter Property="BorderBrush" Value="#FFF5DFB6" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="NetworkHealthDotStyle" TargetType="Ellipse">
+            <Setter Property="Fill" Value="{StaticResource SuccessBrush}" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsNetworkHealthy}" Value="False">
+                    <Setter Property="Fill" Value="{StaticResource WarningBrush}" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+    </UserControl.Resources>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel>
+            <Border Margin="0,2,0,20"
+                    Padding="28"
+                    Background="#FF101828"
+                    CornerRadius="24">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="1.35*" />
+                        <ColumnDefinition Width="28" />
+                        <ColumnDefinition Width="1*" />
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel>
+                        <TextBlock Text="共飞AI工作台"
+                                   FontFamily="Segoe UI Variable Display, Microsoft YaHei UI"
+                                   FontSize="28"
+                                   FontWeight="SemiBold"
+                                   Foreground="White" />
+                        <TextBlock Margin="0,10,0,0"
+                                   Text="先看今天用了多少、连接是否健康，再进入项目开始对话。"
+                                   FontSize="14"
+                                   Foreground="#CCFFFFFF"
+                                   TextWrapping="Wrap" />
+
+                        <StackPanel Margin="0,22,0,0" Orientation="Horizontal">
+                            <Border Style="{StaticResource DashboardStatusPillStyle}">
+                                <StackPanel Orientation="Horizontal">
+                                    <Ellipse Width="7" Height="7" Fill="{StaticResource SuccessBrush}" VerticalAlignment="Center" />
+                                     <TextBlock Margin="8,0,0,0"
+                                                Text="{Binding TelemetryLastUpdated}"
+                                                FontSize="12.5"
+                                                FontWeight="SemiBold"
+                                                Foreground="#FF344054" />
+                                </StackPanel>
+                            </Border>
+                            <Button Margin="10,0,0,0"
+                                    Padding="16,7"
+                                    Content="刷新"
+                                    Command="{Binding RefreshOverviewCommand}"
+                                    Style="{StaticResource PrimaryButtonStyle}" />
+                        </StackPanel>
+                    </StackPanel>
+
+                    <Border Grid.Column="2"
+                            Padding="22"
+                            Background="#18FFFFFF"
+                            BorderBrush="#26FFFFFF"
+                            BorderThickness="1"
+                            CornerRadius="20">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="今日 Token"
+                                           FontSize="12"
+                                           FontWeight="SemiBold"
+                                           Foreground="#BFFFFFFF" />
+                                <TextBlock Margin="0,10,0,0"
+                                           Text="{Binding TodayTokens}"
+                                           FontFamily="Segoe UI Variable Display, Microsoft YaHei UI"
+                                           FontSize="38"
+                                           FontWeight="SemiBold"
+                                           Foreground="White" />
+                                <TextBlock Margin="0,8,0,0"
+                                           Text="{Binding TodayRequests, StringFormat=今日 {0} 次请求}"
+                                           FontSize="13"
+                                           Foreground="#CCFFFFFF" />
+                            </StackPanel>
+                            <ProgressBar Grid.Column="1"
+                                         Width="38"
+                                         Height="3"
+                                         Margin="18,0,0,0"
+                                         IsIndeterminate="True"
+                                         Visibility="{Binding IsTelemetryLoading, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                         VerticalAlignment="Center" />
+                        </Grid>
+                    </Border>
+                </Grid>
+            </Border>
+
+            <UniformGrid Columns="4" Margin="-7,0,-7,20">
+                <Border Margin="7,0" Style="{StaticResource DashboardMetricCardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="近 7 日 Token" Style="{StaticResource DashboardLabelStyle}" />
+                        <TextBlock Margin="0,12,0,0" Text="{Binding SevenDayTokens}" Style="{StaticResource MetricValueStyle}" Foreground="{StaticResource AccentBrush}" />
+                        <TextBlock Text="{Binding SevenDayRequestsDetail}" Style="{StaticResource DashboardDetailStyle}" />
+                    </StackPanel>
+                </Border>
+                <Border Margin="7,0" Style="{StaticResource DashboardMetricCardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="缓存命中率" Style="{StaticResource DashboardLabelStyle}" />
+                        <TextBlock Margin="0,12,0,0" Text="{Binding CacheHitRate}" Style="{StaticResource MetricValueStyle}" />
+                        <TextBlock Text="{Binding CacheHitRateDetail}" Style="{StaticResource DashboardDetailStyle}" />
+                    </StackPanel>
+                </Border>
+                <Border Margin="7,0" Style="{StaticResource DashboardMetricCardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="平均响应" Style="{StaticResource DashboardLabelStyle}" />
+                        <TextBlock Margin="0,12,0,0" Text="{Binding AverageResponseTime}" Style="{StaticResource MetricValueStyle}" />
+                        <TextBlock Text="{Binding AverageResponseDetail}" Style="{StaticResource DashboardDetailStyle}" />
+                    </StackPanel>
+                </Border>
+                <Border Margin="7,0" Style="{StaticResource DashboardMetricCardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="历史会话" Style="{StaticResource DashboardLabelStyle}" />
+                        <TextBlock Margin="0,12,0,0" Text="{Binding IndexedSessions}" Style="{StaticResource MetricValueStyle}" />
+                        <TextBlock Text="{Binding SessionStatusDetail}" Style="{StaticResource DashboardDetailStyle}" />
+                    </StackPanel>
+                </Border>
+            </UniformGrid>
+
+            <Grid Margin="0,0,0,20">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="1.55*" />
+                    <ColumnDefinition Width="18" />
+                    <ColumnDefinition Width="1*" />
+                </Grid.ColumnDefinitions>
+
+                <Border Grid.Column="0" Padding="24" Style="{StaticResource CardBorderStyle}">
+                    <StackPanel>
+                        <Grid Margin="0,0,0,18">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="{Binding UsageTrendTitle}" Style="{StaticResource SectionTitleStyle}" />
+                            <Border Grid.Column="1" Padding="11,6" Background="{StaticResource InputSurfaceBrush}" BorderBrush="{StaticResource HairlineBrush}" BorderThickness="1" CornerRadius="11">
+                                <TextBlock Text="{Binding RecentHourlyTokens, StringFormat={}{0} Token}" FontSize="11.5" Foreground="{StaticResource SecondaryTextBrush}" />
+                            </Border>
+                        </Grid>
+
+                        <controls:UsageLineChart Height="224"
+                                                 ItemsSource="{Binding WeeklyTrend}"
+                                                 IsBarChart="True"
+                                                 Stroke="{StaticResource AccentBrush}"
+                                                 PointBrush="{StaticResource AccentBrush}"
+                                                 Fill="#1F007AFF"
+                                                 GridBrush="#FFE7E8ED"
+                                                 LabelBrush="{StaticResource TertiaryTextBrush}"
+                                                 Visibility="{Binding HasLocalUsage, Converter={StaticResource BooleanToVisibilityConverter}}" />
+
+                        <Border Padding="18,16"
+                                Style="{StaticResource InsetBorderStyle}"
+                                Visibility="{Binding HasNoLocalUsage, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <TextBlock Text="{Binding UsageEmptyNotice}"
+                                       FontSize="13"
+                                       Foreground="{StaticResource SecondaryTextBrush}"
+                                       TextWrapping="Wrap" />
+                        </Border>
+                    </StackPanel>
+                </Border>
+
+                <!-- 备用上游由中转中心显式选择并按顺序待命。 -->
+                <Border Grid.Column="2" Padding="22" Style="{StaticResource CardBorderStyle}">
+                    <StackPanel>
+                        <TextBlock Text="备用上游" Style="{StaticResource SectionTitleStyle}" />
+                        <TextBlock Margin="0,5,0,14"
+                                   Text="个人账号全部不可调度时，按这里的顺序接续。"
+                                   FontSize="11"
+                                   Foreground="{StaticResource SecondaryTextBrush}"
+                                   TextWrapping="Wrap" />
+                        <ItemsControl ItemsSource="{Binding BackupSources}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Margin="0,0,0,10"
+                                            Padding="11,10"
+                                            Background="#FFF8F8FA"
+                                            BorderBrush="{StaticResource HairlineBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="10">
+                                        <StackPanel>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="{Binding Order}" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource AccentBrush}" />
+                                                <TextBlock Grid.Column="1" Margin="8,0,8,0" Text="{Binding Name}" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Grid.Column="2" Text="{Binding Status}" FontSize="10" Foreground="{StaticResource SecondaryTextBrush}" />
+                                            </Grid>
+                                            <Grid Margin="0,8,0,0">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="{Binding Availability, StringFormat=可用性 {0}}" FontSize="10" Foreground="{StaticResource TertiaryTextBrush}" />
+                                                <TextBlock Grid.Column="1" Text="{Binding ProbeCount, StringFormat=近 60 次 · {0}}" FontSize="10" Foreground="{StaticResource TertiaryTextBrush}" />
+                                            </Grid>
+                                            <ItemsControl Margin="0,8,0,0" Height="22" ItemsSource="{Binding Timeline}">
+                                                <ItemsControl.ItemsPanel>
+                                                    <ItemsPanelTemplate>
+                                                        <UniformGrid Rows="1" Columns="60" />
+                                                    </ItemsPanelTemplate>
+                                                </ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Border Margin="1,0" Height="{Binding Height}" Background="{Binding Fill}" CornerRadius="2" VerticalAlignment="Bottom" ToolTip="{Binding ToolTip}" />
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

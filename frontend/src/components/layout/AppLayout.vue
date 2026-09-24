@@ -1,7 +1,7 @@
 <template>
-  <div class="min-h-screen bg-gray-50 dark:bg-dark-950">
-    <!-- Background Decoration -->
-    <div class="pointer-events-none fixed inset-0 bg-mesh-gradient"></div>
+  <div class="min-h-screen bg-[#f6f7f3] dark:bg-dark-950">
+    <!-- Background Decoration：纸面 + 极淡点阵，与首页同一套视觉 -->
+    <div class="app-canvas pointer-events-none fixed inset-0"></div>
 
     <!-- Sidebar -->
     <AppSidebar />

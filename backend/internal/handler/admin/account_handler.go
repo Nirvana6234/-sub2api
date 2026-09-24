@@ -65,6 +65,7 @@ type AccountHandler struct {
 	grokImportProber        grokImportProber
 	upstreamBillingProbe    *service.UpstreamBillingProbeService
 	ollamaCloudUsage        *service.OllamaCloudUsageService
+	profileStatistics       *service.AccountProfileStatisticsService
 	cfg                     *config.Config
 }
 
@@ -167,10 +168,18 @@ type BulkUpdateAccountsRequest struct {
 	Status                  string                    `json:"status" binding:"omitempty,oneof=active inactive error"`
 	Schedulable             *bool                     `json:"schedulable"`
 	GroupIDs                *[]int64                  `json:"group_ids"`
+	GroupPriority           *BulkGroupPriorityRequest `json:"group_priority"`
 	Credentials             map[string]any            `json:"credentials"`
 	Extra                   map[string]any            `json:"extra"`
 	ProbeEnabled            *bool                     `json:"upstream_billing_probe_enabled"`
 	ConfirmMixedChannelRisk *bool                     `json:"confirm_mixed_channel_risk"` // 用户确认混合渠道风险
+}
+
+// BulkGroupPriorityRequest sets the in-group priority (account_groups.priority)
+// of the target accounts within one group.
+type BulkGroupPriorityRequest struct {
+	GroupID  int64 `json:"group_id"`
+	Priority int   `json:"priority"`
 }
 
 type BulkUpdateAccountFilters struct {
@@ -214,12 +223,17 @@ type AccountWithConcurrency struct {
 // so groups/account_groups never appear in the list payload.
 type AccountListItemWithConcurrency struct {
 	*dto.AccountListItem
-	CurrentConcurrency int                          `json:"current_concurrency"`
-	SchedulerScore     *AccountSchedulerScore       `json:"scheduler_score,omitempty"`
-	SchedulerScores    []AccountSchedulerGroupScore `json:"scheduler_scores,omitempty"`
-	CurrentWindowCost  *float64                     `json:"current_window_cost,omitempty"`
-	ActiveSessions     *int                         `json:"active_sessions,omitempty"`
-	CurrentRPM         *int                         `json:"current_rpm,omitempty"`
+	CurrentConcurrency int `json:"current_concurrency"`
+	// GroupPriority 必须和完整响应一样带上：账号列表页固定以 lite=1 请求，
+	// 漏掉它就等于把"按分组筛选时显示组内优先级"这个功能整个关掉——前端拿到
+	// undefined 后回退显示 accounts.priority（全局值），于是筛到某个分组时看到的
+	// 数字和 TransitHub 管理的组内优先级对不上，像是同步失败。
+	GroupPriority     *int                         `json:"group_priority,omitempty"`
+	SchedulerScore    *AccountSchedulerScore       `json:"scheduler_score,omitempty"`
+	SchedulerScores   []AccountSchedulerGroupScore `json:"scheduler_scores,omitempty"`
+	CurrentWindowCost *float64                     `json:"current_window_cost,omitempty"`
+	ActiveSessions    *int                         `json:"active_sessions,omitempty"`
+	CurrentRPM        *int                         `json:"current_rpm,omitempty"`
 }
 
 type simpleModeGroupReference struct {
@@ -814,6 +828,25 @@ func (h *AccountHandler) List(c *gin.Context) {
 			SchedulerScores:    schedulerGroupScores[acc.ID],
 		}
 
+		// 按分组筛选时补上该账号在这个分组内的排位（account_groups.priority）。
+		//
+		// 调度取号排的是组内优先级，TransitHub 的健康降级回写的也是它；而账号自身的
+		// accounts.priority 是跨分组的全局值，两者同名但不是一回事。列表页此前只给
+		// 全局值，于是筛到某个分组时看到的数字和 TransitHub 对不上，像是同步失败。
+		//
+		// 只在筛了分组时返回：账号可以同时属于多个分组，各组排位不同（生产上 #221
+		// 在三个组里分别是 3 / 10000 / 10000），没有唯一的"组内优先级"可言。
+		// 数据来自账号已加载的 AccountGroups，不额外查库。
+		if groupID > 0 {
+			for i := range acc.AccountGroups {
+				if acc.AccountGroups[i].GroupID == groupID {
+					groupPriority := acc.AccountGroups[i].Priority
+					item.GroupPriority = &groupPriority
+					break
+				}
+			}
+		}
+
 		// 添加窗口费用（仅当启用时）
 		if windowCosts != nil {
 			if cost, ok := windowCosts[acc.ID]; ok {
@@ -847,6 +880,7 @@ func (h *AccountHandler) List(c *gin.Context) {
 			compact[i] = AccountListItemWithConcurrency{
 				AccountListItem:    dto.AccountListItemFromAccount(item.Account),
 				CurrentConcurrency: item.CurrentConcurrency,
+				GroupPriority:      item.GroupPriority,
 				SchedulerScore:     item.SchedulerScore,
 				SchedulerScores:    item.SchedulerScores,
 				CurrentWindowCost:  item.CurrentWindowCost,
@@ -854,7 +888,7 @@ func (h *AccountHandler) List(c *gin.Context) {
 				CurrentRPM:         item.CurrentRPM,
 			}
 		}
-		etag := buildAccountsListETag(compact, total, page, pageSize, platform, accountType, status, search, true)
+		etag := buildAccountsListETag(compact, total, page, pageSize, platform, accountType, status, search, groupID, true)
 		if etag != "" {
 			c.Header("ETag", etag)
 			c.Header("Vary", "If-None-Match")
@@ -867,7 +901,7 @@ func (h *AccountHandler) List(c *gin.Context) {
 		return
 	}
 
-	etag := buildAccountsListETag(result, total, page, pageSize, platform, accountType, status, search, false)
+	etag := buildAccountsListETag(result, total, page, pageSize, platform, accountType, status, search, groupID, false)
 	if etag != "" {
 		c.Header("ETag", etag)
 		c.Header("Vary", "If-None-Match")
@@ -880,11 +914,15 @@ func (h *AccountHandler) List(c *gin.Context) {
 	response.Paginated(c, result, total, page, pageSize)
 }
 
+// groupID 必须参与 ETag：列表内容随分组筛选而变（组内优先级就是按它取的），
+// 不纳入的话，同一批账号在不同分组下会算出同一个 ETag，客户端可能收到 304
+// 而继续沿用另一个分组的旧数据。
 func buildAccountsListETag[T any](
 	items []T,
 	total int64,
 	page, pageSize int,
 	platform, accountType, status, search string,
+	groupID int64,
 	lite bool,
 ) string {
 	payload := struct {
@@ -895,6 +933,7 @@ func buildAccountsListETag[T any](
 		AccountType string `json:"type"`
 		Status      string `json:"status"`
 		Search      string `json:"search"`
+		GroupID     int64  `json:"group_id"`
 		Lite        bool   `json:"lite"`
 		Items       []T    `json:"items"`
 	}{
@@ -905,6 +944,7 @@ func buildAccountsListETag[T any](
 		AccountType: accountType,
 		Status:      status,
 		Search:      search,
+		GroupID:     groupID,
 		Lite:        lite,
 		Items:       items,
 	}
@@ -1896,6 +1936,60 @@ func (h *AccountHandler) BatchDelete(c *gin.Context) {
 
 // BatchClearError handles batch clearing account errors
 // POST /api/v1/admin/accounts/batch-clear-error
+// UpdateGroupPriorities 批量设置账号在分组内的调度优先级。
+// POST /api/v1/admin/accounts/group-priorities
+//
+// 该接口是 TransitHub 连接健康探活的回写入口：它按健康度/倍率算出组内排序后，
+// 通过这里落到 account_groups.priority。契约（字段名与 updates 包裹）由 TransitHub
+// 的 sub2APIAccountGroupPriorityRequest 决定，改动需与其对齐，否则它会因为响应
+// 解析失败而重试不止。
+func (h *AccountHandler) UpdateGroupPriorities(c *gin.Context) {
+	var req struct {
+		Updates []struct {
+			AccountID int64 `json:"account_id"`
+			GroupID   int64 `json:"group_id"`
+			Priority  int   `json:"priority"`
+		} `json:"updates"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	if len(req.Updates) == 0 {
+		response.BadRequest(c, "updates is required")
+		return
+	}
+	const maxGroupPriorityUpdates = 500
+	if len(req.Updates) > maxGroupPriorityUpdates {
+		response.BadRequest(c, fmt.Sprintf("updates length must be <= %d", maxGroupPriorityUpdates))
+		return
+	}
+
+	updates := make([]service.AccountGroupPriorityUpdate, 0, len(req.Updates))
+	for _, item := range req.Updates {
+		if item.AccountID <= 0 || item.GroupID <= 0 {
+			response.BadRequest(c, "account_id and group_id must be positive")
+			return
+		}
+		if item.Priority < 0 {
+			response.BadRequest(c, "priority must be >= 0")
+			return
+		}
+		updates = append(updates, service.AccountGroupPriorityUpdate{
+			AccountID: item.AccountID,
+			GroupID:   item.GroupID,
+			Priority:  item.Priority,
+		})
+	}
+
+	updated, err := h.adminService.UpdateAccountGroupPriorities(c.Request.Context(), updates)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"updated": updated, "requested": len(updates)})
+}
+
 func (h *AccountHandler) BatchClearError(c *gin.Context) {
 	var req struct {
 		AccountIDs []int64 `json:"account_ids"`
@@ -2303,6 +2397,18 @@ func (h *AccountHandler) BulkUpdate(c *gin.Context) {
 		response.BadRequest(c, "account_ids or filters is required")
 		return
 	}
+	var groupPriority *service.BulkGroupPriorityUpdate
+	if req.GroupPriority != nil {
+		if req.GroupPriority.GroupID <= 0 {
+			response.BadRequest(c, "group_priority.group_id must be positive")
+			return
+		}
+		if req.GroupPriority.Priority < 0 {
+			response.BadRequest(c, "group_priority.priority must be >= 0")
+			return
+		}
+		groupPriority = &service.BulkGroupPriorityUpdate{GroupID: req.GroupPriority.GroupID, Priority: req.GroupPriority.Priority}
+	}
 	// base_rpm 输入校验：负值归零，超过 10000 截断
 	sanitizeExtraBaseRPM(req.Extra)
 	if err := service.ValidateUpstreamRequestIDHeaderExtra(req.Extra); err != nil {
@@ -2322,6 +2428,7 @@ func (h *AccountHandler) BulkUpdate(c *gin.Context) {
 		req.Status != "" ||
 		req.Schedulable != nil ||
 		req.GroupIDs != nil ||
+		groupPriority != nil ||
 		len(req.Credentials) > 0 ||
 		len(req.Extra) > 0 ||
 		req.ProbeEnabled != nil
@@ -2343,6 +2450,7 @@ func (h *AccountHandler) BulkUpdate(c *gin.Context) {
 		Status:                req.Status,
 		Schedulable:           req.Schedulable,
 		GroupIDs:              req.GroupIDs,
+		GroupPriority:         groupPriority,
 		Credentials:           req.Credentials,
 		Extra:                 req.Extra,
 		ProbeEnabled:          req.ProbeEnabled,

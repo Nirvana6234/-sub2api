@@ -50,6 +50,19 @@ func RegisterGatewayRoutes(
 	// 保证校验发生在合成路由改写与调度之前，且只看客户端书写的模型名。
 	groupModelAllowlist := middleware.GroupModelAllowlist()
 
+	// 全局黑名单拦截，分两段挂载，顺序不能颠倒：
+	//   blacklistIP      —— 必须在 apiKeyAuth 之前。被封 IP 连"拿无效 Key 试探
+	//                       网关"这一步都不该做到，放到认证之后就等于先给它一次
+	//                       枚举机会。
+	//   blacklistAccount —— 必须在 apiKeyAuth 之后。它要从上下文里取认证后的
+	//                       apiKey 才能拿到 userID，提前挂载拿到的是空值，等于不生效。
+	//
+	// 这两个中间件此前定义了却没有被任何路由挂载：管理端能增删查、数据也确实
+	// 写进了 settings.global_blacklist_entries（生产上存着 2 条），但请求从不经过
+	// 拦截，表现为"配了黑名单却照样能用"。
+	blacklistIP := middleware.GlobalBlacklistIP(settingService, cfg)
+	blacklistAccount := middleware.GlobalBlacklistAccount(settingService, cfg)
+
 	isOpenAIResponsesCompatibleGatewayPlatform := func(c *gin.Context) bool {
 		switch getGroupPlatform(c) {
 		case service.PlatformOpenAI, service.PlatformGrok,
@@ -187,13 +200,21 @@ func RegisterGatewayRoutes(
 		}
 	}
 
+	// 自动分组 API Key 在认证后只带着候选池，真正的分组要按本次请求的模型
+	// 现选。这一步必须排在 groupModelAllowlist / requireGroup 之前：它们都要
+	// 读已确定的分组，缺了这层，自动分组的 Key 会以"无分组"进入后续中间件。
+	autoGroupModelRouting := autoGroupModelRoutingMiddleware(apiKeyService, subscriptionService)
+
 	// API网关（Claude API兼容）
 	gateway := r.Group("/v1")
 	gateway.Use(bodyLimit)
 	gateway.Use(clientRequestID)
 	gateway.Use(opsErrorLogger)
 	gateway.Use(endpointNorm)
+	gateway.Use(blacklistIP)
 	gateway.Use(gin.HandlerFunc(apiKeyAuth))
+	gateway.Use(blacklistAccount)
+	gateway.Use(autoGroupModelRouting)
 	gateway.GET("/sub2api/billing", h.Gateway.KeyBillingInfo)
 	gateway.Use(groupModelAllowlist)
 	gateway.Use(compositeTarget)
@@ -349,7 +370,10 @@ func RegisterGatewayRoutes(
 	gemini.Use(clientRequestID)
 	gemini.Use(opsErrorLogger)
 	gemini.Use(endpointNorm)
+	gemini.Use(blacklistIP)
 	gemini.Use(middleware.APIKeyAuthWithSubscriptionGoogle(apiKeyService, subscriptionService, cfg))
+	gemini.Use(blacklistAccount)
+	gemini.Use(autoGroupModelRouting)
 	gemini.Use(groupModelAllowlist)
 	gemini.Use(compositeGeminiTarget)
 	gemini.Use(requireGroupGoogle)
@@ -371,7 +395,7 @@ func RegisterGatewayRoutes(
 	// 根路径别名共用中间件链：白名单准入在 apiKeyAuth 之后、compositeTarget
 	// 之前，避免逐条路由手工维护链导致漏挂。
 	rootRoute := func(method, path string, limit gin.HandlerFunc, handler gin.HandlerFunc) {
-		r.Handle(method, path, limit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), groupModelAllowlist, compositeTarget, requireGroupAnthropic, handler)
+		r.Handle(method, path, limit, clientRequestID, opsErrorLogger, endpointNorm, blacklistIP, gin.HandlerFunc(apiKeyAuth), blacklistAccount, autoGroupModelRouting, groupModelAllowlist, compositeTarget, requireGroupAnthropic, handler)
 	}
 	for _, prefix := range []string{"/api/v3", "/v3", "/v1", ""} {
 		rootRoute(http.MethodPost, prefix+"/contents/generations/tasks", bodyLimit, h.OpenAIGateway.SeedanceTasks)
@@ -388,7 +412,7 @@ func RegisterGatewayRoutes(
 	rootRoute(http.MethodGet, "/models/:model", bodyLimit, h.Gateway.Models)
 	rootRoute(http.MethodPost, "/messages/count_tokens", bodyLimit, countTokensHandler)
 	codexDirect := r.Group("/backend-api/codex")
-	codexDirect.Use(bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), groupModelAllowlist, compositeTarget, requireGroupAnthropic)
+	codexDirect.Use(bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, blacklistIP, gin.HandlerFunc(apiKeyAuth), blacklistAccount, autoGroupModelRouting, groupModelAllowlist, compositeTarget, requireGroupAnthropic)
 	{
 		codexDirect.POST("/realtime/calls", h.OpenAIGateway.Live)
 		codexDirect.GET("/:call_id", h.OpenAIGateway.LiveSideband)
@@ -491,7 +515,7 @@ func RegisterGatewayRoutes(
 	})
 
 	// Antigravity 模型列表
-	r.GET("/antigravity/models", gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, h.Gateway.AntigravityModels)
+	r.GET("/antigravity/models", blacklistIP, gin.HandlerFunc(apiKeyAuth), blacklistAccount, requireGroupAnthropic, h.Gateway.AntigravityModels)
 
 	// Antigravity 专用路由（仅使用 antigravity 账户，不混合调度）
 	antigravityV1 := r.Group("/antigravity/v1")
@@ -500,7 +524,10 @@ func RegisterGatewayRoutes(
 	antigravityV1.Use(opsErrorLogger)
 	antigravityV1.Use(endpointNorm)
 	antigravityV1.Use(middleware.ForcePlatform(service.PlatformAntigravity))
+	antigravityV1.Use(blacklistIP)
 	antigravityV1.Use(gin.HandlerFunc(apiKeyAuth))
+	antigravityV1.Use(blacklistAccount)
+	antigravityV1.Use(autoGroupModelRouting)
 	antigravityV1.Use(groupModelAllowlist)
 	antigravityV1.Use(requireGroupAnthropic)
 	{
@@ -516,7 +543,10 @@ func RegisterGatewayRoutes(
 	antigravityV1Beta.Use(opsErrorLogger)
 	antigravityV1Beta.Use(endpointNorm)
 	antigravityV1Beta.Use(middleware.ForcePlatform(service.PlatformAntigravity))
+	antigravityV1Beta.Use(blacklistIP)
 	antigravityV1Beta.Use(middleware.APIKeyAuthWithSubscriptionGoogle(apiKeyService, subscriptionService, cfg))
+	antigravityV1Beta.Use(blacklistAccount)
+	antigravityV1Beta.Use(autoGroupModelRouting)
 	antigravityV1Beta.Use(groupModelAllowlist)
 	antigravityV1Beta.Use(requireGroupGoogle)
 	{

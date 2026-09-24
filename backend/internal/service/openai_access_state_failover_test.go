@@ -200,8 +200,12 @@ func TestOpenAICapacityFailoverCarriesSafeTerminalResponse(t *testing.T) {
 
 	require.True(t, err.IsOpenAICapacityShed())
 	require.Equal(t, http.StatusServiceUnavailable, err.ClientStatusCode)
-	require.Equal(t, message, err.ClientMessage)
+	// 回给用户的是统一的中文文案，不是上游原文：上游 message 里可能夹带
+	// server_is_overloaded 这类内部错误码，不该出现在用户侧。
+	require.Equal(t, OpenAICapacityShedUserMessage, err.ClientMessage)
 	require.NotContains(t, err.ClientMessage, "server_is_overloaded")
+	require.NotContains(t, err.ClientMessage, message,
+		"上游原文不得透传给用户")
 }
 
 func TestOpenAIStreamSemanticStatusesPreservedAcrossTerminalShapes(t *testing.T) {

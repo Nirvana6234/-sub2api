@@ -45,9 +45,14 @@ func RegisterAdminRoutes(
 
 		// 账号管理
 		registerAccountRoutes(admin, h, stepUpAuth)
+		registerContributionGovernanceRoutes(admin, h)
+		registerContributionRoomRoutes(admin, h)
 
 		// 公告管理
 		registerAnnouncementRoutes(admin, h)
+
+		// 工单管理
+		registerTicketRoutes(admin, h)
 
 		// OpenAI OAuth
 		registerOpenAIOAuthRoutes(admin, h)
@@ -130,6 +135,19 @@ func RegisterAdminRoutes(
 
 		// 操作审计日志
 		registerAuditLogRoutes(admin, h, stepUpAuth)
+	}
+}
+
+func registerTicketRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	tickets := admin.Group("/tickets")
+	{
+		tickets.GET("", h.Admin.Ticket.List)
+		tickets.GET("/unread-count", h.Admin.Ticket.UnreadCount)
+		tickets.POST("/batch-read-status", h.Admin.Ticket.BatchReadStatus)
+		tickets.POST("/batch-delete", h.Admin.Ticket.BatchDelete)
+		tickets.GET("/:id", h.Admin.Ticket.GetByID)
+		tickets.POST("/:id/messages", h.Admin.Ticket.Reply)
+		tickets.PUT("/:id/status", h.Admin.Ticket.UpdateStatus)
 	}
 }
 
@@ -355,7 +373,7 @@ func registerGroupRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 }
 
 func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth middleware.StepUpAuthMiddleware) {
-	accounts := admin.Group("/accounts")
+	accounts := admin.Group("/accounts", h.Admin.Account.RequireAdminManagedAccount())
 	{
 		accounts.GET("", h.Admin.Account.List)
 		accounts.GET("/upstream-billing-rates", h.Admin.Account.GetUpstreamBillingRates)
@@ -375,6 +393,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.GET("/:id/grok-media-eligibility", h.Admin.Account.GetGrokMediaEligibility)
 		accounts.PUT("/:id/grok-media-eligibility", h.Admin.Account.UpdateGrokMediaEligibility)
 		accounts.PUT("/:id/upstream-billing-probe", h.Admin.Account.SetUpstreamBillingProbeEnabled)
+		accounts.PUT("/:id/upstream-billing-probe/manual-rate", h.Admin.Account.SetUpstreamBillingManualRate)
 		accounts.POST("/:id/upstream-billing-probe", h.Admin.Account.ProbeUpstreamBilling)
 		accounts.GET("/:id/ollama-cloud-usage", h.Admin.Account.GetOllamaCloudUsage)
 		accounts.PUT("/:id/ollama-cloud-usage/session", h.Admin.Account.SaveOllamaCloudUsageSession)
@@ -389,6 +408,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.POST("/:id/set-privacy", h.Admin.Account.SetPrivacy)
 		accounts.POST("/:id/refresh-tier", h.Admin.Account.RefreshTier)
 		accounts.GET("/:id/stats", h.Admin.Account.GetStats)
+		accounts.GET("/:id/profile-statistics", h.Admin.Account.GetAccountProfileStatistics)
 		accounts.POST("/:id/clear-error", h.Admin.Account.ClearError)
 		accounts.POST("/:id/revert-proxy-fallback", h.Admin.Account.RevertProxyFallback)
 		accounts.GET("/:id/usage", h.Admin.Account.GetUsage)
@@ -412,6 +432,8 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.POST("/bulk-update", h.Admin.Account.BulkUpdate)
 		accounts.POST("/batch-delete", h.Admin.Account.BatchDelete)
 		accounts.POST("/batch-clear-error", h.Admin.Account.BatchClearError)
+		// TransitHub 连接健康探活的优先级回写入口（account_groups.priority）。
+		accounts.POST("/group-priorities", h.Admin.Account.UpdateGroupPriorities)
 		accounts.POST("/batch-refresh", h.Admin.Account.BatchRefresh)
 
 		// Antigravity 默认模型映射
@@ -430,6 +452,33 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 	}
 }
 
+func registerContributionGovernanceRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	contributions := admin.Group("/contributions")
+	{
+		contributions.GET("", h.Admin.Account.ListContributions)
+		contributions.GET("/:id/usage-summary", h.Admin.Account.GetContributionUsageSummary)
+		contributions.GET("/:id", h.Admin.Account.GetContribution)
+		contributions.PUT("/:id", h.Admin.Account.UpdateManagedContribution)
+		contributions.PATCH("/:id", h.Admin.Account.UpdateContributionGovernance)
+		contributions.POST("/:id/test", h.Admin.Account.TestContribution)
+		contributions.DELETE("/:id", h.Admin.Account.DeleteContribution)
+	}
+}
+
+// registerContributionRoomRoutes is intentionally separate from both normal
+// administrator accounts and legacy pool governance. Its responses use the
+// credential-free contribution room view.
+func registerContributionRoomRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	rooms := admin.Group("/contribution-rooms")
+	{
+		rooms.GET("", h.AccountContribution.ListContributionRoomsForAdmin)
+		rooms.GET("/:id", h.AccountContribution.GetContributionRoomForAdmin)
+		rooms.PUT("/:id", h.AccountContribution.UpdateContributionRoomForAdmin)
+		rooms.PATCH("/:id/accounts/:account_id", h.AccountContribution.UpdateContributionRoomAccountForAdmin)
+		rooms.POST("/:id/accounts/:account_id/test", h.AccountContribution.TestContributionRoomAccountForAdmin)
+	}
+}
+
 func registerAnnouncementRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	announcements := admin.Group("/announcements")
 	{
@@ -443,7 +492,7 @@ func registerAnnouncementRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 }
 
 func registerOpenAIOAuthRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
-	openai := admin.Group("/openai")
+	openai := admin.Group("/openai", h.Admin.Account.RequireAdminManagedAccount())
 	{
 		openai.POST("/generate-auth-url", h.Admin.OpenAIOAuth.GenerateAuthURL)
 		openai.POST("/exchange-code", h.Admin.OpenAIOAuth.ExchangeCode)
@@ -476,7 +525,7 @@ func registerAntigravityOAuthRoutes(admin *gin.RouterGroup, h *handler.Handlers)
 }
 
 func registerGrokOAuthRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
-	grok := admin.Group("/grok")
+	grok := admin.Group("/grok", h.Admin.Account.RequireAdminManagedAccount())
 	{
 		grok.GET("/oauth/capabilities", h.Admin.GrokOAuth.GetCapabilities)
 		grok.POST("/oauth/auth-url", h.Admin.GrokOAuth.GenerateAuthURL)
@@ -596,6 +645,12 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		adminSettings.PUT("/web-search-emulation", h.Admin.Setting.UpdateWebSearchEmulationConfig)
 		adminSettings.POST("/web-search-emulation/test", h.Admin.Setting.TestWebSearchEmulation)
 		adminSettings.POST("/web-search-emulation/reset-usage", h.Admin.Setting.ResetWebSearchUsage)
+		// 未注册访客网页版试用
+		adminSettings.GET("/guest-trial", h.Admin.Setting.GetGuestTrialConfig)
+		adminSettings.PUT("/guest-trial", h.Admin.Setting.UpdateGuestTrialConfig)
+		adminSettings.GET("/global-blacklist", h.Admin.Setting.GetGlobalBlacklist)
+		adminSettings.POST("/global-blacklist", h.Admin.Setting.AddGlobalBlacklist)
+		adminSettings.DELETE("/global-blacklist/:id", h.Admin.Setting.DeleteGlobalBlacklist)
 	}
 }
 

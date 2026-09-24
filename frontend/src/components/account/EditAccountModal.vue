@@ -1671,17 +1671,6 @@
           <p class="input-hint">{{ t('admin.accounts.loadFactorHint') }}</p>
         </div>
         <div>
-          <label class="input-label">{{ t('admin.accounts.priority') }}</label>
-          <input
-            v-model.number="form.priority"
-            type="number"
-            min="1"
-            class="input"
-            data-tour="account-form-priority"
-          />
-          <p class="input-hint">{{ t('admin.accounts.priorityHint') }}</p>
-        </div>
-        <div>
           <label class="input-label">{{ t('admin.accounts.billingRateMultiplier') }}</label>
           <input
             v-model.number="form.rate_multiplier"
@@ -1739,9 +1728,9 @@
         </p>
       </div>
 
-      <!-- OpenAI 自动透传开关（OAuth/API Key） -->
+      <!-- OpenAI API Key 兼容透传；OAuth/Setup Token 由 STATE Kit 接管。 -->
       <div
-        v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')"
+        v-if="account?.platform === 'openai' && account?.type === 'apikey'"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div class="flex items-center justify-between">
@@ -1794,6 +1783,37 @@
               :class="[
                 'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
                 openaiFlattenNamespacesEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+      </div>
+
+      <!-- OpenAI 保留工具调用 namespace（仅 API Key，用于指向 Codex 后端的中转上游） -->
+      <div
+        v-if="account?.platform === 'openai' && account?.type === 'apikey'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex items-center justify-between">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.openai.keepToolCallNamespaces') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.openai.keepToolCallNamespacesDesc') }}
+            </p>
+          </div>
+          <button
+            type="button"
+            data-testid="edit-openai-keep-tool-call-namespaces-toggle"
+            @click="openaiKeepToolCallNamespacesEnabled = !openaiKeepToolCallNamespacesEnabled"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              openaiKeepToolCallNamespacesEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                openaiKeepToolCallNamespacesEnabled ? 'translate-x-5' : 'translate-x-0'
               ]"
             />
           </button>
@@ -1990,6 +2010,11 @@
         v-if="account?.ollama_cloud_usage?.eligible"
         :account="account"
         @updated="handleOllamaCloudUsageUpdated"
+      />
+
+      <CodexProfileStatisticsPanel
+        v-if="account && account.platform === 'openai' && account.type === 'oauth'"
+        :account="account"
       />
 
       <!-- Anthropic API Key 自动透传开关 -->
@@ -2965,6 +2990,27 @@
         data-tour="account-form-groups"
       />
 
+      <div v-if="form.group_ids.length > 0" data-testid="account-group-priorities">
+        <label class="input-label">{{ t('admin.accounts.groupPriorities') }}</label>
+        <div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <div v-for="groupID in form.group_ids" :key="groupID">
+            <label class="mb-1 block truncate text-xs text-gray-500 dark:text-gray-400" :title="groupNameOf(groupID)">
+              {{ groupNameOf(groupID) }}
+            </label>
+            <input
+              v-model.number="groupPriorities[groupID]"
+              type="number"
+              min="0"
+              step="1"
+              class="input"
+              :placeholder="t('admin.accounts.groupPriorityNewPlaceholder')"
+              :data-testid="`group-priority-${groupID}`"
+            />
+          </div>
+        </div>
+        <p class="input-hint">{{ t('admin.accounts.groupPrioritiesHint') }}</p>
+      </div>
+
     </form>
 
     <template #footer>
@@ -3055,6 +3101,7 @@ import CnBaseUrlPresets from '@/components/account/CnBaseUrlPresets.vue'
 import OpenCodeGoProtocolRulesEditor from '@/components/account/OpenCodeGoProtocolRulesEditor.vue'
 import HeaderOverrideEditor from '@/components/account/HeaderOverrideEditor.vue'
 import OllamaCloudUsageSettings from '@/components/account/OllamaCloudUsageSettings.vue'
+import CodexProfileStatisticsPanel from '@/components/account/CodexProfileStatisticsPanel.vue'
 import {
   applyAntigravityProjectID,
   applyHeaderOverride,
@@ -3514,6 +3561,7 @@ const customBaseUrl = ref('')
 const openaiPassthroughEnabled = ref(false)
 // OpenAI Codex namespace 工具摊平兼容开关（仅 OAuth），缺省关闭即原样保留
 const openaiFlattenNamespacesEnabled = ref(false)
+const openaiKeepToolCallNamespacesEnabled = ref(false)
 const openAILongContextBillingEnabled = ref(false)
 // OpenAI 订阅档位（Plus / Pro 20x / Pro 5x / Business Standard / Business Premium / Free）手动覆盖值,
 // 存于 credentials.plan_type;'' 表示清空/自动识别
@@ -3752,7 +3800,7 @@ const normalizeOpenAIResponsesMode = (mode: unknown): OpenAIResponsesMode => {
   return 'auto'
 }
 const isOpenAIModelRestrictionDisabled = computed(() =>
-  props.account?.platform === 'openai' && openaiPassthroughEnabled.value
+  props.account?.platform === 'openai' && props.account?.type === 'apikey' && openaiPassthroughEnabled.value
 )
 const openAIResponsesStatusKey = computed(() => {
   if (openAIResponsesMode.value === 'force_responses') {
@@ -3847,12 +3895,41 @@ const form = reactive({
   proxy_id: null as number | null,
   concurrency: 1,
   load_factor: null as number | null,
-  priority: 1,
   rate_multiplier: 1,
   status: 'active' as 'active' | 'inactive' | 'error',
   group_ids: [] as number[],
   expires_at: null as number | null
 })
+
+// In-group priorities (account_groups.priority) are what scheduling and
+// TransitHub use; the account-wide priority is no longer edited here.
+const groupPriorities = reactive<Record<number, number | '' | null>>({})
+let originalGroupPriorities: Record<number, number> = {}
+
+const resetGroupPriorities = (account: Account | null | undefined) => {
+  for (const key of Object.keys(groupPriorities)) delete groupPriorities[Number(key)]
+  originalGroupPriorities = {}
+  for (const binding of account?.account_groups ?? []) {
+    originalGroupPriorities[binding.group_id] = binding.priority
+    groupPriorities[binding.group_id] = binding.priority
+  }
+}
+
+const groupNameOf = (groupID: number) =>
+  props.groups.find((group) => group.id === groupID)?.name ?? `#${groupID}`
+
+// Returns null when an entered value is invalid; empty means "keep / default".
+const collectGroupPriorityUpdates = (accountID: number) => {
+  const updates: { account_id: number; group_id: number; priority: number }[] = []
+  for (const groupID of form.group_ids) {
+    const value = groupPriorities[groupID]
+    if (value === '' || value == null) continue
+    if (!Number.isSafeInteger(value) || value < 0) return null
+    if (originalGroupPriorities[groupID] === value) continue
+    updates.push({ account_id: accountID, group_id: groupID, priority: value })
+  }
+  return updates
+}
 
 const handleUpstreamBillingRateSyncChange = (enabled: boolean) => {
   upstreamBillingRateSyncEnabled.value = enabled
@@ -3955,7 +4032,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   form.proxy_id = newAccount.proxy_id
   form.concurrency = newAccount.concurrency
   form.load_factor = newAccount.load_factor ?? null
-  form.priority = newAccount.priority
+  resetGroupPriorities(newAccount)
   form.rate_multiplier = newAccount.rate_multiplier ?? 1
   form.status = (newAccount.status === 'active' || newAccount.status === 'inactive' || newAccount.status === 'error')
     ? newAccount.status
@@ -3998,9 +4075,10 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   upstreamBillingRateSyncEnabled.value =
     upstreamBillingAutoProbeEnabled.value && extra?.upstream_billing_rate_sync_enabled === true
 
-  // Load OpenAI passthrough toggle (OpenAI OAuth/SetupToken/API Key)
+  // OAuth/Setup Token 的旧自动透传由 STATE Kit 取代；只保留 API Key 兼容透传。
   openaiPassthroughEnabled.value = false
   openaiFlattenNamespacesEnabled.value = false
+  openaiKeepToolCallNamespacesEnabled.value = false
   openAILongContextBillingEnabled.value = false
   editPlanType.value = ''
   openAICompactMode.value = 'auto'
@@ -4017,9 +4095,13 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
   webSearchEmulationMode.value = 'default'
   if (newAccount.platform === 'openai' && (newAccount.type === 'oauth' || newAccount.type === 'setup-token' || newAccount.type === 'apikey')) {
-    openaiPassthroughEnabled.value = extra?.openai_passthrough === true || extra?.openai_oauth_passthrough === true
+    if (newAccount.type === 'apikey') {
+      openaiPassthroughEnabled.value = extra?.openai_passthrough === true
+    }
     openaiFlattenNamespacesEnabled.value =
       newAccount.type === 'oauth' && extra?.openai_responses_flatten_namespaces === true
+    openaiKeepToolCallNamespacesEnabled.value =
+      newAccount.type === 'apikey' && extra?.openai_responses_keep_tool_call_namespaces === true
     const longContextBillingValue = extra?.openai_long_context_billing_enabled
     openAILongContextBillingEnabled.value = longContextBillingValue === true
     // plan_type 手动覆盖仅 OAuth 有实际调度语义(IsOpenAIChatGPTSubscription 要求 oauth),故只对 oauth 回填
@@ -4929,10 +5011,33 @@ const persistGrokMediaEligibility = async (accountID: number, updatedAccount: Ac
   return updatedAccount
 }
 
+// Set by handleSubmit after validation; written once the account itself saved,
+// so newly selected groups are already bound.
+let pendingGroupPriorityUpdates: { account_id: number; group_id: number; priority: number }[] = []
+
+const applyGroupPriorityUpdates = async (account: Account): Promise<Account> => {
+  const updates = pendingGroupPriorityUpdates
+  if (updates.length === 0) return account
+  await adminAPI.accounts.updateGroupPriorities(updates)
+  const byGroup = new Map(updates.map((update) => [update.group_id, update.priority]))
+  const bindings = account.account_groups ?? (account.group_ids ?? []).map((groupID) => ({
+    account_id: account.id,
+    group_id: groupID,
+    priority: originalGroupPriorities[groupID] ?? 0
+  }))
+  return {
+    ...account,
+    account_groups: bindings.map((binding) =>
+      byGroup.has(binding.group_id) ? { ...binding, priority: byGroup.get(binding.group_id)! } : binding
+    )
+  }
+}
+
 const submitUpdateAccount = async (accountID: number, updatePayload: Record<string, unknown>) => {
   submitting.value = true
   try {
     let updatedAccount = await adminAPI.accounts.update(accountID, withAntigravityConfirmFlag(updatePayload))
+    updatedAccount = await applyGroupPriorityUpdates(updatedAccount)
     updatedAccount = await persistGrokMediaEligibility(accountID, updatedAccount)
     appStore.showSuccess(t('admin.accounts.accountUpdated'))
     emit('updated', updatedAccount)
@@ -4969,6 +5074,13 @@ const handleSubmit = async () => {
 			return
 		}
 	}
+
+  const groupPriorityUpdates = collectGroupPriorityUpdates(accountID)
+  if (groupPriorityUpdates === null) {
+    appStore.showError(t('admin.accounts.invalidGroupPriority'))
+    return
+  }
+  pendingGroupPriorityUpdates = groupPriorityUpdates
 
   const updatePayload: Record<string, unknown> = { ...form }
   try {
@@ -5501,7 +5613,7 @@ const handleSubmit = async () => {
       }
       delete newExtra.responses_websockets_v2_enabled
       delete newExtra.openai_ws_enabled
-      if (openaiPassthroughEnabled.value) {
+      if (props.account.type === 'apikey' && openaiPassthroughEnabled.value) {
         newExtra.openai_passthrough = true
       } else {
         delete newExtra.openai_passthrough
@@ -5512,6 +5624,12 @@ const handleSubmit = async () => {
         newExtra.openai_responses_flatten_namespaces = true
       } else {
         delete newExtra.openai_responses_flatten_namespaces
+      }
+      // 缺省沿用自动推断，不写空值
+      if (props.account.type === 'apikey' && openaiKeepToolCallNamespacesEnabled.value) {
+        newExtra.openai_responses_keep_tool_call_namespaces = true
+      } else {
+        delete newExtra.openai_responses_keep_tool_call_namespaces
       }
       if (isSparkShadow.value) {
         delete newExtra.openai_long_context_billing_enabled

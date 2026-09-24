@@ -33,6 +33,8 @@ func (s *GatewayService) SelectAccountForModel(ctx context.Context, groupID *int
 
 // SelectAccountForModelWithExclusions selects an account supporting the requested model while excluding specified accounts.
 func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}) (*Account, error) {
+	// 兜底尝试账本在本次选号的最外层装一次，递归进兜底池的各层共用它。
+	ctx = withFallbackAttemptLedger(ctx)
 	// 优先检查 context 中的强制平台（/antigravity 路由）
 	var platform string
 	forcePlatform, hasForcePlatform := ctx.Value(ctxkey.ForcePlatform).(string)
@@ -71,18 +73,31 @@ func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context
 		if !gatewayPlatformSupportsFallbackPool(platform) {
 			return nil, nil, false
 		}
-		fallbackCtx, fallbackGroupID := s.nextGatewayFallbackGroup(ctx, groupID)
-		if fallbackGroupID == nil {
-			return nil, nil, false
+		// 按配置顺序逐个试兜底池：前一个（连同它的下游链路）没号才试下一个。
+		// 都没号时报信息量最大的那个错误（见 preferNoAccountError）。
+		var account *Account
+		var err, noAccountErr error
+		used, resolved := false, false
+		s.eachGatewayFallbackAttempt(ctx, groupID, func(attempt gatewayFallbackAttempt) bool {
+			used = true
+			account, err = s.SelectAccountForModelWithExclusions(
+				attempt.ctx,
+				attempt.groupID,
+				sessionHash,
+				requestedModel,
+				excludedIDs,
+			)
+			if errors.Is(err, ErrNoAvailableAccounts) {
+				noAccountErr = preferNoAccountError(noAccountErr, err)
+				return false
+			}
+			resolved = true
+			return true
+		})
+		if resolved {
+			return account, err, true
 		}
-		account, err := s.SelectAccountForModelWithExclusions(
-			fallbackCtx,
-			fallbackGroupID,
-			"",
-			requestedModel,
-			excludedIDs,
-		)
-		return account, err, true
+		return nil, noAccountErr, used
 	}
 
 	// Claude Code 限制可能已将 groupID 解析为 fallback group，
@@ -127,6 +142,8 @@ func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context
 // metadataUserID: 用于客户端亲和调度，从中提取客户端 ID
 // sub2apiUserID: 系统用户 ID，用于二维亲和调度
 func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, metadataUserID string, sub2apiUserID int64) (*AccountSelectionResult, error) {
+	// 兜底尝试账本在本次选号的最外层装一次，递归进兜底池的各层共用它。
+	ctx = withFallbackAttemptLedger(ctx)
 	// 调试日志：记录调度入口参数
 	excludedIDsList := make([]int64, 0, len(excludedIDs))
 	for id := range excludedIDs {
@@ -253,20 +270,33 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		if !gatewayPlatformSupportsFallbackPool(platform) {
 			return nil, nil, false
 		}
-		fallbackCtx, fallbackGroupID := s.nextGatewayFallbackGroup(ctx, groupID)
-		if fallbackGroupID == nil {
-			return nil, nil, false
+		// 按配置顺序逐个试兜底池：前一个（连同它的下游链路）没号才试下一个。
+		// 都没号时报信息量最大的那个错误（见 preferNoAccountError）。
+		var result *AccountSelectionResult
+		var err, noAccountErr error
+		used, resolved := false, false
+		s.eachGatewayFallbackAttempt(ctx, groupID, func(attempt gatewayFallbackAttempt) bool {
+			used = true
+			result, err = s.SelectAccountWithLoadAwareness(
+				attempt.ctx,
+				attempt.groupID,
+				sessionHash,
+				requestedModel,
+				excludedIDs,
+				metadataUserID,
+				sub2apiUserID,
+			)
+			if errors.Is(err, ErrNoAvailableAccounts) {
+				noAccountErr = preferNoAccountError(noAccountErr, err)
+				return false
+			}
+			resolved = true
+			return true
+		})
+		if resolved {
+			return result, err, true
 		}
-		result, err := s.SelectAccountWithLoadAwareness(
-			fallbackCtx,
-			fallbackGroupID,
-			"",
-			requestedModel,
-			excludedIDs,
-			metadataUserID,
-			sub2apiUserID,
-		)
-		return result, err, true
+		return nil, noAccountErr, used
 	}
 
 	accounts, useMixed, err := s.listSchedulableAccounts(ctx, groupID, platform, hasForcePlatform)
@@ -1072,29 +1102,34 @@ func (s *GatewayService) resolvePlatform(ctx context.Context, groupID *int64, gr
 func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *int64, platform string, hasForcePlatform bool) ([]Account, bool, error) {
 	if s.schedulerSnapshot != nil {
 		accounts, useMixed, err := s.schedulerSnapshot.ListSchedulableAccounts(ctx, groupID, platform, hasForcePlatform)
-		if err == nil {
-			accounts = s.filterAccountsBySchedulingThreshold(ctx, accounts)
-			if platform == PlatformGrok || strings.EqualFold(platform, PlatformGrok) {
-				accounts = s.filterGrokFreeQuotaAccountsForGateway(ctx, accounts)
-			}
-			slog.Debug("account_scheduling_list_snapshot",
-				"group_id", derefGroupID(groupID),
-				"platform", platform,
-				"use_mixed", useMixed,
-				"count", len(accounts))
-			if slog.Default().Enabled(ctx, slog.LevelDebug) {
-				for _, acc := range accounts {
-					slog.Debug("account_scheduling_account_detail",
-						"account_id", acc.ID,
-						"name", acc.Name,
-						"platform", acc.Platform,
-						"type", acc.Type,
-						"status", acc.Status,
-						"tls_fingerprint", acc.IsTLSFingerprintEnabled())
-				}
+		if err != nil {
+			return nil, useMixed, err
+		}
+		accounts, err = s.applyContributionRoomRouting(ctx, accounts, groupID, platform, useMixed)
+		if err != nil {
+			return nil, useMixed, err
+		}
+		accounts = s.filterAccountsBySchedulingThreshold(ctx, accounts)
+		if platform == PlatformGrok || strings.EqualFold(platform, PlatformGrok) {
+			accounts = s.filterGrokFreeQuotaAccountsForGateway(ctx, accounts)
+		}
+		slog.Debug("account_scheduling_list_snapshot",
+			"group_id", derefGroupID(groupID),
+			"platform", platform,
+			"use_mixed", useMixed,
+			"count", len(accounts))
+		if slog.Default().Enabled(ctx, slog.LevelDebug) {
+			for _, acc := range accounts {
+				slog.Debug("account_scheduling_account_detail",
+					"account_id", acc.ID,
+					"name", acc.Name,
+					"platform", acc.Platform,
+					"type", acc.Type,
+					"status", acc.Status,
+					"tls_fingerprint", acc.IsTLSFingerprintEnabled())
 			}
 		}
-		return accounts, useMixed, err
+		return accounts, useMixed, nil
 	}
 	useMixed := (platform == PlatformAnthropic || platform == PlatformGemini) && !hasForcePlatform
 	if useMixed {
@@ -1138,6 +1173,10 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 					"tls_fingerprint", acc.IsTLSFingerprintEnabled())
 			}
 		}
+		filtered, err = s.applyContributionRoomRouting(ctx, filtered, groupID, platform, useMixed)
+		if err != nil {
+			return nil, useMixed, err
+		}
 		return s.filterAccountsBySchedulingThreshold(ctx, filtered), useMixed, nil
 	}
 
@@ -1173,11 +1212,229 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 				"tls_fingerprint", acc.IsTLSFingerprintEnabled())
 		}
 	}
+	accounts, err = s.applyContributionRoomRouting(ctx, accounts, groupID, platform, useMixed)
+	if err != nil {
+		return nil, useMixed, err
+	}
 	accounts = s.filterAccountsBySchedulingThreshold(ctx, accounts)
 	if platform == PlatformGrok || strings.EqualFold(platform, PlatformGrok) {
 		accounts = s.filterGrokFreeQuotaAccountsForGateway(ctx, accounts)
 	}
 	return accounts, useMixed, nil
+}
+
+// preferContributedAccount gives a contribution-routed account (room member or
+// the caller's own implicitly-preferred contribution) the lowest possible
+// Priority so normal priority/LRU ordering never demotes it below an
+// unrelated pool account.
+func preferContributedAccount(account *Account) {
+	if account == nil {
+		return
+	}
+	const (
+		basePriority = -1 << 30
+		maxOffset    = 1<<30 - 1
+	)
+	offset := account.Priority
+	if offset < 0 {
+		offset = 0
+	} else if offset > maxOffset {
+		offset = maxOffset
+	}
+	account.Priority = basePriority + offset
+}
+
+// applyContributionRoomRouting substitutes the default candidate list with the
+// caller's contribution-room selection when one applies. Explicit room
+// selection takes priority over the group's default account pool; an implicit
+// (no explicit selection) request instead just prefers the caller's own
+// contributed accounts within the default pool, with the group's public
+// contribution pool appended as an extra source either way.
+func (s *GatewayService) applyContributionRoomRouting(ctx context.Context, defaultAccounts []Account, groupID *int64, platform string, useMixed bool) ([]Account, error) {
+	defaultAccounts = filterContributionAccountsForCaller(ctx, defaultAccounts)
+	if s == nil || s.contributionRoomRepo == nil {
+		return s.appendPublicContributionPoolAccounts(ctx, defaultAccounts, groupID, platform, useMixed)
+	}
+	userID, apiKeyID := contributorUserIDFromContext(ctx), contributorAPIKeyIDFromContext(ctx)
+	if userID <= 0 || apiKeyID <= 0 {
+		return s.appendPublicContributionPoolAccounts(ctx, defaultAccounts, groupID, platform, useMixed)
+	}
+	route, err := s.contributionRoomRepo.ResolveRouteForAPIKey(ctx, userID, apiKeyID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve contribution room route: %w", err)
+	}
+	if !route.IsExplicitSelection() {
+		accounts, err := s.appendPublicContributionPoolAccounts(ctx, defaultAccounts, groupID, platform, useMixed)
+		if err != nil {
+			return nil, err
+		}
+		return s.prependImplicitOwnContributionAccounts(ctx, accounts, platform, useMixed)
+	}
+
+	roomAccounts := make([]Account, 0)
+	seen := make(map[int64]struct{})
+	if s.accountRepo != nil {
+		for _, selectedRoom := range route.Rooms {
+			if len(selectedRoom.AccountIDs) == 0 {
+				continue
+			}
+			accounts, queryErr := s.accountRepo.GetByIDs(ctx, selectedRoom.AccountIDs)
+			if queryErr != nil {
+				return nil, fmt.Errorf("load contribution room accounts: %w", queryErr)
+			}
+			for _, account := range accounts {
+				if account == nil || !account.IsSchedulable() || !s.isAccountAllowedForPlatform(account, platform, useMixed) {
+					continue
+				}
+				if _, duplicate := seen[account.ID]; duplicate {
+					continue
+				}
+				routed := cloneContributionRouteAccount(*account, ContributionRouteSourceRoom, selectedRoom.RoomID, selectedRoom.ConsumerRateMultiplier)
+				applyContributionRoomConcurrency(&routed, selectedRoom.AccountConcurrencies[account.ID])
+				preferContributedAccount(&routed)
+				roomAccounts = append(roomAccounts, routed)
+				seen[routed.ID] = struct{}{}
+			}
+		}
+	}
+	if !route.AllowPoolFallback || route.FallbackGroupID == nil || *route.FallbackGroupID <= 0 {
+		return roomAccounts, nil
+	}
+
+	fallbackAccounts, err := s.listContributionRoomFallbackAccounts(ctx, *route.FallbackGroupID, platform, useMixed)
+	if err != nil {
+		return nil, err
+	}
+	for _, account := range fallbackAccounts {
+		if account.ContributorUserID() > 0 || !account.IsSchedulable() || !s.isAccountAllowedForPlatform(&account, platform, useMixed) {
+			continue
+		}
+		if _, exists := seen[account.ID]; !exists {
+			roomAccounts = append(roomAccounts, account)
+			seen[account.ID] = struct{}{}
+		}
+	}
+	return roomAccounts, nil
+}
+
+// appendPublicContributionPoolAccounts extends the default candidate list with
+// the group's public contribution pool when the group has opted in
+// (group.AllowContributionPool). Pool accounts never replace the default
+// pool, only widen it.
+func (s *GatewayService) appendPublicContributionPoolAccounts(ctx context.Context, defaultAccounts []Account, groupID *int64, platform string, useMixed bool) ([]Account, error) {
+	if !s.groupAllowsContributionPool(ctx, groupID) {
+		return defaultAccounts, nil
+	}
+	poolAccounts, err := s.listPublicContributionPoolAccounts(ctx, platform, useMixed)
+	if err != nil || len(poolAccounts) == 0 {
+		return defaultAccounts, err
+	}
+	result := append([]Account(nil), defaultAccounts...)
+	seen := make(map[int64]struct{}, len(result)+len(poolAccounts))
+	for _, account := range result {
+		seen[account.ID] = struct{}{}
+	}
+	for _, account := range poolAccounts {
+		if _, exists := seen[account.ID]; !exists {
+			result = append(result, account)
+			seen[account.ID] = struct{}{}
+		}
+	}
+	return result, nil
+}
+
+func (s *GatewayService) groupAllowsContributionPool(ctx context.Context, groupID *int64) bool {
+	if s == nil || groupID == nil || *groupID <= 0 {
+		return false
+	}
+	if group := s.groupFromContext(ctx, *groupID); group != nil {
+		return group.AllowContributionPool
+	}
+	if s.groupRepo == nil {
+		return false
+	}
+	group, err := s.groupRepo.GetByIDLite(ctx, *groupID)
+	return err == nil && group != nil && group.AllowContributionPool
+}
+
+// listContributionRoomFallbackAccounts loads the accounts available in an
+// explicit contribution route's fallback group, for when the caller opted in
+// to falling back to the group's own accounts once their room budgets are
+// exhausted.
+func (s *GatewayService) listContributionRoomFallbackAccounts(ctx context.Context, groupID int64, platform string, useMixed bool) ([]Account, error) {
+	if s == nil || s.accountRepo == nil || groupID <= 0 {
+		return nil, nil
+	}
+	if !useMixed {
+		accounts, err := s.accountRepo.ListSchedulableByGroupIDAndPlatform(ctx, groupID, platform)
+		if err != nil {
+			return nil, fmt.Errorf("load contribution fallback group accounts: %w", err)
+		}
+		return accounts, nil
+	}
+	accounts, err := s.accountRepo.ListSchedulableByGroupIDAndPlatforms(ctx, groupID, []string{platform, PlatformAntigravity})
+	if err != nil {
+		return nil, fmt.Errorf("load contribution fallback group accounts: %w", err)
+	}
+	filtered := make([]Account, 0, len(accounts))
+	for _, account := range accounts {
+		if account.Platform != PlatformAntigravity || account.IsMixedSchedulingEnabled() {
+			filtered = append(filtered, account)
+		}
+	}
+	return filtered, nil
+}
+
+// prependImplicitOwnContributionAccounts moves the caller's own contributed
+// accounts to the front of the candidate list when no explicit room was
+// selected, so a contributor's own traffic prefers their own account before
+// falling back to the rest of the group/pool.
+func (s *GatewayService) prependImplicitOwnContributionAccounts(ctx context.Context, defaultAccounts []Account, platform string, useMixed bool) ([]Account, error) {
+	if s == nil {
+		return defaultAccounts, nil
+	}
+	userID := contributorUserIDFromContext(ctx)
+	if userID <= 0 {
+		return defaultAccounts, nil
+	}
+	owned := make([]Account, 0, len(defaultAccounts))
+	shared := make([]Account, 0, len(defaultAccounts))
+	for _, account := range defaultAccounts {
+		if account.IsContributedBy(userID) && account.IsSchedulable() && s.isAccountAllowedForPlatform(&account, platform, useMixed) {
+			preferContributedAccount(&account)
+			owned = append(owned, account)
+		} else {
+			shared = append(shared, account)
+		}
+	}
+	return append(owned, shared...), nil
+}
+
+// listPublicContributionPoolAccounts loads accounts contributed to the shared
+// public pool (share_mode=pool), excluding the caller's own contributions
+// (those are handled separately by prependImplicitOwnContributionAccounts).
+func (s *GatewayService) listPublicContributionPoolAccounts(ctx context.Context, platform string, useMixed bool) ([]Account, error) {
+	if s == nil || s.accountRepo == nil {
+		return []Account{}, nil
+	}
+	var accounts []Account
+	var err error
+	if useMixed {
+		accounts, err = s.accountRepo.ListSchedulableByPlatforms(ctx, []string{platform, PlatformAntigravity})
+	} else {
+		accounts, err = s.accountRepo.ListSchedulableByPlatform(ctx, platform)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load public contribution pool: %w", err)
+	}
+	userID, now := contributorUserIDFromContext(ctx), time.Now()
+	filtered := make([]Account, 0, len(accounts))
+	for _, account := range accounts {
+		if account.ContributorUserID() == 0 && account.IsSharedPoolAccount() && account.IsSharedPoolAvailableTo(userID, now) && s.isAccountAllowedForPlatform(&account, platform, useMixed) {
+			filtered = append(filtered, account)
+		}
+	}
+	return filtered, nil
 }
 
 // IsSingleAntigravityAccountGroup 检查指定分组是否只有一个 antigravity 平台的可调度账号。
@@ -1585,6 +1842,9 @@ func (s *GatewayService) getSchedulableAccount(ctx context.Context, accountID in
 	if s.isAccountBlockedBySchedulingThreshold(ctx, account) {
 		return nil, nil
 	}
+	if contributionAccountBlockedForCaller(ctx, account, s.contributionRoomRepo) {
+		return nil, nil
+	}
 	// Sticky / non-list selection must honor free soft-gate (same as listSchedulableAccounts).
 	if account.IsGrok() {
 		if gated := s.filterGrokFreeQuotaAccountsForGateway(ctx, []Account{*account}); len(gated) == 0 {
@@ -1633,6 +1893,11 @@ func (s *GatewayService) hydrateSelectedAccount(ctx context.Context, account *Ac
 func (s *GatewayService) newSelectionResult(ctx context.Context, account *Account, acquired bool, release func(), waitPlan *AccountWaitPlan) (*AccountSelectionResult, error) {
 	hydrated, err := s.hydrateSelectedAccount(ctx, account)
 	if err != nil {
+		// 槽位已经抢到却交不出选号结果，必须就地归还；调用方拿到的只有错误，
+		// 没有 ReleaseFunc 可调。与 OpenAI 侧 newAcquiredSelectionResult 同一保障。
+		if acquired && release != nil {
+			release()
+		}
 		return nil, err
 	}
 	return attachSelectionProfitGate(ctx, &AccountSelectionResult{
@@ -2580,4 +2845,23 @@ func (s *GatewayService) isModelSupportedByAccount(account *Account, requestedMo
 	}
 	// 其他平台使用账户的模型支持检查
 	return account.IsModelSupported(requestedModel)
+}
+
+// The contribution-room feature remains a local extension. Keep its access
+// predicates alongside the scheduler so upstream account selection continues
+// to respect contributor-scoped routes.
+func contributorUserIDFromContext(ctx context.Context) int64 {
+	if ctx == nil {
+		return 0
+	}
+	userID, _ := ctx.Value(ctxkey.UserID).(int64)
+	return userID
+}
+
+func contributionCreditOnly(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	value, _ := ctx.Value(ctxkey.ContributionCreditOnly).(bool)
+	return value
 }

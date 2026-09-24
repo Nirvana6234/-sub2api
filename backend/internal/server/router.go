@@ -118,6 +118,16 @@ func registerRoutes(
 ) {
 	// 通用路由（健康检查、状态等）
 	routes.RegisterCommonRoutes(r)
+	// Keep the public client download redirect alongside the API route tree so
+	// it is registered in every source-built deployment.
+	r.GET("/api/v1/download/client", func(c *gin.Context) {
+		settings, err := settingService.GetPublicSettings(context.Background())
+		if err != nil || !settings.ClientDownloadEnabled || settings.ClientDownloadDirectURL == "" {
+			c.Redirect(302, service.ClientDownloadDefaultDirectURL)
+			return
+		}
+		c.Redirect(302, settings.ClientDownloadDirectURL)
+	})
 
 	// API v1
 	v1 := r.Group("/api/v1")
@@ -132,6 +142,8 @@ func registerRoutes(
 	routes.RegisterModelPlazaRoutes(v1, h, optionalJWTAuth, settingService, panelRateLimiter)
 	routes.RegisterAdminRoutes(v1, h, adminAuth, auditLog, stepUpAuth, settingService, panelRateLimiter)
 	routes.RegisterGatewayRoutes(r, h, apiKeyAuth, apiKeyService, subscriptionService, opsService, settingService, compositeResolver, cfg)
+	routes.RegisterPlaygroundRoutes(v1, h, jwtAuth, apiKeyService, subscriptionService, opsService, settingService, compositeResolver, cfg, panelRateLimiter)
+	routes.RegisterGuestTrialRoutes(v1, h, apiKeyService, subscriptionService, opsService, settingService, compositeResolver, cfg, panelRateLimiter)
 	routes.RegisterPaymentRoutes(v1, h.Payment, h.PaymentWebhook, h.Admin.Payment, jwtAuth, adminAuth, auditLog, settingService, panelRateLimiter)
 	if h.PawConfigService != nil {
 		var openAIChat gin.HandlerFunc

@@ -60,11 +60,21 @@ func (pawChatRouteChannels) GetChannelForGroup(context.Context, int64) (*service
 }
 
 type pawChatRouteKeySource struct {
-	apiKey *service.APIKey
+	apiKey       *service.APIKey
+	autoGroupKey *service.APIKey
 }
 
 func (s *pawChatRouteKeySource) ResolvePawAPIKey(context.Context, int64, int64) (*service.APIKey, *service.UserSubscription, error) {
 	return s.apiKey, nil, nil
+}
+
+// 自动分组桩：真实实现走网关那套 ResolveAutoGroupForModel，这里只需要交出一把
+// 绑好分组、且仍标着 auto_group 的 key，用来验证 Responses 路由缺省分组时的行为。
+func (s *pawChatRouteKeySource) ResolvePawAutoGroupForModel(_ context.Context, _ int64, _ string) (*service.APIKey, *service.UserSubscription, error) {
+	if s.autoGroupKey == nil {
+		return nil, nil, service.ErrAutoGroupUnavailable
+	}
+	return s.autoGroupKey, nil, nil
 }
 
 func TestPawChatRouteRejectsProviderCredentialHeaders(t *testing.T) {

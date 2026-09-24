@@ -376,10 +376,48 @@
               :now="upstreamBillingNow"
               :probing="probingUpstreamBilling.has(row.id)"
               @probe="handleProbeUpstreamBilling(row)"
+              @edit-manual-rate="handleEditUpstreamBillingManualRate(row)"
+              @clear-manual-rate="handleClearUpstreamBillingManualRate(row)"
             />
           </template>
-          <template #cell-priority="{ value }">
-            <span class="text-sm text-gray-700 dark:text-gray-300">{{ value }}</span>
+          <template #header-priority="{ column }">
+            <div class="flex items-center">
+              <span>{{ column.label }}</span>
+              <HelpTooltip :content="t('admin.accounts.columns.priorityHint')" width-class="w-80" />
+            </div>
+          </template>
+          <!-- 只显示组内优先级（后端仅在筛选分组时返回 group_priority）：调度排序和
+               TransitHub 健康降级用的都是它。未筛分组时显示「—」——账号可能属于多个
+               分组、组内值不唯一，而全局 accounts.priority 不参与分组内调度，显示出来
+               只会误导。 -->
+          <template #cell-priority="{ row }">
+            <span
+              v-if="selectedGroupPriorityGroupID == null || row.group_priority == null"
+              class="text-sm text-gray-400 dark:text-gray-500"
+              :title="t('admin.accounts.priorityNeedsGroupFilter')"
+              data-testid="priority-needs-group-filter"
+            >—</span>
+            <div v-else class="inline-flex items-center gap-1">
+              <span class="text-sm text-gray-700 dark:text-gray-300">
+                {{ row.group_priority }}
+              </span>
+              <span
+                class="rounded bg-gray-100 px-1 py-0.5 text-[10px] text-gray-500 dark:bg-dark-600 dark:text-gray-400"
+              >
+                {{ t('admin.accounts.columns.priorityInGroup') }}
+              </span>
+              <button
+                type="button"
+                class="inline-flex h-6 w-6 items-center justify-center rounded text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 disabled:cursor-not-allowed disabled:opacity-50 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-primary-400"
+                :disabled="groupPriorityUpdatingAccountID === row.id"
+                :aria-label="t('admin.accounts.editGroupPriority')"
+                :title="t('admin.accounts.editGroupPriority')"
+                data-testid="edit-group-priority"
+                @click="handleEditGroupPriority(row)"
+              >
+                <Icon name="edit" size="xs" />
+              </button>
+            </div>
           </template>
           <template #header-scheduler_score="{ column }">
             <div class="flex items-center">
@@ -467,6 +505,7 @@
       :target="bulkEditTarget ?? undefined"
       :proxies="proxies"
       :groups="groups"
+      :group-priority-group-id="selectedGroupPriorityGroupID"
       @close="showBulkEdit = false"
       @updated="handleBulkUpdated"
     />
@@ -1385,6 +1424,9 @@ const inAutoRefreshSilentWindow = () => {
 const shouldReplaceAutoRefreshRow = (current: Account, next: Account) => {
   return (
     current.updated_at !== next.updated_at ||
+    // account_groups.priority (TransitHub, group-priority edits) changes
+    // without touching accounts.updated_at.
+    current.group_priority !== next.group_priority ||
     current.current_concurrency !== next.current_concurrency ||
     current.current_window_cost !== next.current_window_cost ||
     current.active_sessions !== next.active_sessions ||
@@ -1796,7 +1838,8 @@ const allColumns = computed(() => {
   c.push({ key: 'usage', label: t('admin.accounts.columns.usageWindows'), sortable: false })
   c.push(
     { key: 'proxy', label: t('admin.accounts.columns.proxy'), sortable: false },
-    { key: 'priority', label: t('admin.accounts.columns.priority'), sortable: true },
+    // Sorting only means something within one group (backend orders by account_groups.priority).
+    { key: 'priority', label: t('admin.accounts.columns.priority'), sortable: selectedGroupPriorityGroupID.value != null },
     { key: 'scheduler_score', label: t('admin.accounts.columns.schedulerScore'), sortable: false },
     { key: 'rate_multiplier', label: t('admin.accounts.columns.billingRateMultiplier'), sortable: true },
     { key: 'upstream_billing_rate', label: t('admin.accounts.columns.upstreamBillingRate'), sortable: true },
@@ -2124,6 +2167,13 @@ const handleBulkUpdated = () => {
 const handleDataImported = () => { showImportData.value = false; reload() }
 const ACCOUNT_UNGROUPED_GROUP_QUERY_VALUE = 'ungrouped'
 const ACCOUNT_PRIVACY_MODE_UNSET_QUERY_VALUE = '__unset__'
+const selectedGroupPriorityGroupID = computed(() => {
+  const rawGroup = String(params.group || '').trim()
+  if (!rawGroup || rawGroup === ACCOUNT_UNGROUPED_GROUP_QUERY_VALUE) return null
+  const groupID = Number(rawGroup)
+  return Number.isSafeInteger(groupID) && groupID > 0 ? groupID : null
+})
+const groupPriorityUpdatingAccountID = ref<number | null>(null)
 const buildAccountQueryFilters = () => ({
   platform: params.platform || '',
   type: params.type || '',
@@ -2177,11 +2227,66 @@ const accountMatchesCurrentFilters = (account: Account) => {
   if (search && !account.name.toLowerCase().includes(search)) return false
   return true
 }
+
+const handleEditGroupPriority = async (account: AccountListItem) => {
+  const groupID = selectedGroupPriorityGroupID.value
+  const currentPriority = account.group_priority
+  if (groupID == null || currentPriority == null) return
+
+  const value = window.prompt(
+    t('admin.accounts.groupPriorityPrompt'),
+    String(currentPriority)
+  )
+  if (value == null) return
+
+  const priority = Number(value.trim())
+  if (!Number.isSafeInteger(priority) || priority < 0) {
+    appStore.showError(t('admin.accounts.invalidGroupPriority'))
+    return
+  }
+
+  groupPriorityUpdatingAccountID.value = account.id
+  try {
+    await adminAPI.accounts.updateGroupPriorities([{
+      account_id: account.id,
+      group_id: groupID,
+      priority
+    }])
+    await reload()
+    appStore.showSuccess(t('admin.accounts.groupPrioritySaved'))
+  } catch (error) {
+    console.error('Failed to update account group priority:', error)
+    appStore.showError(extractApiErrorMessage(error, t('admin.accounts.groupPrioritySaveFailed')))
+  } finally {
+    groupPriorityUpdatingAccountID.value = null
+  }
+}
+// Single-account endpoints (edit, manual upstream rate, refresh, ...) return a
+// plain account. group_priority and the scheduler scores only come from the
+// list endpoint, so keep the list's values; otherwise the priority column falls
+// back to the global accounts.priority and loses its in-group badge.
+const keepListField = <T,>(updated: T | undefined, old: T | undefined): T | undefined =>
+  updated === undefined ? old : updated
+
+// The edit modal returns the account detail, whose account_groups carries the
+// (possibly just edited) in-group priorities.
+const filteredGroupPriorityFromBindings = (account: Account): number | undefined => {
+  const groupID = selectedGroupPriorityGroupID.value
+  if (groupID == null) return undefined
+  return account.account_groups?.find((binding) => binding.group_id === groupID)?.priority
+}
+
 const mergeRuntimeFields = (oldAccount: Account, updatedAccount: Account): Account => ({
   ...updatedAccount,
   current_concurrency: updatedAccount.current_concurrency ?? oldAccount.current_concurrency,
   current_window_cost: updatedAccount.current_window_cost ?? oldAccount.current_window_cost,
-  active_sessions: updatedAccount.active_sessions ?? oldAccount.active_sessions
+  active_sessions: updatedAccount.active_sessions ?? oldAccount.active_sessions,
+  group_priority: keepListField(
+    updatedAccount.group_priority ?? filteredGroupPriorityFromBindings(updatedAccount),
+    oldAccount.group_priority
+  ),
+  scheduler_score: keepListField(updatedAccount.scheduler_score, oldAccount.scheduler_score),
+  scheduler_scores: keepListField(updatedAccount.scheduler_scores, oldAccount.scheduler_scores)
 })
 
 const syncPaginationAfterLocalRemoval = () => {
@@ -2246,6 +2351,38 @@ const handleProbeUpstreamBilling = async (account: Account) => {
     appStore.showError(extractApiErrorMessage(error, t('admin.accounts.upstreamBilling.probeFailed')))
   } finally {
     probingUpstreamBilling.delete(account.id)
+  }
+}
+const handleEditUpstreamBillingManualRate = async (account: Account) => {
+  const current = account.extra?.upstream_billing_manual_rate_multiplier
+  const value = window.prompt(
+    t('admin.accounts.upstreamBilling.manualRatePrompt'),
+    typeof current === 'number' ? String(current) : ''
+  )
+  if (value == null) return
+  const rateMultiplier = Number(value.trim())
+  if (!Number.isFinite(rateMultiplier) || rateMultiplier < 0) {
+    appStore.showError(t('admin.accounts.upstreamBilling.invalidManualRate'))
+    return
+  }
+  try {
+    const updated = await adminAPI.accounts.setUpstreamBillingManualRate(account.id, rateMultiplier)
+    patchAccountInList(updated)
+    await refreshAccountsAfterUpstreamBillingProbe()
+    appStore.showSuccess(t('admin.accounts.upstreamBilling.manualRateSaved'))
+  } catch (error) {
+    appStore.showError(extractApiErrorMessage(error, t('admin.accounts.upstreamBilling.manualRateSaveFailed')))
+  }
+}
+const handleClearUpstreamBillingManualRate = async (account: Account) => {
+  if (!window.confirm(t('admin.accounts.upstreamBilling.clearManualRateConfirm'))) return
+  try {
+    const updated = await adminAPI.accounts.setUpstreamBillingManualRate(account.id, null)
+    patchAccountInList(updated)
+    await refreshAccountsAfterUpstreamBillingProbe()
+    appStore.showSuccess(t('admin.accounts.upstreamBilling.manualRateCleared'))
+  } catch (error) {
+    appStore.showError(extractApiErrorMessage(error, t('admin.accounts.upstreamBilling.manualRateSaveFailed')))
   }
 }
 const handleAccountUpdated = (updatedAccount: Account) => {

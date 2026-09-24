@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Sub2APIUser 是从 Sub2API `/api/v1/auth/me` 响应中解析出的用户身份，字段名做了常见形式兼容
@@ -34,14 +36,29 @@ type Sub2APIClient struct {
 }
 
 func NewSub2APIClient(client *http.Client) *Sub2APIClient {
-	return &Sub2APIClient{client: client}
+	if client == nil {
+		client = &http.Client{Timeout: 30 * time.Second}
+	}
+	clone := *client
+	if clone.Transport == nil {
+		clone.Transport = newSafeViewerTransport(http.DefaultTransport.(*http.Transport), net.DefaultResolver)
+	} else if transport, ok := clone.Transport.(*http.Transport); ok {
+		clone.Transport = newSafeViewerTransport(transport, net.DefaultResolver)
+	}
+	// An identity must be verified by the requested origin, never a redirect.
+	clone.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &Sub2APIClient{client: &clone}
 }
 
 // FetchCurrentUser 用用户的 Sub2API token 向 srcHost 请求当前用户信息。
 // srcHost 必须已经过 normalizeSrcHost 校验和规范化。请求/响应均不记录 token 或响应体明文到日志，
 // 满足"不打印 Sub2API token"的安全边界。
 func (c *Sub2APIClient) FetchCurrentUser(srcHost string, token string) (Sub2APIUser, error) {
-	reqURL := strings.TrimRight(srcHost, "/") + "/api/v1/auth/me"
+	origin, err := normalizeSrcHost(srcHost)
+	if err != nil {
+		return Sub2APIUser{}, &sub2APIError{detail: "invalid sub2api origin"}
+	}
+	reqURL := origin + "/api/v1/auth/me"
 	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
 	if err != nil {
 		return Sub2APIUser{}, &sub2APIError{detail: "build sub2api request failed"}

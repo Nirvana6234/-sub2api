@@ -30,6 +30,9 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/channelmonitorhistory"
 	"github.com/Wei-Shaw/sub2api/ent/channelmonitorrequesttemplate"
 	"github.com/Wei-Shaw/sub2api/ent/compositemodelroute"
+	"github.com/Wei-Shaw/sub2api/ent/contributionaccountverification"
+	"github.com/Wei-Shaw/sub2api/ent/contributionroom"
+	"github.com/Wei-Shaw/sub2api/ent/contributionroomaccount"
 	"github.com/Wei-Shaw/sub2api/ent/errorpassthroughrule"
 	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/ent/idempotencyrecord"
@@ -45,6 +48,8 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/securitysecret"
 	"github.com/Wei-Shaw/sub2api/ent/setting"
 	"github.com/Wei-Shaw/sub2api/ent/subscriptionplan"
+	"github.com/Wei-Shaw/sub2api/ent/ticket"
+	"github.com/Wei-Shaw/sub2api/ent/ticketmessage"
 	"github.com/Wei-Shaw/sub2api/ent/tlsfingerprintprofile"
 	"github.com/Wei-Shaw/sub2api/ent/usagecleanuptask"
 	"github.com/Wei-Shaw/sub2api/ent/usagelog"
@@ -52,6 +57,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/userallowedgroup"
 	"github.com/Wei-Shaw/sub2api/ent/userattributedefinition"
 	"github.com/Wei-Shaw/sub2api/ent/userattributevalue"
+	"github.com/Wei-Shaw/sub2api/ent/usercontributionroompreference"
 	"github.com/Wei-Shaw/sub2api/ent/userplatformquota"
 	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
 
@@ -93,6 +99,12 @@ type Client struct {
 	ChannelMonitorRequestTemplate *ChannelMonitorRequestTemplateClient
 	// CompositeModelRoute is the client for interacting with the CompositeModelRoute builders.
 	CompositeModelRoute *CompositeModelRouteClient
+	// ContributionAccountVerification is the client for interacting with the ContributionAccountVerification builders.
+	ContributionAccountVerification *ContributionAccountVerificationClient
+	// ContributionRoom is the client for interacting with the ContributionRoom builders.
+	ContributionRoom *ContributionRoomClient
+	// ContributionRoomAccount is the client for interacting with the ContributionRoomAccount builders.
+	ContributionRoomAccount *ContributionRoomAccountClient
 	// ErrorPassthroughRule is the client for interacting with the ErrorPassthroughRule builders.
 	ErrorPassthroughRule *ErrorPassthroughRuleClient
 	// Group is the client for interacting with the Group builders.
@@ -125,6 +137,10 @@ type Client struct {
 	SubscriptionPlan *SubscriptionPlanClient
 	// TLSFingerprintProfile is the client for interacting with the TLSFingerprintProfile builders.
 	TLSFingerprintProfile *TLSFingerprintProfileClient
+	// Ticket is the client for interacting with the Ticket builders.
+	Ticket *TicketClient
+	// TicketMessage is the client for interacting with the TicketMessage builders.
+	TicketMessage *TicketMessageClient
 	// UsageCleanupTask is the client for interacting with the UsageCleanupTask builders.
 	UsageCleanupTask *UsageCleanupTaskClient
 	// UsageLog is the client for interacting with the UsageLog builders.
@@ -137,6 +153,8 @@ type Client struct {
 	UserAttributeDefinition *UserAttributeDefinitionClient
 	// UserAttributeValue is the client for interacting with the UserAttributeValue builders.
 	UserAttributeValue *UserAttributeValueClient
+	// UserContributionRoomPreference is the client for interacting with the UserContributionRoomPreference builders.
+	UserContributionRoomPreference *UserContributionRoomPreferenceClient
 	// UserPlatformQuota is the client for interacting with the UserPlatformQuota builders.
 	UserPlatformQuota *UserPlatformQuotaClient
 	// UserSubscription is the client for interacting with the UserSubscription builders.
@@ -167,6 +185,9 @@ func (c *Client) init() {
 	c.ChannelMonitorHistory = NewChannelMonitorHistoryClient(c.config)
 	c.ChannelMonitorRequestTemplate = NewChannelMonitorRequestTemplateClient(c.config)
 	c.CompositeModelRoute = NewCompositeModelRouteClient(c.config)
+	c.ContributionAccountVerification = NewContributionAccountVerificationClient(c.config)
+	c.ContributionRoom = NewContributionRoomClient(c.config)
+	c.ContributionRoomAccount = NewContributionRoomAccountClient(c.config)
 	c.ErrorPassthroughRule = NewErrorPassthroughRuleClient(c.config)
 	c.Group = NewGroupClient(c.config)
 	c.IdempotencyRecord = NewIdempotencyRecordClient(c.config)
@@ -183,12 +204,15 @@ func (c *Client) init() {
 	c.Setting = NewSettingClient(c.config)
 	c.SubscriptionPlan = NewSubscriptionPlanClient(c.config)
 	c.TLSFingerprintProfile = NewTLSFingerprintProfileClient(c.config)
+	c.Ticket = NewTicketClient(c.config)
+	c.TicketMessage = NewTicketMessageClient(c.config)
 	c.UsageCleanupTask = NewUsageCleanupTaskClient(c.config)
 	c.UsageLog = NewUsageLogClient(c.config)
 	c.User = NewUserClient(c.config)
 	c.UserAllowedGroup = NewUserAllowedGroupClient(c.config)
 	c.UserAttributeDefinition = NewUserAttributeDefinitionClient(c.config)
 	c.UserAttributeValue = NewUserAttributeValueClient(c.config)
+	c.UserContributionRoomPreference = NewUserContributionRoomPreferenceClient(c.config)
 	c.UserPlatformQuota = NewUserPlatformQuotaClient(c.config)
 	c.UserSubscription = NewUserSubscriptionClient(c.config)
 }
@@ -281,47 +305,53 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 	cfg := c.config
 	cfg.driver = tx
 	return &Tx{
-		ctx:                           ctx,
-		config:                        cfg,
-		APIKey:                        NewAPIKeyClient(cfg),
-		Account:                       NewAccountClient(cfg),
-		AccountGroup:                  NewAccountGroupClient(cfg),
-		Announcement:                  NewAnnouncementClient(cfg),
-		AnnouncementRead:              NewAnnouncementReadClient(cfg),
-		AuthIdentity:                  NewAuthIdentityClient(cfg),
-		AuthIdentityChannel:           NewAuthIdentityChannelClient(cfg),
-		BatchImageEvent:               NewBatchImageEventClient(cfg),
-		BatchImageItem:                NewBatchImageItemClient(cfg),
-		BatchImageJob:                 NewBatchImageJobClient(cfg),
-		ChannelMonitor:                NewChannelMonitorClient(cfg),
-		ChannelMonitorDailyRollup:     NewChannelMonitorDailyRollupClient(cfg),
-		ChannelMonitorHistory:         NewChannelMonitorHistoryClient(cfg),
-		ChannelMonitorRequestTemplate: NewChannelMonitorRequestTemplateClient(cfg),
-		CompositeModelRoute:           NewCompositeModelRouteClient(cfg),
-		ErrorPassthroughRule:          NewErrorPassthroughRuleClient(cfg),
-		Group:                         NewGroupClient(cfg),
-		IdempotencyRecord:             NewIdempotencyRecordClient(cfg),
-		IdentityAdoptionDecision:      NewIdentityAdoptionDecisionClient(cfg),
-		PaymentAuditLog:               NewPaymentAuditLogClient(cfg),
-		PaymentOrder:                  NewPaymentOrderClient(cfg),
-		PaymentProviderInstance:       NewPaymentProviderInstanceClient(cfg),
-		PendingAuthSession:            NewPendingAuthSessionClient(cfg),
-		PromoCode:                     NewPromoCodeClient(cfg),
-		PromoCodeUsage:                NewPromoCodeUsageClient(cfg),
-		Proxy:                         NewProxyClient(cfg),
-		RedeemCode:                    NewRedeemCodeClient(cfg),
-		SecuritySecret:                NewSecuritySecretClient(cfg),
-		Setting:                       NewSettingClient(cfg),
-		SubscriptionPlan:              NewSubscriptionPlanClient(cfg),
-		TLSFingerprintProfile:         NewTLSFingerprintProfileClient(cfg),
-		UsageCleanupTask:              NewUsageCleanupTaskClient(cfg),
-		UsageLog:                      NewUsageLogClient(cfg),
-		User:                          NewUserClient(cfg),
-		UserAllowedGroup:              NewUserAllowedGroupClient(cfg),
-		UserAttributeDefinition:       NewUserAttributeDefinitionClient(cfg),
-		UserAttributeValue:            NewUserAttributeValueClient(cfg),
-		UserPlatformQuota:             NewUserPlatformQuotaClient(cfg),
-		UserSubscription:              NewUserSubscriptionClient(cfg),
+		ctx:                             ctx,
+		config:                          cfg,
+		APIKey:                          NewAPIKeyClient(cfg),
+		Account:                         NewAccountClient(cfg),
+		AccountGroup:                    NewAccountGroupClient(cfg),
+		Announcement:                    NewAnnouncementClient(cfg),
+		AnnouncementRead:                NewAnnouncementReadClient(cfg),
+		AuthIdentity:                    NewAuthIdentityClient(cfg),
+		AuthIdentityChannel:             NewAuthIdentityChannelClient(cfg),
+		BatchImageEvent:                 NewBatchImageEventClient(cfg),
+		BatchImageItem:                  NewBatchImageItemClient(cfg),
+		BatchImageJob:                   NewBatchImageJobClient(cfg),
+		ChannelMonitor:                  NewChannelMonitorClient(cfg),
+		ChannelMonitorDailyRollup:       NewChannelMonitorDailyRollupClient(cfg),
+		ChannelMonitorHistory:           NewChannelMonitorHistoryClient(cfg),
+		ChannelMonitorRequestTemplate:   NewChannelMonitorRequestTemplateClient(cfg),
+		CompositeModelRoute:             NewCompositeModelRouteClient(cfg),
+		ContributionAccountVerification: NewContributionAccountVerificationClient(cfg),
+		ContributionRoom:                NewContributionRoomClient(cfg),
+		ContributionRoomAccount:         NewContributionRoomAccountClient(cfg),
+		ErrorPassthroughRule:            NewErrorPassthroughRuleClient(cfg),
+		Group:                           NewGroupClient(cfg),
+		IdempotencyRecord:               NewIdempotencyRecordClient(cfg),
+		IdentityAdoptionDecision:        NewIdentityAdoptionDecisionClient(cfg),
+		PaymentAuditLog:                 NewPaymentAuditLogClient(cfg),
+		PaymentOrder:                    NewPaymentOrderClient(cfg),
+		PaymentProviderInstance:         NewPaymentProviderInstanceClient(cfg),
+		PendingAuthSession:              NewPendingAuthSessionClient(cfg),
+		PromoCode:                       NewPromoCodeClient(cfg),
+		PromoCodeUsage:                  NewPromoCodeUsageClient(cfg),
+		Proxy:                           NewProxyClient(cfg),
+		RedeemCode:                      NewRedeemCodeClient(cfg),
+		SecuritySecret:                  NewSecuritySecretClient(cfg),
+		Setting:                         NewSettingClient(cfg),
+		SubscriptionPlan:                NewSubscriptionPlanClient(cfg),
+		TLSFingerprintProfile:           NewTLSFingerprintProfileClient(cfg),
+		Ticket:                          NewTicketClient(cfg),
+		TicketMessage:                   NewTicketMessageClient(cfg),
+		UsageCleanupTask:                NewUsageCleanupTaskClient(cfg),
+		UsageLog:                        NewUsageLogClient(cfg),
+		User:                            NewUserClient(cfg),
+		UserAllowedGroup:                NewUserAllowedGroupClient(cfg),
+		UserAttributeDefinition:         NewUserAttributeDefinitionClient(cfg),
+		UserAttributeValue:              NewUserAttributeValueClient(cfg),
+		UserContributionRoomPreference:  NewUserContributionRoomPreferenceClient(cfg),
+		UserPlatformQuota:               NewUserPlatformQuotaClient(cfg),
+		UserSubscription:                NewUserSubscriptionClient(cfg),
 	}, nil
 }
 
@@ -339,47 +369,53 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 	cfg := c.config
 	cfg.driver = &txDriver{tx: tx, drv: c.driver}
 	return &Tx{
-		ctx:                           ctx,
-		config:                        cfg,
-		APIKey:                        NewAPIKeyClient(cfg),
-		Account:                       NewAccountClient(cfg),
-		AccountGroup:                  NewAccountGroupClient(cfg),
-		Announcement:                  NewAnnouncementClient(cfg),
-		AnnouncementRead:              NewAnnouncementReadClient(cfg),
-		AuthIdentity:                  NewAuthIdentityClient(cfg),
-		AuthIdentityChannel:           NewAuthIdentityChannelClient(cfg),
-		BatchImageEvent:               NewBatchImageEventClient(cfg),
-		BatchImageItem:                NewBatchImageItemClient(cfg),
-		BatchImageJob:                 NewBatchImageJobClient(cfg),
-		ChannelMonitor:                NewChannelMonitorClient(cfg),
-		ChannelMonitorDailyRollup:     NewChannelMonitorDailyRollupClient(cfg),
-		ChannelMonitorHistory:         NewChannelMonitorHistoryClient(cfg),
-		ChannelMonitorRequestTemplate: NewChannelMonitorRequestTemplateClient(cfg),
-		CompositeModelRoute:           NewCompositeModelRouteClient(cfg),
-		ErrorPassthroughRule:          NewErrorPassthroughRuleClient(cfg),
-		Group:                         NewGroupClient(cfg),
-		IdempotencyRecord:             NewIdempotencyRecordClient(cfg),
-		IdentityAdoptionDecision:      NewIdentityAdoptionDecisionClient(cfg),
-		PaymentAuditLog:               NewPaymentAuditLogClient(cfg),
-		PaymentOrder:                  NewPaymentOrderClient(cfg),
-		PaymentProviderInstance:       NewPaymentProviderInstanceClient(cfg),
-		PendingAuthSession:            NewPendingAuthSessionClient(cfg),
-		PromoCode:                     NewPromoCodeClient(cfg),
-		PromoCodeUsage:                NewPromoCodeUsageClient(cfg),
-		Proxy:                         NewProxyClient(cfg),
-		RedeemCode:                    NewRedeemCodeClient(cfg),
-		SecuritySecret:                NewSecuritySecretClient(cfg),
-		Setting:                       NewSettingClient(cfg),
-		SubscriptionPlan:              NewSubscriptionPlanClient(cfg),
-		TLSFingerprintProfile:         NewTLSFingerprintProfileClient(cfg),
-		UsageCleanupTask:              NewUsageCleanupTaskClient(cfg),
-		UsageLog:                      NewUsageLogClient(cfg),
-		User:                          NewUserClient(cfg),
-		UserAllowedGroup:              NewUserAllowedGroupClient(cfg),
-		UserAttributeDefinition:       NewUserAttributeDefinitionClient(cfg),
-		UserAttributeValue:            NewUserAttributeValueClient(cfg),
-		UserPlatformQuota:             NewUserPlatformQuotaClient(cfg),
-		UserSubscription:              NewUserSubscriptionClient(cfg),
+		ctx:                             ctx,
+		config:                          cfg,
+		APIKey:                          NewAPIKeyClient(cfg),
+		Account:                         NewAccountClient(cfg),
+		AccountGroup:                    NewAccountGroupClient(cfg),
+		Announcement:                    NewAnnouncementClient(cfg),
+		AnnouncementRead:                NewAnnouncementReadClient(cfg),
+		AuthIdentity:                    NewAuthIdentityClient(cfg),
+		AuthIdentityChannel:             NewAuthIdentityChannelClient(cfg),
+		BatchImageEvent:                 NewBatchImageEventClient(cfg),
+		BatchImageItem:                  NewBatchImageItemClient(cfg),
+		BatchImageJob:                   NewBatchImageJobClient(cfg),
+		ChannelMonitor:                  NewChannelMonitorClient(cfg),
+		ChannelMonitorDailyRollup:       NewChannelMonitorDailyRollupClient(cfg),
+		ChannelMonitorHistory:           NewChannelMonitorHistoryClient(cfg),
+		ChannelMonitorRequestTemplate:   NewChannelMonitorRequestTemplateClient(cfg),
+		CompositeModelRoute:             NewCompositeModelRouteClient(cfg),
+		ContributionAccountVerification: NewContributionAccountVerificationClient(cfg),
+		ContributionRoom:                NewContributionRoomClient(cfg),
+		ContributionRoomAccount:         NewContributionRoomAccountClient(cfg),
+		ErrorPassthroughRule:            NewErrorPassthroughRuleClient(cfg),
+		Group:                           NewGroupClient(cfg),
+		IdempotencyRecord:               NewIdempotencyRecordClient(cfg),
+		IdentityAdoptionDecision:        NewIdentityAdoptionDecisionClient(cfg),
+		PaymentAuditLog:                 NewPaymentAuditLogClient(cfg),
+		PaymentOrder:                    NewPaymentOrderClient(cfg),
+		PaymentProviderInstance:         NewPaymentProviderInstanceClient(cfg),
+		PendingAuthSession:              NewPendingAuthSessionClient(cfg),
+		PromoCode:                       NewPromoCodeClient(cfg),
+		PromoCodeUsage:                  NewPromoCodeUsageClient(cfg),
+		Proxy:                           NewProxyClient(cfg),
+		RedeemCode:                      NewRedeemCodeClient(cfg),
+		SecuritySecret:                  NewSecuritySecretClient(cfg),
+		Setting:                         NewSettingClient(cfg),
+		SubscriptionPlan:                NewSubscriptionPlanClient(cfg),
+		TLSFingerprintProfile:           NewTLSFingerprintProfileClient(cfg),
+		Ticket:                          NewTicketClient(cfg),
+		TicketMessage:                   NewTicketMessageClient(cfg),
+		UsageCleanupTask:                NewUsageCleanupTaskClient(cfg),
+		UsageLog:                        NewUsageLogClient(cfg),
+		User:                            NewUserClient(cfg),
+		UserAllowedGroup:                NewUserAllowedGroupClient(cfg),
+		UserAttributeDefinition:         NewUserAttributeDefinitionClient(cfg),
+		UserAttributeValue:              NewUserAttributeValueClient(cfg),
+		UserContributionRoomPreference:  NewUserContributionRoomPreferenceClient(cfg),
+		UserPlatformQuota:               NewUserPlatformQuotaClient(cfg),
+		UserSubscription:                NewUserSubscriptionClient(cfg),
 	}, nil
 }
 
@@ -413,13 +449,15 @@ func (c *Client) Use(hooks ...Hook) {
 		c.AuthIdentity, c.AuthIdentityChannel, c.BatchImageEvent, c.BatchImageItem,
 		c.BatchImageJob, c.ChannelMonitor, c.ChannelMonitorDailyRollup,
 		c.ChannelMonitorHistory, c.ChannelMonitorRequestTemplate,
-		c.CompositeModelRoute, c.ErrorPassthroughRule, c.Group, c.IdempotencyRecord,
-		c.IdentityAdoptionDecision, c.PaymentAuditLog, c.PaymentOrder,
-		c.PaymentProviderInstance, c.PendingAuthSession, c.PromoCode, c.PromoCodeUsage,
-		c.Proxy, c.RedeemCode, c.SecuritySecret, c.Setting, c.SubscriptionPlan,
-		c.TLSFingerprintProfile, c.UsageCleanupTask, c.UsageLog, c.User,
-		c.UserAllowedGroup, c.UserAttributeDefinition, c.UserAttributeValue,
-		c.UserPlatformQuota, c.UserSubscription,
+		c.CompositeModelRoute, c.ContributionAccountVerification, c.ContributionRoom,
+		c.ContributionRoomAccount, c.ErrorPassthroughRule, c.Group,
+		c.IdempotencyRecord, c.IdentityAdoptionDecision, c.PaymentAuditLog,
+		c.PaymentOrder, c.PaymentProviderInstance, c.PendingAuthSession, c.PromoCode,
+		c.PromoCodeUsage, c.Proxy, c.RedeemCode, c.SecuritySecret, c.Setting,
+		c.SubscriptionPlan, c.TLSFingerprintProfile, c.Ticket, c.TicketMessage,
+		c.UsageCleanupTask, c.UsageLog, c.User, c.UserAllowedGroup,
+		c.UserAttributeDefinition, c.UserAttributeValue,
+		c.UserContributionRoomPreference, c.UserPlatformQuota, c.UserSubscription,
 	} {
 		n.Use(hooks...)
 	}
@@ -433,13 +471,15 @@ func (c *Client) Intercept(interceptors ...Interceptor) {
 		c.AuthIdentity, c.AuthIdentityChannel, c.BatchImageEvent, c.BatchImageItem,
 		c.BatchImageJob, c.ChannelMonitor, c.ChannelMonitorDailyRollup,
 		c.ChannelMonitorHistory, c.ChannelMonitorRequestTemplate,
-		c.CompositeModelRoute, c.ErrorPassthroughRule, c.Group, c.IdempotencyRecord,
-		c.IdentityAdoptionDecision, c.PaymentAuditLog, c.PaymentOrder,
-		c.PaymentProviderInstance, c.PendingAuthSession, c.PromoCode, c.PromoCodeUsage,
-		c.Proxy, c.RedeemCode, c.SecuritySecret, c.Setting, c.SubscriptionPlan,
-		c.TLSFingerprintProfile, c.UsageCleanupTask, c.UsageLog, c.User,
-		c.UserAllowedGroup, c.UserAttributeDefinition, c.UserAttributeValue,
-		c.UserPlatformQuota, c.UserSubscription,
+		c.CompositeModelRoute, c.ContributionAccountVerification, c.ContributionRoom,
+		c.ContributionRoomAccount, c.ErrorPassthroughRule, c.Group,
+		c.IdempotencyRecord, c.IdentityAdoptionDecision, c.PaymentAuditLog,
+		c.PaymentOrder, c.PaymentProviderInstance, c.PendingAuthSession, c.PromoCode,
+		c.PromoCodeUsage, c.Proxy, c.RedeemCode, c.SecuritySecret, c.Setting,
+		c.SubscriptionPlan, c.TLSFingerprintProfile, c.Ticket, c.TicketMessage,
+		c.UsageCleanupTask, c.UsageLog, c.User, c.UserAllowedGroup,
+		c.UserAttributeDefinition, c.UserAttributeValue,
+		c.UserContributionRoomPreference, c.UserPlatformQuota, c.UserSubscription,
 	} {
 		n.Intercept(interceptors...)
 	}
@@ -478,6 +518,12 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.ChannelMonitorRequestTemplate.mutate(ctx, m)
 	case *CompositeModelRouteMutation:
 		return c.CompositeModelRoute.mutate(ctx, m)
+	case *ContributionAccountVerificationMutation:
+		return c.ContributionAccountVerification.mutate(ctx, m)
+	case *ContributionRoomMutation:
+		return c.ContributionRoom.mutate(ctx, m)
+	case *ContributionRoomAccountMutation:
+		return c.ContributionRoomAccount.mutate(ctx, m)
 	case *ErrorPassthroughRuleMutation:
 		return c.ErrorPassthroughRule.mutate(ctx, m)
 	case *GroupMutation:
@@ -510,6 +556,10 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.SubscriptionPlan.mutate(ctx, m)
 	case *TLSFingerprintProfileMutation:
 		return c.TLSFingerprintProfile.mutate(ctx, m)
+	case *TicketMutation:
+		return c.Ticket.mutate(ctx, m)
+	case *TicketMessageMutation:
+		return c.TicketMessage.mutate(ctx, m)
 	case *UsageCleanupTaskMutation:
 		return c.UsageCleanupTask.mutate(ctx, m)
 	case *UsageLogMutation:
@@ -522,6 +572,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.UserAttributeDefinition.mutate(ctx, m)
 	case *UserAttributeValueMutation:
 		return c.UserAttributeValue.mutate(ctx, m)
+	case *UserContributionRoomPreferenceMutation:
+		return c.UserContributionRoomPreference.mutate(ctx, m)
 	case *UserPlatformQuotaMutation:
 		return c.UserPlatformQuota.mutate(ctx, m)
 	case *UserSubscriptionMutation:
@@ -664,6 +716,22 @@ func (c *APIKeyClient) QueryGroup(_m *APIKey) *GroupQuery {
 			sqlgraph.From(apikey.Table, apikey.FieldID, id),
 			sqlgraph.To(group.Table, group.FieldID),
 			sqlgraph.Edge(sqlgraph.M2O, true, apikey.GroupTable, apikey.GroupColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
+// QueryContributionRoomPreferences queries the contribution_room_preferences edge of a APIKey.
+func (c *APIKeyClient) QueryContributionRoomPreferences(_m *APIKey) *UserContributionRoomPreferenceQuery {
+	query := (&UserContributionRoomPreferenceClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(apikey.Table, apikey.FieldID, id),
+			sqlgraph.To(usercontributionroompreference.Table, usercontributionroompreference.FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, false, apikey.ContributionRoomPreferencesTable, apikey.ContributionRoomPreferencesColumn),
 		)
 		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
 		return fromV, nil
@@ -2883,6 +2951,501 @@ func (c *CompositeModelRouteClient) mutate(ctx context.Context, m *CompositeMode
 	}
 }
 
+// ContributionAccountVerificationClient is a client for the ContributionAccountVerification schema.
+type ContributionAccountVerificationClient struct {
+	config
+}
+
+// NewContributionAccountVerificationClient returns a client for the ContributionAccountVerification from the given config.
+func NewContributionAccountVerificationClient(c config) *ContributionAccountVerificationClient {
+	return &ContributionAccountVerificationClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `contributionaccountverification.Hooks(f(g(h())))`.
+func (c *ContributionAccountVerificationClient) Use(hooks ...Hook) {
+	c.hooks.ContributionAccountVerification = append(c.hooks.ContributionAccountVerification, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `contributionaccountverification.Intercept(f(g(h())))`.
+func (c *ContributionAccountVerificationClient) Intercept(interceptors ...Interceptor) {
+	c.inters.ContributionAccountVerification = append(c.inters.ContributionAccountVerification, interceptors...)
+}
+
+// Create returns a builder for creating a ContributionAccountVerification entity.
+func (c *ContributionAccountVerificationClient) Create() *ContributionAccountVerificationCreate {
+	mutation := newContributionAccountVerificationMutation(c.config, OpCreate)
+	return &ContributionAccountVerificationCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of ContributionAccountVerification entities.
+func (c *ContributionAccountVerificationClient) CreateBulk(builders ...*ContributionAccountVerificationCreate) *ContributionAccountVerificationCreateBulk {
+	return &ContributionAccountVerificationCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *ContributionAccountVerificationClient) MapCreateBulk(slice any, setFunc func(*ContributionAccountVerificationCreate, int)) *ContributionAccountVerificationCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &ContributionAccountVerificationCreateBulk{err: fmt.Errorf("calling to ContributionAccountVerificationClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*ContributionAccountVerificationCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &ContributionAccountVerificationCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for ContributionAccountVerification.
+func (c *ContributionAccountVerificationClient) Update() *ContributionAccountVerificationUpdate {
+	mutation := newContributionAccountVerificationMutation(c.config, OpUpdate)
+	return &ContributionAccountVerificationUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *ContributionAccountVerificationClient) UpdateOne(_m *ContributionAccountVerification) *ContributionAccountVerificationUpdateOne {
+	mutation := newContributionAccountVerificationMutation(c.config, OpUpdateOne, withContributionAccountVerification(_m))
+	return &ContributionAccountVerificationUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *ContributionAccountVerificationClient) UpdateOneID(id int64) *ContributionAccountVerificationUpdateOne {
+	mutation := newContributionAccountVerificationMutation(c.config, OpUpdateOne, withContributionAccountVerificationID(id))
+	return &ContributionAccountVerificationUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for ContributionAccountVerification.
+func (c *ContributionAccountVerificationClient) Delete() *ContributionAccountVerificationDelete {
+	mutation := newContributionAccountVerificationMutation(c.config, OpDelete)
+	return &ContributionAccountVerificationDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *ContributionAccountVerificationClient) DeleteOne(_m *ContributionAccountVerification) *ContributionAccountVerificationDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *ContributionAccountVerificationClient) DeleteOneID(id int64) *ContributionAccountVerificationDeleteOne {
+	builder := c.Delete().Where(contributionaccountverification.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &ContributionAccountVerificationDeleteOne{builder}
+}
+
+// Query returns a query builder for ContributionAccountVerification.
+func (c *ContributionAccountVerificationClient) Query() *ContributionAccountVerificationQuery {
+	return &ContributionAccountVerificationQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeContributionAccountVerification},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a ContributionAccountVerification entity by its id.
+func (c *ContributionAccountVerificationClient) Get(ctx context.Context, id int64) (*ContributionAccountVerification, error) {
+	return c.Query().Where(contributionaccountverification.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *ContributionAccountVerificationClient) GetX(ctx context.Context, id int64) *ContributionAccountVerification {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// QueryAccount queries the account edge of a ContributionAccountVerification.
+func (c *ContributionAccountVerificationClient) QueryAccount(_m *ContributionAccountVerification) *AccountQuery {
+	query := (&AccountClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(contributionaccountverification.Table, contributionaccountverification.FieldID, id),
+			sqlgraph.To(account.Table, account.FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, false, contributionaccountverification.AccountTable, contributionaccountverification.AccountColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
+// Hooks returns the client hooks.
+func (c *ContributionAccountVerificationClient) Hooks() []Hook {
+	return c.hooks.ContributionAccountVerification
+}
+
+// Interceptors returns the client interceptors.
+func (c *ContributionAccountVerificationClient) Interceptors() []Interceptor {
+	return c.inters.ContributionAccountVerification
+}
+
+func (c *ContributionAccountVerificationClient) mutate(ctx context.Context, m *ContributionAccountVerificationMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&ContributionAccountVerificationCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&ContributionAccountVerificationUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&ContributionAccountVerificationUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&ContributionAccountVerificationDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown ContributionAccountVerification mutation op: %q", m.Op())
+	}
+}
+
+// ContributionRoomClient is a client for the ContributionRoom schema.
+type ContributionRoomClient struct {
+	config
+}
+
+// NewContributionRoomClient returns a client for the ContributionRoom from the given config.
+func NewContributionRoomClient(c config) *ContributionRoomClient {
+	return &ContributionRoomClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `contributionroom.Hooks(f(g(h())))`.
+func (c *ContributionRoomClient) Use(hooks ...Hook) {
+	c.hooks.ContributionRoom = append(c.hooks.ContributionRoom, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `contributionroom.Intercept(f(g(h())))`.
+func (c *ContributionRoomClient) Intercept(interceptors ...Interceptor) {
+	c.inters.ContributionRoom = append(c.inters.ContributionRoom, interceptors...)
+}
+
+// Create returns a builder for creating a ContributionRoom entity.
+func (c *ContributionRoomClient) Create() *ContributionRoomCreate {
+	mutation := newContributionRoomMutation(c.config, OpCreate)
+	return &ContributionRoomCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of ContributionRoom entities.
+func (c *ContributionRoomClient) CreateBulk(builders ...*ContributionRoomCreate) *ContributionRoomCreateBulk {
+	return &ContributionRoomCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *ContributionRoomClient) MapCreateBulk(slice any, setFunc func(*ContributionRoomCreate, int)) *ContributionRoomCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &ContributionRoomCreateBulk{err: fmt.Errorf("calling to ContributionRoomClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*ContributionRoomCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &ContributionRoomCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for ContributionRoom.
+func (c *ContributionRoomClient) Update() *ContributionRoomUpdate {
+	mutation := newContributionRoomMutation(c.config, OpUpdate)
+	return &ContributionRoomUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *ContributionRoomClient) UpdateOne(_m *ContributionRoom) *ContributionRoomUpdateOne {
+	mutation := newContributionRoomMutation(c.config, OpUpdateOne, withContributionRoom(_m))
+	return &ContributionRoomUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *ContributionRoomClient) UpdateOneID(id int64) *ContributionRoomUpdateOne {
+	mutation := newContributionRoomMutation(c.config, OpUpdateOne, withContributionRoomID(id))
+	return &ContributionRoomUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for ContributionRoom.
+func (c *ContributionRoomClient) Delete() *ContributionRoomDelete {
+	mutation := newContributionRoomMutation(c.config, OpDelete)
+	return &ContributionRoomDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *ContributionRoomClient) DeleteOne(_m *ContributionRoom) *ContributionRoomDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *ContributionRoomClient) DeleteOneID(id int64) *ContributionRoomDeleteOne {
+	builder := c.Delete().Where(contributionroom.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &ContributionRoomDeleteOne{builder}
+}
+
+// Query returns a query builder for ContributionRoom.
+func (c *ContributionRoomClient) Query() *ContributionRoomQuery {
+	return &ContributionRoomQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeContributionRoom},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a ContributionRoom entity by its id.
+func (c *ContributionRoomClient) Get(ctx context.Context, id int64) (*ContributionRoom, error) {
+	return c.Query().Where(contributionroom.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *ContributionRoomClient) GetX(ctx context.Context, id int64) *ContributionRoom {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// QueryOwner queries the owner edge of a ContributionRoom.
+func (c *ContributionRoomClient) QueryOwner(_m *ContributionRoom) *UserQuery {
+	query := (&UserClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(contributionroom.Table, contributionroom.FieldID, id),
+			sqlgraph.To(user.Table, user.FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, false, contributionroom.OwnerTable, contributionroom.OwnerColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
+// QueryAccounts queries the accounts edge of a ContributionRoom.
+func (c *ContributionRoomClient) QueryAccounts(_m *ContributionRoom) *ContributionRoomAccountQuery {
+	query := (&ContributionRoomAccountClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(contributionroom.Table, contributionroom.FieldID, id),
+			sqlgraph.To(contributionroomaccount.Table, contributionroomaccount.FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, false, contributionroom.AccountsTable, contributionroom.AccountsColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
+// QueryPreferences queries the preferences edge of a ContributionRoom.
+func (c *ContributionRoomClient) QueryPreferences(_m *ContributionRoom) *UserContributionRoomPreferenceQuery {
+	query := (&UserContributionRoomPreferenceClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(contributionroom.Table, contributionroom.FieldID, id),
+			sqlgraph.To(usercontributionroompreference.Table, usercontributionroompreference.FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, false, contributionroom.PreferencesTable, contributionroom.PreferencesColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
+// Hooks returns the client hooks.
+func (c *ContributionRoomClient) Hooks() []Hook {
+	return c.hooks.ContributionRoom
+}
+
+// Interceptors returns the client interceptors.
+func (c *ContributionRoomClient) Interceptors() []Interceptor {
+	return c.inters.ContributionRoom
+}
+
+func (c *ContributionRoomClient) mutate(ctx context.Context, m *ContributionRoomMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&ContributionRoomCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&ContributionRoomUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&ContributionRoomUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&ContributionRoomDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown ContributionRoom mutation op: %q", m.Op())
+	}
+}
+
+// ContributionRoomAccountClient is a client for the ContributionRoomAccount schema.
+type ContributionRoomAccountClient struct {
+	config
+}
+
+// NewContributionRoomAccountClient returns a client for the ContributionRoomAccount from the given config.
+func NewContributionRoomAccountClient(c config) *ContributionRoomAccountClient {
+	return &ContributionRoomAccountClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `contributionroomaccount.Hooks(f(g(h())))`.
+func (c *ContributionRoomAccountClient) Use(hooks ...Hook) {
+	c.hooks.ContributionRoomAccount = append(c.hooks.ContributionRoomAccount, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `contributionroomaccount.Intercept(f(g(h())))`.
+func (c *ContributionRoomAccountClient) Intercept(interceptors ...Interceptor) {
+	c.inters.ContributionRoomAccount = append(c.inters.ContributionRoomAccount, interceptors...)
+}
+
+// Create returns a builder for creating a ContributionRoomAccount entity.
+func (c *ContributionRoomAccountClient) Create() *ContributionRoomAccountCreate {
+	mutation := newContributionRoomAccountMutation(c.config, OpCreate)
+	return &ContributionRoomAccountCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of ContributionRoomAccount entities.
+func (c *ContributionRoomAccountClient) CreateBulk(builders ...*ContributionRoomAccountCreate) *ContributionRoomAccountCreateBulk {
+	return &ContributionRoomAccountCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *ContributionRoomAccountClient) MapCreateBulk(slice any, setFunc func(*ContributionRoomAccountCreate, int)) *ContributionRoomAccountCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &ContributionRoomAccountCreateBulk{err: fmt.Errorf("calling to ContributionRoomAccountClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*ContributionRoomAccountCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &ContributionRoomAccountCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for ContributionRoomAccount.
+func (c *ContributionRoomAccountClient) Update() *ContributionRoomAccountUpdate {
+	mutation := newContributionRoomAccountMutation(c.config, OpUpdate)
+	return &ContributionRoomAccountUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *ContributionRoomAccountClient) UpdateOne(_m *ContributionRoomAccount) *ContributionRoomAccountUpdateOne {
+	mutation := newContributionRoomAccountMutation(c.config, OpUpdateOne, withContributionRoomAccount(_m))
+	return &ContributionRoomAccountUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *ContributionRoomAccountClient) UpdateOneID(id int64) *ContributionRoomAccountUpdateOne {
+	mutation := newContributionRoomAccountMutation(c.config, OpUpdateOne, withContributionRoomAccountID(id))
+	return &ContributionRoomAccountUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for ContributionRoomAccount.
+func (c *ContributionRoomAccountClient) Delete() *ContributionRoomAccountDelete {
+	mutation := newContributionRoomAccountMutation(c.config, OpDelete)
+	return &ContributionRoomAccountDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *ContributionRoomAccountClient) DeleteOne(_m *ContributionRoomAccount) *ContributionRoomAccountDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *ContributionRoomAccountClient) DeleteOneID(id int64) *ContributionRoomAccountDeleteOne {
+	builder := c.Delete().Where(contributionroomaccount.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &ContributionRoomAccountDeleteOne{builder}
+}
+
+// Query returns a query builder for ContributionRoomAccount.
+func (c *ContributionRoomAccountClient) Query() *ContributionRoomAccountQuery {
+	return &ContributionRoomAccountQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeContributionRoomAccount},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a ContributionRoomAccount entity by its id.
+func (c *ContributionRoomAccountClient) Get(ctx context.Context, id int64) (*ContributionRoomAccount, error) {
+	return c.Query().Where(contributionroomaccount.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *ContributionRoomAccountClient) GetX(ctx context.Context, id int64) *ContributionRoomAccount {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// QueryRoom queries the room edge of a ContributionRoomAccount.
+func (c *ContributionRoomAccountClient) QueryRoom(_m *ContributionRoomAccount) *ContributionRoomQuery {
+	query := (&ContributionRoomClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(contributionroomaccount.Table, contributionroomaccount.FieldID, id),
+			sqlgraph.To(contributionroom.Table, contributionroom.FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, true, contributionroomaccount.RoomTable, contributionroomaccount.RoomColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
+// QueryAccount queries the account edge of a ContributionRoomAccount.
+func (c *ContributionRoomAccountClient) QueryAccount(_m *ContributionRoomAccount) *AccountQuery {
+	query := (&AccountClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(contributionroomaccount.Table, contributionroomaccount.FieldID, id),
+			sqlgraph.To(account.Table, account.FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, false, contributionroomaccount.AccountTable, contributionroomaccount.AccountColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
+// Hooks returns the client hooks.
+func (c *ContributionRoomAccountClient) Hooks() []Hook {
+	return c.hooks.ContributionRoomAccount
+}
+
+// Interceptors returns the client interceptors.
+func (c *ContributionRoomAccountClient) Interceptors() []Interceptor {
+	return c.inters.ContributionRoomAccount
+}
+
+func (c *ContributionRoomAccountClient) mutate(ctx context.Context, m *ContributionRoomAccountMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&ContributionRoomAccountCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&ContributionRoomAccountUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&ContributionRoomAccountUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&ContributionRoomAccountDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown ContributionRoomAccount mutation op: %q", m.Op())
+	}
+}
+
 // ErrorPassthroughRuleClient is a client for the ErrorPassthroughRule schema.
 type ErrorPassthroughRuleClient struct {
 	config
@@ -3213,6 +3776,22 @@ func (c *GroupClient) QueryAllowedUsers(_m *Group) *UserQuery {
 			sqlgraph.From(group.Table, group.FieldID, id),
 			sqlgraph.To(user.Table, user.FieldID),
 			sqlgraph.Edge(sqlgraph.M2M, true, group.AllowedUsersTable, group.AllowedUsersPrimaryKey...),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
+// QueryCompositeModelRoutes queries the composite_model_routes edge of a Group.
+func (c *GroupClient) QueryCompositeModelRoutes(_m *Group) *CompositeModelRouteQuery {
+	query := (&CompositeModelRouteClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(group.Table, group.FieldID, id),
+			sqlgraph.To(compositemodelroute.Table, compositemodelroute.FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, false, group.CompositeModelRoutesTable, group.CompositeModelRoutesColumn),
 		)
 		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
 		return fromV, nil
@@ -5351,6 +5930,320 @@ func (c *TLSFingerprintProfileClient) mutate(ctx context.Context, m *TLSFingerpr
 	}
 }
 
+// TicketClient is a client for the Ticket schema.
+type TicketClient struct {
+	config
+}
+
+// NewTicketClient returns a client for the Ticket from the given config.
+func NewTicketClient(c config) *TicketClient {
+	return &TicketClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `ticket.Hooks(f(g(h())))`.
+func (c *TicketClient) Use(hooks ...Hook) {
+	c.hooks.Ticket = append(c.hooks.Ticket, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `ticket.Intercept(f(g(h())))`.
+func (c *TicketClient) Intercept(interceptors ...Interceptor) {
+	c.inters.Ticket = append(c.inters.Ticket, interceptors...)
+}
+
+// Create returns a builder for creating a Ticket entity.
+func (c *TicketClient) Create() *TicketCreate {
+	mutation := newTicketMutation(c.config, OpCreate)
+	return &TicketCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of Ticket entities.
+func (c *TicketClient) CreateBulk(builders ...*TicketCreate) *TicketCreateBulk {
+	return &TicketCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *TicketClient) MapCreateBulk(slice any, setFunc func(*TicketCreate, int)) *TicketCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &TicketCreateBulk{err: fmt.Errorf("calling to TicketClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*TicketCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &TicketCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for Ticket.
+func (c *TicketClient) Update() *TicketUpdate {
+	mutation := newTicketMutation(c.config, OpUpdate)
+	return &TicketUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *TicketClient) UpdateOne(_m *Ticket) *TicketUpdateOne {
+	mutation := newTicketMutation(c.config, OpUpdateOne, withTicket(_m))
+	return &TicketUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *TicketClient) UpdateOneID(id int64) *TicketUpdateOne {
+	mutation := newTicketMutation(c.config, OpUpdateOne, withTicketID(id))
+	return &TicketUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for Ticket.
+func (c *TicketClient) Delete() *TicketDelete {
+	mutation := newTicketMutation(c.config, OpDelete)
+	return &TicketDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *TicketClient) DeleteOne(_m *Ticket) *TicketDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *TicketClient) DeleteOneID(id int64) *TicketDeleteOne {
+	builder := c.Delete().Where(ticket.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &TicketDeleteOne{builder}
+}
+
+// Query returns a query builder for Ticket.
+func (c *TicketClient) Query() *TicketQuery {
+	return &TicketQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeTicket},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a Ticket entity by its id.
+func (c *TicketClient) Get(ctx context.Context, id int64) (*Ticket, error) {
+	return c.Query().Where(ticket.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *TicketClient) GetX(ctx context.Context, id int64) *Ticket {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// QueryMessages queries the messages edge of a Ticket.
+func (c *TicketClient) QueryMessages(_m *Ticket) *TicketMessageQuery {
+	query := (&TicketMessageClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(ticket.Table, ticket.FieldID, id),
+			sqlgraph.To(ticketmessage.Table, ticketmessage.FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, false, ticket.MessagesTable, ticket.MessagesColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
+// QueryUser queries the user edge of a Ticket.
+func (c *TicketClient) QueryUser(_m *Ticket) *UserQuery {
+	query := (&UserClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(ticket.Table, ticket.FieldID, id),
+			sqlgraph.To(user.Table, user.FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, true, ticket.UserTable, ticket.UserColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
+// Hooks returns the client hooks.
+func (c *TicketClient) Hooks() []Hook {
+	return c.hooks.Ticket
+}
+
+// Interceptors returns the client interceptors.
+func (c *TicketClient) Interceptors() []Interceptor {
+	return c.inters.Ticket
+}
+
+func (c *TicketClient) mutate(ctx context.Context, m *TicketMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&TicketCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&TicketUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&TicketUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&TicketDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown Ticket mutation op: %q", m.Op())
+	}
+}
+
+// TicketMessageClient is a client for the TicketMessage schema.
+type TicketMessageClient struct {
+	config
+}
+
+// NewTicketMessageClient returns a client for the TicketMessage from the given config.
+func NewTicketMessageClient(c config) *TicketMessageClient {
+	return &TicketMessageClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `ticketmessage.Hooks(f(g(h())))`.
+func (c *TicketMessageClient) Use(hooks ...Hook) {
+	c.hooks.TicketMessage = append(c.hooks.TicketMessage, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `ticketmessage.Intercept(f(g(h())))`.
+func (c *TicketMessageClient) Intercept(interceptors ...Interceptor) {
+	c.inters.TicketMessage = append(c.inters.TicketMessage, interceptors...)
+}
+
+// Create returns a builder for creating a TicketMessage entity.
+func (c *TicketMessageClient) Create() *TicketMessageCreate {
+	mutation := newTicketMessageMutation(c.config, OpCreate)
+	return &TicketMessageCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of TicketMessage entities.
+func (c *TicketMessageClient) CreateBulk(builders ...*TicketMessageCreate) *TicketMessageCreateBulk {
+	return &TicketMessageCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *TicketMessageClient) MapCreateBulk(slice any, setFunc func(*TicketMessageCreate, int)) *TicketMessageCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &TicketMessageCreateBulk{err: fmt.Errorf("calling to TicketMessageClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*TicketMessageCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &TicketMessageCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for TicketMessage.
+func (c *TicketMessageClient) Update() *TicketMessageUpdate {
+	mutation := newTicketMessageMutation(c.config, OpUpdate)
+	return &TicketMessageUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *TicketMessageClient) UpdateOne(_m *TicketMessage) *TicketMessageUpdateOne {
+	mutation := newTicketMessageMutation(c.config, OpUpdateOne, withTicketMessage(_m))
+	return &TicketMessageUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *TicketMessageClient) UpdateOneID(id int64) *TicketMessageUpdateOne {
+	mutation := newTicketMessageMutation(c.config, OpUpdateOne, withTicketMessageID(id))
+	return &TicketMessageUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for TicketMessage.
+func (c *TicketMessageClient) Delete() *TicketMessageDelete {
+	mutation := newTicketMessageMutation(c.config, OpDelete)
+	return &TicketMessageDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *TicketMessageClient) DeleteOne(_m *TicketMessage) *TicketMessageDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *TicketMessageClient) DeleteOneID(id int64) *TicketMessageDeleteOne {
+	builder := c.Delete().Where(ticketmessage.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &TicketMessageDeleteOne{builder}
+}
+
+// Query returns a query builder for TicketMessage.
+func (c *TicketMessageClient) Query() *TicketMessageQuery {
+	return &TicketMessageQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeTicketMessage},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a TicketMessage entity by its id.
+func (c *TicketMessageClient) Get(ctx context.Context, id int64) (*TicketMessage, error) {
+	return c.Query().Where(ticketmessage.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *TicketMessageClient) GetX(ctx context.Context, id int64) *TicketMessage {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// QueryTicket queries the ticket edge of a TicketMessage.
+func (c *TicketMessageClient) QueryTicket(_m *TicketMessage) *TicketQuery {
+	query := (&TicketClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(ticketmessage.Table, ticketmessage.FieldID, id),
+			sqlgraph.To(ticket.Table, ticket.FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, true, ticketmessage.TicketTable, ticketmessage.TicketColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
+// Hooks returns the client hooks.
+func (c *TicketMessageClient) Hooks() []Hook {
+	return c.hooks.TicketMessage
+}
+
+// Interceptors returns the client interceptors.
+func (c *TicketMessageClient) Interceptors() []Interceptor {
+	return c.inters.TicketMessage
+}
+
+func (c *TicketMessageClient) mutate(ctx context.Context, m *TicketMessageMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&TicketMessageCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&TicketMessageUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&TicketMessageUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&TicketMessageDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown TicketMessage mutation op: %q", m.Op())
+	}
+}
+
 // UsageCleanupTaskClient is a client for the UsageCleanupTask schema.
 type UsageCleanupTaskClient struct {
 	config
@@ -5878,6 +6771,22 @@ func (c *UserClient) QueryAnnouncementReads(_m *User) *AnnouncementReadQuery {
 			sqlgraph.From(user.Table, user.FieldID, id),
 			sqlgraph.To(announcementread.Table, announcementread.FieldID),
 			sqlgraph.Edge(sqlgraph.O2M, false, user.AnnouncementReadsTable, user.AnnouncementReadsColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
+// QueryTickets queries the tickets edge of a User.
+func (c *UserClient) QueryTickets(_m *User) *TicketQuery {
+	query := (&TicketClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(user.Table, user.FieldID, id),
+			sqlgraph.To(ticket.Table, ticket.FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, false, user.TicketsTable, user.TicketsColumn),
 		)
 		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
 		return fromV, nil
@@ -6488,6 +7397,187 @@ func (c *UserAttributeValueClient) mutate(ctx context.Context, m *UserAttributeV
 	}
 }
 
+// UserContributionRoomPreferenceClient is a client for the UserContributionRoomPreference schema.
+type UserContributionRoomPreferenceClient struct {
+	config
+}
+
+// NewUserContributionRoomPreferenceClient returns a client for the UserContributionRoomPreference from the given config.
+func NewUserContributionRoomPreferenceClient(c config) *UserContributionRoomPreferenceClient {
+	return &UserContributionRoomPreferenceClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `usercontributionroompreference.Hooks(f(g(h())))`.
+func (c *UserContributionRoomPreferenceClient) Use(hooks ...Hook) {
+	c.hooks.UserContributionRoomPreference = append(c.hooks.UserContributionRoomPreference, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `usercontributionroompreference.Intercept(f(g(h())))`.
+func (c *UserContributionRoomPreferenceClient) Intercept(interceptors ...Interceptor) {
+	c.inters.UserContributionRoomPreference = append(c.inters.UserContributionRoomPreference, interceptors...)
+}
+
+// Create returns a builder for creating a UserContributionRoomPreference entity.
+func (c *UserContributionRoomPreferenceClient) Create() *UserContributionRoomPreferenceCreate {
+	mutation := newUserContributionRoomPreferenceMutation(c.config, OpCreate)
+	return &UserContributionRoomPreferenceCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of UserContributionRoomPreference entities.
+func (c *UserContributionRoomPreferenceClient) CreateBulk(builders ...*UserContributionRoomPreferenceCreate) *UserContributionRoomPreferenceCreateBulk {
+	return &UserContributionRoomPreferenceCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *UserContributionRoomPreferenceClient) MapCreateBulk(slice any, setFunc func(*UserContributionRoomPreferenceCreate, int)) *UserContributionRoomPreferenceCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &UserContributionRoomPreferenceCreateBulk{err: fmt.Errorf("calling to UserContributionRoomPreferenceClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*UserContributionRoomPreferenceCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &UserContributionRoomPreferenceCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for UserContributionRoomPreference.
+func (c *UserContributionRoomPreferenceClient) Update() *UserContributionRoomPreferenceUpdate {
+	mutation := newUserContributionRoomPreferenceMutation(c.config, OpUpdate)
+	return &UserContributionRoomPreferenceUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *UserContributionRoomPreferenceClient) UpdateOne(_m *UserContributionRoomPreference) *UserContributionRoomPreferenceUpdateOne {
+	mutation := newUserContributionRoomPreferenceMutation(c.config, OpUpdateOne, withUserContributionRoomPreference(_m))
+	return &UserContributionRoomPreferenceUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *UserContributionRoomPreferenceClient) UpdateOneID(id int64) *UserContributionRoomPreferenceUpdateOne {
+	mutation := newUserContributionRoomPreferenceMutation(c.config, OpUpdateOne, withUserContributionRoomPreferenceID(id))
+	return &UserContributionRoomPreferenceUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for UserContributionRoomPreference.
+func (c *UserContributionRoomPreferenceClient) Delete() *UserContributionRoomPreferenceDelete {
+	mutation := newUserContributionRoomPreferenceMutation(c.config, OpDelete)
+	return &UserContributionRoomPreferenceDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *UserContributionRoomPreferenceClient) DeleteOne(_m *UserContributionRoomPreference) *UserContributionRoomPreferenceDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *UserContributionRoomPreferenceClient) DeleteOneID(id int64) *UserContributionRoomPreferenceDeleteOne {
+	builder := c.Delete().Where(usercontributionroompreference.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &UserContributionRoomPreferenceDeleteOne{builder}
+}
+
+// Query returns a query builder for UserContributionRoomPreference.
+func (c *UserContributionRoomPreferenceClient) Query() *UserContributionRoomPreferenceQuery {
+	return &UserContributionRoomPreferenceQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeUserContributionRoomPreference},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a UserContributionRoomPreference entity by its id.
+func (c *UserContributionRoomPreferenceClient) Get(ctx context.Context, id int64) (*UserContributionRoomPreference, error) {
+	return c.Query().Where(usercontributionroompreference.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *UserContributionRoomPreferenceClient) GetX(ctx context.Context, id int64) *UserContributionRoomPreference {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// QueryUser queries the user edge of a UserContributionRoomPreference.
+func (c *UserContributionRoomPreferenceClient) QueryUser(_m *UserContributionRoomPreference) *UserQuery {
+	query := (&UserClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(usercontributionroompreference.Table, usercontributionroompreference.FieldID, id),
+			sqlgraph.To(user.Table, user.FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, false, usercontributionroompreference.UserTable, usercontributionroompreference.UserColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
+// QueryAPIKey queries the api_key edge of a UserContributionRoomPreference.
+func (c *UserContributionRoomPreferenceClient) QueryAPIKey(_m *UserContributionRoomPreference) *APIKeyQuery {
+	query := (&APIKeyClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(usercontributionroompreference.Table, usercontributionroompreference.FieldID, id),
+			sqlgraph.To(apikey.Table, apikey.FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, true, usercontributionroompreference.APIKeyTable, usercontributionroompreference.APIKeyColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
+// QueryRoom queries the room edge of a UserContributionRoomPreference.
+func (c *UserContributionRoomPreferenceClient) QueryRoom(_m *UserContributionRoomPreference) *ContributionRoomQuery {
+	query := (&ContributionRoomClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(usercontributionroompreference.Table, usercontributionroompreference.FieldID, id),
+			sqlgraph.To(contributionroom.Table, contributionroom.FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, true, usercontributionroompreference.RoomTable, usercontributionroompreference.RoomColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
+// Hooks returns the client hooks.
+func (c *UserContributionRoomPreferenceClient) Hooks() []Hook {
+	return c.hooks.UserContributionRoomPreference
+}
+
+// Interceptors returns the client interceptors.
+func (c *UserContributionRoomPreferenceClient) Interceptors() []Interceptor {
+	return c.inters.UserContributionRoomPreference
+}
+
+func (c *UserContributionRoomPreferenceClient) mutate(ctx context.Context, m *UserContributionRoomPreferenceMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&UserContributionRoomPreferenceCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&UserContributionRoomPreferenceUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&UserContributionRoomPreferenceUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&UserContributionRoomPreferenceDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown UserContributionRoomPreference mutation op: %q", m.Op())
+	}
+}
+
 // UserPlatformQuotaClient is a client for the UserPlatformQuota schema.
 type UserPlatformQuotaClient struct {
 	config
@@ -6844,24 +7934,28 @@ type (
 		APIKey, Account, AccountGroup, Announcement, AnnouncementRead, AuthIdentity,
 		AuthIdentityChannel, BatchImageEvent, BatchImageItem, BatchImageJob,
 		ChannelMonitor, ChannelMonitorDailyRollup, ChannelMonitorHistory,
-		ChannelMonitorRequestTemplate, CompositeModelRoute, ErrorPassthroughRule,
-		Group, IdempotencyRecord, IdentityAdoptionDecision, PaymentAuditLog,
-		PaymentOrder, PaymentProviderInstance, PendingAuthSession, PromoCode,
-		PromoCodeUsage, Proxy, RedeemCode, SecuritySecret, Setting, SubscriptionPlan,
-		TLSFingerprintProfile, UsageCleanupTask, UsageLog, User, UserAllowedGroup,
-		UserAttributeDefinition, UserAttributeValue, UserPlatformQuota,
+		ChannelMonitorRequestTemplate, CompositeModelRoute,
+		ContributionAccountVerification, ContributionRoom, ContributionRoomAccount,
+		ErrorPassthroughRule, Group, IdempotencyRecord, IdentityAdoptionDecision,
+		PaymentAuditLog, PaymentOrder, PaymentProviderInstance, PendingAuthSession,
+		PromoCode, PromoCodeUsage, Proxy, RedeemCode, SecuritySecret, Setting,
+		SubscriptionPlan, TLSFingerprintProfile, Ticket, TicketMessage,
+		UsageCleanupTask, UsageLog, User, UserAllowedGroup, UserAttributeDefinition,
+		UserAttributeValue, UserContributionRoomPreference, UserPlatformQuota,
 		UserSubscription []ent.Hook
 	}
 	inters struct {
 		APIKey, Account, AccountGroup, Announcement, AnnouncementRead, AuthIdentity,
 		AuthIdentityChannel, BatchImageEvent, BatchImageItem, BatchImageJob,
 		ChannelMonitor, ChannelMonitorDailyRollup, ChannelMonitorHistory,
-		ChannelMonitorRequestTemplate, CompositeModelRoute, ErrorPassthroughRule,
-		Group, IdempotencyRecord, IdentityAdoptionDecision, PaymentAuditLog,
-		PaymentOrder, PaymentProviderInstance, PendingAuthSession, PromoCode,
-		PromoCodeUsage, Proxy, RedeemCode, SecuritySecret, Setting, SubscriptionPlan,
-		TLSFingerprintProfile, UsageCleanupTask, UsageLog, User, UserAllowedGroup,
-		UserAttributeDefinition, UserAttributeValue, UserPlatformQuota,
+		ChannelMonitorRequestTemplate, CompositeModelRoute,
+		ContributionAccountVerification, ContributionRoom, ContributionRoomAccount,
+		ErrorPassthroughRule, Group, IdempotencyRecord, IdentityAdoptionDecision,
+		PaymentAuditLog, PaymentOrder, PaymentProviderInstance, PendingAuthSession,
+		PromoCode, PromoCodeUsage, Proxy, RedeemCode, SecuritySecret, Setting,
+		SubscriptionPlan, TLSFingerprintProfile, Ticket, TicketMessage,
+		UsageCleanupTask, UsageLog, User, UserAllowedGroup, UserAttributeDefinition,
+		UserAttributeValue, UserContributionRoomPreference, UserPlatformQuota,
 		UserSubscription []ent.Interceptor
 	}
 )

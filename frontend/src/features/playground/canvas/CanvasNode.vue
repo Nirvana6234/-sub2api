@@ -45,8 +45,9 @@
       <button v-if="imageToolbarVisible('mask')" type="button" class="btn btn-ghost btn-icon h-7 w-7 p-0" :title="t('playground.canvasMaskImage')" @click.stop="emit('mask-image', node.id, imageIndex)"><Icon name="edit" size="xs" /><span class="sr-only">{{ t('playground.canvasMaskImage') }}</span></button>
       <button v-if="imageToolbarVisible('angle')" type="button" class="btn btn-ghost btn-icon h-7 w-7 p-0" :title="t('playground.canvasAngleImage')" @click.stop="emit('angle-image', node.id, imageIndex)"><Icon name="eye" size="xs" /><span class="sr-only">{{ t('playground.canvasAngleImage') }}</span></button>
       <button v-if="imageToolbarVisible('freeResize')" type="button" class="btn btn-ghost btn-icon h-7 w-7 p-0" :class="node.freeResize ? 'text-teal-600 dark:text-teal-300' : ''" :title="node.freeResize ? t('playground.canvasLockAspectRatio') : t('playground.canvasFreeResize')" @click.stop="emit('toggle-free-resize', node.id)"><Icon :name="node.freeResize ? 'lockOpen' : 'lock'" size="xs" /><span class="sr-only">{{ node.freeResize ? t('playground.canvasLockAspectRatio') : t('playground.canvasFreeResize') }}</span></button>
-      <span v-if="imageToolbarVisible('download') || imageToolbarVisible('saveAsset')" class="mx-0.5 h-5 w-px bg-gray-200 dark:bg-dark-600"></span>
+      <span v-if="imageToolbarVisible('download') || imageToolbarVisible('copy') || imageToolbarVisible('saveAsset')" class="mx-0.5 h-5 w-px bg-gray-200 dark:bg-dark-600"></span>
       <button v-if="imageToolbarVisible('download')" type="button" class="btn btn-ghost btn-icon h-7 w-7 p-0" :title="t('playground.canvasDownload')" @click.stop="emit('download', node.id, imageIndex)"><Icon name="download" size="xs" /><span class="sr-only">{{ t('playground.canvasDownload') }}</span></button>
+      <button v-if="imageToolbarVisible('copy')" type="button" class="btn btn-ghost btn-icon h-7 w-7 p-0" :title="t('playground.canvasCopyImage')" @click.stop="emit('copy-image', node.id, imageIndex)"><Icon name="clipboard" size="xs" /><span class="sr-only">{{ t('playground.canvasCopyImage') }}</span></button>
       <button v-if="imageToolbarVisible('saveAsset')" type="button" class="btn btn-ghost btn-icon h-7 w-7 p-0" :title="t('playground.canvasSaveAsset')" @click.stop="emit('save-asset', node.id, imageIndex)"><Icon name="inbox" size="xs" /><span class="sr-only">{{ t('playground.canvasSaveAsset') }}</span></button>
       <button type="button" class="btn btn-ghost btn-icon h-7 w-7 p-0 text-gray-500" :title="t('playground.canvasCustomizeImageToolbar')" @click.stop="openImageToolbarSettings"><Icon name="cog" size="xs" /><span class="sr-only">{{ t('playground.canvasCustomizeImageToolbar') }}</span></button>
     </div>
@@ -134,7 +135,7 @@
     </header>
 
     <CanvasNodeReferenceBar
-      v-if="node.kind !== 'result' && node.type !== 'group' && (selected || nodeHovered) && !(pluginNode && pluginPanelOpen)"
+      v-if="node.kind !== 'result' && node.type !== 'group' && selected && !(pluginNode && pluginPanelOpen)"
       :references="incomingReferences ?? []"
       @start-selection="emit('start-reference-selection')"
       @disconnect-reference="emit('disconnect-reference', node.id, $event)"
@@ -181,7 +182,7 @@
         {{ node.title || fallbackNodeTitle }}
       </button>
     </div>
-    <div v-else-if="node.type === 'text'" class="relative bg-white p-3 dark:bg-dark-900" data-canvas-no-zoom>
+    <div v-if="node.type === 'text'" class="relative bg-white p-3 dark:bg-dark-900" data-canvas-no-zoom>
       <div v-if="selected && node.kind !== 'result'" class="absolute left-1/2 z-50 flex h-9 max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-0.5 overflow-x-auto rounded-md border border-gray-200 bg-white px-1 shadow-lg dark:border-dark-600 dark:bg-dark-800" :class="toolbarPlacementClass" data-canvas-text-toolbar data-canvas-no-zoom @pointerdown.stop>
         <button type="button" class="btn btn-ghost btn-icon h-7 w-7 p-0" :title="isEditingContent ? t('playground.canvasTextPreview') : t('playground.canvasEditText')" @click="isEditingContent ? stopEditingText() : void focusTextEditor()"><Icon :name="isEditingContent ? 'eye' : 'edit'" size="xs" /><span class="sr-only">{{ isEditingContent ? t('playground.canvasTextPreview') : t('playground.canvasEditText') }}</span></button>
         <button type="button" class="btn btn-ghost btn-icon h-7 w-7 p-0" :title="t('playground.canvasTextSmaller')" @click="adjustTextSize(-1)"><Icon name="minus" size="xs" /><span class="sr-only">{{ t('playground.canvasTextSmaller') }}</span></button>
@@ -222,6 +223,10 @@
         @keydown.esc.stop="stopEditingText"
         @update:model-value="emit('update-prompt', node.id, $event)"
       />
+      <div v-if="node.status === 'error' && !(displayedTextContent || '').trim()" class="mt-2 flex items-center justify-between gap-2 rounded border border-red-100 bg-red-50 px-2.5 py-2 text-[11px] text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-200">
+        <span class="min-w-0 truncate">{{ node.errorMessage || t('playground.canvasGenerationFailed') }}</span>
+        <button type="button" class="btn btn-secondary h-7 shrink-0 gap-1 px-2 text-[10px]" :title="t('playground.canvasRetryGeneration')" @click.stop="emit('retry-generation', node.id)"><Icon name="refresh" size="xs" />{{ t('playground.canvasRetryGeneration') }}</button>
+      </div>
     </div>
     <div v-else-if="node.type === 'config'" class="space-y-3 bg-white p-3 dark:bg-dark-900" data-canvas-no-zoom>
       <div class="grid grid-cols-4 gap-1 rounded-lg bg-gray-100 p-1 dark:bg-dark-800" data-canvas-config-mode>
@@ -273,6 +278,8 @@
           :mode="configMode"
           :count="node.config?.count ?? '1'"
           :size="node.config?.size ?? '1024x1024'"
+          :custom-width="node.config?.customWidth ?? '1024'"
+          :custom-height="node.config?.customHeight ?? '1024'"
           :quality="node.config?.quality ?? 'auto'"
           :background="node.config?.background ?? 'auto'"
           :resolution="node.config?.resolution ?? '720p'"
@@ -421,7 +428,7 @@
         <button v-else type="button" class="btn btn-primary h-8 gap-1 px-3 text-xs" :disabled="!builtinPrompt.trim()" data-canvas-plugin-generate @click.stop="emit('generate-plugin', node.id)"><Icon name="sparkles" size="xs" />{{ t('playground.generate') }}</button>
       </div>
     </section>
-    <div v-else-if="!pluginNode" class="relative flex min-h-64 items-center justify-center bg-gray-100 dark:bg-dark-950">
+    <div v-else-if="!pluginNode && (node.type === 'image' || node.type === 'video' || node.type === 'audio')" class="relative flex min-h-64 items-center justify-center bg-gray-100 dark:bg-dark-950">
       <video v-if="node.type === 'video' && node.videoUrl" ref="videoElement" :src="node.videoUrl" class="max-h-[360px] w-full object-contain" controls preload="metadata"></video>
       <audio v-else-if="node.type === 'audio' && node.audioUrl" :src="node.audioUrl" class="w-[90%]" controls preload="metadata"></audio>
             <img v-else-if="displayedImageUrl" :src="displayedImageUrl" :alt="node.prompt || t('playground.generatedImage')" class="max-h-[360px] w-full" :class="node.freeResize ? 'object-fill' : 'object-contain'" draggable="false">
@@ -432,7 +439,7 @@
           <Icon name="upload" size="xs" />
           {{ t(mediaUploadLabelKey) }}
         </button>
-        <button v-if="node.status === 'error' && (node.type === 'video' || node.type === 'audio' || node.type === 'text')" type="button" class="btn btn-secondary h-7 gap-1 px-2.5 text-[11px]" :title="t('playground.canvasRetryGeneration')" @click.stop="emit('retry-generation', node.id)">
+        <button v-if="node.status === 'error' && (node.type === 'video' || node.type === 'audio')" type="button" class="btn btn-secondary h-7 gap-1 px-2.5 text-[11px]" :title="t('playground.canvasRetryGeneration')" @click.stop="emit('retry-generation', node.id)">
           <Icon name="refresh" size="xs" />
           {{ t('playground.canvasRetryGeneration') }}
         </button>
@@ -453,8 +460,8 @@
           <Icon :name="imageBatchExpanded ? 'chevronUp' : 'chevronDown'" size="xs" />
         </span>
       </button>
-      <div v-if="imageBatchExpanded" class="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3" data-canvas-image-batch-list>
-        <div v-for="(slot, index) in imageSlots" :key="slot.id" class="group relative overflow-hidden rounded-md border" :class="index === imageIndex ? 'border-teal-400 ring-1 ring-teal-300' : 'border-gray-200 dark:border-dark-700'" data-canvas-image-batch-item>
+          <div v-if="imageBatchExpanded" class="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3" data-canvas-image-batch-list>
+            <div v-for="(slot, index) in imageSlots" :key="slot.id" class="group relative overflow-hidden rounded-md border" :class="index === imageIndex ? 'border-teal-400 ring-1 ring-teal-300' : 'border-gray-200 dark:border-dark-700'" data-canvas-image-batch-item>
           <button v-if="slot.status === 'success' && slot.url" type="button" class="block aspect-square w-full overflow-hidden bg-gray-100 dark:bg-dark-800" :title="t('playground.canvasSetPrimaryImage')" @click.stop="selectImageVariant(index)" @dblclick.stop="emit('view-image', node.id, index)">
             <img :src="slot.url" :alt="`${t('playground.canvasResult', { index: index + 1 })}`" class="h-full w-full object-cover">
           </button>
@@ -467,11 +474,32 @@
             <span class="rounded bg-gray-950/65 px-1.5 py-0.5 text-[9px] text-white">{{ index + 1 }}</span>
             <div v-if="slot.status === 'success' && slot.url" class="flex items-center gap-0.5">
               <button type="button" class="grid h-6 w-6 place-items-center rounded bg-white/90 text-gray-600 shadow-sm hover:text-teal-700 dark:bg-dark-900/90 dark:text-dark-200 dark:hover:text-teal-200" :title="t('playground.canvasDownload')" @click.stop="emit('download', node.id, index)"><Icon name="download" size="xs" /><span class="sr-only">{{ t('playground.canvasDownload') }}</span></button>
+              <button type="button" class="grid h-6 w-6 place-items-center rounded bg-white/90 text-gray-600 shadow-sm hover:text-teal-700 dark:bg-dark-900/90 dark:text-dark-200 dark:hover:text-teal-200" :title="t('playground.canvasCopyImage')" @click.stop="emit('copy-image', node.id, index)"><Icon name="clipboard" size="xs" /><span class="sr-only">{{ t('playground.canvasCopyImage') }}</span></button>
               <button v-if="node.kind === 'result'" type="button" class="grid h-6 w-6 place-items-center rounded bg-white/90 text-teal-700 shadow-sm dark:bg-dark-900/90 dark:text-teal-200" :title="t('playground.canvasUseAsReference')" @click.stop="emit('use-reference', node.id, index)"><Icon name="upload" size="xs" /><span class="sr-only">{{ t('playground.canvasUseAsReference') }}</span></button>
               <button type="button" class="grid h-6 w-6 place-items-center rounded bg-white/90 text-gray-600 shadow-sm hover:text-teal-700 dark:bg-dark-900/90 dark:text-dark-200 dark:hover:text-teal-200" :title="t('playground.canvasDuplicateNode')" @click.stop="emit('duplicate-image', node.id, index)"><Icon name="copy" size="xs" /><span class="sr-only">{{ t('playground.canvasDuplicateNode') }}</span></button>
             </div>
             <button type="button" class="grid h-6 w-6 place-items-center rounded bg-white/90 text-gray-600 shadow-sm hover:text-red-600 dark:bg-dark-900/90 dark:text-dark-200" :title="t('playground.canvasDeleteImage')" @click.stop="emit('delete-image', node.id, index)"><Icon name="trash" size="xs" /><span class="sr-only">{{ t('playground.canvasDeleteImage') }}</span></button>
           </div>
+          <label v-if="slot.status === 'success' && slot.url" class="mt-2 block px-1 text-[10px] font-medium text-gray-500 dark:text-dark-400">
+            {{ t('playground.canvasRevisionPromptLabel') }}
+            <textarea
+              class="textarea mt-1 min-h-16 w-full resize-y text-[10px] leading-4"
+              :value="slot.revisionPrompt ?? ''"
+              :placeholder="slot.prompt || node.prompt || t('playground.canvasRevisionPromptPlaceholder')"
+              @pointerdown.stop
+              @click.stop
+              @input.stop="emit('update-image-prompt', node.id, index, ($event.target as HTMLTextAreaElement).value)"
+            ></textarea>
+            <button
+              type="button"
+              class="btn btn-secondary mt-1.5 h-7 w-full gap-1 text-[10px]"
+              :disabled="node.status === 'generating' || !slot.revisionPrompt?.trim()"
+              @click.stop="emit('generate-image-child', node.id, index)"
+            >
+              <Icon name="sparkles" size="xs" />
+              {{ t('playground.canvasGenerateChildRevision') }}
+            </button>
+          </label>
         </div>
       </div>
     </div>
@@ -499,14 +527,22 @@
             <Icon name="download" size="xs" :class="{ 'animate-pulse': downloading }" />
             <span class="sr-only">{{ t('playground.canvasDownload') }}</span>
           </button>
+          <button v-if="node.type === 'image'" type="button" class="btn btn-ghost btn-icon h-7 w-7 p-0 text-gray-500" :title="t('playground.canvasCopyImage')" data-canvas-no-zoom @click.stop="emit('copy-image', node.id, imageIndex)">
+            <Icon name="clipboard" size="xs" />
+            <span class="sr-only">{{ t('playground.canvasCopyImage') }}</span>
+          </button>
           <button v-if="node.type === 'audio'" type="button" class="btn btn-ghost btn-icon h-7 w-7 p-0 text-gray-500" :class="transcribing ? 'text-teal-700' : ''" :disabled="transcribing" :title="t('playground.canvasTranscribeAudio')" data-canvas-no-zoom @click.stop="emit('transcribe-audio', node.id)">
             <Icon name="document" size="xs" :class="{ 'animate-pulse': transcribing }" />
             <span class="sr-only">{{ t('playground.canvasTranscribeAudio') }}</span>
           </button>
         </div>
-        <button v-else-if="node.type === 'text' && node.kind !== 'result'" type="button" class="btn h-8 shrink-0 gap-1 px-2.5 text-xs" :class="node.status === 'generating' ? 'btn-ghost text-red-600' : 'btn-primary'" :title="node.status === 'generating' ? t('playground.canvasCancelGeneration') : (node.textContent || node.prompt).trim() ? t('playground.canvasRewriteText') : t('playground.canvasGenerateText')" data-canvas-no-zoom @click.stop="node.status === 'generating' ? emit('cancel-generation', node.id) : emit('generate-text', node.id)">
+        <button v-if="node.type === 'text' && node.kind !== 'result'" type="button" class="btn h-8 shrink-0 gap-1 px-2.5 text-xs" :class="node.status === 'generating' ? 'btn-ghost text-red-600' : 'btn-primary'" :title="node.status === 'generating' ? t('playground.canvasCancelGeneration') : (node.textContent || node.prompt).trim() ? t('playground.canvasRewriteText') : t('playground.canvasGenerateText')" data-canvas-no-zoom @click.stop="node.status === 'generating' ? emit('cancel-generation', node.id) : emit('generate-text', node.id)">
           <Icon :name="node.status === 'generating' ? 'x' : 'sparkles'" size="xs" />
           {{ node.status === 'generating' ? t('playground.canvasCancelGeneration') : (node.textContent || node.prompt).trim() ? t('playground.canvasRewriteText') : t('playground.canvasGenerateText') }}
+        </button>
+        <button v-if="node.type === 'text' && (node.textContent || node.prompt).trim() && node.status !== 'generating'" type="button" class="btn btn-secondary h-8 shrink-0 gap-1 px-2.5 text-xs" :title="t('playground.canvasTextToImage')" data-canvas-no-zoom @click.stop="emit('generate-image-from-text', node.id)">
+          <Icon name="sparkles" size="xs" />
+          {{ t('playground.canvasTextToImage') }}
         </button>
         <button v-else-if="node.type === 'video' && node.kind !== 'result'" type="button" class="btn h-8 shrink-0 gap-1 px-2.5 text-xs" :class="node.status === 'generating' ? 'btn-ghost text-red-600' : 'btn-primary'" :disabled="node.status !== 'generating' && !canGenerateMedia" :title="node.status === 'generating' ? t('playground.canvasCancelGeneration') : t('playground.canvasGenerateVideo')" data-canvas-no-zoom @click.stop="node.status === 'generating' ? emit('cancel-video', node.id) : emit('generate-video', node.id)">
           <Icon :name="node.status === 'generating' ? 'x' : 'play'" size="xs" />
@@ -516,9 +552,9 @@
           <button type="button" class="btn h-8 shrink-0 gap-1 px-2.5 text-xs" :class="node.status === 'generating' ? 'btn-ghost text-red-600' : 'btn-primary'" :disabled="node.status !== 'generating' && !canGenerateMedia" :title="node.status === 'generating' ? t('playground.canvasCancelGeneration') : t('playground.canvasGenerateAudio')" data-canvas-no-zoom @click.stop="node.status === 'generating' ? emit('cancel-audio', node.id) : emit('generate-audio', node.id)"><Icon :name="node.status === 'generating' ? 'x' : 'play'" size="xs" />{{ node.status === 'generating' ? t('playground.canvasCancelGeneration') : t('playground.canvasGenerateAudio') }}</button>
           <button v-if="node.audioUrl" type="button" class="btn btn-ghost btn-icon h-8 w-8 p-0 text-gray-500" :class="transcribing ? 'text-teal-700' : ''" :disabled="transcribing" :title="t('playground.canvasTranscribeAudio')" data-canvas-no-zoom @click.stop="emit('transcribe-audio', node.id)"><Icon name="document" size="xs" :class="{ 'animate-pulse': transcribing }" /><span class="sr-only">{{ t('playground.canvasTranscribeAudio') }}</span></button>
         </div>
-        <button v-else-if="node.type === 'image'" type="button" class="btn btn-primary h-8 shrink-0 gap-1 px-2.5 text-xs" :disabled="node.status === 'generating' || !node.prompt.trim()" data-canvas-no-zoom @click.stop="emit('generate', node.id)">
+        <button v-else-if="node.type === 'image' && node.kind !== 'result'" type="button" class="btn btn-primary h-8 shrink-0 gap-1 px-2.5 text-xs" :disabled="node.status === 'generating' || !node.prompt.trim()" data-canvas-no-zoom @click.stop="emit('generate', node.id)">
           <Icon name="sparkles" size="xs" />
-          {{ node.status === 'generating' ? t('playground.canvasGenerating') : t('playground.generate') }}
+          {{ node.status === 'generating' ? t('playground.canvasGenerating') : (node.imageUrl || node.imageUrls?.length || node.imageCacheKey || node.imageCacheKeys?.length) ? t('playground.canvasEditImage') : t('playground.generate') }}
         </button>
       </div>
     </footer>
@@ -626,10 +662,13 @@ const emit = defineEmits<{
   'retry-generation': [id: string]
   'transcribe-audio': [id: string]
   download: [id: string, imageIndex?: number]
+  'copy-image': [id: string, imageIndex?: number]
   'use-reference': [id: string, imageIndex?: number]
   'select-image': [id: string, imageIndex: number]
   'retry-image': [id: string, imageIndex: number]
   'duplicate-image': [id: string, imageIndex: number]
+  'update-image-prompt': [id: string, imageIndex: number, prompt: string]
+  'generate-image-child': [id: string, imageIndex: number]
   'delete-image': [id: string, imageIndex: number]
   'edit-image': [id: string, imageIndex: number]
   'transform-image': [id: string, imageIndex: number, operation: 'rotate-left' | 'rotate-right' | 'flip-horizontal']
@@ -663,7 +702,7 @@ const emit = defineEmits<{
   'focus-reference': [nodeId: string]
   'close-plugin-panel': []
   'double-click': [id: string]
-  'update-config': [id: string, key: 'mode' | 'model' | 'count' | 'size' | 'quality' | 'background' | 'resolution' | 'duration' | 'aspectRatio' | 'audioVoice' | 'audioFormat' | 'audioSpeed' | 'audioInstructions' | 'reasoningEffort', value: string]
+  'update-config': [id: string, key: 'mode' | 'model' | 'count' | 'size' | 'customWidth' | 'customHeight' | 'quality' | 'background' | 'resolution' | 'duration' | 'aspectRatio' | 'audioVoice' | 'audioFormat' | 'audioSpeed' | 'audioInstructions' | 'reasoningEffort', value: string]
   'generate-config': [id: string]
   'resize-start': [id: string, corner: ResizeCorner, event: PointerEvent]
   'context-menu': [id: string, event: MouseEvent]
@@ -738,10 +777,11 @@ const imageToolbarToolDefinitions = [
   { id: 'angle', label: 'playground.canvasAngleImage', hint: 'playground.canvasAngleImage' },
   { id: 'freeResize', label: 'playground.canvasFreeResize', hint: 'playground.canvasFreeResize' },
   { id: 'download', label: 'playground.canvasDownload', hint: 'playground.canvasDownload' },
+  { id: 'copy', label: 'playground.canvasCopyImage', hint: 'playground.canvasCopyImage' },
   { id: 'saveAsset', label: 'playground.canvasSaveAsset', hint: 'playground.canvasSaveAsset' },
 ] as const
 type ImageToolbarToolId = typeof imageToolbarToolDefinitions[number]['id']
-const defaultImageToolbarToolIds: ImageToolbarToolId[] = ['crop', 'reversePrompt', 'split', 'upscale', 'view', 'mask', 'download', 'saveAsset']
+const defaultImageToolbarToolIds: ImageToolbarToolId[] = ['crop', 'reversePrompt', 'split', 'upscale', 'view', 'mask', 'download', 'copy', 'saveAsset']
 const imageToolbarSettingsOpen = ref(false)
 const imageToolbarToolIds = ref<ImageToolbarToolId[]>([...defaultImageToolbarToolIds])
 const imageToolbarSettingsDraft = ref<ImageToolbarToolId[]>([...defaultImageToolbarToolIds])

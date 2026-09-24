@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"math"
 	"net/http"
 	"reflect"
 	"strconv"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
@@ -27,6 +29,10 @@ func (s *adminServiceImpl) ListAccounts(ctx context.Context, page, pageSize int,
 			return nil, 0, err
 		}
 	}
+	// Keep the regular admin account list separate from contribution governance.
+	// The repository can then apply the exclusion in SQL, before pagination and
+	// total-count calculation, while governance callers opt in explicitly.
+	ctx = context.WithValue(ctx, ctxkey.AdminAccountManagementList, true)
 	params := pagination.PaginationParams{Page: page, PageSize: pageSize, SortBy: sortBy, SortOrder: sortOrder}
 	accounts, result, err := s.accountRepo.ListWithFilters(ctx, params, platform, accountType, status, search, groupID, privacyMode)
 	if err != nil {
@@ -415,6 +421,7 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 	delete(accountExtra, UpstreamBillingProbeEnabledExtraKey)
 	delete(accountExtra, UpstreamBillingRateSyncEnabledExtraKey)
 	delete(accountExtra, UpstreamBillingProbeExtraKey)
+	delete(accountExtra, UpstreamBillingManualRateMultiplierExtraKey)
 	delete(accountExtra, OllamaCloudUsageSessionExtraKey)
 	delete(accountExtra, OllamaCloudUsageAutoRefreshExtraKey)
 	delete(accountExtra, OllamaCloudUsageSnapshotExtraKey)
@@ -671,6 +678,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		delete(normalizedExtra, UpstreamBillingProbeEnabledExtraKey)
 		delete(normalizedExtra, UpstreamBillingRateSyncEnabledExtraKey)
 		delete(normalizedExtra, UpstreamBillingProbeExtraKey)
+		delete(normalizedExtra, UpstreamBillingManualRateMultiplierExtraKey)
 		delete(normalizedExtra, OllamaCloudUsageSessionExtraKey)
 		delete(normalizedExtra, OllamaCloudUsageAutoRefreshExtraKey)
 		delete(normalizedExtra, OllamaCloudUsageSnapshotExtraKey)
@@ -685,6 +693,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			UpstreamBillingProbeEnabledExtraKey,
 			UpstreamBillingRateSyncEnabledExtraKey,
 			UpstreamBillingProbeExtraKey,
+			UpstreamBillingManualRateMultiplierExtraKey,
 			OllamaCloudUsageSessionExtraKey,
 			OllamaCloudUsageAutoRefreshExtraKey,
 			OllamaCloudUsageSnapshotExtraKey,
@@ -762,6 +771,12 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		if !isUpstreamBillingProbeAccount(account) {
 			delete(account.Extra, UpstreamBillingProbeEnabledExtraKey)
 			delete(account.Extra, UpstreamBillingRateSyncEnabledExtraKey)
+			// 手工倍率也必须随身份一起清掉。它只能通过
+			// SetAccountUpstreamBillingManualRateMultiplier 写入，而那条路径只
+			// 接受探测型账号；账号改成 OAuth 后若把旧值留着，就成了唯一一处
+			// "无人负责的残留声明"。清掉它，profitControlAccountUpstreamRate
+			// 才能无条件优先采信手工值而不必再用身份判断兜底。
+			delete(account.Extra, UpstreamBillingManualRateMultiplierExtraKey)
 		}
 	}
 	if account.Extra != nil {
@@ -907,6 +922,7 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 	delete(updates, UpstreamBillingProbeEnabledExtraKey)
 	delete(updates, UpstreamBillingRateSyncEnabledExtraKey)
 	delete(updates, UpstreamBillingProbeExtraKey)
+	delete(updates, UpstreamBillingManualRateMultiplierExtraKey)
 	delete(updates, OllamaCloudUsageSessionExtraKey)
 	delete(updates, OllamaCloudUsageAutoRefreshExtraKey)
 	delete(updates, OllamaCloudUsageSnapshotExtraKey)
@@ -925,6 +941,48 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 	return s.accountRepo.UpdateExtra(ctx, id, updates)
 }
 
+// SetAccountUpstreamBillingManualRateMultiplier stores an administrator-owned
+// scheduling reference. It is deliberately separate from account billing rate:
+// this controls upstream-cost selection and survives later probe results.
+func (s *adminServiceImpl) SetAccountUpstreamBillingManualRateMultiplier(ctx context.Context, id int64, rateMultiplier *float64) (*Account, error) {
+	account, err := s.accountRepo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if !isUpstreamBillingProbeAccount(account) {
+		return nil, ErrUpstreamBillingProbeAccountInvalid
+	}
+	if rateMultiplier != nil && (*rateMultiplier < 0 || math.IsNaN(*rateMultiplier) || math.IsInf(*rateMultiplier, 0)) {
+		return nil, infraerrors.BadRequest(
+			"INVALID_UPSTREAM_BILLING_MANUAL_RATE",
+			"upstream billing manual rate multiplier must be a finite number greater than or equal to zero",
+		)
+	}
+
+	updates := map[string]any{UpstreamBillingManualRateMultiplierExtraKey: nil}
+	if rateMultiplier != nil {
+		updates[UpstreamBillingManualRateMultiplierExtraKey] = *rateMultiplier
+	}
+	if err := s.accountRepo.UpdateExtra(ctx, id, updates); err != nil {
+		return nil, err
+	}
+	if s.authCacheInvalidator != nil {
+		seen := make(map[int64]struct{}, len(account.GroupIDs))
+		for _, groupID := range account.GroupIDs {
+			if groupID <= 0 {
+				continue
+			}
+			if _, exists := seen[groupID]; exists {
+				continue
+			}
+			seen[groupID] = struct{}{}
+			s.authCacheInvalidator.InvalidateAuthCacheByGroupID(ctx, groupID)
+			invalidateAutoGroupSelectionsForGroup(ctx, s.authCacheInvalidator, groupID)
+		}
+	}
+	return s.accountRepo.GetByID(ctx, id)
+}
+
 // BulkUpdateAccounts updates multiple accounts in one request.
 // It merges credentials/extra keys instead of overwriting the whole object.
 func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUpdateAccountsInput) (*BulkUpdateAccountsResult, error) {
@@ -934,6 +992,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	delete(input.Extra, UpstreamBillingProbeEnabledExtraKey)
 	delete(input.Extra, UpstreamBillingRateSyncEnabledExtraKey)
 	delete(input.Extra, UpstreamBillingProbeExtraKey)
+	delete(input.Extra, UpstreamBillingManualRateMultiplierExtraKey)
 	delete(input.Extra, OllamaCloudUsageSessionExtraKey)
 	delete(input.Extra, OllamaCloudUsageAutoRefreshExtraKey)
 	delete(input.Extra, OllamaCloudUsageSnapshotExtraKey)
@@ -1177,6 +1236,21 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 		result.Results = append(result.Results, entry)
 	}
 
+	// After any rebinding, so a group the accounts just joined is covered too.
+	if input.GroupPriority != nil && len(result.SuccessIDs) > 0 {
+		updates := make([]AccountGroupPriorityUpdate, 0, len(result.SuccessIDs))
+		for _, accountID := range result.SuccessIDs {
+			updates = append(updates, AccountGroupPriorityUpdate{
+				AccountID: accountID,
+				GroupID:   input.GroupPriority.GroupID,
+				Priority:  input.GroupPriority.Priority,
+			})
+		}
+		if _, err := s.accountRepo.UpdateGroupPriorities(ctx, updates); err != nil {
+			return nil, err
+		}
+	}
+
 	return result, nil
 }
 
@@ -1304,6 +1378,13 @@ func (s *adminServiceImpl) ClearAccountError(ctx context.Context, id int64) (*Ac
 
 func (s *adminServiceImpl) SetAccountError(ctx context.Context, id int64, errorMsg string) error {
 	return s.accountRepo.SetError(ctx, id, errorMsg)
+}
+
+func (s *adminServiceImpl) UpdateAccountGroupPriorities(ctx context.Context, updates []AccountGroupPriorityUpdate) (int, error) {
+	if s == nil || s.accountRepo == nil {
+		return 0, fmt.Errorf("account repository is not available")
+	}
+	return s.accountRepo.UpdateGroupPriorities(ctx, updates)
 }
 
 func (s *adminServiceImpl) SetAccountSchedulable(ctx context.Context, id int64, schedulable bool) (*Account, error) {

@@ -207,6 +207,35 @@ func (s *AccountTestService) FetchOpenAIAccountModels(ctx context.Context, accou
 			model.Type = "model"
 		}
 	}
+	// A Codex manifest may expose a canonical upstream slug while the account
+	// mapping intentionally publishes a friendlier alias. Keep every explicit
+	// mapping selectable in the admin test dialog, even when the upstream
+	// catalog omits its target; the test request is the authoritative check.
+	if account != nil {
+		byID := make(map[string]openai.Model, len(payload.Data))
+		for _, model := range payload.Data {
+			byID[model.ID] = model
+		}
+		for alias, target := range account.GetModelMapping() {
+			alias = strings.TrimSpace(alias)
+			target = strings.TrimSpace(target)
+			if alias == "" || target == "" || byID[alias].ID != "" {
+				continue
+			}
+			base, ok := byID[target]
+			if !ok {
+				// An explicitly configured mapping is itself an intentional
+				// public model choice. Keep it selectable even when the upstream
+				// catalog omits the target; the subsequent account test remains
+				// authoritative about whether that target actually works.
+				base = openai.Model{Object: "model", Type: "model", OwnedBy: "openai"}
+			}
+			base.ID = alias
+			base.DisplayName = openaiCodexDisplayName(alias)
+			payload.Data = append(payload.Data, base)
+			byID[alias] = base
+		}
+	}
 	// Codex discovery lists Responses drivers, not image_generation tool models.
 	// Add locally supported image choices only to the OAuth test picker; keep the
 	// shared upstream catalog and API-key discovery authoritative.
@@ -340,6 +369,8 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Account not found")
 	}
+	ctx = WithHTTPUpstreamPublicHostsOnlyForAccount(ctx, account)
+	c.Request = c.Request.WithContext(ctx)
 
 	// Synthetic UI load-test accounts exercise the real SSE parsing and modal
 	// interactions, but intentionally do not send their placeholder credentials

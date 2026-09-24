@@ -3,8 +3,9 @@ import { flushPromises, mount } from '@vue/test-utils'
 
 import AccountsView from '../AccountsView.vue'
 
-const { listAccounts } = vi.hoisted(() => ({
-  listAccounts: vi.fn()
+const { listAccounts, updateGroupPriorities } = vi.hoisted(() => ({
+  listAccounts: vi.fn(),
+  updateGroupPriorities: vi.fn()
 }))
 
 vi.mock('@/api/admin', () => ({
@@ -12,6 +13,7 @@ vi.mock('@/api/admin', () => ({
     accounts: {
       list: listAccounts,
       listWithEtag: vi.fn(),
+      updateGroupPriorities,
       getBatchTodayStats: vi.fn().mockResolvedValue({ stats: {} }),
       getUpstreamBillingProbeSettings: vi.fn().mockResolvedValue({ enabled: true, interval_minutes: 30 }),
       delete: vi.fn(),
@@ -41,13 +43,16 @@ vi.mock('vue-i18n', async () => {
 })
 
 const DataTableStub = {
-  props: ['columns'],
+  props: ['columns', 'data'],
   emits: ['sort'],
   template: `
     <div data-test="data-table">
       <span v-for="column in columns" :key="column.key" :data-column="column.key">
         {{ column.sortable ? 'sortable' : 'fixed' }}
       </span>
+      <div v-for="row in data" :key="row.id">
+        <slot name="cell-priority" :row="row" :value="row.group_priority" />
+      </div>
       <button data-test="sort-priority" @click="$emit('sort', 'priority', 'desc')" />
     </div>
   `
@@ -106,10 +111,16 @@ describe('admin AccountsView priority column preferences', () => {
     })
   })
 
-  it('shows priority as a sortable column for fresh preferences', async () => {
+  it('shows priority as a column that sorts only within a filtered group', async () => {
     const wrapper = mountView()
     await flushPromises()
 
+    // Without a group filter there is no single in-group priority to sort by.
+    expect(wrapper.get('[data-column="priority"]').text()).toBe('fixed')
+
+    const viewModel = wrapper.vm as any
+    viewModel.params.group = '34'
+    await flushPromises()
     expect(wrapper.get('[data-column="priority"]').text()).toBe('sortable')
 
     await wrapper.get('[data-test="sort-priority"]').trigger('click')
@@ -143,10 +154,97 @@ describe('admin AccountsView priority column preferences', () => {
     const wrapper = mountView()
     await flushPromises()
 
-    expect(wrapper.get('[data-column="priority"]').text()).toBe('sortable')
+    expect(wrapper.find('[data-column="priority"]').exists()).toBe(true)
     expect(JSON.parse(localStorage.getItem('account-hidden-columns') || '[]')).toEqual(
       expect.arrayContaining(['today_stats', 'scheduler_score'])
     )
     expect(JSON.parse(localStorage.getItem('account-hidden-columns') || '[]')).not.toContain('priority')
+  })
+
+  it('shows a dash instead of the account-wide priority without a group filter', async () => {
+    listAccounts.mockResolvedValue({
+      items: [{ id: 7, priority: 50 }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1
+    })
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="priority-needs-group-filter"]').text()).toBe('—')
+    expect(wrapper.find('[data-testid="edit-group-priority"]').exists()).toBe(false)
+  })
+
+  it('edits the selected group priority through the group-priorities endpoint', async () => {
+    listAccounts.mockResolvedValue({
+      items: [{ id: 7, group_priority: 50, priority: 3 }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1
+    })
+    updateGroupPriorities.mockResolvedValue({ updated: 1, requested: 1 })
+
+    const wrapper = mountView()
+    await flushPromises()
+    const viewModel = wrapper.vm as any
+    viewModel.params.group = '34'
+    await flushPromises()
+
+    const prompt = vi.spyOn(window, 'prompt').mockReturnValue('12')
+    await wrapper.get('[data-testid="edit-group-priority"]').trigger('click')
+    await flushPromises()
+
+    expect(prompt).toHaveBeenCalledWith('admin.accounts.groupPriorityPrompt', '50')
+    expect(updateGroupPriorities).toHaveBeenCalledWith([{
+      account_id: 7,
+      group_id: 34,
+      priority: 12
+    }])
+    prompt.mockRestore()
+  })
+
+  it('keeps the in-group priority after a single-account update patches the row', async () => {
+    listAccounts.mockResolvedValue({
+      items: [{ id: 7, group_priority: 1, priority: 50, group_ids: [34], updated_at: 't1' }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1
+    })
+
+    const wrapper = mountView()
+    await flushPromises()
+    const viewModel = wrapper.vm as any
+    viewModel.params.group = '34'
+    await flushPromises()
+
+    // Single-account endpoints never carry group_priority.
+    viewModel.handleAccountUpdated({ id: 7, priority: 50, group_ids: [34], updated_at: 't2' })
+    await flushPromises()
+
+    expect(viewModel.accounts[0].group_priority).toBe(1)
+    expect(wrapper.get('[data-testid="edit-group-priority"]').exists()).toBe(true)
+  })
+
+  it('replaces a row on auto-refresh when only its in-group priority changed', async () => {
+    listAccounts.mockResolvedValue({
+      items: [{ id: 7, group_priority: 1, priority: 50, group_ids: [34], updated_at: 't1' }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1
+    })
+
+    const wrapper = mountView()
+    await flushPromises()
+    const viewModel = wrapper.vm as any
+
+    viewModel.mergeAccountsIncrementally([{ id: 7, group_priority: 10000, priority: 50, group_ids: [34], updated_at: 't1' }])
+    await flushPromises()
+
+    expect(viewModel.accounts[0].group_priority).toBe(10000)
   })
 })

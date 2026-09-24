@@ -11,6 +11,7 @@ export { useOnboardingStore } from './onboarding'
 export { useAnnouncementStore } from './announcements'
 export { usePaymentStore } from './payment'
 export { useAdminComplianceStore } from './adminCompliance'
+export { useTicketStore } from './tickets'
 
 // Re-export types for convenience
 export type { User, LoginRequest, RegisterRequest, AuthResponse } from '@/types'

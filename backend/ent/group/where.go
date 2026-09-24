@@ -85,6 +85,11 @@ func RateMultiplier(v float64) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldRateMultiplier, v))
 }
 
+// AllowContributionPool applies equality check predicate on the "allow_contribution_pool" field. It's identical to AllowContributionPoolEQ.
+func AllowContributionPool(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldAllowContributionPool, v))
+}
+
 // PeakRateEnabled applies equality check predicate on the "peak_rate_enabled" field. It's identical to PeakRateEnabledEQ.
 func PeakRateEnabled(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldPeakRateEnabled, v))
@@ -255,6 +260,11 @@ func ClaudeCodeOnly(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldClaudeCodeOnly, v))
 }
 
+// KiroCompat applies equality check predicate on the "kiro_compat" field. It's identical to KiroCompatEQ.
+func KiroCompat(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldKiroCompat, v))
+}
+
 // FallbackGroupID applies equality check predicate on the "fallback_group_id" field. It's identical to FallbackGroupIDEQ.
 func FallbackGroupID(v int64) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldFallbackGroupID, v))
@@ -268,11 +278,6 @@ func FallbackGroupIDOnInvalidRequest(v int64) predicate.Group {
 // IsFallbackPool applies equality check predicate on the "is_fallback_pool" field. It's identical to IsFallbackPoolEQ.
 func IsFallbackPool(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldIsFallbackPool, v))
-}
-
-// KiroCompat applies equality check predicate on the "kiro_compat" field. It's identical to KiroCompatEQ.
-func KiroCompat(v bool) predicate.Group {
-	return predicate.Group(sql.FieldEQ(FieldKiroCompat, v))
 }
 
 // ModelRoutingEnabled applies equality check predicate on the "model_routing_enabled" field. It's identical to ModelRoutingEnabledEQ.
@@ -663,6 +668,16 @@ func RateMultiplierLT(v float64) predicate.Group {
 // RateMultiplierLTE applies the LTE predicate on the "rate_multiplier" field.
 func RateMultiplierLTE(v float64) predicate.Group {
 	return predicate.Group(sql.FieldLTE(FieldRateMultiplier, v))
+}
+
+// AllowContributionPoolEQ applies the EQ predicate on the "allow_contribution_pool" field.
+func AllowContributionPoolEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldAllowContributionPool, v))
+}
+
+// AllowContributionPoolNEQ applies the NEQ predicate on the "allow_contribution_pool" field.
+func AllowContributionPoolNEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldAllowContributionPool, v))
 }
 
 // PeakRateEnabledEQ applies the EQ predicate on the "peak_rate_enabled" field.
@@ -2105,6 +2120,16 @@ func ClaudeCodeOnlyNEQ(v bool) predicate.Group {
 	return predicate.Group(sql.FieldNEQ(FieldClaudeCodeOnly, v))
 }
 
+// KiroCompatEQ applies the EQ predicate on the "kiro_compat" field.
+func KiroCompatEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldKiroCompat, v))
+}
+
+// KiroCompatNEQ applies the NEQ predicate on the "kiro_compat" field.
+func KiroCompatNEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldKiroCompat, v))
+}
+
 // FallbackGroupIDEQ applies the EQ predicate on the "fallback_group_id" field.
 func FallbackGroupIDEQ(v int64) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldFallbackGroupID, v))
@@ -2223,16 +2248,6 @@ func IsFallbackPoolEQ(v bool) predicate.Group {
 // IsFallbackPoolNEQ applies the NEQ predicate on the "is_fallback_pool" field.
 func IsFallbackPoolNEQ(v bool) predicate.Group {
 	return predicate.Group(sql.FieldNEQ(FieldIsFallbackPool, v))
-}
-
-// KiroCompatEQ applies the EQ predicate on the "kiro_compat" field.
-func KiroCompatEQ(v bool) predicate.Group {
-	return predicate.Group(sql.FieldEQ(FieldKiroCompat, v))
-}
-
-// KiroCompatNEQ applies the NEQ predicate on the "kiro_compat" field.
-func KiroCompatNEQ(v bool) predicate.Group {
-	return predicate.Group(sql.FieldNEQ(FieldKiroCompat, v))
 }
 
 // ModelRoutingIsNil applies the IsNil predicate on the "model_routing" field.
@@ -2820,6 +2835,29 @@ func HasAllowedUsers() predicate.Group {
 func HasAllowedUsersWith(preds ...predicate.User) predicate.Group {
 	return predicate.Group(func(s *sql.Selector) {
 		step := newAllowedUsersStep()
+		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
+			for _, p := range preds {
+				p(s)
+			}
+		})
+	})
+}
+
+// HasCompositeModelRoutes applies the HasEdge predicate on the "composite_model_routes" edge.
+func HasCompositeModelRoutes() predicate.Group {
+	return predicate.Group(func(s *sql.Selector) {
+		step := sqlgraph.NewStep(
+			sqlgraph.From(Table, FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, false, CompositeModelRoutesTable, CompositeModelRoutesColumn),
+		)
+		sqlgraph.HasNeighbors(s, step)
+	})
+}
+
+// HasCompositeModelRoutesWith applies the HasEdge predicate on the "composite_model_routes" edge with a given conditions (other predicates).
+func HasCompositeModelRoutesWith(preds ...predicate.CompositeModelRoute) predicate.Group {
+	return predicate.Group(func(s *sql.Selector) {
+		step := newCompositeModelRoutesStep()
 		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
 			for _, p := range preds {
 				p(s)

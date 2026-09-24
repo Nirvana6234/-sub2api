@@ -967,7 +967,7 @@ defineExpose({
   position: sticky;
   top: 0;
   z-index: 200;
-  background-color: rgb(249 250 251);
+  background-color: rgb(248 249 246);
 }
 
 .dark .table-wrapper .table-header {
@@ -985,7 +985,7 @@ defineExpose({
   position: sticky;
   top: 0;
   z-index: 210; /* 必须高于所有表体内容 */
-  background-color: rgb(249 250 251);
+  background-color: rgb(248 249 246);
 }
 
 .dark .sticky-header-cell {

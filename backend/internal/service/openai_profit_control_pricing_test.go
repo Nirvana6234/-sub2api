@@ -98,8 +98,11 @@ func TestProfitControl_PricingAtFixesDownstreamPeakFactor(t *testing.T) {
 	require.Equal(t, pricingAt, gate.pricingAt)
 }
 
-// U 只取账号倍率：探测快照内容和新鲜度不再直接参与利润判断。
-func TestProfitControl_UsesAccountRateInsteadOfProbeSnapshot(t *testing.T) {
+// 过期的探测快照不参与利润判断：利润门只采信手工倍率、新鲜探测和列值
+// （profitControlAccountUpstreamRate）。记账侧的 accountCostUpstreamRate 额外
+// 允许退到过期快照，那条退路刻意不给门用——否则一个早已涨价的上游会凭几小时
+// 前的低价快照一直被放行。
+func TestProfitControl_StaleProbeSnapshotDoesNotOverrideDeclaredRate(t *testing.T) {
 	gate := &openAIProfitControlGate{threshold: 0.5, pricingAt: time.Now().Add(-12 * time.Hour)}
 	ctx := context.WithValue(context.Background(), openAIProfitControlGateCtxKey{}, gate)
 	account := upstreamCostTestAccount(9, UpstreamBillingProbeStatusOK, 0.1, time.Now().Add(-3*time.Hour), 30*time.Minute)

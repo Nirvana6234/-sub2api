@@ -49,21 +49,11 @@ function mountHome(settings: Record<string, unknown> = {}) {
       stubs: {
         RouterLink: RouterLinkStub,
         LocaleSwitcher: { template: '<div data-testid="locale-switcher" />' },
+        ClientIntroduction: { props: ['variant'], template: '<section data-testid="home-introduction" :data-variant="variant" />' },
         Icon: { template: '<span data-testid="icon" />' },
       },
     },
   })
-}
-
-function compactDestination(wrapper: ReturnType<typeof mountHome>) {
-  return wrapper.get('[data-testid="compact-home"]').findComponent(RouterLinkStub).props('to')
-}
-
-function modelPlazaDestination(wrapper: ReturnType<typeof mountHome>) {
-  return wrapper
-    .findAllComponents(RouterLinkStub)
-    .find((link) => link.props('to') === '/model-plaza')
-    ?.props('to')
 }
 
 describe('HomeView compact mode', () => {
@@ -85,6 +75,7 @@ describe('HomeView compact mode', () => {
 
     expect(wrapper.get('#custom-home').text()).toBe('Custom home')
     expect(wrapper.find('[data-testid="compact-home"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="home-introduction"]').exists()).toBe(false)
   })
 
   it('renders custom URL content ahead of compact mode', () => {
@@ -95,6 +86,7 @@ describe('HomeView compact mode', () => {
 
     expect(wrapper.get('iframe').attributes('src')).toBe('https://example.com/home')
     expect(wrapper.find('[data-testid="compact-home"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="home-introduction"]').exists()).toBe(false)
   })
 
   it('treats whitespace-only custom content as empty and selects compact mode', () => {
@@ -108,77 +100,66 @@ describe('HomeView compact mode', () => {
     const wrapper = mountHome(settings)
 
     expect(wrapper.find('[data-testid="compact-home"]').exists()).toBe(false)
-    expect(wrapper.find('.terminal-container').exists()).toBe(true)
+    expect(wrapper.get('main').find('[data-testid="home-introduction"]').exists()).toBe(true)
   })
 
-  it('links unauthenticated visitors to login', () => {
-    expect(compactDestination(mountHome({ compact_home_enabled: true }))).toBe('/login')
-  })
-
-  it('links authenticated users to their dashboard', () => {
-    authStore.isAuthenticated = true
-
-    expect(compactDestination(mountHome({ compact_home_enabled: true }))).toBe('/dashboard')
-  })
-
-  it('links administrators to the admin dashboard', () => {
-    authStore.isAuthenticated = true
-    authStore.isAdmin = true
-
+  it('includes the introduction in compact mode', () => {
     const wrapper = mountHome({ compact_home_enabled: true })
-    expect(compactDestination(wrapper)).toBe('/admin/dashboard')
-    expect(authStore.checkAuth).toHaveBeenCalledOnce()
-    expect(appStore.fetchPublicSettings).not.toHaveBeenCalled()
+
+    expect(wrapper.get('main').get('[data-testid="home-introduction"]').attributes('data-variant')).toBe('home')
+    expect(wrapper.find('details').exists()).toBe(false)
   })
 
-  it('shows the model plaza link to anonymous visitors when public access is enabled', () => {
-    const wrapper = mountHome({
-      compact_home_enabled: true,
-      model_plaza_enabled: true,
-      model_plaza_require_auth: false,
-    })
+  it('keeps provider information closed until an experienced user opens it', () => {
+    const wrapper = mountHome()
+    const details = wrapper.get('details')
 
-    expect(modelPlazaDestination(wrapper)).toBe('/model-plaza')
+    expect(details.get('summary').text()).toBe('clientIntroduction.advanced')
+    expect(details.attributes('open')).toBeUndefined()
+    expect(details.text()).toContain('home.providers.title')
   })
 
-  it('hides the model plaza link from anonymous visitors when sign-in is required', () => {
-    const wrapper = mountHome({
-      compact_home_enabled: true,
-      model_plaza_enabled: true,
-      model_plaza_require_auth: true,
-    })
+  describe.each([false, true])('client navigation with compact mode %s', (compact) => {
+    it.each([
+      { role: 'guest', authenticated: false, admin: false, destination: '/login' },
+      { role: 'user', authenticated: true, admin: false, destination: '/dashboard' },
+      { role: 'admin', authenticated: true, admin: true, destination: '/admin/dashboard' },
+    ])('offers console and download links for $role', ({ authenticated, admin, destination }) => {
+      authStore.isAuthenticated = authenticated
+      authStore.isAdmin = admin
+      const wrapper = mountHome({
+        compact_home_enabled: compact,
+        model_plaza_enabled: true,
+        model_plaza_require_auth: false,
+      })
+      const links = wrapper.get('header').findAllComponents(RouterLinkStub)
 
-    expect(modelPlazaDestination(wrapper)).toBeUndefined()
+      expect(links.map((link) => [link.text(), link.props('to')])).toEqual([
+        ['clientIntroduction.console', destination],
+        ['clientIntroduction.clientDownload', '/download'],
+      ])
+      expect(authStore.checkAuth).toHaveBeenCalledOnce()
+      expect(appStore.fetchPublicSettings).not.toHaveBeenCalled()
+    })
   })
 
-  it('shows the model plaza link to authenticated visitors when sign-in is required', () => {
-    authStore.isAuthenticated = true
+  describe.each([false, true])('deployment without the client (compact mode %s)', (compact) => {
+    it('replaces the download button with the web workspace', () => {
+      const wrapper = mountHome({ compact_home_enabled: compact, client_download_enabled: false, playground_enabled: true })
+      const links = wrapper.get('header').findAllComponents(RouterLinkStub)
 
-    const wrapper = mountHome({
-      compact_home_enabled: true,
-      model_plaza_enabled: true,
-      model_plaza_require_auth: true,
+      expect(links.map((link) => [link.text(), link.props('to')])).toEqual([
+        ['clientIntroduction.console', '/login'],
+        ['homeIntro.ctaWeb', { path: '/login', query: { redirect: '/playground' } }],
+      ])
+      expect(wrapper.html()).not.toContain('/download')
     })
 
-    expect(modelPlazaDestination(wrapper)).toBe('/model-plaza')
-  })
+    it('only keeps the console link when the web workspace is also off', () => {
+      const wrapper = mountHome({ compact_home_enabled: compact, client_download_enabled: false, playground_enabled: false })
+      const links = wrapper.get('header').findAllComponents(RouterLinkStub)
 
-  it('shows the model plaza link in the default home header', () => {
-    const wrapper = mountHome({
-      model_plaza_enabled: true,
-      model_plaza_require_auth: false,
+      expect(links.map((link) => link.text())).toEqual(['clientIntroduction.console'])
     })
-
-    expect(modelPlazaDestination(wrapper)).toBe('/model-plaza')
-  })
-
-  it('hides the model plaza link when the feature is disabled', () => {
-    const wrapper = mountHome({
-      compact_home_enabled: true,
-      model_plaza_enabled: false,
-      model_plaza_require_auth: false,
-    })
-
-    expect(modelPlazaDestination(wrapper)).toBeUndefined()
   })
 })

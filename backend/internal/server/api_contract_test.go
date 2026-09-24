@@ -57,6 +57,8 @@ func TestAPIContracts(t *testing.T) {
 						"frozen_balance": 0,
 						"concurrency": 5,
 					"rpm_limit": 0,
+					"account_management_enabled": false,
+					"contribution_rooms_enabled": false,
 					"status": "active",
 					"allowed_groups": null,
 					"created_at": "2025-01-02T03:04:05Z",
@@ -359,6 +361,7 @@ func TestAPIContracts(t *testing.T) {
 						"peak_end": "",
 						"peak_rate_multiplier": 1,
 						"is_exclusive": false,
+						"allow_contribution_pool": false,
 						"status": "active",
 						"subscription_type": "standard",
 						"daily_limit_usd": null,
@@ -388,7 +391,10 @@ func TestAPIContracts(t *testing.T) {
 						"allow_messages_dispatch": false,
 						"allow_live": false,
 						"fallback_group_id": null,
+						"fallback_group_ids": null,
 						"fallback_group_id_on_invalid_request": null,
+						"is_fallback_pool": false,
+						"kiro_compat": false,
 						"require_oauth_only": false,
 						"require_privacy_set": false,
 						"max_reasoning_effort": "",
@@ -919,6 +925,27 @@ func TestAPIContracts(t *testing.T) {
 					"web_search_emulation_enabled": false,
 					"payment_visible_method_alipay_source": "easypay_alipay",
 					"payment_visible_method_wxpay_source": "official_wxpay",
+					"backup_payment_enabled": false,
+					"backup_payment_url": "",
+					"client_download_direct_url": "",
+					"client_download_direct_url_mac": "",
+					"client_download_enabled": true,
+					"client_download_netdisk_url": "",
+					"client_latest_version": "",
+					"client_latest_version_mac": "",
+					"client_tutorial_video_url": "",
+					"latency_compensation_profit_ratio": 1,
+					"latency_compensation_threshold_ms": 30000,
+					"openai_fallback_speedup_ratio": 0,
+					"openai_latency_aware_fallback_enabled": false,
+					"openai_latency_threshold_ms": 0,
+					"playground_default_chat_group_ids": [],
+					"playground_default_chat_model": "gpt-5.4",
+					"playground_default_chat_strategy": "price",
+					"playground_default_image_group_ids": [],
+					"playground_default_image_model": "gpt-image-2",
+					"playground_default_image_strategy": "price",
+					"playground_enabled": false,
 					"payment_visible_method_alipay_enabled": true,
 					"payment_visible_method_wxpay_enabled": false,
 					"openai_low_upstream_rate_priority_enabled": true,
@@ -1236,6 +1263,27 @@ func TestAPIContracts(t *testing.T) {
 					"web_search_emulation_enabled": false,
 					"payment_visible_method_alipay_source": "",
 					"payment_visible_method_wxpay_source": "",
+					"backup_payment_enabled": false,
+					"backup_payment_url": "",
+					"client_download_direct_url": "",
+					"client_download_direct_url_mac": "",
+					"client_download_enabled": true,
+					"client_download_netdisk_url": "",
+					"client_latest_version": "",
+					"client_latest_version_mac": "",
+					"client_tutorial_video_url": "",
+					"latency_compensation_profit_ratio": 1,
+					"latency_compensation_threshold_ms": 30000,
+					"openai_fallback_speedup_ratio": 0,
+					"openai_latency_aware_fallback_enabled": false,
+					"openai_latency_threshold_ms": 0,
+					"playground_default_chat_group_ids": [],
+					"playground_default_chat_model": "gpt-5.4",
+					"playground_default_chat_strategy": "price",
+					"playground_default_image_group_ids": [],
+					"playground_default_image_model": "gpt-image-2",
+					"playground_default_image_strategy": "price",
+					"playground_enabled": false,
 					"payment_visible_method_alipay_enabled": false,
 					"payment_visible_method_wxpay_enabled": false,
 					"openai_low_upstream_rate_priority_enabled": false,
@@ -2746,14 +2794,6 @@ func (r *stubUsageLogRepo) GetUserUsageTrendByUserID(ctx context.Context, userID
 }
 
 func (r *stubUsageLogRepo) GetUserModelStats(ctx context.Context, userID int64, startTime, endTime time.Time) ([]usagestats.ModelStat, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (r *stubUsageLogRepo) GetHeadroomModelStats(ctx context.Context, userID int64, startTime, endTime time.Time) ([]usagestats.HeadroomModelStat, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (r *stubUsageLogRepo) GetHeadroomTrend(ctx context.Context, userID int64, startTime, endTime time.Time, granularity string) ([]usagestats.HeadroomTrendPoint, error) {
 	return nil, errors.New("not implemented")
 }
 

@@ -53,7 +53,7 @@ func (User) Fields() []ent.Field {
 			SchemaType(map[string]string{dialect.Postgres: "decimal(20,8)"}).
 			Default(0),
 		field.Int("concurrency").
-			Default(5),
+			Default(30),
 		field.String("status").
 			MaxLen(20).
 			Default(domain.StatusActive),
@@ -87,6 +87,13 @@ func (User) Fields() []ent.Field {
 				}
 			}).
 			Default("email"),
+		// 注册时的客户端 IP，用于「同一 IP 最多注册 N 个账号」配额。
+		// Nillable：迁移前的存量用户为 NULL，NULL 不参与配额计数。
+		field.String("register_ip").
+			Optional().
+			Nillable().
+			MaxLen(45). // IPv4-mapped IPv6 的最长形式
+			SchemaType(map[string]string{dialect.Postgres: "varchar(45)"}),
 		field.Time("last_login_at").
 			Optional().
 			Nillable().
@@ -120,11 +127,9 @@ func (User) Fields() []ent.Field {
 		// 用户级每分钟请求数上限（0 = 不限制）。仅当所在分组未设置 rpm_limit 时作为兜底生效。
 		field.Int("rpm_limit").
 			Default(0),
-		// headroom 上下文压缩开关：开启后网关转发时会带上 x-headroom-base-url
-		// 头把请求路由到 headroom 压缩代理（地址见全局设置
-		// SettingKeyHeadroomBaseURL），压缩失败/超时/未配置时自动跳过、直连
-		// 原上游，不影响可用性。
-		field.Bool("headroom_compression_enabled").
+		field.Bool("account_management_enabled").
+			Default(false),
+		field.Bool("contribution_rooms_enabled").
 			Default(false),
 	}
 }
@@ -136,6 +141,7 @@ func (User) Edges() []ent.Edge {
 		edge.To("subscriptions", UserSubscription.Type),
 		edge.To("assigned_subscriptions", UserSubscription.Type),
 		edge.To("announcement_reads", AnnouncementRead.Type),
+		edge.To("tickets", Ticket.Type),
 		edge.To("allowed_groups", Group.Type).
 			Through("user_allowed_groups", UserAllowedGroup.Type),
 		edge.To("usage_logs", UsageLog.Type),

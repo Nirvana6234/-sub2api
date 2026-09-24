@@ -38,6 +38,9 @@ const messages: Record<string, string> = {
   'common.refresh': 'Refresh',
   'common.status': 'Status',
   'keys.apiKey': 'API Key',
+  'keys.autoGroup': 'Automatic group selection',
+  'keys.autoGroupCurrentGroup': 'Current group',
+  'keys.autoGroupCurrentGroupPending': 'No runtime selection yet',
   'keys.allGroups': 'All Groups',
   'keys.allStatus': 'All Status',
   'keys.columnSettings': 'Column Settings',
@@ -176,6 +179,9 @@ const DataTableStub = {
         <slot name="cell-actions" :row="row" />
         <div data-test="current-concurrency">
           <slot name="cell-current_concurrency" :value="row.current_concurrency" :row="row" />
+        </div>
+        <div data-test="group-cell">
+          <slot name="cell-group" :value="row.group" :row="row" />
         </div>
         <div
           v-if="columns.some((col) => col.key === 'last_used_ip')"
@@ -494,6 +500,49 @@ describe('user KeysView column settings', () => {
     expect(columnMenuText).toContain('Last Used IP')
     expect(columnMenuText).not.toContain('Name')
     expect(columnMenuText).not.toContain('Actions')
+  })
+
+  it('shows the auto-group badge with the current selection instead of a static group badge', async () => {
+    listKeys.mockResolvedValueOnce({
+      items: [{
+        ...createApiKey(),
+        auto_group: true,
+        auto_group_strategy: 'price',
+        auto_group_ids: [42],
+        auto_group_current_group: { id: 42, name: 'OpenAI-Pro' },
+        auto_group_current_model: 'gpt-5.5',
+      }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    })
+    const wrapper = await mountView()
+
+    const groupCellText = wrapper.get('[data-test="group-cell"]').text()
+    expect(groupCellText).toContain('Current group')
+    expect(groupCellText).toContain('OpenAI-Pro')
+    // The static GroupBadge stub must not render for an auto-group key.
+    expect(wrapper.findComponent({ name: 'GroupBadge' }).exists()).toBe(false)
+  })
+
+  it('shows a pending state when an auto-group key has not routed to a group yet', async () => {
+    listKeys.mockResolvedValueOnce({
+      items: [{
+        ...createApiKey(),
+        auto_group: true,
+        auto_group_strategy: 'speed',
+        auto_group_ids: [42],
+        auto_group_current_group: null,
+      }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    })
+    const wrapper = await mountView()
+
+    expect(wrapper.get('[data-test="group-cell"]').text()).toContain('No runtime selection yet')
   })
 
   it('renders the current concurrency value', async () => {

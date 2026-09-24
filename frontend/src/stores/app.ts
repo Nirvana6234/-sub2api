@@ -26,7 +26,7 @@ export const useAppStore = defineStore('app', () => {
   // Public settings cache state
   const publicSettingsLoaded = ref<boolean>(false)
   const publicSettingsLoading = ref<boolean>(false)
-  const siteName = ref<string>('Sub2API')
+  const siteName = ref<string>('共飞 AI')
   const siteLogo = ref<string>('')
   const siteVersion = ref<string>('')
   const contactInfo = ref<string>('')
@@ -294,7 +294,7 @@ export const useAppStore = defineStore('app', () => {
       window.__APP_CONFIG__ = { ...config }
     }
     cachedPublicSettings.value = config
-    siteName.value = config.site_name || 'Sub2API'
+    siteName.value = config.site_name || '共飞 AI'
     siteLogo.value = config.site_logo || ''
     siteVersion.value = config.version || ''
     contactInfo.value = config.contact_info || ''
@@ -375,15 +375,15 @@ export const useAppStore = defineStore('app', () => {
         payment_balance_disabled: false,
         // 下载页默认开启，与后端 client_download_enabled 的默认值保持一致
         client_download_enabled: true,
-        client_download_netdisk_url: '',
-        client_download_direct_url: '',
-        client_download_direct_url_mac: '',
-        client_latest_version: '',
-        client_latest_version_mac: '',
-        client_tutorial_video_url: '',
+        client_download_netdisk_url: 'https://pan.baidu.com/s/5PT50-jTaOtR8D28OfYnbQQ',
+        client_download_direct_url: 'https://download.gongfeiai.com/downloads/codex-relay-client_v0.5_x64.zip',
+        client_download_direct_url_mac: 'https://download.gongfeiai.com/downloads/codex-relay-client_v0.5_macos-arm64.tar.gz',
+        client_latest_version: '0.5',
+        client_latest_version_mac: '0.5',
+        client_tutorial_video_url: 'https://www.bilibili.com/video/BV1vWYJ6PEhc/',
         backup_payment_enabled: false,
         backup_payment_url: '',
-        playground_enabled: false,
+        playground_enabled: true,
         playground_default_chat_model: 'gpt-5.4',
         playground_default_image_model: 'gpt-image-2',
         model_plaza_enabled: false,

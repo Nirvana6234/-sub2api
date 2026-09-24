@@ -427,14 +427,6 @@ func TestCollectOpenAIImagePointers_RecognizesDirectAssets(t *testing.T) {
 	require.True(t, sawPointer)
 }
 
-func TestResolveOpenAIImageBytes_PrefersInlineBase64(t *testing.T) {
-	data, err := resolveOpenAIImageBytes(context.Background(), nil, nil, "", openAIImagePointerInfo{
-		B64JSON: "data:image/png;base64,QUJD",
-	}, openAIUpstreamErrorBodyReadLimit)
-	require.NoError(t, err)
-	require.Equal(t, []byte("ABC"), data)
-}
-
 func TestNewOpenAIImageStatusError_UsesProvidedReadLimit(t *testing.T) {
 	padding := strings.Repeat("x", int(openAIUpstreamErrorBodyReadLimit)+1024)
 	body := fmt.Sprintf(`{"error":{"padding":"%s","message":"diagnostic-marker"}}`, padding)

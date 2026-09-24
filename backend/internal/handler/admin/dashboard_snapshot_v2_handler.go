@@ -47,6 +47,7 @@ type dashboardSnapshotV2Filters struct {
 	NativeCompactionV2    *bool
 	BillingType           *int8
 	UpstreamModelMismatch *bool
+	AccountSource         string
 }
 
 type dashboardSnapshotV2CacheKey struct {
@@ -63,6 +64,7 @@ type dashboardSnapshotV2CacheKey struct {
 	NativeCompactionV2    *bool  `json:"native_compaction_v2"`
 	BillingType           *int8  `json:"billing_type"`
 	UpstreamModelMismatch *bool  `json:"upstream_model_mismatch"`
+	AccountSource         string `json:"account_source,omitempty"`
 	IncludeStats          bool   `json:"include_stats"`
 	IncludeTrend          bool   `json:"include_trend"`
 	IncludeModels         bool   `json:"include_models"`
@@ -110,6 +112,7 @@ func (h *DashboardHandler) GetSnapshotV2(c *gin.Context) {
 		NativeCompactionV2:    filters.NativeCompactionV2,
 		BillingType:           filters.BillingType,
 		UpstreamModelMismatch: filters.UpstreamModelMismatch,
+		AccountSource:         filters.AccountSource,
 		IncludeStats:          includeStats,
 		IncludeTrend:          includeTrend,
 		IncludeModels:         includeModels,
@@ -192,6 +195,7 @@ func (h *DashboardHandler) buildSnapshotV2Response(
 			filters.NativeCompactionV2,
 			filters.BillingType,
 			filters.UpstreamModelMismatch,
+			filters.AccountSource,
 		)
 		if err != nil {
 			return nil, errors.New("failed to get usage trend")
@@ -214,6 +218,7 @@ func (h *DashboardHandler) buildSnapshotV2Response(
 			filters.NativeCompactionV2,
 			filters.BillingType,
 			filters.UpstreamModelMismatch,
+			filters.AccountSource,
 		)
 		if err != nil {
 			return nil, errors.New("failed to get model statistics")
@@ -235,6 +240,7 @@ func (h *DashboardHandler) buildSnapshotV2Response(
 			filters.NativeCompactionV2,
 			filters.BillingType,
 			filters.UpstreamModelMismatch,
+			filters.AccountSource,
 		)
 		if err != nil {
 			return nil, errors.New("failed to get group statistics")
@@ -309,6 +315,12 @@ func parseDashboardSnapshotV2Filters(c *gin.Context) (*dashboardSnapshotV2Filter
 		}
 		filters.NativeCompactionV2 = &value
 	}
+
+	accountSource, err := service.ParseUsageLogAccountSourceFilter(c.Query("account_source"))
+	if err != nil {
+		return nil, err
+	}
+	filters.AccountSource = accountSource
 
 	if billingTypeStr := strings.TrimSpace(c.Query("billing_type")); billingTypeStr != "" {
 		v, err := strconv.ParseInt(billingTypeStr, 10, 8)

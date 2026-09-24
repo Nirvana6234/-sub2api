@@ -25,6 +25,9 @@ type dashboardUsageRepoCapture struct {
 	trendMismatch         *bool
 	modelMismatch         *bool
 	groupMismatch         *bool
+	trendAccountSource    string
+	modelAccountSource    string
+	groupAccountSource    string
 	rankingLimit          int
 	ranking               []usagestats.UserSpendingRankingItem
 	rankingTotal          float64
@@ -40,6 +43,7 @@ func (s *dashboardUsageRepoCapture) GetUsageTrendWithUsageFilters(
 	s.trendStream = filters.Stream
 	s.trendNativeCompaction = filters.NativeCompactionV2
 	s.trendMismatch = filters.UpstreamModelMismatch
+	s.trendAccountSource = filters.AccountSource
 	return []usagestats.TrendDataPoint{}, nil
 }
 
@@ -68,6 +72,7 @@ func (s *dashboardUsageRepoCapture) GetModelStatsWithUsageFiltersBySource(
 	s.modelStream = filters.Stream
 	s.modelNativeCompaction = filters.NativeCompactionV2
 	s.modelMismatch = filters.UpstreamModelMismatch
+	s.modelAccountSource = filters.AccountSource
 	return []usagestats.ModelStat{}, nil
 }
 
@@ -78,6 +83,7 @@ func (s *dashboardUsageRepoCapture) GetGroupStatsWithUsageFilters(
 ) ([]usagestats.GroupStat, error) {
 	s.groupNativeCompaction = filters.NativeCompactionV2
 	s.groupMismatch = filters.UpstreamModelMismatch
+	s.groupAccountSource = filters.AccountSource
 	return []usagestats.GroupStat{}, nil
 }
 
@@ -323,4 +329,41 @@ func TestDashboardUsersRankingLimitAndCache(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec2.Code)
 	require.Equal(t, "hit", rec2.Header().Get("X-Snapshot-Cache"))
+}
+
+func TestDashboardAccountSourceFilterPropagatesToTrendModelAndGroupQueries(t *testing.T) {
+	resetDashboardReadCachesForTest()
+	repo := &dashboardUsageRepoCapture{}
+	router := newDashboardRequestTypeTestRouter(repo)
+
+	for _, path := range []string{
+		"/admin/dashboard/trend?account_source=own",
+		"/admin/dashboard/models?account_source=own",
+		"/admin/dashboard/groups?account_source=own",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code, path)
+	}
+
+	require.Equal(t, service.UsageLogAccountSourceOwn, repo.trendAccountSource)
+	require.Equal(t, service.UsageLogAccountSourceOwn, repo.modelAccountSource)
+	require.Equal(t, service.UsageLogAccountSourceOwn, repo.groupAccountSource)
+}
+
+func TestDashboardAccountSourceFilterRejectsUnknownValue(t *testing.T) {
+	repo := &dashboardUsageRepoCapture{}
+	router := newDashboardRequestTypeTestRouter(repo)
+
+	for _, path := range []string{
+		"/admin/dashboard/trend?account_source=admin",
+		"/admin/dashboard/models?account_source=admin",
+		"/admin/dashboard/groups?account_source=admin",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusBadRequest, rec.Code, path)
+	}
 }

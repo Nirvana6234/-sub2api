@@ -57,8 +57,22 @@
               <option value="1024x1024">1024 × 1024</option>
               <option value="1536x1024">1536 × 1024</option>
               <option value="1024x1536">1024 × 1536</option>
+              <option value="1440x1080">4:3 · 1440 × 1080</option>
+              <option value="1080x1440">3:4 · 1080 × 1440</option>
+              <option value="1920x1080">16:9 · 1920 × 1080</option>
+              <option value="1080x1920">9:16 · 1080 × 1920</option>
+              <option value="custom">自定义尺寸</option>
             </select>
           </label>
+          <div v-if="size === 'custom'" class="grid grid-cols-[1fr_auto_1fr] items-end gap-2">
+            <label class="block text-[11px] font-medium text-gray-500 dark:text-dark-400">宽度
+              <input class="input mt-1 h-8 w-full text-xs" type="number" min="16" max="3840" step="16" :value="customWidth" :disabled="disabled" @change="emitUpdate('customWidth', ($event.target as HTMLInputElement).value)">
+            </label>
+            <span class="pb-2 text-gray-400">×</span>
+            <label class="block text-[11px] font-medium text-gray-500 dark:text-dark-400">高度
+              <input class="input mt-1 h-8 w-full text-xs" type="number" min="16" max="3840" step="16" :value="customHeight" :disabled="disabled" @change="emitUpdate('customHeight', ($event.target as HTMLInputElement).value)">
+            </label>
+          </div>
           <label class="block text-[11px] font-medium text-gray-500 dark:text-dark-400">
             {{ t('playground.canvasQuality') }}
             <select class="select mt-1 h-8 w-full text-xs" :value="quality" :disabled="disabled" @change="emitUpdate('quality', ($event.target as HTMLSelectElement).value)">
@@ -168,12 +182,14 @@ import { useI18n } from 'vue-i18n'
 import { Icon } from '@/components/icons'
 
 type CanvasConfigMode = 'image' | 'text' | 'video' | 'audio'
-type ConfigKey = 'count' | 'size' | 'quality' | 'background' | 'resolution' | 'duration' | 'aspectRatio' | 'audioVoice' | 'audioFormat' | 'audioSpeed' | 'audioInstructions' | 'reasoningEffort'
+type ConfigKey = 'count' | 'size' | 'customWidth' | 'customHeight' | 'quality' | 'background' | 'resolution' | 'duration' | 'aspectRatio' | 'audioVoice' | 'audioFormat' | 'audioSpeed' | 'audioInstructions' | 'reasoningEffort'
 
 const props = withDefaults(defineProps<{
   mode: CanvasConfigMode
   count?: string
   size?: string
+  customWidth?: string
+  customHeight?: string
   quality?: string
   background?: string
   resolution?: string
@@ -188,6 +204,8 @@ const props = withDefaults(defineProps<{
 }>(), {
   count: '1',
   size: '1024x1024',
+  customWidth: '1024',
+  customHeight: '1024',
   quality: 'auto',
   background: 'auto',
   resolution: '720p',

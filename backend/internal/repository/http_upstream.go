@@ -202,6 +202,9 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 	if err := s.validateRequestHost(req); err != nil {
 		return nil, err
 	}
+	if req != nil && (service.HTTPUpstreamPublicHostsOnly(req.Context()) || service.HTTPUpstreamPublicProxyOnly(req.Context()) || s.shouldValidateResolvedIP()) {
+		return s.doPublicUpstream(req, proxyURL, accountConcurrency)
+	}
 	profile := service.HTTPUpstreamProfileDefault
 	if req != nil {
 		profile = service.HTTPUpstreamProfileFromContext(req.Context())
@@ -245,6 +248,12 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 // profile 非 nil 时使用指定的 Profile 进行 TLS 指纹伪装。
 func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
 	if profile == nil {
+		return s.Do(req, proxyURL, accountID, accountConcurrency)
+	}
+	// TLS fingerprint dialers resolve the hostname internally. For contributed
+	// accounts, use the guarded standard transport so the IP checked by the
+	// policy is the IP actually dialed, including DNS rebinding protection.
+	if req != nil && (service.HTTPUpstreamPublicHostsOnly(req.Context()) || service.HTTPUpstreamPublicProxyOnly(req.Context()) || s.shouldValidateResolvedIP()) {
 		return s.Do(req, proxyURL, accountID, accountConcurrency)
 	}
 	// Plain HTTP has no TLS handshake to fingerprint. Reuse the normal transport

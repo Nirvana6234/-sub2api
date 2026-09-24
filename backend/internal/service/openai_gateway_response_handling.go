@@ -221,18 +221,41 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		firstOutputCh = firstOutputTimer.C
 		defer firstOutputTimer.Stop()
 	}
+	// 硬上限与 response_headers 阶段同一套语义：软时限到点只代表"偏慢"，
+	// 绝不截断一个还在正常进行的请求；只有硬上限成立才判定这条连接已死。
+	firstOutputHardCap := s.openAIFirstOutputHardCap(firstOutputTimeout)
+	var firstOutputHardTimer *time.Timer
+	var firstOutputHardCh <-chan time.Time
+	if firstOutputTimeout > 0 {
+		remaining := time.Until(startTime.Add(firstOutputHardCap))
+		if remaining <= 0 {
+			remaining = time.Nanosecond
+		}
+		firstOutputHardTimer = time.NewTimer(remaining)
+		firstOutputHardCh = firstOutputHardTimer.C
+		defer firstOutputHardTimer.Stop()
+	}
 	stopFirstOutputTimer := func() {
-		if firstOutputTimer == nil {
-			return
-		}
-		if !firstOutputTimer.Stop() {
-			select {
-			case <-firstOutputTimer.C:
-			default:
+		if firstOutputTimer != nil {
+			if !firstOutputTimer.Stop() {
+				select {
+				case <-firstOutputTimer.C:
+				default:
+				}
 			}
+			firstOutputTimer = nil
+			firstOutputCh = nil
 		}
-		firstOutputTimer = nil
-		firstOutputCh = nil
+		if firstOutputHardTimer != nil {
+			if !firstOutputHardTimer.Stop() {
+				select {
+				case <-firstOutputHardTimer.C:
+				default:
+				}
+			}
+			firstOutputHardTimer = nil
+			firstOutputHardCh = nil
+		}
 	}
 	// Track downstream writes separately from upstream reads: pre-output failover
 	// can buffer response.created / response.in_progress, so keepalive must be
@@ -926,6 +949,32 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				_ = resp.Body.Close()
 				return finalizeStream()
 			}
+			// 软时限到点只说明首个语义输出来得慢，连接本身还活着（响应头已回、
+			// 前导事件也在流）。与 response_headers 阶段同一条原则：不截断、
+			// 不换号，继续等它把内容吐出来。真正该放弃由下面的硬上限判定。
+			if firstOutputTimer != nil {
+				if !firstOutputTimer.Stop() {
+					select {
+					case <-firstOutputTimer.C:
+					default:
+					}
+				}
+				firstOutputTimer = nil
+				firstOutputCh = nil
+			}
+			s.observeOpenAISlowFirstOutput(account, startTime, originalModel,
+				reasoningEffort, firstOutputTimeout, "semantic_output")
+			continue
+
+		case <-firstOutputHardCh:
+			if firstOutputProgressObserved {
+				stopFirstOutputTimer()
+				continue
+			}
+			if codexFailureTerminal && sawBareError && !sawResponseFailed && len(events) == 0 {
+				_ = resp.Body.Close()
+				return finalizeStream()
+			}
 			_ = resp.Body.Close()
 			for ev := range events {
 				markEventProcessed(ev)
@@ -933,7 +982,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			return resultWithUsage(), s.newOpenAIFirstOutputTimeoutError(
 				ctx, c, account, opsUpstreamProxyID(account), opsUpstreamProxyName(account),
 				startTime, originalModel, reasoningEffort,
-				firstOutputTimeout, "semantic_output", resp.Header,
+				firstOutputHardCap, "semantic_output", resp.Header,
 			)
 
 		case <-keepaliveCh:

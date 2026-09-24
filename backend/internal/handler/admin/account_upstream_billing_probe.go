@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"strconv"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
@@ -10,6 +11,11 @@ import (
 
 type upstreamBillingProbeEnabledRequest struct {
 	Enabled *bool `json:"enabled" binding:"required"`
+}
+
+type upstreamBillingManualRateRequest struct {
+	// A missing or null value explicitly clears the administrator override.
+	RateMultiplier *float64 `json:"rate_multiplier"`
 }
 
 type upstreamBillingProbeBatchRequest struct {
@@ -71,6 +77,32 @@ func (h *AccountHandler) SetUpstreamBillingProbeEnabled(c *gin.Context) {
 		return
 	}
 	response.Success(c, gin.H{"account_id": accountID, "enabled": *req.Enabled})
+}
+
+func (h *AccountHandler) SetUpstreamBillingManualRate(c *gin.Context) {
+	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || accountID <= 0 {
+		response.BadRequest(c, "Invalid account ID")
+		return
+	}
+	var req upstreamBillingManualRateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	manualRateService, ok := h.adminService.(interface {
+		SetAccountUpstreamBillingManualRateMultiplier(ctx context.Context, id int64, rateMultiplier *float64) (*service.Account, error)
+	})
+	if !ok {
+		response.ErrorFrom(c, service.ErrUpstreamBillingProbeUnavailable)
+		return
+	}
+	account, err := manualRateService.SetAccountUpstreamBillingManualRateMultiplier(c.Request.Context(), accountID, req.RateMultiplier)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, h.buildAccountResponseWithRuntime(c.Request.Context(), account))
 }
 
 func (h *AccountHandler) ProbeUpstreamBilling(c *gin.Context) {

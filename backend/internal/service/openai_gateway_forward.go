@@ -19,6 +19,7 @@ import (
 
 // Forward forwards request to OpenAI API
 func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
+	ctx = WithHTTPUpstreamPublicHostsOnlyForAccount(ctx, account)
 	beginUpstreamResponseModelObservation(c)
 	ClearActualOpenAIUpstreamEndpoint(c)
 	if shouldForwardOpenAIResponsesViaRawChatCompletions(account) {
@@ -46,6 +47,15 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	// 请求体里的 client_metadata / prompt_cache_key，用改写后的值取键会让不同会话
 	// 落到同一个键，也会与 WS 接入路径按原始报文算出的键对不上。
 	wsExecutionScope, _ := resolveOpenAIWSExecutionScope(c, body, apiKeyID)
+	// strict 判定与 ops 档位一并复位。判定只发生在 forwardOpenAIPassthrough 顶部，
+	// 而 failover 从 strict 账号换到**非透传**账号时那一段根本不执行——上一 attempt
+	// 的 true 会原样残留给出站构造器和 ops 记录。复位放在这里，是因为 Forward 是
+	// 每个 attempt 都必经、且早于任何分叉的唯一入口；套路同下方的
+	// stageCodexFingerprintIDs(c, nil)：先无条件复位，真正的判定随后覆写。
+	stageOpenAIStrictPassthrough(c, false)
+	setOpsOpenAIPassthroughMode(c,
+		OpenAIPassthroughModeForOps(false, account.IsOpenAIPassthroughEnabled()),
+		"")
 	logCodexCLIOnlyDetection(ctx, c, account, apiKeyID, restrictionResult, body)
 	if restrictionResult.Enabled && !restrictionResult.Matched {
 		MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalPolicyDenied)
@@ -1043,7 +1053,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		var headerGuard *openAIFirstOutputHeaderGuard
 		if firstOutputTimeout > 0 {
 			upstreamCtx, headerGuard = newOpenAIFirstOutputHeaderGuard(
-				upstreamCtx, releaseUpstreamCtx, startTime.Add(firstOutputTimeout),
+				upstreamCtx, releaseUpstreamCtx,
+				startTime.Add(firstOutputTimeout),
+				startTime.Add(s.openAIFirstOutputHardCap(firstOutputTimeout)),
 			)
 		}
 		upstreamReq, err := s.buildUpstreamRequest(upstreamCtx, c, account, body, token, reqStream, promptCacheKey, isCodexCLI)
@@ -1067,16 +1079,23 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		upstreamStart := time.Now()
 		resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
-		if headerGuard != nil && headerGuard.stopHeaderWait() {
-			if resp != nil && resp.Body != nil {
-				_ = resp.Body.Close()
+		if headerGuard != nil && headerGuard.slowHeaderWait() {
+			// 越过软时限只说明这个请求偏慢。请求已经发出、上游仍在处理，此处
+			// 绝不截断、也不换号——把一个还在正常进行的请求杀掉再给用户回错误
+			// 是不能接受的。只有硬上限成立才代表连接已死，那时才放弃。
+			if headerGuard.hardCapExceeded() {
+				if resp != nil && resp.Body != nil {
+					_ = resp.Body.Close()
+				}
+				headerGuard.close()
+				return nil, s.newOpenAIFirstOutputTimeoutError(
+					ctx, c, account, opsUpstreamProxyID(account), opsUpstreamProxyName(account),
+					startTime, originalModel, reasoningEffortValue,
+					s.openAIFirstOutputHardCap(firstOutputTimeout), "response_headers", nil,
+				)
 			}
-			headerGuard.close()
-			return nil, s.newOpenAIFirstOutputTimeoutError(
-				ctx, c, account, opsUpstreamProxyID(account), opsUpstreamProxyName(account),
-				startTime, originalModel, reasoningEffortValue,
-				firstOutputTimeout, "response_headers", nil,
-			)
+			s.observeOpenAISlowFirstOutput(account, startTime, originalModel,
+				reasoningEffortValue, firstOutputTimeout, "response_headers")
 		}
 		if err != nil {
 			if resp != nil && resp.Body != nil {
@@ -1084,9 +1103,6 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 			if headerGuard != nil {
 				headerGuard.close()
-			}
-			if upstreamReq.Header.Get(HeadroomBaseURLHeader) != "" {
-				markHeadroomTransportFailure()
 			}
 			// Transport-level failure (proxy/DNS/TCP/TLS — no HTTP response). Convert to
 			// a failover so the handler switches to a healthy account, and temporarily
@@ -1116,7 +1132,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 			respBody = s.redactAgentIdentitySensitiveBody(ctx, account, respBody)
 			resp.Body = io.NopCloser(bytes.NewReader(respBody))
-			if !httpInvalidEncryptedContentRetryTried && resp.StatusCode == http.StatusBadRequest && upstreamCode == "invalid_encrypted_content" {
+			if !httpInvalidEncryptedContentRetryTried && isOpenAIInvalidEncryptedContentHTTPResponse(resp.StatusCode, respBody, upstreamCode) {
 				decoded, decodeErr := ensureReqBody()
 				if decodeErr != nil {
 					return nil, decodeErr
@@ -1327,7 +1343,6 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			OpenAIWSMode:                  false,
 			Duration:                      time.Since(startTime),
 			FirstTokenMs:                  firstTokenMs,
-			HeadroomTokensSaved:           parseHeadroomTokensSavedHeader(resp.Header),
 		}
 		if imageCount > 0 {
 			forwardResult.ImageCount = imageCount
@@ -1404,17 +1419,6 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	}
 	targetURL = appendOpenAIResponsesRequestPathSuffix(targetURL, openAIResponsesRequestPathSuffix(c))
 
-	// headroom 上下文压缩：ChatGPT OAuth/Codex 内部协议账号排除在外——headroom
-	// 对"ChatGPT 会话认证"有自己的一套内置路由逻辑，会无视 x-headroom-base-url
-	// 抢先接管，账号可能被错误路由，不冒这个险，始终直连。
-	headroomRealOrigin := ""
-	if !account.UsesOpenAICodexProtocol() {
-		if compressedURL, realOrigin, ok := resolveHeadroomCompressionTarget(ctx, s.settingService, getAPIKeyFromContext(c), targetURL); ok {
-			targetURL = compressedURL
-			headroomRealOrigin = realOrigin
-		}
-	}
-
 	// DeepSeek / Kimi 原生 Responses 端点为无状态实现：强制 store=false、清除
 	// previous_response_id，避免携带状态字段被上游拒绝。
 	body = normalizeDeepSeekResponsesRequestBody(account, body)
@@ -1422,9 +1426,6 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	req, err := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
-	}
-	if headroomRealOrigin != "" {
-		req.Header.Set(HeadroomBaseURLHeader, headroomRealOrigin)
 	}
 	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
 

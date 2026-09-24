@@ -4,17 +4,16 @@
 > Elastic IP，每次 Stop/Start 都会换 IP（2026-08-28 已从 `13.212.118.49` 变为 `52.76.22.21`）。
 >
 > 全文分两部分：**Part A 搬到新服务器**（从零部署）、**Part B 日常发版**（更新已有服务器）。
-> 所有内容于 2026-08-28 对照运行中的生产机逐条核对过。
+> 基础设施流程于 2026-08-28 对照运行中的生产机逐条核对过；最近一次主应用发版核验于 2026-09-20 完成。
 
 ```bash
-PRODKEY="E:/sub2api云服务/枫迹云-154.9.26.202/vpn-manager/keys/52.76.22.21_my rsa.pem"
+PRODKEY="E:/sub2api云服务/枫迹云-154.9.26.202/vpn-manager/keys/52.76.22.21.pem"
 PRODIP="52.76.22.21"      # 每次重启都要确认，别照抄
 ```
 
 - 登录用户是 **`ec2-user`**，root 会被明确拒绝；特权命令一律 `sudo`
-- 密钥不在 `~/.ssh/` 下，路径见上（**文件名含空格，必须加引号**）。**2026-09-09 确认：密钥文件已随 IP 变更改名**
-  （从 `13.212.118.49_my rsa.pem` 改成了 `52.76.22.21_my rsa.pem`），旧文件名已不存在——下次 IP 再变前，
-  先用 `find vpn-manager/keys -iname "*.pem"` 核实当前真实文件名，不要直接照抄本文档里的路径
+- 密钥不在 `~/.ssh/` 下，路径见上。当前文件名为 `52.76.22.21.pem`，使用前先确认文件存在；
+  下次 IP 变化时先用 `Get-ChildItem vpn-manager/keys -Filter *.pem` 核实真实文件名，不要直接照抄旧路径
 
 ---
 
@@ -419,8 +418,8 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags embed -trimpath -o bin/sub2
 ```bash
 ssh -i "$PRODKEY" ec2-user@$PRODIP "sudo docker exec sub2api-postgres pg_dump -U sub2api -d sub2api -Fc -f /tmp/pre-deploy.dump && sudo docker cp sub2api-postgres:/tmp/pre-deploy.dump /opt/sub2api/backups/ && sudo docker exec sub2api-postgres rm -f /tmp/pre-deploy.dump"
 ssh -i "$PRODKEY" ec2-user@$PRODIP "cd /opt/sub2api && cp deploy/docker-compose.local.yml deploy/docker-compose.local.yml.bak-\$(date +%Y%m%d-%H%M%S)"
-scp -i "$PRODKEY" "…/backend/bin/sub2api-linux-amd64" ec2-user@$PRODIP:/opt/sub2api/backend/bin/sub2api-YYYYMMDD-release
-ssh -i "$PRODKEY" ec2-user@$PRODIP "sudo chmod 755 /opt/sub2api/backend/bin/sub2api-YYYYMMDD-release"
+scp -i "$PRODKEY" "…/backend/bin/sub2api-linux-amd64" ec2-user@$PRODIP:/opt/sub2api/backend/bin/sub2api-YYYYMMDD-<feature>-r1
+ssh -i "$PRODKEY" ec2-user@$PRODIP "sudo chmod 755 /opt/sub2api/backend/bin/sub2api-YYYYMMDD-<feature>-r1"
 ```
 
 **永远用新文件名上传，绝不覆盖旧二进制**（回滚就靠它）。
@@ -433,7 +432,7 @@ ssh -i "$PRODKEY" ec2-user@$PRODIP "sudo chmod 755 /opt/sub2api/backend/bin/sub2
 
 ```bash
 ssh -i "$PRODKEY" ec2-user@$PRODIP "grep -n ':/app/sub2api:ro' /opt/sub2api/deploy/docker-compose.local.yml"
-ssh -i "$PRODKEY" ec2-user@$PRODIP "cd /opt/sub2api && sed -i 's|bin/OLD_NAME:/app/sub2api:ro|bin/sub2api-YYYYMMDD-release:/app/sub2api:ro|' deploy/docker-compose.local.yml"
+ssh -i "$PRODKEY" ec2-user@$PRODIP "cd /opt/sub2api && sed -i 's|bin/OLD_NAME:/app/sub2api:ro|bin/sub2api-YYYYMMDD-<feature>-r1:/app/sub2api:ro|' deploy/docker-compose.local.yml"
 ssh -i "$PRODKEY" ec2-user@$PRODIP "cd /opt/sub2api && sudo docker compose -f deploy/docker-compose.local.yml up -d --no-deps --no-build sub2api"
 ```
 
@@ -458,11 +457,35 @@ ssh -i "$PRODKEY" ec2-user@$PRODIP "curl -s -o /dev/null -w 'tickets=%{http_code
 ssh -i "$PRODKEY" ec2-user@$PRODIP "sudo docker inspect sub2api --format '{{range .Config.Env}}{{println .}}{{end}}' | grep ISOLATION"
 ```
 
-> **2026-08-28 核对**：当前最新迁移是 **237**（`237_usage_logs_fallback_pool_trace.sql`）。
-> 本文档旧版写死的 `229/230/231` 已过时 —— **验证时看最新几条是否符合本次发布预期，
-> 不要照抄具体编号**。
+> **2026-09-20 核对**：本次生产库最新迁移为 **256**，最近三条为：
+> `256_remove_legacy_openai_oauth_passthrough.sql`、`255_tickets.sql`、
+> `254_bump_client_download_to_v0_5.sql`。迁移编号会继续变化；验证时看最新几条是否符合本次发布预期，
+> 不要把 `256` 写死到脚本中。
 
-成功后更新 `/opt/sub2api/DEPLOYED_COMMIT`（它的旧值可能是陈的）。
+成功后更新 `/opt/sub2api/DEPLOYED_COMMIT`（它的旧值可能是旧的），并记录本次实际构建标识：
+
+```bash
+ssh -i "$PRODKEY" ec2-user@$PRODIP \
+  "printf '%s\n' '<local-commit-or-build-id>' | sudo tee /opt/sub2api/DEPLOYED_COMMIT"
+```
+
+### B4.1 最近一次发版记录（2026-09-20）
+
+本次使用本地构建的二进制 `sub2api-20260920-state-kit-playground-r1`，服务器路径为：
+
+```text
+/opt/sub2api/backend/bin/sub2api-20260920-state-kit-playground-r1
+```
+
+本地与服务器 SHA256 必须一致；本次校验值为：
+
+```text
+428068ac2c54a01d013ec514d09b6724ed526522580da6196dda1a39d6949a05
+```
+
+本次还验证了 `sub2api=healthy`、`/health=200`、`/api/v1/tickets=401`、
+`/download=200`。`transithub-gpt56-detector` 的 `unhealthy` 状态在发版前已存在，
+本次没有重启或修改 TransitHub；排查 TransitHub 时不要把它当作主应用发版失败。
 
 ## B5. 回滚
 
@@ -690,7 +713,7 @@ icode-xtu.ccwu.cc          icode-xtu-manage.ccwu.cc          gongfeiai.com
 | 位置 | 为什么 |
 |---|---|
 | `vpn-manager/config/servers.json` 的 **`id`** | 是主键，关联 `data/servers/<id>/` 目录，改了丢该服务器全部用户数据 |
-| `keyFile` 及密钥文件名 | 真实文件名——2026-09-09 确认这个文件名**会**随 IP 变更被重命名（`13.212.118.49_my rsa.pem` → `52.76.22.21_my rsa.pem`），不是"旧 IP 只是历史遗留"；改 IP 时同步核实并改文件名引用 |
+| `keyFile` 及密钥文件名 | 当前密钥为 `vpn-manager/keys/52.76.22.21.pem`；IP 变化后先枚举 `vpn-manager/keys/*.pem`，再同步核实配置引用，不能猜文件名 |
 | `backend/migrations/*.sql` | 已执行的迁移，改了破坏一致性 |
 | `commit-msg-*.txt`、`progress.md`、`*.bak-*`、`排查记录/` | 历史记录，改了就失真 |
 

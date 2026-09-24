@@ -19,6 +19,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/pendingauthsession"
 	"github.com/Wei-Shaw/sub2api/ent/promocodeusage"
 	"github.com/Wei-Shaw/sub2api/ent/redeemcode"
+	"github.com/Wei-Shaw/sub2api/ent/ticket"
 	"github.com/Wei-Shaw/sub2api/ent/usagelog"
 	"github.com/Wei-Shaw/sub2api/ent/user"
 	"github.com/Wei-Shaw/sub2api/ent/userattributevalue"
@@ -242,6 +243,20 @@ func (_c *UserCreate) SetNillableSignupSource(v *string) *UserCreate {
 	return _c
 }
 
+// SetRegisterIP sets the "register_ip" field.
+func (_c *UserCreate) SetRegisterIP(v string) *UserCreate {
+	_c.mutation.SetRegisterIP(v)
+	return _c
+}
+
+// SetNillableRegisterIP sets the "register_ip" field if the given value is not nil.
+func (_c *UserCreate) SetNillableRegisterIP(v *string) *UserCreate {
+	if v != nil {
+		_c.SetRegisterIP(*v)
+	}
+	return _c
+}
+
 // SetLastLoginAt sets the "last_login_at" field.
 func (_c *UserCreate) SetLastLoginAt(v time.Time) *UserCreate {
 	_c.mutation.SetLastLoginAt(v)
@@ -368,16 +383,30 @@ func (_c *UserCreate) SetNillableRpmLimit(v *int) *UserCreate {
 	return _c
 }
 
-// SetHeadroomCompressionEnabled sets the "headroom_compression_enabled" field.
-func (_c *UserCreate) SetHeadroomCompressionEnabled(v bool) *UserCreate {
-	_c.mutation.SetHeadroomCompressionEnabled(v)
+// SetAccountManagementEnabled sets the "account_management_enabled" field.
+func (_c *UserCreate) SetAccountManagementEnabled(v bool) *UserCreate {
+	_c.mutation.SetAccountManagementEnabled(v)
 	return _c
 }
 
-// SetNillableHeadroomCompressionEnabled sets the "headroom_compression_enabled" field if the given value is not nil.
-func (_c *UserCreate) SetNillableHeadroomCompressionEnabled(v *bool) *UserCreate {
+// SetNillableAccountManagementEnabled sets the "account_management_enabled" field if the given value is not nil.
+func (_c *UserCreate) SetNillableAccountManagementEnabled(v *bool) *UserCreate {
 	if v != nil {
-		_c.SetHeadroomCompressionEnabled(*v)
+		_c.SetAccountManagementEnabled(*v)
+	}
+	return _c
+}
+
+// SetContributionRoomsEnabled sets the "contribution_rooms_enabled" field.
+func (_c *UserCreate) SetContributionRoomsEnabled(v bool) *UserCreate {
+	_c.mutation.SetContributionRoomsEnabled(v)
+	return _c
+}
+
+// SetNillableContributionRoomsEnabled sets the "contribution_rooms_enabled" field if the given value is not nil.
+func (_c *UserCreate) SetNillableContributionRoomsEnabled(v *bool) *UserCreate {
+	if v != nil {
+		_c.SetContributionRoomsEnabled(*v)
 	}
 	return _c
 }
@@ -455,6 +484,21 @@ func (_c *UserCreate) AddAnnouncementReads(v ...*AnnouncementRead) *UserCreate {
 		ids[i] = v[i].ID
 	}
 	return _c.AddAnnouncementReadIDs(ids...)
+}
+
+// AddTicketIDs adds the "tickets" edge to the Ticket entity by IDs.
+func (_c *UserCreate) AddTicketIDs(ids ...int64) *UserCreate {
+	_c.mutation.AddTicketIDs(ids...)
+	return _c
+}
+
+// AddTickets adds the "tickets" edges to the Ticket entity.
+func (_c *UserCreate) AddTickets(v ...*Ticket) *UserCreate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _c.AddTicketIDs(ids...)
 }
 
 // AddAllowedGroupIDs adds the "allowed_groups" edge to the Group entity by IDs.
@@ -688,9 +732,13 @@ func (_c *UserCreate) defaults() error {
 		v := user.DefaultRpmLimit
 		_c.mutation.SetRpmLimit(v)
 	}
-	if _, ok := _c.mutation.HeadroomCompressionEnabled(); !ok {
-		v := user.DefaultHeadroomCompressionEnabled
-		_c.mutation.SetHeadroomCompressionEnabled(v)
+	if _, ok := _c.mutation.AccountManagementEnabled(); !ok {
+		v := user.DefaultAccountManagementEnabled
+		_c.mutation.SetAccountManagementEnabled(v)
+	}
+	if _, ok := _c.mutation.ContributionRoomsEnabled(); !ok {
+		v := user.DefaultContributionRoomsEnabled
+		_c.mutation.SetContributionRoomsEnabled(v)
 	}
 	return nil
 }
@@ -766,6 +814,11 @@ func (_c *UserCreate) check() error {
 			return &ValidationError{Name: "signup_source", err: fmt.Errorf(`ent: validator failed for field "User.signup_source": %w`, err)}
 		}
 	}
+	if v, ok := _c.mutation.RegisterIP(); ok {
+		if err := user.RegisterIPValidator(v); err != nil {
+			return &ValidationError{Name: "register_ip", err: fmt.Errorf(`ent: validator failed for field "User.register_ip": %w`, err)}
+		}
+	}
 	if _, ok := _c.mutation.RestrictPublicGroups(); !ok {
 		return &ValidationError{Name: "restrict_public_groups", err: errors.New(`ent: missing required field "User.restrict_public_groups"`)}
 	}
@@ -784,8 +837,11 @@ func (_c *UserCreate) check() error {
 	if _, ok := _c.mutation.RpmLimit(); !ok {
 		return &ValidationError{Name: "rpm_limit", err: errors.New(`ent: missing required field "User.rpm_limit"`)}
 	}
-	if _, ok := _c.mutation.HeadroomCompressionEnabled(); !ok {
-		return &ValidationError{Name: "headroom_compression_enabled", err: errors.New(`ent: missing required field "User.headroom_compression_enabled"`)}
+	if _, ok := _c.mutation.AccountManagementEnabled(); !ok {
+		return &ValidationError{Name: "account_management_enabled", err: errors.New(`ent: missing required field "User.account_management_enabled"`)}
+	}
+	if _, ok := _c.mutation.ContributionRoomsEnabled(); !ok {
+		return &ValidationError{Name: "contribution_rooms_enabled", err: errors.New(`ent: missing required field "User.contribution_rooms_enabled"`)}
 	}
 	return nil
 }
@@ -878,6 +934,10 @@ func (_c *UserCreate) createSpec() (*User, *sqlgraph.CreateSpec) {
 		_spec.SetField(user.FieldSignupSource, field.TypeString, value)
 		_node.SignupSource = value
 	}
+	if value, ok := _c.mutation.RegisterIP(); ok {
+		_spec.SetField(user.FieldRegisterIP, field.TypeString, value)
+		_node.RegisterIP = &value
+	}
 	if value, ok := _c.mutation.LastLoginAt(); ok {
 		_spec.SetField(user.FieldLastLoginAt, field.TypeTime, value)
 		_node.LastLoginAt = &value
@@ -914,9 +974,13 @@ func (_c *UserCreate) createSpec() (*User, *sqlgraph.CreateSpec) {
 		_spec.SetField(user.FieldRpmLimit, field.TypeInt, value)
 		_node.RpmLimit = value
 	}
-	if value, ok := _c.mutation.HeadroomCompressionEnabled(); ok {
-		_spec.SetField(user.FieldHeadroomCompressionEnabled, field.TypeBool, value)
-		_node.HeadroomCompressionEnabled = value
+	if value, ok := _c.mutation.AccountManagementEnabled(); ok {
+		_spec.SetField(user.FieldAccountManagementEnabled, field.TypeBool, value)
+		_node.AccountManagementEnabled = value
+	}
+	if value, ok := _c.mutation.ContributionRoomsEnabled(); ok {
+		_spec.SetField(user.FieldContributionRoomsEnabled, field.TypeBool, value)
+		_node.ContributionRoomsEnabled = value
 	}
 	if nodes := _c.mutation.APIKeysIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
@@ -991,6 +1055,22 @@ func (_c *UserCreate) createSpec() (*User, *sqlgraph.CreateSpec) {
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(announcementread.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges = append(_spec.Edges, edge)
+	}
+	if nodes := _c.mutation.TicketsIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.TicketsTable,
+			Columns: []string{user.TicketsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(ticket.FieldID, field.TypeInt64),
 			},
 		}
 		for _, k := range nodes {
@@ -1398,6 +1478,24 @@ func (u *UserUpsert) UpdateSignupSource() *UserUpsert {
 	return u
 }
 
+// SetRegisterIP sets the "register_ip" field.
+func (u *UserUpsert) SetRegisterIP(v string) *UserUpsert {
+	u.Set(user.FieldRegisterIP, v)
+	return u
+}
+
+// UpdateRegisterIP sets the "register_ip" field to the value that was provided on create.
+func (u *UserUpsert) UpdateRegisterIP() *UserUpsert {
+	u.SetExcluded(user.FieldRegisterIP)
+	return u
+}
+
+// ClearRegisterIP clears the value of the "register_ip" field.
+func (u *UserUpsert) ClearRegisterIP() *UserUpsert {
+	u.SetNull(user.FieldRegisterIP)
+	return u
+}
+
 // SetLastLoginAt sets the "last_login_at" field.
 func (u *UserUpsert) SetLastLoginAt(v time.Time) *UserUpsert {
 	u.Set(user.FieldLastLoginAt, v)
@@ -1542,15 +1640,27 @@ func (u *UserUpsert) AddRpmLimit(v int) *UserUpsert {
 	return u
 }
 
-// SetHeadroomCompressionEnabled sets the "headroom_compression_enabled" field.
-func (u *UserUpsert) SetHeadroomCompressionEnabled(v bool) *UserUpsert {
-	u.Set(user.FieldHeadroomCompressionEnabled, v)
+// SetAccountManagementEnabled sets the "account_management_enabled" field.
+func (u *UserUpsert) SetAccountManagementEnabled(v bool) *UserUpsert {
+	u.Set(user.FieldAccountManagementEnabled, v)
 	return u
 }
 
-// UpdateHeadroomCompressionEnabled sets the "headroom_compression_enabled" field to the value that was provided on create.
-func (u *UserUpsert) UpdateHeadroomCompressionEnabled() *UserUpsert {
-	u.SetExcluded(user.FieldHeadroomCompressionEnabled)
+// UpdateAccountManagementEnabled sets the "account_management_enabled" field to the value that was provided on create.
+func (u *UserUpsert) UpdateAccountManagementEnabled() *UserUpsert {
+	u.SetExcluded(user.FieldAccountManagementEnabled)
+	return u
+}
+
+// SetContributionRoomsEnabled sets the "contribution_rooms_enabled" field.
+func (u *UserUpsert) SetContributionRoomsEnabled(v bool) *UserUpsert {
+	u.Set(user.FieldContributionRoomsEnabled, v)
+	return u
+}
+
+// UpdateContributionRoomsEnabled sets the "contribution_rooms_enabled" field to the value that was provided on create.
+func (u *UserUpsert) UpdateContributionRoomsEnabled() *UserUpsert {
+	u.SetExcluded(user.FieldContributionRoomsEnabled)
 	return u
 }
 
@@ -1851,6 +1961,27 @@ func (u *UserUpsertOne) UpdateSignupSource() *UserUpsertOne {
 	})
 }
 
+// SetRegisterIP sets the "register_ip" field.
+func (u *UserUpsertOne) SetRegisterIP(v string) *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.SetRegisterIP(v)
+	})
+}
+
+// UpdateRegisterIP sets the "register_ip" field to the value that was provided on create.
+func (u *UserUpsertOne) UpdateRegisterIP() *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateRegisterIP()
+	})
+}
+
+// ClearRegisterIP clears the value of the "register_ip" field.
+func (u *UserUpsertOne) ClearRegisterIP() *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.ClearRegisterIP()
+	})
+}
+
 // SetLastLoginAt sets the "last_login_at" field.
 func (u *UserUpsertOne) SetLastLoginAt(v time.Time) *UserUpsertOne {
 	return u.Update(func(s *UserUpsert) {
@@ -2019,17 +2150,31 @@ func (u *UserUpsertOne) UpdateRpmLimit() *UserUpsertOne {
 	})
 }
 
-// SetHeadroomCompressionEnabled sets the "headroom_compression_enabled" field.
-func (u *UserUpsertOne) SetHeadroomCompressionEnabled(v bool) *UserUpsertOne {
+// SetAccountManagementEnabled sets the "account_management_enabled" field.
+func (u *UserUpsertOne) SetAccountManagementEnabled(v bool) *UserUpsertOne {
 	return u.Update(func(s *UserUpsert) {
-		s.SetHeadroomCompressionEnabled(v)
+		s.SetAccountManagementEnabled(v)
 	})
 }
 
-// UpdateHeadroomCompressionEnabled sets the "headroom_compression_enabled" field to the value that was provided on create.
-func (u *UserUpsertOne) UpdateHeadroomCompressionEnabled() *UserUpsertOne {
+// UpdateAccountManagementEnabled sets the "account_management_enabled" field to the value that was provided on create.
+func (u *UserUpsertOne) UpdateAccountManagementEnabled() *UserUpsertOne {
 	return u.Update(func(s *UserUpsert) {
-		s.UpdateHeadroomCompressionEnabled()
+		s.UpdateAccountManagementEnabled()
+	})
+}
+
+// SetContributionRoomsEnabled sets the "contribution_rooms_enabled" field.
+func (u *UserUpsertOne) SetContributionRoomsEnabled(v bool) *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.SetContributionRoomsEnabled(v)
+	})
+}
+
+// UpdateContributionRoomsEnabled sets the "contribution_rooms_enabled" field to the value that was provided on create.
+func (u *UserUpsertOne) UpdateContributionRoomsEnabled() *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateContributionRoomsEnabled()
 	})
 }
 
@@ -2496,6 +2641,27 @@ func (u *UserUpsertBulk) UpdateSignupSource() *UserUpsertBulk {
 	})
 }
 
+// SetRegisterIP sets the "register_ip" field.
+func (u *UserUpsertBulk) SetRegisterIP(v string) *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.SetRegisterIP(v)
+	})
+}
+
+// UpdateRegisterIP sets the "register_ip" field to the value that was provided on create.
+func (u *UserUpsertBulk) UpdateRegisterIP() *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateRegisterIP()
+	})
+}
+
+// ClearRegisterIP clears the value of the "register_ip" field.
+func (u *UserUpsertBulk) ClearRegisterIP() *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.ClearRegisterIP()
+	})
+}
+
 // SetLastLoginAt sets the "last_login_at" field.
 func (u *UserUpsertBulk) SetLastLoginAt(v time.Time) *UserUpsertBulk {
 	return u.Update(func(s *UserUpsert) {
@@ -2664,17 +2830,31 @@ func (u *UserUpsertBulk) UpdateRpmLimit() *UserUpsertBulk {
 	})
 }
 
-// SetHeadroomCompressionEnabled sets the "headroom_compression_enabled" field.
-func (u *UserUpsertBulk) SetHeadroomCompressionEnabled(v bool) *UserUpsertBulk {
+// SetAccountManagementEnabled sets the "account_management_enabled" field.
+func (u *UserUpsertBulk) SetAccountManagementEnabled(v bool) *UserUpsertBulk {
 	return u.Update(func(s *UserUpsert) {
-		s.SetHeadroomCompressionEnabled(v)
+		s.SetAccountManagementEnabled(v)
 	})
 }
 
-// UpdateHeadroomCompressionEnabled sets the "headroom_compression_enabled" field to the value that was provided on create.
-func (u *UserUpsertBulk) UpdateHeadroomCompressionEnabled() *UserUpsertBulk {
+// UpdateAccountManagementEnabled sets the "account_management_enabled" field to the value that was provided on create.
+func (u *UserUpsertBulk) UpdateAccountManagementEnabled() *UserUpsertBulk {
 	return u.Update(func(s *UserUpsert) {
-		s.UpdateHeadroomCompressionEnabled()
+		s.UpdateAccountManagementEnabled()
+	})
+}
+
+// SetContributionRoomsEnabled sets the "contribution_rooms_enabled" field.
+func (u *UserUpsertBulk) SetContributionRoomsEnabled(v bool) *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.SetContributionRoomsEnabled(v)
+	})
+}
+
+// UpdateContributionRoomsEnabled sets the "contribution_rooms_enabled" field to the value that was provided on create.
+func (u *UserUpsertBulk) UpdateContributionRoomsEnabled() *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateContributionRoomsEnabled()
 	})
 }
 

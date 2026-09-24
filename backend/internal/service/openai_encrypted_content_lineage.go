@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -23,6 +24,45 @@ const openAIWSFallbackReasonInvalidEncryptedContent = "invalid_encrypted_content
 // openAIWSIngressSessionHashContextKey 在 gin context 中携带 ingress 会话哈希，
 // 供 HTTP bridge turn 内的 lineage 记录复用同一会话键。
 const openAIWSIngressSessionHashContextKey = "openai_ws_ingress_session_hash"
+
+// isOpenAIInvalidEncryptedContentHTTPResponse 判定 HTTP 错误响应是否属于
+// 「加密 reasoning/compaction 内容不可解」，用于触发一次剥离密文后的重试。
+//
+// 官方 Codex 后端给的是结构化 error.code=invalid_encrypted_content，但中转型
+// 上游（把请求转发到 Codex 后端的 API Key 网关）常把 code 置为 null，语义只留
+// 在 message 文本里：
+//
+//	The encrypted content gAAA... could not be verified.
+//	Reason: Encrypted content could not be decrypted or parsed.
+//
+// 只按 code 匹配会漏判：剥离重试不触发、整轮请求直接 400，跨上游的兜底池切换
+// 必然失败——而切换后拿旧上游的密文去解本就解不开，剥离重试正是为此设计的。
+// 文本判据与 WS 侧 classifyOpenAIWSErrorEventFromRaw 保持一致，并额外覆盖
+// decrypt/parse 变体；仍要求 400 且文本明确提到加密内容，避免误吞无关 400。
+func isOpenAIInvalidEncryptedContentHTTPResponse(statusCode int, body []byte, upstreamCode string) bool {
+	if statusCode != http.StatusBadRequest {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(upstreamCode), openAIWSFallbackReasonInvalidEncryptedContent) {
+		return true
+	}
+	// 复用 Grok 侧的多信封 message 提取：它只按通用字段名取值，与厂商无关。
+	for _, candidate := range grokStructuredErrorMessageCandidates(body) {
+		msg := strings.ToLower(candidate)
+		if strings.Contains(msg, openAIWSFallbackReasonInvalidEncryptedContent) {
+			return true
+		}
+		if !strings.Contains(msg, "encrypted content") && !strings.Contains(msg, "encrypted_content") {
+			continue
+		}
+		if strings.Contains(msg, "could not be verified") ||
+			strings.Contains(msg, "decrypt") ||
+			strings.Contains(msg, "could not be parsed") {
+			return true
+		}
+	}
+	return false
+}
 
 func openAIEncryptedContentDigest(encrypted string) string {
 	sum := sha256.Sum256([]byte(encrypted))

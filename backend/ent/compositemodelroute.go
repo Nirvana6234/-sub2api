@@ -44,8 +44,9 @@ type CompositeModelRoute struct {
 	Notes *string `json:"notes,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
 	// The values are being populated by the CompositeModelRouteQuery when eager-loading is set.
-	Edges        CompositeModelRouteEdges `json:"edges"`
-	selectValues sql.SelectValues
+	Edges                        CompositeModelRouteEdges `json:"edges"`
+	group_composite_model_routes *int64
+	selectValues                 sql.SelectValues
 }
 
 // CompositeModelRouteEdges holds the relations/edges for other nodes in the graph.
@@ -81,6 +82,8 @@ func (*CompositeModelRoute) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullString)
 		case compositemodelroute.FieldCreatedAt, compositemodelroute.FieldUpdatedAt, compositemodelroute.FieldDeletedAt:
 			values[i] = new(sql.NullTime)
+		case compositemodelroute.ForeignKeys[0]: // group_composite_model_routes
+			values[i] = new(sql.NullInt64)
 		default:
 			values[i] = new(sql.UnknownType)
 		}
@@ -175,6 +178,13 @@ func (_m *CompositeModelRoute) assignValues(columns []string, values []any) erro
 			} else if value.Valid {
 				_m.Notes = new(string)
 				*_m.Notes = value.String
+			}
+		case compositemodelroute.ForeignKeys[0]:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for edge-field group_composite_model_routes", value)
+			} else if value.Valid {
+				_m.group_composite_model_routes = new(int64)
+				*_m.group_composite_model_routes = int64(value.Int64)
 			}
 		default:
 			_m.selectValues.Set(columns[i], values[i])

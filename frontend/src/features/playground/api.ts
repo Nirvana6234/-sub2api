@@ -49,8 +49,12 @@ async function parseFailure(response: Response): Promise<string> {
         || `HTTP ${response.status}`
     }
 
+    if (responseType.includes('text/html')) {
+      return `HTTP ${response.status}`
+    }
+
     const text = (await response.text()).trim()
-    return text || `HTTP ${response.status}`
+    return (text && text.length <= 500) ? text : `HTTP ${response.status}`
   } catch {
     return `HTTP ${response.status}`
   }

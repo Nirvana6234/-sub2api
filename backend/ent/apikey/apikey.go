@@ -29,6 +29,10 @@ const (
 	FieldName = "name"
 	// FieldGroupID holds the string denoting the group_id field in the database.
 	FieldGroupID = "group_id"
+	// FieldAutoGroup holds the string denoting the auto_group field in the database.
+	FieldAutoGroup = "auto_group"
+	// FieldAutoGroupStrategy holds the string denoting the auto_group_strategy field in the database.
+	FieldAutoGroupStrategy = "auto_group_strategy"
 	// FieldStatus holds the string denoting the status field in the database.
 	FieldStatus = "status"
 	// FieldLastUsedAt holds the string denoting the last_used_at field in the database.
@@ -65,6 +69,8 @@ const (
 	EdgeUser = "user"
 	// EdgeGroup holds the string denoting the group edge name in mutations.
 	EdgeGroup = "group"
+	// EdgeContributionRoomPreferences holds the string denoting the contribution_room_preferences edge name in mutations.
+	EdgeContributionRoomPreferences = "contribution_room_preferences"
 	// EdgeUsageLogs holds the string denoting the usage_logs edge name in mutations.
 	EdgeUsageLogs = "usage_logs"
 	// Table holds the table name of the apikey in the database.
@@ -83,6 +89,13 @@ const (
 	GroupInverseTable = "groups"
 	// GroupColumn is the table column denoting the group relation/edge.
 	GroupColumn = "group_id"
+	// ContributionRoomPreferencesTable is the table that holds the contribution_room_preferences relation/edge.
+	ContributionRoomPreferencesTable = "user_contribution_room_preferences"
+	// ContributionRoomPreferencesInverseTable is the table name for the UserContributionRoomPreference entity.
+	// It exists in this package in order to avoid circular dependency with the "usercontributionroompreference" package.
+	ContributionRoomPreferencesInverseTable = "user_contribution_room_preferences"
+	// ContributionRoomPreferencesColumn is the table column denoting the contribution_room_preferences relation/edge.
+	ContributionRoomPreferencesColumn = "api_key_id"
 	// UsageLogsTable is the table that holds the usage_logs relation/edge.
 	UsageLogsTable = "usage_logs"
 	// UsageLogsInverseTable is the table name for the UsageLog entity.
@@ -102,6 +115,8 @@ var Columns = []string{
 	FieldKey,
 	FieldName,
 	FieldGroupID,
+	FieldAutoGroup,
+	FieldAutoGroupStrategy,
 	FieldStatus,
 	FieldLastUsedAt,
 	FieldIPWhitelist,
@@ -148,6 +163,12 @@ var (
 	KeyValidator func(string) error
 	// NameValidator is a validator for the "name" field. It is called by the builders before save.
 	NameValidator func(string) error
+	// DefaultAutoGroup holds the default value on creation for the "auto_group" field.
+	DefaultAutoGroup bool
+	// DefaultAutoGroupStrategy holds the default value on creation for the "auto_group_strategy" field.
+	DefaultAutoGroupStrategy string
+	// AutoGroupStrategyValidator is a validator for the "auto_group_strategy" field. It is called by the builders before save.
+	AutoGroupStrategyValidator func(string) error
 	// DefaultStatus holds the default value on creation for the "status" field.
 	DefaultStatus string
 	// StatusValidator is a validator for the "status" field. It is called by the builders before save.
@@ -211,6 +232,16 @@ func ByName(opts ...sql.OrderTermOption) OrderOption {
 // ByGroupID orders the results by the group_id field.
 func ByGroupID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldGroupID, opts...).ToFunc()
+}
+
+// ByAutoGroup orders the results by the auto_group field.
+func ByAutoGroup(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAutoGroup, opts...).ToFunc()
+}
+
+// ByAutoGroupStrategy orders the results by the auto_group_strategy field.
+func ByAutoGroupStrategy(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAutoGroupStrategy, opts...).ToFunc()
 }
 
 // ByStatus orders the results by the status field.
@@ -297,6 +328,20 @@ func ByGroupField(field string, opts ...sql.OrderTermOption) OrderOption {
 	}
 }
 
+// ByContributionRoomPreferencesCount orders the results by contribution_room_preferences count.
+func ByContributionRoomPreferencesCount(opts ...sql.OrderTermOption) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborsCount(s, newContributionRoomPreferencesStep(), opts...)
+	}
+}
+
+// ByContributionRoomPreferences orders the results by contribution_room_preferences terms.
+func ByContributionRoomPreferences(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborTerms(s, newContributionRoomPreferencesStep(), append([]sql.OrderTerm{term}, terms...)...)
+	}
+}
+
 // ByUsageLogsCount orders the results by usage_logs count.
 func ByUsageLogsCount(opts ...sql.OrderTermOption) OrderOption {
 	return func(s *sql.Selector) {
@@ -322,6 +367,13 @@ func newGroupStep() *sqlgraph.Step {
 		sqlgraph.From(Table, FieldID),
 		sqlgraph.To(GroupInverseTable, FieldID),
 		sqlgraph.Edge(sqlgraph.M2O, true, GroupTable, GroupColumn),
+	)
+}
+func newContributionRoomPreferencesStep() *sqlgraph.Step {
+	return sqlgraph.NewStep(
+		sqlgraph.From(Table, FieldID),
+		sqlgraph.To(ContributionRoomPreferencesInverseTable, FieldID),
+		sqlgraph.Edge(sqlgraph.O2M, false, ContributionRoomPreferencesTable, ContributionRoomPreferencesColumn),
 	)
 }
 func newUsageLogsStep() *sqlgraph.Step {

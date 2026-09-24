@@ -65,6 +65,10 @@
       <Icon name="arrowsUpDown" size="sm" />
       <span class="sr-only">{{ t('playground.canvasFit') }}</span>
     </button>
+    <button type="button" class="btn btn-ghost btn-icon h-8 w-8 p-0 text-teal-700 dark:text-teal-300" :disabled="nodeCount === 0" :title="t('playground.canvasArrange')" @click="emit('arrange')">
+      <Icon name="sort" size="sm" />
+      <span class="sr-only">{{ t('playground.canvasArrange') }}</span>
+    </button>
     <button type="button" class="btn btn-ghost btn-icon h-8 w-8 p-0" :title="t('playground.canvasResetView')" @click="emit('reset-view')">
       <Icon name="refresh" size="sm" />
       <span class="sr-only">{{ t('playground.canvasResetView') }}</span>
@@ -117,6 +121,7 @@ const emit = defineEmits<{
   'update:background': [value: CanvasBackgroundMode]
   'add-node': [type: 'image' | 'text' | 'video' | 'config' | 'group']
   fit: []
+  arrange: []
   'reset-view': []
   import: []
   export: []

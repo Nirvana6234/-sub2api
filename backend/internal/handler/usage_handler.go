@@ -153,6 +153,25 @@ func (h *UsageHandler) parseUserUsageFilters(c *gin.Context, requireRange bool) 
 		return nil, false
 	}
 
+	accountSource, err := service.ParseUsageLogAccountSourceFilter(c.Query("account_source"))
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return nil, false
+	}
+
+	// 用户侧按账号查只开放给自己贡献的账号：强制 own + 当前用户，
+	// 传入别人的账号 ID 只会查到空结果，不需要额外的归属校验。
+	var accountID int64
+	if accountIDStr := strings.TrimSpace(c.Query("account_id")); accountIDStr != "" {
+		id, err := strconv.ParseInt(accountIDStr, 10, 64)
+		if err != nil || id <= 0 {
+			response.BadRequest(c, "Invalid account_id")
+			return nil, false
+		}
+		accountID = id
+		accountSource = service.UsageLogAccountSourceOwn
+	}
+
 	userTZ := c.Query("timezone")
 	now := timezone.NowInUserLocation(userTZ)
 	var startTime, endTime time.Time
@@ -207,6 +226,8 @@ func (h *UsageHandler) parseUserUsageFilters(c *gin.Context, requireRange bool) 
 		Filters: usagestats.UsageLogFilters{
 			UserID:             subject.UserID,
 			APIKeyID:           apiKeyID,
+			AccountID:          accountID,
+			AccountSource:      accountSource,
 			GroupID:            groupID,
 			Model:              strings.TrimSpace(c.Query("model")),
 			ModelFilterSource:  usagestats.ModelSourceRequested,
@@ -511,50 +532,6 @@ func (h *UsageHandler) DashboardModels(c *gin.Context) {
 		"models":     userModelStatsFromUsageStats(stats),
 		"start_date": parsed.StartTime.Format("2006-01-02"),
 		"end_date":   parsed.EndTime.Add(-24 * time.Hour).Format("2006-01-02"),
-	})
-}
-
-// DashboardHeadroomModels handles getting per-model compression-savings stats.
-// GET /api/v1/usage/dashboard/headroom-models
-func (h *UsageHandler) DashboardHeadroomModels(c *gin.Context) {
-	parsed, ok := h.parseUserUsageFilters(c, true)
-	if !ok {
-		return
-	}
-
-	stats, err := h.usageService.GetHeadroomModelStats(c.Request.Context(), parsed.Filters.UserID, parsed.StartTime, parsed.EndTime)
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-
-	response.Success(c, gin.H{
-		"models":     stats,
-		"start_date": parsed.StartTime.Format("2006-01-02"),
-		"end_date":   parsed.EndTime.Add(-24 * time.Hour).Format("2006-01-02"),
-	})
-}
-
-// DashboardHeadroomTrend handles getting compression-savings trend data.
-// GET /api/v1/usage/dashboard/headroom-trend
-func (h *UsageHandler) DashboardHeadroomTrend(c *gin.Context) {
-	parsed, ok := h.parseUserUsageFilters(c, true)
-	if !ok {
-		return
-	}
-	granularity := c.DefaultQuery("granularity", "day")
-
-	trend, err := h.usageService.GetHeadroomTrend(c.Request.Context(), parsed.Filters.UserID, parsed.StartTime, parsed.EndTime, granularity)
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-
-	response.Success(c, gin.H{
-		"trend":       trend,
-		"start_date":  parsed.StartTime.Format("2006-01-02"),
-		"end_date":    parsed.EndTime.Add(-24 * time.Hour).Format("2006-01-02"),
-		"granularity": granularity,
 	})
 }
 

@@ -88,3 +88,67 @@ describe('UserEditModal concurrency', () => {
     expect(update).not.toHaveBeenCalled()
   })
 })
+
+// 禁止充值开关不落在 users 表，而是写进 settings.recharge_blocked_user_ids，
+// 但对前端而言它就是普通表单字段：回填要反映当前状态，提交要原样带上，
+// 否则管理员每次编辑别的字段都会把这个开关悄悄重置掉。
+describe('UserEditModal 禁止充值开关', () => {
+  const mountWithRecharge = (rechargeDisabled?: boolean) => mount(UserEditModal, {
+    props: {
+      show: true,
+      user: {
+        id: 7, email: 'user@example.test', username: 'user', notes: '',
+        role: 'user', concurrency: 3, rpm_limit: 0, recharge_disabled: rechargeDisabled
+      } as never
+    },
+    global: {
+      stubs: {
+        BaseDialog: {
+          props: ['show', 'title'],
+          template: '<div v-if="show"><slot /><slot name="footer" /></div>'
+        },
+        Select: true,
+        Icon: true,
+        UserAttributeForm: true,
+        TotpStepUpDialog: true
+      }
+    }
+  })
+
+  beforeEach(() => {
+    update.mockReset()
+    updateUserAttributeValues.mockReset()
+    showSuccess.mockReset()
+    showError.mockReset()
+    update.mockResolvedValue({})
+  })
+
+  it('已禁用的用户回填为勾选，提交时保持 true', async () => {
+    const wrapper = mountWithRecharge(true)
+
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(update).toHaveBeenCalledWith(7, expect.objectContaining({ recharge_disabled: true }))
+  })
+
+  it('未禁用的用户提交 false，不会误开', async () => {
+    const wrapper = mountWithRecharge(false)
+
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(update).toHaveBeenCalledWith(7, expect.objectContaining({ recharge_disabled: false }))
+  })
+
+  // 老数据/列表接口未返回该字段时是 undefined，必须落成 false 而不是 undefined，
+  // 否则 JSON 里该键消失，后端会当成"本次不修改"，开关看着像失灵。
+  it('字段缺失时按未禁用处理', async () => {
+    const wrapper = mountWithRecharge(undefined)
+
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(update).toHaveBeenCalledWith(7, expect.objectContaining({ recharge_disabled: false }))
+  })
+})

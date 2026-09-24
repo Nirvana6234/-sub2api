@@ -304,6 +304,8 @@ docs/*
 !docs/ADMIN_PAYMENT_INTEGRATION_API.md
 !docs/ASYNC_IMAGE_TASKS.md
 !docs/PLAYGROUND.md
+!docs/MASTER_RELAY_NODES.md
+!docs/MASTER_RELAY_NODES_PLAN.md
 !docs/legal/
 !docs/legal/*.md
 .serena/
@@ -338,3 +340,10 @@ __pycache__/
 # 预发布构建产物：每次构建都会重新生成，不进仓库
 frontend/dist.predeploy-*/
 
+
+# 本地构建产物与临时打包文件，不进仓库
+backend/sub2api-*-linux-amd64
+transit-hub/transithub-api-*
+transit-public.tar
+/tools/**/bin/
+/tools/**/obj/

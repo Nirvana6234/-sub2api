@@ -89,7 +89,11 @@ export interface User {
   frozen_balance?: number // Balance currently held by async batch jobs
   concurrency: number // Allowed concurrent requests
   rpm_limit?: number // User-level RPM cap (0 = unlimited); effective as fallback when group has no rpm_limit
-  headroom_compression_enabled?: boolean
+  account_management_enabled?: boolean
+  contribution_rooms_enabled?: boolean
+  // 命中充值黑名单（settings.recharge_blocked_user_ids）时为 true，用于隐藏充值入口。
+  // 强制拦截在后端 /payment 路由组，前端隐藏仅为不让用户看到入口。
+  recharge_disabled?: boolean
   status: 'active' | 'disabled' // Account status
   allowed_groups: number[] | null // Allowed group IDs (null = all non-exclusive groups)
   balance_notify_enabled: boolean
@@ -100,6 +104,45 @@ export interface User {
   created_at: string
   updated_at: string
   deleted_at?: string | null
+}
+
+export type TicketStatus = 'open' | 'answered' | 'closed'
+
+export interface TicketMessage {
+  id: number
+  ticket_id: number
+  sender_role: 'user' | 'admin'
+  content: string
+  created_at: string
+}
+
+export interface Ticket {
+  id: number
+  subject: string
+  status: TicketStatus
+  unread_count: number
+  last_message_at: string
+  last_message_preview?: string
+  closed_at?: string | null
+  created_at: string
+  updated_at: string
+  messages?: TicketMessage[]
+}
+
+export interface AdminTicket extends Ticket {
+  user_id: number
+  user_email?: string
+}
+
+export interface TicketListFilters {
+  status?: TicketStatus
+  search?: string
+  unread_only?: boolean
+}
+
+export interface CreateTicketRequest {
+  subject: string
+  content: string
 }
 
 export interface AdminUser extends User {
@@ -192,6 +235,7 @@ export interface CustomMenuItem {
   icon_svg: string
   url: string
   page_slug?: string
+  hide_open_button?: boolean
   visibility: 'user' | 'admin'
   sort_order: number
 }
@@ -283,6 +327,9 @@ export interface PublicSettings {
   payment_balance_disabled: boolean
   /** 公开的客户端下载页 /download 是否可访问（默认开启）。 */
   client_download_enabled: boolean
+  chat_app_download_enabled?: boolean
+  chat_app_download_direct_url?: string
+  chat_app_latest_version?: string
   /** 客户端下载页的网盘下载地址；为空则隐藏该按钮。 */
   client_download_netdisk_url: string
   /** 客户端下载页的直连下载地址；为空则隐藏该按钮。 */
@@ -565,7 +612,7 @@ export interface PaginationConfig {
 
 // ==================== API Key & Group Types ====================
 
-export type GroupPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok' | 'kimi' | 'zhipu' | 'deepseek' | 'minimax' | 'composite'
+export type GroupPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok' | 'kimi' | 'zhipu' | 'deepseek' | 'minimax' | 'opencode_go' | 'composite'
 
 export type VideoModelPrices = Record<string, Record<string, number>>
 
@@ -593,6 +640,7 @@ export interface Group {
   description: string | null
   platform: GroupPlatform
   rate_multiplier: number
+  allow_contribution_pool?: boolean
   rpm_limit?: number // Group-level RPM cap (0 = unlimited); overrides user-level rpm_limit when set
   max_reasoning_effort?: string // Anthropic/OpenAI reasoning ceiling; empty means unlimited
   max_reasoning_effort_over_limit?: string // downgrade (default) or deny when over the ceiling
@@ -813,6 +861,9 @@ export interface CreateApiKeyRequest {
 export interface UpdateApiKeyRequest {
   name?: string
   group_id?: number | null
+  auto_group?: boolean
+  auto_group_strategy?: 'price' | 'balanced' | 'speed'
+  auto_group_ids?: number[]
   status?: 'active' | 'inactive'
   ip_whitelist?: string[]
   ip_blacklist?: string[]
@@ -830,6 +881,7 @@ export interface CreateGroupRequest {
   description?: string | null
   platform?: GroupPlatform
   rate_multiplier?: number
+  allow_contribution_pool?: boolean
   is_exclusive?: boolean
   subscription_type?: SubscriptionType
   daily_limit_usd?: number | null
@@ -896,6 +948,7 @@ export interface UpdateGroupRequest {
   description?: string | null
   platform?: GroupPlatform
   rate_multiplier?: number
+  allow_contribution_pool?: boolean
   is_exclusive?: boolean
   status?: 'active' | 'inactive'
   subscription_type?: SubscriptionType
@@ -961,7 +1014,7 @@ export interface UpdateGroupRequest {
 
 // ==================== Account & Proxy Types ====================
 
-export type AccountPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok' | 'kimi' | 'zhipu' | 'deepseek' | 'minimax'
+export type AccountPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok' | 'kimi' | 'zhipu' | 'deepseek' | 'minimax' | 'opencode_go'
 export type AccountType = 'oauth' | 'setup-token' | 'apikey' | 'upstream' | 'bedrock' | 'service_account'
 export type OAuthAddMethod = 'oauth' | 'setup-token'
 export type ProxyProtocol = 'http' | 'https' | 'socks5' | 'socks5h'
@@ -1198,6 +1251,12 @@ export interface OllamaCloudUsageSettings {
   debounce_minutes: number
 }
 
+export interface AccountGroupBinding {
+  account_id: number
+  group_id: number
+  priority: number
+}
+
 export interface Account {
   id: number
   name: string
@@ -1218,6 +1277,7 @@ export interface Account {
     upstream_billing_probe_enabled?: boolean
     upstream_billing_rate_sync_enabled?: boolean
     upstream_billing_probe?: UpstreamBillingProbeSnapshot
+    upstream_billing_manual_rate_multiplier?: number
     codex_reset_credit_snapshot?: {
       available_count?: number
       credits?: { expires_at?: string }[]
@@ -1248,6 +1308,10 @@ export interface Account {
   } | null
   scheduler_scores?: AccountSchedulerGroupScore[] | null
   priority: number
+  // 该账号在当前筛选分组内的优先级（account_groups.priority）。仅当列表按分组
+  // 筛选时后端才返回：账号可属于多个分组，各组排位独立，不筛分组时没有唯一值。
+  // 调度取号与 TransitHub 健康降级用的都是它，而非上面的全局 priority。
+  group_priority?: number | null
   rate_multiplier?: number // Account billing multiplier (>=0, 0 means free)
   status: 'active' | 'inactive' | 'error'
   error_message: string | null
@@ -1259,6 +1323,9 @@ export interface Account {
   proxy?: Proxy
   group_ids?: number[] // Groups this account belongs to
   groups?: Group[] // Preloaded group objects
+  // In-group priorities (account_groups.priority). Only the account detail
+  // endpoint returns them; the lite list sends group_priority instead.
+  account_groups?: AccountGroupBinding[]
 
   // Rate limit & scheduling fields
   schedulable: boolean
@@ -1498,7 +1565,7 @@ export interface CodexUsageSnapshot {
 
 export type OpenAICompactMode = 'auto' | 'force_on' | 'force_off'
 export type OpenAIResponsesMode = 'auto' | 'force_responses' | 'force_chat_completions'
-export type OpenAIEndpointCapability = 'chat_completions' | 'embeddings'
+export type OpenAIEndpointCapability = 'chat_completions' | 'embeddings' | 'seedance'
 
 export interface OpenAICompactState {
   openai_compact_mode?: OpenAICompactMode
@@ -1728,6 +1795,9 @@ export interface CodexSessionImportResult {
 
 export type RedeemCodeType = 'balance' | 'concurrency' | 'subscription' | 'invitation'
 export type UsageRequestType = 'unknown' | 'sync' | 'stream' | 'ws_v2' | 'cyber' | 'live'
+
+// 请求由哪类账号承接：pool 管理员号池 / own 自己贡献的账号 / room 贡献房间
+export type UsageAccountSource = 'pool' | 'own' | 'room'
 export type ImageSizeSource = 'output' | 'input' | 'default' | 'legacy'
 export type ImageSizeBreakdown = Record<string, number>
 
@@ -1767,6 +1837,7 @@ export interface UsageLog {
   stream: boolean
   openai_ws_mode?: boolean
   native_compaction_v2: boolean
+  account_source?: UsageAccountSource
   duration_ms: number | null
   first_token_ms: number | null
 
@@ -2201,6 +2272,7 @@ export interface UsageQueryParams {
   request_type?: UsageRequestType
   stream?: boolean
   native_compaction_v2?: boolean | null
+  account_source?: UsageAccountSource | null
   billing_type?: number | null
   billing_mode?: string | null
   start_date?: string

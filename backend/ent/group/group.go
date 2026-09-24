@@ -28,6 +28,8 @@ const (
 	FieldDescription = "description"
 	// FieldRateMultiplier holds the string denoting the rate_multiplier field in the database.
 	FieldRateMultiplier = "rate_multiplier"
+	// FieldAllowContributionPool holds the string denoting the allow_contribution_pool field in the database.
+	FieldAllowContributionPool = "allow_contribution_pool"
 	// FieldPeakRateEnabled holds the string denoting the peak_rate_enabled field in the database.
 	FieldPeakRateEnabled = "peak_rate_enabled"
 	// FieldPeakStart holds the string denoting the peak_start field in the database.
@@ -100,6 +102,8 @@ const (
 	FieldModelPricing = "model_pricing"
 	// FieldClaudeCodeOnly holds the string denoting the claude_code_only field in the database.
 	FieldClaudeCodeOnly = "claude_code_only"
+	// FieldKiroCompat holds the string denoting the kiro_compat field in the database.
+	FieldKiroCompat = "kiro_compat"
 	// FieldFallbackGroupID holds the string denoting the fallback_group_id field in the database.
 	FieldFallbackGroupID = "fallback_group_id"
 	// FieldFallbackGroupIds holds the string denoting the fallback_group_ids field in the database.
@@ -108,8 +112,6 @@ const (
 	FieldFallbackGroupIDOnInvalidRequest = "fallback_group_id_on_invalid_request"
 	// FieldIsFallbackPool holds the string denoting the is_fallback_pool field in the database.
 	FieldIsFallbackPool = "is_fallback_pool"
-	// FieldKiroCompat holds the string denoting the kiro_compat field in the database.
-	FieldKiroCompat = "kiro_compat"
 	// FieldModelRouting holds the string denoting the model_routing field in the database.
 	FieldModelRouting = "model_routing"
 	// FieldModelRoutingEnabled holds the string denoting the model_routing_enabled field in the database.
@@ -138,6 +140,8 @@ const (
 	FieldMessagesDispatchModelConfig = "messages_dispatch_model_config"
 	// FieldModelAllowlist holds the string denoting the model_allowlist field in the database.
 	FieldModelAllowlist = "model_allowlist"
+	// FieldModelsListConfig holds the string denoting the models_list_config field in the database.
+	FieldModelsListConfig = "models_list_config"
 	// FieldCodexModelsManifestConfig holds the string denoting the codex_models_manifest_config field in the database.
 	FieldCodexModelsManifestConfig = "codex_models_manifest_config"
 	// FieldRpmLimit holds the string denoting the rpm_limit field in the database.
@@ -166,6 +170,8 @@ const (
 	EdgeAccounts = "accounts"
 	// EdgeAllowedUsers holds the string denoting the allowed_users edge name in mutations.
 	EdgeAllowedUsers = "allowed_users"
+	// EdgeCompositeModelRoutes holds the string denoting the composite_model_routes edge name in mutations.
+	EdgeCompositeModelRoutes = "composite_model_routes"
 	// EdgeAccountGroups holds the string denoting the account_groups edge name in mutations.
 	EdgeAccountGroups = "account_groups"
 	// EdgeUserAllowedGroups holds the string denoting the user_allowed_groups edge name in mutations.
@@ -210,6 +216,13 @@ const (
 	// AllowedUsersInverseTable is the table name for the User entity.
 	// It exists in this package in order to avoid circular dependency with the "user" package.
 	AllowedUsersInverseTable = "users"
+	// CompositeModelRoutesTable is the table that holds the composite_model_routes relation/edge.
+	CompositeModelRoutesTable = "composite_model_routes"
+	// CompositeModelRoutesInverseTable is the table name for the CompositeModelRoute entity.
+	// It exists in this package in order to avoid circular dependency with the "compositemodelroute" package.
+	CompositeModelRoutesInverseTable = "composite_model_routes"
+	// CompositeModelRoutesColumn is the table column denoting the composite_model_routes relation/edge.
+	CompositeModelRoutesColumn = "group_composite_model_routes"
 	// AccountGroupsTable is the table that holds the account_groups relation/edge.
 	AccountGroupsTable = "account_groups"
 	// AccountGroupsInverseTable is the table name for the AccountGroup entity.
@@ -235,6 +248,7 @@ var Columns = []string{
 	FieldName,
 	FieldDescription,
 	FieldRateMultiplier,
+	FieldAllowContributionPool,
 	FieldPeakRateEnabled,
 	FieldPeakStart,
 	FieldPeakEnd,
@@ -271,11 +285,11 @@ var Columns = []string{
 	FieldLongContextPricingEnabled,
 	FieldModelPricing,
 	FieldClaudeCodeOnly,
+	FieldKiroCompat,
 	FieldFallbackGroupID,
 	FieldFallbackGroupIds,
 	FieldFallbackGroupIDOnInvalidRequest,
 	FieldIsFallbackPool,
-	FieldKiroCompat,
 	FieldModelRouting,
 	FieldModelRoutingEnabled,
 	FieldMcpXMLInject,
@@ -290,6 +304,7 @@ var Columns = []string{
 	FieldDefaultMappedModel,
 	FieldMessagesDispatchModelConfig,
 	FieldModelAllowlist,
+	FieldModelsListConfig,
 	FieldCodexModelsManifestConfig,
 	FieldRpmLimit,
 	FieldMaxReasoningEffort,
@@ -337,6 +352,8 @@ var (
 	NameValidator func(string) error
 	// DefaultRateMultiplier holds the default value on creation for the "rate_multiplier" field.
 	DefaultRateMultiplier float64
+	// DefaultAllowContributionPool holds the default value on creation for the "allow_contribution_pool" field.
+	DefaultAllowContributionPool bool
 	// DefaultPeakRateEnabled holds the default value on creation for the "peak_rate_enabled" field.
 	DefaultPeakRateEnabled bool
 	// DefaultPeakStart holds the default value on creation for the "peak_start" field.
@@ -395,10 +412,10 @@ var (
 	DefaultLongContextPricingEnabled bool
 	// DefaultClaudeCodeOnly holds the default value on creation for the "claude_code_only" field.
 	DefaultClaudeCodeOnly bool
-	// DefaultIsFallbackPool holds the default value on creation for the "is_fallback_pool" field.
-	DefaultIsFallbackPool bool
 	// DefaultKiroCompat holds the default value on creation for the "kiro_compat" field.
 	DefaultKiroCompat bool
+	// DefaultIsFallbackPool holds the default value on creation for the "is_fallback_pool" field.
+	DefaultIsFallbackPool bool
 	// DefaultModelRoutingEnabled holds the default value on creation for the "model_routing_enabled" field.
 	DefaultModelRoutingEnabled bool
 	// DefaultMcpXMLInject holds the default value on creation for the "mcp_xml_inject" field.
@@ -427,6 +444,8 @@ var (
 	DefaultMessagesDispatchModelConfig domain.OpenAIMessagesDispatchModelConfig
 	// DefaultModelAllowlist holds the default value on creation for the "model_allowlist" field.
 	DefaultModelAllowlist domain.GroupModelAllowlist
+	// DefaultModelsListConfig holds the default value on creation for the "models_list_config" field.
+	DefaultModelsListConfig domain.GroupModelsListConfig
 	// DefaultCodexModelsManifestConfig holds the default value on creation for the "codex_models_manifest_config" field.
 	DefaultCodexModelsManifestConfig domain.GroupCodexModelsManifestConfig
 	// DefaultRpmLimit holds the default value on creation for the "rpm_limit" field.
@@ -485,6 +504,11 @@ func ByDescription(opts ...sql.OrderTermOption) OrderOption {
 // ByRateMultiplier orders the results by the rate_multiplier field.
 func ByRateMultiplier(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldRateMultiplier, opts...).ToFunc()
+}
+
+// ByAllowContributionPool orders the results by the allow_contribution_pool field.
+func ByAllowContributionPool(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAllowContributionPool, opts...).ToFunc()
 }
 
 // ByPeakRateEnabled orders the results by the peak_rate_enabled field.
@@ -657,6 +681,11 @@ func ByClaudeCodeOnly(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldClaudeCodeOnly, opts...).ToFunc()
 }
 
+// ByKiroCompat orders the results by the kiro_compat field.
+func ByKiroCompat(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldKiroCompat, opts...).ToFunc()
+}
+
 // ByFallbackGroupID orders the results by the fallback_group_id field.
 func ByFallbackGroupID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldFallbackGroupID, opts...).ToFunc()
@@ -670,11 +699,6 @@ func ByFallbackGroupIDOnInvalidRequest(opts ...sql.OrderTermOption) OrderOption 
 // ByIsFallbackPool orders the results by the is_fallback_pool field.
 func ByIsFallbackPool(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldIsFallbackPool, opts...).ToFunc()
-}
-
-// ByKiroCompat orders the results by the kiro_compat field.
-func ByKiroCompat(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldKiroCompat, opts...).ToFunc()
 }
 
 // ByModelRoutingEnabled orders the results by the model_routing_enabled field.
@@ -841,6 +865,20 @@ func ByAllowedUsers(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
 	}
 }
 
+// ByCompositeModelRoutesCount orders the results by composite_model_routes count.
+func ByCompositeModelRoutesCount(opts ...sql.OrderTermOption) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborsCount(s, newCompositeModelRoutesStep(), opts...)
+	}
+}
+
+// ByCompositeModelRoutes orders the results by composite_model_routes terms.
+func ByCompositeModelRoutes(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborTerms(s, newCompositeModelRoutesStep(), append([]sql.OrderTerm{term}, terms...)...)
+	}
+}
+
 // ByAccountGroupsCount orders the results by account_groups count.
 func ByAccountGroupsCount(opts ...sql.OrderTermOption) OrderOption {
 	return func(s *sql.Selector) {
@@ -908,6 +946,13 @@ func newAllowedUsersStep() *sqlgraph.Step {
 		sqlgraph.From(Table, FieldID),
 		sqlgraph.To(AllowedUsersInverseTable, FieldID),
 		sqlgraph.Edge(sqlgraph.M2M, true, AllowedUsersTable, AllowedUsersPrimaryKey...),
+	)
+}
+func newCompositeModelRoutesStep() *sqlgraph.Step {
+	return sqlgraph.NewStep(
+		sqlgraph.From(Table, FieldID),
+		sqlgraph.To(CompositeModelRoutesInverseTable, FieldID),
+		sqlgraph.Edge(sqlgraph.O2M, false, CompositeModelRoutesTable, CompositeModelRoutesColumn),
 	)
 }
 func newAccountGroupsStep() *sqlgraph.Step {

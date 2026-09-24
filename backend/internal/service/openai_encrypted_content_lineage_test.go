@@ -9,6 +9,71 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestIsOpenAIInvalidEncryptedContentHTTPResponse(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		statusCode   int
+		body         string
+		upstreamCode string
+		want         bool
+	}{
+		// 官方 Codex 后端：结构化 code，原有判据。
+		{
+			name:         "structured_code_matches",
+			statusCode:   400,
+			body:         `{"error":{"code":"invalid_encrypted_content","message":"bad"}}`,
+			upstreamCode: "invalid_encrypted_content",
+			want:         true,
+		},
+		// 中转型上游：code=null，语义只在 message 文本里（生产实测报文）。
+		{
+			name:       "relay_null_code_verified_text",
+			statusCode: 400,
+			body:       `{"error":{"code":null,"message":"OpenAI Responses bad request: The encrypted content gAAA...znEh could not be verified. Reason: Encrypted content could not be decrypted or parsed. [trace_id=e7fdbb3a]","param":"","type":"invalid_request_error"}}`,
+			want:       true,
+		},
+		// decrypt 变体（下划线写法）。
+		{
+			name:       "relay_decrypt_underscore_text",
+			statusCode: 400,
+			body:       `{"error":{"message":"Could not decrypt the provided encrypted_content."}}`,
+			want:       true,
+		},
+		// 非 400 不参与：避免把限流/服务端错误也拿去剥离重试。
+		{
+			name:       "non_400_ignored",
+			statusCode: 500,
+			body:       `{"error":{"message":"The encrypted content could not be verified."}}`,
+			want:       false,
+		},
+		// 400 但与加密内容无关：不得误吞。
+		{
+			name:       "unrelated_400_ignored",
+			statusCode: 400,
+			body:       `{"error":{"code":null,"message":"Missing required parameter: 'input[0].summary'."}}`,
+			want:       false,
+		},
+		// 提到加密内容但不是不可解语义：仍不触发。
+		{
+			name:       "encrypted_mention_without_failure_semantics",
+			statusCode: 400,
+			body:       `{"error":{"code":null,"message":"encrypted content is not supported on this endpoint"}}`,
+			want:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tt.want, isOpenAIInvalidEncryptedContentHTTPResponse(
+				tt.statusCode, []byte(tt.body), tt.upstreamCode,
+			))
+		})
+	}
+}
+
 func TestCollectOpenAIEncryptedContentDigestsRaw(t *testing.T) {
 	t.Parallel()
 

@@ -96,18 +96,19 @@ type UserListFilters struct {
 // 注意这里没有 balance / total_recharged：余额只能经由 AdjustBalance、
 // SetBalance、UpdateBalance、DeductBalance 等原子接口修改，Update 永远不碰它们。
 type UserUpdateFields struct {
-	Email                      bool
-	Username                   bool
-	Notes                      bool
-	PasswordHash               bool
-	Role                       bool
-	Status                     bool
-	Concurrency                bool
-	RPMLimit                   bool
-	HeadroomCompressionEnabled bool
-	SignupSource               bool
-	LastLoginAt                bool
-	LastActiveAt               bool
+	Email                    bool
+	Username                 bool
+	Notes                    bool
+	PasswordHash             bool
+	Role                     bool
+	Status                   bool
+	Concurrency              bool
+	RPMLimit                 bool
+	AccountManagementEnabled bool
+	ContributionRoomsEnabled bool
+	SignupSource             bool
+	LastLoginAt              bool
+	LastActiveAt             bool
 	// BalanceNotifySettings 覆盖 balance_notify_enabled / _threshold_type / _threshold。
 	BalanceNotifySettings bool
 	// BalanceNotifyExtraEmails 与上一项分开，避免"改通知阈值"覆盖并发的"加通知邮箱"。
@@ -298,6 +299,63 @@ type UserService struct {
 	billingCache         BillingCache
 	lastActiveTouchL1    sync.Map
 	lastActiveTouchSF    singleflight.Group
+}
+
+type ContributionWallet struct {
+	Balance     float64 `json:"balance"`
+	EarnedTotal float64 `json:"earned_total"`
+	SpentTotal  float64 `json:"spent_total"`
+}
+
+type ContributionIncomeRates struct {
+	ShareRewardRatePercent float64 `json:"share_reward_rate_percent"`
+	OwnIncomeRatePercent   float64 `json:"own_income_rate_percent"`
+}
+
+type contributionWalletReader interface {
+	GetContributionWallet(ctx context.Context, userID int64) (*ContributionWallet, error)
+}
+
+func (s *UserService) GetContributionWallet(ctx context.Context, userID int64) (*ContributionWallet, error) {
+	reader, ok := s.userRepo.(contributionWalletReader)
+	if !ok {
+		return &ContributionWallet{}, nil
+	}
+	wallet, err := reader.GetContributionWallet(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if wallet == nil {
+		wallet = &ContributionWallet{}
+	}
+	return wallet, nil
+}
+
+func (s *UserService) GetContributionIncomeRates(ctx context.Context) *ContributionIncomeRates {
+	shareRewardRate := AccountShareRewardRateDefaultPercent
+	ownUsageFeeRate := AccountOwnUsageFeeRateDefaultPercent
+	if s != nil && s.settingRepo != nil {
+		values, err := s.settingRepo.GetMultiple(ctx, []string{
+			SettingKeyAccountShareRewardRate,
+			SettingKeyAccountOwnUsageFeeRate,
+		})
+		if err == nil {
+			if value, ok := values[SettingKeyAccountShareRewardRate]; ok {
+				if parsed, parseErr := strconv.ParseFloat(strings.TrimSpace(value), 64); parseErr == nil {
+					shareRewardRate = clampAccountShareRewardRatePercent(parsed)
+				}
+			}
+			if value, ok := values[SettingKeyAccountOwnUsageFeeRate]; ok {
+				if parsed, parseErr := strconv.ParseFloat(strings.TrimSpace(value), 64); parseErr == nil {
+					ownUsageFeeRate = clampAccountOwnUsageFeeRatePercent(parsed)
+				}
+			}
+		}
+	}
+	return &ContributionIncomeRates{
+		ShareRewardRatePercent: shareRewardRate,
+		OwnIncomeRatePercent:   100 - ownUsageFeeRate,
+	}
 }
 
 // NewUserService 创建用户服务实例
@@ -1277,7 +1335,7 @@ func saveNotifyVerifyCode(ctx context.Context, cache EmailCache, email, code str
 
 // sendNotifyVerifyEmail builds and sends the verification email.
 func (s *UserService) sendNotifyVerifyEmail(ctx context.Context, emailService *EmailService, userID int64, email, code, locale string) error {
-	siteName := "Sub2API"
+	siteName := "共飞 AI"
 	if s.settingRepo != nil {
 		if name, err := s.settingRepo.GetValue(ctx, SettingKeySiteName); err == nil && name != "" {
 			siteName = name

@@ -81,16 +81,11 @@ type proxyProbeService struct {
 }
 
 func (s *proxyProbeService) ProbeProxy(ctx context.Context, proxyURL string) (*service.ProxyExitInfo, int64, error) {
-	client, err := httpclient.GetClient(httpclient.Options{
-		ProxyURL:           proxyURL,
-		Timeout:            defaultProxyProbeTimeout,
-		InsecureSkipVerify: s.insecureSkipVerify,
-		ValidateResolvedIP: s.validateResolvedIP,
-		AllowPrivateHosts:  s.allowPrivateHosts,
-	})
+	client, closeClient, err := s.probeClient(ctx, proxyURL)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to create proxy client: %w", err)
 	}
+	defer closeClient()
 
 	var lastErr error
 	if len(s.configuredProbeURLs) > 0 {
@@ -113,6 +108,34 @@ func (s *proxyProbeService) ProbeProxy(ctx context.Context, proxyURL string) (*s
 	}
 
 	return nil, 0, fmt.Errorf("all probe URLs failed, last error: %w", lastErr)
+}
+
+// User-owned proxies use the same pinned public destination and proxy policy
+// as contributed upstreams. Never reuse the trusted probe connection cache.
+func (s *proxyProbeService) probeClient(ctx context.Context, rawProxy string) (*http.Client, func(), error) {
+	if service.HTTPUpstreamPublicHostsOnly(ctx) || service.HTTPUpstreamPublicProxyOnly(ctx) {
+		if s.insecureSkipVerify {
+			return nil, nil, fmt.Errorf("insecure TLS is not allowed for proxy probes")
+		}
+		_, proxyURL, err := normalizeProxyURL(rawProxy)
+		if err != nil {
+			return nil, nil, err
+		}
+		transport, err := buildUpstreamTransport(defaultPoolSettings(nil), nil, upstreamProtocolModeDefault)
+		if err != nil {
+			return nil, nil, err
+		}
+		dialer := newPublicUpstreamDialer(proxyURL, service.HTTPUpstreamPublicProxyOnly(ctx))
+		transport.DialContext = dialer.DialContext
+		client := &http.Client{Transport: transport, Timeout: defaultProxyProbeTimeout}
+		return client, transport.CloseIdleConnections, nil
+	}
+	client, err := httpclient.GetClient(httpclient.Options{
+		ProxyURL: rawProxy, Timeout: defaultProxyProbeTimeout,
+		InsecureSkipVerify: s.insecureSkipVerify,
+		ValidateResolvedIP: s.validateResolvedIP, AllowPrivateHosts: s.allowPrivateHosts,
+	})
+	return client, func() {}, err
 }
 
 func (s *proxyProbeService) probeWithURL(ctx context.Context, client *http.Client, url string, parser string) (*service.ProxyExitInfo, int64, error) {

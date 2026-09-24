@@ -127,7 +127,7 @@ export function agentNodeToCanvasNode(node: Record<string, unknown>, fallbackTyp
     x: finite(position.x, 80),
     y: finite(position.y, 80),
     width: finite(node.width, type === 'text' ? 340 : type === 'config' ? 300 : type === 'audio' ? 360 : 360),
-    height: finite(node.height, type === 'text' ? 300 : type === 'config' ? 260 : type === 'audio' ? 220 : 420),
+    height: finite(node.height, type === 'text' ? 240 : type === 'config' ? 260 : type === 'audio' ? 220 : 420),
     prompt,
     textContent: typeof metadata.content === 'string' ? metadata.content : type === 'text' ? prompt : undefined,
     model: typeof metadata.model === 'string' ? metadata.model : '',

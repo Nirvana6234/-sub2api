@@ -17,6 +17,7 @@
           <nav class="flex items-center overflow-x-auto rounded-md bg-gray-100 p-1 text-xs dark:bg-dark-800" :aria-label="t('playground.workspaceLabel')">
             <RouterLink to="/playground/chat" class="rounded px-2.5 py-1.5 font-medium text-gray-500 transition-colors hover:text-gray-800 dark:text-dark-400 dark:hover:text-dark-100">{{ t('playground.chatWorkspace') }}</RouterLink>
             <RouterLink to="/playground/images" class="rounded px-2.5 py-1.5 font-medium text-gray-500 transition-colors hover:text-gray-800 dark:text-dark-400 dark:hover:text-dark-100">{{ t('playground.imageWorkspace') }}</RouterLink>
+            <RouterLink to="/playground/images?view=canvas" class="rounded px-2.5 py-1.5 font-medium text-gray-500 transition-colors hover:text-gray-800 dark:text-dark-400 dark:hover:text-dark-100">{{ t('playground.canvasWorkspace') }}</RouterLink>
             <RouterLink to="/playground/gallery" class="rounded bg-white px-2.5 py-1.5 font-medium text-primary-700 shadow-sm dark:bg-dark-700 dark:text-primary-300">{{ t('playground.galleryWorkspace') }}</RouterLink>
           </nav>
         </div>

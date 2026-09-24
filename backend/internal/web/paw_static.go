@@ -36,6 +36,9 @@ func newPawStaticHandler(distFS fs.FS) gin.HandlerFunc {
 			request := c.Request.Clone(c.Request.Context())
 			request.URL.Path = "/" + cleanPath
 			applyPawStaticAssetCacheHeaders(c.Writer.Header(), cleanPath)
+			if strings.HasSuffix(strings.ToLower(cleanPath), ".js") {
+				c.Writer.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+			}
 			fileServer.ServeHTTP(c.Writer, request)
 			c.Abort()
 			return

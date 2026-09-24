@@ -90,6 +90,16 @@ func GroupID(v int64) predicate.APIKey {
 	return predicate.APIKey(sql.FieldEQ(FieldGroupID, v))
 }
 
+// AutoGroup applies equality check predicate on the "auto_group" field. It's identical to AutoGroupEQ.
+func AutoGroup(v bool) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldAutoGroup, v))
+}
+
+// AutoGroupStrategy applies equality check predicate on the "auto_group_strategy" field. It's identical to AutoGroupStrategyEQ.
+func AutoGroupStrategy(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldAutoGroupStrategy, v))
+}
+
 // Status applies equality check predicate on the "status" field. It's identical to StatusEQ.
 func Status(v string) predicate.APIKey {
 	return predicate.APIKey(sql.FieldEQ(FieldStatus, v))
@@ -468,6 +478,81 @@ func GroupIDIsNil() predicate.APIKey {
 // GroupIDNotNil applies the NotNil predicate on the "group_id" field.
 func GroupIDNotNil() predicate.APIKey {
 	return predicate.APIKey(sql.FieldNotNull(FieldGroupID))
+}
+
+// AutoGroupEQ applies the EQ predicate on the "auto_group" field.
+func AutoGroupEQ(v bool) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldAutoGroup, v))
+}
+
+// AutoGroupNEQ applies the NEQ predicate on the "auto_group" field.
+func AutoGroupNEQ(v bool) predicate.APIKey {
+	return predicate.APIKey(sql.FieldNEQ(FieldAutoGroup, v))
+}
+
+// AutoGroupStrategyEQ applies the EQ predicate on the "auto_group_strategy" field.
+func AutoGroupStrategyEQ(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldAutoGroupStrategy, v))
+}
+
+// AutoGroupStrategyNEQ applies the NEQ predicate on the "auto_group_strategy" field.
+func AutoGroupStrategyNEQ(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldNEQ(FieldAutoGroupStrategy, v))
+}
+
+// AutoGroupStrategyIn applies the In predicate on the "auto_group_strategy" field.
+func AutoGroupStrategyIn(vs ...string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldIn(FieldAutoGroupStrategy, vs...))
+}
+
+// AutoGroupStrategyNotIn applies the NotIn predicate on the "auto_group_strategy" field.
+func AutoGroupStrategyNotIn(vs ...string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldNotIn(FieldAutoGroupStrategy, vs...))
+}
+
+// AutoGroupStrategyGT applies the GT predicate on the "auto_group_strategy" field.
+func AutoGroupStrategyGT(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldGT(FieldAutoGroupStrategy, v))
+}
+
+// AutoGroupStrategyGTE applies the GTE predicate on the "auto_group_strategy" field.
+func AutoGroupStrategyGTE(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldGTE(FieldAutoGroupStrategy, v))
+}
+
+// AutoGroupStrategyLT applies the LT predicate on the "auto_group_strategy" field.
+func AutoGroupStrategyLT(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldLT(FieldAutoGroupStrategy, v))
+}
+
+// AutoGroupStrategyLTE applies the LTE predicate on the "auto_group_strategy" field.
+func AutoGroupStrategyLTE(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldLTE(FieldAutoGroupStrategy, v))
+}
+
+// AutoGroupStrategyContains applies the Contains predicate on the "auto_group_strategy" field.
+func AutoGroupStrategyContains(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldContains(FieldAutoGroupStrategy, v))
+}
+
+// AutoGroupStrategyHasPrefix applies the HasPrefix predicate on the "auto_group_strategy" field.
+func AutoGroupStrategyHasPrefix(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldHasPrefix(FieldAutoGroupStrategy, v))
+}
+
+// AutoGroupStrategyHasSuffix applies the HasSuffix predicate on the "auto_group_strategy" field.
+func AutoGroupStrategyHasSuffix(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldHasSuffix(FieldAutoGroupStrategy, v))
+}
+
+// AutoGroupStrategyEqualFold applies the EqualFold predicate on the "auto_group_strategy" field.
+func AutoGroupStrategyEqualFold(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEqualFold(FieldAutoGroupStrategy, v))
+}
+
+// AutoGroupStrategyContainsFold applies the ContainsFold predicate on the "auto_group_strategy" field.
+func AutoGroupStrategyContainsFold(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldContainsFold(FieldAutoGroupStrategy, v))
 }
 
 // StatusEQ applies the EQ predicate on the "status" field.
@@ -1163,6 +1248,29 @@ func HasGroup() predicate.APIKey {
 func HasGroupWith(preds ...predicate.Group) predicate.APIKey {
 	return predicate.APIKey(func(s *sql.Selector) {
 		step := newGroupStep()
+		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
+			for _, p := range preds {
+				p(s)
+			}
+		})
+	})
+}
+
+// HasContributionRoomPreferences applies the HasEdge predicate on the "contribution_room_preferences" edge.
+func HasContributionRoomPreferences() predicate.APIKey {
+	return predicate.APIKey(func(s *sql.Selector) {
+		step := sqlgraph.NewStep(
+			sqlgraph.From(Table, FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, false, ContributionRoomPreferencesTable, ContributionRoomPreferencesColumn),
+		)
+		sqlgraph.HasNeighbors(s, step)
+	})
+}
+
+// HasContributionRoomPreferencesWith applies the HasEdge predicate on the "contribution_room_preferences" edge with a given conditions (other predicates).
+func HasContributionRoomPreferencesWith(preds ...predicate.UserContributionRoomPreference) predicate.APIKey {
+	return predicate.APIKey(func(s *sql.Selector) {
+		step := newContributionRoomPreferencesStep()
 		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
 			for _, p := range preds {
 				p(s)

@@ -2,7 +2,13 @@ package handler
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"log/slog"
+	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -443,6 +449,9 @@ func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
 	type UserResponse struct {
 		userProfileResponse
 		RunMode string `json:"run_mode"`
+		// RechargeDisabled 供前端隐藏充值入口。真正的强制在
+		// middleware.RechargeBlockedGuard，这里只是让被禁用户看不到入口。
+		RechargeDisabled bool `json:"recharge_disabled"`
 	}
 
 	runMode := config.RunModeStandard
@@ -453,6 +462,7 @@ func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
 	response.Success(c, UserResponse{
 		userProfileResponse: userProfileResponseFromService(user, identities),
 		RunMode:             runMode,
+		RechargeDisabled:    h.settingSvc != nil && h.settingSvc.IsRechargeBlockedUser(c.Request.Context(), subject.UserID),
 	})
 }
 
@@ -764,4 +774,70 @@ func (h *AuthHandler) RevokeAllSessions(c *gin.Context) {
 	response.Success(c, RevokeAllSessionsResponse{
 		Message: "All sessions have been revoked. Please log in again.",
 	})
+}
+
+const localControlTokenHeader = "X-Local-Control-Token"
+const localControlTokenHashFile = "local-control-token.sha256"
+
+func expectedLocalControlTokenHash() ([sha256.Size]byte, bool) {
+	if expected := strings.TrimSpace(os.Getenv("LOCAL_CONTROL_TOKEN")); expected != "" {
+		return sha256.Sum256([]byte(expected)), true
+	}
+
+	dataDir := strings.TrimSpace(os.Getenv("DATA_DIR"))
+	if dataDir == "" {
+		return [sha256.Size]byte{}, false
+	}
+	encoded, err := os.ReadFile(filepath.Join(dataDir, localControlTokenHashFile))
+	if err != nil {
+		return [sha256.Size]byte{}, false
+	}
+	decoded, err := hex.DecodeString(strings.TrimSpace(string(encoded)))
+	if err != nil || len(decoded) != sha256.Size {
+		return [sha256.Size]byte{}, false
+	}
+	var expectedHash [sha256.Size]byte
+	copy(expectedHash[:], decoded)
+	return expectedHash, true
+}
+
+// LocalControlLogin creates a normal administrator session for the desktop
+// controller. The endpoint is absent unless the local launcher explicitly
+// supplies a high-entropy token, and the transport peer must be loopback.
+func (h *AuthHandler) LocalControlLogin(c *gin.Context) {
+	expectedHash, configured := expectedLocalControlTokenHash()
+	if !configured {
+		response.NotFound(c, "Not found")
+		return
+	}
+
+	host, _, err := net.SplitHostPort(c.Request.RemoteAddr)
+	if err != nil {
+		host = c.Request.RemoteAddr
+	}
+	peer := net.ParseIP(strings.Trim(host, "[]"))
+	if peer == nil || !peer.IsLoopback() {
+		response.NotFound(c, "Not found")
+		return
+	}
+
+	provided := strings.TrimSpace(c.GetHeader(localControlTokenHeader))
+	providedHash := sha256.Sum256([]byte(provided))
+	if provided == "" || subtle.ConstantTimeCompare(expectedHash[:], providedHash[:]) != 1 {
+		response.Unauthorized(c, "Local control authorization failed")
+		return
+	}
+
+	admin, err := h.userService.GetFirstAdmin(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if err := ensureLoginUserActive(admin); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	h.authService.RecordSuccessfulLogin(c.Request.Context(), admin.ID)
+	h.respondWithTokenPair(c, admin)
 }

@@ -23,6 +23,8 @@ import (
 type UserWithConcurrency struct {
 	dto.AdminUser
 	CurrentConcurrency int `json:"current_concurrency"`
+	// RechargeDisabled 来自 settings.recharge_blocked_user_ids，不是 users 表字段。
+	RechargeDisabled bool `json:"recharge_disabled"`
 }
 
 // UserHandler handles admin user management
@@ -59,34 +61,40 @@ func NewUserHandler(
 
 // CreateUserRequest represents admin create user request
 type CreateUserRequest struct {
-	Email                      string   `json:"email" binding:"required,email"`
-	Password                   string   `json:"password" binding:"required,min=6"`
-	Username                   string   `json:"username"`
-	Notes                      string   `json:"notes"`
-	Role                       string   `json:"role" binding:"omitempty,oneof=admin user"`
-	Balance                    *float64 `json:"balance"`
-	Concurrency                int      `json:"concurrency"`
-	RPMLimit                   int      `json:"rpm_limit"`
-	AllowedGroups              []int64  `json:"allowed_groups"`
-	RestrictPublicGroups       bool     `json:"restrict_public_groups"`
-	HeadroomCompressionEnabled bool     `json:"headroom_compression_enabled"`
+	Email                    string   `json:"email" binding:"required,email"`
+	Password                 string   `json:"password" binding:"required,min=6"`
+	Username                 string   `json:"username"`
+	Notes                    string   `json:"notes"`
+	Role                     string   `json:"role" binding:"omitempty,oneof=admin user"`
+	Balance                  *float64 `json:"balance"`
+	Concurrency              int      `json:"concurrency"`
+	RPMLimit                 int      `json:"rpm_limit"`
+	AllowedGroups            []int64  `json:"allowed_groups"`
+	RestrictPublicGroups     bool     `json:"restrict_public_groups"`
+	AccountManagementEnabled bool     `json:"account_management_enabled"`
+	ContributionRoomsEnabled bool     `json:"contribution_rooms_enabled"`
 }
 
 // UpdateUserRequest represents admin update user request
 // 使用指针类型来区分"未提供"和"设置为0"
 type UpdateUserRequest struct {
-	Email                      string   `json:"email" binding:"omitempty,email"`
-	Password                   string   `json:"password" binding:"omitempty,min=6"`
-	Username                   *string  `json:"username"`
-	Notes                      *string  `json:"notes"`
-	Role                       string   `json:"role" binding:"omitempty,oneof=admin user"`
-	Balance                    *float64 `json:"balance"`
-	Concurrency                *int     `json:"concurrency"`
-	RPMLimit                   *int     `json:"rpm_limit"`
-	Status                     string   `json:"status" binding:"omitempty,oneof=active disabled"`
-	AllowedGroups              *[]int64 `json:"allowed_groups"`
-	RestrictPublicGroups       *bool    `json:"restrict_public_groups"`
-	HeadroomCompressionEnabled *bool    `json:"headroom_compression_enabled"`
+	Email                    string   `json:"email" binding:"omitempty,email"`
+	Password                 string   `json:"password" binding:"omitempty,min=6"`
+	Username                 *string  `json:"username"`
+	Notes                    *string  `json:"notes"`
+	Role                     string   `json:"role" binding:"omitempty,oneof=admin user"`
+	Balance                  *float64 `json:"balance"`
+	Concurrency              *int     `json:"concurrency"`
+	RPMLimit                 *int     `json:"rpm_limit"`
+	Status                   string   `json:"status" binding:"omitempty,oneof=active disabled"`
+	AllowedGroups            *[]int64 `json:"allowed_groups"`
+	RestrictPublicGroups     *bool    `json:"restrict_public_groups"`
+	AccountManagementEnabled *bool    `json:"account_management_enabled"`
+	ContributionRoomsEnabled *bool    `json:"contribution_rooms_enabled"`
+	// RechargeDisabled 禁止该用户充值。它不落在 users 表，而是写进
+	// settings.recharge_blocked_user_ids 名单，因此在 handler 里单独处理，
+	// 不进 UpdateUserInput。nil 表示本次不修改。
+	RechargeDisabled *bool `json:"recharge_disabled"`
 	// GroupRates 用户专属分组倍率配置
 	// map[groupID]*rate，nil 表示删除该分组的专属倍率
 	GroupRates map[int64]*float64 `json:"group_rates"`
@@ -172,6 +180,14 @@ func (h *UserHandler) List(c *gin.Context) {
 		loadInfo, _ = h.concurrencyService.GetUsersLoadBatch(c.Request.Context(), usersConcurrency)
 	}
 
+	// 充值黑名单整份只读一次，避免每个用户各查一遍设置。
+	blockedRecharge := make(map[int64]struct{})
+	if h.settingService != nil {
+		for _, id := range h.settingService.GetRechargeBlockedUserIDs(c.Request.Context()) {
+			blockedRecharge[id] = struct{}{}
+		}
+	}
+
 	// Build response with concurrency info
 	out := make([]UserWithConcurrency, len(users))
 	for i := range users {
@@ -180,6 +196,9 @@ func (h *UserHandler) List(c *gin.Context) {
 		}
 		if info := loadInfo[users[i].ID]; info != nil {
 			out[i].CurrentConcurrency = info.CurrentConcurrency
+		}
+		if _, blocked := blockedRecharge[users[i].ID]; blocked {
+			out[i].RechargeDisabled = true
 		}
 	}
 
@@ -288,18 +307,19 @@ func (h *UserHandler) Create(c *gin.Context) {
 	}
 
 	user, err := h.adminService.CreateUser(c.Request.Context(), &service.CreateUserInput{
-		Email:                      req.Email,
-		Password:                   req.Password,
-		Username:                   req.Username,
-		Notes:                      req.Notes,
-		Role:                       req.Role,
-		Balance:                    req.Balance,
-		Concurrency:                req.Concurrency,
-		RPMLimit:                   req.RPMLimit,
-		AllowedGroups:              req.AllowedGroups,
-		RestrictPublicGroups:       req.RestrictPublicGroups,
-		HeadroomCompressionEnabled: req.HeadroomCompressionEnabled,
-		ActorAdminID:               getAdminIDFromContext(c),
+		Email:                    req.Email,
+		Password:                 req.Password,
+		Username:                 req.Username,
+		Notes:                    req.Notes,
+		Role:                     req.Role,
+		Balance:                  req.Balance,
+		Concurrency:              req.Concurrency,
+		RPMLimit:                 req.RPMLimit,
+		AllowedGroups:            req.AllowedGroups,
+		RestrictPublicGroups:     req.RestrictPublicGroups,
+		AccountManagementEnabled: req.AccountManagementEnabled,
+		ContributionRoomsEnabled: req.ContributionRoomsEnabled,
+		ActorAdminID:             getAdminIDFromContext(c),
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -348,27 +368,48 @@ func (h *UserHandler) Update(c *gin.Context) {
 
 	// 使用指针类型直接传递，nil 表示未提供该字段
 	user, err := h.adminService.UpdateUser(c.Request.Context(), userID, &service.UpdateUserInput{
-		Email:                      req.Email,
-		Password:                   req.Password,
-		Username:                   req.Username,
-		Notes:                      req.Notes,
-		Role:                       req.Role,
-		Balance:                    req.Balance,
-		Concurrency:                req.Concurrency,
-		RPMLimit:                   req.RPMLimit,
-		Status:                     req.Status,
-		AllowedGroups:              req.AllowedGroups,
-		RestrictPublicGroups:       req.RestrictPublicGroups,
-		HeadroomCompressionEnabled: req.HeadroomCompressionEnabled,
-		GroupRates:                 req.GroupRates,
-		ActorAdminID:               getAdminIDFromContext(c),
+		Email:                    req.Email,
+		Password:                 req.Password,
+		Username:                 req.Username,
+		Notes:                    req.Notes,
+		Role:                     req.Role,
+		Balance:                  req.Balance,
+		Concurrency:              req.Concurrency,
+		RPMLimit:                 req.RPMLimit,
+		Status:                   req.Status,
+		AllowedGroups:            req.AllowedGroups,
+		RestrictPublicGroups:     req.RestrictPublicGroups,
+		AccountManagementEnabled: req.AccountManagementEnabled,
+		ContributionRoomsEnabled: req.ContributionRoomsEnabled,
+		GroupRates:               req.GroupRates,
+		ActorAdminID:             getAdminIDFromContext(c),
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
 
-	response.Success(c, dto.UserFromServiceAdmin(user))
+	// 充值黑名单存在 settings 而非 users 表，因此在用户更新成功后单独落盘。
+	// 这里刻意不因名单写入失败而整体报错：用户的其他字段已经改好了，回滚不了；
+	// 报错会让管理员以为整次编辑都失败而重复提交。失败时记日志并在响应里如实
+	// 返回当前真实状态，管理员能看出开关没生效。
+	rechargeDisabled := h.settingService != nil && h.settingService.IsRechargeBlockedUser(c.Request.Context(), userID)
+	if req.RechargeDisabled != nil && h.settingService != nil && *req.RechargeDisabled != rechargeDisabled {
+		if err := h.settingService.SetUserRechargeBlocked(c.Request.Context(), userID, *req.RechargeDisabled); err != nil {
+			slog.Error("admin.user.set_recharge_blocklist_failed",
+				"user_id", userID, "blocked", *req.RechargeDisabled, "error", err)
+		} else {
+			rechargeDisabled = *req.RechargeDisabled
+		}
+	}
+
+	response.Success(c, struct {
+		*dto.AdminUser
+		RechargeDisabled bool `json:"recharge_disabled"`
+	}{
+		AdminUser:        dto.UserFromServiceAdmin(user),
+		RechargeDisabled: rechargeDisabled,
+	})
 }
 
 // Delete handles deleting a user

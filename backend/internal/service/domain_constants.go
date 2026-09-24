@@ -44,11 +44,12 @@ const (
 	PlatformAntigravity = domain.PlatformAntigravity
 	PlatformGrok        = domain.PlatformGrok
 	// 国产 OpenAI 兼容供应商（与 grok 一样经 OpenAI 网关转发）。
-	PlatformKimi      = domain.PlatformKimi
-	PlatformZhipu     = domain.PlatformZhipu
-	PlatformDeepseek  = domain.PlatformDeepseek
-	PlatformMiniMax   = domain.PlatformMiniMax
-	PlatformComposite = domain.PlatformComposite
+	PlatformKimi       = domain.PlatformKimi
+	PlatformZhipu      = domain.PlatformZhipu
+	PlatformDeepseek   = domain.PlatformDeepseek
+	PlatformMiniMax    = domain.PlatformMiniMax
+	PlatformOpenCodeGo = domain.PlatformOpenCodeGo
+	PlatformComposite  = domain.PlatformComposite
 	// PlatformKiro is retained for unsupported-platform threshold tests and legacy
 	// account rows. Scheduling-threshold evaluation never pauses kiro accounts.
 	PlatformKiro = "kiro"
@@ -58,6 +59,8 @@ const (
 const (
 	AccountModePayG   = domain.AccountModePayG
 	AccountModeCoding = domain.AccountModeCoding
+	AccountModeZen    = domain.AccountModeZen
+	AccountModeGo     = domain.AccountModeGo
 )
 
 // 上游 API 协议（国产供应商）：决定转发端点与格式，与接入模式正交。
@@ -78,6 +81,10 @@ const (
 	DefaultDeepseekBaseURL    = "https://api.deepseek.com"
 	// MiniMax 按量付费与 Coding/Token Plan 共用推理域名，靠 API Key 区分套餐。
 	DefaultMiniMaxBaseURL = "https://api.minimaxi.com/v1"
+	// OpenCode Go：Chat Completions / Responses / models 共用 /v1 基址。
+	DefaultOpenCodeGoBaseURL = "https://opencode.ai/zen/go/v1"
+	// OpenCode Zen：按量付费网关，模型列表为 /zen/v1/models。
+	DefaultOpenCodeZenBaseURL = "https://opencode.ai/zen/v1"
 )
 
 // 国产供应商 Anthropic 协议端点的默认 base_url（上游路径为 {base}/v1/messages）。
@@ -88,6 +95,9 @@ const (
 	DefaultZhipuAnthropicBaseURL      = "https://open.bigmodel.cn/api/anthropic"
 	DefaultDeepseekAnthropicBaseURL   = "https://api.deepseek.com/anthropic"
 	DefaultMiniMaxAnthropicBaseURL    = "https://api.minimaxi.com/anthropic"
+	// OpenCode Go Anthropic 基址不含 /v1：nativeAnthropicTargetURL 会再拼 /v1/messages。
+	DefaultOpenCodeGoAnthropicBaseURL  = "https://opencode.ai/zen/go"
+	DefaultOpenCodeZenAnthropicBaseURL = "https://opencode.ai/zen"
 )
 
 // IsCNProvider 报告 platform 是否为国产 OpenAI 兼容供应商（kimi/zhipu/deepseek/minimax）。
@@ -98,6 +108,17 @@ func IsCNProvider(platform string) bool {
 	default:
 		return false
 	}
+}
+
+// IsOpenCodeGo reports whether the platform is the OpenCode Go gateway.
+func IsOpenCodeGo(platform string) bool {
+	return platform == PlatformOpenCodeGo
+}
+
+// IsMultiProtocolAPIKeyProvider reports providers that support the adaptive
+// multi-protocol API-key gateway.
+func IsMultiProtocolAPIKeyProvider(platform string) bool {
+	return IsCNProvider(platform) || platform == PlatformOpenCodeGo
 }
 
 // AllowedQuotaPlatforms 是允许设置 user × platform quota 的平台列表（单一权威来源）。
@@ -113,6 +134,7 @@ var AllowedQuotaPlatforms = []string{
 	PlatformZhipu,
 	PlatformDeepseek,
 	PlatformMiniMax,
+	PlatformOpenCodeGo,
 }
 
 // AllowedSchedulingThresholdPlatforms 是允许设置账号自动停调阈值的平台列表。
@@ -125,6 +147,7 @@ var AllowedSchedulingThresholdPlatforms = []string{
 	PlatformKimi,
 	PlatformZhipu,
 	PlatformMiniMax,
+	PlatformOpenCodeGo,
 }
 
 // IsAllowedQuotaPlatform 报告 s 是否为合法的 quota platform 标识。
@@ -375,6 +398,11 @@ const (
 	SettingKeyCustomMenuItems             = "custom_menu_items"             // 自定义菜单项（JSON 数组）
 	SettingKeyCustomEndpoints             = "custom_endpoints"              // 自定义端点列表（JSON 数组）
 
+	// 充值限制：禁止充值的用户 ID 列表（JSON 数组，如 [6]）。
+	// 命中的用户在 /payment 下全部接口被拒（后端强制），前端同时隐藏充值入口。
+	// 用配置而非硬编码，改名单不需要重新发版。
+	SettingKeyRechargeBlockedUserIDs = "recharge_blocked_user_ids"
+
 	// 默认配置
 	SettingKeyDefaultConcurrency   = "default_concurrency"    // 新用户默认并发量
 	SettingKeyDefaultBalance       = "default_balance"        // 新用户默认余额
@@ -538,6 +566,14 @@ const (
 	// 前端渲染成一个跳转按钮，不做内嵌播放。留空则下载页不显示这块。
 	SettingKeyClientTutorialVideoURL = "client_tutorial_video_url"
 
+	// SettingKeyChatAppDownloadEnabled 控制客户端下载页上"共飞 AI 助手"（Chat 桌面客户端，
+	// 独立于上面的共飞直连客户端）下载区块是否显示。默认关闭，管理员配好下载地址后再开启。
+	SettingKeyChatAppDownloadEnabled = "chat_app_download_enabled"
+	// SettingKeyChatAppDownloadDirectURL 是 Chat 桌面客户端的安装包直链，为空则下载区块隐藏。
+	SettingKeyChatAppDownloadDirectURL = "chat_app_download_direct_url"
+	// SettingKeyChatAppLatestVersion 是 Chat 桌面客户端的最新版本号，仅用于页面展示。
+	SettingKeyChatAppLatestVersion = "chat_app_latest_version"
+
 	// SettingKeyLatencyCompensationThresholdMs 是延迟补偿功能里"慢请求"的判定
 	// 阈值（首字节耗时 first_token_ms >= 此值才算慢）。管理员在后台按当天实际
 	// 情况调整，不写死在代码里——上游一次波动可能是几秒也可能是几十秒，固定
@@ -581,7 +617,7 @@ const (
 	// 403，响应体是 55 字节的 "large file require login for access."，用户存下来
 	// 的是改了扩展名的报错文本。实测同仓库 9KB 的 README.md 匿名 200 正常，
 	// 说明这是文件大小触发的限制而非仓库私有。
-	ClientDownloadDefaultDirectURL = "https://icode-xtu.cc.cd/downloads/" + ClientDownloadFileName
+	ClientDownloadDefaultDirectURL = "https://download.gongfeiai.com/downloads/" + ClientDownloadFileName
 
 	// ClientDownloadFileName 是对外暴露的安装包文件名，同时用于本地直供分支的
 	// 落盘路径。换版本时改这里一处即可。
@@ -589,7 +625,7 @@ const (
 	// 换版本必须换文件名，不要原地覆盖：下载站给这个路径发的是
 	// Cache-Control: public, max-age=3600，同名覆盖会让一小时内的用户继续拿到
 	// 缓存里的旧包，而且从下载结果上看不出拿到的是哪一版。
-	ClientDownloadFileName = "codex-relay-client_v0.3_x64.zip"
+	ClientDownloadFileName = "codex-relay-client_v0.5_x64.zip"
 
 	// SettingKeyBackupPaymentEnabled 控制充值页的「备用支付通道」入口是否展示。
 	// 与 payment_enabled 相互独立：主通道故障时可以只留备用通道。默认关闭（opt-in）。
@@ -684,6 +720,7 @@ const (
 	SettingKeyMaxCodexVersion = "max_codex_version"
 	// SettingKeyCodexCLIOnlyBlacklist codex_cli_only 全局黑名单（[]AllowedClientEntry JSON，OR deny）。
 	SettingKeyCodexCLIOnlyBlacklist = "codex_cli_only_blacklist"
+	SettingKeyGlobalBlacklist       = "global_blacklist"
 	// SettingKeyCodexCLIOnlyWhitelist codex_cli_only 全局白名单（[]AllowedClientEntry JSON，双因子 AND allow）。
 	SettingKeyCodexCLIOnlyWhitelist = "codex_cli_only_whitelist"
 	// SettingKeyCodexCLIOnlyAllowAppServerClients App Server 开关：对未列名客户端开闸（默认 false；仅显式 "true" 开）。
@@ -718,11 +755,9 @@ const (
 	SettingKeyOpenAIAdvancedSchedulerWeightTTFT                  = "openai_advanced_scheduler_weight_ttft"
 	SettingKeyOpenAIAdvancedSchedulerWeightReset                 = "openai_advanced_scheduler_weight_reset"
 	SettingKeyOpenAIAdvancedSchedulerWeightQuotaHeadroom         = "openai_advanced_scheduler_weight_quota_headroom"
-	// SettingKeyHeadroomBaseURL headroom 压缩代理的内网地址，未配置视为不启用压缩。
-	SettingKeyHeadroomBaseURL                               = "headroom_base_url"
-	SettingKeyOpenAIAdvancedSchedulerWeightUpstreamCost     = "openai_advanced_scheduler_weight_upstream_cost"
-	SettingKeyOpenAIAdvancedSchedulerWeightPreviousResponse = "openai_advanced_scheduler_weight_previous_response"
-	SettingKeyOpenAIAdvancedSchedulerWeightSessionSticky    = "openai_advanced_scheduler_weight_session_sticky"
+	SettingKeyOpenAIAdvancedSchedulerWeightUpstreamCost          = "openai_advanced_scheduler_weight_upstream_cost"
+	SettingKeyOpenAIAdvancedSchedulerWeightPreviousResponse      = "openai_advanced_scheduler_weight_previous_response"
+	SettingKeyOpenAIAdvancedSchedulerWeightSessionSticky         = "openai_advanced_scheduler_weight_session_sticky"
 
 	// SettingKeyBackendModeEnabled Backend 模式：禁用用户注册和自助服务，仅管理员可登录
 	SettingKeyBackendModeEnabled = "backend_mode_enabled"
@@ -791,6 +826,9 @@ const (
 
 	// Web Search Emulation
 	SettingKeyWebSearchEmulationConfig = "web_search_emulation_config" // JSON 配置
+
+	// SettingKeyGuestTrialConfig 未注册访客网页版试用配置（JSON，见 guest_trial_config.go）
+	SettingKeyGuestTrialConfig = "guest_trial_config"
 )
 
 // SettingKeyDefaultPlatformQuotas —— 系统全局：每用户 × 平台日/周/月 USD 上限（JSON）。

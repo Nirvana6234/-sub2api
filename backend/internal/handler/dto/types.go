@@ -32,9 +32,9 @@ type User struct {
 	TotalRecharged             float64            `json:"total_recharged"`
 
 	// RPMLimit 用户级每分钟请求数上限（0 = 不限制），仅在所用分组未设置 rpm_limit 时作为兜底生效。
-	RPMLimit int `json:"rpm_limit"`
-	// HeadroomCompressionEnabled 见 service.User 同名字段注释。
-	HeadroomCompressionEnabled bool `json:"headroom_compression_enabled"`
+	RPMLimit                 int  `json:"rpm_limit"`
+	AccountManagementEnabled bool `json:"account_management_enabled"`
+	ContributionRoomsEnabled bool `json:"contribution_rooms_enabled"`
 
 	APIKeys       []APIKey           `json:"api_keys,omitempty"`
 	Subscriptions []UserSubscription `json:"subscriptions,omitempty"`
@@ -56,21 +56,24 @@ type AdminUser struct {
 }
 
 type APIKey struct {
-	ID          int64      `json:"id"`
-	UserID      int64      `json:"user_id"`
-	Key         string     `json:"key"`
-	Name        string     `json:"name"`
-	GroupID     *int64     `json:"group_id"`
-	Status      string     `json:"status"`
-	IPWhitelist []string   `json:"ip_whitelist"`
-	IPBlacklist []string   `json:"ip_blacklist"`
-	LastUsedAt  *time.Time `json:"last_used_at"`
-	LastUsedIP  *string    `json:"last_used_ip"`
-	Quota       float64    `json:"quota"`      // Quota limit in USD (0 = unlimited)
-	QuotaUsed   float64    `json:"quota_used"` // Used quota amount in USD
-	ExpiresAt   *time.Time `json:"expires_at"` // Expiration time (nil = never expires)
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	ID                int64      `json:"id"`
+	UserID            int64      `json:"user_id"`
+	Key               string     `json:"key"`
+	Name              string     `json:"name"`
+	GroupID           *int64     `json:"group_id"`
+	AutoGroup         bool       `json:"auto_group"`
+	AutoGroupStrategy string     `json:"auto_group_strategy"`
+	AutoGroupIDs      []int64    `json:"auto_group_ids"`
+	Status            string     `json:"status"`
+	IPWhitelist       []string   `json:"ip_whitelist"`
+	IPBlacklist       []string   `json:"ip_blacklist"`
+	LastUsedAt        *time.Time `json:"last_used_at"`
+	LastUsedIP        *string    `json:"last_used_ip"`
+	Quota             float64    `json:"quota"`      // Quota limit in USD (0 = unlimited)
+	QuotaUsed         float64    `json:"quota_used"` // Used quota amount in USD
+	ExpiresAt         *time.Time `json:"expires_at"` // Expiration time (nil = never expires)
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
 	// CurrentConcurrency is the real-time active request count for this API key.
 	CurrentConcurrency int `json:"current_concurrency"`
 
@@ -88,18 +91,22 @@ type APIKey struct {
 	Reset1dAt     *time.Time `json:"reset_1d_at,omitempty"`
 	Reset7dAt     *time.Time `json:"reset_7d_at,omitempty"`
 
-	User  *User  `json:"user,omitempty"`
-	Group *Group `json:"group,omitempty"`
+	User                       *User      `json:"user,omitempty"`
+	Group                      *Group     `json:"group,omitempty"`
+	AutoGroupCurrentGroup      *Group     `json:"auto_group_current_group,omitempty"`
+	AutoGroupCurrentModel      string     `json:"auto_group_current_model,omitempty"`
+	AutoGroupCurrentSelectedAt *time.Time `json:"auto_group_current_selected_at,omitempty"`
 }
 
 type Group struct {
-	ID             int64   `json:"id"`
-	Name           string  `json:"name"`
-	Description    string  `json:"description"`
-	Platform       string  `json:"platform"`
-	RateMultiplier float64 `json:"rate_multiplier"`
-	IsExclusive    bool    `json:"is_exclusive"`
-	Status         string  `json:"status"`
+	ID                    int64   `json:"id"`
+	Name                  string  `json:"name"`
+	Description           string  `json:"description"`
+	Platform              string  `json:"platform"`
+	RateMultiplier        float64 `json:"rate_multiplier"`
+	IsExclusive           bool    `json:"is_exclusive"`
+	AllowContributionPool bool    `json:"allow_contribution_pool"`
+	Status                string  `json:"status"`
 
 	SubscriptionType          string   `json:"subscription_type"`
 	DailyLimitUSD             *float64 `json:"daily_limit_usd"`
@@ -165,6 +172,10 @@ type Group struct {
 	// ReasoningEffortMappings Anthropic/OpenAI 推理强度映射，可按模型精确名、前缀或后缀限定。
 	ReasoningEffortMappings []domain.ReasoningEffortMapping `json:"reasoning_effort_mappings"`
 
+	// ModelAllowlist 分组模型白名单。用户侧也需要（客户端据此决定是否展示「模型」按钮并列出可用模型），
+	// 与网关 /v1/models 对该分组返回的内容同源，不含内部信息。
+	ModelAllowlist service.GroupModelAllowlist `json:"model_allowlist"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -196,7 +207,6 @@ type AdminGroup struct {
 	// OpenAI Messages 调度配置（仅 openai 平台使用）
 	DefaultMappedModel          string                                   `json:"default_mapped_model"`
 	MessagesDispatchModelConfig domain.OpenAIMessagesDispatchModelConfig `json:"messages_dispatch_model_config"`
-	ModelAllowlist              service.GroupModelAllowlist              `json:"model_allowlist"`
 	// 固定账号获取 Codex Model Manifest 配置（仅 openai 平台使用）。
 	CodexModelsManifestConfig domain.GroupCodexModelsManifestConfig `json:"codex_models_manifest_config"`
 
@@ -636,8 +646,10 @@ type UsageLog struct {
 	// NativeCompactionV2 is true only for requests positively identified at
 	// runtime as the native OpenAI remote compaction v2 wire.
 	NativeCompactionV2 bool `json:"native_compaction_v2"`
-	DurationMs         *int `json:"duration_ms"`
-	FirstTokenMs       *int `json:"first_token_ms"`
+	// AccountSource 请求由哪类账号承接：pool（管理员号池）/ own（自己贡献的账号）/ room（贡献房间）。
+	AccountSource string `json:"account_source"`
+	DurationMs    *int   `json:"duration_ms"`
+	FirstTokenMs  *int   `json:"first_token_ms"`
 
 	// 图片生成字段
 	ImageCount         int            `json:"image_count"`

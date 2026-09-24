@@ -111,6 +111,8 @@ type AdminService interface {
 	// ForceAntigravityPrivacy 强制重新设置 Antigravity OAuth 账号隐私，无论当前状态。
 	ForceAntigravityPrivacy(ctx context.Context, account *Account) string
 	SetAccountSchedulable(ctx context.Context, id int64, schedulable bool) (*Account, error)
+	// UpdateAccountGroupPriorities 批量设置账号在分组内的调度优先级，返回命中行数。
+	UpdateAccountGroupPriorities(ctx context.Context, updates []AccountGroupPriorityUpdate) (int, error)
 	BulkUpdateAccounts(ctx context.Context, input *BulkUpdateAccountsInput) (*BulkUpdateAccountsResult, error)
 	CheckMixedChannelRisk(ctx context.Context, currentAccountID int64, currentAccountPlatform string, groupIDs []int64) error
 	// RevertAccountProxyFallback 将账号的 proxy_id 切回 proxy_fallback_origin_id，并清空 origin 字段。
@@ -176,8 +178,9 @@ type CreateUserInput struct {
 	RPMLimit             int
 	AllowedGroups        []int64
 	RestrictPublicGroups bool
-	// HeadroomCompressionEnabled 见 service.User 同名字段注释。
-	HeadroomCompressionEnabled bool
+	// AccountManagementEnabled / ContributionRoomsEnabled 见 service.User 同名字段注释。
+	AccountManagementEnabled bool
+	ContributionRoomsEnabled bool
 	// ActorAdminID 执行本次操作的管理员ID(来自JWT)，仅用于权限敏感操作的审计日志。
 	ActorAdminID int64
 }
@@ -195,8 +198,9 @@ type UpdateUserInput struct {
 	AllowedGroups *[]int64 // 使用指针区分"未提供"和"设置为空数组"
 	// RestrictPublicGroups 指针区分"未提供"和"显式开关"。
 	RestrictPublicGroups *bool
-	// HeadroomCompressionEnabled 指针区分"未提供"和"显式开关"。
-	HeadroomCompressionEnabled *bool
+	// AccountManagementEnabled / ContributionRoomsEnabled 指针区分"未提供"和"显式开关"。
+	AccountManagementEnabled *bool
+	ContributionRoomsEnabled *bool
 	// GroupRates 用户专属分组倍率配置
 	// map[groupID]*rate，nil 表示删除该分组的专属倍率
 	GroupRates map[int64]*float64
@@ -248,6 +252,7 @@ type CreateGroupInput struct {
 	Platform                  string
 	RateMultiplier            float64
 	IsExclusive               bool
+	AllowContributionPool     bool
 	SubscriptionType          string   // standard/subscription
 	DailyLimitUSD             *float64 // 日限额 (USD)
 	WeeklyLimitUSD            *float64 // 周限额 (USD)
@@ -330,6 +335,7 @@ type UpdateGroupInput struct {
 	Platform                  string
 	RateMultiplier            *float64 // 使用指针以支持设置为0
 	IsExclusive               *bool
+	AllowContributionPool     *bool
 	Status                    string
 	SubscriptionType          string   // standard/subscription
 	DailyLimitUSD             *float64 // 日限额 (USD)
@@ -476,12 +482,20 @@ type BulkUpdateAccountsInput struct {
 	Status         string
 	Schedulable    *bool
 	GroupIDs       *[]int64
-	Credentials    map[string]any
-	Extra          map[string]any
-	ProbeEnabled   *bool
+	// GroupPriority sets account_groups.priority in one group for every target
+	// account bound to it; accounts outside the group are left untouched.
+	GroupPriority *BulkGroupPriorityUpdate
+	Credentials   map[string]any
+	Extra         map[string]any
+	ProbeEnabled  *bool
 	// SkipMixedChannelCheck skips the mixed channel risk check when binding groups.
 	// This should only be set when the caller has explicitly confirmed the risk.
 	SkipMixedChannelCheck bool
+}
+
+type BulkGroupPriorityUpdate struct {
+	GroupID  int64
+	Priority int
 }
 
 type BulkUpdateAccountFilters struct {

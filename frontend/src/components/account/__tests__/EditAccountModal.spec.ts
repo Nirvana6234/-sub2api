@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 
-const { updateAccountMock, checkMixedChannelRiskMock, authIsSimpleMode } = vi.hoisted(() => ({
+const { updateAccountMock, updateGroupPrioritiesMock, checkMixedChannelRiskMock, authIsSimpleMode } = vi.hoisted(() => ({
   updateAccountMock: vi.fn(),
+  updateGroupPrioritiesMock: vi.fn(),
   checkMixedChannelRiskMock: vi.fn(),
   authIsSimpleMode: { value: true }
 }))
@@ -28,6 +29,7 @@ vi.mock('@/api/admin', () => ({
   adminAPI: {
     accounts: {
       update: updateAccountMock,
+      updateGroupPriorities: updateGroupPrioritiesMock,
       checkMixedChannelRisk: checkMixedChannelRiskMock
     },
     settings: {
@@ -302,13 +304,13 @@ function buildOpenAIOAuthParentAccount() {
   } as any
 }
 
-function mountModal(account = buildAccount(), renderGroupSelector = false) {
+function mountModal(account = buildAccount(), renderGroupSelector = false, groups: any[] = []) {
   return mount(EditAccountModal, {
     props: {
       show: true,
       account,
       proxies: [],
-      groups: []
+      groups
     },
     global: {
       stubs: {
@@ -329,6 +331,63 @@ describe('EditAccountModal', () => {
   })
 
   afterEach(() => vi.useRealTimers())
+
+  it('edits in-group priorities per group and never sends the account-wide priority', async () => {
+    const account = {
+      ...buildAccount(),
+      priority: 50,
+      group_ids: [23, 24],
+      account_groups: [
+        { account_id: 1, group_id: 23, priority: 1 },
+        { account_id: 1, group_id: 24, priority: 10000 }
+      ]
+    }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    updateGroupPrioritiesMock.mockReset().mockResolvedValue({ updated: 1, requested: 1 })
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account, false, [
+      { id: 23, name: 'grok', platform: 'openai', status: 'active' },
+      { id: 24, name: 'plus', platform: 'openai', status: 'active' }
+    ])
+
+    expect(wrapper.find('input[data-tour="account-form-priority"]').exists()).toBe(false)
+    expect(wrapper.get<HTMLInputElement>('[data-testid="group-priority-23"]').element.value).toBe('1')
+    expect(wrapper.get<HTMLInputElement>('[data-testid="group-priority-24"]').element.value).toBe('10000')
+    expect(wrapper.get('[data-testid="account-group-priorities"]').text()).toContain('grok')
+
+    await wrapper.get('[data-testid="group-priority-23"]').setValue('5')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0][1]).not.toHaveProperty('priority')
+    expect(updateGroupPrioritiesMock).toHaveBeenCalledWith([{ account_id: 1, group_id: 23, priority: 5 }])
+    const emitted = wrapper.emitted('updated')?.[0]?.[0] as any
+    expect(emitted.account_groups).toEqual([
+      { account_id: 1, group_id: 23, priority: 5 },
+      { account_id: 1, group_id: 24, priority: 10000 }
+    ])
+    wrapper.unmount()
+  })
+
+  it('refuses to save an invalid in-group priority', async () => {
+    const account = {
+      ...buildAccount(),
+      group_ids: [23],
+      account_groups: [{ account_id: 1, group_id: 23, priority: 1 }]
+    }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    updateGroupPrioritiesMock.mockReset()
+    const wrapper = mountModal(account, false, [{ id: 23, name: 'grok', platform: 'openai', status: 'active' }])
+
+    await wrapper.get('[data-testid="group-priority-23"]').setValue('-1')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(updateAccountMock).not.toHaveBeenCalled()
+    expect(updateGroupPrioritiesMock).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
 
   it('sets expiry presets from now instead of extending the saved expiry', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })

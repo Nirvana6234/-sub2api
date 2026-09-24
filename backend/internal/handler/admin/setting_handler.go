@@ -390,7 +390,6 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		ClientLatestVersion:            settings.ClientLatestVersion,
 		ClientLatestVersionMac:         settings.ClientLatestVersionMac,
 		ClientTutorialVideoURL:         settings.ClientTutorialVideoURL,
-		HeadroomBaseURL:                settings.HeadroomBaseURL,
 		LatencyCompensationThresholdMs: settings.LatencyCompensationThresholdMs,
 		LatencyCompensationProfitRatio: settings.LatencyCompensationProfitRatio,
 		BackupPaymentEnabled:           settings.BackupPaymentEnabled,

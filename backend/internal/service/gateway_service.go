@@ -584,6 +584,12 @@ type AccountSelectionResult struct {
 	// 局部 ctx 上，handler 必须经 ContextWithSelectionProfitGate 重放后才能在
 	// 调度栈之外做抢槽后终检与准入后粘性绑定。
 	profitGate *openAIProfitControlGate
+	// fallbackTrace 携带本次选号命中的兜底事实（未走兜底为 nil）。兜底状态同样
+	// 只存在于调度栈内部的局部 ctx 上，不随返回值离开；handler 必须经
+	// ContextWithSelectionFallbackTrace 重放到请求 ctx，记用量的 detached worker
+	// 才能通过 PropagateFallbackPoolUsageContext 把它搬过去。少了这一环，
+	// usage_logs 的 fallback_* 字段恒为空（2026-09-10 起的生产表现）。
+	fallbackTrace *fallbackPoolUsageTrace
 }
 
 // ProfitGateActive 报告本次选号是否处于利润门之下。
@@ -628,9 +634,7 @@ type ForwardResult struct {
 	Duration                    time.Duration
 	FirstTokenMs                *int // 首字时间（流式请求）
 	ClientDisconnect            bool // 客户端是否在流式传输过程中断开
-	// HeadroomTokensSaved 是本次请求经 headroom 压缩代理节省的 token 数（未压缩/未生效为 0）。
-	HeadroomTokensSaved int
-	ReasoningEffort     *string
+	ReasoningEffort             *string
 	// RequestedReasoningEffort is the client-requested effort before mapping.
 	RequestedReasoningEffort *string
 	// ServiceTier records the tier requested by the client. OpenAI uses
@@ -799,6 +803,16 @@ type GatewayService struct {
 	tlsFPProfileService   *TLSFingerprintProfileService
 	balanceNotifyService  *BalanceNotifyService
 	userPlatformQuotaRepo UserPlatformQuotaRepository
+	contributionRoomRepo  ContributionRoomRoutingRepository
+}
+
+// SetContributionRoomRoutingRepository wires the optional, read-only room
+// routing source after service construction. Keeping it optional preserves the
+// lightweight constructors used by isolated gateway tests.
+func (s *GatewayService) SetContributionRoomRoutingRepository(repo ContributionRoomRoutingRepository) {
+	if s != nil {
+		s.contributionRoomRepo = repo
+	}
 }
 
 // NewGatewayService creates a new GatewayService

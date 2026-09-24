@@ -47,6 +47,8 @@ const (
 	FieldTotpEnabledAt = "totp_enabled_at"
 	// FieldSignupSource holds the string denoting the signup_source field in the database.
 	FieldSignupSource = "signup_source"
+	// FieldRegisterIP holds the string denoting the register_ip field in the database.
+	FieldRegisterIP = "register_ip"
 	// FieldLastLoginAt holds the string denoting the last_login_at field in the database.
 	FieldLastLoginAt = "last_login_at"
 	// FieldLastActiveAt holds the string denoting the last_active_at field in the database.
@@ -65,8 +67,10 @@ const (
 	FieldTotalRecharged = "total_recharged"
 	// FieldRpmLimit holds the string denoting the rpm_limit field in the database.
 	FieldRpmLimit = "rpm_limit"
-	// FieldHeadroomCompressionEnabled holds the string denoting the headroom_compression_enabled field in the database.
-	FieldHeadroomCompressionEnabled = "headroom_compression_enabled"
+	// FieldAccountManagementEnabled holds the string denoting the account_management_enabled field in the database.
+	FieldAccountManagementEnabled = "account_management_enabled"
+	// FieldContributionRoomsEnabled holds the string denoting the contribution_rooms_enabled field in the database.
+	FieldContributionRoomsEnabled = "contribution_rooms_enabled"
 	// EdgeAPIKeys holds the string denoting the api_keys edge name in mutations.
 	EdgeAPIKeys = "api_keys"
 	// EdgeRedeemCodes holds the string denoting the redeem_codes edge name in mutations.
@@ -77,6 +81,8 @@ const (
 	EdgeAssignedSubscriptions = "assigned_subscriptions"
 	// EdgeAnnouncementReads holds the string denoting the announcement_reads edge name in mutations.
 	EdgeAnnouncementReads = "announcement_reads"
+	// EdgeTickets holds the string denoting the tickets edge name in mutations.
+	EdgeTickets = "tickets"
 	// EdgeAllowedGroups holds the string denoting the allowed_groups edge name in mutations.
 	EdgeAllowedGroups = "allowed_groups"
 	// EdgeUsageLogs holds the string denoting the usage_logs edge name in mutations.
@@ -132,6 +138,13 @@ const (
 	AnnouncementReadsInverseTable = "announcement_reads"
 	// AnnouncementReadsColumn is the table column denoting the announcement_reads relation/edge.
 	AnnouncementReadsColumn = "user_id"
+	// TicketsTable is the table that holds the tickets relation/edge.
+	TicketsTable = "tickets"
+	// TicketsInverseTable is the table name for the Ticket entity.
+	// It exists in this package in order to avoid circular dependency with the "ticket" package.
+	TicketsInverseTable = "tickets"
+	// TicketsColumn is the table column denoting the tickets relation/edge.
+	TicketsColumn = "user_id"
 	// AllowedGroupsTable is the table that holds the allowed_groups relation/edge. The primary key declared below.
 	AllowedGroupsTable = "user_allowed_groups"
 	// AllowedGroupsInverseTable is the table name for the Group entity.
@@ -214,6 +227,7 @@ var Columns = []string{
 	FieldTotpEnabled,
 	FieldTotpEnabledAt,
 	FieldSignupSource,
+	FieldRegisterIP,
 	FieldLastLoginAt,
 	FieldLastActiveAt,
 	FieldRestrictPublicGroups,
@@ -223,7 +237,8 @@ var Columns = []string{
 	FieldBalanceNotifyExtraEmails,
 	FieldTotalRecharged,
 	FieldRpmLimit,
-	FieldHeadroomCompressionEnabled,
+	FieldAccountManagementEnabled,
+	FieldContributionRoomsEnabled,
 }
 
 var (
@@ -286,6 +301,8 @@ var (
 	DefaultSignupSource string
 	// SignupSourceValidator is a validator for the "signup_source" field. It is called by the builders before save.
 	SignupSourceValidator func(string) error
+	// RegisterIPValidator is a validator for the "register_ip" field. It is called by the builders before save.
+	RegisterIPValidator func(string) error
 	// DefaultRestrictPublicGroups holds the default value on creation for the "restrict_public_groups" field.
 	DefaultRestrictPublicGroups bool
 	// DefaultBalanceNotifyEnabled holds the default value on creation for the "balance_notify_enabled" field.
@@ -298,8 +315,10 @@ var (
 	DefaultTotalRecharged float64
 	// DefaultRpmLimit holds the default value on creation for the "rpm_limit" field.
 	DefaultRpmLimit int
-	// DefaultHeadroomCompressionEnabled holds the default value on creation for the "headroom_compression_enabled" field.
-	DefaultHeadroomCompressionEnabled bool
+	// DefaultAccountManagementEnabled holds the default value on creation for the "account_management_enabled" field.
+	DefaultAccountManagementEnabled bool
+	// DefaultContributionRoomsEnabled holds the default value on creation for the "contribution_rooms_enabled" field.
+	DefaultContributionRoomsEnabled bool
 )
 
 // OrderOption defines the ordering options for the User queries.
@@ -390,6 +409,11 @@ func BySignupSource(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldSignupSource, opts...).ToFunc()
 }
 
+// ByRegisterIP orders the results by the register_ip field.
+func ByRegisterIP(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldRegisterIP, opts...).ToFunc()
+}
+
 // ByLastLoginAt orders the results by the last_login_at field.
 func ByLastLoginAt(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldLastLoginAt, opts...).ToFunc()
@@ -435,9 +459,14 @@ func ByRpmLimit(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldRpmLimit, opts...).ToFunc()
 }
 
-// ByHeadroomCompressionEnabled orders the results by the headroom_compression_enabled field.
-func ByHeadroomCompressionEnabled(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldHeadroomCompressionEnabled, opts...).ToFunc()
+// ByAccountManagementEnabled orders the results by the account_management_enabled field.
+func ByAccountManagementEnabled(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAccountManagementEnabled, opts...).ToFunc()
+}
+
+// ByContributionRoomsEnabled orders the results by the contribution_rooms_enabled field.
+func ByContributionRoomsEnabled(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldContributionRoomsEnabled, opts...).ToFunc()
 }
 
 // ByAPIKeysCount orders the results by api_keys count.
@@ -507,6 +536,20 @@ func ByAnnouncementReadsCount(opts ...sql.OrderTermOption) OrderOption {
 func ByAnnouncementReads(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
 	return func(s *sql.Selector) {
 		sqlgraph.OrderByNeighborTerms(s, newAnnouncementReadsStep(), append([]sql.OrderTerm{term}, terms...)...)
+	}
+}
+
+// ByTicketsCount orders the results by tickets count.
+func ByTicketsCount(opts ...sql.OrderTermOption) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborsCount(s, newTicketsStep(), opts...)
+	}
+}
+
+// ByTickets orders the results by tickets terms.
+func ByTickets(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborTerms(s, newTicketsStep(), append([]sql.OrderTerm{term}, terms...)...)
 	}
 }
 
@@ -668,6 +711,13 @@ func newAnnouncementReadsStep() *sqlgraph.Step {
 		sqlgraph.From(Table, FieldID),
 		sqlgraph.To(AnnouncementReadsInverseTable, FieldID),
 		sqlgraph.Edge(sqlgraph.O2M, false, AnnouncementReadsTable, AnnouncementReadsColumn),
+	)
+}
+func newTicketsStep() *sqlgraph.Step {
+	return sqlgraph.NewStep(
+		sqlgraph.From(Table, FieldID),
+		sqlgraph.To(TicketsInverseTable, FieldID),
+		sqlgraph.Edge(sqlgraph.O2M, false, TicketsTable, TicketsColumn),
 	)
 }
 func newAllowedGroupsStep() *sqlgraph.Step {

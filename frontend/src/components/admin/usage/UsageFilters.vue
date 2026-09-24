@@ -133,6 +133,12 @@
           <Select v-model="filters.native_compaction_v2" :options="compactionOptions" @change="emitChange" />
         </div>
 
+        <!-- Which kind of account served the request: admin pool / requester's own contribution / room -->
+        <div v-if="mode !== 'errors'" class="w-full sm:w-auto sm:min-w-[160px]">
+          <label class="input-label">{{ t('usage.accountSource.filter') }}</label>
+          <Select v-model="filters.account_source" :options="accountSourceOptions" data-testid="admin-usage-account-source-filter" @change="emitChange" />
+        </div>
+
         <!-- Billing Type Filter (usage only) -->
         <div v-if="mode !== 'errors'" class="w-full sm:w-auto sm:min-w-[200px]">
           <label class="input-label">{{ t('admin.usage.billingType') }}</label>
@@ -283,6 +289,13 @@ const requestTypeOptions = ref<SelectOption[]>([
 const compactionOptions = ref<SelectOption[]>([
   { value: null, label: t('usage.allCompactionTypes') },
   { value: true, label: t('usage.compactionOnly') }
+])
+
+const accountSourceOptions = ref<SelectOption[]>([
+  { value: null, label: t('usage.accountSource.all') },
+  { value: 'pool', label: t('usage.accountSource.pool') },
+  { value: 'own', label: t('usage.accountSource.own') },
+  { value: 'room', label: t('usage.accountSource.room') }
 ])
 
 const billingTypeOptions = ref<SelectOption[]>([

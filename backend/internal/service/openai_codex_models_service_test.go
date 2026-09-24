@@ -1742,6 +1742,71 @@ func TestFetchCodexModelsManifestPassthrough(t *testing.T) {
 	}
 }
 
+func TestFetchOpenAIModelsUpstreamRestrictedAccountUsesSharedPublicPolicy(t *testing.T) {
+	ownerID := int64(42)
+	account := &Account{
+		ID:          77,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Concurrency: 2,
+		Extra: map[string]any{
+			AccountContributionSourceKey: AccountContributionSourceValue,
+			AccountContributorUserIDKey:  float64(ownerID),
+		},
+		Proxy: &Proxy{OwnerUserID: &ownerID},
+	}
+	upstream := &codexModelsHTTPUpstreamStub{do: func(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
+		require.True(t, HTTPUpstreamPublicHostsOnly(req.Context()))
+		require.True(t, HTTPUpstreamPublicProxyOnly(req.Context()))
+		require.Equal(t, "http://user-proxy.example:8080", proxyURL)
+		require.Equal(t, int64(77), accountID)
+		require.Equal(t, 2, accountConcurrency)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"models":[]}`)),
+		}, nil
+	}}
+	svc := &OpenAIGatewayService{httpUpstream: upstream}
+	request := openAIModelsRequest{
+		url:                "https://models.example/v1/models",
+		headers:            make(http.Header),
+		proxyURL:           "http://user-proxy.example:8080",
+		account:            account,
+		accountID:          account.ID,
+		credentialAccount:  account,
+		accountConcurrency: account.Concurrency,
+	}
+
+	response, err := svc.fetchOpenAIModelsUpstream(context.Background(), request, "")
+	require.NoError(t, err)
+	require.Equal(t, `{"models":[]}`, string(response.Body))
+}
+
+func TestFetchOpenAIModelsUpstreamRestrictedAccountRequiresSharedClient(t *testing.T) {
+	ownerID := int64(42)
+	account := &Account{
+		ID:       78,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Extra: map[string]any{
+			AccountContributionSourceKey: AccountContributionSourceValue,
+			AccountContributorUserIDKey:  float64(ownerID),
+		},
+	}
+	request := openAIModelsRequest{
+		url:               "https://models.example/v1/models",
+		headers:           make(http.Header),
+		account:           account,
+		accountID:         account.ID,
+		credentialAccount: account,
+	}
+
+	_, err := (&OpenAIGatewayService{}).fetchOpenAIModelsUpstream(context.Background(), request, "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "OPENAI_CODEX_MODELS_UPSTREAM_NOT_CONFIGURED")
+}
+
 func TestFetchCodexModelsManifestAgentIdentityUsesAssertionWithoutOAuthToken(t *testing.T) {
 	key, privateKey := newTestAgentIdentityKey(t)
 	account := &Account{

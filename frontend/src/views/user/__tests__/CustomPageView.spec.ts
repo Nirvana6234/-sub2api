@@ -3,11 +3,12 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import CustomPageView from '../CustomPageView.vue'
 
-const { appStore } = vi.hoisted(() => ({
+const { appStore, apiBaseUrl } = vi.hoisted(() => ({
   appStore: {
     publicSettingsLoaded: true,
     cachedPublicSettings: { custom_menu_items: [{ id: 'docs', url: 'https://example.com/docs' }] },
   },
+  apiBaseUrl: { value: '/api/v1' },
 }))
 
 vi.mock('@/components/layout/AppLayout.vue', () => ({ default: { template: '<div><slot /></div>' } }))
@@ -16,13 +17,14 @@ vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key, locale: 
 vi.mock('@/stores', () => ({ useAppStore: () => appStore }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ isAdmin: false, user: { id: 7 }, token: 'test-token' }) }))
 vi.mock('@/stores/adminSettings', () => ({ useAdminSettingsStore: () => ({ customMenuItems: [] }) }))
-vi.mock('@/api/client', () => ({ buildApiUrl: (path: string) => `/api/v1${path}` }))
+vi.mock('@/api/client', () => ({ buildApiUrl: (path: string) => `${apiBaseUrl.value}${path}` }))
 
 let notifyResize: () => void
 const wrappers: ReturnType<typeof mount>[] = []
 
 function mountPage() {
   const wrapper = mount(CustomPageView, {
+    attachTo: document.body,
     global: { stubs: { AppLayout: { template: '<div><slot /></div>' }, Icon: true } },
   })
   wrappers.push(wrapper)
@@ -66,6 +68,7 @@ function click(button: HTMLElement, detail = 1) {
 
 describe('custom page open button', () => {
   beforeEach(() => {
+    apiBaseUrl.value = '/api/v1'
     appStore.cachedPublicSettings.custom_menu_items = [{ id: 'docs', url: 'https://example.com/docs' }]
     vi.stubGlobal('ResizeObserver', class {
       constructor(callback: () => void) { notifyResize = callback }
@@ -164,5 +167,110 @@ describe('custom page open button', () => {
     expect(wrapper.find('.custom-open-fab').exists()).toBe(false)
     expect(wrapper.find('iframe').exists()).toBe(false)
     expect(wrapper.get('.markdown-page-content h1').text()).toBe('Guide')
+  })
+
+  it('loads page images with the bearer header and revokes their blob URL', async () => {
+    appStore.cachedPublicSettings.custom_menu_items = [{ id: 'docs', url: 'md:guide' }]
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => [
+          '![Guide logo](logo.png)',
+          '<img data-page-image-url="https://attacker.example/secret.png" src="/api/v1/pages/guide/images-other/evil.png">',
+        ].join('\n'),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        blob: async () => new Blob(['png'], { type: 'image/png' }),
+      })
+    vi.stubGlobal('fetch', fetchMock)
+    const createObjectURL = vi.fn(() => 'blob:page-image')
+    const revokeObjectURL = vi.fn()
+    Object.defineProperty(window.URL, 'createObjectURL', { configurable: true, value: createObjectURL })
+    Object.defineProperty(window.URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL })
+
+    const wrapper = mountPage()
+    await flushPromises()
+    await nextTick()
+    await flushPromises()
+    await nextTick()
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    const imageRequest = fetchMock.mock.calls[1]
+    expect(imageRequest[0]).toBe('http://localhost:3000/api/v1/pages/guide/images/logo.png')
+    expect(imageRequest[1]).toMatchObject({
+      headers: { Authorization: 'Bearer test-token' },
+      redirect: 'error',
+    })
+    expect(imageRequest[0]).not.toContain('token=')
+    expect(wrapper.get('img').attributes('src')).toBe('blob:page-image')
+    expect(wrapper.findAll('img')[1].attributes('src')).toBe('/api/v1/pages/guide/images-other/evil.png')
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('attacker.example'))).toBe(false)
+
+    wrapper.unmount()
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:page-image')
+  })
+
+  it('loads protected images from an externally configured API origin', async () => {
+    apiBaseUrl.value = 'https://api.example.test/api/v1'
+    appStore.cachedPublicSettings.custom_menu_items = [{ id: 'docs', url: 'md:guide' }]
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => '![Guide logo](logo.png)',
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        blob: async () => new Blob(['png'], { type: 'image/png' }),
+      })
+    vi.stubGlobal('fetch', fetchMock)
+    Object.defineProperty(window.URL, 'createObjectURL', {
+      configurable: true,
+      value: vi.fn(() => 'blob:external-page-image'),
+    })
+    Object.defineProperty(window.URL, 'revokeObjectURL', { configurable: true, value: vi.fn() })
+
+    const wrapper = mountPage()
+    await flushPromises()
+    await nextTick()
+    await flushPromises()
+    await nextTick()
+
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      'https://api.example.test/api/v1/pages/guide/images/logo.png'
+    )
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({
+      headers: { Authorization: 'Bearer test-token' },
+      redirect: 'error',
+    })
+    expect(wrapper.get('img').attributes('src')).toBe('blob:external-page-image')
+  })
+
+  it('cancels stale protected image requests when the page is unmounted', async () => {
+    appStore.cachedPublicSettings.custom_menu_items = [{ id: 'docs', url: 'md:guide' }]
+    let resolveImage: ((value: { ok: boolean; blob: () => Promise<Blob> }) => void) | undefined
+    const imagePromise = new Promise<{ ok: boolean; blob: () => Promise<Blob> }>((resolve) => {
+      resolveImage = resolve
+    })
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => '![Guide logo](logo.png)',
+      })
+      .mockReturnValueOnce(imagePromise)
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountPage()
+    await flushPromises()
+    await nextTick()
+    wrapper.unmount()
+
+    resolveImage?.({
+      ok: true,
+      blob: async () => new Blob(['png'], { type: 'image/png' }),
+    })
+    await flushPromises()
+    await nextTick()
+
+    expect(fetchMock.mock.calls[1]?.[1]?.signal?.aborted).toBe(true)
   })
 })

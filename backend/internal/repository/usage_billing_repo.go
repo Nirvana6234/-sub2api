@@ -172,6 +172,33 @@ func (r *usageBillingRepository) applyBatchImageBalanceHold(
 }
 
 func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand, result *service.UsageBillingApplyResult) error {
+	if cmd.SharedCost > 0 && cmd.SharedContributorUserID > 0 && cmd.SharedContributorUserID != cmd.UserID {
+		walletPaid, reward, err := settleSharedAccountUsage(ctx, tx, cmd)
+		if err != nil {
+			return err
+		}
+		result.ContributionWalletPaid = walletPaid
+		result.ContributionReward = reward
+		if walletPaid > 0 {
+			cmd.BalanceCost -= walletPaid
+			if cmd.BalanceCost < 0 {
+				cmd.BalanceCost = 0
+			}
+		}
+	}
+	if cmd.OwnAccountFeeCost > 0 {
+		walletPaid, err := deductContributionWallet(ctx, tx, cmd.UserID, cmd.OwnAccountFeeCost)
+		if err != nil {
+			return err
+		}
+		result.ContributionWalletPaid = walletPaid
+		if walletPaid > 0 {
+			cmd.BalanceCost -= walletPaid
+			if cmd.BalanceCost < 0 {
+				cmd.BalanceCost = 0
+			}
+		}
+	}
 	if cmd.SubscriptionCost > 0 && cmd.SubscriptionID != nil {
 		if err := incrementUsageBillingSubscription(ctx, tx, *cmd.SubscriptionID, cmd.SubscriptionCost); err != nil {
 			return err
@@ -210,6 +237,141 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 	}
 
 	return nil
+}
+
+func settleSharedAccountUsage(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand) (float64, float64, error) {
+	// Confirm that this account is still an enabled, verified member of an active
+	// contribution room before moving any credit or ledger balance. The room
+	// member owns the dollar allowance, so usage is incremented in the same
+	// transaction as the wallet settlement.
+	budgetCost := cmd.SharedBudgetCost
+	if budgetCost < 0 {
+		budgetCost = 0
+	}
+	var roomID int64
+	var budget, used float64
+	err := tx.QueryRowContext(ctx, `
+		UPDATE contribution_room_accounts AS member
+		SET share_used_usd = member.share_used_usd + $1,
+			updated_at = NOW()
+		FROM accounts AS account,
+			contribution_rooms AS room,
+			contribution_account_verifications AS verification
+		WHERE account.id = $2
+			AND account.extra->>'import_source' = $3
+			AND COALESCE((account.extra->>'submitted_by_user_id')::bigint, 0) = $4
+			AND member.account_id = account.id
+			AND room.id = member.room_id
+			AND verification.account_id = account.id
+			AND member.enabled = TRUE
+			AND member.verified_at IS NOT NULL
+			AND room.status = 'active'
+			AND ($5 = 0 OR member.room_id = $5)
+			AND member.share_used_usd < member.share_budget_usd
+			AND verification.status = $6
+			AND verification.platform = account.platform
+		RETURNING member.room_id, member.share_budget_usd, member.share_used_usd
+	`, budgetCost, cmd.AccountID, service.AccountContributionSourceValue,
+		cmd.SharedContributorUserID, cmd.SharedRoomID, service.ContributionVerificationStatusVerified).
+		Scan(&roomID, &budget, &used)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, 0, errors.New("shared room account is no longer eligible for settlement")
+		}
+		return 0, 0, err
+	}
+	_ = budget
+	_ = used
+	if err := pauseContributionRoomIfExhausted(ctx, tx, roomID); err != nil {
+		return 0, 0, err
+	}
+
+	walletPaid, err := deductContributionWallet(ctx, tx, cmd.UserID, cmd.SharedCost)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	rewardRate := cmd.SharedRewardRate
+	if rewardRate <= 0 || rewardRate > 1 {
+		rewardRate = service.AccountShareRewardRate
+	}
+	reward := cmd.SharedCost * rewardRate
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO user_contribution_wallets (user_id, balance, earned_total)
+		VALUES ($1, $2, $2)
+		ON CONFLICT (user_id) DO UPDATE
+		SET balance = user_contribution_wallets.balance + EXCLUDED.balance,
+			earned_total = user_contribution_wallets.earned_total + EXCLUDED.earned_total,
+			updated_at = NOW()
+	`, cmd.SharedContributorUserID, reward); err != nil {
+		return 0, 0, err
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO account_share_settlements (
+			request_id, api_key_id, account_id, contributor_user_id, consumer_user_id,
+			actual_cost, wallet_paid, cash_paid, reward_rate, reward_amount
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+	`, cmd.RequestID, cmd.APIKeyID, cmd.AccountID, cmd.SharedContributorUserID, cmd.UserID,
+		cmd.SharedCost, walletPaid, cmd.SharedCost-walletPaid, rewardRate, reward); err != nil {
+		return 0, 0, err
+	}
+	return walletPaid, reward, nil
+}
+
+func pauseContributionRoomIfExhausted(ctx context.Context, tx *sql.Tx, roomID int64) error {
+	if roomID <= 0 {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, `
+		UPDATE contribution_rooms AS room
+		SET status = 'paused',
+			updated_at = NOW()
+		WHERE room.id = $1
+			AND room.status = 'active'
+			AND NOT EXISTS (
+				SELECT 1
+				FROM contribution_room_accounts AS member
+				WHERE member.room_id = room.id
+					AND member.enabled = TRUE
+					AND member.share_used_usd < member.share_budget_usd
+			)
+	`, roomID)
+	return err
+}
+
+func deductContributionWallet(ctx context.Context, tx *sql.Tx, userID int64, amount float64) (float64, error) {
+	if amount <= 0 {
+		return 0, nil
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO user_contribution_wallets (user_id)
+		VALUES ($1)
+		ON CONFLICT (user_id) DO NOTHING
+	`, userID); err != nil {
+		return 0, err
+	}
+
+	var walletBalance float64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT balance FROM user_contribution_wallets WHERE user_id = $1 FOR UPDATE
+	`, userID).Scan(&walletBalance); err != nil {
+		return 0, err
+	}
+	walletPaid := amount
+	if walletPaid > walletBalance {
+		walletPaid = walletBalance
+	}
+	if walletPaid > 0 {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE user_contribution_wallets
+			SET balance = balance - $1, spent_total = spent_total + $1, updated_at = NOW()
+			WHERE user_id = $2
+		`, walletPaid, userID); err != nil {
+			return 0, err
+		}
+	}
+	return walletPaid, nil
 }
 
 func incrementUsageBillingSubscription(ctx context.Context, tx *sql.Tx, subscriptionID int64, costUSD float64) error {

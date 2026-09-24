@@ -355,7 +355,30 @@ func newOpenAIUpstreamFailoverError(
 		failoverErr.ClientStatusCode = http.StatusServiceUnavailable
 		failoverErr.ClientMessage = openAICapacityShedClientMessage(upstreamMsg, responseBody)
 	}
+	// A gateway-layer 5xx describes the provider's own edge (its proxy, or its
+	// link to the model vendor), not the credential we sent. Attributing it to
+	// the account lets one provider wobble breaker every key that shares that
+	// upstream: with a small pool all of them enter cooldown at once and the
+	// group goes dark while the provider is merely flapping. Per-request
+	// failover and the scheduler's error-rate score still route around the
+	// account; only the account-wide health breaker must stay out of it.
+	// Codes that genuinely implicate the credential (401/403 access state,
+	// 429 rate limit, 500 application errors) keep their existing scope.
+	if failoverErr.Scope == "" && isOpenAIUpstreamGatewayLayerStatus(statusCode) {
+		failoverErr.Scope = GatewayFailureScopeProvider
+	}
 	return failoverErr
+}
+
+// isOpenAIUpstreamGatewayLayerStatus reports whether an upstream status came
+// from the provider's gateway rather than from request handling.
+func isOpenAIUpstreamGatewayLayerStatus(statusCode int) bool {
+	switch statusCode {
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *OpenAIGatewayService) newOpenAIAccountFailoverError(
@@ -442,6 +465,14 @@ func isOpenAIHTTPUpstreamAccessStateError(_ int, _ string, body []byte) bool {
 	return isOpenAIUpstreamAccessStateError("", body)
 }
 
+// OpenAICapacityShedUserMessage 是上游过载时回给用户的统一文案。
+//
+// 它刻意不透传上游原文：上游的 message 里可能带 server_is_overloaded 之类的
+// 内部错误码或账号线索，不该出现在用户侧。测试断言请直接引用本常量，不要再
+// 硬编码一份字面量——文案改了而断言没跟上，正是 2026-09-15 之前那几个测试
+// 长期飘红、把真正的新失败盖住的原因。
+const OpenAICapacityShedUserMessage = "OpenAI 官方服务当前过载，请稍后重试。"
+
 func openAICapacityShedClientMessage(upstreamMsg string, body []byte) string {
 	for _, candidate := range []string{
 		upstreamMsg,
@@ -451,10 +482,10 @@ func openAICapacityShedClientMessage(upstreamMsg string, body []byte) string {
 	} {
 		candidate = sanitizeUpstreamErrorMessage(strings.TrimSpace(candidate))
 		if candidate != "" && isOpenAICapacityShedMessage(candidate) {
-			return candidate
+			return OpenAICapacityShedUserMessage
 		}
 	}
-	return "Upstream service is temporarily overloaded, please retry later"
+	return OpenAICapacityShedUserMessage
 }
 
 // IsOpenAIRequestBodyTooLarge reports whether another account may accept the

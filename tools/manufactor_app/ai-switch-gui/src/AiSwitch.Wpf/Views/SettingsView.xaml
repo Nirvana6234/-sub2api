@@ -1,0 +1,104 @@
+<UserControl x:Class="LanAi.Workspace.Wpf.Views.SettingsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel MaxWidth="900" HorizontalAlignment="Left">
+            <StackPanel Margin="0,0,0,22">
+                <TextBlock Text="{Binding Title}" Style="{StaticResource PageTitleStyle}" />
+            </StackPanel>
+
+            <Border Margin="0,0,0,16" Padding="22" Style="{StaticResource CardBorderStyle}">
+                <StackPanel>
+                    <TextBlock Text="启动与窗口" Style="{StaticResource SectionTitleStyle}" />
+
+                    <CheckBox Content="登录 Windows 后自动启动"
+                              IsChecked="{Binding StartWithWindows}"
+                              Style="{StaticResource WorkspaceCheckBoxStyle}" />
+                    <Separator Margin="0,14" Background="{StaticResource HairlineBrush}" />
+                    <CheckBox Content="关闭主窗口时最小化到托盘"
+                              IsChecked="{Binding MinimizeToTray}"
+                              Style="{StaticResource WorkspaceCheckBoxStyle}" />
+                </StackPanel>
+            </Border>
+
+            <Border Margin="0,0,0,16" Padding="22" Style="{StaticResource CardBorderStyle}">
+                <StackPanel>
+                    <TextBlock Text="历史与项目" Style="{StaticResource SectionTitleStyle}" />
+
+                    <CheckBox Content="保留项目与会话索引"
+                              IsChecked="{Binding PreserveSessionIndex}"
+                              Style="{StaticResource WorkspaceCheckBoxStyle}" />
+
+                    <Grid Margin="0,18,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="本地索引位置" FontSize="10" Foreground="{StaticResource TertiaryTextBrush}" />
+                            <TextBlock Text="%LocalAppData%\LanAi.Workspace"
+                                       Margin="0,6,0,0"
+                                       FontFamily="Cascadia Mono, Consolas"
+                                       FontSize="10.5"
+                                       Foreground="{StaticResource SecondaryTextBrush}" />
+                        </StackPanel>
+                        <Button Grid.Column="1"
+                                Content="打开目录"
+                                Command="{Binding OpenDataDirectoryCommand}"
+                                Style="{StaticResource SecondaryButtonStyle}" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <Border Margin="0,0,0,16" Padding="22" Style="{StaticResource CardBorderStyle}">
+                <StackPanel>
+                    <TextBlock Text="隐私与诊断" Style="{StaticResource SectionTitleStyle}" />
+
+                    <CheckBox Content="发送匿名崩溃与性能诊断"
+                              IsChecked="{Binding CollectAnonymousDiagnostics}"
+                              Style="{StaticResource WorkspaceCheckBoxStyle}" />
+                </StackPanel>
+            </Border>
+
+            <Border Margin="0,0,0,16" Padding="22" Style="{StaticResource CardBorderStyle}">
+                <StackPanel>
+                    <TextBlock Text="软件更新" Style="{StaticResource SectionTitleStyle}" />
+                    <CheckBox Content="启动后自动检查更新"
+                              IsChecked="{Binding CheckUpdatesAutomatically}"
+                              Style="{StaticResource WorkspaceCheckBoxStyle}" />
+                    <Grid Margin="0,16,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="{Binding UpdateStatus}"
+                                   VerticalAlignment="Center"
+                                   TextWrapping="Wrap"
+                                   Foreground="{StaticResource SecondaryTextBrush}" />
+                        <Button Grid.Column="1"
+                                Content="检查更新"
+                                Command="{Binding CheckUpdatesCommand}"
+                                IsEnabled="{Binding CanCheckUpdates}"
+                                Style="{StaticResource SecondaryButtonStyle}" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <Border Padding="20" Background="#FFF7F7F9" BorderBrush="{StaticResource HairlineBrush}" BorderThickness="1" CornerRadius="14">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel>
+                        <TextBlock Text="共飞AI工作台" FontSize="12" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding SettingsStatus}"
+                                   Margin="0,5,0,0"
+                                   FontSize="10.5"
+                                   Foreground="{StaticResource SecondaryTextBrush}" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

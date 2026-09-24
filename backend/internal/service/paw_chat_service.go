@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
@@ -52,71 +53,114 @@ type APIKeyPawChatKeySource struct {
 	Service PawAPIKeyLookup
 }
 
-func (s APIKeyPawChatKeySource) ResolvePawAPIKey(ctx context.Context, userID, groupID int64) (*APIKey, *UserSubscription, error) {
+// ResolvePawGroupKey is ResolvePawAPIKey that also hands back the group it
+// resolved. Callers that dispatch on the group's platform need it, and taking it
+// from the same lookup avoids a second query per request. The group is nil when
+// groupID is not positive, which is the automatic-routing case.
+func (s APIKeyPawChatKeySource) ResolvePawGroupKey(ctx context.Context, userID, groupID int64) (*APIKey, *UserSubscription, *Group, error) {
 	if s.Service == nil {
-		return nil, nil, errPawKeyUnavailable
+		return nil, nil, nil, errPawKeyUnavailable
 	}
 	groups, err := s.Service.GetAvailableGroups(ctx, userID)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	var selectedGroup *Group
-	for i := range groups {
-		if groups[i].ID == groupID {
-			selectedGroup = &groups[i]
-			break
+	if groupID > 0 {
+		for i := range groups {
+			if groups[i].ID == groupID {
+				selectedGroup = &groups[i]
+				break
+			}
 		}
-	}
-	if selectedGroup == nil {
-		return nil, nil, errPawGroupForbidden
+		if selectedGroup == nil {
+			return nil, nil, nil, errPawGroupForbidden
+		}
 	}
 
 	keys, err := s.Service.SearchAPIKeys(ctx, userID, PlaygroundChatAPIKeyName, 10)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	key := findPawInternalKey(keys)
 	if key == nil {
 		if err := s.Service.EnsurePlaygroundAPIKeys(ctx, userID); err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		keys, err = s.Service.SearchAPIKeys(ctx, userID, PlaygroundChatAPIKeyName, 10)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		key = findPawInternalKey(keys)
 	}
 	if key == nil {
-		groupIDs := make([]int64, 0, len(groups))
-		for _, group := range groups {
-			groupIDs = append(groupIDs, group.ID)
-		}
+		groupIDs := pawFallbackAutoGroupIDs(groups)
 		key, err = s.Service.Create(ctx, userID, CreateAPIKeyRequest{
 			Name:         PlaygroundChatAPIKeyName,
 			AutoGroup:    true,
 			AutoGroupIDs: groupIDs,
 		})
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 	}
 	if key.ID > 0 {
 		loaded, loadErr := s.Service.GetByID(ctx, key.ID)
 		if loadErr != nil {
-			return nil, nil, loadErr
+			return nil, nil, nil, loadErr
 		}
 		if loaded != nil {
 			key = loaded
 		}
 	}
 	var subscription *UserSubscription
-	if selectedGroup.IsSubscriptionType() {
+	if selectedGroup != nil && selectedGroup.IsSubscriptionType() {
 		subscription, err = s.Service.GetActiveSubscriptionForGroup(ctx, userID, groupID)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 	}
-	return key, subscription, nil
+	return key, subscription, selectedGroup, nil
+}
+
+func (s APIKeyPawChatKeySource) ResolvePawAPIKey(ctx context.Context, userID, groupID int64) (*APIKey, *UserSubscription, error) {
+	key, subscription, _, err := s.ResolvePawGroupKey(ctx, userID, groupID)
+	return key, subscription, err
+}
+
+// pawFallbackAutoGroupIDs 决定「内部 Paw key 不得不在这里创建」时用哪一批候选分组。
+//
+// 候选集必须同平台：validateAutoGroupIDs 对混平台的集合会报
+// AUTO_GROUP_CANDIDATE_PLATFORM_MISMATCH，创建直接失败，那个用户的整条 Paw 通路
+// 就断了。而走到这里的前提恰恰是 EnsurePlaygroundAPIKeys 拒绝创建——它在用户
+// 一个 OpenAI 分组都没有时就会拒绝。于是手里只有 Anthropic 分组和 Gemini 分组的
+// 用户，以前会带着一个混平台集合落到这里，最后一把 key 都拿不到。
+//
+// 优先取 OpenAI 以便与 selectPlaygroundGroupIDs 一致；没有 OpenAI 时取第一个
+// 分组的平台，保证单平台用户仍能拿到可用的 key。
+func pawFallbackAutoGroupIDs(groups []Group) []int64 {
+	platform := ""
+	for i := range groups {
+		if groups[i].Platform == PlatformOpenAI {
+			platform = PlatformOpenAI
+			break
+		}
+	}
+	if platform == "" {
+		for i := range groups {
+			if strings.TrimSpace(groups[i].Platform) != "" {
+				platform = groups[i].Platform
+				break
+			}
+		}
+	}
+	groupIDs := make([]int64, 0, len(groups))
+	for i := range groups {
+		if groups[i].Platform == platform {
+			groupIDs = append(groupIDs, groups[i].ID)
+		}
+	}
+	return groupIDs
 }
 
 func findPawInternalKey(keys []APIKey) *APIKey {
@@ -149,6 +193,62 @@ func NewPawChatService(config *PawConfigService, keySource PawChatKeySource, att
 		attachmentService = attachments[0]
 	}
 	return &PawChatService{config: config, keySource: keySource, attachments: attachmentService}
+}
+
+// pawGroupKeySource is what PrepareMessages needs beyond PawChatKeySource: the
+// resolved group as well as the key. Asserted rather than added to the interface
+// so existing stubs keep compiling.
+type pawGroupKeySource interface {
+	ResolvePawGroupKey(ctx context.Context, userID, groupID int64) (*APIKey, *UserSubscription, *Group, error)
+}
+
+// PrepareMessages resolves the group and internal key for an Anthropic Messages
+// request coming from a desktop client (Claude Code and its editor extensions).
+//
+// Unlike PrepareResponses it does not check the model against the group's catalog.
+// A Claude Code session names models the catalog has no reason to list — the small
+// model it uses for background work, or an alias the account maps — and refusing
+// them here would break the session while the same request through an API key is
+// accepted. Which models a group can serve is decided where it is for an API key:
+// by its accounts.
+func (s *PawChatService) PrepareMessages(ctx context.Context, userID, groupID int64) (*PawChatResolution, error) {
+	if s == nil || s.keySource == nil {
+		return nil, errPawKeyUnavailable
+	}
+	if userID <= 0 {
+		return nil, infraerrors.Unauthorized("AUTH_REQUIRED", "authenticated user is required")
+	}
+	if groupID <= 0 {
+		return nil, errPawGroupForbidden
+	}
+	source, ok := s.keySource.(pawGroupKeySource)
+	if !ok {
+		return nil, errPawKeyUnavailable
+	}
+	apiKey, subscription, group, err := source.ResolvePawGroupKey(ctx, userID, groupID)
+	if err != nil {
+		if infraerrors.Reason(err) == errPawGroupForbidden.Reason {
+			return nil, errPawGroupForbidden
+		}
+		return nil, errPawKeyUnavailable.WithCause(err)
+	}
+	if apiKey == nil || group == nil {
+		return nil, errPawKeyUnavailable
+	}
+	if apiKey.Status == StatusAPIKeyQuotaExhausted || apiKey.IsQuotaExhausted() {
+		return nil, errPawQuotaExceeded
+	}
+	if apiKey.Status != "" && apiKey.Status != StatusActive {
+		return nil, errPawKeyUnavailable
+	}
+	if apiKey.IsExpired() {
+		return nil, errPawKeyUnavailable
+	}
+	return &PawChatResolution{
+		APIKey:       clonePawAPIKeyWithGroup(apiKey, group),
+		Subscription: subscription,
+		Group:        group,
+	}, nil
 }
 
 func (s *PawChatService) Prepare(ctx context.Context, userID int64, req PawChatRequest) (*PawChatResolution, error) {
@@ -286,12 +386,19 @@ func (s *PawChatService) PrepareResponses(ctx context.Context, userID int64, req
 	if userID <= 0 {
 		return nil, infraerrors.Unauthorized("AUTH_REQUIRED", "authenticated user is required")
 	}
-	if req.GroupID <= 0 {
-		return nil, errPawGroupForbidden
-	}
 	modelID := strings.TrimSpace(req.ModelID)
 	if modelID == "" {
 		return nil, errPawModelUnavailable
+	}
+	// 没给分组 = 按 Key 上保存的自动分组设置来选，而不是报错。
+	//
+	// 只有这条路径这样：chat 那条的分组是用户在界面上选的，缺失就是请求有问题；
+	// 这条的调用方是桌面端转发的 codex，开了自动分组之后它本来就不该自己挑组。
+	//
+	// 这条分支刻意不校验模型是否在分组目录里——分组就是按「哪个组支持这个模型」
+	// 选出来的，再回头拿目录校一遍是重复的，也会和选组结果自相矛盾。
+	if req.GroupID <= 0 {
+		return s.prepareResponsesByAutoGroup(ctx, userID, modelID)
 	}
 
 	group, _, err := s.selectPawGroupModel(ctx, userID, req.GroupID, modelID)
@@ -451,4 +558,69 @@ func clonePawAPIKeyWithGroup(apiKey *APIKey, group *Group) *APIKey {
 	clone.AutoGroupCurrentModel = ""
 	clone.AutoGroupCurrentSelectedAt = nil
 	return &clone
+}
+
+// prepareResponsesByAutoGroup 按 API Key 上保存的自动分组设置解析出本次该用的分组。
+//
+// 与 selectPawGroupModel 那条的分工：那条回答「用户能不能在这个指定分组里用这个
+// 模型」，这条回答「哪个分组能接这个模型」。后者的结果本身就蕴含了前者的答案，
+// 所以不再重复校验模型目录。
+func (s *PawChatService) prepareResponsesByAutoGroup(ctx context.Context, userID int64, modelID string) (*PawResponsesResolution, error) {
+	autoSource, ok := s.keySource.(interface {
+		ResolvePawAutoGroupForModel(context.Context, int64, string) (*APIKey, *UserSubscription, error)
+	})
+	if !ok {
+		return nil, errPawGroupForbidden
+	}
+	apiKey, subscription, err := autoSource.ResolvePawAutoGroupForModel(ctx, userID, modelID)
+	if err != nil || apiKey == nil || apiKey.Group == nil {
+		if errors.Is(err, ErrAutoGroupUnavailable) {
+			return nil, infraerrors.Forbidden("AUTO_GROUP_UNAVAILABLE", "No available group satisfies the automatic routing requirements")
+		}
+		if err != nil {
+			return nil, errPawKeyUnavailable.WithCause(err)
+		}
+		return nil, errPawGroupForbidden
+	}
+	if apiKey.Status == StatusAPIKeyQuotaExhausted || apiKey.IsQuotaExhausted() {
+		return nil, errPawQuotaExceeded
+	}
+	return &PawResponsesResolution{
+		APIKey:       apiKey,
+		Subscription: subscription,
+		Group:        apiKey.Group,
+		Model:        modelID,
+	}, nil
+}
+
+// ResolvePawAutoGroupForModel 按 Key 上保存的自动分组设置为该模型解析分组。
+//
+// 走的是和网关 auto-group 中间件同一个 ResolveAutoGroupForModel，保证桌面端
+// 自动分组的选组结果与普通 API Key 的自动分组一致。
+func (s APIKeyPawChatKeySource) ResolvePawAutoGroupForModel(ctx context.Context, userID int64, model string) (*APIKey, *UserSubscription, error) {
+	key, _, err := s.ResolvePawAPIKey(ctx, userID, 0)
+	if err != nil || key == nil {
+		return nil, nil, err
+	}
+	resolver, ok := s.Service.(interface {
+		ResolveAutoGroupForModel(context.Context, *APIKey, string) (*APIKey, error)
+	})
+	if !ok || !key.AutoGroup || len(key.AutoGroupIDs) == 0 {
+		return nil, nil, ErrAutoGroupUnavailable
+	}
+	resolved, err := resolver.ResolveAutoGroupForModel(ctx, key, model)
+	if err != nil {
+		return nil, nil, err
+	}
+	if resolved == nil || resolved.Group == nil {
+		return nil, nil, ErrAutoGroupUnavailable
+	}
+	var subscription *UserSubscription
+	if resolved.Group.IsSubscriptionType() {
+		subscription, err = s.Service.GetActiveSubscriptionForGroup(ctx, userID, resolved.Group.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	return resolved, subscription, nil
 }

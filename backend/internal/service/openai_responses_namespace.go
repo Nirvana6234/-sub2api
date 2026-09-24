@@ -81,6 +81,10 @@ func shouldStripOpenAIResponsesInputNamespaces(account *Account, transport OpenA
 //     namespace 工具时（包括 Responses Lite 的 input[].additional_tools），上游显然
 //     使用了 namespace 扩展，此时必须保留调用项上的 namespace，否则声明与历史
 //     调用会失配并触发 Missing namespace。
+//     该推断只覆盖"客户端自己声明 namespace 工具"的情形：当 API Key 指向 Codex
+//     后端中转时，multi_agent 等工具由上游注入、客户端 tools 里并无 namespace 声明，
+//     推断会误判为标准上游而剥掉字段。账号开关
+//     openai_responses_keep_tool_call_namespaces 为这类部署跳过推断、无条件保留。
 //   - 摊平模式下调用项已被改写成平名，残留 namespace 指向的声明已不存在，一律清理。
 func shouldKeepOpenAIResponsesToolCallNamespaces(
 	account *Account,
@@ -96,6 +100,9 @@ func shouldKeepOpenAIResponsesToolCallNamespaces(
 		return false
 	}
 	if account.IsOpenAIApiKey() {
+		if account.IsOpenAIResponsesKeepToolCallNamespacesEnabled() {
+			return true
+		}
 		return hasOpenAIResponsesNamespaceToolDeclaration(body)
 	}
 	if !account.IsOpenAIOAuthLike() {

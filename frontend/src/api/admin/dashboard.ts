@@ -13,7 +13,8 @@ import type {
   UserUsageTrendPoint,
   UserSpendingRankingResponse,
   UserBreakdownItem,
-  UsageRequestType
+  UsageRequestType,
+  UsageAccountSource
 } from '@/types'
 
 /**
@@ -56,6 +57,7 @@ export interface TrendParams {
   request_type?: UsageRequestType
   stream?: boolean
   native_compaction_v2?: boolean | null
+  account_source?: UsageAccountSource | null
   billing_type?: number | null
 	upstream_model_mismatch?: boolean
 }
@@ -89,6 +91,7 @@ export interface ModelStatsParams {
   request_type?: UsageRequestType
   stream?: boolean
   native_compaction_v2?: boolean | null
+  account_source?: UsageAccountSource | null
   billing_type?: number | null
 	upstream_model_mismatch?: boolean
 }
@@ -119,6 +122,7 @@ export interface GroupStatsParams {
   request_type?: UsageRequestType
   stream?: boolean
   native_compaction_v2?: boolean | null
+  account_source?: UsageAccountSource | null
   billing_type?: number | null
 	upstream_model_mismatch?: boolean
 }
@@ -182,6 +186,7 @@ export interface UserBreakdownParams {
   request_type?: UsageRequestType
   stream?: boolean
   native_compaction_v2?: boolean | null
+  account_source?: UsageAccountSource | null
   billing_type?: number | null
 }
 

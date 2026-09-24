@@ -13,7 +13,7 @@ func TestOpenAIFallbackStickyCandidateKeepsTargetUntilProbe(t *testing.T) {
 
 	svc := &OpenAIGatewayService{}
 	svc.markOpenAIFallbackSticky(2, 29, openAILatencyBucketNormal)
-	if got, probing := svc.openAIStickyFallbackCandidate(2); got != 29 || probing {
+	if got, probing := svc.openAIStickyFallbackCandidate(context.Background(), 2); got != 29 || probing {
 		t.Fatalf("sticky candidate = (%d, %t), want (29, false)", got, probing)
 	}
 
@@ -22,7 +22,7 @@ func TestOpenAIFallbackStickyCandidateKeepsTargetUntilProbe(t *testing.T) {
 	state.mu.Lock()
 	state.lastProbeAt = time.Now().Add(-openAIFallbackRecoveryProbeCooldown - time.Second)
 	state.mu.Unlock()
-	if got, probing := svc.openAIStickyFallbackCandidate(2); got != 2 || !probing {
+	if got, probing := svc.openAIStickyFallbackCandidate(context.Background(), 2); got != 2 || !probing {
 		t.Fatalf("probe candidate = (%d, %t), want (2, true)", got, probing)
 	}
 }

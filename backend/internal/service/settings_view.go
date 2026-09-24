@@ -221,10 +221,12 @@ type SystemSettings struct {
 	ClientLatestVersionMac     string `json:"client_latest_version_mac"`
 	ClientTutorialVideoURL     string `json:"client_tutorial_video_url"`
 
+	ChatAppDownloadEnabled   bool   `json:"chat_app_download_enabled"`
+	ChatAppDownloadDirectURL string `json:"chat_app_download_direct_url"`
+	ChatAppLatestVersion     string `json:"chat_app_latest_version"`
+
 	LatencyCompensationThresholdMs int     `json:"latency_compensation_threshold_ms"`
 	LatencyCompensationProfitRatio float64 `json:"latency_compensation_profit_ratio"`
-
-	HeadroomBaseURL string `json:"headroom_base_url"`
 
 	BackupPaymentEnabled bool   `json:"backup_payment_enabled"`
 	BackupPaymentURL     string `json:"backup_payment_url"`
@@ -429,13 +431,16 @@ type PublicSettings struct {
 	ClientLatestVersion        string `json:"client_latest_version"`
 	ClientLatestVersionMac     string `json:"client_latest_version_mac"`
 	ClientTutorialVideoURL     string `json:"client_tutorial_video_url"`
+	ChatAppDownloadEnabled     bool   `json:"chat_app_download_enabled"`
+	ChatAppDownloadDirectURL   string `json:"chat_app_download_direct_url"`
+	ChatAppLatestVersion       string `json:"chat_app_latest_version"`
 	BackupPaymentEnabled       bool   `json:"backup_payment_enabled"`
 	BackupPaymentURL           string `json:"backup_payment_url"`
 
 	PlaygroundEnabled           bool   `json:"playground_enabled"`
 	PlaygroundDefaultChatModel  string `json:"playground_default_chat_model"`
 	PlaygroundDefaultImageModel string `json:"playground_default_image_model"`
-	SubscriptionEnabled        bool   `json:"subscription_enabled"`
+	SubscriptionEnabled         bool   `json:"subscription_enabled"`
 
 	// Model Plaza feature (public group/model pricing showcase)
 	ModelPlazaEnabled       bool `json:"model_plaza_enabled"`
@@ -726,6 +731,7 @@ const (
 	OpenAIFastTierPriority  = "priority"  // 仅匹配 fast（priority）
 	OpenAIFastTierUltrafast = "ultrafast" // 仅匹配 ultrafast
 	OpenAIFastTierFlex      = "flex"      // 仅匹配 flex
+	OpenAIFastTierMissing   = "missing"   // 仅匹配省略 service_tier 的请求
 
 	// OpenAIFastPolicyActionForcePriority 会保留 service_tier 字段并强制写成
 	// priority，用于把 flex/auto/default/scale 等已识别 tier 收敛为 fast。

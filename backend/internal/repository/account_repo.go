@@ -25,6 +25,7 @@ import (
 	dbgroup "github.com/Wei-Shaw/sub2api/ent/group"
 	dbpredicate "github.com/Wei-Shaw/sub2api/ent/predicate"
 	dbproxy "github.com/Wei-Shaw/sub2api/ent/proxy"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -920,7 +921,7 @@ func (r *accountRepository) List(ctx context.Context, params pagination.Paginati
 	return r.ListWithFilters(ctx, params, "", "", "", "", 0, "")
 }
 
-func (r *accountRepository) accountListFilteredQuery(platform, accountType, status, search string, groupID int64, privacyMode string) *dbent.AccountQuery {
+func (r *accountRepository) accountListFilteredQuery(ctx context.Context, platform, accountType, status, search string, groupID int64, privacyMode string) *dbent.AccountQuery {
 	q := r.client.Account.Query()
 
 	if platform != "" {
@@ -1012,12 +1013,23 @@ func (r *accountRepository) accountListFilteredQuery(platform, accountType, stat
 			}
 		}))
 	}
+	adminList, _ := ctx.Value(ctxkey.AdminAccountManagementList).(bool)
+	allowContributionManagement, _ := ctx.Value(ctxkey.AllowContributionAccountManagement).(bool)
+	if adminList && !allowContributionManagement {
+		q = q.Where(dbpredicate.Account(func(s *entsql.Selector) {
+			path := sqljson.Path(service.AccountContributionSourceKey)
+			s.Where(entsql.Or(
+				entsql.Not(sqljson.HasKey(dbaccount.FieldExtra, path)),
+				sqljson.ValueNEQ(dbaccount.FieldExtra, service.AccountContributionSourceValue, path),
+			))
+		}))
+	}
 
 	return q
 }
 
 func (r *accountRepository) ListWithFilters(ctx context.Context, params pagination.PaginationParams, platform, accountType, status, search string, groupID int64, privacyMode string) ([]service.Account, *pagination.PaginationResult, error) {
-	q := r.accountListFilteredQuery(platform, accountType, status, search, groupID, privacyMode)
+	q := r.accountListFilteredQuery(ctx, platform, accountType, status, search, groupID, privacyMode)
 	// Clone before Count so interceptor-appended predicates (SoftDeleteMixin's
 	// deleted_at IS NULL) don't accumulate on the shared builder and pollute the
 	// subsequent list query. Same pattern used in group_repo/promo_code_repo/user_repo
@@ -1030,7 +1042,7 @@ func (r *accountRepository) ListWithFilters(ctx context.Context, params paginati
 	accountsQuery := q.
 		Offset(params.Offset()).
 		Limit(params.Limit())
-	for _, order := range accountListOrder(params) {
+	for _, order := range accountListOrder(params, groupID) {
 		accountsQuery = accountsQuery.Order(order)
 	}
 
@@ -1047,7 +1059,7 @@ func (r *accountRepository) ListWithFilters(ctx context.Context, params paginati
 }
 
 func (r *accountRepository) ListAllWithFilters(ctx context.Context, platform, accountType, status, search string, groupID int64, privacyMode string) ([]service.Account, error) {
-	accounts, err := r.accountListFilteredQuery(platform, accountType, status, search, groupID, privacyMode).All(ctx)
+	accounts, err := r.accountListFilteredQuery(ctx, platform, accountType, status, search, groupID, privacyMode).All(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1089,9 +1101,12 @@ func (r *accountRepository) ListOpsAccountsForStats(ctx context.Context, platfor
 	return r.accountsToService(ctx, accounts)
 }
 
-func accountListOrder(params pagination.PaginationParams) []func(*entsql.Selector) {
+func accountListOrder(params pagination.PaginationParams, groupID int64) []func(*entsql.Selector) {
 	sortBy := strings.ToLower(strings.TrimSpace(params.SortBy))
 	sortOrder := params.NormalizedSortOrder(pagination.SortOrderAsc)
+	if sortBy == "priority" && groupID > 0 {
+		return accountGroupPriorityOrder(groupID, sortOrder)
+	}
 	if sortBy == "upstream_billing_rate" {
 		direction := "ASC"
 		tieOrder := entsql.Asc
@@ -1147,7 +1162,28 @@ func accountListOrder(params pagination.PaginationParams) []func(*entsql.Selecto
 	return []func(*entsql.Selector){dbent.Asc(field), dbent.Asc(dbaccount.FieldID)}
 }
 
+// accountGroupPriorityOrder sorts a group-filtered list by the in-group
+// priority (account_groups.priority) that scheduling actually uses, instead of
+// the account-wide accounts.priority fallback.
+func accountGroupPriorityOrder(groupID int64, sortOrder string) []func(*entsql.Selector) {
+	direction := "ASC"
+	tieOrder := entsql.Asc
+	if sortOrder == pagination.SortOrderDesc {
+		direction = "DESC"
+		tieOrder = entsql.Desc
+	}
+	return []func(*entsql.Selector){func(s *entsql.Selector) {
+		expression := "(SELECT ag.priority FROM account_groups ag WHERE ag.account_id = " +
+			s.C(dbaccount.FieldID) + " AND ag.group_id = " + strconv.FormatInt(groupID, 10) + ")"
+		s.OrderExpr(entsql.Expr(expression + " " + direction + " NULLS LAST"))
+		s.OrderBy(tieOrder(s.C(dbaccount.FieldID)))
+	}}
+}
+
 func upstreamBillingRateSortExpression(extra string) string {
+	manualJSON := extra + " -> '" + service.UpstreamBillingManualRateMultiplierExtraKey + "'"
+	manual := extra + " ->> '" + service.UpstreamBillingManualRateMultiplierExtraKey + "'"
+	manualRate := "(CASE WHEN jsonb_typeof(" + manualJSON + ") = 'number' AND (" + manual + ")::numeric >= 0 THEN (" + manual + ")::numeric END)"
 	status := extra + " #>> '{upstream_billing_probe,status}'"
 	effectiveJSON := extra + " #> '{upstream_billing_probe,data,effective_rate_multiplier}'"
 	effective := extra + " #>> '{upstream_billing_probe,data,effective_rate_multiplier}'"
@@ -1176,9 +1212,10 @@ func upstreamBillingRateSortExpression(extra string) string {
 		" THEN " + peakMultiplierValue + " ELSE 1 END ELSE NULL END"
 	legacySnapshot := "jsonb_typeof(" + resolvedJSON + ") IS NULL AND jsonb_typeof(" + peakEnabledJSON + ") IS NULL"
 
-	return "CASE WHEN " + status + " IN ('ok', 'failed') AND (jsonb_typeof(" + resolvedJSON + ") = 'number' OR jsonb_typeof(" + effectiveJSON + ") = 'number') THEN CASE WHEN jsonb_typeof(" +
+	probedRate := "CASE WHEN " + status + " IN ('ok', 'failed') AND (jsonb_typeof(" + resolvedJSON + ") = 'number' OR jsonb_typeof(" + effectiveJSON + ") = 'number') THEN CASE WHEN jsonb_typeof(" +
 		resolvedJSON + ") = 'number' AND jsonb_typeof(" + peakEnabledJSON + ") = 'boolean' THEN CASE WHEN " + billingScope + " = 'token' THEN " + dynamicRate + " ELSE NULL END WHEN " + legacySnapshot +
 		" AND jsonb_typeof(" + effectiveJSON + ") = 'number' THEN (" + effective + ")::numeric END END"
+	return "COALESCE(" + manualRate + ", " + probedRate + ")"
 }
 
 func (r *accountRepository) ListByGroup(ctx context.Context, groupID int64) ([]service.Account, error) {
@@ -1249,7 +1286,7 @@ func (r *accountRepository) ListOAuthRefreshCandidatePage(ctx context.Context, o
 			AND credentials ? 'refresh_token'
 			AND btrim(credentials->>'refresh_token') <> ''`
 	}
-	if options.ExcludeRetryCooldown {
+	if options.ExcludeRetryCooldown && !options.IncludeTempUnschedulable {
 		query += `
 			AND (
 				temp_unschedulable_until > NOW()
@@ -1811,6 +1848,60 @@ func (r *accountRepository) AddToGroup(ctx context.Context, accountID, groupID i
 	return nil
 }
 
+// UpdateGroupPriorities 批量更新 account_groups.priority，返回实际命中的行数。
+//
+// 只更新已存在的关联：不存在的 (account_id, group_id) 组合被静默跳过而不是报错，
+// 因为调用方（TransitHub 探活）持有的是上一轮快照，账号可能刚被移出分组——为这种
+// 常态竞争整批失败并不合理，返回命中行数让调用方自己判断差异即可。
+//
+// 与 AddToGroup 一样，写完必须投递调度器 outbox：分组内优先级直接决定取号顺序，
+// 不刷新快照的话调度器会在一个缓存周期内继续按旧顺序选号。
+func (r *accountRepository) UpdateGroupPriorities(ctx context.Context, updates []service.AccountGroupPriorityUpdate) (int, error) {
+	if len(updates) == 0 {
+		return 0, nil
+	}
+
+	affected := 0
+	groupIDSet := make(map[int64]struct{}, len(updates))
+	accountIDSet := make(map[int64]struct{}, len(updates))
+	for _, update := range updates {
+		if update.AccountID <= 0 || update.GroupID <= 0 || update.Priority < 0 {
+			continue
+		}
+		n, err := r.client.AccountGroup.Update().
+			Where(
+				dbaccountgroup.AccountIDEQ(update.AccountID),
+				dbaccountgroup.GroupIDEQ(update.GroupID),
+			).
+			SetPriority(update.Priority).
+			Save(ctx)
+		if err != nil {
+			return affected, err
+		}
+		if n > 0 {
+			affected += n
+			groupIDSet[update.GroupID] = struct{}{}
+			accountIDSet[update.AccountID] = struct{}{}
+		}
+	}
+	if affected == 0 {
+		return 0, nil
+	}
+
+	groupIDs := make([]int64, 0, len(groupIDSet))
+	for id := range groupIDSet {
+		groupIDs = append(groupIDs, id)
+	}
+	payload := buildSchedulerGroupPayload(groupIDs)
+	for accountID := range accountIDSet {
+		id := accountID
+		if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountGroupsChanged, &id, nil, payload); err != nil {
+			logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue group priority change failed: account=%d err=%v", id, err)
+		}
+	}
+	return affected, nil
+}
+
 func (r *accountRepository) RemoveFromGroup(ctx context.Context, accountID, groupID int64) error {
 	_, err := r.client.AccountGroup.Delete().
 		Where(
@@ -1868,6 +1959,15 @@ func (r *accountRepository) BindGroups(ctx context.Context, accountID int64, gro
 		return err
 	}
 
+	current, err := txClient.AccountGroup.Query().Where(dbaccountgroup.AccountIDEQ(accountID)).All(ctx)
+	if err != nil {
+		return err
+	}
+	currentPriorities := make(map[int64]int, len(current))
+	for _, ag := range current {
+		currentPriorities[ag.GroupID] = ag.Priority
+	}
+
 	if _, err := txClient.AccountGroup.Delete().Where(dbaccountgroup.AccountIDEQ(accountID)).Exec(ctx); err != nil {
 		return err
 	}
@@ -1879,12 +1979,13 @@ func (r *accountRepository) BindGroups(ctx context.Context, accountID int64, gro
 		return nil
 	}
 
+	priorities := bindGroupPriorities(groupIDs, currentPriorities)
 	builders := make([]*dbent.AccountGroupCreate, 0, len(groupIDs))
 	for i, groupID := range groupIDs {
 		builders = append(builders, txClient.AccountGroup.Create().
 			SetAccountID(accountID).
 			SetGroupID(groupID).
-			SetPriority(i+1),
+			SetPriority(priorities[i]),
 		)
 	}
 
@@ -1902,6 +2003,24 @@ func (r *accountRepository) BindGroups(ctx context.Context, accountID int64, gro
 		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue bind groups failed: account=%d err=%v", accountID, err)
 	}
 	return nil
+}
+
+// bindGroupPriorities returns the in-group priority for each group in a
+// rebinding. Scheduling ranks accounts by account_groups.priority and
+// TransitHub writes its health demotions there, so a group the account stays in
+// keeps its current value; only a newly joined group gets the positional
+// default. Rebinding runs on every account edit that submits group_ids, which
+// used to reset every in-group priority to 1, 2, 3, ...
+func bindGroupPriorities(groupIDs []int64, current map[int64]int) []int {
+	priorities := make([]int, len(groupIDs))
+	for i, groupID := range groupIDs {
+		if priority, ok := current[groupID]; ok {
+			priorities[i] = priority
+			continue
+		}
+		priorities[i] = i + 1
+	}
+	return priorities
 }
 
 func (r *accountRepository) ListSchedulable(ctx context.Context) ([]service.Account, error) {
@@ -2660,7 +2779,8 @@ func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates m
 	}
 
 	clearProbeSnapshot := upstreamBillingProbeExplicitlyDisabled(updates) || upstreamBillingProbeSnapshotClearRequested(updates)
-	durableSchedulerChange := shouldEnqueueSchedulerOutboxForExtraUpdates(updates) || clearProbeSnapshot
+	clearManualRate := upstreamBillingManualRateClearRequested(updates)
+	durableSchedulerChange := shouldEnqueueSchedulerOutboxForExtraUpdates(updates) || clearProbeSnapshot || clearManualRate
 	baseCtx := ctx
 	contextTx := dbent.TxFromContext(ctx)
 	client := clientFromContext(ctx, r.client)
@@ -2680,6 +2800,9 @@ func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates m
 	extraExpression := "COALESCE(extra, '{}'::jsonb) || $1::jsonb"
 	if clearProbeSnapshot {
 		extraExpression = "(" + extraExpression + ") - 'upstream_billing_probe'"
+	}
+	if clearManualRate {
+		extraExpression = "(" + extraExpression + ") - '" + service.UpstreamBillingManualRateMultiplierExtraKey + "'"
 	}
 	if service.ShouldEnsureCodexFingerprintSeedForExtraUpdates(updates) {
 		extraExpression = ensureCodexFingerprintSeedSQL(extraExpression)
@@ -2916,6 +3039,11 @@ func upstreamBillingProbeSnapshotClearRequested(extra map[string]any) bool {
 	return ok && value == nil
 }
 
+func upstreamBillingManualRateClearRequested(extra map[string]any) bool {
+	value, ok := extra[service.UpstreamBillingManualRateMultiplierExtraKey]
+	return ok && value == nil
+}
+
 func ollamaCloudUsageSnapshotClearRequested(extra map[string]any) bool {
 	value, ok := extra[service.OllamaCloudUsageSnapshotExtraKey]
 	return ok && value == nil
@@ -3149,7 +3277,10 @@ type accountGroupQueryOptions struct {
 
 func (r *accountRepository) queryAccountsByGroup(ctx context.Context, groupID int64, opts accountGroupQueryOptions) ([]service.Account, error) {
 	q := r.client.AccountGroup.Query().
-		Where(dbaccountgroup.GroupIDEQ(groupID))
+		Where(
+			dbaccountgroup.GroupIDEQ(groupID),
+			notContributionRoomAccountGroupPredicate(),
+		)
 
 	// 通过 account_groups 中间表查询账号，并按需叠加状态/平台/调度能力过滤。
 	preds := make([]dbpredicate.Account, 0, 6)
@@ -3276,6 +3407,20 @@ func tempUnschedulablePredicate() dbpredicate.Account {
 		s.Where(entsql.Or(
 			entsql.IsNull(col),
 			entsql.LTE(col, entsql.Expr("NOW()")),
+		))
+	})
+}
+
+// notContributionRoomAccountGroupPredicate keeps explicitly assigned room
+// accounts out of ordinary group scheduling. Room routing loads them through
+// its own policy path with room-specific concurrency and billing metadata.
+func notContributionRoomAccountGroupPredicate() dbpredicate.AccountGroup {
+	return dbpredicate.AccountGroup(func(s *entsql.Selector) {
+		membership := entsql.Table("contribution_room_accounts").As("room_membership")
+		s.Where(entsql.NotExists(
+			entsql.Select(membership.C("account_id")).
+				From(membership).
+				Where(entsql.ColumnsEQ(membership.C("account_id"), s.C(dbaccountgroup.FieldAccountID))),
 		))
 	})
 }
@@ -3613,7 +3758,29 @@ func (r *accountRepository) ListDueUpstreamBillingProbeAccounts(ctx context.Cont
 			WHERE deleted_at IS NULL
 				AND status = 'active'
 				AND type = 'apikey'
-				AND extra @> '{"upstream_billing_probe_enabled": true}'::jsonb
+				-- 候选条件必须镜像 upstreamBillingProbeShouldRun，否则被它跳过的账号
+				-- 会每轮都占满 LIMIT 名额却永远探不动。从没声明过成本的账号同样要
+				-- 自动探测（那条规则只看 rate_multiplier_undeclared，与开关无关）。
+				AND (
+					extra @> '{"upstream_billing_probe_enabled": true}'::jsonb
+					OR rate_multiplier_undeclared
+				)
+				-- 手工倍率是管理员的权威声明，不需要联网探测。漏掉这条时，生产上
+				-- 37 个候选里有 21 个是填了手工倍率的账号：它们永远拿不到快照，于是
+				-- probe_status 恒为 NULL、恒排在下面 ORDER BY 的优先级 0，把队首长期
+				-- 占死，真正该刷新的账号被饿了三周。
+				-- 只排除"明确是合法数字"的情形，字符串等异常写法留给 Go 侧判定，
+				-- 保证这里始终是 shouldRun 的超集。
+				--
+				-- COALESCE 不能省：键不存在时 extra->'...' 是 SQL NULL，
+				-- jsonb_typeof(NULL)='number' 也是 NULL，NULL AND x 仍是 NULL，
+				-- NOT NULL 还是 NULL——WHERE 只保留 TRUE，于是"没填手工倍率"的
+				-- 账号会被整批排除，正好把唯一需要探测的那批全干掉。
+				-- 2026-09-14 上线时漏了它，自动探测静默停摆，页面上全是"已过期"。
+				AND NOT COALESCE(
+					jsonb_typeof(extra->'upstream_billing_manual_rate_multiplier') = 'number'
+					AND (extra->>'upstream_billing_manual_rate_multiplier')::numeric >= 0
+				, false)
 		), parsed AS MATERIALIZED (
 			SELECT
 				id,

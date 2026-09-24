@@ -34,10 +34,14 @@ services:
         soft: 100000
         hard: 100000
     ports:
-      - "${BIND_HOST:-0.0.0.0}:${SERVER_PORT:-8080}:8080"
+      # Public traffic should enter through the reverse proxy.
+      - "${BIND_HOST:-127.0.0.1}:${SERVER_PORT:-8080}:8080"
     volumes:
       # Local directory mapping for easy migration
       - ./data:/app/data:Z
+      # Run the binary built from the local source tree. This keeps source
+      # builds active after container recreation instead of using image code.
+      - ../backend/bin/sub2api-linux-amd64:/app/sub2api:ro
       # Optional: Mount custom config.yaml (uncomment and create the file first)
       # Copy config.example.yaml to config.yaml, modify it, then uncomment:
       # - ./config.yaml:/app/data/config.yaml

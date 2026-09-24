@@ -23,7 +23,6 @@ import (
 type openAIFallbackPoolSourcingCtxKey struct{}
 type openAIFallbackGroupStateCtxKey struct{}
 type openAILatencyFallbackTriggerCtxKey struct{}
-type openAILatencyFallbackSuppressedCtxKey struct{}
 
 // withOpenAILatencyFallbackTrigger 标记本次选号是由「源组变慢」触发的，
 // 并带上触发的强度分桶，供后续与兜底组做同桶对齐比较。
@@ -38,23 +37,21 @@ func withOpenAILatencyFallbackTrigger(ctx context.Context, bucket string) contex
 }
 
 // isOpenAILatencyFallbackTrigger 返回触发分桶及是否处于延迟触发链路。
+//
+// 这个标记在整条延迟兜底链路上一直保留，承担两件事：一是链路内不再重复触发
+// 延迟兜底（selectAccountWithSchedulerOnce 见到它就跳过触发判断）；二是下游
+// 每个候选池都要过延迟准入，而且对照的是最初变慢的源组。历史实现在进入第一个
+// 兜底池时用一个 suppressed 标记把两件事一起关掉，结果第一个池没号时，它的下游
+// 可以不经延迟比较就接手——实测会从 93 秒的源组切到 200 秒的池子。
 func isOpenAILatencyFallbackTrigger(ctx context.Context) (string, bool) {
 	if ctx == nil {
 		return "", false
 	}
 	bucket, _ := ctx.Value(openAILatencyFallbackTriggerCtxKey{}).(string)
-	suppressed, _ := ctx.Value(openAILatencyFallbackSuppressedCtxKey{}).(bool)
-	if bucket == "" || suppressed {
+	if bucket == "" {
 		return "", false
 	}
 	return bucket, true
-}
-
-func withOpenAILatencyFallbackSuppressed(ctx context.Context) context.Context {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	return context.WithValue(ctx, openAILatencyFallbackSuppressedCtxKey{}, true)
 }
 
 // withOpenAIFallbackPoolSourcing 标记本次选号来自兜底分组链路。
@@ -158,17 +155,38 @@ func (s *OpenAIGatewayService) shouldUseOpenAIFallbackForModel(
 	return false
 }
 
+// openAIFallbackAttempt 是一个可以尝试的兜底目标：ctx 已带上兜底取号标记和链路状态。
+type openAIFallbackAttempt struct {
+	ctx     context.Context
+	groupID *int64
+}
+
+// nextOpenAIFallbackGroup 返回第一个可尝试的兜底目标，没有时第二个返回值为 nil。
 func (s *OpenAIGatewayService) nextOpenAIFallbackGroup(ctx context.Context, currentGroupID *int64, platform string, requestedModel string) (context.Context, *int64) {
+	nextCtx, nextID := ctx, (*int64)(nil)
+	s.eachOpenAIFallbackAttempt(ctx, currentGroupID, platform, requestedModel, func(attempt openAIFallbackAttempt) bool {
+		nextCtx, nextID = attempt.ctx, attempt.groupID
+		return true
+	})
+	return nextCtx, nextID
+}
+
+// eachOpenAIFallbackAttempt 按配置顺序逐个把兜底目标交给 try，try 返回 true 即停止。
+//
+// 准入是惰性的：模型支持诊断（要查库）、延迟准入和请求级尝试账本都只在轮到这个
+// 目标时才做，前一个目标成功就不会为后面的目标付出任何代价。模型不支持或不够快
+// 只跳过这个目标本身，不影响后面的目标。
+func (s *OpenAIGatewayService) eachOpenAIFallbackAttempt(ctx context.Context, currentGroupID *int64, platform string, requestedModel string, try func(openAIFallbackAttempt) bool) {
 	if s == nil || currentGroupID == nil || *currentGroupID <= 0 {
-		return ctx, nil
+		return
 	}
 	ctx = withOpenAIModelAvailabilityCache(ctx)
 	platform = NormalizeOpenAICompatiblePlatform(platform)
 	if platform != PlatformOpenAI && platform != PlatformGrok {
-		return ctx, nil
+		return
 	}
 
-	fallbackID, nextState, ok := nextFallbackGroupID(
+	hops := fallbackGroupHops(
 		ctx,
 		*currentGroupID,
 		openAIFallbackGroupStateFromContext(ctx),
@@ -192,21 +210,29 @@ func (s *OpenAIGatewayService) nextOpenAIFallbackGroup(ctx context.Context, curr
 			},
 		},
 	)
-	if !ok {
-		return ctx, nil
+	for _, hop := range hops {
+		fallbackID := hop.groupID
+		// Model support is a property of the target pool. Checking currentGroupID
+		// here incorrectly blocks a valid fallback when the source group is only a
+		// routing alias and the fallback pool owns the requested model.
+		if !s.shouldUseOpenAIFallbackForModel(ctx, &fallbackID, requestedModel, platform) {
+			continue
+		}
+		// 延迟准入对照链路起点：下游池要比「最初变慢的那个组」快才值得接手，
+		// 拿它和中间那个没号的池子比没有意义（没号的池子往往也没有延迟读数）。
+		if bucket, triggered := isOpenAILatencyFallbackTrigger(ctx); triggered && !s.shouldUseOpenAILatencyFallbackGroup(hop.state.originGroupID, fallbackID, bucket) {
+			continue
+		}
+		if !claimFallbackAttempt(ctx, "openai", fallbackID, hop.state.hops) {
+			continue
+		}
+		if try(openAIFallbackAttempt{
+			ctx:     withOpenAIFallbackGroupState(withOpenAIFallbackPoolSourcing(ctx), hop.state),
+			groupID: &fallbackID,
+		}) {
+			return
+		}
 	}
-	// Model support is a property of the target pool. Checking currentGroupID
-	// here incorrectly blocks a valid fallback when the source group is only a
-	// routing alias and the fallback pool owns the requested model.
-	if !s.shouldUseOpenAIFallbackForModel(ctx, &fallbackID, requestedModel, platform) {
-		return ctx, nil
-	}
-	if bucket, triggered := isOpenAILatencyFallbackTrigger(ctx); triggered && !s.shouldUseOpenAILatencyFallbackGroup(*currentGroupID, fallbackID, bucket) {
-		return ctx, nil
-	}
-
-	nextCtx := withOpenAIFallbackGroupState(withOpenAIFallbackPoolSourcing(ctx), nextState)
-	return nextCtx, &fallbackID
 }
 
 // shouldUseOpenAILatencyFallbackGroup 判断「源组变慢」时是否值得切到兜底组。

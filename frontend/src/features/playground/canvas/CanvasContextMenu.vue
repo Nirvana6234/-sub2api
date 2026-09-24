@@ -16,7 +16,7 @@ import { Icon } from '@/components/icons'
 import type { CanvasNode } from './types'
 
 const props = defineProps<{ x: number; y: number; node: CanvasNode }>()
-const emit = defineEmits<{ duplicate: []; copy: []; front: []; back: []; download: []; reference: []; delete: [] }>()
+const emit = defineEmits<{ duplicate: []; copy: []; front: []; back: []; download: []; reference: []; 'capture-video-frame': [position: 'first' | 'current' | 'last']; delete: [] }>()
 const { t } = useI18n()
 
 const menuStyle = computed(() => ({
@@ -29,6 +29,11 @@ const actions = computed(() => [
   { id: 'copy' as const, icon: 'clipboard' as const, label: t('playground.canvasCopyNode'), shortcut: 'Ctrl+C' },
   { id: 'front' as const, icon: 'arrowUp' as const, label: t('playground.canvasBringFront') },
   { id: 'back' as const, icon: 'arrowDown' as const, label: t('playground.canvasSendBack') },
+  ...(props.node.type === 'video' && props.node.videoUrl ? [
+    { id: 'capture-first' as const, icon: 'chevronLeft' as const, label: t('playground.canvasCaptureFirstFrame') },
+    { id: 'capture-current' as const, icon: 'eye' as const, label: t('playground.canvasCaptureCurrentFrame') },
+    { id: 'capture-last' as const, icon: 'chevronRight' as const, label: t('playground.canvasCaptureLastFrame') },
+  ] : []),
   ...(props.node.imageUrl || props.node.videoUrl || props.node.audioUrl ? [{ id: 'download' as const, icon: 'download' as const, label: t('playground.canvasDownload') }] : []),
   ...(props.node.kind === 'result' && props.node.type === 'image' ? [{ id: 'reference' as const, icon: 'upload' as const, label: t('playground.canvasUseAsReference') }] : []),
   { id: 'delete' as const, icon: 'trash' as const, label: t('playground.canvasDeleteNode'), shortcut: 'Del', danger: true },
@@ -39,6 +44,9 @@ function runAction(id: (typeof actions.value)[number]['id']): void {
   else if (id === 'copy') emit('copy')
   else if (id === 'front') emit('front')
   else if (id === 'back') emit('back')
+  else if (id === 'capture-first') emit('capture-video-frame', 'first')
+  else if (id === 'capture-current') emit('capture-video-frame', 'current')
+  else if (id === 'capture-last') emit('capture-video-frame', 'last')
   else if (id === 'download') emit('download')
   else if (id === 'reference') emit('reference')
   else emit('delete')

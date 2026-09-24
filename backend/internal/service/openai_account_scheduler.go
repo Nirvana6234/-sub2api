@@ -83,6 +83,13 @@ type OpenAIAccountScheduleRequest struct {
 	StickyWeighted          bool
 	SubscriptionPriority    bool
 	PreserveStickyBinding   bool
+	// EscapedStickyAccountID 是本轮粘性逃逸刚刚判定「当前不可用」的账号。
+	//
+	// 逃逸的语义是换号（坏 TTFT / 高错误率 / 并发满），所以它必须排在选号序列最后，
+	// 否则组内优先级分档会按优先级把它重新提到最前，会话永远卡在坏号上、逃逸判定
+	// 形同虚设。沿用本文件「排序而不过滤」的约定：只降级不剔除，后面的号也都拿不到
+	// 槽位时它仍是最后的出路。
+	EscapedStickyAccountID int64
 	// DisableStickyEscape keeps task-owner lookups on their account even when
 	// generic sticky health or concurrency heuristics would prefer another.
 	DisableStickyEscape     bool
@@ -472,6 +479,7 @@ func (s *defaultOpenAIAccountScheduler) Select(
 		}
 		if escapedSticky {
 			req.PreserveStickyBinding = true
+			req.EscapedStickyAccountID = s.escapedStickyAccountID(ctx, req)
 		}
 	}
 
@@ -496,6 +504,29 @@ func (s *defaultOpenAIAccountScheduler) Select(
 		}
 	}
 	return selection, decision, nil
+}
+
+// escapedStickyAccountID 还原本轮粘性逃逸放弃掉的那个账号。
+//
+// 逃逸判定发生在 selectBySessionHash 内部，账号 ID 没有随返回值带出来（该函数另有
+// grok_media 等多处调用，不宜改签名）。这里按它取绑定时同一套顺序还原：先用请求
+// 自带的绑定，否则回读会话粘性绑定。只走逃逸这条冷路径，多一次缓存读可以接受。
+func (s *defaultOpenAIAccountScheduler) escapedStickyAccountID(
+	ctx context.Context,
+	req OpenAIAccountScheduleRequest,
+) int64 {
+	if req.StickyAccountID > 0 {
+		return req.StickyAccountID
+	}
+	sessionHash := strings.TrimSpace(req.SessionHash)
+	if s == nil || s.service == nil || sessionHash == "" {
+		return 0
+	}
+	accountID, err := s.service.getStickySessionAccountID(ctx, req.GroupID, sessionHash)
+	if err != nil || accountID <= 0 {
+		return 0
+	}
+	return accountID
 }
 
 func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
@@ -970,6 +1001,23 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 	plan.loadSkew = calcLoadSkewByMoments(loadRateSum, loadRateSumSquares, len(candidates))
 
 	weights := s.service.openAIWSSchedulerWeightsForRequest(ctx)
+	// 整池都慢时把延迟权重顶上去，让"谁没那么慢"重新成为主导因素。
+	//
+	// 排序本来有两层：先按 30 秒阈值把候选粗分成「健康/慢」两档（硬隔离，快的
+	// 整体压过慢的），档内再按加权评分排。主力池有快有慢，第一层就把好账号顶到
+	// 前面，看起来很"聪明"；但兜底池这种整池都超阈值的场景，第一层塌缩成一个档，
+	// 只剩第二层，而第二层里延迟权重只有 0.5，优先级 1.0、错误率 1.5，且各因子都
+	// 是池内归一化的——于是排序被优先级主导。
+	//
+	// 生产实测（2026-09-16，puls-兜底组）：组内优先级最高的 212（priority=100）
+	// 恰好是最慢的一档（p90 103.7 秒），而最快的 220（p90 40 秒）优先级是 10000，
+	// 结果流量长期压在最慢的号上。
+	//
+	// 这里只在"第一层失效"时提权，主力池的行为完全不变。
+	weights.TTFT = openAIBoostTTFTWeightWhenAllSlow(
+		weights.TTFT, weights.Priority,
+		s.service.allOpenAICandidatesSlow(ctx, candidates),
+	)
 	now := time.Now()
 	upstreamCostFactors := map[int64]float64(nil)
 	if req.UseUpstreamTokenCost && weights.UpstreamCost > 0 {
@@ -1147,7 +1195,7 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 	// 这里刻意用「排序」而不是「过滤」——调用方是顺着 selectionOrder 逐个尝试、抢不到
 	// 并发槽就 continue，所以排在前面等于优先，排在后面等于降级可用。若直接砍掉更宽的
 	// 账号，专精那档一旦全部满载或抢不到槽，请求就只能失败，而空闲的宽账号在旁边闲着。
-	buildSelectionOrder := func(pool []openAIAccountCandidateScore) []openAIAccountCandidateScore {
+	rankSpecializedFirst := func(pool []openAIAccountCandidateScore) []openAIAccountCandidateScore {
 		if !s.service.preferSpecializedAccountsEnabled() || len(pool) < 2 {
 			return rankPool(pool)
 		}
@@ -1168,6 +1216,32 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 		}
 		ordered := rankPool(specialized)
 		return append(ordered, rankPool(rest)...)
+	}
+
+	// 组内优先级分档，排在稀缺能力保护之外：管理员填的优先级是档位语义
+	// （"优先级 1 的没压满就别碰 2"），必须先决定用哪一档，档内才轮到专精/延迟/
+	// 负载去排序。沿用同一套「排序而不过滤」的约定——低优先级档仍留在序列尾部，
+	// 高优先级档全部满载或抢不到并发槽时照样能降级用上，不会把请求打失败。
+	buildSelectionOrder := func(pool []openAIAccountCandidateScore) []openAIAccountCandidateScore {
+		tiers := splitOpenAICandidatesByPriorityTier(pool)
+		ordered := make([]openAIAccountCandidateScore, 0, len(pool))
+		if len(tiers) < 2 {
+			ordered = rankSpecializedFirst(pool)
+		} else {
+			for _, tier := range tiers {
+				ordered = append(ordered, rankSpecializedFirst(tier)...)
+			}
+			// 已经绑定的会话不受分档影响，否则 previous_response 链会被前面整档的
+			// 账号挤断，用户直接收到错误。
+			//
+			// 但只认「本来就能进全局 top-K」的绑定：分档给每一档各自留了 top-K 名额，
+			// 合起来比原先的全局 top-K 宽，不能让一个原本就选不中的账号借分档复活
+			// （LBTopK=1 时最明显——全局只留一个名额，绑定账号不在其中就该换号）。
+			ordered = hoistOpenAICandidate(ordered,
+				openAIStickyBoundAccountID(req, globalTopKOpenAICandidates(pool, plan.topK)))
+		}
+		// 粘性逃逸刚判定不可用的号压到最后：逃逸的语义就是换号，分档不能把它提回来。
+		return demoteOpenAICandidate(ordered, req.EscapedStickyAccountID)
 	}
 
 	if req.RequireCompact {
@@ -2314,7 +2388,51 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerForImages(
 // zeroing out capacity. The retry re-runs the exact same selection with the
 // quarantine checks bypassed, so healthy proxies always win the first pass
 // and quarantined ones only serve when nothing else can.
+// selectAccountWithScheduler 是所有选号入口的唯一汇合点，在这里做一次"选出来的
+// 账号到底属不属于被请求的分组"的事后核对。
+//
+// 加它的起因：2026-09-16 生产上 gpt-pro(34) 的兜底早已断开（fallback_group_ids
+// 为空），可 usage_logs 里仍有大量请求由账号 221/195 承接——而这两个号在 DB、
+// 在账号快照、在分组候选池快照里都不属于 34。静态排查逐一否掉了兜底配置残留、
+// 快照陈旧、认证缓存陈旧、粘性绕过校验、simple 模式短路这五种可能，没有一条能
+// 解释现象，说明还有一条尚未识别的选号路径绕过了分组归属。
+//
+// 这里只观测、不改变任何行为：命中异常才打一条 WARN，正常流量零开销。
 func (s *OpenAIGatewayService) selectAccountWithScheduler(
+	ctx context.Context,
+	groupID *int64,
+	previousResponseID string,
+	sessionHash string,
+	requestedModel string,
+	excludedIDs map[int64]struct{},
+	requiredTransport OpenAIUpstreamTransport,
+	requiredCapability OpenAIEndpointCapability,
+	requiredImageCapability OpenAIImagesCapability,
+	requireCompact bool,
+	platform string,
+	previousResponseCanMove bool,
+	useUpstreamTokenCost bool,
+) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+	selection, decision, err := s.selectAccountWithSchedulerInner(
+		ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs,
+		requiredTransport, requiredCapability, requiredImageCapability, requireCompact,
+		platform, previousResponseCanMove, useUpstreamTokenCost,
+	)
+	if s.selectionEscapedRequestedGroup(ctx, groupID, sessionHash, previousResponseID, requestedModel, selection) {
+		// 越界的选号一律作废，并且重选时丢掉 sessionHash：所有粘性入口都以
+		// sessionHash 为前提，清空它就能绕开它们，强制从分组候选池重新出号。
+		selection, decision, err = s.selectAccountWithSchedulerInner(
+			ctx, groupID, previousResponseID, "", requestedModel, excludedIDs,
+			requiredTransport, requiredCapability, requiredImageCapability, requireCompact,
+			platform, previousResponseCanMove, useUpstreamTokenCost,
+		)
+		// 重选结果同样要过一遍闸：这里只观测不再重试，避免无限递归。
+		s.auditSelectedAccountGroupMembership(ctx, groupID, "", previousResponseID, requestedModel, selection)
+	}
+	return selection, decision, err
+}
+
+func (s *OpenAIGatewayService) selectAccountWithSchedulerInner(
 	ctx context.Context,
 	groupID *int64,
 	previousResponseID string,
@@ -2333,7 +2451,7 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 	effectiveGroupID := groupID
 	stickyRequest := false
 	if originalGroupID > 0 && NormalizeOpenAICompatiblePlatform(platform) == PlatformOpenAI && !isOpenAIFallbackPoolSourcing(ctx) {
-		candidateGroupID, probing := s.openAIStickyFallbackCandidate(originalGroupID)
+		candidateGroupID, probing := s.openAIStickyFallbackCandidate(ctx, originalGroupID)
 		if candidateGroupID != originalGroupID {
 			effectiveGroupID = &candidateGroupID
 			ctx = s.withOpenAIGroupPrivacyRequirement(ctx, groupID)
@@ -2425,6 +2543,8 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 	previousResponseCanMove bool,
 	useUpstreamTokenCost bool,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+	// 兜底尝试账本在本次选号的最外层装一次，递归进兜底池的各层共用它。
+	ctx = withFallbackAttemptLedger(ctx)
 	ctx = s.withOpenAIQuotaAutoPauseContext(ctx)
 	ctx = s.withOpenAIGroupPrivacyRequirement(ctx, groupID)
 	// 分组利润控制：唯一文本调度入口的防御性装门。handler 文本
@@ -2439,27 +2559,69 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 	selection, decision, err := s.selectAccountWithSchedulerOnceNoFallback(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, previousResponseCanMove, useUpstreamTokenCost)
 	slowBucket, groupIsSlow := "", false
 	if _, alreadyTriggered := isOpenAILatencyFallbackTrigger(ctx); !alreadyTriggered {
-		slowBucket, groupIsSlow = s.shouldTriggerOpenAILatencyFallback(groupID)
+		slowBucket, groupIsSlow = s.shouldTriggerOpenAILatencyFallback(ctx, groupID)
 	}
 	if err == nil && selection != nil && selection.Account != nil && NormalizeOpenAICompatiblePlatform(platform) == PlatformOpenAI && groupIsSlow && len(excludedIDs) == 0 && !isOpenAIFallbackPoolSourcing(ctx) && !isOpenAIStickyFallbackRequest(ctx) {
-		fallbackCtx, fallbackGroupID := s.nextOpenAIFallbackGroup(withOpenAILatencyFallbackTrigger(ctx, slowBucket), groupID, platform, requestedModel)
-		if fallbackGroupID != nil {
-			fallbackSelection, fallbackDecision, fallbackErr := s.selectAccountWithSchedulerOnce(withOpenAILatencyFallbackSuppressed(fallbackCtx), fallbackGroupID, "", "", requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, false, useUpstreamTokenCost)
+		// 源组已有可用账号，这里只是「换个更快的池子」：逐个试够快的兜底池，
+		// 都取不到号就留在源组已选好的账号上。触发标记随链路一直向下传：
+		// 下游不会再次触发延迟兜底，但每个下游候选都要和最初变慢的源组比快慢。
+		var switched *AccountSelectionResult
+		var switchedDecision OpenAIAccountScheduleDecision
+		switchedGroupID := int64(0)
+		s.eachOpenAIFallbackAttempt(withOpenAILatencyFallbackTrigger(ctx, slowBucket), groupID, platform, requestedModel, func(attempt openAIFallbackAttempt) bool {
+			fallbackSelection, fallbackDecision, fallbackErr := s.selectAccountWithSchedulerOnce(attempt.ctx, attempt.groupID, "", "", requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, false, useUpstreamTokenCost)
 			if fallbackErr == nil && fallbackSelection != nil && fallbackSelection.Account != nil {
-				s.markOpenAIFallbackSticky(derefGroupID(groupID), *fallbackGroupID, slowBucket)
-				return fallbackSelection, fallbackDecision, nil
+				switched, switchedDecision, switchedGroupID = fallbackSelection, fallbackDecision, *attempt.groupID
+				return true
 			}
+			releaseUnusedSelection(fallbackSelection)
+			// 只有「没号」才值得换下一个池子。其他错误（查库失败等）说明兜底链路
+			// 本身有问题，继续扩展只会放大故障；源组手里已经有号，停下来用它。
+			return fallbackErr != nil && !isNoAvailableOpenAIAccountError(fallbackErr)
+		})
+		if switched != nil {
+			// 源组那次选号已经占了并发槽，改用兜底池的号就必须把它还回去，
+			// 否则这个槽要等 Redis 过期才释放，源组账号被白白少算一路并发。
+			releaseUnusedSelection(selection)
+			// 粘性要记在真正供号的池子上。A→B 没号、B→D 供号时，记成 B 会让下个
+			// 请求进入 B：粘性上下文已把 B 记为走过，B→D 走不通，只能退回慢源组。
+			if switched.fallbackTrace != nil && switched.fallbackTrace.TargetGroupID > 0 {
+				switchedGroupID = switched.fallbackTrace.TargetGroupID
+			}
+			s.markOpenAIFallbackSticky(derefGroupID(groupID), switchedGroupID, slowBucket)
+			return switched, switchedDecision, nil
 		}
 	}
 	if !isNoAvailableOpenAIAccountError(err) {
 		return selection, decision, err
 	}
-	fallbackCtx, fallbackGroupID := s.nextOpenAIFallbackGroup(ctx, groupID, platform, requestedModel)
-	if fallbackGroupID == nil {
-		return selection, decision, err
+	// 按配置顺序逐个试兜底池：前一个（连同它的下游链路）没号才试下一个。
+	// 都没号时报信息量最大的那个错误（见 preferNoAccountError）。
+	noAccountErr := err
+	var fallbackSelection *AccountSelectionResult
+	var fallbackDecision OpenAIAccountScheduleDecision
+	var fallbackErr error
+	resolved := false
+	s.eachOpenAIFallbackAttempt(ctx, groupID, platform, requestedModel, func(attempt openAIFallbackAttempt) bool {
+		fallbackSelection, fallbackDecision, fallbackErr = s.selectAccountWithSchedulerOnce(attempt.ctx, attempt.groupID, "", sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, false, useUpstreamTokenCost)
+		if isNoAvailableOpenAIAccountError(fallbackErr) {
+			noAccountErr = preferNoAccountError(noAccountErr, fallbackErr)
+			return false
+		}
+		resolved = true
+		return true
+	})
+	if resolved {
+		return fallbackSelection, fallbackDecision, fallbackErr
 	}
-	fallbackSelection, fallbackDecision, fallbackErr := s.selectAccountWithSchedulerOnce(fallbackCtx, fallbackGroupID, "", "", requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, false, useUpstreamTokenCost)
-	return fallbackSelection, fallbackDecision, fallbackErr
+	return selection, decision, noAccountErr
+}
+
+// releaseUnusedSelection 归还一个被放弃的选号结果占着的并发槽。
+func releaseUnusedSelection(selection *AccountSelectionResult) {
+	if selection != nil && selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
+	}
 }
 
 // shouldTriggerOpenAILatencyFallback 判断分组是否已经慢到需要考虑换池，
@@ -2468,16 +2630,24 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 // 判据从中位数改为最差分桶的 p90：中位数对长尾免疫——一个组 10% 的请求 200 秒、
 // 中位数 6 秒时它已经病了，但中位数要破阈值得等一半以上请求都变慢，
 // 那时整池已经塌方，兜底也就失去意义了。
-func (s *OpenAIGatewayService) shouldTriggerOpenAILatencyFallback(groupID *int64) (string, bool) {
+func (s *OpenAIGatewayService) shouldTriggerOpenAILatencyFallback(ctx context.Context, groupID *int64) (string, bool) {
 	if s == nil || groupID == nil || *groupID <= 0 {
 		return "", false
 	}
-	threshold, _, enabled := s.openAILatencyAwareFallbackSettings(context.Background())
+	threshold, _, enabled := s.openAILatencyAwareFallbackSettings(ctx)
 	if !enabled {
 		return "", false
 	}
 	tail, bucket, ok := s.getOpenAILatencyTracker().GroupTail(*groupID)
 	if !ok || tail <= threshold {
+		return "", false
+	}
+	// 分组 p90 说"这个组整体慢"，但调度最终只挑一个账号：组里最慢的成员会把
+	// p90 拉高，使一个仍有快号的分组被整体判为慢，流量被送去别的池子——哪怕
+	// 那个池子里每个账号都比本组最快的账号更慢（生产实测 183 首字 7.5 秒，
+	// 被借的兜底池是 30-38 秒）。源组只要还有健康账号就用它，别去借更慢的。
+	if healthy, accountID, accountTail := s.openAIGroupHasHealthyAccount(ctx, *groupID, threshold); healthy {
+		s.logOpenAILatencyFallbackSkipped(*groupID, tail, accountID, accountTail, threshold)
 		return "", false
 	}
 	return bucket, true
@@ -3194,6 +3364,21 @@ func newOpenAILegacyUpstreamRateOrder(accounts []*Account, now time.Time, oauthS
 func openAISchedulingRate(account *Account, now time.Time, oauthSchedulingRateMultiplier float64) (float64, bool) {
 	if account != nil && account.IsOpenAIOAuthLike() {
 		return oauthSchedulingRateMultiplier, true
+	}
+	// 手工上游倍率是管理员的权威声明，优先于探测——记账（AccountCostRateMultiplier）
+	// 和兜底准入（fallbackPoolRejectReasonWhenSourcing）都是这个口径，调度的成本
+	// 因子必须同源，否则"按哪个号便宜来调度"和"按哪个号便宜来扣费"会各说各话。
+	//
+	// 2026-09-20 生产实测：plus(2) 的 7 个候选里 6 个自营号都填了手工倍率
+	// （0.04~0.075），而"填了手工倍率就不再探测"是 upstreamBillingProbeShouldRun
+	// 的既定规则，于是它们永远没有探测快照，只有中转号 221 有。
+	// openAIUpstreamCostFactors 要求至少两个样本，样本不足就全员中性——管理员标注
+	// 的便宜号一分加成都拿不到；而只要再多一个中转号探测成功，成本权重就变成只在
+	// 中转号之间分配，等于把流量往中转号上推。
+	if account != nil {
+		if rate, ok := upstreamBillingManualRateMultiplier(account.Extra); ok {
+			return rate, true
+		}
 	}
 	return openAIFreshUpstreamBillingRate(account, now)
 }

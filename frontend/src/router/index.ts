@@ -40,6 +40,28 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    // 未注册访客的网页版试用：只能文字聊天，模型和额度由管理员配置
+    path: '/trial',
+    name: 'GuestTrial',
+    component: () => import('@/views/TrialChatView.vue'),
+    meta: {
+      requiresAuth: false,
+      title: 'Free Trial',
+      titleKey: 'guestTrial.pageTitle',
+    },
+  },
+  {
+    path: '/download',
+    name: 'ClientDownload',
+    component: () => import('@/views/ClientDownloadView.vue'),
+    meta: {
+      requiresAuth: false,
+      title: 'Client Download',
+      titleKey: 'nav.clientDownload',
+      requiresClientDownload: true,
+    },
+  },
+  {
     path: '/login',
     name: 'Login',
     component: () => import('@/views/auth/LoginView.vue'),
@@ -229,6 +251,37 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/playground',
+    name: 'Playground',
+    redirect: '/playground/unified',
+  },
+  {
+    path: '/playground/unified',
+    name: 'PlaygroundUnified',
+    component: () => import('@/views/user/PlaygroundView.vue'),
+    props: { mode: 'unified' },
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Playground',
+      titleKey: 'playground.title',
+      descriptionKey: 'playground.description'
+    }
+  },
+  {
+    path: '/playground/chat',
+    name: 'PlaygroundChat',
+    component: () => import('@/views/user/PlaygroundView.vue'),
+    props: { mode: 'unified' },
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Playground',
+      titleKey: 'playground.title',
+      descriptionKey: 'playground.description'
+    }
+  },
+  {
     path: '/playground/images',
     name: 'PlaygroundImage',
     component: () => import('@/views/user/PlaygroundView.vue'),
@@ -276,6 +329,22 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/tickets',
+    // The desktop client has historically opened /contact. Keep that URL as a
+    // compatibility alias so its "联系我们" action lands in the same user
+    // ticket system instead of the SPA 404 page.
+    alias: '/contact',
+    name: 'Tickets',
+    component: () => import('@/views/user/TicketsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'My Tickets',
+      titleKey: 'tickets.title',
+      descriptionKey: 'tickets.description'
+    }
+  },
+  {
     path: '/redeem',
     name: 'Redeem',
     component: () => import('@/views/user/RedeemView.vue'),
@@ -309,6 +378,32 @@ const routes: RouteRecordRaw[] = [
       title: 'Available Channels',
       titleKey: 'availableChannels.title',
       descriptionKey: 'availableChannels.description'
+    }
+  },
+  {
+    path: '/account-contributions',
+    name: 'AccountContributions',
+    component: () => import('@/views/user/AccountContributionsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      requiresAccountManagement: true,
+      title: 'Account Contributions',
+      titleKey: 'accountContributions.title',
+      descriptionKey: 'accountContributions.description'
+    }
+  },
+  {
+    path: '/shared-rooms',
+    name: 'SharedContributionRooms',
+    component: () => import('@/views/user/SharedContributionRoomsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      requiresContributionRooms: true,
+      title: 'Shared Rooms',
+      titleKey: 'sharedRooms.title',
+      descriptionKey: 'sharedRooms.description'
     }
   },
   {
@@ -573,6 +668,30 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/contributions',
+    name: 'AdminContributions',
+    component: () => import('@/views/admin/ContributionsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Shared Account Governance',
+      titleKey: 'admin.contributions.title',
+      descriptionKey: 'admin.contributions.description'
+    }
+  },
+  {
+    path: '/admin/contribution-rooms',
+    name: 'AdminContributionRooms',
+    component: () => import('@/views/admin/ContributionRoomsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Contribution Rooms',
+      titleKey: 'admin.contributionRooms.title',
+      descriptionKey: 'admin.contributionRooms.description'
+    }
+  },
+  {
     path: '/admin/announcements',
     name: 'AdminAnnouncements',
     component: () => import('@/views/admin/AnnouncementsView.vue'),
@@ -582,6 +701,30 @@ const routes: RouteRecordRaw[] = [
       title: 'Announcements',
       titleKey: 'admin.announcements.title',
       descriptionKey: 'admin.announcements.description'
+    }
+  },
+  {
+    path: '/admin/tickets',
+    name: 'AdminTickets',
+    component: () => import('@/views/admin/TicketsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Ticket Management',
+      titleKey: 'tickets.adminTitle',
+      descriptionKey: 'tickets.adminDescription'
+    }
+  },
+  {
+    path: '/admin/blacklist',
+    name: 'AdminBlacklist',
+    component: () => import('@/views/admin/BlacklistView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Access Blacklist',
+      titleKey: 'nav.blacklist',
+      descriptionKey: 'nav.blacklist'
     }
   },
   {
@@ -668,18 +811,6 @@ const routes: RouteRecordRaw[] = [
       title: 'Usage Records',
       titleKey: 'admin.usage.title',
       descriptionKey: 'admin.usage.description'
-    }
-  },
-  {
-    path: '/admin/latency-compensation',
-    name: 'AdminLatencyCompensation',
-    component: () => import('@/views/admin/LatencyCompensationView.vue'),
-    meta: {
-      requiresAuth: true,
-      requiresAdmin: true,
-      title: 'Latency Compensation',
-      titleKey: 'admin.latencyCompensation.title',
-      descriptionKey: 'admin.latencyCompensation.description'
     }
   },
   {
@@ -850,6 +981,8 @@ router.beforeEach(async (to, _from, next) => {
   // Check if route requires authentication
   const requiresAuth = to.meta.requiresAuth !== false // Default to true
   const requiresAdmin = to.meta.requiresAdmin === true
+  const requiresAccountManagement = to.meta.requiresAccountManagement === true
+  const requiresContributionRooms = to.meta.requiresContributionRooms === true
 
   if (to.path === '/setup') {
     try {
@@ -908,6 +1041,21 @@ router.beforeEach(async (to, _from, next) => {
         return
       }
     }
+    // 客户端下载是 opt-out 开关：不提供客户端的部署版本显式关闭后，直达 /download 也回首页。
+    // /download 是公开页，必须在这里拦，走不到后面受保护路由的开关检查。
+    if (to.meta.requiresClientDownload) {
+      if (!appStore.publicSettingsLoaded) {
+        try {
+          await appStore.fetchPublicSettings()
+        } catch (error) {
+          console.warn('Failed to load public settings in route guard', error)
+        }
+      }
+      if (appStore.publicSettingsLoaded && appStore.cachedPublicSettings?.client_download_enabled === false) {
+        next('/')
+        return
+      }
+    }
     // Backend mode: block public pages for unauthenticated users (except login, key-usage, setup)
     if (appStore.backendModeEnabled && !authStore.isAuthenticated) {
       const isAllowed = isBackendModePublicRouteAllowed(to.path, authStore.hasPendingAuthSession)
@@ -933,6 +1081,23 @@ router.beforeEach(async (to, _from, next) => {
   // Check admin requirement
   if (requiresAdmin && !authStore.isAdmin) {
     // User is authenticated but not admin, redirect to user dashboard
+    next('/dashboard')
+    return
+  }
+
+  if (
+    !authStore.isAdmin &&
+    ((requiresAccountManagement && !authStore.user?.account_management_enabled) ||
+      (requiresContributionRooms && !authStore.user?.contribution_rooms_enabled))
+  ) {
+    next('/dashboard')
+    return
+  }
+
+  // 充值黑名单：命中的用户不得进入任何充值相关页面，包括直接输 URL。
+  // 与后端 RechargeBlockedGuard 同口径——刻意不豁免管理员，否则名单里的
+  // 管理员账号就成了绕过限制的口子。后端仍是强制层，这里只保证看不到界面。
+  if (to.meta.requiresPayment === true && authStore.user?.recharge_disabled === true) {
     next('/dashboard')
     return
   }

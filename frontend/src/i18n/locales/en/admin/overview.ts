@@ -525,8 +525,13 @@ export default {
         concurrencyHint: 'Max concurrent requests for this user; 0 = unlimited.',
         rpmLimitPlaceholder: '0 = unlimited',
         rpmLimitHint: 'Max requests per minute for this user; 0 = unlimited. Acts as a fallback only when the group has no rpm_limit set.',
-        headroomCompressionEnabled: 'Enable context compression',
-        headroomCompressionEnabledHint: 'Routes forwarded requests through the compression proxy to shrink context and save tokens; falls back to a direct upstream connection automatically if the proxy is unconfigured or unhealthy.'
+        optionalFeatures: 'Optional Features',
+        accountManagementEnabled: 'Allow account management',
+        accountManagementEnabledHint: 'Lets the user submit and manage personal accounts and contribution rooms.',
+        contributionRoomsEnabled: 'Allow contribution rooms',
+        contributionRoomsEnabledHint: 'Lets the user view and select shared contribution rooms.',
+        rechargeDisabled: 'Block recharge',
+        rechargeDisabledHint: 'Hides the recharge entry for this user and rejects every payment endpoint. Persists regardless of account status.',
       },
       columns: {
         user: 'User',

@@ -149,6 +149,31 @@ describe('BulkEditAccountModal', () => {
     expect(wrapper.text()).not.toContain('GPT-5.3 Codex Spark')
   })
 
+  it('批量优先级只改当前筛选分组内的优先级，不再提交全局 priority', async () => {
+    const wrapper = mountModal({
+      selectedPlatforms: ['openai'],
+      groupPriorityGroupId: 23,
+      groups: [{ id: 23, name: 'grok' }]
+    })
+
+    expect(wrapper.find('#bulk-edit-priority-label').text()).toBe('admin.accounts.bulkGroupPriority')
+    await wrapper.get('#bulk-edit-priority-enabled').setValue(true)
+    await wrapper.get('#bulk-edit-priority').setValue('10000')
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+      group_priority: { group_id: 23, priority: 10000 }
+    })
+  })
+
+  it('未按分组筛选时批量优先级不可用并提示先筛选分组', async () => {
+    const wrapper = mountModal({ selectedPlatforms: ['openai'] })
+
+    expect(wrapper.get('#bulk-edit-priority-enabled').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-testid="bulk-group-priority-needs-filter"]').exists()).toBe(true)
+  })
+
   it('仅勾选模型限制且白名单留空时，应提交空 model_mapping 以支持所有模型', async () => {
     const wrapper = mountModal({
       selectedPlatforms: ['anthropic'],
@@ -273,23 +298,14 @@ describe('BulkEditAccountModal', () => {
     })
   })
 
-  it('OpenAI 账号批量编辑可开启自动透传', async () => {
+  it('OpenAI OAuth 批量编辑不再展示旧自动透传', async () => {
     const wrapper = mountModal({
       selectedPlatforms: ['openai'],
       selectedTypes: ['oauth']
     })
 
-    await wrapper.get('#bulk-edit-openai-passthrough-enabled').setValue(true)
-    await wrapper.get('#bulk-edit-openai-passthrough-toggle').trigger('click')
-    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
-    await flushPromises()
-
-    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledTimes(1)
-    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
-      extra: {
-        openai_passthrough: true
-      }
-    })
+    expect(wrapper.find('#bulk-edit-openai-passthrough-enabled').exists()).toBe(false)
+    expect(wrapper.find('#bulk-edit-openai-passthrough-toggle').exists()).toBe(false)
   })
 
   it('OpenAI OAuth 批量编辑可开启 namespace 摊平兼容开关', async () => {
@@ -875,25 +891,22 @@ describe('BulkEditAccountModal', () => {
     })
   })
 
-  it('开启 OpenAI 自动透传时不再同时提交模型限制', async () => {
+  it('OpenAI OAuth 仍可单独编辑模型限制', async () => {
     const wrapper = mountModal({
       selectedPlatforms: ['openai'],
       selectedTypes: ['oauth']
     })
 
-    await wrapper.get('#bulk-edit-openai-passthrough-enabled').setValue(true)
-    await wrapper.get('#bulk-edit-openai-passthrough-toggle').trigger('click')
     await wrapper.get('#bulk-edit-model-restriction-enabled').setValue(true)
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
 
     expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledTimes(1)
     expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
-      extra: {
-        openai_passthrough: true
+      credentials: {
+        model_mapping: {}
       }
     })
-    expect(wrapper.text()).toContain('admin.accounts.openai.modelRestrictionDisabledByPassthrough')
   })
 
   it('filtered-results 模式下应提交 filters 而不是 account_ids', async () => {

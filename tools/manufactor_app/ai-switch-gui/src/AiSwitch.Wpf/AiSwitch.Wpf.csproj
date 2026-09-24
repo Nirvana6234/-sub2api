@@ -1,0 +1,67 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>LanAi.Workspace</AssemblyName>
+    <RootNamespace>LanAi.Workspace.Wpf</RootNamespace>
+    <ApplicationIcon>..\..\Assets\airplane-app-icon.ico</ApplicationIcon>
+    <AssemblyTitle>共飞AI工作台</AssemblyTitle>
+    <Product>共飞AI工作台</Product>
+    <Company>共飞AI工作台</Company>
+    <Authors>共飞AI工作台</Authors>
+    <Description>局域网与云端 AI 中转、用量统计和项目对话工作台。</Description>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(PublicRelease)' == 'true'">
+    <DefineConstants>$(DefineConstants);PUBLIC_RELEASE</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\THIRD_PARTY_NOTICES.md" Link="THIRD_PARTY_NOTICES.md" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="System.Net.Http" />
+    <Using Remove="System.Drawing" />
+    <Using Remove="System.Windows.Forms" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AiSwitch.Core\AiSwitch.Core.csproj" />
+    <ProjectReference Include="..\AiSwitch.Chat\AiSwitch.Chat.csproj" />
+    <ProjectReference Include="..\AiSwitch.Infrastructure\AiSwitch.Infrastructure.csproj" />
+    <ProjectReference Include="..\AiSwitch.Injection\AiSwitch.Injection.csproj" />
+    <ProjectReference Include="..\AiSwitch.Terminal\AiSwitch.Terminal.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="..\..\Assets\airplane-app-icon.png" Link="Assets\airplane-app-icon.png" />
+    <Resource Include="..\..\Assets\gongfei-plane.png" Link="Assets\gongfei-plane.png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Reuse proven non-UI compatibility services without referencing WinForms. -->
+    <Compile Include="..\..\ConfigPaths.cs" Link="Legacy\ConfigPaths.cs" />
+    <Compile Include="..\..\JsonFile.cs" Link="Legacy\JsonFile.cs" />
+    <Compile Include="..\..\Models.cs" Link="Legacy\Models.cs" />
+    <Compile Include="..\..\ProfileRepository.cs" Link="Legacy\ProfileRepository.cs" />
+    <Compile Include="..\..\SwitchService.cs" Link="Legacy\SwitchService.cs" />
+    <Compile Include="..\..\ClaudeGptBridgeServer.cs" Link="Legacy\ClaudeGptBridgeServer.cs" />
+    <Compile Include="..\..\LocalGatewayService.cs" Link="Legacy\LocalGatewayService.cs" />
+    <Compile Include="..\..\StatsService.cs" Link="Legacy\StatsService.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="AiSwitch.Wpf.Tests" />
+  </ItemGroup>
+
+</Project>

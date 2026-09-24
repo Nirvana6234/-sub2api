@@ -30,7 +30,6 @@ import (
 	"transithub/backend/internal/modules/system"
 	"transithub/backend/internal/modules/tickets"
 	"transithub/backend/internal/modules/upstream"
-	"transithub/backend/internal/modules/users"
 	"transithub/backend/internal/shared/authctx"
 	"transithub/backend/internal/shared/httpjson"
 )
@@ -73,7 +72,6 @@ func New(cfg config.Config, db *pgxpool.Pool, redisClient *redis.Client) *Server
 	}
 
 	auth.RegisterRoutes(server.mux, authService, cfg.AllowPublicRegister)
-	users.RegisterRoutes(server.mux, users.NewService(users.NewRepository(db)))
 	adminAccountsService := admin_accounts.NewService(admin_accounts.NewRepository(db))
 	upstreamRepository := upstream.NewRepository(db)
 	if err := upstreamRepository.EnsureSchema(context.Background()); err != nil {
@@ -526,11 +524,16 @@ func (s *Server) Handler() http.Handler {
 			return
 		}
 		if s.protectedPath(r.URL.Path) {
+			if s.authService == nil {
+				httpjson.WriteError(w, http.StatusUnauthorized, "auth.errors.unauthorized")
+				return
+			}
 			user, err := s.authService.CurrentUser(r.Context(), bearerToken(r.Header.Get("Authorization")))
 			if err != nil {
 				httpjson.WriteError(w, http.StatusUnauthorized, "auth.errors.unauthorized")
 				return
 			}
+			w.Header().Set("Cache-Control", "no-store")
 			r = r.WithContext(authctx.WithUserID(r.Context(), user.ID))
 		}
 		s.mux.ServeHTTP(w, r)
@@ -567,7 +570,37 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 func (s *Server) protectedPath(path string) bool {
-	return strings.HasPrefix(path, "/api/admin-accounts") || strings.HasPrefix(path, "/api/upstream-sites") || strings.HasPrefix(path, "/api/group-rates") || strings.HasPrefix(path, "/api/group-rate-campaigns") || strings.HasPrefix(path, "/api/my-sites") || strings.HasPrefix(path, "/api/settings") || strings.HasPrefix(path, "/api/dashboard") || strings.HasPrefix(path, "/api/system") || strings.HasPrefix(path, "/api/connection-health") || strings.HasPrefix(path, "/api/purity-check") || strings.HasPrefix(path, "/api/daily-report") || strings.HasPrefix(path, "/api/tickets") || strings.HasPrefix(path, "/api/leaderboard") || strings.HasPrefix(path, "/api/lottery") || strings.HasPrefix(path, "/api/mass-email")
+	if !strings.HasPrefix(path, apiPrefix) {
+		return false
+	}
+	return !isPublicAPIPath(path)
+}
+
+func isPublicAPIPath(path string) bool {
+	switch {
+	case path == "/api/health":
+		return true
+	case path == "/api/auth/email-code",
+		path == "/api/auth/register",
+		path == "/api/auth/login",
+		path == "/api/auth/password",
+		path == "/api/auth/api-key":
+		return true
+	case hasPathPrefix(path, "/api/embed/tickets"):
+		return true
+	case hasPathPrefix(path, "/api/embed/leaderboard"):
+		return true
+	case hasPathPrefix(path, "/api/embed/lottery"):
+		return true
+	case path == "/api/internal/fallback-pool-alert":
+		return true
+	default:
+		return false
+	}
+}
+
+func hasPathPrefix(path, prefix string) bool {
+	return path == prefix || strings.HasPrefix(path, prefix+"/")
 }
 
 func (s *Server) setSecurityHeaders(w http.ResponseWriter, r *http.Request) {

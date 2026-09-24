@@ -20,7 +20,7 @@ export interface CanvasPluginRuntimeContext {
   ai: {
     generateImage: (prompt: string, options?: { signal?: AbortSignal; references?: string[]; model?: string; count?: number; size?: string; quality?: string; background?: string }) => Promise<{ images: string[] }>
     generateVideo: (prompt: string, options?: { signal?: AbortSignal; references?: string[]; model?: string; size?: string; seconds?: string; aspectRatio?: string }) => Promise<{ url: string; mimeType: string; width?: number; height?: number; durationMs?: number }>
-    generateText: (prompt: string, options?: { signal?: AbortSignal; model?: string; system?: string; onDelta?: (text: string) => void }) => Promise<{ text: string }>
+    generateText: (prompt: string, options?: { signal?: AbortSignal; model?: string; system?: string; reasoningEffort?: 'none' | 'low' | 'medium' | 'high'; onDelta?: (text: string) => void }) => Promise<{ text: string }>
     generateAudio: (prompt: string, options?: { signal?: AbortSignal; model?: string; voice?: string; language?: string }) => Promise<{ url: string; mimeType: string }>
     listModels: (capability?: 'image' | 'video' | 'text' | 'audio') => Array<{ value: string; label: string }>
     defaultModel: (capability?: 'image' | 'video' | 'text' | 'audio') => string

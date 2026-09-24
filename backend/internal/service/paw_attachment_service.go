@@ -9,13 +9,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/google/uuid"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 )
 
 const (
-	defaultPawAttachmentTTL      = 24 * time.Hour
+	defaultPawAttachmentTTL       = 24 * time.Hour
 	defaultPawAttachmentMaxBytes  = 20 << 20
 	pawAttachmentInlineImageLimit = 5 << 20
 )

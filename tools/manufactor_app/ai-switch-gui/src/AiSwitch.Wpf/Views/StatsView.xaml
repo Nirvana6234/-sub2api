@@ -1,0 +1,603 @@
+<UserControl x:Class="LanAi.Workspace.Wpf.Views.StatsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:LanAi.Workspace.Wpf.Controls"
+             Loaded="StatsView_OnLoaded">
+    <UserControl.Resources>
+        <Style x:Key="StatsNoticeBorderStyle" TargetType="Border">
+            <Setter Property="Background" Value="#FFEAF4FF" />
+            <Setter Property="BorderBrush" Value="#29007AFF" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding HasFailure}" Value="True">
+                    <Setter Property="Background" Value="#FFFFECEA" />
+                    <Setter Property="BorderBrush" Value="#32FF3B30" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="StatsNoticeTextStyle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#FF245E91" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding HasFailure}" Value="True">
+                    <Setter Property="Foreground" Value="#FF9D292D" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="StatsColumnHeaderStyle" TargetType="DataGridColumnHeader">
+            <Setter Property="Padding" Value="14,0" />
+            <Setter Property="Background" Value="White" />
+            <Setter Property="Foreground" Value="{StaticResource TertiaryTextBrush}" />
+            <Setter Property="FontFamily" Value="Segoe UI Variable Text, Microsoft YaHei UI" />
+            <Setter Property="FontSize" Value="11.5" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="BorderBrush" Value="#FFE5E7EB" />
+            <Setter Property="BorderThickness" Value="0,0,0,1" />
+            <Setter Property="ContentTemplate">
+                <Setter.Value>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding}"
+                                   TextAlignment="Left"
+                                   TextWrapping="Wrap"
+                                   LineHeight="15"
+                                   VerticalAlignment="Center" />
+                    </DataTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="StatsNumberHeaderStyle"
+               TargetType="DataGridColumnHeader"
+               BasedOn="{StaticResource StatsColumnHeaderStyle}">
+            <Setter Property="HorizontalContentAlignment" Value="Right" />
+            <Setter Property="ContentTemplate">
+                <Setter.Value>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding}"
+                                   TextAlignment="Right"
+                                   TextWrapping="Wrap"
+                                   LineHeight="15"
+                                   VerticalAlignment="Center" />
+                    </DataTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="StatsDataGridStyle" TargetType="DataGrid">
+            <Setter Property="AutoGenerateColumns" Value="False" />
+            <Setter Property="CanUserAddRows" Value="False" />
+            <Setter Property="CanUserDeleteRows" Value="False" />
+            <Setter Property="CanUserResizeRows" Value="False" />
+            <Setter Property="IsReadOnly" Value="True" />
+            <Setter Property="HeadersVisibility" Value="Column" />
+            <Setter Property="GridLinesVisibility" Value="Horizontal" />
+            <Setter Property="HorizontalGridLinesBrush" Value="#FFE8E8EB" />
+            <Setter Property="VerticalGridLinesBrush" Value="Transparent" />
+            <Setter Property="RowHeaderWidth" Value="0" />
+            <Setter Property="RowHeight" Value="44" />
+            <Setter Property="ColumnHeaderHeight" Value="44" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Background" Value="White" />
+            <Setter Property="SelectionMode" Value="Single" />
+            <Setter Property="SelectionUnit" Value="FullRow" />
+            <Setter Property="FontSize" Value="12.5" />
+            <Setter Property="Foreground" Value="{StaticResource SecondaryTextBrush}" />
+            <Setter Property="ColumnHeaderStyle" Value="{StaticResource StatsColumnHeaderStyle}" />
+            <Setter Property="RowStyle">
+                <Setter.Value>
+                    <Style TargetType="DataGridRow">
+                        <Setter Property="Background" Value="White" />
+                        <Setter Property="BorderThickness" Value="0" />
+                        <Setter Property="SnapsToDevicePixels" Value="True" />
+                        <Style.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#FFF9FAFB" />
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter Property="Background" Value="#FFF3F4F6" />
+                                <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}" />
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="CellStyle">
+                <Setter.Value>
+                    <Style TargetType="DataGridCell">
+                        <Setter Property="Padding" Value="14,0" />
+                        <Setter Property="BorderThickness" Value="0" />
+                        <Setter Property="VerticalContentAlignment" Value="Center" />
+                        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+                        <Style.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter Property="Background" Value="Transparent" />
+                                <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}" />
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="StatsNumberCellStyle" TargetType="TextBlock">
+            <Setter Property="HorizontalAlignment" Value="Right" />
+            <Setter Property="TextAlignment" Value="Right" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Typography.NumeralAlignment" Value="Tabular" />
+            <Setter Property="Typography.NumeralStyle" Value="Lining" />
+        </Style>
+
+        <Style x:Key="StatsPrimaryCellStyle" TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}" />
+        </Style>
+
+        <Style x:Key="StatsPagerButtonStyle" TargetType="Button" BasedOn="{StaticResource SecondaryButtonStyle}">
+            <Setter Property="Height" Value="30" />
+            <Setter Property="MinWidth" Value="64" />
+            <Setter Property="Padding" Value="10,3" />
+            <Setter Property="FontSize" Value="11.5" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Background" Value="White" />
+            <Setter Property="BorderBrush" Value="#FFE5E7EB" />
+        </Style>
+
+        <Style x:Key="DashboardRangeButtonBaseStyle" TargetType="Button" BasedOn="{StaticResource SecondaryButtonStyle}">
+            <Setter Property="Padding" Value="12,7" />
+            <Setter Property="Margin" Value="2" />
+            <Setter Property="MinWidth" Value="60" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="FontSize" Value="10.2" />
+        </Style>
+        <Style x:Key="TodayRangeButtonStyle" TargetType="Button" BasedOn="{StaticResource DashboardRangeButtonBaseStyle}">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsTodayRangeSelected}" Value="True">
+                    <Setter Property="Background" Value="White" />
+                    <Setter Property="BorderBrush" Value="#FFE1E4E9" />
+                    <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+                    <Setter Property="FontWeight" Value="SemiBold" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="SevenDayRangeButtonStyle" TargetType="Button" BasedOn="{StaticResource DashboardRangeButtonBaseStyle}">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsSevenDayRangeSelected}" Value="True">
+                    <Setter Property="Background" Value="White" />
+                    <Setter Property="BorderBrush" Value="#FFE1E4E9" />
+                    <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+                    <Setter Property="FontWeight" Value="SemiBold" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="ThirtyDayRangeButtonStyle" TargetType="Button" BasedOn="{StaticResource DashboardRangeButtonBaseStyle}">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsThirtyDayRangeSelected}" Value="True">
+                    <Setter Property="Background" Value="White" />
+                    <Setter Property="BorderBrush" Value="#FFE1E4E9" />
+                    <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+                    <Setter Property="FontWeight" Value="SemiBold" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+    </UserControl.Resources>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                  HorizontalScrollBarVisibility="Disabled">
+        <StackPanel>
+            <Grid Margin="0,0,0,16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock Text="{Binding Title}" Style="{StaticResource PageTitleStyle}" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <StackPanel Orientation="Vertical" Margin="0,0,11,0" VerticalAlignment="Center">
+                        <TextBlock Margin="3,0,0,3" Text="仪表盘范围" FontSize="8.8" Foreground="{StaticResource TertiaryTextBrush}" />
+                        <Border Padding="3" Background="#FFF1F2F5" CornerRadius="11">
+                            <StackPanel Orientation="Horizontal">
+                                <Button Content="今天"
+                                        Command="{Binding SelectTodayRangeCommand}"
+                                        Style="{StaticResource TodayRangeButtonStyle}" />
+                                <Button Content="近 7 天"
+                                        Command="{Binding SelectSevenDayRangeCommand}"
+                                        Style="{StaticResource SevenDayRangeButtonStyle}" />
+                                <Button Content="近 30 天"
+                                        Command="{Binding SelectThirtyDayRangeCommand}"
+                                        Style="{StaticResource ThirtyDayRangeButtonStyle}" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </StackPanel>
+            </Grid>
+
+            <StackPanel>
+
+            <!-- A malformed fixed local profile is intentionally surfaced as a
+                 recovery card instead of falling through to editable remote
+                 credentials.  That preserves the user's local-only intent. -->
+            <Border Margin="0,0,0,17"
+                    Padding="20"
+                    Background="#FFFFF8ED"
+                    BorderBrush="#FFF3D6A1"
+                    BorderThickness="1"
+                    CornerRadius="15"
+                    Visibility="{Binding HasLocalGatewayConfigurationIssue, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <Border Width="8" Height="8" Margin="0,0,8,0" Background="#FFFF9F0A" CornerRadius="4" VerticalAlignment="Center" />
+                        <TextBlock Text="本机中转配置需要处理" FontSize="13" FontWeight="SemiBold" />
+                    </StackPanel>
+                    <TextBlock Margin="0,8,0,0"
+                               Text="{Binding LocalGatewayConfigurationNotice}"
+                               FontSize="10.4"
+                               Foreground="{StaticResource SecondaryTextBrush}"
+                               TextWrapping="Wrap" />
+                    <Button Margin="0,12,0,0"
+                            Padding="11,6"
+                            HorizontalAlignment="Left"
+                            Content="重新检查"
+                            Command="{Binding RefreshCloudConnectionModeCommand}"
+                            Style="{StaticResource SecondaryButtonStyle}" />
+                </StackPanel>
+            </Border>
+
+            <!-- Keep the fixed local data connection quiet; authorization remains
+                 available through the actions without exposing implementation details. -->
+            <Border Margin="0,0,0,17"
+                    Padding="16,12"
+                    Style="{StaticResource CardBorderStyle}"
+                    Visibility="{Binding IsLocalCloudConnection, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <Border Width="8" Height="8" Margin="0,0,8,0" Background="#FF30C759" CornerRadius="4" VerticalAlignment="Center" />
+                        <TextBlock Text="本机数据已连接" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button Margin="0,0,8,0"
+                                Padding="11,6"
+                                Content="重新检查"
+                                Command="{Binding RefreshCloudConnectionModeCommand}"
+                                Style="{StaticResource SecondaryButtonStyle}" />
+                        <Button Margin="0,0,8,0"
+                                Padding="11,6"
+                                Content="一次性授权"
+                                Command="{Binding BeginLocalAuthorizationCommand}"
+                                Visibility="{Binding RequiresLocalAuthorization, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                Style="{StaticResource PrimaryButtonStyle}" />
+                        <Button Margin="0,0,8,0"
+                                Padding="11,6"
+                                Content="{Binding RefreshButtonLabel}"
+                                IsEnabled="{Binding CanRefresh}"
+                                Click="LocalCloudRefreshButton_OnClick"
+                                Visibility="{Binding HasLocalGatewayAuthorization, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                Style="{StaticResource PrimaryButtonStyle}" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <Border Margin="0,0,0,17"
+                    Padding="20"
+                    Background="#FFF7FAFF"
+                    BorderBrush="#FFE0EAF9"
+                    BorderThickness="1"
+                    CornerRadius="15"
+                    Visibility="{Binding ShowLocalAuthorizationEditor, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <StackPanel>
+                    <Grid Margin="0,0,0,14">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="登录当前数据后台" Style="{StaticResource SectionTitleStyle}" />
+                        </StackPanel>
+                        <Button Grid.Column="1"
+                                Padding="10,5"
+                                Content="取消"
+                                Command="{Binding CancelLocalAuthorizationCommand}"
+                                Style="{StaticResource SecondaryButtonStyle}" />
+                    </Grid>
+
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="1*" />
+                            <ColumnDefinition Width="16" />
+                            <ColumnDefinition Width="1*" />
+                        </Grid.ColumnDefinitions>
+                        <Border Padding="15"
+                                Background="White"
+                                BorderBrush="#FFE1E4E9"
+                                BorderThickness="1"
+                                CornerRadius="12"
+                                Visibility="{Binding ShowAdministratorApiKeyEditor, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <StackPanel>
+                                <TextBlock Text="管理员完整统计（推荐）" FontSize="11" FontWeight="SemiBold" />
+                                <PasswordBox x:Name="LocalAdministratorApiKeyInput"
+                                             Height="37"
+                                             Padding="11,0"
+                                             VerticalContentAlignment="Center"
+                                             PasswordChar="●"
+                                             Background="#FFF8F8FA"
+                                             Foreground="{StaticResource PrimaryTextBrush}"
+                                             BorderBrush="{StaticResource HairlineBrush}"
+                                             BorderThickness="1" />
+                                <Button Margin="0,10,0,0"
+                                        Content="安全保存并读取全站统计"
+                                        Click="SaveLocalAdministratorAuthorizationButton_OnClick"
+                                        Style="{StaticResource PrimaryButtonStyle}" />
+                            </StackPanel>
+                        </Border>
+                        <Border Padding="15" Background="White" BorderBrush="#FFE1E4E9" BorderThickness="1" CornerRadius="12">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Grid.Column" Value="2" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding ShowAdministratorApiKeyEditor}" Value="False">
+                                            <Setter Property="Grid.Column" Value="0" />
+                                            <Setter Property="Grid.ColumnSpan" Value="3" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <StackPanel>
+                                <TextBlock Text="本人账户统计" FontSize="11" FontWeight="SemiBold" />
+                                <Grid Margin="0,0,0,10">
+                                    <Border Padding="10,8" Background="#FFFBFCFE" CornerRadius="8">
+                                        <TextBlock Text="请输入当前后台的账户邮箱和登录密码，授权后可自动读取本人的用量与费用。"
+                                                   FontSize="9.2"
+                                                   Foreground="{StaticResource SecondaryTextBrush}"
+                                                   TextWrapping="Wrap" />
+                                    </Border>
+                                    <Rectangle Stroke="#FFC8D2E3"
+                                               StrokeThickness="1"
+                                               StrokeDashArray="3 3"
+                                               RadiusX="8"
+                                               RadiusY="8"
+                                               IsHitTestVisible="False" />
+                                </Grid>
+                                <TextBlock Text="账户邮箱" FontSize="9.2" Foreground="{StaticResource TertiaryTextBrush}" />
+                                <TextBox Height="37"
+                                          Margin="0,5,0,0"
+                                          Padding="11,0"
+                                         VerticalContentAlignment="Center"
+                                         Text="{Binding LocalAuthorizationEmail, UpdateSourceTrigger=PropertyChanged}"
+                                          Style="{StaticResource WorkspaceTextBoxStyle}"
+                                          ToolTip="当前后台账户邮箱" />
+                                <TextBlock Margin="0,9,0,0" Text="登录密码" FontSize="9.2" Foreground="{StaticResource TertiaryTextBrush}" />
+                                <PasswordBox x:Name="LocalUserPasswordInput"
+                                              Margin="0,5,0,0"
+                                             Height="37"
+                                             Padding="11,0"
+                                             VerticalContentAlignment="Center"
+                                             PasswordChar="●"
+                                             Background="#FFF8F8FA"
+                                             Foreground="{StaticResource PrimaryTextBrush}"
+                                             BorderBrush="{StaticResource HairlineBrush}"
+                                             BorderThickness="1" />
+                                <Button Margin="0,10,0,0"
+                                        Content="授权并读取本人统计"
+                                        Click="AuthorizeLocalUserButton_OnClick"
+                                        Style="{StaticResource SecondaryButtonStyle}" />
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <UniformGrid Columns="4" Margin="-6,0,-6,17">
+                <Border Margin="6,0" Padding="18" Style="{StaticResource CardBorderStyle}">
+                    <StackPanel>
+                        <TextBlock Text="{Binding DashboardRangeLabel, StringFormat={}{0} 请求}" FontSize="11.5" Foreground="{StaticResource TertiaryTextBrush}" />
+                        <TextBlock Margin="0,10,0,0" Text="{Binding CloudRangeRequests}" FontSize="22" FontWeight="SemiBold" />
+                        <TextBlock Margin="0,6,0,0" Text="{Binding DashboardRangeCaption}" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" />
+                    </StackPanel>
+                </Border>
+                <Border Margin="6,0" Padding="18" Style="{StaticResource CardBorderStyle}">
+                    <StackPanel>
+                        <TextBlock Text="{Binding DashboardRangeLabel, StringFormat={}{0} Token}" FontSize="11.5" Foreground="{StaticResource TertiaryTextBrush}" />
+                        <TextBlock Margin="0,10,0,0" Text="{Binding CloudRangeTokens}" FontSize="22" FontWeight="SemiBold" />
+                        <TextBlock Margin="0,6,0,0" Text="{Binding CloudRangeCacheHitRate, StringFormat=缓存命中 {0}}" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" />
+                    </StackPanel>
+                </Border>
+                <Border Margin="6,0" Padding="18" Style="{StaticResource CardBorderStyle}">
+                    <StackPanel>
+                        <TextBlock Text="{Binding DashboardRangeLabel, StringFormat={}{0} 模型用量费用}" FontSize="11.5" Foreground="{StaticResource TertiaryTextBrush}" />
+                        <TextBlock Margin="0,10,0,0" Text="{Binding CloudRangeActualCost}" FontSize="22" FontWeight="SemiBold" Foreground="#FF0A7D38" />
+                        <TextBlock Margin="0,6,0,0" Text="{Binding CloudRangeCacheReadTokens, StringFormat=缓存读取 {0}}" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" />
+                    </StackPanel>
+                </Border>
+                <Border Margin="6,0" Padding="18" Style="{StaticResource CardBorderStyle}">
+                    <StackPanel>
+                        <TextBlock Text="{Binding DashboardRangeLabel, StringFormat={}{0} 平均耗时}" FontSize="11.5" Foreground="{StaticResource TertiaryTextBrush}" />
+                        <TextBlock Margin="0,10,0,0" Text="{Binding CloudRangeAverageLatency}" FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource AccentBrush}" />
+                        <TextBlock Margin="0,6,0,0" Text="{Binding CloudLifetimeSummary}" TextWrapping="Wrap" FontSize="10.6" Foreground="{StaticResource SecondaryTextBrush}" />
+                    </StackPanel>
+                </Border>
+            </UniformGrid>
+
+            <Grid Margin="0,0,0,17">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="2.15*" />
+                    <ColumnDefinition Width="18" />
+                    <ColumnDefinition Width="1*" />
+                </Grid.ColumnDefinitions>
+
+                <Border Grid.Column="0" Padding="22" Style="{StaticResource CardBorderStyle}">
+                    <StackPanel>
+                        <Grid Margin="0,0,0,16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="{Binding DashboardRangeLabel, StringFormat={}{0} 模型账本}" Style="{StaticResource SectionTitleStyle}" />
+                                <TextBlock Margin="0,5,0,0"
+                                           Text="按照官方原始价格排序；模型、请求、缓存与费用均来自本机账本范围。"
+                                            FontSize="11.5"
+                                           Foreground="{StaticResource SecondaryTextBrush}" />
+                            </StackPanel>
+                            <Border Grid.Column="1" Padding="9,5" Background="#FFF4F4F6" CornerRadius="8">
+                                <TextBlock Text="{Binding ApiKeySummary}" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" />
+                            </Border>
+                        </Grid>
+
+                        <DataGrid ItemsSource="{Binding Models}"
+                                  MinHeight="245"
+                                  MaxHeight="390"
+                                  Style="{StaticResource StatsDataGridStyle}">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="模型" Binding="{Binding Model}" Width="1.55*" ElementStyle="{StaticResource StatsPrimaryCellStyle}" />
+                                <DataGridTextColumn Header="请求" Binding="{Binding Requests}" Width="0.72*" ElementStyle="{StaticResource StatsNumberCellStyle}" HeaderStyle="{StaticResource StatsNumberHeaderStyle}" />
+                                <DataGridTextColumn Header="输入" Binding="{Binding InputTokens}" Width="0.8*" ElementStyle="{StaticResource StatsNumberCellStyle}" HeaderStyle="{StaticResource StatsNumberHeaderStyle}" />
+                                <DataGridTextColumn Header="输出" Binding="{Binding OutputTokens}" Width="0.8*" ElementStyle="{StaticResource StatsNumberCellStyle}" HeaderStyle="{StaticResource StatsNumberHeaderStyle}" />
+                                <DataGridTextColumn Header="缓存读取" Binding="{Binding CacheReadTokens}" Width="0.8*" ElementStyle="{StaticResource StatsNumberCellStyle}" HeaderStyle="{StaticResource StatsNumberHeaderStyle}" />
+                                <DataGridTextColumn Header="缓存写入" Binding="{Binding CacheCreationTokens}" Width="0.8*" ElementStyle="{StaticResource StatsNumberCellStyle}" HeaderStyle="{StaticResource StatsNumberHeaderStyle}" />
+                                <DataGridTextColumn Header="总 Token" Binding="{Binding TotalTokens}" Width="0.9*" ElementStyle="{StaticResource StatsNumberCellStyle}" HeaderStyle="{StaticResource StatsNumberHeaderStyle}" />
+                                <DataGridTextColumn Header="官方费用" Binding="{Binding Cost}" Width="0.78*" ElementStyle="{StaticResource StatsNumberCellStyle}" HeaderStyle="{StaticResource StatsNumberHeaderStyle}" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+
+                        <Border Margin="0,10,0,0"
+                                Padding="13,11"
+                                Background="#FFF8F8FA"
+                                CornerRadius="10"
+                                Visibility="{Binding HasNoModels, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <TextBlock Text="接口没有返回模型明细。总览数据仍然有效。"
+                                       FontSize="10"
+                                       Foreground="{StaticResource SecondaryTextBrush}" />
+                        </Border>
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Column="2" Padding="22" Style="{StaticResource CardBorderStyle}">
+                    <StackPanel>
+                        <TextBlock Text="{Binding DashboardRangeLabel, StringFormat={}{0} 用量脉冲}" Style="{StaticResource SectionTitleStyle}" />
+                        <TextBlock Margin="0,5,0,16"
+                                   Text="{Binding TrendSummary}"
+                                   FontSize="11.5"
+                                   Foreground="{StaticResource SecondaryTextBrush}"
+                                   TextWrapping="Wrap" />
+
+                        <controls:UsageLineChart Height="224"
+                                                 ItemsSource="{Binding CloudTrend}"
+                                                 Stroke="{StaticResource AccentBrush}"
+                                                 PointBrush="{StaticResource AccentBrush}"
+                                                 Fill="#1F007AFF"
+                                                 GridBrush="#FFE7E8ED"
+                                                 LabelBrush="{StaticResource TertiaryTextBrush}"
+                                                 IsBarChart="{Binding IsTodayRangeSelected}"
+                                                 Visibility="{Binding HasData, Converter={StaticResource BooleanToVisibilityConverter}}" />
+
+                        <Border Padding="13,11"
+                                Background="#FFF8F8FA"
+                                CornerRadius="10"
+                                Visibility="{Binding HasNoCloudTrend, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <TextBlock Text="近期没有可展示的趋势数据。"
+                                       FontSize="10"
+                                       Foreground="{StaticResource SecondaryTextBrush}" />
+                        </Border>
+
+                        <UniformGrid Columns="2" Margin="-5,15,-5,-5">
+                            <Border Margin="5" MinHeight="82" Padding="14,12" Style="{StaticResource InsetBorderStyle}">
+                                <StackPanel>
+                                    <TextBlock Text="缓存读取" FontSize="11.5" Foreground="{StaticResource TertiaryTextBrush}" />
+                                    <Viewbox Margin="0,7,0,0" Height="24" HorizontalAlignment="Left" Stretch="Uniform" StretchDirection="DownOnly">
+                                        <TextBlock Text="{Binding CloudRangeCacheReadTokens}" FontSize="17" FontWeight="SemiBold" />
+                                    </Viewbox>
+                                </StackPanel>
+                            </Border>
+                            <Border Margin="5" MinHeight="82" Padding="14,12" Style="{StaticResource InsetBorderStyle}">
+                                <StackPanel>
+                                    <TextBlock Text="输入" FontSize="11.5" Foreground="{StaticResource TertiaryTextBrush}" />
+                                    <Viewbox Margin="0,7,0,0" Height="24" HorizontalAlignment="Left" Stretch="Uniform" StretchDirection="DownOnly">
+                                        <TextBlock Text="{Binding CloudRangeInputTokens}" FontSize="17" FontWeight="SemiBold" />
+                                    </Viewbox>
+                                </StackPanel>
+                            </Border>
+                            <Border Margin="5" MinHeight="82" Padding="14,12" Style="{StaticResource InsetBorderStyle}">
+                                <StackPanel>
+                                    <TextBlock Text="输出" FontSize="11.5" Foreground="{StaticResource TertiaryTextBrush}" />
+                                    <Viewbox Margin="0,7,0,0" Height="24" HorizontalAlignment="Left" Stretch="Uniform" StretchDirection="DownOnly">
+                                        <TextBlock Text="{Binding CloudRangeOutputTokens}" FontSize="17" FontWeight="SemiBold" />
+                                    </Viewbox>
+                                </StackPanel>
+                            </Border>
+                            <Border Margin="5" MinHeight="82" Padding="14,12" Style="{StaticResource InsetBorderStyle}">
+                                <StackPanel>
+                                    <TextBlock Text="平均耗时" FontSize="11.5" Foreground="{StaticResource TertiaryTextBrush}" />
+                                    <Viewbox Margin="0,7,0,0" Height="24" HorizontalAlignment="Left" Stretch="Uniform" StretchDirection="DownOnly">
+                                        <TextBlock Text="{Binding CloudRangeAverageLatency}" FontSize="17" FontWeight="SemiBold" />
+                                    </Viewbox>
+                                </StackPanel>
+                            </Border>
+                        </UniformGrid>
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <Border Padding="0"
+                    Background="#FF1C2026"
+                    BorderBrush="#FF2E333B"
+                    BorderThickness="1"
+                    CornerRadius="16">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="47" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid Margin="18,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock Text="RECENT / DAILY"
+                                       FontFamily="Cascadia Mono, Consolas"
+                                       FontSize="9.5"
+                                       FontWeight="Bold"
+                                       Foreground="#FF74C0FC" />
+                            <TextBlock Margin="11,0,0,0"
+                                       Text="近期趋势文本"
+                                       FontSize="10.3"
+                                       Foreground="#FFD7D7DC" />
+                        </StackPanel>
+                        <TextBlock Grid.Column="1"
+                                   Text="请求 · Token · 官方费用"
+                                   FontSize="9"
+                                   Foreground="#FF8E8E93"
+                                   VerticalAlignment="Center" />
+                    </Grid>
+                    <TextBox Grid.Row="1"
+                             MinHeight="118"
+                             MaxHeight="210"
+                             Padding="18,13,18,18"
+                             Text="{Binding RecentTrendText, Mode=OneWay}"
+                             IsReadOnly="True"
+                             AcceptsReturn="True"
+                             TextWrapping="NoWrap"
+                             HorizontalScrollBarVisibility="Auto"
+                             VerticalScrollBarVisibility="Auto"
+                             Background="#FF1C2026"
+                             Foreground="#FFB8E7C3"
+                             BorderThickness="0"
+                             FontFamily="Cascadia Mono, Consolas"
+                             FontSize="9.8" />
+                </Grid>
+            </Border>
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

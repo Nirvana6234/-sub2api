@@ -970,6 +970,16 @@ type GatewayConfig struct {
 	// OpenAIHighEffortFirstOutputTimeoutSeconds: high/xhigh/max 推理的首个语义输出超时（秒）。
 	// 0 表示回退到 OpenAIFirstOutputTimeoutSeconds。
 	OpenAIHighEffortFirstOutputTimeoutSeconds int `mapstructure:"openai_high_effort_first_output_timeout_seconds"`
+	// OpenAIFirstOutputHardCapSeconds: 上游迟迟不出首字时真正放弃的上限（秒）。
+	//
+	// 它与上面两个"首输出超时"的职责完全不同，不要混用：
+	//   - 首输出超时到点 = "这个请求偏慢"，只记观测，绝不截断、绝不换号。请求
+	//     已经发给上游、上游也还在正常处理，慢不构成把用户请求杀掉再回一个错误
+	//     的理由（实测成功请求的首字 p90 就有 35-38 秒、最慢的 73.8 秒也正常返回）。
+	//   - 本上限到点 = "这条连接大概率已经死了"，才取消并走换号。
+	//
+	// 0 表示回退到 defaultOpenAIFirstOutputHardCapSeconds。
+	OpenAIFirstOutputHardCapSeconds int `mapstructure:"openai_first_output_hard_cap_seconds"`
 	// 请求体最大字节数，用于网关请求体大小限制
 	MaxBodySize int64 `mapstructure:"max_body_size"`
 	// TextMaxBodySize limits endpoints that cannot carry inline image/video payloads.
@@ -3325,6 +3335,10 @@ func (c *Config) Validate() error {
 	if c.Gateway.OpenAIHighEffortFirstOutputTimeoutSeconds < 0 || c.Gateway.OpenAIHighEffortFirstOutputTimeoutSeconds > 1800 ||
 		(c.Gateway.OpenAIHighEffortFirstOutputTimeoutSeconds > 0 && c.Gateway.OpenAIHighEffortFirstOutputTimeoutSeconds < 30) {
 		return fmt.Errorf("gateway.openai_high_effort_first_output_timeout_seconds must be 0 or between 30-1800 seconds")
+	}
+	if c.Gateway.OpenAIFirstOutputHardCapSeconds < 0 || c.Gateway.OpenAIFirstOutputHardCapSeconds > 3600 ||
+		(c.Gateway.OpenAIFirstOutputHardCapSeconds > 0 && c.Gateway.OpenAIFirstOutputHardCapSeconds < 60) {
+		return fmt.Errorf("gateway.openai_first_output_hard_cap_seconds must be 0 or between 60-3600 seconds")
 	}
 	if c.Gateway.Live.MaxSessionDurationSeconds <= 0 {
 		c.Gateway.Live.MaxSessionDurationSeconds = 3600

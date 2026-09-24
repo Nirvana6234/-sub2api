@@ -311,10 +311,14 @@ func TestOpenAILatencyFallbackContextMarker(t *testing.T) {
 	if !ok || bucket != openAILatencyBucketHigh {
 		t.Fatalf("marker = (%q, %t), want (high, true)", bucket, ok)
 	}
-	if _, ok := isOpenAILatencyFallbackTrigger(
-		withOpenAILatencyFallbackSuppressed(withOpenAILatencyFallbackTrigger(context.Background(), openAILatencyBucketHigh)),
-	); ok {
-		t.Fatal("suppressed latency fallback context marker must stop recursive latency fallback")
+	// 标记必须随兜底链路向下传：它既阻止链路内再次触发延迟兜底，也让下游候选
+	// 继续接受延迟准入（对照最初变慢的源组）。
+	downstream := withOpenAIFallbackGroupState(
+		withOpenAIFallbackPoolSourcing(withOpenAILatencyFallbackTrigger(context.Background(), openAILatencyBucketHigh)),
+		fallbackGroupState{originGroupID: 1, targetGroupID: 2, hops: 1},
+	)
+	if bucket, ok := isOpenAILatencyFallbackTrigger(downstream); !ok || bucket != openAILatencyBucketHigh {
+		t.Fatalf("downstream marker = (%q, %t), want (high, true)", bucket, ok)
 	}
 	if _, ok := isOpenAILatencyFallbackTrigger(context.Background()); ok {
 		t.Fatal("plain context must not look like a latency fallback trigger")

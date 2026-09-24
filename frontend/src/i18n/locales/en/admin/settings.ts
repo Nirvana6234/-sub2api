@@ -1,4 +1,27 @@
 export default {
+  guestTrial: {
+    title: 'Web trial (no sign-up)',
+    description: 'Visitors can chat in the browser without an account. Traffic uses the key below, only allowlisted models are available, and uploads and image generation are disabled.',
+    openPage: 'Open trial page',
+    enabled: 'Allow trial without sign-up',
+    enabledHint: 'Adds a Free trial button to the home page. Visitors can chat without logging in.',
+    apiKey: 'Key that serves trial traffic',
+    apiKeyPlaceholder: 'Choose a key',
+    apiKeyHint: "Lists the current admin's own keys. Trial usage and cost are recorded on this key, and its group decides the upstream. A dedicated trial key with a quota is recommended.",
+    models: 'Trial models',
+    modelsHint: 'Comma separated; the first one is the default. Visitors can only pick from these.',
+    dailyPerVisitor: 'Messages per visitor per day',
+    dailyPerVisitorHint: 'Counted per browser; one IP may use up to {multiplier}× this to allow shared office or campus networks.',
+    dailyGlobal: 'Site-wide trial requests per day',
+    dailyGlobalHint: 'Once reached, the trial pauses for the day and visitors are asked to sign up.',
+    maxInputChars: 'Max characters per conversation',
+    maxOutputTokens: 'Max output tokens per reply',
+    requireCaptcha: 'Captcha before the first message',
+    requireCaptchaHint: "Uses the site's configured captcha provider; has no effect if none is enabled. One pass lasts 24 hours per device.",
+    loadFailed: 'Failed to load trial settings',
+    saveFailed: 'Save failed',
+    saved: 'Trial settings saved'
+  },
     settings: {
       title: 'System Settings',
       description: 'Manage registration, email verification, default values, and SMTP settings',

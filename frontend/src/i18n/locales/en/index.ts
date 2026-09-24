@@ -1,4 +1,5 @@
 import landing from './landing'
+import onboarding from './onboarding'
 import common from './common'
 import dashboard from './dashboard'
 import channelMonitorV2 from './channelMonitorV2'
@@ -8,6 +9,7 @@ import misc from './misc'
 
 export default {
   ...landing,
+  ...onboarding,
   ...common,
   ...dashboard,
   ...channelMonitorV2,

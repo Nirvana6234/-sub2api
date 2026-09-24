@@ -237,7 +237,10 @@ func (s *TokenRefreshService) refreshLoop() {
 	// 计算检查间隔
 	checkInterval := time.Duration(s.cfg.CheckIntervalMinutes) * time.Minute
 	if checkInterval < time.Minute {
-		checkInterval = 5 * time.Minute
+		// Keep the recovery loop responsive: temporarily blocked accounts are
+		// probed independently of token expiry and should return to service
+		// shortly after their credentials recover.
+		checkInterval = time.Minute
 	}
 
 	ticker := time.NewTicker(checkInterval)
@@ -526,13 +529,14 @@ func (s *TokenRefreshService) processRefreshContext(parent context.Context) {
 			break
 		}
 		page, err := pager.ListOAuthRefreshCandidatePage(ctx, OAuthRefreshPageOptions{
-			Platforms:            platforms,
-			AfterID:              afterID,
-			Limit:                pageSize,
-			ActiveOnly:           true,
-			IncludeSetupToken:    true,
-			RequireRefreshToken:  true,
-			ExcludeRetryCooldown: true,
+			Platforms:                platforms,
+			AfterID:                  afterID,
+			Limit:                    pageSize,
+			ActiveOnly:               true,
+			IncludeSetupToken:        true,
+			RequireRefreshToken:      true,
+			ExcludeRetryCooldown:     true,
+			IncludeTempUnschedulable: true,
 		})
 		if err != nil {
 			slog.Error("token_refresh.list_accounts_failed", "error", err, "after_id", afterID)
@@ -616,7 +620,8 @@ func (s *TokenRefreshService) processCandidatePage(
 			continue
 		}
 		stats.oauth++
-		if !state.registration.refresher.NeedsRefresh(account, refreshWindow) {
+		blocked := account.TempUnschedulableUntil != nil && time.Now().Before(*account.TempUnschedulableUntil)
+		if !blocked && !state.registration.refresher.NeedsRefresh(account, refreshWindow) {
 			continue
 		}
 		stats.needsRefresh++

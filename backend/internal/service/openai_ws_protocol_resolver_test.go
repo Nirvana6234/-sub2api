@@ -104,6 +104,27 @@ func TestOpenAIWSProtocolResolver_Resolve(t *testing.T) {
 		require.Equal(t, "global_disabled", decision.Reason)
 	})
 
+	t.Run("贡献账号强制HTTP bridge", func(t *testing.T) {
+		account := *openAIOAuthEnabled
+		account.Extra = map[string]any{
+			AccountContributionSourceKey:                   AccountContributionSourceValue,
+			AccountContributorUserIDKey:                    float64(42),
+			"openai_oauth_responses_websockets_v2_enabled": true,
+		}
+		decision := NewOpenAIWSProtocolResolver(baseCfg).Resolve(&account)
+		require.Equal(t, OpenAIUpstreamTransportHTTPSSE, decision.Transport)
+		require.Equal(t, "public_upstream_requires_http_bridge", decision.Reason)
+	})
+
+	t.Run("用户自有代理强制HTTP bridge", func(t *testing.T) {
+		ownerID := int64(42)
+		account := *openAIOAuthEnabled
+		account.Proxy = &Proxy{OwnerUserID: &ownerID}
+		decision := NewOpenAIWSProtocolResolver(baseCfg).Resolve(&account)
+		require.Equal(t, OpenAIUpstreamTransportHTTPSSE, decision.Transport)
+		require.Equal(t, "public_upstream_requires_http_bridge", decision.Reason)
+	})
+
 	t.Run("账号开关关闭保持HTTP", func(t *testing.T) {
 		account := *openAIOAuthEnabled
 		account.Extra = map[string]any{

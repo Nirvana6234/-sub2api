@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"math"
 	"net/http"
 	"testing"
 
@@ -159,6 +160,56 @@ func TestCreateAccountAcceptsDedicatedUpstreamBillingProbeSetting(t *testing.T) 
 		SkipDefaultGroupBind: true,
 	})
 	require.ErrorIs(t, err, ErrUpstreamBillingProbeAccountInvalid)
+}
+
+func TestSetAccountUpstreamBillingManualRateMultiplierPersistsUntilCleared(t *testing.T) {
+	accountID := int64(901)
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{
+		accountID: {
+			ID: accountID, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive,
+			Extra: map[string]any{UpstreamBillingProbeExtraKey: map[string]any{"status": UpstreamBillingProbeStatusOK}},
+		},
+	}}
+	svc := &adminServiceImpl{accountRepo: repo}
+	rate := 0.07
+
+	updated, err := svc.SetAccountUpstreamBillingManualRateMultiplier(context.Background(), accountID, &rate)
+	require.NoError(t, err)
+	require.Equal(t, rate, updated.Extra[UpstreamBillingManualRateMultiplierExtraKey])
+	actual, ok := upstreamBillingManualRateMultiplier(updated.Extra)
+	require.True(t, ok)
+	require.Equal(t, rate, actual)
+
+	updated, err = svc.SetAccountUpstreamBillingManualRateMultiplier(context.Background(), accountID, nil)
+	require.NoError(t, err)
+	_, ok = upstreamBillingManualRateMultiplier(updated.Extra)
+	require.False(t, ok)
+}
+
+func TestSetAccountUpstreamBillingManualRateMultiplierRejectsOAuthAccount(t *testing.T) {
+	accountID := int64(905)
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{
+		accountID: {ID: accountID, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive},
+	}}
+	svc := &adminServiceImpl{accountRepo: repo}
+	rate := 0.5
+
+	_, err := svc.SetAccountUpstreamBillingManualRateMultiplier(context.Background(), accountID, &rate)
+	require.ErrorIs(t, err, ErrUpstreamBillingProbeAccountInvalid)
+}
+
+func TestSetAccountUpstreamBillingManualRateMultiplierRejectsInvalidValue(t *testing.T) {
+	accountID := int64(906)
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{
+		accountID: {ID: accountID, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive},
+	}}
+	svc := &adminServiceImpl{accountRepo: repo}
+
+	for _, rate := range []float64{-1, math.NaN(), math.Inf(1)} {
+		rate := rate
+		_, err := svc.SetAccountUpstreamBillingManualRateMultiplier(context.Background(), accountID, &rate)
+		require.Error(t, err)
+	}
 }
 
 func TestUpdateAccountPreservesManagedUpstreamBillingProbeStateForUnrelatedEdit(t *testing.T) {

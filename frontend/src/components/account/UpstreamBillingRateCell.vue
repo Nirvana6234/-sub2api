@@ -4,14 +4,18 @@
       <template #trigger>
         <span
           class="cursor-help border-b border-dotted border-gray-300 text-sm font-medium dark:border-dark-600"
-          :class="hasEffectiveRate ? 'font-mono text-gray-800 dark:text-gray-200' : statusClass || 'text-gray-400 dark:text-gray-500'"
+          :class="manualRate != null ? 'font-mono text-blue-700 dark:text-blue-300' : hasEffectiveRate ? 'font-mono text-gray-800 dark:text-gray-200' : statusClass || 'text-gray-400 dark:text-gray-500'"
           data-testid="upstream-billing-rate"
         >
           {{ primaryValue }}
         </span>
       </template>
       <div class="space-y-1">
-        <template v-if="hasEffectiveRate && data">
+        <template v-if="manualRate != null">
+          <p>{{ t('admin.accounts.upstreamBilling.manualRate', { value: manualRate }) }}</p>
+          <p>{{ t('admin.accounts.upstreamBilling.manualRateHint') }}</p>
+        </template>
+        <template v-else-if="hasEffectiveRate && data">
           <p>{{ t('admin.accounts.upstreamBilling.groupRate', { value: data.group_rate_multiplier }) }}</p>
           <p v-if="data.user_rate_multiplier != null">
             {{ t('admin.accounts.upstreamBilling.userRate', { value: data.user_rate_multiplier }) }}
@@ -65,9 +69,33 @@
         </p>
       </div>
     </HelpTooltip>
-    <span v-if="hasEffectiveRate && statusLabel" :class="statusClass" class="whitespace-nowrap text-[10px] font-medium">
+    <span v-if="manualRate != null" class="whitespace-nowrap text-[10px] font-medium text-blue-600 dark:text-blue-400">
+      {{ t('admin.accounts.upstreamBilling.manual') }}
+    </span>
+    <span v-else-if="hasEffectiveRate && statusLabel" :class="statusClass" class="whitespace-nowrap text-[10px] font-medium">
       {{ statusLabel }}
     </span>
+    <button
+      type="button"
+      class="inline-flex h-6 w-6 flex-shrink-0 items-center justify-center rounded text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
+      :aria-label="t('admin.accounts.upstreamBilling.setManualRate')"
+      :title="t('admin.accounts.upstreamBilling.setManualRate')"
+      data-testid="upstream-billing-set-manual-rate"
+      @click="$emit('edit-manual-rate')"
+    >
+      <Icon name="edit" size="xs" />
+    </button>
+    <button
+      v-if="manualRate != null"
+      type="button"
+      class="inline-flex h-6 w-6 flex-shrink-0 items-center justify-center rounded text-red-600 transition-colors hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/30"
+      :aria-label="t('admin.accounts.upstreamBilling.clearManualRate')"
+      :title="t('admin.accounts.upstreamBilling.clearManualRate')"
+      data-testid="upstream-billing-clear-manual-rate"
+      @click="$emit('clear-manual-rate')"
+    >
+      <Icon name="trash" size="xs" />
+    </button>
     <button
       type="button"
       class="inline-flex h-6 w-6 flex-shrink-0 items-center justify-center rounded text-blue-600 transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-blue-400 dark:hover:bg-blue-900/30"
@@ -102,6 +130,8 @@ const props = withDefaults(defineProps<{
 
 defineEmits<{
   (event: 'probe'): void
+  (event: 'edit-manual-rate'): void
+  (event: 'clear-manual-rate'): void
 }>()
 
 const { t } = useI18n()
@@ -110,6 +140,10 @@ const CLOCK_SKEW_TOLERANCE_MS = 5 * 60 * 1000
 const eligible = computed(() => props.account.type === 'apikey')
 const snapshot = computed<UpstreamBillingProbeSnapshot | undefined>(() => props.account.extra?.upstream_billing_probe)
 const data = computed(() => snapshot.value?.data)
+const manualRate = computed(() => {
+  const value = props.account.extra?.upstream_billing_manual_rate_multiplier
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
+})
 const probeEnabled = computed(() => props.account.extra?.upstream_billing_probe_enabled === true)
 const nextProbeAt = computed(() => {
   const value = snapshot.value?.next_probe_at
@@ -209,7 +243,9 @@ const statusClass = computed(() => {
   return ''
 })
 const hasEffectiveRate = computed(() => effectiveRate.value !== '-')
-const primaryValue = computed(() => hasEffectiveRate.value ? effectiveRate.value : statusLabel.value || '-')
+const primaryValue = computed(() => manualRate.value != null
+  ? `${formatMultiplier(manualRate.value)}x`
+  : hasEffectiveRate.value ? effectiveRate.value : statusLabel.value || '-')
 const formatDate = (value?: string) => value
   ? new Date(value).toLocaleString(undefined, {
       month: '2-digit',

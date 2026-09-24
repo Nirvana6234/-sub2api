@@ -328,11 +328,11 @@ type SystemSettings struct {
 	ClientLatestVersion        string `json:"client_latest_version"`
 	ClientLatestVersionMac     string `json:"client_latest_version_mac"`
 	ClientTutorialVideoURL     string `json:"client_tutorial_video_url"`
+	ChatAppDownloadEnabled     bool   `json:"chat_app_download_enabled"`
+	ChatAppDownloadDirectURL   string `json:"chat_app_download_direct_url"`
+	ChatAppLatestVersion       string `json:"chat_app_latest_version"`
 	BackupPaymentEnabled       bool   `json:"backup_payment_enabled"`
 	BackupPaymentURL           string `json:"backup_payment_url"`
-
-	// headroom 上下文压缩代理地址
-	HeadroomBaseURL string `json:"headroom_base_url"`
 
 	// 延迟补偿阈值(ms)与退款比例(0~1)
 	LatencyCompensationThresholdMs int     `json:"latency_compensation_threshold_ms"`
@@ -460,6 +460,9 @@ type PublicSettings struct {
 	ClientLatestVersion        string `json:"client_latest_version"`
 	ClientLatestVersionMac     string `json:"client_latest_version_mac"`
 	ClientTutorialVideoURL     string `json:"client_tutorial_video_url"`
+	ChatAppDownloadEnabled     bool   `json:"chat_app_download_enabled"`
+	ChatAppDownloadDirectURL   string `json:"chat_app_download_direct_url"`
+	ChatAppLatestVersion       string `json:"chat_app_latest_version"`
 	BackupPaymentEnabled       bool   `json:"backup_payment_enabled"`
 	BackupPaymentURL           string `json:"backup_payment_url"`
 

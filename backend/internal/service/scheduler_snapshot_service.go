@@ -969,6 +969,11 @@ func (s *SchedulerSnapshotService) rebuildBucketWithTokenPolicyAndQueryCache(
 		if strict {
 			return fmt.Errorf("%w: bucket=%s", ErrSchedulerBucketRebuildBusy, bucket.String())
 		}
+		// Ordinary full-rebuild work deliberately preserves the current
+		// snapshot when another writer owns the bucket lock. Keep that
+		// non-blocking behavior, but make repeated skips observable; otherwise a
+		// stale/empty bucket can persist until a user-facing request exposes it.
+		slog.Warn("scheduler_snapshot_bucket_rebuild_skipped", "bucket", bucket.String(), "reason", reason, "strict", false)
 		return nil
 	}
 	defer func() {

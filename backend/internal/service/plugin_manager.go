@@ -984,6 +984,11 @@ func (m *PluginManager) ShouldRouteOpenAIOAuth(account *Account) bool {
 	if m == nil || account == nil || account.Platform != PlatformOpenAI || account.Type != AccountTypeOAuth {
 		return false
 	}
+	// User-contributed accounts and user-owned proxies must stay on the shared
+	// HTTPUpstream path so the public destination/proxy policy is enforced.
+	if requiresHTTPUpstreamPublicPolicy(account) {
+		return false
+	}
 	route := m.route.Load()
 	return route != nil && route.rolloutPercent > 0 && int(stablePluginBucket(account.ID)) < route.rolloutPercent
 }

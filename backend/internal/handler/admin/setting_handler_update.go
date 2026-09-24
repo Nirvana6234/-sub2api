@@ -358,8 +358,6 @@ type UpdateSettingsRequest struct {
 	LatencyCompensationThresholdMs *int     `json:"latency_compensation_threshold_ms"`
 	LatencyCompensationProfitRatio *float64 `json:"latency_compensation_profit_ratio"`
 
-	HeadroomBaseURL *string `json:"headroom_base_url"`
-
 	BackupPaymentEnabled *bool   `json:"backup_payment_enabled"`
 	BackupPaymentURL     *string `json:"backup_payment_url"`
 
@@ -2014,7 +2012,6 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.LatencyCompensationProfitRatio
 		}(),
-		HeadroomBaseURL:  stringSetting(req.HeadroomBaseURL, previousSettings.HeadroomBaseURL),
 		BackupPaymentURL: stringSetting(req.BackupPaymentURL, previousSettings.BackupPaymentURL),
 		PlaygroundEnabled: func() bool {
 			if req.PlaygroundEnabled != nil {
@@ -2499,7 +2496,6 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		ClientTutorialVideoURL:         updatedSettings.ClientTutorialVideoURL,
 		LatencyCompensationThresholdMs: updatedSettings.LatencyCompensationThresholdMs,
 		LatencyCompensationProfitRatio: updatedSettings.LatencyCompensationProfitRatio,
-		HeadroomBaseURL:                updatedSettings.HeadroomBaseURL,
 		BackupPaymentEnabled:           updatedSettings.BackupPaymentEnabled,
 		BackupPaymentURL:               updatedSettings.BackupPaymentURL,
 		PlaygroundEnabled:              updatedSettings.PlaygroundEnabled,

@@ -13,6 +13,7 @@ import type {
   ModelStat,
   GroupStat,
   UsageRequestType,
+  UsageAccountSource,
   UserErrorRequest,
   UserErrorRequestDetail,
   UserErrorListParams
@@ -30,13 +31,6 @@ export interface PlatformDashboardStats {
   today_actual_cost: number
 }
 
-export interface HeadroomModelStat {
-  model: string
-  requests: number
-  tokens_saved: number
-  savings_usd: number // 标准价（倍率固定为1）
-  savings_actual_usd: number // 实际价（按真实计费倍率折算）
-}
 
 export interface UserDashboardStats {
   total_api_keys: number
@@ -61,13 +55,6 @@ export interface UserDashboardStats {
   rpm: number // 近5分钟平均每分钟请求数
   tpm: number // 近5分钟平均每分钟Token数
   by_platform?: PlatformDashboardStats[]
-  headroom_tokens_saved: number // 智能压缩累计节省 token 数
-  headroom_savings_usd: number // 对应标准美金等值（倍率固定为1）
-  headroom_savings_actual_usd: number // 对应实际美金等值（按真实计费倍率折算）
-  headroom_actual_tokens: number // 被压缩命中的请求累计实际消耗 token 数，与 saved 搭配换算节省比例
-  today_headroom_tokens_saved: number
-  today_headroom_actual_tokens: number
-  headroom_by_model?: HeadroomModelStat[]
 }
 
 export interface TrendParams {
@@ -80,6 +67,7 @@ export interface TrendParams {
   request_type?: UsageRequestType
   stream?: boolean
   native_compaction_v2?: boolean | null
+  account_source?: UsageAccountSource | null
   billing_type?: number | null
   billing_mode?: string | null
   timezone?: string
@@ -98,25 +86,6 @@ export interface ModelStatsResponse {
   end_date: string
 }
 
-export interface HeadroomModelsResponse {
-  models: HeadroomModelStat[]
-  start_date: string
-  end_date: string
-}
-
-export interface HeadroomTrendPoint {
-  date: string
-  tokens_saved: number
-  savings_usd: number
-  savings_actual_usd: number
-}
-
-export interface HeadroomTrendResponse {
-  trend: HeadroomTrendPoint[]
-  start_date: string
-  end_date: string
-  granularity: string
-}
 
 export interface ApiKeyDailyUsagePoint {
   date: string
@@ -322,6 +291,7 @@ export async function getDashboardModels(params?: {
   request_type?: UsageRequestType
   stream?: boolean
   native_compaction_v2?: boolean | null
+  account_source?: UsageAccountSource | null
   billing_type?: number | null
   billing_mode?: string | null
   timezone?: string
@@ -330,24 +300,6 @@ export async function getDashboardModels(params?: {
   return data
 }
 
-export async function getDashboardHeadroomModels(params?: {
-  start_date?: string
-  end_date?: string
-  timezone?: string
-}): Promise<HeadroomModelsResponse> {
-  const { data } = await apiClient.get<HeadroomModelsResponse>('/usage/dashboard/headroom-models', { params })
-  return data
-}
-
-export async function getDashboardHeadroomTrend(params?: {
-  start_date?: string
-  end_date?: string
-  granularity?: 'day' | 'hour'
-  timezone?: string
-}): Promise<HeadroomTrendResponse> {
-  const { data } = await apiClient.get<HeadroomTrendResponse>('/usage/dashboard/headroom-trend', { params })
-  return data
-}
 
 /**
  * Get daily usage details for one API key owned by the current user.
@@ -435,8 +387,6 @@ export const usageAPI = {
   getDashboardStats,
   getDashboardTrend,
   getDashboardModels,
-  getDashboardHeadroomModels,
-  getDashboardHeadroomTrend,
   getMyApiKeyDailyUsage,
   getDashboardSnapshotV2,
   getDashboardApiKeysUsage,

@@ -566,6 +566,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		Platform:                        platform,
 		RateMultiplier:                  input.RateMultiplier,
 		IsExclusive:                     input.IsExclusive,
+		AllowContributionPool:           input.AllowContributionPool,
 		Status:                          StatusActive,
 		SubscriptionType:                subscriptionType,
 		DailyLimitUSD:                   dailyLimit,
@@ -841,6 +842,9 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	}
 	if input.IsExclusive != nil {
 		group.IsExclusive = *input.IsExclusive
+	}
+	if input.AllowContributionPool != nil {
+		group.AllowContributionPool = *input.AllowContributionPool
 	}
 	if input.IsFallbackPool != nil {
 		// 取消兜底池标记前先确认没有分组还指着它。

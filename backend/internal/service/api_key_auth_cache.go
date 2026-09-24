@@ -4,16 +4,23 @@ import "time"
 
 // APIKeyAuthSnapshot API Key 认证缓存快照（仅包含认证所需字段）
 type APIKeyAuthSnapshot struct {
-	Version     int                      `json:"version"`
-	APIKeyID    int64                    `json:"api_key_id"`
-	UserID      int64                    `json:"user_id"`
-	GroupID     *int64                   `json:"group_id,omitempty"`
-	Name        string                   `json:"name"`
-	Status      string                   `json:"status"`
-	IPWhitelist []string                 `json:"ip_whitelist,omitempty"`
-	IPBlacklist []string                 `json:"ip_blacklist,omitempty"`
-	User        APIKeyAuthUserSnapshot   `json:"user"`
-	Group       *APIKeyAuthGroupSnapshot `json:"group,omitempty"`
+	Version  int    `json:"version"`
+	APIKeyID int64  `json:"api_key_id"`
+	UserID   int64  `json:"user_id"`
+	GroupID  *int64 `json:"group_id,omitempty"`
+	// 自动分组 Key 认证时只带候选池，分组由 autoGroupModelRoutingMiddleware
+	// 按本次请求的模型现选。少了这三个字段，认证快照重建出的 Key 恒为
+	// AutoGroup=false 且无分组，选组中间件会直接跳过，请求随即被
+	// RequireGroupAssignment 以 403「未分配分组」拒掉。
+	AutoGroup         bool                     `json:"auto_group"`
+	AutoGroupStrategy string                   `json:"auto_group_strategy"`
+	AutoGroupIDs      []int64                  `json:"auto_group_ids,omitempty"`
+	Name              string                   `json:"name"`
+	Status            string                   `json:"status"`
+	IPWhitelist       []string                 `json:"ip_whitelist,omitempty"`
+	IPBlacklist       []string                 `json:"ip_blacklist,omitempty"`
+	User              APIKeyAuthUserSnapshot   `json:"user"`
+	Group             *APIKeyAuthGroupSnapshot `json:"group,omitempty"`
 
 	// Quota fields for API Key independent quota feature
 	Quota     float64 `json:"quota"`      // Quota limit in USD (0 = unlimited)
@@ -53,9 +60,6 @@ type APIKeyAuthUserSnapshot struct {
 	// UserGroupRPMOverride 该 API Key 对应的 (user, group) 专属 RPM 覆盖值。
 	// nil = 无 override（回退到 group/user 级）；0 = 不限流；>0 = 专属上限。
 	UserGroupRPMOverride *int `json:"user_group_rpm_override,omitempty"`
-
-	// HeadroomCompressionEnabled 见 service.User 同名字段注释。
-	HeadroomCompressionEnabled bool `json:"headroom_compression_enabled,omitempty"`
 }
 
 // APIKeyAuthGroupSnapshot 分组快照

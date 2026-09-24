@@ -882,20 +882,35 @@ func resolveOpenAIErrorSchedulingModel(billingModel, upstreamModel string) strin
 }
 
 func (s *OpenAIGatewayService) selectAccountForModelWithExclusions(ctx context.Context, groupID *int64, platform string, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, stickyAccountID int64, requiredCapability OpenAIEndpointCapability, preferLowUpstreamRate bool) (*Account, error) {
+	ctx = withFallbackAttemptLedger(ctx)
 	account, err := s.selectAccountForModelWithExclusionsOnce(ctx, groupID, platform, sessionHash, requestedModel, excludedIDs, requireCompact, stickyAccountID, requiredCapability, preferLowUpstreamRate)
 	if !isNoAvailableOpenAIAccountError(err) {
 		return account, err
 	}
-	fallbackCtx, fallbackGroupID := s.nextOpenAIFallbackGroup(ctx, groupID, platform, requestedModel)
-	if fallbackGroupID == nil {
-		return nil, err
+	// 按配置顺序逐个试兜底池：前一个（连同它的下游链路）没号才试下一个。
+	noAccountErr := err
+	var fallbackAccount *Account
+	var fallbackErr error
+	resolved := false
+	s.eachOpenAIFallbackAttempt(ctx, groupID, platform, requestedModel, func(attempt openAIFallbackAttempt) bool {
+		fallbackAccount, fallbackErr = s.selectAccountForModelWithExclusions(attempt.ctx, attempt.groupID, platform, sessionHash, requestedModel, excludedIDs, requireCompact, 0, requiredCapability, preferLowUpstreamRate)
+		if isNoAvailableOpenAIAccountError(fallbackErr) {
+			noAccountErr = preferNoAccountError(noAccountErr, fallbackErr)
+			return false
+		}
+		resolved = true
+		return true
+	})
+	if resolved {
+		return fallbackAccount, fallbackErr
 	}
-	return s.selectAccountForModelWithExclusions(fallbackCtx, fallbackGroupID, platform, "", requestedModel, excludedIDs, requireCompact, 0, requiredCapability, preferLowUpstreamRate)
+	return nil, noAccountErr
 }
 
 func (s *OpenAIGatewayService) selectAccountForModelWithExclusionsOnce(ctx context.Context, groupID *int64, platform string, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, stickyAccountID int64, requiredCapability OpenAIEndpointCapability, preferLowUpstreamRate bool) (*Account, error) {
 	platform = NormalizeOpenAICompatiblePlatform(platform)
-	if s.hasContributionRoomRoute(ctx) {
+	explicitRoomRoute := s.hasContributionRoomRoute(ctx)
+	if explicitRoomRoute {
 		sessionHash = ""
 		stickyAccountID = 0
 	}
@@ -906,17 +921,33 @@ func (s *OpenAIGatewayService) selectAccountForModelWithExclusionsOnce(ctx conte
 		return nil, fmt.Errorf("%w supporting model: %s (channel pricing restriction)", ErrNoAvailableAccounts, requestedModel)
 	}
 
-	// 1. 尝试粘性会话命中
-	// Try sticky session hit
-	if account := s.tryStickySessionHit(ctx, groupID, platform, sessionHash, requestedModel, excludedIDs, requireCompact, stickyAccountID, requiredCapability); account != nil {
-		return account, nil
-	}
-
-	// 2. 获取可调度的 OpenAI 账号
-	// Get schedulable OpenAI accounts
+	// 1. 获取可调度的 OpenAI 账号（含贡献路由展开：显式房间选择或隐式自有账号置顶）
+	// Get schedulable OpenAI accounts (contribution routing already applied: explicit
+	// room selection, or the caller's own contributed account moved to the front)
 	accounts, err := s.listSchedulableAccounts(ctx, groupID, platform)
 	if err != nil {
 		return nil, fmt.Errorf("query accounts failed: %w", err)
+	}
+
+	// 贡献者自己健康可用的账号必须优先使用，粘性会话的延续性在这条业务规则面前
+	// 让位——否则一个更早建立、指向公共池账号的粘性绑定会一直挡住刚贡献/刚恢复
+	// 可用的自有账号，直到会话自然过期。显式房间选择已经在上面禁用过粘性了。
+	//
+	// The contributor's own healthy account must win over sticky-session continuity;
+	// otherwise an older sticky binding pointing at a pool account keeps blocking a
+	// newly available (or just-recovered) own account until the session's TTL lapses
+	// on its own. Explicit room selection already disabled sticky above.
+	if !explicitRoomRoute && sessionHash != "" {
+		if userID := contributorUserIDFromContext(ctx); userID > 0 && len(accounts) > 0 && accounts[0].IsContributedBy(userID) {
+			sessionHash = ""
+			stickyAccountID = 0
+		}
+	}
+
+	// 2. 尝试粘性会话命中
+	// Try sticky session hit
+	if account := s.tryStickySessionHit(ctx, groupID, platform, sessionHash, requestedModel, excludedIDs, requireCompact, stickyAccountID, requiredCapability); account != nil {
+		return account, nil
 	}
 
 	// 3. 按优先级 + LRU 选择最佳账号
@@ -1131,15 +1162,29 @@ func (s *OpenAIGatewayService) SelectAccountWithLoadAwareness(ctx context.Contex
 }
 
 func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Context, groupID *int64, platform string, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, requiredCapability OpenAIEndpointCapability, useUpstreamTokenCost bool) (*AccountSelectionResult, error) {
+	ctx = withFallbackAttemptLedger(ctx)
 	selection, err := s.selectAccountWithLoadAwarenessOnce(ctx, groupID, platform, sessionHash, requestedModel, excludedIDs, requireCompact, requiredCapability, useUpstreamTokenCost)
 	if !isNoAvailableOpenAIAccountError(err) {
 		return selection, err
 	}
-	fallbackCtx, fallbackGroupID := s.nextOpenAIFallbackGroup(ctx, groupID, platform, requestedModel)
-	if fallbackGroupID == nil {
-		return selection, err
+	// 按配置顺序逐个试兜底池：前一个（连同它的下游链路）没号才试下一个。
+	noAccountSelection, noAccountErr := selection, err
+	var fallbackSelection *AccountSelectionResult
+	var fallbackErr error
+	resolved := false
+	s.eachOpenAIFallbackAttempt(ctx, groupID, platform, requestedModel, func(attempt openAIFallbackAttempt) bool {
+		fallbackSelection, fallbackErr = s.selectAccountWithLoadAwareness(attempt.ctx, attempt.groupID, platform, sessionHash, requestedModel, excludedIDs, requireCompact, requiredCapability, useUpstreamTokenCost)
+		if isNoAvailableOpenAIAccountError(fallbackErr) {
+			noAccountErr = preferNoAccountError(noAccountErr, fallbackErr)
+			return false
+		}
+		resolved = true
+		return true
+	})
+	if resolved {
+		return fallbackSelection, fallbackErr
 	}
-	return s.selectAccountWithLoadAwareness(fallbackCtx, fallbackGroupID, platform, "", requestedModel, excludedIDs, requireCompact, requiredCapability, useUpstreamTokenCost)
+	return noAccountSelection, noAccountErr
 }
 
 func (s *OpenAIGatewayService) selectAccountWithLoadAwarenessOnce(ctx context.Context, groupID *int64, platform string, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, requiredCapability OpenAIEndpointCapability, useUpstreamTokenCost bool) (*AccountSelectionResult, error) {
@@ -1205,6 +1250,22 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwarenessOnce(ctx context.Co
 		}
 		_, excluded := excludedIDs[accountID]
 		return excluded
+	}
+
+	// 贡献者自己健康可用的账号必须优先使用：listSchedulableAccounts 已经把调用者
+	// 隐式偏好的自有贡献账号置于候选列表最前（见 applyContributionRoomRouting /
+	// prependImplicitOwnContributionAccounts）。若最前面确实是自己的账号，粘性会话
+	// 的延续性就该让位，否则一个更早建立、指向公共池账号的粘性绑定会一直挡住刚
+	// 贡献/刚恢复可用的自有账号，直到会话自然过期。
+	//
+	// The contributor's own healthy account must win over sticky-session continuity.
+	// listSchedulableAccounts already moves the caller's own implicitly-preferred
+	// contribution to the front of the list. If it's there, sticky must step aside —
+	// otherwise an older sticky binding pointing at a pool account keeps blocking a
+	// newly available (or just-recovered) own account until the session's TTL lapses.
+	if userID := contributorUserIDFromContext(ctx); userID > 0 && accounts[0].IsContributedBy(userID) {
+		sessionHash = ""
+		stickyAccountID = 0
 	}
 
 	// ============ Layer 1: Sticky session ============
@@ -1510,6 +1571,10 @@ func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, grou
 		if err != nil {
 			return accounts, err
 		}
+		accounts, err = s.applyContributionRoomRouting(ctx, accounts, platform)
+		if err != nil {
+			return nil, err
+		}
 		accounts = s.filterOpenAIAccountsBySchedulingThreshold(ctx, accounts)
 		if platform == PlatformGrok {
 			accounts = s.filterGrokFreeQuotaAccountsForOpenAI(ctx, accounts)
@@ -1528,11 +1593,117 @@ func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, grou
 	if err != nil {
 		return nil, fmt.Errorf("query accounts failed: %w", err)
 	}
+	accounts, err = s.applyContributionRoomRouting(ctx, accounts, platform)
+	if err != nil {
+		return nil, err
+	}
 	accounts = s.filterOpenAIAccountsBySchedulingThreshold(ctx, accounts)
 	if platform == PlatformGrok {
 		accounts = s.filterGrokFreeQuotaAccountsForOpenAI(ctx, accounts)
 	}
 	return accounts, nil
+}
+
+// applyContributionRoomRouting substitutes the default candidate list with the
+// caller's contribution-room selection when one applies. See the Anthropic
+// gateway's applyContributionRoomRouting (gateway_scheduling.go) for the fuller
+// variant that also appends the group's public contribution pool; the OpenAI
+// gateway does not do that append, matching production's current behavior.
+func (s *OpenAIGatewayService) applyContributionRoomRouting(ctx context.Context, defaultAccounts []Account, platform string) ([]Account, error) {
+	defaultAccounts = filterContributionAccountsForCaller(ctx, defaultAccounts)
+	if s == nil || s.contributionRoomRepo == nil {
+		return defaultAccounts, nil
+	}
+	userID := contributorUserIDFromContext(ctx)
+	apiKeyID := contributorAPIKeyIDFromContext(ctx)
+	if userID <= 0 || apiKeyID <= 0 {
+		return defaultAccounts, nil
+	}
+	route, err := s.contributionRoomRepo.ResolveRouteForAPIKey(ctx, userID, apiKeyID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve contribution room route: %w", err)
+	}
+	if !route.IsExplicitSelection() {
+		return s.prependImplicitOwnContributionAccounts(ctx, defaultAccounts, platform)
+	}
+
+	roomAccounts := make([]Account, 0)
+	seen := make(map[int64]struct{})
+	if s.accountRepo != nil {
+		for _, selectedRoom := range route.Rooms {
+			if len(selectedRoom.AccountIDs) == 0 {
+				continue
+			}
+			accounts, queryErr := s.accountRepo.GetByIDs(ctx, selectedRoom.AccountIDs)
+			if queryErr != nil {
+				return nil, fmt.Errorf("load contribution room accounts: %w", queryErr)
+			}
+			for _, account := range accounts {
+				if account == nil || !account.IsSchedulable() || account.Platform != platform || !account.IsOpenAICompatible() {
+					continue
+				}
+				if _, duplicate := seen[account.ID]; duplicate {
+					continue
+				}
+				routed := cloneContributionRouteAccount(*account, ContributionRouteSourceRoom, selectedRoom.RoomID, selectedRoom.ConsumerRateMultiplier)
+				applyContributionRoomConcurrency(&routed, selectedRoom.AccountConcurrencies[account.ID])
+				preferContributedAccount(&routed)
+				roomAccounts = append(roomAccounts, routed)
+				seen[account.ID] = struct{}{}
+			}
+		}
+	}
+	if !route.AllowPoolFallback || route.FallbackGroupID == nil || *route.FallbackGroupID <= 0 {
+		return roomAccounts, nil
+	}
+
+	fallbackAccounts, err := s.listContributionRoomFallbackAccounts(ctx, *route.FallbackGroupID, platform)
+	if err != nil {
+		return nil, err
+	}
+	for _, account := range fallbackAccounts {
+		if account.ContributorUserID() > 0 || !account.IsSchedulable() || account.Platform != platform || !account.IsOpenAICompatible() {
+			continue
+		}
+		if _, exists := seen[account.ID]; exists {
+			continue
+		}
+		roomAccounts = append(roomAccounts, account)
+		seen[account.ID] = struct{}{}
+	}
+	return roomAccounts, nil
+}
+
+func (s *OpenAIGatewayService) listContributionRoomFallbackAccounts(ctx context.Context, groupID int64, platform string) ([]Account, error) {
+	if s == nil || s.accountRepo == nil || groupID <= 0 {
+		return nil, nil
+	}
+	accounts, err := s.accountRepo.ListSchedulableByGroupIDAndPlatform(ctx, groupID, platform)
+	if err != nil {
+		return nil, fmt.Errorf("load contribution fallback group accounts: %w", err)
+	}
+	return accounts, nil
+}
+
+// prependImplicitOwnContributionAccounts moves the caller's own contributed
+// accounts to the front of the candidate list when no explicit room was
+// selected.
+func (s *OpenAIGatewayService) prependImplicitOwnContributionAccounts(ctx context.Context, defaultAccounts []Account, platform string) ([]Account, error) {
+	userID := contributorUserIDFromContext(ctx)
+	if userID <= 0 {
+		return defaultAccounts, nil
+	}
+	owned := make([]Account, 0, len(defaultAccounts))
+	shared := make([]Account, 0, len(defaultAccounts))
+	for _, account := range defaultAccounts {
+		if !account.IsContributedBy(userID) || !account.IsSchedulable() || account.Platform != platform || !account.IsOpenAICompatible() {
+			shared = append(shared, account)
+			continue
+		}
+		preferContributedAccount(&account)
+		owned = append(owned, account)
+	}
+	return append(owned, shared...), nil
 }
 
 func (s *OpenAIGatewayService) tryAcquireAccountSlot(ctx context.Context, accountID int64, maxConcurrency int) (*AcquireResult, error) {
@@ -1684,6 +1855,9 @@ func (s *OpenAIGatewayService) getSchedulableAccount(ctx context.Context, accoun
 		return account, err
 	}
 	if s.isOpenAIAccountBlockedBySchedulingThreshold(ctx, account) {
+		return nil, nil
+	}
+	if contributionAccountBlockedForCaller(ctx, account, s.contributionRoomRepo) {
 		return nil, nil
 	}
 	// Legacy sticky (advanced scheduler off) must still free-gate Grok OAuth.

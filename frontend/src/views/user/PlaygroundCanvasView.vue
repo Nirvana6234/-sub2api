@@ -1,7 +1,7 @@
 <template>
   <component :is="props.embedded ? 'div' : AppLayout">
     <main class="flex min-h-[calc(100vh-7rem)] w-full flex-col gap-3">
-      <header class="grid gap-4 rounded-2xl border border-gray-200/70 bg-white/70 p-3 shadow-sm backdrop-blur dark:border-dark-700/70 dark:bg-dark-950/60" data-canvas-header>
+      <header class="relative z-40 grid gap-4 rounded-2xl border border-gray-200/70 bg-white/70 p-3 shadow-sm backdrop-blur dark:border-dark-700/70 dark:bg-dark-950/60" data-canvas-header>
         <div class="grid min-w-0 gap-4 2xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.6fr)] 2xl:items-center">
           <div class="flex min-w-0 flex-col gap-3 2xl:flex-row 2xl:items-center">
             <div class="flex min-w-0 flex-1 flex-wrap items-center gap-2">
@@ -247,6 +247,7 @@
             @update:background="updateCanvasBackgroundMode"
             @add-node="addNodeAtCenter"
             @fit="fitCanvas"
+            @arrange="arrangeCanvas"
             @reset-view="resetCanvasView"
             @import="importCanvas"
             @export="exportCanvas"
@@ -336,6 +337,8 @@
               @select-image="selectImageVariant"
               @retry-image="retryImageVariant"
               @duplicate-image="duplicateImageVariant"
+              @update-image-prompt="updateImageVariantPrompt"
+              @generate-image-child="generateImageChildVariant"
               @delete-image="deleteImageVariant"
               @generate-video="generateVideoNode"
               @cancel-video="cancelVideoNode"
@@ -343,7 +346,8 @@
                @cancel-audio="cancelAudioNode"
                @retry-generation="retryCanvasGeneration"
                @transcribe-audio="transcribeAudioNode"
-              @download="downloadNode"
+               @download="downloadNode"
+              @copy-image="copyImageNode"
               @use-reference="useResultAsReference"
               @edit-image="openImageEditor"
               @transform-image="quickTransformImage"
@@ -391,16 +395,16 @@
               </span>
               <h2 class="mt-4 text-base font-semibold text-gray-900 dark:text-white">{{ t('playground.canvasEmptyTitle') }}</h2>
               <p class="mt-1 text-sm leading-6 text-gray-500 dark:text-dark-400">{{ t('playground.canvasEmptyDescription') }}</p>
-              <button type="button" class="pointer-events-auto btn btn-primary mt-4 gap-1.5" @click="addNodeAtCenter()">
+              <button type="button" class="pointer-events-auto btn btn-primary mt-4 gap-1.5" data-canvas-no-zoom @pointerdown.stop @click="addNodeAtCenter()">
                 <Icon name="plus" size="sm" />
                 {{ t('playground.canvasAddNode') }}
               </button>
             </div>
           </div>
           <CanvasMiniMap :nodes="activeProject?.nodes ?? []" :viewport="activeProject?.viewport ?? { x: 0, y: 0, scale: 1 }" @update-viewport="updateCanvasViewportFromMiniMap" />
-          <CanvasContextMenu v-if="contextMenu && contextMenuNode" :x="contextMenu.x" :y="contextMenu.y" :node="contextMenuNode" @duplicate="duplicateContextNode" @copy="copyContextNode" @front="bringContextNodeFront" @back="sendContextNodeBack" @download="downloadNode(contextMenu.nodeId); contextMenu = null" @reference="useResultAsReference(contextMenu.nodeId); contextMenu = null" @delete="deleteNode(contextMenu.nodeId); contextMenu = null" />
+          <CanvasContextMenu v-if="contextMenu && contextMenuNode" :x="contextMenu.x" :y="contextMenu.y" :node="contextMenuNode" @duplicate="duplicateContextNode" @copy="copyContextNode" @front="bringContextNodeFront" @back="sendContextNodeBack" @download="downloadNode(contextMenu.nodeId); contextMenu = null" @reference="useResultAsReference(contextMenu.nodeId); contextMenu = null" @capture-video-frame="captureVideoFrame(contextMenu.nodeId, $event)" @delete="deleteNode(contextMenu.nodeId); contextMenu = null" />
           <CanvasConnectionContextMenu v-if="connectionContextMenu" :x="connectionContextMenu.x" :y="connectionContextMenu.y" @delete="deleteConnectionFromContextMenu" @close="connectionContextMenu = null" />
-          <CanvasAssistant v-if="assistantOpen" :messages="activeProject?.assistantMessages ?? []" :context-count="assistantContextNodes.length" :references="assistantMentionReferences" :models="textModels" :model="assistantModel" :loading="assistantLoading" @update:model="assistantModel = $event" @send="sendAssistantMessage" @cancel="cancelAssistant" @insert="insertAssistantMessage" @activate="focusCanvasNode" @clear="clearAssistantMessages" @close="assistantOpen = false" />
+          <CanvasAssistant v-if="assistantOpen" :messages="activeProject?.assistantMessages ?? []" :context-count="assistantContextNodes.length" :references="assistantMentionReferences" :models="textModels" :model="assistantModel" :reasoning-effort="assistantReasoningEffort" :loading="assistantLoading" @update:model="assistantModel = $event" @update:reasoning-effort="setAssistantReasoningEffort($event)" @send="sendAssistantMessage" @cancel="cancelAssistant" @insert="insertAssistantMessage" @activate="focusCanvasNode" @clear="clearAssistantMessages" @close="assistantOpen = false" />
           <CanvasAgentDialog v-if="agentOpen" :endpoint="agentEndpoint" :token="agentToken" :connected="agentConnected" :busy="agentBusy" :sending="agentSending" :conversation-status="agentConversation.status" :active-thread-id="agentConversation.threadId" :threads="agentThreads" :skills="agentSkills" :approval="agentApproval" :messages="agentMessages" :error-message="agentError" @connect="connectCanvasAgent" @disconnect="disconnectCanvasAgent" @sync="publishAgentState" @send="sendCanvasAgentTurn" @cancel="cancelCanvasAgentTurn" @resume="resumeCanvasAgentThread" @approve="resolveCanvasAgentApproval" @toggle-skill="toggleCanvasAgentSkill" @close="agentOpen = false" />
           <CanvasPluginManagerDialog v-if="pluginManagerOpen" :plugins="plugins" :official-plugins="officialPlugins" :busy="pluginBusy" :error-message="pluginError" @install="installCanvasPlugin" @toggle="toggleCanvasPlugin" @uninstall="uninstallCanvasPluginEntry" @close="pluginManagerOpen = false" />
           <CanvasPromptLibrary v-if="promptLibraryOpen" :prompts="promptLibraryEntries" :refreshing="promptRegistryLoading" @close="promptLibraryOpen = false" @insert="insertPromptFromLibrary" @add="addCustomPrompt" @remove="removeCustomPrompt" @refresh="refreshPromptRegistry" />
@@ -450,7 +454,7 @@
               <span class="sr-only">{{ t('common.close') }}</span>
             </button>
           </div>
-          <label v-if="selectedNode.type !== 'config' && !selectedNode.pluginUseBuiltinPanel" class="mb-1.5 block text-xs font-medium text-gray-700 dark:text-dark-300" for="canvas-node-prompt">{{ selectedNode.type === 'text' ? t('playground.canvasTextContent') : t('playground.canvasPrompt') }}</label>
+          <label v-if="selectedNode.type !== 'config' && !selectedNode.pluginUseBuiltinPanel" class="mb-1.5 block text-xs font-medium text-gray-700 dark:text-dark-300" for="canvas-node-prompt">{{ selectedNode.type === 'text' ? t('playground.canvasTextContent') : selectedNode.type === 'image' && (selectedNode.imageUrl || selectedNode.imageUrls?.length || selectedNode.imageCacheKey || selectedNode.imageCacheKeys?.length) ? t('playground.canvasEditImage') : t('playground.canvasPrompt') }}</label>
           <CanvasMentionEditor
             v-if="selectedNode.type === 'text' && !selectedNode.pluginUseBuiltinPanel"
             id="canvas-node-prompt"
@@ -462,7 +466,7 @@
             class="text-sm"
             @update:model-value="updateSelectedPrompt"
           />
-          <textarea v-else-if="selectedNode.type !== 'config' && !selectedNode.pluginUseBuiltinPanel" id="canvas-node-prompt" :value="selectedNode.prompt" rows="7" class="input min-h-36 w-full resize-y text-sm leading-6" :disabled="selectedNode.kind === 'result' || selectedNode.status === 'generating'" @input="updateSelectedPrompt(($event.target as HTMLTextAreaElement).value)"></textarea>
+          <textarea v-else-if="selectedNode.type !== 'config' && !selectedNode.pluginUseBuiltinPanel" id="canvas-node-prompt" :value="selectedNode.prompt" rows="7" class="input min-h-36 w-full resize-y text-sm leading-6" :placeholder="selectedNode.type === 'image' && (selectedNode.imageUrl || selectedNode.imageUrls?.length || selectedNode.imageCacheKey || selectedNode.imageCacheKeys?.length) ? t('playground.canvasImageEditPrompt') : t('playground.canvasPrompt')" :disabled="selectedNode.kind === 'result' || selectedNode.status === 'generating'" @input="updateSelectedPrompt(($event.target as HTMLTextAreaElement).value)"></textarea>
           <section v-if="selectedNode && selectedIncomingReferences.length" class="mt-4" data-canvas-reference-bar>
             <div class="mb-2 flex items-center justify-between gap-2">
               <label class="text-xs font-medium text-gray-700 dark:text-dark-300">{{ t('playground.canvasConnectedReferences') }}</label>
@@ -521,13 +525,52 @@
             <option v-for="model in models" :key="model.id" :value="model.id">{{ model.id }}</option>
           </select>
           <label class="mt-4 block text-xs font-medium text-gray-700 dark:text-dark-300" for="canvas-node-image-count">{{ t('playground.canvasImageCount') }}</label>
-          <input id="canvas-node-image-count" :value="selectedNode.imageCount ?? 4" type="number" min="1" max="10" step="1" class="input mt-1.5 h-9 w-full text-sm" :disabled="selectedNode.status === 'generating'" @change="updateNodeImageCount(selectedNode.id, Number(($event.target as HTMLInputElement).value))">
+          <select id="canvas-node-image-count" class="select mt-1.5 h-9 w-full text-sm" :value="String(selectedNode.imageCount ?? 4)" :disabled="selectedNode.status === 'generating'" @change="updateNodeImageCount(selectedNode.id, Number(($event.target as HTMLSelectElement).value))">
+            <option v-for="count in 10" :key="count" :value="String(count)">{{ count }}</option>
+          </select>
+          <div v-if="(selectedNode.imageCount ?? 4) > 1" class="mt-4 space-y-2" data-canvas-batch-prompts>
+            <div class="flex items-center justify-between gap-2">
+              <label class="text-xs font-medium text-gray-700 dark:text-dark-300">{{ t('playground.canvasBatchPromptsLabel') }}</label>
+              <span class="text-[10px] text-gray-400 dark:text-dark-500">{{ t('playground.canvasBatchPromptsHint') }}</span>
+            </div>
+            <label v-for="slotIndex in (selectedNode.imageCount ?? 4)" :key="slotIndex" class="block text-[11px] font-medium text-gray-500 dark:text-dark-400">
+              {{ t('playground.canvasBatchPromptSlot', { index: slotIndex }) }}
+              <textarea
+                class="textarea mt-1 min-h-14 w-full resize-y text-xs leading-5"
+                :value="selectedNode.imagePrompts?.[slotIndex - 1] ?? ''"
+                :placeholder="selectedNode.prompt || t('playground.canvasBatchPromptPlaceholder')"
+                :disabled="selectedNode.status === 'generating'"
+                @input="updateNodeImagePrompt(selectedNode.id, slotIndex - 1, ($event.target as HTMLTextAreaElement).value)"
+              ></textarea>
+              <div v-if="selectedIncomingReferences.length > 1" class="mt-1.5 flex flex-wrap gap-1" data-canvas-slot-references :title="t('playground.canvasSlotReferenceToggleHint')">
+                <button
+                  v-for="reference in selectedIncomingReferences"
+                  :key="reference.nodeId"
+                  type="button"
+                  class="flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-normal"
+                  :class="isImageSlotReferenceActive(selectedNode, slotIndex - 1, reference.nodeId)
+                    ? 'border-teal-400 bg-teal-50 text-teal-700 dark:border-teal-600 dark:bg-teal-950/40 dark:text-teal-300'
+                    : 'border-gray-200 bg-gray-50 text-gray-400 dark:border-dark-700 dark:bg-dark-900 dark:text-dark-500'"
+                  :disabled="selectedNode.status === 'generating'"
+                  @click="toggleImageSlotReference(selectedNode.id, slotIndex - 1, reference.nodeId)"
+                >
+                  <img v-if="reference.previewUrl" :src="reference.previewUrl" class="h-3.5 w-3.5 rounded-sm object-cover" :alt="reference.label">
+                  <span class="max-w-16 truncate">{{ reference.label }}</span>
+                </button>
+              </div>
+            </label>
+          </div>
           <div class="mt-4 grid grid-cols-2 gap-2">
             <label class="block text-xs font-medium text-gray-700 dark:text-dark-300">{{ t('playground.canvasImageSize') }}
               <select class="select mt-1.5 h-9 w-full text-xs" :value="selectedNode.config?.size ?? '1024x1024'" :disabled="selectedNode.status === 'generating'" @change="updateNodeConfig(selectedNode.id, 'size', ($event.target as HTMLSelectElement).value)">
                 <option value="1024x1024">1024 × 1024</option>
                 <option value="1536x1024">1536 × 1024</option>
                 <option value="1024x1536">1024 × 1536</option>
+                <option value="1440x1080">4:3 · 1440 × 1080</option>
+                <option value="1080x1440">3:4 · 1080 × 1440</option>
+                <option value="1920x1080">16:9 · 1920 × 1080</option>
+                <option value="1080x1920">9:16 · 1080 × 1920</option>
+                <option value="custom">自定义尺寸</option>
               </select>
             </label>
             <label class="block text-xs font-medium text-gray-700 dark:text-dark-300">{{ t('playground.canvasQuality') }}
@@ -537,6 +580,15 @@
                 <option value="medium">Medium</option>
                 <option value="low">Low</option>
               </select>
+            </label>
+          </div>
+          <div v-if="selectedNode.config?.size === 'custom'" class="mt-3 grid grid-cols-[1fr_auto_1fr] items-end gap-2">
+            <label class="block text-xs font-medium text-gray-700 dark:text-dark-300">宽度
+              <input class="input mt-1.5 h-9 w-full text-sm" type="number" min="16" max="3840" step="16" :value="selectedNode.config?.customWidth ?? '1024'" :disabled="selectedNode.status === 'generating'" @change="updateNodeConfig(selectedNode.id, 'customWidth', ($event.target as HTMLInputElement).value)">
+            </label>
+            <span class="pb-2 text-gray-400">×</span>
+            <label class="block text-xs font-medium text-gray-700 dark:text-dark-300">高度
+              <input class="input mt-1.5 h-9 w-full text-sm" type="number" min="16" max="3840" step="16" :value="selectedNode.config?.customHeight ?? '1024'" :disabled="selectedNode.status === 'generating'" @change="updateNodeConfig(selectedNode.id, 'customHeight', ($event.target as HTMLInputElement).value)">
             </label>
           </div>
           <label class="mt-3 block text-xs font-medium text-gray-700 dark:text-dark-300">{{ t('playground.canvasBackground') }}
@@ -593,6 +645,8 @@
               :mode="selectedNode.config?.mode ?? 'image'"
               :count="selectedNode.config?.count ?? '1'"
               :size="selectedNode.config?.size ?? '1024x1024'"
+              :custom-width="selectedNode.config?.customWidth ?? '1024'"
+              :custom-height="selectedNode.config?.customHeight ?? '1024'"
               :quality="selectedNode.config?.quality ?? 'auto'"
               :background="selectedNode.config?.background ?? 'auto'"
               :resolution="selectedNode.config?.resolution ?? '720p'"
@@ -626,13 +680,16 @@
               </button>
             </div>
           </div>
-          <div v-if="selectedNode.type === 'image'" class="mt-4">
+          <div v-if="selectedNode.type === 'image'" class="mt-4 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-teal-500/60" tabindex="0" role="region" :aria-label="t('playground.canvasReferencesLabel')" @paste.stop.prevent="handleReferencePaste">
             <div class="mb-1.5 flex items-center justify-between gap-2">
               <label class="text-xs font-medium text-gray-700 dark:text-dark-300">{{ t('playground.canvasReferencesLabel') }}</label>
-              <button type="button" class="btn btn-ghost h-7 px-2 text-[11px]" :disabled="selectedNode.kind === 'result' || selectedNode.status === 'generating'" @click="referenceInput?.click()">
+              <div class="flex items-center gap-1.5">
+                <span class="text-[10px] text-gray-400 dark:text-dark-500">{{ t('playground.canvasPasteReferenceHint') }}</span>
+                <button type="button" class="btn btn-ghost h-7 px-2 text-[11px]" :disabled="selectedNode.kind === 'result' || selectedNode.status === 'generating'" @click="referenceInput?.click()">
                 <Icon name="upload" size="xs" />
                 {{ t('common.add') }}
-              </button>
+                </button>
+              </div>
               <input ref="referenceInput" type="file" accept="image/*" multiple class="hidden" @change="handleReferenceFiles">
             </div>
             <div v-if="selectedNode.referenceImages?.length" class="grid grid-cols-3 gap-2">
@@ -646,11 +703,45 @@
             </div>
             <p v-else class="rounded border border-dashed border-gray-200 px-3 py-4 text-center text-xs text-gray-400 dark:border-dark-700">{{ t('playground.canvasReferencesEmpty') }}</p>
           </div>
+          <section v-if="selectedNode.type === 'image' && canvasImageSlots(selectedNode).length" class="mt-4 border-t border-gray-100 pt-4 dark:border-dark-700" data-canvas-variant-prompts>
+            <div class="mb-2 flex items-center justify-between gap-2">
+              <label class="text-xs font-medium text-gray-700 dark:text-dark-300">{{ t('playground.canvasRevisionPromptLabel') }}</label>
+              <span class="text-[10px] text-gray-400 dark:text-dark-500">{{ canvasImageSlots(selectedNode).length }} 张</span>
+            </div>
+            <div class="mb-3 grid grid-cols-[minmax(0,1fr)_minmax(0,auto)] items-end gap-2">
+              <label class="block text-[11px] font-medium text-gray-600 dark:text-dark-300">
+                {{ t('playground.canvasRevisionCount') }}
+                <input class="input mt-1 h-8 w-full text-xs" type="number" min="1" max="10" :value="selectedNode.imageRevisionCount ?? 1" :disabled="selectedNode.status === 'generating'" @change="updateImageRevisionCount(selectedNode.id, Number(($event.target as HTMLInputElement).value))">
+              </label>
+              <button type="button" class="btn btn-primary h-8 gap-1.5 px-2.5 text-[11px]" :disabled="selectedNode.status === 'generating' || !hasImageRevisionPrompt(selectedNode)" @click="generateImageChildVariants(selectedNode.id)">
+                <Icon name="sparkles" size="xs" />
+                {{ t('playground.canvasBatchRevision') }}
+              </button>
+            </div>
+            <div class="space-y-3">
+              <div v-for="(variant, index) in canvasImageSlots(selectedNode)" :key="variant.id" class="rounded-lg border border-gray-200 bg-gray-50/70 p-2 dark:border-dark-700 dark:bg-dark-950/40">
+                <button v-if="variant.url" type="button" class="mb-2 flex w-full items-center gap-2 text-left" @click="selectImageVariant(selectedNode.id, index)">
+                  <img :src="variant.url" :alt="`第 ${index + 1} 张`" class="h-10 w-10 rounded object-cover">
+                  <span class="text-[11px] font-medium text-gray-600 dark:text-dark-300">第 {{ index + 1 }} 张{{ index === (selectedNode.primaryImageIndex ?? 0) ? ' · 当前' : '' }}</span>
+                </button>
+                <textarea
+                  class="textarea min-h-20 w-full resize-y text-xs leading-5"
+                  :value="variant.revisionPrompt ?? ''"
+                  :placeholder="variant.prompt || resolveCanvasImageSlotPrompt(selectedNode, index) || t('playground.canvasRevisionPromptPlaceholder')"
+                  @input="updateImageVariantPrompt(selectedNode.id, index, ($event.target as HTMLTextAreaElement).value)"
+                ></textarea>
+                <button type="button" class="btn btn-secondary mt-2 h-8 w-full gap-1.5 text-[11px]" :disabled="variant.status !== 'success' || !variant.url || selectedNode.status === 'generating' || !variant.revisionPrompt?.trim()" @click="generateImageChildVariant(selectedNode.id, index)">
+                  <Icon name="sparkles" size="xs" />
+                  以第 {{ index + 1 }} 张提示词生成子图
+                </button>
+              </div>
+            </div>
+          </section>
           <div class="mt-5 space-y-2 text-xs text-gray-500 dark:text-dark-400">
             <div class="flex justify-between gap-3"><span>{{ t('playground.modelLabel') }}</span><span class="max-w-36 truncate text-right text-gray-800 dark:text-gray-100">{{ selectedNode.model || selectedModel || '-' }}</span></div>
             <div class="flex justify-between gap-3"><span>{{ t('playground.canvasNodeStatus') }}</span><span class="text-right">{{ nodeStatusLabel(selectedNode.status) }}</span></div>
           </div>
-          <div v-if="selectedNode.kind === 'result' && selectedNode.type === 'image'" class="mt-6 grid grid-cols-2 gap-2">
+          <div v-if="selectedNode.type === 'image' && Boolean(selectedNode.imageUrl)" class="mt-6 grid grid-cols-2 gap-2">
             <button type="button" class="btn btn-ghost gap-1.5" @click="useResultAsReference(selectedNode.id)">
               <Icon name="upload" size="sm" />
               {{ t('playground.canvasUseAsReference') }}
@@ -672,9 +763,9 @@
               {{ videoEditBusy ? t('playground.canvasGenerating') : t('playground.canvasEditVideo') }}
             </button>
           </div>
-          <button v-else-if="selectedNode.type === 'image'" type="button" class="btn btn-primary mt-6 w-full gap-1.5" :disabled="selectedNode.status === 'generating' || !selectedNode.prompt.trim() || !canGenerate" @click="generateNode(selectedNode.id)">
+          <button v-else-if="selectedNode.type === 'image' && selectedNode.kind !== 'result'" type="button" class="btn btn-primary mt-6 w-full gap-1.5" :disabled="selectedNode.status === 'generating' || !selectedNode.prompt.trim() || !canGenerate" @click="generateNode(selectedNode.id)">
             <Icon name="sparkles" size="sm" />
-            {{ t('playground.generate') }}
+            {{ (selectedNode.imageUrl || selectedNode.imageUrls?.length || selectedNode.imageCacheKey || selectedNode.imageCacheKeys?.length) ? t('playground.canvasEditImage') : t('playground.generate') }}
           </button>
           <button v-else-if="selectedNode.type === 'video' && selectedNode.kind !== 'result'" type="button" class="btn btn-primary mt-6 w-full gap-1.5" :disabled="selectedNode.status !== 'generating' && (!canvasNodeHasPromptInput(selectedNode) || !videoModels.length)" @click="generateVideoNode(selectedNode.id)">
             <Icon :name="selectedNode.status === 'generating' ? 'x' : 'play'" size="sm" />
@@ -684,6 +775,10 @@
           <button v-else-if="selectedNode.type === 'text' && selectedNode.kind !== 'result'" type="button" class="btn btn-primary mt-6 w-full gap-1.5" :disabled="!canGenerateText(selectedNode)" @click="generateTextNode(selectedNode.id)">
             <Icon :name="selectedNode.status === 'generating' ? 'x' : 'sparkles'" size="sm" />
             {{ selectedNode.status === 'generating' ? t('playground.canvasCancelGeneration') : (selectedNode.textContent || selectedNode.prompt).trim() ? t('playground.canvasRewriteText') : t('playground.canvasGenerateText') }}
+          </button>
+          <button v-else-if="selectedNode.type === 'text' && (selectedNode.textContent || selectedNode.prompt).trim()" type="button" class="btn btn-secondary mt-3 w-full gap-1.5" :disabled="selectedNode.status === 'generating' || !selectedKeyId || !selectedModel" @click="generateImageFromText(selectedNode.id)">
+            <Icon name="sparkles" size="sm" />
+            {{ t('playground.canvasTextToImage') }}
           </button>
           <p v-else-if="selectedNode.type !== 'config'" class="mt-6 text-xs leading-5 text-gray-500 dark:text-dark-400">{{ selectedNode.kind === 'result' && selectedNode.type === 'text' ? t('playground.canvasTextResultHint') : t('playground.canvasNodeSavedLocally') }}</p>
           <p v-if="selectedNode.type === 'image' && !canGenerate" class="mt-2 text-xs leading-5 text-amber-700 dark:text-amber-300">{{ t('playground.canvasUnsupportedKey') }}</p>
@@ -708,6 +803,7 @@ import { useAppStore, useAuthStore } from '@/stores'
 import { fetchPlaygroundModels, fetchPlaygroundVideo, fetchPlaygroundVideoContent, sendPlaygroundChat, sendPlaygroundImageGeneration, sendPlaygroundSpeech, sendPlaygroundTranscription, sendPlaygroundVideoEdit, sendPlaygroundVideoGeneration } from '@/features/playground/api'
 import { cachePlaygroundImage, createPlaygroundImageCacheKey, listPlaygroundGalleryImages, readCachedPlaygroundImageBlob, removeCachedPlaygroundImages, restoreCachedPlaygroundImage, type PlaygroundGalleryImage } from '@/features/playground/imageCache'
 import { downloadPlaygroundImage, imageFilenameExtension, playgroundImageUrl } from '@/features/playground/imageDownload'
+import { copyPlaygroundImageToClipboard, isClipboardImageSupported } from '@/features/playground/imageClipboard'
 import { buildPlaygroundImageRequest, normalizePlaygroundChatModels, normalizePlaygroundImageModels, normalizePlaygroundKeys, normalizePlaygroundVideoModels, formatPlaygroundKeyLabel, resolvePlaygroundDefaultKeyId, resolvePlaygroundDefaultModel, resolveSelectedKeyId, resolveSelectedModel } from '@/features/playground/viewModel'
 import type { PlaygroundAttachment, PlaygroundKeySummary, PlaygroundModel } from '@/features/playground/types'
 import { buildCanvasMentionReferences, buildCanvasReferenceItems, expandCanvasGroupResourceNodes, getCanvasNodeLabel, getCanvasNodePreviewUrl, getCanvasNodeText, isCanvasResourceNode, type CanvasMentionReference, type CanvasReferenceItem } from '@/features/playground/canvas/canvasReferences'
@@ -734,6 +830,7 @@ import CanvasNodeInfoDialog from '@/features/playground/canvas/CanvasNodeInfoDia
 import CanvasAgentDialog from '@/features/playground/canvas/CanvasAgentDialog.vue'
 import CanvasPluginManagerDialog from '@/features/playground/canvas/CanvasPluginManagerDialog.vue'
 import { useCanvasStore } from '@/features/playground/canvas/canvasStore'
+import { arrangeCanvasNodes } from '@/features/playground/canvas/canvasLayout'
 import type { CanvasBackgroundMode, CanvasImageVariant, CanvasNode as CanvasNodeData, CanvasPersistedState, CanvasProject, CanvasPromptEntry, CanvasReferenceImage, CanvasTextVariant, CanvasTool, CanvasViewport } from '@/features/playground/canvas/types'
 import { cacheCanvasMedia, createCanvasMediaCacheKey, readCachedCanvasMediaBlob, restoreCanvasMedia } from '@/features/playground/canvas/mediaCache'
 import { captureCanvasVideoFrame, type CanvasVideoFramePosition } from '@/features/playground/canvas/videoFrame'
@@ -786,6 +883,10 @@ const textGenerationControllers = new Map<string, AbortController>()
 const assistantOpen = ref(false)
 const assistantLoading = ref(false)
 const assistantModel = ref('')
+const assistantReasoningEffort = ref<'none' | 'low' | 'medium' | 'high'>('none')
+function setAssistantReasoningEffort(value: string): void {
+  if (value === 'none' || value === 'low' || value === 'medium' || value === 'high') assistantReasoningEffort.value = value
+}
 const assistantController = ref<AbortController | null>(null)
 const agentOpen = ref(false)
 const agentConnected = ref(false)
@@ -1680,6 +1781,14 @@ function deleteProjectFromMenu(): void {
 
 function handleCanvasPointerDown(event: PointerEvent): void {
   if ((event.target as Element | null)?.closest('[data-canvas-no-zoom]')) return
+  // A prior gesture can fail to reach pointerup/pointercancel (e.g. the canvas
+  // surface re-renders mid-drag while a generation is streaming in updates),
+  // leaving panning/dragging state and its window listeners stuck with stale
+  // start coordinates. The next click's first move then computes a delta
+  // against that stale position, which reads as the whole viewport suddenly
+  // panning. Clearing any leftover gesture before starting a new one prevents
+  // that stale delta from ever being applied.
+  if (panning.value || dragging.value || resizing.value || selectionBox.value) stopPointerAction()
   closeContextMenu()
   canvasMenuOpen.value = false
   const target = event.target instanceof Element ? event.target : null
@@ -2154,11 +2263,19 @@ async function importCanvasFiles(files: File[], clientX: number, clientY: number
       const cached = await cachePlaygroundImage(imageCacheKey, userId.value, selectedKeyId.value, dataUrl, { prompt: file.name, model: 'canvas-upload' })
       if (cached) imageUrl = cached
     }
+    // 与手动新建的节点同构，只是图片/媒体是导入进来的而不是生成的。
     const node: CanvasNodeData = {
-      id: `upload-${now}-${Math.random().toString(36).slice(2, 8)}`,
-      type: isVideo ? 'video' : isAudio ? 'audio' : 'image', kind: 'result', x: baseX + (index % 3) * 300, y: baseY + Math.floor(index / 3) * 340,
-      width: 260, height: isAudio ? 220 : 320, prompt: file.name, model: 'canvas-upload', imageUrl, imageCacheKey,
-      videoUrl, audioUrl, audioCacheKey, imageUrls: imageUrl ? [imageUrl] : undefined, status: 'success', resultIndex: 0, createdAt: now, updatedAt: now,
+      ...createCanvasNode(
+        isVideo ? 'video' : isAudio ? 'audio' : 'image',
+        baseX + (index % 3) * 300,
+        baseY + Math.floor(index / 3) * 340,
+      ),
+      imageUrl,
+      imageCacheKey,
+      videoUrl,
+      audioUrl,
+      audioCacheKey,
+      imageUrls: imageUrl ? [imageUrl] : undefined,
     }
     canvasStore.addNode(node)
     created.push(node.id)
@@ -2342,12 +2459,32 @@ async function pasteNodes(externalText?: string): Promise<void> {
 
 async function handlePaste(event: ClipboardEvent): Promise<void> {
   const target = event.target instanceof Element ? event.target : null
-  if (target?.closest('input,textarea,select,[contenteditable="true"]')) return
-  const files = Array.from(event.clipboardData?.files ?? []).filter((file) => file.type.startsWith('image/') || file.type.startsWith('video/') || file.type.startsWith('audio/')).slice(0, 8)
+  const editable = Boolean(target?.closest('input,textarea,select,[contenteditable="true"]'))
+  const clipboardData = event.clipboardData
+  const itemFiles = Array.from(clipboardData?.items ?? [])
+    .filter((item) => item.kind === 'file')
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => Boolean(file))
+  const files = Array.from(clipboardData?.files ?? [])
+    .filter((file) => file.type.startsWith('image/') || file.type.startsWith('video/') || file.type.startsWith('audio/'))
+    .concat(itemFiles)
+    .filter((file, index, all) => all.findIndex((candidate) => candidate.name === file.name && candidate.size === file.size && candidate.type === file.type) === index)
+    .slice(0, 8)
+  // 焦点在输入框或提示词编辑器里时，粘贴文本交给浏览器默认行为；但图片没有任何
+  // 输入框能消费——CanvasMentionEditor 是 contenteditable，截图粘进去会被吞成一个
+  // <img> 或直接丢弃——所以只要剪贴板里有文件，一律由画布接管。
+  if (editable && !files.length) return
   const text = event.clipboardData?.getData('text/plain') ?? ''
-  if (!files.length && !text) return
-  event.preventDefault()
+  // 系统剪贴板为空时不再直接返回：copySelectedNodes 的 writeText 可能被浏览器权限
+  // 拒绝，此时节点副本只存在于内部 clipboard.value，仍要让 pasteNodes 有机会回退。
+  if (files.length || text) event.preventDefault()
   if (files.length) {
+    // When an editable image node is selected, Ctrl+V adds clipboard images as
+    // references to that node instead of unexpectedly creating new canvas nodes.
+    if (selectedNode.value?.type === 'image' && selectedNode.value.kind !== 'result' && userId.value && selectedKeyId.value && files.some((file) => file.type.startsWith('image/'))) {
+      await addReferenceFiles(files.filter((file) => file.type.startsWith('image/')))
+      return
+    }
     const rect = canvasRef.value?.getBoundingClientRect()
     const clientX = pointerPosition.value.x || (rect ? rect.left + rect.width / 2 : 0)
     const clientY = pointerPosition.value.y || (rect ? rect.top + rect.height / 2 : 0)
@@ -2522,12 +2659,18 @@ function createCanvasPluginContext(node: CanvasNodeData): CanvasPluginRuntimeCon
     }
     throw new Error('视频生成超时。')
   }
-  const pluginTextGeneration = async (prompt: string, options?: { signal?: AbortSignal; model?: string; system?: string; onDelta?: (text: string) => void }): Promise<{ text: string }> => {
+  const pluginTextGeneration = async (prompt: string, options?: { signal?: AbortSignal; model?: string; system?: string; reasoningEffort?: 'none' | 'low' | 'medium' | 'high'; onDelta?: (text: string) => void }): Promise<{ text: string }> => {
     const keyId = selectedTextKeyId.value
     const model = options?.model?.trim() || selectedTextModel.value
     if (!keyId || !model) throw new Error('未配置可用的文本模型或 API Key。')
     const messages = [...(options?.system?.trim() ? [{ role: 'system', content: options.system.trim() }] : []), { role: 'user', content: prompt }]
-    const result = await sendPlaygroundChat(keyId, { model, messages, stream: true }, { signal: options?.signal ?? new AbortController().signal, onDelta: (delta) => options?.onDelta?.(delta.contentDelta) })
+    const reasoningEffort = options?.reasoningEffort
+    const result = await sendPlaygroundChat(keyId, {
+      model,
+      messages,
+      stream: true,
+      ...(reasoningEffort && reasoningEffort !== 'none' ? { reasoning_effort: reasoningEffort } : {}),
+    }, { signal: options?.signal ?? new AbortController().signal, onDelta: (delta) => options?.onDelta?.(delta.contentDelta) })
     return { text: result.content }
   }
   const pluginAudioGeneration = async (prompt: string, options?: { signal?: AbortSignal; model?: string; voice?: string; language?: string }): Promise<{ url: string; mimeType: string }> => {
@@ -2565,7 +2708,7 @@ function createCanvasPluginContext(node: CanvasNodeData): CanvasPluginRuntimeCon
 function nodeDimensions(type: CanvasNodeData['type']): { width: number; height: number } {
   const plugin = pluginDefinition(type)
   if (plugin) return { width: plugin.definition.defaultSize?.width ?? 360, height: plugin.definition.defaultSize?.height ?? 300 }
-  return { width: type === 'text' ? 340 : type === 'config' ? 300 : type === 'group' ? 760 : 360, height: type === 'text' ? 300 : type === 'config' ? 260 : type === 'audio' ? 220 : type === 'group' ? 480 : 420 }
+  return { width: type === 'text' ? 340 : type === 'config' ? 300 : type === 'group' ? 760 : 360, height: type === 'text' ? 240 : type === 'config' ? 260 : type === 'audio' ? 220 : type === 'group' ? 480 : 420 }
 }
 
 function createNodeFromMenu(type: CanvasNodeData['type']): void {
@@ -2587,10 +2730,14 @@ function createNodeFromMenu(type: CanvasNodeData['type']): void {
   nodeCreatePosition.value = null
 }
 
-function addNode(x = 120, y = 120, type: CanvasNodeData['type'] = 'image'): string {
-  canvasStore.checkpoint()
+// 构造一个画布节点。手动新建与粘贴/拖入导入共用这一份属性表。
+//
+// 导入路径原先自己内联了一份，并把 kind 写死成 'result'——那是「生成结果」的语义，
+// 于是粘贴进来的图片不能连线、不能写提示词、不能再生成，只是一张贴在画布上的死图。
+// 上传的素材不是任何生成的产物，它就是一个普通节点，只不过图片是贴进来的。
+function createCanvasNode(type: CanvasNodeData['type'], x: number, y: number): CanvasNodeData {
   const now = Date.now()
-  const node: CanvasNodeData = {
+  return {
     id: `${type}-${now}-${Math.random().toString(36).slice(2, 8)}`,
     type,
     kind: 'generator',
@@ -2604,6 +2751,7 @@ function addNode(x = 120, y = 120, type: CanvasNodeData['type'] = 'image'): stri
     model: type.includes(':') ? 'canvas-plugin' : type === 'text' || type === 'audio' ? selectedTextModel.value : type === 'video' ? (videoModels.value[0]?.id ?? '') : type === 'group' ? '' : selectedModel.value,
     ...(pluginDefinition(type) ? { pluginId: pluginDefinition(type)?.plugin.id, pluginTitle: pluginDefinition(type)?.definition.title, pluginDescription: pluginDefinition(type)?.definition.description, pluginRenderer: pluginDefinition(type)?.definition.renderer ?? 'generic', pluginMetadata: pluginDefinition(type)?.definition.defaultMetadata ? { ...pluginDefinition(type)?.definition.defaultMetadata } : undefined, pluginHidePanel: pluginDefinition(type)?.definition.hidePanel === true, pluginAutoOpenPanel: pluginDefinition(type)?.definition.autoOpenPanel === true, pluginTransparentBackground: pluginDefinition(type)?.definition.transparentBackground === true, pluginInteractionToggle: pluginDefinition(type)?.definition.interactionToggle === true, pluginUseBuiltinPanel: pluginDefinition(type)?.definition.useBuiltinPanel } : {}),
     imageCount: type === 'group' ? 1 : 4,
+    imageRevisionCount: type === 'image' ? 1 : undefined,
     config: type === 'config'
       ? {
           mode: 'image',
@@ -2624,6 +2772,11 @@ function addNode(x = 120, y = 120, type: CanvasNodeData['type'] = 'image'): stri
     createdAt: now,
     updatedAt: now,
   }
+}
+
+function addNode(x = 120, y = 120, type: CanvasNodeData['type'] = 'image'): string {
+  canvasStore.checkpoint()
+  const node = createCanvasNode(type, x, y)
   canvasStore.addNode(node)
   selectedNodeId.value = node.id
   selectedNodeIds.value = new Set([node.id])
@@ -2709,6 +2862,13 @@ function canvasImageSlots(node: CanvasNodeData): CanvasImageVariant[] {
   return urls.map((url, index) => ({ id: `${node.id}-image-${index}`, status: 'success', url, cacheKey: node.imageCacheKeys?.[index] }))
 }
 
+function resolveCanvasImageSize(node: CanvasNodeData): string {
+  if (node.config?.size !== 'custom') return node.config?.size ?? '1024x1024'
+  const width = Math.min(3840, Math.max(16, Math.round(Number(node.config.customWidth) || 1024)))
+  const height = Math.min(3840, Math.max(16, Math.round(Number(node.config.customHeight) || 1024)))
+  return `${width}x${height}`
+}
+
 function syncImageVariantFields(slots: CanvasImageVariant[], preferredIndex?: number): Pick<CanvasNodeData, 'imageUrl' | 'imageUrls' | 'imageCacheKey' | 'imageCacheKeys' | 'primaryImageIndex' | 'imageVariants'> {
   const successful = slots.filter((slot): slot is CanvasImageVariant & { status: 'success'; url: string } => slot.status === 'success' && Boolean(slot.url))
   const preferred = preferredIndex !== undefined && slots[preferredIndex]?.status === 'success' && slots[preferredIndex]?.url ? preferredIndex : slots.findIndex((slot) => slot.status === 'success' && Boolean(slot.url))
@@ -2755,6 +2915,7 @@ function duplicateImageVariant(id: string, imageIndex: number): void {
   const now = Date.now()
   const resultId = `result-${source.id}-${now}-${Math.random().toString(36).slice(2, 8)}`
   const cacheKey = slot?.cacheKey ?? source.imageCacheKey
+  const resolvedPrompt = slot?.prompt?.trim() || source.prompt
   canvasStore.checkpoint()
   canvasStore.addNode({
     id: resultId,
@@ -2764,11 +2925,11 @@ function duplicateImageVariant(id: string, imageIndex: number): void {
     y: source.y + Math.max(0, imageIndex) * 360,
     width: 260,
     height: 320,
-    prompt: source.prompt,
+    prompt: resolvedPrompt,
     model: source.model,
     imageUrl: url,
     imageUrls: [url],
-    imageVariants: [{ id: `${resultId}-image-0`, status: 'success', url, cacheKey }],
+    imageVariants: [{ id: `${resultId}-image-0`, status: 'success', url, cacheKey, prompt: resolvedPrompt, revisionPrompt: resolvedPrompt }],
     imageCacheKey: cacheKey,
     imageCacheKeys: cacheKey ? [cacheKey] : undefined,
     resultIndex: imageIndex,
@@ -2780,6 +2941,70 @@ function duplicateImageVariant(id: string, imageIndex: number): void {
   canvasStore.addConnection({ id: `connection-${source.id}-${resultId}`, from: source.id, to: resultId, kind: 'result' })
   selectedNodeId.value = resultId
   selectedNodeIds.value = new Set([resultId])
+}
+
+function updateImageVariantPrompt(id: string, imageIndex: number, prompt: string): void {
+  const node = activeProject.value?.nodes.find((item) => item.id === id)
+  const slots = node ? canvasImageSlots(node).map((slot) => ({ ...slot })) : []
+  if (!node || node.type !== 'image' || !slots[imageIndex]) return
+  slots[imageIndex].revisionPrompt = prompt.slice(0, 12000)
+  canvasStore.updateNode(id, { imageVariants: slots })
+}
+
+function updateImageRevisionCount(id: string, count: number): void {
+  const node = activeProject.value?.nodes.find((item) => item.id === id)
+  if (!node || node.type !== 'image') return
+  const normalized = Number.isFinite(count) ? Math.min(10, Math.max(1, Math.floor(count))) : 1
+  canvasStore.updateNode(id, { imageRevisionCount: normalized })
+}
+
+function hasImageRevisionPrompt(node: CanvasNodeData | null): boolean {
+  return Boolean(node && canvasImageSlots(node).some((variant, index) => isImageVariantRevised(node, index, variant)))
+}
+
+function generateImageChildVariant(id: string, imageIndex: number): void {
+  const project = activeProject.value
+  const source = project?.nodes.find((item) => item.id === id)
+  const slot = source ? canvasImageSlots(source)[imageIndex] : undefined
+  if (!project || !source || source.type !== 'image' || slot?.status !== 'success' || !slot.url) return
+  const prompt = (slot.revisionPrompt ?? '').trim()
+  if (!prompt) return
+  const now = Date.now()
+  const childId = `image-child-${source.id}-${imageIndex}-${now}-${Math.random().toString(36).slice(2, 8)}`
+  const revisionCount = Math.min(10, Math.max(1, Math.floor(source.imageRevisionCount ?? 1)))
+  canvasStore.checkpoint()
+  canvasStore.addNode({
+    id: childId,
+    type: 'image',
+    kind: 'generator',
+    x: source.x + source.width + 160,
+    y: source.y + imageIndex * 420,
+    width: source.width,
+    height: source.height,
+    prompt,
+    model: source.model || selectedModel.value,
+    imageCount: revisionCount,
+    imageRevisionCount: revisionCount,
+    config: source.config ? { ...source.config } : undefined,
+    sourceNodeId: source.id,
+    resultIndex: imageIndex,
+    status: 'idle',
+    createdAt: now,
+    updatedAt: now,
+  })
+  canvasStore.addConnection({ id: `image-child-${source.id}-${childId}`, from: source.id, to: childId, kind: 'reference' })
+  selectedNodeId.value = childId
+  selectedNodeIds.value = new Set([childId])
+  generateNode(childId)
+}
+
+function generateImageChildVariants(id: string): void {
+  const source = activeProject.value?.nodes.find((item) => item.id === id)
+  if (!source || source.type !== 'image' || source.status === 'generating') return
+  for (const [index, slot] of canvasImageSlots(source).entries()) {
+    if (slot.status !== 'success' || !slot.url || !isImageVariantRevised(source, index, slot)) continue
+    generateImageChildVariant(id, index)
+  }
 }
 
 function deleteImageVariant(id: string, imageIndex: number): void {
@@ -2806,12 +3031,11 @@ function generateImageFromText(id: string): void {
   const project = activeProject.value
   const source = project?.nodes.find((node) => node.id === id)
   const prompt = source && (source.type === 'text' ? source.textContent || source.prompt : source.prompt).trim()
-  if (!project || !source || source.type !== 'text' || source.kind === 'result' || !prompt) return
+  if (!project || !source || source.type !== 'text' || !prompt) return
   if (!selectedKeyId.value || !selectedModel.value) {
     appStore.showError(t('playground.noModels'))
     return
   }
-  const resolvedPrompt = resolveCanvasNodeMentions(prompt, project)
   const configId = addNode(source.x + source.width + 120, source.y, 'config')
   canvasStore.updateNode(configId, {
     prompt: `@[node:${source.id}]`,
@@ -2824,7 +3048,9 @@ function generateImageFromText(id: string): void {
   })
   const imageId = addNode(source.x + source.width + 520, source.y, 'image')
   canvasStore.updateNode(imageId, {
-    prompt: resolvedPrompt,
+    // The connected text node is the single source of truth. Keeping the image
+    // node prompt empty prevents the original text from being appended again.
+    prompt: '',
     model: selectedModel.value,
     imageCount: 4,
   })
@@ -3330,7 +3556,7 @@ async function transcribeAudioNode(id: string): Promise<void> {
       x: node.x + node.width + 120,
       y: node.y,
       width: 340,
-      height: 300,
+      height: 240,
       prompt: text,
       textContent: text,
       model: node.model || 'grok-voice-latest',
@@ -3559,6 +3785,7 @@ async function sendAssistantMessage(content: string): Promise<void> {
     const result = await sendPlaygroundChat(keyId, {
       model,
       stream: true,
+      ...(assistantReasoningEffort.value !== 'none' ? { reasoning_effort: assistantReasoningEffort.value } : {}),
       messages: [
         { role: 'system', content: t('playground.canvasAssistantSystemPrompt') },
         ...history,
@@ -4065,7 +4292,7 @@ function updateSelectedPrompt(prompt: string): void {
   if (selectedNode.value) updateNodePrompt(selectedNode.value.id, prompt)
 }
 
-function updateNodeConfig(id: string, key: 'mode' | 'model' | 'count' | 'size' | 'quality' | 'background' | 'resolution' | 'duration' | 'aspectRatio' | 'audioVoice' | 'audioFormat' | 'audioSpeed' | 'audioInstructions' | 'reasoningEffort', value: string): void {
+function updateNodeConfig(id: string, key: 'mode' | 'model' | 'count' | 'size' | 'customWidth' | 'customHeight' | 'quality' | 'background' | 'resolution' | 'duration' | 'aspectRatio' | 'audioVoice' | 'audioFormat' | 'audioSpeed' | 'audioInstructions' | 'reasoningEffort', value: string): void {
   const node = activeProject.value?.nodes.find((item) => item.id === id)
   if (!node) return
   canvasStore.checkpoint()
@@ -4354,6 +4581,7 @@ function insertCanvasAsset(asset: CanvasAssetItem): void {
       model: asset.kind === 'image' ? selectedModel.value : selectedTextModel.value,
       status: 'success',
       imageCount: 1,
+      imageRevisionCount: 1,
     }),
     id: `asset-node-${now}-${Math.random().toString(36).slice(2, 8)}`,
     x,
@@ -4437,6 +4665,58 @@ function updateNodeImageCount(id: string, value: number): void {
   canvasStore.updateNode(id, { imageCount: count })
 }
 
+// 为批量生成里的第 index 张单独授权提示词；留空则该张在生成时回落到节点共享的
+// prompt（见 resolveCanvasImageSlotPrompt）。不在每次按键时 checkpoint——同类的
+// updateImageVariantPrompt/updateNodeImageCount 也是这么做的，逐键入栈撤销没有意义。
+function updateNodeImagePrompt(id: string, index: number, value: string): void {
+  const node = activeProject.value?.nodes.find((item) => item.id === id)
+  if (!node || index < 0) return
+  const next = [...(node.imagePrompts ?? [])]
+  next[index] = value.slice(0, 12000)
+  canvasStore.updateNode(id, { imagePrompts: next })
+}
+
+// 解析批量生成里第 index 张实际要用的 prompt：per-slot 授权优先，空白则回落共享 prompt。
+function resolveCanvasImageSlotPrompt(node: CanvasNodeData, index: number): string {
+  return node.imagePrompts?.[index]?.trim() || node.prompt
+}
+
+// 每张图的连接引用可以单独指定：未设置过时等价于该张沿用当前全部已连接引用；
+// 第一次为某张图切换任意引用的勾选状态时，把"当前已连接的引用"冻结成这张图的
+// 显式名单再做增删——避免已经调整过的图，因为后面又新增/断开了别的引用而被连带改动。
+function toggleImageSlotReference(id: string, index: number, referenceNodeId: string): void {
+  const project = activeProject.value
+  const node = project?.nodes.find((item) => item.id === id)
+  if (!project || !node || index < 0) return
+  const current = node.imageReferenceSlots?.[index]
+    ?? buildCanvasReferenceItems(project, id).map((reference) => reference.nodeId)
+  const next = current.includes(referenceNodeId)
+    ? current.filter((existing) => existing !== referenceNodeId)
+    : [...current, referenceNodeId]
+  const slots = [...(node.imageReferenceSlots ?? [])]
+  slots[index] = next
+  canvasStore.updateNode(id, { imageReferenceSlots: slots })
+}
+
+// 该引用在这张图里当前是否生效：没有显式名单时视为"全部生效"（旧行为）。
+function isImageSlotReferenceActive(node: CanvasNodeData, index: number, referenceNodeId: string): boolean {
+  const slotList = node.imageReferenceSlots?.[index]
+  return slotList ? slotList.includes(referenceNodeId) : true
+}
+
+// 改版框的默认内容：优先用这张图实际生成时用的 prompt，取不到则回落共享 prompt——
+// 与之前的 placeholder 显示口径保持一致，只是现在写成真实值而不是提示文字。
+function defaultImageVariantRevisionPrompt(node: CanvasNodeData, index: number, slot: CanvasImageVariant): string {
+  return (slot.prompt?.trim() || resolveCanvasImageSlotPrompt(node, index)).trim()
+}
+
+// 改版框内容是否已经偏离默认值——用来在批量改版时跳过用户没有真正修改过的图，
+// 避免"看起来已经填了"就被批量按钮当成需要重新生成的一张。
+function isImageVariantRevised(node: CanvasNodeData, index: number, slot: CanvasImageVariant): boolean {
+  const current = slot.revisionPrompt?.trim()
+  return Boolean(current) && current !== defaultImageVariantRevisionPrompt(node, index, slot)
+}
+
 function newProject(): void {
   const title = window.prompt(t('playground.canvasProjectName'), t('playground.canvasProjectDefault'))
   if (title?.trim()) canvasStore.addProject(title.trim())
@@ -4468,11 +4748,12 @@ function deleteProject(id: string): void {
   selectedNodeId.value = null
 }
 
-function fitCanvas(): void {
+function fitCanvas(options: { checkpoint?: boolean } = {}): void {
+  const checkpoint = options.checkpoint ?? true
   const nodes = activeProject.value?.nodes ?? []
   const rect = canvasRef.value?.getBoundingClientRect()
   if (!nodes.length || !rect) {
-    updateCanvasViewport({ x: 40, y: 40, scale: 1 }, { checkpoint: true })
+    updateCanvasViewport({ x: 40, y: 40, scale: 1 }, { checkpoint })
     return
   }
   const minX = Math.min(...nodes.map((node) => node.x))
@@ -4480,7 +4761,23 @@ function fitCanvas(): void {
   const maxX = Math.max(...nodes.map((node) => node.x + node.width))
   const maxY = Math.max(...nodes.map((node) => node.y + node.height))
   const scale = Math.min(1.2, Math.max(0.35, Math.min((rect.width - 100) / (maxX - minX), (rect.height - 100) / (maxY - minY))))
-  updateCanvasViewport({ x: (rect.width - (maxX - minX) * scale) / 2 - minX * scale, y: (rect.height - (maxY - minY) * scale) / 2 - minY * scale, scale }, { checkpoint: true })
+  updateCanvasViewport({ x: (rect.width - (maxX - minX) * scale) / 2 - minX * scale, y: (rect.height - (maxY - minY) * scale) / 2 - minY * scale, scale }, { checkpoint })
+}
+
+function arrangeCanvas(): void {
+  const project = activeProject.value
+  if (!project?.nodes.length) return
+  const positions = arrangeCanvasNodes(project.nodes, project.connections)
+  const changed = project.nodes.some((node) => {
+    const position = positions[node.id]
+    return position && (position.x !== node.x || position.y !== node.y)
+  })
+  if (!changed) return
+  canvasStore.checkpoint()
+  for (const node of project.nodes) {
+    const position = positions[node.id]
+    if (position) canvasStore.updateNode(node.id, position)
+  }
 }
 
 function resetCanvasView(): void {
@@ -4544,12 +4841,13 @@ function openImageMask(nodeId: string, imageIndex: number): void {
   maskDialogOpen.value = true
 }
 
-async function applyImageMask(maskDataUrl: string): Promise<void> {
+async function applyImageMask(maskDataUrl: string, editPrompt: string): Promise<void> {
   const target = maskDialogTarget.value
   const node = target ? activeProject.value?.nodes.find((item) => item.id === target.nodeId) : null
   const keyId = selectedKeyId.value
   const model = node?.model || selectedModel.value
-  if (!node || !target || !keyId || !model || !node.prompt.trim()) {
+  const prompt = editPrompt.trim()
+  if (!node || !target || !keyId || !model || !prompt) {
     appStore.showError(t('playground.canvasMaskRequiresPrompt'))
     return
   }
@@ -4581,7 +4879,7 @@ async function applyImageMask(maskDataUrl: string): Promise<void> {
     y: node.y,
     width: node.width,
     height: node.height,
-    prompt: node.prompt,
+    prompt,
     model,
     status: 'generating',
     sourceNodeId: node.id,
@@ -4593,8 +4891,8 @@ async function applyImageMask(maskDataUrl: string): Promise<void> {
   try {
     const editBody: Record<string, unknown> = {
       model,
-      prompt: node.prompt,
-      size: node.config?.size ?? '1024x1024',
+      prompt,
+      size: node.config?.size === 'custom' ? resolveCanvasImageSize(node) : node.config?.size ?? '1024x1024',
       quality: node.config?.quality ?? 'auto',
       n: 1,
       output_format: 'png',
@@ -4609,7 +4907,7 @@ async function applyImageMask(maskDataUrl: string): Promise<void> {
     const sourceUrl = playgroundImageUrl(response.data[0], 'png')
     if (!sourceUrl) throw new Error(t('playground.canvasMaskFailed'))
     const cacheKey = userId.value ? createPlaygroundImageCacheKey(userId.value, keyId, resultNodeId, 0) : ''
-    const imageUrl = cacheKey && userId.value ? await cachePlaygroundImage(cacheKey, userId.value, keyId, sourceUrl, { prompt: node.prompt, model }) : sourceUrl
+    const imageUrl = cacheKey && userId.value ? await cachePlaygroundImage(cacheKey, userId.value, keyId, sourceUrl, { prompt, model }) : sourceUrl
     if (!imageUrl) throw new Error(t('playground.canvasMaskFailed'))
     if (imageUrl.startsWith('blob:')) imageObjectUrls.add(imageUrl)
     canvasStore.updateNode(resultNodeId, { imageUrl, imageUrls: [imageUrl], imageCacheKey: cacheKey || undefined, imageCacheKeys: cacheKey ? [cacheKey] : undefined, status: 'success' })
@@ -4822,6 +5120,16 @@ async function resolveImageBlob(node: CanvasNodeData, imageIndex: number): Promi
   }
 }
 
+async function resolveCurrentImageReference(node: CanvasNodeData): Promise<PlaygroundAttachment | null> {
+  if (!(node.imageUrl || node.imageUrls?.length || node.imageCacheKey || node.imageCacheKeys?.length)) return null
+  const blob = await resolveImageBlob(node, node.primaryImageIndex ?? 0)
+  if (!blob) return null
+  const dataUrl = await blobToDataUrl(blob)
+  return dataUrl
+    ? { id: `${node.id}:current`, name: `${canvasNodeLabel(node)}.png`, mimeType: blob.type || 'image/png', size: blob.size, dataUrl }
+    : null
+}
+
 async function reversePromptImage(nodeId: string, imageIndex: number): Promise<void> {
   const project = activeProject.value
   const node = project?.nodes.find((item) => item.id === nodeId)
@@ -4869,6 +5177,10 @@ async function reversePromptImage(nodeId: string, imageIndex: number): Promise<v
     const result = await sendPlaygroundChat(keyId, {
       model,
       stream: true,
+      // 反推提示词跟 AI 助手共用同一套文本模型选择（selectedTextModel /
+      // assistantModel），推理强度也复用助手那一份设置，不用再单独给这个
+      // 一次性动作起一套独立的 UI。
+      ...(assistantReasoningEffort.value !== 'none' ? { reasoning_effort: assistantReasoningEffort.value } : {}),
       messages: [
         { role: 'system', content: t('playground.canvasReversePromptSystem') },
         { role: 'user', content: [
@@ -5144,16 +5456,16 @@ async function handleImportFile(): Promise<void> {
   }
 }
 
-async function handleReferenceFiles(): Promise<void> {
+async function addReferenceFiles(files: File[]): Promise<void> {
   const node = selectedNode.value
   const keyId = selectedKeyId.value
   const owner = userId.value
-  const files = Array.from(referenceInput.value?.files ?? []).filter((file) => file.type.startsWith('image/')).slice(0, MAX_REFERENCE_IMAGES)
-  if (!node || !files.length || !owner || !keyId) return
+  const imageFiles = files.filter((file) => file.type.startsWith('image/')).slice(0, MAX_REFERENCE_IMAGES)
+  if (!node || node.type !== 'image' || node.kind === 'result' || node.status === 'generating' || !imageFiles.length || !owner || !keyId) return
 
   const added: CanvasReferenceImage[] = []
   const batch = Date.now()
-  for (const [index, file] of files.entries()) {
+  for (const [index, file] of imageFiles.entries()) {
     const dataUrl = await readFileAsDataUrl(file)
     // 图片本体写进 IndexedDB，节点只留 cacheKey——base64 绝不进 localStorage。
     const cacheKey = createPlaygroundImageCacheKey(owner, keyId, `${node.id}-ref-${batch}`, index)
@@ -5172,6 +5484,19 @@ async function handleReferenceFiles(): Promise<void> {
     })
   }
   if (referenceInput.value) referenceInput.value.value = ''
+}
+
+async function handleReferenceFiles(): Promise<void> {
+  await addReferenceFiles(Array.from(referenceInput.value?.files ?? []))
+}
+
+async function handleReferencePaste(event: ClipboardEvent): Promise<void> {
+  const items = Array.from(event.clipboardData?.items ?? [])
+  const files = items
+    .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => Boolean(file))
+  if (files.length) await addReferenceFiles(files)
 }
 
 function readFileAsDataUrl(file: File): Promise<string> {
@@ -5219,8 +5544,27 @@ function collectCanvasUpstreamNodes(project: CanvasProject, targetId: string): C
   return nodes
 }
 
+function collectCanvasPromptNodes(project: CanvasProject, targetId: string): CanvasNodeData[] {
+  const visited = new Set<string>()
+  const queue = project.connections.filter((connection) => connection.to === targetId).map((connection) => connection.from)
+  const nodes: CanvasNodeData[] = []
+  while (queue.length) {
+    const id = queue.shift()
+    if (!id || visited.has(id)) continue
+    visited.add(id)
+    const node = project.nodes.find((candidate) => candidate.id === id)
+    if (!node) continue
+    nodes.push(node)
+    if (node.type === 'text') continue
+    for (const connection of project.connections) {
+      if (connection.to === id && !visited.has(connection.from)) queue.push(connection.from)
+    }
+  }
+  return nodes
+}
+
 function composeCanvasPrompt(node: CanvasNodeData, project: CanvasProject): string {
-  const upstreamText = collectCanvasUpstreamNodes(project, node.id)
+  const upstreamText = collectCanvasPromptNodes(project, node.id)
     .flatMap((candidate) => candidate.type === 'group' ? expandCanvasGroupResourceNodes(candidate, project) : [candidate])
     .filter((candidate) => candidate.type === 'text')
     .map((candidate) => (candidate.textContent || candidate.prompt).trim())
@@ -5231,7 +5575,7 @@ function composeCanvasPrompt(node: CanvasNodeData, project: CanvasProject): stri
 }
 
 // 生图前把参考图从 IndexedDB 还原成接口要的 PlaygroundAttachment 形态。
-async function resolveReferenceAttachments(node: CanvasNodeData): Promise<PlaygroundAttachment[]> {
+async function resolveReferenceAttachments(node: CanvasNodeData, slotIndex?: number): Promise<PlaygroundAttachment[]> {
   const attachments: PlaygroundAttachment[] = []
   for (const reference of node.referenceImages ?? []) {
     const objectUrl = referencePreviews.value[reference.cacheKey] ?? await restoreCachedPlaygroundImage(reference.cacheKey)
@@ -5253,9 +5597,23 @@ async function resolveReferenceAttachments(node: CanvasNodeData): Promise<Playgr
       if (!attachments.some((item) => item.dataUrl === attachment.dataUrl)) attachments.push(attachment)
     }
   }
+  const sourceImageIndex = node.kind === 'generator' && Number.isInteger(node.resultIndex) && (node.resultIndex ?? -1) >= 0
+    ? node.resultIndex
+    : undefined
+  const sourceImageNodeId = sourceImageIndex !== undefined ? node.sourceNodeId : undefined
+  // 每张图独立指定参考图（可选）：未显式设置时沿用旧行为（所有已连接引用共享给每张
+  // 图）；一旦为该 slot 显式设置过，就只按这份名单过滤"直接连接"的引用节点——间接
+  // （多级）上游节点不受影响，避免收窄一个从没在 UI 里露出过的东西。
+  const slotReferenceAllowlist = slotIndex !== undefined ? node.imageReferenceSlots?.[slotIndex] : undefined
+  const allowedReferenceNodeIds = slotReferenceAllowlist ? new Set(slotReferenceAllowlist) : undefined
+  const directReferenceSourceIds = allowedReferenceNodeIds && project
+    ? new Set(project.connections.filter((connection) => connection.to === node.id).map((connection) => connection.from))
+    : undefined
   for (const upstream of project ? collectCanvasUpstreamNodes(project, node.id) : []) {
+    if (upstream && allowedReferenceNodeIds && directReferenceSourceIds?.has(upstream.id) && !allowedReferenceNodeIds.has(upstream.id)) continue
     if (upstream?.type === 'image') {
-      const blob = await resolveImageBlob(upstream, 0)
+      const imageIndex = upstream.id === sourceImageNodeId ? sourceImageIndex ?? 0 : 0
+      const blob = await resolveImageBlob(upstream, imageIndex)
       if (blob) {
         const dataUrl = await blobToDataUrl(blob)
         if (dataUrl && !attachments.some((item) => item.dataUrl === dataUrl)) {
@@ -5356,6 +5714,41 @@ function updateGenerationSet(target: Ref<Set<string>>, id: string, active: boole
   target.value = next
 }
 
+function archiveImageGeneration(node: CanvasNodeData): void {
+  const project = activeProject.value
+  const slots = canvasImageSlots(node).filter((slot): slot is CanvasImageVariant & { status: 'success'; url: string } => slot.status === 'success' && Boolean(slot.url))
+  if (!project || node.type !== 'image' || !slots.length) return
+  const now = Date.now()
+  const snapshotId = `image-generation-${node.id}-${now}-${Math.random().toString(36).slice(2, 8)}`
+  const primaryIndex = Math.min(Math.max(node.primaryImageIndex ?? 0, 0), slots.length - 1)
+  const primary = slots[primaryIndex] ?? slots[0]
+  const height = Math.max(node.height, 320)
+  const generationIndex = project.nodes.filter((candidate) => candidate.sourceNodeId === node.id && candidate.type === 'image' && candidate.kind === 'result').length
+  canvasStore.addNode({
+    id: snapshotId,
+    type: 'image',
+    kind: 'result',
+    x: node.x + node.width + 160,
+    y: node.y + generationIndex * (height + 80),
+    width: node.width,
+    height: node.height,
+    prompt: node.prompt,
+    model: node.model,
+    imageUrl: primary.url,
+    imageUrls: slots.map((slot) => slot.url),
+    imageCacheKey: primary.cacheKey,
+    imageCacheKeys: slots.map((slot) => slot.cacheKey).filter((key): key is string => Boolean(key)),
+    imageVariants: slots.map((slot, index) => ({ ...slot, id: `${snapshotId}-image-${index}`, revisionPrompt: defaultImageVariantRevisionPrompt(node, index, slot) })),
+    primaryImageIndex: primaryIndex,
+    resultIndex: generationIndex,
+    sourceNodeId: node.id,
+    status: 'success',
+    createdAt: now,
+    updatedAt: now,
+  })
+  canvasStore.addConnection({ id: `connection-${node.id}-${snapshotId}`, from: node.id, to: snapshotId, kind: 'result' })
+}
+
 function generateNode(id: string): void {
   const node = activeProject.value?.nodes.find((item) => item.id === id)
   const keyId = selectedKeyId.value
@@ -5370,23 +5763,22 @@ function generateNode(id: string): void {
     || !canGenerate.value
   ) return
 
-  const upstreamNodes = collectCanvasUpstreamNodes(activeProject.value, id)
+  const upstreamNodes = collectCanvasPromptNodes(activeProject.value, id)
   const expandedUpstreamNodes = upstreamNodes.flatMap((candidate) => candidate.type === 'group' ? expandCanvasGroupResourceNodes(candidate, activeProject.value) : [candidate])
-  const upstreamText = expandedUpstreamNodes.filter((candidate) => candidate.type === 'text').map((candidate) => candidate.textContent || candidate.prompt).filter(Boolean)
   const upstreamConfig = expandedUpstreamNodes.find((candidate) => candidate.type === 'config')?.config
   const snapshot = {
     ...node,
-    prompt: resolveCanvasNodeMentions([...upstreamText, node.prompt].filter(Boolean).join('\n\n'), activeProject.value),
+    prompt: composeCanvasPrompt(node, activeProject.value),
     config: upstreamConfig ?? node.config,
     referenceImages: node.referenceImages?.map((reference) => ({ ...reference })),
     model,
     imageCount: Math.min(10, Math.max(1, Math.floor(node.imageCount ?? 4))),
   } as CanvasNodeData
   canvasStore.checkpoint()
+  archiveImageGeneration(node)
   const generationToken = `${id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   generationTokens.set(id, generationToken)
   canvasStore.updateNode(id, { status: 'generating', errorMessage: undefined, model, imageCount: snapshot.imageCount })
-  canvasStore.removeDerivedNodes(id)
   updateGenerationSet(activeGenerationIds, id, true)
   updateGenerationSet(queuedGenerationIds, id, true)
   generationQueue.push(async () => {
@@ -5418,11 +5810,15 @@ async function runGeneration(node: CanvasNodeData, keyId: number, generationToke
       status: 'pending',
     }))
     commitImageVariants(node.id, plannedVariants.map((variant) => ({ ...variant })), 'generating', undefined, node.primaryImageIndex)
-    const references = await resolveReferenceAttachments(node)
-    const request = buildPlaygroundImageRequest({
+    // defaultReferences（未按 slot 过滤）只用来算 requestedImageCount 的 hasReferenceImages
+    // 预检；真正发给上游的引用图要按各自 slot 在循环内重新解析（见 slotReferences）。
+    const defaultReferences = await resolveReferenceAttachments(node)
+    const currentImageReference = await resolveCurrentImageReference(node)
+    if (currentImageReference && !defaultReferences.some((reference) => reference.dataUrl === currentImageReference.dataUrl)) defaultReferences.unshift(currentImageReference)
+    const requestedImageCount = buildPlaygroundImageRequest({
       model: node.model,
       prompt: node.prompt,
-      size: node.config?.size ?? '1024x1024',
+      size: node.config?.size === 'custom' ? resolveCanvasImageSize(node) : node.config?.size ?? '1024x1024',
       quality: node.config?.quality ?? 'auto',
       imageCount: node.imageCount ?? 4,
       outputFormat: 'png',
@@ -5431,9 +5827,8 @@ async function runGeneration(node: CanvasNodeData, keyId: number, generationToke
       moderation: 'auto',
       style: 'auto',
       inputFidelity: 'auto',
-      hasReferenceImages: references.length > 0,
-    })
-    const requestedImageCount = request.requestedImageCount
+      hasReferenceImages: defaultReferences.length > 0,
+    }).requestedImageCount
     const imageVariants: CanvasImageVariant[] = requestedImageCount === plannedImageCount
       ? plannedVariants
       : Array.from({ length: requestedImageCount }, (_, index) => ({ id: `${node.id}-image-${index}`, status: 'pending' as const }))
@@ -5441,10 +5836,27 @@ async function runGeneration(node: CanvasNodeData, keyId: number, generationToke
     let nextSlot = 0
     const failures: string[] = []
     for (let requestIndex = 0; requestIndex < requestedImageCount && nextSlot < requestedImageCount; requestIndex += 1) {
+      const slotStart = nextSlot
+      const slotPrompt = resolveCanvasImageSlotPrompt(node, slotStart)
+      const slotReferences = await resolveReferenceAttachments(node, slotStart)
+      if (currentImageReference && !slotReferences.some((reference) => reference.dataUrl === currentImageReference.dataUrl)) slotReferences.unshift(currentImageReference)
       try {
-        const response = await sendPlaygroundImageGeneration(keyId, request.body, { referenceImages: references })
+        const request = buildPlaygroundImageRequest({
+          model: node.model,
+          prompt: slotPrompt,
+          size: node.config?.size === 'custom' ? resolveCanvasImageSize(node) : node.config?.size ?? '1024x1024',
+          quality: node.config?.quality ?? 'auto',
+          imageCount: node.imageCount ?? 4,
+          outputFormat: 'png',
+          outputCompression: 90,
+          background: node.config?.background ?? 'auto',
+          moderation: 'auto',
+          style: 'auto',
+          inputFidelity: 'auto',
+          hasReferenceImages: slotReferences.length > 0,
+        })
+        const response = await sendPlaygroundImageGeneration(keyId, request.body, { referenceImages: slotReferences })
         if (generationTokens.get(node.id) !== generationToken || !activeProject.value?.nodes.some((item) => item.id === node.id)) return
-        const slotStart = nextSlot
         for (const result of response.data) {
           if (nextSlot >= requestedImageCount) break
           const sourceUrl = playgroundImageUrl(result, 'png')
@@ -5455,12 +5867,12 @@ async function runGeneration(node: CanvasNodeData, keyId: number, generationToke
           if (userId.value) {
             cacheKey = createPlaygroundImageCacheKey(userId.value, keyId, node.id, resultIndex)
             const cachedUrl = await cachePlaygroundImage(cacheKey, userId.value, keyId, sourceUrl, {
-              prompt: node.prompt,
+              prompt: slotPrompt,
               model: node.model,
-              size: node.config?.size ?? '1024x1024',
+              size: node.config?.size === 'custom' ? resolveCanvasImageSize(node) : node.config?.size ?? '1024x1024',
               quality: node.config?.quality ?? 'auto',
               outputFormat: 'png',
-              sourceImageCount: references.length,
+              sourceImageCount: slotReferences.length,
             })
             if (cachedUrl) {
               imageUrl = cachedUrl
@@ -5472,6 +5884,8 @@ async function runGeneration(node: CanvasNodeData, keyId: number, generationToke
             status: 'success',
             url: imageUrl,
             cacheKey,
+            prompt: result.revised_prompt?.trim() || slotPrompt,
+            revisionPrompt: result.revised_prompt?.trim() || slotPrompt,
           }
           nextSlot += 1
           const latest = activeProject.value?.nodes.find((item) => item.id === node.id)
@@ -5523,11 +5937,13 @@ async function runImageVariantRetry(node: CanvasNodeData, keyId: number, imageIn
   canvasStore.checkpoint()
   canvasStore.updateNode(node.id, { ...syncImageVariantFields(slots, node.primaryImageIndex ?? imageIndex), status: 'generating', errorMessage: undefined })
   try {
-    const references = await resolveReferenceAttachments(node)
+    const references = await resolveReferenceAttachments(node, imageIndex)
+    const currentImageReference = await resolveCurrentImageReference(node)
+    if (currentImageReference && !references.some((reference) => reference.dataUrl === currentImageReference.dataUrl)) references.unshift(currentImageReference)
     const request = buildPlaygroundImageRequest({
       model: node.model,
       prompt: node.prompt,
-      size: node.config?.size ?? '1024x1024',
+      size: node.config?.size === 'custom' ? resolveCanvasImageSize(node) : node.config?.size ?? '1024x1024',
       quality: node.config?.quality ?? 'auto',
       imageCount: 1,
       outputFormat: 'png',
@@ -5549,7 +5965,7 @@ async function runImageVariantRetry(node: CanvasNodeData, keyId: number, imageIn
       const cachedUrl = await cachePlaygroundImage(cacheKey, userId.value, keyId, result, {
         prompt: node.prompt,
         model: node.model,
-        size: node.config?.size ?? '1024x1024',
+        size: node.config?.size === 'custom' ? resolveCanvasImageSize(node) : node.config?.size ?? '1024x1024',
         quality: node.config?.quality ?? 'auto',
         outputFormat: 'png',
         sourceImageCount: references.length,
@@ -5562,7 +5978,13 @@ async function runImageVariantRetry(node: CanvasNodeData, keyId: number, imageIn
     const latest = activeProject.value?.nodes.find((item) => item.id === node.id)
     if (!latest) return
     const latestSlots = canvasImageSlots(latest)
-    latestSlots[imageIndex] = { id: latestSlots[imageIndex]?.id || `${node.id}-image-${imageIndex}`, status: 'success', url: imageUrl, cacheKey }
+    latestSlots[imageIndex] = {
+      id: latestSlots[imageIndex]?.id || `${node.id}-image-${imageIndex}`,
+      status: 'success',
+      url: imageUrl,
+      cacheKey,
+      prompt: response.data.find((item) => playgroundImageUrl(item, 'png'))?.revised_prompt?.trim() || latestSlots[imageIndex]?.prompt || node.prompt,
+    }
     const fields = syncImageVariantFields(latestSlots, latest.primaryImageIndex ?? imageIndex)
     canvasStore.updateNode(node.id, { ...fields, status: 'success', errorMessage: undefined })
   } catch (error) {
@@ -5679,6 +6101,24 @@ async function downloadNode(id: string, imageIndex?: number): Promise<void> {
     appStore.showError(error instanceof Error ? error.message : t('playground.imageDownloadFailed'))
   } finally {
     downloadingNodeId.value = null
+  }
+}
+
+async function copyImageNode(id: string, imageIndex?: number): Promise<void> {
+  const node = activeProject.value?.nodes.find((item) => item.id === id)
+  if (!node || node.type !== 'image' || !isClipboardImageSupported()) return
+  const normalizedImageIndex = Number.isFinite(imageIndex) ? Math.max(0, Math.floor(imageIndex as number)) : 0
+  const imageSlot = canvasImageSlots(node)[normalizedImageIndex]
+  const cacheKey = imageSlot?.cacheKey ?? node.imageCacheKeys?.[normalizedImageIndex] ?? node.imageCacheKey
+  try {
+    // 优先用本地缓存的原图，省一次网络往返；没有缓存再交给共用逻辑去取 URL。
+    const cached = cacheKey ? await readCachedPlaygroundImageBlob(cacheKey) : null
+    const source = cached || imageSlot?.url || node.imageUrl || ''
+    if (!source) throw new Error('Image unavailable')
+    await copyPlaygroundImageToClipboard(source)
+    appStore.showSuccess(t('playground.canvasImageCopied'))
+  } catch {
+    appStore.showError(t('playground.canvasImageCopyFailed'))
   }
 }
 
@@ -5999,8 +6439,11 @@ function handleKeyDown(event: KeyboardEvent): void {
     return
   }
   if (modifier && event.key.toLowerCase() === 'v') {
-    event.preventDefault()
-    void pasteNodes()
+    // 这里刻意不调用 preventDefault：在 keydown 上取消默认行为会连浏览器的 paste
+    // 事件一起取消，handlePaste 就再也收不到剪贴板里的截图，粘贴只剩内部节点剪贴板
+    // 可用——表现为「截了图粘上来却是上次复制的节点」。
+    // 本分支只负责让 Ctrl/⌘+V 不落到下面的 V-to-pan 分支，真正的粘贴交给
+    // handlePaste 统一处理：有图片走 importCanvasFiles，否则回落到 pasteNodes。
     return
   }
   if (modifier && event.key.toLowerCase() === 'd') {

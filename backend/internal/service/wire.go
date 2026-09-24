@@ -70,6 +70,7 @@ func ProvideAuthService(
 	defaultSubAssigner DefaultSubscriptionAssigner,
 	affiliateService *AffiliateService,
 	userPlatformQuotaRepo UserPlatformQuotaRepository,
+	apiKeyService *APIKeyService,
 ) *AuthService {
 	svc := NewAuthService(
 		entClient,
@@ -88,6 +89,7 @@ func ProvideAuthService(
 	)
 	svc.SetTencentCaptchaService(tencentCaptchaService)
 	svc.SetAliyunCaptchaService(aliyunCaptchaService)
+	svc.SetPlaygroundAPIKeyProvisioner(apiKeyService)
 	return svc
 }
 
@@ -116,6 +118,11 @@ func ProvidePawConfigService(
 		UserAttributePawDefaultsStore{Service: userAttributeService},
 		pricingService,
 	)
+}
+
+// ProvidePawChatService wires the Paw chat service used by the desktop Chat client.
+func ProvidePawChatService(pawConfigService *PawConfigService, apiKeyService *APIKeyService) *PawChatService {
+	return NewPawChatService(pawConfigService, APIKeyPawChatKeySource{Service: apiKeyService})
 }
 
 func ProvideBatchImageCleanupService(repo BatchImageRepository, accountRepo AccountRepository, cfg *config.Config) *BatchImageCleanupService {
@@ -829,12 +836,26 @@ func ProvideAPIKeyService(
 	userGroupRateRepo UserGroupRateRepository,
 	cache APIKeyCache,
 	cfg *config.Config,
+	accountRepo AccountRepository,
+	usageLogRepo UsageLogRepository,
 	billingCacheService *BillingCacheService,
 	concurrencyService *ConcurrencyService,
+	settingService *SettingService,
 ) *APIKeyService {
 	svc := NewAPIKeyService(apiKeyRepo, userRepo, groupRepo, userSubRepo, userGroupRateRepo, cache, cfg)
 	svc.SetRateLimitCacheInvalidator(billingCacheService)
 	svc.SetConcurrencyService(concurrencyService)
+	// 自动分组的选组依据。缺了模型可用性仓储，选组只会比价格，会把请求
+	// 送进一个根本不提供该模型的分组，用户侧表现为 404 model_not_found。
+	// 指标仓储缺失则让 speed/balanced 策略退化成纯价格排序。
+	if metricsRepo, ok := usageLogRepo.(AutoGroupMetricRepository); ok {
+		svc.SetAutoGroupMetricRepository(metricsRepo)
+	}
+	svc.SetAutoGroupModelAvailabilityRepository(accountRepo)
+	if runtimeChecker, ok := accountRepo.(AutoGroupRuntimeModelChecker); ok {
+		svc.SetAutoGroupRuntimeModelChecker(runtimeChecker)
+	}
+	svc.SetPlaygroundDefaultsProvider(settingService)
 	return svc
 }
 
@@ -859,9 +880,13 @@ var ProviderSet = wire.NewSet(
 	NewBillingService,
 	ProvideBillingCacheService,
 	NewAnnouncementService,
+	NewTicketService,
+	NewGuestTrialService,
+	wire.Bind(new(GuestTrialCaptchaVerifier), new(*AuthService)),
 	NewAdminService,
 	NewGatewayService,
 	NewOpenAIGatewayService,
+	ProvideContributionRoomWiring,
 	ProvideImageStorageSettingService,
 	ProvideImageTaskService,
 	ProvideBatchImageModelPricingResolver,
@@ -869,9 +894,13 @@ var ProviderSet = wire.NewSet(
 	NewBatchImageDownloadService,
 	ProvideBatchImageCleanupService,
 	ProvideBatchImageWorkerRuntime,
+	ProvidePawConfigService,
+	ProvidePawChatService,
+	NewPlaygroundHistoryService,
 	wire.Bind(new(AccountRuntimeBlocker), new(*OpenAIGatewayService)),
 	NewOAuthService,
 	ProvideOpenAIOAuthService,
+	NewAccountProfileStatisticsService,
 	ProvideGrokOAuthService,
 	wire.Bind(new(GrokOAuthTokenService), new(*GrokOAuthService)),
 	NewGeminiOAuthService,

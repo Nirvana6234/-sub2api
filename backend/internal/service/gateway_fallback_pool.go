@@ -68,17 +68,20 @@ func gatewayFallbackPoolRejectReason(ctx context.Context, account *Account) stri
 	return fallbackPoolRejectReasonWhenSourcing(ctx, account, isGatewayFallbackPoolSourcing(ctx))
 }
 
-// nextGatewayFallbackGroup 解析下一个兜底目标。
+// eachGatewayFallbackAttempt 按配置顺序逐个把兜底目标交给 try，try 返回 true 即停止。
 //
 // 它刻意不跟随旧的 ClaudeCodeOnly 降级：那条链路复用了同一个 fallback_group_id
 // 字段，但只在 group.ClaudeCodeOnly 为真时才走（见 resolveGatewayGroup）。这里要求
 // 目标显式标记为 is_fallback_pool，两条链路因此互不干扰。
-func (s *GatewayService) nextGatewayFallbackGroup(ctx context.Context, currentGroupID *int64) (context.Context, *int64) {
+//
+// 调用方在前一个目标（连同它的下游链路）取不到号时返回 false，继续试下一个。
+// 每个目标在真正尝试前才向请求级账本记账，同一请求里不会重复试同一个池子。
+func (s *GatewayService) eachGatewayFallbackAttempt(ctx context.Context, currentGroupID *int64, try func(gatewayFallbackAttempt) bool) {
 	if s == nil || currentGroupID == nil || *currentGroupID <= 0 {
-		return ctx, nil
+		return
 	}
 
-	fallbackID, nextState, ok := nextFallbackGroupID(
+	hops := fallbackGroupHops(
 		ctx,
 		*currentGroupID,
 		gatewayFallbackGroupStateFromContext(ctx),
@@ -103,12 +106,24 @@ func (s *GatewayService) nextGatewayFallbackGroup(ctx context.Context, currentGr
 			},
 		},
 	)
-	if !ok {
-		return ctx, nil
+	for _, hop := range hops {
+		fallbackID := hop.groupID
+		if !claimFallbackAttempt(ctx, "gateway", fallbackID, hop.state.hops) {
+			continue
+		}
+		if try(gatewayFallbackAttempt{
+			ctx:     withGatewayFallbackGroupState(withGatewayFallbackPoolSourcing(ctx), hop.state),
+			groupID: &fallbackID,
+		}) {
+			return
+		}
 	}
+}
 
-	nextCtx := withGatewayFallbackGroupState(withGatewayFallbackPoolSourcing(ctx), nextState)
-	return nextCtx, &fallbackID
+// gatewayFallbackAttempt 是一个可以尝试的兜底目标：ctx 已带上兜底取号标记和链路状态。
+type gatewayFallbackAttempt struct {
+	ctx     context.Context
+	groupID *int64
 }
 
 // resolveFallbackGroup 优先用请求上下文里已有的分组，避免兜底链路上重复查库。

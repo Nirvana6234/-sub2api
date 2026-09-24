@@ -16,6 +16,30 @@ export interface DefaultSubscriptionSetting {
   validity_days: number;
 }
 
+export type GlobalBlacklistKind = 'account' | 'ip'
+export interface GlobalBlacklistEntry {
+  id: string
+  kind: GlobalBlacklistKind
+  value: string
+  reason?: string
+  expires_at?: string | null
+  enabled?: boolean
+}
+
+export async function getGlobalBlacklist(): Promise<GlobalBlacklistEntry[]> {
+  const { data } = await apiClient.get<{ entries: GlobalBlacklistEntry[] }>('/admin/settings/global-blacklist')
+  return data.entries
+}
+
+export async function addGlobalBlacklist(entry: Omit<GlobalBlacklistEntry, 'id'>): Promise<GlobalBlacklistEntry> {
+  const { data } = await apiClient.post<GlobalBlacklistEntry>('/admin/settings/global-blacklist', entry)
+  return data
+}
+
+export async function deleteGlobalBlacklist(id: string): Promise<void> {
+  await apiClient.delete(`/admin/settings/global-blacklist/${encodeURIComponent(id)}`)
+}
+
 // ── 平台限额类型 ──────────────────────────────────────────────────
 export type PlatformType = "anthropic" | "openai" | "gemini" | "antigravity" | "grok"
 export type QuotaWindowType = "daily" | "weekly" | "monthly"
@@ -743,7 +767,6 @@ export interface SystemSettings {
   client_latest_version: string;
   client_latest_version_mac: string;
   client_tutorial_video_url: string;
-  headroom_base_url: string;
   latency_compensation_threshold_ms: number;
   latency_compensation_profit_ratio: number;
   backup_payment_enabled: boolean;
@@ -1074,7 +1097,6 @@ export interface UpdateSettingsRequest {
   client_latest_version?: string;
   client_latest_version_mac?: string;
   client_tutorial_video_url?: string;
-  headroom_base_url?: string;
   latency_compensation_threshold_ms?: number;
   latency_compensation_profit_ratio?: number;
   backup_payment_enabled?: boolean;
@@ -1616,6 +1638,28 @@ export async function resetWebSearchUsage(payload: {
   );
 }
 
+/** 未注册访客网页版试用配置（后端 GuestTrialConfig）。 */
+export interface GuestTrialConfig {
+  enabled: boolean;
+  api_key_id: number;
+  models: string[];
+  daily_per_visitor: number;
+  daily_global: number;
+  max_input_chars: number;
+  max_output_tokens: number;
+  require_captcha: boolean;
+}
+
+export async function getGuestTrialConfig(): Promise<GuestTrialConfig> {
+  const { data } = await apiClient.get<GuestTrialConfig>("/admin/settings/guest-trial");
+  return data;
+}
+
+export async function updateGuestTrialConfig(config: GuestTrialConfig): Promise<GuestTrialConfig> {
+  const { data } = await apiClient.put<GuestTrialConfig>("/admin/settings/guest-trial", config);
+  return data;
+}
+
 export const settingsAPI = {
   getSettings,
   updateSettings,
@@ -1645,6 +1689,8 @@ export const settingsAPI = {
   updateWebSearchEmulationConfig,
   testWebSearchEmulation,
   resetWebSearchUsage,
+  getGuestTrialConfig,
+  updateGuestTrialConfig,
 };
 
 export default settingsAPI;

@@ -853,4 +853,47 @@ describe('admin UsageTable deleted-user badge', () => {
     expect(wrapper.text()).not.toContain('Deleted')
     expect(wrapper.text()).toContain('active@test.com')
   })
+
+  it('tags own-account and room rows and marks own-account cost as not charged', () => {
+    const SourceStub = {
+      props: ['data'],
+      template: `
+        <div>
+          <div v-for="row in data" :key="row.request_id" :data-row="row.request_id">
+            <slot name="cell-group" :row="row" />
+            <slot name="cell-cost" :row="row" />
+          </div>
+        </div>
+      `,
+    }
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [
+          { ...baseImageRow, request_id: 'req-pool', account_source: 'pool', group: { name: 'plus' } },
+          { ...baseImageRow, request_id: 'req-own', account_source: 'own', group: { name: 'plus' } },
+          { ...baseImageRow, request_id: 'req-room', account_source: 'room', group: { name: 'plus' } },
+          { ...baseImageRow, request_id: 'req-legacy', group: { name: 'plus' } },
+        ],
+        loading: false,
+        columns: [],
+      },
+      global: {
+        stubs: {
+          DataTable: SourceStub,
+          EmptyState: true,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+
+    const row = (id: string) => wrapper.get(`[data-row="${id}"]`)
+    expect(row('req-pool').find('[data-testid="account-source-badge"]').exists()).toBe(false)
+    expect(row('req-legacy').find('[data-testid="account-source-badge"]').exists()).toBe(false)
+    expect(row('req-own').get('[data-testid="account-source-badge"]').text()).toBe('usage.accountSource.own')
+    expect(row('req-room').get('[data-testid="account-source-badge"]').text()).toBe('usage.accountSource.room')
+
+    expect(wrapper.findAll('[data-testid="own-account-cost-marker"]')).toHaveLength(1)
+    expect(row('req-own').find('[data-testid="own-account-cost-marker"]').exists()).toBe(true)
+  })
 })

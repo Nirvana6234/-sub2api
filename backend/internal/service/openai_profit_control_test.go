@@ -110,6 +110,15 @@ func TestOpenAIProfitControlVetoReason(t *testing.T) {
 			pricingAt: now,
 		})
 	}
+	// 阈值比较的用例只关心"声明值 vs 阈值"的算术，账号不带探测快照，
+	// profitControlAccountUpstreamRate 因此直接落到列值。原先这些用例复用了
+	// 带新鲜探测快照的 fixture（探测值填 99 当噪声），那是当年利润门只读列值
+	// 时的写法；门改为与记账同源后，新鲜探测会成为真正的 U，噪声值会盖掉被测
+	// 的列值。判定语义由 TestProfitControlGateUsesSameRateSourceAsBilling 覆盖。
+	declaredAccount := func(id int64, rate float64) *Account {
+		return profitControlTestAccountWithRate(
+			&Account{ID: id, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}, rate)
+	}
 
 	t.Run("no gate admits everything", func(t *testing.T) {
 		vetoed, reason := openAIProfitControlVetoReason(context.Background(), upstreamCostTestOAuthAccount(1))
@@ -117,36 +126,36 @@ func TestOpenAIProfitControlVetoReason(t *testing.T) {
 		require.Empty(t, reason)
 	})
 
-	t.Run("fresh rate below threshold admits", func(t *testing.T) {
-		account := profitControlTestAccountWithRate(upstreamCostTestAccount(1, UpstreamBillingProbeStatusOK, 99, now.Add(-time.Minute), 30*time.Minute), 0.5)
+	t.Run("declared rate below threshold admits", func(t *testing.T) {
+		account := declaredAccount(1, 0.5)
 		vetoed, _ := openAIProfitControlVetoReason(gateCtx(0.7), account)
 		require.False(t, vetoed)
 	})
 
 	t.Run("rate exactly at threshold admits via epsilon", func(t *testing.T) {
-		account := profitControlTestAccountWithRate(upstreamCostTestAccount(1, UpstreamBillingProbeStatusOK, 99, now.Add(-time.Minute), 30*time.Minute), 0.7)
+		account := declaredAccount(1, 0.7)
 		vetoed, _ := openAIProfitControlVetoReason(gateCtx(0.7), account)
 		require.False(t, vetoed)
 	})
 
 	t.Run("rate within float noise above threshold admits", func(t *testing.T) {
-		account := profitControlTestAccountWithRate(upstreamCostTestAccount(1, UpstreamBillingProbeStatusOK, 99, now.Add(-time.Minute), 30*time.Minute), 0.7+1e-12)
+		account := declaredAccount(1, 0.7+1e-12)
 		vetoed, _ := openAIProfitControlVetoReason(gateCtx(0.7), account)
 		require.False(t, vetoed)
 	})
 
 	t.Run("rate above threshold is vetoed", func(t *testing.T) {
-		account := profitControlTestAccountWithRate(upstreamCostTestAccount(1, UpstreamBillingProbeStatusOK, 0.1, now.Add(-time.Minute), 30*time.Minute), 0.8)
+		account := declaredAccount(1, 0.8)
 		vetoed, reason := openAIProfitControlVetoReason(gateCtx(0.7), account)
 		require.True(t, vetoed)
 		require.Equal(t, openAIProfitFilterReasonThreshold, reason)
 	})
 
 	t.Run("zero threshold only admits free upstream", func(t *testing.T) {
-		free := profitControlTestAccountWithRate(upstreamCostTestAccount(1, UpstreamBillingProbeStatusOK, 99, now.Add(-time.Minute), 30*time.Minute), 0)
+		free := declaredAccount(1, 0)
 		vetoed, _ := openAIProfitControlVetoReason(gateCtx(0), free)
 		require.False(t, vetoed)
-		paid := profitControlTestAccountWithRate(upstreamCostTestAccount(2, UpstreamBillingProbeStatusOK, 0, now.Add(-time.Minute), 30*time.Minute), 0.01)
+		paid := declaredAccount(2, 0.01)
 		vetoed, reason := openAIProfitControlVetoReason(gateCtx(0), paid)
 		require.True(t, vetoed)
 		require.Equal(t, openAIProfitFilterReasonThreshold, reason)

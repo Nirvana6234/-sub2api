@@ -20,6 +20,16 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 )
 
+// AccountGroupPriorityUpdate 描述一次「账号在某分组内的优先级」变更。
+//
+// 注意它改的是 account_groups.priority（分组内顺序），不是 accounts.priority
+// （账号全局优先级）——两者同名但语义不同，调度按前者决定组内取号先后。
+type AccountGroupPriorityUpdate struct {
+	AccountID int64
+	GroupID   int64
+	Priority  int
+}
+
 type Account struct {
 	ID                      int64
 	Name                    string
@@ -69,6 +79,15 @@ type Account struct {
 	AccountGroups []AccountGroup
 	GroupIDs      []int64
 	Groups        []*Group
+
+	// ContributionRouteSource and the related fields exist only for one
+	// in-flight request. They are deliberately not persisted: an account can be
+	// selected from a contributor room for one consumer and from the public pool
+	// for another at the same time, with different billing multipliers.
+	ContributionRouteSource            string   `json:"-"`
+	ContributionRoomID                 int64    `json:"-"`
+	ContributionRateMultiplierOverride *float64 `json:"-"`
+	ContributionConcurrencyOverride    *int     `json:"-"`
 
 	// model_mapping 热路径缓存（非持久化字段）
 	modelMappingCache               map[string]string
@@ -1015,6 +1034,129 @@ func (a *Account) GetExtraString(key string) string {
 		}
 	}
 	return ""
+}
+
+const (
+	AccountContributionSourceKey              = "import_source"
+	AccountContributionSourceValue            = "user_contribution"
+	AccountContributionImportMethodKey        = "contribution_import_method"
+	AccountContributorUserIDKey               = "submitted_by_user_id"
+	AccountContributorEmailKey                = "submitted_by_email"
+	AccountContributorUsernameKey             = "submitted_by_username"
+	AccountContributionSubmittedAtKey         = "submitted_at"
+	AccountShareModeKey                       = "share_mode"
+	AccountShareTotalBudgetKey                = "share_total_budget"
+	AccountShareDailyBudgetKey                = "share_daily_budget"
+	AccountShareExpiresAtKey                  = "share_expires_at"
+	AccountShareUsedTotalKey                  = "share_used_total"
+	AccountShareUsedTodayKey                  = "share_used_today"
+	AccountShareUsageDayKey                   = "share_usage_day"
+	AccountShareConsumerRateMultiplierKey     = "share_consumer_rate_multiplier"
+	AccountContributionGovernanceStateKey     = "contribution_governance_state"
+	AccountContributionGovernanceReasonKey    = "contribution_governance_reason"
+	AccountContributionGovernanceUpdatedAtKey = "contribution_governance_updated_at"
+	AccountContributionGovernanceUpdatedByKey = "contribution_governance_updated_by"
+	AccountContributionGovernancePaused       = "paused"
+	AccountContributionGovernanceActive       = "active"
+	AccountShareModePrivate                   = "private"
+	AccountShareModePool                      = "pool"
+	// AccountShareRewardRate 是 AccountShareRewardRateDefaultPercent（定义于本文件末尾，
+	// 与 AccountOwnUsageFeeRate* 系列常量放在一起）折算成的小数比例，供未接入 SettingService
+	// 的调用方兜底。
+	AccountShareRewardRate = AccountShareRewardRateDefaultPercent / 100
+)
+
+const (
+	ContributionRouteSourceNone = ""
+	ContributionRouteSourceRoom = "room"
+	ContributionRouteSourcePool = "pool"
+)
+
+// ContributorUserID returns the authenticated user who contributed this
+// account. Zero means the account is administrator-managed or legacy data
+// without an owner. The value lives in Extra for compatibility with existing
+// user-contributed accounts created before this feature was upstreamed.
+func (a *Account) ContributorUserID() int64 {
+	if a == nil || a.Extra == nil {
+		return 0
+	}
+	if source := strings.TrimSpace(a.GetExtraString(AccountContributionSourceKey)); source != AccountContributionSourceValue {
+		return 0
+	}
+	return int64(parseExtraFloat64(a.Extra[AccountContributorUserIDKey]))
+}
+
+func (a *Account) IsContributedBy(userID int64) bool {
+	return userID > 0 && a != nil && a.ContributorUserID() == userID
+}
+
+func (a *Account) IsSharedPoolAccount() bool {
+	return a != nil && strings.EqualFold(strings.TrimSpace(a.getExtraString(AccountShareModeKey)), AccountShareModePool)
+}
+
+// ContributionConsumerRateMultiplier returns the multiplier captured while
+// routing this request. A room rate always wins; a public-pool account keeps a
+// separate per-account multiplier and never inherits the consumer's group
+// rate. Any malformed legacy value falls back to 1.0.
+func (a *Account) ContributionConsumerRateMultiplier() (float64, bool) {
+	if a == nil {
+		return 0, false
+	}
+	switch a.ContributionRouteSource {
+	case ContributionRouteSourceRoom:
+		if a.ContributionRateMultiplierOverride != nil && *a.ContributionRateMultiplierOverride >= 0 {
+			return *a.ContributionRateMultiplierOverride, true
+		}
+		return 1.0, true
+	case ContributionRouteSourcePool:
+		if a.Extra != nil {
+			if _, configured := a.Extra[AccountShareConsumerRateMultiplierKey]; configured {
+				rate := a.getExtraFloat64(AccountShareConsumerRateMultiplierKey)
+				if rate >= 0 {
+					return rate, true
+				}
+			}
+		}
+		return 1.0, true
+	default:
+		return 0, false
+	}
+}
+
+func (a *Account) IsContributionRoomRouted() bool {
+	return a != nil && a.ContributionRouteSource == ContributionRouteSourceRoom && a.ContributionRoomID > 0
+}
+
+// IsContributionGovernancePaused is an administrator-owned overlay for shared
+// routing. It never changes the contributor's own private-use preference.
+func (a *Account) IsContributionGovernancePaused() bool {
+	return a != nil && strings.EqualFold(strings.TrimSpace(a.getExtraString(AccountContributionGovernanceStateKey)), AccountContributionGovernancePaused)
+}
+
+// IsSharedPoolAvailableTo exposes an administrator-admitted pool account to
+// regular group scheduling. Contributor-owned private accounts retain their
+// owner-only boundary; room routing is checked separately by callers.
+func (a *Account) IsSharedPoolAvailableTo(userID int64, _ time.Time) bool {
+	if a == nil || a.ContributorUserID() == 0 {
+		return true
+	}
+	if a.IsSharedPoolAccount() && !a.IsContributionGovernancePaused() {
+		return true
+	}
+	return a.IsContributedBy(userID)
+}
+
+// IsContributionAvailableTo reports whether an account may serve userID from a
+// group's ordinary candidate list or a sticky/response binding. A contribution
+// kept for self-use is bound to the contributor's groups only so the
+// contributor can reach it; other members of those groups must never be
+// scheduled onto it. Room-routed clones carry the room's authorization and are
+// always allowed.
+func (a *Account) IsContributionAvailableTo(userID int64) bool {
+	if a == nil || a.ContributorUserID() == 0 || a.IsContributionRoomRouted() {
+		return true
+	}
+	return a.IsSharedPoolAvailableTo(userID, time.Time{})
 }
 
 func (a *Account) GetClaudeUserID() string {
@@ -2111,6 +2253,27 @@ func (a *Account) IsOpenAIPassthroughEnabled() bool {
 	return false
 }
 
+// IsOpenAIPassthroughStrictEnabled 返回 OpenAI 账号是否启用"严格字节保真透传"。
+//
+// 字段：accounts.extra.openai_passthrough_strict。
+//
+// 叠加语义：本开关只在 IsOpenAIPassthroughEnabled() 为 true 时有意义——它取消的
+// 是透传路径上那些为"非官方客户端"兜底的规范化，本身不是一种独立的转发模式。
+//
+// 字段缺失或类型不正确时按 false（关闭）处理：零值必须落在"与今天逐字节一致"
+// 那一侧，否则任何没写过这个键的存量账号都会被静默改变行为。
+//
+// 注意：本方法只回答"账号配置上开没开"。strict 真正生效还要求本次请求确实通过了
+// codex_cli_only 门禁，那个判定在 resolveOpenAIStrictPassthrough——绝不要直接拿
+// 本方法的返回值去决定是否跳过规范化。
+func (a *Account) IsOpenAIPassthroughStrictEnabled() bool {
+	if a == nil || !a.IsOpenAIPassthroughEnabled() || a.Extra == nil {
+		return false
+	}
+	enabled, ok := a.Extra["openai_passthrough_strict"].(bool)
+	return ok && enabled
+}
+
 // IsOpenAIResponsesWebSocketV2Enabled 返回 OpenAI 账号是否开启 Responses WebSocket v2。
 //
 // 分类型新字段：
@@ -2283,6 +2446,22 @@ func (a *Account) IsOpenAIResponsesFlattenNamespacesEnabled() bool {
 		return false
 	}
 	enabled, ok := a.Extra["openai_responses_flatten_namespaces"].(bool)
+	return ok && enabled
+}
+
+// IsOpenAIResponsesKeepToolCallNamespacesEnabled 返回账号级"保留工具调用 namespace"开关。
+// 字段：accounts.extra.openai_responses_keep_tool_call_namespaces，缺省 false（沿用自动判定）。
+//
+// API Key 出口默认按标准 Responses API 处理，靠"请求 tools 里有没有 type==namespace 声明"
+// 推断上游认不认 namespace 扩展（见 shouldKeepOpenAIResponsesToolCallNamespaces）。该推断
+// 对「API Key 指向 Codex 后端中转」的部署不成立：multi_agent 等工具由上游注入，客户端的
+// tools 里根本不会声明 namespace，但上游仍按 namespace 解析历史调用，剥掉字段即 400
+// `Missing namespace for function_call '...'`。打开本开关可跳过推断、无条件保留。
+func (a *Account) IsOpenAIResponsesKeepToolCallNamespacesEnabled() bool {
+	if a == nil || !a.IsOpenAI() || a.Extra == nil {
+		return false
+	}
+	enabled, ok := a.Extra["openai_responses_keep_tool_call_namespaces"].(bool)
 	return ok && enabled
 }
 

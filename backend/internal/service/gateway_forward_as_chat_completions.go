@@ -33,6 +33,7 @@ func (s *GatewayService) ForwardAsChatCompletions(
 	body []byte,
 	parsed *ParsedRequest,
 ) (*ForwardResult, error) {
+	ctx = WithHTTPUpstreamPublicHostsOnlyForAccount(ctx, account)
 	startTime := time.Now()
 
 	// 1. Parse Chat Completions request
@@ -130,9 +131,6 @@ func (s *GatewayService) ForwardAsChatCompletions(
 	if err != nil {
 		if resp != nil && resp.Body != nil {
 			_ = resp.Body.Close()
-		}
-		if upstreamReq.Header.Get(HeadroomBaseURLHeader) != "" {
-			markHeadroomTransportFailure()
 		}
 		return nil, s.handleUpstreamTransportError(ctx, c, account, err, OpsUpstreamErrorEvent{
 			UpstreamURL: safeUpstreamURL(upstreamReq.URL.String()),

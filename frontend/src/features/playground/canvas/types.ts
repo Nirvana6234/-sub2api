@@ -53,6 +53,10 @@ export interface CanvasImageVariant {
   status: 'pending' | 'success' | 'error'
   url?: string
   cacheKey?: string
+  /** Model-produced prompt for this specific image; users may edit it before branching. */
+  prompt?: string
+  /** Optional user-authored revision instruction; empty means this image is skipped in batch edits. */
+  revisionPrompt?: string
   errorMessage?: string
 }
 
@@ -95,6 +99,8 @@ export interface CanvasNode {
     model?: string
     count?: string
     size?: string
+    customWidth?: string
+    customHeight?: string
     quality?: string
     background?: string
     resolution?: string
@@ -120,6 +126,24 @@ export interface CanvasNode {
   imageVariants?: CanvasImageVariant[]
   primaryImageIndex?: number
   imageCount?: number
+  /**
+   * Optional per-slot prompt for the *next* batch generation, indexed like the planned
+   * output slots (0..imageCount-1). A blank/missing entry falls back to the shared
+   * `prompt`. This is distinct from `CanvasImageVariant.revisionPrompt`, which edits an
+   * *already-generated* image after the fact — this array authors the batch before it runs.
+   */
+  imagePrompts?: string[]
+  /**
+   * Optional per-slot override for which connected reference nodes (by node id,
+   * matching `CanvasReferenceItem.nodeId`) apply to that batch slot. A missing/undefined
+   * entry means "use every connected reference" (the previous, still-default behaviour);
+   * an explicit (possibly empty) array replaces that with exactly the listed references.
+   * Only scopes the graph-connected references — direct uploads and @-mentions in the
+   * shared prompt still apply to every slot.
+   */
+  imageReferenceSlots?: (string[] | undefined)[]
+  /** Number of images generated for each per-variant revision branch. */
+  imageRevisionCount?: number
   outputFormat?: string
   sourceNodeId?: string
   groupId?: string

@@ -14,6 +14,7 @@ import (
 	"entgo.io/ent/schema/field"
 	"github.com/Wei-Shaw/sub2api/ent/account"
 	"github.com/Wei-Shaw/sub2api/ent/apikey"
+	"github.com/Wei-Shaw/sub2api/ent/compositemodelroute"
 	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/ent/redeemcode"
 	"github.com/Wei-Shaw/sub2api/ent/usagelog"
@@ -102,6 +103,20 @@ func (_c *GroupCreate) SetRateMultiplier(v float64) *GroupCreate {
 func (_c *GroupCreate) SetNillableRateMultiplier(v *float64) *GroupCreate {
 	if v != nil {
 		_c.SetRateMultiplier(*v)
+	}
+	return _c
+}
+
+// SetAllowContributionPool sets the "allow_contribution_pool" field.
+func (_c *GroupCreate) SetAllowContributionPool(v bool) *GroupCreate {
+	_c.mutation.SetAllowContributionPool(v)
+	return _c
+}
+
+// SetNillableAllowContributionPool sets the "allow_contribution_pool" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableAllowContributionPool(v *bool) *GroupCreate {
+	if v != nil {
+		_c.SetAllowContributionPool(*v)
 	}
 	return _c
 }
@@ -594,6 +609,20 @@ func (_c *GroupCreate) SetNillableClaudeCodeOnly(v *bool) *GroupCreate {
 	return _c
 }
 
+// SetKiroCompat sets the "kiro_compat" field.
+func (_c *GroupCreate) SetKiroCompat(v bool) *GroupCreate {
+	_c.mutation.SetKiroCompat(v)
+	return _c
+}
+
+// SetNillableKiroCompat sets the "kiro_compat" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableKiroCompat(v *bool) *GroupCreate {
+	if v != nil {
+		_c.SetKiroCompat(*v)
+	}
+	return _c
+}
+
 // SetFallbackGroupID sets the "fallback_group_id" field.
 func (_c *GroupCreate) SetFallbackGroupID(v int64) *GroupCreate {
 	_c.mutation.SetFallbackGroupID(v)
@@ -638,20 +667,6 @@ func (_c *GroupCreate) SetIsFallbackPool(v bool) *GroupCreate {
 func (_c *GroupCreate) SetNillableIsFallbackPool(v *bool) *GroupCreate {
 	if v != nil {
 		_c.SetIsFallbackPool(*v)
-	}
-	return _c
-}
-
-// SetKiroCompat sets the "kiro_compat" field.
-func (_c *GroupCreate) SetKiroCompat(v bool) *GroupCreate {
-	_c.mutation.SetKiroCompat(v)
-	return _c
-}
-
-// SetNillableKiroCompat sets the "kiro_compat" field if the given value is not nil.
-func (_c *GroupCreate) SetNillableKiroCompat(v *bool) *GroupCreate {
-	if v != nil {
-		_c.SetKiroCompat(*v)
 	}
 	return _c
 }
@@ -832,6 +847,20 @@ func (_c *GroupCreate) SetModelAllowlist(v domain.GroupModelAllowlist) *GroupCre
 func (_c *GroupCreate) SetNillableModelAllowlist(v *domain.GroupModelAllowlist) *GroupCreate {
 	if v != nil {
 		_c.SetModelAllowlist(*v)
+	}
+	return _c
+}
+
+// SetModelsListConfig sets the "models_list_config" field.
+func (_c *GroupCreate) SetModelsListConfig(v domain.GroupModelsListConfig) *GroupCreate {
+	_c.mutation.SetModelsListConfig(v)
+	return _c
+}
+
+// SetNillableModelsListConfig sets the "models_list_config" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableModelsListConfig(v *domain.GroupModelsListConfig) *GroupCreate {
+	if v != nil {
+		_c.SetModelsListConfig(*v)
 	}
 	return _c
 }
@@ -1030,6 +1059,21 @@ func (_c *GroupCreate) AddAllowedUsers(v ...*User) *GroupCreate {
 	return _c.AddAllowedUserIDs(ids...)
 }
 
+// AddCompositeModelRouteIDs adds the "composite_model_routes" edge to the CompositeModelRoute entity by IDs.
+func (_c *GroupCreate) AddCompositeModelRouteIDs(ids ...int64) *GroupCreate {
+	_c.mutation.AddCompositeModelRouteIDs(ids...)
+	return _c
+}
+
+// AddCompositeModelRoutes adds the "composite_model_routes" edges to the CompositeModelRoute entity.
+func (_c *GroupCreate) AddCompositeModelRoutes(v ...*CompositeModelRoute) *GroupCreate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _c.AddCompositeModelRouteIDs(ids...)
+}
+
 // Mutation returns the GroupMutation object of the builder.
 func (_c *GroupCreate) Mutation() *GroupMutation {
 	return _c.mutation
@@ -1084,6 +1128,10 @@ func (_c *GroupCreate) defaults() error {
 	if _, ok := _c.mutation.RateMultiplier(); !ok {
 		v := group.DefaultRateMultiplier
 		_c.mutation.SetRateMultiplier(v)
+	}
+	if _, ok := _c.mutation.AllowContributionPool(); !ok {
+		v := group.DefaultAllowContributionPool
+		_c.mutation.SetAllowContributionPool(v)
 	}
 	if _, ok := _c.mutation.PeakRateEnabled(); !ok {
 		v := group.DefaultPeakRateEnabled
@@ -1161,13 +1209,13 @@ func (_c *GroupCreate) defaults() error {
 		v := group.DefaultClaudeCodeOnly
 		_c.mutation.SetClaudeCodeOnly(v)
 	}
-	if _, ok := _c.mutation.IsFallbackPool(); !ok {
-		v := group.DefaultIsFallbackPool
-		_c.mutation.SetIsFallbackPool(v)
-	}
 	if _, ok := _c.mutation.KiroCompat(); !ok {
 		v := group.DefaultKiroCompat
 		_c.mutation.SetKiroCompat(v)
+	}
+	if _, ok := _c.mutation.IsFallbackPool(); !ok {
+		v := group.DefaultIsFallbackPool
+		_c.mutation.SetIsFallbackPool(v)
 	}
 	if _, ok := _c.mutation.ModelRoutingEnabled(); !ok {
 		v := group.DefaultModelRoutingEnabled
@@ -1220,6 +1268,10 @@ func (_c *GroupCreate) defaults() error {
 	if _, ok := _c.mutation.ModelAllowlist(); !ok {
 		v := group.DefaultModelAllowlist
 		_c.mutation.SetModelAllowlist(v)
+	}
+	if _, ok := _c.mutation.ModelsListConfig(); !ok {
+		v := group.DefaultModelsListConfig
+		_c.mutation.SetModelsListConfig(v)
 	}
 	if _, ok := _c.mutation.CodexModelsManifestConfig(); !ok {
 		v := group.DefaultCodexModelsManifestConfig
@@ -1274,6 +1326,9 @@ func (_c *GroupCreate) check() error {
 	}
 	if _, ok := _c.mutation.RateMultiplier(); !ok {
 		return &ValidationError{Name: "rate_multiplier", err: errors.New(`ent: missing required field "Group.rate_multiplier"`)}
+	}
+	if _, ok := _c.mutation.AllowContributionPool(); !ok {
+		return &ValidationError{Name: "allow_contribution_pool", err: errors.New(`ent: missing required field "Group.allow_contribution_pool"`)}
 	}
 	if _, ok := _c.mutation.PeakRateEnabled(); !ok {
 		return &ValidationError{Name: "peak_rate_enabled", err: errors.New(`ent: missing required field "Group.peak_rate_enabled"`)}
@@ -1382,11 +1437,11 @@ func (_c *GroupCreate) check() error {
 	if _, ok := _c.mutation.ClaudeCodeOnly(); !ok {
 		return &ValidationError{Name: "claude_code_only", err: errors.New(`ent: missing required field "Group.claude_code_only"`)}
 	}
-	if _, ok := _c.mutation.IsFallbackPool(); !ok {
-		return &ValidationError{Name: "is_fallback_pool", err: errors.New(`ent: missing required field "Group.is_fallback_pool"`)}
-	}
 	if _, ok := _c.mutation.KiroCompat(); !ok {
 		return &ValidationError{Name: "kiro_compat", err: errors.New(`ent: missing required field "Group.kiro_compat"`)}
+	}
+	if _, ok := _c.mutation.IsFallbackPool(); !ok {
+		return &ValidationError{Name: "is_fallback_pool", err: errors.New(`ent: missing required field "Group.is_fallback_pool"`)}
 	}
 	if _, ok := _c.mutation.ModelRoutingEnabled(); !ok {
 		return &ValidationError{Name: "model_routing_enabled", err: errors.New(`ent: missing required field "Group.model_routing_enabled"`)}
@@ -1431,6 +1486,9 @@ func (_c *GroupCreate) check() error {
 	}
 	if _, ok := _c.mutation.ModelAllowlist(); !ok {
 		return &ValidationError{Name: "model_allowlist", err: errors.New(`ent: missing required field "Group.model_allowlist"`)}
+	}
+	if _, ok := _c.mutation.ModelsListConfig(); !ok {
+		return &ValidationError{Name: "models_list_config", err: errors.New(`ent: missing required field "Group.models_list_config"`)}
 	}
 	if _, ok := _c.mutation.CodexModelsManifestConfig(); !ok {
 		return &ValidationError{Name: "codex_models_manifest_config", err: errors.New(`ent: missing required field "Group.codex_models_manifest_config"`)}
@@ -1516,6 +1574,10 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.RateMultiplier(); ok {
 		_spec.SetField(group.FieldRateMultiplier, field.TypeFloat64, value)
 		_node.RateMultiplier = value
+	}
+	if value, ok := _c.mutation.AllowContributionPool(); ok {
+		_spec.SetField(group.FieldAllowContributionPool, field.TypeBool, value)
+		_node.AllowContributionPool = value
 	}
 	if value, ok := _c.mutation.PeakRateEnabled(); ok {
 		_spec.SetField(group.FieldPeakRateEnabled, field.TypeBool, value)
@@ -1661,6 +1723,10 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 		_spec.SetField(group.FieldClaudeCodeOnly, field.TypeBool, value)
 		_node.ClaudeCodeOnly = value
 	}
+	if value, ok := _c.mutation.KiroCompat(); ok {
+		_spec.SetField(group.FieldKiroCompat, field.TypeBool, value)
+		_node.KiroCompat = value
+	}
 	if value, ok := _c.mutation.FallbackGroupID(); ok {
 		_spec.SetField(group.FieldFallbackGroupID, field.TypeInt64, value)
 		_node.FallbackGroupID = &value
@@ -1676,10 +1742,6 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.IsFallbackPool(); ok {
 		_spec.SetField(group.FieldIsFallbackPool, field.TypeBool, value)
 		_node.IsFallbackPool = value
-	}
-	if value, ok := _c.mutation.KiroCompat(); ok {
-		_spec.SetField(group.FieldKiroCompat, field.TypeBool, value)
-		_node.KiroCompat = value
 	}
 	if value, ok := _c.mutation.ModelRouting(); ok {
 		_spec.SetField(group.FieldModelRouting, field.TypeJSON, value)
@@ -1736,6 +1798,10 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.ModelAllowlist(); ok {
 		_spec.SetField(group.FieldModelAllowlist, field.TypeJSON, value)
 		_node.ModelAllowlist = value
+	}
+	if value, ok := _c.mutation.ModelsListConfig(); ok {
+		_spec.SetField(group.FieldModelsListConfig, field.TypeJSON, value)
+		_node.ModelsListConfig = value
 	}
 	if value, ok := _c.mutation.CodexModelsManifestConfig(); ok {
 		_spec.SetField(group.FieldCodexModelsManifestConfig, field.TypeJSON, value)
@@ -1873,6 +1939,22 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 		edge.Target.Fields = specE.Fields
 		_spec.Edges = append(_spec.Edges, edge)
 	}
+	if nodes := _c.mutation.CompositeModelRoutesIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   group.CompositeModelRoutesTable,
+			Columns: []string{group.CompositeModelRoutesColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(compositemodelroute.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges = append(_spec.Edges, edge)
+	}
 	return _node, _spec
 }
 
@@ -2000,6 +2082,18 @@ func (u *GroupUpsert) UpdateRateMultiplier() *GroupUpsert {
 // AddRateMultiplier adds v to the "rate_multiplier" field.
 func (u *GroupUpsert) AddRateMultiplier(v float64) *GroupUpsert {
 	u.Add(group.FieldRateMultiplier, v)
+	return u
+}
+
+// SetAllowContributionPool sets the "allow_contribution_pool" field.
+func (u *GroupUpsert) SetAllowContributionPool(v bool) *GroupUpsert {
+	u.Set(group.FieldAllowContributionPool, v)
+	return u
+}
+
+// UpdateAllowContributionPool sets the "allow_contribution_pool" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateAllowContributionPool() *GroupUpsert {
+	u.SetExcluded(group.FieldAllowContributionPool)
 	return u
 }
 
@@ -2639,6 +2733,18 @@ func (u *GroupUpsert) UpdateClaudeCodeOnly() *GroupUpsert {
 	return u
 }
 
+// SetKiroCompat sets the "kiro_compat" field.
+func (u *GroupUpsert) SetKiroCompat(v bool) *GroupUpsert {
+	u.Set(group.FieldKiroCompat, v)
+	return u
+}
+
+// UpdateKiroCompat sets the "kiro_compat" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateKiroCompat() *GroupUpsert {
+	u.SetExcluded(group.FieldKiroCompat)
+	return u
+}
+
 // SetFallbackGroupID sets the "fallback_group_id" field.
 func (u *GroupUpsert) SetFallbackGroupID(v int64) *GroupUpsert {
 	u.Set(group.FieldFallbackGroupID, v)
@@ -2714,18 +2820,6 @@ func (u *GroupUpsert) SetIsFallbackPool(v bool) *GroupUpsert {
 // UpdateIsFallbackPool sets the "is_fallback_pool" field to the value that was provided on create.
 func (u *GroupUpsert) UpdateIsFallbackPool() *GroupUpsert {
 	u.SetExcluded(group.FieldIsFallbackPool)
-	return u
-}
-
-// SetKiroCompat sets the "kiro_compat" field.
-func (u *GroupUpsert) SetKiroCompat(v bool) *GroupUpsert {
-	u.Set(group.FieldKiroCompat, v)
-	return u
-}
-
-// UpdateKiroCompat sets the "kiro_compat" field to the value that was provided on create.
-func (u *GroupUpsert) UpdateKiroCompat() *GroupUpsert {
-	u.SetExcluded(group.FieldKiroCompat)
 	return u
 }
 
@@ -2906,6 +3000,18 @@ func (u *GroupUpsert) SetModelAllowlist(v domain.GroupModelAllowlist) *GroupUpse
 // UpdateModelAllowlist sets the "model_allowlist" field to the value that was provided on create.
 func (u *GroupUpsert) UpdateModelAllowlist() *GroupUpsert {
 	u.SetExcluded(group.FieldModelAllowlist)
+	return u
+}
+
+// SetModelsListConfig sets the "models_list_config" field.
+func (u *GroupUpsert) SetModelsListConfig(v domain.GroupModelsListConfig) *GroupUpsert {
+	u.Set(group.FieldModelsListConfig, v)
+	return u
+}
+
+// UpdateModelsListConfig sets the "models_list_config" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateModelsListConfig() *GroupUpsert {
+	u.SetExcluded(group.FieldModelsListConfig)
 	return u
 }
 
@@ -3159,6 +3265,20 @@ func (u *GroupUpsertOne) AddRateMultiplier(v float64) *GroupUpsertOne {
 func (u *GroupUpsertOne) UpdateRateMultiplier() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateRateMultiplier()
+	})
+}
+
+// SetAllowContributionPool sets the "allow_contribution_pool" field.
+func (u *GroupUpsertOne) SetAllowContributionPool(v bool) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetAllowContributionPool(v)
+	})
+}
+
+// UpdateAllowContributionPool sets the "allow_contribution_pool" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateAllowContributionPool() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateAllowContributionPool()
 	})
 }
 
@@ -3904,6 +4024,20 @@ func (u *GroupUpsertOne) UpdateClaudeCodeOnly() *GroupUpsertOne {
 	})
 }
 
+// SetKiroCompat sets the "kiro_compat" field.
+func (u *GroupUpsertOne) SetKiroCompat(v bool) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetKiroCompat(v)
+	})
+}
+
+// UpdateKiroCompat sets the "kiro_compat" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateKiroCompat() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateKiroCompat()
+	})
+}
+
 // SetFallbackGroupID sets the "fallback_group_id" field.
 func (u *GroupUpsertOne) SetFallbackGroupID(v int64) *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
@@ -3992,20 +4126,6 @@ func (u *GroupUpsertOne) SetIsFallbackPool(v bool) *GroupUpsertOne {
 func (u *GroupUpsertOne) UpdateIsFallbackPool() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateIsFallbackPool()
-	})
-}
-
-// SetKiroCompat sets the "kiro_compat" field.
-func (u *GroupUpsertOne) SetKiroCompat(v bool) *GroupUpsertOne {
-	return u.Update(func(s *GroupUpsert) {
-		s.SetKiroCompat(v)
-	})
-}
-
-// UpdateKiroCompat sets the "kiro_compat" field to the value that was provided on create.
-func (u *GroupUpsertOne) UpdateKiroCompat() *GroupUpsertOne {
-	return u.Update(func(s *GroupUpsert) {
-		s.UpdateKiroCompat()
 	})
 }
 
@@ -4216,6 +4336,20 @@ func (u *GroupUpsertOne) SetModelAllowlist(v domain.GroupModelAllowlist) *GroupU
 func (u *GroupUpsertOne) UpdateModelAllowlist() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateModelAllowlist()
+	})
+}
+
+// SetModelsListConfig sets the "models_list_config" field.
+func (u *GroupUpsertOne) SetModelsListConfig(v domain.GroupModelsListConfig) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetModelsListConfig(v)
+	})
+}
+
+// UpdateModelsListConfig sets the "models_list_config" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateModelsListConfig() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateModelsListConfig()
 	})
 }
 
@@ -4654,6 +4788,20 @@ func (u *GroupUpsertBulk) AddRateMultiplier(v float64) *GroupUpsertBulk {
 func (u *GroupUpsertBulk) UpdateRateMultiplier() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateRateMultiplier()
+	})
+}
+
+// SetAllowContributionPool sets the "allow_contribution_pool" field.
+func (u *GroupUpsertBulk) SetAllowContributionPool(v bool) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetAllowContributionPool(v)
+	})
+}
+
+// UpdateAllowContributionPool sets the "allow_contribution_pool" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateAllowContributionPool() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateAllowContributionPool()
 	})
 }
 
@@ -5399,6 +5547,20 @@ func (u *GroupUpsertBulk) UpdateClaudeCodeOnly() *GroupUpsertBulk {
 	})
 }
 
+// SetKiroCompat sets the "kiro_compat" field.
+func (u *GroupUpsertBulk) SetKiroCompat(v bool) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetKiroCompat(v)
+	})
+}
+
+// UpdateKiroCompat sets the "kiro_compat" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateKiroCompat() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateKiroCompat()
+	})
+}
+
 // SetFallbackGroupID sets the "fallback_group_id" field.
 func (u *GroupUpsertBulk) SetFallbackGroupID(v int64) *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
@@ -5487,20 +5649,6 @@ func (u *GroupUpsertBulk) SetIsFallbackPool(v bool) *GroupUpsertBulk {
 func (u *GroupUpsertBulk) UpdateIsFallbackPool() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateIsFallbackPool()
-	})
-}
-
-// SetKiroCompat sets the "kiro_compat" field.
-func (u *GroupUpsertBulk) SetKiroCompat(v bool) *GroupUpsertBulk {
-	return u.Update(func(s *GroupUpsert) {
-		s.SetKiroCompat(v)
-	})
-}
-
-// UpdateKiroCompat sets the "kiro_compat" field to the value that was provided on create.
-func (u *GroupUpsertBulk) UpdateKiroCompat() *GroupUpsertBulk {
-	return u.Update(func(s *GroupUpsert) {
-		s.UpdateKiroCompat()
 	})
 }
 
@@ -5711,6 +5859,20 @@ func (u *GroupUpsertBulk) SetModelAllowlist(v domain.GroupModelAllowlist) *Group
 func (u *GroupUpsertBulk) UpdateModelAllowlist() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateModelAllowlist()
+	})
+}
+
+// SetModelsListConfig sets the "models_list_config" field.
+func (u *GroupUpsertBulk) SetModelsListConfig(v domain.GroupModelsListConfig) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetModelsListConfig(v)
+	})
+}
+
+// UpdateModelsListConfig sets the "models_list_config" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateModelsListConfig() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateModelsListConfig()
 	})
 }
 

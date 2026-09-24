@@ -14,10 +14,12 @@ import type {
   PlaygroundRole,
 } from './types'
 
-export const PLAYGROUND_STORAGE_VERSION = 2
+// Bump after the legacy snapshot format proved capable of resurrecting deleted
+// conversations. Version 3 intentionally starts a clean local workspace.
+export const PLAYGROUND_STORAGE_VERSION = 3
 export const PLAYGROUND_LEGACY_STORAGE_VERSION = 1
-export const PLAYGROUND_MAX_PERSIST_BYTES = 96 * 1024
-export const PLAYGROUND_MAX_TOTAL_PERSIST_BYTES = 1024 * 1024
+export const PLAYGROUND_MAX_PERSIST_BYTES = 2 * 1024 * 1024
+export const PLAYGROUND_MAX_TOTAL_PERSIST_BYTES = 4 * 1024 * 1024
 export const PLAYGROUND_MAX_MESSAGES = 48
 export const PLAYGROUND_MAX_MESSAGE_CHARS = 1_000_000
 export const PLAYGROUND_MAX_CONVERSATIONS = 48
@@ -48,7 +50,7 @@ export const DEFAULT_PLAYGROUND_PARAMETERS: PlaygroundParameters = {
   presence_penalty: 0,
   seed: null,
   stream: true,
-  reasoning_effort: 'none',
+  reasoning_effort: 'high',
   enabled: { ...DEFAULT_PLAYGROUND_PARAMETER_ENABLED },
 }
 
@@ -535,6 +537,10 @@ export function buildChatPayload(input: {
     && Number.isFinite(input.parameters.seed)
   ) {
     payload.seed = Math.trunc(input.parameters.seed)
+  }
+
+  if (input.parameters.reasoning_effort && input.parameters.reasoning_effort !== 'none') {
+    payload.reasoning_effort = input.parameters.reasoning_effort
   }
 
   return payload

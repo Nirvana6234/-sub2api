@@ -228,17 +228,19 @@
         </div>
 
         <nav class="order-3 flex w-full items-center overflow-x-auto rounded-md bg-gray-100 p-1 text-xs dark:bg-dark-800 sm:order-none sm:w-auto sm:shrink-0" :aria-label="t('playground.workspaceLabel')">
-          <RouterLink to="/playground/chat" class="rounded px-2.5 py-1.5 font-medium transition-colors" :class="!isImageMode ? 'bg-white text-primary-700 shadow-sm dark:bg-dark-700 dark:text-primary-300' : 'text-gray-500 hover:text-gray-800 dark:text-dark-400 dark:hover:text-dark-100'">{{ t('playground.chatWorkspace') }}</RouterLink>
-          <RouterLink to="/playground/images" class="rounded px-2.5 py-1.5 font-medium transition-colors" :class="isImageMode ? 'bg-white text-primary-700 shadow-sm dark:bg-dark-700 dark:text-primary-300' : 'text-gray-500 hover:text-gray-800 dark:text-dark-400 dark:hover:text-dark-100'">{{ t('playground.imageWorkspace') }}</RouterLink>
+          <RouterLink v-if="props.mode !== 'unified'" to="/playground/chat" class="rounded px-2.5 py-1.5 font-medium text-gray-500 transition-colors hover:text-gray-800 dark:text-dark-400 dark:hover:text-dark-100">{{ t('playground.chatWorkspace') }}</RouterLink>
+          <span v-else class="rounded bg-white px-2.5 py-1.5 font-medium text-primary-700 shadow-sm dark:bg-dark-700 dark:text-primary-300">{{ t('playground.chatWorkspace') }}</span>
+          <RouterLink v-if="props.mode === 'unified'" to="/playground/images" class="rounded px-2.5 py-1.5 font-medium text-gray-500 transition-colors hover:text-gray-800 dark:text-dark-400 dark:hover:text-dark-100">{{ t('playground.imageWorkspace') }}</RouterLink>
+          <span v-else class="rounded bg-white px-2.5 py-1.5 font-medium text-primary-700 shadow-sm dark:bg-dark-700 dark:text-primary-300">{{ t('playground.imageWorkspace') }}</span>
           <RouterLink to="/playground/images?view=canvas" class="rounded px-2.5 py-1.5 font-medium text-gray-500 transition-colors hover:text-gray-800 dark:text-dark-400 dark:hover:text-dark-100">{{ t('playground.canvasWorkspace') }}</RouterLink>
           <RouterLink to="/playground/gallery" class="rounded px-2.5 py-1.5 font-medium text-gray-500 transition-colors hover:text-gray-800 dark:text-dark-400 dark:hover:text-dark-100">{{ t('playground.galleryWorkspace') }}</RouterLink>
         </nav>
         <select v-model="selectedKeyId" class="select h-9 w-48 max-w-[38vw] text-xs sm:w-60" :disabled="isGenerating" :aria-label="t('playground.keyLabel')" :title="selectedKey ? playgroundKeyLabel(selectedKey) : ''">
           <option v-for="key in playgroundKeys" :key="key.id" :value="key.id">{{ playgroundKeyLabel(key) }}</option>
         </select>
-        <select v-model="selectedModel" class="select h-9 min-w-0 max-w-36 text-xs sm:max-w-48" :disabled="loadingModels || isGenerating || models.length === 0" :aria-label="t('playground.modelLabel')">
+        <select v-model="selectedModel" class="select h-9 min-w-0 max-w-36 text-xs sm:max-w-48" :disabled="loadingModels || isGenerating || (props.mode === 'unified' ? visibleChatModels.length === 0 : models.length === 0)" :aria-label="t('playground.modelLabel')">
           <option value="" disabled>{{ loadingModels ? t('playground.loadingModels') : t('playground.noModels') }}</option>
-          <option v-for="model in models" :key="model.id" :value="model.id">{{ model.id }}</option>
+          <option v-for="model in (props.mode === 'unified' ? visibleChatModels : models)" :key="model.id" :value="model.id">{{ model.id }}</option>
         </select>
         <button type="button" class="btn btn-ghost btn-icon h-9 w-9 p-0" :title="t('playground.refreshModels')" :disabled="loadingModels || !selectedKeyId || isGenerating" @click="refreshModels">
           <Icon name="refresh" size="sm" :class="{ 'animate-spin': loadingModels }" />
@@ -270,7 +272,7 @@
         </div>
       </header>
 
-      <main ref="transcript" class="min-h-0 flex-1 overflow-y-auto">
+      <main ref="transcript" class="relative min-h-0 flex-1 overflow-y-auto" @scroll="updateTranscriptScrollState">
         <section v-if="messages.length === 0" class="mx-auto flex min-h-full w-full max-w-3xl items-center px-4 py-10 md:px-8">
           <div class="w-full text-center">
             <span class="mx-auto flex h-11 w-11 items-center justify-center rounded-lg border border-gray-200 bg-gray-50 text-gray-500 dark:border-dark-700 dark:bg-dark-800 dark:text-dark-300">
@@ -378,7 +380,25 @@
                         <span class="max-w-56 truncate">{{ attachment.name }}</span>
                       </span>
                     </div>
-                    <div v-if="message.content && !message.imageUrls?.length" class="playground-markdown" v-html="renderMarkdown(message.content)"></div>
+                    <div v-if="message.content && !message.imageUrls?.length" class="playground-message-content">
+                      <div
+                        class="relative"
+                        :class="isLongUserMessage(message) && !isMessageExpanded(message.id) ? 'max-h-52 overflow-hidden' : ''"
+                      >
+                        <div class="playground-markdown" v-html="renderMarkdown(message.content)"></div>
+                      </div>
+                      <div v-if="isLongUserMessage(message)" class="mt-2 flex" :class="message.role === 'user' ? 'justify-end' : 'justify-start'">
+                        <button
+                          type="button"
+                          class="btn btn-ghost h-7 gap-1 px-2 text-xs text-gray-500 hover:text-gray-800 dark:text-dark-400 dark:hover:text-dark-100"
+                          :aria-expanded="isMessageExpanded(message.id)"
+                          @click="toggleMessageExpanded(message.id)"
+                        >
+                          <Icon :name="isMessageExpanded(message.id) ? 'chevronUp' : 'chevronDown'" size="xs" />
+                          {{ isMessageExpanded(message.id) ? t('playground.collapseLongMessage') : t('playground.expandLongMessage') }}
+                        </button>
+                      </div>
+                    </div>
                     <div v-else-if="message.role === 'assistant' && isGenerating && message.id === streamingMessageId" class="flex items-start gap-2 text-sm text-gray-500 dark:text-dark-400">
                       <span class="mt-2 inline-flex shrink-0 gap-1">
                         <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.2s]"></span>
@@ -415,6 +435,18 @@
             </div>
           </article>
         </section>
+
+        <button
+          v-if="showScrollToBottom"
+          type="button"
+          class="btn btn-secondary btn-icon absolute bottom-4 left-1/2 z-10 h-9 w-9 -translate-x-1/2 rounded-full bg-white/95 p-0 shadow-lg dark:bg-dark-800/95"
+          :title="t('playground.scrollToBottom')"
+          :aria-label="t('playground.scrollToBottom')"
+          @click="scrollTranscriptToBottom()"
+        >
+          <Icon name="chevronDown" size="sm" />
+          <span class="sr-only">{{ t('playground.scrollToBottom') }}</span>
+        </button>
       </main>
 
       <div class="border-t border-gray-200 bg-white p-3 dark:border-dark-700 dark:bg-dark-950 md:p-4">
@@ -632,14 +664,32 @@
             @keydown="handleComposerKeydown"
           ></textarea>
 
-          <div v-if="pendingAttachments.length" class="flex flex-wrap gap-1.5 border-t border-gray-100 px-3 py-2 dark:border-dark-700">
-            <span v-for="attachment in pendingAttachments" :key="attachment.id" class="inline-flex max-w-full items-center gap-1 rounded-md bg-gray-100 px-2 py-1 text-xs text-gray-700 dark:bg-dark-800 dark:text-gray-200">
-              <span class="max-w-48 truncate">{{ attachment.name }}</span>
-              <button type="button" class="shrink-0 text-gray-400 hover:text-red-500" title="移除附件" @click="removePendingAttachment(attachment.id)">
-                <Icon name="x" size="xs" />
-                <span class="sr-only">移除附件</span>
-              </button>
-            </span>
+          <div v-if="pendingAttachments.length" class="flex flex-wrap gap-2 border-t border-gray-100 px-3 py-2 dark:border-dark-700">
+            <div
+              v-for="(attachment, attachmentIndex) in pendingAttachments"
+              :key="attachment.id"
+              class="group/attachment relative flex w-24 flex-col gap-1 rounded-lg border border-gray-200 bg-gray-50 p-1.5 dark:border-dark-600 dark:bg-dark-900"
+              draggable="true"
+              @dragstart="startAttachmentDrag(attachmentIndex)"
+              @dragover.prevent
+              @drop="dropAttachment(attachmentIndex)"
+            >
+              <div class="relative flex h-16 items-center justify-center overflow-hidden rounded-md bg-white dark:bg-dark-800">
+                <img v-if="attachment.mimeType.startsWith('image/') && attachment.dataUrl" :src="attachment.dataUrl" :alt="attachment.name" class="h-full w-full object-cover">
+                <Icon v-else name="document" size="sm" class="text-gray-400" />
+                <span class="absolute left-1 top-1 rounded bg-gray-950/65 px-1 text-[10px] text-white">{{ attachmentIndex + 1 }}</span>
+                <button type="button" class="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-gray-950/65 text-white opacity-0 transition group-hover/attachment:opacity-100" title="移除附件" @click="removePendingAttachment(attachment.id)">
+                  <Icon name="x" size="xs" />
+                  <span class="sr-only">移除附件</span>
+                </button>
+              </div>
+              <span class="truncate px-0.5 text-[10px] text-gray-600 dark:text-dark-300" :title="attachment.name">{{ attachment.name }}</span>
+              <div class="flex items-center justify-between px-0.5">
+                <button type="button" class="text-[10px] text-gray-500 hover:text-primary-600 disabled:opacity-30" :disabled="attachmentIndex === 0" title="向左移动" @click="movePendingAttachment(attachmentIndex, -1)">←</button>
+                <span class="cursor-grab text-[10px] text-gray-400" title="拖动调整顺序">⋮⋮</span>
+                <button type="button" class="text-[10px] text-gray-500 hover:text-primary-600 disabled:opacity-30" :disabled="attachmentIndex === pendingAttachments.length - 1" title="向右移动" @click="movePendingAttachment(attachmentIndex, 1)">→</button>
+              </div>
+            </div>
           </div>
 
           <div class="flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 px-2.5 py-2 dark:border-dark-700">
@@ -714,9 +764,9 @@ import { useClipboard } from '@/composables/useClipboard'
 import { Icon } from '@/components/icons'
 import { useAppStore, useAuthStore } from '@/stores'
 import type { ApiKey } from '@/types'
-import { fetchPlaygroundHistory, fetchPlaygroundModels, savePlaygroundHistory, sendPlaygroundChat, sendPlaygroundImageGeneration } from './api'
+import { fetchPlaygroundModels, sendPlaygroundChat, sendPlaygroundImageGeneration } from './api'
 import { renderPlaygroundMarkdown, stripMathDelimitersForCopy } from './markdown'
-import { createPlaygroundPersistScheduler, loadPlaygroundState, mergePlaygroundStates, savePlaygroundState, toPersistedState } from './persistence'
+import { createPlaygroundPersistScheduler, deletePlaygroundConversations, loadPlaygroundState, markDeletedPlaygroundConversations, savePlaygroundState, toPersistedState } from './persistence'
 import { cachePlaygroundImage, createPlaygroundImageCacheKey, restoreCachedPlaygroundImage } from './imageCache'
 import { downloadPlaygroundImage, imageFilenameExtension, playgroundImageUrl } from './imageDownload'
 import { copyPlaygroundImageToClipboard, isClipboardImageSupported } from './imageClipboard'
@@ -726,6 +776,7 @@ import {
   buildPlaygroundImageRequest,
   normalizePlaygroundImageModels,
   normalizePlaygroundChatModels,
+  isPlaygroundImageModel,
   cloneParameters,
   createConversation,
   createMessage,
@@ -746,6 +797,10 @@ import {
   resolveSelectedModel,
   withSystemPrompt,
 } from './viewModel'
+
+function isPlaygroundImageModelId(model: string): boolean {
+  return isPlaygroundImageModel({ id: model })
+}
 
 const props = defineProps<{
   mode: PlaygroundMode
@@ -790,6 +845,8 @@ const loadingKeys = ref(true)
 const loadingModels = ref(false)
 const playgroundKeys = ref<PlaygroundKeySummary[]>([])
 const models = ref<PlaygroundModel[]>([])
+const modelCatalogByKeyId = new Map<number, PlaygroundModel[]>()
+const visibleChatModels = computed(() => models.value.filter((model) => !isPlaygroundImageModelId(model.id)))
 const selectedKeyId = ref<number | null>(null)
 const selectedModel = ref('')
 const imageSize = ref('1024x1024')
@@ -829,14 +886,23 @@ const editingContent = ref('')
 const downloadingImageIds = ref<Set<string>>(new Set())
 const copyingImageIds = ref<Set<string>>(new Set())
 const failedImageIds = ref<Set<string>>(new Set())
+const expandedMessageIds = ref<Set<string>>(new Set())
+const transcriptAtBottom = ref(true)
 // 剪贴板写图能力在页面生命周期内不会变，求值一次即可，避免每次渲染都探测。
 const clipboardImageSupported = isClipboardImageSupported()
 const generationImageCount = ref(1)
 const generationElapsedSeconds = ref(0)
 const generatedImageCount = ref(0)
 const pendingAttachments = ref<PlaygroundAttachment[]>([])
+const draggedAttachmentIndex = ref<number | null>(null)
 const selectionMode = ref(false)
 const selectedConversationIds = ref<Set<string>>(new Set())
+const operationMode = ref<'chat' | 'image'>(props.mode === 'image' ? 'image' : 'chat')
+const forcedImageGeneration = ref(false)
+const previousChatModel = ref('')
+const previousChatKeyId = ref<number | null>(null)
+
+const showScrollToBottom = computed(() => messages.value.length > 0 && !transcriptAtBottom.value)
 
 let keyAbortController: AbortController | null = null
 let modelsAbortController: AbortController | null = null
@@ -848,24 +914,9 @@ const persistSource = Math.random().toString(36).slice(2)
 const playgroundStateUpdatedEvent = 'sub2api:playground-state-updated'
 const imageObjectUrls = new Set<string>()
 const persistScheduler = createPlaygroundPersistScheduler(500, async (userId, keyId, state) => {
-  // Merge with the latest browser snapshot before writing so a second tab
-  // cannot erase conversations that were created in the first tab.
-  const saved = savePlaygroundState(userId, keyId, mergePlaygroundStates([
-    loadPlaygroundState(userId, keyId),
-    state,
-  ]))
-  try {
-    const remoteSaved = await savePlaygroundHistory(userId, saved)
-    if (!remoteSaved) return saved
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent(playgroundStateUpdatedEvent, {
-        detail: { userId, source: persistSource },
-      }))
-    }
-  } catch {
-    // Local state remains available while history request is temporarily unavailable.
-  }
-  return saved
+  // Playground history is intentionally local-only. Conversations must not be
+  // copied to the server or resurrected from a server snapshot.
+  return savePlaygroundState(userId, keyId, state)
 })
 function handleBackgroundStateUpdate(event: Event): void {
   const detail = (event as CustomEvent<{ userId?: number; source?: string }>).detail
@@ -921,7 +972,7 @@ function playgroundKeyLabel(key: (typeof playgroundKeys.value)[number]): string 
   return formatPlaygroundKeyLabel(key, t('playground.autoGroupKey', { strategy }))
 }
 
-const isImageMode = computed(() => props.mode === 'image')
+const isImageMode = computed(() => operationMode.value === 'image')
 const workspaceTitle = computed(() => t(isImageMode.value ? 'playground.imageWorkspace' : 'playground.chatWorkspace'))
 const workspaceDescription = computed(() => t(isImageMode.value ? 'playground.imageWorkspaceDescription' : 'playground.chatWorkspaceDescription'))
 const composerPlaceholder = computed(() => t(isImageMode.value ? 'playground.imagePromptPlaceholder' : 'playground.chatPromptPlaceholder'))
@@ -945,7 +996,9 @@ const generationProgressLabel = computed(() => {
   return t('playground.imageGenerationStarted', { count: generationImageCount.value })
 })
 const newConversationLabel = computed(() => t(isImageMode.value ? 'playground.newImageTask' : 'playground.newChat'))
-const modeConversations = computed(() => conversations.value.filter((conversation) => conversation.mode === props.mode))
+const modeConversations = computed(() => props.mode === 'unified'
+  ? conversations.value.filter((conversation) => conversation.mode === 'chat' || conversation.mode === 'image')
+  : conversations.value.filter((conversation) => conversation.mode === props.mode))
 const activeConversation = computed(() => modeConversations.value.find((conversation) => conversation.id === activeConversationId.value) ?? null)
 const messages = computed<PlaygroundMessage[]>({
   get: () => activeConversation.value?.messages ?? [],
@@ -1095,6 +1148,35 @@ function messageError(message: PlaygroundMessage): string | undefined {
   return (message as PlaygroundMessage & { errorMessage?: string }).errorMessage
 }
 
+function isLongUserMessage(message: PlaygroundMessage): boolean {
+  if (message.role !== 'user') return false
+  return message.content.length > 1200 || message.content.split(/\r?\n/).length > 16
+}
+
+function isMessageExpanded(messageId: string): boolean {
+  return expandedMessageIds.value.has(messageId)
+}
+
+function toggleMessageExpanded(messageId: string): void {
+  const next = new Set(expandedMessageIds.value)
+  if (next.has(messageId)) next.delete(messageId)
+  else next.add(messageId)
+  expandedMessageIds.value = next
+}
+
+function updateTranscriptScrollState(): void {
+  const element = transcript.value
+  if (!element) return
+  transcriptAtBottom.value = element.scrollHeight - element.scrollTop - element.clientHeight <= 48
+}
+
+function scrollTranscriptToBottom(behavior: ScrollBehavior = 'smooth'): void {
+  const element = transcript.value
+  if (!element) return
+  element.scrollTo({ top: element.scrollHeight, behavior })
+  transcriptAtBottom.value = true
+}
+
 function setMessageError(message: PlaygroundMessage, value: string): void {
   const messageWithError = message as PlaygroundMessage & { errorMessage?: string }
   messageWithError.errorMessage = value
@@ -1161,7 +1243,7 @@ function ensureActiveConversation(projectId: string | null = null): PlaygroundCo
   if (current) return current
 
   const conversation = createConversation({
-    mode: props.mode,
+    mode: operationMode.value,
     projectId,
     ...conversationConfiguration(),
   })
@@ -1183,7 +1265,7 @@ function newConversation(projectId = activeConversation.value?.projectId ?? null
     touchConversation(current)
   } else {
     const conversation = createConversation({
-      mode: props.mode,
+    mode: operationMode.value,
       projectId,
       ...conversationConfiguration(),
     })
@@ -1207,7 +1289,7 @@ function selectConversation(conversationId: string): void {
   imageSettingsOpen.value = false
   conversationSettingsOpen.value = false
   cancelConversationRename()
-  void nextTick(() => transcript.value?.scrollTo({ top: transcript.value.scrollHeight }))
+  void nextTick(() => scrollTranscriptToBottom('auto'))
 }
 
 function toggleSelectionMode(): void {
@@ -1232,12 +1314,13 @@ function clearConversationSelection(): void {
   selectedConversationIds.value = new Set()
 }
 
-function deleteSelectedConversations(): void {
+async function deleteSelectedConversations(): Promise<void> {
   const selectedIds = new Set(selectedConversationIds.value)
   if (isGenerating.value || selectedIds.size === 0) return
   if (!window.confirm(t('playground.deleteConversationsConfirm', { count: selectedIds.size }))) return
   const deletingActive = activeConversationId.value !== null && selectedIds.has(activeConversationId.value)
   conversations.value = conversations.value.filter((conversation) => !selectedIds.has(conversation.id))
+  if (userId.value !== null) markDeletedPlaygroundConversations(userId.value, [...selectedIds])
   if (deletingActive) {
     activeConversationId.value = modeConversations.value[0]?.id ?? null
     ensureActiveConversation()
@@ -1245,6 +1328,7 @@ function deleteSelectedConversations(): void {
   clearConversationSelection()
   selectionMode.value = false
   cancelConversationRename()
+  if (userId.value !== null) deletePlaygroundConversations(userId.value, [...selectedIds])
 }
 
 function startCreateProject(): void {
@@ -1331,15 +1415,17 @@ function cancelConversationRename(): void {
   conversationNameDraft.value = ''
 }
 
-function deleteConversation(conversationId: string): void {
+async function deleteConversation(conversationId: string): Promise<void> {
   if (isGenerating.value || !window.confirm(t('playground.deleteConversationConfirm'))) return
   const deletingActive = activeConversationId.value === conversationId
   conversations.value = conversations.value.filter((conversation) => conversation.id !== conversationId)
+  if (userId.value !== null) markDeletedPlaygroundConversations(userId.value, [conversationId])
   if (deletingActive) {
     activeConversationId.value = modeConversations.value[0]?.id ?? null
     ensureActiveConversation()
   }
   cancelConversationRename()
+  if (userId.value !== null) deletePlaygroundConversations(userId.value, [conversationId])
 }
 
 function isGroupExpanded(groupId: string): boolean {
@@ -1389,17 +1475,6 @@ async function hydrateUserState(keyId: number, force = false): Promise<void> {
   isHydratingKeyState.value = true
   try {
     let saved = loadPlaygroundState(userId.value, keyId)
-    try {
-      const remoteState = await fetchPlaygroundHistory(userId.value)
-      if (remoteState) {
-        // A request can finish after this component unmounts. The local
-        // snapshot may therefore be newer than the server response observed
-        // by a newly mounted page; never let that response erase the result.
-        saved = savePlaygroundState(userId.value, keyId, mergePlaygroundStates([saved, remoteState]))
-      }
-    } catch {
-      // A local snapshot is the offline and rolling-deployment fallback.
-    }
     await restoreCachedImages(saved)
     if (hydrationVersion !== keyStateHydrationVersion) return
     revokeImageObjectUrls()
@@ -1433,7 +1508,9 @@ function applyHydratedState(saved: ReturnType<typeof loadPlaygroundState>): void
   parameters.value = saved.parameters
   projects.value = saved.projects
   conversations.value = saved.conversations
-  const modeState = saved.conversations.filter((conversation) => conversation.mode === props.mode)
+  const modeState = props.mode === 'unified'
+    ? saved.conversations.filter((conversation) => conversation.mode === 'chat' || conversation.mode === 'image')
+    : saved.conversations.filter((conversation) => conversation.mode === props.mode)
   activeConversationId.value = modeState.some((conversation) => conversation.id === saved.activeConversationId)
     ? saved.activeConversationId
     : modeState[0]?.id ?? null
@@ -1459,7 +1536,6 @@ function schedulePersist(): void {
   })
   persistScheduler.schedule(userId.value, selectedKeyId.value, state)
 }
-
 async function loadModels(keyId: number): Promise<void> {
   modelsAbortController?.abort()
   const controller = new AbortController()
@@ -1470,17 +1546,22 @@ async function loadModels(keyId: number): Promise<void> {
   try {
     const availableModels = await fetchPlaygroundModels(keyId, controller.signal)
     if (controller.signal.aborted || selectedKeyId.value !== keyId) return
-    models.value = isImageMode.value
-      ? normalizePlaygroundImageModels(availableModels)
-      : normalizePlaygroundChatModels(availableModels)
+    models.value = props.mode === 'unified'
+      ? [...normalizePlaygroundChatModels(availableModels), ...normalizePlaygroundImageModels(availableModels)]
+      : isImageMode.value
+        ? normalizePlaygroundImageModels(availableModels)
+        : normalizePlaygroundChatModels(availableModels)
+    // Unified/chat mode must always start with a chat model. Image models are
+    // only selectable in the dedicated image workspace or during auto-routing.
+    const selectableModels = props.mode === 'unified' ? visibleChatModels.value : models.value
     const rememberedModel = loadRememberedModel(keyId)
     const rememberedOrCurrentModel = [rememberedModel, selectedModel.value]
-      .find((candidate) => candidate && models.value.some((model) => model.id === candidate)) ?? null
+      .find((candidate) => candidate && selectableModels.some((model) => model.id === candidate)) ?? null
     const administratorDefaultModel = isImageMode.value
       ? appStore.cachedPublicSettings?.playground_default_image_model
       : appStore.cachedPublicSettings?.playground_default_chat_model
     selectedModel.value = resolveSelectedModel(
-      models.value,
+      selectableModels,
       rememberedOrCurrentModel ?? resolvePlaygroundDefaultModel(
         models.value,
         isImageMode.value ? 'image' : 'chat',
@@ -1488,6 +1569,7 @@ async function loadModels(keyId: number): Promise<void> {
       ),
     )
     rememberSelectedModel(keyId)
+    modelCatalogByKeyId.set(keyId, models.value)
   } catch (error) {
     if (!isAbortError(error)) {
       appStore.showError(error instanceof Error ? error.message : t('playground.modelsLoadFailed'))
@@ -1498,6 +1580,36 @@ async function loadModels(keyId: number): Promise<void> {
       loadingModels.value = false
     }
   }
+}
+
+async function selectAutomaticModel(targetMode: 'chat' | 'image'): Promise<boolean> {
+  if (props.mode !== 'unified') return true
+  const candidates = [...playgroundKeys.value].sort((left, right) => {
+    const leftPreferred = targetMode === 'image' ? /image|图片/i.test(left.name) : /chat|聊天/i.test(left.name)
+    const rightPreferred = targetMode === 'image' ? /image|图片/i.test(right.name) : /chat|聊天/i.test(right.name)
+    return Number(rightPreferred) - Number(leftPreferred)
+  })
+  for (const key of candidates) {
+    let catalog = modelCatalogByKeyId.get(key.id)
+    if (!catalog) {
+      try {
+        const available = await fetchPlaygroundModels(key.id)
+        catalog = [...normalizePlaygroundChatModels(available), ...normalizePlaygroundImageModels(available)]
+        modelCatalogByKeyId.set(key.id, catalog)
+      } catch {
+        continue
+      }
+    }
+    const model = catalog.find((candidate) => isPlaygroundImageModelId(candidate.id) === (targetMode === 'image'))
+    if (!model) continue
+    selectedKeyId.value = key.id
+    models.value = catalog
+    selectedModel.value = model.id
+    rememberSelectedKey()
+    rememberSelectedModel(key.id)
+    return true
+  }
+  return false
 }
 
 async function loadKeys(): Promise<void> {
@@ -1527,7 +1639,7 @@ async function loadKeys(): Promise<void> {
     if (controller.signal.aborted) return
     playgroundKeys.value = normalizePlaygroundKeys(allKeys)
     const rememberedKeyId = selectedKeyId.value ?? loadRememberedKeyId()
-    const defaultKeyId = resolvePlaygroundDefaultKeyId(playgroundKeys.value, props.mode)
+    const defaultKeyId = resolvePlaygroundDefaultKeyId(playgroundKeys.value, isImageMode.value ? 'image' : 'chat')
     const nextKeyId = resolveSelectedKeyId(playgroundKeys.value, rememberedKeyId ?? defaultKeyId)
     if (nextKeyId === null) {
       appStore.showInfo(t('playground.noValidKeyRedirect'))
@@ -1584,7 +1696,7 @@ async function runCompletion(conversationId: string, baseMessages: PlaygroundMes
   const controller = new AbortController()
   completionAbortController = controller
   isGenerating.value = true
-  const completionMode = props.mode
+  const completionMode = forcedImageGeneration.value || isImageMode.value ? 'image' : 'chat'
   const assistantMessage = createMessage('assistant', '')
   streamingMessageId.value = assistantMessage.id
   conversation.messages = [...baseMessages, assistantMessage]
@@ -1594,13 +1706,38 @@ async function runCompletion(conversationId: string, baseMessages: PlaygroundMes
     const message = conversation.messages.find((item) => item.id === assistantMessage.id)
     if (!message) return
 
-    if (isImageMode.value) {
+    if (completionMode === 'image') {
       const imageRequest = [...baseMessages].reverse().find((item) => item.role === 'user')
-      const prompt = imageRequest?.content.trim()
-      if (!prompt) throw new Error(t('playground.emptySendHint'))
+      const userPrompt = imageRequest?.content.trim()
+      if (!userPrompt) throw new Error(t('playground.emptySendHint'))
       const referenceImages = (imageRequest?.attachments ?? []).filter((attachment) => (
         attachment.mimeType.startsWith('image/') && Boolean(attachment.dataUrl)
       ))
+      if (props.mode === 'unified' && previousChatKeyId.value && previousChatModel.value) {
+        const chatResult = await sendPlaygroundChat(
+          previousChatKeyId.value,
+          buildChatPayload({
+            model: previousChatModel.value,
+            messages: withSystemPrompt(baseMessages, conversation.systemPrompt),
+            parameters: parameters.value,
+          }),
+          { signal: controller.signal },
+        )
+        if (controller.signal.aborted) return
+        message.content = chatResult.content
+        message.reasoningContent = chatResult.reasoningContent || undefined
+        touchConversation(conversation)
+      }
+      const contextText = baseMessages
+        .filter((item) => item.content.trim())
+        .map((item) => `${item.role === 'user' ? '用户' : item.role === 'assistant' ? '助手' : '系统'}：${item.content.trim()}`)
+        .join('\n')
+      const prompt = [
+        '请根据以下完整对话上下文和用户要求生成图片。保留参考图片中的主体与关键视觉信息，并结合助手刚才的文字回复进行创作。不要把对话内容直接排版成文字，除非用户明确要求图片内有文字。',
+        contextText,
+        `用户当前要求：${userPrompt}`,
+        message.content.trim() ? `助手文字回复：${message.content.trim()}` : '',
+      ].filter(Boolean).join('\n\n')
       const imageGenerationRequest = buildPlaygroundImageRequest({
         model: selectedModel.value,
         prompt,
@@ -1675,7 +1812,7 @@ async function runCompletion(conversationId: string, baseMessages: PlaygroundMes
       if (imageUrls.length === 0) {
         throw new Error(failures[0] ?? t('playground.imageGenerationNoResults'))
       }
-      message.content = t('playground.generatedImage')
+      if (!message.content.trim()) message.content = '已根据你的描述和参考图片生成图片。'
       if (imageUrls.length < requestedImageCount) {
         setMessageError(message, t('playground.imageGenerationIncomplete', {
           completed: imageUrls.length,
@@ -1732,6 +1869,12 @@ async function runCompletion(conversationId: string, baseMessages: PlaygroundMes
       completionAbortController = null
       isGenerating.value = false
       streamingMessageId.value = null
+      if (props.mode === 'unified' && forcedImageGeneration.value) {
+        selectedModel.value = previousChatModel.value || visibleChatModels.value[0]?.id || selectedModel.value
+        if (previousChatKeyId.value) selectedKeyId.value = previousChatKeyId.value
+      }
+      forcedImageGeneration.value = false
+      previousChatKeyId.value = null
       await nextTick()
       schedulePersist()
     }
@@ -1745,6 +1888,34 @@ async function send(): Promise<void> {
   if (!draft && pendingAttachments.value.length === 0) {
     appStore.showInfo(t('playground.emptySendHint'))
     return
+  }
+
+  if (props.mode === 'unified') {
+    const wantsImage = /(?:画|绘|生成|生图|图片|图像|照片|海报|插画|头像|logo|参考图|参考图片|按照(?:这张|该|参考)图|基于(?:这张|该|参考)图|改图|鸟瞰图|效果图|渲染图|image|draw|render|illustrat|photograph|poster|生成图)/i.test(draft)
+    const targetMode = wantsImage ? 'image' : 'chat'
+    if (targetMode === 'image' && !isPlaygroundImageModelId(selectedModel.value)) {
+      previousChatModel.value = selectedModel.value
+      previousChatKeyId.value = selectedKeyId.value
+    }
+    if (targetMode === 'image') {
+      const selected = await selectAutomaticModel('image')
+      if (!selected) {
+        appStore.showError('当前没有可用的图片生成模型，请联系管理员配置图片分组。')
+        return
+      }
+      forcedImageGeneration.value = true
+    } else {
+      // 普通聊天必须尊重用户当前选中的 Key 和模型，不能自动切换到其它供应商。
+      forcedImageGeneration.value = false
+      if (!selectedKeyId.value || !selectedModel.value || isPlaygroundImageModelId(selectedModel.value)) {
+        const chatModel = visibleChatModels.value[0]
+        if (!chatModel) {
+          appStore.showError('当前没有可用的聊天模型，请稍后重试。')
+          return
+        }
+        selectedModel.value = chatModel.id
+      }
+    }
   }
 
   const baseMessages = conversation.messages
@@ -1859,6 +2030,29 @@ async function addAttachments(files: File[]): Promise<void> {
 
 function removePendingAttachment(id: string): void {
   pendingAttachments.value = pendingAttachments.value.filter((attachment) => attachment.id !== id)
+}
+
+function movePendingAttachment(index: number, direction: -1 | 1): void {
+  const target = index + direction
+  if (index < 0 || target < 0 || target >= pendingAttachments.value.length) return
+  const next = [...pendingAttachments.value]
+  const [attachment] = next.splice(index, 1)
+  next.splice(target, 0, attachment)
+  pendingAttachments.value = next
+}
+
+function startAttachmentDrag(index: number): void {
+  draggedAttachmentIndex.value = index
+}
+
+function dropAttachment(targetIndex: number): void {
+  const sourceIndex = draggedAttachmentIndex.value
+  draggedAttachmentIndex.value = null
+  if (sourceIndex === null || sourceIndex === targetIndex) return
+  const next = [...pendingAttachments.value]
+  const [attachment] = next.splice(sourceIndex, 1)
+  next.splice(targetIndex, 0, attachment)
+  pendingAttachments.value = next
 }
 
 function handleComposerKeydown(event: KeyboardEvent): void {
@@ -2039,6 +2233,15 @@ watch(
   { deep: true },
 )
 
+watch(
+  () => messages.value.map((message) => `${message.id}:${message.content.length}:${message.reasoningContent?.length ?? 0}:${message.imageUrls?.length ?? 0}`).join('|'),
+  async () => {
+    await nextTick()
+    if (transcriptAtBottom.value) scrollTranscriptToBottom('auto')
+    else updateTranscriptScrollState()
+  },
+)
+
 onMounted(async () => {
   window.addEventListener(playgroundStateUpdatedEvent, handleBackgroundStateUpdate)
   // 全局监听粘贴：原来只绑在输入框上，截完图不先点输入框就按 Ctrl+V 会毫无反应。
@@ -2046,6 +2249,8 @@ onMounted(async () => {
   window.addEventListener('paste', handleComposerPaste)
   await appStore.fetchPublicSettings()
   await loadKeys()
+  await nextTick()
+  updateTranscriptScrollState()
 })
 
 onBeforeUnmount(() => {

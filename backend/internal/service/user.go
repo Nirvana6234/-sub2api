@@ -59,9 +59,10 @@ type User struct {
 	// 且该 (用户, 分组) 无 rpm_override 时作为全局兜底生效，计数键 rpm:u:{userID}:{min}。
 	RPMLimit int
 
-	// HeadroomCompressionEnabled 开启后网关转发时会带上 x-headroom-base-url 头把
-	// 请求路由到 headroom 压缩代理，压缩失败/超时/未配置时自动跳过、直连原上游。
-	HeadroomCompressionEnabled bool
+	// AccountManagementEnabled 是否允许用户自助管理（贡献）自己的第三方账号。
+	AccountManagementEnabled bool
+	// ContributionRoomsEnabled 是否允许用户创建/加入贡献房间。
+	ContributionRoomsEnabled bool
 
 	// UserGroupRPMOverride 来自 auth cache snapshot 的 (user, group) RPM 覆盖值。
 	// nil = 该 API Key 对应的 (user, group) 无 override；非 nil 时 checkRPM 直接使用，

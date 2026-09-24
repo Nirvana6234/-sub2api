@@ -29,6 +29,9 @@ type OAuthRefreshPageOptions struct {
 	IncludeSetupToken    bool
 	RequireRefreshToken  bool
 	ExcludeRetryCooldown bool
+	// IncludeTempUnschedulable lets the recovery pass revisit accounts that are
+	// temporarily blocked even when their token is not near expiry.
+	IncludeTempUnschedulable bool
 }
 
 // OAuthRefreshCandidatePage keeps cursor metadata from the raw SQL ID page.
@@ -80,6 +83,9 @@ type AccountRepository interface {
 	SetError(ctx context.Context, id int64, errorMsg string) error
 	ClearError(ctx context.Context, id int64) error
 	SetSchedulable(ctx context.Context, id int64, schedulable bool) error
+	// UpdateGroupPriorities 批量更新账号在各自分组内的优先级（account_groups.priority）。
+	// 供 TransitHub 的连接健康探活按健康度/倍率回写调度顺序使用。
+	UpdateGroupPriorities(ctx context.Context, updates []AccountGroupPriorityUpdate) (int, error)
 	AutoPauseExpiredAccounts(ctx context.Context, now time.Time) (int64, error)
 	BindGroups(ctx context.Context, accountID int64, groupIDs []int64) error
 

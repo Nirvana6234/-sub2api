@@ -84,7 +84,7 @@ function cardPlatforms(w: VueWrapper): string[] {
 describe('UserDashboardStats 按平台拆分', () => {
   it('只有用量的平台才产生卡片；三档全空的限额记录不产生卡片', () => {
     const w = mountStats(
-      makeStats({ total_actual_cost: 0.03, today_actual_cost: 0.03, by_platform: [usage('grok', 0.03)] }),
+      makeStats({ total_actual_cost: 0.05, today_actual_cost: 0.05, by_platform: [usage('grok', 0.03), usage('openai', 0.02)] }),
       [
         quota({ platform: 'anthropic' }),
         quota({ platform: 'openai' }),
@@ -92,9 +92,20 @@ describe('UserDashboardStats 按平台拆分', () => {
         quota({ platform: 'grok' }),
       ]
     )
-    expect(cardPlatforms(w)).toEqual(['grok'])
-    expect(w.text()).toContain('dashboard.platformCount:{"count":1}')
+    expect(cardPlatforms(w)).toEqual(['openai', 'grok'])
+    expect(w.text()).toContain('dashboard.platformCount:{"count":2}')
     expect(w.html()).not.toContain('dashboard.platformQuota.title')
+  })
+
+  it('只有一张卡且没有配额时收起整块，避免和第一行重复', () => {
+    const single = mountStats(
+      makeStats({ total_actual_cost: 0.03, today_actual_cost: 0.03, by_platform: [usage('grok', 0.03)] }),
+      [quota({ platform: 'grok' })]
+    )
+    expect(single.find('[data-testid="platform-breakdown"]').exists()).toBe(false)
+    // 只有无法归属平台的"其他"差值时同理
+    const otherOnly = mountStats(makeStats({ total_actual_cost: 1, today_actual_cost: 0 }))
+    expect(otherOnly.find('[data-testid="platform-breakdown"]').exists()).toBe(false)
   })
 
   it('配置了限额但没有用量的平台也产生卡片，并渲染配额区', () => {
@@ -150,5 +161,20 @@ describe('UserDashboardStats 按平台拆分', () => {
   it('简易模式不渲染整块', () => {
     const w = mountStats(makeStats({ by_platform: [usage('openai', 1)] }), null, true)
     expect(w.html()).not.toContain('dashboard.platformBreakdown')
+  })
+})
+
+describe('UserDashboardStats 数字格式', () => {
+  it('今日请求带千分位，卡片金额保留两位且悬停可看 4 位精确值', () => {
+    const w = mountStats(makeStats({ today_requests: 1284, total_requests: 48210, today_actual_cost: 3.62, today_cost: 9.05 }))
+    expect(w.text()).toContain((1284).toLocaleString())
+    expect(w.text()).toContain('$3.62')
+    expect(w.text()).not.toContain('$3.6200')
+    expect(w.find('[title="dashboard.actual: $3.6200"]').exists()).toBe(true)
+  })
+
+  it('小于一分钱的非零金额保留 4 位，不显示成 $0.00', () => {
+    const w = mountStats(makeStats({ today_actual_cost: 0.0036 }))
+    expect(w.text()).toContain('$0.0036')
   })
 })

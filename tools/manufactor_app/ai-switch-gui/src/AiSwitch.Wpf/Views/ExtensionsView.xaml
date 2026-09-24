@@ -1,0 +1,228 @@
+<UserControl x:Class="LanAi.Workspace.Wpf.Views.ExtensionsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel>
+            <Grid Margin="0,0,0,20">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="{Binding Title}" Style="{StaticResource PageTitleStyle}" />
+                <Border Grid.Column="1" Padding="11,6" Background="#FFF1F6FF" CornerRadius="9">
+                    <TextBlock Text="{Binding Status}" FontSize="11.5" Foreground="{StaticResource AccentBrush}" />
+                </Border>
+            </Grid>
+
+            <TabControl Background="Transparent" BorderThickness="0">
+                <TabItem Header="MCP">
+                    <StackPanel Margin="0,14,0,0">
+                        <Grid Margin="0,0,0,12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="MCP 服务器" Style="{StaticResource SectionTitleStyle}" />
+                            <Button Grid.Column="1" Margin="0,0,8,0" Content="从客户端导入" Command="{Binding ImportMcpFromClientsCommand}" Style="{StaticResource SecondaryButtonStyle}" />
+                            <Button Grid.Column="2" Content="新增 MCP" Command="{Binding NewMcpCommand}" Style="{StaticResource PrimaryButtonStyle}" />
+                        </Grid>
+
+                        <Border Margin="0,0,0,14" Padding="18" Style="{StaticResource CardBorderStyle}"
+                                Visibility="{Binding IsMcpEditorOpen, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <StackPanel>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="1*" />
+                                        <ColumnDefinition Width="12" />
+                                        <ColumnDefinition Width="1.4*" />
+                                        <ColumnDefinition Width="12" />
+                                        <ColumnDefinition Width="0.8*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="MCP ID" Style="{StaticResource EyebrowTextStyle}" />
+                                        <TextBox Margin="0,6,0,0" Text="{Binding McpId, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="名称" Style="{StaticResource EyebrowTextStyle}" />
+                                        <TextBox Margin="0,6,0,0" Text="{Binding McpName, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="4">
+                                        <TextBlock Text="传输" Style="{StaticResource EyebrowTextStyle}" />
+                                        <ComboBox Margin="0,6,0,0" ItemsSource="{Binding McpTransportOptions}" SelectedItem="{Binding SelectedMcpTransport}" />
+                                    </StackPanel>
+                                </Grid>
+
+                                <TextBlock Margin="0,14,0,0" Text="命令或 URL" Style="{StaticResource EyebrowTextStyle}" />
+                                <TextBox Margin="0,6,0,0" Text="{Binding McpCommandOrUrl, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <Grid Margin="0,14,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="1*" />
+                                        <ColumnDefinition Width="12" />
+                                        <ColumnDefinition Width="1*" />
+                                        <ColumnDefinition Width="12" />
+                                        <ColumnDefinition Width="1*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="参数（每行一个）" Style="{StaticResource EyebrowTextStyle}" />
+                                        <TextBox Margin="0,6,0,0" MinHeight="84" AcceptsReturn="True" Text="{Binding McpArguments, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="环境变量（KEY=value）" Style="{StaticResource EyebrowTextStyle}" />
+                                        <TextBox Margin="0,6,0,0" MinHeight="84" AcceptsReturn="True" Text="{Binding McpEnvironment, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="4">
+                                        <TextBlock Text="Headers（敏感值用 env:变量名）" Style="{StaticResource EyebrowTextStyle}" />
+                                        <TextBox Margin="0,6,0,0" MinHeight="84" AcceptsReturn="True" Text="{Binding McpHeaders, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                </Grid>
+
+                                <StackPanel Margin="0,14,0,0" Orientation="Horizontal">
+                                    <CheckBox Margin="0,0,18,0" Content="Codex" IsChecked="{Binding McpCodex}" />
+                                    <CheckBox Margin="0,0,18,0" Content="Claude" IsChecked="{Binding McpClaude}" />
+                                    <CheckBox Content="Gemini" IsChecked="{Binding McpGemini}" />
+                                </StackPanel>
+                                <StackPanel Margin="0,14,0,0" Orientation="Horizontal" HorizontalAlignment="Right">
+                                    <Button Content="保存并同步" Command="{Binding SaveMcpCommand}" Style="{StaticResource PrimaryButtonStyle}" />
+                                    <Button Margin="8,0,0,0" Content="取消" Command="{Binding CancelMcpEditCommand}" Style="{StaticResource SecondaryButtonStyle}" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <ItemsControl ItemsSource="{Binding McpServers}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Margin="0,0,0,10" Padding="16" Style="{StaticResource CardBorderStyle}">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding Name}" FontSize="14" FontWeight="SemiBold" />
+                                                <TextBlock Margin="0,5,0,0" Text="{Binding Id}" FontFamily="Cascadia Mono, Consolas" FontSize="10.5" Foreground="{StaticResource TertiaryTextBrush}" />
+                                                <TextBlock Margin="0,5,0,0" Text="{Binding TargetSummary}" FontSize="11.5" Foreground="{StaticResource SecondaryTextBrush}" />
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                                <Button Content="编辑" Command="{Binding DataContext.EditMcpCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}" Style="{StaticResource SecondaryButtonStyle}" />
+                                                <Button Margin="8,0,0,0" Content="删除" Command="{Binding DataContext.DeleteMcpCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}" Style="{StaticResource DangerButtonStyle}" />
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </TabItem>
+
+                <TabItem Header="提示词">
+                    <StackPanel Margin="0,14,0,0">
+                        <Grid Margin="0,0,0,12">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <TextBlock Text="项目与客户端记忆" Style="{StaticResource SectionTitleStyle}" />
+                            <Button Grid.Column="1" Content="新增提示词" Command="{Binding NewPromptCommand}" Style="{StaticResource PrimaryButtonStyle}" />
+                        </Grid>
+                        <Border Margin="0,0,0,14" Padding="18" Style="{StaticResource CardBorderStyle}"
+                                Visibility="{Binding IsPromptEditorOpen, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <StackPanel>
+                                <Grid>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="1*" /><ColumnDefinition Width="12" /><ColumnDefinition Width="2*" /></Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="ID" Style="{StaticResource EyebrowTextStyle}" />
+                                        <TextBox Margin="0,6,0,0" Text="{Binding PromptId, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="名称" Style="{StaticResource EyebrowTextStyle}" />
+                                        <TextBox Margin="0,6,0,0" Text="{Binding PromptName, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                </Grid>
+                                <TextBlock Margin="0,14,0,0" Text="Markdown 内容" Style="{StaticResource EyebrowTextStyle}" />
+                                <TextBox Margin="0,6,0,0" MinHeight="220" AcceptsReturn="True" AcceptsTab="True" TextWrapping="Wrap"
+                                         VerticalScrollBarVisibility="Auto" Text="{Binding PromptMarkdown, UpdateSourceTrigger=PropertyChanged}" />
+                                <StackPanel Margin="0,14,0,0" Orientation="Horizontal">
+                                    <CheckBox Margin="0,0,18,0" Content="Codex" IsChecked="{Binding PromptCodex}" />
+                                    <CheckBox Margin="0,0,18,0" Content="Claude" IsChecked="{Binding PromptClaude}" />
+                                    <CheckBox Content="Gemini" IsChecked="{Binding PromptGemini}" />
+                                </StackPanel>
+                                <StackPanel Margin="0,14,0,0" Orientation="Horizontal" HorizontalAlignment="Right">
+                                    <Button Content="保存并激活" Command="{Binding SavePromptCommand}" Style="{StaticResource PrimaryButtonStyle}" />
+                                    <Button Margin="8,0,0,0" Content="取消" Command="{Binding CancelPromptEditCommand}" Style="{StaticResource SecondaryButtonStyle}" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                        <ItemsControl ItemsSource="{Binding PromptPresets}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Margin="0,0,0,10" Padding="16" Style="{StaticResource CardBorderStyle}">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding Name}" FontSize="14" FontWeight="SemiBold" />
+                                                <TextBlock Margin="0,5,0,0" Text="{Binding TargetSummary}" FontSize="11.5" Foreground="{StaticResource AccentBrush}" />
+                                                <TextBlock Margin="0,6,30,0" Text="{Binding Preview}" MaxHeight="42" TextTrimming="CharacterEllipsis" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" />
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                                <Button Content="编辑" Command="{Binding DataContext.EditPromptCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}" Style="{StaticResource SecondaryButtonStyle}" />
+                                                <Button Margin="8,0,0,0" Content="删除" Command="{Binding DataContext.DeletePromptCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}" Style="{StaticResource DangerButtonStyle}" />
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </TabItem>
+
+                <TabItem Header="Skills">
+                    <StackPanel Margin="0,14,0,0">
+                        <Grid Margin="0,0,0,12">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <TextBlock Text="受管 Skills" Style="{StaticResource SectionTitleStyle}" />
+                            <Button Grid.Column="1" Margin="0,0,8,0" Content="恢复备份" Command="{Binding RestoreSkillBackupCommand}" Style="{StaticResource SecondaryButtonStyle}" />
+                            <Button Grid.Column="2" Content="导入技能目录" Command="{Binding ImportSkillCommand}" Style="{StaticResource PrimaryButtonStyle}" />
+                        </Grid>
+                        <Border Margin="0,0,0,14" Padding="18" Style="{StaticResource CardBorderStyle}"
+                                Visibility="{Binding IsSkillEditorOpen, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="{Binding EditingSkill.Name}" FontSize="15" FontWeight="SemiBold" />
+                                    <StackPanel Margin="0,12,0,0" Orientation="Horizontal">
+                                        <CheckBox Margin="0,0,18,0" Content="Codex" IsChecked="{Binding SkillCodex}" />
+                                        <CheckBox Margin="0,0,18,0" Content="Claude" IsChecked="{Binding SkillClaude}" />
+                                        <CheckBox Content="Gemini" IsChecked="{Binding SkillGemini}" />
+                                    </StackPanel>
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Bottom">
+                                    <Button Content="保存同步范围" Command="{Binding SaveSkillCommand}" Style="{StaticResource PrimaryButtonStyle}" />
+                                    <Button Margin="8,0,0,0" Content="取消" Command="{Binding CancelSkillEditCommand}" Style="{StaticResource SecondaryButtonStyle}" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                        <ItemsControl ItemsSource="{Binding Skills}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Margin="0,0,0,10" Padding="16" Style="{StaticResource CardBorderStyle}">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding Name}" FontSize="14" FontWeight="SemiBold" />
+                                                <TextBlock Margin="0,5,0,0" Text="{Binding Description}" FontSize="11.5" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                                                <TextBlock Margin="0,5,0,0" Text="{Binding TargetSummary}" FontSize="11.5" Foreground="{StaticResource AccentBrush}" />
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                                <Button Content="同步设置" Command="{Binding DataContext.EditSkillCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}" Style="{StaticResource SecondaryButtonStyle}" />
+                                                <Button Margin="8,0,0,0" Content="卸载" Command="{Binding DataContext.DeleteSkillCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}" Style="{StaticResource DangerButtonStyle}" />
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </TabItem>
+            </TabControl>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

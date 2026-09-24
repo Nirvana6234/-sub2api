@@ -79,3 +79,19 @@ func parseBoolQuery(v string) bool {
 		return false
 	}
 }
+
+// Head 返回公告摘要（最大 ID / 未读数 / 总数），供客户端判断是否需要拉正文。
+func (h *AnnouncementHandler) Head(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not found in context")
+		return
+	}
+
+	head, err := h.announcementService.HeadForUser(c.Request.Context(), subject.UserID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, head)
+}

@@ -16,9 +16,13 @@ package service
 //     （用户-分组覆盖 ?? 分组默认）× Group.PeakMultiplierAt(pricingAt)，绝不在
 //     用户有覆盖时退回分组默认；开关与 margin/buffer 则始终取被调度
 //     openai/grok 分组。
-//   - U（上游成本倍率）取 accounts.rate_multiplier。倍率可以由运营者手工维护，
-//     也可以由上游倍率探测同步写回；利润门不再耦合探测协议、新鲜度或账号类型。
-//     0 是合法的免费上游倍率；nil、负数、NaN、Inf 属于非法数据并保守拒绝。
+//   - U（上游成本倍率）经 profitControlAccountUpstreamRate 解析：手工上游倍率
+//     （extra.upstream_billing_manual_rate_multiplier）→ 新鲜探测快照 →
+//     accounts.rate_multiplier。这与 AccountCostRateMultiplier 的记账口径同源，
+//     准入与扣费不得按两套成本判断；记账额外允许的"过期探测快照"退路是记账
+//     专有的，利润门不采信陈旧低价。0 是合法的免费上游倍率；负数、NaN、Inf
+//     和列为空属于非法数据并保守拒绝；三态中的"未声明"按可用性优先放行并计数
+//     （见 profitControlRateState）。
 //
 // 装门点（gate 随 ctx 传播，请求内复用，覆盖等待/重试/failover/抢槽后终检）：
 //   - handler 各文本入口经 WithOpenAIRequestPricingContext 在请求开始统一装门并
@@ -54,8 +58,9 @@ package service
 // 可用性优先"的显式取舍——该异常窗口内利润保证不成立，靠 WARN 与采样观测
 // 暴露，绝不把瞬时 DB 抖动放大成全站不可调度。
 //
-// 可观测性：按分组和平台累计装门/threshold 否决/invalid-rate 否决/终检刷新
-// 失败计数，≥5 分钟采样输出一条 Info（profit_control_activity），无逐请求日志。
+// 可观测性：按分组和平台累计装门/threshold 否决/invalid-rate 否决/未声明放行/
+// 终检刷新失败计数，≥5 分钟采样输出一条 Info（profit_control_activity），
+// 无逐请求日志。
 
 import (
 	"context"
@@ -303,6 +308,8 @@ func (s *OpenAIGatewayService) resolveOpenAIProfitControlGate(ctx context.Contex
 // 选号函数内部的局部 ctx 上安装（composite/fallback 路由还可能解析出与入口
 // 分组不同的门），不随返回值离开调度栈；结果携带后 handler 才能对"真实过滤了
 // 候选的那个门"做抢槽后终检与准入后绑定。
+// 它同时捕获兜底事实：两者都是"只存在于调度栈局部 ctx、必须随结果带出去"的
+// 同一类东西，捕获点也完全一致，分成两个函数只会让某一天新增的返回点漏掉一个。
 func attachSelectionProfitGate(ctx context.Context, sel *AccountSelectionResult) *AccountSelectionResult {
 	if sel == nil {
 		return nil
@@ -310,7 +317,29 @@ func attachSelectionProfitGate(ctx context.Context, sel *AccountSelectionResult)
 	if gate, ok := ctx.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate); ok && gate != nil {
 		sel.profitGate = gate
 	}
+	if trace, ok := fallbackPoolUsageTraceFromContext(ctx); ok {
+		captured := trace
+		sel.fallbackTrace = &captured
+	}
 	return sel
+}
+
+// ContextWithSelectionFallbackTrace 把选号时命中的兜底事实重放到 ctx 上。
+//
+// 与 ContextWithSelectionProfitGate 同源同因：兜底状态安装在调度栈内部的局部
+// ctx 上（nextOpenAIFallbackGroup 返回的 fallbackCtx 随函数栈一起丢弃），
+// handler 手里的请求 ctx 从来看不到它。记用量跑在 detached worker 上，
+// usageRecordContext → PropagateFallbackPoolUsageContext 只能从请求 ctx 搬运，
+// 搬到的是空的，于是 usage_logs.fallback_source_group_id / fallback_target_group_id
+// 恒为 NULL，兜底告警（fallback_pool_alert_notifier）也跟着失效。
+func ContextWithSelectionFallbackTrace(ctx context.Context, sel *AccountSelectionResult) context.Context {
+	if sel == nil || sel.fallbackTrace == nil {
+		return ctx
+	}
+	if _, ok := ctx.Value(fallbackPoolUsageTraceContextKey{}).(fallbackPoolUsageTrace); ok {
+		return ctx
+	}
+	return withFallbackPoolUsageTrace(ctx, *sel.fallbackTrace)
 }
 
 // ContextWithSelectionProfitGate 把选号时真实生效的利润门重放到 ctx 上。
@@ -434,19 +463,30 @@ func openAIStaleUpstreamBillingRate(account *Account, at time.Time) (float64, bo
 
 // openAIProfitControlVetoReason 报告利润门是否否决该账号。ctx 中没有门
 // （分组未启用利润控制或本请求跳门）或账号为 nil 时一律放行。
+//
+// U 走 profitControlAccountUpstreamRate，与 AccountCostRateMultiplier 的记账
+// 口径同源。此前这里直接读 accounts.rate_multiplier 列，导致准入与扣费按两套
+// 成本判断，两个方向都会出错：手工上游倍率写在 extra 里而列仍是建表默认 1.0
+// 的账号，扣费按 0.045 却被门按 1.0 判为越线整池否决；反过来，列上写着 0.12
+// 而新鲜探测回报 0.9 的账号会被门放行、按 0.9 扣费，直接亏钱。
 func openAIProfitControlVetoReason(ctx context.Context, account *Account) (bool, string) {
 	gate, _ := ctx.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate)
 	if gate == nil || account == nil {
 		return false, ""
 	}
-	if account.RateMultiplier == nil ||
-		math.IsNaN(*account.RateMultiplier) ||
-		math.IsInf(*account.RateMultiplier, 0) ||
-		*account.RateMultiplier < 0 {
+	upstream, _, state := profitControlAccountUpstreamRate(account, gate.pricingAt)
+	switch state {
+	case profitControlRateInvalid:
+		// 坏数据（负数、NaN、Inf、列为空）保守拒绝。
 		openAIProfitControlObserverInstance.recordVeto(gate.groupID, gate.platform, gate.threshold, openAIProfitFilterReasonInvalidAccountRate)
 		return true, openAIProfitFilterReasonInvalidAccountRate
+	case profitControlRateUndeclared:
+		// 没有任何人声明过成本：门没有可依据的事实，按可用性优先放行并计数告警，
+		// 不替运营假设成本（三态契约见 profitControlRateState）。跨分组借号的
+		// fallbackPoolRejectReasonWhenSourcing 是另一套更严的规则，不受此影响。
+		openAIProfitControlObserverInstance.recordUndeclaredAdmit(gate.groupID, gate.platform, gate.threshold)
+		return false, ""
 	}
-	upstream := *account.RateMultiplier
 	if profitControlOverThreshold(upstream, gate.threshold) {
 		openAIProfitControlObserverInstance.recordVeto(gate.groupID, gate.platform, gate.threshold, openAIProfitFilterReasonThreshold)
 		return true, openAIProfitFilterReasonThreshold
@@ -517,9 +557,13 @@ func (s *OpenAIGatewayService) BindStickySessionAfterProfitAdmission(ctx context
 // 构成，不能当作精确的请求数或账号数。
 
 type openAIProfitControlGroupStats struct {
-	installs         atomic.Int64
-	vetoThreshold    atomic.Int64
-	vetoInvalidRate  atomic.Int64
+	installs        atomic.Int64
+	vetoThreshold   atomic.Int64
+	vetoInvalidRate atomic.Int64
+	// undeclaredAdmits 计的是"门放弃判断"的次数：账号没有任何成本声明，按
+	// 可用性优先放行。它是运营该去补倍率的信号——计数长期非零说明池子里有
+	// 账号在无成本依据的情况下承接流量。
+	undeclaredAdmits atomic.Int64
 	refreshFailures  atomic.Int64
 	lastLogUnixMilli atomic.Int64
 }
@@ -566,6 +610,12 @@ func (o *openAIProfitControlObserver) recordVeto(groupID int64, platform string,
 	o.maybeLog(groupID, platform, threshold, s)
 }
 
+func (o *openAIProfitControlObserver) recordUndeclaredAdmit(groupID int64, platform string, threshold float64) {
+	s := o.stats(groupID, platform)
+	s.undeclaredAdmits.Add(1)
+	o.maybeLog(groupID, platform, threshold, s)
+}
+
 func (o *openAIProfitControlObserver) recordRefreshFailure(groupID int64, platform string, threshold float64) {
 	s := o.stats(groupID, platform)
 	s.refreshFailures.Add(1)
@@ -590,6 +640,7 @@ func (o *openAIProfitControlObserver) maybeLog(groupID int64, platform string, t
 		"installs_total", s.installs.Load(),
 		"veto_threshold_total", s.vetoThreshold.Load(),
 		"veto_invalid_account_rate_total", s.vetoInvalidRate.Load(),
+		"undeclared_rate_admit_total", s.undeclaredAdmits.Load(),
 		"refresh_failure_total", s.refreshFailures.Load(),
 	)
 }
@@ -621,6 +672,29 @@ func AccountCostRateMultiplier(account *Account, at time.Time) *float64 {
 	}
 	value := rate
 	return &value
+}
+
+// AccountBillingRateMultiplier 返回记账实际使用的上游成本倍率，永远给得出一个数。
+//
+// 口径（运营口径，与利润门准入同源）：
+//  1. 管理员手工填写的上游倍率 —— 填了就按填的算，不受探测新鲜度影响，也不会被
+//     探测值覆盖（生产账号 227 手工 0.15 而探测回报 5，采信探测会把成本记成 33 倍）；
+//  2. 探测到的上游倍率 —— 新鲜快照优先，过期快照次之（过期的探测值仍然比"从没
+//     人维护过的建表默认 1.0"更接近真实成本）；
+//  3. accounts.rate_multiplier 列上的声明；
+//  4. 以上全都拿不到时按 1.0 计。
+//
+// 第 4 步刻意保留 1.0 而不是跳过记账：把未知成本按标准原价计，误差方向是"高估
+// 成本、低估利润"，不会把亏损的账号显示成盈利。
+//
+// 此前三个记账入口调的是 Account.BillingRateMultiplier()（只读列值，缺数据回退
+// 1.0），手工倍率和探测值一概不看，于是管理员填了 0.04 的账号仍按 1.0 记账，
+// account_cost 虚高十几倍，把盈利的日子显示成巨亏，并让账号额度按同样倍数虚耗。
+func AccountBillingRateMultiplier(account *Account, at time.Time) float64 {
+	if rate := AccountCostRateMultiplier(account, at); rate != nil {
+		return *rate
+	}
+	return 1.0
 }
 
 // 对外暴露的成本倍率来源名。内部常量（profitControlRateSource*）承载的是利润门

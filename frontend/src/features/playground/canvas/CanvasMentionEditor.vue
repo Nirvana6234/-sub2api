@@ -160,7 +160,7 @@ function syncMention(): void {
     mention.value = null
     return
   }
-  const match = /(^|\s)@([^\s@]*)$/.exec(textBeforeCaret())
+  const match = /(^|[\s\p{P}\p{S}])@([^\s@]*)$/u.exec(textBeforeCaret())
   if (!match || !props.references.length) {
     mention.value = null
     activeIndex.value = 0
@@ -200,7 +200,7 @@ function removeActiveMention(): void {
   if (!selection?.rangeCount || !selection.isCollapsed) return
   const range = selection.getRangeAt(0)
   const text = textBeforeCaret()
-  const match = /(^|\s)@([^\s@]*)$/.exec(text)
+  const match = /(^|[\s\p{P}\p{S}])@([^\s@]*)$/u.exec(text)
   if (!match) return
   const length = (match[2] || '').length + 1
   const start = Math.max(0, range.startOffset - length)
