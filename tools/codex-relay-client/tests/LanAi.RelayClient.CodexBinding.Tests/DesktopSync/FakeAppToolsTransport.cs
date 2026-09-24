@@ -22,6 +22,7 @@ internal abstract record PipeReply
 internal sealed class FakeAppToolsTransport : IAppToolsTransport
 {
     private readonly Dictionary<string, Func<JsonElement, PipeReply>> _pipes = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _broken = new(StringComparer.Ordinal);
 
     public List<(string Pipe, string Method, string? Tool)> Requests { get; } = [];
 
@@ -30,6 +31,12 @@ internal sealed class FakeAppToolsTransport : IAppToolsTransport
     public void Add(string name, Func<JsonElement, PipeReply> script) => _pipes[name] = script;
 
     public void Remove(string name) => _pipes.Remove(name);
+
+    /// <summary>
+    /// Connections already open to this pipe fail on the next write or read, as a
+    /// connection left over from before the desktop app restarted does.
+    /// </summary>
+    public void Break(string name) => _broken.Add(name);
 
     public IReadOnlyList<string> ListCandidates() => _pipes.Keys.Order(StringComparer.Ordinal).ToList();
 
@@ -41,7 +48,9 @@ internal sealed class FakeAppToolsTransport : IAppToolsTransport
         }
 
         Connects++;
-        return Task.FromResult<Stream>(new ScriptedPipeStream(request =>
+        _broken.Remove(pipeName);
+
+        return Task.FromResult<Stream>(new ScriptedPipeStream(() => _broken.Contains(pipeName), request =>
         {
             string method = request.GetProperty("method").GetString()!;
             string? tool = method == "tools/call" ? request.GetProperty("params").GetProperty("tool").GetString() : null;
@@ -77,7 +86,7 @@ internal sealed class FakeAppToolsTransport : IAppToolsTransport
             $$"""{"contentItems":[{"text":{{JsonSerializer.Serialize(payloadJson)}},"type":"inputText"}],"success":{{(success ? "true" : "false")}}}"""));
 
     /// <summary>A duplex stream that frames like the real pipe and answers from a script.</summary>
-    private sealed class ScriptedPipeStream(Func<JsonElement, PipeReply> script) : Stream
+    private sealed class ScriptedPipeStream(Func<bool> broken, Func<JsonElement, PipeReply> script) : Stream
     {
         private readonly MemoryStream _incoming = new();
         private readonly Channel<byte[]> _outgoing = Channel.CreateUnbounded<byte[]>();
@@ -94,6 +103,11 @@ internal sealed class FakeAppToolsTransport : IAppToolsTransport
 
         public override void Write(ReadOnlySpan<byte> buffer)
         {
+            if (broken())
+            {
+                throw new IOException("Pipe is broken.");
+            }
+
             _incoming.Write(buffer);
             byte[] data = _incoming.ToArray();
             while (data.Length >= 4)
@@ -136,6 +150,11 @@ internal sealed class FakeAppToolsTransport : IAppToolsTransport
 
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
+            if (broken())
+            {
+                throw new IOException("Pipe is broken.");
+            }
+
             if (_position >= _current.Length)
             {
                 if (!await _outgoing.Reader.WaitToReadAsync(cancellationToken))

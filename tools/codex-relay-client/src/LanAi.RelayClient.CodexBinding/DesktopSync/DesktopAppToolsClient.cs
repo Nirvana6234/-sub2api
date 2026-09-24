@@ -20,8 +20,14 @@ public sealed record DesktopThreadStatus(string Type, IReadOnlyList<string> Acti
 
 public enum DesktopAppToolsFailure
 {
-    /// <summary>The desktop app is not running, or its app-tools pipe could not be found.</summary>
+    /// <summary>The desktop app is not running, or its app-tools pipe could not be found. Nothing was sent.</summary>
     Unavailable,
+
+    /// <summary>
+    /// A send went out and the pipe died before answering, or did not answer in time. The
+    /// message may be running; only the conversation itself can tell.
+    /// </summary>
+    Unconfirmed,
 
     /// <summary>The connected desktop app no longer accepts this call in the shape we send it.</summary>
     Unsupported,
@@ -72,9 +78,12 @@ public sealed class DesktopAppToolsException(DesktopAppToolsFailure failure, str
 /// </para>
 /// <para>
 /// Calls are serialised on one connection. A dropped connection is rediscovered once —
-/// the pipe is renamed whenever the desktop app restarts — and reads are retried after
-/// that. <see cref="SendMessageAsync"/> is not: if the pipe dies after the request went
-/// out, the message may already be running, and sending it again would run it twice.
+/// the pipe is renamed whenever the desktop app restarts. A request that could not be
+/// written never reached the desktop app, so every call, sends included, is written
+/// again on the new connection; this is the usual case, a connection left over from
+/// before a restart. Once written, reads are retried and <see cref="SendMessageAsync"/>
+/// is not: the message may already be running, and sending it again would run it twice.
+/// That case is reported as <see cref="DesktopAppToolsFailure.Unconfirmed"/>.
 /// </para>
 /// </remarks>
 public sealed class DesktopAppToolsClient : IDesktopAppTools, IAsyncDisposable
@@ -173,7 +182,10 @@ public sealed class DesktopAppToolsClient : IDesktopAppTools, IAsyncDisposable
         return new DesktopThreadStatus(type, flags);
     }
 
-    /// <summary>Runs <paramref name="prompt"/> as a new message in the conversation. Never retried.</summary>
+    /// <summary>
+    /// Runs <paramref name="prompt"/> as a new message in the conversation. Written again
+    /// only when the first write failed; never sent twice.
+    /// </summary>
     /// <remarks>
     /// If the conversation is mid-turn the message is folded into that turn at its next
     /// step, and the model tends to drop whatever it had not finished (measured). Callers
@@ -253,16 +265,38 @@ public sealed class DesktopAppToolsClient : IDesktopAppTools, IAsyncDisposable
                     "No other Codex conversation exists to name as the caller.");
 
             byte[] request = BuildToolCall(tool, caller, writeArguments);
+            try
+            {
+                await WriteAsync(request, token).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (IsBrokenPipe(exception))
+            {
+                // The desktop app did not take the request: a frame it cannot read whole
+                // is never run. Safe to write again, sends included.
+                await DropAsync().ConfigureAwait(false);
+                await DiscoverAsync(token).ConfigureAwait(false);
+                await WriteAsync(request, token).ConfigureAwait(false);
+            }
+
             JsonDocument response;
             try
             {
-                response = await RoundTripAsync(request, token).ConfigureAwait(false);
+                response = await ReadAsync(token).ConfigureAwait(false);
             }
             catch (Exception exception) when (IsBrokenPipe(exception) && retry)
             {
                 await DropAsync().ConfigureAwait(false);
                 await DiscoverAsync(token).ConfigureAwait(false);
                 response = await RoundTripAsync(request, token).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (!retry && (IsBrokenPipe(exception) ||
+                                                         (exception is OperationCanceledException && !cancellationToken.IsCancellationRequested)))
+            {
+                await DropAsync().ConfigureAwait(false);
+                throw new DesktopAppToolsException(
+                    DesktopAppToolsFailure.Unconfirmed,
+                    $"{tool} went out but the Codex desktop app did not answer; it may have run.",
+                    exception);
             }
 
             using (response)
@@ -341,9 +375,17 @@ public sealed class DesktopAppToolsClient : IDesktopAppTools, IAsyncDisposable
 
     private async Task<JsonDocument> RoundTripAsync(byte[] request, CancellationToken cancellationToken)
     {
-        Stream stream = _stream ?? throw new IOException("Not connected.");
-        await AppToolsFraming.WriteFrameAsync(stream, request, cancellationToken).ConfigureAwait(false);
-        byte[] response = await AppToolsFraming.ReadFrameAsync(stream, cancellationToken).ConfigureAwait(false);
+        await WriteAsync(request, cancellationToken).ConfigureAwait(false);
+        return await ReadAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private Task WriteAsync(byte[] request, CancellationToken cancellationToken) =>
+        AppToolsFraming.WriteFrameAsync(_stream ?? throw new IOException("Not connected."), request, cancellationToken);
+
+    private async Task<JsonDocument> ReadAsync(CancellationToken cancellationToken)
+    {
+        byte[] response = await AppToolsFraming.ReadFrameAsync(_stream ?? throw new IOException("Not connected."), cancellationToken)
+            .ConfigureAwait(false);
         return JsonDocument.Parse(response);
     }
 

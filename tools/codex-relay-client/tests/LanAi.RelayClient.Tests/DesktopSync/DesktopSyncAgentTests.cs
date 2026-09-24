@@ -34,7 +34,10 @@ public sealed class DesktopSyncAgentTests : IDisposable
 
         var record = new CodexThreadRecord(Thread, _rollout, @"C:\Work\p", "测试会话", "gpt-5.5", """{"type":"disabled"}""", "never", false);
         CodexThreadRecord? Find(string id) => id == Thread ? record : null;
-        _agent = new DesktopSyncAgent(_tools, new SessionContentSync(Find), Find, _store, _audit, clock: () => _now);
+        _agent = new DesktopSyncAgent(_tools, new SessionContentSync(Find), Find, _store, _audit, clock: () => _now)
+        {
+            ConfirmTimeout = TimeSpan.FromMilliseconds(300),
+        };
 
         _agent.SetEnabled(true);
         _agent.Select(Thread, "测试会话");
@@ -222,6 +225,75 @@ public sealed class DesktopSyncAgentTests : IDisposable
         Assert.Empty(_tools.Sent);
     }
 
+    /// <summary>
+    /// The desktop app went away between the status check and the send. The message was
+    /// not sent, so it must still be queued, not silently gone.
+    /// </summary>
+    [Fact]
+    public async Task AQueuedMessageSurvivesTheDesktopAppGoingAwayAsItIsSent()
+    {
+        _tools.Status[Thread] = new DesktopThreadStatus("active", []);
+        await Handle(Signed("排队中"));
+
+        _tools.Status[Thread] = new DesktopThreadStatus("idle", []);
+        _tools.SendFailures.Enqueue(DesktopAppToolsFailure.Unavailable);
+        await _agent.PumpAsync();
+
+        Assert.Equal(1, _agent.QueuedCount);
+
+        await _agent.PumpAsync();
+
+        Assert.Equal([(Thread, "排队中"), (Thread, "排队中")], _tools.Sent);
+        Assert.Equal(0, _agent.QueuedCount);
+        Assert.Equal("ok", _audit.Recent(1)[0].Outcome);
+    }
+
+    /// <summary>The pipe died after the send went out, but the message is in the conversation.</summary>
+    [Fact]
+    public async Task AnUnconfirmedSendThatShowsUpInTheConversationCountsAsSent()
+    {
+        _tools.SendFailures.Enqueue(DesktopAppToolsFailure.Unconfirmed);
+        _tools.OnSend = text => File.AppendAllText(_rollout, DelegatedTurn("t2", text));
+
+        JsonElement answer = await Handle(Signed("在吗"));
+
+        Assert.True(answer.GetProperty("ok").GetBoolean());
+        Assert.Single(_tools.Sent);
+        Assert.Equal("ok", _audit.Recent(1)[0].Outcome);
+    }
+
+    /// <summary>
+    /// Not in the conversation either: it may still arrive, so it is reported to the
+    /// phone and never sent a second time.
+    /// </summary>
+    [Fact]
+    public async Task AnUnconfirmedSendIsReportedAndNotRepeated()
+    {
+        _tools.SendFailures.Enqueue(DesktopAppToolsFailure.Unconfirmed);
+
+        JsonElement answer = await Handle(Signed("在吗"));
+
+        Assert.Equal("unconfirmed", answer.GetProperty("error").GetString());
+        Assert.Single(_tools.Sent);
+        Assert.Equal("unconfirmed", _audit.Recent(1)[0].Outcome);
+    }
+
+    [Fact]
+    public async Task AnUnconfirmedQueuedSendIsDroppedNotRepeated()
+    {
+        _tools.Status[Thread] = new DesktopThreadStatus("active", []);
+        await Handle(Signed("排队中"));
+
+        _tools.Status[Thread] = new DesktopThreadStatus("idle", []);
+        _tools.SendFailures.Enqueue(DesktopAppToolsFailure.Unconfirmed);
+        await _agent.PumpAsync();
+        await _agent.PumpAsync();
+
+        Assert.Single(_tools.Sent);
+        Assert.Equal(0, _agent.QueuedCount);
+        Assert.Equal("unconfirmed", _audit.Recent(1)[0].Outcome);
+    }
+
     // ---- Reading ---------------------------------------------------------------------
 
     [Fact]
@@ -394,6 +466,12 @@ public sealed class DesktopSyncAgentTests : IDisposable
 
         public bool Unavailable { get; set; }
 
+        /// <summary>How the next sends fail, after being recorded as attempted.</summary>
+        public Queue<DesktopAppToolsFailure> SendFailures { get; } = new();
+
+        /// <summary>Runs on every send attempt, before any failure, like the desktop app taking the message.</summary>
+        public Action<string>? OnSend { get; set; }
+
         public AppToolsCapabilities Capabilities => new(true, true, true, true);
 
         public Task<AppToolsCapabilities> ConnectAsync(CancellationToken cancellationToken) => Task.FromResult(Capabilities);
@@ -413,7 +491,10 @@ public sealed class DesktopSyncAgentTests : IDisposable
                 Sent.Add((threadId, prompt));
             }
 
-            return Task.CompletedTask;
+            OnSend?.Invoke(prompt);
+            return SendFailures.TryDequeue(out DesktopAppToolsFailure failure)
+                ? throw new DesktopAppToolsException(failure, failure.ToString())
+                : Task.CompletedTask;
         }
 
         public Task NavigateToAsync(string threadId, CancellationToken cancellationToken) => Task.CompletedTask;
