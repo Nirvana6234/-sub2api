@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -105,13 +106,31 @@ func preferNoAccountError(current, candidate error) error {
 	return current
 }
 
-var noAccountRateLimitedPattern = regexp.MustCompile(`(?:model_rate_limited|rate_limited)=([1-9]\d*)`)
+var noAccountRateLimitedPattern = regexp.MustCompile(`(?:model_rate_limited|rate_limited)=(\d+)`)
+
+// NoAccountRateLimitedCount 从选号失败的错误里读出「因限流被跳过的账号数」，
+// 读不到或不为正时返回 0。handler 据此把「没号」分类成 429，兜底聚合据此决定
+// 保留哪个池子的错误——两边必须用同一个判定，否则同一个错误会被分成两类。
+func NoAccountRateLimitedCount(err error) int {
+	if err == nil {
+		return 0
+	}
+	match := noAccountRateLimitedPattern.FindStringSubmatch(strings.ToLower(err.Error()))
+	if len(match) != 2 {
+		return 0
+	}
+	count, parseErr := strconv.Atoi(match[1])
+	if parseErr != nil || count <= 0 {
+		return 0
+	}
+	return count
+}
 
 func noAccountErrorPriority(err error) int {
 	switch {
 	case err == nil:
 		return -1
-	case noAccountRateLimitedPattern.MatchString(strings.ToLower(err.Error())):
+	case NoAccountRateLimitedCount(err) > 0:
 		return 2
 	case errors.Is(err, ErrNoAvailableCompactAccounts):
 		return 1

@@ -69,14 +69,17 @@ func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context
 	}
 	ctx = s.withGatewayProfitControlGate(ctx, groupID)
 
-	tryFallback := func() (*Account, error, bool) {
+	// sourceErr 是源组自己的「没号」错误，参与错误优先级比较：兜底池全都没号时，
+	// 源组若带着限流诊断，不能被兜底池的普通「没号」盖掉。
+	tryFallback := func(sourceErr error) (*Account, error, bool) {
 		if !gatewayPlatformSupportsFallbackPool(platform) {
 			return nil, nil, false
 		}
 		// 按配置顺序逐个试兜底池：前一个（连同它的下游链路）没号才试下一个。
 		// 都没号时报信息量最大的那个错误（见 preferNoAccountError）。
 		var account *Account
-		var err, noAccountErr error
+		var err error
+		noAccountErr := sourceErr
 		used, resolved := false, false
 		s.eachGatewayFallbackAttempt(ctx, groupID, func(attempt gatewayFallbackAttempt) bool {
 			used = true
@@ -115,7 +118,7 @@ func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context
 		account, err := s.selectAccountWithMixedScheduling(ctx, groupID, sessionHash, requestedModel, excludedIDs, platform)
 		if err != nil {
 			if errors.Is(err, ErrNoAvailableAccounts) {
-				if fallbackAccount, fallbackErr, used := tryFallback(); used {
+				if fallbackAccount, fallbackErr, used := tryFallback(err); used {
 					return fallbackAccount, fallbackErr
 				}
 			}
@@ -129,7 +132,7 @@ func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context
 	account, err := s.selectAccountForModelWithPlatform(ctx, groupID, sessionHash, requestedModel, excludedIDs, platform)
 	if err != nil {
 		if errors.Is(err, ErrNoAvailableAccounts) {
-			if fallbackAccount, fallbackErr, used := tryFallback(); used {
+			if fallbackAccount, fallbackErr, used := tryFallback(err); used {
 				return fallbackAccount, fallbackErr
 			}
 		}
@@ -266,14 +269,17 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] load-aware enabled: group_id=%v model=%s session=%s platform=%s", derefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), platform)
 	}
 
-	tryFallback := func() (*AccountSelectionResult, error, bool) {
+	// sourceErr 是源组自己的「没号」错误，参与错误优先级比较：兜底池全都没号时，
+	// 源组若带着限流诊断，不能被兜底池的普通「没号」盖掉。
+	tryFallback := func(sourceErr error) (*AccountSelectionResult, error, bool) {
 		if !gatewayPlatformSupportsFallbackPool(platform) {
 			return nil, nil, false
 		}
 		// 按配置顺序逐个试兜底池：前一个（连同它的下游链路）没号才试下一个。
 		// 都没号时报信息量最大的那个错误（见 preferNoAccountError）。
 		var result *AccountSelectionResult
-		var err, noAccountErr error
+		var err error
+		noAccountErr := sourceErr
 		used, resolved := false, false
 		s.eachGatewayFallbackAttempt(ctx, groupID, func(attempt gatewayFallbackAttempt) bool {
 			used = true
@@ -304,7 +310,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		return nil, err
 	}
 	if len(accounts) == 0 {
-		if fallbackResult, fallbackErr, used := tryFallback(); used {
+		if fallbackResult, fallbackErr, used := tryFallback(ErrNoAvailableAccounts); used {
 			return fallbackResult, fallbackErr
 		}
 		return nil, ErrNoAvailableAccounts
@@ -776,7 +782,11 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 	}
 
 	if len(candidates) == 0 {
-		if fallbackResult, fallbackErr, used := tryFallback(); used {
+		sourceErr := ErrNoAvailableAccounts
+		if channelRestrictedCount > 0 {
+			sourceErr = fmt.Errorf("%w supporting model: %s (channel pricing restriction)", ErrNoAvailableAccounts, requestedModel)
+		}
+		if fallbackResult, fallbackErr, used := tryFallback(sourceErr); used {
 			return fallbackResult, fallbackErr
 		}
 		if channelRestrictedCount > 0 {
@@ -785,9 +795,8 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 				"model", requestedModel,
 				"restricted_accounts", channelRestrictedCount,
 				"total_accounts", len(accounts))
-			return nil, fmt.Errorf("%w supporting model: %s (channel pricing restriction)", ErrNoAvailableAccounts, requestedModel)
 		}
-		return nil, ErrNoAvailableAccounts
+		return nil, sourceErr
 	}
 
 	accountLoads := make([]AccountWithConcurrency, 0, len(candidates))
@@ -875,7 +884,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			MaxWaiting:     cfg.FallbackMaxWaiting,
 		})
 	}
-	if fallbackResult, fallbackErr, used := tryFallback(); used {
+	if fallbackResult, fallbackErr, used := tryFallback(ErrNoAvailableAccounts); used {
 		return fallbackResult, fallbackErr
 	}
 	return nil, ErrNoAvailableAccounts
