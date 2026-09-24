@@ -181,6 +181,17 @@ public sealed partial class DesktopSyncViewModel : ObservableObject
     [ObservableProperty]
     private string desktopStatus = "尚未检测 Codex 桌面版";
 
+    /// <summary>The desktop app is not running: the page offers to start it.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(LaunchDesktopLabel))]
+    private bool isDesktopOffline;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(LaunchDesktopLabel))]
+    private bool isWaitingForDesktop;
+
+    public string LaunchDesktopLabel => IsWaitingForDesktop ? "正在启动 ChatGPT…" : "启动 ChatGPT";
+
     public bool HasPairingCode => PairingCode is not null;
 
     public bool HasMessage => !string.IsNullOrEmpty(Message);
@@ -248,11 +259,13 @@ public sealed partial class DesktopSyncViewModel : ObservableObject
         {
             threads = await _tools.ListThreadsAsync(ListedConversations, cancellationToken).ConfigureAwait(true);
             DesktopStatus = _tools.Capabilities.CanSend ? "Codex 桌面版已连接" : "Codex 桌面版已连接（当前版本不支持从手机发送，只能查看）";
+            IsDesktopOffline = false;
         }
         catch (DesktopAppToolsException ex)
         {
             threads = [];
-            DesktopStatus = ex.Failure == DesktopAppToolsFailure.Unavailable ? "Codex 桌面版未运行" : $"Codex 桌面版出错：{ex.Message}";
+            IsDesktopOffline = ex.Failure == DesktopAppToolsFailure.Unavailable;
+            DesktopStatus = IsDesktopOffline ? "Codex 桌面版未运行" : $"Codex 桌面版出错：{ex.Message}";
         }
 
         var selected = _agent.State.Sessions.ToDictionary(s => s.ThreadId, StringComparer.Ordinal);
@@ -291,6 +304,48 @@ public sealed partial class DesktopSyncViewModel : ObservableObject
         }
 
         ApplyState();
+    }
+
+    /// <summary>
+    /// After 启动 ChatGPT was asked for elsewhere: re-reads the list until the desktop app
+    /// answers, so the page fills in by itself instead of needing 刷新.
+    /// </summary>
+    /// <remarks>
+    /// The start itself runs on the dashboard, which also reports why it could not start
+    /// (no group yet, restart declined); running out of time points there.
+    /// </remarks>
+    public async Task WaitForDesktopAsync(TimeSpan timeout, TimeSpan interval, CancellationToken cancellationToken = default)
+    {
+        if (IsWaitingForDesktop)
+        {
+            return;
+        }
+
+        IsWaitingForDesktop = true;
+        Message = null;
+        try
+        {
+            DateTimeOffset deadline = _clock() + timeout;
+            while (true)
+            {
+                await Task.Delay(interval, cancellationToken).ConfigureAwait(true);
+                await RefreshSessionsAsync(cancellationToken).ConfigureAwait(true);
+                if (!IsDesktopOffline)
+                {
+                    return;
+                }
+
+                if (_clock() >= deadline)
+                {
+                    Message = "ChatGPT 还没有打开，可在「仪表盘」查看启动情况。";
+                    return;
+                }
+            }
+        }
+        finally
+        {
+            IsWaitingForDesktop = false;
+        }
     }
 
     /// <summary>Selects or deselects; full access needs a confirmation to select.</summary>

@@ -11,6 +11,10 @@ public partial class DesktopSyncPage : UserControl
 {
     private readonly DesktopSyncViewModel? _viewModel;
     private readonly SafeAsyncRunner? _safeAsync;
+    private readonly IDashboardActions? _actions;
+
+    private static readonly TimeSpan DesktopStartTimeout = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan DesktopPollInterval = TimeSpan.FromSeconds(3);
 
     /// <summary>Design-time constructor. Not used at runtime.</summary>
     public DesktopSyncPage()
@@ -18,11 +22,12 @@ public partial class DesktopSyncPage : UserControl
         InitializeComponent();
     }
 
-    internal DesktopSyncPage(DesktopSyncViewModel viewModel, SafeAsyncRunner safeAsync)
+    internal DesktopSyncPage(DesktopSyncViewModel viewModel, SafeAsyncRunner safeAsync, IDashboardActions actions)
         : this()
     {
         _viewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
         _safeAsync = safeAsync ?? throw new ArgumentNullException(nameof(safeAsync));
+        _actions = actions ?? throw new ArgumentNullException(nameof(actions));
         DataContext = viewModel;
     }
 
@@ -36,6 +41,13 @@ public partial class DesktopSyncPage : UserControl
     }
 
     private void Refresh_OnClick(object? sender, RoutedEventArgs e) => Run(vm => vm.RefreshSessionsAsync());
+
+    /// <summary>The same start as the overview's button, then watch for the app to come up.</summary>
+    private void LaunchDesktop_OnClick(object? sender, RoutedEventArgs e)
+    {
+        _actions?.StartOrInstallCodex();
+        Run(vm => vm.WaitForDesktopAsync(DesktopStartTimeout, DesktopPollInterval));
+    }
 
     private void Pair_OnClick(object? sender, RoutedEventArgs e) => Run(vm => vm.StartPairingAsync());
 

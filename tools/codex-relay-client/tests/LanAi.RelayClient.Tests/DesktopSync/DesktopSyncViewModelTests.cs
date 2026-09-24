@@ -115,6 +115,37 @@ public sealed class DesktopSyncViewModelTests : IAsyncDisposable
         await _page.RefreshSessionsAsync();
 
         Assert.Equal("Codex 桌面版未运行", _page.DesktopStatus);
+        Assert.True(_page.IsDesktopOffline, "the page offers 启动 ChatGPT");
+    }
+
+    /// <summary>After 启动 ChatGPT the list fills in once the app answers, without 刷新.</summary>
+    [Fact]
+    public async Task WaitingForTheDesktopAppStopsWhenItAnswers()
+    {
+        GivenConversations(("a", "auto"));
+        _tools.Unavailable = true;
+        await _page.RefreshSessionsAsync();
+        _tools.AvailableAfterCalls = 2;
+
+        await _page.WaitForDesktopAsync(TimeSpan.FromSeconds(10), TimeSpan.FromMilliseconds(1));
+
+        Assert.False(_page.IsDesktopOffline);
+        Assert.False(_page.IsWaitingForDesktop);
+        Assert.Single(_page.Sessions);
+        Assert.Null(_page.Message);
+    }
+
+    [Fact]
+    public async Task WaitingForTheDesktopAppGivesUpAndSaysWhereToLook()
+    {
+        _tools.Unavailable = true;
+        await _page.RefreshSessionsAsync();
+
+        await _page.WaitForDesktopAsync(TimeSpan.FromMilliseconds(30), TimeSpan.FromMilliseconds(5));
+
+        Assert.True(_page.IsDesktopOffline);
+        Assert.False(_page.IsWaitingForDesktop);
+        Assert.Contains("仪表盘", _page.Message);
     }
 
     [Fact]
@@ -143,14 +174,25 @@ public sealed class DesktopSyncViewModelTests : IAsyncDisposable
 
         public bool Unavailable { get; set; }
 
+        /// <summary>Comes up after this many more list calls, like an app that is starting.</summary>
+        public int? AvailableAfterCalls { get; set; }
+
         public AppToolsCapabilities Capabilities => new(true, true, true, true);
 
         public Task<AppToolsCapabilities> ConnectAsync(CancellationToken cancellationToken) => Task.FromResult(Capabilities);
 
-        public Task<IReadOnlyList<DesktopThread>> ListThreadsAsync(int limit, CancellationToken cancellationToken) =>
-            Unavailable
+        public Task<IReadOnlyList<DesktopThread>> ListThreadsAsync(int limit, CancellationToken cancellationToken)
+        {
+            if (AvailableAfterCalls is int left)
+            {
+                AvailableAfterCalls = --left <= 0 ? null : left;
+                Unavailable = AvailableAfterCalls is not null;
+            }
+
+            return Unavailable
                 ? throw new DesktopAppToolsException(DesktopAppToolsFailure.Unavailable, "not running")
                 : Task.FromResult<IReadOnlyList<DesktopThread>>(Threads);
+        }
 
         public Task<DesktopThreadStatus> GetThreadStatusAsync(string threadId, CancellationToken cancellationToken) =>
             Task.FromResult(new DesktopThreadStatus("idle", []));

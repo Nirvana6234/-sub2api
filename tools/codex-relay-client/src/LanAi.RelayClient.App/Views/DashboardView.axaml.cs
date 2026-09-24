@@ -98,7 +98,7 @@ public partial class DashboardView : UserControl, IDashboardActions
         // Its own view model, not the dashboard's: phone sync is decided on this page alone.
         if (page.DesktopSync is not null)
         {
-            _pages[ClientPage.DesktopSync] = new Pages.DesktopSyncPage(page.DesktopSync, safeAsync);
+            _pages[ClientPage.DesktopSync] = new Pages.DesktopSyncPage(page.DesktopSync, safeAsync, this);
         }
 
         page.Navigation.PropertyChanged += Navigation_OnPropertyChanged;

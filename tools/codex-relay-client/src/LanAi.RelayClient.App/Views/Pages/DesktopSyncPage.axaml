@@ -81,7 +81,12 @@
               <TextBlock Text="Claude Code（即将支持）" Classes="label" Margin="8,0,0,0" VerticalAlignment="Center" Opacity="0.5" />
             </StackPanel>
           </DockPanel>
-          <TextBlock Text="{Binding DesktopStatus}" Classes="hint" Margin="0,4,0,0" />
+          <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,4,0,0">
+            <TextBlock Text="{Binding DesktopStatus}" Classes="hint" VerticalAlignment="Center" />
+            <Button Content="{Binding LaunchDesktopLabel}" Click="LaunchDesktop_OnClick" Classes="secondary"
+                    IsVisible="{Binding IsDesktopOffline}" IsEnabled="{Binding !IsWaitingForDesktop}"
+                    VerticalAlignment="Center" />
+          </StackPanel>
           <!-- The desktop app keeps every conversation ever had; the list scrolls on its
                own so the rest of the page stays within reach. -->
           <ScrollViewer MaxHeight="360" VerticalScrollBarVisibility="Auto" Margin="0,6,0,0">
