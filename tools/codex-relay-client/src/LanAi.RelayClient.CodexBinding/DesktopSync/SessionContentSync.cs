@@ -87,21 +87,23 @@ public sealed class SessionContentSync
     };
 
     private readonly Func<string, CodexThreadRecord?> _findThread;
-    private readonly Func<byte[], string, byte[]?> _shrinkImage;
+    private readonly Func<byte[], string, (byte[] Bytes, string MediaType)?> _shrinkImage;
     private readonly Dictionary<string, TurnIndex> _indexes = new(StringComparer.Ordinal);
     private readonly Dictionary<string, (long Offset, ProjectionState State)> _followStates = new(StringComparer.Ordinal);
     private readonly object _gate = new();
 
     /// <param name="findThread">Normally <see cref="CodexStateDatabase.FindThread"/>.</param>
     /// <param name="shrinkImage">
-    /// Given image bytes and media type, a version under <see cref="MaxImageBytes"/>, or
-    /// null. This project has no imaging; the host that does supplies it. Without one,
-    /// only images already small enough are sent.
+    /// Given image bytes and media type, a version under <see cref="MaxImageBytes"/> and its
+    /// media type (it may be re-encoded), or null. This project has no imaging; the host
+    /// that does supplies it. Without one, only images already small enough are sent.
     /// </param>
-    public SessionContentSync(Func<string, CodexThreadRecord?> findThread, Func<byte[], string, byte[]?>? shrinkImage = null)
+    public SessionContentSync(
+        Func<string, CodexThreadRecord?> findThread,
+        Func<byte[], string, (byte[] Bytes, string MediaType)?>? shrinkImage = null)
     {
         _findThread = findThread;
-        _shrinkImage = shrinkImage ?? ((bytes, _) => bytes.Length <= MaxImageBytes ? bytes : null);
+        _shrinkImage = shrinkImage ?? ((bytes, type) => bytes.Length <= MaxImageBytes ? (bytes, type) : null);
     }
 
     /// <summary>The latest <paramref name="turns"/> turns, and a cursor to follow from.</summary>
@@ -283,8 +285,8 @@ public sealed class SessionContentSync
         }
 
         byte[] bytes = File.ReadAllBytes(path);
-        return _shrinkImage(bytes, mediaType) is byte[] sendable && sendable.Length <= MaxImageBytes
-            ? new SessionDetail(DetailOutcome.Found, Bytes: sendable, MediaType: mediaType)
+        return _shrinkImage(bytes, mediaType) is { } sendable && sendable.Bytes.Length <= MaxImageBytes
+            ? new SessionDetail(DetailOutcome.Found, Bytes: sendable.Bytes, MediaType: sendable.MediaType)
             : new SessionDetail(DetailOutcome.Refused);
     }
 

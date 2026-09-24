@@ -28,8 +28,15 @@ public sealed partial class DashboardPageViewModel : ObservableObject
         DashboardViewModel dashboard,
         ClientUpdateViewModel clientUpdate,
         AnnouncementsViewModel announcements,
-        RelaySessionManager session)
+        RelaySessionManager session,
+        DesktopSyncViewModel? desktopSync = null)
     {
+        DesktopSync = desktopSync;
+        if (desktopSync is null)
+        {
+            // No page to show, so no entry that would lead to one.
+            Navigation.Items.Remove(Navigation.Item(ClientPage.DesktopSync));
+        }
         Dashboard = dashboard ?? throw new ArgumentNullException(nameof(dashboard));
         ClientUpdate = clientUpdate ?? throw new ArgumentNullException(nameof(clientUpdate));
         Announcements = announcements ?? throw new ArgumentNullException(nameof(announcements));
@@ -88,6 +95,9 @@ public sealed partial class DashboardPageViewModel : ObservableObject
     }
 
     public DashboardViewModel Dashboard { get; }
+
+    /// <summary>The 「同步会话」 page; null where the head does not offer it.</summary>
+    public DesktopSyncViewModel? DesktopSync { get; }
 
     /// <summary>Which page of the signed-in surface is showing.</summary>
     public NavigationViewModel Navigation { get; } = new();

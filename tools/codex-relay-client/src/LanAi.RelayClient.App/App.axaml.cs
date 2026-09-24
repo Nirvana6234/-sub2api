@@ -6,6 +6,8 @@ using Avalonia.Markup.Xaml;
 using LanAi.RelayClient.App.Services;
 using LanAi.RelayClient.App.Views;
 using LanAi.RelayClient.CodexBinding;
+using LanAi.RelayClient.CodexBinding.DesktopSync;
+using LanAi.RelayClient.DesktopSync;
 using LanAi.RelayClient.Platform;
 using LanAi.RelayClient.Server;
 using LanAi.RelayClient.Services;
@@ -41,6 +43,7 @@ namespace LanAi.RelayClient.App;
 public partial class App : Application
 {
     private HttpClient? _http;
+    private DesktopSyncLink? _desktopSyncLink;
     private ISingleInstanceCoordinator? _singleInstance;
     private ClientShutdownCoordinator? _shutdown;
     private TrayPresence? _tray;
@@ -240,6 +243,52 @@ public partial class App : Application
             localProxyUsage: localProxyUsage);
         dashboardForRelay = dashboard;
 
+        // Phone sync (「同步会话」). Everything that decides what a phone may do lives in the
+        // agent, on this computer; the link only carries frames to and from the server.
+        var codexState = new CodexStateDatabase(new CodexPaths());
+        var desktopTools = new DesktopAppToolsClient(new NamedPipeAppToolsTransport(), codexState.FindCallerThread);
+        var syncAudit = new SyncAuditLog();
+        var syncAgent = new DesktopSyncAgent(
+            desktopTools,
+            new SessionContentSync(codexState.FindThread, PhoneImageShrinker.Shrink),
+            codexState.FindThread,
+            new DesktopSyncStateStore(),
+            syncAudit);
+        syncAgent.Start();
+        var syncLink = new DesktopSyncLink(
+            new Uri(ClientOptions.ServerAddress),
+            $"pc-{new InstallId().Get()}",
+            Environment.MachineName,
+            session.GetAccessTokenAsync,
+            syncAgent,
+            async cancellationToken =>
+            {
+                AppToolsCapabilities capabilities = AppToolsCapabilities.None;
+                try
+                {
+                    capabilities = await desktopTools.ConnectAsync(cancellationToken).ConfigureAwait(false);
+                }
+                catch (DesktopAppToolsException)
+                {
+                    // Reported as not running; the phone shows that.
+                }
+
+                return DesktopSyncHello.Write(capabilities, ClientOptions.CurrentVersion.ToString());
+            });
+        _desktopSyncLink = syncLink;
+        var desktopSync = new DesktopSyncViewModel(
+            syncAgent,
+            syncLink,
+            desktopTools,
+            codexState.FindThread,
+            syncAudit,
+            action => Avalonia.Threading.Dispatcher.UIThread.Post(action))
+        {
+            Confirm = (message, confirmLabel) => ConfirmDialog.AskAsync(shell, message, confirmLabel: confirmLabel),
+        };
+        session.StateChanged += (_, _) => Avalonia.Threading.Dispatcher.UIThread.Post(() => desktopSync.SetSignedIn(session.IsSignedIn));
+        desktopSync.SetSignedIn(session.IsSignedIn);
+
         var announcements = new AnnouncementsViewModel(
             new AnnouncementMonitor(
                 relay,
@@ -251,7 +300,7 @@ public partial class App : Application
         var exitCoordinator = new ClientExitCoordinator(codex, session);
         _shutdown = new ClientShutdownCoordinator(() => exitCoordinator.ReleaseForExitAsync());
 
-        var dashboardPage = new DashboardPageViewModel(dashboard, clientUpdate, announcements, session);
+        var dashboardPage = new DashboardPageViewModel(dashboard, clientUpdate, announcements, session, desktopSync);
         // Created here, on the UI thread, because the Windows implementation owns a
         // window whose procedure receives the click callback on its creating thread.
         _notifications = NotificationPresenters.Create();
@@ -559,6 +608,9 @@ public partial class App : Application
     {
         ClientLog.Info("客户端退出");
         _shutdown?.ReleaseBeforeProcessExit();
+
+        // Best effort and bounded: the server notices a dropped socket on its own.
+        _desktopSyncLink?.StopAsync().Wait(TimeSpan.FromSeconds(2));
         _singleInstance?.Dispose();
         _tray?.Dispose();
         _notifications?.Dispose();
