@@ -22,6 +22,7 @@ import {
   uploadPawFile,
 } from "@/client/paw/api";
 import { safeLocalStorage } from "@/utils/storage";
+import { captureRemoteHandoff } from "@/client/remote/handoff";
 import {
   compactAgentMessageForRuntime,
   persistConversationsWithCompression,
@@ -1606,6 +1607,8 @@ export function usePawClient() {
 
   useEffect(() => {
     setHydrated(true);
+    // 从主站带配对码跳进来时，先收起码（必要时接过主站的访问令牌），再读会话。
+    captureRemoteHandoff();
     setSession(loadPawSession());
     const initialConversations = loadConversations();
     setConversations(initialConversations);

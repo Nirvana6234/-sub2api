@@ -852,6 +852,8 @@ func ProvideAPIKeyService(
 		svc.SetAutoGroupMetricRepository(metricsRepo)
 	}
 	svc.SetAutoGroupModelAvailabilityRepository(accountRepo)
+	// 没手动开白名单的分组，按组内账号支持的模型给客户端下发自动白名单。
+	svc.SetGroupAutoModelAccountLister(accountRepo)
 	if runtimeChecker, ok := accountRepo.(AutoGroupRuntimeModelChecker); ok {
 		svc.SetAutoGroupRuntimeModelChecker(runtimeChecker)
 	}

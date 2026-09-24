@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -34,8 +32,6 @@ type noAccountErrorClassification struct {
 	ModelNotFound bool // true when this is a 404 model_not_found classification
 }
 
-var selectionModelRateLimitedPattern = regexp.MustCompile(`(?:model_rate_limited|rate_limited)=(\d+)`)
-
 // classifySelectionFailureError preserves the scheduler's compact reason when
 // every model-capable account is temporarily rate limited.
 func classifySelectionFailureError(err error, fallback noAccountErrorClassification) noAccountErrorClassification {
@@ -59,12 +55,8 @@ func classifySelectionFailureError(err error, fallback noAccountErrorClassificat
 	if fallback.ModelNotFound {
 		return fallback
 	}
-	match := selectionModelRateLimitedPattern.FindStringSubmatch(strings.ToLower(err.Error()))
-	if len(match) != 2 {
-		return fallback
-	}
-	count, parseErr := strconv.Atoi(match[1])
-	if parseErr != nil || count <= 0 {
+	// 与兜底池的错误聚合共用同一个判定，见 service.NoAccountRateLimitedCount。
+	if service.NoAccountRateLimitedCount(err) <= 0 {
 		return fallback
 	}
 	return noAccountErrorClassification{

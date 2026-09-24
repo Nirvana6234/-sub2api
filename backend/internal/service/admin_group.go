@@ -95,16 +95,26 @@ func (s *adminServiceImpl) GetGroupModelsListCandidates(ctx context.Context, id 
 		platform = PlatformAnthropic
 	}
 
-	candidates := defaultModelsListCandidateIDs(platform)
 	if id <= 0 || s.accountRepo == nil {
-		return candidates, nil
+		return modelsListCandidatesFromAccounts(platform, nil), nil
 	}
-
 	accounts, err := s.accountRepo.ListSchedulableByGroupID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
+	return modelsListCandidatesFromAccounts(platform, accounts), nil
+}
 
+// modelsListCandidatesFromAccounts 管理端「模型白名单」的候选：平台内置模型表 + 组内同平台账号
+// 映射里属于本厂商的模型名。
+//   - 国产供应商没有内置模型表，defaultModelsListCandidateIDs 会退回 Claude 列表，
+//     放进 GLM/Kimi 分组的候选里只会误导，这些分组只列组内账号实际支持的模型；
+//   - 跨厂商的兼容别名（如 GLM 账号上的 gpt-5.6-sol）不是本分组厂商的模型，不列。
+func modelsListCandidatesFromAccounts(platform string, accounts []Account) []string {
+	candidates := []string{}
+	if autoModelAllowlistHasReliableDefaults(platform) {
+		candidates = defaultModelsListCandidateIDs(platform)
+	}
 	seen := make(map[string]struct{}, len(candidates))
 	for _, model := range candidates {
 		seen[model] = struct{}{}
@@ -119,7 +129,7 @@ func (s *adminServiceImpl) GetGroupModelsListCandidates(ctx context.Context, id 
 		}
 		for model := range acc.GetModelMapping() {
 			model = strings.TrimSpace(model)
-			if model == "" {
+			if model == "" || !groupListsModel(platform, model) {
 				continue
 			}
 			if _, ok := seen[model]; ok {
@@ -129,7 +139,7 @@ func (s *adminServiceImpl) GetGroupModelsListCandidates(ctx context.Context, id 
 			candidates = append(candidates, model)
 		}
 	}
-	return candidates, nil
+	return candidates
 }
 
 func (s *adminServiceImpl) ListCompositeRoutes(ctx context.Context, groupID int64) ([]CompositeModelRoute, error) {

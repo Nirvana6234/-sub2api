@@ -77,7 +77,14 @@ export default {
         mac: 'macOS · Apple silicon',
         meta: 'Latest v{version}',
         guide: 'Install guide',
-        action: 'Download'
+        action: 'Download',
+        remote: {
+          title: 'Control Codex on your computer from your phone',
+          hint: 'In the desktop assistant open "Sync sessions" → "Pair a phone", enter the 6-digit code here, then confirm on the computer.',
+          placeholder: '6-digit code',
+          connect: 'Connect',
+          open: 'Open mobile app'
+        }
       }
     },
     quickActions: 'Quick Actions',

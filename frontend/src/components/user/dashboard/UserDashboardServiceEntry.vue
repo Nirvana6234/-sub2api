@@ -77,6 +77,42 @@
               {{ t(`dashboard.serviceEntry.client.${platform}`) }}
             </router-link>
           </div>
+
+          <!-- 助手客户端：输入助手「同步会话」里的 6 位码，跳到手机控制界面（/paw/）接着配对 -->
+          <form
+            v-if="card.id === 'client'"
+            class="mt-3 rounded-lg border border-dashed border-teal-200 bg-teal-50/40 px-3 py-2.5 dark:border-teal-800/60 dark:bg-teal-900/10"
+            data-testid="service-client-remote"
+            @submit.prevent="connectRemote"
+          >
+            <div class="flex items-start justify-between gap-2">
+              <p class="min-w-0 text-xs font-medium text-gray-800 dark:text-dark-100">{{ t('dashboard.serviceEntry.client.remote.title') }}</p>
+              <a
+                :href="PAW_PATH"
+                class="flex-shrink-0 whitespace-nowrap text-[11px] text-teal-700 hover:underline dark:text-teal-300"
+                data-testid="service-remote-open"
+              >{{ t('dashboard.serviceEntry.client.remote.open') }}</a>
+            </div>
+            <p class="mt-0.5 text-[11px] leading-relaxed text-gray-500 dark:text-dark-400">{{ t('dashboard.serviceEntry.client.remote.hint') }}</p>
+            <div class="mt-2 flex items-center gap-2">
+              <input
+                v-model="pairCode"
+                class="input h-8 min-w-0 max-w-[10rem] flex-1 px-2 font-mono text-sm tracking-[0.3em]"
+                inputmode="numeric"
+                autocomplete="one-time-code"
+                maxlength="7"
+                :placeholder="t('dashboard.serviceEntry.client.remote.placeholder')"
+                :aria-label="t('dashboard.serviceEntry.client.remote.placeholder')"
+                data-testid="service-remote-code"
+              />
+              <button
+                type="submit"
+                class="inline-flex h-8 flex-shrink-0 items-center whitespace-nowrap rounded-lg bg-teal-600 px-3 text-xs font-medium text-white shadow-sm transition-colors hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50"
+                :disabled="!normalizedPairCode"
+                data-testid="service-remote-connect"
+              >{{ t('dashboard.serviceEntry.client.remote.connect') }}</button>
+            </div>
+          </form>
         </div>
 
         <div class="mt-4 flex flex-wrap items-center justify-between gap-2">
@@ -116,7 +152,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import { useAppStore } from '@/stores'
@@ -177,6 +213,21 @@ const clientPlatforms = computed(() => {
   const mac = /^https?:\/\//i.test((appStore.cachedPublicSettings?.client_download_direct_url_mac || '').trim())
   return mac ? ['windows', 'mac'] : ['windows']
 })
+
+// 手机控制界面（Paw）挂在 /paw/。配对码交给它：它负责生成手机签名密钥并认领，
+// 等电脑上确认后直接打开同步的会话。
+const PAW_PATH = '/paw/'
+const pairCode = ref('')
+const normalizedPairCode = computed(() => {
+  const code = pairCode.value.replace(/\s/g, '')
+  return /^\d{6}$/.test(code) ? code : ''
+})
+
+function connectRemote() {
+  const code = normalizedPairCode.value
+  if (!code) return
+  window.location.assign(`${PAW_PATH}?pair=${code}`)
+}
 
 const clientVersion = computed(() => (appStore.cachedPublicSettings?.client_latest_version || '').trim())
 const docUrl = computed(() => sanitizeUrl(appStore.cachedPublicSettings?.doc_url || appStore.docUrl || ''))

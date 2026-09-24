@@ -389,6 +389,7 @@ type APIKeyService struct {
 	autoGroupAllGroupsEpoch    uint64           // guarded by autoGroupSelectionMu
 	autoGroupCacheOperations   atomic.Uint64
 	authInvalidationOutbox     AuthCacheInvalidationOutboxRepository
+	groupAutoModels            *groupAutoModelAllowlist
 	cfg                        *config.Config
 	authCacheL1                *ristretto.Cache
 	authNegativeCacheL1        *ristretto.Cache
@@ -1305,6 +1306,7 @@ func (s *APIKeyService) resolveAutoGroupForModel(ctx context.Context, apiKey *AP
 			}
 			return nil, fmt.Errorf("get user group rates for auto mode: %w", err)
 		}
+		var peerVerifiedCandidate *Group
 		if priceReviewOnly {
 			currentGroup := findAvailableAutoGroup(groups, current.groupID)
 			if currentGroup != nil {
@@ -1321,6 +1323,7 @@ func (s *APIKeyService) resolveAutoGroupForModel(ctx context.Context, apiKey *AP
 					}
 					continue
 				}
+				peerVerifiedCandidate = peerCandidate
 			}
 		}
 		strategy := normalizeAutoGroupStrategy(apiKey.AutoGroupStrategy)
@@ -1340,9 +1343,19 @@ func (s *APIKeyService) resolveAutoGroupForModel(ctx context.Context, apiKey *AP
 			}
 			current.settled = false
 		}
-		selected, nextSelection, err := selectStableAutoGroup(groups, rates, metrics, strategy, current)
-		if err != nil {
-			return nil, err
+		var selected *Group
+		var nextSelection autoGroupSelection
+		if peerVerifiedCandidate != nil && strategy == autoGroupStrategyPrice {
+			// 价格复查唤醒切换的依据是「这个更便宜的组已被其他用户验证健康」。
+			// price 策略下的完整选择会直接取全体最便宜的组，那个组可能从未被验证
+			// （甚至正是此前让本 key 切走的故障组），所以这里只提交被验证的那个。
+			selected = peerVerifiedCandidate
+			nextSelection = autoGroupSelection{groupID: peerVerifiedCandidate.ID, settled: true}
+		} else {
+			selected, nextSelection, err = selectStableAutoGroup(groups, rates, metrics, strategy, current)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if selected == nil {
 			return nil, ErrAutoGroupUnavailable
@@ -1940,9 +1953,12 @@ func (s *APIKeyService) storeAutoGroupSelectionIfCurrent(key, switchKey string, 
 	defer s.autoGroupSelectionMu.Unlock()
 
 	currentRevision := uint64(0)
+	var stored autoGroupSelection
+	hasStored := false
 	if value, ok := s.autoGroupSelections.Load(key); ok {
 		if current, ok := value.(autoGroupSelection); ok {
 			currentRevision = current.revision
+			stored, hasStored = current, true
 		}
 	}
 	if currentRevision != expected.selection || s.autoGroupUserGenerations[userID] != expected.user {
@@ -1963,10 +1979,26 @@ func (s *APIKeyService) storeAutoGroupSelectionIfCurrent(key, switchKey string, 
 		}
 	}
 
+	// revision 只随路由决策推进，统计计数的更新不推进它（见
+	// ObserveAutoGroupRequestResult）。所以 revision 没变只说明路由决策没变，
+	// 快照之后到达的故障/慢请求计数仍可能已经写进了存储。这里写回的是同一分组
+	// 的同一决策，必须保留存储里最新的计数，否则价格复查会把它们抹掉、推迟切组。
+	if hasStored && stored.groupID == selection.groupID {
+		mergeAutoGroupSelectionStats(&selection, stored)
+	}
 	selection.revision = currentRevision + 1
 	selection.expiresAt = time.Now().Add(autoGroupSelectionTTL)
 	s.autoGroupSelections.Store(key, selection)
 	return true
+}
+
+// mergeAutoGroupSelectionStats 把 latest 里的统计计数复制到 selection 上。
+// 只用于写回同一分组、同一路由决策的场景；换组或重新决策时计数应当清零。
+func mergeAutoGroupSelectionStats(selection *autoGroupSelection, latest autoGroupSelection) {
+	selection.transientFailureStreak = latest.transientFailureStreak
+	selection.lastTransientFailureAt = latest.lastTransientFailureAt
+	selection.consecutiveSlowRequests = latest.consecutiveSlowRequests
+	selection.observedProbeSamples = latest.observedProbeSamples
 }
 
 func (s *APIKeyService) commitAutoGroupSelectionIfCurrent(key, switchKey, model string, userID int64, expected autoGroupGenerationSnapshot, current, next autoGroupSelection, groups []Group, now time.Time) (autoGroupSelection, bool) {
