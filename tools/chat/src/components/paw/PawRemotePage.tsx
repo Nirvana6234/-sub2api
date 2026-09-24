@@ -1,10 +1,10 @@
 "use client";
 
-// 「电脑」: the Codex conversations a paired computer shares with this phone.
+// 「电脑」: pairing with computers, and one conversation a paired computer shares.
 //
-// Three levels — computers, a computer's shared conversations, one conversation —
-// on one page. What may be reached is decided on the computer (its 「同步会话」 tab);
-// this page only shows what the computer answers and says plainly when it refuses.
+// The shared conversations themselves are listed in the sidebar group
+// (PawRemoteSidebar). What may be reached is decided on the computer (its 「同步会话」
+// tab); these pages only show what the computer answers and say plainly when it refuses.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -13,7 +13,6 @@ import {
   claimPairing,
   followSession,
   listDevices,
-  listSessions,
   loadDetail,
   loadHistory,
   navigateOnComputer,
@@ -22,13 +21,15 @@ import {
   revokePairing,
   sendMessage,
 } from "../../client/remote/api";
-import { mergeItems, type RemoteDevice, type RemoteSessionHeader, type RemoteSessionSummary, type SyncItem } from "../../client/remote/protocol";
-import { deleteSession, loadSession, pruneSessions, saveSession, type StoredPairing } from "../../client/remote/store";
+import { mergeItems, type RemoteDevice, type RemoteSessionHeader, type SyncItem } from "../../client/remote/protocol";
+import { deleteSession, loadSession, saveSession, type StoredPairing } from "../../client/remote/store";
 import { PawMarkdown } from "./PawMarkdown";
 import { PawModal } from "./PawModal";
 
 interface PawRemotePageProps {
   onClose: () => void;
+  /** A computer was paired or unpaired: the sidebar group reloads. */
+  onChanged: () => void;
 }
 
 const PERMISSION_TEXT: Record<string, string> = {
@@ -37,24 +38,14 @@ const PERMISSION_TEXT: Record<string, string> = {
   sandboxed: "沙箱 · 越界操作会失败",
 };
 
-const STATUS_TEXT: Record<string, string> = {
-  active: "运行中",
-  idle: "空闲",
-  notLoaded: "未打开",
-  systemError: "出错",
-  unknown: "未知",
-  missing: "已不存在",
-};
-
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : "出错了";
 }
 
-export function PawRemotePage({ onClose }: PawRemotePageProps) {
+export function PawRemotePage({ onClose, onChanged }: PawRemotePageProps) {
   const [devices, setDevices] = useState<Array<{ pairing: StoredPairing; device: RemoteDevice | null }>>([]);
-  const [deviceId, setDeviceId] = useState<string | null>(null);
-  const [threadId, setThreadId] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const onChangedRef = useRef(onChanged);
+  onChangedRef.current = onChanged;
 
   const reload = useCallback(async () => {
     setDevices(await listDevices());
@@ -64,75 +55,17 @@ export function PawRemotePage({ onClose }: PawRemotePageProps) {
     void reload();
   }, [reload]);
 
-  // Straight into the computer when there is only one, or when one has just been
-  // confirmed: stopping on a one-row list after pairing looked like nothing happened.
-  const autoOpened = useRef(false);
-  const previousActive = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    const active = devices.filter((d) => d.pairing.status === "active").map((d) => d.pairing.deviceId);
-    const justConfirmed = active.find((id) => !previousActive.current.has(id));
-    const firstLoad = !autoOpened.current;
-    previousActive.current = new Set(active);
-    if (deviceId !== null || active.length === 0) return;
-    if (firstLoad && active.length === 1) {
-      autoOpened.current = true;
-      setDeviceId(active[0]);
-    } else if (!firstLoad && justConfirmed) {
-      setDeviceId(justConfirmed);
-    }
-    autoOpened.current = true;
-  }, [devices, deviceId]);
-
-  const selected = devices.find((d) => d.pairing.deviceId === deviceId) ?? null;
-
-  let title = "电脑";
-  let body;
-  if (selected && threadId) {
-    title = selected.pairing.deviceName;
-    body = (
-      <RemoteConversation
-        pairing={selected.pairing}
-        threadId={threadId}
-        onBack={() => setThreadId(null)}
-        onRevoked={(message) => {
-          setThreadId(null);
-          setNotice(message);
-        }}
-      />
-    );
-  } else if (selected && selected.pairing.status === "active") {
-    title = selected.pairing.deviceName;
-    body = (
-      <RemoteSessions
-        entry={selected}
-        onOpen={setThreadId}
-        onBack={() => setDeviceId(null)}
-        onForget={async () => {
-          await revokePairing(selected.pairing);
-          setDeviceId(null);
-          await reload();
-        }}
-      />
-    );
-  } else {
-    body = (
-      <RemoteDevices
-        devices={devices}
-        onOpen={(id) => {
-          setNotice(null);
-          setDeviceId(id);
-        }}
-        onChanged={reload}
-      />
-    );
-  }
+  const changed = useCallback(async () => {
+    await reload();
+    onChangedRef.current();
+  }, [reload]);
 
   return (
     <main className="paw-account-page paw-remote-page">
       <header className="paw-account-page-head">
         <div>
-          <h1>{title}</h1>
-          <p>查看并接着操作电脑上共享的 Codex 会话</p>
+          <h1>电脑</h1>
+          <p>配对电脑后，它共享的 Codex 会话会列在左侧「电脑 · 同步会话」里</p>
         </div>
         <button type="button" className="paw-button" onClick={onClose}>
           返回对话
@@ -140,8 +73,7 @@ export function PawRemotePage({ onClose }: PawRemotePageProps) {
       </header>
       <div className="paw-account-page-scroll">
         <div className="paw-remote-content">
-          {notice ? <div className="paw-remote-notice">{notice}</div> : null}
-          {body}
+          <RemoteDevices devices={devices} onChanged={changed} />
         </div>
       </div>
     </main>
@@ -176,7 +108,7 @@ export function PawRemoteSessionPage({
       </header>
       <div className="paw-account-page-scroll">
         <div className="paw-remote-content">
-          <RemoteConversation key={`${pairing.deviceId}|${threadId}`} pairing={pairing} threadId={threadId} onBack={null} onRevoked={onRevoked} />
+          <RemoteConversation key={`${pairing.deviceId}|${threadId}`} pairing={pairing} threadId={threadId} onRevoked={onRevoked} />
         </div>
       </div>
     </main>
@@ -187,13 +119,12 @@ export function PawRemoteSessionPage({
 
 function RemoteDevices({
   devices,
-  onOpen,
   onChanged,
 }: {
   devices: Array<{ pairing: StoredPairing; device: RemoteDevice | null }>;
-  onOpen: (deviceId: string) => void;
   onChanged: () => Promise<void>;
 }) {
+  const [forgetting, setForgetting] = useState<StoredPairing | null>(null);
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -242,20 +173,23 @@ function RemoteDevices({
         {devices
           .filter((d) => d.pairing.status === "active")
           .map(({ pairing, device }) => (
-            <button key={pairing.deviceId} type="button" className="paw-remote-row" onClick={() => onOpen(pairing.deviceId)}>
+            <div key={pairing.deviceId} className="paw-remote-row">
               <span className={`paw-remote-dot ${device?.online ? "on" : ""}`} />
               <span className="paw-remote-row-main">
                 <strong>{pairing.deviceName}</strong>
                 <small>
+                  <span className="paw-remote-paired">已配对</span>
                   {!device?.online
-                    ? "不在线"
+                    ? "电脑不在线"
                     : device.desktopRunning
                       ? "在线 · Codex 桌面版已打开"
                       : "在线 · Codex 桌面版未打开"}
                 </small>
               </span>
-              <span className="paw-remote-chevron">›</span>
-            </button>
+              <button type="button" className="paw-button" onClick={() => setForgetting(pairing)}>
+                解除配对
+              </button>
+            </div>
           ))}
       </section>
 
@@ -294,90 +228,30 @@ function RemoteDevices({
         </div>
         {error ? <p className="paw-remote-error">{error}</p> : null}
       </section>
-    </>
-  );
-}
 
-// ---- A computer's conversations ------------------------------------------------------
-
-function RemoteSessions({
-  entry,
-  onOpen,
-  onBack,
-  onForget,
-}: {
-  entry: { pairing: StoredPairing; device: RemoteDevice | null };
-  onOpen: (threadId: string) => void;
-  onBack: () => void;
-  onForget: () => Promise<void>;
-}) {
-  const [sessions, setSessions] = useState<RemoteSessionSummary[] | null>(null);
-  const [desktopRunning, setDesktopRunning] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [confirmForget, setConfirmForget] = useState(false);
-
-  const load = useCallback(async () => {
-    setError(null);
-    try {
-      const result = await listSessions(entry.pairing);
-      setSessions(result.sessions);
-      setDesktopRunning(result.desktopRunning);
-      await pruneSessions(entry.pairing.deviceId, result.sessions.map((s) => s.threadId));
-    } catch (err) {
-      setError(errorText(err));
-    }
-  }, [entry.pairing]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  return (
-    <>
-      <div className="paw-remote-toolbar">
-        <button type="button" className="paw-button" onClick={onBack}>‹ 电脑列表</button>
-        <button type="button" className="paw-button" onClick={() => void load()}>刷新</button>
-      </div>
-      {error ? <p className="paw-remote-error">{error}</p> : null}
-      {!desktopRunning ? <p className="paw-remote-warn">电脑上的 Codex 桌面版没有运行：可以查看记录，发出的消息要等它打开后才能执行。</p> : null}
-      <section className="paw-account-section">
-        <h3 className="paw-remote-heading">共享的会话</h3>
-        {sessions && sessions.length === 0 ? (
-          <p className="paw-remote-muted">电脑上还没有勾选要同步的会话（共飞助手 →「同步会话」）。</p>
-        ) : null}
-        {(sessions ?? []).map((session) => (
-          <button key={session.threadId} type="button" className="paw-remote-row" onClick={() => onOpen(session.threadId)}>
-            <span className={`paw-remote-dot status-${session.status}`} />
-            <span className="paw-remote-row-main">
-              <strong>{session.title}</strong>
-              <small>
-                {STATUS_TEXT[session.status] ?? session.status}
-                {" · "}
-                <span className={session.permission === "full_access" ? "paw-remote-danger" : ""}>
-                  {PERMISSION_TEXT[session.permission]}
-                </span>
-              </small>
-              {session.cwd ? <small className="paw-remote-path">{session.cwd}</small> : null}
-            </span>
-            <span className="paw-remote-chevron">›</span>
-          </button>
-        ))}
-      </section>
-      <section className="paw-account-section">
-        <button type="button" className="paw-button" onClick={() => setConfirmForget(true)}>解除与这台电脑的配对</button>
-      </section>
-      {confirmForget ? (
+      {forgetting ? (
         <PawModal
           title="解除配对"
-          onClose={() => setConfirmForget(false)}
+          onClose={() => setForgetting(null)}
           actions={
             <>
-              <button type="button" className="paw-button" onClick={() => setConfirmForget(false)}>取消</button>
-              <button type="button" className="paw-button primary" onClick={() => void onForget()}>解除</button>
+              <button type="button" className="paw-button" onClick={() => setForgetting(null)}>取消</button>
+              <button
+                type="button"
+                className="paw-button primary"
+                onClick={async () => {
+                  const pairing = forgetting;
+                  setForgetting(null);
+                  await revokePairing(pairing);
+                  await onChanged();
+                }}
+              >
+                解除
+              </button>
             </>
           }
         >
-          <p>解除后这台手机不能再访问「{entry.pairing.deviceName}」，本机缓存的会话记录也会删除。</p>
+          <p>解除后这台手机不能再访问「{forgetting.deviceName}」，本机缓存的会话记录也会删除。</p>
         </PawModal>
       ) : null}
     </>
@@ -399,13 +273,10 @@ function useTicker(active: boolean): number {
 function RemoteConversation({
   pairing,
   threadId,
-  onBack,
   onRevoked,
 }: {
   pairing: StoredPairing;
   threadId: string;
-  /** Null hides the in-page back button, e.g. when opened from the sidebar. */
-  onBack: (() => void) | null;
   onRevoked: (message: string) => void;
 }) {
   const [header, setHeader] = useState<RemoteSessionHeader | null>(null);
@@ -563,7 +434,6 @@ function RemoteConversation({
   return (
     <div className="paw-remote-conversation">
       <div className="paw-remote-toolbar">
-        {onBack ? <button type="button" className="paw-button" onClick={onBack}>‹ 会话列表</button> : <span />}
         <button type="button" className="paw-button" onClick={() => void navigateOnComputer(pairing, threadId).catch((err) => setError(errorText(err)))}>
           在电脑上打开
         </button>

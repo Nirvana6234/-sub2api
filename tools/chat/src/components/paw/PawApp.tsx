@@ -412,12 +412,7 @@ export function PawApp() {
           }}
         />
       ) : remoteOpen ? (
-        <PawRemotePage
-          onClose={() => {
-            setRemoteOpen(false);
-            setRemoteReload((n) => n + 1);
-          }}
-        />
+        <PawRemotePage onClose={() => setRemoteOpen(false)} onChanged={() => setRemoteReload((n) => n + 1)} />
       ) : profileOpen ? (
         <PawProfileModal
           config={paw.config}

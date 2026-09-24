@@ -7,7 +7,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { listDevices, listSessions } from "../../client/remote/api";
 import type { RemoteDevice, RemoteSessionSummary } from "../../client/remote/protocol";
-import type { StoredPairing } from "../../client/remote/store";
+import { pruneSessions, type StoredPairing } from "../../client/remote/store";
 import { PawRefreshIcon, PawSettingsIcon } from "./PawIcons";
 
 const OPEN_KEY = "paw-remote-sidebar-open:v1";
@@ -60,7 +60,10 @@ export function PawRemoteSidebar({ activeKey, reloadToken, onOpenSession, onMana
           .map(async ({ pairing, device }): Promise<ComputerEntry> => {
             if (!device?.online) return { pairing, device, sessions: [], error: null };
             try {
-              return { pairing, device, sessions: (await listSessions(pairing)).sessions, error: null };
+              const { sessions } = await listSessions(pairing);
+              // Cached records of conversations the computer stopped sharing go too.
+              await pruneSessions(pairing.deviceId, sessions.map((s) => s.threadId));
+              return { pairing, device, sessions, error: null };
             } catch (err) {
               return { pairing, device, sessions: [], error: err instanceof Error ? err.message : "读取失败" };
             }

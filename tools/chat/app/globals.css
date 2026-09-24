@@ -4229,12 +4229,8 @@ textarea:disabled {
   gap: 12px;
   width: 100%;
   padding: 10px 4px;
-  border: 0;
   border-top: 1px solid var(--border);
-  background: transparent;
   color: var(--text);
-  text-align: left;
-  cursor: pointer;
 }
 
 .paw-remote-row-main {
@@ -4242,6 +4238,17 @@ textarea:disabled {
   min-width: 0;
   display: grid;
   gap: 2px;
+}
+
+.paw-remote-paired {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, #059669 14%, transparent);
+  color: #059669;
+  font-size: 11px;
+  line-height: 18px;
 }
 
 .paw-remote-row-main strong {
@@ -4256,10 +4263,6 @@ textarea:disabled {
   white-space: nowrap;
 }
 
-.paw-remote-chevron {
-  color: var(--muted);
-  font-size: 20px;
-}
 
 .paw-remote-dot {
   width: 9px;
@@ -4304,7 +4307,7 @@ textarea:disabled {
 
 .paw-remote-toolbar {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 10px;
 }
 
