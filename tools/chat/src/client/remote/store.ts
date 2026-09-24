@@ -5,8 +5,12 @@
 // its bytes back — only use it to sign. The pairing token is a bearer secret for one
 // computer; it never leaves this origin except in the X-Remote-Pairing header.
 //
-// All of it is cleared on sign-out (clearRemoteData), and a conversation's cache is
-// dropped when the computer says it is no longer shared.
+// A pairing belongs to the account that made it (userId) and outlives sign-out: signing
+// back in continues with it, with no new code. Another account signing in on this
+// browser does not see it, and could not use it anyway — the server takes a pairing's
+// token only with a session of the account that paired. It goes when the user 解除配对,
+// or when the server says it was revoked. Cached conversation content is cleared on
+// sign-out (clearRemoteCache) and refills from the computer.
 
 import type { RemoteSessionHeader, SyncItem } from "./protocol";
 
@@ -28,6 +32,8 @@ export interface StoredPairing {
   publicKey: string;
   fingerprint: string;
   createdAt: number;
+  /** The account that paired. Missing on pairings saved before this was kept. */
+  userId?: number;
 }
 
 export interface StoredSession {
@@ -147,10 +153,10 @@ export async function pruneSessions(deviceId: string, sharedThreadIds: string[])
 }
 
 /** Everything, on sign-out: the next account must not inherit this one's computers. */
-export async function clearRemoteData(): Promise<void> {
+/** On sign-out: the cached conversations go, the pairings stay (see the top of this file). */
+export async function clearRemoteCache(): Promise<void> {
   if (!canUseIndexedDb()) return;
   try {
-    await withStore(PAIRINGS, "readwrite", (s) => s.clear());
     await withStore(SESSIONS, "readwrite", (s) => s.clear());
   } catch {
     // Best effort; a failed clear leaves only data this account already had.

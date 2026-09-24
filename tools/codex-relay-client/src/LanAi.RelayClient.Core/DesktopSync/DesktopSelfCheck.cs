@@ -23,9 +23,9 @@ public sealed record DesktopSelfCheckResult(bool RelayListening, bool SignedIn, 
     /// <summary>One sentence for the phone: the first thing found wrong, or that nothing was.</summary>
     public string Summary =>
         !SignedIn ? "电脑上的共飞助手登录已失效，请在电脑上重新登录。"
-        : !RelayListening ? "电脑上的本机中转没有在运行，请在电脑上点「修复 ChatGPT 启动」。"
+        : !RelayListening ? "电脑上的本机中转没有在运行：可以点「远程修复 ChatGPT」，或在电脑上点「修复 ChatGPT 启动」。"
         : !ServerReachable ? "电脑连不上共飞服务器，请检查电脑的网络。"
-        : "电脑这边一切正常，多半是服务端临时出错，可以重发；仍然失败请在电脑上点「修复 ChatGPT 启动」。";
+        : "电脑这边一切正常，多半是服务端临时出错，可以重发；仍然失败再试「远程修复 ChatGPT」。";
 }
 
 /// <summary>
@@ -33,10 +33,10 @@ public sealed record DesktopSelfCheckResult(bool RelayListening, bool SignedIn, 
 /// the account still signed in, is the server reachable. Nothing here restarts anything.
 /// </summary>
 /// <remarks>
-/// The relay is not restarted even when it does not answer: its port is written into
-/// ChatGPT's config, and a relay back on another port would fail the same way, silently.
-/// Restarting ChatGPT is 修复 ChatGPT 启动, which stops every conversation, so it stays a
-/// button on this computer.
+/// The relay is not restarted on its own even when it does not answer: its port is
+/// written into ChatGPT's config, and a relay back on another port would fail the same
+/// way, silently. What fixes that is 修复 ChatGPT 启动, which stops every conversation —
+/// a separate, signed command the user asks for from the phone (desktop.repair).
 /// </remarks>
 /// <param name="relayOrigin">Where the loopback relay listens; null when it has not started, which counts as not listening.</param>
 internal sealed class DesktopSelfCheck(

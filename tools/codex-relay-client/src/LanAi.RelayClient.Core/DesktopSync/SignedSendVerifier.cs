@@ -17,11 +17,21 @@ internal static class DesktopSyncCommands
     /// <summary>Read-only checks after a failed turn; touches nothing (see <see cref="DesktopSelfCheck"/>).</summary>
     public const string SelfCheck = "desktop.check";
 
-    public static bool IsKnown(string? type) => type is ListSessions or OpenSession or History or Detail or SendMessage or Navigate or SelfCheck;
+    /// <summary>
+    /// 修复 ChatGPT 启动, from the phone: restarts ChatGPT (keeping its key). Signed like a send,
+    /// because it stops every conversation on this computer.
+    /// </summary>
+    public const string Repair = "desktop.repair";
+
+    /// <summary>The mode a repair is signed with; a repair has no text, so the empty string's hash.</summary>
+    public const string RepairMode = "restart";
+
+    public static bool IsKnown(string? type) =>
+        type is ListSessions or OpenSession or History or Detail or SendMessage or Navigate or SelfCheck or Repair;
 }
 
 /// <summary>
-/// Checks that a message-to-send was signed by the phone the user approved (D-8).
+/// Checks that a message-to-send (or a repair) was signed by the phone the user approved (D-8).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -34,11 +44,13 @@ internal static class DesktopSyncCommands
 /// <para>
 /// The phone signs, as UTF-8, with ECDSA P-256 / SHA-256, in WebCrypto's raw r‖s form:
 /// <code>
-/// cofly-remote/1\n message.send\n {pairing_id}\n {thread_id}\n {mode}\n {sha256 hex of text}\n {ts}\n {nonce}
+/// cofly-remote/1\n {command}\n {pairing_id}\n {thread_id}\n {mode}\n {sha256 hex of text}\n {ts}\n {nonce}
 /// </code>
-/// (no spaces; <c>\n</c> is a newline). The pairing id binds the signature to this
-/// pairing, the thread id to that conversation, and the timestamp and nonce stop a
-/// captured command from being replayed.
+/// (no spaces; <c>\n</c> is a newline). The command binds the signature to what it
+/// asks for, so a captured send cannot be replayed as a restart; the pairing id binds it
+/// to this pairing, the thread id to that conversation, and the timestamp and nonce stop
+/// a captured command from being replayed. A repair signs <c>desktop.repair</c>, mode
+/// <c>restart</c> and empty text.
 /// </para>
 /// <para>
 /// Reads are not signed. Everything a read returns passes through the server anyway,
@@ -55,10 +67,11 @@ internal sealed class SignedSendVerifier
 
     public SignedSendVerifier(Func<DateTimeOffset>? clock = null) => _clock = clock ?? (() => DateTimeOffset.UtcNow);
 
-    public static string Canonical(long pairingId, string threadId, string mode, string text, long timestampMs, string nonce) =>
+    public static string Canonical(long pairingId, string threadId, string mode, string text, long timestampMs, string nonce,
+        string command = DesktopSyncCommands.SendMessage) =>
         string.Join('\n',
             "cofly-remote/1",
-            DesktopSyncCommands.SendMessage,
+            command,
             pairingId.ToString(System.Globalization.CultureInfo.InvariantCulture),
             threadId,
             mode,
@@ -67,7 +80,8 @@ internal sealed class SignedSendVerifier
             nonce);
 
     /// <returns>Null when valid, otherwise why not.</returns>
-    public string? Verify(ApprovedPhone phone, string threadId, string mode, string text, long timestampMs, string? nonce, string? signature)
+    public string? Verify(ApprovedPhone phone, string threadId, string mode, string text, long timestampMs, string? nonce, string? signature,
+        string command = DesktopSyncCommands.SendMessage)
     {
         if (string.IsNullOrEmpty(nonce) || nonce.Length is < 16 or > 128 || string.IsNullOrEmpty(signature))
         {
@@ -91,7 +105,7 @@ internal sealed class SignedSendVerifier
             return "签名格式错误";
         }
 
-        byte[] message = Encoding.UTF8.GetBytes(Canonical(phone.PairingId, threadId, mode, text, timestampMs, nonce));
+        byte[] message = Encoding.UTF8.GetBytes(Canonical(phone.PairingId, threadId, mode, text, timestampMs, nonce, command));
         try
         {
             using var key = ECDsa.Create();

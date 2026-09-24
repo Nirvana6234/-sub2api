@@ -304,13 +304,15 @@ public sealed class DesktopSyncAgentTests : IDisposable
     private DesktopSyncAgent AgentWith(
         Func<CancellationToken, Task<DesktopStartResult>>? start = null,
         Func<CancellationToken, Task<DesktopSelfCheckResult>>? check = null,
-        TimeSpan? answerWait = null)
+        TimeSpan? answerWait = null,
+        Func<CancellationToken, Task<string?>>? repair = null)
     {
         var agent = new DesktopSyncAgent(_tools, new SessionContentSync(_find), _find, _store, _audit, clock: () => _now,
-            startDesktop: start, selfCheck: check)
+            startDesktop: start, selfCheck: check, repairDesktop: repair)
         {
             ConfirmTimeout = TimeSpan.FromMilliseconds(300),
             StartAnswerWait = answerWait ?? TimeSpan.FromSeconds(2),
+            RepairAnswerWait = answerWait ?? TimeSpan.FromSeconds(2),
         };
         _extraAgents.Add(agent);
         return agent;
@@ -488,6 +490,146 @@ public sealed class DesktopSyncAgentTests : IDisposable
     [InlineData(false, false, false, "重新登录")]
     public void TheSummaryNamesTheFirstProblem(bool relay, bool signedIn, bool server, string expected) =>
         Assert.Contains(expected, new DesktopSelfCheckResult(relay, signedIn, server).Summary);
+
+    // ---- 远程修复 ChatGPT ----------------------------------------------------------------
+
+    private Dictionary<string, object> SignedRepair(ECDsa? key = null)
+    {
+        long ts = _now.ToUnixTimeMilliseconds();
+        string nonce = Convert.ToBase64String(RandomNumberGenerator.GetBytes(18));
+        byte[] message = Encoding.UTF8.GetBytes(SignedSendVerifier.Canonical(
+            PairingId, Thread, DesktopSyncCommands.RepairMode, string.Empty, ts, nonce, DesktopSyncCommands.Repair));
+        byte[] sig = (key ?? _phoneKey).SignData(message, HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
+        return new Dictionary<string, object>
+        {
+            ["type"] = "desktop.repair",
+            ["thread_id"] = Thread,
+            ["ts"] = ts,
+            ["nonce"] = nonce,
+            ["sig"] = Convert.ToBase64String(sig),
+        };
+    }
+
+    [Fact]
+    public async Task ASignedRepairRunsOnceAndIsAudited()
+    {
+        int repairs = 0;
+        DesktopSyncAgent agent = AgentWith(repair: _ =>
+        {
+            repairs++;
+            return Task.FromResult<string?>(null);
+        });
+
+        JsonElement answer = await Handle(agent, SignedRepair());
+
+        Assert.True(answer.GetProperty("repaired").GetBoolean());
+        Assert.Equal(1, repairs);
+        Assert.Equal(["ok", "started"], _audit.Recent(2).Select(e => e.Outcome));
+        Assert.Equal(DesktopSyncCommands.Repair, _audit.Recent(1)[0].Command);
+    }
+
+    /// <summary>The server relays every command; only the phone's key can ask for a restart.</summary>
+    [Fact]
+    public async Task AnUnsignedOrForeignSignedRepairDoesNothing()
+    {
+        int repairs = 0;
+        DesktopSyncAgent agent = AgentWith(repair: _ =>
+        {
+            repairs++;
+            return Task.FromResult<string?>(null);
+        });
+        using var stranger = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+
+        JsonElement unsigned = await Handle(agent, new { type = "desktop.repair", thread_id = Thread });
+        JsonElement forged = await Handle(agent, SignedRepair(stranger));
+        JsonElement replayedSend = await Handle(agent, Replace(Signed("x"), "type", "desktop.repair"));
+
+        Assert.Equal("bad_signature", unsigned.GetProperty("error").GetString());
+        Assert.Equal("bad_signature", forged.GetProperty("error").GetString());
+        Assert.Equal("bad_signature", replayedSend.GetProperty("error").GetString());
+        Assert.Equal(0, repairs);
+    }
+
+    [Fact]
+    public async Task ARepairThatWorkedIsNotRepeatedWithinTheInterval()
+    {
+        int repairs = 0;
+        DesktopSyncAgent agent = AgentWith(repair: _ =>
+        {
+            repairs++;
+            return Task.FromResult<string?>(null);
+        });
+
+        await Handle(agent, SignedRepair());
+        JsonElement again = await Handle(agent, SignedRepair());
+        _now += DesktopSyncAgent.RepairInterval + TimeSpan.FromSeconds(1);
+        JsonElement later = await Handle(agent, SignedRepair());
+
+        Assert.Equal("rate_limited", again.GetProperty("error").GetString());
+        Assert.True(later.GetProperty("repaired").GetBoolean());
+        Assert.Equal(2, repairs);
+    }
+
+    /// <summary>A repair that failed can be asked for again at once, with the reason shown.</summary>
+    [Fact]
+    public async Task AFailedRepairSaysWhyAndCanBeRetried()
+    {
+        int repairs = 0;
+        DesktopSyncAgent agent = AgentWith(repair: _ =>
+        {
+            repairs++;
+            return Task.FromResult<string?>(repairs == 1 ? "这个账号还没有可用于 Codex 的分组" : null);
+        });
+
+        JsonElement failed = await Handle(agent, SignedRepair());
+        JsonElement retried = await Handle(agent, SignedRepair());
+
+        Assert.Equal("repair_failed", failed.GetProperty("error").GetString());
+        Assert.Contains("分组", failed.GetProperty("message").GetString());
+        Assert.True(retried.GetProperty("repaired").GetBoolean());
+    }
+
+    /// <summary>Restarting takes longer than the server waits: the phone hears it is under way, and a second ask does not start another.</summary>
+    [Fact]
+    public async Task ASlowRepairIsReportedInProgressAndNotStartedTwice()
+    {
+        int repairs = 0;
+        var done = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        DesktopSyncAgent agent = AgentWith(repair: _ =>
+        {
+            repairs++;
+            return done.Task;
+        }, answerWait: TimeSpan.FromMilliseconds(20));
+
+        JsonElement first = await Handle(agent, SignedRepair());
+        JsonElement second = await Handle(agent, SignedRepair());
+
+        Assert.True(first.GetProperty("in_progress").GetBoolean());
+        Assert.True(second.GetProperty("in_progress").GetBoolean());
+        Assert.Equal(1, repairs);
+
+        done.SetResult(null);
+        DateTime deadline = DateTime.UtcNow.AddSeconds(5);
+        while (_audit.Recent(1)[0].Outcome != "ok" && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+        }
+
+        Assert.Equal("ok", _audit.Recent(1)[0].Outcome);
+    }
+
+    [Fact]
+    public async Task TheSelfCheckCountsRunningConversations()
+    {
+        _tools.Threads.Add(new DesktopThread("a", "active", null, null, 1));
+        _tools.Threads.Add(new DesktopThread("b", "idle", null, null, 1));
+        _tools.Threads.Add(new DesktopThread("c", "active", null, null, 1));
+        DesktopSyncAgent agent = AgentWith();
+
+        JsonElement answer = await Handle(agent, new { type = "desktop.check", thread_id = Thread });
+
+        Assert.Equal(2, answer.GetProperty("active_conversations").GetInt32());
+    }
 
     // ---- Reading ---------------------------------------------------------------------
 

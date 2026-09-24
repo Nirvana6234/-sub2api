@@ -766,6 +766,49 @@ public sealed partial class DashboardViewModel : ObservableObject
             : new DesktopSync.DesktopStartResult(DesktopSync.DesktopStartOutcome.Refused, CodexMessage ?? "电脑上的 ChatGPT 没有启动");
     }
 
+    /// <summary>
+    /// 修复 ChatGPT 启动, asked for from the phone: the relay started, config rewritten, and
+    /// ChatGPT restarted when it is running.
+    /// </summary>
+    /// <remarks>
+    /// The button's repair without its dialog: nobody is at this computer to answer it, and
+    /// the phone's signed request, confirmed there, is the consent. Unlike the button it
+    /// keeps the key: what breaks while nobody is here is ChatGPT pointing at a relay that
+    /// is gone (a client restart, say), which the restart fixes; replacing the key is for
+    /// a key that is itself broken, and is left to the button. The restart confirmation
+    /// passed on is still "no" — <c>forceRestart</c> already restarts, and nothing else
+    /// should be agreed to on the user's behalf. Never installs, and never runs while a
+    /// start or an install is under way (<see cref="StartCodexAsync"/> lets a forced restart
+    /// through an install, so that is checked here).
+    /// </remarks>
+    /// <returns>Null when ChatGPT is up again, otherwise why not.</returns>
+    public async Task<string?> RepairCodexForPhoneAsync(CancellationToken cancellationToken = default)
+    {
+        if (IsStartingCodex || IsInstallingCodex)
+        {
+            return "电脑上正在启动或安装 ChatGPT，请稍后再试。";
+        }
+
+        CodexHealth health = await _codex.CheckAsync(cancellationToken).ConfigureAwait(true);
+        IsCodexRunning = health.IsRunning;
+        if (!health.IsInstalled)
+        {
+            return "电脑上还没有安装 ChatGPT，请在电脑上安装。";
+        }
+
+        // forceRestart even when not running: it takes the path that neither asks nor, for a
+        // stopped ChatGPT, has anything to stop — the other path asks about an account
+        // switch, and the answer here would be no.
+        await StartCodexAsync(_ => Task.FromResult(false), cancellationToken, forceRestart: true)
+            .ConfigureAwait(true);
+        if (!IsCodexRunning)
+        {
+            IsCodexRunning = (await _codex.CheckAsync(cancellationToken).ConfigureAwait(true)).IsRunning;
+        }
+
+        return IsCodexRunning ? null : CodexMessage ?? "修复后 ChatGPT 没有启动";
+    }
+
     public async Task InstallCodexAsync(CancellationToken cancellationToken = default)
     {
         if (IsInstallingCodex)

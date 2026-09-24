@@ -275,7 +275,11 @@ public partial class App : Application
             // never an install, never a restart (see StartCodexForPhoneAsync).
             startDesktop: cancellationToken => Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(
                 () => dashboard.StartCodexForPhoneAsync(cancellationToken)),
-            selfCheck: selfCheck.RunAsync);
+            selfCheck: selfCheck.RunAsync,
+            // 修复 ChatGPT 启动 without its dialog: the phone's signed, confirmed request is
+            // the consent (see RepairCodexForPhoneAsync).
+            repairDesktop: cancellationToken => Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(
+                () => dashboard.RepairCodexForPhoneAsync(cancellationToken)));
         syncAgent.Start();
         var syncLink = new DesktopSyncLink(
             new Uri(ClientOptions.ServerAddress),

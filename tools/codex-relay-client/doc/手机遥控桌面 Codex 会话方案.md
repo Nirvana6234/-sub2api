@@ -351,7 +351,7 @@ v1 只实现 Codex，但要把「会话来源」抽象出来，免得以后接 C
 | `GET  /api/v1/remote/devices/:device_id/sessions/:thread_id/stream?cursor=`（SSE） | 手机 | 跟读一条会话；连上时服务端向助手发 `subscribe`，断开时发 `unsubscribe` |
 | `GET  /api/v1/remote/agent?device_id=`（WebSocket） | 助手 | 助手的长连接 |
 
-服务端对 `cmd` 只检查信封：`type` 必须是 `sessions.list` / `session.open` / `session.history` / `session.detail` / `message.send` / `thread.navigate` / `desktop.check` 之一，体积 ≤ 64 KB。这是第二道防线，第一道在助手本地（§5.2）。
+服务端对 `cmd` 只检查信封：`type` 必须是 `sessions.list` / `session.open` / `session.history` / `session.detail` / `message.send` / `thread.navigate` / `desktop.check` / `desktop.repair` 之一，体积 ≤ 64 KB。这是第二道防线，第一道在助手本地（§5.2）。
 
 ### 7.2 与助手之间的帧
 
@@ -395,7 +395,8 @@ WebSocket 文本帧，JSON：
 | `session.detail` | `thread_id`，`turn_id`，`item_id`，`part`（`output` / `diff` / `image`），`index` | `text`，或 `media_type` + `data`（base64）；`truncated` |
 | `message.send` | `thread_id`，`text`（≤ 8000 字），`mode`（`queue` 默认 / `insert`），`ts`（毫秒），`nonce`，`sig` | `queued`：`true` 表示会话正忙，助手会在这一轮结束后再发；`waiting_for_desktop`：`true` 表示桌面版没有回应，消息排队等它就绪（3 分钟内不就绪即丢弃并记审计）；`starting_desktop`：`true` 表示助手正为此启动 ChatGPT（只在 ChatGPT 未运行时启动，不安装、不重启；启动被拒（没装、没有分组、需要重启等）时回 `desktop_start_refused`，`message` 是原因，手机原样显示） |
 | `thread.navigate` | `thread_id` | — |
-| `desktop.check` | `thread_id`（须是已勾选会话） | 只读自检，不重启任何东西：`desktop_running`、`relay_listening`（本机中转能否应答）、`signed_in`、`server_reachable`（服务器 `/health`）、`summary`（给手机的一句话）。轮次失败后由用户在手机上点「电脑自检」触发；重启 ChatGPT 的修复只提示到电脑上做 |
+| `desktop.check` | `thread_id`（须是已勾选会话） | 只读自检，不重启任何东西：`desktop_running`、`relay_listening`（本机中转能否应答）、`signed_in`、`server_reachable`（服务器 `/health`）、`summary`（给手机的一句话）。另带 `active_conversations`（电脑上正在运行的会话数，给远程修复的确认用）。轮次失败后由用户在手机上点「电脑自检」触发 |
+| `desktop.repair` | `thread_id`（须是已勾选会话），`ts`，`nonce`，`sig` | 远程「修复 ChatGPT 启动」：起本机中转、改写配置、重启 ChatGPT（会中断电脑上所有会话）；**不换授权**（换 key 只留给电脑上的按钮）。**要签名**，签名串同下，命令段为 `desktop.repair`、`mode` 固定 `restart`、`text` 为空串。同一时间只跑一个；成功或进行中的修复 2 分钟内不再接受（`rate_limited`），失败的可立刻重试。8 秒内完成回 `repaired: true`，否则回 `in_progress: true`，结果写审计；失败回 `repair_failed` 带原因。不安装、安装或启动进行中时拒绝 |
 
 `items[]` 每项：`seq`、`turn_id`、`item_id`、`kind`（`user` / `progress` / `reply` / `thinking` / `command` / `file_change` / `tool` / `image` / `running` / `notice` / `turn_started` / `turn_ended` / `unknown`），按需带 `text`、`origin`（`desktop` / `phone` / `delegated`）、`phase_missing`（`progress` 消息在 rollout 里没有 `phase`，可能其实是最终回答；手机在该轮结束且没有 `reply` 时，把这一轮最后一条这样的消息当 `reply` 显示）、`image_count`、`command`、`exit_code`、`status`、`duration_ms`、`output_preview`、`output_truncated`、`files[]`（`path`、`change`、`added`、`removed`）、`outcome`（`completed` / `failed` / `aborted`）。`running` 卡片在同一轮出现任何后续条目时由手机收起。
 
@@ -414,12 +415,12 @@ WebSocket 文本帧，JSON：
 
 **游标** 形如 `123456.ab12cd34`：字节偏移加上 rollout 路径哈希的前 8 位。手机当它不透明的字符串用。
 
-**签名（D-8）**：配对时手机用 WebCrypto 生成 **ECDSA P-256** 密钥对（私钥设为不可导出），把公钥的 **SPKI 的 base64** 作为 `public_key` 提交。每条 `message.send` 对下面这个 UTF-8 字符串签名（`
+**签名（D-8）**：配对时手机用 WebCrypto 生成 **ECDSA P-256** 密钥对（私钥设为不可导出），把公钥的 **SPKI 的 base64** 作为 `public_key` 提交。每条 `message.send`（以及 `desktop.repair`）对下面这个 UTF-8 字符串签名（`
 ` 为换行，各段之间没有空格），签名格式是 WebCrypto 的原生 r‖s（64 字节），base64 后放进 `sig`：
 
 ```
 cofly-remote/1
-message.send
+{命令：message.send 或 desktop.repair}
 {pairing_id}
 {thread_id}
 {mode}
@@ -428,7 +429,7 @@ message.send
 {nonce}
 ```
 
-`nonce` 为 16～128 个字符的随机串（建议 18 字节随机数的 base64）。助手拒绝 5 分钟以前的 `ts`，以及用过的 `nonce`。
+命令名在签名串里，所以截获的一条发送签名不能当作重启 ChatGPT 的指令用。`nonce` 为 16～128 个字符的随机串（建议 18 字节随机数的 base64）。助手拒绝 5 分钟以前的 `ts`，以及用过的 `nonce`。
 
 **指纹**：对 `public_key` 这个 base64 **字符串本身**的 UTF-8 做 SHA-256，取前 3 字节，写成大写十六进制并在第 3 位后空一格（例如 `A1B 2C3`）。手机配对后显示它，电脑的确认框也显示它，两边一致才点确认。
 
