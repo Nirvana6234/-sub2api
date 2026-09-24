@@ -26,6 +26,10 @@ const (
 	ContextKeyAuthEmail = "auth_email"
 	// ContextKeySessionID 认证中间件写入的会话 ID（refresh token family）。
 	ContextKeySessionID = "session_id"
+	// ContextKeyTokenExpiresAt JWT 中间件写入的 access token 过期时间（time.Time）。
+	// 长连接（手机同步的助手 WebSocket）据此在 token 过期时主动断开，
+	// 否则只在握手时校验一次的连接会比签发它的 token 活得更久。
+	ContextKeyTokenExpiresAt = "token_expires_at"
 )
 
 // SetAuditAction 允许 handler / 中间件为当前请求指定审计动作名（覆盖自动推导）。

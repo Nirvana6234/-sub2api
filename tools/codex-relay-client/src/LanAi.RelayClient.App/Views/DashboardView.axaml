@@ -1,0 +1,189 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:LanAi.RelayClient.ViewModels;assembly=LanAi.RelayClient.Core"
+             x:Class="LanAi.RelayClient.App.Views.DashboardView"
+             x:DataType="vm:DashboardPageViewModel">
+
+  <!-- Styles live here rather than on each page: every page is hosted below, so they
+       cascade to all of them from one place.
+
+       WPF's Style.Triggers / DataTrigger has no Avalonia counterpart. The replacement
+       is a style class toggled by a boolean binding, which is why the controls carry
+       Classes.installing / Classes.restart / Classes.low / Classes.unread. Same effect,
+       but the condition lives on the control and the appearance lives here. -->
+  <UserControl.Styles>
+    <Style Selector="Button.primary">
+      <Setter Property="Background" Value="#2563EB" />
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="Button.primary.installing">
+      <Setter Property="Background" Value="#6B7280" />
+    </Style>
+    <!-- Restart wins over installing: it is the state the user must act on. Later
+         selectors of equal specificity win in Avalonia, so the order here matters. -->
+    <Style Selector="Button.primary.restart">
+      <Setter Property="Background" Value="#DC2626" />
+    </Style>
+
+    <Style Selector="Button.recharge">
+      <Setter Property="Background" Value="#F3F4F6" />
+      <Setter Property="Foreground" Value="#374151" />
+      <Setter Property="BorderBrush" Value="#D1D5DB" />
+    </Style>
+    <Style Selector="Button.recharge.low">
+      <Setter Property="Background" Value="#DC2626" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="BorderBrush" Value="#DC2626" />
+    </Style>
+
+    <Style Selector="Button.bell">
+      <Setter Property="BorderBrush" Value="#D1D5DB" />
+      <Setter Property="Foreground" Value="#111827" />
+    </Style>
+    <Style Selector="Button.bell.unread">
+      <Setter Property="BorderBrush" Value="#2563EB" />
+      <Setter Property="Foreground" Value="#2563EB" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+
+    <Style Selector="Button.link">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Foreground" Value="#2563EB" />
+      <Setter Property="FontSize" Value="11" />
+    </Style>
+
+    <Style Selector="Button.secondary">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="#D1D5DB" />
+      <Setter Property="Foreground" Value="#374151" />
+      <Setter Property="Padding" Value="10,4" />
+    </Style>
+
+    <Style Selector="Border.card">
+      <Setter Property="Background" Value="White" />
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="Padding" Value="16" />
+      <Setter Property="Margin" Value="0,0,0,12" />
+      <Setter Property="BorderBrush" Value="#E5E7EB" />
+      <Setter Property="BorderThickness" Value="1" />
+    </Style>
+
+    <Style Selector="TextBlock.cardTitle">
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="TextBlock.hint">
+      <Setter Property="Foreground" Value="#9CA3AF" />
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+    <Style Selector="TextBlock.label">
+      <Setter Property="Foreground" Value="#6B7280" />
+      <Setter Property="FontSize" Value="12" />
+    </Style>
+    <Style Selector="TextBlock.unavailable">
+      <Setter Property="Foreground" Value="#9CA3AF" />
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="HorizontalAlignment" Value="Right" />
+    </Style>
+
+    <!-- The left rail. -->
+    <Style Selector="ListBox#NavList ListBoxItem">
+      <Setter Property="Padding" Value="10,9" />
+      <Setter Property="Margin" Value="0,0,0,2" />
+      <Setter Property="CornerRadius" Value="6" />
+    </Style>
+    <Style Selector="ListBox#NavList ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="#EFF6FF" />
+    </Style>
+    <Style Selector="ListBox#NavList ListBoxItem:selected">
+      <Setter Property="Foreground" Value="#2563EB" />
+    </Style>
+    <Style Selector="Button.nav">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="HorizontalAlignment" Value="Stretch" />
+      <Setter Property="HorizontalContentAlignment" Value="Left" />
+      <Setter Property="Padding" Value="10,9" />
+      <Setter Property="CornerRadius" Value="6" />
+      <Setter Property="Foreground" Value="#111827" />
+    </Style>
+    <Style Selector="Button.nav.selected">
+      <Setter Property="Background" Value="#EFF6FF" />
+      <Setter Property="Foreground" Value="#2563EB" />
+    </Style>
+  </UserControl.Styles>
+
+  <Grid ColumnDefinitions="176,*">
+
+    <Border Grid.Column="0" Background="White" BorderBrush="#E5E7EB" BorderThickness="0,0,1,0">
+      <DockPanel Margin="12,20,12,12">
+        <TextBlock DockPanel.Dock="Top" Text="共飞 AI 助手"
+                   FontSize="16" FontWeight="SemiBold" Margin="10,0,0,16" />
+
+        <StackPanel DockPanel.Dock="Bottom">
+          <Button Classes="nav" Classes.selected="{Binding Navigation.IsSettingsSelected}"
+                  Click="Settings_OnClick">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="{Binding Navigation.SettingsItem.Glyph}" Width="22" />
+              <TextBlock Text="{Binding Navigation.SettingsItem.Title}" />
+            </StackPanel>
+          </Button>
+          <Border Height="1" Background="#E5E7EB" Margin="0,8" />
+          <DockPanel Margin="10,0,0,0">
+            <!-- 退出 asks what it should mean (minimise / sign out / quit); see
+                 DashboardView.SignOutAsync. -->
+            <Button DockPanel.Dock="Right" Content="退出" Click="SignOut_OnClick"
+                    Classes="link" Padding="6,0" FontSize="12" />
+            <TextBlock Text="{Binding WelcomeText}" Foreground="#6B7280" FontSize="12"
+                       TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+          </DockPanel>
+        </StackPanel>
+
+        <!-- Selection is mirrored by hand, not bound: this list cannot hold 设置, and a
+             two-way binding would write null back whenever 设置 is chosen. -->
+        <ListBox Name="NavList" ItemsSource="{Binding Navigation.Items}"
+                 SelectionMode="Single" Background="Transparent"
+                 SelectionChanged="NavList_OnSelectionChanged">
+          <ListBox.ItemTemplate>
+            <DataTemplate x:DataType="vm:NavItemViewModel">
+              <Grid ColumnDefinitions="22,*,Auto">
+                <TextBlock Text="{Binding Glyph}" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1" Text="{Binding Title}" VerticalAlignment="Center" />
+                <Ellipse Grid.Column="2" Width="8" Height="8" Fill="#DC2626"
+                         VerticalAlignment="Center" IsVisible="{Binding HasBadge}" />
+              </Grid>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </DockPanel>
+    </Border>
+
+    <DockPanel Grid.Column="1" Margin="28,20,28,12">
+      <Grid DockPanel.Dock="Top" Margin="0,0,0,16">
+        <StackPanel>
+          <TextBlock Text="{Binding Navigation.Title}" FontSize="20" FontWeight="SemiBold" />
+          <TextBlock Text="{Binding Dashboard.RefreshState.RefreshMessage}"
+                     Foreground="#B45309" FontSize="12" Margin="0,2,0,0"
+                     IsVisible="{Binding Dashboard.RefreshState.IsRateLimited}" />
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top">
+          <!-- One of three ways into the reader, alongside the tray menu and the tray
+               balloon. All three read the same view model, so this count cannot
+               disagree with what the list shows. -->
+          <Button Content="{Binding Announcements.BellLabel}"
+                  Classes="bell"
+                  Classes.unread="{Binding Announcements.HasUnread}"
+                  Click="ShowAnnouncements_OnClick"
+                  Padding="10,4" Margin="0,0,8,0" Background="Transparent" />
+          <Button Content="刷新" Click="Refresh_OnClick"
+                  IsEnabled="{Binding !Dashboard.RefreshState.IsRefreshing}"
+                  Classes="secondary" />
+        </StackPanel>
+      </Grid>
+
+      <!-- Pages are built once by DashboardView and swapped here by ClientPage. -->
+      <ContentControl Name="PageHost" />
+    </DockPanel>
+  </Grid>
+</UserControl>

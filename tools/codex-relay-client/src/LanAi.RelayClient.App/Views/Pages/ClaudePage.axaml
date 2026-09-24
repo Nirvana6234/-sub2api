@@ -1,0 +1,76 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:LanAi.RelayClient.ViewModels;assembly=LanAi.RelayClient.Core"
+             xmlns:controls="clr-namespace:LanAi.RelayClient.Controls"
+             x:Class="LanAi.RelayClient.App.Views.Pages.ClaudePage"
+             x:DataType="vm:DashboardPageViewModel">
+
+  <!-- Claude Code and the VS Code extension built on it: a path of its own beside
+       Codex, with its own Claude group. Off by default, since it writes files outside
+       this client; put back on exit. -->
+  <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <StackPanel>
+
+      <Border Classes="card" Margin="0">
+        <StackPanel>
+          <TextBlock Text="Claude Code / VS Code 插件" Classes="cardTitle" />
+          <TextBlock Classes="hint" Margin="0,4,0,0"
+                     Text="开启后，Claude Code 命令行及其 VS Code 插件通过共飞使用你账号里的 Claude 分组。只在客户端运行期间有效，退出时自动还原你原来的配置。" />
+
+          <CheckBox Content="接入 Claude Code（支持 VS Code 插件等）"
+                    IsChecked="{Binding Dashboard.ClaudeCode.PluginSupportEnabled}"
+                    IsEnabled="{Binding Dashboard.ClaudeCode.CanConfigurePluginSupport}"
+                    Foreground="#374151" Margin="0,12,0,0" />
+          <TextBlock Text="当前连接方式不支持接入 Claude Code" Classes="hint" Margin="0,4,0,0"
+                     IsVisible="{Binding !Dashboard.ClaudeCode.CanConfigurePluginSupport}" />
+
+          <StackPanel IsVisible="{Binding Dashboard.ClaudeCode.PluginSupportEnabled}" Margin="0,12,0,0">
+            <TextBlock Text="插件使用的 Claude 分组" FontWeight="SemiBold" Classes="label" Margin="0,0,0,6" />
+            <ComboBox ItemsSource="{Binding Dashboard.ClaudeCode.ClaudePluginGroups}"
+                      SelectedItem="{Binding Dashboard.ClaudeCode.SelectedClaudePluginGroup, Mode=TwoWay}"
+                      IsVisible="{Binding Dashboard.ClaudeCode.HasClaudePluginGroups}"
+                      IsEnabled="{Binding Dashboard.ClaudeCode.CanChooseGroup}"
+                      controls:ComboBoxWheelBehavior.DisableMouseWheel="True"
+                      HorizontalAlignment="Stretch" Padding="8,6" PlaceholderText="点击选择 Claude 分组">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:GroupItemViewModel">
+                  <TextBlock Text="{Binding DisplayText}" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+            <TextBlock Text="该账号没有可用的 Claude 分组" Foreground="#9CA3AF" FontSize="12"
+                       IsVisible="{Binding !Dashboard.ClaudeCode.HasClaudePluginGroups}" />
+            <TextBlock Text="{Binding Dashboard.LocalProxy.ClaudeStatusText, StringFormat='{}{0}：分组暂不生效，可在「本地代理」页改回经中转站。'}"
+                       TextWrapping="Wrap" Foreground="#B45309" FontSize="12" Margin="0,4,0,0"
+                       IsVisible="{Binding Dashboard.LocalProxy.IsClaudeActive}" />
+            <TextBlock Text="{Binding Dashboard.ClaudeCode.PluginSupportStatus}"
+                       IsVisible="{Binding Dashboard.ClaudeCode.HasPluginSupportStatus}"
+                       Classes="hint" Margin="0,4,0,0" />
+
+            <!-- The account's Claude model preference. Shown only once a Claude group is
+                 chosen, because choosing one is what loads it from the server — editing
+                 it before then would save the untouched thinking level over the real one.
+                 The Codex page binds the same properties. -->
+            <StackPanel Margin="0,12,0,0"
+                        IsVisible="{Binding Dashboard.ClaudeCode.SelectedClaudePluginGroup, Converter={x:Static ObjectConverters.IsNotNull}}">
+              <TextBlock Text="Claude 模型" FontWeight="SemiBold" Classes="label" Margin="0,0,0,6" />
+              <Grid ColumnDefinitions="*,8,*">
+                <ComboBox Grid.Column="0"
+                          ItemsSource="{x:Static vm:ClaudePreferenceViewModel.ClaudeModels}"
+                          SelectedItem="{Binding Dashboard.ClaudePreference.SelectedClaudeModel, Mode=TwoWay}"
+                          HorizontalAlignment="Stretch" Padding="8,6" />
+                <ComboBox Grid.Column="2"
+                          ItemsSource="{x:Static vm:ClaudePreferenceViewModel.ClaudeThinkingLevels}"
+                          SelectedItem="{Binding Dashboard.ClaudePreference.SelectedClaudeThinkingLevel, Mode=TwoWay}"
+                          HorizontalAlignment="Stretch" Padding="8,6" />
+              </Grid>
+              <TextBlock Classes="hint" Margin="0,4,0,0"
+                         Text="账号级设置：Codex 使用 Claude 分组时也按此设置。插件只采用模型，思考强度在插件里自行设置。" />
+            </StackPanel>
+          </StackPanel>
+        </StackPanel>
+      </Border>
+
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

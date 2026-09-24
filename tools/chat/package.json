@@ -1,0 +1,48 @@
+{
+  "name": "chat",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "export": "cross-env PAW_STATIC_EXPORT=1 BUILD_MODE=export PAW_MOUNT_PATH=/paw next build",
+    "export:desktop": "cross-env PAW_STATIC_EXPORT=1 BUILD_MODE=export PAW_MOUNT_PATH= BUILD_APP=1 next build",
+    "stage:server": "node scripts/stage-server-dist.mjs",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"src/client/remote/*.test.ts\" \"src/client/paw/*.test.ts\"",
+    "codex:vendor": "node scripts/fetch-codex-vendor.mjs",
+    "app:dev": "node scripts/dev-desktop.mjs",
+    "app:build": "node scripts/build-tauri.mjs",
+    "app:build:local": "cross-env PAW_SERVICE_URL=http://127.0.0.1:8080 node scripts/build-tauri.mjs",
+    "app:build:release": "cross-env PAW_SERVICE_URL=https://gongfeiai.com node scripts/build-tauri.mjs"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-dialog": "^2.7.3",
+    "@tauri-apps/plugin-http": "^2.6.0",
+    "katex": "^0.16.22",
+    "mermaid": "^11.12.0",
+    "next": "^14.2.30",
+    "qrcode": "^1.5.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^9.0.1",
+    "rehype-highlight": "^7.0.0",
+    "rehype-katex": "^7.0.0",
+    "remark-breaks": "^3.0.2",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
+    "zustand": "^5.0.7"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4",
+    "@types/node": "^22.12.0",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "cross-env": "^7.0.3",
+    "typescript": "^5.7.3"
+  }
+}

@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AssemblyName>LanAi.RelayClient.CodexBinding</AssemblyName>
+    <RootNamespace>LanAi.RelayClient.CodexBinding</RootNamespace>
+
+    <!-- Third project to get this guard. The snapshot manifest below is what restores
+         a user to their own ChatGPT account; reflection-based JSON here fails silently
+         under trimming and takes that recovery with it. -->
+    <IsTrimmable>true</IsTrimmable>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+  </PropertyGroup>
+
+  <!-- Same package and version as AiSwitch.Infrastructure, so it is already restored
+       and there is one SQLite build to reason about rather than two. Only the session
+       migrator uses it: Codex keeps each conversation's provider in its own state
+       database, and there is no other way to reach it. -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.28" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="LanAi.RelayClient.CodexBinding.Tests" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,131 @@
+using CommunityToolkit.Mvvm.ComponentModel;
+using LanAi.RelayClient.Server;
+
+namespace LanAi.RelayClient.ViewModels;
+
+/// <summary>
+/// One selectable group, labelled the way the web panel labels it (F5.1, F5.2).
+/// </summary>
+/// <remarks>
+/// Public, like every bound type: WPF cannot bind to internal members, and a
+/// failed binding yields no value rather than an error.
+/// </remarks>
+public sealed partial class GroupItemViewModel : ObservableObject
+{
+    private GroupItemViewModel()
+    {
+        Id = 0;
+        Name = "自动分组";
+        Description = "按模型与所选策略自动选择可用分组";
+        Platform = "openai";
+        RateLabel = "自动";
+        RateDescription = "实际倍率取决于每次请求自动选择的分组";
+        IsAutomatic = true;
+    }
+
+    internal GroupItemViewModel(RelayGroup group, GroupRate rate, string? serverUtcOffset)
+    {
+        Id = group.Id;
+        Name = group.Name;
+        Description = group.Description;
+        Platform = group.Platform;
+        IsSubscription = group.IsSubscription;
+        AllowedModels = group.ModelAllowlist.Enabled
+            ? group.ModelAllowlist.Models
+                .Where(m => !string.IsNullOrWhiteSpace(m))
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(m => m, StringComparer.Ordinal)
+                .ToArray()
+            : [];
+
+        // Subscription groups show the word "订阅" where standard groups show a
+        // number — matching GroupBadge, which returns t('groups.subscription')
+        // for them. Printing a multiplier here would disagree with the panel on
+        // the very screen M2 is judged against.
+        RateLabel = group.IsSubscription
+            ? "订阅"
+            : FormatMultiplier(rate.EffectiveMultiplier);
+        RateDescription = group.IsSubscription
+            ? "订阅分组：消耗订阅额度，不按倍率扣账户余额"
+            : $"1 Token 计价相当于官方标准计价的 {rate.EffectiveMultiplier.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)} 倍";
+
+        // Only shown when a user-specific rate actually differs from the group's
+        // own; the panel strikes the default through in that case and shows a
+        // single value otherwise.
+        StruckThroughRateLabel = !group.IsSubscription && rate.HasUserOverride
+            ? FormatMultiplier(rate.DefaultMultiplier)
+            : null;
+
+        PeakLabel = rate.Peak?.Format(serverUtcOffset);
+    }
+
+    public static GroupItemViewModel CreateAutomatic() => new();
+
+    public long Id { get; }
+
+    public string Name { get; }
+
+    public string Description { get; }
+
+    public string Platform { get; }
+
+    public bool IsSubscription { get; }
+
+    /// <summary>The group's whitelisted models; empty when the group has no whitelist switched on.</summary>
+    public IReadOnlyList<string> AllowedModels { get; } = [];
+
+    /// <summary>
+    /// Whether to offer the 模型 button. Only a switched-on whitelist gives the group a
+    /// definite list of its own; without one every model the pool serves is fair game and
+    /// there is nothing meaningful to list. Always false for 自动分组.
+    /// </summary>
+    public bool HasModelAllowlist => AllowedModels.Count > 0;
+
+    public bool IsAutomatic { get; }
+
+    [ObservableProperty]
+    private bool isAutoGroupCandidateSelected;
+
+    /// <summary>The multiplier in force, or "订阅" for subscription groups.</summary>
+    public string RateLabel { get; }
+
+    /// <summary>
+    /// Explains what the multiplier means: a ratio against official pricing, plus the concrete
+    /// account-balance deduction for one dollar of official-priced Token quota.
+    /// </summary>
+    public string RateDescription { get; }
+
+    public bool HasRateDescription => !string.IsNullOrWhiteSpace(RateDescription);
+
+    /// <summary>The group default, shown struck through only when a personal rate overrides it.</summary>
+    public string? StruckThroughRateLabel { get; }
+
+    public bool HasStruckThroughRate => StruckThroughRateLabel is not null;
+
+    /// <summary>The peak window, already carrying the server's timezone. Null when none applies.</summary>
+    public string? PeakLabel { get; }
+
+    public bool HasPeak => PeakLabel is not null;
+
+    public bool HasDescription => !string.IsNullOrWhiteSpace(Description);
+
+    /// <summary>
+    /// Name and rate on one line, for the collapsed dropdown and each row.
+    /// </summary>
+    /// <remarks>
+    /// The rate travels with the name everywhere the group is named, because for a
+    /// novice user "which group" and "what does it cost" are the same question —
+    /// a bare name would make them open the list to find out.
+    /// </remarks>
+    public string DisplayText => $"{Name}   {RateLabel}";
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CurrentMarker))]
+    private bool isCurrent;
+
+    /// <summary>Marks the row that is actually in force, so the list says so in words.</summary>
+    public string CurrentMarker => IsCurrent ? "当前使用中" : string.Empty;
+
+    private static string FormatMultiplier(double value) =>
+        value.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture) + "x";
+}

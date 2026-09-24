@@ -1,0 +1,151 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:LanAi.RelayClient.ViewModels;assembly=LanAi.RelayClient.Core"
+             x:Class="LanAi.RelayClient.App.Views.Pages.LocalProxyPage"
+             x:DataType="vm:DashboardPageViewModel">
+
+  <UserControl.Styles>
+    <Style Selector="TextBlock.error">
+      <Setter Property="Foreground" Value="#DC2626" />
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+    <Style Selector="Button.toggle">
+      <Setter Property="Background" Value="#2563EB" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="Padding" Value="14,4" />
+    </Style>
+    <Style Selector="Button.toggle.active">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="#374151" />
+      <Setter Property="BorderBrush" Value="#D1D5DB" />
+      <Setter Property="BorderThickness" Value="1" />
+    </Style>
+  </UserControl.Styles>
+
+  <!-- Each tool is its own either/or with the relay server. A tool on a local proxy goes
+       straight to the official API with one of the user's own accounts; it costs no
+       balance, and it never falls back to the relay server on its own. -->
+  <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <StackPanel>
+
+      <Border Classes="card">
+        <StackPanel>
+          <TextBlock Text="本地代理" Classes="cardTitle" />
+          <TextBlock Classes="hint" Margin="0,4,0,0"
+                     Text="用你在中转站上自己的账号，让 Codex 或 Claude Code 直接连官方：不经过中转站、不扣余额。每个工具各自选择，出错时只提醒、不会自动切回中转站。" />
+          <!-- The one thing most likely to go wrong: the official hosts usually need a proxy/VPN. -->
+          <TextBlock Classes="hint" Foreground="#B45309" Margin="0,4,0,0"
+                     Text="需要本机能直接访问官方（国内通常要开启代理/VPN）。开启时会先检测网络；使用期间请保持代理开启，代理断开时工具会无法使用。" />
+          <TextBlock Text="{Binding Dashboard.LocalProxy.ActionMessage}" Foreground="#2563EB" FontSize="12"
+                     TextWrapping="Wrap" Margin="0,8,0,0"
+                     IsVisible="{Binding Dashboard.LocalProxy.HasActionMessage}" />
+          <TextBlock Text="{Binding Dashboard.LocalProxy.AccountsMessage}" Foreground="#6B7280" FontSize="12"
+                     TextWrapping="Wrap" Margin="0,8,0,0"
+                     IsVisible="{Binding Dashboard.LocalProxy.HasAccountsMessage}" />
+        </StackPanel>
+      </Border>
+
+      <!-- Codex -->
+      <Border Classes="card">
+        <StackPanel>
+          <DockPanel>
+            <TextBlock DockPanel.Dock="Right" Text="{Binding Dashboard.LocalProxy.CodexUsageText, StringFormat='今日：{0}'}"
+                       Classes="label" VerticalAlignment="Center" />
+            <TextBlock Text="Codex（ChatGPT 账号）" Classes="cardTitle" />
+          </DockPanel>
+          <TextBlock Text="{Binding Dashboard.LocalProxy.CodexStatusText}" Margin="0,6,0,0" FontSize="12" />
+          <TextBlock Text="{Binding Dashboard.LocalProxy.CodexError}" Classes="error" Margin="0,4,0,0"
+                     IsVisible="{Binding Dashboard.LocalProxy.HasCodexError}" />
+          <ItemsControl ItemsSource="{Binding Dashboard.LocalProxy.CodexAccounts}" Margin="0,8,0,0">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:LocalProxyAccountItem">
+                <Border BorderBrush="#E5E7EB" BorderThickness="0,1,0,0" Padding="0,8">
+                  <DockPanel>
+                    <Button DockPanel.Dock="Right" Content="{Binding ActionLabel}" Click="Toggle_OnClick"
+                            Classes="toggle" Classes.active="{Binding IsActive}" VerticalAlignment="Center" />
+                    <StackPanel>
+                      <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding PlanText}" Classes="label" Margin="8,0,0,0"
+                                   IsVisible="{Binding HasPlan}" VerticalAlignment="Center" />
+                        <TextBlock Text="使用中" Foreground="#059669" FontSize="12" Margin="8,0,0,0"
+                                   IsVisible="{Binding IsActive}" VerticalAlignment="Center" />
+                      </StackPanel>
+                      <TextBlock Text="{Binding StatusText}" Classes="hint" />
+                    </StackPanel>
+                  </DockPanel>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+          <TextBlock Text="没有可用的 ChatGPT 订阅账号" Classes="hint" Margin="0,6,0,0"
+                     IsVisible="{Binding !Dashboard.LocalProxy.HasCodexAccounts}" />
+        </StackPanel>
+      </Border>
+
+      <!-- Claude Code -->
+      <Border Classes="card">
+        <StackPanel>
+          <DockPanel>
+            <TextBlock DockPanel.Dock="Right" Text="{Binding Dashboard.LocalProxy.ClaudeUsageText, StringFormat='今日：{0}'}"
+                       Classes="label" VerticalAlignment="Center" />
+            <TextBlock Text="Claude Code（Claude 账号）" Classes="cardTitle" />
+          </DockPanel>
+          <TextBlock Text="{Binding Dashboard.LocalProxy.ClaudeStatusText}" Margin="0,6,0,0" FontSize="12" />
+          <TextBlock Text="{Binding Dashboard.LocalProxy.ClaudeError}" Classes="error" Margin="0,4,0,0"
+                     IsVisible="{Binding Dashboard.LocalProxy.HasClaudeError}" />
+          <ItemsControl ItemsSource="{Binding Dashboard.LocalProxy.ClaudeAccounts}" Margin="0,8,0,0">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:LocalProxyAccountItem">
+                <Border BorderBrush="#E5E7EB" BorderThickness="0,1,0,0" Padding="0,8">
+                  <DockPanel>
+                    <Button DockPanel.Dock="Right" Content="{Binding ActionLabel}" Click="Toggle_OnClick"
+                            Classes="toggle" Classes.active="{Binding IsActive}" VerticalAlignment="Center" />
+                    <StackPanel>
+                      <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding PlanText}" Classes="label" Margin="8,0,0,0"
+                                   IsVisible="{Binding HasPlan}" VerticalAlignment="Center" />
+                        <TextBlock Text="使用中" Foreground="#059669" FontSize="12" Margin="8,0,0,0"
+                                   IsVisible="{Binding IsActive}" VerticalAlignment="Center" />
+                      </StackPanel>
+                      <TextBlock Text="{Binding StatusText}" Classes="hint" />
+                    </StackPanel>
+                  </DockPanel>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+          <TextBlock Text="没有可用的 Claude 订阅账号" Classes="hint" Margin="0,6,0,0"
+                     IsVisible="{Binding !Dashboard.LocalProxy.HasClaudeAccounts}" />
+          <TextBlock Classes="hint" Margin="0,6,0,0"
+                     Text="开启后会自动打开 Claude 页的「接入 Claude Code」，模型沿用 Claude 页的设置。" />
+        </StackPanel>
+      </Border>
+
+      <!-- Everything the local proxy cannot use, said in words rather than hidden. -->
+      <Border Classes="card" Margin="0" IsVisible="{Binding Dashboard.LocalProxy.HasOtherAccounts}">
+        <StackPanel>
+          <TextBlock Text="暂不支持的账号" Classes="cardTitle" />
+          <TextBlock Classes="hint" Margin="0,4,0,0"
+                     Text="本地代理只支持订阅登录的 ChatGPT / Claude 账号；API Key、长期令牌和其他平台的账号请继续经中转站使用。" />
+          <ItemsControl ItemsSource="{Binding Dashboard.LocalProxy.OtherAccounts}" Margin="0,6,0,0">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:LocalProxyAccountItem">
+                <TextBlock Classes="label" Margin="0,2,0,0">
+                  <Run Text="{Binding Name}" />
+                  <Run Text=" · " />
+                  <Run Text="{Binding PlatformLabel}" />
+                  <Run Text=" · " />
+                  <Run Text="{Binding TypeLabel}" />
+                </TextBlock>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </Border>
+
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

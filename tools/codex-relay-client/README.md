@@ -1,0 +1,358 @@
+# 共飞直连客户端（小白版）
+
+面向小白用户的中转站瘦客户端。需求见
+[`doc/共飞直连客户端（小白版）需求文档.md`](../../doc/共飞直连客户端（小白版）需求文档.md)。
+
+Codex 接入默认采用本机安全链路：
+
+```text
+Codex → Context Filter（可选）→ 127.0.0.1 Paw Relay → /api/v1/paw/responses
+```
+
+Codex 只接触本机随机 fake key；登录 JWT 和分组 ID 由客户端 Relay 在转发边界注入。
+
+- **账号会话是每请求现取的**，不是启动时的快照——access token 会轮换，快照会在一小时内变成一路 401，而界面看上去一切正常。
+- **分组切换直接推给 Relay**，下一轮即生效；本机链路下没有服务端 key 可改分组。
+- 未选分组时**拒绝启动**，而不是启动后每轮静默失败。
+- **「启用上下文压缩」立即生效并记住选择**，不等下次启动（细节见下方 Context Filter 一节）。
+- **历史会话跟随共飞**：Codex 给每个会话记下创建时的 provider，列表和恢复都认这个标记。启动前把旧会话归入 `gongfei`，退出时按记录还回去，详见下方「历史会话归属」。
+- **CDP 注入（官方客户端内的状态条与限额检测）已移除**。它在现行 ChatGPT 上基本连不上，每次启动往日志里灌一段栈，而它从来不是必需功能。`config.toml` 路由守护**保留**，并且现在 Windows 和 macOS 都有——它才是防「官方登录把共飞路由冲掉」的那一道。
+
+> **macOS 走同一条链路**——出货头只有一个（Avalonia），两个平台共用同一份接线。
+> 差别只在 Context Filter 是 Windows 二进制：macOS 上找不到它，于是链路退化为
+> `Codex → 本机 Paw Relay`，压缩勾选框置灰。托管 API Key 路径两个平台都只是兼容回退。
+> macOS 上的本机 relay **尚未在真机验证过**（开发机是 Windows）。
+
+> **当前状态：M1/M2 核心链路已跑通，F3/F4/F5/F9 核心可靠性已补齐。**
+> 构建通过、测试全绿（565/565：CodexBinding 53、Server 92、客户端 420）；
+> 客户端已实机启动并对接本地中转站，
+> 登录页按服务器下发的开关正确渲染。
+> 契约用**真实服务器响应**核对过（本机 relay v0.1.158）。
+> **已实机验证（2026-08-01）**：登录态下三张卡均从真实服务器取数成功，
+> 分组下拉默认停在当前分组。受限于本机服务器只有一个分组、无专属倍率、
+> 无高峰时段配置，**多组切换 / 倍率覆盖 / 高峰标签仍只有单测覆盖**。
+
+## 目录
+
+```
+tools/codex-relay-client/
+├── LanAi.RelayClient.sln
+├── src/
+│   ├── LanAi.RelayClient.Server/       # 中转站 HTTP 客户端（net8.0，零 NuGet 依赖）
+│   ├── LanAi.RelayClient.CodexBinding/ # Codex 配置写入、完整快照与恢复
+│   ├── LanAi.RelayClient.Core/         # 视图模型、服务、本机 relay（net8.0，不引用任何 UI 框架）
+│   └── LanAi.RelayClient.App/          # Avalonia —— **唯一的 UI 头**，Windows 与 macOS 共用
+└── tests/
+    ├── LanAi.RelayClient.CodexBinding.Tests/ # 239 个：路由、加密快照、迁移、恢复与 TOML 保留
+    ├── LanAi.RelayClient.Server.Tests/ # 95 个：信封语义、错误分类、面板和 key 契约
+    └── LanAi.RelayClient.Tests/        # 625 个：会话、生命周期、本机转发、退避、异步、订阅和 UI 状态
+```
+
+后续按需求文档分期补：客户端内注册、充值、Codex 安装、项目中心和 `LanAi.RelayClient.Chat`。
+
+### 登录后界面的结构（2026-09-23 改为左侧页签）
+
+左侧页签：仪表盘 / Codex / Claude / Kimi（占位，等 Kimi Code CLI 调研）/ 账户，底部是设置。
+改版计划与各项决定见 [`doc/小白端左侧页签改版任务计划.md`](doc/小白端左侧页签改版任务计划.md)。
+
+- `DashboardView` 是登录后的外壳：左侧导航 + 按 `ClientPage` 切换的页面（`Views/Pages/`，构造时显式 new 出来，不靠命名反射，裁剪安全）。
+  三个轮询计时器挂在外壳上，**不随切页停止**——托盘状态、健康检查、余额提醒在窗口隐藏时也要数据。
+- 页面的按钮统一经 `IDashboardActions` 回到外壳，同一个动作（例如「启动 ChatGPT」）在两页上走同一条路。
+- 视图模型：`DashboardViewModel`（Codex 页：启动/分组/自动分组/压缩）持有 `RefreshState`（每轮刷新的限流/401 记账）、
+  `Account`、`Usage`、`Catalog`（未过滤的分组列表，每个工具自己筛）、`ClaudePreference`（账号级 Claude 模型，**全应用唯一实例**）、
+  `ClaudeCode`（Claude Code / VS Code 插件）。子对象**没有在父级留转发属性**：谁要用就绑 `Dashboard.Account.BalanceText` 这样的完整路径，
+  漏改的消费者编译期就报错，而不是运行时悄悄不更新。
+
+## 构建与测试
+
+### Context Filter（可选但推荐）
+
+小白客户端会优先使用发布目录中的 `context-filter.exe`，形成：
+
+```text
+Codex → Context Filter → 本机 Paw Relay → /api/v1/paw/responses
+```
+
+在发布前运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools/codex-relay-client/fetch-context-filter.ps1 -Version v0.1.1
+```
+
+脚本从 Context Filter GitHub Release 下载 Windows x64 包，并校验 SHA-256。未携带该文件时，客户端自动退回 `Codex → 本机 Paw Relay`，不会退回远程 API Key，界面上的「启用上下文压缩」置灰。
+
+**带了这个文件时，它就常驻链路**——不论压缩开没开。「启用上下文压缩」切的是过滤器自己的 `[filter] enabled`，勾选**立即生效**（在原端口重启过滤器），并缓存在 `context-filter.json` 里，下次启动沿用。
+
+这么设计是因为：把过滤器整个移出链路会改变 Codex 连的地址，而**一个已经在运行的 ChatGPT 会不会重读 `config.toml` 至今没在真机验证过**（macOS 方案文档里的 G-1）。端口在整个会话里固定，这个开关就不依赖那个答案。两条前提都已实测：`enabled = false` 是**透明直通**（照常转发，只是不再加 `x-context-filter-*` 头），同一端口可以干净重绑。
+
+#### 怎么从日志判断压缩有没有真的生效
+
+开关状态只说明**要求**是什么，不说明**实际**发生了什么。所以本机 relay 每轮请求写一行，内容来自 Context Filter 盖在转发请求上的统计头：
+
+```text
+本轮上下文压缩生效：45.2 KB → 11.8 KB（省 33.4 KB，74.0%）
+本轮上下文压缩已启用，未压缩（812 B，无可压缩内容）   # 短轮次的正常结果，不是故障
+本轮未经过上下文压缩
+```
+
+最后那条要小心：实测压缩关闭时过滤器**一个统计头都不盖**，所以「没有头」既可能是压缩关着、也可能是根本没有过滤器——这两种要靠启动时那行 `已启动 Context Filter（压缩开启/关闭，直通）` 来区分。
+
+构建会自动跑一次这个脚本（`EnsureBundledContextFilter`）。它**不会**因为离线或 GitHub 限流而让构建失败——拿不到就只是少打一个可选文件。要完全跳过这次网络请求：
+
+```bash
+dotnet build -p:SkipContextFilterDownload=true
+```
+
+**`-Version latest` 默认不打网络。** `bundled-context-filter/`（仓库里的 `context-filter.exe` + `VERSION`）会被优先使用——每个全新 checkout（尤其是每次都从零开始的 CI runner）不再需要 `api.github.com` 应答就能拿到这个文件，绕开它每 IP 60 次/小时且 Actions runner 共享出口 IP 的限流（2026-09-17 起，之前正式发布流水线在这条上失败过）。只有显式传一个**跟 vendor 版本不同**的 `-Version` 才会真的去打网络。
+
+要升级 vendor 的版本：对着一个临时目录跑一遍这个脚本（这一步照常验证 `SHA256SUMS`），把新的 `context-filter.exe` 和 `VERSION` 复制进 `bundled-context-filter/` 再提交。`.gitignore` 里 `*.exe` 的全局规则对这两个文件单独开了口子，别忘了同步改。
+
+在仓库根目录：
+
+```bash
+dotnet test tools/codex-relay-client/LanAi.RelayClient.sln
+```
+
+> PowerShell 里若不在仓库根目录，用绝对路径；`curl` 是 `Invoke-WebRequest` 的别名，
+> 要调真正的 curl 需写 `curl.exe`。
+
+### 打正式包
+
+**唯一权威流程是 [`.github/workflows/client-release.yml`](../../.github/workflows/client-release.yml)**——打 `client-v<version>` tag 推送，或在 Actions 页面手动触发。本地要打一份临时包核对时，照抄它 win-x64 那几步（发布对象是 `src/LanAi.RelayClient.App`，**不是** `src/LanAi.RelayClient`）：
+
+```powershell
+dotnet publish src/LanAi.RelayClient.App/LanAi.RelayClient.App.csproj `
+    -c Release -r win-x64 --self-contained true `
+    -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+    -o <临时目录>
+python packaging/check-server-address.py --channel production <临时目录>/LanAi.RelayClient.App.exe
+```
+
+**三个渠道，靠发布参数区分，绝不改源码**——包连哪台服务器，只由下面这个参数决定，出包后必须用 `--channel` 核对出货字节：
+
+| 渠道 | 发布参数 | 连接地址 | 核对 |
+|---|---|---|---|
+| 正式（默认） | 不带任何渠道参数 | `https://gongfeiai.com/` | `--channel production` |
+| 测试服 | `-p:TestServer=true` | `http://test.gongfeiai.com/` | `--channel test` |
+| 本机联调 | `-p:LocalServer=true` | `http://127.0.0.1:8080/` | `--channel local` |
+
+脚本要求本渠道的地址存在、另外两个不存在，任何一项不符都退出码非 0。**产物目录名只是标签，不是证据**——命名成“正式”而没跑 `--channel production` 的包不算正式包。发布流水线只走 `production`，不带渠道参数。
+
+`context-filter.exe` 要放在**子目录** `context-filter\` 下（`App.axaml.cs` 按 `AppContext.BaseDirectory\context-filter\context-filter.exe` 找它，不跟主 exe 平铺），产物结构照 workflow 里"打包 Windows zip"那一步的 staging 布局来。（WPF 头已于 2026-09-23 删除，只剩这一种约定。）
+
+之前 `packaging/publish-windows.ps1` 想省掉这几步，但发布的是早已不出货的 WPF 头，已删除。**不要再写第二个打包脚本**：本地要自动化就直接照上面几行封一个函数，别让它跟 CI 的步骤分叉。
+
+## 历史会话归属
+
+**问题**：Codex 在 `~/.codex/state_N.sqlite` 的 `threads.model_provider` 里记下每个会话创建时的 provider id。这个标记有两个后果（用本机 `codex-app-server 0.153.0` 对真实会话库实测）：
+
+- 会话列表**只显示标记与当前 `model_provider` 一致的会话**。同一份库，config 指向 `gongfei` 只看到 3 个，回落到默认 `openai` 是 0 个，全部是 63 个。
+- 恢复会话时**用会话自己的标记**，而不是当前的：走的是那个 provider 自己那一节的 `base_url`（绕过本客户端），那一节被删了就直接报 `Model provider ... not found`。
+
+所以只把默认 provider 改成 `gongfei`，旧会话要么看不见，要么继续连着旧地址。
+
+**做法**（`CodexSessionProviderMigrator`）：
+
+| 时机 | 动作 |
+|---|---|
+| 写入配置之后、拉起 Codex 之前 | 把标记不是 `gongfei` 的会话改成 `gongfei` |
+| 还原用户原始配置之后 | 按记录把它们改回去；在共飞下新建的会话没有"原来"，交给还原后配置所选的 provider（没选则 `openai`） |
+
+- **只改数据库**。实测恢复以库里的标记为准，rollout 文件里重复的那份不参与，所以不动磁盘上的会话文件。
+- **只动侧边栏看得见的**：不碰已归档、子代理、内部会话和 ambient 建议。还原时不加这个限制——归档会话之后被恢复也得能打开。
+- **可精确还原**：每个被改动会话的原标记在改之前先写入 `journal.json`，还原按记录逐个改回，而不是猜。
+- **不改时间戳**：只更新 `model_provider` 一列，列表顺序不变。
+- **先备份**：用 SQLite 自己的备份接口（WAL 下一致），只保留最新 1 份。**提交成功后才裁剪旧备份；没有改动就不留备份。**
+- **绝不阻止启动或退出**：没有会话库、结构不认识、Codex 正占着库（等待 3 秒后放弃）、库损坏，都只记日志并跳过，下次启动再试。
+
+位置：`%LOCALAPPDATA%\LanAi\RelayClient\codex-session-backup\`（`AppPaths.CodexSessionBackupRoot`），里面是最新一份 `state_N.sqlite` 备份和 `journal.json`。**不要放进 `codex-snapshot`**：那个目录在还原用户配置时会被清空，日记要活到还回去的那一刻。
+
+**手动恢复**：备份是完整的 SQLite 文件。要回到迁移之前，先退出 Codex，再用备份文件替换 `~/.codex/state_N.sqlite`（连同同名的 `-wal`、`-shm` 一并删除）。
+
+**已知边界**：
+- 不处理 Codex 运行期间新建的会话——它们在下次启动时才被归入。路由守护重写配置时也不触发迁移。
+- 只认 `state_数字.sqlite`，取数字最大的一份。Codex 若改了文件命名，会记为「没找到会话库」而跳过，不会误改别的文件。
+- 恢复行为是在 `codex-app-server 0.153.0` 上测的，桌面版内嵌的版本可能不同。
+
+## 已修的两个真 bug（都由测试/契约核对抓到）
+
+1. **令牌响应缺 access_token 却被当成登录成功。**
+   `AuthTokens` 每个属性都有默认值，所以形状不对的响应（如 `{"requires_2fa":true}`）
+   会干净地绑成一个空令牌对象。客户端会报告"登录成功"，然后后续每次调用都 401——
+   比当场失败难查得多。现由 `RequireUsableTokens` 在**所有**发令牌的端点上拦截。
+   只要求 access token：后端在令牌对生成失败时会退化为只发 access token，
+   硬要求 refresh token 会拒掉一个本来可用的会话。
+
+2. **`registration_email_suffix_whitelist` 绑错了类型。**
+   后端是 `[]string`（`dto/settings.go:32`），原先按逗号分隔字符串绑。
+   后果是整个 `/settings/public` 解析抛异常 → 按 F1.7 降级到最保守形态 →
+   **注册入口在一台开着注册的服务器上直接消失**。一个字段类型打掉整个注册功能。
+
+## 已落地的设计约束
+
+`LanAi.RelayClient.Server` 是纯 `net8.0` 库，**零 NuGet 依赖**，不引用 WPF，
+因此可以脱离 UI 单测。几条不是随手写的决定：
+
+- **不持有凭据**。令牌作为方法参数传入，刷新调度、安全存储、登出集中在上层，
+  不散落到传输层。
+- **错误在传输层就分类**（`RelayFailure`）。需求 F1 的验收标准明确要求
+  "断网时给出'连不上服务器'而非'密码错误'"——这个区分只有在这里做才守得住。
+- **401 分两种**：登录/2FA 端点上是"凭据不对"，其他端点上是"会话过期"。
+  合并两者会让令牌自然过期的用户看到"密码不正确"。已有回归测试锁定。
+- **信封的 `code` 才是权威**。HTTP 200 但 `code != 0` 一律按失败处理。
+- **`reason` 原样保留**。部分映射（尤其是"账号未设密码"）尚待真机验证，
+  保留原始 reason 可以在不改异常契约的前提下收紧映射。
+
+## M2：切换分组时**只发 `group_id`**（安全属性，不是风格）
+
+`PUT /keys/:id` 对 `expires_at` 有三态语义（`api_key_handler.go:225-238`）：
+
+| 请求体中的 `expires_at` | 后端行为 |
+|---|---|
+| 字段缺失（`nil`） | 保持原过期时间不变 |
+| 空字符串 `""` | **清除过期时间 → key 永不过期** |
+| RFC3339 字符串 | 设为该时间 |
+
+因此 `UpdateApiKeyGroupAsync` 用 `Dictionary` 只塞一个 `group_id`，
+**绝不能**改成带默认值的请求记录类型：一个 `ExpiresAt { get; init; } = ""`
+会被序列化成 `"expires_at": ""`，于是「用户点一下切换分组」= 「把 1 天租约
+变成永久 key」，F3.2 租约模型整个失效，且用户完全无感。
+`SwitchingGroupsSendsGroupIdAndNothingElse` 这条测试就是为了钉死这件事。
+
+## M2：倍率口径与需求文档 F5.2 的两处出入
+
+以**后端 `Group.PeakMultiplierAt` + 网页版实现**为准（M2 出口标准是"与网页版逐项一致"），
+需求文档 F5.2 的伪代码有两处不准确，已按实现落地：
+
+1. **高峰倍率只对订阅类型分组生效。** 后端第一个判断就是
+   `!g.IsSubscriptionType() → 1.0`，F5.2 伪代码没写这个前提。
+   按伪代码实现会给标准组显示一个永远不会被计费的高峰倍率。
+2. **不在客户端算"当前是否高峰"。** 网页版**故意**只展示时段标签
+   （`utils/peak-rate.ts`），因为高峰窗口是按**服务器时区**判定的
+   （`now.In(timezone.Location())`）。客户端若按本机时区算，
+   跨时区用户看到的倍率会和实际扣费对不上。
+   因此客户端同样展示 `14:00-18:00 ×2 (UTC+08:00)`，时区标注取自
+   `/settings/public` 的 `server_utc_offset`（M1 契约漏了这个字段，M2 已补）。
+
+3. **订阅类型分组不显示倍率数字，显示"订阅"。**
+   网页版 `GroupBadge.labelText` 在 `isSubscription && !alwaysShowRate` 时
+   返回 `t('groups.subscription')`，而 KeysView 的分组下拉正是这样调用的。
+   所以 UI 层直接绑 `EffectiveMultiplier` 会在网页版显示"订阅"的地方印出 `2.0x`，
+   违反"与网页版逐项一致"。分支条件用 `RelayGroup.IsSubscription`。
+
+另外两条实现约束：
+
+- **跨天窗口不存在。** 后端 `start >= end` 直接返回 1.0，且
+  `ValidatePeakRateConfig` 明确"不支持跨天"，所以客户端也不做环绕处理——
+  否则会显示一个后端永不计费的时段。
+- **用户专属倍率用 `TryGetValue`，不用 `GetValueOrDefault`。**
+  `/groups/rates` 里"没有这个组"和"这个组是 0 倍（免费）"是两回事，
+  后者是真实配置。用 `GetValueOrDefault` 会把所有组都显示成免费。
+
+## M2：卡片必须各自独立失败（F4.2）
+
+F4.2 禁止"整页报错或退出登录"，而 M1 的会话规则是"只有服务器明确拒绝才登出"——
+卡片端点返回的 401 恰恰就是一次明确拒绝。两者直接叠加会导致
+**一张卡片 401 就把用户踢下线**。`DashboardViewModel` 的结构本身就是这条约束：
+
+- 访问令牌**只在最外层取一次**，那一次调用是唯一有权结束会话的地方
+  （且仅在续期本身失败时；断网不登出）。
+- 各张卡各自 `try/catch`，**没有**共用的 `Task.WhenAll` 或外层 catch——
+  失败在结构上就没有传播路径。
+- 卡片层捕获的 `Unauthenticated` 只置灰该卡片，不接登出路径。
+- 分组卡内部再分一层：`/groups/rates` 单独失败时，分组列表仍按默认倍率渲染，
+  否则用户会连"切换分组"的能力一起失去。
+
+顺带一条：所有卡片是**串行**取数而非并发。面板端点有按用户限流，
+每 60 秒同时打多个请求是最容易触发限流的形态。任一端点返回 429 后，
+本轮后续卡片和 Codex 监控都会停止，并进入指数退避。
+
+## 2026-08-03 核心可靠性补强
+
+- 订阅摘要按后端真实对象契约读取 `subscriptions`，不再把整个响应误当数组。
+- 路由守护同时校验 `config.toml`、`auth.json` 和当前托管 key；OAuth 或空 key
+  重写凭据后会自动重新应用。
+- Codex 启动与释放共用生命周期锁；释放期间的新启动会被拒绝，恢复失败可由退出兜底重试。
+- 退出时撤销当前安装及同机旧安装留下的托管 key，不影响其他机器和用户手建 key。
+- 完整快照和恢复都使用临时文件原子替换；损坏清单会阻止继续覆盖真实配置。
+- `auth.bin`、`config.bin` 和旧凭据快照均使用当前 Windows 用户的 DPAPI 保护，
+  自动化测试只注入临时内存保护器，不读取真实用户密钥状态。
+- 旧明文快照会在成功验证后原子迁移；迁移中断时可识别已保护文件并继续，
+  不会重复保护或在恢复校验失败时部分覆盖真实配置。
+- 卡片和 Codex 监控共用限流退避与轮询门；监控自身 429 或重叠定时轮询不会追加请求。
+- 托盘退出、Windows 注销/关机等进程退出路径共用幂等清理，先释放再销毁 HTTP 客户端。
+
+## M2：分组按平台过滤（F5.3）
+
+F5.3 要求"列表按平台过滤，只展示与 Codex 相关的平台分组"。
+Codex 走 OpenAI 协议，所以 anthropic / gemini / grok 分组即便服务器允许绑定，
+出现在这个客户端里也是**给用户一个点了就坏事的选项**——选中后每个请求都会失败，
+而小白根本无从诊断。因此 `CodexPlatforms = [openai]`
+（composite 为何被排除见下方"架构复审"一节）。
+
+一个必须保留的例外：**当前生效的那个分组一律显示，哪怕它不在上述平台内**。
+账号可能本来就绑在别的平台分组上（本机服务器的 `default` 就是 anthropic），
+把它藏掉会让用户看不到自己实际在按什么计费——比多显示一行更糟。
+这是"收窄"服务器的列表，不是"放宽"，F5.3 允许前者、禁止后者。
+
+## M2：分组下拉的"程序设选中"必须与"用户切换"分开
+
+分组用 `ComboBox`，默认停在当前生效的分组，并在卡片上用文字写明
+"当前使用：<分组> <倍率>"，下拉项里当前那条另标"当前使用中"。
+
+这里有个下拉列表的经典坑：**填充列表并预选当前项，和用户手动选一项，
+在事件层面长得一模一样**。不做区分的话，每 60 秒刷新一次就会往服务器
+`PUT` 一次相同的分组。`DashboardViewModel` 用 `_applyingKnownState` 守卫，
+所有程序侧赋值（刷新预选、失败回滚）都走 `SelectWithoutSwitching`，
+只有守卫之外的变更才算用户切换。测试
+`LoadingTheDropdownDoesNotCountAsTheUserSwitching` 连刷两次并让
+`UpdateApiKeyGroupAsync` 直接抛异常，确保刷新不写任何东西。
+
+还有一条只有跑起来才看得见的：**没有选中项时，折叠态的 ComboBox 渲染成一片空白**，
+小白会直接判定"坏了"。所以未选中时叠一层"点击选择分组"的占位文字
+（`IsHitTestVisible=False`，不挡开合的点击）。
+
+## 架构复审修掉的四处（2026-08-01）
+
+1. **`FindCurrent` 原本偏爱一把"永不过期"的 key。** 排序用
+   `ExpiresAt ?? DateTimeOffset.MaxValue`，把空过期时间排到了最前——而按 F3.2，
+   没有过期时间的托管 key 恰恰是**缺陷**（多半是某次更新把 `expires_at` 清空了）。
+   等于客户端会优先认领租约模型要防的那把 key，并永远给它续签。改为空值排最后。
+2. **偏好文件没有作用域，而会话有。** `RelaySessionManager.RestoreAsync` 明确
+   丢弃属于别的服务器的会话（"地址不是身份"），但 `preferences.json` 只存了个
+   裸 `{"groupId":N}`。**分组 id 是每个中转站数据库各自分配的**，开发服的 3 号
+   和生产服的 3 号是毫不相干的两个组。同一条规则没传导到第二个存储。已按服务器地址隔离。
+3. **登出不清状态，且刷新守卫会吞掉下一个用户的加载。** A 登出时若有刷新在途，
+   它的续体仍会把 A 的余额写进卡片；同时 `if (IsRefreshing) return;` 会把 B 登录后的
+   首次加载直接丢弃，B 要盯着 A 的余额看到下一次 60 秒轮询。这已经不是"数据过期"，
+   是**串号**。新增 `Reset()`：取消在途刷新、清空卡片与分组、释放守卫。
+4. **F4.2 的隔离只有 `catch (RelayApiException)` 那么宽。** 任何其他异常
+   （映射 bug、取消、序列化错误）都会从卡片加载器里逃出来，把排在后面的卡片一起带走——
+   正是 F4.2 禁止的"一张卡拖垮整页"。改为捕获除进程级致命异常外的全部。
+
+另外**去掉了 composite 平台**。它聚合多个上游，能否承载 Codex 取决于路由配置，
+而那个配置在用户侧 payload 里根本没有（是 admin-only 字段）。仅凭平台标签放进来，
+等于把刚删掉的"看着能选、选了每个请求都失败"重新塞回去。等响应里有客户端可判断的
+依据再放开。
+
+一条**已验证不是 bug** 的：怀疑过下拉框在刷新时自动触发切换（`Groups.Clear()` +
+`Add()` 发生在 `_applyingKnownState` 守卫之外）。用最可能触发的形状实测——
+列表 2 项、当前项不是第一项——跑满一个轮询周期，偏好未翻转。WPF 的 ComboBox
+默认不会在填充 ItemsSource 时自动选中，所以不会写回。
+
+## 待办与已知未决
+
+| 项 | 说明 |
+|---|---|
+| **新增链路实机验证** | 近 7 日趋势、订阅卡、Codex 启动/释放与异常退出目前只有自动化测试覆盖；本轮按要求未启动客户端、未访问本机中转站、未修改真实 Codex 配置 |
+| V-3（能否建 key） | 仍是 M0 未验证项。M2 只用到 `GET /keys`（只读识别），不依赖建 key，因此 V-3 若为否也不影响 M2 |
+| `PASSWORD_NOT_SET` 的真实 reason 码 | 需求风险 20：能否与"密码错误"区分需真机确认。当前按两个候选码匹配，未命中则降级为通用路径，不会误报 |
+| 默认服务器地址 | 需求 §10 待定项。`ClientOptions.ServerAddress` 目前是 `http://127.0.0.1:8080/` **占位**，发给用户的构建必须换成生产 `https://` 地址 |
+| 产品名与图标 | 需求 §10 待定项，暂沿用"共飞"品牌与 `LanAi.*` 程序集前缀 |
+
+## 已确认的产品决策（2026-07-30）
+
+- 开机自启**默认勾选**（F9.1）
+- 退款**只保留"联系我们"入口**，不做退款流程（F10.6 相应收窄）
+- 托管 key 与网页版 key 分开，用户已认可；本客户端定位为网页版的**简化视图**
+- 只做邮箱登录，不做 OAuth（F1′.5）

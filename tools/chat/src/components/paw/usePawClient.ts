@@ -1,0 +1,2687 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import {
+  clearPawSession,
+  loadPawSession,
+  markPawSessionExpired,
+  onPawSessionChange,
+  savePawSession,
+} from "@/client/paw/auth";
+import {
+  fetchPawConfig,
+  fetchPawPublicSettings,
+  editPawImage,
+  fetchPawCurrentUser,
+  generatePawImage,
+  loginPaw,
+  registerPaw,
+  savePawDefaults,
+  sendPawChat,
+  sendPawVerifyCode,
+  uploadPawFile,
+} from "@/client/paw/api";
+import { safeLocalStorage } from "@/utils/storage";
+import {
+  compactAgentMessageForRuntime,
+  persistConversationsWithCompression,
+  projectConversationsForStorage,
+  stripAgentOutput,
+} from "@/client/paw/conversationCompression";
+import {
+  clearPawAttachmentCache,
+  deletePawAttachmentBlob,
+  loadPawAttachmentBlob,
+  savePawAttachmentBlob,
+} from "@/client/paw/attachmentCache";
+import type { AgentApprovalUiMode } from "@/client/agent/session";
+import type {
+  PawAttachment,
+  PawAgentFileChange,
+  PawAgentPanels,
+  PawAgentPanelsPatch,
+  PawAgentApprovalReview,
+  PawAgentFileSearch,
+  PawAgentNotification,
+  PawAgentTerminalInteraction,
+  PawConfigData,
+  PawConversation,
+  PawConversationMessage,
+  PawGroup,
+  PawImageSize,
+  PawModel,
+  PawPrompt,
+  PawPublicSettings,
+  PawSelectionState,
+  PawSession,
+  PawSubmitKey,
+} from "@/client/paw/types";
+import { clearRemoteData } from "../../client/remote/store";
+
+const CONVERSATIONS_KEY = "paw-conversations:v2";
+const ACTIVE_CONVERSATION_KEY = "paw-active-conversation:v2";
+const SELECTION_KEY = "paw-selection:v2";
+const MODE_KEY = "paw-mode:v1";
+const IMAGE_SIZE_KEY = "paw-image-size:v1";
+const PROMPTS_KEY = "paw-prompts:v1";
+const SUBMIT_KEY = "paw-submit-key:v1";
+const PAW_IMAGE_SIZES: PawImageSize[] = [
+  "1024x1024",
+  "1792x1024",
+  "1024x1792",
+  "768x1344",
+  "864x1152",
+  "1344x768",
+  "1152x864",
+  "1440x720",
+  "720x1440",
+];
+
+export const PAW_BUILTIN_PROMPTS: PawPrompt[] = [
+  {
+    id: "builtin-summarize",
+    title: "总结内容",
+    content: "请总结下面的内容，并列出三个关键要点：\n",
+    createdAt: 0,
+  },
+  {
+    id: "builtin-polish",
+    title: "润色文字",
+    content: "请润色下面这段文字，让表达更自然、清晰：\n",
+    createdAt: 0,
+  },
+  {
+    id: "builtin-explain",
+    title: "解释概念",
+    content: "请用简单易懂的方式解释这个概念，并举一个例子：\n",
+    createdAt: 0,
+  },
+  {
+    id: "builtin-plan",
+    title: "制定计划",
+    content: "请帮我制定一个可执行的计划，包含步骤和注意事项：\n",
+    createdAt: 0,
+  },
+  {
+    id: "builtin-translate",
+    title: "翻译文本",
+    content: "请将下面的内容翻译成简体中文，并保留原文的格式：\n",
+    createdAt: 0,
+  },
+  {
+    id: "builtin-code-review",
+    title: "代码审查",
+    content: "请审查下面的代码，指出潜在问题、风险和改进建议：\n",
+    createdAt: 0,
+  },
+];
+
+function createId(prefix: string): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeAgentPanels(input: unknown): PawAgentPanels | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const source = input as Record<string, unknown>;
+  const now = Date.now();
+  const result: PawAgentPanels = {};
+
+  if (typeof source.diff === "string") {
+    result.diff = source.diff;
+  }
+
+  if (source.plan && typeof source.plan === "object") {
+    const plan = source.plan as Record<string, unknown>;
+    result.plan = {
+      explanation:
+        typeof plan.explanation === "string" || plan.explanation === null
+          ? plan.explanation
+          : undefined,
+      steps: Array.isArray(plan.steps) ? plan.steps : [],
+      delta: typeof plan.delta === "string" ? plan.delta : undefined,
+    };
+  }
+
+  if (source.fileChanges && typeof source.fileChanges === "object") {
+    const fileChanges: Record<string, PawAgentFileChange> = {};
+    for (const [key, value] of Object.entries(
+      source.fileChanges as Record<string, unknown>,
+    )) {
+      if (!value || typeof value !== "object") continue;
+      const change = value as Record<string, unknown>;
+      fileChanges[key] = {
+        itemId: typeof change.itemId === "string" ? change.itemId : key,
+        changes: change.changes,
+        output: typeof change.output === "string" ? change.output : undefined,
+      };
+    }
+    if (Object.keys(fileChanges).length > 0) result.fileChanges = fileChanges;
+  }
+
+  if (Array.isArray(source.terminalInteractions)) {
+    result.terminalInteractions = source.terminalInteractions.filter(
+      (item): item is PawAgentTerminalInteraction =>
+        Boolean(item) &&
+        typeof item === "object" &&
+        typeof (item as { itemId?: unknown }).itemId === "string" &&
+        typeof (item as { processId?: unknown }).processId === "string" &&
+        typeof (item as { stdin?: unknown }).stdin === "string" &&
+        typeof (item as { createdAt?: unknown }).createdAt === "number",
+    );
+  }
+
+  if (Array.isArray(source.moderationMetadata)) {
+    result.moderationMetadata = source.moderationMetadata;
+  }
+
+  if (Array.isArray(source.notifications)) {
+    result.notifications = source.notifications.filter(
+      (item): item is PawAgentNotification =>
+        Boolean(item) &&
+        typeof item === "object" &&
+        typeof (item as { method?: unknown }).method === "string" &&
+        typeof (item as { message?: unknown }).message === "string" &&
+        typeof (item as { createdAt?: unknown }).createdAt === "number",
+    );
+  }
+
+  if (source.fileSearches && typeof source.fileSearches === "object") {
+    const fileSearches: Record<string, PawAgentFileSearch> = {};
+    for (const [key, value] of Object.entries(
+      source.fileSearches as Record<string, unknown>,
+    )) {
+      if (!value || typeof value !== "object") continue;
+      const search = value as Record<string, unknown>;
+      fileSearches[key] = {
+        sessionId: typeof search.sessionId === "string" ? search.sessionId : key,
+        query: typeof search.query === "string" ? search.query : "",
+        files: Array.isArray(search.files) ? search.files : [],
+        completed: search.completed === true,
+        updatedAt: typeof search.updatedAt === "number" ? search.updatedAt : now,
+      };
+    }
+    if (Object.keys(fileSearches).length > 0) result.fileSearches = fileSearches;
+  }
+
+  if (source.approvalReviews && typeof source.approvalReviews === "object") {
+    const approvalReviews: Record<string, PawAgentApprovalReview> = {};
+    for (const [key, value] of Object.entries(
+      source.approvalReviews as Record<string, unknown>,
+    )) {
+      if (!value || typeof value !== "object") continue;
+      const review = value as Record<string, unknown>;
+      approvalReviews[key] = {
+        reviewId: typeof review.reviewId === "string" ? review.reviewId : key,
+        method: typeof review.method === "string" ? review.method : "autoApprovalReview",
+        raw: review.raw,
+        updatedAt: typeof review.updatedAt === "number" ? review.updatedAt : now,
+      };
+    }
+    if (Object.keys(approvalReviews).length > 0) result.approvalReviews = approvalReviews;
+  }
+
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function normalizeAttachment(input: unknown): PawAttachment | null {
+  if (!input || typeof input !== "object") return null;
+  const source = input as Record<string, unknown>;
+  const id = typeof source.id === "string" ? source.id.trim() : "";
+  const filename = typeof source.filename === "string" ? source.filename : "";
+  const mimeType = typeof source.mime_type === "string" ? source.mime_type : "";
+  const size =
+    typeof source.size === "number" && Number.isFinite(source.size)
+      ? Math.max(0, source.size)
+      : 0;
+  const expiresAt = typeof source.expires_at === "string" ? source.expires_at : "";
+  if (!id || !filename || !mimeType) return null;
+  return {
+    id,
+    filename,
+    mime_type: mimeType,
+    size,
+    expires_at: expiresAt,
+    localCacheStatus:
+      source.localCacheStatus === "available" || source.localCacheStatus === "unavailable"
+        ? source.localCacheStatus
+        : undefined,
+  };
+}
+
+function conversationAttachments(conversations: PawConversation[]): PawAttachment[] {
+  return conversations.flatMap((conversation) =>
+    conversation.messages.flatMap((message) => message.attachments ?? []),
+  );
+}
+
+function mergePersistedConversationRuntime(
+  current: PawConversation[],
+  persisted: PawConversation[],
+): PawConversation[] {
+  const currentById = new Map(current.map((conversation) => [conversation.id, conversation]));
+  return persisted.map((conversation) => {
+    const previous = currentById.get(conversation.id);
+    if (!previous) return conversation;
+    const previousMessages = new Map(previous.messages.map((message) => [message.id, message]));
+    return {
+      ...conversation,
+      messages: conversation.messages.map((message) => {
+        const previousMessage = previousMessages.get(message.id);
+        if (!previousMessage?.attachments || !message.attachments) return message;
+        const previousAttachments = new Map(
+          previousMessage.attachments.map((attachment) => [attachment.id, attachment]),
+        );
+        return {
+          ...message,
+          attachments: message.attachments.map((attachment) => {
+            const runtime = previousAttachments.get(attachment.id);
+            return runtime?.previewUrl
+              ? { ...attachment, previewUrl: runtime.previewUrl }
+              : attachment;
+          }),
+        };
+      }),
+    };
+  });
+}
+
+function normalizeConversation(input: Partial<PawConversation>): PawConversation {
+  const now = Date.now();
+  const messages = Array.isArray(input.messages)
+    ? input.messages
+        .filter((message): message is PawConversationMessage => Boolean(message))
+        .map((message) => ({
+          id:
+            typeof message.id === "string" && message.id.trim()
+              ? message.id
+              : createId("message"),
+          role:
+            message.role === "system" ||
+            message.role === "user" ||
+            message.role === "assistant"
+              ? message.role
+              : "user",
+          content: typeof message.content === "string" ? message.content : "",
+          model: typeof message.model === "string" ? message.model : undefined,
+          reasoningContent:
+            typeof message.reasoningContent === "string"
+              ? message.reasoningContent
+              : undefined,
+          agentPanels: normalizeAgentPanels(message.agentPanels),
+          attachments: Array.isArray(message.attachments)
+            ? message.attachments.map(normalizeAttachment).filter(
+                (item): item is PawAttachment => Boolean(item),
+              )
+            : undefined,
+          images: Array.isArray(message.images)
+            ? message.images.filter(
+                (item): item is string =>
+                  typeof item === "string" && item.trim().length > 0,
+              )
+            : undefined,
+          pinned: Boolean(message.pinned),
+          error: Boolean(message.error),
+          turnStatus:
+            message.turnStatus === "active" || message.turnStatus === "complete"
+              ? message.turnStatus
+              : undefined,
+          agentTurn: message.agentTurn === true ? true : undefined,
+          createdAt:
+            typeof message.createdAt === "number" ? message.createdAt : now,
+          updatedAt:
+            typeof message.updatedAt === "number" ? message.updatedAt : now,
+        }))
+    : [];
+
+  return {
+    id:
+      typeof input.id === "string" && input.id.trim()
+        ? input.id
+        : createId("conversation"),
+    title:
+      typeof input.title === "string" && input.title.trim()
+        ? input.title.trim()
+        : "新对话",
+    draft: typeof input.draft === "string" ? input.draft : "",
+    createdAt: typeof input.createdAt === "number" ? input.createdAt : now,
+    updatedAt: typeof input.updatedAt === "number" ? input.updatedAt : now,
+    contextStartIndex:
+      typeof input.contextStartIndex === "number" &&
+      Number.isFinite(input.contextStartIndex)
+        ? Math.min(messages.length, Math.max(0, Math.floor(input.contextStartIndex)))
+        : undefined,
+    messages,
+    agentCwd:
+      typeof input.agentCwd === "string" && input.agentCwd.trim() ? input.agentCwd : undefined,
+    agentThreadId:
+      typeof input.agentThreadId === "string" && input.agentThreadId.trim()
+        ? input.agentThreadId
+        : undefined,
+    agentCwdLocked: Boolean(input.agentCwdLocked),
+    agentApprovalMode:
+      input.agentApprovalMode === "review" || input.agentApprovalMode === "full"
+        ? input.agentApprovalMode
+        : undefined,
+  };
+}
+
+function createConversation(): PawConversation {
+  return normalizeConversation({});
+}
+
+function readJSON<T>(key: string, fallback: T): T {
+  const storage = safeLocalStorage();
+  const raw = storage.getItem(key);
+  if (!raw) return fallback;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeJSON(key: string, value: unknown): void {
+  safeLocalStorage().setItem(key, JSON.stringify(value));
+}
+
+function loadConversations(): PawConversation[] {
+  const stored = readJSON<unknown[]>(CONVERSATIONS_KEY, []);
+  if (!Array.isArray(stored)) return [];
+  const conversations = stored.map((item) =>
+    normalizeConversation(item as Partial<PawConversation>),
+  );
+  return conversations.length > 0 ? conversations : [createConversation()];
+}
+
+function loadSelection(): PawSelectionState | null {
+  const stored = readJSON<Partial<PawSelectionState> | null>(SELECTION_KEY, null);
+  if (!stored) return null;
+  return {
+    groupId:
+      typeof stored.groupId === "number" && Number.isFinite(stored.groupId)
+        ? stored.groupId
+        : null,
+    modelId: typeof stored.modelId === "string" ? stored.modelId : "",
+    reasoning: typeof stored.reasoning === "string" ? stored.reasoning : "",
+  };
+}
+
+function normalizePrompt(input: Partial<PawPrompt>, isUser = true): PawPrompt | null {
+  const title = typeof input.title === "string" ? input.title.trim() : "";
+  const content = typeof input.content === "string" ? input.content : "";
+  if (!title || !content.trim()) return null;
+  return {
+    id:
+      typeof input.id === "string" && input.id.trim()
+        ? input.id
+        : createId("prompt"),
+    title: title.slice(0, 80),
+    content,
+    createdAt:
+      typeof input.createdAt === "number" && Number.isFinite(input.createdAt)
+        ? input.createdAt
+        : Date.now(),
+    isUser,
+  };
+}
+
+function loadPrompts(): PawPrompt[] {
+  const stored = readJSON<unknown[]>(PROMPTS_KEY, []);
+  if (!Array.isArray(stored)) return [];
+  return stored
+    .map((item) => normalizePrompt((item ?? {}) as Partial<PawPrompt>))
+    .filter((item): item is PawPrompt => Boolean(item));
+}
+
+function saveSelection(selection: PawSelectionState): void {
+  writeJSON(SELECTION_KEY, selection);
+}
+
+function imageSourcesFromResponse(
+  data: Array<{ url?: string; b64_json?: string }>,
+): string[] {
+  return data
+    .map((item) => {
+      if (typeof item.url === "string" && item.url.trim()) {
+        return item.url.trim();
+      }
+      if (typeof item.b64_json === "string" && item.b64_json.trim()) {
+        return `data:image/png;base64,${item.b64_json.trim()}`;
+      }
+      return "";
+    })
+    .filter(Boolean);
+}
+
+function createUserMessage(
+  content: string,
+  attachments: PawAttachment[],
+): PawConversationMessage {
+  const now = Date.now();
+  return {
+    id: createId("user"),
+    role: "user",
+    content,
+    attachments: attachments.length ? attachments.map((item) => ({ ...item })) : undefined,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function createAssistantMessage(model?: string, agentTurn?: boolean): PawConversationMessage {
+  const now = Date.now();
+  return {
+    id: createId("assistant"),
+    role: "assistant",
+    content: "",
+    model,
+    turnStatus: "active",
+    agentTurn: agentTurn || undefined,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function getDefaultGroupId(config: PawConfigData | null): number | null {
+  return config?.defaults.group_id || null;
+}
+
+function findGroup(
+  config: PawConfigData | null,
+  groupId: number | null,
+): PawGroup | undefined {
+  if (!config || groupId == null) return undefined;
+  return config.groups.find((group) => group.id === groupId);
+}
+
+function findModel(
+  group: PawGroup | undefined,
+  modelId: string,
+): PawModel | undefined {
+  if (!group || !modelId) return undefined;
+  return group.models.find((model) => model.id === modelId);
+}
+
+function getDefaultModelId(group: PawGroup | undefined, fallback: string): string {
+  if (!group) return fallback;
+  return group.models.find((model) => model.id === fallback)?.id ?? group.models[0]?.id ?? "";
+}
+
+function getDefaultReasoning(model: PawModel | undefined, fallback: string): string {
+  if (!model || !model.reasoning.supported) return "";
+  return (
+    model.reasoning.values.find((value) => value === fallback) ??
+    model.reasoning.default ??
+    model.reasoning.values[0] ??
+    ""
+  );
+}
+
+function hasConfiguredDefaults(config: PawConfigData): boolean {
+  return (
+    config.defaults.group_id > 0 ||
+    Boolean(config.defaults.model_id.trim()) ||
+    Boolean(config.defaults.reasoning.trim())
+  );
+}
+
+function getPawImageSizes(model: PawModel | undefined): PawImageSize[] {
+  if (!model?.image_generation) return [];
+  const id = model.id.toLowerCase();
+  if (id.includes("dall-e") || id.includes("dalle") || id.includes("gpt-image")) {
+    return ["1024x1024", "1792x1024", "1024x1792"];
+  }
+  if (id.includes("cogview")) {
+    return [
+      "1024x1024",
+      "768x1344",
+      "864x1152",
+      "1344x768",
+      "1152x864",
+      "1440x720",
+      "720x1440",
+    ];
+  }
+  return ["1024x1024"];
+}
+
+function isSelectionValid(
+  config: PawConfigData | null,
+  groupId: number | null,
+  modelId: string,
+  reasoning: string,
+): boolean {
+  const group = findGroup(config, groupId);
+  const model = findModel(group, modelId);
+  if (!group || !model) return false;
+  if (!model.reasoning.supported) {
+    return reasoning === "";
+  }
+  if (!reasoning) {
+    return Boolean(model.reasoning.default || model.reasoning.values[0]);
+  }
+  return model.reasoning.values.includes(reasoning);
+}
+
+function selectionSummary(
+  config: PawConfigData | null,
+  groupId: number | null,
+  modelId: string,
+  reasoning: string,
+): string {
+  const group = findGroup(config, groupId);
+  const model = findModel(group, modelId);
+  if (!group || !model) return "未选择可用模型";
+  const reasoningLabel = model.reasoning.supported
+    ? reasoning || model.reasoning.default || model.reasoning.values[0] || "标准"
+    : "不支持推理";
+  return `${group.name} / ${model.name} / ${reasoningLabel}`;
+}
+
+function getContextStartIndex(conversation: PawConversation): number {
+  return Math.min(
+    conversation.messages.length,
+    Math.max(0, conversation.contextStartIndex ?? 0),
+  );
+}
+
+function cleanSelectionLabel(value: string): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized || "新对话";
+}
+
+function isValidAuthEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
+
+function isAllowedRegistrationEmail(
+  email: string,
+  whitelist: string[] | undefined,
+): boolean {
+  if (!whitelist?.length) return true;
+  const normalized = email.trim().toLowerCase();
+  return whitelist.some((suffix) => {
+    const value = suffix.trim().toLowerCase();
+    return value.length > 0 && normalized.endsWith(value);
+  });
+}
+
+export function usePawClient() {
+  const [hydrated, setHydrated] = useState(false);
+  const [session, setSession] = useState<PawSession | null>(null);
+  // 令牌可能在这个组件完全不知情的地方失效——静默刷新失败时
+  // `client/paw/api.ts` 深处直接 `clearPawSession()` 再抛错，调用方十有八九
+  // 只把 error.message 当一条普通提示显示，不会想起来还要 setSession(null)。
+  // 不订阅这个的后果是：localStorage 里的会话已经被清空，这里的 `session`
+  // 却还是失效前的旧对象，`!session` 分支永远不触发，登录页出不来，用户
+  // 卡在一句"会话已过期"的提示上却没有路可退。见 client/paw/auth.ts 里
+  // `onPawSessionChange` 的注释。
+  useEffect(() => onPawSessionChange(setSession), []);
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [authSettings, setAuthSettings] = useState<PawPublicSettings | null>(null);
+  const [authSettingsBusy, setAuthSettingsBusy] = useState(false);
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [registerPassword, setRegisterPassword] = useState("");
+  const [registerConfirmPassword, setRegisterConfirmPassword] = useState("");
+  const [registerVerifyCode, setRegisterVerifyCode] = useState("");
+  const [registerInvitationCode, setRegisterInvitationCode] = useState("");
+  const [registerPromoCode, setRegisterPromoCode] = useState("");
+  const [registerCaptchaToken, setRegisterCaptchaToken] = useState("");
+  const [loginBusy, setLoginBusy] = useState(false);
+  const [verifyCodeBusy, setVerifyCodeBusy] = useState(false);
+  const [verifyCodeCountdown, setVerifyCodeCountdown] = useState(0);
+  const [captchaResetKey, setCaptchaResetKey] = useState(0);
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [config, setConfig] = useState<PawConfigData | null>(null);
+  const [configBusy, setConfigBusy] = useState(false);
+  const [configError, setConfigError] = useState<string | null>(null);
+  const [selectedGroupId, setSelectedGroupId] = useState<number | null>(null);
+  const [selectedModelId, setSelectedModelId] = useState("");
+  const [selectedReasoning, setSelectedReasoning] = useState("");
+  const [submitKey, setSubmitKey] = useState<PawSubmitKey>("enter");
+  const [imageMode, setImageMode] = useState(false);
+  const [imageSize, setImageSize] = useState<PawImageSize>("1024x1024");
+  const [conversations, setConversations] = useState<PawConversation[]>([]);
+  const [prompts, setPrompts] = useState<PawPrompt[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState("");
+  const [draft, setDraftState] = useState("");
+  const [attachments, setAttachments] = useState<PawAttachment[]>([]);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [selectionInvalid, setSelectionInvalid] = useState(false);
+  const [fileBusy, setFileBusy] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const sendAbortRef = useRef<AbortController | null>(null);
+  const draftBackupRef = useRef("");
+  const attachmentsBackupRef = useRef<PawAttachment[]>([]);
+  const attachmentFilesRef = useRef<Map<string, File>>(new Map());
+  const attachmentPreviewRefsRef = useRef<Map<string, number>>(new Map());
+  const attachmentRestoreGenerationRef = useRef(0);
+  const selectionInitializedRef = useRef(false);
+
+  const retainAttachmentPreviews = useCallback((items: PawAttachment[]) => {
+    for (const item of items) {
+      if (!item.previewUrl?.startsWith("blob:")) continue;
+      const count = attachmentPreviewRefsRef.current.get(item.previewUrl) ?? 0;
+      attachmentPreviewRefsRef.current.set(item.previewUrl, count + 1);
+    }
+  }, []);
+
+  const releaseAttachmentPreviews = useCallback((items: PawAttachment[]) => {
+    for (const item of items) {
+      const url = item.previewUrl;
+      if (!url?.startsWith("blob:")) continue;
+      const count = (attachmentPreviewRefsRef.current.get(url) ?? 0) - 1;
+      if (count > 0) {
+        attachmentPreviewRefsRef.current.set(url, count);
+      } else {
+        attachmentPreviewRefsRef.current.delete(url);
+        URL.revokeObjectURL(url);
+      }
+    }
+  }, []);
+
+  const replaceComposerAttachments = useCallback(
+    (next: PawAttachment[]) => {
+      setAttachments((current) => {
+        releaseAttachmentPreviews(current);
+        retainAttachmentPreviews(next);
+        return next;
+      });
+    },
+    [releaseAttachmentPreviews, retainAttachmentPreviews],
+  );
+
+  const appendComposerAttachments = useCallback(
+    (next: PawAttachment[]) => {
+      if (!next.length) return;
+      retainAttachmentPreviews(next);
+      setAttachments((current) => [...current, ...next]);
+    },
+    [retainAttachmentPreviews],
+  );
+
+  const restoreConversationAttachments = useCallback(
+    async (source: PawConversation[]) => {
+      const generation = attachmentRestoreGenerationRef.current + 1;
+      attachmentRestoreGenerationRef.current = generation;
+      const createdPreviews: PawAttachment[] = [];
+      const restored = await Promise.all(
+        source.map(async (conversation) => ({
+          ...conversation,
+          messages: await Promise.all(
+            conversation.messages.map(async (message) => {
+              if (!message.attachments?.length) return message;
+              const attachments = await Promise.all(
+                message.attachments.map(async (attachment) => {
+                  const blob = await loadPawAttachmentBlob(attachment.id);
+                  if (!blob) {
+                    return { ...attachment, localCacheStatus: "unavailable" as const };
+                  }
+
+                  const file = new File([blob], attachment.filename, {
+                    type: attachment.mime_type,
+                  });
+                  attachmentFilesRef.current.set(attachment.id, file);
+                  if (!attachment.mime_type.startsWith("image/")) {
+                    return { ...attachment, localCacheStatus: "available" as const };
+                  }
+
+                  const previewUrl = URL.createObjectURL(blob);
+                  const restoredAttachment = {
+                    ...attachment,
+                    previewUrl,
+                    localCacheStatus: "available" as const,
+                  };
+                  createdPreviews.push(restoredAttachment);
+                  retainAttachmentPreviews([restoredAttachment]);
+                  return restoredAttachment;
+                }),
+              );
+              return { ...message, attachments };
+            }),
+          ),
+        })),
+      );
+      if (generation !== attachmentRestoreGenerationRef.current) {
+        releaseAttachmentPreviews(createdPreviews);
+        return;
+      }
+      const restoredById = new Map(restored.map((conversation) => [conversation.id, conversation]));
+      setConversations((current) =>
+        current.map((conversation) => restoredById.get(conversation.id) ?? conversation),
+      );
+    },
+    [releaseAttachmentPreviews, retainAttachmentPreviews],
+  );
+
+  useEffect(
+    () => () => {
+      for (const url of attachmentPreviewRefsRef.current.keys()) {
+        URL.revokeObjectURL(url);
+      }
+      attachmentPreviewRefsRef.current.clear();
+      attachmentFilesRef.current.clear();
+    },
+    [],
+  );
+
+  const activeConversation = useMemo(
+    () =>
+      conversations.find((conversation) => conversation.id === activeConversationId) ??
+      conversations[0] ??
+      null,
+    [activeConversationId, conversations],
+  );
+
+  const currentGroup = findGroup(config, selectedGroupId);
+  const currentModel = findModel(currentGroup, selectedModelId);
+  const canSend = Boolean(
+    session &&
+      config &&
+      currentGroup &&
+      currentModel &&
+      isSelectionValid(config, selectedGroupId, selectedModelId, selectedReasoning) &&
+      !sending,
+  );
+
+  const updateConversation = useCallback(
+    (conversationId: string, updater: (conversation: PawConversation) => PawConversation) => {
+      setConversations((current) =>
+        current.map((conversation) =>
+          conversation.id === conversationId ? updater(conversation) : conversation,
+        ),
+      );
+    },
+    [],
+  );
+
+  /**
+   * agent 会话专用的一组消息拼装函数（配合 `client/agent/useAgentSession.ts`）。
+   *
+   * **故意和 handleSend/dispatchConversationSend 完全分开**：agent 走的是另一条
+   * 通道（Rust 桥 → 本地转发层），不经过 `sendPawChat`，也不占用 `sending` 这个
+   * 状态机——那是"这次 Paw 聊天请求有没有在飞"的信号，语义上不该被 agent 的轮次
+   * 借用（两者互不知道对方，混在一起只会让"发送中"这件事对不上号）。
+   *
+   * 这几个函数只负责把 agent 产生的文本落进对应会话的消息列表，复用现成的气泡
+   * 渲染（Markdown、推理折叠块）——agent 的输出因此和普通对话长得一样，不需要
+   * 一套平行的展示组件。
+   */
+  const ensureActiveConversationId = useCallback((): string => {
+    if (activeConversationId) return activeConversationId;
+    const conversation = createConversation();
+    setConversations((current) => [conversation, ...current]);
+    setActiveConversationId(conversation.id);
+    return conversation.id;
+  }, [activeConversationId]);
+
+  const beginAgentTurn = useCallback(
+    (conversationId: string, text: string) => {
+      const userMessage = createUserMessage(text, []);
+      const assistantMessage = createAssistantMessage(undefined, true);
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        title:
+          conversation.title === "新对话" && text
+            ? cleanSelectionLabel(text.slice(0, 32))
+            : conversation.title,
+        messages: [...conversation.messages, userMessage, assistantMessage],
+        updatedAt: Date.now(),
+      }));
+      return { userMessage, assistantMessage };
+    },
+    [updateConversation],
+  );
+
+  const appendAgentDelta = useCallback(
+    (
+      conversationId: string,
+      messageId: string,
+      delta: { content?: string; reasoning?: string },
+    ) => {
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        messages: conversation.messages.map((message) =>
+          message.id === messageId
+            ? {
+                ...message,
+                content: delta.content ? `${message.content}${delta.content}` : message.content,
+                reasoningContent: delta.reasoning
+                  ? `${message.reasoningContent ?? ""}${delta.reasoning}`
+                  : message.reasoningContent,
+                updatedAt: Date.now(),
+              }
+            : message,
+        ),
+        updatedAt: Date.now(),
+      }));
+    },
+    [updateConversation],
+  );
+
+  const updateAgentPanel = useCallback(
+    (
+      conversationId: string,
+      messageId: string,
+      patch: PawAgentPanelsPatch,
+    ) => {
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        messages: conversation.messages.map((message) => {
+          if (message.id !== messageId) return message;
+          const current = message.agentPanels ?? {};
+          const nextPanels: PawAgentPanels = {
+            ...current,
+            ...(patch.plan ? { plan: patch.plan } : {}),
+            ...(patch.diff !== undefined ? { diff: patch.diff } : {}),
+            ...(patch.fileChanges
+              ? {
+                  fileChanges: {
+                    ...(current.fileChanges ?? {}),
+                    ...patch.fileChanges,
+                  },
+                }
+              : {}),
+            ...(patch.terminalInteractions?.length
+              ? {
+                  terminalInteractions: [
+                    ...(current.terminalInteractions ?? []),
+                    ...patch.terminalInteractions,
+                  ],
+                }
+              : {}),
+            ...(patch.moderationMetadata?.length
+              ? {
+                  moderationMetadata: [
+                    ...(current.moderationMetadata ?? []),
+                    ...patch.moderationMetadata,
+                  ],
+                }
+              : {}),
+            ...(patch.notifications?.length
+              ? {
+                  notifications: [
+                    ...(current.notifications ?? []),
+                    ...patch.notifications,
+                  ],
+                }
+              : {}),
+            ...(patch.fileSearches
+              ? {
+                  fileSearches: {
+                    ...(current.fileSearches ?? {}),
+                    ...patch.fileSearches,
+                  },
+                }
+              : {}),
+            ...(patch.approvalReviews
+              ? {
+                  approvalReviews: {
+                    ...(current.approvalReviews ?? {}),
+                    ...patch.approvalReviews,
+                  },
+                }
+              : {}),
+          };
+          return {
+            ...message,
+            agentPanels: nextPanels,
+            updatedAt: Date.now(),
+          };
+        }),
+        updatedAt: Date.now(),
+      }));
+    },
+    [updateConversation],
+  );
+
+  const finishAgentTurn = useCallback(
+    (conversationId: string, messageId: string, opts: { error?: boolean } = {}) => {
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        messages: conversation.messages.map((message) =>
+          message.id === messageId
+            ? {
+                ...message,
+                error: opts.error ?? message.error,
+                turnStatus: "complete",
+                updatedAt: Date.now(),
+              }
+            : message,
+        ),
+        updatedAt: Date.now(),
+      }));
+    },
+    [updateConversation],
+  );
+
+  const compactAgentMessage = useCallback(
+    (conversationId: string, messageId: string) => {
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        messages: conversation.messages.map((message) =>
+          message.id === messageId
+            ? { ...compactAgentMessageForRuntime(message), updatedAt: Date.now() }
+            : message,
+        ),
+        updatedAt: Date.now(),
+      }));
+    },
+    [updateConversation],
+  );
+
+  /**
+   * 独立追加一条通知气泡（不编辑某条已有消息）——用于轮次之间发生的事，
+   * 比如会话意外结束、协议漂移诊断。这些事没有一条"正在写"的助手消息可以挂，
+   * 只能另起一条。
+   */
+  const appendAgentNotice = useCallback(
+    (conversationId: string, text: string) => {
+      const now = Date.now();
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        messages: [
+          ...conversation.messages,
+          {
+            id: createId("assistant"),
+            role: "assistant" as const,
+            content: text,
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+        updatedAt: now,
+      }));
+    },
+    [updateConversation],
+  );
+
+  /**
+   * 设置 agent 工作目录——**发消息前可以随便重选**，这里不挡。真正的锁定点是
+   * `lockAgentCwd`：那之前光选目录不算数，没有起真正的会话，改主意的代价是零。
+   * 锁定之后再调这个函数是 no-op——那不是"选目录"，是想绕过锁的 bug。
+   */
+  const setAgentBinding = useCallback(
+    (conversationId: string, cwd: string) => {
+      updateConversation(conversationId, (conversation) =>
+        conversation.agentCwdLocked ? conversation : { ...conversation, agentCwd: cwd },
+      );
+    },
+    [updateConversation],
+  );
+
+  const setAgentThreadId = useCallback(
+    (conversationId: string, threadId: string | null) => {
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        agentThreadId: threadId || undefined,
+        updatedAt: Date.now(),
+      }));
+    },
+    [updateConversation],
+  );
+
+  const getAgentThreadId = useCallback(
+    (conversationId: string) =>
+      conversations.find((conversation) => conversation.id === conversationId)?.agentThreadId ??
+      null,
+    [conversations],
+  );
+
+  /**
+   * 锁死当前的工作目录——**只在真正起了一条会话（第一次成功发消息）之后才调**，
+   * 不是选完目录就调。落在数据层而不是只在 UI 上挡一下：就算将来哪个界面
+   * 漏了判断，这里也不会被覆盖。已经锁过再调是 no-op。
+   */
+  const lockAgentCwd = useCallback(
+    (conversationId: string) => {
+      updateConversation(conversationId, (conversation) =>
+        conversation.agentCwdLocked ? conversation : { ...conversation, agentCwdLocked: true },
+      );
+    },
+    [updateConversation],
+  );
+
+  /** 审批模式随时可改，不像工作目录那样锁定。 */
+  const setAgentApprovalMode = useCallback(
+    (conversationId: string, mode: AgentApprovalUiMode) => {
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        agentApprovalMode: mode,
+      }));
+    },
+    [updateConversation],
+  );
+
+  const syncDraft = useCallback(
+    (value: string) => {
+      setDraftState(value);
+      if (!activeConversationId) return;
+      updateConversation(activeConversationId, (conversation) => ({
+        ...conversation,
+        draft: value,
+        updatedAt: Date.now(),
+      }));
+    },
+    [activeConversationId, updateConversation],
+  );
+
+  const removeAttachment = useCallback((id: string) => {
+    setAttachments((current) => {
+      const removed = current.find((attachment) => attachment.id === id);
+      if (removed) releaseAttachmentPreviews([removed]);
+      attachmentFilesRef.current.delete(id);
+      return current.filter((attachment) => attachment.id !== id);
+    });
+  }, [releaseAttachmentPreviews]);
+
+  const clearEditState = useCallback((restoreDraft = false) => {
+    setEditingMessageId(null);
+    if (restoreDraft) {
+      setDraftState(draftBackupRef.current);
+      replaceComposerAttachments(attachmentsBackupRef.current.map((item) => ({ ...item })));
+      if (activeConversationId) {
+        updateConversation(activeConversationId, (conversation) => ({
+          ...conversation,
+          draft: draftBackupRef.current,
+          updatedAt: Date.now(),
+        }));
+      }
+    } else {
+      replaceComposerAttachments([]);
+    }
+    draftBackupRef.current = "";
+    attachmentsBackupRef.current = [];
+  }, [
+    activeConversationId,
+    replaceComposerAttachments,
+    updateConversation,
+  ]);
+
+  const deleteMessage = useCallback((messageId: string) => {
+    if (!activeConversationId) return;
+    const conversation = conversations.find((item) => item.id === activeConversationId);
+    const removed = conversation?.messages.find((message) => message.id === messageId);
+    if (removed?.attachments) {
+      releaseAttachmentPreviews(removed.attachments);
+      const remainingAttachmentIds = new Set(
+        conversations.flatMap((item) =>
+          item.messages
+            .filter((message) => item.id !== activeConversationId || message.id !== messageId)
+            .flatMap((message) => (message.attachments ?? []).map((attachment) => attachment.id)),
+        ),
+      );
+      const protectedAttachmentIds = new Set(
+        [...attachments, ...attachmentsBackupRef.current].map((attachment) => attachment.id),
+      );
+      for (const id of new Set(removed.attachments.map((attachment) => attachment.id))) {
+        if (!remainingAttachmentIds.has(id) && !protectedAttachmentIds.has(id)) {
+          attachmentFilesRef.current.delete(id);
+          void deletePawAttachmentBlob(id);
+        }
+      }
+    }
+    updateConversation(activeConversationId, (conversation) => ({
+      ...conversation,
+      messages: conversation.messages.filter((message) => message.id !== messageId),
+      contextStartIndex:
+        conversation.contextStartIndex == null
+          ? undefined
+          : Math.min(
+              conversation.contextStartIndex,
+              Math.max(0, conversation.messages.length - 1),
+            ),
+      updatedAt: Date.now(),
+    }));
+  }, [
+    activeConversationId,
+    attachments,
+    conversations,
+    releaseAttachmentPreviews,
+    updateConversation,
+  ]);
+
+  const togglePinMessage = useCallback((messageId: string) => {
+    if (!activeConversationId) return;
+    updateConversation(activeConversationId, (conversation) => ({
+      ...conversation,
+      messages: conversation.messages.map((message) =>
+        message.id === messageId
+          ? { ...message, pinned: !message.pinned, updatedAt: Date.now() }
+          : message,
+      ),
+      updatedAt: Date.now(),
+    }));
+    setNotice("消息置顶状态已更新。");
+  }, [activeConversationId, updateConversation]);
+
+  const copyMessage = useCallback((messageId: string) => {
+    if (!activeConversationId) return;
+    const conversation = conversations.find((item) => item.id === activeConversationId);
+    const message = conversation?.messages.find((item) => item.id === messageId);
+    const text = [
+      message?.reasoningContent?.trim(),
+      message?.content?.trim(),
+    ].filter(Boolean).join("\n\n");
+    if (!text) return;
+    const clipboard = navigator.clipboard;
+    if (!clipboard) {
+      setNotice("复制失败，请手动选择文本。");
+      return;
+    }
+    void clipboard.writeText(text).then(
+      () => setNotice("已复制消息内容。"),
+      () => setNotice("复制失败，请手动选择文本。"),
+    );
+  }, [activeConversationId, conversations]);
+
+  const getRequestMessages = useCallback(
+    (
+      conversation: PawConversation,
+      endIndex = conversation.messages.length,
+    ): Array<Pick<PawConversationMessage, "role" | "content">> => {
+      const contextStart = getContextStartIndex(conversation);
+      return conversation.messages
+        .slice(0, endIndex)
+        .filter((message, index) => index >= contextStart || message.pinned)
+        .map((message) => ({
+          role: message.role,
+          content: stripAgentOutput(message.content),
+        }));
+    },
+    [],
+  );
+
+  async function dispatchConversationSend(options: {
+    conversation: PawConversation;
+    requestMessages: Array<Pick<PawConversationMessage, "role" | "content">>;
+    nextMessages: PawConversationMessage[];
+    requestAttachments: PawAttachment[];
+    assistantMessage: PawConversationMessage;
+    title: string;
+    restoreDraft: string;
+    restoreAttachments: PawAttachment[];
+    messageAttachments: PawAttachment[];
+    editMessageId?: string | null;
+  }): Promise<void> {
+    const abortController = new AbortController();
+    sendAbortRef.current = abortController;
+    setSending(true);
+    setDraftState("");
+    if (options.editMessageId) {
+      const replacedMessage = options.conversation.messages.find(
+        (message) => message.id === options.editMessageId,
+      );
+      if (replacedMessage?.attachments) {
+        releaseAttachmentPreviews(replacedMessage.attachments);
+      }
+    }
+    retainAttachmentPreviews(options.messageAttachments);
+    replaceComposerAttachments([]);
+    setNotice(null);
+
+    const nextConversation = normalizeConversation({
+      id: options.conversation.id,
+      title: options.title,
+      draft: "",
+      createdAt: options.conversation.createdAt,
+      updatedAt: Date.now(),
+      contextStartIndex: options.conversation.contextStartIndex,
+      messages: options.nextMessages,
+      agentCwd: options.conversation.agentCwd,
+      agentCwdLocked: options.conversation.agentCwdLocked,
+      agentThreadId: options.conversation.agentThreadId,
+      agentApprovalMode: options.conversation.agentApprovalMode,
+    });
+
+    setConversations((current) => {
+      const exists = current.some((item) => item.id === options.conversation.id);
+      if (exists) {
+        return current.map((item) =>
+          item.id === options.conversation.id ? nextConversation : item,
+        );
+      }
+      return [nextConversation, ...current];
+    });
+    setActiveConversationId(options.conversation.id);
+
+    try {
+      const response = await sendPawChat(
+        {
+          group_id: currentGroup!.id,
+          model_id: currentModel!.id,
+          reasoning: selectedReasoning,
+          messages: options.requestMessages.map((item) => ({
+            role: item.role,
+            content: item.content,
+          })),
+          stream: true,
+          attachments: options.requestAttachments.map((item) => ({ id: item.id })),
+        },
+        {
+          signal: abortController.signal,
+          onDelta: ({ contentDelta, reasoningDelta }) => {
+            updateConversation(options.conversation.id, (item) => ({
+              ...item,
+              messages: item.messages.map((message) =>
+                message.id === options.assistantMessage.id
+                  ? {
+                      ...message,
+                      content: `${message.content}${contentDelta}`,
+                      reasoningContent: `${message.reasoningContent ?? ""}${reasoningDelta}`,
+                      updatedAt: Date.now(),
+                    }
+                  : message,
+              ),
+              updatedAt: Date.now(),
+            }));
+          },
+        },
+      );
+
+      updateConversation(options.conversation.id, (item) => ({
+        ...item,
+        messages: item.messages.map((message) =>
+          message.id === options.assistantMessage.id
+            ? {
+                ...message,
+                content: response.content || message.content,
+                reasoningContent: response.reasoningContent || message.reasoningContent,
+                turnStatus: "complete",
+                updatedAt: Date.now(),
+              }
+            : message,
+        ),
+        updatedAt: Date.now(),
+      }));
+
+      if (options.editMessageId) {
+        clearEditState(false);
+        setNotice("消息已重新生成。");
+      }
+    } catch (error) {
+      const isAbort = error instanceof DOMException && error.name === "AbortError";
+      const message = isAbort
+        ? "已停止生成。"
+        : error instanceof Error
+          ? error.message
+          : "发送失败";
+
+      if (!isAbort && /(CONFIG|MODEL|GROUP|REASONING|QUOTA)/i.test(message)) {
+        setSelectionInvalid(true);
+        setNotice("当前配置不可用，请重新选择分组或模型。");
+        await refreshConfig();
+      } else {
+        setNotice(message);
+      }
+
+      updateConversation(options.conversation.id, (item) => ({
+        ...item,
+        messages: item.messages.map((itemMessage) =>
+          itemMessage.id === options.assistantMessage.id
+            ? {
+                ...itemMessage,
+                content: itemMessage.content || message,
+                error: !isAbort,
+                turnStatus: "complete",
+                updatedAt: Date.now(),
+              }
+            : itemMessage,
+        ),
+        updatedAt: Date.now(),
+      }));
+
+      setDraftState(options.restoreDraft);
+      replaceComposerAttachments(options.restoreAttachments.map((item) => ({ ...item })));
+      if (options.editMessageId) {
+        setEditingMessageId(options.editMessageId);
+      }
+    } finally {
+      if (sendAbortRef.current === abortController) {
+        sendAbortRef.current = null;
+      }
+      setSending(false);
+    }
+  }
+
+  async function dispatchImageGeneration(options: {
+    conversation: PawConversation;
+    prompt: string;
+    attachments: PawAttachment[];
+    title: string;
+  }): Promise<void> {
+    const assistantMessage = createAssistantMessage(currentModel?.name);
+    const userMessage = createUserMessage(options.prompt, options.attachments);
+    const nextConversation = normalizeConversation({
+      id: options.conversation.id,
+      title: options.title,
+      draft: "",
+      createdAt: options.conversation.createdAt,
+      updatedAt: Date.now(),
+      contextStartIndex: options.conversation.contextStartIndex,
+      messages: [...options.conversation.messages, userMessage, assistantMessage],
+      agentCwd: options.conversation.agentCwd,
+      agentCwdLocked: options.conversation.agentCwdLocked,
+      agentThreadId: options.conversation.agentThreadId,
+      agentApprovalMode: options.conversation.agentApprovalMode,
+    });
+
+    setSending(true);
+    setDraftState("");
+    retainAttachmentPreviews(userMessage.attachments ?? []);
+    replaceComposerAttachments([]);
+    setNotice(null);
+    setConversations((current) => {
+      const exists = current.some((item) => item.id === options.conversation.id);
+      return exists
+        ? current.map((item) =>
+            item.id === options.conversation.id ? nextConversation : item,
+          )
+        : [nextConversation, ...current];
+    });
+    setActiveConversationId(options.conversation.id);
+
+    try {
+      const response = await generatePawImage({
+        group_id: currentGroup!.id,
+        model_id: currentModel!.id,
+        prompt: options.prompt,
+        size: getPawImageSizes(currentModel).includes(imageSize)
+          ? imageSize
+          : "1024x1024",
+        n: 1,
+        stream: false,
+      });
+      const images = imageSourcesFromResponse(response.data);
+      if (!images.length) {
+        throw new Error("图片生成成功，但没有返回图片。");
+      }
+      updateConversation(options.conversation.id, (item) => ({
+        ...item,
+        messages: item.messages.map((message) =>
+          message.id === assistantMessage.id
+            ? {
+                ...message,
+                content: "已生成图片。",
+                images,
+                turnStatus: "complete",
+                updatedAt: Date.now(),
+              }
+            : message,
+        ),
+        updatedAt: Date.now(),
+      }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "图片生成失败";
+      if (/(CONFIG|MODEL|GROUP|REASONING|QUOTA)/i.test(message)) {
+        setSelectionInvalid(true);
+        setNotice("当前图像配置不可用，请重新选择分组或模型。");
+        await refreshConfig();
+      } else {
+        setNotice(message);
+      }
+      updateConversation(options.conversation.id, (item) => ({
+        ...item,
+        messages: item.messages.map((itemMessage) =>
+          itemMessage.id === assistantMessage.id
+            ? {
+                ...itemMessage,
+                content: message,
+                error: true,
+                turnStatus: "complete",
+                updatedAt: Date.now(),
+              }
+            : itemMessage,
+        ),
+        updatedAt: Date.now(),
+      }));
+      setDraftState(options.prompt);
+      replaceComposerAttachments(options.attachments.map((item) => ({ ...item })));
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function dispatchImageEdit(options: {
+    conversation: PawConversation;
+    prompt: string;
+    attachments: PawAttachment[];
+    title: string;
+  }): Promise<void> {
+    const sourceFiles = options.attachments
+      .filter((attachment) => attachment.mime_type.startsWith("image/"))
+      .map((attachment) => attachmentFilesRef.current.get(attachment.id))
+      .filter((file): file is File => Boolean(file));
+    if (sourceFiles.length === 0) {
+      setNotice("图片附件已失效，请重新上传图片后再编辑。");
+      return;
+    }
+
+    const assistantMessage = createAssistantMessage(currentModel?.name);
+    const userMessage = createUserMessage(options.prompt, options.attachments);
+    const nextConversation = normalizeConversation({
+      id: options.conversation.id,
+      title: options.title,
+      draft: "",
+      createdAt: options.conversation.createdAt,
+      updatedAt: Date.now(),
+      contextStartIndex: options.conversation.contextStartIndex,
+      messages: [...options.conversation.messages, userMessage, assistantMessage],
+      agentCwd: options.conversation.agentCwd,
+      agentCwdLocked: options.conversation.agentCwdLocked,
+      agentThreadId: options.conversation.agentThreadId,
+      agentApprovalMode: options.conversation.agentApprovalMode,
+    });
+
+    setSending(true);
+    setDraftState("");
+    retainAttachmentPreviews(userMessage.attachments ?? []);
+    replaceComposerAttachments([]);
+    setNotice(null);
+    setConversations((current) => {
+      const exists = current.some((item) => item.id === options.conversation.id);
+      return exists
+        ? current.map((item) =>
+            item.id === options.conversation.id ? nextConversation : item,
+          )
+        : [nextConversation, ...current];
+    });
+    setActiveConversationId(options.conversation.id);
+
+    try {
+      const body = new FormData();
+      body.set("group_id", String(currentGroup!.id));
+      body.set("model", currentModel!.id);
+      body.set("prompt", options.prompt);
+      body.set(
+        "size",
+        getPawImageSizes(currentModel).includes(imageSize) ? imageSize : "1024x1024",
+      );
+      body.set("n", "1");
+      sourceFiles.forEach((file) => body.append("image", file, file.name));
+      const response = await editPawImage(body);
+      const images = imageSourcesFromResponse(response.data);
+      if (!images.length) {
+        throw new Error("图片编辑成功，但没有返回图片。");
+      }
+      updateConversation(options.conversation.id, (item) => ({
+        ...item,
+        messages: item.messages.map((message) =>
+          message.id === assistantMessage.id
+            ? {
+                ...message,
+                content: "已完成图片编辑。",
+                images,
+                turnStatus: "complete",
+                updatedAt: Date.now(),
+              }
+            : message,
+        ),
+        updatedAt: Date.now(),
+      }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "图片编辑失败";
+      if (/(CONFIG|MODEL|GROUP|REASONING|QUOTA)/i.test(message)) {
+        setSelectionInvalid(true);
+        setNotice("当前图像配置不可用，请重新选择分组或模型。");
+        await refreshConfig();
+      } else {
+        setNotice(message);
+      }
+      updateConversation(options.conversation.id, (item) => ({
+        ...item,
+        messages: item.messages.map((itemMessage) =>
+          itemMessage.id === assistantMessage.id
+            ? {
+                ...itemMessage,
+                content: message,
+                error: true,
+                updatedAt: Date.now(),
+              }
+            : itemMessage,
+        ),
+        updatedAt: Date.now(),
+      }));
+      setDraftState(options.prompt);
+      replaceComposerAttachments(options.attachments.map((item) => ({ ...item })));
+    } finally {
+      setSending(false);
+    }
+  }
+
+  const beginEditMessage = useCallback((messageId: string) => {
+    const conversation = conversations.find((item) => item.id === activeConversationId);
+    const message = conversation?.messages.find((item) => item.id === messageId);
+    if (!conversation || !message || message.role !== "user") return;
+    draftBackupRef.current = draft;
+    attachmentsBackupRef.current = attachments.map((item) => ({ ...item }));
+    setEditingMessageId(messageId);
+    syncDraft(message.content);
+    replaceComposerAttachments(
+      message.attachments ? message.attachments.map((item) => ({ ...item })) : [],
+    );
+    setNotice("正在编辑这条消息，发送后会重新生成后续内容。");
+  }, [
+    activeConversationId,
+    attachments,
+    conversations,
+    draft,
+    replaceComposerAttachments,
+    syncDraft,
+  ]);
+
+  const retryMessage = useCallback((messageId: string) => {
+    const conversation = conversations.find((item) => item.id === activeConversationId);
+    if (!conversation) return;
+    const index = conversation.messages.findIndex((item) => item.id === messageId);
+    if (index < 0) return;
+    const target = conversation.messages[index];
+    if (target.role !== "assistant") return;
+    const requestMessages = getRequestMessages(conversation, index);
+    const nextAssistantMessage = createAssistantMessage(currentModel?.name);
+    void dispatchConversationSend({
+      conversation,
+      requestMessages,
+      nextMessages: [
+        ...conversation.messages.slice(0, index),
+        nextAssistantMessage,
+      ],
+      requestAttachments: [],
+      assistantMessage: nextAssistantMessage,
+      title: conversation.title,
+      restoreDraft: draft,
+      restoreAttachments: attachments,
+      messageAttachments: [],
+    });
+  }, [
+    activeConversationId,
+    attachments,
+    conversations,
+    currentModel?.name,
+    draft,
+    getRequestMessages,
+  ]);
+
+  useEffect(() => {
+    setHydrated(true);
+    setSession(loadPawSession());
+    const initialConversations = loadConversations();
+    setConversations(initialConversations);
+
+    const storedSelection = loadSelection();
+    if (storedSelection) {
+      setSelectedGroupId(storedSelection.groupId);
+      setSelectedModelId(storedSelection.modelId);
+      setSelectedReasoning(storedSelection.reasoning);
+      selectionInitializedRef.current = true;
+    }
+    const storedSubmitKey = safeLocalStorage().getItem(SUBMIT_KEY) as PawSubmitKey | null;
+    if (
+      storedSubmitKey === "enter" ||
+      storedSubmitKey === "shift-enter" ||
+      storedSubmitKey === "ctrl-enter" ||
+      storedSubmitKey === "alt-enter"
+    ) {
+      setSubmitKey(storedSubmitKey);
+    }
+    setPrompts(loadPrompts());
+    setImageMode(safeLocalStorage().getItem(MODE_KEY) === "image");
+    const storedImageSize = safeLocalStorage().getItem(IMAGE_SIZE_KEY) as PawImageSize | null;
+    if (storedImageSize && PAW_IMAGE_SIZES.includes(storedImageSize)) {
+      setImageSize(storedImageSize);
+    }
+
+    const storedActiveId = safeLocalStorage().getItem(ACTIVE_CONVERSATION_KEY) ?? "";
+    const initialActiveId =
+      initialConversations.find((conversation) => conversation.id === storedActiveId)?.id ??
+      initialConversations[0]?.id ??
+      "";
+    setActiveConversationId(initialActiveId);
+    void restoreConversationAttachments(initialConversations);
+  }, [restoreConversationAttachments]);
+
+  useEffect(() => {
+    if (!hydrated || session) return;
+
+    let active = true;
+    setAuthSettingsBusy(true);
+    void fetchPawPublicSettings()
+      .then((settings) => {
+        if (active) {
+          setAuthSettings(settings);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setAuthSettings(null);
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setAuthSettingsBusy(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [hydrated, session]);
+
+  useEffect(() => {
+    if (verifyCodeCountdown <= 0) return;
+    const timer = window.setInterval(() => {
+      setVerifyCodeCountdown((current) => Math.max(0, current - 1));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [verifyCodeCountdown]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    // 这条真实炸过：长会话（尤其 agent 那些命令输出）把 `paw-conversations`
+    // 写爆了 localStorage 配额，`setItem` 抛出的 QuotaExceededError 没人接，
+    // 直接把整个页面带崩（Next dev 的错误浮层，正式包下就是白屏）。
+    // `safeLocalStorage().setItem` 现在不抛了，但"存失败"本身要让用户知道——
+    // 静默吞掉的话，用户以为记录都在，其实这一轮之后的对话重开就没了。
+    //
+    // 默认写入的就是"completed"档（回合完成后只留最终结果，见
+    // conversationCompression.ts）——这不是异常，不该弹通知。只有连这档都存不下、
+    // 退化到 "aggressive" 或者删掉了整条历史对话，才是真的在告警。
+    const storage = safeLocalStorage();
+    const result = persistConversationsWithCompression(
+      storage,
+      CONVERSATIONS_KEY,
+      conversations,
+      activeConversationId,
+    );
+    if (result.saved) {
+      const runtimeConversations = mergePersistedConversationRuntime(
+        conversations,
+        result.conversations,
+      );
+      const currentPersistedSnapshot = JSON.stringify(
+        projectConversationsForStorage(conversations, "completed"),
+      );
+      const resultSnapshot = JSON.stringify(result.conversations);
+      if (
+        currentPersistedSnapshot !== resultSnapshot &&
+        JSON.stringify(runtimeConversations) !== JSON.stringify(conversations)
+      ) {
+        setConversations(runtimeConversations);
+      }
+    }
+    if (!result.saved) {
+      setNotice("Local storage is full; the latest conversation may not have been saved.");
+    } else if (result.mode === "aggressive" || result.removedConversationCount > 0) {
+      setNotice("本地存储空间已满，最新的对话记录可能没保存上——建议删掉一些旧对话。");
+    }
+  }, [activeConversationId, conversations, hydrated]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    if (activeConversationId) {
+      safeLocalStorage().setItem(ACTIVE_CONVERSATION_KEY, activeConversationId);
+    } else {
+      safeLocalStorage().removeItem(ACTIVE_CONVERSATION_KEY);
+    }
+  }, [activeConversationId, hydrated]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    saveSelection({
+      groupId: selectedGroupId,
+      modelId: selectedModelId,
+      reasoning: selectedReasoning,
+    });
+  }, [hydrated, selectedGroupId, selectedModelId, selectedReasoning]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    safeLocalStorage().setItem(MODE_KEY, imageMode ? "image" : "chat");
+  }, [hydrated, imageMode]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    safeLocalStorage().setItem(IMAGE_SIZE_KEY, imageSize);
+  }, [hydrated, imageSize]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    writeJSON(PROMPTS_KEY, prompts);
+  }, [hydrated, prompts]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    safeLocalStorage().setItem(SUBMIT_KEY, submitKey);
+  }, [hydrated, submitKey]);
+
+  const refreshConfig = useCallback(async () => {
+    if (!session) return;
+    setConfigBusy(true);
+    setConfigError(null);
+    try {
+      const [response, user] = await Promise.all([
+        fetchPawConfig(),
+        fetchPawCurrentUser().catch(() => null),
+      ]);
+      setConfig({
+        ...response.data,
+        user: user ? { ...response.data.user, ...user } : response.data.user,
+      });
+    } catch (error) {
+      setConfigError(
+        error instanceof Error ? error.message : "配置加载失败，请重新登录或稍后再试。",
+      );
+    } finally {
+      setConfigBusy(false);
+    }
+  }, [session]);
+
+  useEffect(() => {
+    if (!session) {
+      setConfig(null);
+      return;
+    }
+    void refreshConfig();
+  }, [refreshConfig, session?.accessToken]);
+
+  useEffect(() => {
+    if (!config) return;
+
+    if (!selectionInitializedRef.current) {
+      const configured = hasConfiguredDefaults(config);
+      const nextGroup = configured
+        ? findGroup(config, getDefaultGroupId(config))
+        : config.groups[0];
+      const nextGroupId = nextGroup?.id ?? null;
+      const nextModelId = configured
+        ? config.defaults.model_id
+        : nextGroup?.models[0]?.id ?? "";
+      const nextModel = findModel(nextGroup, nextModelId);
+      const nextReasoning = configured
+        ? config.defaults.reasoning
+        : getDefaultReasoning(nextModel, "");
+      const valid = isSelectionValid(config, nextGroupId, nextModelId, nextReasoning);
+      setSelectedGroupId(valid ? nextGroupId : null);
+      setSelectedModelId(valid ? nextModelId : "");
+      setSelectedReasoning(valid ? nextReasoning : "");
+      setSelectionInvalid(!valid);
+      if (!valid) {
+        setNotice("当前默认选择已失效，请重新选择分组或模型。");
+      }
+      selectionInitializedRef.current = true;
+      return;
+    }
+
+    const valid = isSelectionValid(
+      config,
+      selectedGroupId,
+      selectedModelId,
+      selectedReasoning,
+    );
+    setSelectionInvalid(!valid);
+    if (!valid) {
+      setSelectedGroupId(null);
+      setSelectedModelId("");
+      setSelectedReasoning("");
+      setNotice("当前选择已失效，请重新选择分组或模型。");
+    }
+  }, [config, selectedGroupId, selectedModelId, selectedReasoning]);
+
+  const addConversation = useCallback(() => {
+    clearEditState(false);
+    const conversation = createConversation();
+    setConversations((current) => [conversation, ...current]);
+    setActiveConversationId(conversation.id);
+    setDraftState("");
+    setNotice(null);
+  }, [clearEditState]);
+
+  const selectConversation = useCallback(
+    (conversationId: string) => {
+      const conversation = conversations.find((item) => item.id === conversationId);
+      if (!conversation) return;
+      clearEditState(false);
+      setActiveConversationId(conversationId);
+      setDraftState(conversation.draft);
+    },
+    [clearEditState, conversations],
+  );
+
+  const deleteConversation = useCallback(
+    (conversationId?: string) => {
+      const targetId = conversationId ?? activeConversationId;
+      if (!targetId) return;
+      const removedConversation = conversations.find((conversation) => conversation.id === targetId);
+      if (removedConversation) {
+        releaseAttachmentPreviews(
+          removedConversation.messages.flatMap((message) => message.attachments ?? []),
+        );
+        const remainingAttachmentIds = new Set(
+          conversations
+            .filter((conversation) => conversation.id !== targetId)
+            .flatMap((conversation) =>
+              conversation.messages.flatMap((message) =>
+                (message.attachments ?? []).map((attachment) => attachment.id),
+              ),
+            ),
+        );
+        for (const attachment of [...attachments, ...attachmentsBackupRef.current]) {
+          remainingAttachmentIds.add(attachment.id);
+        }
+        for (const id of new Set(
+          removedConversation.messages.flatMap((message) =>
+            (message.attachments ?? []).map((attachment) => attachment.id),
+          ),
+        )) {
+          if (!remainingAttachmentIds.has(id)) void deletePawAttachmentBlob(id);
+        }
+      }
+      setConversations((current) => {
+        const next = current.filter((conversation) => conversation.id !== targetId);
+        const fallback = next[0] ?? null;
+        if (targetId === activeConversationId) {
+          setActiveConversationId(fallback?.id ?? "");
+          setDraftState(fallback?.draft ?? "");
+        }
+        return next;
+      });
+      clearEditState(false);
+    },
+    [activeConversationId, clearEditState, conversations, releaseAttachmentPreviews],
+  );
+
+  const reorderConversations = useCallback((sourceId: string, targetId: string) => {
+    setConversations((current) => {
+      const sourceIndex = current.findIndex((conversation) => conversation.id === sourceId);
+      const targetIndex = current.findIndex((conversation) => conversation.id === targetId);
+      if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) {
+        return current;
+      }
+      const next = current.slice();
+      const [moved] = next.splice(sourceIndex, 1);
+      if (!moved) return current;
+      next.splice(targetIndex, 0, moved);
+      return next;
+    });
+  }, []);
+
+  const clearConversationMessages = useCallback((conversationId?: string) => {
+    const targetId = conversationId ?? activeConversationId;
+    if (!targetId) return;
+    updateConversation(targetId, (conversation) => ({
+      ...conversation,
+      contextStartIndex: conversation.messages.length,
+      updatedAt: Date.now(),
+    }));
+    if (targetId === activeConversationId) {
+      clearEditState(false);
+    }
+  }, [activeConversationId, clearEditState, updateConversation]);
+
+  const restoreConversationContext = useCallback((conversationId?: string) => {
+    const targetId = conversationId ?? activeConversationId;
+    if (!targetId) return;
+    updateConversation(targetId, (conversation) => ({
+      ...conversation,
+      contextStartIndex: undefined,
+      updatedAt: Date.now(),
+    }));
+  }, [activeConversationId, updateConversation]);
+
+  const renameConversation = useCallback((conversationId: string, title: string) => {
+    const nextTitle = cleanSelectionLabel(title).slice(0, 48);
+    updateConversation(conversationId, (conversation) => ({
+      ...conversation,
+      title: nextTitle,
+      updatedAt: Date.now(),
+    }));
+  }, [updateConversation]);
+
+  const addPrompt = useCallback((title: string, content: string): string | null => {
+    const prompt = normalizePrompt({ title, content });
+    if (!prompt) return null;
+    setPrompts((current) => [prompt, ...current]);
+    return prompt.id;
+  }, []);
+
+  const updatePrompt = useCallback(
+    (promptId: string, title: string, content: string): boolean => {
+      const nextPrompt = normalizePrompt({ id: promptId, title, content });
+      if (!nextPrompt) return false;
+      setPrompts((current) =>
+        current.map((prompt) =>
+          prompt.id === promptId ? { ...nextPrompt, isUser: true } : prompt,
+        ),
+      );
+      return true;
+    },
+    [],
+  );
+
+  const deletePrompt = useCallback((promptId: string) => {
+    setPrompts((current) => current.filter((prompt) => prompt.id !== promptId));
+  }, []);
+
+  const exportLocalData = useCallback(() => {
+    const payload = {
+      type: "paw-local-data",
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      conversations,
+      activeConversationId,
+      selection: {
+        groupId: selectedGroupId,
+        modelId: selectedModelId,
+        reasoning: selectedReasoning,
+      },
+      submitKey,
+      imageMode,
+      imageSize,
+      prompts,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `paw-data-${new Date().toISOString().slice(0, 10)}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    setNotice("Chat 本地数据已导出。");
+  }, [
+    activeConversationId,
+    conversations,
+    imageMode,
+    imageSize,
+    prompts,
+    selectedGroupId,
+    selectedModelId,
+    selectedReasoning,
+    submitKey,
+  ]);
+
+  const importLocalData = useCallback(
+    async (file: File) => {
+      try {
+        const parsed = JSON.parse(await file.text()) as Record<string, unknown>;
+        if (parsed.type !== "paw-local-data" || !Array.isArray(parsed.conversations)) {
+          throw new Error("这不是有效的 Chat 数据文件。");
+        }
+        const importedConversations = parsed.conversations
+          .map((item) => normalizeConversation((item ?? {}) as Partial<PawConversation>))
+          .filter((item): item is PawConversation => Boolean(item));
+        const nextConversations =
+          importedConversations.length > 0 ? importedConversations : [createConversation()];
+        const requestedActiveId =
+          typeof parsed.activeConversationId === "string" ? parsed.activeConversationId : "";
+        const nextActiveId =
+          nextConversations.find((conversation) => conversation.id === requestedActiveId)?.id ??
+          nextConversations[0]?.id ??
+          "";
+        const selection = (parsed.selection ?? {}) as Partial<PawSelectionState>;
+        const nextGroupId =
+          typeof selection.groupId === "number" && Number.isFinite(selection.groupId)
+            ? selection.groupId
+            : null;
+        const nextModelId = typeof selection.modelId === "string" ? selection.modelId : "";
+        const nextReasoning =
+          typeof selection.reasoning === "string" ? selection.reasoning : "";
+        const nextSubmitKey: PawSubmitKey =
+          parsed.submitKey === "shift-enter" ||
+          parsed.submitKey === "ctrl-enter" ||
+          parsed.submitKey === "alt-enter"
+            ? parsed.submitKey
+            : "enter";
+        const importedPrompts = Array.isArray(parsed.prompts)
+          ? parsed.prompts
+              .map((item) => normalizePrompt((item ?? {}) as Partial<PawPrompt>))
+              .filter((item): item is PawPrompt => Boolean(item))
+          : [];
+
+        releaseAttachmentPreviews(conversationAttachments(conversations));
+        setConversations(nextConversations);
+        setActiveConversationId(nextActiveId);
+        setDraftState(nextConversations.find((item) => item.id === nextActiveId)?.draft ?? "");
+        replaceComposerAttachments([]);
+        void restoreConversationAttachments(nextConversations);
+        setSelectedGroupId(nextGroupId);
+        setSelectedModelId(nextModelId);
+        setSelectedReasoning(nextReasoning);
+        setSubmitKey(nextSubmitKey);
+        setImageMode(parsed.imageMode === true);
+        if (typeof parsed.imageSize === "string" && PAW_IMAGE_SIZES.includes(parsed.imageSize as PawImageSize)) {
+          setImageSize(parsed.imageSize as PawImageSize);
+        }
+        setPrompts(importedPrompts);
+        setSelectionInvalid(false);
+        setNotice("Chat 本地数据已导入。");
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : "本地数据导入失败。");
+      }
+    },
+    [
+      conversations,
+      releaseAttachmentPreviews,
+      replaceComposerAttachments,
+      restoreConversationAttachments,
+    ],
+  );
+
+  const resetLocalData = useCallback(() => {
+    releaseAttachmentPreviews(
+      conversations.flatMap((conversation) =>
+        conversation.messages.flatMap((message) => message.attachments ?? []),
+      ),
+    );
+    const conversation = createConversation();
+    setConversations([conversation]);
+    setActiveConversationId(conversation.id);
+    setDraftState("");
+    replaceComposerAttachments([]);
+    void clearPawAttachmentCache();
+    setPrompts([]);
+    setSelectedGroupId(null);
+    setSelectedModelId("");
+    setSelectedReasoning("");
+    setSubmitKey("enter");
+    setImageMode(false);
+    setImageSize("1024x1024");
+    setSelectionInvalid(false);
+    setNotice("Chat 本地数据已清空。");
+  }, [conversations, releaseAttachmentPreviews, replaceComposerAttachments]);
+
+  const updateSelection = useCallback(
+    (groupId: number) => {
+      const nextGroup = findGroup(config, groupId);
+      const nextModelId = getDefaultModelId(nextGroup, config?.defaults.model_id ?? "");
+      const nextModel = findModel(nextGroup, nextModelId);
+      const nextReasoning = getDefaultReasoning(nextModel, config?.defaults.reasoning ?? "");
+      setSelectedGroupId(groupId);
+      setSelectedModelId(nextModelId);
+      setSelectedReasoning(nextReasoning);
+      if (!nextModel?.image_generation) {
+        setImageMode(false);
+      }
+      setImageSize((current) =>
+        getPawImageSizes(nextModel).includes(current) ? current : "1024x1024",
+      );
+      setSelectionInvalid(!isSelectionValid(config, groupId, nextModelId, nextReasoning));
+      setNotice(null);
+    },
+    [config],
+  );
+
+  const updateModel = useCallback(
+    (modelId: string) => {
+      const nextModel = findModel(currentGroup, modelId);
+      const nextReasoning = getDefaultReasoning(nextModel, selectedReasoning);
+      setSelectedModelId(modelId);
+      setSelectedReasoning(nextReasoning);
+      if (!nextModel?.image_generation) {
+        setImageMode(false);
+      }
+      setImageSize((current) =>
+        getPawImageSizes(nextModel).includes(current) ? current : "1024x1024",
+      );
+      setSelectionInvalid(
+        !isSelectionValid(config, selectedGroupId, modelId, nextReasoning),
+      );
+      setNotice(null);
+    },
+    [config, currentGroup, selectedGroupId, selectedReasoning],
+  );
+
+  const toggleImageMode = useCallback(() => {
+    if (!currentModel?.image_generation) {
+      setNotice("当前模型不支持图片生成，请重新选择模型。");
+      return;
+    }
+    setImageMode((current) => !current);
+    setNotice(null);
+  }, [currentModel]);
+
+  const updateReasoning = useCallback(
+    (reasoning: string) => {
+      setSelectedReasoning(reasoning);
+      setSelectionInvalid(
+        !isSelectionValid(config, selectedGroupId, selectedModelId, reasoning),
+      );
+      setNotice(null);
+    },
+    [config, selectedGroupId, selectedModelId],
+  );
+
+  const handleLogin = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      setLoginBusy(true);
+      setLoginError(null);
+      try {
+        const nextSession = await loginPaw(loginEmail, loginPassword);
+        setSession(nextSession);
+        setLoginPassword("");
+        setNotice("登录成功。");
+      } catch (error) {
+        setLoginError(error instanceof Error ? error.message : "登录失败");
+      } finally {
+        setLoginBusy(false);
+      }
+    },
+    [loginEmail, loginPassword],
+  );
+
+  const handleAuthModeChange = useCallback(
+    (mode: "login" | "register") => {
+      if (mode === "register" && !authSettings?.registration_enabled) {
+        setLoginError("当前服务端未开放注册");
+        return;
+      }
+      setAuthMode(mode);
+      setLoginError(null);
+    },
+    [authSettings?.registration_enabled],
+  );
+
+  const handleCaptchaTokenChange = useCallback((token: string) => {
+    setRegisterCaptchaToken(token);
+    setLoginError(null);
+  }, []);
+
+  const handleCaptchaError = useCallback(() => {
+    setRegisterCaptchaToken("");
+    setLoginError("安全验证加载失败，请刷新页面后重试");
+  }, []);
+
+  const handleSendVerifyCode = useCallback(async () => {
+    const email = loginEmail.trim();
+    if (!isValidAuthEmail(email)) {
+      setLoginError("请输入有效的邮箱地址");
+      return;
+    }
+    if (!authSettings?.email_verify_enabled) {
+      setLoginError("当前服务端未启用邮箱验证");
+      return;
+    }
+    if (authSettings.turnstile_enabled && !registerCaptchaToken) {
+      setLoginError("请先完成安全验证");
+      return;
+    }
+    if (
+      authSettings.tencent_captcha_enabled === true ||
+      authSettings.aliyun_captcha_enabled === true
+    ) {
+      setLoginError("当前服务端启用了暂未支持的安全验证方式，请使用后台网页注册");
+      return;
+    }
+
+    setVerifyCodeBusy(true);
+    setLoginError(null);
+    try {
+      const response = await sendPawVerifyCode({
+        email,
+        ...(registerCaptchaToken
+          ? { turnstile_token: registerCaptchaToken }
+          : {}),
+      });
+      setVerifyCodeCountdown(Math.max(0, response.countdown));
+      setLoginError(null);
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : "验证码发送失败");
+    } finally {
+      setVerifyCodeBusy(false);
+      setRegisterCaptchaToken("");
+      setCaptchaResetKey((current) => current + 1);
+    }
+  }, [authSettings, loginEmail, registerCaptchaToken]);
+
+  const handleRegister = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      const email = loginEmail.trim();
+      const password = registerPassword;
+      const confirmPassword = registerConfirmPassword;
+
+      if (!authSettings?.registration_enabled) {
+        setLoginError("当前服务端未开放注册");
+        return;
+      }
+      if (!isValidAuthEmail(email)) {
+        setLoginError("请输入有效的邮箱地址");
+        return;
+      }
+      if (!isAllowedRegistrationEmail(
+        email,
+        authSettings.registration_email_suffix_whitelist,
+      )) {
+        setLoginError("该邮箱后缀暂不支持注册");
+        return;
+      }
+      if (password.length < 6) {
+        setLoginError("密码至少需要 6 位");
+        return;
+      }
+      if (password !== confirmPassword) {
+        setLoginError("两次输入的密码不一致");
+        return;
+      }
+      if (authSettings.email_verify_enabled && !registerVerifyCode.trim()) {
+        setLoginError("请输入邮箱验证码");
+        return;
+      }
+      if (
+        authSettings.invitation_code_enabled &&
+        !registerInvitationCode.trim()
+      ) {
+        setLoginError("请输入邀请码");
+        return;
+      }
+      if (authSettings.turnstile_enabled && !registerCaptchaToken) {
+        setLoginError("请先完成安全验证");
+        return;
+      }
+      if (
+        authSettings.tencent_captcha_enabled === true ||
+        authSettings.aliyun_captcha_enabled === true
+      ) {
+        setLoginError("当前服务端启用了暂未支持的安全验证方式，请使用后台网页注册");
+        return;
+      }
+
+      setLoginBusy(true);
+      setLoginError(null);
+      try {
+        const nextSession = await registerPaw({
+          email,
+          password,
+          ...(authSettings.email_verify_enabled
+            ? { verify_code: registerVerifyCode.trim() }
+            : {}),
+          ...(registerCaptchaToken
+            ? { turnstile_token: registerCaptchaToken }
+            : {}),
+          ...(authSettings.invitation_code_enabled
+            ? { invitation_code: registerInvitationCode.trim() }
+            : {}),
+          ...(authSettings.promo_code_enabled && registerPromoCode.trim()
+            ? { promo_code: registerPromoCode.trim() }
+            : {}),
+        });
+        setSession(nextSession);
+        setRegisterPassword("");
+        setRegisterConfirmPassword("");
+        setRegisterVerifyCode("");
+        setRegisterInvitationCode("");
+        setRegisterPromoCode("");
+        setRegisterCaptchaToken("");
+        setVerifyCodeCountdown(0);
+        setNotice("注册成功");
+      } catch (error) {
+        setLoginError(error instanceof Error ? error.message : "注册失败");
+      } finally {
+        setLoginBusy(false);
+        setRegisterCaptchaToken("");
+        setCaptchaResetKey((current) => current + 1);
+      }
+    },
+    [
+      authSettings,
+      loginEmail,
+      registerCaptchaToken,
+      registerConfirmPassword,
+      registerInvitationCode,
+      registerPassword,
+      registerPromoCode,
+      registerVerifyCode,
+    ],
+  );
+
+  const handleLogout = useCallback(() => {
+    sendAbortRef.current?.abort();
+    // The next account must not inherit this one's paired computers or their conversations.
+    void clearRemoteData();
+    clearEditState(false);
+    clearPawSession();
+    markPawSessionExpired();
+    setSession(null);
+    setConfig(null);
+    setConfigError(null);
+    setAuthMode("login");
+    setLoginPassword("");
+    setRegisterPassword("");
+    setRegisterConfirmPassword("");
+    setRegisterVerifyCode("");
+    setRegisterInvitationCode("");
+    setRegisterPromoCode("");
+    setRegisterCaptchaToken("");
+    setCaptchaResetKey((current) => current + 1);
+    setVerifyCodeCountdown(0);
+    setLoginError(null);
+    setNotice(null);
+    setSelectionInvalid(false);
+    setSending(false);
+    replaceComposerAttachments([]);
+    setActiveConversationId("");
+    setDraftState("");
+  }, [clearEditState, replaceComposerAttachments]);
+
+  const uploadFiles = useCallback(async (files: File[]) => {
+    if (!files.length) return;
+    setFileBusy(true);
+    const uploaded: PawAttachment[] = [];
+    try {
+      for (const file of files) {
+        const response = await uploadPawFile(file);
+        const cached = await savePawAttachmentBlob(response.data.id, file);
+        const previewUrl = file.type.startsWith("image/")
+          ? URL.createObjectURL(file)
+          : undefined;
+        uploaded.push({
+          ...response.data,
+          previewUrl,
+          localCacheStatus: cached ? "available" : "unavailable",
+        });
+        attachmentFilesRef.current.set(response.data.id, file);
+      }
+      appendComposerAttachments(uploaded);
+      setNotice(
+        uploaded.some((item) => item.localCacheStatus === "unavailable")
+          ? "附件已上传，但部分附件无法写入本地缓存，刷新后可能不可恢复。"
+          : `${uploaded.length} 个附件已上传。`,
+      );
+    } catch (error) {
+      releaseAttachmentPreviews(uploaded);
+      for (const item of uploaded) {
+        attachmentFilesRef.current.delete(item.id);
+        void deletePawAttachmentBlob(item.id);
+      }
+      setNotice(error instanceof Error ? error.message : "附件上传失败");
+    } finally {
+      setFileBusy(false);
+    }
+  }, [
+    appendComposerAttachments,
+    releaseAttachmentPreviews,
+  ]);
+
+  const handleFileChange = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(event.target.files ?? []);
+      event.target.value = "";
+      await uploadFiles(files);
+    },
+    [uploadFiles],
+  );
+
+  const handlePasteFiles = useCallback(
+    async (files: File[]) => {
+      const accepted = files.filter((file) => {
+        if (file.type.startsWith("image/")) {
+          return Boolean(currentModel?.vision || currentModel?.file_input);
+        }
+        return Boolean(currentModel?.file_input);
+      });
+      if (!accepted.length) {
+        setNotice("当前模型不支持粘贴的文件类型。");
+        return;
+      }
+      await uploadFiles(accepted.slice(0, 3));
+    },
+    [currentModel?.file_input, currentModel?.vision, uploadFiles],
+  );
+
+  const handleSaveDefaults = useCallback(async () => {
+    if (!config || selectedGroupId == null || !selectedModelId) return;
+    if (!isSelectionValid(config, selectedGroupId, selectedModelId, selectedReasoning)) {
+      setSelectionInvalid(true);
+      setNotice("当前选择不可用，请先重新选择分组或模型。");
+      return;
+    }
+    await savePawDefaults({
+      group_id: selectedGroupId,
+      model_id: selectedModelId,
+      reasoning: selectedReasoning,
+    });
+    setNotice("默认选择已保存。");
+  }, [config, selectedGroupId, selectedModelId, selectedReasoning]);
+
+  const handleStop = useCallback(() => {
+    sendAbortRef.current?.abort();
+  }, []);
+
+  const handleSend = useCallback(async () => {
+    const conversation = activeConversation ?? createConversation();
+    if (!config || !currentGroup || !currentModel) {
+      setNotice("请先选择可用的分组和模型。");
+      return;
+    }
+    if (!isSelectionValid(config, selectedGroupId, selectedModelId, selectedReasoning)) {
+      setSelectionInvalid(true);
+      setNotice("当前分组或模型已失效，请重新选择。");
+      return;
+    }
+
+    const text = draft.trim();
+    if (!text && attachments.length === 0) {
+      setNotice(
+        currentModel.image_generation
+          ? "请输入图片描述后再生成。"
+          : "先输入内容再发送。",
+      );
+      return;
+    }
+
+    const submittedDraft = draft;
+    const submittedAttachments = attachments.map((item) => ({ ...item }));
+
+    if (currentModel.image_generation) {
+      if (editingMessageId) {
+        setNotice("图片生成消息暂不支持编辑，请新建一条图片请求。");
+        return;
+      }
+      const imageAttachments = submittedAttachments.filter((attachment) =>
+        attachment.mime_type.startsWith("image/"),
+      );
+      const imageRequest = {
+        conversation,
+        prompt: text,
+        attachments: submittedAttachments,
+        title:
+          conversation.title === "新对话" && text
+            ? cleanSelectionLabel(text.slice(0, 32))
+            : conversation.title,
+      };
+      if (imageAttachments.length > 0) {
+        await dispatchImageEdit(imageRequest);
+      } else {
+        await dispatchImageGeneration(imageRequest);
+      }
+      return;
+    }
+
+    if (editingMessageId) {
+      const editMessageId = editingMessageId;
+      const index = conversation.messages.findIndex((item) => item.id === editingMessageId);
+      const original = conversation.messages[index];
+      if (index < 0 || !original || original.role !== "user") {
+        setNotice("当前编辑目标已失效，请重新选择消息。");
+        return;
+      }
+      setEditingMessageId(null);
+      const prefix = conversation.messages.slice(0, index);
+      const editedMessage: PawConversationMessage = {
+        ...original,
+        content: text,
+        attachments: submittedAttachments.length ? submittedAttachments : original.attachments,
+        error: false,
+        updatedAt: Date.now(),
+      };
+      const assistantMessage = createAssistantMessage(currentModel?.name);
+      const title = prefix.length === 0 && text ? cleanSelectionLabel(text.slice(0, 32)) : conversation.title;
+      await dispatchConversationSend({
+        conversation,
+      requestMessages: [
+        ...getRequestMessages(conversation, index),
+        { role: "user", content: text },
+      ],
+        nextMessages: [...prefix, editedMessage, assistantMessage],
+        requestAttachments: submittedAttachments,
+        assistantMessage,
+        title,
+        restoreDraft: text,
+        restoreAttachments: submittedAttachments,
+        messageAttachments: editedMessage.attachments ?? [],
+        editMessageId,
+      });
+      return;
+    }
+
+    const userMessage = createUserMessage(text, submittedAttachments);
+    const assistantMessage = createAssistantMessage(currentModel?.name);
+    const nextMessages = [...conversation.messages, userMessage, assistantMessage];
+    const title =
+      conversation.title === "新对话" && text
+        ? cleanSelectionLabel(text.slice(0, 32))
+        : conversation.title;
+
+    await dispatchConversationSend({
+      conversation,
+      requestMessages: [
+        ...getRequestMessages(conversation),
+        { role: "user", content: text },
+      ],
+      nextMessages,
+      requestAttachments: submittedAttachments,
+      assistantMessage,
+      title,
+      restoreDraft: submittedDraft,
+      restoreAttachments: submittedAttachments,
+      messageAttachments: submittedAttachments,
+    });
+  }, [
+    activeConversation,
+    attachments,
+    config,
+    editingMessageId,
+    currentGroup,
+    currentModel,
+    draft,
+    selectedGroupId,
+    selectedModelId,
+    selectedReasoning,
+    imageSize,
+    dispatchConversationSend,
+    dispatchImageGeneration,
+    dispatchImageEdit,
+    getRequestMessages,
+  ]);
+
+  return {
+    hydrated,
+    session,
+    authMode,
+    authSettings,
+    authSettingsBusy,
+    loginEmail,
+    setLoginEmail,
+    loginPassword,
+    setLoginPassword,
+    registerPassword,
+    setRegisterPassword,
+    registerConfirmPassword,
+    setRegisterConfirmPassword,
+    registerVerifyCode,
+    setRegisterVerifyCode,
+    registerInvitationCode,
+    setRegisterInvitationCode,
+    registerPromoCode,
+    setRegisterPromoCode,
+    loginBusy,
+    verifyCodeBusy,
+    verifyCodeCountdown,
+    captchaResetKey,
+    loginError,
+    handleAuthModeChange,
+    handleCaptchaTokenChange,
+    handleCaptchaError,
+    handleSendVerifyCode,
+    handleRegister,
+    config,
+    configBusy,
+    configError,
+    conversations,
+    activeConversation,
+    activeConversationId,
+    draft,
+    setDraft: syncDraft,
+    attachments,
+    setAttachments,
+    removeAttachment,
+    notice,
+    setNotice,
+    selectionInvalid,
+    fileBusy,
+    sending,
+    editingMessageId,
+    selectedGroupId,
+    selectedModelId,
+    selectedReasoning,
+    submitKey,
+    setSubmitKey,
+    imageMode,
+    imageSize,
+    imageSizes: getPawImageSizes(currentModel),
+    setImageSize,
+    toggleImageMode,
+    currentGroup,
+    currentModel,
+    canSend,
+    ensureActiveConversationId,
+    beginAgentTurn,
+    appendAgentDelta,
+    updateAgentPanel,
+    finishAgentTurn,
+    appendAgentNotice,
+    setAgentBinding,
+    setAgentThreadId,
+    getAgentThreadId,
+    lockAgentCwd,
+    setAgentApprovalMode,
+    compactAgentMessage,
+    addConversation,
+    selectConversation,
+    deleteConversation,
+    reorderConversations,
+    clearConversationMessages,
+    restoreConversationContext,
+    renameConversation,
+    prompts,
+    builtinPrompts: PAW_BUILTIN_PROMPTS,
+    addPrompt,
+    updatePrompt,
+    deletePrompt,
+    exportLocalData,
+    importLocalData,
+    resetLocalData,
+    updateSelection,
+    updateModel,
+    updateReasoning,
+    refreshConfig,
+    handleLogin,
+    handleLogout,
+    handleFileChange,
+    handlePasteFiles,
+    handleSaveDefaults,
+    handleSend,
+    handleStop,
+    copyMessage,
+    togglePinMessage,
+    deleteMessage,
+    beginEditMessage,
+    retryMessage,
+    clearEditState,
+    getSelectionSummary: selectionSummary,
+  };
+}

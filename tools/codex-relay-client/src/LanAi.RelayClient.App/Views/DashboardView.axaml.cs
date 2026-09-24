@@ -1,0 +1,444 @@
+using System.ComponentModel;
+using System.Globalization;
+using Avalonia.Controls;
+using Avalonia.Interactivity;
+using Avalonia.Markup.Xaml;
+using Avalonia.Threading;
+using LanAi.RelayClient.Platform;
+using LanAi.RelayClient.Services;
+using LanAi.RelayClient.ViewModels;
+
+namespace LanAi.RelayClient.App.Views;
+
+/// <summary>The signed-in surface: the left rail, and whichever page it has selected.</summary>
+/// <remarks>
+/// <para>
+/// Carries the three polling loops, because they belong to the signed-in surface as a
+/// whole rather than to any one page: they start when the user signs in and stop when
+/// they sign out, whichever page is showing and whether or not the window is. The
+/// tray line, the ChatGPT health check and the low-balance reminder all depend on
+/// them while the window is hidden.
+/// </para>
+/// <para>
+/// Pages are built once, here, and swapped by <see cref="ClientPage"/>. They forward
+/// every click to this class through <see cref="IDashboardActions"/>, so recharge,
+/// announcements and 退出 still raise the events the composition root decides about.
+/// </para>
+/// </remarks>
+public partial class DashboardView : UserControl, IDashboardActions
+{
+    /// <summary>How often the cards are refreshed.</summary>
+    /// <remarks>
+    /// The panel endpoints sit behind a per-user rate limiter, so this interval is a
+    /// budget as much as a freshness target. It read 30 seconds during the port — half
+    /// the WPF value, changed by nothing more deliberate than my retyping it — which
+    /// doubles every client's call rate against that limiter for no gain the user can
+    /// see. The dashboard's own <c>IsRateLimited</c> banner is what they would have
+    /// got instead.
+    /// </remarks>
+    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(60);
+
+    /// <summary>How often active ChatGPT use is checked for a low-balance reminder.</summary>
+    private static readonly TimeSpan ActivityMonitorInterval = TimeSpan.FromSeconds(15);
+
+    /// <summary>
+    /// How often announcements are checked.
+    /// </summary>
+    /// <remarks>
+    /// Its own timer rather than a ride on the card refresh: an announcement has no
+    /// minute-level urgency, and the endpoints behind it run a per-user subscription
+    /// query for every call. For scale, the web panel does not poll at all — it
+    /// refetches on navigation behind a 20-minute throttle. This too had drifted during
+    /// the port, to 5 minutes: three times the load, for news that is not urgent.
+    /// </remarks>
+    private static readonly TimeSpan AnnouncementPollInterval = TimeSpan.FromMinutes(15);
+
+    private readonly DashboardPageViewModel? _page;
+    private readonly RelaySessionManager? _session;
+    private readonly BalanceActivityMonitor? _balanceActivity;
+    private readonly SafeAsyncRunner? _safeAsync;
+    private readonly DispatcherTimer? _pollTimer;
+    private readonly DispatcherTimer? _activityTimer;
+    private readonly DispatcherTimer? _announcementTimer;
+    private bool _isRunning;
+    private readonly Dictionary<ClientPage, Control> _pages = [];
+    private bool _mirroringSelection;
+
+    /// <summary>Design-time constructor. Not used at runtime.</summary>
+    public DashboardView()
+    {
+        InitializeComponent();
+    }
+
+    internal DashboardView(
+        DashboardPageViewModel page,
+        RelaySessionManager session,
+        BalanceActivityMonitor balanceActivity,
+        SafeAsyncRunner safeAsync)
+    {
+        _page = page ?? throw new ArgumentNullException(nameof(page));
+        _session = session ?? throw new ArgumentNullException(nameof(session));
+        _balanceActivity = balanceActivity ?? throw new ArgumentNullException(nameof(balanceActivity));
+        _safeAsync = safeAsync ?? throw new ArgumentNullException(nameof(safeAsync));
+
+        InitializeComponent();
+        DataContext = page;
+
+        _pages[ClientPage.Overview] = new Pages.OverviewPage(this);
+        _pages[ClientPage.Codex] = new Pages.CodexPage(this);
+        _pages[ClientPage.Claude] = new Pages.ClaudePage();
+        _pages[ClientPage.LocalProxy] = new Pages.LocalProxyPage(this);
+        _pages[ClientPage.Account] = new Pages.AccountPage(this);
+        _pages[ClientPage.Settings] = new Pages.SettingsPage(this);
+        foreach (Control view in _pages.Values)
+        {
+            view.DataContext = page;
+        }
+
+        // Its own view model, not the dashboard's: phone sync is decided on this page alone.
+        if (page.DesktopSync is not null)
+        {
+            _pages[ClientPage.DesktopSync] = new Pages.DesktopSyncPage(page.DesktopSync, safeAsync, this);
+        }
+
+        page.Navigation.PropertyChanged += Navigation_OnPropertyChanged;
+        ShowSelectedPage();
+
+        _pollTimer = new DispatcherTimer { Interval = PollInterval };
+        _pollTimer.Tick += (_, _) => _ = _safeAsync.RunAsync(RefreshAndMonitorAsync);
+        _activityTimer = new DispatcherTimer { Interval = ActivityMonitorInterval };
+        _activityTimer.Tick += (_, _) => _ = _safeAsync.RunAsync(MonitorBalanceActivityAsync);
+        _announcementTimer = new DispatcherTimer { Interval = AnnouncementPollInterval };
+        _announcementTimer.Tick += (_, _) => _ = _safeAsync.RunAsync(RefreshAnnouncementsAsync);
+    }
+
+    /// <summary>Raised when the user asks to sign out and has confirmed it.</summary>
+    public event EventHandler? SignedOut;
+
+    /// <summary>Raised when the user asks to quit the client entirely.</summary>
+    public event EventHandler? ExitRequested;
+
+    /// <summary>Raised when the user asks to hide the window and keep relaying.</summary>
+    public event EventHandler? MinimizeRequested;
+
+    /// <summary>Raised when the user asks for the recharge screen.</summary>
+    public event EventHandler? RechargeRequested;
+
+    /// <summary>Raised when the user asks for the announcement reader.</summary>
+    public event EventHandler? AnnouncementsRequested;
+
+    /// <summary>Asks a yes/no question. Supplied by the host, which owns a window.</summary>
+    internal Func<string, Task<bool>>? Confirm { get; set; }
+
+    /// <summary>
+    /// Shows the low-balance reminder. Supplied by the host, which owns the presenter.
+    /// </summary>
+    /// <remarks>
+    /// A property in the same style as <see cref="Confirm"/> rather than a constructor
+    /// argument, because the presenter's lifetime belongs to the application and this
+    /// view is one of two things that use it.
+    /// </remarks>
+    internal INotificationPresenter? Notifications { get; set; }
+
+    /// <summary>
+    /// Asks what 退出 should mean. Supplied by the host, which owns a window.
+    /// </summary>
+    /// <param name="isCodexRunning">Changes what the choice costs, so it changes the wording.</param>
+    internal Func<bool, Task<ExitChoice>>? AskExitChoice { get; set; }
+
+    private void InitializeComponent() => AvaloniaXamlLoader.Load(this);
+
+    private void Navigation_OnPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(NavigationViewModel.Selected))
+        {
+            ShowSelectedPage();
+        }
+    }
+
+    private void ShowSelectedPage()
+    {
+        if (_page is null)
+        {
+            return;
+        }
+
+        NavigationViewModel navigation = _page.Navigation;
+        this.FindControl<ContentControl>("PageHost")!.Content = _pages[navigation.CurrentPage];
+
+        _mirroringSelection = true;
+        try
+        {
+            this.FindControl<ListBox>("NavList")!.SelectedItem =
+                navigation.Items.Contains(navigation.Selected) ? navigation.Selected : null;
+        }
+        finally
+        {
+            _mirroringSelection = false;
+        }
+    }
+
+    private void NavList_OnSelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (!_mirroringSelection && (sender as ListBox)?.SelectedItem is NavItemViewModel item)
+        {
+            _page?.Navigation.Navigate(item.Page);
+        }
+    }
+
+    private void Settings_OnClick(object? sender, RoutedEventArgs e) =>
+        _page?.Navigation.Navigate(ClientPage.Settings);
+
+    void IDashboardActions.Navigate(ClientPage page) => _page?.Navigation.Navigate(page);
+
+    void IDashboardActions.StartOrInstallCodex() => _ = _safeAsync?.RunAsync(StartOrInstallCodexAsync);
+
+    void IDashboardActions.RepairCodexStartup() => _ = _safeAsync?.RunAsync(RepairCodexStartupAsync);
+
+    void IDashboardActions.ConfigureAutoGroup() =>
+        _ = _safeAsync?.RunAsync(() => _page?.Dashboard.ConfigureAutoGroupAsync() ?? Task.CompletedTask);
+
+    void IDashboardActions.ShowGroupModels(GroupItemViewModel group) =>
+        _ = _safeAsync?.RunAsync(() => _page?.Dashboard.ShowGroupModelsAsync(group) ?? Task.CompletedTask);
+
+    void IDashboardActions.Recharge()
+    {
+        if (_session?.IsSignedIn == true)
+        {
+            RechargeRequested?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    void IDashboardActions.ShowAnnouncements() => AnnouncementsRequested?.Invoke(this, EventArgs.Empty);
+
+    void IDashboardActions.CheckUpdate() =>
+        _ = _safeAsync?.RunAsync(() => _page!.ClientUpdate.CheckAndOfferUpdateAsync());
+
+    void IDashboardActions.OpenContactPage() => BrowserLauncher.TryOpenRelayPage("contact");
+
+    void IDashboardActions.ToggleLocalProxy(LocalProxyAccountItem item) =>
+        _ = _safeAsync?.RunAsync(() => _page?.Dashboard.LocalProxy.ToggleAsync(item) ?? Task.CompletedTask);
+
+    /// <summary>Starts the polling loops and does the first refresh.</summary>
+    /// <remarks>
+    /// Idempotent, and deliberately so. Restoring a saved session raises
+    /// <c>StateChanged</c> <i>and</i> returns to a caller that then shows the surface
+    /// itself, so this is reached twice on almost every launch by a signed-in user.
+    /// Without the guard that is two of every poll — two refreshes, two announcement
+    /// fetches, two balance observations — from one start.
+    /// </remarks>
+    internal void Start()
+    {
+        if (_page is null || _safeAsync is null || _isRunning)
+        {
+            return;
+        }
+
+        _isRunning = true;
+        _page.Refresh();
+        _page.Dashboard.InitializeStartupPreference();
+
+        _pollTimer!.Start();
+        _activityTimer!.Start();
+        _announcementTimer!.Start();
+
+        _ = _safeAsync.RunAsync(RefreshAndMonitorAsync);
+        _ = _safeAsync.RunAsync(RefreshAnnouncementsAsync);
+    }
+
+    /// <summary>
+    /// Stops polling and drops the previous account's figures.
+    /// </summary>
+    /// <remarks>
+    /// The reset is not tidiness. Both the cards and the announcement list are
+    /// per-account, so leaving either populated would show one user another user's
+    /// data on the next sign-in.
+    /// </remarks>
+    internal void Stop()
+    {
+        if (!_isRunning)
+        {
+            return;
+        }
+
+        _isRunning = false;
+        _pollTimer?.Stop();
+        _activityTimer?.Stop();
+        _announcementTimer?.Stop();
+
+        _balanceActivity?.Reset();
+        _page?.Dashboard.Reset();
+        _page?.Announcements.Reset();
+        _page?.Refresh();
+    }
+
+    private async Task RefreshAndMonitorAsync()
+    {
+        if (_page is null)
+        {
+            return;
+        }
+
+        await _page.Dashboard.RefreshAndMonitorAsync().ConfigureAwait(true);
+        await MonitorBalanceActivityAsync().ConfigureAwait(true);
+    }
+
+    /// <remarks>
+    /// The observation is taken on every tick even when it will not be shown, because
+    /// the monitor's own state depends on it — skipping the check while Codex is idle
+    /// would leave it primed to fire the moment the user comes back.
+    /// </remarks>
+    private async Task MonitorBalanceActivityAsync()
+    {
+        if (_page is null || _session is null || _balanceActivity is null)
+        {
+            return;
+        }
+
+        if (!_session.IsSignedIn || !_page.Dashboard.IsCodexRunning)
+        {
+            _balanceActivity.Reset();
+            return;
+        }
+
+        BalanceActivityObservation observation = await _balanceActivity.CheckAsync().ConfigureAwait(true);
+        if (observation.ShouldNotify)
+        {
+            string balance = observation.Balance.ToString("0.####", CultureInfo.InvariantCulture);
+            Notifications?.Show(new NotificationRequest(
+                "共飞 AI 助手余额提醒",
+                $"检测到 ChatGPT 正在使用，当前余额仅 ¥{balance}，请及时充值。",
+                NotificationSeverity.Warning));
+        }
+    }
+
+    private Task RefreshAnnouncementsAsync() =>
+        _session?.IsSignedIn == true && _page is not null
+            ? _page.Announcements.RefreshAsync()
+            : Task.CompletedTask;
+
+    /// <summary>Starts Codex from the tray, by the same route as the panel button.</summary>
+    /// <remarks>
+    /// Routed through here rather than reaching into the view model from the tray, so
+    /// the two entry points cannot diverge — including the restart confirmation, which
+    /// the tray would otherwise skip. Opens the Codex page, where the outcome is shown.
+    /// </remarks>
+    internal void StartCodexFromTray()
+    {
+        _page?.Navigation.Navigate(ClientPage.Codex);
+        _ = _safeAsync?.RunAsync(StartOrInstallCodexAsync);
+    }
+
+    /// <summary>Opens the announcement reader from the tray.</summary>
+    internal void RequestAnnouncements() => AnnouncementsRequested?.Invoke(this, EventArgs.Empty);
+
+    private void Refresh_OnClick(object? sender, RoutedEventArgs e) =>
+        _ = _safeAsync?.RunAsync(RefreshAndMonitorAsync);
+
+    private Task StartOrInstallCodexAsync()
+    {
+        if (_page is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        return _page.Dashboard.CodexNotInstalled
+            ? _page.Dashboard.InstallCodexAsync()
+            : _page.Dashboard.StartCodexAsync(ConfirmCodexRestartAsync);
+    }
+
+    /// <remarks>
+    /// Deliberately its own entry point rather than reusing the start button's route:
+    /// this one exists specifically so a user can force a config rewrite even when
+    /// the dashboard has not (yet) flagged anything as broken. When ChatGPT is already
+    /// running, a plain rewrite would leave the live process holding the old config — it
+    /// does not re-read the file on its own — so this asks first and, once agreed, forces
+    /// the same kill-and-relaunch restart the button's own confirmation flow uses elsewhere.
+    /// It also always forces a fresh key: an unexpired key can still be broken in a way
+    /// the normal reuse check cannot see (missing group, revoked from the panel, ...), and
+    /// reusing it again would just repeat whatever "修复" was supposed to fix.
+    /// </remarks>
+    private async Task RepairCodexStartupAsync()
+    {
+        if (_page is null)
+        {
+            return;
+        }
+
+        if (!_page.Dashboard.IsCodexRunning)
+        {
+            await _page.Dashboard.StartCodexAsync(ConfirmCodexRestartAsync, forceNewKey: true).ConfigureAwait(true);
+            return;
+        }
+
+        bool confirmed = await ConfirmCodexRestartAsync(
+                "修复 ChatGPT 启动会立即重启 ChatGPT（结束当前进程）。")
+            .ConfigureAwait(true);
+        if (!confirmed)
+        {
+            return;
+        }
+
+        await _page.Dashboard
+            .StartCodexAsync(ConfirmCodexRestartAsync, forceRestart: true, forceNewKey: true)
+            .ConfigureAwait(true);
+    }
+
+    /// <remarks>
+    /// Restarting discards whatever the user has in flight in Codex, so it is only
+    /// ever done after they say so — and the prompt says what they stand to lose
+    /// rather than asking an abstract yes/no. If no host supplied a
+    /// <see cref="Confirm"/> callback the answer is no, never a silent yes.
+    /// </remarks>
+    private Task<bool> ConfirmCodexRestartAsync(string message) =>
+        Confirm?.Invoke(message + "\n\n要现在重启 ChatGPT 吗？") ?? Task.FromResult(false);
+
+    private void SignOut_OnClick(object? sender, RoutedEventArgs e) =>
+        _ = _safeAsync?.RunAsync(SignOutAsync);
+
+    /// <remarks>
+    /// <para>
+    /// 退出 is asked, not assumed. It previously ran a single yes/no confirmation that
+    /// signed the user out — which was wrong in both directions: someone who wanted the
+    /// window out of the way lost their session, and someone who wanted the client
+    /// stopped found it still running and still billing.
+    /// </para>
+    /// <para>
+    /// Dismissing the dialog does nothing at all. A close-box on a question about
+    /// quitting must never be read as an answer to it.
+    /// </para>
+    /// </remarks>
+    private async Task SignOutAsync()
+    {
+        if (AskExitChoice is null)
+        {
+            return;
+        }
+
+        ExitChoice choice = await AskExitChoice(_page?.Dashboard.IsCodexRunning ?? false)
+            .ConfigureAwait(true);
+
+        switch (choice)
+        {
+            case ExitChoice.FullExit:
+                ExitRequested?.Invoke(this, EventArgs.Empty);
+                break;
+
+            case ExitChoice.MinimizeToTray:
+                MinimizeRequested?.Invoke(this, EventArgs.Empty);
+                break;
+
+            case ExitChoice.SignOut:
+                SignedOut?.Invoke(this, EventArgs.Empty);
+                break;
+
+            case ExitChoice.None:
+            default:
+                break;
+        }
+    }
+
+    private void ShowAnnouncements_OnClick(object? sender, RoutedEventArgs e) =>
+        AnnouncementsRequested?.Invoke(this, EventArgs.Empty);
+
+}

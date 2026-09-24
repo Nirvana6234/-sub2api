@@ -881,6 +881,8 @@ var ProviderSet = wire.NewSet(
 	ProvideBillingCacheService,
 	NewAnnouncementService,
 	NewTicketService,
+	NewRemoteHub,
+	NewRemoteSyncService,
 	NewGuestTrialService,
 	wire.Bind(new(GuestTrialCaptchaVerifier), new(*AuthService)),
 	NewAdminService,

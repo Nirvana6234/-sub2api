@@ -204,6 +204,7 @@ func ProvideHandlers(
 	accountContributionHandler *AccountContributionHandler,
 	ticketHandler *TicketHandler,
 	guestTrialHandler *GuestTrialHandler,
+	remoteHandler *RemoteHandler,
 	_ *service.IdempotencyCoordinator,
 	_ *service.IdempotencyCleanupService,
 	_ *service.OpenAIQuotaAutoResetService,
@@ -236,6 +237,7 @@ func ProvideHandlers(
 		AccountContribution: accountContributionHandler,
 		Ticket:              ticketHandler,
 		GuestTrial:          guestTrialHandler,
+		Remote:              remoteHandler,
 	}
 }
 
@@ -266,6 +268,7 @@ var ProviderSet = wire.NewSet(
 	ProvideAccountContributionHandler,
 	NewTicketHandler,
 	NewGuestTrialHandler,
+	NewRemoteHandler,
 
 	// Admin handlers
 	admin.NewDashboardHandler,

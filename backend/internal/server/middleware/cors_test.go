@@ -104,6 +104,8 @@ func TestCORS_AllowedOrigin_HasAllowHeaders(t *testing.T) {
 			assert.NotEmpty(t, w.Header().Get("Access-Control-Allow-Headers"),
 				"允许的 origin 应收到 Allow-Headers")
 			assert.Contains(t, w.Header().Get("Access-Control-Allow-Headers"), "X-Admin-UI-Request")
+			assert.Contains(t, w.Header().Get("Access-Control-Allow-Headers"), "X-Remote-Pairing",
+				"phone sync sends its pairing token in this header")
 			assert.Contains(t, w.Header().Get("Access-Control-Allow-Headers"), "X-User-UI-Request")
 			assert.NotEmpty(t, w.Header().Get("Access-Control-Allow-Methods"),
 				"允许的 origin 应收到 Allow-Methods")

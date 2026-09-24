@@ -1,0 +1,1456 @@
+using System.Collections.ObjectModel;
+using CommunityToolkit.Mvvm.ComponentModel;
+using LanAi.RelayClient.Server;
+using LanAi.RelayClient.Services;
+using LanAi.RelayClient.Transport;
+using LanAi.RelayClient.Controls;
+
+namespace LanAi.RelayClient.ViewModels;
+
+/// <summary>
+/// The signed-in surface: balance, today's usage, and the group selector (F4, F5).
+/// </summary>
+/// <remarks>
+/// <para>
+/// Each card loads on its own and fails on its own. F4.2 forbids one card's
+/// failure from taking down the page or the session, and the shape of the code
+/// enforces it: there is no combined await and no shared try/catch, so a failure
+/// has nowhere to propagate to.
+/// </para>
+/// <para>
+/// In particular a 401 from a card endpoint greys that card only — it never signs
+/// the user out directly. But it does report the rejected token to
+/// <see cref="RelaySessionManager.NotifyAccessTokenRejectedAsync"/>, which forces
+/// the renewal check the local clock alone would not have triggered yet; ending
+/// the session remains that renewal's decision, not the card's.
+/// </para>
+/// </remarks>
+public sealed partial class DashboardViewModel : ObservableObject
+{
+    private readonly IRelayServerClient _client;
+    private readonly RelaySessionManager _session;
+    private readonly IGroupPreferenceStore _preferences;
+    private readonly ManagedKeyNaming _keyNaming;
+    private readonly ICodexStartup _codex;
+    private readonly ICodexInstaller _codexInstaller;
+    private readonly ICodexAccountStore _codexAccountStore;
+    private readonly IStartupRegistration _startupRegistration;
+    private readonly IContextFilterPreferenceStore _contextFilterPreferences;
+    private readonly IContextFilterUsageStore _contextFilterUsage;
+    private readonly SafeAsyncRunner _safeAsync;
+    private readonly SemaphoreSlim _pollGate = new(1, 1);
+
+    private PublicSettings _settings = PublicSettings.Conservative;
+
+    /// <summary>
+    /// 启用上下文压缩. Defaults to on, and is restored from disk on the next launch.
+    /// </summary>
+    [ObservableProperty]
+    private bool contextFilterEnabled = true;
+
+    private RelayApiKey? _managedKey;
+
+    /// <summary>Whether there is a bundled filter to switch; false greys the checkbox out.</summary>
+    public bool CanToggleContextFilter => _codex.HasContextFilter;
+
+    /// <summary>
+    /// The 累计处理/节省 line shown under 启用上下文压缩.
+    /// </summary>
+    /// <remarks>
+    /// Loaded once in the constructor so it is not blank on first paint, then
+    /// refreshed on the same poll <see cref="MonitorCodexAsync"/> already runs —
+    /// there is no event from the transport layer to push it live (see
+    /// <c>LocalPawRelay._onCompressionMeasured</c>), and piggybacking on a poll this
+    /// codebase already has beats adding a second one for a number that only ever
+    /// grows a little between ticks.
+    /// </remarks>
+    [ObservableProperty]
+    private string contextFilterUsageText = string.Empty;
+
+    private void RefreshContextFilterUsageText() =>
+        ContextFilterUsageText = ContextFilterUsageStore.Describe(_contextFilterUsage.Load());
+
+    /// <summary>
+    /// True while the value is being set by us rather than by the user.
+    /// </summary>
+    /// <remarks>
+    /// The same distinction the group dropdown needs, for the same reason: restoring
+    /// a saved value and a user ticking the box are indistinguishable at the event
+    /// level. Without this, every launch writes the preference straight back and
+    /// tries to restart a filter that is not running yet.
+    /// </remarks>
+    private bool _applyingKnownContextFilterState;
+
+    partial void OnContextFilterEnabledChanged(bool value)
+    {
+        if (_applyingKnownContextFilterState)
+        {
+            return;
+        }
+
+        _contextFilterPreferences.Save(value);
+
+        // Applied through the safe runner rather than awaited: this is a checkbox
+        // handler, and honouring the switch on a live session restarts the filter
+        // process. A failure there must surface as a notice, not as an unobserved
+        // task that leaves the box showing a state the chain is not in.
+        _ = _safeAsync.RunAsync(async () =>
+        {
+            try
+            {
+                await _codex.SetContextFilterEnabledAsync(value).ConfigureAwait(true);
+            }
+            catch
+            {
+                // Put the box back where the chain actually is, so it never claims
+                // a setting that did not take.
+                SetContextFilterWithoutApplying(!value);
+                throw;
+            }
+        });
+    }
+
+    private void SetContextFilterWithoutApplying(bool value)
+    {
+        _applyingKnownContextFilterState = true;
+        try
+        {
+            ContextFilterEnabled = value;
+        }
+        finally
+        {
+            _applyingKnownContextFilterState = false;
+        }
+    }
+
+    /// <summary>Cancels the refresh in flight when the session ends under it.</summary>
+    private CancellationTokenSource? _refreshCancellation;
+
+    private CancellationTokenSource? _installationCancellation;
+
+    internal DashboardViewModel(
+        IRelayServerClient client,
+        RelaySessionManager session,
+        IGroupPreferenceStore preferences,
+        ManagedKeyNaming keyNaming,
+        ICodexStartup codex,
+        PollingBackoff? pollingBackoff = null,
+        SafeAsyncRunner? safeAsync = null,
+        ICodexInstaller? codexInstaller = null,
+        ICodexAccountStore? codexAccountStore = null,
+        IStartupRegistration? startupRegistration = null,
+        IContextFilterPreferenceStore? contextFilterPreferences = null,
+        IContextFilterUsageStore? contextFilterUsage = null,
+        IPluginSupportPreferenceStore? pluginSupportPreferences = null,
+        ILocalProxyCredentialSource? localProxyCredentials = null,
+        ILocalProxyPreferenceStore? localProxyPreferences = null,
+        ILocalProxyUsageStore? localProxyUsage = null,
+        IOfficialReachability? localProxyReachability = null)
+    {
+        _client = client ?? throw new ArgumentNullException(nameof(client));
+        _session = session ?? throw new ArgumentNullException(nameof(session));
+        _preferences = preferences ?? throw new ArgumentNullException(nameof(preferences));
+        _keyNaming = keyNaming ?? throw new ArgumentNullException(nameof(keyNaming));
+        _codex = codex ?? throw new ArgumentNullException(nameof(codex));
+        _codexInstaller = codexInstaller ?? new CodexInstaller();
+        _codexAccountStore = codexAccountStore ?? new CodexAccountStore();
+        _startupRegistration = startupRegistration ?? new UnsupportedStartupRegistration();
+        RefreshState = new RefreshState(pollingBackoff ?? new PollingBackoff(), _session);
+        Account = new AccountCardViewModel(_client, RefreshState);
+        Usage = new UsageCardViewModel(_client, RefreshState);
+        Catalog = new GroupCatalog(_client, RefreshState);
+        _safeAsync = safeAsync ?? new SafeAsyncRunner();
+        _contextFilterPreferences = contextFilterPreferences ?? new ContextFilterPreferenceStore();
+        _contextFilterUsage = contextFilterUsage ?? new ContextFilterUsageStore();
+        SetContextFilterWithoutApplying(_contextFilterPreferences.Load() ?? true);
+        RefreshContextFilterUsageText();
+        ClaudePreference = new ClaudePreferenceViewModel(_client, _session, _safeAsync);
+        ClaudeCode = new ClaudeCodeViewModel(
+            _codex,
+            _preferences,
+            pluginSupportPreferences ?? new PluginSupportPreferenceStore(),
+            ClaudePreference,
+            _safeAsync);
+        // The credential source must be the very instance the relay reads from, so a token
+        // checked on switch-on is the one the next turn uses; the host passes it in.
+        LocalProxy = new LocalProxyViewModel(
+            _client,
+            RefreshState,
+            _codex,
+            localProxyCredentials ?? new LocalProxyCredentialCache(_client, _session.GetAccessTokenAsync),
+            localProxyPreferences ?? new LocalProxyPreferenceStore(),
+            localProxyUsage ?? new LocalProxyUsageStore(),
+            ClaudeCode,
+            ClaudePreference,
+            () => IsClaudeGroup,
+            reachability: localProxyReachability);
+        // Switching Codex onto a local proxy starts ChatGPT when it is not running yet. Only
+        // a plain start: a ChatGPT that would need restarting is never restarted from here.
+        LocalProxy.CodexNeedsLaunch = () =>
+            !IsCodexRunning && !IsStartingCodex && !IsInstallingCodex && !CodexNotInstalled &&
+            !RequiresCodexAccountRestart;
+        LocalProxy.LaunchCodex = async () =>
+        {
+            await StartCodexAsync(_ => Task.FromResult(false)).ConfigureAwait(true);
+            return IsCodexRunning ? null : (HasCodexMessage ? CodexMessage : "请到 Codex 页查看。");
+        };
+        LocalProxy.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(LocalProxyViewModel.CodexTarget))
+            {
+                // On a local proxy Codex needs no billing group, and the group no longer
+                // decides where its traffic goes.
+                OnPropertyChanged(nameof(CanChooseGroup));
+                OnPropertyChanged(nameof(CanStartCodex));
+                OnPropertyChanged(nameof(StartCodexLabel));
+            }
+        };
+    }
+
+    /// <summary>The refresh cycle's shared bookkeeping: backoff, rate-limit banner, 401s.</summary>
+    public RefreshState RefreshState { get; }
+
+    /// <summary>Balance, recharge and subscription.</summary>
+    public AccountCardViewModel Account { get; }
+
+    /// <summary>Today's usage and the seven-day trend.</summary>
+    public UsageCardViewModel Usage { get; }
+
+    /// <summary>Every group the account may use, unfiltered; each tool narrows it itself.</summary>
+    public GroupCatalog Catalog { get; }
+
+    /// <summary>The account's Claude model and thinking level. One instance for every page.</summary>
+    public ClaudePreferenceViewModel ClaudePreference { get; }
+
+    /// <summary>Claude Code and its editor extension.</summary>
+    public ClaudeCodeViewModel ClaudeCode { get; }
+
+    /// <summary>The 本地代理 page: each tool straight to the official API with one of the user's own accounts.</summary>
+    public LocalProxyViewModel LocalProxy { get; }
+
+    /// <summary>Whether the Codex group picker means anything right now: not while Codex is on a local proxy.</summary>
+    public bool CanChooseGroup => GroupsReady && !LocalProxy.IsCodexActive;
+
+    public ObservableCollection<GroupItemViewModel> Groups { get; } = [];
+
+    /// <summary>Provided by the UI host to show the automatic-routing modal.</summary>
+    public Func<PawAutoGroupSettings, IReadOnlyList<GroupItemViewModel>, Task<PawAutoGroupSettings?>>?
+        ConfigureAutoGroup { get; set; }
+
+    /// <summary>Whether the automatic-routing feature is available at all.</summary>
+    /// <remarks>
+    /// True only when the automatic entry is actually in the list, i.e. the server
+    /// supports it and the account has at least one OpenAI group to route between.
+    /// This gates whether <see cref="ConfigureAutoGroupAsync"/> may run; it is not,
+    /// by itself, whether the 配置 button is shown — see
+    /// <see cref="ShowConfigureAutoGroupButton"/> for that.
+    /// </remarks>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowConfigureAutoGroupButton))]
+    private bool canConfigureAutoGroup;
+
+    /// <summary>
+    /// Whether the 配置 button beside the group list should be offered right now.
+    /// </summary>
+    /// <remarks>
+    /// Only while 自动分组 is the selected entry. The dialog edits the automatic
+    /// candidate set and strategy, which is meaningless to a fixed group — showing
+    /// the button there just invites a click that has nothing to configure.
+    /// </remarks>
+    public bool ShowConfigureAutoGroupButton => CanConfigureAutoGroup && SelectedGroup is { IsAutomatic: true };
+
+    private PawAutoGroupSettings? _autoGroupSettings;
+    // Automatic routing was added after the original relay API. A 404 here means
+    // an older server, not a failure of the group card itself.
+    private bool _autoGroupSupported = true;
+
+    // ---- Group card ---------------------------------------------------------
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(GroupsUnavailable))]
+    [NotifyPropertyChangedFor(nameof(StartCodexLabel))]
+    [NotifyPropertyChangedFor(nameof(CanChooseGroup))]
+    private bool groupsReady;
+
+    public bool GroupsUnavailable => !GroupsReady;
+
+    [ObservableProperty]
+    private string currentGroupName = "未选择";
+
+    /// <summary>The rate of the group in force, spelled out next to its name.</summary>
+    [ObservableProperty]
+    private string currentGroupRate = string.Empty;
+
+    [ObservableProperty]
+    private string currentGroupRateDescription = string.Empty;
+
+    public bool HasGroupRateDescription => !string.IsNullOrWhiteSpace(CurrentGroupRateDescription);
+
+    partial void OnCurrentGroupRateDescriptionChanged(string value) =>
+        OnPropertyChanged(nameof(HasGroupRateDescription));
+
+    /// <summary>
+    /// The dropdown's selection.
+    /// </summary>
+    /// <remarks>
+    /// Changing this is what performs a switch, so every programmatic assignment —
+    /// loading the current group, rolling a rejected switch back — is made under
+    /// <see cref="_applyingKnownState"/>. Without that guard, populating the list
+    /// would look exactly like the user picking something and would fire a switch
+    /// against the server on every refresh.
+    /// </remarks>
+    [ObservableProperty]
+    private GroupItemViewModel? selectedGroup;
+
+    private bool _applyingKnownState;
+
+    /// <summary>
+    /// True when the dropdown has nothing selected and would otherwise read as blank.
+    /// </summary>
+    /// <remarks>
+    /// A collapsed WPF ComboBox with no selection renders empty, which a novice
+    /// user reads as "broken" rather than "nothing chosen yet" — so the blank state
+    /// gets words of its own.
+    /// </remarks>
+    public bool HasNoGroupSelected => SelectedGroup is null;
+
+    partial void OnSelectedGroupChanged(GroupItemViewModel? value)
+    {
+        OnPropertyChanged(nameof(HasNoGroupSelected));
+        OnPropertyChanged(nameof(IsClaudeGroup));
+        OnPropertyChanged(nameof(ShowConfigureAutoGroupButton));
+        // The start button is gated on having a group; see AwaitingBillingGroup.
+        OnPropertyChanged(nameof(CanStartCodex));
+        OnPropertyChanged(nameof(StartCodexLabel));
+
+        if (_applyingKnownState || value is null || value.IsCurrent)
+        {
+            return;
+        }
+        _ = _safeAsync.RunAsync(() => SwitchGroupAsync(value));
+    }
+
+    /// <summary>Assigns the selection without treating it as a user action.</summary>
+    private void SelectWithoutSwitching(GroupItemViewModel? group)
+    {
+        _applyingKnownState = true;
+        try
+        {
+            SelectedGroup = group;
+        }
+        finally
+        {
+            _applyingKnownState = false;
+        }
+    }
+
+    [ObservableProperty]
+    private string groupMessage = string.Empty;
+
+    public bool HasGroupMessage => !string.IsNullOrWhiteSpace(GroupMessage);
+
+    partial void OnGroupMessageChanged(string value) => OnPropertyChanged(nameof(HasGroupMessage));
+
+    // ---- Claude ------------------------------------------------------------------------
+    //
+    // The account's Claude model preference and the editor plug-ins live in their own view
+    // models (ClaudePreference, ClaudeCode). What stays here is only what the Codex
+    // selection itself decides.
+
+    /// <summary>True when the selected group uses the Anthropic/Claude platform.</summary>
+    public bool IsClaudeGroup => SelectedGroup?.Platform?.ToLowerInvariant().Contains("claude") == true
+                               || SelectedGroup?.Platform?.ToLowerInvariant().Contains("anthropic") == true;
+
+    // ---- Codex ---------------------------------------------------------------
+
+    [ObservableProperty]
+    private bool isStartingCodex;
+
+    [ObservableProperty]
+    private string codexMessage = string.Empty;
+
+    public bool HasCodexMessage => !string.IsNullOrWhiteSpace(CodexMessage);
+
+    partial void OnCodexMessageChanged(string value) => OnPropertyChanged(nameof(HasCodexMessage));
+
+    /// <summary>True once Codex is up, so the button stops inviting a second launch.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanStartCodex))]
+    [NotifyPropertyChangedFor(nameof(StartCodexLabel))]
+    private bool isCodexRunning;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanStartCodex))]
+    [NotifyPropertyChangedFor(nameof(StartCodexLabel))]
+    private bool requiresCodexAccountRestart;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanStartCodex))]
+    [NotifyPropertyChangedFor(nameof(CanRepairCodexStartup))]
+    [NotifyPropertyChangedFor(nameof(StartCodexLabel))]
+    private bool isInstallingCodex;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(StartCodexLabel))]
+    private string codexDownloadProgressText = string.Empty;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanStartCodex))]
+    [NotifyPropertyChangedFor(nameof(CanRepairCodexStartup))]
+    [NotifyPropertyChangedFor(nameof(StartCodexLabel))]
+    private bool codexNotInstalled;
+
+    [ObservableProperty]
+    private bool codexInstallerAvailable;
+
+    [ObservableProperty]
+    private bool startWithWindows = true;
+
+    private bool _loadingStartupPreference;
+
+    partial void OnStartWithWindowsChanged(bool value)
+    {
+        if (!_loadingStartupPreference)
+        {
+            _startupRegistration.SetEnabled(value);
+        }
+    }
+
+    /// <summary>Loads the preference and enables startup by default on first use.</summary>
+    public void InitializeStartupPreference()
+    {
+        _loadingStartupPreference = true;
+        try
+        {
+            StartWithWindows = _startupRegistration.EnsureDefaultEnabled();
+        }
+        finally
+        {
+            _loadingStartupPreference = false;
+        }
+    }
+
+    /// <remarks>
+    /// Disabled while starting, and once running: pressing it again would rewrite
+    /// the config and re-probe for no benefit, and to a novice a button that stays
+    /// live reads as "it did not work, press again". <see cref="RequiresCodexAccountRestart"/>
+    /// is the one exception to that: the process is up, but under the wrong account, so
+    /// the button has to come back rather than sit on a stale "已启动" forever. A silent
+    /// config-only route problem — the other case where the process is up but wrong — is
+    /// deliberately not handled here; see <see cref="CanRepairCodexStartup"/>.
+    /// </remarks>
+    /// <summary>
+    /// True while there is no group for the loopback relay to bill to yet.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The group is chosen for the user, not by them: <c>LoadGroupsAsync</c>
+    /// auto-selects the first server-approved one. But that runs over the network,
+    /// and this button used to be live from the moment the dashboard appeared — so
+    /// pressing 启动 in the first couple of seconds reached the relay with no group
+    /// and was refused, telling the user to pick a group they never had to pick and
+    /// which appeared a second later. Seen in a real session: refused at 23:19:21,
+    /// worked at 23:19:29, same account, nothing changed in between.
+    /// </para>
+    /// <para>
+    /// Not applied while Codex is missing: that turns this button into 安装 ChatGPT,
+    /// which has nothing to do with billing and must stay pressable.
+    /// </para>
+    /// </remarks>
+    private bool AwaitingBillingGroup =>
+        _codex.UsesLocalTransport && !CodexNotInstalled && !LocalProxy.IsCodexActive &&
+        (SelectedGroup is null ||
+         (SelectedGroup.IsAutomatic && (_autoGroupSettings is null || _autoGroupSettings.AutoGroupIds.Count == 0)));
+
+    public bool CanStartCodex => !IsStartingCodex && !IsInstallingCodex &&
+        !AwaitingBillingGroup &&
+        (!IsCodexRunning || RequiresCodexAccountRestart);
+
+    /// <summary>
+    /// Whether the standalone "修复 ChatGPT 启动" button, sharing a row with the
+    /// start-with-Windows checkbox, could do something useful right now.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately not gated on <see cref="IsCodexRunning"/> or
+    /// <see cref="RequiresCodexAccountRestart"/> the way <see cref="CanStartCodex"/> is: this
+    /// button is the only path back when an official ChatGPT login silently rewrites
+    /// <c>config.toml</c>/<c>auth.json</c> while ChatGPT keeps running — <see cref="CanStartCodex"/>
+    /// hides the main button for exactly that state, on purpose, so it does not invite a second
+    /// launch once the process looks up. <see cref="CodexRouteGuard"/> keeps auto-healing this
+    /// in the background while this client is open to run it; this button covers the rest —
+    /// a stretch this client was closed, or the guard simply has not polled yet. It runs the
+    /// exact same <see cref="StartCodexAsync"/> that the main button does, and the host is
+    /// expected to force a restart when <see cref="IsCodexRunning"/> is already true — a repair
+    /// that left the running process untouched would rewrite config.toml underneath a ChatGPT
+    /// that never re-reads it, so the user would see the button go quiet with nothing actually
+    /// fixed. That is worth interrupting an in-flight conversation for, which is why the host
+    /// confirms before doing it rather than restarting silently.
+    /// </remarks>
+    public bool CanRepairCodexStartup => !IsStartingCodex && !IsInstallingCodex && !CodexNotInstalled;
+
+    public string StartCodexLabel => IsInstallingCodex && !string.IsNullOrWhiteSpace(CodexDownloadProgressText)
+        ? CodexDownloadProgressText
+        : IsInstallingCodex
+        ? "正在安装 ChatGPT…"
+        : RequiresCodexAccountRestart
+        ? "重启 ChatGPT 激活账户"
+        : IsCodexRunning
+        ? "ChatGPT 已启动"
+        : AwaitingBillingGroup
+        // A disabled button with no explanation is the "点了没反应" this codebase
+        // keeps designing against, so the reason goes on the button itself.
+        ? (GroupsReady ? "没有可用分组" : "正在加载分组…")
+        : CodexNotInstalled ? "安装 ChatGPT" : "启动 ChatGPT";
+
+    partial void OnIsStartingCodexChanged(bool value)
+    {
+        OnPropertyChanged(nameof(CanStartCodex));
+        OnPropertyChanged(nameof(CanRepairCodexStartup));
+    }
+
+    /// <summary>
+    /// Refreshes the Codex state and rolls the lease forward when it is due.
+    /// </summary>
+    /// <remarks>
+    /// Runs on the same poll as the cards. The lease is the reason the client stays
+    /// resident at all — a tray icon that sat there without renewing would keep the
+    /// process alive and still let Codex stop working overnight.
+    /// </remarks>
+    public async Task MonitorCodexAsync(CancellationToken cancellationToken = default)
+    {
+        // Local file read, never throws (see ContextFilterUsageStore) — safe to run
+        // ahead of the try block that guards the network calls below.
+        RefreshContextFilterUsageText();
+        LocalProxy.RefreshUsage();
+
+        try
+        {
+            CodexHealth health = await _codex.CheckAsync(cancellationToken).ConfigureAwait(true);
+            IsCodexRunning = health.IsRunning;
+            UpdateCodexAccountActivationState();
+            CodexNotInstalled = !health.IsInstalled;
+            CodexInstallerAvailable = _codexInstaller.Inspect().PackageAvailable;
+
+            DateTimeOffset? renewed = await _codex.RenewLeaseIfDueAsync(cancellationToken).ConfigureAwait(true);
+            DateTimeOffset? expiry = renewed ?? health.LeaseExpiresAt;
+
+            LeaseStatus = expiry is { } at
+                ? $"授权有效至 {at.ToLocalTime():MM-dd HH:mm}"
+                : string.Empty;
+        }
+        catch (RelayApiException ex) when (ex.Failure == RelayFailure.RateLimited)
+        {
+            RefreshState.RecordRateLimited();
+            ClientLog.Warning("Codex 状态监控触发限流，已暂停轮询", ex);
+        }
+        catch (Exception ex) when (RefreshState.IsCardFailure(ex))
+        {
+            // Monitoring is background work; it must never be able to interrupt the
+            // user or take the panel down.
+            ClientLog.Warning("Codex 状态监控失败", ex);
+        }
+    }
+
+    /// <summary>让卡片刷新和 Codex 监控共用同一轮询与退避预算。</summary>
+    public async Task RefreshAndMonitorAsync(CancellationToken cancellationToken = default)
+    {
+        if (!await _pollGate.WaitAsync(0, cancellationToken).ConfigureAwait(true))
+        {
+            return;
+        }
+
+        try
+        {
+            await RefreshAsync(cancellationToken).ConfigureAwait(true);
+            if (RefreshState.CanAttempt)
+            {
+                await MonitorCodexAsync(cancellationToken).ConfigureAwait(true);
+            }
+        }
+        finally
+        {
+            _pollGate.Release();
+        }
+    }
+
+    [ObservableProperty]
+    private string leaseStatus = string.Empty;
+
+    public bool HasLeaseStatus => !string.IsNullOrWhiteSpace(LeaseStatus);
+
+    partial void OnLeaseStatusChanged(string value) => OnPropertyChanged(nameof(HasLeaseStatus));
+
+    /// <summary>
+    /// Issues or renews the lease, points Codex at the relay, and launches it (F3).
+    /// </summary>
+    /// <param name="confirmRestart">
+    /// Asked only when Codex is already running without a debug port. Restarting
+    /// discards whatever turn the user has in flight, so it is never assumed.
+    /// </param>
+    /// <param name="forceNewKey">
+    /// Set by the "修复 ChatGPT 启动" button: forces a fresh key rather than reusing
+    /// whatever this installation currently holds. The normal button never sets this
+    /// — reuse is the right default there — but repair exists specifically for a key
+    /// that looks fine (unexpired) and is not, and reusing it again would repeat
+    /// whatever is wrong with it.
+    /// </param>
+    public async Task StartCodexAsync(
+        Func<string, Task<bool>> confirmRestart,
+        CancellationToken cancellationToken = default,
+        bool forceRestart = false,
+        bool forceNewKey = false)
+    {
+        ArgumentNullException.ThrowIfNull(confirmRestart);
+
+        if (IsStartingCodex || (IsInstallingCodex && !forceRestart))
+        {
+            return;
+        }
+
+        // The tray menu's 启动 does not consult CanStartCodex, so the reason is given
+        // here too rather than relying on the button being disabled.
+        if (AwaitingBillingGroup)
+        {
+            // Automatic mode with no candidates is a different problem from having no
+            // groups at all, and only the first one is something the user can act on.
+            CodexMessage = SelectedGroup is { IsAutomatic: true }
+                ? "自动分组还没有选择候选分组，请先在分组里完成配置。"
+                : GroupsReady
+                    ? "这个账号还没有可用于 Codex 的分组，请确认后重试。"
+                    : "正在加载分组，请稍候再试。";
+            return;
+        }
+
+        IsStartingCodex = true;
+        CodexMessage = "正在准备 ChatGPT…";
+        try
+        {
+            long? groupId = SelectedGroup is { IsAutomatic: false } selected ? selected.Id : null;
+            string? groupName = SelectedGroup?.Name;
+            string? preferredModel = IsClaudeGroup ? ClaudePreference.SelectedClaudeModel : null;
+            CodexStartupResult result;
+            if (forceRestart)
+            {
+                result = await _codex
+                    .RunAsync(
+                        groupId,
+                        _settings.ApiBaseUrl ?? string.Empty,
+                        allowRestart: true,
+                        cancellationToken: cancellationToken,
+                        preferredModel: preferredModel,
+                        forceNewKey: forceNewKey,
+                        groupName: groupName)
+                    .ConfigureAwait(true);
+            }
+            else if (RequiresCodexAccountRestart)
+            {
+                const string activationMessage = "当前登录账户与 ChatGPT 已激活账户不同，需要重启 ChatGPT 才能激活当前账户。";
+                if (!await confirmRestart(activationMessage).ConfigureAwait(true))
+                {
+                    CodexMessage = "已取消重启，ChatGPT 仍使用原账户。";
+                    return;
+                }
+
+                result = await _codex
+                    .RunAsync(
+                        groupId,
+                        _settings.ApiBaseUrl ?? string.Empty,
+                        allowRestart: true,
+                        cancellationToken: cancellationToken,
+                        preferredModel: preferredModel,
+                        forceNewKey: forceNewKey,
+                        groupName: groupName)
+                    .ConfigureAwait(true);
+            }
+            else
+            {
+                result = await _codex
+                    .RunAsync(
+                        groupId,
+                        _settings.ApiBaseUrl ?? string.Empty,
+                        allowRestart: false,
+                        cancellationToken: cancellationToken,
+                        preferredModel: preferredModel,
+                        forceNewKey: forceNewKey,
+                        groupName: groupName)
+                    .ConfigureAwait(true);
+            }
+
+            if (result.Status == CodexStartupStatus.NeedsRestartConfirmation &&
+                await confirmRestart(result.Message).ConfigureAwait(true))
+            {
+                result = await _codex
+                    .RunAsync(
+                        groupId,
+                        _settings.ApiBaseUrl ?? string.Empty,
+                        allowRestart: true,
+                        cancellationToken: cancellationToken,
+                        preferredModel: preferredModel,
+                        forceNewKey: forceNewKey,
+                        groupName: groupName)
+                    .ConfigureAwait(true);
+            }
+
+            CodexMessage = result.Message;
+
+            if (result.Status == CodexStartupStatus.NotInstalled)
+            {
+                CodexNotInstalled = true;
+                CodexInstallerAvailable = _codexInstaller.Inspect().PackageAvailable;
+            }
+
+            if (result.Status == CodexStartupStatus.Ready)
+            {
+                IsCodexRunning = true;
+                CodexNotInstalled = false;
+                string currentEmail = _session.UserEmail.Trim();
+                if (!string.IsNullOrWhiteSpace(currentEmail))
+                {
+                    _codexAccountStore.Save(currentEmail);
+                    RequiresCodexAccountRestart = false;
+                }
+            }
+        }
+        catch (Exception ex) when (RefreshState.IsCardFailure(ex))
+        {
+            // Same rule as the cards: pressing this button must not be able to end
+            // the session or take the window down.
+            ClientLog.Error("启动 Codex 失败", ex);
+            CodexMessage = "启动 ChatGPT 时出错，详情见日志。";
+        }
+        finally
+        {
+            IsStartingCodex = false;
+        }
+    }
+
+    public async Task InstallCodexAsync(CancellationToken cancellationToken = default)
+    {
+        if (IsInstallingCodex)
+        {
+            return;
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        _installationCancellation?.Cancel();
+        _installationCancellation?.Dispose();
+        _installationCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        IsInstallingCodex = true;
+        CodexDownloadProgressText = _codexInstaller.Inspect().PackageAvailable
+            ? string.Empty
+            : "正在下载 ChatGPT…";
+        try
+        {
+            var progress = new Progress<CodexDownloadProgress>(UpdateCodexDownloadProgress);
+            CodexInstallerResult result = await _codexInstaller
+                .EnsureAndLaunchAsync(progress, _installationCancellation.Token)
+                .ConfigureAwait(true);
+            CodexDownloadProgressText = string.Empty;
+            CodexMessage = result.Message;
+            CodexInstallerAvailable = _codexInstaller.Inspect().PackageAvailable;
+            if (!result.Started)
+            {
+                CodexNotInstalled = true;
+                return;
+            }
+
+            bool installed = await WaitForCodexInstallationAsync(
+                result.InstallerProcess,
+                _installationCancellation.Token).ConfigureAwait(true);
+
+            if (!installed)
+            {
+                CodexNotInstalled = true;
+                CodexMessage = "ChatGPT 安装未完成，可以重新点击安装。";
+                return;
+            }
+
+            CodexNotInstalled = false;
+            await StartCodexAsync(
+                _ => Task.FromResult(true),
+                _installationCancellation.Token,
+                forceRestart: true).ConfigureAwait(true);
+        }
+        catch (OperationCanceledException)
+        {
+            CodexNotInstalled = true;
+            CodexMessage = "ChatGPT 安装已取消，可以重新点击安装。";
+        }
+        catch (Exception ex) when (RefreshState.IsCardFailure(ex))
+        {
+            CodexNotInstalled = true;
+            CodexMessage = "ChatGPT 安装状态检查失败，可以重新点击安装。";
+            ClientLog.Error("监控 Codex 安装失败", ex);
+        }
+        finally
+        {
+            IsInstallingCodex = false;
+            CodexDownloadProgressText = string.Empty;
+            _installationCancellation?.Dispose();
+            _installationCancellation = null;
+        }
+    }
+
+    private void UpdateCodexDownloadProgress(CodexDownloadProgress progress) =>
+        CodexDownloadProgressText = progress.Percent is int percent
+            ? $"正在下载 ChatGPT… {percent}%"
+            : "正在下载 ChatGPT…";
+
+    private async Task<bool> WaitForCodexInstallationAsync(
+        System.Diagnostics.Process? installerProcess,
+        CancellationToken cancellationToken)
+    {
+        DateTimeOffset deadline = DateTimeOffset.UtcNow.AddMinutes(10);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (await _codex.CheckInstalledAsync(cancellationToken).ConfigureAwait(true))
+            {
+                return true;
+            }
+
+            if (installerProcess?.HasExited == true)
+            {
+                return false;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(500), cancellationToken).ConfigureAwait(true);
+        }
+
+        return false;
+    }
+
+    // ---- Whole-panel state --------------------------------------------------
+
+    /// <summary>Reads the server-driven settings the cards depend on.</summary>
+    public void ApplySettings(PublicSettings settings)
+    {
+        _settings = settings ?? PublicSettings.Conservative;
+        Account.ApplySettings(_settings);
+    }
+
+    /// <summary>
+    /// Refreshes every card.
+    /// </summary>
+    /// <remarks>
+    /// The access token is obtained once, up front. That single call is the only
+    /// place allowed to end the session, and it does so only when renewal itself
+    /// fails. If it throws, no card is loaded — but the user is not signed out for
+    /// a mere network failure either, because renewal keeps the session on
+    /// <see cref="RelayFailure.NetworkUnreachable"/>.
+    /// </remarks>
+    public async Task RefreshAsync(CancellationToken cancellationToken = default)
+    {
+        if (RefreshState.IsRefreshing)
+        {
+            return;
+        }
+
+        if (!RefreshState.CanAttempt)
+        {
+            RefreshState.ShowBackoff();
+            return;
+        }
+
+        RefreshState.BeginCycle();
+
+        // Linked so a sign-out can abandon this refresh; without it the guard above
+        // would still be set when the next user signs in, and their load would be
+        // silently dropped.
+        _refreshCancellation?.Dispose();
+        _refreshCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        CancellationToken cancellation = _refreshCancellation.Token;
+
+        RefreshState.IsRefreshing = true;
+        try
+        {
+            Account.UserDisplayName = _session.UserDisplayName;
+
+            string accessToken;
+            try
+            {
+                accessToken = await _session.GetAccessTokenAsync(cancellation).ConfigureAwait(true);
+            }
+            catch (Exception ex) when (ex is RelayApiException or OperationCanceledException)
+            {
+                // Either the session ended (the manager has already signed out and
+                // raised its event), the network is down, or a sign-out cancelled
+                // us. Cards stay greyed; nothing here decides to sign anyone out.
+                MarkAllUnavailable();
+                RefreshState.Observe(ex);
+                return;
+            }
+
+            // Sequential rather than concurrent: the panel endpoints share a
+            // per-user rate limiter, and four simultaneous calls every 60 seconds
+            // is the pattern most likely to trip it. Each still fails alone.
+            foreach (Func<string, CancellationToken, Task> loadCard in CardLoaders())
+            {
+                await loadCard(accessToken, cancellation).ConfigureAwait(true);
+                if (RefreshState.StopForRateLimit() ||
+                    await RefreshState.StopForUnauthenticatedAsync(accessToken, cancellation).ConfigureAwait(true))
+                {
+                    return;
+                }
+            }
+
+            RefreshState.CompleteCycle();
+        }
+        finally
+        {
+            RefreshState.IsRefreshing = false;
+        }
+    }
+
+    /// <summary>The cards, in the order a refresh loads them.</summary>
+    private IEnumerable<Func<string, CancellationToken, Task>> CardLoaders()
+    {
+        yield return Account.LoadAccountAsync;
+        yield return Usage.LoadTodayAsync;
+        yield return Account.LoadSubscriptionAsync;
+        yield return LoadGroupCardAsync;
+        yield return Usage.LoadTrendAsync;
+        yield return LocalProxy.LoadAccountsAsync;
+    }
+
+    private async Task LoadGroupCardAsync(string token, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Catalog.LoadAsync(token, cancellationToken).ConfigureAwait(true);
+
+            if (RefreshState.WasRateLimited)
+            {
+                GroupsReady = false;
+                return;
+            }
+
+            await IdentifyManagedKeyAsync(token, cancellationToken).ConfigureAwait(true);
+
+            if (_codex.UsesLocalTransport && _autoGroupSupported)
+            {
+                try
+                {
+                    _autoGroupSettings = await _client
+                        .GetPawAutoGroupAsync(token, cancellationToken)
+                        .ConfigureAwait(true);
+                }
+                catch (RelayApiException ex) when (ex.Failure == RelayFailure.NotFound || ex.StatusCode == 404)
+                {
+                    _autoGroupSupported = false;
+                    _autoGroupSettings = null;
+                    ClientLog.Warning("当前服务器未提供自动分组接口，按固定分组模式运行。", ex);
+                }
+            }
+
+            // Under the local transport, the managed key's group id (if a key exists
+            // at all — a leftover from before this installation moved to the loopback
+            // relay, or one recorded by another installation of the same account, see
+            // SwitchGroupAsync below) is only ever a *default*: something to seed a
+            // client that has not made its own choice yet. Once this installation has
+            // a local preference, that preference is authoritative for as long as it
+            // runs — a refresh must never drag the group back to the server's record,
+            // and neither may some other device's later switch, which is why the
+            // server default is written into the local preference immediately below
+            // rather than re-read on every poll.
+            long? localGroup = _preferences.Load();
+            long? current;
+            if (_codex.UsesLocalTransport)
+            {
+                current = localGroup ?? _managedKey?.GroupId;
+                if (localGroup is null && current is not null)
+                {
+                    _preferences.Save(current.Value);
+                }
+            }
+            else
+            {
+                current = _managedKey?.GroupId ?? localGroup;
+            }
+
+            Groups.Clear();
+            foreach (RelayGroup group in Catalog.Groups.Where(g => IsSelectable(g, current)))
+            {
+                GroupItemViewModel item = Catalog.CreateItem(group, _settings.ServerUtcOffset);
+                item.IsCurrent = current == group.Id;
+                Groups.Add(item);
+            }
+
+            GroupItemViewModel? automatic = null;
+            if (_codex.UsesLocalTransport && _autoGroupSupported && Groups.Any(g =>
+                    !g.IsAutomatic && string.Equals(g.Platform, "openai", StringComparison.OrdinalIgnoreCase)))
+            {
+                automatic = GroupItemViewModel.CreateAutomatic();
+                Groups.Insert(0, automatic);
+            }
+
+            GroupItemViewModel? inForce;
+            // The mode is the client's own choice, so it is read back from local
+            // preferences. The server's auto_group flag says only that candidates
+            // exist for this account, never which mode this machine is in.
+            if (_preferences.LoadAutomatic() && automatic is not null)
+            {
+                automatic.IsCurrent = true;
+                inForce = automatic;
+            }
+            else
+            {
+                inForce = Groups.FirstOrDefault(g => !g.IsAutomatic && g.IsCurrent);
+            }
+
+            // A first-time account has neither a managed key nor a local choice.
+            // Select the first server-approved group so Codex has a usable billing
+            // target immediately after registration, then persist that choice for
+            // the next refresh.
+            GroupItemViewModel? firstFixedGroup = Groups.FirstOrDefault(g => !g.IsAutomatic);
+            if (inForce is null && firstFixedGroup is not null)
+            {
+                await SwitchGroupAsync(firstFixedGroup, cancellationToken).ConfigureAwait(true);
+            }
+            else
+            {
+                // The dropdown opens on the group actually in force rather than on
+                // nothing, so the answer to "which one am I on" needs no interaction.
+                SelectWithoutSwitching(inForce);
+                ApplyCurrentLabels(inForce);
+                if (_codex.UsesLocalTransport && inForce is not null)
+                {
+                    _codex.SetActiveGroup(inForce.IsAutomatic ? null : inForce.Id, inForce.Name);
+                }
+                if (IsClaudeGroup) _ = _safeAsync.RunAsync(ClaudePreference.LoadAsync);
+                ClaudeCode.RequestSync();
+            }
+
+            // Independent of inForce above: the plug-ins' Claude group is its own selection,
+            // not derived from whichever group Codex just landed on.
+            ClaudeCode.RebuildGroups(Catalog, _settings.ServerUtcOffset);
+
+            // RebuildGroups only triggers a sync itself when the restored group
+            // actually changes SelectedClaudePluginGroup (null -> null is not a change). A
+            // checkbox already on at launch, with no group to restore, would otherwise sit
+            // there saying nothing until something else nudges it — explicitly asked for here
+            // so a fresh launch applies (or explains) an already-ticked box, not just a switch.
+            ClaudeCode.RequestSync();
+
+            CanConfigureAutoGroup = automatic is not null;
+            GroupsReady = true;
+            OnPropertyChanged(nameof(CanStartCodex));
+            OnPropertyChanged(nameof(StartCodexLabel));
+        }
+        catch (Exception ex) when (RefreshState.Observe(ex))
+        {
+            GroupsReady = false;
+            ClientLog.Warning("分组卡取数失败", ex);
+        }
+    }
+
+    /// <summary>
+    /// Platforms whose groups can actually serve Codex traffic (F5.3).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The relay supports OpenAI-compatible groups and the Claude-over-Codex
+    /// bridge. Gemini and other unrelated platforms would fail every request.
+    /// </para>
+    /// <para>
+    /// <c>composite</c> is deliberately excluded. Such a group aggregates several
+    /// upstreams, so whether it can serve Codex depends on its routing
+    /// configuration — which the user-facing group payload does not carry (it is
+    /// an admin-only field). Including it on the strength of the platform label
+    /// would put back exactly the kind of entry F5.3 exists to remove: one that
+    /// looks selectable and then fails every request. It can be allowed once
+    /// there is something in the response a client can actually evaluate.
+    /// </para>
+    /// </remarks>
+    private static readonly string[] CodexPlatforms = ["openai", "anthropic", "claude"];
+
+    /// <summary>
+    /// Whether a group belongs in the switcher.
+    /// </summary>
+    /// <remarks>
+    /// Narrows the server's list by platform, which F5.3 permits — it never widens
+    /// it, which F5.3 forbids. The group currently in force is kept regardless:
+    /// hiding it would leave the user unable to see what they are actually billed
+    /// on, and this client cannot assume every account was set up for Codex.
+    /// </remarks>
+    private static bool IsSelectable(RelayGroup group, long? currentGroupId) =>
+        group.Id == currentGroupId ||
+        CodexPlatforms.Contains(group.Platform, StringComparer.OrdinalIgnoreCase);
+
+    /// <remarks>
+    /// Read-only (F3.2.1). A failure here leaves <c>_managedKey</c> null, which
+    /// only means switching falls back to recording the choice locally — the group
+    /// list itself must still render.
+    /// </remarks>
+    private async Task IdentifyManagedKeyAsync(string token, CancellationToken cancellationToken)
+    {
+        try
+        {
+            IReadOnlyList<RelayApiKey> keys = await _client.ListApiKeysAsync(token, cancellationToken).ConfigureAwait(true);
+            _managedKey = _keyNaming.FindCurrent(keys);
+        }
+        catch (Exception ex) when (RefreshState.Observe(ex))
+        {
+            _managedKey = null;
+            ClientLog.Warning("托管 key 识别失败，分组切换将只记录在本地", ex);
+        }
+    }
+
+    /// <summary>
+    /// Switches to <paramref name="group"/> (F5.4), rolling the selection back on failure (F5.5).
+    /// </summary>
+    /// <remarks>
+    /// With no managed key yet the choice is recorded locally instead. That is a
+    /// real branch, not a stub: the key is created with its group already set
+    /// (F3.2.2), so the selection has to exist before the key does.
+    /// </remarks>
+    public async Task SwitchGroupAsync(GroupItemViewModel group, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(group);
+
+        GroupItemViewModel? previous = Groups.FirstOrDefault(g => g.IsCurrent);
+        if (previous == group)
+        {
+            return;
+        }
+
+        if (_codex.UsesLocalTransport && group.IsAutomatic)
+        {
+            await EnableAutomaticRoutingAsync(group, previous, cancellationToken).ConfigureAwait(true);
+            return;
+        }
+
+        if (_codex.UsesLocalTransport)
+        {
+            // Leaving automatic routing is purely local: from here on the relay stamps
+            // this group's id instead of "auto". Nothing is written to the server —
+            // the internal key's auto_group flag must stay on for its candidate list
+            // to remain readable, so it cannot double as the mode switch.
+            _preferences.SaveAutomatic(false);
+        }
+
+        SetCurrent(group);
+
+        // Keeps the dropdown in step when the switch was started from elsewhere
+        // (a tray menu later, or a test) rather than from the dropdown itself.
+        SelectWithoutSwitching(group);
+        GroupMessage = string.Empty;
+
+        if (_codex.UsesLocalTransport)
+        {
+            // There is no server-side key to re-point: the loopback relay stamps the
+            // group on each request, so the switch is a local push and is in force for
+            // the very next turn. Falling through to the branch below instead would
+            // leave the relay on the previous group while telling the user otherwise.
+            _codex.SetActiveGroup(group.Id, group.Name);
+            _preferences.Save(group.Id);
+            GroupMessage = $"已切换到 {group.Name}。";
+            if (IsClaudeGroup) _ = _safeAsync.RunAsync(ClaudePreference.LoadAsync);
+            ClaudeCode.RequestSync();
+
+            // Best-effort record for another installation of the same account to pick
+            // up as its own bootstrap default (see LoadGroupCardAsync) — never
+            // load-bearing for this switch, which already took effect locally above.
+            // Only written onto a key that already exists: this client does not issue
+            // one itself under the local transport, so an account with none yet simply
+            // has no cross-device record, same as before this existed.
+            if (_managedKey is not null)
+            {
+                _ = _safeAsync.RunAsync(() => RecordGroupOnManagedKeyAsync(_managedKey.Id, group.Id, cancellationToken));
+            }
+            return;
+        }
+
+        if (_managedKey is null)
+        {
+            _preferences.Save(group.Id);
+            GroupMessage = $"已选择 {group.Name}，将在授权生效时套用。";
+            if (IsClaudeGroup) _ = _safeAsync.RunAsync(ClaudePreference.LoadAsync);
+            return;
+        }
+
+        try
+        {
+            string token = await _session.GetAccessTokenAsync(cancellationToken).ConfigureAwait(true);
+            RelayApiKey updated = await _client
+                .UpdateApiKeyGroupAsync(token, _managedKey.Id, group.Id, cancellationToken)
+                .ConfigureAwait(true);
+
+            _managedKey = updated;
+            _preferences.Save(group.Id);
+            GroupMessage = $"已切换到 {group.Name}。";
+            if (IsClaudeGroup) _ = _safeAsync.RunAsync(ClaudePreference.LoadAsync);
+        }
+        catch (RelayApiException ex)
+        {
+            // The server refused — the group may have been retired or the
+            // subscription lapsed. Leaving the dropdown on the new group would tell
+            // the user their traffic is being billed somewhere it is not.
+            if (previous is not null)
+            {
+                SetCurrent(previous);
+            }
+            else
+            {
+                group.IsCurrent = false;
+                ApplyCurrentLabels(null);
+            }
+
+            SelectWithoutSwitching(previous);
+            GroupMessage = ex.UserMessage;
+        }
+    }
+
+    /// <summary>
+    /// Stamps the group just switched to onto the managed key, purely so another
+    /// installation of this account has something to bootstrap from later.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately quiet: a failure here means only that the cross-device default
+    /// is momentarily stale, not that anything about this switch failed — the caller
+    /// runs it through <c>_safeAsync</c> and does not await it inline.
+    /// </remarks>
+    private async Task RecordGroupOnManagedKeyAsync(long keyId, long groupId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            string token = await _session.GetAccessTokenAsync(cancellationToken).ConfigureAwait(true);
+            _managedKey = await _client
+                .UpdateApiKeyGroupAsync(token, keyId, groupId, cancellationToken)
+                .ConfigureAwait(true);
+        }
+        catch (RelayApiException ex)
+        {
+            ClientLog.Warning("记录最近使用的分组失败（不影响本机切换，仅影响其他设备的默认分组）", ex);
+        }
+    }
+
+    private async Task EnableAutomaticRoutingAsync(
+        GroupItemViewModel automatic,
+        GroupItemViewModel? previous,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            string token = await _session.GetAccessTokenAsync(cancellationToken).ConfigureAwait(true);
+            PawAutoGroupSettings current = await _client
+                .GetPawAutoGroupAsync(token, cancellationToken)
+                .ConfigureAwait(true);
+            IReadOnlyList<GroupItemViewModel> candidates = AutoGroupCandidates();
+            HashSet<long> allowed = candidates.Select(g => g.Id).ToHashSet();
+
+            // The dialog is only for an account that has nothing configured yet.
+            // Once candidates exist, choosing 自动分组 just turns it on — asking
+            // again on every switch would make a routine mode change feel like a
+            // form to fill in. The 配置 button is the way back into the dialog.
+            long[] configured = current.AutoGroupIds.Where(allowed.Contains).Distinct().ToArray();
+            PawAutoGroupSettings? chosen = configured.Length > 0
+                ? new PawAutoGroupSettings(true, configured, current.AutoGroupStrategy)
+                : ConfigureAutoGroup is null
+                    ? null
+                    : await ConfigureAutoGroup(current, candidates).ConfigureAwait(true);
+            if (chosen is null)
+            {
+                SelectWithoutSwitching(previous);
+                return;
+            }
+
+            long[] ids = chosen.AutoGroupIds.Where(allowed.Contains).Distinct().ToArray();
+            if (ids.Length == 0)
+            {
+                SelectWithoutSwitching(previous);
+                GroupMessage = "请至少选择一个自动分组候选项。";
+                return;
+            }
+
+            PawAutoGroupSettings saved = await _client.SavePawAutoGroupAsync(
+                token,
+                new PawAutoGroupSettings(true, ids, chosen.AutoGroupStrategy),
+                cancellationToken).ConfigureAwait(true);
+
+            // The local mode changes only after the server accepted the complete
+            // candidate set and strategy. This ordering prevents a green UI whose
+            // relay is still sending the previous fixed group.
+            _autoGroupSettings = saved;
+            _preferences.SaveAutomatic(true);
+            SetCurrent(automatic);
+            SelectWithoutSwitching(automatic);
+            _codex.SetActiveGroup(null, automatic.Name);
+            ClaudeCode.RequestSync();
+            GroupMessage = "已启用自动分组。";
+            OnPropertyChanged(nameof(CanStartCodex));
+            OnPropertyChanged(nameof(StartCodexLabel));
+        }
+        catch (RelayApiException ex)
+        {
+            SelectWithoutSwitching(previous);
+            GroupMessage = ex.UserMessage;
+        }
+    }
+
+    /// <summary>The OpenAI groups automatic routing may choose between.</summary>
+    private IReadOnlyList<GroupItemViewModel> AutoGroupCandidates() => Groups
+        .Where(g => !g.IsAutomatic && string.Equals(g.Platform, "openai", StringComparison.OrdinalIgnoreCase))
+        .ToArray();
+
+    /// <summary>
+    /// Opens the automatic-routing dialog on demand and saves what the user picks.
+    /// </summary>
+    /// <remarks>
+    /// Saves the candidates and strategy only; it never changes which mode the client
+    /// is in. Someone tidying the list while on a fixed group should not be switched
+    /// over as a side effect, and someone already on automatic routing needs nothing
+    /// pushed to the relay — the server reads the candidates on every request.
+    /// </remarks>
+    public async Task ConfigureAutoGroupAsync(CancellationToken cancellationToken = default)
+    {
+        if (!CanConfigureAutoGroup || ConfigureAutoGroup is null)
+        {
+            return;
+        }
+
+        try
+        {
+            string token = await _session.GetAccessTokenAsync(cancellationToken).ConfigureAwait(true);
+            PawAutoGroupSettings current = await _client
+                .GetPawAutoGroupAsync(token, cancellationToken)
+                .ConfigureAwait(true);
+            IReadOnlyList<GroupItemViewModel> candidates = AutoGroupCandidates();
+
+            PawAutoGroupSettings? chosen = await ConfigureAutoGroup(current, candidates).ConfigureAwait(true);
+            if (chosen is null)
+            {
+                return;
+            }
+
+            HashSet<long> allowed = candidates.Select(g => g.Id).ToHashSet();
+            long[] ids = chosen.AutoGroupIds.Where(allowed.Contains).Distinct().ToArray();
+            if (ids.Length == 0)
+            {
+                GroupMessage = "请至少选择一个自动分组候选项。";
+                return;
+            }
+
+            _autoGroupSettings = await _client.SavePawAutoGroupAsync(
+                token,
+                new PawAutoGroupSettings(true, ids, chosen.AutoGroupStrategy),
+                cancellationToken).ConfigureAwait(true);
+
+            GroupMessage = SelectedGroup is { IsAutomatic: true }
+                ? "自动分组设置已保存。"
+                : "自动分组设置已保存，选择「自动分组」即可使用。";
+            OnPropertyChanged(nameof(CanStartCodex));
+            OnPropertyChanged(nameof(StartCodexLabel));
+        }
+        catch (RelayApiException ex)
+        {
+            GroupMessage = ex.UserMessage;
+        }
+    }
+
+    // ---- Which models a group supports (F5.x) ---------------------------------------
+
+    /// <summary>Shows a ready-made message — see <see cref="DescribeGroupModels"/> — in whatever way the host presents a tip.</summary>
+    public Func<string, Task>? ShowGroupModels { get; set; }
+
+    /// <summary>
+    /// Opens the 白名单模型 tip for one group. A no-op for 自动分组 and for a group with no
+    /// whitelist switched on — neither has a definite list of its own, and the button is
+    /// hidden for both (<see cref="GroupItemViewModel.HasModelAllowlist"/>).
+    /// </summary>
+    /// <remarks>
+    /// The list comes with the group itself (<c>/groups/available</c>), so there is nothing
+    /// to fetch and nothing that can fail at click time.
+    /// </remarks>
+    public async Task ShowGroupModelsAsync(GroupItemViewModel? group)
+    {
+        if (group is null || !group.HasModelAllowlist || ShowGroupModels is null)
+        {
+            return;
+        }
+
+        await ShowGroupModels(DescribeGroupModels(group.Name, group.AllowedModels)).ConfigureAwait(true);
+    }
+
+    internal static string DescribeGroupModels(string groupName, IReadOnlyList<string> models) =>
+        models.Count == 0
+            ? $"{groupName} 暂时没有可显示的模型信息。"
+            : $"{groupName} 支持的模型：\n\n" + string.Join('\n', models);
+
+    private void SetCurrent(GroupItemViewModel group)
+    {
+        foreach (GroupItemViewModel item in Groups)
+        {
+            item.IsCurrent = item == group;
+        }
+
+        ApplyCurrentLabels(group);
+    }
+
+    private void ApplyCurrentLabels(GroupItemViewModel? group)
+    {
+        CurrentGroupName = group?.Name ?? "未选择";
+        CurrentGroupRate = group?.RateLabel ?? string.Empty;
+        CurrentGroupRateDescription = group?.RateDescription ?? string.Empty;
+    }
+
+    private void MarkAllUnavailable()
+    {
+        Account.MarkUnavailable();
+        Usage.MarkUnavailable();
+        GroupsReady = false;
+    }
+
+    private void UpdateCodexAccountActivationState()
+    {
+        string currentEmail = _session.UserEmail.Trim();
+        string? activatedEmail = _codexAccountStore.Load();
+
+        RequiresCodexAccountRestart = IsCodexRunning &&
+            !string.IsNullOrWhiteSpace(currentEmail) &&
+            !string.IsNullOrWhiteSpace(activatedEmail) &&
+            !string.Equals(currentEmail, activatedEmail.Trim(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Drops everything belonging to the account that just signed out.
+    /// </summary>
+    /// <remarks>
+    /// Without this, signing out and back in as someone else leaves the previous
+    /// user's balance, usage and group on screen until the next poll — one account
+    /// showing another's figures, which is a disclosure, not just a stale view.
+    /// The in-flight refresh is cancelled for the same reason: its continuation
+    /// would otherwise write the old user's values into the cards after the new
+    /// one has signed in.
+    /// </remarks>
+    public void Reset()
+    {
+        _installationCancellation?.Cancel();
+        _installationCancellation?.Dispose();
+        _installationCancellation = null;
+        IsInstallingCodex = false;
+
+        _refreshCancellation?.Cancel();
+        _refreshCancellation?.Dispose();
+        _refreshCancellation = null;
+
+        _managedKey = null;
+        _autoGroupSettings = null;
+        _autoGroupSupported = true;
+        CanConfigureAutoGroup = false;
+        ClaudeCode.Reset();
+        ClaudePreference.Reset();
+        LocalProxy.Reset();
+        RefreshState.Reset();
+
+        Account.Reset();
+        Usage.Reset();
+        GroupMessage = string.Empty;
+        RequiresCodexAccountRestart = false;
+
+        Catalog.Reset();
+        Groups.Clear();
+        SelectWithoutSwitching(null);
+        ApplyCurrentLabels(null);
+        MarkAllUnavailable();
+    }
+}

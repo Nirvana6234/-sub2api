@@ -1,0 +1,84 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:LanAi.RelayClient.ViewModels;assembly=LanAi.RelayClient.Core"
+             x:Class="LanAi.RelayClient.App.Views.Pages.AccountPage"
+             x:DataType="vm:DashboardPageViewModel">
+
+  <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <StackPanel>
+
+      <!-- Greys out on its own; a failure here never touches the other cards or the
+           session. -->
+      <Border Classes="card">
+        <StackPanel>
+          <DockPanel>
+            <TextBlock Text="暂时取不到" Classes="unavailable" DockPanel.Dock="Right"
+                       IsVisible="{Binding Dashboard.Account.AccountUnavailable}" />
+            <TextBlock Text="{Binding WelcomeText}" Classes="cardTitle" />
+          </DockPanel>
+          <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+            <StackPanel>
+              <TextBlock Text="余额" Classes="label" />
+              <TextBlock Text="{Binding Dashboard.Account.BalanceText}" FontSize="22" FontWeight="SemiBold" />
+            </StackPanel>
+            <StackPanel Margin="32,0,0,0">
+              <TextBlock Text="冻结" Classes="label" />
+              <TextBlock Text="{Binding Dashboard.Account.FrozenBalanceText}" FontSize="22" Foreground="#6B7280" />
+            </StackPanel>
+          </StackPanel>
+
+          <DockPanel Margin="0,10,0,0" IsVisible="{Binding Dashboard.Account.CanRecharge}">
+            <Button Content="去充值" Click="Recharge_OnClick"
+                    Classes="recharge"
+                    Classes.low="{Binding Dashboard.Account.BalanceIsLow}"
+                    DockPanel.Dock="Right" HorizontalAlignment="Right"
+                    Padding="10,4" BorderThickness="1" />
+            <TextBlock Text="余额偏低" Foreground="#DC2626" VerticalAlignment="Center"
+                       IsVisible="{Binding Dashboard.Account.BalanceIsLow}" />
+          </DockPanel>
+        </StackPanel>
+      </Border>
+
+      <!-- Hidden when the server reports none. -->
+      <Border Classes="card" IsVisible="{Binding Dashboard.Account.HasSubscription}">
+        <StackPanel>
+          <TextBlock Text="订阅" Classes="cardTitle" />
+          <TextBlock Text="{Binding Dashboard.Account.SubscriptionName}" FontSize="16"
+                     FontWeight="SemiBold" Margin="0,8,0,2" />
+          <TextBlock Text="{Binding Dashboard.Account.SubscriptionProgressText}" Foreground="#6B7280" />
+        </StackPanel>
+      </Border>
+
+      <!-- Deliberately five rows: the workspace app's dashboard has twenty collections,
+           which is the right answer for an operator and the wrong one here. -->
+      <Border Classes="card" Margin="0">
+        <StackPanel>
+          <DockPanel>
+            <TextBlock Text="暂时取不到" Classes="unavailable" DockPanel.Dock="Right"
+                       IsVisible="{Binding Dashboard.Usage.TrendUnavailable}" />
+            <TextBlock Text="近 7 日按模型消费" Classes="cardTitle" />
+          </DockPanel>
+          <TextBlock Text="最近 7 天还没有用量记录"
+                     Foreground="#9CA3AF" FontSize="12" Margin="0,10,0,0"
+                     IsVisible="{Binding Dashboard.Usage.HasNoUsageYet}" />
+          <ItemsControl ItemsSource="{Binding Dashboard.Usage.TopModelUsage}" Margin="0,10,0,0">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:ModelUsageRowViewModel">
+                <DockPanel Margin="0,0,0,6">
+                  <TextBlock Text="{Binding CostText}" FontWeight="SemiBold"
+                             FontSize="12" DockPanel.Dock="Right"
+                             HorizontalAlignment="Right" VerticalAlignment="Center" />
+                  <StackPanel>
+                    <TextBlock Text="{Binding Model}" FontSize="12" />
+                    <TextBlock Text="{Binding DetailText}" Foreground="#9CA3AF" FontSize="11" />
+                  </StackPanel>
+                </DockPanel>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </Border>
+
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

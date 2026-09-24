@@ -1,0 +1,45 @@
+{
+  "_notes": "随包发的 codex 取自上游 release，不自己编 —— 官方发布的 app-server bundle 与我们自己从 main 编出来的是同一代（工具集/body 键/头集合全同，只差一天的提示词改动），但官方那份带得出版本号，我们自己编的 workspace version 写死 0.0.0。换版本必须同步改这里，并重跑 scripts/ 下两个探针。",
+  "source": "https://github.com/openai/codex/releases/download/rust-v0.153.0/codex-app-server-package-x86_64-pc-windows-msvc.tar.gz",
+  "tag": "rust-v0.153.0",
+  "declaredVersion": "0.153.0",
+  "target": "x86_64-pc-windows-msvc",
+  "files": {
+    "bin/codex-app-server.exe": {
+      "sha256": "8fb65ce8f626a289faa24d68b6d77d789c7d3bdafb174c940c2b9aa55e3cfb05",
+      "bytes": 229037872
+    },
+    "bin/codex-code-mode-host.exe": {
+      "sha256": "b5bd9b83f8d2c16e4a4c29bcb39e380fcc7d74e5a56d97f0ade26e9b446f7ab3",
+      "bytes": 72446768
+    },
+    "codex-path/rg.exe": {
+      "sha256": "14231169855ec5205cf5a1b6f1db358ff4aed4247c86b69ce8aae647c77f6680",
+      "bytes": 4218880
+    },
+    "codex-resources/codex-command-runner.exe": {
+      "sha256": "1ed001295558a262244266343491d5109395b6603f2c3acc6fdf9ccf5aeeb58a",
+      "bytes": 8204592
+    },
+    "codex-resources/codex-windows-sandbox-setup.exe": {
+      "sha256": "2a77368d026f9b6d54b63e05c814d57e25a6b41ba812bb3026cedc61005bc1af",
+      "bytes": 15412016
+    }
+  },
+  "sizes": {
+    "packageUncompressedMB": 315,
+    "tarGzMB": 108.9,
+    "tarZstMB": 81.6,
+    "appServerExeMB": 218.4
+  },
+  "weOnlyNeed": {
+    "bin/codex-app-server.exe": "必需",
+    "codex-resources/codex-command-runner.exe": "必需 —— 沙箱执行链路",
+    "codex-resources/codex-windows-sandbox-setup.exe": "必需 —— 沙箱执行链路",
+    "codex-path/rg.exe": "可选 —— 给 agent 的 shell 用，codex 自己不依赖",
+    "bin/codex-code-mode-host.exe": "用不上 —— CodeModeHostTransport::Local 不 spawn 它（69MB，省掉）"
+  },
+  "notCompatibleWith": {
+    "0.144.2": "工具集不同（0.144.2 是 shell_command/update_plan，0.153.0 是 exec_command/write_stdin），0.144.2 对 exec_command 直接回 unsupported call。A2/A3 的 fixture 与 306 份 schema 都录自 0.144.2，**尚未重录**。"
+  }
+}

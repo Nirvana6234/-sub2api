@@ -1,0 +1,47 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:LanAi.RelayClient.ViewModels;assembly=LanAi.RelayClient.Core"
+             x:Class="LanAi.RelayClient.App.Views.Pages.SettingsPage"
+             x:DataType="vm:DashboardPageViewModel">
+
+  <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <StackPanel>
+
+      <Border Classes="card">
+        <StackPanel>
+          <TextBlock Text="常规" Classes="cardTitle" />
+          <CheckBox Content="随系统启动" IsChecked="{Binding Dashboard.StartWithWindows}"
+                    Foreground="#374151" Margin="0,10,0,0" />
+          <TextBlock Text="开机后在后台运行，ChatGPT 随时可用共飞额度" Classes="hint" Margin="0,2,0,0" />
+        </StackPanel>
+      </Border>
+
+      <Border Classes="card" Margin="0">
+        <StackPanel>
+          <TextBlock Text="关于" Classes="cardTitle" />
+          <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+            <TextBlock Text="{Binding ClientUpdate.CurrentVersionText}"
+                       Foreground="#6B7280" FontSize="12" VerticalAlignment="Center" />
+            <!-- One button: 检查更新 until something is found, then the version it
+                 found — both labels trigger the same check-then-offer flow. Disabled
+                 while an update is being downloaded or applied, so a second click cannot
+                 start a second one. -->
+            <Button Content="{Binding ClientUpdate.CheckUpdateButtonLabel}"
+                    Click="CheckUpdate_OnClick" Classes="link" FontSize="12" Padding="10,0,0,0"
+                    IsEnabled="{Binding !ClientUpdate.IsApplyingUpdate}" />
+          </StackPanel>
+          <!-- Windows-only in practice: the mac path opens Terminal and returns almost at
+               once, so this shows for a moment at 0% at worst. -->
+          <TextBlock Text="{Binding ClientUpdate.DownloadProgressText}"
+                     IsVisible="{Binding ClientUpdate.HasDownloadProgress}"
+                     Classes="hint" Margin="0,4,0,0" />
+          <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+            <Button Content="查看公告" Click="ShowAnnouncements_OnClick" Classes="secondary" />
+            <Button Content="联系我们" Click="OpenContactPage_OnClick" Classes="secondary" Margin="8,0,0,0" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

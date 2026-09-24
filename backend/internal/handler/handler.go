@@ -76,6 +76,7 @@ type Handlers struct {
 	AccountContribution *AccountContributionHandler
 	Ticket              *TicketHandler
 	GuestTrial          *GuestTrialHandler
+	Remote              *RemoteHandler
 }
 
 // BuildInfo contains build-time information
