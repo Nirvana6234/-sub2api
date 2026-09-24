@@ -23,6 +23,13 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
+func TestPublicUpstreamDialContextRejectsLoopback(t *testing.T) {
+	ctx := service.WithHTTPUpstreamPublicHostsOnly(t.Context())
+	_, err := newPublicUpstreamDialer(nil, false).DialContext(ctx, "tcp", "127.0.0.1:1")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not public")
+}
+
 func TestHTTPUpstreamDoCanDisableRedirectsPerRequest(t *testing.T) {
 	var redirectedCalls atomic.Int64
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

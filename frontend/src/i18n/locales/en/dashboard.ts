@@ -12,6 +12,7 @@ export default {
     performance: 'Performance',
     avgResponse: 'Avg Response',
     averageTime: 'Average time',
+    usageAnalysis: 'Usage analysis',
     timeRange: 'Time Range',
     granularity: 'Granularity',
     day: 'Day',
@@ -48,6 +49,37 @@ export default {
     noUsageRecords: 'No usage records',
     startUsingApi: 'Start using the API to see your usage history here.',
     viewAllUsage: 'View all usage',
+    serviceEntry: {
+      title: 'Get started',
+      subtitle: 'Every option draws from the same account balance. Pick one or use them together.',
+      subtitleSingle: 'Connect the service to the tools you already use.',
+      recommended: 'Recommended',
+      web: {
+        title: 'Web Workspace',
+        description: 'Chat and generate images right in your browser. Nothing to install.',
+        meta: 'No installation needed',
+        action: 'Start chatting'
+      },
+      api: {
+        title: 'API access',
+        description: 'Use it in Codex CLI, Cursor and other tools.',
+        endpoint: 'Endpoint',
+        copy: 'Copy',
+        copied: 'Copied',
+        meta: '{total} keys · {active} active',
+        docs: 'Docs',
+        action: 'Manage keys'
+      },
+      client: {
+        title: 'Desktop Assistant',
+        description: 'Launch Codex desktop in one click, no setup, and save tokens along the way.',
+        windows: 'Windows x64',
+        mac: 'macOS · Apple silicon',
+        meta: 'Latest v{version}',
+        guide: 'Install guide',
+        action: 'Download'
+      }
+    },
     quickActions: 'Quick Actions',
     createApiKey: 'Create API Key',
     generateNewKey: 'Generate a new API key',
@@ -163,6 +195,7 @@ export default {
     quota: 'Quota',
     lastUsedAt: 'Last Used',
     lastUsedIP: 'Last Used IP',
+    accessHint: 'Click Use Key in the list to generate configs for Codex, Claude Code and other tools.',
     useKey: 'Use Key',
     useKeyModal: {
       title: 'Use API Key',
@@ -403,6 +436,15 @@ export default {
     compactionFilter: 'Request Kind',
     allCompactionTypes: 'All Requests',
     compactionOnly: 'Compaction Only',
+    accountSource: {
+      filter: 'Account Source',
+      all: 'All Sources',
+      pool: 'Pool',
+      own: 'Own Account',
+      room: 'Contribution Room',
+      ownCostHint: 'Served by your own contributed account. This amount is the model price; your balance is only charged the own-account fee.',
+      ownCostTag: 'Not charged',
+    },
     cyber: 'Cyber',
     live: 'Live',
     unknown: 'Unknown',
@@ -1053,6 +1095,15 @@ export default {
   },
 
   accountContributions: {
+    usageRecords: 'Usage records',
+    usageModalTitle: 'Own account usage',
+    usageModalHint: 'Only your own requests served by this account are counted. Amounts are model prices; your balance is only charged the own-account fee.',
+    usagePeriodToday: 'Today',
+    usagePeriod7d: 'Last 7 days',
+    usagePeriod30d: 'Last 30 days',
+    usageRequests: 'Requests',
+    usageTokens: 'Total tokens',
+    usageModelCost: 'At model price',
     accountType: 'Account type',
     title: 'Account Management',
     description: 'Submit and manage your accounts. Accounts remain private until they are verified and placed in a contribution room.',

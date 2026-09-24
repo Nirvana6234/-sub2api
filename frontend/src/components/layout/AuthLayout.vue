@@ -2,6 +2,7 @@
   <div class="gongfei-auth relative flex min-h-screen items-center justify-center overflow-hidden p-4">
     <div class="gongfei-route gongfei-route-top" aria-hidden="true"></div>
     <div class="gongfei-route gongfei-route-bottom" aria-hidden="true"></div>
+    <span class="gongfei-star" aria-hidden="true">✳</span>
 
     <!-- Content Container -->
     <div class="relative z-10 w-full max-w-md">
@@ -50,24 +51,36 @@ onMounted(() => {
 
 <style scoped>
 .gongfei-auth {
-  background: #f4fbff;
+  background: #f6f7f3;
 }
 
 .gongfei-auth::before {
   position: absolute;
   inset: 0;
   content: '';
-  background-image: linear-gradient(#dbeef7 1px, transparent 1px), linear-gradient(90deg, #dbeef7 1px, transparent 1px);
-  background-size: 40px 40px;
-  opacity: 0.45;
+  background-image:
+    radial-gradient(rgba(23, 43, 57, 0.08) 0.8px, transparent 0.8px),
+    radial-gradient(ellipse 50% 40% at 85% 0%, rgba(22, 155, 208, 0.08), transparent 70%),
+    radial-gradient(ellipse 45% 35% at 5% 100%, rgba(233, 219, 190, 0.35), transparent 70%);
+  background-size: 18px 18px, 100% 100%, 100% 100%;
 }
 
 .gongfei-route {
   position: absolute;
   z-index: 0;
-  border: 2px dashed #9cdbef;
+  border: 1.5px dashed #8cacb3;
   border-radius: 50%;
-  opacity: 0.75;
+  opacity: 0.6;
+}
+
+.gongfei-star {
+  position: absolute;
+  top: 14%;
+  left: calc(50% - 16rem);
+  z-index: 0;
+  color: #d28c62;
+  font-size: 30px;
+  transform: rotate(15deg);
 }
 
 .gongfei-route-top {
@@ -106,34 +119,40 @@ onMounted(() => {
 }
 
 .gongfei-title {
-  color: #173b5c;
-  letter-spacing: 0;
+  color: #172b39;
+  letter-spacing: -0.02em;
 }
 
 .gongfei-subtitle {
-  color: #5d7387;
+  color: #647077;
 }
 
 .gongfei-auth-card {
-  border: 1px solid #cfe6f1;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.94);
-  box-shadow: 0 18px 45px rgba(39, 102, 137, 0.14), 0 2px 0 rgba(255, 255, 255, 0.9) inset;
+  border: 1px solid rgba(23, 43, 57, 0.08);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 26px 56px -24px rgba(37, 59, 75, 0.35), 0 3px 9px rgba(38, 59, 74, 0.05);
 }
 
 :global(.dark) .gongfei-auth {
-  background: #0d1d2b;
+  background: #0f1720;
 }
 
 :global(.dark) .gongfei-auth::before {
-  background-image: linear-gradient(#26475c 1px, transparent 1px), linear-gradient(90deg, #26475c 1px, transparent 1px);
-  opacity: 0.32;
+  background-image:
+    radial-gradient(rgba(148, 163, 184, 0.08) 0.8px, transparent 0.8px),
+    radial-gradient(ellipse 50% 40% at 85% 0%, rgba(22, 155, 208, 0.1), transparent 70%);
+  background-size: 18px 18px, 100% 100%;
+}
+
+:global(.dark) .gongfei-route {
+  border-color: #476478;
 }
 
 :global(.dark) .gongfei-auth-card {
-  border-color: #29475a;
-  background: rgba(17, 35, 50, 0.96);
-  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.25);
+  border-color: #30414c;
+  background: rgba(23, 35, 46, 0.96);
+  box-shadow: 0 26px 56px -24px rgba(0, 0, 0, 0.5);
 }
 
 :global(.dark) .gongfei-title {
@@ -155,7 +174,8 @@ onMounted(() => {
 }
 
 @media (max-width: 640px) {
-  .gongfei-route {
+  .gongfei-route,
+  .gongfei-star {
     display: none;
   }
 

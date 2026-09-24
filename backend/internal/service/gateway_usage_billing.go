@@ -1206,6 +1206,7 @@ func (s *GatewayService) buildRecordUsageLog(
 		UserID:                   user.ID,
 		APIKeyID:                 apiKey.ID,
 		AccountID:                account.ID,
+		AccountSource:            UsageLogAccountSourceFor(account, user.ID),
 		RequestID:                requestID,
 		UpstreamRequestID:        usageUpstreamRequestIDPtr(account, result.UpstreamHeaders, false),
 		Model:                    result.Model,

@@ -4,7 +4,7 @@
  */
 
 import { apiClient } from '../client'
-import type { AdminUsageLog, UsageQueryParams, PaginatedResponse, UsageRequestType } from '@/types'
+import type { AdminUsageLog, UsageQueryParams, PaginatedResponse, UsageRequestType, UsageAccountSource } from '@/types'
 import type { EndpointStat } from '@/types'
 
 // ==================== Types ====================
@@ -146,6 +146,7 @@ export async function getStats(params: {
   request_type?: UsageRequestType
   stream?: boolean
   native_compaction_v2?: boolean | null
+  account_source?: UsageAccountSource | null
   upstream_model_mismatch?: boolean
   period?: string
   start_date?: string

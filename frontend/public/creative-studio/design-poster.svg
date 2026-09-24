@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="420" height="560" viewBox="0 0 420 560" fill="none">
+  <title>Make something wonderful — a warm geometric art poster</title>
+  <defs>
+    <linearGradient id="paper" x1="0" y1="0" x2="420" y2="560" gradientUnits="userSpaceOnUse"><stop stop-color="#FFF3C9"/><stop offset="1" stop-color="#F1DDA2"/></linearGradient>
+    <linearGradient id="orange" x1="88" y1="225" x2="284" y2="463" gradientUnits="userSpaceOnUse"><stop stop-color="#FA9060"/><stop offset="1" stop-color="#E55738"/></linearGradient>
+    <pattern id="lines" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(-35)"><path d="M0 0v7" stroke="#EAA36C" stroke-width="1"/></pattern>
+    <clipPath id="poster"><path d="M0 0h420v560H0z"/></clipPath>
+  </defs>
+  <g clip-path="url(#poster)">
+    <path fill="url(#paper)" d="M0 0h420v560H0z"/>
+    <path d="M29 30h362" stroke="#263A3D" stroke-width="1.2"/>
+    <text x="29" y="52" font-family="Verdana, sans-serif" font-size="9" letter-spacing="2.8" fill="#354847">A LITTLE IDEA. A WHOLE NEW WORLD.</text>
+    <text x="26" y="121" font-family="Georgia, 'Times New Roman', serif" font-size="64" font-weight="700" letter-spacing="-4" fill="#183E43">Make</text>
+    <text x="26" y="178" font-family="Georgia, 'Times New Roman', serif" font-size="62" font-weight="700" letter-spacing="-3.8" fill="#183E43">something.</text>
+    <path d="M55 431c72-32 131-90 163-166" stroke="#254B43" stroke-width="9" stroke-linecap="round"/>
+    <path d="M116 383c-67 9-103-25-107-73 60-7 100 12 107 73Z" fill="#456D50"/>
+    <path d="M137 362c-13-69 15-102 59-111 22 48 4 90-59 111Z" fill="#A9B27B"/>
+    <path d="m46 337 65 41m47-103-17 75" stroke="#E6DDA4" stroke-opacity=".5" stroke-width="1.5"/>
+    <g transform="translate(249 337)">
+      <ellipse cy="-63" rx="43" ry="76" fill="url(#orange)"/>
+      <ellipse cy="-63" rx="43" ry="76" fill="url(#orange)" transform="rotate(45)"/>
+      <ellipse cy="-63" rx="43" ry="76" fill="url(#orange)" transform="rotate(90)"/>
+      <ellipse cy="-63" rx="43" ry="76" fill="url(#orange)" transform="rotate(135)"/>
+      <ellipse cy="-63" rx="43" ry="76" fill="url(#orange)" transform="rotate(180)"/>
+      <ellipse cy="-63" rx="43" ry="76" fill="url(#orange)" transform="rotate(225)"/>
+      <ellipse cy="-63" rx="43" ry="76" fill="url(#orange)" transform="rotate(270)"/>
+      <ellipse cy="-63" rx="43" ry="76" fill="url(#orange)" transform="rotate(315)"/>
+      <circle r="63" fill="#F8D889"/>
+      <circle r="55" fill="#FBE5AA"/>
+      <circle r="55" fill="url(#lines)" opacity=".6"/>
+      <circle r="11" fill="#EF8250"/>
+    </g>
+    <path d="m54 209 7 19 20 7-20 7-7 19-7-19-19-7 19-7 7-19Z" fill="#315B4D"/>
+    <circle cx="363" cy="200" r="7" fill="#ED8053"/>
+    <circle cx="72" cy="470" r="4" fill="#ED8053"/>
+    <path d="M29 509h362" stroke="#263A3D" stroke-width="1.2"/>
+    <text x="29" y="535" font-family="Verdana, sans-serif" font-size="9" letter-spacing="2.2" fill="#354847">MADE OF CURIOSITY</text>
+    <text x="391" y="535" text-anchor="end" font-family="Georgia, 'Times New Roman', serif" font-style="italic" font-size="16" fill="#183E43">No. 01</text>
+  </g>
+</svg>

@@ -1,4 +1,14 @@
 export default {
+  charts: {
+    tokenTrend: {
+      input: 'Input',
+      output: 'Output',
+      cacheCreation: 'Cache write',
+      cacheRead: 'Cache read',
+      cacheHitRate: 'Cache hit rate',
+      costFooter: 'Actual ${actual} · Standard ${standard}'
+    }
+  },
   common: {
     loading: 'Loading...',
     submitting: 'Submitting...',
@@ -190,7 +200,7 @@ export default {
     sharedAccountGovernance: 'Shared Accounts',
     contributionRooms: 'Contribution Rooms',
     modelPlaza: 'Model Plaza',
-    playground: 'Playground',
+    playground: 'Web Workspace',
     playgroundCanvas: 'Infinite canvas',
     subscriptions: 'Subscriptions',
     accounts: 'Accounts',
@@ -471,7 +481,7 @@ export default {
 
   playground: {
     eyebrow: 'Native Workspace',
-    title: 'Playground',
+    title: 'Web Workspace',
     description: 'Run direct chat completion experiments against one of your assigned groups with live streaming, prompt editing, and parameter control.',
     workspaceLabel: 'Playground workspaces',
       chatWorkspace: 'Chat',

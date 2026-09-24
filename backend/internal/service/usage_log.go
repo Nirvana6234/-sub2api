@@ -11,6 +11,40 @@ const (
 	BillingTypeSubscription int8 = 1 // 订阅套餐
 )
 
+// 请求由哪一类账号承接（相对发起请求的用户）。
+const (
+	UsageLogAccountSourcePool = "pool" // 管理员号池（含并入号池的贡献账号）
+	UsageLogAccountSourceOwn  = "own"  // 用户自己贡献的账号
+	UsageLogAccountSourceRoom = "room" // 通过贡献房间共享的他人账号
+)
+
+// UsageLogAccountSourceFor 与计费（UsageBillingCommand 的 own/shared 分支）使用同一套判定：
+// 贡献者本人优先判为 own，其次按房间路由判为 room，其余都属于管理员号池。
+func UsageLogAccountSourceFor(account *Account, userID int64) string {
+	if account == nil {
+		return UsageLogAccountSourcePool
+	}
+	if contributorID := account.ContributorUserID(); contributorID > 0 && contributorID == userID {
+		return UsageLogAccountSourceOwn
+	}
+	if account.IsContributionRoomRouted() {
+		return UsageLogAccountSourceRoom
+	}
+	return UsageLogAccountSourcePool
+}
+
+// ParseUsageLogAccountSourceFilter 解析查询参数 account_source：空或 all 表示不过滤。
+func ParseUsageLogAccountSourceFilter(value string) (string, error) {
+	switch source := strings.ToLower(strings.TrimSpace(value)); source {
+	case "", "all":
+		return "", nil
+	case UsageLogAccountSourcePool, UsageLogAccountSourceOwn, UsageLogAccountSourceRoom:
+		return source, nil
+	default:
+		return "", fmt.Errorf("invalid account_source, allowed values: all, pool, own, room")
+	}
+}
+
 type RequestType int16
 
 const (
@@ -186,10 +220,13 @@ type UsageLog struct {
 	Stream             bool
 	OpenAIWSMode       bool
 	NativeCompactionV2 bool
-	DurationMs         *int
-	FirstTokenMs       *int
-	UserAgent          *string
-	IPAddress          *string
+	// AccountSource is one of the UsageLogAccountSource* values; empty is
+	// written as pool.
+	AccountSource string
+	DurationMs    *int
+	FirstTokenMs  *int
+	UserAgent     *string
+	IPAddress     *string
 	// SessionID is the explicit client-provided request correlation identifier
 	// (e.g. the session_id / X-Session-Id headers). Nil when the client sent no
 	// valid session header. It is never derived from prompt_cache_key or content.

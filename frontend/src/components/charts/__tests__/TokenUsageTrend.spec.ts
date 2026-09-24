@@ -51,7 +51,7 @@ describe('TokenUsageTrend', () => {
 
     const chartData = JSON.parse(wrapper.find('.chart-data').text())
     const hitRateDataset = chartData.datasets.find(
-      (ds: any) => ds.label === 'Cache Hit Rate'
+      (ds: any) => ds.yAxisID === 'yPercent'
     )
     // Hit rate = 1500 / (500 + 1500 + 0) * 100 = 75%
     expect(hitRateDataset.data[0]).toBe(75)
@@ -82,7 +82,7 @@ describe('TokenUsageTrend', () => {
 
     const chartData = JSON.parse(wrapper.find('.chart-data').text())
     const hitRateDataset = chartData.datasets.find(
-      (ds: any) => ds.label === 'Cache Hit Rate'
+      (ds: any) => ds.yAxisID === 'yPercent'
     )
     expect(hitRateDataset.data[0]).toBe(0)
   })
@@ -112,7 +112,7 @@ describe('TokenUsageTrend', () => {
 
     const chartData = JSON.parse(wrapper.find('.chart-data').text())
     const hitRateDataset = chartData.datasets.find(
-      (ds: any) => ds.label === 'Cache Hit Rate'
+      (ds: any) => ds.yAxisID === 'yPercent'
     )
     // Hit rate = 500 / (200 + 500 + 300) * 100 = 50%
     expect(hitRateDataset.data[0]).toBe(50)

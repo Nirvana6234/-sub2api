@@ -18,6 +18,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestValidateContributionBaseURLRejectsPrivateTargets(t *testing.T) {
+	for _, raw := range []string{
+		"http://127.0.0.1:8080",
+		"http://[::1]:8080",
+		"http://169.254.169.254/latest",
+		"http://10.0.0.5:8080",
+	} {
+		_, err := validateContributionBaseURL(raw)
+		require.Error(t, err, "base_url=%q", raw)
+	}
+}
+
+func TestValidateContributionBaseURLAllowsPublicEndpoint(t *testing.T) {
+	got, err := validateContributionBaseURL("https://api.example.test/v1/")
+	require.NoError(t, err)
+	require.Equal(t, "https://api.example.test/v1", got)
+}
+
 type contributionUserRepoStub struct {
 	service.UserRepository
 	user *service.User

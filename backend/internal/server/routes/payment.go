@@ -49,15 +49,21 @@ func RegisterPaymentRoutes(
 		}
 	}
 
-	// --- Public payment endpoints (no auth) ---
-	// Signed resume-token recovery is the preferred public lookup path.
-	// The legacy anonymous out_trade_no verify endpoint remains available as a
-	// persisted-state compatibility path for staggered upgrades.
+	// --- Public payment endpoints ---
+	// Signed resume-token recovery is intentionally anonymous: possession of the
+	// short-lived signed token is the checkout capability.
 	public := v1.Group("/payment/public")
-	{
-		public.POST("/orders/verify", paymentHandler.VerifyOrderPublic)
-		public.POST("/orders/resolve", paymentHandler.ResolveOrderPublicByResumeToken)
-	}
+	public.POST("/orders/resolve", paymentHandler.ResolveOrderPublicByResumeToken)
+
+	// Keep the legacy URL for staggered frontend upgrades, but never allow an
+	// out_trade_no alone to disclose an order. The handler also repeats the
+	// ownership check so direct handler calls cannot bypass this boundary.
+	legacyVerify := public.Group("/orders")
+	legacyVerify.Use(gin.HandlerFunc(jwtAuth))
+	legacyVerify.Use(middleware.BackendModeUserGuard(settingService))
+	legacyVerify.Use(middleware.RechargeBlockedGuard(settingService))
+	legacyVerify.Use(panelRateLimiter.Global())
+	legacyVerify.POST("/verify", paymentHandler.VerifyOrderPublic)
 
 	// --- Webhook endpoints (no auth) ---
 	webhook := v1.Group("/payment/webhook")

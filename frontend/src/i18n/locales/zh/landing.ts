@@ -4,6 +4,85 @@ export default {
     description: '一次提交多条提示词，任务完成后可统一下载图片结果'
   },
   // Home Page
+  homeIntro: {
+    eyebrow: 'AI 网关 · 网页版 AI',
+    eyebrowGatewayOnly: 'AI 网关 · 多模型接入',
+    title: '多种模型，',
+    titleAccent: '都在 Codex 里用。',
+    description: '共飞是一款 AI 网关：GPT、Claude、Gemini 等模型通过同一个接口地址接入 Codex，也能用在 Claude Code、Cursor、Cline、Cherry Studio 等插件里。',
+    descriptionWeb: '不想装软件？直接在网页上聊天、生图、改图。',
+    ctaStart: '登录 / 注册',
+    ctaStartWork: '开始工作',
+    ctaConsole: '进入控制台',
+    ctaWeb: '打开网页工作台',
+    ctaClient: '下载客户端',
+    ctaClientPrimary: '下载共飞客户端',
+    beginnerNote: '一个账号、一个密钥、一份余额，所有用法通用。',
+    ideaNote: 'GPT、Claude、Gemini，一个密钥全接上。',
+    purpose: '共飞负责连接模型、管理账号和费用；你在 Codex、各类插件或网页工作台里说出需求。',
+    purposeNoWeb: '共飞负责连接模型、管理账号和费用；你在 Codex 或各类插件里说出需求。',
+    map: {
+      title: '它是怎么接起来的',
+      hint: '一个接口地址，把各家模型接到你常用的地方',
+      models: '模型',
+      more: '以及更多模型',
+      gateway: '{name} 网关',
+      protocols: '兼容 OpenAI · Anthropic · Gemini 接口',
+      targets: '用在哪里',
+      codexHint: 'CLI · 桌面版',
+      webHint: '浏览器直接用',
+      fact1: '一个接口地址',
+      fact2: '一个密钥，所有模型通用',
+      fact3: '一份余额，按量计费'
+    },
+    ways: {
+      eyebrow: '怎么用',
+      title: '选一种\n顺手的方式',
+      note: '几种方式共用同一个账号和余额，可以同时用。',
+      api: {
+        title: '接入 Codex 和各类插件',
+        p1: '在 Codex CLI、Codex 桌面版里切换 GPT、Claude 等模型。',
+        p2: 'Claude Code、Cursor、Cline、Cherry Studio 等兼容 OpenAI、Anthropic、Gemini 接口的工具都能接。',
+        action: '创建密钥'
+      },
+      web: {
+        title: '网页版 AI',
+        p1: '打开浏览器就能用，不用装任何软件。',
+        p2: '聊天、生图、上传图片直接修改，还有无限画布和图库。',
+        action: '打开网页工作台'
+      },
+      client: {
+        title: '共飞助手客户端',
+        badge: '推荐',
+        p1: '下载页同时提供 Codex 和共飞客户端，装好就能用，不用手动改任何配置。',
+        p2: '账号、分组、余额在客户端里一目了然；还能帮你节省 Token，用量和节省比例随时看得见。',
+        action: '下载客户端',
+        guide: '看安装教程'
+      }
+    },
+    codex: {
+      eyebrow: '在 Codex 里使用',
+      title: '三步，把共飞接进 Codex。',
+      step1Title: '创建一个密钥',
+      step1: '登录后在「API 密钥」里新建，一个密钥所有模型通用。',
+      step2Title: '写进 Codex 配置',
+      step2: '把下面这段写进 config.toml；密钥页的「使用密钥」里有完整版本，可以一键复制。',
+      step3Title: '打开 Codex，开始干活',
+      step3: '在模型列表里切换 GPT、Claude 等模型，说出你想做的事。',
+      comment: '接口地址已按本站自动填好',
+      action: '去创建密钥',
+      clientTitle: '三步，开始在 Codex 里干活。',
+      clientStep1Title: '下载两个软件',
+      clientStep1: '下载页同时提供共飞客户端和 Codex，按你的电脑选对应版本。',
+      clientStep2Title: '登录共飞客户端',
+      clientStep2: '登录后客户端自动接好 Codex，不用改任何配置文件。',
+      clientStep3Title: '打开 Codex，开始干活',
+      clientStep3: '说出你想做的事；客户端帮你节省 Token，用量随时可查。',
+      clientAction: '下载共飞客户端',
+      guide: '看安装教程',
+      manualToggle: '习惯手动配置？查看 config.toml 写法'
+    }
+  },
   home: {
     viewOnGithub: '在 GitHub 上查看',
     viewDocs: '查看文档',
@@ -13,14 +92,32 @@ export default {
     dashboard: '控制台',
     login: '登录',
     getStarted: '立即开始',
+    register: '注册',
     goToDashboard: '进入控制台',
+    downloadClient: '下载客户端',
+    loginExisting: '已有账号，直接登录',
     // 新增：面向用户的价值主张
-    heroSubtitle: '一个密钥，畅用多个 AI 模型',
-    heroDescription: '无需管理多个订阅账号，一站式接入 Claude、GPT、Gemini 等主流 AI 服务',
+    heroSubtitle: '一个客户端，用上 Claude、GPT、Gemini',
+    heroDescription: '开箱即用，注册登录、分组切换、余额充值全部在客户端内完成',
     tags: {
-      subscriptionToApi: '订阅转 API',
-      stickySession: '会话保持',
-      realtimeBilling: '按量计费'
+      allInOne: '客户端内完成注册充值',
+      groupSwitch: '分组稳定切换',
+      payAsYouGo: '按量计费'
+    },
+    // 首页三张卖点卡片：压缩省钱、价格倍率、线路稳定性，替换掉原来信息量很小的三个胶囊标签
+    benefits: {
+      compression: {
+        title: '内置上下文压缩',
+        desc: '自动精简重复上下文，减少多余 token 消耗，用得越多、省得越多'
+      },
+      pricing: {
+        title: '低至官方价格数倍',
+        desc: 'Claude / GPT / Gemini 全线支持，最高可省 97%'
+      },
+      groupSwitch: {
+        title: '多线路稳定切换',
+        desc: '账号池自动调度，单个账号触发限流不影响使用'
+      }
     },
     // 用户痛点区块
     painPoints: {
@@ -48,14 +145,6 @@ export default {
     solutions: {
       title: '我们帮你解决',
       subtitle: '简单三步，开始省心使用 AI'
-    },
-    features: {
-      unifiedGateway: '一键接入',
-      unifiedGatewayDesc: '获取一个 API 密钥，即可调用所有已接入的 AI 模型，无需分别申请。',
-      multiAccount: '稳定可靠',
-      multiAccountDesc: '智能调度多个上游账号，自动切换和负载均衡，告别频繁报错。',
-      balanceQuota: '用多少付多少',
-      balanceQuotaDesc: '按实际使用量计费，支持设置配额上限，团队用量一目了然。'
     },
     // 优势对比
     comparison: {
@@ -95,19 +184,20 @@ export default {
     },
     providers: {
       title: '已支持的 AI 模型',
-      description: '一个 API，多种选择',
+      description: '一个客户端，多种选择，价格仅为官方倍率',
       supported: '已支持',
       soon: '即将推出',
+      priceFrom: '低至官方 {rate} 倍',
       claude: 'Claude',
+      gpt: 'GPT',
       gemini: 'Gemini',
-      antigravity: 'Antigravity',
       more: '更多'
     },
     // CTA 区块
     cta: {
-      title: '准备好开始了吗？',
-      description: '注册即可获得免费试用额度，体验一站式 AI 服务',
-      button: '免费注册'
+      title: '现在就开始，几分钟就能用上',
+      description: '下载客户端，注册登录、分组切换、余额充值都在里面',
+      button: '下载客户端'
     },
     footer: {
       allRightsReserved: '保留所有权利。'

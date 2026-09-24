@@ -278,7 +278,11 @@ func (h *AccountContributionHandler) TestContributionProxy(c *gin.Context) {
 		}
 	}
 	proxyValue := contributionProxyServiceValue(item)
-	exitInfo, latencyMs, probeErr := h.proxyProber.ProbeProxy(c.Request.Context(), proxyValue.URL())
+	probeCtx := c.Request.Context()
+	if !user.IsAdmin() {
+		probeCtx = service.WithHTTPUpstreamPublicProxyOnly(service.WithHTTPUpstreamPublicHostsOnly(probeCtx))
+	}
+	exitInfo, latencyMs, probeErr := h.proxyProber.ProbeProxy(probeCtx, proxyValue.URL())
 	if probeErr != nil {
 		response.Success(c, service.ProxyTestResult{Success: false, Message: probeErr.Error()})
 		return

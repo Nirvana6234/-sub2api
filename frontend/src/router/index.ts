@@ -47,6 +47,7 @@ const routes: RouteRecordRaw[] = [
       requiresAuth: false,
       title: 'Client Download',
       titleKey: 'nav.clientDownload',
+      requiresClientDownload: true,
     },
   },
   {
@@ -1026,6 +1027,21 @@ router.beforeEach(async (to, _from, next) => {
       // Backend mode:登录的非管理员也不可见(匿名由下方公共拦截处理,广场不在白名单)
       if (appStore.backendModeEnabled && authStore.isAuthenticated && !authStore.isAdmin) {
         next('/login')
+        return
+      }
+    }
+    // 客户端下载是 opt-out 开关：不提供客户端的部署版本显式关闭后，直达 /download 也回首页。
+    // /download 是公开页，必须在这里拦，走不到后面受保护路由的开关检查。
+    if (to.meta.requiresClientDownload) {
+      if (!appStore.publicSettingsLoaded) {
+        try {
+          await appStore.fetchPublicSettings()
+        } catch (error) {
+          console.warn('Failed to load public settings in route guard', error)
+        }
+      }
+      if (appStore.publicSettingsLoaded && appStore.cachedPublicSettings?.client_download_enabled === false) {
+        next('/')
         return
       }
     }

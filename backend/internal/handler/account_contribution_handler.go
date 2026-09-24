@@ -19,6 +19,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 	"github.com/gin-gonic/gin"
 )
 
@@ -481,7 +482,12 @@ func (h *AccountContributionHandler) Update(c *gin.Context) {
 			credentials["api_key"] = strings.TrimSpace(*req.APIKey)
 		}
 		if req.BaseURL != nil {
-			credentials["base_url"] = strings.TrimRight(strings.TrimSpace(*req.BaseURL), "/")
+			baseURL, err := validateContributionBaseURL(*req.BaseURL)
+			if err != nil {
+				response.BadRequest(c, err.Error())
+				return
+			}
+			credentials["base_url"] = baseURL
 		}
 	}
 	extra := cloneExtra(account.Extra)
@@ -690,7 +696,12 @@ func (h *AccountContributionHandler) createAPIKeyContribution(ctx context.Contex
 	}
 	credentials := map[string]any{"api_key": apiKey}
 	if baseURL := strings.TrimRight(strings.TrimSpace(req.BaseURL), "/"); baseURL != "" {
-		credentials["base_url"] = baseURL
+		normalized, err := validateContributionBaseURL(baseURL)
+		if err != nil {
+			item.Message = err.Error()
+			return item
+		}
+		credentials["base_url"] = normalized
 	}
 	concurrency := 30
 	if req.Concurrency != nil {
@@ -716,6 +727,19 @@ func (h *AccountContributionHandler) createAPIKeyContribution(ctx context.Contex
 		return item
 	}
 	return createdContributionItem(account, item)
+}
+
+func validateContributionBaseURL(raw string) (string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return "", nil
+	}
+	normalized, err := urlvalidator.ValidateHTTPURL(raw, true, urlvalidator.ValidationOptions{
+		AllowPrivate: false,
+	})
+	if err != nil {
+		return "", fmt.Errorf("base_url is not allowed: %w", err)
+	}
+	return normalized, nil
 }
 
 func (h *AccountContributionHandler) createOAuthContribution(ctx context.Context, parsed adminhandler.ParsedCodexSessionAccount, user *service.User, req SubmitAccountContributionRequest) AccountContributionResultItem {

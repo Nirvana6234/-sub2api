@@ -307,13 +307,16 @@ async function resolveOrderFromOutTradeNo(outTradeNo: string): Promise<ResolvedO
     const result = await paymentAPI.verifyOrder(outTradeNo)
     return result.data
   } catch (_err: unknown) {
-    try {
-      const result = await paymentAPI.verifyOrderPublic(outTradeNo)
-      return result.data
-    } catch (_innerErr: unknown) {
-      return null
-    }
+    return null
   }
+}
+
+function redirectToLogin(): void {
+  clearRecoverySnapshot()
+  void router.push({
+    path: '/login',
+    query: { redirect: route.fullPath },
+  })
 }
 
 function clearStatusRefreshTimer(): void {
@@ -360,7 +363,6 @@ onMounted(async () => {
   const routeOrderId = Number(readRouteQueryString('order_id')) || 0
   let outTradeNo = readRouteQueryString('out_trade_no')
   let orderId = 0
-  let resumeTokenLookupFailed = false
 
   const restored = restoreRecoverySnapshot({
     resumeToken,
@@ -385,17 +387,22 @@ onMounted(async () => {
         orderId = hasOrderId(resolvedOrder) ? resolvedOrder.id : 0
       }
     } else if (routeOrderId > 0) {
-      resumeTokenLookupFailed = true
       orderId = routeOrderId
-    } else {
-      resumeTokenLookupFailed = true
     }
   } else if (routeOrderId > 0) {
     orderId = routeOrderId
   }
 
   const hasLegacyFallbackContext = readRouteQueryString('trade_status').trim() !== ''
-  const shouldUsePublicOutTradeNo = outTradeNo !== '' && (hasLegacyFallbackContext || routeOrderId > 0 || orderId > 0)
+  const shouldUseOutTradeNo = !resumeToken && outTradeNo !== '' && (hasLegacyFallbackContext || routeOrderId > 0 || orderId > 0)
+
+  // The legacy return URL may contain only out_trade_no. It is no longer a
+  // public capability, so require the existing login UI before any polling.
+  if (!resumeToken && !authStore.isAuthenticated && (outTradeNo || routeOrderId > 0)) {
+    redirectToLogin()
+    loading.value = false
+    return
+  }
 
   if (!order.value && orderId && (!resumeToken || routeOrderId > 0)) {
     try {
@@ -405,7 +412,7 @@ onMounted(async () => {
     }
   }
 
-  if (!order.value && shouldUsePublicOutTradeNo && (!resumeToken || resumeTokenLookupFailed)) {
+  if (!order.value && shouldUseOutTradeNo) {
     const legacyOrder = await resolveOrderFromOutTradeNo(outTradeNo)
     if (legacyOrder) {
       setResolvedOrder(legacyOrder)
@@ -440,7 +447,7 @@ onMounted(async () => {
       }
     }
 
-    if (shouldUsePublicOutTradeNo) {
+    if (shouldUseOutTradeNo) {
       return await resolveOrderFromOutTradeNo(outTradeNo)
     }
 

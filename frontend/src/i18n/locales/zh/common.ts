@@ -1,4 +1,14 @@
 export default {
+  charts: {
+    tokenTrend: {
+      input: '输入',
+      output: '输出',
+      cacheCreation: '缓存写入',
+      cacheRead: '缓存读取',
+      cacheHitRate: '缓存命中率',
+      costFooter: '实际 ${actual} · 标准 ${standard}'
+    }
+  },
   common: {
     loading: '加载中...',
     submitting: '提交中...',
@@ -190,7 +200,7 @@ export default {
     sharedAccountGovernance: '共享账号治理',
     contributionRooms: '贡献房间',
     modelPlaza: '模型广场',
-    playground: '游乐场',
+    playground: '网页工作台',
     playgroundCanvas: '无限画布',
     subscriptions: '订阅管理',
     accounts: '账号管理',
@@ -469,9 +479,9 @@ export default {
   },
   playground: {
     eyebrow: '原生工作台',
-    title: '游乐场',
+    title: '网页工作台',
     description: '使用你当前分组分配的密钥直接发起聊天补全实验，支持流式输出、提示词编辑和参数调节。',
-    workspaceLabel: '游乐场工作台',
+    workspaceLabel: '网页工作台',
       chatWorkspace: '聊天',
       imageWorkspace: '生图',
       canvasWorkspace: '无限画布',

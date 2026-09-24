@@ -35,9 +35,6 @@ const (
 	openAIImagesGenerationsURL = "https://api.openai.com/v1/images/generations"
 	openAIImagesEditsURL       = "https://api.openai.com/v1/images/edits"
 
-	openAIChatGPTStartURL                  = "https://chatgpt.com/"
-	openAIChatGPTFilesURL                  = "https://chatgpt.com/backend-api/files"
-	openAIImageBackendUserAgent            = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 	openAIImageMaxDownloadBytes            = 20 << 20 // 20MB per image download
 	openAIImageMaxUploadPartSize           = 20 << 20 // 20MB per multipart upload part
 	openAIImagesResponsesMainModel         = "gpt-5.6-luna"
@@ -1404,30 +1401,6 @@ func mergeOpenAIImagePointerInfo(existing, next openAIImagePointerInfo) openAIIm
 	return merged
 }
 
-func resolveOpenAIImageBytes(
-	ctx context.Context,
-	client *req.Client,
-	headers http.Header,
-	conversationID string,
-	pointer openAIImagePointerInfo,
-	errorBodyReadLimit int64,
-) ([]byte, error) {
-	if normalized := normalizeOpenAIImageBase64(pointer.B64JSON); normalized != "" {
-		return base64.StdEncoding.DecodeString(normalized)
-	}
-	if downloadURL := strings.TrimSpace(pointer.DownloadURL); downloadURL != "" {
-		return downloadOpenAIImageBytes(ctx, client, headers, downloadURL, errorBodyReadLimit)
-	}
-	if strings.TrimSpace(pointer.Pointer) == "" {
-		return nil, fmt.Errorf("image asset is missing pointer, url, and base64 data")
-	}
-	downloadURL, err := fetchOpenAIImageDownloadURL(ctx, client, headers, conversationID, pointer.Pointer, errorBodyReadLimit)
-	if err != nil {
-		return nil, err
-	}
-	return downloadOpenAIImageBytes(ctx, client, headers, downloadURL, errorBodyReadLimit)
-}
-
 func normalizeOpenAIImageBase64(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -1524,101 +1497,6 @@ func isLikelyOpenAIImageDownloadURL(raw string) bool {
 		strings.Contains(lower, ".webp")
 }
 
-func fetchOpenAIImageDownloadURL(
-	ctx context.Context,
-	client *req.Client,
-	headers http.Header,
-	conversationID string,
-	pointer string,
-	errorBodyReadLimit int64,
-) (string, error) {
-	url := ""
-	allowConversationRetry := false
-	switch {
-	case strings.HasPrefix(pointer, "file-service://"):
-		fileID := strings.TrimPrefix(pointer, "file-service://")
-		url = fmt.Sprintf("%s/%s/download", openAIChatGPTFilesURL, fileID)
-	case strings.HasPrefix(pointer, "sediment://"):
-		attachmentID := strings.TrimPrefix(pointer, "sediment://")
-		url = fmt.Sprintf("https://chatgpt.com/backend-api/conversation/%s/attachment/%s/download", conversationID, attachmentID)
-		allowConversationRetry = true
-	default:
-		return "", fmt.Errorf("unsupported image pointer: %s", pointer)
-	}
-
-	var lastErr error
-	for attempt := 0; attempt < 8; attempt++ {
-		var result struct {
-			DownloadURL string `json:"download_url"`
-		}
-		resp, err := client.R().
-			SetContext(ctx).
-			SetHeaders(headerToMap(headers)).
-			SetSuccessResult(&result).
-			Get(url)
-		if err != nil {
-			lastErr = err
-		} else if resp.IsSuccessState() && strings.TrimSpace(result.DownloadURL) != "" {
-			return strings.TrimSpace(result.DownloadURL), nil
-		} else {
-			statusErr := newOpenAIImageStatusError(resp, "fetch image download url failed", errorBodyReadLimit)
-			if !allowConversationRetry || !isOpenAIImageTransientConversationNotFoundError(statusErr) {
-				return "", statusErr
-			}
-			lastErr = statusErr
-		}
-		if attempt == 7 {
-			break
-		}
-		timer := time.NewTimer(750 * time.Millisecond)
-		select {
-		case <-ctx.Done():
-			if !timer.Stop() {
-				<-timer.C
-			}
-			return "", ctx.Err()
-		case <-timer.C:
-		}
-	}
-	if lastErr == nil {
-		lastErr = fmt.Errorf("fetch image download url failed")
-	}
-	return "", lastErr
-}
-
-func downloadOpenAIImageBytes(ctx context.Context, client *req.Client, headers http.Header, downloadURL string, errorBodyReadLimit int64) ([]byte, error) {
-	request := client.R().
-		SetContext(ctx).
-		DisableAutoReadResponse()
-
-	if strings.HasPrefix(downloadURL, openAIChatGPTStartURL) {
-		downloadHeaders := cloneHTTPHeader(headers)
-		downloadHeaders.Set("Accept", "image/*,*/*;q=0.8")
-		downloadHeaders.Del("Content-Type")
-		request.SetHeaders(headerToMap(downloadHeaders))
-	} else {
-		userAgent := strings.TrimSpace(headers.Get("User-Agent"))
-		if userAgent == "" {
-			userAgent = openAIImageBackendUserAgent
-		}
-		request.SetHeader("User-Agent", userAgent)
-	}
-
-	resp, err := request.Get(downloadURL)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if resp != nil && resp.Body != nil {
-			_ = resp.Body.Close()
-		}
-	}()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, newOpenAIImageStatusError(resp, "download image bytes failed", errorBodyReadLimit)
-	}
-	return io.ReadAll(io.LimitReader(resp.Body, openAIImageMaxDownloadBytes))
-}
-
 type openAIImageStatusError struct {
 	StatusCode      int
 	Message         string
@@ -1687,49 +1565,6 @@ func newOpenAIImageStatusError(resp *req.Response, fallback string, errorBodyRea
 		RequestID:       requestID,
 		URL:             requestURL,
 	}
-}
-
-func isOpenAIImageTransientConversationNotFoundError(err error) bool {
-	statusErr, ok := err.(*openAIImageStatusError)
-	if !ok || statusErr == nil || statusErr.StatusCode != http.StatusNotFound {
-		return false
-	}
-	msg := strings.ToLower(strings.TrimSpace(statusErr.Message))
-	if strings.Contains(msg, "conversation_not_found") {
-		return true
-	}
-	if strings.Contains(msg, "conversation") && strings.Contains(msg, "not found") {
-		return true
-	}
-	bodyMsg := strings.ToLower(strings.TrimSpace(extractUpstreamErrorMessage(statusErr.ResponseBody)))
-	if strings.Contains(bodyMsg, "conversation_not_found") {
-		return true
-	}
-	return strings.Contains(bodyMsg, "conversation") && strings.Contains(bodyMsg, "not found")
-}
-
-func cloneHTTPHeader(src http.Header) http.Header {
-	dst := make(http.Header, len(src))
-	for key, values := range src {
-		copied := make([]string, len(values))
-		copy(copied, values)
-		dst[key] = copied
-	}
-	return dst
-}
-
-func headerToMap(header http.Header) map[string]string {
-	if len(header) == 0 {
-		return nil
-	}
-	result := make(map[string]string, len(header))
-	for key, values := range header {
-		if len(values) == 0 {
-			continue
-		}
-		result[key] = values[0]
-	}
-	return result
 }
 
 func dedupeStrings(values []string) []string {

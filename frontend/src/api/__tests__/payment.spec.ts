@@ -22,14 +22,6 @@ describe('payment api', () => {
     post.mockResolvedValue({ data: {} })
   })
 
-  it('keeps legacy public out_trade_no verification for upgrade compatibility', async () => {
-    await paymentAPI.verifyOrderPublic('legacy-order-no')
-
-    expect(post).toHaveBeenCalledWith('/payment/public/orders/verify', {
-      out_trade_no: 'legacy-order-no',
-    })
-  })
-
   it('keeps signed public resume-token resolve endpoint', async () => {
     await paymentAPI.resolveOrderPublicByResumeToken('resume-token-123')
 

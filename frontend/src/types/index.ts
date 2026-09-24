@@ -1786,6 +1786,9 @@ export interface CodexSessionImportResult {
 
 export type RedeemCodeType = 'balance' | 'concurrency' | 'subscription' | 'invitation'
 export type UsageRequestType = 'unknown' | 'sync' | 'stream' | 'ws_v2' | 'cyber' | 'live'
+
+// 请求由哪类账号承接：pool 管理员号池 / own 自己贡献的账号 / room 贡献房间
+export type UsageAccountSource = 'pool' | 'own' | 'room'
 export type ImageSizeSource = 'output' | 'input' | 'default' | 'legacy'
 export type ImageSizeBreakdown = Record<string, number>
 
@@ -1825,6 +1828,7 @@ export interface UsageLog {
   stream: boolean
   openai_ws_mode?: boolean
   native_compaction_v2: boolean
+  account_source?: UsageAccountSource
   duration_ms: number | null
   first_token_ms: number | null
 
@@ -2259,6 +2263,7 @@ export interface UsageQueryParams {
   request_type?: UsageRequestType
   stream?: boolean
   native_compaction_v2?: boolean | null
+  account_source?: UsageAccountSource | null
   billing_type?: number | null
   billing_mode?: string | null
   start_date?: string

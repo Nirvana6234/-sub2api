@@ -15,6 +15,7 @@ import (
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/enttest"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
+	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -23,6 +24,29 @@ import (
 	entsql "entgo.io/ent/dialect/sql"
 	_ "modernc.org/sqlite"
 )
+
+func ensurePaymentHandlerTestUserColumns(t *testing.T, db *sql.DB) {
+	t.Helper()
+	for _, column := range []struct {
+		name string
+		def  string
+	}{
+		{name: "register_ip", def: "TEXT"},
+		{name: "account_management_enabled", def: "BOOLEAN NOT NULL DEFAULT FALSE"},
+		{name: "contribution_rooms_enabled", def: "BOOLEAN NOT NULL DEFAULT FALSE"},
+	} {
+		var present int
+		err := db.QueryRow(
+			"SELECT COUNT(*) FROM pragma_table_info('users') WHERE name = ?",
+			column.name,
+		).Scan(&present)
+		require.NoError(t, err)
+		if present == 0 {
+			_, err = db.Exec("ALTER TABLE users ADD COLUMN " + column.name + " " + column.def)
+			require.NoError(t, err)
+		}
+	}
+}
 
 func TestApplyWeChatPaymentResumeClaims(t *testing.T) {
 	t.Parallel()
@@ -80,7 +104,7 @@ func TestVerifyOrderPublicReturnsLegacyOrderState(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 
-	db, err := sql.Open("sqlite", "file:payment_handler_public_verify?mode=memory&cache=shared")
+	db, err := sql.Open("sqlite", "file:payment_handler_public_verify?mode=memory&cache=shared&_fk=1")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 
@@ -90,6 +114,7 @@ func TestVerifyOrderPublicReturnsLegacyOrderState(t *testing.T) {
 	drv := entsql.OpenDB(dialect.SQLite, db)
 	client := enttest.NewClient(t, enttest.WithOptions(dbent.Driver(drv)))
 	t.Cleanup(func() { _ = client.Close() })
+	ensurePaymentHandlerTestUserColumns(t, db)
 
 	user, err := client.User.Create().
 		SetEmail("public-verify@example.com").
@@ -129,6 +154,7 @@ func TestVerifyOrderPublicReturnsLegacyOrderState(t *testing.T) {
 		bytes.NewBufferString(`{"out_trade_no":"legacy-order-no"}`),
 	)
 	ctx.Request.Header.Set("Content-Type", "application/json")
+	ctx.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: user.ID})
 
 	h.VerifyOrderPublic(ctx)
 
@@ -165,11 +191,61 @@ func TestVerifyOrderPublicReturnsLegacyOrderState(t *testing.T) {
 	require.NotZero(t, order.ID)
 }
 
+func TestVerifyOrderPublicRejectsAnonymousAndWrongOwner(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	db, err := sql.Open("sqlite", "file:payment_handler_public_auth?mode=memory&cache=shared&_fk=1")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	_, err = db.Exec("PRAGMA foreign_keys = ON")
+	require.NoError(t, err)
+
+	drv := entsql.OpenDB(dialect.SQLite, db)
+	client := enttest.NewClient(t, enttest.WithOptions(dbent.Driver(drv)))
+	t.Cleanup(func() { _ = client.Close() })
+	ensurePaymentHandlerTestUserColumns(t, db)
+
+	ctx := context.Background()
+	owner, err := client.User.Create().SetEmail("owner@example.com").SetPasswordHash("hash").SetUsername("owner").Save(ctx)
+	require.NoError(t, err)
+	other, err := client.User.Create().SetEmail("other@example.com").SetPasswordHash("hash").SetUsername("other").Save(ctx)
+	require.NoError(t, err)
+	_, err = client.PaymentOrder.Create().
+		SetUserID(owner.ID).SetUserEmail(owner.Email).SetUserName(owner.Username).
+		SetAmount(10).SetPayAmount(10).SetFeeRate(0).SetRechargeCode("AUTH").
+		SetOutTradeNo("auth-owner-order").SetPaymentType(payment.TypeAlipay).
+		SetPaymentTradeNo("").SetOrderType(payment.OrderTypeBalance).
+		SetStatus(service.OrderStatusPending).SetExpiresAt(time.Now().Add(time.Hour)).
+		SetClientIP("127.0.0.1").SetSrcHost("api.example.com").Save(ctx)
+	require.NoError(t, err)
+
+	paymentSvc := service.NewPaymentService(client, payment.NewRegistry(), nil, nil, nil, nil, nil, nil, nil)
+	h := NewPaymentHandler(paymentSvc, nil)
+
+	request := func(userID int64) *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		ginCtx, _ := gin.CreateTestContext(recorder)
+		ginCtx.Request = httptest.NewRequest(http.MethodPost, "/api/v1/payment/public/orders/verify",
+			bytes.NewBufferString(`{"out_trade_no":"auth-owner-order"}`))
+		ginCtx.Request.Header.Set("Content-Type", "application/json")
+		if userID > 0 {
+			ginCtx.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: userID})
+		}
+		h.VerifyOrderPublic(ginCtx)
+		return recorder
+	}
+
+	require.Equal(t, http.StatusUnauthorized, request(0).Code)
+	require.Equal(t, http.StatusForbidden, request(other.ID).Code)
+	require.Equal(t, http.StatusOK, request(owner.ID).Code)
+}
+
 func TestResolveOrderPublicByResumeTokenReturnsFrontendContractFields(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	t.Setenv("PAYMENT_RESUME_SIGNING_KEY", "0123456789abcdef0123456789abcdef")
 
-	db, err := sql.Open("sqlite", "file:payment_handler_public_resolve?mode=memory&cache=shared")
+	db, err := sql.Open("sqlite", "file:payment_handler_public_resolve?mode=memory&cache=shared&_fk=1")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 
@@ -179,6 +255,7 @@ func TestResolveOrderPublicByResumeTokenReturnsFrontendContractFields(t *testing
 	drv := entsql.OpenDB(dialect.SQLite, db)
 	client := enttest.NewClient(t, enttest.WithOptions(dbent.Driver(drv)))
 	t.Cleanup(func() { _ = client.Close() })
+	ensurePaymentHandlerTestUserColumns(t, db)
 
 	user, err := client.User.Create().
 		SetEmail("public-resolve@example.com").
@@ -251,14 +328,22 @@ func TestResolveOrderPublicByResumeTokenReturnsFrontendContractFields(t *testing
 	require.Equal(t, service.OrderStatusPaid, resp.Data["status"])
 	require.Contains(t, resp.Data, "created_at")
 	require.Contains(t, resp.Data, "expires_at")
-	require.Contains(t, resp.Data, "refund_amount")
+	for _, field := range []string{
+		"refund_amount",
+		"refund_reason",
+		"refund_requested_at",
+		"refund_requested_by",
+		"refund_request_reason",
+	} {
+		require.NotContains(t, resp.Data, field)
+	}
 }
 
 func TestResolveOrderPublicByResumeTokenReturnsBadRequestForMismatchedToken(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	t.Setenv("PAYMENT_RESUME_SIGNING_KEY", "0123456789abcdef0123456789abcdef")
 
-	db, err := sql.Open("sqlite", "file:payment_handler_public_resolve_mismatch?mode=memory&cache=shared")
+	db, err := sql.Open("sqlite", "file:payment_handler_public_resolve_mismatch?mode=memory&cache=shared&_fk=1")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 
@@ -268,6 +353,7 @@ func TestResolveOrderPublicByResumeTokenReturnsBadRequestForMismatchedToken(t *t
 	drv := entsql.OpenDB(dialect.SQLite, db)
 	client := enttest.NewClient(t, enttest.WithOptions(dbent.Driver(drv)))
 	t.Cleanup(func() { _ = client.Close() })
+	ensurePaymentHandlerTestUserColumns(t, db)
 
 	user, err := client.User.Create().
 		SetEmail("public-resolve-mismatch@example.com").
@@ -335,7 +421,7 @@ func TestResolveOrderPublicByResumeTokenReturnsBadRequestForMismatchedToken(t *t
 func TestVerifyOrderPublicRejectsBlankOutTradeNo(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	db, err := sql.Open("sqlite", "file:payment_handler_public_verify_blank?mode=memory&cache=shared")
+	db, err := sql.Open("sqlite", "file:payment_handler_public_verify_blank?mode=memory&cache=shared&_fk=1")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 
@@ -345,6 +431,7 @@ func TestVerifyOrderPublicRejectsBlankOutTradeNo(t *testing.T) {
 	drv := entsql.OpenDB(dialect.SQLite, db)
 	client := enttest.NewClient(t, enttest.WithOptions(dbent.Driver(drv)))
 	t.Cleanup(func() { _ = client.Close() })
+	ensurePaymentHandlerTestUserColumns(t, db)
 
 	paymentSvc := service.NewPaymentService(client, payment.NewRegistry(), nil, nil, nil, nil, nil, nil, nil)
 	h := NewPaymentHandler(paymentSvc, nil)
@@ -360,13 +447,12 @@ func TestVerifyOrderPublicRejectsBlankOutTradeNo(t *testing.T) {
 
 	h.VerifyOrderPublic(ctx)
 
-	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	require.Equal(t, http.StatusUnauthorized, recorder.Code)
 
 	var resp struct {
 		Code   int    `json:"code"`
 		Reason string `json:"reason"`
 	}
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
-	require.Equal(t, http.StatusBadRequest, resp.Code)
-	require.Equal(t, "INVALID_OUT_TRADE_NO", resp.Reason)
+	require.Equal(t, http.StatusUnauthorized, resp.Code)
 }

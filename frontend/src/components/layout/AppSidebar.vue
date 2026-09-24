@@ -128,7 +128,7 @@
             @click="handleMenuItemClick(item.path)"
           >
             <span v-if="item.iconSvg" class="h-5 w-5 flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
-            <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" />
+            <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" :class="item.accent ? serviceAccentClass[item.accent] : undefined" />
             <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
           </component>
         </div>
@@ -152,7 +152,7 @@
             @click="handleMenuItemClick(item.path)"
           >
             <span v-if="item.iconSvg" class="h-5 w-5 flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
-            <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" />
+            <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" :class="item.accent ? serviceAccentClass[item.accent] : undefined" />
             <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
           </component>
         </div>
@@ -212,6 +212,14 @@ import { FeatureFlags, makeSidebarFlag } from '@/utils/featureFlags'
 import { resolveSiteBillingMode } from '@/utils/siteBillingMode'
 import { useBatchImageAccess } from '@/composables/useBatchImageAccess'
 
+type ServiceAccent = 'web' | 'api' | 'client'
+
+const serviceAccentClass: Record<ServiceAccent, string> = {
+  web: 'text-primary-500 dark:text-primary-400',
+  api: 'text-violet-500 dark:text-violet-400',
+  client: 'text-teal-500 dark:text-teal-400',
+}
+
 interface NavItem {
   path: string
   label: string
@@ -233,6 +241,8 @@ interface NavItem {
    * 开关切换时菜单自动更新。
    */
   featureFlag?: () => boolean | undefined
+  /** 三种用法（网页工作台 / API / 客户端）的识别色，只给图标上色，不改结构。 */
+  accent?: ServiceAccent
 }
 
 // applyFeatureFlags 递归过滤掉 featureFlag() === false 的节点（含子节点）。
@@ -763,7 +773,7 @@ function buildSelfNavItems(withDashboard: boolean): NavItem[] {
     items.push({ path: '/dashboard', label: t('nav.dashboard'), icon: DashboardIcon })
   }
   items.push(
-    { path: '/keys', label: t('nav.apiKeys'), icon: KeyIcon },
+    { path: '/keys', label: t('nav.apiKeys'), icon: KeyIcon, accent: 'api' },
     {
       path: '/purchase',
       label: purchaseNavLabel.value,
@@ -771,8 +781,8 @@ function buildSelfNavItems(withDashboard: boolean): NavItem[] {
       hideInSimpleMode: true,
       featureFlag: flagPurchase,
     },
-    { path: '/playground', label: t('nav.playground'), icon: PlaygroundIcon, featureFlag: flagPlayground },
-    { path: '/download', label: t('nav.clientDownload'), icon: ClientDownloadIcon, featureFlag: flagClientDownload },
+    { path: '/playground', label: t('nav.playground'), icon: PlaygroundIcon, featureFlag: flagPlayground, accent: 'web' },
+    { path: '/download', label: t('nav.clientDownload'), icon: ClientDownloadIcon, featureFlag: flagClientDownload, accent: 'client' },
     { path: '/batch-image', label: t('nav.batchImage'), icon: BatchImageIcon, hideInSimpleMode: true, featureFlag: flagBatchImageAccess },
     { path: '/usage', label: t('nav.usage'), icon: ChartIcon, hideInSimpleMode: true },
     { path: '/tickets', label: t('nav.tickets'), icon: TicketIcon },

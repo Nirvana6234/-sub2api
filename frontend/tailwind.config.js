@@ -51,7 +51,7 @@ export default {
       fontFamily: {
         sans: [
           'HarmonyOS Sans SC',
-          'Alibaba PuHuiTi 3.0',
+          '"Alibaba PuHuiTi 3.0"',
           'ui-rounded',
           'system-ui',
           '-apple-system',
@@ -72,8 +72,8 @@ export default {
         'glass-sm': '0 4px 16px rgba(0, 0, 0, 0.06)',
         glow: '0 0 20px rgba(22, 155, 208, 0.22)',
         'glow-lg': '0 0 40px rgba(22, 155, 208, 0.3)',
-        card: '0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.06)',
-        'card-hover': '0 10px 40px rgba(0, 0, 0, 0.08)',
+        card: '0 1px 2px rgba(23, 43, 57, 0.04), 0 10px 28px -18px rgba(23, 43, 57, 0.22)',
+        'card-hover': '0 2px 4px rgba(23, 43, 57, 0.05), 0 18px 40px -20px rgba(23, 43, 57, 0.3)',
         'inner-glow': 'inset 0 1px 0 rgba(255, 255, 255, 0.1)'
       },
       backgroundImage: {

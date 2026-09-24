@@ -62,6 +62,12 @@ declare module 'vue-router' {
     requiresSubscription?: boolean
 
     /**
+     * 是否要求客户端下载开关（client_download_enabled，opt-out）未被显式关闭
+     * @default false
+     */
+    requiresClientDownload?: boolean
+
+    /**
      * Whether this route requires the user's account-management self-service
      * feature to be enabled
      * @default false

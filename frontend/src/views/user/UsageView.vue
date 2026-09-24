@@ -115,6 +115,10 @@
               <label class="input-label">{{ t('usage.compactionFilter') }}</label>
               <Select v-model="filters.native_compaction_v2" :options="compactionOptions" @change="applyFilters" />
             </div>
+            <div class="w-full sm:w-auto sm:min-w-[160px]">
+              <label class="input-label">{{ t('usage.accountSource.filter') }}</label>
+              <Select v-model="filters.account_source" :options="accountSourceOptions" data-testid="usage-account-source-filter" @change="applyFilters" />
+            </div>
             <div v-if="subscriptionFeatureEnabled" class="w-full sm:w-auto sm:min-w-[200px]">
               <label class="input-label">{{ t('admin.usage.billingType') }}</label>
               <Select v-model="filters.billing_type" :options="billingTypeOptions" @change="applyFilters" />
@@ -358,11 +362,16 @@ const endpointDistributionSource = ref<EndpointSource>('inbound')
 const activeTab = ref<'usage' | 'errors'>('usage')
 const errorViewEnabled = computed(() => appStore.cachedPublicSettings?.allow_user_view_error_requests ?? false)
 
+// 默认只看号池：自己贡献账号的请求在「我的账号」里单独看，混在一起会把按模型价计的
+// 自有账号金额算进号池花费。
+const DEFAULT_ACCOUNT_SOURCE = 'pool' as const
+
 const filters = ref<UsageQueryParams>({
   start_date: startDate.value,
   end_date: endDate.value,
   request_type: undefined,
   native_compaction_v2: null,
+  account_source: DEFAULT_ACCOUNT_SOURCE,
   billing_type: null,
   billing_mode: null,
 })
@@ -391,6 +400,12 @@ const requestTypeOptions = computed<SelectOption[]>(() => [
 const compactionOptions = computed<SelectOption[]>(() => [
   { value: null, label: t('usage.allCompactionTypes') },
   { value: true, label: t('usage.compactionOnly') },
+])
+const accountSourceOptions = computed<SelectOption[]>(() => [
+  { value: null, label: t('usage.accountSource.all') },
+  { value: 'pool', label: t('usage.accountSource.pool') },
+  { value: 'own', label: t('usage.accountSource.own') },
+  { value: 'room', label: t('usage.accountSource.room') },
 ])
 // 订阅功能关闭后只剩余额计费，「计费类型」筛选（余额/订阅）失去意义，整块隐藏。
 const subscriptionFeatureEnabled = computed(() => resolveFeatureFlag(appStore.cachedPublicSettings, FeatureFlags.subscription))
@@ -566,6 +581,7 @@ const resetFilters = () => {
     end_date: range.end,
     request_type: undefined,
     native_compaction_v2: null,
+    account_source: DEFAULT_ACCOUNT_SOURCE,
     billing_type: null,
     billing_mode: null,
   }

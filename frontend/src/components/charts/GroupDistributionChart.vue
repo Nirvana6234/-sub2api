@@ -109,6 +109,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { CHART_SERIES_COLORS } from '@/utils/chartPalette'
 import { useI18n } from 'vue-i18n'
 import { Chart as ChartJS, ArcElement, Tooltip, Legend } from 'chart.js'
 import { Doughnut } from 'vue-chartjs'
@@ -175,18 +176,7 @@ const toggleBreakdown = async (type: string, id: number | string) => {
   }
 }
 
-const chartColors = [
-  '#3b82f6',
-  '#10b981',
-  '#f59e0b',
-  '#ef4444',
-  '#8b5cf6',
-  '#ec4899',
-  '#14b8a6',
-  '#f97316',
-  '#6366f1',
-  '#84cc16'
-]
+const chartColors: string[] = [...CHART_SERIES_COLORS]
 
 const displayGroupStats = computed(() => {
   if (!props.groupStats?.length) return []

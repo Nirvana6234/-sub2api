@@ -22,12 +22,65 @@
               :options="statusFilterOptions"
               @update:model-value="onStatusFilterChange"
             />
+            <!-- 操作按钮与搜索筛选并排，原来单独占一行 -->
+            <div class="ml-auto flex gap-3" data-testid="keys-toolbar-actions">
+              <button
+                @click="loadApiKeys"
+                :disabled="loading"
+                class="btn btn-secondary"
+                :title="t('common.refresh')"
+              >
+                <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
+              </button>
+              <div class="relative" ref="columnDropdownRef">
+                <button
+                  @click="showColumnDropdown = !showColumnDropdown"
+                  class="btn btn-secondary px-2 md:px-3"
+                  :title="t('keys.columnSettings')"
+                >
+                  <svg class="h-4 w-4 md:mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 4.5v15m6-15v15m-10.875 0h15.75c.621 0 1.125-.504 1.125-1.125V5.625c0-.621-.504-1.125-1.125-1.125H4.125C3.504 4.5 3 5.004 3 5.625v12.75c0 .621.504 1.125 1.125 1.125z" />
+                  </svg>
+                  <span class="hidden md:inline">{{ t('keys.columnSettings') }}</span>
+                </button>
+                <div
+                  v-if="showColumnDropdown"
+                  class="absolute right-0 top-full z-50 mt-1 max-h-80 w-48 overflow-y-auto rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-dark-600 dark:bg-dark-800"
+                >
+                  <button
+                    v-for="col in toggleableColumns"
+                    :key="col.key"
+                    @click="toggleColumn(col.key)"
+                    class="flex w-full items-center justify-between px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
+                  >
+                    <span>{{ col.label }}</span>
+                    <Icon
+                      v-if="isColumnVisible(col.key)"
+                      name="check"
+                      size="sm"
+                      class="text-primary-500"
+                      :stroke-width="2"
+                    />
+                  </button>
+                </div>
+              </div>
+              <button @click="showCreateModal = true" class="btn btn-primary" data-tour="keys-create-btn">
+                <Icon name="plus" size="md" class="mr-2" />
+                {{ t('keys.createKey') }}
+              </button>
+            </div>
           </div>
-          <EndpointPopover
+          <div
             v-if="publicSettings?.api_base_url || (publicSettings?.custom_endpoints?.length ?? 0) > 0"
-            :api-base-url="publicSettings?.api_base_url || ''"
-            :custom-endpoints="publicSettings?.custom_endpoints || []"
-          />
+            class="keys-access-bar flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl px-3 py-2"
+            data-testid="keys-access-bar"
+          >
+            <EndpointPopover
+              :api-base-url="publicSettings?.api_base_url || ''"
+              :custom-endpoints="publicSettings?.custom_endpoints || []"
+            />
+            <span class="text-xs text-gray-500 dark:text-dark-400">{{ t('keys.accessHint') }}</span>
+          </div>
           <div v-if="selectedIds.length" class="flex flex-wrap items-center gap-3 text-sm">
             <span class="text-gray-600 dark:text-gray-300">
               {{ t('keys.bulkEdit.selectedCount', { count: selectedIds.length }) }}
@@ -47,54 +100,6 @@
         </div>
       </template>
 
-      <template #actions>
-        <div class="flex justify-end gap-3">
-          <button
-            @click="loadApiKeys"
-            :disabled="loading"
-            class="btn btn-secondary"
-            :title="t('common.refresh')"
-          >
-            <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
-          </button>
-          <div class="relative" ref="columnDropdownRef">
-            <button
-              @click="showColumnDropdown = !showColumnDropdown"
-              class="btn btn-secondary px-2 md:px-3"
-              :title="t('keys.columnSettings')"
-            >
-              <svg class="h-4 w-4 md:mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M9 4.5v15m6-15v15m-10.875 0h15.75c.621 0 1.125-.504 1.125-1.125V5.625c0-.621-.504-1.125-1.125-1.125H4.125C3.504 4.5 3 5.004 3 5.625v12.75c0 .621.504 1.125 1.125 1.125z" />
-              </svg>
-              <span class="hidden md:inline">{{ t('keys.columnSettings') }}</span>
-            </button>
-            <div
-              v-if="showColumnDropdown"
-              class="absolute right-0 top-full z-50 mt-1 max-h-80 w-48 overflow-y-auto rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-dark-600 dark:bg-dark-800"
-            >
-              <button
-                v-for="col in toggleableColumns"
-                :key="col.key"
-                @click="toggleColumn(col.key)"
-                class="flex w-full items-center justify-between px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
-              >
-                <span>{{ col.label }}</span>
-                <Icon
-                  v-if="isColumnVisible(col.key)"
-                  name="check"
-                  size="sm"
-                  class="text-primary-500"
-                  :stroke-width="2"
-                />
-              </button>
-            </div>
-          </div>
-          <button @click="showCreateModal = true" class="btn btn-primary" data-tour="keys-create-btn">
-            <Icon name="plus" size="md" class="mr-2" />
-            {{ t('keys.createKey') }}
-          </button>
-        </div>
-      </template>
 
       <template #table>
         <DataTable
@@ -2509,3 +2514,16 @@ onUnmounted(() => {
   if (resetTimer) clearInterval(resetTimer)
 })
 </script>
+
+<style scoped>
+.keys-access-bar {
+  background-color: rgb(255 255 255 / 0.7);
+  border: 1px solid rgb(23 43 57 / 0.07);
+  box-shadow: inset 3px 0 0 rgb(139 92 246);
+}
+
+:global(.dark) .keys-access-bar {
+  background-color: rgb(30 41 59 / 0.5);
+  border-color: rgb(51 65 85 / 0.6);
+}
+</style>
