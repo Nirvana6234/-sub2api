@@ -1,6 +1,6 @@
 # 共飞直连客户端 —— 出包
 #
-#   打 tag：  git tag client-v0.2 && git push origin client-v0.2
+#   打 tag：  git tag client-v0.9 && git push origin client-v0.9
 #   或在 Actions 页面手动运行（workflow_dispatch）。
 #
 # 产出
