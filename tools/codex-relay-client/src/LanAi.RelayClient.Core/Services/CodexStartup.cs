@@ -36,7 +36,12 @@ internal sealed record CodexStartupResult(CodexStartupStatus Status, string Mess
 /// <param name="IsInstalled">Whether the official desktop app is present.</param>
 /// <param name="IsRunning">Whether it is up right now.</param>
 /// <param name="LeaseExpiresAt">When the managed lease lapses; null when there is none.</param>
-internal sealed record CodexHealth(bool IsInstalled, bool IsRunning, DateTimeOffset? LeaseExpiresAt);
+/// <param name="IsConnected">
+/// Whether a running ChatGPT is the one this client launched onto its local relay. False when
+/// ChatGPT was left running by a previous client instance (its relay port is gone) or started
+/// on its own. Always true without the local relay: a managed key has nothing local to lose.
+/// </param>
+internal sealed record CodexHealth(bool IsInstalled, bool IsRunning, DateTimeOffset? LeaseExpiresAt, bool IsConnected = true);
 
 /// <summary>Runs the sequence that gets Codex talking to the relay.</summary>
 /// <remarks>
@@ -177,6 +182,11 @@ internal sealed class CodexStartup : ICodexStartup
     // when one lets go would cut off the other.
     private bool _codexUsesRelay;
     private bool _pluginsUseRelay;
+
+    // Whether the ChatGPT this client launched is the one talking to its relay. A running
+    // ChatGPT is not proof of that: one left behind by a previous client instance still
+    // points at that instance's relay port, which is gone. Read by CheckAsync.
+    private volatile bool _servingCodex;
 
     // What the user chose, kept here rather than only on the relay: the relay forgets its
     // targets whenever it stops (so a sign-out cannot carry one account's choice into the
@@ -427,6 +437,9 @@ internal sealed class CodexStartup : ICodexStartup
 
             await MoveSessionsToRelayAsync().ConfigureAwait(false);
 
+            // Until the launch below comes back ready, a running ChatGPT has not picked up
+            // the config just written.
+            _servingCodex = false;
             CodexLaunchResult launch = await _launcher
                 .EnsureDebugPortAsync(new CodexLaunchRequest { AllowTerminateExisting = allowRestart }, cancellationToken)
                 .ConfigureAwait(true);
@@ -460,6 +473,7 @@ internal sealed class CodexStartup : ICodexStartup
                     .StartAsync(codexKey, codexBaseUrl, cancellationToken)
                     .ConfigureAwait(true);
 
+                _servingCodex = true;
                 return new CodexStartupResult(
                     CodexStartupStatus.Ready,
                     "ChatGPT 已就绪，可以开始对话了。");
@@ -517,7 +531,7 @@ internal sealed class CodexStartup : ICodexStartup
             ClientLog.Warning("检查授权状态失败", ex);
         }
 
-        return new CodexHealth(installed, running, expiry);
+        return new CodexHealth(installed, running, expiry, IsConnected: _localRelay is null || _servingCodex);
     }
 
     public Task<bool> CheckInstalledAsync(CancellationToken cancellationToken = default)
@@ -624,6 +638,7 @@ internal sealed class CodexStartup : ICodexStartup
                             await _contextFilter.DisposeAsync().ConfigureAwait(false);
                         await _localRelay.StopAsync().ConfigureAwait(false);
                         _codexUsesRelay = false;
+                        _servingCodex = false;
                         _pluginsUseRelay = false;
                         ClientLog.Info("已停止本机 Paw Relay");
                     }
@@ -948,6 +963,7 @@ internal sealed class CodexStartup : ICodexStartup
             await _contextFilter.DisposeAsync().ConfigureAwait(false);
 
         _codexUsesRelay = false;
+        _servingCodex = false;
 
         // Only Codex's launch failed. An editor plug-in configured against the same relay is
         // still using it, and stopping it here would leave that configuration pointing at nothing

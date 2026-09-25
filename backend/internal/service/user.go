@@ -64,10 +64,11 @@ type User struct {
 	// ContributionRoomsEnabled 是否允许用户创建/加入贡献房间。
 	ContributionRoomsEnabled bool
 
-	// UserGroupRPMOverride 来自 auth cache snapshot 的 (user, group) RPM 覆盖值。
-	// nil = 该 API Key 对应的 (user, group) 无 override；非 nil 时 checkRPM 直接使用，
-	// 避免每请求查 DB。字段不持久化到数据库。
-	UserGroupRPMOverride *int
+	// UserGroupRPMOverride 来自 auth cache snapshot 的 (user, group) RPM 覆盖值，
+	// 对应分组记在 UserGroupRPMOverrideGroupID（0 = 未查询）。请求分组与之相同时
+	// checkRPM 直接使用（nil 表示确定无 override），避免每请求查 DB。字段不持久化到数据库。
+	UserGroupRPMOverride        *int
+	UserGroupRPMOverrideGroupID int64
 
 	APIKeys       []APIKey
 	Subscriptions []UserSubscription

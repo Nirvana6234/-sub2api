@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
@@ -50,20 +51,23 @@ type UsageHandler struct {
 	apiKeyService  *service.APIKeyService
 	opsService     *service.OpsService
 	settingService *service.SettingService
+	resultCache    *service.ResultCache
 }
 
-// NewUsageHandler creates a new UsageHandler
+// NewUsageHandler creates a new UsageHandler. resultCache may be nil.
 func NewUsageHandler(
 	usageService *service.UsageService,
 	apiKeyService *service.APIKeyService,
 	opsService *service.OpsService,
 	settingService *service.SettingService,
+	resultCache *service.ResultCache,
 ) *UsageHandler {
 	return &UsageHandler{
 		usageService:   usageService,
 		apiKeyService:  apiKeyService,
 		opsService:     opsService,
 		settingService: settingService,
+		resultCache:    resultCache,
 	}
 }
 
@@ -476,7 +480,13 @@ func (h *UsageHandler) DashboardStats(c *gin.Context) {
 		return
 	}
 
-	stats, err := h.usageService.GetUserDashboardStats(c.Request.Context(), subject.UserID)
+	// Desktop clients refresh this every minute; the aggregation over the
+	// user's usage logs does not need to be fresher than that.
+	stats, err := service.CachedResult(c.Request.Context(), h.resultCache,
+		"user_dashboard_stats:v1:"+strconv.FormatInt(subject.UserID, 10), userDashboardStatsCacheTTL,
+		func(ctx context.Context) (*usagestats.UserDashboardStats, error) {
+			return h.usageService.GetUserDashboardStats(ctx, subject.UserID)
+		})
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -484,6 +494,8 @@ func (h *UsageHandler) DashboardStats(c *gin.Context) {
 
 	response.Success(c, stats)
 }
+
+const userDashboardStatsCacheTTL = 30 * time.Second
 
 // DashboardTrend handles getting user usage trend data
 // GET /api/v1/usage/dashboard/trend

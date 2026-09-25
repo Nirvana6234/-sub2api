@@ -60,6 +60,9 @@ type APIKeyAuthUserSnapshot struct {
 	// UserGroupRPMOverride 该 API Key 对应的 (user, group) 专属 RPM 覆盖值。
 	// nil = 无 override（回退到 group/user 级）；0 = 不限流；>0 = 专属上限。
 	UserGroupRPMOverride *int `json:"user_group_rpm_override,omitempty"`
+	// UserGroupRPMOverrideGroupID 记录 UserGroupRPMOverride 是为哪个分组查询得到的；
+	// 0 = 未查询。命中该分组时 nil 也是确定结果（无 override），checkRPM 不必再查 DB。
+	UserGroupRPMOverrideGroupID int64 `json:"user_group_rpm_override_group_id,omitempty"`
 }
 
 // APIKeyAuthGroupSnapshot 分组快照

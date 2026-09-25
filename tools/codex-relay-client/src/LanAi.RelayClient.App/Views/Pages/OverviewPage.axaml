@@ -69,7 +69,7 @@
                     IsEnabled="{Binding Dashboard.CanStartCodex}"
                     Classes="primary"
                     Classes.installing="{Binding Dashboard.IsInstallingCodex}"
-                    Classes.restart="{Binding Dashboard.RequiresCodexAccountRestart}"
+                    Classes.restart="{Binding Dashboard.CodexNeedsRestart}"
                     HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
                     Padding="0,8" Margin="0,10,0,0" FontWeight="SemiBold" BorderThickness="0" />
             <StackPanel>

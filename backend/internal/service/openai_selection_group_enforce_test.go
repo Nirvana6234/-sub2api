@@ -21,6 +21,10 @@ func (r *noFallbackGroupRepo) GetByID(_ context.Context, id int64) (*Group, erro
 	return nil, nil
 }
 
+func (r *noFallbackGroupRepo) GetByIDLite(ctx context.Context, id int64) (*Group, error) {
+	return r.GetByID(ctx, id)
+}
+
 func newNoFallbackService(groupID int64) *OpenAIGatewayService {
 	repo := &noFallbackGroupRepo{group: &Group{
 		ID: groupID, Platform: PlatformOpenAI, Status: StatusActive,

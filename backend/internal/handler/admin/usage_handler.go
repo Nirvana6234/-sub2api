@@ -2,6 +2,8 @@ package admin
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -26,20 +28,23 @@ type UsageHandler struct {
 	apiKeyService  *service.APIKeyService
 	adminService   service.AdminService
 	cleanupService *service.UsageCleanupService
+	resultCache    *service.ResultCache
 }
 
-// NewUsageHandler creates a new admin usage handler
+// NewUsageHandler creates a new admin usage handler. resultCache may be nil.
 func NewUsageHandler(
 	usageService *service.UsageService,
 	apiKeyService *service.APIKeyService,
 	adminService service.AdminService,
 	cleanupService *service.UsageCleanupService,
+	resultCache *service.ResultCache,
 ) *UsageHandler {
 	return &UsageHandler{
 		usageService:   usageService,
 		apiKeyService:  apiKeyService,
 		adminService:   adminService,
 		cleanupService: cleanupService,
+		resultCache:    resultCache,
 	}
 }
 
@@ -215,17 +220,41 @@ func (h *UsageHandler) List(c *gin.Context) {
 		ExactTotal:            exactTotal,
 	}
 
-	records, result, err := h.usageService.ListWithFilters(c.Request.Context(), params, filters)
+	// The listing is polled heavily (external monitors page through it every
+	// few seconds), and each call runs the log query plus five association
+	// loads. Every admin sees the same rows for the same query, so the rendered
+	// page is shared for a short TTL.
+	listing, err := service.CachedResult(c.Request.Context(), h.resultCache, adminUsageListCacheKey(c), adminUsageListCacheTTL,
+		func(ctx context.Context) (adminUsageListPage, error) {
+			records, result, err := h.usageService.ListWithFilters(ctx, params, filters)
+			if err != nil {
+				return adminUsageListPage{}, err
+			}
+			out := make([]dto.AdminUsageLog, 0, len(records))
+			for i := range records {
+				out = append(out, *dto.UsageLogFromServiceAdmin(&records[i]))
+			}
+			return adminUsageListPage{Items: out, Total: result.Total}, nil
+		})
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
+	response.Paginated(c, listing.Items, listing.Total, page, pageSize)
+}
 
-	out := make([]dto.AdminUsageLog, 0, len(records))
-	for i := range records {
-		out = append(out, *dto.UsageLogFromServiceAdmin(&records[i]))
-	}
-	response.Paginated(c, out, result.Total, page, pageSize)
+const adminUsageListCacheTTL = 30 * time.Second
+
+type adminUsageListPage struct {
+	Items []dto.AdminUsageLog `json:"items"`
+	Total int64               `json:"total"`
+}
+
+// adminUsageListCacheKey identifies a listing by its full query string; the
+// handler derives every filter, page and sort option from the query alone.
+func adminUsageListCacheKey(c *gin.Context) string {
+	sum := sha256.Sum256([]byte(c.Request.URL.Query().Encode()))
+	return "admin_usage_list:v1:" + hex.EncodeToString(sum[:16])
 }
 
 // Stats handles getting usage statistics with filters

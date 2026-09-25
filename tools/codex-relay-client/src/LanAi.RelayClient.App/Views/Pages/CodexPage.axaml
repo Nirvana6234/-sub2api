@@ -17,7 +17,7 @@
                   IsEnabled="{Binding Dashboard.CanStartCodex}"
                   Classes="primary"
                   Classes.installing="{Binding Dashboard.IsInstallingCodex}"
-                  Classes.restart="{Binding Dashboard.RequiresCodexAccountRestart}"
+                  Classes.restart="{Binding Dashboard.CodexNeedsRestart}"
                   HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
                   Padding="0,12" FontSize="16" FontWeight="SemiBold"
                   BorderThickness="0" />

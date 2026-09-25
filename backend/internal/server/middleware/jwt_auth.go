@@ -17,11 +17,21 @@ func NewJWTAuthMiddleware(
 	settingService *service.SettingService,
 	auditService *service.AuditLogService,
 ) JWTAuthMiddleware {
-	return JWTAuthMiddleware(jwtAuth(authService, userService, userService, settingService, auditService))
+	return JWTAuthMiddleware(jwtAuth(authService, authUserReader{users: userService}, userService, settingService, auditService))
 }
 
 type jwtUserReader interface {
 	GetByID(ctx context.Context, id int64) (*service.User, error)
+}
+
+// authUserReader loads users through UserService.GetByIDForAuth, which skips
+// the avatar the middleware never reads.
+type authUserReader struct {
+	users *service.UserService
+}
+
+func (r authUserReader) GetByID(ctx context.Context, id int64) (*service.User, error) {
+	return r.users.GetByIDForAuth(ctx, id)
 }
 
 type userActivityToucher interface {

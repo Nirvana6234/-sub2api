@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -43,6 +44,18 @@ type BalanceNotifyService struct {
 	settingRepo              SettingRepository
 	accountRepo              AccountQuotaReader
 	notificationEmailService *NotificationEmailService
+
+	// toggles caches the notification switches checked after every billed
+	// request; a switch change takes effect within settingValueCacheTTL.
+	togglesOnce sync.Once
+	toggles     *settingValueCache
+}
+
+func (s *BalanceNotifyService) toggleSettings() *settingValueCache {
+	s.togglesOnce.Do(func() {
+		s.toggles = newSettingValueCache(s.settingRepo, settingValueCacheTTL)
+	})
+	return s.toggles
 }
 
 // NewBalanceNotifyService creates a new BalanceNotifyService.
@@ -252,7 +265,7 @@ func (s *BalanceNotifyService) asyncSendQuotaAlert(adminEmails []string, account
 // getBalanceNotifyConfig reads global balance notification settings.
 func (s *BalanceNotifyService) getBalanceNotifyConfig(ctx context.Context) (enabled bool, threshold float64, rechargeURL string) {
 	keys := []string{SettingKeyBalanceLowNotifyEnabled, SettingKeyBalanceLowNotifyThreshold, SettingKeyBalanceLowNotifyRechargeURL}
-	settings, err := s.settingRepo.GetMultiple(ctx, keys)
+	settings, err := s.toggleSettings().GetMultiple(ctx, keys)
 	if err != nil {
 		return false, 0, ""
 	}
@@ -268,7 +281,7 @@ func (s *BalanceNotifyService) getBalanceNotifyConfig(ctx context.Context) (enab
 
 // isAccountQuotaNotifyEnabled checks the global account quota notification toggle.
 func (s *BalanceNotifyService) isAccountQuotaNotifyEnabled(ctx context.Context) bool {
-	val, err := s.settingRepo.GetValue(ctx, SettingKeyAccountQuotaNotifyEnabled)
+	val, err := s.toggleSettings().GetValue(ctx, SettingKeyAccountQuotaNotifyEnabled)
 	if err != nil {
 		return false
 	}
