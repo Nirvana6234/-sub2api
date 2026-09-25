@@ -5,7 +5,6 @@
 // private key can make. The computer checks both against what the user approved on it.
 
 import { pawRequest } from "../paw/api";
-import { loadPawSession } from "../paw/auth";
 import { parsePawSSEChunk } from "../paw/sse";
 import {
   REMOTE_ERROR_TEXT,
@@ -15,7 +14,6 @@ import {
   readItems,
   readSessionSummary,
   readStreamEvent,
-  signCommand,
   signSend,
   type RemoteDevice,
   type RemoteSessionHeader,
@@ -62,7 +60,7 @@ async function serverFailure(response: Response): Promise<RemoteError> {
     REMOTE_DEVICE_OFFLINE: "电脑不在线（共飞助手没开，或没开启手机同步）",
     REMOTE_DEVICE_TIMEOUT: "电脑没有及时回应",
     REMOTE_DEVICE_GONE: "电脑刚刚断开了连接",
-    REMOTE_PAIRING_NOT_ACTIVE: "这台手机和那台电脑的配对已失效，请重新配对",
+    REMOTE_PAIRING_NOT_ACTIVE: "这台手机和那台电脑的配对已失效",
     REMOTE_PAIRING_CODE_INVALID: "配对码错误或已过期",
     REMOTE_COMMAND_REFUSED: "服务器还不支持这个操作，需要先更新服务端",
   };
@@ -104,7 +102,6 @@ export async function claimPairing(code: string): Promise<StoredPairing> {
     publicKey,
     fingerprint: await fingerprint(publicKey),
     createdAt: Date.now(),
-    userId: currentUserId(),
   };
   if (!pairing.deviceId || !pairing.token || !Number.isFinite(pairing.pairingId)) {
     throw new RemoteError("bad_response", "服务端返回的配对信息不完整");
@@ -147,42 +144,9 @@ export async function revokePairing(pairing: StoredPairing): Promise<void> {
   }
 }
 
-function currentUserId(): number | undefined {
-  const id = loadPawSession()?.user?.id;
-  return typeof id === "number" ? id : undefined;
-}
-
-/** This account's paired computers, with whether each is online right now. */
+/** This phone's paired computers, with whether each is online right now. */
 export async function listDevices(): Promise<Array<{ pairing: StoredPairing; device: RemoteDevice | null }>> {
-  // Pairings outlive sign-out; another account's on this browser are left alone, not
-  // asked about (the server would call them unknown, and they would be deleted).
-  const userId = currentUserId();
-  const mine = (await listPairings()).filter(
-    (pairing) => pairing.userId === undefined || userId === undefined || pairing.userId === userId,
-  );
-
-  // "active" here is only what this phone last heard. The pairing may have been revoked
-  // since — on the computer, or by 解除配对 elsewhere — and the page would go on saying
-  // 已配对 while every command is refused. Asked again each time; one that cannot be
-  // asked right now is kept as it was.
-  const pairings = (
-    await Promise.all(
-      mine.map(async (pairing) => {
-        try {
-          const checked = await refreshPairingStatus(pairing);
-          if (checked && checked.userId === undefined && userId !== undefined) {
-            // Saved before pairings were bound to an account; the server just said it is ours.
-            const owned = { ...checked, userId };
-            await savePairing(owned);
-            return owned;
-          }
-          return checked;
-        } catch {
-          return pairing;
-        }
-      }),
-    )
-  ).filter((pairing): pairing is StoredPairing => pairing !== null);
+  const pairings = await listPairings();
   let online = new Map<string, RemoteDevice>();
   try {
     const response = await pawRequest("/api/v1/remote/devices", { method: "GET", headers: { Accept: "application/json" } });
@@ -219,12 +183,7 @@ async function command(pairing: StoredPairing, body: Record<string, unknown>): P
     headers: { "Content-Type": "application/json", Accept: "application/json", [PAIRING_HEADER]: pairing.token },
     body: JSON.stringify(body),
   });
-  if (!response.ok) {
-    const failure = await serverFailure(response);
-    // Forgotten here as soon as the server says so, rather than at the next list.
-    if (failure.code === "REMOTE_PAIRING_NOT_ACTIVE") await refreshPairingStatus(pairing).catch(() => null);
-    throw failure;
-  }
+  if (!response.ok) throw await serverFailure(response);
 
   const answer = await readJson(response);
   if (!isRecord(answer)) throw new RemoteError("bad_response", "电脑返回的内容无法识别");
@@ -323,22 +282,9 @@ export interface SendResult {
 export interface SelfCheck {
   summary: string;
   desktopRunning: boolean;
-  /** Conversations running on the computer now; a repair stops them. */
-  activeConversations: number;
   relayListening: boolean | null;
   signedIn: boolean | null;
   serverReachable: boolean | null;
-}
-
-/**
- * 修复 ChatGPT 启动 on the computer, for when nobody can get to it: ChatGPT restarted
- * (keeping its key), which stops every conversation there. Signed like a send.
- * `repaired` false with `inProgress` means it is still going; check again shortly.
- */
-export async function repairComputer(pairing: StoredPairing, threadId: string): Promise<{ repaired: boolean; inProgress: boolean }> {
-  const signed = await signCommand(pairing.keyPair.privateKey, "desktop.repair", pairing.pairingId, threadId, "restart", "");
-  const answer = await command(pairing, { type: "desktop.repair", thread_id: threadId, ...signed });
-  return { repaired: answer.repaired === true, inProgress: answer.in_progress === true };
 }
 
 /** Read-only checks on the computer after a failed turn. Restarts nothing. */
@@ -348,7 +294,6 @@ export async function checkComputer(pairing: StoredPairing, threadId: string): P
   return {
     summary: typeof answer.summary === "string" ? answer.summary : "",
     desktopRunning: answer.desktop_running === true,
-    activeConversations: typeof answer.active_conversations === "number" ? answer.active_conversations : 0,
     relayListening: flag(answer.relay_listening),
     signedIn: flag(answer.signed_in),
     serverReachable: flag(answer.server_reachable),

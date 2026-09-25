@@ -2,8 +2,6 @@
 
 This directory contains files for deploying Sub2API on Linux servers and Apple-silicon Macs.
 
-> Production upgrade rule: before every release, read [`SUB2API-部署交接文档.md`](../../SUB2API-部署交接文档.md), especially its "部署前必读" and local build sections. For the Windows workstation, use `build-local-release.ps1`; do not compile or build on the server.
-
 ## Deployment Methods
 
 | Method | Best For | Setup Wizard |
@@ -44,7 +42,7 @@ Apple-silicon Macs running macOS 26 can run the complete Sub2API, PostgreSQL, an
 ./apple-container.sh logs app -f
 ```
 
-The script uses Apple named volumes, starts dependencies in order, and performs live readiness checks. It does not provide a continuous restart supervisor; run `./apple-container.sh up` after a host reboot. Docker Compose remains the recommended production deployment path.
+The script uses Apple named volumes, starts dependencies in order, and performs live readiness checks. The application container supervises the Sub2API process so the Web UI's update-and-restart flow can relaunch an updated binary. It does not provide host-level automatic startup; run `./apple-container.sh up` after a host reboot. Docker Compose remains the recommended production deployment path.
 
 See [APPLE_CONTAINER.md](./APPLE_CONTAINER.md) for configuration, upgrades, persistence, networking behavior, and limitations.
 

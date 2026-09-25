@@ -82,7 +82,12 @@ func New(cfg config.Config, db *pgxpool.Pool, redisClient *redis.Client) *Server
 		panic(err)
 	}
 	group_rates.RegisterRoutes(server.mux, groupRatesService, adminAccountsService)
-	upstreamHTTPClient := &http.Client{Timeout: upstreamRequestTimeout}
+	upstreamHTTPClient, err := upstream.NewInternalAdminHTTPClient(
+		&http.Client{Timeout: upstreamRequestTimeout}, cfg.Sub2APIInternalAdminOrigins, cfg.Sub2APIInternalAdminURL,
+	)
+	if err != nil {
+		panic(err)
+	}
 	platformService := upstream.NewPlatformService(upstream.NewHTTPClient(upstreamHTTPClient))
 	upstreamCache := upstream.NewRedisSiteCache(redisClient)
 	upstreamService := upstream.NewService(platformService, upstreamRepository, groupRateSnapshotWriter{service: groupRatesService}, upstreamCache)
@@ -145,7 +150,13 @@ func New(cfg config.Config, db *pgxpool.Pool, redisClient *redis.Client) *Server
 		log.Printf("[lottery] WARNING: private Sub2API targets are enabled for local debugging; do not enable this in production")
 	}
 	lotteryViewerClient := lottery.NewSub2APIViewerClientWithPrivateTargets(&http.Client{Timeout: upstreamRequestTimeout}, cfg.LotteryAllowPrivateSub2APITargets)
-	lotteryRewardClient := lottery.NewRewardClientWithPrivateTargets(&http.Client{Timeout: upstreamRequestTimeout}, cfg.LotteryAllowPrivateSub2APITargets)
+	lotteryRewardClient, err := lottery.NewRewardClientWithInternalRouting(
+		&http.Client{Timeout: upstreamRequestTimeout}, cfg.LotteryAllowPrivateSub2APITargets,
+		cfg.Sub2APIInternalAdminOrigins, cfg.Sub2APIInternalAdminURL,
+	)
+	if err != nil {
+		panic(err)
+	}
 	lotteryService := lottery.NewService(lotteryRepository, lotterySessions, lotteryViewerClient, lotteryRewardClient, mySitesService)
 	lotteryService.SetAdminAccountResolver(adminAccountsService)
 	lotteryService.SetSubscriptionGroupProvider(platformService)

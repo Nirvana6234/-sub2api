@@ -1,0 +1,36 @@
+# Overlay for the pinned v4.1.1 image when its local adaptations are not baked in.
+# GPT56_ADAPTERS_DIR must be a durable directory containing exactly these source
+# files. Never include local run databases, or mount over /app / vendor wholesale.
+services:
+  gpt56-detector:
+    volumes:
+      - type: bind
+        source: ${GPT56_ADAPTERS_DIR:?GPT56_ADAPTERS_DIR is required}/serve.py
+        target: /app/serve.py
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${GPT56_ADAPTERS_DIR:?GPT56_ADAPTERS_DIR is required}/vendor/gpt56_vnext/server.py
+        target: /app/vendor/gpt56_vnext/server.py
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${GPT56_ADAPTERS_DIR:?GPT56_ADAPTERS_DIR is required}/vendor/gpt56_vnext/transport.py
+        target: /app/vendor/gpt56_vnext/transport.py
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${GPT56_ADAPTERS_DIR:?GPT56_ADAPTERS_DIR is required}/vendor/gpt56_vnext/detector.py
+        target: /app/vendor/gpt56_vnext/detector.py
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${GPT56_ADAPTERS_DIR:?GPT56_ADAPTERS_DIR is required}/vendor/gpt56_vnext/native/codex-native-transport.mjs
+        target: /app/vendor/gpt56_vnext/native/codex-native-transport.mjs
+        read_only: true
+        bind:
+          create_host_path: false

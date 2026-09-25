@@ -2,6 +2,15 @@ package config
 
 import "testing"
 
+func TestLoadInternalAdminRouting(t *testing.T) {
+	t.Setenv("SUB2API_INTERNAL_ADMIN_ORIGINS", " https://own.example, https://legacy.example ")
+	t.Setenv("SUB2API_INTERNAL_ADMIN_URL", " http://sub2api-internal:8080 ")
+	cfg := Load()
+	if len(cfg.Sub2APIInternalAdminOrigins) != 2 || cfg.Sub2APIInternalAdminOrigins[1] != "https://legacy.example" || cfg.Sub2APIInternalAdminURL != "http://sub2api-internal:8080" {
+		t.Fatal("internal admin routing configuration was not parsed")
+	}
+}
+
 func TestSetEnvLineOverridesWhenKeyMarkedForOverride(t *testing.T) {
 	t.Setenv("SOME_KEY", "online-value")
 

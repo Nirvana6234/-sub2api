@@ -6,7 +6,6 @@
 data/
 postgres_data/
 redis_data/
-kiro-gateway/
 
 # Environment configuration (contains sensitive information)
 .env

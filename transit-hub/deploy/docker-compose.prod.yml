@@ -33,6 +33,11 @@ services:
       # SMTP_ENCRYPTION_KEY: change-this-to-a-generated-base64-32-byte-key
       # Shared secret for Sub2API fallback-pool event callbacks.
       SUB2API_FALLBACK_ALERT_SECRET: ${SUB2API_FALLBACK_ALERT_SECRET:?SUB2API_FALLBACK_ALERT_SECRET is required}
+      # Optional exact public origins (comma-separated) and trusted internal origin.
+      # Both containers must share a persistent Docker network with the target alias.
+      # Only /api/v1/admin and /api/v1/auth use this direct route; saved URLs stay public.
+      SUB2API_INTERNAL_ADMIN_ORIGINS: ${SUB2API_INTERNAL_ADMIN_ORIGINS:-}
+      SUB2API_INTERNAL_ADMIN_URL: ${SUB2API_INTERNAL_ADMIN_URL:-}
       # GPT-5.6 纯度检测旁路服务地址。注释掉这一行即可整体关闭该功能：
       # 接口会返回「检测器不可用」，后台队列 worker 也不启动。
       PURITY_CHECK_DETECTOR_URL: http://gpt56-detector:8760

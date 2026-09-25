@@ -40,13 +40,14 @@ var (
 	// Official GPT Image 2.5 token rates (2026-09-08):
 	// https://developers.openai.com/api/docs/pricing#image-generation-models
 	openAIGPTImage25FallbackPricing = &LiteLLMModelPricing{
-		InputCostPerToken:       5e-06,
-		CacheReadInputTokenCost: 1.25e-06,
-		InputCostPerImageToken:  8e-06,
-		OutputCostPerImageToken: 3e-05,
-		LiteLLMProvider:         "openai",
-		Mode:                    "image_generation",
-		SupportsPromptCaching:   true,
+		InputCostPerToken:            5e-06,
+		CacheReadInputTokenCost:      1.25e-06,
+		InputCostPerImageToken:       8e-06,
+		CacheReadInputImageTokenCost: 2e-06,
+		OutputCostPerImageToken:      3e-05,
+		LiteLLMProvider:              "openai",
+		Mode:                         "image_generation",
+		SupportsPromptCaching:        true,
 	}
 	openAIGPT54FallbackPricing = &LiteLLMModelPricing{
 		InputCostPerToken:       2.5e-06, // $2.5 per MTok

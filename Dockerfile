@@ -25,11 +25,11 @@ ARG NPM_CONFIG_REGISTRY
 
 WORKDIR /app/frontend
 
-# Keep Docker and CI on the pnpm version that generated pnpm-lock.yaml.
-RUN corepack enable && corepack prepare pnpm@11.16.0 --activate
+# Install pnpm (pinned to v9 to match CI and keep builds reproducible)
+RUN corepack enable && corepack prepare pnpm@9 --activate
 
 # Install dependencies first (better caching)
-COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
+COPY frontend/package.json frontend/pnpm-lock.yaml ./
 RUN --mount=type=cache,id=sub2api-pnpm-store,target=/root/.local/share/pnpm/store \
     if [ -n "${NPM_CONFIG_REGISTRY}" ]; then pnpm config set registry "${NPM_CONFIG_REGISTRY}"; fi && \
     pnpm install --frozen-lockfile --prefer-offline
@@ -42,19 +42,6 @@ RUN --mount=type=cache,id=sub2api-pnpm-store,target=/root/.local/share/pnpm/stor
 COPY frontend/ ./
 COPY docs/legal/ /app/docs/legal/
 RUN pnpm run build
-
-# ---------------------------------------------------------------------------
-# Stage 1b: Build Paw PWA
-# ---------------------------------------------------------------------------
-FROM --platform=${BUILDPLATFORM} ${NODE_IMAGE} AS chat-builder
-
-WORKDIR /app/tools/chat
-
-COPY tools/chat/package.json tools/chat/package-lock.json ./
-RUN npm ci
-
-COPY tools/chat/ ./
-RUN npm run export
 
 # -----------------------------------------------------------------------------
 # Stage 2: Backend Builder
@@ -95,15 +82,13 @@ COPY backend/ ./
 
 # Copy frontend dist from previous stage (must be after backend copy to avoid being overwritten)
 COPY --from=frontend-builder /app/backend/internal/web/dist ./internal/web/dist
-# Paw is served under /paw and uses its own embedded filesystem.
-COPY --from=chat-builder /app/tools/chat/out ./internal/web/paw_dist
 
 # Build the binary (BuildType=release for CI builds, embed frontend)
 # Version precedence: build arg VERSION > exact git tag > cmd/server/VERSION
 RUN --mount=type=cache,id=sub2api-gomod,target=/go/pkg/mod \
     --mount=type=cache,id=sub2api-gobuild,target=/root/.cache/go-build \
     VERSION_VALUE="${VERSION}" && \
-    if [ -z "${VERSION_VALUE}" ]; then VERSION_VALUE="$(sh ./scripts/resolve-version.sh)"; fi && \
+    if [ -z "${VERSION_VALUE}" ]; then VERSION_VALUE="$(./scripts/resolve-version.sh)"; fi && \
     DATE_VALUE="${DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" && \
     CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build \
     -tags embed \

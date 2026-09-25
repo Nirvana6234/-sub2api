@@ -24,12 +24,7 @@ services:
   # Sub2API Application
   # ===========================================================================
   sub2api:
-    image: deploy-sub2api:local
-    build:
-      context: ..
-      dockerfile: Dockerfile.binary
-      args:
-        NPM_CONFIG_REGISTRY: ${NPM_CONFIG_REGISTRY:-https://registry.npmmirror.com}
+    image: weishaw/sub2api:latest
     container_name: sub2api
     restart: unless-stopped
     security_opt:
@@ -44,6 +39,9 @@ services:
     volumes:
       # Local directory mapping for easy migration
       - ./data:/app/data:Z
+      # Run the binary built from the local source tree. This keeps source
+      # builds active after container recreation instead of using image code.
+      - ../backend/bin/sub2api-linux-amd64:/app/sub2api:ro
       # Optional: Mount custom config.yaml (uncomment and create the file first)
       # Copy config.example.yaml to config.yaml, modify it, then uncomment:
       # - ./config.yaml:/app/data/config.yaml
@@ -172,11 +170,6 @@ services:
       - GATEWAY_FORCE_CODEX_CLI=${GATEWAY_FORCE_CODEX_CLI:-false}
       - GATEWAY_OPENAI_COMPACT_MODEL=${GATEWAY_OPENAI_COMPACT_MODEL:-gpt-5.5}
       - SUB2API_IMAGES_MAIN_MODEL=${SUB2API_IMAGES_MAIN_MODEL:-gpt-5.6-luna}
-      # TransitHub fallback alerts are sent over the private Docker network.
-      - FALLBACK_POOL_ALERT_URL=${FALLBACK_POOL_ALERT_URL:-http://transithub:10621/api/internal/fallback-pool-alert}
-      - FALLBACK_POOL_ALERT_SECRET=${FALLBACK_POOL_ALERT_SECRET:-}
-      - FALLBACK_POOL_ALERT_SITE_BASE_URL=${FALLBACK_POOL_ALERT_SITE_BASE_URL:-}
-      - FALLBACK_POOL_ALERT_TIMEOUT_SECONDS=${FALLBACK_POOL_ALERT_TIMEOUT_SECONDS:-3}
       - GATEWAY_OPENAI_RESPONSE_HEADER_TIMEOUT=${GATEWAY_OPENAI_RESPONSE_HEADER_TIMEOUT:-0}
       # 首字输出超时：等首个语义输出超过该秒数即判上游无响应并换账号重试。
       # 0=禁用，合法值 0 或 30-600。高强度档（high/xhigh/max）用下一项单独放宽。
@@ -225,7 +218,6 @@ services:
         condition: service_healthy
     networks:
       - sub2api-network
-      - service-integration
     healthcheck:
       test: ["CMD", "wget", "-q", "-T", "5", "-O", "/dev/null", "http://localhost:8080/health"]
       interval: 30s
@@ -308,6 +300,3 @@ services:
 networks:
   sub2api-network:
     driver: bridge
-  service-integration:
-    external: true
-    name: service-integration

@@ -8,7 +8,6 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  canonical,
   canonicalSend,
   fingerprint,
   generateSigningKey,
@@ -144,13 +143,4 @@ test("a turn's message is found for sending again", () => {
   assert.equal(turnMessage(items, "t"), "改一下标题");
   assert.equal(turnMessage(items, "other"), null);
   assert.equal(turnMessage([{ ...msg(2, "t", "user"), text: "  " }], "t"), null);
-});
-
-// The same vector as PhoneProtocolVectorTests.TheRepairStringMatchesThePhones.
-test("a repair signs its own command, so a send's signature cannot pass for it", async () => {
-  assert.equal(
-    await canonical("desktop.repair", 5, "01a0ced9-0000-7000-8000-000000000001", "restart", "", 1790200000000, "bm9uY2Utbm9uY2Utbm9uY2Ut"),
-    "cofly-remote/1\ndesktop.repair\n5\n01a0ced9-0000-7000-8000-000000000001\nrestart\n" +
-      "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n1790200000000\nbm9uY2Utbm9uY2Utbm9uY2Ut",
-  );
 });

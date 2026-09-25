@@ -1,5 +1,5 @@
 {
-  "version": "0.9",
+  "version": "0.8",
   "download_page": "/download",
-  "release_notes": "0.9：新增「同步会话」，可在手机上的共飞 AI 工作台查看并接着操作电脑上 Codex 桌面版的会话；桌面版没开时可一键启动 ChatGPT。"
+  "release_notes": "0.8：左侧页签改版（仪表盘 / Codex / Claude / 本地代理 / 账户 / 设置）；新增本地代理，可用自己的 ChatGPT / Claude 订阅账号直连官方。"
 }

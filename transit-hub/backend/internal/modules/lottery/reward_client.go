@@ -48,6 +48,19 @@ func NewRewardClientWithPrivateTargets(client *http.Client, allowPrivateTargets 
 	return &RewardClient{client: client, allowPrivateTargets: allowPrivateTargets}
 }
 
+// NewRewardClientWithInternalRouting installs internal routing only after the
+// ordinary reward client's SSRF-safe transport is in place. Unconfigured sites
+// therefore keep the same DNS/IP restrictions and proxy policy.
+func NewRewardClientWithInternalRouting(client *http.Client, allowPrivateTargets bool, origins []string, target string) (*RewardClient, error) {
+	rewards := NewRewardClientWithPrivateTargets(client, allowPrivateTargets)
+	routed, err := upstream.NewInternalAdminHTTPClient(rewards.client, origins, target)
+	if err != nil {
+		return nil, err
+	}
+	rewards.client = routed
+	return rewards, nil
+}
+
 func (c *RewardClient) Redeem(ctx context.Context, session upstream.Session, job RewardJob) RewardResult {
 	if session.Platform != upstream.PlatformSub2API || strings.TrimSpace(session.AccessToken) == "" {
 		return RewardResult{Status: RewardRetryableFailed, ErrorKey: ErrorRewardAdminSession, Detail: "missing sub2api admin session"}

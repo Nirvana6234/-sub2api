@@ -31,14 +31,6 @@ func TestOpenAIResponsesRejectedFieldRetryStateRejectsDuplicateBodyAndCap(t *tes
 	require.False(t, state.Allow([]byte(`{"model":"gpt-5.5","variant":"overflow"}`)))
 }
 
-func TestOpenAIResponsesRejectedFieldRetryStateRemembersInitialBodyAfterAnotherRetry(t *testing.T) {
-	initialBody := []byte(`{"model":"gpt-5.5","truncation":"auto"}`)
-	state := newOpenAIResponsesRejectedFieldRetryState(initialBody)
-
-	require.True(t, state.Allow([]byte(`{"model":"gpt-5.5"}`)))
-	require.False(t, state.Allow(initialBody), "the initial body must stay excluded even though it is hashed lazily")
-}
-
 func TestOpenAIResponsesRejectedFieldRetryStateForRequestAllowsSameTransformAcrossAccounts(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())

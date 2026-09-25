@@ -693,4 +693,3 @@ internal interface IJevClient
 | 测试 | `tests/LanAi.RelayClient.Tests/WeChatIntent/`，64 个 | 全部通过；客户端测试共 893 个，全部通过。**还缺**：假助手进程的心跳超时和崩溃重启测试（第 12 节列了，没写） |
 
 **还没做的**：在真实微信上的端到端冒烟测试（第 12 节「手工冒烟」），包括浮窗的位置、不抢焦点、是否停在底部的判断（`IsAtBottom` 目前一直是 null，见 10.12）、深色模式的颜色标定。
-

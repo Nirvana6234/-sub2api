@@ -57,7 +57,7 @@ import type {
   PawSession,
   PawSubmitKey,
 } from "@/client/paw/types";
-import { clearRemoteCache } from "../../client/remote/store";
+import { clearRemoteData } from "../../client/remote/store";
 
 const CONVERSATIONS_KEY = "paw-conversations:v2";
 const ACTIVE_CONVERSATION_KEY = "paw-active-conversation:v2";
@@ -2343,9 +2343,8 @@ export function usePawClient() {
 
   const handleLogout = useCallback(() => {
     sendAbortRef.current?.abort();
-    // Cached conversations go; pairings stay with the account that made them, so signing
-    // back in continues without a new code (see client/remote/store.ts).
-    void clearRemoteCache();
+    // The next account must not inherit this one's paired computers or their conversations.
+    void clearRemoteData();
     clearEditState(false);
     clearPawSession();
     markPawSessionExpired();
