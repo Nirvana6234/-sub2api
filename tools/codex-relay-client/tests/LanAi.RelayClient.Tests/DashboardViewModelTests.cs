@@ -1535,6 +1535,71 @@ public sealed class DashboardViewModelTests
         Assert.True(dashboard.RequiresCodexAccountRestart);
     }
 
+    // 2026-09-25: after the client restarted, a ChatGPT still running from the previous
+    // instance was shown as 已启动 with the button greyed out, while it pointed at a relay
+    // port that no longer existed.
+    [Fact]
+    public async Task ARunningChatGPTThisClientDidNotConnectOffersToReconnect()
+    {
+        var codex = new FakeCodexStartup { OnCheck = () => new CodexHealth(true, true, null, IsConnected: false) };
+        DashboardViewModel dashboard = BuildWith(codex, new FakeCodexAccountStore(), "a@example.com", out RelaySessionManager session);
+        await session.SignInAsync("a@example.com", "pw");
+
+        await dashboard.MonitorCodexAsync();
+
+        Assert.True(dashboard.RequiresCodexReconnect);
+        Assert.True(dashboard.CodexNeedsRestart);
+        Assert.True(dashboard.CanStartCodex);
+        Assert.Equal("重新接入 ChatGPT", dashboard.StartCodexLabel);
+        Assert.Equal(0, codex.RunCount);
+    }
+
+    [Fact]
+    public async Task AConnectedRunningChatGPTStillReadsAsStarted()
+    {
+        var codex = new FakeCodexStartup { OnCheck = () => new CodexHealth(true, true, null, IsConnected: true) };
+        DashboardViewModel dashboard = BuildWith(codex, new FakeCodexAccountStore(), "a@example.com", out RelaySessionManager session);
+        await session.SignInAsync("a@example.com", "pw");
+
+        await dashboard.MonitorCodexAsync();
+
+        Assert.False(dashboard.RequiresCodexReconnect);
+        Assert.False(dashboard.CanStartCodex);
+        Assert.Equal("ChatGPT 已启动", dashboard.StartCodexLabel);
+    }
+
+    [Fact]
+    public async Task ConfirmingReconnectRestartsChatGPTAndClearsTheState()
+    {
+        var codex = new FakeCodexStartup { OnCheck = () => new CodexHealth(true, true, null, IsConnected: false) };
+        DashboardViewModel dashboard = BuildWith(codex, new FakeCodexAccountStore(), "a@example.com", out RelaySessionManager session);
+        await session.SignInAsync("a@example.com", "pw");
+        await dashboard.MonitorCodexAsync();
+        string? asked = null;
+
+        await dashboard.StartCodexAsync(message => { asked = message; return Task.FromResult(true); });
+
+        Assert.Contains("没有接入本客户端", asked, StringComparison.Ordinal);
+        Assert.Equal(1, codex.RunCount);
+        Assert.True(codex.LastAllowRestart);
+        Assert.False(dashboard.RequiresCodexReconnect);
+    }
+
+    [Fact]
+    public async Task CancellingReconnectLeavesChatGPTAlone()
+    {
+        var codex = new FakeCodexStartup { OnCheck = () => new CodexHealth(true, true, null, IsConnected: false) };
+        DashboardViewModel dashboard = BuildWith(codex, new FakeCodexAccountStore(), "a@example.com", out RelaySessionManager session);
+        await session.SignInAsync("a@example.com", "pw");
+        await dashboard.MonitorCodexAsync();
+
+        await dashboard.StartCodexAsync(_ => Task.FromResult(false));
+
+        Assert.Equal(0, codex.RunCount);
+        Assert.True(dashboard.RequiresCodexReconnect);
+        Assert.Equal("已取消重启，ChatGPT 仍未接入。", dashboard.CodexMessage);
+    }
+
     [Fact]
     public async Task MissingCodexSwitchesTheButtonToInstallWithoutIssuingAKey()
     {

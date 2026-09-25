@@ -382,7 +382,22 @@ public sealed partial class DashboardViewModel : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanStartCodex))]
     [NotifyPropertyChangedFor(nameof(StartCodexLabel))]
+    [NotifyPropertyChangedFor(nameof(CodexNeedsRestart))]
     private bool requiresCodexAccountRestart;
+
+    /// <summary>The button's restart highlight: either reason ChatGPT has to be restarted.</summary>
+    public bool CodexNeedsRestart => RequiresCodexAccountRestart || RequiresCodexReconnect;
+
+    /// <summary>
+    /// ChatGPT is running, but not through this client: it was left behind by a previous
+    /// client instance, whose relay port is gone, or started on its own. Every turn fails or
+    /// bypasses the relay, while a bare "已启动" would say all is well.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanStartCodex))]
+    [NotifyPropertyChangedFor(nameof(StartCodexLabel))]
+    [NotifyPropertyChangedFor(nameof(CodexNeedsRestart))]
+    private bool requiresCodexReconnect;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanStartCodex))]
@@ -464,7 +479,7 @@ public sealed partial class DashboardViewModel : ObservableObject
 
     public bool CanStartCodex => !IsStartingCodex && !IsInstallingCodex &&
         !AwaitingBillingGroup &&
-        (!IsCodexRunning || RequiresCodexAccountRestart);
+        (!IsCodexRunning || RequiresCodexAccountRestart || RequiresCodexReconnect);
 
     /// <summary>
     /// Whether the standalone "修复 ChatGPT 启动" button, sharing a row with the
@@ -494,6 +509,8 @@ public sealed partial class DashboardViewModel : ObservableObject
         ? "正在安装 ChatGPT…"
         : RequiresCodexAccountRestart
         ? "重启 ChatGPT 激活账户"
+        : RequiresCodexReconnect
+        ? "重新接入 ChatGPT"
         : IsCodexRunning
         ? "ChatGPT 已启动"
         : AwaitingBillingGroup
@@ -527,6 +544,7 @@ public sealed partial class DashboardViewModel : ObservableObject
         {
             CodexHealth health = await _codex.CheckAsync(cancellationToken).ConfigureAwait(true);
             IsCodexRunning = health.IsRunning;
+            RequiresCodexReconnect = health.IsRunning && !health.IsConnected && !IsStartingCodex;
             UpdateCodexAccountActivationState();
             CodexNotInstalled = !health.IsInstalled;
             CodexInstallerAvailable = _codexInstaller.Inspect().PackageAvailable;
@@ -642,12 +660,15 @@ public sealed partial class DashboardViewModel : ObservableObject
                         groupName: groupName)
                     .ConfigureAwait(true);
             }
-            else if (RequiresCodexAccountRestart)
+            else if (RequiresCodexAccountRestart || RequiresCodexReconnect)
             {
                 const string activationMessage = "当前登录账户与 ChatGPT 已激活账户不同，需要重启 ChatGPT 才能激活当前账户。";
-                if (!await confirmRestart(activationMessage).ConfigureAwait(true))
+                const string reconnectMessage = "ChatGPT 正在运行，但没有接入本客户端（客户端重启过，或 ChatGPT 是单独打开的）。需要重启 ChatGPT 才能接入，重启会中断正在进行的对话。";
+                if (!await confirmRestart(RequiresCodexAccountRestart ? activationMessage : reconnectMessage).ConfigureAwait(true))
                 {
-                    CodexMessage = "已取消重启，ChatGPT 仍使用原账户。";
+                    CodexMessage = RequiresCodexAccountRestart
+                        ? "已取消重启，ChatGPT 仍使用原账户。"
+                        : "已取消重启，ChatGPT 仍未接入。";
                     return;
                 }
 
@@ -702,6 +723,7 @@ public sealed partial class DashboardViewModel : ObservableObject
             if (result.Status == CodexStartupStatus.Ready)
             {
                 IsCodexRunning = true;
+                RequiresCodexReconnect = false;
                 CodexNotInstalled = false;
                 string currentEmail = _session.UserEmail.Trim();
                 if (!string.IsNullOrWhiteSpace(currentEmail))
@@ -1531,6 +1553,7 @@ public sealed partial class DashboardViewModel : ObservableObject
         Usage.Reset();
         GroupMessage = string.Empty;
         RequiresCodexAccountRestart = false;
+        RequiresCodexReconnect = false;
 
         Catalog.Reset();
         Groups.Clear();

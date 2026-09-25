@@ -309,6 +309,46 @@ public sealed class CodexLifecycleTests : IDisposable
         Assert.Contains(loopback.Token, File.ReadAllText(setup.Paths.AuthPath), StringComparison.Ordinal);
     }
 
+    // A ChatGPT left running by a previous client instance points at that instance's relay
+    // port, which is gone. Only a launch by this instance connects it (2026-09-25: the
+    // dashboard said 已启动 over a ChatGPT whose every turn failed).
+    [Fact]
+    public async Task OnlyALaunchByThisClientCountsAsConnected()
+    {
+        await using var loopback = new LocalPawRelay("https://relay.test/", _ => Task.FromResult("jwt"));
+        Setup setup = await CreateSetupAsync(localRelay: loopback);
+
+        Assert.False((await setup.Startup.CheckAsync()).IsConnected);
+
+        await setup.Startup.RunAsync(groupId: null, "https://relay.test/v1");
+        Assert.True((await setup.Startup.CheckAsync()).IsConnected);
+
+        await setup.Startup.ReleaseAsync();
+        Assert.False((await setup.Startup.CheckAsync()).IsConnected);
+    }
+
+    [Fact]
+    public async Task ALaunchBlockedByARunningChatGPTIsNotConnected()
+    {
+        await using var loopback = new LocalPawRelay("https://relay.test/", _ => Task.FromResult("jwt"));
+        Setup setup = await CreateSetupAsync(localRelay: loopback);
+        await setup.Startup.RunAsync(groupId: null, "https://relay.test/v1");
+
+        setup.Launcher.Outcome = CodexLaunchOutcome.BlockedByRunningInstance;
+        CodexStartupResult result = await setup.Startup.RunAsync(groupId: null, "https://relay.test/v1");
+
+        Assert.Equal(CodexStartupStatus.NeedsRestartConfirmation, result.Status);
+        Assert.False((await setup.Startup.CheckAsync()).IsConnected);
+    }
+
+    [Fact]
+    public async Task AManagedKeyAlwaysCountsAsConnected()
+    {
+        Setup setup = await CreateSetupAsync();
+
+        Assert.True((await setup.Startup.CheckAsync()).IsConnected);
+    }
+
     private async Task<Setup> CreateSetupAsync(
         ICodexRouteGuardHost? enhancement = null,
         LocalPawRelay? localRelay = null)
