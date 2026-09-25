@@ -60,6 +60,7 @@ const (
 	AuditIdentityDuplicate = "identity_duplicated"
 	AuditMultiIPChanged    = "allow_multi_ip_changed"
 	AuditPendingPurged     = "pending_purged"
+	AuditAddressMoved      = "address_moved"
 )
 
 // NodesOptions 配置节点管理。零值字段取设计 19 的默认值。
@@ -128,6 +129,8 @@ type Nodes struct {
 	multiIP    map[int64]bool
 	revoked    map[string]struct{}
 	superseded map[string]time.Time // 已被续签的证书 → 旧连接最迟关闭时间
+	moves      map[int64]ipMove     // 最近一次换出口
+	renewals   map[string]string    // 新证书 → 它替换的旧证书（新证书还没被用过）
 }
 
 // NewNodes 创建节点管理。调用 Load 之后才能用。
@@ -142,6 +145,8 @@ func NewNodes(store NodeStore, ca *CA, notifier Notifier, opts NodesOptions) *No
 		multiIP:    map[int64]bool{},
 		revoked:    map[string]struct{}{},
 		superseded: map[string]time.Time{},
+		moves:      map[int64]ipMove{},
+		renewals:   map[string]string{},
 	}
 }
 
@@ -155,6 +160,10 @@ func (n *Nodes) Load(ctx context.Context) error {
 		return err
 	}
 	revoked, err := n.store.ListRevokedSerials(ctx, n.now())
+	if err != nil {
+		return err
+	}
+	renewed, err := n.store.ListRenewedSerials(ctx, n.now())
 	if err != nil {
 		return err
 	}
@@ -176,8 +185,43 @@ func (n *Nodes) Load(ctx context.Context) error {
 			delete(n.superseded, serial)
 		}
 	}
+	// 被续签替换的证书以库为准：主节点重启后内存里的名单没了，从库里补回来。
+	for _, serial := range renewed {
+		if _, ok := n.superseded[serial]; !ok {
+			n.superseded[serial] = now
+		}
+	}
 	n.mu.Unlock()
 	return nil
+}
+
+// recordRenewal 记下"新证书替换旧证书"。旧证书在新证书第一次被使用时失效；
+// 宽限期内新证书一直没被用（比如续签回复丢了、从节点重启），宽限期到了也失效。
+// 这样回复丢失后，从节点还能用旧证书连上来重发续签、拿回同一张新证书（设计 7.2 第 1 条）。
+func (n *Nodes) recordRenewal(oldSerial, newSerial string) {
+	n.mu.Lock()
+	n.renewals[newSerial] = oldSerial
+	n.mu.Unlock()
+	time.AfterFunc(n.opts.RenewGrace, func() {
+		n.mu.Lock()
+		delete(n.renewals, newSerial)
+		n.mu.Unlock()
+		n.markSuperseded(oldSerial)
+	})
+}
+
+// markSuperseded 让被续签替换的旧证书不能再建新连接，已有连接宽限 RenewGrace 后关闭。
+func (n *Nodes) markSuperseded(serial string) {
+	n.mu.Lock()
+	if _, already := n.superseded[serial]; already {
+		n.mu.Unlock()
+		return
+	}
+	n.superseded[serial] = n.now().Add(n.opts.RenewGrace)
+	n.mu.Unlock()
+	if n.registry != nil {
+		n.registry.CloseSerialAfter(serial, n.opts.RenewGrace)
+	}
 }
 
 // RunRefresh 定时对账，直到 ctx 结束。只在主从分流开关打开时运行。
@@ -230,23 +274,80 @@ func (n *Nodes) AdmitConn(peer transport.PeerIdentity) error {
 	if superseded {
 		return errors.New("relay certificate was renewed; connect with the new certificate")
 	}
+	n.mu.Lock()
+	oldSerial, firstUse := n.renewals[peer.CertSerial]
+	delete(n.renewals, peer.CertSerial)
+	n.mu.Unlock()
+	if firstUse {
+		n.markSuperseded(oldSerial)
+	}
 	if !st.Serving() {
 		return fmt.Errorf("relay node is %s", orUnknown(st))
 	}
 	if n.registry == nil || multi {
 		return nil
 	}
+	return n.checkAddress(peer)
+}
+
+// ipMoveWindow：节点换出口后，这段时间里旧地址又用同一张证书连回来（而新地址还连着），
+// 就判定为两台机器在用同一身份。
+const ipMoveWindow = 10 * time.Minute
+
+type ipMove struct {
+	from, to string
+	at       time.Time
+}
+
+// checkAddress 处理同一张证书从不同 IP 连接（设计 7.2 第 2、3 条）：
+//   - 节点换了出口（云上 NAT 换 IP 等），旧地址上的连接还没等到保活超时，看起来像
+//     "两个 IP 同时连着"。这时按换 IP 处理：断开旧地址的连接、告警，不阻断；
+//   - 旧地址在新地址还连着的时候又连回来，才是真正的两份身份：退回待激活、吊销、严重告警。
+//     被偷的证书在别处使用时，原节点会被挤掉、重连，正好触发这一条。
+func (n *Nodes) checkAddress(peer transport.PeerIdentity) error {
 	ip := hostOf(peer.RemoteAddr)
+	others := map[string]struct{}{}
 	for _, c := range n.registry.Connections(peer.NodeID) {
-		if c.Peer.CertSerial == peer.CertSerial && hostOf(c.Peer.RemoteAddr) != ip {
-			n.duplicateIdentity(context.Background(), peer.NodeID, map[string]any{
-				"reason": "same certificate connected from two addresses",
-				"serial": peer.CertSerial,
-				"ips":    []string{hostOf(c.Peer.RemoteAddr), ip},
-			})
-			return errors.New("relay node identity is in use from another address")
+		if c.Peer.CertSerial == peer.CertSerial {
+			if other := hostOf(c.Peer.RemoteAddr); other != ip {
+				others[other] = struct{}{}
+			}
 		}
 	}
+	if len(others) == 0 {
+		return nil
+	}
+	now := n.now()
+	n.mu.Lock()
+	mv, moved := n.moves[peer.NodeID]
+	_, newStillConnected := others[mv.to]
+	returning := moved && now.Sub(mv.at) < ipMoveWindow && mv.from == ip && newStillConnected
+	if returning || len(others) > 1 {
+		n.mu.Unlock()
+		ips := []string{ip}
+		for o := range others {
+			ips = append(ips, o)
+		}
+		n.duplicateIdentity(context.Background(), peer.NodeID, map[string]any{
+			"reason": "same certificate connected from two addresses at once",
+			"serial": peer.CertSerial,
+			"ips":    ips,
+		})
+		return errors.New("relay node identity is in use from another address")
+	}
+	var from string
+	for o := range others {
+		from = o
+	}
+	n.moves[peer.NodeID] = ipMove{from: from, to: ip, at: now}
+	n.mu.Unlock()
+
+	go n.registry.CloseNodeAddr(peer.NodeID, from)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	detail := map[string]any{"from": from, "to": ip, "serial": peer.CertSerial}
+	_ = n.store.Audit(ctx, AuditEntry{NodeID: peer.NodeID, Action: AuditAddressMoved, SourceIP: ip, Detail: detail})
+	n.notify(ctx, Event{Kind: EventNodeIPChanged, Severity: SeverityWarning, NodeID: peer.NodeID, Detail: detail})
 	return nil
 }
 

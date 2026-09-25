@@ -221,6 +221,34 @@ func (s *MemoryStore) GetCertificate(_ context.Context, serial string) (*Certifi
 	return &cp, nil
 }
 
+func (s *MemoryStore) GetRenewalOf(_ context.Context, serial string) (*Certificate, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, c := range s.certs {
+		if c.RenewedFromSerial == serial {
+			cp := *c
+			return &cp, nil
+		}
+	}
+	return nil, ErrNodeNotFound
+}
+
+func (s *MemoryStore) ListRenewedSerials(_ context.Context, notAfter time.Time) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []string
+	for _, c := range s.certs {
+		if c.RenewedFromSerial == "" {
+			continue
+		}
+		if old, ok := s.certs[c.RenewedFromSerial]; ok && old.NotAfter.After(notAfter) {
+			out = append(out, old.Serial)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
 func (s *MemoryStore) CountCertificates(_ context.Context, nodeID int64) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

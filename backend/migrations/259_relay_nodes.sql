@@ -61,11 +61,14 @@ CREATE INDEX IF NOT EXISTS idx_relay_nodes_status
     WHERE deleted_at IS NULL;
 
 -- 主从通信证书（24 小时有效，续签换密钥）。按序列号吊销。
+-- certificate_der 保存签发的证书原文：续签回复丢失后，从节点用同一把新公钥重发时
+-- 原样返回这张证书（幂等），不把正常的重试当成"同一证书续签两次"。
 CREATE TABLE IF NOT EXISTS relay_node_certificates (
     id BIGSERIAL PRIMARY KEY,
     node_id BIGINT NOT NULL REFERENCES relay_nodes(id) ON DELETE CASCADE,
     serial VARCHAR(64) NOT NULL,
     public_key TEXT NOT NULL,
+    certificate_der BYTEA NOT NULL DEFAULT ''::bytea,
     not_before TIMESTAMPTZ NOT NULL,
     not_after TIMESTAMPTZ NOT NULL,
     renewed_from_serial VARCHAR(64) NOT NULL DEFAULT '',
@@ -80,7 +83,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_relay_node_certificates_serial
     ON relay_node_certificates (serial);
 CREATE INDEX IF NOT EXISTS idx_relay_node_certificates_node
     ON relay_node_certificates (node_id, not_after DESC);
--- "同一把旧密钥被续签两次"的检测靠这个唯一索引：一张证书只能被续签一次。
+-- 一张证书只能被续签出一张新证书。用同一把新公钥重发是幂等重放；换了公钥再续签
+-- 就是"同一把旧密钥被续签两次"（设计 7.2），按身份重复处理。
 CREATE UNIQUE INDEX IF NOT EXISTS idx_relay_node_certificates_renewed_from
     ON relay_node_certificates (renewed_from_serial)
     WHERE renewed_from_serial <> '';

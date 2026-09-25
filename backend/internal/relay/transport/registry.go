@@ -87,6 +87,23 @@ func (r *ConnRegistry) CloseSerialAfter(serial string, delay time.Duration) *tim
 	return time.AfterFunc(delay, func() { r.CloseSerial(serial) })
 }
 
+// CloseNodeAddr 断开这个节点从某个 IP 建立的连接（节点换出口后清掉旧地址上的半开连接）。
+func (r *ConnRegistry) CloseNodeAddr(nodeID int64, ip string) int {
+	return r.closeWhere(func(p PeerIdentity) bool {
+		return p.Class == PeerIssued && p.NodeID == nodeID && hostOfAddr(p.RemoteAddr) == ip
+	})
+}
+
+func hostOfAddr(addr net.Addr) string {
+	if addr == nil {
+		return ""
+	}
+	if host, _, err := net.SplitHostPort(addr.String()); err == nil {
+		return host
+	}
+	return addr.String()
+}
+
 // CloseKey 断开用这把长期密钥建立的连接（节点被拒绝、密钥拉黑时）。
 func (r *ConnRegistry) CloseKey(fingerprint string) int {
 	return r.closeWhere(func(p PeerIdentity) bool { return p.Class == PeerLongTerm && p.KeyFingerprint == fingerprint })

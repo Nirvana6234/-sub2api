@@ -244,9 +244,9 @@ func (r *relayNodeRepository) PurgeStalePending(ctx context.Context, before time
 
 func (r *relayNodeRepository) InsertCertificate(ctx context.Context, c *master.Certificate) error {
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO relay_node_certificates (node_id, serial, public_key, not_before, not_after, renewed_from_serial)
-		VALUES ($1, $2, $3, $4, $5, $6)`,
-		c.NodeID, c.Serial, encodeRelayKey(c.PublicKey), c.NotBefore, c.NotAfter, c.RenewedFromSerial)
+		INSERT INTO relay_node_certificates (node_id, serial, public_key, certificate_der, not_before, not_after, renewed_from_serial)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		c.NodeID, c.Serial, encodeRelayKey(c.PublicKey), c.DER, c.NotBefore, c.NotAfter, c.RenewedFromSerial)
 	var pqErr *pq.Error
 	if errors.As(err, &pqErr) && pqErr.Code == "23505" && strings.Contains(pqErr.Constraint, "renewed_from") {
 		return master.ErrDuplicateRenewal
@@ -254,14 +254,13 @@ func (r *relayNodeRepository) InsertCertificate(ctx context.Context, c *master.C
 	return err
 }
 
-func (r *relayNodeRepository) GetCertificate(ctx context.Context, serial string) (*master.Certificate, error) {
+const relayCertColumns = `id, node_id, serial, public_key, certificate_der, not_before, not_after, renewed_from_serial, revoked_at, revoke_reason, created_at`
+
+func scanRelayCert(row rowScanner) (*master.Certificate, error) {
 	var c master.Certificate
 	var pub string
 	var revoked sql.NullTime
-	err := r.db.QueryRowContext(ctx, `
-		SELECT id, node_id, serial, public_key, not_before, not_after, renewed_from_serial, revoked_at, revoke_reason, created_at
-		FROM relay_node_certificates WHERE serial = $1`, serial).
-		Scan(&c.ID, &c.NodeID, &c.Serial, &pub, &c.NotBefore, &c.NotAfter, &c.RenewedFromSerial, &revoked, &c.RevokeReason, &c.CreatedAt)
+	err := row.Scan(&c.ID, &c.NodeID, &c.Serial, &pub, &c.DER, &c.NotBefore, &c.NotAfter, &c.RenewedFromSerial, &revoked, &c.RevokeReason, &c.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, master.ErrNodeNotFound
 	}
@@ -274,6 +273,36 @@ func (r *relayNodeRepository) GetCertificate(ctx context.Context, serial string)
 		c.RevokedAt = &t
 	}
 	return &c, nil
+}
+
+func (r *relayNodeRepository) GetCertificate(ctx context.Context, serial string) (*master.Certificate, error) {
+	return scanRelayCert(r.db.QueryRowContext(ctx, `SELECT `+relayCertColumns+` FROM relay_node_certificates WHERE serial = $1`, serial))
+}
+
+func (r *relayNodeRepository) GetRenewalOf(ctx context.Context, serial string) (*master.Certificate, error) {
+	return scanRelayCert(r.db.QueryRowContext(ctx,
+		`SELECT `+relayCertColumns+` FROM relay_node_certificates WHERE renewed_from_serial = $1 AND renewed_from_serial <> ''`, serial))
+}
+
+func (r *relayNodeRepository) ListRenewedSerials(ctx context.Context, notAfter time.Time) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT c.serial FROM relay_node_certificates c
+		WHERE c.not_after > $1
+		  AND EXISTS (SELECT 1 FROM relay_node_certificates r WHERE r.renewed_from_serial = c.serial)
+		ORDER BY c.serial`, notAfter)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
 }
 
 func (r *relayNodeRepository) CountCertificates(ctx context.Context, nodeID int64) (int, error) {

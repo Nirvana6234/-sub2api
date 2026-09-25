@@ -76,9 +76,8 @@ func (p PeerIdentity) limiterKey() string {
 	switch p.Class {
 	case PeerIssued:
 		return "node:" + strconv.FormatInt(p.NodeID, 10)
-	case PeerLongTerm:
-		return "key:" + p.KeyFingerprint
 	default:
+		// 长期密钥和匿名对端都按来源 IP 限流：换一把密钥不能换来一份新的额度。
 		if p.RemoteAddr != nil {
 			if host, _, err := net.SplitHostPort(p.RemoteAddr.String()); err == nil {
 				return "ip:" + host

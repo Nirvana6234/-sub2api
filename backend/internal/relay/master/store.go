@@ -56,6 +56,7 @@ type Certificate struct {
 	NodeID            int64
 	Serial            string
 	PublicKey         []byte // PKIX DER
+	DER               []byte // 签发的证书原文，续签重放时原样返回
 	NotBefore         time.Time
 	NotAfter          time.Time
 	RenewedFromSerial string
@@ -114,6 +115,11 @@ type NodeStore interface {
 	PurgeStalePending(ctx context.Context, before time.Time) (int64, error)
 	InsertCertificate(ctx context.Context, c *Certificate) error
 	GetCertificate(ctx context.Context, serial string) (*Certificate, error)
+	// GetRenewalOf 返回由 serial 续签出的那张证书；没有时返回 ErrNodeNotFound。
+	GetRenewalOf(ctx context.Context, serial string) (*Certificate, error)
+	// ListRenewedSerials 返回 notAfter 之后才过期、且已经被续签替换的证书：
+	// 它们不能再建新连接（设计 7.2 第 1 条），主节点重启后要从库里恢复这份名单。
+	ListRenewedSerials(ctx context.Context, notAfter time.Time) ([]string, error)
 	CountCertificates(ctx context.Context, nodeID int64) (int, error)
 	// RevokeCertificates 吊销节点所有未吊销、未过期的证书，返回被吊销的序列号。
 	RevokeCertificates(ctx context.Context, nodeID int64, reason string, at time.Time) ([]string, error)

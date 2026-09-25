@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -89,11 +90,16 @@ type testNode struct {
 
 func startNode(t *testing.T, m *testMaster, dir, localIP string) *testNode {
 	t.Helper()
+	return startNodeVia(t, m, dir, m.addr, localIP)
+}
+
+func startNodeVia(t *testing.T, m *testMaster, dir, addr, localIP string) *testNode {
+	t.Helper()
 	id, err := identity.Load(dir)
 	require.NoError(t, err)
 	fps := m.ca.RootFingerprints()
 	client, err := transport.NewClient(transport.ClientOptions{
-		Address:        m.addr,
+		Address:        addr,
 		LocalIP:        localIP,
 		ProgramVersion: "test",
 		RotateGrace:    200 * time.Millisecond,
@@ -266,39 +272,104 @@ func TestCopiedCertificateOnASecondMachineDisconnectsTheNode(t *testing.T) {
 	nodeID := enroll(t, m, n)
 	require.NoError(t, n.ping(t))
 
-	// 第二台机器（另一个地址）拿着同一张证书连过来。
+	// 第二台机器（另一个地址）拿着同一张证书连过来。它先被当成"换了出口"放行，
+	// 原节点被挤掉后自动重连——旧地址在新地址还连着时回来，判定为两份身份。
 	thief := rawClient(t, m, n.id.TLSCertificate(), "127.0.0.2")
-	require.Error(t, pingWith(thief))
+	_ = pingWith(thief)
 
-	node, err := m.store.GetByID(context.Background(), nodeID)
-	require.NoError(t, err)
-	require.Equal(t, master.NodePending, node.Status, "the node goes back to pending")
+	// 真实节点一直有心跳和选号请求，断开后马上重连；这里用持续的调用模拟。
+	require.Eventually(t, func() bool {
+		_ = n.ping(t)
+		node, err := m.store.GetByID(context.Background(), nodeID)
+		return err == nil && node.Status == master.NodePending
+	}, 10*time.Second, 20*time.Millisecond, "the node goes back to pending")
 	require.True(t, hasAudit(m, nodeID, master.AuditIdentityDuplicate))
-	require.Eventually(t, func() bool { return n.ping(t) != nil }, 5*time.Second, 50*time.Millisecond,
-		"the original connections are closed and the certificate is revoked")
+	require.Eventually(t, func() bool { return n.ping(t) != nil && pingWith(thief) != nil }, 5*time.Second, 50*time.Millisecond,
+		"both copies are cut off and the certificate is revoked")
 }
 
-func TestRenewingTheSameCertificateTwiceDisconnectsTheNode(t *testing.T) {
+func TestNodeThatChangesItsAddressStaysActive(t *testing.T) {
+	m := startMaster(t, master.NodesOptions{})
+	// 旧地址的连接经过一个会"冻结"的代理：节点换出口后，主节点上留着半开的旧连接。
+	proxy := newFreezingProxy(t, m.addr)
+	old := startNodeVia(t, m, t.TempDir(), proxy.addr(), "")
+	nodeID := enroll(t, m, old)
+	require.NoError(t, old.ping(t))
+	require.NotEmpty(t, m.srv.Registry().Connections(nodeID))
+
+	proxy.freeze()
+	cert := old.id.TLSCertificate()
+	require.NoError(t, old.client.Close())
+
+	moved := rawClient(t, m, cert, "127.0.0.2")
+	require.NoError(t, pingWith(moved), "the node reconnects from its new address")
+	node, err := m.store.GetByID(context.Background(), nodeID)
+	require.NoError(t, err)
+	require.Equal(t, master.NodeActive, node.Status, "an address change alone only raises an alert")
+	require.True(t, hasAudit(m, nodeID, master.AuditAddressMoved))
+	require.Eventually(t, func() bool {
+		for _, c := range m.srv.Registry().Connections(nodeID) {
+			if strings.HasPrefix(c.Peer.RemoteAddr.String(), "127.0.0.1:") {
+				return false
+			}
+		}
+		return true
+	}, 5*time.Second, 20*time.Millisecond, "half-open connections on the old address are closed")
+}
+
+func TestRenewingTheSameCertificateTwiceWithDifferentKeysDisconnectsTheNode(t *testing.T) {
 	m := startMaster(t, master.NodesOptions{RenewGrace: 5 * time.Second})
 	n := startNode(t, m, t.TempDir(), "")
 	nodeID := enroll(t, m, n)
 
-	// 用同一张证书、同一条连接续签两次。
+	// 同一张旧证书，先后带两把不同的新公钥续签：旧证书在两处被使用。
 	stolen := rawClient(t, m, n.id.TLSCertificate(), "")
 	enroll := relayv1.NewRelayEnrollmentClient(stolen.Conn(transport.TierControl))
-	req, _, err := n.id.PrepareRequest()
+	first, _, err := n.id.PrepareRequest()
 	require.NoError(t, err)
+	other, err := identity.Load(t.TempDir())
+	require.NoError(t, err)
+	second, _, err := other.PrepareRequest()
+	require.NoError(t, err)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_, err = enroll.RenewCertificate(ctx, req)
+	_, err = enroll.RenewCertificate(ctx, first)
 	require.NoError(t, err)
-	_, err = enroll.RenewCertificate(ctx, req)
+	_, err = enroll.RenewCertificate(ctx, second)
 	require.Equal(t, codes.PermissionDenied, status.Code(err))
 
 	node, err := m.store.GetByID(context.Background(), nodeID)
 	require.NoError(t, err)
 	require.Equal(t, master.NodePending, node.Status)
 	require.True(t, hasAudit(m, nodeID, master.AuditIdentityDuplicate))
+}
+
+func TestLostRenewalResponseIsReplayedNotTreatedAsTheft(t *testing.T) {
+	m := startMaster(t, master.NodesOptions{RenewGrace: 5 * time.Second})
+	dir := t.TempDir()
+	n := startNode(t, m, dir, "")
+	nodeID := enroll(t, m, n)
+
+	// 续签请求到了主节点、签发了证书，但回复丢了：从节点没装上。
+	req, _, err := n.id.PrepareRequest()
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	lost, err := relayv1.NewRelayEnrollmentClient(n.client.Conn(transport.TierControl)).RenewCertificate(ctx, req)
+	require.NoError(t, err)
+
+	// 从节点重启后重试：复用落盘的待用密钥，主节点原样返回同一张证书。
+	require.NoError(t, n.client.Close())
+	again := startNode(t, m, dir, "")
+	require.NoError(t, again.enroller.Renew(ctx))
+	require.Equal(t, lost.Certificate, again.id.TLSCertificate().Certificate[0], "the replay returns the certificate issued the first time")
+	require.NoError(t, again.ping(t))
+
+	node, err := m.store.GetByID(context.Background(), nodeID)
+	require.NoError(t, err)
+	require.Equal(t, master.NodeActive, node.Status, "a retried renewal is not a theft signal")
+	require.False(t, hasAudit(m, nodeID, master.AuditIdentityDuplicate))
 }
 
 func TestRevokedNodeCannotRecoverUntilReactivated(t *testing.T) {
@@ -379,4 +450,60 @@ func pingWith(c *transport.Client) error {
 	defer cancel()
 	_, err := relayv1.NewRelayControlClient(c.Conn(transport.TierControl)).Ping(ctx, &relayv1.PingRequest{})
 	return err
+}
+
+// freezingProxy 转发 TCP；freeze 之后停止转发但不关连接，模拟节点换出口后
+// 主节点上残留的半开连接。
+type freezingProxy struct {
+	lis    net.Listener
+	target string
+	frozen atomic.Bool
+}
+
+func newFreezingProxy(t *testing.T, target string) *freezingProxy {
+	t.Helper()
+	lis, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	p := &freezingProxy{lis: lis, target: target}
+	t.Cleanup(func() { _ = lis.Close() })
+	go func() {
+		for {
+			in, err := lis.Accept()
+			if err != nil {
+				return
+			}
+			out, err := net.Dial("tcp4", target)
+			if err != nil {
+				_ = in.Close()
+				continue
+			}
+			t.Cleanup(func() { _ = in.Close(); _ = out.Close() })
+			go p.pipe(out, in)
+			go p.pipe(in, out)
+		}
+	}()
+	return p
+}
+
+func (p *freezingProxy) addr() string { return p.lis.Addr().String() }
+
+func (p *freezingProxy) freeze() { p.frozen.Store(true) }
+
+func (p *freezingProxy) pipe(dst, src net.Conn) {
+	buf := make([]byte, 32<<10)
+	for {
+		n, err := src.Read(buf)
+		if err != nil {
+			if !p.frozen.Load() {
+				_ = dst.Close()
+			}
+			return
+		}
+		if p.frozen.Load() {
+			continue
+		}
+		if _, err := dst.Write(buf[:n]); err != nil {
+			return
+		}
+	}
 }

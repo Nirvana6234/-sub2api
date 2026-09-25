@@ -8,6 +8,8 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
 	"github.com/Wei-Shaw/sub2api/internal/relay/transport"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // ErrRejected 表示管理员拒绝了这把长期密钥，同一台机器要换密钥重新注册（设计 11.2）。
@@ -140,27 +142,34 @@ func (e *Enroller) Renew(ctx context.Context) error {
 	return nil
 }
 
-// RunRenewal 在证书用掉三分之二有效期时续签；失败按退避重试，证书过期就走恢复
-// （EnsureCertificate 用长期密钥重新领取）。直到 ctx 结束。
+// renewAttemptsBeforeRecovery：续签连续失败这么多次后，改用长期密钥重新领证。
+const renewAttemptsBeforeRecovery = 3
+
+// RunRenewal 在证书用掉三分之二有效期时续签；失败按退避重试（重试复用落盘的待用密钥，
+// 主节点把它当作重放）。续签被拒（旧证书已被替换、节点状态不对）或连续失败多次时，
+// 丢掉当前证书，改用长期密钥重新领证（设计 7.2 第 4 条的恢复）。证书过期同样走恢复。
+// 直到 ctx 结束。
 func (e *Enroller) RunRenewal(ctx context.Context, onError func(error)) {
 	backoff := transport.DefaultBackoff()
+	failures := 0
 	for {
 		if !e.id.HasValidIssued() {
 			if err := e.EnsureCertificate(ctx); err != nil {
-				if ctx.Err() != nil || errors.Is(err, ErrRejected) {
-					if onError != nil && ctx.Err() == nil {
-						onError(err)
-					}
+				if ctx.Err() != nil {
 					return
 				}
 				if onError != nil {
 					onError(err)
+				}
+				if errors.Is(err, ErrRejected) {
+					return
 				}
 				if !sleep(ctx, backoff.Next()) {
 					return
 				}
 				continue
 			}
+			failures = 0
 		}
 		notBefore, notAfter := e.id.IssuedValidity()
 		renewAt := notBefore.Add(notAfter.Sub(notBefore) * 2 / 3)
@@ -174,13 +183,33 @@ func (e *Enroller) RunRenewal(ctx context.Context, onError func(error)) {
 			if onError != nil {
 				onError(err)
 			}
+			failures++
+			if refusedRenewal(err) || failures >= renewAttemptsBeforeRecovery {
+				e.id.DiscardIssued()
+				failures = 0
+				continue
+			}
 			if !sleep(ctx, backoff.Next()) {
 				return
 			}
 			continue
 		}
+		failures = 0
 		backoff.Reset()
 	}
+}
+
+// refusedRenewal 报告主节点是否明确拒绝了这次续签（而不是暂时连不上）。
+func refusedRenewal(err error) bool {
+	switch status.Code(errors.Unwrap(err)) {
+	case codes.PermissionDenied, codes.FailedPrecondition, codes.Unauthenticated:
+		return true
+	}
+	switch status.Code(err) {
+	case codes.PermissionDenied, codes.FailedPrecondition, codes.Unauthenticated:
+		return true
+	}
+	return false
 }
 
 func sleep(ctx context.Context, d time.Duration) bool {

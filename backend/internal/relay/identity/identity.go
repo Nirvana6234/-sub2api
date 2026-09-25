@@ -34,6 +34,10 @@ const (
 	fileCert        = "node.crt"
 	fileCertKey     = "node.key"
 	fileEncKey      = "node.enc"
+	// 待用的新密钥：发出领证 / 续签请求之前先落盘，回复丢失后重试、甚至重启后都复用
+	// 同一对密钥，主节点据此把重发识别为重放，而不是"同一证书续签两次"。
+	filePendingKey = "pending.key"
+	filePendingEnc = "pending.enc"
 )
 
 // validityMargin：签发证书剩余有效期少于它就不再使用，改走恢复。
@@ -165,22 +169,84 @@ type PendingKeys struct {
 	encKey *ecdh.PrivateKey
 }
 
-// PrepareRequest 生成新的 TLS 密钥和加密密钥，返回要发给主节点的请求。
+// PrepareRequest 返回要发给主节点的领证 / 续签请求。上一次请求还没装上证书时
+// 复用那一对待用密钥（已落盘），否则生成新的 TLS 密钥和加密密钥并先落盘。
 func (i *Identity) PrepareRequest() (*relayv1.CertificateRequest, *PendingKeys, error) {
-	_, tlsKey, err := ed25519.GenerateKey(rand.Reader)
+	p, err := i.loadPending()
+	if err != nil || p == nil {
+		p, err = i.newPending()
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	pub, err := x509.MarshalPKIXPublicKey(p.tlsKey.Public())
 	if err != nil {
 		return nil, nil, err
+	}
+	return &relayv1.CertificateRequest{TlsPublicKey: pub, EncryptionPublicKey: p.encKey.PublicKey().Bytes()}, p, nil
+}
+
+func (i *Identity) newPending() (*PendingKeys, error) {
+	_, tlsKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, err
 	}
 	encKey, err := sealbox.GenerateKey()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	pub, err := x509.MarshalPKIXPublicKey(tlsKey.Public())
+	der, err := x509.MarshalPKCS8PrivateKey(tlsKey)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return &relayv1.CertificateRequest{TlsPublicKey: pub, EncryptionPublicKey: encKey.PublicKey().Bytes()},
-		&PendingKeys{tlsKey: tlsKey, encKey: encKey}, nil
+	if err := writeFileAtomic(filepath.Join(i.dir, filePendingEnc), pem.EncodeToMemory(&pem.Block{Type: "X25519 PRIVATE KEY", Bytes: encKey.Bytes()})); err != nil {
+		return nil, err
+	}
+	if err := writeFileAtomic(filepath.Join(i.dir, filePendingKey), pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})); err != nil {
+		return nil, err
+	}
+	return &PendingKeys{tlsKey: tlsKey, encKey: encKey}, nil
+}
+
+func (i *Identity) loadPending() (*PendingKeys, error) {
+	keyPEM, err := os.ReadFile(filepath.Join(i.dir, filePendingKey))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	encPEM, err := os.ReadFile(filepath.Join(i.dir, filePendingEnc))
+	if err != nil {
+		return nil, err
+	}
+	kb, _ := pem.Decode(keyPEM)
+	eb, _ := pem.Decode(encPEM)
+	if kb == nil || eb == nil {
+		return nil, errors.New("relay pending key files are malformed")
+	}
+	parsed, err := x509.ParsePKCS8PrivateKey(kb.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	tlsKey, ok := parsed.(ed25519.PrivateKey)
+	if !ok {
+		return nil, errors.New("relay pending key is not Ed25519")
+	}
+	encKey, err := ecdh.X25519().NewPrivateKey(eb.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	return &PendingKeys{tlsKey: tlsKey, encKey: encKey}, nil
+}
+
+// DiscardIssued 丢掉当前签发证书（内存和文件），之后握手改用长期密钥证书，
+// 走 ObtainCertificate 恢复。续签一直失败、旧证书已被主节点替换时用。
+func (i *Identity) DiscardIssued() {
+	i.mu.Lock()
+	i.issued = nil
+	i.mu.Unlock()
+	_ = os.Remove(filepath.Join(i.dir, fileCert))
 }
 
 // Install 校验并启用主节点签发的证书：公钥必须是这次生成的、节点 ID 与证书一致且
@@ -227,6 +293,10 @@ func (i *Identity) Install(p *PendingKeys, resp *relayv1.CertificateResponse) er
 	if err := writeFileAtomic(filepath.Join(i.dir, fileCert), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leaf.Raw})); err != nil {
 		return err
 	}
+
+	// 证书已落盘，待用密钥用完了。
+	_ = os.Remove(filepath.Join(i.dir, filePendingKey))
+	_ = os.Remove(filepath.Join(i.dir, filePendingEnc))
 
 	i.mu.Lock()
 	i.prevEncKey = i.encKey

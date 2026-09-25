@@ -153,7 +153,7 @@ func Run(t *testing.T, h Harness) {
 		n, err := s.CreatePending(ctx, newNode("c"), 20)
 		require.NoError(t, err)
 		now := time.Now().UTC().Truncate(time.Millisecond)
-		first := &master.Certificate{NodeID: n.ID, Serial: "s1-" + n.IdentityFingerprint[:8], PublicKey: []byte{1}, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour)}
+		first := &master.Certificate{NodeID: n.ID, Serial: "s1-" + n.IdentityFingerprint[:8], PublicKey: []byte{1}, DER: []byte{0xde, 0xad}, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour)}
 		require.NoError(t, s.InsertCertificate(ctx, first))
 		renewed := &master.Certificate{NodeID: n.ID, Serial: "s2-" + n.IdentityFingerprint[:8], PublicKey: []byte{2}, NotBefore: now, NotAfter: now.Add(2 * time.Hour), RenewedFromSerial: first.Serial}
 		require.NoError(t, s.InsertCertificate(ctx, renewed))
@@ -163,12 +163,23 @@ func Run(t *testing.T, h Harness) {
 		expired := &master.Certificate{NodeID: n.ID, Serial: "s0-" + n.IdentityFingerprint[:8], PublicKey: []byte{0}, NotBefore: now.Add(-3 * time.Hour), NotAfter: now.Add(-2 * time.Hour)}
 		require.NoError(t, s.InsertCertificate(ctx, expired))
 
+		renewal, err := s.GetRenewalOf(ctx, first.Serial)
+		require.NoError(t, err)
+		require.Equal(t, renewed.Serial, renewal.Serial)
+		_, err = s.GetRenewalOf(ctx, renewed.Serial)
+		require.ErrorIs(t, err, master.ErrNodeNotFound, "the newest certificate has not been renewed")
+		superseded, err := s.ListRenewedSerials(ctx, now)
+		require.NoError(t, err)
+		require.Contains(t, superseded, first.Serial)
+		require.NotContains(t, superseded, renewed.Serial)
+
 		count, err := s.CountCertificates(ctx, n.ID)
 		require.NoError(t, err)
 		require.Equal(t, 3, count)
 		got, err := s.GetCertificate(ctx, first.Serial)
 		require.NoError(t, err)
 		require.Equal(t, []byte{1}, got.PublicKey)
+		require.Equal(t, []byte{0xde, 0xad}, got.DER)
 		require.Nil(t, got.RevokedAt)
 
 		revoked, err := s.RevokeCertificates(ctx, n.ID, "test", now)

@@ -1,6 +1,7 @@
 package master
 
 import (
+	"bytes"
 	"context"
 	"crypto/x509"
 	"errors"
@@ -172,9 +173,12 @@ func (e *Enrollment) ObtainCertificate(ctx context.Context, req *relayv1.Certifi
 	return resp, nil
 }
 
-// RenewCertificate 用当前证书续签：签发新证书，旧证书立即不能建新连接，
-// 已有连接最多保留 RenewGrace 后由主节点关闭（设计 7.2 第 1 条）。
-// 同一张证书被续签两次，说明它被偷了：按"同一身份出现两份"处理。
+// RenewCertificate 用当前证书续签：签发新证书。新证书一被使用，旧证书就不能再建新连接，
+// 已有连接最多保留 RenewGrace 后由主节点关闭（设计 7.2 第 1 条，见 recordRenewal）。
+//
+// 同一张旧证书带着**同一把新公钥**再来，是回复丢失后的重发（从节点把待用的新密钥
+// 落了盘，重试和重启都复用它）：原样返回上次签发的证书。带着**另一把公钥**再来，
+// 说明旧证书在两处被使用：按"同一身份出现两份"处理。
 func (e *Enrollment) RenewCertificate(ctx context.Context, req *relayv1.CertificateRequest) (*relayv1.CertificateResponse, error) {
 	peer, _ := transport.PeerFromContext(ctx)
 	node, err := e.nodes.store.GetByID(ctx, peer.NodeID)
@@ -183,19 +187,20 @@ func (e *Enrollment) RenewCertificate(ctx context.Context, req *relayv1.Certific
 	}
 	resp, err := e.issue(ctx, node, req, peer.CertSerial)
 	if errors.Is(err, ErrDuplicateRenewal) {
-		e.nodes.duplicateIdentity(ctx, node.ID, map[string]any{"reason": "the same certificate was renewed twice", "serial": peer.CertSerial})
+		prior, lookupErr := e.nodes.store.GetRenewalOf(ctx, peer.CertSerial)
+		if lookupErr == nil && prior.RevokedAt == nil && len(prior.DER) > 0 && bytes.Equal(prior.PublicKey, req.GetTlsPublicKey()) {
+			if err := e.nodes.store.SetEncryptionKey(ctx, node.ID, req.GetEncryptionPublicKey()); err != nil {
+				return nil, status.Error(codes.Internal, "store encryption key failed")
+			}
+			return &relayv1.CertificateResponse{Certificate: prior.DER, NotAfterUnixMs: prior.NotAfter.UnixMilli(), NodeId: node.ID}, nil
+		}
+		e.nodes.duplicateIdentity(ctx, node.ID, map[string]any{"reason": "the same certificate was renewed twice with different keys", "serial": peer.CertSerial})
 		return nil, status.Error(codes.PermissionDenied, "relay certificate was already renewed")
 	}
 	if err != nil {
 		return nil, err
 	}
-	until := e.nodes.now().Add(e.nodes.opts.RenewGrace)
-	e.nodes.mu.Lock()
-	e.nodes.superseded[peer.CertSerial] = until
-	e.nodes.mu.Unlock()
-	if e.nodes.registry != nil {
-		e.nodes.registry.CloseSerialAfter(peer.CertSerial, e.nodes.opts.RenewGrace)
-	}
+	e.nodes.recordRenewal(peer.CertSerial, serialOf(resp))
 	_ = e.nodes.store.Audit(ctx, AuditEntry{NodeID: node.ID, Action: AuditCertRenewed, SourceIP: hostOf(peer.RemoteAddr), Detail: map[string]any{"from": peer.CertSerial}})
 	return resp, nil
 }
@@ -217,6 +222,7 @@ func (e *Enrollment) issue(ctx context.Context, node *Node, req *relayv1.Certifi
 		NodeID:            node.ID,
 		Serial:            cert.SerialNumber.Text(16),
 		PublicKey:         req.GetTlsPublicKey(),
+		DER:               cert.Raw,
 		NotBefore:         cert.NotBefore,
 		NotAfter:          cert.NotAfter,
 		RenewedFromSerial: renewedFrom,
@@ -309,4 +315,12 @@ func peerTLS(ctx context.Context) ([]*x509.Certificate, bool) {
 		return nil, false
 	}
 	return info.State.PeerCertificates, true
+}
+
+func serialOf(resp *relayv1.CertificateResponse) string {
+	cert, err := x509.ParseCertificate(resp.GetCertificate())
+	if err != nil {
+		return ""
+	}
+	return cert.SerialNumber.Text(16)
 }
