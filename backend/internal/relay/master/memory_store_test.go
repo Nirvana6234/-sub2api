@@ -11,8 +11,12 @@ import (
 func TestMemoryStoreContract(t *testing.T) {
 	mastertest.Run(t, mastertest.Harness{
 		New: func(*testing.T) master.NodeStore { return master.NewMemoryStore() },
-		Age: func(_ *testing.T, s master.NodeStore, id int64, at time.Time) {
-			s.(*master.MemoryStore).SetCreatedAt(id, at)
+		Age: func(t *testing.T, s master.NodeStore, id int64, at time.Time) {
+			mem, ok := s.(*master.MemoryStore)
+			if !ok {
+				t.Fatalf("unexpected store %T", s)
+			}
+			mem.SetCreatedAt(id, at)
 		},
 	})
 }

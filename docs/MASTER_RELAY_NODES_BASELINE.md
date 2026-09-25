@@ -37,3 +37,15 @@ go test -tags=unit -count=1 -skip 'TestUserRepositoryCreateSerializesNormalizedE
 | `internal/repository` | `TestServerTimingConnectorRecordsDriverCallsWithoutRowLifetime` |
 | `internal/server` | `TestAPIContracts` 的 7 个子用例：`GET /api/v1/auth/me`、`POST /api/v1/keys`、`GET /api/v1/keys (paginated)`、`GET /api/v1/groups/available`、`GET /api/v1/usage (paginated)`、`GET /api/v1/admin/settings`、`GET /api/v1/admin/settings falls back to config oauth defaults` |
 | `internal/service` | `TestAdminServiceSimpleModeNormalizesAllUnsupportedUpdateFieldsDirectly`、`TestResolveAutoGroupExpiredPendingProbeReloadsPersonalMetricsAndSettlesOnMeasuredGroup` |
+
+## golangci-lint 基线
+
+本机用 CI 同版本 v2.13.0（`go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.0`）。
+
+```bash
+cd backend
+golangci-lint run --max-issues-per-linter=0 --max-same-issues=0 ./...
+```
+
+开工时主干上已有 89 条（errcheck 47、unused 23、gofmt 8、ineffassign 6、staticcheck 4、gosec 1），都不在主从分流改动的文件里，不在本分支修。
+门槛：`internal/relay/...` 必须 0 条；改动过的其他文件不新增条目。

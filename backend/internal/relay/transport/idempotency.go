@@ -120,16 +120,22 @@ func (s *idempotencyStore) do(ctx context.Context, peerKey, key string, fn func(
 	e.element = p.order.PushBack(e)
 	p.bytes += entrySize(e)
 	for p.bytes > s.opts.MaxBytesPerPeer && p.order.Len() > 0 {
-		s.removeLocked(p, p.order.Front().Value.(*idempotencyEntry))
+		s.removeLocked(p, frontEntry(p))
 	}
 	return resp, nil
+}
+
+// frontEntry 返回最旧的已完成条目（order 里只放 *idempotencyEntry）。
+func frontEntry(p *idempotencyPeer) *idempotencyEntry {
+	e, _ := p.order.Front().Value.(*idempotencyEntry)
+	return e
 }
 
 func entrySize(e *idempotencyEntry) int { return len(e.payload) + len(e.key) + 96 }
 
 func (s *idempotencyStore) evictExpiredLocked(p *idempotencyPeer, now time.Time) {
 	for p.order.Len() > 0 {
-		oldest := p.order.Front().Value.(*idempotencyEntry)
+		oldest := frontEntry(p)
 		if now.Before(oldest.expires) {
 			return
 		}

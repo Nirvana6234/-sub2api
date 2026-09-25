@@ -197,7 +197,7 @@ func TestIssuedPeerCanCallControlAndIsIdentified(t *testing.T) {
 	resp, err := ping(ctxTimeout(t, 5*time.Second), c, []byte("hi"))
 	require.NoError(t, err)
 	require.Equal(t, []byte("hi"), resp.Payload)
-	peer := m.lastPeer.Load().(transport.PeerIdentity)
+	peer := lastPeer(m)
 	require.Equal(t, transport.PeerIssued, peer.Class)
 	require.EqualValues(t, 7, peer.NodeID)
 }
@@ -256,6 +256,11 @@ func TestServerRejectsForgedAndExpiredNodeCertificates(t *testing.T) {
 	}
 }
 
+func lastPeer(m *testMaster) transport.PeerIdentity {
+	p, _ := m.lastPeer.Load().(transport.PeerIdentity)
+	return p
+}
+
 // ---- 从节点按固定指纹验证主节点 ----
 
 func TestClientRejectsMasterThatDoesNotMatchThePinnedRoot(t *testing.T) {
@@ -297,7 +302,7 @@ func TestMasterPortRefusesTLS12AndPlaintext(t *testing.T) {
 
 	plain, err := grpc.NewClient("passthrough:///"+m.addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
-	defer plain.Close()
+	defer func() { _ = plain.Close() }()
 	_, err = relayv1.NewRelayEnrollmentClient(plain).Hello(ctxTimeout(t, 3*time.Second), &relayv1.HelloRequest{})
 	require.Error(t, err)
 	require.Zero(t, m.pings.Load())
@@ -371,13 +376,13 @@ func TestRotateMovesCallsToTheNewCertificate(t *testing.T) {
 
 	_, err := ping(ctxTimeout(t, 5*time.Second), c, []byte("x"))
 	require.NoError(t, err)
-	require.Equal(t, first.Leaf.SerialNumber.Text(16), m.lastPeer.Load().(transport.PeerIdentity).CertSerial)
+	require.Equal(t, first.Leaf.SerialNumber.Text(16), lastPeer(m).CertSerial)
 
 	current.Store(second)
 	require.NoError(t, c.Rotate())
 	_, err = ping(ctxTimeout(t, 5*time.Second), c, []byte("x"))
 	require.NoError(t, err)
-	require.Equal(t, second.Leaf.SerialNumber.Text(16), m.lastPeer.Load().(transport.PeerIdentity).CertSerial)
+	require.Equal(t, second.Leaf.SerialNumber.Text(16), lastPeer(m).CertSerial)
 
 	// 旧证书的连接在宽限期后关闭。
 	require.Eventually(t, func() bool {
@@ -554,7 +559,7 @@ func TestCallsWithoutAProtocolVersionAreRefused(t *testing.T) {
 	require.NoError(t, err)
 	raw, err := grpc.NewClient("passthrough:///"+m.addr, grpc.WithTransportCredentials(credentials.NewTLS(cfg)))
 	require.NoError(t, err)
-	defer raw.Close()
+	defer func() { _ = raw.Close() }()
 
 	var trailer metadata.MD
 	_, err = relayv1.NewRelayControlClient(raw).Ping(ctxTimeout(t, 5*time.Second), &relayv1.PingRequest{}, grpc.Trailer(&trailer))
@@ -615,7 +620,7 @@ func (p *tcpProxy) pipe(dst, src net.Conn) {
 		n, err := src.Read(buf)
 		if n > 0 {
 			p.mu.Lock()
-			p.buf.Write(buf[:n])
+			_, _ = p.buf.Write(buf[:n])
 			p.mu.Unlock()
 			if _, werr := dst.Write(buf[:n]); werr != nil {
 				return

@@ -37,7 +37,9 @@ func TestGenerateReloadAndSign(t *testing.T) {
 	msg := []byte("ticket")
 	sig, err := ring2.Active.Signer.Sign(rand.Reader, msg, crypto.Hash(0))
 	require.NoError(t, err)
-	require.True(t, ed25519.Verify(ring.Active.Public().(ed25519.PublicKey), msg, sig))
+	pub, ok := ring.Active.Public().(ed25519.PublicKey)
+	require.True(t, ok)
+	require.True(t, ed25519.Verify(pub, msg, sig))
 }
 
 func TestPrivateKeyIsNotStoredInPlaintextAndNeedsTheKEK(t *testing.T) {
@@ -49,7 +51,9 @@ func TestPrivateKeyIsNotStoredInPlaintextAndNeedsTheKEK(t *testing.T) {
 
 	raw, err := os.ReadFile(filepath.Join(dir, "voucher-v1.json"))
 	require.NoError(t, err)
-	seed := key.Signer.(ed25519.PrivateKey).Seed()
+	priv, ok := key.Signer.(ed25519.PrivateKey)
+	require.True(t, ok)
+	seed := priv.Seed()
 	require.False(t, bytes.Contains(raw, seed), "private key must not appear in the file")
 
 	wrong, err := Open(dir, testKEK(t))

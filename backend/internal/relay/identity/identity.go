@@ -145,7 +145,7 @@ func (i *Identity) EncryptionKeys() []*ecdh.PrivateKey {
 
 // OpenSealed 用当前或上一把加密私钥解开主节点加密的凭据。
 func (i *Identity) OpenSealed(sealed, aad []byte) ([]byte, error) {
-	var lastErr error = errors.New("relay node has no encryption key")
+	lastErr := errors.New("relay node has no encryption key")
 	for _, k := range i.EncryptionKeys() {
 		plain, err := sealbox.Open(k, sealed, aad)
 		if err == nil {

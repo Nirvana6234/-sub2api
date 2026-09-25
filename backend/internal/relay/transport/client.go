@@ -195,7 +195,10 @@ func (c *Client) dialSet() (*connSet, error) {
 func (c *Client) Conn(t Tier) grpc.ClientConnInterface { return &tierConn{client: c, tier: t} }
 
 // Epoch 返回最近一次得知的主节点纪元（还没和主节点通信过时为空）。
-func (c *Client) Epoch() string { return c.epoch.Load().(string) }
+func (c *Client) Epoch() string {
+	e, _ := c.epoch.Load().(string)
+	return e
+}
 
 // Rotate 用当前证书重建所有连接（证书续签后调用，设计 7.2）。新调用立即走新连接，
 // 旧连接保留 RotateGrace 让进行中的调用结束，之后关闭。
@@ -235,7 +238,7 @@ func (c *Client) observeEpoch(md metadata.MD) {
 		return
 	}
 	c.epochMu.Lock()
-	old := c.epoch.Load().(string)
+	old, _ := c.epoch.Load().(string)
 	if old == e {
 		c.epochMu.Unlock()
 		return
@@ -297,7 +300,7 @@ type observedClientStream struct {
 
 func (s *observedClientStream) observeHeader() {
 	if s.observed.CompareAndSwap(false, true) {
-		if md, err := s.ClientStream.Header(); err == nil {
+		if md, err := s.Header(); err == nil {
 			s.client.observeEpoch(md)
 		}
 	}
@@ -307,7 +310,7 @@ func (s *observedClientStream) RecvMsg(m any) error {
 	err := s.ClientStream.RecvMsg(m)
 	s.observeHeader()
 	if err != nil {
-		trailer := s.ClientStream.Trailer()
+		trailer := s.Trailer()
 		s.client.observeEpoch(trailer)
 		return translateError(err, trailer)
 	}
