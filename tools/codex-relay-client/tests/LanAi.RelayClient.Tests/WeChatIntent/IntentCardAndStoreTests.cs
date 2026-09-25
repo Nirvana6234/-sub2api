@@ -63,7 +63,9 @@ public sealed class IntentCardAndStoreTests : IDisposable
 
     private sealed class ReversingProtector : ISnapshotProtector
     {
-        public byte[] Protect(byte[] plaintext) => plaintext.Reverse().Select(b => (byte)(b ^ 0x5a)).ToArray();
+        // Enumerable.Reverse spelled out: with C# 14 (newer SDKs on the CI runner) `array.Reverse()`
+        // binds to the in-place, void MemoryExtensions.Reverse(Span<T>) instead.
+        public byte[] Protect(byte[] plaintext) => Enumerable.Reverse(plaintext).Select(b => (byte)(b ^ 0x5a)).ToArray();
 
         public byte[] Unprotect(byte[] protectedData) => protectedData.Select(b => (byte)(b ^ 0x5a)).Reverse().ToArray();
     }
