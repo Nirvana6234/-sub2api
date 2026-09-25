@@ -51,6 +51,7 @@ public sealed partial class DashboardPageViewModel : ObservableObject
                     OnPropertyChanged(nameof(CodexRouteText));
                     break;
                 case nameof(DashboardViewModel.RequiresCodexAccountRestart):
+                case nameof(DashboardViewModel.RequiresCodexReconnect):
                 case nameof(DashboardViewModel.IsCodexRunning):
                 case nameof(DashboardViewModel.CodexNotInstalled):
                 case nameof(DashboardViewModel.IsInstallingCodex):
@@ -113,6 +114,7 @@ public sealed partial class DashboardPageViewModel : ObservableObject
     /// <summary>One line on the overview's Codex card.</summary>
     public string CodexStatusText =>
         Dashboard.RequiresCodexAccountRestart ? "需要重启 ChatGPT"
+        : Dashboard.RequiresCodexReconnect ? "未接入，需要重启"
         : Dashboard.IsInstallingCodex ? "正在安装"
         : Dashboard.CodexNotInstalled ? "未安装"
         : Dashboard.IsCodexRunning ? "运行中"
@@ -145,7 +147,8 @@ public sealed partial class DashboardPageViewModel : ObservableObject
     private void UpdateCodexStatus()
     {
         OnPropertyChanged(nameof(CodexStatusText));
-        Navigation.Item(ClientPage.Codex).HasBadge = Dashboard.RequiresCodexAccountRestart;
+        Navigation.Item(ClientPage.Codex).HasBadge =
+            Dashboard.RequiresCodexAccountRestart || Dashboard.RequiresCodexReconnect;
     }
 
     public ClientUpdateViewModel ClientUpdate { get; }
