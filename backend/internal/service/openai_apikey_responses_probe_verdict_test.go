@@ -9,7 +9,9 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 // sub2apiModelNotFoundBody 与 ginRouteNotFoundBody 都是从本机 sub2api 实际抓到的
@@ -202,4 +204,99 @@ func TestResponsesProbeVerdictIsConclusive(t *testing.T) {
 			require.Equal(t, tc.want, responsesProbeVerdictIsConclusive(tc.status, []byte(tc.body)))
 		})
 	}
+}
+
+// modelKeyedProbeUpstream 按请求体里的 model 回不同的响应，并记录尝试顺序。
+type modelKeyedProbeUpstream struct {
+	replies map[string]probeReply
+	tried   []string
+}
+
+type probeReply struct {
+	status int
+	body   string
+}
+
+func (u *modelKeyedProbeUpstream) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+	raw, _ := io.ReadAll(req.Body)
+	model := gjson.GetBytes(raw, "model").String()
+	u.tried = append(u.tried, model)
+	reply, ok := u.replies[model]
+	if !ok {
+		reply = probeReply{status: http.StatusNotFound, body: sub2apiModelNotFoundBody}
+	}
+	return &http.Response{StatusCode: reply.status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(reply.body))}, nil
+}
+
+func (u *modelKeyedProbeUpstream) DoWithTLS(req *http.Request, proxyURL string, accountID int64, concurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
+	return u.Do(req, proxyURL, accountID, concurrency)
+}
+
+func runModelKeyedProbe(t *testing.T, mapping map[string]any, upstream *modelKeyedProbeUpstream) map[string]any {
+	t.Helper()
+	account := newResponsesProbeAccount(4300)
+	account.Credentials["model_mapping"] = mapping
+	updateCalls := make(chan map[string]any, 1)
+	svc := &AccountTestService{
+		accountRepo: &snapshotUpdateAccountRepo{
+			stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{account}},
+			updateExtraCalls:      updateCalls,
+		},
+		httpUpstream: upstream,
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+	}
+	svc.ProbeOpenAIAPIKeyResponsesSupport(context.Background(), account.ID)
+	select {
+	case updates := <-updateCalls:
+		return updates
+	default:
+		return nil
+	}
+}
+
+// 映射里字典序最前的模型上游没有（2026-09-25 本机：codex-auto-review），探测应换下一个
+// 真有的模型去验证工具能力，而不是拿 model-not-found 草草下结论。
+func TestProbeOpenAIAPIKeyResponsesSupport_SkipsModelsTheUpstreamLacks(t *testing.T) {
+	mapping := map[string]any{"codex-auto-review": "codex-auto-review", "gpt-6-astra": "gpt-6-astra"}
+
+	t.Run("next_model_confirms_tools", func(t *testing.T) {
+		upstream := &modelKeyedProbeUpstream{replies: map[string]probeReply{
+			"gpt-6-astra": {http.StatusOK, `{"status":"completed","output":[{"type":"function_call","name":"probe_ping"}]}`},
+		}}
+		updates := runModelKeyedProbe(t, mapping, upstream)
+		require.Equal(t, []string{"codex-auto-review", "gpt-6-astra"}, upstream.tried)
+		require.Equal(t, true, updates[openai_compat.ExtraKeyResponsesSupported])
+	})
+
+	t.Run("next_model_exposes_broken_tools", func(t *testing.T) {
+		upstream := &modelKeyedProbeUpstream{replies: map[string]probeReply{
+			"gpt-6-astra": {http.StatusOK, `{"status":"completed","output":[{"type":"reasoning"}]}`},
+		}}
+		updates := runModelKeyedProbe(t, mapping, upstream)
+		require.Equal(t, []string{"codex-auto-review", "gpt-6-astra"}, upstream.tried)
+		require.Equal(t, false, updates[openai_compat.ExtraKeyResponsesSupported])
+	})
+
+	t.Run("no_model_available_endpoint_still_exists", func(t *testing.T) {
+		upstream := &modelKeyedProbeUpstream{}
+		updates := runModelKeyedProbe(t, mapping, upstream)
+		require.Equal(t, []string{"codex-auto-review", "gpt-6-astra"}, upstream.tried)
+		require.Equal(t, true, updates[openai_compat.ExtraKeyResponsesSupported])
+	})
+
+	t.Run("route_absent_stops_at_first_model", func(t *testing.T) {
+		upstream := &modelKeyedProbeUpstream{replies: map[string]probeReply{
+			"codex-auto-review": {http.StatusNotFound, ginRouteNotFoundBody},
+		}}
+		updates := runModelKeyedProbe(t, mapping, upstream)
+		require.Equal(t, []string{"codex-auto-review"}, upstream.tried)
+		require.Equal(t, false, updates[openai_compat.ExtraKeyResponsesSupported])
+	})
+
+	t.Run("attempts_are_capped", func(t *testing.T) {
+		wide := map[string]any{"a": "m1", "b": "m2", "c": "m3", "d": "m4", "e": "m5"}
+		upstream := &modelKeyedProbeUpstream{}
+		runModelKeyedProbe(t, wide, upstream)
+		require.Equal(t, []string{"m1", "m2", "m3"}, upstream.tried)
+	})
 }

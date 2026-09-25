@@ -80,20 +80,39 @@ func openaiResponsesProbePayload(modelID string) []byte {
 // 的上游模型(值),按字典序取首个具体(非通配符)模型以保证可复现;无映射时回退
 // DefaultTestModel(适配 OpenAI 官方 APIKey 账号)。
 func selectResponsesProbeModel(account *Account) string {
+	return selectResponsesProbeModels(account)[0]
+}
+
+// openaiResponsesProbeMaxModels 限制一次探测最多尝试的模型数。
+const openaiResponsesProbeMaxModels = 3
+
+// selectResponsesProbeModels 按 selectResponsesProbeModel 的顺序返回去重后的
+// 候选模型（至多 openaiResponsesProbeMaxModels 个，恒非空）。映射里的某个模型
+// 上游未必真有（上游是另一台 sub2api 时，分组里没有就回 404 model_not_found），
+// 探测据此换下一个，尽量用上游真有的模型去验证工具能力。
+func selectResponsesProbeModels(account *Account) []string {
 	mapping := account.GetModelMapping()
+	seen := make(map[string]struct{}, len(mapping))
 	candidates := make([]string, 0, len(mapping))
 	for _, upstream := range mapping {
 		upstream = strings.TrimSpace(upstream)
 		if upstream == "" || strings.Contains(upstream, "*") {
 			continue
 		}
+		if _, dup := seen[upstream]; dup {
+			continue
+		}
+		seen[upstream] = struct{}{}
 		candidates = append(candidates, upstream)
 	}
 	if len(candidates) == 0 {
-		return openai.DefaultTestModel
+		return []string{openai.DefaultTestModel}
 	}
 	sort.Strings(candidates)
-	return candidates[0]
+	if len(candidates) > openaiResponsesProbeMaxModels {
+		candidates = candidates[:openaiResponsesProbeMaxModels]
+	}
+	return candidates
 }
 
 // ProbeOpenAIAPIKeyResponsesSupport 探测 OpenAI APIKey 账号上游是否支持
@@ -162,15 +181,78 @@ func (s *AccountTestService) ProbeOpenAIAPIKeyResponsesSupport(ctx context.Conte
 	}
 
 	probeURL := buildOpenAIResponsesURL(normalizedBaseURL)
-	probeModel := selectResponsesProbeModel(account)
 
+	// 候选模型逐个试：上游回 404 model-not-found 只说明它没有这个模型，换下一个；
+	// 试完仍是 model-not-found 时按最后一次结果判定（端点存在）。
+	var (
+		probeModel string
+		status     int
+		bodyBytes  []byte
+	)
+	for _, probeModel = range selectResponsesProbeModels(account) {
+		var ok bool
+		status, bodyBytes, ok = s.doResponsesProbeAttempt(ctx, account, apiKey, probeURL, probeModel)
+		if !ok {
+			return
+		}
+		if !isUpstreamModelNotFoundError(status, bodyBytes) {
+			break
+		}
+		logger.LegacyPrintf("service.openai_probe", "probe_model_not_found: account_id=%d probe_model=%s", accountID, probeModel)
+	}
+
+	// 本次响应不足以下结论时保持 unknown，与网络层失败、响应体读取失败一致：
+	// 标记一旦写成 false 就会一直粘住（只有下次账号创建/更新才重探），网关会静默
+	// 改走 /v1/chat/completions —— 对 Codex 客户端意味着 prompt 缓存前缀被打散。
+	// 宁可不写，让请求继续走既有的 Responses 路径。
+	if !responsesProbeVerdictIsConclusive(status, bodyBytes) {
+		logger.LegacyPrintf("service.openai_probe",
+			"probe_inconclusive_keep_unknown: account_id=%d base_url=%s probe_model=%s status=%d response_status=%s reason=%s",
+			accountID, normalizedBaseURL, probeModel, status,
+			gjson.GetBytes(bodyBytes, "status").String(),
+			gjson.GetBytes(bodyBytes, "incomplete_details.reason").String(),
+		)
+		return
+	}
+
+	supported := decideResponsesProbeSupport(status, bodyBytes)
+
+	if err := s.accountRepo.UpdateExtra(ctx, accountID, map[string]any{
+		openai_compat.ExtraKeyResponsesSupported: supported,
+	}); err != nil {
+		logger.LegacyPrintf("service.openai_probe", "probe_persist_failed: account_id=%d supported=%v err=%v", accountID, supported, err)
+		return
+	}
+
+	if !supported {
+		// 落标为不支持等于把该账号长期钉在 /v1/chat/completions 上，成本与缓存命中率
+		// 都会变化，且不会自动恢复。这条必须能被运维看到（#5371）。
+		slog.Warn(
+			"openai_responses_probe_marked_unsupported",
+			"account_id", accountID,
+			"account_name", account.Name,
+			"base_url", normalizedBaseURL,
+			"probe_model", probeModel,
+			"upstream_status", status,
+		)
+	}
+
+	logger.LegacyPrintf("service.openai_probe",
+		"probe_done: account_id=%d base_url=%s probe_model=%s status=%d supported=%v",
+		accountID, normalizedBaseURL, probeModel, status, supported,
+	)
+}
+
+// doResponsesProbeAttempt 用指定模型发一次探测请求。ok=false 表示网络层失败或
+// 响应体读取失败——此时不下结论、保持 unknown，由调用方直接返回。
+func (s *AccountTestService) doResponsesProbeAttempt(ctx context.Context, account *Account, apiKey, probeURL, probeModel string) (status int, body []byte, ok bool) {
 	probeCtx, cancel := context.WithTimeout(ctx, openaiResponsesProbeTimeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(probeCtx, http.MethodPost, probeURL, bytes.NewReader(openaiResponsesProbePayload(probeModel)))
 	if err != nil {
-		logger.LegacyPrintf("service.openai_probe", "probe_build_request_failed: account_id=%d err=%v", accountID, err)
-		return
+		logger.LegacyPrintf("service.openai_probe", "probe_build_request_failed: account_id=%d err=%v", account.ID, err)
+		return 0, nil, false
 	}
 	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
 	req.Header.Set("Content-Type", "application/json")
@@ -189,60 +271,20 @@ func (s *AccountTestService) ProbeOpenAIAPIKeyResponsesSupport(ctx context.Conte
 	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 	if err != nil {
 		// 网络层失败：不写标记，保持 unknown，下次重试或由网关 fallback 处理
-		logger.LegacyPrintf("service.openai_probe", "probe_request_failed: account_id=%d url=%s err=%v", accountID, probeURL, err)
-		return
+		logger.LegacyPrintf("service.openai_probe", "probe_request_failed: account_id=%d url=%s err=%v", account.ID, probeURL, err)
+		return 0, nil, false
 	}
 	defer func() { _ = resp.Body.Close() }()
-	bodyBytes, readErr := io.ReadAll(io.LimitReader(resp.Body, responsesProbeMaxBodyBytes))
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, responsesProbeMaxBodyBytes))
 	// 有界排空剩余响应体:既帮助连接复用,又避免行为异常的上游用超大响应体拖住探测。
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, responsesProbeMaxBodyBytes))
 	if readErr != nil {
 		// 响应体读取失败(部分读取/传输错误):按网络层失败处理,保持 unknown,
 		// 不写标记——否则可能给一个 2xx 响应误写 supported=false。
-		logger.LegacyPrintf("service.openai_probe", "probe_read_body_failed: account_id=%d url=%s err=%v", accountID, probeURL, readErr)
-		return
+		logger.LegacyPrintf("service.openai_probe", "probe_read_body_failed: account_id=%d url=%s err=%v", account.ID, probeURL, readErr)
+		return 0, nil, false
 	}
-
-	// 本次响应不足以下结论时保持 unknown，与网络层失败、响应体读取失败一致：
-	// 标记一旦写成 false 就会一直粘住（只有下次账号创建/更新才重探），网关会静默
-	// 改走 /v1/chat/completions —— 对 Codex 客户端意味着 prompt 缓存前缀被打散。
-	// 宁可不写，让请求继续走既有的 Responses 路径。
-	if !responsesProbeVerdictIsConclusive(resp.StatusCode, bodyBytes) {
-		logger.LegacyPrintf("service.openai_probe",
-			"probe_inconclusive_keep_unknown: account_id=%d base_url=%s probe_model=%s status=%d response_status=%s reason=%s",
-			accountID, normalizedBaseURL, probeModel, resp.StatusCode,
-			gjson.GetBytes(bodyBytes, "status").String(),
-			gjson.GetBytes(bodyBytes, "incomplete_details.reason").String(),
-		)
-		return
-	}
-
-	supported := decideResponsesProbeSupport(resp.StatusCode, bodyBytes)
-
-	if err := s.accountRepo.UpdateExtra(ctx, accountID, map[string]any{
-		openai_compat.ExtraKeyResponsesSupported: supported,
-	}); err != nil {
-		logger.LegacyPrintf("service.openai_probe", "probe_persist_failed: account_id=%d supported=%v err=%v", accountID, supported, err)
-		return
-	}
-
-	if !supported {
-		// 落标为不支持等于把该账号长期钉在 /v1/chat/completions 上，成本与缓存命中率
-		// 都会变化，且不会自动恢复。这条必须能被运维看到（#5371）。
-		slog.Warn(
-			"openai_responses_probe_marked_unsupported",
-			"account_id", accountID,
-			"account_name", account.Name,
-			"base_url", normalizedBaseURL,
-			"probe_model", probeModel,
-			"upstream_status", resp.StatusCode,
-		)
-	}
-
-	logger.LegacyPrintf("service.openai_probe",
-		"probe_done: account_id=%d base_url=%s probe_model=%s status=%d supported=%v",
-		accountID, normalizedBaseURL, probeModel, resp.StatusCode, supported,
-	)
+	return resp.StatusCode, body, true
 }
 
 // responsesProbeVerdictIsConclusive 判断本次探测响应是否足以对「上游是否支持带工具的
