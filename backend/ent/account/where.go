@@ -150,6 +150,11 @@ func AutoPauseOnExpired(v bool) predicate.Account {
 	return predicate.Account(sql.FieldEQ(FieldAutoPauseOnExpired, v))
 }
 
+// MasterOnly applies equality check predicate on the "master_only" field. It's identical to MasterOnlyEQ.
+func MasterOnly(v bool) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldMasterOnly, v))
+}
+
 // Schedulable applies equality check predicate on the "schedulable" field. It's identical to SchedulableEQ.
 func Schedulable(v bool) predicate.Account {
 	return predicate.Account(sql.FieldEQ(FieldSchedulable, v))
@@ -1123,6 +1128,16 @@ func AutoPauseOnExpiredEQ(v bool) predicate.Account {
 // AutoPauseOnExpiredNEQ applies the NEQ predicate on the "auto_pause_on_expired" field.
 func AutoPauseOnExpiredNEQ(v bool) predicate.Account {
 	return predicate.Account(sql.FieldNEQ(FieldAutoPauseOnExpired, v))
+}
+
+// MasterOnlyEQ applies the EQ predicate on the "master_only" field.
+func MasterOnlyEQ(v bool) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldMasterOnly, v))
+}
+
+// MasterOnlyNEQ applies the NEQ predicate on the "master_only" field.
+func MasterOnlyNEQ(v bool) predicate.Account {
+	return predicate.Account(sql.FieldNEQ(FieldMasterOnly, v))
 }
 
 // SchedulableEQ applies the EQ predicate on the "schedulable" field.

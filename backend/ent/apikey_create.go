@@ -336,6 +336,34 @@ func (_c *APIKeyCreate) SetNillableWindow7dStart(v *time.Time) *APIKeyCreate {
 	return _c
 }
 
+// SetRelayNodeID sets the "relay_node_id" field.
+func (_c *APIKeyCreate) SetRelayNodeID(v int64) *APIKeyCreate {
+	_c.mutation.SetRelayNodeID(v)
+	return _c
+}
+
+// SetNillableRelayNodeID sets the "relay_node_id" field if the given value is not nil.
+func (_c *APIKeyCreate) SetNillableRelayNodeID(v *int64) *APIKeyCreate {
+	if v != nil {
+		_c.SetRelayNodeID(*v)
+	}
+	return _c
+}
+
+// SetRelayNodeChangedAt sets the "relay_node_changed_at" field.
+func (_c *APIKeyCreate) SetRelayNodeChangedAt(v time.Time) *APIKeyCreate {
+	_c.mutation.SetRelayNodeChangedAt(v)
+	return _c
+}
+
+// SetNillableRelayNodeChangedAt sets the "relay_node_changed_at" field if the given value is not nil.
+func (_c *APIKeyCreate) SetNillableRelayNodeChangedAt(v *time.Time) *APIKeyCreate {
+	if v != nil {
+		_c.SetRelayNodeChangedAt(*v)
+	}
+	return _c
+}
+
 // SetUser sets the "user" edge to the User entity.
 func (_c *APIKeyCreate) SetUser(v *User) *APIKeyCreate {
 	return _c.SetUserID(v.ID)
@@ -665,6 +693,14 @@ func (_c *APIKeyCreate) createSpec() (*APIKey, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Window7dStart(); ok {
 		_spec.SetField(apikey.FieldWindow7dStart, field.TypeTime, value)
 		_node.Window7dStart = &value
+	}
+	if value, ok := _c.mutation.RelayNodeID(); ok {
+		_spec.SetField(apikey.FieldRelayNodeID, field.TypeInt64, value)
+		_node.RelayNodeID = &value
+	}
+	if value, ok := _c.mutation.RelayNodeChangedAt(); ok {
+		_spec.SetField(apikey.FieldRelayNodeChangedAt, field.TypeTime, value)
+		_node.RelayNodeChangedAt = &value
 	}
 	if nodes := _c.mutation.UserIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
@@ -1174,6 +1210,48 @@ func (u *APIKeyUpsert) ClearWindow7dStart() *APIKeyUpsert {
 	return u
 }
 
+// SetRelayNodeID sets the "relay_node_id" field.
+func (u *APIKeyUpsert) SetRelayNodeID(v int64) *APIKeyUpsert {
+	u.Set(apikey.FieldRelayNodeID, v)
+	return u
+}
+
+// UpdateRelayNodeID sets the "relay_node_id" field to the value that was provided on create.
+func (u *APIKeyUpsert) UpdateRelayNodeID() *APIKeyUpsert {
+	u.SetExcluded(apikey.FieldRelayNodeID)
+	return u
+}
+
+// AddRelayNodeID adds v to the "relay_node_id" field.
+func (u *APIKeyUpsert) AddRelayNodeID(v int64) *APIKeyUpsert {
+	u.Add(apikey.FieldRelayNodeID, v)
+	return u
+}
+
+// ClearRelayNodeID clears the value of the "relay_node_id" field.
+func (u *APIKeyUpsert) ClearRelayNodeID() *APIKeyUpsert {
+	u.SetNull(apikey.FieldRelayNodeID)
+	return u
+}
+
+// SetRelayNodeChangedAt sets the "relay_node_changed_at" field.
+func (u *APIKeyUpsert) SetRelayNodeChangedAt(v time.Time) *APIKeyUpsert {
+	u.Set(apikey.FieldRelayNodeChangedAt, v)
+	return u
+}
+
+// UpdateRelayNodeChangedAt sets the "relay_node_changed_at" field to the value that was provided on create.
+func (u *APIKeyUpsert) UpdateRelayNodeChangedAt() *APIKeyUpsert {
+	u.SetExcluded(apikey.FieldRelayNodeChangedAt)
+	return u
+}
+
+// ClearRelayNodeChangedAt clears the value of the "relay_node_changed_at" field.
+func (u *APIKeyUpsert) ClearRelayNodeChangedAt() *APIKeyUpsert {
+	u.SetNull(apikey.FieldRelayNodeChangedAt)
+	return u
+}
+
 // UpdateNewValues updates the mutable fields using the new values that were set on create.
 // Using this option is equivalent to using:
 //
@@ -1671,6 +1749,55 @@ func (u *APIKeyUpsertOne) UpdateWindow7dStart() *APIKeyUpsertOne {
 func (u *APIKeyUpsertOne) ClearWindow7dStart() *APIKeyUpsertOne {
 	return u.Update(func(s *APIKeyUpsert) {
 		s.ClearWindow7dStart()
+	})
+}
+
+// SetRelayNodeID sets the "relay_node_id" field.
+func (u *APIKeyUpsertOne) SetRelayNodeID(v int64) *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetRelayNodeID(v)
+	})
+}
+
+// AddRelayNodeID adds v to the "relay_node_id" field.
+func (u *APIKeyUpsertOne) AddRelayNodeID(v int64) *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.AddRelayNodeID(v)
+	})
+}
+
+// UpdateRelayNodeID sets the "relay_node_id" field to the value that was provided on create.
+func (u *APIKeyUpsertOne) UpdateRelayNodeID() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateRelayNodeID()
+	})
+}
+
+// ClearRelayNodeID clears the value of the "relay_node_id" field.
+func (u *APIKeyUpsertOne) ClearRelayNodeID() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.ClearRelayNodeID()
+	})
+}
+
+// SetRelayNodeChangedAt sets the "relay_node_changed_at" field.
+func (u *APIKeyUpsertOne) SetRelayNodeChangedAt(v time.Time) *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetRelayNodeChangedAt(v)
+	})
+}
+
+// UpdateRelayNodeChangedAt sets the "relay_node_changed_at" field to the value that was provided on create.
+func (u *APIKeyUpsertOne) UpdateRelayNodeChangedAt() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateRelayNodeChangedAt()
+	})
+}
+
+// ClearRelayNodeChangedAt clears the value of the "relay_node_changed_at" field.
+func (u *APIKeyUpsertOne) ClearRelayNodeChangedAt() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.ClearRelayNodeChangedAt()
 	})
 }
 
@@ -2337,6 +2464,55 @@ func (u *APIKeyUpsertBulk) UpdateWindow7dStart() *APIKeyUpsertBulk {
 func (u *APIKeyUpsertBulk) ClearWindow7dStart() *APIKeyUpsertBulk {
 	return u.Update(func(s *APIKeyUpsert) {
 		s.ClearWindow7dStart()
+	})
+}
+
+// SetRelayNodeID sets the "relay_node_id" field.
+func (u *APIKeyUpsertBulk) SetRelayNodeID(v int64) *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetRelayNodeID(v)
+	})
+}
+
+// AddRelayNodeID adds v to the "relay_node_id" field.
+func (u *APIKeyUpsertBulk) AddRelayNodeID(v int64) *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.AddRelayNodeID(v)
+	})
+}
+
+// UpdateRelayNodeID sets the "relay_node_id" field to the value that was provided on create.
+func (u *APIKeyUpsertBulk) UpdateRelayNodeID() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateRelayNodeID()
+	})
+}
+
+// ClearRelayNodeID clears the value of the "relay_node_id" field.
+func (u *APIKeyUpsertBulk) ClearRelayNodeID() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.ClearRelayNodeID()
+	})
+}
+
+// SetRelayNodeChangedAt sets the "relay_node_changed_at" field.
+func (u *APIKeyUpsertBulk) SetRelayNodeChangedAt(v time.Time) *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetRelayNodeChangedAt(v)
+	})
+}
+
+// UpdateRelayNodeChangedAt sets the "relay_node_changed_at" field to the value that was provided on create.
+func (u *APIKeyUpsertBulk) UpdateRelayNodeChangedAt() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateRelayNodeChangedAt()
+	})
+}
+
+// ClearRelayNodeChangedAt clears the value of the "relay_node_changed_at" field.
+func (u *APIKeyUpsertBulk) ClearRelayNodeChangedAt() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.ClearRelayNodeChangedAt()
 	})
 }
 

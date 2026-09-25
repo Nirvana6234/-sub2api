@@ -268,22 +268,26 @@ func init() {
 	accountDescAutoPauseOnExpired := accountFields[17].Descriptor()
 	// account.DefaultAutoPauseOnExpired holds the default value on creation for the auto_pause_on_expired field.
 	account.DefaultAutoPauseOnExpired = accountDescAutoPauseOnExpired.Default.(bool)
+	// accountDescMasterOnly is the schema descriptor for master_only field.
+	accountDescMasterOnly := accountFields[18].Descriptor()
+	// account.DefaultMasterOnly holds the default value on creation for the master_only field.
+	account.DefaultMasterOnly = accountDescMasterOnly.Default.(bool)
 	// accountDescSchedulable is the schema descriptor for schedulable field.
-	accountDescSchedulable := accountFields[18].Descriptor()
+	accountDescSchedulable := accountFields[19].Descriptor()
 	// account.DefaultSchedulable holds the default value on creation for the schedulable field.
 	account.DefaultSchedulable = accountDescSchedulable.Default.(bool)
 	// accountDescSchedulabilitySource is the schema descriptor for schedulability_source field.
-	accountDescSchedulabilitySource := accountFields[24].Descriptor()
+	accountDescSchedulabilitySource := accountFields[25].Descriptor()
 	// account.DefaultSchedulabilitySource holds the default value on creation for the schedulability_source field.
 	account.DefaultSchedulabilitySource = accountDescSchedulabilitySource.Default.(string)
 	// account.SchedulabilitySourceValidator is a validator for the "schedulability_source" field. It is called by the builders before save.
 	account.SchedulabilitySourceValidator = accountDescSchedulabilitySource.Validators[0].(func(string) error)
 	// accountDescSchedulabilityReason is the schema descriptor for schedulability_reason field.
-	accountDescSchedulabilityReason := accountFields[25].Descriptor()
+	accountDescSchedulabilityReason := accountFields[26].Descriptor()
 	// account.SchedulabilityReasonValidator is a validator for the "schedulability_reason" field. It is called by the builders before save.
 	account.SchedulabilityReasonValidator = accountDescSchedulabilityReason.Validators[0].(func(string) error)
 	// accountDescSessionWindowStatus is the schema descriptor for session_window_status field.
-	accountDescSessionWindowStatus := accountFields[29].Descriptor()
+	accountDescSessionWindowStatus := accountFields[30].Descriptor()
 	// account.SessionWindowStatusValidator is a validator for the "session_window_status" field. It is called by the builders before save.
 	account.SessionWindowStatusValidator = accountDescSessionWindowStatus.Validators[0].(func(string) error)
 	accountgroupFields := schema.AccountGroup{}.Fields()

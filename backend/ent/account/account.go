@@ -58,6 +58,8 @@ const (
 	FieldExpiresAt = "expires_at"
 	// FieldAutoPauseOnExpired holds the string denoting the auto_pause_on_expired field in the database.
 	FieldAutoPauseOnExpired = "auto_pause_on_expired"
+	// FieldMasterOnly holds the string denoting the master_only field in the database.
+	FieldMasterOnly = "master_only"
 	// FieldSchedulable holds the string denoting the schedulable field in the database.
 	FieldSchedulable = "schedulable"
 	// FieldRateLimitedAt holds the string denoting the rate_limited_at field in the database.
@@ -160,6 +162,7 @@ var Columns = []string{
 	FieldLastUsedAt,
 	FieldExpiresAt,
 	FieldAutoPauseOnExpired,
+	FieldMasterOnly,
 	FieldSchedulable,
 	FieldRateLimitedAt,
 	FieldRateLimitResetAt,
@@ -230,6 +233,8 @@ var (
 	StatusValidator func(string) error
 	// DefaultAutoPauseOnExpired holds the default value on creation for the "auto_pause_on_expired" field.
 	DefaultAutoPauseOnExpired bool
+	// DefaultMasterOnly holds the default value on creation for the "master_only" field.
+	DefaultMasterOnly bool
 	// DefaultSchedulable holds the default value on creation for the "schedulable" field.
 	DefaultSchedulable bool
 	// DefaultSchedulabilitySource holds the default value on creation for the "schedulability_source" field.
@@ -369,6 +374,11 @@ func ByExpiresAt(opts ...sql.OrderTermOption) OrderOption {
 // ByAutoPauseOnExpired orders the results by the auto_pause_on_expired field.
 func ByAutoPauseOnExpired(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldAutoPauseOnExpired, opts...).ToFunc()
+}
+
+// ByMasterOnly orders the results by the master_only field.
+func ByMasterOnly(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldMasterOnly, opts...).ToFunc()
 }
 
 // BySchedulable orders the results by the schedulable field.

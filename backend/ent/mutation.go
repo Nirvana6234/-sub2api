@@ -156,6 +156,9 @@ type APIKeyMutation struct {
 	window_5h_start                      *time.Time
 	window_1d_start                      *time.Time
 	window_7d_start                      *time.Time
+	relay_node_id                        *int64
+	addrelay_node_id                     *int64
+	relay_node_changed_at                *time.Time
 	clearedFields                        map[string]struct{}
 	user                                 *int64
 	cleareduser                          bool
@@ -1479,6 +1482,125 @@ func (m *APIKeyMutation) ResetWindow7dStart() {
 	delete(m.clearedFields, apikey.FieldWindow7dStart)
 }
 
+// SetRelayNodeID sets the "relay_node_id" field.
+func (m *APIKeyMutation) SetRelayNodeID(i int64) {
+	m.relay_node_id = &i
+	m.addrelay_node_id = nil
+}
+
+// RelayNodeID returns the value of the "relay_node_id" field in the mutation.
+func (m *APIKeyMutation) RelayNodeID() (r int64, exists bool) {
+	v := m.relay_node_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRelayNodeID returns the old "relay_node_id" field's value of the APIKey entity.
+// If the APIKey object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *APIKeyMutation) OldRelayNodeID(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRelayNodeID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRelayNodeID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRelayNodeID: %w", err)
+	}
+	return oldValue.RelayNodeID, nil
+}
+
+// AddRelayNodeID adds i to the "relay_node_id" field.
+func (m *APIKeyMutation) AddRelayNodeID(i int64) {
+	if m.addrelay_node_id != nil {
+		*m.addrelay_node_id += i
+	} else {
+		m.addrelay_node_id = &i
+	}
+}
+
+// AddedRelayNodeID returns the value that was added to the "relay_node_id" field in this mutation.
+func (m *APIKeyMutation) AddedRelayNodeID() (r int64, exists bool) {
+	v := m.addrelay_node_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearRelayNodeID clears the value of the "relay_node_id" field.
+func (m *APIKeyMutation) ClearRelayNodeID() {
+	m.relay_node_id = nil
+	m.addrelay_node_id = nil
+	m.clearedFields[apikey.FieldRelayNodeID] = struct{}{}
+}
+
+// RelayNodeIDCleared returns if the "relay_node_id" field was cleared in this mutation.
+func (m *APIKeyMutation) RelayNodeIDCleared() bool {
+	_, ok := m.clearedFields[apikey.FieldRelayNodeID]
+	return ok
+}
+
+// ResetRelayNodeID resets all changes to the "relay_node_id" field.
+func (m *APIKeyMutation) ResetRelayNodeID() {
+	m.relay_node_id = nil
+	m.addrelay_node_id = nil
+	delete(m.clearedFields, apikey.FieldRelayNodeID)
+}
+
+// SetRelayNodeChangedAt sets the "relay_node_changed_at" field.
+func (m *APIKeyMutation) SetRelayNodeChangedAt(t time.Time) {
+	m.relay_node_changed_at = &t
+}
+
+// RelayNodeChangedAt returns the value of the "relay_node_changed_at" field in the mutation.
+func (m *APIKeyMutation) RelayNodeChangedAt() (r time.Time, exists bool) {
+	v := m.relay_node_changed_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRelayNodeChangedAt returns the old "relay_node_changed_at" field's value of the APIKey entity.
+// If the APIKey object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *APIKeyMutation) OldRelayNodeChangedAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRelayNodeChangedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRelayNodeChangedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRelayNodeChangedAt: %w", err)
+	}
+	return oldValue.RelayNodeChangedAt, nil
+}
+
+// ClearRelayNodeChangedAt clears the value of the "relay_node_changed_at" field.
+func (m *APIKeyMutation) ClearRelayNodeChangedAt() {
+	m.relay_node_changed_at = nil
+	m.clearedFields[apikey.FieldRelayNodeChangedAt] = struct{}{}
+}
+
+// RelayNodeChangedAtCleared returns if the "relay_node_changed_at" field was cleared in this mutation.
+func (m *APIKeyMutation) RelayNodeChangedAtCleared() bool {
+	_, ok := m.clearedFields[apikey.FieldRelayNodeChangedAt]
+	return ok
+}
+
+// ResetRelayNodeChangedAt resets all changes to the "relay_node_changed_at" field.
+func (m *APIKeyMutation) ResetRelayNodeChangedAt() {
+	m.relay_node_changed_at = nil
+	delete(m.clearedFields, apikey.FieldRelayNodeChangedAt)
+}
+
 // ClearUser clears the "user" edge to the User entity.
 func (m *APIKeyMutation) ClearUser() {
 	m.cleareduser = true
@@ -1675,7 +1797,7 @@ func (m *APIKeyMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *APIKeyMutation) Fields() []string {
-	fields := make([]string, 0, 25)
+	fields := make([]string, 0, 27)
 	if m.created_at != nil {
 		fields = append(fields, apikey.FieldCreatedAt)
 	}
@@ -1751,6 +1873,12 @@ func (m *APIKeyMutation) Fields() []string {
 	if m.window_7d_start != nil {
 		fields = append(fields, apikey.FieldWindow7dStart)
 	}
+	if m.relay_node_id != nil {
+		fields = append(fields, apikey.FieldRelayNodeID)
+	}
+	if m.relay_node_changed_at != nil {
+		fields = append(fields, apikey.FieldRelayNodeChangedAt)
+	}
 	return fields
 }
 
@@ -1809,6 +1937,10 @@ func (m *APIKeyMutation) Field(name string) (ent.Value, bool) {
 		return m.Window1dStart()
 	case apikey.FieldWindow7dStart:
 		return m.Window7dStart()
+	case apikey.FieldRelayNodeID:
+		return m.RelayNodeID()
+	case apikey.FieldRelayNodeChangedAt:
+		return m.RelayNodeChangedAt()
 	}
 	return nil, false
 }
@@ -1868,6 +2000,10 @@ func (m *APIKeyMutation) OldField(ctx context.Context, name string) (ent.Value, 
 		return m.OldWindow1dStart(ctx)
 	case apikey.FieldWindow7dStart:
 		return m.OldWindow7dStart(ctx)
+	case apikey.FieldRelayNodeID:
+		return m.OldRelayNodeID(ctx)
+	case apikey.FieldRelayNodeChangedAt:
+		return m.OldRelayNodeChangedAt(ctx)
 	}
 	return nil, fmt.Errorf("unknown APIKey field %s", name)
 }
@@ -2052,6 +2188,20 @@ func (m *APIKeyMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetWindow7dStart(v)
 		return nil
+	case apikey.FieldRelayNodeID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRelayNodeID(v)
+		return nil
+	case apikey.FieldRelayNodeChangedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRelayNodeChangedAt(v)
+		return nil
 	}
 	return fmt.Errorf("unknown APIKey field %s", name)
 }
@@ -2084,6 +2234,9 @@ func (m *APIKeyMutation) AddedFields() []string {
 	if m.addusage_7d != nil {
 		fields = append(fields, apikey.FieldUsage7d)
 	}
+	if m.addrelay_node_id != nil {
+		fields = append(fields, apikey.FieldRelayNodeID)
+	}
 	return fields
 }
 
@@ -2108,6 +2261,8 @@ func (m *APIKeyMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedUsage1d()
 	case apikey.FieldUsage7d:
 		return m.AddedUsage7d()
+	case apikey.FieldRelayNodeID:
+		return m.AddedRelayNodeID()
 	}
 	return nil, false
 }
@@ -2173,6 +2328,13 @@ func (m *APIKeyMutation) AddField(name string, value ent.Value) error {
 		}
 		m.AddUsage7d(v)
 		return nil
+	case apikey.FieldRelayNodeID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddRelayNodeID(v)
+		return nil
 	}
 	return fmt.Errorf("unknown APIKey numeric field %s", name)
 }
@@ -2207,6 +2369,12 @@ func (m *APIKeyMutation) ClearedFields() []string {
 	}
 	if m.FieldCleared(apikey.FieldWindow7dStart) {
 		fields = append(fields, apikey.FieldWindow7dStart)
+	}
+	if m.FieldCleared(apikey.FieldRelayNodeID) {
+		fields = append(fields, apikey.FieldRelayNodeID)
+	}
+	if m.FieldCleared(apikey.FieldRelayNodeChangedAt) {
+		fields = append(fields, apikey.FieldRelayNodeChangedAt)
 	}
 	return fields
 }
@@ -2248,6 +2416,12 @@ func (m *APIKeyMutation) ClearField(name string) error {
 		return nil
 	case apikey.FieldWindow7dStart:
 		m.ClearWindow7dStart()
+		return nil
+	case apikey.FieldRelayNodeID:
+		m.ClearRelayNodeID()
+		return nil
+	case apikey.FieldRelayNodeChangedAt:
+		m.ClearRelayNodeChangedAt()
 		return nil
 	}
 	return fmt.Errorf("unknown APIKey nullable field %s", name)
@@ -2331,6 +2505,12 @@ func (m *APIKeyMutation) ResetField(name string) error {
 		return nil
 	case apikey.FieldWindow7dStart:
 		m.ResetWindow7dStart()
+		return nil
+	case apikey.FieldRelayNodeID:
+		m.ResetRelayNodeID()
+		return nil
+	case apikey.FieldRelayNodeChangedAt:
+		m.ResetRelayNodeChangedAt()
 		return nil
 	}
 	return fmt.Errorf("unknown APIKey field %s", name)
@@ -2513,6 +2693,7 @@ type AccountMutation struct {
 	last_used_at                *time.Time
 	expires_at                  *time.Time
 	auto_pause_on_expired       *bool
+	master_only                 *bool
 	schedulable                 *bool
 	rate_limited_at             *time.Time
 	rate_limit_reset_at         *time.Time
@@ -3605,6 +3786,42 @@ func (m *AccountMutation) ResetAutoPauseOnExpired() {
 	m.auto_pause_on_expired = nil
 }
 
+// SetMasterOnly sets the "master_only" field.
+func (m *AccountMutation) SetMasterOnly(b bool) {
+	m.master_only = &b
+}
+
+// MasterOnly returns the value of the "master_only" field in the mutation.
+func (m *AccountMutation) MasterOnly() (r bool, exists bool) {
+	v := m.master_only
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldMasterOnly returns the old "master_only" field's value of the Account entity.
+// If the Account object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountMutation) OldMasterOnly(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldMasterOnly is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldMasterOnly requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldMasterOnly: %w", err)
+	}
+	return oldValue.MasterOnly, nil
+}
+
+// ResetMasterOnly resets all changes to the "master_only" field.
+func (m *AccountMutation) ResetMasterOnly() {
+	m.master_only = nil
+}
+
 // SetSchedulable sets the "schedulable" field.
 func (m *AccountMutation) SetSchedulable(b bool) {
 	m.schedulable = &b
@@ -4515,7 +4732,7 @@ func (m *AccountMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *AccountMutation) Fields() []string {
-	fields := make([]string, 0, 35)
+	fields := make([]string, 0, 36)
 	if m.created_at != nil {
 		fields = append(fields, account.FieldCreatedAt)
 	}
@@ -4578,6 +4795,9 @@ func (m *AccountMutation) Fields() []string {
 	}
 	if m.auto_pause_on_expired != nil {
 		fields = append(fields, account.FieldAutoPauseOnExpired)
+	}
+	if m.master_only != nil {
+		fields = append(fields, account.FieldMasterOnly)
 	}
 	if m.schedulable != nil {
 		fields = append(fields, account.FieldSchedulable)
@@ -4671,6 +4891,8 @@ func (m *AccountMutation) Field(name string) (ent.Value, bool) {
 		return m.ExpiresAt()
 	case account.FieldAutoPauseOnExpired:
 		return m.AutoPauseOnExpired()
+	case account.FieldMasterOnly:
+		return m.MasterOnly()
 	case account.FieldSchedulable:
 		return m.Schedulable()
 	case account.FieldRateLimitedAt:
@@ -4750,6 +4972,8 @@ func (m *AccountMutation) OldField(ctx context.Context, name string) (ent.Value,
 		return m.OldExpiresAt(ctx)
 	case account.FieldAutoPauseOnExpired:
 		return m.OldAutoPauseOnExpired(ctx)
+	case account.FieldMasterOnly:
+		return m.OldMasterOnly(ctx)
 	case account.FieldSchedulable:
 		return m.OldSchedulable(ctx)
 	case account.FieldRateLimitedAt:
@@ -4933,6 +5157,13 @@ func (m *AccountMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetAutoPauseOnExpired(v)
+		return nil
+	case account.FieldMasterOnly:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetMasterOnly(v)
 		return nil
 	case account.FieldSchedulable:
 		v, ok := value.(bool)
@@ -5323,6 +5554,9 @@ func (m *AccountMutation) ResetField(name string) error {
 		return nil
 	case account.FieldAutoPauseOnExpired:
 		m.ResetAutoPauseOnExpired()
+		return nil
+	case account.FieldMasterOnly:
+		m.ResetMasterOnly()
 		return nil
 	case account.FieldSchedulable:
 		m.ResetSchedulable()

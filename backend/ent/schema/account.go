@@ -160,6 +160,10 @@ func (Account) Fields() []ent.Field {
 		field.Bool("auto_pause_on_expired").
 			Default(true).
 			Comment("Auto pause scheduling when account expires."),
+		// master_only: 主从分流下只给主节点转发的请求调度（migrations/259_relay_nodes.sql）。
+		field.Bool("master_only").
+			Default(false).
+			Comment("Only scheduled for requests served by the master node."),
 
 		// ========== 调度和速率限制相关字段 ==========
 		// 这些字段在 migrations/005_schema_parity.sql 中添加

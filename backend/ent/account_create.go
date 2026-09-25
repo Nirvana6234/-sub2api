@@ -279,6 +279,20 @@ func (_c *AccountCreate) SetNillableAutoPauseOnExpired(v *bool) *AccountCreate {
 	return _c
 }
 
+// SetMasterOnly sets the "master_only" field.
+func (_c *AccountCreate) SetMasterOnly(v bool) *AccountCreate {
+	_c.mutation.SetMasterOnly(v)
+	return _c
+}
+
+// SetNillableMasterOnly sets the "master_only" field if the given value is not nil.
+func (_c *AccountCreate) SetNillableMasterOnly(v *bool) *AccountCreate {
+	if v != nil {
+		_c.SetMasterOnly(*v)
+	}
+	return _c
+}
+
 // SetSchedulable sets the "schedulable" field.
 func (_c *AccountCreate) SetSchedulable(v bool) *AccountCreate {
 	_c.mutation.SetSchedulable(v)
@@ -633,6 +647,10 @@ func (_c *AccountCreate) defaults() error {
 		v := account.DefaultAutoPauseOnExpired
 		_c.mutation.SetAutoPauseOnExpired(v)
 	}
+	if _, ok := _c.mutation.MasterOnly(); !ok {
+		v := account.DefaultMasterOnly
+		_c.mutation.SetMasterOnly(v)
+	}
 	if _, ok := _c.mutation.Schedulable(); !ok {
 		v := account.DefaultSchedulable
 		_c.mutation.SetSchedulable(v)
@@ -708,6 +726,9 @@ func (_c *AccountCreate) check() error {
 	}
 	if _, ok := _c.mutation.AutoPauseOnExpired(); !ok {
 		return &ValidationError{Name: "auto_pause_on_expired", err: errors.New(`ent: missing required field "Account.auto_pause_on_expired"`)}
+	}
+	if _, ok := _c.mutation.MasterOnly(); !ok {
+		return &ValidationError{Name: "master_only", err: errors.New(`ent: missing required field "Account.master_only"`)}
 	}
 	if _, ok := _c.mutation.Schedulable(); !ok {
 		return &ValidationError{Name: "schedulable", err: errors.New(`ent: missing required field "Account.schedulable"`)}
@@ -844,6 +865,10 @@ func (_c *AccountCreate) createSpec() (*Account, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.AutoPauseOnExpired(); ok {
 		_spec.SetField(account.FieldAutoPauseOnExpired, field.TypeBool, value)
 		_node.AutoPauseOnExpired = value
+	}
+	if value, ok := _c.mutation.MasterOnly(); ok {
+		_spec.SetField(account.FieldMasterOnly, field.TypeBool, value)
+		_node.MasterOnly = value
 	}
 	if value, ok := _c.mutation.Schedulable(); ok {
 		_spec.SetField(account.FieldSchedulable, field.TypeBool, value)
@@ -1350,6 +1375,18 @@ func (u *AccountUpsert) SetAutoPauseOnExpired(v bool) *AccountUpsert {
 // UpdateAutoPauseOnExpired sets the "auto_pause_on_expired" field to the value that was provided on create.
 func (u *AccountUpsert) UpdateAutoPauseOnExpired() *AccountUpsert {
 	u.SetExcluded(account.FieldAutoPauseOnExpired)
+	return u
+}
+
+// SetMasterOnly sets the "master_only" field.
+func (u *AccountUpsert) SetMasterOnly(v bool) *AccountUpsert {
+	u.Set(account.FieldMasterOnly, v)
+	return u
+}
+
+// UpdateMasterOnly sets the "master_only" field to the value that was provided on create.
+func (u *AccountUpsert) UpdateMasterOnly() *AccountUpsert {
+	u.SetExcluded(account.FieldMasterOnly)
 	return u
 }
 
@@ -2000,6 +2037,20 @@ func (u *AccountUpsertOne) SetAutoPauseOnExpired(v bool) *AccountUpsertOne {
 func (u *AccountUpsertOne) UpdateAutoPauseOnExpired() *AccountUpsertOne {
 	return u.Update(func(s *AccountUpsert) {
 		s.UpdateAutoPauseOnExpired()
+	})
+}
+
+// SetMasterOnly sets the "master_only" field.
+func (u *AccountUpsertOne) SetMasterOnly(v bool) *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetMasterOnly(v)
+	})
+}
+
+// UpdateMasterOnly sets the "master_only" field to the value that was provided on create.
+func (u *AccountUpsertOne) UpdateMasterOnly() *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateMasterOnly()
 	})
 }
 
@@ -2855,6 +2906,20 @@ func (u *AccountUpsertBulk) SetAutoPauseOnExpired(v bool) *AccountUpsertBulk {
 func (u *AccountUpsertBulk) UpdateAutoPauseOnExpired() *AccountUpsertBulk {
 	return u.Update(func(s *AccountUpsert) {
 		s.UpdateAutoPauseOnExpired()
+	})
+}
+
+// SetMasterOnly sets the "master_only" field.
+func (u *AccountUpsertBulk) SetMasterOnly(v bool) *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetMasterOnly(v)
+	})
+}
+
+// UpdateMasterOnly sets the "master_only" field to the value that was provided on create.
+func (u *AccountUpsertBulk) UpdateMasterOnly() *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateMasterOnly()
 	})
 }
 

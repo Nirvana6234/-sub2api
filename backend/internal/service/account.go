@@ -56,6 +56,7 @@ type Account struct {
 	LastUsedAt               *time.Time
 	ExpiresAt                *time.Time
 	AutoPauseOnExpired       bool
+	MasterOnly               bool // 主从分流：只给主节点转发的请求调度（docs/MASTER_RELAY_NODES.md 第 9 节）
 	CreatedAt                time.Time
 	UpdatedAt                time.Time
 

@@ -70,6 +70,10 @@ type APIKey struct {
 	Window5hStart *time.Time // Start of current 5h window
 	Window1dStart *time.Time // Start of current 1d window
 	Window7dStart *time.Time // Start of current 7d window
+
+	// 主从分流：分配的节点。nil 未分配，0 主节点，> 0 从节点 ID（docs/MASTER_RELAY_NODES.md 10.2）。
+	RelayNodeID        *int64
+	RelayNodeChangedAt *time.Time
 }
 
 func (k *APIKey) IsActive() bool {

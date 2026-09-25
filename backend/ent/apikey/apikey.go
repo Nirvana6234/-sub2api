@@ -65,6 +65,10 @@ const (
 	FieldWindow1dStart = "window_1d_start"
 	// FieldWindow7dStart holds the string denoting the window_7d_start field in the database.
 	FieldWindow7dStart = "window_7d_start"
+	// FieldRelayNodeID holds the string denoting the relay_node_id field in the database.
+	FieldRelayNodeID = "relay_node_id"
+	// FieldRelayNodeChangedAt holds the string denoting the relay_node_changed_at field in the database.
+	FieldRelayNodeChangedAt = "relay_node_changed_at"
 	// EdgeUser holds the string denoting the user edge name in mutations.
 	EdgeUser = "user"
 	// EdgeGroup holds the string denoting the group edge name in mutations.
@@ -133,6 +137,8 @@ var Columns = []string{
 	FieldWindow5hStart,
 	FieldWindow1dStart,
 	FieldWindow7dStart,
+	FieldRelayNodeID,
+	FieldRelayNodeChangedAt,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).
@@ -312,6 +318,16 @@ func ByWindow1dStart(opts ...sql.OrderTermOption) OrderOption {
 // ByWindow7dStart orders the results by the window_7d_start field.
 func ByWindow7dStart(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldWindow7dStart, opts...).ToFunc()
+}
+
+// ByRelayNodeID orders the results by the relay_node_id field.
+func ByRelayNodeID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldRelayNodeID, opts...).ToFunc()
+}
+
+// ByRelayNodeChangedAt orders the results by the relay_node_changed_at field.
+func ByRelayNodeChangedAt(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldRelayNodeChangedAt, opts...).ToFunc()
 }
 
 // ByUserField orders the results by user field.

@@ -1080,6 +1080,9 @@ func apiKeyEntityToService(m *dbent.APIKey) *service.APIKey {
 		Window5hStart:     m.Window5hStart,
 		Window1dStart:     m.Window1dStart,
 		Window7dStart:     m.Window7dStart,
+
+		RelayNodeID:        m.RelayNodeID,
+		RelayNodeChangedAt: m.RelayNodeChangedAt,
 	}
 	if m.Edges.User != nil {
 		out.User = userEntityToService(m.Edges.User)

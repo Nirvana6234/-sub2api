@@ -122,6 +122,17 @@ func (APIKey) Fields() []ent.Field {
 			Optional().
 			Nillable().
 			Comment("Start time of the current 7d rate limit window"),
+		// 主从分流：这个 Key 分配的节点（migrations/259_relay_nodes.sql）。
+		// NULL 未分配（主从分流开关关闭时一直是 NULL），0 主节点，> 0 relay_nodes.id。
+		field.Int64("relay_node_id").
+			Optional().
+			Nillable().
+			Comment("Assigned node: NULL unassigned, 0 master, >0 relay_nodes.id"),
+		field.Time("relay_node_changed_at").
+			Optional().
+			Nillable().
+			SchemaType(map[string]string{dialect.Postgres: "timestamptz"}).
+			Comment("When the assigned node last changed; drives the address-changed notice"),
 	}
 }
 

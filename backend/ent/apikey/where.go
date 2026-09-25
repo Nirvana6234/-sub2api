@@ -170,6 +170,16 @@ func Window7dStart(v time.Time) predicate.APIKey {
 	return predicate.APIKey(sql.FieldEQ(FieldWindow7dStart, v))
 }
 
+// RelayNodeID applies equality check predicate on the "relay_node_id" field. It's identical to RelayNodeIDEQ.
+func RelayNodeID(v int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldRelayNodeID, v))
+}
+
+// RelayNodeChangedAt applies equality check predicate on the "relay_node_changed_at" field. It's identical to RelayNodeChangedAtEQ.
+func RelayNodeChangedAt(v time.Time) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldRelayNodeChangedAt, v))
+}
+
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.
 func CreatedAtEQ(v time.Time) predicate.APIKey {
 	return predicate.APIKey(sql.FieldEQ(FieldCreatedAt, v))
@@ -1208,6 +1218,106 @@ func Window7dStartIsNil() predicate.APIKey {
 // Window7dStartNotNil applies the NotNil predicate on the "window_7d_start" field.
 func Window7dStartNotNil() predicate.APIKey {
 	return predicate.APIKey(sql.FieldNotNull(FieldWindow7dStart))
+}
+
+// RelayNodeIDEQ applies the EQ predicate on the "relay_node_id" field.
+func RelayNodeIDEQ(v int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldRelayNodeID, v))
+}
+
+// RelayNodeIDNEQ applies the NEQ predicate on the "relay_node_id" field.
+func RelayNodeIDNEQ(v int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldNEQ(FieldRelayNodeID, v))
+}
+
+// RelayNodeIDIn applies the In predicate on the "relay_node_id" field.
+func RelayNodeIDIn(vs ...int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldIn(FieldRelayNodeID, vs...))
+}
+
+// RelayNodeIDNotIn applies the NotIn predicate on the "relay_node_id" field.
+func RelayNodeIDNotIn(vs ...int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldNotIn(FieldRelayNodeID, vs...))
+}
+
+// RelayNodeIDGT applies the GT predicate on the "relay_node_id" field.
+func RelayNodeIDGT(v int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldGT(FieldRelayNodeID, v))
+}
+
+// RelayNodeIDGTE applies the GTE predicate on the "relay_node_id" field.
+func RelayNodeIDGTE(v int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldGTE(FieldRelayNodeID, v))
+}
+
+// RelayNodeIDLT applies the LT predicate on the "relay_node_id" field.
+func RelayNodeIDLT(v int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldLT(FieldRelayNodeID, v))
+}
+
+// RelayNodeIDLTE applies the LTE predicate on the "relay_node_id" field.
+func RelayNodeIDLTE(v int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldLTE(FieldRelayNodeID, v))
+}
+
+// RelayNodeIDIsNil applies the IsNil predicate on the "relay_node_id" field.
+func RelayNodeIDIsNil() predicate.APIKey {
+	return predicate.APIKey(sql.FieldIsNull(FieldRelayNodeID))
+}
+
+// RelayNodeIDNotNil applies the NotNil predicate on the "relay_node_id" field.
+func RelayNodeIDNotNil() predicate.APIKey {
+	return predicate.APIKey(sql.FieldNotNull(FieldRelayNodeID))
+}
+
+// RelayNodeChangedAtEQ applies the EQ predicate on the "relay_node_changed_at" field.
+func RelayNodeChangedAtEQ(v time.Time) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldRelayNodeChangedAt, v))
+}
+
+// RelayNodeChangedAtNEQ applies the NEQ predicate on the "relay_node_changed_at" field.
+func RelayNodeChangedAtNEQ(v time.Time) predicate.APIKey {
+	return predicate.APIKey(sql.FieldNEQ(FieldRelayNodeChangedAt, v))
+}
+
+// RelayNodeChangedAtIn applies the In predicate on the "relay_node_changed_at" field.
+func RelayNodeChangedAtIn(vs ...time.Time) predicate.APIKey {
+	return predicate.APIKey(sql.FieldIn(FieldRelayNodeChangedAt, vs...))
+}
+
+// RelayNodeChangedAtNotIn applies the NotIn predicate on the "relay_node_changed_at" field.
+func RelayNodeChangedAtNotIn(vs ...time.Time) predicate.APIKey {
+	return predicate.APIKey(sql.FieldNotIn(FieldRelayNodeChangedAt, vs...))
+}
+
+// RelayNodeChangedAtGT applies the GT predicate on the "relay_node_changed_at" field.
+func RelayNodeChangedAtGT(v time.Time) predicate.APIKey {
+	return predicate.APIKey(sql.FieldGT(FieldRelayNodeChangedAt, v))
+}
+
+// RelayNodeChangedAtGTE applies the GTE predicate on the "relay_node_changed_at" field.
+func RelayNodeChangedAtGTE(v time.Time) predicate.APIKey {
+	return predicate.APIKey(sql.FieldGTE(FieldRelayNodeChangedAt, v))
+}
+
+// RelayNodeChangedAtLT applies the LT predicate on the "relay_node_changed_at" field.
+func RelayNodeChangedAtLT(v time.Time) predicate.APIKey {
+	return predicate.APIKey(sql.FieldLT(FieldRelayNodeChangedAt, v))
+}
+
+// RelayNodeChangedAtLTE applies the LTE predicate on the "relay_node_changed_at" field.
+func RelayNodeChangedAtLTE(v time.Time) predicate.APIKey {
+	return predicate.APIKey(sql.FieldLTE(FieldRelayNodeChangedAt, v))
+}
+
+// RelayNodeChangedAtIsNil applies the IsNil predicate on the "relay_node_changed_at" field.
+func RelayNodeChangedAtIsNil() predicate.APIKey {
+	return predicate.APIKey(sql.FieldIsNull(FieldRelayNodeChangedAt))
+}
+
+// RelayNodeChangedAtNotNil applies the NotNil predicate on the "relay_node_changed_at" field.
+func RelayNodeChangedAtNotNil() predicate.APIKey {
+	return predicate.APIKey(sql.FieldNotNull(FieldRelayNodeChangedAt))
 }
 
 // HasUser applies the HasEdge predicate on the "user" edge.

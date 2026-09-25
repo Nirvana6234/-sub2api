@@ -467,6 +467,53 @@ func (_u *APIKeyUpdate) ClearWindow7dStart() *APIKeyUpdate {
 	return _u
 }
 
+// SetRelayNodeID sets the "relay_node_id" field.
+func (_u *APIKeyUpdate) SetRelayNodeID(v int64) *APIKeyUpdate {
+	_u.mutation.ResetRelayNodeID()
+	_u.mutation.SetRelayNodeID(v)
+	return _u
+}
+
+// SetNillableRelayNodeID sets the "relay_node_id" field if the given value is not nil.
+func (_u *APIKeyUpdate) SetNillableRelayNodeID(v *int64) *APIKeyUpdate {
+	if v != nil {
+		_u.SetRelayNodeID(*v)
+	}
+	return _u
+}
+
+// AddRelayNodeID adds value to the "relay_node_id" field.
+func (_u *APIKeyUpdate) AddRelayNodeID(v int64) *APIKeyUpdate {
+	_u.mutation.AddRelayNodeID(v)
+	return _u
+}
+
+// ClearRelayNodeID clears the value of the "relay_node_id" field.
+func (_u *APIKeyUpdate) ClearRelayNodeID() *APIKeyUpdate {
+	_u.mutation.ClearRelayNodeID()
+	return _u
+}
+
+// SetRelayNodeChangedAt sets the "relay_node_changed_at" field.
+func (_u *APIKeyUpdate) SetRelayNodeChangedAt(v time.Time) *APIKeyUpdate {
+	_u.mutation.SetRelayNodeChangedAt(v)
+	return _u
+}
+
+// SetNillableRelayNodeChangedAt sets the "relay_node_changed_at" field if the given value is not nil.
+func (_u *APIKeyUpdate) SetNillableRelayNodeChangedAt(v *time.Time) *APIKeyUpdate {
+	if v != nil {
+		_u.SetRelayNodeChangedAt(*v)
+	}
+	return _u
+}
+
+// ClearRelayNodeChangedAt clears the value of the "relay_node_changed_at" field.
+func (_u *APIKeyUpdate) ClearRelayNodeChangedAt() *APIKeyUpdate {
+	_u.mutation.ClearRelayNodeChangedAt()
+	return _u
+}
+
 // SetUser sets the "user" edge to the User entity.
 func (_u *APIKeyUpdate) SetUser(v *User) *APIKeyUpdate {
 	return _u.SetUserID(v.ID)
@@ -771,6 +818,21 @@ func (_u *APIKeyUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.Window7dStartCleared() {
 		_spec.ClearField(apikey.FieldWindow7dStart, field.TypeTime)
+	}
+	if value, ok := _u.mutation.RelayNodeID(); ok {
+		_spec.SetField(apikey.FieldRelayNodeID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedRelayNodeID(); ok {
+		_spec.AddField(apikey.FieldRelayNodeID, field.TypeInt64, value)
+	}
+	if _u.mutation.RelayNodeIDCleared() {
+		_spec.ClearField(apikey.FieldRelayNodeID, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.RelayNodeChangedAt(); ok {
+		_spec.SetField(apikey.FieldRelayNodeChangedAt, field.TypeTime, value)
+	}
+	if _u.mutation.RelayNodeChangedAtCleared() {
+		_spec.ClearField(apikey.FieldRelayNodeChangedAt, field.TypeTime)
 	}
 	if _u.mutation.UserCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -1374,6 +1436,53 @@ func (_u *APIKeyUpdateOne) ClearWindow7dStart() *APIKeyUpdateOne {
 	return _u
 }
 
+// SetRelayNodeID sets the "relay_node_id" field.
+func (_u *APIKeyUpdateOne) SetRelayNodeID(v int64) *APIKeyUpdateOne {
+	_u.mutation.ResetRelayNodeID()
+	_u.mutation.SetRelayNodeID(v)
+	return _u
+}
+
+// SetNillableRelayNodeID sets the "relay_node_id" field if the given value is not nil.
+func (_u *APIKeyUpdateOne) SetNillableRelayNodeID(v *int64) *APIKeyUpdateOne {
+	if v != nil {
+		_u.SetRelayNodeID(*v)
+	}
+	return _u
+}
+
+// AddRelayNodeID adds value to the "relay_node_id" field.
+func (_u *APIKeyUpdateOne) AddRelayNodeID(v int64) *APIKeyUpdateOne {
+	_u.mutation.AddRelayNodeID(v)
+	return _u
+}
+
+// ClearRelayNodeID clears the value of the "relay_node_id" field.
+func (_u *APIKeyUpdateOne) ClearRelayNodeID() *APIKeyUpdateOne {
+	_u.mutation.ClearRelayNodeID()
+	return _u
+}
+
+// SetRelayNodeChangedAt sets the "relay_node_changed_at" field.
+func (_u *APIKeyUpdateOne) SetRelayNodeChangedAt(v time.Time) *APIKeyUpdateOne {
+	_u.mutation.SetRelayNodeChangedAt(v)
+	return _u
+}
+
+// SetNillableRelayNodeChangedAt sets the "relay_node_changed_at" field if the given value is not nil.
+func (_u *APIKeyUpdateOne) SetNillableRelayNodeChangedAt(v *time.Time) *APIKeyUpdateOne {
+	if v != nil {
+		_u.SetRelayNodeChangedAt(*v)
+	}
+	return _u
+}
+
+// ClearRelayNodeChangedAt clears the value of the "relay_node_changed_at" field.
+func (_u *APIKeyUpdateOne) ClearRelayNodeChangedAt() *APIKeyUpdateOne {
+	_u.mutation.ClearRelayNodeChangedAt()
+	return _u
+}
+
 // SetUser sets the "user" edge to the User entity.
 func (_u *APIKeyUpdateOne) SetUser(v *User) *APIKeyUpdateOne {
 	return _u.SetUserID(v.ID)
@@ -1708,6 +1817,21 @@ func (_u *APIKeyUpdateOne) sqlSave(ctx context.Context) (_node *APIKey, err erro
 	}
 	if _u.mutation.Window7dStartCleared() {
 		_spec.ClearField(apikey.FieldWindow7dStart, field.TypeTime)
+	}
+	if value, ok := _u.mutation.RelayNodeID(); ok {
+		_spec.SetField(apikey.FieldRelayNodeID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedRelayNodeID(); ok {
+		_spec.AddField(apikey.FieldRelayNodeID, field.TypeInt64, value)
+	}
+	if _u.mutation.RelayNodeIDCleared() {
+		_spec.ClearField(apikey.FieldRelayNodeID, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.RelayNodeChangedAt(); ok {
+		_spec.SetField(apikey.FieldRelayNodeChangedAt, field.TypeTime, value)
+	}
+	if _u.mutation.RelayNodeChangedAtCleared() {
+		_spec.ClearField(apikey.FieldRelayNodeChangedAt, field.TypeTime)
 	}
 	if _u.mutation.UserCleared() {
 		edge := &sqlgraph.EdgeSpec{

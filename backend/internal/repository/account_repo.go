@@ -3628,6 +3628,7 @@ func accountEntityToService(m *dbent.Account) *service.Account {
 		LastUsedAt:               m.LastUsedAt,
 		ExpiresAt:                m.ExpiresAt,
 		AutoPauseOnExpired:       m.AutoPauseOnExpired,
+		MasterOnly:               m.MasterOnly,
 		CreatedAt:                m.CreatedAt,
 		UpdatedAt:                m.UpdatedAt,
 		Schedulable:              m.Schedulable,

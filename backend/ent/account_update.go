@@ -370,6 +370,20 @@ func (_u *AccountUpdate) SetNillableAutoPauseOnExpired(v *bool) *AccountUpdate {
 	return _u
 }
 
+// SetMasterOnly sets the "master_only" field.
+func (_u *AccountUpdate) SetMasterOnly(v bool) *AccountUpdate {
+	_u.mutation.SetMasterOnly(v)
+	return _u
+}
+
+// SetNillableMasterOnly sets the "master_only" field if the given value is not nil.
+func (_u *AccountUpdate) SetNillableMasterOnly(v *bool) *AccountUpdate {
+	if v != nil {
+		_u.SetMasterOnly(*v)
+	}
+	return _u
+}
+
 // SetSchedulable sets the "schedulable" field.
 func (_u *AccountUpdate) SetSchedulable(v bool) *AccountUpdate {
 	_u.mutation.SetSchedulable(v)
@@ -972,6 +986,9 @@ func (_u *AccountUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.AutoPauseOnExpired(); ok {
 		_spec.SetField(account.FieldAutoPauseOnExpired, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.MasterOnly(); ok {
+		_spec.SetField(account.FieldMasterOnly, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.Schedulable(); ok {
 		_spec.SetField(account.FieldSchedulable, field.TypeBool, value)
@@ -1602,6 +1619,20 @@ func (_u *AccountUpdateOne) SetAutoPauseOnExpired(v bool) *AccountUpdateOne {
 func (_u *AccountUpdateOne) SetNillableAutoPauseOnExpired(v *bool) *AccountUpdateOne {
 	if v != nil {
 		_u.SetAutoPauseOnExpired(*v)
+	}
+	return _u
+}
+
+// SetMasterOnly sets the "master_only" field.
+func (_u *AccountUpdateOne) SetMasterOnly(v bool) *AccountUpdateOne {
+	_u.mutation.SetMasterOnly(v)
+	return _u
+}
+
+// SetNillableMasterOnly sets the "master_only" field if the given value is not nil.
+func (_u *AccountUpdateOne) SetNillableMasterOnly(v *bool) *AccountUpdateOne {
+	if v != nil {
+		_u.SetMasterOnly(*v)
 	}
 	return _u
 }
@@ -2238,6 +2269,9 @@ func (_u *AccountUpdateOne) sqlSave(ctx context.Context) (_node *Account, err er
 	}
 	if value, ok := _u.mutation.AutoPauseOnExpired(); ok {
 		_spec.SetField(account.FieldAutoPauseOnExpired, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.MasterOnly(); ok {
+		_spec.SetField(account.FieldMasterOnly, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.Schedulable(); ok {
 		_spec.SetField(account.FieldSchedulable, field.TypeBool, value)
