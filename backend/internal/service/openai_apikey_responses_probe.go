@@ -102,7 +102,7 @@ func selectResponsesProbeModel(account *Account) string {
 // 调用时机：账号创建/更新后，且仅当 platform=openai && type=apikey 时。
 //
 // 探测策略（参见包文档 internal/pkg/openai_compat）：
-//   - 上游 404 / 405 → 端点不存在,写 false
+//   - 上游 404 / 405 → 端点不存在,写 false（404 model-not-found 除外，见 decideResponsesProbeSupport）
 //   - 上游 2xx → 端点存在,进一步看工具能力:响应含 function_call 输出项才写 true;
 //     仅 reasoning / 无 function_call(如火山方舟 coding/v3 × kimi-k2.6)写 false
 //   - 其他非 2xx（401/422/400/5xx 等）→ 端点存在但无法判定工具能力,保守写 true
@@ -275,7 +275,7 @@ func responsesProbeVerdictIsConclusive(status int, body []byte) bool {
 	}
 }
 
-// isResponsesEndpointSupportedByStatus 根据探测响应的 HTTP 状态码判定上游
+// isResponsesEndpointSupportedByStatus 根据上游响应的 HTTP 状态码判定上游
 // 是否暴露 /v1/responses 端点。
 //
 // 关键观察：第三方 OpenAI 兼容上游（DeepSeek/Kimi 等）对未知端点统一返回 404
@@ -283,9 +283,14 @@ func responsesProbeVerdictIsConclusive(status int, body []byte) bool {
 // 返回 400/422 等业务错误，但端点本身存在。
 //
 // 因此：仅 404 和 405 视为"端点不存在"，其他 status 视为"端点存在"。
+// 例外是响应体为 model-not-found 的 404：那是端点在、模型不在（上游是另一台
+// sub2api 时很常见），不能据此判定端点不存在。
 //
 // 5xx 也视为"端点存在"——上游偶发故障不应误判为不支持。
-func isResponsesEndpointSupportedByStatus(status int) bool {
+func isResponsesEndpointSupportedByStatus(status int, body []byte) bool {
+	if isUpstreamModelNotFoundError(status, body) {
+		return true
+	}
 	switch status {
 	case http.StatusNotFound, http.StatusMethodNotAllowed:
 		return false
@@ -297,12 +302,18 @@ func isResponsesEndpointSupportedByStatus(status int) bool {
 // 携带工具的请求。
 //
 //   - 404 / 405：端点不存在 → false
+//   - 404 且响应体是 model-not-found：端点在，只是上游没有探测所用的模型
+//     （上游是另一台 sub2api 时，分组里没有该模型就回 404 model_not_found）→
+//     同下一条，按端点存在处理
 //   - 其他非 2xx（401/403/422/5xx 等）：端点存在,但本次无法判定工具能力
 //     （鉴权/校验/瞬时故障）→ 保守按 true,保持既有"端点存在即支持"行为
 //   - 2xx：探测以 tool_choice=required 强制工具调用,响应必须含 function_call
 //     输出项才算真正可用;否则(如火山方舟 coding/v3 × kimi-k2.6 仅回 reasoning)
 //     判为 false,使网关改走 /v1/chat/completions 直转路径。
 func decideResponsesProbeSupport(status int, body []byte) bool {
+	if isUpstreamModelNotFoundError(status, body) {
+		return true
+	}
 	if status == http.StatusNotFound || status == http.StatusMethodNotAllowed {
 		return false
 	}

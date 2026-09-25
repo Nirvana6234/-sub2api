@@ -414,7 +414,7 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		if account.Type == AccountTypeAPIKey &&
 			!account.IsOpenCodeGo() &&
 			openai_compat.ResolveResponsesSupport(account.Extra) == openai_compat.ResponsesSupportUnknown &&
-			!isResponsesEndpointSupportedByStatus(resp.StatusCode) {
+			!isResponsesEndpointSupportedByStatus(resp.StatusCode, respBody) {
 			logger.L().Info("openai chat_completions: /responses unsupported, falling back to raw chat completions",
 				zap.Int64("account_id", account.ID),
 				zap.Int("upstream_status", resp.StatusCode),

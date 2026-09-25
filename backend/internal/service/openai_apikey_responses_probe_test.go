@@ -103,6 +103,9 @@ func TestDecideResponsesProbeSupport(t *testing.T) {
 		// Endpoint clearly absent on third-party OpenAI-compatible upstreams.
 		{"404 endpoint absent", 404, fnCall, false},
 		{"405 method not allowed", 405, fnCall, false},
+		// Upstream is another sub2api whose group lacks the probe model: the
+		// endpoint exists, only the model is missing.
+		{"404 model not found", 404, []byte(sub2apiModelNotFoundBody), true},
 		// 2xx: tool capability is judged by presence of a function_call output item.
 		{"200 with function_call", 200, fnCall, true},
 		// Volcengine Ark coding/v3 × kimi-k2.6: reasoning only, no function_call.

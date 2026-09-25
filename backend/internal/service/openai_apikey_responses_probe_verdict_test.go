@@ -12,6 +12,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// sub2apiModelNotFoundBody 与 ginRouteNotFoundBody 都是从本机 sub2api 实际抓到的
+// 404 响应体：前者是分组里没有该模型，后者是路由本身不存在。
+const (
+	sub2apiModelNotFoundBody = `{"error":{"message":"Model \"codex-auto-review\" is not supported by any configured account in this group","type":"model_not_found"}}`
+	ginRouteNotFoundBody     = `404 page not found`
+)
+
+func TestIsResponsesEndpointSupportedByStatus(t *testing.T) {
+	require.True(t, isResponsesEndpointSupportedByStatus(http.StatusNotFound, []byte(sub2apiModelNotFoundBody)))
+	require.False(t, isResponsesEndpointSupportedByStatus(http.StatusNotFound, []byte(ginRouteNotFoundBody)))
+	require.False(t, isResponsesEndpointSupportedByStatus(http.StatusNotFound, nil))
+	require.False(t, isResponsesEndpointSupportedByStatus(http.StatusMethodNotAllowed, []byte(sub2apiModelNotFoundBody)))
+	require.True(t, isResponsesEndpointSupportedByStatus(http.StatusBadRequest, nil))
+}
+
 func newResponsesProbeAccount(id int64) Account {
 	return Account{
 		ID:          id,
@@ -123,9 +138,23 @@ func TestProbeOpenAIAPIKeyResponsesSupport_ConclusiveResponsesStillPersist(t *te
 			want:   true,
 		},
 		{
+			// 上游是另一台 sub2api、分组里没有探测模型：端点在，只是模型不在。
+			// 落成 false 会把账号长期钉在 CC 直转上（2026-09-25 本机实测）。
+			name:   "model_not_found_404_keeps_responses",
+			status: http.StatusNotFound,
+			body:   sub2apiModelNotFoundBody,
+			want:   true,
+		},
+		{
 			name:   "endpoint_absent_404",
 			status: http.StatusNotFound,
 			body:   `{"error":{"message":"Not Found"}}`,
+			want:   false,
+		},
+		{
+			name:   "route_absent_404_plain_text",
+			status: http.StatusNotFound,
+			body:   ginRouteNotFoundBody,
 			want:   false,
 		},
 		{
