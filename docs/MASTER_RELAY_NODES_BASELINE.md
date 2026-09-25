@@ -20,6 +20,13 @@ go test -tags=unit -count=1 -skip 'TestUserRepositoryCreateSerializesNormalizedE
   - `TestSettingService_GetPublicSettings_PaymentBalanceDisabledStrictTrue`（`PaymentBalanceDisabled` 已删）
 - `ent/migrate/schema.go` 过期（改了 Ent schema 没重新生成），测试用的 SQLite 表缺列，导致 100 多个测试失败。已重新生成（`go generate ./ent`）；生产走 SQL 迁移，不读这个文件。
 
+## 比对规则
+
+已经失败的测试，新改动可能让它"换一种方式失败"而被掩盖。所以比对时不只看测试名，还要看失败内容：
+
+- `TestConfigKeysAreEnvReachable`：输出里只能列出 `gateway.openai_first_output_hard_cap_seconds` 这一个键。新加配置项必须注册默认值，否则会混进这条失败里。
+- `TestAPIContracts`：只能是下面这 7 个子用例失败，每个子用例的差异内容与基线相同。改接口返回字段时，先确认差异没有变多。
+
 ## 仍然失败的（基线，不在本分支修）
 
 | 包 | 测试 |

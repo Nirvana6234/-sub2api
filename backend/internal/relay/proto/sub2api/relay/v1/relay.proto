@@ -1,0 +1,95 @@
+// 主从节点通信协议（docs/MASTER_RELAY_NODES.md 第 7 节，开发计划 2.3）。
+//
+// 连接按优先级分开（控制 / 事件 / 扣费 / 审核 / 日志），每类连接只调用对应的
+// service。业务消息由后续工作包逐步加入：
+//   - 新增 RPC 只加不改；
+//   - 事件流的信封用 oneof，字段号按下面的保留区间分配，老版本收到不认识的类型
+//     会忽略，不会出错。
+//
+// 生成：internal/relay/proto/generate.sh（不要手改生成代码）。
+syntax = "proto3";
+
+package sub2api.relay.v1;
+
+option go_package = "github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1;relayv1";
+
+// 接入：握手、注册、证书续签与恢复（WP3）。允许未签发证书的对端调用，
+// 各 RPC 允许的对端类型见 internal/relay/transport 的访问策略。
+service RelayEnrollment {
+  // Hello 返回主节点纪元、协议版本范围，以及主节点眼中这个对端的类型。
+  rpc Hello(HelloRequest) returns (HelloResponse);
+}
+
+// 控制连接：选号、上游错误决策、额度、Key 查询等同步小消息（WP6、WP7、WP11）。
+service RelayControl {
+  rpc Ping(PingRequest) returns (PingResponse);
+}
+
+// 事件连接：一条长期双向流，承载心跳、释放、账号事件，以及主节点下发的指令。
+service RelayEvents {
+  rpc Stream(stream NodeEnvelope) returns (stream MasterEnvelope);
+}
+
+// 对端类型，与 transport.PeerClass 一一对应。
+enum PeerClass {
+  PEER_CLASS_UNSPECIFIED = 0;
+  // 没有出示证书（只能注册）。
+  PEER_CLASS_ANONYMOUS = 1;
+  // 用从节点长期密钥自签的证书（待激活、证书过期后的恢复）。
+  PEER_CLASS_LONG_TERM = 2;
+  // 主节点签发的主从通信证书（已激活节点的正常通信）。
+  PEER_CLASS_ISSUED = 3;
+}
+
+message ProtocolVersion {
+  uint32 major = 1;
+  uint32 minor = 2;
+}
+
+message HelloRequest {
+  ProtocolVersion version = 1;
+  string program_version = 2;
+}
+
+message HelloResponse {
+  string master_epoch = 1;
+  ProtocolVersion min_supported = 2;
+  ProtocolVersion current = 3;
+  PeerClass peer_class = 4;
+  // 签发证书的对端：证书里的节点 ID。其他类型为 0。
+  int64 node_id = 5;
+  // 主节点当前时间（Unix 毫秒），用于测时钟偏差（设计 7.4）。
+  int64 master_time_unix_ms = 6;
+}
+
+message PingRequest {
+  bytes payload = 1;
+}
+
+message PingResponse {
+  bytes payload = 1;
+  int64 master_time_unix_ms = 2;
+}
+
+// 从节点 → 主节点的事件信封。
+// 字段号：1~9 信封本身；10~99 从节点上报的事件；100~199 对主节点指令的回执；
+// 200 起留给以后。
+message NodeEnvelope {
+  uint64 seq = 1;
+  oneof body {
+    EventPing ping = 10;
+  }
+}
+
+// 主节点 → 从节点的事件信封。
+// 字段号：1~9 信封本身；10~99 主节点指令；100~199 对从节点事件的回执；200 起留给以后。
+message MasterEnvelope {
+  uint64 seq = 1;
+  oneof body {
+    EventPing ping = 10;
+  }
+}
+
+message EventPing {
+  bytes payload = 1;
+}
