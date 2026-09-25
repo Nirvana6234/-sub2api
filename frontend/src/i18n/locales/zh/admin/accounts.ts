@@ -356,6 +356,7 @@ export default {
         deepseek: 'DeepSeek',
         minimax: 'MiniMax',
         opencode_go: 'OpenCode',
+        typesafe: 'TypeSafe',
       },
       cnProviders: {
         accountMode: {
@@ -719,6 +720,10 @@ export default {
         official: '{platform} 官方 API'
       },
       // OpenAI specific hints
+      typesafe: {
+        baseUrlHint: '留空使用 https://api.typesafe.ai，末尾带不带 /v1 都可以',
+        apiKeyHint: '您的 TypeSafe API Key'
+      },
       openai: {
         baseUrlHint: '留空使用官方 OpenAI API',
         apiKeyHint: '您的 OpenAI API Key',

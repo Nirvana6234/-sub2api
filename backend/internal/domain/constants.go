@@ -31,7 +31,10 @@ const (
 	// PlatformOpenCodeGo 是 OpenCode 平台（账号类型 Zen 按量 / Go 订阅）。
 	// 值保持 opencode_go 以兼容已落库的分组、配额与 Composite 路由 CHECK。
 	PlatformOpenCodeGo = "opencode_go"
-	PlatformComposite  = "composite"
+	// PlatformTypeSafe 是 TypeSafe（Jev 意图判断模型）。协议是 POST /v1/systemone，
+	// 与 OpenAI / Anthropic 都不兼容，只走 /v1/systemone 与 /paw/systemone。
+	PlatformTypeSafe  = "typesafe"
+	PlatformComposite = "composite"
 )
 
 // Account mode constants 区分国产供应商的「按量付费（余额）」与「Coding Plan」两种接入方式。

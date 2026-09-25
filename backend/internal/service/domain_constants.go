@@ -49,6 +49,7 @@ const (
 	PlatformDeepseek   = domain.PlatformDeepseek
 	PlatformMiniMax    = domain.PlatformMiniMax
 	PlatformOpenCodeGo = domain.PlatformOpenCodeGo
+	PlatformTypeSafe   = domain.PlatformTypeSafe
 	PlatformComposite  = domain.PlatformComposite
 	// PlatformKiro is retained for unsupported-platform threshold tests and legacy
 	// account rows. Scheduling-threshold evaluation never pauses kiro accounts.
@@ -85,6 +86,8 @@ const (
 	DefaultOpenCodeGoBaseURL = "https://opencode.ai/zen/go/v1"
 	// OpenCode Zen：按量付费网关，模型列表为 /zen/v1/models。
 	DefaultOpenCodeZenBaseURL = "https://opencode.ai/zen/v1"
+	// TypeSafe：base_url 不含 /v1，转发时拼 /v1/systemone。
+	DefaultTypeSafeBaseURL = "https://api.typesafe.ai"
 )
 
 // 国产供应商 Anthropic 协议端点的默认 base_url（上游路径为 {base}/v1/messages）。

@@ -228,6 +228,19 @@
             <PlatformIcon platform="opencode_go" size="sm" />
             OpenCode
           </button>
+          <button
+            type="button"
+            @click="selectTypeSafePlatform()"
+            :class="[
+              'flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2.5 text-sm font-medium transition-all',
+              form.platform === 'typesafe'
+                ? 'bg-white text-lime-700 shadow-sm dark:bg-dark-600 dark:text-lime-300'
+                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
+            ]"
+          >
+            <PlatformIcon platform="typesafe" size="sm" />
+            TypeSafe
+          </button>
         </div>
       </div>
 
@@ -1419,8 +1432,9 @@
           <p v-if="apiKeyHint" class="input-hint">{{ apiKeyHint }}</p>
         </div>
 
-        <!-- 上游倍率自动探测：全部 API-key 平台可用（所在区块已限定 apikey 类型） -->
+        <!-- 上游倍率自动探测：TypeSafe 以外的 API-key 平台可用（所在区块已限定 apikey 类型） -->
         <div
+          v-if="upstreamBillingProbeSupported"
           class="flex items-center justify-between gap-4 border-t border-gray-200 pt-4 dark:border-dark-600"
         >
           <div>
@@ -4011,6 +4025,7 @@ const baseUrlHint = computed(() => {
   if (form.platform === 'openai') return t('admin.accounts.openai.baseUrlHint')
   if (form.platform === 'gemini') return t('admin.accounts.gemini.baseUrlHint')
   if (form.platform === 'grok') return ''
+  if (form.platform === 'typesafe') return t('admin.accounts.typesafe.baseUrlHint')
   return t('admin.accounts.baseUrlHint')
 })
 
@@ -4018,6 +4033,7 @@ const apiKeyHint = computed(() => {
   if (form.platform === 'openai') return t('admin.accounts.openai.apiKeyHint')
   if (form.platform === 'gemini') return t('admin.accounts.gemini.apiKeyHint')
   if (form.platform === 'grok') return ''
+  if (form.platform === 'typesafe') return t('admin.accounts.typesafe.apiKeyHint')
   return t('admin.accounts.apiKeyHint')
 })
 
@@ -4034,6 +4050,8 @@ const apiKeyBaseUrlPlaceholder = computed(() => {
       return 'https://generativelanguage.googleapis.com'
     case 'grok':
       return 'https://api.x.ai/v1'
+    case 'typesafe':
+      return TYPESAFE_DEFAULT_BASE_URL
     default:
       return 'https://api.anthropic.com'
   }
@@ -4140,9 +4158,12 @@ const step = ref(1)
 const submitting = ref(false)
 const accountCategory = ref<'oauth-based' | 'apikey' | 'bedrock' | 'service_account'>('oauth-based') // UI selection for account category
 const addMethod = ref<AddMethod>('oauth') // For oauth-based: 'oauth' or 'setup-token'
+const TYPESAFE_DEFAULT_BASE_URL = 'https://api.typesafe.ai'
 const apiKeyBaseUrl = ref('https://api.anthropic.com')
 const apiKeyValue = ref('')
 const upstreamBillingAutoProbeEnabled = ref(true)
+// TypeSafe 没有可探测的上游计费接口，后端对它开探测会拒绝创建（UPSTREAM_BILLING_PROBE_ACCOUNT_INVALID）。
+const upstreamBillingProbeSupported = computed(() => form.platform !== 'typesafe')
 
 // ── 国产供应商（Kimi / Zhipu / DeepSeek）账号类型、API 协议与端点 ──
 const accountMode = ref<CnAccountMode>('payg')
@@ -4251,6 +4272,13 @@ function selectCNPlatform(platform: CnProviderPlatform) {
   }
   apiKeyBaseUrl.value = defaultCNBaseUrl(platform, accountMode.value, apiProtocol.value)
   resetAdaptiveBaseUrls(platform, accountMode.value)
+}
+// TypeSafe（Jev）：只有 API Key 一种接入，base_url 不含 /v1，转发时拼 /v1/systemone。
+function selectTypeSafePlatform() {
+  form.platform = 'typesafe'
+  form.type = 'apikey'
+  accountCategory.value = 'apikey'
+  apiKeyBaseUrl.value = TYPESAFE_DEFAULT_BASE_URL
 }
 function selectOpenCodeGoPlatform() {
   form.platform = 'opencode_go'
@@ -4835,7 +4863,9 @@ watch(
             ? 'https://generativelanguage.googleapis.com'
             : newPlatform === 'grok'
               ? 'https://api.x.ai/v1'
-              : 'https://api.anthropic.com'
+              : newPlatform === 'typesafe'
+                ? TYPESAFE_DEFAULT_BASE_URL
+                : 'https://api.anthropic.com'
     }
     // Clear model-related settings
     allowedModels.value = []
@@ -5763,7 +5793,9 @@ const handleSubmit = async () => {
         ? 'https://generativelanguage.googleapis.com'
         : form.platform === 'grok'
           ? 'https://api.x.ai/v1'
-          : 'https://api.anthropic.com'
+          : form.platform === 'typesafe'
+            ? TYPESAFE_DEFAULT_BASE_URL
+            : 'https://api.anthropic.com'
 
   // Build credentials with optional model mapping
   const credentials: Record<string, unknown> = {
@@ -5863,7 +5895,7 @@ const handleSubmit = async () => {
     ...form,
     group_ids: form.group_ids,
     extra: withUpstreamRequestIdHeader(extra),
-    upstream_billing_probe_enabled: upstreamBillingAutoProbeEnabled.value,
+    upstream_billing_probe_enabled: upstreamBillingProbeSupported.value && upstreamBillingAutoProbeEnabled.value,
     auto_pause_on_expired: autoPauseOnExpired.value
   })
 }
@@ -5994,7 +6026,7 @@ const createAccountAndFinish = async (
     expires_at: form.expires_at,
     // 上游倍率探测对全部 API-key 平台开放（antigravity upstream 走本 helper）；
     // 非 apikey 类型（bedrock/oauth）不传，后端不动作。
-    upstream_billing_probe_enabled: type === 'apikey' ? upstreamBillingAutoProbeEnabled.value : undefined,
+    upstream_billing_probe_enabled: type === 'apikey' ? upstreamBillingProbeSupported.value && upstreamBillingAutoProbeEnabled.value : undefined,
     auto_pause_on_expired: autoPauseOnExpired.value
   })
 }

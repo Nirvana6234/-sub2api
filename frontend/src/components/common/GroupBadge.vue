@@ -174,6 +174,9 @@ const labelClass = computed(() => {
   if (props.platform === 'minimax') {
     return `${base} bg-rose-200/60 text-rose-800 dark:bg-rose-800/40 dark:text-rose-300`
   }
+  if (props.platform === 'typesafe') {
+    return `${base} bg-lime-200/60 text-lime-900 dark:bg-lime-800/40 dark:text-lime-300`
+  }
   if (props.platform === 'composite') {
     return `${base} bg-cyan-200/70 text-cyan-900 dark:bg-cyan-900/50 dark:text-cyan-300`
   }
@@ -231,6 +234,11 @@ const badgeClass = computed(() => {
     return isSubscription.value
       ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400'
       : 'bg-rose-50 text-rose-700 dark:bg-rose-900/20 dark:text-rose-400'
+  }
+  if (props.platform === 'typesafe') {
+    return isSubscription.value
+      ? 'bg-lime-100 text-lime-800 dark:bg-lime-900/30 dark:text-lime-300'
+      : 'bg-lime-50 text-lime-800 dark:bg-lime-900/20 dark:text-lime-300'
   }
   if (props.platform === 'composite') {
     return isSubscription.value
