@@ -14,7 +14,7 @@ public sealed class NavigationTests
         var navigation = new NavigationViewModel();
 
         Assert.Equal(
-            [ClientPage.Overview, ClientPage.Codex, ClientPage.Claude, ClientPage.LocalProxy, ClientPage.DesktopSync, ClientPage.Account],
+            [ClientPage.Overview, ClientPage.Codex, ClientPage.Claude, ClientPage.LocalProxy, ClientPage.DesktopSync, ClientPage.Explore, ClientPage.Account],
             navigation.Items.Select(i => i.Page));
         Assert.Equal(ClientPage.Overview, navigation.CurrentPage);
         Assert.Equal("仪表盘", navigation.Title);
@@ -54,6 +54,15 @@ public sealed class NavigationTests
 
         Assert.True(page.Navigation.Item(ClientPage.Account).HasBadge);
         Assert.False(page.Navigation.Item(ClientPage.Codex).HasBadge);
+    }
+
+    [Fact]
+    public async Task WithoutTheExperimentalSwitchThereIsNoExplorePage()
+    {
+        (DashboardPageViewModel page, _, _, _) = await SignedInPageAsync();
+
+        Assert.Null(page.Explore);
+        Assert.DoesNotContain(page.Navigation.Items, i => i.Page == ClientPage.Explore);
     }
 
     [Fact]

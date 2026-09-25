@@ -88,6 +88,59 @@
     </Content>
   </ItemGroup>
 
+  <!-- Optional WeChat screen reader for 「探索」 → 微信消息意图判断, Windows only
+       (docs/WECHAT_INTENT_ASSISTANT.md §4.6).
+
+       Opt-in, and deliberately not part of the release package in phase 1: the feature is
+       for the developer's own testing, and the reader is a self-contained exe of its own
+       (about 14 MB trimmed) that every user's download and update would otherwise carry.
+       Build with -p:IncludeWeChatReader=true to get it next to the client.
+
+       `dotnet publish` through Exec rather than the MSBuild task: the reader has its own
+       target framework (a Windows SDK one) and its own publish settings, and an MSBuild call
+       would hand it this project's global properties. -->
+  <Target Name="IncludeWeChatReader" BeforeTargets="AssignTargetPaths"
+          Condition="'$(DesignTimeBuild)' != 'true' and '$(IncludeWeChatReader)' == 'true' and ($(RuntimeIdentifier.StartsWith('win')) or ('$(RuntimeIdentifier)' == '' and $([MSBuild]::IsOSPlatform('Windows'))))">
+    <PropertyGroup>
+      <!-- No trailing separator: in the Exec below it would escape the closing quote. -->
+      <WeChatReaderPublishDir>$(MSBuildProjectDirectory)\$(IntermediateOutputPath)wechat-reader</WeChatReaderPublishDir>
+    </PropertyGroup>
+    <Exec Command="&quot;$(DOTNET_HOST_PATH)&quot; publish &quot;$(MSBuildProjectDirectory)\..\LanAi.RelayClient.WeChatReader\LanAi.RelayClient.WeChatReader.csproj&quot; -c Release -o &quot;$(WeChatReaderPublishDir)&quot; --nologo" />
+    <ItemGroup>
+      <Content Include="$(WeChatReaderPublishDir)\wechat-reader.exe">
+        <Link>wechat-reader\wechat-reader.exe</Link>
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+        <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+      </Content>
+    </ItemGroup>
+  </Target>
+
+  <!-- The same opt-in for macOS: the reader there is Swift (src/LanAi.RelayClient.WeChatReader.Mac),
+       which only a Mac can build. On a Mac it is built here; anywhere else — the release runner
+       cross-compiles macOS from Windows — a binary built on a Mac beforehand is taken from
+       WeChatReaderMacBinary. It lands in Contents/MacOS/wechat-reader/ once build-app.py copies the
+       publish output into the bundle, and build-app.py marks it executable. -->
+  <Target Name="IncludeWeChatReaderMac" BeforeTargets="AssignTargetPaths"
+          Condition="'$(DesignTimeBuild)' != 'true' and '$(IncludeWeChatReader)' == 'true' and $(RuntimeIdentifier.StartsWith('osx'))">
+    <PropertyGroup>
+      <WeChatReaderMacPackage>$(MSBuildProjectDirectory)\..\LanAi.RelayClient.WeChatReader.Mac</WeChatReaderMacPackage>
+      <WeChatReaderMacBinary Condition="'$(WeChatReaderMacBinary)' == ''">$(WeChatReaderMacPackage)/.build/apple/Products/Release/wechat-reader</WeChatReaderMacBinary>
+    </PropertyGroup>
+    <Exec Condition="$([MSBuild]::IsOSPlatform('OSX'))"
+          Command="swift build -c release --arch arm64 --arch x86_64 --package-path &quot;$(WeChatReaderMacPackage)&quot;" />
+    <Error Condition="!Exists('$(WeChatReaderMacBinary)')"
+           Text="IncludeWeChatReader for macOS needs the Swift reader built on a Mac first: run src/LanAi.RelayClient.WeChatReader.Mac/build.sh there, or pass -p:WeChatReaderMacBinary=&lt;path&gt;. Not found: $(WeChatReaderMacBinary)" />
+    <ItemGroup>
+      <Content Include="$(WeChatReaderMacBinary)">
+        <Link>wechat-reader/wechat-reader</Link>
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+        <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+      </Content>
+    </ItemGroup>
+  </Target>
+
   <!-- Optional bundled context filter, Windows only.
 
        Keyed on the RuntimeIdentifier and not on the build machine's OS: the macOS

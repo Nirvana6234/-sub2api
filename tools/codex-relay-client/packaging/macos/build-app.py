@@ -59,6 +59,11 @@ VERSION_MANIFEST = REPO_ROOT / "frontend" / "public" / "client-version.json"
 # Files that must be executable inside the bundle. Everything else is 0644.
 EXECUTABLE_SUFFIXES = {".dylib", ".so"}
 
+# Helper executables with no suffix, found anywhere under Contents/MacOS. wechat-reader is the Swift
+# screen reader for 微信消息意图判断, present only in packages built with -p:IncludeWeChatReader=true;
+# without the bit the client finds it but cannot start it.
+EXECUTABLE_NAMES = {"wechat-reader"}
+
 
 def read_client_version():
     """The version this build reports, read from the one place that defines it."""
@@ -175,7 +180,7 @@ def archive(app, out_dir, version, executable):
         # The permission bits are set here rather than copied from disk, because
         # this runs on Windows where they do not exist. Getting the executable
         # wrong means an app that cannot start on every target machine.
-        needs_exec = path.name == executable or path.suffix in EXECUTABLE_SUFFIXES
+        needs_exec = path.name == executable or path.name in EXECUTABLE_NAMES or path.suffix in EXECUTABLE_SUFFIXES
         info.mode = 0o755 if needs_exec else 0o644
 
         with path.open("rb") as handle:
@@ -190,7 +195,7 @@ def archive(app, out_dir, version, executable):
         for path in sorted(app.rglob("*")):
             arcname = str(path.relative_to(root)).replace(os.sep, "/")
             add(path, arcname)
-            if path.is_file() and (path.name == executable or path.suffix in EXECUTABLE_SUFFIXES):
+            if path.is_file() and (path.name == executable or path.name in EXECUTABLE_NAMES or path.suffix in EXECUTABLE_SUFFIXES):
                 executable_entries += 1
 
     print(f"  wrote {target.name} ({target.stat().st_size:,} bytes)")

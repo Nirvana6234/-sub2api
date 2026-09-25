@@ -101,6 +101,12 @@ public partial class DashboardView : UserControl, IDashboardActions
             _pages[ClientPage.DesktopSync] = new Pages.DesktopSyncPage(page.DesktopSync, safeAsync, this);
         }
 
+        // Experimental and self-test only: present when the head built the view model (docs §3.1).
+        if (page.Explore is not null)
+        {
+            _pages[ClientPage.Explore] = new Pages.ExplorePage(page.Explore, safeAsync);
+        }
+
         page.Navigation.PropertyChanged += Navigation_OnPropertyChanged;
         ShowSelectedPage();
 

@@ -13,6 +13,7 @@ using LanAi.RelayClient.Server;
 using LanAi.RelayClient.Services;
 using LanAi.RelayClient.Transport;
 using LanAi.RelayClient.ViewModels;
+using LanAi.RelayClient.WeChatIntent;
 using LanAi.Workspace.Injection;
 
 namespace LanAi.RelayClient.App;
@@ -48,6 +49,7 @@ public partial class App : Application
     private ClientShutdownCoordinator? _shutdown;
     private TrayPresence? _tray;
     private INotificationPresenter? _notifications;
+    private WeChatIntentViewModel? _weChatIntent;
 
     /// <summary>
     /// Set once the shell exists, so the single-instance listener can raise it.
@@ -323,10 +325,12 @@ public partial class App : Application
             relay,
             session);
 
+        _weChatIntent = CreateWeChatIntent(session, dashboard, shell);
+
         var exitCoordinator = new ClientExitCoordinator(codex, session);
         _shutdown = new ClientShutdownCoordinator(() => exitCoordinator.ReleaseForExitAsync());
 
-        var dashboardPage = new DashboardPageViewModel(dashboard, clientUpdate, announcements, session, desktopSync);
+        var dashboardPage = new DashboardPageViewModel(dashboard, clientUpdate, announcements, session, desktopSync, _weChatIntent);
         // Created here, on the UI thread, because the Windows implementation owns a
         // window whose procedure receives the click callback on its creating thread.
         _notifications = NotificationPresenters.Create();
@@ -602,8 +606,14 @@ public partial class App : Application
             // A session left by an earlier run is restored before showing the form, so
             // a returning user is not asked for a password they already gave.
             await session.RestoreAsync().ConfigureAwait(true);
-            ShowCurrentSurface();
+            if (session.RestoreFailureMessage is { } restoreFailure)
+            {
+                // Stay on the sign-in page and say so, rather than open a dashboard that
+                // has no data because the server cannot be reached.
+                signIn.ShowRestoreFailure(restoreFailure);
+            }
 
+            ShowCurrentSurface();
 
         });
 
@@ -630,9 +640,87 @@ public partial class App : Application
     private void RaiseExistingWindow() =>
         Avalonia.Threading.Dispatcher.UIThread.Post(() => _shell?.RestoreFromTray());
 
+    /// <summary>
+    /// 「探索」 → 微信消息意图判断 (docs/WECHAT_INTENT_ASSISTANT.md). Present exactly when the package
+    /// carries the WeChat reader — <c>wechat-reader\wechat-reader.exe</c> on Windows,
+    /// <c>Contents/MacOS/wechat-reader/wechat-reader</c> on macOS — which only a build with
+    /// <c>-p:IncludeWeChatReader=true</c> does. The release workflow does not pass it, so a released
+    /// client has neither the reader nor the page — the package itself is the switch, and no
+    /// environment variable is needed.
+    /// </summary>
+    private static WeChatIntentViewModel? CreateWeChatIntent(RelaySessionManager session, DashboardViewModel dashboard, ShellWindow shell)
+    {
+        if (!OperatingSystem.IsWindows() && !OperatingSystem.IsMacOS())
+        {
+            return null;
+        }
+
+        string readerPath = Path.Combine(AppContext.BaseDirectory, "wechat-reader",
+            OperatingSystem.IsWindows() ? "wechat-reader.exe" : "wechat-reader");
+        if (!File.Exists(readerPath))
+        {
+            // Said once, so a missing 「探索」 tab can be told from a broken one in the log.
+            ClientLog.Info("未带微信读取组件，不显示「探索」页签");
+            return null;
+        }
+
+        IWeChatReader reader = new WeChatReaderProcess(readerPath);
+        string? dump = Environment.GetEnvironmentVariable("GONGFEI_WECHAT_DEBUG_DUMP");
+        ClientLog.Info($"实验功能：微信消息意图判断{(string.IsNullOrWhiteSpace(dump) ? string.Empty : "（调试导出已开启）")}");
+
+        // The client reads the key per request through the view model, which owns it.
+        WeChatIntentViewModel? viewModel = null;
+        // The own-key route exists only in test builds (local and test-server channels); a production
+        // build judges through the 共飞 Jev group alone and never creates the direct client.
+        DirectJevClient? jev = ClientOptions.OwnKeyJevRoute ? new DirectJevClient(() => viewModel?.CurrentKey()) : null;
+
+        // Phase 2: the 共飞 relay's Jev group, with the signed-in session. Offered on the page only
+        // once the group list holds a typesafe group, so it stays out of sight until the server has one.
+        var relayJev = new PawJevClient(
+            new Uri(ClientOptions.ServerAddress),
+            cancellationToken => session.GetAccessTokenAsync(cancellationToken),
+            (rejected, cancellationToken) => session.NotifyAccessTokenRejectedAsync(rejected, cancellationToken),
+            () => viewModel?.CurrentRelayGroupId());
+        viewModel = new WeChatIntentViewModel(
+            reader,
+            jev,
+            jev is not null ? jev.CheckKeyAsync : (_, _) => Task.FromResult(JevKeyCheck.Unreachable),
+            new JevApiKeyStore(SecureStorage.CreateSnapshotProtector()),
+            new WeChatIntentPreferenceStore(),
+            new WeChatIntentUsageStore(),
+            new WeChatIntentFeedbackStore(),
+            WeChatProcess.IsRunning,
+            action => Avalonia.Threading.Dispatcher.UIThread.Post(action),
+            (interval, onTick) => new AvaloniaUiTimer(interval, onTick),
+            isOwnWindowInFront: WeChatProcess.ForegroundIsOurs,
+            dumpDirectory: dump,
+            relayJev: relayJev)
+        {
+            Confirm = message => ConfirmDialog.AskAsync(shell, message, confirmLabel: "同意并开启"),
+        };
+
+        WeChatIntentViewModel intent = viewModel;
+        void ApplySession() => intent.SetSignedIn(
+            session.IsSignedIn,
+            session.IsSignedIn ? JevApiKeyStore.ScopeFor(ClientOptions.ServerAddress, session.UserEmail) : null);
+        session.StateChanged += (_, _) => Avalonia.Threading.Dispatcher.UIThread.Post(ApplySession);
+        ApplySession();
+
+        // Raised on the UI thread after every read of the group list.
+        dashboard.GroupsRefreshed += () => intent.SetRelayGroups(
+            dashboard.GroupsOn("typesafe").Select(g => new JevGroupOption(g.Id, g.Name, g.RateLabel)));
+
+        // One card beside each of the other person's messages, shown while WeChat is in front and
+        // the feature runs. There is no panel of its own: the controls are on the 「探索」 page and in
+        // each card's right-click menu.
+        _ = new InlineCardHost(intent);
+        return intent;
+    }
+
     private void OnExit()
     {
         ClientLog.Info("客户端退出");
+        _weChatIntent?.Dispose();
         _shutdown?.ReleaseBeforeProcessExit();
 
         // Best effort and bounded: the server notices a dropped socket on its own.
