@@ -174,7 +174,7 @@ func validateJWTForAdmin(
 	}
 
 	// 从数据库获取用户
-	user, err := userService.GetByID(c.Request.Context(), claims.UserID)
+	user, err := userService.GetByIDForAuth(c.Request.Context(), claims.UserID)
 	if err != nil {
 		if errors.Is(err, service.ErrUserNotFound) {
 			AbortWithError(c, 401, "USER_NOT_FOUND", "User not found")

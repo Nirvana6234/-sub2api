@@ -1119,6 +1119,19 @@ func (s *UserService) GetByID(ctx context.Context, id int64) (*User, error) {
 	return user, nil
 }
 
+// GetByIDForAuth loads the user for request authentication: status, token
+// version, role and quotas, without the avatar, which the auth middlewares
+// never read. They run on every authenticated request, so the avatar lookup
+// was one extra query per request.
+func (s *UserService) GetByIDForAuth(ctx context.Context, id int64) (*User, error) {
+	user, err := s.userRepo.GetByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("get user: %w", err)
+	}
+	normalizeLoadedUserTokenVersion(user)
+	return user, nil
+}
+
 func normalizeLoadedUserTokenVersion(user *User) {
 	if user == nil || user.TokenVersionResolved {
 		return

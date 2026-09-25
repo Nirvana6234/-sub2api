@@ -321,7 +321,9 @@ func (s *SettingService) IsTotpEncryptionKeyConfigured() bool {
 // 开启时会话与登录时的 IP/User-Agent 绑定，任一变化立即失效并撤销该会话。
 // 默认关闭：移动网络/多出口 IP 场景下 IP 频繁变化会导致登录后立即掉线。
 func (s *SettingService) IsSessionBindingEnabled(ctx context.Context) bool {
-	value, err := s.settingRepo.GetValue(ctx, SettingKeySessionBindingEnabled)
+	// Checked by the JWT middleware on every authenticated request; settings
+	// updates invalidate the cache, so toggling it applies immediately.
+	value, err := s.hotSettings().GetValue(ctx, SettingKeySessionBindingEnabled)
 	if err != nil {
 		return false // 默认关闭
 	}
