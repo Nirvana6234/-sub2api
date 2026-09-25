@@ -50,4 +50,17 @@ internal static class ClientOptions
 #else
     public const string ServerAddress = "https://gongfeiai.com/";
 #endif
+
+    /// <summary>
+    /// Whether 微信消息意图判断 may use the user's own TypeSafe key directly — the phase 1
+    /// route, kept for testing only. The local and test channels have it; a production build has
+    /// neither the card nor the client, and a key saved by an earlier test build is never read.
+    /// A property rather than a const so callers' branches on it do not trip the unreachable-code
+    /// warning; its value is still fixed by the channel at compile time.
+    /// </summary>
+#if LOCAL_SERVER || TEST_SERVER
+    public static bool OwnKeyJevRoute => true;
+#else
+    public static bool OwnKeyJevRoute => false;
+#endif
 }

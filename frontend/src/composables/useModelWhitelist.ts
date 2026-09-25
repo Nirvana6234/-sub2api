@@ -219,6 +219,9 @@ const minimaxModels = [
   'abab5.5-chat', 'abab5.5s-chat'
 ]
 
+// TypeSafe Jev（意图判断，POST /v1/systemone）。客户端固定 jev-1.13.0，下线时退回 jev-latest。
+const typesafeModels = ['jev-1.13.0', 'jev-latest']
+
 // 百度 文心
 const baiduModels = [
   'ernie-4.0-8k-latest', 'ernie-4.0-8k', 'ernie-4.0-turbo-8k',
@@ -265,6 +268,7 @@ const allModelsList: string[] = [
   ...moonshotModels,
   ...doubaoModels,
   ...minimaxModels,
+  ...typesafeModels,
   ...baiduModels,
   ...sparkModels,
   ...hunyuanModels,
@@ -382,6 +386,11 @@ const antigravityPresetMappings = [
 ]
 
 // Bedrock 预设映射（与后端 DefaultBedrockModelMapping 保持一致）
+const typesafePresetMappings = [
+  { label: 'Jev 1.13.0', from: 'jev-1.13.0', to: 'jev-1.13.0', color: 'bg-lime-100 text-lime-700 hover:bg-lime-200 dark:bg-lime-900/30 dark:text-lime-400' },
+  { label: 'Jev Latest', from: 'jev-latest', to: 'jev-latest', color: 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400' }
+]
+
 const bedrockPresetMappings = [
   { label: 'Fable 5.1', from: 'claude-fable-5-1', to: 'anthropic.claude-fable-5-1', color: 'bg-rose-100 text-rose-700 hover:bg-rose-200 dark:bg-rose-900/30 dark:text-rose-400' },
   { label: 'Fable 5', from: 'claude-fable-5', to: 'anthropic.claude-fable-5', color: 'bg-rose-100 text-rose-700 hover:bg-rose-200 dark:bg-rose-900/30 dark:text-rose-400' },
@@ -467,6 +476,7 @@ export function getModelsByPlatform(platform: string): string[] {
     ]
     case 'doubao': return doubaoModels
     case 'minimax': return minimaxModels
+    case 'typesafe': return typesafeModels
     case 'baidu': return baiduModels
     case 'spark': return sparkModels
     case 'hunyuan': return hunyuanModels
@@ -482,6 +492,7 @@ export function getPresetMappingsByPlatform(platform: string) {
   if (platform === 'grok' || platform === 'xai') return grokPresetMappings
   if (platform === 'antigravity') return antigravityPresetMappings
   if (platform === 'bedrock') return bedrockPresetMappings
+  if (platform === 'typesafe') return typesafePresetMappings
   return anthropicPresetMappings
 }
 

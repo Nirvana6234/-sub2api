@@ -120,6 +120,7 @@ export default {
         deepseek: 'DeepSeek',
         minimax: 'MiniMax',
         opencode_go: 'OpenCode',
+        typesafe: 'TypeSafe',
       },
       cnProviders: {
         accountMode: {
@@ -632,6 +633,10 @@ export default {
         official: '{platform} official API'
       },
       // OpenAI specific hints
+      typesafe: {
+        baseUrlHint: 'Leave empty for https://api.typesafe.ai; a trailing /v1 is optional',
+        apiKeyHint: 'Your TypeSafe API key'
+      },
       openai: {
         baseUrlHint: 'Leave default for official OpenAI API',
         apiKeyHint: 'Your OpenAI API Key',

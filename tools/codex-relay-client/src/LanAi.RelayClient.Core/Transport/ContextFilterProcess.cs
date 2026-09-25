@@ -223,7 +223,9 @@ internal static class ChildProcessJob
     private static IntPtr _job;
     private static bool _failed;
 
-    public static void TryAdopt(Process process)
+    /// <param name="process">The child to tie to this process's life.</param>
+    /// <param name="name">What the child is, for the log.</param>
+    public static void TryAdopt(Process process, string name = "Context Filter")
     {
         if (!OperatingSystem.IsWindows()) return;
         try
@@ -233,12 +235,12 @@ internal static class ChildProcessJob
                 if (_failed) return;
                 if (_job == IntPtr.Zero && !TryCreateJob()) { _failed = true; return; }
                 if (!AssignProcessToJobObject(_job, process.Handle))
-                    ClientLog.Warning($"无法把 Context Filter 绑定到客户端的作业对象（错误 {Marshal.GetLastWin32Error()}），退出时仍会主动结束它");
+                    ClientLog.Warning($"无法把 {name} 绑定到客户端的作业对象（错误 {Marshal.GetLastWin32Error()}），退出时仍会主动结束它");
             }
         }
         catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or DllNotFoundException or EntryPointNotFoundException)
         {
-            ClientLog.Warning("绑定 Context Filter 到作业对象失败，退出时仍会主动结束它", ex);
+            ClientLog.Warning($"绑定 {name} 到作业对象失败，退出时仍会主动结束它", ex);
         }
     }
 

@@ -146,6 +146,62 @@ func RegisterPawRoutes(v1 *gin.RouterGroup, svc *service.PawConfigService, jwtAu
 	}
 	paw.POST("/messages", pawMessagesHandler(messagesChat, deps, false))
 	paw.POST("/messages/count_tokens", pawMessagesHandler(messagesChat, deps, true))
+
+	// TypeSafe Jev 意图判断（小白端「探索」页签）。分组同样由 X-Paw-Group-Id 指名，
+	// 请求体逐字是 TypeSafe 的 {state, model, questions}。/paw 没有挂分组模型白名单
+	// 中间件，这里在换上分组 key 之后单独挂一次。
+	paw.POST("/systemone", pawSystemOnePrepareHandler(messagesChat), middleware.GroupModelAllowlist(), pawSystemOneDispatchHandler(deps))
+}
+
+// pawSystemOnePrepareHandler 校验登录态和 X-Paw-Group-Id 指名的 typesafe 分组，
+// 把带上该分组的内部 key 副本放进上下文。不走自动分组。
+func pawSystemOnePrepareHandler(chat *service.PawChatService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if pawCredentialSelectorPresent(c) {
+			pawChatError(c, http.StatusBadRequest, "INVALID_REQUEST", "Paw accepts only the authenticated account session")
+			return
+		}
+		subject, ok := middleware.GetAuthSubjectFromContext(c)
+		if !ok || subject.UserID <= 0 {
+			pawChatError(c, http.StatusUnauthorized, PawErrorCodeAuthRequired, "authenticated user is required")
+			return
+		}
+		if chat == nil {
+			pawChatError(c, http.StatusServiceUnavailable, PawErrorCodeConfigUnavailable, "Paw System One gateway is unavailable")
+			return
+		}
+		groupID, err := strconv.ParseInt(strings.TrimSpace(c.GetHeader(PawGroupHeader)), 10, 64)
+		if err != nil || groupID <= 0 {
+			pawChatError(c, http.StatusBadRequest, "INVALID_REQUEST", "a valid Paw group is required")
+			return
+		}
+		resolution, err := chat.PrepareMessages(c.Request.Context(), subject.UserID, groupID)
+		if err != nil {
+			pawChatServiceError(c, err)
+			return
+		}
+		if resolution.Group.Platform != service.PlatformTypeSafe {
+			pawChatError(c, http.StatusForbidden, "GROUP_FORBIDDEN", "selected group does not serve System One")
+			return
+		}
+		middleware.ReplaceAuthenticatedAPIKey(c, resolution.APIKey, resolution.Subscription)
+	}
+}
+
+func pawSystemOneDispatchHandler(deps PawRouteDependencies) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if deps.Gateway == nil {
+			pawChatError(c, http.StatusServiceUnavailable, PawErrorCodeUpstreamUnavailable, "Paw System One gateway is unavailable")
+			return
+		}
+		deps.Gateway.SystemOne(c)
+	}
+}
+
+// pawRejectTypeSafeGroup 让 typesafe 分组只能走 /paw/systemone：它的账号只说
+// TypeSafe 协议，聊天和 Responses 请求落过去只会被上游拒掉，还白占一次选号。
+func pawRejectTypeSafeGroup(group *service.Group) bool {
+	return group != nil && group.Platform == service.PlatformTypeSafe
 }
 
 func pawGetAutoGroupHandler(apiKeys *service.APIKeyService) gin.HandlerFunc {
@@ -434,6 +490,10 @@ func pawChatHandler(primaryChat *service.PawChatService, localChat *service.PawC
 			pawChatServiceError(c, err)
 			return
 		}
+		if pawRejectTypeSafeGroup(resolution.Group) {
+			pawChatError(c, http.StatusForbidden, "GROUP_FORBIDDEN", "selected group only serves System One")
+			return
+		}
 		middleware.ReplaceAuthenticatedAPIKey(c, resolution.APIKey, resolution.Subscription)
 		resetRequestBody(c, resolution.Body)
 
@@ -554,6 +614,10 @@ func pawResponsesHandler(primaryChat, localChat *service.PawChatService, deps Pa
 			pawChatServiceError(c, err)
 			return
 		}
+		if pawRejectTypeSafeGroup(resolution.Group) {
+			pawChatError(c, http.StatusForbidden, "GROUP_FORBIDDEN", "selected group only serves System One")
+			return
+		}
 		middleware.ReplaceAuthenticatedAPIKey(c, resolution.APIKey, resolution.Subscription)
 
 		if deps.CompositeResolver != nil && resolution.Group != nil && resolution.Group.Platform == service.PlatformComposite {
@@ -640,6 +704,10 @@ func pawMessagesHandler(chat *service.PawChatService, deps PawRouteDependencies,
 		resolution, err := chat.PrepareMessages(c.Request.Context(), subject.UserID, groupID)
 		if err != nil {
 			pawMessagesServiceError(c, err)
+			return
+		}
+		if pawRejectTypeSafeGroup(resolution.Group) {
+			pawMessagesError(c, http.StatusForbidden, "permission_error", "selected group only serves System One")
 			return
 		}
 		middleware.ReplaceAuthenticatedAPIKey(c, resolution.APIKey, resolution.Subscription)

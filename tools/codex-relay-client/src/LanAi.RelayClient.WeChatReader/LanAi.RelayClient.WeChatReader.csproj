@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- wechat-reader.exe: captures the WeChat window and recognises its text, for the
+       「微信消息意图判断」 feature. A separate process, not code in the App, because
+       Windows.Graphics.Capture and Windows.Media.Ocr need a Windows-SDK target framework,
+       and App/Core are plain net8.0, trimmed, and cross-compiled for macOS from the same
+       project. See docs/WECHAT_INTENT_ASSISTANT.md §4.1.
+
+       Not referenced by the App. The App's IncludeWeChatReader target publishes this
+       project and copies the result into wechat-reader\ next to the client (§4.6). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- 22621 for the SDK surface (IsBorderRequired); 19041 is what it actually needs to run
+         (IsCursorCaptureEnabled). Calls newer than that are guarded at the call site. -->
+    <TargetFramework>net8.0-windows10.0.22621.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>wechat-reader</AssemblyName>
+    <RootNamespace>LanAi.RelayClient.WeChatReader</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <!-- Trimmed: 13.6 MB instead of 94 MB. What made that possible is calling
+         IGraphicsCaptureItemInterop through its vtable (WindowCapture.CreateForWindow) — with a
+         [ComImport] interface the trimmed build fails at the first capture. -->
+    <PublishTrimmed>true</PublishTrimmed>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+  </PropertyGroup>
+
+  <!-- The wire format, shared with the client by compiling the same file on both sides. -->
+  <ItemGroup>
+    <Compile Include="..\LanAi.RelayClient.Core\WeChatIntent\ReaderProtocol.cs" Link="ReaderProtocol.cs" />
+  </ItemGroup>
+
+</Project>

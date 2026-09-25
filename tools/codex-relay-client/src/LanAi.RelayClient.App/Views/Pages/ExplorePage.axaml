@@ -1,0 +1,120 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:LanAi.RelayClient.ViewModels;assembly=LanAi.RelayClient.Core"
+             x:Class="LanAi.RelayClient.App.Views.Pages.ExplorePage"
+             x:DataType="vm:WeChatIntentViewModel">
+
+  <UserControl.Styles>
+    <Style Selector="TextBlock.danger">
+      <Setter Property="Foreground" Value="#DC2626" />
+      <Setter Property="FontSize" Value="12" />
+    </Style>
+    <Style Selector="TextBlock.info">
+      <Setter Property="Foreground" Value="#2563EB" />
+      <Setter Property="FontSize" Value="12" />
+    </Style>
+    <Style Selector="TextBlock.section">
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Margin" Value="0,14,0,4" />
+    </Style>
+  </UserControl.Styles>
+
+  <!-- 「探索」 (docs/WECHAT_INTENT_ASSISTANT.md §3). Everything about 微信消息意图判断 is in the first
+       card, judged through the 共飞 Jev group. The own-key route has its own card, present only in
+       test builds (ClientOptions.OwnKeyJevRoute). -->
+  <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <StackPanel>
+
+      <Border Classes="card">
+        <StackPanel>
+          <DockPanel>
+            <ToggleSwitch Name="EnableSwitch" DockPanel.Dock="Right" IsChecked="{Binding IsEnabled, Mode=OneWay}"
+                          OnContent="已开启" OffContent="已关闭" VerticalAlignment="Center" Click="Enable_OnClick" />
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+              <TextBlock Text="微信消息意图判断" Classes="cardTitle" />
+              <TextBlock Text="实验" Classes="label" Margin="8,0,0,0" Foreground="#B45309" VerticalAlignment="Center" />
+            </StackPanel>
+          </DockPanel>
+          <TextBlock Classes="hint" Margin="0,6,0,0" TextWrapping="Wrap"
+                     Text="开启后，电脑版微信聊天窗口里对方的每条消息旁边会出现一张半透明的小卡片，显示意图、情绪、危险等级和建议动作。鼠标移上去看完整结果；右键可以标记判断得对不对，或者让这个会话不再分析。截图只在本机识别；只读屏幕，不改微信，不代发消息。" />
+
+          <TextBlock Text="{Binding StatusText}" Classes="label" Margin="0,10,0,0" />
+          <TextBlock Text="{Binding DisabledReason}" Classes="danger" Margin="0,4,0,0" TextWrapping="Wrap"
+                     IsVisible="{Binding !CanTurnOn}" />
+          <TextBlock Text="{Binding Overlay.Status}" Classes="info" Margin="0,4,0,0" TextWrapping="Wrap"
+                     IsVisible="{Binding Overlay.HasStatus}" />
+          <TextBlock Text="调试导出中：识别出的聊天文字正在写入本机目录（GONGFEI_WECHAT_DEBUG_DUMP）" Classes="danger"
+                     Margin="0,4,0,0" TextWrapping="Wrap" IsVisible="{Binding Overlay.IsDumping}" />
+
+          <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto" Margin="0,10,0,0">
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="微信" Classes="label" Margin="0,0,16,6" VerticalAlignment="Center" />
+            <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding WeChatText}" Classes="label" VerticalAlignment="Center" />
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="共飞分组" Classes="label" Margin="0,0,16,0" VerticalAlignment="Center" />
+            <StackPanel Grid.Row="1" Grid.Column="1">
+              <ComboBox ItemsSource="{Binding RelayGroups}" SelectedItem="{Binding SelectedRelayGroup}"
+                        MinWidth="240" IsVisible="{Binding HasRelayGroups}">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate x:DataType="vm:JevGroupOption">
+                    <TextBlock Text="{Binding Display}" />
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
+              <TextBlock Text="暂无可用的共飞 Jev 分组" Classes="label" IsVisible="{Binding !HasRelayGroups}" />
+            </StackPanel>
+          </Grid>
+          <TextBlock Classes="hint" Margin="0,6,0,0" TextWrapping="Wrap"
+                     Text="每次判断从共飞余额按次扣费，按分组倍率计算。消息文字经共飞服务器转给 TypeSafe 的 Jev 模型，服务器不保存。" />
+          <TextBlock Text="当前使用本地直连（见下方测试卡片）" Classes="danger" Margin="0,4,0,0" IsVisible="{Binding UseOwnKey}" />
+
+          <StackPanel IsVisible="{Binding IsEnabled}">
+            <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+              <Button Content="暂停 30 分钟" Click="Pause_OnClick" Classes="secondary" IsVisible="{Binding IsRunning}" />
+              <Button Content="恢复" Click="Resume_OnClick" Classes="secondary" Margin="8,0,0,0" />
+            </StackPanel>
+            <TextBlock Text="{Binding TodayText}" Classes="hint" Margin="0,8,0,0" TextWrapping="Wrap" />
+
+            <TextBlock Text="不分析的会话" Classes="section" />
+            <ItemsControl ItemsSource="{Binding Muted}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="x:String">
+                  <DockPanel Margin="0,2">
+                    <Button DockPanel.Dock="Right" Content="恢复分析" Click="Unmute_OnClick" Classes="link" />
+                    <TextBlock Text="{Binding}" VerticalAlignment="Center" />
+                  </DockPanel>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <TextBlock Text="在卡片上右键「本会话不再分析」可以加入这里" Classes="hint" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+
+      <!-- Test builds only (local and test-server channels): the phase 1 own-key route. A production
+           build has no own-key client, so OwnKeyAvailable is false and this card never shows. -->
+      <Border Classes="card" IsVisible="{Binding OwnKeyAvailable}">
+        <StackPanel>
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="本地直连" Classes="cardTitle" />
+            <TextBlock Text="仅测试包" Classes="label" Margin="8,0,0,0" Foreground="#B45309" VerticalAlignment="Center" />
+          </StackPanel>
+          <TextBlock Classes="hint" Margin="0,6,0,0" TextWrapping="Wrap"
+                     Text="用你自己的 TypeSafe 账号从本机直连，不经过共飞服务器，费用由该账号承担。key 加密保存在本机，只属于当前登录的共飞账号。正式包没有这个选项。" />
+          <CheckBox Content="改用自己的 TypeSafe key 直连（不经过共飞分组）" Margin="0,10,0,0"
+                    IsChecked="{Binding UseOwnKey, Mode=OneWay}" Click="UseOwnKey_OnClick" />
+          <TextBlock Text="{Binding KeyText, StringFormat='TypeSafe API Key：{0}'}" Classes="label" Margin="0,8,0,0" />
+          <DockPanel Margin="0,8,0,0">
+            <Button DockPanel.Dock="Right" Content="验证并保存" Click="SaveKey_OnClick" Classes="secondary"
+                    IsEnabled="{Binding !IsCheckingKey}" Margin="8,0,0,0" />
+            <TextBox Text="{Binding KeyInput}" PasswordChar="•" Watermark="粘贴 API Key" />
+          </DockPanel>
+          <DockPanel Margin="0,6,0,0">
+            <Button DockPanel.Dock="Right" Content="清除 key" Click="ClearKey_OnClick" Classes="link"
+                    IsVisible="{Binding HasKey}" />
+            <TextBlock Text="{Binding KeyMessage}" Classes="info" VerticalAlignment="Center" />
+          </DockPanel>
+        </StackPanel>
+      </Border>
+
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

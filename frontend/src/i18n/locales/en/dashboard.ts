@@ -232,6 +232,11 @@ export default {
         codexCliWs: 'Codex CLI (WebSocket)',
         grokCli: 'Grok CLI',
         opencode: 'OpenCode',
+        systemOne: 'System One API'
+      },
+      typesafe: {
+        description: 'TypeSafe (Jev intent judgement) groups only serve POST /v1/systemone. The request body is the same as the official TypeSafe API; only the base URL and API key change.',
+        note: 'This group does not work with chat clients such as Claude Code or Codex. The model must be on the group allowlist, for example jev-1.13.0 or jev-latest.'
       },
       antigravity: {
         description: 'Configure API access for Antigravity group. Select the configuration method based on your client.',

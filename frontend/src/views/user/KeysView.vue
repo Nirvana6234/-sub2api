@@ -1791,6 +1791,7 @@ const platformLabel = (platform: GroupPlatform) => {
     deepseek: 'DeepSeek',
     minimax: 'MiniMax',
     opencode_go: 'OpenCode',
+    typesafe: 'TypeSafe',
     composite: 'Composite'
   }
   return labels[platform]

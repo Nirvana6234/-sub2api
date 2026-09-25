@@ -71,7 +71,7 @@ func TestGatewayRoutesGroupModelAllowlistMountedOnEveryGatewayRoute(t *testing.T
 	// rootRoute helper：apiKeyAuth 之后、compositeTarget 之前。
 	// autoGroupModelRouting 先于 allowlist：自动分组 Key 必须先定下分组，
 	// 白名单才有分组可查。
-	rootHelper := regexp.MustCompile(regexp.QuoteMeta(`r.Handle(method, path, limit, clientRequestID, opsErrorLogger, endpointNorm, blacklistIP, gin.HandlerFunc(apiKeyAuth), blacklistAccount, autoGroupModelRouting, groupModelAllowlist, compositeTarget, requireGroupAnthropic, handler)`))
+	rootHelper := regexp.MustCompile(regexp.QuoteMeta(`r.Handle(method, path, limit, clientRequestID, opsErrorLogger, endpointNorm, blacklistIP, gin.HandlerFunc(apiKeyAuth), blacklistAccount, autoGroupModelRouting, groupModelAllowlist, compositeTarget, requireGroupAnthropic, typeSafeProtocolGuard, handler)`))
 	require.Regexp(t, rootHelper, source,
 		"root alias helper must place the allowlist between apiKeyAuth and compositeTarget")
 
@@ -96,7 +96,7 @@ func TestGatewayRoutesGroupModelAllowlistMountedOnEveryGatewayRoute(t *testing.T
 	}
 
 	// codexDirect 链是一条 Use 调用，直接断言顺序。
-	codexDirect := regexp.MustCompile(regexp.QuoteMeta(`codexDirect.Use(bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, blacklistIP, gin.HandlerFunc(apiKeyAuth), blacklistAccount, autoGroupModelRouting, groupModelAllowlist, compositeTarget, requireGroupAnthropic)`))
+	codexDirect := regexp.MustCompile(regexp.QuoteMeta(`codexDirect.Use(bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, blacklistIP, gin.HandlerFunc(apiKeyAuth), blacklistAccount, autoGroupModelRouting, groupModelAllowlist, compositeTarget, requireGroupAnthropic, typeSafeProtocolGuard)`))
 	require.Regexp(t, codexDirect, source, "codexDirect chain must mount the allowlist after auth and before compositeTarget")
 
 	// 所有带 apiKeyAuth 的根路径路由必须收敛到 rootRoute，避免漏挂。

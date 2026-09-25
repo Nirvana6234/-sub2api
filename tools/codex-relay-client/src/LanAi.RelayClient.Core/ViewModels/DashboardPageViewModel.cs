@@ -29,13 +29,32 @@ public sealed partial class DashboardPageViewModel : ObservableObject
         ClientUpdateViewModel clientUpdate,
         AnnouncementsViewModel announcements,
         RelaySessionManager session,
-        DesktopSyncViewModel? desktopSync = null)
+        DesktopSyncViewModel? desktopSync = null,
+        WeChatIntentViewModel? explore = null)
     {
         DesktopSync = desktopSync;
         if (desktopSync is null)
         {
             // No page to show, so no entry that would lead to one.
             Navigation.Items.Remove(Navigation.Item(ClientPage.DesktopSync));
+        }
+
+        // Phase 1 is for self-testing only: a package without the WeChat reader gets no view
+        // model from the head, and so no 「探索」 entry at all (docs §3.1).
+        Explore = explore;
+        if (explore is null)
+        {
+            Navigation.Items.Remove(Navigation.Item(ClientPage.Explore));
+        }
+        else
+        {
+            explore.PropertyChanged += (_, args) =>
+            {
+                if (args.PropertyName == nameof(WeChatIntentViewModel.NeedsAttention))
+                {
+                    Navigation.Item(ClientPage.Explore).HasBadge = explore.NeedsAttention;
+                }
+            };
         }
         Dashboard = dashboard ?? throw new ArgumentNullException(nameof(dashboard));
         ClientUpdate = clientUpdate ?? throw new ArgumentNullException(nameof(clientUpdate));
@@ -99,6 +118,9 @@ public sealed partial class DashboardPageViewModel : ObservableObject
 
     /// <summary>The 「同步会话」 page; null where the head does not offer it.</summary>
     public DesktopSyncViewModel? DesktopSync { get; }
+
+    /// <summary>The 「探索」 page; null unless the package carries the WeChat reader (docs §3.1).</summary>
+    public WeChatIntentViewModel? Explore { get; }
 
     /// <summary>Which page of the signed-in surface is showing.</summary>
     public NavigationViewModel Navigation { get; } = new();

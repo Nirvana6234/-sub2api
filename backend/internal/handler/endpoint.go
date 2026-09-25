@@ -32,6 +32,7 @@ const (
 	EndpointVideos               = "/v1/videos"
 	EndpointSeedanceTasks        = "/api/v3/contents/generations/tasks"
 	EndpointGeminiModels         = "/v1beta/models"
+	EndpointSystemOne            = "/v1/systemone"
 )
 
 const EndpointAntigravityGenerateContent = "/v1internal:streamGenerateContent"
@@ -94,6 +95,9 @@ func NormalizeInboundEndpoint(path string) string {
 		return EndpointResponsesInputTokens
 	case strings.Contains(path, EndpointEmbeddings):
 		return EndpointEmbeddings
+	case strings.HasSuffix(trimmedPath, "/systemone"):
+		// /v1/systemone 与 /api/v1/paw/systemone 同一个端点。
+		return EndpointSystemOne
 	case strings.Contains(path, EndpointAlphaSearch) || isBareOrSubpathOf(strings.TrimRight(path, "/"), "/alpha/search") || isBareOrSubpathOf(strings.TrimRight(path, "/"), "/backend-api/codex/alpha/search"):
 		return EndpointAlphaSearch
 	case strings.Contains(path, EndpointChatCompletions):

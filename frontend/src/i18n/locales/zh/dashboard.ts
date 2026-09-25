@@ -232,7 +232,12 @@ export default {
         codexCli: 'Codex CLI',
         codexCliWs: 'Codex CLI (WebSocket)',
         grokCli: 'Grok CLI',
-        opencode: 'OpenCode'
+        opencode: 'OpenCode',
+        systemOne: 'System One API'
+      },
+      typesafe: {
+        description: 'TypeSafe（Jev 意图判断）分组只支持 POST /v1/systemone，请求体与 TypeSafe 官方接口一致，只需换成本站地址和 API 密钥。',
+        note: '这个分组不能用于 Claude Code、Codex 等对话客户端。请求里的 model 须在分组白名单内，例如 jev-1.13.0 或 jev-latest。'
       },
       antigravity: {
         description: '为 Antigravity 分组配置 API 访问。请根据您使用的客户端选择对应的配置方式。',

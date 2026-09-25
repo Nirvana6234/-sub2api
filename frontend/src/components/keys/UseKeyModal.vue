@@ -341,6 +341,8 @@ const defaultClientTab = computed(() => {
       return 'gemini'
     case 'antigravity':
       return 'claude'
+    case 'typesafe':
+      return 'systemone'
     default:
       return 'claude'
   }
@@ -468,6 +470,11 @@ const clientTabs = computed((): TabConfig[] => {
         { id: 'codex', label: t('keys.useKeyModal.cliTabs.codexCli'), icon: TerminalIcon },
         { id: 'opencode', label: t('keys.useKeyModal.cliTabs.opencode'), icon: TerminalIcon }
       ]
+    case 'typesafe':
+      // TypeSafe 分组只说 /v1/systemone，Claude Code / Codex 配置对它无效。
+      return [
+        { id: 'systemone', label: t('keys.useKeyModal.cliTabs.systemOne'), icon: TerminalIcon }
+      ]
     case 'deepseek':
     case 'minimax':
     case 'composite':
@@ -552,6 +559,8 @@ const platformDescription = computed(() => {
       return activeClientTab.value === 'codex'
         ? t('keys.useKeyModal.composite.codexDescription')
         : t('keys.useKeyModal.composite.description')
+    case 'typesafe':
+      return t('keys.useKeyModal.typesafe.description')
     default:
       return t('keys.useKeyModal.description')
   }
@@ -609,6 +618,8 @@ const platformNote = computed(() => {
       return activeClientTab.value === 'codex'
         ? t('keys.useKeyModal.composite.codexNote')
         : t('keys.useKeyModal.note')
+    case 'typesafe':
+      return t('keys.useKeyModal.typesafe.note')
     default:
       return t('keys.useKeyModal.note')
   }
@@ -778,6 +789,8 @@ const currentFiles = computed((): FileConfig[] => {
         return generateRoutedCodexFiles(apiBase, apiKey, 'composite')
       }
       return generateAnthropicFiles(baseRoot, apiKey)
+    case 'typesafe':
+      return [generateSystemOneRequest(apiBase, apiKey)]
     default:
       if (activeClientTab.value === 'codex' && props.platform) {
         return generateRoutedCodexFiles(apiBase, apiKey, props.platform)
@@ -785,6 +798,53 @@ const currentFiles = computed((): FileConfig[] => {
       return generateAnthropicFiles(baseUrl, apiKey)
   }
 })
+
+// TypeSafe 分组：请求体与 TypeSafe 官方 /v1/systemone 一致，只换 base_url 和 key。
+function generateSystemOneRequest(apiBase: string, apiKey: string): FileConfig {
+  const url = `${apiBase}/systemone`
+  const body = {
+    model: 'jev-latest',
+    state: { message: 'Are you coming tonight?' },
+    questions: {
+      needs_reply: { type: 'noul', instructions: 'The sender is waiting for a reply.' }
+    }
+  }
+  const json = JSON.stringify(body)
+  // 续行符各 shell 不同：bash 用反斜杠，CMD 用 ^，PowerShell 用反引号。
+  const tick = '`'
+  switch (activeTab.value) {
+    case 'powershell':
+      return {
+        path: 'PowerShell',
+        content: [
+          `Invoke-RestMethod -Method Post -Uri "${url}" ${tick}`,
+          `  -Headers @{ Authorization = "Bearer ${apiKey}" } ${tick}`,
+          `  -ContentType "application/json" ${tick}`,
+          `  -Body '${json}'`
+        ].join('\n')
+      }
+    case 'cmd':
+      return {
+        path: 'Command Prompt',
+        content: [
+          `curl -X POST "${url}" ^`,
+          `  -H "Authorization: Bearer ${apiKey}" ^`,
+          '  -H "Content-Type: application/json" ^',
+          `  -d "${json.replace(/"/g, '\\"')}"`
+        ].join('\n')
+      }
+    default:
+      return {
+        path: 'Terminal',
+        content: [
+          `curl -X POST "${url}" \\`,
+          `  -H "Authorization: Bearer ${apiKey}" \\`,
+          '  -H "Content-Type: application/json" \\',
+          `  -d '${json}'`
+        ].join('\n')
+      }
+  }
+}
 
 function generateAnthropicFiles(baseUrl: string, apiKey: string): FileConfig[] {
   let path: string
@@ -1252,6 +1312,7 @@ function generateRoutedCodexFiles(
     deepseek: 'DeepSeek',
     minimax: 'MiniMax',
     opencode_go: 'OpenCode',
+    typesafe: 'TypeSafe',
     composite: 'Composite'
   }
   const label = labels[platform]

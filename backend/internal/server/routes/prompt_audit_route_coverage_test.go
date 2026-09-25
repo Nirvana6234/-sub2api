@@ -55,6 +55,7 @@ func TestEveryGatewayPOSTRouteIsClassifiedForPromptAuditCoverage(t *testing.T) {
 		"/images/batches/:id/cancel": "control-plane cancellation with no user prompt",
 		"/stt":                       "speech transcription is not a text-generation prompt",
 		"/custom-voices":             "voice profile management has no model prompt",
+		"/systemone":                 "TypeSafe Jev judges private chat text the server must neither inspect nor keep (docs/WECHAT_INTENT_ASSISTANT.md 7.6)",
 	}
 
 	unclassified := make([]string, 0)
