@@ -33,6 +33,8 @@ service RelayEnrollment {
 // 控制连接：选号、上游错误决策、额度、Key 查询等同步小消息（WP6、WP7、WP11）。
 service RelayControl {
   rpc Ping(PingRequest) returns (PingResponse);
+  // FetchConfig 拉取本节点的配置快照（启动、重连、纪元变化、版本落后时，设计 6.2）。
+  rpc FetchConfig(FetchConfigRequest) returns (ConfigSnapshot);
 }
 
 // 事件连接：一条长期双向流，承载心跳、释放、账号事件，以及主节点下发的指令。
@@ -140,12 +142,48 @@ message NodeEnvelope {
   }
 }
 
+message FetchConfigRequest {
+  // 从节点手里的版本；与当前一致时只回 unchanged。
+  string known_version = 1;
+}
+
+// 配置快照（设计 6 第二类、11.3）。版本是内容哈希：内容相同版本就相同，
+// 主节点重启后也一致；从节点只比较是否相等。
+message ConfigSnapshot {
+  string version = 1;
+  bool unchanged = 2;
+  // 按白名单下发的系统设置。白名单外的设置在从节点上读到空值；不含任何密钥。
+  map<string, string> settings = 3;
+  // 其他配置分段（错误透传规则、TLS 指纹等，内容为 JSON），由主节点按需登记。
+  map<string, bytes> sections = 4;
+  // 本节点配置与主从分流通用配置（JSON）。
+  bytes node_config = 5;
+  // 主从通信根证书指纹（含轮换中的新根），从节点据此更新固定的指纹。
+  repeated string root_fingerprints = 6;
+}
+
+// 配置变了，从节点拉取新版本。
+message ConfigChanged {
+  string version = 1;
+}
+
+// 缓存作废（设计 6 第三类）。收到后从节点清掉对应缓存，下一个请求重新向主节点查询。
+message Invalidation {
+  // API Key 鉴权缓存键：原始 Key 的 SHA-256（十六进制）。新建 Key 也会发，
+  // 用来清掉"查不到"的负缓存。
+  repeated string api_key_hashes = 1;
+  repeated int64 user_ids = 2;
+  repeated int64 group_ids = 3;
+}
+
 // 主节点 → 从节点的事件信封。
 // 字段号：1~9 信封本身；10~99 主节点指令；100~199 对从节点事件的回执；200 起留给以后。
 message MasterEnvelope {
   uint64 seq = 1;
   oneof body {
     EventPing ping = 10;
+    ConfigChanged config_changed = 11;
+    Invalidation invalidation = 12;
   }
 }
 

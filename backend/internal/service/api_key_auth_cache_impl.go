@@ -251,7 +251,20 @@ func (s *APIKeyService) setAuthCacheEntry(ctx context.Context, cacheKey string, 
 	_ = s.cache.SetAuthCache(ctx, cacheKey, entry, s.authCfg.jitterTTL(ttl))
 }
 
+// SetAuthCacheInvalidationListener 设置（nil 表示取消）鉴权缓存作废监听。
+// 回调在作废的调用方协程里同步执行，必须很快返回。新建 Key 也会触发（清掉负缓存）。
+func (s *APIKeyService) SetAuthCacheInvalidationListener(fn func(cacheKey string)) {
+	if fn == nil {
+		s.authInvalidationListener.Store(nil)
+		return
+	}
+	s.authInvalidationListener.Store(&fn)
+}
+
 func (s *APIKeyService) deleteAuthCache(ctx context.Context, cacheKey string) {
+	if fn := s.authInvalidationListener.Load(); fn != nil {
+		(*fn)(cacheKey)
+	}
 	if s.authCacheL1 != nil {
 		s.authCacheL1.Del(cacheKey)
 	}

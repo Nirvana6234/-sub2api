@@ -853,6 +853,249 @@ type NodeEnvelope_Ping struct {
 
 func (*NodeEnvelope_Ping) isNodeEnvelope_Body() {}
 
+type FetchConfigRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 从节点手里的版本；与当前一致时只回 unchanged。
+	KnownVersion  string `protobuf:"bytes,1,opt,name=known_version,json=knownVersion,proto3" json:"known_version,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FetchConfigRequest) Reset() {
+	*x = FetchConfigRequest{}
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FetchConfigRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FetchConfigRequest) ProtoMessage() {}
+
+func (x *FetchConfigRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FetchConfigRequest.ProtoReflect.Descriptor instead.
+func (*FetchConfigRequest) Descriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *FetchConfigRequest) GetKnownVersion() string {
+	if x != nil {
+		return x.KnownVersion
+	}
+	return ""
+}
+
+// 配置快照（设计 6 第二类、11.3）。版本是内容哈希：内容相同版本就相同，
+// 主节点重启后也一致；从节点只比较是否相等。
+type ConfigSnapshot struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Version   string                 `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"`
+	Unchanged bool                   `protobuf:"varint,2,opt,name=unchanged,proto3" json:"unchanged,omitempty"`
+	// 按白名单下发的系统设置。白名单外的设置在从节点上读到空值；不含任何密钥。
+	Settings map[string]string `protobuf:"bytes,3,rep,name=settings,proto3" json:"settings,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// 其他配置分段（错误透传规则、TLS 指纹等，内容为 JSON），由主节点按需登记。
+	Sections map[string][]byte `protobuf:"bytes,4,rep,name=sections,proto3" json:"sections,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// 本节点配置与主从分流通用配置（JSON）。
+	NodeConfig []byte `protobuf:"bytes,5,opt,name=node_config,json=nodeConfig,proto3" json:"node_config,omitempty"`
+	// 主从通信根证书指纹（含轮换中的新根），从节点据此更新固定的指纹。
+	RootFingerprints []string `protobuf:"bytes,6,rep,name=root_fingerprints,json=rootFingerprints,proto3" json:"root_fingerprints,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *ConfigSnapshot) Reset() {
+	*x = ConfigSnapshot{}
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConfigSnapshot) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConfigSnapshot) ProtoMessage() {}
+
+func (x *ConfigSnapshot) ProtoReflect() protoreflect.Message {
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ConfigSnapshot.ProtoReflect.Descriptor instead.
+func (*ConfigSnapshot) Descriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *ConfigSnapshot) GetVersion() string {
+	if x != nil {
+		return x.Version
+	}
+	return ""
+}
+
+func (x *ConfigSnapshot) GetUnchanged() bool {
+	if x != nil {
+		return x.Unchanged
+	}
+	return false
+}
+
+func (x *ConfigSnapshot) GetSettings() map[string]string {
+	if x != nil {
+		return x.Settings
+	}
+	return nil
+}
+
+func (x *ConfigSnapshot) GetSections() map[string][]byte {
+	if x != nil {
+		return x.Sections
+	}
+	return nil
+}
+
+func (x *ConfigSnapshot) GetNodeConfig() []byte {
+	if x != nil {
+		return x.NodeConfig
+	}
+	return nil
+}
+
+func (x *ConfigSnapshot) GetRootFingerprints() []string {
+	if x != nil {
+		return x.RootFingerprints
+	}
+	return nil
+}
+
+// 配置变了，从节点拉取新版本。
+type ConfigChanged struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Version       string                 `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ConfigChanged) Reset() {
+	*x = ConfigChanged{}
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConfigChanged) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConfigChanged) ProtoMessage() {}
+
+func (x *ConfigChanged) ProtoReflect() protoreflect.Message {
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ConfigChanged.ProtoReflect.Descriptor instead.
+func (*ConfigChanged) Descriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *ConfigChanged) GetVersion() string {
+	if x != nil {
+		return x.Version
+	}
+	return ""
+}
+
+// 缓存作废（设计 6 第三类）。收到后从节点清掉对应缓存，下一个请求重新向主节点查询。
+type Invalidation struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// API Key 鉴权缓存键：原始 Key 的 SHA-256（十六进制）。新建 Key 也会发，
+	// 用来清掉"查不到"的负缓存。
+	ApiKeyHashes  []string `protobuf:"bytes,1,rep,name=api_key_hashes,json=apiKeyHashes,proto3" json:"api_key_hashes,omitempty"`
+	UserIds       []int64  `protobuf:"varint,2,rep,packed,name=user_ids,json=userIds,proto3" json:"user_ids,omitempty"`
+	GroupIds      []int64  `protobuf:"varint,3,rep,packed,name=group_ids,json=groupIds,proto3" json:"group_ids,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Invalidation) Reset() {
+	*x = Invalidation{}
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Invalidation) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Invalidation) ProtoMessage() {}
+
+func (x *Invalidation) ProtoReflect() protoreflect.Message {
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Invalidation.ProtoReflect.Descriptor instead.
+func (*Invalidation) Descriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *Invalidation) GetApiKeyHashes() []string {
+	if x != nil {
+		return x.ApiKeyHashes
+	}
+	return nil
+}
+
+func (x *Invalidation) GetUserIds() []int64 {
+	if x != nil {
+		return x.UserIds
+	}
+	return nil
+}
+
+func (x *Invalidation) GetGroupIds() []int64 {
+	if x != nil {
+		return x.GroupIds
+	}
+	return nil
+}
+
 // 主节点 → 从节点的事件信封。
 // 字段号：1~9 信封本身；10~99 主节点指令；100~199 对从节点事件的回执；200 起留给以后。
 type MasterEnvelope struct {
@@ -861,6 +1104,8 @@ type MasterEnvelope struct {
 	// Types that are valid to be assigned to Body:
 	//
 	//	*MasterEnvelope_Ping
+	//	*MasterEnvelope_ConfigChanged
+	//	*MasterEnvelope_Invalidation
 	Body          isMasterEnvelope_Body `protobuf_oneof:"body"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -868,7 +1113,7 @@ type MasterEnvelope struct {
 
 func (x *MasterEnvelope) Reset() {
 	*x = MasterEnvelope{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[12]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -880,7 +1125,7 @@ func (x *MasterEnvelope) String() string {
 func (*MasterEnvelope) ProtoMessage() {}
 
 func (x *MasterEnvelope) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[12]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -893,7 +1138,7 @@ func (x *MasterEnvelope) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MasterEnvelope.ProtoReflect.Descriptor instead.
 func (*MasterEnvelope) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{12}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *MasterEnvelope) GetSeq() uint64 {
@@ -919,6 +1164,24 @@ func (x *MasterEnvelope) GetPing() *EventPing {
 	return nil
 }
 
+func (x *MasterEnvelope) GetConfigChanged() *ConfigChanged {
+	if x != nil {
+		if x, ok := x.Body.(*MasterEnvelope_ConfigChanged); ok {
+			return x.ConfigChanged
+		}
+	}
+	return nil
+}
+
+func (x *MasterEnvelope) GetInvalidation() *Invalidation {
+	if x != nil {
+		if x, ok := x.Body.(*MasterEnvelope_Invalidation); ok {
+			return x.Invalidation
+		}
+	}
+	return nil
+}
+
 type isMasterEnvelope_Body interface {
 	isMasterEnvelope_Body()
 }
@@ -927,7 +1190,19 @@ type MasterEnvelope_Ping struct {
 	Ping *EventPing `protobuf:"bytes,10,opt,name=ping,proto3,oneof"`
 }
 
+type MasterEnvelope_ConfigChanged struct {
+	ConfigChanged *ConfigChanged `protobuf:"bytes,11,opt,name=config_changed,json=configChanged,proto3,oneof"`
+}
+
+type MasterEnvelope_Invalidation struct {
+	Invalidation *Invalidation `protobuf:"bytes,12,opt,name=invalidation,proto3,oneof"`
+}
+
 func (*MasterEnvelope_Ping) isMasterEnvelope_Body() {}
+
+func (*MasterEnvelope_ConfigChanged) isMasterEnvelope_Body() {}
+
+func (*MasterEnvelope_Invalidation) isMasterEnvelope_Body() {}
 
 type EventPing struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -938,7 +1213,7 @@ type EventPing struct {
 
 func (x *EventPing) Reset() {
 	*x = EventPing{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[13]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -950,7 +1225,7 @@ func (x *EventPing) String() string {
 func (*EventPing) ProtoMessage() {}
 
 func (x *EventPing) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[13]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -963,7 +1238,7 @@ func (x *EventPing) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EventPing.ProtoReflect.Descriptor instead.
 func (*EventPing) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{13}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *EventPing) GetPayload() []byte {
@@ -1026,11 +1301,35 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x03seq\x18\x01 \x01(\x04R\x03seq\x121\n" +
 	"\x04ping\x18\n" +
 	" \x01(\v2\x1b.sub2api.relay.v1.EventPingH\x00R\x04pingB\x06\n" +
-	"\x04body\"]\n" +
+	"\x04body\"9\n" +
+	"\x12FetchConfigRequest\x12#\n" +
+	"\rknown_version\x18\x01 \x01(\tR\fknownVersion\"\xa8\x03\n" +
+	"\x0eConfigSnapshot\x12\x18\n" +
+	"\aversion\x18\x01 \x01(\tR\aversion\x12\x1c\n" +
+	"\tunchanged\x18\x02 \x01(\bR\tunchanged\x12J\n" +
+	"\bsettings\x18\x03 \x03(\v2..sub2api.relay.v1.ConfigSnapshot.SettingsEntryR\bsettings\x12J\n" +
+	"\bsections\x18\x04 \x03(\v2..sub2api.relay.v1.ConfigSnapshot.SectionsEntryR\bsections\x12\x1f\n" +
+	"\vnode_config\x18\x05 \x01(\fR\n" +
+	"nodeConfig\x12+\n" +
+	"\x11root_fingerprints\x18\x06 \x03(\tR\x10rootFingerprints\x1a;\n" +
+	"\rSettingsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a;\n" +
+	"\rSectionsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01\")\n" +
+	"\rConfigChanged\x12\x18\n" +
+	"\aversion\x18\x01 \x01(\tR\aversion\"l\n" +
+	"\fInvalidation\x12$\n" +
+	"\x0eapi_key_hashes\x18\x01 \x03(\tR\fapiKeyHashes\x12\x19\n" +
+	"\buser_ids\x18\x02 \x03(\x03R\auserIds\x12\x1b\n" +
+	"\tgroup_ids\x18\x03 \x03(\x03R\bgroupIds\"\xed\x01\n" +
 	"\x0eMasterEnvelope\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x04R\x03seq\x121\n" +
 	"\x04ping\x18\n" +
-	" \x01(\v2\x1b.sub2api.relay.v1.EventPingH\x00R\x04pingB\x06\n" +
+	" \x01(\v2\x1b.sub2api.relay.v1.EventPingH\x00R\x04ping\x12H\n" +
+	"\x0econfig_changed\x18\v \x01(\v2\x1f.sub2api.relay.v1.ConfigChangedH\x00R\rconfigChanged\x12D\n" +
+	"\finvalidation\x18\f \x01(\v2\x1e.sub2api.relay.v1.InvalidationH\x00R\finvalidationB\x06\n" +
 	"\x04body\"%\n" +
 	"\tEventPing\x12\x18\n" +
 	"\apayload\x18\x01 \x01(\fR\apayload*r\n" +
@@ -1054,9 +1353,10 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\n" +
 	"NodeStatus\x12#.sub2api.relay.v1.NodeStatusRequest\x1a$.sub2api.relay.v1.NodeStatusResponse\x12`\n" +
 	"\x11ObtainCertificate\x12$.sub2api.relay.v1.CertificateRequest\x1a%.sub2api.relay.v1.CertificateResponse\x12_\n" +
-	"\x10RenewCertificate\x12$.sub2api.relay.v1.CertificateRequest\x1a%.sub2api.relay.v1.CertificateResponse2U\n" +
+	"\x10RenewCertificate\x12$.sub2api.relay.v1.CertificateRequest\x1a%.sub2api.relay.v1.CertificateResponse2\xac\x01\n" +
 	"\fRelayControl\x12E\n" +
-	"\x04Ping\x12\x1d.sub2api.relay.v1.PingRequest\x1a\x1e.sub2api.relay.v1.PingResponse2]\n" +
+	"\x04Ping\x12\x1d.sub2api.relay.v1.PingRequest\x1a\x1e.sub2api.relay.v1.PingResponse\x12U\n" +
+	"\vFetchConfig\x12$.sub2api.relay.v1.FetchConfigRequest\x1a .sub2api.relay.v1.ConfigSnapshot2]\n" +
 	"\vRelayEvents\x12N\n" +
 	"\x06Stream\x12\x1e.sub2api.relay.v1.NodeEnvelope\x1a .sub2api.relay.v1.MasterEnvelope(\x010\x01BBZ@github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1;relayv1b\x06proto3"
 
@@ -1073,7 +1373,7 @@ func file_sub2api_relay_v1_relay_proto_rawDescGZIP() []byte {
 }
 
 var file_sub2api_relay_v1_relay_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_sub2api_relay_v1_relay_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_sub2api_relay_v1_relay_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
 var file_sub2api_relay_v1_relay_proto_goTypes = []any{
 	(PeerClass)(0),              // 0: sub2api.relay.v1.PeerClass
 	(NodeStatus)(0),             // 1: sub2api.relay.v1.NodeStatus
@@ -1089,39 +1389,51 @@ var file_sub2api_relay_v1_relay_proto_goTypes = []any{
 	(*PingRequest)(nil),         // 11: sub2api.relay.v1.PingRequest
 	(*PingResponse)(nil),        // 12: sub2api.relay.v1.PingResponse
 	(*NodeEnvelope)(nil),        // 13: sub2api.relay.v1.NodeEnvelope
-	(*MasterEnvelope)(nil),      // 14: sub2api.relay.v1.MasterEnvelope
-	(*EventPing)(nil),           // 15: sub2api.relay.v1.EventPing
-	nil,                         // 16: sub2api.relay.v1.RegisterRequest.SystemInfoEntry
+	(*FetchConfigRequest)(nil),  // 14: sub2api.relay.v1.FetchConfigRequest
+	(*ConfigSnapshot)(nil),      // 15: sub2api.relay.v1.ConfigSnapshot
+	(*ConfigChanged)(nil),       // 16: sub2api.relay.v1.ConfigChanged
+	(*Invalidation)(nil),        // 17: sub2api.relay.v1.Invalidation
+	(*MasterEnvelope)(nil),      // 18: sub2api.relay.v1.MasterEnvelope
+	(*EventPing)(nil),           // 19: sub2api.relay.v1.EventPing
+	nil,                         // 20: sub2api.relay.v1.RegisterRequest.SystemInfoEntry
+	nil,                         // 21: sub2api.relay.v1.ConfigSnapshot.SettingsEntry
+	nil,                         // 22: sub2api.relay.v1.ConfigSnapshot.SectionsEntry
 }
 var file_sub2api_relay_v1_relay_proto_depIdxs = []int32{
 	2,  // 0: sub2api.relay.v1.HelloRequest.version:type_name -> sub2api.relay.v1.ProtocolVersion
 	2,  // 1: sub2api.relay.v1.HelloResponse.min_supported:type_name -> sub2api.relay.v1.ProtocolVersion
 	2,  // 2: sub2api.relay.v1.HelloResponse.current:type_name -> sub2api.relay.v1.ProtocolVersion
 	0,  // 3: sub2api.relay.v1.HelloResponse.peer_class:type_name -> sub2api.relay.v1.PeerClass
-	16, // 4: sub2api.relay.v1.RegisterRequest.system_info:type_name -> sub2api.relay.v1.RegisterRequest.SystemInfoEntry
+	20, // 4: sub2api.relay.v1.RegisterRequest.system_info:type_name -> sub2api.relay.v1.RegisterRequest.SystemInfoEntry
 	1,  // 5: sub2api.relay.v1.RegisterResponse.status:type_name -> sub2api.relay.v1.NodeStatus
 	1,  // 6: sub2api.relay.v1.NodeStatusResponse.status:type_name -> sub2api.relay.v1.NodeStatus
-	15, // 7: sub2api.relay.v1.NodeEnvelope.ping:type_name -> sub2api.relay.v1.EventPing
-	15, // 8: sub2api.relay.v1.MasterEnvelope.ping:type_name -> sub2api.relay.v1.EventPing
-	3,  // 9: sub2api.relay.v1.RelayEnrollment.Hello:input_type -> sub2api.relay.v1.HelloRequest
-	5,  // 10: sub2api.relay.v1.RelayEnrollment.Register:input_type -> sub2api.relay.v1.RegisterRequest
-	7,  // 11: sub2api.relay.v1.RelayEnrollment.NodeStatus:input_type -> sub2api.relay.v1.NodeStatusRequest
-	9,  // 12: sub2api.relay.v1.RelayEnrollment.ObtainCertificate:input_type -> sub2api.relay.v1.CertificateRequest
-	9,  // 13: sub2api.relay.v1.RelayEnrollment.RenewCertificate:input_type -> sub2api.relay.v1.CertificateRequest
-	11, // 14: sub2api.relay.v1.RelayControl.Ping:input_type -> sub2api.relay.v1.PingRequest
-	13, // 15: sub2api.relay.v1.RelayEvents.Stream:input_type -> sub2api.relay.v1.NodeEnvelope
-	4,  // 16: sub2api.relay.v1.RelayEnrollment.Hello:output_type -> sub2api.relay.v1.HelloResponse
-	6,  // 17: sub2api.relay.v1.RelayEnrollment.Register:output_type -> sub2api.relay.v1.RegisterResponse
-	8,  // 18: sub2api.relay.v1.RelayEnrollment.NodeStatus:output_type -> sub2api.relay.v1.NodeStatusResponse
-	10, // 19: sub2api.relay.v1.RelayEnrollment.ObtainCertificate:output_type -> sub2api.relay.v1.CertificateResponse
-	10, // 20: sub2api.relay.v1.RelayEnrollment.RenewCertificate:output_type -> sub2api.relay.v1.CertificateResponse
-	12, // 21: sub2api.relay.v1.RelayControl.Ping:output_type -> sub2api.relay.v1.PingResponse
-	14, // 22: sub2api.relay.v1.RelayEvents.Stream:output_type -> sub2api.relay.v1.MasterEnvelope
-	16, // [16:23] is the sub-list for method output_type
-	9,  // [9:16] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	19, // 7: sub2api.relay.v1.NodeEnvelope.ping:type_name -> sub2api.relay.v1.EventPing
+	21, // 8: sub2api.relay.v1.ConfigSnapshot.settings:type_name -> sub2api.relay.v1.ConfigSnapshot.SettingsEntry
+	22, // 9: sub2api.relay.v1.ConfigSnapshot.sections:type_name -> sub2api.relay.v1.ConfigSnapshot.SectionsEntry
+	19, // 10: sub2api.relay.v1.MasterEnvelope.ping:type_name -> sub2api.relay.v1.EventPing
+	16, // 11: sub2api.relay.v1.MasterEnvelope.config_changed:type_name -> sub2api.relay.v1.ConfigChanged
+	17, // 12: sub2api.relay.v1.MasterEnvelope.invalidation:type_name -> sub2api.relay.v1.Invalidation
+	3,  // 13: sub2api.relay.v1.RelayEnrollment.Hello:input_type -> sub2api.relay.v1.HelloRequest
+	5,  // 14: sub2api.relay.v1.RelayEnrollment.Register:input_type -> sub2api.relay.v1.RegisterRequest
+	7,  // 15: sub2api.relay.v1.RelayEnrollment.NodeStatus:input_type -> sub2api.relay.v1.NodeStatusRequest
+	9,  // 16: sub2api.relay.v1.RelayEnrollment.ObtainCertificate:input_type -> sub2api.relay.v1.CertificateRequest
+	9,  // 17: sub2api.relay.v1.RelayEnrollment.RenewCertificate:input_type -> sub2api.relay.v1.CertificateRequest
+	11, // 18: sub2api.relay.v1.RelayControl.Ping:input_type -> sub2api.relay.v1.PingRequest
+	14, // 19: sub2api.relay.v1.RelayControl.FetchConfig:input_type -> sub2api.relay.v1.FetchConfigRequest
+	13, // 20: sub2api.relay.v1.RelayEvents.Stream:input_type -> sub2api.relay.v1.NodeEnvelope
+	4,  // 21: sub2api.relay.v1.RelayEnrollment.Hello:output_type -> sub2api.relay.v1.HelloResponse
+	6,  // 22: sub2api.relay.v1.RelayEnrollment.Register:output_type -> sub2api.relay.v1.RegisterResponse
+	8,  // 23: sub2api.relay.v1.RelayEnrollment.NodeStatus:output_type -> sub2api.relay.v1.NodeStatusResponse
+	10, // 24: sub2api.relay.v1.RelayEnrollment.ObtainCertificate:output_type -> sub2api.relay.v1.CertificateResponse
+	10, // 25: sub2api.relay.v1.RelayEnrollment.RenewCertificate:output_type -> sub2api.relay.v1.CertificateResponse
+	12, // 26: sub2api.relay.v1.RelayControl.Ping:output_type -> sub2api.relay.v1.PingResponse
+	15, // 27: sub2api.relay.v1.RelayControl.FetchConfig:output_type -> sub2api.relay.v1.ConfigSnapshot
+	18, // 28: sub2api.relay.v1.RelayEvents.Stream:output_type -> sub2api.relay.v1.MasterEnvelope
+	21, // [21:29] is the sub-list for method output_type
+	13, // [13:21] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_sub2api_relay_v1_relay_proto_init() }
@@ -1132,8 +1444,10 @@ func file_sub2api_relay_v1_relay_proto_init() {
 	file_sub2api_relay_v1_relay_proto_msgTypes[11].OneofWrappers = []any{
 		(*NodeEnvelope_Ping)(nil),
 	}
-	file_sub2api_relay_v1_relay_proto_msgTypes[12].OneofWrappers = []any{
+	file_sub2api_relay_v1_relay_proto_msgTypes[16].OneofWrappers = []any{
 		(*MasterEnvelope_Ping)(nil),
+		(*MasterEnvelope_ConfigChanged)(nil),
+		(*MasterEnvelope_Invalidation)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -1141,7 +1455,7 @@ func file_sub2api_relay_v1_relay_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sub2api_relay_v1_relay_proto_rawDesc), len(file_sub2api_relay_v1_relay_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   15,
+			NumMessages:   21,
 			NumExtensions: 0,
 			NumServices:   3,
 		},

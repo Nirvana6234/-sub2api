@@ -303,7 +303,8 @@ var RelayEnrollment_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	RelayControl_Ping_FullMethodName = "/sub2api.relay.v1.RelayControl/Ping"
+	RelayControl_Ping_FullMethodName        = "/sub2api.relay.v1.RelayControl/Ping"
+	RelayControl_FetchConfig_FullMethodName = "/sub2api.relay.v1.RelayControl/FetchConfig"
 )
 
 // RelayControlClient is the client API for RelayControl service.
@@ -313,6 +314,8 @@ const (
 // 控制连接：选号、上游错误决策、额度、Key 查询等同步小消息（WP6、WP7、WP11）。
 type RelayControlClient interface {
 	Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error)
+	// FetchConfig 拉取本节点的配置快照（启动、重连、纪元变化、版本落后时，设计 6.2）。
+	FetchConfig(ctx context.Context, in *FetchConfigRequest, opts ...grpc.CallOption) (*ConfigSnapshot, error)
 }
 
 type relayControlClient struct {
@@ -333,6 +336,16 @@ func (c *relayControlClient) Ping(ctx context.Context, in *PingRequest, opts ...
 	return out, nil
 }
 
+func (c *relayControlClient) FetchConfig(ctx context.Context, in *FetchConfigRequest, opts ...grpc.CallOption) (*ConfigSnapshot, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ConfigSnapshot)
+	err := c.cc.Invoke(ctx, RelayControl_FetchConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RelayControlServer is the server API for RelayControl service.
 // All implementations must embed UnimplementedRelayControlServer
 // for forward compatibility.
@@ -340,6 +353,8 @@ func (c *relayControlClient) Ping(ctx context.Context, in *PingRequest, opts ...
 // 控制连接：选号、上游错误决策、额度、Key 查询等同步小消息（WP6、WP7、WP11）。
 type RelayControlServer interface {
 	Ping(context.Context, *PingRequest) (*PingResponse, error)
+	// FetchConfig 拉取本节点的配置快照（启动、重连、纪元变化、版本落后时，设计 6.2）。
+	FetchConfig(context.Context, *FetchConfigRequest) (*ConfigSnapshot, error)
 	mustEmbedUnimplementedRelayControlServer()
 }
 
@@ -352,6 +367,9 @@ type UnimplementedRelayControlServer struct{}
 
 func (UnimplementedRelayControlServer) Ping(context.Context, *PingRequest) (*PingResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Ping not implemented")
+}
+func (UnimplementedRelayControlServer) FetchConfig(context.Context, *FetchConfigRequest) (*ConfigSnapshot, error) {
+	return nil, status.Error(codes.Unimplemented, "method FetchConfig not implemented")
 }
 func (UnimplementedRelayControlServer) mustEmbedUnimplementedRelayControlServer() {}
 func (UnimplementedRelayControlServer) testEmbeddedByValue()                      {}
@@ -392,6 +410,24 @@ func _RelayControl_Ping_Handler(srv interface{}, ctx context.Context, dec func(i
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RelayControl_FetchConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FetchConfigRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayControlServer).FetchConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayControl_FetchConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayControlServer).FetchConfig(ctx, req.(*FetchConfigRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // RelayControl_ServiceDesc is the grpc.ServiceDesc for RelayControl service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -402,6 +438,10 @@ var RelayControl_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Ping",
 			Handler:    _RelayControl_Ping_Handler,
+		},
+		{
+			MethodName: "FetchConfig",
+			Handler:    _RelayControl_FetchConfig_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

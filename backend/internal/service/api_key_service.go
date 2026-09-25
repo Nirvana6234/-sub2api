@@ -393,21 +393,24 @@ type APIKeyService struct {
 	cfg                        *config.Config
 	authCacheL1                *ristretto.Cache
 	authNegativeCacheL1        *ristretto.Cache
-	authCfg                    apiKeyAuthCacheConfig
-	authGroup                  singleflight.Group
-	authLookupSlots            chan struct{}
-	authLookupTotal            atomic.Uint64
-	authLookupRejected         atomic.Uint64
-	authLookupInFlight         atomic.Int64
-	invalidAuthAbuse           *invalidAuthAbuseLimiter
-	authInvalidationStart      sync.Once
-	authInvalidationStop       sync.Once
-	authInvalidationCancel     context.CancelFunc
-	authInvalidationWG         sync.WaitGroup
-	authInvalidationConnected  atomic.Bool
-	authInvalidationFailures   atomic.Uint64
-	lastUsedTouchL1            sync.Map // keyID -> nextAllowedAt(time.Time)
-	lastUsedTouchSF            singleflight.Group
+	// authInvalidationListener 在每次作废鉴权缓存时收到缓存键（原始 Key 的 SHA-256），
+	// 主从分流的主节点据此通知从节点清掉自己的 Key 缓存（docs/MASTER_RELAY_NODES.md 6、8.2）。
+	authInvalidationListener  atomic.Pointer[func(cacheKey string)]
+	authCfg                   apiKeyAuthCacheConfig
+	authGroup                 singleflight.Group
+	authLookupSlots           chan struct{}
+	authLookupTotal           atomic.Uint64
+	authLookupRejected        atomic.Uint64
+	authLookupInFlight        atomic.Int64
+	invalidAuthAbuse          *invalidAuthAbuseLimiter
+	authInvalidationStart     sync.Once
+	authInvalidationStop      sync.Once
+	authInvalidationCancel    context.CancelFunc
+	authInvalidationWG        sync.WaitGroup
+	authInvalidationConnected atomic.Bool
+	authInvalidationFailures  atomic.Uint64
+	lastUsedTouchL1           sync.Map // keyID -> nextAllowedAt(time.Time)
+	lastUsedTouchSF           singleflight.Group
 }
 
 // AutoGroupMetricRepository provides the narrow, routing-only usage query.
