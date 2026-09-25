@@ -27,6 +27,8 @@ type sqlExecutor interface {
 type groupRepository struct {
 	client *dbent.Client
 	sql    sqlExecutor
+	// activeCounts caches the account counts of ListActive/ListActiveByPlatform.
+	activeCounts groupAccountCountsCache
 }
 
 // lockLiveGroups makes account-group inserts participate in the same row-lock
@@ -702,7 +704,7 @@ func (r *groupRepository) ListActive(ctx context.Context) ([]service.Group, erro
 		groupIDs = append(groupIDs, g.ID)
 	}
 
-	counts, err := r.loadAccountCounts(ctx, groupIDs)
+	counts, err := r.cachedActiveAccountCounts(ctx, groupIDs)
 	if err == nil {
 		for i := range outGroups {
 			c := counts[outGroups[i].ID]
@@ -775,7 +777,7 @@ func (r *groupRepository) ListActiveByPlatform(ctx context.Context, platform str
 		groupIDs = append(groupIDs, g.ID)
 	}
 
-	counts, err := r.loadAccountCounts(ctx, groupIDs)
+	counts, err := r.cachedActiveAccountCounts(ctx, groupIDs)
 	if err == nil {
 		for i := range outGroups {
 			c := counts[outGroups[i].ID]
