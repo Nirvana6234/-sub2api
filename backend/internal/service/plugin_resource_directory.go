@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	pluginv1 "github.com/Wei-Shaw/sub2api/pkg/pluginapi/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -96,4 +98,23 @@ func (s *pluginHostServiceServer) ResolveProxy(ctx context.Context, req *pluginv
 		return nil, status.Error(codes.Unavailable, "selected proxy unavailable")
 	}
 	return &pluginv1.ResolveProxyResponse{Found: u != "", ProxyUrl: u}, nil
+}
+
+// ProvidePluginManager 构造插件管理器并接上账号目录。
+//
+// 账号目录原先是在生成的 wire_gen.go 里手工补的一行，重新生成 wire 时会被悄悄丢掉；
+// 放进 provider 后由 wire 生成，不再依赖手工修改。
+func ProvidePluginManager(
+	repo PluginRepository,
+	encryptor SecretEncryptor,
+	cfg *config.Config,
+	hostInfo PluginHostInfo,
+	kvStore PluginKVStore,
+	gateway *OpenAIGatewayService,
+	accounts AccountRepository,
+	proxies ProxyRepository,
+) *PluginManager {
+	m := NewPluginManager(repo, encryptor, cfg, hostInfo, kvStore)
+	m.SetAccountDirectory(NewPluginResourceDirectory(gateway, accounts, proxies))
+	return m
 }
