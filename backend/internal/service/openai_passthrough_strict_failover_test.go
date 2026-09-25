@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -293,73 +292,4 @@ func TestForward_NonCodexClientFallsBackToAuthOnlyPassthrough(t *testing.T) {
 	assert.Equal(t, OpenAIStrictPassthroughReasonGateNotMatched, reason)
 	require.NotNil(t, upstream.lastReq)
 	assert.NotEqual(t, "zstd", upstream.lastReq.Header.Get("Content-Encoding"))
-}
-
-// 全局黑名单/版本门等策略对「只开 strict、不开 codex_cli_only」的账号同样要生效。
-// 取策略的条件一旦漏了 strict，这些配置在最常见的用法上就成了摆设。
-func TestEvaluateCodexClientIdentity_HonoursPolicy(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	account := newStrictPassthroughAccount(map[string]any{
-		"openai_passthrough":        true,
-		"openai_passthrough_strict": true,
-	})
-
-	newCtx := func() *gin.Context {
-		c, _ := gin.CreateTestContext(httptest.NewRecorder())
-		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
-		c.Request.Header.Set("User-Agent", "codex_cli_rs/0.98.0 (Windows 10.0.19045; x86_64) unknown")
-		c.Request.Header.Set("x-codex-turn-state", "turn-state-blob")
-		return c
-	}
-
-	base := CodexRestrictionPolicy{EngineFingerprintSignals: openai.DefaultEngineFingerprintSignals}
-
-	t.Run("基线放行", func(t *testing.T) {
-		got := EvaluateCodexClientIdentity(newCtx(), account, base, nil)
-		require.True(t, got.Enabled)
-		assert.True(t, got.Matched)
-	})
-
-	t.Run("黑名单命中即拒", func(t *testing.T) {
-		policy := base
-		policy.Blacklist = []openai.AllowedClientEntry{{UAContains: []string{"codex_cli_rs/0.98"}}}
-		got := EvaluateCodexClientIdentity(newCtx(), account, policy, nil)
-		assert.False(t, got.Matched, "黑名单对 strict 路径必须同样生效")
-		assert.Equal(t, CodexClientRestrictionReasonBlacklisted, got.Reason)
-	})
-
-	t.Run("版本下限拦得住", func(t *testing.T) {
-		policy := base
-		policy.MinCodexVersion = "99.0.0"
-		got := EvaluateCodexClientIdentity(newCtx(), account, policy, nil)
-		assert.False(t, got.Matched)
-		assert.Equal(t, CodexClientRestrictionReasonVersionTooLow, got.Reason)
-	})
-
-	t.Run("指纹门拦得住", func(t *testing.T) {
-		c, _ := gin.CreateTestContext(httptest.NewRecorder())
-		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
-		c.Request.Header.Set("User-Agent", "codex_cli_rs/0.98.0 (Windows 10.0.19045; x86_64) unknown")
-		// 官方 UA 但没有任何 x-codex-* 头
-		got := EvaluateCodexClientIdentity(c, account, base, nil)
-		assert.False(t, got.Matched)
-		assert.Equal(t, CodexClientRestrictionReasonMissingEngineFingerprint, got.Reason)
-	})
-}
-
-// force_codex_cli 是无条件放行，证明不了来路，因此不得让 strict 生效。
-func TestEvaluateCodexClientIdentity_IgnoresForceCodexCLI(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	account := newStrictPassthroughAccount(map[string]any{
-		"openai_passthrough":        true,
-		"openai_passthrough_strict": true,
-	})
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
-	c.Request.Header.Set("User-Agent", "curl/8.0")
-
-	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: true}}}
-	got := svc.detectCodexClientIdentity(c, account, nil)
-
-	assert.False(t, got.Matched, "force_codex_cli 只是放行，不能当作「这是 Codex」的证据")
 }

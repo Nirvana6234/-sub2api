@@ -2098,6 +2098,10 @@ func (s *stubAccountRepo) ResetQuotaUsedAndClearRateLimitCooldown(ctx context.Co
 	return errors.New("not implemented")
 }
 
+func (s *stubAccountRepo) UpdateGroupPriorities(ctx context.Context, updates []service.AccountGroupPriorityUpdate) (int, error) {
+	return 0, nil
+}
+
 func (s *stubAccountRepo) BulkUpdate(ctx context.Context, ids []int64, updates service.AccountBulkUpdate) (int64, error) {
 	s.bulkUpdateIDs = append([]int64{}, ids...)
 	return int64(len(ids)), nil

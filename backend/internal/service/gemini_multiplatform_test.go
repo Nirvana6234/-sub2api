@@ -181,6 +181,10 @@ func (m *mockAccountRepoForGemini) UpdateSessionWindowEnd(ctx context.Context, i
 func (m *mockAccountRepoForGemini) UpdateExtra(ctx context.Context, id int64, updates map[string]any) error {
 	return nil
 }
+func (m *mockAccountRepoForGemini) UpdateGroupPriorities(ctx context.Context, updates []AccountGroupPriorityUpdate) (int, error) {
+	return 0, nil
+}
+
 func (m *mockAccountRepoForGemini) BulkUpdate(ctx context.Context, ids []int64, updates AccountBulkUpdate) (int64, error) {
 	return 0, nil
 }

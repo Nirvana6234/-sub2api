@@ -207,6 +207,10 @@ func (s *accountRepoStub) UpdateExtra(ctx context.Context, id int64, updates map
 	panic("unexpected UpdateExtra call")
 }
 
+func (s *accountRepoStub) UpdateGroupPriorities(ctx context.Context, updates []AccountGroupPriorityUpdate) (int, error) {
+	return 0, nil
+}
+
 func (s *accountRepoStub) BulkUpdate(ctx context.Context, ids []int64, updates AccountBulkUpdate) (int64, error) {
 	panic("unexpected BulkUpdate call")
 }

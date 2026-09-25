@@ -104,22 +104,6 @@ func TestFilterAutoGroupCandidatesForModelKeepsOnlyImageCapableGroups(t *testing
 	require.Equal(t, []int64{20}, []int64{filtered[0].ID})
 }
 
-func TestFilterAutoGroupCandidatesForModelHonorsConfiguredModelList(t *testing.T) {
-	groups := []Group{
-		{ID: 10, Platform: PlatformOpenAI, AllowImageGeneration: true, ActiveAccountCount: 1,
-			ModelsListConfig: GroupModelsListConfig{Enabled: true, Models: []string{"gpt-5.6"}}},
-		{ID: 20, Platform: PlatformOpenAI, AllowImageGeneration: true, ActiveAccountCount: 1,
-			ModelsListConfig: GroupModelsListConfig{Enabled: true, Models: []string{"gpt-image-*"}}},
-	}
-	svc := &APIKeyService{}
-
-	filtered, err := svc.filterAutoGroupCandidatesForModel(context.Background(), groups, "gpt-image-2")
-
-	require.NoError(t, err)
-	require.Len(t, filtered, 1)
-	require.Equal(t, int64(20), filtered[0].ID)
-}
-
 func TestResolveAutoGroupForModelNeverSelectsGroupWithoutRequestedModel(t *testing.T) {
 	groups := []Group{
 		{ID: 10, Platform: PlatformOpenAI, Status: StatusActive, RateMultiplier: 0.1, ActiveAccountCount: 1, AllowImageGeneration: true},

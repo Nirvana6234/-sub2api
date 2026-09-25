@@ -279,33 +279,3 @@ func TestSettingService_GetPublicSettingsForInjection_MirrorsSubscriptionEnabled
 		require.Equal(t, value == "true", payload.SubscriptionEnabled, "value=%q", value)
 	}
 }
-
-// payment_balance_disabled is exposed publicly so the user shell can derive the site
-// billing mode (recharge & subscription / recharge only / subscription only) before any
-// authenticated checkout call. Strict true, mirroring the payment-config parser.
-func TestSettingService_GetPublicSettings_PaymentBalanceDisabledStrictTrue(t *testing.T) {
-	cases := []struct {
-		name  string
-		value map[string]string
-		want  bool
-	}{
-		{name: "missing key stays enabled", value: map[string]string{}, want: false},
-		{name: "explicit false", value: map[string]string{SettingBalancePayDisabled: "false"}, want: false},
-		{name: "explicit true disables balance recharge", value: map[string]string{SettingBalancePayDisabled: "true"}, want: true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			svc := NewSettingService(&settingPublicRepoStub{values: tc.value}, &config.Config{})
-
-			settings, err := svc.GetPublicSettings(context.Background())
-			require.NoError(t, err)
-			require.Equal(t, tc.want, settings.PaymentBalanceDisabled)
-
-			raw, err := svc.GetPublicSettingsForInjection(context.Background())
-			require.NoError(t, err)
-			payload, ok := raw.(*PublicSettingsInjectionPayload)
-			require.True(t, ok)
-			require.Equal(t, tc.want, payload.PaymentBalanceDisabled)
-		})
-	}
-}

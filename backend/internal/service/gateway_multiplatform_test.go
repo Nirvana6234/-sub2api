@@ -217,6 +217,10 @@ func (m *mockAccountRepoForPlatform) UpdateSessionWindowEnd(ctx context.Context,
 func (m *mockAccountRepoForPlatform) UpdateExtra(ctx context.Context, id int64, updates map[string]any) error {
 	return nil
 }
+func (m *mockAccountRepoForPlatform) UpdateGroupPriorities(ctx context.Context, updates []AccountGroupPriorityUpdate) (int, error) {
+	return 0, nil
+}
+
 func (m *mockAccountRepoForPlatform) BulkUpdate(ctx context.Context, ids []int64, updates AccountBulkUpdate) (int64, error) {
 	return 0, nil
 }
