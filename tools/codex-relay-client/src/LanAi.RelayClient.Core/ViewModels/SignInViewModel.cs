@@ -237,6 +237,9 @@ public sealed partial class SignInViewModel : ObservableObject
         }
     }
 
+    /// <summary>Tells the user why a stored session was not resumed (server unreachable).</summary>
+    public void ShowRestoreFailure(string message) => ErrorMessage = message;
+
     /// <summary>Returns to the password step, discarding the pending two-factor attempt.</summary>
     public void CancelTwoFactor()
     {

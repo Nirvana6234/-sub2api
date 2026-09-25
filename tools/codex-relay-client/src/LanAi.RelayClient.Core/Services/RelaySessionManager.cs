@@ -71,6 +71,9 @@ internal sealed class RelaySessionManager
 
     public SignOutReason LastSignOutReason { get; private set; } = SignOutReason.None;
 
+    /// <summary>Why the last <see cref="RestoreAsync"/> left the user on the sign-in page although a session was stored; null otherwise.</summary>
+    public string? RestoreFailureMessage { get; private set; }
+
     /// <summary>
     /// Restores a session persisted by an earlier run, if it is still usable.
     /// </summary>
@@ -94,19 +97,34 @@ internal sealed class RelaySessionManager
 
         _session = stored;
 
+        RestoreFailureMessage = null;
         try
         {
-            await GetAccessTokenAsync(cancellationToken).ConfigureAwait(false);
+            // A real round trip, not just renewal: a still-fresh token needs no renewal
+            // and would otherwise let an unreachable server through to a dashboard with
+            // no data in it.
+            string token = await GetAccessTokenAsync(cancellationToken).ConfigureAwait(false);
+            await _client.GetCurrentUserAsync(token, cancellationToken).ConfigureAwait(false);
         }
-        catch (RelayApiException)
+        catch (RelayApiException ex)
         {
-            // Includes the offline case. Renewal already dropped the session when
-            // the server rejected it; a network failure leaves it in place so the
-            // user is not signed out merely for starting up without a connection.
+            // Renewal already dropped the session when the server rejected it.
             if (_session is null)
             {
                 return false;
             }
+
+            if (ex.Failure == RelayFailure.Unauthenticated)
+            {
+                SignOutLocally(SignOutReason.SessionExpired);
+                return false;
+            }
+
+            // The server could not be reached or answered badly. The stored session is
+            // kept for the next start, but this run stays on the sign-in page and says why.
+            _session = null;
+            RestoreFailureMessage = ex.UserMessage;
+            return false;
         }
 
         RaiseStateChanged();
