@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	xdraw "golang.org/x/image/draw"
@@ -299,7 +300,18 @@ type UserService struct {
 	billingCache         BillingCache
 	lastActiveTouchL1    sync.Map
 	lastActiveTouchSF    singleflight.Group
+	firstAdminForAuth    atomic.Pointer[cachedFirstAdmin]
 }
+
+type cachedFirstAdmin struct {
+	user      User
+	expiresAt time.Time
+}
+
+// firstAdminForAuthTTL bounds how long admin-API-key requests keep being
+// attributed to an admin who was just disabled or demoted. The key itself is
+// the credential, so this only affects attribution.
+const firstAdminForAuthTTL = 5 * time.Second
 
 type ContributionWallet struct {
 	Balance     float64 `json:"balance"`
@@ -374,6 +386,23 @@ func (s *UserService) GetFirstAdmin(ctx context.Context) (*User, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get first admin: %w", err)
 	}
+	return admin, nil
+}
+
+// GetFirstAdminForAuth is GetFirstAdmin for the admin-API-key middleware,
+// which resolves the admin on every request (monitoring tools poll admin
+// endpoints several times a second). The result is reused for
+// firstAdminForAuthTTL; each caller gets its own copy.
+func (s *UserService) GetFirstAdminForAuth(ctx context.Context) (*User, error) {
+	if cached := s.firstAdminForAuth.Load(); cached != nil && time.Now().Before(cached.expiresAt) {
+		admin := cached.user
+		return &admin, nil
+	}
+	admin, err := s.GetFirstAdmin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.firstAdminForAuth.Store(&cachedFirstAdmin{user: *admin, expiresAt: time.Now().Add(firstAdminForAuthTTL)})
 	return admin, nil
 }
 

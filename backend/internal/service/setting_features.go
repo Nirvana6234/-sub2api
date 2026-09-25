@@ -730,6 +730,8 @@ func (s *SettingService) GenerateAdminAPIKey(ctx context.Context) (string, error
 	if err := s.settingRepo.Set(ctx, SettingKeyAdminAPIKey, key); err != nil {
 		return "", fmt.Errorf("save admin api key: %w", err)
 	}
+	// The old key must stop working at once.
+	s.invalidateHotSettings()
 
 	return key, nil
 }
@@ -761,7 +763,10 @@ func (s *SettingService) GetAdminAPIKeyStatus(ctx context.Context) (maskedKey st
 // GetAdminAPIKey 获取完整的管理员 API Key（仅供内部验证使用）
 // 如果未配置返回空字符串和 nil 错误，只有数据库错误时才返回 error
 func (s *SettingService) GetAdminAPIKey(ctx context.Context) (string, error) {
-	key, err := s.settingRepo.GetValue(ctx, SettingKeyAdminAPIKey)
+	// Checked on every admin-API-key request. Generating or deleting the key
+	// here drops the cache; writers outside this service apply within the
+	// cache TTL.
+	key, err := s.hotSettings().GetValue(ctx, SettingKeyAdminAPIKey)
 	if err != nil {
 		if errors.Is(err, ErrSettingNotFound) {
 			return "", nil // 未配置，返回空字符串
@@ -773,7 +778,11 @@ func (s *SettingService) GetAdminAPIKey(ctx context.Context) (string, error) {
 
 // DeleteAdminAPIKey 删除管理员 API Key
 func (s *SettingService) DeleteAdminAPIKey(ctx context.Context) error {
-	return s.settingRepo.Delete(ctx, SettingKeyAdminAPIKey)
+	err := s.settingRepo.Delete(ctx, SettingKeyAdminAPIKey)
+	// Drop the cache even if the delete failed: a stale cached key must never
+	// outlive a revocation attempt.
+	s.invalidateHotSettings()
+	return err
 }
 
 // IsModelFallbackEnabled 检查是否启用模型兜底机制
