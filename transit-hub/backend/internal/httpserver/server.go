@@ -82,7 +82,12 @@ func New(cfg config.Config, db *pgxpool.Pool, redisClient *redis.Client) *Server
 		panic(err)
 	}
 	group_rates.RegisterRoutes(server.mux, groupRatesService, adminAccountsService)
-	upstreamHTTPClient := &http.Client{Timeout: upstreamRequestTimeout}
+	upstreamHTTPClient, err := upstream.NewInternalAdminHTTPClient(
+		&http.Client{Timeout: upstreamRequestTimeout}, cfg.Sub2APIInternalAdminOrigins, cfg.Sub2APIInternalAdminURL,
+	)
+	if err != nil {
+		panic(err)
+	}
 	platformService := upstream.NewPlatformService(upstream.NewHTTPClient(upstreamHTTPClient))
 	upstreamCache := upstream.NewRedisSiteCache(redisClient)
 	upstreamService := upstream.NewService(platformService, upstreamRepository, groupRateSnapshotWriter{service: groupRatesService}, upstreamCache)

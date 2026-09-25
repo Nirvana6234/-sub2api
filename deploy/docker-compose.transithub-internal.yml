@@ -1,0 +1,16 @@
+# Optional Sub2API overlay for a co-hosted TransitHub installation.
+# Create the shared network first: docker network create service-integration
+# Include this overlay on every subsequent Sub2API compose invocation, or merge
+# the network settings into the production compose file so recreates retain them.
+services:
+  sub2api:
+    networks:
+      sub2api-network: {}
+      service-integration:
+        aliases:
+          - sub2api-internal
+
+networks:
+  service-integration:
+    external: true
+    name: service-integration

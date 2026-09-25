@@ -633,6 +633,29 @@ curl -s -o /dev/null -w 'transithub=%{http_code}\n' http://127.0.0.1:10621/api/h
 
 ---
 
+## C7. 管理员 API 内网路由与检测器目录（2026-09-25）
+
+TransitHub 的本站管理员请求通过容器网络访问 Sub2API。生产配置为：
+
+```env
+SUB2API_INTERNAL_ADMIN_ORIGINS=https://icode-xtu.ccwu.cc,https://gongfeiai.com
+SUB2API_INTERNAL_ADMIN_URL=http://sub2api-internal:8080
+```
+
+仅匹配上述 origin 的 `/api/v1/admin`、`/api/v1/auth` 请求改走内网，持久化
+站点 URL 保持公网地址，第三方站点请求保持原路径。内部请求禁用环境代理并
+拒绝重定向，配置缺一项会阻止启动。抽奖奖励的独立客户端保留原 SSRF 防护。
+
+**Sub2API 和 TransitHub 必须都加入 `service-integration` 网络。** Sub2API
+使用 `sub2api-internal` 网络别名。生产已把此设置写入主 compose 文件；新机器
+可参考 `docker-compose.transithub-internal.yml` 叠加配置。仅执行一次
+`docker network connect` 不够，下次重建会丢失网络，必须同时持久化 compose。
+
+检测器使用固定版本镜像内的 `/app`，只挂载报告卷 `/data/runs`。不要再次添加
+指向历史发布目录的 `/app` bind mount；目录被清理会使档位预估及检测失败。
+除 `/api/health` 外，发版还要用登录会话检查 `/api/purity-check/tiers` 返回
+三个有效档位，以及 `/api/purity-check/targets` 可读取账号。
+
 # Part D · 搬服务器 / 换 IP 完整清单
 
 > **照这份做，不需要再全盘扫描一遍。** 内容于 2026-08-28 逐项实测确认。

@@ -1,5 +1,16 @@
 # gpt56-detector 旁路服务
 
+## 生产运行目录
+
+使用固定版本镜像时，代码和检测资源直接取自镜像内的 `/app`，只持久化
+`/data/runs`。不要把临时发布目录覆盖挂载到 `/app`：宿主机目录被清理后，
+旧进程可能仍能回答健康接口，但预估和检测会报“运行资源缺失”，容器健康检查
+还可能报 `current working directory is outside of container mount namespace root`。
+
+2026-09-25 生产故障由一个已删除的历史发布目录挂载造成。修复时先验证现有
+`v4.1.1` 镜像的三个档位预估和 Node 运行时，再备份报告卷、移除该代码挂载并
+用 `--no-deps --no-build` 重建检测器。无需升级检测算法，也不要删除报告卷。
+
 把 GPT-5.6 混用检测器包成一个只在内网监听的 HTTP 服务，供 transithub 的
 `purity_check` 模块调用。
 
