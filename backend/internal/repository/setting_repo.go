@@ -17,6 +17,12 @@ func NewSettingRepository(client *ent.Client) service.SettingRepository {
 	return &settingRepository{client: client}
 }
 
+// ProvideSettingRepository 是 wire 用的设置仓储：写入成功后通知 SettingChangeHub
+// （主从分流的配置推送靠它；没有订阅者时行为不变）。
+func ProvideSettingRepository(client *ent.Client, hub *service.SettingChangeHub) service.SettingRepository {
+	return service.NewObservedSettingRepository(NewSettingRepository(client), hub)
+}
+
 func (r *settingRepository) Get(ctx context.Context, key string) (*service.Setting, error) {
 	m, err := r.client.Setting.Query().Where(setting.KeyEQ(key)).Only(ctx)
 	if err != nil {

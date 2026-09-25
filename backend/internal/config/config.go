@@ -105,6 +105,30 @@ type Config struct {
 	ImageStorage            ImageStorageConfig            `mapstructure:"image_storage"`
 	Plugins                 PluginConfig                  `mapstructure:"plugins"`
 	FallbackPoolAlert       FallbackPoolAlertConfig       `mapstructure:"fallback_pool_alert"`
+	Relay                   RelayConfig                   `mapstructure:"relay"`
+}
+
+// 主从分流的节点角色（docs/MASTER_RELAY_NODES.md 不变量 5）。
+const (
+	RelayNodeRoleMaster = "master"
+	RelayNodeRoleRelay  = "relay"
+)
+
+// RelayConfig 是主从分流的本机配置。开关、比例等运营参数在后台设置里，不在这里。
+type RelayConfig struct {
+	// NodeRole：master（默认，现有单机部署就是它）或 relay。环境变量 NODE_ROLE。
+	NodeRole string `mapstructure:"node_role"`
+	// MasterListenAddr 是主节点主从通信端口，例如 ":7443"。为空时主节点不提供主从通信，
+	// 后台打开主从分流开关也不会启动（管理页会说明原因）。
+	// 这个端口只有 TLS，不能放在会解密的反向代理后面（设计 7.1）。
+	MasterListenAddr string `mapstructure:"master_listen_addr"`
+	// KeyDir 是主节点私钥目录（加密文件），默认 <data_dir>/relay-keys。整个目录可离线备份。
+	KeyDir string `mapstructure:"key_dir"`
+	// KeyEncryptionKey 是加密私钥文件的密钥（64 位十六进制，AES-256），与 KeyEncryptionKeyFile 二选一。
+	// 必须显式配置并妥善保管，不会自动生成：换了它，已有的私钥就解不开，所有从节点要重新激活。
+	KeyEncryptionKey string `mapstructure:"key_encryption_key"`
+	// KeyEncryptionKeyFile 是存放上述密钥的文件路径（内容为 64 位十六进制）。
+	KeyEncryptionKeyFile string `mapstructure:"key_encryption_key_file"`
 }
 
 type FallbackPoolAlertConfig struct {
@@ -2612,6 +2636,14 @@ func setDefaults() {
 // environment. Any subsystem that wants a richer default still applies it after
 // unmarshal, exactly as before.
 func setEnvReachableDefaults() {
+	// 主从分流（docs/MASTER_RELAY_NODES.md）。NODE_ROLE 是设计里约定的环境变量名。
+	viper.SetDefault("relay.node_role", RelayNodeRoleMaster)
+	viper.SetDefault("relay.master_listen_addr", "")
+	viper.SetDefault("relay.key_dir", "")
+	viper.SetDefault("relay.key_encryption_key", "")
+	viper.SetDefault("relay.key_encryption_key_file", "")
+	_ = viper.BindEnv("relay.node_role", "NODE_ROLE", "RELAY_NODE_ROLE")
+
 	viper.SetDefault("gateway.forced_codex_instructions_template_file", "")
 	viper.SetDefault("gateway.session_idle_timeout_minutes", 0)
 	viper.SetDefault("gateway.user_message_queue.mode", "")
@@ -2682,6 +2714,16 @@ func setEnvReachableDefaults() {
 }
 
 func (c *Config) Validate() error {
+	switch c.Relay.NodeRole = strings.ToLower(strings.TrimSpace(c.Relay.NodeRole)); c.Relay.NodeRole {
+	case "":
+		c.Relay.NodeRole = RelayNodeRoleMaster
+	case RelayNodeRoleMaster, RelayNodeRoleRelay:
+	default:
+		return fmt.Errorf("relay.node_role (NODE_ROLE) must be %q or %q", RelayNodeRoleMaster, RelayNodeRoleRelay)
+	}
+	if c.Relay.KeyEncryptionKey != "" && c.Relay.KeyEncryptionKeyFile != "" {
+		return fmt.Errorf("relay.key_encryption_key and relay.key_encryption_key_file are mutually exclusive")
+	}
 	forwardedClientIPHeaders, err := NormalizeForwardedClientIPHeaders(c.Security.ForwardedClientIPHeaders)
 	if err != nil {
 		return fmt.Errorf("security.forwarded_client_ip_headers: %w", err)
