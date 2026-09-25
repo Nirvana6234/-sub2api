@@ -53,9 +53,9 @@ func TestAuthSnapshotRoundTripCarriesAutoGroupState(t *testing.T) {
 // rather than served, otherwise an automatic key keeps failing until its TTL
 // expires.
 func TestAuthSnapshotVersionRejectsPreAutoGroupPayloads(t *testing.T) {
-	require.Equal(t, 25, apiKeyAuthSnapshotVersion,
+	require.Equal(t, 26, apiKeyAuthSnapshotVersion,
 		"bump the snapshot version whenever the payload gains auth-relevant fields")
 
-	stale := &APIKeyAuthCacheEntry{Snapshot: &APIKeyAuthSnapshot{Version: 24, APIKeyID: 1}}
+	stale := &APIKeyAuthCacheEntry{Snapshot: &APIKeyAuthSnapshot{Version: 25, APIKeyID: 1}}
 	require.NotEqual(t, apiKeyAuthSnapshotVersion, stale.Snapshot.Version)
 }

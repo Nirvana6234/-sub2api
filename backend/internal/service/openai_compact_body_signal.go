@@ -1,12 +1,15 @@
 package service
 
 import (
+	"bytes"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 )
+
+var compactionTriggerType = []byte("compaction_trigger")
 
 // openAINativeCompactionV2Key 标记本请求是原生 remote compaction v2
 // （裸 /responses + stream:true + compaction_trigger），由 handler 在判定后
@@ -26,6 +29,12 @@ func MarkOpenAINativeCompactionV2(c *gin.Context) {
 // the final Responses input item, as required by the upstream v2 wire format.
 func NormalizeCompactionTriggerInputOrder(body []byte) ([]byte, bool, error) {
 	if len(body) == 0 {
+		return body, false, nil
+	}
+	// Every forwarded request passes through here, while triggers are rare.
+	// Decoding the whole body into a map costs time proportional to its size
+	// on every relay hop, so skip bodies that cannot contain a trigger.
+	if !bytes.Contains(body, compactionTriggerType) {
 		return body, false, nil
 	}
 	var payload map[string]any

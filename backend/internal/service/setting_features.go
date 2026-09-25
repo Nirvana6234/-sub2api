@@ -167,7 +167,7 @@ func (s *SettingService) GetAccountShareRewardRatePercent(ctx context.Context) f
 	if s == nil || s.settingRepo == nil {
 		return AccountShareRewardRateDefaultPercent
 	}
-	raw, err := s.settingRepo.GetValue(ctx, SettingKeyAccountShareRewardRate)
+	raw, err := s.hotSettings().GetValue(ctx, SettingKeyAccountShareRewardRate)
 	if err != nil {
 		return AccountShareRewardRateDefaultPercent
 	}
@@ -182,7 +182,7 @@ func (s *SettingService) GetAccountOwnUsageFeeRatePercent(ctx context.Context) f
 	if s == nil || s.settingRepo == nil {
 		return AccountOwnUsageFeeRateDefaultPercent
 	}
-	raw, err := s.settingRepo.GetValue(ctx, SettingKeyAccountOwnUsageFeeRate)
+	raw, err := s.hotSettings().GetValue(ctx, SettingKeyAccountOwnUsageFeeRate)
 	if err != nil {
 		return AccountOwnUsageFeeRateDefaultPercent
 	}
@@ -321,7 +321,9 @@ func (s *SettingService) IsTotpEncryptionKeyConfigured() bool {
 // 开启时会话与登录时的 IP/User-Agent 绑定，任一变化立即失效并撤销该会话。
 // 默认关闭：移动网络/多出口 IP 场景下 IP 频繁变化会导致登录后立即掉线。
 func (s *SettingService) IsSessionBindingEnabled(ctx context.Context) bool {
-	value, err := s.settingRepo.GetValue(ctx, SettingKeySessionBindingEnabled)
+	// Checked by the JWT middleware on every authenticated request; settings
+	// updates invalidate the cache, so toggling it applies immediately.
+	value, err := s.hotSettings().GetValue(ctx, SettingKeySessionBindingEnabled)
 	if err != nil {
 		return false // 默认关闭
 	}
@@ -728,6 +730,8 @@ func (s *SettingService) GenerateAdminAPIKey(ctx context.Context) (string, error
 	if err := s.settingRepo.Set(ctx, SettingKeyAdminAPIKey, key); err != nil {
 		return "", fmt.Errorf("save admin api key: %w", err)
 	}
+	// The old key must stop working at once.
+	s.invalidateHotSettings()
 
 	return key, nil
 }
@@ -759,7 +763,10 @@ func (s *SettingService) GetAdminAPIKeyStatus(ctx context.Context) (maskedKey st
 // GetAdminAPIKey 获取完整的管理员 API Key（仅供内部验证使用）
 // 如果未配置返回空字符串和 nil 错误，只有数据库错误时才返回 error
 func (s *SettingService) GetAdminAPIKey(ctx context.Context) (string, error) {
-	key, err := s.settingRepo.GetValue(ctx, SettingKeyAdminAPIKey)
+	// Checked on every admin-API-key request. Generating or deleting the key
+	// here drops the cache; writers outside this service apply within the
+	// cache TTL.
+	key, err := s.hotSettings().GetValue(ctx, SettingKeyAdminAPIKey)
 	if err != nil {
 		if errors.Is(err, ErrSettingNotFound) {
 			return "", nil // 未配置，返回空字符串
@@ -771,7 +778,11 @@ func (s *SettingService) GetAdminAPIKey(ctx context.Context) (string, error) {
 
 // DeleteAdminAPIKey 删除管理员 API Key
 func (s *SettingService) DeleteAdminAPIKey(ctx context.Context) error {
-	return s.settingRepo.Delete(ctx, SettingKeyAdminAPIKey)
+	err := s.settingRepo.Delete(ctx, SettingKeyAdminAPIKey)
+	// Drop the cache even if the delete failed: a stale cached key must never
+	// outlive a revocation attempt.
+	s.invalidateHotSettings()
+	return err
 }
 
 // IsModelFallbackEnabled 检查是否启用模型兜底机制
@@ -1125,7 +1136,9 @@ func (s *SettingService) SetBetaPolicySettings(ctx context.Context, settings *Be
 
 // GetOpenAIFastPolicySettings 获取 OpenAI fast 策略配置
 func (s *SettingService) GetOpenAIFastPolicySettings(ctx context.Context) (*OpenAIFastPolicySettings, error) {
-	value, err := s.settingRepo.GetValue(ctx, SettingKeyOpenAIFastPolicySettings)
+	// Every forwarded OpenAI request consults this policy, so the raw value is
+	// cached; each call still decodes its own copy.
+	value, err := s.hotSettings().GetValue(ctx, SettingKeyOpenAIFastPolicySettings)
 	if err != nil {
 		if errors.Is(err, ErrSettingNotFound) {
 			return DefaultOpenAIFastPolicySettings(), nil
@@ -1210,7 +1223,11 @@ func (s *SettingService) SetOpenAIFastPolicySettings(ctx context.Context, settin
 		return fmt.Errorf("marshal openai fast policy settings: %w", err)
 	}
 
-	return s.settingRepo.Set(ctx, SettingKeyOpenAIFastPolicySettings, string(data))
+	if err := s.settingRepo.Set(ctx, SettingKeyOpenAIFastPolicySettings, string(data)); err != nil {
+		return err
+	}
+	s.invalidateHotSettings()
+	return nil
 }
 
 // SetStreamTimeoutSettings 设置流超时处理配置

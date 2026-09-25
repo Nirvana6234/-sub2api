@@ -185,7 +185,8 @@ type ContributionRoomWiring struct{}
 // a dependency of any provider guaranteed to run during startup (e.g.
 // provideCleanup in cmd/server/wire.go) so Wire actually calls this.
 func ProvideContributionRoomWiring(gs *GatewayService, ogs *OpenAIGatewayService, repo ContributionRoomRoutingRepository) ContributionRoomWiring {
-	gs.SetContributionRoomRoutingRepository(repo)
-	ogs.SetContributionRoomRoutingRepository(repo)
+	cached := newCachedContributionRoomRoutes(repo, contributionRoomRouteCacheTTL)
+	gs.SetContributionRoomRoutingRepository(cached)
+	ogs.SetContributionRoomRoutingRepository(cached)
 	return ContributionRoomWiring{}
 }

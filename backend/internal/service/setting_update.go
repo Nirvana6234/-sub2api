@@ -87,6 +87,9 @@ func (s *SettingService) UpdateSettingsWithAuthSourceDefaultsOmitting(ctx contex
 // it omitted, so in that case the caches are rebuilt from storage rather than
 // from the request struct.
 func (s *SettingService) refreshCachedSettingsAfterWrite(ctx context.Context, settings *SystemSettings, omitted OmittedSettingKeys) {
+	// Drop cached raw values first: the rebuild below can fail, and security
+	// switches such as session binding must not outlive the write.
+	s.invalidateHotSettings()
 	if len(omitted) == 0 {
 		s.refreshCachedSettings(settings)
 		return
@@ -823,6 +826,7 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 	// codex_cli_only 加固策略缓存：设置更新后强制下次重载（涉及 4 个键 + JSON 解析，直接置过期）。
 	s.codexRestrictionPolicySF.Forget("codex_restriction_policy")
 	s.codexRestrictionPolicyCache.Store(&cachedCodexRestrictionPolicy{expiresAt: 0})
+	s.invalidateHotSettings()
 	if s.onUpdate != nil {
 		s.onUpdate() // Invalidate cache after settings update
 	}

@@ -137,7 +137,7 @@ func validateAdminAPIKey(
 	}
 
 	// 获取真实的管理员用户
-	admin, err := userService.GetFirstAdmin(c.Request.Context())
+	admin, err := userService.GetFirstAdminForAuth(c.Request.Context())
 	if err != nil {
 		AbortWithError(c, 500, "INTERNAL_ERROR", "No admin user found")
 		return false
@@ -174,7 +174,7 @@ func validateJWTForAdmin(
 	}
 
 	// 从数据库获取用户
-	user, err := userService.GetByID(c.Request.Context(), claims.UserID)
+	user, err := userService.GetByIDForAuth(c.Request.Context(), claims.UserID)
 	if err != nil {
 		if errors.Is(err, service.ErrUserNotFound) {
 			AbortWithError(c, 401, "USER_NOT_FOUND", "User not found")

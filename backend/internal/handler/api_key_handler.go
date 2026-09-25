@@ -21,12 +21,14 @@ import (
 // APIKeyHandler handles API key-related requests
 type APIKeyHandler struct {
 	apiKeyService *service.APIKeyService
+	resultCache   *service.ResultCache
 }
 
-// NewAPIKeyHandler creates a new APIKeyHandler
-func NewAPIKeyHandler(apiKeyService *service.APIKeyService) *APIKeyHandler {
+// NewAPIKeyHandler creates a new APIKeyHandler. resultCache may be nil.
+func NewAPIKeyHandler(apiKeyService *service.APIKeyService, resultCache *service.ResultCache) *APIKeyHandler {
 	return &APIKeyHandler{
 		apiKeyService: apiKeyService,
+		resultCache:   resultCache,
 	}
 }
 
@@ -356,20 +358,33 @@ func (h *APIKeyHandler) GetAvailableGroups(c *gin.Context) {
 		return
 	}
 
-	groups, err := h.apiKeyService.GetAvailableGroups(c.Request.Context(), subject.UserID)
+	// Desktop clients refresh this every minute. The list only drives what the
+	// user is offered; gateway authentication still checks group access on
+	// every request, so a short-lived stale list grants nothing.
+	out, err := service.CachedResult(c.Request.Context(), h.resultCache,
+		"available_groups:v1:"+strconv.FormatInt(subject.UserID, 10), availableGroupsCacheTTL,
+		func(ctx context.Context) ([]dto.Group, error) {
+			groups, err := h.apiKeyService.GetAvailableGroups(ctx, subject.UserID)
+			if err != nil {
+				return nil, err
+			}
+			// 只在这个面向客户端的列表里补自动白名单；自动分组选路等内部调用方拿到的仍是原始配置。
+			h.apiKeyService.ApplyAutoModelAllowlists(ctx, groups)
+
+			out := make([]dto.Group, 0, len(groups))
+			for i := range groups {
+				out = append(out, *dto.GroupFromService(&groups[i]))
+			}
+			return out, nil
+		})
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
-	// 只在这个面向客户端的列表里补自动白名单；自动分组选路等内部调用方拿到的仍是原始配置。
-	h.apiKeyService.ApplyAutoModelAllowlists(c.Request.Context(), groups)
-
-	out := make([]dto.Group, 0, len(groups))
-	for i := range groups {
-		out = append(out, *dto.GroupFromService(&groups[i]))
-	}
 	response.Success(c, out)
 }
+
+const availableGroupsCacheTTL = 30 * time.Second
 
 // GetUserGroupRates 获取当前用户的专属分组倍率配置
 // GET /api/v1/groups/rates
