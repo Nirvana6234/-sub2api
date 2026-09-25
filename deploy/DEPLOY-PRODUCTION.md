@@ -644,7 +644,8 @@ SUB2API_INTERNAL_ADMIN_URL=http://sub2api-internal:8080
 
 仅匹配上述 origin 的 `/api/v1/admin`、`/api/v1/auth` 请求改走内网，持久化
 站点 URL 保持公网地址，第三方站点请求保持原路径。内部请求禁用环境代理并
-拒绝重定向，配置缺一项会阻止启动。抽奖奖励的独立客户端保留原 SSRF 防护。
+拒绝重定向，配置缺一项会阻止启动。抽奖发奖及到期倍率清理的管理员请求也使用
+同一内网路由；未配置站点仍经过原有 SSRF 防护，不开放任意私网目标。
 
 **Sub2API 和 TransitHub 必须都加入 `service-integration` 网络。** Sub2API
 使用 `sub2api-internal` 网络别名。生产已把此设置写入主 compose 文件；新机器
