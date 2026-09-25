@@ -219,6 +219,20 @@ public sealed partial class DashboardViewModel : ObservableObject
     /// <summary>Every group the account may use, unfiltered; each tool narrows it itself.</summary>
     public GroupCatalog Catalog { get; }
 
+    /// <summary>
+    /// Raised on the UI thread each time the group list has been read, even when it did not
+    /// change — for features outside the Codex card that pick their own groups from it (the
+    /// 「探索」 page's Jev group).
+    /// </summary>
+    public event Action? GroupsRefreshed;
+
+    /// <summary>The account's groups on <paramref name="platform"/>, priced at its own rate.</summary>
+    public IReadOnlyList<GroupItemViewModel> GroupsOn(string platform) =>
+        Catalog.Groups
+            .Where(g => string.Equals(g.Platform, platform, StringComparison.OrdinalIgnoreCase))
+            .Select(g => Catalog.CreateItem(g, _settings.ServerUtcOffset))
+            .ToList();
+
     /// <summary>The account's Claude model and thinking level. One instance for every page.</summary>
     public ClaudePreferenceViewModel ClaudePreference { get; }
 
@@ -1140,6 +1154,7 @@ public sealed partial class DashboardViewModel : ObservableObject
 
             CanConfigureAutoGroup = automatic is not null;
             GroupsReady = true;
+            GroupsRefreshed?.Invoke();
             OnPropertyChanged(nameof(CanStartCodex));
             OnPropertyChanged(nameof(StartCodexLabel));
         }

@@ -205,6 +205,11 @@ func RegisterGatewayRoutes(
 	// 读已确定的分组，缺了这层，自动分组的 Key 会以"无分组"进入后续中间件。
 	autoGroupModelRouting := autoGroupModelRoutingMiddleware(apiKeyService, subscriptionService)
 
+	// typesafe 分组只说 TypeSafe 的 /v1/systemone 协议。不拦的话，/v1/messages 等
+	// 接口对不认识的平台会落到 Anthropic 网关，再按分组平台选中 typesafe 账号，
+	// 把错误协议的请求发给 TypeSafe。挂在每一条 API Key 能到达的路由链上。
+	typeSafeProtocolGuard := typeSafeProtocolGuardMiddleware()
+
 	// API网关（Claude API兼容）
 	gateway := r.Group("/v1")
 	gateway.Use(bodyLimit)
@@ -219,6 +224,7 @@ func RegisterGatewayRoutes(
 	gateway.Use(groupModelAllowlist)
 	gateway.Use(compositeTarget)
 	gateway.Use(requireGroupAnthropic)
+	gateway.Use(typeSafeProtocolGuard)
 	{
 		// /v1/messages: auto-route based on group platform
 		gateway.POST("/messages", func(c *gin.Context) {
@@ -267,6 +273,8 @@ func RegisterGatewayRoutes(
 			}
 			h.Gateway.ChatCompletions(c)
 		})
+		// TypeSafe Jev：分组平台不是 typesafe 时由 handler 返回 404。
+		gateway.POST("/systemone", h.Gateway.SystemOne)
 		gateway.POST("/embeddings", textBodyLimit, func(c *gin.Context) {
 			if !isOpenAIOnlyEndpointGatewayPlatform(c) {
 				service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
@@ -377,6 +385,7 @@ func RegisterGatewayRoutes(
 	gemini.Use(groupModelAllowlist)
 	gemini.Use(compositeGeminiTarget)
 	gemini.Use(requireGroupGoogle)
+	gemini.Use(typeSafeProtocolGuard)
 	{
 		gemini.GET("/models", h.Gateway.GeminiV1BetaListModels)
 		gemini.GET("/models/:model", h.Gateway.GeminiV1BetaGetModel)
@@ -395,7 +404,7 @@ func RegisterGatewayRoutes(
 	// 根路径别名共用中间件链：白名单准入在 apiKeyAuth 之后、compositeTarget
 	// 之前，避免逐条路由手工维护链导致漏挂。
 	rootRoute := func(method, path string, limit gin.HandlerFunc, handler gin.HandlerFunc) {
-		r.Handle(method, path, limit, clientRequestID, opsErrorLogger, endpointNorm, blacklistIP, gin.HandlerFunc(apiKeyAuth), blacklistAccount, autoGroupModelRouting, groupModelAllowlist, compositeTarget, requireGroupAnthropic, handler)
+		r.Handle(method, path, limit, clientRequestID, opsErrorLogger, endpointNorm, blacklistIP, gin.HandlerFunc(apiKeyAuth), blacklistAccount, autoGroupModelRouting, groupModelAllowlist, compositeTarget, requireGroupAnthropic, typeSafeProtocolGuard, handler)
 	}
 	for _, prefix := range []string{"/api/v3", "/v3", "/v1", ""} {
 		rootRoute(http.MethodPost, prefix+"/contents/generations/tasks", bodyLimit, h.OpenAIGateway.SeedanceTasks)
@@ -412,7 +421,7 @@ func RegisterGatewayRoutes(
 	rootRoute(http.MethodGet, "/models/:model", bodyLimit, h.Gateway.Models)
 	rootRoute(http.MethodPost, "/messages/count_tokens", bodyLimit, countTokensHandler)
 	codexDirect := r.Group("/backend-api/codex")
-	codexDirect.Use(bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, blacklistIP, gin.HandlerFunc(apiKeyAuth), blacklistAccount, autoGroupModelRouting, groupModelAllowlist, compositeTarget, requireGroupAnthropic)
+	codexDirect.Use(bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, blacklistIP, gin.HandlerFunc(apiKeyAuth), blacklistAccount, autoGroupModelRouting, groupModelAllowlist, compositeTarget, requireGroupAnthropic, typeSafeProtocolGuard)
 	{
 		codexDirect.POST("/realtime/calls", h.OpenAIGateway.Live)
 		codexDirect.GET("/:call_id", h.OpenAIGateway.LiveSideband)
@@ -515,7 +524,7 @@ func RegisterGatewayRoutes(
 	})
 
 	// Antigravity 模型列表
-	r.GET("/antigravity/models", blacklistIP, gin.HandlerFunc(apiKeyAuth), blacklistAccount, requireGroupAnthropic, h.Gateway.AntigravityModels)
+	r.GET("/antigravity/models", blacklistIP, gin.HandlerFunc(apiKeyAuth), blacklistAccount, requireGroupAnthropic, typeSafeProtocolGuard, h.Gateway.AntigravityModels)
 
 	// Antigravity 专用路由（仅使用 antigravity 账户，不混合调度）
 	antigravityV1 := r.Group("/antigravity/v1")
@@ -530,6 +539,7 @@ func RegisterGatewayRoutes(
 	antigravityV1.Use(autoGroupModelRouting)
 	antigravityV1.Use(groupModelAllowlist)
 	antigravityV1.Use(requireGroupAnthropic)
+	antigravityV1.Use(typeSafeProtocolGuard)
 	{
 		antigravityV1.POST("/messages", h.Gateway.Messages)
 		antigravityV1.POST("/messages/count_tokens", h.Gateway.CountTokens)
@@ -549,6 +559,7 @@ func RegisterGatewayRoutes(
 	antigravityV1Beta.Use(autoGroupModelRouting)
 	antigravityV1Beta.Use(groupModelAllowlist)
 	antigravityV1Beta.Use(requireGroupGoogle)
+	antigravityV1Beta.Use(typeSafeProtocolGuard)
 	{
 		antigravityV1Beta.GET("/models", h.Gateway.GeminiV1BetaListModels)
 		antigravityV1Beta.GET("/models/:model", h.Gateway.GeminiV1BetaGetModel)
@@ -566,6 +577,36 @@ func dispatchCodexModelsGateway(c *gin.Context, openAIHandler, generatedHandler 
 }
 
 // getGroupPlatform extracts the group platform from the API Key stored in context.
+// typeSafeProtocolGuardMiddleware 让 typesafe 分组的 API Key 只能用 /v1/systemone，
+// 以及与协议无关的 /v1/usage、/v1/models。其他接口一律 404。
+func typeSafeProtocolGuardMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if getGroupPlatform(c) != service.PlatformTypeSafe || typeSafeGroupAllowsRoute(c.Request.Method, c.FullPath()) {
+			c.Next()
+			return
+		}
+		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
+		c.AbortWithStatusJSON(http.StatusNotFound, gin.H{
+			"error": gin.H{
+				"type":    "not_found_error",
+				"code":    "PLATFORM_UNSUPPORTED",
+				"message": "This group only supports POST /v1/systemone",
+			},
+		})
+	}
+}
+
+func typeSafeGroupAllowsRoute(method, fullPath string) bool {
+	switch {
+	case method == http.MethodPost && fullPath == "/v1/systemone":
+		return true
+	case method == http.MethodGet && (fullPath == "/v1/usage" || fullPath == "/v1/models" || fullPath == "/v1/models/:model"):
+		return true
+	default:
+		return false
+	}
+}
+
 func getGroupPlatform(c *gin.Context) string {
 	apiKey, ok := middleware.GetAPIKeyFromContext(c)
 	if !ok || apiKey.Group == nil {

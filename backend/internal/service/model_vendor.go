@@ -30,6 +30,8 @@ func modelVendorPlatform(model string) string {
 		return PlatformDeepseek
 	case strings.HasPrefix(m, "minimax"), strings.HasPrefix(m, "abab"):
 		return PlatformMiniMax
+	case strings.HasPrefix(m, "jev"):
+		return PlatformTypeSafe
 	default:
 		return ""
 	}

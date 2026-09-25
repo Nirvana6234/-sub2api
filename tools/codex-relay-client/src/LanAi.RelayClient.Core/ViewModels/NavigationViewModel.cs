@@ -11,6 +11,9 @@ public enum ClientPage
     Claude,
     LocalProxy,
     DesktopSync,
+
+    /// <summary>「探索」: experimental features. Phase 1 has only 微信消息意图判断, for self-testing.</summary>
+    Explore,
     Account,
     Settings,
 }
@@ -62,6 +65,7 @@ public sealed partial class NavigationViewModel : ObservableObject
             new NavItemViewModel(ClientPage.Claude, "Claude", "✱"),
             new NavItemViewModel(ClientPage.LocalProxy, "本地代理", "⇄"),
             new NavItemViewModel(ClientPage.DesktopSync, "同步会话", "⇅"),
+            new NavItemViewModel(ClientPage.Explore, "探索", "✦"),
             new NavItemViewModel(ClientPage.Account, "账户", "◎"),
         ];
         SettingsItem = new NavItemViewModel(ClientPage.Settings, "设置", "⚙");
