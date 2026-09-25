@@ -46,6 +46,10 @@ type ServerOptions struct {
 	// MaxMessageBytes 覆盖各类调用的单条消息上限（见 defaultMaxMessageBytes）。
 	MaxMessageBytes map[CallClass]int
 	Idempotency     IdempotencyOptions
+	// AdmitConn 在每条连接握手成功、登记之前调用；返回错误则断开这条连接。
+	// 用于"旧证书续签后不能再建新连接"、吊销、同一身份两份的检测（设计 7.2）。
+	// 已经建立的连接不受影响（它们由 Registry 按宽限期关闭）。
+	AdmitConn func(PeerIdentity) error
 	// OnConnect 在每条连接握手成功后调用。
 	OnConnect func(ConnInfo)
 }
@@ -94,7 +98,7 @@ func NewServer(opts ServerOptions) (*Server, error) {
 		}
 	}
 	registry := NewConnRegistry(opts.OnConnect)
-	creds, err := newServerCreds(opts.TLS, registry)
+	creds, err := newServerCreds(opts.TLS, registry, opts.AdmitConn)
 	if err != nil {
 		return nil, err
 	}

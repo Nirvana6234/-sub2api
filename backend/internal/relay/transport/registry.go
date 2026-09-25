@@ -101,8 +101,15 @@ func (r *ConnRegistry) closeWhere(match func(PeerIdentity) bool) int {
 		}
 	}
 	r.mu.Unlock()
+	// 并行关闭：TLS 关闭要发 close_notify，单条连接最长可能卡 5 秒，不能串起来等。
+	var wg sync.WaitGroup
 	for _, c := range victims {
-		_ = c.Close()
+		wg.Add(1)
+		go func(c *trackedConn) {
+			defer wg.Done()
+			_ = c.Close()
+		}(c)
 	}
+	wg.Wait()
 	return len(victims)
 }

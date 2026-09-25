@@ -29,7 +29,11 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	RelayEnrollment_Hello_FullMethodName = "/sub2api.relay.v1.RelayEnrollment/Hello"
+	RelayEnrollment_Hello_FullMethodName             = "/sub2api.relay.v1.RelayEnrollment/Hello"
+	RelayEnrollment_Register_FullMethodName          = "/sub2api.relay.v1.RelayEnrollment/Register"
+	RelayEnrollment_NodeStatus_FullMethodName        = "/sub2api.relay.v1.RelayEnrollment/NodeStatus"
+	RelayEnrollment_ObtainCertificate_FullMethodName = "/sub2api.relay.v1.RelayEnrollment/ObtainCertificate"
+	RelayEnrollment_RenewCertificate_FullMethodName  = "/sub2api.relay.v1.RelayEnrollment/RenewCertificate"
 )
 
 // RelayEnrollmentClient is the client API for RelayEnrollment service.
@@ -41,6 +45,16 @@ const (
 type RelayEnrollmentClient interface {
 	// Hello 返回主节点纪元、协议版本范围，以及主节点眼中这个对端的类型。
 	Hello(ctx context.Context, in *HelloRequest, opts ...grpc.CallOption) (*HelloResponse, error)
+	// Register 登记一台新节点（设计 11.1）。必须用长期密钥自签的证书握手：节点身份
+	// 就是这把密钥的指纹，由 TLS 证明持有，不信消息里报的值。重复注册是幂等的。
+	Register(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*RegisterResponse, error)
+	// NodeStatus 查询这把长期密钥对应节点的状态，同时是待激活期间的心跳（设计 11.2）。
+	NodeStatus(ctx context.Context, in *NodeStatusRequest, opts ...grpc.CallOption) (*NodeStatusResponse, error)
+	// ObtainCertificate 已激活节点用长期密钥领取主从通信证书：激活后第一次、
+	// 重启后手里没有有效证书、证书过期后的恢复（设计 7.2 第 4 条）。
+	ObtainCertificate(ctx context.Context, in *CertificateRequest, opts ...grpc.CallOption) (*CertificateResponse, error)
+	// RenewCertificate 用当前签发证书续签，同时换新的 TLS 密钥和加密密钥（设计 7.2 第 1 条）。
+	RenewCertificate(ctx context.Context, in *CertificateRequest, opts ...grpc.CallOption) (*CertificateResponse, error)
 }
 
 type relayEnrollmentClient struct {
@@ -61,6 +75,46 @@ func (c *relayEnrollmentClient) Hello(ctx context.Context, in *HelloRequest, opt
 	return out, nil
 }
 
+func (c *relayEnrollmentClient) Register(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*RegisterResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RegisterResponse)
+	err := c.cc.Invoke(ctx, RelayEnrollment_Register_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *relayEnrollmentClient) NodeStatus(ctx context.Context, in *NodeStatusRequest, opts ...grpc.CallOption) (*NodeStatusResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(NodeStatusResponse)
+	err := c.cc.Invoke(ctx, RelayEnrollment_NodeStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *relayEnrollmentClient) ObtainCertificate(ctx context.Context, in *CertificateRequest, opts ...grpc.CallOption) (*CertificateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CertificateResponse)
+	err := c.cc.Invoke(ctx, RelayEnrollment_ObtainCertificate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *relayEnrollmentClient) RenewCertificate(ctx context.Context, in *CertificateRequest, opts ...grpc.CallOption) (*CertificateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CertificateResponse)
+	err := c.cc.Invoke(ctx, RelayEnrollment_RenewCertificate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RelayEnrollmentServer is the server API for RelayEnrollment service.
 // All implementations must embed UnimplementedRelayEnrollmentServer
 // for forward compatibility.
@@ -70,6 +124,16 @@ func (c *relayEnrollmentClient) Hello(ctx context.Context, in *HelloRequest, opt
 type RelayEnrollmentServer interface {
 	// Hello 返回主节点纪元、协议版本范围，以及主节点眼中这个对端的类型。
 	Hello(context.Context, *HelloRequest) (*HelloResponse, error)
+	// Register 登记一台新节点（设计 11.1）。必须用长期密钥自签的证书握手：节点身份
+	// 就是这把密钥的指纹，由 TLS 证明持有，不信消息里报的值。重复注册是幂等的。
+	Register(context.Context, *RegisterRequest) (*RegisterResponse, error)
+	// NodeStatus 查询这把长期密钥对应节点的状态，同时是待激活期间的心跳（设计 11.2）。
+	NodeStatus(context.Context, *NodeStatusRequest) (*NodeStatusResponse, error)
+	// ObtainCertificate 已激活节点用长期密钥领取主从通信证书：激活后第一次、
+	// 重启后手里没有有效证书、证书过期后的恢复（设计 7.2 第 4 条）。
+	ObtainCertificate(context.Context, *CertificateRequest) (*CertificateResponse, error)
+	// RenewCertificate 用当前签发证书续签，同时换新的 TLS 密钥和加密密钥（设计 7.2 第 1 条）。
+	RenewCertificate(context.Context, *CertificateRequest) (*CertificateResponse, error)
 	mustEmbedUnimplementedRelayEnrollmentServer()
 }
 
@@ -82,6 +146,18 @@ type UnimplementedRelayEnrollmentServer struct{}
 
 func (UnimplementedRelayEnrollmentServer) Hello(context.Context, *HelloRequest) (*HelloResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Hello not implemented")
+}
+func (UnimplementedRelayEnrollmentServer) Register(context.Context, *RegisterRequest) (*RegisterResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Register not implemented")
+}
+func (UnimplementedRelayEnrollmentServer) NodeStatus(context.Context, *NodeStatusRequest) (*NodeStatusResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method NodeStatus not implemented")
+}
+func (UnimplementedRelayEnrollmentServer) ObtainCertificate(context.Context, *CertificateRequest) (*CertificateResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ObtainCertificate not implemented")
+}
+func (UnimplementedRelayEnrollmentServer) RenewCertificate(context.Context, *CertificateRequest) (*CertificateResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RenewCertificate not implemented")
 }
 func (UnimplementedRelayEnrollmentServer) mustEmbedUnimplementedRelayEnrollmentServer() {}
 func (UnimplementedRelayEnrollmentServer) testEmbeddedByValue()                         {}
@@ -122,6 +198,78 @@ func _RelayEnrollment_Hello_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RelayEnrollment_Register_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RegisterRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayEnrollmentServer).Register(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayEnrollment_Register_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayEnrollmentServer).Register(ctx, req.(*RegisterRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RelayEnrollment_NodeStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(NodeStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayEnrollmentServer).NodeStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayEnrollment_NodeStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayEnrollmentServer).NodeStatus(ctx, req.(*NodeStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RelayEnrollment_ObtainCertificate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CertificateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayEnrollmentServer).ObtainCertificate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayEnrollment_ObtainCertificate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayEnrollmentServer).ObtainCertificate(ctx, req.(*CertificateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RelayEnrollment_RenewCertificate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CertificateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayEnrollmentServer).RenewCertificate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayEnrollment_RenewCertificate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayEnrollmentServer).RenewCertificate(ctx, req.(*CertificateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // RelayEnrollment_ServiceDesc is the grpc.ServiceDesc for RelayEnrollment service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -132,6 +280,22 @@ var RelayEnrollment_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Hello",
 			Handler:    _RelayEnrollment_Hello_Handler,
+		},
+		{
+			MethodName: "Register",
+			Handler:    _RelayEnrollment_Register_Handler,
+		},
+		{
+			MethodName: "NodeStatus",
+			Handler:    _RelayEnrollment_NodeStatus_Handler,
+		},
+		{
+			MethodName: "ObtainCertificate",
+			Handler:    _RelayEnrollment_ObtainCertificate_Handler,
+		},
+		{
+			MethodName: "RenewCertificate",
+			Handler:    _RelayEnrollment_RenewCertificate_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

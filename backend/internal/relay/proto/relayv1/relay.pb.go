@@ -87,6 +87,69 @@ func (PeerClass) EnumDescriptor() ([]byte, []int) {
 	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{0}
 }
 
+// 节点状态，与 relay_nodes.status 对应。
+type NodeStatus int32
+
+const (
+	NodeStatus_NODE_STATUS_UNSPECIFIED NodeStatus = 0
+	// 这把长期密钥没有注册过（或已被清除）。
+	NodeStatus_NODE_STATUS_UNKNOWN  NodeStatus = 1
+	NodeStatus_NODE_STATUS_PENDING  NodeStatus = 2
+	NodeStatus_NODE_STATUS_ACTIVE   NodeStatus = 3
+	NodeStatus_NODE_STATUS_DRAINING NodeStatus = 4
+	NodeStatus_NODE_STATUS_DISABLED NodeStatus = 5
+	NodeStatus_NODE_STATUS_REJECTED NodeStatus = 6
+)
+
+// Enum value maps for NodeStatus.
+var (
+	NodeStatus_name = map[int32]string{
+		0: "NODE_STATUS_UNSPECIFIED",
+		1: "NODE_STATUS_UNKNOWN",
+		2: "NODE_STATUS_PENDING",
+		3: "NODE_STATUS_ACTIVE",
+		4: "NODE_STATUS_DRAINING",
+		5: "NODE_STATUS_DISABLED",
+		6: "NODE_STATUS_REJECTED",
+	}
+	NodeStatus_value = map[string]int32{
+		"NODE_STATUS_UNSPECIFIED": 0,
+		"NODE_STATUS_UNKNOWN":     1,
+		"NODE_STATUS_PENDING":     2,
+		"NODE_STATUS_ACTIVE":      3,
+		"NODE_STATUS_DRAINING":    4,
+		"NODE_STATUS_DISABLED":    5,
+		"NODE_STATUS_REJECTED":    6,
+	}
+)
+
+func (x NodeStatus) Enum() *NodeStatus {
+	p := new(NodeStatus)
+	*p = x
+	return p
+}
+
+func (x NodeStatus) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (NodeStatus) Descriptor() protoreflect.EnumDescriptor {
+	return file_sub2api_relay_v1_relay_proto_enumTypes[1].Descriptor()
+}
+
+func (NodeStatus) Type() protoreflect.EnumType {
+	return &file_sub2api_relay_v1_relay_proto_enumTypes[1]
+}
+
+func (x NodeStatus) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use NodeStatus.Descriptor instead.
+func (NodeStatus) EnumDescriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{1}
+}
+
 type ProtocolVersion struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Major         uint32                 `protobuf:"varint,1,opt,name=major,proto3" json:"major,omitempty"`
@@ -277,6 +340,346 @@ func (x *HelloResponse) GetMasterTimeUnixMs() int64 {
 	return 0
 }
 
+type RegisterRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Hostname       string                 `protobuf:"bytes,1,opt,name=hostname,proto3" json:"hostname,omitempty"`
+	ProgramVersion string                 `protobuf:"bytes,2,opt,name=program_version,json=programVersion,proto3" json:"program_version,omitempty"`
+	SystemInfo     map[string]string      `protobuf:"bytes,3,rep,name=system_info,json=systemInfo,proto3" json:"system_info,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	DisplayName    string                 `protobuf:"bytes,4,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *RegisterRequest) Reset() {
+	*x = RegisterRequest{}
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegisterRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegisterRequest) ProtoMessage() {}
+
+func (x *RegisterRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegisterRequest.ProtoReflect.Descriptor instead.
+func (*RegisterRequest) Descriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *RegisterRequest) GetHostname() string {
+	if x != nil {
+		return x.Hostname
+	}
+	return ""
+}
+
+func (x *RegisterRequest) GetProgramVersion() string {
+	if x != nil {
+		return x.ProgramVersion
+	}
+	return ""
+}
+
+func (x *RegisterRequest) GetSystemInfo() map[string]string {
+	if x != nil {
+		return x.SystemInfo
+	}
+	return nil
+}
+
+func (x *RegisterRequest) GetDisplayName() string {
+	if x != nil {
+		return x.DisplayName
+	}
+	return ""
+}
+
+type RegisterResponse struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Status NodeStatus             `protobuf:"varint,1,opt,name=status,proto3,enum=sub2api.relay.v1.NodeStatus" json:"status,omitempty"`
+	// 主节点算出的长期密钥指纹，从节点把它和本机打印的对一下。
+	KeyFingerprint string `protobuf:"bytes,2,opt,name=key_fingerprint,json=keyFingerprint,proto3" json:"key_fingerprint,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *RegisterResponse) Reset() {
+	*x = RegisterResponse{}
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegisterResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegisterResponse) ProtoMessage() {}
+
+func (x *RegisterResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegisterResponse.ProtoReflect.Descriptor instead.
+func (*RegisterResponse) Descriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *RegisterResponse) GetStatus() NodeStatus {
+	if x != nil {
+		return x.Status
+	}
+	return NodeStatus_NODE_STATUS_UNSPECIFIED
+}
+
+func (x *RegisterResponse) GetKeyFingerprint() string {
+	if x != nil {
+		return x.KeyFingerprint
+	}
+	return ""
+}
+
+type NodeStatusRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	ProgramVersion string                 `protobuf:"bytes,1,opt,name=program_version,json=programVersion,proto3" json:"program_version,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *NodeStatusRequest) Reset() {
+	*x = NodeStatusRequest{}
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NodeStatusRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NodeStatusRequest) ProtoMessage() {}
+
+func (x *NodeStatusRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NodeStatusRequest.ProtoReflect.Descriptor instead.
+func (*NodeStatusRequest) Descriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *NodeStatusRequest) GetProgramVersion() string {
+	if x != nil {
+		return x.ProgramVersion
+	}
+	return ""
+}
+
+type NodeStatusResponse struct {
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	Status              NodeStatus             `protobuf:"varint,1,opt,name=status,proto3,enum=sub2api.relay.v1.NodeStatus" json:"status,omitempty"`
+	HeartbeatIntervalMs int64                  `protobuf:"varint,2,opt,name=heartbeat_interval_ms,json=heartbeatIntervalMs,proto3" json:"heartbeat_interval_ms,omitempty"`
+	KeyFingerprint      string                 `protobuf:"bytes,3,opt,name=key_fingerprint,json=keyFingerprint,proto3" json:"key_fingerprint,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *NodeStatusResponse) Reset() {
+	*x = NodeStatusResponse{}
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NodeStatusResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NodeStatusResponse) ProtoMessage() {}
+
+func (x *NodeStatusResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NodeStatusResponse.ProtoReflect.Descriptor instead.
+func (*NodeStatusResponse) Descriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *NodeStatusResponse) GetStatus() NodeStatus {
+	if x != nil {
+		return x.Status
+	}
+	return NodeStatus_NODE_STATUS_UNSPECIFIED
+}
+
+func (x *NodeStatusResponse) GetHeartbeatIntervalMs() int64 {
+	if x != nil {
+		return x.HeartbeatIntervalMs
+	}
+	return 0
+}
+
+func (x *NodeStatusResponse) GetKeyFingerprint() string {
+	if x != nil {
+		return x.KeyFingerprint
+	}
+	return ""
+}
+
+type CertificateRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 新的 TLS 公钥（PKIX DER，Ed25519）。私钥只在从节点本机。
+	TlsPublicKey []byte `protobuf:"bytes,1,opt,name=tls_public_key,json=tlsPublicKey,proto3" json:"tls_public_key,omitempty"`
+	// 新的加密公钥（X25519，32 字节），用于上游凭据的二次加密（设计 7.1 第 4 条）。
+	EncryptionPublicKey []byte `protobuf:"bytes,2,opt,name=encryption_public_key,json=encryptionPublicKey,proto3" json:"encryption_public_key,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *CertificateRequest) Reset() {
+	*x = CertificateRequest{}
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CertificateRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CertificateRequest) ProtoMessage() {}
+
+func (x *CertificateRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CertificateRequest.ProtoReflect.Descriptor instead.
+func (*CertificateRequest) Descriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *CertificateRequest) GetTlsPublicKey() []byte {
+	if x != nil {
+		return x.TlsPublicKey
+	}
+	return nil
+}
+
+func (x *CertificateRequest) GetEncryptionPublicKey() []byte {
+	if x != nil {
+		return x.EncryptionPublicKey
+	}
+	return nil
+}
+
+type CertificateResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 签发的证书（DER）。
+	Certificate    []byte `protobuf:"bytes,1,opt,name=certificate,proto3" json:"certificate,omitempty"`
+	NotAfterUnixMs int64  `protobuf:"varint,2,opt,name=not_after_unix_ms,json=notAfterUnixMs,proto3" json:"not_after_unix_ms,omitempty"`
+	NodeId         int64  `protobuf:"varint,3,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *CertificateResponse) Reset() {
+	*x = CertificateResponse{}
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CertificateResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CertificateResponse) ProtoMessage() {}
+
+func (x *CertificateResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CertificateResponse.ProtoReflect.Descriptor instead.
+func (*CertificateResponse) Descriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *CertificateResponse) GetCertificate() []byte {
+	if x != nil {
+		return x.Certificate
+	}
+	return nil
+}
+
+func (x *CertificateResponse) GetNotAfterUnixMs() int64 {
+	if x != nil {
+		return x.NotAfterUnixMs
+	}
+	return 0
+}
+
+func (x *CertificateResponse) GetNodeId() int64 {
+	if x != nil {
+		return x.NodeId
+	}
+	return 0
+}
+
 type PingRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Payload       []byte                 `protobuf:"bytes,1,opt,name=payload,proto3" json:"payload,omitempty"`
@@ -286,7 +689,7 @@ type PingRequest struct {
 
 func (x *PingRequest) Reset() {
 	*x = PingRequest{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[3]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -298,7 +701,7 @@ func (x *PingRequest) String() string {
 func (*PingRequest) ProtoMessage() {}
 
 func (x *PingRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[3]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -311,7 +714,7 @@ func (x *PingRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PingRequest.ProtoReflect.Descriptor instead.
 func (*PingRequest) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{3}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *PingRequest) GetPayload() []byte {
@@ -331,7 +734,7 @@ type PingResponse struct {
 
 func (x *PingResponse) Reset() {
 	*x = PingResponse{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[4]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -343,7 +746,7 @@ func (x *PingResponse) String() string {
 func (*PingResponse) ProtoMessage() {}
 
 func (x *PingResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[4]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -356,7 +759,7 @@ func (x *PingResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PingResponse.ProtoReflect.Descriptor instead.
 func (*PingResponse) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{4}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *PingResponse) GetPayload() []byte {
@@ -389,7 +792,7 @@ type NodeEnvelope struct {
 
 func (x *NodeEnvelope) Reset() {
 	*x = NodeEnvelope{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[5]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -401,7 +804,7 @@ func (x *NodeEnvelope) String() string {
 func (*NodeEnvelope) ProtoMessage() {}
 
 func (x *NodeEnvelope) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[5]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -414,7 +817,7 @@ func (x *NodeEnvelope) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeEnvelope.ProtoReflect.Descriptor instead.
 func (*NodeEnvelope) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{5}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *NodeEnvelope) GetSeq() uint64 {
@@ -465,7 +868,7 @@ type MasterEnvelope struct {
 
 func (x *MasterEnvelope) Reset() {
 	*x = MasterEnvelope{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[6]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -477,7 +880,7 @@ func (x *MasterEnvelope) String() string {
 func (*MasterEnvelope) ProtoMessage() {}
 
 func (x *MasterEnvelope) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[6]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -490,7 +893,7 @@ func (x *MasterEnvelope) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MasterEnvelope.ProtoReflect.Descriptor instead.
 func (*MasterEnvelope) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{6}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *MasterEnvelope) GetSeq() uint64 {
@@ -535,7 +938,7 @@ type EventPing struct {
 
 func (x *EventPing) Reset() {
 	*x = EventPing{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[7]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -547,7 +950,7 @@ func (x *EventPing) String() string {
 func (*EventPing) ProtoMessage() {}
 
 func (x *EventPing) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[7]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -560,7 +963,7 @@ func (x *EventPing) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EventPing.ProtoReflect.Descriptor instead.
 func (*EventPing) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{7}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *EventPing) GetPayload() []byte {
@@ -588,7 +991,32 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\n" +
 	"peer_class\x18\x04 \x01(\x0e2\x1b.sub2api.relay.v1.PeerClassR\tpeerClass\x12\x17\n" +
 	"\anode_id\x18\x05 \x01(\x03R\x06nodeId\x12-\n" +
-	"\x13master_time_unix_ms\x18\x06 \x01(\x03R\x10masterTimeUnixMs\"'\n" +
+	"\x13master_time_unix_ms\x18\x06 \x01(\x03R\x10masterTimeUnixMs\"\x8c\x02\n" +
+	"\x0fRegisterRequest\x12\x1a\n" +
+	"\bhostname\x18\x01 \x01(\tR\bhostname\x12'\n" +
+	"\x0fprogram_version\x18\x02 \x01(\tR\x0eprogramVersion\x12R\n" +
+	"\vsystem_info\x18\x03 \x03(\v21.sub2api.relay.v1.RegisterRequest.SystemInfoEntryR\n" +
+	"systemInfo\x12!\n" +
+	"\fdisplay_name\x18\x04 \x01(\tR\vdisplayName\x1a=\n" +
+	"\x0fSystemInfoEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"q\n" +
+	"\x10RegisterResponse\x124\n" +
+	"\x06status\x18\x01 \x01(\x0e2\x1c.sub2api.relay.v1.NodeStatusR\x06status\x12'\n" +
+	"\x0fkey_fingerprint\x18\x02 \x01(\tR\x0ekeyFingerprint\"<\n" +
+	"\x11NodeStatusRequest\x12'\n" +
+	"\x0fprogram_version\x18\x01 \x01(\tR\x0eprogramVersion\"\xa7\x01\n" +
+	"\x12NodeStatusResponse\x124\n" +
+	"\x06status\x18\x01 \x01(\x0e2\x1c.sub2api.relay.v1.NodeStatusR\x06status\x122\n" +
+	"\x15heartbeat_interval_ms\x18\x02 \x01(\x03R\x13heartbeatIntervalMs\x12'\n" +
+	"\x0fkey_fingerprint\x18\x03 \x01(\tR\x0ekeyFingerprint\"n\n" +
+	"\x12CertificateRequest\x12$\n" +
+	"\x0etls_public_key\x18\x01 \x01(\fR\ftlsPublicKey\x122\n" +
+	"\x15encryption_public_key\x18\x02 \x01(\fR\x13encryptionPublicKey\"{\n" +
+	"\x13CertificateResponse\x12 \n" +
+	"\vcertificate\x18\x01 \x01(\fR\vcertificate\x12)\n" +
+	"\x11not_after_unix_ms\x18\x02 \x01(\x03R\x0enotAfterUnixMs\x12\x17\n" +
+	"\anode_id\x18\x03 \x01(\x03R\x06nodeId\"'\n" +
 	"\vPingRequest\x12\x18\n" +
 	"\apayload\x18\x01 \x01(\fR\apayload\"W\n" +
 	"\fPingResponse\x12\x18\n" +
@@ -610,9 +1038,23 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x16PEER_CLASS_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14PEER_CLASS_ANONYMOUS\x10\x01\x12\x18\n" +
 	"\x14PEER_CLASS_LONG_TERM\x10\x02\x12\x15\n" +
-	"\x11PEER_CLASS_ISSUED\x10\x032[\n" +
+	"\x11PEER_CLASS_ISSUED\x10\x03*\xc1\x01\n" +
+	"\n" +
+	"NodeStatus\x12\x1b\n" +
+	"\x17NODE_STATUS_UNSPECIFIED\x10\x00\x12\x17\n" +
+	"\x13NODE_STATUS_UNKNOWN\x10\x01\x12\x17\n" +
+	"\x13NODE_STATUS_PENDING\x10\x02\x12\x16\n" +
+	"\x12NODE_STATUS_ACTIVE\x10\x03\x12\x18\n" +
+	"\x14NODE_STATUS_DRAINING\x10\x04\x12\x18\n" +
+	"\x14NODE_STATUS_DISABLED\x10\x05\x12\x18\n" +
+	"\x14NODE_STATUS_REJECTED\x10\x062\xca\x03\n" +
 	"\x0fRelayEnrollment\x12H\n" +
-	"\x05Hello\x12\x1e.sub2api.relay.v1.HelloRequest\x1a\x1f.sub2api.relay.v1.HelloResponse2U\n" +
+	"\x05Hello\x12\x1e.sub2api.relay.v1.HelloRequest\x1a\x1f.sub2api.relay.v1.HelloResponse\x12Q\n" +
+	"\bRegister\x12!.sub2api.relay.v1.RegisterRequest\x1a\".sub2api.relay.v1.RegisterResponse\x12W\n" +
+	"\n" +
+	"NodeStatus\x12#.sub2api.relay.v1.NodeStatusRequest\x1a$.sub2api.relay.v1.NodeStatusResponse\x12`\n" +
+	"\x11ObtainCertificate\x12$.sub2api.relay.v1.CertificateRequest\x1a%.sub2api.relay.v1.CertificateResponse\x12_\n" +
+	"\x10RenewCertificate\x12$.sub2api.relay.v1.CertificateRequest\x1a%.sub2api.relay.v1.CertificateResponse2U\n" +
 	"\fRelayControl\x12E\n" +
 	"\x04Ping\x12\x1d.sub2api.relay.v1.PingRequest\x1a\x1e.sub2api.relay.v1.PingResponse2]\n" +
 	"\vRelayEvents\x12N\n" +
@@ -630,37 +1072,56 @@ func file_sub2api_relay_v1_relay_proto_rawDescGZIP() []byte {
 	return file_sub2api_relay_v1_relay_proto_rawDescData
 }
 
-var file_sub2api_relay_v1_relay_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_sub2api_relay_v1_relay_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_sub2api_relay_v1_relay_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_sub2api_relay_v1_relay_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_sub2api_relay_v1_relay_proto_goTypes = []any{
-	(PeerClass)(0),          // 0: sub2api.relay.v1.PeerClass
-	(*ProtocolVersion)(nil), // 1: sub2api.relay.v1.ProtocolVersion
-	(*HelloRequest)(nil),    // 2: sub2api.relay.v1.HelloRequest
-	(*HelloResponse)(nil),   // 3: sub2api.relay.v1.HelloResponse
-	(*PingRequest)(nil),     // 4: sub2api.relay.v1.PingRequest
-	(*PingResponse)(nil),    // 5: sub2api.relay.v1.PingResponse
-	(*NodeEnvelope)(nil),    // 6: sub2api.relay.v1.NodeEnvelope
-	(*MasterEnvelope)(nil),  // 7: sub2api.relay.v1.MasterEnvelope
-	(*EventPing)(nil),       // 8: sub2api.relay.v1.EventPing
+	(PeerClass)(0),              // 0: sub2api.relay.v1.PeerClass
+	(NodeStatus)(0),             // 1: sub2api.relay.v1.NodeStatus
+	(*ProtocolVersion)(nil),     // 2: sub2api.relay.v1.ProtocolVersion
+	(*HelloRequest)(nil),        // 3: sub2api.relay.v1.HelloRequest
+	(*HelloResponse)(nil),       // 4: sub2api.relay.v1.HelloResponse
+	(*RegisterRequest)(nil),     // 5: sub2api.relay.v1.RegisterRequest
+	(*RegisterResponse)(nil),    // 6: sub2api.relay.v1.RegisterResponse
+	(*NodeStatusRequest)(nil),   // 7: sub2api.relay.v1.NodeStatusRequest
+	(*NodeStatusResponse)(nil),  // 8: sub2api.relay.v1.NodeStatusResponse
+	(*CertificateRequest)(nil),  // 9: sub2api.relay.v1.CertificateRequest
+	(*CertificateResponse)(nil), // 10: sub2api.relay.v1.CertificateResponse
+	(*PingRequest)(nil),         // 11: sub2api.relay.v1.PingRequest
+	(*PingResponse)(nil),        // 12: sub2api.relay.v1.PingResponse
+	(*NodeEnvelope)(nil),        // 13: sub2api.relay.v1.NodeEnvelope
+	(*MasterEnvelope)(nil),      // 14: sub2api.relay.v1.MasterEnvelope
+	(*EventPing)(nil),           // 15: sub2api.relay.v1.EventPing
+	nil,                         // 16: sub2api.relay.v1.RegisterRequest.SystemInfoEntry
 }
 var file_sub2api_relay_v1_relay_proto_depIdxs = []int32{
-	1, // 0: sub2api.relay.v1.HelloRequest.version:type_name -> sub2api.relay.v1.ProtocolVersion
-	1, // 1: sub2api.relay.v1.HelloResponse.min_supported:type_name -> sub2api.relay.v1.ProtocolVersion
-	1, // 2: sub2api.relay.v1.HelloResponse.current:type_name -> sub2api.relay.v1.ProtocolVersion
-	0, // 3: sub2api.relay.v1.HelloResponse.peer_class:type_name -> sub2api.relay.v1.PeerClass
-	8, // 4: sub2api.relay.v1.NodeEnvelope.ping:type_name -> sub2api.relay.v1.EventPing
-	8, // 5: sub2api.relay.v1.MasterEnvelope.ping:type_name -> sub2api.relay.v1.EventPing
-	2, // 6: sub2api.relay.v1.RelayEnrollment.Hello:input_type -> sub2api.relay.v1.HelloRequest
-	4, // 7: sub2api.relay.v1.RelayControl.Ping:input_type -> sub2api.relay.v1.PingRequest
-	6, // 8: sub2api.relay.v1.RelayEvents.Stream:input_type -> sub2api.relay.v1.NodeEnvelope
-	3, // 9: sub2api.relay.v1.RelayEnrollment.Hello:output_type -> sub2api.relay.v1.HelloResponse
-	5, // 10: sub2api.relay.v1.RelayControl.Ping:output_type -> sub2api.relay.v1.PingResponse
-	7, // 11: sub2api.relay.v1.RelayEvents.Stream:output_type -> sub2api.relay.v1.MasterEnvelope
-	9, // [9:12] is the sub-list for method output_type
-	6, // [6:9] is the sub-list for method input_type
-	6, // [6:6] is the sub-list for extension type_name
-	6, // [6:6] is the sub-list for extension extendee
-	0, // [0:6] is the sub-list for field type_name
+	2,  // 0: sub2api.relay.v1.HelloRequest.version:type_name -> sub2api.relay.v1.ProtocolVersion
+	2,  // 1: sub2api.relay.v1.HelloResponse.min_supported:type_name -> sub2api.relay.v1.ProtocolVersion
+	2,  // 2: sub2api.relay.v1.HelloResponse.current:type_name -> sub2api.relay.v1.ProtocolVersion
+	0,  // 3: sub2api.relay.v1.HelloResponse.peer_class:type_name -> sub2api.relay.v1.PeerClass
+	16, // 4: sub2api.relay.v1.RegisterRequest.system_info:type_name -> sub2api.relay.v1.RegisterRequest.SystemInfoEntry
+	1,  // 5: sub2api.relay.v1.RegisterResponse.status:type_name -> sub2api.relay.v1.NodeStatus
+	1,  // 6: sub2api.relay.v1.NodeStatusResponse.status:type_name -> sub2api.relay.v1.NodeStatus
+	15, // 7: sub2api.relay.v1.NodeEnvelope.ping:type_name -> sub2api.relay.v1.EventPing
+	15, // 8: sub2api.relay.v1.MasterEnvelope.ping:type_name -> sub2api.relay.v1.EventPing
+	3,  // 9: sub2api.relay.v1.RelayEnrollment.Hello:input_type -> sub2api.relay.v1.HelloRequest
+	5,  // 10: sub2api.relay.v1.RelayEnrollment.Register:input_type -> sub2api.relay.v1.RegisterRequest
+	7,  // 11: sub2api.relay.v1.RelayEnrollment.NodeStatus:input_type -> sub2api.relay.v1.NodeStatusRequest
+	9,  // 12: sub2api.relay.v1.RelayEnrollment.ObtainCertificate:input_type -> sub2api.relay.v1.CertificateRequest
+	9,  // 13: sub2api.relay.v1.RelayEnrollment.RenewCertificate:input_type -> sub2api.relay.v1.CertificateRequest
+	11, // 14: sub2api.relay.v1.RelayControl.Ping:input_type -> sub2api.relay.v1.PingRequest
+	13, // 15: sub2api.relay.v1.RelayEvents.Stream:input_type -> sub2api.relay.v1.NodeEnvelope
+	4,  // 16: sub2api.relay.v1.RelayEnrollment.Hello:output_type -> sub2api.relay.v1.HelloResponse
+	6,  // 17: sub2api.relay.v1.RelayEnrollment.Register:output_type -> sub2api.relay.v1.RegisterResponse
+	8,  // 18: sub2api.relay.v1.RelayEnrollment.NodeStatus:output_type -> sub2api.relay.v1.NodeStatusResponse
+	10, // 19: sub2api.relay.v1.RelayEnrollment.ObtainCertificate:output_type -> sub2api.relay.v1.CertificateResponse
+	10, // 20: sub2api.relay.v1.RelayEnrollment.RenewCertificate:output_type -> sub2api.relay.v1.CertificateResponse
+	12, // 21: sub2api.relay.v1.RelayControl.Ping:output_type -> sub2api.relay.v1.PingResponse
+	14, // 22: sub2api.relay.v1.RelayEvents.Stream:output_type -> sub2api.relay.v1.MasterEnvelope
+	16, // [16:23] is the sub-list for method output_type
+	9,  // [9:16] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_sub2api_relay_v1_relay_proto_init() }
@@ -668,10 +1129,10 @@ func file_sub2api_relay_v1_relay_proto_init() {
 	if File_sub2api_relay_v1_relay_proto != nil {
 		return
 	}
-	file_sub2api_relay_v1_relay_proto_msgTypes[5].OneofWrappers = []any{
+	file_sub2api_relay_v1_relay_proto_msgTypes[11].OneofWrappers = []any{
 		(*NodeEnvelope_Ping)(nil),
 	}
-	file_sub2api_relay_v1_relay_proto_msgTypes[6].OneofWrappers = []any{
+	file_sub2api_relay_v1_relay_proto_msgTypes[12].OneofWrappers = []any{
 		(*MasterEnvelope_Ping)(nil),
 	}
 	type x struct{}
@@ -679,8 +1140,8 @@ func file_sub2api_relay_v1_relay_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sub2api_relay_v1_relay_proto_rawDesc), len(file_sub2api_relay_v1_relay_proto_rawDesc)),
-			NumEnums:      1,
-			NumMessages:   8,
+			NumEnums:      2,
+			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   3,
 		},

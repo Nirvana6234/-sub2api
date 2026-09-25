@@ -18,6 +18,16 @@ option go_package = "github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1;re
 service RelayEnrollment {
   // Hello 返回主节点纪元、协议版本范围，以及主节点眼中这个对端的类型。
   rpc Hello(HelloRequest) returns (HelloResponse);
+  // Register 登记一台新节点（设计 11.1）。必须用长期密钥自签的证书握手：节点身份
+  // 就是这把密钥的指纹，由 TLS 证明持有，不信消息里报的值。重复注册是幂等的。
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  // NodeStatus 查询这把长期密钥对应节点的状态，同时是待激活期间的心跳（设计 11.2）。
+  rpc NodeStatus(NodeStatusRequest) returns (NodeStatusResponse);
+  // ObtainCertificate 已激活节点用长期密钥领取主从通信证书：激活后第一次、
+  // 重启后手里没有有效证书、证书过期后的恢复（设计 7.2 第 4 条）。
+  rpc ObtainCertificate(CertificateRequest) returns (CertificateResponse);
+  // RenewCertificate 用当前签发证书续签，同时换新的 TLS 密钥和加密密钥（设计 7.2 第 1 条）。
+  rpc RenewCertificate(CertificateRequest) returns (CertificateResponse);
 }
 
 // 控制连接：选号、上游错误决策、额度、Key 查询等同步小消息（WP6、WP7、WP11）。
@@ -60,6 +70,55 @@ message HelloResponse {
   int64 node_id = 5;
   // 主节点当前时间（Unix 毫秒），用于测时钟偏差（设计 7.4）。
   int64 master_time_unix_ms = 6;
+}
+
+// 节点状态，与 relay_nodes.status 对应。
+enum NodeStatus {
+  NODE_STATUS_UNSPECIFIED = 0;
+  // 这把长期密钥没有注册过（或已被清除）。
+  NODE_STATUS_UNKNOWN = 1;
+  NODE_STATUS_PENDING = 2;
+  NODE_STATUS_ACTIVE = 3;
+  NODE_STATUS_DRAINING = 4;
+  NODE_STATUS_DISABLED = 5;
+  NODE_STATUS_REJECTED = 6;
+}
+
+message RegisterRequest {
+  string hostname = 1;
+  string program_version = 2;
+  map<string, string> system_info = 3;
+  string display_name = 4;
+}
+
+message RegisterResponse {
+  NodeStatus status = 1;
+  // 主节点算出的长期密钥指纹，从节点把它和本机打印的对一下。
+  string key_fingerprint = 2;
+}
+
+message NodeStatusRequest {
+  string program_version = 1;
+}
+
+message NodeStatusResponse {
+  NodeStatus status = 1;
+  int64 heartbeat_interval_ms = 2;
+  string key_fingerprint = 3;
+}
+
+message CertificateRequest {
+  // 新的 TLS 公钥（PKIX DER，Ed25519）。私钥只在从节点本机。
+  bytes tls_public_key = 1;
+  // 新的加密公钥（X25519，32 字节），用于上游凭据的二次加密（设计 7.1 第 4 条）。
+  bytes encryption_public_key = 2;
+}
+
+message CertificateResponse {
+  // 签发的证书（DER）。
+  bytes certificate = 1;
+  int64 not_after_unix_ms = 2;
+  int64 node_id = 3;
 }
 
 message PingRequest {

@@ -35,14 +35,15 @@ type serverCreds struct {
 	credentials.TransportCredentials
 	opts     ServerTLSOptions
 	registry *ConnRegistry
+	admit    func(PeerIdentity) error
 }
 
-func newServerCreds(opts ServerTLSOptions, registry *ConnRegistry) (*serverCreds, error) {
+func newServerCreds(opts ServerTLSOptions, registry *ConnRegistry, admit func(PeerIdentity) error) (*serverCreds, error) {
 	cfg, err := ServerTLSConfig(opts)
 	if err != nil {
 		return nil, err
 	}
-	return &serverCreds{TransportCredentials: credentials.NewTLS(cfg), opts: opts, registry: registry}, nil
+	return &serverCreds{TransportCredentials: credentials.NewTLS(cfg), opts: opts, registry: registry, admit: admit}, nil
 }
 
 func (c *serverCreds) ServerHandshake(raw net.Conn) (net.Conn, credentials.AuthInfo, error) {
@@ -62,11 +63,17 @@ func (c *serverCreds) ServerHandshake(raw net.Conn) (net.Conn, credentials.AuthI
 		return nil, nil, err
 	}
 	identity.RemoteAddr = raw.RemoteAddr()
+	if c.admit != nil {
+		if err := c.admit(identity); err != nil {
+			_ = conn.Close()
+			return nil, nil, err
+		}
+	}
 	return c.registry.track(conn, identity), PeerAuthInfo{TLSInfo: tlsInfo, Identity: identity}, nil
 }
 
 func (c *serverCreds) Clone() credentials.TransportCredentials {
-	return &serverCreds{TransportCredentials: c.TransportCredentials.Clone(), opts: c.opts, registry: c.registry}
+	return &serverCreds{TransportCredentials: c.TransportCredentials.Clone(), opts: c.opts, registry: c.registry, admit: c.admit}
 }
 
 // handshakeTimeout 限制 TLS 握手时间，慢速握手不能长期占着主节点的连接。
