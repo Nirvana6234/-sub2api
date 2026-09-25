@@ -651,8 +651,10 @@ SUB2API_INTERNAL_ADMIN_URL=http://sub2api-internal:8080
 可参考 `docker-compose.transithub-internal.yml` 叠加配置。仅执行一次
 `docker network connect` 不够，下次重建会丢失网络，必须同时持久化 compose。
 
-检测器使用固定版本镜像内的 `/app`，只挂载报告卷 `/data/runs`。不要再次添加
-指向历史发布目录的 `/app` bind mount；目录被清理会使档位预估及检测失败。
+检测器使用固定版本镜像内的检测资源，持久化报告卷 `/data/runs`。原有代理、
+请求头和中断恢复适配以五个只读单文件挂载保留在固定目录，详见检测器 README
+和 `docker-compose.adapters.yml`。不要再次添加指向历史发布目录的整个 `/app`
+bind mount；目录被清理会使档位预估及检测失败。
 除 `/api/health` 外，发版还要用登录会话检查 `/api/purity-check/tiers` 返回
 三个有效档位，以及 `/api/purity-check/targets` 可读取账号。
 
