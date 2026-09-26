@@ -107,6 +107,15 @@ func relayNodeID(c *gin.Context) (int64, bool) {
 	return id, true
 }
 
+func relayUserID(c *gin.Context) (int64, bool) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.BadRequest(c, "Invalid user ID")
+		return 0, false
+	}
+	return id, true
+}
+
 // relayKeyTarget 解析 :purpose 和（可选的）:version。
 func relayKeyTarget(c *gin.Context, withVersion bool) (keystore.Purpose, int, bool) {
 	purpose, err := master.ParseKeyPurpose(c.Param("purpose"))
@@ -325,6 +334,44 @@ func (h *RelayHandler) SetNodeAllowMultiIP(c *gin.Context) {
 	h.nodeAction(c, func(c *gin.Context, id, actor int64) error {
 		return h.runtime.SetNodeAllowMultiIP(c.Request.Context(), id, actor, *req.Allow)
 	})
+}
+
+// ReclaimNodeQuota 按节点立即回收额度：在线时发收回，离线时它的租约当场作废（设计 4.4）。
+// POST /api/v1/admin/relay/nodes/:id/reclaim-quota
+func (h *RelayHandler) ReclaimNodeQuota(c *gin.Context) {
+	id, ok := relayNodeID(c)
+	if !ok {
+		return
+	}
+	actor, ok := relayActor(c)
+	if !ok {
+		return
+	}
+	res, err := h.runtime.ReclaimNode(c.Request.Context(), actor, id)
+	if err != nil {
+		relayError(c, err)
+		return
+	}
+	response.Success(c, res)
+}
+
+// ReclaimUserQuota 按用户立即回收：这个用户在离线节点上的额度当场作废，在线节点上的发收回。
+// POST /api/v1/admin/relay/users/:id/reclaim-quota
+func (h *RelayHandler) ReclaimUserQuota(c *gin.Context) {
+	id, ok := relayUserID(c)
+	if !ok {
+		return
+	}
+	actor, ok := relayActor(c)
+	if !ok {
+		return
+	}
+	res, err := h.runtime.ReclaimUser(c.Request.Context(), actor, id)
+	if err != nil {
+		relayError(c, err)
+		return
+	}
+	response.Success(c, res)
 }
 
 // RejectAllPendingNodes 一键拒绝所有待激活节点。

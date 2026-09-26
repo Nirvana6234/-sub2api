@@ -104,6 +104,8 @@ type runningRelay struct {
 	signing     *signingKeys
 	revoker     *ticketRevoker
 	quotas      *Quotas
+	recaller    *EventRecaller
+	quotaEvents *quotaEvents
 }
 
 // NewRuntime 创建运行时（不启动任何东西）。
@@ -322,9 +324,18 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 			return nil, err
 		}
 	}
+	var recaller *EventRecaller
+	var qEvents *quotaEvents
+	if quotas != nil {
+		recaller = NewEventRecaller(quotas, events)
+		qEvents = newQuotaEvents(quotas, recaller)
+	}
 	var revoker *ticketRevoker
 	if r.deps.Users != nil {
 		revoker = newTicketRevoker(r.deps.Users, events, r.now)
+		if qEvents != nil {
+			revoker.onInactive = qEvents.OnUserInactive
+		}
 	}
 	events.OnConnect = func(nodeID int64) {
 		publisher.NotifyNode(context.Background(), nodeID)
@@ -335,7 +346,7 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 	relayv1.RegisterRelayEnrollmentServer(server.GRPC(), NewEnrollment(nodes, server))
 	control := NewControl(publisher)
 	if quotas != nil {
-		control.AttachQuotas(quotas, NewEventRecaller(quotas, events), server.Epoch())
+		control.AttachQuotas(quotas, recaller, server.Epoch())
 	}
 	relayv1.RegisterRelayControlServer(server.GRPC(), control)
 	relayv1.RegisterRelayEventsServer(server.GRPC(), events)
@@ -349,7 +360,7 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 	}
 
 	runCtx, cancel := context.WithCancel(context.Background())
-	running := &runningRelay{server: server, listener: lis, nodes: nodes, publisher: publisher, events: events, invalidator: invalidator, cancel: cancel, ca: ca, keys: keys, signing: signing, revoker: revoker, quotas: quotas}
+	running := &runningRelay{server: server, listener: lis, nodes: nodes, publisher: publisher, events: events, invalidator: invalidator, cancel: cancel, ca: ca, keys: keys, signing: signing, revoker: revoker, quotas: quotas, recaller: recaller, quotaEvents: qEvents}
 	var unsubs []func()
 	if r.deps.Hub != nil {
 		unsubs = append(unsubs, r.deps.Hub.Subscribe(publisher.OnSettingsChanged))
@@ -362,6 +373,9 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 		unsubs = append(unsubs, r.deps.AccessChanges.Subscribe(invalidator.OnAccessChange))
 		if revoker != nil {
 			unsubs = append(unsubs, r.deps.AccessChanges.Subscribe(revoker.OnAccessChange))
+		}
+		if qEvents != nil {
+			unsubs = append(unsubs, r.deps.AccessChanges.Subscribe(qEvents.OnAccessChange))
 		}
 	}
 	if quotas != nil && r.deps.ReservedSink != nil {
@@ -386,6 +400,7 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 	running.goRun(func() { publisher.RunRecheck(runCtx) })
 	if quotas != nil {
 		running.goRun(func() { quotas.RunExpiry(runCtx) })
+		running.goRun(func() { qEvents.run(runCtx) })
 	}
 	if revoker != nil {
 		running.goRun(func() { revoker.run(runCtx) })

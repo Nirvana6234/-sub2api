@@ -82,6 +82,16 @@ func (s *MemoryLeaseStore) ListActiveByNode(_ context.Context, nodeID int64) ([]
 	return s.list(func(l *Lease) bool { return l.Status == LeaseActive && l.NodeID == nodeID }, 0), nil
 }
 
+func (s *MemoryLeaseStore) ListActiveByScope(_ context.Context, dimensions []string, scopeID int64, userID int64) ([]*Lease, error) {
+	dims := map[string]bool{}
+	for _, d := range dimensions {
+		dims[d] = true
+	}
+	return s.list(func(l *Lease) bool {
+		return l.Status == LeaseActive && dims[l.Dimension] && l.ScopeID == scopeID && (userID <= 0 || l.UserID == userID)
+	}, 0), nil
+}
+
 func (s *MemoryLeaseStore) ListExpired(_ context.Context, before time.Time, limit int) ([]*Lease, error) {
 	return s.list(func(l *Lease) bool { return l.Status == LeaseActive && l.ExpiresAt.Before(before) }, limit), nil
 }

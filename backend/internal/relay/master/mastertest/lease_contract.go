@@ -230,6 +230,27 @@ func RunLeaseStore(t *testing.T, h LeaseHarness) {
 		require.NoError(t, err)
 		require.Len(t, expired, 1)
 		require.Equal(t, n1, expired[0].NodeID)
+
+		u2 := h.NewUser(t, s)
+		weekly := master.LeaseScope{Dimension: service.QuotaDimSubscriptionWeekly, ScopeID: 5}
+		otherGroup := master.LeaseScope{Dimension: service.QuotaDimSubscriptionDaily, ScopeID: 6}
+		for _, g := range []struct {
+			user  int64
+			scope master.LeaseScope
+		}{{u, daily}, {u2, weekly}, {u2, otherGroup}, {u, platform}} {
+			require.NoError(t, s.WithUser(ctx, g.user, func(tx master.LeaseTx) error {
+				_, err := tx.Grant(ctx, master.LeaseKey{UserID: g.user, NodeID: n1, LeaseScope: g.scope}, 3, later, "e", now)
+				return err
+			}))
+		}
+		subDims := []string{service.QuotaDimSubscriptionDaily, service.QuotaDimSubscriptionWeekly, service.QuotaDimSubscriptionMonthly}
+		byScope, err := s.ListActiveByScope(ctx, subDims, 5, 0)
+		require.NoError(t, err)
+		require.Len(t, byScope, 2, "both users' group-5 subscription leases, not group 6, not the platform lease")
+		byScope, err = s.ListActiveByScope(ctx, subDims, 5, u2)
+		require.NoError(t, err)
+		require.Len(t, byScope, 1)
+		require.Equal(t, weekly, byScope[0].LeaseScope)
 	})
 
 	t.Run("a deleted user has no leases to change", func(t *testing.T) {

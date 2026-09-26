@@ -89,6 +89,9 @@ type LeaseStore interface {
 	WithUser(ctx context.Context, userID int64, fn func(tx LeaseTx) error) error
 	// ListActiveByNode 列出一台节点的生效租约（停用节点、纪元核对用）。
 	ListActiveByNode(ctx context.Context, nodeID int64) ([]*Lease, error)
+	// ListActiveByScope 列出某些维度、某个归属 ID 的生效租约（分组改动时收回这个分组的订阅额度），
+	// userID 大于 0 时只列这个用户的。
+	ListActiveByScope(ctx context.Context, dimensions []string, scopeID int64, userID int64) ([]*Lease, error)
 	// ListExpired 列出到期时间早于 before 的生效租约（到期回收用），最多 limit 条。
 	ListExpired(ctx context.Context, before time.Time, limit int) ([]*Lease, error)
 	// ReservedBalances 返回所有冻结额大于 0 的用户（主节点启动时载入内存）。

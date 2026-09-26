@@ -26,11 +26,13 @@ const revocationQueueSize = 1024
 // 而是在后台查一次当前状态：不存在或未启用才吊销。改密码、改邮箱不经过这里——
 // 那些靠选号时比对 token_version 拒绝，从节点被拒后自己记进吊销表。
 type ticketRevoker struct {
-	users  UserStatusReader
-	list   *sign.RevocationList
-	events *EventHub
-	now    func() time.Time
-	queue  chan int64
+	// onInactive 在查到用户已停用或删除时调用（收回额度，设计 4.4）。
+	onInactive func(userID int64)
+	users      UserStatusReader
+	list       *sign.RevocationList
+	events     *EventHub
+	now        func() time.Time
+	queue      chan int64
 }
 
 func newTicketRevoker(users UserStatusReader, events *EventHub, now func() time.Time) *ticketRevoker {
@@ -67,11 +69,19 @@ func (t *ticketRevoker) check(ctx context.Context, userID int64) {
 	u, err := t.users.GetByID(cctx, userID)
 	switch {
 	case errors.Is(err, service.ErrUserNotFound):
-		t.revoke(userID)
+		t.revokeInactive(userID)
 	case err != nil:
 		slog.Warn("relay ticket revocation check failed; relying on the selection re-check", "user_id", userID, "error", err)
 	case !u.IsActive():
-		t.revoke(userID)
+		t.revokeInactive(userID)
+	}
+}
+
+// revokeInactive 用户已停用或删除：作废票据，并收回额度。
+func (t *ticketRevoker) revokeInactive(userID int64) {
+	t.revoke(userID)
+	if t.onInactive != nil {
+		t.onInactive(userID)
 	}
 }
 

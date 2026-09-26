@@ -86,6 +86,8 @@ func newRelayTestRouter(t *testing.T) (*gin.Engine, *master.MemoryStore) {
 	g.POST("/nodes/:id/reject", h.RejectNode)
 	g.POST("/nodes/:id/activate", h.ActivateNode)
 	g.GET("/keys/:purpose", h.ListKeys)
+	g.POST("/nodes/:id/reclaim-quota", h.ReclaimNodeQuota)
+	g.POST("/users/:id/reclaim-quota", h.ReclaimUserQuota)
 	g.POST("/keys/:purpose/:version/activate", h.ActivateKey)
 	return r, store
 }
@@ -125,6 +127,14 @@ func TestRelayHandlerWhileRelayIsOff(t *testing.T) {
 
 	w = relayDo(r, http.MethodPost, "/relay/nodes/abc/reject", nil)
 	require.Equal(t, http.StatusBadRequest, w.Code)
+	w = relayDo(r, http.MethodPost, "/relay/users/x/reclaim-quota", nil)
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.Contains(t, w.Body.String(), "Invalid user ID")
+	for _, path := range []string{"/relay/users/9/reclaim-quota", "/relay/nodes/1/reclaim-quota"} {
+		w = relayDo(r, http.MethodPost, path, nil)
+		require.Equal(t, http.StatusConflict, w.Code, path)
+		require.Contains(t, w.Body.String(), "RELAY_NOT_RUNNING")
+	}
 	w = relayDo(r, http.MethodPost, "/relay/keys/ticket/0/activate", nil)
 	require.Equal(t, http.StatusBadRequest, w.Code)
 	w = relayDo(r, http.MethodPost, "/relay/keys/tls/1/activate", nil)

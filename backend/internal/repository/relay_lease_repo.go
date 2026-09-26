@@ -9,6 +9,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/relay/master"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/lib/pq"
 )
 
 // relayLeaseRepository 是 master.LeaseStore 的 SQL 实现（relay_quota_leases、users.relay_reserved_balance）。
@@ -71,6 +72,15 @@ func (r *relayLeaseRepository) WithUser(ctx context.Context, userID int64, fn fu
 
 func (r *relayLeaseRepository) ListActiveByNode(ctx context.Context, nodeID int64) ([]*master.Lease, error) {
 	return r.query(ctx, `SELECT `+relayLeaseColumns+` FROM relay_quota_leases WHERE node_id = $1 AND status = 'active' ORDER BY id`, nodeID)
+}
+
+func (r *relayLeaseRepository) ListActiveByScope(ctx context.Context, dimensions []string, scopeID int64, userID int64) ([]*master.Lease, error) {
+	if len(dimensions) == 0 {
+		return nil, nil
+	}
+	return r.query(ctx, `SELECT `+relayLeaseColumns+` FROM relay_quota_leases
+		WHERE status = 'active' AND dimension = ANY($1) AND scope_id = $2 AND ($3 <= 0 OR user_id = $3) ORDER BY id`,
+		pq.Array(dimensions), scopeID, userID)
 }
 
 func (r *relayLeaseRepository) ListExpired(ctx context.Context, before time.Time, limit int) ([]*master.Lease, error) {
