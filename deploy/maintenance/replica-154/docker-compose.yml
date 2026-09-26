@@ -1,0 +1,53 @@
+# sub2api 生产库的只读备库（部署在 154.9.26.202:/www/sub2api-replica）
+#
+# 数据来自 52.76.22.21 生产库的物理基础备份，之后每小时由生产机上的
+# wal-ship-154.sh 把 WAL 段推到 ./wal_incoming，本容器持续回放。
+# 与 154 上原有的 sub2api / sub2api-postgres 完全独立，互不影响。
+#
+# 只读：hot_standby 下可以查询，任何写入都会报
+#   "cannot execute ... in a read-only transaction"
+# 查询入口只绑在本机回环：psql -h 127.0.0.1 -p 15432 -U sub2api sub2api
+#
+# 注意：不要设 POSTGRES_PASSWORD 等初始化变量，也不要清空 ./data——
+# data 非空时镜像入口不会 initdb，直接以恢复模式启动。
+services:
+  sub2api-replica:
+    image: postgres:18-alpine
+    container_name: sub2api-replica
+    restart: unless-stopped
+    environment:
+      - PGDATA=/var/lib/postgresql/data
+      - TZ=Asia/Shanghai
+    volumes:
+      - ./data:/var/lib/postgresql/data
+      - ./wal_incoming:/wal_incoming
+    ports:
+      - "127.0.0.1:15432:5432"
+    command:
+      - postgres
+      # 基础备份里带着生产的 archive_mode=on，备库上关掉
+      - -c
+      - archive_mode=off
+      # 段不存在时静默返回非 0，Postgres 会等下一批（避免每 5 秒刷一条 cp 报错）
+      - -c
+      - restore_command=test -f /wal_incoming/%f && cp /wal_incoming/%f %p
+      - -c
+      - archive_cleanup_command=pg_archivecleanup /wal_incoming %r
+      # WAL 每小时才到一次；默认 5s 重试会每 5 秒刷一条 "waiting for WAL"
+      - -c
+      - wal_retrieve_retry_interval=60s
+      - -c
+      - recovery_target_timeline=latest
+      - -c
+      - hot_standby=on
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sub2api -d sub2api"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s

@@ -776,6 +776,7 @@ swapon --show                                               # 必须有 swap
 systemctl is-active sysstat-collect.timer                   # 出事后靠它回溯
 df -h /                                                     # 别又只给 8 GB
 systemctl is-active sub2api-log-cleanup.timer sub2api-artifact-cleanup.timer transithub-artifact-cleanup.timer  # 三个磁盘保护 timer 都要 active
+systemctl is-active sub2api-wal-ship.timer                  # 异地只读备库推送，见 D5.6
 ```
 
 ## D5.5 磁盘容量保护：发版产物自动清理
@@ -799,6 +800,73 @@ systemctl is-active sub2api-log-cleanup.timer sub2api-artifact-cleanup.timer tra
 当前根盘仍是 gp3 15G（2026-09-09 用到 70%，11G/15G）。有了这个 timer 后 bin+backups 稳态占用
 从峰值 5.5G 降到约 1.2G，短期内不会再写满，但机型建议（见 A1）里的 "gp3 30 GB 起" 仍然成立——
 这台机器的发版频率下 15G 长期看依然偏紧，条件允许时应该扩容，扩容步骤见文末「排查速查」。
+
+## D5.6 数据库异地只读备库：154.9.26.202（2026-09-26 起）
+
+sub2api 主库每小时增量同步到 154.9.26.202 上的**只读备库**（物理复制 / WAL 日志传送）。
+TransitHub 库不在范围内。
+
+```
+生产 sub2api-postgres ──archive_command──> /opt/sub2api/deploy/wal_archive
+      │                                           │ sub2api-wal-ship.timer（每小时 :05）
+      │                                           │ pg_switch_wal → rsync -z → 删本地
+      ▼                                           ▼
+  （业务照常读写）            154:/www/sub2api-replica/wal_incoming
+                                                  │ restore_command，每 60s 取一次
+                                                  ▼
+                              154 容器 sub2api-replica（hot standby，只读，127.0.0.1:15432）
+```
+
+| 位置 | 东西 |
+|---|---|
+| 生产 `postgresql.auto.conf` | `archive_mode=on`、`archive_command=cp ... /wal_archive/...`（`ALTER SYSTEM` 写入，跟着数据目录走） |
+| 生产 compose | postgres 服务多挂了 `./wal_archive:/wal_archive:Z` |
+| 生产 `/opt/sub2api/scripts/wal-ship-154.sh` + `sub2api-wal-ship.{service,timer}` | 推送脚本，日志 `/var/log/sub2api-wal-ship.log` |
+| 生产 `/root/.ssh/wal_ship_154` | 推送专用密钥。154 的 `authorized_keys` 里限制为 `rrsync -wo /www/sub2api-replica/wal_incoming`，只能往这一个目录写，拿不到 shell；没有绑来源 IP，所以生产换 IP 不影响 |
+| 154 `/www/sub2api-replica/` | `docker-compose.yml`（源码 [`maintenance/replica-154/`](maintenance/replica-154/)）、`data/`、`wal_incoming/`。与 154 上原有的 sub2api / sub2api-postgres **完全独立** |
+
+源码都在 [`sub2api/deploy/maintenance/`](maintenance/)。
+
+**看同步状态：**
+
+```bash
+# 154 上：备库回放到哪、最后一笔事务的时间（应在一小时内）
+docker exec sub2api-replica psql -U sub2api -d sub2api -XAt \
+  -c "select pg_is_in_recovery(), pg_last_wal_replay_lsn(), now() - pg_last_xact_replay_timestamp()"
+# 生产上：推送日志、归档失败计数（failed_count 应为 0）
+sudo tail -5 /var/log/sub2api-wal-ship.log
+sudo docker exec sub2api-postgres psql -U sub2api -XAt -c "select archived_count, failed_count, last_failed_wal from pg_stat_archiver"
+```
+
+**磁盘保护：** 154 长时间不可达时，生产本地 `wal_archive` 会堆积（约 30–60 MB/小时）。超过 3 GB
+时脚本删最旧的段保生产磁盘，并写 `/opt/sub2api/deploy/WAL_REPLICA_NEEDS_RESEED`——看到这个文件
+就说明备库断链了，要按下面重做基础备份。
+
+**重做基础备份（断链、或备库数据出问题时）：**
+
+```bash
+# 生产
+SEED=/opt/sub2api/deploy/replica-seed-$(date +%Y%m%d-%H%M%S).tar.gz
+sudo docker exec sub2api-postgres pg_basebackup -U sub2api -D - -Ft -X fetch -c fast | gzip -1 | sudo tee $SEED >/dev/null
+sudo rsync -a -e "ssh -i /root/.ssh/wal_ship_154" $SEED root@154.9.26.202:/ && sudo rm -f $SEED
+sudo rm -f /opt/sub2api/deploy/WAL_REPLICA_NEEDS_RESEED
+# 154（种子文件落在 wal_incoming 里）
+cd /www/sub2api-replica && docker compose down
+mv data data.old-$(date +%Y%m%d) && mkdir data
+tar -xzf wal_incoming/replica-seed-*.tar.gz -C data && rm -f wal_incoming/replica-seed-*.tar.gz
+touch data/standby.signal && chown -R 70:70 data && chmod 700 data
+docker compose up -d        # 确认追上后再删 data.old-*
+```
+
+**要点：**
+
+- 备库**只读**，写入会报 `cannot execute ... in a read-only transaction`。要把它提升为可写主库
+  （生产彻底挂了时）：`docker exec -u postgres sub2api-replica pg_ctl promote -D /var/lib/postgresql/data`。
+  提升后就和生产分叉了，不能再接收 WAL，事后要重做基础备份。
+- 两边 Postgres **主版本必须一致**（当前都是 18.4 / x86_64 / Alpine musl）。生产升级主版本时备库要一起升并重做基础备份。
+- 生产搬新服务器时：`postgresql.auto.conf` 随数据目录迁走，但 compose 的 `wal_archive` 挂载、推送脚本、
+  timer、`/root/.ssh/wal_ship_154`（及 154 上对应的 authorized_keys 行）要重建；搬完后重做基础备份。
+- 开关归档要重启生产 Postgres（2026-09-26 那次中断约 2.5 秒，sub2api 自动重连）。
 
 ## D6. 新机器一次性做对的顺序
 
