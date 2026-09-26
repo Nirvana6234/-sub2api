@@ -25,7 +25,7 @@ func TestRelayErrorMapsBusinessErrorsTo4xx(t *testing.T) {
 		status int
 	}{
 		{master.ErrNodeNotFound, http.StatusNotFound},
-		{master.ErrRootNotFound, http.StatusNotFound},
+		{master.ErrKeyNotFound, http.StatusNotFound},
 		{master.ErrFingerprintMismatch, http.StatusBadRequest},
 		{master.ErrDomainRequired, http.StatusBadRequest},
 		{fmt.Errorf("%w: ratio", master.ErrInvalidGeneralConfig), http.StatusBadRequest},
@@ -33,9 +33,9 @@ func TestRelayErrorMapsBusinessErrorsTo4xx(t *testing.T) {
 		{master.ErrNodesStillServing, http.StatusConflict},
 		{master.ErrStatusConflict, http.StatusConflict},
 		{master.ErrDomainTaken, http.StatusConflict},
-		{master.ErrRootNotStaged, http.StatusConflict},
-		{master.ErrRootInUse, http.StatusConflict},
-		{master.ErrRootRetireTooEarly, http.StatusConflict},
+		{master.ErrKeyNotStaged, http.StatusConflict},
+		{master.ErrKeyInUse, http.StatusConflict},
+		{master.ErrKeyRetireTooEarly, http.StatusConflict},
 		{keystore.ErrAlreadyStaged, http.StatusConflict},
 		{errors.New("database is down"), http.StatusInternalServerError},
 	}
@@ -50,14 +50,14 @@ func TestRelayErrorMapsBusinessErrorsTo4xx(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
-	relayError(c, &master.RootNotDeliveredError{NodeIDs: []int64{4, 9}})
+	relayError(c, &master.KeyNotDeliveredError{NodeIDs: []int64{4, 9}})
 	require.Equal(t, http.StatusConflict, w.Code)
 	var body struct {
 		Reason   string            `json:"reason"`
 		Metadata map[string]string `json:"metadata"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
-	require.Equal(t, "RELAY_ROOT_NOT_DELIVERED", body.Reason)
+	require.Equal(t, "RELAY_KEY_NOT_DELIVERED", body.Reason)
 	require.Equal(t, "4,9", body.Metadata["node_ids"], "the admin page shows which nodes are holding up the rotation")
 }
 
@@ -85,7 +85,8 @@ func newRelayTestRouter(t *testing.T) (*gin.Engine, *master.MemoryStore) {
 	g.GET("/nodes", h.ListNodes)
 	g.POST("/nodes/:id/reject", h.RejectNode)
 	g.POST("/nodes/:id/activate", h.ActivateNode)
-	g.POST("/roots/:version/activate", h.ActivateRoot)
+	g.GET("/keys/:purpose", h.ListKeys)
+	g.POST("/keys/:purpose/:version/activate", h.ActivateKey)
 	return r, store
 }
 
@@ -124,8 +125,12 @@ func TestRelayHandlerWhileRelayIsOff(t *testing.T) {
 
 	w = relayDo(r, http.MethodPost, "/relay/nodes/abc/reject", nil)
 	require.Equal(t, http.StatusBadRequest, w.Code)
-	w = relayDo(r, http.MethodPost, "/relay/roots/0/activate", nil)
+	w = relayDo(r, http.MethodPost, "/relay/keys/ticket/0/activate", nil)
 	require.Equal(t, http.StatusBadRequest, w.Code)
+	w = relayDo(r, http.MethodPost, "/relay/keys/tls/1/activate", nil)
+	require.Equal(t, http.StatusBadRequest, w.Code, "unknown purpose")
+	w = relayDo(r, http.MethodGet, "/relay/keys/voucher", nil)
+	require.Equal(t, http.StatusConflict, w.Code, "keys are listed only while relay is running")
 	w = relayDo(r, http.MethodPost, "/relay/nodes/1/activate", map[string]any{"public_domain": "r.example.com"})
 	require.Equal(t, http.StatusBadRequest, w.Code, "the fingerprint must be confirmed")
 

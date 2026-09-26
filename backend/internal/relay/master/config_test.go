@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
@@ -61,9 +62,9 @@ func (f fixedSettings) GetMultiple(_ context.Context, keys []string) (map[string
 func TestSnapshotVersionIsAContentHash(t *testing.T) {
 	ctx := context.Background()
 	settings := fixedSettings{service.SettingKeyOpenAITTFTMode: "strict", service.SettingKeyMinCodexVersion: "0.9.0"}
-	a, err := buildGlobal(ctx, settings, nil, []string{"root-1"}, nil)
+	a, err := buildGlobal(ctx, settings, nil, Trust{RootFingerprints: []string{"root-1"}}, nil)
 	require.NoError(t, err)
-	b, err := buildGlobal(ctx, settings, nil, []string{"root-1"}, nil)
+	b, err := buildGlobal(ctx, settings, nil, Trust{RootFingerprints: []string{"root-1"}}, nil)
 	require.NoError(t, err)
 	require.Equal(t, a.hash, b.hash)
 
@@ -73,20 +74,29 @@ func TestSnapshotVersionIsAContentHash(t *testing.T) {
 	require.NotEqual(t, a.snapshotFor(node1).Version, a.snapshotFor(node2).Version)
 
 	settings[service.SettingKeyOpenAITTFTMode] = "loose"
-	c, err := buildGlobal(ctx, settings, nil, []string{"root-1"}, nil)
+	c, err := buildGlobal(ctx, settings, nil, Trust{RootFingerprints: []string{"root-1"}}, nil)
 	require.NoError(t, err)
 	require.NotEqual(t, a.hash, c.hash)
 
-	d, err := buildGlobal(ctx, settings, nil, []string{"root-1", "root-2"}, nil)
+	d, err := buildGlobal(ctx, settings, nil, Trust{RootFingerprints: []string{"root-1", "root-2"}}, nil)
 	require.NoError(t, err)
 	require.NotEqual(t, c.hash, d.hash, "publishing a new root fingerprint is a config change")
 
 	e, err := buildGlobal(ctx, settings, map[string]SectionProvider{"error_passthrough_rules": func(context.Context) ([]byte, error) {
 		return []byte(`[{"code":429}]`), nil
-	}}, []string{"root-1", "root-2"}, nil)
+	}}, Trust{RootFingerprints: []string{"root-1", "root-2"}}, nil)
 	require.NoError(t, err)
 	require.NotEqual(t, d.hash, e.hash)
 	require.Equal(t, []byte(`[{"code":429}]`), e.snapshotFor(node1).Sections["error_passthrough_rules"])
+
+	// 票据公钥也随配置下发，新版本同样是配置变化。
+	ticket := &relayv1.SigningPublicKey{Version: 1, PublicKey: make([]byte, 32)}
+	f, err := buildGlobal(ctx, settings, nil, Trust{RootFingerprints: []string{"root-1", "root-2"}, TicketPublicKeys: []*relayv1.SigningPublicKey{ticket}}, nil)
+	require.NoError(t, err)
+	require.NotEqual(t, d.hash, f.hash, "publishing a new ticket key is a config change")
+	snap := f.snapshotFor(node1)
+	require.Len(t, snap.TicketPublicKeys, 1)
+	require.Equal(t, uint32(1), snap.TicketPublicKeys[0].Version)
 }
 
 func TestGeneralConfigDefaultsAndValidation(t *testing.T) {

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
-	"github.com/Wei-Shaw/sub2api/internal/relay/transport"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -21,25 +20,25 @@ type ConfigPublisher struct {
 	settings SettingsReader
 	nodes    NodeStore
 	events   *EventHub
-	roots    func() []string
+	trust    func() Trust
 
 	sectionsMu sync.Mutex
 	sections   map[string]SectionProvider
 
 	mu      sync.RWMutex
 	current *globalSnapshot
-	// delivered：每台节点最近一次拉到的快照里的根证书指纹（只在内存；主节点重启后
-	// 节点重连会先拉配置，随即补齐）。根证书轮换据此判断新指纹是否已送达所有节点。
-	delivered map[int64][]string
+	// delivered：每台节点最近一次拉到的快照里的信任材料标识（根指纹、票据公钥，只在内存；
+	// 主节点重启后节点重连会先拉配置，随即补齐）。密钥轮换据此判断新版本是否已送达所有节点。
+	delivered map[int64]map[string]struct{}
 
 	triggerMu sync.Mutex
 	timer     *time.Timer
 	now       func() time.Time
 }
 
-// NewConfigPublisher 创建发布器。roots 返回当前所有未停用的根证书指纹。
-func NewConfigPublisher(settings SettingsReader, nodes NodeStore, events *EventHub, roots func() []string) *ConfigPublisher {
-	return &ConfigPublisher{settings: settings, nodes: nodes, events: events, roots: roots, sections: map[string]SectionProvider{}, delivered: map[int64][]string{}, now: time.Now}
+// NewConfigPublisher 创建发布器。trust 返回当前要下发的信任材料（所有未停用的根证书指纹、票据公钥）。
+func NewConfigPublisher(settings SettingsReader, nodes NodeStore, events *EventHub, trust func() Trust) *ConfigPublisher {
+	return &ConfigPublisher{settings: settings, nodes: nodes, events: events, trust: trust, sections: map[string]SectionProvider{}, delivered: map[int64]map[string]struct{}{}, now: time.Now}
 }
 
 // RegisterSection 登记一个配置分段（错误透传规则、TLS 指纹等）。登记后下一次生成生效。
@@ -58,7 +57,7 @@ func (p *ConfigPublisher) Rebuild(ctx context.Context) error {
 	}
 	p.sectionsMu.Unlock()
 
-	next, err := buildGlobal(ctx, p.settings, sections, p.roots(), func(key string) {
+	next, err := buildGlobal(ctx, p.settings, sections, p.trust(), func(key string) {
 		slog.Error("relay config snapshot dropped a value that looks like it contains a secret", "key", key)
 	})
 	if err != nil {
@@ -184,9 +183,14 @@ func (p *ConfigPublisher) FetchConfig(ctx context.Context, nodeID int64, known s
 	if err != nil {
 		return nil, status.Error(codes.Unavailable, "relay config is not available")
 	}
-	// 版本哈希包含根证书指纹，所以"没变"也说明节点手里就是这份指纹。
+	// 版本哈希包含信任材料，所以"没变"也说明节点手里就是这一份。
+	ids := Trust{RootFingerprints: snap.RootFingerprints, TicketPublicKeys: snap.TicketPublicKeys}.deliveryIDs()
+	set := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		set[id] = struct{}{}
+	}
 	p.mu.Lock()
-	p.delivered[nodeID] = append([]string(nil), snap.RootFingerprints...)
+	p.delivered[nodeID] = set
 	p.mu.Unlock()
 	if known != "" && known == snap.Version {
 		return &relayv1.ConfigSnapshot{Version: snap.Version, Unchanged: true}, nil
@@ -194,21 +198,13 @@ func (p *ConfigPublisher) FetchConfig(ctx context.Context, nodeID int64, known s
 	return snap, nil
 }
 
-// NodesMissingRoot 返回 nodeIDs 里还没拉到含指定根证书指纹的配置的节点。
-func (p *ConfigPublisher) NodesMissingRoot(nodeIDs []int64, fingerprint string) []int64 {
-	fingerprint = transport.NormalizeFingerprint(fingerprint)
+// nodesMissing 返回 nodeIDs 里还没拉到含某项信任材料（deliveryID）的配置的节点。
+func (p *ConfigPublisher) nodesMissing(nodeIDs []int64, deliveryID string) []int64 {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	var missing []int64
 	for _, id := range nodeIDs {
-		found := false
-		for _, fp := range p.delivered[id] {
-			if transport.NormalizeFingerprint(fp) == fingerprint {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if _, ok := p.delivered[id][deliveryID]; !ok {
 			missing = append(missing, id)
 		}
 	}

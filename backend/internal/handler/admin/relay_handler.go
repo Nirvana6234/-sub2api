@@ -15,7 +15,7 @@ import (
 )
 
 // RelayHandler 是从节点管理页的后台接口（设计 11.5）：总开关、通用配置、节点激活与停用、
-// 根证书分阶段轮换。所有改动类接口在路由上要求二次验证（stepUpAuth），并由主节点记审计。
+// 密钥分阶段轮换（根证书、中转票据、扣费凭证）。所有改动类接口在路由上要求二次验证（stepUpAuth），并由主节点记审计。
 type RelayHandler struct {
 	runtime *master.Runtime
 }
@@ -107,38 +107,47 @@ func relayNodeID(c *gin.Context) (int64, bool) {
 	return id, true
 }
 
-func relayRootVersion(c *gin.Context) (int, bool) {
+// relayKeyTarget 解析 :purpose 和（可选的）:version。
+func relayKeyTarget(c *gin.Context, withVersion bool) (keystore.Purpose, int, bool) {
+	purpose, err := master.ParseKeyPurpose(c.Param("purpose"))
+	if err != nil {
+		response.BadRequest(c, "Invalid key purpose (root_ca, ticket or voucher)")
+		return "", 0, false
+	}
+	if !withVersion {
+		return purpose, 0, true
+	}
 	v, err := strconv.Atoi(c.Param("version"))
 	if err != nil || v <= 0 {
-		response.BadRequest(c, "Invalid root version")
-		return 0, false
+		response.BadRequest(c, "Invalid key version")
+		return "", 0, false
 	}
-	return v, true
+	return purpose, v, true
 }
 
 // relayError 把主从分流的业务错误映射成 4xx；其余按内部错误处理。
 func relayError(c *gin.Context, err error) {
-	var notDelivered *master.RootNotDeliveredError
+	var notDelivered *master.KeyNotDeliveredError
 	switch {
 	case errors.As(err, &notDelivered):
 		ids := make([]string, 0, len(notDelivered.NodeIDs))
 		for _, id := range notDelivered.NodeIDs {
 			ids = append(ids, strconv.FormatInt(id, 10))
 		}
-		err = infraerrors.Conflict("RELAY_ROOT_NOT_DELIVERED", err.Error()).
+		err = infraerrors.Conflict("RELAY_KEY_NOT_DELIVERED", err.Error()).
 			WithMetadata(map[string]string{"node_ids": strings.Join(ids, ",")})
-	case errors.Is(err, master.ErrNodeNotFound), errors.Is(err, master.ErrRootNotFound):
+	case errors.Is(err, master.ErrNodeNotFound), errors.Is(err, master.ErrKeyNotFound):
 		err = infraerrors.NotFound("RELAY_NOT_FOUND", err.Error())
 	case errors.Is(err, master.ErrFingerprintMismatch), errors.Is(err, master.ErrDomainRequired),
-		errors.Is(err, master.ErrInvalidGeneralConfig):
+		errors.Is(err, master.ErrInvalidGeneralConfig), errors.Is(err, master.ErrUnknownKeyPurpose):
 		err = infraerrors.BadRequest("RELAY_INVALID_REQUEST", err.Error())
 	case errors.Is(err, master.ErrRelayNotRunning):
 		err = infraerrors.Conflict("RELAY_NOT_RUNNING", err.Error())
 	case errors.Is(err, master.ErrNodesStillServing):
 		err = infraerrors.Conflict("RELAY_NODES_STILL_SERVING", err.Error())
 	case errors.Is(err, master.ErrStatusConflict), errors.Is(err, master.ErrDomainTaken),
-		errors.Is(err, master.ErrRootNotStaged), errors.Is(err, master.ErrRootInUse),
-		errors.Is(err, master.ErrRootRetireTooEarly), errors.Is(err, keystore.ErrAlreadyStaged):
+		errors.Is(err, master.ErrKeyNotStaged), errors.Is(err, master.ErrKeyInUse),
+		errors.Is(err, master.ErrKeyRetireTooEarly), errors.Is(err, keystore.ErrAlreadyStaged):
 		err = infraerrors.Conflict("RELAY_CONFLICT", err.Error())
 	}
 	response.ErrorFrom(c, err)
@@ -333,25 +342,34 @@ func (h *RelayHandler) RejectAllPendingNodes(c *gin.Context) {
 	response.Success(c, gin.H{"rejected": count})
 }
 
-// ListRoots 列出未停用的主从通信根证书版本；预备版本带上还没收到它的节点。
-// GET /api/v1/admin/relay/roots
-func (h *RelayHandler) ListRoots(c *gin.Context) {
-	roots, err := h.runtime.Roots(c.Request.Context())
+// ListKeys 列出某种用途（root_ca 主从通信根证书、ticket 中转票据、voucher 扣费凭证）未停用的版本；
+// 预备版本带上还没收到它的节点。
+// GET /api/v1/admin/relay/keys/:purpose
+func (h *RelayHandler) ListKeys(c *gin.Context) {
+	purpose, _, ok := relayKeyTarget(c, false)
+	if !ok {
+		return
+	}
+	keys, err := h.runtime.Keys(c.Request.Context(), purpose)
 	if err != nil {
 		relayError(c, err)
 		return
 	}
-	response.Success(c, roots)
+	response.Success(c, keys)
 }
 
-// StageRoot 根证书轮换第一步：生成预备根证书，指纹随配置推给所有节点。
-// POST /api/v1/admin/relay/roots/stage
-func (h *RelayHandler) StageRoot(c *gin.Context) {
+// StageKey 轮换第一步：生成预备版本（根指纹、票据公钥随配置推给所有节点）。
+// POST /api/v1/admin/relay/keys/:purpose/stage
+func (h *RelayHandler) StageKey(c *gin.Context) {
+	purpose, _, ok := relayKeyTarget(c, false)
+	if !ok {
+		return
+	}
 	actor, ok := relayActor(c)
 	if !ok {
 		return
 	}
-	info, err := h.runtime.StageRoot(c.Request.Context(), actor)
+	info, err := h.runtime.StageKey(c.Request.Context(), actor, purpose)
 	if err != nil {
 		relayError(c, err)
 		return
@@ -359,10 +377,10 @@ func (h *RelayHandler) StageRoot(c *gin.Context) {
 	response.Success(c, info)
 }
 
-// ActivateRoot 根证书轮换第二步：切换到预备根证书签发。有在服务的节点还没收到指纹时 409。
-// POST /api/v1/admin/relay/roots/:version/activate
-func (h *RelayHandler) ActivateRoot(c *gin.Context) {
-	version, ok := relayRootVersion(c)
+// ActivateKey 轮换第二步：切换到预备版本签发。根证书和票据有在服务的节点还没收到时 409。
+// POST /api/v1/admin/relay/keys/:purpose/:version/activate
+func (h *RelayHandler) ActivateKey(c *gin.Context) {
+	purpose, version, ok := relayKeyTarget(c, true)
 	if !ok {
 		return
 	}
@@ -370,17 +388,17 @@ func (h *RelayHandler) ActivateRoot(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.runtime.ActivateRoot(c.Request.Context(), actor, version); err != nil {
+	if err := h.runtime.ActivateKey(c.Request.Context(), actor, purpose, version); err != nil {
 		relayError(c, err)
 		return
 	}
 	response.Success(c, nil)
 }
 
-// RetireRoot 根证书轮换第三步：停用旧根（新根签发满 25 小时后），或放弃预备根。
-// POST /api/v1/admin/relay/roots/:version/retire
-func (h *RelayHandler) RetireRoot(c *gin.Context) {
-	version, ok := relayRootVersion(c)
+// RetireKey 轮换第三步：停用旧版本（新版本签发够久之后），或放弃预备版本。
+// POST /api/v1/admin/relay/keys/:purpose/:version/retire
+func (h *RelayHandler) RetireKey(c *gin.Context) {
+	purpose, version, ok := relayKeyTarget(c, true)
 	if !ok {
 		return
 	}
@@ -388,7 +406,7 @@ func (h *RelayHandler) RetireRoot(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.runtime.RetireRoot(c.Request.Context(), actor, version); err != nil {
+	if err := h.runtime.RetireKey(c.Request.Context(), actor, purpose, version); err != nil {
 		relayError(c, err)
 		return
 	}

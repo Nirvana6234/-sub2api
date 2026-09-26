@@ -6,9 +6,9 @@ import "context"
 const (
 	AuditRelaySwitched        = "relay_switched"
 	AuditGeneralConfigChanged = "general_config_changed"
-	AuditRootStaged           = "root_staged"
-	AuditRootActivated        = "root_activated"
-	AuditRootRetired          = "root_retired"
+	AuditKeyStaged            = "key_staged"
+	AuditKeyActivated         = "key_activated"
+	AuditKeyRetired           = "key_retired"
 )
 
 type sourceIPKey struct{}

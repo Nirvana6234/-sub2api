@@ -168,17 +168,17 @@ type globalSnapshot struct {
 	settings map[string]string
 	sections map[string][]byte
 	general  GeneralConfig
-	roots    []string
+	trust    Trust
 	hash     string
 }
 
 // buildGlobal 读取设置和各分段，生成共用部分。含密钥字段的 JSON 值被剔除并报错。
-func buildGlobal(ctx context.Context, settings SettingsReader, sections map[string]SectionProvider, roots []string, onSecret func(key string)) (*globalSnapshot, error) {
+func buildGlobal(ctx context.Context, settings SettingsReader, sections map[string]SectionProvider, trust Trust, onSecret func(key string)) (*globalSnapshot, error) {
 	values, err := settings.GetMultiple(ctx, ForwardingSettingKeys)
 	if err != nil {
 		return nil, fmt.Errorf("read forwarding settings: %w", err)
 	}
-	g := &globalSnapshot{settings: map[string]string{}, sections: map[string][]byte{}, roots: append([]string(nil), roots...)}
+	g := &globalSnapshot{settings: map[string]string{}, sections: map[string][]byte{}, trust: trust}
 	for _, key := range ForwardingSettingKeys {
 		v, ok := values[key]
 		if !ok {
@@ -209,7 +209,7 @@ func buildGlobal(ctx context.Context, settings SettingsReader, sections map[stri
 	if err != nil {
 		return nil, err
 	}
-	g.hash = hashParts(canonicalMap(g.settings), canonicalBytesMap(g.sections), mustJSON(g.general), mustJSON(g.roots))
+	g.hash = hashParts(canonicalMap(g.settings), canonicalBytesMap(g.sections), mustJSON(g.general), mustJSON(g.trust.deliveryIDs()))
 	return g, nil
 }
 
@@ -234,7 +234,8 @@ func (g *globalSnapshot) snapshotFor(node *Node) *relayv1.ConfigSnapshot {
 		Settings:         settings,
 		Sections:         sections,
 		NodeConfig:       nodeJSON,
-		RootFingerprints: append([]string(nil), g.roots...),
+		RootFingerprints: append([]string(nil), g.trust.RootFingerprints...),
+		TicketPublicKeys: cloneSigningKeys(g.trust.TicketPublicKeys),
 	}
 }
 
@@ -314,3 +315,11 @@ const configRebuildDelay = 200 * time.Millisecond
 
 // configRecheckInterval 是定时重新生成快照的间隔：兜住绕开设置仓储直接改库的情况。
 const configRecheckInterval = 30 * time.Second
+
+func cloneSigningKeys(in []*relayv1.SigningPublicKey) []*relayv1.SigningPublicKey {
+	out := make([]*relayv1.SigningPublicKey, 0, len(in))
+	for _, k := range in {
+		out = append(out, &relayv1.SigningPublicKey{Version: k.Version, PublicKey: append([]byte(nil), k.PublicKey...)})
+	}
+	return out
+}

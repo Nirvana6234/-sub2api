@@ -111,7 +111,7 @@ func RegisterAdminRoutes(
 		// 本地进程插件管理
 		registerPluginRoutes(admin, h, stepUpAuth)
 
-		// 主从分流：从节点管理、通用配置、根证书轮换（改动全部要求二次验证，设计 11.5）
+		// 主从分流：从节点管理、通用配置、密钥轮换（改动全部要求二次验证，设计 11.5）
 		registerRelayRoutes(admin, h, stepUpAuth)
 
 		// API Key 管理
@@ -966,9 +966,9 @@ func registerRelayRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth
 		relay.POST("/nodes/:id/revoke", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.RevokeNode)
 		relay.PUT("/nodes/:id/allow-multi-ip", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.SetNodeAllowMultiIP)
 
-		relay.GET("/roots", h.Admin.Relay.ListRoots)
-		relay.POST("/roots/stage", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.StageRoot)
-		relay.POST("/roots/:version/activate", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.ActivateRoot)
-		relay.POST("/roots/:version/retire", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.RetireRoot)
+		relay.GET("/keys/:purpose", h.Admin.Relay.ListKeys)
+		relay.POST("/keys/:purpose/stage", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.StageKey)
+		relay.POST("/keys/:purpose/:version/activate", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.ActivateKey)
+		relay.POST("/keys/:purpose/:version/retire", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.RetireKey)
 	}
 }

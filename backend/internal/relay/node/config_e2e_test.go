@@ -58,7 +58,7 @@ func startMaster(t *testing.T) *testMaster {
 
 	m.nodes = master.NewNodes(m.store, ca, nil, master.NodesOptions{})
 	m.events = master.NewEventHub()
-	m.publisher = master.NewConfigPublisher(m.repo, m.store, m.events, ca.RootFingerprints)
+	m.publisher = master.NewConfigPublisher(m.repo, m.store, m.events, func() master.Trust { return master.Trust{RootFingerprints: ca.RootFingerprints()} })
 	m.invalid = master.NewInvalidator(m.events)
 	hub.Subscribe(m.publisher.OnSettingsChanged)
 	m.events.OnConnect = func(nodeID int64) { m.publisher.NotifyNode(context.Background(), nodeID) }

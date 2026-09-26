@@ -2,6 +2,7 @@ package master
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -72,9 +73,9 @@ type Runtime struct {
 	running *runningRelay
 	unsub   func()
 
-	// rootMu 串行化根证书轮换操作（预备、启用、停用）。
-	rootMu sync.Mutex
-	now    func() time.Time
+	// keyMu 串行化密钥轮换操作（预备、启用、停用）。
+	keyMu sync.Mutex
+	now   func() time.Time
 }
 
 type runningRelay struct {
@@ -89,6 +90,7 @@ type runningRelay struct {
 	unsubscribe func()
 	ca          *CA
 	keys        *keystore.Store
+	signing     *signingKeys
 }
 
 // NewRuntime 创建运行时（不启动任何东西）。
@@ -269,6 +271,10 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 	if err != nil {
 		return nil, fmt.Errorf("load relay root certificate: %w", err)
 	}
+	signing, err := loadSigningKeys(keys)
+	if err != nil {
+		return nil, err
+	}
 	general, err := LoadGeneralConfig(ctx, r.deps.Settings)
 	if err != nil {
 		return nil, err
@@ -280,7 +286,9 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 		return nil, fmt.Errorf("load relay nodes: %w", err)
 	}
 	events := NewEventHub()
-	publisher := NewConfigPublisher(r.deps.Settings, r.deps.Store, events, ca.RootFingerprints)
+	publisher := NewConfigPublisher(r.deps.Settings, r.deps.Store, events, func() Trust {
+		return Trust{RootFingerprints: ca.RootFingerprints(), TicketPublicKeys: signing.ticketPublicKeys()}
+	})
 	invalidator := NewInvalidator(events)
 
 	server, err := transport.NewServer(transport.ServerOptions{
@@ -309,7 +317,7 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 	}
 
 	runCtx, cancel := context.WithCancel(context.Background())
-	running := &runningRelay{server: server, listener: lis, nodes: nodes, publisher: publisher, events: events, invalidator: invalidator, cancel: cancel, ca: ca, keys: keys}
+	running := &runningRelay{server: server, listener: lis, nodes: nodes, publisher: publisher, events: events, invalidator: invalidator, cancel: cancel, ca: ca, keys: keys, signing: signing}
 	var unsubs []func()
 	if r.deps.Hub != nil {
 		unsubs = append(unsubs, r.deps.Hub.Subscribe(publisher.OnSettingsChanged))
@@ -419,30 +427,32 @@ func relayKeyDir(c config.RelayConfig) string {
 // 来源 IP 由 handler 用 WithSourceIP 放进 ctx）----
 
 var (
-	// ErrRelayNotRunning：主从分流没在运行，节点和根证书操作做不了。
+	// ErrRelayNotRunning：主从分流没在运行，节点和密钥操作做不了。
 	ErrRelayNotRunning = errors.New("relay is not running; turn it on first")
 	// ErrInvalidGeneralConfig：通用配置不合法。
 	ErrInvalidGeneralConfig = errors.New("invalid relay general config")
-	// ErrRootNotFound：没有这个版本的根证书（或已停用）。
-	ErrRootNotFound = errors.New("relay root version not found")
-	// ErrRootNotStaged：只有预备中的根证书可以启用。
-	ErrRootNotStaged = errors.New("only a staged relay root can be activated")
-	// ErrRootInUse：正在签发的根证书不能停用，先启用新的根证书。
-	ErrRootInUse = errors.New("the signing relay root cannot be retired; activate a new root first")
-	// ErrRootRetireTooEarly：新根证书启用未满 rootRetireAfterActivation，旧根签的节点证书可能还在用。
-	ErrRootRetireTooEarly = errors.New("the new relay root has not signed long enough for every node certificate to be reissued")
-	// ErrRootNotDelivered：还有在服务的节点没拿到预备根证书的指纹，这时切换签发会让它们连不上。
-	ErrRootNotDelivered = errors.New("some serving relay nodes have not received the staged root fingerprint yet")
+	// ErrUnknownKeyPurpose：密钥用途不是 root_ca / ticket / voucher。
+	ErrUnknownKeyPurpose = errors.New("unknown relay key purpose")
+	// ErrKeyNotFound：没有这个版本（或已停用）。
+	ErrKeyNotFound = errors.New("relay key version not found")
+	// ErrKeyNotStaged：只有预备中的版本可以启用。
+	ErrKeyNotStaged = errors.New("only a staged relay key can be activated")
+	// ErrKeyInUse：正在签发的版本不能停用，先启用新版本。
+	ErrKeyInUse = errors.New("the signing relay key cannot be retired; activate a new version first")
+	// ErrKeyRetireTooEarly：新版本签发还不够久，旧版本签的证书、票据或凭证可能还在用。
+	ErrKeyRetireTooEarly = errors.New("the new relay key has not signed long enough for everything signed by the old one to expire")
+	// ErrKeyNotDelivered：还有在服务的节点没拿到预备版本，这时切换签发会让它们认不出新签名。
+	ErrKeyNotDelivered = errors.New("some serving relay nodes have not received the staged key yet")
 )
 
-// RootNotDeliveredError 列出还没拿到预备根证书指纹的节点。errors.Is(err, ErrRootNotDelivered) 成立。
-type RootNotDeliveredError struct{ NodeIDs []int64 }
+// KeyNotDeliveredError 列出还没拿到预备版本的节点。errors.Is(err, ErrKeyNotDelivered) 成立。
+type KeyNotDeliveredError struct{ NodeIDs []int64 }
 
-func (e *RootNotDeliveredError) Error() string {
-	return fmt.Sprintf("%s (nodes %v)", ErrRootNotDelivered.Error(), e.NodeIDs)
+func (e *KeyNotDeliveredError) Error() string {
+	return fmt.Sprintf("%s (nodes %v)", ErrKeyNotDelivered.Error(), e.NodeIDs)
 }
 
-func (e *RootNotDeliveredError) Unwrap() error { return ErrRootNotDelivered }
+func (e *KeyNotDeliveredError) Unwrap() error { return ErrKeyNotDelivered }
 
 // rootRetireAfterActivation：新根证书启用满这么久才能停用旧根。节点证书 24 小时有效，
 // 到这时用旧根签的节点证书都已过期，停用旧根不会让在线节点断开。
@@ -546,40 +556,69 @@ func (r *Runtime) SetNodeAllowMultiIP(ctx context.Context, nodeID, actor int64, 
 	return r.nodeOp(func(n *Nodes) error { return n.SetAllowMultiIP(ctx, nodeID, actor, allow) })
 }
 
-// RootInfo 描述一个根证书版本（管理页展示）。
-type RootInfo struct {
-	Version     int        `json:"version"`
+// KeyInfo 描述一个密钥版本（管理页展示）。
+type KeyInfo struct {
+	Purpose keystore.Purpose `json:"purpose"`
+	Version int              `json:"version"`
+	// Fingerprint：根证书是证书指纹，票据和凭证是公钥的 SHA-256。
 	Fingerprint string     `json:"fingerprint"`
 	Staged      bool       `json:"staged"`
 	Signing     bool       `json:"signing"`
 	CreatedAt   time.Time  `json:"created_at"`
 	ActivatedAt *time.Time `json:"activated_at,omitempty"`
-	// PendingNodeIDs：预备版本还没送达的在服务节点（为空才能启用）。
+	// PendingNodeIDs：预备版本还没送达的在服务节点（为空才能启用；凭证不下发，恒为空）。
 	PendingNodeIDs []int64 `json:"pending_node_ids,omitempty"`
 }
 
-// Roots 列出未停用的根证书版本。
-func (r *Runtime) Roots(ctx context.Context) ([]RootInfo, error) {
+// ParseKeyPurpose 校验管理接口里的用途名。
+func ParseKeyPurpose(s string) (keystore.Purpose, error) {
+	switch p := keystore.Purpose(s); p {
+	case keystore.PurposeRootCA, keystore.PurposeTicket, keystore.PurposeVoucher:
+		return p, nil
+	}
+	return "", ErrUnknownKeyPurpose
+}
+
+func keyFingerprint(k *keystore.Key) string {
+	if k.Purpose == keystore.PurposeRootCA {
+		return transport.CertificateFingerprint(k.Certificate)
+	}
+	pub, _ := k.Signer.Public().(ed25519.PublicKey)
+	return publicKeyFingerprint(pub)
+}
+
+// keyDeliveryID 是这个版本下发给节点时的标识（与 Trust.deliveryIDs 一致）。
+func keyDeliveryID(k *keystore.Key) string {
+	if k.Purpose == keystore.PurposeRootCA {
+		return rootDeliveryID(transport.CertificateFingerprint(k.Certificate))
+	}
+	pub, _ := k.Signer.Public().(ed25519.PublicKey)
+	return ticketDeliveryID(uint32(k.Version), pub)
+}
+
+// Keys 列出某种用途未停用的版本。
+func (r *Runtime) Keys(ctx context.Context, purpose keystore.Purpose) ([]KeyInfo, error) {
 	rr, err := r.runningRelay()
 	if err != nil {
 		return nil, err
 	}
-	ring, err := rr.keys.Ring(keystore.PurposeRootCA)
+	ring, err := rr.keys.Ring(purpose)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]RootInfo, 0, len(ring.Keys))
+	out := make([]KeyInfo, 0, len(ring.Keys))
 	for _, k := range ring.Keys {
-		info := RootInfo{
+		info := KeyInfo{
+			Purpose:     purpose,
 			Version:     k.Version,
-			Fingerprint: transport.CertificateFingerprint(k.Certificate),
+			Fingerprint: keyFingerprint(k),
 			Staged:      k.Staged,
 			Signing:     ring.Active != nil && ring.Active.Version == k.Version,
 			CreatedAt:   k.CreatedAt,
 			ActivatedAt: k.ActivatedAt,
 		}
-		if k.Staged {
-			if info.PendingNodeIDs, err = r.nodesMissingRoot(ctx, rr, info.Fingerprint); err != nil {
+		if k.Staged && keyNeedsDelivery(purpose) {
+			if info.PendingNodeIDs, err = r.nodesMissingKey(ctx, rr, k); err != nil {
 				return nil, err
 			}
 		}
@@ -588,9 +627,9 @@ func (r *Runtime) Roots(ctx context.Context) ([]RootInfo, error) {
 	return out, nil
 }
 
-// nodesMissingRoot 返回在服务（已激活、排空中）但还没拉到这个根证书指纹的节点。
-// 离线的在服务节点也算：它回来时要能认出新根证书签的主节点证书。
-func (r *Runtime) nodesMissingRoot(ctx context.Context, rr *runningRelay, fingerprint string) ([]int64, error) {
+// nodesMissingKey 返回在服务（已激活、排空中）但还没拉到这个版本的节点。
+// 离线的在服务节点也算：它回来时要能认出新版本签的东西。
+func (r *Runtime) nodesMissingKey(ctx context.Context, rr *runningRelay, k *keystore.Key) ([]int64, error) {
 	nodes, err := r.deps.Store.List(ctx)
 	if err != nil {
 		return nil, err
@@ -601,18 +640,25 @@ func (r *Runtime) nodesMissingRoot(ctx context.Context, rr *runningRelay, finger
 			serving = append(serving, n.ID)
 		}
 	}
-	return rr.publisher.NodesMissingRoot(serving, fingerprint), nil
+	return rr.publisher.nodesMissing(serving, keyDeliveryID(k)), nil
 }
 
-// reloadRoots 根证书变动后重新加载 CA 并立即重新生成配置（新指纹随配置推给节点）。
-func (r *Runtime) reloadRoots(ctx context.Context, rr *runningRelay) error {
-	if err := rr.ca.Reload(); err != nil {
+// reloadKeys 密钥变动后重新加载：根证书重载 CA，票据和凭证重载签名器；
+// 然后立即重新生成配置（新根指纹、新票据公钥随配置推给节点）。
+func (r *Runtime) reloadKeys(ctx context.Context, rr *runningRelay, purpose keystore.Purpose) error {
+	var err error
+	if purpose == keystore.PurposeRootCA {
+		err = rr.ca.Reload()
+	} else {
+		err = rr.signing.reload()
+	}
+	if err != nil {
 		return err
 	}
 	return rr.publisher.Rebuild(ctx)
 }
 
-func findRoot(ring *keystore.Ring, version int) *keystore.Key {
+func findKey(ring *keystore.Ring, version int) *keystore.Key {
 	for _, k := range ring.Keys {
 		if k.Version == version {
 			return k
@@ -621,96 +667,97 @@ func findRoot(ring *keystore.Ring, version int) *keystore.Key {
 	return nil
 }
 
-// StageRoot 轮换第一步：生成预备根证书。它的指纹随配置推给所有从节点，
-// 等在服务的节点都拿到之后才能 ActivateRoot（开发计划 WP4：新指纹先下发，再切换签发，最后停用旧根）。
-func (r *Runtime) StageRoot(ctx context.Context, actor int64) (RootInfo, error) {
+// StageKey 轮换第一步：生成预备版本。根证书指纹、票据公钥随配置推给所有从节点，
+// 等在服务的节点都拿到之后才能 ActivateKey（开发计划 WP4、WP5：先下发，再切换签发，最后停用旧版本）。
+func (r *Runtime) StageKey(ctx context.Context, actor int64, purpose keystore.Purpose) (KeyInfo, error) {
 	rr, err := r.runningRelay()
 	if err != nil {
-		return RootInfo{}, err
+		return KeyInfo{}, err
 	}
-	r.rootMu.Lock()
-	defer r.rootMu.Unlock()
-	k, err := rr.keys.Stage(keystore.PurposeRootCA)
+	r.keyMu.Lock()
+	defer r.keyMu.Unlock()
+	k, err := rr.keys.Stage(purpose)
 	if err != nil {
-		return RootInfo{}, err
+		return KeyInfo{}, err
 	}
-	fp := transport.CertificateFingerprint(k.Certificate)
-	if err := r.reloadRoots(ctx, rr); err != nil {
-		return RootInfo{}, err
+	if err := r.reloadKeys(ctx, rr, purpose); err != nil {
+		return KeyInfo{}, err
 	}
-	r.audit(ctx, actor, AuditRootStaged, map[string]any{"version": k.Version, "fingerprint": fp})
-	return RootInfo{Version: k.Version, Fingerprint: fp, Staged: true, CreatedAt: k.CreatedAt}, nil
+	fp := keyFingerprint(k)
+	r.audit(ctx, actor, AuditKeyStaged, map[string]any{"purpose": purpose, "version": k.Version, "fingerprint": fp})
+	return KeyInfo{Purpose: purpose, Version: k.Version, Fingerprint: fp, Staged: true, CreatedAt: k.CreatedAt}, nil
 }
 
-// ActivateRoot 轮换第二步：用预备根证书签发（主节点证书、之后的节点证书）。
-// 还有在服务的节点没拿到它的指纹时拒绝（RootNotDeliveredError）：切换后它们认不出主节点证书。
-func (r *Runtime) ActivateRoot(ctx context.Context, actor int64, version int) error {
+// ActivateKey 轮换第二步：切换到预备版本签发。根证书和票据要求所有在服务的节点
+// 都已拿到它（KeyNotDeliveredError），否则切换后它们认不出新签名。
+func (r *Runtime) ActivateKey(ctx context.Context, actor int64, purpose keystore.Purpose, version int) error {
 	rr, err := r.runningRelay()
 	if err != nil {
 		return err
 	}
-	r.rootMu.Lock()
-	defer r.rootMu.Unlock()
-	ring, err := rr.keys.Ring(keystore.PurposeRootCA)
+	r.keyMu.Lock()
+	defer r.keyMu.Unlock()
+	ring, err := rr.keys.Ring(purpose)
 	if err != nil {
 		return err
 	}
-	target := findRoot(ring, version)
+	target := findKey(ring, version)
 	if target == nil {
-		return ErrRootNotFound
+		return ErrKeyNotFound
 	}
 	if !target.Staged {
-		return ErrRootNotStaged
+		return ErrKeyNotStaged
 	}
-	fp := transport.CertificateFingerprint(target.Certificate)
-	missing, err := r.nodesMissingRoot(ctx, rr, fp)
-	if err != nil {
+	if keyNeedsDelivery(purpose) {
+		missing, err := r.nodesMissingKey(ctx, rr, target)
+		if err != nil {
+			return err
+		}
+		if len(missing) > 0 {
+			return &KeyNotDeliveredError{NodeIDs: missing}
+		}
+	}
+	if err := rr.keys.Activate(purpose, version); err != nil {
 		return err
 	}
-	if len(missing) > 0 {
-		return &RootNotDeliveredError{NodeIDs: missing}
-	}
-	if err := rr.keys.Activate(keystore.PurposeRootCA, version); err != nil {
+	if err := r.reloadKeys(ctx, rr, purpose); err != nil {
 		return err
 	}
-	if err := r.reloadRoots(ctx, rr); err != nil {
-		return err
-	}
-	r.audit(ctx, actor, AuditRootActivated, map[string]any{"version": version, "fingerprint": fp})
+	r.audit(ctx, actor, AuditKeyActivated, map[string]any{"purpose": purpose, "version": version, "fingerprint": keyFingerprint(target)})
 	return nil
 }
 
-// RetireRoot 轮换第三步：停用旧根证书。签发用的根证书启用满 25 小时后才允许
-// （这时旧根签的节点证书都已过期）。预备中的根证书随时可以放弃。
-func (r *Runtime) RetireRoot(ctx context.Context, actor int64, version int) error {
+// RetireKey 轮换第三步：停用旧版本。新版本签发满 keyRetireWait 后才允许（这时旧版本签的
+// 节点证书 / 票据都已过期、凭证都已超过入账期限）。预备中的版本随时可以放弃。
+func (r *Runtime) RetireKey(ctx context.Context, actor int64, purpose keystore.Purpose, version int) error {
 	rr, err := r.runningRelay()
 	if err != nil {
 		return err
 	}
-	r.rootMu.Lock()
-	defer r.rootMu.Unlock()
-	ring, err := rr.keys.Ring(keystore.PurposeRootCA)
+	r.keyMu.Lock()
+	defer r.keyMu.Unlock()
+	ring, err := rr.keys.Ring(purpose)
 	if err != nil {
 		return err
 	}
-	target := findRoot(ring, version)
+	target := findKey(ring, version)
 	if target == nil {
-		return ErrRootNotFound
+		return ErrKeyNotFound
 	}
 	if !target.Staged {
 		if ring.Active == nil || ring.Active.Version == version {
-			return ErrRootInUse
+			return ErrKeyInUse
 		}
-		if ring.Active.ActivatedAt == nil || r.now().Sub(*ring.Active.ActivatedAt) < rootRetireAfterActivation {
-			return ErrRootRetireTooEarly
+		if ring.Active.ActivatedAt == nil || r.now().Sub(*ring.Active.ActivatedAt) < keyRetireWait(purpose) {
+			return ErrKeyRetireTooEarly
 		}
 	}
-	if err := rr.keys.Retire(keystore.PurposeRootCA, version); err != nil {
+	if err := rr.keys.Retire(purpose, version); err != nil {
 		return err
 	}
-	if err := r.reloadRoots(ctx, rr); err != nil {
+	if err := r.reloadKeys(ctx, rr, purpose); err != nil {
 		return err
 	}
-	r.audit(ctx, actor, AuditRootRetired, map[string]any{"version": version, "fingerprint": transport.CertificateFingerprint(target.Certificate), "staged": target.Staged})
+	r.audit(ctx, actor, AuditKeyRetired, map[string]any{"purpose": purpose, "version": version, "fingerprint": keyFingerprint(target), "staged": target.Staged})
 	return nil
 }

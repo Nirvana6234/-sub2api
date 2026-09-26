@@ -18,7 +18,7 @@ func TestRootRotationWaitsForEveryServingNode(t *testing.T) {
 	clock := time.Now()
 	master.SetRuntimeClock(h.runtime, func() time.Time { return clock })
 
-	_, err := h.runtime.StageRoot(ctx, 7)
+	_, err := h.runtime.StageKey(ctx, 7, keystore.PurposeRootCA)
 	require.ErrorIs(t, err, master.ErrRelayNotRunning)
 
 	st, err := h.runtime.SetEnabled(ctx, 7, true)
@@ -32,21 +32,21 @@ func TestRootRotationWaitsForEveryServingNode(t *testing.T) {
 	_, err = h.runtime.Publisher().FetchConfig(ctx, n.ID, "")
 	require.NoError(t, err)
 
-	staged, err := h.runtime.StageRoot(ctx, 7)
+	staged, err := h.runtime.StageKey(ctx, 7, keystore.PurposeRootCA)
 	require.NoError(t, err)
-	_, err = h.runtime.StageRoot(ctx, 7)
+	_, err = h.runtime.StageKey(ctx, 7, keystore.PurposeRootCA)
 	require.ErrorIs(t, err, keystore.ErrAlreadyStaged, "one staged root at a time")
 
-	roots, err := h.runtime.Roots(ctx)
+	roots, err := h.runtime.Keys(ctx, keystore.PurposeRootCA)
 	require.NoError(t, err)
 	require.Len(t, roots, 2)
 	require.True(t, roots[0].Signing)
 	require.Equal(t, []int64{n.ID}, roots[1].PendingNodeIDs, "the node fetched before the new root existed")
 
 	// 节点还没拿到新指纹：切换签发会让它连不上，拒绝。
-	err = h.runtime.ActivateRoot(ctx, 7, staged.Version)
-	require.ErrorIs(t, err, master.ErrRootNotDelivered)
-	var nd *master.RootNotDeliveredError
+	err = h.runtime.ActivateKey(ctx, 7, keystore.PurposeRootCA, staged.Version)
+	require.ErrorIs(t, err, master.ErrKeyNotDelivered)
+	var nd *master.KeyNotDeliveredError
 	require.ErrorAs(t, err, &nd)
 	require.Equal(t, []int64{n.ID}, nd.NodeIDs)
 	require.NoError(t, hello(t, h.runtime.Status()), "still signing with the old root")
@@ -55,8 +55,8 @@ func TestRootRotationWaitsForEveryServingNode(t *testing.T) {
 	snap, err := h.runtime.Publisher().FetchConfig(ctx, n.ID, "")
 	require.NoError(t, err)
 	require.Contains(t, snap.RootFingerprints, staged.Fingerprint)
-	require.ErrorIs(t, h.runtime.ActivateRoot(ctx, 7, roots[0].Version), master.ErrRootNotStaged)
-	require.NoError(t, h.runtime.ActivateRoot(ctx, 7, staged.Version))
+	require.ErrorIs(t, h.runtime.ActivateKey(ctx, 7, keystore.PurposeRootCA, roots[0].Version), master.ErrKeyNotStaged)
+	require.NoError(t, h.runtime.ActivateKey(ctx, 7, keystore.PurposeRootCA, staged.Version))
 
 	st = h.runtime.Status()
 	st.RootFingerprints = []string{staged.Fingerprint}
@@ -65,12 +65,12 @@ func TestRootRotationWaitsForEveryServingNode(t *testing.T) {
 	require.Error(t, hello(t, st), "the master certificate is no longer signed by the old root")
 
 	// 停用：签发中的不能停；旧根要等新根签满 25 小时。
-	require.ErrorIs(t, h.runtime.RetireRoot(ctx, 7, staged.Version), master.ErrRootInUse)
-	require.ErrorIs(t, h.runtime.RetireRoot(ctx, 7, roots[0].Version), master.ErrRootRetireTooEarly)
+	require.ErrorIs(t, h.runtime.RetireKey(ctx, 7, keystore.PurposeRootCA, staged.Version), master.ErrKeyInUse)
+	require.ErrorIs(t, h.runtime.RetireKey(ctx, 7, keystore.PurposeRootCA, roots[0].Version), master.ErrKeyRetireTooEarly)
 	clock = clock.Add(26 * time.Hour)
-	require.NoError(t, h.runtime.RetireRoot(ctx, 7, roots[0].Version))
-	require.ErrorIs(t, h.runtime.RetireRoot(ctx, 7, roots[0].Version), master.ErrRootNotFound)
-	roots, err = h.runtime.Roots(ctx)
+	require.NoError(t, h.runtime.RetireKey(ctx, 7, keystore.PurposeRootCA, roots[0].Version))
+	require.ErrorIs(t, h.runtime.RetireKey(ctx, 7, keystore.PurposeRootCA, roots[0].Version), master.ErrKeyNotFound)
+	roots, err = h.runtime.Keys(ctx, keystore.PurposeRootCA)
 	require.NoError(t, err)
 	require.Len(t, roots, 1)
 	require.Equal(t, staged.Fingerprint, roots[0].Fingerprint)
@@ -79,7 +79,7 @@ func TestRootRotationWaitsForEveryServingNode(t *testing.T) {
 	for _, a := range h.store.Audits() {
 		actions[a.Action] = a
 	}
-	for _, action := range []string{master.AuditRelaySwitched, master.AuditRootStaged, master.AuditRootActivated, master.AuditRootRetired} {
+	for _, action := range []string{master.AuditRelaySwitched, master.AuditKeyStaged, master.AuditKeyActivated, master.AuditKeyRetired} {
 		a, ok := actions[action]
 		require.True(t, ok, action)
 		require.Equal(t, int64(7), a.ActorUserID, action)
@@ -93,10 +93,10 @@ func TestStagedRootCanBeAbandoned(t *testing.T) {
 	h := newRuntime(t, nil)
 	_, err := h.runtime.SetEnabled(ctx, 1, true)
 	require.NoError(t, err)
-	staged, err := h.runtime.StageRoot(ctx, 1)
+	staged, err := h.runtime.StageKey(ctx, 1, keystore.PurposeRootCA)
 	require.NoError(t, err)
-	require.NoError(t, h.runtime.RetireRoot(ctx, 1, staged.Version))
-	_, err = h.runtime.StageRoot(ctx, 1)
+	require.NoError(t, h.runtime.RetireKey(ctx, 1, keystore.PurposeRootCA, staged.Version))
+	_, err = h.runtime.StageKey(ctx, 1, keystore.PurposeRootCA)
 	require.NoError(t, err)
 }
 
