@@ -12,9 +12,10 @@ Sub2API. Keep all keys and account tokens on the server, outside source control.
 
 ## Paired custom releases
 
-The September 26 custom release pairs backend `4a27790` with management UI
-`b80ce2e`. Build the Linux backend with CGO enabled against Debian Bookworm
-(matching the pinned production image), and build the frontend as one HTML
+The current September 26 release is `20260926-4a27790-s2ui-0b7bdcf`, pairing
+backend `4a27790` with management UI `0b7bdcf`. Build the Linux backend with CGO
+enabled against Debian Bookworm (matching the pinned production image), and
+build the frontend as one HTML
 file. The production image remains pinned; bind-mount the versioned backend
 and `management.html` read-only into `/CLIProxyAPI/CLIProxyAPI` and
 `/CLIProxyAPI/static/management.html`. Preserve the existing plugin mount.
@@ -36,6 +37,24 @@ client keys to `[plus]`, and add `credential_group: plus` to the existing Plus
 OAuth account. Preserve all tokens and unrelated fields. Keep the existing
 Sub2API account's URL and key. Subsequent releases must preserve operator pool
 choices rather than repeating this initial migration. Explicit `[]` denies a key.
+
+## Management workflow
+
+The management UI follows the Sub2API workflow through three separate pages:
+
+- **分组管理** (`#/credential-pools`): create groups, manage their accounts, and
+  follow account/key counts to the corresponding filtered lists.
+- **账号管理** (`#/auth-files`): filter accounts by group and assign a group to
+  one account or a selected batch. Assignment replaces an OAuth account's
+  existing memberships; confirm replacement when moving a legacy multi-group
+  account.
+- **API 密钥** (`#/api-keys`): create keys with explicit groups, edit group
+  access, disable/enable keys, and rotate keys while preserving their bindings.
+  Keys can access multiple groups; a disabled key has an empty binding (`[]`).
+
+Create the groups, assign accounts, and then select those groups for each key
+before using it in Sub2API. When replacing a key, also update the corresponding
+Sub2API upstream credential; rotating a CPA key does not update Sub2API for you.
 
 ## Release procedure
 
@@ -82,9 +101,15 @@ pool/deny binding against the running management API, account memberships,
 enabled plugin registration, TLS hostname/certificate validity through local
 Nginx, and the running backend commit plus served HTML against the active
 release manifest when present.
-It also requests model lists from the actual Sub2API network namespace over
-the shared Docker network. Keys pass only in memory/private stdin, never argv
-or logs. Output contains counts and check status, not keys, accounts or tokens.
+It also requests model lists using the keys currently configured in CPA, from
+the actual Sub2API network namespace over the shared Docker network. This does
+not check whether Sub2API's stored upstream credential still matches a current
+CPA key. Separately compare that credential with CPA's current configuration in
+a read-only check before declaring the configured Sub2API connection healthy.
+Keep values in memory and report only match status; never automatically restore
+a key removed by the operator to resolve a mismatch.
+Keys pass only in memory/private stdin, never argv or logs. Output contains
+counts and check status, not keys, accounts or tokens.
 Model lists verify authentication/reachability, not upstream generation health.
 
 The original `provision.sh` and compose template describe first installation
