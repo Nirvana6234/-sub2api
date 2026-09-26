@@ -666,11 +666,6 @@ func (s *BillingCacheService) loadAPIKeyRateLimitUsage(ctx context.Context, apiK
 	return s.applyRateLimitWindows(apiKey, cacheData.Usage5h, cacheData.Usage1d, cacheData.Usage7d, w5h, w1d, w7d), nil
 }
 
-// evaluateRateLimits checks usage against limits, triggering async resets for expired windows.
-func (s *BillingCacheService) evaluateRateLimits(_ context.Context, apiKey *APIKey, usage5h, usage1d, usage7d float64, w5h, w1d, w7d *time.Time) error {
-	return s.applyRateLimitWindows(apiKey, usage5h, usage1d, usage7d, w5h, w1d, w7d).exhaustedErr(apiKey)
-}
-
 // applyRateLimitWindows 把过期窗口的用量清零，并在有窗口过期时异步重置数据库和缓存。
 func (s *BillingCacheService) applyRateLimitWindows(apiKey *APIKey, usage5h, usage1d, usage7d float64, w5h, w1d, w7d *time.Time) *apiKeyRateLimitUsage {
 	needsReset := false
