@@ -63,8 +63,9 @@ func (v *Invalidator) Group(groupID int64) {
 }
 
 // OnAccessChange 把业务层的改动（service.AccessChangeHub）转成作废通知。
-// 订阅和平台配额都按用户作废：从节点按用户缓存的状态（Key 解析结果、小白端内部 Key、
-// 额度）整体丢掉重取，比逐个维度作废简单，而这类改动很少，重取的代价可以忽略。
+// 订阅和平台配额都按用户作废：从节点丢掉这个用户的缓存（Key 解析结果、小白端内部 Key
+// 解析结果）重取。作废只清缓存，**不动额度租约**：租约是主节点锁定的钱，从节点本地丢掉
+// 主节点也要等租约到期才能放回；额度的收回按设计 4.4 由主节点发起（WP6 订阅同一个中心）。
 func (v *Invalidator) OnAccessChange(c service.AccessChange) {
 	switch c.Kind {
 	case service.AccessChangeGroup:
