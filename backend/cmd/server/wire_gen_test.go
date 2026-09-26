@@ -98,6 +98,7 @@ func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {
 		nil, // promptAudit
 		nil, // pluginManager
 		service.ContributionRoomWiring{},
+		nil, // relayRuntime
 	)
 
 	require.NotPanics(t, func() {
