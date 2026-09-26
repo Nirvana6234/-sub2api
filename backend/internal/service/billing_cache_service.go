@@ -579,29 +579,57 @@ func (s *BillingCacheService) InvalidateAPIKeyRateLimit(ctx context.Context, key
 // It loads usage from Redis cache (falling back to DB on cache miss),
 // resets expired windows in-memory and triggers async DB reset,
 // and returns an error if any window limit is exceeded.
+// 取不到用量（缓存和数据库都出错）时放行，与原有行为一致。
 func (s *BillingCacheService) checkAPIKeyRateLimits(ctx context.Context, apiKey *APIKey) error {
+	usage, err := s.loadAPIKeyRateLimitUsage(ctx, apiKey)
+	if err != nil || usage == nil {
+		return nil // Don't block requests on DB errors
+	}
+	return usage.exhaustedErr(apiKey)
+}
+
+// apiKeyRateLimitUsage 是 API Key 5 小时 / 1 天 / 7 天窗口在"现在"的用量（过期窗口已清零）。
+type apiKeyRateLimitUsage struct {
+	usage5h, usage1d, usage7d float64
+}
+
+func (u *apiKeyRateLimitUsage) exhaustedErr(apiKey *APIKey) error {
+	if apiKey.RateLimit5h > 0 && u.usage5h >= apiKey.RateLimit5h {
+		return ErrAPIKeyRateLimit5hExceeded
+	}
+	if apiKey.RateLimit1d > 0 && u.usage1d >= apiKey.RateLimit1d {
+		return ErrAPIKeyRateLimit1dExceeded
+	}
+	if apiKey.RateLimit7d > 0 && u.usage7d >= apiKey.RateLimit7d {
+		return ErrAPIKeyRateLimit7dExceeded
+	}
+	return nil
+}
+
+// loadAPIKeyRateLimitUsage 读 Key 的窗口用量：先读缓存，未命中查库并回填；过期窗口按规则清零并异步重置。
+// 没有加载器也没有缓存时返回 (nil, nil)；数据取不到时返回错误（资格检查据此放行，额度服务据此不给额度）。
+func (s *BillingCacheService) loadAPIKeyRateLimitUsage(ctx context.Context, apiKey *APIKey) (*apiKeyRateLimitUsage, error) {
 	if s.cache == nil {
-		// No cache: fall back to reading from DB directly
 		if s.apiKeyRateLimitLoader == nil {
-			return nil
+			return nil, nil
 		}
 		data, err := s.apiKeyRateLimitLoader.GetRateLimitData(ctx, apiKey.ID)
 		if err != nil {
-			return nil // Don't block requests on DB errors
+			return nil, err
 		}
-		return s.evaluateRateLimits(ctx, apiKey, data.Usage5h, data.Usage1d, data.Usage7d,
-			data.Window5hStart, data.Window1dStart, data.Window7dStart)
+		return s.applyRateLimitWindows(apiKey, data.Usage5h, data.Usage1d, data.Usage7d,
+			data.Window5hStart, data.Window1dStart, data.Window7dStart), nil
 	}
 
 	cacheData, err := s.cache.GetAPIKeyRateLimit(ctx, apiKey.ID)
 	if err != nil {
-		// Cache miss: load from DB and populate cache
+		// Cache miss: fall back to DB
 		if s.apiKeyRateLimitLoader == nil {
-			return nil
+			return nil, err
 		}
 		dbData, dbErr := s.apiKeyRateLimitLoader.GetRateLimitData(ctx, apiKey.ID)
 		if dbErr != nil {
-			return nil // Don't block requests on DB errors
+			return nil, dbErr
 		}
 		// Build cache entry from DB data
 		cacheEntry := &APIKeyRateLimitCacheData{
@@ -635,11 +663,16 @@ func (s *BillingCacheService) checkAPIKeyRateLimits(ctx context.Context, apiKey 
 		t := time.Unix(cacheData.Window7d, 0)
 		w7d = &t
 	}
-	return s.evaluateRateLimits(ctx, apiKey, cacheData.Usage5h, cacheData.Usage1d, cacheData.Usage7d, w5h, w1d, w7d)
+	return s.applyRateLimitWindows(apiKey, cacheData.Usage5h, cacheData.Usage1d, cacheData.Usage7d, w5h, w1d, w7d), nil
 }
 
 // evaluateRateLimits checks usage against limits, triggering async resets for expired windows.
-func (s *BillingCacheService) evaluateRateLimits(ctx context.Context, apiKey *APIKey, usage5h, usage1d, usage7d float64, w5h, w1d, w7d *time.Time) error {
+func (s *BillingCacheService) evaluateRateLimits(_ context.Context, apiKey *APIKey, usage5h, usage1d, usage7d float64, w5h, w1d, w7d *time.Time) error {
+	return s.applyRateLimitWindows(apiKey, usage5h, usage1d, usage7d, w5h, w1d, w7d).exhaustedErr(apiKey)
+}
+
+// applyRateLimitWindows 把过期窗口的用量清零，并在有窗口过期时异步重置数据库和缓存。
+func (s *BillingCacheService) applyRateLimitWindows(apiKey *APIKey, usage5h, usage1d, usage7d float64, w5h, w1d, w7d *time.Time) *apiKeyRateLimitUsage {
 	needsReset := false
 
 	// Reset expired windows in-memory for check purposes
@@ -680,18 +713,7 @@ func (s *BillingCacheService) evaluateRateLimits(ctx context.Context, apiKey *AP
 			}
 		}()
 	}
-
-	// Check limits
-	if apiKey.RateLimit5h > 0 && usage5h >= apiKey.RateLimit5h {
-		return ErrAPIKeyRateLimit5hExceeded
-	}
-	if apiKey.RateLimit1d > 0 && usage1d >= apiKey.RateLimit1d {
-		return ErrAPIKeyRateLimit1dExceeded
-	}
-	if apiKey.RateLimit7d > 0 && usage7d >= apiKey.RateLimit7d {
-		return ErrAPIKeyRateLimit7dExceeded
-	}
-	return nil
+	return &apiKeyRateLimitUsage{usage5h: usage5h, usage1d: usage1d, usage7d: usage7d}
 }
 
 // QueueUpdateAPIKeyRateLimitUsage asynchronously updates rate limit usage in the cache.
@@ -1114,8 +1136,45 @@ func (s *BillingCacheService) checkUserPlatformQuotaEligibility(
 	userID int64,
 	platform string,
 ) error {
-	if platform == "" || s.userPlatformQuotaRepo == nil {
+	st, err := s.loadUserPlatformQuotaState(ctx, userID, platform)
+	if err != nil || st == nil {
+		// 取不到数据时放行（fail-open，原因已在 load 里记日志）；没有配额行 = 不限。
 		return nil
+	}
+	return st.exhaustedErr()
+}
+
+// platformQuotaState 是 user × platform 配额在"现在"的状态（窗口已按规则重置）。
+type platformQuotaState struct {
+	now                                   time.Time
+	dailyLimit, weeklyLimit, monthlyLimit *float64
+	daily, weekly, monthly                float64
+	monthlyWindowStart                    *time.Time
+}
+
+// exhaustedErr 返回第一个用完的窗口对应的错误（带重置时间），都没用完返回 nil。
+func (st *platformQuotaState) exhaustedErr() error {
+	if st.dailyLimit != nil && st.daily >= *st.dailyLimit {
+		return withWindowResetsMetadata(ErrUserPlatformDailyQuotaExhausted, nextDailyReset(st.now))
+	}
+	if st.weeklyLimit != nil && st.weekly >= *st.weeklyLimit {
+		return withWindowResetsMetadata(ErrUserPlatformWeeklyQuotaExhausted, nextWeeklyReset(st.now))
+	}
+	if st.monthlyLimit != nil && st.monthly >= *st.monthlyLimit {
+		return withWindowResetsMetadata(ErrUserPlatformMonthlyQuotaExhausted, nextMonthlyResetFrom(st.monthlyWindowStart, st.now))
+	}
+	return nil
+}
+
+// loadUserPlatformQuotaState 读配额状态：先读缓存，缓存未命中、旧版或 Redis 故障时查库（并回填）。
+// 没有配额行时返回 (nil, nil)；数据取不到时返回错误（资格检查据此放行，额度服务据此不给额度）。
+func (s *BillingCacheService) loadUserPlatformQuotaState(
+	ctx context.Context,
+	userID int64,
+	platform string,
+) (*platformQuotaState, error) {
+	if platform == "" || s.userPlatformQuotaRepo == nil {
+		return nil, nil
 	}
 
 	// cache 未配置（如简化部署 / 单测路径）→ 直接走 DB 查询，避免 nil panic。
@@ -1197,16 +1256,12 @@ func (s *BillingCacheService) checkUserPlatformQuotaEligibility(
 			}
 			setCancel()
 		}
-		if entry.DailyLimitUSD != nil && dailyUsage >= *entry.DailyLimitUSD {
-			return withWindowResetsMetadata(ErrUserPlatformDailyQuotaExhausted, nextDailyReset(now))
-		}
-		if entry.WeeklyLimitUSD != nil && weeklyUsage >= *entry.WeeklyLimitUSD {
-			return withWindowResetsMetadata(ErrUserPlatformWeeklyQuotaExhausted, nextWeeklyReset(now))
-		}
-		if entry.MonthlyLimitUSD != nil && monthlyUsage >= *entry.MonthlyLimitUSD {
-			return withWindowResetsMetadata(ErrUserPlatformMonthlyQuotaExhausted, nextMonthlyResetFrom(entry.MonthlyWindowStart, now))
-		}
-		return nil
+		return &platformQuotaState{
+			now:        now,
+			dailyLimit: entry.DailyLimitUSD, weeklyLimit: entry.WeeklyLimitUSD, monthlyLimit: entry.MonthlyLimitUSD,
+			daily: dailyUsage, weekly: weeklyUsage, monthly: monthlyUsage,
+			monthlyWindowStart: entry.MonthlyWindowStart,
+		}, nil
 	}
 
 	// --- cache MISS、旧版 entry 或 Redis 故障 → 查 DB（singleflight 合并并发回源）---
@@ -1230,11 +1285,11 @@ func (s *BillingCacheService) checkUserPlatformQuotaEligibility(
 	case <-ctx.Done():
 		// 当前 caller 的 ctx 被取消：fail-open，不阻断 (此请求已无意义)。
 		logger.LegacyPrintf("service.billing_cache", "Warning: user platform quota check ctx cancelled user=%d platform=%s: %v (fail-open)", userID, platform, ctx.Err())
-		return nil
+		return nil, ctx.Err()
 	}
 	if dbErr != nil {
 		logger.LegacyPrintf("service.billing_cache", "Warning: load user platform quota failed user=%d platform=%s: %v (fail-open)", userID, platform, dbErr)
-		return nil
+		return nil, dbErr
 	}
 	rec, _ := v.(*UserPlatformQuotaRecord)
 	if rec == nil {
@@ -1265,7 +1320,7 @@ func (s *BillingCacheService) checkUserPlatformQuotaEligibility(
 			}
 			setCancel()
 		}
-		return nil
+		return nil, nil
 	}
 
 	now := time.Now()
@@ -1282,18 +1337,15 @@ func (s *BillingCacheService) checkUserPlatformQuotaEligibility(
 		monthlyUsage = 0
 	}
 
+	st := &platformQuotaState{
+		now:        now,
+		dailyLimit: rec.DailyLimitUSD, weeklyLimit: rec.WeeklyLimitUSD, monthlyLimit: rec.MonthlyLimitUSD,
+		daily: dailyUsage, weekly: weeklyUsage, monthly: monthlyUsage,
+		monthlyWindowStart: rec.MonthlyWindowStart,
+	}
 	// Redis 故障时 fail-open：不回填，直接用 DB 数据做一次性检查
 	if cacheErr != nil {
-		if rec.DailyLimitUSD != nil && dailyUsage >= *rec.DailyLimitUSD {
-			return withWindowResetsMetadata(ErrUserPlatformDailyQuotaExhausted, nextDailyReset(now))
-		}
-		if rec.WeeklyLimitUSD != nil && weeklyUsage >= *rec.WeeklyLimitUSD {
-			return withWindowResetsMetadata(ErrUserPlatformWeeklyQuotaExhausted, nextWeeklyReset(now))
-		}
-		if rec.MonthlyLimitUSD != nil && monthlyUsage >= *rec.MonthlyLimitUSD {
-			return withWindowResetsMetadata(ErrUserPlatformMonthlyQuotaExhausted, nextMonthlyResetFrom(rec.MonthlyWindowStart, now))
-		}
-		return nil
+		return st, nil
 	}
 
 	// cache MISS 或旧版 entry → 回填完整 entry（含 limits 和 window_start）
@@ -1321,16 +1373,7 @@ func (s *BillingCacheService) checkUserPlatformQuotaEligibility(
 		setCancel()
 	}
 
-	if rec.DailyLimitUSD != nil && dailyUsage >= *rec.DailyLimitUSD {
-		return withWindowResetsMetadata(ErrUserPlatformDailyQuotaExhausted, nextDailyReset(now))
-	}
-	if rec.WeeklyLimitUSD != nil && weeklyUsage >= *rec.WeeklyLimitUSD {
-		return withWindowResetsMetadata(ErrUserPlatformWeeklyQuotaExhausted, nextWeeklyReset(now))
-	}
-	if rec.MonthlyLimitUSD != nil && monthlyUsage >= *rec.MonthlyLimitUSD {
-		return withWindowResetsMetadata(ErrUserPlatformMonthlyQuotaExhausted, nextMonthlyResetFrom(rec.MonthlyWindowStart, now))
-	}
-	return nil
+	return st, nil
 }
 
 // withWindowResetsMetadata 给 quota error 附加 window_resets_at metadata（RFC3339）。
