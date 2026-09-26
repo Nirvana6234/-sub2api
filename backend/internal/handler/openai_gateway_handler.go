@@ -2329,77 +2329,127 @@ func (h *OpenAIGatewayHandler) acquireOpenAIAccountSlot(
 			h.handleStreamingAwareErrorWithCode(c, status, errType, code, message, *streamStarted, false)
 		}
 	}
-	if selection == nil || selection.Account == nil {
+	if selection != nil && selection.Account != nil {
+		// 兜底事实要先回到请求 ctx 上：记用量跑在 detached worker，
+		// submitOpenAIUsageRecordTask 取的 parent 就是 c.Request.Context()，
+		// 只重放到本函数的局部 ctx 的话，usage_logs 的 fallback_* 依旧是空的。
+		c.Request = c.Request.WithContext(service.ContextWithSelectionFallbackTrace(c.Request.Context(), selection))
+	}
+	var (
+		onTick     func() error
+		cannotWait error
+	)
+	if reqStream && h.concurrencyHelper.pingFormat != "" {
+		if flusher, ok := c.Writer.(http.Flusher); ok {
+			onTick = h.concurrencyHelper.sseTick(c, flusher, streamStarted)
+		} else {
+			cannotWait = fmt.Errorf("streaming not supported")
+		}
+	}
+	ctx, admission := OpenAIAccountAdmitter{Gateway: h.gatewayService, Concurrency: h.concurrencyHelper}.
+		Admit(c.Request.Context(), groupID, sessionHash, selection, onTick, cannotWait, reqLog)
+	switch admission.Kind {
+	case OpenAIAdmitted:
+		return wrapReleaseOnDone(ctx, admission.Release), openAISlotAcquireOK
+	case OpenAIAdmissionProfitVetoed:
+		return nil, openAISlotAcquireProfitVetoed
+	case OpenAIAdmissionQueueFull:
+		writeError(http.StatusTooManyRequests, "rate_limit_error", gatewayQueueFullCode, "Too many pending requests, please retry later")
+	case OpenAIAdmissionSlotError:
+		status, errType, code, message := concurrencyErrorResponse(admission.Err, "account")
+		writeError(status, errType, code, message)
+	default:
 		markOpsRoutingCapacityLimited(c)
 		writeError(http.StatusServiceUnavailable, "api_error", "", "No available accounts")
-		return nil, openAISlotAcquireFailed
 	}
+	return nil, openAISlotAcquireFailed
+}
 
-	// 兜底事实要先回到请求 ctx 上：记用量跑在 detached worker，
-	// submitOpenAIUsageRecordTask 取的 parent 就是 c.Request.Context()，
-	// 只重放到本函数的局部 ctx 的话，usage_logs 的 fallback_* 依旧是空的。
-	c.Request = c.Request.WithContext(service.ContextWithSelectionFallbackTrace(c.Request.Context(), selection))
+// OpenAIAdmissionKind 是一次账号准入的结果。
+type OpenAIAdmissionKind int
+
+const (
+	// OpenAIAdmitted：拿到槽位、通过利润终检，Release 在请求结束时调用。
+	OpenAIAdmitted OpenAIAdmissionKind = iota
+	// OpenAIAdmissionProfitVetoed：拿到槽位后利润终检否决，槽位已释放；调用方排除该账号重选。
+	OpenAIAdmissionProfitVetoed
+	// OpenAIAdmissionNoAccounts：没选到账号或没有等待计划（503 No available accounts）。
+	OpenAIAdmissionNoAccounts
+	// OpenAIAdmissionQueueFull：账号等待队列已满（429）。
+	OpenAIAdmissionQueueFull
+	// OpenAIAdmissionSlotError：抢槽出错或排队超时（Err，按 concurrencyErrorResponse 转响应）。
+	OpenAIAdmissionSlotError
+)
+
+// OpenAIAdmission 是 Admit 的结果。
+type OpenAIAdmission struct {
+	Kind    OpenAIAdmissionKind
+	Release func()
+	Err     error
+}
+
+// OpenAIAccountAdmitter 是 OpenAI 选号后的账号准入：抢槽（抢不到按等待计划排队）、利润终检、
+// 粘性会话绑定。本地选号循环（acquireOpenAIAccountSlot）和主从分流主节点的选号共用这一个实现，
+// 两边结果一致（开发计划 WP7）。它不写客户端：排队期间的保活由 onTick 负责（本地发 SSE ping；
+// 主节点不传，从节点自己保活）；cannotWait 非空时不排队（抢不到就以它失败，本地流式响应不能刷新时）。
+// 返回的 Release 没有绑定 ctx：主节点上槽位要占到从节点释放为止。
+type OpenAIAccountAdmitter struct {
+	Gateway     *service.OpenAIGatewayService
+	Concurrency *ConcurrencyHelper
+}
+
+// Admit 对 selection 做准入。返回的 ctx 带着选号结果里的利润门（后续终检、绑定用）。
+func (a OpenAIAccountAdmitter) Admit(
+	parent context.Context,
+	groupID *int64,
+	sessionHash string,
+	selection *service.AccountSelectionResult,
+	onTick func() error,
+	cannotWait error,
+	reqLog *zap.Logger,
+) (context.Context, OpenAIAdmission) {
+	if selection == nil || selection.Account == nil {
+		return parent, OpenAIAdmission{Kind: OpenAIAdmissionNoAccounts}
+	}
 	// 终检与准入后绑定使用选号结果携带的门：composite 等跨分组调度解析出的
 	// 门只存在于调度栈的局部 ctx，必须经选号结果重放到本函数的 ctx 上。
-	ctx := service.ContextWithSelectionProfitGate(c.Request.Context(), selection)
+	ctx := service.ContextWithSelectionProfitGate(parent, selection)
 	account := selection.Account
 	if selection.Acquired {
-		latest, vetoed, reason := h.gatewayService.ProfitControlVetoLatest(ctx, account)
+		latest, vetoed, reason := a.Gateway.ProfitControlVetoLatest(ctx, account)
 		if vetoed {
 			if selection.ReleaseFunc != nil {
 				selection.ReleaseFunc()
 			}
 			reqLog.Debug("openai.account_slot_profit_vetoed", zap.Int64("account_id", account.ID), zap.String("reason", reason))
-			return nil, openAISlotAcquireProfitVetoed
+			return ctx, OpenAIAdmission{Kind: OpenAIAdmissionProfitVetoed}
 		}
-		account = latest
 		selection.Account = latest
 		// 调度器已抢槽路径无门时由选号内部完成 eager 绑定；门下选号内部
 		// 推迟绑定，这里在终检通过后补准入后绑定。
 		if selection.ProfitGateActive() {
-			if err := h.gatewayService.BindStickySessionAfterProfitAdmission(ctx, groupID, sessionHash, account.ID); err != nil {
-				reqLog.Warn("openai.bind_sticky_session_after_profit_admission_failed", zap.Int64("account_id", account.ID), zap.Error(err))
+			if err := a.Gateway.BindStickySessionAfterProfitAdmission(ctx, groupID, sessionHash, latest.ID); err != nil {
+				reqLog.Warn("openai.bind_sticky_session_after_profit_admission_failed", zap.Int64("account_id", latest.ID), zap.Error(err))
 			}
 		}
-		return wrapReleaseOnDone(ctx, selection.ReleaseFunc), openAISlotAcquireOK
+		return ctx, OpenAIAdmission{Kind: OpenAIAdmitted, Release: selection.ReleaseFunc}
 	}
 	if selection.WaitPlan == nil {
-		markOpsRoutingCapacityLimited(c)
-		writeError(http.StatusServiceUnavailable, "api_error", "", "No available accounts")
-		return nil, openAISlotAcquireFailed
+		return ctx, OpenAIAdmission{Kind: OpenAIAdmissionNoAccounts}
 	}
 
-	fastReleaseFunc, fastAcquired, err := h.concurrencyHelper.TryAcquireAccountSlot(
-		ctx,
-		account.ID,
-		selection.WaitPlan.MaxConcurrency,
-	)
+	fastReleaseFunc, fastAcquired, err := a.Concurrency.TryAcquireAccountSlot(ctx, account.ID, selection.WaitPlan.MaxConcurrency)
 	if err != nil {
 		reqLog.Warn("openai.account_slot_quick_acquire_failed", zap.Int64("account_id", account.ID), zap.Error(err))
-		status, errType, code, message := concurrencyErrorResponse(err, "account")
-		writeError(status, errType, code, message)
-		return nil, openAISlotAcquireFailed
+		return ctx, OpenAIAdmission{Kind: OpenAIAdmissionSlotError, Err: err}
 	}
 	if fastAcquired {
 		// 分组利润控制：快速抢槽成功后终检。选号与抢槽之间账号
 		// 倍率可能刷新，越线则释放槽位交由调用方排除重选，不绑定粘连。
-		latest, vetoed, reason := h.gatewayService.ProfitControlVetoLatest(ctx, account)
-		if vetoed {
-			if fastReleaseFunc != nil {
-				fastReleaseFunc()
-			}
-			reqLog.Debug("openai.account_slot_profit_vetoed", zap.Int64("account_id", account.ID), zap.String("reason", reason))
-			return nil, openAISlotAcquireProfitVetoed
-		}
-		account = latest
-		selection.Account = latest
-		if err := h.gatewayService.BindStickySessionAfterProfitAdmission(ctx, groupID, sessionHash, account.ID); err != nil {
-			reqLog.Warn("openai.bind_sticky_session_after_profit_admission_failed", zap.Int64("account_id", account.ID), zap.Error(err))
-		}
-		return wrapReleaseOnDone(ctx, fastReleaseFunc), openAISlotAcquireOK
+		return a.checkAndBind(ctx, groupID, sessionHash, selection, account, fastReleaseFunc, reqLog)
 	}
 
-	canWait, waitErr := h.concurrencyHelper.IncrementAccountWaitCount(ctx, account.ID, selection.WaitPlan.MaxWaiting)
+	canWait, waitErr := a.Concurrency.IncrementAccountWaitCount(ctx, account.ID, selection.WaitPlan.MaxWaiting)
 	if waitErr != nil {
 		reqLog.Warn("openai.account_wait_counter_increment_failed", zap.Int64("account_id", account.ID), zap.Error(waitErr))
 	} else if !canWait {
@@ -2407,52 +2457,68 @@ func (h *OpenAIGatewayHandler) acquireOpenAIAccountSlot(
 			zap.Int64("account_id", account.ID),
 			zap.Int("max_waiting", selection.WaitPlan.MaxWaiting),
 		)
-		writeError(http.StatusTooManyRequests, "rate_limit_error", gatewayQueueFullCode, "Too many pending requests, please retry later")
-		return nil, openAISlotAcquireFailed
+		return ctx, OpenAIAdmission{Kind: OpenAIAdmissionQueueFull}
 	}
 
 	accountWaitCounted := waitErr == nil && canWait
 	releaseWait := func() {
 		if accountWaitCounted {
-			h.concurrencyHelper.DecrementAccountWaitCount(ctx, account.ID)
+			a.Concurrency.DecrementAccountWaitCount(ctx, account.ID)
 			accountWaitCounted = false
 		}
 	}
 	defer releaseWait()
 
-	accountReleaseFunc, err := h.concurrencyHelper.AcquireAccountSlotWithWaitTimeout(
-		c,
-		account.ID,
-		selection.WaitPlan.MaxConcurrency,
-		selection.WaitPlan.Timeout,
-		reqStream,
-		streamStarted,
-	)
+	var accountReleaseFunc func()
+	if cannotWait != nil {
+		// 与原先顺序一致：先试一次立即抢槽，抢不到才因为不能排队而失败。
+		release, acquired, aerr := a.Concurrency.acquireSlotOnce(ctx, "account", account.ID, selection.WaitPlan.MaxConcurrency)
+		switch {
+		case aerr != nil:
+			err = aerr
+		case !acquired:
+			err = cannotWait
+		default:
+			accountReleaseFunc = release
+		}
+	} else {
+		accountReleaseFunc, err = a.Concurrency.waitForSlot(ctx, "account", account.ID, selection.WaitPlan.MaxConcurrency, selection.WaitPlan.Timeout, true, onTick)
+	}
 	if err != nil {
 		reqLog.Warn("openai.account_slot_acquire_failed", zap.Int64("account_id", account.ID), zap.Error(err))
-		status, errType, code, message := concurrencyErrorResponse(err, "account")
-		writeError(status, errType, code, message)
-		return nil, openAISlotAcquireFailed
+		return ctx, OpenAIAdmission{Kind: OpenAIAdmissionSlotError, Err: err}
 	}
 
 	// Slot acquired: no longer waiting in queue.
 	releaseWait()
 	// 分组利润控制：WaitPlan 排队成功后终检。排队期间账号倍率
 	// 可能上调，越线则释放槽位交由调用方排除重选，不绑定粘连。
-	latest, vetoed, reason := h.gatewayService.ProfitControlVetoLatest(ctx, account)
+	return a.checkAndBind(ctx, groupID, sessionHash, selection, account, accountReleaseFunc, reqLog)
+}
+
+// checkAndBind：抢到槽位后的利润终检和粘性绑定。
+func (a OpenAIAccountAdmitter) checkAndBind(
+	ctx context.Context,
+	groupID *int64,
+	sessionHash string,
+	selection *service.AccountSelectionResult,
+	account *service.Account,
+	release func(),
+	reqLog *zap.Logger,
+) (context.Context, OpenAIAdmission) {
+	latest, vetoed, reason := a.Gateway.ProfitControlVetoLatest(ctx, account)
 	if vetoed {
-		if accountReleaseFunc != nil {
-			accountReleaseFunc()
+		if release != nil {
+			release()
 		}
 		reqLog.Debug("openai.account_slot_profit_vetoed", zap.Int64("account_id", account.ID), zap.String("reason", reason))
-		return nil, openAISlotAcquireProfitVetoed
+		return ctx, OpenAIAdmission{Kind: OpenAIAdmissionProfitVetoed}
 	}
-	account = latest
 	selection.Account = latest
-	if err := h.gatewayService.BindStickySessionAfterProfitAdmission(ctx, groupID, sessionHash, account.ID); err != nil {
-		reqLog.Warn("openai.bind_sticky_session_after_profit_admission_failed", zap.Int64("account_id", account.ID), zap.Error(err))
+	if err := a.Gateway.BindStickySessionAfterProfitAdmission(ctx, groupID, sessionHash, latest.ID); err != nil {
+		reqLog.Warn("openai.bind_sticky_session_after_profit_admission_failed", zap.Int64("account_id", latest.ID), zap.Error(err))
 	}
-	return wrapReleaseOnDone(ctx, accountReleaseFunc), openAISlotAcquireOK
+	return ctx, OpenAIAdmission{Kind: OpenAIAdmitted, Release: release}
 }
 
 // ResponsesWebSocket handles OpenAI Responses API WebSocket ingress endpoint

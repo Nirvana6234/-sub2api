@@ -359,7 +359,67 @@ func (h *ConcurrencyHelper) waitForSlotWithPing(c *gin.Context, slotType string,
 
 // waitForSlotWithPingTimeout waits for a concurrency slot with a custom timeout.
 func (h *ConcurrencyHelper) waitForSlotWithPingTimeout(c *gin.Context, slotType string, id int64, maxConcurrency int, timeout time.Duration, isStream bool, streamStarted *bool, tryImmediate bool) (func(), error) {
-	ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
+	// Determine if ping is needed (streaming + ping format defined)
+	var onTick func() error
+	if isStream && h.pingFormat != "" {
+		flusher, ok := c.Writer.(http.Flusher)
+		if !ok {
+			// 与原先顺序一致：先试一次立即抢槽，抢不到才因为不能发 ping 而失败。
+			if tryImmediate {
+				if release, acquired, err := h.acquireSlotOnce(c.Request.Context(), slotType, id, maxConcurrency); err != nil || acquired {
+					return release, err
+				}
+			}
+			return nil, fmt.Errorf("streaming not supported")
+		}
+		onTick = h.sseTick(c, flusher, streamStarted)
+	}
+	return h.waitForSlot(c.Request.Context(), slotType, id, maxConcurrency, timeout, tryImmediate, onTick)
+}
+
+// sseTick 返回排队期间给客户端发一次 SSE ping 的回调（第一次发时补上流式响应头）。
+func (h *ConcurrencyHelper) sseTick(c *gin.Context, flusher http.Flusher, streamStarted *bool) func() error {
+	return func() error {
+		// Send ping to keep connection alive
+		if !*streamStarted {
+			c.Header("Content-Type", "text/event-stream")
+			c.Header("Cache-Control", "no-cache")
+			c.Header("Connection", "keep-alive")
+			c.Header("X-Accel-Buffering", "no")
+			*streamStarted = true
+		}
+		written, err := fmt.Fprint(c.Writer, string(h.pingFormat))
+		if err != nil {
+			return err
+		}
+		recordGatewayStreamHeartbeat(c, written)
+		flusher.Flush()
+		return nil
+	}
+}
+
+// acquireSlotOnce 立即抢一次槽位。
+func (h *ConcurrencyHelper) acquireSlotOnce(ctx context.Context, slotType string, id int64, maxConcurrency int) (func(), bool, error) {
+	var (
+		result *service.AcquireResult
+		err    error
+	)
+	if slotType == "user" {
+		result, err = h.concurrencyService.AcquireUserSlot(ctx, id, maxConcurrency)
+	} else {
+		result, err = h.concurrencyService.AcquireAccountSlot(ctx, id, maxConcurrency)
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return result.ReleaseFunc, result.Acquired, nil
+}
+
+// waitForSlot 排队抢一个槽位，只依赖 ctx：等待期间每个 ping 间隔调一次 onTick（本地路径给客户端发
+// SSE ping 保活；主从分流时主节点替从节点排队，不传 onTick，保活由从节点自己发）。
+// 超时返回 ConcurrencyError（IsTimeout），parent 被取消时返回 parent 的错误。
+func (h *ConcurrencyHelper) waitForSlot(parent context.Context, slotType string, id int64, maxConcurrency int, timeout time.Duration, tryImmediate bool, onTick func() error) (func(), error) {
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 
 	acquireSlot := func() (*service.AcquireResult, error) {
@@ -379,21 +439,9 @@ func (h *ConcurrencyHelper) waitForSlotWithPingTimeout(c *gin.Context, slotType 
 		}
 	}
 
-	// Determine if ping is needed (streaming + ping format defined)
-	needPing := isStream && h.pingFormat != ""
-
-	var flusher http.Flusher
-	if needPing {
-		var ok bool
-		flusher, ok = c.Writer.(http.Flusher)
-		if !ok {
-			return nil, fmt.Errorf("streaming not supported")
-		}
-	}
-
 	// Only create ping ticker if ping is needed
 	var pingCh <-chan time.Time
-	if needPing {
+	if onTick != nil {
 		pingTicker := time.NewTicker(h.pingInterval)
 		defer pingTicker.Stop()
 		pingCh = pingTicker.C
@@ -406,7 +454,7 @@ func (h *ConcurrencyHelper) waitForSlotWithPingTimeout(c *gin.Context, slotType 
 	for {
 		select {
 		case <-ctx.Done():
-			if parentErr := c.Request.Context().Err(); parentErr != nil {
+			if parentErr := parent.Err(); parentErr != nil {
 				return nil, parentErr
 			}
 			return nil, &ConcurrencyError{
@@ -415,20 +463,9 @@ func (h *ConcurrencyHelper) waitForSlotWithPingTimeout(c *gin.Context, slotType 
 			}
 
 		case <-pingCh:
-			// Send ping to keep connection alive
-			if !*streamStarted {
-				c.Header("Content-Type", "text/event-stream")
-				c.Header("Cache-Control", "no-cache")
-				c.Header("Connection", "keep-alive")
-				c.Header("X-Accel-Buffering", "no")
-				*streamStarted = true
-			}
-			written, err := fmt.Fprint(c.Writer, string(h.pingFormat))
-			if err != nil {
+			if err := onTick(); err != nil {
 				return nil, err
 			}
-			recordGatewayStreamHeartbeat(c, written)
-			flusher.Flush()
 
 		case <-timer.C:
 			// Try to acquire slot
@@ -444,6 +481,11 @@ func (h *ConcurrencyHelper) waitForSlotWithPingTimeout(c *gin.Context, slotType 
 			timer.Reset(backoff)
 		}
 	}
+}
+
+// WaitForAccountSlot 排队抢账号槽（不写客户端）：主从分流时主节点替从节点排队用。
+func (h *ConcurrencyHelper) WaitForAccountSlot(ctx context.Context, accountID int64, maxConcurrency int, timeout time.Duration) (func(), error) {
+	return h.waitForSlot(ctx, "account", accountID, maxConcurrency, timeout, true, nil)
 }
 
 // AcquireAccountSlotWithWaitTimeout acquires an account slot with a custom timeout (keeps SSE ping).
