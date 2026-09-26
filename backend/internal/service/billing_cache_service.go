@@ -106,6 +106,9 @@ type subscriptionCacheInvalidationPubSub interface {
 type BillingCacheService struct {
 	// accessChanges 在订阅作废时发布改动（主从分流推给从节点，见 AccessChangeHub）。
 	accessChanges atomic.Pointer[AccessChangeHub]
+	// relayReserved 返回锁在主从分流从节点上的余额（设计 4.3）。主从分流运行时挂上，
+	// 关闭时为 nil：余额预检不做任何额外读取，行为与单机一致。
+	relayReserved atomic.Pointer[relayReservedHolder]
 
 	cache                 BillingCache
 	userRepo              UserRepository
@@ -883,7 +886,25 @@ func (s *BillingCacheService) balanceBelowEligibilityThreshold(balance float64) 
 	return minimumReserve > 0 && balance < minimumReserve
 }
 
-// checkBalanceEligibility 检查余额模式资格
+// RelayReservedBalanceReader 返回某个用户锁在从节点上的余额。由主从分流的额度服务实现：
+// 主节点只有一个进程，锁定、收回、入账都经过它，所以直接读内存，不查库、不查 Redis。
+type RelayReservedBalanceReader interface {
+	RelayReservedBalance(userID int64) float64
+}
+
+type relayReservedHolder struct{ r RelayReservedBalanceReader }
+
+// SetRelayReservedBalanceReader 挂上（nil 表示摘下）冻结额读取。
+func (s *BillingCacheService) SetRelayReservedBalanceReader(r RelayReservedBalanceReader) {
+	if r == nil {
+		s.relayReserved.Store(nil)
+		return
+	}
+	s.relayReserved.Store(&relayReservedHolder{r: r})
+}
+
+// checkBalanceEligibility 检查余额模式资格。余额缓存存的是真实余额（扣费时直接减它），
+// 判断用"余额 − 锁在从节点上的部分"（设计 4.3）。
 func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, userID int64) error {
 	balance, err := s.GetUserBalance(ctx, userID)
 	if err != nil {
@@ -895,6 +916,9 @@ func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, userI
 	}
 	if s.circuitBreaker != nil {
 		s.circuitBreaker.OnSuccess()
+	}
+	if h := s.relayReserved.Load(); h != nil {
+		balance = SpendableBalance(balance, h.r.RelayReservedBalance(userID))
 	}
 
 	if s.balanceBelowEligibilityThreshold(balance) {

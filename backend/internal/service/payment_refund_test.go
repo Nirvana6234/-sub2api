@@ -125,6 +125,7 @@ func TestPrepDeductBalanceRequiresForceWhenBalanceIsInsufficient(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
 		balance     float64
+		reserved    float64
 		force       bool
 		wantDeduct  float64
 		wantWarning bool
@@ -132,10 +133,13 @@ func TestPrepDeductBalanceRequiresForceWhenBalanceIsInsufficient(t *testing.T) {
 		{name: "insufficient balance", balance: 40, wantWarning: true},
 		{name: "forced insufficient balance", balance: 40, force: true, wantDeduct: 40},
 		{name: "equal balance", balance: 100, wantDeduct: 100},
+		// 锁在主从分流从节点上的余额不能退（设计 4.3）。
+		{name: "balance locked on relay nodes", balance: 100, reserved: 30, wantWarning: true},
+		{name: "forced with balance locked on relay nodes", balance: 100, reserved: 30, force: true, wantDeduct: 70},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			plan := &RefundPlan{RefundAmount: 100}
-			svc := &PaymentService{userRepo: &mockUserRepo{getByIDUser: &User{Balance: tc.balance}}}
+			svc := &PaymentService{userRepo: &mockUserRepo{getByIDUser: &User{Balance: tc.balance, RelayReservedBalance: tc.reserved}}}
 
 			result := svc.prepDeduct(context.Background(), &dbent.PaymentOrder{
 				UserID:    1,

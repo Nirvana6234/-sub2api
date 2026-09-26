@@ -444,7 +444,7 @@ func reserveUsageBillingBatchImageBalance(ctx context.Context, tx *sql.Tx, cmd *
 		SET balance = balance - $1,
 			frozen_balance = COALESCE(frozen_balance, 0) + $1,
 			updated_at = NOW()
-		WHERE id = $2 AND deleted_at IS NULL AND balance >= $1
+		WHERE id = $2 AND deleted_at IS NULL AND balance - COALESCE(relay_reserved_balance, 0) >= $1
 		RETURNING balance, frozen_balance
 	`, cmd.HoldAmount, cmd.UserID).Scan(&balance, &frozen)
 	if err == nil {

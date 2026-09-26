@@ -151,6 +151,27 @@ func (_u *UserUpdate) AddFrozenBalance(v float64) *UserUpdate {
 	return _u
 }
 
+// SetRelayReservedBalance sets the "relay_reserved_balance" field.
+func (_u *UserUpdate) SetRelayReservedBalance(v float64) *UserUpdate {
+	_u.mutation.ResetRelayReservedBalance()
+	_u.mutation.SetRelayReservedBalance(v)
+	return _u
+}
+
+// SetNillableRelayReservedBalance sets the "relay_reserved_balance" field if the given value is not nil.
+func (_u *UserUpdate) SetNillableRelayReservedBalance(v *float64) *UserUpdate {
+	if v != nil {
+		_u.SetRelayReservedBalance(*v)
+	}
+	return _u
+}
+
+// AddRelayReservedBalance adds value to the "relay_reserved_balance" field.
+func (_u *UserUpdate) AddRelayReservedBalance(v float64) *UserUpdate {
+	_u.mutation.AddRelayReservedBalance(v)
+	return _u
+}
+
 // SetConcurrency sets the "concurrency" field.
 func (_u *UserUpdate) SetConcurrency(v int) *UserUpdate {
 	_u.mutation.ResetConcurrency()
@@ -1128,6 +1149,12 @@ func (_u *UserUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.AddedFrozenBalance(); ok {
 		_spec.AddField(user.FieldFrozenBalance, field.TypeFloat64, value)
 	}
+	if value, ok := _u.mutation.RelayReservedBalance(); ok {
+		_spec.SetField(user.FieldRelayReservedBalance, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedRelayReservedBalance(); ok {
+		_spec.AddField(user.FieldRelayReservedBalance, field.TypeFloat64, value)
+	}
 	if value, ok := _u.mutation.Concurrency(); ok {
 		_spec.SetField(user.FieldConcurrency, field.TypeInt, value)
 	}
@@ -1987,6 +2014,27 @@ func (_u *UserUpdateOne) SetNillableFrozenBalance(v *float64) *UserUpdateOne {
 // AddFrozenBalance adds value to the "frozen_balance" field.
 func (_u *UserUpdateOne) AddFrozenBalance(v float64) *UserUpdateOne {
 	_u.mutation.AddFrozenBalance(v)
+	return _u
+}
+
+// SetRelayReservedBalance sets the "relay_reserved_balance" field.
+func (_u *UserUpdateOne) SetRelayReservedBalance(v float64) *UserUpdateOne {
+	_u.mutation.ResetRelayReservedBalance()
+	_u.mutation.SetRelayReservedBalance(v)
+	return _u
+}
+
+// SetNillableRelayReservedBalance sets the "relay_reserved_balance" field if the given value is not nil.
+func (_u *UserUpdateOne) SetNillableRelayReservedBalance(v *float64) *UserUpdateOne {
+	if v != nil {
+		_u.SetRelayReservedBalance(*v)
+	}
+	return _u
+}
+
+// AddRelayReservedBalance adds value to the "relay_reserved_balance" field.
+func (_u *UserUpdateOne) AddRelayReservedBalance(v float64) *UserUpdateOne {
+	_u.mutation.AddRelayReservedBalance(v)
 	return _u
 }
 
@@ -2996,6 +3044,12 @@ func (_u *UserUpdateOne) sqlSave(ctx context.Context) (_node *User, err error) {
 	}
 	if value, ok := _u.mutation.AddedFrozenBalance(); ok {
 		_spec.AddField(user.FieldFrozenBalance, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.RelayReservedBalance(); ok {
+		_spec.SetField(user.FieldRelayReservedBalance, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedRelayReservedBalance(); ok {
+		_spec.AddField(user.FieldRelayReservedBalance, field.TypeFloat64, value)
 	}
 	if value, ok := _u.mutation.Concurrency(); ok {
 		_spec.SetField(user.FieldConcurrency, field.TypeInt, value)

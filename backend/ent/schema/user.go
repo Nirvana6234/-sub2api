@@ -52,6 +52,11 @@ func (User) Fields() []ent.Field {
 		field.Float("frozen_balance").
 			SchemaType(map[string]string{dialect.Postgres: "decimal(20,8)"}).
 			Default(0),
+		// 主从分流：锁在从节点上的余额（migrations/259_relay_nodes.sql，设计 4.3）。
+		// 只由主从分流的额度服务用原始 SQL 维护，通用更新不写；可花余额 = balance - relay_reserved_balance。
+		field.Float("relay_reserved_balance").
+			SchemaType(map[string]string{dialect.Postgres: "decimal(20,8)"}).
+			Default(0),
 		field.Int("concurrency").
 			Default(30),
 		field.String("status").

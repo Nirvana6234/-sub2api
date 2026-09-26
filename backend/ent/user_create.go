@@ -131,6 +131,20 @@ func (_c *UserCreate) SetNillableFrozenBalance(v *float64) *UserCreate {
 	return _c
 }
 
+// SetRelayReservedBalance sets the "relay_reserved_balance" field.
+func (_c *UserCreate) SetRelayReservedBalance(v float64) *UserCreate {
+	_c.mutation.SetRelayReservedBalance(v)
+	return _c
+}
+
+// SetNillableRelayReservedBalance sets the "relay_reserved_balance" field if the given value is not nil.
+func (_c *UserCreate) SetNillableRelayReservedBalance(v *float64) *UserCreate {
+	if v != nil {
+		_c.SetRelayReservedBalance(*v)
+	}
+	return _c
+}
+
 // SetConcurrency sets the "concurrency" field.
 func (_c *UserCreate) SetConcurrency(v int) *UserCreate {
 	_c.mutation.SetConcurrency(v)
@@ -684,6 +698,10 @@ func (_c *UserCreate) defaults() error {
 		v := user.DefaultFrozenBalance
 		_c.mutation.SetFrozenBalance(v)
 	}
+	if _, ok := _c.mutation.RelayReservedBalance(); !ok {
+		v := user.DefaultRelayReservedBalance
+		_c.mutation.SetRelayReservedBalance(v)
+	}
 	if _, ok := _c.mutation.Concurrency(); !ok {
 		v := user.DefaultConcurrency
 		_c.mutation.SetConcurrency(v)
@@ -780,6 +798,9 @@ func (_c *UserCreate) check() error {
 	}
 	if _, ok := _c.mutation.FrozenBalance(); !ok {
 		return &ValidationError{Name: "frozen_balance", err: errors.New(`ent: missing required field "User.frozen_balance"`)}
+	}
+	if _, ok := _c.mutation.RelayReservedBalance(); !ok {
+		return &ValidationError{Name: "relay_reserved_balance", err: errors.New(`ent: missing required field "User.relay_reserved_balance"`)}
 	}
 	if _, ok := _c.mutation.Concurrency(); !ok {
 		return &ValidationError{Name: "concurrency", err: errors.New(`ent: missing required field "User.concurrency"`)}
@@ -901,6 +922,10 @@ func (_c *UserCreate) createSpec() (*User, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.FrozenBalance(); ok {
 		_spec.SetField(user.FieldFrozenBalance, field.TypeFloat64, value)
 		_node.FrozenBalance = value
+	}
+	if value, ok := _c.mutation.RelayReservedBalance(); ok {
+		_spec.SetField(user.FieldRelayReservedBalance, field.TypeFloat64, value)
+		_node.RelayReservedBalance = value
 	}
 	if value, ok := _c.mutation.Concurrency(); ok {
 		_spec.SetField(user.FieldConcurrency, field.TypeInt, value)
@@ -1361,6 +1386,24 @@ func (u *UserUpsert) UpdateFrozenBalance() *UserUpsert {
 // AddFrozenBalance adds v to the "frozen_balance" field.
 func (u *UserUpsert) AddFrozenBalance(v float64) *UserUpsert {
 	u.Add(user.FieldFrozenBalance, v)
+	return u
+}
+
+// SetRelayReservedBalance sets the "relay_reserved_balance" field.
+func (u *UserUpsert) SetRelayReservedBalance(v float64) *UserUpsert {
+	u.Set(user.FieldRelayReservedBalance, v)
+	return u
+}
+
+// UpdateRelayReservedBalance sets the "relay_reserved_balance" field to the value that was provided on create.
+func (u *UserUpsert) UpdateRelayReservedBalance() *UserUpsert {
+	u.SetExcluded(user.FieldRelayReservedBalance)
+	return u
+}
+
+// AddRelayReservedBalance adds v to the "relay_reserved_balance" field.
+func (u *UserUpsert) AddRelayReservedBalance(v float64) *UserUpsert {
+	u.Add(user.FieldRelayReservedBalance, v)
 	return u
 }
 
@@ -1825,6 +1868,27 @@ func (u *UserUpsertOne) AddFrozenBalance(v float64) *UserUpsertOne {
 func (u *UserUpsertOne) UpdateFrozenBalance() *UserUpsertOne {
 	return u.Update(func(s *UserUpsert) {
 		s.UpdateFrozenBalance()
+	})
+}
+
+// SetRelayReservedBalance sets the "relay_reserved_balance" field.
+func (u *UserUpsertOne) SetRelayReservedBalance(v float64) *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.SetRelayReservedBalance(v)
+	})
+}
+
+// AddRelayReservedBalance adds v to the "relay_reserved_balance" field.
+func (u *UserUpsertOne) AddRelayReservedBalance(v float64) *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.AddRelayReservedBalance(v)
+	})
+}
+
+// UpdateRelayReservedBalance sets the "relay_reserved_balance" field to the value that was provided on create.
+func (u *UserUpsertOne) UpdateRelayReservedBalance() *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateRelayReservedBalance()
 	})
 }
 
@@ -2505,6 +2569,27 @@ func (u *UserUpsertBulk) AddFrozenBalance(v float64) *UserUpsertBulk {
 func (u *UserUpsertBulk) UpdateFrozenBalance() *UserUpsertBulk {
 	return u.Update(func(s *UserUpsert) {
 		s.UpdateFrozenBalance()
+	})
+}
+
+// SetRelayReservedBalance sets the "relay_reserved_balance" field.
+func (u *UserUpsertBulk) SetRelayReservedBalance(v float64) *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.SetRelayReservedBalance(v)
+	})
+}
+
+// AddRelayReservedBalance adds v to the "relay_reserved_balance" field.
+func (u *UserUpsertBulk) AddRelayReservedBalance(v float64) *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.AddRelayReservedBalance(v)
+	})
+}
+
+// UpdateRelayReservedBalance sets the "relay_reserved_balance" field to the value that was provided on create.
+func (u *UserUpsertBulk) UpdateRelayReservedBalance() *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateRelayReservedBalance()
 	})
 }
 

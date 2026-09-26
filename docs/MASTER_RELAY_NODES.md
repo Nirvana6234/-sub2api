@@ -189,10 +189,13 @@ cyber 策略：
 | 维度 | 字段 | 归属 |
 |---|---|---|
 | 余额 | `users.balance` | 用户 |
-| 订阅日/周/月窗口 | `user_subscriptions.daily/weekly/monthly_usage_usd` | 用户 × 订阅分组 |
-| 分组日/周/月上限 | `groups.daily/weekly/monthly_limit_usd` | 用户 × 分组 |
+| 订阅日/周/月窗口 | 用量 `user_subscriptions.daily/weekly/monthly_usage_usd`，上限 `groups.daily/weekly/monthly_limit_usd` | 用户 × 订阅分组（租约的 `scope_id` 记分组 ID，与订阅缓存、订阅作废同一个键） |
 | 平台日/周/月配额 | `user_platform_quotas.*_limit_usd` | 用户 × 平台 |
 | Key 总额度、5 小时/1 天/7 天限额 | `api_keys.quota`、`rate_limit_5h/1d/7d` | 单个 API Key（小白端记在它的内部 Key 上，8.1） |
+
+分组的日/周/月上限只在订阅模式下、拿订阅用量来比（`checkSubscriptionEligibility`），余额模式不用，所以和订阅窗口是同一个维度；租约表里的 `group_*` 维度不使用。
+上限没配置（为空）的窗口不限，不锁、不申请。余额这一项的剩余要先减去最低保留额（`billing.minimum_balance_reserve`），和单机的余额预检一致。
+各项的"剩余"与单机的资格检查读同一份数据（余额缓存、订阅缓存、平台配额缓存、Key 限额缓存）、用同样的窗口重置规则。单机的 Key 限额检查在数据库出错时放行；锁定额度在主节点 PG / Redis 出错时一律不给（开发计划第 4 节）。
 
 所以从节点上一个用户的额度是**一组子额度**，每项各自申请、收回，都遵守 4.2 的规则。一个请求放行前，它会用到的每一项子额度都要够。
 
@@ -238,8 +241,10 @@ cyber 策略：
 
 前两处读的是缓存里的余额，做法：
 - **鉴权层不动**：`apiKeyBalanceBelowAuthThreshold` 只拦余额 ≤ 0，继续看 `balance`，Key 鉴权缓存不变。余额为正、但全被锁在从节点上的用户能过鉴权层，由下一步预检拦下。
-- **预检减去冻结额**：余额缓存（`GetUserBalance`，现在只有预检在读，扣费时 `QueueDeductBalance` 直接减它）保持存真实余额；另加一个按用户缓存的冻结额，锁定、收回、入账时更新；`checkBalanceEligibility` 用"余额 − 冻结额"判断。
+- **预检减去冻结额**：余额缓存（`GetUserBalance`，现在只有预检在读，扣费时 `QueueDeductBalance` 直接减它）保持存真实余额；冻结额由主节点的额度服务放在内存里（主节点只有一个进程，锁定、收回、入账都经过它），挂到 `BillingCacheService` 上；`checkBalanceEligibility` 用"余额 − 冻结额"判断。主从分流关闭时不挂，预检不做任何额外读取。
   不把余额缓存直接改成可花余额：从节点的记录入账时余额和冻结额同时减、可花余额不变，现有的"扣费即减缓存"就错了。
+- **扣费后的缓存处理不改**（`gateway_usage_billing.go` 的 `syncBalanceCacheAfterDeduction`）：它按新余额决定作废余额缓存还是直接减缓存，缓存里存的是真实余额，看真实余额是对的；冻结额在预检时才减。
+- 退款的余额判断和"可用余额扣减"（`DeductAvailableBalance`）、批量图片冻结的余额条件都改成看"余额 − 冻结额"，锁在从节点上的钱不能退、不能挪去冻结。
 余额显示、低余额提醒、用户接口、管理后台的代码不用改。主节点入账时同步更新余额缓存。
 
 ### 4.4 收回

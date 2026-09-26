@@ -925,7 +925,8 @@ func (r *userRepository) DeductBalance(ctx context.Context, id int64, amount flo
 	return nil
 }
 
-// DeductAvailableBalance atomically deducts min(amount, max(balance, 0)).
+// DeductAvailableBalance atomically deducts min(amount, max(balance - relay_reserved_balance, 0)).
+// 锁在主从分流从节点上的余额（relay_reserved_balance，设计 4.3）不能退。
 // Unlike DeductBalance, this refund-specific operation never increases an
 // existing deficit or permits a concurrent deduction to cause an overdraft.
 func (r *userRepository) DeductAvailableBalance(ctx context.Context, id int64, amount float64) (deducted float64, err error) {
@@ -934,13 +935,13 @@ func (r *userRepository) DeductAvailableBalance(ctx context.Context, id int64, a
 	}
 	const updateSQL = `
 		WITH target AS (
-			SELECT id, balance
+			SELECT id, balance, COALESCE(relay_reserved_balance, 0) AS reserved
 			FROM users
 			WHERE id = $2 AND deleted_at IS NULL
 			FOR UPDATE
 		), updated AS (
 			UPDATE users AS u
-			SET balance = target.balance - LEAST($1, GREATEST(target.balance, 0)), updated_at = NOW()
+			SET balance = target.balance - LEAST($1, GREATEST(target.balance - target.reserved, 0)), updated_at = NOW()
 			FROM target
 			WHERE u.id = target.id AND u.deleted_at IS NULL
 			RETURNING target.balance - u.balance AS deducted

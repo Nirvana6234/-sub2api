@@ -95,6 +95,11 @@ func FrozenBalance(v float64) predicate.User {
 	return predicate.User(sql.FieldEQ(FieldFrozenBalance, v))
 }
 
+// RelayReservedBalance applies equality check predicate on the "relay_reserved_balance" field. It's identical to RelayReservedBalanceEQ.
+func RelayReservedBalance(v float64) predicate.User {
+	return predicate.User(sql.FieldEQ(FieldRelayReservedBalance, v))
+}
+
 // Concurrency applies equality check predicate on the "concurrency" field. It's identical to ConcurrencyEQ.
 func Concurrency(v int) predicate.User {
 	return predicate.User(sql.FieldEQ(FieldConcurrency, v))
@@ -598,6 +603,46 @@ func FrozenBalanceLT(v float64) predicate.User {
 // FrozenBalanceLTE applies the LTE predicate on the "frozen_balance" field.
 func FrozenBalanceLTE(v float64) predicate.User {
 	return predicate.User(sql.FieldLTE(FieldFrozenBalance, v))
+}
+
+// RelayReservedBalanceEQ applies the EQ predicate on the "relay_reserved_balance" field.
+func RelayReservedBalanceEQ(v float64) predicate.User {
+	return predicate.User(sql.FieldEQ(FieldRelayReservedBalance, v))
+}
+
+// RelayReservedBalanceNEQ applies the NEQ predicate on the "relay_reserved_balance" field.
+func RelayReservedBalanceNEQ(v float64) predicate.User {
+	return predicate.User(sql.FieldNEQ(FieldRelayReservedBalance, v))
+}
+
+// RelayReservedBalanceIn applies the In predicate on the "relay_reserved_balance" field.
+func RelayReservedBalanceIn(vs ...float64) predicate.User {
+	return predicate.User(sql.FieldIn(FieldRelayReservedBalance, vs...))
+}
+
+// RelayReservedBalanceNotIn applies the NotIn predicate on the "relay_reserved_balance" field.
+func RelayReservedBalanceNotIn(vs ...float64) predicate.User {
+	return predicate.User(sql.FieldNotIn(FieldRelayReservedBalance, vs...))
+}
+
+// RelayReservedBalanceGT applies the GT predicate on the "relay_reserved_balance" field.
+func RelayReservedBalanceGT(v float64) predicate.User {
+	return predicate.User(sql.FieldGT(FieldRelayReservedBalance, v))
+}
+
+// RelayReservedBalanceGTE applies the GTE predicate on the "relay_reserved_balance" field.
+func RelayReservedBalanceGTE(v float64) predicate.User {
+	return predicate.User(sql.FieldGTE(FieldRelayReservedBalance, v))
+}
+
+// RelayReservedBalanceLT applies the LT predicate on the "relay_reserved_balance" field.
+func RelayReservedBalanceLT(v float64) predicate.User {
+	return predicate.User(sql.FieldLT(FieldRelayReservedBalance, v))
+}
+
+// RelayReservedBalanceLTE applies the LTE predicate on the "relay_reserved_balance" field.
+func RelayReservedBalanceLTE(v float64) predicate.User {
+	return predicate.User(sql.FieldLTE(FieldRelayReservedBalance, v))
 }
 
 // ConcurrencyEQ applies the EQ predicate on the "concurrency" field.

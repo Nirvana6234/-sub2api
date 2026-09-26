@@ -1114,6 +1114,7 @@ func userEntityToService(u *dbent.User) *service.User {
 		Role:                       u.Role,
 		Balance:                    u.Balance,
 		FrozenBalance:              u.FrozenBalance,
+		RelayReservedBalance:       u.RelayReservedBalance,
 		Concurrency:                u.Concurrency,
 		Status:                     u.Status,
 		SignupSource:               u.SignupSource,

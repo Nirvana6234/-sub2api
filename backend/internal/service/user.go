@@ -20,9 +20,11 @@ type User struct {
 	Role           string
 	Balance        float64
 	FrozenBalance  float64
-	Concurrency    int
-	Status         string
-	AllowedGroups  []int64
+	// RelayReservedBalance 是锁在主从分流从节点上的余额（设计 4.3），只读；开关关闭时恒为 0。
+	RelayReservedBalance float64
+	Concurrency          int
+	Status               string
+	AllowedGroups        []int64
 	// RestrictPublicGroups narrows the public groups this user may bind to the
 	// ones listed in AllowedGroups. False keeps the default, where every public
 	// group is bindable.
@@ -76,6 +78,20 @@ type User struct {
 
 func (u *User) IsAdmin() bool {
 	return u.Role == RoleAdmin
+}
+
+// SpendableBalance 是还能花的余额：真实余额减去锁在从节点上的部分（设计 4.3）。
+// "能不能花钱"的判断都用它；余额显示、低余额提醒仍看 Balance。
+func (u *User) SpendableBalance() float64 {
+	return SpendableBalance(u.Balance, u.RelayReservedBalance)
+}
+
+// SpendableBalance 见 User.SpendableBalance。
+func SpendableBalance(balance, relayReserved float64) float64 {
+	if relayReserved <= 0 {
+		return balance
+	}
+	return balance - relayReserved
 }
 
 func (u *User) IsActive() bool {

@@ -126,3 +126,38 @@ func TestSyncBalanceCacheAfterDeduction_QueuesDeductWhenBalanceStillEligible(t *
 		return cache.deductCalls.Load() == 1
 	}, 2*time.Second, 10*time.Millisecond)
 }
+
+type relayReservedStub map[int64]float64
+
+func (s relayReservedStub) RelayReservedBalance(userID int64) float64 { return s[userID] }
+
+// 主从分流运行时，余额预检看"余额 − 锁在从节点上的部分"；摘下后回到只看余额（设计 4.3）。
+func TestCheckBillingEligibility_SubtractsBalanceLockedOnRelayNodes(t *testing.T) {
+	cache := &balanceEligibilityCacheStub{balance: 5}
+	cfg := &config.Config{}
+	cfg.Billing.MinimumBalanceReserve = 0.01
+	svc := NewBillingCacheService(cache, nil, nil, nil, nil, nil, cfg, nil)
+	t.Cleanup(svc.Stop)
+	ctx := context.Background()
+
+	require.NoError(t, svc.CheckBillingEligibility(ctx, &User{ID: 1}, nil, nil, nil, ""))
+	svc.SetRelayReservedBalanceReader(relayReservedStub{1: 4.995})
+	require.ErrorIs(t, svc.CheckBillingEligibility(ctx, &User{ID: 1}, nil, nil, nil, ""), ErrInsufficientBalance,
+		"0.005 spendable is below the minimum reserve")
+	require.NoError(t, svc.CheckBillingEligibility(ctx, &User{ID: 2}, nil, nil, nil, ""), "other users are unaffected")
+	svc.SetRelayReservedBalanceReader(relayReservedStub{1: 4.98})
+	require.NoError(t, svc.CheckBillingEligibility(ctx, &User{ID: 1}, nil, nil, nil, ""), "0.02 spendable is above the reserve")
+	svc.SetRelayReservedBalanceReader(nil)
+	svc.SetRelayReservedBalanceReader(relayReservedStub{1: 5})
+	require.ErrorIs(t, svc.CheckBillingEligibility(ctx, &User{ID: 1}, nil, nil, nil, ""), ErrInsufficientBalance)
+	svc.SetRelayReservedBalanceReader(nil)
+	require.NoError(t, svc.CheckBillingEligibility(ctx, &User{ID: 1}, nil, nil, nil, ""), "relay off: balance only")
+}
+
+func TestSpendableBalance(t *testing.T) {
+	require.Equal(t, 10.0, SpendableBalance(10, 0))
+	require.Equal(t, 10.0, SpendableBalance(10, -1), "a negative reserve is ignored")
+	require.InDelta(t, 6.5, (&User{Balance: 10, RelayReservedBalance: 3.5}).SpendableBalance(), 1e-9)
+	require.InDelta(t, -2.0, SpendableBalance(1, 3), 1e-9)
+}
+

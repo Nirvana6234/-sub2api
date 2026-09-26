@@ -523,6 +523,7 @@ func (s *UserRepoSuite) TestDeductAvailableBalance_ClampsToNonnegativeBalance() 
 	for _, tc := range []struct {
 		name        string
 		balance     float64
+		reserved    float64
 		requested   float64
 		wantDeduct  float64
 		wantBalance float64
@@ -530,9 +531,16 @@ func (s *UserRepoSuite) TestDeductAvailableBalance_ClampsToNonnegativeBalance() 
 		{name: "enough balance", balance: 10, requested: 4, wantDeduct: 4, wantBalance: 6},
 		{name: "insufficient balance", balance: 5, requested: 10, wantDeduct: 5, wantBalance: 0},
 		{name: "negative balance unchanged", balance: -3, requested: 10, wantDeduct: 0, wantBalance: -3},
+		// 锁在主从分流从节点上的余额不能退（设计 4.3）。
+		{name: "balance locked on relay nodes", balance: 10, reserved: 7, requested: 10, wantDeduct: 3, wantBalance: 7},
+		{name: "all locked on relay nodes", balance: 10, reserved: 10, requested: 10, wantDeduct: 0, wantBalance: 10},
 	} {
 		s.Run(tc.name, func() {
 			user := s.mustCreateUser(&service.User{Email: "available-" + strings.ReplaceAll(tc.name, " ", "-") + "@test.com", Balance: tc.balance})
+			if tc.reserved > 0 {
+				_, err := s.client.ExecContext(s.ctx, "UPDATE users SET relay_reserved_balance = $1 WHERE id = $2", tc.reserved, user.ID)
+				s.Require().NoError(err)
+			}
 			deducted, err := s.repo.DeductAvailableBalance(s.ctx, user.ID, tc.requested)
 			s.Require().NoError(err)
 			s.Require().InDelta(tc.wantDeduct, deducted, 1e-6)
