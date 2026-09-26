@@ -12,8 +12,14 @@ Sub2API. Keep all keys and account tokens on the server, outside source control.
 
 ## Paired custom releases
 
-The current September 26 release is `20260926-be98c51-concurrency-ded79f5`, pairing
-backend `be98c51` with management UI `ded79f5`. Build the Linux backend with CGO
+The current release (2026-09-27) is `20260927-a303e91-concurrency-37e6b5b`,
+pairing backend `a303e91` with management UI `37e6b5b`. It adds the Sub2API
+scheduling source (disabled until configured) and mounts
+`/opt/cli-proxy-api/sub2api-sync` at `/CLIProxyAPI/sub2api-sync` with
+`CPA_SUB2API_SYNC_DIR` pointing at it, so sync settings survive container
+recreation. Routing stays `least-connections`. The Linux backend is
+cross-compiled on Windows with CGO via the zig toolchain in
+`CLIProxyAPI/.git/production-toolchain` (`zig cc -target x86_64-linux-gnu.2.36`). Build the Linux backend with CGO
 enabled against Debian Bookworm (matching the pinned production image), and
 build the frontend as one HTML
 file. The production image remains pinned; bind-mount the versioned backend
