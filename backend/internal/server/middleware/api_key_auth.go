@@ -3,7 +3,6 @@ package middleware
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 
@@ -130,153 +129,50 @@ func authenticateResolvedAPIKey(c *gin.Context, apiKey *service.APIKey, apiKeySe
 	if cfg == nil {
 		cfg = &config.Config{}
 	}
-
-	if apiKey == nil {
-		AbortWithError(c, 401, "INVALID_API_KEY", "Invalid API key")
-		return
+	in := APIKeyAuthInput{APIKey: apiKey, APIKeys: apiKeyService, Subscriptions: subscriptionService, Config: cfg,
+		Method: c.Request.Method, Path: c.Request.URL.Path}
+	if apiKey != nil && (len(apiKey.IPWhitelist) > 0 || len(apiKey.IPBlacklist) > 0) {
+		in.ClientIP = ip.GetSecurityClientIP(c, cfg.TrustForwardedIPForAPIKeyACL())
 	}
 
-	if !apiKey.IsActive() &&
-		apiKey.Status != service.StatusAPIKeyExpired &&
-		apiKey.Status != service.StatusAPIKeyQuotaExhausted {
-		MarkIngressRejected(c, IngressRejectAPIKeyDisabled)
-		AbortWithError(c, 401, "API_KEY_DISABLED", "API key is disabled")
-		return
-	}
-
-	if len(apiKey.IPWhitelist) > 0 || len(apiKey.IPBlacklist) > 0 {
-		clientIP := ip.GetSecurityClientIP(c, cfg.TrustForwardedIPForAPIKeyACL())
-		allowed, _ := ip.CheckIPRestrictionWithCompiledRules(clientIP, apiKey.CompiledIPWhitelist, apiKey.CompiledIPBlacklist)
-		if !allowed {
-			if clientIP == "" {
-				clientIP = "unknown"
-			}
-			service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonIPRestriction)
-			MarkIngressRejected(c, IngressRejectIPRestricted)
-			AbortWithError(c, 403, "ACCESS_DENIED", fmt.Sprintf("Access denied. Your IP is %s", clientIP))
-			return
-		}
-	}
-
-	if apiKey.User == nil {
-		AbortWithError(c, 401, "USER_NOT_FOUND", "User associated with API key not found")
-		return
-	}
-
-	if !apiKey.User.IsActive() {
-		MarkIngressRejected(c, IngressRejectUserInactive)
-		AbortWithError(c, 401, "USER_INACTIVE", "User account is not active")
-		return
-	}
-	if abortIfAPIKeyGroupUnavailable(c, apiKey) {
-		return
-	}
-	if abortIfAPIKeyGroupNotAllowed(c, apiKey) {
+	if rejection := EvaluateAPIKeyAuthentication(in); rejection != nil {
+		abortWithAPIKeyAuthRejection(c, rejection)
 		return
 	}
 	setAuthenticatedAPIKeyRequestContext(c, apiKey)
-	billingInfoRequest := c.Request.URL.Path == "/v1/sub2api/billing"
-	skipBilling := c.Request.URL.Path == "/v1/usage" || billingInfoRequest || isAsyncImageTaskRead(c.Request.Method, c.Request.URL.Path)
 
-	if cfg.RunMode == config.RunModeSimple {
-		if apiKeyBalanceBelowAuthThreshold(apiKey.User.Balance, cfg) {
-			contributionBalance, contributionErr := apiKeyService.GetContributionBalance(c.Request.Context(), apiKey.User.ID)
-			if contributionErr == nil && contributionBalance > 0 {
-				ctx := context.WithValue(c.Request.Context(), ctxkey.ContributionCreditOnly, true)
-				c.Request = c.Request.WithContext(ctx)
-			} else {
-				ctx := context.WithValue(c.Request.Context(), ctxkey.OwnContributedAccountsOnly, true)
-				c.Request = c.Request.WithContext(ctx)
-			}
-		}
-		setAuthenticatedAPIKeyGinContext(c, apiKey, nil)
-		if !billingInfoRequest {
-			_ = apiKeyService.TouchLastUsed(c.Request.Context(), apiKey.ID)
-		}
-		c.Next()
+	decision, rejection := EvaluateAPIKeyBilling(c.Request.Context(), in)
+	if rejection != nil {
+		abortWithAPIKeyAuthRejection(c, rejection)
 		return
 	}
-
-	var subscription *service.UserSubscription
-	isSubscriptionType := apiKey.Group != nil && apiKey.Group.IsSubscriptionType()
-
-	if isSubscriptionType && subscriptionService != nil && !billingInfoRequest {
-		sub, subErr := subscriptionService.GetActiveSubscription(
-			c.Request.Context(),
-			apiKey.User.ID,
-			apiKey.Group.ID,
-		)
-		if subErr != nil {
-			if !skipBilling {
-				AbortWithError(c, 403, "SUBSCRIPTION_NOT_FOUND", "No active subscription found for this group")
-				return
-			}
-		} else {
-			subscription = sub
-		}
+	if decision.ContributionCreditOnly {
+		c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), ctxkey.ContributionCreditOnly, true))
 	}
-
-	if !skipBilling {
-		switch apiKey.Status {
-		case service.StatusAPIKeyQuotaExhausted:
-			abortWithAPIKeyQuotaError(c)
-			return
-		case service.StatusAPIKeyExpired:
-			AbortWithError(c, 403, "API_KEY_EXPIRED", "API key 已过期")
-			return
-		}
-
-		if apiKey.IsExpired() {
-			AbortWithError(c, 403, "API_KEY_EXPIRED", "API key 已过期")
-			return
-		}
-		if apiKey.IsQuotaExhausted() {
-			abortWithAPIKeyQuotaError(c)
-			return
-		}
-
-		if subscription != nil {
-			needsMaintenance, validateErr := subscriptionService.ValidateAndCheckLimits(subscription, apiKey.Group)
-			if needsMaintenance {
-				refreshed, maintenanceErr := subscriptionService.EnsureWindowMaintenance(c.Request.Context(), subscription)
-				if maintenanceErr != nil {
-					AbortWithError(c, 500, "SUBSCRIPTION_MAINTENANCE_FAILED", "Failed to maintain subscription usage windows")
-					return
-				}
-				subscription = refreshed
-				_, validateErr = subscriptionService.ValidateAndCheckLimits(subscription, apiKey.Group)
-			}
-			if validateErr != nil {
-				code := "SUBSCRIPTION_INVALID"
-				status := 403
-				if errors.Is(validateErr, service.ErrDailyLimitExceeded) ||
-					errors.Is(validateErr, service.ErrWeeklyLimitExceeded) ||
-					errors.Is(validateErr, service.ErrMonthlyLimitExceeded) {
-					code = "USAGE_LIMIT_EXCEEDED"
-					status = 429
-				}
-				AbortWithError(c, status, code, validateErr.Error())
-				return
-			}
-		} else {
-			// 贡献房间自用（OwnContributedAccountsOnly/ContributionCreditOnly）本应放行
-			// 余额耗尽用户但把调度限定在其自己贡献/信用范围内；但下游调度层
-			// （gateway_scheduling.go 等）目前并未读取这两个 context key 做任何限制，
-			// 放行等于让零余额用户白嫖整个共享账号池。在配套的调度层限制补齐之前，
-			// 维持鉴权层的历史语义：余额耗尽直接拒绝。
-			if apiKeyBalanceBelowAuthThreshold(apiKey.User.Balance, cfg) {
-				AbortWithError(c, 403, "INSUFFICIENT_BALANCE", "Insufficient account balance")
-				return
-			}
-		}
+	if decision.OwnContributedAccountsOnly {
+		c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), ctxkey.OwnContributedAccountsOnly, true))
 	}
-
-	setAuthenticatedAPIKeyGinContext(c, apiKey, subscription)
-	if !billingInfoRequest {
+	setAuthenticatedAPIKeyGinContext(c, apiKey, decision.Subscription)
+	if decision.TouchLastUsed {
 		_ = apiKeyService.TouchLastUsed(c.Request.Context(), apiKey.ID)
 	}
 
 	c.Next()
+}
+
+// abortWithAPIKeyAuthRejection 按鉴权判断的结果打运维标记、写错误响应。
+func abortWithAPIKeyAuthRejection(c *gin.Context, r *APIKeyAuthRejection) {
+	if r.OpsReason != "" {
+		service.MarkOpsClientBusinessLimited(c, r.OpsReason)
+	}
+	if r.IngressReason != "" {
+		MarkIngressRejected(c, r.IngressReason)
+	}
+	if r.OpenAIQuotaFormat {
+		abortWithOpenAIQuotaError(c, r.Status, r.Message)
+		return
+	}
+	AbortWithError(c, r.Status, r.Code, r.Message)
 }
 
 func setAuthenticatedAPIKeyGinContext(c *gin.Context, apiKey *service.APIKey, subscription *service.UserSubscription) {
@@ -321,34 +217,6 @@ func hasAPIKeyCredentialInput(c *gin.Context) bool {
 	return c.GetHeader("Authorization") != "" ||
 		c.GetHeader("x-api-key") != "" ||
 		c.GetHeader("x-goog-api-key") != ""
-}
-
-func abortWithAPIKeyQuotaError(c *gin.Context) {
-	const message = "API key 额度已用完"
-	if isOpenAICompatibleAPIKeyRequest(c) {
-		abortWithOpenAIQuotaError(c, http.StatusTooManyRequests, message)
-		return
-	}
-	AbortWithError(c, http.StatusTooManyRequests, "API_KEY_QUOTA_EXHAUSTED", message)
-}
-
-func isOpenAICompatibleAPIKeyRequest(c *gin.Context) bool {
-	if c == nil || c.Request == nil || c.Request.URL == nil {
-		return false
-	}
-
-	path := strings.TrimRight(c.Request.URL.Path, "/")
-	for _, root := range []string{
-		"/v1/responses",
-		"/openai/v1/responses",
-		"/responses",
-		"/backend-api/codex/responses",
-	} {
-		if path == root || strings.HasPrefix(path, root+"/") {
-			return true
-		}
-	}
-	return false
 }
 
 func isAsyncImageTaskRead(method, path string) bool {
@@ -433,31 +301,6 @@ func setAuthenticatedAPIKeyRequestContext(c *gin.Context, apiKey *service.APIKey
 // 否则已配置该值的存量部署升级后，0 < balance < reserve 的用户会在所有端点被静默 403。
 func apiKeyBalanceBelowAuthThreshold(balance float64, _ *config.Config) bool {
 	return balance <= 0
-}
-
-func abortIfAPIKeyGroupUnavailable(c *gin.Context, apiKey *service.APIKey) bool {
-	code, message, ok := validateAPIKeyGroupAvailable(apiKey)
-	if ok {
-		return false
-	}
-	service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonAPIKeyGroupUnavailable)
-	if code == "GROUP_DELETED" {
-		MarkIngressRejected(c, IngressRejectGroupDeleted)
-	} else {
-		MarkIngressRejected(c, IngressRejectGroupDisabled)
-	}
-	AbortWithError(c, 403, code, message)
-	return true
-}
-
-func abortIfAPIKeyGroupNotAllowed(c *gin.Context, apiKey *service.APIKey) bool {
-	if validateAPIKeyGroupAllowed(apiKey) {
-		return false
-	}
-	service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonAPIKeyGroupUnavailable)
-	MarkIngressRejected(c, IngressRejectGroupNotAllowed)
-	AbortWithError(c, 403, "GROUP_NOT_ALLOWED", "API Key 所属专属分组不再允许当前用户使用")
-	return true
 }
 
 func validateAPIKeyGroupAllowed(apiKey *service.APIKey) bool {
