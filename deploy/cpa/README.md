@@ -17,7 +17,16 @@ pairing backend `a303e91` with management UI `37e6b5b`. It adds the Sub2API
 scheduling source (disabled until configured) and mounts
 `/opt/cli-proxy-api/sub2api-sync` at `/CLIProxyAPI/sub2api-sync` with
 `CPA_SUB2API_SYNC_DIR` pointing at it, so sync settings survive container
-recreation. Routing stays `least-connections`. The Linux backend is
+recreation.
+
+Sync was enabled on 2026-09-27 with no account mappings, so only the global
+policy (weights, waiting, retries, cooldowns) comes from Sub2API; the CPA
+account keeps its local limit. Sub2API reads `CPA_SCHEDULING_SYNC_TOKEN` and
+`CPA_SCHEDULING_SOURCE_ID=sub2api-prod` from `/opt/sub2api/deploy/.env` via
+`docker-compose.local.yml`; CPA stores the same token (write-only) with source
+`http://sub2api:8080` in `/opt/cli-proxy-api/sub2api-sync/`. Rotating the token
+requires updating both sides. To stop following Sub2API, disable the source in
+the CPA management panel; the configured `routing.strategy` then applies again. The Linux backend is
 cross-compiled on Windows with CGO via the zig toolchain in
 `CLIProxyAPI/.git/production-toolchain` (`zig cc -target x86_64-linux-gnu.2.36`). Build the Linux backend with CGO
 enabled against Debian Bookworm (matching the pinned production image), and
