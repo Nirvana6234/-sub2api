@@ -43,6 +43,8 @@ func ProvideMasterRuntime(
 		APIKeys:       apiKeys,
 		AccessChanges: accessChanges,
 		Users:         users,
+		Leases:        repository.NewRelayLeaseRepository(db),
+		ReservedSink:  billing,
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

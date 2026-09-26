@@ -9,6 +9,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/relay/master"
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
 	"github.com/Wei-Shaw/sub2api/internal/relay/sign"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
 
@@ -134,4 +135,47 @@ func TestParseKeyPurpose(t *testing.T) {
 	}
 	_, err := master.ParseKeyPurpose("tls")
 	require.ErrorIs(t, err, master.ErrUnknownKeyPurpose)
+}
+
+type reservedSinkStub struct {
+	reader service.RelayReservedBalanceReader
+}
+
+func (s *reservedSinkStub) SetRelayReservedBalanceReader(r service.RelayReservedBalanceReader) {
+	s.reader = r
+}
+
+// 主从分流打开时额度服务就绪、冻结额挂到余额预检上；停用节点作废它的租约；关掉后摘下。
+func TestRuntimeQuotasLifecycle(t *testing.T) {
+	ctx := context.Background()
+	store := master.NewMemoryLeaseStore()
+	sink := &reservedSinkStub{}
+	h := &runtimeHarness{store: master.NewMemoryStore(), settings: newMemSettings()}
+	h.cfg = testRelayConfig(t)
+	h.runtime = master.NewRuntime(master.RuntimeDeps{Config: h.cfg, Store: h.store, Settings: h.settings, Leases: store, ReservedSink: sink})
+	t.Cleanup(h.runtime.Close)
+	h.runtime.Init(ctx)
+	require.Nil(t, h.runtime.Quotas(), "no quota service while relay is off")
+
+	_, err := h.runtime.SetEnabled(ctx, 1, true)
+	require.NoError(t, err)
+	q := h.runtime.Quotas()
+	require.NotNil(t, q)
+	require.NotNil(t, sink.reader, "the balance pre-check now subtracts relay reservations")
+
+	n, err := h.store.CreatePending(ctx, &master.Node{IdentityFingerprint: "fp", IdentityPublicKey: []byte{1}}, 20)
+	require.NoError(t, err)
+	require.NoError(t, h.store.Activate(ctx, n.ID, master.Activation{PublicDomain: "r.example.com", At: time.Now()}))
+	require.NoError(t, h.runtime.Nodes().Load(ctx))
+	_, err = q.Acquire(ctx, master.AcquireRequest{UserID: 42, NodeID: n.ID, Wants: []master.QuotaWant{{Scope: master.LeaseScope{Dimension: service.QuotaDimBalance}, Headroom: 100}}})
+	require.NoError(t, err)
+	require.InDelta(t, 5, sink.reader.RelayReservedBalance(42), 1e-9)
+
+	require.NoError(t, h.runtime.DisableNode(ctx, n.ID, 1))
+	require.Zero(t, store.ReservedBalance(42), "disabling a node returns everything it held")
+	require.Zero(t, sink.reader.RelayReservedBalance(42))
+
+	_, err = h.runtime.SetEnabled(ctx, 1, false)
+	require.NoError(t, err)
+	require.Nil(t, sink.reader, "relay off: the pre-check reads nothing extra")
 }

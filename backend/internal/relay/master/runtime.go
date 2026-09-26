@@ -61,8 +61,17 @@ type RuntimeDeps struct {
 	// AccessChanges：用户、分组、订阅、平台配额的改动，运行时转成作废推给从节点。
 	AccessChanges *service.AccessChangeHub
 	// Users：用户被停用、删除时推票据吊销（设计 8.1）；nil 时不推（以选号复查为准）。
-	Users    UserStatusReader
-	Notifier Notifier
+	Users UserStatusReader
+	// Leases：额度租约存储（设计第 4 节）；nil 时不提供额度服务（测试）。
+	Leases LeaseStore
+	// ReservedSink：主从分流运行时把冻结额读取挂到余额预检上（service.BillingCacheService）。
+	ReservedSink ReservedBalanceSink
+	Notifier     Notifier
+}
+
+// ReservedBalanceSink 接收冻结额读取（service.BillingCacheService 满足）。
+type ReservedBalanceSink interface {
+	SetRelayReservedBalanceReader(service.RelayReservedBalanceReader)
 }
 
 // Runtime 按主从分流总开关动态启停主节点的主从通信：开关打开当场开端口、起后台任务，
@@ -94,6 +103,7 @@ type runningRelay struct {
 	keys        *keystore.Store
 	signing     *signingKeys
 	revoker     *ticketRevoker
+	quotas      *Quotas
 }
 
 // NewRuntime 创建运行时（不启动任何东西）。
@@ -306,6 +316,12 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 		return nil, err
 	}
 	nodes.AttachRegistry(server.Registry())
+	var quotas *Quotas
+	if r.deps.Leases != nil {
+		if quotas, err = NewQuotas(ctx, r.deps.Leases, server.Epoch(), r.now); err != nil {
+			return nil, err
+		}
+	}
 	var revoker *ticketRevoker
 	if r.deps.Users != nil {
 		revoker = newTicketRevoker(r.deps.Users, events, r.now)
@@ -329,7 +345,7 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 	}
 
 	runCtx, cancel := context.WithCancel(context.Background())
-	running := &runningRelay{server: server, listener: lis, nodes: nodes, publisher: publisher, events: events, invalidator: invalidator, cancel: cancel, ca: ca, keys: keys, signing: signing, revoker: revoker}
+	running := &runningRelay{server: server, listener: lis, nodes: nodes, publisher: publisher, events: events, invalidator: invalidator, cancel: cancel, ca: ca, keys: keys, signing: signing, revoker: revoker, quotas: quotas}
 	var unsubs []func()
 	if r.deps.Hub != nil {
 		unsubs = append(unsubs, r.deps.Hub.Subscribe(publisher.OnSettingsChanged))
@@ -343,6 +359,11 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 		if revoker != nil {
 			unsubs = append(unsubs, r.deps.AccessChanges.Subscribe(revoker.OnAccessChange))
 		}
+	}
+	if quotas != nil && r.deps.ReservedSink != nil {
+		// 余额预检从此减去锁在从节点上的部分（设计 4.3）；停止时摘下，回到只看余额。
+		r.deps.ReservedSink.SetRelayReservedBalanceReader(quotas)
+		unsubs = append(unsubs, func() { r.deps.ReservedSink.SetRelayReservedBalanceReader(nil) })
 	}
 	running.unsubscribe = func() {
 		for _, u := range unsubs {
@@ -359,6 +380,9 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 		nodes.RunRefresh(runCtx, func(err error) { slog.Warn("relay node state refresh failed", "error", err) })
 	})
 	running.goRun(func() { publisher.RunRecheck(runCtx) })
+	if quotas != nil {
+		running.goRun(func() { quotas.RunExpiry(runCtx) })
+	}
 	if revoker != nil {
 		running.goRun(func() { revoker.run(runCtx) })
 	}
@@ -554,9 +578,37 @@ func (r *Runtime) RejectAllPendingNodes(ctx context.Context, actor int64) (int, 
 	return count, err
 }
 
-// DisableNode 停用节点（吊销证书、断开连接）。
+// DisableNode 停用节点（吊销证书、断开连接）；它锁着的额度全部作废放回（设计 4.4、5.4：之后补报的已发生用量照常扣）。
 func (r *Runtime) DisableNode(ctx context.Context, nodeID, actor int64) error {
-	return r.nodeOp(func(n *Nodes) error { return n.Disable(ctx, nodeID, actor) })
+	if err := r.nodeOp(func(n *Nodes) error { return n.Disable(ctx, nodeID, actor) }); err != nil {
+		return err
+	}
+	return r.voidNodeLeases(ctx, nodeID, "node_disabled")
+}
+
+// voidNodeLeases 作废一台节点的全部租约。
+func (r *Runtime) voidNodeLeases(ctx context.Context, nodeID int64, reason string) error {
+	rr, err := r.runningRelay()
+	if err != nil || rr.quotas == nil {
+		return err
+	}
+	returned, err := rr.quotas.VoidNode(ctx, nodeID, reason)
+	if err != nil {
+		return fmt.Errorf("void relay node leases: %w", err)
+	}
+	if returned > 0 {
+		slog.Info("relay node leases voided", "node_id", nodeID, "reason", reason, "returned", FromMicros(returned))
+	}
+	return nil
+}
+
+// Quotas 返回运行中的额度服务（WP7 选号时申请额度用）；没在运行时为 nil。
+func (r *Runtime) Quotas() *Quotas {
+	rr, err := r.runningRelay()
+	if err != nil {
+		return nil
+	}
+	return rr.quotas
 }
 
 // EnableNode 让停用的节点回到待激活。
@@ -566,7 +618,10 @@ func (r *Runtime) EnableNode(ctx context.Context, nodeID, actor int64) error {
 
 // RevokeNode 因怀疑被攻破吊销节点证书（退回待激活）。
 func (r *Runtime) RevokeNode(ctx context.Context, nodeID, actor int64, reason string) error {
-	return r.nodeOp(func(n *Nodes) error { return n.RevokeCertificates(ctx, nodeID, actor, reason) })
+	if err := r.nodeOp(func(n *Nodes) error { return n.RevokeCertificates(ctx, nodeID, actor, reason) }); err != nil {
+		return err
+	}
+	return r.voidNodeLeases(ctx, nodeID, "node_revoked")
 }
 
 // SetNodeAllowMultiIP 对这台单独关闭或打开"同时两个 IP"的判断。
