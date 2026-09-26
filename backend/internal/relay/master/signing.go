@@ -140,8 +140,8 @@ func (r *Runtime) IssueVoucher(v *relayv1.Voucher) ([]byte, *relayv1.Voucher, er
 	return sign.IssueVoucher(signer, v, r.now())
 }
 
-// VerifyVoucher 验一张扣费凭证（入账时）。
-func (r *Runtime) VerifyVoucher(raw []byte) (*relayv1.Voucher, error) {
+// VerifyVoucher 验一张扣费凭证（入账时）。reportingNodeID 是上报这条记录的节点（取自主从连接的证书）。
+func (r *Runtime) VerifyVoucher(raw []byte, reportingNodeID int64) (*relayv1.Voucher, error) {
 	s, err := r.signing()
 	if err != nil {
 		return nil, err
@@ -149,7 +149,7 @@ func (r *Runtime) VerifyVoucher(raw []byte) (*relayv1.Voucher, error) {
 	s.mu.RLock()
 	pub := s.voucherPub
 	s.mu.RUnlock()
-	return sign.VerifyVoucher(raw, pub, r.now())
+	return sign.VerifyVoucher(raw, pub, reportingNodeID, r.now())
 }
 
 // TicketPublicKeys 返回当前的票据公钥（测试和诊断用；从节点从配置快照取）。

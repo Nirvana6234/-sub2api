@@ -41,9 +41,10 @@ func IssueVoucher(s *Signer, v *relayv1.Voucher, now time.Time) ([]byte, *relayv
 	return raw, v, nil
 }
 
-// VerifyVoucher 验一张凭证（主节点入账时）：签名、签发时间不在未来、签发未超过 60 天。
-// 节点是否与上报的节点一致、是否已入账、实际模型是否在允许范围内由入账（WP8）检查。
-func VerifyVoucher(raw []byte, keys *PublicKeys, now time.Time) (*relayv1.Voucher, error) {
+// VerifyVoucher 验一张凭证（主节点入账时）：签名、签发时间不在未来、签发未超过 60 天、
+// 上报的节点就是凭证签给的节点（reportingNodeID，来自主从连接的证书）。
+// 是否已入账、实际模型是否在允许范围内由入账（WP8）检查。
+func VerifyVoucher(raw []byte, keys *PublicKeys, reportingNodeID int64, now time.Time) (*relayv1.Voucher, error) {
 	if len(raw) == 0 || len(raw) > maxVoucherSize {
 		return nil, ErrMalformed
 	}
@@ -66,6 +67,9 @@ func VerifyVoucher(raw []byte, keys *PublicKeys, now time.Time) (*relayv1.Vouche
 	}
 	if now.Sub(time.UnixMilli(v.IssuedAtUnixMs)) > VoucherMaxAge {
 		return nil, ErrExpired
+	}
+	if v.NodeId != reportingNodeID {
+		return nil, ErrWrongNode
 	}
 	return &v, nil
 }

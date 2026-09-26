@@ -111,7 +111,9 @@ func TestVoucherKeyRotation(t *testing.T) {
 	require.Empty(t, keys[1].PendingNodeIDs, "voucher keys are never sent to nodes")
 	require.NoError(t, h.runtime.ActivateKey(ctx, 1, keystore.PurposeVoucher, staged.Version), "no delivery needed")
 
-	got, err := h.runtime.VerifyVoucher(raw)
+	_, err = h.runtime.VerifyVoucher(raw, nodeID+1)
+	require.ErrorIs(t, err, sign.ErrWrongNode, "only the node the voucher was issued for may report it")
+	got, err := h.runtime.VerifyVoucher(raw, nodeID)
 	require.NoError(t, err, "vouchers signed before the rotation still verify")
 	require.Equal(t, issued.VoucherId, got.VoucherId)
 

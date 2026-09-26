@@ -139,7 +139,7 @@ func TestTicketAndVoucherCannotStandInForEachOther(t *testing.T) {
 	require.NoError(t, err)
 	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(token, sign.TicketPrefix))
 	require.NoError(t, err)
-	_, err = sign.VerifyVoucher(raw, pub, now)
+	_, err = sign.VerifyVoucher(raw, pub, 7, now)
 	require.ErrorIs(t, err, sign.ErrBadSignature)
 
 	voucher, _, err := sign.IssueVoucher(s, &relayv1.Voucher{NodeId: 7, UserId: 42}, now)
@@ -164,12 +164,12 @@ func TestVoucherRoundTripAndRejections(t *testing.T) {
 	require.Empty(t, in.VoucherId, "the caller's message is not modified")
 	pub := k.public(t)
 
-	got, err := sign.VerifyVoucher(raw, pub, now.Add(sign.VoucherMaxAge-time.Second))
+	got, err := sign.VerifyVoucher(raw, pub, 7, now.Add(sign.VoucherMaxAge-time.Second))
 	require.NoError(t, err)
 	require.True(t, proto.Equal(issued, got))
-	_, err = sign.VerifyVoucher(raw, pub, now.Add(sign.VoucherMaxAge+time.Minute))
+	_, err = sign.VerifyVoucher(raw, pub, 7, now.Add(sign.VoucherMaxAge+time.Minute))
 	require.ErrorIs(t, err, sign.ErrExpired, "older than 60 days is treated as lost")
-	_, err = sign.VerifyVoucher(raw, pub, now.Add(-sign.ClockSkew-time.Second))
+	_, err = sign.VerifyVoucher(raw, pub, 7, now.Add(-sign.ClockSkew-time.Second))
 	require.ErrorIs(t, err, sign.ErrNotYetValid)
 
 	var st relayv1.SignedToken
@@ -177,16 +177,18 @@ func TestVoucherRoundTripAndRejections(t *testing.T) {
 	st.Payload = append(append([]byte(nil), st.Payload...), 0x08, 0x01) // 追加字段也算篡改
 	tampered, err := proto.Marshal(&st)
 	require.NoError(t, err)
-	_, err = sign.VerifyVoucher(tampered, pub, now)
+	_, err = sign.VerifyVoucher(tampered, pub, 7, now)
 	require.ErrorIs(t, err, sign.ErrBadSignature)
 
 	second, _, err := sign.IssueVoucher(k.signer(t), in, now)
 	require.NoError(t, err)
-	a, _ := sign.VerifyVoucher(raw, pub, now)
-	b, _ := sign.VerifyVoucher(second, pub, now)
+	a, _ := sign.VerifyVoucher(raw, pub, 7, now)
+	b, _ := sign.VerifyVoucher(second, pub, 7, now)
 	require.NotEqual(t, a.VoucherId, b.VoucherId, "every voucher gets its own id")
 
-	_, err = sign.VerifyVoucher(make([]byte, 20<<10), pub, now)
+	_, err = sign.VerifyVoucher(raw, pub, 8, now)
+	require.ErrorIs(t, err, sign.ErrWrongNode, "reported by another node")
+	_, err = sign.VerifyVoucher(make([]byte, 20<<10), pub, 7, now)
 	require.ErrorIs(t, err, sign.ErrMalformed)
 }
 
