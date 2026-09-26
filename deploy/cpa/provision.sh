@@ -17,6 +17,7 @@ install -d -m 700 "$root" "$root/auths" "$root/logs" "$root/plugins"
 install -m 644 "$stage/docker-compose.yml" "$root/docker-compose.yml"
 install -m 700 "$stage/enable-ip-console.sh" "$root/enable-ip-console.sh"
 install -m 700 "$stage/verify.sh" "$root/verify.sh"
+install -m 700 "$stage/verify.py" "$root/verify.py"
 install -m 700 "$stage/reset-management-key.sh" "$root/reset-management-key.sh"
 install -m 644 "$stage/nginx-ip.conf.template" "$root/nginx-ip.conf.template"
 
