@@ -150,6 +150,56 @@ func (NodeStatus) EnumDescriptor() ([]byte, []int) {
 	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{1}
 }
 
+// 计费模式（设计 5.3）。
+type BillingMode int32
+
+const (
+	BillingMode_BILLING_MODE_UNSPECIFIED  BillingMode = 0
+	BillingMode_BILLING_MODE_BALANCE      BillingMode = 1
+	BillingMode_BILLING_MODE_SUBSCRIPTION BillingMode = 2
+)
+
+// Enum value maps for BillingMode.
+var (
+	BillingMode_name = map[int32]string{
+		0: "BILLING_MODE_UNSPECIFIED",
+		1: "BILLING_MODE_BALANCE",
+		2: "BILLING_MODE_SUBSCRIPTION",
+	}
+	BillingMode_value = map[string]int32{
+		"BILLING_MODE_UNSPECIFIED":  0,
+		"BILLING_MODE_BALANCE":      1,
+		"BILLING_MODE_SUBSCRIPTION": 2,
+	}
+)
+
+func (x BillingMode) Enum() *BillingMode {
+	p := new(BillingMode)
+	*p = x
+	return p
+}
+
+func (x BillingMode) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (BillingMode) Descriptor() protoreflect.EnumDescriptor {
+	return file_sub2api_relay_v1_relay_proto_enumTypes[2].Descriptor()
+}
+
+func (BillingMode) Type() protoreflect.EnumType {
+	return &file_sub2api_relay_v1_relay_proto_enumTypes[2]
+}
+
+func (x BillingMode) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use BillingMode.Descriptor instead.
+func (BillingMode) EnumDescriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{2}
+}
+
 type ProtocolVersion struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Major         uint32                 `protobuf:"varint,1,opt,name=major,proto3" json:"major,omitempty"`
@@ -939,6 +989,9 @@ type ConfigSnapshot struct {
 	NodeConfig []byte `protobuf:"bytes,5,opt,name=node_config,json=nodeConfig,proto3" json:"node_config,omitempty"`
 	// 主从通信根证书指纹（含轮换中的新根），从节点据此更新固定的指纹。
 	RootFingerprints []string `protobuf:"bytes,6,rep,name=root_fingerprints,json=rootFingerprints,proto3" json:"root_fingerprints,omitempty"`
+	// 验中转票据的公钥（全部未停用的版本，含预备中的，设计 8.1）。
+	// 扣费凭证只在主节点验，公钥不下发。
+	TicketPublicKeys []*SigningPublicKey `protobuf:"bytes,7,rep,name=ticket_public_keys,json=ticketPublicKeys,proto3" json:"ticket_public_keys,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -1011,6 +1064,13 @@ func (x *ConfigSnapshot) GetNodeConfig() []byte {
 func (x *ConfigSnapshot) GetRootFingerprints() []string {
 	if x != nil {
 		return x.RootFingerprints
+	}
+	return nil
+}
+
+func (x *ConfigSnapshot) GetTicketPublicKeys() []*SigningPublicKey {
+	if x != nil {
+		return x.TicketPublicKeys
 	}
 	return nil
 }
@@ -1133,6 +1193,7 @@ type MasterEnvelope struct {
 	//	*MasterEnvelope_Ping
 	//	*MasterEnvelope_ConfigChanged
 	//	*MasterEnvelope_Invalidation
+	//	*MasterEnvelope_TicketRevocations
 	Body          isMasterEnvelope_Body `protobuf_oneof:"body"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1209,6 +1270,15 @@ func (x *MasterEnvelope) GetInvalidation() *Invalidation {
 	return nil
 }
 
+func (x *MasterEnvelope) GetTicketRevocations() *TicketRevocations {
+	if x != nil {
+		if x, ok := x.Body.(*MasterEnvelope_TicketRevocations); ok {
+			return x.TicketRevocations
+		}
+	}
+	return nil
+}
+
 type isMasterEnvelope_Body interface {
 	isMasterEnvelope_Body()
 }
@@ -1225,11 +1295,17 @@ type MasterEnvelope_Invalidation struct {
 	Invalidation *Invalidation `protobuf:"bytes,12,opt,name=invalidation,proto3,oneof"`
 }
 
+type MasterEnvelope_TicketRevocations struct {
+	TicketRevocations *TicketRevocations `protobuf:"bytes,13,opt,name=ticket_revocations,json=ticketRevocations,proto3,oneof"`
+}
+
 func (*MasterEnvelope_Ping) isMasterEnvelope_Body() {}
 
 func (*MasterEnvelope_ConfigChanged) isMasterEnvelope_Body() {}
 
 func (*MasterEnvelope_Invalidation) isMasterEnvelope_Body() {}
+
+func (*MasterEnvelope_TicketRevocations) isMasterEnvelope_Body() {}
 
 type EventPing struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -1273,6 +1349,530 @@ func (x *EventPing) GetPayload() []byte {
 		return x.Payload
 	}
 	return nil
+}
+
+// 签名信封：payload 是 Ticket 或 Voucher 的 protobuf 编码，按收到的原始字节验签。
+// 签名 = Ed25519(私钥, 用途串 || 0x00 || payload)，用途串区分票据和凭证，一种不能冒充另一种。
+type SignedToken struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 签名密钥版本（keystore 的版本号）。
+	KeyVersion    uint32 `protobuf:"varint,1,opt,name=key_version,json=keyVersion,proto3" json:"key_version,omitempty"`
+	Payload       []byte `protobuf:"bytes,2,opt,name=payload,proto3" json:"payload,omitempty"`
+	Signature     []byte `protobuf:"bytes,3,opt,name=signature,proto3" json:"signature,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SignedToken) Reset() {
+	*x = SignedToken{}
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SignedToken) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SignedToken) ProtoMessage() {}
+
+func (x *SignedToken) ProtoReflect() protoreflect.Message {
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SignedToken.ProtoReflect.Descriptor instead.
+func (*SignedToken) Descriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *SignedToken) GetKeyVersion() uint32 {
+	if x != nil {
+		return x.KeyVersion
+	}
+	return 0
+}
+
+func (x *SignedToken) GetPayload() []byte {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+func (x *SignedToken) GetSignature() []byte {
+	if x != nil {
+		return x.Signature
+	}
+	return nil
+}
+
+type SigningPublicKey struct {
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Version uint32                 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
+	// Ed25519 公钥，32 字节。
+	PublicKey     []byte `protobuf:"bytes,2,opt,name=public_key,json=publicKey,proto3" json:"public_key,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SigningPublicKey) Reset() {
+	*x = SigningPublicKey{}
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SigningPublicKey) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SigningPublicKey) ProtoMessage() {}
+
+func (x *SigningPublicKey) ProtoReflect() protoreflect.Message {
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SigningPublicKey.ProtoReflect.Descriptor instead.
+func (*SigningPublicKey) Descriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *SigningPublicKey) GetVersion() uint32 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+func (x *SigningPublicKey) GetPublicKey() []byte {
+	if x != nil {
+		return x.PublicKey
+	}
+	return nil
+}
+
+// 中转票据（设计 8.1）：小白端访问分配的从节点用，10 分钟有效。
+type Ticket struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	UserId int64                  `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	// 只能在这台从节点上用。
+	NodeId int64 `protobuf:"varint,2,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	// 签发时用户的 token_version（由邮箱和密码哈希推导）。主节点选号时和当前值比对，
+	// 改密码、改邮箱后旧票据在下一个请求被拒，和登录态一致。
+	TokenVersion    int64 `protobuf:"varint,3,opt,name=token_version,json=tokenVersion,proto3" json:"token_version,omitempty"`
+	IssuedAtUnixMs  int64 `protobuf:"varint,4,opt,name=issued_at_unix_ms,json=issuedAtUnixMs,proto3" json:"issued_at_unix_ms,omitempty"`
+	ExpiresAtUnixMs int64 `protobuf:"varint,5,opt,name=expires_at_unix_ms,json=expiresAtUnixMs,proto3" json:"expires_at_unix_ms,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *Ticket) Reset() {
+	*x = Ticket{}
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Ticket) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Ticket) ProtoMessage() {}
+
+func (x *Ticket) ProtoReflect() protoreflect.Message {
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Ticket.ProtoReflect.Descriptor instead.
+func (*Ticket) Descriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *Ticket) GetUserId() int64 {
+	if x != nil {
+		return x.UserId
+	}
+	return 0
+}
+
+func (x *Ticket) GetNodeId() int64 {
+	if x != nil {
+		return x.NodeId
+	}
+	return 0
+}
+
+func (x *Ticket) GetTokenVersion() int64 {
+	if x != nil {
+		return x.TokenVersion
+	}
+	return 0
+}
+
+func (x *Ticket) GetIssuedAtUnixMs() int64 {
+	if x != nil {
+		return x.IssuedAtUnixMs
+	}
+	return 0
+}
+
+func (x *Ticket) GetExpiresAtUnixMs() int64 {
+	if x != nil {
+		return x.ExpiresAtUnixMs
+	}
+	return 0
+}
+
+// 扣费凭证（设计 5.3）：主节点每次选号签发一张，从节点上报扣费记录时原样带回，主节点验签后才入账。
+type Voucher struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// UUID（16 字节）；与 issued_at 一起是 relay_voucher_consumed 的主键，每张只入账一次。
+	VoucherId      []byte `protobuf:"bytes,1,opt,name=voucher_id,json=voucherId,proto3" json:"voucher_id,omitempty"`
+	IssuedAtUnixMs int64  `protobuf:"varint,2,opt,name=issued_at_unix_ms,json=issuedAtUnixMs,proto3" json:"issued_at_unix_ms,omitempty"`
+	// 只能由这台从节点上报（入账时核对，WP8）。
+	NodeId         int64       `protobuf:"varint,3,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	SelectionId    string      `protobuf:"bytes,4,opt,name=selection_id,json=selectionId,proto3" json:"selection_id,omitempty"`
+	UserId         int64       `protobuf:"varint,5,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	ApiKeyId       int64       `protobuf:"varint,6,opt,name=api_key_id,json=apiKeyId,proto3" json:"api_key_id,omitempty"`
+	AccountId      int64       `protobuf:"varint,7,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	GroupId        int64       `protobuf:"varint,8,opt,name=group_id,json=groupId,proto3" json:"group_id,omitempty"`
+	BillingMode    BillingMode `protobuf:"varint,9,opt,name=billing_mode,json=billingMode,proto3,enum=sub2api.relay.v1.BillingMode" json:"billing_mode,omitempty"`
+	RequestedModel string      `protobuf:"bytes,10,opt,name=requested_model,json=requestedModel,proto3" json:"requested_model,omitempty"`
+	// 上报的实际模型必须在这里面，否则按请求模型计费并报警（设计 5.3）。
+	AllowedBillingModels []string          `protobuf:"bytes,11,rep,name=allowed_billing_models,json=allowedBillingModels,proto3" json:"allowed_billing_models,omitempty"`
+	Quote                *Quote            `protobuf:"bytes,12,opt,name=quote,proto3" json:"quote,omitempty"`
+	Context              *SelectionContext `protobuf:"bytes,13,opt,name=context,proto3" json:"context,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *Voucher) Reset() {
+	*x = Voucher{}
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Voucher) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Voucher) ProtoMessage() {}
+
+func (x *Voucher) ProtoReflect() protoreflect.Message {
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Voucher.ProtoReflect.Descriptor instead.
+func (*Voucher) Descriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *Voucher) GetVoucherId() []byte {
+	if x != nil {
+		return x.VoucherId
+	}
+	return nil
+}
+
+func (x *Voucher) GetIssuedAtUnixMs() int64 {
+	if x != nil {
+		return x.IssuedAtUnixMs
+	}
+	return 0
+}
+
+func (x *Voucher) GetNodeId() int64 {
+	if x != nil {
+		return x.NodeId
+	}
+	return 0
+}
+
+func (x *Voucher) GetSelectionId() string {
+	if x != nil {
+		return x.SelectionId
+	}
+	return ""
+}
+
+func (x *Voucher) GetUserId() int64 {
+	if x != nil {
+		return x.UserId
+	}
+	return 0
+}
+
+func (x *Voucher) GetApiKeyId() int64 {
+	if x != nil {
+		return x.ApiKeyId
+	}
+	return 0
+}
+
+func (x *Voucher) GetAccountId() int64 {
+	if x != nil {
+		return x.AccountId
+	}
+	return 0
+}
+
+func (x *Voucher) GetGroupId() int64 {
+	if x != nil {
+		return x.GroupId
+	}
+	return 0
+}
+
+func (x *Voucher) GetBillingMode() BillingMode {
+	if x != nil {
+		return x.BillingMode
+	}
+	return BillingMode_BILLING_MODE_UNSPECIFIED
+}
+
+func (x *Voucher) GetRequestedModel() string {
+	if x != nil {
+		return x.RequestedModel
+	}
+	return ""
+}
+
+func (x *Voucher) GetAllowedBillingModels() []string {
+	if x != nil {
+		return x.AllowedBillingModels
+	}
+	return nil
+}
+
+func (x *Voucher) GetQuote() *Quote {
+	if x != nil {
+		return x.Quote
+	}
+	return nil
+}
+
+func (x *Voucher) GetContext() *SelectionContext {
+	if x != nil {
+		return x.Context
+	}
+	return nil
+}
+
+// 报价：签发时的计价输入，入账按它计价（设计 5.3、6 第一类）。
+// 字段由 WP7 / WP8 按开发计划 2.2 的脚本补齐。金额用整数微单位（1 = 10⁻⁸），
+// 单价按每百万 token 表示（按每 token 会出现小数，比如 0.075 美元每百万 token）。
+type Quote struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Quote) Reset() {
+	*x = Quote{}
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Quote) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Quote) ProtoMessage() {}
+
+func (x *Quote) ProtoReflect() protoreflect.Message {
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Quote.ProtoReflect.Descriptor instead.
+func (*Quote) Descriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{22}
+}
+
+// 选号上下文：扣费函数从请求上下文读、由选号决定的值，入账前原样恢复（设计 5.3）。
+// 其余字段由 WP7 / WP8 按开发计划 2.2 的脚本补齐。
+type SelectionContext struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 计价时间（openai_profit_control 的 pricingAt）。
+	PricingAtUnixMs int64 `protobuf:"varint,1,opt,name=pricing_at_unix_ms,json=pricingAtUnixMs,proto3" json:"pricing_at_unix_ms,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *SelectionContext) Reset() {
+	*x = SelectionContext{}
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SelectionContext) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SelectionContext) ProtoMessage() {}
+
+func (x *SelectionContext) ProtoReflect() protoreflect.Message {
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SelectionContext.ProtoReflect.Descriptor instead.
+func (*SelectionContext) Descriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *SelectionContext) GetPricingAtUnixMs() int64 {
+	if x != nil {
+		return x.PricingAtUnixMs
+	}
+	return 0
+}
+
+// 票据吊销（设计 8.1）：这些用户在 revoked_before 及之前签发的票据作废。
+// 从节点只拿它提前拒绝；以主节点选号时的复查为准。
+type TicketRevocations struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Users         []*RevokedTicketUser   `protobuf:"bytes,1,rep,name=users,proto3" json:"users,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TicketRevocations) Reset() {
+	*x = TicketRevocations{}
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TicketRevocations) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TicketRevocations) ProtoMessage() {}
+
+func (x *TicketRevocations) ProtoReflect() protoreflect.Message {
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TicketRevocations.ProtoReflect.Descriptor instead.
+func (*TicketRevocations) Descriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *TicketRevocations) GetUsers() []*RevokedTicketUser {
+	if x != nil {
+		return x.Users
+	}
+	return nil
+}
+
+type RevokedTicketUser struct {
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	UserId              int64                  `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	RevokedBeforeUnixMs int64                  `protobuf:"varint,2,opt,name=revoked_before_unix_ms,json=revokedBeforeUnixMs,proto3" json:"revoked_before_unix_ms,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *RevokedTicketUser) Reset() {
+	*x = RevokedTicketUser{}
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RevokedTicketUser) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RevokedTicketUser) ProtoMessage() {}
+
+func (x *RevokedTicketUser) ProtoReflect() protoreflect.Message {
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RevokedTicketUser.ProtoReflect.Descriptor instead.
+func (*RevokedTicketUser) Descriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *RevokedTicketUser) GetUserId() int64 {
+	if x != nil {
+		return x.UserId
+	}
+	return 0
+}
+
+func (x *RevokedTicketUser) GetRevokedBeforeUnixMs() int64 {
+	if x != nil {
+		return x.RevokedBeforeUnixMs
+	}
+	return 0
 }
 
 var File_sub2api_relay_v1_relay_proto protoreflect.FileDescriptor
@@ -1333,7 +1933,7 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	" \x01(\v2\x1b.sub2api.relay.v1.EventPingH\x00R\x04pingB\x06\n" +
 	"\x04body\"9\n" +
 	"\x12FetchConfigRequest\x12#\n" +
-	"\rknown_version\x18\x01 \x01(\tR\fknownVersion\"\xa8\x03\n" +
+	"\rknown_version\x18\x01 \x01(\tR\fknownVersion\"\xfa\x03\n" +
 	"\x0eConfigSnapshot\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12\x1c\n" +
 	"\tunchanged\x18\x02 \x01(\bR\tunchanged\x12J\n" +
@@ -1341,7 +1941,8 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\bsections\x18\x04 \x03(\v2..sub2api.relay.v1.ConfigSnapshot.SectionsEntryR\bsections\x12\x1f\n" +
 	"\vnode_config\x18\x05 \x01(\fR\n" +
 	"nodeConfig\x12+\n" +
-	"\x11root_fingerprints\x18\x06 \x03(\tR\x10rootFingerprints\x1a;\n" +
+	"\x11root_fingerprints\x18\x06 \x03(\tR\x10rootFingerprints\x12P\n" +
+	"\x12ticket_public_keys\x18\a \x03(\v2\".sub2api.relay.v1.SigningPublicKeyR\x10ticketPublicKeys\x1a;\n" +
 	"\rSettingsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a;\n" +
@@ -1353,16 +1954,58 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\fInvalidation\x12$\n" +
 	"\x0eapi_key_hashes\x18\x01 \x03(\tR\fapiKeyHashes\x12\x19\n" +
 	"\buser_ids\x18\x02 \x03(\x03R\auserIds\x12\x1b\n" +
-	"\tgroup_ids\x18\x03 \x03(\x03R\bgroupIds\"\xed\x01\n" +
+	"\tgroup_ids\x18\x03 \x03(\x03R\bgroupIds\"\xc3\x02\n" +
 	"\x0eMasterEnvelope\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x04R\x03seq\x121\n" +
 	"\x04ping\x18\n" +
 	" \x01(\v2\x1b.sub2api.relay.v1.EventPingH\x00R\x04ping\x12H\n" +
 	"\x0econfig_changed\x18\v \x01(\v2\x1f.sub2api.relay.v1.ConfigChangedH\x00R\rconfigChanged\x12D\n" +
-	"\finvalidation\x18\f \x01(\v2\x1e.sub2api.relay.v1.InvalidationH\x00R\finvalidationB\x06\n" +
+	"\finvalidation\x18\f \x01(\v2\x1e.sub2api.relay.v1.InvalidationH\x00R\finvalidation\x12T\n" +
+	"\x12ticket_revocations\x18\r \x01(\v2#.sub2api.relay.v1.TicketRevocationsH\x00R\x11ticketRevocationsB\x06\n" +
 	"\x04body\"%\n" +
 	"\tEventPing\x12\x18\n" +
-	"\apayload\x18\x01 \x01(\fR\apayload*r\n" +
+	"\apayload\x18\x01 \x01(\fR\apayload\"f\n" +
+	"\vSignedToken\x12\x1f\n" +
+	"\vkey_version\x18\x01 \x01(\rR\n" +
+	"keyVersion\x12\x18\n" +
+	"\apayload\x18\x02 \x01(\fR\apayload\x12\x1c\n" +
+	"\tsignature\x18\x03 \x01(\fR\tsignature\"K\n" +
+	"\x10SigningPublicKey\x12\x18\n" +
+	"\aversion\x18\x01 \x01(\rR\aversion\x12\x1d\n" +
+	"\n" +
+	"public_key\x18\x02 \x01(\fR\tpublicKey\"\xb7\x01\n" +
+	"\x06Ticket\x12\x17\n" +
+	"\auser_id\x18\x01 \x01(\x03R\x06userId\x12\x17\n" +
+	"\anode_id\x18\x02 \x01(\x03R\x06nodeId\x12#\n" +
+	"\rtoken_version\x18\x03 \x01(\x03R\ftokenVersion\x12)\n" +
+	"\x11issued_at_unix_ms\x18\x04 \x01(\x03R\x0eissuedAtUnixMs\x12+\n" +
+	"\x12expires_at_unix_ms\x18\x05 \x01(\x03R\x0fexpiresAtUnixMs\"\x8e\x04\n" +
+	"\aVoucher\x12\x1d\n" +
+	"\n" +
+	"voucher_id\x18\x01 \x01(\fR\tvoucherId\x12)\n" +
+	"\x11issued_at_unix_ms\x18\x02 \x01(\x03R\x0eissuedAtUnixMs\x12\x17\n" +
+	"\anode_id\x18\x03 \x01(\x03R\x06nodeId\x12!\n" +
+	"\fselection_id\x18\x04 \x01(\tR\vselectionId\x12\x17\n" +
+	"\auser_id\x18\x05 \x01(\x03R\x06userId\x12\x1c\n" +
+	"\n" +
+	"api_key_id\x18\x06 \x01(\x03R\bapiKeyId\x12\x1d\n" +
+	"\n" +
+	"account_id\x18\a \x01(\x03R\taccountId\x12\x19\n" +
+	"\bgroup_id\x18\b \x01(\x03R\agroupId\x12@\n" +
+	"\fbilling_mode\x18\t \x01(\x0e2\x1d.sub2api.relay.v1.BillingModeR\vbillingMode\x12'\n" +
+	"\x0frequested_model\x18\n" +
+	" \x01(\tR\x0erequestedModel\x124\n" +
+	"\x16allowed_billing_models\x18\v \x03(\tR\x14allowedBillingModels\x12-\n" +
+	"\x05quote\x18\f \x01(\v2\x17.sub2api.relay.v1.QuoteR\x05quote\x12<\n" +
+	"\acontext\x18\r \x01(\v2\".sub2api.relay.v1.SelectionContextR\acontext\"\a\n" +
+	"\x05Quote\"?\n" +
+	"\x10SelectionContext\x12+\n" +
+	"\x12pricing_at_unix_ms\x18\x01 \x01(\x03R\x0fpricingAtUnixMs\"N\n" +
+	"\x11TicketRevocations\x129\n" +
+	"\x05users\x18\x01 \x03(\v2#.sub2api.relay.v1.RevokedTicketUserR\x05users\"a\n" +
+	"\x11RevokedTicketUser\x12\x17\n" +
+	"\auser_id\x18\x01 \x01(\x03R\x06userId\x123\n" +
+	"\x16revoked_before_unix_ms\x18\x02 \x01(\x03R\x13revokedBeforeUnixMs*r\n" +
 	"\tPeerClass\x12\x1a\n" +
 	"\x16PEER_CLASS_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14PEER_CLASS_ANONYMOUS\x10\x01\x12\x18\n" +
@@ -1376,7 +2019,11 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x12NODE_STATUS_ACTIVE\x10\x03\x12\x18\n" +
 	"\x14NODE_STATUS_DRAINING\x10\x04\x12\x18\n" +
 	"\x14NODE_STATUS_DISABLED\x10\x05\x12\x18\n" +
-	"\x14NODE_STATUS_REJECTED\x10\x062\xca\x03\n" +
+	"\x14NODE_STATUS_REJECTED\x10\x06*d\n" +
+	"\vBillingMode\x12\x1c\n" +
+	"\x18BILLING_MODE_UNSPECIFIED\x10\x00\x12\x18\n" +
+	"\x14BILLING_MODE_BALANCE\x10\x01\x12\x1d\n" +
+	"\x19BILLING_MODE_SUBSCRIPTION\x10\x022\xca\x03\n" +
 	"\x0fRelayEnrollment\x12H\n" +
 	"\x05Hello\x12\x1e.sub2api.relay.v1.HelloRequest\x1a\x1f.sub2api.relay.v1.HelloResponse\x12Q\n" +
 	"\bRegister\x12!.sub2api.relay.v1.RegisterRequest\x1a\".sub2api.relay.v1.RegisterResponse\x12W\n" +
@@ -1402,68 +2049,83 @@ func file_sub2api_relay_v1_relay_proto_rawDescGZIP() []byte {
 	return file_sub2api_relay_v1_relay_proto_rawDescData
 }
 
-var file_sub2api_relay_v1_relay_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_sub2api_relay_v1_relay_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
+var file_sub2api_relay_v1_relay_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
+var file_sub2api_relay_v1_relay_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
 var file_sub2api_relay_v1_relay_proto_goTypes = []any{
 	(PeerClass)(0),              // 0: sub2api.relay.v1.PeerClass
 	(NodeStatus)(0),             // 1: sub2api.relay.v1.NodeStatus
-	(*ProtocolVersion)(nil),     // 2: sub2api.relay.v1.ProtocolVersion
-	(*HelloRequest)(nil),        // 3: sub2api.relay.v1.HelloRequest
-	(*HelloResponse)(nil),       // 4: sub2api.relay.v1.HelloResponse
-	(*RegisterRequest)(nil),     // 5: sub2api.relay.v1.RegisterRequest
-	(*RegisterResponse)(nil),    // 6: sub2api.relay.v1.RegisterResponse
-	(*NodeStatusRequest)(nil),   // 7: sub2api.relay.v1.NodeStatusRequest
-	(*NodeStatusResponse)(nil),  // 8: sub2api.relay.v1.NodeStatusResponse
-	(*CertificateRequest)(nil),  // 9: sub2api.relay.v1.CertificateRequest
-	(*CertificateResponse)(nil), // 10: sub2api.relay.v1.CertificateResponse
-	(*PingRequest)(nil),         // 11: sub2api.relay.v1.PingRequest
-	(*PingResponse)(nil),        // 12: sub2api.relay.v1.PingResponse
-	(*NodeEnvelope)(nil),        // 13: sub2api.relay.v1.NodeEnvelope
-	(*FetchConfigRequest)(nil),  // 14: sub2api.relay.v1.FetchConfigRequest
-	(*ConfigSnapshot)(nil),      // 15: sub2api.relay.v1.ConfigSnapshot
-	(*ConfigChanged)(nil),       // 16: sub2api.relay.v1.ConfigChanged
-	(*Invalidation)(nil),        // 17: sub2api.relay.v1.Invalidation
-	(*MasterEnvelope)(nil),      // 18: sub2api.relay.v1.MasterEnvelope
-	(*EventPing)(nil),           // 19: sub2api.relay.v1.EventPing
-	nil,                         // 20: sub2api.relay.v1.RegisterRequest.SystemInfoEntry
-	nil,                         // 21: sub2api.relay.v1.ConfigSnapshot.SettingsEntry
-	nil,                         // 22: sub2api.relay.v1.ConfigSnapshot.SectionsEntry
+	(BillingMode)(0),            // 2: sub2api.relay.v1.BillingMode
+	(*ProtocolVersion)(nil),     // 3: sub2api.relay.v1.ProtocolVersion
+	(*HelloRequest)(nil),        // 4: sub2api.relay.v1.HelloRequest
+	(*HelloResponse)(nil),       // 5: sub2api.relay.v1.HelloResponse
+	(*RegisterRequest)(nil),     // 6: sub2api.relay.v1.RegisterRequest
+	(*RegisterResponse)(nil),    // 7: sub2api.relay.v1.RegisterResponse
+	(*NodeStatusRequest)(nil),   // 8: sub2api.relay.v1.NodeStatusRequest
+	(*NodeStatusResponse)(nil),  // 9: sub2api.relay.v1.NodeStatusResponse
+	(*CertificateRequest)(nil),  // 10: sub2api.relay.v1.CertificateRequest
+	(*CertificateResponse)(nil), // 11: sub2api.relay.v1.CertificateResponse
+	(*PingRequest)(nil),         // 12: sub2api.relay.v1.PingRequest
+	(*PingResponse)(nil),        // 13: sub2api.relay.v1.PingResponse
+	(*NodeEnvelope)(nil),        // 14: sub2api.relay.v1.NodeEnvelope
+	(*FetchConfigRequest)(nil),  // 15: sub2api.relay.v1.FetchConfigRequest
+	(*ConfigSnapshot)(nil),      // 16: sub2api.relay.v1.ConfigSnapshot
+	(*ConfigChanged)(nil),       // 17: sub2api.relay.v1.ConfigChanged
+	(*Invalidation)(nil),        // 18: sub2api.relay.v1.Invalidation
+	(*MasterEnvelope)(nil),      // 19: sub2api.relay.v1.MasterEnvelope
+	(*EventPing)(nil),           // 20: sub2api.relay.v1.EventPing
+	(*SignedToken)(nil),         // 21: sub2api.relay.v1.SignedToken
+	(*SigningPublicKey)(nil),    // 22: sub2api.relay.v1.SigningPublicKey
+	(*Ticket)(nil),              // 23: sub2api.relay.v1.Ticket
+	(*Voucher)(nil),             // 24: sub2api.relay.v1.Voucher
+	(*Quote)(nil),               // 25: sub2api.relay.v1.Quote
+	(*SelectionContext)(nil),    // 26: sub2api.relay.v1.SelectionContext
+	(*TicketRevocations)(nil),   // 27: sub2api.relay.v1.TicketRevocations
+	(*RevokedTicketUser)(nil),   // 28: sub2api.relay.v1.RevokedTicketUser
+	nil,                         // 29: sub2api.relay.v1.RegisterRequest.SystemInfoEntry
+	nil,                         // 30: sub2api.relay.v1.ConfigSnapshot.SettingsEntry
+	nil,                         // 31: sub2api.relay.v1.ConfigSnapshot.SectionsEntry
 }
 var file_sub2api_relay_v1_relay_proto_depIdxs = []int32{
-	2,  // 0: sub2api.relay.v1.HelloRequest.version:type_name -> sub2api.relay.v1.ProtocolVersion
-	2,  // 1: sub2api.relay.v1.HelloResponse.min_supported:type_name -> sub2api.relay.v1.ProtocolVersion
-	2,  // 2: sub2api.relay.v1.HelloResponse.current:type_name -> sub2api.relay.v1.ProtocolVersion
+	3,  // 0: sub2api.relay.v1.HelloRequest.version:type_name -> sub2api.relay.v1.ProtocolVersion
+	3,  // 1: sub2api.relay.v1.HelloResponse.min_supported:type_name -> sub2api.relay.v1.ProtocolVersion
+	3,  // 2: sub2api.relay.v1.HelloResponse.current:type_name -> sub2api.relay.v1.ProtocolVersion
 	0,  // 3: sub2api.relay.v1.HelloResponse.peer_class:type_name -> sub2api.relay.v1.PeerClass
-	20, // 4: sub2api.relay.v1.RegisterRequest.system_info:type_name -> sub2api.relay.v1.RegisterRequest.SystemInfoEntry
+	29, // 4: sub2api.relay.v1.RegisterRequest.system_info:type_name -> sub2api.relay.v1.RegisterRequest.SystemInfoEntry
 	1,  // 5: sub2api.relay.v1.RegisterResponse.status:type_name -> sub2api.relay.v1.NodeStatus
 	1,  // 6: sub2api.relay.v1.NodeStatusResponse.status:type_name -> sub2api.relay.v1.NodeStatus
-	19, // 7: sub2api.relay.v1.NodeEnvelope.ping:type_name -> sub2api.relay.v1.EventPing
-	21, // 8: sub2api.relay.v1.ConfigSnapshot.settings:type_name -> sub2api.relay.v1.ConfigSnapshot.SettingsEntry
-	22, // 9: sub2api.relay.v1.ConfigSnapshot.sections:type_name -> sub2api.relay.v1.ConfigSnapshot.SectionsEntry
-	19, // 10: sub2api.relay.v1.MasterEnvelope.ping:type_name -> sub2api.relay.v1.EventPing
-	16, // 11: sub2api.relay.v1.MasterEnvelope.config_changed:type_name -> sub2api.relay.v1.ConfigChanged
-	17, // 12: sub2api.relay.v1.MasterEnvelope.invalidation:type_name -> sub2api.relay.v1.Invalidation
-	3,  // 13: sub2api.relay.v1.RelayEnrollment.Hello:input_type -> sub2api.relay.v1.HelloRequest
-	5,  // 14: sub2api.relay.v1.RelayEnrollment.Register:input_type -> sub2api.relay.v1.RegisterRequest
-	7,  // 15: sub2api.relay.v1.RelayEnrollment.NodeStatus:input_type -> sub2api.relay.v1.NodeStatusRequest
-	9,  // 16: sub2api.relay.v1.RelayEnrollment.ObtainCertificate:input_type -> sub2api.relay.v1.CertificateRequest
-	9,  // 17: sub2api.relay.v1.RelayEnrollment.RenewCertificate:input_type -> sub2api.relay.v1.CertificateRequest
-	11, // 18: sub2api.relay.v1.RelayControl.Ping:input_type -> sub2api.relay.v1.PingRequest
-	14, // 19: sub2api.relay.v1.RelayControl.FetchConfig:input_type -> sub2api.relay.v1.FetchConfigRequest
-	13, // 20: sub2api.relay.v1.RelayEvents.Stream:input_type -> sub2api.relay.v1.NodeEnvelope
-	4,  // 21: sub2api.relay.v1.RelayEnrollment.Hello:output_type -> sub2api.relay.v1.HelloResponse
-	6,  // 22: sub2api.relay.v1.RelayEnrollment.Register:output_type -> sub2api.relay.v1.RegisterResponse
-	8,  // 23: sub2api.relay.v1.RelayEnrollment.NodeStatus:output_type -> sub2api.relay.v1.NodeStatusResponse
-	10, // 24: sub2api.relay.v1.RelayEnrollment.ObtainCertificate:output_type -> sub2api.relay.v1.CertificateResponse
-	10, // 25: sub2api.relay.v1.RelayEnrollment.RenewCertificate:output_type -> sub2api.relay.v1.CertificateResponse
-	12, // 26: sub2api.relay.v1.RelayControl.Ping:output_type -> sub2api.relay.v1.PingResponse
-	15, // 27: sub2api.relay.v1.RelayControl.FetchConfig:output_type -> sub2api.relay.v1.ConfigSnapshot
-	18, // 28: sub2api.relay.v1.RelayEvents.Stream:output_type -> sub2api.relay.v1.MasterEnvelope
-	21, // [21:29] is the sub-list for method output_type
-	13, // [13:21] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	20, // 7: sub2api.relay.v1.NodeEnvelope.ping:type_name -> sub2api.relay.v1.EventPing
+	30, // 8: sub2api.relay.v1.ConfigSnapshot.settings:type_name -> sub2api.relay.v1.ConfigSnapshot.SettingsEntry
+	31, // 9: sub2api.relay.v1.ConfigSnapshot.sections:type_name -> sub2api.relay.v1.ConfigSnapshot.SectionsEntry
+	22, // 10: sub2api.relay.v1.ConfigSnapshot.ticket_public_keys:type_name -> sub2api.relay.v1.SigningPublicKey
+	20, // 11: sub2api.relay.v1.MasterEnvelope.ping:type_name -> sub2api.relay.v1.EventPing
+	17, // 12: sub2api.relay.v1.MasterEnvelope.config_changed:type_name -> sub2api.relay.v1.ConfigChanged
+	18, // 13: sub2api.relay.v1.MasterEnvelope.invalidation:type_name -> sub2api.relay.v1.Invalidation
+	27, // 14: sub2api.relay.v1.MasterEnvelope.ticket_revocations:type_name -> sub2api.relay.v1.TicketRevocations
+	2,  // 15: sub2api.relay.v1.Voucher.billing_mode:type_name -> sub2api.relay.v1.BillingMode
+	25, // 16: sub2api.relay.v1.Voucher.quote:type_name -> sub2api.relay.v1.Quote
+	26, // 17: sub2api.relay.v1.Voucher.context:type_name -> sub2api.relay.v1.SelectionContext
+	28, // 18: sub2api.relay.v1.TicketRevocations.users:type_name -> sub2api.relay.v1.RevokedTicketUser
+	4,  // 19: sub2api.relay.v1.RelayEnrollment.Hello:input_type -> sub2api.relay.v1.HelloRequest
+	6,  // 20: sub2api.relay.v1.RelayEnrollment.Register:input_type -> sub2api.relay.v1.RegisterRequest
+	8,  // 21: sub2api.relay.v1.RelayEnrollment.NodeStatus:input_type -> sub2api.relay.v1.NodeStatusRequest
+	10, // 22: sub2api.relay.v1.RelayEnrollment.ObtainCertificate:input_type -> sub2api.relay.v1.CertificateRequest
+	10, // 23: sub2api.relay.v1.RelayEnrollment.RenewCertificate:input_type -> sub2api.relay.v1.CertificateRequest
+	12, // 24: sub2api.relay.v1.RelayControl.Ping:input_type -> sub2api.relay.v1.PingRequest
+	15, // 25: sub2api.relay.v1.RelayControl.FetchConfig:input_type -> sub2api.relay.v1.FetchConfigRequest
+	14, // 26: sub2api.relay.v1.RelayEvents.Stream:input_type -> sub2api.relay.v1.NodeEnvelope
+	5,  // 27: sub2api.relay.v1.RelayEnrollment.Hello:output_type -> sub2api.relay.v1.HelloResponse
+	7,  // 28: sub2api.relay.v1.RelayEnrollment.Register:output_type -> sub2api.relay.v1.RegisterResponse
+	9,  // 29: sub2api.relay.v1.RelayEnrollment.NodeStatus:output_type -> sub2api.relay.v1.NodeStatusResponse
+	11, // 30: sub2api.relay.v1.RelayEnrollment.ObtainCertificate:output_type -> sub2api.relay.v1.CertificateResponse
+	11, // 31: sub2api.relay.v1.RelayEnrollment.RenewCertificate:output_type -> sub2api.relay.v1.CertificateResponse
+	13, // 32: sub2api.relay.v1.RelayControl.Ping:output_type -> sub2api.relay.v1.PingResponse
+	16, // 33: sub2api.relay.v1.RelayControl.FetchConfig:output_type -> sub2api.relay.v1.ConfigSnapshot
+	19, // 34: sub2api.relay.v1.RelayEvents.Stream:output_type -> sub2api.relay.v1.MasterEnvelope
+	27, // [27:35] is the sub-list for method output_type
+	19, // [19:27] is the sub-list for method input_type
+	19, // [19:19] is the sub-list for extension type_name
+	19, // [19:19] is the sub-list for extension extendee
+	0,  // [0:19] is the sub-list for field type_name
 }
 
 func init() { file_sub2api_relay_v1_relay_proto_init() }
@@ -1478,14 +2140,15 @@ func file_sub2api_relay_v1_relay_proto_init() {
 		(*MasterEnvelope_Ping)(nil),
 		(*MasterEnvelope_ConfigChanged)(nil),
 		(*MasterEnvelope_Invalidation)(nil),
+		(*MasterEnvelope_TicketRevocations)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sub2api_relay_v1_relay_proto_rawDesc), len(file_sub2api_relay_v1_relay_proto_rawDesc)),
-			NumEnums:      2,
-			NumMessages:   21,
+			NumEnums:      3,
+			NumMessages:   29,
 			NumExtensions: 0,
 			NumServices:   3,
 		},

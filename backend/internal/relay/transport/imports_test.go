@@ -15,7 +15,7 @@ import (
 // 主从通信的底层包不能依赖业务层（开发计划 2.1）：它们同时被主节点和从节点使用，
 // 必须能单独编译、单独测试。master（主节点侧）和 node（从节点装配，要复用转发服务）
 // 会用到业务层，不在检查范围；从节点"不连库"由 WP9 的对象图守卫保证。
-var lowLevelRelayPackages = []string{"transport", "proto", "identity", "sealbox", "keystore", "relaytest"}
+var lowLevelRelayPackages = []string{"transport", "proto", "identity", "sealbox", "keystore", "relaytest", "sign"}
 
 func TestRelayPackagesDoNotImportBusinessLayers(t *testing.T) {
 	forbidden := []string{

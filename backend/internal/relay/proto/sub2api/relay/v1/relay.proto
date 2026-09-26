@@ -166,6 +166,9 @@ message ConfigSnapshot {
   bytes node_config = 5;
   // 主从通信根证书指纹（含轮换中的新根），从节点据此更新固定的指纹。
   repeated string root_fingerprints = 6;
+  // 验中转票据的公钥（全部未停用的版本，含预备中的，设计 8.1）。
+  // 扣费凭证只在主节点验，公钥不下发。
+  repeated SigningPublicKey ticket_public_keys = 7;
 }
 
 // 配置变了，从节点拉取新版本。
@@ -190,9 +193,91 @@ message MasterEnvelope {
     EventPing ping = 10;
     ConfigChanged config_changed = 11;
     Invalidation invalidation = 12;
+    TicketRevocations ticket_revocations = 13;
   }
 }
 
 message EventPing {
   bytes payload = 1;
 }
+
+// ---- 签名（开发计划 WP5，internal/relay/sign）----
+
+// 签名信封：payload 是 Ticket 或 Voucher 的 protobuf 编码，按收到的原始字节验签。
+// 签名 = Ed25519(私钥, 用途串 || 0x00 || payload)，用途串区分票据和凭证，一种不能冒充另一种。
+message SignedToken {
+  // 签名密钥版本（keystore 的版本号）。
+  uint32 key_version = 1;
+  bytes payload = 2;
+  bytes signature = 3;
+}
+
+message SigningPublicKey {
+  uint32 version = 1;
+  // Ed25519 公钥，32 字节。
+  bytes public_key = 2;
+}
+
+// 中转票据（设计 8.1）：小白端访问分配的从节点用，10 分钟有效。
+message Ticket {
+  int64 user_id = 1;
+  // 只能在这台从节点上用。
+  int64 node_id = 2;
+  // 签发时用户的 token_version（由邮箱和密码哈希推导）。主节点选号时和当前值比对，
+  // 改密码、改邮箱后旧票据在下一个请求被拒，和登录态一致。
+  int64 token_version = 3;
+  int64 issued_at_unix_ms = 4;
+  int64 expires_at_unix_ms = 5;
+}
+
+// 计费模式（设计 5.3）。
+enum BillingMode {
+  BILLING_MODE_UNSPECIFIED = 0;
+  BILLING_MODE_BALANCE = 1;
+  BILLING_MODE_SUBSCRIPTION = 2;
+}
+
+// 扣费凭证（设计 5.3）：主节点每次选号签发一张，从节点上报扣费记录时原样带回，主节点验签后才入账。
+message Voucher {
+  // UUID（16 字节）；与 issued_at 一起是 relay_voucher_consumed 的主键，每张只入账一次。
+  bytes voucher_id = 1;
+  int64 issued_at_unix_ms = 2;
+  // 只能由这台从节点上报（入账时核对，WP8）。
+  int64 node_id = 3;
+  string selection_id = 4;
+  int64 user_id = 5;
+  int64 api_key_id = 6;
+  int64 account_id = 7;
+  int64 group_id = 8;
+  BillingMode billing_mode = 9;
+  string requested_model = 10;
+  // 上报的实际模型必须在这里面，否则按请求模型计费并报警（设计 5.3）。
+  repeated string allowed_billing_models = 11;
+  Quote quote = 12;
+  SelectionContext context = 13;
+}
+
+// 报价：签发时的计价输入，入账按它计价（设计 5.3、6 第一类）。
+// 字段由 WP7 / WP8 按开发计划 2.2 的脚本补齐。金额用整数微单位（1 = 10⁻⁸），
+// 单价按每百万 token 表示（按每 token 会出现小数，比如 0.075 美元每百万 token）。
+message Quote {
+}
+
+// 选号上下文：扣费函数从请求上下文读、由选号决定的值，入账前原样恢复（设计 5.3）。
+// 其余字段由 WP7 / WP8 按开发计划 2.2 的脚本补齐。
+message SelectionContext {
+  // 计价时间（openai_profit_control 的 pricingAt）。
+  int64 pricing_at_unix_ms = 1;
+}
+
+// 票据吊销（设计 8.1）：这些用户在 revoked_before 及之前签发的票据作废。
+// 从节点只拿它提前拒绝；以主节点选号时的复查为准。
+message TicketRevocations {
+  repeated RevokedTicketUser users = 1;
+}
+
+message RevokedTicketUser {
+  int64 user_id = 1;
+  int64 revoked_before_unix_ms = 2;
+}
+
