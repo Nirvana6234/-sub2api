@@ -395,7 +395,9 @@ type APIKeyService struct {
 	authNegativeCacheL1        *ristretto.Cache
 	// authInvalidationListener 在每次作废鉴权缓存时收到缓存键（原始 Key 的 SHA-256），
 	// 主从分流的主节点据此通知从节点清掉自己的 Key 缓存（docs/MASTER_RELAY_NODES.md 6、8.2）。
-	authInvalidationListener  atomic.Pointer[func(cacheKey string)]
+	authInvalidationListener atomic.Pointer[func(cacheKey string)]
+	// accessChanges 在按用户、分组作废时发布改动（主从分流推给从节点，见 AccessChangeHub）。
+	accessChanges             atomic.Pointer[AccessChangeHub]
 	authCfg                   apiKeyAuthCacheConfig
 	authGroup                 singleflight.Group
 	authLookupSlots           chan struct{}

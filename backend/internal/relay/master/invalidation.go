@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
 // invalidationFlushInterval 是作废通知的合并间隔（开发计划 3.2：每 50 毫秒合并一次）。
@@ -59,6 +60,18 @@ func (v *Invalidator) Group(groupID int64) {
 	v.groups[groupID] = struct{}{}
 	v.scheduleLocked()
 	v.mu.Unlock()
+}
+
+// OnAccessChange 把业务层的改动（service.AccessChangeHub）转成作废通知。
+// 订阅和平台配额都按用户作废：从节点按用户缓存的状态（Key 解析结果、小白端内部 Key、
+// 额度）整体丢掉重取，比逐个维度作废简单，而这类改动很少，重取的代价可以忽略。
+func (v *Invalidator) OnAccessChange(c service.AccessChange) {
+	switch c.Kind {
+	case service.AccessChangeGroup:
+		v.Group(c.GroupID)
+	case service.AccessChangeUser, service.AccessChangeSubscription, service.AccessChangePlatformQuota:
+		v.User(c.UserID)
+	}
 }
 
 func (v *Invalidator) scheduleLocked() {

@@ -329,3 +329,41 @@ func (s *memSettings) Delete(_ context.Context, key string) error {
 	s.mu.Unlock()
 	return nil
 }
+
+// 业务层的用户、分组、订阅、平台配额改动经 AccessChangeHub 推到从节点；
+// 订阅和配额按用户作废。
+func TestAccessChangesReachTheNode(t *testing.T) {
+	m := startMaster(t)
+	n := startNode(t, m)
+	hub := service.NewAccessChangeHub()
+	hub.Subscribe(m.invalid.OnAccessChange)
+
+	var mu sync.Mutex
+	users, groups := map[int64]bool{}, map[int64]bool{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go node.RunEvents(ctx, n.client, n.syncer, node.EventHandlers{OnInvalidation: func(inv *relayv1.Invalidation) {
+		mu.Lock()
+		for _, u := range inv.UserIds {
+			users[u] = true
+		}
+		for _, g := range inv.GroupIds {
+			groups[g] = true
+		}
+		mu.Unlock()
+	}})
+	require.Eventually(t, func() bool { return len(m.events.ConnectedNodes()) == 1 }, 5*time.Second, 10*time.Millisecond)
+
+	hub.Publish(service.AccessChange{Kind: service.AccessChangeUser, UserID: 1})
+	hub.Publish(service.AccessChange{Kind: service.AccessChangeGroup, GroupID: 2})
+	hub.Publish(service.AccessChange{Kind: service.AccessChangeSubscription, UserID: 3, GroupID: 4})
+	hub.Publish(service.AccessChange{Kind: service.AccessChangePlatformQuota, UserID: 5})
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return users[1] && users[3] && users[5] && groups[2]
+	}, 5*time.Second, 10*time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	require.False(t, groups[4], "a subscription change invalidates the user, not the whole group")
+}

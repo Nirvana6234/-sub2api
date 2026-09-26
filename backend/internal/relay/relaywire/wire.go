@@ -29,13 +29,18 @@ func ProvideMasterRuntime(
 	settings service.SettingRepository,
 	hub *service.SettingChangeHub,
 	apiKeys *service.APIKeyService,
+	billing *service.BillingCacheService,
+	accessChanges *service.AccessChangeHub,
 ) *master.Runtime {
+	// 用户、分组、订阅作废时发布改动（平台配额在仓储层已接好，见 repository/wire.go）。
+	service.AttachAccessChangeHub(accessChanges, apiKeys, billing)
 	rt := master.NewRuntime(master.RuntimeDeps{
-		Config:   cfg,
-		Store:    repository.NewRelayNodeRepository(db),
-		Settings: settings,
-		Hub:      hub,
-		APIKeys:  apiKeys,
+		Config:        cfg,
+		Store:         repository.NewRelayNodeRepository(db),
+		Settings:      settings,
+		Hub:           hub,
+		APIKeys:       apiKeys,
+		AccessChanges: accessChanges,
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

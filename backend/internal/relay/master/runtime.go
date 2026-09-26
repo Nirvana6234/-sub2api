@@ -57,7 +57,9 @@ type RuntimeDeps struct {
 	Settings service.SettingRepository
 	Hub      *service.SettingChangeHub
 	APIKeys  *service.APIKeyService
-	Notifier Notifier
+	// AccessChanges：用户、分组、订阅、平台配额的改动，运行时转成作废推给从节点。
+	AccessChanges *service.AccessChangeHub
+	Notifier      Notifier
 }
 
 // Runtime 按主从分流总开关动态启停主节点的主从通信：开关打开当场开端口、起后台任务，
@@ -315,6 +317,9 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 	if r.deps.APIKeys != nil {
 		r.deps.APIKeys.SetAuthCacheInvalidationListener(invalidator.APIKeyHash)
 		unsubs = append(unsubs, func() { r.deps.APIKeys.SetAuthCacheInvalidationListener(nil) })
+	}
+	if r.deps.AccessChanges != nil {
+		unsubs = append(unsubs, r.deps.AccessChanges.Subscribe(invalidator.OnAccessChange))
 	}
 	running.unsubscribe = func() {
 		for _, u := range unsubs {

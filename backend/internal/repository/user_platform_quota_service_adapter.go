@@ -15,6 +15,12 @@ type userPlatformQuotaServiceAdapter struct {
 	inner *userPlatformQuotaRepository
 }
 
+// ProvideUserPlatformQuotaServiceRepository 是 wire 用的构造：适配后再加上配额改动通知
+// （主从分流把配额改动推给从节点，service.AccessChangeHub）。
+func ProvideUserPlatformQuotaServiceRepository(repo UserPlatformQuotaRepository, hub *service.AccessChangeHub) service.UserPlatformQuotaRepository {
+	return service.NewObservedUserPlatformQuotaRepository(NewUserPlatformQuotaServiceAdapter(repo), hub)
+}
+
 // NewUserPlatformQuotaServiceAdapter 将 UserPlatformQuotaRepository 实现包装为
 // 满足 service.UserPlatformQuotaRepository 接口的适配器。
 func NewUserPlatformQuotaServiceAdapter(repo UserPlatformQuotaRepository) service.UserPlatformQuotaRepository {

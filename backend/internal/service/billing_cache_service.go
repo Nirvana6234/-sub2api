@@ -104,6 +104,9 @@ type subscriptionCacheInvalidationPubSub interface {
 // BillingCacheService 计费缓存服务
 // 负责余额和订阅数据的缓存管理，提供高性能的计费资格检查
 type BillingCacheService struct {
+	// accessChanges 在订阅作废时发布改动（主从分流推给从节点，见 AccessChangeHub）。
+	accessChanges atomic.Pointer[AccessChangeHub]
+
 	cache                 BillingCache
 	userRepo              UserRepository
 	subRepo               UserSubscriptionRepository
@@ -520,6 +523,7 @@ func (s *BillingCacheService) QueueUpdateSubscriptionUsage(userID, groupID int64
 
 // InvalidateSubscription 失效指定订阅缓存
 func (s *BillingCacheService) InvalidateSubscription(ctx context.Context, userID, groupID int64) error {
+	s.accessChanges.Load().Publish(AccessChange{Kind: AccessChangeSubscription, UserID: userID, GroupID: groupID})
 	if s.cache == nil {
 		return nil
 	}

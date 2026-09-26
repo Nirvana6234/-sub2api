@@ -7,6 +7,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/relay/keystore"
 	"github.com/Wei-Shaw/sub2api/internal/relay/master"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
 
@@ -136,4 +137,21 @@ func TestNodeAdminAuditCarriesSourceIP(t *testing.T) {
 	last := audits[len(audits)-1]
 	require.Equal(t, master.AuditRejected, last.Action)
 	require.Equal(t, "192.0.2.4", last.SourceIP)
+}
+
+// 主从分流运行时才订阅业务层改动；关掉即取消，开关关闭时不挂任何东西。
+func TestRuntimeSubscribesToAccessChangesOnlyWhileRunning(t *testing.T) {
+	ctx := context.Background()
+	hub := service.NewAccessChangeHub()
+	rt := master.NewRuntime(master.RuntimeDeps{Config: testRelayConfig(t), Store: master.NewMemoryStore(), Settings: newMemSettings(), AccessChanges: hub})
+	t.Cleanup(rt.Close)
+	rt.Init(ctx)
+	require.Equal(t, 0, hub.SubscriberCount())
+
+	_, err := rt.SetEnabled(ctx, 1, true)
+	require.NoError(t, err)
+	require.Equal(t, 1, hub.SubscriberCount())
+	_, err = rt.SetEnabled(ctx, 1, false)
+	require.NoError(t, err)
+	require.Equal(t, 0, hub.SubscriberCount())
 }

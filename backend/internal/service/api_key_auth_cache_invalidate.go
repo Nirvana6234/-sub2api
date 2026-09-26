@@ -27,6 +27,8 @@ func (s *APIKeyService) InvalidateAuthCacheByUserID(ctx context.Context, userID 
 	if userID <= 0 {
 		return
 	}
+	// 先发布再查 Key：删除用户时 Key 可能已经查不到，用户这一级的作废不能跟着丢。
+	s.accessChanges.Load().Publish(AccessChange{Kind: AccessChangeUser, UserID: userID})
 	keys, err := s.apiKeyRepo.ListKeysByUserID(ctx, userID)
 	if err != nil {
 		return
@@ -39,6 +41,7 @@ func (s *APIKeyService) InvalidateAuthCacheByGroupID(ctx context.Context, groupI
 	if groupID <= 0 {
 		return
 	}
+	s.accessChanges.Load().Publish(AccessChange{Kind: AccessChangeGroup, GroupID: groupID})
 	keys, err := s.apiKeyRepo.ListKeysByGroupID(ctx, groupID)
 	if err != nil {
 		return

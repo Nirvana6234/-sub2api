@@ -24,17 +24,23 @@ type runtimeHarness struct {
 	runtime  *master.Runtime
 }
 
-func newRuntime(t *testing.T, mutate func(*config.Config)) *runtimeHarness {
+// testRelayConfig 返回能启动主从通信的主节点配置（本机随机端口、临时私钥目录）。
+func testRelayConfig(t *testing.T) *config.Config {
 	t.Helper()
 	kek := make([]byte, 32)
 	_, err := rand.Read(kek)
 	require.NoError(t, err)
-	cfg := &config.Config{Relay: config.RelayConfig{
+	return &config.Config{Relay: config.RelayConfig{
 		NodeRole:         config.RelayNodeRoleMaster,
 		MasterListenAddr: "127.0.0.1:0",
 		KeyDir:           t.TempDir(),
 		KeyEncryptionKey: hex.EncodeToString(kek),
 	}}
+}
+
+func newRuntime(t *testing.T, mutate func(*config.Config)) *runtimeHarness {
+	t.Helper()
+	cfg := testRelayConfig(t)
 	if mutate != nil {
 		mutate(cfg)
 	}
