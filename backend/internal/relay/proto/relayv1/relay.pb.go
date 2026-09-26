@@ -2713,6 +2713,329 @@ func (x *AckQuotaRecallResponse) GetDroppedLeaseIds() []int64 {
 	return nil
 }
 
+// 账号快照：选号结果里给从节点转发用的账号（设计 2.2、9）。按白名单编码
+// （internal/relay/accountcodec）：转发要用的普通配置原样带上；密钥（上游 Key、短期 access token、
+// 代理密码、自定义请求头等白名单外的一切）放进 sealed_credentials，用这台节点的 X25519 加密公钥
+// 加密（设计 7.1），附加数据绑定节点、账号和凭据版本。refresh token、client secret、服务账号文件
+// 永远不离开主节点。
+type AccountSnapshot struct {
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Id          int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	Name        string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Platform    string                 `protobuf:"bytes,3,opt,name=platform,proto3" json:"platform,omitempty"`
+	Type        string                 `protobuf:"bytes,4,opt,name=type,proto3" json:"type,omitempty"`
+	Concurrency int32                  `protobuf:"varint,5,opt,name=concurrency,proto3" json:"concurrency,omitempty"`
+	Priority    int32                  `protobuf:"varint,6,opt,name=priority,proto3" json:"priority,omitempty"`
+	// 未声明时 has_rate_multiplier 为 false（按 1.0 处理）。
+	HasRateMultiplier        bool    `protobuf:"varint,7,opt,name=has_rate_multiplier,json=hasRateMultiplier,proto3" json:"has_rate_multiplier,omitempty"`
+	RateMultiplier           float64 `protobuf:"fixed64,8,opt,name=rate_multiplier,json=rateMultiplier,proto3" json:"rate_multiplier,omitempty"`
+	RateMultiplierUndeclared bool    `protobuf:"varint,9,opt,name=rate_multiplier_undeclared,json=rateMultiplierUndeclared,proto3" json:"rate_multiplier_undeclared,omitempty"`
+	Status                   string  `protobuf:"bytes,10,opt,name=status,proto3" json:"status,omitempty"`
+	// 白名单内的凭据字段（JSON 对象）。
+	PublicCredentials []byte `protobuf:"bytes,11,opt,name=public_credentials,json=publicCredentials,proto3" json:"public_credentials,omitempty"`
+	// Extra（JSON 对象），名字像密钥的字段已剔除。
+	Extra           []byte         `protobuf:"bytes,12,opt,name=extra,proto3" json:"extra,omitempty"`
+	ParentAccountId int64          `protobuf:"varint,13,opt,name=parent_account_id,json=parentAccountId,proto3" json:"parent_account_id,omitempty"`
+	QuotaDimension  string         `protobuf:"bytes,14,opt,name=quota_dimension,json=quotaDimension,proto3" json:"quota_dimension,omitempty"`
+	GroupIds        []int64        `protobuf:"varint,15,rep,packed,name=group_ids,json=groupIds,proto3" json:"group_ids,omitempty"`
+	Proxy           *ProxySnapshot `protobuf:"bytes,16,opt,name=proxy,proto3" json:"proxy,omitempty"`
+	// 贡献房间路由的结果（只对这一次请求有效）。
+	ContributionRouteSource               string  `protobuf:"bytes,17,opt,name=contribution_route_source,json=contributionRouteSource,proto3" json:"contribution_route_source,omitempty"`
+	ContributionRoomId                    int64   `protobuf:"varint,18,opt,name=contribution_room_id,json=contributionRoomId,proto3" json:"contribution_room_id,omitempty"`
+	HasContributionRateMultiplierOverride bool    `protobuf:"varint,19,opt,name=has_contribution_rate_multiplier_override,json=hasContributionRateMultiplierOverride,proto3" json:"has_contribution_rate_multiplier_override,omitempty"`
+	ContributionRateMultiplierOverride    float64 `protobuf:"fixed64,20,opt,name=contribution_rate_multiplier_override,json=contributionRateMultiplierOverride,proto3" json:"contribution_rate_multiplier_override,omitempty"`
+	// 凭据版本：密钥内容的哈希。节点已有同一版本时 sealed_credentials 为空，用本地缓存的（设计 9.1）。
+	CredentialVersion string `protobuf:"bytes,21,opt,name=credential_version,json=credentialVersion,proto3" json:"credential_version,omitempty"`
+	SealedCredentials []byte `protobuf:"bytes,22,opt,name=sealed_credentials,json=sealedCredentials,proto3" json:"sealed_credentials,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *AccountSnapshot) Reset() {
+	*x = AccountSnapshot{}
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[41]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AccountSnapshot) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AccountSnapshot) ProtoMessage() {}
+
+func (x *AccountSnapshot) ProtoReflect() protoreflect.Message {
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[41]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AccountSnapshot.ProtoReflect.Descriptor instead.
+func (*AccountSnapshot) Descriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{41}
+}
+
+func (x *AccountSnapshot) GetId() int64 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
+}
+
+func (x *AccountSnapshot) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *AccountSnapshot) GetPlatform() string {
+	if x != nil {
+		return x.Platform
+	}
+	return ""
+}
+
+func (x *AccountSnapshot) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *AccountSnapshot) GetConcurrency() int32 {
+	if x != nil {
+		return x.Concurrency
+	}
+	return 0
+}
+
+func (x *AccountSnapshot) GetPriority() int32 {
+	if x != nil {
+		return x.Priority
+	}
+	return 0
+}
+
+func (x *AccountSnapshot) GetHasRateMultiplier() bool {
+	if x != nil {
+		return x.HasRateMultiplier
+	}
+	return false
+}
+
+func (x *AccountSnapshot) GetRateMultiplier() float64 {
+	if x != nil {
+		return x.RateMultiplier
+	}
+	return 0
+}
+
+func (x *AccountSnapshot) GetRateMultiplierUndeclared() bool {
+	if x != nil {
+		return x.RateMultiplierUndeclared
+	}
+	return false
+}
+
+func (x *AccountSnapshot) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *AccountSnapshot) GetPublicCredentials() []byte {
+	if x != nil {
+		return x.PublicCredentials
+	}
+	return nil
+}
+
+func (x *AccountSnapshot) GetExtra() []byte {
+	if x != nil {
+		return x.Extra
+	}
+	return nil
+}
+
+func (x *AccountSnapshot) GetParentAccountId() int64 {
+	if x != nil {
+		return x.ParentAccountId
+	}
+	return 0
+}
+
+func (x *AccountSnapshot) GetQuotaDimension() string {
+	if x != nil {
+		return x.QuotaDimension
+	}
+	return ""
+}
+
+func (x *AccountSnapshot) GetGroupIds() []int64 {
+	if x != nil {
+		return x.GroupIds
+	}
+	return nil
+}
+
+func (x *AccountSnapshot) GetProxy() *ProxySnapshot {
+	if x != nil {
+		return x.Proxy
+	}
+	return nil
+}
+
+func (x *AccountSnapshot) GetContributionRouteSource() string {
+	if x != nil {
+		return x.ContributionRouteSource
+	}
+	return ""
+}
+
+func (x *AccountSnapshot) GetContributionRoomId() int64 {
+	if x != nil {
+		return x.ContributionRoomId
+	}
+	return 0
+}
+
+func (x *AccountSnapshot) GetHasContributionRateMultiplierOverride() bool {
+	if x != nil {
+		return x.HasContributionRateMultiplierOverride
+	}
+	return false
+}
+
+func (x *AccountSnapshot) GetContributionRateMultiplierOverride() float64 {
+	if x != nil {
+		return x.ContributionRateMultiplierOverride
+	}
+	return 0
+}
+
+func (x *AccountSnapshot) GetCredentialVersion() string {
+	if x != nil {
+		return x.CredentialVersion
+	}
+	return ""
+}
+
+func (x *AccountSnapshot) GetSealedCredentials() []byte {
+	if x != nil {
+		return x.SealedCredentials
+	}
+	return nil
+}
+
+// 代理快照；用户名、密码在 sealed_credentials 里（键 __proxy_username / __proxy_password）。
+type ProxySnapshot struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Id             int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	Name           string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Protocol       string                 `protobuf:"bytes,3,opt,name=protocol,proto3" json:"protocol,omitempty"`
+	Host           string                 `protobuf:"bytes,4,opt,name=host,proto3" json:"host,omitempty"`
+	Port           int32                  `protobuf:"varint,5,opt,name=port,proto3" json:"port,omitempty"`
+	Status         string                 `protobuf:"bytes,6,opt,name=status,proto3" json:"status,omitempty"`
+	HasOwnerUserId bool                   `protobuf:"varint,7,opt,name=has_owner_user_id,json=hasOwnerUserId,proto3" json:"has_owner_user_id,omitempty"`
+	OwnerUserId    int64                  `protobuf:"varint,8,opt,name=owner_user_id,json=ownerUserId,proto3" json:"owner_user_id,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *ProxySnapshot) Reset() {
+	*x = ProxySnapshot{}
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[42]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProxySnapshot) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProxySnapshot) ProtoMessage() {}
+
+func (x *ProxySnapshot) ProtoReflect() protoreflect.Message {
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[42]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProxySnapshot.ProtoReflect.Descriptor instead.
+func (*ProxySnapshot) Descriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{42}
+}
+
+func (x *ProxySnapshot) GetId() int64 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
+}
+
+func (x *ProxySnapshot) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *ProxySnapshot) GetProtocol() string {
+	if x != nil {
+		return x.Protocol
+	}
+	return ""
+}
+
+func (x *ProxySnapshot) GetHost() string {
+	if x != nil {
+		return x.Host
+	}
+	return ""
+}
+
+func (x *ProxySnapshot) GetPort() int32 {
+	if x != nil {
+		return x.Port
+	}
+	return 0
+}
+
+func (x *ProxySnapshot) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *ProxySnapshot) GetHasOwnerUserId() bool {
+	if x != nil {
+		return x.HasOwnerUserId
+	}
+	return false
+}
+
+func (x *ProxySnapshot) GetOwnerUserId() int64 {
+	if x != nil {
+		return x.OwnerUserId
+	}
+	return 0
+}
+
 var File_sub2api_relay_v1_relay_proto protoreflect.FileDescriptor
 
 const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
@@ -2895,7 +3218,40 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\trecall_id\x18\x01 \x01(\tR\brecallId\x127\n" +
 	"\areturns\x18\x02 \x03(\v2\x1d.sub2api.relay.v1.LeaseReturnR\areturns\"D\n" +
 	"\x16AckQuotaRecallResponse\x12*\n" +
-	"\x11dropped_lease_ids\x18\x01 \x03(\x03R\x0fdroppedLeaseIds*r\n" +
+	"\x11dropped_lease_ids\x18\x01 \x03(\x03R\x0fdroppedLeaseIds\"\xb9\a\n" +
+	"\x0fAccountSnapshot\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1a\n" +
+	"\bplatform\x18\x03 \x01(\tR\bplatform\x12\x12\n" +
+	"\x04type\x18\x04 \x01(\tR\x04type\x12 \n" +
+	"\vconcurrency\x18\x05 \x01(\x05R\vconcurrency\x12\x1a\n" +
+	"\bpriority\x18\x06 \x01(\x05R\bpriority\x12.\n" +
+	"\x13has_rate_multiplier\x18\a \x01(\bR\x11hasRateMultiplier\x12'\n" +
+	"\x0frate_multiplier\x18\b \x01(\x01R\x0erateMultiplier\x12<\n" +
+	"\x1arate_multiplier_undeclared\x18\t \x01(\bR\x18rateMultiplierUndeclared\x12\x16\n" +
+	"\x06status\x18\n" +
+	" \x01(\tR\x06status\x12-\n" +
+	"\x12public_credentials\x18\v \x01(\fR\x11publicCredentials\x12\x14\n" +
+	"\x05extra\x18\f \x01(\fR\x05extra\x12*\n" +
+	"\x11parent_account_id\x18\r \x01(\x03R\x0fparentAccountId\x12'\n" +
+	"\x0fquota_dimension\x18\x0e \x01(\tR\x0equotaDimension\x12\x1b\n" +
+	"\tgroup_ids\x18\x0f \x03(\x03R\bgroupIds\x125\n" +
+	"\x05proxy\x18\x10 \x01(\v2\x1f.sub2api.relay.v1.ProxySnapshotR\x05proxy\x12:\n" +
+	"\x19contribution_route_source\x18\x11 \x01(\tR\x17contributionRouteSource\x120\n" +
+	"\x14contribution_room_id\x18\x12 \x01(\x03R\x12contributionRoomId\x12X\n" +
+	")has_contribution_rate_multiplier_override\x18\x13 \x01(\bR%hasContributionRateMultiplierOverride\x12Q\n" +
+	"%contribution_rate_multiplier_override\x18\x14 \x01(\x01R\"contributionRateMultiplierOverride\x12-\n" +
+	"\x12credential_version\x18\x15 \x01(\tR\x11credentialVersion\x12-\n" +
+	"\x12sealed_credentials\x18\x16 \x01(\fR\x11sealedCredentials\"\xde\x01\n" +
+	"\rProxySnapshot\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1a\n" +
+	"\bprotocol\x18\x03 \x01(\tR\bprotocol\x12\x12\n" +
+	"\x04host\x18\x04 \x01(\tR\x04host\x12\x12\n" +
+	"\x04port\x18\x05 \x01(\x05R\x04port\x12\x16\n" +
+	"\x06status\x18\x06 \x01(\tR\x06status\x12)\n" +
+	"\x11has_owner_user_id\x18\a \x01(\bR\x0ehasOwnerUserId\x12\"\n" +
+	"\rowner_user_id\x18\b \x01(\x03R\vownerUserId*r\n" +
 	"\tPeerClass\x12\x1a\n" +
 	"\x16PEER_CLASS_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14PEER_CLASS_ANONYMOUS\x10\x01\x12\x18\n" +
@@ -2944,7 +3300,7 @@ func file_sub2api_relay_v1_relay_proto_rawDescGZIP() []byte {
 }
 
 var file_sub2api_relay_v1_relay_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_sub2api_relay_v1_relay_proto_msgTypes = make([]protoimpl.MessageInfo, 44)
+var file_sub2api_relay_v1_relay_proto_msgTypes = make([]protoimpl.MessageInfo, 46)
 var file_sub2api_relay_v1_relay_proto_goTypes = []any{
 	(PeerClass)(0),                 // 0: sub2api.relay.v1.PeerClass
 	(NodeStatus)(0),                // 1: sub2api.relay.v1.NodeStatus
@@ -2990,21 +3346,23 @@ var file_sub2api_relay_v1_relay_proto_goTypes = []any{
 	(*QuotaRecall)(nil),            // 41: sub2api.relay.v1.QuotaRecall
 	(*AckQuotaRecallRequest)(nil),  // 42: sub2api.relay.v1.AckQuotaRecallRequest
 	(*AckQuotaRecallResponse)(nil), // 43: sub2api.relay.v1.AckQuotaRecallResponse
-	nil,                            // 44: sub2api.relay.v1.RegisterRequest.SystemInfoEntry
-	nil,                            // 45: sub2api.relay.v1.ConfigSnapshot.SettingsEntry
-	nil,                            // 46: sub2api.relay.v1.ConfigSnapshot.SectionsEntry
+	(*AccountSnapshot)(nil),        // 44: sub2api.relay.v1.AccountSnapshot
+	(*ProxySnapshot)(nil),          // 45: sub2api.relay.v1.ProxySnapshot
+	nil,                            // 46: sub2api.relay.v1.RegisterRequest.SystemInfoEntry
+	nil,                            // 47: sub2api.relay.v1.ConfigSnapshot.SettingsEntry
+	nil,                            // 48: sub2api.relay.v1.ConfigSnapshot.SectionsEntry
 }
 var file_sub2api_relay_v1_relay_proto_depIdxs = []int32{
 	3,  // 0: sub2api.relay.v1.HelloRequest.version:type_name -> sub2api.relay.v1.ProtocolVersion
 	3,  // 1: sub2api.relay.v1.HelloResponse.min_supported:type_name -> sub2api.relay.v1.ProtocolVersion
 	3,  // 2: sub2api.relay.v1.HelloResponse.current:type_name -> sub2api.relay.v1.ProtocolVersion
 	0,  // 3: sub2api.relay.v1.HelloResponse.peer_class:type_name -> sub2api.relay.v1.PeerClass
-	44, // 4: sub2api.relay.v1.RegisterRequest.system_info:type_name -> sub2api.relay.v1.RegisterRequest.SystemInfoEntry
+	46, // 4: sub2api.relay.v1.RegisterRequest.system_info:type_name -> sub2api.relay.v1.RegisterRequest.SystemInfoEntry
 	1,  // 5: sub2api.relay.v1.RegisterResponse.status:type_name -> sub2api.relay.v1.NodeStatus
 	1,  // 6: sub2api.relay.v1.NodeStatusResponse.status:type_name -> sub2api.relay.v1.NodeStatus
 	20, // 7: sub2api.relay.v1.NodeEnvelope.ping:type_name -> sub2api.relay.v1.EventPing
-	45, // 8: sub2api.relay.v1.ConfigSnapshot.settings:type_name -> sub2api.relay.v1.ConfigSnapshot.SettingsEntry
-	46, // 9: sub2api.relay.v1.ConfigSnapshot.sections:type_name -> sub2api.relay.v1.ConfigSnapshot.SectionsEntry
+	47, // 8: sub2api.relay.v1.ConfigSnapshot.settings:type_name -> sub2api.relay.v1.ConfigSnapshot.SettingsEntry
+	48, // 9: sub2api.relay.v1.ConfigSnapshot.sections:type_name -> sub2api.relay.v1.ConfigSnapshot.SectionsEntry
 	22, // 10: sub2api.relay.v1.ConfigSnapshot.ticket_public_keys:type_name -> sub2api.relay.v1.SigningPublicKey
 	20, // 11: sub2api.relay.v1.MasterEnvelope.ping:type_name -> sub2api.relay.v1.EventPing
 	17, // 12: sub2api.relay.v1.MasterEnvelope.config_changed:type_name -> sub2api.relay.v1.ConfigChanged
@@ -3022,35 +3380,36 @@ var file_sub2api_relay_v1_relay_proto_depIdxs = []int32{
 	38, // 24: sub2api.relay.v1.ReportLeasesRequest.leases:type_name -> sub2api.relay.v1.HeldLease
 	29, // 25: sub2api.relay.v1.QuotaRecall.scope:type_name -> sub2api.relay.v1.QuotaScope
 	31, // 26: sub2api.relay.v1.AckQuotaRecallRequest.returns:type_name -> sub2api.relay.v1.LeaseReturn
-	4,  // 27: sub2api.relay.v1.RelayEnrollment.Hello:input_type -> sub2api.relay.v1.HelloRequest
-	6,  // 28: sub2api.relay.v1.RelayEnrollment.Register:input_type -> sub2api.relay.v1.RegisterRequest
-	8,  // 29: sub2api.relay.v1.RelayEnrollment.NodeStatus:input_type -> sub2api.relay.v1.NodeStatusRequest
-	10, // 30: sub2api.relay.v1.RelayEnrollment.ObtainCertificate:input_type -> sub2api.relay.v1.CertificateRequest
-	10, // 31: sub2api.relay.v1.RelayEnrollment.RenewCertificate:input_type -> sub2api.relay.v1.CertificateRequest
-	12, // 32: sub2api.relay.v1.RelayControl.Ping:input_type -> sub2api.relay.v1.PingRequest
-	15, // 33: sub2api.relay.v1.RelayControl.FetchConfig:input_type -> sub2api.relay.v1.FetchConfigRequest
-	32, // 34: sub2api.relay.v1.RelayControl.ReleaseQuota:input_type -> sub2api.relay.v1.ReleaseQuotaRequest
-	35, // 35: sub2api.relay.v1.RelayControl.RenewLeases:input_type -> sub2api.relay.v1.RenewLeasesRequest
-	39, // 36: sub2api.relay.v1.RelayControl.ReportLeases:input_type -> sub2api.relay.v1.ReportLeasesRequest
-	42, // 37: sub2api.relay.v1.RelayControl.AckQuotaRecall:input_type -> sub2api.relay.v1.AckQuotaRecallRequest
-	14, // 38: sub2api.relay.v1.RelayEvents.Stream:input_type -> sub2api.relay.v1.NodeEnvelope
-	5,  // 39: sub2api.relay.v1.RelayEnrollment.Hello:output_type -> sub2api.relay.v1.HelloResponse
-	7,  // 40: sub2api.relay.v1.RelayEnrollment.Register:output_type -> sub2api.relay.v1.RegisterResponse
-	9,  // 41: sub2api.relay.v1.RelayEnrollment.NodeStatus:output_type -> sub2api.relay.v1.NodeStatusResponse
-	11, // 42: sub2api.relay.v1.RelayEnrollment.ObtainCertificate:output_type -> sub2api.relay.v1.CertificateResponse
-	11, // 43: sub2api.relay.v1.RelayEnrollment.RenewCertificate:output_type -> sub2api.relay.v1.CertificateResponse
-	13, // 44: sub2api.relay.v1.RelayControl.Ping:output_type -> sub2api.relay.v1.PingResponse
-	16, // 45: sub2api.relay.v1.RelayControl.FetchConfig:output_type -> sub2api.relay.v1.ConfigSnapshot
-	33, // 46: sub2api.relay.v1.RelayControl.ReleaseQuota:output_type -> sub2api.relay.v1.ReleaseQuotaResponse
-	37, // 47: sub2api.relay.v1.RelayControl.RenewLeases:output_type -> sub2api.relay.v1.RenewLeasesResponse
-	40, // 48: sub2api.relay.v1.RelayControl.ReportLeases:output_type -> sub2api.relay.v1.ReportLeasesResponse
-	43, // 49: sub2api.relay.v1.RelayControl.AckQuotaRecall:output_type -> sub2api.relay.v1.AckQuotaRecallResponse
-	19, // 50: sub2api.relay.v1.RelayEvents.Stream:output_type -> sub2api.relay.v1.MasterEnvelope
-	39, // [39:51] is the sub-list for method output_type
-	27, // [27:39] is the sub-list for method input_type
-	27, // [27:27] is the sub-list for extension type_name
-	27, // [27:27] is the sub-list for extension extendee
-	0,  // [0:27] is the sub-list for field type_name
+	45, // 27: sub2api.relay.v1.AccountSnapshot.proxy:type_name -> sub2api.relay.v1.ProxySnapshot
+	4,  // 28: sub2api.relay.v1.RelayEnrollment.Hello:input_type -> sub2api.relay.v1.HelloRequest
+	6,  // 29: sub2api.relay.v1.RelayEnrollment.Register:input_type -> sub2api.relay.v1.RegisterRequest
+	8,  // 30: sub2api.relay.v1.RelayEnrollment.NodeStatus:input_type -> sub2api.relay.v1.NodeStatusRequest
+	10, // 31: sub2api.relay.v1.RelayEnrollment.ObtainCertificate:input_type -> sub2api.relay.v1.CertificateRequest
+	10, // 32: sub2api.relay.v1.RelayEnrollment.RenewCertificate:input_type -> sub2api.relay.v1.CertificateRequest
+	12, // 33: sub2api.relay.v1.RelayControl.Ping:input_type -> sub2api.relay.v1.PingRequest
+	15, // 34: sub2api.relay.v1.RelayControl.FetchConfig:input_type -> sub2api.relay.v1.FetchConfigRequest
+	32, // 35: sub2api.relay.v1.RelayControl.ReleaseQuota:input_type -> sub2api.relay.v1.ReleaseQuotaRequest
+	35, // 36: sub2api.relay.v1.RelayControl.RenewLeases:input_type -> sub2api.relay.v1.RenewLeasesRequest
+	39, // 37: sub2api.relay.v1.RelayControl.ReportLeases:input_type -> sub2api.relay.v1.ReportLeasesRequest
+	42, // 38: sub2api.relay.v1.RelayControl.AckQuotaRecall:input_type -> sub2api.relay.v1.AckQuotaRecallRequest
+	14, // 39: sub2api.relay.v1.RelayEvents.Stream:input_type -> sub2api.relay.v1.NodeEnvelope
+	5,  // 40: sub2api.relay.v1.RelayEnrollment.Hello:output_type -> sub2api.relay.v1.HelloResponse
+	7,  // 41: sub2api.relay.v1.RelayEnrollment.Register:output_type -> sub2api.relay.v1.RegisterResponse
+	9,  // 42: sub2api.relay.v1.RelayEnrollment.NodeStatus:output_type -> sub2api.relay.v1.NodeStatusResponse
+	11, // 43: sub2api.relay.v1.RelayEnrollment.ObtainCertificate:output_type -> sub2api.relay.v1.CertificateResponse
+	11, // 44: sub2api.relay.v1.RelayEnrollment.RenewCertificate:output_type -> sub2api.relay.v1.CertificateResponse
+	13, // 45: sub2api.relay.v1.RelayControl.Ping:output_type -> sub2api.relay.v1.PingResponse
+	16, // 46: sub2api.relay.v1.RelayControl.FetchConfig:output_type -> sub2api.relay.v1.ConfigSnapshot
+	33, // 47: sub2api.relay.v1.RelayControl.ReleaseQuota:output_type -> sub2api.relay.v1.ReleaseQuotaResponse
+	37, // 48: sub2api.relay.v1.RelayControl.RenewLeases:output_type -> sub2api.relay.v1.RenewLeasesResponse
+	40, // 49: sub2api.relay.v1.RelayControl.ReportLeases:output_type -> sub2api.relay.v1.ReportLeasesResponse
+	43, // 50: sub2api.relay.v1.RelayControl.AckQuotaRecall:output_type -> sub2api.relay.v1.AckQuotaRecallResponse
+	19, // 51: sub2api.relay.v1.RelayEvents.Stream:output_type -> sub2api.relay.v1.MasterEnvelope
+	40, // [40:52] is the sub-list for method output_type
+	28, // [28:40] is the sub-list for method input_type
+	28, // [28:28] is the sub-list for extension type_name
+	28, // [28:28] is the sub-list for extension extendee
+	0,  // [0:28] is the sub-list for field type_name
 }
 
 func init() { file_sub2api_relay_v1_relay_proto_init() }
@@ -3074,7 +3433,7 @@ func file_sub2api_relay_v1_relay_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sub2api_relay_v1_relay_proto_rawDesc), len(file_sub2api_relay_v1_relay_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   44,
+			NumMessages:   46,
 			NumExtensions: 0,
 			NumServices:   3,
 		},

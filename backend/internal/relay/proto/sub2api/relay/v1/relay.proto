@@ -385,3 +385,52 @@ message AckQuotaRecallResponse {
   repeated int64 dropped_lease_ids = 1;
 }
 
+// ---- 选号（开发计划 WP7）----
+
+// 账号快照：选号结果里给从节点转发用的账号（设计 2.2、9）。按白名单编码
+// （internal/relay/accountcodec）：转发要用的普通配置原样带上；密钥（上游 Key、短期 access token、
+// 代理密码、自定义请求头等白名单外的一切）放进 sealed_credentials，用这台节点的 X25519 加密公钥
+// 加密（设计 7.1），附加数据绑定节点、账号和凭据版本。refresh token、client secret、服务账号文件
+// 永远不离开主节点。
+message AccountSnapshot {
+  int64 id = 1;
+  string name = 2;
+  string platform = 3;
+  string type = 4;
+  int32 concurrency = 5;
+  int32 priority = 6;
+  // 未声明时 has_rate_multiplier 为 false（按 1.0 处理）。
+  bool has_rate_multiplier = 7;
+  double rate_multiplier = 8;
+  bool rate_multiplier_undeclared = 9;
+  string status = 10;
+  // 白名单内的凭据字段（JSON 对象）。
+  bytes public_credentials = 11;
+  // Extra（JSON 对象），名字像密钥的字段已剔除。
+  bytes extra = 12;
+  int64 parent_account_id = 13;
+  string quota_dimension = 14;
+  repeated int64 group_ids = 15;
+  ProxySnapshot proxy = 16;
+  // 贡献房间路由的结果（只对这一次请求有效）。
+  string contribution_route_source = 17;
+  int64 contribution_room_id = 18;
+  bool has_contribution_rate_multiplier_override = 19;
+  double contribution_rate_multiplier_override = 20;
+  // 凭据版本：密钥内容的哈希。节点已有同一版本时 sealed_credentials 为空，用本地缓存的（设计 9.1）。
+  string credential_version = 21;
+  bytes sealed_credentials = 22;
+}
+
+// 代理快照；用户名、密码在 sealed_credentials 里（键 __proxy_username / __proxy_password）。
+message ProxySnapshot {
+  int64 id = 1;
+  string name = 2;
+  string protocol = 3;
+  string host = 4;
+  int32 port = 5;
+  string status = 6;
+  bool has_owner_user_id = 7;
+  int64 owner_user_id = 8;
+}
+
