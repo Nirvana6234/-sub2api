@@ -12,8 +12,8 @@ Sub2API. Keep all keys and account tokens on the server, outside source control.
 
 ## Paired custom releases
 
-The current September 26 release is `20260926-9e10394-s2flow-fe8e554`, pairing
-backend `9e10394` with management UI `fe8e554`. Build the Linux backend with CGO
+The current September 26 release is `20260926-be98c51-concurrency-ded79f5`, pairing
+backend `be98c51` with management UI `ded79f5`. Build the Linux backend with CGO
 enabled against Debian Bookworm (matching the pinned production image), and
 build the frontend as one HTML
 file. The production image remains pinned; bind-mount the versioned backend
@@ -64,6 +64,43 @@ before using it in Sub2API. When replacing a key, also update the corresponding
 Sub2API upstream credential; rotating a CPA key does not update Sub2API for you.
 
 ## Release procedure
+
+### Account concurrency release
+
+Account cards show the current request count and configured limit. Use **Set
+limit** on the account card to change it; `0` means no configured limit. Values
+are administrator settings, not official Plus/Pro allowances. The deployment
+preserves every existing account limit and enables `routing.strategy:
+least-connections` with session affinity. Highest available priority is retained;
+within it, configured accounts use active/limit utilization and unlimited
+accounts use their active count. Ties rotate. A full session account can only
+fall back where its existing protocol and group rules allow it.
+
+All strategies atomically enforce configured capacity. If the eligible pool is
+full, requests receive local 429 without upstream cooldown; there is no new
+waiting queue. Lowering a limit does not interrupt active work. Counters are
+local to this process and reset on restart. Other CPA replicas do not share them.
+
+The authenticated `/v0/management/auth-files/concurrency` endpoint returns safe
+identities, current counts, limits, and editability. The page polls every three
+seconds while visible; unavailable statistics are not shown as zero. The new
+limit editor sends only identity and `max_concurrency`, preserving refreshed
+tokens. Home mode continues to own its admission and returns unknown local
+counts.
+
+Ordinary HTTP/SSE and Codex Responses generations are covered. Idle duplex
+connections do not occupy a slot. Realtime automatic/VAD responses can only be
+canceled after their creation event reaches CPA; WebRTC without a connected CPA
+sideband is unobserved. Do not present these counts as provider-wide capacity.
+
+Release evidence: 771 frontend tests, lint/typecheck/build, seven real-CPA browser
+scenarios, backend full tests, Linux `go vet`, and Linux race checks for admission,
+selection, duplex and Realtime. The existing Antigravity connection-pool test now
+uses a server barrier to guarantee actual simultaneous requests. Windows full
+vet still reports existing unsafe-pointer warnings in the native plugin loader;
+the Linux production target passes.
+
+### Applying a paired release
 
 1. Verify clean source revisions, backend tests/build, frontend tests/lint/build,
    and the browser integration test using the matching pair. Hash the artifacts.
