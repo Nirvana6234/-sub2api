@@ -134,6 +134,38 @@ func RunLeaseStore(t *testing.T, h LeaseHarness) {
 		require.Equal(t, master.Micros(5), again.Granted)
 	})
 
+	t.Run("returns apply only the part above the persisted cumulative total", func(t *testing.T) {
+		s := h.New(t)
+		u, n := h.NewUser(t, s), h.NewNode(t, s)
+		var lease *master.Lease
+		require.NoError(t, s.WithUser(ctx, u, func(tx master.LeaseTx) error {
+			var err error
+			lease, err = tx.Grant(ctx, master.LeaseKey{UserID: u, NodeID: n, LeaseScope: balance}, 500, later, "e", now)
+			return err
+		}))
+		apply := func(total master.Micros) master.Micros {
+			var d master.Micros
+			require.NoError(t, s.WithUser(ctx, u, func(tx master.LeaseTx) error {
+				var err error
+				d, err = tx.ApplyReturned(ctx, lease.ID, total, now)
+				return err
+			}))
+			return d
+		}
+		require.Equal(t, master.Micros(200), apply(200))
+		require.Equal(t, master.Micros(0), apply(200), "the same total twice applies once")
+		require.Equal(t, master.Micros(0), apply(100), "a lower total applies nothing")
+		require.Equal(t, master.Micros(50), apply(250), "a higher total applies the difference")
+		require.Equal(t, master.Micros(250), h.Reserved(t, s, u))
+		require.Equal(t, master.Micros(250), apply(900), "never more than is still locked")
+		require.Equal(t, master.Micros(0), h.Reserved(t, s, u))
+		active, err := s.ListActiveByNode(ctx, n)
+		require.NoError(t, err)
+		require.Len(t, active, 1)
+		require.Equal(t, master.Micros(900), active[0].ReturnedTotal, "the larger total is kept")
+		require.Equal(t, master.Micros(0), active[0].Granted)
+	})
+
 	t.Run("a failed transaction changes nothing", func(t *testing.T) {
 		s := h.New(t)
 		u, n := h.NewUser(t, s), h.NewNode(t, s)

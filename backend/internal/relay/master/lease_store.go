@@ -58,15 +58,17 @@ type LeaseKey struct {
 type Lease struct {
 	ID int64
 	LeaseKey
-	Granted     Micros
-	Status      LeaseStatus
-	ExpiresAt   time.Time
-	MasterEpoch string
-	LastUsedAt  *time.Time
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	ClosedAt    *time.Time
-	CloseReason string
+	Granted Micros
+	// ReturnedTotal 是节点至今累计退回的金额（随租约持久化，设计 4.2）：退回只处理比它多出来的部分。
+	ReturnedTotal Micros
+	Status        LeaseStatus
+	ExpiresAt     time.Time
+	MasterEpoch   string
+	LastUsedAt    *time.Time
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+	ClosedAt      *time.Time
+	CloseReason   string
 }
 
 var (
@@ -99,8 +101,12 @@ type LeaseTx interface {
 	Active(ctx context.Context) ([]*Lease, error)
 	// Grant 给 key 加锁 amount（> 0），没有生效租约时新建；到期时间更新为 expiresAt。
 	Grant(ctx context.Context, key LeaseKey, amount Micros, expiresAt time.Time, epoch string, now time.Time) (*Lease, error)
-	// Reduce 从生效租约里减去 amount（退回或入账），不能超过 Granted。
+	// Reduce 从生效租约里减去 amount（入账），不能超过 Granted。
 	Reduce(ctx context.Context, leaseID int64, amount Micros, now time.Time) (*Lease, error)
+	// ApplyReturned 处理节点的退回：returnedTotal 是节点报告的这份租约累计退回。只减去比已记录的
+	// 累计多出来的那一截（不超过 Granted），并把累计记成两者中较大的。返回这次实际减去的金额。
+	// 同一个累计值重复到达（重发、回复丢失、主节点重启后）只生效一次。
+	ApplyReturned(ctx context.Context, leaseID int64, returnedTotal Micros, now time.Time) (Micros, error)
 	// Close 关闭生效租约，剩下的 Granted 全部放回，返回放回的金额。
 	Close(ctx context.Context, leaseID int64, status LeaseStatus, reason string, now time.Time) (Micros, error)
 	// Renew 续期，并记下节点报告的最后使用时间（闲置判断用）。

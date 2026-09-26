@@ -72,6 +72,29 @@ func TestApplyReturnIsCumulativeAndIdempotent(t *testing.T) {
 	require.Zero(t, n)
 }
 
+// 主节点重启（新的额度服务、同一个库）后，节点重发同一条退回（回复丢失的情况）什么都不改。
+func TestResentReturnAfterMasterRestartAppliesNothing(t *testing.T) {
+	q, store, now := newProtoQuotas(t)
+	ctx := context.Background()
+	g := grant(t, q, 10, 100)
+	ret := &relayv1.LeaseReturn{LeaseId: g.LeaseID, UserId: 1, ReturnedTotal: ToMicros(2)}
+	_, n, err := q.ApplyReturn(ctx, 10, ret)
+	require.NoError(t, err)
+	require.Equal(t, ToMicros(2), n)
+
+	restarted, err := NewQuotas(ctx, store, "epoch-2", func() time.Time { return *now })
+	require.NoError(t, err)
+	_, n, err = restarted.ApplyReturn(ctx, 10, ret)
+	require.NoError(t, err)
+	require.Zero(t, n, "already applied before the restart")
+	require.Equal(t, ToMicros(3), store.ReservedBalance(1))
+	require.InDelta(t, 3, restarted.RelayReservedBalance(1), 1e-9)
+
+	_, n, err = restarted.ApplyReturn(ctx, 10, &relayv1.LeaseReturn{LeaseId: g.LeaseID, UserId: 1, ReturnedTotal: ToMicros(3)})
+	require.NoError(t, err)
+	require.Equal(t, ToMicros(1), n, "the counter carries on across the restart")
+}
+
 // 续期记下最后使用时间；已作废的（比如节点离线时被管理员回收）让节点丢掉。
 func TestRenewBatchDropsVoidedLeases(t *testing.T) {
 	q, store, now := newProtoQuotas(t)

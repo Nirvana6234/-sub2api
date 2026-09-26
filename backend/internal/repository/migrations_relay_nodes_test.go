@@ -12,17 +12,21 @@ import (
 // 主从分流的迁移必须是纯加法（开发计划第 1 节）：只加表、加列、加索引，
 // 不改、不删现有列，才能在开关关闭时对现有部署零影响。
 func TestRelayNodeMigrationsAreAdditiveOnly(t *testing.T) {
-	content, err := migrations.FS.ReadFile("259_relay_nodes.sql")
-	require.NoError(t, err)
-
-	sql := strings.ToUpper(stripAllSQLLineComments(string(content)))
-	for _, forbidden := range []string{"DROP ", "RENAME ", "ALTER COLUMN", "TRUNCATE", "DELETE FROM", "UPDATE "} {
-		require.NotContains(t, sql, forbidden, "259_relay_nodes.sql must be additive only")
+	for _, name := range []string{"259_relay_nodes.sql", "261_relay_lease_returned_total.sql"} {
+		content, err := migrations.FS.ReadFile(name)
+		require.NoError(t, err)
+		sql := strings.ToUpper(stripAllSQLLineComments(string(content)))
+		for _, forbidden := range []string{"DROP ", "RENAME ", "ALTER COLUMN", "TRUNCATE", "DELETE FROM", "UPDATE "} {
+			require.NotContains(t, sql, forbidden, name+" must be additive only")
+		}
+		// 每个 ALTER TABLE 都只能 ADD。
+		alters := regexp.MustCompile(`ALTER TABLE\s+\w+\s+ADD\s+(COLUMN IF NOT EXISTS|CONSTRAINT)`).FindAllString(sql, -1)
+		require.Equal(t, strings.Count(sql, "ALTER TABLE"), len(alters), name+": every ALTER TABLE must only add")
 	}
 
-	// 每个 ALTER TABLE 都只能 ADD。
-	alters := regexp.MustCompile(`ALTER TABLE\s+\w+\s+ADD\s+(COLUMN IF NOT EXISTS|CONSTRAINT)`).FindAllString(sql, -1)
-	require.Equal(t, strings.Count(sql, "ALTER TABLE"), len(alters), "every ALTER TABLE must only add")
+	content, err := migrations.FS.ReadFile("259_relay_nodes.sql")
+	require.NoError(t, err)
+	sql := strings.ToUpper(stripAllSQLLineComments(string(content)))
 
 	// 现有表加的列必须可空或带常量默认值，PostgreSQL 11+ 只改元数据、不重写大表。
 	for _, column := range []string{
@@ -49,6 +53,12 @@ func TestRelayNodeMigrationsExecutionMode(t *testing.T) {
 	nonTx, err = validateMigrationExecutionMode("260_relay_nodes_indexes_notx.sql", string(idx))
 	require.NoError(t, err)
 	require.True(t, nonTx)
+
+	ret, err := migrations.FS.ReadFile("261_relay_lease_returned_total.sql")
+	require.NoError(t, err)
+	nonTx, err = validateMigrationExecutionMode("261_relay_lease_returned_total.sql", string(ret))
+	require.NoError(t, err)
+	require.False(t, nonTx)
 }
 
 // 扣费凭证去重表按签发时间分区，唯一键必须包含分区键；默认分区保证

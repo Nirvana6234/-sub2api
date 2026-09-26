@@ -321,8 +321,10 @@ type RelayControlClient interface {
 	// FetchConfig 拉取本节点的配置快照（启动、重连、纪元变化、版本落后时，设计 6.2）。
 	FetchConfig(ctx context.Context, in *FetchConfigRequest, opts ...grpc.CallOption) (*ConfigSnapshot, error)
 	// ---- 额度（设计第 4 节）。申请随选号一起（WP7），这里是退回、续期、核对、收回确认。----
-	// 这几个调用都动钱：必须带当前纪元，跨纪元一律拒绝（EPOCH_MISMATCH），从节点清零重来。
-	// 退回类消息带"本纪元累计退回"而不是增量，重发多少次都只生效一次。
+	// 这几个调用都动钱：必须带当前纪元，跨纪元一律拒绝（EPOCH_MISMATCH）；从节点先上报租约
+	// （ReportLeases），再用同样的数值重发，不清零。
+	// 退回类消息带"这份租约至今累计退回"而不是增量；主节点把累计记在租约上（持久化），只处理多出来的
+	// 部分，重发、回复丢失、主节点重启后再发都只生效一次。
 	ReleaseQuota(ctx context.Context, in *ReleaseQuotaRequest, opts ...grpc.CallOption) (*ReleaseQuotaResponse, error)
 	RenewLeases(ctx context.Context, in *RenewLeasesRequest, opts ...grpc.CallOption) (*RenewLeasesResponse, error)
 	// ReportLeases 重连或纪元变化后上报手里的租约：主节点关掉没上报的，告诉节点哪些已作废。
@@ -409,8 +411,10 @@ type RelayControlServer interface {
 	// FetchConfig 拉取本节点的配置快照（启动、重连、纪元变化、版本落后时，设计 6.2）。
 	FetchConfig(context.Context, *FetchConfigRequest) (*ConfigSnapshot, error)
 	// ---- 额度（设计第 4 节）。申请随选号一起（WP7），这里是退回、续期、核对、收回确认。----
-	// 这几个调用都动钱：必须带当前纪元，跨纪元一律拒绝（EPOCH_MISMATCH），从节点清零重来。
-	// 退回类消息带"本纪元累计退回"而不是增量，重发多少次都只生效一次。
+	// 这几个调用都动钱：必须带当前纪元，跨纪元一律拒绝（EPOCH_MISMATCH）；从节点先上报租约
+	// （ReportLeases），再用同样的数值重发，不清零。
+	// 退回类消息带"这份租约至今累计退回"而不是增量；主节点把累计记在租约上（持久化），只处理多出来的
+	// 部分，重发、回复丢失、主节点重启后再发都只生效一次。
 	ReleaseQuota(context.Context, *ReleaseQuotaRequest) (*ReleaseQuotaResponse, error)
 	RenewLeases(context.Context, *RenewLeasesRequest) (*RenewLeasesResponse, error)
 	// ReportLeases 重连或纪元变化后上报手里的租约：主节点关掉没上报的，告诉节点哪些已作废。

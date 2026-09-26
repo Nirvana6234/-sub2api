@@ -23,7 +23,7 @@ func NewRelayLeaseRepository(db *sql.DB) master.LeaseStore {
 }
 
 const relayLeaseColumns = `id, user_id, node_id, dimension, scope_id, scope_key, (granted * 100000000)::bigint,
-	status, expires_at, master_epoch, last_used_at, created_at, updated_at, closed_at, close_reason`
+	(returned_total * 100000000)::bigint, status, expires_at, master_epoch, last_used_at, created_at, updated_at, closed_at, close_reason`
 
 func scanRelayLease(row rowScanner) (*master.Lease, error) {
 	var (
@@ -33,7 +33,7 @@ func scanRelayLease(row rowScanner) (*master.Lease, error) {
 		closedAt   sql.NullTime
 	)
 	if err := row.Scan(&l.ID, &l.UserID, &l.NodeID, &l.Dimension, &l.ScopeID, &l.ScopeKey, &l.Granted,
-		&status, &l.ExpiresAt, &l.MasterEpoch, &lastUsedAt, &l.CreatedAt, &l.UpdatedAt, &closedAt, &l.CloseReason); err != nil {
+		&l.ReturnedTotal, &status, &l.ExpiresAt, &l.MasterEpoch, &lastUsedAt, &l.CreatedAt, &l.UpdatedAt, &closedAt, &l.CloseReason); err != nil {
 		return nil, err
 	}
 	l.Status = master.LeaseStatus(status)
@@ -206,6 +206,31 @@ func (t *relayLeaseTx) Reduce(ctx context.Context, leaseID int64, amount master.
 		return nil, err
 	}
 	return l, nil
+}
+
+func (t *relayLeaseTx) ApplyReturned(ctx context.Context, leaseID int64, returnedTotal master.Micros, now time.Time) (master.Micros, error) {
+	cur, err := t.lockActive(ctx, leaseID)
+	if err != nil {
+		return 0, err
+	}
+	delta := returnedTotal - cur.ReturnedTotal
+	if delta < 0 {
+		delta = 0
+	}
+	if delta > cur.Granted {
+		delta = cur.Granted
+	}
+	if _, err := t.tx.ExecContext(ctx, `UPDATE relay_quota_leases
+		SET granted = granted - ($1::numeric / 100000000),
+			returned_total = GREATEST(returned_total, $2::numeric / 100000000),
+			updated_at = $3
+		WHERE id = $4`, delta, returnedTotal, now, leaseID); err != nil {
+		return 0, err
+	}
+	if err := t.adjustReserved(ctx, cur.Dimension, -delta); err != nil {
+		return 0, err
+	}
+	return delta, nil
 }
 
 func (t *relayLeaseTx) Close(ctx context.Context, leaseID int64, status master.LeaseStatus, reason string, now time.Time) (master.Micros, error) {

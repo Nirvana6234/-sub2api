@@ -88,8 +88,6 @@ type Quotas struct {
 	recaller QuotaRecaller
 
 	locks [64]sync.Mutex
-	// applied：本纪元里每份租约已处理到的"累计退回"（ApplyReturn）。
-	applied appliedReturns
 
 	reservedMu sync.RWMutex
 	reserved   map[int64]Micros

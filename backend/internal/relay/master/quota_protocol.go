@@ -18,40 +18,11 @@ import (
 // 收回发生在别的请求的选号里，不能让它久等；等不到的节点按离线处理，等租约到期。
 const quotaRecallBudget = 1500 * time.Millisecond
 
-// ---- 退回（累计值，重发只生效一次）----
+// ---- 退回：节点报告这份租约至今累计退回了多少，主节点只处理比已记录的多出来的部分 ----
 
-// appliedReturns 记着本纪元里每份租约已经处理到的"累计退回"。只在内存：
-// 纪元变了（主节点重启）从节点也清零重来，旧纪元的调用被拒。
-type appliedReturns struct {
-	mu sync.Mutex
-	m  map[int64]Micros
-}
-
-func (a *appliedReturns) get(leaseID int64) Micros {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.m[leaseID]
-}
-
-func (a *appliedReturns) set(leaseID int64, v Micros) {
-	a.mu.Lock()
-	if a.m == nil {
-		a.m = map[int64]Micros{}
-	}
-	if v > a.m[leaseID] {
-		a.m[leaseID] = v
-	}
-	a.mu.Unlock()
-}
-
-func (a *appliedReturns) forget(leaseID int64) {
-	a.mu.Lock()
-	delete(a.m, leaseID)
-	a.mu.Unlock()
-}
-
-// ApplyReturn 处理节点对一份租约的退回：只处理比已处理部分多出来的那一截（不超过租约还锁着的），
-// closed 时关闭整份租约。租约已不在（关闭、作废、不是这台的）时返回 dropped=true，节点应丢弃它。
+// ApplyReturn 处理节点对一份租约的退回：累计值记在租约上（持久化），只处理比已记录的多出来的
+// 那一截（不超过租约还锁着的），所以重发、回复丢失、主节点重启后再发都只生效一次，不依赖传输层的
+// 幂等记录。closed 时关闭整份租约。租约已不在（关闭、作废、不是这台的）时返回 dropped=true。
 func (q *Quotas) ApplyReturn(ctx context.Context, nodeID int64, ret *relayv1.LeaseReturn) (dropped bool, returned Micros, err error) {
 	err = q.withUser(ctx, ret.GetUserId(), func(tx LeaseTx) error {
 		l, err := q.ownLease(ctx, tx, nodeID, ret.GetLeaseId())
@@ -63,17 +34,11 @@ func (q *Quotas) ApplyReturn(ctx context.Context, nodeID int64, ret *relayv1.Lea
 			return err
 		}
 		now := q.now()
-		if delta := ret.GetReturnedTotal() - q.applied.get(l.ID); delta > 0 {
-			if delta > l.Granted {
-				delta = l.Granted
-			}
-			if delta > 0 {
-				if _, err := tx.Reduce(ctx, l.ID, delta, now); err != nil {
-					return err
-				}
-				returned += delta
-			}
+		delta, err := tx.ApplyReturned(ctx, l.ID, ret.GetReturnedTotal(), now)
+		if err != nil {
+			return err
 		}
+		returned += delta
 		if ret.GetClosed() {
 			n, err := tx.Close(ctx, l.ID, LeaseReleased, "node_returned", now)
 			if err != nil {
@@ -89,11 +54,6 @@ func (q *Quotas) ApplyReturn(ctx context.Context, nodeID int64, ret *relayv1.Lea
 	}
 	if err != nil {
 		return false, 0, err
-	}
-	if dropped {
-		q.applied.forget(ret.GetLeaseId())
-	} else {
-		q.applied.set(ret.GetLeaseId(), ret.GetReturnedTotal())
 	}
 	return dropped, returned, nil
 }
@@ -141,9 +101,6 @@ func (q *Quotas) ReconcileNode(ctx context.Context, nodeID int64, held []*relayv
 	}
 	if _, err := q.closeLeases(ctx, lost, LeaseReleased, "node_lost_lease"); err != nil {
 		return nil, err
-	}
-	for _, l := range lost {
-		q.applied.forget(l.ID)
 	}
 	for _, h := range held {
 		if !known[h.GetLeaseId()] {

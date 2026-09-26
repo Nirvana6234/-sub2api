@@ -2040,7 +2040,8 @@ func (x *QuotaGrant) GetExpiresAtUnixMs() int64 {
 	return 0
 }
 
-// 一份租约的退回：本纪元里累计退回了多少（不是增量）。closed 表示节点放弃整份租约（剩下的全部退回）。
+// 一份租约的退回：这份租约至今累计退回了多少（不是增量，跨纪元也不清零）。
+// closed 表示节点放弃整份租约（剩下的全部退回）。
 type LeaseReturn struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	LeaseId       int64                  `protobuf:"varint,1,opt,name=lease_id,json=leaseId,proto3" json:"lease_id,omitempty"`

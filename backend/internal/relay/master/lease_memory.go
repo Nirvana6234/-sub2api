@@ -185,6 +185,29 @@ func (t *memoryLeaseTx) Reduce(_ context.Context, leaseID int64, amount Micros, 
 	return &c, nil
 }
 
+func (t *memoryLeaseTx) ApplyReturned(_ context.Context, leaseID int64, returnedTotal Micros, now time.Time) (Micros, error) {
+	l, err := t.active(leaseID)
+	if err != nil {
+		return 0, err
+	}
+	delta := returnedTotal - l.ReturnedTotal
+	if delta < 0 {
+		delta = 0
+	}
+	if delta > l.Granted {
+		delta = l.Granted
+	}
+	l.Granted -= delta
+	if returnedTotal > l.ReturnedTotal {
+		l.ReturnedTotal = returnedTotal
+	}
+	l.UpdatedAt = now
+	if isBalanceDimension(l.Dimension) {
+		t.reserved -= delta
+	}
+	return delta, nil
+}
+
 func (t *memoryLeaseTx) Close(_ context.Context, leaseID int64, status LeaseStatus, reason string, now time.Time) (Micros, error) {
 	l, err := t.active(leaseID)
 	if err != nil {

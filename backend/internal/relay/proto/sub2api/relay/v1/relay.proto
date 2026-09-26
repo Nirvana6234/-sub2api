@@ -37,8 +37,10 @@ service RelayControl {
   rpc FetchConfig(FetchConfigRequest) returns (ConfigSnapshot);
 
   // ---- 额度（设计第 4 节）。申请随选号一起（WP7），这里是退回、续期、核对、收回确认。----
-  // 这几个调用都动钱：必须带当前纪元，跨纪元一律拒绝（EPOCH_MISMATCH），从节点清零重来。
-  // 退回类消息带"本纪元累计退回"而不是增量，重发多少次都只生效一次。
+  // 这几个调用都动钱：必须带当前纪元，跨纪元一律拒绝（EPOCH_MISMATCH）；从节点先上报租约
+  // （ReportLeases），再用同样的数值重发，不清零。
+  // 退回类消息带"这份租约至今累计退回"而不是增量；主节点把累计记在租约上（持久化），只处理多出来的
+  // 部分，重发、回复丢失、主节点重启后再发都只生效一次。
   rpc ReleaseQuota(ReleaseQuotaRequest) returns (ReleaseQuotaResponse);
   rpc RenewLeases(RenewLeasesRequest) returns (RenewLeasesResponse);
   // ReportLeases 重连或纪元变化后上报手里的租约：主节点关掉没上报的，告诉节点哪些已作废。
@@ -314,7 +316,8 @@ message QuotaGrant {
   int64 expires_at_unix_ms = 6;
 }
 
-// 一份租约的退回：本纪元里累计退回了多少（不是增量）。closed 表示节点放弃整份租约（剩下的全部退回）。
+// 一份租约的退回：这份租约至今累计退回了多少（不是增量，跨纪元也不清零）。
+// closed 表示节点放弃整份租约（剩下的全部退回）。
 message LeaseReturn {
   int64 lease_id = 1;
   int64 user_id = 2;
