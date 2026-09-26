@@ -1,0 +1,11 @@
+[Unit]
+Description=Run TransitHub release artifact cleanup daily
+
+[Timer]
+# 错开 sub2api-log-cleanup (19:00) 和 sub2api-artifact-cleanup (19:30 + 最多 5 分钟随机延迟)
+OnCalendar=*-*-* 19:45:00 UTC
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

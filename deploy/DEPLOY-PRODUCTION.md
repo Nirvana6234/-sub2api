@@ -775,7 +775,7 @@ done                                                        # 都要有 max-size
 swapon --show                                               # 必须有 swap
 systemctl is-active sysstat-collect.timer                   # 出事后靠它回溯
 df -h /                                                     # 别又只给 8 GB
-systemctl is-active sub2api-log-cleanup.timer sub2api-artifact-cleanup.timer  # 两个磁盘保护 timer 都要 active
+systemctl is-active sub2api-log-cleanup.timer sub2api-artifact-cleanup.timer transithub-artifact-cleanup.timer  # 三个磁盘保护 timer 都要 active
 ```
 
 ## D5.5 磁盘容量保护：发版产物自动清理
@@ -788,11 +788,13 @@ systemctl is-active sub2api-log-cleanup.timer sub2api-artifact-cleanup.timer  # 
 |---|---|---|---|
 | `sub2api-log-cleanup.timer` | 每天 19:00 UTC | 清 `ops_system_logs`/`ops_error_logs`/`ops_alert_events` 三张运维日志表（保留最近 3 天） | 只装在服务器上，未入库 |
 | `sub2api-artifact-cleanup.timer` | 每天 19:30 UTC（错开 30 分钟避免抢资源） | `/opt/sub2api/backend/bin` 只保留最近 5 个二进制（**外加当前 compose 挂载的那个，即使排不进前 5 也强制保留**）；`/opt/sub2api/backups` 只保留最近 5 份 `*.dump`（`.csv`/`cleanup-manifest-*.txt` 等小文件不动） | 源码在 [`sub2api/deploy/maintenance/`](maintenance/)，已同步部署到服务器 |
+| `transithub-artifact-cleanup.timer` | 每天 19:45 UTC | `/opt/transithub-releases/<版本>/` 只保留最近 3 个（**外加当前 compose 引用的所有 release，强制保留；解析不到引用时整段跳过**）；两个 backups 目录（`/opt/transithub-releases/backups`、`/opt/transit-hub/backups`）的 `*.dump`/`*.sql.gz` 合并保留最近 5 份，其中超过 30 天的快照子目录删除；`/opt/transit-hub/docker-compose.yml.*` 保留最近 10 份；`.env.*` 备份保留最近 3 份 | 同上，脚本装在 `/opt/transit-hub/scripts/transithub-artifact-cleanup.sh`（2026-09-26 起） |
 
-两者都是 `Type=oneshot` + `Nice=10` + `IOSchedulingClass=idle`，不跟业务抢资源；执行日志在
-`/var/log/sub2api-artifact-cleanup.log`。改保留份数：改 `/opt/sub2api/scripts/prod-artifact-cleanup.sh`
-里的 `KEEP_BIN`/`KEEP_DUMP` 默认值，或者用环境变量跑
-`KEEP_BIN=8 sudo /opt/sub2api/scripts/prod-artifact-cleanup.sh`。想看会删什么但不真删，加 `--dry-run`。
+三者都是 `Type=oneshot` + `Nice=10` + `IOSchedulingClass=idle`，不跟业务抢资源；执行日志在
+`/var/log/sub2api-artifact-cleanup.log`、`/var/log/transithub-artifact-cleanup.log`。改保留份数：改脚本里的
+`KEEP_*` 默认值，或者用环境变量跑，例如
+`KEEP_BIN=8 sudo /opt/sub2api/scripts/prod-artifact-cleanup.sh`、
+`KEEP_RELEASE=5 sudo /opt/transit-hub/scripts/transithub-artifact-cleanup.sh`。想看会删什么但不真删，加 `--dry-run`。
 
 当前根盘仍是 gp3 15G（2026-09-09 用到 70%，11G/15G）。有了这个 timer 后 bin+backups 稳态占用
 从峰值 5.5G 降到约 1.2G，短期内不会再写满，但机型建议（见 A1）里的 "gp3 30 GB 起" 仍然成立——
