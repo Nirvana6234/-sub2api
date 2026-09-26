@@ -163,7 +163,19 @@ func (s *PaymentService) RequestRefund(ctx context.Context, oid, uid int64, reas
 	if err != nil {
 		return fmt.Errorf("get user: %w", err)
 	}
-	// 锁在主从分流从节点上的余额不能退（设计 4.3）。
+	// 锁在主从分流从节点上的余额不能退（设计 4.3）。余额本身够、只是被锁住时，先从在线节点
+	// 收回；仍不够返回 409，告诉管理员锁着多少、最晚什么时候放回（设计 4.4）。
+	if u.SpendableBalance() < o.Amount && u.Balance >= o.Amount {
+		locked, releaseBy, reclaimed := reclaimRelayBalanceFor(ctx, o.UserID)
+		if reclaimed {
+			if u, err = s.userRepo.GetByID(ctx, o.UserID); err != nil {
+				return fmt.Errorf("get user: %w", err)
+			}
+		}
+		if u.SpendableBalance() < o.Amount {
+			return relayBalanceLockedConflict(locked, releaseBy)
+		}
+	}
 	if u.SpendableBalance() < o.Amount {
 		return infraerrors.BadRequest("BALANCE_NOT_ENOUGH", "refund amount exceeds balance")
 	}
@@ -278,6 +290,14 @@ func (s *PaymentService) prepDeduct(ctx context.Context, o *dbent.PaymentOrder, 
 	}
 	p.DeductionType = payment.DeductionTypeBalance
 	spendable := u.SpendableBalance()
+	if spendable < p.RefundAmount && u.Balance >= p.RefundAmount {
+		// 只是被锁在从节点上：先从在线节点收回（设计 4.4）。
+		if _, _, reclaimed := reclaimRelayBalanceFor(ctx, o.UserID); reclaimed {
+			if fresh, ferr := s.userRepo.GetByID(ctx, o.UserID); ferr == nil {
+				spendable = fresh.SpendableBalance()
+			}
+		}
+	}
 	if spendable < p.RefundAmount && !force {
 		return &RefundResult{Success: false, Warning: "user balance is insufficient for deduction, use force", RequireForce: true}
 	}

@@ -973,10 +973,12 @@ func (r *userRepository) DeductAvailableBalance(ctx context.Context, id int64, a
 // 相比"读余额 → 算新值 → 整行写回"，这里把读与写压进同一条 UPDATE，
 // 并发的计费扣款不会被旧快照覆盖。
 func (r *userRepository) AdjustBalance(ctx context.Context, id int64, delta float64) (service.BalanceChange, error) {
+	// 扣减不能动到锁在主从分流从节点上的余额（relay_reserved_balance，设计 4.3、4.4）。
 	const updateSQL = `
 		UPDATE users
 		SET balance = balance + $1, updated_at = NOW()
 		WHERE id = $2 AND deleted_at IS NULL AND balance + $1 >= 0
+			AND ($1 >= 0 OR balance + $1 >= COALESCE(relay_reserved_balance, 0))
 		RETURNING balance - $1, balance
 	`
 	change, ok, err := scanBalanceChange(ctx, clientFromContext(ctx, r.client), updateSQL, delta, id)
@@ -987,12 +989,16 @@ func (r *userRepository) AdjustBalance(ctx context.Context, id int64, delta floa
 		return change, nil
 	}
 
-	// 0 行既可能是用户不存在，也可能是余额不足以承受这次扣减，需要区分。
-	current, err := r.currentBalance(ctx, id)
+	// 0 行可能是用户不存在、余额不足以承受这次扣减，或者要扣的钱锁在从节点上，需要区分。
+	current, reserved, err := r.currentBalanceAndReserved(ctx, id)
 	if err != nil {
 		return service.BalanceChange{}, err
 	}
-	return service.BalanceChange{Old: current, New: current + delta}, service.ErrBalanceNegative
+	change = service.BalanceChange{Old: current, New: current + delta}
+	if change.New >= 0 && delta < 0 && change.New < reserved {
+		return change, service.ErrBalanceLockedOnRelay
+	}
+	return change, service.ErrBalanceNegative
 }
 
 // SetBalance 原子地把余额置为 value，并返回变更前后的值。
@@ -1005,11 +1011,13 @@ func (r *userRepository) SetBalance(ctx context.Context, id int64, value float64
 		}
 		return service.BalanceChange{Old: current, New: value}, service.ErrBalanceNegative
 	}
+	// 往下设不能低于锁在主从分流从节点上的余额（设计 4.3、4.4）；往上设不受限。
 	const updateSQL = `
 		UPDATE users AS u
 		SET balance = $1, updated_at = NOW()
-		FROM (SELECT id, balance FROM users WHERE id = $2 AND deleted_at IS NULL) AS prev
-		WHERE u.id = prev.id AND u.deleted_at IS NULL
+		FROM (SELECT id, balance, COALESCE(relay_reserved_balance, 0) AS reserved
+			FROM users WHERE id = $2 AND deleted_at IS NULL) AS prev
+		WHERE u.id = prev.id AND u.deleted_at IS NULL AND ($1 >= prev.balance OR $1 >= prev.reserved)
 		RETURNING prev.balance, u.balance
 	`
 	change, ok, err := scanBalanceChange(ctx, clientFromContext(ctx, r.client), updateSQL, value, id)
@@ -1017,7 +1025,11 @@ func (r *userRepository) SetBalance(ctx context.Context, id int64, value float64
 		return service.BalanceChange{}, err
 	}
 	if !ok {
-		return service.BalanceChange{}, service.ErrUserNotFound
+		current, _, err := r.currentBalanceAndReserved(ctx, id)
+		if err != nil {
+			return service.BalanceChange{}, err
+		}
+		return service.BalanceChange{Old: current, New: value}, service.ErrBalanceLockedOnRelay
 	}
 	return change, nil
 }
@@ -1044,6 +1056,30 @@ func (r *userRepository) currentBalance(ctx context.Context, id int64) (balance 
 		return 0, err
 	}
 	return balance, rows.Err()
+}
+
+// currentBalanceAndReserved 读取用户当前余额和锁在从节点上的余额，用户不存在时返回 ErrUserNotFound。
+func (r *userRepository) currentBalanceAndReserved(ctx context.Context, id int64) (balance, reserved float64, err error) {
+	rows, err := clientFromContext(ctx, r.client).QueryContext(ctx,
+		`SELECT balance, COALESCE(relay_reserved_balance, 0) FROM users WHERE id = $1 AND deleted_at IS NULL`, id)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
+	if !rows.Next() {
+		if rowsErr := rows.Err(); rowsErr != nil {
+			return 0, 0, rowsErr
+		}
+		return 0, 0, service.ErrUserNotFound
+	}
+	if err := rows.Scan(&balance, &reserved); err != nil {
+		return 0, 0, err
+	}
+	return balance, reserved, rows.Err()
 }
 
 // scanBalanceChange 执行一条 RETURNING 旧余额、新余额的语句。ok 为 false 表示语句未命中任何行。

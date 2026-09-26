@@ -419,6 +419,11 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 			unsubs = append(unsubs, r.deps.AccessChanges.Subscribe(qEvents.OnAccessChange))
 		}
 	}
+	if quotas != nil {
+		// 管理员减余额、退款遇到锁着的余额时先从在线节点收回（设计 4.4）。
+		service.SetRelayBalanceReclaimer(&balanceReclaimer{quotas: quotas, recaller: recaller})
+		unsubs = append(unsubs, func() { service.SetRelayBalanceReclaimer(nil) })
+	}
 	if quotas != nil && r.deps.ReservedSink != nil {
 		// 余额预检从此减去锁在从节点上的部分（设计 4.3）；停止时摘下，回到只看余额。
 		r.deps.ReservedSink.SetRelayReservedBalanceReader(quotas)

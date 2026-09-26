@@ -526,20 +526,22 @@ func (s *adminServiceImpl) BatchUpdateLimits(ctx context.Context, userIDs []int6
 
 func (s *adminServiceImpl) UpdateUserBalance(ctx context.Context, userID int64, balance float64, operation string, notes string) (*User, error) {
 	// 余额调整必须走原子接口：先读后整行写回会把并发的计费扣款覆盖掉。
-	var (
-		change BalanceChange
-		err    error
-	)
-	switch operation {
-	case "set":
-		change, err = s.userRepo.SetBalance(ctx, userID, balance)
-	case "add":
-		change, err = s.userRepo.AdjustBalance(ctx, userID, balance)
-	case "subtract":
-		change, err = s.userRepo.AdjustBalance(ctx, userID, -balance)
-	default:
-		return nil, fmt.Errorf("unsupported balance operation: %q", operation)
-	}
+	var change BalanceChange
+	// 锁在从节点上的余额不能减：先从在线节点收回再试，仍不够返回 409（设计 4.4）。
+	err := withRelayBalanceReclaim(ctx, userID, func() error {
+		var err error
+		switch operation {
+		case "set":
+			change, err = s.userRepo.SetBalance(ctx, userID, balance)
+		case "add":
+			change, err = s.userRepo.AdjustBalance(ctx, userID, balance)
+		case "subtract":
+			change, err = s.userRepo.AdjustBalance(ctx, userID, -balance)
+		default:
+			return fmt.Errorf("unsupported balance operation: %q", operation)
+		}
+		return err
+	})
 	if errors.Is(err, ErrBalanceNegative) {
 		return nil, fmt.Errorf("balance cannot be negative, current balance: %.2f, requested operation would result in: %.2f", change.Old, change.New)
 	}
@@ -600,7 +602,12 @@ func (s *adminServiceImpl) UpdateUserBalance(ctx context.Context, userID int64, 
 // through it, so this stays auditable-by-reading rather than by a flag that
 // silently suppresses behavior deep inside the normal path.
 func (s *adminServiceImpl) AdjustUserBalanceSilently(ctx context.Context, userID int64, delta float64) (*User, error) {
-	change, err := s.userRepo.AdjustBalance(ctx, userID, delta)
+	var change BalanceChange
+	err := withRelayBalanceReclaim(ctx, userID, func() error {
+		var err error
+		change, err = s.userRepo.AdjustBalance(ctx, userID, delta)
+		return err
+	})
 	if errors.Is(err, ErrBalanceNegative) {
 		return nil, fmt.Errorf("balance cannot be negative, current balance: %.2f, requested delta: %.2f", change.Old, delta)
 	}

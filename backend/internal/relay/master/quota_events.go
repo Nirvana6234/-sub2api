@@ -215,3 +215,35 @@ func (r *Runtime) ReclaimUser(ctx context.Context, actor, userID int64) (Reclaim
 	r.audit(ctx, actor, AuditQuotaReclaimed, map[string]any{"user_id": userID, "recall_sent": res.RecallSent, "voided": res.Voided, "voided_amount": res.VoidedBalance})
 	return res, nil
 }
+
+// ---- 管理员减余额、退款前先收回（设计 4.4；锁在离线节点上的返回 409）----
+
+// relayBalanceReclaimTimeout：管理员操作里同步收回的最长等待。
+const relayBalanceReclaimTimeout = 3 * time.Second
+
+// balanceReclaimer 实现 service.RelayBalanceReclaimer。
+type balanceReclaimer struct {
+	quotas   *Quotas
+	recaller *EventRecaller
+}
+
+// ReclaimBalance 从所有在线节点收回这个用户锁着的余额（同步，等回复），返回收回后仍锁着的金额
+// （在离线节点上，或节点已用、未入账的）和最晚的租约到期时间。
+func (b *balanceReclaimer) ReclaimBalance(ctx context.Context, userID int64) (float64, time.Time, error) {
+	rctx, cancel := context.WithTimeout(ctx, relayBalanceReclaimTimeout)
+	defer cancel()
+	if _, err := b.recaller.Recall(rctx, userID, 0, LeaseScope{Dimension: service.QuotaDimBalance}, false); err != nil {
+		return b.quotas.RelayReservedBalance(userID), time.Time{}, err
+	}
+	leases, err := b.quotas.activeForUser(ctx, userID)
+	if err != nil {
+		return b.quotas.RelayReservedBalance(userID), time.Time{}, err
+	}
+	var releaseBy time.Time
+	for _, l := range leases {
+		if isBalanceDimension(l.Dimension) && l.Granted > 0 && l.ExpiresAt.After(releaseBy) {
+			releaseBy = l.ExpiresAt
+		}
+	}
+	return b.quotas.RelayReservedBalance(userID), releaseBy, nil
+}

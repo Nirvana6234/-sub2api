@@ -130,3 +130,29 @@ func TestAdminReclaimVoidsOfflineAndRecallsOnline(t *testing.T) {
 	require.Equal(t, AuditQuotaReclaimed, audits[0].Action)
 	require.Equal(t, int64(7), audits[0].ActorUserID)
 }
+
+// 管理员减余额前的收回：在线节点同步退回，剩下锁在离线节点上的报告金额和最晚放回时间。
+func TestBalanceReclaimerWaitsForOnlineNodes(t *testing.T) {
+	q, store, now := newProtoQuotas(t)
+	events := NewEventHub()
+	r := NewEventRecaller(q, events)
+	b := &balanceReclaimer{quotas: q, recaller: r}
+	ctx := context.Background()
+	online := fakeRecallSession(events, 10)
+	g := grant(t, q, 10, 100)
+	grant(t, q, 11, 100)
+	require.Equal(t, ToMicros(10), store.ReservedBalance(1))
+
+	go func() {
+		env := <-online
+		rc := env.GetQuotaRecall()
+		_, _ = r.Ack(ctx, 10, &relayv1.AckQuotaRecallRequest{RecallId: rc.GetRecallId(), Returns: []*relayv1.LeaseReturn{
+			{LeaseId: g.LeaseID, UserId: 1, ReturnedTotal: ToMicros(5)},
+		}})
+	}()
+	locked, releaseBy, err := b.ReclaimBalance(ctx, 1)
+	require.NoError(t, err)
+	require.InDelta(t, 5, locked, 1e-9, "node 11 is offline")
+	require.Equal(t, now.Add(QuotaLeaseTTL).UnixMilli(), releaseBy.UnixMilli())
+	require.Equal(t, ToMicros(5), store.ReservedBalance(1))
+}

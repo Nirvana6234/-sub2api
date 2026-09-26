@@ -551,6 +551,28 @@ func (s *UserRepoSuite) TestDeductAvailableBalance_ClampsToNonnegativeBalance() 
 	}
 }
 
+// 管理员减余额、设余额不能动到锁在主从分流从节点上的余额（设计 4.3、4.4）。
+func (s *UserRepoSuite) TestBalanceChangesRespectRelayReservedBalance() {
+	user := s.mustCreateUser(&service.User{Email: "relay-locked@test.com", Balance: 10})
+	_, err := s.client.ExecContext(s.ctx, "UPDATE users SET relay_reserved_balance = 7 WHERE id = $1", user.ID)
+	s.Require().NoError(err)
+
+	_, err = s.repo.AdjustBalance(s.ctx, user.ID, -4)
+	s.Require().ErrorIs(err, service.ErrBalanceLockedOnRelay)
+	ch, err := s.repo.AdjustBalance(s.ctx, user.ID, -3)
+	s.Require().NoError(err)
+	s.Require().InDelta(7.0, ch.New, 1e-6)
+	_, err = s.repo.AdjustBalance(s.ctx, user.ID, -8)
+	s.Require().ErrorIs(err, service.ErrBalanceNegative)
+	_, err = s.repo.AdjustBalance(s.ctx, user.ID, 5)
+	s.Require().NoError(err, "adding is never blocked")
+
+	_, err = s.repo.SetBalance(s.ctx, user.ID, 6)
+	s.Require().ErrorIs(err, service.ErrBalanceLockedOnRelay)
+	_, err = s.repo.SetBalance(s.ctx, user.ID, 20)
+	s.Require().NoError(err, "raising is never blocked")
+}
+
 // --- Concurrency ---
 
 func (s *UserRepoSuite) TestUpdateConcurrency() {
