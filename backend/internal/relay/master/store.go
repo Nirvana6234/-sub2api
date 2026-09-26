@@ -94,6 +94,10 @@ var (
 	ErrStatusConflict = errors.New("relay node status does not allow this operation")
 	// ErrDomainTaken：对外域名已被别的节点使用。
 	ErrDomainTaken = errors.New("relay node public domain is already in use")
+	// ErrFingerprintMismatch：激活时核对的指纹和节点注册时的不一致。
+	ErrFingerprintMismatch = errors.New("the fingerprint does not match the one this node registered with")
+	// ErrDomainRequired：激活节点必须填对外域名。
+	ErrDomainRequired = errors.New("a public domain is required to activate a relay node")
 )
 
 // NodeStore 是节点、证书、审计的持久化。实现必须保证：

@@ -136,7 +136,7 @@ type Nodes struct {
 // NewNodes 创建节点管理。调用 Load 之后才能用。
 func NewNodes(store NodeStore, ca *CA, notifier Notifier, opts NodesOptions) *Nodes {
 	return &Nodes{
-		store:      store,
+		store:      sourceIPAuditStore{store},
 		ca:         ca,
 		notifier:   notifier,
 		opts:       opts.withDefaults(),
@@ -402,11 +402,11 @@ func (n *Nodes) Activate(ctx context.Context, nodeID int64, confirmFingerprint s
 		return ErrStatusConflict
 	}
 	if transport.NormalizeFingerprint(confirmFingerprint) != node.IdentityFingerprint {
-		return errors.New("the fingerprint does not match the one this node registered with")
+		return ErrFingerprintMismatch
 	}
 	a.PublicDomain = strings.ToLower(strings.TrimSpace(a.PublicDomain))
 	if a.PublicDomain == "" {
-		return errors.New("a public domain is required to activate a relay node")
+		return ErrDomainRequired
 	}
 	if a.At.IsZero() {
 		a.At = n.now()

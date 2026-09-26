@@ -60,7 +60,11 @@ type Key struct {
 	Purpose   Purpose
 	Version   int
 	CreatedAt time.Time
-	Signer    crypto.Signer
+	// Staged 为 true 表示预备中：用于验证、公开（比如根证书指纹随配置下发给从节点），
+	// 但还不用于签发。轮换第一步生成预备版本，所有节点都拿到后再 Activate。
+	Staged      bool
+	ActivatedAt *time.Time
+	Signer      crypto.Signer
 	// Certificate 只有根证书用途有：自签的主从通信根证书。
 	Certificate *x509.Certificate
 }
@@ -68,7 +72,8 @@ type Key struct {
 // Public 返回公钥。
 func (k *Key) Public() crypto.PublicKey { return k.Signer.Public() }
 
-// Ring 是一个用途下所有未停用的版本。Active 是最新版本，用于签发；Keys 全部用于验证。
+// Ring 是一个用途下所有未停用的版本。Active 是最新的已启用版本，用于签发；
+// Keys（含预备版本）全部用于验证。
 type Ring struct {
 	Active *Key
 	Keys   []*Key
@@ -97,15 +102,17 @@ func Open(dir string, kek []byte) (*Store, error) {
 }
 
 type keyFile struct {
-	Format     int        `json:"format"`
-	Purpose    Purpose    `json:"purpose"`
-	Version    int        `json:"version"`
-	Algorithm  string     `json:"algorithm"`
-	CreatedAt  time.Time  `json:"created_at"`
-	RetiredAt  *time.Time `json:"retired_at,omitempty"`
-	PublicKey  []byte     `json:"public_key"`
-	Nonce      []byte     `json:"nonce"`
-	Ciphertext []byte     `json:"ciphertext"`
+	Format      int        `json:"format"`
+	Purpose     Purpose    `json:"purpose"`
+	Version     int        `json:"version"`
+	Algorithm   string     `json:"algorithm"`
+	CreatedAt   time.Time  `json:"created_at"`
+	RetiredAt   *time.Time `json:"retired_at,omitempty"`
+	Staged      bool       `json:"staged,omitempty"`
+	ActivatedAt *time.Time `json:"activated_at,omitempty"`
+	PublicKey   []byte     `json:"public_key"`
+	Nonce       []byte     `json:"nonce"`
+	Ciphertext  []byte     `json:"ciphertext"`
 	// Certificate 是根证书的 DER（公开信息，不加密）。
 	Certificate []byte `json:"certificate,omitempty"`
 }
@@ -137,19 +144,38 @@ func (s *Store) Ring(p Purpose) (*Ring, error) {
 		}
 		ring.Keys = append(ring.Keys, k)
 	}
-	if n := len(ring.Keys); n > 0 {
-		ring.Active = ring.Keys[n-1]
+	for i := len(ring.Keys) - 1; i >= 0; i-- {
+		if !ring.Keys[i].Staged {
+			ring.Active = ring.Keys[i]
+			break
+		}
 	}
 	return ring, nil
 }
 
-// Generate 生成一个新版本并设为签发用的版本。根证书用途同时生成 20 年有效的自签根证书。
-func (s *Store) Generate(p Purpose) (*Key, error) {
+// Generate 生成一个新版本并直接启用（设为签发用的版本）。根证书用途同时生成 20 年有效的自签根证书。
+func (s *Store) Generate(p Purpose) (*Key, error) { return s.generate(p, false) }
+
+// Stage 生成一个预备版本：参与验证、公开，但不用于签发，等 Activate。
+// 同一用途同时只能有一个预备版本，已有时返回 ErrAlreadyStaged。
+func (s *Store) Stage(p Purpose) (*Key, error) { return s.generate(p, true) }
+
+// ErrAlreadyStaged：这个用途已有一个预备版本，先启用或停用它。
+var ErrAlreadyStaged = errors.New("keystore: a staged key already exists; activate or retire it first")
+
+func (s *Store) generate(p Purpose, staged bool) (*Key, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	files, err := s.list(p)
 	if err != nil {
 		return nil, err
+	}
+	if staged {
+		for _, f := range files {
+			if f.Staged && f.RetiredAt == nil {
+				return nil, ErrAlreadyStaged
+			}
+		}
 	}
 	version := 1
 	if n := len(files); n > 0 {
@@ -188,8 +214,11 @@ func (s *Store) Generate(p Purpose) (*Key, error) {
 	if err != nil {
 		return nil, err
 	}
-	f := keyFile{Format: 1, Purpose: p, Version: version, Algorithm: algorithm, CreatedAt: now, PublicKey: pub, Nonce: nonce, Ciphertext: ciphertext}
-	key := &Key{Purpose: p, Version: version, CreatedAt: now, Signer: signer}
+	f := keyFile{Format: 1, Purpose: p, Version: version, Algorithm: algorithm, CreatedAt: now, PublicKey: pub, Nonce: nonce, Ciphertext: ciphertext, Staged: staged}
+	if !staged {
+		f.ActivatedAt = &now
+	}
+	key := &Key{Purpose: p, Version: version, CreatedAt: now, Staged: staged, ActivatedAt: f.ActivatedAt, Signer: signer}
 	if p == PurposeRootCA {
 		cert, err := selfSignRoot(signer, version, now)
 		if err != nil {
@@ -219,7 +248,33 @@ func (s *Store) EnsureActive(p Purpose) (*Ring, error) {
 	return s.Ring(p)
 }
 
-// Retire 把某个版本标记为停用：不再用于验证。不能停用最后一个未停用的版本。
+// Activate 启用一个预备版本：之后签发用它（它是最新的已启用版本时）。
+func (s *Store) Activate(p Purpose, version int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	files, err := s.list(p)
+	if err != nil {
+		return err
+	}
+	for i := range files {
+		if files[i].Version != version {
+			continue
+		}
+		if files[i].RetiredAt != nil {
+			return fmt.Errorf("keystore: %s v%d is retired", p, version)
+		}
+		if !files[i].Staged {
+			return nil
+		}
+		now := s.now().UTC()
+		files[i].Staged = false
+		files[i].ActivatedAt = &now
+		return s.write(files[i])
+	}
+	return fmt.Errorf("keystore: %s v%d not found", p, version)
+}
+
+// Retire 把某个版本标记为停用：不再用于验证。不能停用最后一个已启用的版本。
 func (s *Store) Retire(p Purpose, version int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -230,7 +285,7 @@ func (s *Store) Retire(p Purpose, version int) error {
 	var target *keyFile
 	active := 0
 	for i := range files {
-		if files[i].RetiredAt == nil {
+		if files[i].RetiredAt == nil && !files[i].Staged {
 			active++
 		}
 		if files[i].Version == version {
@@ -243,7 +298,7 @@ func (s *Store) Retire(p Purpose, version int) error {
 	if target.RetiredAt != nil {
 		return nil
 	}
-	if active <= 1 {
+	if active <= 1 && !target.Staged {
 		return fmt.Errorf("keystore: cannot retire the only active %s key", p)
 	}
 	now := s.now().UTC()
@@ -295,7 +350,12 @@ func (s *Store) decode(f keyFile) (*Key, error) {
 	if string(pub) != string(f.PublicKey) {
 		return nil, fmt.Errorf("keystore: %s v%d public key does not match its private key", f.Purpose, f.Version)
 	}
-	key := &Key{Purpose: f.Purpose, Version: f.Version, CreatedAt: f.CreatedAt, Signer: signer}
+	key := &Key{Purpose: f.Purpose, Version: f.Version, CreatedAt: f.CreatedAt, Staged: f.Staged, ActivatedAt: f.ActivatedAt, Signer: signer}
+	if !key.Staged && key.ActivatedAt == nil {
+		// 加入预备状态之前写的文件没有启用时间：它们生成即启用。
+		created := f.CreatedAt
+		key.ActivatedAt = &created
+	}
 	if len(f.Certificate) > 0 {
 		cert, err := x509.ParseCertificate(f.Certificate)
 		if err != nil {

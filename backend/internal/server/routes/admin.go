@@ -111,6 +111,9 @@ func RegisterAdminRoutes(
 		// 本地进程插件管理
 		registerPluginRoutes(admin, h, stepUpAuth)
 
+		// 主从分流：从节点管理、通用配置、根证书轮换（改动全部要求二次验证，设计 11.5）
+		registerRelayRoutes(admin, h, stepUpAuth)
+
 		// API Key 管理
 		registerAdminAPIKeyRoutes(admin, h)
 
@@ -943,5 +946,29 @@ func channelMonitorModeV2Guard(settingService *service.SettingService) gin.Handl
 			return
 		}
 		c.Next()
+	}
+}
+
+func registerRelayRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth middleware.StepUpAuthMiddleware) {
+	relay := admin.Group("/relay")
+	{
+		relay.GET("/status", h.Admin.Relay.GetStatus)
+		relay.PUT("/enabled", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.SetEnabled)
+		relay.GET("/general-config", h.Admin.Relay.GetGeneralConfig)
+		relay.PUT("/general-config", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.UpdateGeneralConfig)
+
+		relay.GET("/nodes", h.Admin.Relay.ListNodes)
+		relay.POST("/nodes/reject-pending", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.RejectAllPendingNodes)
+		relay.POST("/nodes/:id/activate", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.ActivateNode)
+		relay.POST("/nodes/:id/reject", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.RejectNode)
+		relay.POST("/nodes/:id/disable", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.DisableNode)
+		relay.POST("/nodes/:id/enable", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.EnableNode)
+		relay.POST("/nodes/:id/revoke", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.RevokeNode)
+		relay.PUT("/nodes/:id/allow-multi-ip", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.SetNodeAllowMultiIP)
+
+		relay.GET("/roots", h.Admin.Relay.ListRoots)
+		relay.POST("/roots/stage", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.StageRoot)
+		relay.POST("/roots/:version/activate", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.ActivateRoot)
+		relay.POST("/roots/:version/retire", gin.HandlerFunc(stepUpAuth), h.Admin.Relay.RetireRoot)
 	}
 }

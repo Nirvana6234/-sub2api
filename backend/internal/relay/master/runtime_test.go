@@ -74,13 +74,13 @@ func TestRuntimeIsInertUnlessRoleSwitchAndConfigAllAgree(t *testing.T) {
 	require.Equal(t, master.StateOff, h.runtime.Status().State, "the switch is off by default")
 
 	noAddr := newRuntime(t, func(c *config.Config) { c.Relay.MasterListenAddr = "" })
-	st, err := noAddr.runtime.SetEnabled(ctx, true)
+	st, err := noAddr.runtime.SetEnabled(ctx, 1, true)
 	require.NoError(t, err)
 	require.Equal(t, master.StateNotConfigured, st.State)
 	require.Contains(t, st.Reason, "master_listen_addr")
 
 	noKEK := newRuntime(t, func(c *config.Config) { c.Relay.KeyEncryptionKey = "" })
-	st, err = noKEK.runtime.SetEnabled(ctx, true)
+	st, err = noKEK.runtime.SetEnabled(ctx, 1, true)
 	require.NoError(t, err)
 	require.Equal(t, master.StateNotConfigured, st.State)
 	require.Contains(t, st.Reason, "key_encryption_key", "the KEK is never generated automatically")
@@ -90,7 +90,7 @@ func TestRuntimeStartsAndStopsWithTheSwitch(t *testing.T) {
 	ctx := context.Background()
 	h := newRuntime(t, nil)
 
-	st, err := h.runtime.SetEnabled(ctx, true)
+	st, err := h.runtime.SetEnabled(ctx, 1, true)
 	require.NoError(t, err)
 	require.Equal(t, master.StateRunning, st.State, st.Reason)
 	require.NotEmpty(t, st.RootFingerprints)
@@ -104,13 +104,13 @@ func TestRuntimeStartsAndStopsWithTheSwitch(t *testing.T) {
 	n, err := h.store.CreatePending(ctx, &master.Node{IdentityFingerprint: "fp", IdentityPublicKey: []byte{1}}, 20)
 	require.NoError(t, err)
 	require.NoError(t, h.store.Activate(ctx, n.ID, master.Activation{PublicDomain: "r.example.com", At: time.Now()}))
-	_, err = h.runtime.SetEnabled(ctx, false)
+	_, err = h.runtime.SetEnabled(ctx, 1, false)
 	require.ErrorIs(t, err, master.ErrNodesStillServing)
 	require.Equal(t, master.StateRunning, h.runtime.Status().State)
 
 	// 停用节点后可以关：端口随之关闭。
 	require.NoError(t, h.runtime.Nodes().Disable(ctx, n.ID, 1))
-	st2, err := h.runtime.SetEnabled(ctx, false)
+	st2, err := h.runtime.SetEnabled(ctx, 1, false)
 	require.NoError(t, err)
 	require.Equal(t, master.StateOff, st2.State)
 	_, dialErr := net.DialTimeout("tcp", st.ListenAddr, time.Second)
@@ -118,7 +118,7 @@ func TestRuntimeStartsAndStopsWithTheSwitch(t *testing.T) {
 	require.Nil(t, h.runtime.Nodes())
 
 	// 再打开：同一套私钥（根证书指纹不变），新纪元。
-	st3, err := h.runtime.SetEnabled(ctx, true)
+	st3, err := h.runtime.SetEnabled(ctx, 1, true)
 	require.NoError(t, err)
 	require.Equal(t, master.StateRunning, st3.State, st3.Reason)
 	require.Equal(t, st.RootFingerprints, st3.RootFingerprints, "the root certificate survives a restart of the relay")
@@ -139,13 +139,13 @@ func TestRuntimeReportsAWrongKeyEncryptionKey(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	first := newRuntime(t, func(c *config.Config) { c.Relay.KeyDir = dir })
-	st, err := first.runtime.SetEnabled(ctx, true)
+	st, err := first.runtime.SetEnabled(ctx, 1, true)
 	require.NoError(t, err)
 	require.Equal(t, master.StateRunning, st.State)
 	first.runtime.Close()
 
 	other := newRuntime(t, func(c *config.Config) { c.Relay.KeyDir = dir })
-	st, err = other.runtime.SetEnabled(ctx, true)
+	st, err = other.runtime.SetEnabled(ctx, 1, true)
 	require.NoError(t, err)
 	require.Equal(t, master.StateFailed, st.State)
 	require.Contains(t, st.Reason, "wrong key encryption key")

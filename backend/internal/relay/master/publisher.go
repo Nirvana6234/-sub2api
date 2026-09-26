@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
+	"github.com/Wei-Shaw/sub2api/internal/relay/transport"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -27,6 +28,9 @@ type ConfigPublisher struct {
 
 	mu      sync.RWMutex
 	current *globalSnapshot
+	// delivered：每台节点最近一次拉到的快照里的根证书指纹（只在内存；主节点重启后
+	// 节点重连会先拉配置，随即补齐）。根证书轮换据此判断新指纹是否已送达所有节点。
+	delivered map[int64][]string
 
 	triggerMu sync.Mutex
 	timer     *time.Timer
@@ -35,7 +39,7 @@ type ConfigPublisher struct {
 
 // NewConfigPublisher 创建发布器。roots 返回当前所有未停用的根证书指纹。
 func NewConfigPublisher(settings SettingsReader, nodes NodeStore, events *EventHub, roots func() []string) *ConfigPublisher {
-	return &ConfigPublisher{settings: settings, nodes: nodes, events: events, roots: roots, sections: map[string]SectionProvider{}, now: time.Now}
+	return &ConfigPublisher{settings: settings, nodes: nodes, events: events, roots: roots, sections: map[string]SectionProvider{}, delivered: map[int64][]string{}, now: time.Now}
 }
 
 // RegisterSection 登记一个配置分段（错误透传规则、TLS 指纹等）。登记后下一次生成生效。
@@ -180,8 +184,33 @@ func (p *ConfigPublisher) FetchConfig(ctx context.Context, nodeID int64, known s
 	if err != nil {
 		return nil, status.Error(codes.Unavailable, "relay config is not available")
 	}
+	// 版本哈希包含根证书指纹，所以"没变"也说明节点手里就是这份指纹。
+	p.mu.Lock()
+	p.delivered[nodeID] = append([]string(nil), snap.RootFingerprints...)
+	p.mu.Unlock()
 	if known != "" && known == snap.Version {
 		return &relayv1.ConfigSnapshot{Version: snap.Version, Unchanged: true}, nil
 	}
 	return snap, nil
+}
+
+// NodesMissingRoot 返回 nodeIDs 里还没拉到含指定根证书指纹的配置的节点。
+func (p *ConfigPublisher) NodesMissingRoot(nodeIDs []int64, fingerprint string) []int64 {
+	fingerprint = transport.NormalizeFingerprint(fingerprint)
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	var missing []int64
+	for _, id := range nodeIDs {
+		found := false
+		for _, fp := range p.delivered[id] {
+			if transport.NormalizeFingerprint(fp) == fingerprint {
+				found = true
+				break
+			}
+		}
+		if !found {
+			missing = append(missing, id)
+		}
+	}
+	return missing
 }

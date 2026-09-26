@@ -109,3 +109,59 @@ func TestParseKEK(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, kek, KEKLength)
 }
+
+// 轮换分三步：预备（公开、参与验证、不签发）→ 启用（签发）→ 停用旧版本。
+func TestStagedRootIsPublishedBeforeItSigns(t *testing.T) {
+	s, err := Open(t.TempDir(), testKEK(t))
+	require.NoError(t, err)
+	first, err := s.EnsureActive(PurposeRootCA)
+	require.NoError(t, err)
+
+	staged, err := s.Stage(PurposeRootCA)
+	require.NoError(t, err)
+	require.True(t, staged.Staged)
+	ring, err := s.Ring(PurposeRootCA)
+	require.NoError(t, err)
+	require.Len(t, ring.Keys, 2, "the staged root is already used for verification")
+	require.Equal(t, first.Active.Version, ring.Active.Version, "but the old root still signs")
+	require.Error(t, s.Retire(PurposeRootCA, first.Active.Version), "the only activated root cannot be retired")
+
+	require.NoError(t, s.Activate(PurposeRootCA, staged.Version))
+	ring, err = s.Ring(PurposeRootCA)
+	require.NoError(t, err)
+	require.Equal(t, staged.Version, ring.Active.Version)
+	require.NotNil(t, ring.Active.ActivatedAt)
+
+	require.NoError(t, s.Retire(PurposeRootCA, first.Active.Version))
+	ring, err = s.Ring(PurposeRootCA)
+	require.NoError(t, err)
+	require.Len(t, ring.Keys, 1)
+	require.Error(t, s.Activate(PurposeRootCA, first.Active.Version), "a retired key cannot come back")
+}
+
+func TestStageRefusesSecondStagedAndActivationSurvivesReopen(t *testing.T) {
+	dir, kek := t.TempDir(), testKEK(t)
+	s, err := Open(dir, kek)
+	require.NoError(t, err)
+	_, err = s.EnsureActive(PurposeRootCA)
+	require.NoError(t, err)
+	staged, err := s.Stage(PurposeRootCA)
+	require.NoError(t, err)
+	_, err = s.Stage(PurposeRootCA)
+	require.ErrorIs(t, err, ErrAlreadyStaged)
+
+	require.NoError(t, s.Activate(PurposeRootCA, staged.Version))
+	reopened, err := Open(dir, kek)
+	require.NoError(t, err)
+	ring, err := reopened.Ring(PurposeRootCA)
+	require.NoError(t, err)
+	require.Equal(t, staged.Version, ring.Active.Version)
+	require.False(t, ring.Active.Staged)
+	require.NotNil(t, ring.Active.ActivatedAt, "the retire-after-activation wait must survive a restart")
+	for _, k := range ring.Keys {
+		require.NotNil(t, k.ActivatedAt, "v%d", k.Version)
+	}
+
+	_, err = reopened.Stage(PurposeRootCA)
+	require.NoError(t, err, "a new staged key is allowed once the previous one is activated")
+}
