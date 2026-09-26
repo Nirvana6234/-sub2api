@@ -3,6 +3,7 @@ server {
     listen [::]:443 ssl default_server;
     server_name _;
     server_tokens off;
+    access_log off;
 
     ssl_certificate /etc/pki/cpa-ip/cert.pem;
     ssl_certificate_key /etc/pki/cpa-ip/key.pem;

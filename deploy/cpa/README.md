@@ -17,6 +17,14 @@ CPA Management Key. Retrieve it over SSH with
 used to log in. The `api-keys` value is a separate key reserved for Sub2API.
 No model accounts have been added yet.
 
+The named HTTPS entry is `https://icode-xtu.cc.cd/management.html`. Its A record
+must point to the current production IP. `nginx-domain-http.conf.template` is
+used only while obtaining the first certificate. The active
+`nginx-domain.conf.template` retains the HTTP-01 challenge location for the
+existing Certbot renewal timer and proxies only the management UI/API. Access
+logging is disabled on both CPA virtual hosts so OAuth callback codes are not
+written to the Nginx request log.
+
 On the production host, back up `config.yaml`, `management.key`, and `auths/`
 privately. Rotate the management key with
 `sudo bash /opt/cli-proxy-api/reset-management-key.sh`. Do not put the
