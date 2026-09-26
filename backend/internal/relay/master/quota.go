@@ -366,13 +366,25 @@ func (q *Quotas) VoidNode(ctx context.Context, nodeID int64, reason string) (Mic
 }
 
 // ExpireDue 回收到期未续的租约（节点失联，设计 4.2）。返回回收的份数。
+// 一次取 500 份，取满就接着取（一台失联节点可能持有很多用户的租约），最多 20 批，
+// 防止关不掉的租约（用户已删除）让这一轮停不下来。
 func (q *Quotas) ExpireDue(ctx context.Context) (int, error) {
-	leases, err := q.store.ListExpired(ctx, q.now(), 500)
-	if err != nil {
-		return 0, err
+	const batch, maxBatches = 500, 20
+	total := 0
+	for i := 0; i < maxBatches; i++ {
+		leases, err := q.store.ListExpired(ctx, q.now(), batch)
+		if err != nil {
+			return total, err
+		}
+		if _, err := q.closeLeases(ctx, leases, LeaseExpired, "lease_expired"); err != nil {
+			return total, err
+		}
+		total += len(leases)
+		if len(leases) < batch {
+			break
+		}
 	}
-	_, err = q.closeLeases(ctx, leases, LeaseExpired, "lease_expired")
-	return len(leases), err
+	return total, nil
 }
 
 func (q *Quotas) closeLeases(ctx context.Context, leases []*Lease, status LeaseStatus, reason string) (Micros, error) {

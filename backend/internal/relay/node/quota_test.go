@@ -276,3 +276,43 @@ func TestDropRenewHeldAndReset(t *testing.T) {
 	q.Reset()
 	require.Empty(t, q.Held())
 }
+
+// capMaster 模拟主节点的每台上限：给 min(上限 − 节点报告的未用, 预算)。
+type capMaster struct {
+	fakeMaster
+	inFlight atomic.Int64
+	overlap  atomic.Bool
+}
+
+func (m *capMaster) Refill(ctx context.Context, userID int64, wants []node.QuotaWantReport, need int64) ([]*relayv1.QuotaGrant, error) {
+	if m.inFlight.Add(1) > 1 {
+		m.overlap.Store(true)
+	}
+	defer m.inFlight.Add(-1)
+	return m.fakeMaster.Refill(ctx, userID, wants, need)
+}
+
+// 同一用户两个请求用到的子额度组合不同但都含余额：补充在本机串行、在锁里重算未用，
+// 余额上最多持有一份上限（设计 5.4 的"每台最多透支约 5"依赖它）。
+func TestRefillsForOverlappingScopesRespectTheCap(t *testing.T) {
+	now := time.Now()
+	m := &capMaster{fakeMaster: fakeMaster{budget: 100 * unit, perGrant: 5 * unit, delay: 30 * time.Millisecond}}
+	m.leaseID, m.expires = 1, now.Add(time.Hour)
+	q := node.NewLocalQuota(m, func() time.Time { return now }, nil)
+	plat := node.QuotaScope{Dimension: "platform_daily", ScopeKey: "anthropic"}
+	key := node.QuotaScope{Dimension: "api_key_5h", ScopeID: 9}
+	var wg sync.WaitGroup
+	for _, scopes := range [][]node.QuotaScope{{balance, plat}, {balance, key}} {
+		wg.Add(1)
+		go func(scopes []node.QuotaScope) {
+			defer wg.Done()
+			r, err := q.Reserve(context.Background(), 1, scopes, unit/10)
+			if err == nil {
+				r.Cancel()
+			}
+		}(scopes)
+	}
+	wg.Wait()
+	require.False(t, m.overlap.Load(), "refills for the same user are serialised")
+	require.LessOrEqual(t, q.Unused(1, balance), 5*unit, "never more than one cap on the shared scope")
+}

@@ -106,6 +106,9 @@ type LocalQuota struct {
 	byLease map[int64]quotaKey
 
 	sf singleflight.Group
+	// refillLocks 让同一用户的补充在本机串行：不同请求用到的子额度组合可能重叠（都含余额），
+	// 并发补充会各自报告同一个旧的"未用"，主节点就会在重叠的那项上给两份每台上限。
+	refillLocks [64]sync.Mutex
 }
 
 // NewLocalQuota 创建本地额度。
@@ -199,6 +202,10 @@ func (q *LocalQuota) refill(ctx context.Context, userID int64, scopes []QuotaSco
 	sort.Strings(keys)
 	key := strconv.FormatInt(userID, 10) + "|" + strings.Join(keys, ",")
 	_, err, _ := q.sf.Do(key, func() (any, error) {
+		lock := &q.refillLocks[uint64(userID)%uint64(len(q.refillLocks))]
+		lock.Lock()
+		defer lock.Unlock()
+		// 拿到锁之后再读"未用"：前一个补充的结果已经算进去了。
 		wants := make([]QuotaWantReport, 0, len(scopes))
 		for _, s := range scopes {
 			var unused int64

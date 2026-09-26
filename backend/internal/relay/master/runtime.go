@@ -201,6 +201,11 @@ func (r *Runtime) Reconcile(ctx context.Context) {
 		return
 	}
 	if !enabled {
+		var q *Quotas
+		if r.running != nil {
+			q = r.running.quotas
+		}
+		r.voidAllLeases(ctx, q)
 		r.stopLocked()
 		r.status = RuntimeStatus{State: StateOff, Since: time.Now()}
 		return
@@ -226,6 +231,42 @@ func (r *Runtime) Reconcile(ctx context.Context) {
 	r.running = running
 	r.status = RuntimeStatus{State: StateRunning, ListenAddr: running.listener.Addr().String(), Epoch: running.server.Epoch(), Since: time.Now()}
 	slog.Info("relay master started", "listen", running.listener.Addr().String(), "root_fingerprints", running.ca.RootFingerprints())
+}
+
+// voidAllLeases 主从分流被关闭：作废所有节点的生效租约，钱全部放回（设计 4.3）。
+// 开关可能被直接写库或在主节点停着时改掉，绕过了 SetEnabled 的"先停用所有节点"检查；
+// 关着的时候没有到期回收，不放回的话这部分余额会一直不能花、不能退。
+// 只在"因为开关关闭而停止"时做：进程退出（Close）不作废，重启后按纪元核对继续用。
+func (r *Runtime) voidAllLeases(ctx context.Context, q *Quotas) {
+	if r.deps.Leases == nil || r.deps.Store == nil {
+		return
+	}
+	nodes, err := r.deps.Store.List(ctx)
+	if err != nil {
+		slog.Warn("relay off: list nodes to void leases failed", "error", err)
+		return
+	}
+	for _, n := range nodes {
+		leases, err := r.deps.Leases.ListActiveByNode(ctx, n.ID)
+		if err != nil {
+			slog.Warn("relay off: list node leases failed", "node_id", n.ID, "error", err)
+			continue
+		}
+		if len(leases) == 0 {
+			continue
+		}
+		if q == nil {
+			if q, err = NewQuotas(ctx, r.deps.Leases, "", r.now); err != nil {
+				slog.Warn("relay off: open quota store failed", "error", err)
+				return
+			}
+		}
+		if returned, err := q.closeLeases(ctx, leases, LeaseVoided, "relay_disabled"); err != nil {
+			slog.Warn("relay off: void leases failed", "node_id", n.ID, "error", err)
+		} else {
+			slog.Info("relay off: leases voided", "node_id", n.ID, "count", len(leases), "returned", FromMicros(returned))
+		}
+	}
 }
 
 // Close 在进程退出时停止（不改开关）。

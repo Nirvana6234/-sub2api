@@ -179,3 +179,47 @@ func TestRuntimeQuotasLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, sink.reader, "relay off: the pre-check reads nothing extra")
 }
+
+// 开关被直接写成关闭（绕过 SetEnabled 的检查）时，锁着的额度全部作废放回，不能一直卡在冻结额里；
+// 主节点停着时被关掉的，启动时同样放回。
+func TestSwitchingRelayOffReturnsAllReservedBalance(t *testing.T) {
+	ctx := context.Background()
+	store := master.NewMemoryLeaseStore()
+	nodes := master.NewMemoryStore()
+	settings := newMemSettings()
+	hub := service.NewSettingChangeHub()
+	repo := service.NewObservedSettingRepository(settings, hub)
+	cfg := testRelayConfig(t)
+	newRT := func() *master.Runtime {
+		rt := master.NewRuntime(master.RuntimeDeps{Config: cfg, Store: nodes, Settings: repo, Hub: hub, Leases: store})
+		t.Cleanup(rt.Close)
+		rt.Init(ctx)
+		return rt
+	}
+	rt := newRT()
+	_, err := rt.SetEnabled(ctx, 1, true)
+	require.NoError(t, err)
+	n, err := nodes.CreatePending(ctx, &master.Node{IdentityFingerprint: "fp", IdentityPublicKey: []byte{1}}, 20)
+	require.NoError(t, err)
+	require.NoError(t, nodes.Activate(ctx, n.ID, master.Activation{PublicDomain: "r.example.com", At: time.Now()}))
+	_, err = rt.Quotas().Acquire(ctx, master.AcquireRequest{UserID: 42, NodeID: n.ID, Wants: []master.QuotaWant{{Scope: master.LeaseScope{Dimension: service.QuotaDimBalance}, Headroom: 100}}})
+	require.NoError(t, err)
+	require.Positive(t, store.ReservedBalance(42))
+
+	require.NoError(t, repo.Set(ctx, master.SettingKeyRelayEnabled, "false"))
+	require.Eventually(t, func() bool { return rt.Status().State == master.StateOff }, 5*time.Second, 10*time.Millisecond)
+	require.Zero(t, store.ReservedBalance(42), "switching relay off must not leave money locked")
+
+	// 主节点停着时有人把开关关掉：启动时发现还有生效租约，放回。
+	rt.Close()
+	_, err = rt.SetEnabled(ctx, 1, true)
+	require.NoError(t, err)
+	rt2 := newRT()
+	_, err = rt2.Quotas().Acquire(ctx, master.AcquireRequest{UserID: 43, NodeID: n.ID, Wants: []master.QuotaWant{{Scope: master.LeaseScope{Dimension: service.QuotaDimBalance}, Headroom: 100}}})
+	require.NoError(t, err)
+	rt2.Close()
+	require.NoError(t, settings.Set(ctx, master.SettingKeyRelayEnabled, "false")) // 绕过通知：模拟主节点停着时改的
+	require.Positive(t, store.ReservedBalance(43))
+	newRT()
+	require.Zero(t, store.ReservedBalance(43))
+}
