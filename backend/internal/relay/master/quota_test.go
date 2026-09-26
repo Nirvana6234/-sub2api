@@ -253,3 +253,18 @@ func errNaN() float64 {
 }
 
 var _ = errors.New
+
+// 这台已经持有上限、这次一分不给时，顺带把它的租约续期（节点可能因为快到期来申请）。
+func TestAcquireWithNothingToGiveStillExtendsTheLease(t *testing.T) {
+	now := time.Now()
+	q, _ := newQuotas(t, &now)
+	first := acquire(t, q, 10, 100, 0)
+	require.Equal(t, unit(5), first)
+	now = now.Add(9 * time.Minute)
+	grants, err := q.Acquire(context.Background(), master.AcquireRequest{UserID: 1, NodeID: 10, Wants: []master.QuotaWant{{Scope: balanceScope, Headroom: 100, NodeUnused: unit(5)}}})
+	require.NoError(t, err)
+	require.Len(t, grants, 1)
+	require.Zero(t, grants[0].Amount)
+	require.Equal(t, unit(5), grants[0].Granted)
+	require.Equal(t, now.Add(master.QuotaLeaseTTL), grants[0].ExpiresAt)
+}

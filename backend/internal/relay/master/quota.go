@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
@@ -266,8 +267,13 @@ func (q *Quotas) tryAcquire(ctx context.Context, req AcquireRequest) ([]QuotaGra
 				expires = *p.want.ExpiresAt
 			}
 			if p.give <= 0 {
+				// 这次不给钱，但这台已有这份租约：顺带续期（节点可能因为快到期才来申请）。
 				if p.lockedHere != nil {
-					grants = append(grants, QuotaGrant{LeaseID: p.lockedHere.ID, Scope: p.want.Scope, Granted: p.lockedHere.Granted, ExpiresAt: p.lockedHere.ExpiresAt})
+					l, err := tx.Renew(ctx, p.lockedHere.ID, expires, nil, now)
+					if err != nil {
+						return err
+					}
+					grants = append(grants, QuotaGrant{LeaseID: l.ID, Scope: l.LeaseScope, Granted: l.Granted, ExpiresAt: l.ExpiresAt})
 				}
 				continue
 			}
@@ -405,5 +411,13 @@ func (q *Quotas) RunExpiry(ctx context.Context) {
 				slog.Info("relay leases expired", "count", n)
 			}
 		}
+	}
+}
+
+// Proto 把给出的额度转成下发给节点的消息（选号回复里带上，WP7）。
+func (g QuotaGrant) Proto(userID int64) *relayv1.QuotaGrant {
+	return &relayv1.QuotaGrant{
+		LeaseId: g.LeaseID, UserId: userID, Amount: g.Amount, Granted: g.Granted, ExpiresAtUnixMs: g.ExpiresAt.UnixMilli(),
+		Scope: &relayv1.QuotaScope{Dimension: g.Scope.Dimension, ScopeId: g.Scope.ScopeID, ScopeKey: g.Scope.ScopeKey},
 	}
 }

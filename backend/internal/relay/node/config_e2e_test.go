@@ -32,6 +32,7 @@ type testMaster struct {
 	events    *master.EventHub
 	publisher *master.ConfigPublisher
 	invalid   *master.Invalidator
+	control   *master.Control
 	srv       *transport.Server
 	addr      string
 	nodeID    int64
@@ -84,7 +85,8 @@ func startMaster(t *testing.T) *testMaster {
 	})
 	require.NoError(t, err)
 	m.nodes.AttachRegistry(srv.Registry())
-	relayv1.RegisterRelayControlServer(srv.GRPC(), master.NewControl(m.publisher))
+	m.control = master.NewControl(m.publisher)
+	relayv1.RegisterRelayControlServer(srv.GRPC(), m.control)
 	relayv1.RegisterRelayEventsServer(srv.GRPC(), m.events)
 	lis, err := net.Listen("tcp4", "127.0.0.1:0")
 	require.NoError(t, err)
