@@ -333,7 +333,11 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 		}
 	}
 	relayv1.RegisterRelayEnrollmentServer(server.GRPC(), NewEnrollment(nodes, server))
-	relayv1.RegisterRelayControlServer(server.GRPC(), NewControl(publisher))
+	control := NewControl(publisher)
+	if quotas != nil {
+		control.AttachQuotas(quotas, NewEventRecaller(quotas, events), server.Epoch())
+	}
+	relayv1.RegisterRelayControlServer(server.GRPC(), control)
 	relayv1.RegisterRelayEventsServer(server.GRPC(), events)
 
 	if err := publisher.Rebuild(ctx); err != nil {

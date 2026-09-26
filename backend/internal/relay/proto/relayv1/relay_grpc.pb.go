@@ -303,8 +303,12 @@ var RelayEnrollment_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	RelayControl_Ping_FullMethodName        = "/sub2api.relay.v1.RelayControl/Ping"
-	RelayControl_FetchConfig_FullMethodName = "/sub2api.relay.v1.RelayControl/FetchConfig"
+	RelayControl_Ping_FullMethodName           = "/sub2api.relay.v1.RelayControl/Ping"
+	RelayControl_FetchConfig_FullMethodName    = "/sub2api.relay.v1.RelayControl/FetchConfig"
+	RelayControl_ReleaseQuota_FullMethodName   = "/sub2api.relay.v1.RelayControl/ReleaseQuota"
+	RelayControl_RenewLeases_FullMethodName    = "/sub2api.relay.v1.RelayControl/RenewLeases"
+	RelayControl_ReportLeases_FullMethodName   = "/sub2api.relay.v1.RelayControl/ReportLeases"
+	RelayControl_AckQuotaRecall_FullMethodName = "/sub2api.relay.v1.RelayControl/AckQuotaRecall"
 )
 
 // RelayControlClient is the client API for RelayControl service.
@@ -316,6 +320,15 @@ type RelayControlClient interface {
 	Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error)
 	// FetchConfig 拉取本节点的配置快照（启动、重连、纪元变化、版本落后时，设计 6.2）。
 	FetchConfig(ctx context.Context, in *FetchConfigRequest, opts ...grpc.CallOption) (*ConfigSnapshot, error)
+	// ---- 额度（设计第 4 节）。申请随选号一起（WP7），这里是退回、续期、核对、收回确认。----
+	// 这几个调用都动钱：必须带当前纪元，跨纪元一律拒绝（EPOCH_MISMATCH），从节点清零重来。
+	// 退回类消息带"本纪元累计退回"而不是增量，重发多少次都只生效一次。
+	ReleaseQuota(ctx context.Context, in *ReleaseQuotaRequest, opts ...grpc.CallOption) (*ReleaseQuotaResponse, error)
+	RenewLeases(ctx context.Context, in *RenewLeasesRequest, opts ...grpc.CallOption) (*RenewLeasesResponse, error)
+	// ReportLeases 重连或纪元变化后上报手里的租约：主节点关掉没上报的，告诉节点哪些已作废。
+	// 上报完成之前从节点不发选号。
+	ReportLeases(ctx context.Context, in *ReportLeasesRequest, opts ...grpc.CallOption) (*ReportLeasesResponse, error)
+	AckQuotaRecall(ctx context.Context, in *AckQuotaRecallRequest, opts ...grpc.CallOption) (*AckQuotaRecallResponse, error)
 }
 
 type relayControlClient struct {
@@ -346,6 +359,46 @@ func (c *relayControlClient) FetchConfig(ctx context.Context, in *FetchConfigReq
 	return out, nil
 }
 
+func (c *relayControlClient) ReleaseQuota(ctx context.Context, in *ReleaseQuotaRequest, opts ...grpc.CallOption) (*ReleaseQuotaResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReleaseQuotaResponse)
+	err := c.cc.Invoke(ctx, RelayControl_ReleaseQuota_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *relayControlClient) RenewLeases(ctx context.Context, in *RenewLeasesRequest, opts ...grpc.CallOption) (*RenewLeasesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RenewLeasesResponse)
+	err := c.cc.Invoke(ctx, RelayControl_RenewLeases_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *relayControlClient) ReportLeases(ctx context.Context, in *ReportLeasesRequest, opts ...grpc.CallOption) (*ReportLeasesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReportLeasesResponse)
+	err := c.cc.Invoke(ctx, RelayControl_ReportLeases_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *relayControlClient) AckQuotaRecall(ctx context.Context, in *AckQuotaRecallRequest, opts ...grpc.CallOption) (*AckQuotaRecallResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AckQuotaRecallResponse)
+	err := c.cc.Invoke(ctx, RelayControl_AckQuotaRecall_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RelayControlServer is the server API for RelayControl service.
 // All implementations must embed UnimplementedRelayControlServer
 // for forward compatibility.
@@ -355,6 +408,15 @@ type RelayControlServer interface {
 	Ping(context.Context, *PingRequest) (*PingResponse, error)
 	// FetchConfig 拉取本节点的配置快照（启动、重连、纪元变化、版本落后时，设计 6.2）。
 	FetchConfig(context.Context, *FetchConfigRequest) (*ConfigSnapshot, error)
+	// ---- 额度（设计第 4 节）。申请随选号一起（WP7），这里是退回、续期、核对、收回确认。----
+	// 这几个调用都动钱：必须带当前纪元，跨纪元一律拒绝（EPOCH_MISMATCH），从节点清零重来。
+	// 退回类消息带"本纪元累计退回"而不是增量，重发多少次都只生效一次。
+	ReleaseQuota(context.Context, *ReleaseQuotaRequest) (*ReleaseQuotaResponse, error)
+	RenewLeases(context.Context, *RenewLeasesRequest) (*RenewLeasesResponse, error)
+	// ReportLeases 重连或纪元变化后上报手里的租约：主节点关掉没上报的，告诉节点哪些已作废。
+	// 上报完成之前从节点不发选号。
+	ReportLeases(context.Context, *ReportLeasesRequest) (*ReportLeasesResponse, error)
+	AckQuotaRecall(context.Context, *AckQuotaRecallRequest) (*AckQuotaRecallResponse, error)
 	mustEmbedUnimplementedRelayControlServer()
 }
 
@@ -370,6 +432,18 @@ func (UnimplementedRelayControlServer) Ping(context.Context, *PingRequest) (*Pin
 }
 func (UnimplementedRelayControlServer) FetchConfig(context.Context, *FetchConfigRequest) (*ConfigSnapshot, error) {
 	return nil, status.Error(codes.Unimplemented, "method FetchConfig not implemented")
+}
+func (UnimplementedRelayControlServer) ReleaseQuota(context.Context, *ReleaseQuotaRequest) (*ReleaseQuotaResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReleaseQuota not implemented")
+}
+func (UnimplementedRelayControlServer) RenewLeases(context.Context, *RenewLeasesRequest) (*RenewLeasesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RenewLeases not implemented")
+}
+func (UnimplementedRelayControlServer) ReportLeases(context.Context, *ReportLeasesRequest) (*ReportLeasesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReportLeases not implemented")
+}
+func (UnimplementedRelayControlServer) AckQuotaRecall(context.Context, *AckQuotaRecallRequest) (*AckQuotaRecallResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AckQuotaRecall not implemented")
 }
 func (UnimplementedRelayControlServer) mustEmbedUnimplementedRelayControlServer() {}
 func (UnimplementedRelayControlServer) testEmbeddedByValue()                      {}
@@ -428,6 +502,78 @@ func _RelayControl_FetchConfig_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RelayControl_ReleaseQuota_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReleaseQuotaRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayControlServer).ReleaseQuota(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayControl_ReleaseQuota_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayControlServer).ReleaseQuota(ctx, req.(*ReleaseQuotaRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RelayControl_RenewLeases_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RenewLeasesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayControlServer).RenewLeases(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayControl_RenewLeases_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayControlServer).RenewLeases(ctx, req.(*RenewLeasesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RelayControl_ReportLeases_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReportLeasesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayControlServer).ReportLeases(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayControl_ReportLeases_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayControlServer).ReportLeases(ctx, req.(*ReportLeasesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RelayControl_AckQuotaRecall_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AckQuotaRecallRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayControlServer).AckQuotaRecall(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayControl_AckQuotaRecall_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayControlServer).AckQuotaRecall(ctx, req.(*AckQuotaRecallRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // RelayControl_ServiceDesc is the grpc.ServiceDesc for RelayControl service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -442,6 +588,22 @@ var RelayControl_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "FetchConfig",
 			Handler:    _RelayControl_FetchConfig_Handler,
+		},
+		{
+			MethodName: "ReleaseQuota",
+			Handler:    _RelayControl_ReleaseQuota_Handler,
+		},
+		{
+			MethodName: "RenewLeases",
+			Handler:    _RelayControl_RenewLeases_Handler,
+		},
+		{
+			MethodName: "ReportLeases",
+			Handler:    _RelayControl_ReportLeases_Handler,
+		},
+		{
+			MethodName: "AckQuotaRecall",
+			Handler:    _RelayControl_AckQuotaRecall_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

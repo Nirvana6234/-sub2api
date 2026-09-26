@@ -88,6 +88,8 @@ type Quotas struct {
 	recaller QuotaRecaller
 
 	locks [64]sync.Mutex
+	// applied：本纪元里每份租约已处理到的"累计退回"（ApplyReturn）。
+	applied appliedReturns
 
 	reservedMu sync.RWMutex
 	reserved   map[int64]Micros
@@ -230,9 +232,12 @@ func (q *Quotas) Acquire(ctx context.Context, req AcquireRequest) ([]QuotaGrant,
 	if !errors.Is(err, ErrQuotaInsufficient) || q.recaller == nil {
 		return grants, err
 	}
+	// 收回在进程内锁之外进行（节点的回复要进同一把锁入账），两轮收回共用一个时限。
+	rctx, cancel := context.WithTimeout(ctx, quotaRecallBudget)
+	defer cancel()
 	var short *QuotaInsufficientError
 	errors.As(err, &short)
-	if n, rerr := q.recaller.Recall(ctx, req.UserID, req.NodeID, short.Scope, true); rerr == nil && n > 0 {
+	if n, rerr := q.recaller.Recall(rctx, req.UserID, req.NodeID, short.Scope, true); rerr == nil && n > 0 {
 		if grants, err = q.tryAcquire(ctx, req); !errors.Is(err, ErrQuotaInsufficient) {
 			return grants, err
 		}
@@ -240,7 +245,7 @@ func (q *Quotas) Acquire(ctx context.Context, req AcquireRequest) ([]QuotaGrant,
 	}
 	for _, w := range req.Wants {
 		if w.Scope == short.Scope && ToMicros(w.Headroom) < quotaLowRemaining {
-			if n, rerr := q.recaller.Recall(ctx, req.UserID, req.NodeID, short.Scope, false); rerr == nil && n > 0 {
+			if n, rerr := q.recaller.Recall(rctx, req.UserID, req.NodeID, short.Scope, false); rerr == nil && n > 0 {
 				return q.tryAcquire(ctx, req)
 			}
 		}

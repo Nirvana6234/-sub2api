@@ -14,6 +14,7 @@ import (
 type Control struct {
 	relayv1.UnimplementedRelayControlServer
 	config *ConfigPublisher
+	quota  *quotaControl
 }
 
 // NewControl 创建控制服务。

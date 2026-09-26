@@ -35,6 +35,16 @@ service RelayControl {
   rpc Ping(PingRequest) returns (PingResponse);
   // FetchConfig 拉取本节点的配置快照（启动、重连、纪元变化、版本落后时，设计 6.2）。
   rpc FetchConfig(FetchConfigRequest) returns (ConfigSnapshot);
+
+  // ---- 额度（设计第 4 节）。申请随选号一起（WP7），这里是退回、续期、核对、收回确认。----
+  // 这几个调用都动钱：必须带当前纪元，跨纪元一律拒绝（EPOCH_MISMATCH），从节点清零重来。
+  // 退回类消息带"本纪元累计退回"而不是增量，重发多少次都只生效一次。
+  rpc ReleaseQuota(ReleaseQuotaRequest) returns (ReleaseQuotaResponse);
+  rpc RenewLeases(RenewLeasesRequest) returns (RenewLeasesResponse);
+  // ReportLeases 重连或纪元变化后上报手里的租约：主节点关掉没上报的，告诉节点哪些已作废。
+  // 上报完成之前从节点不发选号。
+  rpc ReportLeases(ReportLeasesRequest) returns (ReportLeasesResponse);
+  rpc AckQuotaRecall(AckQuotaRecallRequest) returns (AckQuotaRecallResponse);
 }
 
 // 事件连接：一条长期双向流，承载心跳、释放、账号事件，以及主节点下发的指令。
@@ -194,6 +204,7 @@ message MasterEnvelope {
     ConfigChanged config_changed = 11;
     Invalidation invalidation = 12;
     TicketRevocations ticket_revocations = 13;
+    QuotaRecall quota_recall = 14;
   }
 }
 
@@ -279,5 +290,95 @@ message TicketRevocations {
 message RevokedTicketUser {
   int64 user_id = 1;
   int64 revoked_before_unix_ms = 2;
+}
+
+// ---- 额度（设计第 4 节，开发计划 WP6）。金额都是整数微单位（1 = 10⁻⁸）。----
+
+message QuotaScope {
+  string dimension = 1;
+  // 订阅窗口为分组 ID，Key 维度为 API Key ID，其余为 0。
+  int64 scope_id = 2;
+  // 平台配额为平台名，其余为空。
+  string scope_key = 3;
+}
+
+// 主节点给出的一项额度（随选号回复下发，WP7）。
+message QuotaGrant {
+  int64 lease_id = 1;
+  int64 user_id = 2;
+  QuotaScope scope = 3;
+  // 这次新给的。
+  int64 amount = 4;
+  // 这份租约现在总共锁着的（含节点已用、未入账的）。
+  int64 granted = 5;
+  int64 expires_at_unix_ms = 6;
+}
+
+// 一份租约的退回：本纪元里累计退回了多少（不是增量）。closed 表示节点放弃整份租约（剩下的全部退回）。
+message LeaseReturn {
+  int64 lease_id = 1;
+  int64 user_id = 2;
+  int64 returned_total = 3;
+  bool closed = 4;
+}
+
+message ReleaseQuotaRequest {
+  repeated LeaseReturn returns = 1;
+}
+
+message ReleaseQuotaResponse {
+  // 主节点已不认的租约（已关闭、已作废）：节点立即丢弃，不再使用。
+  repeated int64 dropped_lease_ids = 1;
+}
+
+message LeaseRenewal {
+  int64 lease_id = 1;
+  int64 user_id = 2;
+  // 最后一次用这份额度的时间（闲置判断，设计 4.4）；没用过为 0。
+  int64 last_used_at_unix_ms = 3;
+}
+
+message RenewLeasesRequest {
+  repeated LeaseRenewal leases = 1;
+}
+
+message RenewedLease {
+  int64 lease_id = 1;
+  int64 expires_at_unix_ms = 2;
+}
+
+message RenewLeasesResponse {
+  repeated RenewedLease renewed = 1;
+  repeated int64 dropped_lease_ids = 2;
+}
+
+message HeldLease {
+  int64 lease_id = 1;
+  int64 user_id = 2;
+}
+
+message ReportLeasesRequest {
+  repeated HeldLease leases = 1;
+}
+
+message ReportLeasesResponse {
+  repeated int64 dropped_lease_ids = 1;
+}
+
+// 主节点要求收回某个用户的一项子额度（设计 4.2、4.4）。idle_only 时只收回闲置的。
+message QuotaRecall {
+  string recall_id = 1;
+  int64 user_id = 2;
+  QuotaScope scope = 3;
+  bool idle_only = 4;
+}
+
+message AckQuotaRecallRequest {
+  string recall_id = 1;
+  repeated LeaseReturn returns = 2;
+}
+
+message AckQuotaRecallResponse {
+  repeated int64 dropped_lease_ids = 1;
 }
 

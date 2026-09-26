@@ -74,6 +74,19 @@ func WithIdempotencyKey(ctx context.Context, key string) context.Context {
 	return context.WithValue(ctx, idempotencyKeyCtx{}, key)
 }
 
+// IncomingEpoch 返回调用方带来的主节点纪元（服务端处理函数用）。
+func IncomingEpoch(ctx context.Context) string {
+	md, _ := metadata.FromIncomingContext(ctx)
+	return firstMD(md, mdEpoch)
+}
+
+// EpochMismatch 返回"主节点已重启"错误（与幂等调用的纪元检查同一个），从节点据此清零重来。
+// 动钱的调用不管带不带幂等键都要检查纪元。
+func EpochMismatch(ctx context.Context) error {
+	return reasonError(ctx, codes.FailedPrecondition, reasonEpochMismatch,
+		"relay master restarted; start the call again under the new epoch")
+}
+
 func idempotencyKeyFrom(ctx context.Context) string {
 	key, _ := ctx.Value(idempotencyKeyCtx{}).(string)
 	return key
