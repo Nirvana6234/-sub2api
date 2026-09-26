@@ -12,8 +12,8 @@ Sub2API. Keep all keys and account tokens on the server, outside source control.
 
 ## Paired custom releases
 
-The current September 26 release is `20260926-4a27790-s2ui-0b7bdcf`, pairing
-backend `4a27790` with management UI `0b7bdcf`. Build the Linux backend with CGO
+The current September 26 release is `20260926-9e10394-s2flow-fe8e554`, pairing
+backend `9e10394` with management UI `fe8e554`. Build the Linux backend with CGO
 enabled against Debian Bookworm (matching the pinned production image), and
 build the frontend as one HTML
 file. The production image remains pinned; bind-mount the versioned backend
@@ -42,15 +42,22 @@ choices rather than repeating this initial migration. Explicit `[]` denies a key
 
 The management UI follows the Sub2API workflow through three separate pages:
 
-- **分组管理** (`#/credential-pools`): create groups, manage their accounts, and
-  follow account/key counts to the corresponding filtered lists.
-- **账号管理** (`#/auth-files`): filter accounts by group and assign a group to
-  one account or a selected batch. Assignment replaces an OAuth account's
-  existing memberships; confirm replacement when moving a legacy multi-group
-  account.
-- **API 密钥** (`#/api-keys`): create keys with explicit groups, edit group
-  access, disable/enable keys, and rotate keys while preserving their bindings.
-  Keys can access multiple groups; a disabled key has an empty binding (`[]`).
+- **分组管理** (`#/credential-pools`): create/delete groups and follow account/key
+  counts to the corresponding filtered lists. This page has no account editor.
+- **账号管理** (`#/auth-files`): filter accounts by group and select multiple
+  groups for an account or batch. Individual edits preselect all current groups;
+  batch saves explicitly replace memberships. Clearing groups is deliberate,
+  and failed targets remain available for retry.
+- **API 密钥** (`#/api-keys`): create a key with one group. Click its group in the
+  table, search if needed, and select another group to save immediately without
+  changing the key. Existing multi-group keys retain all memberships until an
+  explicit switch. Rotation preserves all bindings; disabling writes `[]`.
+
+The account editor requires the paired backend's `credential_groups: string[]`
+PATCH contract. It validates and replaces memberships through `UpdateManagedAuth`,
+preserving tokens and unrelated metadata. `[]` clears membership; the legacy
+`credential_group` string remains supported. Deploy this frontend and backend
+together; do not repeat the initial pool migration during upgrades.
 
 Create the groups, assign accounts, and then select those groups for each key
 before using it in Sub2API. When replacing a key, also update the corresponding
