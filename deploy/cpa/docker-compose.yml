@@ -1,0 +1,24 @@
+services:
+  cli-proxy-api:
+    image: eceasy/cli-proxy-api@sha256:a1dffb9c2300099039d9e2dd3dbf6396a72b798c891fe170940d2d8106222a8c
+    container_name: cli-proxy-api
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 384m
+    environment:
+      GOMEMLIMIT: 300MiB
+    ports:
+      - "127.0.0.1:8317:8317"
+    volumes:
+      - ./config.yaml:/CLIProxyAPI/config.yaml
+      - ./auths:/root/.cli-proxy-api
+      - ./logs:/CLIProxyAPI/logs
+      - ./plugins:/CLIProxyAPI/plugins
+    networks:
+      - sub2api-network
+
+networks:
+  sub2api-network:
+    external: true
+    name: deploy_sub2api-network
