@@ -31,6 +31,7 @@ func ProvideMasterRuntime(
 	apiKeys *service.APIKeyService,
 	billing *service.BillingCacheService,
 	accessChanges *service.AccessChangeHub,
+	users service.UserRepository,
 ) *master.Runtime {
 	// 用户、分组、订阅作废时发布改动（平台配额在仓储层已接好，见 repository/wire.go）。
 	service.AttachAccessChangeHub(accessChanges, apiKeys, billing)
@@ -41,6 +42,7 @@ func ProvideMasterRuntime(
 		Hub:           hub,
 		APIKeys:       apiKeys,
 		AccessChanges: accessChanges,
+		Users:         users,
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

@@ -15,6 +15,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/relay/master"
 	"github.com/Wei-Shaw/sub2api/internal/relay/node"
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
+	"github.com/Wei-Shaw/sub2api/internal/relay/sign"
 	"github.com/Wei-Shaw/sub2api/internal/relay/transport"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
@@ -366,4 +367,24 @@ func TestAccessChangesReachTheNode(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	require.False(t, groups[4], "a subscription change invalidates the user, not the whole group")
+}
+
+// 票据吊销经事件流到达从节点，合进吊销表后被吊销用户的票据被拒（设计 8.1）。
+func TestTicketRevocationsReachTheNode(t *testing.T) {
+	m := startMaster(t)
+	n := startNode(t, m)
+	list := sign.NewRevocationList()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go node.RunEvents(ctx, n.client, n.syncer, node.EventHandlers{OnTicketRevocations: func(msg *relayv1.TicketRevocations) {
+		list.Apply(msg, time.Now())
+	}})
+	require.Eventually(t, func() bool { return len(m.events.ConnectedNodes()) == 1 }, 5*time.Second, 10*time.Millisecond)
+
+	at := time.Now()
+	m.events.Broadcast(&relayv1.MasterEnvelope{Body: &relayv1.MasterEnvelope_TicketRevocations{TicketRevocations: &relayv1.TicketRevocations{
+		Users: []*relayv1.RevokedTicketUser{{UserId: 42, RevokedBeforeUnixMs: at.UnixMilli()}},
+	}}})
+	require.Eventually(t, func() bool { return list.Revoked(42, at.Add(-time.Minute), time.Now()) }, 5*time.Second, 10*time.Millisecond)
+	require.False(t, list.Revoked(43, at.Add(-time.Minute), time.Now()))
 }

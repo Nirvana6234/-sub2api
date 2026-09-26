@@ -13,6 +13,8 @@ import (
 type EventHandlers struct {
 	// OnInvalidation 清掉对应的 Key 缓存、票据、额度等（设计 6 第三类）。
 	OnInvalidation func(*relayv1.Invalidation)
+	// OnTicketRevocations 合并进票据吊销表（sign.RevocationList.Apply，设计 8.1）。
+	OnTicketRevocations func(*relayv1.TicketRevocations)
 }
 
 // RunEvents 维持到主节点的事件流，直到 ctx 结束：断开后按退避重连；
@@ -44,6 +46,10 @@ func RunEvents(ctx context.Context, client *transport.Client, syncer *ConfigSync
 			case *relayv1.MasterEnvelope_Invalidation:
 				if handlers.OnInvalidation != nil {
 					handlers.OnInvalidation(body.Invalidation)
+				}
+			case *relayv1.MasterEnvelope_TicketRevocations:
+				if handlers.OnTicketRevocations != nil {
+					handlers.OnTicketRevocations(body.TicketRevocations)
 				}
 			}
 		}

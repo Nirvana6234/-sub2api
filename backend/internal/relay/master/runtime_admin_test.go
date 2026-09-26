@@ -143,15 +143,21 @@ func TestNodeAdminAuditCarriesSourceIP(t *testing.T) {
 func TestRuntimeSubscribesToAccessChangesOnlyWhileRunning(t *testing.T) {
 	ctx := context.Background()
 	hub := service.NewAccessChangeHub()
-	rt := master.NewRuntime(master.RuntimeDeps{Config: testRelayConfig(t), Store: master.NewMemoryStore(), Settings: newMemSettings(), AccessChanges: hub})
+	rt := master.NewRuntime(master.RuntimeDeps{Config: testRelayConfig(t), Store: master.NewMemoryStore(), Settings: newMemSettings(), AccessChanges: hub, Users: noUsers{}})
 	t.Cleanup(rt.Close)
 	rt.Init(ctx)
 	require.Equal(t, 0, hub.SubscriberCount())
 
 	_, err := rt.SetEnabled(ctx, 1, true)
 	require.NoError(t, err)
-	require.Equal(t, 1, hub.SubscriberCount())
+	require.Equal(t, 2, hub.SubscriberCount(), "cache invalidation and ticket revocation")
 	_, err = rt.SetEnabled(ctx, 1, false)
 	require.NoError(t, err)
 	require.Equal(t, 0, hub.SubscriberCount())
+}
+
+type noUsers struct{}
+
+func (noUsers) GetByID(context.Context, int64) (*service.User, error) {
+	return nil, service.ErrUserNotFound
 }

@@ -60,7 +60,9 @@ type RuntimeDeps struct {
 	APIKeys  *service.APIKeyService
 	// AccessChanges：用户、分组、订阅、平台配额的改动，运行时转成作废推给从节点。
 	AccessChanges *service.AccessChangeHub
-	Notifier      Notifier
+	// Users：用户被停用、删除时推票据吊销（设计 8.1）；nil 时不推（以选号复查为准）。
+	Users    UserStatusReader
+	Notifier Notifier
 }
 
 // Runtime 按主从分流总开关动态启停主节点的主从通信：开关打开当场开端口、起后台任务，
@@ -91,6 +93,7 @@ type runningRelay struct {
 	ca          *CA
 	keys        *keystore.Store
 	signing     *signingKeys
+	revoker     *ticketRevoker
 }
 
 // NewRuntime 创建运行时（不启动任何东西）。
@@ -303,7 +306,16 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 		return nil, err
 	}
 	nodes.AttachRegistry(server.Registry())
-	events.OnConnect = func(nodeID int64) { publisher.NotifyNode(context.Background(), nodeID) }
+	var revoker *ticketRevoker
+	if r.deps.Users != nil {
+		revoker = newTicketRevoker(r.deps.Users, events, r.now)
+	}
+	events.OnConnect = func(nodeID int64) {
+		publisher.NotifyNode(context.Background(), nodeID)
+		if revoker != nil {
+			revoker.sendAll(nodeID)
+		}
+	}
 	relayv1.RegisterRelayEnrollmentServer(server.GRPC(), NewEnrollment(nodes, server))
 	relayv1.RegisterRelayControlServer(server.GRPC(), NewControl(publisher))
 	relayv1.RegisterRelayEventsServer(server.GRPC(), events)
@@ -317,7 +329,7 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 	}
 
 	runCtx, cancel := context.WithCancel(context.Background())
-	running := &runningRelay{server: server, listener: lis, nodes: nodes, publisher: publisher, events: events, invalidator: invalidator, cancel: cancel, ca: ca, keys: keys, signing: signing}
+	running := &runningRelay{server: server, listener: lis, nodes: nodes, publisher: publisher, events: events, invalidator: invalidator, cancel: cancel, ca: ca, keys: keys, signing: signing, revoker: revoker}
 	var unsubs []func()
 	if r.deps.Hub != nil {
 		unsubs = append(unsubs, r.deps.Hub.Subscribe(publisher.OnSettingsChanged))
@@ -328,6 +340,9 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 	}
 	if r.deps.AccessChanges != nil {
 		unsubs = append(unsubs, r.deps.AccessChanges.Subscribe(invalidator.OnAccessChange))
+		if revoker != nil {
+			unsubs = append(unsubs, r.deps.AccessChanges.Subscribe(revoker.OnAccessChange))
+		}
 	}
 	running.unsubscribe = func() {
 		for _, u := range unsubs {
@@ -344,6 +359,9 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 		nodes.RunRefresh(runCtx, func(err error) { slog.Warn("relay node state refresh failed", "error", err) })
 	})
 	running.goRun(func() { publisher.RunRecheck(runCtx) })
+	if revoker != nil {
+		running.goRun(func() { revoker.run(runCtx) })
+	}
 	running.goRun(func() { runPendingPurge(runCtx, nodes) })
 	return running, nil
 }
