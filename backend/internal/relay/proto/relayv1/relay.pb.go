@@ -413,8 +413,10 @@ type RegisterResponse struct {
 	Status NodeStatus             `protobuf:"varint,1,opt,name=status,proto3,enum=sub2api.relay.v1.NodeStatus" json:"status,omitempty"`
 	// 主节点算出的长期密钥指纹，从节点把它和本机打印的对一下。
 	KeyFingerprint string `protobuf:"bytes,2,opt,name=key_fingerprint,json=keyFingerprint,proto3" json:"key_fingerprint,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// 全部未停用的主从通信根证书指纹（含预备中的），从节点用它替换本机存下的列表（设计 7.4）。
+	RootFingerprints []string `protobuf:"bytes,3,rep,name=root_fingerprints,json=rootFingerprints,proto3" json:"root_fingerprints,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *RegisterResponse) Reset() {
@@ -459,6 +461,13 @@ func (x *RegisterResponse) GetKeyFingerprint() string {
 		return x.KeyFingerprint
 	}
 	return ""
+}
+
+func (x *RegisterResponse) GetRootFingerprints() []string {
+	if x != nil {
+		return x.RootFingerprints
+	}
+	return nil
 }
 
 type NodeStatusRequest struct {
@@ -510,8 +519,10 @@ type NodeStatusResponse struct {
 	Status              NodeStatus             `protobuf:"varint,1,opt,name=status,proto3,enum=sub2api.relay.v1.NodeStatus" json:"status,omitempty"`
 	HeartbeatIntervalMs int64                  `protobuf:"varint,2,opt,name=heartbeat_interval_ms,json=heartbeatIntervalMs,proto3" json:"heartbeat_interval_ms,omitempty"`
 	KeyFingerprint      string                 `protobuf:"bytes,3,opt,name=key_fingerprint,json=keyFingerprint,proto3" json:"key_fingerprint,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// 同 RegisterResponse.root_fingerprints：待激活、已停用的节点靠心跳拿到预备中的新根。
+	RootFingerprints []string `protobuf:"bytes,4,rep,name=root_fingerprints,json=rootFingerprints,proto3" json:"root_fingerprints,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *NodeStatusResponse) Reset() {
@@ -563,6 +574,13 @@ func (x *NodeStatusResponse) GetKeyFingerprint() string {
 		return x.KeyFingerprint
 	}
 	return ""
+}
+
+func (x *NodeStatusResponse) GetRootFingerprints() []string {
+	if x != nil {
+		return x.RootFingerprints
+	}
+	return nil
 }
 
 type CertificateRequest struct {
@@ -625,8 +643,10 @@ type CertificateResponse struct {
 	Certificate    []byte `protobuf:"bytes,1,opt,name=certificate,proto3" json:"certificate,omitempty"`
 	NotAfterUnixMs int64  `protobuf:"varint,2,opt,name=not_after_unix_ms,json=notAfterUnixMs,proto3" json:"not_after_unix_ms,omitempty"`
 	NodeId         int64  `protobuf:"varint,3,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// 同 RegisterResponse.root_fingerprints。
+	RootFingerprints []string `protobuf:"bytes,4,rep,name=root_fingerprints,json=rootFingerprints,proto3" json:"root_fingerprints,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *CertificateResponse) Reset() {
@@ -678,6 +698,13 @@ func (x *CertificateResponse) GetNodeId() int64 {
 		return x.NodeId
 	}
 	return 0
+}
+
+func (x *CertificateResponse) GetRootFingerprints() []string {
+	if x != nil {
+		return x.RootFingerprints
+	}
+	return nil
 }
 
 type PingRequest struct {
@@ -1275,23 +1302,26 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\fdisplay_name\x18\x04 \x01(\tR\vdisplayName\x1a=\n" +
 	"\x0fSystemInfoEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"q\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x9e\x01\n" +
 	"\x10RegisterResponse\x124\n" +
 	"\x06status\x18\x01 \x01(\x0e2\x1c.sub2api.relay.v1.NodeStatusR\x06status\x12'\n" +
-	"\x0fkey_fingerprint\x18\x02 \x01(\tR\x0ekeyFingerprint\"<\n" +
+	"\x0fkey_fingerprint\x18\x02 \x01(\tR\x0ekeyFingerprint\x12+\n" +
+	"\x11root_fingerprints\x18\x03 \x03(\tR\x10rootFingerprints\"<\n" +
 	"\x11NodeStatusRequest\x12'\n" +
-	"\x0fprogram_version\x18\x01 \x01(\tR\x0eprogramVersion\"\xa7\x01\n" +
+	"\x0fprogram_version\x18\x01 \x01(\tR\x0eprogramVersion\"\xd4\x01\n" +
 	"\x12NodeStatusResponse\x124\n" +
 	"\x06status\x18\x01 \x01(\x0e2\x1c.sub2api.relay.v1.NodeStatusR\x06status\x122\n" +
 	"\x15heartbeat_interval_ms\x18\x02 \x01(\x03R\x13heartbeatIntervalMs\x12'\n" +
-	"\x0fkey_fingerprint\x18\x03 \x01(\tR\x0ekeyFingerprint\"n\n" +
+	"\x0fkey_fingerprint\x18\x03 \x01(\tR\x0ekeyFingerprint\x12+\n" +
+	"\x11root_fingerprints\x18\x04 \x03(\tR\x10rootFingerprints\"n\n" +
 	"\x12CertificateRequest\x12$\n" +
 	"\x0etls_public_key\x18\x01 \x01(\fR\ftlsPublicKey\x122\n" +
-	"\x15encryption_public_key\x18\x02 \x01(\fR\x13encryptionPublicKey\"{\n" +
+	"\x15encryption_public_key\x18\x02 \x01(\fR\x13encryptionPublicKey\"\xa8\x01\n" +
 	"\x13CertificateResponse\x12 \n" +
 	"\vcertificate\x18\x01 \x01(\fR\vcertificate\x12)\n" +
 	"\x11not_after_unix_ms\x18\x02 \x01(\x03R\x0enotAfterUnixMs\x12\x17\n" +
-	"\anode_id\x18\x03 \x01(\x03R\x06nodeId\"'\n" +
+	"\anode_id\x18\x03 \x01(\x03R\x06nodeId\x12+\n" +
+	"\x11root_fingerprints\x18\x04 \x03(\tR\x10rootFingerprints\"'\n" +
 	"\vPingRequest\x12\x18\n" +
 	"\apayload\x18\x01 \x01(\fR\apayload\"W\n" +
 	"\fPingResponse\x12\x18\n" +

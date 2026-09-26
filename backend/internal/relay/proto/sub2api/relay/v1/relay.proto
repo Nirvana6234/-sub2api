@@ -97,6 +97,8 @@ message RegisterResponse {
   NodeStatus status = 1;
   // 主节点算出的长期密钥指纹，从节点把它和本机打印的对一下。
   string key_fingerprint = 2;
+  // 全部未停用的主从通信根证书指纹（含预备中的），从节点用它替换本机存下的列表（设计 7.4）。
+  repeated string root_fingerprints = 3;
 }
 
 message NodeStatusRequest {
@@ -107,6 +109,8 @@ message NodeStatusResponse {
   NodeStatus status = 1;
   int64 heartbeat_interval_ms = 2;
   string key_fingerprint = 3;
+  // 同 RegisterResponse.root_fingerprints：待激活、已停用的节点靠心跳拿到预备中的新根。
+  repeated string root_fingerprints = 4;
 }
 
 message CertificateRequest {
@@ -121,6 +125,8 @@ message CertificateResponse {
   bytes certificate = 1;
   int64 not_after_unix_ms = 2;
   int64 node_id = 3;
+  // 同 RegisterResponse.root_fingerprints。
+  repeated string root_fingerprints = 4;
 }
 
 message PingRequest {

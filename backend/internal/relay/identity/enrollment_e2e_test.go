@@ -26,6 +26,7 @@ import (
 
 type testMaster struct {
 	store *master.MemoryStore
+	keys  *keystore.Store
 	ca    *master.CA
 	nodes *master.Nodes
 	srv   *transport.Server
@@ -43,7 +44,7 @@ func startMaster(t *testing.T, opts master.NodesOptions) *testMaster {
 	ca, err := master.NewCA(keys)
 	require.NoError(t, err)
 
-	m := &testMaster{store: master.NewMemoryStore(), ca: ca}
+	m := &testMaster{store: master.NewMemoryStore(), keys: keys, ca: ca}
 	if opts.HeartbeatInterval == 0 {
 		opts.HeartbeatInterval = 50 * time.Millisecond // 生产默认 5 秒；测试里让激活后尽快领证
 	}
@@ -506,4 +507,72 @@ func (p *freezingProxy) pipe(dst, src net.Conn) {
 			return
 		}
 	}
+}
+
+// 根证书轮换（设计 7.4，方案 B）：待激活节点在预备期间从心跳拿到新根指纹；主节点切到
+// 新根签发、停用旧根后，这台节点仍能认出主节点证书、领证并连上，而本机只配置了旧指纹。
+func TestPendingNodeLearnsTheStagedRootAndSurvivesTheSwitch(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	m := startMaster(t, master.NodesOptions{})
+	oldFPs := m.ca.RootFingerprints()
+	require.Len(t, oldFPs, 1)
+	oldRing, err := m.keys.Ring(keystore.PurposeRootCA)
+	require.NoError(t, err)
+
+	dir := t.TempDir()
+	id, err := identity.Load(dir)
+	require.NoError(t, err)
+	pins, err := identity.LoadRootPins(dir, oldFPs)
+	require.NoError(t, err)
+	client, err := transport.NewClient(transport.ClientOptions{
+		Address:        m.addr,
+		ProgramVersion: "test",
+		RotateGrace:    200 * time.Millisecond,
+		TLS:            transport.ClientTLSOptions{PinnedRootFingerprints: pins.Pinned, Certificate: id.TLSCertificate},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+	enroller := identity.NewEnroller(id, client, identity.EnrollerOptions{
+		Hostname: "relay-test", ProgramVersion: "test", RenewGrace: 200 * time.Millisecond, Pins: pins,
+	})
+
+	done := make(chan error, 1)
+	go func() { done <- enroller.EnsureCertificate(ctx) }()
+	require.Eventually(t, func() bool {
+		_, err := m.store.GetByFingerprint(ctx, id.Fingerprint())
+		return err == nil
+	}, 10*time.Second, 20*time.Millisecond, "node never registered")
+
+	// 节点已在待激活、按心跳查询状态时才预备新根：新指纹只能经心跳送到。
+	staged, err := m.keys.Stage(keystore.PurposeRootCA)
+	require.NoError(t, err)
+	require.NoError(t, m.ca.Reload())
+	newFP := transport.CertificateFingerprint(staged.Certificate)
+	require.Eventually(t, func() bool {
+		for _, fp := range pins.Pinned() {
+			if fp == newFP {
+				return true
+			}
+		}
+		return false
+	}, 10*time.Second, 20*time.Millisecond, "the pending node never learned the staged root")
+
+	// 切换签发并停用旧根：之后主节点出示的证书只由新根签发。
+	require.NoError(t, m.keys.Activate(keystore.PurposeRootCA, staged.Version))
+	require.NoError(t, m.keys.Retire(keystore.PurposeRootCA, oldRing.Active.Version))
+	require.NoError(t, m.ca.Reload())
+	require.Equal(t, []string{newFP}, m.ca.RootFingerprints())
+
+	node, err := m.store.GetByFingerprint(ctx, id.Fingerprint())
+	require.NoError(t, err)
+	require.NoError(t, m.nodes.Activate(ctx, node.ID, id.Fingerprint(), master.Activation{PublicDomain: "relay-b.example.com", ActorUserID: 1}))
+	require.NoError(t, <-done, "obtaining the certificate reconnects with the new root")
+	n := &testNode{id: id, client: client}
+	require.NoError(t, n.ping(t))
+
+	// 存下来的列表已替换成主节点当前的列表：停用的旧根不再来自存储。
+	reloaded, err := identity.LoadRootPins(dir, []string{newFP})
+	require.NoError(t, err)
+	require.Equal(t, []string{newFP}, reloaded.Pinned())
 }

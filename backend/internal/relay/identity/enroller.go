@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
@@ -25,6 +26,8 @@ type EnrollerOptions struct {
 	OnStatus func(relayv1.NodeStatus)
 	// RenewGrace 是续签后丢掉旧加密私钥之前等待的时间，与主节点关闭旧证书连接的宽限一致（默认 60 秒）。
 	RenewGrace time.Duration
+	// Pins 收到主节点给的根证书指纹时更新（设计 7.4）；nil 表示不跟随（测试）。
+	Pins *RootPins
 }
 
 // Enroller 让从节点拿到并保持一张有效的主从通信证书。
@@ -56,14 +59,16 @@ func (e *Enroller) EnsureCertificate(ctx context.Context) error {
 	if err := e.client.Rotate(); err != nil {
 		return err
 	}
-	if _, err := e.enrollment().Register(ctx, &relayv1.RegisterRequest{
+	reg, err := e.enrollment().Register(ctx, &relayv1.RegisterRequest{
 		Hostname:       e.opts.Hostname,
 		ProgramVersion: e.opts.ProgramVersion,
 		DisplayName:    e.opts.DisplayName,
 		SystemInfo:     e.opts.SystemInfo,
-	}); err != nil {
+	})
+	if err != nil {
 		return fmt.Errorf("relay registration failed: %w", err)
 	}
+	e.updatePins(reg.GetRootFingerprints())
 
 	last := relayv1.NodeStatus_NODE_STATUS_UNSPECIFIED
 	backoff := transport.DefaultBackoff()
@@ -72,6 +77,7 @@ func (e *Enroller) EnsureCertificate(ctx context.Context) error {
 		wait := backoff.Next()
 		if err == nil {
 			backoff.Reset()
+			e.updatePins(resp.RootFingerprints)
 			if resp.Status != last {
 				last = resp.Status
 				if e.opts.OnStatus != nil {
@@ -85,12 +91,14 @@ func (e *Enroller) EnsureCertificate(ctx context.Context) error {
 				return ErrRejected
 			case relayv1.NodeStatus_NODE_STATUS_UNKNOWN:
 				// 待激活超时被清除了：重新注册。
-				if _, err := e.enrollment().Register(ctx, &relayv1.RegisterRequest{
+				reg, err := e.enrollment().Register(ctx, &relayv1.RegisterRequest{
 					Hostname: e.opts.Hostname, ProgramVersion: e.opts.ProgramVersion,
 					DisplayName: e.opts.DisplayName, SystemInfo: e.opts.SystemInfo,
-				}); err != nil {
+				})
+				if err != nil {
 					return fmt.Errorf("relay registration failed: %w", err)
 				}
+				e.updatePins(reg.GetRootFingerprints())
 			}
 			wait = time.Duration(resp.HeartbeatIntervalMs) * time.Millisecond
 			if wait <= 0 {
@@ -107,6 +115,19 @@ func (e *Enroller) EnsureCertificate(ctx context.Context) error {
 	}
 }
 
+// updatePins 用主节点给的根证书指纹更新本机列表。这些回复来自按当前指纹验证过的主节点；
+// 写盘失败只记日志：本机配置的指纹仍然有效，下一次回复会再试。
+func (e *Enroller) updatePins(fingerprints []string) {
+	if e.opts.Pins == nil {
+		return
+	}
+	if changed, err := e.opts.Pins.Update(fingerprints); err != nil {
+		slog.Warn("relay root fingerprints could not be saved", "error", err)
+	} else if changed {
+		slog.Info("relay root fingerprints updated", "fingerprints", e.opts.Pins.Pinned())
+	}
+}
+
 func (e *Enroller) obtain(ctx context.Context) error {
 	req, pending, err := e.id.PrepareRequest()
 	if err != nil {
@@ -116,6 +137,7 @@ func (e *Enroller) obtain(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("relay certificate request failed: %w", err)
 	}
+	e.updatePins(resp.RootFingerprints)
 	if err := e.id.Install(pending, resp); err != nil {
 		return err
 	}
@@ -132,6 +154,7 @@ func (e *Enroller) Renew(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("relay certificate renewal failed: %w", err)
 	}
+	e.updatePins(resp.RootFingerprints)
 	if err := e.id.Install(pending, resp); err != nil {
 		return err
 	}

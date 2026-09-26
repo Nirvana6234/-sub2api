@@ -80,7 +80,7 @@ func (e *Enrollment) Register(ctx context.Context, req *relayv1.RegisterRequest)
 				return nil, status.Error(codes.Internal, "update registration failed")
 			}
 		}
-		return &relayv1.RegisterResponse{Status: toProtoStatus(existing.Status), KeyFingerprint: peer.KeyFingerprint}, nil
+		return &relayv1.RegisterResponse{Status: toProtoStatus(existing.Status), KeyFingerprint: peer.KeyFingerprint, RootFingerprints: e.nodes.ca.RootFingerprints()}, nil
 	case !errors.Is(err, ErrNodeNotFound):
 		return nil, status.Error(codes.Internal, "lookup failed")
 	}
@@ -106,7 +106,7 @@ func (e *Enrollment) Register(ctx context.Context, req *relayv1.RegisterRequest)
 		"fingerprint": peer.KeyFingerprint, "hostname": req.Hostname, "program_version": req.ProgramVersion,
 	}})
 	e.nodes.notify(ctx, Event{Kind: EventNodeRegistered, Severity: SeverityInfo, NodeID: node.ID, Detail: map[string]any{"hostname": req.Hostname, "ip": ip}})
-	return &relayv1.RegisterResponse{Status: relayv1.NodeStatus_NODE_STATUS_PENDING, KeyFingerprint: peer.KeyFingerprint}, nil
+	return &relayv1.RegisterResponse{Status: relayv1.NodeStatus_NODE_STATUS_PENDING, KeyFingerprint: peer.KeyFingerprint, RootFingerprints: e.nodes.ca.RootFingerprints()}, nil
 }
 
 // NodeStatus 返回这把长期密钥对应节点的状态；也是待激活期间的心跳。
@@ -115,6 +115,8 @@ func (e *Enrollment) NodeStatus(ctx context.Context, _ *relayv1.NodeStatusReques
 	resp := &relayv1.NodeStatusResponse{
 		HeartbeatIntervalMs: e.nodes.opts.HeartbeatInterval.Milliseconds(),
 		KeyFingerprint:      peer.KeyFingerprint,
+		// 待激活、已停用的节点也一直按心跳查询，靠它提前拿到预备中的新根（设计 7.4）。
+		RootFingerprints: e.nodes.ca.RootFingerprints(),
 	}
 	node, err := e.nodes.store.GetByFingerprint(ctx, peer.KeyFingerprint)
 	if errors.Is(err, ErrNodeNotFound) {
@@ -192,7 +194,7 @@ func (e *Enrollment) RenewCertificate(ctx context.Context, req *relayv1.Certific
 			if err := e.nodes.store.SetEncryptionKey(ctx, node.ID, req.GetEncryptionPublicKey()); err != nil {
 				return nil, status.Error(codes.Internal, "store encryption key failed")
 			}
-			return &relayv1.CertificateResponse{Certificate: prior.DER, NotAfterUnixMs: prior.NotAfter.UnixMilli(), NodeId: node.ID}, nil
+			return &relayv1.CertificateResponse{Certificate: prior.DER, NotAfterUnixMs: prior.NotAfter.UnixMilli(), NodeId: node.ID, RootFingerprints: e.nodes.ca.RootFingerprints()}, nil
 		}
 		e.nodes.duplicateIdentity(ctx, node.ID, map[string]any{"reason": "the same certificate was renewed twice with different keys", "serial": peer.CertSerial})
 		return nil, status.Error(codes.PermissionDenied, "relay certificate was already renewed")
@@ -237,9 +239,10 @@ func (e *Enrollment) issue(ctx context.Context, node *Node, req *relayv1.Certifi
 		return nil, status.Error(codes.Internal, "store encryption key failed")
 	}
 	return &relayv1.CertificateResponse{
-		Certificate:    cert.Raw,
-		NotAfterUnixMs: cert.NotAfter.UnixMilli(),
-		NodeId:         node.ID,
+		Certificate:      cert.Raw,
+		NotAfterUnixMs:   cert.NotAfter.UnixMilli(),
+		NodeId:           node.ID,
+		RootFingerprints: e.nodes.ca.RootFingerprints(),
 	}, nil
 }
 
