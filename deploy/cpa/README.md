@@ -65,40 +65,54 @@ Sub2API upstream credential; rotating a CPA key does not update Sub2API for you.
 
 ## Release procedure
 
-### Account concurrency release
+### Adaptive account scheduling release
 
-Account cards show the current request count and configured limit. Use **Set
-limit** on the account card to change it; `0` means no configured limit. Values
-are administrator settings, not official Plus/Pro allowances. The deployment
-preserves every existing account limit and enables `routing.strategy:
-least-connections` with session affinity. Highest available priority is retained;
-within it, configured accounts use active/limit utilization and unlimited
-accounts use their active count. Ties rotate. A full session account can only
-fall back where its existing protocol and group rules allow it.
+The **Account management** cards show active concurrency, the configured ceiling,
+recent generation error rate, semantic first-output latency and account/model
+cooldowns. Unknown or expired observations are not displayed as zero. Visible
+pages poll every three seconds; leaving the page cancels polling. These metrics
+belong to this CPA process, not the upstream provider or another CPA replica.
 
-All strategies atomically enforce configured capacity. If the eligible pool is
-full, requests receive local 429 without upstream cooldown; there is no new
-waiting queue. Lowering a limit does not interrupt active work. Counters are
-local to this process and reset on restart. Other CPA replicas do not share them.
+**Set limit** edits only the account identity and `max_concurrency`, preserving
+refreshed tokens and group memberships. A positive value enforces a ceiling;
+`0` means no configured ceiling. The limit editor also offers Sub2API's local
+account-creation default: 10 for ordinary accounts, 1 for Grok (`xai`). Applying
+this preset requires Save and does not overwrite existing values on deployment.
+Sub2API has no Plus/Pro default-concurrency table. Full imports retain their
+configured concurrency; other import paths can use different defaults.
 
-The authenticated `/v0/management/auth-files/concurrency` endpoint returns safe
-identities, current counts, limits, and editability. The page polls every three
-seconds while visible; unavailable statistics are not shown as zero. The new
-limit editor sends only identity and `max_concurrency`, preserving refreshed
-tokens. Home mode continues to own its admission and returns unknown local
-counts.
+The **Configuration management / Network** page exposes `adaptive` routing and
+all scoring, session-escape, health-expiry, queue and attempt settings. Initial
+release settings use Top-K 7, load/queue/error/TTFT weights 1/0.7/0.8/0.5,
+health TTL 300 seconds, a 1500 ms acquisition window, 32 waiting requests and
+3 conductor executor attempts per inbound request. The acquisition window never
+becomes a response or established-stream deadline. Waiting is only before the
+first upstream attempt; set its timeout to 0 to reject immediately when full.
 
-Ordinary HTTP/SSE and Codex Responses generations are covered. Idle duplex
-connections do not occupy a slot. Realtime automatic/VAD responses can only be
-canceled after their creation event reaches CPA; WebRTC without a connected CPA
-sideband is unobserved. Do not present these counts as provider-wide capacity.
+Selection keeps the highest eligible priority tier and healthy session affinity
+within Top-K. Full or unhealthy session accounts may fall back only within the
+Key's authenticated groups and protocol pin constraints. Queued requests recheck
+current account state when woken. The original authenticated Key scope does not
+expand in flight; Key reassignment applies to the next authenticated request.
 
-Release evidence: 771 frontend tests, lint/typecheck/build, seven real-CPA browser
-scenarios, backend full tests, Linux `go vet`, and Linux race checks for admission,
-selection, duplex and Realtime. The existing Antigravity connection-pool test now
-uses a server barrier to guarantee actual simultaneous requests. Windows full
-vet still reports existing unsafe-pointer warnings in the native plugin loader;
-the Linux production target passes.
+The attempt budget includes credential/model/OAuth retries, credits fallback and
+handler stream bootstrap replay. It does not override transport retries inside
+an executor or Sub2API's separate retries. Local queue/attempt errors return 429
+with `Retry-After: 1` and never degrade account health. Delivered stream output
+is never replayed. General waiters count globally; an account's waiting number
+only counts requests explicitly pinned to it.
+
+Health uses an EWMA of real generation outcomes and first semantic stream output.
+Cancellation, client errors, local admission failures, token-count calls and
+management probes do not become account failures. Nonstream duration is not TTFT.
+Duplex generations are observed individually; an automatic successor without a
+request start has unknown TTFT. Realtime/VAD concurrency can only react after a
+response-created event; WebRTC without a CPA sideband remains unobserved.
+CLIProxyAPIHome continues to own its admission and reports unknown local metrics.
+
+Deploy paired artifacts and retain the existing account limits, tokens, groups,
+Key assignments and Sub2API settings. Backend details are documented in
+`CLIProxyAPI/docs/account-adaptive-scheduling.md` in the local workspace.
 
 ### Applying a paired release
 

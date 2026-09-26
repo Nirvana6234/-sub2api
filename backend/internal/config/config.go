@@ -105,6 +105,7 @@ type Config struct {
 	ImageStorage            ImageStorageConfig            `mapstructure:"image_storage"`
 	Plugins                 PluginConfig                  `mapstructure:"plugins"`
 	FallbackPoolAlert       FallbackPoolAlertConfig       `mapstructure:"fallback_pool_alert"`
+	CPAScheduling           CPASchedulingConfig           `mapstructure:"cpa_scheduling"`
 }
 
 type FallbackPoolAlertConfig struct {
@@ -2015,6 +2016,8 @@ func configureConfigSource(setConfigFile, addConfigPath func(string)) {
 }
 
 func setDefaults() {
+	viper.SetDefault("cpa_scheduling.sync_token", "")
+	viper.SetDefault("cpa_scheduling.source_id", "")
 	viper.SetDefault("run_mode", RunModeStandard)
 
 	// Server
@@ -2682,6 +2685,9 @@ func setEnvReachableDefaults() {
 }
 
 func (c *Config) Validate() error {
+	if err := c.CPAScheduling.Validate(); err != nil {
+		return err
+	}
 	forwardedClientIPHeaders, err := NormalizeForwardedClientIPHeaders(c.Security.ForwardedClientIPHeaders)
 	if err != nil {
 		return fmt.Errorf("security.forwarded_client_ip_headers: %w", err)
