@@ -258,12 +258,16 @@ type RejectionFormat int32
 
 const (
 	RejectionFormat_REJECTION_FORMAT_UNSPECIFIED RejectionFormat = 0
-	// 网关处理函数的错误（按入口协议的错误格式，流式已开始时写流内错误）。
+	// 网关处理函数的错误：status / error_type / code / message，从节点按入口协议写出
+	// （流式已开始时写流内错误）；cyber_block_key 非空时按 cyber 屏蔽的写法。
 	RejectionFormat_REJECTION_FORMAT_GATEWAY RejectionFormat = 1
-	// 鉴权中间件的错误（{code, message}）。
-	RejectionFormat_REJECTION_FORMAT_AUTH RejectionFormat = 2
-	// Key 额度用完、按 OpenAI 格式写的错误（insufficient_quota）。
-	RejectionFormat_REJECTION_FORMAT_OPENAI_QUOTA RejectionFormat = 3
+	// 处理函数之前的中间件（鉴权、黑名单、模型白名单、未分组拦截）写出的响应：
+	// 主节点按本地同样的写法生成，从节点原样写出 status / headers / body。
+	RejectionFormat_REJECTION_FORMAT_RAW RejectionFormat = 2
+	// 换号用完：从节点按它最近一次上游错误写出（continuation_unsupported 时按"续链不支持"的 400）。
+	RejectionFormat_REJECTION_FORMAT_FAILOVER_EXHAUSTED RejectionFormat = 3
+	// 这个请求还不能经从节点处理（自动分组、组合平台分组、尚未接入的平台）：从节点交给主节点转发。
+	RejectionFormat_REJECTION_FORMAT_UNSUPPORTED RejectionFormat = 4
 )
 
 // Enum value maps for RejectionFormat.
@@ -271,14 +275,16 @@ var (
 	RejectionFormat_name = map[int32]string{
 		0: "REJECTION_FORMAT_UNSPECIFIED",
 		1: "REJECTION_FORMAT_GATEWAY",
-		2: "REJECTION_FORMAT_AUTH",
-		3: "REJECTION_FORMAT_OPENAI_QUOTA",
+		2: "REJECTION_FORMAT_RAW",
+		3: "REJECTION_FORMAT_FAILOVER_EXHAUSTED",
+		4: "REJECTION_FORMAT_UNSUPPORTED",
 	}
 	RejectionFormat_value = map[string]int32{
-		"REJECTION_FORMAT_UNSPECIFIED":  0,
-		"REJECTION_FORMAT_GATEWAY":      1,
-		"REJECTION_FORMAT_AUTH":         2,
-		"REJECTION_FORMAT_OPENAI_QUOTA": 3,
+		"REJECTION_FORMAT_UNSPECIFIED":        0,
+		"REJECTION_FORMAT_GATEWAY":            1,
+		"REJECTION_FORMAT_RAW":                2,
+		"REJECTION_FORMAT_FAILOVER_EXHAUSTED": 3,
+		"REJECTION_FORMAT_UNSUPPORTED":        4,
 	}
 )
 
@@ -2872,9 +2878,11 @@ type SelectRequest struct {
 	// cyber 会话屏蔽要查的键（开关打开时由从节点算出，设计 3.4）。
 	Cyber *CyberSessionLookup `protobuf:"bytes,16,opt,name=cyber,proto3" json:"cyber,omitempty"`
 	// 从节点手里这个用户各项子额度还没用掉的金额：主节点据此决定是否随选号补充。
-	HeldQuota     []*HeldQuota `protobuf:"bytes,17,rep,name=held_quota,json=heldQuota,proto3" json:"held_quota,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	HeldQuota []*HeldQuota `protobuf:"bytes,17,rep,name=held_quota,json=heldQuota,proto3" json:"held_quota,omitempty"`
+	// 请求里可能被下游解析到的全部模型名（分组模型白名单逐一检查，规则同 GroupModelAllowlist 中间件）。
+	ModelCandidates []string `protobuf:"bytes,18,rep,name=model_candidates,json=modelCandidates,proto3" json:"model_candidates,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *SelectRequest) Reset() {
@@ -3031,6 +3039,13 @@ func (x *SelectRequest) GetCyber() *CyberSessionLookup {
 func (x *SelectRequest) GetHeldQuota() []*HeldQuota {
 	if x != nil {
 		return x.HeldQuota
+	}
+	return nil
+}
+
+func (x *SelectRequest) GetModelCandidates() []string {
+	if x != nil {
+		return x.ModelCandidates
 	}
 	return nil
 }
@@ -3265,8 +3280,14 @@ type SelectRejection struct {
 	IngressRejectReason      string `protobuf:"bytes,9,opt,name=ingress_reject_reason,json=ingressRejectReason,proto3" json:"ingress_reject_reason,omitempty"`
 	// 命中 cyber 会话屏蔽的键（从节点记运维日志用）。
 	CyberBlockKey string `protobuf:"bytes,10,opt,name=cyber_block_key,json=cyberBlockKey,proto3" json:"cyber_block_key,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// REJECTION_FORMAT_RAW 的响应头和响应体。
+	Headers map[string]string `protobuf:"bytes,11,rep,name=headers,proto3" json:"headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Body    []byte            `protobuf:"bytes,12,opt,name=body,proto3" json:"body,omitempty"`
+	// REJECTION_FORMAT_FAILOVER_EXHAUSTED：这次选号里因为 previous_response_id 跳过了 OAuth 账号，
+	// 最后的错误是"续链不支持"。
+	ContinuationUnsupported bool `protobuf:"varint,13,opt,name=continuation_unsupported,json=continuationUnsupported,proto3" json:"continuation_unsupported,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
 }
 
 func (x *SelectRejection) Reset() {
@@ -3369,6 +3390,27 @@ func (x *SelectRejection) GetCyberBlockKey() string {
 	return ""
 }
 
+func (x *SelectRejection) GetHeaders() map[string]string {
+	if x != nil {
+		return x.Headers
+	}
+	return nil
+}
+
+func (x *SelectRejection) GetBody() []byte {
+	if x != nil {
+		return x.Body
+	}
+	return nil
+}
+
+func (x *SelectRejection) GetContinuationUnsupported() bool {
+	if x != nil {
+		return x.ContinuationUnsupported
+	}
+	return false
+}
+
 type Selection struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// 主节点起的选号 ID：释放、取凭据、补额度都按它。
@@ -3387,8 +3429,8 @@ type Selection struct {
 	BillingModelSource string `protobuf:"bytes,11,opt,name=billing_model_source,json=billingModelSource,proto3" json:"billing_model_source,omitempty"`
 	// 实际使用的会话哈希（池模式账号可能改写），后续选号和释放都用它。
 	SessionHash string `protobuf:"bytes,12,opt,name=session_hash,json=sessionHash,proto3" json:"session_hash,omitempty"`
-	// 扣费凭证（签名信封，payload 是 Voucher）。
-	Voucher *SignedToken `protobuf:"bytes,13,opt,name=voucher,proto3" json:"voucher,omitempty"`
+	// 扣费凭证：SignedToken（payload 是 Voucher）的编码。上报扣费时原样带回，主节点按这些字节验签。
+	Voucher []byte `protobuf:"bytes,13,opt,name=voucher,proto3" json:"voucher,omitempty"`
 	// 这次请求用到的各项子额度，和最低预估费用（从节点按它预扣）。
 	QuotaScopes []*QuotaScope `protobuf:"bytes,14,rep,name=quota_scopes,json=quotaScopes,proto3" json:"quota_scopes,omitempty"`
 	QuotaNeed   int64         `protobuf:"varint,15,opt,name=quota_need,json=quotaNeed,proto3" json:"quota_need,omitempty"`
@@ -3517,7 +3559,7 @@ func (x *Selection) GetSessionHash() string {
 	return ""
 }
 
-func (x *Selection) GetVoucher() *SignedToken {
+func (x *Selection) GetVoucher() []byte {
 	if x != nil {
 		return x.Voucher
 	}
@@ -4329,7 +4371,7 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\trecall_id\x18\x01 \x01(\tR\brecallId\x127\n" +
 	"\areturns\x18\x02 \x03(\v2\x1d.sub2api.relay.v1.LeaseReturnR\areturns\"D\n" +
 	"\x16AckQuotaRecallResponse\x12*\n" +
-	"\x11dropped_lease_ids\x18\x01 \x03(\x03R\x0fdroppedLeaseIds\"\xa1\x05\n" +
+	"\x11dropped_lease_ids\x18\x01 \x03(\x03R\x0fdroppedLeaseIds\"\xcc\x05\n" +
 	"\rSelectRequest\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x18\n" +
@@ -4350,7 +4392,8 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x14excluded_account_ids\x18\x0f \x03(\x03R\x12excludedAccountIds\x12:\n" +
 	"\x05cyber\x18\x10 \x01(\v2$.sub2api.relay.v1.CyberSessionLookupR\x05cyber\x12:\n" +
 	"\n" +
-	"held_quota\x18\x11 \x03(\v2\x1b.sub2api.relay.v1.HeldQuotaR\theldQuotaB\f\n" +
+	"held_quota\x18\x11 \x03(\v2\x1b.sub2api.relay.v1.HeldQuotaR\theldQuota\x12)\n" +
+	"\x10model_candidates\x18\x12 \x03(\tR\x0fmodelCandidatesB\f\n" +
 	"\n" +
 	"credential\"\xb0\x01\n" +
 	"\x12CyberSessionLookup\x12!\n" +
@@ -4364,7 +4407,7 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x0eSelectResponse\x12;\n" +
 	"\tselection\x18\x01 \x01(\v2\x1b.sub2api.relay.v1.SelectionH\x00R\tselection\x12A\n" +
 	"\trejection\x18\x02 \x01(\v2!.sub2api.relay.v1.SelectRejectionH\x00R\trejectionB\b\n" +
-	"\x06result\"\xb6\x03\n" +
+	"\x06result\"\x8b\x05\n" +
 	"\x0fSelectRejection\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\x05R\x06status\x12\x1d\n" +
 	"\n" +
@@ -4377,7 +4420,13 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x1bops_business_limited_reason\x18\b \x01(\tR\x18opsBusinessLimitedReason\x122\n" +
 	"\x15ingress_reject_reason\x18\t \x01(\tR\x13ingressRejectReason\x12&\n" +
 	"\x0fcyber_block_key\x18\n" +
-	" \x01(\tR\rcyberBlockKey\"\xc6\x06\n" +
+	" \x01(\tR\rcyberBlockKey\x12H\n" +
+	"\aheaders\x18\v \x03(\v2..sub2api.relay.v1.SelectRejection.HeadersEntryR\aheaders\x12\x12\n" +
+	"\x04body\x18\f \x01(\fR\x04body\x129\n" +
+	"\x18continuation_unsupported\x18\r \x01(\bR\x17continuationUnsupported\x1a:\n" +
+	"\fHeadersEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xa7\x06\n" +
 	"\tSelection\x12!\n" +
 	"\fselection_id\x18\x01 \x01(\tR\vselectionId\x12\x17\n" +
 	"\auser_id\x18\x02 \x01(\x03R\x06userId\x12\x1c\n" +
@@ -4393,8 +4442,8 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"channel_id\x18\n" +
 	" \x01(\x03R\tchannelId\x120\n" +
 	"\x14billing_model_source\x18\v \x01(\tR\x12billingModelSource\x12!\n" +
-	"\fsession_hash\x18\f \x01(\tR\vsessionHash\x127\n" +
-	"\avoucher\x18\r \x01(\v2\x1d.sub2api.relay.v1.SignedTokenR\avoucher\x12?\n" +
+	"\fsession_hash\x18\f \x01(\tR\vsessionHash\x12\x18\n" +
+	"\avoucher\x18\r \x01(\fR\avoucher\x12?\n" +
 	"\fquota_scopes\x18\x0e \x03(\v2\x1c.sub2api.relay.v1.QuotaScopeR\vquotaScopes\x12\x1d\n" +
 	"\n" +
 	"quota_need\x18\x0f \x01(\x03R\tquotaNeed\x124\n" +
@@ -4471,12 +4520,13 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x0eSelectEndpoint\x12\x1f\n" +
 	"\x1bSELECT_ENDPOINT_UNSPECIFIED\x10\x00\x12$\n" +
 	" SELECT_ENDPOINT_OPENAI_RESPONSES\x10\x01\x12\x1f\n" +
-	"\x1bSELECT_ENDPOINT_OPENAI_CHAT\x10\x02*\x8f\x01\n" +
+	"\x1bSELECT_ENDPOINT_OPENAI_CHAT\x10\x02*\xb6\x01\n" +
 	"\x0fRejectionFormat\x12 \n" +
 	"\x1cREJECTION_FORMAT_UNSPECIFIED\x10\x00\x12\x1c\n" +
-	"\x18REJECTION_FORMAT_GATEWAY\x10\x01\x12\x19\n" +
-	"\x15REJECTION_FORMAT_AUTH\x10\x02\x12!\n" +
-	"\x1dREJECTION_FORMAT_OPENAI_QUOTA\x10\x032\xca\x03\n" +
+	"\x18REJECTION_FORMAT_GATEWAY\x10\x01\x12\x18\n" +
+	"\x14REJECTION_FORMAT_RAW\x10\x02\x12'\n" +
+	"#REJECTION_FORMAT_FAILOVER_EXHAUSTED\x10\x03\x12 \n" +
+	"\x1cREJECTION_FORMAT_UNSUPPORTED\x10\x042\xca\x03\n" +
 	"\x0fRelayEnrollment\x12H\n" +
 	"\x05Hello\x12\x1e.sub2api.relay.v1.HelloRequest\x1a\x1f.sub2api.relay.v1.HelloResponse\x12Q\n" +
 	"\bRegister\x12!.sub2api.relay.v1.RegisterRequest\x1a\".sub2api.relay.v1.RegisterResponse\x12W\n" +
@@ -4510,7 +4560,7 @@ func file_sub2api_relay_v1_relay_proto_rawDescGZIP() []byte {
 }
 
 var file_sub2api_relay_v1_relay_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
-var file_sub2api_relay_v1_relay_proto_msgTypes = make([]protoimpl.MessageInfo, 57)
+var file_sub2api_relay_v1_relay_proto_msgTypes = make([]protoimpl.MessageInfo, 58)
 var file_sub2api_relay_v1_relay_proto_goTypes = []any{
 	(PeerClass)(0),                   // 0: sub2api.relay.v1.PeerClass
 	(NodeStatus)(0),                  // 1: sub2api.relay.v1.NodeStatus
@@ -4574,6 +4624,7 @@ var file_sub2api_relay_v1_relay_proto_goTypes = []any{
 	nil,                              // 59: sub2api.relay.v1.RegisterRequest.SystemInfoEntry
 	nil,                              // 60: sub2api.relay.v1.ConfigSnapshot.SettingsEntry
 	nil,                              // 61: sub2api.relay.v1.ConfigSnapshot.SectionsEntry
+	nil,                              // 62: sub2api.relay.v1.SelectRejection.HeadersEntry
 }
 var file_sub2api_relay_v1_relay_proto_depIdxs = []int32{
 	5,  // 0: sub2api.relay.v1.HelloRequest.version:type_name -> sub2api.relay.v1.ProtocolVersion
@@ -4611,9 +4662,9 @@ var file_sub2api_relay_v1_relay_proto_depIdxs = []int32{
 	51, // 32: sub2api.relay.v1.SelectResponse.selection:type_name -> sub2api.relay.v1.Selection
 	50, // 33: sub2api.relay.v1.SelectResponse.rejection:type_name -> sub2api.relay.v1.SelectRejection
 	4,  // 34: sub2api.relay.v1.SelectRejection.format:type_name -> sub2api.relay.v1.RejectionFormat
-	2,  // 35: sub2api.relay.v1.Selection.billing_mode:type_name -> sub2api.relay.v1.BillingMode
-	57, // 36: sub2api.relay.v1.Selection.account:type_name -> sub2api.relay.v1.AccountSnapshot
-	23, // 37: sub2api.relay.v1.Selection.voucher:type_name -> sub2api.relay.v1.SignedToken
+	62, // 35: sub2api.relay.v1.SelectRejection.headers:type_name -> sub2api.relay.v1.SelectRejection.HeadersEntry
+	2,  // 36: sub2api.relay.v1.Selection.billing_mode:type_name -> sub2api.relay.v1.BillingMode
+	57, // 37: sub2api.relay.v1.Selection.account:type_name -> sub2api.relay.v1.AccountSnapshot
 	31, // 38: sub2api.relay.v1.Selection.quota_scopes:type_name -> sub2api.relay.v1.QuotaScope
 	32, // 39: sub2api.relay.v1.Selection.grants:type_name -> sub2api.relay.v1.QuotaGrant
 	57, // 40: sub2api.relay.v1.FetchCredentialsResponse.account:type_name -> sub2api.relay.v1.AccountSnapshot
@@ -4686,7 +4737,7 @@ func file_sub2api_relay_v1_relay_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sub2api_relay_v1_relay_proto_rawDesc), len(file_sub2api_relay_v1_relay_proto_rawDesc)),
 			NumEnums:      5,
-			NumMessages:   57,
+			NumMessages:   58,
 			NumExtensions: 0,
 			NumServices:   3,
 		},

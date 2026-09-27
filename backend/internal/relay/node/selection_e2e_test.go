@@ -109,7 +109,7 @@ func TestSelectionCallsOverTheWire(t *testing.T) {
 
 	sel.respond = func(*relayv1.SelectRequest) (*relayv1.SelectResponse, error) {
 		return &relayv1.SelectResponse{Result: &relayv1.SelectResponse_Rejection{Rejection: &relayv1.SelectRejection{
-			Status: 401, Code: "INVALID_API_KEY", Message: "Invalid API key", Format: relayv1.RejectionFormat_REJECTION_FORMAT_AUTH,
+			Status: 401, Code: "INVALID_API_KEY", Message: "Invalid API key", Format: relayv1.RejectionFormat_REJECTION_FORMAT_RAW,
 		}}}, nil
 	}
 	resp, err = client.Select(ctx, &relayv1.SelectRequest{RequestId: "r3", Attempt: 1})

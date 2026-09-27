@@ -1505,6 +1505,23 @@ func (s *OpenAIGatewayService) bindHTTPResponseAccount(ctx context.Context, c *g
 	if s == nil || account == nil || account.ID <= 0 {
 		return
 	}
+	var owner openAIHTTPResponseOwner
+	if rawOwner, ok := c.Get(openAIHTTPResponseOwnerContextKey); ok {
+		owner, _ = rawOwner.(openAIHTTPResponseOwner)
+	}
+	s.bindHTTPResponse(ctx, getOpenAIGroupIDFromContext(c), account.ID, responseID, owner)
+}
+
+// BindRelayHTTPResponse 记下一个 Responses 响应的账号和归属（后续 previous_response_id 用）。
+// 主从分流时响应在从节点上产生，从节点在释放选号时带回 response id，由主节点写入（开发计划 WP7）。
+func (s *OpenAIGatewayService) BindRelayHTTPResponse(ctx context.Context, groupID, accountID int64, responseID string, userID, apiKeyID int64) {
+	if s == nil || accountID <= 0 {
+		return
+	}
+	s.bindHTTPResponse(ctx, groupID, accountID, responseID, openAIHTTPResponseOwner{userID: userID, apiKeyID: apiKeyID})
+}
+
+func (s *OpenAIGatewayService) bindHTTPResponse(ctx context.Context, groupID, accountID int64, responseID string, owner openAIHTTPResponseOwner) {
 	responseID = strings.TrimSpace(responseID)
 	if responseID == "" {
 		return
@@ -1524,22 +1541,19 @@ func (s *OpenAIGatewayService) bindHTTPResponseAccount(ctx context.Context, c *g
 	bindCtx, cancel := context.WithTimeout(bindBaseCtx, openAIWSStateStoreRedisTimeout)
 	defer cancel()
 
-	groupID := getOpenAIGroupIDFromContext(c)
 	ttl := s.openAIWSResponseStickyTTL()
-	logOpenAIWSBindResponseAccountWarn(groupID, account.ID, responseID, store.BindResponseAccount(bindCtx, groupID, responseID, account.ID, ttl))
-	if rawOwner, ok := c.Get(openAIHTTPResponseOwnerContextKey); ok {
-		if owner, ok := rawOwner.(openAIHTTPResponseOwner); ok && owner.userID > 0 && owner.apiKeyID > 0 {
-			if err := s.BindOpenAIHTTPResponseOwner(bindCtx, groupID, responseID, owner.userID, owner.apiKeyID); err != nil {
-				logger.L().Warn(
-					"openai.http_bind_response_owner_failed",
-					zap.Int64("group_id", groupID),
-					zap.Int64("account_id", account.ID),
-					zap.Int64("user_id", owner.userID),
-					zap.Int64("api_key_id", owner.apiKeyID),
-					zap.String("response_id", truncateOpenAIWSLogValue(responseID, openAIWSIDValueMaxLen)),
-					zap.Error(err),
-				)
-			}
+	logOpenAIWSBindResponseAccountWarn(groupID, accountID, responseID, store.BindResponseAccount(bindCtx, groupID, responseID, accountID, ttl))
+	if owner.userID > 0 && owner.apiKeyID > 0 {
+		if err := s.BindOpenAIHTTPResponseOwner(bindCtx, groupID, responseID, owner.userID, owner.apiKeyID); err != nil {
+			logger.L().Warn(
+				"openai.http_bind_response_owner_failed",
+				zap.Int64("group_id", groupID),
+				zap.Int64("account_id", accountID),
+				zap.Int64("user_id", owner.userID),
+				zap.Int64("api_key_id", owner.apiKeyID),
+				zap.String("response_id", truncateOpenAIWSLogValue(responseID, openAIWSIDValueMaxLen)),
+				zap.Error(err),
+			)
 		}
 	}
 }

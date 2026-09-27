@@ -1,0 +1,303 @@
+package relayselect
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"net/http"
+	"strings"
+
+	"github.com/Wei-Shaw/sub2api/internal/handler"
+	"github.com/Wei-Shaw/sub2api/internal/relay/master"
+	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
+	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
+	"github.com/Wei-Shaw/sub2api/internal/service"
+	"go.uber.org/zap"
+)
+
+// Select 选号。目前接入 OpenAI Responses + API Key（WP7 第 1 片），其余返回"暂不支持"，
+// 由从节点交给主节点转发。
+func (s *selector) Select(ctx context.Context, nodeID int64, req *relayv1.SelectRequest) (*relayv1.SelectResponse, error) {
+	if req.GetEndpoint() != relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_RESPONSES || req.GetApiKey() == "" {
+		return unsupported(), nil
+	}
+	resp, err := s.selectOpenAIResponses(ctx, nodeID, req)
+	if err == nil && ctx.Err() != nil {
+		// 调用已取消时的拒绝多半是取消造成的（查 Key 失败等）；按错误返回，幂等缓存不会记住它，
+		// 从节点超时重发时重新判断。选中的情况在上面已经放槽并返回错误。
+		return nil, ctx.Err()
+	}
+	return resp, err
+}
+
+// selectOpenAIResponses 按本地 Responses 处理函数（handler.OpenAIGatewayHandler.Responses）的顺序：
+// 中间件链的检查 → previous_response_id 检查 → 分组是否允许生图 → 渠道映射 → 用户并发槽 → 计费资格 →
+// cyber 会话屏蔽 → 计价上下文 → 选号与准入。
+// 内容审核（checkSecurityAudit）不在这里：按设计 3.4 另走审核连接，接入之前开着审核的部署不能启用从节点。
+func (s *selector) selectOpenAIResponses(ctx context.Context, nodeID int64, req *relayv1.SelectRequest) (*relayv1.SelectResponse, error) {
+	cfg := s.deps.Config
+	adm, raw, err := middleware.EvaluateRelayAPIKeyAdmission(ctx, middleware.RelayAPIKeyAdmissionInput{
+		APIKeyAuthInput: middleware.APIKeyAuthInput{
+			APIKeys: s.deps.APIKeys, Subscriptions: s.deps.Subscriptions, Config: cfg,
+			ClientIP: req.GetClientIp(), Method: req.GetMethod(), Path: req.GetPath(),
+		},
+		RawKey:   req.GetApiKey(),
+		Settings: s.deps.Settings,
+		Models:   modelCandidates(req),
+	})
+	if errors.Is(err, middleware.ErrRelayAdmissionUnsupported) {
+		return unsupported(), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if raw != nil {
+		return rawRejection(raw), nil
+	}
+	apiKey := adm.APIKey
+	if apiKey.Group == nil || apiKey.Group.Platform != service.PlatformOpenAI {
+		// 未分组 Key 走 Anthropic 网关，其他 OpenAI 兼容平台（Grok 等）还没接入。
+		return unsupported(), nil
+	}
+	ctx = middleware.RelayRequestContext(ctx, adm)
+	subscription := adm.Billing.Subscription
+	userID := apiKey.User.ID
+	groupID := apiKey.Group.ID
+	reqModel := req.GetModel()
+	requestPlatform := service.PlatformOpenAI
+	log := zap.NewNop()
+
+	previousResponseID := strings.TrimSpace(req.GetPreviousResponseId())
+	if previousResponseID != "" {
+		if service.ClassifyOpenAIPreviousResponseIDKind(previousResponseID) == service.OpenAIPreviousResponseIDKindMessageID {
+			return gatewayRejection(handler.OpenAIGatewayRejection{Status: http.StatusBadRequest, ErrType: "invalid_request_error", Message: "previous_response_id must be a response.id (resp_*), not a message id"}), nil
+		}
+		owned, ownershipErr := s.deps.Gateway.ValidateOpenAIHTTPResponseOwner(ctx, groupID, previousResponseID, userID, apiKey.ID)
+		if ownershipErr != nil {
+			slog.Warn("relay: previous response owner lookup failed", "error", ownershipErr)
+		}
+		if !owned {
+			return gatewayRejection(handler.OpenAIGatewayRejection{Status: http.StatusBadRequest, ErrType: "invalid_request_error", Message: "previous_response_id is not available for this user"}), nil
+		}
+	}
+	if req.GetImageIntent() && !service.GroupAllowsImageGeneration(apiKey.Group) {
+		return gatewayRejection(handler.OpenAIGatewayRejection{Status: http.StatusForbidden, ErrType: "permission_error", Message: service.ImageGenerationPermissionMessage()}), nil
+	}
+	channelMapping, _ := s.deps.Gateway.ResolveChannelMappingAndRestrict(ctx, apiKey.GroupID, reqModel)
+	forwardModel := handler.OpenAIChannelForwardModel(channelMapping, reqModel)
+	quotaReq := service.QuotaRequest{User: apiKey.User, APIKey: apiKey, Group: apiKey.Group, Subscription: subscription, Platform: service.QuotaPlatform(ctx, apiKey)}
+
+	record, first, err := s.requestFor(nodeID, req.GetRequestId())
+	if err != nil {
+		return nil, err
+	}
+	record.mu.Lock()
+	defer record.mu.Unlock()
+	if !first && (record.userID != userID || record.apiKeyID != apiKey.ID) {
+		return nil, errors.New("relay request id reused by a different API key")
+	}
+	// 没有成功选出账号就结束这次请求（放掉用户槽）：与本地一致，被拒、出错、调用被取消时请求都到此为止。
+	// 从节点超时重发同一次选号时从头来过。
+	selected := false
+	defer func() {
+		if !selected {
+			s.dropRequest(record)
+		}
+	}()
+	if first {
+		if rej := s.startRequest(ctx, record, req, adm, quotaReq); rej != nil {
+			return rej, nil
+		}
+	}
+
+	// 每次选号：计价上下文沿用请求开始时固定的，取消跟着这次调用。
+	attemptCtx, cancel := context.WithCancel(record.pricingCtx)
+	defer cancel()
+	stop := context.AfterFunc(ctx, cancel)
+	defer stop()
+
+	for _, id := range req.GetExcludedAccountIds() {
+		record.excluded[id] = struct{}{}
+	}
+	lastFailover := record.state.LastFailoverErr
+	needsResponses := req.GetNativeCompactionV2() || req.GetLegacyCompact()
+	outcome := s.admitter.SelectAndAdmit(attemptCtx, handler.OpenAISelectRequest{
+		GroupID:            apiKey.GroupID,
+		PreviousResponseID: previousResponseID,
+		SessionHash:        req.GetSessionHash(),
+		ForwardModel:       forwardModel,
+		RequestPlatform:    requestPlatform,
+		RequiredCapability: handler.OpenAIResponsesRequiredCapability(req.GetImageIntent(), needsResponses, requestPlatform),
+		RequireCompact:     req.GetLegacyCompact(),
+		ImageIntent:        req.GetImageIntent(),
+		Excluded:           record.excluded,
+	}, &record.state, log)
+
+	if ctx.Err() != nil {
+		// 从节点已经不等了（本地：failoverClientGone 先于一切错误处理）。
+		if outcome.Kind == handler.OpenAISelected && outcome.Release != nil {
+			outcome.Release()
+		}
+		return nil, ctx.Err()
+	}
+	switch outcome.Kind {
+	case handler.OpenAISelected:
+	case handler.OpenAISelectAborted:
+		return nil, context.Canceled
+	case handler.OpenAISelectFailed:
+		if len(record.excluded) > 0 {
+			// 换号用完（本地：handleFailoverExhausted）。续链不支持是这次选号里刚记下的才算最后的错误。
+			continuation := record.state.LastFailoverErr != nil && record.state.LastFailoverErr != lastFailover
+			return &relayv1.SelectResponse{Result: &relayv1.SelectResponse_Rejection{Rejection: &relayv1.SelectRejection{
+				Format: relayv1.RejectionFormat_REJECTION_FORMAT_FAILOVER_EXHAUSTED, ContinuationUnsupported: continuation,
+			}}}, nil
+		}
+		return gatewayRejection(handler.OpenAIFirstSelectFailureRejection(ctx, s.deps.Gateway, apiKey, reqModel, requestPlatform, req.GetLegacyCompact(), outcome.Err)), nil
+	case handler.OpenAISelectNone:
+		return gatewayRejection(handler.OpenAINoAccountRejection(ctx, s.deps.Gateway, apiKey, reqModel, requestPlatform, nil)), nil
+	default:
+		return gatewayRejection(handler.OpenAISelectOutcomeRejection(outcome)), nil
+	}
+
+	sel := &selectionRecord{
+		id: newSelectionID(), nodeID: nodeID, request: record, account: outcome.Account, release: outcome.Release,
+		createdAt: s.now(), quota: quotaReq, groupID: groupID, userID: userID, apiKeyID: apiKey.ID,
+	}
+	resp, rej, err := s.buildSelection(ctx, nodeID, req, sel, outcome, forwardModel, reqModel, channelMapping, subscription)
+	if err != nil || rej != nil || ctx.Err() != nil {
+		// 从节点已经不等了（或回复做不出来）：这次选号没人会用，立刻放槽；幂等缓存只存成功的结果。
+		if outcome.Release != nil {
+			outcome.Release()
+		}
+		if rej != nil {
+			return rej, nil
+		}
+		if err == nil {
+			err = ctx.Err()
+		}
+		return nil, err
+	}
+	s.addSelection(sel)
+	selected = true
+	return resp, nil
+}
+
+// startRequest 是一次请求的第一次选号时做的：用户并发槽、计费资格、cyber 会话屏蔽、计价上下文。
+// 被拒时返回拒绝（调用方放掉用户槽）。
+func (s *selector) startRequest(ctx context.Context, record *requestRecord, req *relayv1.SelectRequest, adm middleware.RelayAPIKeyAdmission, quotaReq service.QuotaRequest) *relayv1.SelectResponse {
+	apiKey := adm.APIKey
+	record.userID, record.apiKeyID = apiKey.User.ID, apiKey.ID
+	release, err := s.helper.AcquireUserSlotWithWaitNoGin(ctx, apiKey.User.ID, apiKey.ID, apiKey.User.Concurrency)
+	if err != nil {
+		return gatewayRejection(handler.OpenAIConcurrencyRejection(err, "user"))
+	}
+	record.userRelease = release
+
+	held := heldBalance(req.GetHeldQuota())
+	billingCtx := service.WithRelayRequesterHeldBalance(ctx, master.FromMicros(held))
+	if err := s.deps.Billing.CheckBillingEligibility(billingCtx, apiKey.User, apiKey, apiKey.Group, quotaReq.Subscription, quotaReq.Platform); err != nil {
+		return gatewayRejection(handler.OpenAIBillingRejection(err))
+	}
+	if c := req.GetCyber(); c != nil {
+		if key := s.deps.Gateway.FindCyberSessionBlockedByLookup(ctx, service.CyberSessionLookup{
+			ExplicitKey: c.GetExplicitKey(), ScopeKey: c.GetScopeKey(), TranscriptKeys: c.GetTranscriptKeys(), TranscriptTruncated: c.GetTranscriptTruncated(),
+		}); key != "" {
+			rej := gatewayRejection(handler.OpenAICyberSessionBlockedRejection())
+			rej.GetRejection().CyberBlockKey = key
+			return rej
+		}
+	}
+	pricingCtx, pricingAt := s.deps.Gateway.WithOpenAIRequestPricingContext(context.WithoutCancel(ctx), apiKey.GroupID)
+	record.pricingCtx, record.pricingAt = pricingCtx, pricingAt
+	return nil
+}
+
+// buildSelection 组装选号结果：额度、账号快照、扣费凭证。
+func (s *selector) buildSelection(ctx context.Context, nodeID int64, req *relayv1.SelectRequest, sel *selectionRecord, outcome handler.OpenAISelectOutcome,
+	forwardModel, reqModel string, mapping service.ChannelMappingResult, subscription *service.UserSubscription,
+) (*relayv1.SelectResponse, *relayv1.SelectResponse, error) {
+	grants, scopes, err := s.acquireQuota(ctx, nodeID, sel.quota, req.GetHeldQuota(), quotaNeed, false)
+	if err != nil {
+		var insufficient *master.QuotaInsufficientError
+		if errors.As(err, &insufficient) {
+			return nil, gatewayRejection(handler.OpenAIBillingRejection(quotaError(insufficient.Scope.Dimension))), nil
+		}
+		if errors.Is(err, service.ErrSubscriptionInvalid) || errors.Is(err, service.ErrBillingServiceUnavailable) {
+			// 与本地计费检查在同样的情况下返回的一致（订阅已失效、计费数据取不到）。
+			return nil, gatewayRejection(handler.OpenAIBillingRejection(err)), nil
+		}
+		return nil, nil, err
+	}
+	snap, err := s.encodeAccount(ctx, nodeID, sel.account, s.nodeHas(nodeID))
+	if err != nil {
+		return nil, nil, err
+	}
+	mode := relayv1.BillingMode_BILLING_MODE_BALANCE
+	if sel.quota.Group != nil && sel.quota.Group.IsSubscriptionType() && subscription != nil {
+		mode = relayv1.BillingMode_BILLING_MODE_SUBSCRIPTION
+	}
+	allowed := []string{reqModel}
+	if forwardModel != reqModel {
+		allowed = append(allowed, forwardModel)
+	}
+	voucher, _, err := s.env.IssueVoucher(&relayv1.Voucher{
+		NodeId: nodeID, SelectionId: sel.id, UserId: sel.userID, ApiKeyId: sel.apiKeyID, AccountId: sel.account.ID,
+		GroupId: sel.groupID, BillingMode: mode, RequestedModel: reqModel, AllowedBillingModels: allowed,
+		Quote:   &relayv1.Quote{},
+		Context: &relayv1.SelectionContext{PricingAtUnixMs: sel.request.pricingAt.UnixMilli()},
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	version, err := s.env.ConfigVersion(ctx, nodeID)
+	if err != nil {
+		return nil, nil, err
+	}
+	switches := 3
+	if cfg := s.deps.Config; cfg != nil && cfg.Gateway.MaxAccountSwitches > 0 {
+		switches = cfg.Gateway.MaxAccountSwitches
+	}
+	return &relayv1.SelectResponse{Result: &relayv1.SelectResponse_Selection{Selection: &relayv1.Selection{
+		SelectionId: sel.id, UserId: sel.userID, ApiKeyId: sel.apiKeyID, GroupId: sel.groupID, BillingMode: mode,
+		Account: snap, ForwardModel: forwardModel, ChannelMapped: mapping.Mapped, ChannelMappedModel: mapping.MappedModel,
+		ChannelId: mapping.ChannelID, BillingModelSource: mapping.BillingModelSource, SessionHash: outcome.SessionHash,
+		Voucher: voucher, QuotaScopes: scopes, QuotaNeed: quotaNeed, Grants: grants,
+		MaxAccountSwitches: int32(switches), ConfigVersion: version, PricingAtUnixMs: sel.request.pricingAt.UnixMilli(),
+	}}}, nil, nil
+}
+
+func modelCandidates(req *relayv1.SelectRequest) []string {
+	if len(req.GetModelCandidates()) > 0 {
+		return req.GetModelCandidates()
+	}
+	if req.GetModel() == "" {
+		return nil
+	}
+	return []string{req.GetModel()}
+}
+
+func unsupported() *relayv1.SelectResponse {
+	return &relayv1.SelectResponse{Result: &relayv1.SelectResponse_Rejection{Rejection: &relayv1.SelectRejection{
+		Format: relayv1.RejectionFormat_REJECTION_FORMAT_UNSUPPORTED, Status: http.StatusServiceUnavailable,
+		Code: "relay_unsupported", Message: "this request is not served by relay nodes yet",
+	}}}
+}
+
+func rawRejection(r *middleware.CapturedRejection) *relayv1.SelectResponse {
+	headers := make(map[string]string, len(r.Header))
+	for k := range r.Header {
+		headers[k] = r.Header.Get(k)
+	}
+	return &relayv1.SelectResponse{Result: &relayv1.SelectResponse_Rejection{Rejection: &relayv1.SelectRejection{
+		Format: relayv1.RejectionFormat_REJECTION_FORMAT_RAW, Status: int32(r.Status), Headers: headers, Body: r.Body,
+		IngressRejectReason: r.IngressReason, OpsBusinessLimitedReason: r.OpsReason,
+	}}}
+}
+
+func gatewayRejection(r handler.OpenAIGatewayRejection) *relayv1.SelectResponse {
+	return &relayv1.SelectResponse{Result: &relayv1.SelectResponse_Rejection{Rejection: &relayv1.SelectRejection{
+		Format: relayv1.RejectionFormat_REJECTION_FORMAT_GATEWAY, Status: int32(r.Status), ErrorType: r.ErrType, Code: r.Code,
+		Message: r.Message, RetryAfterSeconds: int32(r.RetryAfter), RoutingCapacityLimited: r.RoutingCapacityLimited,
+		OpsBusinessLimitedReason: r.OpsBusinessLimitedReason,
+	}}}
+}

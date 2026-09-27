@@ -11,6 +11,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/relay/master"
+	"github.com/Wei-Shaw/sub2api/internal/relay/relayselect"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/google/wire"
@@ -32,6 +33,10 @@ func ProvideMasterRuntime(
 	billing *service.BillingCacheService,
 	accessChanges *service.AccessChangeHub,
 	users service.UserRepository,
+	subscriptions *service.SubscriptionService,
+	settingService *service.SettingService,
+	gateway *service.OpenAIGatewayService,
+	concurrency *service.ConcurrencyService,
 ) *master.Runtime {
 	// 用户、分组、订阅作废时发布改动（平台配额在仓储层已接好，见 repository/wire.go）。
 	service.AttachAccessChangeHub(accessChanges, apiKeys, billing)
@@ -45,6 +50,10 @@ func ProvideMasterRuntime(
 		Users:         users,
 		Leases:        repository.NewRelayLeaseRepository(db),
 		ReservedSink:  billing,
+		NewSelector: relayselect.NewFactory(relayselect.Deps{
+			Config: cfg, APIKeys: apiKeys, Subscriptions: subscriptions, Settings: settingService,
+			Billing: billing, Gateway: gateway, Concurrency: concurrency,
+		}),
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

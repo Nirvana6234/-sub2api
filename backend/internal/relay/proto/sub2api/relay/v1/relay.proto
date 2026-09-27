@@ -440,6 +440,8 @@ message SelectRequest {
   CyberSessionLookup cyber = 16;
   // 从节点手里这个用户各项子额度还没用掉的金额：主节点据此决定是否随选号补充。
   repeated HeldQuota held_quota = 17;
+  // 请求里可能被下游解析到的全部模型名（分组模型白名单逐一检查，规则同 GroupModelAllowlist 中间件）。
+  repeated string model_candidates = 18;
 }
 
 // cyber 会话屏蔽的查询键（都已哈希）。
@@ -466,12 +468,16 @@ message SelectResponse {
 // 拒绝的响应格式：从节点按它写客户端响应，与单机版一致。
 enum RejectionFormat {
   REJECTION_FORMAT_UNSPECIFIED = 0;
-  // 网关处理函数的错误（按入口协议的错误格式，流式已开始时写流内错误）。
+  // 网关处理函数的错误：status / error_type / code / message，从节点按入口协议写出
+  // （流式已开始时写流内错误）；cyber_block_key 非空时按 cyber 屏蔽的写法。
   REJECTION_FORMAT_GATEWAY = 1;
-  // 鉴权中间件的错误（{code, message}）。
-  REJECTION_FORMAT_AUTH = 2;
-  // Key 额度用完、按 OpenAI 格式写的错误（insufficient_quota）。
-  REJECTION_FORMAT_OPENAI_QUOTA = 3;
+  // 处理函数之前的中间件（鉴权、黑名单、模型白名单、未分组拦截）写出的响应：
+  // 主节点按本地同样的写法生成，从节点原样写出 status / headers / body。
+  REJECTION_FORMAT_RAW = 2;
+  // 换号用完：从节点按它最近一次上游错误写出（continuation_unsupported 时按"续链不支持"的 400）。
+  REJECTION_FORMAT_FAILOVER_EXHAUSTED = 3;
+  // 这个请求还不能经从节点处理（自动分组、组合平台分组、尚未接入的平台）：从节点交给主节点转发。
+  REJECTION_FORMAT_UNSUPPORTED = 4;
 }
 
 message SelectRejection {
@@ -489,6 +495,12 @@ message SelectRejection {
   string ingress_reject_reason = 9;
   // 命中 cyber 会话屏蔽的键（从节点记运维日志用）。
   string cyber_block_key = 10;
+  // REJECTION_FORMAT_RAW 的响应头和响应体。
+  map<string, string> headers = 11;
+  bytes body = 12;
+  // REJECTION_FORMAT_FAILOVER_EXHAUSTED：这次选号里因为 previous_response_id 跳过了 OAuth 账号，
+  // 最后的错误是"续链不支持"。
+  bool continuation_unsupported = 13;
 }
 
 message Selection {

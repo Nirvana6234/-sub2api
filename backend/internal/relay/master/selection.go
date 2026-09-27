@@ -78,6 +78,10 @@ func (c *Control) Select(ctx context.Context, req *relayv1.SelectRequest) (*rela
 		return nil, status.Error(codes.InvalidArgument, "request_id and attempt are required")
 	}
 	resp, err := c.selector.Select(ctx, nodeID, req)
+	if err == nil && ctx.Err() != nil {
+		// 调用已取消：不返回成功结果，否则幂等缓存会把它记下来，从节点超时重发时拿到的是它。
+		err = ctx.Err()
+	}
 	if err != nil {
 		return nil, selectionError(ctx, "select", nodeID, err)
 	}

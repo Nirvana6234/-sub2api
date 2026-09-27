@@ -12,9 +12,10 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/relay/transport"
 )
 
-// SelectTimeout 是一次选号调用的最长时间：主节点上可能要排队等账号槽（等待计划最长 45 秒），
-// 比控制连接默认的 5 秒长得多。排队期间从节点自己给客户端保活。
-const SelectTimeout = 60 * time.Second
+// SelectTimeout 是一次选号调用的最长时间。主节点上可能要排队：用户并发槽最长 30 秒，账号槽按等待计划
+// （可配置，利润否决后还会换号再排），单机没有总时限，这里只防主节点卡死。排队期间从节点自己给客户端保活；
+// 客户端断开时从节点取消调用，主节点随即放槽。
+const SelectTimeout = 5 * time.Minute
 
 // SelectClient 是从节点调用主节点选号的客户端（设计 3.1 第 5 步）。
 type SelectClient struct {

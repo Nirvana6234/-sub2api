@@ -1,0 +1,462 @@
+package relayselect
+
+import (
+	"context"
+	"crypto/ecdh"
+	"crypto/rand"
+	"errors"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/relay/accountcodec"
+	"github.com/Wei-Shaw/sub2api/internal/relay/keystore"
+	"github.com/Wei-Shaw/sub2api/internal/relay/master"
+	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
+	"github.com/Wei-Shaw/sub2api/internal/relay/sealbox"
+	"github.com/Wei-Shaw/sub2api/internal/relay/sign"
+	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/stretchr/testify/require"
+)
+
+// ---- 假仓储 ----
+
+type fakeKeys struct {
+	service.APIKeyRepository
+	keys map[string]*service.APIKey
+}
+
+func (r fakeKeys) GetByKey(_ context.Context, key string) (*service.APIKey, error) {
+	if k, ok := r.keys[key]; ok {
+		clone := *k
+		return &clone, nil
+	}
+	return nil, service.ErrAPIKeyNotFound
+}
+
+func (r fakeKeys) GetByKeyForAuth(ctx context.Context, key string) (*service.APIKey, error) {
+	return r.GetByKey(ctx, key)
+}
+
+type fakeAccounts struct {
+	service.AccountRepository
+	accounts []service.Account
+}
+
+func (r fakeAccounts) GetByID(_ context.Context, id int64) (*service.Account, error) {
+	for i := range r.accounts {
+		if r.accounts[i].ID == id {
+			a := r.accounts[i]
+			return &a, nil
+		}
+	}
+	return nil, service.ErrNoAvailableAccounts
+}
+
+func (r fakeAccounts) forPlatform(platform string) []service.Account {
+	var out []service.Account
+	for _, a := range r.accounts {
+		if a.Platform == platform {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+func (r fakeAccounts) ListSchedulableByGroupIDAndPlatform(_ context.Context, _ int64, platform string) ([]service.Account, error) {
+	return r.forPlatform(platform), nil
+}
+
+func (r fakeAccounts) ListSchedulableByPlatform(_ context.Context, platform string) ([]service.Account, error) {
+	return r.forPlatform(platform), nil
+}
+
+func (r fakeAccounts) ListSchedulableUngroupedByPlatform(_ context.Context, platform string) ([]service.Account, error) {
+	return r.forPlatform(platform), nil
+}
+
+type memSettings struct{ values map[string]string }
+
+func (s memSettings) Get(context.Context, string) (*service.Setting, error) {
+	return nil, service.ErrSettingNotFound
+}
+func (s memSettings) GetValue(_ context.Context, key string) (string, error) {
+	if v, ok := s.values[key]; ok {
+		return v, nil
+	}
+	return "", service.ErrSettingNotFound
+}
+func (s memSettings) Set(context.Context, string, string) error { return errors.New("read only") }
+func (s memSettings) GetMultiple(_ context.Context, keys []string) (map[string]string, error) {
+	out := map[string]string{}
+	for _, k := range keys {
+		if v, ok := s.values[k]; ok {
+			out[k] = v
+		}
+	}
+	return out, nil
+}
+func (s memSettings) SetMultiple(context.Context, map[string]string) error {
+	return errors.New("read only")
+}
+func (s memSettings) GetAll(context.Context) (map[string]string, error) { return s.values, nil }
+func (s memSettings) Delete(context.Context, string) error              { return errors.New("read only") }
+
+// countingSlots 记用户槽的占用和释放。
+type countingSlots struct {
+	service.ConcurrencyCache
+	held atomic.Int64
+}
+
+func (c *countingSlots) AcquireUserSlot(context.Context, int64, int, string) (bool, error) {
+	c.held.Add(1)
+	return true, nil
+}
+
+func (c *countingSlots) ReleaseUserSlot(context.Context, int64, string) error {
+	c.held.Add(-1)
+	return nil
+}
+
+type balanceCache struct {
+	service.BillingCache
+	balance float64
+}
+
+func (b balanceCache) GetUserBalance(context.Context, int64) (float64, error) { return b.balance, nil }
+
+// ---- 环境 ----
+
+type world struct {
+	sel     *selector
+	slots   *countingSlots
+	nodeKey *ecdh.PrivateKey
+	pub     *sign.PublicKeys
+	leases  *master.MemoryLeaseStore
+	quotas  *master.Quotas
+}
+
+const testNode = int64(21)
+
+func openAIGroup(id int64) *service.Group {
+	return &service.Group{ID: id, Platform: service.PlatformOpenAI, Status: service.StatusActive, Hydrated: true, SubscriptionType: service.SubscriptionTypeStandard, RateMultiplier: 1}
+}
+
+func testKey(key string, id int64, group *service.Group) *service.APIKey {
+	k := &service.APIKey{ID: id, Key: key, UserID: 3, Status: service.StatusActive,
+		User: &service.User{ID: 3, Status: service.StatusActive, Balance: 10, Concurrency: 5}}
+	if group != nil {
+		k.GroupID, k.Group = &group.ID, group
+	}
+	return k
+}
+
+func newWorld(t *testing.T, runMode string, accounts ...service.Account) *world {
+	return newWorldWithBalance(t, runMode, 10, accounts...)
+}
+
+func newWorldWithBalance(t *testing.T, runMode string, balance float64, accounts ...service.Account) *world {
+	t.Helper()
+	cfg := &config.Config{RunMode: runMode}
+	anthropic := openAIGroup(9)
+	anthropic.Platform = service.PlatformAnthropic
+	keys := fakeKeys{keys: map[string]*service.APIKey{
+		"sk-a":         testKey("sk-a", 11, openAIGroup(5)),
+		"sk-b":         testKey("sk-b", 12, openAIGroup(5)),
+		"sk-anthropic": testKey("sk-anthropic", 13, anthropic),
+	}}
+	slots := &countingSlots{}
+	concurrency := service.NewConcurrencyService(slots)
+	billing := service.NewBillingCacheService(balanceCache{balance: balance}, nil, nil, nil, nil, nil, cfg, nil)
+	t.Cleanup(billing.Stop)
+	gateway := service.NewOpenAIGatewayService(fakeAccounts{accounts: accounts}, nil, nil, nil, nil, nil, nil, cfg,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+	kek := make([]byte, keystore.KEKLength)
+	_, err := rand.Read(kek)
+	require.NoError(t, err)
+	store, err := keystore.Open(t.TempDir(), kek)
+	require.NoError(t, err)
+	_, err = store.EnsureActive(keystore.PurposeVoucher)
+	require.NoError(t, err)
+	ring, err := store.Ring(keystore.PurposeVoucher)
+	require.NoError(t, err)
+	signer, err := sign.NewSigner(ring.Active)
+	require.NoError(t, err)
+	pub, _, err := sign.PublicKeysFromRing(ring)
+	require.NoError(t, err)
+
+	nodeKey, err := sealbox.GenerateKey()
+	require.NoError(t, err)
+	leases := master.NewMemoryLeaseStore()
+	quotas, err := master.NewQuotas(context.Background(), leases, "epoch-1", time.Now)
+	require.NoError(t, err)
+
+	sel := newSelector(Deps{
+		Config: cfg, APIKeys: service.NewAPIKeyService(keys, nil, nil, nil, nil, nil, cfg),
+		Settings: service.NewSettingService(memSettings{values: map[string]string{}}, cfg),
+		Billing:  billing, Gateway: gateway, Concurrency: concurrency,
+	}, master.SelectEnv{
+		Epoch:  "epoch-1",
+		Quotas: quotas,
+		IssueVoucher: func(v *relayv1.Voucher) ([]byte, *relayv1.Voucher, error) {
+			return sign.IssueVoucher(signer, v, time.Now())
+		},
+		NodeEncryptionKey: func(nodeID int64) (*ecdh.PublicKey, bool) {
+			return nodeKey.PublicKey(), nodeID == testNode
+		},
+		ConfigVersion: func(context.Context, int64) (string, error) { return "cfg-v1", nil },
+	})
+	t.Cleanup(sel.Close)
+	return &world{sel: sel, slots: slots, nodeKey: nodeKey, pub: pub, leases: leases, quotas: quotas}
+}
+
+func apiKeyAccount(id int64, name string) service.Account {
+	return service.Account{ID: id, Name: name, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
+		Status: service.StatusActive, Schedulable: true, Credentials: map[string]any{"api_key": "SECRET-" + name, "base_url": "https://up.example"}}
+}
+
+func responsesRequest(requestID string, attempt uint32, key string) *relayv1.SelectRequest {
+	return &relayv1.SelectRequest{RequestId: requestID, Attempt: attempt, Credential: &relayv1.SelectRequest_ApiKey{ApiKey: key},
+		Method: "POST", Path: "/v1/responses", Endpoint: relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_RESPONSES, Model: "gpt-5", ClientIp: "5.6.7.8"}
+}
+
+func (w *world) waitReleased(t *testing.T) {
+	t.Helper()
+	require.Eventually(t, func() bool { return w.slots.held.Load() == 0 }, 2*time.Second, 5*time.Millisecond, "the user slot is given back")
+}
+
+// ---- 用例 ----
+
+// 选中的账号、加密下发的凭据、签好的凭证；释放时放槽、记下响应归属，后续续链能通过归属检查。
+func TestSelectResponsesHappyPath(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t, config.RunModeSimple, apiKeyAccount(1, "one"))
+
+	resp, err := w.sel.Select(ctx, testNode, responsesRequest("r1", 1, "sk-a"))
+	require.NoError(t, err)
+	sel := resp.GetSelection()
+	require.NotNil(t, sel, "rejection: %+v", resp.GetRejection())
+	require.Equal(t, int64(1), sel.GetAccount().GetId())
+	require.Equal(t, int64(3), sel.GetUserId())
+	require.Equal(t, int64(5), sel.GetGroupId())
+	require.Equal(t, "cfg-v1", sel.GetConfigVersion())
+	require.Equal(t, "gpt-5", sel.GetForwardModel())
+	require.Equal(t, int64(1), w.slots.held.Load(), "the user slot is held for the whole request")
+
+	cache := accountcodec.NewSecretCache()
+	open := func(sealed, aad []byte) ([]byte, error) { return sealbox.Open(w.nodeKey, sealed, aad) }
+	account, err := accountcodec.Decode(sel.GetAccount(), testNode, open, cache)
+	require.NoError(t, err)
+	require.Equal(t, "SECRET-one", account.Credentials["api_key"])
+
+	v, err := sign.VerifyVoucher(sel.GetVoucher(), w.pub, testNode, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, sel.GetSelectionId(), v.GetSelectionId())
+	require.Equal(t, int64(1), v.GetAccountId())
+	require.Equal(t, sel.GetPricingAtUnixMs(), v.GetContext().GetPricingAtUnixMs())
+	_, err = sign.VerifyVoucher(sel.GetVoucher(), w.pub, testNode+1, time.Now())
+	require.Error(t, err, "only the selecting node can report it")
+
+	// 同一个账号再次被选中：凭据版本相同，不再下发。
+	again, err := w.sel.Select(ctx, testNode, responsesRequest("r2", 1, "sk-a"))
+	require.NoError(t, err)
+	require.Empty(t, again.GetSelection().GetAccount().GetSealedCredentials(), "the node already has this credential version")
+	_, err = accountcodec.Decode(again.GetSelection().GetAccount(), testNode, open, cache)
+	require.NoError(t, err)
+	creds, err := w.sel.FetchCredentials(ctx, testNode, &relayv1.FetchCredentialsRequest{SelectionId: again.GetSelection().GetSelectionId()})
+	require.NoError(t, err)
+	require.NotEmpty(t, creds.GetAccount().GetSealedCredentials(), "a node that lost its cache can fetch them for a live selection")
+	_, err = w.sel.FetchCredentials(ctx, testNode+1, &relayv1.FetchCredentialsRequest{SelectionId: again.GetSelection().GetSelectionId()})
+	require.ErrorIs(t, err, master.ErrSelectionNotFound, "another node cannot use this selection")
+
+	w.sel.Release(testNode, &relayv1.SelectionRelease{SelectionId: sel.GetSelectionId(), RequestDone: true, ResponseIds: []string{"resp_one"}})
+	w.sel.Release(testNode, &relayv1.SelectionRelease{SelectionId: again.GetSelection().GetSelectionId(), RequestDone: true})
+	w.waitReleased(t)
+	_, err = w.sel.FetchCredentials(ctx, testNode, &relayv1.FetchCredentialsRequest{SelectionId: sel.GetSelectionId()})
+	require.ErrorIs(t, err, master.ErrSelectionNotFound, "released selections are gone")
+
+	// 续链：本人（同一用户的另一个 Key 也算）可以，别人不行。
+	cont := responsesRequest("r3", 1, "sk-b")
+	cont.PreviousResponseId = "resp_one"
+	resp, err = w.sel.Select(ctx, testNode, cont)
+	require.NoError(t, err)
+	require.NotNil(t, resp.GetSelection(), "the response owner was recorded on release: %+v", resp.GetRejection())
+	w.sel.Release(testNode, &relayv1.SelectionRelease{SelectionId: resp.GetSelection().GetSelectionId(), RequestDone: true})
+	w.waitReleased(t)
+
+	cont = responsesRequest("r4", 1, "sk-a")
+	cont.PreviousResponseId = "resp_unknown"
+	resp, err = w.sel.Select(ctx, testNode, cont)
+	require.NoError(t, err)
+	require.Equal(t, int32(400), resp.GetRejection().GetStatus())
+	require.Equal(t, "previous_response_id is not available for this user", resp.GetRejection().GetMessage())
+	require.Equal(t, int64(0), w.slots.held.Load(), "rejected before any slot is taken")
+}
+
+func TestSelectRejectionsAndUnsupportedRequests(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t, config.RunModeSimple, apiKeyAccount(1, "one"))
+
+	resp, err := w.sel.Select(ctx, testNode, responsesRequest("r1", 1, "sk-nope"))
+	require.NoError(t, err)
+	rej := resp.GetRejection()
+	require.Equal(t, relayv1.RejectionFormat_REJECTION_FORMAT_RAW, rej.GetFormat())
+	require.Equal(t, int32(401), rej.GetStatus())
+	require.JSONEq(t, `{"code":"INVALID_API_KEY","message":"Invalid API key"}`, string(rej.GetBody()))
+	require.Equal(t, "invalid_api_key", rej.GetIngressRejectReason())
+
+	resp, err = w.sel.Select(ctx, testNode, responsesRequest("r2", 1, "sk-anthropic"))
+	require.NoError(t, err)
+	require.Equal(t, relayv1.RejectionFormat_REJECTION_FORMAT_UNSUPPORTED, resp.GetRejection().GetFormat(), "non-OpenAI groups stay on the master for now")
+
+	chat := responsesRequest("r3", 1, "sk-a")
+	chat.Endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_CHAT
+	resp, err = w.sel.Select(ctx, testNode, chat)
+	require.NoError(t, err)
+	require.Equal(t, relayv1.RejectionFormat_REJECTION_FORMAT_UNSUPPORTED, resp.GetRejection().GetFormat())
+	require.Equal(t, int64(0), w.slots.held.Load())
+}
+
+// 换号：主节点按请求记已排除的账号；全部用完时让从节点按它最近的上游错误写出，用户槽随请求结束放掉。
+func TestSelectFailoverExhaustion(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t, config.RunModeSimple, apiKeyAccount(1, "one"), apiKeyAccount(2, "two"))
+
+	first, err := w.sel.Select(ctx, testNode, responsesRequest("r1", 1, "sk-a"))
+	require.NoError(t, err)
+	used := first.GetSelection().GetAccount().GetId()
+	w.sel.Release(testNode, &relayv1.SelectionRelease{SelectionId: first.GetSelection().GetSelectionId()})
+
+	retry := responsesRequest("r1", 2, "sk-a")
+	retry.ExcludedAccountIds = []int64{used}
+	second, err := w.sel.Select(ctx, testNode, retry)
+	require.NoError(t, err)
+	require.NotEqual(t, used, second.GetSelection().GetAccount().GetId(), "the failed account is not selected again")
+	require.Equal(t, int64(1), w.slots.held.Load(), "one user slot for the whole request")
+	w.sel.Release(testNode, &relayv1.SelectionRelease{SelectionId: second.GetSelection().GetSelectionId()})
+
+	last := responsesRequest("r1", 3, "sk-a")
+	last.ExcludedAccountIds = []int64{second.GetSelection().GetAccount().GetId()}
+	resp, err := w.sel.Select(ctx, testNode, last)
+	require.NoError(t, err)
+	require.Equal(t, relayv1.RejectionFormat_REJECTION_FORMAT_FAILOVER_EXHAUSTED, resp.GetRejection().GetFormat())
+	require.False(t, resp.GetRejection().GetContinuationUnsupported())
+	w.waitReleased(t)
+}
+
+// previous_response_id 只能走 API Key 账号：只有 OAuth 账号时按"续链不支持"结束（与本地一致）。
+func TestSelectContinuationSkipsOAuthAccounts(t *testing.T) {
+	ctx := context.Background()
+	oauth := apiKeyAccount(1, "oauth")
+	oauth.Type = service.AccountTypeOAuth
+	oauth.Credentials = map[string]any{"access_token": "SECRET-at"}
+	w := newWorld(t, config.RunModeSimple, oauth)
+	w.sel.deps.Gateway.BindRelayHTTPResponse(ctx, 5, 1, "resp_prev", 3, 11)
+
+	req := responsesRequest("r1", 1, "sk-a")
+	req.PreviousResponseId = "resp_prev"
+	resp, err := w.sel.Select(ctx, testNode, req)
+	require.NoError(t, err)
+	require.Equal(t, relayv1.RejectionFormat_REJECTION_FORMAT_FAILOVER_EXHAUSTED, resp.GetRejection().GetFormat())
+	require.True(t, resp.GetRejection().GetContinuationUnsupported())
+	w.waitReleased(t)
+}
+
+// 额度：节点手里没有时随选号给；节点报告手里有时不再给。余额全部锁在这台节点上也照样能选号。
+func TestSelectGrantsQuotaWhenTheNodeHasNone(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t, config.RunModeStandard, apiKeyAccount(1, "one"))
+
+	resp, err := w.sel.Select(ctx, testNode, responsesRequest("r1", 1, "sk-a"))
+	require.NoError(t, err)
+	sel := resp.GetSelection()
+	require.NotNil(t, sel, "rejection: %+v", resp.GetRejection())
+	require.Len(t, sel.GetQuotaScopes(), 1)
+	require.Equal(t, service.QuotaDimBalance, sel.GetQuotaScopes()[0].GetDimension())
+	require.Len(t, sel.GetGrants(), 1)
+	granted := sel.GetGrants()[0].GetGranted()
+	require.Equal(t, master.ToMicros(5), granted, "half of the balance")
+	w.sel.Release(testNode, &relayv1.SelectionRelease{SelectionId: sel.GetSelectionId(), RequestDone: true})
+	w.waitReleased(t)
+
+	held := []*relayv1.HeldQuota{{Scope: sel.GetQuotaScopes()[0], Unused: granted}}
+	req := responsesRequest("r2", 1, "sk-a")
+	req.HeldQuota = held
+	resp, err = w.sel.Select(ctx, testNode, req)
+	require.NoError(t, err)
+	require.Empty(t, resp.GetSelection().GetGrants(), "the node still holds enough")
+
+	refill, err := w.sel.RefillQuota(ctx, testNode, &relayv1.RefillQuotaRequest{SelectionId: resp.GetSelection().GetSelectionId(), HeldQuota: held, Need: 1})
+	require.NoError(t, err)
+	require.NotEmpty(t, refill.GetGrants(), "an early refill tops the lease up")
+	w.sel.Release(testNode, &relayv1.SelectionRelease{SelectionId: resp.GetSelection().GetSelectionId(), RequestDone: true})
+	w.waitReleased(t)
+
+	_, err = w.sel.RefillQuota(ctx, testNode, &relayv1.RefillQuotaRequest{SelectionId: resp.GetSelection().GetSelectionId(), Need: 1})
+	require.ErrorIs(t, err, master.ErrSelectionNotFound, "refills need a live selection")
+}
+
+// 释放消息丢了：占用超过上限的请求被定时清理，关闭时放掉全部。
+func TestStaleRequestsAreReapedAndCloseReleasesEverything(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t, config.RunModeSimple, apiKeyAccount(1, "one"))
+	_, err := w.sel.Select(ctx, testNode, responsesRequest("r1", 1, "sk-a"))
+	require.NoError(t, err)
+	require.Equal(t, int64(1), w.slots.held.Load())
+
+	var mu sync.Mutex
+	later := time.Now().Add(holdLimit + time.Minute)
+	w.sel.now = func() time.Time { mu.Lock(); defer mu.Unlock(); return later }
+	w.sel.reap()
+	require.Equal(t, int64(0), w.slots.held.Load())
+
+	w.sel.now = time.Now
+	_, err = w.sel.Select(ctx, testNode, responsesRequest("r2", 1, "sk-a"))
+	require.NoError(t, err)
+	w.sel.Close()
+	require.Equal(t, int64(0), w.slots.held.Load())
+	_, err = w.sel.Select(ctx, testNode, responsesRequest("r3", 1, "sk-a"))
+	require.Error(t, err, "a closed selector does not select")
+}
+
+// 调用被取消（从节点不等了）：这次请求在主节点上结束，用户槽立刻放掉，不等定时清理。
+func TestCancelledSelectReleasesTheUserSlot(t *testing.T) {
+	w := newWorld(t, config.RunModeSimple, apiKeyAccount(1, "one"))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := w.sel.Select(ctx, testNode, responsesRequest("r1", 1, "sk-a"))
+	require.Error(t, err)
+	require.Equal(t, int64(0), w.slots.held.Load())
+	w.sel.mu.Lock()
+	defer w.sel.mu.Unlock()
+	require.Empty(t, w.sel.requests)
+}
+
+// 余额很少时整笔锁给了这台节点：主节点的余额预检不能把这台自己手里的当成"被别处锁走"。
+func TestSelectWhenTheWholeBalanceIsLockedOnThisNode(t *testing.T) {
+	ctx := context.Background()
+	w := newWorldWithBalance(t, config.RunModeStandard, 0.05, apiKeyAccount(1, "one"))
+	w.sel.deps.Billing.SetRelayReservedBalanceReader(w.quotas)
+
+	resp, err := w.sel.Select(ctx, testNode, responsesRequest("r1", 1, "sk-a"))
+	require.NoError(t, err)
+	sel := resp.GetSelection()
+	require.NotNil(t, sel, "rejection: %+v", resp.GetRejection())
+	require.Equal(t, master.ToMicros(0.05), sel.GetGrants()[0].GetGranted(), "below 0.1 everything is locked to the node")
+	w.sel.Release(testNode, &relayv1.SelectionRelease{SelectionId: sel.GetSelectionId(), RequestDone: true})
+	w.waitReleased(t)
+
+	req := responsesRequest("r2", 1, "sk-a")
+	req.HeldQuota = []*relayv1.HeldQuota{{Scope: sel.GetQuotaScopes()[0], Unused: master.ToMicros(0.05)}}
+	resp, err = w.sel.Select(ctx, testNode, req)
+	require.NoError(t, err)
+	require.NotNil(t, resp.GetSelection(), "the node serves from what it holds: %+v", resp.GetRejection())
+
+	other := responsesRequest("r3", 1, "sk-a")
+	resp, err = w.sel.Select(ctx, testNode, other)
+	require.NoError(t, err)
+	require.Equal(t, int32(403), resp.GetRejection().GetStatus(), "a node holding nothing sees no spendable balance")
+}
