@@ -1123,7 +1123,15 @@ func buildCodexUsageExtraUpdates(snapshot *OpenAICodexUsageSnapshot, fallbackNow
 // ⚠️ 调用方必须排除 spark 影子账号(account.IsShadow()):影子的 codex_* 仅由 QueryUsage
 // (/wham/usage bengalfox 道)更新,不能被全局头口径污染(外审第7轮 P1)。本函数仅持 accountID,
 // 无法在此自检影子,故守卫前置到各调用点。
+// updateCodexUsageSnapshot 经 OpenAIAccountReporter 记下 Codex 用量窗口（从节点发给主节点）。
 func (s *OpenAIGatewayService) updateCodexUsageSnapshot(ctx context.Context, accountID int64, snapshot *OpenAICodexUsageSnapshot) {
+	if snapshot == nil {
+		return
+	}
+	s.accountReporter().UpdateCodexUsageSnapshot(ctx, accountID, snapshot)
+}
+
+func (s *OpenAIGatewayService) updateCodexUsageSnapshotLocal(ctx context.Context, accountID int64, snapshot *OpenAICodexUsageSnapshot) {
 	if snapshot == nil {
 		return
 	}

@@ -128,7 +128,7 @@ func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportError(ctx context.Co
 
 	// Transport attempt reached the network path; count as Ollama Cloud activity.
 	if s != nil {
-		scheduleOllamaCloudUsageActivity(s.deferredService, account)
+		s.accountReporter().OllamaCloudUsageActivity(account)
 	}
 
 	// 插件已把请求交给上游时，自动切换账号可能造成重复扣费或重复执行。
@@ -159,6 +159,14 @@ func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportError(ctx context.Co
 //   - "openai.account_temp_unscheduled_transport_failed" — DB write attempted
 //     but returned an error.
 func (s *OpenAIGatewayService) tempUnscheduleOpenAITransportError(ctx context.Context, account *Account, safeErr string) {
+	if s == nil || account == nil {
+		return
+	}
+	s.accountReporter().TempUnscheduleTransportError(ctx, account, safeErr)
+}
+
+// tempUnscheduleOpenAITransportErrorLocal 是本机的实现（单机、主节点）。
+func (s *OpenAIGatewayService) tempUnscheduleOpenAITransportErrorLocal(ctx context.Context, account *Account, safeErr string) {
 	if s == nil || account == nil {
 		return
 	}

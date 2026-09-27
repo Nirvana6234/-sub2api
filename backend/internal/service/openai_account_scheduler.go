@@ -2873,7 +2873,30 @@ func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(account *Accoun
 
 // ReportOpenAIAccountScheduleResultWithLatency 上报调度结果，并把 TTFT 样本
 // 归属到 servingGroupID（本次实际服务的分组）与 reasoningEffort 对应的分桶。
+// 经 OpenAIAccountReporter 上报（主从分流的从节点发给主节点，返回 false）。
 func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResultWithLatency(
+	account *Account,
+	model string,
+	success bool,
+	firstTokenMs *int,
+	servingGroupID int64,
+	reasoningEffort string,
+	observedErr ...error,
+) bool {
+	if s != nil {
+		if h := s.accountReporterOverride.Load(); h != nil {
+			var err error
+			if len(observedErr) > 0 {
+				err = observedErr[0]
+			}
+			h.r.ReportScheduleResult(account, model, success, firstTokenMs, servingGroupID, reasoningEffort, err)
+			return false
+		}
+	}
+	return s.reportOpenAIAccountScheduleResultLocal(account, model, success, firstTokenMs, servingGroupID, reasoningEffort, observedErr...)
+}
+
+func (s *OpenAIGatewayService) reportOpenAIAccountScheduleResultLocal(
 	account *Account,
 	model string,
 	success bool,
@@ -2909,7 +2932,18 @@ func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResultWithLatency(
 
 // ObserveOpenAIAccountHealthFailure records failures that cannot reach the
 // scheduler-result path, for example after semantic response bytes were sent.
+// 经 OpenAIAccountReporter 上报（主从分流的从节点发给主节点，返回 false）。
 func (s *OpenAIGatewayService) ObserveOpenAIAccountHealthFailure(ctx context.Context, account *Account, observedErr error) bool {
+	if s != nil {
+		if h := s.accountReporterOverride.Load(); h != nil {
+			h.r.ObserveHealthFailure(ctx, account, observedErr)
+			return false
+		}
+	}
+	return s.observeOpenAIAccountHealthFailureLocal(ctx, account, observedErr)
+}
+
+func (s *OpenAIGatewayService) observeOpenAIAccountHealthFailureLocal(ctx context.Context, account *Account, observedErr error) bool {
 	if s == nil || s.rateLimitService == nil || account == nil || observedErr == nil {
 		return false
 	}
@@ -2917,6 +2951,10 @@ func (s *OpenAIGatewayService) ObserveOpenAIAccountHealthFailure(ctx context.Con
 }
 
 func (s *OpenAIGatewayService) RecordOpenAIAccountSwitch() {
+	s.accountReporter().RecordAccountSwitch()
+}
+
+func (s *OpenAIGatewayService) recordOpenAIAccountSwitchLocal() {
 	scheduler := s.getOpenAIAccountScheduler(context.Background())
 	if scheduler == nil {
 		return
