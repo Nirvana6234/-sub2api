@@ -12,6 +12,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/relay/master"
 	"github.com/Wei-Shaw/sub2api/internal/relay/relayselect"
+	"github.com/Wei-Shaw/sub2api/internal/relay/relaysettle"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -40,6 +41,8 @@ func ProvideMasterRuntime(
 	concurrency *service.ConcurrencyService,
 	moderation *service.ContentModerationService,
 	promptAudit *securityaudit.PromptService,
+	accounts service.AccountRepository,
+	groups service.GroupRepository,
 ) *master.Runtime {
 	// 用户、分组、订阅作废时发布改动（平台配额在仓储层已接好，见 repository/wire.go）。
 	service.AttachAccessChangeHub(accessChanges, apiKeys, billing)
@@ -62,9 +65,22 @@ func ProvideMasterRuntime(
 			Billing: billing, Gateway: gateway, Concurrency: concurrency,
 			Moderation: moderation, PromptAudit: prompt,
 		}),
+		NewSettler: relaysettle.NewFactory(relaysettle.Deps{
+			Gateway: gateway, APIKeys: apiKeys, Accounts: accounts, Groups: groups, Subscriptions: subscriptions,
+			Vouchers: relayVoucherRecorder(db),
+		}),
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	rt.Init(ctx)
 	return rt
+}
+
+// relayVoucherRecorder 是扣费仓储的凭证记录（入账没走到扣费事务时把凭证记成零消耗）。
+func relayVoucherRecorder(db *sql.DB) service.RelayVoucherRecorder {
+	r, ok := repository.NewUsageBillingRepository(nil, db).(service.RelayVoucherRecorder)
+	if !ok {
+		panic("relaywire: the usage billing repository does not record relay vouchers")
+	}
+	return r
 }

@@ -273,3 +273,48 @@ func TestRemoteAccountReporterOverTheWire(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 	}
 }
+
+type recordingSettler struct {
+	mu    sync.Mutex
+	nodes []int64
+	seqs  []uint64
+}
+
+func (s *recordingSettler) Settle(_ context.Context, nodeID int64, rec *relayv1.UsageRecord) *relayv1.UsageRecordResult {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.nodes = append(s.nodes, nodeID)
+	s.seqs = append(s.seqs, rec.GetSeq())
+	status := relayv1.UsageRecordStatus_USAGE_RECORD_STATUS_SETTLED
+	if len(rec.GetVoucher()) == 0 {
+		status = relayv1.UsageRecordStatus_USAGE_RECORD_STATUS_REJECTED
+	}
+	return &relayv1.UsageRecordResult{Seq: rec.GetSeq(), Status: status}
+}
+
+// 扣费批次经扣费连接送到主节点：逐条入账、逐条回结果，节点身份取自证书；一批条数有上限。
+func TestUsageBatchesOverTheWire(t *testing.T) {
+	ctx := context.Background()
+	m := startMaster(t)
+	settler := &recordingSettler{}
+	m.settler.set(settler)
+	n := startNode(t, m)
+	client := node.NewBillingClient(n.client)
+
+	ack, err := client.Submit(ctx, &relayv1.UsageBatch{BatchSeq: 1, Records: []*relayv1.UsageRecord{
+		{Seq: 10, Voucher: []byte("v")}, {Seq: 11},
+	}})
+	require.NoError(t, err)
+	require.Len(t, ack.GetResults(), 2)
+	require.Equal(t, uint64(10), ack.GetResults()[0].GetSeq())
+	require.Equal(t, relayv1.UsageRecordStatus_USAGE_RECORD_STATUS_SETTLED, ack.GetResults()[0].GetStatus())
+	require.Equal(t, relayv1.UsageRecordStatus_USAGE_RECORD_STATUS_REJECTED, ack.GetResults()[1].GetStatus())
+	require.Equal(t, []int64{m.nodeID, m.nodeID}, settler.nodes)
+
+	big := &relayv1.UsageBatch{BatchSeq: 2}
+	for i := 0; i < 501; i++ {
+		big.Records = append(big.Records, &relayv1.UsageRecord{Seq: uint64(i)})
+	}
+	_, err = client.Submit(ctx, big)
+	require.Equal(t, codes.InvalidArgument, status.Code(err))
+}

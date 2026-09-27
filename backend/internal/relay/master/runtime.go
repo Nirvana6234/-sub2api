@@ -70,6 +70,8 @@ type RuntimeDeps struct {
 	Notifier     Notifier
 	// NewSelector 创建选号实现（relayselect，WP7）；nil 时不提供选号（测试、还没接入的部署）。
 	NewSelector func(SelectEnv) Selector
+	// NewSettler 创建扣费入账（relaysettle，WP8）；nil 时不提供扣费服务。
+	NewSettler func(SettleEnv) Settler
 }
 
 // ReservedBalanceSink 接收冻结额读取（service.BillingCacheService 满足）。
@@ -409,6 +411,13 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 		RouteNodeEvents(events, selector)
 	}
 	relayv1.RegisterRelayControlServer(server.GRPC(), control)
+	if r.deps.NewSettler != nil {
+		env := SettleEnv{VerifyVoucher: r.VerifyVoucher}
+		if quotas != nil {
+			env.RefreshUser = quotas.RefreshUser
+		}
+		relayv1.RegisterRelayBillingServer(server.GRPC(), NewBilling(r.deps.NewSettler(env)))
+	}
 	relayv1.RegisterRelayEventsServer(server.GRPC(), events)
 
 	if err := publisher.Rebuild(ctx); err != nil {

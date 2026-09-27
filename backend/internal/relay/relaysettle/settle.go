@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	"github.com/Wei-Shaw/sub2api/internal/relay/master"
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
@@ -45,6 +46,15 @@ type Settler struct{ deps Deps }
 
 // New 创建入账。
 func New(d Deps) *Settler { return &Settler{deps: d} }
+
+// NewFactory 返回运行时用来新建入账的函数（master.RuntimeDeps.NewSettler）：验凭证、刷新冻结额取自本次启动。
+func NewFactory(d Deps) func(master.SettleEnv) master.Settler {
+	return func(env master.SettleEnv) master.Settler {
+		deps := d
+		deps.VerifyVoucher, deps.RefreshUser = env.VerifyVoucher, env.RefreshUser
+		return New(deps)
+	}
+}
 
 // errReject：记录本身有问题，隔离、不再重试。
 type rejectError struct{ reason string }

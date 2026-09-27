@@ -789,6 +789,116 @@ var RelayControl_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
+	RelayBilling_SubmitUsage_FullMethodName = "/sub2api.relay.v1.RelayBilling/SubmitUsage"
+)
+
+// RelayBillingClient is the client API for RelayBilling service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// 扣费连接：扣费批次（设计 5.1、5.2，开发计划 WP8）。
+type RelayBillingClient interface {
+	// SubmitUsage 提交一批扣费记录。主节点逐条入账、逐条回结果；每条按扣费凭证去重，重发只入账一次，
+	// 所以一批没收到确认时整批重发即可。结果是 RETRY 的记录稍后再发，REJECTED 的不要再发。
+	SubmitUsage(ctx context.Context, in *UsageBatch, opts ...grpc.CallOption) (*UsageBatchAck, error)
+}
+
+type relayBillingClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewRelayBillingClient(cc grpc.ClientConnInterface) RelayBillingClient {
+	return &relayBillingClient{cc}
+}
+
+func (c *relayBillingClient) SubmitUsage(ctx context.Context, in *UsageBatch, opts ...grpc.CallOption) (*UsageBatchAck, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UsageBatchAck)
+	err := c.cc.Invoke(ctx, RelayBilling_SubmitUsage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// RelayBillingServer is the server API for RelayBilling service.
+// All implementations must embed UnimplementedRelayBillingServer
+// for forward compatibility.
+//
+// 扣费连接：扣费批次（设计 5.1、5.2，开发计划 WP8）。
+type RelayBillingServer interface {
+	// SubmitUsage 提交一批扣费记录。主节点逐条入账、逐条回结果；每条按扣费凭证去重，重发只入账一次，
+	// 所以一批没收到确认时整批重发即可。结果是 RETRY 的记录稍后再发，REJECTED 的不要再发。
+	SubmitUsage(context.Context, *UsageBatch) (*UsageBatchAck, error)
+	mustEmbedUnimplementedRelayBillingServer()
+}
+
+// UnimplementedRelayBillingServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedRelayBillingServer struct{}
+
+func (UnimplementedRelayBillingServer) SubmitUsage(context.Context, *UsageBatch) (*UsageBatchAck, error) {
+	return nil, status.Error(codes.Unimplemented, "method SubmitUsage not implemented")
+}
+func (UnimplementedRelayBillingServer) mustEmbedUnimplementedRelayBillingServer() {}
+func (UnimplementedRelayBillingServer) testEmbeddedByValue()                      {}
+
+// UnsafeRelayBillingServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to RelayBillingServer will
+// result in compilation errors.
+type UnsafeRelayBillingServer interface {
+	mustEmbedUnimplementedRelayBillingServer()
+}
+
+func RegisterRelayBillingServer(s grpc.ServiceRegistrar, srv RelayBillingServer) {
+	// If the following call panics, it indicates UnimplementedRelayBillingServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&RelayBilling_ServiceDesc, srv)
+}
+
+func _RelayBilling_SubmitUsage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UsageBatch)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayBillingServer).SubmitUsage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayBilling_SubmitUsage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayBillingServer).SubmitUsage(ctx, req.(*UsageBatch))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// RelayBilling_ServiceDesc is the grpc.ServiceDesc for RelayBilling service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var RelayBilling_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "sub2api.relay.v1.RelayBilling",
+	HandlerType: (*RelayBillingServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "SubmitUsage",
+			Handler:    _RelayBilling_SubmitUsage_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "sub2api/relay/v1/relay.proto",
+}
+
+const (
 	RelayEvents_Stream_FullMethodName = "/sub2api.relay.v1.RelayEvents/Stream"
 )
 

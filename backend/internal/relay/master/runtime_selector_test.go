@@ -47,8 +47,13 @@ func TestRuntimeCreatesAndClosesTheSelector(t *testing.T) {
 	store := master.NewMemoryStore()
 	var mu sync.Mutex
 	var made []*recordingSelector
+	var settleEnvs []master.SettleEnv
 	rt := master.NewRuntime(master.RuntimeDeps{
 		Config: cfg, Store: store, Settings: service.NewObservedSettingRepository(newMemSettings(), hub), Hub: hub,
+		NewSettler: func(env master.SettleEnv) master.Settler {
+			settleEnvs = append(settleEnvs, env)
+			return nil
+		},
 		NewSelector: func(env master.SelectEnv) master.Selector {
 			s := &recordingSelector{env: env}
 			mu.Lock()
@@ -88,6 +93,10 @@ func TestRuntimeCreatesAndClosesTheSelector(t *testing.T) {
 	viaEnv, err := env.VerifyVoucher(raw, n.ID)
 	require.NoError(t, err)
 	require.Equal(t, signed.GetVoucherId(), viaEnv.GetVoucherId())
+	require.Len(t, settleEnvs, 1, "the settler is created with the relay")
+	fromSettleEnv, err := settleEnvs[0].VerifyVoucher(raw, n.ID)
+	require.NoError(t, err)
+	require.Equal(t, signed.GetVoucherId(), fromSettleEnv.GetVoucherId())
 	_, err = env.VerifyVoucher(raw, n.ID+1)
 	require.Error(t, err)
 

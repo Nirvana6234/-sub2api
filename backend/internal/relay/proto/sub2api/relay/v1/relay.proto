@@ -65,6 +65,13 @@ service RelayControl {
   rpc UpstreamError(UpstreamErrorRequest) returns (UpstreamErrorResponse);
 }
 
+// 扣费连接：扣费批次（设计 5.1、5.2，开发计划 WP8）。
+service RelayBilling {
+  // SubmitUsage 提交一批扣费记录。主节点逐条入账、逐条回结果；每条按扣费凭证去重，重发只入账一次，
+  // 所以一批没收到确认时整批重发即可。结果是 RETRY 的记录稍后再发，REJECTED 的不要再发。
+  rpc SubmitUsage(UsageBatch) returns (UsageBatchAck);
+}
+
 // 事件连接：一条长期双向流，承载心跳、释放、账号事件，以及主节点下发的指令。
 service RelayEvents {
   rpc Stream(stream NodeEnvelope) returns (stream MasterEnvelope);
@@ -654,6 +661,17 @@ message UsageRecord {
   // 请求 ID（入账日志、扣费请求 ID 的回退）。
   string client_request_id = 13;
   string request_id = 14;
+}
+
+// 一批扣费记录。batch_seq 是本节点的批次序号（连续递增），主节点据此发现漏掉或重复的批次（只报警，
+// 入账本身按凭证去重）。
+message UsageBatch {
+  uint64 batch_seq = 1;
+  repeated UsageRecord records = 2;
+}
+
+message UsageBatchAck {
+  repeated UsageRecordResult results = 1;
 }
 
 enum UsageRecordStatus {

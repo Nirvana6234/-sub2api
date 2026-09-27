@@ -37,6 +37,30 @@ type testMaster struct {
 	addr      string
 	nodeID    int64
 	nodeCert  *tls.Certificate
+	// settler：扣费服务背后的入账，测试替换。
+	settler settlerSlot
+}
+
+// settlerSlot 让测试在服务开始之后再挂上入账实现（gRPC 服务要在开始服务前注册）。
+type settlerSlot struct {
+	mu sync.Mutex
+	s  master.Settler
+}
+
+func (s *settlerSlot) set(v master.Settler) {
+	s.mu.Lock()
+	s.s = v
+	s.mu.Unlock()
+}
+
+func (s *settlerSlot) Settle(ctx context.Context, nodeID int64, rec *relayv1.UsageRecord) *relayv1.UsageRecordResult {
+	s.mu.Lock()
+	inner := s.s
+	s.mu.Unlock()
+	if inner == nil {
+		return &relayv1.UsageRecordResult{Seq: rec.GetSeq(), Status: relayv1.UsageRecordStatus_USAGE_RECORD_STATUS_RETRY}
+	}
+	return inner.Settle(ctx, nodeID, rec)
 }
 
 func startMaster(t *testing.T) *testMaster {
@@ -88,6 +112,7 @@ func startMaster(t *testing.T) *testMaster {
 	m.control = master.NewControl(m.publisher)
 	relayv1.RegisterRelayControlServer(srv.GRPC(), m.control)
 	relayv1.RegisterRelayEventsServer(srv.GRPC(), m.events)
+	relayv1.RegisterRelayBillingServer(srv.GRPC(), master.NewBilling(&m.settler))
 	lis, err := net.Listen("tcp4", "127.0.0.1:0")
 	require.NoError(t, err)
 	go func() { _ = srv.Serve(lis) }()
