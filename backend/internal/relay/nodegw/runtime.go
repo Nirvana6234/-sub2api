@@ -145,6 +145,9 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 		}
 	})
 
+	if strings.EqualFold(cfg.Server.Mode, gin.ReleaseMode) {
+		gin.SetMode(gin.ReleaseMode)
+	}
 	h := NewOpenAIHandler(GatewayDeps{
 		Config: cfg, Settings: settings, HTTPUpstream: opts.HTTPUpstream, Dispatcher: d,
 		Decider:  node.NewRemoteUpstreamErrorDecider(client),

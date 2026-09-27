@@ -269,6 +269,20 @@ WP19
 
 WP10 工作量最大（所有平台），WP9 完成后按平台拆给多人并行。
 
+### WP9 进展与已定细节
+
+最小从节点已完成（WP9-1 ~ WP9-4），本机一主一从跑通 OpenAI 分组的 Responses、Chat Completions + API Key：
+
+- **准入**（`RelayControl.Admit`）：从节点按本地同一规则取 Key（`middleware.ExtractAPIKeyCredential`），主节点复用 `EvaluateRelayAPIKeyAdmission`（不带模型名）回原样拒绝或 Key 快照（`internal/relay/keycodec`：用户只带 ID/角色/并发/状态，每个字段都归类）；分组模型白名单中间件在从节点本地照常跑，检查顺序与单机一致。选号时主节点仍独立复查。每个请求一次准入调用，Key 缓存留给 WP11。
+- **处理函数接缝**（`handler.OpenAIRelayDispatcher`）：处理函数里主节点负责的步骤（续链归属、安全审计、用户并发槽、计费资格、cyber、渠道映射、计价上下文、选号与准入）在 `relay` 非 nil 时合成一次远程选号；用量写本地扣费队列；其余代码两边同一份。远程拒绝按单机同样情况下的写法写出；入账事实用 `collectOpenAIUsageFacts` 共用收集。这就是 2.5 节的 `Dispatcher`，WP10 其余入口照这三处接。
+- **从节点网关**（`internal/relay/nodegw`）：准入中间件、分发实现（预扣、凭据解开与按选号补取、释放在下一次选号前或请求结束时发出并带 response id 和凭证、纪元变化先 `ReportLeases` 再重选、主节点不可达按 503 / 最近上游错误写）、只在内存的响应状态存储、`NoopGatewayCache`、交给主节点转发（反向代理，客户端 IP 放 X-Forwarded-For）。
+- **进程**：`NODE_ROLE=relay` 时 `server` 以从节点运行（`nodegw.Run`），不连库、不走安装向导；新配置 `relay.node_master_addr / node_master_url / node_root_fingerprints / node_data_dir / node_display_name`。扣费队列不健康时不接新请求，`/health` 给负载均衡，优雅关闭时把队列发完。
+- **测试**：进程内端到端（`relayselect/node_e2e_test.go`，真实 TLS、真实主节点选号、假上游）；装配守卫（对象图里没有 ent/sql/redis/仓储实现）。本机真机联调（临时库）：准入、选号、转发、入账扣费、租约与冻结额、主节点重启后自动恢复都验证过。
+- **顺带修的**：扣费发送空轮询也占批次序号，主节点误报"批次缺失"。
+
+还没做（按原计划归属）：Key 缓存与负缓存、无效鉴权防刷（WP11）；`usage_logs.node_id` 入账时没填（列已在迁移 259，WP14）；cyber 风控记录改成事件、错误透传规则随快照下发、`ForceCacheBilling` 核对（WP10）；选号排队时给客户端保活（主节点上等账号槽期间从节点不发心跳）；票据中间件与小白端接口（WP12）；接口白名单、HTTP 服务参数与内存预算、日志回传（WP14）；ACME 证书（WP13）；时钟偏差来源（心跳测得，现在按 0）；交给主节点转发时主节点要把从节点配成可信代理（部署说明）。
+已知与单机的次序差异：续链归属改在选号时查，所以"续链不属于本人"且同时有从节点本地能查出的错误（如生图权限）时，单机先报前者、从节点先报后者；读请求体失败在准入之后按模型白名单中间件的写法报。
+
 ### WP8 进展与已定细节
 
 OpenAI（Responses、Chat）这一路已完成（WP8-1 ~ WP8-4）：
