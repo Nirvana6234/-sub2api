@@ -16,13 +16,18 @@ import (
 	"go.uber.org/zap"
 )
 
-// Select 选号。目前接入 OpenAI Responses + API Key（WP7 第 1 片），其余返回"暂不支持"，
+// Select 选号。目前接入 OpenAI Responses、Chat Completions + API Key，其余返回"暂不支持"，
 // 由从节点交给主节点转发。
 func (s *selector) Select(ctx context.Context, nodeID int64, req *relayv1.SelectRequest) (*relayv1.SelectResponse, error) {
-	if req.GetEndpoint() != relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_RESPONSES || req.GetApiKey() == "" {
+	switch req.GetEndpoint() {
+	case relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_RESPONSES, relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_CHAT:
+	default:
 		return unsupported(), nil
 	}
-	resp, err := s.selectOpenAIResponses(ctx, nodeID, req)
+	if req.GetApiKey() == "" {
+		return unsupported(), nil
+	}
+	resp, err := s.selectOpenAI(ctx, nodeID, req)
 	if err == nil && ctx.Err() != nil && resp.GetSelection() == nil {
 		// 调用已取消时的拒绝多半是取消造成的（查 Key 失败等）；按错误返回，幂等缓存不会记住它，
 		// 从节点超时重发时重新判断。
@@ -31,11 +36,15 @@ func (s *selector) Select(ctx context.Context, nodeID int64, req *relayv1.Select
 	return resp, err
 }
 
-// selectOpenAIResponses 按本地 Responses 处理函数（handler.OpenAIGatewayHandler.Responses）的顺序：
-// 中间件链的检查 → previous_response_id 检查 → 分组是否允许生图 → 渠道映射 → 用户并发槽 → 计费资格 →
-// cyber 会话屏蔽 → 计价上下文 → 选号与准入。
-// 内容审核（checkSecurityAudit）不在这里：按设计 3.4 另走审核连接，接入之前开着审核的部署不能启用从节点。
-func (s *selector) selectOpenAIResponses(ctx context.Context, nodeID int64, req *relayv1.SelectRequest) (*relayv1.SelectResponse, error) {
+// selectOpenAI 按本地处理函数的顺序做 OpenAI 的选号：
+//   - Responses（handler.OpenAIGatewayHandler.Responses）：中间件链的检查 → previous_response_id 检查 →
+//     分组是否允许生图 → 渠道映射 → 用户并发槽 → 计费资格 → cyber 会话屏蔽 → 计价上下文 → 选号与准入；
+//   - Chat Completions（ChatCompletions）：中间件链的检查 → cyber 会话屏蔽 → 渠道映射 → 用户并发槽 →
+//     计费资格 → 计价上下文 → 选号与准入（没有续链和生图，要求账号支持 Chat Completions）。
+//
+// 会被安全审计处理的请求留在主节点转发（审核接入主从通信之前，设计 3.4）。
+func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.SelectRequest) (*relayv1.SelectResponse, error) {
+	chat := req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_CHAT
 	cfg := s.deps.Config
 	adm, raw, err := middleware.EvaluateRelayAPIKeyAdmission(ctx, middleware.RelayAPIKeyAdmissionInput{
 		APIKeyAuthInput: middleware.APIKeyAuthInput{
@@ -72,7 +81,20 @@ func (s *selector) selectOpenAIResponses(ctx context.Context, nodeID int64, req 
 	requestPlatform := service.PlatformOpenAI
 	log := zap.NewNop()
 
-	previousResponseID := strings.TrimSpace(req.GetPreviousResponseId())
+	// Chat 没有续链、生图和 compact：从节点报了也不认。
+	previousResponseID, imageIntent := strings.TrimSpace(req.GetPreviousResponseId()), req.GetImageIntent()
+	legacyCompact, nativeV2 := req.GetLegacyCompact(), req.GetNativeCompactionV2()
+	capability := handler.OpenAIResponsesRequiredCapability(imageIntent, nativeV2 || legacyCompact, requestPlatform)
+	if chat {
+		previousResponseID, imageIntent, legacyCompact = "", false, false
+		capability = service.OpenAIEndpointCapabilityChatCompletions
+	}
+	if chat {
+		// Chat 在占用户槽之前查 cyber 屏蔽（本地 ChatCompletions 的顺序）。
+		if rej := s.cyberRejection(ctx, req); rej != nil {
+			return rej, nil
+		}
+	}
 	if previousResponseID != "" {
 		if service.ClassifyOpenAIPreviousResponseIDKind(previousResponseID) == service.OpenAIPreviousResponseIDKindMessageID {
 			return gatewayRejection(handler.OpenAIGatewayRejection{Status: http.StatusBadRequest, ErrType: "invalid_request_error", Message: "previous_response_id must be a response.id (resp_*), not a message id"}), nil
@@ -85,7 +107,7 @@ func (s *selector) selectOpenAIResponses(ctx context.Context, nodeID int64, req 
 			return gatewayRejection(handler.OpenAIGatewayRejection{Status: http.StatusBadRequest, ErrType: "invalid_request_error", Message: "previous_response_id is not available for this user"}), nil
 		}
 	}
-	if req.GetImageIntent() && !service.GroupAllowsImageGeneration(apiKey.Group) {
+	if imageIntent && !service.GroupAllowsImageGeneration(apiKey.Group) {
 		return gatewayRejection(handler.OpenAIGatewayRejection{Status: http.StatusForbidden, ErrType: "permission_error", Message: service.ImageGenerationPermissionMessage()}), nil
 	}
 	channelMapping, _ := s.deps.Gateway.ResolveChannelMappingAndRestrict(ctx, apiKey.GroupID, reqModel)
@@ -110,7 +132,7 @@ func (s *selector) selectOpenAIResponses(ctx context.Context, nodeID int64, req 
 		}
 	}()
 	if first {
-		if rej := s.startRequest(ctx, record, req, adm, quotaReq); rej != nil {
+		if rej := s.startRequest(ctx, record, req, adm, quotaReq, !chat); rej != nil {
 			return rej, nil
 		}
 	}
@@ -125,16 +147,15 @@ func (s *selector) selectOpenAIResponses(ctx context.Context, nodeID int64, req 
 		record.excluded[id] = struct{}{}
 	}
 	lastFailover := record.state.LastFailoverErr
-	needsResponses := req.GetNativeCompactionV2() || req.GetLegacyCompact()
 	outcome := s.admitter.SelectAndAdmit(attemptCtx, handler.OpenAISelectRequest{
 		GroupID:            apiKey.GroupID,
 		PreviousResponseID: previousResponseID,
 		SessionHash:        req.GetSessionHash(),
 		ForwardModel:       forwardModel,
 		RequestPlatform:    requestPlatform,
-		RequiredCapability: handler.OpenAIResponsesRequiredCapability(req.GetImageIntent(), needsResponses, requestPlatform),
-		RequireCompact:     req.GetLegacyCompact(),
-		ImageIntent:        req.GetImageIntent(),
+		RequiredCapability: capability,
+		RequireCompact:     legacyCompact,
+		ImageIntent:        imageIntent,
 		Excluded:           record.excluded,
 	}, &record.state, log)
 
@@ -157,7 +178,7 @@ func (s *selector) selectOpenAIResponses(ctx context.Context, nodeID int64, req 
 				Format: relayv1.RejectionFormat_REJECTION_FORMAT_FAILOVER_EXHAUSTED, ContinuationUnsupported: continuation,
 			}}}, nil
 		}
-		return gatewayRejection(handler.OpenAIFirstSelectFailureRejection(ctx, s.deps.Gateway, apiKey, reqModel, requestPlatform, req.GetLegacyCompact(), outcome.Err)), nil
+		return gatewayRejection(handler.OpenAIFirstSelectFailureRejection(ctx, s.deps.Gateway, apiKey, reqModel, requestPlatform, legacyCompact, outcome.Err)), nil
 	case handler.OpenAISelectNone:
 		return gatewayRejection(handler.OpenAINoAccountRejection(ctx, s.deps.Gateway, apiKey, reqModel, requestPlatform, nil)), nil
 	default:
@@ -189,9 +210,9 @@ func (s *selector) selectOpenAIResponses(ctx context.Context, nodeID int64, req 
 	return resp, nil
 }
 
-// startRequest 是一次请求的第一次选号时做的：用户并发槽、计费资格、cyber 会话屏蔽、计价上下文。
-// 被拒时返回拒绝（调用方放掉用户槽）。
-func (s *selector) startRequest(ctx context.Context, record *requestRecord, req *relayv1.SelectRequest, adm middleware.RelayAPIKeyAdmission, quotaReq service.QuotaRequest) *relayv1.SelectResponse {
+// startRequest 是一次请求的第一次选号时做的：用户并发槽、计费资格、（cyberAfterBilling 时）cyber 会话屏蔽、
+// 计价上下文。被拒时返回拒绝（调用方放掉用户槽）。
+func (s *selector) startRequest(ctx context.Context, record *requestRecord, req *relayv1.SelectRequest, adm middleware.RelayAPIKeyAdmission, quotaReq service.QuotaRequest, cyberAfterBilling bool) *relayv1.SelectResponse {
 	apiKey := adm.APIKey
 	record.userID, record.apiKeyID = apiKey.User.ID, apiKey.ID
 	release, err := s.helper.AcquireUserSlotWithWaitNoGin(ctx, apiKey.User.ID, apiKey.ID, apiKey.User.Concurrency)
@@ -213,18 +234,31 @@ func (s *selector) startRequest(ctx context.Context, record *requestRecord, req 
 	if err := s.deps.Billing.CheckBillingEligibility(billingCtx, apiKey.User, apiKey, apiKey.Group, quotaReq.Subscription, quotaReq.Platform); err != nil {
 		return gatewayRejection(handler.OpenAIBillingRejection(err))
 	}
-	if c := req.GetCyber(); c != nil {
-		if key := s.deps.Gateway.FindCyberSessionBlockedByLookup(ctx, service.CyberSessionLookup{
-			ExplicitKey: c.GetExplicitKey(), ScopeKey: c.GetScopeKey(), TranscriptKeys: c.GetTranscriptKeys(), TranscriptTruncated: c.GetTranscriptTruncated(),
-		}); key != "" {
-			rej := gatewayRejection(handler.OpenAICyberSessionBlockedRejection())
-			rej.GetRejection().CyberBlockKey = key
+	if cyberAfterBilling {
+		if rej := s.cyberRejection(ctx, req); rej != nil {
 			return rej
 		}
 	}
 	pricingCtx, pricingAt := s.deps.Gateway.WithOpenAIRequestPricingContext(context.WithoutCancel(ctx), apiKey.GroupID)
 	record.pricingCtx, record.pricingAt = pricingCtx, pricingAt
 	return nil
+}
+
+// cyberRejection 查 cyber 会话屏蔽（从节点算好的键）；命中时返回拒绝。
+func (s *selector) cyberRejection(ctx context.Context, req *relayv1.SelectRequest) *relayv1.SelectResponse {
+	c := req.GetCyber()
+	if c == nil {
+		return nil
+	}
+	key := s.findCyberBlocked(ctx, service.CyberSessionLookup{
+		ExplicitKey: c.GetExplicitKey(), ScopeKey: c.GetScopeKey(), TranscriptKeys: c.GetTranscriptKeys(), TranscriptTruncated: c.GetTranscriptTruncated(),
+	})
+	if key == "" {
+		return nil
+	}
+	rej := gatewayRejection(handler.OpenAICyberSessionBlockedRejection())
+	rej.GetRejection().CyberBlockKey = key
+	return rej
 }
 
 // buildSelection 组装选号结果：额度、账号快照、扣费凭证。

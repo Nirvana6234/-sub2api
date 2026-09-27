@@ -67,6 +67,8 @@ type selector struct {
 	closed bool
 	// localReporter 执行账号事件（默认网关服务的本机实现；测试替换）。
 	localReporter func() service.OpenAIAccountReporter
+	// findCyberBlocked 查 cyber 会话屏蔽（默认网关服务；测试替换）。
+	findCyberBlocked func(ctx context.Context, l service.CyberSessionLookup) string
 
 	stopReaper context.CancelFunc
 }
@@ -125,6 +127,7 @@ func newSelector(d Deps, env master.SelectEnv) *selector {
 		events:     make(chan queuedAccountEvent, accountEventQueue),
 	}
 	s.localReporter = d.Gateway.LocalAccountReporter
+	s.findCyberBlocked = d.Gateway.FindCyberSessionBlockedByLookup
 	ctx, cancel := context.WithCancel(context.Background())
 	s.stopReaper = cancel
 	go s.runReaper(ctx)

@@ -12,6 +12,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/Wei-Shaw/sub2api/internal/relay/accountcodec"
 	"github.com/Wei-Shaw/sub2api/internal/relay/keystore"
 	"github.com/Wei-Shaw/sub2api/internal/relay/master"
@@ -330,9 +331,9 @@ func TestSelectRejectionsAndUnsupportedRequests(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, relayv1.RejectionFormat_REJECTION_FORMAT_UNSUPPORTED, resp.GetRejection().GetFormat(), "non-OpenAI groups stay on the master for now")
 
-	chat := responsesRequest("r3", 1, "sk-a")
-	chat.Endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_CHAT
-	resp, err = w.sel.Select(ctx, testNode, chat)
+	unknown := responsesRequest("r3", 1, "sk-a")
+	unknown.Endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_UNSPECIFIED
+	resp, err = w.sel.Select(ctx, testNode, unknown)
 	require.NoError(t, err)
 	require.Equal(t, relayv1.RejectionFormat_REJECTION_FORMAT_UNSUPPORTED, resp.GetRejection().GetFormat())
 	require.Equal(t, int64(0), w.slots.held.Load())
@@ -750,4 +751,56 @@ func TestAccountEventsOnTheMaster(t *testing.T) {
 	w.sel.applyAccountEvent(testNode, result(1))
 	require.Len(t, rec.reports, 4, "long after the release the account is no longer this node's")
 	w.sel.now = time.Now
+}
+
+func chatRequest(requestID string, attempt uint32, key string) *relayv1.SelectRequest {
+	req := responsesRequest(requestID, attempt, key)
+	req.Endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_CHAT
+	req.Path = "/v1/chat/completions"
+	return req
+}
+
+// Chat Completions：与本地 ChatCompletions 一样要求账号支持 Chat（不看 Responses 能力）、
+// 没有续链和生图（从节点报了也不认）、cyber 屏蔽在占用户槽之前查（Responses 在计费检查之后）。
+func TestSelectChatCompletions(t *testing.T) {
+	ctx := context.Background()
+	chatOnly := apiKeyAccount(1, "chat-only")
+	chatOnly.Extra = map[string]any{openai_compat.ExtraKeyResponsesSupported: false}
+	w := newWorld(t, config.RunModeSimple, chatOnly)
+
+	img := responsesRequest("r0", 1, "sk-a")
+	img.ImageIntent = true
+	resp, err := w.sel.Select(ctx, testNode, img)
+	require.NoError(t, err)
+	require.NotNil(t, resp.GetRejection(), "an image request on Responses needs an account that supports Responses")
+	require.Equal(t, int64(0), w.slots.held.Load())
+
+	req := chatRequest("r1", 1, "sk-a")
+	req.ImageIntent, req.PreviousResponseId, req.LegacyCompact = true, "resp_not_mine", true
+	resp, err = w.sel.Select(ctx, testNode, req)
+	require.NoError(t, err)
+	sel := resp.GetSelection()
+	require.NotNil(t, sel, "chat ignores Responses-only fields: %+v", resp.GetRejection())
+	require.Equal(t, int64(1), sel.GetAccount().GetId())
+	w.sel.Release(testNode, &relayv1.SelectionRelease{SelectionId: sel.GetSelectionId(), RequestDone: true})
+	w.waitReleased(t)
+
+	// cyber 屏蔽命中：Chat 不占用户槽就拒绝；Responses 先占槽、过计费检查再拒绝（本地顺序）。
+	var slotsWhenChecked []int64
+	w.sel.findCyberBlocked = func(context.Context, service.CyberSessionLookup) string {
+		slotsWhenChecked = append(slotsWhenChecked, w.slots.held.Load())
+		return "cyber-key"
+	}
+	blocked := chatRequest("r2", 1, "sk-a")
+	blocked.Cyber = &relayv1.CyberSessionLookup{ExplicitKey: "k"}
+	resp, err = w.sel.Select(ctx, testNode, blocked)
+	require.NoError(t, err)
+	require.Equal(t, "cyber-key", resp.GetRejection().GetCyberBlockKey())
+	require.Equal(t, int32(403), resp.GetRejection().GetStatus())
+	blockedResponses := responsesRequest("r3", 1, "sk-a")
+	blockedResponses.Cyber = &relayv1.CyberSessionLookup{ExplicitKey: "k"}
+	_, err = w.sel.Select(ctx, testNode, blockedResponses)
+	require.NoError(t, err)
+	require.Equal(t, []int64{0, 1}, slotsWhenChecked, "chat checks before taking the user slot, responses after")
+	require.Equal(t, int64(0), w.slots.held.Load())
 }
