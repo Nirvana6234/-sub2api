@@ -312,6 +312,7 @@ const (
 	RelayControl_Select_FullMethodName           = "/sub2api.relay.v1.RelayControl/Select"
 	RelayControl_FetchCredentials_FullMethodName = "/sub2api.relay.v1.RelayControl/FetchCredentials"
 	RelayControl_RefillQuota_FullMethodName      = "/sub2api.relay.v1.RelayControl/RefillQuota"
+	RelayControl_UpstreamError_FullMethodName    = "/sub2api.relay.v1.RelayControl/UpstreamError"
 )
 
 // RelayControlClient is the client API for RelayControl service.
@@ -345,6 +346,10 @@ type RelayControlClient interface {
 	// RefillQuota 按一次进行中的选号补充额度（提前补充，设计 4.2）：主节点按这次选号的用户、Key、
 	// 分组、订阅重新算剩余；选号已释放时拒绝。
 	RefillQuota(ctx context.Context, in *RefillQuotaRequest, opts ...grpc.CallOption) (*RefillQuotaResponse, error)
+	// UpstreamError 上游错误决策（设计 3.1 第 10 步）：从节点转发遇到上游错误时同步调用，主节点用
+	// 单机同一段代码判定并记录账号状态（限流、临时不可调度、停用、冷却），返回判定结果。
+	// 只能针对这台节点正在用的账号（有进行中的选号）。
+	UpstreamError(ctx context.Context, in *UpstreamErrorRequest, opts ...grpc.CallOption) (*UpstreamErrorResponse, error)
 }
 
 type relayControlClient struct {
@@ -445,6 +450,16 @@ func (c *relayControlClient) RefillQuota(ctx context.Context, in *RefillQuotaReq
 	return out, nil
 }
 
+func (c *relayControlClient) UpstreamError(ctx context.Context, in *UpstreamErrorRequest, opts ...grpc.CallOption) (*UpstreamErrorResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UpstreamErrorResponse)
+	err := c.cc.Invoke(ctx, RelayControl_UpstreamError_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RelayControlServer is the server API for RelayControl service.
 // All implementations must embed UnimplementedRelayControlServer
 // for forward compatibility.
@@ -476,6 +491,10 @@ type RelayControlServer interface {
 	// RefillQuota 按一次进行中的选号补充额度（提前补充，设计 4.2）：主节点按这次选号的用户、Key、
 	// 分组、订阅重新算剩余；选号已释放时拒绝。
 	RefillQuota(context.Context, *RefillQuotaRequest) (*RefillQuotaResponse, error)
+	// UpstreamError 上游错误决策（设计 3.1 第 10 步）：从节点转发遇到上游错误时同步调用，主节点用
+	// 单机同一段代码判定并记录账号状态（限流、临时不可调度、停用、冷却），返回判定结果。
+	// 只能针对这台节点正在用的账号（有进行中的选号）。
+	UpstreamError(context.Context, *UpstreamErrorRequest) (*UpstreamErrorResponse, error)
 	mustEmbedUnimplementedRelayControlServer()
 }
 
@@ -512,6 +531,9 @@ func (UnimplementedRelayControlServer) FetchCredentials(context.Context, *FetchC
 }
 func (UnimplementedRelayControlServer) RefillQuota(context.Context, *RefillQuotaRequest) (*RefillQuotaResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RefillQuota not implemented")
+}
+func (UnimplementedRelayControlServer) UpstreamError(context.Context, *UpstreamErrorRequest) (*UpstreamErrorResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpstreamError not implemented")
 }
 func (UnimplementedRelayControlServer) mustEmbedUnimplementedRelayControlServer() {}
 func (UnimplementedRelayControlServer) testEmbeddedByValue()                      {}
@@ -696,6 +718,24 @@ func _RelayControl_RefillQuota_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RelayControl_UpstreamError_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpstreamErrorRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayControlServer).UpstreamError(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayControl_UpstreamError_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayControlServer).UpstreamError(ctx, req.(*UpstreamErrorRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // RelayControl_ServiceDesc is the grpc.ServiceDesc for RelayControl service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -738,6 +778,10 @@ var RelayControl_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RefillQuota",
 			Handler:    _RelayControl_RefillQuota_Handler,
+		},
+		{
+			MethodName: "UpstreamError",
+			Handler:    _RelayControl_UpstreamError_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

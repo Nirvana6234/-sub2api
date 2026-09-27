@@ -59,6 +59,10 @@ service RelayControl {
   // RefillQuota 按一次进行中的选号补充额度（提前补充，设计 4.2）：主节点按这次选号的用户、Key、
   // 分组、订阅重新算剩余；选号已释放时拒绝。
   rpc RefillQuota(RefillQuotaRequest) returns (RefillQuotaResponse);
+  // UpstreamError 上游错误决策（设计 3.1 第 10 步）：从节点转发遇到上游错误时同步调用，主节点用
+  // 单机同一段代码判定并记录账号状态（限流、临时不可调度、停用、冷却），返回判定结果。
+  // 只能针对这台节点正在用的账号（有进行中的选号）。
+  rpc UpstreamError(UpstreamErrorRequest) returns (UpstreamErrorResponse);
 }
 
 // 事件连接：一条长期双向流，承载心跳、释放、账号事件，以及主节点下发的指令。
@@ -555,6 +559,50 @@ message RefillQuotaResponse {
 }
 
 // 选号用完（这次尝试结束），经事件连接发送、不等回复（设计 3.1）。按 selection_id 幂等。
+// 上游错误决策的种类，对应 service.OpenAIUpstreamErrorDecider 的方法。
+enum UpstreamErrorKind {
+  UPSTREAM_ERROR_KIND_UNSPECIFIED = 0;
+  // 一次上游错误响应（返回 should_disable）。
+  UPSTREAM_ERROR_KIND_RESPONSE = 1;
+  // OAuth 账号瞬时 429 能否同账号重试（返回 retry_same_account、retry_deadline_unix_ms）。
+  UPSTREAM_ERROR_KIND_OAUTH429_RETRY = 2;
+  // 流超时（返回 should_disable）。
+  UPSTREAM_ERROR_KIND_STREAM_TIMEOUT = 3;
+  // 错误策略（返回 error_policy）。
+  UPSTREAM_ERROR_KIND_ERROR_POLICY = 4;
+}
+
+message HeaderValues {
+  string name = 1;
+  repeated string values = 2;
+}
+
+message UpstreamErrorRequest {
+  UpstreamErrorKind kind = 1;
+  // 出错的账号，以及这次尝试的选号（知道时带上）。主节点用自己选号记录里的账号判定，
+  // 不信消息里的账号内容。
+  int64 account_id = 2;
+  string selection_id = 3;
+  int32 status_code = 4;
+  // 上游响应头（去掉 Set-Cookie）和响应体（不超过 1 MiB）。
+  repeated HeaderValues headers = 5;
+  bytes body = 6;
+  // 判定用的模型（账号映射后的调度模型、超时的模型、策略的模型）；has_model 为 false 表示没有。
+  string model = 7;
+  bool has_model = 8;
+  // 请求范围的标记（判定会读）：自建的生图请求、从生图接口进来的请求。
+  bool images_self_built = 9;
+  bool images_endpoint = 10;
+}
+
+message UpstreamErrorResponse {
+  bool should_disable = 1;
+  bool retry_same_account = 2;
+  int64 retry_deadline_unix_ms = 3;
+  // service.ErrorPolicyResult 的值。
+  int32 error_policy = 4;
+}
+
 message SelectionRelease {
   string selection_id = 1;
   // 这是这次客户端请求的最后一次尝试：主节点同时放掉按请求占的用户并发槽。

@@ -29,6 +29,10 @@ func (s *recordingSelector) RefillQuota(context.Context, int64, *relayv1.RefillQ
 	return &relayv1.RefillQuotaResponse{}, nil
 }
 
+func (s *recordingSelector) UpstreamError(context.Context, int64, *relayv1.UpstreamErrorRequest) (*relayv1.UpstreamErrorResponse, error) {
+	return &relayv1.UpstreamErrorResponse{}, nil
+}
+
 func (s *recordingSelector) Release(int64, *relayv1.SelectionRelease) {}
 
 func (s *recordingSelector) Close() { s.closed = true }

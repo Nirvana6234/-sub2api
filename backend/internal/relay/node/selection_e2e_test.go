@@ -3,6 +3,7 @@ package node_test
 import (
 	"context"
 	"errors"
+	"net/http"
 	"sync"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/relay/node"
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
 	"github.com/Wei-Shaw/sub2api/internal/relay/transport"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -23,6 +25,7 @@ type fakeSelector struct {
 	releases chan *relayv1.SelectionRelease
 	respond  func(*relayv1.SelectRequest) (*relayv1.SelectResponse, error)
 	closed   bool
+	upstream []*relayv1.UpstreamErrorRequest
 }
 
 func newFakeSelector() *fakeSelector {
@@ -52,6 +55,24 @@ func (f *fakeSelector) FetchCredentials(_ context.Context, _ int64, req *relayv1
 
 func (f *fakeSelector) RefillQuota(context.Context, int64, *relayv1.RefillQuotaRequest) (*relayv1.RefillQuotaResponse, error) {
 	return nil, errors.New("database is down: secret detail")
+}
+
+func (f *fakeSelector) UpstreamError(_ context.Context, nodeID int64, req *relayv1.UpstreamErrorRequest) (*relayv1.UpstreamErrorResponse, error) {
+	f.mu.Lock()
+	f.upstream = append(f.upstream, req)
+	f.nodes = append(f.nodes, nodeID)
+	f.mu.Unlock()
+	if req.GetAccountId() != 7 {
+		return nil, master.ErrSelectionNotFound
+	}
+	switch req.GetKind() {
+	case relayv1.UpstreamErrorKind_UPSTREAM_ERROR_KIND_OAUTH429_RETRY:
+		return &relayv1.UpstreamErrorResponse{RetrySameAccount: true, RetryDeadlineUnixMs: 1_900_000_000_000}, nil
+	case relayv1.UpstreamErrorKind_UPSTREAM_ERROR_KIND_ERROR_POLICY:
+		return &relayv1.UpstreamErrorResponse{ErrorPolicy: int32(service.ErrorPolicyTempUnscheduled)}, nil
+	default:
+		return &relayv1.UpstreamErrorResponse{ShouldDisable: true}, nil
+	}
 }
 
 func (f *fakeSelector) Release(nodeID int64, rel *relayv1.SelectionRelease) {
@@ -148,4 +169,45 @@ func TestEventOutboxDropsTheOldestWhenFull(t *testing.T) {
 		o.Enqueue(&relayv1.NodeEnvelope{Body: &relayv1.NodeEnvelope_SelectionRelease{SelectionRelease: &relayv1.SelectionRelease{SelectionId: id}}})
 	}
 	require.Equal(t, 2, o.Len())
+}
+
+// 上游错误决策经真实连接：带上 ctx 里的选号 ID 和请求标记，响应头去掉 Set-Cookie；
+// 主节点不认这个账号（或不可达）时按"不改变账号状态"回答。
+func TestRemoteUpstreamErrorDecider(t *testing.T) {
+	ctx := context.Background()
+	m := startMaster(t)
+	n := startNode(t, m)
+	sel := newFakeSelector()
+	m.control.AttachSelector(sel, m.srv.Epoch())
+	d := node.NewRemoteUpstreamErrorDecider(n.client)
+	account := &service.Account{ID: 7}
+
+	rctx := service.WithOpenAIUpstreamErrorFlags(node.WithSelectionID(ctx, "sel-9"), service.OpenAIUpstreamErrorFlags{ImagesSelfBuilt: true})
+	headers := http.Header{"X-Codex-Primary-Used-Percent": {"100"}, "Set-Cookie": {"session=secret"}}
+	require.True(t, d.HandleUpstreamError(rctx, account, 429, headers, []byte(`{"error":{}}`), "gpt-5"))
+	req := sel.upstream[0]
+	require.Equal(t, relayv1.UpstreamErrorKind_UPSTREAM_ERROR_KIND_RESPONSE, req.GetKind())
+	require.Equal(t, "sel-9", req.GetSelectionId())
+	require.Equal(t, int64(7), req.GetAccountId())
+	require.Equal(t, int32(429), req.GetStatusCode())
+	require.True(t, req.GetHasModel())
+	require.Equal(t, "gpt-5", req.GetModel())
+	require.True(t, req.GetImagesSelfBuilt())
+	require.Equal(t, m.nodeID, sel.nodes[0])
+	for _, h := range req.GetHeaders() {
+		require.NotEqual(t, "Set-Cookie", h.GetName(), "cookies are not sent to the master")
+	}
+	require.Len(t, req.GetHeaders(), 1)
+
+	retry, deadline := d.OAuth429SameAccountRetry(context.Background(), account)
+	require.True(t, retry)
+	require.Equal(t, int64(1_900_000_000_000), deadline.UnixMilli())
+	require.Equal(t, service.ErrorPolicyTempUnscheduled, d.CheckErrorPolicy(ctx, account, 400, nil, "gpt-5"))
+	require.True(t, d.HandleStreamTimeout(ctx, account, "gpt-5"))
+
+	other := &service.Account{ID: 8}
+	require.False(t, d.HandleUpstreamError(ctx, other, 500, nil, nil), "an account the node is not using changes nothing")
+	retry, _ = d.OAuth429SameAccountRetry(ctx, other)
+	require.False(t, retry)
+	require.Equal(t, service.ErrorPolicyNone, d.CheckErrorPolicy(ctx, other, 400, nil, "gpt-5"))
 }

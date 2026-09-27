@@ -593,3 +593,44 @@ func TestAuditedRequestsStayOnTheMaster(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, resp.GetSelection())
 }
+
+// 上游错误决策：只认这台节点正在用的账号，用主节点选号记录里的账号，状态记在主节点上。
+func TestUpstreamErrorDecisionOnTheMaster(t *testing.T) {
+	ctx := context.Background()
+	oauth := apiKeyAccount(1, "oauth")
+	oauth.Type = service.AccountTypeOAuth
+	oauth.Credentials = map[string]any{"access_token": "SECRET-at"}
+	w := newWorld(t, config.RunModeSimple, oauth)
+
+	ask := func(nodeID int64, selectionID string, accountID int64, kind relayv1.UpstreamErrorKind) (*relayv1.UpstreamErrorResponse, error) {
+		return w.sel.UpstreamError(ctx, nodeID, &relayv1.UpstreamErrorRequest{Kind: kind, AccountId: accountID, SelectionId: selectionID, StatusCode: 429})
+	}
+	_, err := ask(testNode, "", 1, relayv1.UpstreamErrorKind_UPSTREAM_ERROR_KIND_RESPONSE)
+	require.ErrorIs(t, err, master.ErrSelectionNotFound, "no live selection uses this account")
+
+	resp, err := w.sel.Select(ctx, testNode, responsesRequest("r1", 1, "sk-a"))
+	require.NoError(t, err)
+	selID := resp.GetSelection().GetSelectionId()
+
+	_, err = ask(testNode+1, "", 1, relayv1.UpstreamErrorKind_UPSTREAM_ERROR_KIND_RESPONSE)
+	require.ErrorIs(t, err, master.ErrSelectionNotFound, "another node cannot touch this account")
+	_, err = ask(testNode, selID, 2, relayv1.UpstreamErrorKind_UPSTREAM_ERROR_KIND_RESPONSE)
+	require.ErrorIs(t, err, master.ErrSelectionNotFound, "the selection chose a different account")
+
+	// OAuth 瞬时 429：第一次打开同账号重试窗口（记在主节点上），之后问重试时拿到窗口截止时间。
+	out, err := ask(testNode, selID, 1, relayv1.UpstreamErrorKind_UPSTREAM_ERROR_KIND_RESPONSE)
+	require.NoError(t, err)
+	require.False(t, out.GetShouldDisable())
+	out, err = ask(testNode, "", 1, relayv1.UpstreamErrorKind_UPSTREAM_ERROR_KIND_OAUTH429_RETRY)
+	require.NoError(t, err)
+	require.True(t, out.GetRetrySameAccount())
+	require.InDelta(t, time.Now().Add(2*time.Minute).UnixMilli(), out.GetRetryDeadlineUnixMs(), float64(5*time.Second/time.Millisecond))
+
+	_, err = w.sel.UpstreamError(ctx, testNode, &relayv1.UpstreamErrorRequest{AccountId: 1})
+	require.Error(t, err, "the kind is required")
+
+	w.sel.Release(testNode, &relayv1.SelectionRelease{SelectionId: selID, RequestDone: true})
+	w.waitReleased(t)
+	_, err = ask(testNode, selID, 1, relayv1.UpstreamErrorKind_UPSTREAM_ERROR_KIND_RESPONSE)
+	require.ErrorIs(t, err, master.ErrSelectionNotFound, "decisions come before the release")
+}

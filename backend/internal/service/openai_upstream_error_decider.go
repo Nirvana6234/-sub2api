@@ -87,3 +87,26 @@ func (d localOpenAIUpstreamErrorDecider) CheckErrorPolicy(ctx context.Context, a
 	}
 	return d.s.rateLimitService.CheckErrorPolicy(ctx, account, statusCode, body, model)
 }
+
+// OpenAIUpstreamErrorFlags 是判定会从请求 ctx 读的标记。主从分流时从节点把它们随上游错误决策发给主节点，
+// 主节点装回 ctx 再判定。
+type OpenAIUpstreamErrorFlags struct {
+	ImagesSelfBuilt bool
+	ImagesEndpoint  bool
+}
+
+// OpenAIUpstreamErrorFlagsFromContext 读出 ctx 上的标记。
+func OpenAIUpstreamErrorFlagsFromContext(ctx context.Context) OpenAIUpstreamErrorFlags {
+	return OpenAIUpstreamErrorFlags{ImagesSelfBuilt: isOpenAIImagesSelfBuiltRequest(ctx), ImagesEndpoint: OpenAIImagesEndpointFromContext(ctx)}
+}
+
+// WithOpenAIUpstreamErrorFlags 把标记装回 ctx。
+func WithOpenAIUpstreamErrorFlags(ctx context.Context, f OpenAIUpstreamErrorFlags) context.Context {
+	if f.ImagesSelfBuilt {
+		ctx = withOpenAIImagesSelfBuiltRequest(ctx)
+	}
+	if f.ImagesEndpoint {
+		ctx = WithOpenAIImagesEndpoint(ctx)
+	}
+	return ctx
+}
