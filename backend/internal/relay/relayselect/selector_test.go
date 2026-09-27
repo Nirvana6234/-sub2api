@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/relay/accountcodec"
 	"github.com/Wei-Shaw/sub2api/internal/relay/keystore"
 	"github.com/Wei-Shaw/sub2api/internal/relay/master"
@@ -633,4 +634,31 @@ func TestUpstreamErrorDecisionOnTheMaster(t *testing.T) {
 	w.waitReleased(t)
 	_, err = ask(testNode, selID, 1, relayv1.UpstreamErrorKind_UPSTREAM_ERROR_KIND_RESPONSE)
 	require.ErrorIs(t, err, master.ErrSelectionNotFound, "decisions come before the release")
+}
+
+// 凭证的选号上下文带着入账要恢复的值：兜底事实、贡献房间路由、渠道映射、配额平台、订阅。
+func TestVoucherCarriesTheSelectionContext(t *testing.T) {
+	override := 0.7
+	account := &service.Account{ID: 9, ContributionRouteSource: service.ContributionRouteSourceRoom, ContributionRoomID: 44, ContributionRateMultiplierOverride: &override}
+	ctx := service.WithFallbackPoolTrace(context.Background(), service.FallbackPoolTrace{SourceGroupID: 20, SourceGroupName: "free", TargetGroupID: 29, TargetGroupName: "fallback"})
+	record := &requestRecord{pricingAt: time.UnixMilli(1_800_000_000_000)}
+	sel := &selectionRecord{request: record, quota: service.QuotaRequest{Platform: "openai"}}
+	c := selectionContext(handler.OpenAISelectOutcome{Ctx: ctx, Account: account}, sel,
+		service.ChannelMappingResult{ChannelID: 3, MappedModel: "gpt-5-mini", BillingModelSource: "channel_mapped"}, &service.UserSubscription{ID: 77})
+	require.Equal(t, int64(1_800_000_000_000), c.GetPricingAtUnixMs())
+	require.Equal(t, "openai", c.GetQuotaPlatform())
+	require.Equal(t, int64(77), c.GetSubscriptionId())
+	require.Equal(t, int64(3), c.GetChannelId())
+	require.Equal(t, "gpt-5-mini", c.GetChannelMappedModel())
+	require.Equal(t, "channel_mapped", c.GetBillingModelSource())
+	require.Equal(t, int64(20), c.GetFallbackSourceGroupId())
+	require.Equal(t, "fallback", c.GetFallbackTargetGroupName())
+	require.Equal(t, service.ContributionRouteSourceRoom, c.GetContributionRouteSource())
+	require.Equal(t, int64(44), c.GetContributionRoomId())
+	require.True(t, c.GetHasContributionRateMultiplierOverride())
+	require.InDelta(t, 0.7, c.GetContributionRateMultiplierOverride(), 1e-12)
+
+	plain := selectionContext(handler.OpenAISelectOutcome{Ctx: context.Background(), Account: &service.Account{ID: 9}}, sel, service.ChannelMappingResult{}, nil)
+	require.Zero(t, plain.GetFallbackSourceGroupId(), "no fallback, no trace")
+	require.False(t, plain.GetHasContributionRateMultiplierOverride())
 }

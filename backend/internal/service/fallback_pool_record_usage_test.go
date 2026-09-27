@@ -41,6 +41,23 @@ func TestRecordUsageSeesTheFallbackTraceInTheWorkerContext(t *testing.T) {
 		requireFallback(t, usageRepo.lastLog)
 	})
 
+	t.Run("restored from a relay voucher", func(t *testing.T) {
+		// 主从分流的主节点入账：兜底事实从凭证的选号上下文装回 ctx（WP8），入账写出同样的 fallback_*。
+		trace, ok := FallbackPoolTraceFromContext(workerCtx)
+		require.True(t, ok)
+		settleCtx := WithFallbackPoolTrace(context.Background(), trace)
+		usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+		svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+		require.NoError(t, svc.RecordUsage(settleCtx, &OpenAIRecordUsageInput{
+			Result:  &OpenAIForwardResult{RequestID: "resp_relay_fallback", Usage: OpenAIUsage{InputTokens: 10, OutputTokens: 5}, Model: "gpt-5.1", Duration: time.Second},
+			APIKey:  &APIKey{ID: 1000, Group: &Group{RateMultiplier: 1}},
+			User:    &User{ID: 2000},
+			Account: &Account{ID: 3000, Type: AccountTypeAPIKey},
+		}))
+		requireFallback(t, usageRepo.lastLog)
+		require.Equal(t, "plus-fallback", *usageRepo.lastLog.FallbackTargetGroupName)
+	})
+
 	t.Run("gateway", func(t *testing.T) {
 		usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 		svc := newGatewayRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})

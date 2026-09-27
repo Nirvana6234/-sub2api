@@ -1900,7 +1900,7 @@ func (x *Voucher) GetContext() *SelectionContext {
 }
 
 // 报价：签发时的计价输入，入账按它计价（设计 5.3、6 第一类）。
-// 字段由 WP7 / WP8 按开发计划 2.2 的脚本补齐。金额用整数微单位（1 = 10⁻⁸），
+// 字段随 WP8 的"按报价计价"一起补（要补哪些见 relayselect 的字段守卫）。金额用整数微单位（1 = 10⁻⁸），
 // 单价按每百万 token 表示（按每 token 会出现小数，比如 0.075 美元每百万 token）。
 type Quote struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -1938,14 +1938,32 @@ func (*Quote) Descriptor() ([]byte, []int) {
 	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{22}
 }
 
-// 选号上下文：扣费函数从请求上下文读、由选号决定的值，入账前原样恢复（设计 5.3）。
-// 其余字段由 WP7 / WP8 按开发计划 2.2 的脚本补齐。
+// 选号上下文：入账要用、由选号决定的值，入账前原样恢复（设计 5.3）。清单由 relayselect 的字段守卫维护：
+// 入账输入、账号的请求级字段、入账 ctx 搬运的值，每一项都要归类，新增时守卫测试失败。
 type SelectionContext struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// 计价时间（openai_profit_control 的 pricingAt）。
 	PricingAtUnixMs int64 `protobuf:"varint,1,opt,name=pricing_at_unix_ms,json=pricingAtUnixMs,proto3" json:"pricing_at_unix_ms,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// 用户 × 平台配额的计量平台（QuotaPlatform，组合平台、ForcePlatform 解析后）。
+	QuotaPlatform string `protobuf:"bytes,2,opt,name=quota_platform,json=quotaPlatform,proto3" json:"quota_platform,omitempty"`
+	// 订阅（订阅计费时）。
+	SubscriptionId int64 `protobuf:"varint,3,opt,name=subscription_id,json=subscriptionId,proto3" json:"subscription_id,omitempty"`
+	// 渠道映射（ChannelUsageFields 里由主节点定下的部分；映射链由入账时按上游模型重新生成）。
+	ChannelId          int64  `protobuf:"varint,4,opt,name=channel_id,json=channelId,proto3" json:"channel_id,omitempty"`
+	ChannelMappedModel string `protobuf:"bytes,5,opt,name=channel_mapped_model,json=channelMappedModel,proto3" json:"channel_mapped_model,omitempty"`
+	BillingModelSource string `protobuf:"bytes,6,opt,name=billing_model_source,json=billingModelSource,proto3" json:"billing_model_source,omitempty"`
+	// 分组兜底池（usage_log 的 fallback_*）。
+	FallbackSourceGroupId   int64  `protobuf:"varint,7,opt,name=fallback_source_group_id,json=fallbackSourceGroupId,proto3" json:"fallback_source_group_id,omitempty"`
+	FallbackSourceGroupName string `protobuf:"bytes,8,opt,name=fallback_source_group_name,json=fallbackSourceGroupName,proto3" json:"fallback_source_group_name,omitempty"`
+	FallbackTargetGroupId   int64  `protobuf:"varint,9,opt,name=fallback_target_group_id,json=fallbackTargetGroupId,proto3" json:"fallback_target_group_id,omitempty"`
+	FallbackTargetGroupName string `protobuf:"bytes,10,opt,name=fallback_target_group_name,json=fallbackTargetGroupName,proto3" json:"fallback_target_group_name,omitempty"`
+	// 贡献房间路由（账号上只对这一次请求有效的字段，影响计费倍率）。
+	ContributionRouteSource               string  `protobuf:"bytes,11,opt,name=contribution_route_source,json=contributionRouteSource,proto3" json:"contribution_route_source,omitempty"`
+	ContributionRoomId                    int64   `protobuf:"varint,12,opt,name=contribution_room_id,json=contributionRoomId,proto3" json:"contribution_room_id,omitempty"`
+	HasContributionRateMultiplierOverride bool    `protobuf:"varint,13,opt,name=has_contribution_rate_multiplier_override,json=hasContributionRateMultiplierOverride,proto3" json:"has_contribution_rate_multiplier_override,omitempty"`
+	ContributionRateMultiplierOverride    float64 `protobuf:"fixed64,14,opt,name=contribution_rate_multiplier_override,json=contributionRateMultiplierOverride,proto3" json:"contribution_rate_multiplier_override,omitempty"`
+	unknownFields                         protoimpl.UnknownFields
+	sizeCache                             protoimpl.SizeCache
 }
 
 func (x *SelectionContext) Reset() {
@@ -1981,6 +1999,97 @@ func (*SelectionContext) Descriptor() ([]byte, []int) {
 func (x *SelectionContext) GetPricingAtUnixMs() int64 {
 	if x != nil {
 		return x.PricingAtUnixMs
+	}
+	return 0
+}
+
+func (x *SelectionContext) GetQuotaPlatform() string {
+	if x != nil {
+		return x.QuotaPlatform
+	}
+	return ""
+}
+
+func (x *SelectionContext) GetSubscriptionId() int64 {
+	if x != nil {
+		return x.SubscriptionId
+	}
+	return 0
+}
+
+func (x *SelectionContext) GetChannelId() int64 {
+	if x != nil {
+		return x.ChannelId
+	}
+	return 0
+}
+
+func (x *SelectionContext) GetChannelMappedModel() string {
+	if x != nil {
+		return x.ChannelMappedModel
+	}
+	return ""
+}
+
+func (x *SelectionContext) GetBillingModelSource() string {
+	if x != nil {
+		return x.BillingModelSource
+	}
+	return ""
+}
+
+func (x *SelectionContext) GetFallbackSourceGroupId() int64 {
+	if x != nil {
+		return x.FallbackSourceGroupId
+	}
+	return 0
+}
+
+func (x *SelectionContext) GetFallbackSourceGroupName() string {
+	if x != nil {
+		return x.FallbackSourceGroupName
+	}
+	return ""
+}
+
+func (x *SelectionContext) GetFallbackTargetGroupId() int64 {
+	if x != nil {
+		return x.FallbackTargetGroupId
+	}
+	return 0
+}
+
+func (x *SelectionContext) GetFallbackTargetGroupName() string {
+	if x != nil {
+		return x.FallbackTargetGroupName
+	}
+	return ""
+}
+
+func (x *SelectionContext) GetContributionRouteSource() string {
+	if x != nil {
+		return x.ContributionRouteSource
+	}
+	return ""
+}
+
+func (x *SelectionContext) GetContributionRoomId() int64 {
+	if x != nil {
+		return x.ContributionRoomId
+	}
+	return 0
+}
+
+func (x *SelectionContext) GetHasContributionRateMultiplierOverride() bool {
+	if x != nil {
+		return x.HasContributionRateMultiplierOverride
+	}
+	return false
+}
+
+func (x *SelectionContext) GetContributionRateMultiplierOverride() float64 {
+	if x != nil {
+		return x.ContributionRateMultiplierOverride
 	}
 	return 0
 }
@@ -4625,9 +4734,24 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x16allowed_billing_models\x18\v \x03(\tR\x14allowedBillingModels\x12-\n" +
 	"\x05quote\x18\f \x01(\v2\x17.sub2api.relay.v1.QuoteR\x05quote\x12<\n" +
 	"\acontext\x18\r \x01(\v2\".sub2api.relay.v1.SelectionContextR\acontext\"\a\n" +
-	"\x05Quote\"?\n" +
+	"\x05Quote\"\x99\x06\n" +
 	"\x10SelectionContext\x12+\n" +
-	"\x12pricing_at_unix_ms\x18\x01 \x01(\x03R\x0fpricingAtUnixMs\"N\n" +
+	"\x12pricing_at_unix_ms\x18\x01 \x01(\x03R\x0fpricingAtUnixMs\x12%\n" +
+	"\x0equota_platform\x18\x02 \x01(\tR\rquotaPlatform\x12'\n" +
+	"\x0fsubscription_id\x18\x03 \x01(\x03R\x0esubscriptionId\x12\x1d\n" +
+	"\n" +
+	"channel_id\x18\x04 \x01(\x03R\tchannelId\x120\n" +
+	"\x14channel_mapped_model\x18\x05 \x01(\tR\x12channelMappedModel\x120\n" +
+	"\x14billing_model_source\x18\x06 \x01(\tR\x12billingModelSource\x127\n" +
+	"\x18fallback_source_group_id\x18\a \x01(\x03R\x15fallbackSourceGroupId\x12;\n" +
+	"\x1afallback_source_group_name\x18\b \x01(\tR\x17fallbackSourceGroupName\x127\n" +
+	"\x18fallback_target_group_id\x18\t \x01(\x03R\x15fallbackTargetGroupId\x12;\n" +
+	"\x1afallback_target_group_name\x18\n" +
+	" \x01(\tR\x17fallbackTargetGroupName\x12:\n" +
+	"\x19contribution_route_source\x18\v \x01(\tR\x17contributionRouteSource\x120\n" +
+	"\x14contribution_room_id\x18\f \x01(\x03R\x12contributionRoomId\x12X\n" +
+	")has_contribution_rate_multiplier_override\x18\r \x01(\bR%hasContributionRateMultiplierOverride\x12Q\n" +
+	"%contribution_rate_multiplier_override\x18\x0e \x01(\x01R\"contributionRateMultiplierOverride\"N\n" +
 	"\x11TicketRevocations\x129\n" +
 	"\x05users\x18\x01 \x03(\v2#.sub2api.relay.v1.RevokedTicketUserR\x05users\"a\n" +
 	"\x11RevokedTicketUser\x12\x17\n" +

@@ -288,16 +288,34 @@ message Voucher {
 }
 
 // 报价：签发时的计价输入，入账按它计价（设计 5.3、6 第一类）。
-// 字段由 WP7 / WP8 按开发计划 2.2 的脚本补齐。金额用整数微单位（1 = 10⁻⁸），
+// 字段随 WP8 的"按报价计价"一起补（要补哪些见 relayselect 的字段守卫）。金额用整数微单位（1 = 10⁻⁸），
 // 单价按每百万 token 表示（按每 token 会出现小数，比如 0.075 美元每百万 token）。
 message Quote {
 }
 
-// 选号上下文：扣费函数从请求上下文读、由选号决定的值，入账前原样恢复（设计 5.3）。
-// 其余字段由 WP7 / WP8 按开发计划 2.2 的脚本补齐。
+// 选号上下文：入账要用、由选号决定的值，入账前原样恢复（设计 5.3）。清单由 relayselect 的字段守卫维护：
+// 入账输入、账号的请求级字段、入账 ctx 搬运的值，每一项都要归类，新增时守卫测试失败。
 message SelectionContext {
   // 计价时间（openai_profit_control 的 pricingAt）。
   int64 pricing_at_unix_ms = 1;
+  // 用户 × 平台配额的计量平台（QuotaPlatform，组合平台、ForcePlatform 解析后）。
+  string quota_platform = 2;
+  // 订阅（订阅计费时）。
+  int64 subscription_id = 3;
+  // 渠道映射（ChannelUsageFields 里由主节点定下的部分；映射链由入账时按上游模型重新生成）。
+  int64 channel_id = 4;
+  string channel_mapped_model = 5;
+  string billing_model_source = 6;
+  // 分组兜底池（usage_log 的 fallback_*）。
+  int64 fallback_source_group_id = 7;
+  string fallback_source_group_name = 8;
+  int64 fallback_target_group_id = 9;
+  string fallback_target_group_name = 10;
+  // 贡献房间路由（账号上只对这一次请求有效的字段，影响计费倍率）。
+  string contribution_route_source = 11;
+  int64 contribution_room_id = 12;
+  bool has_contribution_rate_multiplier_override = 13;
+  double contribution_rate_multiplier_override = 14;
 }
 
 // 票据吊销（设计 8.1）：这些用户在 revoked_before 及之前签发的票据作废。

@@ -335,6 +335,29 @@ func withFallbackPoolUsageTrace(ctx context.Context, trace fallbackPoolUsageTrac
 	return context.WithValue(ctx, fallbackPoolUsageTraceContextKey{}, trace)
 }
 
+// FallbackPoolTrace 是一次请求命中分组兜底池的事实（写进 usage_log 的 fallback_* 列）。
+// 主从分流时随扣费凭证的选号上下文带到入账（开发计划 2.2）。
+type FallbackPoolTrace struct {
+	SourceGroupID   int64
+	SourceGroupName string
+	TargetGroupID   int64
+	TargetGroupName string
+}
+
+// FallbackPoolTraceFromContext 读出 ctx 上的兜底事实（与入账读的是同一个）。
+func FallbackPoolTraceFromContext(ctx context.Context) (FallbackPoolTrace, bool) {
+	t, ok := fallbackPoolUsageTraceFromContext(ctx)
+	return FallbackPoolTrace(t), ok
+}
+
+// WithFallbackPoolTrace 把兜底事实装回入账用的 ctx（主节点入账时从凭证恢复）。
+func WithFallbackPoolTrace(ctx context.Context, t FallbackPoolTrace) context.Context {
+	if t.SourceGroupID <= 0 || t.TargetGroupID <= 0 {
+		return ctx
+	}
+	return withFallbackPoolUsageTrace(ctx, fallbackPoolUsageTrace(t))
+}
+
 // PropagateFallbackPoolUsageContext copies the immutable fallback fact from a
 // request context into a detached usage-record worker context.
 func PropagateFallbackPoolUsageContext(parent, base context.Context) context.Context {

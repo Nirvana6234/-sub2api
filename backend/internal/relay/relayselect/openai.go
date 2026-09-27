@@ -247,7 +247,7 @@ func (s *selector) buildSelection(ctx context.Context, nodeID int64, req *relayv
 		NodeId: nodeID, SelectionId: sel.id, UserId: sel.userID, ApiKeyId: sel.apiKeyID, AccountId: sel.account.ID,
 		GroupId: sel.groupID, BillingMode: mode, RequestedModel: reqModel, AllowedBillingModels: allowed,
 		Quote:   &relayv1.Quote{},
-		Context: &relayv1.SelectionContext{PricingAtUnixMs: sel.request.pricingAt.UnixMilli()},
+		Context: selectionContext(outcome, sel, mapping, subscription),
 	})
 	if err != nil {
 		return nil, nil, err
@@ -324,4 +324,29 @@ func gatewayRejection(r handler.OpenAIGatewayRejection) *relayv1.SelectResponse 
 		Message: r.Message, RetryAfterSeconds: int32(r.RetryAfter), RoutingCapacityLimited: r.RoutingCapacityLimited,
 		OpsBusinessLimitedReason: r.OpsBusinessLimitedReason,
 	}}}
+}
+
+// selectionContext 是凭证里的选号上下文：入账要用、由这次选号定下的值（字段清单见 fields_guard_test.go）。
+func selectionContext(outcome handler.OpenAISelectOutcome, sel *selectionRecord, mapping service.ChannelMappingResult, subscription *service.UserSubscription) *relayv1.SelectionContext {
+	c := &relayv1.SelectionContext{
+		PricingAtUnixMs:    sel.request.pricingAt.UnixMilli(),
+		QuotaPlatform:      sel.quota.Platform,
+		ChannelId:          mapping.ChannelID,
+		ChannelMappedModel: mapping.MappedModel,
+		BillingModelSource: mapping.BillingModelSource,
+	}
+	if subscription != nil {
+		c.SubscriptionId = subscription.ID
+	}
+	if trace, ok := service.FallbackPoolTraceFromContext(outcome.Ctx); ok {
+		c.FallbackSourceGroupId, c.FallbackSourceGroupName = trace.SourceGroupID, trace.SourceGroupName
+		c.FallbackTargetGroupId, c.FallbackTargetGroupName = trace.TargetGroupID, trace.TargetGroupName
+	}
+	if a := outcome.Account; a != nil {
+		c.ContributionRouteSource, c.ContributionRoomId = a.ContributionRouteSource, a.ContributionRoomID
+		if a.ContributionRateMultiplierOverride != nil {
+			c.HasContributionRateMultiplierOverride, c.ContributionRateMultiplierOverride = true, *a.ContributionRateMultiplierOverride
+		}
+	}
+	return c
 }
