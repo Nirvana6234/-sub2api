@@ -61,7 +61,12 @@ type selector struct {
 	// delivered：每台节点已经拿到的账号凭据版本（设计 9.1：同一版本不重复下发）。只是省流量的提示：
 	// 节点缓存里没有时用 FetchCredentials 取。
 	delivered map[int64]map[int64]string
-	closed    bool
+	// recent：节点刚用过的账号（账号事件在放槽之后到达）。
+	recent map[nodeAccount]recentUse
+	events chan queuedAccountEvent
+	closed bool
+	// localReporter 执行账号事件（默认网关服务的本机实现；测试替换）。
+	localReporter func() service.OpenAIAccountReporter
 
 	stopReaper context.CancelFunc
 }
@@ -116,10 +121,16 @@ func newSelector(d Deps, env master.SelectEnv) *selector {
 		requests:   map[requestKey]*requestRecord{},
 		selections: map[string]*selectionRecord{},
 		delivered:  map[int64]map[int64]string{},
+		recent:     map[nodeAccount]recentUse{},
+		events:     make(chan queuedAccountEvent, accountEventQueue),
 	}
+	s.localReporter = d.Gateway.LocalAccountReporter
 	ctx, cancel := context.WithCancel(context.Background())
 	s.stopReaper = cancel
 	go s.runReaper(ctx)
+	for i := 0; i < accountEventWorkers; i++ {
+		go s.runAccountEvents(ctx)
+	}
 	return s
 }
 
@@ -156,6 +167,7 @@ func (s *selector) dropRequest(r *requestRecord) {
 	for id := range r.active {
 		if sel, ok := s.selections[id]; ok {
 			delete(s.selections, id)
+			s.rememberUseLocked(sel)
 			sels = append(sels, sel)
 		}
 	}
@@ -190,6 +202,7 @@ func (s *selector) takeSelection(nodeID int64, id string) *selectionRecord {
 	}
 	delete(s.selections, id)
 	delete(sel.request.active, id)
+	s.rememberUseLocked(sel)
 	return sel
 }
 
@@ -362,6 +375,11 @@ func (s *selector) runReaper(ctx context.Context) {
 func (s *selector) reap() {
 	cutoff := s.now().Add(-holdLimit)
 	s.mu.Lock()
+	for k, r := range s.recent {
+		if !s.now().Before(r.until) {
+			delete(s.recent, k)
+		}
+	}
 	var stale []*requestRecord
 	for _, r := range s.requests {
 		if r.lastSeen.Before(cutoff) {

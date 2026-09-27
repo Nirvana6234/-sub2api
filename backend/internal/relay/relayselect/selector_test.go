@@ -662,3 +662,92 @@ func TestVoucherCarriesTheSelectionContext(t *testing.T) {
 	require.Zero(t, plain.GetFallbackSourceGroupId(), "no fallback, no trace")
 	require.False(t, plain.GetHasContributionRateMultiplierOverride())
 }
+
+type recordedReport struct {
+	kind    string
+	account int64
+	err     error
+	extra   any
+}
+
+type recordingReporter struct {
+	mu      sync.Mutex
+	reports []recordedReport
+}
+
+func (r *recordingReporter) add(rep recordedReport) {
+	r.mu.Lock()
+	r.reports = append(r.reports, rep)
+	r.mu.Unlock()
+}
+
+func (r *recordingReporter) ReportScheduleResult(account *service.Account, model string, success bool, firstTokenMs *int, _ int64, _ string, observedErr error) {
+	r.add(recordedReport{kind: "result", account: account.ID, err: observedErr, extra: []any{model, success, firstTokenMs}})
+}
+func (r *recordingReporter) ObserveHealthFailure(_ context.Context, account *service.Account, observedErr error) {
+	r.add(recordedReport{kind: "health", account: account.ID, err: observedErr})
+}
+func (r *recordingReporter) RecordAccountSwitch() { r.add(recordedReport{kind: "switch"}) }
+func (r *recordingReporter) UpdateCodexUsageSnapshot(_ context.Context, accountID int64, snapshot *service.OpenAICodexUsageSnapshot) {
+	r.add(recordedReport{kind: "codex", account: accountID, extra: snapshot})
+}
+func (r *recordingReporter) TempUnscheduleTransportError(_ context.Context, account *service.Account, safeErr string) {
+	r.add(recordedReport{kind: "transport", account: account.ID, extra: safeErr})
+}
+func (r *recordingReporter) OllamaCloudUsageActivity(account *service.Account) {
+	r.add(recordedReport{kind: "ollama", account: account.ID})
+}
+
+// 账号事件：只认这台节点正在用或刚用过（10 分钟内）的账号，用主节点记录里的账号对象执行。
+func TestAccountEventsOnTheMaster(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t, config.RunModeSimple, apiKeyAccount(1, "one"))
+	rec := &recordingReporter{}
+	w.sel.localReporter = func() service.OpenAIAccountReporter { return rec }
+
+	result := func(accountID int64) *relayv1.AccountEvent {
+		return &relayv1.AccountEvent{AccountId: accountID, Kind: &relayv1.AccountEvent_ScheduleResult{ScheduleResult: &relayv1.ScheduleResultEvent{
+			Model: "gpt-5", Success: false, HasFirstTokenMs: true, FirstTokenMs: 120,
+			Failure: &relayv1.HealthFailureFacts{Eligible: true, StatusCode: 502, Body: []byte("bad gateway")},
+		}}}
+	}
+	w.sel.applyAccountEvent(testNode, result(1))
+	require.Empty(t, rec.reports, "the node is not using this account")
+
+	resp, err := w.sel.Select(ctx, testNode, responsesRequest("r1", 1, "sk-a"))
+	require.NoError(t, err)
+	w.sel.applyAccountEvent(testNode, result(1))
+	w.sel.applyAccountEvent(testNode+1, result(1))
+	require.Len(t, rec.reports, 1, "only the node that selected the account")
+	got := rec.reports[0]
+	require.Equal(t, "result", got.kind)
+	var failover *service.UpstreamFailoverError
+	require.ErrorAs(t, got.err, &failover)
+	require.Equal(t, 502, failover.StatusCode)
+	extra, ok := got.extra.([]any)
+	require.True(t, ok)
+	firstToken, ok := extra[2].(*int)
+	require.True(t, ok)
+	require.Equal(t, 120, *firstToken)
+
+	// 调度结果在放槽之后才到：刚用过的账号照样认。
+	w.sel.release(testNode, &relayv1.SelectionRelease{SelectionId: resp.GetSelection().GetSelectionId(), RequestDone: true})
+	w.sel.applyAccountEvent(testNode, &relayv1.AccountEvent{AccountId: 1, Kind: &relayv1.AccountEvent_TransportError{TransportError: &relayv1.TransportErrorEvent{Message: "dial tcp: refused"}}})
+	w.sel.applyAccountEvent(testNode, &relayv1.AccountEvent{AccountId: 1, Kind: &relayv1.AccountEvent_CodexUsage{CodexUsage: &relayv1.CodexUsageEvent{SnapshotJson: []byte(`{"primary_used_percent":40,"updated_at":"2026-09-27T01:02:03Z"}`)}}})
+	w.sel.applyAccountEvent(testNode, &relayv1.AccountEvent{AccountId: 1, Kind: &relayv1.AccountEvent_HealthFailure{HealthFailure: &relayv1.HealthFailureEvent{Failure: &relayv1.HealthFailureFacts{}}}})
+	w.sel.applyAccountEvent(testNode, &relayv1.AccountEvent{Kind: &relayv1.AccountEvent_AccountSwitch{AccountSwitch: &relayv1.AccountSwitchEvent{}}})
+	kinds := []string{}
+	for _, r := range rec.reports[1:] {
+		kinds = append(kinds, r.kind)
+	}
+	require.Equal(t, []string{"transport", "codex", "switch"}, kinds, "a non-eligible health failure changes nothing")
+	snapshot, ok := rec.reports[2].extra.(*service.OpenAICodexUsageSnapshot)
+	require.True(t, ok)
+	require.Equal(t, "2026-09-27T01:02:03Z", snapshot.UpdatedAt)
+
+	later := time.Now().Add(recentUseTTL + time.Minute)
+	w.sel.now = func() time.Time { return later }
+	w.sel.applyAccountEvent(testNode, result(1))
+	require.Len(t, rec.reports, 4, "long after the release the account is no longer this node's")
+	w.sel.now = time.Now
+}

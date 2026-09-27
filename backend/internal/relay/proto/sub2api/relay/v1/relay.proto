@@ -174,6 +174,7 @@ message NodeEnvelope {
   oneof body {
     EventPing ping = 10;
     SelectionRelease selection_release = 11;
+    AccountEvent account_event = 12;
   }
 }
 
@@ -620,6 +621,57 @@ message UpstreamErrorResponse {
   // service.ErrorPolicyResult 的值。
   int32 error_policy = 4;
 }
+
+// 账号事件（设计 7.3）：转发结果对账号状态的影响（调度统计、健康熔断、Codex 用量快照、传输错误的
+// 临时不可调度等），经事件连接发送、不等回复；主节点用单机同一段代码执行（service.OpenAIAccountReporter）。
+// 只认这台节点正在用或刚用过的账号，用主节点记录里的账号对象。
+message AccountEvent {
+  int64 account_id = 1;
+  oneof kind {
+    ScheduleResultEvent schedule_result = 10;
+    HealthFailureEvent health_failure = 11;
+    AccountSwitchEvent account_switch = 12;
+    CodexUsageEvent codex_usage = 13;
+    TransportErrorEvent transport_error = 14;
+    OllamaActivityEvent ollama_activity = 15;
+  }
+}
+
+// 健康熔断要看的失败事实（service.OpenAIHealthFailureFacts）；eligible 为 false 表示不计入熔断。
+message HealthFailureFacts {
+  bool eligible = 1;
+  int32 status_code = 2;
+  // 上游响应体摘要（不超过 8 KiB，写进临时不可调度的原因里）。
+  bytes body = 3;
+}
+
+message ScheduleResultEvent {
+  string model = 1;
+  bool success = 2;
+  bool has_first_token_ms = 3;
+  int32 first_token_ms = 4;
+  int64 serving_group_id = 5;
+  string reasoning_effort = 6;
+  HealthFailureFacts failure = 7;
+}
+
+message HealthFailureEvent {
+  HealthFailureFacts failure = 1;
+}
+
+message AccountSwitchEvent {}
+
+message CodexUsageEvent {
+  // service.OpenAICodexUsageSnapshot 的 JSON（updated_at 为从节点收到响应的时间）。
+  bytes snapshot_json = 1;
+}
+
+message TransportErrorEvent {
+  // 已脱敏的传输错误。
+  string message = 1;
+}
+
+message OllamaActivityEvent {}
 
 message SelectionRelease {
   string selection_id = 1;

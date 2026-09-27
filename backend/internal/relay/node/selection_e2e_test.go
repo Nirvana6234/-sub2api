@@ -2,6 +2,7 @@ package node_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"sync"
@@ -26,10 +27,12 @@ type fakeSelector struct {
 	respond  func(*relayv1.SelectRequest) (*relayv1.SelectResponse, error)
 	closed   bool
 	upstream []*relayv1.UpstreamErrorRequest
+
+	accountEvents chan *relayv1.AccountEvent
 }
 
 func newFakeSelector() *fakeSelector {
-	return &fakeSelector{releases: make(chan *relayv1.SelectionRelease, 16)}
+	return &fakeSelector{releases: make(chan *relayv1.SelectionRelease, 16), accountEvents: make(chan *relayv1.AccountEvent, 16)}
 }
 
 func (f *fakeSelector) Select(_ context.Context, nodeID int64, req *relayv1.SelectRequest) (*relayv1.SelectResponse, error) {
@@ -82,6 +85,10 @@ func (f *fakeSelector) Release(nodeID int64, rel *relayv1.SelectionRelease) {
 	f.releases <- rel
 }
 
+func (f *fakeSelector) AccountEvent(nodeID int64, ev *relayv1.AccountEvent) {
+	f.accountEvents <- ev
+}
+
 func (f *fakeSelector) Close() { f.closed = true }
 
 func (f *fakeSelector) selectCount() int {
@@ -107,7 +114,7 @@ func TestSelectionCallsOverTheWire(t *testing.T) {
 	require.Equal(t, codes.Unavailable, status.Code(err), "no selector attached yet")
 
 	m.control.AttachSelector(sel, m.srv.Epoch())
-	master.RouteSelectionReleases(m.events, sel)
+	master.RouteNodeEvents(m.events, sel)
 
 	req := &relayv1.SelectRequest{RequestId: "r1", Attempt: 1, Credential: &relayv1.SelectRequest_ApiKey{ApiKey: "sk-test"}, Model: "gpt-5"}
 	resp, err := client.Select(ctx, req)
@@ -210,4 +217,59 @@ func TestRemoteUpstreamErrorDecider(t *testing.T) {
 	retry, _ = d.OAuth429SameAccountRetry(ctx, other)
 	require.False(t, retry)
 	require.Equal(t, service.ErrorPolicyNone, d.CheckErrorPolicy(ctx, other, 400, nil, "gpt-5"))
+}
+
+// 账号事件经事件连接送到主节点：健康失败按分类发事实，不计入熔断的不发；Codex 快照补上收到响应的时间。
+func TestRemoteAccountReporterOverTheWire(t *testing.T) {
+	ctx := context.Background()
+	m := startMaster(t)
+	n := startNode(t, m)
+	sel := newFakeSelector()
+	m.control.AttachSelector(sel, m.srv.Epoch())
+	master.RouteNodeEvents(m.events, sel)
+	outbox := node.NewEventOutbox(0)
+	runCtx, stop := context.WithCancel(ctx)
+	defer stop()
+	go node.RunEvents(runCtx, n.client, n.syncer, node.EventHandlers{Outbox: outbox})
+
+	r := node.NewRemoteAccountReporter(outbox)
+	account := &service.Account{ID: 7, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey}
+	first := 90
+	r.ReportScheduleResult(account, "gpt-5", false, &first, 5, "high", &service.UpstreamFailoverError{StatusCode: 500, ResponseBody: []byte("oops")})
+	r.ObserveHealthFailure(ctx, account, &service.UpstreamFailoverError{StatusCode: 400}) // 不计入熔断：不发
+	r.RecordAccountSwitch()
+	r.UpdateCodexUsageSnapshot(ctx, 7, &service.OpenAICodexUsageSnapshot{})
+	r.TempUnscheduleTransportError(ctx, account, "dial tcp: refused")
+	r.OllamaCloudUsageActivity(account) // 不是 Ollama Cloud 账号：不发
+
+	next := func() *relayv1.AccountEvent {
+		select {
+		case ev := <-sel.accountEvents:
+			return ev
+		case <-time.After(5 * time.Second):
+			t.Fatal("account event was not delivered")
+			return nil
+		}
+	}
+	ev := next()
+	res := ev.GetScheduleResult()
+	require.Equal(t, int64(7), ev.GetAccountId())
+	require.Equal(t, "gpt-5", res.GetModel())
+	require.True(t, res.GetHasFirstTokenMs())
+	require.Equal(t, int32(90), res.GetFirstTokenMs())
+	require.Equal(t, int64(5), res.GetServingGroupId())
+	require.True(t, res.GetFailure().GetEligible())
+	require.Equal(t, int32(500), res.GetFailure().GetStatusCode())
+	require.NotNil(t, next().GetAccountSwitch())
+	codex := next().GetCodexUsage()
+	var snap service.OpenAICodexUsageSnapshot
+	require.NoError(t, json.Unmarshal(codex.GetSnapshotJson(), &snap))
+	_, err := time.Parse(time.RFC3339, snap.UpdatedAt)
+	require.NoError(t, err, "the node stamps when it saw the headers")
+	require.Equal(t, "dial tcp: refused", next().GetTransportError().GetMessage())
+	select {
+	case ev := <-sel.accountEvents:
+		t.Fatalf("unexpected event %v", ev)
+	case <-time.After(200 * time.Millisecond):
+	}
 }

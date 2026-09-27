@@ -27,6 +27,8 @@ type Selector interface {
 	// Release 处理事件连接上的释放消息（不回复，按选号 ID 幂等）。在事件流的接收协程里调用，
 	// 不能阻塞：要访问 Redis 等的工作放到自己的协程里做。
 	Release(nodeID int64, rel *relayv1.SelectionRelease)
+	// AccountEvent 处理事件连接上的账号事件（不回复）。与 Release 一样不能阻塞。
+	AccountEvent(nodeID int64, ev *relayv1.AccountEvent)
 	// Close 在运行时停止时调用：放掉还占着的并发槽。
 	Close()
 }
@@ -132,11 +134,14 @@ func (c *Control) UpstreamError(ctx context.Context, req *relayv1.UpstreamErrorR
 	return resp, nil
 }
 
-// RouteSelectionReleases 把事件连接上的释放消息交给选号实现。
-func RouteSelectionReleases(events *EventHub, s Selector) {
+// RouteNodeEvents 把事件连接上的释放消息和账号事件交给选号实现。
+func RouteNodeEvents(events *EventHub, s Selector) {
 	events.OnNodeEvent = func(nodeID int64, env *relayv1.NodeEnvelope) {
-		if rel := env.GetSelectionRelease(); rel != nil {
-			s.Release(nodeID, rel)
+		switch body := env.Body.(type) {
+		case *relayv1.NodeEnvelope_SelectionRelease:
+			s.Release(nodeID, body.SelectionRelease)
+		case *relayv1.NodeEnvelope_AccountEvent:
+			s.AccountEvent(nodeID, body.AccountEvent)
 		}
 	}
 }

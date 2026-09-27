@@ -406,7 +406,7 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 			VerifyVoucher:     r.VerifyVoucher,
 		})
 		control.AttachSelector(selector, server.Epoch())
-		RouteSelectionReleases(events, selector)
+		RouteNodeEvents(events, selector)
 	}
 	relayv1.RegisterRelayControlServer(server.GRPC(), control)
 	relayv1.RegisterRelayEventsServer(server.GRPC(), events)

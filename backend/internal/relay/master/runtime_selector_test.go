@@ -35,6 +35,8 @@ func (s *recordingSelector) UpstreamError(context.Context, int64, *relayv1.Upstr
 
 func (s *recordingSelector) Release(int64, *relayv1.SelectionRelease) {}
 
+func (s *recordingSelector) AccountEvent(int64, *relayv1.AccountEvent) {}
+
 func (s *recordingSelector) Close() { s.closed = true }
 
 // 选号实现随主从分流启停：每次启动用本次的纪元、签名密钥、节点信息新建一个，停止时关闭。
