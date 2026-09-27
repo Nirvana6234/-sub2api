@@ -267,25 +267,31 @@ func GetSubscriptionFromContext(c *gin.Context) (*service.UserSubscription, bool
 }
 
 func setGroupContext(c *gin.Context, group *service.Group) {
+	c.Request = c.Request.WithContext(withGroupContext(c.Request.Context(), group))
+}
+
+func withGroupContext(ctx context.Context, group *service.Group) context.Context {
 	if !service.IsGroupContextValid(group) {
-		return
+		return ctx
 	}
-	if existing, ok := c.Request.Context().Value(ctxkey.Group).(*service.Group); ok && existing != nil && existing.ID == group.ID && service.IsGroupContextValid(existing) {
-		return
+	if existing, ok := ctx.Value(ctxkey.Group).(*service.Group); ok && existing != nil && existing.ID == group.ID && service.IsGroupContextValid(existing) {
+		return ctx
 	}
-	ctx := context.WithValue(c.Request.Context(), ctxkey.Group, group)
-	c.Request = c.Request.WithContext(ctx)
+	return context.WithValue(ctx, ctxkey.Group, group)
 }
 
 func setAuthenticatedAPIKeyRequestContext(c *gin.Context, apiKey *service.APIKey) {
 	if c == nil || apiKey == nil {
 		return
 	}
+	c.Request = c.Request.WithContext(withAuthenticatedAPIKey(c.Request.Context(), apiKey))
+}
+
+func withAuthenticatedAPIKey(ctx context.Context, apiKey *service.APIKey) context.Context {
 	userID := apiKey.UserID
 	if apiKey.User != nil && apiKey.User.ID > 0 {
 		userID = apiKey.User.ID
 	}
-	ctx := c.Request.Context()
 	if userID > 0 {
 		ctx = context.WithValue(ctx, ctxkey.UserID, userID)
 	}
@@ -293,7 +299,20 @@ func setAuthenticatedAPIKeyRequestContext(c *gin.Context, apiKey *service.APIKey
 	if strings.HasPrefix(apiKey.Name, "共飞工作台-") && strings.HasSuffix(apiKey.Name, "-客户端") {
 		ctx = context.WithValue(ctx, ctxkey.WorkspaceLocalFallbackRoute, true)
 	}
-	c.Request = c.Request.WithContext(ctx)
+	return ctx
+}
+
+// RelayRequestContext 给主节点选号用的 ctx 装上本地鉴权中间件会放进请求 ctx 的值
+// （用户、Key、工作台回退标记、贡献房间限制、分组），调度与计价读到的与单机一致。
+func RelayRequestContext(ctx context.Context, adm RelayAPIKeyAdmission) context.Context {
+	ctx = withAuthenticatedAPIKey(ctx, adm.APIKey)
+	if adm.Billing.ContributionCreditOnly {
+		ctx = context.WithValue(ctx, ctxkey.ContributionCreditOnly, true)
+	}
+	if adm.Billing.OwnContributedAccountsOnly {
+		ctx = context.WithValue(ctx, ctxkey.OwnContributedAccountsOnly, true)
+	}
+	return withGroupContext(ctx, adm.APIKey.Group)
 }
 
 // apiKeyBalanceBelowAuthThreshold 保持鉴权层的历史语义：仅在余额耗尽（<=0）时拒绝。

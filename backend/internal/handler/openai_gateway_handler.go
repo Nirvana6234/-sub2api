@@ -598,11 +598,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	// 2. Re-check billing eligibility after wait
 	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
 		reqLog.Info("openai.billing_eligibility_check_failed", zap.Error(err))
-		status, code, message, retryAfter := billingErrorDetails(err)
-		if retryAfter > 0 {
-			c.Header("Retry-After", strconv.Itoa(retryAfter))
-		}
-		h.handleStreamingAwareError(c, status, code, message, streamStarted)
+		h.writeOpenAIGatewayRejection(c, OpenAIBillingRejection(err), streamStarted)
 		return
 	}
 
@@ -687,11 +683,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			h.writeOpenAIAdmissionFailure(c, outcome, streamStarted)
 			return
 		case OpenAISelectNone:
-			cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, reqModel, reqModel, requestPlatform)
-			if !cls.ModelNotFound {
-				markOpsRoutingCapacityLimited(c)
-			}
-			h.handleStreamingAwareError(c, cls.Status, cls.ErrType, cls.Message, streamStarted)
+			h.writeOpenAIGatewayRejection(c, OpenAINoAccountRejection(c.Request.Context(), h.gatewayService, apiKey, reqModel, requestPlatform, nil), streamStarted)
 			return
 		case OpenAISelectFailed:
 			err := outcome.Err
@@ -714,17 +706,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					c.Request = c.Request.WithContext(pricingCtx)
 					continue
 				}
-				if legacyCompact && errors.Is(err, service.ErrNoAvailableCompactAccounts) {
-					markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
-					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "compact_not_supported", "No available accounts support /responses/compact", streamStarted)
-					return
-				}
-				cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, reqModel, reqModel, requestPlatform)
-				cls = classifySelectionFailureError(err, cls)
-				if !cls.ModelNotFound {
-					markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
-				}
-				h.handleStreamingAwareError(c, cls.Status, cls.ErrType, cls.Message, streamStarted)
+				h.writeOpenAIGatewayRejection(c, OpenAIFirstSelectFailureRejection(c.Request.Context(), h.gatewayService, apiKey, reqModel, requestPlatform, legacyCompact, err), streamStarted)
 				return
 			}
 			if tryOpenAIAutoGroupFailover(c, h.apiKeyService, &apiKey, reqModel, failedGroupIDs, &subscription) {
@@ -2339,11 +2321,7 @@ func (h *OpenAIGatewayHandler) openAIAdmissionWaitHooks(c *gin.Context, reqStrea
 
 // writeOpenAIAdmissionFailure 写出准入失败（队列满、抢槽出错、没有等待计划）的响应，与 acquireOpenAIAccountSlot 一致。
 func (h *OpenAIGatewayHandler) writeOpenAIAdmissionFailure(c *gin.Context, outcome OpenAISelectOutcome, streamStarted bool) {
-	status, errType, code, message := OpenAIAdmissionFailureResponse(outcome)
-	if outcome.Kind == OpenAISelectNoWaitPlan {
-		markOpsRoutingCapacityLimited(c)
-	}
-	h.handleStreamingAwareErrorWithCode(c, status, errType, code, message, streamStarted, false)
+	h.writeOpenAIGatewayRejection(c, OpenAISelectOutcomeRejection(outcome), streamStarted)
 }
 
 // OpenAIAdmissionFailureResponse 返回准入失败的状态码、错误类型、错误码和文案（本地与主从分流共用）。
