@@ -39,19 +39,27 @@ func globalBlacklist(settings *service.SettingService, cfg *appconfig.Config, ch
 			}
 		}
 		matched, entry, err := settings.IsGloballyBlacklisted(c.Request.Context(), userID, clientIP)
-		if err != nil {
-			// A blacklist read failure must fail closed for security-sensitive access.
-			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
-				"error": gin.H{"code": "BLACKLIST_UNAVAILABLE", "message": "Access control is temporarily unavailable"},
-			})
-			return
-		}
-		if matched {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-				"error": gin.H{"code": "BLACKLISTED", "message": "Access denied by administrator policy", "kind": entry.Kind},
-			})
+		if abortIfGloballyBlacklisted(c, matched, entry, err) {
 			return
 		}
 		c.Next()
 	}
+}
+
+// abortIfGloballyBlacklisted 按黑名单查询结果写出拒绝响应；放行时返回 false。
+func abortIfGloballyBlacklisted(c *gin.Context, matched bool, entry service.GlobalBlacklistEntry, err error) bool {
+	if err != nil {
+		// A blacklist read failure must fail closed for security-sensitive access.
+		c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
+			"error": gin.H{"code": "BLACKLIST_UNAVAILABLE", "message": "Access control is temporarily unavailable"},
+		})
+		return true
+	}
+	if matched {
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+			"error": gin.H{"code": "BLACKLISTED", "message": "Access denied by administrator policy", "kind": entry.Kind},
+		})
+		return true
+	}
+	return false
 }

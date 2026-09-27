@@ -903,6 +903,26 @@ func (s *BillingCacheService) balanceBelowEligibilityThreshold(balance float64) 
 	return minimumReserve > 0 && balance < minimumReserve
 }
 
+type relayRequesterHeldKey struct{}
+
+// WithRelayRequesterHeldBalance 标记这次检查来自主从分流的选号：发起选号的从节点手里
+// 已经锁着这个用户 held 这么多没用掉的余额。它本来就是给这台节点用的，余额预检不应再把它当作
+// "已被别处锁走"扣掉，否则用户的钱全锁在这台节点上时，这台节点反而选不了号（设计 4.3）。
+func WithRelayRequesterHeldBalance(ctx context.Context, held float64) context.Context {
+	if held <= 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, relayRequesterHeldKey{}, held)
+}
+
+func relayRequesterHeldBalance(ctx context.Context) float64 {
+	if ctx == nil {
+		return 0
+	}
+	held, _ := ctx.Value(relayRequesterHeldKey{}).(float64)
+	return held
+}
+
 // RelayReservedBalanceReader 返回某个用户锁在从节点上的余额。由主从分流的额度服务实现：
 // 主节点只有一个进程，锁定、收回、入账都经过它，所以直接读内存，不查库、不查 Redis。
 type RelayReservedBalanceReader interface {
@@ -935,7 +955,8 @@ func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, userI
 		s.circuitBreaker.OnSuccess()
 	}
 	if h := s.relayReserved.Load(); h != nil {
-		balance = SpendableBalance(balance, h.r.RelayReservedBalance(userID))
+		reserved := h.r.RelayReservedBalance(userID) - relayRequesterHeldBalance(ctx)
+		balance = SpendableBalance(balance, reserved)
 	}
 
 	if s.balanceBelowEligibilityThreshold(balance) {

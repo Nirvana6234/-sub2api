@@ -121,11 +121,50 @@ func (s *OpenAIGatewayService) FindCyberSessionBlockedForRequest(ctx context.Con
 	if !enabled {
 		return ""
 	}
+	return s.findCyberSessionBlocked(ctx, CyberSessionExplicitBlockKey(apiKeyID, c, body), CyberSessionScopeKey(apiKeyID, clientIP, userAgent), func() ([]string, bool) {
+		transcript := deriveOpenAICyberTranscriptBlockKeys(apiKeyID, body)
+		return transcript.lookupKeys, transcript.lookupKeysTruncated
+	})
+}
+
+// CyberSessionLookup 是 cyber 会话屏蔽要查的键（都已哈希）。主从分流时从节点按请求算出、
+// 随选号发给主节点，主节点查屏蔽表（设计 3.4）。
+type CyberSessionLookup struct {
+	ExplicitKey         string
+	ScopeKey            string
+	TranscriptKeys      []string
+	TranscriptTruncated bool
+}
+
+// NewCyberSessionLookup 按请求算出要查的键，与 FindCyberSessionBlockedForRequest 用的一致。
+func NewCyberSessionLookup(apiKeyID int64, c *gin.Context, body []byte, clientIP, userAgent string) CyberSessionLookup {
+	transcript := deriveOpenAICyberTranscriptBlockKeys(apiKeyID, body)
+	return CyberSessionLookup{
+		ExplicitKey:         CyberSessionExplicitBlockKey(apiKeyID, c, body),
+		ScopeKey:            CyberSessionScopeKey(apiKeyID, clientIP, userAgent),
+		TranscriptKeys:      transcript.lookupKeys,
+		TranscriptTruncated: transcript.lookupKeysTruncated,
+	}
+}
+
+// FindCyberSessionBlockedByLookup 用从节点算好的键查屏蔽表，规则与 FindCyberSessionBlockedForRequest 相同。
+func (s *OpenAIGatewayService) FindCyberSessionBlockedByLookup(ctx context.Context, l CyberSessionLookup) string {
+	enabled, _ := s.CyberSessionBlockRuntime(ctx)
+	if !enabled {
+		return ""
+	}
+	return s.findCyberSessionBlocked(ctx, l.ExplicitKey, l.ScopeKey, func() ([]string, bool) {
+		return l.TranscriptKeys, l.TranscriptTruncated
+	})
+}
+
+// findCyberSessionBlocked：先查显式会话键，再在会话范围激活时查对话记录键。transcript 只在范围激活时才算。
+func (s *OpenAIGatewayService) findCyberSessionBlocked(ctx context.Context, explicitKey, scopeKey string, transcript func() ([]string, bool)) string {
 	store := s.cyberSessionBlockStore()
 	if store == nil {
 		return ""
 	}
-	if explicitKey := CyberSessionExplicitBlockKey(apiKeyID, c, body); explicitKey != "" {
+	if explicitKey != "" {
 		key, err := store.FindCyberSessionBlocked(ctx, []string{explicitKey})
 		if err != nil {
 			logger.LegacyPrintf("service.openai_gateway", "cyber explicit session read failed: err=%v", err)
@@ -135,7 +174,6 @@ func (s *OpenAIGatewayService) FindCyberSessionBlockedForRequest(ctx context.Con
 			return key
 		}
 	}
-	scopeKey := CyberSessionScopeKey(apiKeyID, clientIP, userAgent)
 	active, err := store.IsCyberSessionScopeActive(ctx, scopeKey)
 	if err != nil {
 		logger.LegacyPrintf("service.openai_gateway", "cyber session scope read failed: err=%v", err)
@@ -144,13 +182,12 @@ func (s *OpenAIGatewayService) FindCyberSessionBlockedForRequest(ctx context.Con
 	if !active {
 		return ""
 	}
-	transcript := deriveOpenAICyberTranscriptBlockKeys(apiKeyID, body)
-	if transcript.lookupKeysTruncated {
+	keys, truncated := transcript()
+	if truncated {
 		// Once the coarse scope is active, silently dropping old candidates would
 		// let a blocked client evade prefix matching by appending dummy items.
 		return cyberSessionTranscriptLookupOverflowBlockKey
 	}
-	keys := transcript.lookupKeys
 	if len(keys) == 0 {
 		return ""
 	}

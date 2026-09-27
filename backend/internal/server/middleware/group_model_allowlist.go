@@ -70,23 +70,31 @@ func GroupModelAllowlist() gin.HandlerFunc {
 			}
 		}
 
-		blocked := ""
-		for _, candidate := range models {
-			if !allowlist.Allows(candidate) {
-				blocked = candidate
-				break
-			}
-		}
+		blocked := firstModelNotAllowed(allowlist, models)
 		if blocked == "" {
 			c.Next()
 			return
 		}
-
-		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalModelConfiguration)
-		MarkIngressRejected(c, IngressRejectModelNotAllowed)
-		groupModelAllowlistErrorWriter(c)(c, http.StatusNotFound, fmt.Sprintf("Model %q is not available for this group", blocked))
-		c.Abort()
+		abortGroupModelNotAllowed(c, blocked)
 	}
+}
+
+// firstModelNotAllowed 返回第一个不在白名单里的模型（都允许时为空）。
+func firstModelNotAllowed(allowlist service.GroupModelAllowlist, models []string) string {
+	for _, candidate := range models {
+		if !allowlist.Allows(candidate) {
+			return candidate
+		}
+	}
+	return ""
+}
+
+// abortGroupModelNotAllowed 写出"模型不在分组白名单"的拒绝（按入口协议格式 404）并打运维标记。
+func abortGroupModelNotAllowed(c *gin.Context, blocked string) {
+	service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalModelConfiguration)
+	MarkIngressRejected(c, IngressRejectModelNotAllowed)
+	groupModelAllowlistErrorWriter(c)(c, http.StatusNotFound, fmt.Sprintf("Model %q is not available for this group", blocked))
+	c.Abort()
 }
 
 // isResponsesWebSocketRoute 判断当前请求是否命中 OpenAI Responses WebSocket

@@ -272,16 +272,39 @@ func (h *ConcurrencyHelper) AcquireUserSlotWithWait(c *gin.Context, userID int64
 }
 
 func (h *ConcurrencyHelper) acquireUserSlotWithWaitTimeout(c *gin.Context, userID int64, maxConcurrency int, timeout time.Duration, isStream bool, streamStarted *bool) (func(), error) {
-	ctx := c.Request.Context()
+	releaseFunc, err := h.acquireUserSlotQueued(c.Request.Context(), userID, maxConcurrency, func() (func(), error) {
+		// Need to wait - handle streaming ping if needed
+		return h.waitForSlotWithPingTimeout(c, "user", userID, maxConcurrency, timeout, isStream, streamStarted, false)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return h.withAPIKeySlotFromGin(c, releaseFunc), nil
+}
 
+// AcquireUserSlotWithWaitNoGin 抢用户并发槽，抢不到按等待队列排队，与网关处理函数的规则一致
+// （主从分流主节点选号用：没有 gin，排队期间不发 ping，由从节点给客户端保活）。
+// apiKeyID 大于 0 时同时记 Key 的并发。返回的释放函数不绑定 ctx。
+func (h *ConcurrencyHelper) AcquireUserSlotWithWaitNoGin(ctx context.Context, userID, apiKeyID int64, maxConcurrency int) (func(), error) {
+	releaseFunc, err := h.acquireUserSlotQueued(ctx, userID, maxConcurrency, func() (func(), error) {
+		return h.waitForSlot(ctx, "user", userID, maxConcurrency, maxConcurrencyWait, false, nil)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return h.withAPIKeySlot(ctx, apiKeyID, releaseFunc), nil
+}
+
+// acquireUserSlotQueued：先立即抢一次；抢不到就进等待队列（队列满返回 WaitQueueFullError），
+// 用 wait 排队等槽。
+func (h *ConcurrencyHelper) acquireUserSlotQueued(ctx context.Context, userID int64, maxConcurrency int, wait func() (func(), error)) (func(), error) {
 	// Try to acquire immediately
 	releaseFunc, acquired, err := h.TryAcquireUserSlot(ctx, userID, maxConcurrency)
 	if err != nil {
 		return nil, err
 	}
-
 	if acquired {
-		return h.withAPIKeySlotFromGin(c, releaseFunc), nil
+		return releaseFunc, nil
 	}
 
 	queueLimit := service.CalculateMaxWait(maxConcurrency) - maxConcurrency
@@ -296,13 +319,7 @@ func (h *ConcurrencyHelper) acquireUserSlotWithWaitTimeout(c *gin.Context, userI
 		return nil, &WaitQueueFullError{SlotType: "user"}
 	}
 	defer h.DecrementWaitCount(ctx, userID)
-
-	// Need to wait - handle streaming ping if needed
-	releaseFunc, err = h.waitForSlotWithPingTimeout(c, "user", userID, maxConcurrency, timeout, isStream, streamStarted, false)
-	if err != nil {
-		return nil, err
-	}
-	return h.withAPIKeySlotFromGin(c, releaseFunc), nil
+	return wait()
 }
 
 func (h *ConcurrencyHelper) withAPIKeySlotFromGin(c *gin.Context, releaseFunc func()) func() {

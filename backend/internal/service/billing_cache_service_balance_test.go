@@ -150,6 +150,11 @@ func TestCheckBillingEligibility_SubtractsBalanceLockedOnRelayNodes(t *testing.T
 	svc.SetRelayReservedBalanceReader(nil)
 	svc.SetRelayReservedBalanceReader(relayReservedStub{1: 5})
 	require.ErrorIs(t, svc.CheckBillingEligibility(ctx, &User{ID: 1}, nil, nil, nil, ""), ErrInsufficientBalance)
+	// 选号来自持有这笔锁定额的从节点：它手里的部分不算"被别处锁走"。
+	require.NoError(t, svc.CheckBillingEligibility(WithRelayRequesterHeldBalance(ctx, 5), &User{ID: 1}, nil, nil, nil, ""),
+		"all of the balance is locked on the requesting node itself")
+	require.ErrorIs(t, svc.CheckBillingEligibility(WithRelayRequesterHeldBalance(ctx, 0.005), &User{ID: 1}, nil, nil, nil, ""), ErrInsufficientBalance,
+		"only the requesting node's own share is added back")
 	svc.SetRelayReservedBalanceReader(nil)
 	require.NoError(t, svc.CheckBillingEligibility(ctx, &User{ID: 1}, nil, nil, nil, ""), "relay off: balance only")
 }

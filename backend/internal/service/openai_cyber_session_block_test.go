@@ -265,11 +265,11 @@ func TestCyberSessionBlock_RoundTrip(t *testing.T) {
 
 	c, body := newCyberBlockTestCtx(map[string]string{"session_id": "sess-roundtrip"}, `{}`)
 	explicitKey := CyberSessionExplicitBlockKey(1, c, body)
-	require.Empty(t, svc.FindCyberSessionBlockedForRequest(ctx, 1, c, body, "203.0.113.1", "client/1.0"))
+	require.Empty(t, findCyberBoth(t, svc, ctx, 1, c, body, "203.0.113.1", "client/1.0"))
 
 	svc.MarkCyberSessionBlocked(ctx, "", []string{explicitKey, testKey})
 
-	require.Equal(t, explicitKey, svc.FindCyberSessionBlockedForRequest(ctx, 1, c, body, "203.0.113.1", "client/1.0"))
+	require.Equal(t, explicitKey, findCyberBoth(t, svc, ctx, 1, c, body, "203.0.113.1", "client/1.0"))
 }
 
 func TestFindCyberSessionBlockedForRequestUsesScopeForTranscript(t *testing.T) {
@@ -289,10 +289,10 @@ func TestFindCyberSessionBlockedForRequestUsesScopeForTranscript(t *testing.T) {
 	blockKey := CyberSessionTranscriptBlockKeys(9, hitBody)[1]
 
 	// Without an active source scope, transcript candidates are never blocks.
-	require.Empty(t, svc.FindCyberSessionBlockedForRequest(ctx, 9, nextCtx, nextBody, clientIP, userAgent))
+	require.Empty(t, findCyberBoth(t, svc, ctx, 9, nextCtx, nextBody, clientIP, userAgent))
 	scopeKey := CyberSessionScopeKey(9, clientIP, userAgent)
 	svc.MarkCyberSessionBlocked(ctx, scopeKey, []string{blockKey})
-	require.Equal(t, blockKey, svc.FindCyberSessionBlockedForRequest(ctx, 9, nextCtx, nextBody, clientIP, "Codex CLI 1.2.4"))
+	require.Equal(t, blockKey, findCyberBoth(t, svc, ctx, 9, nextCtx, nextBody, clientIP, "Codex CLI 1.2.4"))
 }
 
 func TestFindCyberSessionBlockedForRequestFailsClosedOnScopedTranscriptOverflow(t *testing.T) {
@@ -314,12 +314,12 @@ func TestFindCyberSessionBlockedForRequestFailsClosedOnScopedTranscriptOverflow(
 	body, err := json.Marshal(map[string]any{"messages": messages})
 	require.NoError(t, err)
 	c, _ := newCyberBlockTestCtx(nil, string(body))
-	require.Empty(t, svc.FindCyberSessionBlockedForRequest(ctx, apiKeyID, c, body, clientIP, userAgent),
+	require.Empty(t, findCyberBoth(t, svc, ctx, apiKeyID, c, body, clientIP, userAgent),
 		"overflow alone must not bypass the scope gate")
 	combo.store.scopes = map[string]bool{CyberSessionScopeKey(apiKeyID, clientIP, userAgent): true}
 
 	require.Equal(t, cyberSessionTranscriptLookupOverflowBlockKey,
-		svc.FindCyberSessionBlockedForRequest(ctx, apiKeyID, c, body, clientIP, userAgent))
+		findCyberBoth(t, svc, ctx, apiKeyID, c, body, clientIP, userAgent))
 	require.Zero(t, combo.store.findCalls, "overflow must not issue an unbounded Redis lookup")
 }
 
@@ -329,4 +329,13 @@ func TestCyberSessionScopeKeyNormalizesUserAgentVersion(t *testing.T) {
 	require.Equal(t, base, CyberSessionScopeKey(7, "203.0.113.10", "Codex CLI 1.2.4"))
 	require.NotEqual(t, base, CyberSessionScopeKey(8, "203.0.113.10", "Codex CLI 1.2.3"))
 	require.NotEqual(t, base, CyberSessionScopeKey(7, "203.0.113.11", "Codex CLI 1.2.3"))
+}
+
+// findCyberBoth 同时按请求查、按从节点算好的键查（主从分流，设计 3.4），两者必须一致。
+func findCyberBoth(t *testing.T, svc *OpenAIGatewayService, ctx context.Context, apiKeyID int64, c *gin.Context, body []byte, clientIP, userAgent string) string {
+	t.Helper()
+	direct := svc.FindCyberSessionBlockedForRequest(ctx, apiKeyID, c, body, clientIP, userAgent)
+	byLookup := svc.FindCyberSessionBlockedByLookup(ctx, NewCyberSessionLookup(apiKeyID, c, body, clientIP, userAgent))
+	require.Equal(t, direct, byLookup, "relay lookup must match the local lookup")
+	return direct
 }

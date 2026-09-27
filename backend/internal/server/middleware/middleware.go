@@ -152,9 +152,14 @@ func RequireGroupAssignment(settingService *service.SettingService, writeError G
 			c.Next()
 			return
 		}
-		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonAPIKeyGroupUnassigned)
-		MarkIngressRejected(c, IngressRejectGroupUnassigned)
-		writeError(c, http.StatusForbidden, "API Key is not assigned to any group and cannot be used. Please contact the administrator to assign it to a group.")
-		c.Abort()
+		abortGroupUnassigned(c, writeError)
 	}
+}
+
+// abortGroupUnassigned 写出"Key 未分配分组"的拒绝并打运维标记。
+func abortGroupUnassigned(c *gin.Context, writeError GatewayErrorWriter) {
+	service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonAPIKeyGroupUnassigned)
+	MarkIngressRejected(c, IngressRejectGroupUnassigned)
+	writeError(c, http.StatusForbidden, "API Key is not assigned to any group and cannot be used. Please contact the administrator to assign it to a group.")
+	c.Abort()
 }
