@@ -3146,6 +3146,234 @@ func (x *AckQuotaRecallResponse) GetDroppedLeaseIds() []int64 {
 	return nil
 }
 
+type AdmitRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Credential:
+	//
+	//	*AdmitRequest_ApiKey
+	Credential    isAdmitRequest_Credential `protobuf_oneof:"credential"`
+	ClientIp      string                    `protobuf:"bytes,2,opt,name=client_ip,json=clientIp,proto3" json:"client_ip,omitempty"`
+	Method        string                    `protobuf:"bytes,3,opt,name=method,proto3" json:"method,omitempty"`
+	Path          string                    `protobuf:"bytes,4,opt,name=path,proto3" json:"path,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AdmitRequest) Reset() {
+	*x = AdmitRequest{}
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[41]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AdmitRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AdmitRequest) ProtoMessage() {}
+
+func (x *AdmitRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[41]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AdmitRequest.ProtoReflect.Descriptor instead.
+func (*AdmitRequest) Descriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{41}
+}
+
+func (x *AdmitRequest) GetCredential() isAdmitRequest_Credential {
+	if x != nil {
+		return x.Credential
+	}
+	return nil
+}
+
+func (x *AdmitRequest) GetApiKey() string {
+	if x != nil {
+		if x, ok := x.Credential.(*AdmitRequest_ApiKey); ok {
+			return x.ApiKey
+		}
+	}
+	return ""
+}
+
+func (x *AdmitRequest) GetClientIp() string {
+	if x != nil {
+		return x.ClientIp
+	}
+	return ""
+}
+
+func (x *AdmitRequest) GetMethod() string {
+	if x != nil {
+		return x.Method
+	}
+	return ""
+}
+
+func (x *AdmitRequest) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+type isAdmitRequest_Credential interface {
+	isAdmitRequest_Credential()
+}
+
+type AdmitRequest_ApiKey struct {
+	ApiKey string `protobuf:"bytes,1,opt,name=api_key,json=apiKey,proto3,oneof"`
+}
+
+func (*AdmitRequest_ApiKey) isAdmitRequest_Credential() {}
+
+type AdmitResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Result:
+	//
+	//	*AdmitResponse_Admission
+	//	*AdmitResponse_Rejection
+	Result        isAdmitResponse_Result `protobuf_oneof:"result"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AdmitResponse) Reset() {
+	*x = AdmitResponse{}
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[42]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AdmitResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AdmitResponse) ProtoMessage() {}
+
+func (x *AdmitResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[42]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AdmitResponse.ProtoReflect.Descriptor instead.
+func (*AdmitResponse) Descriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{42}
+}
+
+func (x *AdmitResponse) GetResult() isAdmitResponse_Result {
+	if x != nil {
+		return x.Result
+	}
+	return nil
+}
+
+func (x *AdmitResponse) GetAdmission() *Admission {
+	if x != nil {
+		if x, ok := x.Result.(*AdmitResponse_Admission); ok {
+			return x.Admission
+		}
+	}
+	return nil
+}
+
+func (x *AdmitResponse) GetRejection() *SelectRejection {
+	if x != nil {
+		if x, ok := x.Result.(*AdmitResponse_Rejection); ok {
+			return x.Rejection
+		}
+	}
+	return nil
+}
+
+type isAdmitResponse_Result interface {
+	isAdmitResponse_Result()
+}
+
+type AdmitResponse_Admission struct {
+	Admission *Admission `protobuf:"bytes,1,opt,name=admission,proto3,oneof"`
+}
+
+type AdmitResponse_Rejection struct {
+	// REJECTION_FORMAT_RAW（中间件写出的响应）或 REJECTION_FORMAT_UNSUPPORTED（交给主节点转发）。
+	Rejection *SelectRejection `protobuf:"bytes,2,opt,name=rejection,proto3,oneof"`
+}
+
+func (*AdmitResponse_Admission) isAdmitResponse_Result() {}
+
+func (*AdmitResponse_Rejection) isAdmitResponse_Result() {}
+
+// 准入通过：Key 快照（internal/relay/keycodec 按白名单编码的 JSON；用户只带转发要用的字段，
+// 不含邮箱、密码哈希、余额等）。
+type Admission struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	ApiKey []byte                 `protobuf:"bytes,1,opt,name=api_key,json=apiKey,proto3" json:"api_key,omitempty"`
+	// 订阅（订阅计费分组时），同样按白名单编码；没有时为空。
+	Subscription  []byte `protobuf:"bytes,2,opt,name=subscription,proto3" json:"subscription,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Admission) Reset() {
+	*x = Admission{}
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[43]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Admission) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Admission) ProtoMessage() {}
+
+func (x *Admission) ProtoReflect() protoreflect.Message {
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[43]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Admission.ProtoReflect.Descriptor instead.
+func (*Admission) Descriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{43}
+}
+
+func (x *Admission) GetApiKey() []byte {
+	if x != nil {
+		return x.ApiKey
+	}
+	return nil
+}
+
+func (x *Admission) GetSubscription() []byte {
+	if x != nil {
+		return x.Subscription
+	}
+	return nil
+}
+
 type SelectRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// 从节点为这次客户端请求起的 ID。同一请求的多次选号（换号）共用：用户并发槽、利润否决次数、
@@ -3189,7 +3417,7 @@ type SelectRequest struct {
 
 func (x *SelectRequest) Reset() {
 	*x = SelectRequest{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[41]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3201,7 +3429,7 @@ func (x *SelectRequest) String() string {
 func (*SelectRequest) ProtoMessage() {}
 
 func (x *SelectRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[41]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3214,7 +3442,7 @@ func (x *SelectRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SelectRequest.ProtoReflect.Descriptor instead.
 func (*SelectRequest) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{41}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *SelectRequest) GetRequestId() string {
@@ -3376,7 +3604,7 @@ type CyberSessionLookup struct {
 
 func (x *CyberSessionLookup) Reset() {
 	*x = CyberSessionLookup{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[42]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3388,7 +3616,7 @@ func (x *CyberSessionLookup) String() string {
 func (*CyberSessionLookup) ProtoMessage() {}
 
 func (x *CyberSessionLookup) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[42]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3401,7 +3629,7 @@ func (x *CyberSessionLookup) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CyberSessionLookup.ProtoReflect.Descriptor instead.
 func (*CyberSessionLookup) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{42}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *CyberSessionLookup) GetExplicitKey() string {
@@ -3442,7 +3670,7 @@ type HeldQuota struct {
 
 func (x *HeldQuota) Reset() {
 	*x = HeldQuota{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[43]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3454,7 +3682,7 @@ func (x *HeldQuota) String() string {
 func (*HeldQuota) ProtoMessage() {}
 
 func (x *HeldQuota) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[43]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3467,7 +3695,7 @@ func (x *HeldQuota) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeldQuota.ProtoReflect.Descriptor instead.
 func (*HeldQuota) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{43}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *HeldQuota) GetScope() *QuotaScope {
@@ -3497,7 +3725,7 @@ type SelectResponse struct {
 
 func (x *SelectResponse) Reset() {
 	*x = SelectResponse{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[44]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3509,7 +3737,7 @@ func (x *SelectResponse) String() string {
 func (*SelectResponse) ProtoMessage() {}
 
 func (x *SelectResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[44]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3522,7 +3750,7 @@ func (x *SelectResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SelectResponse.ProtoReflect.Descriptor instead.
 func (*SelectResponse) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{44}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *SelectResponse) GetResult() isSelectResponse_Result {
@@ -3594,7 +3822,7 @@ type SelectRejection struct {
 
 func (x *SelectRejection) Reset() {
 	*x = SelectRejection{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[45]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3606,7 +3834,7 @@ func (x *SelectRejection) String() string {
 func (*SelectRejection) ProtoMessage() {}
 
 func (x *SelectRejection) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[45]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3619,7 +3847,7 @@ func (x *SelectRejection) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SelectRejection.ProtoReflect.Descriptor instead.
 func (*SelectRejection) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{45}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *SelectRejection) GetStatus() int32 {
@@ -3749,7 +3977,7 @@ type Selection struct {
 
 func (x *Selection) Reset() {
 	*x = Selection{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[46]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3761,7 +3989,7 @@ func (x *Selection) String() string {
 func (*Selection) ProtoMessage() {}
 
 func (x *Selection) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[46]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3774,7 +4002,7 @@ func (x *Selection) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Selection.ProtoReflect.Descriptor instead.
 func (*Selection) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{46}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *Selection) GetSelectionId() string {
@@ -3919,7 +4147,7 @@ type FetchCredentialsRequest struct {
 
 func (x *FetchCredentialsRequest) Reset() {
 	*x = FetchCredentialsRequest{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[47]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3931,7 +4159,7 @@ func (x *FetchCredentialsRequest) String() string {
 func (*FetchCredentialsRequest) ProtoMessage() {}
 
 func (x *FetchCredentialsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[47]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3944,7 +4172,7 @@ func (x *FetchCredentialsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FetchCredentialsRequest.ProtoReflect.Descriptor instead.
 func (*FetchCredentialsRequest) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{47}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *FetchCredentialsRequest) GetSelectionId() string {
@@ -3964,7 +4192,7 @@ type FetchCredentialsResponse struct {
 
 func (x *FetchCredentialsResponse) Reset() {
 	*x = FetchCredentialsResponse{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[48]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3976,7 +4204,7 @@ func (x *FetchCredentialsResponse) String() string {
 func (*FetchCredentialsResponse) ProtoMessage() {}
 
 func (x *FetchCredentialsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[48]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3989,7 +4217,7 @@ func (x *FetchCredentialsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FetchCredentialsResponse.ProtoReflect.Descriptor instead.
 func (*FetchCredentialsResponse) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{48}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *FetchCredentialsResponse) GetAccount() *AccountSnapshot {
@@ -4011,7 +4239,7 @@ type RefillQuotaRequest struct {
 
 func (x *RefillQuotaRequest) Reset() {
 	*x = RefillQuotaRequest{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[49]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4023,7 +4251,7 @@ func (x *RefillQuotaRequest) String() string {
 func (*RefillQuotaRequest) ProtoMessage() {}
 
 func (x *RefillQuotaRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[49]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4036,7 +4264,7 @@ func (x *RefillQuotaRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RefillQuotaRequest.ProtoReflect.Descriptor instead.
 func (*RefillQuotaRequest) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{49}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *RefillQuotaRequest) GetSelectionId() string {
@@ -4069,7 +4297,7 @@ type RefillQuotaResponse struct {
 
 func (x *RefillQuotaResponse) Reset() {
 	*x = RefillQuotaResponse{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[50]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4081,7 +4309,7 @@ func (x *RefillQuotaResponse) String() string {
 func (*RefillQuotaResponse) ProtoMessage() {}
 
 func (x *RefillQuotaResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[50]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4094,7 +4322,7 @@ func (x *RefillQuotaResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RefillQuotaResponse.ProtoReflect.Descriptor instead.
 func (*RefillQuotaResponse) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{50}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{53}
 }
 
 func (x *RefillQuotaResponse) GetGrants() []*QuotaGrant {
@@ -4114,7 +4342,7 @@ type HeaderValues struct {
 
 func (x *HeaderValues) Reset() {
 	*x = HeaderValues{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[51]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4126,7 +4354,7 @@ func (x *HeaderValues) String() string {
 func (*HeaderValues) ProtoMessage() {}
 
 func (x *HeaderValues) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[51]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4139,7 +4367,7 @@ func (x *HeaderValues) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeaderValues.ProtoReflect.Descriptor instead.
 func (*HeaderValues) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{51}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{54}
 }
 
 func (x *HeaderValues) GetName() string {
@@ -4179,7 +4407,7 @@ type UpstreamErrorRequest struct {
 
 func (x *UpstreamErrorRequest) Reset() {
 	*x = UpstreamErrorRequest{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[52]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[55]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4191,7 +4419,7 @@ func (x *UpstreamErrorRequest) String() string {
 func (*UpstreamErrorRequest) ProtoMessage() {}
 
 func (x *UpstreamErrorRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[52]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[55]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4204,7 +4432,7 @@ func (x *UpstreamErrorRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpstreamErrorRequest.ProtoReflect.Descriptor instead.
 func (*UpstreamErrorRequest) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{52}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{55}
 }
 
 func (x *UpstreamErrorRequest) GetKind() UpstreamErrorKind {
@@ -4290,7 +4518,7 @@ type UpstreamErrorResponse struct {
 
 func (x *UpstreamErrorResponse) Reset() {
 	*x = UpstreamErrorResponse{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[53]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[56]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4302,7 +4530,7 @@ func (x *UpstreamErrorResponse) String() string {
 func (*UpstreamErrorResponse) ProtoMessage() {}
 
 func (x *UpstreamErrorResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[53]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[56]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4315,7 +4543,7 @@ func (x *UpstreamErrorResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpstreamErrorResponse.ProtoReflect.Descriptor instead.
 func (*UpstreamErrorResponse) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{53}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{56}
 }
 
 func (x *UpstreamErrorResponse) GetShouldDisable() bool {
@@ -4374,7 +4602,7 @@ type UsageRecord struct {
 
 func (x *UsageRecord) Reset() {
 	*x = UsageRecord{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[54]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[57]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4386,7 +4614,7 @@ func (x *UsageRecord) String() string {
 func (*UsageRecord) ProtoMessage() {}
 
 func (x *UsageRecord) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[54]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[57]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4399,7 +4627,7 @@ func (x *UsageRecord) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UsageRecord.ProtoReflect.Descriptor instead.
 func (*UsageRecord) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{54}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{57}
 }
 
 func (x *UsageRecord) GetSeq() uint64 {
@@ -4512,7 +4740,7 @@ type UsageBatch struct {
 
 func (x *UsageBatch) Reset() {
 	*x = UsageBatch{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[55]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[58]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4524,7 +4752,7 @@ func (x *UsageBatch) String() string {
 func (*UsageBatch) ProtoMessage() {}
 
 func (x *UsageBatch) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[55]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[58]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4537,7 +4765,7 @@ func (x *UsageBatch) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UsageBatch.ProtoReflect.Descriptor instead.
 func (*UsageBatch) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{55}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{58}
 }
 
 func (x *UsageBatch) GetBatchSeq() uint64 {
@@ -4563,7 +4791,7 @@ type UsageBatchAck struct {
 
 func (x *UsageBatchAck) Reset() {
 	*x = UsageBatchAck{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[56]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[59]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4575,7 +4803,7 @@ func (x *UsageBatchAck) String() string {
 func (*UsageBatchAck) ProtoMessage() {}
 
 func (x *UsageBatchAck) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[56]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[59]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4588,7 +4816,7 @@ func (x *UsageBatchAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UsageBatchAck.ProtoReflect.Descriptor instead.
 func (*UsageBatchAck) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{56}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{59}
 }
 
 func (x *UsageBatchAck) GetResults() []*UsageRecordResult {
@@ -4611,7 +4839,7 @@ type UsageRecordResult struct {
 
 func (x *UsageRecordResult) Reset() {
 	*x = UsageRecordResult{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[57]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[60]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4623,7 +4851,7 @@ func (x *UsageRecordResult) String() string {
 func (*UsageRecordResult) ProtoMessage() {}
 
 func (x *UsageRecordResult) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[57]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[60]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4636,7 +4864,7 @@ func (x *UsageRecordResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UsageRecordResult.ProtoReflect.Descriptor instead.
 func (*UsageRecordResult) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{57}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{60}
 }
 
 func (x *UsageRecordResult) GetSeq() uint64 {
@@ -4679,7 +4907,7 @@ type LeaseConsumption struct {
 
 func (x *LeaseConsumption) Reset() {
 	*x = LeaseConsumption{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[58]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[61]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4691,7 +4919,7 @@ func (x *LeaseConsumption) String() string {
 func (*LeaseConsumption) ProtoMessage() {}
 
 func (x *LeaseConsumption) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[58]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[61]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4704,7 +4932,7 @@ func (x *LeaseConsumption) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LeaseConsumption.ProtoReflect.Descriptor instead.
 func (*LeaseConsumption) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{58}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{61}
 }
 
 func (x *LeaseConsumption) GetLeaseId() int64 {
@@ -4749,7 +4977,7 @@ type AccountEvent struct {
 
 func (x *AccountEvent) Reset() {
 	*x = AccountEvent{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[59]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[62]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4761,7 +4989,7 @@ func (x *AccountEvent) String() string {
 func (*AccountEvent) ProtoMessage() {}
 
 func (x *AccountEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[59]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[62]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4774,7 +5002,7 @@ func (x *AccountEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AccountEvent.ProtoReflect.Descriptor instead.
 func (*AccountEvent) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{59}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{62}
 }
 
 func (x *AccountEvent) GetAccountId() int64 {
@@ -4898,7 +5126,7 @@ type HealthFailureFacts struct {
 
 func (x *HealthFailureFacts) Reset() {
 	*x = HealthFailureFacts{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[60]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[63]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4910,7 +5138,7 @@ func (x *HealthFailureFacts) String() string {
 func (*HealthFailureFacts) ProtoMessage() {}
 
 func (x *HealthFailureFacts) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[60]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[63]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4923,7 +5151,7 @@ func (x *HealthFailureFacts) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthFailureFacts.ProtoReflect.Descriptor instead.
 func (*HealthFailureFacts) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{60}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{63}
 }
 
 func (x *HealthFailureFacts) GetEligible() bool {
@@ -4962,7 +5190,7 @@ type ScheduleResultEvent struct {
 
 func (x *ScheduleResultEvent) Reset() {
 	*x = ScheduleResultEvent{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[61]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[64]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4974,7 +5202,7 @@ func (x *ScheduleResultEvent) String() string {
 func (*ScheduleResultEvent) ProtoMessage() {}
 
 func (x *ScheduleResultEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[61]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[64]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4987,7 +5215,7 @@ func (x *ScheduleResultEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ScheduleResultEvent.ProtoReflect.Descriptor instead.
 func (*ScheduleResultEvent) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{61}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{64}
 }
 
 func (x *ScheduleResultEvent) GetModel() string {
@@ -5048,7 +5276,7 @@ type HealthFailureEvent struct {
 
 func (x *HealthFailureEvent) Reset() {
 	*x = HealthFailureEvent{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[62]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[65]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5060,7 +5288,7 @@ func (x *HealthFailureEvent) String() string {
 func (*HealthFailureEvent) ProtoMessage() {}
 
 func (x *HealthFailureEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[62]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[65]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5073,7 +5301,7 @@ func (x *HealthFailureEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthFailureEvent.ProtoReflect.Descriptor instead.
 func (*HealthFailureEvent) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{62}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{65}
 }
 
 func (x *HealthFailureEvent) GetFailure() *HealthFailureFacts {
@@ -5091,7 +5319,7 @@ type AccountSwitchEvent struct {
 
 func (x *AccountSwitchEvent) Reset() {
 	*x = AccountSwitchEvent{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[63]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[66]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5103,7 +5331,7 @@ func (x *AccountSwitchEvent) String() string {
 func (*AccountSwitchEvent) ProtoMessage() {}
 
 func (x *AccountSwitchEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[63]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[66]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5116,7 +5344,7 @@ func (x *AccountSwitchEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AccountSwitchEvent.ProtoReflect.Descriptor instead.
 func (*AccountSwitchEvent) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{63}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{66}
 }
 
 type CodexUsageEvent struct {
@@ -5129,7 +5357,7 @@ type CodexUsageEvent struct {
 
 func (x *CodexUsageEvent) Reset() {
 	*x = CodexUsageEvent{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[64]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[67]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5141,7 +5369,7 @@ func (x *CodexUsageEvent) String() string {
 func (*CodexUsageEvent) ProtoMessage() {}
 
 func (x *CodexUsageEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[64]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[67]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5154,7 +5382,7 @@ func (x *CodexUsageEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CodexUsageEvent.ProtoReflect.Descriptor instead.
 func (*CodexUsageEvent) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{64}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{67}
 }
 
 func (x *CodexUsageEvent) GetSnapshotJson() []byte {
@@ -5174,7 +5402,7 @@ type TransportErrorEvent struct {
 
 func (x *TransportErrorEvent) Reset() {
 	*x = TransportErrorEvent{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[65]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[68]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5186,7 +5414,7 @@ func (x *TransportErrorEvent) String() string {
 func (*TransportErrorEvent) ProtoMessage() {}
 
 func (x *TransportErrorEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[65]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[68]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5199,7 +5427,7 @@ func (x *TransportErrorEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TransportErrorEvent.ProtoReflect.Descriptor instead.
 func (*TransportErrorEvent) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{65}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{68}
 }
 
 func (x *TransportErrorEvent) GetMessage() string {
@@ -5217,7 +5445,7 @@ type OllamaActivityEvent struct {
 
 func (x *OllamaActivityEvent) Reset() {
 	*x = OllamaActivityEvent{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[66]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[69]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5229,7 +5457,7 @@ func (x *OllamaActivityEvent) String() string {
 func (*OllamaActivityEvent) ProtoMessage() {}
 
 func (x *OllamaActivityEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[66]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[69]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5242,7 +5470,7 @@ func (x *OllamaActivityEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OllamaActivityEvent.ProtoReflect.Descriptor instead.
 func (*OllamaActivityEvent) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{66}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{69}
 }
 
 type SelectionRelease struct {
@@ -5261,7 +5489,7 @@ type SelectionRelease struct {
 
 func (x *SelectionRelease) Reset() {
 	*x = SelectionRelease{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[67]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[70]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5273,7 +5501,7 @@ func (x *SelectionRelease) String() string {
 func (*SelectionRelease) ProtoMessage() {}
 
 func (x *SelectionRelease) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[67]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[70]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5286,7 +5514,7 @@ func (x *SelectionRelease) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SelectionRelease.ProtoReflect.Descriptor instead.
 func (*SelectionRelease) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{67}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{70}
 }
 
 func (x *SelectionRelease) GetSelectionId() string {
@@ -5357,7 +5585,7 @@ type AccountSnapshot struct {
 
 func (x *AccountSnapshot) Reset() {
 	*x = AccountSnapshot{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[68]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[71]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5369,7 +5597,7 @@ func (x *AccountSnapshot) String() string {
 func (*AccountSnapshot) ProtoMessage() {}
 
 func (x *AccountSnapshot) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[68]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[71]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5382,7 +5610,7 @@ func (x *AccountSnapshot) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AccountSnapshot.ProtoReflect.Descriptor instead.
 func (*AccountSnapshot) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{68}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{71}
 }
 
 func (x *AccountSnapshot) GetId() int64 {
@@ -5556,7 +5784,7 @@ type ProxySnapshot struct {
 
 func (x *ProxySnapshot) Reset() {
 	*x = ProxySnapshot{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[69]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[72]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5568,7 +5796,7 @@ func (x *ProxySnapshot) String() string {
 func (*ProxySnapshot) ProtoMessage() {}
 
 func (x *ProxySnapshot) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[69]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[72]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5581,7 +5809,7 @@ func (x *ProxySnapshot) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProxySnapshot.ProtoReflect.Descriptor instead.
 func (*ProxySnapshot) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{69}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{72}
 }
 
 func (x *ProxySnapshot) GetId() int64 {
@@ -5840,7 +6068,21 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\trecall_id\x18\x01 \x01(\tR\brecallId\x127\n" +
 	"\areturns\x18\x02 \x03(\v2\x1d.sub2api.relay.v1.LeaseReturnR\areturns\"D\n" +
 	"\x16AckQuotaRecallResponse\x12*\n" +
-	"\x11dropped_lease_ids\x18\x01 \x03(\x03R\x0fdroppedLeaseIds\"\xcc\x05\n" +
+	"\x11dropped_lease_ids\x18\x01 \x03(\x03R\x0fdroppedLeaseIds\"\x80\x01\n" +
+	"\fAdmitRequest\x12\x19\n" +
+	"\aapi_key\x18\x01 \x01(\tH\x00R\x06apiKey\x12\x1b\n" +
+	"\tclient_ip\x18\x02 \x01(\tR\bclientIp\x12\x16\n" +
+	"\x06method\x18\x03 \x01(\tR\x06method\x12\x12\n" +
+	"\x04path\x18\x04 \x01(\tR\x04pathB\f\n" +
+	"\n" +
+	"credential\"\x99\x01\n" +
+	"\rAdmitResponse\x12;\n" +
+	"\tadmission\x18\x01 \x01(\v2\x1b.sub2api.relay.v1.AdmissionH\x00R\tadmission\x12A\n" +
+	"\trejection\x18\x02 \x01(\v2!.sub2api.relay.v1.SelectRejectionH\x00R\trejectionB\b\n" +
+	"\x06result\"H\n" +
+	"\tAdmission\x12\x17\n" +
+	"\aapi_key\x18\x01 \x01(\fR\x06apiKey\x12\"\n" +
+	"\fsubscription\x18\x02 \x01(\fR\fsubscription\"\xcc\x05\n" +
 	"\rSelectRequest\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x18\n" +
@@ -6109,14 +6351,15 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\n" +
 	"NodeStatus\x12#.sub2api.relay.v1.NodeStatusRequest\x1a$.sub2api.relay.v1.NodeStatusResponse\x12`\n" +
 	"\x11ObtainCertificate\x12$.sub2api.relay.v1.CertificateRequest\x1a%.sub2api.relay.v1.CertificateResponse\x12_\n" +
-	"\x10RenewCertificate\x12$.sub2api.relay.v1.CertificateRequest\x1a%.sub2api.relay.v1.CertificateResponse2\xa1\a\n" +
+	"\x10RenewCertificate\x12$.sub2api.relay.v1.CertificateRequest\x1a%.sub2api.relay.v1.CertificateResponse2\xeb\a\n" +
 	"\fRelayControl\x12E\n" +
 	"\x04Ping\x12\x1d.sub2api.relay.v1.PingRequest\x1a\x1e.sub2api.relay.v1.PingResponse\x12U\n" +
 	"\vFetchConfig\x12$.sub2api.relay.v1.FetchConfigRequest\x1a .sub2api.relay.v1.ConfigSnapshot\x12]\n" +
 	"\fReleaseQuota\x12%.sub2api.relay.v1.ReleaseQuotaRequest\x1a&.sub2api.relay.v1.ReleaseQuotaResponse\x12Z\n" +
 	"\vRenewLeases\x12$.sub2api.relay.v1.RenewLeasesRequest\x1a%.sub2api.relay.v1.RenewLeasesResponse\x12]\n" +
 	"\fReportLeases\x12%.sub2api.relay.v1.ReportLeasesRequest\x1a&.sub2api.relay.v1.ReportLeasesResponse\x12c\n" +
-	"\x0eAckQuotaRecall\x12'.sub2api.relay.v1.AckQuotaRecallRequest\x1a(.sub2api.relay.v1.AckQuotaRecallResponse\x12K\n" +
+	"\x0eAckQuotaRecall\x12'.sub2api.relay.v1.AckQuotaRecallRequest\x1a(.sub2api.relay.v1.AckQuotaRecallResponse\x12H\n" +
+	"\x05Admit\x12\x1e.sub2api.relay.v1.AdmitRequest\x1a\x1f.sub2api.relay.v1.AdmitResponse\x12K\n" +
 	"\x06Select\x12\x1f.sub2api.relay.v1.SelectRequest\x1a .sub2api.relay.v1.SelectResponse\x12i\n" +
 	"\x10FetchCredentials\x12).sub2api.relay.v1.FetchCredentialsRequest\x1a*.sub2api.relay.v1.FetchCredentialsResponse\x12Z\n" +
 	"\vRefillQuota\x12$.sub2api.relay.v1.RefillQuotaRequest\x1a%.sub2api.relay.v1.RefillQuotaResponse\x12`\n" +
@@ -6139,7 +6382,7 @@ func file_sub2api_relay_v1_relay_proto_rawDescGZIP() []byte {
 }
 
 var file_sub2api_relay_v1_relay_proto_enumTypes = make([]protoimpl.EnumInfo, 8)
-var file_sub2api_relay_v1_relay_proto_msgTypes = make([]protoimpl.MessageInfo, 74)
+var file_sub2api_relay_v1_relay_proto_msgTypes = make([]protoimpl.MessageInfo, 77)
 var file_sub2api_relay_v1_relay_proto_goTypes = []any{
 	(PeerClass)(0),                   // 0: sub2api.relay.v1.PeerClass
 	(NodeStatus)(0),                  // 1: sub2api.relay.v1.NodeStatus
@@ -6190,53 +6433,56 @@ var file_sub2api_relay_v1_relay_proto_goTypes = []any{
 	(*QuotaRecall)(nil),              // 46: sub2api.relay.v1.QuotaRecall
 	(*AckQuotaRecallRequest)(nil),    // 47: sub2api.relay.v1.AckQuotaRecallRequest
 	(*AckQuotaRecallResponse)(nil),   // 48: sub2api.relay.v1.AckQuotaRecallResponse
-	(*SelectRequest)(nil),            // 49: sub2api.relay.v1.SelectRequest
-	(*CyberSessionLookup)(nil),       // 50: sub2api.relay.v1.CyberSessionLookup
-	(*HeldQuota)(nil),                // 51: sub2api.relay.v1.HeldQuota
-	(*SelectResponse)(nil),           // 52: sub2api.relay.v1.SelectResponse
-	(*SelectRejection)(nil),          // 53: sub2api.relay.v1.SelectRejection
-	(*Selection)(nil),                // 54: sub2api.relay.v1.Selection
-	(*FetchCredentialsRequest)(nil),  // 55: sub2api.relay.v1.FetchCredentialsRequest
-	(*FetchCredentialsResponse)(nil), // 56: sub2api.relay.v1.FetchCredentialsResponse
-	(*RefillQuotaRequest)(nil),       // 57: sub2api.relay.v1.RefillQuotaRequest
-	(*RefillQuotaResponse)(nil),      // 58: sub2api.relay.v1.RefillQuotaResponse
-	(*HeaderValues)(nil),             // 59: sub2api.relay.v1.HeaderValues
-	(*UpstreamErrorRequest)(nil),     // 60: sub2api.relay.v1.UpstreamErrorRequest
-	(*UpstreamErrorResponse)(nil),    // 61: sub2api.relay.v1.UpstreamErrorResponse
-	(*UsageRecord)(nil),              // 62: sub2api.relay.v1.UsageRecord
-	(*UsageBatch)(nil),               // 63: sub2api.relay.v1.UsageBatch
-	(*UsageBatchAck)(nil),            // 64: sub2api.relay.v1.UsageBatchAck
-	(*UsageRecordResult)(nil),        // 65: sub2api.relay.v1.UsageRecordResult
-	(*LeaseConsumption)(nil),         // 66: sub2api.relay.v1.LeaseConsumption
-	(*AccountEvent)(nil),             // 67: sub2api.relay.v1.AccountEvent
-	(*HealthFailureFacts)(nil),       // 68: sub2api.relay.v1.HealthFailureFacts
-	(*ScheduleResultEvent)(nil),      // 69: sub2api.relay.v1.ScheduleResultEvent
-	(*HealthFailureEvent)(nil),       // 70: sub2api.relay.v1.HealthFailureEvent
-	(*AccountSwitchEvent)(nil),       // 71: sub2api.relay.v1.AccountSwitchEvent
-	(*CodexUsageEvent)(nil),          // 72: sub2api.relay.v1.CodexUsageEvent
-	(*TransportErrorEvent)(nil),      // 73: sub2api.relay.v1.TransportErrorEvent
-	(*OllamaActivityEvent)(nil),      // 74: sub2api.relay.v1.OllamaActivityEvent
-	(*SelectionRelease)(nil),         // 75: sub2api.relay.v1.SelectionRelease
-	(*AccountSnapshot)(nil),          // 76: sub2api.relay.v1.AccountSnapshot
-	(*ProxySnapshot)(nil),            // 77: sub2api.relay.v1.ProxySnapshot
-	nil,                              // 78: sub2api.relay.v1.RegisterRequest.SystemInfoEntry
-	nil,                              // 79: sub2api.relay.v1.ConfigSnapshot.SettingsEntry
-	nil,                              // 80: sub2api.relay.v1.ConfigSnapshot.SectionsEntry
-	nil,                              // 81: sub2api.relay.v1.SelectRejection.HeadersEntry
+	(*AdmitRequest)(nil),             // 49: sub2api.relay.v1.AdmitRequest
+	(*AdmitResponse)(nil),            // 50: sub2api.relay.v1.AdmitResponse
+	(*Admission)(nil),                // 51: sub2api.relay.v1.Admission
+	(*SelectRequest)(nil),            // 52: sub2api.relay.v1.SelectRequest
+	(*CyberSessionLookup)(nil),       // 53: sub2api.relay.v1.CyberSessionLookup
+	(*HeldQuota)(nil),                // 54: sub2api.relay.v1.HeldQuota
+	(*SelectResponse)(nil),           // 55: sub2api.relay.v1.SelectResponse
+	(*SelectRejection)(nil),          // 56: sub2api.relay.v1.SelectRejection
+	(*Selection)(nil),                // 57: sub2api.relay.v1.Selection
+	(*FetchCredentialsRequest)(nil),  // 58: sub2api.relay.v1.FetchCredentialsRequest
+	(*FetchCredentialsResponse)(nil), // 59: sub2api.relay.v1.FetchCredentialsResponse
+	(*RefillQuotaRequest)(nil),       // 60: sub2api.relay.v1.RefillQuotaRequest
+	(*RefillQuotaResponse)(nil),      // 61: sub2api.relay.v1.RefillQuotaResponse
+	(*HeaderValues)(nil),             // 62: sub2api.relay.v1.HeaderValues
+	(*UpstreamErrorRequest)(nil),     // 63: sub2api.relay.v1.UpstreamErrorRequest
+	(*UpstreamErrorResponse)(nil),    // 64: sub2api.relay.v1.UpstreamErrorResponse
+	(*UsageRecord)(nil),              // 65: sub2api.relay.v1.UsageRecord
+	(*UsageBatch)(nil),               // 66: sub2api.relay.v1.UsageBatch
+	(*UsageBatchAck)(nil),            // 67: sub2api.relay.v1.UsageBatchAck
+	(*UsageRecordResult)(nil),        // 68: sub2api.relay.v1.UsageRecordResult
+	(*LeaseConsumption)(nil),         // 69: sub2api.relay.v1.LeaseConsumption
+	(*AccountEvent)(nil),             // 70: sub2api.relay.v1.AccountEvent
+	(*HealthFailureFacts)(nil),       // 71: sub2api.relay.v1.HealthFailureFacts
+	(*ScheduleResultEvent)(nil),      // 72: sub2api.relay.v1.ScheduleResultEvent
+	(*HealthFailureEvent)(nil),       // 73: sub2api.relay.v1.HealthFailureEvent
+	(*AccountSwitchEvent)(nil),       // 74: sub2api.relay.v1.AccountSwitchEvent
+	(*CodexUsageEvent)(nil),          // 75: sub2api.relay.v1.CodexUsageEvent
+	(*TransportErrorEvent)(nil),      // 76: sub2api.relay.v1.TransportErrorEvent
+	(*OllamaActivityEvent)(nil),      // 77: sub2api.relay.v1.OllamaActivityEvent
+	(*SelectionRelease)(nil),         // 78: sub2api.relay.v1.SelectionRelease
+	(*AccountSnapshot)(nil),          // 79: sub2api.relay.v1.AccountSnapshot
+	(*ProxySnapshot)(nil),            // 80: sub2api.relay.v1.ProxySnapshot
+	nil,                              // 81: sub2api.relay.v1.RegisterRequest.SystemInfoEntry
+	nil,                              // 82: sub2api.relay.v1.ConfigSnapshot.SettingsEntry
+	nil,                              // 83: sub2api.relay.v1.ConfigSnapshot.SectionsEntry
+	nil,                              // 84: sub2api.relay.v1.SelectRejection.HeadersEntry
 }
 var file_sub2api_relay_v1_relay_proto_depIdxs = []int32{
 	8,  // 0: sub2api.relay.v1.HelloRequest.version:type_name -> sub2api.relay.v1.ProtocolVersion
 	8,  // 1: sub2api.relay.v1.HelloResponse.min_supported:type_name -> sub2api.relay.v1.ProtocolVersion
 	8,  // 2: sub2api.relay.v1.HelloResponse.current:type_name -> sub2api.relay.v1.ProtocolVersion
 	0,  // 3: sub2api.relay.v1.HelloResponse.peer_class:type_name -> sub2api.relay.v1.PeerClass
-	78, // 4: sub2api.relay.v1.RegisterRequest.system_info:type_name -> sub2api.relay.v1.RegisterRequest.SystemInfoEntry
+	81, // 4: sub2api.relay.v1.RegisterRequest.system_info:type_name -> sub2api.relay.v1.RegisterRequest.SystemInfoEntry
 	1,  // 5: sub2api.relay.v1.RegisterResponse.status:type_name -> sub2api.relay.v1.NodeStatus
 	1,  // 6: sub2api.relay.v1.NodeStatusResponse.status:type_name -> sub2api.relay.v1.NodeStatus
 	25, // 7: sub2api.relay.v1.NodeEnvelope.ping:type_name -> sub2api.relay.v1.EventPing
-	75, // 8: sub2api.relay.v1.NodeEnvelope.selection_release:type_name -> sub2api.relay.v1.SelectionRelease
-	67, // 9: sub2api.relay.v1.NodeEnvelope.account_event:type_name -> sub2api.relay.v1.AccountEvent
-	79, // 10: sub2api.relay.v1.ConfigSnapshot.settings:type_name -> sub2api.relay.v1.ConfigSnapshot.SettingsEntry
-	80, // 11: sub2api.relay.v1.ConfigSnapshot.sections:type_name -> sub2api.relay.v1.ConfigSnapshot.SectionsEntry
+	78, // 8: sub2api.relay.v1.NodeEnvelope.selection_release:type_name -> sub2api.relay.v1.SelectionRelease
+	70, // 9: sub2api.relay.v1.NodeEnvelope.account_event:type_name -> sub2api.relay.v1.AccountEvent
+	82, // 10: sub2api.relay.v1.ConfigSnapshot.settings:type_name -> sub2api.relay.v1.ConfigSnapshot.SettingsEntry
+	83, // 11: sub2api.relay.v1.ConfigSnapshot.sections:type_name -> sub2api.relay.v1.ConfigSnapshot.SectionsEntry
 	27, // 12: sub2api.relay.v1.ConfigSnapshot.ticket_public_keys:type_name -> sub2api.relay.v1.SigningPublicKey
 	25, // 13: sub2api.relay.v1.MasterEnvelope.ping:type_name -> sub2api.relay.v1.EventPing
 	22, // 14: sub2api.relay.v1.MasterEnvelope.config_changed:type_name -> sub2api.relay.v1.ConfigChanged
@@ -6254,77 +6500,81 @@ var file_sub2api_relay_v1_relay_proto_depIdxs = []int32{
 	43, // 26: sub2api.relay.v1.ReportLeasesRequest.leases:type_name -> sub2api.relay.v1.HeldLease
 	34, // 27: sub2api.relay.v1.QuotaRecall.scope:type_name -> sub2api.relay.v1.QuotaScope
 	36, // 28: sub2api.relay.v1.AckQuotaRecallRequest.returns:type_name -> sub2api.relay.v1.LeaseReturn
-	3,  // 29: sub2api.relay.v1.SelectRequest.endpoint:type_name -> sub2api.relay.v1.SelectEndpoint
-	50, // 30: sub2api.relay.v1.SelectRequest.cyber:type_name -> sub2api.relay.v1.CyberSessionLookup
-	51, // 31: sub2api.relay.v1.SelectRequest.held_quota:type_name -> sub2api.relay.v1.HeldQuota
-	34, // 32: sub2api.relay.v1.HeldQuota.scope:type_name -> sub2api.relay.v1.QuotaScope
-	54, // 33: sub2api.relay.v1.SelectResponse.selection:type_name -> sub2api.relay.v1.Selection
-	53, // 34: sub2api.relay.v1.SelectResponse.rejection:type_name -> sub2api.relay.v1.SelectRejection
-	4,  // 35: sub2api.relay.v1.SelectRejection.format:type_name -> sub2api.relay.v1.RejectionFormat
-	81, // 36: sub2api.relay.v1.SelectRejection.headers:type_name -> sub2api.relay.v1.SelectRejection.HeadersEntry
-	2,  // 37: sub2api.relay.v1.Selection.billing_mode:type_name -> sub2api.relay.v1.BillingMode
-	76, // 38: sub2api.relay.v1.Selection.account:type_name -> sub2api.relay.v1.AccountSnapshot
-	34, // 39: sub2api.relay.v1.Selection.quota_scopes:type_name -> sub2api.relay.v1.QuotaScope
-	35, // 40: sub2api.relay.v1.Selection.grants:type_name -> sub2api.relay.v1.QuotaGrant
-	76, // 41: sub2api.relay.v1.FetchCredentialsResponse.account:type_name -> sub2api.relay.v1.AccountSnapshot
-	51, // 42: sub2api.relay.v1.RefillQuotaRequest.held_quota:type_name -> sub2api.relay.v1.HeldQuota
-	35, // 43: sub2api.relay.v1.RefillQuotaResponse.grants:type_name -> sub2api.relay.v1.QuotaGrant
-	5,  // 44: sub2api.relay.v1.UpstreamErrorRequest.kind:type_name -> sub2api.relay.v1.UpstreamErrorKind
-	59, // 45: sub2api.relay.v1.UpstreamErrorRequest.headers:type_name -> sub2api.relay.v1.HeaderValues
-	6,  // 46: sub2api.relay.v1.UsageRecord.kind:type_name -> sub2api.relay.v1.UsageRecordKind
-	62, // 47: sub2api.relay.v1.UsageBatch.records:type_name -> sub2api.relay.v1.UsageRecord
-	65, // 48: sub2api.relay.v1.UsageBatchAck.results:type_name -> sub2api.relay.v1.UsageRecordResult
-	7,  // 49: sub2api.relay.v1.UsageRecordResult.status:type_name -> sub2api.relay.v1.UsageRecordStatus
-	66, // 50: sub2api.relay.v1.UsageRecordResult.consumed:type_name -> sub2api.relay.v1.LeaseConsumption
-	34, // 51: sub2api.relay.v1.LeaseConsumption.scope:type_name -> sub2api.relay.v1.QuotaScope
-	69, // 52: sub2api.relay.v1.AccountEvent.schedule_result:type_name -> sub2api.relay.v1.ScheduleResultEvent
-	70, // 53: sub2api.relay.v1.AccountEvent.health_failure:type_name -> sub2api.relay.v1.HealthFailureEvent
-	71, // 54: sub2api.relay.v1.AccountEvent.account_switch:type_name -> sub2api.relay.v1.AccountSwitchEvent
-	72, // 55: sub2api.relay.v1.AccountEvent.codex_usage:type_name -> sub2api.relay.v1.CodexUsageEvent
-	73, // 56: sub2api.relay.v1.AccountEvent.transport_error:type_name -> sub2api.relay.v1.TransportErrorEvent
-	74, // 57: sub2api.relay.v1.AccountEvent.ollama_activity:type_name -> sub2api.relay.v1.OllamaActivityEvent
-	68, // 58: sub2api.relay.v1.ScheduleResultEvent.failure:type_name -> sub2api.relay.v1.HealthFailureFacts
-	68, // 59: sub2api.relay.v1.HealthFailureEvent.failure:type_name -> sub2api.relay.v1.HealthFailureFacts
-	77, // 60: sub2api.relay.v1.AccountSnapshot.proxy:type_name -> sub2api.relay.v1.ProxySnapshot
-	9,  // 61: sub2api.relay.v1.RelayEnrollment.Hello:input_type -> sub2api.relay.v1.HelloRequest
-	11, // 62: sub2api.relay.v1.RelayEnrollment.Register:input_type -> sub2api.relay.v1.RegisterRequest
-	13, // 63: sub2api.relay.v1.RelayEnrollment.NodeStatus:input_type -> sub2api.relay.v1.NodeStatusRequest
-	15, // 64: sub2api.relay.v1.RelayEnrollment.ObtainCertificate:input_type -> sub2api.relay.v1.CertificateRequest
-	15, // 65: sub2api.relay.v1.RelayEnrollment.RenewCertificate:input_type -> sub2api.relay.v1.CertificateRequest
-	17, // 66: sub2api.relay.v1.RelayControl.Ping:input_type -> sub2api.relay.v1.PingRequest
-	20, // 67: sub2api.relay.v1.RelayControl.FetchConfig:input_type -> sub2api.relay.v1.FetchConfigRequest
-	37, // 68: sub2api.relay.v1.RelayControl.ReleaseQuota:input_type -> sub2api.relay.v1.ReleaseQuotaRequest
-	40, // 69: sub2api.relay.v1.RelayControl.RenewLeases:input_type -> sub2api.relay.v1.RenewLeasesRequest
-	44, // 70: sub2api.relay.v1.RelayControl.ReportLeases:input_type -> sub2api.relay.v1.ReportLeasesRequest
-	47, // 71: sub2api.relay.v1.RelayControl.AckQuotaRecall:input_type -> sub2api.relay.v1.AckQuotaRecallRequest
-	49, // 72: sub2api.relay.v1.RelayControl.Select:input_type -> sub2api.relay.v1.SelectRequest
-	55, // 73: sub2api.relay.v1.RelayControl.FetchCredentials:input_type -> sub2api.relay.v1.FetchCredentialsRequest
-	57, // 74: sub2api.relay.v1.RelayControl.RefillQuota:input_type -> sub2api.relay.v1.RefillQuotaRequest
-	60, // 75: sub2api.relay.v1.RelayControl.UpstreamError:input_type -> sub2api.relay.v1.UpstreamErrorRequest
-	63, // 76: sub2api.relay.v1.RelayBilling.SubmitUsage:input_type -> sub2api.relay.v1.UsageBatch
-	19, // 77: sub2api.relay.v1.RelayEvents.Stream:input_type -> sub2api.relay.v1.NodeEnvelope
-	10, // 78: sub2api.relay.v1.RelayEnrollment.Hello:output_type -> sub2api.relay.v1.HelloResponse
-	12, // 79: sub2api.relay.v1.RelayEnrollment.Register:output_type -> sub2api.relay.v1.RegisterResponse
-	14, // 80: sub2api.relay.v1.RelayEnrollment.NodeStatus:output_type -> sub2api.relay.v1.NodeStatusResponse
-	16, // 81: sub2api.relay.v1.RelayEnrollment.ObtainCertificate:output_type -> sub2api.relay.v1.CertificateResponse
-	16, // 82: sub2api.relay.v1.RelayEnrollment.RenewCertificate:output_type -> sub2api.relay.v1.CertificateResponse
-	18, // 83: sub2api.relay.v1.RelayControl.Ping:output_type -> sub2api.relay.v1.PingResponse
-	21, // 84: sub2api.relay.v1.RelayControl.FetchConfig:output_type -> sub2api.relay.v1.ConfigSnapshot
-	38, // 85: sub2api.relay.v1.RelayControl.ReleaseQuota:output_type -> sub2api.relay.v1.ReleaseQuotaResponse
-	42, // 86: sub2api.relay.v1.RelayControl.RenewLeases:output_type -> sub2api.relay.v1.RenewLeasesResponse
-	45, // 87: sub2api.relay.v1.RelayControl.ReportLeases:output_type -> sub2api.relay.v1.ReportLeasesResponse
-	48, // 88: sub2api.relay.v1.RelayControl.AckQuotaRecall:output_type -> sub2api.relay.v1.AckQuotaRecallResponse
-	52, // 89: sub2api.relay.v1.RelayControl.Select:output_type -> sub2api.relay.v1.SelectResponse
-	56, // 90: sub2api.relay.v1.RelayControl.FetchCredentials:output_type -> sub2api.relay.v1.FetchCredentialsResponse
-	58, // 91: sub2api.relay.v1.RelayControl.RefillQuota:output_type -> sub2api.relay.v1.RefillQuotaResponse
-	61, // 92: sub2api.relay.v1.RelayControl.UpstreamError:output_type -> sub2api.relay.v1.UpstreamErrorResponse
-	64, // 93: sub2api.relay.v1.RelayBilling.SubmitUsage:output_type -> sub2api.relay.v1.UsageBatchAck
-	24, // 94: sub2api.relay.v1.RelayEvents.Stream:output_type -> sub2api.relay.v1.MasterEnvelope
-	78, // [78:95] is the sub-list for method output_type
-	61, // [61:78] is the sub-list for method input_type
-	61, // [61:61] is the sub-list for extension type_name
-	61, // [61:61] is the sub-list for extension extendee
-	0,  // [0:61] is the sub-list for field type_name
+	51, // 29: sub2api.relay.v1.AdmitResponse.admission:type_name -> sub2api.relay.v1.Admission
+	56, // 30: sub2api.relay.v1.AdmitResponse.rejection:type_name -> sub2api.relay.v1.SelectRejection
+	3,  // 31: sub2api.relay.v1.SelectRequest.endpoint:type_name -> sub2api.relay.v1.SelectEndpoint
+	53, // 32: sub2api.relay.v1.SelectRequest.cyber:type_name -> sub2api.relay.v1.CyberSessionLookup
+	54, // 33: sub2api.relay.v1.SelectRequest.held_quota:type_name -> sub2api.relay.v1.HeldQuota
+	34, // 34: sub2api.relay.v1.HeldQuota.scope:type_name -> sub2api.relay.v1.QuotaScope
+	57, // 35: sub2api.relay.v1.SelectResponse.selection:type_name -> sub2api.relay.v1.Selection
+	56, // 36: sub2api.relay.v1.SelectResponse.rejection:type_name -> sub2api.relay.v1.SelectRejection
+	4,  // 37: sub2api.relay.v1.SelectRejection.format:type_name -> sub2api.relay.v1.RejectionFormat
+	84, // 38: sub2api.relay.v1.SelectRejection.headers:type_name -> sub2api.relay.v1.SelectRejection.HeadersEntry
+	2,  // 39: sub2api.relay.v1.Selection.billing_mode:type_name -> sub2api.relay.v1.BillingMode
+	79, // 40: sub2api.relay.v1.Selection.account:type_name -> sub2api.relay.v1.AccountSnapshot
+	34, // 41: sub2api.relay.v1.Selection.quota_scopes:type_name -> sub2api.relay.v1.QuotaScope
+	35, // 42: sub2api.relay.v1.Selection.grants:type_name -> sub2api.relay.v1.QuotaGrant
+	79, // 43: sub2api.relay.v1.FetchCredentialsResponse.account:type_name -> sub2api.relay.v1.AccountSnapshot
+	54, // 44: sub2api.relay.v1.RefillQuotaRequest.held_quota:type_name -> sub2api.relay.v1.HeldQuota
+	35, // 45: sub2api.relay.v1.RefillQuotaResponse.grants:type_name -> sub2api.relay.v1.QuotaGrant
+	5,  // 46: sub2api.relay.v1.UpstreamErrorRequest.kind:type_name -> sub2api.relay.v1.UpstreamErrorKind
+	62, // 47: sub2api.relay.v1.UpstreamErrorRequest.headers:type_name -> sub2api.relay.v1.HeaderValues
+	6,  // 48: sub2api.relay.v1.UsageRecord.kind:type_name -> sub2api.relay.v1.UsageRecordKind
+	65, // 49: sub2api.relay.v1.UsageBatch.records:type_name -> sub2api.relay.v1.UsageRecord
+	68, // 50: sub2api.relay.v1.UsageBatchAck.results:type_name -> sub2api.relay.v1.UsageRecordResult
+	7,  // 51: sub2api.relay.v1.UsageRecordResult.status:type_name -> sub2api.relay.v1.UsageRecordStatus
+	69, // 52: sub2api.relay.v1.UsageRecordResult.consumed:type_name -> sub2api.relay.v1.LeaseConsumption
+	34, // 53: sub2api.relay.v1.LeaseConsumption.scope:type_name -> sub2api.relay.v1.QuotaScope
+	72, // 54: sub2api.relay.v1.AccountEvent.schedule_result:type_name -> sub2api.relay.v1.ScheduleResultEvent
+	73, // 55: sub2api.relay.v1.AccountEvent.health_failure:type_name -> sub2api.relay.v1.HealthFailureEvent
+	74, // 56: sub2api.relay.v1.AccountEvent.account_switch:type_name -> sub2api.relay.v1.AccountSwitchEvent
+	75, // 57: sub2api.relay.v1.AccountEvent.codex_usage:type_name -> sub2api.relay.v1.CodexUsageEvent
+	76, // 58: sub2api.relay.v1.AccountEvent.transport_error:type_name -> sub2api.relay.v1.TransportErrorEvent
+	77, // 59: sub2api.relay.v1.AccountEvent.ollama_activity:type_name -> sub2api.relay.v1.OllamaActivityEvent
+	71, // 60: sub2api.relay.v1.ScheduleResultEvent.failure:type_name -> sub2api.relay.v1.HealthFailureFacts
+	71, // 61: sub2api.relay.v1.HealthFailureEvent.failure:type_name -> sub2api.relay.v1.HealthFailureFacts
+	80, // 62: sub2api.relay.v1.AccountSnapshot.proxy:type_name -> sub2api.relay.v1.ProxySnapshot
+	9,  // 63: sub2api.relay.v1.RelayEnrollment.Hello:input_type -> sub2api.relay.v1.HelloRequest
+	11, // 64: sub2api.relay.v1.RelayEnrollment.Register:input_type -> sub2api.relay.v1.RegisterRequest
+	13, // 65: sub2api.relay.v1.RelayEnrollment.NodeStatus:input_type -> sub2api.relay.v1.NodeStatusRequest
+	15, // 66: sub2api.relay.v1.RelayEnrollment.ObtainCertificate:input_type -> sub2api.relay.v1.CertificateRequest
+	15, // 67: sub2api.relay.v1.RelayEnrollment.RenewCertificate:input_type -> sub2api.relay.v1.CertificateRequest
+	17, // 68: sub2api.relay.v1.RelayControl.Ping:input_type -> sub2api.relay.v1.PingRequest
+	20, // 69: sub2api.relay.v1.RelayControl.FetchConfig:input_type -> sub2api.relay.v1.FetchConfigRequest
+	37, // 70: sub2api.relay.v1.RelayControl.ReleaseQuota:input_type -> sub2api.relay.v1.ReleaseQuotaRequest
+	40, // 71: sub2api.relay.v1.RelayControl.RenewLeases:input_type -> sub2api.relay.v1.RenewLeasesRequest
+	44, // 72: sub2api.relay.v1.RelayControl.ReportLeases:input_type -> sub2api.relay.v1.ReportLeasesRequest
+	47, // 73: sub2api.relay.v1.RelayControl.AckQuotaRecall:input_type -> sub2api.relay.v1.AckQuotaRecallRequest
+	49, // 74: sub2api.relay.v1.RelayControl.Admit:input_type -> sub2api.relay.v1.AdmitRequest
+	52, // 75: sub2api.relay.v1.RelayControl.Select:input_type -> sub2api.relay.v1.SelectRequest
+	58, // 76: sub2api.relay.v1.RelayControl.FetchCredentials:input_type -> sub2api.relay.v1.FetchCredentialsRequest
+	60, // 77: sub2api.relay.v1.RelayControl.RefillQuota:input_type -> sub2api.relay.v1.RefillQuotaRequest
+	63, // 78: sub2api.relay.v1.RelayControl.UpstreamError:input_type -> sub2api.relay.v1.UpstreamErrorRequest
+	66, // 79: sub2api.relay.v1.RelayBilling.SubmitUsage:input_type -> sub2api.relay.v1.UsageBatch
+	19, // 80: sub2api.relay.v1.RelayEvents.Stream:input_type -> sub2api.relay.v1.NodeEnvelope
+	10, // 81: sub2api.relay.v1.RelayEnrollment.Hello:output_type -> sub2api.relay.v1.HelloResponse
+	12, // 82: sub2api.relay.v1.RelayEnrollment.Register:output_type -> sub2api.relay.v1.RegisterResponse
+	14, // 83: sub2api.relay.v1.RelayEnrollment.NodeStatus:output_type -> sub2api.relay.v1.NodeStatusResponse
+	16, // 84: sub2api.relay.v1.RelayEnrollment.ObtainCertificate:output_type -> sub2api.relay.v1.CertificateResponse
+	16, // 85: sub2api.relay.v1.RelayEnrollment.RenewCertificate:output_type -> sub2api.relay.v1.CertificateResponse
+	18, // 86: sub2api.relay.v1.RelayControl.Ping:output_type -> sub2api.relay.v1.PingResponse
+	21, // 87: sub2api.relay.v1.RelayControl.FetchConfig:output_type -> sub2api.relay.v1.ConfigSnapshot
+	38, // 88: sub2api.relay.v1.RelayControl.ReleaseQuota:output_type -> sub2api.relay.v1.ReleaseQuotaResponse
+	42, // 89: sub2api.relay.v1.RelayControl.RenewLeases:output_type -> sub2api.relay.v1.RenewLeasesResponse
+	45, // 90: sub2api.relay.v1.RelayControl.ReportLeases:output_type -> sub2api.relay.v1.ReportLeasesResponse
+	48, // 91: sub2api.relay.v1.RelayControl.AckQuotaRecall:output_type -> sub2api.relay.v1.AckQuotaRecallResponse
+	50, // 92: sub2api.relay.v1.RelayControl.Admit:output_type -> sub2api.relay.v1.AdmitResponse
+	55, // 93: sub2api.relay.v1.RelayControl.Select:output_type -> sub2api.relay.v1.SelectResponse
+	59, // 94: sub2api.relay.v1.RelayControl.FetchCredentials:output_type -> sub2api.relay.v1.FetchCredentialsResponse
+	61, // 95: sub2api.relay.v1.RelayControl.RefillQuota:output_type -> sub2api.relay.v1.RefillQuotaResponse
+	64, // 96: sub2api.relay.v1.RelayControl.UpstreamError:output_type -> sub2api.relay.v1.UpstreamErrorResponse
+	67, // 97: sub2api.relay.v1.RelayBilling.SubmitUsage:output_type -> sub2api.relay.v1.UsageBatchAck
+	24, // 98: sub2api.relay.v1.RelayEvents.Stream:output_type -> sub2api.relay.v1.MasterEnvelope
+	81, // [81:99] is the sub-list for method output_type
+	63, // [63:81] is the sub-list for method input_type
+	63, // [63:63] is the sub-list for extension type_name
+	63, // [63:63] is the sub-list for extension extendee
+	0,  // [0:63] is the sub-list for field type_name
 }
 
 func init() { file_sub2api_relay_v1_relay_proto_init() }
@@ -6345,13 +6595,20 @@ func file_sub2api_relay_v1_relay_proto_init() {
 		(*MasterEnvelope_QuotaRecall)(nil),
 	}
 	file_sub2api_relay_v1_relay_proto_msgTypes[41].OneofWrappers = []any{
-		(*SelectRequest_ApiKey)(nil),
+		(*AdmitRequest_ApiKey)(nil),
+	}
+	file_sub2api_relay_v1_relay_proto_msgTypes[42].OneofWrappers = []any{
+		(*AdmitResponse_Admission)(nil),
+		(*AdmitResponse_Rejection)(nil),
 	}
 	file_sub2api_relay_v1_relay_proto_msgTypes[44].OneofWrappers = []any{
+		(*SelectRequest_ApiKey)(nil),
+	}
+	file_sub2api_relay_v1_relay_proto_msgTypes[47].OneofWrappers = []any{
 		(*SelectResponse_Selection)(nil),
 		(*SelectResponse_Rejection)(nil),
 	}
-	file_sub2api_relay_v1_relay_proto_msgTypes[59].OneofWrappers = []any{
+	file_sub2api_relay_v1_relay_proto_msgTypes[62].OneofWrappers = []any{
 		(*AccountEvent_ScheduleResult)(nil),
 		(*AccountEvent_HealthFailure)(nil),
 		(*AccountEvent_AccountSwitch)(nil),
@@ -6365,7 +6622,7 @@ func file_sub2api_relay_v1_relay_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sub2api_relay_v1_relay_proto_rawDesc), len(file_sub2api_relay_v1_relay_proto_rawDesc)),
 			NumEnums:      8,
-			NumMessages:   74,
+			NumMessages:   77,
 			NumExtensions: 0,
 			NumServices:   4,
 		},

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler"
+	"github.com/Wei-Shaw/sub2api/internal/relay/keycodec"
 	"github.com/Wei-Shaw/sub2api/internal/relay/master"
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
 	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
@@ -45,30 +46,11 @@ func (s *selector) Select(ctx context.Context, nodeID int64, req *relayv1.Select
 // 会被安全审计处理的请求留在主节点转发（审核接入主从通信之前，设计 3.4）。
 func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.SelectRequest) (*relayv1.SelectResponse, error) {
 	chat := req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_CHAT
-	cfg := s.deps.Config
-	adm, raw, err := middleware.EvaluateRelayAPIKeyAdmission(ctx, middleware.RelayAPIKeyAdmissionInput{
-		APIKeyAuthInput: middleware.APIKeyAuthInput{
-			APIKeys: s.deps.APIKeys, Subscriptions: s.deps.Subscriptions, Config: cfg,
-			ClientIP: req.GetClientIp(), Method: req.GetMethod(), Path: req.GetPath(),
-		},
-		RawKey:   req.GetApiKey(),
-		Settings: s.deps.Settings,
-		Models:   modelCandidates(req),
-	})
-	if errors.Is(err, middleware.ErrRelayAdmissionUnsupported) {
-		return unsupported(), nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	if raw != nil {
-		return rawRejection(raw), nil
+	adm, rej, err := s.admitAPIKey(ctx, req.GetApiKey(), req.GetClientIp(), req.GetMethod(), req.GetPath(), modelCandidates(req))
+	if err != nil || rej != nil {
+		return rej, err
 	}
 	apiKey := adm.APIKey
-	if apiKey.Group == nil || apiKey.Group.Platform != service.PlatformOpenAI {
-		// 未分组 Key 走 Anthropic 网关，其他 OpenAI 兼容平台（Grok 等）还没接入。
-		return unsupported(), nil
-	}
 	if s.auditApplies(ctx, apiKey.GroupID, req.GetModel()) {
 		// 安全审计（内容审核、提示词审计）还没接入主从通信：这类请求留在主节点转发。
 		return unsupported(), nil
@@ -208,6 +190,55 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 	s.addSelection(sel)
 	selected = true
 	return resp, nil
+}
+
+// Admit 准入（设计 3.2）：中间件链的检查，不含分组模型白名单（从节点用快照里的分组在本地跑那个中间件，
+// 保持与单机相同的检查顺序；选号时这里再按请求里的模型名查一遍）。
+func (s *selector) Admit(ctx context.Context, _ int64, req *relayv1.AdmitRequest) (*relayv1.AdmitResponse, error) {
+	adm, rej, err := s.admitAPIKey(ctx, req.GetApiKey(), req.GetClientIp(), req.GetMethod(), req.GetPath(), nil)
+	if err != nil {
+		return nil, err
+	}
+	if rej != nil {
+		return &relayv1.AdmitResponse{Result: &relayv1.AdmitResponse_Rejection{Rejection: rej.GetRejection()}}, nil
+	}
+	key, err := keycodec.EncodeAPIKey(adm.APIKey)
+	if err != nil {
+		return nil, err
+	}
+	sub, err := keycodec.EncodeSubscription(adm.Billing.Subscription)
+	if err != nil {
+		return nil, err
+	}
+	return &relayv1.AdmitResponse{Result: &relayv1.AdmitResponse_Admission{Admission: &relayv1.Admission{ApiKey: key, Subscription: sub}}}, nil
+}
+
+// admitAPIKey 按本地网关中间件链复查 Key（EvaluateRelayAPIKeyAdmission），再挡掉还不能经从节点处理的分组。
+// 被拒时返回拒绝回复。
+func (s *selector) admitAPIKey(ctx context.Context, rawKey, clientIP, method, path string, models []string) (middleware.RelayAPIKeyAdmission, *relayv1.SelectResponse, error) {
+	adm, raw, err := middleware.EvaluateRelayAPIKeyAdmission(ctx, middleware.RelayAPIKeyAdmissionInput{
+		APIKeyAuthInput: middleware.APIKeyAuthInput{
+			APIKeys: s.deps.APIKeys, Subscriptions: s.deps.Subscriptions, Config: s.deps.Config,
+			ClientIP: clientIP, Method: method, Path: path,
+		},
+		RawKey:   rawKey,
+		Settings: s.deps.Settings,
+		Models:   models,
+	})
+	if errors.Is(err, middleware.ErrRelayAdmissionUnsupported) {
+		return adm, unsupported(), nil
+	}
+	if err != nil {
+		return adm, nil, err
+	}
+	if raw != nil {
+		return adm, rawRejection(raw), nil
+	}
+	if g := adm.APIKey.Group; g == nil || g.Platform != service.PlatformOpenAI {
+		// 未分组 Key 走 Anthropic 网关，其他 OpenAI 兼容平台（Grok 等）还没接入。
+		return adm, unsupported(), nil
+	}
+	return adm, nil, nil
 }
 
 // startRequest 是一次请求的第一次选号时做的：用户并发槽、计费资格、（cyberAfterBilling 时）cyber 会话屏蔽、

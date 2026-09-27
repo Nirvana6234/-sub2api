@@ -35,6 +35,16 @@ func NewRequestID() string {
 	return hex.EncodeToString(b)
 }
 
+// AdmitTimeout 是一次准入调用的最长时间（只读，主节点不排队）。
+const AdmitTimeout = 10 * time.Second
+
+// Admit 准入（设计 3.2）：主节点按本地中间件链复查 Key，通过时回 Key 快照。只读，不带幂等键。
+func (s *SelectClient) Admit(ctx context.Context, req *relayv1.AdmitRequest) (*relayv1.AdmitResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, AdmitTimeout)
+	defer cancel()
+	return s.control.Admit(ctx, req)
+}
+
 // Select 选号。幂等键是"请求 ID/第几次"：超时重发拿回同一个结果，不会多占一个槽。
 // 主节点纪元变了返回 transport.ErrEpochChanged：调用方先核对租约（ReportLeases），再以新的一次选号重来。
 func (s *SelectClient) Select(ctx context.Context, req *relayv1.SelectRequest) (*relayv1.SelectResponse, error) {

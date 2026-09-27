@@ -49,6 +49,13 @@ func (f *fakeSelector) Select(_ context.Context, nodeID int64, req *relayv1.Sele
 	}}}, nil
 }
 
+func (f *fakeSelector) Admit(_ context.Context, _ int64, req *relayv1.AdmitRequest) (*relayv1.AdmitResponse, error) {
+	if req.GetApiKey() == "" {
+		return &relayv1.AdmitResponse{Result: &relayv1.AdmitResponse_Rejection{Rejection: &relayv1.SelectRejection{Status: 401, Format: relayv1.RejectionFormat_REJECTION_FORMAT_RAW}}}, nil
+	}
+	return &relayv1.AdmitResponse{Result: &relayv1.AdmitResponse_Admission{Admission: &relayv1.Admission{ApiKey: []byte(`{"ID":1}`)}}}, nil
+}
+
 func (f *fakeSelector) FetchCredentials(_ context.Context, _ int64, req *relayv1.FetchCredentialsRequest) (*relayv1.FetchCredentialsResponse, error) {
 	if req.GetSelectionId() != "sel-r1" {
 		return nil, master.ErrSelectionNotFound

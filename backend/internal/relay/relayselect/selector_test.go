@@ -14,6 +14,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/Wei-Shaw/sub2api/internal/relay/accountcodec"
+	"github.com/Wei-Shaw/sub2api/internal/relay/keycodec"
 	"github.com/Wei-Shaw/sub2api/internal/relay/keystore"
 	"github.com/Wei-Shaw/sub2api/internal/relay/master"
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
@@ -336,6 +337,35 @@ func TestSelectRejectionsAndUnsupportedRequests(t *testing.T) {
 	resp, err = w.sel.Select(ctx, testNode, unknown)
 	require.NoError(t, err)
 	require.Equal(t, relayv1.RejectionFormat_REJECTION_FORMAT_UNSUPPORTED, resp.GetRejection().GetFormat())
+	require.Equal(t, int64(0), w.slots.held.Load())
+}
+
+// 准入：拒绝与选号时同样按中间件写法；通过时回白名单化的 Key 快照，不占任何槽。
+func TestAdmit(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t, config.RunModeSimple, apiKeyAccount(1, "one"))
+	admit := func(key string) *relayv1.AdmitResponse {
+		resp, err := w.sel.Admit(ctx, testNode, &relayv1.AdmitRequest{Credential: &relayv1.AdmitRequest_ApiKey{ApiKey: key}, ClientIp: "5.6.7.8", Method: "POST", Path: "/v1/responses"})
+		require.NoError(t, err)
+		return resp
+	}
+
+	rej := admit("sk-nope").GetRejection()
+	require.Equal(t, relayv1.RejectionFormat_REJECTION_FORMAT_RAW, rej.GetFormat())
+	require.Equal(t, int32(401), rej.GetStatus())
+	require.JSONEq(t, `{"code":"INVALID_API_KEY","message":"Invalid API key"}`, string(rej.GetBody()))
+
+	require.Equal(t, relayv1.RejectionFormat_REJECTION_FORMAT_UNSUPPORTED, admit("sk-anthropic").GetRejection().GetFormat())
+
+	adm := admit("sk-a").GetAdmission()
+	require.NotNil(t, adm)
+	key, err := keycodec.DecodeAPIKey(adm.GetApiKey(), "sk-a")
+	require.NoError(t, err)
+	require.Equal(t, int64(11), key.ID)
+	require.Equal(t, int64(5), key.Group.ID)
+	require.Equal(t, 5, key.User.Concurrency)
+	require.Zero(t, key.User.Balance, "balances stay on the master")
+	require.Empty(t, adm.GetSubscription())
 	require.Equal(t, int64(0), w.slots.held.Load())
 }
 

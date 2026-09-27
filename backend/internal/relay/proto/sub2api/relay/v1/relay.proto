@@ -48,7 +48,11 @@ service RelayControl {
   rpc ReportLeases(ReportLeasesRequest) returns (ReportLeasesResponse);
   rpc AckQuotaRecall(AckQuotaRecallRequest) returns (AckQuotaRecallResponse);
 
-  // ---- 选号（设计 3.1 第 5 步、开发计划 WP7）----
+  // ---- 准入与选号（设计 3.1 第 5 步、3.2，开发计划 WP7、WP9）----
+  // Admit 按本地网关中间件链复查一个 API Key 请求（全局黑名单、Key 鉴权与计费检查、未分组拦截；
+  // 分组模型白名单除外：从节点用回复里分组的白名单在本地跑同一个中间件），通过时回 Key 快照，
+  // 从节点据此运行处理函数里选号之前的步骤。只读，不带幂等键；选号时主节点仍然独立复查。
+  rpc Admit(AdmitRequest) returns (AdmitResponse);
   // Select 为一次客户端请求的一次尝试选号：主节点复查凭据、做只有它能做的检查、选号、占并发槽，
   // 签发扣费凭证，需要时顺带补充额度。带幂等键（请求 ID + 第几次选号）：超时重发拿到同一个结果。
   // 被拒绝时正常返回 rejection（不是 gRPC 错误），从节点按它写客户端响应。
@@ -438,6 +442,31 @@ enum SelectEndpoint {
   SELECT_ENDPOINT_OPENAI_RESPONSES = 1;
   // OpenAI Chat Completions。
   SELECT_ENDPOINT_OPENAI_CHAT = 2;
+}
+
+message AdmitRequest {
+  oneof credential {
+    string api_key = 1;
+  }
+  string client_ip = 2;
+  string method = 3;
+  string path = 4;
+}
+
+message AdmitResponse {
+  oneof result {
+    Admission admission = 1;
+    // REJECTION_FORMAT_RAW（中间件写出的响应）或 REJECTION_FORMAT_UNSUPPORTED（交给主节点转发）。
+    SelectRejection rejection = 2;
+  }
+}
+
+// 准入通过：Key 快照（internal/relay/keycodec 按白名单编码的 JSON；用户只带转发要用的字段，
+// 不含邮箱、密码哈希、余额等）。
+message Admission {
+  bytes api_key = 1;
+  // 订阅（订阅计费分组时），同样按白名单编码；没有时为空。
+  bytes subscription = 2;
 }
 
 message SelectRequest {

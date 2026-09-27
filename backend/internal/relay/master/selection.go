@@ -18,6 +18,8 @@ import (
 // handler（handler → handler/admin → master 会循环），所以经 relaywire 注入。
 // 运行时每次启动用 RuntimeDeps.NewSelector 建一个，停止时 Close。
 type Selector interface {
+	// Admit 准入：按本地中间件链复查 API Key，通过时回 Key 快照（设计 3.2）。被拒绝时返回带 rejection 的回复。
+	Admit(ctx context.Context, nodeID int64, req *relayv1.AdmitRequest) (*relayv1.AdmitResponse, error)
 	// Select 被拒绝时返回带 rejection 的回复，不返回 error；error 只表示主节点自身的故障。
 	Select(ctx context.Context, nodeID int64, req *relayv1.SelectRequest) (*relayv1.SelectResponse, error)
 	FetchCredentials(ctx context.Context, nodeID int64, req *relayv1.FetchCredentialsRequest) (*relayv1.FetchCredentialsResponse, error)
@@ -72,6 +74,19 @@ func (c *Control) selectPeer(ctx context.Context, checkEpoch bool) (int64, error
 		return 0, transport.EpochMismatch(ctx)
 	}
 	return peer.NodeID, nil
+}
+
+// Admit 准入。只读：不校验纪元，也不需要幂等键。
+func (c *Control) Admit(ctx context.Context, req *relayv1.AdmitRequest) (*relayv1.AdmitResponse, error) {
+	nodeID, err := c.selectPeer(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.selector.Admit(ctx, nodeID, req)
+	if err != nil {
+		return nil, selectionError(ctx, "admit", nodeID, err)
+	}
+	return resp, nil
 }
 
 // Select 选号。

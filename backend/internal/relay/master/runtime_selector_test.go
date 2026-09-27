@@ -2,6 +2,7 @@ package master_test
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -36,6 +37,10 @@ func (s *recordingSelector) UpstreamError(context.Context, int64, *relayv1.Upstr
 func (s *recordingSelector) Release(int64, *relayv1.SelectionRelease) {}
 
 func (s *recordingSelector) AccountEvent(int64, *relayv1.AccountEvent) {}
+
+func (s *recordingSelector) Admit(context.Context, int64, *relayv1.AdmitRequest) (*relayv1.AdmitResponse, error) {
+	return nil, errors.New("not implemented")
+}
 
 func (s *recordingSelector) Close() { s.closed = true }
 

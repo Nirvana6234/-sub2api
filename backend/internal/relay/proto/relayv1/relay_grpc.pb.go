@@ -309,6 +309,7 @@ const (
 	RelayControl_RenewLeases_FullMethodName      = "/sub2api.relay.v1.RelayControl/RenewLeases"
 	RelayControl_ReportLeases_FullMethodName     = "/sub2api.relay.v1.RelayControl/ReportLeases"
 	RelayControl_AckQuotaRecall_FullMethodName   = "/sub2api.relay.v1.RelayControl/AckQuotaRecall"
+	RelayControl_Admit_FullMethodName            = "/sub2api.relay.v1.RelayControl/Admit"
 	RelayControl_Select_FullMethodName           = "/sub2api.relay.v1.RelayControl/Select"
 	RelayControl_FetchCredentials_FullMethodName = "/sub2api.relay.v1.RelayControl/FetchCredentials"
 	RelayControl_RefillQuota_FullMethodName      = "/sub2api.relay.v1.RelayControl/RefillQuota"
@@ -335,7 +336,11 @@ type RelayControlClient interface {
 	// 上报完成之前从节点不发选号。
 	ReportLeases(ctx context.Context, in *ReportLeasesRequest, opts ...grpc.CallOption) (*ReportLeasesResponse, error)
 	AckQuotaRecall(ctx context.Context, in *AckQuotaRecallRequest, opts ...grpc.CallOption) (*AckQuotaRecallResponse, error)
-	// ---- 选号（设计 3.1 第 5 步、开发计划 WP7）----
+	// ---- 准入与选号（设计 3.1 第 5 步、3.2，开发计划 WP7、WP9）----
+	// Admit 按本地网关中间件链复查一个 API Key 请求（全局黑名单、Key 鉴权与计费检查、未分组拦截；
+	// 分组模型白名单除外：从节点用回复里分组的白名单在本地跑同一个中间件），通过时回 Key 快照，
+	// 从节点据此运行处理函数里选号之前的步骤。只读，不带幂等键；选号时主节点仍然独立复查。
+	Admit(ctx context.Context, in *AdmitRequest, opts ...grpc.CallOption) (*AdmitResponse, error)
 	// Select 为一次客户端请求的一次尝试选号：主节点复查凭据、做只有它能做的检查、选号、占并发槽，
 	// 签发扣费凭证，需要时顺带补充额度。带幂等键（请求 ID + 第几次选号）：超时重发拿到同一个结果。
 	// 被拒绝时正常返回 rejection（不是 gRPC 错误），从节点按它写客户端响应。
@@ -420,6 +425,16 @@ func (c *relayControlClient) AckQuotaRecall(ctx context.Context, in *AckQuotaRec
 	return out, nil
 }
 
+func (c *relayControlClient) Admit(ctx context.Context, in *AdmitRequest, opts ...grpc.CallOption) (*AdmitResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AdmitResponse)
+	err := c.cc.Invoke(ctx, RelayControl_Admit_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *relayControlClient) Select(ctx context.Context, in *SelectRequest, opts ...grpc.CallOption) (*SelectResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SelectResponse)
@@ -480,7 +495,11 @@ type RelayControlServer interface {
 	// 上报完成之前从节点不发选号。
 	ReportLeases(context.Context, *ReportLeasesRequest) (*ReportLeasesResponse, error)
 	AckQuotaRecall(context.Context, *AckQuotaRecallRequest) (*AckQuotaRecallResponse, error)
-	// ---- 选号（设计 3.1 第 5 步、开发计划 WP7）----
+	// ---- 准入与选号（设计 3.1 第 5 步、3.2，开发计划 WP7、WP9）----
+	// Admit 按本地网关中间件链复查一个 API Key 请求（全局黑名单、Key 鉴权与计费检查、未分组拦截；
+	// 分组模型白名单除外：从节点用回复里分组的白名单在本地跑同一个中间件），通过时回 Key 快照，
+	// 从节点据此运行处理函数里选号之前的步骤。只读，不带幂等键；选号时主节点仍然独立复查。
+	Admit(context.Context, *AdmitRequest) (*AdmitResponse, error)
 	// Select 为一次客户端请求的一次尝试选号：主节点复查凭据、做只有它能做的检查、选号、占并发槽，
 	// 签发扣费凭证，需要时顺带补充额度。带幂等键（请求 ID + 第几次选号）：超时重发拿到同一个结果。
 	// 被拒绝时正常返回 rejection（不是 gRPC 错误），从节点按它写客户端响应。
@@ -522,6 +541,9 @@ func (UnimplementedRelayControlServer) ReportLeases(context.Context, *ReportLeas
 }
 func (UnimplementedRelayControlServer) AckQuotaRecall(context.Context, *AckQuotaRecallRequest) (*AckQuotaRecallResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method AckQuotaRecall not implemented")
+}
+func (UnimplementedRelayControlServer) Admit(context.Context, *AdmitRequest) (*AdmitResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Admit not implemented")
 }
 func (UnimplementedRelayControlServer) Select(context.Context, *SelectRequest) (*SelectResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Select not implemented")
@@ -664,6 +686,24 @@ func _RelayControl_AckQuotaRecall_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RelayControl_Admit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AdmitRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayControlServer).Admit(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayControl_Admit_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayControlServer).Admit(ctx, req.(*AdmitRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _RelayControl_Select_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SelectRequest)
 	if err := dec(in); err != nil {
@@ -766,6 +806,10 @@ var RelayControl_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "AckQuotaRecall",
 			Handler:    _RelayControl_AckQuotaRecall_Handler,
+		},
+		{
+			MethodName: "Admit",
+			Handler:    _RelayControl_Admit_Handler,
 		},
 		{
 			MethodName: "Select",
