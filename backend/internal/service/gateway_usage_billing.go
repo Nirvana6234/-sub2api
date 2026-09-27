@@ -358,6 +358,12 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 	}
 
 	cmd := buildUsageBillingCommand(requestID, usageLog, p, resolveAccountShareRewardRate(ctx, deps), resolveAccountOwnUsageFeeRate(ctx, deps))
+	if relay := relaySettlementFromContext(ctx); relay != nil && cmd != nil {
+		cmd.Relay = relay
+		if !p.IsSubscriptionBill && p.Platform != "" && p.Cost != nil {
+			relay.PlatformQuotaCost = p.Cost.ActualCost
+		}
+	}
 	if cmd == nil || cmd.RequestID == "" || repo == nil {
 		postUsageBilling(ctx, p, deps)
 		return true, nil

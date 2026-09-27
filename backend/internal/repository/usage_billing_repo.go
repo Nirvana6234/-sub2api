@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
+	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -42,11 +43,35 @@ func (r *usageBillingRepository) Apply(ctx context.Context, cmd *service.UsageBi
 		}
 	}()
 
+	// 主从分流入账：先认领凭证，已入账过就什么都不做（返回当时的消耗，设计 5.2）。
+	if relay := cmd.Relay; relay != nil {
+		claimed, err := claimRelayVoucher(ctx, tx, relay)
+		if err != nil {
+			return nil, err
+		}
+		if !claimed {
+			relay.Handled = true
+			return &service.UsageBillingApplyResult{Applied: false}, nil
+		}
+	}
+
 	applied, err := r.claimUsageBillingKey(ctx, tx, cmd)
 	if err != nil {
 		return nil, err
 	}
 	if !applied {
+		if relay := cmd.Relay; relay != nil {
+			// 同一个扣费请求 ID 已经扣过（与单机一样不重复扣）：凭证记成零消耗。
+			relay.Consumed = nil
+			if err := saveRelaySettlement(ctx, tx, relay, cmd.RequestID); err != nil {
+				return nil, err
+			}
+			if err := tx.Commit(); err != nil {
+				return nil, err
+			}
+			tx = nil
+			relay.Handled = true
+		}
 		return &service.UsageBillingApplyResult{Applied: false}, nil
 	}
 
@@ -54,11 +79,22 @@ func (r *usageBillingRepository) Apply(ctx context.Context, cmd *service.UsageBi
 	if err := r.applyUsageBillingEffects(ctx, tx, cmd, result); err != nil {
 		return nil, err
 	}
+	if relay := cmd.Relay; relay != nil {
+		if err := consumeRelayLeases(ctx, tx, relay, cmd, time.Now()); err != nil {
+			return nil, err
+		}
+		if err := saveRelaySettlement(ctx, tx, relay, cmd.RequestID); err != nil {
+			return nil, err
+		}
+	}
 
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	tx = nil
+	if cmd.Relay != nil {
+		cmd.Relay.Handled = true
+	}
 	return result, nil
 }
 

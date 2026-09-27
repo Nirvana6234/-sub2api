@@ -52,6 +52,9 @@ type UsageBillingCommand struct {
 	SharedRoomID            int64
 	SharedBudgetCost        float64
 	OwnAccountFeeCost       float64
+
+	// Relay：主从分流入账时在同一事务里认领凭证、消耗租约（不参与指纹）。单机为 nil。
+	Relay *RelaySettlement
 }
 
 func (c *UsageBillingCommand) Normalize() {

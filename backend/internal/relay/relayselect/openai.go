@@ -368,6 +368,7 @@ func selectionContext(outcome handler.OpenAISelectOutcome, sel *selectionRecord,
 		ChannelId:          mapping.ChannelID,
 		ChannelMappedModel: mapping.MappedModel,
 		BillingModelSource: mapping.BillingModelSource,
+		ChannelMapped:      mapping.Mapped,
 	}
 	if subscription != nil {
 		c.SubscriptionId = subscription.ID

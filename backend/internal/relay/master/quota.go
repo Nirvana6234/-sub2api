@@ -196,6 +196,15 @@ func (q *Quotas) NodeReservedBalance(ctx context.Context, userID, nodeID int64) 
 	return perNode[nodeID], nil
 }
 
+// RefreshUser 重新读这个用户的租约，刷新内存里的冻结额（入账在扣费事务里消耗了租约之后调用）。
+func (q *Quotas) RefreshUser(ctx context.Context, userID int64) error {
+	err := q.withUser(ctx, userID, func(LeaseTx) error { return nil })
+	if errors.Is(err, ErrLeaseUserNotFound) {
+		return nil
+	}
+	return err
+}
+
 // grantAmount 按设计 4.2 算这次给多少：未锁定额度的一半，不足 0.1 全给；
 // 但至少给到够这次请求（need − 节点手里没用掉的），否则未锁定额度明明够也会因为"一半"被拒；
 // 最后受未锁定额度和每台上限约束。
