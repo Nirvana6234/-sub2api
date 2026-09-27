@@ -73,6 +73,14 @@ func (r fakeAccounts) ListSchedulableByGroupIDAndPlatform(_ context.Context, _ i
 	return r.forPlatform(platform), nil
 }
 
+func (r fakeAccounts) ListModelAvailabilityCandidates(_ context.Context, _ *int64, platforms []string, _ bool) ([]service.Account, error) {
+	var out []service.Account
+	for _, p := range platforms {
+		out = append(out, r.forPlatform(p)...)
+	}
+	return out, nil
+}
+
 func (r fakeAccounts) ListSchedulableByPlatform(_ context.Context, platform string) ([]service.Account, error) {
 	return r.forPlatform(platform), nil
 }
@@ -145,6 +153,7 @@ func (b balanceCache) GetUserBalance(context.Context, int64) (float64, error) { 
 // ---- 环境 ----
 
 type world struct {
+	keys    fakeKeys
 	sel     *selector
 	slots   *countingSlots
 	nodeKey *ecdh.PrivateKey
@@ -233,7 +242,7 @@ func newWorldOn(t *testing.T, cfg *config.Config, balance float64, nodeID int64,
 		},
 	})
 	t.Cleanup(sel.Close)
-	return &world{sel: sel, slots: slots, nodeKey: nodeKey, pub: pub, leases: leases, quotas: quotas}
+	return &world{keys: keys, sel: sel, slots: slots, nodeKey: nodeKey, pub: pub, leases: leases, quotas: quotas}
 }
 
 func apiKeyAccount(id int64, name string) service.Account {
@@ -838,6 +847,63 @@ func TestSelectChatCompletions(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []int64{0, 1}, slotsWhenChecked, "chat checks before taking the user slot, responses after")
 	require.Equal(t, int64(0), w.slots.held.Load())
+}
+
+func messagesRequest(requestID string, attempt uint32, key, model string) *relayv1.SelectRequest {
+	req := responsesRequest(requestID, attempt, key)
+	req.Endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_MESSAGES
+	req.Path = "/v1/messages"
+	req.Model = model
+	return req
+}
+
+// OpenAI 分组的 /v1/messages：分组要允许派发；按派发映射模型选号；计费和选不出账号的错误按 Anthropic 格式。
+func TestSelectMessages(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t, config.RunModeSimple, apiKeyAccount(1, "one"))
+
+	resp, err := w.sel.Select(ctx, testNode, messagesRequest("r1", 1, "sk-a", "claude-sonnet-4-5"))
+	require.NoError(t, err)
+	rej := resp.GetRejection()
+	require.Equal(t, int32(403), rej.GetStatus())
+	require.Equal(t, "permission_error", rej.GetErrorType())
+	require.True(t, rej.GetAnthropicFormat())
+	require.Equal(t, int64(0), w.slots.held.Load(), "denied before any slot is taken")
+
+	w.keys.keys["sk-a"].Group.AllowMessagesDispatch = true
+	req := messagesRequest("r2", 1, "sk-a", "claude-sonnet-4-5")
+	req.PreviousResponseId, req.ImageIntent = "resp_not_mine", true
+	resp, err = w.sel.Select(ctx, testNode, req)
+	require.NoError(t, err)
+	sel := resp.GetSelection()
+	require.NotNil(t, sel, "messages ignores Responses-only fields: %+v", resp.GetRejection())
+	routing := handler.OpenAIMessagesRoutingModel(w.keys.keys["sk-a"], "claude-sonnet-4-5")
+	require.NotEqual(t, "claude-sonnet-4-5", routing, "the group's dispatch mapping picks a GPT model")
+	require.Equal(t, routing, sel.GetForwardModel())
+	v, err := sign.VerifyVoucher(sel.GetVoucher(), w.pub, testNode, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, "claude-sonnet-4-5", v.GetRequestedModel())
+	require.Contains(t, v.GetAllowedBillingModels(), routing)
+	w.sel.Release(testNode, &relayv1.SelectionRelease{SelectionId: sel.GetSelectionId(), RequestDone: true})
+	w.waitReleased(t)
+
+	// 选不出账号（排除了唯一的账号、还没排除过别的）：Anthropic 格式。
+	none := newWorld(t, config.RunModeSimple)
+	none.keys.keys["sk-a"].Group.AllowMessagesDispatch = true
+	resp, err = none.sel.Select(ctx, testNode, messagesRequest("r3", 1, "sk-a", "claude-sonnet-4-5"))
+	require.NoError(t, err)
+	require.True(t, resp.GetRejection().GetAnthropicFormat(), "%+v", resp.GetRejection())
+
+	// 计费拒绝：Anthropic 格式；用户并发槽等其他准入错误仍是 OpenAI 格式（与本地一致）。
+	broke := newWorldWithBalance(t, config.RunModeStandard, 0, apiKeyAccount(1, "one"))
+	broke.keys.keys["sk-a"].Group.AllowMessagesDispatch = true
+	resp, err = broke.sel.Select(ctx, testNode, messagesRequest("r4", 1, "sk-a", "claude-sonnet-4-5"))
+	require.NoError(t, err)
+	require.Equal(t, int32(403), resp.GetRejection().GetStatus())
+	require.True(t, resp.GetRejection().GetAnthropicFormat())
+	resp, err = broke.sel.Select(ctx, testNode, responsesRequest("r5", 1, "sk-a"))
+	require.NoError(t, err)
+	require.False(t, resp.GetRejection().GetAnthropicFormat(), "responses billing errors stay OpenAI-shaped")
 }
 
 // 凭证允许的计费模型：请求模型、渠道映射后的、账号映射后发给上游的（去重）。

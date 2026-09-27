@@ -17,11 +17,12 @@ import (
 	"go.uber.org/zap"
 )
 
-// Select 选号。目前接入 OpenAI Responses、Chat Completions + API Key，其余返回"暂不支持"，
+// Select 选号。目前接入 OpenAI 分组的 Responses、Chat Completions、Messages + API Key，其余返回"暂不支持"，
 // 由从节点交给主节点转发。
 func (s *selector) Select(ctx context.Context, nodeID int64, req *relayv1.SelectRequest) (*relayv1.SelectResponse, error) {
 	switch req.GetEndpoint() {
-	case relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_RESPONSES, relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_CHAT:
+	case relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_RESPONSES, relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_CHAT,
+		relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_MESSAGES:
 	default:
 		return unsupported(), nil
 	}
@@ -41,16 +42,24 @@ func (s *selector) Select(ctx context.Context, nodeID int64, req *relayv1.Select
 //   - Responses（handler.OpenAIGatewayHandler.Responses）：中间件链的检查 → previous_response_id 检查 →
 //     分组是否允许生图 → 渠道映射 → 用户并发槽 → 计费资格 → cyber 会话屏蔽 → 计价上下文 → 选号与准入；
 //   - Chat Completions（ChatCompletions）：中间件链的检查 → cyber 会话屏蔽 → 渠道映射 → 用户并发槽 →
-//     计费资格 → 计价上下文 → 选号与准入（没有续链和生图，要求账号支持 Chat Completions）。
+//     计费资格 → 计价上下文 → 选号与准入（没有续链和生图，要求账号支持 Chat Completions）；
+//   - Messages（OpenAIGatewayHandler.Messages）：中间件链的检查 → 分组是否允许 /v1/messages 派发 → 渠道映射 →
+//     用户并发槽 → 计费资格 → cyber 会话屏蔽 → 计价上下文 → 选号与准入（要求账号支持 Chat Completions，
+//     按分组的派发映射模型选号；计费和选不出账号的错误按 Anthropic 格式）。
 //
 // 会被安全审计处理的请求留在主节点转发（审核接入主从通信之前，设计 3.4）。
 func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.SelectRequest) (*relayv1.SelectResponse, error) {
 	chat := req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_CHAT
+	messages := req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_MESSAGES
 	adm, rej, err := s.admitAPIKey(ctx, req.GetApiKey(), req.GetClientIp(), req.GetMethod(), req.GetPath(), modelCandidates(req))
 	if err != nil || rej != nil {
 		return rej, err
 	}
 	apiKey := adm.APIKey
+	if messages && !apiKey.Group.AllowMessagesDispatch {
+		// 本地在读请求体之前就查（分组平台只会是 OpenAI：其余平台在准入时已回"暂不支持"）。
+		return gatewayRejection(handler.OpenAIMessagesDispatchDeniedRejection()), nil
+	}
 	if s.auditApplies(ctx, apiKey.GroupID, req.GetModel()) {
 		// 安全审计（内容审核、提示词审计）还没接入主从通信：这类请求留在主节点转发。
 		return unsupported(), nil
@@ -67,7 +76,7 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 	previousResponseID, imageIntent := strings.TrimSpace(req.GetPreviousResponseId()), req.GetImageIntent()
 	legacyCompact, nativeV2 := req.GetLegacyCompact(), req.GetNativeCompactionV2()
 	capability := handler.OpenAIResponsesRequiredCapability(imageIntent, nativeV2 || legacyCompact, requestPlatform)
-	if chat {
+	if chat || messages {
 		previousResponseID, imageIntent, legacyCompact = "", false, false
 		capability = service.OpenAIEndpointCapabilityChatCompletions
 	}
@@ -94,6 +103,10 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 	}
 	channelMapping, _ := s.deps.Gateway.ResolveChannelMappingAndRestrict(ctx, apiKey.GroupID, reqModel)
 	forwardModel := handler.OpenAIChannelForwardModel(channelMapping, reqModel)
+	if messages {
+		// Messages 按分组的派发映射（或规范化后的请求模型）选号，渠道映射只改请求体。
+		forwardModel = handler.OpenAIMessagesRoutingModel(apiKey, reqModel)
+	}
 	quotaReq := service.QuotaRequest{User: apiKey.User, APIKey: apiKey, Group: apiKey.Group, Subscription: subscription, Platform: service.QuotaPlatform(ctx, apiKey)}
 
 	record, first, err := s.requestFor(nodeID, req.GetRequestId())
@@ -114,7 +127,7 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 		}
 	}()
 	if first {
-		if rej := s.startRequest(ctx, record, req, adm, quotaReq, !chat); rej != nil {
+		if rej := s.startRequest(ctx, record, req, adm, quotaReq, !chat, messages); rej != nil {
 			return rej, nil
 		}
 	}
@@ -160,8 +173,14 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 				Format: relayv1.RejectionFormat_REJECTION_FORMAT_FAILOVER_EXHAUSTED, ContinuationUnsupported: continuation,
 			}}}, nil
 		}
+		if messages {
+			return gatewayRejection(handler.OpenAIMessagesNoAccountRejection(ctx, s.deps.Gateway, apiKey, forwardModel, reqModel, requestPlatform, outcome.Err)), nil
+		}
 		return gatewayRejection(handler.OpenAIFirstSelectFailureRejection(ctx, s.deps.Gateway, apiKey, reqModel, requestPlatform, legacyCompact, outcome.Err)), nil
 	case handler.OpenAISelectNone:
+		if messages {
+			return gatewayRejection(handler.OpenAIMessagesNoAccountRejection(ctx, s.deps.Gateway, apiKey, forwardModel, reqModel, requestPlatform, nil)), nil
+		}
 		return gatewayRejection(handler.OpenAINoAccountRejection(ctx, s.deps.Gateway, apiKey, reqModel, requestPlatform, nil)), nil
 	default:
 		return gatewayRejection(handler.OpenAISelectOutcomeRejection(outcome)), nil
@@ -171,7 +190,7 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 		id: newSelectionID(), nodeID: nodeID, request: record, account: outcome.Account, release: outcome.Release,
 		createdAt: s.now(), quota: quotaReq, groupID: groupID, userID: userID, apiKeyID: apiKey.ID,
 	}
-	resp, rej, err := s.buildSelection(ctx, nodeID, req, sel, outcome, forwardModel, reqModel, channelMapping, subscription)
+	resp, rej, err := s.buildSelection(ctx, nodeID, req, sel, outcome, forwardModel, reqModel, channelMapping, subscription, messages)
 	if err == nil && rej == nil && ctx.Err() != nil {
 		// 额度已经给了但从节点不等了：原样收回（节点不知道这笔，不收回就一直锁到租约到期）。
 		s.ungrant(sel.userID, nodeID, resp.GetSelection().GetGrants())
@@ -243,7 +262,8 @@ func (s *selector) admitAPIKey(ctx context.Context, rawKey, clientIP, method, pa
 
 // startRequest 是一次请求的第一次选号时做的：用户并发槽、计费资格、（cyberAfterBilling 时）cyber 会话屏蔽、
 // 计价上下文。被拒时返回拒绝（调用方放掉用户槽）。
-func (s *selector) startRequest(ctx context.Context, record *requestRecord, req *relayv1.SelectRequest, adm middleware.RelayAPIKeyAdmission, quotaReq service.QuotaRequest, cyberAfterBilling bool) *relayv1.SelectResponse {
+// anthropicBilling：计费资格的拒绝按 Anthropic 格式写（Messages 入口）。
+func (s *selector) startRequest(ctx context.Context, record *requestRecord, req *relayv1.SelectRequest, adm middleware.RelayAPIKeyAdmission, quotaReq service.QuotaRequest, cyberAfterBilling, anthropicBilling bool) *relayv1.SelectResponse {
 	apiKey := adm.APIKey
 	record.userID, record.apiKeyID = apiKey.User.ID, apiKey.ID
 	release, err := s.helper.AcquireUserSlotWithWaitNoGin(ctx, apiKey.User.ID, apiKey.ID, apiKey.User.Concurrency)
@@ -257,13 +277,13 @@ func (s *selector) startRequest(ctx context.Context, record *requestRecord, req 
 		// 不信节点报的数：不超过主节点记着的、锁在这台上的。
 		locked, err := s.env.Quotas.NodeReservedBalance(ctx, apiKey.User.ID, record.key.nodeID)
 		if err != nil {
-			return gatewayRejection(handler.OpenAIBillingRejection(service.ErrBillingServiceUnavailable.WithCause(err)))
+			return gatewayRejection(billingRejection(service.ErrBillingServiceUnavailable.WithCause(err), anthropicBilling))
 		}
 		held = min(held, locked)
 	}
 	billingCtx := service.WithRelayRequesterHeldBalance(ctx, master.FromMicros(held))
 	if err := s.deps.Billing.CheckBillingEligibility(billingCtx, apiKey.User, apiKey, apiKey.Group, quotaReq.Subscription, quotaReq.Platform); err != nil {
-		return gatewayRejection(handler.OpenAIBillingRejection(err))
+		return gatewayRejection(billingRejection(err, anthropicBilling))
 	}
 	if cyberAfterBilling {
 		if rej := s.cyberRejection(ctx, req); rej != nil {
@@ -294,7 +314,7 @@ func (s *selector) cyberRejection(ctx context.Context, req *relayv1.SelectReques
 
 // buildSelection 组装选号结果：额度、账号快照、扣费凭证。
 func (s *selector) buildSelection(ctx context.Context, nodeID int64, req *relayv1.SelectRequest, sel *selectionRecord, outcome handler.OpenAISelectOutcome,
-	forwardModel, reqModel string, mapping service.ChannelMappingResult, subscription *service.UserSubscription,
+	forwardModel, reqModel string, mapping service.ChannelMappingResult, subscription *service.UserSubscription, anthropicBilling bool,
 ) (*relayv1.SelectResponse, *relayv1.SelectResponse, error) {
 	snap, err := s.encodeAccount(ctx, nodeID, sel.account, s.nodeHas(nodeID))
 	if err != nil {
@@ -327,11 +347,11 @@ func (s *selector) buildSelection(ctx context.Context, nodeID int64, req *relayv
 	if err != nil {
 		var insufficient *master.QuotaInsufficientError
 		if errors.As(err, &insufficient) {
-			return nil, gatewayRejection(handler.OpenAIBillingRejection(quotaError(insufficient.Scope.Dimension))), nil
+			return nil, gatewayRejection(billingRejection(quotaError(insufficient.Scope.Dimension), anthropicBilling)), nil
 		}
 		if errors.Is(err, service.ErrSubscriptionInvalid) || errors.Is(err, service.ErrBillingServiceUnavailable) {
 			// 与本地计费检查在同样的情况下返回的一致（订阅已失效、计费数据取不到）。
-			return nil, gatewayRejection(handler.OpenAIBillingRejection(err)), nil
+			return nil, gatewayRejection(billingRejection(err, anthropicBilling)), nil
 		}
 		return nil, nil, err
 	}
@@ -384,8 +404,15 @@ func gatewayRejection(r handler.OpenAIGatewayRejection) *relayv1.SelectResponse 
 	return &relayv1.SelectResponse{Result: &relayv1.SelectResponse_Rejection{Rejection: &relayv1.SelectRejection{
 		Format: relayv1.RejectionFormat_REJECTION_FORMAT_GATEWAY, Status: int32(r.Status), ErrorType: r.ErrType, Code: r.Code,
 		Message: r.Message, RetryAfterSeconds: int32(r.RetryAfter), RoutingCapacityLimited: r.RoutingCapacityLimited,
-		OpsBusinessLimitedReason: r.OpsBusinessLimitedReason,
+		OpsBusinessLimitedReason: r.OpsBusinessLimitedReason, AnthropicFormat: r.Anthropic,
 	}}}
+}
+
+// billingRejection 是计费资格的拒绝；Messages 入口按 Anthropic 格式写（与本地一致）。
+func billingRejection(err error, anthropic bool) handler.OpenAIGatewayRejection {
+	r := handler.OpenAIBillingRejection(err)
+	r.Anthropic = anthropic
+	return r
 }
 
 // selectionContext 是凭证里的选号上下文：入账要用、由这次选号定下的值（字段清单见 fields_guard_test.go）。

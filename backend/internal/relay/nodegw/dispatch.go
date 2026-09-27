@@ -154,8 +154,11 @@ func (d *Dispatcher) Select(c *gin.Context, req handler.OpenAIRelaySelectRequest
 func (d *Dispatcher) selectRequest(c *gin.Context, st *requestState, req handler.OpenAIRelaySelectRequest) *relayv1.SelectRequest {
 	clientIP := strings.TrimSpace(ip.GetClientIP(c))
 	endpoint := relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_RESPONSES
-	if req.Chat {
+	switch {
+	case req.Chat:
 		endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_CHAT
+	case req.Messages:
+		endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_MESSAGES
 	}
 	sreq := &relayv1.SelectRequest{
 		RequestId:          st.id,
@@ -372,7 +375,7 @@ func convertRejection(r *relayv1.SelectRejection) *handler.OpenAIRelayRejection 
 			Gateway: handler.OpenAIGatewayRejection{
 				Status: int(r.GetStatus()), ErrType: r.GetErrorType(), Code: r.GetCode(), Message: r.GetMessage(),
 				RetryAfter: int(r.GetRetryAfterSeconds()), RoutingCapacityLimited: r.GetRoutingCapacityLimited(),
-				OpsBusinessLimitedReason: r.GetOpsBusinessLimitedReason(),
+				OpsBusinessLimitedReason: r.GetOpsBusinessLimitedReason(), Anthropic: r.GetAnthropicFormat(),
 			},
 		}
 	case relayv1.RejectionFormat_REJECTION_FORMAT_RAW:

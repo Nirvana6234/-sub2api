@@ -442,6 +442,8 @@ enum SelectEndpoint {
   SELECT_ENDPOINT_OPENAI_RESPONSES = 1;
   // OpenAI Chat Completions。
   SELECT_ENDPOINT_OPENAI_CHAT = 2;
+  // OpenAI 分组的 Anthropic Messages（/v1/messages，按 Chat Completions 能力选号，错误按 Anthropic 格式）。
+  SELECT_ENDPOINT_OPENAI_MESSAGES = 3;
 }
 
 message AdmitRequest {
@@ -562,6 +564,9 @@ message SelectRejection {
   // REJECTION_FORMAT_FAILOVER_EXHAUSTED：这次选号里因为 previous_response_id 跳过了 OAuth 账号，
   // 最后的错误是"续链不支持"。
   bool continuation_unsupported = 13;
+  // REJECTION_FORMAT_GATEWAY：按 Anthropic Messages 的错误格式写（OpenAI 分组的 /v1/messages 入口里
+  // 单机按 Anthropic 格式写的那些错误）。
+  bool anthropic_format = 14;
 }
 
 message Selection {

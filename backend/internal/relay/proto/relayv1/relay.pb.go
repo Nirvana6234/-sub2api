@@ -210,6 +210,8 @@ const (
 	SelectEndpoint_SELECT_ENDPOINT_OPENAI_RESPONSES SelectEndpoint = 1
 	// OpenAI Chat Completions。
 	SelectEndpoint_SELECT_ENDPOINT_OPENAI_CHAT SelectEndpoint = 2
+	// OpenAI 分组的 Anthropic Messages（/v1/messages，按 Chat Completions 能力选号，错误按 Anthropic 格式）。
+	SelectEndpoint_SELECT_ENDPOINT_OPENAI_MESSAGES SelectEndpoint = 3
 )
 
 // Enum value maps for SelectEndpoint.
@@ -218,11 +220,13 @@ var (
 		0: "SELECT_ENDPOINT_UNSPECIFIED",
 		1: "SELECT_ENDPOINT_OPENAI_RESPONSES",
 		2: "SELECT_ENDPOINT_OPENAI_CHAT",
+		3: "SELECT_ENDPOINT_OPENAI_MESSAGES",
 	}
 	SelectEndpoint_value = map[string]int32{
 		"SELECT_ENDPOINT_UNSPECIFIED":      0,
 		"SELECT_ENDPOINT_OPENAI_RESPONSES": 1,
 		"SELECT_ENDPOINT_OPENAI_CHAT":      2,
+		"SELECT_ENDPOINT_OPENAI_MESSAGES":  3,
 	}
 )
 
@@ -3816,8 +3820,11 @@ type SelectRejection struct {
 	// REJECTION_FORMAT_FAILOVER_EXHAUSTED：这次选号里因为 previous_response_id 跳过了 OAuth 账号，
 	// 最后的错误是"续链不支持"。
 	ContinuationUnsupported bool `protobuf:"varint,13,opt,name=continuation_unsupported,json=continuationUnsupported,proto3" json:"continuation_unsupported,omitempty"`
-	unknownFields           protoimpl.UnknownFields
-	sizeCache               protoimpl.SizeCache
+	// REJECTION_FORMAT_GATEWAY：按 Anthropic Messages 的错误格式写（OpenAI 分组的 /v1/messages 入口里
+	// 单机按 Anthropic 格式写的那些错误）。
+	AnthropicFormat bool `protobuf:"varint,14,opt,name=anthropic_format,json=anthropicFormat,proto3" json:"anthropic_format,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *SelectRejection) Reset() {
@@ -3937,6 +3944,13 @@ func (x *SelectRejection) GetBody() []byte {
 func (x *SelectRejection) GetContinuationUnsupported() bool {
 	if x != nil {
 		return x.ContinuationUnsupported
+	}
+	return false
+}
+
+func (x *SelectRejection) GetAnthropicFormat() bool {
+	if x != nil {
+		return x.AnthropicFormat
 	}
 	return false
 }
@@ -6118,7 +6132,7 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x0eSelectResponse\x12;\n" +
 	"\tselection\x18\x01 \x01(\v2\x1b.sub2api.relay.v1.SelectionH\x00R\tselection\x12A\n" +
 	"\trejection\x18\x02 \x01(\v2!.sub2api.relay.v1.SelectRejectionH\x00R\trejectionB\b\n" +
-	"\x06result\"\x8b\x05\n" +
+	"\x06result\"\xb6\x05\n" +
 	"\x0fSelectRejection\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\x05R\x06status\x12\x1d\n" +
 	"\n" +
@@ -6134,7 +6148,8 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	" \x01(\tR\rcyberBlockKey\x12H\n" +
 	"\aheaders\x18\v \x03(\v2..sub2api.relay.v1.SelectRejection.HeadersEntryR\aheaders\x12\x12\n" +
 	"\x04body\x18\f \x01(\fR\x04body\x129\n" +
-	"\x18continuation_unsupported\x18\r \x01(\bR\x17continuationUnsupported\x1a:\n" +
+	"\x18continuation_unsupported\x18\r \x01(\bR\x17continuationUnsupported\x12)\n" +
+	"\x10anthropic_format\x18\x0e \x01(\bR\x0fanthropicFormat\x1a:\n" +
 	"\fHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xa7\x06\n" +
@@ -6319,11 +6334,12 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\vBillingMode\x12\x1c\n" +
 	"\x18BILLING_MODE_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14BILLING_MODE_BALANCE\x10\x01\x12\x1d\n" +
-	"\x19BILLING_MODE_SUBSCRIPTION\x10\x02*x\n" +
+	"\x19BILLING_MODE_SUBSCRIPTION\x10\x02*\x9d\x01\n" +
 	"\x0eSelectEndpoint\x12\x1f\n" +
 	"\x1bSELECT_ENDPOINT_UNSPECIFIED\x10\x00\x12$\n" +
 	" SELECT_ENDPOINT_OPENAI_RESPONSES\x10\x01\x12\x1f\n" +
-	"\x1bSELECT_ENDPOINT_OPENAI_CHAT\x10\x02*\xb6\x01\n" +
+	"\x1bSELECT_ENDPOINT_OPENAI_CHAT\x10\x02\x12#\n" +
+	"\x1fSELECT_ENDPOINT_OPENAI_MESSAGES\x10\x03*\xb6\x01\n" +
 	"\x0fRejectionFormat\x12 \n" +
 	"\x1cREJECTION_FORMAT_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18REJECTION_FORMAT_GATEWAY\x10\x01\x12\x18\n" +

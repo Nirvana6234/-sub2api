@@ -32,7 +32,9 @@ type OpenAIRelayDispatcher interface {
 
 // OpenAIRelaySelectRequest 是一次远程选号的输入：处理函数在单机上交给主节点那几步的原始事实。
 type OpenAIRelaySelectRequest struct {
-	Chat               bool
+	Chat bool
+	// Messages：OpenAI 分组的 /v1/messages 入口。
+	Messages           bool
 	APIKey             *service.APIKey
 	Model              string
 	Stream             bool
@@ -123,13 +125,18 @@ func openAIHTTPContinuationUnsupportedError() *service.UpstreamFailoverError {
 }
 
 // writeOpenAIRelayRejection 按远程选号拒绝的写法写出响应，与单机在同样情况下写的一致。
-// format 同时表示入口（Chat 与 Responses 在换号用完、没有上游错误时写法不同）。
+// format 同时表示入口：Chat 与 Responses 在换号用完、没有上游错误时写法不同；Messages（Anthropic）的换号用完、
+// 主节点不可达按 Anthropic 格式写。
 func (h *OpenAIGatewayHandler) writeOpenAIRelayRejection(c *gin.Context, r *OpenAIRelayRejection, apiKey *service.APIKey, model string, format cyberSessionBlockFormat, lastFailoverErr *service.UpstreamFailoverError, streamStarted bool, reqLog *zap.Logger) {
 	switch r.Kind {
 	case OpenAIRelayRejectRaw:
 		middleware2.WriteCapturedRejection(c, r.Raw)
 	case OpenAIRelayRejectFailoverExhausted:
 		switch {
+		case format == cyberBlockFormatAnthropic && lastFailoverErr != nil:
+			h.handleAnthropicFailoverExhausted(c, lastFailoverErr, streamStarted)
+		case format == cyberBlockFormatAnthropic:
+			h.anthropicStreamingAwareError(c, http.StatusBadGateway, "api_error", "Upstream request failed", streamStarted)
 		case r.ContinuationUnsupported:
 			h.handleFailoverExhausted(c, openAIHTTPContinuationUnsupportedError(), streamStarted)
 		case lastFailoverErr != nil:
@@ -142,17 +149,26 @@ func (h *OpenAIGatewayHandler) writeOpenAIRelayRejection(c *gin.Context, r *Open
 	case OpenAIRelayRejectUnsupported:
 		if streamStarted || c.Writer.Written() || service.StopOpenAICompactSSEKeepaliveCommitted(c) {
 			reqLog.Error("openai.relay_handoff_after_response_started")
+			if format == cyberBlockFormatAnthropic {
+				h.anthropicStreamingAwareError(c, http.StatusBadGateway, "api_error", "Upstream request failed", streamStarted)
+				return
+			}
 			h.handleStreamingAwareError(c, http.StatusBadGateway, "api_error", "Upstream request failed", streamStarted)
 			return
 		}
 		h.relay.HandOff(c)
 	case OpenAIRelayRejectUnavailable:
 		reqLog.Warn("openai.relay_master_unavailable")
-		if lastFailoverErr != nil {
+		switch {
+		case format == cyberBlockFormatAnthropic && lastFailoverErr != nil:
+			h.handleAnthropicFailoverExhausted(c, lastFailoverErr, streamStarted)
+		case format == cyberBlockFormatAnthropic:
+			h.anthropicStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "Service temporarily unavailable", streamStarted)
+		case lastFailoverErr != nil:
 			h.handleFailoverExhausted(c, lastFailoverErr, streamStarted)
-			return
+		default:
+			h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "Service temporarily unavailable", streamStarted)
 		}
-		h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "Service temporarily unavailable", streamStarted)
 	default:
 		if r.CyberBlockKey != "" {
 			h.writeCyberSessionBlocked(c, apiKey, model, r.CyberBlockKey, format)

@@ -275,3 +275,27 @@ func TestNodeServesChatCompletionsEndToEnd(t *testing.T) {
 	require.Positive(t, result.Usage.InputTokens)
 	e.world.waitReleased(t)
 }
+
+func TestNodeServesOpenAIMessagesEndToEnd(t *testing.T) {
+	e := startE2E(t)
+	body := `{"model":"claude-sonnet-4-5","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`
+
+	status, out := e.post(t, "/v1/messages", "sk-a", body)
+	require.Equal(t, http.StatusForbidden, status, out)
+	require.Contains(t, out, `"type":"error"`, "anthropic error shape")
+
+	e.world.keys.keys["sk-a"].Group.AllowMessagesDispatch = true
+	status, out = e.post(t, "/v1/messages", "sk-a", body)
+	require.Equal(t, http.StatusOK, status, out)
+	require.Contains(t, out, "hello")
+	r := <-e.hits
+	require.Equal(t, "Bearer SECRET-one", r.Header.Get("Authorization"))
+	require.Eventually(t, func() bool { return len(e.settler.records()) == 1 }, 5*time.Second, 20*time.Millisecond)
+	rec := e.settler.records()[0]
+	require.Equal(t, "/v1/messages", rec.GetInboundEndpoint())
+	require.NotEmpty(t, rec.GetRequestPayloadHash())
+	var result service.OpenAIForwardResult
+	require.NoError(t, json.Unmarshal(rec.GetResultJson(), &result))
+	require.Positive(t, result.Usage.InputTokens)
+	e.world.waitReleased(t)
+}
