@@ -18,6 +18,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/relay/accountcodec"
 	"github.com/Wei-Shaw/sub2api/internal/relay/master"
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
+	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -32,6 +33,10 @@ type Deps struct {
 	Billing       *service.BillingCacheService
 	Gateway       *service.OpenAIGatewayService
 	Concurrency   *service.ConcurrencyService
+	// Moderation、PromptAudit 用来判断请求会不会被安全审计处理：会的请求暂时留在主节点
+	// （审核接入主从通信之前，设计 3.4）。nil 表示没有这个功能。
+	Moderation  *service.ContentModerationService
+	PromptAudit interface{ EffectiveMode() securityaudit.Mode }
 }
 
 // holdLimit 是一次选号最长占着槽位的时间：从节点的释放消息丢了、从节点下线时由定时清理放掉。
@@ -225,7 +230,10 @@ func (s *selector) Release(nodeID int64, rel *relayv1.SelectionRelease) {
 func (s *selector) release(nodeID int64, rel *relayv1.SelectionRelease) {
 	sel := s.takeSelection(nodeID, rel.GetSelectionId())
 	if sel == nil {
-		return // 已释放（重发）、已过期或不属于这台节点
+		// 已释放（重发）、不属于这台节点，或占用太久已被清理（槽早已放掉）。
+		// 最后一种情况下响应归属还要记：按凭证里的值，凭证是主节点签的，节点改不了。
+		s.bindFromVoucher(nodeID, rel)
+		return
 	}
 	if sel.release != nil {
 		sel.release()
@@ -297,7 +305,29 @@ func (s *selector) RefillQuota(ctx context.Context, nodeID int64, req *relayv1.R
 	if err != nil {
 		return nil, err
 	}
+	if ctx.Err() != nil {
+		s.ungrant(sel.userID, nodeID, grants)
+		return nil, ctx.Err()
+	}
 	return &relayv1.RefillQuotaResponse{Grants: grants}, nil
+}
+
+// ungrant 收回刚给出、但没送到从节点的额度：每份租约减去这次新给的金额（不动累计退回，
+// 节点之后按自己知道的累计值退回不受影响）。
+func (s *selector) ungrant(userID, nodeID int64, grants []*relayv1.QuotaGrant) {
+	if s.env.Quotas == nil || len(grants) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for _, g := range grants {
+		if g.GetAmount() <= 0 {
+			continue
+		}
+		if err := s.env.Quotas.Release(ctx, nodeID, userID, g.GetLeaseId(), g.GetAmount()); err != nil {
+			slog.Warn("relay: give back an undelivered quota grant failed", "lease_id", g.GetLeaseId(), "amount", g.GetAmount(), "error", err)
+		}
+	}
 }
 
 // Close 放掉所有还占着的槽（运行时停止时）。
@@ -342,5 +372,22 @@ func (s *selector) reap() {
 	for _, r := range stale {
 		slog.Warn("relay selection held too long, releasing", "node_id", r.key.nodeID, "request_id", r.key.requestID)
 		s.dropRequest(r)
+	}
+}
+
+// bindFromVoucher 按释放消息带回的凭证记响应归属（选号记录已被清理时）。
+func (s *selector) bindFromVoucher(nodeID int64, rel *relayv1.SelectionRelease) {
+	if len(rel.GetResponseIds()) == 0 || len(rel.GetVoucher()) == 0 || s.env.VerifyVoucher == nil {
+		return
+	}
+	v, err := s.env.VerifyVoucher(rel.GetVoucher(), nodeID)
+	if err != nil || v.GetSelectionId() != rel.GetSelectionId() {
+		slog.Warn("relay: release carries an invalid voucher", "node_id", nodeID, "selection_id", rel.GetSelectionId(), "error", err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for _, id := range rel.GetResponseIds() {
+		s.deps.Gateway.BindRelayHTTPResponse(ctx, v.GetGroupId(), v.GetAccountId(), id, v.GetUserId(), v.GetApiKeyId())
 	}
 }

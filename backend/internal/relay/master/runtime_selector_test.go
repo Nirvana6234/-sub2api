@@ -79,6 +79,11 @@ func TestRuntimeCreatesAndClosesTheSelector(t *testing.T) {
 	verified, err := rt.VerifyVoucher(raw, n.ID)
 	require.NoError(t, err, "vouchers issued through the selection environment verify with the runtime's key")
 	require.Equal(t, signed.GetVoucherId(), verified.GetVoucherId())
+	viaEnv, err := env.VerifyVoucher(raw, n.ID)
+	require.NoError(t, err)
+	require.Equal(t, signed.GetVoucherId(), viaEnv.GetVoucherId())
+	_, err = env.VerifyVoucher(raw, n.ID+1)
+	require.Error(t, err)
 
 	require.NoError(t, rt.Nodes().Disable(ctx, n.ID, 1))
 	_, err = rt.SetEnabled(ctx, 1, false)

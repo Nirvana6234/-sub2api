@@ -3809,7 +3809,10 @@ type SelectionRelease struct {
 	// 这是这次客户端请求的最后一次尝试：主节点同时放掉按请求占的用户并发槽。
 	RequestDone bool `protobuf:"varint,2,opt,name=request_done,json=requestDone,proto3" json:"request_done,omitempty"`
 	// 上游返回的 response id（Responses），主节点记下账号和归属，后续 previous_response_id 用。
-	ResponseIds   []string `protobuf:"bytes,3,rep,name=response_ids,json=responseIds,proto3" json:"response_ids,omitempty"`
+	ResponseIds []string `protobuf:"bytes,3,rep,name=response_ids,json=responseIds,proto3" json:"response_ids,omitempty"`
+	// 这次选号的扣费凭证（原样）。选号在主节点上已被清理时（长请求超过占用上限），
+	// 主节点验签后按凭证里的账号、分组、用户、Key 记响应归属，不信消息里的其他值。
+	Voucher       []byte `protobuf:"bytes,4,opt,name=voucher,proto3" json:"voucher,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3861,6 +3864,13 @@ func (x *SelectionRelease) GetRequestDone() bool {
 func (x *SelectionRelease) GetResponseIds() []string {
 	if x != nil {
 		return x.ResponseIds
+	}
+	return nil
+}
+
+func (x *SelectionRelease) GetVoucher() []byte {
+	if x != nil {
+		return x.Voucher
 	}
 	return nil
 }
@@ -4461,11 +4471,12 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"held_quota\x18\x02 \x03(\v2\x1b.sub2api.relay.v1.HeldQuotaR\theldQuota\x12\x12\n" +
 	"\x04need\x18\x03 \x01(\x03R\x04need\"K\n" +
 	"\x13RefillQuotaResponse\x124\n" +
-	"\x06grants\x18\x01 \x03(\v2\x1c.sub2api.relay.v1.QuotaGrantR\x06grants\"{\n" +
+	"\x06grants\x18\x01 \x03(\v2\x1c.sub2api.relay.v1.QuotaGrantR\x06grants\"\x95\x01\n" +
 	"\x10SelectionRelease\x12!\n" +
 	"\fselection_id\x18\x01 \x01(\tR\vselectionId\x12!\n" +
 	"\frequest_done\x18\x02 \x01(\bR\vrequestDone\x12!\n" +
-	"\fresponse_ids\x18\x03 \x03(\tR\vresponseIds\"\xb9\a\n" +
+	"\fresponse_ids\x18\x03 \x03(\tR\vresponseIds\x12\x18\n" +
+	"\avoucher\x18\x04 \x01(\fR\avoucher\"\xb9\a\n" +
 	"\x0fAccountSnapshot\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1a\n" +

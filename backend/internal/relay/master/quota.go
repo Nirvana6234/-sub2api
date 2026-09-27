@@ -92,6 +92,9 @@ type Quotas struct {
 
 	reservedMu sync.RWMutex
 	reserved   map[int64]Micros
+	// byNode：用户 → 节点 → 这台上锁着的余额。选号时核对节点报告的"手里还有"。
+	// 只记处理过的用户（改动租约时刷新）；没有的按需从存储读一次。
+	byNode map[int64]map[int64]Micros
 }
 
 // NewQuotas 创建额度服务并载入所有用户当前的冻结额。
@@ -103,7 +106,7 @@ func NewQuotas(ctx context.Context, store LeaseStore, epoch string, now func() t
 	if err != nil {
 		return nil, fmt.Errorf("load relay reserved balances: %w", err)
 	}
-	return &Quotas{store: store, epoch: epoch, now: now, reserved: reserved}, nil
+	return &Quotas{store: store, epoch: epoch, now: now, reserved: reserved, byNode: map[int64]map[int64]Micros{}}, nil
 }
 
 // SetRecaller 挂上跨节点收回（协议层建好后）。
@@ -129,6 +132,7 @@ func (q *Quotas) withUser(ctx context.Context, userID int64, fn func(tx LeaseTx)
 	unlock := q.lockUser(userID)
 	defer unlock()
 	var reserved Micros
+	var perNode map[int64]Micros
 	err := q.store.WithUser(ctx, userID, func(tx LeaseTx) error {
 		if err := fn(tx); err != nil {
 			return err
@@ -137,12 +141,7 @@ func (q *Quotas) withUser(ctx context.Context, userID int64, fn func(tx LeaseTx)
 		if err != nil {
 			return err
 		}
-		reserved = 0
-		for _, l := range active {
-			if isBalanceDimension(l.Dimension) {
-				reserved += l.Granted
-			}
-		}
+		reserved, perNode = balanceByNode(active)
 		return nil
 	})
 	if err != nil {
@@ -154,8 +153,47 @@ func (q *Quotas) withUser(ctx context.Context, userID int64, fn func(tx LeaseTx)
 	} else {
 		delete(q.reserved, userID)
 	}
+	q.byNode[userID] = perNode
 	q.reservedMu.Unlock()
 	return nil
+}
+
+func balanceByNode(active []*Lease) (Micros, map[int64]Micros) {
+	var total Micros
+	perNode := map[int64]Micros{}
+	for _, l := range active {
+		if isBalanceDimension(l.Dimension) {
+			total += l.Granted
+			perNode[l.NodeID] += l.Granted
+		}
+	}
+	return total, perNode
+}
+
+// NodeReservedBalance 返回这个用户现在锁在某台节点上的余额。节点在选号时报告"手里还有多少"，
+// 主节点按它把这部分加回余额预检；报告不能超过这个数（被攻破的节点不能借此无视其他节点锁着的钱）。
+func (q *Quotas) NodeReservedBalance(ctx context.Context, userID, nodeID int64) (Micros, error) {
+	q.reservedMu.RLock()
+	perNode, known := q.byNode[userID]
+	amount := perNode[nodeID]
+	q.reservedMu.RUnlock()
+	if known {
+		return amount, nil
+	}
+	active, err := q.activeForUser(ctx, userID)
+	if errors.Is(err, ErrLeaseUserNotFound) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	_, perNode = balanceByNode(active)
+	q.reservedMu.Lock()
+	if _, raced := q.byNode[userID]; !raced {
+		q.byNode[userID] = perNode
+	}
+	q.reservedMu.Unlock()
+	return perNode[nodeID], nil
 }
 
 // grantAmount 按设计 4.2 算这次给多少：未锁定额度的一半，不足 0.1 全给；

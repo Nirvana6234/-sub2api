@@ -13,6 +13,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/relay/master"
 	"github.com/Wei-Shaw/sub2api/internal/relay/relayselect"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
+	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/google/wire"
 )
@@ -37,9 +38,15 @@ func ProvideMasterRuntime(
 	settingService *service.SettingService,
 	gateway *service.OpenAIGatewayService,
 	concurrency *service.ConcurrencyService,
+	moderation *service.ContentModerationService,
+	promptAudit *securityaudit.PromptService,
 ) *master.Runtime {
 	// 用户、分组、订阅作废时发布改动（平台配额在仓储层已接好，见 repository/wire.go）。
 	service.AttachAccessChangeHub(accessChanges, apiKeys, billing)
+	var prompt interface{ EffectiveMode() securityaudit.Mode }
+	if promptAudit != nil {
+		prompt = promptAudit
+	}
 	rt := master.NewRuntime(master.RuntimeDeps{
 		Config:        cfg,
 		Store:         repository.NewRelayNodeRepository(db),
@@ -53,6 +60,7 @@ func ProvideMasterRuntime(
 		NewSelector: relayselect.NewFactory(relayselect.Deps{
 			Config: cfg, APIKeys: apiKeys, Subscriptions: subscriptions, Settings: settingService,
 			Billing: billing, Gateway: gateway, Concurrency: concurrency,
+			Moderation: moderation, PromptAudit: prompt,
 		}),
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

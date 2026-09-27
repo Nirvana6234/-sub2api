@@ -811,6 +811,27 @@ func (s *ContentModerationService) TestAPIKeys(ctx context.Context, input TestCo
 	return &TestContentModerationAPIKeysResult{Items: items, AuditResult: auditResult, ImageCount: imageCount}, nil
 }
 
+// AppliesTo 报告这个分组、模型的请求会不会进内容审核（不看抽样和输入内容，宁宽勿漏）。
+// 主从分流用：在审核接入主从通信之前（设计 3.4），会被审核的请求留在主节点转发，不交给从节点。
+// 读不到配置时按"会"处理。
+func (s *ContentModerationService) AppliesTo(ctx context.Context, groupID *int64, model string) bool {
+	if s == nil || s.settingRepo == nil || s.repo == nil {
+		return false
+	}
+	runtimeSnapshot, err := s.loadRuntimeSnapshot(ctx)
+	if err != nil {
+		return true
+	}
+	if !runtimeSnapshot.riskControlEnabled {
+		return false
+	}
+	cfg := runtimeSnapshot.config
+	if !cfg.Enabled || cfg.Mode == ContentModerationModeOff {
+		return false
+	}
+	return cfg.includesGroup(groupID) && cfg.includesModel(model)
+}
+
 func (s *ContentModerationService) Check(ctx context.Context, input ContentModerationCheckInput) (*ContentModerationDecision, error) {
 	allow := &ContentModerationDecision{Allowed: true, Action: ContentModerationActionAllow}
 	if s == nil || s.settingRepo == nil || s.repo == nil {

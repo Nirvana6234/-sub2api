@@ -156,7 +156,7 @@ func TestRelayAPIKeyAdmissionMatchesTheLocalMiddlewareChain(t *testing.T) {
 func TestRelayAPIKeyAdmissionLeavesUnsupportedKeysToTheMaster(t *testing.T) {
 	cfg := &config.Config{}
 	for name, mutate := range map[string]func(k *service.APIKey){
-		"composite":  func(k *service.APIKey) { k.Group.Platform = service.PlatformComposite },
+		"composite": func(k *service.APIKey) { k.Group.Platform = service.PlatformComposite },
 	} {
 		t.Run(name, func(t *testing.T) {
 			key := relayAdmissionKey(mutate)

@@ -44,6 +44,8 @@ type SelectEnv struct {
 	NodeEncryptionKey func(nodeID int64) (*ecdh.PublicKey, bool)
 	// ConfigVersion 返回节点当前的配置版本（选号回复里带着，设计 6.2）。
 	ConfigVersion func(ctx context.Context, nodeID int64) (string, error)
+	// VerifyVoucher 验一张扣费凭证（签名、期限、上报节点）。
+	VerifyVoucher func(raw []byte, reportingNodeID int64) (*relayv1.Voucher, error)
 }
 
 // AttachSelector 挂上选号实现（运行时启动时）。
@@ -78,8 +80,9 @@ func (c *Control) Select(ctx context.Context, req *relayv1.SelectRequest) (*rela
 		return nil, status.Error(codes.InvalidArgument, "request_id and attempt are required")
 	}
 	resp, err := c.selector.Select(ctx, nodeID, req)
-	if err == nil && ctx.Err() != nil {
-		// 调用已取消：不返回成功结果，否则幂等缓存会把它记下来，从节点超时重发时拿到的是它。
+	if err == nil && ctx.Err() != nil && resp.GetSelection() == nil {
+		// 调用已取消时的拒绝多半是取消造成的：按错误返回，幂等缓存不会记住它，从节点超时重发时重新判断。
+		// 选中的结果照常返回（缓存下来，重发拿到的就是它，槽位和额度不会白占）。
 		err = ctx.Err()
 	}
 	if err != nil {

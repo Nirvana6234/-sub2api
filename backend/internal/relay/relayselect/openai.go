@@ -10,6 +10,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/relay/master"
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
+	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"go.uber.org/zap"
@@ -22,9 +23,9 @@ func (s *selector) Select(ctx context.Context, nodeID int64, req *relayv1.Select
 		return unsupported(), nil
 	}
 	resp, err := s.selectOpenAIResponses(ctx, nodeID, req)
-	if err == nil && ctx.Err() != nil {
+	if err == nil && ctx.Err() != nil && resp.GetSelection() == nil {
 		// 调用已取消时的拒绝多半是取消造成的（查 Key 失败等）；按错误返回，幂等缓存不会记住它，
-		// 从节点超时重发时重新判断。选中的情况在上面已经放槽并返回错误。
+		// 从节点超时重发时重新判断。
 		return nil, ctx.Err()
 	}
 	return resp, err
@@ -57,6 +58,10 @@ func (s *selector) selectOpenAIResponses(ctx context.Context, nodeID int64, req 
 	apiKey := adm.APIKey
 	if apiKey.Group == nil || apiKey.Group.Platform != service.PlatformOpenAI {
 		// 未分组 Key 走 Anthropic 网关，其他 OpenAI 兼容平台（Grok 等）还没接入。
+		return unsupported(), nil
+	}
+	if s.auditApplies(ctx, apiKey.GroupID, req.GetModel()) {
+		// 安全审计（内容审核、提示词审计）还没接入主从通信：这类请求留在主节点转发。
 		return unsupported(), nil
 	}
 	ctx = middleware.RelayRequestContext(ctx, adm)
@@ -164,16 +169,18 @@ func (s *selector) selectOpenAIResponses(ctx context.Context, nodeID int64, req 
 		createdAt: s.now(), quota: quotaReq, groupID: groupID, userID: userID, apiKeyID: apiKey.ID,
 	}
 	resp, rej, err := s.buildSelection(ctx, nodeID, req, sel, outcome, forwardModel, reqModel, channelMapping, subscription)
-	if err != nil || rej != nil || ctx.Err() != nil {
-		// 从节点已经不等了（或回复做不出来）：这次选号没人会用，立刻放槽；幂等缓存只存成功的结果。
+	if err == nil && rej == nil && ctx.Err() != nil {
+		// 额度已经给了但从节点不等了：原样收回（节点不知道这笔，不收回就一直锁到租约到期）。
+		s.ungrant(sel.userID, nodeID, resp.GetSelection().GetGrants())
+		err = ctx.Err()
+	}
+	if err != nil || rej != nil {
+		// 这次选号没人会用：立刻放槽；幂等缓存只存成功的结果。
 		if outcome.Release != nil {
 			outcome.Release()
 		}
 		if rej != nil {
 			return rej, nil
-		}
-		if err == nil {
-			err = ctx.Err()
 		}
 		return nil, err
 	}
@@ -194,6 +201,14 @@ func (s *selector) startRequest(ctx context.Context, record *requestRecord, req 
 	record.userRelease = release
 
 	held := heldBalance(req.GetHeldQuota())
+	if held > 0 && s.env.Quotas != nil {
+		// 不信节点报的数：不超过主节点记着的、锁在这台上的。
+		locked, err := s.env.Quotas.NodeReservedBalance(ctx, apiKey.User.ID, record.key.nodeID)
+		if err != nil {
+			return gatewayRejection(handler.OpenAIBillingRejection(service.ErrBillingServiceUnavailable.WithCause(err)))
+		}
+		held = min(held, locked)
+	}
 	billingCtx := service.WithRelayRequesterHeldBalance(ctx, master.FromMicros(held))
 	if err := s.deps.Billing.CheckBillingEligibility(billingCtx, apiKey.User, apiKey, apiKey.Group, quotaReq.Subscription, quotaReq.Platform); err != nil {
 		return gatewayRejection(handler.OpenAIBillingRejection(err))
@@ -216,18 +231,6 @@ func (s *selector) startRequest(ctx context.Context, record *requestRecord, req 
 func (s *selector) buildSelection(ctx context.Context, nodeID int64, req *relayv1.SelectRequest, sel *selectionRecord, outcome handler.OpenAISelectOutcome,
 	forwardModel, reqModel string, mapping service.ChannelMappingResult, subscription *service.UserSubscription,
 ) (*relayv1.SelectResponse, *relayv1.SelectResponse, error) {
-	grants, scopes, err := s.acquireQuota(ctx, nodeID, sel.quota, req.GetHeldQuota(), quotaNeed, false)
-	if err != nil {
-		var insufficient *master.QuotaInsufficientError
-		if errors.As(err, &insufficient) {
-			return nil, gatewayRejection(handler.OpenAIBillingRejection(quotaError(insufficient.Scope.Dimension))), nil
-		}
-		if errors.Is(err, service.ErrSubscriptionInvalid) || errors.Is(err, service.ErrBillingServiceUnavailable) {
-			// 与本地计费检查在同样的情况下返回的一致（订阅已失效、计费数据取不到）。
-			return nil, gatewayRejection(handler.OpenAIBillingRejection(err)), nil
-		}
-		return nil, nil, err
-	}
 	snap, err := s.encodeAccount(ctx, nodeID, sel.account, s.nodeHas(nodeID))
 	if err != nil {
 		return nil, nil, err
@@ -257,6 +260,19 @@ func (s *selector) buildSelection(ctx context.Context, nodeID int64, req *relayv
 	if cfg := s.deps.Config; cfg != nil && cfg.Gateway.MaxAccountSwitches > 0 {
 		switches = cfg.Gateway.MaxAccountSwitches
 	}
+	// 额度放在最后：之后不会再有失败的步骤，给出的额度不会因为回复做不出来而白锁着。
+	grants, scopes, err := s.acquireQuota(ctx, nodeID, sel.quota, req.GetHeldQuota(), quotaNeed, false)
+	if err != nil {
+		var insufficient *master.QuotaInsufficientError
+		if errors.As(err, &insufficient) {
+			return nil, gatewayRejection(handler.OpenAIBillingRejection(quotaError(insufficient.Scope.Dimension))), nil
+		}
+		if errors.Is(err, service.ErrSubscriptionInvalid) || errors.Is(err, service.ErrBillingServiceUnavailable) {
+			// 与本地计费检查在同样的情况下返回的一致（订阅已失效、计费数据取不到）。
+			return nil, gatewayRejection(handler.OpenAIBillingRejection(err)), nil
+		}
+		return nil, nil, err
+	}
 	return &relayv1.SelectResponse{Result: &relayv1.SelectResponse_Selection{Selection: &relayv1.Selection{
 		SelectionId: sel.id, UserId: sel.userID, ApiKeyId: sel.apiKeyID, GroupId: sel.groupID, BillingMode: mode,
 		Account: snap, ForwardModel: forwardModel, ChannelMapped: mapping.Mapped, ChannelMappedModel: mapping.MappedModel,
@@ -264,6 +280,14 @@ func (s *selector) buildSelection(ctx context.Context, nodeID int64, req *relayv
 		Voucher: voucher, QuotaScopes: scopes, QuotaNeed: quotaNeed, Grants: grants,
 		MaxAccountSwitches: int32(switches), ConfigVersion: version, PricingAtUnixMs: sel.request.pricingAt.UnixMilli(),
 	}}}, nil, nil
+}
+
+// auditApplies 报告这个请求会不会被安全审计处理（本地处理函数里的 checkSecurityAudit）。
+func (s *selector) auditApplies(ctx context.Context, groupID *int64, model string) bool {
+	if p := s.deps.PromptAudit; p != nil && p.EffectiveMode() != securityaudit.ModeOff {
+		return true
+	}
+	return s.deps.Moderation.AppliesTo(ctx, groupID, model)
 }
 
 func modelCandidates(req *relayv1.SelectRequest) []string {

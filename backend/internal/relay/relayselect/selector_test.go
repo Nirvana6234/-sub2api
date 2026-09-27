@@ -17,6 +17,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
 	"github.com/Wei-Shaw/sub2api/internal/relay/sealbox"
 	"github.com/Wei-Shaw/sub2api/internal/relay/sign"
+	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
@@ -104,10 +105,21 @@ func (s memSettings) SetMultiple(context.Context, map[string]string) error {
 func (s memSettings) GetAll(context.Context) (map[string]string, error) { return s.values, nil }
 func (s memSettings) Delete(context.Context, string) error              { return errors.New("read only") }
 
-// countingSlots 记用户槽的占用和释放。
+// countingSlots 记用户槽和账号槽的占用和释放。
 type countingSlots struct {
 	service.ConcurrencyCache
-	held atomic.Int64
+	held     atomic.Int64
+	accounts atomic.Int64
+}
+
+func (c *countingSlots) AcquireAccountSlot(context.Context, int64, int, string) (bool, error) {
+	c.accounts.Add(1)
+	return true, nil
+}
+
+func (c *countingSlots) ReleaseAccountSlot(context.Context, int64, string) error {
+	c.accounts.Add(-1)
+	return nil
 }
 
 func (c *countingSlots) AcquireUserSlot(context.Context, int64, int, string) (bool, error) {
@@ -172,7 +184,7 @@ func newWorldWithBalance(t *testing.T, runMode string, balance float64, accounts
 	billing := service.NewBillingCacheService(balanceCache{balance: balance}, nil, nil, nil, nil, nil, cfg, nil)
 	t.Cleanup(billing.Stop)
 	gateway := service.NewOpenAIGatewayService(fakeAccounts{accounts: accounts}, nil, nil, nil, nil, nil, nil, cfg,
-		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+		nil, concurrency, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	kek := make([]byte, keystore.KEKLength)
 	_, err := rand.Read(kek)
@@ -208,6 +220,9 @@ func newWorldWithBalance(t *testing.T, runMode string, balance float64, accounts
 			return nodeKey.PublicKey(), nodeID == testNode
 		},
 		ConfigVersion: func(context.Context, int64) (string, error) { return "cfg-v1", nil },
+		VerifyVoucher: func(raw []byte, nodeID int64) (*relayv1.Voucher, error) {
+			return sign.VerifyVoucher(raw, pub, nodeID, time.Now())
+		},
 	})
 	t.Cleanup(sel.Close)
 	return &world{sel: sel, slots: slots, nodeKey: nodeKey, pub: pub, leases: leases, quotas: quotas}
@@ -215,7 +230,7 @@ func newWorldWithBalance(t *testing.T, runMode string, balance float64, accounts
 
 func apiKeyAccount(id int64, name string) service.Account {
 	return service.Account{ID: id, Name: name, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
-		Status: service.StatusActive, Schedulable: true, Credentials: map[string]any{"api_key": "SECRET-" + name, "base_url": "https://up.example"}}
+		Status: service.StatusActive, Schedulable: true, Concurrency: 2, Credentials: map[string]any{"api_key": "SECRET-" + name, "base_url": "https://up.example"}}
 }
 
 func responsesRequest(requestID string, attempt uint32, key string) *relayv1.SelectRequest {
@@ -226,6 +241,7 @@ func responsesRequest(requestID string, attempt uint32, key string) *relayv1.Sel
 func (w *world) waitReleased(t *testing.T) {
 	t.Helper()
 	require.Eventually(t, func() bool { return w.slots.held.Load() == 0 }, 2*time.Second, 5*time.Millisecond, "the user slot is given back")
+	require.Eventually(t, func() bool { return w.slots.accounts.Load() == 0 }, 2*time.Second, 5*time.Millisecond, "account slots are given back")
 }
 
 // ---- 用例 ----
@@ -264,6 +280,7 @@ func TestSelectResponsesHappyPath(t *testing.T) {
 	again, err := w.sel.Select(ctx, testNode, responsesRequest("r2", 1, "sk-a"))
 	require.NoError(t, err)
 	require.Empty(t, again.GetSelection().GetAccount().GetSealedCredentials(), "the node already has this credential version")
+	require.Equal(t, int64(2), w.slots.accounts.Load(), "account slots are held after the call returns, until the node releases them")
 	_, err = accountcodec.Decode(again.GetSelection().GetAccount(), testNode, open, cache)
 	require.NoError(t, err)
 	creds, err := w.sel.FetchCredentials(ctx, testNode, &relayv1.FetchCredentialsRequest{SelectionId: again.GetSelection().GetSelectionId()})
@@ -406,18 +423,22 @@ func TestStaleRequestsAreReapedAndCloseReleasesEverything(t *testing.T) {
 	_, err := w.sel.Select(ctx, testNode, responsesRequest("r1", 1, "sk-a"))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), w.slots.held.Load())
+	require.Equal(t, int64(1), w.slots.accounts.Load())
 
 	var mu sync.Mutex
 	later := time.Now().Add(holdLimit + time.Minute)
 	w.sel.now = func() time.Time { mu.Lock(); defer mu.Unlock(); return later }
 	w.sel.reap()
 	require.Equal(t, int64(0), w.slots.held.Load())
+	require.Equal(t, int64(0), w.slots.accounts.Load())
 
 	w.sel.now = time.Now
 	_, err = w.sel.Select(ctx, testNode, responsesRequest("r2", 1, "sk-a"))
 	require.NoError(t, err)
+	require.Equal(t, int64(1), w.slots.accounts.Load())
 	w.sel.Close()
 	require.Equal(t, int64(0), w.slots.held.Load())
+	require.Equal(t, int64(0), w.slots.accounts.Load())
 	_, err = w.sel.Select(ctx, testNode, responsesRequest("r3", 1, "sk-a"))
 	require.Error(t, err, "a closed selector does not select")
 }
@@ -459,4 +480,116 @@ func TestSelectWhenTheWholeBalanceIsLockedOnThisNode(t *testing.T) {
 	resp, err = w.sel.Select(ctx, testNode, other)
 	require.NoError(t, err)
 	require.Equal(t, int32(403), resp.GetRejection().GetStatus(), "a node holding nothing sees no spendable balance")
+}
+
+// 额度给出之后从节点不等了：原样收回，钱不白锁；之前没送到节点的那笔不影响节点之后按累计值退回。
+func TestUndeliveredGrantsAreGivenBack(t *testing.T) {
+	w := newWorld(t, config.RunModeStandard, apiKeyAccount(1, "one"))
+	ctx, cancel := context.WithCancel(context.Background())
+	w.sel.env.ConfigVersion = func(context.Context, int64) (string, error) {
+		cancel() // 从节点在主节点做回复的时候放弃了
+		return "cfg-v1", nil
+	}
+	_, err := w.sel.Select(ctx, testNode, responsesRequest("r1", 1, "sk-a"))
+	require.Error(t, err)
+	require.Zero(t, w.leases.ReservedBalance(3), "the grant the node never saw is given back")
+	require.Equal(t, int64(0), w.slots.held.Load())
+	require.Equal(t, int64(0), w.slots.accounts.Load(), "the account slot nobody will use is released")
+}
+
+func TestNoQuotaIsLockedWhenTheReplyCannotBeBuilt(t *testing.T) {
+	w := newWorld(t, config.RunModeStandard, apiKeyAccount(1, "one"))
+	_, err := w.sel.Select(context.Background(), testNode+1, responsesRequest("r1", 1, "sk-a"))
+	require.Error(t, err, "this node has no encryption key")
+	require.Zero(t, w.leases.ReservedBalance(3))
+	require.Equal(t, int64(0), w.slots.held.Load())
+}
+
+func TestUngrantKeepsTheNodesCumulativeReturnsWorking(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t, config.RunModeStandard, apiKeyAccount(1, "one"))
+	resp, err := w.sel.Select(ctx, testNode, responsesRequest("r1", 1, "sk-a"))
+	require.NoError(t, err)
+	first := resp.GetSelection().GetGrants()[0]
+	require.Equal(t, master.ToMicros(5), w.leases.ReservedBalance(3))
+
+	// 同一份租约上又给了一笔，但没送到节点：收回后回到节点知道的数。
+	extra, err := w.quotas.Acquire(ctx, master.AcquireRequest{UserID: 3, NodeID: testNode, Need: 1, Wants: []master.QuotaWant{{
+		Scope: master.LeaseScope{Dimension: service.QuotaDimBalance}, Headroom: 10, NodeUnused: first.GetGranted(),
+	}}})
+	require.NoError(t, err)
+	require.Equal(t, first.GetLeaseId(), extra[0].LeaseID)
+	w.sel.ungrant(3, testNode, []*relayv1.QuotaGrant{extra[0].Proto(3)})
+	require.Equal(t, first.GetGranted(), w.leases.ReservedBalance(3))
+
+	// 节点按它知道的累计值退回 1：照常生效。
+	_, returned, err := w.quotas.ApplyReturn(ctx, testNode, &relayv1.LeaseReturn{LeaseId: first.GetLeaseId(), UserId: 3, ReturnedTotal: master.ToMicros(1)})
+	require.NoError(t, err)
+	require.Equal(t, master.ToMicros(1), returned)
+	require.Equal(t, first.GetGranted()-master.ToMicros(1), w.leases.ReservedBalance(3))
+}
+
+// 节点报告的"手里还有"不能超过主节点记着的、锁在这台上的：锁在别的节点上的钱不能借此绕过余额预检。
+func TestNodeCannotClaimBalanceLockedElsewhere(t *testing.T) {
+	ctx := context.Background()
+	w := newWorldWithBalance(t, config.RunModeStandard, 0.05, apiKeyAccount(1, "one"))
+	w.sel.deps.Billing.SetRelayReservedBalanceReader(w.quotas)
+	balance := master.LeaseScope{Dimension: service.QuotaDimBalance}
+	_, err := w.quotas.Acquire(ctx, master.AcquireRequest{UserID: 3, NodeID: testNode + 1, Need: 1, Wants: []master.QuotaWant{{Scope: balance, Headroom: 0.05}}})
+	require.NoError(t, err)
+
+	req := responsesRequest("r1", 1, "sk-a")
+	req.HeldQuota = []*relayv1.HeldQuota{{Scope: &relayv1.QuotaScope{Dimension: service.QuotaDimBalance}, Unused: master.ToMicros(0.05)}}
+	resp, err := w.sel.Select(ctx, testNode, req)
+	require.NoError(t, err)
+	require.Equal(t, int32(403), resp.GetRejection().GetStatus(), "the money is locked on another node")
+	require.Equal(t, int64(0), w.slots.held.Load())
+}
+
+// 超过占用上限的长请求：选号记录已被清理，释放时按凭证记响应归属，续链照常可用；伪造的凭证不认。
+func TestLongRequestStillRecordsTheResponseOwner(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t, config.RunModeSimple, apiKeyAccount(1, "one"))
+	resp, err := w.sel.Select(ctx, testNode, responsesRequest("r1", 1, "sk-a"))
+	require.NoError(t, err)
+	sel := resp.GetSelection()
+	later := time.Now().Add(holdLimit + time.Minute)
+	w.sel.now = func() time.Time { return later }
+	w.sel.reap()
+	w.sel.now = time.Now
+
+	// 伪造：换一张别的选号的凭证。
+	other, err := w.sel.Select(ctx, testNode, responsesRequest("r2", 1, "sk-a"))
+	require.NoError(t, err)
+	w.sel.release(testNode, &relayv1.SelectionRelease{SelectionId: sel.GetSelectionId(), ResponseIds: []string{"resp_forged"}, Voucher: other.GetSelection().GetVoucher()})
+	w.sel.release(testNode+1, &relayv1.SelectionRelease{SelectionId: sel.GetSelectionId(), ResponseIds: []string{"resp_wrong_node"}, Voucher: sel.GetVoucher()})
+	w.sel.release(testNode, &relayv1.SelectionRelease{SelectionId: sel.GetSelectionId(), RequestDone: true, ResponseIds: []string{"resp_long"}, Voucher: sel.GetVoucher()})
+
+	owned, err := w.sel.deps.Gateway.ValidateOpenAIHTTPResponseOwner(ctx, 5, "resp_long", 3, 11)
+	require.NoError(t, err)
+	require.True(t, owned)
+	for _, id := range []string{"resp_forged", "resp_wrong_node"} {
+		owned, _ = w.sel.deps.Gateway.ValidateOpenAIHTTPResponseOwner(ctx, 5, id, 3, 11)
+		require.False(t, owned, id)
+	}
+}
+
+type fixedPromptMode securityaudit.Mode
+
+func (m fixedPromptMode) EffectiveMode() securityaudit.Mode { return securityaudit.Mode(m) }
+
+// 开着安全审计（提示词审计或内容审核覆盖到这个请求）时留在主节点转发：审核还没接入主从通信（设计 3.4）。
+func TestAuditedRequestsStayOnTheMaster(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t, config.RunModeSimple, apiKeyAccount(1, "one"))
+	w.sel.deps.PromptAudit = fixedPromptMode(securityaudit.ModeBlocking)
+	resp, err := w.sel.Select(ctx, testNode, responsesRequest("r1", 1, "sk-a"))
+	require.NoError(t, err)
+	require.Equal(t, relayv1.RejectionFormat_REJECTION_FORMAT_UNSUPPORTED, resp.GetRejection().GetFormat())
+	require.Equal(t, int64(0), w.slots.held.Load())
+
+	w.sel.deps.PromptAudit = fixedPromptMode(securityaudit.ModeOff)
+	resp, err = w.sel.Select(ctx, testNode, responsesRequest("r2", 1, "sk-a"))
+	require.NoError(t, err)
+	require.NotNil(t, resp.GetSelection())
 }

@@ -165,4 +165,3 @@ func TestSpendableBalance(t *testing.T) {
 	require.InDelta(t, 6.5, (&User{Balance: 10, RelayReservedBalance: 3.5}).SpendableBalance(), 1e-9)
 	require.InDelta(t, -2.0, SpendableBalance(1, 3), 1e-9)
 }
-
