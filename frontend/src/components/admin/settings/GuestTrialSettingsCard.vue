@@ -172,9 +172,12 @@ const form = reactive<GuestTrialConfig>({
 
 const sameModel = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
 const isSelected = (model: string) => selectedModels.value.some((item) => sameModel(item, model))
+// 自动分组密钥按模型挑分组，列表只反映当前解析到的分组，不能据此判定模型不可用
+const selectedKeyIsAutoGroup = computed(() => keys.value.some((key) => key.id === form.api_key_id && key.auto_group))
 // 候选列表还没读到或读取失败时不标黄，避免误报
 const isAvailable = (model: string) =>
-  modelsLoading.value || modelsError.value || availableModels.value.length === 0 || availableModels.value.some((item) => sameModel(item, model))
+  selectedKeyIsAutoGroup.value || modelsLoading.value || modelsError.value || availableModels.value.length === 0 ||
+  availableModels.value.some((item) => sameModel(item, model))
 
 const filteredAvailable = computed(() => {
   const keyword = modelFilter.value.trim().toLowerCase()
