@@ -92,7 +92,13 @@ func isOpenAIAccount(account *Account) bool {
 
 // handleOpenAIAccountUpstreamError expects canonicalModel to be the model used
 // for scheduling after applying account mapping exactly once.
+// 经 OpenAIUpstreamErrorDecider 判定（主从分流的从节点由主节点判定）。
 func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte, canonicalModel ...string) bool {
+	return s.errorDecider().HandleUpstreamError(ctx, account, statusCode, headers, responseBody, canonicalModel...)
+}
+
+// handleOpenAIAccountUpstreamErrorLocal 是本机的判定（单机、主节点）。
+func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamErrorLocal(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte, canonicalModel ...string) bool {
 	if account != nil && account.Platform == PlatformGrok && isGrokContentPolicyRejection(statusCode, responseBody) {
 		return false
 	}
@@ -248,19 +254,21 @@ func (s *OpenAIGatewayService) shouldRetryOpenAIOAuth429OnSameAccount(account *A
 }
 
 func (s *OpenAIGatewayService) shouldRetryOpenAIOAuth429OnSameAccountWithResponse(account *Account, statusCode int, shouldDisable bool, headers http.Header, responseBody []byte) bool {
+	retry, _ := s.openAIOAuth429SameAccountRetry(account, statusCode, shouldDisable, headers, responseBody)
+	return retry
+}
+
+// openAIOAuth429SameAccountRetry：与状态无关的判断在本地做；账号熔断和重试窗口是进程内状态，
+// 经 OpenAIUpstreamErrorDecider 查（从节点问主节点）。返回能否重试和重试窗口的截止时间。
+func (s *OpenAIGatewayService) openAIOAuth429SameAccountRetry(account *Account, statusCode int, shouldDisable bool, headers http.Header, responseBody []byte) (bool, time.Time) {
 	if shouldDisable || statusCode != http.StatusTooManyRequests || !isOpenAIOAuthAccount(account) || account.IsShadow() {
-		return false
+		return false, time.Time{}
 	}
 	disposition, _ := classifyOpenAIOAuth429(headers, responseBody)
 	if disposition != openAIOAuth429Transient {
-		return false
+		return false, time.Time{}
 	}
-	// markOpenAIOAuth429RateLimited parks the account once the window expires.
-	// Do not accidentally create a fresh window after that transition.
-	if s.isOpenAIAccountRuntimeBlocked(account) {
-		return false
-	}
-	return s.openAIOAuth429RetryWindowActive(account)
+	return s.errorDecider().OAuth429SameAccountRetry(context.Background(), account)
 }
 
 // ShouldRetryOpenAIOAuth429 lets RateLimitService defer persistent account
