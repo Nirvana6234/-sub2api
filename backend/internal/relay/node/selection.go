@@ -72,6 +72,23 @@ func (s *SelectClient) RefillQuota(ctx context.Context, req *relayv1.RefillQuota
 	return resp.GetGrants(), nil
 }
 
+// SelectionRefiller 是 LocalQuota 的补充实现：按 ctx 里进行中的选号向主节点补充（RefillQuota 只接受
+// 进行中的选号）。ctx 里没有选号（后台的提前补充）时不补，等下一次选号顺带。
+type SelectionRefiller struct{ Client *SelectClient }
+
+// Refill 实现 QuotaRefiller。
+func (r SelectionRefiller) Refill(ctx context.Context, _ int64, wants []QuotaWantReport, need int64) ([]*relayv1.QuotaGrant, error) {
+	id := SelectionIDFrom(ctx)
+	if id == "" {
+		return nil, nil
+	}
+	held := make([]*relayv1.HeldQuota, 0, len(wants))
+	for _, w := range wants {
+		held = append(held, &relayv1.HeldQuota{Scope: &relayv1.QuotaScope{Dimension: w.Scope.Dimension, ScopeId: w.Scope.ScopeID, ScopeKey: w.Scope.ScopeKey}, Unused: w.Unused})
+	}
+	return r.Client.RefillQuota(ctx, &relayv1.RefillQuotaRequest{SelectionId: id, HeldQuota: held, Need: need})
+}
+
 // Release 释放一次选号：经事件连接发送，不等回复（设计 3.1）。
 func (s *SelectClient) Release(rel *relayv1.SelectionRelease) {
 	s.outbox.Enqueue(&relayv1.NodeEnvelope{Body: &relayv1.NodeEnvelope_SelectionRelease{SelectionRelease: rel}})

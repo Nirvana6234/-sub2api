@@ -22,6 +22,9 @@ func WithSelectionID(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, selectionIDKey{}, id)
 }
 
+// SelectionIDFrom 取 ctx 里这次尝试的选号 ID（没有时为空）。
+func SelectionIDFrom(ctx context.Context) string { return selectionIDFrom(ctx) }
+
 func selectionIDFrom(ctx context.Context) string {
 	if ctx == nil {
 		return ""

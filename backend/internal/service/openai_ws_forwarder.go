@@ -320,6 +320,13 @@ func (s *OpenAIGatewayService) SnapshotOpenAIWSPerformanceMetrics() OpenAIWSPerf
 	return snapshot
 }
 
+// SetOpenAIWSStateStore 替换响应/会话状态存储（主从分流从节点：响应归属不写 Redis，随释放带回主节点）。
+// 必须在处理请求之前调用。
+func (s *OpenAIGatewayService) SetOpenAIWSStateStore(store OpenAIWSStateStore) {
+	s.openaiWSStateStoreOnce.Do(func() {})
+	s.openaiWSStateStore = store
+}
+
 func (s *OpenAIGatewayService) getOpenAIWSStateStore() OpenAIWSStateStore {
 	if s == nil {
 		return nil

@@ -138,6 +138,7 @@ func (q *LocalQuota) usable(e *quotaEntry) bool {
 type Reservation struct {
 	q       *LocalQuota
 	entries []*quotaEntry
+	scopes  []QuotaScope
 	amount  int64
 	done    atomic.Bool
 }
@@ -163,7 +164,7 @@ func (q *LocalQuota) Reserve(ctx context.Context, userID int64, scopes []QuotaSc
 					break
 				}
 			}
-			return &Reservation{q: q, entries: taken, amount: need}, nil
+			return &Reservation{q: q, entries: taken, scopes: scopes, amount: need}, nil
 		}
 		for _, e := range taken {
 			e.remaining.Add(need)
@@ -186,6 +187,23 @@ func (r *Reservation) Settle(actual int64) {
 	now := r.q.now().UnixMilli()
 	for _, e := range r.entries {
 		e.remaining.Add(r.amount - actual)
+		e.lastUsedMs.Store(now)
+	}
+}
+
+// SettleConsumed 按主节点入账确认里各项子额度的实际消耗结算（设计 5.2：金额由主节点算）。
+// 确认里没有的项按 0 算（这一项没扣钱，预扣全部退回）。只生效一次。
+func (r *Reservation) SettleConsumed(consumed []*relayv1.LeaseConsumption) {
+	if r == nil || !r.done.CompareAndSwap(false, true) {
+		return
+	}
+	by := make(map[QuotaScope]int64, len(consumed))
+	for _, c := range consumed {
+		by[scopeFromProto(c.GetScope())] += c.GetAmount()
+	}
+	now := r.q.now().UnixMilli()
+	for i, e := range r.entries {
+		e.remaining.Add(r.amount - by[r.scopes[i]])
 		e.lastUsedMs.Store(now)
 	}
 }

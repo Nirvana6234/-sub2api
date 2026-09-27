@@ -38,59 +38,8 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 			return
 		}
 
-		if apiKeyHeadersTooLarge(c) {
-			recordInvalidAuthFailure(c, apiKeyService)
-			MarkIngressRejected(c, IngressRejectInvalidAPIKey)
-			AbortWithError(c, http.StatusUnauthorized, "INVALID_API_KEY", "Invalid API key")
-			return
-		}
-
-		queryKey := strings.TrimSpace(c.Query("key"))
-		queryApiKey := strings.TrimSpace(c.Query("api_key"))
-		if queryKey != "" || queryApiKey != "" {
-			recordInvalidAuthFailure(c, apiKeyService)
-			MarkIngressRejected(c, IngressRejectQueryAPIKeyDeprecated)
-			AbortWithError(c, 400, "api_key_in_query_deprecated", "API key in query parameter is deprecated. Please use Authorization header instead.")
-			return
-		}
-
-		// 尝试从Authorization header中提取API key (Bearer scheme)
-		authHeader := c.GetHeader("Authorization")
-		var apiKeyString string
-
-		if authHeader != "" {
-			// 验证Bearer scheme
-			parts := strings.SplitN(authHeader, " ", 2)
-			if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
-				apiKeyString = strings.TrimSpace(parts[1])
-			}
-		}
-
-		// 如果Authorization header中没有，尝试从x-api-key header中提取
-		if apiKeyString == "" {
-			apiKeyString = c.GetHeader("x-api-key")
-		}
-		if len(apiKeyString) > service.MaxAPIKeyCredentialBytes {
-			recordInvalidAuthFailure(c, apiKeyService)
-			MarkIngressRejected(c, IngressRejectInvalidAPIKey)
-			AbortWithError(c, http.StatusUnauthorized, "INVALID_API_KEY", "Invalid API key")
-			return
-		}
-
-		// 如果x-api-key header中没有，尝试从x-goog-api-key header中提取（Gemini CLI兼容）
-		if apiKeyString == "" {
-			apiKeyString = c.GetHeader("x-goog-api-key")
-		}
-
-		// 如果所有header都没有API key
-		if apiKeyString == "" {
-			recordInvalidAuthFailure(c, apiKeyService)
-			if hasAPIKeyCredentialInput(c) {
-				MarkIngressRejected(c, IngressRejectInvalidAPIKey)
-			} else {
-				MarkIngressRejected(c, IngressRejectAPIKeyRequired)
-			}
-			AbortWithError(c, 401, "API_KEY_REQUIRED", "API key is required in Authorization header (Bearer scheme), x-api-key header, or x-goog-api-key header")
+		apiKeyString, ok := ExtractAPIKeyCredential(c, func() { recordInvalidAuthFailure(c, apiKeyService) })
+		if !ok {
 			return
 		}
 
@@ -158,6 +107,73 @@ func authenticateResolvedAPIKey(c *gin.Context, apiKey *service.APIKey, apiKeySe
 	}
 
 	c.Next()
+}
+
+// ExtractAPIKeyCredential 按网关鉴权的规则从请求头取 API Key（Authorization Bearer、x-api-key、x-goog-api-key；
+// 查询参数里的 Key 已废弃）。取不到或不合法时写出拒绝并返回 false，写之前调用 onInvalid（无效鉴权计数，可为 nil）。
+// 本地鉴权中间件和主从分流从节点的准入中间件共用。
+func ExtractAPIKeyCredential(c *gin.Context, onInvalid func()) (string, bool) {
+	invalid := func() {
+		if onInvalid != nil {
+			onInvalid()
+		}
+	}
+	if apiKeyHeadersTooLarge(c) {
+		invalid()
+		MarkIngressRejected(c, IngressRejectInvalidAPIKey)
+		AbortWithError(c, http.StatusUnauthorized, "INVALID_API_KEY", "Invalid API key")
+		return "", false
+	}
+
+	queryKey := strings.TrimSpace(c.Query("key"))
+	queryApiKey := strings.TrimSpace(c.Query("api_key"))
+	if queryKey != "" || queryApiKey != "" {
+		invalid()
+		MarkIngressRejected(c, IngressRejectQueryAPIKeyDeprecated)
+		AbortWithError(c, 400, "api_key_in_query_deprecated", "API key in query parameter is deprecated. Please use Authorization header instead.")
+		return "", false
+	}
+
+	// 尝试从Authorization header中提取API key (Bearer scheme)
+	authHeader := c.GetHeader("Authorization")
+	var apiKeyString string
+
+	if authHeader != "" {
+		// 验证Bearer scheme
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+			apiKeyString = strings.TrimSpace(parts[1])
+		}
+	}
+
+	// 如果Authorization header中没有，尝试从x-api-key header中提取
+	if apiKeyString == "" {
+		apiKeyString = c.GetHeader("x-api-key")
+	}
+	if len(apiKeyString) > service.MaxAPIKeyCredentialBytes {
+		invalid()
+		MarkIngressRejected(c, IngressRejectInvalidAPIKey)
+		AbortWithError(c, http.StatusUnauthorized, "INVALID_API_KEY", "Invalid API key")
+		return "", false
+	}
+
+	// 如果x-api-key header中没有，尝试从x-goog-api-key header中提取（Gemini CLI兼容）
+	if apiKeyString == "" {
+		apiKeyString = c.GetHeader("x-goog-api-key")
+	}
+
+	// 如果所有header都没有API key
+	if apiKeyString == "" {
+		invalid()
+		if hasAPIKeyCredentialInput(c) {
+			MarkIngressRejected(c, IngressRejectInvalidAPIKey)
+		} else {
+			MarkIngressRejected(c, IngressRejectAPIKeyRequired)
+		}
+		AbortWithError(c, 401, "API_KEY_REQUIRED", "API key is required in Authorization header (Bearer scheme), x-api-key header, or x-goog-api-key header")
+		return "", false
+	}
+	return apiKeyString, true
 }
 
 // abortWithAPIKeyAuthRejection 按鉴权判断的结果打运维标记、写错误响应。

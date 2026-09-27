@@ -232,4 +232,6 @@ func TestUsageSender(t *testing.T) {
 	require.Equal(t, 1, n)
 	require.Equal(t, uint64(2), sub.batches[len(sub.batches)-1].GetRecords()[0].GetSeq())
 	require.Greater(t, sub.batches[len(sub.batches)-1].GetBatchSeq(), sub.batches[0].GetBatchSeq())
+	last, prev := sub.batches[len(sub.batches)-1], sub.batches[len(sub.batches)-2]
+	require.Equal(t, prev.GetBatchSeq()+1, last.GetBatchSeq(), "an empty flush does not use up a batch number (the master alarms on gaps)")
 }

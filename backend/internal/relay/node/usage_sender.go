@@ -99,14 +99,17 @@ func (s *UsageSender) Flush(ctx context.Context) (int, error) {
 			skip[seq] = true
 		}
 	}
-	s.batchSeq++
-	batchSeq := s.batchSeq
 	s.mu.Unlock()
 
 	recs := s.wal.Pending(s.opts.BatchSize, skip)
 	if len(recs) == 0 {
 		return 0, nil
 	}
+	// 批次序号只给真正发出的批次（主节点按跳号报警），空轮询不占号。
+	s.mu.Lock()
+	s.batchSeq++
+	batchSeq := s.batchSeq
+	s.mu.Unlock()
 	ack, err := s.submit.Submit(ctx, &relayv1.UsageBatch{BatchSeq: batchSeq, Records: recs})
 	if err != nil {
 		return 0, err

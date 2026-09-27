@@ -174,7 +174,12 @@ func newWorld(t *testing.T, runMode string, accounts ...service.Account) *world 
 
 func newWorldWithBalance(t *testing.T, runMode string, balance float64, accounts ...service.Account) *world {
 	t.Helper()
-	cfg := &config.Config{RunMode: runMode}
+	return newWorldOn(t, &config.Config{RunMode: runMode}, balance, testNode, accounts...)
+}
+
+// newWorldOn 同 newWorldWithBalance，可指定配置和节点 ID（端到端测试用主节点登记的节点）。
+func newWorldOn(t *testing.T, cfg *config.Config, balance float64, nodeID int64, accounts ...service.Account) *world {
+	t.Helper()
 	anthropic := openAIGroup(9)
 	anthropic.Platform = service.PlatformAnthropic
 	keys := fakeKeys{keys: map[string]*service.APIKey{
@@ -219,8 +224,8 @@ func newWorldWithBalance(t *testing.T, runMode string, balance float64, accounts
 		IssueVoucher: func(v *relayv1.Voucher) ([]byte, *relayv1.Voucher, error) {
 			return sign.IssueVoucher(signer, v, time.Now())
 		},
-		NodeEncryptionKey: func(nodeID int64) (*ecdh.PublicKey, bool) {
-			return nodeKey.PublicKey(), nodeID == testNode
+		NodeEncryptionKey: func(id int64) (*ecdh.PublicKey, bool) {
+			return nodeKey.PublicKey(), id == nodeID
 		},
 		ConfigVersion: func(context.Context, int64) (string, error) { return "cfg-v1", nil },
 		VerifyVoucher: func(raw []byte, nodeID int64) (*relayv1.Voucher, error) {
