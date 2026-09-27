@@ -27,6 +27,13 @@ const baseConfig = {
   require_captcha: true,
 }
 
+// 生产上的实际形态：试用密钥在 grok 分组，GPT / Claude 在各自分组的密钥里
+const modelsByKey: Record<number, string[]> = {
+  513: ['grok-4.7', 'grok-code'],
+  29: ['gpt-5.5', 'gpt-5.4-mini'],
+  2: ['claude-haiku-4-5', 'claude-sonnet-5'],
+}
+
 function render() {
   return mount(GuestTrialSettingsCard, {
     global: {
@@ -42,67 +49,80 @@ function render() {
   })
 }
 
+async function save(wrapper: ReturnType<typeof render>) {
+  await wrapper.get('[data-testid="guest-trial-save"]').trigger('click')
+  await flushPromises()
+  return settingsApi.updateGuestTrialConfig.mock.calls.at(-1)?.[0]
+}
+
 describe('GuestTrialSettingsCard', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     settingsApi.getGuestTrialConfig.mockResolvedValue({ ...baseConfig })
     settingsApi.updateGuestTrialConfig.mockImplementation(async (config) => config)
-    keysApi.list.mockResolvedValue({ items: [{ id: 513, name: '试用' }, { id: 600, name: '多模型' }] })
-    playgroundApi.fetchPlaygroundModels.mockImplementation(async (keyId: number) =>
-      keyId === 513
-        ? [{ id: 'grok-4.7' }, { id: 'grok-4.7-fast' }, { id: 'grok-code' }]
-        : [{ id: 'gpt-5.5' }, { id: 'claude-haiku-4-5' }],
-    )
+    keysApi.list.mockResolvedValue({
+      items: [
+        { id: 513, name: '试用', group_id: 46, group: { name: 'grok（兼容codex）' }, auto_group: false },
+        { id: 29, name: 'GPT', group_id: 20, group: { name: 'plus-free' }, auto_group: false },
+        { id: 2, name: 'claude', group_id: 14, group: { name: 'claude_正价' }, auto_group: false },
+      ],
+    })
+    playgroundApi.fetchPlaygroundModels.mockImplementation(async (keyId: number) => (modelsByKey[keyId] || []).map((id) => ({ id })))
   })
 
-  it('lists the selected key models as checkboxes and saves the ticked models in order', async () => {
+  it('lets the trial offer models from several platforms, each bound to the key that serves it', async () => {
+    const wrapper = render()
+    await flushPromises()
+    expect((wrapper.get('[data-testid="guest-trial-model-513-grok-4.7"]').element as HTMLInputElement).checked).toBe(true)
+
+    await wrapper.get('[data-testid="guest-trial-key-29"]').setValue(true)
+    await wrapper.get('[data-testid="guest-trial-key-2"]').setValue(true)
+    await flushPromises()
+    await wrapper.get('[data-testid="guest-trial-model-29-gpt-5.5"]').setValue(true)
+    await wrapper.get('[data-testid="guest-trial-model-2-claude-haiku-4-5"]').setValue(true)
+
+    expect(await save(wrapper)).toEqual(expect.objectContaining({
+      api_key_id: 513,
+      models: ['grok-4.7', 'gpt-5.5', 'claude-haiku-4-5'],
+      model_keys: { 'grok-4.7': 513, 'gpt-5.5': 29, 'claude-haiku-4-5': 2 },
+    }))
+  })
+
+  it('restores per-model keys and follows the default model when choosing the default key', async () => {
+    settingsApi.getGuestTrialConfig.mockResolvedValue({ ...baseConfig, models: ['grok-4.7', 'gpt-5.5'], model_keys: { 'gpt-5.5': 29 } })
     const wrapper = render()
     await flushPromises()
 
-    expect(playgroundApi.fetchPlaygroundModels).toHaveBeenCalledWith(513, expect.any(AbortSignal))
-    expect((wrapper.get('[data-testid="guest-trial-model-grok-4.7"]').element as HTMLInputElement).checked).toBe(true)
-
-    await wrapper.get('[data-testid="guest-trial-model-grok-code"]').setValue(true)
-    await wrapper.get('[data-testid="guest-trial-model-grok-4.7-fast"]').setValue(true)
-    await wrapper.get('[data-testid="guest-trial-save"]').trigger('click')
-    await flushPromises()
-
-    expect(settingsApi.updateGuestTrialConfig).toHaveBeenCalledWith(
-      expect.objectContaining({ models: ['grok-4.7', 'grok-code', 'grok-4.7-fast'] }),
-    )
-  })
-
-  it('moves a model to the front when it is made the default', async () => {
-    const wrapper = render()
-    await flushPromises()
-    await wrapper.get('[data-testid="guest-trial-model-grok-code"]').setValue(true)
-
+    expect((wrapper.get('[data-testid="guest-trial-model-29-gpt-5.5"]').element as HTMLInputElement).checked).toBe(true)
     const makeDefault = wrapper.get('[data-testid="guest-trial-selected"]').findAll('button').find((button) => button.text() === '设为默认')
     await makeDefault!.trigger('click')
-    await wrapper.get('[data-testid="guest-trial-save"]').trigger('click')
-    await flushPromises()
 
-    expect(settingsApi.updateGuestTrialConfig).toHaveBeenCalledWith(expect.objectContaining({ models: ['grok-code', 'grok-4.7'] }))
+    expect(await save(wrapper)).toEqual(expect.objectContaining({
+      api_key_id: 29,
+      models: ['gpt-5.5', 'grok-4.7'],
+      model_keys: { 'gpt-5.5': 29, 'grok-4.7': 513 },
+    }))
   })
 
-  it('reloads candidates when the key changes and keeps manually added models', async () => {
+  it('drops the models of a key that is unticked and adds manual models to the chosen key', async () => {
     const wrapper = render()
     await flushPromises()
-
-    await wrapper.get('[data-testid="guest-trial-key"]').setValue('600')
+    await wrapper.get('[data-testid="guest-trial-key-29"]').setValue(true)
     await flushPromises()
-    expect(playgroundApi.fetchPlaygroundModels).toHaveBeenLastCalledWith(600, expect.any(AbortSignal))
-    expect(wrapper.find('[data-testid="guest-trial-model-gpt-5.5"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="guest-trial-model-grok-code"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="guest-trial-model-29-gpt-5.5"]').setValue(true)
 
+    await wrapper.get('[data-testid="guest-trial-custom-key"]').setValue('29')
     const custom = wrapper.get('[data-testid="guest-trial-custom-model"]')
-    await custom.setValue(' my-custom-model ')
+    await custom.setValue(' gpt-5.6-sol ')
     await custom.trigger('keydown', { key: 'Enter' })
-    await wrapper.get('[data-testid="guest-trial-save"]').trigger('click')
-    await flushPromises()
 
-    expect(settingsApi.updateGuestTrialConfig).toHaveBeenCalledWith(
-      expect.objectContaining({ api_key_id: 600, models: ['grok-4.7', 'my-custom-model'] }),
-    )
+    await wrapper.get('[data-testid="guest-trial-key-513"]').setValue(false)
+    expect(wrapper.find('[data-testid="guest-trial-key-models-513"]').exists()).toBe(false)
+
+    expect(await save(wrapper)).toEqual(expect.objectContaining({
+      api_key_id: 29,
+      models: ['gpt-5.5', 'gpt-5.6-sol'],
+      model_keys: { 'gpt-5.5': 29, 'gpt-5.6-sol': 29 },
+    }))
   })
 })

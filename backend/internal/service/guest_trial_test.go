@@ -261,3 +261,55 @@ func TestGuestTrialClosedInBackendMode(t *testing.T) {
 		t.Fatalf("backend mode must close the trial: %v", err)
 	}
 }
+
+func TestGuestTrialModelKeysRouteEachModelToItsKey(t *testing.T) {
+	cfg := normalizeGuestTrialConfig(&GuestTrialConfig{
+		Enabled:  true,
+		APIKeyID: 513,
+		Models:   []string{"grok-4.7", "gpt-5.5", "Claude-Haiku-4-5"},
+		// 键大小写与 Models 不一致、多余模型、与默认密钥相同、无效 id 都应被规范掉
+		ModelKeys: map[string]int64{"GPT-5.5": 29, "claude-haiku-4-5": 2, "grok-4.7": 513, "not-listed": 7, "x": -1},
+	})
+	if err := validateGuestTrialConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]int64{"gpt-5.5": 29, "Claude-Haiku-4-5": 2}
+	if len(cfg.ModelKeys) != len(want) {
+		t.Fatalf("model_keys not normalized: %v", cfg.ModelKeys)
+	}
+	for model, keyID := range want {
+		if cfg.ModelKeys[model] != keyID {
+			t.Fatalf("model_keys not normalized: %v", cfg.ModelKeys)
+		}
+	}
+
+	svc := newTrialServiceForTest(cfg, &fakeTrialQuota{}, false)
+	for model, keyID := range map[string]int64{"grok-4.7": 513, "GPT-5.5": 29, "claude-haiku-4-5": 2} {
+		body := []byte(`{"model":"` + model + `","messages":[{"role":"user","content":"hi"}]}`)
+		prepared, err := svc.PrepareChat(context.Background(), testTrialDevice, "1.1.1.1", body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if prepared.APIKeyID != keyID {
+			t.Fatalf("model %s routed to key %d, want %d", model, prepared.APIKeyID, keyID)
+		}
+	}
+}
+
+func TestGuestTrialConfigRequiresAKeyForEveryModel(t *testing.T) {
+	cfg := normalizeGuestTrialConfig(&GuestTrialConfig{
+		Enabled:   true,
+		Models:    []string{"gpt-5.5", "grok-4.7"},
+		ModelKeys: map[string]int64{"gpt-5.5": 29},
+	})
+	if err := validateGuestTrialConfig(cfg); err == nil || !strings.Contains(err.Error(), "grok-4.7") {
+		t.Fatalf("model without a key must be rejected, got %v", err)
+	}
+	if cfg.Usable() {
+		t.Fatal("config with an unroutable model must not be usable")
+	}
+	cfg.ModelKeys["grok-4.7"] = 513
+	if err := validateGuestTrialConfig(cfg); err != nil || !cfg.Usable() {
+		t.Fatalf("fully mapped config without a default key should be usable, err=%v", err)
+	}
+}
