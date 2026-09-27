@@ -244,7 +244,11 @@ func TestRelaySettlementMatchesLocalBilling(t *testing.T) {
 
 	require.Equal(t, w.billing.commands[0], w.billing.commands[1], "same billing command")
 	require.Greater(t, w.billing.commands[1].BalanceCost, 0.0)
-	require.Equal(t, comparableLog(w.logs.logs[0]), comparableLog(w.logs.logs[1]), "same usage log")
+	require.Nil(t, w.logs.logs[0].NodeID)
+	require.Equal(t, node, *w.logs.logs[1].NodeID, "the relayed usage log records which node reported it")
+	relayed := *w.logs.logs[1]
+	relayed.NodeID = nil
+	require.Equal(t, comparableLog(w.logs.logs[0]), comparableLog(&relayed), "same usage log apart from the node")
 	require.True(t, w.logs.logs[1].FallbackPoolUsed)
 
 	require.Len(t, res.GetConsumed(), 1)

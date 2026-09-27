@@ -36,8 +36,8 @@ func TestPrepareUsageLogInsert_AccountSourceWiring(t *testing.T) {
 				CreatedAt:     time.Now().UTC(),
 			})
 			require.Len(t, prepared.args, len(usageLogInsertArgTypes))
-			require.Equal(t, tc.want, prepared.args[len(prepared.args)-1])
-			require.Equal(t, "text", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-1])
+			require.Equal(t, tc.want, prepared.args[len(prepared.args)-2])
+			require.Equal(t, "text", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-2])
 		})
 	}
 }

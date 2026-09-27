@@ -622,6 +622,13 @@ func writeUsageLogBestEffort(ctx context.Context, repo UsageLogRepository, usage
 	if repo == nil || usageLog == nil {
 		return
 	}
+	if usageLog.NodeID == nil {
+		// 主从分流：从节点上报、主节点入账的用量记下来源节点（入账 ctx 里带着凭证的节点）。
+		if rs := relaySettlementFromContext(ctx); rs != nil && rs.NodeID > 0 {
+			nodeID := rs.NodeID
+			usageLog.NodeID = &nodeID
+		}
+	}
 	usageCtx, cancel := detachedBillingContext(ctx)
 	defer cancel()
 

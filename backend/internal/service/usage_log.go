@@ -223,6 +223,9 @@ type UsageLog struct {
 	// AccountSource is one of the UsageLogAccountSource* values; empty is
 	// written as pool.
 	AccountSource string
+	// NodeID 是经主从分流从节点转发、由主节点入账时的从节点 ID；nil 表示主节点自己转发的
+	// （docs/MASTER_RELAY_NODES.md 12 章，迁移 259 的约定）。
+	NodeID *int64
 	DurationMs    *int
 	FirstTokenMs  *int
 	UserAgent     *string
