@@ -650,23 +650,51 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		if !openAIRequestAllowsFailoverReplay(c) {
 			return
 		}
-		// Select account supporting the requested model
-		reqLog.Debug("openai.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
-		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
-			c.Request.Context(),
-			apiKey.GroupID,
-			previousResponseID,
-			sessionHash,
-			forwardModel,
-			failedAccountIDs,
-			service.OpenAIUpstreamTransportAny,
-			requiredCapability,
-			requireCompact,
-			false,
-			!imageIntent,
-			requestPlatform,
-		)
-		if err != nil {
+		// Select account supporting the requested model, then admit it (shared with relay selection).
+		onTick, cannotWait := h.openAIAdmissionWaitHooks(c, reqStream, &streamStarted)
+		selectState := OpenAISelectState{ProfitVetoCount: profitVetoCount, LastFailoverErr: lastFailoverErr}
+		outcome := OpenAIAccountAdmitter{Gateway: h.gatewayService, Concurrency: h.concurrencyHelper}.SelectAndAdmit(c.Request.Context(), OpenAISelectRequest{
+			GroupID:            apiKey.GroupID,
+			PreviousResponseID: previousResponseID,
+			SessionHash:        sessionHash,
+			ForwardModel:       forwardModel,
+			RequestPlatform:    requestPlatform,
+			RequiredCapability: requiredCapability,
+			RequireCompact:     requireCompact,
+			ImageIntent:        imageIntent,
+			Excluded:           failedAccountIDs,
+			OnTick:             onTick,
+			CannotWait:         cannotWait,
+			OnAccountChosen: func(_ context.Context, selection *service.AccountSelectionResult) context.Context {
+				setOpsSelectedAccount(c, selection.Account.ID, selection.Account.Platform)
+				// 兜底事实要先回到请求 ctx 上：记用量跑在 detached worker，
+				// submitOpenAIUsageRecordTask 取的 parent 就是 c.Request.Context()。
+				c.Request = c.Request.WithContext(service.ContextWithSelectionFallbackTrace(c.Request.Context(), selection))
+				return c.Request.Context()
+			},
+		}, &selectState, reqLog)
+		profitVetoCount, lastFailoverErr = selectState.ProfitVetoCount, selectState.LastFailoverErr
+		sessionHash = outcome.SessionHash
+		switch outcome.Kind {
+		case OpenAISelected:
+		case OpenAISelectAborted:
+			failoverClientGone(c)
+			return
+		case OpenAISelectVetoExhausted:
+			h.handleOpenAIProfitVetoExhausted(c, streamStarted, reqLog, profitVetoCount)
+			return
+		case OpenAISelectQueueFull, OpenAISelectSlotError, OpenAISelectNoWaitPlan:
+			h.writeOpenAIAdmissionFailure(c, outcome, streamStarted)
+			return
+		case OpenAISelectNone:
+			cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, reqModel, reqModel, requestPlatform)
+			if !cls.ModelNotFound {
+				markOpsRoutingCapacityLimited(c)
+			}
+			h.handleStreamingAwareError(c, cls.Status, cls.ErrType, cls.Message, streamStarted)
+			return
+		case OpenAISelectFailed:
+			err := outcome.Err
 			if failoverClientGone(c) {
 				reqLog.Info("openai.account_select_aborted_client_disconnected", zap.Error(err))
 				return
@@ -733,67 +761,8 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			}
 			return
 		}
-		if selection == nil || selection.Account == nil {
-			cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, reqModel, reqModel, requestPlatform)
-			if !cls.ModelNotFound {
-				markOpsRoutingCapacityLimited(c)
-			}
-			h.handleStreamingAwareError(c, cls.Status, cls.ErrType, cls.Message, streamStarted)
-			return
-		}
-		if previousResponseID != "" && selection != nil && selection.Account != nil {
-			reqLog.Debug("openai.account_selected_with_previous_response_id", zap.Int64("account_id", selection.Account.ID))
-		}
-		reqLog.Debug("openai.account_schedule_decision",
-			zap.String("layer", scheduleDecision.Layer),
-			zap.Bool("sticky_previous_hit", scheduleDecision.StickyPreviousHit),
-			zap.Bool("sticky_session_hit", scheduleDecision.StickySessionHit),
-			zap.Int("candidate_count", scheduleDecision.CandidateCount),
-			zap.Int("top_k", scheduleDecision.TopK),
-			zap.Int64("latency_ms", scheduleDecision.LatencyMs),
-			zap.Float64("load_skew", scheduleDecision.LoadSkew),
-		)
-		account := selection.Account
-		if previousResponseID != "" && requestPlatform == service.PlatformOpenAI && !account.IsOpenAIApiKey() {
-			// The public Responses HTTP API supports previous_response_id on API-key
-			// accounts. OAuth/SetupToken upstreams do not, so keep searching instead
-			// of silently deleting continuation state from a mixed account pool.
-			failedAccountIDs[account.ID] = struct{}{}
-			if selection.ReleaseFunc != nil {
-				selection.ReleaseFunc()
-				selection.ReleaseFunc = nil
-			}
-			lastFailoverErr = &service.UpstreamFailoverError{
-				StatusCode:       http.StatusBadRequest,
-				Stage:            service.GatewayFailureStageInference,
-				Scope:            service.GatewayFailureScopeRequest,
-				Reason:           service.OpenAIHTTPContinuationUnsupportedReason,
-				ClientStatusCode: http.StatusBadRequest,
-				ClientMessage:    "previous_response_id requires an OpenAI API-key account for HTTP requests",
-			}
-			reqLog.Debug("openai.account_skipped_http_continuation_unsupported",
-				zap.Int64("account_id", account.ID),
-				zap.String("account_type", account.Type),
-			)
-			continue
-		}
-		sessionHash = ensureOpenAIPoolModeSessionHash(sessionHash, account)
-		reqLog.Debug("openai.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
-		setOpsSelectedAccount(c, account.ID, account.Platform)
-
-		accountReleaseFunc, slotResult := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
-		if slotResult == openAISlotAcquireProfitVetoed {
-			// 利润终检否决：排除该账号重新选号，全池耗尽由下一轮选号报错；
-			// 否决次数达上限则直接终止，避免排队抢槽后才终检的延迟放大。
-			if !recordOpenAIProfitVeto(failedAccountIDs, account.ID, &profitVetoCount) {
-				h.handleOpenAIProfitVetoExhausted(c, streamStarted, reqLog, profitVetoCount)
-				return
-			}
-			continue
-		}
-		if slotResult != openAISlotAcquireOK {
-			return
-		}
+		account := outcome.Account
+		accountReleaseFunc := wrapReleaseOnDone(outcome.Ctx, outcome.Release)
 
 		// Forward request
 		service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, time.Since(routingStart).Milliseconds())
@@ -2335,17 +2304,7 @@ func (h *OpenAIGatewayHandler) acquireOpenAIAccountSlot(
 		// 只重放到本函数的局部 ctx 的话，usage_logs 的 fallback_* 依旧是空的。
 		c.Request = c.Request.WithContext(service.ContextWithSelectionFallbackTrace(c.Request.Context(), selection))
 	}
-	var (
-		onTick     func() error
-		cannotWait error
-	)
-	if reqStream && h.concurrencyHelper.pingFormat != "" {
-		if flusher, ok := c.Writer.(http.Flusher); ok {
-			onTick = h.concurrencyHelper.sseTick(c, flusher, streamStarted)
-		} else {
-			cannotWait = fmt.Errorf("streaming not supported")
-		}
-	}
+	onTick, cannotWait := h.openAIAdmissionWaitHooks(c, reqStream, streamStarted)
 	ctx, admission := OpenAIAccountAdmitter{Gateway: h.gatewayService, Concurrency: h.concurrencyHelper}.
 		Admit(c.Request.Context(), groupID, sessionHash, selection, onTick, cannotWait, reqLog)
 	switch admission.Kind {
@@ -2363,6 +2322,40 @@ func (h *OpenAIGatewayHandler) acquireOpenAIAccountSlot(
 		writeError(http.StatusServiceUnavailable, "api_error", "", "No available accounts")
 	}
 	return nil, openAISlotAcquireFailed
+}
+
+// openAIAdmissionWaitHooks 返回账号排队期间的保活回调：流式请求发 SSE ping；
+// 响应不能刷新时不排队（cannotWait）。
+func (h *OpenAIGatewayHandler) openAIAdmissionWaitHooks(c *gin.Context, reqStream bool, streamStarted *bool) (onTick func() error, cannotWait error) {
+	if reqStream && h.concurrencyHelper.pingFormat != "" {
+		if flusher, ok := c.Writer.(http.Flusher); ok {
+			onTick = h.concurrencyHelper.sseTick(c, flusher, streamStarted)
+		} else {
+			cannotWait = fmt.Errorf("streaming not supported")
+		}
+	}
+	return onTick, cannotWait
+}
+
+// writeOpenAIAdmissionFailure 写出准入失败（队列满、抢槽出错、没有等待计划）的响应，与 acquireOpenAIAccountSlot 一致。
+func (h *OpenAIGatewayHandler) writeOpenAIAdmissionFailure(c *gin.Context, outcome OpenAISelectOutcome, streamStarted bool) {
+	status, errType, code, message := OpenAIAdmissionFailureResponse(outcome)
+	if outcome.Kind == OpenAISelectNoWaitPlan {
+		markOpsRoutingCapacityLimited(c)
+	}
+	h.handleStreamingAwareErrorWithCode(c, status, errType, code, message, streamStarted, false)
+}
+
+// OpenAIAdmissionFailureResponse 返回准入失败的状态码、错误类型、错误码和文案（本地与主从分流共用）。
+func OpenAIAdmissionFailureResponse(outcome OpenAISelectOutcome) (status int, errType, code, message string) {
+	switch outcome.Kind {
+	case OpenAISelectQueueFull:
+		return http.StatusTooManyRequests, "rate_limit_error", gatewayQueueFullCode, "Too many pending requests, please retry later"
+	case OpenAISelectSlotError:
+		return concurrencyErrorResponse(outcome.Err, "account")
+	default:
+		return http.StatusServiceUnavailable, "api_error", "", "No available accounts"
+	}
 }
 
 // OpenAIAdmissionKind 是一次账号准入的结果。
@@ -2396,6 +2389,8 @@ type OpenAIAdmission struct {
 type OpenAIAccountAdmitter struct {
 	Gateway     *service.OpenAIGatewayService
 	Concurrency *ConcurrencyHelper
+	// choose 为空时用 Gateway 的调度器选号（测试替换用）。
+	choose openAIAccountChooser
 }
 
 // Admit 对 selection 做准入。返回的 ctx 带着选号结果里的利润门（后续终检、绑定用）。
