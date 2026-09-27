@@ -19,6 +19,8 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/relay/nodegw"
+	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/setup"
 	"github.com/Wei-Shaw/sub2api/internal/web"
@@ -66,6 +68,12 @@ func main() {
 		return
 	}
 
+	// 主从分流从节点（NODE_ROLE=relay）：不连数据库，不走安装向导。
+	if cfg, err := config.LoadForBootstrap(); err == nil && cfg.Relay.NodeRole == config.RelayNodeRoleRelay {
+		runRelayNode(cfg)
+		return
+	}
+
 	// CLI setup mode
 	if *setupMode {
 		if err := setup.RunCLI(); err != nil {
@@ -92,6 +100,21 @@ func main() {
 
 	// Normal server mode
 	runMainServer()
+}
+
+// runRelayNode 以从节点身份运行，直到收到中断信号（开发计划 WP9）。
+func runRelayNode(cfg *config.Config) {
+	if err := logger.Init(logger.OptionsFromConfig(cfg.Log)); err != nil {
+		log.Fatalf("Failed to initialize logger: %v", err)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	if err := nodegw.Run(ctx, cfg, nodegw.RunOptions{
+		ProgramVersion: Version,
+		HTTPUpstream:   repository.NewHTTPUpstream(cfg),
+	}); err != nil && !errors.Is(err, context.Canceled) {
+		log.Fatalf("Relay node failed: %v", err)
+	}
 }
 
 func runSetupServer() {

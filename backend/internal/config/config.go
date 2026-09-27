@@ -129,6 +129,18 @@ type RelayConfig struct {
 	KeyEncryptionKey string `mapstructure:"key_encryption_key"`
 	// KeyEncryptionKeyFile 是存放上述密钥的文件路径（内容为 64 位十六进制）。
 	KeyEncryptionKeyFile string `mapstructure:"key_encryption_key_file"`
+
+	// 以下是从节点（node_role=relay）的设置。
+	// NodeMasterAddr 是主节点主从通信地址（host:port，即主节点的 master_listen_addr 对外地址）。
+	NodeMasterAddr string `mapstructure:"node_master_addr"`
+	// NodeMasterURL 是主节点对外的 HTTP 地址：还不能经从节点处理的请求原样交给它转发。
+	NodeMasterURL string `mapstructure:"node_master_url"`
+	// NodeRootFingerprints 是主节点主从通信根证书指纹（管理页上显示的，至少一个）。
+	NodeRootFingerprints []string `mapstructure:"node_root_fingerprints"`
+	// NodeDataDir 是从节点身份密钥、证书和本地扣费队列的目录，默认 <data_dir>/relay-node。
+	NodeDataDir string `mapstructure:"node_data_dir"`
+	// NodeDisplayName 是注册时上报的名称（管理员激活时可改）。
+	NodeDisplayName string `mapstructure:"node_display_name"`
 }
 
 type FallbackPoolAlertConfig struct {
@@ -2642,6 +2654,11 @@ func setEnvReachableDefaults() {
 	viper.SetDefault("relay.key_dir", "")
 	viper.SetDefault("relay.key_encryption_key", "")
 	viper.SetDefault("relay.key_encryption_key_file", "")
+	viper.SetDefault("relay.node_master_addr", "")
+	viper.SetDefault("relay.node_master_url", "")
+	viper.SetDefault("relay.node_root_fingerprints", []string{})
+	viper.SetDefault("relay.node_data_dir", "")
+	viper.SetDefault("relay.node_display_name", "")
 	_ = viper.BindEnv("relay.node_role", "NODE_ROLE", "RELAY_NODE_ROLE")
 
 	viper.SetDefault("gateway.forced_codex_instructions_template_file", "")

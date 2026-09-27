@@ -31,6 +31,12 @@ func NewOpenAIHandler(d GatewayDeps) *handler.OpenAIGatewayHandler {
 	gw.SetUpstreamErrorDecider(d.Decider)
 	gw.SetAccountReporter(d.Reporter)
 	gw.SetOpenAIWSStateStore(NewStateStore())
+	if d.Dispatcher.deps.CyberEnabled == nil {
+		d.Dispatcher.deps.CyberEnabled = func(ctx context.Context) bool {
+			on, _ := gw.CyberSessionBlockRuntime(ctx)
+			return on
+		}
+	}
 	h := handler.NewOpenAIGatewayHandler(gw, nil, nil, nil, nil, nil, nil, nil, d.Config)
 	h.SetRelayDispatcher(d.Dispatcher)
 	return h

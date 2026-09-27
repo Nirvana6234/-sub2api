@@ -1,0 +1,245 @@
+package nodegw
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/relay/accountcodec"
+	"github.com/Wei-Shaw/sub2api/internal/relay/identity"
+	"github.com/Wei-Shaw/sub2api/internal/relay/node"
+	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
+	"github.com/Wei-Shaw/sub2api/internal/relay/transport"
+	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/gin-gonic/gin"
+)
+
+// 从节点后台循环的间隔（开发计划 WP9：续期远小于"10 分钟 − 30 秒"）。
+const (
+	renewInterval  = time.Minute
+	idleReturnTime = 10 * time.Minute
+	shutdownGrace  = 30 * time.Second
+)
+
+// RunOptions 是从节点运行时从进程入口拿到的东西。
+type RunOptions struct {
+	ProgramVersion string
+	// HTTPUpstream 是转发用的上游 HTTP（repository.NewHTTPUpstream：连接池、代理、TLS 指纹）。
+	HTTPUpstream service.HTTPUpstream
+}
+
+// Run 运行从节点直到 ctx 结束（NODE_ROLE=relay）：不连数据库和 Redis，只经 TLS 双向认证连主节点。
+// 启动顺序：身份与注册（等管理员激活）→ 配置快照 → 核对租约 → 事件流、扣费发送、额度续期 → 对外服务。
+func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
+	rc := cfg.Relay
+	if strings.TrimSpace(rc.NodeMasterAddr) == "" || len(rc.NodeRootFingerprints) == 0 {
+		return errors.New("relay node: relay.node_master_addr and relay.node_root_fingerprints are required")
+	}
+	dataDir := nodeDataDir(rc)
+	idDir := filepath.Join(dataDir, "identity")
+	id, err := identity.Load(idDir)
+	if err != nil {
+		return fmt.Errorf("relay node identity: %w", err)
+	}
+	pins, err := identity.LoadRootPins(idDir, rc.NodeRootFingerprints)
+	if err != nil {
+		return err
+	}
+	client, err := transport.NewClient(transport.ClientOptions{
+		Address: rc.NodeMasterAddr,
+		TLS:     transport.ClientTLSOptions{PinnedRootFingerprints: pins.Pinned, Certificate: id.TLSCertificate},
+	})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = client.Close() }()
+
+	slog.Info("relay node starting", "fingerprint", id.Fingerprint(), "master", rc.NodeMasterAddr)
+	host, _ := os.Hostname()
+	enroller := identity.NewEnroller(id, client, identity.EnrollerOptions{
+		Hostname: host, ProgramVersion: opts.ProgramVersion, DisplayName: rc.NodeDisplayName, Pins: pins,
+		OnStatus: func(s relayv1.NodeStatus) {
+			slog.Info("relay node status", "status", s.String(), "fingerprint", id.Fingerprint())
+		},
+	})
+	if err := enroller.EnsureCertificate(ctx); err != nil {
+		return fmt.Errorf("relay node enrollment: %w", err)
+	}
+	go enroller.RunRenewal(ctx, func(err error) { slog.Warn("relay certificate renewal failed", "error", err) })
+	slog.Info("relay node certificate ready", "node_id", id.NodeID())
+
+	cache := node.NewConfigCache()
+	settings := service.NewSettingService(cache, cfg)
+	cache.OnSwap(func(*relayv1.ConfigSnapshot) {
+		settings.InvalidateAll()
+		if changed, err := pins.Update(cache.RootFingerprints()); err != nil {
+			slog.Warn("relay root fingerprints could not be saved", "error", err)
+		} else if changed {
+			slog.Info("relay root fingerprints updated", "fingerprints", pins.Pinned())
+		}
+	})
+	syncer := node.NewConfigSyncer(cache, client)
+	if err := retry(ctx, "config sync", syncer.Sync); err != nil {
+		return err
+	}
+
+	outbox := node.NewEventOutbox(0)
+	selectClient := node.NewSelectClient(client, outbox)
+	quota := node.NewLocalQuota(node.SelectionRefiller{Client: selectClient}, time.Now, func() time.Duration { return 0 })
+	quotaSync := node.NewQuotaSync(quota, client)
+	// 重启后本机没有租约：上报空列表，主节点关掉这台之前的租约（设计 4.2）。之后才发选号。
+	if err := retry(ctx, "lease report", quotaSync.Report); err != nil {
+		return err
+	}
+
+	wal, err := node.OpenUsageWAL(filepath.Join(dataDir, "usage"), node.UsageWALOptions{})
+	if err != nil {
+		return fmt.Errorf("relay usage queue: %w", err)
+	}
+	defer func() { _ = wal.Close() }()
+	var d *Dispatcher
+	sender := node.NewUsageSender(wal, node.NewBillingClient(client), node.UsageSenderOptions{
+		OnResult: func(rec *relayv1.UsageRecord, res *relayv1.UsageRecordResult) { d.OnUsageResult(rec, res) },
+	})
+	deps := Deps{
+		NodeID: id.NodeID, Select: selectClient, Quota: quota, Secrets: accountcodec.NewSecretCache(),
+		Open: id.OpenSealed, WAL: wal, Kick: sender.Kick, EnsureConfig: syncer.EnsureVersion,
+		AfterEpochChange: quotaSync.Report,
+	}
+	if u := strings.TrimSpace(rc.NodeMasterURL); u != "" {
+		masterURL, err := url.Parse(u)
+		if err != nil {
+			return fmt.Errorf("relay.node_master_url: %w", err)
+		}
+		deps.HandOff = NewHandOff(masterURL, nil)
+	}
+	d = NewDispatcher(deps)
+
+	runCtx, stop := context.WithCancel(context.WithoutCancel(ctx))
+	defer stop()
+	go node.RunEvents(runCtx, client, syncer, node.EventHandlers{
+		Outbox: outbox,
+		OnQuotaRecall: func(rc *relayv1.QuotaRecall) {
+			if err := quotaSync.HandleRecall(runCtx, rc); err != nil {
+				slog.Warn("relay quota recall failed", "error", err)
+			}
+		},
+	})
+	go sender.Run(runCtx)
+	go every(runCtx, renewInterval, func() {
+		if err := quotaSync.Renew(runCtx); err != nil {
+			slog.Warn("relay lease renewal failed", "error", err)
+		}
+		if err := quotaSync.ReleaseIdle(runCtx, idleReturnTime); err != nil {
+			slog.Warn("relay idle quota return failed", "error", err)
+		}
+	})
+
+	h := NewOpenAIHandler(GatewayDeps{
+		Config: cfg, Settings: settings, HTTPUpstream: opts.HTTPUpstream, Dispatcher: d,
+		Decider:  node.NewRemoteUpstreamErrorDecider(client),
+		Reporter: node.NewRemoteAccountReporter(outbox),
+	})
+	r := NewEngine()
+	r.GET("/health", func(c *gin.Context) {
+		if err := wal.Healthy(); err != nil || !cache.Ready() {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unhealthy"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "node_id": id.NodeID()})
+	})
+	r.Use(func(c *gin.Context) {
+		// 扣费队列写不进去时不接新请求（设计 3.1）：否则转发了记不上账。
+		if err := wal.Healthy(); err != nil {
+			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"type": "api_error", "message": "Service temporarily unavailable"}})
+			return
+		}
+		c.Next()
+	})
+	RegisterRoutes(r, h, d, cfg)
+
+	srv := &http.Server{
+		Addr:              net.JoinHostPort(cfg.Server.Host, strconv.Itoa(cfg.Server.Port)),
+		Handler:           r,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	errc := make(chan error, 1)
+	go func() { errc <- srv.ListenAndServe() }()
+	slog.Info("relay node serving", "addr", srv.Addr, "node_id", id.NodeID())
+
+	select {
+	case err := <-errc:
+		if !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+	case <-ctx.Done():
+	}
+	// 关闭：不接新请求、等进行中的请求，再把扣费队列发完（有超时，没发完的留在队列里下次启动重发）。
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Warn("relay node http shutdown", "error", err)
+	}
+	for shutdownCtx.Err() == nil && wal.Len() > 0 {
+		if n, err := sender.Flush(shutdownCtx); err != nil || n == 0 {
+			break
+		}
+	}
+	slog.Info("relay node stopped", "pending_usage", wal.Len())
+	return nil
+}
+
+// nodeDataDir 返回从节点数据目录：显式配置的，否则 <DATA_DIR 或 ./data>/relay-node。
+func nodeDataDir(c config.RelayConfig) string {
+	if dir := strings.TrimSpace(c.NodeDataDir); dir != "" {
+		return dir
+	}
+	base := strings.TrimSpace(os.Getenv("DATA_DIR"))
+	if base == "" {
+		base = "./data"
+	}
+	return filepath.Join(base, "relay-node")
+}
+
+// retry 按退避重试直到成功或 ctx 结束。
+func retry(ctx context.Context, what string, fn func(context.Context) error) error {
+	backoff := transport.DefaultBackoff()
+	for {
+		err := fn(ctx)
+		if err == nil {
+			return nil
+		}
+		wait := backoff.Next()
+		slog.Warn("relay node "+what+" failed, retrying", "error", err, "wait", wait)
+		t := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return ctx.Err()
+		case <-t.C:
+		}
+	}
+}
+
+func every(ctx context.Context, d time.Duration, fn func()) {
+	t := time.NewTicker(d)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			fn()
+		}
+	}
+}
