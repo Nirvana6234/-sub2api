@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
 	"github.com/Wei-Shaw/sub2api/internal/relay/transport"
@@ -26,6 +27,9 @@ type SettleEnv struct {
 	VerifyVoucher func(raw []byte, reportingNodeID int64) (*relayv1.Voucher, error)
 	// RefreshUser 入账消耗租约后刷新内存里的冻结额；没有额度服务时为 nil。
 	RefreshUser func(ctx context.Context, userID int64) error
+	// LastSuspectRevocation 返回节点最近一次因怀疑被攻破而吊销的时间（NodeStore.LastSuspectRevocation）：
+	// 之前签发的凭证照常入账、记为待复核（设计 5.4）。
+	LastSuspectRevocation func(ctx context.Context, nodeID int64) (time.Time, bool, error)
 }
 
 // Billing 实现 RelayBilling 服务（扣费连接）。

@@ -399,7 +399,7 @@ func (n *Nodes) OnConnect(info transport.ConnInfo) {
 // duplicateIdentity 处理"同一身份出现两份"：退回待激活、吊销证书、断开所有连接、严重告警。
 func (n *Nodes) duplicateIdentity(ctx context.Context, nodeID int64, detail map[string]any) {
 	_, _ = n.store.SetStatus(ctx, nodeID, []NodeStatus{NodeActive, NodeDraining}, NodePending)
-	serials, _ := n.store.RevokeCertificates(ctx, nodeID, "identity_duplicated", n.now())
+	serials, _ := n.store.RevokeCertificates(ctx, nodeID, revokeReasonIdentityDuplicated, n.now())
 	n.mu.Lock()
 	n.status[nodeID] = NodePending
 	for _, s := range serials {
@@ -526,7 +526,7 @@ func (n *Nodes) RevokeCertificates(ctx context.Context, nodeID, actor int64, rea
 	if _, err := n.store.SetStatus(ctx, nodeID, []NodeStatus{NodeActive, NodeDraining}, NodePending); err != nil {
 		return err
 	}
-	serials, err := n.store.RevokeCertificates(ctx, nodeID, "revoked:"+reason, n.now())
+	serials, err := n.store.RevokeCertificates(ctx, nodeID, revokeReasonAdminPrefix+reason, n.now())
 	if err != nil {
 		return err
 	}

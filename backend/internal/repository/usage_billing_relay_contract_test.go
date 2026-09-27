@@ -111,3 +111,42 @@ func runUsageBillingRelayContract(t *testing.T, db *sql.DB) {
 	require.True(t, r5.Handled)
 	require.False(t, r5.AlreadySettled)
 }
+
+// runRelayVoucherPartitionsContract：预建之后的月份分区、删掉超过保留期的分区和默认分区里的旧行；
+// 新签发的凭证落进对应月份的分区。
+func runRelayVoucherPartitionsContract(t *testing.T, db *sql.DB) {
+	ctx := context.Background()
+	p := NewRelayVoucherPartitions(db)
+	now := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+	require.NoError(t, p.Maintain(ctx, now))
+	require.NoError(t, p.Maintain(ctx, now), "idempotent")
+	exists := func(name string) bool {
+		var n int
+		require.NoError(t, db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pg_class WHERE relname = $1`, name).Scan(&n))
+		return n == 1
+	}
+	require.True(t, exists("relay_voucher_consumed_202610"))
+	require.True(t, exists("relay_voucher_consumed_202611"))
+	require.False(t, exists("relay_voucher_consumed_202609"), "the current month may already have rows in the default partition")
+
+	insert := func(issued time.Time) {
+		_, err := db.ExecContext(ctx, `INSERT INTO relay_voucher_consumed (voucher_id, issued_at, node_id, user_id) VALUES ($1, $2, 1, 1)`, uuid.NewString(), issued)
+		require.NoError(t, err)
+	}
+	insert(time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC))
+	var inOct int
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT COUNT(*) FROM relay_voucher_consumed_202610`).Scan(&inOct))
+	require.Equal(t, 1, inOct, "a voucher lands in its month's partition")
+	insert(now.Add(-100 * 24 * time.Hour)) // 默认分区里的旧行
+	insert(now.Add(-10 * 24 * time.Hour))
+
+	// 半年后：十月、十一月的分区都已超过保留期，删掉；默认分区的旧行清掉。
+	later := time.Date(2027, 3, 15, 0, 0, 0, 0, time.UTC)
+	require.NoError(t, p.Maintain(ctx, later))
+	require.False(t, exists("relay_voucher_consumed_202610"))
+	require.False(t, exists("relay_voucher_consumed_202611"))
+	require.True(t, exists("relay_voucher_consumed_202704"))
+	var inDefault int
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT COUNT(*) FROM relay_voucher_consumed_default`).Scan(&inDefault))
+	require.Zero(t, inDefault, "rows older than the retention are purged from the default partition")
+}

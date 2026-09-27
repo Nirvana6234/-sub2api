@@ -72,6 +72,13 @@ type RuntimeDeps struct {
 	NewSelector func(SelectEnv) Selector
 	// NewSettler 创建扣费入账（relaysettle，WP8）；nil 时不提供扣费服务。
 	NewSettler func(SettleEnv) Settler
+	// VoucherPartitions 维护已入账凭证表的按月分区（预建、过期删除，设计 5.4）；nil 时不维护。
+	VoucherPartitions VoucherPartitionMaintainer
+}
+
+// VoucherPartitionMaintainer 维护已入账凭证表的分区（repository.RelayVoucherPartitions）。
+type VoucherPartitionMaintainer interface {
+	Maintain(ctx context.Context, now time.Time) error
 }
 
 // ReservedBalanceSink 接收冻结额读取（service.BillingCacheService 满足）。
@@ -412,7 +419,7 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 	}
 	relayv1.RegisterRelayControlServer(server.GRPC(), control)
 	if r.deps.NewSettler != nil {
-		env := SettleEnv{VerifyVoucher: r.VerifyVoucher}
+		env := SettleEnv{VerifyVoucher: r.VerifyVoucher, LastSuspectRevocation: r.deps.Store.LastSuspectRevocation}
 		if quotas != nil {
 			env.RefreshUser = quotas.RefreshUser
 		}
@@ -480,7 +487,26 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 		running.goRun(func() { revoker.run(runCtx) })
 	}
 	running.goRun(func() { runPendingPurge(runCtx, nodes) })
+	if p := r.deps.VoucherPartitions; p != nil {
+		running.goRun(func() { runVoucherPartitions(runCtx, p, r.now) })
+	}
 	return running, nil
+}
+
+// runVoucherPartitions 启动时和之后每天维护一次已入账凭证表的分区。
+func runVoucherPartitions(ctx context.Context, p VoucherPartitionMaintainer, now func() time.Time) {
+	t := time.NewTicker(24 * time.Hour)
+	defer t.Stop()
+	for {
+		if err := p.Maintain(ctx, now()); err != nil {
+			slog.Warn("relay voucher partition maintenance failed", "error", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
 }
 
 func (rr *runningRelay) goRun(fn func()) {

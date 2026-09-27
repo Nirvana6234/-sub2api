@@ -276,6 +276,19 @@ func (s *MemoryStore) RevokeCertificates(_ context.Context, nodeID int64, reason
 	return out, nil
 }
 
+func (s *MemoryStore) LastSuspectRevocation(_ context.Context, nodeID int64) (time.Time, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var last time.Time
+	found := false
+	for _, c := range s.certs {
+		if c.NodeID == nodeID && c.RevokedAt != nil && IsSuspectRevokeReason(c.RevokeReason) && (!found || c.RevokedAt.After(last)) {
+			last, found = *c.RevokedAt, true
+		}
+	}
+	return last, found, nil
+}
+
 func (s *MemoryStore) ListRevokedSerials(_ context.Context, notAfter time.Time) ([]string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

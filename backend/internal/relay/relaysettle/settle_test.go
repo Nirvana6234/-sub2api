@@ -40,6 +40,7 @@ type billing struct {
 	commands []service.UsageBillingCommand
 	settled  map[string][]service.RelayLeaseConsumption
 	fail     error
+	reviews  []string
 }
 
 func (b *billing) Apply(_ context.Context, cmd *service.UsageBillingCommand) (*service.UsageBillingApplyResult, error) {
@@ -49,6 +50,7 @@ func (b *billing) Apply(_ context.Context, cmd *service.UsageBillingCommand) (*s
 		return nil, b.fail
 	}
 	if r := cmd.Relay; r != nil {
+		b.reviews = append(b.reviews, r.ReviewStatus)
 		if prior, ok := b.settled[r.VoucherID]; ok {
 			r.Handled, r.AlreadySettled, r.Consumed = true, true, prior
 			return &service.UsageBillingApplyResult{Applied: false}, nil
@@ -173,7 +175,7 @@ func (w *world) voucher(t *testing.T) []byte {
 	t.Helper()
 	raw, _, err := sign.IssueVoucher(w.signer, &relayv1.Voucher{
 		NodeId: node, SelectionId: "sel-1", UserId: 3, ApiKeyId: 11, AccountId: 7, GroupId: 5,
-		BillingMode: relayv1.BillingMode_BILLING_MODE_BALANCE, RequestedModel: "gpt-5.1",
+		BillingMode: relayv1.BillingMode_BILLING_MODE_BALANCE, RequestedModel: "gpt-5.1", AllowedBillingModels: []string{"gpt-5.1"},
 		Context: &relayv1.SelectionContext{
 			PricingAtUnixMs: pricingAt.UnixMilli(), QuotaPlatform: service.PlatformOpenAI,
 			ChannelId: 4, ChannelMappedModel: "gpt-5.1", BillingModelSource: service.BillingModelSourceRequested,
@@ -279,4 +281,28 @@ func TestRelaySettlementReplayRejectAndRetry(t *testing.T) {
 	require.Empty(t, res.GetConsumed())
 	w.billing.fail = nil
 	require.Equal(t, relayv1.UsageRecordStatus_USAGE_RECORD_STATUS_ALREADY_SETTLED, w.settler.Settle(ctx, node, failed).GetStatus())
+}
+
+// 待复核：上报的模型不在凭证允许的范围内（照上报的计费、报警）；节点因怀疑被攻破吊销过、凭证签发在那之前。
+func TestRelaySettlementMarksRecordsForReview(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	require.Equal(t, relayv1.UsageRecordStatus_USAGE_RECORD_STATUS_SETTLED, w.settler.Settle(ctx, node, w.record(t, 1)).GetStatus())
+
+	cheap := w.record(t, 2)
+	result := forwardResult()
+	result.UpstreamModel = "gpt-4o-mini"
+	cheap.ResultJson, _ = json.Marshal(result)
+	require.Equal(t, relayv1.UsageRecordStatus_USAGE_RECORD_STATUS_SETTLED, w.settler.Settle(ctx, node, cheap).GetStatus(), "billed as reported")
+
+	var revokedAt time.Time
+	w.settler.deps.LastSuspectRevocation = func(context.Context, int64) (time.Time, bool, error) { return revokedAt, true, nil }
+	revokedAt = time.Now().Add(time.Minute)
+	require.Equal(t, relayv1.UsageRecordStatus_USAGE_RECORD_STATUS_SETTLED, w.settler.Settle(ctx, node, w.record(t, 3)).GetStatus())
+	w.settler.suspects = map[int64]suspectRevocation{}
+	revokedAt = time.Now().Add(-time.Hour)
+	require.Equal(t, relayv1.UsageRecordStatus_USAGE_RECORD_STATUS_SETTLED, w.settler.Settle(ctx, node, w.record(t, 4)).GetStatus())
+
+	require.Equal(t, []string{"", "pending_review", "pending_review", ""}, w.billing.reviews,
+		"reviewed: a model outside the voucher, and a voucher issued before the suspected compromise; not: one issued after it")
 }

@@ -7,3 +7,7 @@ import "testing"
 func TestUsageBillingRelaySettlement(t *testing.T) {
 	runUsageBillingRelayContract(t, integrationDB)
 }
+
+func TestRelayVoucherPartitions(t *testing.T) {
+	runRelayVoucherPartitionsContract(t, integrationDB)
+}

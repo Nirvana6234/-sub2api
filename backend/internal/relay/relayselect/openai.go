@@ -273,10 +273,7 @@ func (s *selector) buildSelection(ctx context.Context, nodeID int64, req *relayv
 	if sel.quota.Group != nil && sel.quota.Group.IsSubscriptionType() && subscription != nil {
 		mode = relayv1.BillingMode_BILLING_MODE_SUBSCRIPTION
 	}
-	allowed := []string{reqModel}
-	if forwardModel != reqModel {
-		allowed = append(allowed, forwardModel)
-	}
+	allowed := allowedBillingModels(reqModel, forwardModel, sel.account)
 	voucher, _, err := s.env.IssueVoucher(&relayv1.Voucher{
 		NodeId: nodeID, SelectionId: sel.id, UserId: sel.userID, ApiKeyId: sel.apiKeyID, AccountId: sel.account.ID,
 		GroupId: sel.groupID, BillingMode: mode, RequestedModel: reqModel, AllowedBillingModels: allowed,
@@ -384,4 +381,19 @@ func selectionContext(outcome handler.OpenAISelectOutcome, sel *selectionRecord,
 		}
 	}
 	return c
+}
+
+// allowedBillingModels 是凭证允许的计费模型（设计 5.3）：请求模型、渠道映射后的模型、账号映射后发给上游的模型。
+// 转发中还可能出现别的合法模型（compact 映射、Codex 归一、上游拒绝后的回退模型），入账时对不上只报警
+// 并记为待复核，照上报的计费，不改价（改价会让正常请求和单机算得不一样）。
+func allowedBillingModels(reqModel, forwardModel string, account *service.Account) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, m := range []string{reqModel, forwardModel, account.GetMappedModel(forwardModel)} {
+		if m = strings.TrimSpace(m); m != "" && !seen[m] {
+			seen[m] = true
+			out = append(out, m)
+		}
+	}
+	return out
 }

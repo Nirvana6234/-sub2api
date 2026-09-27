@@ -65,6 +65,7 @@ func ProvideMasterRuntime(
 			Billing: billing, Gateway: gateway, Concurrency: concurrency,
 			Moderation: moderation, PromptAudit: prompt,
 		}),
+		VoucherPartitions: repository.NewRelayVoucherPartitions(db),
 		NewSettler: relaysettle.NewFactory(relaysettle.Deps{
 			Gateway: gateway, APIKeys: apiKeys, Accounts: accounts, Groups: groups, Subscriptions: subscriptions,
 			Vouchers: relayVoucherRecorder(db),

@@ -192,6 +192,23 @@ func Run(t *testing.T, h Harness) {
 		require.NoError(t, err)
 		require.NotNil(t, got.RevokedAt)
 		require.Equal(t, "test", got.RevokeReason)
+		_, suspect, err := s.LastSuspectRevocation(ctx, n.ID)
+		require.NoError(t, err)
+		require.False(t, suspect, "an ordinary revocation is not a suspected compromise")
+
+		// 怀疑被攻破的吊销（管理员吊销、身份重复）：记下最近一次的时间。
+		later := now.Add(time.Minute).Truncate(time.Millisecond)
+		fresh := &master.Certificate{NodeID: n.ID, Serial: "s4-" + n.IdentityFingerprint[:8], PublicKey: []byte{4}, NotBefore: now, NotAfter: now.Add(2 * time.Hour)}
+		require.NoError(t, s.InsertCertificate(ctx, fresh))
+		_, err = s.RevokeCertificates(ctx, n.ID, "revoked:suspected", later)
+		require.NoError(t, err)
+		at, suspect, err := s.LastSuspectRevocation(ctx, n.ID)
+		require.NoError(t, err)
+		require.True(t, suspect)
+		require.WithinDuration(t, later, at, time.Millisecond)
+		_, suspect, err = s.LastSuspectRevocation(ctx, n.ID+1000)
+		require.NoError(t, err)
+		require.False(t, suspect)
 	})
 
 	t.Run("stale pending registrations are purged", func(t *testing.T) {

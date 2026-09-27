@@ -8,6 +8,7 @@ package master
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -64,6 +65,16 @@ type Certificate struct {
 	RevokeReason      string
 	CreatedAt         time.Time
 }
+
+// IsSuspectRevokeReason 报告一个吊销原因是否表示怀疑节点被攻破（身份重复、管理员吊销）。
+func IsSuspectRevokeReason(reason string) bool {
+	return reason == revokeReasonIdentityDuplicated || strings.HasPrefix(reason, revokeReasonAdminPrefix)
+}
+
+const (
+	revokeReasonIdentityDuplicated = "identity_duplicated"
+	revokeReasonAdminPrefix        = "revoked:"
+)
 
 // Activation 是管理员激活节点时填写的内容（设计 11.1 第 5 步）。
 type Activation struct {
@@ -127,6 +138,9 @@ type NodeStore interface {
 	CountCertificates(ctx context.Context, nodeID int64) (int, error)
 	// RevokeCertificates 吊销节点所有未吊销、未过期的证书，返回被吊销的序列号。
 	RevokeCertificates(ctx context.Context, nodeID int64, reason string, at time.Time) ([]string, error)
+	// LastSuspectRevocation 返回这台节点最近一次因怀疑被攻破而吊销证书的时间（身份重复、管理员吊销，
+	// 不含停用），没有过时 ok 为 false。之前签发的扣费凭证入账时记为待复核（设计 5.4）。
+	LastSuspectRevocation(ctx context.Context, nodeID int64) (time.Time, bool, error)
 	// ListRevokedSerials 返回 notAfter 之后才过期的已吊销证书（过期的证书握手本来就过不了）。
 	ListRevokedSerials(ctx context.Context, notAfter time.Time) ([]string, error)
 	Audit(ctx context.Context, e AuditEntry) error

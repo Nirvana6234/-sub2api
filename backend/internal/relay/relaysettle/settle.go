@@ -13,6 +13,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
@@ -39,19 +41,36 @@ type Deps struct {
 	VerifyVoucher func(raw []byte, reportingNodeID int64) (*relayv1.Voucher, error)
 	// RefreshUser 入账消耗了租约后刷新主节点内存里的冻结额（master.Quotas.RefreshUser）；nil 时不刷。
 	RefreshUser func(ctx context.Context, userID int64) error
+	// LastSuspectRevocation 节点最近一次因怀疑被攻破而吊销的时间；nil 时不查。
+	LastSuspectRevocation func(ctx context.Context, nodeID int64) (time.Time, bool, error)
 }
 
 // Settler 入账从节点上报的扣费记录。
-type Settler struct{ deps Deps }
+type Settler struct {
+	deps Deps
+	now  func() time.Time
+
+	mu       sync.Mutex
+	suspects map[int64]suspectRevocation
+}
+
+// suspectRevocation 缓存一台节点的可疑吊销时间（一分钟）：被吊销的节点连不上来，重新激活后才会补报。
+type suspectRevocation struct {
+	at      time.Time
+	ok      bool
+	fetched time.Time
+}
 
 // New 创建入账。
-func New(d Deps) *Settler { return &Settler{deps: d} }
+func New(d Deps) *Settler {
+	return &Settler{deps: d, now: time.Now, suspects: map[int64]suspectRevocation{}}
+}
 
 // NewFactory 返回运行时用来新建入账的函数（master.RuntimeDeps.NewSettler）：验凭证、刷新冻结额取自本次启动。
 func NewFactory(d Deps) func(master.SettleEnv) master.Settler {
 	return func(env master.SettleEnv) master.Settler {
 		deps := d
-		deps.VerifyVoucher, deps.RefreshUser = env.VerifyVoucher, env.RefreshUser
+		deps.VerifyVoucher, deps.RefreshUser, deps.LastSuspectRevocation = env.VerifyVoucher, env.RefreshUser, env.LastSuspectRevocation
 		return New(deps)
 	}
 }
@@ -114,6 +133,20 @@ func (s *Settler) settle(ctx context.Context, nodeID int64, rec *relayv1.UsageRe
 		VoucherID: uuidString(v.GetVoucherId()), IssuedAt: time.UnixMilli(v.GetIssuedAtUnixMs()).UTC(),
 		NodeID: nodeID, UserID: v.GetUserId(), GroupID: v.GetGroupId(), APIKeyID: v.GetApiKeyId(),
 		Platform: sc.GetQuotaPlatform(),
+	}
+	underReview, err := s.issuedBeforeSuspectRevocation(ctx, nodeID, relay.IssuedAt)
+	if err != nil {
+		return nil, err
+	}
+	if underReview {
+		// 节点因怀疑被攻破而吊销过，这张凭证签发在吊销之前：照常入账，记为待复核，管理员可按用户整笔退回（设计 5.4）。
+		relay.ReviewStatus = "pending_review"
+	}
+	if outside := modelsOutsideVoucher(v, &result); len(outside) > 0 {
+		// 上报的模型不在凭证允许的范围内：按上报的计费（与单机一致），报警并记为待复核（设计 5.3、5.4）。
+		relay.ReviewStatus = "pending_review"
+		slog.Error("relay usage reports a model outside the voucher", "node_id", nodeID, "user_id", v.GetUserId(),
+			"allowed", v.GetAllowedBillingModels(), "reported", outside)
 	}
 	sctx := context.WithoutCancel(ctx)
 	sctx = service.WithRelaySettlement(sctx, relay)
@@ -213,6 +246,43 @@ func (s *Settler) buildOpenAIInput(ctx context.Context, v *relayv1.Voucher, rec 
 		NativeCompactionV2: rec.GetNativeCompactionV2(),
 		ChannelUsageFields: mapping.ToUsageFields(v.GetRequestedModel(), result.UpstreamModel),
 	}, nil
+}
+
+// issuedBeforeSuspectRevocation 报告凭证是否签发在节点最近一次可疑吊销之前（含同一时刻）。
+func (s *Settler) issuedBeforeSuspectRevocation(ctx context.Context, nodeID int64, issuedAt time.Time) (bool, error) {
+	if s.deps.LastSuspectRevocation == nil {
+		return false, nil
+	}
+	now := s.now()
+	s.mu.Lock()
+	cached, ok := s.suspects[nodeID]
+	s.mu.Unlock()
+	if !ok || now.Sub(cached.fetched) > time.Minute {
+		at, found, err := s.deps.LastSuspectRevocation(ctx, nodeID)
+		if err != nil {
+			return false, err
+		}
+		cached = suspectRevocation{at: at, ok: found, fetched: now}
+		s.mu.Lock()
+		s.suspects[nodeID] = cached
+		s.mu.Unlock()
+	}
+	return cached.ok && !issuedAt.After(cached.at), nil
+}
+
+// modelsOutsideVoucher 返回转发结果里不在凭证允许范围内的计费相关模型。
+func modelsOutsideVoucher(v *relayv1.Voucher, result *service.OpenAIForwardResult) []string {
+	allowed := map[string]bool{}
+	for _, m := range v.GetAllowedBillingModels() {
+		allowed[strings.ToLower(strings.TrimSpace(m))] = true
+	}
+	var out []string
+	for _, m := range []string{result.Model, result.UpstreamModel, result.BillingModel} {
+		if m = strings.TrimSpace(m); m != "" && !allowed[strings.ToLower(m)] {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 func uuidString(b []byte) string {

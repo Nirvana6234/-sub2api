@@ -804,3 +804,10 @@ func TestSelectChatCompletions(t *testing.T) {
 	require.Equal(t, []int64{0, 1}, slotsWhenChecked, "chat checks before taking the user slot, responses after")
 	require.Equal(t, int64(0), w.slots.held.Load())
 }
+
+// 凭证允许的计费模型：请求模型、渠道映射后的、账号映射后发给上游的（去重）。
+func TestAllowedBillingModels(t *testing.T) {
+	mapped := &service.Account{Credentials: map[string]any{"model_mapping": map[string]any{"gpt-5": "gpt-5-2025"}}}
+	require.Equal(t, []string{"gpt-5-alias", "gpt-5", "gpt-5-2025"}, allowedBillingModels("gpt-5-alias", "gpt-5", mapped))
+	require.Equal(t, []string{"gpt-5"}, allowedBillingModels("gpt-5", "gpt-5", &service.Account{}))
+}

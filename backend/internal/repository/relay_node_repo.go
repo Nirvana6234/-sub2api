@@ -331,6 +331,16 @@ func (r *relayNodeRepository) RevokeCertificates(ctx context.Context, nodeID int
 	return out, rows.Err()
 }
 
+func (r *relayNodeRepository) LastSuspectRevocation(ctx context.Context, nodeID int64) (time.Time, bool, error) {
+	var last sql.NullTime
+	err := r.db.QueryRowContext(ctx, `SELECT MAX(revoked_at) FROM relay_node_certificates
+		WHERE node_id = $1 AND revoked_at IS NOT NULL AND (revoke_reason = 'identity_duplicated' OR revoke_reason LIKE 'revoked:%')`, nodeID).Scan(&last)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	return last.Time, last.Valid, nil
+}
+
 func (r *relayNodeRepository) ListRevokedSerials(ctx context.Context, notAfter time.Time) ([]string, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT serial FROM relay_node_certificates WHERE revoked_at IS NOT NULL AND not_after > $1 ORDER BY serial`, notAfter)
