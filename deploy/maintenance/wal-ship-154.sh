@@ -78,14 +78,19 @@ main() {
   fi
 
   log "开始推送 ${count} 个文件（本地 $(local_mb)MB）"
-  if rsync -a --numeric-ids --compress --remove-source-files --exclude='*.tmp' \
+  local out rc sent
+  out=$(rsync -a --numeric-ids --compress --remove-source-files --exclude='*.tmp' --stats \
       -e "ssh -i ${SSH_KEY} -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=30" \
-      "${ARCHIVE_DIR}/" "${REMOTE}:/"; then
-    log "推送成功，本地剩余 $(find "$ARCHIVE_DIR" -maxdepth 1 -type f | wc -l) 个文件"
+      "${ARCHIVE_DIR}/" "${REMOTE}:/" 2>&1)
+  rc=$?
+  if [ "$rc" = "0" ]; then
+    # "Total bytes sent" 是压缩后实际走网络的出站字节数（含 rsync 协议开销）
+    sent=$(awk -F': ' '/^Total bytes sent/ {gsub(/,/, "", $2); print $2}' <<<"$out")
+    log "推送成功，实际发送 $(( ${sent:-0} / 1024 ))KB，本地剩余 $(find "$ARCHIVE_DIR" -maxdepth 1 -type f | wc -l) 个文件"
     return 0
   fi
 
-  log "错误：推送失败，本地积压 $(local_mb)MB"
+  log "错误：推送失败（rsync 退出码 ${rc}），本地积压 $(local_mb)MB：$(tail -3 <<<"$out" | tr '\n' ' ')"
   if [ "$(local_mb)" -gt "$MAX_LOCAL_MB" ]; then
     log "严重：本地积压超过 ${MAX_LOCAL_MB}MB，删除最旧的段以保护生产磁盘；备库已断链，需要重新做基础备份"
     date -u '+%Y-%m-%dT%H:%M:%SZ' >"$RESEED_MARKER"
