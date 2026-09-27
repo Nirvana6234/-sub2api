@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -120,4 +121,25 @@ func EvaluateRelayAPIKeyAdmission(ctx context.Context, in RelayAPIKeyAdmissionIn
 		return RelayAPIKeyAdmission{}, capture(func(c *gin.Context) { abortGroupUnassigned(c, AnthropicErrorWriter) }), nil
 	}
 	return RelayAPIKeyAdmission{APIKey: apiKey, Billing: billing}, nil, nil
+}
+
+// WriteCapturedRejection 在从节点上写出主节点生成的拒绝：原样的状态码、响应头、响应体和运维标记。
+func WriteCapturedRejection(c *gin.Context, r *CapturedRejection) {
+	for k, vs := range r.Header {
+		if strings.EqualFold(k, "Content-Length") {
+			continue
+		}
+		for _, v := range vs {
+			c.Writer.Header().Add(k, v)
+		}
+	}
+	if r.IngressReason != "" {
+		MarkIngressRejected(c, IngressRejectReason(r.IngressReason))
+	}
+	if r.OpsReason != "" {
+		service.MarkOpsClientBusinessLimited(c, r.OpsReason)
+	}
+	c.Status(r.Status)
+	_, _ = c.Writer.Write(r.Body)
+	c.Abort()
 }

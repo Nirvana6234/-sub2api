@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"net/http"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"go.uber.org/zap"
@@ -145,14 +144,7 @@ func (a OpenAIAccountAdmitter) SelectAndAdmit(ctx context.Context, req OpenAISel
 				selection.ReleaseFunc()
 				selection.ReleaseFunc = nil
 			}
-			state.LastFailoverErr = &service.UpstreamFailoverError{
-				StatusCode:       http.StatusBadRequest,
-				Stage:            service.GatewayFailureStageInference,
-				Scope:            service.GatewayFailureScopeRequest,
-				Reason:           service.OpenAIHTTPContinuationUnsupportedReason,
-				ClientStatusCode: http.StatusBadRequest,
-				ClientMessage:    "previous_response_id requires an OpenAI API-key account for HTTP requests",
-			}
+			state.LastFailoverErr = openAIHTTPContinuationUnsupportedError()
 			reqLog.Debug("openai.account_skipped_http_continuation_unsupported",
 				zap.Int64("account_id", account.ID),
 				zap.String("account_type", account.Type),

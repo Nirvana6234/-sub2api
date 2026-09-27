@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -47,6 +46,9 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 
 	if !h.ensureResponsesDependencies(c, reqLog) {
 		return
+	}
+	if h.relay != nil {
+		defer h.relay.RequestDone(c)
 	}
 
 	body, err := readLenientJSONRequestBodyWithPrealloc(c.Request, h.cfg)
@@ -106,16 +108,22 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	setOpsRequestContext(c, reqModel, reqStream)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(reqStream, false)))
 
-	if decision := h.checkSecurityAudit(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIChat, reqModel, body); decision != nil && !decision.AllowNextStage {
-		h.openAISecurityAuditError(c, decision)
-		return
-	}
-	if h.rejectIfCyberSessionBlocked(c, apiKey, body, reqModel, cyberBlockFormatChat) {
-		return
+	// 从节点：安全审计、cyber 会话屏蔽、渠道映射都在主节点选号时做（审计命中时回"暂不支持"，交给主节点转发）。
+	if h.relay == nil {
+		if decision := h.checkSecurityAudit(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIChat, reqModel, body); decision != nil && !decision.AllowNextStage {
+			h.openAISecurityAuditError(c, decision)
+			return
+		}
+		if h.rejectIfCyberSessionBlocked(c, apiKey, body, reqModel, cyberBlockFormatChat) {
+			return
+		}
 	}
 
 	// 解析渠道级模型映射
-	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
+	var channelMapping service.ChannelMappingResult
+	if h.relay == nil {
+		channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
+	}
 	forwardModel := openAIChannelForwardModel(channelMapping, reqModel)
 
 	if h.errorPassthroughService != nil {
@@ -128,22 +136,25 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(requestStart).Milliseconds())
 	routingStart := time.Now()
 
-	userReleaseFunc, acquired := h.acquireResponsesUserSlot(c, subject.UserID, subject.Concurrency, reqStream, &streamStarted, reqLog)
-	if !acquired {
-		return
-	}
-	if userReleaseFunc != nil {
-		defer userReleaseFunc()
-	}
-
-	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
-		reqLog.Info("openai_chat_completions.billing_eligibility_check_failed", zap.Error(err))
-		status, code, message, retryAfter := billingErrorDetails(err)
-		if retryAfter > 0 {
-			c.Header("Retry-After", strconv.Itoa(retryAfter))
+	// 从节点：用户并发槽和计费资格在主节点第一次选号时做。
+	if h.relay == nil {
+		userReleaseFunc, acquired := h.acquireResponsesUserSlot(c, subject.UserID, subject.Concurrency, reqStream, &streamStarted, reqLog)
+		if !acquired {
+			return
 		}
-		h.handleStreamingAwareError(c, status, code, message, streamStarted)
-		return
+		if userReleaseFunc != nil {
+			defer userReleaseFunc()
+		}
+
+		if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
+			reqLog.Info("openai_chat_completions.billing_eligibility_check_failed", zap.Error(err))
+			status, code, message, retryAfter := billingErrorDetails(err)
+			if retryAfter > 0 {
+				c.Header("Retry-After", strconv.Itoa(retryAfter))
+			}
+			h.handleStreamingAwareError(c, status, code, message, streamStarted)
+			return
+		}
 	}
 
 	sessionHash := h.gatewayService.GenerateSessionHash(c, body)
@@ -159,32 +170,56 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	var oauth429FailoverState service.OpenAIOAuth429FailoverState
 
 	// 分组利润控制：chat completions 文本入口请求级装门并固定 pricingAt。
-	ccPricingCtx, pricingAt := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
-	c.Request = c.Request.WithContext(ccPricingCtx)
+	// 从节点：计价在主节点。
+	var ccPricingCtx context.Context
+	var pricingAt time.Time
+	if h.relay == nil {
+		ccPricingCtx, pricingAt = h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
+		c.Request = c.Request.WithContext(ccPricingCtx)
+	}
+	var relayAttempt *OpenAIRelayAttempt
 
 	for {
 		if failoverClientGone(c) {
 			return
 		}
-		// Select account and admit it (shared with relay selection, see OpenAIAccountAdmitter.SelectAndAdmit).
-		onTick, cannotWait := h.openAIAdmissionWaitHooks(c, reqStream, &streamStarted)
-		selectState := OpenAISelectState{ProfitVetoCount: profitVetoCount, LastFailoverErr: lastFailoverErr}
-		outcome := OpenAIAccountAdmitter{Gateway: h.gatewayService, Concurrency: h.concurrencyHelper}.SelectAndAdmit(c.Request.Context(), OpenAISelectRequest{
-			GroupID:            apiKey.GroupID,
-			SessionHash:        sessionHash,
-			ForwardModel:       forwardModel,
-			RequestPlatform:    requestPlatform,
-			RequiredCapability: service.OpenAIEndpointCapabilityChatCompletions,
-			Excluded:           failedAccountIDs,
-			OnTick:             onTick,
-			CannotWait:         cannotWait,
-			OnAccountChosen: func(_ context.Context, selection *service.AccountSelectionResult) context.Context {
-				setOpsSelectedAccount(c, selection.Account.ID, selection.Account.Platform)
-				c.Request = c.Request.WithContext(service.ContextWithSelectionFallbackTrace(c.Request.Context(), selection))
-				return c.Request.Context()
-			},
-		}, &selectState, reqLog)
-		profitVetoCount, lastFailoverErr = selectState.ProfitVetoCount, selectState.LastFailoverErr
+		var outcome OpenAISelectOutcome
+		if h.relay != nil {
+			res := h.relay.Select(c, OpenAIRelaySelectRequest{
+				Chat: true, APIKey: apiKey, Model: reqModel, Stream: reqStream, SessionHash: sessionHash,
+				Excluded: failedAccountIDs, Body: body,
+			})
+			if res.Rejection != nil {
+				h.writeOpenAIRelayRejection(c, res.Rejection, apiKey, reqModel, cyberBlockFormatChat, lastFailoverErr, streamStarted, reqLog)
+				return
+			}
+			relayAttempt = res.Attempt
+			channelMapping = relayAttempt.ChannelMapping
+			forwardModel = relayAttempt.ForwardModel
+			maxAccountSwitches = relayAttempt.MaxAccountSwitches
+			setOpsSelectedAccount(c, relayAttempt.Account.ID, relayAttempt.Account.Platform)
+			outcome = h.relayAttemptOutcome(c, relayAttempt)
+		} else {
+			// Select account and admit it (shared with relay selection, see OpenAIAccountAdmitter.SelectAndAdmit).
+			onTick, cannotWait := h.openAIAdmissionWaitHooks(c, reqStream, &streamStarted)
+			selectState := OpenAISelectState{ProfitVetoCount: profitVetoCount, LastFailoverErr: lastFailoverErr}
+			outcome = OpenAIAccountAdmitter{Gateway: h.gatewayService, Concurrency: h.concurrencyHelper}.SelectAndAdmit(c.Request.Context(), OpenAISelectRequest{
+				GroupID:            apiKey.GroupID,
+				SessionHash:        sessionHash,
+				ForwardModel:       forwardModel,
+				RequestPlatform:    requestPlatform,
+				RequiredCapability: service.OpenAIEndpointCapabilityChatCompletions,
+				Excluded:           failedAccountIDs,
+				OnTick:             onTick,
+				CannotWait:         cannotWait,
+				OnAccountChosen: func(_ context.Context, selection *service.AccountSelectionResult) context.Context {
+					setOpsSelectedAccount(c, selection.Account.ID, selection.Account.Platform)
+					c.Request = c.Request.WithContext(service.ContextWithSelectionFallbackTrace(c.Request.Context(), selection))
+					return c.Request.Context()
+				},
+			}, &selectState, reqLog)
+			profitVetoCount, lastFailoverErr = selectState.ProfitVetoCount, selectState.LastFailoverErr
+		}
 		sessionHash = outcome.SessionHash
 		switch outcome.Kind {
 		case OpenAISelected:
@@ -272,7 +307,10 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			}()
 			return h.gatewayService.ForwardAsChatCompletions(c.Request.Context(), c, account, forwardBody, promptCacheKey, "")
 		}()
-		if service.GetOpsCyberPolicy(c) != nil {
+		if service.GetOpsCyberPolicy(c) != nil && h.relay != nil {
+			// TODO(WP10)：cyber 风控记录改成发给主节点的事件；扣费记录里的 cyber_blocked 照常带上。
+			reqLog.Warn("openai_chat_completions.relay_cyber_policy_record_not_reported", zap.Int64("account_id", account.ID))
+		} else if service.GetOpsCyberPolicy(c) != nil {
 			h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil, body, clientRequestedUsageFields(c, channelMapping, reqModel, ""), service.HashUsageRequestPayload(body))
 		}
 
@@ -293,13 +331,13 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 				return
 			}
 			stampOpenAIRequestedReasoningEffort(res, c)
-			userAgent := c.GetHeader("User-Agent")
-			clientIP := ip.GetClientIP(c)
-			inboundEndpoint := GetInboundEndpoint(c)
-			upstreamEndpoint := resolveOpenAIUpstreamEndpoint(c, account, res)
+			// Chat 的用量不记请求体哈希（与原来一致）。
+			facts := collectOpenAIUsageFacts(c, account, res, func() string { return "" }, false)
+			if h.relay != nil {
+				h.relay.SubmitUsage(c, relayAttempt, facts, res)
+				return
+			}
 			quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
-			sessionID := service.ExtractClientSessionID(c)
-			cyberBlocked := service.GetOpsCyberPolicy(c) != nil
 			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
 				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 					Result:             res,
@@ -307,16 +345,16 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 					User:               apiKey.User,
 					Account:            account,
 					Subscription:       subscription,
-					InboundEndpoint:    inboundEndpoint,
-					UpstreamEndpoint:   upstreamEndpoint,
-					UserAgent:          userAgent,
-					IPAddress:          clientIP,
+					InboundEndpoint:    facts.InboundEndpoint,
+					UpstreamEndpoint:   facts.UpstreamEndpoint,
+					UserAgent:          facts.UserAgent,
+					IPAddress:          facts.IPAddress,
 					APIKeyService:      h.apiKeyService,
 					QuotaPlatform:      quotaPlatform,
-					SessionID:          sessionID,
+					SessionID:          facts.SessionID,
 					ChannelUsageFields: clientRequestedUsageFields(c, channelMapping, reqModel, res.UpstreamModel),
 					PricingAt:          pricingAt,
-					CyberBlocked:       cyberBlocked,
+					CyberBlocked:       facts.CyberBlocked,
 				}); err != nil {
 					logger.L().With(
 						zap.String("component", "handler.openai_gateway.chat_completions"),
