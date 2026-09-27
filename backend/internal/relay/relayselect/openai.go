@@ -320,6 +320,12 @@ func (s *selector) buildSelection(ctx context.Context, nodeID int64, req *relayv
 	if err != nil {
 		return nil, nil, err
 	}
+	var parentSnap *relayv1.AccountSnapshot
+	if sel.account.IsShadow() {
+		if parentSnap, err = s.encodeCredentialParent(ctx, nodeID, sel.account, s.nodeHas(nodeID)); err != nil {
+			return nil, nil, err
+		}
+	}
 	mode := relayv1.BillingMode_BILLING_MODE_BALANCE
 	if sel.quota.Group != nil && sel.quota.Group.IsSubscriptionType() && subscription != nil {
 		mode = relayv1.BillingMode_BILLING_MODE_SUBSCRIPTION
@@ -361,6 +367,7 @@ func (s *selector) buildSelection(ctx context.Context, nodeID int64, req *relayv
 		ChannelId: mapping.ChannelID, BillingModelSource: mapping.BillingModelSource, SessionHash: outcome.SessionHash,
 		Voucher: voucher, QuotaScopes: scopes, QuotaNeed: quotaNeed, Grants: grants,
 		MaxAccountSwitches: int32(switches), ConfigVersion: version, PricingAtUnixMs: sel.request.pricingAt.UnixMilli(),
+		CredentialParent: parentSnap,
 	}}}, nil, nil
 }
 

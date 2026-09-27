@@ -3985,8 +3985,10 @@ type Selection struct {
 	// 当前配置版本，从节点落后时先同步拉取。
 	ConfigVersion   string `protobuf:"bytes,18,opt,name=config_version,json=configVersion,proto3" json:"config_version,omitempty"`
 	PricingAtUnixMs int64  `protobuf:"varint,19,opt,name=pricing_at_unix_ms,json=pricingAtUnixMs,proto3" json:"pricing_at_unix_ms,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// 选中的是影子账号时，它的母账号（凭据取自母账号，转发时按 ID 找它）。
+	CredentialParent *AccountSnapshot `protobuf:"bytes,20,opt,name=credential_parent,json=credentialParent,proto3" json:"credential_parent,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *Selection) Reset() {
@@ -4152,6 +4154,13 @@ func (x *Selection) GetPricingAtUnixMs() int64 {
 	return 0
 }
 
+func (x *Selection) GetCredentialParent() *AccountSnapshot {
+	if x != nil {
+		return x.CredentialParent
+	}
+	return nil
+}
+
 type FetchCredentialsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SelectionId   string                 `protobuf:"bytes,1,opt,name=selection_id,json=selectionId,proto3" json:"selection_id,omitempty"`
@@ -4199,9 +4208,11 @@ func (x *FetchCredentialsRequest) GetSelectionId() string {
 type FetchCredentialsResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// 只含 id、credential_version、sealed_credentials。
-	Account       *AccountSnapshot `protobuf:"bytes,1,opt,name=account,proto3" json:"account,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Account *AccountSnapshot `protobuf:"bytes,1,opt,name=account,proto3" json:"account,omitempty"`
+	// 影子账号的母账号（同样只含这三项）。
+	CredentialParent *AccountSnapshot `protobuf:"bytes,2,opt,name=credential_parent,json=credentialParent,proto3" json:"credential_parent,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *FetchCredentialsResponse) Reset() {
@@ -4237,6 +4248,13 @@ func (*FetchCredentialsResponse) Descriptor() ([]byte, []int) {
 func (x *FetchCredentialsResponse) GetAccount() *AccountSnapshot {
 	if x != nil {
 		return x.Account
+	}
+	return nil
+}
+
+func (x *FetchCredentialsResponse) GetCredentialParent() *AccountSnapshot {
+	if x != nil {
+		return x.CredentialParent
 	}
 	return nil
 }
@@ -6152,7 +6170,7 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x10anthropic_format\x18\x0e \x01(\bR\x0fanthropicFormat\x1a:\n" +
 	"\fHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xa7\x06\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xf7\x06\n" +
 	"\tSelection\x12!\n" +
 	"\fselection_id\x18\x01 \x01(\tR\vselectionId\x12\x17\n" +
 	"\auser_id\x18\x02 \x01(\x03R\x06userId\x12\x1c\n" +
@@ -6176,11 +6194,13 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x06grants\x18\x10 \x03(\v2\x1c.sub2api.relay.v1.QuotaGrantR\x06grants\x120\n" +
 	"\x14max_account_switches\x18\x11 \x01(\x05R\x12maxAccountSwitches\x12%\n" +
 	"\x0econfig_version\x18\x12 \x01(\tR\rconfigVersion\x12+\n" +
-	"\x12pricing_at_unix_ms\x18\x13 \x01(\x03R\x0fpricingAtUnixMs\"<\n" +
+	"\x12pricing_at_unix_ms\x18\x13 \x01(\x03R\x0fpricingAtUnixMs\x12N\n" +
+	"\x11credential_parent\x18\x14 \x01(\v2!.sub2api.relay.v1.AccountSnapshotR\x10credentialParent\"<\n" +
 	"\x17FetchCredentialsRequest\x12!\n" +
-	"\fselection_id\x18\x01 \x01(\tR\vselectionId\"W\n" +
+	"\fselection_id\x18\x01 \x01(\tR\vselectionId\"\xa7\x01\n" +
 	"\x18FetchCredentialsResponse\x12;\n" +
-	"\aaccount\x18\x01 \x01(\v2!.sub2api.relay.v1.AccountSnapshotR\aaccount\"\x87\x01\n" +
+	"\aaccount\x18\x01 \x01(\v2!.sub2api.relay.v1.AccountSnapshotR\aaccount\x12N\n" +
+	"\x11credential_parent\x18\x02 \x01(\v2!.sub2api.relay.v1.AccountSnapshotR\x10credentialParent\"\x87\x01\n" +
 	"\x12RefillQuotaRequest\x12!\n" +
 	"\fselection_id\x18\x01 \x01(\tR\vselectionId\x12:\n" +
 	"\n" +
@@ -6530,67 +6550,69 @@ var file_sub2api_relay_v1_relay_proto_depIdxs = []int32{
 	79, // 40: sub2api.relay.v1.Selection.account:type_name -> sub2api.relay.v1.AccountSnapshot
 	34, // 41: sub2api.relay.v1.Selection.quota_scopes:type_name -> sub2api.relay.v1.QuotaScope
 	35, // 42: sub2api.relay.v1.Selection.grants:type_name -> sub2api.relay.v1.QuotaGrant
-	79, // 43: sub2api.relay.v1.FetchCredentialsResponse.account:type_name -> sub2api.relay.v1.AccountSnapshot
-	54, // 44: sub2api.relay.v1.RefillQuotaRequest.held_quota:type_name -> sub2api.relay.v1.HeldQuota
-	35, // 45: sub2api.relay.v1.RefillQuotaResponse.grants:type_name -> sub2api.relay.v1.QuotaGrant
-	5,  // 46: sub2api.relay.v1.UpstreamErrorRequest.kind:type_name -> sub2api.relay.v1.UpstreamErrorKind
-	62, // 47: sub2api.relay.v1.UpstreamErrorRequest.headers:type_name -> sub2api.relay.v1.HeaderValues
-	6,  // 48: sub2api.relay.v1.UsageRecord.kind:type_name -> sub2api.relay.v1.UsageRecordKind
-	65, // 49: sub2api.relay.v1.UsageBatch.records:type_name -> sub2api.relay.v1.UsageRecord
-	68, // 50: sub2api.relay.v1.UsageBatchAck.results:type_name -> sub2api.relay.v1.UsageRecordResult
-	7,  // 51: sub2api.relay.v1.UsageRecordResult.status:type_name -> sub2api.relay.v1.UsageRecordStatus
-	69, // 52: sub2api.relay.v1.UsageRecordResult.consumed:type_name -> sub2api.relay.v1.LeaseConsumption
-	34, // 53: sub2api.relay.v1.LeaseConsumption.scope:type_name -> sub2api.relay.v1.QuotaScope
-	72, // 54: sub2api.relay.v1.AccountEvent.schedule_result:type_name -> sub2api.relay.v1.ScheduleResultEvent
-	73, // 55: sub2api.relay.v1.AccountEvent.health_failure:type_name -> sub2api.relay.v1.HealthFailureEvent
-	74, // 56: sub2api.relay.v1.AccountEvent.account_switch:type_name -> sub2api.relay.v1.AccountSwitchEvent
-	75, // 57: sub2api.relay.v1.AccountEvent.codex_usage:type_name -> sub2api.relay.v1.CodexUsageEvent
-	76, // 58: sub2api.relay.v1.AccountEvent.transport_error:type_name -> sub2api.relay.v1.TransportErrorEvent
-	77, // 59: sub2api.relay.v1.AccountEvent.ollama_activity:type_name -> sub2api.relay.v1.OllamaActivityEvent
-	71, // 60: sub2api.relay.v1.ScheduleResultEvent.failure:type_name -> sub2api.relay.v1.HealthFailureFacts
-	71, // 61: sub2api.relay.v1.HealthFailureEvent.failure:type_name -> sub2api.relay.v1.HealthFailureFacts
-	80, // 62: sub2api.relay.v1.AccountSnapshot.proxy:type_name -> sub2api.relay.v1.ProxySnapshot
-	9,  // 63: sub2api.relay.v1.RelayEnrollment.Hello:input_type -> sub2api.relay.v1.HelloRequest
-	11, // 64: sub2api.relay.v1.RelayEnrollment.Register:input_type -> sub2api.relay.v1.RegisterRequest
-	13, // 65: sub2api.relay.v1.RelayEnrollment.NodeStatus:input_type -> sub2api.relay.v1.NodeStatusRequest
-	15, // 66: sub2api.relay.v1.RelayEnrollment.ObtainCertificate:input_type -> sub2api.relay.v1.CertificateRequest
-	15, // 67: sub2api.relay.v1.RelayEnrollment.RenewCertificate:input_type -> sub2api.relay.v1.CertificateRequest
-	17, // 68: sub2api.relay.v1.RelayControl.Ping:input_type -> sub2api.relay.v1.PingRequest
-	20, // 69: sub2api.relay.v1.RelayControl.FetchConfig:input_type -> sub2api.relay.v1.FetchConfigRequest
-	37, // 70: sub2api.relay.v1.RelayControl.ReleaseQuota:input_type -> sub2api.relay.v1.ReleaseQuotaRequest
-	40, // 71: sub2api.relay.v1.RelayControl.RenewLeases:input_type -> sub2api.relay.v1.RenewLeasesRequest
-	44, // 72: sub2api.relay.v1.RelayControl.ReportLeases:input_type -> sub2api.relay.v1.ReportLeasesRequest
-	47, // 73: sub2api.relay.v1.RelayControl.AckQuotaRecall:input_type -> sub2api.relay.v1.AckQuotaRecallRequest
-	49, // 74: sub2api.relay.v1.RelayControl.Admit:input_type -> sub2api.relay.v1.AdmitRequest
-	52, // 75: sub2api.relay.v1.RelayControl.Select:input_type -> sub2api.relay.v1.SelectRequest
-	58, // 76: sub2api.relay.v1.RelayControl.FetchCredentials:input_type -> sub2api.relay.v1.FetchCredentialsRequest
-	60, // 77: sub2api.relay.v1.RelayControl.RefillQuota:input_type -> sub2api.relay.v1.RefillQuotaRequest
-	63, // 78: sub2api.relay.v1.RelayControl.UpstreamError:input_type -> sub2api.relay.v1.UpstreamErrorRequest
-	66, // 79: sub2api.relay.v1.RelayBilling.SubmitUsage:input_type -> sub2api.relay.v1.UsageBatch
-	19, // 80: sub2api.relay.v1.RelayEvents.Stream:input_type -> sub2api.relay.v1.NodeEnvelope
-	10, // 81: sub2api.relay.v1.RelayEnrollment.Hello:output_type -> sub2api.relay.v1.HelloResponse
-	12, // 82: sub2api.relay.v1.RelayEnrollment.Register:output_type -> sub2api.relay.v1.RegisterResponse
-	14, // 83: sub2api.relay.v1.RelayEnrollment.NodeStatus:output_type -> sub2api.relay.v1.NodeStatusResponse
-	16, // 84: sub2api.relay.v1.RelayEnrollment.ObtainCertificate:output_type -> sub2api.relay.v1.CertificateResponse
-	16, // 85: sub2api.relay.v1.RelayEnrollment.RenewCertificate:output_type -> sub2api.relay.v1.CertificateResponse
-	18, // 86: sub2api.relay.v1.RelayControl.Ping:output_type -> sub2api.relay.v1.PingResponse
-	21, // 87: sub2api.relay.v1.RelayControl.FetchConfig:output_type -> sub2api.relay.v1.ConfigSnapshot
-	38, // 88: sub2api.relay.v1.RelayControl.ReleaseQuota:output_type -> sub2api.relay.v1.ReleaseQuotaResponse
-	42, // 89: sub2api.relay.v1.RelayControl.RenewLeases:output_type -> sub2api.relay.v1.RenewLeasesResponse
-	45, // 90: sub2api.relay.v1.RelayControl.ReportLeases:output_type -> sub2api.relay.v1.ReportLeasesResponse
-	48, // 91: sub2api.relay.v1.RelayControl.AckQuotaRecall:output_type -> sub2api.relay.v1.AckQuotaRecallResponse
-	50, // 92: sub2api.relay.v1.RelayControl.Admit:output_type -> sub2api.relay.v1.AdmitResponse
-	55, // 93: sub2api.relay.v1.RelayControl.Select:output_type -> sub2api.relay.v1.SelectResponse
-	59, // 94: sub2api.relay.v1.RelayControl.FetchCredentials:output_type -> sub2api.relay.v1.FetchCredentialsResponse
-	61, // 95: sub2api.relay.v1.RelayControl.RefillQuota:output_type -> sub2api.relay.v1.RefillQuotaResponse
-	64, // 96: sub2api.relay.v1.RelayControl.UpstreamError:output_type -> sub2api.relay.v1.UpstreamErrorResponse
-	67, // 97: sub2api.relay.v1.RelayBilling.SubmitUsage:output_type -> sub2api.relay.v1.UsageBatchAck
-	24, // 98: sub2api.relay.v1.RelayEvents.Stream:output_type -> sub2api.relay.v1.MasterEnvelope
-	81, // [81:99] is the sub-list for method output_type
-	63, // [63:81] is the sub-list for method input_type
-	63, // [63:63] is the sub-list for extension type_name
-	63, // [63:63] is the sub-list for extension extendee
-	0,  // [0:63] is the sub-list for field type_name
+	79, // 43: sub2api.relay.v1.Selection.credential_parent:type_name -> sub2api.relay.v1.AccountSnapshot
+	79, // 44: sub2api.relay.v1.FetchCredentialsResponse.account:type_name -> sub2api.relay.v1.AccountSnapshot
+	79, // 45: sub2api.relay.v1.FetchCredentialsResponse.credential_parent:type_name -> sub2api.relay.v1.AccountSnapshot
+	54, // 46: sub2api.relay.v1.RefillQuotaRequest.held_quota:type_name -> sub2api.relay.v1.HeldQuota
+	35, // 47: sub2api.relay.v1.RefillQuotaResponse.grants:type_name -> sub2api.relay.v1.QuotaGrant
+	5,  // 48: sub2api.relay.v1.UpstreamErrorRequest.kind:type_name -> sub2api.relay.v1.UpstreamErrorKind
+	62, // 49: sub2api.relay.v1.UpstreamErrorRequest.headers:type_name -> sub2api.relay.v1.HeaderValues
+	6,  // 50: sub2api.relay.v1.UsageRecord.kind:type_name -> sub2api.relay.v1.UsageRecordKind
+	65, // 51: sub2api.relay.v1.UsageBatch.records:type_name -> sub2api.relay.v1.UsageRecord
+	68, // 52: sub2api.relay.v1.UsageBatchAck.results:type_name -> sub2api.relay.v1.UsageRecordResult
+	7,  // 53: sub2api.relay.v1.UsageRecordResult.status:type_name -> sub2api.relay.v1.UsageRecordStatus
+	69, // 54: sub2api.relay.v1.UsageRecordResult.consumed:type_name -> sub2api.relay.v1.LeaseConsumption
+	34, // 55: sub2api.relay.v1.LeaseConsumption.scope:type_name -> sub2api.relay.v1.QuotaScope
+	72, // 56: sub2api.relay.v1.AccountEvent.schedule_result:type_name -> sub2api.relay.v1.ScheduleResultEvent
+	73, // 57: sub2api.relay.v1.AccountEvent.health_failure:type_name -> sub2api.relay.v1.HealthFailureEvent
+	74, // 58: sub2api.relay.v1.AccountEvent.account_switch:type_name -> sub2api.relay.v1.AccountSwitchEvent
+	75, // 59: sub2api.relay.v1.AccountEvent.codex_usage:type_name -> sub2api.relay.v1.CodexUsageEvent
+	76, // 60: sub2api.relay.v1.AccountEvent.transport_error:type_name -> sub2api.relay.v1.TransportErrorEvent
+	77, // 61: sub2api.relay.v1.AccountEvent.ollama_activity:type_name -> sub2api.relay.v1.OllamaActivityEvent
+	71, // 62: sub2api.relay.v1.ScheduleResultEvent.failure:type_name -> sub2api.relay.v1.HealthFailureFacts
+	71, // 63: sub2api.relay.v1.HealthFailureEvent.failure:type_name -> sub2api.relay.v1.HealthFailureFacts
+	80, // 64: sub2api.relay.v1.AccountSnapshot.proxy:type_name -> sub2api.relay.v1.ProxySnapshot
+	9,  // 65: sub2api.relay.v1.RelayEnrollment.Hello:input_type -> sub2api.relay.v1.HelloRequest
+	11, // 66: sub2api.relay.v1.RelayEnrollment.Register:input_type -> sub2api.relay.v1.RegisterRequest
+	13, // 67: sub2api.relay.v1.RelayEnrollment.NodeStatus:input_type -> sub2api.relay.v1.NodeStatusRequest
+	15, // 68: sub2api.relay.v1.RelayEnrollment.ObtainCertificate:input_type -> sub2api.relay.v1.CertificateRequest
+	15, // 69: sub2api.relay.v1.RelayEnrollment.RenewCertificate:input_type -> sub2api.relay.v1.CertificateRequest
+	17, // 70: sub2api.relay.v1.RelayControl.Ping:input_type -> sub2api.relay.v1.PingRequest
+	20, // 71: sub2api.relay.v1.RelayControl.FetchConfig:input_type -> sub2api.relay.v1.FetchConfigRequest
+	37, // 72: sub2api.relay.v1.RelayControl.ReleaseQuota:input_type -> sub2api.relay.v1.ReleaseQuotaRequest
+	40, // 73: sub2api.relay.v1.RelayControl.RenewLeases:input_type -> sub2api.relay.v1.RenewLeasesRequest
+	44, // 74: sub2api.relay.v1.RelayControl.ReportLeases:input_type -> sub2api.relay.v1.ReportLeasesRequest
+	47, // 75: sub2api.relay.v1.RelayControl.AckQuotaRecall:input_type -> sub2api.relay.v1.AckQuotaRecallRequest
+	49, // 76: sub2api.relay.v1.RelayControl.Admit:input_type -> sub2api.relay.v1.AdmitRequest
+	52, // 77: sub2api.relay.v1.RelayControl.Select:input_type -> sub2api.relay.v1.SelectRequest
+	58, // 78: sub2api.relay.v1.RelayControl.FetchCredentials:input_type -> sub2api.relay.v1.FetchCredentialsRequest
+	60, // 79: sub2api.relay.v1.RelayControl.RefillQuota:input_type -> sub2api.relay.v1.RefillQuotaRequest
+	63, // 80: sub2api.relay.v1.RelayControl.UpstreamError:input_type -> sub2api.relay.v1.UpstreamErrorRequest
+	66, // 81: sub2api.relay.v1.RelayBilling.SubmitUsage:input_type -> sub2api.relay.v1.UsageBatch
+	19, // 82: sub2api.relay.v1.RelayEvents.Stream:input_type -> sub2api.relay.v1.NodeEnvelope
+	10, // 83: sub2api.relay.v1.RelayEnrollment.Hello:output_type -> sub2api.relay.v1.HelloResponse
+	12, // 84: sub2api.relay.v1.RelayEnrollment.Register:output_type -> sub2api.relay.v1.RegisterResponse
+	14, // 85: sub2api.relay.v1.RelayEnrollment.NodeStatus:output_type -> sub2api.relay.v1.NodeStatusResponse
+	16, // 86: sub2api.relay.v1.RelayEnrollment.ObtainCertificate:output_type -> sub2api.relay.v1.CertificateResponse
+	16, // 87: sub2api.relay.v1.RelayEnrollment.RenewCertificate:output_type -> sub2api.relay.v1.CertificateResponse
+	18, // 88: sub2api.relay.v1.RelayControl.Ping:output_type -> sub2api.relay.v1.PingResponse
+	21, // 89: sub2api.relay.v1.RelayControl.FetchConfig:output_type -> sub2api.relay.v1.ConfigSnapshot
+	38, // 90: sub2api.relay.v1.RelayControl.ReleaseQuota:output_type -> sub2api.relay.v1.ReleaseQuotaResponse
+	42, // 91: sub2api.relay.v1.RelayControl.RenewLeases:output_type -> sub2api.relay.v1.RenewLeasesResponse
+	45, // 92: sub2api.relay.v1.RelayControl.ReportLeases:output_type -> sub2api.relay.v1.ReportLeasesResponse
+	48, // 93: sub2api.relay.v1.RelayControl.AckQuotaRecall:output_type -> sub2api.relay.v1.AckQuotaRecallResponse
+	50, // 94: sub2api.relay.v1.RelayControl.Admit:output_type -> sub2api.relay.v1.AdmitResponse
+	55, // 95: sub2api.relay.v1.RelayControl.Select:output_type -> sub2api.relay.v1.SelectResponse
+	59, // 96: sub2api.relay.v1.RelayControl.FetchCredentials:output_type -> sub2api.relay.v1.FetchCredentialsResponse
+	61, // 97: sub2api.relay.v1.RelayControl.RefillQuota:output_type -> sub2api.relay.v1.RefillQuotaResponse
+	64, // 98: sub2api.relay.v1.RelayControl.UpstreamError:output_type -> sub2api.relay.v1.UpstreamErrorResponse
+	67, // 99: sub2api.relay.v1.RelayBilling.SubmitUsage:output_type -> sub2api.relay.v1.UsageBatchAck
+	24, // 100: sub2api.relay.v1.RelayEvents.Stream:output_type -> sub2api.relay.v1.MasterEnvelope
+	83, // [83:101] is the sub-list for method output_type
+	65, // [65:83] is the sub-list for method input_type
+	65, // [65:65] is the sub-list for extension type_name
+	65, // [65:65] is the sub-list for extension extendee
+	0,  // [0:65] is the sub-list for field type_name
 }
 
 func init() { file_sub2api_relay_v1_relay_proto_init() }

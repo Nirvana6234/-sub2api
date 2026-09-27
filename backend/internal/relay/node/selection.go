@@ -54,13 +54,9 @@ func (s *SelectClient) Select(ctx context.Context, req *relayv1.SelectRequest) (
 	return s.control.Select(ctx, req)
 }
 
-// FetchCredentials 取这次选号所选账号的上游凭据（本机缓存里没有这个版本时）。
-func (s *SelectClient) FetchCredentials(ctx context.Context, selectionID string) (*relayv1.AccountSnapshot, error) {
-	resp, err := s.control.FetchCredentials(ctx, &relayv1.FetchCredentialsRequest{SelectionId: selectionID})
-	if err != nil {
-		return nil, err
-	}
-	return resp.GetAccount(), nil
+// FetchCredentials 取这次选号所选账号（和影子账号的母账号）的上游凭据（本机缓存里没有这个版本时）。
+func (s *SelectClient) FetchCredentials(ctx context.Context, selectionID string) (*relayv1.FetchCredentialsResponse, error) {
+	return s.control.FetchCredentials(ctx, &relayv1.FetchCredentialsRequest{SelectionId: selectionID})
 }
 
 // RefillQuota 按进行中的选号补充额度。

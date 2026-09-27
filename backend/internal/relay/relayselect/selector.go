@@ -276,9 +276,28 @@ func (s *selector) FetchCredentials(ctx context.Context, nodeID int64, req *rela
 	if err != nil {
 		return nil, err
 	}
-	return &relayv1.FetchCredentialsResponse{Account: &relayv1.AccountSnapshot{
-		Id: snap.GetId(), CredentialVersion: snap.GetCredentialVersion(), SealedCredentials: snap.GetSealedCredentials(),
-	}}, nil
+	resp := &relayv1.FetchCredentialsResponse{Account: credentialsOnly(snap)}
+	if sel.account.IsShadow() {
+		parent, err := s.encodeCredentialParent(ctx, nodeID, sel.account, nil)
+		if err != nil {
+			return nil, err
+		}
+		resp.CredentialParent = credentialsOnly(parent)
+	}
+	return resp, nil
+}
+
+func credentialsOnly(snap *relayv1.AccountSnapshot) *relayv1.AccountSnapshot {
+	return &relayv1.AccountSnapshot{Id: snap.GetId(), CredentialVersion: snap.GetCredentialVersion(), SealedCredentials: snap.GetSealedCredentials()}
+}
+
+// encodeCredentialParent 编码影子账号的母账号（凭据取自母账号，设计第 9 节）。
+func (s *selector) encodeCredentialParent(ctx context.Context, nodeID int64, shadow *service.Account, nodeHas func(int64, string) bool) (*relayv1.AccountSnapshot, error) {
+	parent, err := s.deps.Gateway.CredentialAccount(ctx, shadow)
+	if err != nil {
+		return nil, err
+	}
+	return s.encodeAccount(ctx, nodeID, parent, nodeHas)
 }
 
 // encodeAccount 编码账号快照；OAuth 账号带上主节点刚取的短期 access token（refresh token 不下发，设计第 9 节）。

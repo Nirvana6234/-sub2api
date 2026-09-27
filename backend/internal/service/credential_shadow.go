@@ -14,9 +14,18 @@ func resolveCredentialAccount(ctx context.Context, repo AccountRepository, accou
 	if account == nil || !account.IsShadow() {
 		return account, nil
 	}
-	parent, err := repo.GetByID(ctx, *account.ParentAccountID)
-	if err != nil {
-		return nil, fmt.Errorf("resolve spark shadow parent %d: %w", *account.ParentAccountID, err)
+	var parent *Account
+	if p := credentialParentFromContext(ctx); p != nil && p.ID == *account.ParentAccountID {
+		// 主从分流从节点：母账号随选号下发，放在请求 ctx 里（从节点没有账号仓储）。
+		parent = p
+	} else if repo == nil {
+		return nil, fmt.Errorf("resolve spark shadow parent %d: no account repository", *account.ParentAccountID)
+	} else {
+		var err error
+		parent, err = repo.GetByID(ctx, *account.ParentAccountID)
+		if err != nil {
+			return nil, fmt.Errorf("resolve spark shadow parent %d: %w", *account.ParentAccountID, err)
+		}
 	}
 	if parent == nil {
 		return nil, fmt.Errorf("spark shadow parent %d not found", *account.ParentAccountID)
@@ -30,4 +39,24 @@ func resolveCredentialAccount(ctx context.Context, repo AccountRepository, accou
 		return nil, fmt.Errorf("spark shadow parent %d is not OpenAI OAuth", parent.ID)
 	}
 	return parent, nil
+}
+
+type credentialParentKey struct{}
+
+// WithCredentialParent 把影子账号的母账号放进请求 ctx（主从分流从节点：母账号随选号下发）。
+func WithCredentialParent(ctx context.Context, parent *Account) context.Context {
+	return context.WithValue(ctx, credentialParentKey{}, parent)
+}
+
+func credentialParentFromContext(ctx context.Context) *Account {
+	if ctx == nil {
+		return nil
+	}
+	p, _ := ctx.Value(credentialParentKey{}).(*Account)
+	return p
+}
+
+// CredentialAccount 返回账号实际用的凭据账号：影子账号为它的母账号，其余为自身（主从分流主节点给从节点下发母账号用）。
+func (s *OpenAIGatewayService) CredentialAccount(ctx context.Context, account *Account) (*Account, error) {
+	return resolveCredentialAccount(ctx, s.accountRepo, account)
 }

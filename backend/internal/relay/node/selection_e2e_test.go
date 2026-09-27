@@ -153,7 +153,7 @@ func TestSelectionCallsOverTheWire(t *testing.T) {
 
 	creds, err := client.FetchCredentials(ctx, "sel-r1")
 	require.NoError(t, err)
-	require.Equal(t, []byte("sealed"), creds.GetSealedCredentials())
+	require.Equal(t, []byte("sealed"), creds.GetAccount().GetSealedCredentials())
 	_, err = client.FetchCredentials(ctx, "sel-gone")
 	require.Equal(t, codes.NotFound, status.Code(err))
 

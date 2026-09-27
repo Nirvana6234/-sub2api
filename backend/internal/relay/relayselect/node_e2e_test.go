@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -52,15 +53,19 @@ func (s *recordingSettler) records() []*relayv1.UsageRecord {
 	return append([]*relayv1.UsageRecord(nil), s.recs...)
 }
 
-// plainUpstream 是测试用的上游 HTTP（不走代理、不做 TLS 指纹）。
-type plainUpstream struct{}
+// plainUpstream 是测试用的上游 HTTP（不走代理、不做 TLS 指纹）。发往固定地址（如 OAuth 的 chatgpt.com）的请求
+// 改写到测试上游。
+type plainUpstream struct{ target *url.URL }
 
-func (plainUpstream) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+func (u plainUpstream) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+	if u.target != nil && req.URL.Host != u.target.Host {
+		req.URL.Scheme, req.URL.Host = u.target.Scheme, u.target.Host
+	}
 	return http.DefaultTransport.RoundTrip(req)
 }
 
-func (plainUpstream) DoWithTLS(req *http.Request, _ string, _ int64, _ int, _ *tlsfingerprint.Profile) (*http.Response, error) {
-	return http.DefaultTransport.RoundTrip(req)
+func (u plainUpstream) DoWithTLS(req *http.Request, proxyURL string, accountID int64, concurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
+	return u.Do(req, proxyURL, accountID, concurrency)
 }
 
 type e2e struct {
@@ -72,6 +77,16 @@ type e2e struct {
 }
 
 func startE2E(t *testing.T) *e2e {
+	t.Helper()
+	return startE2EWith(t, func(upstreamURL string) []service.Account {
+		return []service.Account{{ID: 1, Name: "one", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
+			Status: service.StatusActive, Schedulable: true, Concurrency: 2,
+			Credentials: map[string]any{"api_key": "SECRET-one", "base_url": upstreamURL}}}
+	})
+}
+
+// startE2EWith 同 startE2E，账号由 accounts 给出（参数是假上游地址）。
+func startE2EWith(t *testing.T, accounts func(upstreamURL string) []service.Account) *e2e {
 	t.Helper()
 	ctx := context.Background()
 	e := &e2e{settler: &recordingSettler{}, hits: make(chan *http.Request, 16)}
@@ -126,10 +141,7 @@ func startE2E(t *testing.T) *e2e {
 	require.NoError(t, err)
 	nodeCert := &tls.Certificate{Certificate: [][]byte{leaf.Raw}, PrivateKey: priv, Leaf: leaf}
 
-	account := service.Account{ID: 1, Name: "one", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
-		Status: service.StatusActive, Schedulable: true, Concurrency: 2,
-		Credentials: map[string]any{"api_key": "SECRET-one", "base_url": e.upstream.URL}}
-	e.world = newWorldOn(t, &config.Config{RunMode: config.RunModeSimple}, 10, n.ID, account)
+	e.world = newWorldOn(t, &config.Config{RunMode: config.RunModeSimple}, 10, n.ID, accounts(e.upstream.URL)...)
 
 	srv, err := transport.NewServer(transport.ServerOptions{
 		TLS:        transport.ServerTLSOptions{Certificate: ca.MasterCertificate, Roots: ca.RootPool},
@@ -151,6 +163,8 @@ func startE2E(t *testing.T) *e2e {
 	t.Cleanup(srv.Stop)
 
 	// ---- 从节点 ----
+	upstreamURL, err := url.Parse(e.upstream.URL)
+	require.NoError(t, err)
 	fps := ca.RootFingerprints()
 	client, err := transport.NewClient(transport.ClientOptions{
 		Address: lis.Addr().String(),
@@ -202,7 +216,7 @@ func startE2E(t *testing.T) *e2e {
 	go sender.Run(runCtx)
 
 	h := nodegw.NewOpenAIHandler(nodegw.GatewayDeps{
-		Config: nodeCfg, Settings: nodeSettings, HTTPUpstream: plainUpstream{}, Dispatcher: d,
+		Config: nodeCfg, Settings: nodeSettings, HTTPUpstream: plainUpstream{target: upstreamURL}, Dispatcher: d,
 		Decider:  node.NewRemoteUpstreamErrorDecider(client),
 		Reporter: node.NewRemoteAccountReporter(outbox),
 	})
@@ -297,5 +311,24 @@ func TestNodeServesOpenAIMessagesEndToEnd(t *testing.T) {
 	var result service.OpenAIForwardResult
 	require.NoError(t, json.Unmarshal(rec.GetResultJson(), &result))
 	require.Positive(t, result.Usage.InputTokens)
+	e.world.waitReleased(t)
+}
+
+// 影子 OAuth 账号：凭据取自母账号，母账号随选号下发（从节点没有账号仓储）。
+func TestNodeServesAShadowOAuthAccount(t *testing.T) {
+	parentID := int64(2)
+	e := startE2EWith(t, func(string) []service.Account {
+		return []service.Account{
+			{ID: 1, Name: "shadow", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Status: service.StatusActive,
+				Schedulable: true, Concurrency: 2, ParentAccountID: &parentID, Credentials: map[string]any{}},
+			{ID: 2, Name: "parent", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Status: service.StatusActive,
+				Schedulable: false, Concurrency: 2, Credentials: map[string]any{"access_token": "PARENT-TOKEN", "chatgpt_account_id": "acct-parent"}},
+		}
+	})
+	status, out := e.post(t, "/v1/responses", "sk-a", `{"model":"gpt-5","input":"hi"}`)
+	require.Equal(t, http.StatusOK, status, out)
+	r := <-e.hits
+	require.Equal(t, "Bearer PARENT-TOKEN", r.Header.Get("Authorization"), "the shadow forwards with its parent's token")
+	require.Equal(t, "acct-parent", r.Header.Get("chatgpt-account-id"))
 	e.world.waitReleased(t)
 }

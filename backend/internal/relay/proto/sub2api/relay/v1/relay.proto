@@ -598,6 +598,8 @@ message Selection {
   // 当前配置版本，从节点落后时先同步拉取。
   string config_version = 18;
   int64 pricing_at_unix_ms = 19;
+  // 选中的是影子账号时，它的母账号（凭据取自母账号，转发时按 ID 找它）。
+  AccountSnapshot credential_parent = 20;
 }
 
 message FetchCredentialsRequest {
@@ -607,6 +609,8 @@ message FetchCredentialsRequest {
 message FetchCredentialsResponse {
   // 只含 id、credential_version、sealed_credentials。
   AccountSnapshot account = 1;
+  // 影子账号的母账号（同样只含这三项）。
+  AccountSnapshot credential_parent = 2;
 }
 
 message RefillQuotaRequest {

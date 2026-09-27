@@ -226,18 +226,12 @@ func (d *Dispatcher) admitSelection(c *gin.Context, st *requestState, req handle
 		a.reservation = res
 	}
 
-	account, err := accountcodec.Decode(sel.GetAccount(), d.deps.NodeID(), d.deps.Open, d.deps.Secrets)
-	if errors.Is(err, accountcodec.ErrSecretsMissing) {
-		// 本机缓存里没有这个凭据版本（刚重启、被清掉）：按这次选号取一次。
-		var creds *relayv1.AccountSnapshot
-		if creds, err = d.deps.Select.FetchCredentials(ctx, a.selectionID); err == nil {
-			snap, _ := proto.Clone(sel.GetAccount()).(*relayv1.AccountSnapshot)
-			snap.CredentialVersion, snap.SealedCredentials = creds.GetCredentialVersion(), creds.GetSealedCredentials()
-			account, err = accountcodec.Decode(snap, d.deps.NodeID(), d.deps.Open, d.deps.Secrets)
-		}
-	}
+	account, parent, err := d.decodeAccounts(ctx, a.selectionID, sel.GetAccount(), sel.GetCredentialParent())
 	if err != nil {
 		return fail("relay account credentials unavailable", err, &handler.OpenAIRelayRejection{Kind: handler.OpenAIRelayRejectUnavailable})
+	}
+	if parent != nil {
+		ctx = service.WithCredentialParent(ctx, parent)
 	}
 
 	c.Request = c.Request.WithContext(withAttempt(ctx, a))
@@ -414,4 +408,41 @@ func attemptFrom(ctx context.Context) *attemptState {
 	}
 	a, _ := ctx.Value(attemptKey{}).(*attemptState)
 	return a
+}
+
+// decodeAccounts 解开选中的账号（和影子账号的母账号）。本机缓存里没有这个凭据版本（刚重启、被清掉）时按这次选号取一次。
+func (d *Dispatcher) decodeAccounts(ctx context.Context, selectionID string, snap, parentSnap *relayv1.AccountSnapshot) (*service.Account, *service.Account, error) {
+	decode := func(s *relayv1.AccountSnapshot) (*service.Account, error) {
+		if s == nil {
+			return nil, nil
+		}
+		return accountcodec.Decode(s, d.deps.NodeID(), d.deps.Open, d.deps.Secrets)
+	}
+	account, err := decode(snap)
+	var parent *service.Account
+	if err == nil {
+		parent, err = decode(parentSnap)
+	}
+	if !errors.Is(err, accountcodec.ErrSecretsMissing) {
+		return account, parent, err
+	}
+	creds, err := d.deps.Select.FetchCredentials(ctx, selectionID)
+	if err != nil {
+		return nil, nil, err
+	}
+	withSecrets := func(s, from *relayv1.AccountSnapshot) *relayv1.AccountSnapshot {
+		if s == nil {
+			return nil
+		}
+		cp, _ := proto.Clone(s).(*relayv1.AccountSnapshot)
+		cp.CredentialVersion, cp.SealedCredentials = from.GetCredentialVersion(), from.GetSealedCredentials()
+		return cp
+	}
+	if account, err = decode(withSecrets(snap, creds.GetAccount())); err != nil {
+		return nil, nil, err
+	}
+	if parent, err = decode(withSecrets(parentSnap, creds.GetCredentialParent())); err != nil {
+		return nil, nil, err
+	}
+	return account, parent, nil
 }
