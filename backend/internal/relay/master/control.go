@@ -15,6 +15,9 @@ type Control struct {
 	relayv1.UnimplementedRelayControlServer
 	config *ConfigPublisher
 	quota  *quotaControl
+
+	selector      Selector
+	selectorEpoch string
 }
 
 // NewControl 创建控制服务。

@@ -2,6 +2,7 @@ package master
 
 import (
 	"context"
+	"crypto/ecdh"
 	"errors"
 	"fmt"
 	"net"
@@ -9,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/relay/sealbox"
 	"github.com/Wei-Shaw/sub2api/internal/relay/transport"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -128,9 +130,10 @@ type Nodes struct {
 	status     map[int64]NodeStatus
 	multiIP    map[int64]bool
 	revoked    map[string]struct{}
-	superseded map[string]time.Time // 已被续签的证书 → 旧连接最迟关闭时间
-	moves      map[int64]ipMove     // 最近一次换出口
-	renewals   map[string]string    // 新证书 → 它替换的旧证书（新证书还没被用过）
+	superseded map[string]time.Time      // 已被续签的证书 → 旧连接最迟关闭时间
+	moves      map[int64]ipMove          // 最近一次换出口
+	renewals   map[string]string         // 新证书 → 它替换的旧证书（新证书还没被用过）
+	encKeys    map[int64]*ecdh.PublicKey // 节点当前的 X25519 加密公钥（选号下发凭据用，WP7）
 }
 
 // NewNodes 创建节点管理。调用 Load 之后才能用。
@@ -147,6 +150,7 @@ func NewNodes(store NodeStore, ca *CA, notifier Notifier, opts NodesOptions) *No
 		superseded: map[string]time.Time{},
 		moves:      map[int64]ipMove{},
 		renewals:   map[string]string{},
+		encKeys:    map[int64]*ecdh.PublicKey{},
 	}
 }
 
@@ -169,16 +173,20 @@ func (n *Nodes) Load(ctx context.Context) error {
 	}
 	status := make(map[int64]NodeStatus, len(nodes))
 	multi := make(map[int64]bool, len(nodes))
+	encKeys := make(map[int64]*ecdh.PublicKey, len(nodes))
 	for _, node := range nodes {
 		status[node.ID] = node.Status
 		multi[node.ID] = node.AllowMultiIP
+		if key, err := sealbox.ParsePublicKey(node.EncryptionPublicKey); err == nil {
+			encKeys[node.ID] = key
+		}
 	}
 	rev := make(map[string]struct{}, len(revoked))
 	for _, s := range revoked {
 		rev[s] = struct{}{}
 	}
 	n.mu.Lock()
-	n.status, n.multiIP, n.revoked = status, multi, rev
+	n.status, n.multiIP, n.revoked, n.encKeys = status, multi, rev, encKeys
 	now := n.now()
 	for serial, until := range n.superseded {
 		if now.After(until.Add(n.opts.CertificateLifetime)) {
@@ -191,6 +199,29 @@ func (n *Nodes) Load(ctx context.Context) error {
 			n.superseded[serial] = now
 		}
 	}
+	n.mu.Unlock()
+	return nil
+}
+
+// EncryptionKey 返回节点当前的 X25519 加密公钥（选号时加密上游凭据，设计 7.1）。
+func (n *Nodes) EncryptionKey(nodeID int64) (*ecdh.PublicKey, bool) {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	key, ok := n.encKeys[nodeID]
+	return key, ok
+}
+
+// setEncryptionKey 记下节点的新加密公钥（领证、续签时），库和内存一起更新。
+func (n *Nodes) setEncryptionKey(ctx context.Context, nodeID int64, raw []byte) error {
+	key, err := sealbox.ParsePublicKey(raw)
+	if err != nil {
+		return err
+	}
+	if err := n.store.SetEncryptionKey(ctx, nodeID, raw); err != nil {
+		return err
+	}
+	n.mu.Lock()
+	n.encKeys[nodeID] = key
 	n.mu.Unlock()
 	return nil
 }

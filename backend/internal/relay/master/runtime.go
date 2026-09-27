@@ -17,6 +17,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/relay/keystore"
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
+	"github.com/Wei-Shaw/sub2api/internal/relay/sign"
 	"github.com/Wei-Shaw/sub2api/internal/relay/transport"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
@@ -67,6 +68,8 @@ type RuntimeDeps struct {
 	// ReservedSink：主从分流运行时把冻结额读取挂到余额预检上（service.BillingCacheService）。
 	ReservedSink ReservedBalanceSink
 	Notifier     Notifier
+	// NewSelector 创建选号实现（relayselect，WP7）；nil 时不提供选号（测试、还没接入的部署）。
+	NewSelector func(SelectEnv) Selector
 }
 
 // ReservedBalanceSink 接收冻结额读取（service.BillingCacheService 满足）。
@@ -106,6 +109,7 @@ type runningRelay struct {
 	quotas      *Quotas
 	recaller    *EventRecaller
 	quotaEvents *quotaEvents
+	selector    Selector
 }
 
 // NewRuntime 创建运行时（不启动任何东西）。
@@ -389,6 +393,20 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 	if quotas != nil {
 		control.AttachQuotas(quotas, recaller, server.Epoch())
 	}
+	var selector Selector
+	if r.deps.NewSelector != nil {
+		selector = r.deps.NewSelector(SelectEnv{
+			Epoch:  server.Epoch(),
+			Quotas: quotas,
+			IssueVoucher: func(v *relayv1.Voucher) ([]byte, *relayv1.Voucher, error) {
+				return sign.IssueVoucher(signing.currentVoucherSigner(), v, r.now())
+			},
+			NodeEncryptionKey: nodes.EncryptionKey,
+			ConfigVersion:     publisher.VersionFor,
+		})
+		control.AttachSelector(selector, server.Epoch())
+		RouteSelectionReleases(events, selector)
+	}
 	relayv1.RegisterRelayControlServer(server.GRPC(), control)
 	relayv1.RegisterRelayEventsServer(server.GRPC(), events)
 
@@ -401,7 +419,7 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 	}
 
 	runCtx, cancel := context.WithCancel(context.Background())
-	running := &runningRelay{server: server, listener: lis, nodes: nodes, publisher: publisher, events: events, invalidator: invalidator, cancel: cancel, ca: ca, keys: keys, signing: signing, revoker: revoker, quotas: quotas, recaller: recaller, quotaEvents: qEvents}
+	running := &runningRelay{server: server, listener: lis, nodes: nodes, publisher: publisher, events: events, invalidator: invalidator, cancel: cancel, ca: ca, keys: keys, signing: signing, revoker: revoker, quotas: quotas, recaller: recaller, quotaEvents: qEvents, selector: selector}
 	var unsubs []func()
 	if r.deps.Hub != nil {
 		unsubs = append(unsubs, r.deps.Hub.Subscribe(publisher.OnSettingsChanged))
@@ -483,6 +501,9 @@ func (r *Runtime) stopLocked() {
 	}
 	rr.cancel()
 	rr.wg.Wait()
+	if rr.selector != nil {
+		rr.selector.Close()
+	}
 	slog.Info("relay master stopped")
 }
 

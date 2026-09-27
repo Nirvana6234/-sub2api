@@ -134,10 +134,14 @@ func (r *Runtime) IssueVoucher(v *relayv1.Voucher) ([]byte, *relayv1.Voucher, er
 	if err != nil {
 		return nil, nil, err
 	}
+	return sign.IssueVoucher(s.currentVoucherSigner(), v, r.now())
+}
+
+// currentVoucherSigner 返回当前启用的凭证签名密钥（轮换时会换）。
+func (s *signingKeys) currentVoucherSigner() *sign.Signer {
 	s.mu.RLock()
-	signer := s.voucherSigner
-	s.mu.RUnlock()
-	return sign.IssueVoucher(signer, v, r.now())
+	defer s.mu.RUnlock()
+	return s.voucherSigner
 }
 
 // VerifyVoucher 验一张扣费凭证（入账时）。reportingNodeID 是上报这条记录的节点（取自主从连接的证书）。

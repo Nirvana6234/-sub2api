@@ -180,6 +180,9 @@ func TestEnrollmentLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, stored.EncryptionPublicKey, 32, "the node's encryption key is recorded for sealing credentials")
 	require.Equal(t, stored.EncryptionPublicKey, n.id.EncryptionKeys()[0].PublicKey().Bytes())
+	cached, ok := m.nodes.EncryptionKey(nodeID)
+	require.True(t, ok, "selection reads the key from memory, not the database")
+	require.Equal(t, stored.EncryptionPublicKey, cached.Bytes())
 }
 
 func TestActivationRequiresTheRegisteredFingerprint(t *testing.T) {
@@ -212,6 +215,14 @@ func TestRenewalRotatesKeysAndRetiresTheOldCertificate(t *testing.T) {
 	newCert := n.id.TLSCertificate()
 	require.NotEqual(t, oldCert.Leaf.SerialNumber, newCert.Leaf.SerialNumber)
 	require.NotEqual(t, oldEnc, n.id.EncryptionKeys()[0].PublicKey().Bytes(), "renewal changes the encryption key")
+	cached, ok := m.nodes.EncryptionKey(nodeID)
+	require.True(t, ok)
+	require.Equal(t, n.id.EncryptionKeys()[0].PublicKey().Bytes(), cached.Bytes(), "credentials are sealed to the new key after renewal")
+	reloaded := master.NewNodes(m.store, nil, nil, master.NodesOptions{})
+	require.NoError(t, reloaded.Load(ctx))
+	fromStore, ok := reloaded.EncryptionKey(nodeID)
+	require.True(t, ok)
+	require.Equal(t, cached.Bytes(), fromStore.Bytes(), "a master restart loads the same key")
 	require.NoError(t, n.ping(t))
 	require.True(t, hasAudit(m, nodeID, master.AuditCertRenewed))
 

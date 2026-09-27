@@ -17,6 +17,8 @@ type EventHandlers struct {
 	OnTicketRevocations func(*relayv1.TicketRevocations)
 	// OnQuotaRecall 响应额度收回（QuotaSync.HandleRecall，在自己的协程里做，不阻塞事件流）。
 	OnQuotaRecall func(*relayv1.QuotaRecall)
+	// Outbox 是要发给主节点的消息（选号释放等）；每条事件流连上后接着发。
+	Outbox *EventOutbox
 }
 
 // RunEvents 维持到主节点的事件流，直到 ctx 结束：断开后按退避重连；
@@ -30,6 +32,15 @@ func RunEvents(ctx context.Context, client *transport.Client, syncer *ConfigSync
 		}
 		if err := syncer.Sync(ctx); err != nil {
 			slog.Warn("relay config sync after reconnect failed", "error", err)
+		}
+		if handlers.Outbox != nil {
+			sendCtx, stopSending := context.WithCancel(ctx)
+			defer stopSending()
+			go func() {
+				if err := handlers.Outbox.drain(sendCtx, stream.Send); err != nil && sendCtx.Err() == nil {
+					slog.Warn("relay event send failed", "error", err)
+				}
+			}()
 		}
 		for {
 			env, err := stream.Recv()

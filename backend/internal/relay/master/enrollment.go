@@ -191,7 +191,7 @@ func (e *Enrollment) RenewCertificate(ctx context.Context, req *relayv1.Certific
 	if errors.Is(err, ErrDuplicateRenewal) {
 		prior, lookupErr := e.nodes.store.GetRenewalOf(ctx, peer.CertSerial)
 		if lookupErr == nil && prior.RevokedAt == nil && len(prior.DER) > 0 && bytes.Equal(prior.PublicKey, req.GetTlsPublicKey()) {
-			if err := e.nodes.store.SetEncryptionKey(ctx, node.ID, req.GetEncryptionPublicKey()); err != nil {
+			if err := e.nodes.setEncryptionKey(ctx, node.ID, req.GetEncryptionPublicKey()); err != nil {
 				return nil, status.Error(codes.Internal, "store encryption key failed")
 			}
 			return &relayv1.CertificateResponse{Certificate: prior.DER, NotAfterUnixMs: prior.NotAfter.UnixMilli(), NodeId: node.ID, RootFingerprints: e.nodes.ca.RootFingerprints()}, nil
@@ -235,7 +235,7 @@ func (e *Enrollment) issue(ctx context.Context, node *Node, req *relayv1.Certifi
 		}
 		return nil, status.Error(codes.Internal, "store certificate failed")
 	}
-	if err := e.nodes.store.SetEncryptionKey(ctx, node.ID, req.GetEncryptionPublicKey()); err != nil {
+	if err := e.nodes.setEncryptionKey(ctx, node.ID, req.GetEncryptionPublicKey()); err != nil {
 		return nil, status.Error(codes.Internal, "store encryption key failed")
 	}
 	return &relayv1.CertificateResponse{

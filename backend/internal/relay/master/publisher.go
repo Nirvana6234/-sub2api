@@ -30,6 +30,9 @@ type ConfigPublisher struct {
 	// delivered：每台节点最近一次拉到的快照里的信任材料标识（根指纹、票据公钥，只在内存；
 	// 主节点重启后节点重连会先拉配置，随即补齐）。密钥轮换据此判断新版本是否已送达所有节点。
 	delivered map[int64]map[string]struct{}
+	// versions：每台节点的配置版本，跟着生成它的全局快照走（每次重新生成都换新快照，自动失效）。
+	// 选号每次都要带版本号，不能每次都查库取节点行。
+	versions map[int64]nodeVersion
 
 	triggerMu sync.Mutex
 	timer     *time.Timer
@@ -38,7 +41,7 @@ type ConfigPublisher struct {
 
 // NewConfigPublisher 创建发布器。trust 返回当前要下发的信任材料（所有未停用的根证书指纹、票据公钥）。
 func NewConfigPublisher(settings SettingsReader, nodes NodeStore, events *EventHub, trust func() Trust) *ConfigPublisher {
-	return &ConfigPublisher{settings: settings, nodes: nodes, events: events, trust: trust, sections: map[string]SectionProvider{}, delivered: map[int64]map[string]struct{}{}, now: time.Now}
+	return &ConfigPublisher{settings: settings, nodes: nodes, events: events, trust: trust, sections: map[string]SectionProvider{}, delivered: map[int64]map[string]struct{}{}, versions: map[int64]nodeVersion{}, now: time.Now}
 }
 
 // RegisterSection 登记一个配置分段（错误透传规则、TLS 指纹等）。登记后下一次生成生效。
@@ -153,11 +156,29 @@ func (p *ConfigPublisher) SnapshotFor(ctx context.Context, nodeID int64) (*relay
 	return cur.snapshotFor(node), nil
 }
 
+type nodeVersion struct {
+	global  *globalSnapshot
+	version string
+}
+
 // VersionFor 返回某台节点当前的配置版本，选号返回里带着它（WP7）。
+// 同一份全局快照下按节点缓存；节点配置改了会触发重新生成，缓存随之失效。
 func (p *ConfigPublisher) VersionFor(ctx context.Context, nodeID int64) (string, error) {
+	p.mu.RLock()
+	cur := p.current
+	cached, ok := p.versions[nodeID]
+	p.mu.RUnlock()
+	if ok && cur != nil && cached.global == cur {
+		return cached.version, nil
+	}
 	snap, err := p.SnapshotFor(ctx, nodeID)
 	if err != nil {
 		return "", err
+	}
+	if cur != nil {
+		p.mu.Lock()
+		p.versions[nodeID] = nodeVersion{global: cur, version: snap.Version}
+		p.mu.Unlock()
 	}
 	return snap.Version, nil
 }

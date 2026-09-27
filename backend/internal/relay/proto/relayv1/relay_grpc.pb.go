@@ -303,12 +303,15 @@ var RelayEnrollment_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	RelayControl_Ping_FullMethodName           = "/sub2api.relay.v1.RelayControl/Ping"
-	RelayControl_FetchConfig_FullMethodName    = "/sub2api.relay.v1.RelayControl/FetchConfig"
-	RelayControl_ReleaseQuota_FullMethodName   = "/sub2api.relay.v1.RelayControl/ReleaseQuota"
-	RelayControl_RenewLeases_FullMethodName    = "/sub2api.relay.v1.RelayControl/RenewLeases"
-	RelayControl_ReportLeases_FullMethodName   = "/sub2api.relay.v1.RelayControl/ReportLeases"
-	RelayControl_AckQuotaRecall_FullMethodName = "/sub2api.relay.v1.RelayControl/AckQuotaRecall"
+	RelayControl_Ping_FullMethodName             = "/sub2api.relay.v1.RelayControl/Ping"
+	RelayControl_FetchConfig_FullMethodName      = "/sub2api.relay.v1.RelayControl/FetchConfig"
+	RelayControl_ReleaseQuota_FullMethodName     = "/sub2api.relay.v1.RelayControl/ReleaseQuota"
+	RelayControl_RenewLeases_FullMethodName      = "/sub2api.relay.v1.RelayControl/RenewLeases"
+	RelayControl_ReportLeases_FullMethodName     = "/sub2api.relay.v1.RelayControl/ReportLeases"
+	RelayControl_AckQuotaRecall_FullMethodName   = "/sub2api.relay.v1.RelayControl/AckQuotaRecall"
+	RelayControl_Select_FullMethodName           = "/sub2api.relay.v1.RelayControl/Select"
+	RelayControl_FetchCredentials_FullMethodName = "/sub2api.relay.v1.RelayControl/FetchCredentials"
+	RelayControl_RefillQuota_FullMethodName      = "/sub2api.relay.v1.RelayControl/RefillQuota"
 )
 
 // RelayControlClient is the client API for RelayControl service.
@@ -331,6 +334,17 @@ type RelayControlClient interface {
 	// 上报完成之前从节点不发选号。
 	ReportLeases(ctx context.Context, in *ReportLeasesRequest, opts ...grpc.CallOption) (*ReportLeasesResponse, error)
 	AckQuotaRecall(ctx context.Context, in *AckQuotaRecallRequest, opts ...grpc.CallOption) (*AckQuotaRecallResponse, error)
+	// ---- 选号（设计 3.1 第 5 步、开发计划 WP7）----
+	// Select 为一次客户端请求的一次尝试选号：主节点复查凭据、做只有它能做的检查、选号、占并发槽，
+	// 签发扣费凭证，需要时顺带补充额度。带幂等键（请求 ID + 第几次选号）：超时重发拿到同一个结果。
+	// 被拒绝时正常返回 rejection（不是 gRPC 错误），从节点按它写客户端响应。
+	Select(ctx context.Context, in *SelectRequest, opts ...grpc.CallOption) (*SelectResponse, error)
+	// FetchCredentials 取一次进行中的选号所选账号的上游凭据：从节点缓存里没有这个版本时用（设计 9.1）。
+	// 只有这次选号还没释放、且账号就是它选中的，主节点才给。
+	FetchCredentials(ctx context.Context, in *FetchCredentialsRequest, opts ...grpc.CallOption) (*FetchCredentialsResponse, error)
+	// RefillQuota 按一次进行中的选号补充额度（提前补充，设计 4.2）：主节点按这次选号的用户、Key、
+	// 分组、订阅重新算剩余；选号已释放时拒绝。
+	RefillQuota(ctx context.Context, in *RefillQuotaRequest, opts ...grpc.CallOption) (*RefillQuotaResponse, error)
 }
 
 type relayControlClient struct {
@@ -401,6 +415,36 @@ func (c *relayControlClient) AckQuotaRecall(ctx context.Context, in *AckQuotaRec
 	return out, nil
 }
 
+func (c *relayControlClient) Select(ctx context.Context, in *SelectRequest, opts ...grpc.CallOption) (*SelectResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SelectResponse)
+	err := c.cc.Invoke(ctx, RelayControl_Select_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *relayControlClient) FetchCredentials(ctx context.Context, in *FetchCredentialsRequest, opts ...grpc.CallOption) (*FetchCredentialsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FetchCredentialsResponse)
+	err := c.cc.Invoke(ctx, RelayControl_FetchCredentials_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *relayControlClient) RefillQuota(ctx context.Context, in *RefillQuotaRequest, opts ...grpc.CallOption) (*RefillQuotaResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RefillQuotaResponse)
+	err := c.cc.Invoke(ctx, RelayControl_RefillQuota_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RelayControlServer is the server API for RelayControl service.
 // All implementations must embed UnimplementedRelayControlServer
 // for forward compatibility.
@@ -421,6 +465,17 @@ type RelayControlServer interface {
 	// 上报完成之前从节点不发选号。
 	ReportLeases(context.Context, *ReportLeasesRequest) (*ReportLeasesResponse, error)
 	AckQuotaRecall(context.Context, *AckQuotaRecallRequest) (*AckQuotaRecallResponse, error)
+	// ---- 选号（设计 3.1 第 5 步、开发计划 WP7）----
+	// Select 为一次客户端请求的一次尝试选号：主节点复查凭据、做只有它能做的检查、选号、占并发槽，
+	// 签发扣费凭证，需要时顺带补充额度。带幂等键（请求 ID + 第几次选号）：超时重发拿到同一个结果。
+	// 被拒绝时正常返回 rejection（不是 gRPC 错误），从节点按它写客户端响应。
+	Select(context.Context, *SelectRequest) (*SelectResponse, error)
+	// FetchCredentials 取一次进行中的选号所选账号的上游凭据：从节点缓存里没有这个版本时用（设计 9.1）。
+	// 只有这次选号还没释放、且账号就是它选中的，主节点才给。
+	FetchCredentials(context.Context, *FetchCredentialsRequest) (*FetchCredentialsResponse, error)
+	// RefillQuota 按一次进行中的选号补充额度（提前补充，设计 4.2）：主节点按这次选号的用户、Key、
+	// 分组、订阅重新算剩余；选号已释放时拒绝。
+	RefillQuota(context.Context, *RefillQuotaRequest) (*RefillQuotaResponse, error)
 	mustEmbedUnimplementedRelayControlServer()
 }
 
@@ -448,6 +503,15 @@ func (UnimplementedRelayControlServer) ReportLeases(context.Context, *ReportLeas
 }
 func (UnimplementedRelayControlServer) AckQuotaRecall(context.Context, *AckQuotaRecallRequest) (*AckQuotaRecallResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method AckQuotaRecall not implemented")
+}
+func (UnimplementedRelayControlServer) Select(context.Context, *SelectRequest) (*SelectResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Select not implemented")
+}
+func (UnimplementedRelayControlServer) FetchCredentials(context.Context, *FetchCredentialsRequest) (*FetchCredentialsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method FetchCredentials not implemented")
+}
+func (UnimplementedRelayControlServer) RefillQuota(context.Context, *RefillQuotaRequest) (*RefillQuotaResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RefillQuota not implemented")
 }
 func (UnimplementedRelayControlServer) mustEmbedUnimplementedRelayControlServer() {}
 func (UnimplementedRelayControlServer) testEmbeddedByValue()                      {}
@@ -578,6 +642,60 @@ func _RelayControl_AckQuotaRecall_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RelayControl_Select_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SelectRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayControlServer).Select(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayControl_Select_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayControlServer).Select(ctx, req.(*SelectRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RelayControl_FetchCredentials_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FetchCredentialsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayControlServer).FetchCredentials(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayControl_FetchCredentials_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayControlServer).FetchCredentials(ctx, req.(*FetchCredentialsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RelayControl_RefillQuota_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RefillQuotaRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayControlServer).RefillQuota(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayControl_RefillQuota_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayControlServer).RefillQuota(ctx, req.(*RefillQuotaRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // RelayControl_ServiceDesc is the grpc.ServiceDesc for RelayControl service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -608,6 +726,18 @@ var RelayControl_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "AckQuotaRecall",
 			Handler:    _RelayControl_AckQuotaRecall_Handler,
+		},
+		{
+			MethodName: "Select",
+			Handler:    _RelayControl_Select_Handler,
+		},
+		{
+			MethodName: "FetchCredentials",
+			Handler:    _RelayControl_FetchCredentials_Handler,
+		},
+		{
+			MethodName: "RefillQuota",
+			Handler:    _RelayControl_RefillQuota_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -200,6 +200,115 @@ func (BillingMode) EnumDescriptor() ([]byte, []int) {
 	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{2}
 }
 
+// ---- 选号（开发计划 WP7）----
+// 选号的入口类型：决定主节点复用哪一套本地选号流程（WP7 按入口逐个接入）。
+type SelectEndpoint int32
+
+const (
+	SelectEndpoint_SELECT_ENDPOINT_UNSPECIFIED SelectEndpoint = 0
+	// OpenAI Responses（/v1/responses 及别名、/responses/compact）。
+	SelectEndpoint_SELECT_ENDPOINT_OPENAI_RESPONSES SelectEndpoint = 1
+	// OpenAI Chat Completions。
+	SelectEndpoint_SELECT_ENDPOINT_OPENAI_CHAT SelectEndpoint = 2
+)
+
+// Enum value maps for SelectEndpoint.
+var (
+	SelectEndpoint_name = map[int32]string{
+		0: "SELECT_ENDPOINT_UNSPECIFIED",
+		1: "SELECT_ENDPOINT_OPENAI_RESPONSES",
+		2: "SELECT_ENDPOINT_OPENAI_CHAT",
+	}
+	SelectEndpoint_value = map[string]int32{
+		"SELECT_ENDPOINT_UNSPECIFIED":      0,
+		"SELECT_ENDPOINT_OPENAI_RESPONSES": 1,
+		"SELECT_ENDPOINT_OPENAI_CHAT":      2,
+	}
+)
+
+func (x SelectEndpoint) Enum() *SelectEndpoint {
+	p := new(SelectEndpoint)
+	*p = x
+	return p
+}
+
+func (x SelectEndpoint) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (SelectEndpoint) Descriptor() protoreflect.EnumDescriptor {
+	return file_sub2api_relay_v1_relay_proto_enumTypes[3].Descriptor()
+}
+
+func (SelectEndpoint) Type() protoreflect.EnumType {
+	return &file_sub2api_relay_v1_relay_proto_enumTypes[3]
+}
+
+func (x SelectEndpoint) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use SelectEndpoint.Descriptor instead.
+func (SelectEndpoint) EnumDescriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{3}
+}
+
+// 拒绝的响应格式：从节点按它写客户端响应，与单机版一致。
+type RejectionFormat int32
+
+const (
+	RejectionFormat_REJECTION_FORMAT_UNSPECIFIED RejectionFormat = 0
+	// 网关处理函数的错误（按入口协议的错误格式，流式已开始时写流内错误）。
+	RejectionFormat_REJECTION_FORMAT_GATEWAY RejectionFormat = 1
+	// 鉴权中间件的错误（{code, message}）。
+	RejectionFormat_REJECTION_FORMAT_AUTH RejectionFormat = 2
+	// Key 额度用完、按 OpenAI 格式写的错误（insufficient_quota）。
+	RejectionFormat_REJECTION_FORMAT_OPENAI_QUOTA RejectionFormat = 3
+)
+
+// Enum value maps for RejectionFormat.
+var (
+	RejectionFormat_name = map[int32]string{
+		0: "REJECTION_FORMAT_UNSPECIFIED",
+		1: "REJECTION_FORMAT_GATEWAY",
+		2: "REJECTION_FORMAT_AUTH",
+		3: "REJECTION_FORMAT_OPENAI_QUOTA",
+	}
+	RejectionFormat_value = map[string]int32{
+		"REJECTION_FORMAT_UNSPECIFIED":  0,
+		"REJECTION_FORMAT_GATEWAY":      1,
+		"REJECTION_FORMAT_AUTH":         2,
+		"REJECTION_FORMAT_OPENAI_QUOTA": 3,
+	}
+)
+
+func (x RejectionFormat) Enum() *RejectionFormat {
+	p := new(RejectionFormat)
+	*p = x
+	return p
+}
+
+func (x RejectionFormat) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (RejectionFormat) Descriptor() protoreflect.EnumDescriptor {
+	return file_sub2api_relay_v1_relay_proto_enumTypes[4].Descriptor()
+}
+
+func (RejectionFormat) Type() protoreflect.EnumType {
+	return &file_sub2api_relay_v1_relay_proto_enumTypes[4]
+}
+
+func (x RejectionFormat) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use RejectionFormat.Descriptor instead.
+func (RejectionFormat) EnumDescriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{4}
+}
+
 type ProtocolVersion struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Major         uint32                 `protobuf:"varint,1,opt,name=major,proto3" json:"major,omitempty"`
@@ -862,6 +971,7 @@ type NodeEnvelope struct {
 	// Types that are valid to be assigned to Body:
 	//
 	//	*NodeEnvelope_Ping
+	//	*NodeEnvelope_SelectionRelease
 	Body          isNodeEnvelope_Body `protobuf_oneof:"body"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -920,6 +1030,15 @@ func (x *NodeEnvelope) GetPing() *EventPing {
 	return nil
 }
 
+func (x *NodeEnvelope) GetSelectionRelease() *SelectionRelease {
+	if x != nil {
+		if x, ok := x.Body.(*NodeEnvelope_SelectionRelease); ok {
+			return x.SelectionRelease
+		}
+	}
+	return nil
+}
+
 type isNodeEnvelope_Body interface {
 	isNodeEnvelope_Body()
 }
@@ -928,7 +1047,13 @@ type NodeEnvelope_Ping struct {
 	Ping *EventPing `protobuf:"bytes,10,opt,name=ping,proto3,oneof"`
 }
 
+type NodeEnvelope_SelectionRelease struct {
+	SelectionRelease *SelectionRelease `protobuf:"bytes,11,opt,name=selection_release,json=selectionRelease,proto3,oneof"`
+}
+
 func (*NodeEnvelope_Ping) isNodeEnvelope_Body() {}
+
+func (*NodeEnvelope_SelectionRelease) isNodeEnvelope_Body() {}
 
 type FetchConfigRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -2713,6 +2838,991 @@ func (x *AckQuotaRecallResponse) GetDroppedLeaseIds() []int64 {
 	return nil
 }
 
+type SelectRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 从节点为这次客户端请求起的 ID。同一请求的多次选号（换号）共用：用户并发槽、利润否决次数、
+	// 已排除的账号按请求记在主节点。
+	RequestId string `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	// 这次请求里的第几次选号（从 1 开始），与 request_id 一起作幂等键。
+	Attempt uint32 `protobuf:"varint,2,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	// 客户端凭据原文：主节点自己验证，不信从节点的鉴权结论（设计 8.2）。
+	//
+	// Types that are valid to be assigned to Credential:
+	//
+	//	*SelectRequest_ApiKey
+	Credential isSelectRequest_Credential `protobuf_oneof:"credential"`
+	// 从节点按信任代理规则解析出的客户端 IP（IP 黑白名单、全局黑名单、cyber 会话范围用）。
+	ClientIp string `protobuf:"bytes,4,opt,name=client_ip,json=clientIp,proto3" json:"client_ip,omitempty"`
+	Method   string `protobuf:"bytes,5,opt,name=method,proto3" json:"method,omitempty"`
+	// 入口路径（鉴权跳过计费、额度错误格式按它判断）。
+	Path     string         `protobuf:"bytes,6,opt,name=path,proto3" json:"path,omitempty"`
+	Endpoint SelectEndpoint `protobuf:"varint,7,opt,name=endpoint,proto3,enum=sub2api.relay.v1.SelectEndpoint" json:"endpoint,omitempty"`
+	Model    string         `protobuf:"bytes,8,opt,name=model,proto3" json:"model,omitempty"`
+	Stream   bool           `protobuf:"varint,9,opt,name=stream,proto3" json:"stream,omitempty"`
+	// 会话哈希（从节点按请求头和请求体算出）。
+	SessionHash        string `protobuf:"bytes,10,opt,name=session_hash,json=sessionHash,proto3" json:"session_hash,omitempty"`
+	PreviousResponseId string `protobuf:"bytes,11,opt,name=previous_response_id,json=previousResponseId,proto3" json:"previous_response_id,omitempty"`
+	// 显式生图意图（能力路由、分组是否允许生图）。
+	ImageIntent bool `protobuf:"varint,12,opt,name=image_intent,json=imageIntent,proto3" json:"image_intent,omitempty"`
+	// /responses/compact 旧路径；原生 v2 压缩。
+	LegacyCompact      bool `protobuf:"varint,13,opt,name=legacy_compact,json=legacyCompact,proto3" json:"legacy_compact,omitempty"`
+	NativeCompactionV2 bool `protobuf:"varint,14,opt,name=native_compaction_v2,json=nativeCompactionV2,proto3" json:"native_compaction_v2,omitempty"`
+	// 本请求此前尝试失败、要排除的账号。
+	ExcludedAccountIds []int64 `protobuf:"varint,15,rep,packed,name=excluded_account_ids,json=excludedAccountIds,proto3" json:"excluded_account_ids,omitempty"`
+	// cyber 会话屏蔽要查的键（开关打开时由从节点算出，设计 3.4）。
+	Cyber *CyberSessionLookup `protobuf:"bytes,16,opt,name=cyber,proto3" json:"cyber,omitempty"`
+	// 从节点手里这个用户各项子额度还没用掉的金额：主节点据此决定是否随选号补充。
+	HeldQuota     []*HeldQuota `protobuf:"bytes,17,rep,name=held_quota,json=heldQuota,proto3" json:"held_quota,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SelectRequest) Reset() {
+	*x = SelectRequest{}
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[41]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SelectRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SelectRequest) ProtoMessage() {}
+
+func (x *SelectRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[41]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SelectRequest.ProtoReflect.Descriptor instead.
+func (*SelectRequest) Descriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{41}
+}
+
+func (x *SelectRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *SelectRequest) GetAttempt() uint32 {
+	if x != nil {
+		return x.Attempt
+	}
+	return 0
+}
+
+func (x *SelectRequest) GetCredential() isSelectRequest_Credential {
+	if x != nil {
+		return x.Credential
+	}
+	return nil
+}
+
+func (x *SelectRequest) GetApiKey() string {
+	if x != nil {
+		if x, ok := x.Credential.(*SelectRequest_ApiKey); ok {
+			return x.ApiKey
+		}
+	}
+	return ""
+}
+
+func (x *SelectRequest) GetClientIp() string {
+	if x != nil {
+		return x.ClientIp
+	}
+	return ""
+}
+
+func (x *SelectRequest) GetMethod() string {
+	if x != nil {
+		return x.Method
+	}
+	return ""
+}
+
+func (x *SelectRequest) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *SelectRequest) GetEndpoint() SelectEndpoint {
+	if x != nil {
+		return x.Endpoint
+	}
+	return SelectEndpoint_SELECT_ENDPOINT_UNSPECIFIED
+}
+
+func (x *SelectRequest) GetModel() string {
+	if x != nil {
+		return x.Model
+	}
+	return ""
+}
+
+func (x *SelectRequest) GetStream() bool {
+	if x != nil {
+		return x.Stream
+	}
+	return false
+}
+
+func (x *SelectRequest) GetSessionHash() string {
+	if x != nil {
+		return x.SessionHash
+	}
+	return ""
+}
+
+func (x *SelectRequest) GetPreviousResponseId() string {
+	if x != nil {
+		return x.PreviousResponseId
+	}
+	return ""
+}
+
+func (x *SelectRequest) GetImageIntent() bool {
+	if x != nil {
+		return x.ImageIntent
+	}
+	return false
+}
+
+func (x *SelectRequest) GetLegacyCompact() bool {
+	if x != nil {
+		return x.LegacyCompact
+	}
+	return false
+}
+
+func (x *SelectRequest) GetNativeCompactionV2() bool {
+	if x != nil {
+		return x.NativeCompactionV2
+	}
+	return false
+}
+
+func (x *SelectRequest) GetExcludedAccountIds() []int64 {
+	if x != nil {
+		return x.ExcludedAccountIds
+	}
+	return nil
+}
+
+func (x *SelectRequest) GetCyber() *CyberSessionLookup {
+	if x != nil {
+		return x.Cyber
+	}
+	return nil
+}
+
+func (x *SelectRequest) GetHeldQuota() []*HeldQuota {
+	if x != nil {
+		return x.HeldQuota
+	}
+	return nil
+}
+
+type isSelectRequest_Credential interface {
+	isSelectRequest_Credential()
+}
+
+type SelectRequest_ApiKey struct {
+	ApiKey string `protobuf:"bytes,3,opt,name=api_key,json=apiKey,proto3,oneof"`
+}
+
+func (*SelectRequest_ApiKey) isSelectRequest_Credential() {}
+
+// cyber 会话屏蔽的查询键（都已哈希）。
+type CyberSessionLookup struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	ExplicitKey    string                 `protobuf:"bytes,1,opt,name=explicit_key,json=explicitKey,proto3" json:"explicit_key,omitempty"`
+	ScopeKey       string                 `protobuf:"bytes,2,opt,name=scope_key,json=scopeKey,proto3" json:"scope_key,omitempty"`
+	TranscriptKeys []string               `protobuf:"bytes,3,rep,name=transcript_keys,json=transcriptKeys,proto3" json:"transcript_keys,omitempty"`
+	// 请求体里的候选键超过上限被截断（范围已激活时按命中处理）。
+	TranscriptTruncated bool `protobuf:"varint,4,opt,name=transcript_truncated,json=transcriptTruncated,proto3" json:"transcript_truncated,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *CyberSessionLookup) Reset() {
+	*x = CyberSessionLookup{}
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[42]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CyberSessionLookup) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CyberSessionLookup) ProtoMessage() {}
+
+func (x *CyberSessionLookup) ProtoReflect() protoreflect.Message {
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[42]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CyberSessionLookup.ProtoReflect.Descriptor instead.
+func (*CyberSessionLookup) Descriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{42}
+}
+
+func (x *CyberSessionLookup) GetExplicitKey() string {
+	if x != nil {
+		return x.ExplicitKey
+	}
+	return ""
+}
+
+func (x *CyberSessionLookup) GetScopeKey() string {
+	if x != nil {
+		return x.ScopeKey
+	}
+	return ""
+}
+
+func (x *CyberSessionLookup) GetTranscriptKeys() []string {
+	if x != nil {
+		return x.TranscriptKeys
+	}
+	return nil
+}
+
+func (x *CyberSessionLookup) GetTranscriptTruncated() bool {
+	if x != nil {
+		return x.TranscriptTruncated
+	}
+	return false
+}
+
+type HeldQuota struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Scope         *QuotaScope            `protobuf:"bytes,1,opt,name=scope,proto3" json:"scope,omitempty"`
+	Unused        int64                  `protobuf:"varint,2,opt,name=unused,proto3" json:"unused,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HeldQuota) Reset() {
+	*x = HeldQuota{}
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[43]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HeldQuota) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HeldQuota) ProtoMessage() {}
+
+func (x *HeldQuota) ProtoReflect() protoreflect.Message {
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[43]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HeldQuota.ProtoReflect.Descriptor instead.
+func (*HeldQuota) Descriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{43}
+}
+
+func (x *HeldQuota) GetScope() *QuotaScope {
+	if x != nil {
+		return x.Scope
+	}
+	return nil
+}
+
+func (x *HeldQuota) GetUnused() int64 {
+	if x != nil {
+		return x.Unused
+	}
+	return 0
+}
+
+type SelectResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Result:
+	//
+	//	*SelectResponse_Selection
+	//	*SelectResponse_Rejection
+	Result        isSelectResponse_Result `protobuf_oneof:"result"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SelectResponse) Reset() {
+	*x = SelectResponse{}
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[44]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SelectResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SelectResponse) ProtoMessage() {}
+
+func (x *SelectResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[44]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SelectResponse.ProtoReflect.Descriptor instead.
+func (*SelectResponse) Descriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{44}
+}
+
+func (x *SelectResponse) GetResult() isSelectResponse_Result {
+	if x != nil {
+		return x.Result
+	}
+	return nil
+}
+
+func (x *SelectResponse) GetSelection() *Selection {
+	if x != nil {
+		if x, ok := x.Result.(*SelectResponse_Selection); ok {
+			return x.Selection
+		}
+	}
+	return nil
+}
+
+func (x *SelectResponse) GetRejection() *SelectRejection {
+	if x != nil {
+		if x, ok := x.Result.(*SelectResponse_Rejection); ok {
+			return x.Rejection
+		}
+	}
+	return nil
+}
+
+type isSelectResponse_Result interface {
+	isSelectResponse_Result()
+}
+
+type SelectResponse_Selection struct {
+	Selection *Selection `protobuf:"bytes,1,opt,name=selection,proto3,oneof"`
+}
+
+type SelectResponse_Rejection struct {
+	Rejection *SelectRejection `protobuf:"bytes,2,opt,name=rejection,proto3,oneof"`
+}
+
+func (*SelectResponse_Selection) isSelectResponse_Result() {}
+
+func (*SelectResponse_Rejection) isSelectResponse_Result() {}
+
+type SelectRejection struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Status int32                  `protobuf:"varint,1,opt,name=status,proto3" json:"status,omitempty"`
+	// 网关格式的错误类型（如 invalid_request_error）；鉴权格式为空。
+	ErrorType string          `protobuf:"bytes,2,opt,name=error_type,json=errorType,proto3" json:"error_type,omitempty"`
+	Code      string          `protobuf:"bytes,3,opt,name=code,proto3" json:"code,omitempty"`
+	Message   string          `protobuf:"bytes,4,opt,name=message,proto3" json:"message,omitempty"`
+	Format    RejectionFormat `protobuf:"varint,5,opt,name=format,proto3,enum=sub2api.relay.v1.RejectionFormat" json:"format,omitempty"`
+	// 大于 0 时写 Retry-After。
+	RetryAfterSeconds int32 `protobuf:"varint,6,opt,name=retry_after_seconds,json=retryAfterSeconds,proto3" json:"retry_after_seconds,omitempty"`
+	// 运维标记，与单机版在同一位置打的一致。
+	RoutingCapacityLimited   bool   `protobuf:"varint,7,opt,name=routing_capacity_limited,json=routingCapacityLimited,proto3" json:"routing_capacity_limited,omitempty"`
+	OpsBusinessLimitedReason string `protobuf:"bytes,8,opt,name=ops_business_limited_reason,json=opsBusinessLimitedReason,proto3" json:"ops_business_limited_reason,omitempty"`
+	IngressRejectReason      string `protobuf:"bytes,9,opt,name=ingress_reject_reason,json=ingressRejectReason,proto3" json:"ingress_reject_reason,omitempty"`
+	// 命中 cyber 会话屏蔽的键（从节点记运维日志用）。
+	CyberBlockKey string `protobuf:"bytes,10,opt,name=cyber_block_key,json=cyberBlockKey,proto3" json:"cyber_block_key,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SelectRejection) Reset() {
+	*x = SelectRejection{}
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[45]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SelectRejection) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SelectRejection) ProtoMessage() {}
+
+func (x *SelectRejection) ProtoReflect() protoreflect.Message {
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[45]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SelectRejection.ProtoReflect.Descriptor instead.
+func (*SelectRejection) Descriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{45}
+}
+
+func (x *SelectRejection) GetStatus() int32 {
+	if x != nil {
+		return x.Status
+	}
+	return 0
+}
+
+func (x *SelectRejection) GetErrorType() string {
+	if x != nil {
+		return x.ErrorType
+	}
+	return ""
+}
+
+func (x *SelectRejection) GetCode() string {
+	if x != nil {
+		return x.Code
+	}
+	return ""
+}
+
+func (x *SelectRejection) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *SelectRejection) GetFormat() RejectionFormat {
+	if x != nil {
+		return x.Format
+	}
+	return RejectionFormat_REJECTION_FORMAT_UNSPECIFIED
+}
+
+func (x *SelectRejection) GetRetryAfterSeconds() int32 {
+	if x != nil {
+		return x.RetryAfterSeconds
+	}
+	return 0
+}
+
+func (x *SelectRejection) GetRoutingCapacityLimited() bool {
+	if x != nil {
+		return x.RoutingCapacityLimited
+	}
+	return false
+}
+
+func (x *SelectRejection) GetOpsBusinessLimitedReason() string {
+	if x != nil {
+		return x.OpsBusinessLimitedReason
+	}
+	return ""
+}
+
+func (x *SelectRejection) GetIngressRejectReason() string {
+	if x != nil {
+		return x.IngressRejectReason
+	}
+	return ""
+}
+
+func (x *SelectRejection) GetCyberBlockKey() string {
+	if x != nil {
+		return x.CyberBlockKey
+	}
+	return ""
+}
+
+type Selection struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 主节点起的选号 ID：释放、取凭据、补额度都按它。
+	SelectionId string `protobuf:"bytes,1,opt,name=selection_id,json=selectionId,proto3" json:"selection_id,omitempty"`
+	UserId      int64  `protobuf:"varint,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	ApiKeyId    int64  `protobuf:"varint,3,opt,name=api_key_id,json=apiKeyId,proto3" json:"api_key_id,omitempty"`
+	// 本次使用的分组（0 表示未分组）与计费模式。
+	GroupId     int64            `protobuf:"varint,4,opt,name=group_id,json=groupId,proto3" json:"group_id,omitempty"`
+	BillingMode BillingMode      `protobuf:"varint,5,opt,name=billing_mode,json=billingMode,proto3,enum=sub2api.relay.v1.BillingMode" json:"billing_mode,omitempty"`
+	Account     *AccountSnapshot `protobuf:"bytes,6,opt,name=account,proto3" json:"account,omitempty"`
+	// 渠道映射后发给上游的模型；channel_mapped 为是否发生了映射。
+	ForwardModel       string `protobuf:"bytes,7,opt,name=forward_model,json=forwardModel,proto3" json:"forward_model,omitempty"`
+	ChannelMapped      bool   `protobuf:"varint,8,opt,name=channel_mapped,json=channelMapped,proto3" json:"channel_mapped,omitempty"`
+	ChannelMappedModel string `protobuf:"bytes,9,opt,name=channel_mapped_model,json=channelMappedModel,proto3" json:"channel_mapped_model,omitempty"`
+	ChannelId          int64  `protobuf:"varint,10,opt,name=channel_id,json=channelId,proto3" json:"channel_id,omitempty"`
+	BillingModelSource string `protobuf:"bytes,11,opt,name=billing_model_source,json=billingModelSource,proto3" json:"billing_model_source,omitempty"`
+	// 实际使用的会话哈希（池模式账号可能改写），后续选号和释放都用它。
+	SessionHash string `protobuf:"bytes,12,opt,name=session_hash,json=sessionHash,proto3" json:"session_hash,omitempty"`
+	// 扣费凭证（签名信封，payload 是 Voucher）。
+	Voucher *SignedToken `protobuf:"bytes,13,opt,name=voucher,proto3" json:"voucher,omitempty"`
+	// 这次请求用到的各项子额度，和最低预估费用（从节点按它预扣）。
+	QuotaScopes []*QuotaScope `protobuf:"bytes,14,rep,name=quota_scopes,json=quotaScopes,proto3" json:"quota_scopes,omitempty"`
+	QuotaNeed   int64         `protobuf:"varint,15,opt,name=quota_need,json=quotaNeed,proto3" json:"quota_need,omitempty"`
+	// 随选号补充的额度。
+	Grants []*QuotaGrant `protobuf:"bytes,16,rep,name=grants,proto3" json:"grants,omitempty"`
+	// 本请求的换号上限。
+	MaxAccountSwitches int32 `protobuf:"varint,17,opt,name=max_account_switches,json=maxAccountSwitches,proto3" json:"max_account_switches,omitempty"`
+	// 当前配置版本，从节点落后时先同步拉取。
+	ConfigVersion   string `protobuf:"bytes,18,opt,name=config_version,json=configVersion,proto3" json:"config_version,omitempty"`
+	PricingAtUnixMs int64  `protobuf:"varint,19,opt,name=pricing_at_unix_ms,json=pricingAtUnixMs,proto3" json:"pricing_at_unix_ms,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *Selection) Reset() {
+	*x = Selection{}
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[46]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Selection) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Selection) ProtoMessage() {}
+
+func (x *Selection) ProtoReflect() protoreflect.Message {
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[46]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Selection.ProtoReflect.Descriptor instead.
+func (*Selection) Descriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{46}
+}
+
+func (x *Selection) GetSelectionId() string {
+	if x != nil {
+		return x.SelectionId
+	}
+	return ""
+}
+
+func (x *Selection) GetUserId() int64 {
+	if x != nil {
+		return x.UserId
+	}
+	return 0
+}
+
+func (x *Selection) GetApiKeyId() int64 {
+	if x != nil {
+		return x.ApiKeyId
+	}
+	return 0
+}
+
+func (x *Selection) GetGroupId() int64 {
+	if x != nil {
+		return x.GroupId
+	}
+	return 0
+}
+
+func (x *Selection) GetBillingMode() BillingMode {
+	if x != nil {
+		return x.BillingMode
+	}
+	return BillingMode_BILLING_MODE_UNSPECIFIED
+}
+
+func (x *Selection) GetAccount() *AccountSnapshot {
+	if x != nil {
+		return x.Account
+	}
+	return nil
+}
+
+func (x *Selection) GetForwardModel() string {
+	if x != nil {
+		return x.ForwardModel
+	}
+	return ""
+}
+
+func (x *Selection) GetChannelMapped() bool {
+	if x != nil {
+		return x.ChannelMapped
+	}
+	return false
+}
+
+func (x *Selection) GetChannelMappedModel() string {
+	if x != nil {
+		return x.ChannelMappedModel
+	}
+	return ""
+}
+
+func (x *Selection) GetChannelId() int64 {
+	if x != nil {
+		return x.ChannelId
+	}
+	return 0
+}
+
+func (x *Selection) GetBillingModelSource() string {
+	if x != nil {
+		return x.BillingModelSource
+	}
+	return ""
+}
+
+func (x *Selection) GetSessionHash() string {
+	if x != nil {
+		return x.SessionHash
+	}
+	return ""
+}
+
+func (x *Selection) GetVoucher() *SignedToken {
+	if x != nil {
+		return x.Voucher
+	}
+	return nil
+}
+
+func (x *Selection) GetQuotaScopes() []*QuotaScope {
+	if x != nil {
+		return x.QuotaScopes
+	}
+	return nil
+}
+
+func (x *Selection) GetQuotaNeed() int64 {
+	if x != nil {
+		return x.QuotaNeed
+	}
+	return 0
+}
+
+func (x *Selection) GetGrants() []*QuotaGrant {
+	if x != nil {
+		return x.Grants
+	}
+	return nil
+}
+
+func (x *Selection) GetMaxAccountSwitches() int32 {
+	if x != nil {
+		return x.MaxAccountSwitches
+	}
+	return 0
+}
+
+func (x *Selection) GetConfigVersion() string {
+	if x != nil {
+		return x.ConfigVersion
+	}
+	return ""
+}
+
+func (x *Selection) GetPricingAtUnixMs() int64 {
+	if x != nil {
+		return x.PricingAtUnixMs
+	}
+	return 0
+}
+
+type FetchCredentialsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SelectionId   string                 `protobuf:"bytes,1,opt,name=selection_id,json=selectionId,proto3" json:"selection_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FetchCredentialsRequest) Reset() {
+	*x = FetchCredentialsRequest{}
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[47]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FetchCredentialsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FetchCredentialsRequest) ProtoMessage() {}
+
+func (x *FetchCredentialsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[47]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FetchCredentialsRequest.ProtoReflect.Descriptor instead.
+func (*FetchCredentialsRequest) Descriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{47}
+}
+
+func (x *FetchCredentialsRequest) GetSelectionId() string {
+	if x != nil {
+		return x.SelectionId
+	}
+	return ""
+}
+
+type FetchCredentialsResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 只含 id、credential_version、sealed_credentials。
+	Account       *AccountSnapshot `protobuf:"bytes,1,opt,name=account,proto3" json:"account,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FetchCredentialsResponse) Reset() {
+	*x = FetchCredentialsResponse{}
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[48]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FetchCredentialsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FetchCredentialsResponse) ProtoMessage() {}
+
+func (x *FetchCredentialsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[48]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FetchCredentialsResponse.ProtoReflect.Descriptor instead.
+func (*FetchCredentialsResponse) Descriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{48}
+}
+
+func (x *FetchCredentialsResponse) GetAccount() *AccountSnapshot {
+	if x != nil {
+		return x.Account
+	}
+	return nil
+}
+
+type RefillQuotaRequest struct {
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	SelectionId string                 `protobuf:"bytes,1,opt,name=selection_id,json=selectionId,proto3" json:"selection_id,omitempty"`
+	HeldQuota   []*HeldQuota           `protobuf:"bytes,2,rep,name=held_quota,json=heldQuota,proto3" json:"held_quota,omitempty"`
+	// 这次要保证的最少金额（每一项"手里没用掉的 + 这次给的"都要不少于它）。
+	Need          int64 `protobuf:"varint,3,opt,name=need,proto3" json:"need,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RefillQuotaRequest) Reset() {
+	*x = RefillQuotaRequest{}
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[49]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RefillQuotaRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RefillQuotaRequest) ProtoMessage() {}
+
+func (x *RefillQuotaRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[49]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RefillQuotaRequest.ProtoReflect.Descriptor instead.
+func (*RefillQuotaRequest) Descriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{49}
+}
+
+func (x *RefillQuotaRequest) GetSelectionId() string {
+	if x != nil {
+		return x.SelectionId
+	}
+	return ""
+}
+
+func (x *RefillQuotaRequest) GetHeldQuota() []*HeldQuota {
+	if x != nil {
+		return x.HeldQuota
+	}
+	return nil
+}
+
+func (x *RefillQuotaRequest) GetNeed() int64 {
+	if x != nil {
+		return x.Need
+	}
+	return 0
+}
+
+type RefillQuotaResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Grants        []*QuotaGrant          `protobuf:"bytes,1,rep,name=grants,proto3" json:"grants,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RefillQuotaResponse) Reset() {
+	*x = RefillQuotaResponse{}
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[50]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RefillQuotaResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RefillQuotaResponse) ProtoMessage() {}
+
+func (x *RefillQuotaResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[50]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RefillQuotaResponse.ProtoReflect.Descriptor instead.
+func (*RefillQuotaResponse) Descriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{50}
+}
+
+func (x *RefillQuotaResponse) GetGrants() []*QuotaGrant {
+	if x != nil {
+		return x.Grants
+	}
+	return nil
+}
+
+// 选号用完（这次尝试结束），经事件连接发送、不等回复（设计 3.1）。按 selection_id 幂等。
+type SelectionRelease struct {
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	SelectionId string                 `protobuf:"bytes,1,opt,name=selection_id,json=selectionId,proto3" json:"selection_id,omitempty"`
+	// 这是这次客户端请求的最后一次尝试：主节点同时放掉按请求占的用户并发槽。
+	RequestDone bool `protobuf:"varint,2,opt,name=request_done,json=requestDone,proto3" json:"request_done,omitempty"`
+	// 上游返回的 response id（Responses），主节点记下账号和归属，后续 previous_response_id 用。
+	ResponseIds   []string `protobuf:"bytes,3,rep,name=response_ids,json=responseIds,proto3" json:"response_ids,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SelectionRelease) Reset() {
+	*x = SelectionRelease{}
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[51]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SelectionRelease) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SelectionRelease) ProtoMessage() {}
+
+func (x *SelectionRelease) ProtoReflect() protoreflect.Message {
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[51]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SelectionRelease.ProtoReflect.Descriptor instead.
+func (*SelectionRelease) Descriptor() ([]byte, []int) {
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{51}
+}
+
+func (x *SelectionRelease) GetSelectionId() string {
+	if x != nil {
+		return x.SelectionId
+	}
+	return ""
+}
+
+func (x *SelectionRelease) GetRequestDone() bool {
+	if x != nil {
+		return x.RequestDone
+	}
+	return false
+}
+
+func (x *SelectionRelease) GetResponseIds() []string {
+	if x != nil {
+		return x.ResponseIds
+	}
+	return nil
+}
+
 // 账号快照：选号结果里给从节点转发用的账号（设计 2.2、9）。按白名单编码
 // （internal/relay/accountcodec）：转发要用的普通配置原样带上；密钥（上游 Key、短期 access token、
 // 代理密码、自定义请求头等白名单外的一切）放进 sealed_credentials，用这台节点的 X25519 加密公钥
@@ -2753,7 +3863,7 @@ type AccountSnapshot struct {
 
 func (x *AccountSnapshot) Reset() {
 	*x = AccountSnapshot{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[41]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2765,7 +3875,7 @@ func (x *AccountSnapshot) String() string {
 func (*AccountSnapshot) ProtoMessage() {}
 
 func (x *AccountSnapshot) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[41]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2778,7 +3888,7 @@ func (x *AccountSnapshot) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AccountSnapshot.ProtoReflect.Descriptor instead.
 func (*AccountSnapshot) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{41}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *AccountSnapshot) GetId() int64 {
@@ -2952,7 +4062,7 @@ type ProxySnapshot struct {
 
 func (x *ProxySnapshot) Reset() {
 	*x = ProxySnapshot{}
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[42]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2964,7 +4074,7 @@ func (x *ProxySnapshot) String() string {
 func (*ProxySnapshot) ProtoMessage() {}
 
 func (x *ProxySnapshot) ProtoReflect() protoreflect.Message {
-	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[42]
+	mi := &file_sub2api_relay_v1_relay_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2977,7 +4087,7 @@ func (x *ProxySnapshot) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProxySnapshot.ProtoReflect.Descriptor instead.
 func (*ProxySnapshot) Descriptor() ([]byte, []int) {
-	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{42}
+	return file_sub2api_relay_v1_relay_proto_rawDescGZIP(), []int{53}
 }
 
 func (x *ProxySnapshot) GetId() int64 {
@@ -3087,11 +4197,12 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\apayload\x18\x01 \x01(\fR\apayload\"W\n" +
 	"\fPingResponse\x12\x18\n" +
 	"\apayload\x18\x01 \x01(\fR\apayload\x12-\n" +
-	"\x13master_time_unix_ms\x18\x02 \x01(\x03R\x10masterTimeUnixMs\"[\n" +
+	"\x13master_time_unix_ms\x18\x02 \x01(\x03R\x10masterTimeUnixMs\"\xae\x01\n" +
 	"\fNodeEnvelope\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x04R\x03seq\x121\n" +
 	"\x04ping\x18\n" +
-	" \x01(\v2\x1b.sub2api.relay.v1.EventPingH\x00R\x04pingB\x06\n" +
+	" \x01(\v2\x1b.sub2api.relay.v1.EventPingH\x00R\x04ping\x12Q\n" +
+	"\x11selection_release\x18\v \x01(\v2\".sub2api.relay.v1.SelectionReleaseH\x00R\x10selectionReleaseB\x06\n" +
 	"\x04body\"9\n" +
 	"\x12FetchConfigRequest\x12#\n" +
 	"\rknown_version\x18\x01 \x01(\tR\fknownVersion\"\xfa\x03\n" +
@@ -3218,7 +4329,94 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\trecall_id\x18\x01 \x01(\tR\brecallId\x127\n" +
 	"\areturns\x18\x02 \x03(\v2\x1d.sub2api.relay.v1.LeaseReturnR\areturns\"D\n" +
 	"\x16AckQuotaRecallResponse\x12*\n" +
-	"\x11dropped_lease_ids\x18\x01 \x03(\x03R\x0fdroppedLeaseIds\"\xb9\a\n" +
+	"\x11dropped_lease_ids\x18\x01 \x03(\x03R\x0fdroppedLeaseIds\"\xa1\x05\n" +
+	"\rSelectRequest\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x12\x18\n" +
+	"\aattempt\x18\x02 \x01(\rR\aattempt\x12\x19\n" +
+	"\aapi_key\x18\x03 \x01(\tH\x00R\x06apiKey\x12\x1b\n" +
+	"\tclient_ip\x18\x04 \x01(\tR\bclientIp\x12\x16\n" +
+	"\x06method\x18\x05 \x01(\tR\x06method\x12\x12\n" +
+	"\x04path\x18\x06 \x01(\tR\x04path\x12<\n" +
+	"\bendpoint\x18\a \x01(\x0e2 .sub2api.relay.v1.SelectEndpointR\bendpoint\x12\x14\n" +
+	"\x05model\x18\b \x01(\tR\x05model\x12\x16\n" +
+	"\x06stream\x18\t \x01(\bR\x06stream\x12!\n" +
+	"\fsession_hash\x18\n" +
+	" \x01(\tR\vsessionHash\x120\n" +
+	"\x14previous_response_id\x18\v \x01(\tR\x12previousResponseId\x12!\n" +
+	"\fimage_intent\x18\f \x01(\bR\vimageIntent\x12%\n" +
+	"\x0elegacy_compact\x18\r \x01(\bR\rlegacyCompact\x120\n" +
+	"\x14native_compaction_v2\x18\x0e \x01(\bR\x12nativeCompactionV2\x120\n" +
+	"\x14excluded_account_ids\x18\x0f \x03(\x03R\x12excludedAccountIds\x12:\n" +
+	"\x05cyber\x18\x10 \x01(\v2$.sub2api.relay.v1.CyberSessionLookupR\x05cyber\x12:\n" +
+	"\n" +
+	"held_quota\x18\x11 \x03(\v2\x1b.sub2api.relay.v1.HeldQuotaR\theldQuotaB\f\n" +
+	"\n" +
+	"credential\"\xb0\x01\n" +
+	"\x12CyberSessionLookup\x12!\n" +
+	"\fexplicit_key\x18\x01 \x01(\tR\vexplicitKey\x12\x1b\n" +
+	"\tscope_key\x18\x02 \x01(\tR\bscopeKey\x12'\n" +
+	"\x0ftranscript_keys\x18\x03 \x03(\tR\x0etranscriptKeys\x121\n" +
+	"\x14transcript_truncated\x18\x04 \x01(\bR\x13transcriptTruncated\"W\n" +
+	"\tHeldQuota\x122\n" +
+	"\x05scope\x18\x01 \x01(\v2\x1c.sub2api.relay.v1.QuotaScopeR\x05scope\x12\x16\n" +
+	"\x06unused\x18\x02 \x01(\x03R\x06unused\"\x9a\x01\n" +
+	"\x0eSelectResponse\x12;\n" +
+	"\tselection\x18\x01 \x01(\v2\x1b.sub2api.relay.v1.SelectionH\x00R\tselection\x12A\n" +
+	"\trejection\x18\x02 \x01(\v2!.sub2api.relay.v1.SelectRejectionH\x00R\trejectionB\b\n" +
+	"\x06result\"\xb6\x03\n" +
+	"\x0fSelectRejection\x12\x16\n" +
+	"\x06status\x18\x01 \x01(\x05R\x06status\x12\x1d\n" +
+	"\n" +
+	"error_type\x18\x02 \x01(\tR\terrorType\x12\x12\n" +
+	"\x04code\x18\x03 \x01(\tR\x04code\x12\x18\n" +
+	"\amessage\x18\x04 \x01(\tR\amessage\x129\n" +
+	"\x06format\x18\x05 \x01(\x0e2!.sub2api.relay.v1.RejectionFormatR\x06format\x12.\n" +
+	"\x13retry_after_seconds\x18\x06 \x01(\x05R\x11retryAfterSeconds\x128\n" +
+	"\x18routing_capacity_limited\x18\a \x01(\bR\x16routingCapacityLimited\x12=\n" +
+	"\x1bops_business_limited_reason\x18\b \x01(\tR\x18opsBusinessLimitedReason\x122\n" +
+	"\x15ingress_reject_reason\x18\t \x01(\tR\x13ingressRejectReason\x12&\n" +
+	"\x0fcyber_block_key\x18\n" +
+	" \x01(\tR\rcyberBlockKey\"\xc6\x06\n" +
+	"\tSelection\x12!\n" +
+	"\fselection_id\x18\x01 \x01(\tR\vselectionId\x12\x17\n" +
+	"\auser_id\x18\x02 \x01(\x03R\x06userId\x12\x1c\n" +
+	"\n" +
+	"api_key_id\x18\x03 \x01(\x03R\bapiKeyId\x12\x19\n" +
+	"\bgroup_id\x18\x04 \x01(\x03R\agroupId\x12@\n" +
+	"\fbilling_mode\x18\x05 \x01(\x0e2\x1d.sub2api.relay.v1.BillingModeR\vbillingMode\x12;\n" +
+	"\aaccount\x18\x06 \x01(\v2!.sub2api.relay.v1.AccountSnapshotR\aaccount\x12#\n" +
+	"\rforward_model\x18\a \x01(\tR\fforwardModel\x12%\n" +
+	"\x0echannel_mapped\x18\b \x01(\bR\rchannelMapped\x120\n" +
+	"\x14channel_mapped_model\x18\t \x01(\tR\x12channelMappedModel\x12\x1d\n" +
+	"\n" +
+	"channel_id\x18\n" +
+	" \x01(\x03R\tchannelId\x120\n" +
+	"\x14billing_model_source\x18\v \x01(\tR\x12billingModelSource\x12!\n" +
+	"\fsession_hash\x18\f \x01(\tR\vsessionHash\x127\n" +
+	"\avoucher\x18\r \x01(\v2\x1d.sub2api.relay.v1.SignedTokenR\avoucher\x12?\n" +
+	"\fquota_scopes\x18\x0e \x03(\v2\x1c.sub2api.relay.v1.QuotaScopeR\vquotaScopes\x12\x1d\n" +
+	"\n" +
+	"quota_need\x18\x0f \x01(\x03R\tquotaNeed\x124\n" +
+	"\x06grants\x18\x10 \x03(\v2\x1c.sub2api.relay.v1.QuotaGrantR\x06grants\x120\n" +
+	"\x14max_account_switches\x18\x11 \x01(\x05R\x12maxAccountSwitches\x12%\n" +
+	"\x0econfig_version\x18\x12 \x01(\tR\rconfigVersion\x12+\n" +
+	"\x12pricing_at_unix_ms\x18\x13 \x01(\x03R\x0fpricingAtUnixMs\"<\n" +
+	"\x17FetchCredentialsRequest\x12!\n" +
+	"\fselection_id\x18\x01 \x01(\tR\vselectionId\"W\n" +
+	"\x18FetchCredentialsResponse\x12;\n" +
+	"\aaccount\x18\x01 \x01(\v2!.sub2api.relay.v1.AccountSnapshotR\aaccount\"\x87\x01\n" +
+	"\x12RefillQuotaRequest\x12!\n" +
+	"\fselection_id\x18\x01 \x01(\tR\vselectionId\x12:\n" +
+	"\n" +
+	"held_quota\x18\x02 \x03(\v2\x1b.sub2api.relay.v1.HeldQuotaR\theldQuota\x12\x12\n" +
+	"\x04need\x18\x03 \x01(\x03R\x04need\"K\n" +
+	"\x13RefillQuotaResponse\x124\n" +
+	"\x06grants\x18\x01 \x03(\v2\x1c.sub2api.relay.v1.QuotaGrantR\x06grants\"{\n" +
+	"\x10SelectionRelease\x12!\n" +
+	"\fselection_id\x18\x01 \x01(\tR\vselectionId\x12!\n" +
+	"\frequest_done\x18\x02 \x01(\bR\vrequestDone\x12!\n" +
+	"\fresponse_ids\x18\x03 \x03(\tR\vresponseIds\"\xb9\a\n" +
 	"\x0fAccountSnapshot\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1a\n" +
@@ -3269,21 +4467,33 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\vBillingMode\x12\x1c\n" +
 	"\x18BILLING_MODE_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14BILLING_MODE_BALANCE\x10\x01\x12\x1d\n" +
-	"\x19BILLING_MODE_SUBSCRIPTION\x10\x022\xca\x03\n" +
+	"\x19BILLING_MODE_SUBSCRIPTION\x10\x02*x\n" +
+	"\x0eSelectEndpoint\x12\x1f\n" +
+	"\x1bSELECT_ENDPOINT_UNSPECIFIED\x10\x00\x12$\n" +
+	" SELECT_ENDPOINT_OPENAI_RESPONSES\x10\x01\x12\x1f\n" +
+	"\x1bSELECT_ENDPOINT_OPENAI_CHAT\x10\x02*\x8f\x01\n" +
+	"\x0fRejectionFormat\x12 \n" +
+	"\x1cREJECTION_FORMAT_UNSPECIFIED\x10\x00\x12\x1c\n" +
+	"\x18REJECTION_FORMAT_GATEWAY\x10\x01\x12\x19\n" +
+	"\x15REJECTION_FORMAT_AUTH\x10\x02\x12!\n" +
+	"\x1dREJECTION_FORMAT_OPENAI_QUOTA\x10\x032\xca\x03\n" +
 	"\x0fRelayEnrollment\x12H\n" +
 	"\x05Hello\x12\x1e.sub2api.relay.v1.HelloRequest\x1a\x1f.sub2api.relay.v1.HelloResponse\x12Q\n" +
 	"\bRegister\x12!.sub2api.relay.v1.RegisterRequest\x1a\".sub2api.relay.v1.RegisterResponse\x12W\n" +
 	"\n" +
 	"NodeStatus\x12#.sub2api.relay.v1.NodeStatusRequest\x1a$.sub2api.relay.v1.NodeStatusResponse\x12`\n" +
 	"\x11ObtainCertificate\x12$.sub2api.relay.v1.CertificateRequest\x1a%.sub2api.relay.v1.CertificateResponse\x12_\n" +
-	"\x10RenewCertificate\x12$.sub2api.relay.v1.CertificateRequest\x1a%.sub2api.relay.v1.CertificateResponse2\xab\x04\n" +
+	"\x10RenewCertificate\x12$.sub2api.relay.v1.CertificateRequest\x1a%.sub2api.relay.v1.CertificateResponse2\xbf\x06\n" +
 	"\fRelayControl\x12E\n" +
 	"\x04Ping\x12\x1d.sub2api.relay.v1.PingRequest\x1a\x1e.sub2api.relay.v1.PingResponse\x12U\n" +
 	"\vFetchConfig\x12$.sub2api.relay.v1.FetchConfigRequest\x1a .sub2api.relay.v1.ConfigSnapshot\x12]\n" +
 	"\fReleaseQuota\x12%.sub2api.relay.v1.ReleaseQuotaRequest\x1a&.sub2api.relay.v1.ReleaseQuotaResponse\x12Z\n" +
 	"\vRenewLeases\x12$.sub2api.relay.v1.RenewLeasesRequest\x1a%.sub2api.relay.v1.RenewLeasesResponse\x12]\n" +
 	"\fReportLeases\x12%.sub2api.relay.v1.ReportLeasesRequest\x1a&.sub2api.relay.v1.ReportLeasesResponse\x12c\n" +
-	"\x0eAckQuotaRecall\x12'.sub2api.relay.v1.AckQuotaRecallRequest\x1a(.sub2api.relay.v1.AckQuotaRecallResponse2]\n" +
+	"\x0eAckQuotaRecall\x12'.sub2api.relay.v1.AckQuotaRecallRequest\x1a(.sub2api.relay.v1.AckQuotaRecallResponse\x12K\n" +
+	"\x06Select\x12\x1f.sub2api.relay.v1.SelectRequest\x1a .sub2api.relay.v1.SelectResponse\x12i\n" +
+	"\x10FetchCredentials\x12).sub2api.relay.v1.FetchCredentialsRequest\x1a*.sub2api.relay.v1.FetchCredentialsResponse\x12Z\n" +
+	"\vRefillQuota\x12$.sub2api.relay.v1.RefillQuotaRequest\x1a%.sub2api.relay.v1.RefillQuotaResponse2]\n" +
 	"\vRelayEvents\x12N\n" +
 	"\x06Stream\x12\x1e.sub2api.relay.v1.NodeEnvelope\x1a .sub2api.relay.v1.MasterEnvelope(\x010\x01BBZ@github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1;relayv1b\x06proto3"
 
@@ -3299,117 +4509,152 @@ func file_sub2api_relay_v1_relay_proto_rawDescGZIP() []byte {
 	return file_sub2api_relay_v1_relay_proto_rawDescData
 }
 
-var file_sub2api_relay_v1_relay_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_sub2api_relay_v1_relay_proto_msgTypes = make([]protoimpl.MessageInfo, 46)
+var file_sub2api_relay_v1_relay_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
+var file_sub2api_relay_v1_relay_proto_msgTypes = make([]protoimpl.MessageInfo, 57)
 var file_sub2api_relay_v1_relay_proto_goTypes = []any{
-	(PeerClass)(0),                 // 0: sub2api.relay.v1.PeerClass
-	(NodeStatus)(0),                // 1: sub2api.relay.v1.NodeStatus
-	(BillingMode)(0),               // 2: sub2api.relay.v1.BillingMode
-	(*ProtocolVersion)(nil),        // 3: sub2api.relay.v1.ProtocolVersion
-	(*HelloRequest)(nil),           // 4: sub2api.relay.v1.HelloRequest
-	(*HelloResponse)(nil),          // 5: sub2api.relay.v1.HelloResponse
-	(*RegisterRequest)(nil),        // 6: sub2api.relay.v1.RegisterRequest
-	(*RegisterResponse)(nil),       // 7: sub2api.relay.v1.RegisterResponse
-	(*NodeStatusRequest)(nil),      // 8: sub2api.relay.v1.NodeStatusRequest
-	(*NodeStatusResponse)(nil),     // 9: sub2api.relay.v1.NodeStatusResponse
-	(*CertificateRequest)(nil),     // 10: sub2api.relay.v1.CertificateRequest
-	(*CertificateResponse)(nil),    // 11: sub2api.relay.v1.CertificateResponse
-	(*PingRequest)(nil),            // 12: sub2api.relay.v1.PingRequest
-	(*PingResponse)(nil),           // 13: sub2api.relay.v1.PingResponse
-	(*NodeEnvelope)(nil),           // 14: sub2api.relay.v1.NodeEnvelope
-	(*FetchConfigRequest)(nil),     // 15: sub2api.relay.v1.FetchConfigRequest
-	(*ConfigSnapshot)(nil),         // 16: sub2api.relay.v1.ConfigSnapshot
-	(*ConfigChanged)(nil),          // 17: sub2api.relay.v1.ConfigChanged
-	(*Invalidation)(nil),           // 18: sub2api.relay.v1.Invalidation
-	(*MasterEnvelope)(nil),         // 19: sub2api.relay.v1.MasterEnvelope
-	(*EventPing)(nil),              // 20: sub2api.relay.v1.EventPing
-	(*SignedToken)(nil),            // 21: sub2api.relay.v1.SignedToken
-	(*SigningPublicKey)(nil),       // 22: sub2api.relay.v1.SigningPublicKey
-	(*Ticket)(nil),                 // 23: sub2api.relay.v1.Ticket
-	(*Voucher)(nil),                // 24: sub2api.relay.v1.Voucher
-	(*Quote)(nil),                  // 25: sub2api.relay.v1.Quote
-	(*SelectionContext)(nil),       // 26: sub2api.relay.v1.SelectionContext
-	(*TicketRevocations)(nil),      // 27: sub2api.relay.v1.TicketRevocations
-	(*RevokedTicketUser)(nil),      // 28: sub2api.relay.v1.RevokedTicketUser
-	(*QuotaScope)(nil),             // 29: sub2api.relay.v1.QuotaScope
-	(*QuotaGrant)(nil),             // 30: sub2api.relay.v1.QuotaGrant
-	(*LeaseReturn)(nil),            // 31: sub2api.relay.v1.LeaseReturn
-	(*ReleaseQuotaRequest)(nil),    // 32: sub2api.relay.v1.ReleaseQuotaRequest
-	(*ReleaseQuotaResponse)(nil),   // 33: sub2api.relay.v1.ReleaseQuotaResponse
-	(*LeaseRenewal)(nil),           // 34: sub2api.relay.v1.LeaseRenewal
-	(*RenewLeasesRequest)(nil),     // 35: sub2api.relay.v1.RenewLeasesRequest
-	(*RenewedLease)(nil),           // 36: sub2api.relay.v1.RenewedLease
-	(*RenewLeasesResponse)(nil),    // 37: sub2api.relay.v1.RenewLeasesResponse
-	(*HeldLease)(nil),              // 38: sub2api.relay.v1.HeldLease
-	(*ReportLeasesRequest)(nil),    // 39: sub2api.relay.v1.ReportLeasesRequest
-	(*ReportLeasesResponse)(nil),   // 40: sub2api.relay.v1.ReportLeasesResponse
-	(*QuotaRecall)(nil),            // 41: sub2api.relay.v1.QuotaRecall
-	(*AckQuotaRecallRequest)(nil),  // 42: sub2api.relay.v1.AckQuotaRecallRequest
-	(*AckQuotaRecallResponse)(nil), // 43: sub2api.relay.v1.AckQuotaRecallResponse
-	(*AccountSnapshot)(nil),        // 44: sub2api.relay.v1.AccountSnapshot
-	(*ProxySnapshot)(nil),          // 45: sub2api.relay.v1.ProxySnapshot
-	nil,                            // 46: sub2api.relay.v1.RegisterRequest.SystemInfoEntry
-	nil,                            // 47: sub2api.relay.v1.ConfigSnapshot.SettingsEntry
-	nil,                            // 48: sub2api.relay.v1.ConfigSnapshot.SectionsEntry
+	(PeerClass)(0),                   // 0: sub2api.relay.v1.PeerClass
+	(NodeStatus)(0),                  // 1: sub2api.relay.v1.NodeStatus
+	(BillingMode)(0),                 // 2: sub2api.relay.v1.BillingMode
+	(SelectEndpoint)(0),              // 3: sub2api.relay.v1.SelectEndpoint
+	(RejectionFormat)(0),             // 4: sub2api.relay.v1.RejectionFormat
+	(*ProtocolVersion)(nil),          // 5: sub2api.relay.v1.ProtocolVersion
+	(*HelloRequest)(nil),             // 6: sub2api.relay.v1.HelloRequest
+	(*HelloResponse)(nil),            // 7: sub2api.relay.v1.HelloResponse
+	(*RegisterRequest)(nil),          // 8: sub2api.relay.v1.RegisterRequest
+	(*RegisterResponse)(nil),         // 9: sub2api.relay.v1.RegisterResponse
+	(*NodeStatusRequest)(nil),        // 10: sub2api.relay.v1.NodeStatusRequest
+	(*NodeStatusResponse)(nil),       // 11: sub2api.relay.v1.NodeStatusResponse
+	(*CertificateRequest)(nil),       // 12: sub2api.relay.v1.CertificateRequest
+	(*CertificateResponse)(nil),      // 13: sub2api.relay.v1.CertificateResponse
+	(*PingRequest)(nil),              // 14: sub2api.relay.v1.PingRequest
+	(*PingResponse)(nil),             // 15: sub2api.relay.v1.PingResponse
+	(*NodeEnvelope)(nil),             // 16: sub2api.relay.v1.NodeEnvelope
+	(*FetchConfigRequest)(nil),       // 17: sub2api.relay.v1.FetchConfigRequest
+	(*ConfigSnapshot)(nil),           // 18: sub2api.relay.v1.ConfigSnapshot
+	(*ConfigChanged)(nil),            // 19: sub2api.relay.v1.ConfigChanged
+	(*Invalidation)(nil),             // 20: sub2api.relay.v1.Invalidation
+	(*MasterEnvelope)(nil),           // 21: sub2api.relay.v1.MasterEnvelope
+	(*EventPing)(nil),                // 22: sub2api.relay.v1.EventPing
+	(*SignedToken)(nil),              // 23: sub2api.relay.v1.SignedToken
+	(*SigningPublicKey)(nil),         // 24: sub2api.relay.v1.SigningPublicKey
+	(*Ticket)(nil),                   // 25: sub2api.relay.v1.Ticket
+	(*Voucher)(nil),                  // 26: sub2api.relay.v1.Voucher
+	(*Quote)(nil),                    // 27: sub2api.relay.v1.Quote
+	(*SelectionContext)(nil),         // 28: sub2api.relay.v1.SelectionContext
+	(*TicketRevocations)(nil),        // 29: sub2api.relay.v1.TicketRevocations
+	(*RevokedTicketUser)(nil),        // 30: sub2api.relay.v1.RevokedTicketUser
+	(*QuotaScope)(nil),               // 31: sub2api.relay.v1.QuotaScope
+	(*QuotaGrant)(nil),               // 32: sub2api.relay.v1.QuotaGrant
+	(*LeaseReturn)(nil),              // 33: sub2api.relay.v1.LeaseReturn
+	(*ReleaseQuotaRequest)(nil),      // 34: sub2api.relay.v1.ReleaseQuotaRequest
+	(*ReleaseQuotaResponse)(nil),     // 35: sub2api.relay.v1.ReleaseQuotaResponse
+	(*LeaseRenewal)(nil),             // 36: sub2api.relay.v1.LeaseRenewal
+	(*RenewLeasesRequest)(nil),       // 37: sub2api.relay.v1.RenewLeasesRequest
+	(*RenewedLease)(nil),             // 38: sub2api.relay.v1.RenewedLease
+	(*RenewLeasesResponse)(nil),      // 39: sub2api.relay.v1.RenewLeasesResponse
+	(*HeldLease)(nil),                // 40: sub2api.relay.v1.HeldLease
+	(*ReportLeasesRequest)(nil),      // 41: sub2api.relay.v1.ReportLeasesRequest
+	(*ReportLeasesResponse)(nil),     // 42: sub2api.relay.v1.ReportLeasesResponse
+	(*QuotaRecall)(nil),              // 43: sub2api.relay.v1.QuotaRecall
+	(*AckQuotaRecallRequest)(nil),    // 44: sub2api.relay.v1.AckQuotaRecallRequest
+	(*AckQuotaRecallResponse)(nil),   // 45: sub2api.relay.v1.AckQuotaRecallResponse
+	(*SelectRequest)(nil),            // 46: sub2api.relay.v1.SelectRequest
+	(*CyberSessionLookup)(nil),       // 47: sub2api.relay.v1.CyberSessionLookup
+	(*HeldQuota)(nil),                // 48: sub2api.relay.v1.HeldQuota
+	(*SelectResponse)(nil),           // 49: sub2api.relay.v1.SelectResponse
+	(*SelectRejection)(nil),          // 50: sub2api.relay.v1.SelectRejection
+	(*Selection)(nil),                // 51: sub2api.relay.v1.Selection
+	(*FetchCredentialsRequest)(nil),  // 52: sub2api.relay.v1.FetchCredentialsRequest
+	(*FetchCredentialsResponse)(nil), // 53: sub2api.relay.v1.FetchCredentialsResponse
+	(*RefillQuotaRequest)(nil),       // 54: sub2api.relay.v1.RefillQuotaRequest
+	(*RefillQuotaResponse)(nil),      // 55: sub2api.relay.v1.RefillQuotaResponse
+	(*SelectionRelease)(nil),         // 56: sub2api.relay.v1.SelectionRelease
+	(*AccountSnapshot)(nil),          // 57: sub2api.relay.v1.AccountSnapshot
+	(*ProxySnapshot)(nil),            // 58: sub2api.relay.v1.ProxySnapshot
+	nil,                              // 59: sub2api.relay.v1.RegisterRequest.SystemInfoEntry
+	nil,                              // 60: sub2api.relay.v1.ConfigSnapshot.SettingsEntry
+	nil,                              // 61: sub2api.relay.v1.ConfigSnapshot.SectionsEntry
 }
 var file_sub2api_relay_v1_relay_proto_depIdxs = []int32{
-	3,  // 0: sub2api.relay.v1.HelloRequest.version:type_name -> sub2api.relay.v1.ProtocolVersion
-	3,  // 1: sub2api.relay.v1.HelloResponse.min_supported:type_name -> sub2api.relay.v1.ProtocolVersion
-	3,  // 2: sub2api.relay.v1.HelloResponse.current:type_name -> sub2api.relay.v1.ProtocolVersion
+	5,  // 0: sub2api.relay.v1.HelloRequest.version:type_name -> sub2api.relay.v1.ProtocolVersion
+	5,  // 1: sub2api.relay.v1.HelloResponse.min_supported:type_name -> sub2api.relay.v1.ProtocolVersion
+	5,  // 2: sub2api.relay.v1.HelloResponse.current:type_name -> sub2api.relay.v1.ProtocolVersion
 	0,  // 3: sub2api.relay.v1.HelloResponse.peer_class:type_name -> sub2api.relay.v1.PeerClass
-	46, // 4: sub2api.relay.v1.RegisterRequest.system_info:type_name -> sub2api.relay.v1.RegisterRequest.SystemInfoEntry
+	59, // 4: sub2api.relay.v1.RegisterRequest.system_info:type_name -> sub2api.relay.v1.RegisterRequest.SystemInfoEntry
 	1,  // 5: sub2api.relay.v1.RegisterResponse.status:type_name -> sub2api.relay.v1.NodeStatus
 	1,  // 6: sub2api.relay.v1.NodeStatusResponse.status:type_name -> sub2api.relay.v1.NodeStatus
-	20, // 7: sub2api.relay.v1.NodeEnvelope.ping:type_name -> sub2api.relay.v1.EventPing
-	47, // 8: sub2api.relay.v1.ConfigSnapshot.settings:type_name -> sub2api.relay.v1.ConfigSnapshot.SettingsEntry
-	48, // 9: sub2api.relay.v1.ConfigSnapshot.sections:type_name -> sub2api.relay.v1.ConfigSnapshot.SectionsEntry
-	22, // 10: sub2api.relay.v1.ConfigSnapshot.ticket_public_keys:type_name -> sub2api.relay.v1.SigningPublicKey
-	20, // 11: sub2api.relay.v1.MasterEnvelope.ping:type_name -> sub2api.relay.v1.EventPing
-	17, // 12: sub2api.relay.v1.MasterEnvelope.config_changed:type_name -> sub2api.relay.v1.ConfigChanged
-	18, // 13: sub2api.relay.v1.MasterEnvelope.invalidation:type_name -> sub2api.relay.v1.Invalidation
-	27, // 14: sub2api.relay.v1.MasterEnvelope.ticket_revocations:type_name -> sub2api.relay.v1.TicketRevocations
-	41, // 15: sub2api.relay.v1.MasterEnvelope.quota_recall:type_name -> sub2api.relay.v1.QuotaRecall
-	2,  // 16: sub2api.relay.v1.Voucher.billing_mode:type_name -> sub2api.relay.v1.BillingMode
-	25, // 17: sub2api.relay.v1.Voucher.quote:type_name -> sub2api.relay.v1.Quote
-	26, // 18: sub2api.relay.v1.Voucher.context:type_name -> sub2api.relay.v1.SelectionContext
-	28, // 19: sub2api.relay.v1.TicketRevocations.users:type_name -> sub2api.relay.v1.RevokedTicketUser
-	29, // 20: sub2api.relay.v1.QuotaGrant.scope:type_name -> sub2api.relay.v1.QuotaScope
-	31, // 21: sub2api.relay.v1.ReleaseQuotaRequest.returns:type_name -> sub2api.relay.v1.LeaseReturn
-	34, // 22: sub2api.relay.v1.RenewLeasesRequest.leases:type_name -> sub2api.relay.v1.LeaseRenewal
-	36, // 23: sub2api.relay.v1.RenewLeasesResponse.renewed:type_name -> sub2api.relay.v1.RenewedLease
-	38, // 24: sub2api.relay.v1.ReportLeasesRequest.leases:type_name -> sub2api.relay.v1.HeldLease
-	29, // 25: sub2api.relay.v1.QuotaRecall.scope:type_name -> sub2api.relay.v1.QuotaScope
-	31, // 26: sub2api.relay.v1.AckQuotaRecallRequest.returns:type_name -> sub2api.relay.v1.LeaseReturn
-	45, // 27: sub2api.relay.v1.AccountSnapshot.proxy:type_name -> sub2api.relay.v1.ProxySnapshot
-	4,  // 28: sub2api.relay.v1.RelayEnrollment.Hello:input_type -> sub2api.relay.v1.HelloRequest
-	6,  // 29: sub2api.relay.v1.RelayEnrollment.Register:input_type -> sub2api.relay.v1.RegisterRequest
-	8,  // 30: sub2api.relay.v1.RelayEnrollment.NodeStatus:input_type -> sub2api.relay.v1.NodeStatusRequest
-	10, // 31: sub2api.relay.v1.RelayEnrollment.ObtainCertificate:input_type -> sub2api.relay.v1.CertificateRequest
-	10, // 32: sub2api.relay.v1.RelayEnrollment.RenewCertificate:input_type -> sub2api.relay.v1.CertificateRequest
-	12, // 33: sub2api.relay.v1.RelayControl.Ping:input_type -> sub2api.relay.v1.PingRequest
-	15, // 34: sub2api.relay.v1.RelayControl.FetchConfig:input_type -> sub2api.relay.v1.FetchConfigRequest
-	32, // 35: sub2api.relay.v1.RelayControl.ReleaseQuota:input_type -> sub2api.relay.v1.ReleaseQuotaRequest
-	35, // 36: sub2api.relay.v1.RelayControl.RenewLeases:input_type -> sub2api.relay.v1.RenewLeasesRequest
-	39, // 37: sub2api.relay.v1.RelayControl.ReportLeases:input_type -> sub2api.relay.v1.ReportLeasesRequest
-	42, // 38: sub2api.relay.v1.RelayControl.AckQuotaRecall:input_type -> sub2api.relay.v1.AckQuotaRecallRequest
-	14, // 39: sub2api.relay.v1.RelayEvents.Stream:input_type -> sub2api.relay.v1.NodeEnvelope
-	5,  // 40: sub2api.relay.v1.RelayEnrollment.Hello:output_type -> sub2api.relay.v1.HelloResponse
-	7,  // 41: sub2api.relay.v1.RelayEnrollment.Register:output_type -> sub2api.relay.v1.RegisterResponse
-	9,  // 42: sub2api.relay.v1.RelayEnrollment.NodeStatus:output_type -> sub2api.relay.v1.NodeStatusResponse
-	11, // 43: sub2api.relay.v1.RelayEnrollment.ObtainCertificate:output_type -> sub2api.relay.v1.CertificateResponse
-	11, // 44: sub2api.relay.v1.RelayEnrollment.RenewCertificate:output_type -> sub2api.relay.v1.CertificateResponse
-	13, // 45: sub2api.relay.v1.RelayControl.Ping:output_type -> sub2api.relay.v1.PingResponse
-	16, // 46: sub2api.relay.v1.RelayControl.FetchConfig:output_type -> sub2api.relay.v1.ConfigSnapshot
-	33, // 47: sub2api.relay.v1.RelayControl.ReleaseQuota:output_type -> sub2api.relay.v1.ReleaseQuotaResponse
-	37, // 48: sub2api.relay.v1.RelayControl.RenewLeases:output_type -> sub2api.relay.v1.RenewLeasesResponse
-	40, // 49: sub2api.relay.v1.RelayControl.ReportLeases:output_type -> sub2api.relay.v1.ReportLeasesResponse
-	43, // 50: sub2api.relay.v1.RelayControl.AckQuotaRecall:output_type -> sub2api.relay.v1.AckQuotaRecallResponse
-	19, // 51: sub2api.relay.v1.RelayEvents.Stream:output_type -> sub2api.relay.v1.MasterEnvelope
-	40, // [40:52] is the sub-list for method output_type
-	28, // [28:40] is the sub-list for method input_type
-	28, // [28:28] is the sub-list for extension type_name
-	28, // [28:28] is the sub-list for extension extendee
-	0,  // [0:28] is the sub-list for field type_name
+	22, // 7: sub2api.relay.v1.NodeEnvelope.ping:type_name -> sub2api.relay.v1.EventPing
+	56, // 8: sub2api.relay.v1.NodeEnvelope.selection_release:type_name -> sub2api.relay.v1.SelectionRelease
+	60, // 9: sub2api.relay.v1.ConfigSnapshot.settings:type_name -> sub2api.relay.v1.ConfigSnapshot.SettingsEntry
+	61, // 10: sub2api.relay.v1.ConfigSnapshot.sections:type_name -> sub2api.relay.v1.ConfigSnapshot.SectionsEntry
+	24, // 11: sub2api.relay.v1.ConfigSnapshot.ticket_public_keys:type_name -> sub2api.relay.v1.SigningPublicKey
+	22, // 12: sub2api.relay.v1.MasterEnvelope.ping:type_name -> sub2api.relay.v1.EventPing
+	19, // 13: sub2api.relay.v1.MasterEnvelope.config_changed:type_name -> sub2api.relay.v1.ConfigChanged
+	20, // 14: sub2api.relay.v1.MasterEnvelope.invalidation:type_name -> sub2api.relay.v1.Invalidation
+	29, // 15: sub2api.relay.v1.MasterEnvelope.ticket_revocations:type_name -> sub2api.relay.v1.TicketRevocations
+	43, // 16: sub2api.relay.v1.MasterEnvelope.quota_recall:type_name -> sub2api.relay.v1.QuotaRecall
+	2,  // 17: sub2api.relay.v1.Voucher.billing_mode:type_name -> sub2api.relay.v1.BillingMode
+	27, // 18: sub2api.relay.v1.Voucher.quote:type_name -> sub2api.relay.v1.Quote
+	28, // 19: sub2api.relay.v1.Voucher.context:type_name -> sub2api.relay.v1.SelectionContext
+	30, // 20: sub2api.relay.v1.TicketRevocations.users:type_name -> sub2api.relay.v1.RevokedTicketUser
+	31, // 21: sub2api.relay.v1.QuotaGrant.scope:type_name -> sub2api.relay.v1.QuotaScope
+	33, // 22: sub2api.relay.v1.ReleaseQuotaRequest.returns:type_name -> sub2api.relay.v1.LeaseReturn
+	36, // 23: sub2api.relay.v1.RenewLeasesRequest.leases:type_name -> sub2api.relay.v1.LeaseRenewal
+	38, // 24: sub2api.relay.v1.RenewLeasesResponse.renewed:type_name -> sub2api.relay.v1.RenewedLease
+	40, // 25: sub2api.relay.v1.ReportLeasesRequest.leases:type_name -> sub2api.relay.v1.HeldLease
+	31, // 26: sub2api.relay.v1.QuotaRecall.scope:type_name -> sub2api.relay.v1.QuotaScope
+	33, // 27: sub2api.relay.v1.AckQuotaRecallRequest.returns:type_name -> sub2api.relay.v1.LeaseReturn
+	3,  // 28: sub2api.relay.v1.SelectRequest.endpoint:type_name -> sub2api.relay.v1.SelectEndpoint
+	47, // 29: sub2api.relay.v1.SelectRequest.cyber:type_name -> sub2api.relay.v1.CyberSessionLookup
+	48, // 30: sub2api.relay.v1.SelectRequest.held_quota:type_name -> sub2api.relay.v1.HeldQuota
+	31, // 31: sub2api.relay.v1.HeldQuota.scope:type_name -> sub2api.relay.v1.QuotaScope
+	51, // 32: sub2api.relay.v1.SelectResponse.selection:type_name -> sub2api.relay.v1.Selection
+	50, // 33: sub2api.relay.v1.SelectResponse.rejection:type_name -> sub2api.relay.v1.SelectRejection
+	4,  // 34: sub2api.relay.v1.SelectRejection.format:type_name -> sub2api.relay.v1.RejectionFormat
+	2,  // 35: sub2api.relay.v1.Selection.billing_mode:type_name -> sub2api.relay.v1.BillingMode
+	57, // 36: sub2api.relay.v1.Selection.account:type_name -> sub2api.relay.v1.AccountSnapshot
+	23, // 37: sub2api.relay.v1.Selection.voucher:type_name -> sub2api.relay.v1.SignedToken
+	31, // 38: sub2api.relay.v1.Selection.quota_scopes:type_name -> sub2api.relay.v1.QuotaScope
+	32, // 39: sub2api.relay.v1.Selection.grants:type_name -> sub2api.relay.v1.QuotaGrant
+	57, // 40: sub2api.relay.v1.FetchCredentialsResponse.account:type_name -> sub2api.relay.v1.AccountSnapshot
+	48, // 41: sub2api.relay.v1.RefillQuotaRequest.held_quota:type_name -> sub2api.relay.v1.HeldQuota
+	32, // 42: sub2api.relay.v1.RefillQuotaResponse.grants:type_name -> sub2api.relay.v1.QuotaGrant
+	58, // 43: sub2api.relay.v1.AccountSnapshot.proxy:type_name -> sub2api.relay.v1.ProxySnapshot
+	6,  // 44: sub2api.relay.v1.RelayEnrollment.Hello:input_type -> sub2api.relay.v1.HelloRequest
+	8,  // 45: sub2api.relay.v1.RelayEnrollment.Register:input_type -> sub2api.relay.v1.RegisterRequest
+	10, // 46: sub2api.relay.v1.RelayEnrollment.NodeStatus:input_type -> sub2api.relay.v1.NodeStatusRequest
+	12, // 47: sub2api.relay.v1.RelayEnrollment.ObtainCertificate:input_type -> sub2api.relay.v1.CertificateRequest
+	12, // 48: sub2api.relay.v1.RelayEnrollment.RenewCertificate:input_type -> sub2api.relay.v1.CertificateRequest
+	14, // 49: sub2api.relay.v1.RelayControl.Ping:input_type -> sub2api.relay.v1.PingRequest
+	17, // 50: sub2api.relay.v1.RelayControl.FetchConfig:input_type -> sub2api.relay.v1.FetchConfigRequest
+	34, // 51: sub2api.relay.v1.RelayControl.ReleaseQuota:input_type -> sub2api.relay.v1.ReleaseQuotaRequest
+	37, // 52: sub2api.relay.v1.RelayControl.RenewLeases:input_type -> sub2api.relay.v1.RenewLeasesRequest
+	41, // 53: sub2api.relay.v1.RelayControl.ReportLeases:input_type -> sub2api.relay.v1.ReportLeasesRequest
+	44, // 54: sub2api.relay.v1.RelayControl.AckQuotaRecall:input_type -> sub2api.relay.v1.AckQuotaRecallRequest
+	46, // 55: sub2api.relay.v1.RelayControl.Select:input_type -> sub2api.relay.v1.SelectRequest
+	52, // 56: sub2api.relay.v1.RelayControl.FetchCredentials:input_type -> sub2api.relay.v1.FetchCredentialsRequest
+	54, // 57: sub2api.relay.v1.RelayControl.RefillQuota:input_type -> sub2api.relay.v1.RefillQuotaRequest
+	16, // 58: sub2api.relay.v1.RelayEvents.Stream:input_type -> sub2api.relay.v1.NodeEnvelope
+	7,  // 59: sub2api.relay.v1.RelayEnrollment.Hello:output_type -> sub2api.relay.v1.HelloResponse
+	9,  // 60: sub2api.relay.v1.RelayEnrollment.Register:output_type -> sub2api.relay.v1.RegisterResponse
+	11, // 61: sub2api.relay.v1.RelayEnrollment.NodeStatus:output_type -> sub2api.relay.v1.NodeStatusResponse
+	13, // 62: sub2api.relay.v1.RelayEnrollment.ObtainCertificate:output_type -> sub2api.relay.v1.CertificateResponse
+	13, // 63: sub2api.relay.v1.RelayEnrollment.RenewCertificate:output_type -> sub2api.relay.v1.CertificateResponse
+	15, // 64: sub2api.relay.v1.RelayControl.Ping:output_type -> sub2api.relay.v1.PingResponse
+	18, // 65: sub2api.relay.v1.RelayControl.FetchConfig:output_type -> sub2api.relay.v1.ConfigSnapshot
+	35, // 66: sub2api.relay.v1.RelayControl.ReleaseQuota:output_type -> sub2api.relay.v1.ReleaseQuotaResponse
+	39, // 67: sub2api.relay.v1.RelayControl.RenewLeases:output_type -> sub2api.relay.v1.RenewLeasesResponse
+	42, // 68: sub2api.relay.v1.RelayControl.ReportLeases:output_type -> sub2api.relay.v1.ReportLeasesResponse
+	45, // 69: sub2api.relay.v1.RelayControl.AckQuotaRecall:output_type -> sub2api.relay.v1.AckQuotaRecallResponse
+	49, // 70: sub2api.relay.v1.RelayControl.Select:output_type -> sub2api.relay.v1.SelectResponse
+	53, // 71: sub2api.relay.v1.RelayControl.FetchCredentials:output_type -> sub2api.relay.v1.FetchCredentialsResponse
+	55, // 72: sub2api.relay.v1.RelayControl.RefillQuota:output_type -> sub2api.relay.v1.RefillQuotaResponse
+	21, // 73: sub2api.relay.v1.RelayEvents.Stream:output_type -> sub2api.relay.v1.MasterEnvelope
+	59, // [59:74] is the sub-list for method output_type
+	44, // [44:59] is the sub-list for method input_type
+	44, // [44:44] is the sub-list for extension type_name
+	44, // [44:44] is the sub-list for extension extendee
+	0,  // [0:44] is the sub-list for field type_name
 }
 
 func init() { file_sub2api_relay_v1_relay_proto_init() }
@@ -3419,6 +4664,7 @@ func file_sub2api_relay_v1_relay_proto_init() {
 	}
 	file_sub2api_relay_v1_relay_proto_msgTypes[11].OneofWrappers = []any{
 		(*NodeEnvelope_Ping)(nil),
+		(*NodeEnvelope_SelectionRelease)(nil),
 	}
 	file_sub2api_relay_v1_relay_proto_msgTypes[16].OneofWrappers = []any{
 		(*MasterEnvelope_Ping)(nil),
@@ -3427,13 +4673,20 @@ func file_sub2api_relay_v1_relay_proto_init() {
 		(*MasterEnvelope_TicketRevocations)(nil),
 		(*MasterEnvelope_QuotaRecall)(nil),
 	}
+	file_sub2api_relay_v1_relay_proto_msgTypes[41].OneofWrappers = []any{
+		(*SelectRequest_ApiKey)(nil),
+	}
+	file_sub2api_relay_v1_relay_proto_msgTypes[44].OneofWrappers = []any{
+		(*SelectResponse_Selection)(nil),
+		(*SelectResponse_Rejection)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sub2api_relay_v1_relay_proto_rawDesc), len(file_sub2api_relay_v1_relay_proto_rawDesc)),
-			NumEnums:      3,
-			NumMessages:   46,
+			NumEnums:      5,
+			NumMessages:   57,
 			NumExtensions: 0,
 			NumServices:   3,
 		},

@@ -47,6 +47,18 @@ service RelayControl {
   // 上报完成之前从节点不发选号。
   rpc ReportLeases(ReportLeasesRequest) returns (ReportLeasesResponse);
   rpc AckQuotaRecall(AckQuotaRecallRequest) returns (AckQuotaRecallResponse);
+
+  // ---- 选号（设计 3.1 第 5 步、开发计划 WP7）----
+  // Select 为一次客户端请求的一次尝试选号：主节点复查凭据、做只有它能做的检查、选号、占并发槽，
+  // 签发扣费凭证，需要时顺带补充额度。带幂等键（请求 ID + 第几次选号）：超时重发拿到同一个结果。
+  // 被拒绝时正常返回 rejection（不是 gRPC 错误），从节点按它写客户端响应。
+  rpc Select(SelectRequest) returns (SelectResponse);
+  // FetchCredentials 取一次进行中的选号所选账号的上游凭据：从节点缓存里没有这个版本时用（设计 9.1）。
+  // 只有这次选号还没释放、且账号就是它选中的，主节点才给。
+  rpc FetchCredentials(FetchCredentialsRequest) returns (FetchCredentialsResponse);
+  // RefillQuota 按一次进行中的选号补充额度（提前补充，设计 4.2）：主节点按这次选号的用户、Key、
+  // 分组、订阅重新算剩余；选号已释放时拒绝。
+  rpc RefillQuota(RefillQuotaRequest) returns (RefillQuotaResponse);
 }
 
 // 事件连接：一条长期双向流，承载心跳、释放、账号事件，以及主节点下发的指令。
@@ -157,6 +169,7 @@ message NodeEnvelope {
   uint64 seq = 1;
   oneof body {
     EventPing ping = 10;
+    SelectionRelease selection_release = 11;
   }
 }
 
@@ -386,6 +399,158 @@ message AckQuotaRecallResponse {
 }
 
 // ---- 选号（开发计划 WP7）----
+// 选号的入口类型：决定主节点复用哪一套本地选号流程（WP7 按入口逐个接入）。
+enum SelectEndpoint {
+  SELECT_ENDPOINT_UNSPECIFIED = 0;
+  // OpenAI Responses（/v1/responses 及别名、/responses/compact）。
+  SELECT_ENDPOINT_OPENAI_RESPONSES = 1;
+  // OpenAI Chat Completions。
+  SELECT_ENDPOINT_OPENAI_CHAT = 2;
+}
+
+message SelectRequest {
+  // 从节点为这次客户端请求起的 ID。同一请求的多次选号（换号）共用：用户并发槽、利润否决次数、
+  // 已排除的账号按请求记在主节点。
+  string request_id = 1;
+  // 这次请求里的第几次选号（从 1 开始），与 request_id 一起作幂等键。
+  uint32 attempt = 2;
+  // 客户端凭据原文：主节点自己验证，不信从节点的鉴权结论（设计 8.2）。
+  oneof credential {
+    string api_key = 3;
+  }
+  // 从节点按信任代理规则解析出的客户端 IP（IP 黑白名单、全局黑名单、cyber 会话范围用）。
+  string client_ip = 4;
+  string method = 5;
+  // 入口路径（鉴权跳过计费、额度错误格式按它判断）。
+  string path = 6;
+  SelectEndpoint endpoint = 7;
+  string model = 8;
+  bool stream = 9;
+  // 会话哈希（从节点按请求头和请求体算出）。
+  string session_hash = 10;
+  string previous_response_id = 11;
+  // 显式生图意图（能力路由、分组是否允许生图）。
+  bool image_intent = 12;
+  // /responses/compact 旧路径；原生 v2 压缩。
+  bool legacy_compact = 13;
+  bool native_compaction_v2 = 14;
+  // 本请求此前尝试失败、要排除的账号。
+  repeated int64 excluded_account_ids = 15;
+  // cyber 会话屏蔽要查的键（开关打开时由从节点算出，设计 3.4）。
+  CyberSessionLookup cyber = 16;
+  // 从节点手里这个用户各项子额度还没用掉的金额：主节点据此决定是否随选号补充。
+  repeated HeldQuota held_quota = 17;
+}
+
+// cyber 会话屏蔽的查询键（都已哈希）。
+message CyberSessionLookup {
+  string explicit_key = 1;
+  string scope_key = 2;
+  repeated string transcript_keys = 3;
+  // 请求体里的候选键超过上限被截断（范围已激活时按命中处理）。
+  bool transcript_truncated = 4;
+}
+
+message HeldQuota {
+  QuotaScope scope = 1;
+  int64 unused = 2;
+}
+
+message SelectResponse {
+  oneof result {
+    Selection selection = 1;
+    SelectRejection rejection = 2;
+  }
+}
+
+// 拒绝的响应格式：从节点按它写客户端响应，与单机版一致。
+enum RejectionFormat {
+  REJECTION_FORMAT_UNSPECIFIED = 0;
+  // 网关处理函数的错误（按入口协议的错误格式，流式已开始时写流内错误）。
+  REJECTION_FORMAT_GATEWAY = 1;
+  // 鉴权中间件的错误（{code, message}）。
+  REJECTION_FORMAT_AUTH = 2;
+  // Key 额度用完、按 OpenAI 格式写的错误（insufficient_quota）。
+  REJECTION_FORMAT_OPENAI_QUOTA = 3;
+}
+
+message SelectRejection {
+  int32 status = 1;
+  // 网关格式的错误类型（如 invalid_request_error）；鉴权格式为空。
+  string error_type = 2;
+  string code = 3;
+  string message = 4;
+  RejectionFormat format = 5;
+  // 大于 0 时写 Retry-After。
+  int32 retry_after_seconds = 6;
+  // 运维标记，与单机版在同一位置打的一致。
+  bool routing_capacity_limited = 7;
+  string ops_business_limited_reason = 8;
+  string ingress_reject_reason = 9;
+  // 命中 cyber 会话屏蔽的键（从节点记运维日志用）。
+  string cyber_block_key = 10;
+}
+
+message Selection {
+  // 主节点起的选号 ID：释放、取凭据、补额度都按它。
+  string selection_id = 1;
+  int64 user_id = 2;
+  int64 api_key_id = 3;
+  // 本次使用的分组（0 表示未分组）与计费模式。
+  int64 group_id = 4;
+  BillingMode billing_mode = 5;
+  AccountSnapshot account = 6;
+  // 渠道映射后发给上游的模型；channel_mapped 为是否发生了映射。
+  string forward_model = 7;
+  bool channel_mapped = 8;
+  string channel_mapped_model = 9;
+  int64 channel_id = 10;
+  string billing_model_source = 11;
+  // 实际使用的会话哈希（池模式账号可能改写），后续选号和释放都用它。
+  string session_hash = 12;
+  // 扣费凭证：SignedToken（payload 是 Voucher）的编码。上报扣费时原样带回，主节点按这些字节验签。
+  bytes voucher = 13;
+  // 这次请求用到的各项子额度，和最低预估费用（从节点按它预扣）。
+  repeated QuotaScope quota_scopes = 14;
+  int64 quota_need = 15;
+  // 随选号补充的额度。
+  repeated QuotaGrant grants = 16;
+  // 本请求的换号上限。
+  int32 max_account_switches = 17;
+  // 当前配置版本，从节点落后时先同步拉取。
+  string config_version = 18;
+  int64 pricing_at_unix_ms = 19;
+}
+
+message FetchCredentialsRequest {
+  string selection_id = 1;
+}
+
+message FetchCredentialsResponse {
+  // 只含 id、credential_version、sealed_credentials。
+  AccountSnapshot account = 1;
+}
+
+message RefillQuotaRequest {
+  string selection_id = 1;
+  repeated HeldQuota held_quota = 2;
+  // 这次要保证的最少金额（每一项"手里没用掉的 + 这次给的"都要不少于它）。
+  int64 need = 3;
+}
+
+message RefillQuotaResponse {
+  repeated QuotaGrant grants = 1;
+}
+
+// 选号用完（这次尝试结束），经事件连接发送、不等回复（设计 3.1）。按 selection_id 幂等。
+message SelectionRelease {
+  string selection_id = 1;
+  // 这是这次客户端请求的最后一次尝试：主节点同时放掉按请求占的用户并发槽。
+  bool request_done = 2;
+  // 上游返回的 response id（Responses），主节点记下账号和归属，后续 previous_response_id 用。
+  repeated string response_ids = 3;
+}
+
 
 // 账号快照：选号结果里给从节点转发用的账号（设计 2.2、9）。按白名单编码
 // （internal/relay/accountcodec）：转发要用的普通配置原样带上；密钥（上游 Key、短期 access token、
