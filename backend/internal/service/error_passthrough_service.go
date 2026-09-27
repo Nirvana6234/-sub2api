@@ -47,6 +47,27 @@ type ErrorPassthroughService struct {
 	// 本地内存缓存，用于快速匹配
 	localCache   []*cachedPassthroughRule
 	localCacheMu sync.RWMutex
+
+	// onChange 在规则增删改之后调用（主从分流：主节点据此把新规则推给从节点）。
+	onChange func()
+}
+
+// NewStaticErrorPassthroughService 创建只按给定规则匹配的服务（主从分流从节点：规则随配置快照下发，
+// 没有仓储和缓存；换快照时用 ReplaceRules 整体替换）。只能用于匹配，不能增删改。
+func NewStaticErrorPassthroughService(rules []*model.ErrorPassthroughRule) *ErrorPassthroughService {
+	svc := &ErrorPassthroughService{}
+	svc.setLocalCache(rules)
+	return svc
+}
+
+// ReplaceRules 整体替换本地规则（从节点换配置快照时）。
+func (s *ErrorPassthroughService) ReplaceRules(rules []*model.ErrorPassthroughRule) {
+	s.setLocalCache(rules)
+}
+
+// SetChangeNotifier 设置规则增删改之后的回调（主从分流主节点重新生成配置快照）。
+func (s *ErrorPassthroughService) SetChangeNotifier(fn func()) {
+	s.onChange = fn
 }
 
 // cachedPassthroughRule 预计算的规则缓存，避免运行时重复 ToLower
@@ -285,6 +306,9 @@ func (s *ErrorPassthroughService) newCacheRefreshContext() (context.Context, con
 
 // invalidateAndNotify 使缓存失效并通知其他实例
 func (s *ErrorPassthroughService) invalidateAndNotify(ctx context.Context) {
+	if s.onChange != nil {
+		defer s.onChange()
+	}
 	// 先失效缓存，避免后续刷新读到陈旧规则。
 	if s.cache != nil {
 		if err := s.cache.Invalidate(ctx); err != nil {

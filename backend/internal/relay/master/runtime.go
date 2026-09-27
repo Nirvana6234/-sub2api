@@ -74,6 +74,8 @@ type RuntimeDeps struct {
 	NewSettler func(SettleEnv) Settler
 	// VoucherPartitions 维护已入账凭证表的按月分区（预建、过期删除，设计 5.4）；nil 时不维护。
 	VoucherPartitions VoucherPartitionMaintainer
+	// Sections 是配置快照里 settings 表之外的转发配置分段（错误透传规则等，设计 6），按名字登记。
+	Sections map[string]SectionProvider
 }
 
 // VoucherPartitionMaintainer 维护已入账凭证表的分区（repository.RelayVoucherPartitions）。
@@ -358,6 +360,9 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 	publisher := NewConfigPublisher(r.deps.Settings, r.deps.Store, events, func() Trust {
 		return Trust{RootFingerprints: ca.RootFingerprints(), TicketPublicKeys: signing.ticketPublicKeys()}
 	})
+	for name, provide := range r.deps.Sections {
+		publisher.RegisterSection(name, provide)
+	}
 	invalidator := NewInvalidator(events)
 
 	server, err := transport.NewServer(transport.ServerOptions{

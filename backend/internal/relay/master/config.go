@@ -323,3 +323,9 @@ func cloneSigningKeys(in []*relayv1.SigningPublicKey) []*relayv1.SigningPublicKe
 	}
 	return out
 }
+
+// SectionErrorPassthroughRules 是配置快照里错误透传规则的分段名（JSON：[]model.ErrorPassthroughRule）。
+const SectionErrorPassthroughRules = "error_passthrough_rules"
+
+// SectionChangedKey 是分段内容改了时发给 SettingChangeHub 的键：以 relay_ 开头，发布器据此当场重新生成。
+func SectionChangedKey(section string) string { return "relay_section_" + section }

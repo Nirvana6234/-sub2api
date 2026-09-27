@@ -21,6 +21,8 @@ type GatewayDeps struct {
 	Dispatcher   *Dispatcher
 	Decider      service.OpenAIUpstreamErrorDecider
 	Reporter     service.OpenAIAccountReporter
+	// ErrorPassthrough 是随配置快照下发的错误透传规则（nil 表示不透传）。
+	ErrorPassthrough *service.ErrorPassthroughService
 }
 
 // NewOpenAIHandler 组装从节点上的 OpenAI 处理函数：与单机同一个处理函数和转发服务，换上远程选号、
@@ -37,7 +39,7 @@ func NewOpenAIHandler(d GatewayDeps) *handler.OpenAIGatewayHandler {
 			return on
 		}
 	}
-	h := handler.NewOpenAIGatewayHandler(gw, nil, nil, nil, nil, nil, nil, nil, d.Config)
+	h := handler.NewOpenAIGatewayHandler(gw, nil, nil, nil, nil, d.ErrorPassthrough, nil, nil, d.Config)
 	h.SetRelayDispatcher(d.Dispatcher)
 	return h
 }

@@ -2,6 +2,7 @@ package nodegw
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -15,8 +16,10 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/model"
 	"github.com/Wei-Shaw/sub2api/internal/relay/accountcodec"
 	"github.com/Wei-Shaw/sub2api/internal/relay/identity"
+	"github.com/Wei-Shaw/sub2api/internal/relay/master"
 	"github.com/Wei-Shaw/sub2api/internal/relay/node"
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
 	"github.com/Wei-Shaw/sub2api/internal/relay/transport"
@@ -80,8 +83,10 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 
 	cache := node.NewConfigCache()
 	settings := service.NewSettingService(cache, cfg)
+	errorPassthrough := service.NewStaticErrorPassthroughService(nil)
 	cache.OnSwap(func(*relayv1.ConfigSnapshot) {
 		settings.InvalidateAll()
+		applyErrorPassthroughRules(cache, errorPassthrough)
 		if changed, err := pins.Update(cache.RootFingerprints()); err != nil {
 			slog.Warn("relay root fingerprints could not be saved", "error", err)
 		} else if changed {
@@ -150,8 +155,9 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 	}
 	h := NewOpenAIHandler(GatewayDeps{
 		Config: cfg, Settings: settings, HTTPUpstream: opts.HTTPUpstream, Dispatcher: d,
-		Decider:  node.NewRemoteUpstreamErrorDecider(client),
-		Reporter: node.NewRemoteAccountReporter(outbox),
+		Decider:          node.NewRemoteUpstreamErrorDecider(client),
+		Reporter:         node.NewRemoteAccountReporter(outbox),
+		ErrorPassthrough: errorPassthrough,
 	})
 	r := NewEngine()
 	r.GET("/health", func(c *gin.Context) {
@@ -245,4 +251,19 @@ func every(ctx context.Context, d time.Duration, fn func()) {
 			fn()
 		}
 	}
+}
+
+// applyErrorPassthroughRules 用配置快照里的错误透传规则替换本地规则；分段缺失或解不开时保留原来的并报警。
+func applyErrorPassthroughRules(cache *node.ConfigCache, svc *service.ErrorPassthroughService) {
+	raw, ok := cache.Section(master.SectionErrorPassthroughRules)
+	if !ok {
+		svc.ReplaceRules(nil)
+		return
+	}
+	var rules []*model.ErrorPassthroughRule
+	if err := json.Unmarshal(raw, &rules); err != nil {
+		slog.Error("relay error passthrough rules in the config snapshot are malformed; keeping the previous rules", "error", err)
+		return
+	}
+	svc.ReplaceRules(rules)
 }

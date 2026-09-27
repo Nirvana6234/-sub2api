@@ -7,6 +7,7 @@ package relaywire
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -43,6 +44,7 @@ func ProvideMasterRuntime(
 	promptAudit *securityaudit.PromptService,
 	accounts service.AccountRepository,
 	groups service.GroupRepository,
+	errorPassthrough *service.ErrorPassthroughService,
 ) *master.Runtime {
 	// 用户、分组、订阅作废时发布改动（平台配额在仓储层已接好，见 repository/wire.go）。
 	service.AttachAccessChangeHub(accessChanges, apiKeys, billing)
@@ -66,11 +68,16 @@ func ProvideMasterRuntime(
 			Moderation: moderation, PromptAudit: prompt,
 		}),
 		VoucherPartitions: repository.NewRelayVoucherPartitions(db),
+		Sections:          forwardingSections(errorPassthrough),
 		NewSettler: relaysettle.NewFactory(relaysettle.Deps{
 			Gateway: gateway, APIKeys: apiKeys, Accounts: accounts, Groups: groups, Subscriptions: subscriptions,
 			Vouchers: relayVoucherRecorder(db),
 		}),
 	})
+	if errorPassthrough != nil {
+		// 规则改了当场重新生成快照（发布器另有 30 秒一次的定时重算兜底）。
+		errorPassthrough.SetChangeNotifier(func() { hub.Notify([]string{master.SectionChangedKey(master.SectionErrorPassthroughRules)}) })
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	rt.Init(ctx)
@@ -84,4 +91,19 @@ func relayVoucherRecorder(db *sql.DB) service.RelayVoucherRecorder {
 		panic("relaywire: the usage billing repository does not record relay vouchers")
 	}
 	return r
+}
+
+// forwardingSections 是配置快照里 settings 表之外的转发配置分段（设计 6）。
+func forwardingSections(errorPassthrough *service.ErrorPassthroughService) map[string]master.SectionProvider {
+	sections := map[string]master.SectionProvider{}
+	if errorPassthrough != nil {
+		sections[master.SectionErrorPassthroughRules] = func(ctx context.Context) ([]byte, error) {
+			rules, err := errorPassthrough.List(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return json.Marshal(rules)
+		}
+	}
+	return sections
 }
