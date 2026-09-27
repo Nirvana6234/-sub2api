@@ -1242,8 +1242,8 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 
 	// 检查分组是否允许 /v1/messages 调度
 	if !allowOpenAICompatibleMessagesDispatch(c, apiKey) {
-		h.anthropicErrorResponse(c, http.StatusForbidden, "permission_error",
-			"This group does not allow /v1/messages dispatch")
+		r := OpenAIMessagesDispatchDeniedRejection()
+		h.anthropicErrorResponse(c, r.Status, r.ErrType, r.Message)
 		return
 	}
 
@@ -1360,22 +1360,42 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		if effectiveMappedModel != "" {
 			currentRoutingModel = effectiveMappedModel
 		}
-		reqLog.Debug("openai_messages.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
-		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
-			c.Request.Context(),
-			apiKey.GroupID,
-			"", // no previous_response_id
-			sessionHash,
-			currentRoutingModel,
-			failedAccountIDs,
-			service.OpenAIUpstreamTransportAny,
-			service.OpenAIEndpointCapabilityChatCompletions,
-			false,
-			false,
-			true,
-			requestPlatform,
-		)
-		if err != nil {
+		// Select account and admit it (shared with relay selection, see OpenAIAccountAdmitter.SelectAndAdmit).
+		onTick, cannotWait := h.openAIAdmissionWaitHooks(c, reqStream, &streamStarted)
+		selectState := OpenAISelectState{ProfitVetoCount: profitVetoCount, LastFailoverErr: lastFailoverErr}
+		outcome := OpenAIAccountAdmitter{Gateway: h.gatewayService, Concurrency: h.concurrencyHelper}.SelectAndAdmit(c.Request.Context(), OpenAISelectRequest{
+			GroupID:            apiKey.GroupID,
+			SessionHash:        sessionHash,
+			ForwardModel:       currentRoutingModel,
+			RequestPlatform:    requestPlatform,
+			RequiredCapability: service.OpenAIEndpointCapabilityChatCompletions,
+			Excluded:           failedAccountIDs,
+			OnTick:             onTick,
+			CannotWait:         cannotWait,
+			OnAccountChosen: func(_ context.Context, selection *service.AccountSelectionResult) context.Context {
+				setOpsSelectedAccount(c, selection.Account.ID, selection.Account.Platform)
+				c.Request = c.Request.WithContext(service.ContextWithSelectionFallbackTrace(c.Request.Context(), selection))
+				return c.Request.Context()
+			},
+		}, &selectState, reqLog)
+		profitVetoCount, lastFailoverErr = selectState.ProfitVetoCount, selectState.LastFailoverErr
+		sessionHash = outcome.SessionHash
+		switch outcome.Kind {
+		case OpenAISelected:
+		case OpenAISelectAborted:
+			failoverClientGone(c)
+			return
+		case OpenAISelectVetoExhausted:
+			h.handleOpenAIProfitVetoExhausted(c, streamStarted, reqLog, profitVetoCount)
+			return
+		case OpenAISelectQueueFull, OpenAISelectSlotError, OpenAISelectNoWaitPlan:
+			h.writeOpenAIAdmissionFailure(c, outcome, streamStarted)
+			return
+		case OpenAISelectNone:
+			h.writeOpenAIGatewayRejection(c, OpenAIMessagesNoAccountRejection(c.Request.Context(), h.gatewayService, apiKey, currentRoutingModel, reqModel, openAICompatibleRequestPlatform(c.Request.Context(), apiKey), nil), streamStarted)
+			return
+		case OpenAISelectFailed:
+			err := outcome.Err
 			if failoverClientGone(c) {
 				reqLog.Info("openai_messages.account_select_aborted_client_disconnected", zap.Error(err))
 				return
@@ -1394,14 +1414,8 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 					c.Request = c.Request.WithContext(msgPricingCtx)
 					continue
 				}
-				if err != nil {
-					cls := classifyOpenAICompatibleNoAccountErrorFromGin(c, h.gatewayService, apiKey, currentRoutingModel, reqModel)
-					if !cls.ModelNotFound {
-						markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
-					}
-					h.anthropicStreamingAwareError(c, cls.Status, cls.ErrType, cls.Message, streamStarted)
-					return
-				}
+				h.writeOpenAIGatewayRejection(c, OpenAIMessagesNoAccountRejection(c.Request.Context(), h.gatewayService, apiKey, currentRoutingModel, reqModel, openAICompatibleRequestPlatform(c.Request.Context(), apiKey), err), streamStarted)
+				return
 			} else {
 				if tryOpenAIAutoGroupFailover(c, h.apiKeyService, &apiKey, reqModel, failedGroupIDs, &subscription) {
 					failedAccountIDs = make(map[int64]struct{})
@@ -1433,33 +1447,8 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 				return
 			}
 		}
-		if selection == nil || selection.Account == nil {
-			cls := classifyOpenAICompatibleNoAccountErrorFromGin(c, h.gatewayService, apiKey, currentRoutingModel, reqModel)
-			if !cls.ModelNotFound {
-				markOpsRoutingCapacityLimited(c)
-			}
-			h.anthropicStreamingAwareError(c, cls.Status, cls.ErrType, cls.Message, streamStarted)
-			return
-		}
-		account := selection.Account
-		sessionHash = ensureOpenAIPoolModeSessionHash(sessionHash, account)
-		reqLog.Debug("openai_messages.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
-		_ = scheduleDecision
-		setOpsSelectedAccount(c, account.ID, account.Platform)
-
-		accountReleaseFunc, slotResult := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
-		if slotResult == openAISlotAcquireProfitVetoed {
-			// 利润终检否决：排除该账号重新选号，全池耗尽由下一轮选号报错；
-			// 否决次数达上限则直接终止，避免排队抢槽后才终检的延迟放大。
-			if !recordOpenAIProfitVeto(failedAccountIDs, account.ID, &profitVetoCount) {
-				h.handleOpenAIProfitVetoExhausted(c, streamStarted, reqLog, profitVetoCount)
-				return
-			}
-			continue
-		}
-		if slotResult != openAISlotAcquireOK {
-			return
-		}
+		account := outcome.Account
+		accountReleaseFunc := wrapReleaseOnDone(outcome.Ctx, outcome.Release)
 
 		service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, time.Since(routingStart).Milliseconds())
 		forwardStart := time.Now()

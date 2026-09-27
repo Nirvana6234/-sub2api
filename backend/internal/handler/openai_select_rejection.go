@@ -22,6 +22,8 @@ type OpenAIGatewayRejection struct {
 	// RoutingCapacityLimited、OpsBusinessLimitedReason 是运维标记。
 	RoutingCapacityLimited   bool
 	OpsBusinessLimitedReason string
+	// Anthropic：按 Anthropic Messages 的错误格式写（OpenAI 分组的 /v1/messages 入口，Code 不写出）。
+	Anthropic bool
 }
 
 // writeOpenAIGatewayRejection 打运维标记并写出错误（流式已开始时写流内错误）。
@@ -35,7 +37,41 @@ func (h *OpenAIGatewayHandler) writeOpenAIGatewayRejection(c *gin.Context, r Ope
 	if r.RetryAfter > 0 {
 		c.Header("Retry-After", strconv.Itoa(r.RetryAfter))
 	}
+	if r.Anthropic {
+		h.anthropicStreamingAwareError(c, r.Status, r.ErrType, r.Message, streamStarted)
+		return
+	}
 	h.handleStreamingAwareErrorWithCode(c, r.Status, r.ErrType, r.Code, r.Message, streamStarted, false)
+}
+
+// OpenAIMessagesNoAccountRejection：OpenAI 分组 /v1/messages 入口没选出账号时的错误（Anthropic 格式）。
+// routingModel 是选号用的模型（分组的派发映射或规范化后的请求模型）；selectErr 为调度器错误，没选出账号时为 nil。
+// 与 Responses 不同，这里不按调度错误细分（与原来的 Messages 处理函数一致）。
+func OpenAIMessagesNoAccountRejection(ctx context.Context, diag service.ModelAvailabilityDiagnoser, apiKey *service.APIKey, routingModel, reqModel, platform string, selectErr error) OpenAIGatewayRejection {
+	cls := classifyNoAccountError(ctx, diag, apiKey, routingModel, reqModel, platform)
+	r := OpenAIGatewayRejection{Status: cls.Status, ErrType: cls.ErrType, Message: cls.Message, Anthropic: true}
+	switch {
+	case cls.ModelNotFound:
+		r.OpsBusinessLimitedReason = service.OpsClientBusinessLimitedReasonLocalModelConfiguration
+	case selectErr == nil:
+		r.RoutingCapacityLimited = true
+	default:
+		r.RoutingCapacityLimited = isOpsNoAvailableAccountError(selectErr)
+	}
+	return r
+}
+
+// OpenAIMessagesDispatchDeniedRejection：分组不允许 /v1/messages 派发。
+func OpenAIMessagesDispatchDeniedRejection() OpenAIGatewayRejection {
+	return OpenAIGatewayRejection{Status: http.StatusForbidden, ErrType: "permission_error", Message: "This group does not allow /v1/messages dispatch", Anthropic: true}
+}
+
+// OpenAIMessagesRoutingModel 是 /v1/messages 入口选号用的模型：分组配置的派发映射优先，否则规范化后的请求模型。
+func OpenAIMessagesRoutingModel(apiKey *service.APIKey, reqModel string) string {
+	if mapped := resolveOpenAIMessagesDispatchMappedModel(nil, apiKey, reqModel); mapped != "" {
+		return mapped
+	}
+	return service.NormalizeOpenAICompatRequestedModel(reqModel)
 }
 
 // OpenAINoAccountRejection：调度器没选出账号时的错误（404 模型没有账号支持，或 503）。
