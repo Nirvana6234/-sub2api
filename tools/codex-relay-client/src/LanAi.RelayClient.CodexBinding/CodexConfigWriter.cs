@@ -21,12 +21,20 @@ namespace LanAi.RelayClient.CodexBinding;
 /// oversight.
 /// </para>
 /// </remarks>
-public sealed class CodexConfigWriter
+public sealed class CodexConfigWriter : ICodexLoginStore
 {
     /// <summary>The provider name this client owns inside <c>config.toml</c>.</summary>
     internal const string ProviderName = "gongfei";
 
     private const string ApiKeyField = "OPENAI_API_KEY";
+
+    /// <summary>
+    /// Serialises every read and write of the user's sign-in, across instances: the local
+    /// proxy refreshes it from relay threads while launch, the route guard and release move
+    /// it between <c>auth.json</c> and the snapshots. A refresh written into a copy that a
+    /// restore is about to replace would be lost — and OpenAI refresh tokens are single-use.
+    /// </summary>
+    private static readonly object LoginGate = new();
 
     private readonly CodexPaths _paths;
     private readonly CodexAuthSnapshot _snapshot;
@@ -77,11 +85,14 @@ public sealed class CodexConfigWriter
         ArgumentException.ThrowIfNullOrWhiteSpace(apiKey);
         ArgumentException.ThrowIfNullOrWhiteSpace(baseUrl);
 
-        _fileSnapshot.CaptureOnce();
-        Directory.CreateDirectory(_paths.Home);
+        lock (LoginGate)
+        {
+            bool firstCapture = _fileSnapshot.CaptureOnce();
+            Directory.CreateDirectory(_paths.Home);
 
-        WriteAuth(apiKey);
-        WriteConfig(baseUrl, preferredModel);
+            WriteAuth(apiKey, firstCapture);
+            WriteConfig(baseUrl, preferredModel);
+        }
     }
 
     /// <summary>
@@ -124,16 +135,28 @@ public sealed class CodexConfigWriter
     /// The account material is therefore taken into safekeeping first, and only
     /// then removed. <see cref="RestoreOriginalAuth"/> hands it back.
     /// </para>
+    /// <para>
+    /// Account material found when a snapshot already exists is a sign-in the user made
+    /// while Codex pointed at the relay (<c>codex login</c> rewrites the file, the route
+    /// guard then calls here). It is newer than what the snapshot holds, so it replaces
+    /// it: keeping the old one would hand back a sign-in the user had already replaced,
+    /// and drop the one they just made.
+    /// </para>
     /// </remarks>
-    private void WriteAuth(string apiKey)
+    private void WriteAuth(string apiKey, bool firstCapture)
     {
         JsonObject current = ReadAuth();
 
-        // Captured before anything is discarded, and only when this client has not
-        // already replaced the file — otherwise the second run would "preserve"
-        // its own key and lose the user's login permanently.
+        // Captured before anything is discarded. Only account material is ever captured —
+        // a file carrying just a key is one this client wrote, and "preserving" it would
+        // lose the user's login permanently.
         if (HasAccountMaterial(current))
         {
+            if (!firstCapture)
+            {
+                ReplaceSnapshotAuth(current, File.ReadAllBytes(_paths.AuthPath));
+            }
+
             _snapshot.CaptureOnce(current);
         }
 
@@ -170,28 +193,188 @@ public sealed class CodexConfigWriter
     /// </remarks>
     public bool RestoreOriginalAuth()
     {
-        JsonObject? original = _snapshot.Read();
-        if (original is null)
+        lock (LoginGate)
         {
-            return false;
-        }
+            JsonObject? original = _snapshot.Read();
+            if (original is null)
+            {
+                return false;
+            }
 
-        WriteAuthObject(original);
-        _snapshot.Clear();
-        return true;
+            WriteAuthObject(original);
+            _snapshot.Clear();
+            return true;
+        }
     }
 
     /// <summary>Restores both Codex files exactly as they were before the first apply.</summary>
+    /// <remarks>
+    /// "As they were" except for the sign-in: a newer one the user made meanwhile, or the
+    /// same one with tokens the local proxy refreshed, is what goes back.
+    /// </remarks>
     public bool RestoreOriginalFiles()
     {
-        bool restored = _fileSnapshot.Restore();
-        if (restored)
+        lock (LoginGate)
         {
-            _snapshot.Clear();
+            bool restored = _fileSnapshot.Restore();
+            if (restored)
+            {
+                _snapshot.Clear();
+            }
+
+            return restored;
+        }
+    }
+
+    /// <inheritdoc />
+    public CodexLogin? ReadLogin()
+    {
+        lock (LoginGate)
+        {
+            // Newest first: a sign-in in the file itself is either the only copy (Codex not on
+            // the relay) or one made since the snapshot was taken.
+            foreach (Func<JsonObject?> source in LoginSources())
+            {
+                if (ParseLogin(source()) is { } login)
+                {
+                    return login;
+                }
+            }
+
+            return null;
+        }
+    }
+
+    /// <inheritdoc />
+    public bool UpdateLoginTokens(string previousRefreshToken, CodexRefreshedTokens refreshed, DateTimeOffset refreshedAt)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(previousRefreshToken);
+        ArgumentNullException.ThrowIfNull(refreshed);
+        ArgumentException.ThrowIfNullOrWhiteSpace(refreshed.AccessToken);
+
+        lock (LoginGate)
+        {
+            bool updated = false;
+
+            JsonObject live = ReadAuth();
+            if (HasRefreshToken(live, previousRefreshToken))
+            {
+                WriteAuthObject(ApplyRefresh(live, refreshed, refreshedAt));
+                updated = true;
+            }
+
+            if (ReadFileSnapshotAuth() is { } recorded && HasRefreshToken(recorded, previousRefreshToken))
+            {
+                byte[] plaintext = Encoding.UTF8.GetBytes(
+                    ApplyRefresh(recorded, refreshed, refreshedAt).ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+                try
+                {
+                    _fileSnapshot.ReplaceAuth(plaintext);
+                }
+                finally
+                {
+                    Array.Clear(plaintext, 0, plaintext.Length);
+                }
+
+                updated = true;
+            }
+
+            if (_snapshot.Read() is { } legacy && HasRefreshToken(legacy, previousRefreshToken))
+            {
+                _snapshot.ReplaceIfExists(ApplyRefresh(legacy, refreshed, refreshedAt));
+                updated = true;
+            }
+
+            return updated;
+        }
+    }
+
+    private IEnumerable<Func<JsonObject?>> LoginSources()
+    {
+        yield return () => ReadAuth() is { } live && HasAccountMaterial(live) ? live : null;
+        yield return ReadFileSnapshotAuth;
+        yield return _snapshot.Read;
+    }
+
+    private JsonObject? ReadFileSnapshotAuth()
+    {
+        byte[]? plaintext = _fileSnapshot.ReadAuth();
+        if (plaintext is null)
+        {
+            return null;
         }
 
-        return restored;
+        try
+        {
+            return JsonNode.Parse(plaintext) as JsonObject;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+        finally
+        {
+            Array.Clear(plaintext, 0, plaintext.Length);
+        }
     }
+
+    /// <summary>Puts a newer sign-in into both snapshots, in place of the one they hold.</summary>
+    private void ReplaceSnapshotAuth(JsonObject auth, byte[] raw)
+    {
+        try
+        {
+            _fileSnapshot.ReplaceAuth(raw);
+        }
+        finally
+        {
+            Array.Clear(raw, 0, raw.Length);
+        }
+
+        _snapshot.ReplaceIfExists(auth);
+    }
+
+    private static CodexLogin? ParseLogin(JsonObject? auth)
+    {
+        if (auth?["tokens"] is not JsonObject tokens)
+        {
+            return null;
+        }
+
+        string refresh = StringOf(tokens, "refresh_token");
+        string access = StringOf(tokens, "access_token");
+        if (refresh.Length == 0 && access.Length == 0)
+        {
+            return null;
+        }
+
+        return new CodexLogin(access, refresh, StringOf(tokens, "id_token"), StringOf(tokens, "account_id"));
+    }
+
+    private static bool HasRefreshToken(JsonObject auth, string refreshToken) =>
+        auth["tokens"] is JsonObject tokens &&
+        string.Equals(StringOf(tokens, "refresh_token"), refreshToken, StringComparison.Ordinal);
+
+    /// <summary>The same shape Codex itself writes after a refresh: the three tokens and <c>last_refresh</c>.</summary>
+    private static JsonObject ApplyRefresh(JsonObject auth, CodexRefreshedTokens refreshed, DateTimeOffset refreshedAt)
+    {
+        var tokens = (JsonObject)auth["tokens"]!;
+        tokens["access_token"] = refreshed.AccessToken;
+        if (!string.IsNullOrWhiteSpace(refreshed.RefreshToken))
+        {
+            tokens["refresh_token"] = refreshed.RefreshToken;
+        }
+        if (!string.IsNullOrWhiteSpace(refreshed.IdToken))
+        {
+            tokens["id_token"] = refreshed.IdToken;
+        }
+
+        auth["last_refresh"] = refreshedAt.UtcDateTime.ToString(
+            "yyyy-MM-dd'T'HH:mm:ss.fffffff'Z'", System.Globalization.CultureInfo.InvariantCulture);
+        return auth;
+    }
+
+    private static string StringOf(JsonObject obj, string name) =>
+        obj[name] is JsonValue value && value.TryGetValue(out string? text) ? text ?? string.Empty : string.Empty;
 
     /// <summary>Reads the live TOML without changing it and verifies the owned route.</summary>
     public bool IsRelayRoute(string baseUrl, string? expectedApiKey = null)
