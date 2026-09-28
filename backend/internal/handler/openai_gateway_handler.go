@@ -4287,6 +4287,7 @@ func buildCyberSessionBlockedOpsEntry(meta cyberPolicyOpsErrorMeta) *service.Ops
 	if meta.ClientIP != "" {
 		entry.ClientIP = &meta.ClientIP
 	}
+	entry.NodeID = meta.NodeID
 	return entry
 }
 
@@ -4380,33 +4381,59 @@ func (h *OpenAIGatewayHandler) enqueueCyberSessionBlockedOpsEntry(c *gin.Context
 	// The dedicated cyber_session_blocked entry owns Ops semantics for this
 	// request; suppress the generic middleware record of the same 403 response.
 	c.Set(opsDedicatedErrorRecordedKey, true)
-	meta := cyberPolicyOpsErrorMeta{Model: model, InboundEndpoint: GetInboundEndpoint(c), CreatedAt: time.Now(), SessionBlockKey: sessionBlockKey}
-	meta.RequestID = c.Writer.Header().Get("X-Request-Id")
+	r := CyberSessionBlockedRequest{Model: model, InboundEndpoint: GetInboundEndpoint(c), SessionBlockKey: sessionBlockKey}
+	r.RequestID = c.Writer.Header().Get("X-Request-Id")
 	if c.Request != nil && c.Request.URL != nil {
-		meta.RequestPath = c.Request.URL.Path
+		r.RequestPath = c.Request.URL.Path
 	}
 	if v, ok := c.Get(opsStreamKey); ok {
 		if b, ok := v.(bool); ok {
-			meta.Stream = b
+			r.Stream = b
 		}
 	}
 	requestCtx := context.Background()
 	if c.Request != nil {
 		requestCtx = c.Request.Context()
+		r.ClientRequestID, _ = c.Request.Context().Value(ctxkey.ClientRequestID).(string)
+		r.UserAgent = c.GetHeader("User-Agent")
+		r.ClientIP = strings.TrimSpace(ip.GetClientIP(c))
 	}
-	meta.Platform = resolveOpsPlatform(requestCtx, apiKey, guessPlatformFromPath(meta.RequestPath))
-	if c.Request != nil {
-		meta.ClientRequestID, _ = c.Request.Context().Value(ctxkey.ClientRequestID).(string)
-		meta.UserAgent = c.GetHeader("User-Agent")
-		meta.ClientIP = strings.TrimSpace(ip.GetClientIP(c))
+	EnqueueCyberSessionBlockedOpsEntry(requestCtx, h.opsService, apiKey, r)
+}
+
+// CyberSessionBlockedRequest 是 cyber 会话屏蔽拒绝的运维日志要的请求事实。主从分流时屏蔽在主节点选号时查出，
+// 主节点按选号请求填（NodeID 是转发的从节点）。
+type CyberSessionBlockedRequest struct {
+	RequestID       string
+	ClientRequestID string
+	Model           string
+	RequestPath     string
+	Stream          bool
+	InboundEndpoint string
+	UserAgent       string
+	ClientIP        string
+	SessionBlockKey string
+	NodeID          *int64
+}
+
+// EnqueueCyberSessionBlockedOpsEntry 记一条 cyber 会话屏蔽拒绝的运维日志（单机与主节点共用）。
+func EnqueueCyberSessionBlockedOpsEntry(ctx context.Context, ops *service.OpsService, apiKey *service.APIKey, r CyberSessionBlockedRequest) {
+	if ops == nil || apiKey == nil {
+		return
 	}
+	meta := cyberPolicyOpsErrorMeta{
+		RequestID: r.RequestID, ClientRequestID: r.ClientRequestID, Model: r.Model, RequestPath: r.RequestPath,
+		Stream: r.Stream, InboundEndpoint: r.InboundEndpoint, UserAgent: r.UserAgent, ClientIP: r.ClientIP,
+		CreatedAt: time.Now(), SessionBlockKey: r.SessionBlockKey, NodeID: r.NodeID,
+	}
+	meta.Platform = resolveOpsPlatform(ctx, apiKey, guessPlatformFromPath(meta.RequestPath))
 	meta.APIKeyID = apiKey.ID
 	meta.GroupID = apiKey.GroupID
 	meta.APIKeyPrefix = keyPrefix(apiKey.Key, 8)
 	if apiKey.User != nil {
 		meta.UserID = apiKey.User.ID
 	}
-	enqueueOpsErrorLog(h.opsService, buildCyberSessionBlockedOpsEntry(meta))
+	enqueueOpsErrorLog(ops, buildCyberSessionBlockedOpsEntry(meta))
 }
 
 // usagePayloadHasher 返回请求体 hash 的惰性求值函数：首次调用才计算，之后复用结果。

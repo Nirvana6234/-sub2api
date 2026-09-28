@@ -177,7 +177,10 @@ func (d *Dispatcher) selectRequest(c *gin.Context, st *requestState, req handler
 		ImageIntent:        req.ImageIntent,
 		LegacyCompact:      req.LegacyCompact,
 		NativeCompactionV2: req.NativeCompactionV2,
+		UserAgent:          c.GetHeader("User-Agent"),
+		HttpRequestId:      c.Writer.Header().Get("X-Request-Id"),
 	}
+	sreq.ClientRequestId, _ = c.Request.Context().Value(ctxkey.ClientRequestID).(string)
 	for id := range req.Excluded {
 		sreq.ExcludedAccountIds = append(sreq.ExcludedAccountIds, id)
 	}

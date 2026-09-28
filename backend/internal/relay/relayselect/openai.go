@@ -82,7 +82,7 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 	}
 	if chat {
 		// Chat 在占用户槽之前查 cyber 屏蔽（本地 ChatCompletions 的顺序）。
-		if rej := s.cyberRejection(ctx, req); rej != nil {
+		if rej := s.cyberRejection(ctx, nodeID, req, apiKey); rej != nil {
 			return rej, nil
 		}
 	}
@@ -287,7 +287,7 @@ func (s *selector) startRequest(ctx context.Context, record *requestRecord, req 
 		return gatewayRejection(billingRejection(err, anthropicBilling))
 	}
 	if cyberAfterBilling {
-		if rej := s.cyberRejection(ctx, req); rej != nil {
+		if rej := s.cyberRejection(ctx, record.key.nodeID, req, apiKey); rej != nil {
 			return rej
 		}
 	}
@@ -296,8 +296,9 @@ func (s *selector) startRequest(ctx context.Context, record *requestRecord, req 
 	return nil
 }
 
-// cyberRejection 查 cyber 会话屏蔽（从节点算好的键）；命中时返回拒绝。
-func (s *selector) cyberRejection(ctx context.Context, req *relayv1.SelectRequest) *relayv1.SelectResponse {
+// cyberRejection 查 cyber 会话屏蔽（从节点算好的键）；命中时记运维日志（与单机 writeCyberSessionBlocked 一样）
+// 并返回拒绝，从节点按 cyber 屏蔽的写法写响应。
+func (s *selector) cyberRejection(ctx context.Context, nodeID int64, req *relayv1.SelectRequest, apiKey *service.APIKey) *relayv1.SelectResponse {
 	c := req.GetCyber()
 	if c == nil {
 		return nil
@@ -306,6 +307,12 @@ func (s *selector) cyberRejection(ctx context.Context, req *relayv1.SelectReques
 	if key == "" {
 		return nil
 	}
+	node := nodeID
+	s.recordCyberBlocked(ctx, apiKey, handler.CyberSessionBlockedRequest{
+		RequestID: req.GetHttpRequestId(), ClientRequestID: req.GetClientRequestId(), Model: req.GetModel(),
+		RequestPath: req.GetPath(), Stream: req.GetStream(), InboundEndpoint: handler.NormalizeInboundEndpoint(req.GetPath()),
+		UserAgent: req.GetUserAgent(), ClientIP: req.GetClientIp(), SessionBlockKey: key, NodeID: &node,
+	})
 	rej := gatewayRejection(handler.OpenAICyberSessionBlockedRejection())
 	rej.GetRejection().CyberBlockKey = key
 	return rej

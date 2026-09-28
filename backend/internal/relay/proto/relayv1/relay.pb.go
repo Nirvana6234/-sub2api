@@ -3420,6 +3420,11 @@ type SelectRequest struct {
 	HeldQuota []*HeldQuota `protobuf:"bytes,17,rep,name=held_quota,json=heldQuota,proto3" json:"held_quota,omitempty"`
 	// 请求里可能被下游解析到的全部模型名（分组模型白名单逐一检查，规则同 GroupModelAllowlist 中间件）。
 	ModelCandidates []string `protobuf:"bytes,18,rep,name=model_candidates,json=modelCandidates,proto3" json:"model_candidates,omitempty"`
+	// 客户端 User-Agent、从节点给这次请求的请求 ID（响应头 X-Request-Id）、客户端带的请求 ID：
+	// 主节点在选号时记运维日志用（如 cyber 会话屏蔽的拒绝）。
+	UserAgent       string `protobuf:"bytes,19,opt,name=user_agent,json=userAgent,proto3" json:"user_agent,omitempty"`
+	HttpRequestId   string `protobuf:"bytes,20,opt,name=http_request_id,json=httpRequestId,proto3" json:"http_request_id,omitempty"`
+	ClientRequestId string `protobuf:"bytes,21,opt,name=client_request_id,json=clientRequestId,proto3" json:"client_request_id,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -3587,6 +3592,27 @@ func (x *SelectRequest) GetModelCandidates() []string {
 		return x.ModelCandidates
 	}
 	return nil
+}
+
+func (x *SelectRequest) GetUserAgent() string {
+	if x != nil {
+		return x.UserAgent
+	}
+	return ""
+}
+
+func (x *SelectRequest) GetHttpRequestId() string {
+	if x != nil {
+		return x.HttpRequestId
+	}
+	return ""
+}
+
+func (x *SelectRequest) GetClientRequestId() string {
+	if x != nil {
+		return x.ClientRequestId
+	}
+	return ""
 }
 
 type isSelectRequest_Credential interface {
@@ -4556,7 +4582,7 @@ type CyberPolicyHitRequest struct {
 	state       protoimpl.MessageState `protogen:"open.v1"`
 	SelectionId string                 `protobuf:"bytes,1,opt,name=selection_id,json=selectionId,proto3" json:"selection_id,omitempty"`
 	AccountId   int64                  `protobuf:"varint,2,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
-	// 上游标记：message、body（不超过 64 KiB，主节点落库前照单机脱敏）、上游状态码、上游已报的 token。
+	// 上游标记：message、body（单机截到 4 KiB；超过 8 KiB 时主节点截断，落库前照单机脱敏）、上游状态码、上游已报的 token。
 	Message              string `protobuf:"bytes,3,opt,name=message,proto3" json:"message,omitempty"`
 	Body                 string `protobuf:"bytes,4,opt,name=body,proto3" json:"body,omitempty"`
 	UpstreamStatus       int32  `protobuf:"varint,5,opt,name=upstream_status,json=upstreamStatus,proto3" json:"upstream_status,omitempty"`
@@ -6339,7 +6365,7 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x06result\"H\n" +
 	"\tAdmission\x12\x17\n" +
 	"\aapi_key\x18\x01 \x01(\fR\x06apiKey\x12\"\n" +
-	"\fsubscription\x18\x02 \x01(\fR\fsubscription\"\xcc\x05\n" +
+	"\fsubscription\x18\x02 \x01(\fR\fsubscription\"\xbf\x06\n" +
 	"\rSelectRequest\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x18\n" +
@@ -6361,7 +6387,11 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x05cyber\x18\x10 \x01(\v2$.sub2api.relay.v1.CyberSessionLookupR\x05cyber\x12:\n" +
 	"\n" +
 	"held_quota\x18\x11 \x03(\v2\x1b.sub2api.relay.v1.HeldQuotaR\theldQuota\x12)\n" +
-	"\x10model_candidates\x18\x12 \x03(\tR\x0fmodelCandidatesB\f\n" +
+	"\x10model_candidates\x18\x12 \x03(\tR\x0fmodelCandidates\x12\x1d\n" +
+	"\n" +
+	"user_agent\x18\x13 \x01(\tR\tuserAgent\x12&\n" +
+	"\x0fhttp_request_id\x18\x14 \x01(\tR\rhttpRequestId\x12*\n" +
+	"\x11client_request_id\x18\x15 \x01(\tR\x0fclientRequestIdB\f\n" +
 	"\n" +
 	"credential\"\xdf\x01\n" +
 	"\x12CyberSessionLookup\x12!\n" +

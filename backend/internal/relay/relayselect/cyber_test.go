@@ -10,6 +10,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/relay/master"
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 )
@@ -105,4 +106,46 @@ func TestTruncateTextKeepsUTF8(t *testing.T) {
 	require.Equal(t, "ab", truncateText("ab", 4))
 	require.Equal(t, "a", truncateText("a中", 3), "does not cut a character in half")
 	require.Equal(t, "a中", truncateText("a中b", 4))
+}
+
+// cyber 会话屏蔽在选号时命中：主节点记运维日志（单机 writeCyberSessionBlocked 记的那条），请求事实取自选号请求，
+// 归属取自准入的 Key，带上转发的节点。
+func TestCyberSessionBlockedIsLoggedOnTheMaster(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t, config.RunModeSimple, apiKeyAccount(1, "one"))
+	w.sel.findCyberBlocked = func(context.Context, service.CyberSessionLookup) string { return "blocked-key" }
+	type logged struct {
+		key *service.APIKey
+		r   handler.CyberSessionBlockedRequest
+	}
+	var got []logged
+	w.sel.recordCyberBlocked = func(_ context.Context, apiKey *service.APIKey, r handler.CyberSessionBlockedRequest) {
+		got = append(got, logged{key: apiKey, r: r})
+	}
+
+	req := responsesRequest("r1", 1, "sk-a")
+	req.Cyber = &relayv1.CyberSessionLookup{ExplicitKey: "k"}
+	req.Stream, req.UserAgent, req.HttpRequestId, req.ClientRequestId = true, "codex/1.0", "req-node-1", "client-1"
+	resp, err := w.sel.Select(ctx, testNode, req)
+	require.NoError(t, err)
+	require.Equal(t, "blocked-key", resp.GetRejection().GetCyberBlockKey())
+	require.Len(t, got, 1)
+	require.Equal(t, "sk-a", got[0].key.Key)
+	r := got[0].r
+	require.Equal(t, "blocked-key", r.SessionBlockKey)
+	require.Equal(t, "req-node-1", r.RequestID)
+	require.Equal(t, "client-1", r.ClientRequestID)
+	require.Equal(t, "codex/1.0", r.UserAgent)
+	require.Equal(t, "5.6.7.8", r.ClientIP)
+	require.Equal(t, "gpt-5", r.Model)
+	require.Equal(t, "/v1/responses", r.RequestPath)
+	require.Equal(t, handler.EndpointResponses, r.InboundEndpoint)
+	require.True(t, r.Stream)
+	require.Equal(t, testNode, *r.NodeID)
+
+	// 没命中不记。
+	w.sel.findCyberBlocked = func(context.Context, service.CyberSessionLookup) string { return "" }
+	_, err = w.sel.Select(ctx, testNode, responsesRequest("r2", 1, "sk-a"))
+	require.NoError(t, err)
+	require.Len(t, got, 1)
 }

@@ -73,6 +73,8 @@ type selector struct {
 	findCyberBlocked func(ctx context.Context, l service.CyberSessionLookup) string
 	// recordCyber 执行 cyber 命中的记录（默认 handler.CyberPolicyRecorder；测试替换）。
 	recordCyber func(hit handler.CyberPolicyHit, subj handler.CyberPolicySubject, blockScope string, blockKeys []string)
+	// recordCyberBlocked 记 cyber 会话屏蔽拒绝的运维日志（默认 handler.EnqueueCyberSessionBlockedOpsEntry；测试替换）。
+	recordCyberBlocked func(ctx context.Context, apiKey *service.APIKey, r handler.CyberSessionBlockedRequest)
 
 	stopReaper context.CancelFunc
 }
@@ -140,6 +142,9 @@ func newSelector(d Deps, env master.SelectEnv) *selector {
 	recorder := handler.CyberPolicyRecorder{Gateway: d.Gateway, Moderation: d.Moderation, Ops: d.Ops}
 	s.recordCyber = func(hit handler.CyberPolicyHit, subj handler.CyberPolicySubject, blockScope string, blockKeys []string) {
 		recorder.Record(hit, subj, blockScope, blockKeys, nil)
+	}
+	s.recordCyberBlocked = func(ctx context.Context, apiKey *service.APIKey, r handler.CyberSessionBlockedRequest) {
+		handler.EnqueueCyberSessionBlockedOpsEntry(ctx, d.Ops, apiKey, r)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s.stopReaper = cancel

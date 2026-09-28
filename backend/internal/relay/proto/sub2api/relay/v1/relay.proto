@@ -509,6 +509,11 @@ message SelectRequest {
   repeated HeldQuota held_quota = 17;
   // 请求里可能被下游解析到的全部模型名（分组模型白名单逐一检查，规则同 GroupModelAllowlist 中间件）。
   repeated string model_candidates = 18;
+  // 客户端 User-Agent、从节点给这次请求的请求 ID（响应头 X-Request-Id）、客户端带的请求 ID：
+  // 主节点在选号时记运维日志用（如 cyber 会话屏蔽的拒绝）。
+  string user_agent = 19;
+  string http_request_id = 20;
+  string client_request_id = 21;
 }
 
 // cyber 会话屏蔽的查询键（都已哈希）。
