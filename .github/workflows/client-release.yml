@@ -511,12 +511,18 @@ jobs:
           codesign -dv "$app" 2>&1 | grep -E '^(Identifier|Authority|Signature)=' || true
           requirement=$(codesign -d -r- "$app" 2>&1)
           echo "$requirement"
+          # 整段转小写再比：codesign 写的是 H"…"（大写 H），指纹按十六进制也可能大小写不一。
+          # 只认两样——标识符与证书指纹，不依赖 codesign 把它写成 certificate root = 还是 anchor。
           if [ "$HAS_CERT" = "true" ]; then
-            expected=$(openssl x509 -in "$cert" -noout -fingerprint -sha1 | sed 's/.*=//; s/://g' | tr 'A-F' 'a-f')
-            if ! printf '%s' "$requirement" | tr 'A-F' 'a-f' | grep -q "certificate root = h\"$expected\""; then
-              echo "::error::codesign 读出的指定要求里没有 signing-cert.pem 的指纹 $expected"
-              exit 1
-            fi
+            expected=$(openssl x509 -in "$cert" -noout -fingerprint -sha1 | sed 's/.*=//; s/://g' | tr 'A-Z' 'a-z')
+            designated=$(printf '%s' "$requirement" | grep 'designated' | tr 'A-Z' 'a-z')
+            case "$designated" in
+              *'identifier "com.gongfeiai.chatgpt-assistant"'*"h\"$expected\""*) echo "与 signing-cert.pem（$expected）一致" ;;
+              *)
+                echo "::error::codesign 读出的指定要求里没有 com.gongfeiai.chatgpt-assistant 与 signing-cert.pem 的指纹 $expected"
+                exit 1
+                ;;
+            esac
           fi
 
   # -------------------------------------------------------------------
