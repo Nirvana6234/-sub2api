@@ -142,6 +142,17 @@ func TestPawChatServiceRejectsModelOutsideSelectedGroup(t *testing.T) {
 
 	require.Error(t, err)
 	require.Equal(t, "MODEL_UNAVAILABLE", infraerrors.Reason(err))
+	require.Contains(t, infraerrors.Message(err), "自动分组")
+}
+
+// 没填模型是请求本身的问题，换自动分组也解决不了，不该劝用户开自动分组。
+func TestPawChatServiceMissingModelDoesNotRecommendAutoGroup(t *testing.T) {
+	svc := newPawChatTestService(&pawChatKeySourceStub{apiKey: &APIKey{ID: 99, UserID: 42, Status: StatusActive}})
+
+	_, err := svc.PrepareResponses(context.Background(), 42, PawResponsesRequest{GroupID: 7, ModelID: " "})
+
+	require.Equal(t, "MODEL_UNAVAILABLE", infraerrors.Reason(err))
+	require.NotContains(t, infraerrors.Message(err), "自动分组")
 }
 
 func TestPawChatServiceRejectsUnsupportedReasoning(t *testing.T) {

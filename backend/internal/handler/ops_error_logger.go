@@ -1273,6 +1273,7 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 			entry.ClientIP = &clientIP
 		}
 
+		fillOpsUserFromAuthSubject(c, entry)
 		enqueueOpsErrorLog(ops, entry)
 	}
 }
@@ -1389,6 +1390,7 @@ func logOpsRecoveredUpstream(c *gin.Context, ops *service.OpsService, finalStatu
 		entry.ClientIP = &clientIP
 	}
 	applyOpsLatencyFieldsFromContext(c, entry)
+	fillOpsUserFromAuthSubject(c, entry)
 	enqueueOpsErrorLog(ops, entry)
 }
 
@@ -1578,6 +1580,7 @@ func logOpsStreamErrorValue(c *gin.Context, ops *service.OpsService, wireStatus 
 		entry.ClientIP = &clientIP
 	}
 
+	fillOpsUserFromAuthSubject(c, entry)
 	enqueueOpsErrorLog(ops, entry)
 }
 
@@ -2084,6 +2087,32 @@ func inferStreamFailureStatus(_ *gin.Context, parsed parsedOpsError) int {
 // 鉴权早退（分组停用/删除、Key 停用/过期/额度、用户停用、IP 限制等）时，
 // 正式 key 尚未写入，回退到 middleware 写入的 ops fallback key
 // （含 User/Group/Platform），从而让日志能展示 用户/分组/平台。
+// fillOpsUserFromAuthSubject 在记录里还没有用户时，用登录态补上。
+//
+// 桌面端和网页工作台走 /api/v1/paw/*，按登录会话认证：分组校验通过之后才把分组的
+// 内部 key 放进上下文。校验就失败的请求（例如所选模型不在分组里）上下文里没有 key，
+// 后台错误列表的「用户」一栏原来就是空的。
+func fillOpsUserFromAuthSubject(c *gin.Context, entry *service.OpsInsertErrorLogInput) {
+	if c == nil || entry == nil || entry.UserID != nil {
+		return
+	}
+	if subject, ok := middleware2.GetAuthSubjectFromContext(c); ok && subject.UserID > 0 {
+		userID := subject.UserID
+		entry.UserID = &userID
+	}
+}
+
+// SetOpsRequestedModel 记下请求的模型，供后台错误列表显示。给在进入网关 handler
+// 之前就可能失败的入口（/api/v1/paw/*）用；网关 handler 之后会用同样的值覆盖。
+func SetOpsRequestedModel(c *gin.Context, model string) {
+	if c == nil {
+		return
+	}
+	if model = strings.TrimSpace(model); model != "" {
+		c.Set(opsModelKey, model)
+	}
+}
+
 func getOpsAPIKey(c *gin.Context) *service.APIKey {
 	if apiKey, ok := middleware2.GetAPIKeyFromContext(c); ok && apiKey != nil {
 		return apiKey
