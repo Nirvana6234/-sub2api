@@ -140,6 +140,7 @@ jobs:
         run: |
           dotnet publish src/LanAi.RelayClient.App/LanAi.RelayClient.App.csproj `
             -c Release -r win-x64 --self-contained true `
+            -p:IncludeWeChatReader=true `
             -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
             -o "${{ runner.temp }}/pub-win"
 
@@ -168,6 +169,18 @@ jobs:
             exit 1
           fi
 
+      # 「探索」页签及微信消息意图判断依赖这个独立进程。它不能塞进单文件，
+      # 且 App.axaml.cs 会以它是否存在作为功能开关；漏掉它时客户端会静默隐藏
+      # 整个页签，所以发布阶段必须显式拦截。
+      - name: 发布包必须带上 wechat-reader
+        shell: bash
+        run: |
+          if [ ! -f "${{ runner.temp }}/pub-win/wechat-reader/wechat-reader.exe" ]; then
+            echo "::error::win-x64 发布目录里没有 wechat-reader\\wechat-reader.exe，拒绝出包"
+            ls -la "${{ runner.temp }}/pub-win"
+            exit 1
+          fi
+
       # zip 里要放齐用户解压后能直接跑的东西，不只是主 exe：
       # context-filter.exe 是 ExcludeFromSingleFile 的，必须放在它自己的
       # context-filter\ 子目录下（不是跟主 exe 平铺），发布产物已经是这个结构了，
@@ -181,6 +194,7 @@ jobs:
           New-Item -ItemType Directory -Force $staging | Out-Null
           Copy-Item "${{ runner.temp }}/pub-win/LanAi.RelayClient.App.exe" (Join-Path $staging "共飞-ChatGPT助手.exe")
           Copy-Item "${{ runner.temp }}/pub-win/context-filter" (Join-Path $staging "context-filter") -Recurse
+          Copy-Item "${{ runner.temp }}/pub-win/wechat-reader" (Join-Path $staging "wechat-reader") -Recurse
           Copy-Item "${{ runner.temp }}/pub-win/codex-installer" $staging -Recurse
           Copy-Item "注册桌面和开始菜单快捷方式.cmd","删除桌面和开始菜单快捷方式.cmd" $staging
           Compress-Archive -Path (Join-Path $staging "*") `
