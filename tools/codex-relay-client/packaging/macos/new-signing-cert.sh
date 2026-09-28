@@ -80,15 +80,21 @@ subjectKeyIdentifier = hash
 CNF
 
 # 30 年：中途过期就得换证书，而换证书等于让所有用户重新授权。
-openssl req -x509 -newkey rsa:3072 -nodes -sha256 -days 10950   -config cert.cnf -keyout key.pem -out cert.pem 2>/dev/null   || { echo "openssl req 失败" >&2; exit 1; }
+openssl req -x509 -newkey rsa:3072 -nodes -sha256 -days 10950 \
+  -config cert.cnf -keyout key.pem -out cert.pem 2>/dev/null \
+  || { echo "openssl req 失败" >&2; exit 1; }
 
-openssl rand -base64 24 | tr -d '
-' > password
+# 去掉 \r 和 \n：Git Bash 带的 openssl 输出 \r\n 结尾，只删 \n 会把回车留进密码——p12 的真实密码
+# 就多了一个看不见的 \r，而粘贴进 GitHub secret 时它会丢，流水线报「密码错误」。
+openssl rand -base64 24 | tr -d '\r\n' > password
 
 # 3DES + SHA-1 MAC：rcodesign 用的 p12 解析库只认这种老格式，OpenSSL 3 的默认（AES + PBKDF2）它读不了。
-openssl pkcs12 -export -inkey key.pem -in cert.pem   -name "Gongfei AI Code Signing"   -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1   -passout file:password -out signing.p12
+openssl pkcs12 -export -inkey key.pem -in cert.pem \
+  -name "Gongfei AI Code Signing" \
+  -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 \
+  -passout file:password -out signing.p12
 
-openssl base64 -A -in signing.p12 > signing.p12.base64
+openssl base64 -A -in signing.p12 | tr -d '\r\n' > signing.p12.base64
 
 cp signing.p12 "$out/signing.p12"
 cp password "$out/signing.p12.password"

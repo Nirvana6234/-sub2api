@@ -357,11 +357,18 @@ jobs:
               echo "::error::有 MACOS_SIGNING_P12_BASE64 却没有 MACOS_SIGNING_P12_PASSWORD"
               exit 1
             fi
+            # 去掉粘贴时可能带进来的空白：生成的密码与 base64 都不含空白字符，rcodesign 却会把它们当成密码的一部分。
+            password=$(printf '%s' "$P12_PASSWORD" | tr -d ' \t\r\n')
             mkdir -p "$key_dir"
-            printf '%s' "$P12_BASE64" | base64 -d > "$key_dir/signing.p12"
-            printf '%s' "$P12_PASSWORD" > "$key_dir/password"
+            printf '%s' "$P12_BASE64" | tr -d ' \t\r\n' | base64 -d > "$key_dir/signing.p12"
+            printf '%s' "$password" > "$key_dir/password"
             identity=(--p12-file "$key_dir/signing.p12" --p12-password-file "$key_dir/password")
             echo "用固定证书签名"
+            # 先单独签一个，打不开证书时说清楚是哪一项不对（只报长度，不报内容）。
+            if ! rcodesign sign "${identity[@]}" "$app/Contents/MacOS/wechat-reader/wechat-reader"; then
+              echo "::error::签名证书打不开。MACOS_SIGNING_P12_PASSWORD 有 ${#password} 个字符（new-signing-cert.sh 生成的是 32 个），p12 解码后 $(wc -c < "$key_dir/signing.p12") 字节。多半是两个 secret 填反了，或密码与 p12 不是同一次生成的。"
+              exit 1
+            fi
           elif [ "$MUST_USE_CERT" = "true" ]; then
             echo "::error::没有配置 MACOS_SIGNING_P12_BASE64。正式发布必须用固定证书签，否则用户每次升级都要重新授权屏幕录制。见本文件开头与 packaging/macos/new-signing-cert.sh"
             exit 1
