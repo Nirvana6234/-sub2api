@@ -1,5 +1,5 @@
 {
-  "version": "0.8",
+  "version": "0.9",
   "download_page": "/download",
-  "release_notes": "0.8：左侧页签改版（仪表盘 / Codex / Claude / 本地代理 / 账户 / 设置）；新增本地代理，可用自己的 ChatGPT / Claude 订阅账号直连官方。"
+  "release_notes": "0.9：本地代理新增「本机官方账号」，可直接用这台电脑上 Codex / Claude Code 已登录的官方账号直连官方（凭据只在本机使用，不上传中转站）；修复客户端运行期间重新登录 ChatGPT 会丢失新登录的问题。"
 }
