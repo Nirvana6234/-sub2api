@@ -188,7 +188,10 @@ public partial class App : Application
         var localProxyCredentials = new LocalProxyCredentialRouter(
             new LocalProxyCredentialCache(relay, session.GetAccessTokenAsync),
             new LocalCodexAccount(codexConfig, officialTokens),
-            new LocalClaudeAccount(new ClaudeCredentialFile(), officialTokens));
+            // On macOS Claude Code keeps its sign-in in the keychain (read only once the user
+            // switches it on, after one system prompt); elsewhere, and when it fell back to the
+            // file there, .credentials.json.
+            new LocalClaudeAccount(OperatingSystem.IsMacOS() ? new ClaudeKeychainStore(new ClaudeCredentialFile()) : new ClaudeCredentialFile(), officialTokens));
         var localProxyUsage = new LocalProxyUsageStore();
         DashboardViewModel? dashboardForRelay = null;
 

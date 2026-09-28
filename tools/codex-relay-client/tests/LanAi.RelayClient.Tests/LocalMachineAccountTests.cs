@@ -254,11 +254,26 @@ public sealed class LocalClaudeAccountTests
 
         public string? UnsupportedReason { get; set; }
 
+        public bool ReadNeedsConsent { get; set; }
+
+        public bool ReadMayBlock { get; set; }
+
+        public int Reads { get; private set; }
+
         public int Writes { get; private set; }
 
         public Exception? FailWrite { get; set; }
 
-        public string? Read() => Text;
+        public bool Exists() => Text is not null;
+
+        public string? Read()
+        {
+            Reads++;
+            ReadNeedsConsent = false;
+            return Text;
+        }
+
+        public string? ReadCached() => Text;
 
         public void Write(string json)
         {
@@ -294,6 +309,41 @@ public sealed class LocalClaudeAccountTests
         var store = new MemoryClaudeStore { Text = text };
         var refresher = new FakeTokenRefresher();
         return (new LocalClaudeAccount(store, refresher, () => Now), store, refresher);
+    }
+
+    /// <summary>
+    /// The macOS keychain (D10): opening the page only looks; the sign-in is read — and the
+    /// system prompt comes — when the user switches it on, and off the UI thread.
+    /// </summary>
+    [Fact]
+    public async Task ASignInBehindAPromptIsOnlyLookedAtUntilItIsSwitchedOn()
+    {
+        var (account, store, _) = Rig(File(Now.AddHours(8)));
+        store.ReadNeedsConsent = true;
+        store.ReadMayBlock = true;
+
+        LocalMachineAccountStatus before = account.Probe();
+        Assert.True(before.IsUsable);
+        Assert.Equal(LocalClaudeAccount.ConsentDetail, before.Detail);
+        Assert.Equal(0, store.Reads);
+
+        LocalProxyCredential credential = await account.GetAsync(LocalMachineAccounts.ClaudeId, forceRefresh: false, CancellationToken.None);
+        Assert.Equal("claude-access-1", credential.AccessToken);
+        Assert.Equal(1, store.Reads);
+
+        LocalMachineAccountStatus after = account.Probe();
+        Assert.Equal(string.Empty, after.Detail);
+        Assert.Equal(1, store.Reads);
+    }
+
+    [Fact]
+    public void NothingThereBehindAPromptIsNotSignedIn()
+    {
+        var (account, store, _) = Rig(null);
+        store.ReadNeedsConsent = true;
+
+        Assert.Equal(LocalMachineAccountState.NotSignedIn, account.Probe().State);
+        Assert.Equal(0, store.Reads);
     }
 
     [Fact]

@@ -49,6 +49,7 @@ public sealed partial class LocalProxyAccountItem : ObservableObject
         IsHealthy = status.IsUsable;
         StatusText = status.State switch
         {
+            LocalMachineAccountState.SignedIn when status.Detail.Length > 0 => "已登录。" + status.Detail,
             LocalMachineAccountState.SignedIn => "已登录，凭据只在本机使用，不上传中转站",
             LocalMachineAccountState.Unsupported => "暂不支持：" + status.Detail,
             _ => "未登录：" + status.Detail,
@@ -420,8 +421,10 @@ public sealed partial class LocalProxyViewModel : ObservableObject
         ActionMessage = "正在检测能否连上官方服务器…";
         Reachability check = await _reachability.CheckAsync(OfficialEndpoint(item.Kind)).ConfigureAwait(true);
         bool launchesCodex = item.Kind == LocalProxyKind.Codex && LaunchCodex is not null && CodexNeedsLaunch?.Invoke() == true;
+        // A usable local sign-in with something to say first — the macOS keychain prompt that is coming.
+        string notice = item.IsLocal && item.IsUsable && item.Detail.Length > 0 ? "\n\n" + item.Detail : string.Empty;
         bool confirmed = ConfirmEnable is { } confirm
-            ? await confirm(DescribeSwitchOn(item.Kind, check, launchesCodex), check.Reachable ? "开启" : "仍然开启").ConfigureAwait(true)
+            ? await confirm(DescribeSwitchOn(item.Kind, check, launchesCodex) + notice, check.Reachable ? "开启" : "仍然开启").ConfigureAwait(true)
             : check.Reachable;
         if (!confirmed)
         {
