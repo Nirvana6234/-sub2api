@@ -30,4 +30,9 @@ internal interface IDashboardActions
     void OpenContactPage();
 
     void ToggleLocalProxy(LocalProxyAccountItem item);
+
+    /// <summary>Signs in to an official account within the client for a tool, or — with <paramref name="reauthorize"/> — again to that one.</summary>
+    void StartLocalProxySignIn(LanAi.RelayClient.Server.LocalProxyKind kind, LocalProxyAccountItem? reauthorize);
+
+    void RemoveLocalProxyAccount(LocalProxyAccountItem item);
 }

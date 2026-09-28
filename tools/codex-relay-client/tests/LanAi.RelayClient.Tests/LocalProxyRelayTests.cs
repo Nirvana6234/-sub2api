@@ -199,10 +199,10 @@ public sealed class LocalProxyRelayTests
     }
 
     [Fact]
-    public async Task ACredentialTheServerWillNotIssueIsReported()
+    public async Task ACredentialThatCannotBeHadIsReported()
     {
         await using Rig rig = await Rig.StartAsync();
-        rig.Credentials.Fail = new RelayApiException(RelayFailure.Forbidden, "not yours");
+        rig.Credentials.Fail = new LocalProxyCredentialException("登录已失效");
         rig.Relay.SetLocalProxy(LocalProxyKind.Codex, Mine);
 
         using HttpResponseMessage response = await rig.PostAsync("/v1/responses");

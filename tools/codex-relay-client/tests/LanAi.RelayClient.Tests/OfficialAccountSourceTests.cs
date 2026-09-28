@@ -192,12 +192,15 @@ public sealed class OfficialAccountSourceTests : IDisposable
         var (source, store, _) = Create();
         OfficialAccount account = store.Add(ChatGpt(Now.AddHours(1)));
         var router = new LocalProxyCredentialRouter(
-            new LocalProxyCredentialCache(new FakeRelayClient(), _ => Task.FromResult("jwt")),
             new LocalProxyViewModelTests.FakeLocalAccount(LocalProxyKind.Codex),
             new LocalProxyViewModelTests.FakeLocalAccount(LocalProxyKind.ClaudeCode),
             source);
 
         Assert.Equal("at-rt-1", (await router.GetAsync(account.Id, false, CancellationToken.None)).AccessToken);
+
+        // A relay-server account id, saved by an older client, is refused in words.
+        var retired = await Assert.ThrowsAsync<LocalProxyCredentialException>(() => router.GetAsync(7, false, CancellationToken.None));
+        Assert.Contains("不再使用中转站上的账号", retired.UserMessage, StringComparison.Ordinal);
     }
 
     [Fact]

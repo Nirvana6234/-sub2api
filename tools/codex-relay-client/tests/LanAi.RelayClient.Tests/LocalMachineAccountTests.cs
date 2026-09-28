@@ -514,52 +514,45 @@ public sealed class OfficialTokenRefresherTests
     }
 }
 
-/// <summary>One credential source: relay accounts by id, this machine's sign-ins by their reserved ids.</summary>
+/// <summary>One credential source: this machine's sign-ins by their reserved ids; relay accounts are refused.</summary>
 public sealed class LocalProxyCredentialRouterTests
 {
     private sealed class Source(string label, LocalProxyKind kind = LocalProxyKind.Codex) : ILocalMachineAccount
     {
-        public List<long> Asked { get; } = [];
-
         public int Cleared { get; private set; }
 
         public LocalProxyKind Kind => kind;
 
         public LocalMachineAccountStatus Probe() => new(LocalMachineAccountState.SignedIn, label, string.Empty);
 
-        public Task<LocalProxyCredential> GetAsync(long accountId, bool forceRefresh, CancellationToken cancellationToken)
-        {
-            Asked.Add(accountId);
-            return Task.FromResult(new LocalProxyCredential(accountId: accountId, accessToken: label));
-        }
+        public Task<LocalProxyCredential> GetAsync(long accountId, bool forceRefresh, CancellationToken cancellationToken) =>
+            Task.FromResult(new LocalProxyCredential(accountId: accountId, accessToken: label));
 
         public void Clear() => Cleared++;
     }
 
     [Fact]
-    public async Task EachIdGoesToItsOwnSource()
+    public async Task EachIdGoesToItsOwnSourceAndARelayAccountIsRefused()
     {
-        var relay = new Source("relay");
         var codex = new Source("codex");
         var claude = new Source("claude", LocalProxyKind.ClaudeCode);
-        var router = new LocalProxyCredentialRouter(relay, codex, claude);
+        var router = new LocalProxyCredentialRouter(codex, claude);
 
-        Assert.Equal("relay", (await router.GetAsync(7, false, CancellationToken.None)).AccessToken);
         Assert.Equal("codex", (await router.GetAsync(LocalMachineAccounts.CodexId, false, CancellationToken.None)).AccessToken);
         Assert.Equal("claude", (await router.GetAsync(LocalMachineAccounts.ClaudeId, false, CancellationToken.None)).AccessToken);
         Assert.Same(claude, router.LocalFor(LocalProxyKind.ClaudeCode));
+        await Assert.ThrowsAsync<LocalProxyCredentialException>(() => router.GetAsync(7, false, CancellationToken.None));
+        await Assert.ThrowsAsync<LocalProxyCredentialException>(() => router.GetAsync(OfficialAccountIds.First, false, CancellationToken.None));
     }
 
     [Fact]
     public void SigningOutOfTheRelayLeavesThisMachinesSignInsAlone()
     {
-        var relay = new Source("relay");
         var codex = new Source("codex");
         var claude = new Source("claude", LocalProxyKind.ClaudeCode);
 
-        new LocalProxyCredentialRouter(relay, codex, claude).Clear();
+        new LocalProxyCredentialRouter(codex, claude).Clear();
 
-        Assert.Equal(1, relay.Cleared);
         Assert.Equal(0, codex.Cleared);
         Assert.Equal(0, claude.Cleared);
     }

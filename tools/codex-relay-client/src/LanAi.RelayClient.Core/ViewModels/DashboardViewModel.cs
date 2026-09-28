@@ -145,7 +145,9 @@ public sealed partial class DashboardViewModel : ObservableObject
         ILocalProxyCredentialSource? localProxyCredentials = null,
         ILocalProxyPreferenceStore? localProxyPreferences = null,
         ILocalProxyUsageStore? localProxyUsage = null,
-        IOfficialReachability? localProxyReachability = null)
+        IOfficialReachability? localProxyReachability = null,
+        Func<LocalProxyKind, OfficialSignInSession>? localOfficialSignIn = null,
+        Func<Uri, bool>? openUrl = null)
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
         _session = session ?? throw new ArgumentNullException(nameof(session));
@@ -172,14 +174,12 @@ public sealed partial class DashboardViewModel : ObservableObject
             ClaudePreference,
             _safeAsync);
         // The credential source must be the very instance the relay reads from, so a token
-        // checked on switch-on is the one the next turn uses; the host passes it in. When it
-        // routes to this machine's own sign-ins too, the page lists them.
+        // checked on switch-on is the one the next turn uses; the host passes it in. The page
+        // lists what it routes to: this machine's own sign-ins, and the client's own.
         var localRouter = localProxyCredentials as LocalProxyCredentialRouter;
         LocalProxy = new LocalProxyViewModel(
-            _client,
-            RefreshState,
             _codex,
-            localProxyCredentials ?? new LocalProxyCredentialCache(_client, _session.GetAccessTokenAsync),
+            localProxyCredentials ?? NoLocalProxyAccounts.Instance,
             localProxyPreferences ?? new LocalProxyPreferenceStore(),
             localProxyUsage ?? new LocalProxyUsageStore(),
             ClaudeCode,
@@ -187,7 +187,14 @@ public sealed partial class DashboardViewModel : ObservableObject
             () => IsClaudeGroup,
             reachability: localProxyReachability,
             localCodex: localRouter?.LocalCodex,
-            localClaude: localRouter?.LocalClaude);
+            localClaude: localRouter?.LocalClaude,
+            officialAccounts: localRouter?.Official?.Store,
+            // The client's own official accounts belong to the 共飞 user signed in (D5).
+            officialScope: () => _session.IsSignedIn
+                ? LanAi.RelayClient.WeChatIntent.JevApiKeyStore.ScopeFor(ClientOptions.ServerAddress, _session.UserEmail)
+                : null,
+            startSignIn: localOfficialSignIn,
+            openUrl: openUrl);
         // Switching Codex onto a local proxy starts ChatGPT when it is not running yet. Only
         // a plain start: a ChatGPT that would need restarting is never restarted from here.
         LocalProxy.CodexNeedsLaunch = () =>

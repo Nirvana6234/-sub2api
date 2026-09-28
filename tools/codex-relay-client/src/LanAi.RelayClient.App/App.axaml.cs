@@ -179,19 +179,20 @@ public partial class App : Application
         var contextFilterUsage = new ContextFilterUsageStore();
 
         // Local proxy: one credential source for the relay and the page alike, so the token
-        // checked when the user switches it on is the one the next turn uses — the user's
-        // accounts on the relay, and this machine's own Codex and Claude Code sign-ins (read
-        // and refreshed here, never sent to the relay server). The relay reports from its own
-        // threads; the page is told on the UI thread. The dashboard does not exist yet, so the
-        // callbacks reach it through this variable.
+        // checked when the user switches it on is the one the next turn uses — this machine's
+        // own Codex and Claude Code sign-ins, and the official accounts signed in within the
+        // client (read, refreshed and kept here, encrypted, never sent to the relay server).
+        // The relay reports from its own threads; the page is told on the UI thread. The
+        // dashboard does not exist yet, so the callbacks reach it through this variable.
         var officialTokens = new OfficialTokenRefresher();
+        var officialAccounts = new OfficialAccountStore(SecureStorage.CreateSnapshotProtector());
         var localProxyCredentials = new LocalProxyCredentialRouter(
-            new LocalProxyCredentialCache(relay, session.GetAccessTokenAsync),
             new LocalCodexAccount(codexConfig, officialTokens),
             // On macOS Claude Code keeps its sign-in in the keychain (read only once the user
             // switches it on, after one system prompt); elsewhere, and when it fell back to the
             // file there, .credentials.json.
-            new LocalClaudeAccount(OperatingSystem.IsMacOS() ? new ClaudeKeychainStore(new ClaudeCredentialFile()) : new ClaudeCredentialFile(), officialTokens));
+            new LocalClaudeAccount(OperatingSystem.IsMacOS() ? new ClaudeKeychainStore(new ClaudeCredentialFile()) : new ClaudeCredentialFile(), officialTokens),
+            new OfficialAccountSource(officialAccounts, officialTokens));
         var localProxyUsage = new LocalProxyUsageStore();
         DashboardViewModel? dashboardForRelay = null;
 
@@ -344,6 +345,8 @@ public partial class App : Application
         // a reminder to keep the proxy/VPN on: the official hosts are often reachable only through one.
         dashboard.LocalProxy.ConfirmEnable = (message, confirmLabel) =>
             ConfirmDialog.AskAsync(shell, message, confirmLabel: confirmLabel);
+        // The client's own accounts change from the relay's threads too (a refresh marking one gone).
+        dashboard.LocalProxy.Post = action => Avalonia.Threading.Dispatcher.UIThread.Post(action);
 
         // A local proxy that fails is only ever reported, never rerouted; this is the report.
         dashboard.LocalProxy.FailureRaised += message => _notifications?.Show(new NotificationRequest(

@@ -64,6 +64,27 @@ public sealed class OfficialSignInTests
 
     private static OfficialSignInEndpoints Endpoints(int port = 1455) => OfficialSignInEndpoints.Official with { OpenAiCallbackPort = port };
 
+    /// <summary>
+    /// A ChatGPT sign-in listening on a free port. Tests run in parallel: a port found free can be
+    /// taken by another test before the session listens on it, and the session then (rightly)
+    /// falls back to pasting — so another port is tried.
+    /// </summary>
+    private static (OfficialSignInSession Session, int Port) StartListening(Handler server)
+    {
+        for (int attempt = 0; ; attempt++)
+        {
+            int port = LoopbackHttpListener.ProbeFreePort();
+            OfficialSignInSession session = OfficialSignInSession.Start(
+                LocalProxyKind.Codex, new OfficialTokenExchanger(Endpoints(port), _ => server, () => Now));
+            if (session.IsAutomatic || attempt >= 10)
+            {
+                return (session, port);
+            }
+
+            session.Dispose();
+        }
+    }
+
     [Fact]
     public void TheChatGptLinkIsTheOneTheRelayServerBuilds()
     {
@@ -217,10 +238,9 @@ public sealed class OfficialSignInTests
     [Fact]
     public async Task TheBrowserComingBackToLocalhostFinishesTheChatGptSignIn()
     {
-        int port = LoopbackHttpListener.ProbeFreePort();
         Handler server = OpenAiServer();
-        using OfficialSignInSession session = OfficialSignInSession.Start(
-            LocalProxyKind.Codex, new OfficialTokenExchanger(Endpoints(port), _ => server, () => Now));
+        (OfficialSignInSession started, int port) = StartListening(server);
+        using OfficialSignInSession session = started;
         Assert.True(session.IsAutomatic);
         string state = OfficialAuthorization.ParseQuery(session.AuthorizeUrl.Query.TrimStart('?'))["state"];
 
@@ -278,9 +298,9 @@ public sealed class OfficialSignInTests
     [Fact]
     public async Task DecliningInTheBrowserAndCancellingEndTheSignInInWords()
     {
-        int port = LoopbackHttpListener.ProbeFreePort();
-        using OfficialSignInSession declined = OfficialSignInSession.Start(
-            LocalProxyKind.Codex, new OfficialTokenExchanger(Endpoints(port), _ => OpenAiServer(), () => Now));
+        (OfficialSignInSession listening, int port) = StartListening(OpenAiServer());
+        using OfficialSignInSession declined = listening;
+        Assert.True(declined.IsAutomatic);
         string state = OfficialAuthorization.ParseQuery(declined.AuthorizeUrl.Query.TrimStart('?'))["state"];
         using (var browser = new HttpClient())
         {

@@ -225,6 +225,12 @@ public partial class DashboardView : UserControl, IDashboardActions
     void IDashboardActions.ToggleLocalProxy(LocalProxyAccountItem item) =>
         _ = _safeAsync?.RunAsync(() => _page?.Dashboard.LocalProxy.ToggleAsync(item) ?? Task.CompletedTask);
 
+    void IDashboardActions.StartLocalProxySignIn(LanAi.RelayClient.Server.LocalProxyKind kind, LocalProxyAccountItem? reauthorize) =>
+        _ = _safeAsync?.RunAsync(() => _page?.Dashboard.LocalProxy.StartSignInAsync(kind, reauthorize) ?? Task.CompletedTask);
+
+    void IDashboardActions.RemoveLocalProxyAccount(LocalProxyAccountItem item) =>
+        _ = _safeAsync?.RunAsync(() => _page?.Dashboard.LocalProxy.RemoveAsync(item) ?? Task.CompletedTask);
+
     /// <summary>Starts the polling loops and does the first refresh.</summary>
     /// <remarks>
     /// Idempotent, and deliberately so. Restoring a saved session raises

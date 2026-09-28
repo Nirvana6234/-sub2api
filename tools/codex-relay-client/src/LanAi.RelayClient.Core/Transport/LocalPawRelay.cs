@@ -926,20 +926,12 @@ internal sealed class LocalPawRelay : IAsyncDisposable
                         .GetAsync(target.AccountId, forceRefresh: tokenRetried, cancellationToken)
                         .ConfigureAwait(false);
                 }
-                catch (RelayApiException ex)
-                {
-                    ClientLog.Warning($"取本地代理凭据失败（账号 {target.AccountId}）", ex);
-                    Report(kind, target, false, "无法从中转站取得该账号的授权：" + ex.UserMessage);
-                    await WriteErrorAsync(context, 502, "local proxy: could not obtain the account's token", protocol)
-                        .ConfigureAwait(false);
-                    return true;
-                }
                 catch (LocalProxyCredentialException ex)
                 {
-                    // This machine's own sign-in: the message already says what to do.
-                    ClientLog.Warning($"取本机官方账号凭据失败（{label}）：{ex.UserMessage}");
+                    // The source's own words: they already say what to do.
+                    ClientLog.Warning($"取本地代理凭据失败（{label}）：{ex.UserMessage}");
                     Report(kind, target, false, ex.UserMessage);
-                    await WriteErrorAsync(context, 502, "local proxy: this machine's sign-in is not usable", protocol)
+                    await WriteErrorAsync(context, 502, "local proxy: the account's sign-in is not usable", protocol)
                         .ConfigureAwait(false);
                     return true;
                 }
