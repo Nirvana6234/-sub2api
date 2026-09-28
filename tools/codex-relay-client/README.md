@@ -144,6 +144,8 @@ python packaging/check-server-address.py --channel production <临时目录>/Lan
 
 macOS 包用一张固定的自签名证书签名，好让「屏幕录制」、钥匙串授权随升级保留（ad-hoc 签名每个版本身份都不同，每次升级都要重新授权）。证书由 `packaging/macos/new-signing-cert.sh` 一次性生成：公开证书 `packaging/macos/signing-cert.pem` 提交在仓库里，私钥以 p12 存在 GitHub secret `MACOS_SIGNING_P12_BASE64` / `MACOS_SIGNING_P12_PASSWORD`。流水线签完核对主程序的指定要求带着这张证书的指纹，再由 `mac-verify` 任务在 macOS 上用 `codesign` 验一遍，才建 Release。**不要重新生成证书**：换证书等于让所有用户再授权一次。
 
+macOS 包是**单文件发布**（`-p:PublishSingleFile=true -p:DebugType=none`，原生 .dylib 单独放、不自解压）：`Contents/MacOS` 里只能放可执行代码，不打包时那一堆 .dll / .json 会被 rcodesign 跳过、不进签名，macOS 上 `codesign` 就拒绝整个 .app。`build-app.py` 组装时核对 `Contents/MacOS` 里只有 Mach-O，签名步骤也会检查 rcodesign 日志。
+
 之前 `packaging/publish-windows.ps1` 想省掉这几步，但发布的是早已不出货的 WPF 头，已删除。**不要再写第二个打包脚本**：本地要自动化就直接照上面几行封一个函数，别让它跟 CI 的步骤分叉。
 
 ## 历史会话归属

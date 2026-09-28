@@ -78,8 +78,11 @@
 
   <!-- The bundled 759 MB msix is gone: CodexInstaller downloads on demand, and this
        directory is the manual drop point for an offline machine. The
-       README is both the guidance for that step and what makes the directory exist. -->
-  <ItemGroup>
+       README is both the guidance for that step and what makes the directory exist.
+       Windows only (the msix is): in the .app it would be a text file in Contents/MacOS, which
+       can hold only code — rcodesign leaves such a file out of the seal and codesign then rejects
+       the whole bundle. -->
+  <ItemGroup Condition="!$(RuntimeIdentifier.StartsWith('osx'))">
     <Content Include="..\..\codex-installer\README.txt">
       <Link>codex-installer\%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

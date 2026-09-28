@@ -279,10 +279,16 @@ jobs:
           name: wechat-reader-mac
           path: ${{ runner.temp }}/wechat-reader-mac
 
+      # 单文件发布：Contents/MacOS 在苹果那里只能放可执行代码（Mach-O）。不打包时那一堆 .dll /
+      # .json / .pdb 都在这里，rcodesign 不把它们封进签名，macOS 上 codesign 就拒绝整个 .app。
+      # 原生库（.dylib）照旧单独放，它们是 Mach-O，逐个签名；**不要**加
+      # IncludeNativeLibrariesForSelfExtract——那会让它们运行时解压到临时目录、落在签名之外。
+      # build-app.py 组装时会核对 Contents/MacOS 里只有 Mach-O。
       - name: 发布 osx-arm64
         run: |
           dotnet publish src/LanAi.RelayClient.App/LanAi.RelayClient.App.csproj `
             -c Release -r osx-arm64 --self-contained true `
+            -p:PublishSingleFile=true -p:DebugType=none `
             -p:IncludeWeChatReader=true `
             -p:WeChatReaderMacBinary="${{ runner.temp }}/wechat-reader-mac/wechat-reader" `
             -p:ContextFilterMacBinary="${{ runner.temp }}/wechat-reader-mac/context-filter" `
@@ -375,9 +381,18 @@ jobs:
           else
             echo "::warning::没有配置签名证书，这个包是 ad-hoc 签名：装它的机器升级后要重新授权屏幕录制。只用于测试。"
           fi
-          rcodesign sign "${identity[@]}" "$app/Contents/MacOS/wechat-reader/wechat-reader"
-          rcodesign sign "${identity[@]}" "$app/Contents/MacOS/context-filter/context-filter"
-          rcodesign sign "${identity[@]}" "$app"
+          # rcodesign 遇到 Contents/MacOS 下不是 Mach-O 的文件只在日志里报错、退出码仍是 0，那个文件就
+          # 不在签名里，macOS 上 codesign 会拒绝整个 .app。所以看日志，不只看退出码。
+          log="$RUNNER_TEMP/rcodesign.log"
+          : > "$log"
+          rcodesign sign "${identity[@]}" "$app/Contents/MacOS/wechat-reader/wechat-reader" 2>&1 | tee -a "$log"
+          rcodesign sign "${identity[@]}" "$app/Contents/MacOS/context-filter/context-filter" 2>&1 | tee -a "$log"
+          rcodesign sign "${identity[@]}" "$app" 2>&1 | tee -a "$log"
+          if grep -q "non Mach-O file with a nested rule" "$log"; then
+            echo "::error::rcodesign 跳过了 Contents/MacOS 下不是可执行文件的内容，这些文件不在签名里："
+            grep "non Mach-O file with a nested rule" "$log"
+            exit 1
+          fi
 
       # 漏签的产物在 CI 里完全看不出来，只有到用户的机器上才会被内核杀掉。
       # 因此签完必须回头验一次，而不是相信上一步的退出码。
@@ -395,6 +410,12 @@ jobs:
             || { echo "::error::微信读屏组件没有可读的签名"; exit 1; }
           rcodesign print-signature-info "$app/Contents/MacOS/context-filter/context-filter" \
             || { echo "::error::context-filter 没有可读的签名"; exit 1; }
+          # 单文件包是主程序后面接着程序集。签名若把尾部截掉，codesign 照样通过，程序却一启动就报
+          # 找不到程序集——所以回头确认程序集清单还在（清单里的名字是 UTF-8）。
+          if ! grep -q "LanAi.RelayClient.Core.dll" "$app/Contents/MacOS/LanAi.RelayClient.App"; then
+            echo "::error::签名后的主程序里找不到打包进去的程序集，单文件的内容被截掉了"
+            exit 1
+          fi
 
       # 授权能不能随升级保留，全看主程序的指定要求：必须是 Bundle ID + 仓库里那张证书的指纹。
       # 指纹不对（secret 换成了别的证书）或退回了 cdhash（没用上证书），用户升级后都会被要求重新授权，

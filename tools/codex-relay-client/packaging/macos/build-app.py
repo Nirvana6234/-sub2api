@@ -59,6 +59,13 @@ VERSION_MANIFEST = REPO_ROOT / "frontend" / "public" / "client-version.json"
 # Files that must be executable inside the bundle. Everything else is 0644.
 EXECUTABLE_SUFFIXES = {".dylib", ".so"}
 
+# First four bytes of a Mach-O file: thin 32/64-bit (either byte order) and fat/fat64.
+MACHO_MAGICS = {
+    bytes.fromhex("cffaedfe"), bytes.fromhex("feedfacf"),
+    bytes.fromhex("cefaedfe"), bytes.fromhex("feedface"),
+    bytes.fromhex("cafebabe"), bytes.fromhex("cafebabf"),
+}
+
 # Helper executables with no suffix, found anywhere under Contents/MacOS. wechat-reader is the Swift
 # screen reader for 微信消息意图判断, present only in packages built with -p:IncludeWeChatReader=true;
 # without the bit the client finds it but cannot start it.
@@ -126,6 +133,8 @@ def assemble(publish_dir, out_dir, version):
         else:
             shutil.copy2(item, macos / item.name)
 
+    check_only_code_in_macos(macos)
+
     plist_text = (HERE / "Info.plist").read_text(encoding="utf-8")
     plist_text = plist_text.replace("__VERSION__", version)
     (contents / "Info.plist").write_text(plist_text, encoding="utf-8")
@@ -150,6 +159,30 @@ def assemble(publish_dir, out_dir, version):
 
     print(f"  assembled {app.name} (executable: {executable})")
     return app, executable
+
+
+def check_only_code_in_macos(macos):
+    """Refuses a bundle with anything but Mach-O files under Contents/MacOS.
+
+    Apple treats everything there as nested code. rcodesign skips a non-Mach-O file there with
+    an error in its log and still exits 0, so the file is left out of CodeResources, and
+    `codesign --verify` on a Mac then rejects the whole bundle ("file added"). That is what an
+    unbundled .NET publish looks like (every .dll, .json and .pdb), hence the osx publish is
+    single-file. Checked here, where the layout is decided, and not first on a Mac.
+    """
+    offenders = []
+    for path in sorted(macos.rglob("*")):
+        if path.is_file():
+            with open(path, "rb") as handle:
+                if handle.read(4) not in MACHO_MAGICS:
+                    offenders.append(path.relative_to(macos).as_posix())
+    if offenders:
+        listing = "\n".join(f"  {name}" for name in offenders)
+        raise SystemExit(
+            "Contents/MacOS may hold only Mach-O files; these are not:\n"
+            f"{listing}\n"
+            "  Publish osx with -p:PublishSingleFile=true -p:DebugType=none (see client-release.yml),\n"
+            "  and keep non-code content out of the publish directory for osx.")
 
 
 def is_signed(app):
