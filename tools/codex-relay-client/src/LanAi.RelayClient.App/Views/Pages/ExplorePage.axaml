@@ -63,7 +63,7 @@
             </StackPanel>
           </Grid>
           <TextBlock Classes="hint" Margin="0,6,0,0" TextWrapping="Wrap"
-                     Text="每次判断从共飞余额按次扣费，按分组倍率计算。消息文字经共飞服务器转给 TypeSafe 的 Jev 模型，服务器不保存。" />
+                     Text="每次判断从共飞余额扣费，按分组价格和倍率计算。消息文字经共飞服务器转给 TypeSafe 的 Jev 模型，服务器不保存。" />
           <TextBlock Text="当前使用本地直连（见下方测试卡片）" Classes="danger" Margin="0,4,0,0" IsVisible="{Binding UseOwnKey}" />
 
           <StackPanel IsVisible="{Binding IsEnabled}">

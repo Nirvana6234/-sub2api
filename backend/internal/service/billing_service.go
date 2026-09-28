@@ -915,11 +915,33 @@ func (s *BillingService) initFallbackPricing() {
 		LongContextInputMultiplier:    2,
 		LongContextOutputMultiplier:   2,
 	}
+
+	// TypeSafe Jev（意图判断，POST /v1/systemone）：官方价只收输入 $0.042/MTok，输出免费。
+	// LiteLLM 价格表没有 Jev；分组或渠道显式定价优先于这里。
+	s.fallbackPrices[typeSafeJevFallbackPricingKey] = &ModelPricing{
+		InputPricePerToken:     0.042e-6,
+		OutputPricePerToken:    0,
+		SupportsCacheBreakdown: false,
+	}
+}
+
+// typeSafeJevFallbackPricingKey 是 Jev 全系列共用的兜底价条目。
+const typeSafeJevFallbackPricingKey = "jev"
+
+// IsTypeSafeJevModel 报告模型名是否属于 TypeSafe Jev 系列（jev-1.13.0、jev-latest、jev-preview 等）。
+// 只认 "jev" 本身或 "jev-" 前缀，避免把名字里碰巧含 jev 的其他模型算进来。
+func IsTypeSafeJevModel(model string) bool {
+	m := strings.ToLower(strings.TrimSpace(model))
+	return m == "jev" || strings.HasPrefix(m, "jev-")
 }
 
 // getFallbackPricing 根据模型系列获取回退价格
 func (s *BillingService) getFallbackPricing(model string) *ModelPricing {
 	modelLower := strings.ToLower(model)
+
+	if IsTypeSafeJevModel(modelLower) {
+		return s.fallbackPrices[typeSafeJevFallbackPricingKey]
+	}
 
 	// 按模型系列匹配
 	if isClaudeFable51Model(modelLower) {

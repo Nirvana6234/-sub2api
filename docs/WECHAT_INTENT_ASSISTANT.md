@@ -561,15 +561,15 @@ internal interface IJevClient
 ### 7.5 计费：没配价格就拒绝
 
 - 已核实：两条网关在找不到模型价格时都按 0 元记账。OpenAI 这条见 `openai_gateway_usage.go` 里的 `pricing_missing_record_zero_cost`；Anthropic 这条见 `gateway_usage_billing.go`，注释写明「所有候选都无价时…走既有的 warn + 零成本路径」。**这条新接口不能沿用这个行为**，否则就是免费用。
-- 价格从哪里来：LiteLLM 的动态价格表里不会有 Jev。**由管理员在渠道定价（`ChannelModelPricing`，平台选 typesafe）里配置**，`jev-1.13.0` 和 `jev-latest` 两个名字都要配。不写进硬编码的兜底价格表，避免价格被悄悄定死。
+- 价格从哪里来：LiteLLM 的动态价格表里不会有 Jev。**优先用管理员在分组定价或渠道定价（`ChannelModelPricing`，平台选 typesafe）里配置的价格**；都没配时，`jev-*` 全系列按内置官方价计费（`BillingService` 兜底价表的 `jev` 条目：输入 $0.042/MTok，输出免费，分组倍率照常生效）。2026-09-28 起改为内置兜底：此前「只认显式定价」导致没配价格的 Jev 分组一律 503，客户端无法使用。
 - 上游官方价格：只收输入，$0.042 / 百万 token，输出免费。实测每次约 1130 个输入 token，**上游成本约 $0.00005/次**。
 - 渠道定价支持两种计费方式（`BillingModeToken` 和 `BillingModePerRequest`），**建议按次计费**：
   - 按 token 计费的话，每次只扣几万分之一美元，用户在账单上几乎看不到数字，对账也不直观。
   - 按次计费的话，单价由我们定，例如每次 $0.0005（上游成本的 10 倍），用户看得懂，「今日次数与花费」也好算。
   - 如果坚持按 token 计费：输入单价按上游价乘倍率，输出单价填 0，和上游口径一致。
-- 转发前调用 `GatewayService.HasTypeSafePricing(ctx, model, apiKey)`，它只认 `resolveChannelPricing`（分组或渠道显式定价，按次和按 token 都算），**不认全局价格表**：全局表按名字子串猜的兜底价不能用在 Jev 上。返回 false 就直接返回 503「Jev 价格未配置」，不转发。
+- 转发前调用 `GatewayService.HasTypeSafePricing(ctx, model, apiKey)`：先认 `resolveChannelPricing`（分组或渠道显式定价，按次和按 token 都算），再认 `jev-*` 的内置官方价；**其他名字的全局兜底价一律不认**（全局表按名字子串猜的价格不能用在 Jev 分组上）。返回 false 就直接返回 503「Jev 价格未配置」，不转发。
   - 已核实分组是怎么传进来的：渠道定价由 `resolveChannelPricing` 按 `apiKey.Group` 解析，`apiKey.Group` 为空时直接返回 nil。小白端内部 key 本身不带分组，`PrepareMessages` 返回的是 `clonePawAPIKeyWithGroup` 生成的、带上请求头里那个分组的副本，所以检查能拿到分组。
-  - **管理员要把配了 Jev 价格的渠道关联到 typesafe 分组**，光在渠道里填价格不够。后台配置说明里写明这一步。
+  - 想按次收费或加价时，**管理员要把配了 Jev 价格的渠道关联到 typesafe 分组**（或直接在分组定价里配），光在渠道里填价格不够。
   - 已核实：按次计费经 `CalculateTokenCostForRequest` 进入 `CalculateCostUnified`，`BillingModePerRequest` 按 `RequestCount = 1` 计价。
 - 小白端这条路径没有用户自己的 API Key，`apiKey` 用现有小白端接口替换进去的服务端内部 key，和 `/paw/messages` 的做法一致。
 

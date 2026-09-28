@@ -1047,7 +1047,7 @@ public sealed partial class WeChatIntentViewModel : ObservableObject, IDisposabl
         WeChatIntentUsageStore.Totals today = _usage.Today();
         double usd = today.InputTokens * WeChatIntentUsageStore.UsdPerInputToken;
         TodayText = UseRelayGroup
-            ? $"今日 {today.Count} 次（共飞分组按次从余额扣费，明细见账户用量）"
+            ? $"今日 {today.Count} 次（共飞分组从余额扣费，明细见账户用量）"
             : $"今日 {today.Count} 次 · 约 ${usd:0.0000}（按官方价估算，以 TypeSafe 账单为准）";
     }
 

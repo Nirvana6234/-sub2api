@@ -163,8 +163,9 @@ func TestTypeSafeSystemOneURL(t *testing.T) {
 	}
 }
 
-// 没配价格就不转发：只认分组或渠道的显式定价（按次和按 token 都算），不认全局价格表。
-func TestHasTypeSafePricingRequiresExplicitPricing(t *testing.T) {
+// 显式定价（分组或渠道，按次和按 token 都算）优先；没配时 jev-* 用内置官方价，
+// 其他名字即使全局价格表能猜出价格也不转发。
+func TestHasTypeSafePricingExplicitOrBuiltinJev(t *testing.T) {
 	price := 0.0005
 	repo := &typeSafeChannelRepoStub{channels: []Channel{{
 		ID: 1, Name: "jev", Status: StatusActive, GroupIDs: []int64{100},
@@ -181,9 +182,12 @@ func TestHasTypeSafePricingRequiresExplicitPricing(t *testing.T) {
 	ctx := context.Background()
 
 	require.True(t, svc.HasTypeSafePricing(ctx, "jev-1.13.0", apiKey))
-	require.False(t, svc.HasTypeSafePricing(ctx, "jev-latest", apiKey), "each name needs its own price")
-	require.False(t, svc.HasTypeSafePricing(ctx, "jev-1.13.0", &APIKey{}), "no group, no channel pricing")
+	require.True(t, svc.HasTypeSafePricing(ctx, "jev-latest", apiKey), "no explicit price: builtin Jev price")
+	require.True(t, svc.HasTypeSafePricing(ctx, "JEV-Preview", apiKey), "builtin price covers the whole jev- family")
+	require.False(t, svc.HasTypeSafePricing(ctx, "gpt-5.4", apiKey), "non-Jev names never use the global fallback")
+	require.False(t, svc.HasTypeSafePricing(ctx, "claude-jev", apiKey))
 	require.False(t, svc.HasTypeSafePricing(ctx, "", apiKey))
+	require.False(t, (&GatewayService{resolver: resolver}).HasTypeSafePricing(ctx, "jev-latest", apiKey), "no billing service, no builtin price")
 
 	// 按次计费经 token 计价入口按一次收费。
 	gid := group.ID
@@ -195,6 +199,18 @@ func TestHasTypeSafePricingRequiresExplicitPricing(t *testing.T) {
 	require.NoError(t, err)
 	require.InDelta(t, 0.0005, cost.TotalCost, 1e-12)
 	require.InDelta(t, 0.001, cost.ActualCost, 1e-12)
+
+	// 没配显式价格的 jev-latest 按内置官方价：输入 $0.042/MTok，输出免费，倍率照常生效。
+	resolved = resolver.Resolve(ctx, PricingInput{Model: "jev-latest", GroupID: &gid, Group: group})
+	require.NotNil(t, resolved.BasePricing)
+	require.InDelta(t, 0.042e-6, resolved.BasePricing.InputPricePerToken, 1e-18)
+	cost, err = bs.CalculateTokenCostForRequest(TokenCostRequest{
+		Ctx: ctx, Model: "jev-latest", Group: group, Tokens: UsageTokens{InputTokens: 1130, OutputTokens: 500}, RateMultiplier: 2,
+		Resolver: resolver, Resolved: resolved,
+	})
+	require.NoError(t, err)
+	require.InDelta(t, 1130*0.042e-6, cost.TotalCost, 1e-12)
+	require.InDelta(t, 2*1130*0.042e-6, cost.ActualCost, 1e-12)
 }
 
 func TestModelVendorPlatformRecognisesJev(t *testing.T) {
