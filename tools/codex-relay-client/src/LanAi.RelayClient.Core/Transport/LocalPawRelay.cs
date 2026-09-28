@@ -934,6 +934,15 @@ internal sealed class LocalPawRelay : IAsyncDisposable
                         .ConfigureAwait(false);
                     return true;
                 }
+                catch (LocalProxyCredentialException ex)
+                {
+                    // This machine's own sign-in: the message already says what to do.
+                    ClientLog.Warning($"取本机官方账号凭据失败（{label}）：{ex.UserMessage}");
+                    Report(kind, target, false, ex.UserMessage);
+                    await WriteErrorAsync(context, 502, "local proxy: this machine's sign-in is not usable", protocol)
+                        .ConfigureAwait(false);
+                    return true;
+                }
 
                 using HttpRequestMessage request = BuildLocalProxyRequest(context, route, body, credential);
                 try

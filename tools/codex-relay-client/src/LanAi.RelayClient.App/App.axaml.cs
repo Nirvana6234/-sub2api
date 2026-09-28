@@ -178,11 +178,17 @@ public partial class App : Application
 
         var contextFilterUsage = new ContextFilterUsageStore();
 
-        // Local proxy: one credential cache for the relay and the page alike, so the token
-        // checked when the user switches it on is the one the next turn uses. The relay
-        // reports from its own threads; the page is told on the UI thread. The dashboard does
-        // not exist yet, so the callbacks reach it through this variable.
-        var localProxyCredentials = new LocalProxyCredentialCache(relay, session.GetAccessTokenAsync);
+        // Local proxy: one credential source for the relay and the page alike, so the token
+        // checked when the user switches it on is the one the next turn uses — the user's
+        // accounts on the relay, and this machine's own Codex and Claude Code sign-ins (read
+        // and refreshed here, never sent to the relay server). The relay reports from its own
+        // threads; the page is told on the UI thread. The dashboard does not exist yet, so the
+        // callbacks reach it through this variable.
+        var officialTokens = new OfficialTokenRefresher();
+        var localProxyCredentials = new LocalProxyCredentialRouter(
+            new LocalProxyCredentialCache(relay, session.GetAccessTokenAsync),
+            new LocalCodexAccount(codexConfig, officialTokens),
+            new LocalClaudeAccount(new ClaudeCredentialFile(), officialTokens));
         var localProxyUsage = new LocalProxyUsageStore();
         DashboardViewModel? dashboardForRelay = null;
 

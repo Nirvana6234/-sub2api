@@ -45,6 +45,31 @@ public sealed class LocalProxyViewModelTests
         }
     }
 
+    /// <summary>This machine's own sign-in, as the page and the relay see it.</summary>
+    internal sealed class FakeLocalAccount(LocalProxyKind kind) : ILocalMachineAccount
+    {
+        public LocalMachineAccountStatus Status { get; set; } =
+            new(LocalMachineAccountState.SignedIn, kind == LocalProxyKind.ClaudeCode ? "本机 Claude 登录（me · Max）" : "本机 ChatGPT 登录（me · Plus）", string.Empty);
+
+        public List<bool> Requests { get; } = [];
+
+        public LocalProxyKind Kind => kind;
+
+        public LocalMachineAccountStatus Probe() => Status;
+
+        public Task<LocalProxyCredential> GetAsync(long accountId, bool forceRefresh, CancellationToken cancellationToken)
+        {
+            Requests.Add(forceRefresh);
+            return Status.IsUsable
+                ? Task.FromResult(new LocalProxyCredential(accountId: accountId, accessToken: "local"))
+                : Task.FromException<LocalProxyCredential>(new LocalProxyCredentialException(Status.Detail));
+        }
+
+        public void Clear()
+        {
+        }
+    }
+
     private sealed class Rig
     {
         public required FakeReachability Network { get; init; }
@@ -58,6 +83,10 @@ public sealed class LocalProxyViewModelTests
         public required MemoryChoiceStore Choice { get; init; }
 
         public LocalProxyViewModel LocalProxy => Dashboard.LocalProxy;
+
+        public FakeLocalAccount? LocalCodex { get; init; }
+
+        public FakeLocalAccount? LocalClaude { get; init; }
     }
 
     private static readonly ContributionAccount Plus =
@@ -73,7 +102,9 @@ public sealed class LocalProxyViewModelTests
     private static async Task<Rig> SignedInAsync(
         LocalProxyChoice? saved = null,
         Func<IReadOnlyList<ContributionAccount>>? accounts = null,
-        bool reachable = true)
+        bool reachable = true,
+        bool withLocalAccounts = false,
+        Action<FakeLocalAccount, FakeLocalAccount>? arrangeLocal = null)
     {
         var network = new FakeReachability { Reachable = reachable };
         var relay = new FakeRelayClient
@@ -89,6 +120,17 @@ public sealed class LocalProxyViewModelTests
         var session = new RelaySessionManager(relay, new FakeSessionStore(), "https://relay.test/", new TestClock().Read);
         var codex = new FakeCodexStartup { UsesLocalTransport = true };
         var choice = new MemoryChoiceStore { Saved = saved ?? LocalProxyChoice.None };
+        var relayCredentials = new LocalProxyCredentialCache(relay, _ => Task.FromResult("jwt"));
+        FakeLocalAccount? localCodex = null;
+        FakeLocalAccount? localClaude = null;
+        ILocalProxyCredentialSource credentials = relayCredentials;
+        if (withLocalAccounts)
+        {
+            localCodex = new FakeLocalAccount(LocalProxyKind.Codex);
+            localClaude = new FakeLocalAccount(LocalProxyKind.ClaudeCode);
+            arrangeLocal?.Invoke(localCodex, localClaude);
+            credentials = new LocalProxyCredentialRouter(relayCredentials, localCodex, localClaude);
+        }
         var dashboard = new DashboardViewModel(
             relay,
             session,
@@ -96,13 +138,17 @@ public sealed class LocalProxyViewModelTests
             new ManagedKeyNaming(new FixedInstallId("t")),
             codex,
             pluginSupportPreferences: new FakePluginSupportPreferenceStore(),
-            localProxyCredentials: new LocalProxyCredentialCache(relay, _ => Task.FromResult("jwt")),
+            localProxyCredentials: credentials,
             localProxyPreferences: choice,
             localProxyUsage: new MemoryUsageStore(),
             localProxyReachability: network);
         await session.SignInAsync("a@b.com", "pw");
         await dashboard.RefreshAsync();
-        return new Rig { Dashboard = dashboard, Relay = relay, Codex = codex, Choice = choice, Network = network };
+        return new Rig
+        {
+            Dashboard = dashboard, Relay = relay, Codex = codex, Choice = choice, Network = network,
+            LocalCodex = localCodex, LocalClaude = localClaude,
+        };
     }
 
     [Fact]
@@ -257,5 +303,141 @@ public sealed class LocalProxyViewModelTests
         Assert.Null(rig.LocalProxy.CodexTarget);
         Assert.Equal(LocalProxyChoice.None, rig.Choice.Saved);
         Assert.Empty(rig.LocalProxy.CodexAccounts);
+    }
+
+    private static readonly LocalMachineAccountStatus NotSignedIn =
+        new(LocalMachineAccountState.NotSignedIn, "本机 Claude 登录", "请在终端运行 claude 登录");
+
+    [Fact]
+    public async Task WithoutLocalAccountsThePageListsOnlyTheRelaysAccounts()
+    {
+        Rig rig = await SignedInAsync();
+
+        Assert.False(rig.LocalProxy.HasLocalCodexAccount);
+        Assert.False(rig.LocalProxy.HasLocalClaudeAccount);
+    }
+
+    [Fact]
+    public async Task ThisMachinesSignInsAreListedPerToolWithWhetherTheyCanBeUsed()
+    {
+        Rig rig = await SignedInAsync(withLocalAccounts: true, arrangeLocal: (_, claude) => claude.Status = NotSignedIn);
+
+        LocalProxyAccountItem codex = rig.LocalProxy.LocalCodexAccount!;
+        Assert.Equal(LocalMachineAccounts.CodexId, codex.Id);
+        Assert.True(codex.IsLocal);
+        Assert.True(codex.CanToggle);
+        Assert.Equal("本机 ChatGPT 登录（me · Plus）", codex.Name);
+        Assert.Contains("不上传中转站", codex.StatusText);
+
+        LocalProxyAccountItem claude = rig.LocalProxy.LocalClaudeAccount!;
+        Assert.False(claude.CanToggle);
+        Assert.Contains("未登录", claude.StatusText);
+        Assert.Contains("claude", claude.StatusText);
+
+        Assert.Equal([7L], rig.LocalProxy.CodexAccounts.Select(a => a.Id));
+    }
+
+    [Fact]
+    public async Task SwitchingCodexOnToThisMachinesSignInSpendsNoRefreshAndIsRemembered()
+    {
+        Rig rig = await SignedInAsync(withLocalAccounts: true);
+
+        await rig.LocalProxy.ToggleAsync(rig.LocalProxy.LocalCodexAccount!);
+
+        LocalProxyTarget expected = new(LocalMachineAccounts.CodexId, "本机 ChatGPT 登录（me · Plus）");
+        Assert.Equal((LocalProxyKind.Codex, expected), rig.Codex.LocalProxies[^1]);
+        Assert.Equal([false], rig.LocalCodex!.Requests);
+        Assert.Empty(rig.Relay.LocalProxyCredentialRequests);
+        Assert.Equal(LocalMachineAccounts.CodexId, rig.Choice.Saved.CodexAccountId);
+        Assert.True(rig.LocalProxy.LocalCodexAccount!.IsActive);
+        Assert.False(rig.LocalProxy.CodexAccounts[0].IsActive);
+        Assert.Equal("正在使用本地代理：本机 ChatGPT 登录（me · Plus）", rig.LocalProxy.CodexStatusText);
+    }
+
+    [Fact]
+    public async Task ASignInThatCannotBeUsedIsNotSwitchedOnAndSaysWhy()
+    {
+        Rig rig = await SignedInAsync(withLocalAccounts: true, arrangeLocal: (_, claude) => claude.Status = NotSignedIn);
+
+        await rig.LocalProxy.ToggleAsync(rig.LocalProxy.LocalClaudeAccount!);
+
+        Assert.DoesNotContain(rig.Codex.LocalProxies, p => p.Kind == LocalProxyKind.ClaudeCode);
+        Assert.Equal("请在终端运行 claude 登录", rig.LocalProxy.ActionMessage);
+        Assert.Empty(rig.LocalClaude!.Requests);
+    }
+
+    [Fact]
+    public async Task ASignInLostBetweenTheProbeAndTheClickIsRefusedInWords()
+    {
+        Rig rig = await SignedInAsync(withLocalAccounts: true);
+        rig.LocalCodex!.Status = new(LocalMachineAccountState.NotSignedIn, "x", "本机 ChatGPT 登录已失效");
+        LocalProxyAccountItem stale = rig.LocalProxy.LocalCodexAccount!;
+
+        await rig.LocalProxy.ToggleAsync(stale);
+
+        Assert.Empty(rig.Codex.LocalProxies);
+        Assert.Contains("开启失败：本机 ChatGPT 登录已失效", rig.LocalProxy.ActionMessage);
+    }
+
+    [Fact]
+    public async Task ASignInMadeLaterShowsUpOnTheNextRefresh()
+    {
+        Rig rig = await SignedInAsync(withLocalAccounts: true, arrangeLocal: (_, claude) => claude.Status = NotSignedIn);
+        Assert.False(rig.LocalProxy.LocalClaudeAccount!.CanToggle);
+
+        rig.LocalClaude!.Status = new(LocalMachineAccountState.SignedIn, "本机 Claude 登录（me · Max）", string.Empty);
+        await rig.Dashboard.RefreshAsync();
+
+        Assert.True(rig.LocalProxy.LocalClaudeAccount!.CanToggle);
+    }
+
+    [Fact]
+    public async Task ARestoredLocalChoiceComesBackUnderItsCurrentName()
+    {
+        Rig rig = await SignedInAsync(
+            new LocalProxyChoice { CodexAccountId = LocalMachineAccounts.CodexId, CodexAccountName = "旧名字" },
+            withLocalAccounts: true);
+
+        Assert.Equal(new LocalProxyTarget(LocalMachineAccounts.CodexId, "本机 ChatGPT 登录（me · Plus）"), rig.LocalProxy.CodexTarget);
+        Assert.False(rig.LocalProxy.HasCodexError);
+        Assert.True(rig.LocalProxy.LocalCodexAccount!.IsActive);
+    }
+
+    [Fact]
+    public async Task ARestoredLocalChoiceWhoseSignInIsGoneStaysOnAndSaysSo()
+    {
+        Rig rig = await SignedInAsync(
+            new LocalProxyChoice { ClaudeAccountId = LocalMachineAccounts.ClaudeId, ClaudeAccountName = "本机 Claude 登录" },
+            withLocalAccounts: true,
+            arrangeLocal: (_, claude) => claude.Status = NotSignedIn);
+
+        Assert.Equal(LocalMachineAccounts.ClaudeId, rig.LocalProxy.ClaudeTarget?.AccountId);
+        Assert.Contains("本机官方账号现在用不了", rig.LocalProxy.ClaudeError);
+        Assert.True(rig.LocalProxy.LocalClaudeAccount!.CanToggle);
+    }
+
+    [Fact]
+    public async Task WithoutTheRelayFeatureThisMachinesSignInsStillWork()
+    {
+        Rig rig = await SignedInAsync(
+            accounts: () => throw new RelayApiException(RelayFailure.Forbidden, "nope"),
+            withLocalAccounts: true);
+
+        Assert.Contains("本机官方账号不受影响", rig.LocalProxy.AccountsMessage);
+        await rig.LocalProxy.ToggleAsync(rig.LocalProxy.LocalCodexAccount!);
+        Assert.Equal(LocalMachineAccounts.CodexId, rig.LocalProxy.CodexTarget?.AccountId);
+    }
+
+    [Fact]
+    public async Task SigningOutKeepsListingThisMachinesSignIns()
+    {
+        Rig rig = await SignedInAsync(withLocalAccounts: true);
+        await rig.LocalProxy.ToggleAsync(rig.LocalProxy.LocalCodexAccount!);
+
+        rig.Dashboard.Reset();
+
+        Assert.Null(rig.LocalProxy.CodexTarget);
+        Assert.True(rig.LocalProxy.HasLocalCodexAccount);
+        Assert.False(rig.LocalProxy.LocalCodexAccount!.IsActive);
     }
 }

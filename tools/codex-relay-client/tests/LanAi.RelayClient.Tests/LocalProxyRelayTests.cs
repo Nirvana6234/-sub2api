@@ -214,6 +214,23 @@ public sealed class LocalProxyRelayTests
     }
 
     [Fact]
+    public async Task ThisMachinesUnusableSignInIsReportedInItsOwnWords()
+    {
+        await using Rig rig = await Rig.StartAsync();
+        rig.Credentials.Fail = new LocalProxyCredentialException("本机 ChatGPT 登录已失效，请先重新登录（codex login）");
+        rig.Relay.SetLocalProxy(LocalProxyKind.Codex, new LocalProxyTarget(LocalMachineAccounts.CodexId, "本机 ChatGPT 登录"));
+
+        using HttpResponseMessage response = await rig.PostAsync("/v1/responses");
+
+        Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
+        Assert.Empty(rig.Official.Requests);
+        Assert.Empty(rig.Server.Requests);
+        LocalProxyOutcome outcome = Assert.Single(rig.Outcomes);
+        Assert.Equal(LocalMachineAccounts.CodexId, outcome.AccountId);
+        Assert.Equal("本机 ChatGPT 登录已失效，请先重新登录（codex login）", outcome.Message);
+    }
+
+    [Fact]
     public async Task CompactIsServedOnlyByTheLocalProxy()
     {
         await using Rig rig = await Rig.StartAsync((200, "{\"output\":[]}"));
@@ -255,7 +272,7 @@ public sealed class LocalProxyRelayTests
     {
         public List<bool> ForceRefreshes { get; } = [];
 
-        public RelayApiException? Fail { get; set; }
+        public Exception? Fail { get; set; }
 
         public bool Cleared { get; private set; }
 
