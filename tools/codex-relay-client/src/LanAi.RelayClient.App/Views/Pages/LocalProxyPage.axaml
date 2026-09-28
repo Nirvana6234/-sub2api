@@ -12,7 +12,7 @@
       <Border BorderBrush="#E5E7EB" BorderThickness="0,1,0,0" Padding="0,8">
         <DockPanel>
           <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" Margin="8,0,0,0">
-            <Button Content="重新登录" Click="Reauthorize_OnClick" Classes="quiet" IsVisible="{Binding IsOfficial}" />
+            <Button Content="重新授权" Click="Reauthorize_OnClick" Classes="quiet" IsVisible="{Binding IsOfficial}" />
             <Button Content="删除" Click="Remove_OnClick" Classes="quiet" IsVisible="{Binding IsOfficial}" />
             <Button Content="{Binding ActionLabel}" Click="Toggle_OnClick"
                     Classes="toggle" Classes.active="{Binding IsActive}" IsVisible="{Binding CanToggle}" />
@@ -81,7 +81,7 @@
         <StackPanel>
           <TextBlock Text="本地代理" Classes="cardTitle" />
           <TextBlock Classes="hint" Margin="0,4,0,0"
-                     Text="让 Codex 或 Claude Code 不经过中转站、直接连官方，不扣余额。优先用这台电脑上已登录的官方账号；没有的话，可以在这里登录官方账号。凭据只保存在这台电脑上，不上传中转站。每个工具各自选择，出错时只提醒、不会自动切回中转站。" />
+                     Text="让 Codex 或 Claude Code 不经过中转站、直接连官方，不扣余额。" />
           <!-- The one thing most likely to go wrong: the official hosts usually need a proxy/VPN. -->
           <TextBlock Classes="hint" Foreground="#B45309" Margin="0,4,0,0"
                      Text="需要本机能直接访问官方（国内通常要开启代理/VPN）。开启时会先检测网络；使用期间请保持代理开启，代理断开时工具会无法使用。" />
@@ -109,15 +109,15 @@
                           ContentTemplate="{StaticResource AccountRow}"
                           IsVisible="{Binding Dashboard.LocalProxy.HasLocalCodexAccount}" />
 
-          <TextBlock Text="在共飞里登录的账号" Classes="label" Margin="0,10,0,0"
+          <TextBlock Text="已授权给共飞AI助手的账号" Classes="label" Margin="0,10,0,0"
                      IsVisible="{Binding Dashboard.LocalProxy.HasCodexSignIns}" />
           <ItemsControl ItemsSource="{Binding Dashboard.LocalProxy.CodexSignIns}"
                         ItemTemplate="{StaticResource AccountRow}" />
 
-          <Button Classes="toggle" Content="在共飞里登录 ChatGPT 账号" Tag="Codex" Click="StartSignIn_OnClick"
+          <Button Classes="toggle" Content="授权共飞AI助手本地代理" Tag="Codex" Click="StartSignIn_OnClick"
                   HorizontalAlignment="Left" Margin="0,10,0,0"
                   IsVisible="{Binding Dashboard.LocalProxy.ShowCodexSignInButton}" />
-          <Button Classes="link" Content="用其他 ChatGPT 账号登录" Tag="Codex" Click="StartSignIn_OnClick"
+          <Button Classes="link" Content="授权其他 ChatGPT 账号" Tag="Codex" Click="StartSignIn_OnClick"
                   HorizontalAlignment="Left" Margin="0,8,0,0"
                   IsVisible="{Binding Dashboard.LocalProxy.ShowCodexSignInLink}" />
 
@@ -163,15 +163,15 @@
                           ContentTemplate="{StaticResource AccountRow}"
                           IsVisible="{Binding Dashboard.LocalProxy.HasLocalClaudeAccount}" />
 
-          <TextBlock Text="在共飞里登录的账号" Classes="label" Margin="0,10,0,0"
+          <TextBlock Text="已授权给共飞AI助手的账号" Classes="label" Margin="0,10,0,0"
                      IsVisible="{Binding Dashboard.LocalProxy.HasClaudeSignIns}" />
           <ItemsControl ItemsSource="{Binding Dashboard.LocalProxy.ClaudeSignIns}"
                         ItemTemplate="{StaticResource AccountRow}" />
 
-          <Button Classes="toggle" Content="在共飞里登录 Claude 账号" Tag="ClaudeCode" Click="StartSignIn_OnClick"
+          <Button Classes="toggle" Content="授权共飞AI助手本地代理" Tag="ClaudeCode" Click="StartSignIn_OnClick"
                   HorizontalAlignment="Left" Margin="0,10,0,0"
                   IsVisible="{Binding Dashboard.LocalProxy.ShowClaudeSignInButton}" />
-          <Button Classes="link" Content="用其他 Claude 账号登录" Tag="ClaudeCode" Click="StartSignIn_OnClick"
+          <Button Classes="link" Content="授权其他 Claude 账号" Tag="ClaudeCode" Click="StartSignIn_OnClick"
                   HorizontalAlignment="Left" Margin="0,8,0,0"
                   IsVisible="{Binding Dashboard.LocalProxy.ShowClaudeSignInLink}" />
 

@@ -132,7 +132,7 @@ public sealed class LocalCodexAccountTests
 
         var error = await Assert.ThrowsAsync<LocalProxyCredentialException>(
             () => account.GetAsync(LocalMachineAccounts.CodexId, false, CancellationToken.None));
-        Assert.Contains("codex login", error.UserMessage);
+        Assert.Contains("授权共飞AI助手本地代理", error.UserMessage);
         Assert.Equal(LocalMachineAccountState.NotSignedIn, account.Probe().State);
     }
 
@@ -364,7 +364,7 @@ public sealed class LocalClaudeAccountTests
 
         var error = await Assert.ThrowsAsync<LocalProxyCredentialException>(
             () => account.GetAsync(LocalMachineAccounts.ClaudeId, false, CancellationToken.None));
-        Assert.Contains("/login", error.UserMessage);
+        Assert.Contains("授权共飞AI助手本地代理", error.UserMessage);
         Assert.Equal(LocalMachineAccountState.NotSignedIn, account.Probe().State);
     }
 

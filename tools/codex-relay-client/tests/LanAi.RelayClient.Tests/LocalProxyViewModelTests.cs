@@ -213,7 +213,7 @@ public sealed class LocalProxyViewModelTests : IDisposable
         Assert.True(codex.CanToggle);
         Assert.True(codex.IsRecommended);
         Assert.Equal("本机 ChatGPT 登录（me · Plus）", codex.Name);
-        Assert.Contains("不上传中转站", codex.StatusText);
+        Assert.Contains("不会上传到共飞服务器", codex.StatusText);
 
         LocalProxyAccountItem claude = rig.LocalProxy.LocalClaudeAccount!;
         Assert.False(claude.CanToggle);
@@ -524,9 +524,9 @@ public sealed class LocalProxyViewModelTests : IDisposable
 
         LocalProxyAccountItem item = rig.LocalProxy.ClaudeSignIns.Single();
         Assert.False(item.CanToggle);
-        Assert.Contains("重新登录", item.StatusText);
+        Assert.Contains("重新授权", item.StatusText);
         await rig.LocalProxy.ToggleAsync(item);
-        Assert.Contains("重新登录", rig.LocalProxy.ActionMessage);
+        Assert.Contains("重新授权", rig.LocalProxy.ActionMessage);
         Assert.Null(rig.LocalProxy.ClaudeTarget);
     }
 

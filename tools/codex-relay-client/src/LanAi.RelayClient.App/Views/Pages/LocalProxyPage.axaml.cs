@@ -34,7 +34,7 @@ public partial class LocalProxyPage : UserControl
         }
     }
 
-    /// <summary>「在共飞里登录…」, 「用其他…账号登录」 and 「重新开始」: the tool is in the button's Tag.</summary>
+    /// <summary>「授权共飞AI助手本地代理」, 「授权其他…账号」 and 「重新开始」: the tool is in the button's Tag.</summary>
     private void StartSignIn_OnClick(object? sender, RoutedEventArgs e)
     {
         if ((sender as Control)?.Tag is string tag && Enum.TryParse(tag, out LocalProxyKind kind))

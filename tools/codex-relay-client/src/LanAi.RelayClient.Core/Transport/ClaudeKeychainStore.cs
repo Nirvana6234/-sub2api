@@ -208,7 +208,7 @@ internal sealed class ClaudeKeychainStore : IClaudeCredentialStore
             ClientLog.Warning($"读取钥匙串中的 Claude Code 登录失败，退出码 {result.ExitCode}");
             throw new LocalProxyCredentialException(result.ExitCode == ItemNotFound
                 ? "钥匙串里没有找到 Claude Code 的登录。"
-                : "macOS 没有允许读取 Claude Code 的登录（授权框被拒绝）。可以重新点「开启」再试，或改用「在共飞里登录」。");
+                : "macOS 没有允许读取 Claude Code 的登录（授权框被拒绝）。可以重新点「开启」再试，或改为授权共飞AI助手本地代理。");
         }
 
         string secret = result.Output.TrimEnd('\r', '\n');

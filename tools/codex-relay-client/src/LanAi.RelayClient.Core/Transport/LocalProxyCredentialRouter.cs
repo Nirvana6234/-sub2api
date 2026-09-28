@@ -15,7 +15,7 @@ namespace LanAi.RelayClient.Transport;
 internal sealed class LocalProxyCredentialRouter : ILocalProxyCredentialSource
 {
     internal const string RelayAccountsRetired =
-        "本地代理不再使用中转站上的账号。请在「本地代理」页改用这台电脑上已登录的账号，或在共飞里登录官方账号。";
+        "本地代理不再使用中转站上的账号。请在「本地代理」页改用这台电脑上已登录的账号，或授权共飞AI助手本地代理使用你的官方账号。";
 
     public LocalProxyCredentialRouter(
         ILocalMachineAccount localCodex,
@@ -44,7 +44,7 @@ internal sealed class LocalProxyCredentialRouter : ILocalProxyCredentialSource
             _ when OfficialAccountIds.IsOfficial(accountId) && Official is { } official =>
                 official.GetAsync(accountId, forceRefresh, cancellationToken),
             _ when OfficialAccountIds.IsOfficial(accountId) =>
-                Task.FromException<LocalProxyCredential>(new LocalProxyCredentialException("这个客户端没有启用「在共飞里登录的账号」。")),
+                Task.FromException<LocalProxyCredential>(new LocalProxyCredentialException("这个客户端没有启用「已授权给共飞AI助手的账号」。")),
             _ => Task.FromException<LocalProxyCredential>(new LocalProxyCredentialException(RelayAccountsRetired)),
         };
 

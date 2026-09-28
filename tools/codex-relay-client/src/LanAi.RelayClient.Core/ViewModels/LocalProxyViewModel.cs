@@ -23,7 +23,7 @@ public sealed partial class LocalProxyAccountItem : ObservableObject
         StatusText = status.State switch
         {
             LocalMachineAccountState.SignedIn when status.Detail.Length > 0 => "已登录。" + status.Detail,
-            LocalMachineAccountState.SignedIn => "已登录，凭据只在本机使用，不上传中转站",
+            LocalMachineAccountState.SignedIn => "已登录，登录信息只在这台电脑上使用，不会上传到共飞服务器",
             LocalMachineAccountState.Unsupported => "暂不支持：" + status.Detail,
             _ => "未登录：" + status.Detail,
         };
@@ -39,14 +39,14 @@ public sealed partial class LocalProxyAccountItem : ObservableObject
         IsOfficial = true;
         IsUsable = account.IsValid;
         PlatformLabel = account.Kind == LocalProxyKind.ClaudeCode ? "Claude" : "ChatGPT";
-        TypeLabel = "在共飞里登录";
+        TypeLabel = "已授权";
         string expiry = DateTimeOffset.TryParse(account.SubscriptionExpiresAt, out DateTimeOffset until)
             ? $"，订阅到 {until.ToLocalTime():yyyy-MM-dd}"
             : string.Empty;
         StatusText = account.IsValid
-            ? $"可用{expiry}，凭据只在本机使用，不上传中转站"
-            : $"{(account.InvalidReason.Length > 0 ? account.InvalidReason : "登录已失效")}，请点「重新登录」";
-        Detail = account.IsValid ? string.Empty : "这个账号的登录已失效，请点「重新登录」。";
+            ? $"可用{expiry}，授权信息只保存在这台电脑上，不会上传到共飞服务器"
+            : $"{(account.InvalidReason.Length > 0 ? account.InvalidReason : "授权已失效")}，请点「重新授权」";
+        Detail = account.IsValid ? string.Empty : "这个账号的授权已失效，请点「重新授权」。";
     }
 
     public long Id { get; }
@@ -534,7 +534,7 @@ public sealed partial class LocalProxyViewModel : ObservableObject
 
         if (_official.Scope is null)
         {
-            ActionMessage = "请先登录共飞，再在这里登录官方账号。";
+            ActionMessage = "请先登录共飞AI助手，再授权本地代理。";
             return;
         }
 
@@ -795,7 +795,7 @@ public sealed partial class LocalProxyViewModel : ObservableObject
             // and the tool is left on the relay server rather than on something that cannot work.
             Save();
             string message = $"{string.Join("、", retired)}是中转站上的账号，本地代理不再使用中转站上的账号，已改回经中转站。" +
-                             "可以改用这台电脑上已登录的账号，或在本地代理页「在共飞里登录」官方账号。";
+                             "可以改用这台电脑上已登录的账号，或在本地代理页授权共飞AI助手使用你的官方账号。";
             ActionMessage = message;
             NoticeRaised?.Invoke(message);
         }
@@ -813,7 +813,7 @@ public sealed partial class LocalProxyViewModel : ObservableObject
         return item switch
         {
             null => "上次选择的账号已不在，本地代理无法使用。请另选一个账号，或改回经中转站。",
-            { IsUsable: false } => "上次选择的账号登录已失效，请在下面点「重新登录」。",
+            { IsUsable: false } => "上次选择的账号授权已失效，请在下面点「重新授权」。",
             _ => string.Empty,
         };
     }

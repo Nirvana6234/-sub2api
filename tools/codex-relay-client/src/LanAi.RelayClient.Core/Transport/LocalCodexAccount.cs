@@ -34,7 +34,7 @@ internal sealed class LocalCodexAccount : ILocalMachineAccount
     private static readonly TimeSpan ForcedRefreshQuietPeriod = TimeSpan.FromSeconds(60);
 
     internal const string NotSignedInDetail =
-        "没有找到本机 Codex 的 ChatGPT 登录（没登录过，或登录的是 API Key）。可以在本地代理页「在共飞里登录 ChatGPT 账号」，或在终端执行 codex login（客户端开着也可以），登录后这里会自动识别。";
+        "这台电脑上的 Codex 还没有登录 ChatGPT 账号。可以授权共飞AI助手本地代理使用你的 ChatGPT 账号，授权信息只保存在这台电脑上，不会上传到共飞服务器。";
 
     private readonly ICodexLoginStore _store;
     private readonly IOfficialTokenRefresher _refresher;

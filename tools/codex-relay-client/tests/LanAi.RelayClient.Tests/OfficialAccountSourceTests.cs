@@ -105,7 +105,7 @@ public sealed class OfficialAccountSourceTests : IDisposable
         var first = await Assert.ThrowsAsync<LocalProxyCredentialException>(() => source.GetAsync(account.Id, false, CancellationToken.None));
         var second = await Assert.ThrowsAsync<LocalProxyCredentialException>(() => source.GetAsync(account.Id, false, CancellationToken.None));
 
-        Assert.Contains("重新登录", first.UserMessage, StringComparison.Ordinal);
+        Assert.Contains("重新授权", first.UserMessage, StringComparison.Ordinal);
         Assert.DoesNotContain("本机", first.UserMessage, StringComparison.Ordinal);
         Assert.Equal(first.UserMessage, second.UserMessage);
         Assert.Single(refresher.CodexCalls);

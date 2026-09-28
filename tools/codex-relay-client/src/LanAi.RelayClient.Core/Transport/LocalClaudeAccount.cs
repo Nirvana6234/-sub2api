@@ -128,7 +128,7 @@ internal sealed class LocalClaudeAccount : ILocalMachineAccount
     private static readonly TimeSpan ForcedRefreshQuietPeriod = TimeSpan.FromSeconds(60);
 
     internal const string NotSignedInDetail =
-        "没有找到本机 Claude Code 的 Claude 订阅登录。可以在本地代理页「在共飞里登录 Claude 账号」，或在终端运行 claude 按提示登录（或在 claude 里执行 /login），登录后这里会自动识别。";
+        "这台电脑上的 Claude Code 还没有登录 Claude 账号。可以授权共飞AI助手本地代理使用你的 Claude 账号，授权信息只保存在这台电脑上，不会上传到共飞服务器。";
 
     /// <summary>Said before the first keychain read (D10): the prompt is coming, and which button keeps it from coming back.</summary>
     internal const string ConsentDetail =

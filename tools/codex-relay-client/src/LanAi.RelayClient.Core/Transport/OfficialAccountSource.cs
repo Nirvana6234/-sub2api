@@ -94,7 +94,7 @@ internal sealed class OfficialAccountSource : ILocalProxyCredentialSource
     private (OfficialAccount Account, string StoredRefreshToken) Current(long accountId)
     {
         OfficialAccount stored = _store.Get(accountId)
-            ?? throw new LocalProxyCredentialException("这个在共飞里登录的账号已被删除，请在本地代理页另选一个账号或改回经中转站。");
+            ?? throw new LocalProxyCredentialException("这个已授权的账号已被删除，请在本地代理页另选一个账号或改回经中转站。");
         return _unsaved.TryGetValue(accountId, out var pending) && pending.StoredRefreshToken == stored.RefreshToken
             ? (pending.Refreshed, stored.RefreshToken)
             : (stored, stored.RefreshToken);
@@ -135,7 +135,7 @@ internal sealed class OfficialAccountSource : ILocalProxyCredentialSource
                 _unsaved.TryRemove(account.Id, out _);
                 ClientLog.Info($"在共飞里登录的官方账号 {account.Id} 在刷新期间已重新登录，改用新的登录");
                 return _store.Get(account.Id)
-                    ?? throw new LocalProxyCredentialException("这个在共飞里登录的账号已被删除，请在本地代理页另选一个账号或改回经中转站。");
+                    ?? throw new LocalProxyCredentialException("这个已授权的账号已被删除，请在本地代理页另选一个账号或改回经中转站。");
             }
 
             _unsaved.TryRemove(account.Id, out _);
@@ -225,6 +225,6 @@ internal sealed class OfficialAccountSource : ILocalProxyCredentialSource
     {
         string product = account.Kind == LocalProxyKind.ClaudeCode ? "Claude" : "ChatGPT";
         string reason = account.InvalidReason.Length > 0 ? account.InvalidReason : "登录已失效";
-        return $"在共飞里登录的 {product} 账号「{account.DisplayName}」{reason}，请在本地代理页点「重新登录」。未切回中转站。";
+        return $"已授权的 {product} 账号「{account.DisplayName}」{reason}，请在本地代理页点「重新授权」。未切回中转站。";
     }
 }
