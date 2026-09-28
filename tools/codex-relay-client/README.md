@@ -124,7 +124,6 @@ dotnet test tools/codex-relay-client/LanAi.RelayClient.sln
 dotnet publish src/LanAi.RelayClient.App/LanAi.RelayClient.App.csproj `
     -c Release -r win-x64 --self-contained true `
     -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
-    -p:IncludeWeChatReader=true `
     -o <临时目录>
 python packaging/check-server-address.py --channel production <临时目录>/LanAi.RelayClient.App.exe
 ```
