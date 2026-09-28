@@ -41,7 +41,7 @@ internal interface IKeychainItemWriter
 /// <item><b>Reading</b> goes through Apple's <c>security … -w</c>, the secret coming back on its
 /// standard output, never in an argument. The program asking the keychain is then Apple's
 /// signed <c>security</c>: 「始终允许」 is remembered for it, and survives every update of this
-/// ad-hoc-signed client. The first read happens when the user switches the account on; until
+/// client whatever this client is signed with. The first read happens when the user switches the account on; until
 /// then <see cref="ReadNeedsConsent"/> tells the caller not to read on the UI thread.</item>
 /// <item>After that the secret is kept in memory; each read compares the item's attributes
 /// (modification date included) and reads the secret again only when Claude Code changed it.</item>

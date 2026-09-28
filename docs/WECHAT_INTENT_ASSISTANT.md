@@ -193,8 +193,8 @@
 - **打包**：
   - 在 Mac 上跑 `build.sh`，同时编 arm64 和 x86_64，产物在 `.build/apple/Products/Release/wechat-reader`。链接器会给 arm64 产物加 ad-hoc 签名。
   - 用 osx 运行时标识发布时加 `-p:IncludeWeChatReader=true`：在 Mac 上会自动编译；在其他机器上从 `-p:WeChatReaderMacBinary=<路径>` 或上面的默认路径取现成的二进制；找不到就报错。它会被放到发布目录的 `wechat-reader/` 下，`build-app.py` 再把它放进 `Contents/MacOS/wechat-reader/`，并在打 tar 包时加上可执行位（`EXECUTABLE_NAMES`）。
-  - 正式发布流程 `client-release.yml` 不带这个参数，所以正式发布的 Mac 版同样没有这个功能。
-- **签名风险不变**：正式包是 rcodesign ad-hoc 签名，屏幕录制授权可能在每次升级后失效（10.3）。
+  - 1.0 起正式发布流程 `client-release.yml` 带这个参数：`mac-reader` 任务在 macOS runner 上编好读屏组件，再交给 osx-arm64 发布。
+- **签名**：1.0 起正式包用一张固定的自签名证书签（`packaging/macos/new-signing-cert.sh`，私钥在 GitHub secret），指定要求是 `identifier "com.gongfeiai.chatgpt-assistant" and certificate root = H"…"`，每个版本相同，屏幕录制授权应能随升级保留。此前的 ad-hoc 签名以 cdhash 为指定要求，每次升级都要重新授权。**待真机确认**（10.3）。
 
 ### 4.5 消息解析
 
@@ -625,7 +625,7 @@ internal interface IJevClient
 3. **macOS**（代码已写，全部待在真机上验证）：
    - Swift 包能否编译（`build.sh`）；`--probe` 能否在 Mac 版微信上找到聊天区。颜色阈值来自 Windows 版，Mac 版微信的颜色还没测过。
    - Avalonia 在 macOS 上的 `Window.Position` 是不是「点」、原点在主屏左上角。如果不是，卡片会错位，要在 `WeChatIntentViewModel.RefreshInline` 里调换算。
-   - 屏幕录制的授权弹窗是否记在共飞助手名下；授权后要不要重启；ad-hoc 签名升级后授权是否失效；有没有可用的 Developer ID；macOS 15 定期确认弹窗的频率。
+   - 屏幕录制的授权弹窗是否记在共飞助手名下；授权后要不要重启；换成固定自签名证书后，升级时屏幕录制授权是否确实保留；从 ad-hoc 签名的版本升上来，钥匙串是否只问一次；macOS 15 定期确认弹窗的频率。
    - rcodesign 给 .app 签名时会不会连带处理 `Contents/MacOS/wechat-reader/wechat-reader`（链接器已经给它加了 ad-hoc 签名，应该能运行）。
 4. **消息区定位**：窄窗口、宽窗口、深色模式、会话列表折叠这几种布局下能否稳定找到消息区。实测固定比例在窄窗口上就分错了。
 5. **Jev 效果与延迟**

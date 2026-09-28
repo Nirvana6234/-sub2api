@@ -142,6 +142,8 @@ python packaging/check-server-address.py --channel production <临时目录>/Lan
 
 `context-filter.exe` 要放在**子目录** `context-filter\` 下（`App.axaml.cs` 按 `AppContext.BaseDirectory\context-filter\context-filter.exe` 找它，不跟主 exe 平铺），产物结构照 workflow 里"打包 Windows zip"那一步的 staging 布局来。微信读屏组件同理放在 `wechat-reader\` 子目录下：1.0 起两个正式包都带它（`-p:IncludeWeChatReader=true`），有它才有「探索」页签。macOS 版是 Swift，只能在 Mac 上编译：`client-release.yml` 的 `mac-reader` 任务在 macOS runner 上编好，再经 `-p:WeChatReaderMacBinary=…` 交给 osx-arm64 发布；`client-ci.yml` 也在 macOS runner 上编一遍，作为它唯一的编译检查。（WPF 头已于 2026-09-23 删除，只剩这一种约定。）
 
+macOS 包用一张固定的自签名证书签名，好让「屏幕录制」、钥匙串授权随升级保留（ad-hoc 签名每个版本身份都不同，每次升级都要重新授权）。证书由 `packaging/macos/new-signing-cert.sh` 一次性生成：公开证书 `packaging/macos/signing-cert.pem` 提交在仓库里，私钥以 p12 存在 GitHub secret `MACOS_SIGNING_P12_BASE64` / `MACOS_SIGNING_P12_PASSWORD`。流水线签完核对主程序的指定要求带着这张证书的指纹，再由 `mac-verify` 任务在 macOS 上用 `codesign` 验一遍，才建 Release。**不要重新生成证书**：换证书等于让所有用户再授权一次。
+
 之前 `packaging/publish-windows.ps1` 想省掉这几步，但发布的是早已不出货的 WPF 头，已删除。**不要再写第二个打包脚本**：本地要自动化就直接照上面几行封一个函数，别让它跟 CI 的步骤分叉。
 
 ## 历史会话归属
