@@ -21,8 +21,8 @@ var (
 // errPawModelNotInGroup 是用户选定的分组里确实没有这个模型。自动分组会按模型挑出
 // 支持它的分组，所以直接建议开启；自动分组的请求不走这个校验，不会被重复劝。
 var errPawModelNotInGroup = infraerrors.BadRequest("MODEL_UNAVAILABLE",
-	"当前分组不支持所选模型。建议在共飞客户端开启「自动分组」，系统会自动选择支持该模型的分组。"+
-		"（selected model is not available in this group; turn on automatic group selection）")
+	"当前分组不支持所选模型。建议开启「自动分组」，系统会自动选择支持该模型的分组。"+
+		"（selected model is not available in this group; try automatic group selection）")
 
 type PawChatMessage struct {
 	Role    string `json:"role"`
