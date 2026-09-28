@@ -184,6 +184,9 @@ public sealed partial class LocalProxyViewModel : ObservableObject
     /// <summary>Raised with a message the first time a new problem appears; the host shows a notification.</summary>
     public event Action<string>? FailureRaised;
 
+    /// <summary>Something the user should know that is not a failure (a saved choice that no longer applies); the host shows a plain notification.</summary>
+    public event Action<string>? NoticeRaised;
+
     /// <summary>
     /// Asks the user to confirm: (message, confirm-button label) → whether to go ahead. Supplied by
     /// the host, which owns a window. Without one, switching on goes ahead when the official host
@@ -794,7 +797,7 @@ public sealed partial class LocalProxyViewModel : ObservableObject
             string message = $"{string.Join("、", retired)}是中转站上的账号，本地代理不再使用中转站上的账号，已改回经中转站。" +
                              "可以改用这台电脑上已登录的账号，或在本地代理页「在共飞里登录」官方账号。";
             ActionMessage = message;
-            FailureRaised?.Invoke(message);
+            NoticeRaised?.Invoke(message);
         }
     }
 

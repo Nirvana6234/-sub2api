@@ -64,7 +64,12 @@ internal sealed class ClaudeKeychainStore : IClaudeCredentialStore
     internal static readonly TimeSpan ReadTimeout = TimeSpan.FromSeconds(60);
 
     private static readonly TimeSpan LookTimeout = TimeSpan.FromSeconds(5);
-    private static readonly TimeSpan ExistsMaxAge = TimeSpan.FromSeconds(30);
+    /// <summary>
+    /// How long the item's presence is taken as known. The page looks every refresh cycle, on the
+    /// UI thread, and each look is a child process; a sign-in made or removed in Claude Code
+    /// shows up within this.
+    /// </summary>
+    private static readonly TimeSpan ExistsMaxAge = TimeSpan.FromMinutes(5);
 
     private const int ItemNotFound = 44;
 

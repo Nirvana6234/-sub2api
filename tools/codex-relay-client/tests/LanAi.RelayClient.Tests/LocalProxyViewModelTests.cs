@@ -127,6 +127,8 @@ public sealed class LocalProxyViewModelTests : IDisposable
 
         public List<string> Notified { get; } = [];
 
+        public List<string> Notices { get; } = [];
+
         public LocalProxyViewModel LocalProxy => Dashboard.LocalProxy;
     }
 
@@ -180,6 +182,7 @@ public sealed class LocalProxyViewModelTests : IDisposable
             Opened = opened,
         };
         dashboard.LocalProxy.FailureRaised += rig.Notified.Add;
+        dashboard.LocalProxy.NoticeRaised += rig.Notices.Add;
         await session.SignInAsync("a@b.com", "pw");
         if (arrangeOfficial is not null)
         {
@@ -418,11 +421,12 @@ public sealed class LocalProxyViewModelTests : IDisposable
         Assert.DoesNotContain(rig.Codex.LocalProxies, p => p.Target?.AccountId == 7);
         Assert.Null(rig.Choice.Saved.CodexAccountId);
         Assert.Equal(LocalMachineAccounts.ClaudeId, rig.Choice.Saved.ClaudeAccountId);
-        Assert.Contains("中转站上的账号", Assert.Single(rig.Notified));
+        Assert.Contains("中转站上的账号", Assert.Single(rig.Notices));
+        Assert.Empty(rig.Notified);
         Assert.Contains("我的 Plus", rig.LocalProxy.ActionMessage);
 
         await rig.Dashboard.RefreshAsync();
-        Assert.Single(rig.Notified);
+        Assert.Single(rig.Notices);
     }
 
     // ---- Official accounts signed in within the client. ----

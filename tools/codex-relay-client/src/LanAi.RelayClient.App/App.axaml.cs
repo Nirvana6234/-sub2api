@@ -353,6 +353,11 @@ public partial class App : Application
             "共飞 AI 助手 · 本地代理出错",
             message,
             NotificationSeverity.Warning));
+        // Not a fault: a choice from an older client that no longer applies (the relay's accounts).
+        dashboard.LocalProxy.NoticeRaised += message => _notifications?.Show(new NotificationRequest(
+            "共飞 AI 助手 · 本地代理",
+            message,
+            NotificationSeverity.Information));
 
         var dashboardView = new DashboardView(
             dashboardPage,

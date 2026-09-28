@@ -72,7 +72,7 @@ public sealed class ClaudeKeychainStoreTests : IDisposable
         Assert.True(store.ReadNeedsConsent);
         Assert.True(store.Exists());
         Assert.True(store.Exists());
-        _now = _now.AddSeconds(31);
+        _now = _now.AddMinutes(5).AddSeconds(1);
         Assert.True(store.Exists());
 
         Assert.Equal(0, security.SecretReads);

@@ -371,8 +371,10 @@ internal sealed class OfficialTokenExchanger
 /// a held port means "paste instead", decided before the browser is sent anywhere.
 /// </para>
 /// <para>
-/// Only <c>/auth/callback</c> with the sign-in's own state is taken; anything else is answered
-/// and ignored, so a stray or forged request cannot end the sign-in.
+/// Only <c>/auth/callback</c> with the sign-in's own state, from this machine, is taken; anything
+/// else is answered and ignored, so a stray or forged request cannot end the sign-in. "From this
+/// machine" is checked, not assumed: http.sys matches the registration on the Host header, so a
+/// request to this computer's network address that claims <c>Host: localhost</c> would reach it.
 /// </para>
 /// </remarks>
 internal sealed class OAuthCallbackListener : IDisposable
@@ -425,6 +427,12 @@ internal sealed class OAuthCallbackListener : IDisposable
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 throw new OfficialSignInException("授权回调意外中断，请把浏览器地址栏里的网址粘贴到客户端。", ex);
+            }
+
+            if (!context.Request.IsLocal)
+            {
+                Answer(context, 403, "Forbidden");
+                continue;
             }
 
             if (!string.Equals(context.Request.Url?.AbsolutePath, "/auth/callback", StringComparison.Ordinal))
