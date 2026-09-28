@@ -124,6 +124,7 @@ dotnet test tools/codex-relay-client/LanAi.RelayClient.sln
 dotnet publish src/LanAi.RelayClient.App/LanAi.RelayClient.App.csproj `
     -c Release -r win-x64 --self-contained true `
     -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+    -p:IncludeWeChatReader=true `
     -o <临时目录>
 python packaging/check-server-address.py --channel production <临时目录>/LanAi.RelayClient.App.exe
 ```
@@ -138,7 +139,7 @@ python packaging/check-server-address.py --channel production <临时目录>/Lan
 
 脚本要求本渠道的地址存在、另外两个不存在，任何一项不符都退出码非 0。**产物目录名只是标签，不是证据**——命名成“正式”而没跑 `--channel production` 的包不算正式包。发布流水线只走 `production`，不带渠道参数。
 
-`context-filter.exe` 要放在**子目录** `context-filter\` 下（`App.axaml.cs` 按 `AppContext.BaseDirectory\context-filter\context-filter.exe` 找它，不跟主 exe 平铺），产物结构照 workflow 里"打包 Windows zip"那一步的 staging 布局来。（WPF 头已于 2026-09-23 删除，只剩这一种约定。）
+`context-filter.exe` 要放在**子目录** `context-filter\` 下（`App.axaml.cs` 按 `AppContext.BaseDirectory\context-filter\context-filter.exe` 找它，不跟主 exe 平铺），产物结构照 workflow 里"打包 Windows zip"那一步的 staging 布局来。微信读屏组件同理放在 `wechat-reader\` 子目录下：1.0 起 Windows 正式包带它（`-p:IncludeWeChatReader=true`），有它才有「探索」页签；macOS 包不带（读屏组件的 Mac 版只能在 Mac 上编译）。（WPF 头已于 2026-09-23 删除，只剩这一种约定。）
 
 之前 `packaging/publish-windows.ps1` 想省掉这几步，但发布的是早已不出货的 WPF 头，已删除。**不要再写第二个打包脚本**：本地要自动化就直接照上面几行封一个函数，别让它跟 CI 的步骤分叉。
 

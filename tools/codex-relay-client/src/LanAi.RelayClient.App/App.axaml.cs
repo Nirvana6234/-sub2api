@@ -657,9 +657,9 @@ public partial class App : Application
     /// 「探索」 → 微信消息意图判断 (docs/WECHAT_INTENT_ASSISTANT.md). Present exactly when the package
     /// carries the WeChat reader — <c>wechat-reader\wechat-reader.exe</c> on Windows,
     /// <c>Contents/MacOS/wechat-reader/wechat-reader</c> on macOS — which only a build with
-    /// <c>-p:IncludeWeChatReader=true</c> does. The release workflow does not pass it, so a released
-    /// client has neither the reader nor the page — the package itself is the switch, and no
-    /// environment variable is needed.
+    /// <c>-p:IncludeWeChatReader=true</c> does. From 1.0 the release workflow passes it for Windows,
+    /// so the Windows package has the page; the macOS package has not (the Mac reader is Swift and
+    /// builds only on a Mac). The package itself is the switch, and no environment variable is needed.
     /// </summary>
     private static WeChatIntentViewModel? CreateWeChatIntent(RelaySessionManager session, DashboardViewModel dashboard, ShellWindow shell)
     {
