@@ -171,7 +171,8 @@ internal sealed class OfficialTokenRefresher : IOfficialTokenRefresher
 
     private static string? NullIfEmpty(string value) => value.Length == 0 ? null : value;
 
-    private static HttpMessageHandler CreateHandler(Uri target)
+    /// <summary>A connection to an official host through the proxy as it is set now. Shared with the sign-in exchange.</summary>
+    internal static HttpMessageHandler CreateHandler(Uri target)
     {
         SystemProxy proxy = SystemProxyReader.Current(target);
         return new HttpClientHandler
