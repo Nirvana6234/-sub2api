@@ -112,7 +112,7 @@ public sealed class ClaudeCodeSettingsWriter
 
     public string SettingsPath => _settingsPath;
 
-    internal static string DefaultConfigDirectory()
+    public static string DefaultConfigDirectory()
     {
         string? overridden = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR");
         return string.IsNullOrWhiteSpace(overridden)

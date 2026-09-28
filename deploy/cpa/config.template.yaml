@@ -1,0 +1,13 @@
+host: ""
+port: 8317
+
+remote-management:
+  allow-remote: true
+  secret-key: "__CPA_MANAGEMENT_KEY__"
+  disable-control-panel: false
+
+auth-dir: "/root/.cli-proxy-api"
+api-keys:
+  - "__CPA_CLIENT_KEY__"
+
+debug: false

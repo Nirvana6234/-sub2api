@@ -314,6 +314,10 @@ func (s *RateLimitService) CheckErrorPolicy(ctx context.Context, account *Accoun
 		if statusCode != http.StatusUnauthorized && s.tryTempUnschedulable(ctx, account, statusCode, responseBody) {
 			return ErrorPolicyTempUnscheduled
 		}
+		// 上游明确余额不足时同账号重试不会恢复，临时停调（见 ratelimit_pool_mode_balance.go）。
+		if s.tryPoolModeInsufficientBalance(ctx, account, statusCode, responseBody) {
+			return ErrorPolicyTempUnscheduled
+		}
 		return ErrorPolicySkipped
 	}
 	// The global overload cooldown is the default for ordinary accounts. Explicit
@@ -340,6 +344,10 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 	// 401 保留现有认证错误语义，不在这里改变池模式的认证处理。
 	if account.IsPoolMode() && !customErrorCodesEnabled {
 		if statusCode != http.StatusUnauthorized && s.tryTempUnschedulable(ctx, account, statusCode, responseBody) {
+			return true
+		}
+		// 上游明确余额不足时同账号重试不会恢复，临时停调（见 ratelimit_pool_mode_balance.go）。
+		if s.tryPoolModeInsufficientBalance(ctx, account, statusCode, responseBody) {
 			return true
 		}
 		slog.Info("pool_mode_error_skipped", "account_id", account.ID, "status_code", statusCode)

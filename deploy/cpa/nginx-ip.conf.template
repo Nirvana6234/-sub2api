@@ -1,0 +1,29 @@
+server {
+    listen 443 ssl default_server;
+    listen [::]:443 ssl default_server;
+    server_name _;
+    server_tokens off;
+    access_log off;
+
+    ssl_certificate /etc/pki/cpa-ip/cert.pem;
+    ssl_certificate_key /etc/pki/cpa-ip/key.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    location = /management.html {
+        proxy_pass http://127.0.0.1:8317;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+
+    location ^~ /v0/management/ {
+        proxy_pass http://127.0.0.1:8317;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+
+    location / {
+        return 404;
+    }
+}

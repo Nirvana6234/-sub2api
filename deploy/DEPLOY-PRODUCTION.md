@@ -469,23 +469,45 @@ ssh -i "$PRODKEY" ec2-user@$PRODIP \
   "printf '%s\n' '<local-commit-or-build-id>' | sudo tee /opt/sub2api/DEPLOYED_COMMIT"
 ```
 
-### B4.1 最近一次发版记录（2026-09-20）
+### B4.1 最近一次发版记录（2026-09-28）
 
-本次使用本地构建的二进制 `sub2api-20260920-state-kit-playground-r1`，服务器路径为：
-
-```text
-/opt/sub2api/backend/bin/sub2api-20260920-state-kit-playground-r1
-```
-
-本地与服务器 SHA256 必须一致；本次校验值为：
+本次使用本地构建的二进制 `sub2api-20260928-jev-pricing-r1`（`local/main` `c688ba502`，Jev 内置兜底价），
+上一版为 `sub2api-20260927-panel-cn-dispatch-r1`，回滚改回它即可。服务器路径：
 
 ```text
-428068ac2c54a01d013ec514d09b6724ed526522580da6196dda1a39d6949a05
+/opt/sub2api/backend/bin/sub2api-20260928-jev-pricing-r1
 ```
 
-本次还验证了 `sub2api=healthy`、`/health=200`、`/api/v1/tickets=401`、
-`/download=200`。`transithub-gpt56-detector` 的 `unhealthy` 状态在发版前已存在，
-本次没有重启或修改 TransitHub；排查 TransitHub 时不要把它当作主应用发版失败。
+本地与服务器 SHA256 一致：
+
+```text
+2d5ce5811df73321a94cc6059d2b7768321caf91eec42a0f2e3914890a05bdb4
+```
+
+发版前备份：`/opt/sub2api/backups/pre-deploy-20260928-jev-pricing.dump`。验证结果：`sub2api=healthy`、
+`/health=200`、`/api/v1/tickets=401`、`/download=200`、未带凭据的 `POST /v1/systemone=401`，
+迁移最新仍为 `258_remote_pairings.sql`。
+
+> B0 里的 `./cmd/checkmigrations` 目前**不在仓库里**（2026-09-28 实测 `directory not found`）。
+> 本次没有迁移改动（`git diff <已部署提交> HEAD -- backend/migrations` 为空），因此跳过；
+> 有迁移改动的发版需要先把这个工具补回来，或手工比对 sha256(TrimSpace(content))。
+
+### B4.2 同日第二次发版：客户端 0.9（2026-09-28）
+
+二进制 `sub2api-20260928-client-v09-r1`（`local/main` `cd25009d5`），只为让内嵌的
+`frontend/public/client-version.json` 变成 0.9；上一版 `sub2api-20260928-jev-pricing-r1`。SHA256：
+
+```text
+02bd259a2d2b8a402cc1da9cf585bdee0bc8b2719cc177e9646883ff18415425
+```
+
+发版前备份：`/opt/sub2api/backups/pre-deploy-20260928-client-v09.dump`。验证：healthy、`/health=200`、
+`/api/v1/tickets=401`、`/download=200`，`/client-version.json` 与 `/download` 页面都是 0.9。
+
+> **直接改 `settings` 表不会刷新页面。** 后端把公开设置注入 `index.html` 后缓存在内存里
+> （`internal/web/html_cache.go`），只有经后台设置接口保存时才清缓存。直接 `UPDATE settings` 后，
+> `/api/v1/settings/public` 立刻是新值，但 `/download` 等页面仍是旧值，直到容器重启或后台设置页再保存一次。
+> 客户端发版改下载地址/版本号时，要么在后台设置页改，要么改完数据库后重启 sub2api。
 
 ## B5. 回滚
 
@@ -775,7 +797,8 @@ done                                                        # 都要有 max-size
 swapon --show                                               # 必须有 swap
 systemctl is-active sysstat-collect.timer                   # 出事后靠它回溯
 df -h /                                                     # 别又只给 8 GB
-systemctl is-active sub2api-log-cleanup.timer sub2api-artifact-cleanup.timer  # 两个磁盘保护 timer 都要 active
+systemctl is-active sub2api-log-cleanup.timer sub2api-artifact-cleanup.timer transithub-artifact-cleanup.timer  # 三个磁盘保护 timer 都要 active
+systemctl is-active sub2api-wal-ship.timer                  # 异地只读备库推送，见 D5.6
 ```
 
 ## D5.5 磁盘容量保护：发版产物自动清理
@@ -788,15 +811,84 @@ systemctl is-active sub2api-log-cleanup.timer sub2api-artifact-cleanup.timer  # 
 |---|---|---|---|
 | `sub2api-log-cleanup.timer` | 每天 19:00 UTC | 清 `ops_system_logs`/`ops_error_logs`/`ops_alert_events` 三张运维日志表（保留最近 3 天） | 只装在服务器上，未入库 |
 | `sub2api-artifact-cleanup.timer` | 每天 19:30 UTC（错开 30 分钟避免抢资源） | `/opt/sub2api/backend/bin` 只保留最近 5 个二进制（**外加当前 compose 挂载的那个，即使排不进前 5 也强制保留**）；`/opt/sub2api/backups` 只保留最近 5 份 `*.dump`（`.csv`/`cleanup-manifest-*.txt` 等小文件不动） | 源码在 [`sub2api/deploy/maintenance/`](maintenance/)，已同步部署到服务器 |
+| `transithub-artifact-cleanup.timer` | 每天 19:45 UTC | `/opt/transithub-releases/<版本>/` 只保留最近 3 个（**外加当前 compose 引用的所有 release，强制保留；解析不到引用时整段跳过**）；两个 backups 目录（`/opt/transithub-releases/backups`、`/opt/transit-hub/backups`）的 `*.dump`/`*.sql.gz` 合并保留最近 5 份，其中超过 30 天的快照子目录删除；`/opt/transit-hub/docker-compose.yml.*` 保留最近 10 份；`.env.*` 备份保留最近 3 份 | 同上，脚本装在 `/opt/transit-hub/scripts/transithub-artifact-cleanup.sh`（2026-09-26 起） |
 
-两者都是 `Type=oneshot` + `Nice=10` + `IOSchedulingClass=idle`，不跟业务抢资源；执行日志在
-`/var/log/sub2api-artifact-cleanup.log`。改保留份数：改 `/opt/sub2api/scripts/prod-artifact-cleanup.sh`
-里的 `KEEP_BIN`/`KEEP_DUMP` 默认值，或者用环境变量跑
-`KEEP_BIN=8 sudo /opt/sub2api/scripts/prod-artifact-cleanup.sh`。想看会删什么但不真删，加 `--dry-run`。
+三者都是 `Type=oneshot` + `Nice=10` + `IOSchedulingClass=idle`，不跟业务抢资源；执行日志在
+`/var/log/sub2api-artifact-cleanup.log`、`/var/log/transithub-artifact-cleanup.log`。改保留份数：改脚本里的
+`KEEP_*` 默认值，或者用环境变量跑，例如
+`KEEP_BIN=8 sudo /opt/sub2api/scripts/prod-artifact-cleanup.sh`、
+`KEEP_RELEASE=5 sudo /opt/transit-hub/scripts/transithub-artifact-cleanup.sh`。想看会删什么但不真删，加 `--dry-run`。
 
 当前根盘仍是 gp3 15G（2026-09-09 用到 70%，11G/15G）。有了这个 timer 后 bin+backups 稳态占用
 从峰值 5.5G 降到约 1.2G，短期内不会再写满，但机型建议（见 A1）里的 "gp3 30 GB 起" 仍然成立——
 这台机器的发版频率下 15G 长期看依然偏紧，条件允许时应该扩容，扩容步骤见文末「排查速查」。
+
+## D5.6 数据库异地只读备库：154.9.26.202（2026-09-26 起）
+
+sub2api 主库每小时增量同步到 154.9.26.202 上的**只读备库**（物理复制 / WAL 日志传送）。
+TransitHub 库不在范围内。
+
+```
+生产 sub2api-postgres ──archive_command──> /opt/sub2api/deploy/wal_archive
+      │                                           │ sub2api-wal-ship.timer（每小时 :05）
+      │                                           │ pg_switch_wal → rsync -z → 删本地
+      ▼                                           ▼
+  （业务照常读写）            154:/www/sub2api-replica/wal_incoming
+                                                  │ restore_command，每 60s 取一次
+                                                  ▼
+                              154 容器 sub2api-replica（hot standby，只读，127.0.0.1:15432）
+```
+
+| 位置 | 东西 |
+|---|---|
+| 生产 `postgresql.auto.conf` | `archive_mode=on`、`archive_command=cp ... /wal_archive/...`（`ALTER SYSTEM` 写入，跟着数据目录走） |
+| 生产 compose | postgres 服务多挂了 `./wal_archive:/wal_archive:Z` |
+| 生产 `/opt/sub2api/scripts/wal-ship-154.sh` + `sub2api-wal-ship.{service,timer}` | 推送脚本，日志 `/var/log/sub2api-wal-ship.log` |
+| 生产 `/root/.ssh/wal_ship_154` | 推送专用密钥。154 的 `authorized_keys` 里限制为 `rrsync -wo /www/sub2api-replica/wal_incoming`，只能往这一个目录写，拿不到 shell；没有绑来源 IP，所以生产换 IP 不影响 |
+| 154 `/www/sub2api-replica/` | `docker-compose.yml`（源码 [`maintenance/replica-154/`](maintenance/replica-154/)）、`data/`、`wal_incoming/`。与 154 上原有的 sub2api / sub2api-postgres **完全独立** |
+
+源码都在 [`sub2api/deploy/maintenance/`](maintenance/)。
+
+**看同步状态：**
+
+```bash
+# 154 上：备库回放到哪、最后一笔事务的时间（应在一小时内）
+docker exec sub2api-replica psql -U sub2api -d sub2api -XAt \
+  -c "select pg_is_in_recovery(), pg_last_wal_replay_lsn(), now() - pg_last_xact_replay_timestamp()"
+# 生产上：推送日志、归档失败计数（failed_count 应为 0）
+sudo tail -5 /var/log/sub2api-wal-ship.log
+sudo docker exec sub2api-postgres psql -U sub2api -XAt -c "select archived_count, failed_count, last_failed_wal from pg_stat_archiver"
+```
+
+**磁盘保护：** 154 长时间不可达时，生产本地 `wal_archive` 会堆积（约 30–60 MB/小时）。超过 3 GB
+时脚本删最旧的段保生产磁盘，并写 `/opt/sub2api/deploy/WAL_REPLICA_NEEDS_RESEED`——看到这个文件
+就说明备库断链了，要按下面重做基础备份。
+
+**重做基础备份（断链、或备库数据出问题时）：**
+
+```bash
+# 生产
+SEED=/opt/sub2api/deploy/replica-seed-$(date +%Y%m%d-%H%M%S).tar.gz
+sudo docker exec sub2api-postgres pg_basebackup -U sub2api -D - -Ft -X fetch -c fast | gzip -1 | sudo tee $SEED >/dev/null
+sudo rsync -a -e "ssh -i /root/.ssh/wal_ship_154" $SEED root@154.9.26.202:/ && sudo rm -f $SEED
+sudo rm -f /opt/sub2api/deploy/WAL_REPLICA_NEEDS_RESEED
+# 154（种子文件落在 wal_incoming 里）
+cd /www/sub2api-replica && docker compose down
+mv data data.old-$(date +%Y%m%d) && mkdir data
+tar -xzf wal_incoming/replica-seed-*.tar.gz -C data && rm -f wal_incoming/replica-seed-*.tar.gz
+touch data/standby.signal && chown -R 70:70 data && chmod 700 data
+docker compose up -d        # 确认追上后再删 data.old-*
+```
+
+**要点：**
+
+- 备库**只读**，写入会报 `cannot execute ... in a read-only transaction`。要把它提升为可写主库
+  （生产彻底挂了时）：`docker exec -u postgres sub2api-replica pg_ctl promote -D /var/lib/postgresql/data`。
+  提升后就和生产分叉了，不能再接收 WAL，事后要重做基础备份。
+- 两边 Postgres **主版本必须一致**（当前都是 18.4 / x86_64 / Alpine musl）。生产升级主版本时备库要一起升并重做基础备份。
+- 生产搬新服务器时：`postgresql.auto.conf` 随数据目录迁走，但 compose 的 `wal_archive` 挂载、推送脚本、
+  timer、`/root/.ssh/wal_ship_154`（及 154 上对应的 authorized_keys 行）要重建；搬完后重做基础备份。
+- 开关归档要重启生产 Postgres（2026-09-26 那次中断约 2.5 秒，sub2api 自动重连）。
 
 ## D6. 新机器一次性做对的顺序
 

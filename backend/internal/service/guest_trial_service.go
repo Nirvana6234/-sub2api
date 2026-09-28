@@ -254,7 +254,7 @@ func (s *GuestTrialService) PrepareChat(ctx context.Context, device, ip string, 
 	return &GuestTrialPrepared{
 		Body:      sanitized,
 		Model:     model,
-		APIKeyID:  cfg.APIKeyID,
+		APIKeyID:  cfg.KeyForModel(model),
 		Remaining: max(cfg.DailyPerVisitor-used, 0),
 	}, nil
 }

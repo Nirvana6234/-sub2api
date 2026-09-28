@@ -172,7 +172,9 @@ public sealed partial class DashboardViewModel : ObservableObject
             ClaudePreference,
             _safeAsync);
         // The credential source must be the very instance the relay reads from, so a token
-        // checked on switch-on is the one the next turn uses; the host passes it in.
+        // checked on switch-on is the one the next turn uses; the host passes it in. When it
+        // routes to this machine's own sign-ins too, the page lists them.
+        var localRouter = localProxyCredentials as LocalProxyCredentialRouter;
         LocalProxy = new LocalProxyViewModel(
             _client,
             RefreshState,
@@ -183,7 +185,9 @@ public sealed partial class DashboardViewModel : ObservableObject
             ClaudeCode,
             ClaudePreference,
             () => IsClaudeGroup,
-            reachability: localProxyReachability);
+            reachability: localProxyReachability,
+            localCodex: localRouter?.LocalCodex,
+            localClaude: localRouter?.LocalClaude);
         // Switching Codex onto a local proxy starts ChatGPT when it is not running yet. Only
         // a plain start: a ChatGPT that would need restarting is never restarted from here.
         LocalProxy.CodexNeedsLaunch = () =>

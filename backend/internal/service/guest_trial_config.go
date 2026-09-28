@@ -20,10 +20,13 @@ import (
 // 只开放文字聊天：模型走白名单，请求体里的图片、文件、工具调用在入口就被拒绝。
 type GuestTrialConfig struct {
 	Enabled bool `json:"enabled"`
-	// APIKeyID 承担试用流量的密钥；其分组决定路由到哪个上游。
+	// APIKeyID 承担试用流量的默认密钥；其分组决定路由到哪个上游。
 	APIKeyID int64 `json:"api_key_id"`
 	// Models 允许访客选择的模型，第一个是默认模型。
 	Models []string `json:"models"`
+	// ModelKeys 按模型指定承担流量的密钥（键与 Models 中的写法一致），未列出的模型用 APIKeyID。
+	// 一把密钥只对应一个分组，GPT / Claude / Grok 这类跨平台试用要靠它把每个模型分给对应分组的密钥。
+	ModelKeys map[string]int64 `json:"model_keys,omitempty"`
 	// DailyPerVisitor 每个访客（浏览器设备）每天可发的消息数；同一 IP 的上限是它的 IPMultiplier 倍，容忍 NAT 共享出口。
 	DailyPerVisitor int `json:"daily_per_visitor"`
 	// DailyGlobal 全站每天的试用请求总数上限，防止批量换 IP 刷爆。
@@ -85,9 +88,31 @@ func (c *GuestTrialConfig) AllowsModel(model string) bool {
 	return false
 }
 
-// Usable 配置是否足以对外开放：开关打开、指定了密钥、至少一个模型。
+// KeyForModel 返回承担该模型流量的密钥：优先 ModelKeys，其次 APIKeyID；0 表示没有可用密钥。
+func (c *GuestTrialConfig) KeyForModel(model string) int64 {
+	if c == nil {
+		return 0
+	}
+	model = strings.TrimSpace(model)
+	for name, keyID := range c.ModelKeys {
+		if keyID > 0 && strings.EqualFold(name, model) {
+			return keyID
+		}
+	}
+	return c.APIKeyID
+}
+
+// Usable 配置是否足以对外开放：开关打开、至少一个模型、每个模型都有承担流量的密钥。
 func (c *GuestTrialConfig) Usable() bool {
-	return c != nil && c.Enabled && c.APIKeyID > 0 && len(c.Models) > 0
+	if c == nil || !c.Enabled || len(c.Models) == 0 {
+		return false
+	}
+	for _, model := range c.Models {
+		if c.KeyForModel(model) <= 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // normalizeGuestTrialConfig 去重、去空白，把越界数字拉回合理区间；缺省数字回落到默认值。
@@ -108,6 +133,17 @@ func normalizeGuestTrialConfig(cfg *GuestTrialConfig) *GuestTrialConfig {
 		}
 		seen[key] = true
 		out.Models = append(out.Models, model)
+	}
+	// 只保留白名单内模型的有效映射，键统一成 Models 里的写法；和默认密钥相同的映射不存。
+	for _, model := range out.Models {
+		keyID := cfg.KeyForModel(model)
+		if keyID <= 0 || keyID == out.APIKeyID {
+			continue
+		}
+		if out.ModelKeys == nil {
+			out.ModelKeys = make(map[string]int64)
+		}
+		out.ModelKeys[model] = keyID
 	}
 	out.DailyPerVisitor = clampGuestTrialInt(cfg.DailyPerVisitor, GuestTrialDefaultDailyPerVisitor, guestTrialMaxDailyPerVisitor)
 	out.DailyGlobal = clampGuestTrialInt(cfg.DailyGlobal, GuestTrialDefaultDailyGlobal, guestTrialMaxDailyGlobal)
@@ -130,11 +166,13 @@ func validateGuestTrialConfig(cfg *GuestTrialConfig) error {
 	if cfg == nil || !cfg.Enabled {
 		return nil
 	}
-	if cfg.APIKeyID <= 0 {
-		return errors.New("启用试用前需要指定一把承担试用流量的 API 密钥")
-	}
 	if len(cfg.Models) == 0 {
 		return errors.New("启用试用前需要至少配置一个试用模型")
+	}
+	for _, model := range cfg.Models {
+		if cfg.KeyForModel(model) <= 0 {
+			return fmt.Errorf("试用模型 %s 没有指定承担流量的 API 密钥", model)
+		}
 	}
 	return nil
 }

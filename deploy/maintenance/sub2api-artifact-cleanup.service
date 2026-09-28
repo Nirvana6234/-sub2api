@@ -1,0 +1,11 @@
+[Unit]
+Description=sub2api release artifact retention cleanup (bin + pg_dump)
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/opt/sub2api/scripts/prod-artifact-cleanup.sh
+# 清理是低优先级维护任务，不与业务争资源
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=1800

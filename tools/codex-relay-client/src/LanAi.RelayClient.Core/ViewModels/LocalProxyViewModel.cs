@@ -35,11 +35,41 @@ public sealed partial class LocalProxyAccountItem : ObservableObject
             : string.IsNullOrWhiteSpace(account.ErrorMessage) ? $"不可用（{account.Status}）" : $"不可用：{account.ErrorMessage}";
     }
 
+    /// <summary>This machine's own official sign-in (<see cref="LocalMachineAccounts"/>).</summary>
+    internal LocalProxyAccountItem(LocalProxyKind kind, LocalMachineAccountStatus status)
+    {
+        Id = LocalMachineAccounts.IdFor(kind);
+        Name = status.DisplayName;
+        Kind = kind;
+        IsLocal = true;
+        IsUsable = status.IsUsable;
+        PlatformLabel = kind == LocalProxyKind.ClaudeCode ? "Claude" : "ChatGPT";
+        TypeLabel = "本机登录";
+        PlanText = string.Empty;
+        IsHealthy = status.IsUsable;
+        StatusText = status.State switch
+        {
+            LocalMachineAccountState.SignedIn => "已登录，凭据只在本机使用，不上传中转站",
+            LocalMachineAccountState.Unsupported => "暂不支持：" + status.Detail,
+            _ => "未登录：" + status.Detail,
+        };
+        Detail = status.Detail;
+    }
+
     public long Id { get; }
 
     public string Name { get; }
 
     internal LocalProxyKind Kind { get; }
+
+    /// <summary>This machine's own sign-in rather than an account on the relay.</summary>
+    public bool IsLocal { get; }
+
+    /// <summary>Can be switched on: always for a relay account, only when signed in for a local one.</summary>
+    public bool IsUsable { get; } = true;
+
+    /// <summary>Why a local sign-in cannot be used, and what to do about it.</summary>
+    internal string Detail { get; } = string.Empty;
 
     public string PlatformLabel { get; }
 
@@ -59,14 +89,21 @@ public sealed partial class LocalProxyAccountItem : ObservableObject
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ActionLabel))]
+    [NotifyPropertyChangedFor(nameof(CanToggle))]
     private bool isActive;
 
     public string ActionLabel => IsActive ? "关闭" : "开启";
+
+    /// <summary>An active one can always be switched off, even after its sign-in went away.</summary>
+    public bool CanToggle => IsUsable || IsActive;
+
+    internal bool SameAs(LocalProxyAccountItem other) =>
+        Id == other.Id && Name == other.Name && IsUsable == other.IsUsable && StatusText == other.StatusText;
 }
 
 /// <summary>
-/// The 本地代理 page: the user's own accounts on the relay, and which of them, if any, each
-/// tool goes straight to the official API with.
+/// The 本地代理 page: which account, if any, each tool goes straight to the official API with —
+/// this machine's own official sign-in, or one of the user's own accounts on the relay.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -95,6 +132,8 @@ public sealed partial class LocalProxyViewModel : ObservableObject
     private readonly ClaudePreferenceViewModel _claudePreference;
     private readonly Func<bool> _codexOnClaudeGroup;
     private readonly Func<DateTimeOffset> _clock;
+    private readonly ILocalMachineAccount? _localCodex;
+    private readonly ILocalMachineAccount? _localClaude;
 
     private DateTimeOffset? _accountsLoadedAt;
     private bool _restored;
@@ -110,7 +149,9 @@ public sealed partial class LocalProxyViewModel : ObservableObject
         ClaudePreferenceViewModel claudePreference,
         Func<bool> codexOnClaudeGroup,
         Func<DateTimeOffset>? clock = null,
-        IOfficialReachability? reachability = null)
+        IOfficialReachability? reachability = null,
+        ILocalMachineAccount? localCodex = null,
+        ILocalMachineAccount? localClaude = null)
     {
         _reachability = reachability ?? new OfficialReachability();
         _client = client ?? throw new ArgumentNullException(nameof(client));
@@ -123,7 +164,10 @@ public sealed partial class LocalProxyViewModel : ObservableObject
         _claudePreference = claudePreference ?? throw new ArgumentNullException(nameof(claudePreference));
         _codexOnClaudeGroup = codexOnClaudeGroup ?? throw new ArgumentNullException(nameof(codexOnClaudeGroup));
         _clock = clock ?? (() => DateTimeOffset.Now);
+        _localCodex = localCodex;
+        _localClaude = localClaude;
         RefreshUsage();
+        ProbeLocalAccounts();
     }
 
     private readonly IOfficialReachability _reachability;
@@ -174,6 +218,20 @@ public sealed partial class LocalProxyViewModel : ObservableObject
               "本地代理需要本机能直接访问官方，国内通常要先打开代理/VPN（系统代理或 TUN 模式）。" +
               $"建议先开好代理再开启；现在开启的话，{tool} 在连上官方之前都无法使用。\n\n{launch}仍要开启吗？";
     }
+
+    /// <summary>This machine's Codex ChatGPT sign-in; null when the host supplied none.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasLocalCodexAccount))]
+    private LocalProxyAccountItem? localCodexAccount;
+
+    /// <summary>This machine's Claude Code sign-in; null when the host supplied none.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasLocalClaudeAccount))]
+    private LocalProxyAccountItem? localClaudeAccount;
+
+    public bool HasLocalCodexAccount => LocalCodexAccount is not null;
+
+    public bool HasLocalClaudeAccount => LocalClaudeAccount is not null;
 
     public ObservableCollection<LocalProxyAccountItem> CodexAccounts { get; } = [];
 
@@ -245,6 +303,9 @@ public sealed partial class LocalProxyViewModel : ObservableObject
     /// <summary>A card loader for the refresh cycle: reads the user's own accounts, at most every ten minutes.</summary>
     internal async Task LoadAccountsAsync(string token, CancellationToken cancellationToken)
     {
+        // Cheap and local: a sign-in made or lost since the last cycle shows up within one.
+        ProbeLocalAccounts();
+
         if (_accountsLoadedAt is { } loaded && _clock() - loaded < AccountsMaxAge)
         {
             return;
@@ -256,20 +317,20 @@ public sealed partial class LocalProxyViewModel : ObservableObject
                 await _client.ListContributionAccountsAsync(token, cancellationToken).ConfigureAwait(true);
             _accountsLoadedAt = _clock();
             Populate(accounts);
-            AccountsMessage = accounts.Count == 0 ? "你在中转站还没有自己的账号。" : string.Empty;
+            AccountsMessage = accounts.Count == 0 ? "你在中转站上还没有自己的账号；本机官方账号不受影响。" : string.Empty;
         }
         catch (RelayApiException ex) when (ex.Failure == RelayFailure.Forbidden)
         {
             // An answer, not a failure of the cycle: this user simply does not have the feature.
             _accountsLoadedAt = _clock();
             Populate([]);
-            AccountsMessage = "你的账号未开通「我的账号」功能，暂时无法使用本地代理。";
+            AccountsMessage = "你的共飞账号未开通「我的账号」功能，中转站上的账号暂时不能用于本地代理；本机官方账号不受影响。";
         }
         catch (Exception ex) when (_refresh.Observe(ex))
         {
             if (_accountsLoadedAt is null)
             {
-                AccountsMessage = "暂时取不到你的账号，稍后会自动重试。";
+                AccountsMessage = "暂时取不到你在中转站上的账号，稍后会自动重试。";
             }
             ClientLog.Warning("读取本地代理账号失败", ex);
         }
@@ -344,6 +405,12 @@ public sealed partial class LocalProxyViewModel : ObservableObject
             return;
         }
 
+        if (!item.IsUsable)
+        {
+            ActionMessage = item.Detail;
+            return;
+        }
+
         if (item.Kind == LocalProxyKind.Codex && _codexOnClaudeGroup())
         {
             ActionMessage = "Codex 现在用的是 Claude 分组，ChatGPT 账号跑不了 Claude 模型。请先在 Codex 页切到 GPT 分组，再开启本地代理。";
@@ -365,11 +432,18 @@ public sealed partial class LocalProxyViewModel : ObservableObject
         }
 
         // Asked for once now, so a refusal is shown on this click rather than on the tool's next turn.
+        // A relay account's token is fetched fresh; this machine's own sign-in is only refreshed
+        // when it is expiring — each refresh spends its refresh token for good.
         try
         {
-            await _credentials.GetAsync(item.Id, forceRefresh: true, CancellationToken.None).ConfigureAwait(true);
+            await _credentials.GetAsync(item.Id, forceRefresh: !item.IsLocal, CancellationToken.None).ConfigureAwait(true);
         }
         catch (RelayApiException ex)
+        {
+            ActionMessage = $"开启失败：{ex.UserMessage}";
+            return;
+        }
+        catch (LocalProxyCredentialException ex)
         {
             ActionMessage = $"开启失败：{ex.UserMessage}";
             return;
@@ -468,24 +542,61 @@ public sealed partial class LocalProxyViewModel : ObservableObject
         LocalProxyChoice saved = _preferences.Load();
         if (saved.CodexAccountId is long codexId)
         {
-            Apply(LocalProxyKind.Codex, new LocalProxyTarget(codexId, NameOf(CodexAccounts, codexId, saved.CodexAccountName)));
-            if (CodexAccounts.All(a => a.Id != codexId) && AccountsMessage.Length == 0)
-            {
-                CodexError = "上次选择的账号已不在你的账号列表中，本地代理无法使用。";
-            }
+            Apply(LocalProxyKind.Codex, new LocalProxyTarget(codexId, NameOf(CodexItems(), codexId, saved.CodexAccountName)));
+            CodexError = MissingChoice(CodexItems(), codexId);
         }
         if (saved.ClaudeAccountId is long claudeId)
         {
-            Apply(LocalProxyKind.ClaudeCode, new LocalProxyTarget(claudeId, NameOf(ClaudeAccounts, claudeId, saved.ClaudeAccountName)));
-            if (ClaudeAccounts.All(a => a.Id != claudeId) && AccountsMessage.Length == 0)
-            {
-                ClaudeError = "上次选择的账号已不在你的账号列表中，本地代理无法使用。";
-            }
+            Apply(LocalProxyKind.ClaudeCode, new LocalProxyTarget(claudeId, NameOf(ClaudeItems(), claudeId, saved.ClaudeAccountName)));
+            ClaudeError = MissingChoice(ClaudeItems(), claudeId);
         }
     }
 
+    /// <summary>Why a restored choice cannot work, or empty. A local sign-in is checked as it is now.</summary>
+    private string MissingChoice(IReadOnlyList<LocalProxyAccountItem> items, long id)
+    {
+        if (LocalMachineAccounts.IsLocal(id))
+        {
+            return items.FirstOrDefault(a => a.Id == id) is { IsUsable: false } local
+                ? "本机官方账号现在用不了：" + local.Detail
+                : string.Empty;
+        }
+
+        return items.All(a => a.Id != id) && AccountsMessage.Length == 0
+            ? "上次选择的账号已不在你的账号列表中，本地代理无法使用。"
+            : string.Empty;
+    }
+
+    private IReadOnlyList<LocalProxyAccountItem> CodexItems() =>
+        LocalCodexAccount is { } local ? [local, .. CodexAccounts] : [.. CodexAccounts];
+
+    private IReadOnlyList<LocalProxyAccountItem> ClaudeItems() =>
+        LocalClaudeAccount is { } local ? [local, .. ClaudeAccounts] : [.. ClaudeAccounts];
+
     private static string NameOf(IEnumerable<LocalProxyAccountItem> items, long id, string? fallback) =>
         items.FirstOrDefault(a => a.Id == id)?.Name ?? fallback ?? $"账号 {id}";
+
+    /// <summary>
+    /// Looks for this machine's own sign-ins again. An item is replaced only when something the
+    /// page shows changed, so an unchanged row is not rebuilt under the user's pointer.
+    /// </summary>
+    internal void ProbeLocalAccounts()
+    {
+        LocalCodexAccount = Probed(_localCodex, LocalCodexAccount);
+        LocalClaudeAccount = Probed(_localClaude, LocalClaudeAccount);
+        MarkActive();
+    }
+
+    private static LocalProxyAccountItem? Probed(ILocalMachineAccount? account, LocalProxyAccountItem? current)
+    {
+        if (account is null)
+        {
+            return null;
+        }
+
+        var fresh = new LocalProxyAccountItem(account.Kind, account.Probe());
+        return current is not null && current.SameAs(fresh) ? current : fresh;
+    }
 
     private void Apply(LocalProxyKind kind, LocalProxyTarget? target)
     {
@@ -554,11 +665,11 @@ public sealed partial class LocalProxyViewModel : ObservableObject
 
     private void MarkActive()
     {
-        foreach (LocalProxyAccountItem item in CodexAccounts)
+        foreach (LocalProxyAccountItem item in CodexItems())
         {
             item.IsActive = CodexTarget?.AccountId == item.Id;
         }
-        foreach (LocalProxyAccountItem item in ClaudeAccounts)
+        foreach (LocalProxyAccountItem item in ClaudeItems())
         {
             item.IsActive = ClaudeTarget?.AccountId == item.Id;
         }

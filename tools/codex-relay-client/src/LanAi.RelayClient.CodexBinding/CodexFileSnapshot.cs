@@ -90,6 +90,59 @@ public sealed class CodexFileSnapshot
         }
     }
 
+    /// <summary>
+    /// The recorded <c>auth.json</c>, or null when there is no snapshot or the user had none.
+    /// The caller clears the returned bytes.
+    /// </summary>
+    public byte[]? ReadAuth()
+    {
+        string manifestPath = Path.Combine(_root, ManifestFileName);
+        if (!File.Exists(manifestPath))
+        {
+            return null;
+        }
+
+        SnapshotManifest manifest = ReadManifest(manifestPath);
+        return ReadCapturedFile(
+            Path.Combine(_root, AuthFileName),
+            manifest.AuthExisted,
+            manifest.ProtectionVersion);
+    }
+
+    /// <summary>
+    /// Replaces the recorded <c>auth.json</c> — with the user's newer sign-in, or with the same
+    /// sign-in after its tokens were refreshed — leaving the recorded <c>config.toml</c> as it is.
+    /// Returns false when there is no snapshot to update.
+    /// </summary>
+    public bool ReplaceAuth(byte[] plaintext)
+    {
+        ArgumentNullException.ThrowIfNull(plaintext);
+        string manifestPath = Path.Combine(_root, ManifestFileName);
+        if (!File.Exists(manifestPath))
+        {
+            return false;
+        }
+
+        SnapshotManifest manifest = ReadManifest(manifestPath);
+        if (manifest.ProtectionVersion != SnapshotBlobFormat.CurrentProtectionVersion)
+        {
+            MigrateExistingSnapshot(manifest);
+            manifest = manifest with { ProtectionVersion = SnapshotBlobFormat.CurrentProtectionVersion };
+        }
+
+        // The blob first, then the manifest: a crash in between leaves a manifest that still
+        // says "no auth.json" beside a blob nobody reads, never one pointing at a missing blob.
+        AtomicWrite(Path.Combine(_root, AuthFileName), SnapshotBlobFormat.Protect(plaintext, _protector));
+        if (!manifest.AuthExisted)
+        {
+            AtomicWrite(
+                manifestPath,
+                JsonSerializer.SerializeToUtf8Bytes(manifest with { AuthExisted = true }, CodexJsonContext.Default.SnapshotManifest));
+        }
+
+        return true;
+    }
+
     public void Clear()
     {
         DeleteWithTemporary(Path.Combine(_root, ManifestFileName));

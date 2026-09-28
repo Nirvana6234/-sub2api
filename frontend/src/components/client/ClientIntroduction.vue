@@ -354,8 +354,11 @@ h1 > span { display: block; color: var(--blue); white-space: pre-line; }
   .map-column { flex-direction: row; flex-wrap: wrap; align-items: center; }
   .map-label { width: 100%; }
   .map-ticket { min-width: 0; }
-  .map-wire { justify-content: center; height: 26px; transform: rotate(90deg); }
-  .map-wire i { left: 10px; }
+  /* A short vertical wire. Rotating the whole element instead turned its card-wide width
+     into a line running through every row above and below it. */
+  .map-wire { justify-content: center; align-items: flex-end; height: 34px; }
+  .map-wire i { left: 50%; right: auto; top: 0; bottom: 12px; border-top: 0; border-left: 1.5px dashed #8cacb3; }
+  .map-wire svg { transform: rotate(90deg); }
   .map-targets { flex-direction: column; align-items: stretch; }
   .map-facts { grid-template-columns: 1fr; gap: 10px; }
 }

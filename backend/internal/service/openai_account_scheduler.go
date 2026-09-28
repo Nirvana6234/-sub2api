@@ -252,7 +252,7 @@ func (s *openAIAccountRuntimeStats) report(accountID int64, success bool, firstT
 	if s == nil || accountID <= 0 {
 		return
 	}
-	const alpha = 0.2
+	const alpha = openAIAccountHealthEWMAAlpha
 	stat := s.loadOrCreate(accountID)
 
 	errorSample := 1.0
