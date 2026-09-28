@@ -197,40 +197,20 @@ internal sealed class LocalCodexAccount : ILocalMachineAccount
         IdToken = tokens.IdToken ?? login.IdToken,
     };
 
-    private static LocalProxyCredential ToCredential(CodexLogin login)
-    {
-        JsonObject? auth = JwtPayload.Read(login.IdToken)?["https://api.openai.com/auth"] as JsonObject;
-        string accountId = login.AccountId.Length > 0 ? login.AccountId : JwtPayload.String(auth, "chatgpt_account_id");
-        return new LocalProxyCredential(
-            accountId: LocalMachineAccounts.CodexId,
-            name: DisplayName(login.IdToken),
-            platform: "openai",
-            accessToken: login.AccessToken,
-            expiresAt: JwtPayload.ExpiresAt(login.AccessToken),
-            chatgptAccountId: accountId,
-            fedramp: JwtPayload.Bool(auth, "chatgpt_account_is_fedramp"));
-    }
+    private static LocalProxyCredential ToCredential(CodexLogin login) => new(
+        accountId: LocalMachineAccounts.CodexId,
+        name: DisplayName(login.IdToken),
+        platform: "openai",
+        accessToken: login.AccessToken,
+        expiresAt: JwtPayload.ExpiresAt(login.AccessToken),
+        chatgptAccountId: login.AccountId.Length > 0 ? login.AccountId : ChatGptIdToken.AccountId(login.IdToken),
+        fedramp: ChatGptIdToken.FedRamp(login.IdToken));
 
     /// <summary>本机 ChatGPT 登录（email · Plus）, from the id token's claims.</summary>
     internal static string DisplayName(string idToken)
     {
-        JsonObject? claims = JwtPayload.Read(idToken);
-        string email = JwtPayload.String(claims, "email");
-        string plan = JwtPayload.String(claims?["https://api.openai.com/auth"] as JsonObject, "chatgpt_plan_type");
-        string label = string.Join(" · ", new[] { email, PlanLabel(plan) }.Where(part => part.Length > 0));
+        string label = string.Join(" · ", new[] { ChatGptIdToken.Email(idToken), ChatGptIdToken.PlanLabel(ChatGptIdToken.PlanType(idToken)) }
+            .Where(part => part.Length > 0));
         return label.Length > 0 ? $"本机 ChatGPT 登录（{label}）" : "本机 ChatGPT 登录";
     }
-
-    private static string PlanLabel(string plan) => plan.ToLowerInvariant() switch
-    {
-        "" => string.Empty,
-        "plus" => "Plus",
-        "pro" => "Pro",
-        "team" => "Team",
-        "business" => "Business",
-        "enterprise" => "Enterprise",
-        "edu" => "Edu",
-        "free" => "Free",
-        _ => plan,
-    };
 }
