@@ -492,6 +492,23 @@ ssh -i "$PRODKEY" ec2-user@$PRODIP \
 > 本次没有迁移改动（`git diff <已部署提交> HEAD -- backend/migrations` 为空），因此跳过；
 > 有迁移改动的发版需要先把这个工具补回来，或手工比对 sha256(TrimSpace(content))。
 
+### B4.2 同日第二次发版：客户端 0.9（2026-09-28）
+
+二进制 `sub2api-20260928-client-v09-r1`（`local/main` `cd25009d5`），只为让内嵌的
+`frontend/public/client-version.json` 变成 0.9；上一版 `sub2api-20260928-jev-pricing-r1`。SHA256：
+
+```text
+02bd259a2d2b8a402cc1da9cf585bdee0bc8b2719cc177e9646883ff18415425
+```
+
+发版前备份：`/opt/sub2api/backups/pre-deploy-20260928-client-v09.dump`。验证：healthy、`/health=200`、
+`/api/v1/tickets=401`、`/download=200`，`/client-version.json` 与 `/download` 页面都是 0.9。
+
+> **直接改 `settings` 表不会刷新页面。** 后端把公开设置注入 `index.html` 后缓存在内存里
+> （`internal/web/html_cache.go`），只有经后台设置接口保存时才清缓存。直接 `UPDATE settings` 后，
+> `/api/v1/settings/public` 立刻是新值，但 `/download` 等页面仍是旧值，直到容器重启或后台设置页再保存一次。
+> 客户端发版改下载地址/版本号时，要么在后台设置页改，要么改完数据库后重启 sub2api。
+
 ## B5. 回滚
 
 bind mount 模式：把 compose 里挂载的文件名改回上一个二进制，重跑 B3 最后那条命令即可。
