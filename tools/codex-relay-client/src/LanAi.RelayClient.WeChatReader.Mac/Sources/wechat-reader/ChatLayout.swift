@@ -58,14 +58,21 @@ struct ChatLayout {
 
     /// FNV-1a over the message list only, every third pixel: the header (typing indicator) and the
     /// input box (caret) are outside it.
-    func hash(_ p: Pixels) -> UInt64 {
+    ///
+    /// Stops short of the window's right edge, like ChatLayout.cs: the overlay scrollbar shown while
+    /// the pointer moves over the list would otherwise make every mouse movement a "scroll", and no
+    /// screen would stay still long enough to be judged (measured on Windows at 150 %). A fixed
+    /// distance from the window's edge, not from `right`, which itself moves with the scrollbar.
+    /// `scale`: image pixels per design pixel.
+    func hash(_ p: Pixels, scale: Double) -> UInt64 {
         var hash: UInt64 = 14_695_981_039_346_656_037
         let prime: UInt64 = 1_099_511_628_211
+        let limit = min(right, p.width - Int((40 * scale).rounded()))
         var y = messagesTop
         while y <= messagesBottom {
             let row = y * p.width * 4
             var x = left
-            while x < right {
+            while x < limit {
                 let i = row + x * 4
                 hash = (hash ^ UInt64(p.bgra[i])) &* prime
                 hash = (hash ^ UInt64(p.bgra[i + 1])) &* prime

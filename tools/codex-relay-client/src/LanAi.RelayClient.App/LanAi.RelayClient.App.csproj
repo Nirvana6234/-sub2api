@@ -93,7 +93,7 @@
 
        Opt-in: the reader is a self-contained exe of its own (about 14 MB trimmed). Left out of
        the release package in phase 1, when the feature was for the developer's own testing;
-       from 1.0 the release workflow (client-release.yml) passes it for win-x64. Build with
+       from 1.0 the release workflow (client-release.yml) passes it for both targets. Build with
        -p:IncludeWeChatReader=true to get it next to the client.
 
        `dotnet publish` through Exec rather than the MSBuild task: the reader has its own
@@ -162,6 +162,26 @@
       <Content Include="bin\context-filter\context-filter.exe"
                Condition="Exists('$(MSBuildProjectDirectory)\bin\context-filter\context-filter.exe')">
         <Link>context-filter\context-filter.exe</Link>
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+        <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+      </Content>
+    </ItemGroup>
+  </Target>
+
+  <!-- The macOS build of the same filter (upstream publishes darwin-arm64 with every release).
+       Nothing is downloaded here: the release workflow fetches it on its macOS runner, checks
+       it against upstream's SHA256SUMS, and passes it in as ContextFilterMacBinary. Without one
+       the .app simply has no filter, and the client greys out 「启用上下文压缩」 as before. It lands
+       in Contents/MacOS/context-filter/, where App.axaml.cs looks, and build-app.py marks it
+       executable. -->
+  <Target Name="IncludeContextFilterMac" BeforeTargets="AssignTargetPaths"
+          Condition="'$(DesignTimeBuild)' != 'true' and $(RuntimeIdentifier.StartsWith('osx')) and '$(ContextFilterMacBinary)' != ''">
+    <Error Condition="!Exists('$(ContextFilterMacBinary)')"
+           Text="ContextFilterMacBinary was given but not found: $(ContextFilterMacBinary)" />
+    <ItemGroup>
+      <Content Include="$(ContextFilterMacBinary)">
+        <Link>context-filter/context-filter</Link>
         <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
         <ExcludeFromSingleFile>true</ExcludeFromSingleFile>

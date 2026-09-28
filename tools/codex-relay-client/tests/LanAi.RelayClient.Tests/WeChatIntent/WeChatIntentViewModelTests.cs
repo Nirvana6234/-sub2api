@@ -79,7 +79,9 @@ public sealed class WeChatIntentViewModelTests : IDisposable
 
     /// <param name="ownKeyRoute">A test build (the own-key route exists). False is a production build.</param>
     /// <param name="startOnOwnKey">Most tests exercise the pipeline through the own-key client; the 共飞 group is the default otherwise.</param>
-    private (WeChatIntentViewModel Vm, FakeReader Reader, FakeJev Jev) Create(bool withReader = true, bool withKey = true, JevKeyCheck check = JevKeyCheck.Valid, bool ownKeyRoute = true, bool startOnOwnKey = true)
+    private readonly List<Uri> _opened = [];
+
+    private (WeChatIntentViewModel Vm, FakeReader Reader, FakeJev Jev) Create(bool withReader = true, bool withKey = true, JevKeyCheck check = JevKeyCheck.Valid, bool ownKeyRoute = true, bool startOnOwnKey = true, bool mac = false)
     {
         var reader = new FakeReader();
         var jev = new FakeJev();
@@ -110,7 +112,13 @@ public sealed class WeChatIntentViewModelTests : IDisposable
             action => action(),
             (interval, onTick) => _timer = new FakeUiTimer(interval, onTick),
             () => _now,
-            relayJev: _relay = new FakeJev())
+            relayJev: _relay = new FakeJev(),
+            isMacOS: mac,
+            openUrl: url =>
+            {
+                _opened.Add(url);
+                return true;
+            })
         {
             Confirm = _ => Task.FromResult(true),
         };
@@ -559,6 +567,89 @@ public sealed class WeChatIntentViewModelTests : IDisposable
         Assert.Equal(JevKeyState.Missing, vm.KeyState);
         Assert.Equal("TypeSafe 不接受这个 key，请检查后重试", vm.KeyMessage);
         Assert.Empty(Directory.Exists(_lastDir) ? Directory.GetFiles(_lastDir, "typesafe-key-*") : []);
+    }
+
+    [Fact]
+    public async Task OnAMacTheFirstSwitchOnSaysWhatScreenRecordingIsForOnce()
+    {
+        var (vm, _, _) = Create(mac: true);
+        var asked = new List<string>();
+        vm.Confirm = message =>
+        {
+            asked.Add(message);
+            return Task.FromResult(true);
+        };
+
+        await vm.SetEnabledAsync(true);
+        await vm.SetEnabledAsync(false);
+        await vm.SetEnabledAsync(true);
+
+        Assert.Single(asked, m => m == WeChatIntentViewModel.ScreenRecordingText);
+        Assert.True(vm.IsEnabled);
+    }
+
+    [Fact]
+    public async Task OnAMacDecliningTheExplanationLeavesTheSwitchOff()
+    {
+        var (vm, reader, _) = Create(mac: true);
+        vm.Confirm = message => Task.FromResult(message != WeChatIntentViewModel.ScreenRecordingText);
+
+        await vm.SetEnabledAsync(true);
+
+        Assert.False(vm.IsEnabled);
+        Assert.False(reader.IsRunning);
+    }
+
+    [Fact]
+    public async Task OnWindowsNothingIsSaidAboutScreenRecording()
+    {
+        var (vm, _, _) = Create();
+        var asked = new List<string>();
+        vm.Confirm = message =>
+        {
+            asked.Add(message);
+            return Task.FromResult(true);
+        };
+
+        await vm.SetEnabledAsync(true);
+
+        Assert.DoesNotContain(WeChatIntentViewModel.ScreenRecordingText, asked);
+    }
+
+    [Fact]
+    public async Task ARefusedScreenRecordingOffersTheSettingsAndARestart()
+    {
+        var (vm, reader, _) = Create(mac: true);
+        await vm.SetEnabledAsync(true);
+        reader.Raise(InFront());
+
+        reader.Raise(new ReaderEvent { Type = ReaderEvent.Error, Code = ReaderEvent.ErrorScreenRecordingDenied, Message = "需要「屏幕录制」权限" });
+
+        Assert.True(vm.NeedsScreenRecording);
+        Assert.Equal(WeChatIntentRunState.Stopped, vm.RunState);
+        Assert.Contains("打开系统设置", vm.StatusText, StringComparison.Ordinal);
+        Assert.False(reader.IsRunning);
+
+        vm.OpenScreenRecordingSettings();
+        Assert.Equal("x-apple.systempreferences", Assert.Single(_opened).Scheme);
+
+        Assert.False(vm.CanRestartClient);
+        int restarts = 0;
+        vm.RestartClient = () =>
+        {
+            restarts++;
+            return Task.CompletedTask;
+        };
+        Assert.True(vm.CanRestartClient);
+        await vm.RestartClient();
+        Assert.Equal(1, restarts);
+
+        // Allowed and restarted: the first frame clears it.
+        await vm.SetEnabledAsync(false);
+        await vm.SetEnabledAsync(true);
+        reader.Raise(InFront());
+        reader.Raise(Frame("小明", Them(250, "那你说")));
+        Assert.False(vm.NeedsScreenRecording);
     }
 
     [Fact]

@@ -80,6 +80,16 @@ public partial class ExplorePage : UserControl
 
     private void Pause_OnClick(object? sender, RoutedEventArgs e) => _viewModel?.Pause();
 
+    private void OpenScreenRecording_OnClick(object? sender, RoutedEventArgs e) => _viewModel?.OpenScreenRecordingSettings();
+
+    private async void Restart_OnClick(object? sender, RoutedEventArgs e)
+    {
+        if (_viewModel?.RestartClient is { } restart)
+        {
+            await restart();
+        }
+    }
+
     private void Resume_OnClick(object? sender, RoutedEventArgs e) => _viewModel?.Resume();
 
     private void Unmute_OnClick(object? sender, RoutedEventArgs e)

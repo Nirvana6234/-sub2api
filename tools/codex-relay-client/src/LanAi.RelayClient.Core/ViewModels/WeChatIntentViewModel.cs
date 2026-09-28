@@ -70,6 +70,22 @@ public sealed partial class WeChatIntentViewModel : ObservableObject, IDisposabl
         "· 每次判断从你的共飞余额扣费，按分组倍率计算。\n" +
         "· 这些消息是对方发给你的，请只在自己的聊天里使用。";
 
+    /// <summary>
+    /// Said once on macOS before the first switch-on: the reader needs 「屏幕录制」, macOS asks for it
+    /// only once, and the permission reaches the app only after it restarts.
+    /// </summary>
+    internal const string ScreenRecordingText =
+        "在 Mac 上读取微信窗口需要「屏幕录制」权限：\n" +
+        "· 开启后 macOS 会弹出一次授权框，请点「打开系统设置」，在「隐私与安全性 → 屏幕录制」里打开「共飞-ChatGPT助手」。\n" +
+        "· 打开后 macOS 要求重新启动助手，权限才会生效：回到这里点「重新启动助手」即可。\n" +
+        "· 截图只在本机识别文字，识别完就丢，不保存也不上传。";
+
+    internal const string ScreenRecordingDenied =
+        "需要「屏幕录制」权限：点「打开系统设置」，在「屏幕录制」里打开「共飞-ChatGPT助手」，再点「重新启动助手」。";
+
+    /// <summary>The 「屏幕录制」 pane of System Settings.</summary>
+    internal static readonly Uri ScreenRecordingSettings = new("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture");
+
     private static readonly TimeSpan WeChatCheckInterval = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan PauseLength = TimeSpan.FromMinutes(30);
     private const int CardsPerChat = 60;
@@ -94,6 +110,8 @@ public sealed partial class WeChatIntentViewModel : ObservableObject, IDisposabl
     private readonly Func<DateTimeOffset> _clock;
     private readonly IUiTimer _timer;
     private readonly string? _dumpDirectory;
+    private readonly bool _isMac;
+    private readonly Func<Uri, bool> _openUrl;
     private readonly SemaphoreSlim _slots = new(Concurrency);
 
     private readonly IntentScheduler _scheduler = new();
@@ -145,7 +163,9 @@ public sealed partial class WeChatIntentViewModel : ObservableObject, IDisposabl
         Func<DateTimeOffset>? clock = null,
         Func<bool>? isOwnWindowInFront = null,
         string? dumpDirectory = null,
-        IJevClient? relayJev = null)
+        IJevClient? relayJev = null,
+        bool? isMacOS = null,
+        Func<Uri, bool>? openUrl = null)
     {
         _reader = reader;
         _jev = jev;
@@ -160,6 +180,8 @@ public sealed partial class WeChatIntentViewModel : ObservableObject, IDisposabl
         _clock = clock ?? (() => DateTimeOffset.Now);
         _isOwnWindowInFront = isOwnWindowInFront ?? (() => false);
         _dumpDirectory = string.IsNullOrWhiteSpace(dumpDirectory) ? null : dumpDirectory;
+        _isMac = isMacOS ?? OperatingSystem.IsMacOS();
+        _openUrl = openUrl ?? LanAi.RelayClient.Platform.BrowserLauncher.TryOpen;
 
         _prefs = _preferences.Load();
         isEnabled = _prefs.Enabled;
@@ -191,6 +213,37 @@ public sealed partial class WeChatIntentViewModel : ObservableObject, IDisposabl
 
     /// <summary>Asks the consent question (§3.3). Supplied by the head, which owns a window.</summary>
     public Func<string, Task<bool>>? Confirm { get; set; }
+
+    /// <summary>
+    /// macOS: the reader was refused 「屏幕录制」. The page offers the way out — System Settings, then
+    /// a restart — because macOS asks only once and applies the permission only to a new process.
+    /// </summary>
+    [ObservableProperty]
+    private bool needsScreenRecording;
+
+    /// <summary>Quits and opens the client again (macOS, after 「屏幕录制」 was granted). Supplied by the head.</summary>
+    public Func<Task>? RestartClient
+    {
+        get => _restartClient;
+        set
+        {
+            _restartClient = value;
+            OnPropertyChanged(nameof(CanRestartClient));
+        }
+    }
+
+    private Func<Task>? _restartClient;
+
+    public bool CanRestartClient => RestartClient is not null;
+
+    /// <summary>Opens the 「屏幕录制」 pane of System Settings.</summary>
+    public void OpenScreenRecordingSettings()
+    {
+        if (!_openUrl(ScreenRecordingSettings))
+        {
+            Overlay.Status = "没能打开系统设置：请手动打开「系统设置 → 隐私与安全性 → 屏幕录制」。";
+        }
+    }
 
     /// <summary>The installed wechat-reader.exe was found. Without it the switch cannot be turned on (§4.6).</summary>
     public bool ReaderAvailable => _reader is not null;
@@ -485,6 +538,19 @@ public sealed partial class WeChatIntentViewModel : ObservableObject, IDisposabl
                     ? _prefs with { RelayConsentVersion = RelayConsentVersion }
                     : _prefs with { ConsentVersion = ConsentVersion };
             }
+
+            // macOS: say what the system prompt that is coming is for, before it comes.
+            if (_isMac && !_prefs.ScreenRecordingExplained)
+            {
+                bool understood = Confirm is not null && await Confirm(ScreenRecordingText).ConfigureAwait(true);
+                if (!understood)
+                {
+                    IsEnabled = false;
+                    return;
+                }
+
+                _prefs = _prefs with { ScreenRecordingExplained = true };
+            }
         }
 
         IsEnabled = on;
@@ -761,7 +827,8 @@ public sealed partial class WeChatIntentViewModel : ObservableObject, IDisposabl
                 StopWith(OperatingSystem.IsMacOS() ? "需要 macOS 14 或更高版本" : "需要 Windows 10 2004 或更高版本");
                 break;
             case ReaderEvent.ErrorScreenRecordingDenied:
-                StopWith("需要「屏幕录制」权限：在「系统设置 → 隐私与安全性 → 屏幕录制」里允许共飞-ChatGPT助手，然后重启助手再打开开关");
+                NeedsScreenRecording = true;
+                StopWith(ScreenRecordingDenied);
                 break;
             case ReaderEvent.ErrorNoChatArea:
                 Overlay.Status = "未识别到聊天界面";
@@ -776,6 +843,8 @@ public sealed partial class WeChatIntentViewModel : ObservableObject, IDisposabl
 
     private void OnFrame(ReaderEvent frame)
     {
+        // A frame means the reader can see the screen: whatever was said about the permission is past.
+        NeedsScreenRecording = false;
         // The parser works in image pixels: its thresholds want image pixels per design pixel.
         ChatScreen screen = ChatScreenParser.Parse(frame, Overlay.WeChatScale * Overlay.WeChatImageScale);
         Dump(frame, screen);

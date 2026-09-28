@@ -19,9 +19,10 @@ Codex 只接触本机随机 fake key；登录 JWT 和分组 ID 由客户端 Rela
 - **CDP 注入（官方客户端内的状态条与限额检测）已移除**。它在现行 ChatGPT 上基本连不上，每次启动往日志里灌一段栈，而它从来不是必需功能。`config.toml` 路由守护**保留**，并且现在 Windows 和 macOS 都有——它才是防「官方登录把共飞路由冲掉」的那一道。
 
 > **macOS 走同一条链路**——出货头只有一个（Avalonia），两个平台共用同一份接线。
-> 差别只在 Context Filter 是 Windows 二进制：macOS 上找不到它，于是链路退化为
+> 1.0 起 macOS 包也带 Context Filter（上游发布的 darwin-arm64 版，出包流水线下载并校验后放进
+> `.app/Contents/MacOS/context-filter/`），链路与 Windows 相同；没带它的包仍退化为
 > `Codex → 本机 Paw Relay`，压缩勾选框置灰。托管 API Key 路径两个平台都只是兼容回退。
-> macOS 上的本机 relay **尚未在真机验证过**（开发机是 Windows）。
+> macOS 上的本机 relay 与 Context Filter **尚未在真机验证过**（开发机是 Windows）。
 
 > **当前状态：M1/M2 核心链路已跑通，F3/F4/F5/F9 核心可靠性已补齐。**
 > 构建通过、测试全绿（565/565：CodexBinding 53、Server 92、客户端 420）；
@@ -139,7 +140,7 @@ python packaging/check-server-address.py --channel production <临时目录>/Lan
 
 脚本要求本渠道的地址存在、另外两个不存在，任何一项不符都退出码非 0。**产物目录名只是标签，不是证据**——命名成“正式”而没跑 `--channel production` 的包不算正式包。发布流水线只走 `production`，不带渠道参数。
 
-`context-filter.exe` 要放在**子目录** `context-filter\` 下（`App.axaml.cs` 按 `AppContext.BaseDirectory\context-filter\context-filter.exe` 找它，不跟主 exe 平铺），产物结构照 workflow 里"打包 Windows zip"那一步的 staging 布局来。微信读屏组件同理放在 `wechat-reader\` 子目录下：1.0 起 Windows 正式包带它（`-p:IncludeWeChatReader=true`），有它才有「探索」页签；macOS 包不带（读屏组件的 Mac 版只能在 Mac 上编译）。（WPF 头已于 2026-09-23 删除，只剩这一种约定。）
+`context-filter.exe` 要放在**子目录** `context-filter\` 下（`App.axaml.cs` 按 `AppContext.BaseDirectory\context-filter\context-filter.exe` 找它，不跟主 exe 平铺），产物结构照 workflow 里"打包 Windows zip"那一步的 staging 布局来。微信读屏组件同理放在 `wechat-reader\` 子目录下：1.0 起两个正式包都带它（`-p:IncludeWeChatReader=true`），有它才有「探索」页签。macOS 版是 Swift，只能在 Mac 上编译：`client-release.yml` 的 `mac-reader` 任务在 macOS runner 上编好，再经 `-p:WeChatReaderMacBinary=…` 交给 osx-arm64 发布；`client-ci.yml` 也在 macOS runner 上编一遍，作为它唯一的编译检查。（WPF 头已于 2026-09-23 删除，只剩这一种约定。）
 
 之前 `packaging/publish-windows.ps1` 想省掉这几步，但发布的是早已不出货的 WPF 头，已删除。**不要再写第二个打包脚本**：本地要自动化就直接照上面几行封一个函数，别让它跟 CI 的步骤分叉。
 

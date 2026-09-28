@@ -5,11 +5,14 @@
 #
 # 产出
 #   codex-relay-client_v<版本>_x64.zip            Windows 单文件，带 context-filter 与微信读屏组件
-#   codex-relay-client_v<版本>_macos-arm64.tar.gz macOS .app（已 ad-hoc 签名，不带微信读屏组件）
+#   codex-relay-client_v<版本>_macos-arm64.tar.gz macOS .app（已 ad-hoc 签名，带 context-filter 与微信读屏组件）
 #
-# 微信读屏组件（wechat-reader，「探索」页的微信消息意图判断）只随 Windows 包发：
-# 它是 -p:IncludeWeChatReader=true 才编进去的独立进程；macOS 版是 Swift 写的，只能在 Mac
-# 上编译，这条流水线跑在 Windows 上，所以 macOS 包里没有它，也就没有「探索」页签。
+# 微信读屏组件（wechat-reader，「探索」页的微信消息意图判断）是 -p:IncludeWeChatReader=true
+# 才编进去的独立进程，两个包都带。Windows 版是 .NET，随 win-x64 发布一起编；macOS 版是
+# Swift，只能在 Mac 上编译——所以先由 mac-reader 任务在 macOS runner 上编出通用二进制
+# （arm64 + x86_64），再交给这里的 osx-arm64 发布（WeChatReaderMacBinary）。
+# context-filter 的 macOS 版由上游随每个版本发布（darwin-arm64），同一个任务按
+# bundled-context-filter/VERSION 下载、对照上游 SHA256SUMS 校验后一并交过来（ContextFilterMacBinary）。
 #
 # 为什么整条流水线在 windows-latest（2× 计费）
 # --------------------------------------------
@@ -57,7 +60,52 @@ defaults:
     working-directory: tools/codex-relay-client
 
 jobs:
+  # macOS 包里的两个辅助程序，在 macOS runner 上准备好再交给 release：
+  # - 微信读屏组件：Swift（ScreenCaptureKit + Vision），只能在 Mac 上编译。链接器会给 arm64
+  #   产物加 ad-hoc 签名；打进 .app 后下面还会再签一次、再核验。
+  # - context-filter 的 darwin-arm64 版：上游发布物，走下载地址而不是 api.github.com（后者按
+  #   共享的 runner IP 限流），并对照上游 SHA256SUMS 校验。
+  mac-reader:
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 编译 macOS 微信读屏组件
+        run: sh src/LanAi.RelayClient.WeChatReader.Mac/build.sh
+
+      - name: 下载并校验 macOS 版 context-filter
+        run: |
+          version=$(tr -d '[:space:]' < bundled-context-filter/VERSION)
+          base="https://github.com/LiangMu-Studio/context-filter/releases/download/$version"
+          dir="$RUNNER_TEMP/context-filter-mac"
+          mkdir -p "$dir" && cd "$dir"
+          curl -fsSL --retry 3 -o context-filter-darwin-arm64.tar.gz "$base/context-filter-darwin-arm64.tar.gz"
+          curl -fsSL --retry 3 -o SHA256SUMS "$base/SHA256SUMS"
+          grep ' context-filter-darwin-arm64.tar.gz$' SHA256SUMS | shasum -a 256 -c -
+          tar -xzf context-filter-darwin-arm64.tar.gz
+          found=$(find . -type f -name context-filter | head -n 1)
+          if [ -z "$found" ]; then echo "::error::压缩包里没有 context-filter"; exit 1; fi
+          mkdir -p "$RUNNER_TEMP/mac-helpers"
+          cp "$found" "$RUNNER_TEMP/mac-helpers/context-filter"
+          file "$RUNNER_TEMP/mac-helpers/context-filter"
+
+      # 两个文件放进同一个目录再上传：分处两个根目录时，upload-artifact 会按公共上级目录
+      # 保留层级，下载后就不在 release 任务期待的位置了。
+      - name: 汇总
+        run: |
+          cp src/LanAi.RelayClient.WeChatReader.Mac/.build/apple/Products/Release/wechat-reader "$RUNNER_TEMP/mac-helpers/wechat-reader"
+          ls -la "$RUNNER_TEMP/mac-helpers"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wechat-reader-mac
+          path: ${{ runner.temp }}/mac-helpers/*
+          retention-days: 1
+          if-no-files-found: error
+
   release:
+    needs: mac-reader
     runs-on: windows-latest
     timeout-minutes: 60
 
@@ -208,10 +256,19 @@ jobs:
       # -------------------------------------------------------------------
       # macOS 产物
       # -------------------------------------------------------------------
+      # 上传工件会丢掉可执行位；build-app.py 按名字把 wechat-reader 标成 0755。
+      - uses: actions/download-artifact@v4
+        with:
+          name: wechat-reader-mac
+          path: ${{ runner.temp }}/wechat-reader-mac
+
       - name: 发布 osx-arm64
         run: |
           dotnet publish src/LanAi.RelayClient.App/LanAi.RelayClient.App.csproj `
             -c Release -r osx-arm64 --self-contained true `
+            -p:IncludeWeChatReader=true `
+            -p:WeChatReaderMacBinary="${{ runner.temp }}/wechat-reader-mac/wechat-reader" `
+            -p:ContextFilterMacBinary="${{ runner.temp }}/wechat-reader-mac/context-filter" `
             -o "${{ runner.temp }}/pub-mac"
 
       - name: 生成图标
@@ -232,6 +289,20 @@ jobs:
             --out "${{ runner.temp }}/macos" \
             --assemble-only
 
+      # 与 Windows 包同理：少了读屏组件 Mac 上「探索」页签整个不出现，少了 context-filter
+      # 「启用上下文压缩」永久置灰，都没有报错。
+      - name: .app 必须带上微信读屏组件与 context-filter
+        shell: bash
+        run: |
+          macos="${{ runner.temp }}/macos/共飞-ChatGPT助手.app/Contents/MacOS"
+          for helper in wechat-reader/wechat-reader context-filter/context-filter; do
+            if [ ! -f "$macos/$helper" ]; then
+              echo "::error::.app 里没有 Contents/MacOS/$helper，拒绝出包"
+              ls -laR "$macos" | head -50
+              exit 1
+            fi
+          done
+
       - name: 缓存 rcodesign
         id: cache-rcodesign
         uses: actions/cache@v4
@@ -248,9 +319,13 @@ jobs:
       # 强制步骤，不是可选优化（§8.2）。Apple Silicon 要求每个 arm64 可执行文件
       # 带签名，哪怕只是 ad-hoc；内核不警告，直接杀进程。而 .NET 从 Windows
       # 交叉编译时不会签名。
+      # 读屏组件是 Contents/MacOS 下子目录里的另一个 Mach-O：先单独签它，再签整个 .app
+      # （后者把它的签名封进 CodeResources）。不依赖 rcodesign 会不会自己找到这个嵌套的可执行文件。
       - name: ad-hoc 签名
         shell: bash
         run: |
+          rcodesign sign "${{ runner.temp }}/macos/共飞-ChatGPT助手.app/Contents/MacOS/wechat-reader/wechat-reader"
+          rcodesign sign "${{ runner.temp }}/macos/共飞-ChatGPT助手.app/Contents/MacOS/context-filter/context-filter"
           rcodesign sign "${{ runner.temp }}/macos/共飞-ChatGPT助手.app"
 
       # 漏签的产物在 CI 里完全看不出来，只有到用户的机器上才会被内核杀掉。
@@ -265,6 +340,10 @@ jobs:
           fi
           rcodesign print-signature-info "$app/Contents/MacOS/LanAi.RelayClient.App" \
             || { echo "::error::主可执行文件没有可读的签名"; exit 1; }
+          rcodesign print-signature-info "$app/Contents/MacOS/wechat-reader/wechat-reader" \
+            || { echo "::error::微信读屏组件没有可读的签名"; exit 1; }
+          rcodesign print-signature-info "$app/Contents/MacOS/context-filter/context-filter" \
+            || { echo "::error::context-filter 没有可读的签名"; exit 1; }
 
       - name: 打包 .tar.gz
         shell: bash

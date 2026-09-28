@@ -62,7 +62,7 @@ EXECUTABLE_SUFFIXES = {".dylib", ".so"}
 # Helper executables with no suffix, found anywhere under Contents/MacOS. wechat-reader is the Swift
 # screen reader for 微信消息意图判断, present only in packages built with -p:IncludeWeChatReader=true;
 # without the bit the client finds it but cannot start it.
-EXECUTABLE_NAMES = {"wechat-reader"}
+EXECUTABLE_NAMES = {"wechat-reader", "context-filter"}
 
 
 def read_client_version():

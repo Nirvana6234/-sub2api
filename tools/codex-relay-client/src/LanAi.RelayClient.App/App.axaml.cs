@@ -217,11 +217,11 @@ public partial class App : Application
             new ClaudeCodeSettingsWriter(Path.Combine(AppPaths.PluginConfigRoot, "claude-settings-journal.json")),
             new VsCodeSettingsEditor(Path.Combine(AppPaths.PluginConfigRoot, "vscode")));
 
-        // Optional and platform-shaped by nothing more than whether the file is there.
-        // The filter is a Windows binary, so the macOS build of this same head finds
-        // nothing, runs Codex → relay directly, and greys out the switch — no OS test
-        // needed here.
-        string contextFilterPath = Path.Combine(AppContext.BaseDirectory, "context-filter", "context-filter.exe");
+        // Optional, and decided by nothing more than whether the file is there: a package
+        // without it runs Codex → relay directly and greys out the switch. From 1.0 both
+        // packages carry it — the Windows .exe, and upstream's darwin-arm64 build in the .app.
+        string contextFilterPath = Path.Combine(AppContext.BaseDirectory, "context-filter",
+            OperatingSystem.IsWindows() ? "context-filter.exe" : "context-filter");
         ContextFilterProcess? contextFilter = File.Exists(contextFilterPath)
             ? new ContextFilterProcess(contextFilterPath)
             : null;
@@ -535,6 +535,24 @@ public partial class App : Application
 
         dashboardView.ExitRequested += (_, _) => _ = safeAsync.RunAsync(QuitAsync);
 
+        // macOS: 「屏幕录制」 reaches the app only when it starts anew. 「重新启动助手」 on the 探索 page
+        // leaves through the same quit path as 退出 — config restored, key released — and the bundle
+        // is opened again once this process is gone.
+        if (_weChatIntent is { } explore && OperatingSystem.IsMacOS())
+        {
+            explore.RestartClient = async () =>
+            {
+                if (LanAi.RelayClient.Platform.MacOS.MacAppRelauncher.ScheduleRelaunch())
+                {
+                    await QuitAsync().ConfigureAwait(true);
+                }
+                else
+                {
+                    explore.Overlay.Status = "没能自动重新启动：请从菜单栏退出共飞-ChatGPT助手，再重新打开。";
+                }
+            };
+        }
+
         dashboardView.MinimizeRequested += (_, _) =>
         {
             shell.Hide();
@@ -657,9 +675,9 @@ public partial class App : Application
     /// 「探索」 → 微信消息意图判断 (docs/WECHAT_INTENT_ASSISTANT.md). Present exactly when the package
     /// carries the WeChat reader — <c>wechat-reader\wechat-reader.exe</c> on Windows,
     /// <c>Contents/MacOS/wechat-reader/wechat-reader</c> on macOS — which only a build with
-    /// <c>-p:IncludeWeChatReader=true</c> does. From 1.0 the release workflow passes it for Windows,
-    /// so the Windows package has the page; the macOS package has not (the Mac reader is Swift and
-    /// builds only on a Mac). The package itself is the switch, and no environment variable is needed.
+    /// <c>-p:IncludeWeChatReader=true</c> does. From 1.0 the release workflow passes it for both
+    /// packages (the Mac reader is Swift, built on a macOS runner first). The package itself is the
+    /// switch, and no environment variable is needed.
     /// </summary>
     private static WeChatIntentViewModel? CreateWeChatIntent(RelaySessionManager session, DashboardViewModel dashboard, ShellWindow shell)
     {
