@@ -73,7 +73,10 @@ public sealed partial class WeChatIntentViewModel : ObservableObject, IDisposabl
     private static readonly TimeSpan WeChatCheckInterval = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan PauseLength = TimeSpan.FromMinutes(30);
     private const int CardsPerChat = 60;
+    // The card window's fixed size in design pixels (InlineCardWindow.axaml), and the least space between two.
     private const double CardWidth = 220;
+    private const double CardHeight = 44;
+    private const double CardGap = 4;
     private const int Concurrency = 4;
 
     private readonly IWeChatReader? _reader;
@@ -122,6 +125,11 @@ public sealed partial class WeChatIntentViewModel : ObservableObject, IDisposabl
 
     /// <summary>Bumped whenever everything read is forgotten, so late answers from before are dropped.</summary>
     private int _generation;
+
+    // What the log last said, so it says each change once (docs §3: counts and states only, no text).
+    private string? _loggedRun;
+    private string? _loggedWindow;
+    private int _scrollsSinceFrame;
 
     internal WeChatIntentViewModel(
         IWeChatReader? reader,
@@ -600,6 +608,11 @@ public sealed partial class WeChatIntentViewModel : ObservableObject, IDisposabl
 
         if (force || running != IsWeChatRunning)
         {
+            if (running != IsWeChatRunning)
+            {
+                ClientLog.Info($"微信进程：{(running ? "已运行" : "未运行")}");
+            }
+
             IsWeChatRunning = running;
             UpdateRunState();
         }
@@ -643,6 +656,7 @@ public sealed partial class WeChatIntentViewModel : ObservableObject, IDisposabl
 
         RunState = state;
         NeedsAttention = state == WeChatIntentRunState.Stopped;
+        LogRunState(state);
         if (state == WeChatIntentRunState.Running)
         {
             _reader?.Start();
@@ -654,6 +668,24 @@ public sealed partial class WeChatIntentViewModel : ObservableObject, IDisposabl
         }
 
         UpdateOverlayVisibility();
+    }
+
+    /// <summary>
+    /// Each change of the real state, with every condition behind it: 「开着却不动」 has to be
+    /// readable from the log alone.
+    /// </summary>
+    private void LogRunState(WeChatIntentRunState state)
+    {
+        string route = UseRelayGroup
+            ? SelectedRelayGroup is { } g ? $"共飞分组 {g.Id}" : _groupsKnown ? "共飞分组（无可用）" : "共飞分组（读取中）"
+            : $"自己的 key（{KeyState}）";
+        string line = $"意图判断状态：{state}「{StatusText}」 开关 {(IsEnabled ? "开" : "关")}，已登录 {(_signedIn ? "是" : "否")}，"
+            + $"通道 {route}，读屏组件 {(ReaderAvailable ? "有" : "无")}，微信进程 {(IsWeChatRunning ? "在" : "不在")}";
+        if (line != _loggedRun)
+        {
+            _loggedRun = line;
+            ClientLog.Info(line);
+        }
     }
 
     private void StopWith(string reason)
@@ -685,6 +717,13 @@ public sealed partial class WeChatIntentViewModel : ObservableObject, IDisposabl
                 Overlay.WeChatScale = e.Scale ?? 1.0;
                 Overlay.WeChatImageScale = e.ImageScale is > 0 ? e.ImageScale.Value : 1.0;
                 _ownInFront = e.FrontPid == Environment.ProcessId;
+                string window = $"{e.State}，缩放 {Overlay.WeChatScale:0.##}";
+                if (window != _loggedWindow)
+                {
+                    _loggedWindow = window;
+                    ClientLog.Info($"微信窗口：{window}，位置 {e.Rect?.X},{e.Rect?.Y} 尺寸 {e.Rect?.W}x{e.Rect?.H}");
+                }
+
                 RefreshInline();
                 if (e.State == ReaderEvent.StateGone)
                 {
@@ -695,10 +734,12 @@ public sealed partial class WeChatIntentViewModel : ObservableObject, IDisposabl
                 break;
             case ReaderEvent.Scrolling:
                 // The bubbles are moving; cards pinned to where they were would point at the wrong
-                // messages. They come back on the next settled screen.
+                // messages. They come back on the next settled screen. What is waiting to be judged
+                // stays: those messages were on a settled screen, and the next one decides whether
+                // they still wait (IntentScheduler.OnScreen).
+                _scrollsSinceFrame++;
                 Overlay.InlineCards.Clear();
                 _lastScreen = null;
-                _scheduler.Cancel();
                 break;
             case ReaderEvent.Frame:
                 OnFrame(e);
@@ -740,6 +781,7 @@ public sealed partial class WeChatIntentViewModel : ObservableObject, IDisposabl
         Dump(frame, screen);
         if (screen.Title.Length == 0)
         {
+            LogFrame(frame, screen, "没识别出标题，跳过");
             return;
         }
 
@@ -757,6 +799,7 @@ public sealed partial class WeChatIntentViewModel : ObservableObject, IDisposabl
         Overlay.Status = screen.IsGroup ? "群聊暂不分析" : Muted.Contains(_currentChat) ? $"「{_currentChat}」不分析" : string.Empty;
         if (screen.IsGroup || Muted.Contains(_currentChat))
         {
+            LogFrame(frame, screen, screen.IsGroup ? "群聊，跳过" : "此会话已设为不分析，跳过");
             RefreshInline();
             return;
         }
@@ -771,7 +814,21 @@ public sealed partial class WeChatIntentViewModel : ObservableObject, IDisposabl
         // on what is "new" — every message from them on screen gets a card.
         transcript.Apply(screen);
         RefreshInline();
-        _scheduler.OnScreen(screen.Title, WithoutCard(screen), _clock());
+        List<ChatItem> waiting = WithoutCard(screen);
+        int them = screen.Items.Count(i => i.Speaker == ChatSpeaker.Them);
+        LogFrame(frame, screen, $"对方消息 {them} 条，其中待判断 {waiting.Count} 条（其余已有卡片或正在判断）");
+        _scheduler.OnScreen(screen.Title, waiting, _clock());
+    }
+
+    /// <summary>One line per settled screen: how its lines were read, and what came of it. Counts and colours only.</summary>
+    private void LogFrame(ReaderEvent frame, ChatScreen screen, string outcome)
+    {
+        ParseStats st = screen.Stats;
+        ClientLog.Info($"画面 #{frame.Seq}：{st.Lines} 行 → 对方 {st.Them}、自己 {st.Me}、时间 {st.Time}、丢弃 {st.Dropped}"
+            + (st.Dropped > 0 ? $"（丢弃行底色 {st.DroppedColours}）" : string.Empty)
+            + $"，聊天背景 {st.Background}，成段 {screen.Items.Count} 条（被边缘截断 {st.CutOff}，不像文字 {st.NotText}），"
+            + $"标题 {screen.Title.Length} 字，此前滚动 {_scrollsSinceFrame} 次 → {outcome}");
+        _scrollsSinceFrame = 0;
     }
 
     /// <summary>The other person's messages on <paramref name="screen"/> that have no card and none coming.</summary>
@@ -809,6 +866,7 @@ public sealed partial class WeChatIntentViewModel : ObservableObject, IDisposabl
     /// <summary>Sends each message of the batch as its own judgement, a few at a time.</summary>
     private void Dispatch(DueBatch batch)
     {
+        ClientLog.Info($"发出判断 {batch.Items.Count} 条（{(UseRelayGroup ? "共飞分组" : "自己的 key")}）");
         _transcripts.TryGetValue(batch.Chat, out ChatTranscript? transcript);
         ChatScreen? screen = _lastScreen is { } s && s.Title == batch.Chat ? s : null;
         foreach (ChatItem item in batch.Items)
@@ -852,6 +910,7 @@ public sealed partial class WeChatIntentViewModel : ObservableObject, IDisposabl
         {
             if (generation != _generation || !IsRunning)
             {
+                ClientLog.Info($"判断未发出：{(generation != _generation ? "读到的内容已清空" : $"已不在运行（{RunState}）")}");
                 return;
             }
 
@@ -859,6 +918,7 @@ public sealed partial class WeChatIntentViewModel : ObservableObject, IDisposabl
             IJevClient? client = UseRelayGroup ? _relayJev : _jev;
             if (client is null)
             {
+                ClientLog.Warning("判断未发出：当前通道没有可用的客户端");
                 return;
             }
 
@@ -983,6 +1043,7 @@ public sealed partial class WeChatIntentViewModel : ObservableObject, IDisposabl
             placedByIndex[IndexOf(screen, placed.Bubble)] = placed;
         }
 
+        var wanted = new List<(int X, int Y, PlacedCard? Card)>();
         for (int i = 0; i < screen.Items.Count; i++)
         {
             ChatItem item = screen.Items[i];
@@ -991,37 +1052,44 @@ public sealed partial class WeChatIntentViewModel : ObservableObject, IDisposabl
                 continue;
             }
 
-            (int ix, int iy) = PlaceBeside(screen.Bounds[i], screen.AreaRight, scale);
-            int x = (int)Math.Round(ix / imageScale);
-            int y = (int)Math.Round(iy / imageScale);
+            (int ix, int iy) = PlaceBeside(screen.Bounds[i], scale);
             if (placedByIndex.TryGetValue(i, out PlacedCard? placed))
             {
-                Overlay.InlineCards.Add(Present(placed.Card, x, y));
+                wanted.Add((ix, iy, placed));
             }
             else if (_scheduler.IsInFlight(screen.Title, item))
             {
-                Overlay.InlineCards.Add(new InlineCardViewModel
+                wanted.Add((ix, iy, null));
+            }
+        }
+
+        // Messages close together would put their cards on top of each other: the later ones move right.
+        List<(int X, int Y, PlacedCard? Card)> cardsToShow = InlinePlacement.Arrange(wanted,
+            (int)Math.Round(CardWidth * scale), (int)Math.Round(CardHeight * scale), (int)Math.Round(CardGap * scale));
+        foreach ((int ix, int iy, PlacedCard? placed) in cardsToShow)
+        {
+            int x = (int)Math.Round(ix / imageScale);
+            int y = (int)Math.Round(iy / imageScale);
+            Overlay.InlineCards.Add(placed is not null
+                ? Present(placed.Card, x, y)
+                : new InlineCardViewModel
                 {
                     ScreenX = Overlay.WeChatX + x,
                     ScreenY = Overlay.WeChatY + y,
                     Headline = "分析中…",
                     IsPending = true,
                 });
-            }
         }
     }
 
-    /// <summary>In image pixels; <paramref name="scale"/> is image pixels per design pixel.</summary>
-    private static (int X, int Y) PlaceBeside(BubbleBounds bubble, int areaRight, double scale)
-    {
+    /// <summary>
+    /// To the bubble's right, level with it; in image pixels, <paramref name="scale"/> being image
+    /// pixels per design pixel. Always to the right, past the chat area and WeChat's window when
+    /// the window is narrow: under the bubble, the card covered the next messages.
+    /// </summary>
+    private static (int X, int Y) PlaceBeside(BubbleBounds bubble, double scale) =>
         // The text's right edge plus the bubble's own padding, then a gap.
-        int gap = (int)Math.Round(20 * scale);
-        int width = (int)Math.Round(CardWidth * scale);
-        bool roomRight = bubble.Right + gap + width <= areaRight;
-        return roomRight
-            ? (bubble.Right + gap, bubble.Top - (int)Math.Round(8 * scale))
-            : (bubble.Left, bubble.Bottom + (int)Math.Round(14 * scale));
-    }
+        (bubble.Right + (int)Math.Round(20 * scale), bubble.Top - (int)Math.Round(8 * scale));
 
     private InlineCardViewModel Present(AnchoredCard anchored, int x, int y)
     {

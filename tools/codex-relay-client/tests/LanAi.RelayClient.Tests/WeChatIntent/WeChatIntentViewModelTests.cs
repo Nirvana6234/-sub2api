@@ -207,6 +207,91 @@ public sealed class WeChatIntentViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task TheLogFollowsEachScreenWithCountsButNeverTheText()
+    {
+        var log = new System.Text.StringBuilder();
+        using (LanAi.RelayClient.Services.ClientLog.Capture(log))
+        {
+            var (vm, reader, _) = Create();
+            await vm.SetEnabledAsync(true);
+            reader.Raise(InFront());
+            reader.Raise(Frame("小明", Them(187, "你今天是不是又忘了"), Me(250, "记得"),
+                new ReaderLine { Text = "深色模式的气泡", X = 383, Y = 450, W = 120, H = 13, Bg = [60, 60, 60] }));
+            Advance(1);
+        }
+
+        string text = log.ToString();
+        Assert.Contains("意图判断状态：Running", text, StringComparison.Ordinal);
+        Assert.Contains("微信窗口：foreground", text, StringComparison.Ordinal);
+        Assert.Contains("3 行 → 对方 1、自己 1、时间 0、丢弃 1（丢弃行底色 (60,60,60)×1）", text, StringComparison.Ordinal);
+        Assert.Contains("标题 2 字", text, StringComparison.Ordinal);
+        Assert.Contains("待判断 1 条", text, StringComparison.Ordinal);
+        Assert.Contains("发出判断 1 条", text, StringComparison.Ordinal);
+        foreach (string secret in new[] { "小明", "你今天是不是又忘了", "记得", "深色模式的气泡" })
+        {
+            Assert.DoesNotContain(secret, text, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public async Task AScreenThatKeepsChangingUnderThePointerIsStillJudged()
+    {
+        // Measured on a 150 % display: the scrollbar showing and hiding sent a 「scrolling」 and a
+        // new settled screen every second or so, and nothing after the first screen was judged.
+        var (vm, reader, jev) = Create();
+        await vm.SetEnabledAsync(true);
+        reader.Raise(InFront());
+
+        for (int i = 0; i < 4; i++)
+        {
+            reader.Raise(new ReaderEvent { Type = ReaderEvent.Scrolling });
+            reader.Raise(Frame("小明", Me(187, "在"), Them(250, "那你说")));
+            Advance(0.6);
+        }
+
+        Assert.Single(jev.Seen);
+    }
+
+    [Fact]
+    public async Task CardsOfMessagesCloseTogetherDoNotOverlap()
+    {
+        var (vm, reader, jev) = Create();
+        await vm.SetEnabledAsync(true);
+        reader.Raise(InFront());
+
+        reader.Raise(Frame("小明", Them(187, "在吗"), Them(215, "那你说"), Them(243, "你最好是")));
+        Advance(1);
+
+        Assert.Equal(3, jev.Seen.Count);
+        var cards = vm.Overlay.InlineCards.ToList();
+        Assert.Equal([111 + 187 - 8, 111 + 215 - 8, 111 + 243 - 8], cards.Select(c => c.ScreenY));   // each level with its message
+        foreach (var a in cards)
+        {
+            foreach (var b in cards.Where(b => !ReferenceEquals(a, b)))
+            {
+                bool overlap = a.ScreenX < b.ScreenX + 220 && b.ScreenX < a.ScreenX + 220 && a.ScreenY < b.ScreenY + 44 && b.ScreenY < a.ScreenY + 44;
+                Assert.False(overlap);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task InANarrowWindowTheCardStillGoesBesideTheMessagePastTheWindow()
+    {
+        var (vm, reader, _) = Create();
+        await vm.SetEnabledAsync(true);
+        reader.Raise(InFront());
+
+        // A bubble reaching almost to the list's right edge (1148): no room beside it inside the window.
+        reader.Raise(Frame("小明", Them(250, "一条很长很长的消息", w: 700)));
+        Advance(1);
+
+        InlineCardViewModel card = Assert.Single(vm.Overlay.InlineCards);
+        Assert.Equal(111 + 250 - 8, card.ScreenY);
+        Assert.Equal(346 + 383 + 700 + 20, card.ScreenX);
+    }
+
+    [Fact]
     public async Task CardsFollowScrollingAndAMessageIsJudgedOnlyOnce()
     {
         var (vm, reader, jev) = Create();

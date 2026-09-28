@@ -46,4 +46,33 @@ internal static class InlinePlacement
         placed.Reverse();
         return placed;
     }
+
+    /// <summary>
+    /// Keeps each card level with its message and moves it right, one card-width at a time, until
+    /// it overlaps no card above it — beyond the chat area and past WeChat's window when it must.
+    /// Positions are the cards' top-left corners, every card <paramref name="width"/> by
+    /// <paramref name="height"/>; the result is top to bottom.
+    /// </summary>
+    /// <remarks>
+    /// Sideways rather than up or down: a card that leaves its message's height points at another
+    /// message, and one dropped for lack of room is a message without an answer. Room outside the
+    /// window is fine — the cards are windows of their own.
+    /// </remarks>
+    public static List<(int X, int Y, T Item)> Arrange<T>(IEnumerable<(int X, int Y, T Item)> cards, int width, int height, int gap)
+    {
+        ArgumentNullException.ThrowIfNull(cards);
+        var placed = new List<(int X, int Y, T Item)>();
+        foreach ((int x0, int y, T item) in cards.OrderBy(c => c.Y))
+        {
+            int x = x0;
+            while (placed.Any(o => x < o.X + width + gap && o.X < x + width + gap && y < o.Y + height + gap && o.Y < y + height + gap))
+            {
+                x += width + gap;
+            }
+
+            placed.Add((x, y, item));
+        }
+
+        return placed;
+    }
 }

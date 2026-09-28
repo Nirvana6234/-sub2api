@@ -8,6 +8,7 @@ using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
 using Avalonia.Media;
 using Avalonia.Threading;
+using LanAi.RelayClient.Services;
 using LanAi.RelayClient.ViewModels;
 
 namespace LanAi.RelayClient.App.Views;
@@ -33,6 +34,7 @@ public partial class InlineCardWindow : Window
     private readonly MenuItem _wrong;
     private WeChatIntentViewModel? _owner;
     private InlineCardViewModel? _current;
+    private bool _scalingLogged;
 
     public InlineCardWindow()
     {
@@ -60,12 +62,32 @@ public partial class InlineCardWindow : Window
         _right.IsEnabled = _wrong.IsEnabled = !card.IsPending && !card.FeedbackGiven;
         ToolTip.SetTip(_card, card.Detail.Length > 0 ? card.Detail : null);
         Position = new PixelPoint(card.ScreenX, card.ScreenY);
+        if (IsVisible)
+        {
+            CheckScaling();
+        }
     }
 
     protected override void OnOpened(EventArgs e)
     {
         base.OnOpened(e);
         NonActivating.Apply(this);
+        CheckScaling();
+    }
+
+    /// <summary>
+    /// Says once in the log when the card is drawn at another scale than the screen it is on,
+    /// which is what a card that came up narrow and tall on a two-screen setup would show.
+    /// </summary>
+    private void CheckScaling()
+    {
+        if (_scalingLogged || Screens.ScreenFromWindow(this) is not { } screen || Math.Abs(screen.Scaling - RenderScaling) < 0.01)
+        {
+            return;
+        }
+
+        _scalingLogged = true;
+        ClientLog.Warning($"意图卡片缩放与所在屏幕不一致：卡片 {RenderScaling:0.##}，屏幕 {screen.Scaling:0.##}，位置 {Position.X},{Position.Y}，大小 {Bounds.Width:0}x{Bounds.Height:0}");
     }
 
     private void Right_OnClick(object? sender, RoutedEventArgs e) => Rate(correct: true);

@@ -2,7 +2,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="LanAi.RelayClient.App.Views.InlineCardWindow"
         Title="意图判断"
-        Width="220" SizeToContent="Height"
+        Width="220" Height="44"
         SystemDecorations="None" CanResize="False"
         Topmost="True" ShowActivated="False" ShowInTaskbar="False"
         Background="Transparent" TransparencyLevelHint="Transparent"
@@ -10,7 +10,13 @@
 
   <!-- One message's analysis, pinned beside its bubble in WeChat (docs §6). See-through so the
        chat under it stays readable; solid while the pointer is on it. Filled from code by
-       InlineCardHost: the windows are pooled and re-pointed at another card on every screen. -->
+       InlineCardHost: the windows are pooled and re-pointed at another card on every screen.
+
+       A fixed size, two lines cut short with an ellipsis, the whole of it in the tooltip. Sized
+       to its content, the card changed height with every text and, moved from the client's
+       screen onto WeChat's on a two-screen setup with different scaling, came up narrow and tall;
+       a fixed size also lets WeChatIntentViewModel keep cards from piling on each other. Its
+       220x44 must match CardWidth / CardHeight there. -->
   <Border Name="Card" Background="#EEFFFFFF" CornerRadius="6" BorderBrush="#D1D5DB" BorderThickness="1">
     <Border.ContextMenu>
       <ContextMenu>
@@ -22,9 +28,11 @@
     </Border.ContextMenu>
     <DockPanel>
       <Border Name="Stripe" DockPanel.Dock="Left" Width="3" CornerRadius="6,0,0,6" Background="#10B981" />
-      <StackPanel Margin="7,4,7,5">
-        <TextBlock Name="Headline" FontSize="12" FontWeight="SemiBold" Foreground="#111827" TextWrapping="Wrap" />
-        <TextBlock Name="Advice" FontSize="11" Foreground="#4B5563" TextWrapping="Wrap" Margin="0,1,0,0" />
+      <StackPanel Margin="7,0,7,0" VerticalAlignment="Center">
+        <TextBlock Name="Headline" FontSize="12" FontWeight="SemiBold" Foreground="#111827"
+                   TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
+        <TextBlock Name="Advice" FontSize="11" Foreground="#4B5563" Margin="0,1,0,0"
+                   TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
       </StackPanel>
     </DockPanel>
   </Border>

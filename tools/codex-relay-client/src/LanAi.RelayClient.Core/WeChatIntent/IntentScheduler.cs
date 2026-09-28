@@ -40,9 +40,28 @@ internal sealed class IntentScheduler
     public bool IsPaused(DateTimeOffset now) => PausedUntil is { } until && now < until;
 
     /// <summary>A settled screen of <paramref name="chat"/>, with its messages from the other person that have no card yet.</summary>
+    /// <remarks>
+    /// A screen still showing some of the waiting messages keeps their time: the picture can change
+    /// without the conversation moving (a scrollbar fading in and out under the pointer, a typing
+    /// indicator), and restarting the wait on each of those meant it never ran out — on one test
+    /// machine nothing was judged after the first screen.
+    /// </remarks>
     public void OnScreen(string chat, IReadOnlyList<ChatItem> withoutCard, DateTimeOffset now)
     {
-        _pending = withoutCard.Count == 0 ? null : new Pending(chat, withoutCard, now + Settle);
+        if (withoutCard.Count == 0)
+        {
+            _pending = null;
+            return;
+        }
+
+        DateTimeOffset due = now + Settle;
+        if (_pending is { } waiting && waiting.Chat == chat
+            && withoutCard.Any(i => waiting.Items.Any(w => ChatTranscript.Same(w, i))) && waiting.DueAt < due)
+        {
+            due = waiting.DueAt;
+        }
+
+        _pending = new Pending(chat, withoutCard, due);
     }
 
     /// <summary>The user switched away or the feature stopped: forget what was waiting.</summary>

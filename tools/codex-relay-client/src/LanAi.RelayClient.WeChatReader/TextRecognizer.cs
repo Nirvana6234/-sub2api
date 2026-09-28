@@ -18,6 +18,9 @@ internal sealed class TextRecognizer
 
     private TextRecognizer(OcrEngine engine) => _engine = engine;
 
+    /// <summary>The recogniser's language, for the log.</summary>
+    public string LanguageTag => _engine.RecognizerLanguage.LanguageTag;
+
     /// <summary>Null when Windows has no Simplified Chinese recogniser installed.</summary>
     public static TextRecognizer? TryCreate()
     {
@@ -30,7 +33,8 @@ internal sealed class TextRecognizer
     /// Recognises the region <paramref name="x"/>,<paramref name="y"/>,<paramref name="w"/>,<paramref name="h"/>
     /// and returns its lines in the window's coordinates, top to bottom.
     /// </summary>
-    public async Task<List<ReaderLine>> ReadAsync(Pixels p, int x, int y, int w, int h, double scale)
+    /// <param name="upscale">1, or 2 to read the region enlarged: a short name the recogniser misses at its size is often read at twice it.</param>
+    public async Task<List<ReaderLine>> ReadAsync(Pixels p, int x, int y, int w, int h, double scale, int upscale = 1)
     {
         x = Math.Clamp(x, 0, p.Width - 1);
         y = Math.Clamp(y, 0, p.Height - 1);
@@ -43,7 +47,15 @@ internal sealed class TextRecognizer
             Buffer.BlockCopy(p.Bgra, (((y + row) * p.Width) + x) * 4, crop, row * w * 4, w * 4);
         }
 
-        using var bgra = new SoftwareBitmap(BitmapPixelFormat.Bgra8, w, h, BitmapAlphaMode.Premultiplied);
+        int bw = w, bh = h;
+        if (upscale == 2)
+        {
+            crop = Double(crop, w, h);
+            bw = w * 2;
+            bh = h * 2;
+        }
+
+        using var bgra = new SoftwareBitmap(BitmapPixelFormat.Bgra8, bw, bh, BitmapAlphaMode.Premultiplied);
         bgra.CopyFromBuffer(crop.AsBuffer());
         using SoftwareBitmap gray = SoftwareBitmap.Convert(bgra, BitmapPixelFormat.Gray8);
         OcrResult result = await _engine.RecognizeAsync(gray);
@@ -56,10 +68,11 @@ internal sealed class TextRecognizer
                 continue;
             }
 
-            int left = (int)line.Words.Min(word => word.BoundingRect.Left);
-            int top = (int)line.Words.Min(word => word.BoundingRect.Top);
-            int right = (int)Math.Ceiling(line.Words.Max(word => word.BoundingRect.Right));
-            int bottom = (int)Math.Ceiling(line.Words.Max(word => word.BoundingRect.Bottom));
+            int k = upscale == 2 ? 2 : 1;
+            int left = (int)line.Words.Min(word => word.BoundingRect.Left) / k;
+            int top = (int)line.Words.Min(word => word.BoundingRect.Top) / k;
+            int right = (int)Math.Ceiling(line.Words.Max(word => word.BoundingRect.Right) / k);
+            int bottom = (int)Math.Ceiling(line.Words.Max(word => word.BoundingRect.Bottom) / k);
             int lx = x + left, ly = y + top, lw = right - left, lh = bottom - top;
             lines.Add(new ReaderLine
             {
@@ -74,6 +87,33 @@ internal sealed class TextRecognizer
 
         lines.Sort((a, b) => a.Y != b.Y ? a.Y.CompareTo(b.Y) : a.X.CompareTo(b.X));
         return lines;
+    }
+
+    /// <summary>Twice the size each way, bilinear.</summary>
+    private static byte[] Double(byte[] src, int w, int h)
+    {
+        int dw = w * 2, dh = h * 2;
+        var dst = new byte[dw * dh * 4];
+        for (int y = 0; y < dh; y++)
+        {
+            double sy = Math.Clamp(((y + 0.5) / 2) - 0.5, 0, h - 1);
+            int y0 = (int)sy, y1 = Math.Min(y0 + 1, h - 1);
+            double fy = sy - y0;
+            for (int x = 0; x < dw; x++)
+            {
+                double sx = Math.Clamp(((x + 0.5) / 2) - 0.5, 0, w - 1);
+                int x0 = (int)sx, x1 = Math.Min(x0 + 1, w - 1);
+                double fx = sx - x0;
+                for (int c = 0; c < 4; c++)
+                {
+                    double top = (src[((y0 * w) + x0) * 4 + c] * (1 - fx)) + (src[((y0 * w) + x1) * 4 + c] * fx);
+                    double bottom = (src[((y1 * w) + x0) * 4 + c] * (1 - fx)) + (src[((y1 * w) + x1) * 4 + c] * fx);
+                    dst[((y * dw) + x) * 4 + c] = (byte)Math.Round((top * (1 - fy)) + (bottom * fy));
+                }
+            }
+        }
+
+        return dst;
     }
 
     /// <summary>
