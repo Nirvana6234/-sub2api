@@ -469,23 +469,28 @@ ssh -i "$PRODKEY" ec2-user@$PRODIP \
   "printf '%s\n' '<local-commit-or-build-id>' | sudo tee /opt/sub2api/DEPLOYED_COMMIT"
 ```
 
-### B4.1 最近一次发版记录（2026-09-20）
+### B4.1 最近一次发版记录（2026-09-28）
 
-本次使用本地构建的二进制 `sub2api-20260920-state-kit-playground-r1`，服务器路径为：
-
-```text
-/opt/sub2api/backend/bin/sub2api-20260920-state-kit-playground-r1
-```
-
-本地与服务器 SHA256 必须一致；本次校验值为：
+本次使用本地构建的二进制 `sub2api-20260928-jev-pricing-r1`（`local/main` `c688ba502`，Jev 内置兜底价），
+上一版为 `sub2api-20260927-panel-cn-dispatch-r1`，回滚改回它即可。服务器路径：
 
 ```text
-428068ac2c54a01d013ec514d09b6724ed526522580da6196dda1a39d6949a05
+/opt/sub2api/backend/bin/sub2api-20260928-jev-pricing-r1
 ```
 
-本次还验证了 `sub2api=healthy`、`/health=200`、`/api/v1/tickets=401`、
-`/download=200`。`transithub-gpt56-detector` 的 `unhealthy` 状态在发版前已存在，
-本次没有重启或修改 TransitHub；排查 TransitHub 时不要把它当作主应用发版失败。
+本地与服务器 SHA256 一致：
+
+```text
+2d5ce5811df73321a94cc6059d2b7768321caf91eec42a0f2e3914890a05bdb4
+```
+
+发版前备份：`/opt/sub2api/backups/pre-deploy-20260928-jev-pricing.dump`。验证结果：`sub2api=healthy`、
+`/health=200`、`/api/v1/tickets=401`、`/download=200`、未带凭据的 `POST /v1/systemone=401`，
+迁移最新仍为 `258_remote_pairings.sql`。
+
+> B0 里的 `./cmd/checkmigrations` 目前**不在仓库里**（2026-09-28 实测 `directory not found`）。
+> 本次没有迁移改动（`git diff <已部署提交> HEAD -- backend/migrations` 为空），因此跳过；
+> 有迁移改动的发版需要先把这个工具补回来，或手工比对 sha256(TrimSpace(content))。
 
 ## B5. 回滚
 
