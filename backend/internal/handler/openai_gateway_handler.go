@@ -4479,7 +4479,12 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 		CyberBlocked:       true,
 		NativeCompactionV2: service.IsOpenAINativeCompactionV2(c),
 	}
-	if h.relay != nil && relayAttempt != nil {
+	if h.relay != nil {
+		if relayAttempt == nil {
+			// 从节点上没有本机的风控与运维日志服务：没有选号就无从上报，不能悄悄走本机那一段。
+			logger.L().Error("openai.relay_cyber_policy_without_selection", zap.String("request_id", hit.RequestID))
+			return
+		}
 		var usage *OpenAIRelayCyberUsage
 		if forwardErrored {
 			usage = &OpenAIRelayCyberUsage{

@@ -393,4 +393,28 @@ func TestNodeReportsCyberPolicyHitsToTheMaster(t *testing.T) {
 	require.Equal(t, "gpt-5", result.Model)
 	require.Zero(t, result.Usage.InputTokens)
 	e.world.waitReleased(t)
+
+	// Chat Completions 与 Messages 入口同样上报（各自按入口格式把错误写给客户端）。
+	e.world.keys.keys["sk-a"].Group.AllowMessagesDispatch = true
+	for i, tc := range []struct{ path, body, endpoint string }{
+		{"/v1/chat/completions", `{"model":"gpt-5","messages":[{"role":"user","content":"cyber-trigger"}]}`, "/v1/chat/completions"},
+		{"/v1/messages", `{"model":"gpt-5","max_tokens":64,"messages":[{"role":"user","content":"cyber-trigger"}]}`, "/v1/messages"},
+	} {
+		status, out := e.post(t, tc.path, "sk-a", tc.body)
+		require.NotEqual(t, http.StatusOK, status, "%s: %s", tc.path, out)
+		<-e.hits
+		select {
+		case got = <-hits:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s: the master did not record the cyber hit", tc.path)
+		}
+		require.Equal(t, tc.endpoint, got.hit.InboundEndpoint)
+		require.Equal(t, "blocked by policy", got.hit.Mark.Message)
+		require.Equal(t, int64(1), got.subj.Account.ID)
+		require.Eventually(t, func() bool { return len(e.settler.records()) == i+2 }, 5*time.Second, 20*time.Millisecond, tc.path)
+		rec := e.settler.records()[i+1]
+		require.Equal(t, relayv1.UsageRecordKind_USAGE_RECORD_KIND_OPENAI_CYBER_POLICY, rec.GetKind(), tc.path)
+		require.Equal(t, tc.endpoint, rec.GetInboundEndpoint())
+		e.world.waitReleased(t)
+	}
 }
