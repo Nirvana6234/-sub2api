@@ -744,8 +744,9 @@ internal sealed class CodexStartup : ICodexStartup
             }
 
             // A Claude group, or a local-proxy account in its place: either gives Claude Code
-            // somewhere to go.
-            bool wanted = request.Enabled && (request.GroupId is > 0 || request.LocalProxyAccountId is > 0);
+            // somewhere to go. Any account id counts — this machine's own sign-in and the ones
+            // signed in within the client have negative ids (LocalMachineAccounts).
+            bool wanted = request.Enabled && (request.GroupId is > 0 || request.LocalProxyAccountId is not null);
             if (!wanted)
             {
                 await RestorePluginsAsync().ConfigureAwait(false);

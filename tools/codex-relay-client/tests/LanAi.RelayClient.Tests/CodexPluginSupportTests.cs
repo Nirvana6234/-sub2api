@@ -188,6 +188,23 @@ public sealed class CodexPluginSupportTests : IDisposable
     }
 
     /// <summary>
+    /// This machine's own Claude sign-in has a negative id; it stands in for a group just the
+    /// same. It did not: only positive ids counted, so switching Claude Code to it with no
+    /// Claude group chosen left Claude Code pointed nowhere.
+    /// </summary>
+    [Fact]
+    public async Task ThisMachinesClaudeSignInIsEnoughToSetUpThePlugins()
+    {
+        Setup setup = await CreateSetupAsync();
+
+        PluginSupportResult result = await setup.Startup.SyncPluginSupportAsync(
+            Wanted() with { GroupId = null, GroupName = null, LocalProxyAccountId = LanAi.RelayClient.Transport.LocalMachineAccounts.ClaudeId });
+
+        Assert.Equal(PluginSupportState.Active, result.State);
+        Assert.NotNull(setup.Relay.Origin);
+    }
+
+    /// <summary>
     /// The relay has two users. Turning the plug-ins off must not take it from Codex.
     /// </summary>
     [Fact]
