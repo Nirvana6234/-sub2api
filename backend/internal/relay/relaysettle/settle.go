@@ -113,7 +113,9 @@ func (s *Settler) Settle(ctx context.Context, nodeID int64, rec *relayv1.UsageRe
 }
 
 func (s *Settler) settle(ctx context.Context, nodeID int64, rec *relayv1.UsageRecord) (*service.RelaySettlement, error) {
-	if rec.GetKind() != relayv1.UsageRecordKind_USAGE_RECORD_KIND_OPENAI {
+	switch rec.GetKind() {
+	case relayv1.UsageRecordKind_USAGE_RECORD_KIND_OPENAI, relayv1.UsageRecordKind_USAGE_RECORD_KIND_OPENAI_CYBER_POLICY:
+	default:
 		return nil, reject("unsupported usage record kind %v", rec.GetKind())
 	}
 	v, err := s.deps.VerifyVoucher(rec.GetVoucher(), nodeID)
@@ -127,6 +129,11 @@ func (s *Settler) settle(ctx context.Context, nodeID int64, rec *relayv1.UsageRe
 	input, err := s.buildOpenAIInput(ctx, v, rec, &result)
 	if err != nil {
 		return nil, err
+	}
+	cyber := rec.GetKind() == relayv1.UsageRecordKind_USAGE_RECORD_KIND_OPENAI_CYBER_POLICY
+	if cyber {
+		// 与单机 RecordCyberPolicyUsageLog 同口径：记成 cyber 请求、按入账时计价、配额平台按 Key 的分组取。
+		input.CyberBlocked, input.PricingAt, input.QuotaPlatform = true, time.Time{}, ""
 	}
 	sc := v.GetContext()
 	relay := &service.RelaySettlement{
@@ -150,15 +157,18 @@ func (s *Settler) settle(ctx context.Context, nodeID int64, rec *relayv1.UsageRe
 	}
 	sctx := context.WithoutCancel(ctx)
 	sctx = service.WithRelaySettlement(sctx, relay)
-	sctx = service.WithFallbackPoolTrace(sctx, service.FallbackPoolTrace{
-		SourceGroupID: sc.GetFallbackSourceGroupId(), SourceGroupName: sc.GetFallbackSourceGroupName(),
-		TargetGroupID: sc.GetFallbackTargetGroupId(), TargetGroupName: sc.GetFallbackTargetGroupName(),
-	})
-	if id := rec.GetClientRequestId(); id != "" {
-		sctx = context.WithValue(sctx, ctxkey.ClientRequestID, id)
-	}
-	if id := rec.GetRequestId(); id != "" {
-		sctx = context.WithValue(sctx, ctxkey.RequestID, id)
+	// 单机的 cyber 用量行在后台协程里用空 ctx 入账：没有请求 ID 和兜底事实，这里同样不放。
+	if !cyber {
+		sctx = service.WithFallbackPoolTrace(sctx, service.FallbackPoolTrace{
+			SourceGroupID: sc.GetFallbackSourceGroupId(), SourceGroupName: sc.GetFallbackSourceGroupName(),
+			TargetGroupID: sc.GetFallbackTargetGroupId(), TargetGroupName: sc.GetFallbackTargetGroupName(),
+		})
+		if id := rec.GetClientRequestId(); id != "" {
+			sctx = context.WithValue(sctx, ctxkey.ClientRequestID, id)
+		}
+		if id := rec.GetRequestId(); id != "" {
+			sctx = context.WithValue(sctx, ctxkey.RequestID, id)
+		}
 	}
 
 	recordErr := s.deps.Gateway.RecordUsage(sctx, input)

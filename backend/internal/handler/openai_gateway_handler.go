@@ -812,11 +812,8 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			}()
 			return h.gatewayService.Forward(c.Request.Context(), c, account, attemptBody)
 		}()
-		if service.GetOpsCyberPolicy(c) != nil && h.relay != nil {
-			// TODO(WP10)：cyber 风控记录改成发给主节点的事件；扣费记录里的 cyber_blocked 照常带上。
-			reqLog.Warn("openai.relay_cyber_policy_record_not_reported", zap.Int64("account_id", account.ID))
-		} else if service.GetOpsCyberPolicy(c) != nil {
-			h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil, sessionHashBody, clientRequestedUsageFields(c, channelMapping, reqModel, ""), hashRequestPayload())
+		if service.GetOpsCyberPolicy(c) != nil {
+			h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil, sessionHashBody, clientRequestedUsageFields(c, channelMapping, reqModel, ""), hashRequestPayload(), relayAttempt)
 		}
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
 		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)
@@ -1501,11 +1498,8 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			}()
 			return h.gatewayService.ForwardAsAnthropic(c.Request.Context(), c, account, forwardBody, promptCacheKey, defaultMappedModel)
 		}()
-		if service.GetOpsCyberPolicy(c) != nil && h.relay != nil {
-			// TODO(WP10)：cyber 风控记录改成发给主节点的事件；扣费记录里的 cyber_blocked 照常带上。
-			reqLog.Warn("openai_messages.relay_cyber_policy_record_not_reported", zap.Int64("account_id", account.ID))
-		} else if service.GetOpsCyberPolicy(c) != nil {
-			h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil, body, clientRequestedUsageFields(c, channelMappingMsg, reqModel, ""), hashRequestPayload())
+		if service.GetOpsCyberPolicy(c) != nil {
+			h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil, body, clientRequestedUsageFields(c, channelMappingMsg, reqModel, ""), hashRequestPayload(), relayAttempt)
 		}
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
 		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)
@@ -3224,7 +3218,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				}
 				turnUsageFields := turnMapping.ToUsageFields(turnRequestedModel, turnUpstreamModel)
 				cyberMarked := service.GetOpsCyberPolicy(c) != nil
-				h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, turnRequestedModel, turnErr != nil, cyberBlockBody, turnUsageFields, requestPayloadHash)
+				h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, turnRequestedModel, turnErr != nil, cyberBlockBody, turnUsageFields, requestPayloadHash, nil)
 				cyberBlockedThisConn, cyberBlockPendingAfterFailover = advanceOpenAIWSCyberBlockState(
 					cyberBlockedThisConn,
 					cyberBlockPendingAfterFailover,
@@ -4200,6 +4194,8 @@ type cyberPolicyOpsErrorMeta struct {
 	ClientIP        string
 	CreatedAt       time.Time
 	SessionBlockKey string
+	// NodeID 是转发的从节点（单机为 nil）。
+	NodeID *int64
 }
 
 // buildCyberPolicyOpsErrorEntry builds the ops_error_logs entry for an upstream
@@ -4243,6 +4239,7 @@ func buildCyberPolicyOpsErrorEntry(meta cyberPolicyOpsErrorMeta, mark *service.C
 	if meta.ClientIP != "" {
 		entry.ClientIP = &meta.ClientIP
 	}
+	entry.NodeID = meta.NodeID
 	return entry
 }
 
@@ -4351,26 +4348,15 @@ func (h *OpenAIGatewayHandler) writeCyberSessionBlocked(c *gin.Context, apiKey *
 	h.enqueueCyberSessionBlockedOpsEntry(c, apiKey, model, key)
 }
 
-type cyberSessionBlockWritePlan struct {
-	scopeKey string
-	keys     []string
-}
-
-func buildCyberSessionBlockWritePlan(apiKeyID int64, c *gin.Context, body []byte) cyberSessionBlockWritePlan {
-	plan := cyberSessionBlockWritePlan{}
-	if key := service.CyberSessionExplicitBlockKey(apiKeyID, c, body); key != "" {
-		plan.keys = append(plan.keys, key)
+// cyberSessionBlockWritePlan 返回 cyber 命中后要写进屏蔽表的键，由查询键推导（主从分流时主节点按选号时上送的
+// 查询键同样推导，service.CyberSessionLookup.BlockWritePlan）。
+func cyberSessionBlockWritePlan(apiKeyID int64, c *gin.Context, body []byte) (scopeKey string, keys []string) {
+	clientIP, userAgent := "", ""
+	if c != nil && c.Request != nil {
+		clientIP = strings.TrimSpace(ip.GetClientIP(c))
+		userAgent = c.GetHeader("User-Agent")
 	}
-	transcriptKeys := service.CyberSessionTranscriptBlockKeys(apiKeyID, body)
-	for _, key := range transcriptKeys {
-		if len(plan.keys) == 0 || key != plan.keys[0] {
-			plan.keys = append(plan.keys, key)
-		}
-	}
-	if len(transcriptKeys) > 0 {
-		plan.scopeKey = cyberSessionScopeKey(apiKeyID, c)
-	}
-	return plan
+	return service.NewCyberSessionLookup(apiKeyID, c, body, clientIP, userAgent).BlockWritePlan()
 }
 
 func findBlockedCyberSessionKey(ctx context.Context, gatewayService *service.OpenAIGatewayService, apiKeyID int64, c *gin.Context, body []byte) string {
@@ -4383,13 +4369,6 @@ func findBlockedCyberSessionKey(ctx context.Context, gatewayService *service.Ope
 		userAgent = c.GetHeader("User-Agent")
 	}
 	return gatewayService.FindCyberSessionBlockedForRequest(ctx, apiKeyID, c, body, clientIP, userAgent)
-}
-
-func cyberSessionScopeKey(apiKeyID int64, c *gin.Context) string {
-	if c == nil {
-		return ""
-	}
-	return service.CyberSessionScopeKey(apiKeyID, strings.TrimSpace(ip.GetClientIP(c)), c.GetHeader("User-Agent"))
 }
 
 // enqueueCyberSessionBlockedOpsEntry captures request meta and enqueues the
@@ -4446,7 +4425,8 @@ func usagePayloadHasher(body []byte) func() string {
 // 并在 forward 返回错误时写一条 tokens=0 用量行。标记由 gateway 服务层在透传 cyber 后设置；
 // 当前请求已发给用户，本方法只做事后记录，不影响响应。forwardErrored 为 true 时才写用量行，
 // 避免与正常 RecordUsage(forward 成功路径)重复。每请求至多记录一次。
-func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, forwardErrored bool, cyberBlockBody []byte, channelFields service.ChannelUsageFields, requestPayloadHash string) {
+// 主从分流的从节点上（relayAttempt 非 nil）：屏蔽标记、风控记录、运维日志交给主节点执行，用量行写本地扣费队列。
+func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, forwardErrored bool, cyberBlockBody []byte, channelFields service.ChannelUsageFields, requestPayloadHash string, relayAttempt *OpenAIRelayAttempt) {
 	mark := service.GetOpsCyberPolicy(c)
 	if mark == nil {
 		return
@@ -4455,16 +4435,141 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 		return
 	}
 	c.Set(cyberPolicyRecordedKey, true)
-	model = clientRequestedModel(c, model)
+	hit := captureCyberPolicyHit(c, apiKey, *mark, clientRequestedModel(c, model))
 
-	requestID := c.Writer.Header().Get("X-Request-Id")
+	// 提前拍成标量，避免在下方 goroutine 内访问 gin.Context。
+	upstreamEndpoint := ""
+	if account != nil {
+		upstreamEndpoint = resolveOpenAIUpstreamEndpoint(c, account, nil)
+	}
+	facts := OpenAIUsageFacts{
+		InboundEndpoint:    hit.InboundEndpoint,
+		UpstreamEndpoint:   upstreamEndpoint,
+		UserAgent:          hit.UserAgent,
+		IPAddress:          hit.ClientIP,
+		RequestPayloadHash: requestPayloadHash,
+		SessionID:          service.ExtractClientSessionID(c),
+		CyberBlocked:       true,
+		NativeCompactionV2: service.IsOpenAINativeCompactionV2(c),
+	}
+	if h.relay != nil && relayAttempt != nil {
+		var usage *OpenAIRelayCyberUsage
+		if forwardErrored {
+			usage = &OpenAIRelayCyberUsage{
+				Result: service.CyberPolicyUsageResult(hit.RequestID, hit.Model, hit.Stream, mark.UpstreamInTok, mark.UpstreamOutTok),
+				Facts:  facts,
+			}
+		}
+		h.relay.RecordCyberPolicy(c, relayAttempt, hit, usage)
+		return
+	}
+
+	var blockScope string
+	var blockKeys []string
+	if apiKey != nil {
+		blockScope, blockKeys = cyberSessionBlockWritePlan(apiKey.ID, c, cyberBlockBody)
+	}
+	var usage func(ctx context.Context)
+	if forwardErrored && h.gatewayService != nil {
+		gwSvc, apiKeySvc := h.gatewayService, h.apiKeyService
+		usage = func(ctx context.Context) {
+			gwSvc.RecordCyberPolicyUsageLog(ctx, service.CyberPolicyUsageInput{
+				APIKey:             apiKey,
+				Account:            account,
+				Subscription:       subscription,
+				RequestID:          hit.RequestID,
+				Model:              hit.Model,
+				Stream:             hit.Stream,
+				InputTokens:        mark.UpstreamInTok,
+				OutputTokens:       mark.UpstreamOutTok,
+				InboundEndpoint:    facts.InboundEndpoint,
+				UpstreamEndpoint:   facts.UpstreamEndpoint,
+				UserAgent:          facts.UserAgent,
+				IPAddress:          facts.IPAddress,
+				SessionID:          facts.SessionID,
+				RequestPayloadHash: facts.RequestPayloadHash,
+				APIKeyService:      apiKeySvc,
+				NativeCompactionV2: facts.NativeCompactionV2,
+				ChannelUsageFields: channelFields,
+			})
+		}
+	}
+	h.cyberPolicyRecorder().Record(hit, CyberPolicySubject{APIKey: apiKey, Account: account}, blockScope, blockKeys, usage)
+}
+
+func (h *OpenAIGatewayHandler) cyberPolicyRecorder() CyberPolicyRecorder {
+	return CyberPolicyRecorder{Gateway: h.gatewayService, Moderation: h.contentModerationService, Ops: h.opsService}
+}
+
+// CyberPolicyHit 是上游判定 cyber 策略后要记的请求事实（在请求上拍下的标量）。单机在本机执行；
+// 主从分流的从节点把它发给主节点（设计 3.4），主节点用选号记录里的用户、Key、分组、账号执行同一段代码。
+type CyberPolicyHit struct {
+	Mark            service.CyberPolicyMark
+	RequestID       string
+	ClientRequestID string
+	Platform        string
+	// Model 是客户端请求的模型（clientRequestedModel）。
+	Model           string
+	RequestPath     string
+	Stream          bool
+	InboundEndpoint string
+	UserAgent       string
+	ClientIP        string
+	CreatedAt       time.Time
+}
+
+func captureCyberPolicyHit(c *gin.Context, apiKey *service.APIKey, mark service.CyberPolicyMark, model string) CyberPolicyHit {
+	hit := CyberPolicyHit{
+		Mark:            mark,
+		RequestID:       c.Writer.Header().Get("X-Request-Id"),
+		Model:           model,
+		InboundEndpoint: GetInboundEndpoint(c),
+		CreatedAt:       time.Now(),
+	}
+	if v, ok := c.Get(opsStreamKey); ok {
+		if b, ok := v.(bool); ok {
+			hit.Stream = b
+		}
+	}
+	requestCtx := context.Background()
+	if c.Request != nil {
+		requestCtx = c.Request.Context()
+		if c.Request.URL != nil {
+			hit.RequestPath = c.Request.URL.Path
+		}
+		hit.ClientRequestID, _ = c.Request.Context().Value(ctxkey.ClientRequestID).(string)
+		hit.UserAgent = c.GetHeader("User-Agent")
+		hit.ClientIP = strings.TrimSpace(ip.GetClientIP(c))
+	}
+	hit.Platform = resolveOpsPlatform(requestCtx, apiKey, guessPlatformFromPath(hit.RequestPath))
+	return hit
+}
+
+// CyberPolicySubject 是 cyber 记录的归属：单机取自请求，主节点取自选号记录。NodeID 是转发的从节点（单机为 nil）。
+type CyberPolicySubject struct {
+	APIKey  *service.APIKey
+	Account *service.Account
+	NodeID  *int64
+}
+
+// CyberPolicyRecorder 执行 cyber 命中后的记录：会话屏蔽标记（同步，最多等 500ms）、风控记录、用量行、运维日志（异步）。
+type CyberPolicyRecorder struct {
+	Gateway    *service.OpenAIGatewayService
+	Moderation *service.ContentModerationService
+	Ops        *service.OpsService
+}
+
+// Record 执行一次 cyber 命中的记录。blockScope、blockKeys 是要写进屏蔽表的键；usage 非 nil 时在风控记录之后写用量行。
+func (r CyberPolicyRecorder) Record(hit CyberPolicyHit, subj CyberPolicySubject, blockScope string, blockKeys []string, usage func(ctx context.Context)) {
+	apiKey, account := subj.APIKey, subj.Account
 	var userID, apiKeyID int64
-	var userEmail, apiKeyName, groupName string
+	var userEmail, apiKeyName, groupName, apiKeyPrefix string
 	var groupID *int64
 	if apiKey != nil {
 		apiKeyID = apiKey.ID
 		apiKeyName = apiKey.Name
 		groupID = apiKey.GroupID
+		apiKeyPrefix = keyPrefix(apiKey.Key, 8)
 		if apiKey.User != nil {
 			userID = apiKey.User.ID
 			userEmail = apiKey.User.Email
@@ -4473,84 +4578,49 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 			groupName = apiKey.Group.Name
 		}
 	}
-	inboundEndpoint := GetInboundEndpoint(c)
-	upstreamEndpoint := ""
 	var accountID int64
 	if account != nil {
 		accountID = account.ID
-		upstreamEndpoint = resolveOpenAIUpstreamEndpoint(c, account, nil)
 	}
-	stream := false
-	if v, ok := c.Get(opsStreamKey); ok {
-		if b, ok := v.(bool); ok {
-			stream = b
-		}
-	}
-	cmSvc := h.contentModerationService
-	gwSvc := h.gatewayService
-	opsSvc := h.opsService
-	apiKeySvc := h.apiKeyService
-	requestPath := ""
-	if c.Request != nil && c.Request.URL != nil {
-		requestPath = c.Request.URL.Path
-	}
-	requestCtx := context.Background()
-	if c.Request != nil {
-		requestCtx = c.Request.Context()
-	}
-	platform := resolveOpsPlatform(requestCtx, apiKey, guessPlatformFromPath(requestPath))
-	var clientRequestID, userAgent, clientIPStr string
-	if c.Request != nil {
-		clientRequestID, _ = c.Request.Context().Value(ctxkey.ClientRequestID).(string)
-		userAgent = c.GetHeader("User-Agent")
-		clientIPStr = strings.TrimSpace(ip.GetClientIP(c))
-	}
-	// 提前拍成标量，避免在下方 goroutine 内访问 gin.Context。
-	sessionID := service.ExtractClientSessionID(c)
-	nativeCompactionV2 := service.IsOpenAINativeCompactionV2(c)
-	apiKeyPrefix := ""
-	if apiKey != nil {
-		apiKeyPrefix = keyPrefix(apiKey.Key, 8)
-	}
+	mark := hit.Mark
 	opsMeta := cyberPolicyOpsErrorMeta{
-		RequestID:       requestID,
-		ClientRequestID: clientRequestID,
-		Platform:        platform,
-		Model:           model,
-		RequestPath:     requestPath,
-		Stream:          stream,
-		InboundEndpoint: inboundEndpoint,
-		UserAgent:       userAgent,
+		RequestID:       hit.RequestID,
+		ClientRequestID: hit.ClientRequestID,
+		Platform:        hit.Platform,
+		Model:           hit.Model,
+		RequestPath:     hit.RequestPath,
+		Stream:          hit.Stream,
+		InboundEndpoint: hit.InboundEndpoint,
+		UserAgent:       hit.UserAgent,
 		APIKeyPrefix:    apiKeyPrefix,
 		UserID:          userID,
 		APIKeyID:        apiKeyID,
 		AccountID:       accountID,
 		GroupID:         groupID,
-		ClientIP:        clientIPStr,
-		CreatedAt:       time.Now(),
+		ClientIP:        hit.ClientIP,
+		CreatedAt:       hit.CreatedAt,
+		NodeID:          subj.NodeID,
 	}
-	if gwSvc != nil && apiKey != nil {
-		plan := buildCyberSessionBlockWritePlan(apiKey.ID, c, cyberBlockBody)
-		if len(plan.keys) > 0 {
-			blockCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-			gwSvc.MarkCyberSessionBlocked(blockCtx, plan.scopeKey, plan.keys)
-			cancel()
-		}
+	if r.Gateway != nil && apiKey != nil && len(blockKeys) > 0 {
+		blockCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		r.Gateway.MarkCyberSessionBlocked(blockCtx, blockScope, blockKeys)
+		cancel()
 	}
+	cmSvc, opsSvc := r.Moderation, r.Ops
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		if cmSvc != nil {
 			cmSvc.RecordCyberPolicyEvent(ctx, service.CyberPolicyRecordInput{
-				RequestID:       requestID,
+				RequestID:       hit.RequestID,
 				UserID:          userID,
 				UserEmail:       userEmail,
 				APIKeyID:        apiKeyID,
 				APIKeyName:      apiKeyName,
 				GroupID:         groupID,
 				GroupName:       groupName,
-				Endpoint:        inboundEndpoint,
-				Model:           model,
+				Endpoint:        hit.InboundEndpoint,
+				Model:           hit.Model,
 				UpstreamMessage: mark.Message,
 				UpstreamBody:    mark.Body,
 				UpstreamStatus:  mark.UpstreamStatus,
@@ -4558,29 +4628,11 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 				UpstreamOutTok:  mark.UpstreamOutTok,
 			})
 		}
-		if forwardErrored && gwSvc != nil {
-			gwSvc.RecordCyberPolicyUsageLog(ctx, service.CyberPolicyUsageInput{
-				APIKey:             apiKey,
-				Account:            account,
-				Subscription:       subscription,
-				RequestID:          requestID,
-				Model:              model,
-				Stream:             stream,
-				InputTokens:        mark.UpstreamInTok,
-				OutputTokens:       mark.UpstreamOutTok,
-				InboundEndpoint:    inboundEndpoint,
-				UpstreamEndpoint:   upstreamEndpoint,
-				UserAgent:          userAgent,
-				IPAddress:          clientIPStr,
-				SessionID:          sessionID,
-				RequestPayloadHash: requestPayloadHash,
-				APIKeyService:      apiKeySvc,
-				NativeCompactionV2: nativeCompactionV2,
-				ChannelUsageFields: channelFields,
-			})
+		if usage != nil {
+			usage(ctx)
 		}
 		if opsSvc != nil {
-			enqueueOpsErrorLog(opsSvc, buildCyberPolicyOpsErrorEntry(opsMeta, mark))
+			enqueueOpsErrorLog(opsSvc, buildCyberPolicyOpsErrorEntry(opsMeta, &mark))
 		}
 	}()
 }

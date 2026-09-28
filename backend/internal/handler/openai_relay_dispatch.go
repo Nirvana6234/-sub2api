@@ -24,6 +24,10 @@ type OpenAIRelayDispatcher interface {
 	AttemptDone(c *gin.Context, attempt *OpenAIRelayAttempt)
 	// SubmitUsage 把这次尝试的转发结果写入本地扣费队列（代替 RecordUsage）。
 	SubmitUsage(c *gin.Context, attempt *OpenAIRelayAttempt, facts OpenAIUsageFacts, result *service.OpenAIForwardResult)
+	// RecordCyberPolicy 上游判定 cyber 策略后调用（代替本机的 CyberPolicyRecorder，设计 3.4）：会话屏蔽标记、
+	// 风控记录、运维日志交给主节点，最多等 500ms（单机同步写屏蔽标记的上限）；usage 非 nil 时（转发返回错误）
+	// 把用量行写进本地扣费队列。
+	RecordCyberPolicy(c *gin.Context, attempt *OpenAIRelayAttempt, hit CyberPolicyHit, usage *OpenAIRelayCyberUsage)
 	// RequestDone 在处理函数返回时调用：最后一次尝试的释放带"请求结束"，主节点放掉用户并发槽。
 	RequestDone(c *gin.Context)
 	// HandOff 把请求原样交给主节点转发（主节点回"暂不支持"时，只在还没写出任何响应时调用）。
@@ -107,6 +111,12 @@ type OpenAIUsageFacts struct {
 	SessionID          string
 	CyberBlocked       bool
 	NativeCompactionV2 bool
+}
+
+// OpenAIRelayCyberUsage 是 cyber 命中且转发返回错误时要记的用量（单机的 RecordCyberPolicyUsageLog）。
+type OpenAIRelayCyberUsage struct {
+	Result *service.OpenAIForwardResult
+	Facts  OpenAIUsageFacts
 }
 
 // SetRelayDispatcher 让处理函数在主从分流的从节点上运行（WP9 装配时调用）。

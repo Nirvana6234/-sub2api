@@ -314,6 +314,7 @@ const (
 	RelayControl_FetchCredentials_FullMethodName = "/sub2api.relay.v1.RelayControl/FetchCredentials"
 	RelayControl_RefillQuota_FullMethodName      = "/sub2api.relay.v1.RelayControl/RefillQuota"
 	RelayControl_UpstreamError_FullMethodName    = "/sub2api.relay.v1.RelayControl/UpstreamError"
+	RelayControl_CyberPolicyHit_FullMethodName   = "/sub2api.relay.v1.RelayControl/CyberPolicyHit"
 )
 
 // RelayControlClient is the client API for RelayControl service.
@@ -355,6 +356,10 @@ type RelayControlClient interface {
 	// 单机同一段代码判定并记录账号状态（限流、临时不可调度、停用、冷却），返回判定结果。
 	// 只能针对这台节点正在用的账号（有进行中的选号）。
 	UpstreamError(ctx context.Context, in *UpstreamErrorRequest, opts ...grpc.CallOption) (*UpstreamErrorResponse, error)
+	// CyberPolicyHit 上游判定 cyber 策略后调用（设计 3.4）：主节点写会话屏蔽标记（同步）、风控记录和
+	// 运维日志（异步），用单机同一段代码（handler.CyberPolicyRecorder）。用户、Key、分组、账号取自这次选号的
+	// 记录，屏蔽的键由选号时上送的查询键推导；每次请求只记一次。选号必须是这台节点进行中的。
+	CyberPolicyHit(ctx context.Context, in *CyberPolicyHitRequest, opts ...grpc.CallOption) (*CyberPolicyHitResponse, error)
 }
 
 type relayControlClient struct {
@@ -475,6 +480,16 @@ func (c *relayControlClient) UpstreamError(ctx context.Context, in *UpstreamErro
 	return out, nil
 }
 
+func (c *relayControlClient) CyberPolicyHit(ctx context.Context, in *CyberPolicyHitRequest, opts ...grpc.CallOption) (*CyberPolicyHitResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CyberPolicyHitResponse)
+	err := c.cc.Invoke(ctx, RelayControl_CyberPolicyHit_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RelayControlServer is the server API for RelayControl service.
 // All implementations must embed UnimplementedRelayControlServer
 // for forward compatibility.
@@ -514,6 +529,10 @@ type RelayControlServer interface {
 	// 单机同一段代码判定并记录账号状态（限流、临时不可调度、停用、冷却），返回判定结果。
 	// 只能针对这台节点正在用的账号（有进行中的选号）。
 	UpstreamError(context.Context, *UpstreamErrorRequest) (*UpstreamErrorResponse, error)
+	// CyberPolicyHit 上游判定 cyber 策略后调用（设计 3.4）：主节点写会话屏蔽标记（同步）、风控记录和
+	// 运维日志（异步），用单机同一段代码（handler.CyberPolicyRecorder）。用户、Key、分组、账号取自这次选号的
+	// 记录，屏蔽的键由选号时上送的查询键推导；每次请求只记一次。选号必须是这台节点进行中的。
+	CyberPolicyHit(context.Context, *CyberPolicyHitRequest) (*CyberPolicyHitResponse, error)
 	mustEmbedUnimplementedRelayControlServer()
 }
 
@@ -556,6 +575,9 @@ func (UnimplementedRelayControlServer) RefillQuota(context.Context, *RefillQuota
 }
 func (UnimplementedRelayControlServer) UpstreamError(context.Context, *UpstreamErrorRequest) (*UpstreamErrorResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpstreamError not implemented")
+}
+func (UnimplementedRelayControlServer) CyberPolicyHit(context.Context, *CyberPolicyHitRequest) (*CyberPolicyHitResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CyberPolicyHit not implemented")
 }
 func (UnimplementedRelayControlServer) mustEmbedUnimplementedRelayControlServer() {}
 func (UnimplementedRelayControlServer) testEmbeddedByValue()                      {}
@@ -776,6 +798,24 @@ func _RelayControl_UpstreamError_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RelayControl_CyberPolicyHit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CyberPolicyHitRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayControlServer).CyberPolicyHit(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayControl_CyberPolicyHit_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayControlServer).CyberPolicyHit(ctx, req.(*CyberPolicyHitRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // RelayControl_ServiceDesc is the grpc.ServiceDesc for RelayControl service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -826,6 +866,10 @@ var RelayControl_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UpstreamError",
 			Handler:    _RelayControl_UpstreamError_Handler,
+		},
+		{
+			MethodName: "CyberPolicyHit",
+			Handler:    _RelayControl_CyberPolicyHit_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

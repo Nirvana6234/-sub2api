@@ -67,6 +67,10 @@ service RelayControl {
   // 单机同一段代码判定并记录账号状态（限流、临时不可调度、停用、冷却），返回判定结果。
   // 只能针对这台节点正在用的账号（有进行中的选号）。
   rpc UpstreamError(UpstreamErrorRequest) returns (UpstreamErrorResponse);
+  // CyberPolicyHit 上游判定 cyber 策略后调用（设计 3.4）：主节点写会话屏蔽标记（同步）、风控记录和
+  // 运维日志（异步），用单机同一段代码（handler.CyberPolicyRecorder）。用户、Key、分组、账号取自这次选号的
+  // 记录，屏蔽的键由选号时上送的查询键推导；每次请求只记一次。选号必须是这台节点进行中的。
+  rpc CyberPolicyHit(CyberPolicyHitRequest) returns (CyberPolicyHitResponse);
 }
 
 // 扣费连接：扣费批次（设计 5.1、5.2，开发计划 WP8）。
@@ -514,6 +518,8 @@ message CyberSessionLookup {
   repeated string transcript_keys = 3;
   // 请求体里的候选键超过上限被截断（范围已激活时按命中处理）。
   bool transcript_truncated = 4;
+  // "最后一轮用户输入之前"的对话记录键：不用来查，cyber 命中后主节点写屏蔽表时用。
+  string pre_latest_user_key = 5;
 }
 
 message HeldQuota {
@@ -661,6 +667,31 @@ message UpstreamErrorRequest {
   bool images_endpoint = 10;
 }
 
+// 上游 cyber 策略命中（service.CyberPolicyMark 与请求上拍下的事实，handler.CyberPolicyHit）。
+message CyberPolicyHitRequest {
+  string selection_id = 1;
+  int64 account_id = 2;
+  // 上游标记：message、body（单机截到 4 KiB；超过 8 KiB 时主节点截断，落库前照单机脱敏）、上游状态码、上游已报的 token。
+  string message = 3;
+  string body = 4;
+  int32 upstream_status = 5;
+  int64 upstream_input_tokens = 6;
+  int64 upstream_output_tokens = 7;
+  // 请求上的事实（风控记录、运维日志用）：客户端请求的模型、流式、平台、路径、入口、UA、客户端 IP、请求 ID。
+  string model = 8;
+  bool stream = 9;
+  string platform = 10;
+  string request_path = 11;
+  string inbound_endpoint = 12;
+  string user_agent = 13;
+  string client_ip = 14;
+  string request_id = 15;
+  string client_request_id = 16;
+  int64 created_at_unix_ms = 17;
+}
+
+message CyberPolicyHitResponse {}
+
 message UpstreamErrorResponse {
   bool should_disable = 1;
   bool retry_same_account = 2;
@@ -676,6 +707,9 @@ enum UsageRecordKind {
   USAGE_RECORD_KIND_UNSPECIFIED = 0;
   // OpenAI 网关（service.OpenAIGatewayService.RecordUsage）。
   USAGE_RECORD_KIND_OPENAI = 1;
+  // OpenAI 网关上 cyber 策略拒绝、转发返回错误的请求（service.OpenAIGatewayService.RecordCyberPolicyUsageLog 的口径：
+  // 只有上游已报的 token，按入账时计价）。
+  USAGE_RECORD_KIND_OPENAI_CYBER_POLICY = 2;
 }
 
 // 一条扣费记录（设计 5.1）：扣费凭证 + 只有转发的从节点知道的事实（字段清单见 relayselect 的字段守卫）。

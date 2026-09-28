@@ -37,6 +37,8 @@ type Deps struct {
 	// （审核接入主从通信之前，设计 3.4）。nil 表示没有这个功能。
 	Moderation  *service.ContentModerationService
 	PromptAudit interface{ EffectiveMode() securityaudit.Mode }
+	// Ops 记运维错误日志（cyber 命中、cyber 会话屏蔽）；nil 表示不记。
+	Ops *service.OpsService
 }
 
 // holdLimit 是一次选号最长占着槽位的时间：从节点的释放消息丢了、从节点下线时由定时清理放掉。
@@ -69,6 +71,8 @@ type selector struct {
 	localReporter func() service.OpenAIAccountReporter
 	// findCyberBlocked 查 cyber 会话屏蔽（默认网关服务；测试替换）。
 	findCyberBlocked func(ctx context.Context, l service.CyberSessionLookup) string
+	// recordCyber 执行 cyber 命中的记录（默认 handler.CyberPolicyRecorder；测试替换）。
+	recordCyber func(hit handler.CyberPolicyHit, subj handler.CyberPolicySubject, blockScope string, blockKeys []string)
 
 	stopReaper context.CancelFunc
 }
@@ -95,6 +99,8 @@ type requestRecord struct {
 	excluded   map[int64]struct{}
 	active     map[string]struct{}
 	lastSeen   time.Time
+	// cyberRecorded：这次请求已记过 cyber 命中（与单机每请求只记一次一致）。由 selector.mu 保护。
+	cyberRecorded bool
 }
 
 // selectionRecord 是一次进行中的选号。
@@ -110,6 +116,9 @@ type selectionRecord struct {
 	groupID  int64
 	userID   int64
 	apiKeyID int64
+	// apiKey 是选号时准入的 Key（含用户、分组），cyber 是这次选号上送的 cyber 查询键：cyber 命中的记录用。
+	apiKey *service.APIKey
+	cyber  service.CyberSessionLookup
 }
 
 func newSelector(d Deps, env master.SelectEnv) *selector {
@@ -128,6 +137,10 @@ func newSelector(d Deps, env master.SelectEnv) *selector {
 	}
 	s.localReporter = d.Gateway.LocalAccountReporter
 	s.findCyberBlocked = d.Gateway.FindCyberSessionBlockedByLookup
+	recorder := handler.CyberPolicyRecorder{Gateway: d.Gateway, Moderation: d.Moderation, Ops: d.Ops}
+	s.recordCyber = func(hit handler.CyberPolicyHit, subj handler.CyberPolicySubject, blockScope string, blockKeys []string) {
+		recorder.Record(hit, subj, blockScope, blockKeys, nil)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s.stopReaper = cancel
 	go s.runReaper(ctx)

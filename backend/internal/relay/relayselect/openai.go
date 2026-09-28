@@ -189,6 +189,7 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 	sel := &selectionRecord{
 		id: newSelectionID(), nodeID: nodeID, request: record, account: outcome.Account, release: outcome.Release,
 		createdAt: s.now(), quota: quotaReq, groupID: groupID, userID: userID, apiKeyID: apiKey.ID,
+		apiKey: apiKey, cyber: cyberLookup(req.GetCyber()),
 	}
 	resp, rej, err := s.buildSelection(ctx, nodeID, req, sel, outcome, forwardModel, reqModel, channelMapping, subscription, messages)
 	if err == nil && rej == nil && ctx.Err() != nil {
@@ -301,9 +302,7 @@ func (s *selector) cyberRejection(ctx context.Context, req *relayv1.SelectReques
 	if c == nil {
 		return nil
 	}
-	key := s.findCyberBlocked(ctx, service.CyberSessionLookup{
-		ExplicitKey: c.GetExplicitKey(), ScopeKey: c.GetScopeKey(), TranscriptKeys: c.GetTranscriptKeys(), TranscriptTruncated: c.GetTranscriptTruncated(),
-	})
+	key := s.findCyberBlocked(ctx, cyberLookup(c))
 	if key == "" {
 		return nil
 	}

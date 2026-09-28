@@ -45,6 +45,7 @@ func ProvideMasterRuntime(
 	accounts service.AccountRepository,
 	groups service.GroupRepository,
 	errorPassthrough *service.ErrorPassthroughService,
+	ops *service.OpsService,
 ) *master.Runtime {
 	// 用户、分组、订阅作废时发布改动（平台配额在仓储层已接好，见 repository/wire.go）。
 	service.AttachAccessChangeHub(accessChanges, apiKeys, billing)
@@ -65,7 +66,7 @@ func ProvideMasterRuntime(
 		NewSelector: relayselect.NewFactory(relayselect.Deps{
 			Config: cfg, APIKeys: apiKeys, Subscriptions: subscriptions, Settings: settingService,
 			Billing: billing, Gateway: gateway, Concurrency: concurrency,
-			Moderation: moderation, PromptAudit: prompt,
+			Moderation: moderation, PromptAudit: prompt, Ops: ops,
 		}),
 		VoucherPartitions: repository.NewRelayVoucherPartitions(db),
 		Sections:          forwardingSections(errorPassthrough),

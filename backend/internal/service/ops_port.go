@@ -122,6 +122,9 @@ type OpsInsertErrorLogInput struct {
 	// 有效(未删除)key 报错时快照的 key 脱敏前缀(前 8 位)。
 	// 落库快照而非读时 JOIN:key 之后被删(key 列被 tombstone 覆盖)仍保留当时前缀。
 	APIKeyPrefix string
+
+	// NodeID 是转发这个请求的从节点（主从分流，迁移 259）；nil 表示主节点自己处理的。
+	NodeID *int64
 }
 
 type OpsInsertSystemMetricsInput struct {

@@ -81,15 +81,7 @@ func (s *OpenAIGatewayService) RecordCyberPolicyUsageLog(ctx context.Context, in
 	if s == nil || in.APIKey == nil || in.APIKey.User == nil || in.Account == nil || strings.TrimSpace(in.Model) == "" {
 		return
 	}
-	result := &OpenAIForwardResult{
-		RequestID: in.RequestID,
-		Model:     in.Model,
-		Stream:    in.Stream,
-		Usage: OpenAIUsage{
-			InputTokens:  in.InputTokens,
-			OutputTokens: in.OutputTokens,
-		},
-	}
+	result := CyberPolicyUsageResult(in.RequestID, in.Model, in.Stream, in.InputTokens, in.OutputTokens)
 	if err := s.RecordUsage(ctx, &OpenAIRecordUsageInput{
 		Result:             result,
 		APIKey:             in.APIKey,
@@ -108,6 +100,20 @@ func (s *OpenAIGatewayService) RecordCyberPolicyUsageLog(ctx context.Context, in
 		NativeCompactionV2: in.NativeCompactionV2,
 	}); err != nil {
 		logger.LegacyPrintf("service.openai_gateway", "cyber usage record failed: request_id=%s err=%v", in.RequestID, err)
+	}
+}
+
+// CyberPolicyUsageResult 是 cyber 拒绝的请求入账用的转发结果：只有上游已报的 token（主从分流时从节点
+// 把它写进扣费队列，主节点入账时同样按 RecordCyberPolicyUsageLog 的口径）。
+func CyberPolicyUsageResult(requestID, model string, stream bool, inputTokens, outputTokens int) *OpenAIForwardResult {
+	return &OpenAIForwardResult{
+		RequestID: requestID,
+		Model:     model,
+		Stream:    stream,
+		Usage: OpenAIUsage{
+			InputTokens:  inputTokens,
+			OutputTokens: outputTokens,
+		},
 	}
 }
 

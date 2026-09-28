@@ -67,6 +67,10 @@ func (f *fakeSelector) RefillQuota(context.Context, int64, *relayv1.RefillQuotaR
 	return nil, errors.New("database is down: secret detail")
 }
 
+func (f *fakeSelector) CyberPolicyHit(context.Context, int64, *relayv1.CyberPolicyHitRequest) (*relayv1.CyberPolicyHitResponse, error) {
+	return &relayv1.CyberPolicyHitResponse{}, nil
+}
+
 func (f *fakeSelector) UpstreamError(_ context.Context, nodeID int64, req *relayv1.UpstreamErrorRequest) (*relayv1.UpstreamErrorResponse, error) {
 	f.mu.Lock()
 	f.upstream = append(f.upstream, req)

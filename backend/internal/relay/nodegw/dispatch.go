@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
@@ -81,6 +82,8 @@ type attemptState struct {
 	finished       bool
 	usageSubmitted bool
 	released       bool
+	// cyberDone 在 cyber 命中报告发完（或放弃）时关闭：释放要等它，主节点按进行中的选号认这份报告。
+	cyberDone chan struct{}
 }
 
 func (a *attemptState) addResponseID(id string) {
@@ -180,7 +183,10 @@ func (d *Dispatcher) selectRequest(c *gin.Context, st *requestState, req handler
 	}
 	if d.deps.CyberEnabled != nil && d.deps.CyberEnabled(c.Request.Context()) {
 		l := service.NewCyberSessionLookup(req.APIKey.ID, c, req.Body, clientIP, c.GetHeader("User-Agent"))
-		sreq.Cyber = &relayv1.CyberSessionLookup{ExplicitKey: l.ExplicitKey, ScopeKey: l.ScopeKey, TranscriptKeys: l.TranscriptKeys, TranscriptTruncated: l.TranscriptTruncated}
+		sreq.Cyber = &relayv1.CyberSessionLookup{
+			ExplicitKey: l.ExplicitKey, ScopeKey: l.ScopeKey, TranscriptKeys: l.TranscriptKeys, TranscriptTruncated: l.TranscriptTruncated,
+			PreLatestUserKey: l.PreLatestUserKey,
+		}
 	}
 	if st.rawBody != nil {
 		sreq.ModelCandidates = requestmodel.FromBodyCandidates(c.FullPath(), c.GetHeader("Content-Type"), st.rawBody)
@@ -284,15 +290,29 @@ func (d *Dispatcher) flush(st *requestState, requestDone bool) {
 	a.released = true
 	ids := append([]string(nil), a.responseIDs...)
 	submitted := a.usageSubmitted
+	cyberDone := a.cyberDone
 	a.mu.Unlock()
 	if !submitted && a.reservation != nil {
 		a.reservation.Cancel()
 	}
-	d.deps.Select.Release(&relayv1.SelectionRelease{SelectionId: a.selectionID, RequestDone: requestDone, ResponseIds: ids, Voucher: a.voucher})
+	rel := &relayv1.SelectionRelease{SelectionId: a.selectionID, RequestDone: requestDone, ResponseIds: ids, Voucher: a.voucher}
+	if cyberDone != nil {
+		// cyber 命中报告还没发完：等它（最长 node.CyberPolicyTimeout）再释放，否则主节点查不到这次选号。
+		go func() {
+			<-cyberDone
+			d.deps.Select.Release(rel)
+		}()
+		return
+	}
+	d.deps.Select.Release(rel)
 }
 
 // SubmitUsage 把转发结果写进本地扣费队列（handler.OpenAIRelayDispatcher）。
 func (d *Dispatcher) SubmitUsage(c *gin.Context, attempt *handler.OpenAIRelayAttempt, facts handler.OpenAIUsageFacts, result *service.OpenAIForwardResult) {
+	d.submitUsage(c, attempt, facts, result, relayv1.UsageRecordKind_USAGE_RECORD_KIND_OPENAI)
+}
+
+func (d *Dispatcher) submitUsage(c *gin.Context, attempt *handler.OpenAIRelayAttempt, facts handler.OpenAIUsageFacts, result *service.OpenAIForwardResult, kind relayv1.UsageRecordKind) {
 	a, ok := attempt.State.(*attemptState)
 	if !ok || result == nil {
 		return
@@ -304,7 +324,7 @@ func (d *Dispatcher) SubmitUsage(c *gin.Context, attempt *handler.OpenAIRelayAtt
 	}
 	ctx := context.WithoutCancel(c.Request.Context())
 	rec := &relayv1.UsageRecord{
-		Voucher: a.voucher, Kind: relayv1.UsageRecordKind_USAGE_RECORD_KIND_OPENAI, ResultJson: resultJSON,
+		Voucher: a.voucher, Kind: kind, ResultJson: resultJSON,
 		InboundEndpoint: facts.InboundEndpoint, UpstreamEndpoint: facts.UpstreamEndpoint, UserAgent: facts.UserAgent,
 		IpAddress: facts.IPAddress, SessionId: facts.SessionID, RequestPayloadHash: facts.RequestPayloadHash,
 		CyberBlocked: facts.CyberBlocked, NativeCompactionV2: facts.NativeCompactionV2,
@@ -358,6 +378,52 @@ func (d *Dispatcher) HandOff(c *gin.Context) {
 
 func rejection(r *handler.OpenAIRelayRejection) handler.OpenAIRelaySelectResult {
 	return handler.OpenAIRelaySelectResult{Rejection: r}
+}
+
+// cyberPolicyWait 是处理函数等 cyber 命中报告的最长时间：单机同步写会话屏蔽标记的上限（500ms），
+// 超过后报告在后台继续发，释放等它发完。
+const cyberPolicyWait = 500 * time.Millisecond
+
+// RecordCyberPolicy 上游 cyber 策略命中（handler.OpenAIRelayDispatcher，设计 3.4）：屏蔽标记、风控记录、运维日志
+// 由主节点执行；转发返回错误时用量行写本地扣费队列（主节点按 RecordCyberPolicyUsageLog 的口径入账）。
+func (d *Dispatcher) RecordCyberPolicy(c *gin.Context, attempt *handler.OpenAIRelayAttempt, hit handler.CyberPolicyHit, usage *handler.OpenAIRelayCyberUsage) {
+	a, ok := attempt.State.(*attemptState)
+	if !ok {
+		return
+	}
+	if usage != nil {
+		d.submitUsage(c, attempt, usage.Facts, usage.Result, relayv1.UsageRecordKind_USAGE_RECORD_KIND_OPENAI_CYBER_POLICY)
+	}
+	req := &relayv1.CyberPolicyHitRequest{
+		SelectionId: a.selectionID, AccountId: attempt.Account.ID,
+		Message: hit.Mark.Message, Body: hit.Mark.Body, UpstreamStatus: int32(hit.Mark.UpstreamStatus),
+		UpstreamInputTokens: int64(hit.Mark.UpstreamInTok), UpstreamOutputTokens: int64(hit.Mark.UpstreamOutTok),
+		Model: hit.Model, Stream: hit.Stream, Platform: hit.Platform, RequestPath: hit.RequestPath,
+		InboundEndpoint: hit.InboundEndpoint, UserAgent: hit.UserAgent, ClientIp: hit.ClientIP,
+		RequestId: hit.RequestID, ClientRequestId: hit.ClientRequestID, CreatedAtUnixMs: hit.CreatedAt.UnixMilli(),
+	}
+	done := make(chan struct{})
+	a.mu.Lock()
+	if a.released || a.cyberDone != nil {
+		a.mu.Unlock()
+		return
+	}
+	a.cyberDone = done
+	a.mu.Unlock()
+	ctx := context.WithoutCancel(c.Request.Context())
+	go func() {
+		defer close(done)
+		if err := d.deps.Select.CyberPolicyHit(ctx, req); err != nil {
+			// 主节点不可达：这次的屏蔽标记、风控记录丢失（用量行在扣费队列里，不丢）。
+			slog.Warn("relay cyber policy hit could not be reported", "selection_id", a.selectionID, "error", err)
+		}
+	}()
+	timer := time.NewTimer(cyberPolicyWait)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+	}
 }
 
 // convertRejection 把主节点的拒绝转成处理函数的写法。

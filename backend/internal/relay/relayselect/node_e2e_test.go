@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/Wei-Shaw/sub2api/internal/relay/accountcodec"
@@ -29,6 +30,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/relay/sealbox"
 	"github.com/Wei-Shaw/sub2api/internal/relay/transport"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
@@ -96,6 +98,11 @@ func startE2EWith(t *testing.T, accounts func(upstreamURL string) []service.Acco
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		e.hits <- r
 		w.Header().Set("Content-Type", "application/json")
+		if bytes.Contains(body, []byte("cyber-trigger")) {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":{"code":"cyber_policy","message":"blocked by policy","type":"invalid_request_error"}}`)
+			return
+		}
 		if strings.HasSuffix(r.URL.Path, "/chat/completions") {
 			_, _ = io.WriteString(w, `{"id":"chatcmpl-e2e","object":"chat.completion","model":"gpt-5",`+
 				`"choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}],`+
@@ -127,7 +134,8 @@ func startE2EWith(t *testing.T, accounts func(upstreamURL string) []service.Acco
 	ca, err := master.NewCA(keys)
 	require.NoError(t, err)
 	store := master.NewMemoryStore()
-	settings := memSettings{values: map[string]string{}}
+	// cyber 会话屏蔽打开：从节点把查询键随选号上送（主节点的网关服务没有设置，查屏蔽表时按关闭处理）。
+	settings := memSettings{values: map[string]string{service.SettingKeyCyberSessionBlockEnabled: "true"}}
 	nodes := master.NewNodes(store, ca, nil, master.NodesOptions{})
 	events := master.NewEventHub()
 	publisher := master.NewConfigPublisher(settings, store, events, func() master.Trust { return master.Trust{RootFingerprints: ca.RootFingerprints()} })
@@ -330,5 +338,59 @@ func TestNodeServesAShadowOAuthAccount(t *testing.T) {
 	r := <-e.hits
 	require.Equal(t, "Bearer PARENT-TOKEN", r.Header.Get("Authorization"), "the shadow forwards with its parent's token")
 	require.Equal(t, "acct-parent", r.Header.Get("chatgpt-account-id"))
+	e.world.waitReleased(t)
+}
+
+// 上游判定 cyber 策略：客户端照单机收到上游的错误；主节点按这次选号记下风控记录（归属取自选号记录、
+// 屏蔽键由选号时的查询键推导），用量行经扣费队列按 cyber 口径送到主节点；报告发完才释放。
+func TestNodeReportsCyberPolicyHitsToTheMaster(t *testing.T) {
+	e := startE2E(t)
+	hits := make(chan recordedCyber, 4)
+	e.world.sel.recordCyber = func(hit handler.CyberPolicyHit, subj handler.CyberPolicySubject, scope string, keys []string) {
+		hits <- recordedCyber{hit: hit, subj: subj, blockScope: scope, blockKeys: keys}
+	}
+
+	req, err := http.NewRequest(http.MethodPost, e.gateway.URL+"/v1/responses", strings.NewReader(`{"model":"gpt-5","input":"cyber-trigger"}`))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer sk-a")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("session_id", "sess-cyber")
+	req.Header.Set("User-Agent", "codex/1.0")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	out, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode, string(out))
+	require.Contains(t, string(out), "cyber_policy", "the upstream error is passed through like a single server")
+	<-e.hits
+
+	var got recordedCyber
+	select {
+	case got = <-hits:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the master did not record the cyber hit")
+	}
+	require.Equal(t, "sk-a", got.subj.APIKey.Key)
+	require.Equal(t, int64(1), got.subj.Account.ID)
+	require.NotNil(t, got.subj.NodeID)
+	require.Equal(t, "blocked by policy", got.hit.Mark.Message)
+	require.Equal(t, http.StatusBadRequest, got.hit.Mark.UpstreamStatus)
+	require.Equal(t, "gpt-5", got.hit.Model)
+	require.Equal(t, "/v1/responses", got.hit.InboundEndpoint)
+	require.Equal(t, "codex/1.0", got.hit.UserAgent)
+	require.NotEmpty(t, got.blockKeys, "block keys derived from the lookup sent at selection")
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	c.Request.Header.Set("session_id", "sess-cyber")
+	require.Equal(t, service.CyberSessionExplicitBlockKey(11, c, []byte(`{"model":"gpt-5","input":"cyber-trigger"}`)), got.blockKeys[0])
+
+	require.Eventually(t, func() bool { return len(e.settler.records()) == 1 }, 5*time.Second, 20*time.Millisecond)
+	rec := e.settler.records()[0]
+	require.Equal(t, relayv1.UsageRecordKind_USAGE_RECORD_KIND_OPENAI_CYBER_POLICY, rec.GetKind())
+	require.True(t, rec.GetCyberBlocked())
+	var result service.OpenAIForwardResult
+	require.NoError(t, json.Unmarshal(rec.GetResultJson(), &result))
+	require.Equal(t, "gpt-5", result.Model)
+	require.Zero(t, result.Usage.InputTokens)
 	e.world.waitReleased(t)
 }

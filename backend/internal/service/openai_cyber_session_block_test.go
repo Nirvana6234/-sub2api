@@ -339,3 +339,47 @@ func findCyberBoth(t *testing.T, svc *OpenAIGatewayService, ctx context.Context,
 	require.Equal(t, direct, byLookup, "relay lookup must match the local lookup")
 	return direct
 }
+
+// 查询键推导出的屏蔽计划与直接从请求体算的一致（主从分流时主节点按选号时上送的查询键写屏蔽表），
+// 包括对话记录超过查询键上限、被截断的请求。
+func TestCyberSessionLookupBlockWritePlanMatchesRequest(t *testing.T) {
+	var many strings.Builder
+	_, _ = many.WriteString(`{"messages":[{"role":"user","content":"setup"},{"role":"assistant","content":"ready"}`)
+	for i := 0; i < maxOpenAICyberTranscriptLookupKeys+10; i++ {
+		_, _ = many.WriteString(`,{"role":"user","content":"turn ` + strconv.Itoa(i) + `"},{"role":"assistant","content":"ok"}`)
+	}
+	_, _ = many.WriteString(`,{"role":"user","content":"trigger"}]}`)
+	for name, tc := range map[string]struct {
+		headers map[string]string
+		body    string
+	}{
+		"explicit only":         {headers: map[string]string{"session_id": "sess-1"}, body: `{"input":"hi"}`},
+		"transcript":            {body: `{"messages":[{"role":"user","content":"setup"},{"role":"assistant","content":"ready"},{"role":"user","content":"trigger"}]}`},
+		"explicit + transcript": {headers: map[string]string{"session_id": "sess-1"}, body: `{"messages":[{"role":"user","content":"a"},{"role":"assistant","content":"b"},{"role":"user","content":"c"}]}`},
+		"truncated transcript":  {body: many.String()},
+		"no keys":               {body: `{}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, body := newCyberBlockTestCtx(tc.headers, tc.body)
+			l := NewCyberSessionLookup(5, c, body, "1.2.3.4", "codex/1.0")
+			scope, keys := l.BlockWritePlan()
+
+			var want []string
+			if k := CyberSessionExplicitBlockKey(5, c, body); k != "" {
+				want = append(want, k)
+			}
+			transcript := CyberSessionTranscriptBlockKeys(5, body)
+			for _, k := range transcript {
+				if len(want) == 0 || k != want[0] {
+					want = append(want, k)
+				}
+			}
+			require.Equal(t, want, keys)
+			if len(transcript) > 0 {
+				require.Equal(t, CyberSessionScopeKey(5, "1.2.3.4", "codex/1.0"), scope)
+			} else {
+				require.Empty(t, scope)
+			}
+		})
+	}
+}

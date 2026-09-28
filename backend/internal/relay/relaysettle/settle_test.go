@@ -310,3 +310,36 @@ func TestRelaySettlementMarksRecordsForReview(t *testing.T) {
 	require.Equal(t, []string{"", "pending_review", "pending_review", ""}, w.billing.reviews,
 		"reviewed: a model outside the voucher, and a voucher issued before the suspected compromise; not: one issued after it")
 }
+
+// cyber 命中且转发返回错误的用量行：主从入账与单机 RecordCyberPolicyUsageLog 写出同样的扣费命令和用量记录
+// （记成 cyber 请求、只有上游已报的 token、按入账时计价、没有请求 ID 和兜底事实）。
+func TestRelayCyberPolicyUsageMatchesLocal(t *testing.T) {
+	w := newWorld(t)
+	account := w.account
+	account.ContributionRouteSource = service.ContributionRouteSourcePool
+	mapping := service.ChannelMappingResult{ChannelID: 4, MappedModel: "gpt-5.1", BillingModelSource: service.BillingModelSourceRequested}
+	w.gateway.RecordCyberPolicyUsageLog(context.Background(), service.CyberPolicyUsageInput{
+		APIKey: w.key, Account: &account, RequestID: "req-cyber", Model: "gpt-5.1", Stream: true, InputTokens: 900, OutputTokens: 12,
+		InboundEndpoint: "/v1/responses", UpstreamEndpoint: "/v1/responses", UserAgent: "codex/1.0", IPAddress: "5.6.7.8",
+		SessionID: "sess-1", RequestPayloadHash: "hash-1", APIKeyService: w.settler.deps.APIKeys,
+		ChannelUsageFields: mapping.ToUsageFields("gpt-5.1", ""),
+	})
+	require.Len(t, w.logs.logs, 1)
+
+	rec := w.record(t, 1)
+	rec.Kind = relayv1.UsageRecordKind_USAGE_RECORD_KIND_OPENAI_CYBER_POLICY
+	rec.CyberBlocked = true
+	rec.ResultJson, _ = json.Marshal(service.CyberPolicyUsageResult("req-cyber", "gpt-5.1", true, 900, 12))
+	res := w.settler.Settle(context.Background(), node, rec)
+	require.Equal(t, relayv1.UsageRecordStatus_USAGE_RECORD_STATUS_SETTLED, res.GetStatus(), res.GetReason())
+	require.Len(t, w.logs.logs, 2)
+	require.Len(t, w.billing.commands, 2)
+	require.Equal(t, w.billing.commands[0], w.billing.commands[1], "same billing command")
+
+	local, relayed := *w.logs.logs[0], *w.logs.logs[1]
+	require.Equal(t, service.RequestTypeCyberBlocked, local.RequestType)
+	require.Equal(t, node, *relayed.NodeID)
+	relayed.NodeID = nil
+	require.Equal(t, comparableLog(&local), comparableLog(&relayed), "same usage log apart from the node")
+	require.False(t, relayed.FallbackPoolUsed, "no fallback facts, like the local background record")
+}

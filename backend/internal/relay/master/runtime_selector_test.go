@@ -34,6 +34,10 @@ func (s *recordingSelector) UpstreamError(context.Context, int64, *relayv1.Upstr
 	return &relayv1.UpstreamErrorResponse{}, nil
 }
 
+func (s *recordingSelector) CyberPolicyHit(context.Context, int64, *relayv1.CyberPolicyHitRequest) (*relayv1.CyberPolicyHitResponse, error) {
+	return &relayv1.CyberPolicyHitResponse{}, nil
+}
+
 func (s *recordingSelector) Release(int64, *relayv1.SelectionRelease) {}
 
 func (s *recordingSelector) AccountEvent(int64, *relayv1.AccountEvent) {}

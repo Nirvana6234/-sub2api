@@ -307,11 +307,8 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			}()
 			return h.gatewayService.ForwardAsChatCompletions(c.Request.Context(), c, account, forwardBody, promptCacheKey, "")
 		}()
-		if service.GetOpsCyberPolicy(c) != nil && h.relay != nil {
-			// TODO(WP10)：cyber 风控记录改成发给主节点的事件；扣费记录里的 cyber_blocked 照常带上。
-			reqLog.Warn("openai_chat_completions.relay_cyber_policy_record_not_reported", zap.Int64("account_id", account.ID))
-		} else if service.GetOpsCyberPolicy(c) != nil {
-			h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil, body, clientRequestedUsageFields(c, channelMapping, reqModel, ""), service.HashUsageRequestPayload(body))
+		if service.GetOpsCyberPolicy(c) != nil {
+			h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil, body, clientRequestedUsageFields(c, channelMapping, reqModel, ""), service.HashUsageRequestPayload(body), relayAttempt)
 		}
 
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()

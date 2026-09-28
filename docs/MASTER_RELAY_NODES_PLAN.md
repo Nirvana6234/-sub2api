@@ -269,6 +269,15 @@ WP19
 
 WP10 工作量最大（所有平台），WP9 完成后按平台拆给多人并行。
 
+### WP10 进展与已定细节
+
+逐个入口接入，每个入口照 WP9 的三处接缝接；已完成：
+
+- **OpenAI 分组的 `/v1/messages`**（WP10-1）：主节点 `SELECT_ENDPOINT_OPENAI_MESSAGES`，按分组的派发映射模型选号（要求支持 Chat Completions），计费资格、额度不足、选不出账号的拒绝按 Anthropic 格式，其余（用户并发槽、准入）与单机一样仍是 OpenAI 格式；从节点只注册 `/v1/messages`（与单机一致）。
+- **影子账号**：选号与取凭据的回复带母账号快照（`credential_parent`，同样白名单编码、凭据加密），从节点放进请求 ctx（`service.WithCredentialParent`），转发路径上按 ID 查母账号的地方先认 ctx 里的。
+- **错误透传规则**：配置快照登记分段 `error_passthrough_rules`，规则增删改经 `SettingChangeHub` 当场重新生成；从节点 `NewStaticErrorPassthroughService` 按快照匹配。其他单独表的转发配置照此加（`RuntimeDeps.Sections`）。
+- **cyber 记录**（设计 3.4）：`recordCyberPolicyIfMarked` 拆成"在请求上拍下事实"（`handler.CyberPolicyHit`）和执行（`handler.CyberPolicyRecorder`，单机与主节点共用）。从节点调 `CyberPolicyHit`，主节点只认这台节点进行中的选号、账号一致，归属取自选号记录，屏蔽键由选号时的查询键推导（查询键加了 `pre_latest_user_key`；单机的写入键也改由查询键推导，结果不变，有等价测试）；每请求只记一次。转发返回错误时的用量行是扣费记录种类 `OPENAI_CYBER_POLICY`，入账与单机 `RecordCyberPolicyUsageLog` 逐字段一致（记成 cyber、按入账时计价、ctx 里没有请求 ID 和兜底事实，一致性测试覆盖）。运维错误日志补上 `node_id` 列的写入。本机真机：经从节点的 cyber 请求，客户端收到上游原错误，用量行 `request_type=4`、`node_id=1`，运维日志 `cyber_policy` 带 `node_id=1`，同一会话下一次请求被屏蔽（403）、其他会话照常。
+
 ### WP9 进展与已定细节
 
 最小从节点已完成（WP9-1 ~ WP9-4），本机一主一从跑通 OpenAI 分组的 Responses、Chat Completions + API Key：
@@ -280,7 +289,7 @@ WP10 工作量最大（所有平台），WP9 完成后按平台拆给多人并�
 - **测试**：进程内端到端（`relayselect/node_e2e_test.go`，真实 TLS、真实主节点选号、假上游）；装配守卫（对象图里没有 ent/sql/redis/仓储实现）。本机真机联调（临时库、apikey 类型上游账号）：准入、选号、转发、入账扣费、租约与冻结额、主节点重启后自动恢复都验证过；同一个 Key 同样三种请求（Responses 非流式 / 流式、Chat）分别直打主节点（单机路径）和经从节点，上游调用、响应、用量记录的 tokens / 费用 / 端点 / 流式标记逐项一致。OAuth（Codex）账号的 token 下发没有真机走过。
 - **顺带修的**：扣费发送空轮询也占批次序号，主节点误报"批次缺失"；`usage_logs.node_id` 入账时按凭证的节点填上（原来空着，按约定会被当成主节点），查询与后台"来源"列仍归 WP14。
 
-还没做（按原计划归属）：Key 缓存与负缓存、无效鉴权防刷（WP11）；无效鉴权防刷没有时，公网从节点可被用来不限速地试 Key（每次一次准入调用）；cyber 风控记录改成事件、错误透传规则随快照下发、`ForceCacheBilling` 核对（WP10）；选号排队时给客户端保活（主节点上等账号槽期间从节点不发心跳）；票据中间件与小白端接口（WP12）；接口白名单、HTTP 服务参数与内存预算、日志回传（WP14）；ACME 证书（WP13）；时钟偏差来源（心跳测得，现在按 0）；交给主节点转发时主节点要把从节点配成可信代理（部署说明）。
+还没做（按原计划归属）：Key 缓存与负缓存、无效鉴权防刷（WP11）；无效鉴权防刷没有时，公网从节点可被用来不限速地试 Key（每次一次准入调用）；`ForceCacheBilling` 核对（WP10）；选号排队时给客户端保活（主节点上等账号槽期间从节点不发心跳）；票据中间件与小白端接口（WP12）；接口白名单、HTTP 服务参数与内存预算、日志回传（WP14）；ACME 证书（WP13）；时钟偏差来源（心跳测得，现在按 0）；交给主节点转发时主节点要把从节点配成可信代理（部署说明）。
 已知与单机的次序差异：续链归属改在选号时查，所以"续链不属于本人"且同时有从节点本地能查出的错误（如生图权限）时，单机先报前者、从节点先报后者；读请求体失败在准入之后按模型白名单中间件的写法报。
 
 ### WP8 进展与已定细节

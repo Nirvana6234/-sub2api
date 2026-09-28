@@ -34,12 +34,17 @@ func CyberSessionExplicitBlockKey(apiKeyID int64, c *gin.Context, body []byte) s
 // model-generated history has been observed.
 func CyberSessionTranscriptBlockKeys(apiKeyID int64, body []byte) []string {
 	derived := deriveOpenAICyberTranscriptBlockKeys(apiKeyID, body)
-	if len(derived.lookupKeys) == 0 {
+	return transcriptBlockKeys(derived.lookupKeys, derived.preLatestUserKey)
+}
+
+// transcriptBlockKeys：完整对话记录的键（查询键里最新的一个），以及"最后一轮用户输入之前"的键。
+func transcriptBlockKeys(lookupKeys []string, preLatestUserKey string) []string {
+	if len(lookupKeys) == 0 {
 		return nil
 	}
-	keys := []string{derived.lookupKeys[len(derived.lookupKeys)-1]}
-	if derived.preLatestUserKey != "" && derived.preLatestUserKey != keys[0] {
-		keys = append(keys, derived.preLatestUserKey)
+	keys := []string{lookupKeys[len(lookupKeys)-1]}
+	if preLatestUserKey != "" && preLatestUserKey != keys[0] {
+		keys = append(keys, preLatestUserKey)
 	}
 	return keys
 }
@@ -134,6 +139,26 @@ type CyberSessionLookup struct {
 	ScopeKey            string
 	TranscriptKeys      []string
 	TranscriptTruncated bool
+	// PreLatestUserKey 是"最后一轮用户输入之前"的对话记录键，只在 cyber 命中后写屏蔽表时用（见 BlockWritePlan）。
+	PreLatestUserKey string
+}
+
+// BlockWritePlan 返回 cyber 命中后要写进屏蔽表的键：显式会话键、完整对话记录的键和"最后一轮用户输入之前"
+// 的键；有对话记录键时带上会话范围键。主从分流时主节点按选号时上送的查询键写，不信从节点另报的键。
+func (l CyberSessionLookup) BlockWritePlan() (scopeKey string, keys []string) {
+	if l.ExplicitKey != "" {
+		keys = append(keys, l.ExplicitKey)
+	}
+	transcript := transcriptBlockKeys(l.TranscriptKeys, l.PreLatestUserKey)
+	for _, key := range transcript {
+		if len(keys) == 0 || key != keys[0] {
+			keys = append(keys, key)
+		}
+	}
+	if len(transcript) > 0 {
+		scopeKey = l.ScopeKey
+	}
+	return scopeKey, keys
 }
 
 // NewCyberSessionLookup 按请求算出要查的键，与 FindCyberSessionBlockedForRequest 用的一致。
@@ -144,6 +169,7 @@ func NewCyberSessionLookup(apiKeyID int64, c *gin.Context, body []byte, clientIP
 		ScopeKey:            CyberSessionScopeKey(apiKeyID, clientIP, userAgent),
 		TranscriptKeys:      transcript.lookupKeys,
 		TranscriptTruncated: transcript.lookupKeysTruncated,
+		PreLatestUserKey:    transcript.preLatestUserKey,
 	}
 }
 

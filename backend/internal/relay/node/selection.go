@@ -54,6 +54,17 @@ func (s *SelectClient) Select(ctx context.Context, req *relayv1.SelectRequest) (
 	return s.control.Select(ctx, req)
 }
 
+// CyberPolicyTimeout 是一次 cyber 命中报告的最长时间（处理函数只等 500ms，其余在后台等完）。
+const CyberPolicyTimeout = 10 * time.Second
+
+// CyberPolicyHit 报告上游 cyber 策略命中（设计 3.4）：主节点写会话屏蔽标记、风控记录和运维日志。
+func (s *SelectClient) CyberPolicyHit(ctx context.Context, req *relayv1.CyberPolicyHitRequest) error {
+	ctx, cancel := context.WithTimeout(ctx, CyberPolicyTimeout)
+	defer cancel()
+	_, err := s.control.CyberPolicyHit(ctx, req)
+	return err
+}
+
 // FetchCredentials 取这次选号所选账号（和影子账号的母账号）的上游凭据（本机缓存里没有这个版本时）。
 func (s *SelectClient) FetchCredentials(ctx context.Context, selectionID string) (*relayv1.FetchCredentialsResponse, error) {
 	return s.control.FetchCredentials(ctx, &relayv1.FetchCredentialsRequest{SelectionId: selectionID})
