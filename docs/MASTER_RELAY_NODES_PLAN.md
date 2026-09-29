@@ -278,6 +278,20 @@ WP10 工作量最大（所有平台），WP9 完成后按平台拆给多人并�
 - **错误透传规则**：配置快照登记分段 `error_passthrough_rules`，规则增删改经 `SettingChangeHub` 当场重新生成；从节点 `NewStaticErrorPassthroughService` 按快照匹配。其他单独表的转发配置照此加（`RuntimeDeps.Sections`）。
 - **cyber 记录**（设计 3.4）：`recordCyberPolicyIfMarked` 拆成"在请求上拍下事实"（`handler.CyberPolicyHit`）和执行（`handler.CyberPolicyRecorder`，单机与主节点共用）。从节点调 `CyberPolicyHit`，主节点只认这台节点进行中的选号、账号一致，归属取自选号记录，屏蔽键由选号时的查询键推导（查询键加了 `pre_latest_user_key`；单机的写入键也改由查询键推导，结果不变，有等价测试）；每请求只记一次。转发返回错误时的用量行是扣费记录种类 `OPENAI_CYBER_POLICY`，入账与单机 `RecordCyberPolicyUsageLog` 逐字段一致（记成 cyber、按入账时计价、ctx 里没有请求 ID 和兜底事实，一致性测试覆盖）。运维错误日志补上 `node_id` 列的写入。选号时命中 cyber 会话屏蔽，主节点记 `cyber_policy_session_blocked` 运维日志（与单机 `writeCyberSessionBlocked` 共用 `handler.EnqueueCyberSessionBlockedOpsEntry`；选号请求为此加了 UA、请求 ID、客户端请求 ID）。本机真机：经从节点的 cyber 请求，客户端收到上游原错误，用量行 `request_type=4`、`node_id=1`，运维日志 `cyber_policy` 带 `node_id=1`，同一会话下一次请求被屏蔽（403）并记下屏蔽日志（与直打主节点的那条除 `node_id` 外相同）、其他会话照常。已知差异：流式 Responses 在 cyber 事件之后客户端断开、转发又以错误返回时，单机会写两条用量行（cyber 那条和断开时的部分结果，请求 ID 不同，两条都计费），主从下同一凭证只入账先到的 cyber 那条；Chat / Messages 不会出现这种组合。
 
+### WP10-3 Codex WebSocket（Responses WS）的设计
+
+单机的做法（`OpenAIGatewayHandler.ResponsesWebSocket`）：一条连接绑定一个上游账号；每一轮开始时不排队地抢用户槽和账号槽、按当时的利润门复核账号、冻结这一轮的计价时间，轮结束放槽；连接内换号时放账号槽、需要时补用户槽再选号。主从下照这个结构，**每一轮是主节点上的一次选号（一张凭证）**：
+
+- **处理函数不分叉**：选号 + 抢槽 + 利润终检、抢放用户槽和账号槽、每轮准入（复核 + 定价 + 凭证）、每轮渠道映射经接缝；单机实现是原来的代码，从节点实现是远程调用。其余（读帧、模型白名单、续链判断、转发、换号分类）两边同一份。
+- **升级之前**（接受 WebSocket 之前才能交给主节点）：从节点问主节点一次"开连接"：分组会不会被安全审计处理（提示词审计开着就全部交给主节点；内容审核按分组判断，不看模型，新加"分组是否可能被审核"的方法），以及每 Key 连接数租约（Redis 全局租约在主节点申请：带 Key 原文、上限用主节点的配置、主节点按节点记租约归属，别的节点不能续期或释放；续期失败的容忍与单机一样是一个租约周期）。要交给主节点的连接原样反向代理（已有测试）。
+- **连接选号**（`SELECT_ENDPOINT_OPENAI_RESPONSES_WS`）：主节点按单机顺序：cyber 会话屏蔽 → 用户槽（不排队）→ 计费资格 → 计价上下文 → 选号（WS 传输、能力、续链可迁移、生图意图）+ 不排队抢账号槽 + 利润终检（否决后排除重选，次数上限同单机）→ 粘性绑定。回复带账号、渠道映射（第 1 轮）、`StickyPreviousHit`（从节点据此剥掉首帧的 `previous_response_id`）、换号上限；不带凭证。拒绝按 WebSocket 关闭码和原因写（cyber 屏蔽按单机写错误帧再关闭）。换号时从节点先放这次选号的账号槽，再以同一请求 ID 选号；用户槽没占着时主节点先补占。
+- **每一轮**：`BeforeTurn` 同步调一次主节点：第 2 轮起先补占用户槽和这个账号的槽（不排队），再按当时的利润门复核账号、冻结计价时间、按这一轮的模型签凭证并给额度；否决和占不到槽按单机的关闭码关闭连接。`AfterTurn` 放这一轮的槽（带 response id，主节点记归属），用量带这一轮的凭证进扣费队列，cyber 按这一轮的选号上报。同账号重试（429）按单机补占账号槽。
+- **每轮的渠道映射**：钩子顺序随接入模式不同（直通模式 BeforeRequest → BeforeTurn → MapRequestModel，其他模式 MapRequestModel 可能在 BeforeTurn 之前），所以映射不随每轮准入返回：第 1 轮用连接选号回复里的，之后按模型缓存，模型变了才同步问主节点；凭证里的映射由主节点按这一轮的模型自己算。
+- **连接记录**：主节点上连接就是一次请求的记录；两轮之间不占槽，只占内存，空闲上限单独放长（不按 15 分钟的占槽上限清理）。记录没了或主节点换了纪元，下一轮按"请重连"（TryAgainLater）关闭。
+- **Codex 审查子代理跟随父会话**：选号请求带父会话哈希（已加，HTTP 同样用）。
+- **与单机的差异**：会话抢占（同一会话的新连接顶掉旧连接）只在从节点进程内生效，客户端一条连主节点、一条连从节点时互不抢占。
+- **测试**：主节点单测（顺序、否决、槽、记录丢失）；进程内端到端用 coder/websocket 假上游，覆盖默认的 `ctx_pool` 接入模式（`mode_router_v2_enabled` 默认关）；本机真机另用 HTTP 桥接模式的账号补充。
+
 ### WP9 进展与已定细节
 
 最小从节点已完成（WP9-1 ~ WP9-4），本机一主一从跑通 OpenAI 分组的 Responses、Chat Completions + API Key：

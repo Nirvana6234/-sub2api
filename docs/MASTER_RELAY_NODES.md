@@ -975,7 +975,7 @@ GET /v1/relay/assignment        Authorization: Bearer <API Key>
 1. **附件**：`/paw/files` 上传的附件存在进程内存里（`NewPawAttachmentMemoryRepository()`），之后按 ID 引用。小白端同一用户所有请求走同一台，可以直接在从节点上运行；上传后、使用前换了节点时会找不到，本次接受。
 2. **并发槽**：现有并发槽 15 分钟自动过期（`repository/concurrency_cache.go:47`），有流量时刷新。释放消息丢了最多占用 15 分钟。超过 15 分钟的长请求靠心跳里的选号 ID 续期。
 3. **WebSocket 和实时会话**：现有代码每一轮重新定价（`service/openai_profit_control.go:182`），在线占用 60 秒过期需持续刷新（`concurrency_cache.go:39-40`）。所以每一轮都要选号，占用通过长连接刷新；实时音频的时长由从节点上报。
-4. **进程内的上限要按节点数调整**：图片生成并发、WebSocket 连接数等按进程计算（`deploy/config.example.yaml:502` `image_concurrency`）。
+4. **进程内的上限要按节点数调整**：图片生成并发等按进程计算（`deploy/config.example.yaml:502` `image_concurrency`）。WebSocket 每个 Key 的连接数不是按进程：它是 Redis 里的全局租约（`gateway.openai_ws.max_ingress_connections_per_api_key`），从节点经主节点申请（开发计划 WP10-3）。
 5. **余额很少的用户**：余额不足 0.1 时会被全部锁到一台。小白端和只用分配地址的 API Key 用户只在一台上用，不受影响。
    同一用户同时在多个地址使用时（多个 Key 分到不同节点、节点规则为"全部从节点"时换了地址、同时用主节点地址），别处的请求可能看到"余额不足"，直到按 4.2 从持有的那台收回（剩余低于 1 时立即收回）。这是预期行为，客服要知道。
 6. **可观测性**：`usage_log` 加 `node_id`（主节点转发也记），后台按节点看流量、错误率、延迟、丢失用量、额度申请频率。
