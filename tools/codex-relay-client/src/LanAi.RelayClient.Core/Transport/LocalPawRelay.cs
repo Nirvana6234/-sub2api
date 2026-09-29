@@ -639,7 +639,7 @@ internal sealed class LocalPawRelay : IAsyncDisposable
 
             if (served.ClientPath == CatalogPath)
             {
-                await HandleCatalogAsync(context, cancellationToken).ConfigureAwait(false);
+                responseStarted = await HandleCatalogAsync(context, cancellationToken).ConfigureAwait(false);
                 return;
             }
 
@@ -791,7 +791,7 @@ internal sealed class LocalPawRelay : IAsyncDisposable
                 {
                     await WriteErrorAsync(context, 502, "relay unreachable: " + ex.Message, protocol).ConfigureAwait(false);
                 }
-                catch (Exception inner) when (inner is HttpListenerException or ObjectDisposedException or IOException)
+                catch (Exception inner) when (inner is HttpListenerException or ObjectDisposedException or IOException or InvalidOperationException)
                 {
                 }
             }
@@ -1291,7 +1291,14 @@ internal sealed class LocalPawRelay : IAsyncDisposable
     /// Every answer leaves one log line — until now nothing recorded whether Codex ever asked.
     /// </para>
     /// </remarks>
-    private async Task HandleCatalogAsync(HttpListenerContext context, CancellationToken cancellationToken)
+    /// <returns>
+    /// Whether the response was started, so a failure after that point is not answered with a
+    /// second, impossible, status line. A Codex that hangs up mid-answer is the ordinary way to
+    /// get there: the first version of this method reported nothing, and the error handler's
+    /// attempt to write a 502 over a submitted response went unobserved and was logged as a
+    /// crash on the finalizer thread.
+    /// </returns>
+    private async Task<bool> HandleCatalogAsync(HttpListenerContext context, CancellationToken cancellationToken)
     {
         CodexGroupModels? models;
         long? group;
@@ -1323,7 +1330,7 @@ internal sealed class LocalPawRelay : IAsyncDisposable
         {
             ClientLog.Info("Codex 请求模型列表：读不到 Codex 自带的模型目录，不下发");
             await WriteErrorAsync(context, 404, "no such endpoint", RelayProtocol.Responses).ConfigureAwait(false);
-            return;
+            return true;
         }
 
         ClientLog.Info($"Codex 请求模型列表：{summary}");
@@ -1333,6 +1340,7 @@ internal sealed class LocalPawRelay : IAsyncDisposable
         context.Response.ContentType = "application/json";
         context.Response.ContentLength64 = payload.Length;
         await context.Response.OutputStream.WriteAsync(payload, cancellationToken).ConfigureAwait(false);
+        return true;
     }
 
     private string? _lastSubstitution;

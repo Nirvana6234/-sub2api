@@ -495,9 +495,11 @@ public sealed partial class DashboardViewModel : ObservableObject
 
     /// <summary>
     /// The sentence added to a switch's message when the running Codex will show a different
-    /// model list. Nothing needs restarting — the relay and the client see to it that Codex
-    /// fetches the new list (see <c>CodexStartup.SetActiveGroup</c>) — but the picker only
-    /// changes when it is next opened or a message is sent, and saying so beats a user wondering.
+    /// model list. Nothing needs restarting — the relay and the client see to it that Codex's
+    /// server side fetches the new list (see <c>CodexStartup.SetActiveGroup</c>) — but the
+    /// desktop window keeps the list it has for five minutes and asks again only when the window
+    /// next gains focus after that (its own query cache, read out of the app bundle), so the
+    /// picker can lag by that long. Saying so beats a user wondering.
     /// </summary>
     private string ModelListNote(GroupItemViewModel? from, GroupItemViewModel to) =>
         IsCodexRunning &&
@@ -505,7 +507,7 @@ public sealed partial class DashboardViewModel : ObservableObject
             CodexGroupModels.SignatureOf(ModelsFor(from)),
             CodexGroupModels.SignatureOf(ModelsFor(to)),
             StringComparison.Ordinal)
-            ? " Codex 的模型下拉会在下次打开或发送消息后更新。"
+            ? " Codex 的模型下拉最多约 5 分钟后更新，重启 Codex 可立即更新。"
             : string.Empty;
 
     // ---- Codex ---------------------------------------------------------------
