@@ -417,4 +417,16 @@ public sealed class DashboardCodexModelListTests
 
         Assert.Equal(1, dashboard.SelectedGroup!.Id);
     }
+
+    [Fact]
+    public async Task ChineseEntriesNeverReachCodexsPickerOrTheDefault()
+    {
+        var noisy = Group(9, "Noisy", "anthropic", "claude-sonnet-5", "测试模型", "claude-opus-5", "限时");
+        (DashboardViewModel dashboard, FakeCodexStartup codex) = await BuildWithCodexAsync(noisy);
+
+        await dashboard.StartCodexAsync(_ => Task.FromResult(false));
+
+        Assert.Equal(["claude-opus-5", "claude-sonnet-5"], codex.LastGroupModels!.Models.OrderBy(m => m, StringComparer.Ordinal));
+        Assert.Equal(["claude-sonnet-5", "claude-opus-5"], dashboard.CodexModelChoices.OrderByDescending(m => m));
+    }
 }

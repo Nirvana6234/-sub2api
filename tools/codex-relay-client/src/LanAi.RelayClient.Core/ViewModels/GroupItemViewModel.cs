@@ -32,7 +32,7 @@ public sealed partial class GroupItemViewModel : ObservableObject
         IsSubscription = group.IsSubscription;
         AllowedModels = group.ModelAllowlist.Enabled
             ? group.ModelAllowlist.Models
-                .Where(m => !string.IsNullOrWhiteSpace(m))
+                .Where(IsSelectableModelId)
                 .Distinct(StringComparer.Ordinal)
                 .OrderBy(m => m, StringComparer.Ordinal)
                 .ToArray()
@@ -60,6 +60,22 @@ public sealed partial class GroupItemViewModel : ObservableObject
     }
 
     public static GroupItemViewModel CreateAutomatic() => new();
+
+    /// <summary>
+    /// Whether a whitelist entry can be a model at all. Entries with Chinese characters in them
+    /// are notes an operator typed into the list, not model ids, and one of them offered in the
+    /// picker (or sent as a model name) is a choice that can only fail. Dropped here, at the one
+    /// place the whitelist is read, so the 模型 tip, Codex's picker and the default all agree.
+    /// </summary>
+    internal static bool IsSelectableModelId(string? model) =>
+        !string.IsNullOrWhiteSpace(model) && !model.Any(IsCjk);
+
+    private static bool IsCjk(char c) =>
+        c is >= '㐀' and <= '䶿'   // CJK Unified Ideographs Extension A
+        or >= '一' and <= '鿿'     // CJK Unified Ideographs
+        or >= '豈' and <= '﫿'     // CJK Compatibility Ideographs
+        or >= '　' and <= '〿'     // CJK punctuation
+        or >= '＀' and <= '￯';    // fullwidth forms
 
     public long Id { get; }
 
