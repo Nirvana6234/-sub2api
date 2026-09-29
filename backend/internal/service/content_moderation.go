@@ -319,6 +319,8 @@ type ContentModerationCheckInput struct {
 	Model      string
 	Protocol   string
 	Body       []byte
+	// Prepared 是预先从请求体抽好的输入（主从分流时从节点算好、不带请求体）；有它就不再从 Body 抽。
+	Prepared *ContentModerationInput
 }
 
 type ContentModerationInput struct {
@@ -950,7 +952,13 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 			"configured_models", cfg.ModelFilter.Models)
 		return allow, nil
 	}
-	content := ExtractContentModerationInput(input.Protocol, input.Body)
+	var content ContentModerationInput
+	if input.Prepared != nil {
+		// 主从分流：从节点用同一段抽取代码算好的输入（不带请求体）。
+		content = *input.Prepared
+	} else {
+		content = ExtractContentModerationInput(input.Protocol, input.Body)
+	}
 	if content.IsEmpty() {
 		slog.Info("content_moderation.skip_empty_input",
 			"user_id", input.UserID,
