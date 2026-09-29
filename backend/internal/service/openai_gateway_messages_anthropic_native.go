@@ -229,9 +229,7 @@ func (s *OpenAIGatewayService) handleNativeAnthropicBufferedResponse(
 	reasoningEffort *string,
 	startTime time.Time,
 ) (*OpenAIForwardResult, error) {
-	if s.rateLimitService != nil {
-		s.rateLimitService.UpdateSessionWindow(ctx, account, resp.Header)
-	}
+	s.accountReporter().UpdateSessionWindow(ctx, account, resp.Header)
 
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, anthropicTooLargeError)
 	if err != nil {
@@ -245,7 +243,7 @@ func (s *OpenAIGatewayService) handleNativeAnthropicBufferedResponse(
 
 	var raw json.RawMessage
 	if err := json.Unmarshal(body, &raw); err != nil {
-		return nil, invalidNonStreamingJSONFailoverError(ctx, s.rateLimitService, resp, account, body, err, billingModel)
+		return nil, invalidNonStreamingJSONFailoverError(ctx, s.openAIRateLimitErrorHandler(), resp, account, body, err, billingModel)
 	}
 
 	usage := parseClaudeUsageFromResponseBody(body)
@@ -296,9 +294,7 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 	if observer == nil {
 		observer = beginUpstreamResponseModelObservation(c)
 	}
-	if s.rateLimitService != nil {
-		s.rateLimitService.UpdateSessionWindow(ctx, account, resp.Header)
-	}
+	s.accountReporter().UpdateSessionWindow(ctx, account, resp.Header)
 
 	writeAnthropicPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 

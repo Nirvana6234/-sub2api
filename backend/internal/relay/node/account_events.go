@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
@@ -97,6 +98,22 @@ func (r *RemoteAccountReporter) TempUnscheduleTransportError(_ context.Context, 
 }
 
 // OllamaCloudUsageActivity 见 service.OpenAIAccountReporter。
+// UpdateSessionWindow 见 service.OpenAIAccountReporter：没有会话窗口头时不发。
+func (r *RemoteAccountReporter) UpdateSessionWindow(_ context.Context, account *service.Account, headers http.Header) {
+	if account == nil {
+		return
+	}
+	window := service.SessionWindowHeaders(headers)
+	if len(window) == 0 {
+		return
+	}
+	ev := &relayv1.SessionWindowEvent{}
+	for name, values := range window {
+		ev.Headers = append(ev.Headers, &relayv1.HeaderValues{Name: name, Values: values})
+	}
+	r.send(&relayv1.AccountEvent{AccountId: account.ID, Kind: &relayv1.AccountEvent_SessionWindow{SessionWindow: ev}})
+}
+
 func (r *RemoteAccountReporter) OllamaCloudUsageActivity(account *service.Account) {
 	if account == nil || !service.IsOllamaCloudUsageAccount(account) {
 		return

@@ -33,6 +33,10 @@ func (d *countingDecider) HandleStreamTimeout(ctx context.Context, account *Acco
 	return d.OpenAIUpstreamErrorDecider.HandleStreamTimeout(ctx, account, model)
 }
 
+func (d *countingDecider) HandleRateLimitError(ctx context.Context, account *Account, statusCode int, headers http.Header, body []byte, requestedModel ...string) bool {
+	return d.OpenAIUpstreamErrorDecider.HandleRateLimitError(ctx, account, statusCode, headers, body, requestedModel...)
+}
+
 func (d *countingDecider) CheckErrorPolicy(ctx context.Context, account *Account, statusCode int, body []byte, model string) ErrorPolicyResult {
 	d.policies.Add(1)
 	return d.OpenAIUpstreamErrorDecider.CheckErrorPolicy(ctx, account, statusCode, body, model)

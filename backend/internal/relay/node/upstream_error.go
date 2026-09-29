@@ -111,6 +111,21 @@ func (d *RemoteUpstreamErrorDecider) HandleStreamTimeout(ctx context.Context, ac
 	}).GetShouldDisable()
 }
 
+// HandleRateLimitError 见 service.OpenAIUpstreamErrorDecider。
+func (d *RemoteUpstreamErrorDecider) HandleRateLimitError(ctx context.Context, account *service.Account, statusCode int, headers http.Header, body []byte, requestedModel ...string) bool {
+	if account == nil {
+		return false
+	}
+	req := &relayv1.UpstreamErrorRequest{
+		Kind: relayv1.UpstreamErrorKind_UPSTREAM_ERROR_KIND_RATE_LIMIT, AccountId: account.ID, StatusCode: int32(statusCode),
+		Headers: headersToProto(headers), Body: capBody(body),
+	}
+	if len(requestedModel) > 0 {
+		req.Model, req.HasModel = requestedModel[0], true
+	}
+	return d.call(ctx, req).GetShouldDisable()
+}
+
 // CheckErrorPolicy 见 service.OpenAIUpstreamErrorDecider。
 func (d *RemoteUpstreamErrorDecider) CheckErrorPolicy(ctx context.Context, account *service.Account, statusCode int, body []byte, model string) service.ErrorPolicyResult {
 	if account == nil {

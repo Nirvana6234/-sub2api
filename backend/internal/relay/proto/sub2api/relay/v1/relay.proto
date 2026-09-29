@@ -651,6 +651,8 @@ enum UpstreamErrorKind {
   UPSTREAM_ERROR_KIND_STREAM_TIMEOUT = 3;
   // 错误策略（返回 error_policy）。
   UPSTREAM_ERROR_KIND_ERROR_POLICY = 4;
+  // 只走限流服务自己的判定（返回 should_disable）。
+  UPSTREAM_ERROR_KIND_RATE_LIMIT = 5;
 }
 
 message HeaderValues {
@@ -794,6 +796,7 @@ message AccountEvent {
     CodexUsageEvent codex_usage = 13;
     TransportErrorEvent transport_error = 14;
     OllamaActivityEvent ollama_activity = 15;
+    SessionWindowEvent session_window = 16;
   }
 }
 
@@ -832,6 +835,11 @@ message TransportErrorEvent {
 }
 
 message OllamaActivityEvent {}
+
+// Anthropic 原生直通的响应头里的会话窗口（只带 anthropic-ratelimit-unified-* 这几个头）。
+message SessionWindowEvent {
+  repeated HeaderValues headers = 1;
+}
 
 message SelectionRelease {
   string selection_id = 1;

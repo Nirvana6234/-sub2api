@@ -43,6 +43,8 @@ func (s *selector) UpstreamError(ctx context.Context, nodeID int64, req *relayv1
 		resp.ShouldDisable = decider.HandleStreamTimeout(ctx, account, req.GetModel())
 	case relayv1.UpstreamErrorKind_UPSTREAM_ERROR_KIND_ERROR_POLICY:
 		resp.ErrorPolicy = int32(decider.CheckErrorPolicy(ctx, account, int(req.GetStatusCode()), req.GetBody(), req.GetModel()))
+	case relayv1.UpstreamErrorKind_UPSTREAM_ERROR_KIND_RATE_LIMIT:
+		resp.ShouldDisable = decider.HandleRateLimitError(ctx, account, int(req.GetStatusCode()), headersFromProto(req.GetHeaders()), req.GetBody(), models...)
 	default:
 		return nil, status.Error(codes.InvalidArgument, "unknown upstream error kind")
 	}

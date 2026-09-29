@@ -23,6 +23,9 @@ type OpenAIUpstreamErrorDecider interface {
 	HandleStreamTimeout(ctx context.Context, account *Account, model string) bool
 	// CheckErrorPolicy 按账号的错误策略判定（可能把账号标记为临时不可调度）。
 	CheckErrorPolicy(ctx context.Context, account *Account, statusCode int, body []byte, model string) ErrorPolicyResult
+	// HandleRateLimitError 只走限流服务自己的判定（原 rateLimitService.HandleUpstreamError，
+	// 比 HandleUpstreamError 少 OpenAI 的运行时熔断等步骤；共用的 Anthropic 直通函数这样调）。
+	HandleRateLimitError(ctx context.Context, account *Account, statusCode int, headers http.Header, body []byte, requestedModel ...string) bool
 }
 
 type openAIUpstreamErrorDeciderHolder struct{ d OpenAIUpstreamErrorDecider }
@@ -48,6 +51,15 @@ func (s *OpenAIGatewayService) errorDecider() OpenAIUpstreamErrorDecider {
 		}
 	}
 	return localOpenAIUpstreamErrorDecider{s: s}
+}
+
+// openAIRateLimitErrorHandler 是 OpenAI 转发文件调共用 Anthropic 直通函数时用的限流判定（经判定接口）；
+// 没有地方判定时为 nil（与原来限流服务为 nil 时一样跳过）。
+func (s *OpenAIGatewayService) openAIRateLimitErrorHandler() func(ctx context.Context, account *Account, statusCode int, headers http.Header, body []byte, requestedModel ...string) bool {
+	if !s.hasErrorDecider() {
+		return nil
+	}
+	return s.errorDecider().HandleRateLimitError
 }
 
 // hasErrorDecider：有地方可以判定上游错误（本机有限流服务，或装了远端实现）。
@@ -79,6 +91,13 @@ func (d localOpenAIUpstreamErrorDecider) HandleStreamTimeout(ctx context.Context
 		return false
 	}
 	return d.s.rateLimitService.HandleStreamTimeout(ctx, account, model)
+}
+
+func (d localOpenAIUpstreamErrorDecider) HandleRateLimitError(ctx context.Context, account *Account, statusCode int, headers http.Header, body []byte, requestedModel ...string) bool {
+	if d.s == nil || d.s.rateLimitService == nil {
+		return false
+	}
+	return d.s.rateLimitService.HandleUpstreamError(ctx, account, statusCode, headers, body, requestedModel...)
 }
 
 func (d localOpenAIUpstreamErrorDecider) CheckErrorPolicy(ctx context.Context, account *Account, statusCode int, body []byte, model string) ErrorPolicyResult {

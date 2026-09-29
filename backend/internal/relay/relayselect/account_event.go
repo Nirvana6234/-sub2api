@@ -116,6 +116,8 @@ func (s *selector) applyAccountEvent(nodeID int64, ev *relayv1.AccountEvent) {
 		reporter.TempUnscheduleTransportError(ctx, account, kind.TransportError.GetMessage())
 	case *relayv1.AccountEvent_OllamaActivity:
 		reporter.OllamaCloudUsageActivity(account)
+	case *relayv1.AccountEvent_SessionWindow:
+		reporter.UpdateSessionWindow(ctx, account, service.SessionWindowHeaders(headersFromProto(kind.SessionWindow.GetHeaders())))
 	}
 }
 

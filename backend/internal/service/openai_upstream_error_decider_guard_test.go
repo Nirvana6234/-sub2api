@@ -40,3 +40,28 @@ func TestOpenAIForwardPathUsesTheUpstreamErrorDecider(t *testing.T) {
 		}
 	}
 }
+
+// OpenAI 转发文件不能碰限流服务，连 nil 判断也不行：从节点上限流服务是 nil，"有它才判定"的写法会让判定在
+// 从节点上悄悄跳过（单机照常执行）。要判定就经 s.errorDecider()，要看有没有地方判定用 s.hasErrorDecider()。
+func TestOpenAIForwardPathDoesNotTouchTheRateLimitService(t *testing.T) {
+	allowed := map[string]string{
+		"openai_upstream_error_decider.go":         "the local decider",
+		"openai_account_runtime_block_fastpath.go": "the local decision itself",
+		"openai_account_reporter.go":               "the local reporter",
+		"openai_account_scheduler.go":              "scheduling runs on the master",
+		"openai_gateway_scheduling.go":             "scheduling runs on the master",
+		"openai_gateway_service.go":                "the constructor",
+		"openai_gateway_usage.go":                  "RecordUsage runs on the master (relay settlement)",
+		"openai_gateway_count_tokens.go":           "count_tokens is not served by relay nodes yet (WP7 later slice)",
+	}
+	files, err := filepath.Glob("openai_*.go")
+	require.NoError(t, err)
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") || allowed[f] != "" {
+			continue
+		}
+		raw, err := os.ReadFile(f)
+		require.NoError(t, err)
+		require.NotContains(t, string(raw), "rateLimitService", "%s uses the rate limit service; route it through s.errorDecider() / s.accountReporter()", f)
+	}
+}

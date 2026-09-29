@@ -5,6 +5,7 @@ import (
 	"crypto/ecdh"
 	"crypto/rand"
 	"errors"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -685,6 +686,12 @@ func TestUpstreamErrorDecisionOnTheMaster(t *testing.T) {
 	require.True(t, out.GetRetrySameAccount())
 	require.InDelta(t, time.Now().Add(2*time.Minute).UnixMilli(), out.GetRetryDeadlineUnixMs(), float64(5*time.Second/time.Millisecond))
 
+	// 只走限流服务的判定（Anthropic 直通的非 JSON 响应）：同样只对这台节点在用的账号。
+	_, err = ask(testNode, selID, 1, relayv1.UpstreamErrorKind_UPSTREAM_ERROR_KIND_RATE_LIMIT)
+	require.NoError(t, err)
+	_, err = ask(testNode+1, "", 1, relayv1.UpstreamErrorKind_UPSTREAM_ERROR_KIND_RATE_LIMIT)
+	require.ErrorIs(t, err, master.ErrSelectionNotFound)
+
 	_, err = w.sel.UpstreamError(ctx, testNode, &relayv1.UpstreamErrorRequest{AccountId: 1})
 	require.Error(t, err, "the kind is required")
 
@@ -755,6 +762,9 @@ func (r *recordingReporter) TempUnscheduleTransportError(_ context.Context, acco
 func (r *recordingReporter) OllamaCloudUsageActivity(account *service.Account) {
 	r.add(recordedReport{kind: "ollama", account: account.ID})
 }
+func (r *recordingReporter) UpdateSessionWindow(_ context.Context, account *service.Account, headers http.Header) {
+	r.add(recordedReport{kind: "session_window", account: account.ID, extra: headers})
+}
 
 // 账号事件：只认这台节点正在用或刚用过（10 分钟内）的账号，用主节点记录里的账号对象执行。
 func TestAccountEventsOnTheMaster(t *testing.T) {
@@ -794,19 +804,29 @@ func TestAccountEventsOnTheMaster(t *testing.T) {
 	w.sel.applyAccountEvent(testNode, &relayv1.AccountEvent{AccountId: 1, Kind: &relayv1.AccountEvent_CodexUsage{CodexUsage: &relayv1.CodexUsageEvent{SnapshotJson: []byte(`{"primary_used_percent":40,"updated_at":"2026-09-27T01:02:03Z"}`)}}})
 	w.sel.applyAccountEvent(testNode, &relayv1.AccountEvent{AccountId: 1, Kind: &relayv1.AccountEvent_HealthFailure{HealthFailure: &relayv1.HealthFailureEvent{Failure: &relayv1.HealthFailureFacts{}}}})
 	w.sel.applyAccountEvent(testNode, &relayv1.AccountEvent{Kind: &relayv1.AccountEvent_AccountSwitch{AccountSwitch: &relayv1.AccountSwitchEvent{}}})
+	w.sel.applyAccountEvent(testNode, &relayv1.AccountEvent{AccountId: 1, Kind: &relayv1.AccountEvent_SessionWindow{SessionWindow: &relayv1.SessionWindowEvent{
+		Headers: []*relayv1.HeaderValues{
+			{Name: "Anthropic-Ratelimit-Unified-5h-Status", Values: []string{"allowed"}},
+			{Name: "Set-Cookie", Values: []string{"not-a-window-header"}},
+		},
+	}}})
 	kinds := []string{}
 	for _, r := range rec.reports[1:] {
 		kinds = append(kinds, r.kind)
 	}
-	require.Equal(t, []string{"transport", "codex", "switch"}, kinds, "a non-eligible health failure changes nothing")
+	require.Equal(t, []string{"transport", "codex", "switch", "session_window"}, kinds, "a non-eligible health failure changes nothing")
 	snapshot, ok := rec.reports[2].extra.(*service.OpenAICodexUsageSnapshot)
 	require.True(t, ok)
 	require.Equal(t, "2026-09-27T01:02:03Z", snapshot.UpdatedAt)
+	window, ok := rec.reports[4].extra.(http.Header)
+	require.True(t, ok)
+	require.Equal(t, "allowed", window.Get("anthropic-ratelimit-unified-5h-status"))
+	require.Empty(t, window.Get("Set-Cookie"), "only the session window headers are used")
 
 	later := time.Now().Add(recentUseTTL + time.Minute)
 	w.sel.now = func() time.Time { return later }
 	w.sel.applyAccountEvent(testNode, result(1))
-	require.Len(t, rec.reports, 4, "long after the release the account is no longer this node's")
+	require.Len(t, rec.reports, 5, "long after the release the account is no longer this node's")
 	w.sel.now = time.Now
 }
 

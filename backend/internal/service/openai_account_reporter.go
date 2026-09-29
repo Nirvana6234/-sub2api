@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"net/http"
+	"strings"
 )
 
 // OpenAIAccountReporter 记录转发结果对账号状态的影响：调度统计与 API Key 健康熔断、换号计数、
@@ -23,6 +25,9 @@ type OpenAIAccountReporter interface {
 	TempUnscheduleTransportError(ctx context.Context, account *Account, safeErr string)
 	// OllamaCloudUsageActivity 记一次 Ollama Cloud 账号的用量活动。
 	OllamaCloudUsageActivity(account *Account)
+	// UpdateSessionWindow 按上游响应头（anthropic-ratelimit-unified-5h-*）更新账号的 5 小时会话窗口
+	// （Anthropic 原生直通路径，原 rateLimitService.UpdateSessionWindow）。
+	UpdateSessionWindow(ctx context.Context, account *Account, headers http.Header)
 }
 
 type openAIAccountReporterHolder struct{ r OpenAIAccountReporter }
@@ -81,6 +86,24 @@ func (r localOpenAIAccountReporter) OllamaCloudUsageActivity(account *Account) {
 		return
 	}
 	scheduleOllamaCloudUsageActivity(r.s.deferredService, account)
+}
+
+func (r localOpenAIAccountReporter) UpdateSessionWindow(ctx context.Context, account *Account, headers http.Header) {
+	if r.s == nil || r.s.rateLimitService == nil {
+		return
+	}
+	r.s.rateLimitService.UpdateSessionWindow(ctx, account, headers)
+}
+
+// SessionWindowHeaders 取出会话窗口要看的响应头（anthropic-ratelimit-unified-*），从节点只把这些随账号事件发给主节点。
+func SessionWindowHeaders(headers http.Header) http.Header {
+	out := http.Header{}
+	for name, values := range headers {
+		if strings.HasPrefix(strings.ToLower(name), "anthropic-ratelimit-unified-") {
+			out[name] = append([]string(nil), values...)
+		}
+	}
+	return out
 }
 
 // OpenAIHealthFailureFacts 把一次失败化成健康熔断要看的事实（与 ObserveOpenAIAPIKeyHealthFailure 的分类一致）：

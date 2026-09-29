@@ -798,9 +798,17 @@ func parseClaudeUsageFromResponseBody(body []byte) *ClaudeUsage {
 // invalidNonStreamingJSONFailoverError 把"上游 2xx 返回非 JSON body"归一为
 // failover 错误（包级函数：Anthropic 平台 passthrough 与国产供应商原生
 // Anthropic 直通共用）。
+// rateLimitErrorHandler 把限流服务的判定包成 invalidNonStreamingJSONFailoverError 要的函数（nil 表示不判定）。
+func rateLimitErrorHandler(rateLimitService *RateLimitService) func(ctx context.Context, account *Account, statusCode int, headers http.Header, body []byte, requestedModel ...string) bool {
+	if rateLimitService == nil {
+		return nil
+	}
+	return rateLimitService.HandleUpstreamError
+}
+
 func invalidNonStreamingJSONFailoverError(
 	ctx context.Context,
-	rateLimitService *RateLimitService,
+	handleUpstreamError func(ctx context.Context, account *Account, statusCode int, headers http.Header, body []byte, requestedModel ...string) bool,
 	resp *http.Response,
 	account *Account,
 	body []byte,
@@ -828,11 +836,11 @@ func invalidNonStreamingJSONFailoverError(
 		parseErr,
 	)
 
-	if rateLimitService != nil && account != nil {
+	if handleUpstreamError != nil && account != nil {
 		if len(requestedModel) > 0 {
-			rateLimitService.HandleUpstreamError(ctx, account, statusCode, resp.Header, body, requestedModel[0])
+			handleUpstreamError(ctx, account, statusCode, resp.Header, body, requestedModel[0])
 		} else {
-			rateLimitService.HandleUpstreamError(ctx, account, statusCode, resp.Header, body)
+			handleUpstreamError(ctx, account, statusCode, resp.Header, body)
 		}
 	}
 
@@ -867,7 +875,7 @@ func (s *GatewayService) handleNonStreamingResponseAnthropicAPIKeyPassthrough(
 	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
 		var raw json.RawMessage
 		if err := json.Unmarshal(body, &raw); err != nil {
-			return nil, invalidNonStreamingJSONFailoverError(ctx, s.rateLimitService, resp, account, body, err)
+			return nil, invalidNonStreamingJSONFailoverError(ctx, rateLimitErrorHandler(s.rateLimitService), resp, account, body, err)
 		}
 	}
 

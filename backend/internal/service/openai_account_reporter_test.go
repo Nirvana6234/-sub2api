@@ -46,6 +46,10 @@ func (r *countingReporter) TempUnscheduleTransportError(ctx context.Context, acc
 	r.OpenAIAccountReporter.TempUnscheduleTransportError(ctx, account, safeErr)
 }
 
+func (r *countingReporter) UpdateSessionWindow(ctx context.Context, account *Account, headers http.Header) {
+	r.OpenAIAccountReporter.UpdateSessionWindow(ctx, account, headers)
+}
+
 func (r *countingReporter) OllamaCloudUsageActivity(account *Account) {
 	r.ollama.Add(1)
 	r.OpenAIAccountReporter.OllamaCloudUsageActivity(account)
@@ -126,6 +130,7 @@ func TestOpenAIForwardPathUsesTheAccountReporter(t *testing.T) {
 		"updateCodexUsageSnapshotLocal(",
 		"tempUnscheduleOpenAITransportErrorLocal(",
 		"scheduleOllamaCloudUsageActivity(",
+		"rateLimitService.UpdateSessionWindow(",
 	}
 	allowed := map[string]string{
 		"openai_account_reporter.go":               "the local reporter",
