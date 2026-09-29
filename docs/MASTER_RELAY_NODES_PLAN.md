@@ -269,6 +269,33 @@ WP19
 
 WP10 工作量最大（所有平台），WP9 完成后按平台拆给多人并行。
 
+### 剩余事项总账（2026-09-29 起，做完一项划掉一项）
+
+各节"还没做"散在进展里，汇总在这里，每项归到一个工作包；"全部完成"以这张表清空为准。每个包开工时先重扫路由和入账输入字段（主干可能加了新入口）。
+
+| 事项 | 归属 | 状态 |
+|---|---|---|
+| 非 OpenAI 网关服务的账号状态接口：Anthropic（`GatewayService`，含 Bedrock / Vertex / Antigravity 账号）、Gemini、Antigravity、Grok、Bedrock 转发文件里直接调限流服务的约 30 处，统一成一个"账号状态"接口（同步判定走上游错误决策、异步的走账号事件），源码守卫扩到全部转发文件 | WP10 | |
+| 各服务族的扣费记录种类与入账（`GatewayService.RecordUsage` 等），每族一个与单机逐字段比对的一致性测试 | WP10 | |
+| 内容审核与 cyber 拆分（设计 3.4）：审核输入哈希随选号、外部审核接口主节点调、审核结果事件；做完后"会被安全审计处理的请求"不再留在主节点 | WP10 | |
+| 联网搜索在主节点执行（设计 3.3） | WP10 | |
+| 自动分组 Key、组合平台分组经从节点（主节点选号时选组、选目标平台） | WP10 | |
+| Anthropic 网关入口：`/v1/messages`、count_tokens（含 Bedrock、Vertex、Antigravity 账号）；`ForceCacheBilling` 核对 | WP10 | |
+| Gemini v1beta、Antigravity 路由 | WP10 | |
+| OpenAI 其余入口：图片（同步）、嵌入、count_tokens（input_tokens）、`/alpha/search`、`/web_search`、`/x_search`、Codex 直连路径 `/backend-api/codex/*` | WP10 | |
+| Grok（含语音）、Ollama Cloud、TypeSafe `/v1/systemone`、Seedance | WP10 | |
+| 按 ID 选号的有状态入口（设计 14）：异步图片任务、视频生成与查询、实时会话 `live` / `realtime`（call_id） | WP10 | |
+| 小白端 `/paw/*` 转发接口（票据由 WP12 签发，WP10 先用 `sign.IssueTicket` 直接签的票据测试） | WP10（票据签发 WP12） | |
+| 非转发接口转交（设计 8.4：`/v1/models`、`/v1/usage`、`/sub2api/billing` 等） | WP10 | |
+| 选号在主节点排队时给客户端保活 | WP10 | |
+| Key 缓存与负缓存、无效鉴权防刷（没有时公网从节点可被用来不限速试 Key）、Key 删除 / 停用时收回额度、生成时分配节点等（见 WP11 行） | WP11 | |
+| 票据签发、小白端票据中间件与主节点复查、分配查询接口、主节点分配比例 | WP12 | |
+| ACME 证书、Caddy on_demand、域名解析检查与健康探测 | WP13 | |
+| 接口白名单、HTTP 服务参数与内存预算、日志回传、时钟偏差来源（心跳测得，现在按 0）、"签发数 / 入账数"统计与少报检测、日志和用量的节点查询 | WP14 | |
+| 待复核凭证的后台列表与按用户退回，以及 WP16 行的全部页面 | WP16 | |
+| 部署说明：主节点把从节点配成可信代理（交给主节点转发时客户端 IP 在 X-Forwarded-For） | WP18 | |
+| 最后统一测试时要走的：OAuth 账号经从节点（凭据快照、WebSocket 会话抢占修复）、WebSocket 直通与 HTTP 桥接模式、压测（机型待定）、域名与证书（要真实域名和服务器） | WP19 | |
+
 ### WP10 进展与已定细节
 
 逐个入口接入，每个入口照 WP9 的三处接缝接；已完成：
