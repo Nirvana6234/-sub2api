@@ -5930,7 +5930,10 @@ type SelectionRelease struct {
 	// 主节点验签后按凭证里的账号、分组、用户、Key 记响应归属，不信消息里的其他值。
 	Voucher []byte `protobuf:"bytes,4,opt,name=voucher,proto3" json:"voucher,omitempty"`
 	// WebSocket 一轮结束：放掉这一轮的用户槽和账号槽、记响应归属，选号留着（账号绑定这条连接）。
-	TurnEnd       bool `protobuf:"varint,5,opt,name=turn_end,json=turnEnd,proto3" json:"turn_end,omitempty"`
+	TurnEnd bool `protobuf:"varint,5,opt,name=turn_end,json=turnEnd,proto3" json:"turn_end,omitempty"`
+	// turn_end 时是哪一轮（BeginTurn 回的 turn_id）。事件连接上的释放可能晚于下一轮的 BeginTurn：
+	// 主节点只放这一轮还开着时占的槽，已被下一轮接手的不动。
+	TurnId        string `protobuf:"bytes,6,opt,name=turn_id,json=turnId,proto3" json:"turn_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5998,6 +6001,13 @@ func (x *SelectionRelease) GetTurnEnd() bool {
 		return x.TurnEnd
 	}
 	return false
+}
+
+func (x *SelectionRelease) GetTurnId() string {
+	if x != nil {
+		return x.TurnId
+	}
+	return ""
 }
 
 type BeginTurnRequest struct {
@@ -6082,8 +6092,10 @@ type BeginTurnResponse struct {
 	QuotaNeed       int64         `protobuf:"varint,5,opt,name=quota_need,json=quotaNeed,proto3" json:"quota_need,omitempty"`
 	Grants          []*QuotaGrant `protobuf:"bytes,6,rep,name=grants,proto3" json:"grants,omitempty"`
 	PricingAtUnixMs int64         `protobuf:"varint,7,opt,name=pricing_at_unix_ms,json=pricingAtUnixMs,proto3" json:"pricing_at_unix_ms,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// 这一轮的 ID：结束这一轮的释放消息带回。
+	TurnId        string `protobuf:"bytes,8,opt,name=turn_id,json=turnId,proto3" json:"turn_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *BeginTurnResponse) Reset() {
@@ -6163,6 +6175,13 @@ func (x *BeginTurnResponse) GetPricingAtUnixMs() int64 {
 		return x.PricingAtUnixMs
 	}
 	return 0
+}
+
+func (x *BeginTurnResponse) GetTurnId() string {
+	if x != nil {
+		return x.TurnId
+	}
+	return ""
 }
 
 type TurnMappingRequest struct {
@@ -7147,19 +7166,20 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\amessage\x18\x01 \x01(\tR\amessage\"\x15\n" +
 	"\x13OllamaActivityEvent\"N\n" +
 	"\x12SessionWindowEvent\x128\n" +
-	"\aheaders\x18\x01 \x03(\v2\x1e.sub2api.relay.v1.HeaderValuesR\aheaders\"\xb0\x01\n" +
+	"\aheaders\x18\x01 \x03(\v2\x1e.sub2api.relay.v1.HeaderValuesR\aheaders\"\xc9\x01\n" +
 	"\x10SelectionRelease\x12!\n" +
 	"\fselection_id\x18\x01 \x01(\tR\vselectionId\x12!\n" +
 	"\frequest_done\x18\x02 \x01(\bR\vrequestDone\x12!\n" +
 	"\fresponse_ids\x18\x03 \x03(\tR\vresponseIds\x12\x18\n" +
 	"\avoucher\x18\x04 \x01(\fR\avoucher\x12\x19\n" +
-	"\bturn_end\x18\x05 \x01(\bR\aturnEnd\"\x9b\x01\n" +
+	"\bturn_end\x18\x05 \x01(\bR\aturnEnd\x12\x17\n" +
+	"\aturn_id\x18\x06 \x01(\tR\x06turnId\"\x9b\x01\n" +
 	"\x10BeginTurnRequest\x12!\n" +
 	"\fselection_id\x18\x01 \x01(\tR\vselectionId\x12\x12\n" +
 	"\x04turn\x18\x02 \x01(\x05R\x04turn\x12\x14\n" +
 	"\x05model\x18\x03 \x01(\tR\x05model\x12:\n" +
 	"\n" +
-	"held_quota\x18\x04 \x03(\v2\x1b.sub2api.relay.v1.HeldQuotaR\theldQuota\"\xb6\x02\n" +
+	"held_quota\x18\x04 \x03(\v2\x1b.sub2api.relay.v1.HeldQuotaR\theldQuota\"\xcf\x02\n" +
 	"\x11BeginTurnResponse\x12!\n" +
 	"\fclose_status\x18\x01 \x01(\x05R\vcloseStatus\x12!\n" +
 	"\fclose_reason\x18\x02 \x01(\tR\vcloseReason\x12\x18\n" +
@@ -7168,7 +7188,8 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\n" +
 	"quota_need\x18\x05 \x01(\x03R\tquotaNeed\x124\n" +
 	"\x06grants\x18\x06 \x03(\v2\x1c.sub2api.relay.v1.QuotaGrantR\x06grants\x12+\n" +
-	"\x12pricing_at_unix_ms\x18\a \x01(\x03R\x0fpricingAtUnixMs\"M\n" +
+	"\x12pricing_at_unix_ms\x18\a \x01(\x03R\x0fpricingAtUnixMs\x12\x17\n" +
+	"\aturn_id\x18\b \x01(\tR\x06turnId\"M\n" +
 	"\x12TurnMappingRequest\x12!\n" +
 	"\fselection_id\x18\x01 \x01(\tR\vselectionId\x12\x14\n" +
 	"\x05model\x18\x02 \x01(\tR\x05model\"\xbf\x01\n" +

@@ -873,6 +873,9 @@ message SelectionRelease {
   bytes voucher = 4;
   // WebSocket 一轮结束：放掉这一轮的用户槽和账号槽、记响应归属，选号留着（账号绑定这条连接）。
   bool turn_end = 5;
+  // turn_end 时是哪一轮（BeginTurn 回的 turn_id）。事件连接上的释放可能晚于下一轮的 BeginTurn：
+  // 主节点只放这一轮还开着时占的槽，已被下一轮接手的不动。
+  string turn_id = 6;
 }
 
 message BeginTurnRequest {
@@ -895,6 +898,8 @@ message BeginTurnResponse {
   int64 quota_need = 5;
   repeated QuotaGrant grants = 6;
   int64 pricing_at_unix_ms = 7;
+  // 这一轮的 ID：结束这一轮的释放消息带回。
+  string turn_id = 8;
 }
 
 message TurnMappingRequest {

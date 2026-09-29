@@ -107,6 +107,9 @@ type requestRecord struct {
 	cyberRecorded bool
 	// ws：这是一条 Responses WebSocket 连接（用户槽按轮占、放；两轮之间不占槽，清理按 wsIdleLimit）。
 	ws bool
+	// userSlotTurn：WebSocket 连接的用户槽现在归哪一轮（"选号 ID/轮 ID"；连接选号时占的为"选号 ID/"）。
+	// 迟到的轮结束只放自己那一轮的槽。由 selector.mu 保护。
+	userSlotTurn string
 }
 
 // selectionRecord 是一次进行中的选号。
@@ -127,6 +130,8 @@ type selectionRecord struct {
 	cyber  service.CyberSessionLookup
 	// maxConcurrency：WebSocket 连接之后每一轮重新占这个账号的槽时的上限。
 	maxConcurrency int
+	// turnID：WebSocket 这次选号上开着的一轮（BeginTurn 起、这一轮的结束消息清掉）。由 selector.mu 保护。
+	turnID string
 }
 
 func newSelector(d Deps, env master.SelectEnv) *selector {

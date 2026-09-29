@@ -104,7 +104,7 @@ func (s *selector) selectOpenAIWS(ctx context.Context, nodeID int64, req *relayv
 			rej.GetRejection().Message = "session blocked by cyber-security policy"
 			return rej, nil
 		}
-		if rej := s.acquireWSUserSlot(ctx, record, apiKey); rej != nil {
+		if rej := s.acquireWSUserSlot(ctx, record, apiKey, ""); rej != nil {
 			return rej, nil
 		}
 		held := heldBalance(req.GetHeldQuota())
@@ -121,7 +121,7 @@ func (s *selector) selectOpenAIWS(ctx context.Context, nodeID int64, req *relayv
 		}
 		// 连接级的计价上下文（选号与准入用）；每一轮在 BeginTurn 按当时重新冻结计价时间。
 		record.pricingCtx, record.pricingAt = s.deps.Gateway.WithOpenAIRequestPricingContext(context.WithoutCancel(ctx), apiKey.GroupID)
-	} else if rej := s.acquireWSUserSlot(ctx, record, apiKey); rej != nil {
+	} else if rej := s.acquireWSUserSlot(ctx, record, apiKey, ""); rej != nil {
 		return rej, nil
 	}
 
@@ -187,10 +187,14 @@ func (s *selector) selectOpenAIWS(ctx context.Context, nodeID int64, req *relayv
 	return resp, nil
 }
 
-// acquireWSUserSlot 不排队地占这条连接的用户槽（已占着时不动）；占不到时回关闭。
-func (s *selector) acquireWSUserSlot(ctx context.Context, record *requestRecord, apiKey *service.APIKey) *relayv1.SelectResponse {
+// acquireWSUserSlot 不排队地占这条连接的用户槽，记在 owner 名下（已占着时改记到 owner 名下，不重复占）；
+// 占不到时回关闭。
+func (s *selector) acquireWSUserSlot(ctx context.Context, record *requestRecord, apiKey *service.APIKey, owner string) *relayv1.SelectResponse {
 	s.mu.Lock()
 	held := record.userRelease != nil
+	if held {
+		record.userSlotTurn = owner
+	}
 	s.mu.Unlock()
 	if held {
 		return nil
@@ -204,6 +208,7 @@ func (s *selector) acquireWSUserSlot(ctx context.Context, record *requestRecord,
 	}
 	s.mu.Lock()
 	record.userRelease = release
+	record.userSlotTurn = owner
 	s.mu.Unlock()
 	return nil
 }
@@ -276,12 +281,22 @@ func (s *selector) BeginTurn(ctx context.Context, nodeID int64, req *relayv1.Beg
 	s.touch(record)
 	apiKey := sel.apiKey
 
+	// 上一轮的结束消息还没到（事件连接上的释放可能晚于这次调用）：当作上一轮已结束，放掉它的槽再占
+	// （本地 BeforeTurn 同样先 releaseTurnSlots 再占）。之后迟到的结束消息对不上轮 ID，不再放槽。
+	s.mu.Lock()
+	previous := sel.turnID
+	s.mu.Unlock()
+	if previous != "" {
+		s.releaseWSTurnSlots(sel, previous)
+	}
+	turnID := newSelectionID()
+
 	// 长连接跨峰谷 / 倍率刷新防护：每一轮按当前时刻重装门并复核账号（本地同样在占槽之前）。
 	turnCtx, turnAt := s.deps.Gateway.WithOpenAITurnPricingContext(record.pricingCtx, apiKey.GroupID)
 	if _, vetoed, _ := s.deps.Gateway.ProfitControlVetoLatest(turnCtx, sel.account); vetoed {
 		return turnClose(coderws.StatusTryAgainLater, "account is no longer eligible for this connection, please reconnect"), nil
 	}
-	if rej := s.acquireWSUserSlot(ctx, record, apiKey); rej != nil {
+	if rej := s.acquireWSUserSlot(ctx, record, apiKey, sel.id+"/"+turnID); rej != nil {
 		r := rej.GetRejection()
 		return turnClose(coderws.StatusCode(r.GetStatus()), r.GetMessage()), nil
 	}
@@ -302,6 +317,9 @@ func (s *selector) BeginTurn(ctx context.Context, nodeID int64, req *relayv1.Beg
 		sel.release = release
 		s.mu.Unlock()
 	}
+	s.mu.Lock()
+	sel.turnID = turnID
+	s.mu.Unlock()
 
 	model := strings.TrimSpace(req.GetModel())
 	mapping, _ := s.deps.Gateway.ResolveChannelMappingAndRestrict(record.pricingCtx, apiKey.GroupID, model)
@@ -317,7 +335,7 @@ func (s *selector) BeginTurn(ctx context.Context, nodeID int64, req *relayv1.Beg
 	if err != nil {
 		return nil, err
 	}
-	resp := &relayv1.BeginTurnResponse{Voucher: voucher, QuotaNeed: quotaNeed, PricingAtUnixMs: turnAt.UnixMilli()}
+	resp := &relayv1.BeginTurnResponse{Voucher: voucher, QuotaNeed: quotaNeed, PricingAtUnixMs: turnAt.UnixMilli(), TurnId: turnID}
 	// 额度：尽量补充，但不因为额度拒绝这一轮（本地只在建连时查计费资格）。
 	grants, scopes, err := s.acquireQuota(ctx, nodeID, sel.quota, req.GetHeldQuota(), quotaNeed, false)
 	if err != nil {
@@ -340,6 +358,7 @@ func (s *selector) releaseWSUserSlot(record *requestRecord) {
 	s.mu.Lock()
 	release := record.userRelease
 	record.userRelease = nil
+	record.userSlotTurn = ""
 	s.mu.Unlock()
 	if release != nil {
 		release()
@@ -353,19 +372,9 @@ func (s *selector) endTurn(nodeID int64, rel *relayv1.SelectionRelease) {
 		s.bindFromVoucher(nodeID, rel)
 		return
 	}
-	record := sel.request
-	s.mu.Lock()
-	accountRelease := sel.release
-	sel.release = nil
-	userRelease := record.userRelease
-	record.userRelease = nil
-	record.lastSeen = s.now()
-	s.mu.Unlock()
-	if accountRelease != nil {
-		accountRelease()
-	}
-	if userRelease != nil {
-		userRelease()
+	s.touch(sel.request)
+	if turnID := rel.GetTurnId(); turnID != "" {
+		s.releaseWSTurnSlots(sel, turnID)
 	}
 	if len(rel.GetResponseIds()) > 0 {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -373,6 +382,33 @@ func (s *selector) endTurn(nodeID int64, rel *relayv1.SelectionRelease) {
 			s.deps.Gateway.BindRelayHTTPResponse(ctx, sel.groupID, sel.account.ID, id, sel.userID, sel.apiKeyID)
 		}
 		cancel()
+	}
+}
+
+// releaseWSTurnSlots 结束 turnID 这一轮：它还是这次选号上开着的那一轮时放掉账号槽，用户槽还记在它名下时放掉。
+// 已被下一轮接手（轮 ID 对不上）时什么都不动。
+func (s *selector) releaseWSTurnSlots(sel *selectionRecord, turnID string) {
+	record := sel.request
+	s.mu.Lock()
+	if sel.turnID != turnID {
+		s.mu.Unlock()
+		return
+	}
+	sel.turnID = ""
+	accountRelease := sel.release
+	sel.release = nil
+	var userRelease func()
+	if record.userSlotTurn == sel.id+"/"+turnID {
+		userRelease = record.userRelease
+		record.userRelease = nil
+		record.userSlotTurn = ""
+	}
+	s.mu.Unlock()
+	if accountRelease != nil {
+		accountRelease()
+	}
+	if userRelease != nil {
+		userRelease()
 	}
 }
 

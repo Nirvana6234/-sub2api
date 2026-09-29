@@ -55,7 +55,7 @@ func (d *Dispatcher) BeginTurn(c *gin.Context, conn *handler.OpenAIRelayAttempt,
 	if code := resp.GetCloseStatus(); code != 0 {
 		return nil, wsCloseError(coderws.StatusCode(code), resp.GetCloseReason(), nil)
 	}
-	t := &attemptState{selectionID: a.selectionID, voucher: resp.GetVoucher(), userID: a.userID, apiKeyID: a.apiKeyID}
+	t := &attemptState{selectionID: a.selectionID, voucher: resp.GetVoucher(), userID: a.userID, apiKeyID: a.apiKeyID, turnID: resp.GetTurnId()}
 	d.deps.Quota.ApplyGrants(resp.GetGrants())
 	if len(resp.GetQuotaScopes()) > 0 {
 		scopes := make([]node.QuotaScope, 0, len(resp.GetQuotaScopes()))
@@ -100,7 +100,7 @@ func (d *Dispatcher) EndTurn(_ *gin.Context, conn, turn *handler.OpenAIRelayAtte
 			if !submitted && t.reservation != nil {
 				t.reservation.Cancel()
 			}
-			rel.Voucher = t.voucher
+			rel.Voucher, rel.TurnId = t.voucher, t.turnID
 		}
 	}
 	if cyberDone != nil {

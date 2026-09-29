@@ -82,6 +82,8 @@ type attemptState struct {
 	userID, apiKeyID int64
 	// turnCalls：这条 WebSocket 连接选号上调过几次 BeginTurn（幂等键用）。
 	turnCalls atomic.Uint32
+	// turnID：WebSocket 这一轮的 ID（主节点回的，轮结束时带回）。
+	turnID string
 
 	mu             sync.Mutex
 	responseIDs    []string

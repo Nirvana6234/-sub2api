@@ -68,7 +68,7 @@ func TestWebSocketConnectionTurns(t *testing.T) {
 	require.Equal(t, "gpt-5", v1.GetRequestedModel())
 	require.Equal(t, turn1.GetPricingAtUnixMs(), v1.GetContext().GetPricingAtUnixMs())
 
-	w.sel.release(testNode, &relayv1.SelectionRelease{SelectionId: sel.GetSelectionId(), TurnEnd: true, ResponseIds: []string{"resp_ws1"}})
+	w.sel.release(testNode, &relayv1.SelectionRelease{SelectionId: sel.GetSelectionId(), TurnEnd: true, TurnId: turn1.GetTurnId(), ResponseIds: []string{"resp_ws1"}})
 	require.Equal(t, int64(0), w.slots.held.Load(), "the turn's user slot is given back")
 	require.Equal(t, int64(0), w.slots.accounts.Load(), "the turn's account slot is given back")
 
@@ -106,8 +106,10 @@ func TestWebSocketFailoverWithinAConnection(t *testing.T) {
 	resp, err := w.sel.Select(ctx, testNode, wsRequest("c1", 1, "sk-a"))
 	require.NoError(t, err)
 	first := resp.GetSelection()
+	turn, err := w.sel.BeginTurn(ctx, testNode, &relayv1.BeginTurnRequest{SelectionId: first.GetSelectionId(), Turn: 1, Model: "gpt-5"})
+	require.NoError(t, err)
 	// 一轮失败：钩子先结束这一轮（两个槽都放掉），再换号。
-	w.sel.release(testNode, &relayv1.SelectionRelease{SelectionId: first.GetSelectionId(), TurnEnd: true})
+	w.sel.release(testNode, &relayv1.SelectionRelease{SelectionId: first.GetSelectionId(), TurnEnd: true, TurnId: turn.GetTurnId()})
 	w.sel.release(testNode, &relayv1.SelectionRelease{SelectionId: first.GetSelectionId()})
 	require.Equal(t, int64(0), w.slots.held.Load())
 
@@ -137,7 +139,9 @@ func TestWebSocketBusyAccount(t *testing.T) {
 	resp, err := w.sel.Select(ctx, testNode, wsRequest("c1", 1, "sk-a"))
 	require.NoError(t, err)
 	sel := resp.GetSelection()
-	w.sel.release(testNode, &relayv1.SelectionRelease{SelectionId: sel.GetSelectionId(), TurnEnd: true})
+	turn1, err := w.sel.BeginTurn(ctx, testNode, &relayv1.BeginTurnRequest{SelectionId: sel.GetSelectionId(), Turn: 1, Model: "gpt-5"})
+	require.NoError(t, err)
+	w.sel.release(testNode, &relayv1.SelectionRelease{SelectionId: sel.GetSelectionId(), TurnEnd: true, TurnId: turn1.GetTurnId()})
 
 	w.slots.accountLimit.Store(1)
 	w.slots.accounts.Store(1) // 别的请求占着这个账号唯一的槽
@@ -156,7 +160,9 @@ func TestWebSocketConnectionsSurviveIdleGaps(t *testing.T) {
 	resp, err := w.sel.Select(ctx, testNode, wsRequest("c1", 1, "sk-a"))
 	require.NoError(t, err)
 	sel := resp.GetSelection()
-	w.sel.release(testNode, &relayv1.SelectionRelease{SelectionId: sel.GetSelectionId(), TurnEnd: true})
+	turn1, err := w.sel.BeginTurn(ctx, testNode, &relayv1.BeginTurnRequest{SelectionId: sel.GetSelectionId(), Turn: 1, Model: "gpt-5"})
+	require.NoError(t, err)
+	w.sel.release(testNode, &relayv1.SelectionRelease{SelectionId: sel.GetSelectionId(), TurnEnd: true, TurnId: turn1.GetTurnId()})
 
 	base := time.Now()
 	w.sel.now = func() time.Time { return base.Add(holdLimit + time.Minute) }
@@ -164,7 +170,7 @@ func TestWebSocketConnectionsSurviveIdleGaps(t *testing.T) {
 	next, err := w.sel.BeginTurn(ctx, testNode, &relayv1.BeginTurnRequest{SelectionId: sel.GetSelectionId(), Turn: 2, Model: "gpt-5"})
 	require.NoError(t, err)
 	require.Zero(t, next.GetCloseStatus(), "an idle connection outlives the slot hold limit")
-	w.sel.release(testNode, &relayv1.SelectionRelease{SelectionId: sel.GetSelectionId(), TurnEnd: true})
+	w.sel.release(testNode, &relayv1.SelectionRelease{SelectionId: sel.GetSelectionId(), TurnEnd: true, TurnId: next.GetTurnId()})
 
 	w.sel.now = func() time.Time { return base.Add(holdLimit + wsIdleLimit + 2*time.Minute) }
 	w.sel.reap()
@@ -246,4 +252,65 @@ func TestWebSocketLeases(t *testing.T) {
 	out, err := unlimited.sel.WebSocketLease(ctx, testNode, &relayv1.WebSocketLeaseRequest{Op: relayv1.WebSocketLeaseOp_WEB_SOCKET_LEASE_OP_REFRESH, LeaseId: "a"})
 	require.NoError(t, err)
 	require.True(t, out.GetOk(), "without a limit a lease stays valid")
+}
+
+// 下一轮的 BeginTurn 比上一轮的结束消息先到（事件连接上的释放是异步的）：上一轮当作已结束，下一轮占着自己的槽；
+// 迟到的结束消息不放下一轮的槽。
+func TestWebSocketLateTurnEndDoesNotReleaseTheNextTurn(t *testing.T) {
+	ctx := context.Background()
+	w := newWorldOn(t, wsConfig(), 10, testNode, wsAccount(1, "one"))
+	resp, err := w.sel.Select(ctx, testNode, wsRequest("c1", 1, "sk-a"))
+	require.NoError(t, err)
+	sel := resp.GetSelection()
+	turn1, err := w.sel.BeginTurn(ctx, testNode, &relayv1.BeginTurnRequest{SelectionId: sel.GetSelectionId(), Turn: 1, Model: "gpt-5"})
+	require.NoError(t, err)
+
+	turn2, err := w.sel.BeginTurn(ctx, testNode, &relayv1.BeginTurnRequest{SelectionId: sel.GetSelectionId(), Turn: 2, Model: "gpt-5"})
+	require.NoError(t, err)
+	require.Zero(t, turn2.GetCloseStatus(), turn2.GetCloseReason())
+	require.Equal(t, int64(1), w.slots.held.Load(), "turn 2 holds a user slot (turn 1's was given back first)")
+	require.Equal(t, int64(1), w.slots.accounts.Load())
+
+	w.sel.release(testNode, &relayv1.SelectionRelease{SelectionId: sel.GetSelectionId(), TurnEnd: true, TurnId: turn1.GetTurnId()})
+	require.Equal(t, int64(1), w.slots.held.Load(), "a late end of turn 1 leaves turn 2's slots alone")
+	require.Equal(t, int64(1), w.slots.accounts.Load())
+
+	w.sel.release(testNode, &relayv1.SelectionRelease{SelectionId: sel.GetSelectionId(), TurnEnd: true, TurnId: turn2.GetTurnId()})
+	require.Equal(t, int64(0), w.slots.held.Load())
+	require.Equal(t, int64(0), w.slots.accounts.Load())
+}
+
+// 连接内换号后，旧选号那一轮迟到的结束消息不放新选号的用户槽。
+func TestWebSocketLateTurnEndAfterFailover(t *testing.T) {
+	ctx := context.Background()
+	w := newWorldOn(t, wsConfig(), 10, testNode, wsAccount(1, "one"), wsAccount(2, "two"))
+	resp, err := w.sel.Select(ctx, testNode, wsRequest("c1", 1, "sk-a"))
+	require.NoError(t, err)
+	first := resp.GetSelection()
+	turn, err := w.sel.BeginTurn(ctx, testNode, &relayv1.BeginTurnRequest{SelectionId: first.GetSelectionId(), Turn: 1, Model: "gpt-5"})
+	require.NoError(t, err)
+
+	// 换号：同步的选号比旧选号那一轮的结束消息和释放消息（事件连接，异步）先到主节点。
+	retry := wsRequest("c1", 2, "sk-a")
+	retry.ExcludedAccountIds = []int64{first.GetAccount().GetId()}
+	resp, err = w.sel.Select(ctx, testNode, retry)
+	require.NoError(t, err)
+	second := resp.GetSelection()
+	require.NotNil(t, second)
+	require.Equal(t, int64(1), w.slots.held.Load(), "the connection keeps its one user slot")
+
+	w.sel.release(testNode, &relayv1.SelectionRelease{SelectionId: first.GetSelectionId(), TurnEnd: true, TurnId: turn.GetTurnId()})
+	require.Equal(t, int64(1), w.slots.held.Load(), "the old selection's late turn end leaves the connection's user slot alone")
+	require.Equal(t, int64(1), w.slots.accounts.Load(), "it gives back only the old account's slot")
+	w.sel.release(testNode, &relayv1.SelectionRelease{SelectionId: first.GetSelectionId()})
+
+	next, err := w.sel.BeginTurn(ctx, testNode, &relayv1.BeginTurnRequest{SelectionId: second.GetSelectionId(), Turn: 1, Model: "gpt-5"})
+	require.NoError(t, err)
+	require.Zero(t, next.GetCloseStatus())
+	require.Equal(t, int64(1), w.slots.held.Load())
+	require.Equal(t, int64(1), w.slots.accounts.Load())
+
+	w.sel.release(testNode, &relayv1.SelectionRelease{SelectionId: second.GetSelectionId(), TurnEnd: true, TurnId: next.GetTurnId()})
+	require.Equal(t, int64(0), w.slots.held.Load())
+	require.Equal(t, int64(0), w.slots.accounts.Load())
 }
