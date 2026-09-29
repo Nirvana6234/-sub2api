@@ -67,6 +67,9 @@ func TestWebSocketConnectionTurns(t *testing.T) {
 	require.Equal(t, sel.GetSelectionId(), v1.GetSelectionId())
 	require.Equal(t, "gpt-5", v1.GetRequestedModel())
 	require.Equal(t, turn1.GetPricingAtUnixMs(), v1.GetContext().GetPricingAtUnixMs())
+	require.Equal(t, relayv1.AuditPolicy_AUDIT_POLICY_SKIP, turn1.GetAuditPolicy())
+	// 连接期间审计配置变了：之后的轮按新的策略审计（连接可以开几个小时）。
+	w.sel.deps.PromptAudit = auditMode{securityaudit.ModeBlocking}
 
 	w.sel.release(testNode, &relayv1.SelectionRelease{SelectionId: sel.GetSelectionId(), TurnEnd: true, TurnId: turn1.GetTurnId(), ResponseIds: []string{"resp_ws1"}})
 	require.Equal(t, int64(0), w.slots.held.Load(), "the turn's user slot is given back")
@@ -76,6 +79,7 @@ func TestWebSocketConnectionTurns(t *testing.T) {
 	turn2, err := w.sel.BeginTurn(ctx, testNode, &relayv1.BeginTurnRequest{SelectionId: sel.GetSelectionId(), Turn: 2, Model: "gpt-5-mini"})
 	require.NoError(t, err)
 	require.Zero(t, turn2.GetCloseStatus(), turn2.GetCloseReason())
+	require.Equal(t, relayv1.AuditPolicy_AUDIT_POLICY_FAIL_CLOSED, turn2.GetAuditPolicy())
 	require.Equal(t, int64(1), w.slots.held.Load())
 	require.Equal(t, int64(1), w.slots.accounts.Load())
 	v2, err := sign.VerifyVoucher(turn2.GetVoucher(), w.pub, testNode, time.Now())
@@ -212,10 +216,10 @@ func TestWebSocketConnectRejections(t *testing.T) {
 		require.NoError(t, err)
 		return out
 	}
-	require.NotNil(t, admit(w.sel).GetAdmission(), "no audit: the node serves the connection")
+	require.Equal(t, relayv1.AuditPolicy_AUDIT_POLICY_SKIP, admit(w.sel).GetAdmission().GetAuditPolicy(), "no audit: the node serves the connection")
 	w.sel.deps.PromptAudit = auditMode{securityaudit.ModeAsync}
-	require.Equal(t, relayv1.RejectionFormat_REJECTION_FORMAT_UNSUPPORTED, admit(w.sel).GetRejection().GetFormat(),
-		"prompt audit on: the whole connection is handed to the master before the upgrade")
+	require.Equal(t, relayv1.AuditPolicy_AUDIT_POLICY_FAIL_OPEN, admit(w.sel).GetAdmission().GetAuditPolicy(),
+		"prompt audit on: the node still serves the connection and audits every turn through the master")
 }
 
 type auditMode struct{ m securityaudit.Mode }

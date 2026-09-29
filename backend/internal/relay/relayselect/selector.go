@@ -33,10 +33,13 @@ type Deps struct {
 	Billing       *service.BillingCacheService
 	Gateway       *service.OpenAIGatewayService
 	Concurrency   *service.ConcurrencyService
-	// Moderation、PromptAudit 用来判断请求会不会被安全审计处理：会的请求暂时留在主节点
-	// （审核接入主从通信之前，设计 3.4）。nil 表示没有这个功能。
+	// Moderation、PromptAudit 用来判断请求会不会被安全审计处理（准入与每一轮回复里的审计策略）；
+	// Audit 是单机同一个审计协调器（从节点经 SecurityAudit 调）。nil 表示没有这个功能。
 	Moderation  *service.ContentModerationService
 	PromptAudit interface{ EffectiveMode() securityaudit.Mode }
+	Audit       interface {
+		Check(ctx context.Context, req securityaudit.Request) securityaudit.Decision
+	}
 	// Ops 记运维错误日志（cyber 命中、cyber 会话屏蔽）；nil 表示不记。
 	Ops *service.OpsService
 }

@@ -50,6 +50,10 @@ func (s *recordingSelector) CyberPolicyHit(context.Context, int64, *relayv1.Cybe
 	return &relayv1.CyberPolicyHitResponse{}, nil
 }
 
+func (s *recordingSelector) SecurityAudit(context.Context, int64, *relayv1.SecurityAuditRequest) (*relayv1.SecurityAuditResponse, error) {
+	return &relayv1.SecurityAuditResponse{Skipped: true}, nil
+}
+
 func (s *recordingSelector) Release(int64, *relayv1.SelectionRelease) {}
 
 func (s *recordingSelector) AccountEvent(int64, *relayv1.AccountEvent) {}

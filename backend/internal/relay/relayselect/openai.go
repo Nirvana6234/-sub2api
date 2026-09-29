@@ -11,7 +11,6 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/relay/keycodec"
 	"github.com/Wei-Shaw/sub2api/internal/relay/master"
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
-	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"go.uber.org/zap"
@@ -56,7 +55,7 @@ func (s *selector) Select(ctx context.Context, nodeID int64, req *relayv1.Select
 //     用户并发槽 → 计费资格 → cyber 会话屏蔽 → 计价上下文 → 选号与准入（要求账号支持 Chat Completions，
 //     按分组的派发映射模型选号；计费和选不出账号的错误按 Anthropic 格式）。
 //
-// 会被安全审计处理的请求留在主节点转发（审核接入主从通信之前，设计 3.4）。
+// 安全审计在这之前由从节点经 SecurityAudit 做完（设计 3.4）。
 func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.SelectRequest) (*relayv1.SelectResponse, error) {
 	chat := req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_CHAT
 	messages := req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_MESSAGES
@@ -68,10 +67,6 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 	if messages && !apiKey.Group.AllowMessagesDispatch {
 		// 本地在读请求体之前就查（分组平台只会是 OpenAI：其余平台在准入时已回"暂不支持"）。
 		return gatewayRejection(handler.OpenAIMessagesDispatchDeniedRejection()), nil
-	}
-	if s.auditApplies(ctx, apiKey.GroupID, req.GetModel()) {
-		// 安全审计（内容审核、提示词审计）还没接入主从通信：这类请求留在主节点转发。
-		return unsupported(), nil
 	}
 	ctx = middleware.RelayRequestContext(ctx, adm)
 	// Codex 审查子代理跟随父会话的账号（本地由处理函数放进请求 ctx）：请求开始时固定进计价上下文，之后每次选号都带着。
@@ -233,10 +228,6 @@ func (s *selector) Admit(ctx context.Context, _ int64, req *relayv1.AdmitRequest
 	if rej != nil {
 		return &relayv1.AdmitResponse{Result: &relayv1.AdmitResponse_Rejection{Rejection: rej.GetRejection()}}, nil
 	}
-	if isResponsesWebSocketAdmission(req.GetMethod(), req.GetPath()) && s.wsAuditMayApply(ctx, adm.APIKey.GroupID) {
-		// WebSocket 升级之前还不知道模型：分组可能被安全审计处理时整条连接交给主节点（审核接入主从通信之前）。
-		return &relayv1.AdmitResponse{Result: &relayv1.AdmitResponse_Rejection{Rejection: unsupported().GetRejection()}}, nil
-	}
 	key, err := keycodec.EncodeAPIKey(adm.APIKey)
 	if err != nil {
 		return nil, err
@@ -245,7 +236,9 @@ func (s *selector) Admit(ctx context.Context, _ int64, req *relayv1.AdmitRequest
 	if err != nil {
 		return nil, err
 	}
-	return &relayv1.AdmitResponse{Result: &relayv1.AdmitResponse_Admission{Admission: &relayv1.Admission{ApiKey: key, Subscription: sub}}}, nil
+	return &relayv1.AdmitResponse{Result: &relayv1.AdmitResponse_Admission{Admission: &relayv1.Admission{
+		ApiKey: key, Subscription: sub, AuditPolicy: s.auditPolicy(ctx, adm.APIKey.GroupID),
+	}}}, nil
 }
 
 // admitAPIKey 按本地网关中间件链复查 Key（EvaluateRelayAPIKeyAdmission），再挡掉还不能经从节点处理的分组。
@@ -390,14 +383,6 @@ func (s *selector) buildSelection(ctx context.Context, nodeID int64, req *relayv
 		MaxAccountSwitches: int32(switches), ConfigVersion: version, PricingAtUnixMs: sel.request.pricingAt.UnixMilli(),
 		CredentialParent: parentSnap,
 	}}}, nil, nil
-}
-
-// auditApplies 报告这个请求会不会被安全审计处理（本地处理函数里的 checkSecurityAudit）。
-func (s *selector) auditApplies(ctx context.Context, groupID *int64, model string) bool {
-	if p := s.deps.PromptAudit; p != nil && p.EffectiveMode() != securityaudit.ModeOff {
-		return true
-	}
-	return s.deps.Moderation.AppliesTo(ctx, groupID, model)
 }
 
 func modelCandidates(req *relayv1.SelectRequest) []string {

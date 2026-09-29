@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
+	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	coderws "github.com/coder/websocket"
@@ -35,6 +36,9 @@ type OpenAIRelayDispatcher interface {
 	RequestDone(c *gin.Context)
 	// HandOff 把请求原样交给主节点转发（主节点回"暂不支持"时，只在还没写出任何响应时调用）。
 	HandOff(c *gin.Context)
+	// SecurityAudit 转发前的安全审计（代替本机的审计协调器，设计 3.4）：按准入（WebSocket 为上一轮）时主节点给的
+	// 审计策略，不会被审计时直接放行；否则把预先抽好的审核输入交给主节点判定，调不通时按策略放行或回审计不可用。
+	SecurityAudit(c *gin.Context, apiKey *service.APIKey, request securityaudit.Request) securityaudit.Decision
 
 	// ---- Responses WebSocket（开发计划 WP10-3）：连接选号用 Select（WS 为 true），每一轮在主节点准入 ----
 
@@ -276,7 +280,9 @@ func (h *OpenAIGatewayHandler) relayWSTurnMapping(c *gin.Context, conn *OpenAIRe
 		return conn.ChannelMapping, nil
 	}
 	if v, ok := cache.Load(model); ok {
-		return v.(service.ChannelMappingResult), nil
+		if mapping, isMapping := v.(service.ChannelMappingResult); isMapping {
+			return mapping, nil
+		}
 	}
 	mapping, err := h.relay.TurnMapping(c, conn, model)
 	if err != nil {

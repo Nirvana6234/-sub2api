@@ -108,12 +108,12 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	setOpsRequestContext(c, reqModel, reqStream)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(reqStream, false)))
 
-	// 从节点：安全审计、cyber 会话屏蔽、渠道映射都在主节点选号时做（审计命中时回"暂不支持"，交给主节点转发）。
+	// 从节点：安全审计经主节点判定（h.relay.SecurityAudit）；cyber 会话屏蔽、渠道映射在主节点选号时做。
+	if decision := h.checkSecurityAudit(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIChat, reqModel, body); decision != nil && !decision.AllowNextStage {
+		h.openAISecurityAuditError(c, decision)
+		return
+	}
 	if h.relay == nil {
-		if decision := h.checkSecurityAudit(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIChat, reqModel, body); decision != nil && !decision.AllowNextStage {
-			h.openAISecurityAuditError(c, decision)
-			return
-		}
 		if h.rejectIfCyberSessionBlocked(c, apiKey, body, reqModel, cyberBlockFormatChat) {
 			return
 		}

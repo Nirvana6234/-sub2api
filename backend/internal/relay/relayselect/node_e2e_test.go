@@ -173,6 +173,7 @@ func startE2EWithConfig(t *testing.T, configure func(*config.Config), accounts f
 	control.AttachSelector(e.world.sel, srv.Epoch())
 	master.RouteNodeEvents(events, e.world.sel)
 	relayv1.RegisterRelayControlServer(srv.GRPC(), control)
+	relayv1.RegisterRelayModerationServer(srv.GRPC(), master.NewModerationServer(control))
 	relayv1.RegisterRelayEventsServer(srv.GRPC(), events)
 	relayv1.RegisterRelayBillingServer(srv.GRPC(), master.NewBilling(e.settler))
 	lis, err := net.Listen("tcp4", "127.0.0.1:0")
@@ -230,6 +231,7 @@ func startE2EWithConfig(t *testing.T, configure func(*config.Config), accounts f
 			return syncer.EnsureVersion(ctx, v)
 		},
 		AfterEpochChange: quotaSync.Report,
+		Moderation:       relayv1.NewRelayModerationClient(client.Conn(transport.TierModeration)),
 	})
 	runCtx, stop := context.WithCancel(ctx)
 	t.Cleanup(stop)

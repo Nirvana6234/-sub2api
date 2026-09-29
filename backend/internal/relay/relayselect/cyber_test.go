@@ -48,7 +48,8 @@ func TestCyberPolicyHitOnTheMaster(t *testing.T) {
 	}
 	_, err = w.sel.CyberPolicyHit(ctx, testNode+1, hit)
 	require.ErrorIs(t, err, master.ErrSelectionNotFound, "another node's selection")
-	wrongAccount := proto.Clone(hit).(*relayv1.CyberPolicyHitRequest)
+	wrongAccount, ok := proto.Clone(hit).(*relayv1.CyberPolicyHitRequest)
+	require.True(t, ok)
 	wrongAccount.AccountId = 2
 	_, err = w.sel.CyberPolicyHit(ctx, testNode, wrongAccount)
 	require.ErrorIs(t, err, master.ErrSelectionNotFound, "not the selected account")

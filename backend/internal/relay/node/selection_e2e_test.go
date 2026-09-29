@@ -83,6 +83,10 @@ func (f *fakeSelector) CyberPolicyHit(context.Context, int64, *relayv1.CyberPoli
 	return &relayv1.CyberPolicyHitResponse{}, nil
 }
 
+func (f *fakeSelector) SecurityAudit(context.Context, int64, *relayv1.SecurityAuditRequest) (*relayv1.SecurityAuditResponse, error) {
+	return &relayv1.SecurityAuditResponse{Skipped: true}, nil
+}
+
 func (f *fakeSelector) UpstreamError(_ context.Context, nodeID int64, req *relayv1.UpstreamErrorRequest) (*relayv1.UpstreamErrorResponse, error) {
 	f.mu.Lock()
 	f.upstream = append(f.upstream, req)

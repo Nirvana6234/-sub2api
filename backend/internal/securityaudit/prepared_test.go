@@ -35,6 +35,10 @@ var preparedEquivalenceBodies = []struct{ protocol, body string }{
 	{"openai_chat_completions", `{"messages":[]}`},
 	{"openai_chat_completions", `{"messages":[{"role":"user","content":`},
 	{"openai_chat_completions", ``},
+	{"openai_chat_completions", `{"messages":[{"role":"user","content":[{"type":"text","text":"   
+	 "},{"type":"text","text":" "}]}]}`},
+	{"openai_chat_completions", `{"messages":[{"role":"user","content":[{"type":"text","text":"many"},{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}},{"type":"image_url","image_url":{"url":"data:image/png;base64,BBBB"}},{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}},{"type":"image_url","image_url":{"url":"https://example.com/c.png"}}]}]}`},
+	{"openai_responses", `{"input":[{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,CCCC"},{"type":"input_image","image_url":"data:image/png;base64,DDDD"}]}]}`},
 }
 
 // 提示词审计：拿请求体与拿预先抽好的输入（过一遍 JSON）得到的快照、错误完全一样，含最新一轮模式。
@@ -55,7 +59,8 @@ func TestPreparedRequestPromptSnapshotMatchesBody(t *testing.T) {
 	}
 }
 
-// 内容审核：交给审核服务的输入与从请求体抽的一样。
+// 内容审核：交给审核服务的输入与从请求体抽的判定一样：文字、是否为空、图片数、输入哈希（命中过的哈希拦截用）相同，
+// 图片多时只带抽中的那张（审核接口一次只要一张，单机也是随机抽一张）。
 func TestPreparedRequestModerationInputMatchesBody(t *testing.T) {
 	for _, tc := range preparedEquivalenceBodies {
 		req := Request{Protocol: tc.protocol, Body: []byte(tc.body)}
@@ -63,13 +68,18 @@ func TestPreparedRequestModerationInputMatchesBody(t *testing.T) {
 		prepared := preparedOverWire(t, req)
 		got := preparedModeration(prepared)
 		require.NotNil(t, got)
-		if len(want.Images) == 0 {
-			want.Images = nil
+		got.Normalize()
+		require.Equal(t, want.Text, got.Text, "%s %s", tc.protocol, tc.body)
+		require.Equal(t, want.IsEmpty(), got.IsEmpty())
+		require.Equal(t, want.ImageCount(), got.ImageCount())
+		require.Equal(t, want.Hash(), got.Hash(), "%s %s", tc.protocol, tc.body)
+		require.LessOrEqual(t, len(got.Images), 1)
+		for _, image := range got.Images {
+			require.Contains(t, want.Images, image)
 		}
-		if len(got.Images) == 0 {
-			got.Images = nil
+		if len(want.Images) <= 1 {
+			require.Equal(t, want.ModerationInput(), got.ModerationInput())
 		}
-		require.Equal(t, want, *got, "%s %s", tc.protocol, tc.body)
 		// 带请求体时不用预先抽好的（单机路径不变）。
 		require.Nil(t, preparedModeration(req))
 	}

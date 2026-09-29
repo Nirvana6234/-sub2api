@@ -326,6 +326,31 @@ type ContentModerationCheckInput struct {
 type ContentModerationInput struct {
 	Text   string
 	Images []string
+	// ImageHashes 只在主从分流的传输形式里有（见 ForTransfer）：全部图片各自的 SHA-256（十六进制，按原顺序），
+	// 这时 Images 只剩审核时抽中的那一张。输入哈希和图片数按它算，与单机按全部图片算的一致。
+	ImageHashes []string `json:",omitempty"`
+}
+
+// ForTransfer 是从节点发给主节点的形式：图片多于审核接口一次要的张数时，只带抽中的那张（抽法与
+// ModerationInput 相同）和全部图片的哈希，免得历史截图把审核连接撑满。
+func (in ContentModerationInput) ForTransfer() ContentModerationInput {
+	if in.ImageHashes != nil || len(in.Images) <= maxContentModerationInputImages {
+		return in
+	}
+	hashes := make([]string, len(in.Images))
+	for i, image := range in.Images {
+		sum := sha256.Sum256([]byte(image))
+		hashes[i] = hex.EncodeToString(sum[:])
+	}
+	return ContentModerationInput{Text: in.Text, Images: limitContentModerationImages(in.Images), ImageHashes: hashes}
+}
+
+// ImageCount 是请求里的图片数（传输形式按哈希数）。
+func (in ContentModerationInput) ImageCount() int {
+	if in.ImageHashes != nil {
+		return len(in.ImageHashes)
+	}
+	return len(in.Images)
 }
 
 func (in *ContentModerationInput) Normalize() {
@@ -366,6 +391,13 @@ func (in ContentModerationInput) Hash() string {
 	h := sha256.New()
 	_, _ = h.Write([]byte("text:"))
 	_, _ = h.Write([]byte(in.Text))
+	if in.ImageHashes != nil {
+		for _, imageHash := range in.ImageHashes {
+			_, _ = h.Write([]byte("\nimage:"))
+			_, _ = h.Write([]byte(imageHash))
+		}
+		return hex.EncodeToString(h.Sum(nil))
+	}
 	for _, image := range in.Images {
 		imageHash := sha256.Sum256([]byte(image))
 		_, _ = h.Write([]byte("\nimage:"))
@@ -977,7 +1009,7 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 		"endpoint", input.Endpoint,
 		"protocol", input.Protocol,
 		"text_runes", len([]rune(content.Text)),
-		"image_count", len(content.Images))
+		"image_count", content.ImageCount())
 	hashText := content.Hash()
 	if cfg.Mode == ContentModerationModePreBlock {
 		if cfg.KeywordBlockingMode != ContentModerationKeywordModeAPIOnly && len(cfg.BlockedKeywords) > 0 {

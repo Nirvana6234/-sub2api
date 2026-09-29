@@ -92,6 +92,7 @@ func (r Request) Clone() Request {
 		p := *r.Prepared
 		p.Segments = slices.Clone(p.Segments)
 		p.Moderation.Images = slices.Clone(p.Moderation.Images)
+		p.Moderation.ImageHashes = slices.Clone(p.Moderation.ImageHashes)
 		r.Prepared = &p
 	}
 	if r.GroupID != nil {

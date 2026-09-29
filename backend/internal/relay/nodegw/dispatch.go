@@ -45,6 +45,8 @@ type Deps struct {
 	CyberEnabled func(ctx context.Context) bool
 	// HandOff 把请求交给主节点转发（见 handoff.go）；nil 时按 503 写。
 	HandOff func(c *gin.Context, body []byte)
+	// Moderation 是审核连接（安全审计，见 audit.go）；nil 时按审计调不通处理。
+	Moderation relayv1.RelayModerationClient
 }
 
 // Dispatcher 实现 handler.OpenAIRelayDispatcher。
@@ -70,6 +72,8 @@ type requestState struct {
 	attempt uint32
 	rawBody []byte
 	current *attemptState
+	// auditPolicy：主节点给的安全审计策略（relayv1.AuditPolicy；准入时给，WebSocket 每一轮更新）。
+	auditPolicy atomic.Int32
 }
 
 // attemptState 是一次选中的尝试。WebSocket 连接上，连接选号一份（收 response id、释放），每一轮另有一份

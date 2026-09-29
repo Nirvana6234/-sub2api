@@ -120,6 +120,7 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 		NodeID: id.NodeID, Select: selectClient, Quota: quota, Secrets: accountcodec.NewSecretCache(),
 		Open: id.OpenSealed, WAL: wal, Kick: sender.Kick, EnsureConfig: syncer.EnsureVersion,
 		AfterEpochChange: quotaSync.Report,
+		Moderation:       relayv1.NewRelayModerationClient(client.Conn(transport.TierModeration)),
 	}
 	if u := strings.TrimSpace(rc.NodeMasterURL); u != "" {
 		masterURL, err := url.Parse(u)

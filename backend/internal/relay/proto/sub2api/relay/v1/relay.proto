@@ -84,6 +84,14 @@ service RelayControl {
   rpc CyberPolicyHit(CyberPolicyHitRequest) returns (CyberPolicyHitResponse);
 }
 
+// 审核连接：转发前的安全审计（设计 3.4），走单独的连接，不和选号挤在一起。
+service RelayModeration {
+  // SecurityAudit 转发前的安全审计（内容审核 + 提示词审计）：从节点送预先抽好的审核输入（不带请求体），主节点用
+  // 单机同一个审计协调器判定（关键词、命中过的输入哈希、外部审核接口、审核记录、累计封号都在主节点）。用户、Key、
+  // 分组由主节点按 Key 原文复查得出，不信从节点。复查不通过时回 skipped：从节点照常往下走，选号时按同一复查拒绝。
+  rpc SecurityAudit(SecurityAuditRequest) returns (SecurityAuditResponse);
+}
+
 // 扣费连接：扣费批次（设计 5.1、5.2，开发计划 WP8）。
 service RelayBilling {
   // SubmitUsage 提交一批扣费记录。主节点逐条入账、逐条回结果；每条按扣费凭证去重，重发只入账一次，
@@ -487,6 +495,44 @@ message Admission {
   bytes api_key = 1;
   // 订阅（订阅计费分组时），同样按白名单编码；没有时为空。
   bytes subscription = 2;
+  // 这个 Key 的请求要不要做安全审计（按分组和当时的审计配置）。
+  AuditPolicy audit_policy = 3;
+}
+
+// 安全审计策略：从节点据此决定要不要调 SecurityAudit、调不通时怎么办（与单机审计服务出错时的处理一致）。
+enum AuditPolicy {
+  // 未指定：按 FAIL_OPEN 处理。
+  AUDIT_POLICY_UNSPECIFIED = 0;
+  // 不会被审计（风控和提示词审计都没开，或内容审核不管这个分组）：不调。
+  AUDIT_POLICY_SKIP = 1;
+  // 调审计；调不通时放行（单机内容审核出错时放行，提示词审计异步模式不影响请求）。
+  AUDIT_POLICY_FAIL_OPEN = 2;
+  // 调审计；调不通时按审计不可用拒绝（提示词审计阻断模式：单机审计服务出错时回 503）。
+  AUDIT_POLICY_FAIL_CLOSED = 3;
+}
+
+message SecurityAuditRequest {
+  // Key 原文：主节点按它复查用户、Key、分组。
+  string api_key = 1;
+  string client_ip = 2;
+  string method = 3;
+  string path = 4;
+  // 请求上的事实（审核记录用）：请求 ID、入口、平台、协议、客户端请求的模型、阶段（http、first_turn、subsequent_turn）。
+  string request_id = 5;
+  string endpoint = 6;
+  string provider = 7;
+  string protocol = 8;
+  string model = 9;
+  string stage = 10;
+  // 预先抽好的审核输入（securityaudit.PreparedInput 的 JSON）：提示词分段、内容审核的文字和抽中的图片、全部图片的哈希。
+  bytes prepared = 11;
+}
+
+message SecurityAuditResponse {
+  // Key 复查不通过：没有审计，从节点照常往下走（选号时拒绝）。
+  bool skipped = 1;
+  // 判定结果（securityaudit.Decision 的 JSON）。
+  bytes decision = 2;
 }
 
 message SelectRequest {
@@ -900,6 +946,8 @@ message BeginTurnResponse {
   int64 pricing_at_unix_ms = 7;
   // 这一轮的 ID：结束这一轮的释放消息带回。
   string turn_id = 8;
+  // 当时的安全审计策略：连接内下一轮的审计按它（连接可以开几个小时，审计配置会变）。
+  AuditPolicy audit_policy = 9;
 }
 
 message TurnMappingRequest {

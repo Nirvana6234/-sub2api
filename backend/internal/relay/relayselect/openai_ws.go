@@ -10,7 +10,6 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/relay/master"
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
-	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	coderws "github.com/coder/websocket"
@@ -24,19 +23,6 @@ const wsIdleLimit = 6 * time.Hour
 
 // wsReconnectReason 是主节点丢了这条连接的记录（清理、纪元变化）或配置变了、需要客户端重连时的关闭原因。
 const wsReconnectReason = "relay session expired, please reconnect"
-
-// isResponsesWebSocketAdmission 报告准入的是 Responses WebSocket 的升级请求（GET /v1/responses、/responses）。
-func isResponsesWebSocketAdmission(method, path string) bool {
-	return strings.EqualFold(method, "GET") && strings.HasSuffix(strings.TrimRight(path, "/"), "/responses")
-}
-
-// wsAuditMayApply 报告这个分组的 WebSocket 连接可能被安全审计处理（接受升级之前还不知道模型，按分组判断）。
-func (s *selector) wsAuditMayApply(ctx context.Context, groupID *int64) bool {
-	if p := s.deps.PromptAudit; p != nil && p.EffectiveMode() != securityaudit.ModeOff {
-		return true
-	}
-	return s.deps.Moderation.AppliesToGroup(ctx, groupID)
-}
 
 func wsClose(code coderws.StatusCode, reason string) *relayv1.SelectResponse {
 	return &relayv1.SelectResponse{Result: &relayv1.SelectResponse_Rejection{Rejection: &relayv1.SelectRejection{
@@ -66,10 +52,6 @@ func (s *selector) selectOpenAIWS(ctx context.Context, nodeID int64, req *relayv
 		return wsClose(coderws.StatusPolicyViolation, "request rejected"), nil
 	}
 	apiKey := adm.APIKey
-	if s.auditApplies(ctx, apiKey.GroupID, req.GetModel()) {
-		// 升级之前按分组判断过不会被审计；配置变了。重连时会交给主节点。
-		return wsClose(coderws.StatusTryAgainLater, wsReconnectReason), nil
-	}
 	ctx = middleware.RelayRequestContext(ctx, adm)
 	ctx = service.WithOpenAIGuardianParentSessionHashes(ctx, req.GetGuardianParentSessionHash(), req.GetGuardianParentLegacySessionHash())
 	subscription := adm.Billing.Subscription
@@ -335,7 +317,8 @@ func (s *selector) BeginTurn(ctx context.Context, nodeID int64, req *relayv1.Beg
 	if err != nil {
 		return nil, err
 	}
-	resp := &relayv1.BeginTurnResponse{Voucher: voucher, QuotaNeed: quotaNeed, PricingAtUnixMs: turnAt.UnixMilli(), TurnId: turnID}
+	resp := &relayv1.BeginTurnResponse{Voucher: voucher, QuotaNeed: quotaNeed, PricingAtUnixMs: turnAt.UnixMilli(), TurnId: turnID,
+		AuditPolicy: s.auditPolicy(ctx, apiKey.GroupID)}
 	// 额度：尽量补充，但不因为额度拒绝这一轮（本地只在建连时查计费资格）。
 	grants, scopes, err := s.acquireQuota(ctx, nodeID, sel.quota, req.GetHeldQuota(), quotaNeed, false)
 	if err != nil {

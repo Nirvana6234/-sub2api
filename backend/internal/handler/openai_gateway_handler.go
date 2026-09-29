@@ -541,12 +541,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	setOpsRequestContext(c, reqModel, reqStream)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(reqStream, false)))
 
-	// 从节点：会被安全审计处理的请求由主节点在选号时回"暂不支持"，交给主节点转发。
-	if h.relay == nil {
-		if decision := h.checkSecurityAudit(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIResponses, reqModel, body); decision != nil && !decision.AllowNextStage {
-			h.openAISecurityAuditError(c, decision)
-			return
-		}
+	// 从节点：安全审计经主节点判定（h.relay.SecurityAudit）。
+	if decision := h.checkSecurityAudit(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIResponses, reqModel, body); decision != nil && !decision.AllowNextStage {
+		h.openAISecurityAuditError(c, decision)
+		return
 	}
 
 	// 使用 IsExplicitImageGenerationIntent 排除被动 image_gen namespace 声明。
@@ -1292,12 +1290,10 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	setOpsRequestContext(c, reqModel, reqStream)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(reqStream, false)))
 
-	// 从节点：安全审计、渠道映射在主节点选号时做（审计命中时回"暂不支持"，交给主节点转发）。
-	if h.relay == nil {
-		if decision := h.checkSecurityAudit(c, reqLog, apiKey, subject, service.ContentModerationProtocolAnthropicMessages, reqModel, body); decision != nil && !decision.AllowNextStage {
-			h.anthropicSecurityAuditError(c, decision)
-			return
-		}
+	// 从节点：安全审计经主节点判定（h.relay.SecurityAudit），渠道映射在主节点选号时做。
+	if decision := h.checkSecurityAudit(c, reqLog, apiKey, subject, service.ContentModerationProtocolAnthropicMessages, reqModel, body); decision != nil && !decision.AllowNextStage {
+		h.anthropicSecurityAuditError(c, decision)
+		return
 	}
 
 	// 解析渠道级模型映射
@@ -3114,7 +3110,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					// 从节点：复核、定价、占这一轮的槽、签凭证都在主节点（BeginTurn）。
 					model := reqModel
 					if v, ok := relayTurnModels.Load(turn); ok && turn > 1 {
-						model = v.(string)
+						if m, isString := v.(string); isString {
+							model = m
+						}
 					}
 					turnAttempt, err := h.relay.BeginTurn(c, relayConn, turn, model)
 					if err != nil {
@@ -3177,7 +3175,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				var relayTurn *OpenAIRelayAttempt
 				if h.relay != nil {
 					if v, ok := relayTurns.LoadAndDelete(turn); ok {
-						relayTurn = v.(*OpenAIRelayAttempt)
+						relayTurn, _ = v.(*OpenAIRelayAttempt)
 					}
 					// 放这一轮的槽在用量入队之后（没入队的预扣随之退回）。
 					defer h.relay.EndTurn(c, relayConn, relayTurn)

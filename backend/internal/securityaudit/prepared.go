@@ -26,7 +26,7 @@ type PreparedInput struct {
 
 // PrepareRequest 用请求体算好审核输入并去掉请求体。结果交给 Check 与拿原请求体判定一致（有等价测试）。
 func PrepareRequest(req Request) Request {
-	prepared := &PreparedInput{Moderation: service.ExtractContentModerationInput(req.Protocol, req.Body)}
+	prepared := &PreparedInput{Moderation: service.ExtractContentModerationInput(req.Protocol, req.Body).ForTransfer()}
 	var document any
 	if err := json.Unmarshal(req.Body, &document); err != nil {
 		prepared.InvalidJSON = true
@@ -68,4 +68,12 @@ func preparedModeration(req Request) *service.ContentModerationInput {
 	}
 	in := req.Prepared.Moderation
 	return &in
+}
+
+// AllowDecision 是放行的判定（不会被审计时）。
+func AllowDecision() Decision { return allowDecision(nil, nil) }
+
+// UnavailableDecision 是审计判定不可用时的结果（与提示词审计阻断模式下审计服务出错时一样：503，不往下走）。
+func UnavailableDecision() Decision {
+	return prioritize(nil, unavailablePromptDecision(ErrorCodeUnavailable))
 }

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"crypto/sha256"
 	"net/http"
 	"strings"
@@ -55,17 +56,41 @@ func (h *OpenAIGatewayHandler) checkSecurityAudit(c *gin.Context, reqLog *zap.Lo
 	if h == nil {
 		return nil
 	}
-	return runSecurityAudit(c, reqLog, h.securityAuditCoordinator, h.contentModerationService, apiKey, subject, protocol, model, body, "http")
+	return runSecurityAuditWith(c, reqLog, h.securityAuditCheck(c, apiKey), h.contentModerationService, apiKey, subject, protocol, model, body, "http")
 }
 
 func (h *OpenAIGatewayHandler) checkSecurityAuditStage(c *gin.Context, reqLog *zap.Logger, apiKey *service.APIKey, subject middleware2.AuthSubject, protocol, model string, body []byte, stage string) *securityaudit.Decision {
 	if h == nil {
 		return nil
 	}
-	return runSecurityAudit(c, reqLog, h.securityAuditCoordinator, h.contentModerationService, apiKey, subject, protocol, model, body, stage)
+	return runSecurityAuditWith(c, reqLog, h.securityAuditCheck(c, apiKey), h.contentModerationService, apiKey, subject, protocol, model, body, stage)
+}
+
+// securityAuditCheckFunc 是审计判定：单机是审计协调器；主从分流的从节点经主节点判定（OpenAIRelayDispatcher.SecurityAudit）。
+type securityAuditCheckFunc func(ctx context.Context, request securityaudit.Request) securityaudit.Decision
+
+func coordinatorCheck(coordinator *securityaudit.Coordinator) securityAuditCheckFunc {
+	if coordinator == nil {
+		return nil
+	}
+	return coordinator.Check
+}
+
+// securityAuditCheck 是这个处理函数的审计判定：从节点上经主节点，否则用本机的协调器（没有时为 nil，只跑旧内容审核）。
+func (h *OpenAIGatewayHandler) securityAuditCheck(c *gin.Context, apiKey *service.APIKey) securityAuditCheckFunc {
+	if h.relay != nil {
+		return func(_ context.Context, request securityaudit.Request) securityaudit.Decision {
+			return h.relay.SecurityAudit(c, apiKey, request)
+		}
+	}
+	return coordinatorCheck(h.securityAuditCoordinator)
 }
 
 func runSecurityAudit(c *gin.Context, reqLog *zap.Logger, coordinator *securityaudit.Coordinator, legacy *service.ContentModerationService, apiKey *service.APIKey, subject middleware2.AuthSubject, protocol, model string, body []byte, stage string) *securityaudit.Decision {
+	return runSecurityAuditWith(c, reqLog, coordinatorCheck(coordinator), legacy, apiKey, subject, protocol, model, body, stage)
+}
+
+func runSecurityAuditWith(c *gin.Context, reqLog *zap.Logger, check securityAuditCheckFunc, legacy *service.ContentModerationService, apiKey *service.APIKey, subject middleware2.AuthSubject, protocol, model string, body []byte, stage string) *securityaudit.Decision {
 	if c == nil || c.Request == nil {
 		return nil
 	}
@@ -75,7 +100,7 @@ func runSecurityAudit(c *gin.Context, reqLog *zap.Logger, coordinator *securitya
 			return nil
 		}
 	}
-	if coordinator == nil {
+	if check == nil {
 		legacyDecision := runContentModeration(c, reqLog, legacy, apiKey, subject, protocol, model, body)
 		if legacyDecision == nil {
 			return nil
@@ -107,7 +132,7 @@ func runSecurityAudit(c *gin.Context, reqLog *zap.Logger, coordinator *securitya
 				}
 			}
 			logSecurityAuditStart(reqLog, request, len(body), false)
-			decision := coordinator.Check(c.Request.Context(), request)
+			decision := check(c.Request.Context(), request)
 			if decision.Kind == securityaudit.DecisionAllow {
 				c.Set(securityAuditWSDedupeContextKey, securityAuditWSDedupeEntry{
 					stage: request.Stage, turn: turnNo, bodyHash: bodyHash, decision: decision,
@@ -118,7 +143,7 @@ func runSecurityAudit(c *gin.Context, reqLog *zap.Logger, coordinator *securitya
 		}
 	}
 	logSecurityAuditStart(reqLog, request, len(body), false)
-	decision := coordinator.Check(c.Request.Context(), request)
+	decision := check(c.Request.Context(), request)
 	if decision.AllowNextStage && cacheCompletion {
 		c.Set(securityAuditCompletedContextKey, true)
 	}
@@ -160,21 +185,31 @@ func securityAuditWSTurn(c *gin.Context) (int, bool) {
 func buildSecurityAuditRequest(c *gin.Context, apiKey *service.APIKey, subject middleware2.AuthSubject, protocol, model string, body []byte, stage string) securityaudit.Request {
 	legacy := buildContentModerationInput(c, apiKey, subject, protocol, model, body)
 	request := securityaudit.Request{
-		RequestID: legacy.RequestID, UserID: legacy.UserID, UserEmail: legacy.UserEmail,
-		APIKeyID: legacy.APIKeyID, APIKeyName: legacy.APIKeyName, GroupID: cloneSecurityAuditGroupID(legacy.GroupID),
-		GroupName: legacy.GroupName, Provider: legacy.Provider, Endpoint: legacy.Endpoint,
+		RequestID: legacy.RequestID, Provider: legacy.Provider, Endpoint: legacy.Endpoint,
 		Protocol: legacy.Protocol, Model: legacy.Model, Body: body, Stage: strings.TrimSpace(stage),
 	}
-	if apiKey != nil && apiKey.User != nil {
-		request.Username = apiKey.User.Username
-		if request.UserEmail == "" {
-			request.UserEmail = apiKey.User.Email
-		}
-	}
+	ApplySecurityAuditIdentity(&request, apiKey, subject.UserID)
 	if request.Stage == "" {
 		request.Stage = "http"
 	}
 	return request
+}
+
+// ApplySecurityAuditIdentity 按 Key 填审计请求里的用户、Key、分组（单机按鉴权通过的 Key，主从分流时主节点按
+// 自己复查的 Key，不信从节点）。
+func ApplySecurityAuditIdentity(request *securityaudit.Request, apiKey *service.APIKey, userID int64) {
+	request.UserID = userID
+	if apiKey == nil {
+		return
+	}
+	request.APIKeyID, request.APIKeyName = apiKey.ID, apiKey.Name
+	request.GroupID = cloneSecurityAuditGroupID(apiKey.GroupID)
+	if apiKey.Group != nil {
+		request.GroupName = apiKey.Group.Name
+	}
+	if apiKey.User != nil {
+		request.Username, request.UserEmail = apiKey.User.Username, apiKey.User.Email
+	}
 }
 
 func securityAuditStatus(decision *securityaudit.Decision) int {

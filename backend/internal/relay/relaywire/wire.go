@@ -42,6 +42,7 @@ func ProvideMasterRuntime(
 	concurrency *service.ConcurrencyService,
 	moderation *service.ContentModerationService,
 	promptAudit *securityaudit.PromptService,
+	auditCoordinator *securityaudit.Coordinator,
 	accounts service.AccountRepository,
 	groups service.GroupRepository,
 	errorPassthrough *service.ErrorPassthroughService,
@@ -52,6 +53,12 @@ func ProvideMasterRuntime(
 	var prompt interface{ EffectiveMode() securityaudit.Mode }
 	if promptAudit != nil {
 		prompt = promptAudit
+	}
+	var audit interface {
+		Check(ctx context.Context, req securityaudit.Request) securityaudit.Decision
+	}
+	if auditCoordinator != nil {
+		audit = auditCoordinator
 	}
 	rt := master.NewRuntime(master.RuntimeDeps{
 		Config:        cfg,
@@ -66,7 +73,7 @@ func ProvideMasterRuntime(
 		NewSelector: relayselect.NewFactory(relayselect.Deps{
 			Config: cfg, APIKeys: apiKeys, Subscriptions: subscriptions, Settings: settingService,
 			Billing: billing, Gateway: gateway, Concurrency: concurrency,
-			Moderation: moderation, PromptAudit: prompt, Ops: ops,
+			Moderation: moderation, PromptAudit: prompt, Audit: audit, Ops: ops,
 		}),
 		VoucherPartitions: repository.NewRelayVoucherPartitions(db),
 		Sections:          forwardingSections(errorPassthrough),
