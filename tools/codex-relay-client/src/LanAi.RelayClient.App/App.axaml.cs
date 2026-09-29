@@ -178,17 +178,27 @@ public partial class App : Application
 
         var contextFilterUsage = new ContextFilterUsageStore();
 
+        // Which entries of a group's model whitelist may be offered: built-in rules, plus the
+        // user's own in model-filter.json when there is one (see ModelIdFilter).
+        ModelIdFilter.Current = ModelIdFilter.Load(
+            AppPaths.InData("model-filter.json"),
+            message => ClientLog.Warning(message));
+
         // Local proxy: one credential source for the relay and the page alike, so the token
-        // checked when the user switches it on is the one the next turn uses — the user's
-        // accounts on the relay, and this machine's own Codex and Claude Code sign-ins (read
-        // and refreshed here, never sent to the relay server). The relay reports from its own
-        // threads; the page is told on the UI thread. The dashboard does not exist yet, so the
-        // callbacks reach it through this variable.
+        // checked when the user switches it on is the one the next turn uses — this machine's
+        // own Codex and Claude Code sign-ins, and the official accounts signed in within the
+        // client (read, refreshed and kept here, encrypted, never sent to the relay server).
+        // The relay reports from its own threads; the page is told on the UI thread. The
+        // dashboard does not exist yet, so the callbacks reach it through this variable.
         var officialTokens = new OfficialTokenRefresher();
+        var officialAccounts = new OfficialAccountStore(SecureStorage.CreateSnapshotProtector());
         var localProxyCredentials = new LocalProxyCredentialRouter(
-            new LocalProxyCredentialCache(relay, session.GetAccessTokenAsync),
             new LocalCodexAccount(codexConfig, officialTokens),
-            new LocalClaudeAccount(new ClaudeCredentialFile(), officialTokens));
+            // On macOS Claude Code keeps its sign-in in the keychain (read only once the user
+            // switches it on, after one system prompt); elsewhere, and when it fell back to the
+            // file there, .credentials.json.
+            new LocalClaudeAccount(OperatingSystem.IsMacOS() ? new ClaudeKeychainStore(new ClaudeCredentialFile()) : new ClaudeCredentialFile(), officialTokens),
+            new OfficialAccountSource(officialAccounts, officialTokens));
         var localProxyUsage = new LocalProxyUsageStore();
         DashboardViewModel? dashboardForRelay = null;
 
@@ -207,17 +217,18 @@ public partial class App : Application
             {
                 localProxyUsage.Add(usage);
                 Avalonia.Threading.Dispatcher.UIThread.Post(() => dashboardForRelay?.LocalProxy.RefreshUsage());
-            });
+            },
+            codexCatalogSource: new CodexBundledCatalogSource());
         // Claude Code's settings.json and the editor's own settings, put back on exit.
         var pluginBinding = new ClaudePluginBinding(
             new ClaudeCodeSettingsWriter(Path.Combine(AppPaths.PluginConfigRoot, "claude-settings-journal.json")),
             new VsCodeSettingsEditor(Path.Combine(AppPaths.PluginConfigRoot, "vscode")));
 
-        // Optional and platform-shaped by nothing more than whether the file is there.
-        // The filter is a Windows binary, so the macOS build of this same head finds
-        // nothing, runs Codex → relay directly, and greys out the switch — no OS test
-        // needed here.
-        string contextFilterPath = Path.Combine(AppContext.BaseDirectory, "context-filter", "context-filter.exe");
+        // Optional, and decided by nothing more than whether the file is there: a package
+        // without it runs Codex → relay directly and greys out the switch. From 1.0 both
+        // packages carry it — the Windows .exe, and upstream's darwin-arm64 build in the .app.
+        string contextFilterPath = Path.Combine(AppContext.BaseDirectory, "context-filter",
+            OperatingSystem.IsWindows() ? "context-filter.exe" : "context-filter");
         ContextFilterProcess? contextFilter = File.Exists(contextFilterPath)
             ? new ContextFilterProcess(contextFilterPath)
             : null;
@@ -341,12 +352,19 @@ public partial class App : Application
         // a reminder to keep the proxy/VPN on: the official hosts are often reachable only through one.
         dashboard.LocalProxy.ConfirmEnable = (message, confirmLabel) =>
             ConfirmDialog.AskAsync(shell, message, confirmLabel: confirmLabel);
+        // The client's own accounts change from the relay's threads too (a refresh marking one gone).
+        dashboard.LocalProxy.Post = action => Avalonia.Threading.Dispatcher.UIThread.Post(action);
 
         // A local proxy that fails is only ever reported, never rerouted; this is the report.
         dashboard.LocalProxy.FailureRaised += message => _notifications?.Show(new NotificationRequest(
             "共飞 AI 助手 · 本地代理出错",
             message,
             NotificationSeverity.Warning));
+        // Not a fault: a choice from an older client that no longer applies (the relay's accounts).
+        dashboard.LocalProxy.NoticeRaised += message => _notifications?.Show(new NotificationRequest(
+            "共飞 AI 助手 · 本地代理",
+            message,
+            NotificationSeverity.Information));
 
         var dashboardView = new DashboardView(
             dashboardPage,
@@ -360,6 +378,8 @@ public partial class App : Application
         dashboard.ConfigureAutoGroup = (settings, candidates) =>
             AutoGroupDialog.ShowAsync(shell, settings, candidates);
         dashboard.ShowGroupModels = message => NoticeDialog.ShowNoticeAsync(shell, message);
+        dashboard.ConfirmModelListRestart = message =>
+            ConfirmDialog.AskAsync(shell, message, confirmLabel: "立即重启", cancelLabel: "等待");
 
         clientUpdate.ConfirmUpdate = message => ConfirmDialog.AskAsync(shell, message, confirmLabel: "更新");
         clientUpdate.ShowMessage = message => NoticeDialog.ShowNoticeAsync(shell, message);
@@ -524,6 +544,24 @@ public partial class App : Application
 
         dashboardView.ExitRequested += (_, _) => _ = safeAsync.RunAsync(QuitAsync);
 
+        // macOS: 「屏幕录制」 reaches the app only when it starts anew. 「重新启动助手」 on the 探索 page
+        // leaves through the same quit path as 退出 — config restored, key released — and the bundle
+        // is opened again once this process is gone.
+        if (_weChatIntent is { } explore && OperatingSystem.IsMacOS())
+        {
+            explore.RestartClient = async () =>
+            {
+                if (LanAi.RelayClient.Platform.MacOS.MacAppRelauncher.ScheduleRelaunch())
+                {
+                    await QuitAsync().ConfigureAwait(true);
+                }
+                else
+                {
+                    explore.Overlay.Status = "没能自动重新启动：请从菜单栏退出共飞-ChatGPT助手，再重新打开。";
+                }
+            };
+        }
+
         dashboardView.MinimizeRequested += (_, _) =>
         {
             shell.Hide();
@@ -646,9 +684,9 @@ public partial class App : Application
     /// 「探索」 → 微信消息意图判断 (docs/WECHAT_INTENT_ASSISTANT.md). Present exactly when the package
     /// carries the WeChat reader — <c>wechat-reader\wechat-reader.exe</c> on Windows,
     /// <c>Contents/MacOS/wechat-reader/wechat-reader</c> on macOS — which only a build with
-    /// <c>-p:IncludeWeChatReader=true</c> does. The release workflow does not pass it, so a released
-    /// client has neither the reader nor the page — the package itself is the switch, and no
-    /// environment variable is needed.
+    /// <c>-p:IncludeWeChatReader=true</c> does. From 1.0 the release workflow passes it for both
+    /// packages (the Mac reader is Swift, built on a macOS runner first). The package itself is the
+    /// switch, and no environment variable is needed.
     /// </summary>
     private static WeChatIntentViewModel? CreateWeChatIntent(RelaySessionManager session, DashboardViewModel dashboard, ShellWindow shell)
     {

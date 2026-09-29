@@ -28,6 +28,17 @@ defaults:
     working-directory: tools/codex-relay-client
 
 jobs:
+  # macOS 版微信读屏组件是 Swift，开发机（Windows）上不编译——这里是它唯一的编译检查，
+  # 写错了在这里失败，而不是等到出包。
+  mac-reader:
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 编译 macOS 微信读屏组件
+        run: sh src/LanAi.RelayClient.WeChatReader.Mac/build.sh
+
   test:
     runs-on: windows-latest
     timeout-minutes: 30

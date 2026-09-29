@@ -36,15 +36,7 @@ public sealed class LocalProxyNetworkReminderTests
 
     private static async Task<Rig> SignedInAsync(bool reachable, bool userSaysYes, LocalProxyChoice? saved = null)
     {
-        var relay = new FakeRelayClient
-        {
-            OnListContributionAccounts = () =>
-            [
-                new ContributionAccount(id: 7, name: "我的 Plus", platform: "openai", type: "oauth", status: "active"),
-                new ContributionAccount(id: 8, name: "Max", platform: "anthropic", type: "oauth", status: "active"),
-            ],
-            OnLocalProxyCredential = id => new LocalProxyCredential(accountId: id, accessToken: "at"),
-        };
+        var relay = new FakeRelayClient();
         var session = new RelaySessionManager(relay, new FakeSessionStore(), "https://relay.test/", new TestClock().Read);
         var codex = new FakeCodexStartup { UsesLocalTransport = true };
         var network = new LocalProxyViewModelTests.FakeReachability { Reachable = reachable };
@@ -55,7 +47,9 @@ public sealed class LocalProxyNetworkReminderTests
             new ManagedKeyNaming(new FixedInstallId("t")),
             codex,
             pluginSupportPreferences: new FakePluginSupportPreferenceStore(),
-            localProxyCredentials: new LocalProxyCredentialCache(relay, _ => Task.FromResult("jwt")),
+            localProxyCredentials: new LocalProxyCredentialRouter(
+                new LocalProxyViewModelTests.FakeLocalAccount(LocalProxyKind.Codex),
+                new LocalProxyViewModelTests.FakeLocalAccount(LocalProxyKind.ClaudeCode)),
             localProxyPreferences: new ChoiceStore { Saved = saved ?? LocalProxyChoice.None },
             localProxyUsage: new NoUsage(),
             localProxyReachability: network);
@@ -77,8 +71,8 @@ public sealed class LocalProxyNetworkReminderTests
     {
         Rig rig = await SignedInAsync(reachable: true, userSaysYes: true);
 
-        await rig.Dashboard.LocalProxy.ToggleAsync(rig.Dashboard.LocalProxy.CodexAccounts[0]);
-        await rig.Dashboard.LocalProxy.ToggleAsync(rig.Dashboard.LocalProxy.ClaudeAccounts[0]);
+        await rig.Dashboard.LocalProxy.ToggleAsync(rig.Dashboard.LocalProxy.LocalCodexAccount!);
+        await rig.Dashboard.LocalProxy.ToggleAsync(rig.Dashboard.LocalProxy.LocalClaudeAccount!);
 
         Assert.Equal(["chatgpt.com", "api.anthropic.com"], rig.Network.Checked.Select(u => u.Host));
         (string message, string label) = rig.Asked[0];
@@ -86,7 +80,7 @@ public sealed class LocalProxyNetworkReminderTests
         Assert.Contains("保持代理/VPN", message);
         Assert.Contains("\n", message);
         Assert.Equal("开启", label);
-        Assert.Contains(rig.Codex.LocalProxies, p => p.Kind == LocalProxyKind.Codex && p.Target?.AccountId == 7);
+        Assert.Contains(rig.Codex.LocalProxies, p => p.Kind == LocalProxyKind.Codex && p.Target?.AccountId == LocalMachineAccounts.CodexId);
         Assert.False(rig.Dashboard.LocalProxy.HasError);
     }
 
@@ -95,7 +89,7 @@ public sealed class LocalProxyNetworkReminderTests
     {
         Rig rig = await SignedInAsync(reachable: true, userSaysYes: false);
 
-        await rig.Dashboard.LocalProxy.ToggleAsync(rig.Dashboard.LocalProxy.CodexAccounts[0]);
+        await rig.Dashboard.LocalProxy.ToggleAsync(rig.Dashboard.LocalProxy.LocalCodexAccount!);
 
         Assert.Empty(rig.Codex.LocalProxies);
         Assert.False(rig.Dashboard.LocalProxy.IsCodexActive);
@@ -106,7 +100,7 @@ public sealed class LocalProxyNetworkReminderTests
     {
         Rig rig = await SignedInAsync(reachable: false, userSaysYes: true);
 
-        await rig.Dashboard.LocalProxy.ToggleAsync(rig.Dashboard.LocalProxy.CodexAccounts[0]);
+        await rig.Dashboard.LocalProxy.ToggleAsync(rig.Dashboard.LocalProxy.LocalCodexAccount!);
 
         (string message, string label) = Assert.Single(rig.Asked);
         Assert.Contains("连不上官方服务器", message);
@@ -122,7 +116,7 @@ public sealed class LocalProxyNetworkReminderTests
         Rig rig = await SignedInAsync(reachable: false, userSaysYes: true);
         rig.Dashboard.LocalProxy.ConfirmEnable = null;
 
-        await rig.Dashboard.LocalProxy.ToggleAsync(rig.Dashboard.LocalProxy.CodexAccounts[0]);
+        await rig.Dashboard.LocalProxy.ToggleAsync(rig.Dashboard.LocalProxy.LocalCodexAccount!);
 
         Assert.Empty(rig.Codex.LocalProxies);
         Assert.Contains("代理/VPN", rig.Dashboard.LocalProxy.ActionMessage);
@@ -133,7 +127,7 @@ public sealed class LocalProxyNetworkReminderTests
     {
         Rig rig = await SignedInAsync(reachable: true, userSaysYes: true);
 
-        await rig.Dashboard.LocalProxy.ToggleAsync(rig.Dashboard.LocalProxy.CodexAccounts[0]);
+        await rig.Dashboard.LocalProxy.ToggleAsync(rig.Dashboard.LocalProxy.LocalCodexAccount!);
 
         Assert.Contains("确定后会自动启动", rig.Asked[0].Message);
         Assert.Equal(1, rig.Codex.RunCount);
@@ -148,21 +142,21 @@ public sealed class LocalProxyNetworkReminderTests
         Rig rig = await SignedInAsync(reachable: true, userSaysYes: true);
         rig.Dashboard.IsCodexRunning = true;
 
-        await rig.Dashboard.LocalProxy.ToggleAsync(rig.Dashboard.LocalProxy.CodexAccounts[0]);
+        await rig.Dashboard.LocalProxy.ToggleAsync(rig.Dashboard.LocalProxy.LocalCodexAccount!);
 
         Assert.DoesNotContain("自动启动", rig.Asked[0].Message);
         Assert.Equal(0, rig.Codex.RunCount);
-        Assert.DoesNotContain("ChatGPT", rig.Dashboard.LocalProxy.ActionMessage.Replace("ChatGPT 账号", string.Empty));
+        Assert.DoesNotContain("启动", rig.Dashboard.LocalProxy.ActionMessage);
     }
 
     [Fact]
     public async Task DecliningOrSwitchingClaudeCodeOnStartsNothing()
     {
         Rig rig = await SignedInAsync(reachable: true, userSaysYes: false);
-        await rig.Dashboard.LocalProxy.ToggleAsync(rig.Dashboard.LocalProxy.CodexAccounts[0]);
+        await rig.Dashboard.LocalProxy.ToggleAsync(rig.Dashboard.LocalProxy.LocalCodexAccount!);
 
         Rig claude = await SignedInAsync(reachable: true, userSaysYes: true);
-        await claude.Dashboard.LocalProxy.ToggleAsync(claude.Dashboard.LocalProxy.ClaudeAccounts[0]);
+        await claude.Dashboard.LocalProxy.ToggleAsync(claude.Dashboard.LocalProxy.LocalClaudeAccount!);
 
         Assert.Equal(0, rig.Codex.RunCount);
         Assert.Equal(0, claude.Codex.RunCount);
@@ -175,7 +169,7 @@ public sealed class LocalProxyNetworkReminderTests
         Rig rig = await SignedInAsync(reachable: true, userSaysYes: true);
         rig.Codex.OnRun = (_, _) => new CodexStartupResult(CodexStartupStatus.RelayUnavailable, "本机 Relay 启动失败。");
 
-        await rig.Dashboard.LocalProxy.ToggleAsync(rig.Dashboard.LocalProxy.CodexAccounts[0]);
+        await rig.Dashboard.LocalProxy.ToggleAsync(rig.Dashboard.LocalProxy.LocalCodexAccount!);
 
         Assert.True(rig.Dashboard.LocalProxy.IsCodexActive);
         Assert.EndsWith("ChatGPT 没有启动：本机 Relay 启动失败。", rig.Dashboard.LocalProxy.ActionMessage);
@@ -187,7 +181,7 @@ public sealed class LocalProxyNetworkReminderTests
         Rig rig = await SignedInAsync(
             reachable: false,
             userSaysYes: true,
-            saved: new LocalProxyChoice { CodexAccountId = 7, CodexAccountName = "我的 Plus" });
+            saved: new LocalProxyChoice { CodexAccountId = LocalMachineAccounts.CodexId, CodexAccountName = "本机 ChatGPT 登录" });
 
         Assert.True(rig.Dashboard.LocalProxy.IsCodexActive);
         Assert.Contains("代理/VPN", rig.Dashboard.LocalProxy.CodexError);

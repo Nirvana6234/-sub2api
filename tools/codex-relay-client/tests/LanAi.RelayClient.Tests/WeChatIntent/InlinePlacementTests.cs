@@ -63,4 +63,24 @@ public sealed class InlinePlacementTests
 
         Assert.Empty(InlinePlacement.Place([Card("在吗")], screen));
     }
+
+    [Fact]
+    public void CardsTooCloseMoveRightAndStayLevelWithTheirMessages()
+    {
+        var cards = new[] { (X: 600, Y: 100, Item: "a"), (X: 600, Y: 120, Item: "b"), (X: 600, Y: 140, Item: "c"), (X: 600, Y: 160, Item: "d") };
+
+        var placed = InlinePlacement.Arrange(cards, width: 220, height: 44, gap: 4);
+
+        Assert.Equal([("a", 600, 100), ("b", 824, 120), ("c", 1048, 140), ("d", 600, 160)], placed.Select(p => (p.Item, p.X, p.Y)));
+    }
+
+    [Fact]
+    public void CardsFarEnoughApartAreNotMoved()
+    {
+        var cards = new[] { (X: 600, Y: 100, Item: "a"), (X: 640, Y: 148, Item: "b"), (X: 100, Y: 110, Item: "c") };
+
+        var placed = InlinePlacement.Arrange(cards, width: 220, height: 44, gap: 4);
+
+        Assert.Equal([("a", 600), ("c", 100), ("b", 640)], placed.Select(p => (p.Item, p.X)));
+    }
 }

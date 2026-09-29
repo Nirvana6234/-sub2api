@@ -110,6 +110,9 @@ internal sealed class WeChatIntentPreferenceStore(string? filePath = null)
 
         /// <summary>The relay route's consent text version the user accepted; 0 when never.</summary>
         public int RelayConsentVersion { get; init; }
+
+        /// <summary>macOS: the user was told, before the first switch-on, that 「屏幕录制」 will be asked for.</summary>
+        public bool ScreenRecordingExplained { get; init; }
     }
 
     public Preferences Load()

@@ -413,7 +413,10 @@ public sealed class CodexLifecycleTests : IDisposable
         public async Task StartAsync(
             string apiKey,
             string baseUrl,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            string? catalogUrl = null,
+            string? preferredModel = null,
+            IReadOnlyCollection<string>? keepModelIfIn = null)
         {
             StartEntered.SetResult();
             await AllowStart.Task.WaitAsync(cancellationToken);
@@ -440,7 +443,10 @@ public sealed class CodexLifecycleTests : IDisposable
         public Task StartAsync(
             string apiKey,
             string baseUrl,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            string? catalogUrl = null,
+            string? preferredModel = null,
+            IReadOnlyCollection<string>? keepModelIfIn = null)
         {
             StartCallCount++;
             return Task.CompletedTask;

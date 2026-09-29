@@ -135,9 +135,13 @@ internal sealed class OfficialTokenRefresher : IOfficialTokenRefresher
                 ClientLog.Info($"刷新本机 {product} 登录：HTTP {status}");
                 if (!response.IsSuccessStatusCode)
                 {
-                    throw new LocalProxyCredentialException(IsSignInGone(status, text)
+                    bool gone = IsSignInGone(status, text);
+                    throw new LocalProxyCredentialException(gone
                         ? $"本机 {product} 登录已失效（可能在别处退出或被重新登录过），请先重新登录（{signInHint}），下一轮对话会自动使用新登录。"
-                        : $"刷新本机 {product} 登录失败（HTTP {status}），稍后会自动重试。");
+                        : $"刷新本机 {product} 登录失败（HTTP {status}），稍后会自动重试。")
+                    {
+                        SignInGone = gone,
+                    };
                 }
 
                 try
@@ -167,7 +171,8 @@ internal sealed class OfficialTokenRefresher : IOfficialTokenRefresher
 
     private static string? NullIfEmpty(string value) => value.Length == 0 ? null : value;
 
-    private static HttpMessageHandler CreateHandler(Uri target)
+    /// <summary>A connection to an official host through the proxy as it is set now. Shared with the sign-in exchange.</summary>
+    internal static HttpMessageHandler CreateHandler(Uri target)
     {
         SystemProxy proxy = SystemProxyReader.Current(target);
         return new HttpClientHandler

@@ -76,8 +76,15 @@ internal interface ICodexStartup
     /// </remarks>
     bool UsesLocalTransport => false;
 
-    /// <summary>Rebinds forwarded traffic to <paramref name="groupId"/>, effective immediately.</summary>
-    void SetActiveGroup(long? groupId, string? groupName = null) { }
+    /// <summary>
+    /// Rebinds forwarded traffic to <paramref name="groupId"/>, effective immediately.
+    /// </summary>
+    /// <param name="models">
+    /// What the group serves when it has a whitelist, null otherwise. Moves with the group in
+    /// one step, so the relay never holds one group's models against another's traffic.
+    /// </param>
+    void SetActiveGroup(long? groupId, string? groupName = null, CodexGroupModels? models = null) { }
+
 
     /// <summary>
     /// Sends one tool straight to the official API with one of the user's own accounts, or —
@@ -112,7 +119,9 @@ internal interface ICodexStartup
         CancellationToken cancellationToken = default,
         string? preferredModel = null,
         bool forceNewKey = false,
-        string? groupName = null);
+        string? groupName = null,
+        CodexGroupModels? groupModels = null,
+        bool keepUserModelIfServed = false);
 
     /// <summary>Reports the current state without starting or writing anything.</summary>
     Task<CodexHealth> CheckAsync(CancellationToken cancellationToken = default);
@@ -259,10 +268,42 @@ internal sealed class CodexStartup : ICodexStartup
 
     public bool UsesLocalTransport => _localRelay is not null;
 
-    public void SetActiveGroup(long? groupId, string? groupName = null) => _localRelay?.SetGroup(groupId, groupName);
+    public void SetActiveGroup(long? groupId, string? groupName = null, CodexGroupModels? models = null)
+    {
+        if (_localRelay is null)
+        {
+            return;
+        }
+
+        string before = _localRelay.ModelsEtag;
+        _localRelay.SetGroup(groupId, groupName, models);
+        ForgetCachedModelListIfChanged(before);
+    }
+
+    /// <summary>
+    /// Makes a running Codex pick up a changed model list without a restart.
+    /// </summary>
+    /// <remarks>
+    /// Two nudges, since neither reaches every case. Deleting Codex's cached copy makes its next
+    /// list request go to the relay instead of being answered from that copy — the case of
+    /// opening the picker. The relay's new version number, stamped on the next reply, makes it
+    /// fetch during the next turn. Both measured against the real binary; the version number
+    /// alone leaves the list stale until a message is sent, the deleted cache alone until the
+    /// list is next requested.
+    /// </remarks>
+    private void ForgetCachedModelListIfChanged(string etagBefore)
+    {
+        if (_localRelay is null || string.Equals(etagBefore, _localRelay.ModelsEtag, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _config.ForgetCachedModelList();
+    }
 
     public void SetLocalProxy(LocalProxyKind kind, LocalProxyTarget? target)
     {
+        string etagBefore = _localRelay?.ModelsEtag ?? string.Empty;
         lock (_localProxyGate)
         {
             if (kind == LocalProxyKind.Codex)
@@ -280,6 +321,7 @@ internal sealed class CodexStartup : ICodexStartup
         }
 
         _localRelay?.SetLocalProxy(kind, target);
+        ForgetCachedModelListIfChanged(etagBefore);
     }
 
     /// <summary>Puts the chosen targets back on the relay after it (re)started.</summary>
@@ -310,6 +352,15 @@ internal sealed class CodexStartup : ICodexStartup
     /// An explicit model selected for a Claude/Kiro group. When absent, the
     /// user's existing top-level Codex model setting is preserved.
     /// </param>
+    /// <param name="groupModels">
+    /// The group's whitelist, when it has one. Handed to the relay, and it is what makes
+    /// Codex's model picker show the group's models.
+    /// </param>
+    /// <param name="keepUserModelIfServed">
+    /// The user's own <c>model</c> survives when the group serves it, and <paramref name="preferredModel"/>
+    /// only fills in when it does not. False replaces the model outright, as a Claude group's
+    /// chosen model always did.
+    /// </param>
     public async Task<CodexStartupResult> RunAsync(
         long? groupId,
         string apiBaseUrl,
@@ -317,7 +368,9 @@ internal sealed class CodexStartup : ICodexStartup
         CancellationToken cancellationToken = default,
         string? preferredModel = null,
         bool forceNewKey = false,
-        string? groupName = null)
+        string? groupName = null,
+        CodexGroupModels? groupModels = null,
+        bool keepUserModelIfServed = false)
     {
         if (Volatile.Read(ref _releaseRequests) > 0)
         {
@@ -368,7 +421,7 @@ internal sealed class CodexStartup : ICodexStartup
                     // been restarted and every turn fails.
                     await _session.GetAccessTokenAsync(cancellationToken).ConfigureAwait(true);
                     await _localRelay.StartAsync(cancellationToken).ConfigureAwait(true);
-                    _localRelay.SetGroup(selectedGroup, groupName);
+                    _localRelay.SetGroup(selectedGroup, groupName, groupModels);
                     ApplyLocalProxies();
                     _codexUsesRelay = true;
                     codexKey = _localRelay.Token;
@@ -421,9 +474,13 @@ internal sealed class CodexStartup : ICodexStartup
                 codexBaseUrl = apiBaseUrl;
             }
 
+            // Only the loopback relay can answer a model-list request for the chosen group; a
+            // managed key talks to the server directly, where there is nothing to ask.
+            string? catalogUrl = _localRelay?.Origin is { } relayOrigin ? relayOrigin + LocalPawRelay.CatalogPath : null;
+            IReadOnlyCollection<string>? keepModelIfIn = keepUserModelIfServed ? groupModels?.Models : null;
             try
             {
-                _config.Apply(codexKey, codexBaseUrl, preferredModel);
+                _config.Apply(codexKey, codexBaseUrl, preferredModel, catalogUrl, keepModelIfIn);
                 ClientLog.Info(_localRelay is null ? $"已写入 ChatGPT 配置，授权 {managedKey!.Id}" : "已写入 ChatGPT 本机 Relay 配置");
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -470,7 +527,7 @@ internal sealed class CodexStartup : ICodexStartup
                 // branch, which left that guard off entirely on the growing share of
                 // machines where the port never opens.
                 await _routeGuard
-                    .StartAsync(codexKey, codexBaseUrl, cancellationToken)
+                    .StartAsync(codexKey, codexBaseUrl, cancellationToken, catalogUrl, preferredModel, keepModelIfIn)
                     .ConfigureAwait(true);
 
                 _servingCodex = true;
@@ -744,8 +801,9 @@ internal sealed class CodexStartup : ICodexStartup
             }
 
             // A Claude group, or a local-proxy account in its place: either gives Claude Code
-            // somewhere to go.
-            bool wanted = request.Enabled && (request.GroupId is > 0 || request.LocalProxyAccountId is > 0);
+            // somewhere to go. Any account id counts — this machine's own sign-in and the ones
+            // signed in within the client have negative ids (LocalMachineAccounts).
+            bool wanted = request.Enabled && (request.GroupId is > 0 || request.LocalProxyAccountId is not null);
             if (!wanted)
             {
                 await RestorePluginsAsync().ConfigureAwait(false);

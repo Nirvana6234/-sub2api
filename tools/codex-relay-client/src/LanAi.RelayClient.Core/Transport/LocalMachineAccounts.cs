@@ -30,6 +30,9 @@ internal sealed class LocalProxyCredentialException(string userMessage, Exceptio
     : Exception(userMessage, innerException)
 {
     public string UserMessage => Message;
+
+    /// <summary>The official side refused the refresh token for good; only signing in again helps.</summary>
+    public bool SignInGone { get; init; }
 }
 
 internal enum LocalMachineAccountState

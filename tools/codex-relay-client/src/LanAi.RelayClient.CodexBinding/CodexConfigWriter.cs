@@ -26,6 +26,21 @@ public sealed class CodexConfigWriter : ICodexLoginStore
     /// <summary>The provider name this client owns inside <c>config.toml</c>.</summary>
     internal const string ProviderName = "gongfei";
 
+    private const string FeaturesHeader = "[features]";
+
+    /// <summary>
+    /// The switch that lets Codex fetch a model list when it signs in with an API key. Still
+    /// marked as under development in Codex, hence a constant to find in one place if it moves.
+    /// </summary>
+    private const string DiscoveryFeature = "api_key_model_discovery";
+
+    /// <summary>
+    /// Codex warns in every conversation when a feature still under development is on
+    /// ("Under-development features enabled: api_key_model_discovery", measured). The switch is
+    /// ours, not something the user opted into, so the warning is silenced along with it.
+    /// </summary>
+    private const string SuppressUnstableWarning = "suppress_unstable_features_warning";
+
     private const string ApiKeyField = "OPENAI_API_KEY";
 
     /// <summary>
@@ -80,7 +95,22 @@ public sealed class CodexConfigWriter : ICodexLoginStore
     /// The Claude model selected for a Claude/Kiro group. Null leaves the user's
     /// existing top-level model setting unchanged.
     /// </param>
-    public void Apply(string apiKey, string baseUrl, string? preferredModel = null)
+    /// <param name="catalogUrl">
+    /// Where Codex should ask for its model list. Written to the provider together with the
+    /// feature switch Codex requires before it will ask at all (measured: without the switch
+    /// the address is ignored). Null writes neither.
+    /// </param>
+    /// <param name="keepModelIfIn">
+    /// When given, <paramref name="preferredModel"/> only replaces the user's model if the
+    /// user's is not among these — a model the user picked and the group serves is theirs to
+    /// keep. Null replaces unconditionally.
+    /// </param>
+    public void Apply(
+        string apiKey,
+        string baseUrl,
+        string? preferredModel = null,
+        string? catalogUrl = null,
+        IReadOnlyCollection<string>? keepModelIfIn = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(apiKey);
         ArgumentException.ThrowIfNullOrWhiteSpace(baseUrl);
@@ -91,7 +121,37 @@ public sealed class CodexConfigWriter : ICodexLoginStore
             Directory.CreateDirectory(_paths.Home);
 
             WriteAuth(apiKey, firstCapture);
-            WriteConfig(baseUrl, preferredModel);
+            WriteConfig(baseUrl, preferredModel, catalogUrl, keepModelIfIn);
+
+            if (catalogUrl is not null)
+            {
+                ForgetCachedModelList();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Codex's on-disk copy of the last model list it fetched, for up to five minutes.
+    /// </summary>
+    internal const string ModelsCacheFile = "models_cache.json";
+
+    /// <summary>
+    /// Deletes Codex's cached model list so the next start asks for it again.
+    /// </summary>
+    /// <remarks>
+    /// Codex answers its first request from that copy and refreshes it in the background, so a
+    /// restart right after a group switch raced the refresh and often showed the previous
+    /// group's models (measured, against the real binary). Best-effort: a copy that cannot be
+    /// removed only means the old list may show once more.
+    /// </remarks>
+    public void ForgetCachedModelList()
+    {
+        try
+        {
+            File.Delete(Path.Combine(_paths.Home, ModelsCacheFile));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
         }
     }
 
@@ -377,7 +437,7 @@ public sealed class CodexConfigWriter : ICodexLoginStore
         obj[name] is JsonValue value && value.TryGetValue(out string? text) ? text ?? string.Empty : string.Empty;
 
     /// <summary>Reads the live TOML without changing it and verifies the owned route.</summary>
-    public bool IsRelayRoute(string baseUrl, string? expectedApiKey = null)
+    public bool IsRelayRoute(string baseUrl, string? expectedApiKey = null, string? catalogUrl = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(baseUrl);
         if (expectedApiKey is not null)
@@ -392,7 +452,10 @@ public sealed class CodexConfigWriter : ICodexLoginStore
 
         bool providerSelected = false;
         bool baseUrlMatches = false;
+        bool catalogMatches = catalogUrl is null;
+        bool discoveryOn = catalogUrl is null;
         bool inRelaySection = false;
+        bool inFeatures = false;
         bool inAnySection = false;
         string relayHeader = $"[model_providers.{ProviderName}]";
 
@@ -403,6 +466,7 @@ public sealed class CodexConfigWriter : ICodexLoginStore
             {
                 inAnySection = true;
                 inRelaySection = string.Equals(trimmed, relayHeader, StringComparison.Ordinal);
+                inFeatures = string.Equals(trimmed, FeaturesHeader, StringComparison.Ordinal);
                 continue;
             }
 
@@ -414,9 +478,18 @@ public sealed class CodexConfigWriter : ICodexLoginStore
             {
                 baseUrlMatches = true;
             }
+            else if (inRelaySection && catalogUrl is not null && AssignmentEquals(rawLine, "model_catalog_url", catalogUrl))
+            {
+                catalogMatches = true;
+            }
+            else if (inFeatures && IsAssignmentTo(rawLine, DiscoveryFeature) &&
+                     rawLine.Split('=', 2)[1].Trim().StartsWith("true", StringComparison.Ordinal))
+            {
+                discoveryOn = true;
+            }
         }
 
-        if (!providerSelected || !baseUrlMatches)
+        if (!providerSelected || !baseUrlMatches || !catalogMatches || !discoveryOn)
         {
             return false;
         }
@@ -555,20 +628,29 @@ public sealed class CodexConfigWriter : ICodexLoginStore
     /// dependency the installer budget does not want, and a round-trip through one
     /// would reformat the whole file and lose the user's comments.
     /// </remarks>
-    private void WriteConfig(string baseUrl, string? preferredModel)
+    private void WriteConfig(
+        string baseUrl,
+        string? preferredModel,
+        string? catalogUrl = null,
+        IReadOnlyCollection<string>? keepModelIfIn = null)
     {
         string existing = File.Exists(_paths.ConfigPath)
             ? File.ReadAllText(_paths.ConfigPath)
             : string.Empty;
 
-        AtomicWrite(_paths.ConfigPath, MergeConfig(existing, baseUrl, preferredModel));
+        AtomicWrite(_paths.ConfigPath, MergeConfig(existing, baseUrl, preferredModel, catalogUrl, keepModelIfIn));
     }
 
     /// <summary>
     /// Produces a <c>config.toml</c> routing through the relay while keeping
     /// everything the user had that is not this client's to change.
     /// </summary>
-    internal static string MergeConfig(string existing, string baseUrl, string? preferredModel = null)
+    internal static string MergeConfig(
+        string existing,
+        string baseUrl,
+        string? preferredModel = null,
+        string? catalogUrl = null,
+        IReadOnlyCollection<string>? keepModelIfIn = null)
     {
         var preamble = new List<string>();
         var sections = new List<(string Header, List<string> Body)>();
@@ -592,13 +674,24 @@ public sealed class CodexConfigWriter : ICodexLoginStore
             }
         }
 
-        bool replaceModel = !string.IsNullOrWhiteSpace(preferredModel);
+        string? existingModel = preamble
+            .Select(line => IsAssignmentTo(line, "model") ? ReadQuotedValue(line) : null)
+            .FirstOrDefault(value => value is not null);
+        bool replaceModel = !string.IsNullOrWhiteSpace(preferredModel) &&
+            (keepModelIfIn is null ||
+             existingModel is null ||
+             !keepModelIfIn.Contains(existingModel, StringComparer.OrdinalIgnoreCase));
         bool wroteModel = false;
         bool hasReasoningEffort = false;
         var topLevel = new List<string>();
         foreach (string line in preamble)
         {
             if (IsAssignmentTo(line, "model_provider"))
+            {
+                continue;
+            }
+
+            if (catalogUrl is not null && IsAssignmentTo(line, SuppressUnstableWarning))
             {
                 continue;
             }
@@ -633,6 +726,11 @@ public sealed class CodexConfigWriter : ICodexLoginStore
             topLevel.Add("model_reasoning_effort = \"medium\"");
         }
 
+        if (catalogUrl is not null)
+        {
+            topLevel.Add($"{SuppressUnstableWarning} = true");
+        }
+
         topLevel.Add($"model_provider = \"{ProviderName}\"");
 
         string ourHeader = $"[model_providers.{ProviderName}]";
@@ -649,6 +747,15 @@ public sealed class CodexConfigWriter : ICodexLoginStore
         builder.AppendLine($"base_url = \"{EscapeToml(baseUrl)}\"");
         builder.AppendLine("wire_api = \"responses\"");
         builder.AppendLine("requires_openai_auth = true");
+        if (catalogUrl is not null)
+        {
+            builder.AppendLine($"model_catalog_url = \"{EscapeToml(catalogUrl)}\"");
+        }
+
+        if (catalogUrl is not null)
+        {
+            EnsureDiscoveryFeature(sections);
+        }
 
         foreach ((string header, List<string> body) in sections)
         {
@@ -671,6 +778,52 @@ public sealed class CodexConfigWriter : ICodexLoginStore
         }
 
         return builder.ToString();
+    }
+
+    /// <summary>
+    /// Turns the model-list switch on inside the user's own <c>[features]</c> table, or adds
+    /// the table. Two tables of the same name are a TOML error that stops Codex reading the
+    /// file at all, so an existing one is edited rather than appended to.
+    /// </summary>
+    private static void EnsureDiscoveryFeature(List<(string Header, List<string> Body)> sections)
+    {
+        string line = $"{DiscoveryFeature} = true";
+        int at = sections.FindIndex(s => string.Equals(s.Header, FeaturesHeader, StringComparison.Ordinal));
+        if (at < 0)
+        {
+            sections.Add((FeaturesHeader, [line]));
+            return;
+        }
+
+        List<string> body = sections[at].Body;
+        int existing = body.FindIndex(l => IsAssignmentTo(l, DiscoveryFeature));
+        if (existing >= 0)
+        {
+            body[existing] = line;
+        }
+        else
+        {
+            body.Insert(0, line);
+        }
+    }
+
+    /// <summary>The string in <c>key = "value"</c>, or null when the value is not a plain quoted string.</summary>
+    private static string? ReadQuotedValue(string line)
+    {
+        int equals = line.IndexOf('=', StringComparison.Ordinal);
+        if (equals < 0)
+        {
+            return null;
+        }
+
+        string value = line[(equals + 1)..].Trim();
+        if (value.Length < 2 || value[0] != '"')
+        {
+            return null;
+        }
+
+        int close = value.IndexOf('"', 1);
+        return close < 0 ? null : value[1..close];
     }
 
     private static IEnumerable<string> SplitLines(string text) =>

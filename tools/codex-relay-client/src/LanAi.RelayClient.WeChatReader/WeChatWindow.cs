@@ -102,15 +102,17 @@ internal sealed class WeChatWindow
     /// The visible top-level window of a Weixin process — the one in front when there are
     /// several (a second instance, or a pop-out chat window, which is not read in phase 1).
     /// </summary>
-    private static IntPtr Find()
+    private IntPtr Find()
     {
         var candidates = new List<IntPtr>();
+        var pids = new HashSet<uint>();
         foreach (Process process in Process.GetProcessesByName(ProcessName))
         {
             using (process)
             {
                 try
                 {
+                    pids.Add((uint)process.Id);
                     IntPtr main = process.MainWindowHandle;
                     if (main != IntPtr.Zero && IsWindowVisible(main))
                     {
@@ -124,17 +126,136 @@ internal sealed class WeChatWindow
             }
         }
 
-        if (candidates.Count == 0)
+        IntPtr foreground = GetForegroundWindow();
+        IntPtr chosen = candidates.Count == 0 ? IntPtr.Zero : candidates.Contains(foreground) ? foreground : candidates[0];
+        LogFind(chosen, pids, candidates.Count);
+        return chosen;
+    }
+
+    private IntPtr _loggedChoice = new(-1);
+    private string? _loggedCounts;
+
+    /// <summary>
+    /// When the choice changes: which window was taken, and every visible top-level window the
+    /// Weixin processes have — so a log shows whether the right one was picked.
+    /// </summary>
+    private void LogFind(IntPtr chosen, HashSet<uint> pids, int candidates)
+    {
+        string counts = $"Weixin 进程 {pids.Count} 个，主窗口候选 {candidates} 个";
+        if (chosen == _loggedChoice && counts == _loggedCounts)
         {
-            return IntPtr.Zero;
+            return;
         }
 
+        _loggedChoice = chosen;
+        _loggedCounts = counts;
+        Diag.Log(chosen == IntPtr.Zero ? $"查找微信窗口：{counts}，没有可用窗口" : $"查找微信窗口：{counts}，选中 {Describe(chosen)}");
+        List<IntPtr> all = TopLevelWindowsOf(pids);
+        foreach (IntPtr hwnd in all.Take(10))
+        {
+            Diag.Log($"  微信的顶层窗口：{Describe(hwnd)}");
+        }
+
+        if (all.Count > 10)
+        {
+            Diag.Log($"  ……另有 {all.Count - 10} 个");
+        }
+    }
+
+    /// <summary>Class, size, visibility and owner of a window — never its title, which can name a chat.</summary>
+    public static string Describe(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero)
+        {
+            return "（无）";
+        }
+
+        if (!IsWindow(hwnd))
+        {
+            return $"0x{hwnd.ToInt64():X} 已失效";
+        }
+
+        var name = new char[256];
+        int length = GetClassName(hwnd, name, name.Length);
+        string cls = length > 0 ? new string(name, 0, length) : "?";
+        GetWindowRect(hwnd, out Rect r);
+        bool cloaked = DwmGetWindowAttribute(hwnd, DwmwaCloaked, out int cloak, sizeof(int)) == 0 && cloak != 0;
+        GetWindowThreadProcessId(hwnd, out uint pid);
+        return $"0x{hwnd.ToInt64():X} 类 {cls} 位置 {r.Left},{r.Top} 尺寸 {r.Right - r.Left}x{r.Bottom - r.Top}"
+            + $" 可见 {(IsWindowVisible(hwnd) ? "是" : "否")} 最小化 {(IsIconic(hwnd) ? "是" : "否")} 被遮蔽 {(cloaked ? "是" : "否")}"
+            + $" pid {pid} DPI {GetDpiForWindow(hwnd)}";
+    }
+
+    /// <summary>The window in front and its process name, for telling why WeChat does not count as in front.</summary>
+    public static string DescribeForeground()
+    {
         IntPtr foreground = GetForegroundWindow();
-        return candidates.Contains(foreground) ? foreground : candidates[0];
+        if (foreground == IntPtr.Zero)
+        {
+            return "（无）";
+        }
+
+        GetWindowThreadProcessId(foreground, out uint pid);
+        string process = "?";
+        try
+        {
+            using Process p = Process.GetProcessById((int)pid);
+            process = p.ProcessName;
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+        }
+
+        IntPtr root = GetAncestor(foreground, GaRootOwner);
+        return $"进程 {process}，{Describe(foreground)}{(root != foreground ? $"，根窗口 0x{root.ToInt64():X}" : string.Empty)}";
+    }
+
+    [ThreadStatic]
+    private static List<IntPtr>? _enumerated;
+
+    [ThreadStatic]
+    private static HashSet<uint>? _enumeratePids;
+
+    private static unsafe List<IntPtr> TopLevelWindowsOf(HashSet<uint> pids)
+    {
+        _enumerated = [];
+        _enumeratePids = pids;
+        try
+        {
+            EnumWindows(&CollectWindow, IntPtr.Zero);
+            return _enumerated;
+        }
+        finally
+        {
+            _enumerated = null;
+            _enumeratePids = null;
+        }
+    }
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvStdcall)])]
+    private static int CollectWindow(IntPtr hwnd, IntPtr lParam)
+    {
+        GetWindowThreadProcessId(hwnd, out uint pid);
+        if (_enumeratePids is { } pids && pids.Contains(pid) && IsWindowVisible(hwnd))
+        {
+            _enumerated?.Add(hwnd);
+        }
+
+        return 1;
     }
 
     private const uint GaRootOwner = 3;
     private const int DwmwaExtendedFrameBounds = 9;
+    private const int DwmwaCloaked = 14;
+
+    [DllImport("user32.dll")]
+    private static extern unsafe int EnumWindows(delegate* unmanaged[Stdcall]<IntPtr, IntPtr, int> callback, IntPtr lParam);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetClassNameW")]
+    private static extern int GetClassName(IntPtr hwnd, [Out] char[] name, int count);
+
+    [DllImport("dwmapi.dll", EntryPoint = "DwmGetWindowAttribute")]
+    private static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out int value, int size);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct Rect

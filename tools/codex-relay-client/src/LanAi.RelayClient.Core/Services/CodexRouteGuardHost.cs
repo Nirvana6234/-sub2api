@@ -32,14 +32,29 @@ internal sealed class CodexAppLauncherAdapter(CodexAppLauncher launcher) : ICode
 /// </remarks>
 internal interface ICodexRouteGuardHost
 {
-    Task StartAsync(string apiKey, string baseUrl, CancellationToken cancellationToken = default);
+    /// <param name="catalogUrl">Where Codex asks for its model list; part of the route to keep.</param>
+    /// <param name="preferredModel">Written back with the route, so a rewrite does not lose it.</param>
+    /// <param name="keepModelIfIn">See <see cref="CodexConfigWriter.Apply"/>.</param>
+    Task StartAsync(
+        string apiKey,
+        string baseUrl,
+        CancellationToken cancellationToken = default,
+        string? catalogUrl = null,
+        string? preferredModel = null,
+        IReadOnlyCollection<string>? keepModelIfIn = null);
 
     Task StopAsync();
 }
 
 internal sealed class NullCodexRouteGuardHost : ICodexRouteGuardHost
 {
-    public Task StartAsync(string apiKey, string baseUrl, CancellationToken cancellationToken = default) =>
+    public Task StartAsync(
+        string apiKey,
+        string baseUrl,
+        CancellationToken cancellationToken = default,
+        string? catalogUrl = null,
+        string? preferredModel = null,
+        IReadOnlyCollection<string>? keepModelIfIn = null) =>
         Task.CompletedTask;
 
     public Task StopAsync() => Task.CompletedTask;
@@ -74,15 +89,18 @@ internal sealed class CodexRouteGuardHost(CodexConfigWriter config) : ICodexRout
     public async Task StartAsync(
         string apiKey,
         string baseUrl,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? catalogUrl = null,
+        string? preferredModel = null,
+        IReadOnlyCollection<string>? keepModelIfIn = null)
     {
         await StopAsync().ConfigureAwait(false);
 
         _guard = new CodexRouteGuard(
-            () => _config.IsRelayRoute(baseUrl, apiKey),
+            () => _config.IsRelayRoute(baseUrl, apiKey, catalogUrl),
             _ =>
             {
-                _config.Apply(apiKey, baseUrl);
+                _config.Apply(apiKey, baseUrl, preferredModel, catalogUrl, keepModelIfIn);
                 ClientLog.Info("Codex 路由被重写，已自动重新应用共飞路由");
                 return Task.CompletedTask;
             });

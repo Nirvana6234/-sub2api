@@ -132,7 +132,7 @@ public sealed class LocalCodexAccountTests
 
         var error = await Assert.ThrowsAsync<LocalProxyCredentialException>(
             () => account.GetAsync(LocalMachineAccounts.CodexId, false, CancellationToken.None));
-        Assert.Contains("codex login", error.UserMessage);
+        Assert.Contains("授权共飞AI助手本地代理", error.UserMessage);
         Assert.Equal(LocalMachineAccountState.NotSignedIn, account.Probe().State);
     }
 
@@ -254,11 +254,26 @@ public sealed class LocalClaudeAccountTests
 
         public string? UnsupportedReason { get; set; }
 
+        public bool ReadNeedsConsent { get; set; }
+
+        public bool ReadMayBlock { get; set; }
+
+        public int Reads { get; private set; }
+
         public int Writes { get; private set; }
 
         public Exception? FailWrite { get; set; }
 
-        public string? Read() => Text;
+        public bool Exists() => Text is not null;
+
+        public string? Read()
+        {
+            Reads++;
+            ReadNeedsConsent = false;
+            return Text;
+        }
+
+        public string? ReadCached() => Text;
 
         public void Write(string json)
         {
@@ -296,6 +311,41 @@ public sealed class LocalClaudeAccountTests
         return (new LocalClaudeAccount(store, refresher, () => Now), store, refresher);
     }
 
+    /// <summary>
+    /// The macOS keychain (D10): opening the page only looks; the sign-in is read — and the
+    /// system prompt comes — when the user switches it on, and off the UI thread.
+    /// </summary>
+    [Fact]
+    public async Task ASignInBehindAPromptIsOnlyLookedAtUntilItIsSwitchedOn()
+    {
+        var (account, store, _) = Rig(File(Now.AddHours(8)));
+        store.ReadNeedsConsent = true;
+        store.ReadMayBlock = true;
+
+        LocalMachineAccountStatus before = account.Probe();
+        Assert.True(before.IsUsable);
+        Assert.Equal(LocalClaudeAccount.ConsentDetail, before.Detail);
+        Assert.Equal(0, store.Reads);
+
+        LocalProxyCredential credential = await account.GetAsync(LocalMachineAccounts.ClaudeId, forceRefresh: false, CancellationToken.None);
+        Assert.Equal("claude-access-1", credential.AccessToken);
+        Assert.Equal(1, store.Reads);
+
+        LocalMachineAccountStatus after = account.Probe();
+        Assert.Equal(string.Empty, after.Detail);
+        Assert.Equal(1, store.Reads);
+    }
+
+    [Fact]
+    public void NothingThereBehindAPromptIsNotSignedIn()
+    {
+        var (account, store, _) = Rig(null);
+        store.ReadNeedsConsent = true;
+
+        Assert.Equal(LocalMachineAccountState.NotSignedIn, account.Probe().State);
+        Assert.Equal(0, store.Reads);
+    }
+
     [Fact]
     public async Task AnUnsupportedPlatformSaysWhyAndGivesNothing()
     {
@@ -314,7 +364,7 @@ public sealed class LocalClaudeAccountTests
 
         var error = await Assert.ThrowsAsync<LocalProxyCredentialException>(
             () => account.GetAsync(LocalMachineAccounts.ClaudeId, false, CancellationToken.None));
-        Assert.Contains("/login", error.UserMessage);
+        Assert.Contains("授权共飞AI助手本地代理", error.UserMessage);
         Assert.Equal(LocalMachineAccountState.NotSignedIn, account.Probe().State);
     }
 
@@ -464,52 +514,45 @@ public sealed class OfficialTokenRefresherTests
     }
 }
 
-/// <summary>One credential source: relay accounts by id, this machine's sign-ins by their reserved ids.</summary>
+/// <summary>One credential source: this machine's sign-ins by their reserved ids; relay accounts are refused.</summary>
 public sealed class LocalProxyCredentialRouterTests
 {
     private sealed class Source(string label, LocalProxyKind kind = LocalProxyKind.Codex) : ILocalMachineAccount
     {
-        public List<long> Asked { get; } = [];
-
         public int Cleared { get; private set; }
 
         public LocalProxyKind Kind => kind;
 
         public LocalMachineAccountStatus Probe() => new(LocalMachineAccountState.SignedIn, label, string.Empty);
 
-        public Task<LocalProxyCredential> GetAsync(long accountId, bool forceRefresh, CancellationToken cancellationToken)
-        {
-            Asked.Add(accountId);
-            return Task.FromResult(new LocalProxyCredential(accountId: accountId, accessToken: label));
-        }
+        public Task<LocalProxyCredential> GetAsync(long accountId, bool forceRefresh, CancellationToken cancellationToken) =>
+            Task.FromResult(new LocalProxyCredential(accountId: accountId, accessToken: label));
 
         public void Clear() => Cleared++;
     }
 
     [Fact]
-    public async Task EachIdGoesToItsOwnSource()
+    public async Task EachIdGoesToItsOwnSourceAndARelayAccountIsRefused()
     {
-        var relay = new Source("relay");
         var codex = new Source("codex");
         var claude = new Source("claude", LocalProxyKind.ClaudeCode);
-        var router = new LocalProxyCredentialRouter(relay, codex, claude);
+        var router = new LocalProxyCredentialRouter(codex, claude);
 
-        Assert.Equal("relay", (await router.GetAsync(7, false, CancellationToken.None)).AccessToken);
         Assert.Equal("codex", (await router.GetAsync(LocalMachineAccounts.CodexId, false, CancellationToken.None)).AccessToken);
         Assert.Equal("claude", (await router.GetAsync(LocalMachineAccounts.ClaudeId, false, CancellationToken.None)).AccessToken);
         Assert.Same(claude, router.LocalFor(LocalProxyKind.ClaudeCode));
+        await Assert.ThrowsAsync<LocalProxyCredentialException>(() => router.GetAsync(7, false, CancellationToken.None));
+        await Assert.ThrowsAsync<LocalProxyCredentialException>(() => router.GetAsync(OfficialAccountIds.First, false, CancellationToken.None));
     }
 
     [Fact]
     public void SigningOutOfTheRelayLeavesThisMachinesSignInsAlone()
     {
-        var relay = new Source("relay");
         var codex = new Source("codex");
         var claude = new Source("claude", LocalProxyKind.ClaudeCode);
 
-        new LocalProxyCredentialRouter(relay, codex, claude).Clear();
+        new LocalProxyCredentialRouter(codex, claude).Clear();
 
-        Assert.Equal(1, relay.Cleared);
         Assert.Equal(0, codex.Cleared);
         Assert.Equal(0, claude.Cleared);
     }

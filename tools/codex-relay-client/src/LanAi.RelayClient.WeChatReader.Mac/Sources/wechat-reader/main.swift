@@ -13,6 +13,7 @@ import Foundation
 
 // NSScreen needs the shared application to exist; it is never run.
 _ = NSApplication.shared
+Output.diagnose("启动：pid \(ProcessInfo.processInfo.processIdentifier)，系统 \(ProcessInfo.processInfo.operatingSystemVersionString)")
 
 guard #available(macOS 14.0, *) else {
     Output.emit(ReaderEvent(type: ReaderEvent.error, code: ReaderEvent.errorOsUnsupported, message: "需要 macOS 14 或更高版本"))
@@ -26,10 +27,15 @@ guard TextRecognizer.supportsChinese() else {
 
 // Screen Recording. The first request shows macOS's own prompt, attributed to the client app
 // that launched this process; after the user allows it, macOS usually wants the app restarted.
+// CGRequestScreenCaptureAccess brings the prompt up only the first time ever; after that it just
+// answers no, and the client's page offers System Settings and a restart instead.
 if !CGPreflightScreenCaptureAccess() {
-    _ = CGRequestScreenCaptureAccess()
+    let granted = CGRequestScreenCaptureAccess()
+    Output.diagnose("屏幕录制权限：没有，已请求（\(granted ? "已允许" : "未允许，或需重新启动助手后生效")）")
     Output.emit(ReaderEvent(type: ReaderEvent.error, code: ReaderEvent.errorScreenRecordingDenied,
                             message: "需要「屏幕录制」权限"))
+} else {
+    Output.diagnose("屏幕录制权限：已允许")
 }
 
 if CommandLine.arguments.contains("--probe") {

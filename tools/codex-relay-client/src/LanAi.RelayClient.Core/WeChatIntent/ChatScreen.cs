@@ -40,6 +40,20 @@ internal sealed record ChatScreen(string Title, bool IsGroup, IReadOnlyList<Chat
 
     /// <summary>The message list's right edge, in the captured window's pixels.</summary>
     public int AreaRight { get; init; }
+
+    /// <summary>How the frame's lines were sorted, for the log (counts and colours only).</summary>
+    public ParseStats Stats { get; init; } = ParseStats.Empty;
+}
+
+/// <summary>
+/// What the parser made of a frame's lines: how many went to each speaker and how many were
+/// dropped, with the colours behind the dropped ones — a theme or scale the thresholds were not
+/// measured on shows up here as every line dropped. Never any text.
+/// </summary>
+internal sealed record ParseStats(
+    int Lines, int Them, int Me, int Time, int Dropped, string DroppedColours, int CutOff, int NotText, (int R, int G, int B) Background)
+{
+    public static readonly ParseStats Empty = new(0, 0, 0, 0, 0, string.Empty, 0, 0, (0, 0, 0));
 }
 
 /// <summary>A bubble's text extent in the captured window's pixels.</summary>
@@ -69,13 +83,19 @@ internal static partial class ChatScreenParser
         (int R, int G, int B) background = frame.Background is [int br, int bg, int bb] ? (br, bg, bb) : EstimateBackground(lines);
 
         var bubbles = new List<Bubble>();
+        var perSpeaker = new int[3];
+        var dropped = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (ReaderLine line in lines.OrderBy(l => l.Y).ThenBy(l => l.X))
         {
             ChatSpeaker? speaker = Classify(line, area, background);
             if (speaker is null)
             {
+                string colour = line.Bg is [int dr, int dg, int db] ? $"({dr},{dg},{db})" : "(无)";
+                dropped[colour] = dropped.GetValueOrDefault(colour) + 1;
                 continue;
             }
+
+            perSpeaker[(int)speaker.Value]++;
 
             Bubble? last = bubbles.Count > 0 ? bubbles[^1] : null;
             if (last is not null && last.Speaker == speaker && speaker != ChatSpeaker.Time && Continues(last, line, scale))
@@ -92,18 +112,21 @@ internal static partial class ChatScreenParser
 
         var items = new List<ChatItem>();
         var bounds = new List<BubbleBounds>();
+        int cutOff = 0, notText = 0;
         foreach (Bubble bubble in bubbles)
         {
             // A cut bubble is left for the picture where it shows whole — except one that fills
             // the list from edge to edge, which never will (§4.5: 超过一屏的长消息).
             if (bubble.Partial && bubbles.Count > 1)
             {
+                cutOff++;
                 continue;
             }
 
             string text = bubble.Text();
             if (!LooksLikeText(text))
             {
+                notText++;
                 continue;
             }
 
@@ -115,7 +138,10 @@ internal static partial class ChatScreenParser
                 bubble.Lines[^1].Y + bubble.Lines[^1].H));
         }
 
-        return new ChatScreen(title, IsGroupTitle(title), items) { Bounds = bounds, AreaRight = area.X + area.W };
+        string droppedColours = string.Join(" ", dropped.OrderByDescending(kv => kv.Value).Take(4).Select(kv => $"{kv.Key}×{kv.Value}"));
+        var stats = new ParseStats(lines.Length, perSpeaker[(int)ChatSpeaker.Them], perSpeaker[(int)ChatSpeaker.Me], perSpeaker[(int)ChatSpeaker.Time],
+            dropped.Values.Sum(), droppedColours, cutOff, notText, background);
+        return new ChatScreen(title, IsGroupTitle(title), items) { Bounds = bounds, AreaRight = area.X + area.W, Stats = stats };
     }
 
     /// <summary>A group's title ends in its member count: 「家人群(12)」 or 「家人群（12）」.</summary>

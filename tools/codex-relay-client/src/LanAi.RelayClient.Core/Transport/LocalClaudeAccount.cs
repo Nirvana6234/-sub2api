@@ -10,11 +10,26 @@ namespace LanAi.RelayClient.Transport;
 /// <summary>Where Claude Code keeps its sign-in, read and written whole.</summary>
 internal interface IClaudeCredentialStore
 {
-    /// <summary>Null when this platform keeps the sign-in somewhere this client cannot read without prompting.</summary>
+    /// <summary>Why this client cannot use the sign-in here at all; null when it can.</summary>
     string? UnsupportedReason { get; }
 
-    /// <summary>The file's text, or null when there is none.</summary>
+    /// <summary>
+    /// The next <see cref="Read"/> may ask the user first (the macOS keychain prompt): look with
+    /// <see cref="Exists"/> instead until the user switches the account on.
+    /// </summary>
+    bool ReadNeedsConsent { get; }
+
+    /// <summary>A read may wait — on the user or a child process — so it is kept off the UI thread.</summary>
+    bool ReadMayBlock { get; }
+
+    /// <summary>Whether there is a sign-in, without reading it (never prompts).</summary>
+    bool Exists();
+
+    /// <summary>The text, or null when there is none. May prompt and wait (<see cref="ReadNeedsConsent"/>).</summary>
     string? Read();
+
+    /// <summary>What the last <see cref="Read"/> returned, or the file as it is; never prompts, never waits.</summary>
+    string? ReadCached();
 
     void Write(string json);
 
@@ -24,9 +39,8 @@ internal interface IClaudeCredentialStore
 
 /// <summary>
 /// <c>.credentials.json</c> in Claude Code's config directory — where it keeps the sign-in on
-/// Windows and Linux. On macOS the sign-in lives in the login keychain instead, and reading
-/// another program's keychain item raises a system prompt, so there it is supported only when
-/// Claude Code fell back to the file.
+/// Windows and Linux, and on macOS when it fell back from the keychain (otherwise
+/// <see cref="ClaudeKeychainStore"/>).
 /// </summary>
 internal sealed class ClaudeCredentialFile : IClaudeCredentialStore
 {
@@ -46,11 +60,17 @@ internal sealed class ClaudeCredentialFile : IClaudeCredentialStore
             : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude.json");
     }
 
-    public string? UnsupportedReason => OperatingSystem.IsMacOS() && !File.Exists(_path)
-        ? "macOS 上 Claude Code 的登录保存在系统钥匙串里，读取会弹出系统授权框，暂不支持。"
-        : null;
+    public string? UnsupportedReason => null;
+
+    public bool ReadNeedsConsent => false;
+
+    public bool ReadMayBlock => false;
+
+    public bool Exists() => File.Exists(_path);
 
     public string? Read() => File.Exists(_path) ? File.ReadAllText(_path) : null;
+
+    public string? ReadCached() => Read();
 
     public void Write(string json)
     {
@@ -108,7 +128,11 @@ internal sealed class LocalClaudeAccount : ILocalMachineAccount
     private static readonly TimeSpan ForcedRefreshQuietPeriod = TimeSpan.FromSeconds(60);
 
     internal const string NotSignedInDetail =
-        "没有找到本机 Claude Code 的 Claude 订阅登录。请在终端运行 claude，按提示登录 Claude 账号（或在 claude 里执行 /login），登录后这里会自动识别。";
+        "这台电脑上的 Claude Code 还没有登录 Claude 账号。可以授权共飞AI助手本地代理使用你的 Claude 账号，授权信息只保存在这台电脑上，不会上传到共飞服务器。";
+
+    /// <summary>Said before the first keychain read (D10): the prompt is coming, and which button keeps it from coming back.</summary>
+    internal const string ConsentDetail =
+        "开启时 macOS 会询问是否允许读取 Claude Code 的登录，请点「始终允许」（只问这一次）。";
 
     private readonly IClaudeCredentialStore _store;
     private readonly IOfficialTokenRefresher _refresher;
@@ -135,9 +159,18 @@ internal sealed class LocalClaudeAccount : ILocalMachineAccount
             return new LocalMachineAccountStatus(LocalMachineAccountState.Unsupported, "本机 Claude 登录", reason);
         }
 
+        // Before the user has switched it on, the keychain is only looked at, never read: the
+        // page must not bring up a system prompt by being opened.
+        if (_store.ReadNeedsConsent)
+        {
+            return _store.Exists()
+                ? new LocalMachineAccountStatus(LocalMachineAccountState.SignedIn, DisplayName(null), ConsentDetail)
+                : new LocalMachineAccountStatus(LocalMachineAccountState.NotSignedIn, "本机 Claude 登录", NotSignedInDetail);
+        }
+
         try
         {
-            return ReadSignIn() is { } signIn && signIn.RefreshToken.Length > 0
+            return ReadSignIn(cached: true) is { } signIn && signIn.RefreshToken.Length > 0
                 ? new LocalMachineAccountStatus(LocalMachineAccountState.SignedIn, DisplayName(signIn), string.Empty)
                 : new LocalMachineAccountStatus(LocalMachineAccountState.NotSignedIn, "本机 Claude 登录", NotSignedInDetail);
         }
@@ -147,7 +180,14 @@ internal sealed class LocalClaudeAccount : ILocalMachineAccount
         }
     }
 
-    public async Task<LocalProxyCredential> GetAsync(long accountId, bool forceRefresh, CancellationToken cancellationToken)
+    public Task<LocalProxyCredential> GetAsync(long accountId, bool forceRefresh, CancellationToken cancellationToken) =>
+        // The keychain read may sit behind a system prompt for up to a minute; the switch that
+        // triggers it is awaited on the UI thread, which must not freeze meanwhile.
+        _store.ReadMayBlock
+            ? Task.Run(() => GetCoreAsync(forceRefresh, cancellationToken), cancellationToken)
+            : GetCoreAsync(forceRefresh, cancellationToken);
+
+    private async Task<LocalProxyCredential> GetCoreAsync(bool forceRefresh, CancellationToken cancellationToken)
     {
         if (_store.UnsupportedReason is { } reason)
         {
@@ -281,12 +321,12 @@ internal sealed class LocalClaudeAccount : ILocalMachineAccount
         return true;
     }
 
-    private SignIn? ReadSignIn()
+    private SignIn? ReadSignIn(bool cached = false)
     {
         string? text;
         try
         {
-            text = _store.Read();
+            text = cached ? _store.ReadCached() : _store.Read();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -326,9 +366,10 @@ internal sealed class LocalClaudeAccount : ILocalMachineAccount
         }
     }
 
-    private string DisplayName(SignIn signIn)
+    /// <param name="signIn">Null while the sign-in has not been read (the keychain, before consent): the email alone.</param>
+    private string DisplayName(SignIn? signIn)
     {
-        string plan = signIn.SubscriptionType.ToLowerInvariant() switch
+        string plan = (signIn?.SubscriptionType ?? string.Empty).ToLowerInvariant() switch
         {
             "" => string.Empty,
             "pro" => "Pro",

@@ -25,7 +25,13 @@ internal enum RelayProtocol
 /// Served only while that tool's local proxy is on. The account-session endpoint on the
 /// server has no such sub-path, so in relay mode it is refused exactly as before.
 /// </param>
-internal sealed record RelayRoute(string ClientPath, string UpstreamPath, RelayProtocol Protocol, bool LocalProxyOnly = false);
+/// <param name="Method">The one HTTP method the route answers; anything else is refused as if the path were unknown.</param>
+internal sealed record RelayRoute(
+    string ClientPath,
+    string UpstreamPath,
+    RelayProtocol Protocol,
+    bool LocalProxyOnly = false,
+    string Method = "POST");
 
 /// <summary>
 /// A loopback-only relay: the only network address Codex, and Claude Code with it, ever see.
@@ -49,6 +55,12 @@ internal sealed class LocalPawRelay : IAsyncDisposable
 {
     /// <summary>The single path Codex calls: <c>base_url</c> is <c>.../v1</c> and it appends this.</summary>
     private const string CodexPath = "/v1/responses";
+
+    /// <summary>
+    /// The model list for Codex's picker. Answered here, never forwarded: the list depends on
+    /// the group the client has chosen, which only this process knows.
+    /// </summary>
+    internal const string CatalogPath = "/v1/models";
 
     /// <summary>
     /// The account-session route on the server.
@@ -89,6 +101,7 @@ internal sealed class LocalPawRelay : IAsyncDisposable
         new(CodexPath + "/input_tokens", string.Empty, RelayProtocol.Responses, LocalProxyOnly: true),
         new("/v1/messages", "/api/v1/paw/messages", RelayProtocol.Messages),
         new("/v1/messages/count_tokens", "/api/v1/paw/messages/count_tokens", RelayProtocol.Messages),
+        new(CatalogPath, string.Empty, RelayProtocol.Responses, Method: "GET"),
     ];
 
     /// <summary>
@@ -145,9 +158,14 @@ internal sealed class LocalPawRelay : IAsyncDisposable
     private LocalProxyTarget? _codexLocalProxy;
     private LocalProxyTarget? _claudeLocalProxy;
 
+    private readonly ICodexCatalogSource? _codexCatalogSource;
+
     private readonly object _gate = new();
     private long? _codexGroupId;
     private string? _codexGroupName;
+
+    /// <summary>The models the Codex group serves, when its whitelist is on. Null: Codex keeps its own list.</summary>
+    private CodexGroupModels? _codexModels;
     private long? _claudeGroupId;
     private string? _claudeGroupName;
     private int _port;
@@ -174,8 +192,10 @@ internal sealed class LocalPawRelay : IAsyncDisposable
         LocalProxyEndpoints? localProxyEndpoints = null,
         HttpClient? directHttp = null,
         Action<LocalProxyOutcome>? onLocalProxyOutcome = null,
-        Action<LocalProxyUsage>? onLocalProxyUsage = null)
+        Action<LocalProxyUsage>? onLocalProxyUsage = null,
+        ICodexCatalogSource? codexCatalogSource = null)
     {
+        _codexCatalogSource = codexCatalogSource;
         if (!Uri.TryCreate(upstreamBaseUrl, UriKind.Absolute, out Uri? uri) ||
             uri.Scheme is not ("http" or "https"))
             throw new ArgumentException("upstreamBaseUrl must be an absolute HTTP URL", nameof(upstreamBaseUrl));
@@ -238,17 +258,24 @@ internal sealed class LocalPawRelay : IAsyncDisposable
     /// group. Sharing one slot between them would re-bill whichever caller set it last
     /// to a group it never chose.
     /// </remarks>
-    public void SetGroup(long? groupId, string? groupName = null)
+    /// <param name="models">
+    /// What the group serves, or null when it has no whitelist of its own. Set in the same
+    /// step as the group: models left over from the previous group would rewrite requests to
+    /// a model this one does not offer.
+    /// </param>
+    public void SetGroup(long? groupId, string? groupName = null, CodexGroupModels? models = null)
     {
         lock (_gate)
         {
             _codexGroupId = groupId;
             _codexGroupName = string.IsNullOrWhiteSpace(groupName) ? null : groupName.Trim();
+            _codexModels = groupId is null ? null : models;
         }
 
-        ClientLog.Info(groupId is null
+        ClientLog.Info((groupId is null
             ? "本机 Relay（ChatGPT）已切换到自动分组"
-            : $"本机 Relay（ChatGPT）已切换{FormatGroup(groupId, groupName)}");
+            : $"本机 Relay（ChatGPT）已切换{FormatGroup(groupId, groupName)}") +
+            (groupId is not null && models is not null ? $"，模型白名单 {models.Models.Count} 个（默认 {models.DefaultModel}）" : string.Empty));
     }
 
     /// <summary>
@@ -413,7 +440,7 @@ internal sealed class LocalPawRelay : IAsyncDisposable
         string expectedToken,
         int port)
     {
-        if (method != "POST" || FindRoute(path) is null)
+        if (FindRoute(path) is not { } known || !string.Equals(method, known.Method, StringComparison.Ordinal))
             return (404, "no such endpoint");
 
         // Codex never sends Origin (measured), so its presence means a web page is
@@ -610,6 +637,12 @@ internal sealed class LocalPawRelay : IAsyncDisposable
             // places below cannot drift from that.
             RelayRoute served = route ?? throw new InvalidOperationException("Reject let an unrouted path through.");
 
+            if (served.ClientPath == CatalogPath)
+            {
+                responseStarted = await HandleCatalogAsync(context, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
             LocalProxyTarget? localProxy;
             lock (_gate)
             {
@@ -690,6 +723,11 @@ internal sealed class LocalPawRelay : IAsyncDisposable
                 body = buffer.ToArray();
             }
 
+            if (protocol == RelayProtocol.Responses)
+            {
+                body = KeepModelInsideGroup(body, group, groupName);
+            }
+
             using HttpRequestMessage request = BuildUpstreamRequest(context, served, body, jwt, group);
 
             using HttpResponseMessage response = await _http
@@ -727,6 +765,7 @@ internal sealed class LocalPawRelay : IAsyncDisposable
 
                 byte[] payload = Encoding.UTF8.GetBytes(detail);
                 CopyResponseHeaders(response, context.Response, protocol);
+                StampModelsEtag(context.Response, protocol);
                 context.Response.StatusCode = (int)response.StatusCode;
                 context.Response.ContentType =
                     response.Content.Headers.ContentType?.ToString() ?? "application/json";
@@ -737,6 +776,7 @@ internal sealed class LocalPawRelay : IAsyncDisposable
             }
 
             CopyResponseHeaders(response, context.Response, protocol);
+            StampModelsEtag(context.Response, protocol);
             responseStarted = true;
             await PumpAsync(response, context, observe: null, cancellationToken).ConfigureAwait(false);
         }
@@ -751,7 +791,7 @@ internal sealed class LocalPawRelay : IAsyncDisposable
                 {
                     await WriteErrorAsync(context, 502, "relay unreachable: " + ex.Message, protocol).ConfigureAwait(false);
                 }
-                catch (Exception inner) when (inner is HttpListenerException or ObjectDisposedException or IOException)
+                catch (Exception inner) when (inner is HttpListenerException or ObjectDisposedException or IOException or InvalidOperationException)
                 {
                 }
             }
@@ -926,20 +966,12 @@ internal sealed class LocalPawRelay : IAsyncDisposable
                         .GetAsync(target.AccountId, forceRefresh: tokenRetried, cancellationToken)
                         .ConfigureAwait(false);
                 }
-                catch (RelayApiException ex)
-                {
-                    ClientLog.Warning($"取本地代理凭据失败（账号 {target.AccountId}）", ex);
-                    Report(kind, target, false, "无法从中转站取得该账号的授权：" + ex.UserMessage);
-                    await WriteErrorAsync(context, 502, "local proxy: could not obtain the account's token", protocol)
-                        .ConfigureAwait(false);
-                    return true;
-                }
                 catch (LocalProxyCredentialException ex)
                 {
-                    // This machine's own sign-in: the message already says what to do.
-                    ClientLog.Warning($"取本机官方账号凭据失败（{label}）：{ex.UserMessage}");
+                    // The source's own words: they already say what to do.
+                    ClientLog.Warning($"取本地代理凭据失败（{label}）：{ex.UserMessage}");
                     Report(kind, target, false, ex.UserMessage);
-                    await WriteErrorAsync(context, 502, "local proxy: this machine's sign-in is not usable", protocol)
+                    await WriteErrorAsync(context, 502, "local proxy: the account's sign-in is not usable", protocol)
                         .ConfigureAwait(false);
                     return true;
                 }
@@ -1007,6 +1039,7 @@ internal sealed class LocalPawRelay : IAsyncDisposable
 
                 byte[] payload = Encoding.UTF8.GetBytes(detail);
                 CopyResponseHeaders(response, context.Response, protocol, localProxy: true);
+                StampModelsEtag(context.Response, protocol);
                 context.Response.StatusCode = (int)response.StatusCode;
                 context.Response.ContentType = response.Content.Headers.ContentType?.ToString() ?? "application/json";
                 context.Response.ContentLength64 = payload.Length;
@@ -1016,6 +1049,7 @@ internal sealed class LocalPawRelay : IAsyncDisposable
 
             Report(kind, target, true, null);
             CopyResponseHeaders(response, context.Response, protocol, localProxy: true);
+            StampModelsEtag(context.Response, protocol);
             var meter = new LocalProxyUsageMeter(protocol);
             try
             {
@@ -1239,6 +1273,178 @@ internal sealed class LocalPawRelay : IAsyncDisposable
     /// an upstream failure. A bare status code with an empty body surfaces to the user
     /// as an unexplained protocol error instead.
     /// </remarks>
+    /// <summary>
+    /// Answers Codex's request for its model list: the current group's models when it has a
+    /// whitelist, and Codex's own bundled list otherwise.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The bundled list is sent, not a 404,</b> for the groups with nothing of ours to show
+    /// (no whitelist, the automatic group, a local proxy). A 404 does make Codex fall back — but
+    /// to its on-disk copy of the last catalog it fetched while that is under five minutes old
+    /// (measured), so a switch from a whitelisted group to one without, followed by a restart,
+    /// would go on showing the old group's models. Answering with the very list Codex would
+    /// have used replaces that copy and changes nothing else. A 404 is left for when even that
+    /// cannot be read.
+    /// </para>
+    /// <para>
+    /// Every answer leaves one log line — until now nothing recorded whether Codex ever asked.
+    /// </para>
+    /// </remarks>
+    /// <returns>
+    /// Whether the response was started, so a failure after that point is not answered with a
+    /// second, impossible, status line. A Codex that hangs up mid-answer is the ordinary way to
+    /// get there: the first version of this method reported nothing, and the error handler's
+    /// attempt to write a 502 over a submitted response went unobserved and was logged as a
+    /// crash on the finalizer thread.
+    /// </returns>
+    private async Task<bool> HandleCatalogAsync(HttpListenerContext context, CancellationToken cancellationToken)
+    {
+        CodexGroupModels? models;
+        long? group;
+        bool localProxy;
+        lock (_gate)
+        {
+            models = _codexModels;
+            group = _codexGroupId;
+            localProxy = _codexLocalProxy is not null;
+        }
+
+        string? bundled = _codexCatalogSource is null
+            ? null
+            : await _codexCatalogSource.GetBundledCatalogAsync(cancellationToken).ConfigureAwait(false);
+
+        string? ownList = localProxy ? "Codex 正在使用本地代理"
+            : group is null ? "自动分组没有固定的模型列表"
+            : models is null ? "该分组没有模型白名单"
+            : null;
+        string? catalog = bundled;
+        string summary = ownList is null ? string.Empty : $"（{ownList}），下发 Codex 自带列表";
+        if (ownList is null && bundled is not null)
+        {
+            catalog = CodexModelCatalog.Build(bundled, models!);
+            summary = $"{models!.Models.Count} 个（{string.Join("、", models.Models)}）";
+        }
+
+        if (catalog is null)
+        {
+            ClientLog.Info("Codex 请求模型列表：读不到 Codex 自带的模型目录，不下发");
+            await WriteErrorAsync(context, 404, "no such endpoint", RelayProtocol.Responses).ConfigureAwait(false);
+            return true;
+        }
+
+        ClientLog.Info($"Codex 请求模型列表：{summary}");
+        byte[] payload = Encoding.UTF8.GetBytes(catalog);
+        context.Response.Headers["ETag"] = EtagFor(models, group, localProxy);
+        context.Response.StatusCode = 200;
+        context.Response.ContentType = "application/json";
+        context.Response.ContentLength64 = payload.Length;
+        await context.Response.OutputStream.WriteAsync(payload, cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
+    private string? _lastSubstitution;
+
+    /// <summary>
+    /// The version of the model list Codex is being shown, as HTTP entity-tag text.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Served as the catalog's <c>ETag</c> and stamped on every reply to Codex as
+    /// <c>X-Models-Etag</c>. Codex compares the two: when a turn's reply names a version it does
+    /// not hold, it fetches the list again on the spot (measured: 0.6 s, same process). That is
+    /// how a group switch reaches a running Codex without restarting it. The two values must be
+    /// identical down to the quotes, or every turn would fetch again.
+    /// </para>
+    /// <para>
+    /// Empty when this relay cannot answer a catalog request at all: with nothing to fetch, a
+    /// version Codex could never match would only make it ask every turn.
+    /// </para>
+    /// </remarks>
+    internal string ModelsEtag
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return EtagFor(_codexModels, _codexGroupId, _codexLocalProxy is not null);
+            }
+        }
+    }
+
+    private string EtagFor(CodexGroupModels? models, long? group, bool localProxy)
+    {
+        if (_codexCatalogSource is null)
+        {
+            return string.Empty;
+        }
+
+        if (localProxy || group is null || models is null)
+        {
+            return "\"bundled\"";
+        }
+
+        byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(models.Signature));
+        return "\"g-" + Convert.ToHexString(hash, 0, 8).ToLowerInvariant() + "\"";
+    }
+
+    /// <summary>Puts the current model-list version on a reply to Codex. See <see cref="ModelsEtag"/>.</summary>
+    private void StampModelsEtag(HttpListenerResponse to, RelayProtocol protocol)
+    {
+        if (protocol != RelayProtocol.Responses)
+        {
+            return;
+        }
+
+        string etag = ModelsEtag;
+        if (etag.Length > 0)
+        {
+            to.Headers["X-Models-Etag"] = etag;
+        }
+    }
+
+    /// <summary>
+    /// Moves a request for a model the group does not serve onto the group's default.
+    /// </summary>
+    /// <remarks>
+    /// Codex keeps asking for the model it started with until it is restarted, so after a
+    /// group switch it can name one the new group refuses. Rewriting here turns a certain
+    /// upstream error into a working turn. Only with a whitelist, only for a named group, and
+    /// only when the local proxy is off — that path talks to the official API, whose models
+    /// are not the group's.
+    /// </remarks>
+    private byte[] KeepModelInsideGroup(byte[] body, long? group, string? groupName)
+    {
+        CodexGroupModels? models;
+        bool localProxy;
+        lock (_gate)
+        {
+            models = _codexModels;
+            localProxy = _codexLocalProxy is not null;
+        }
+
+        if (models is null || group is null || localProxy)
+        {
+            return body;
+        }
+
+        byte[]? rewritten = CodexModelCatalog.SubstituteUnservedModel(body, models, out string? requested);
+        if (rewritten is null)
+        {
+            return body;
+        }
+
+        // Once per distinct pair: a long session repeats this every turn.
+        string note = $"{group}:{requested}";
+        if (!string.Equals(Interlocked.Exchange(ref _lastSubstitution, note), note, StringComparison.Ordinal))
+        {
+            ClientLog.Info(
+                $"Codex 请求的模型 {Sanitize(requested)} 不在{FormatGroup(group, groupName)}的白名单内，已换成 {models.DefaultModel}");
+        }
+
+        return rewritten;
+    }
+
     private static async Task WriteErrorAsync(
         HttpListenerContext context,
         int status,

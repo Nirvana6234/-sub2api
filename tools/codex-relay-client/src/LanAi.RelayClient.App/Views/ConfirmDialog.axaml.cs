@@ -29,11 +29,12 @@ public partial class ConfirmDialog : Window
     private void InitializeComponent() => AvaloniaXamlLoader.Load(this);
 
     /// <summary>Shows the question over <paramref name="owner"/> and waits for an answer.</summary>
-    internal static async Task<bool> AskAsync(Window owner, string message, string confirmLabel = "确定")
+    internal static async Task<bool> AskAsync(Window owner, string message, string confirmLabel = "确定", string cancelLabel = "取消")
     {
         var dialog = new ConfirmDialog();
         dialog.FindControl<TextBlock>("MessageText")!.Text = message;
         dialog.FindControl<Button>("ConfirmButton")!.Content = confirmLabel;
+        dialog.FindControl<Button>("CancelButton")!.Content = cancelLabel;
 
         await dialog.ShowDialog(owner);
         return dialog._confirmed;

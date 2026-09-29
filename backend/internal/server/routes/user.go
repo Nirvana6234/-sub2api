@@ -129,6 +129,8 @@ func RegisterUserRoutes(
 			contributions.POST("/:id/test", h.AccountContribution.Test)
 			contributions.POST("/:id/test-stream", h.AccountContribution.TestStream)
 			// 本地代理：只给所有者下发 OAuth 账号的短期 access token，刷新仍只在服务端。
+			// 2026-09 起客户端不再用中转站上的账号做本地代理（改为本机账号 / 在客户端里登录官方账号），
+			// 这个接口仅为 0.9 及更早的客户端保留，旧版淘汰后可删。
 			contributions.POST("/:id/local-proxy-token", h.AccountContribution.IssueLocalProxyToken)
 		}
 
