@@ -514,6 +514,10 @@ message SelectRequest {
   string user_agent = 19;
   string http_request_id = 20;
   string client_request_id = 21;
+  // Codex 审查子代理的父会话哈希（service.WithOpenAIGuardianParentAffinity 从请求头和请求体算出）：
+  // 选号优先用父会话绑定的账号。
+  string guardian_parent_session_hash = 22;
+  string guardian_parent_legacy_session_hash = 23;
 }
 
 // cyber 会话屏蔽的查询键（都已哈希）。

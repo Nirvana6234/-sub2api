@@ -164,6 +164,15 @@ type world struct {
 
 const testNode = int64(21)
 
+// testGatewayCache 给测试世界的网关服务装上缓存（粘性会话等）；nil 时不装。用例用 useGatewayCache 设置。
+var testGatewayCache service.GatewayCache
+
+func useGatewayCache(t *testing.T, c service.GatewayCache) {
+	t.Helper()
+	testGatewayCache = c
+	t.Cleanup(func() { testGatewayCache = nil })
+}
+
 func openAIGroup(id int64) *service.Group {
 	return &service.Group{ID: id, Platform: service.PlatformOpenAI, Status: service.StatusActive, Hydrated: true, SubscriptionType: service.SubscriptionTypeStandard, RateMultiplier: 1}
 }
@@ -200,7 +209,11 @@ func newWorldOn(t *testing.T, cfg *config.Config, balance float64, nodeID int64,
 	concurrency := service.NewConcurrencyService(slots)
 	billing := service.NewBillingCacheService(balanceCache{balance: balance}, nil, nil, nil, nil, nil, cfg, nil)
 	t.Cleanup(billing.Stop)
-	gateway := service.NewOpenAIGatewayService(fakeAccounts{accounts: accounts}, nil, nil, nil, nil, nil, nil, cfg,
+	var gatewayCache service.GatewayCache
+	if testGatewayCache != nil {
+		gatewayCache = testGatewayCache
+	}
+	gateway := service.NewOpenAIGatewayService(fakeAccounts{accounts: accounts}, nil, nil, nil, nil, nil, gatewayCache, cfg,
 		nil, concurrency, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	kek := make([]byte, keystore.KEKLength)

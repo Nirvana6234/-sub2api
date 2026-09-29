@@ -3425,8 +3425,12 @@ type SelectRequest struct {
 	UserAgent       string `protobuf:"bytes,19,opt,name=user_agent,json=userAgent,proto3" json:"user_agent,omitempty"`
 	HttpRequestId   string `protobuf:"bytes,20,opt,name=http_request_id,json=httpRequestId,proto3" json:"http_request_id,omitempty"`
 	ClientRequestId string `protobuf:"bytes,21,opt,name=client_request_id,json=clientRequestId,proto3" json:"client_request_id,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Codex 审查子代理的父会话哈希（service.WithOpenAIGuardianParentAffinity 从请求头和请求体算出）：
+	// 选号优先用父会话绑定的账号。
+	GuardianParentSessionHash       string `protobuf:"bytes,22,opt,name=guardian_parent_session_hash,json=guardianParentSessionHash,proto3" json:"guardian_parent_session_hash,omitempty"`
+	GuardianParentLegacySessionHash string `protobuf:"bytes,23,opt,name=guardian_parent_legacy_session_hash,json=guardianParentLegacySessionHash,proto3" json:"guardian_parent_legacy_session_hash,omitempty"`
+	unknownFields                   protoimpl.UnknownFields
+	sizeCache                       protoimpl.SizeCache
 }
 
 func (x *SelectRequest) Reset() {
@@ -3611,6 +3615,20 @@ func (x *SelectRequest) GetHttpRequestId() string {
 func (x *SelectRequest) GetClientRequestId() string {
 	if x != nil {
 		return x.ClientRequestId
+	}
+	return ""
+}
+
+func (x *SelectRequest) GetGuardianParentSessionHash() string {
+	if x != nil {
+		return x.GuardianParentSessionHash
+	}
+	return ""
+}
+
+func (x *SelectRequest) GetGuardianParentLegacySessionHash() string {
+	if x != nil {
+		return x.GuardianParentLegacySessionHash
 	}
 	return ""
 }
@@ -6365,7 +6383,7 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x06result\"H\n" +
 	"\tAdmission\x12\x17\n" +
 	"\aapi_key\x18\x01 \x01(\fR\x06apiKey\x12\"\n" +
-	"\fsubscription\x18\x02 \x01(\fR\fsubscription\"\xbf\x06\n" +
+	"\fsubscription\x18\x02 \x01(\fR\fsubscription\"\xce\a\n" +
 	"\rSelectRequest\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x18\n" +
@@ -6391,7 +6409,9 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\n" +
 	"user_agent\x18\x13 \x01(\tR\tuserAgent\x12&\n" +
 	"\x0fhttp_request_id\x18\x14 \x01(\tR\rhttpRequestId\x12*\n" +
-	"\x11client_request_id\x18\x15 \x01(\tR\x0fclientRequestIdB\f\n" +
+	"\x11client_request_id\x18\x15 \x01(\tR\x0fclientRequestId\x12?\n" +
+	"\x1cguardian_parent_session_hash\x18\x16 \x01(\tR\x19guardianParentSessionHash\x12L\n" +
+	"#guardian_parent_legacy_session_hash\x18\x17 \x01(\tR\x1fguardianParentLegacySessionHashB\f\n" +
 	"\n" +
 	"credential\"\xdf\x01\n" +
 	"\x12CyberSessionLookup\x12!\n" +

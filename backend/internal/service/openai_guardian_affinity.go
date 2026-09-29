@@ -99,6 +99,27 @@ func hasUnambiguousOpenAICodexReviewSubagent(candidates ...string) bool {
 	return subagent == "guardian" || subagent == "review"
 }
 
+// OpenAIGuardianParentSessionHashes 取出 ctx 里 Codex 审查子代理的父会话哈希（WithOpenAIGuardianParentAffinity 放的）。
+// 主从分流时从节点把它随选号发给主节点（选号在主节点）。
+func OpenAIGuardianParentSessionHashes(ctx context.Context) (current, legacy string) {
+	affinity, ok := openAIGuardianParentAffinityFromContext(ctx)
+	if !ok {
+		return "", ""
+	}
+	return affinity.currentSessionHash, affinity.legacySessionHash
+}
+
+// WithOpenAIGuardianParentSessionHashes 把从节点算好的父会话哈希放回 ctx（主节点选号用），current 为空时不放。
+func WithOpenAIGuardianParentSessionHashes(ctx context.Context, current, legacy string) context.Context {
+	if ctx == nil || strings.TrimSpace(current) == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, openAIGuardianParentAffinityContextKey{}, openAIGuardianParentAffinity{
+		currentSessionHash: current,
+		legacySessionHash:  legacy,
+	})
+}
+
 func openAIGuardianParentAffinityFromContext(ctx context.Context) (openAIGuardianParentAffinity, bool) {
 	if ctx == nil {
 		return openAIGuardianParentAffinity{}, false

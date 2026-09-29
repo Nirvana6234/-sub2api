@@ -181,6 +181,7 @@ func (d *Dispatcher) selectRequest(c *gin.Context, st *requestState, req handler
 		HttpRequestId:      c.Writer.Header().Get("X-Request-Id"),
 	}
 	sreq.ClientRequestId, _ = c.Request.Context().Value(ctxkey.ClientRequestID).(string)
+	sreq.GuardianParentSessionHash, sreq.GuardianParentLegacySessionHash = service.OpenAIGuardianParentSessionHashes(c.Request.Context())
 	for id := range req.Excluded {
 		sreq.ExcludedAccountIds = append(sreq.ExcludedAccountIds, id)
 	}

@@ -65,6 +65,8 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 		return unsupported(), nil
 	}
 	ctx = middleware.RelayRequestContext(ctx, adm)
+	// Codex 审查子代理跟随父会话的账号（本地由处理函数放进请求 ctx）：请求开始时固定进计价上下文，之后每次选号都带着。
+	ctx = service.WithOpenAIGuardianParentSessionHashes(ctx, req.GetGuardianParentSessionHash(), req.GetGuardianParentLegacySessionHash())
 	subscription := adm.Billing.Subscription
 	userID := apiKey.User.ID
 	groupID := apiKey.Group.ID
