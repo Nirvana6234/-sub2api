@@ -1879,10 +1879,10 @@ func (s *GatewayService) filterAccountsBySchedulingThreshold(ctx context.Context
 }
 
 func (s *GatewayService) isAccountBlockedBySchedulingThreshold(ctx context.Context, account *Account) bool {
-	if s == nil || s.rateLimitService == nil || account == nil {
+	if s == nil || s.rateLimitService == nil || account == nil { // relay:master-only 调度
 		return false
 	}
-	return s.rateLimitService.ApplyAccountSchedulingThreshold(ctx, account)
+	return s.rateLimitService.ApplyAccountSchedulingThreshold(ctx, account) // relay:master-only 调度
 }
 
 func (s *GatewayService) hydrateSelectedAccount(ctx context.Context, account *Account) (*Account, error) {

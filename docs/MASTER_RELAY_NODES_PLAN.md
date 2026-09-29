@@ -275,7 +275,7 @@ WP10 工作量最大（所有平台），WP9 完成后按平台拆给多人并�
 
 | 事项 | 归属 | 状态 |
 |---|---|---|
-| 非 OpenAI 网关服务的账号状态接口：Anthropic（`GatewayService`，含 Bedrock / Vertex / Antigravity 账号）、Gemini、Antigravity、Grok、Bedrock 转发文件里直接调限流服务的约 30 处，统一成一个"账号状态"接口（同步判定走上游错误决策、异步的走账号事件），源码守卫扩到全部转发文件 | WP10 | |
+| 非 OpenAI 网关服务的账号状态接口：Anthropic（`GatewayService`，含 Bedrock / Vertex / Antigravity 账号）、Gemini、Antigravity、Grok、Bedrock 转发文件里直接调限流服务的约 30 处，统一成一个"账号状态"接口（同步判定走上游错误决策、异步的走账号事件），源码守卫扩到全部转发文件 | WP10 | 限流服务的四种判定已接（`AccountStateDecider`、从节点 `RemoteAccountState`、源码守卫）；各平台自己的写库（Gemini 429 冷却与限流标记、Grok 临时不可调度、`accountRepo.UpdateExtra` 等）随各自入口做 |
 | 各服务族的扣费记录种类与入账（`GatewayService.RecordUsage` 等），每族一个与单机逐字段比对的一致性测试 | WP10 | |
 | 内容审核与 cyber 拆分（设计 3.4）：审核输入哈希随选号、外部审核接口主节点调、审核结果事件；做完后"会被安全审计处理的请求"不再留在主节点 | WP10 | |
 | 联网搜索在主节点执行（设计 3.3） | WP10 | |

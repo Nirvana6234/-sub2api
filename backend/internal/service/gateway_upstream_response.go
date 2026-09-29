@@ -417,11 +417,11 @@ func (s *GatewayService) handleErrorResponse(ctx context.Context, resp *http.Res
 
 	// 处理上游错误，标记账号状态
 	shouldDisable := false
-	if s.rateLimitService != nil {
+	if s.accountState() != nil {
 		if len(requestedModel) > 0 {
-			shouldDisable = s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, body, requestedModel[0])
+			shouldDisable = s.accountState().HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, body, requestedModel[0])
 		} else {
-			shouldDisable = s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, body)
+			shouldDisable = s.accountState().HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, body)
 		}
 	}
 	if shouldDisable {
@@ -532,7 +532,7 @@ func (s *GatewayService) handleRetryExhaustedSideEffects(ctx context.Context, re
 
 	// OAuth/Setup Token 账号的 403：标记账号异常
 	if account.IsOAuth() && statusCode == 403 {
-		s.rateLimitService.HandleUpstreamError(ctx, account, statusCode, resp.Header, body)
+		s.accountState().HandleUpstreamError(ctx, account, statusCode, resp.Header, body)
 		logger.LegacyPrintf("service.gateway", "Account %d: marked as error after %d retries for status %d", account.ID, maxRetryAttempts, statusCode)
 	} else {
 		// API Key 未配置错误码：不标记账号状态
@@ -543,10 +543,10 @@ func (s *GatewayService) handleRetryExhaustedSideEffects(ctx context.Context, re
 func (s *GatewayService) handleFailoverSideEffects(ctx context.Context, resp *http.Response, account *Account, requestedModel ...string) {
 	body, _ := s.readUpstreamErrorBody(resp)
 	if len(requestedModel) > 0 {
-		s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, body, requestedModel[0])
+		s.accountState().HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, body, requestedModel[0])
 		return
 	}
-	s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, body)
+	s.accountState().HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, body)
 }
 
 // handleRetryExhaustedError 处理重试耗尽后的错误
@@ -705,7 +705,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 		observer = beginUpstreamResponseModelObservation(c)
 	}
 	// 更新5h窗口状态
-	s.rateLimitService.UpdateSessionWindow(ctx, account, resp.Header)
+	s.accountState().UpdateSessionWindow(ctx, account, resp.Header)
 
 	if s.responseHeaderFilter != nil {
 		responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
@@ -1122,8 +1122,8 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 			}
 			logger.LegacyPrintf("service.gateway", "Stream data interval timeout: account=%d model=%s interval=%s", account.ID, originalModel, streamInterval)
 			// 处理流超时，可能标记账户为临时不可调度或错误状态
-			if s.rateLimitService != nil {
-				s.rateLimitService.HandleStreamTimeout(ctx, account, originalModel)
+			if s.accountState() != nil {
+				s.accountState().HandleStreamTimeout(ctx, account, originalModel)
 			}
 			sendErrorEvent("stream_timeout", fmt.Sprintf("upstream stream idle for %s", streamInterval))
 			return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, fmt.Errorf("stream data interval timeout")
@@ -1389,7 +1389,7 @@ func (s *GatewayService) resolveCacheTTLUsageOverrideTarget(ctx context.Context,
 
 func (s *GatewayService) handleNonStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, originalModel, mappedModel string) (*ClaudeUsage, error) {
 	// 更新5h窗口状态
-	s.rateLimitService.UpdateSessionWindow(ctx, account, resp.Header)
+	s.accountState().UpdateSessionWindow(ctx, account, resp.Header)
 
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, anthropicTooLargeError)
 	if err != nil {
@@ -1407,7 +1407,7 @@ func (s *GatewayService) handleNonStreamingResponse(ctx context.Context, resp *h
 	}
 	if err := json.Unmarshal(body, &response); err != nil {
 		if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
-			return nil, invalidNonStreamingJSONFailoverError(ctx, rateLimitErrorHandler(s.rateLimitService), resp, account, body, err, mappedModel)
+			return nil, invalidNonStreamingJSONFailoverError(ctx, accountStateErrorHandler(s.accountState()), resp, account, body, err, mappedModel)
 		}
 		return nil, fmt.Errorf("parse response: %w", err)
 	}

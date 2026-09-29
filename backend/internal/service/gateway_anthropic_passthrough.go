@@ -381,8 +381,8 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 	if observer == nil {
 		observer = beginUpstreamResponseModelObservation(c)
 	}
-	if s.rateLimitService != nil {
-		s.rateLimitService.UpdateSessionWindow(ctx, account, resp.Header)
+	if s.accountState() != nil {
+		s.accountState().UpdateSessionWindow(ctx, account, resp.Header)
 	}
 
 	writeAnthropicPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
@@ -578,8 +578,8 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, fmt.Errorf("stream usage incomplete after timeout")
 			}
 			logger.LegacyPrintf("service.gateway", "[Anthropic passthrough] Stream data interval timeout: account=%d model=%s interval=%s", account.ID, model, streamInterval)
-			if s.rateLimitService != nil {
-				s.rateLimitService.HandleStreamTimeout(ctx, account, model)
+			if s.accountState() != nil {
+				s.accountState().HandleStreamTimeout(ctx, account, model)
 			}
 			return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, fmt.Errorf("stream data interval timeout")
 
@@ -798,14 +798,6 @@ func parseClaudeUsageFromResponseBody(body []byte) *ClaudeUsage {
 // invalidNonStreamingJSONFailoverError 把"上游 2xx 返回非 JSON body"归一为
 // failover 错误（包级函数：Anthropic 平台 passthrough 与国产供应商原生
 // Anthropic 直通共用）。
-// rateLimitErrorHandler 把限流服务的判定包成 invalidNonStreamingJSONFailoverError 要的函数（nil 表示不判定）。
-func rateLimitErrorHandler(rateLimitService *RateLimitService) func(ctx context.Context, account *Account, statusCode int, headers http.Header, body []byte, requestedModel ...string) bool {
-	if rateLimitService == nil {
-		return nil
-	}
-	return rateLimitService.HandleUpstreamError
-}
-
 func invalidNonStreamingJSONFailoverError(
 	ctx context.Context,
 	handleUpstreamError func(ctx context.Context, account *Account, statusCode int, headers http.Header, body []byte, requestedModel ...string) bool,
@@ -858,8 +850,8 @@ func (s *GatewayService) handleNonStreamingResponseAnthropicAPIKeyPassthrough(
 	c *gin.Context,
 	account *Account,
 ) (*ClaudeUsage, error) {
-	if s.rateLimitService != nil {
-		s.rateLimitService.UpdateSessionWindow(ctx, account, resp.Header)
+	if s.accountState() != nil {
+		s.accountState().UpdateSessionWindow(ctx, account, resp.Header)
 	}
 
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, anthropicTooLargeError)
@@ -875,7 +867,7 @@ func (s *GatewayService) handleNonStreamingResponseAnthropicAPIKeyPassthrough(
 	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
 		var raw json.RawMessage
 		if err := json.Unmarshal(body, &raw); err != nil {
-			return nil, invalidNonStreamingJSONFailoverError(ctx, rateLimitErrorHandler(s.rateLimitService), resp, account, body, err)
+			return nil, invalidNonStreamingJSONFailoverError(ctx, accountStateErrorHandler(s.accountState()), resp, account, body, err)
 		}
 	}
 

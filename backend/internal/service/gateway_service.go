@@ -779,6 +779,8 @@ type GatewayService struct {
 	schedulerSnapshot     *SchedulerSnapshotService
 	billingService        *BillingService
 	rateLimitService      *RateLimitService
+	// accountStateSlot：账号状态判定；从节点装远程实现（account_state_decider.go）。
+	accountStateSlot
 	billingCacheService   *BillingCacheService
 	identityService       *IdentityService
 	httpUpstream          HTTPUpstream

@@ -162,8 +162,8 @@ func (s *GatewayService) ForwardTypeSafeSystemOne(ctx context.Context, c *gin.Co
 			})
 			// 529 是 TypeSafe 整体过载，不是这个账号的问题；通用处理会给账号 10 分钟
 			// 过载冷却，一次高峰就能把唯一的 Jev 账号停掉。只换号，不标记。
-			if s.rateLimitService != nil && resp.StatusCode != 529 {
-				s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
+			if s.accountState() != nil && resp.StatusCode != 529 {
+				s.accountState().HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
 			}
 			return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: respBody, ResponseHeaders: resp.Header.Clone()}
 		}

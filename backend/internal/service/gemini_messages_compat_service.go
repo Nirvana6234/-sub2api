@@ -56,6 +56,8 @@ type GeminiMessagesCompatService struct {
 	antigravityGatewayService *AntigravityGatewayService
 	cfg                       *config.Config
 	responseHeaderFilter      *responseheaders.CompiledHeaderFilter
+	// accountStateSlot：账号状态判定；从节点装远程实现（account_state_decider.go）。
+	accountStateSlot
 }
 
 func (s *GeminiMessagesCompatService) readUpstreamErrorBody(resp *http.Response) []byte {
@@ -299,7 +301,7 @@ func (s *GeminiMessagesCompatService) isAccountValidForPlatform(account *Account
 }
 
 func (s *GeminiMessagesCompatService) passesRateLimitPreCheckWithCache(ctx context.Context, account *Account, requestedModel string, precheckResult map[int64]bool) bool {
-	if s.rateLimitService == nil || requestedModel == "" {
+	if s.rateLimitService == nil || requestedModel == "" { // relay:master-only 选号时的用量预检
 		return true
 	}
 
@@ -309,7 +311,7 @@ func (s *GeminiMessagesCompatService) passesRateLimitPreCheckWithCache(ctx conte
 		}
 	}
 
-	ok, err := s.rateLimitService.PreCheckUsage(ctx, account, requestedModel)
+	ok, err := s.rateLimitService.PreCheckUsage(ctx, account, requestedModel) // relay:master-only 选号时的用量预检
 	if err != nil {
 		logger.LegacyPrintf("service.gemini_messages_compat", "[Gemini PreCheck] Account %d precheck error: %v", account.ID, err)
 	}
@@ -360,7 +362,7 @@ func (s *GeminiMessagesCompatService) selectBestGeminiAccount(
 }
 
 func (s *GeminiMessagesCompatService) buildPreCheckUsageResultMap(ctx context.Context, accounts []Account, requestedModel string) map[int64]bool {
-	if s.rateLimitService == nil || requestedModel == "" || len(accounts) == 0 {
+	if s.rateLimitService == nil || requestedModel == "" || len(accounts) == 0 { // relay:master-only 选号时的用量预检
 		return nil
 	}
 
@@ -369,7 +371,7 @@ func (s *GeminiMessagesCompatService) buildPreCheckUsageResultMap(ctx context.Co
 		candidates = append(candidates, &accounts[i])
 	}
 
-	result, err := s.rateLimitService.PreCheckUsageBatch(ctx, candidates, requestedModel)
+	result, err := s.rateLimitService.PreCheckUsageBatch(ctx, candidates, requestedModel) // relay:master-only 选号时的用量预检
 	if err != nil {
 		logger.LegacyPrintf("service.gemini_messages_compat", "[Gemini PreCheckBatch] failed: %v", err)
 	}
@@ -994,8 +996,8 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 	if resp.StatusCode >= 400 {
 		respBody := s.readUpstreamErrorBody(resp)
 		// 统一错误策略：自定义错误码 + 临时不可调度
-		if s.rateLimitService != nil {
-			policy := s.rateLimitService.CheckErrorPolicy(ctx, account, resp.StatusCode, respBody, mappedModel)
+		if s.accountState() != nil {
+			policy := s.accountState().CheckErrorPolicy(ctx, account, resp.StatusCode, respBody, mappedModel)
 			switch policy {
 			case ErrorPolicySkipped:
 				upstreamReqID := resp.Header.Get(requestIDHeader)
@@ -1529,8 +1531,8 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 		}
 
 		// 统一错误策略：自定义错误码 + 临时不可调度
-		if s.rateLimitService != nil {
-			policy := s.rateLimitService.CheckErrorPolicy(ctx, account, resp.StatusCode, respBody, mappedModel)
+		if s.accountState() != nil {
+			policy := s.accountState().CheckErrorPolicy(ctx, account, resp.StatusCode, respBody, mappedModel)
 			switch policy {
 			case ErrorPolicySkipped:
 				if failoverErr := s.skippedErrorPolicyFailoverError(c, account, resp.StatusCode, respBody, requestID); failoverErr != nil {
@@ -1704,7 +1706,7 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 func (s *GeminiMessagesCompatService) checkErrorPolicyInLoop(
 	ctx context.Context, account *Account, resp *http.Response, mappedModel string,
 ) (matched bool, rebuilt *http.Response) {
-	if resp.StatusCode < 400 || s.rateLimitService == nil {
+	if resp.StatusCode < 400 || s.accountState() == nil {
 		return false, resp
 	}
 	body := s.readUpstreamErrorBody(resp)
@@ -1714,7 +1716,7 @@ func (s *GeminiMessagesCompatService) checkErrorPolicyInLoop(
 		Header:     resp.Header.Clone(),
 		Body:       io.NopCloser(bytes.NewReader(body)),
 	}
-	policy := s.rateLimitService.CheckErrorPolicy(ctx, account, resp.StatusCode, body, mappedModel)
+	policy := s.accountState().CheckErrorPolicy(ctx, account, resp.StatusCode, body, mappedModel)
 	return policy != ErrorPolicyNone, rebuilt
 }
 
@@ -3127,8 +3129,8 @@ func (s *GeminiMessagesCompatService) handleGeminiUpstreamError(ctx context.Cont
 	if !account.ShouldHandleErrorCode(statusCode) {
 		return
 	}
-	if s.rateLimitService != nil && (statusCode == 401 || statusCode == 403 || statusCode == 529) {
-		s.rateLimitService.HandleUpstreamError(ctx, account, statusCode, headers, body)
+	if s.accountState() != nil && (statusCode == 401 || statusCode == 403 || statusCode == 529) {
+		s.accountState().HandleUpstreamError(ctx, account, statusCode, headers, body)
 		return
 	}
 	if statusCode != 429 {
@@ -3152,8 +3154,8 @@ func (s *GeminiMessagesCompatService) handleGeminiUpstreamError(ctx context.Cont
 		if isCodeAssist || oauthType == "google_one" {
 			// Gemini CLI / Google One: fallback cooldown by tier
 			cooldown := geminiCooldownForTier(tierID)
-			if s.rateLimitService != nil {
-				cooldown = s.rateLimitService.GeminiCooldown(ctx, account)
+			if s.rateLimitService != nil { // relay:pending Gemini 429 的整段处理随 Gemini 入口改为主节点判定（剩余事项总账）
+				cooldown = s.rateLimitService.GeminiCooldown(ctx, account) // relay:pending 同上
 			}
 			ra = time.Now().Add(cooldown)
 			if isCodeAssist {

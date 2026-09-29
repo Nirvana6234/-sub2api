@@ -38,6 +38,18 @@ go test -tags=unit -count=1 -skip 'TestUserRepositoryCreateSerializesNormalizedE
 | `internal/server` | `TestAPIContracts` 的 7 个子用例：`GET /api/v1/auth/me`、`POST /api/v1/keys`、`GET /api/v1/keys (paginated)`、`GET /api/v1/groups/available`、`GET /api/v1/usage (paginated)`、`GET /api/v1/admin/settings`、`GET /api/v1/admin/settings falls back to config oauth defaults` |
 | `internal/service` | `TestAdminServiceSimpleModeNormalizesAllUnsupportedUpdateFieldsDirectly`、`TestResolveAutoGroupExpiredPendingProbeReloadsPersonalMetricsAndSettlesOnMeasuredGroup` |
 
+### service 包里被 panic 挡住的失败（2026-09-29 补记）
+
+`TestResolveAutoGroup*` 里有用例 panic（`unexpected GetByUserID call`），整个 service 包的测试进程随之退出，排在它后面的用例根本没跑。要看全，跑：
+
+```bash
+go test -tags=unit -count=1 -skip 'TestResolveAutoGroup' ./internal/service/
+```
+
+合并 main（`19028d5b`）时这样跑的失败（与主从分流无关，基线）：`TestAdminServiceSimpleModeNormalizesAllUnsupportedUpdateFieldsDirectly`、`TestForward_NonCodexClientFallsBackToAuthOnlyPassthrough`、`TestForward_ResetsStrictStateBeforeClientRestrictionRejection`、`TestForward_StrictAppliesToAPIKeyAccountWithoutCodexCLIOnly`、`TestForward_StrictDecisionAppliesAfterNonStrictAttempt`、`TestForward_StrictDecisionDoesNotLeakIntoNonPassthroughAttempt`、`TestGetUserGroupVisibilityEmptyAndErrors`、`TestGetUserGroupVisibilityIncludesActiveSubscriptions`、`TestIsAccountQuotaNotifyEnabled`、`TestOllamaProbeCallback_StaleLongDoesNotOverrideNewShort`。
+
+另有一个按时序的用例偶发失败（约一成）：`TestAntigravityGeminiStreamKeepsCommentKeepaliveForOrdinaryClients`（1 秒保活间隔对 1.2 秒空闲，机器忙时抢不到），不算新增失败。
+
 ## golangci-lint 基线
 
 本机用 CI 同版本 v2.13.0（`go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.0`）。

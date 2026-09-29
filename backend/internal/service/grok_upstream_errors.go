@@ -284,9 +284,9 @@ func (s *OpenAIGatewayService) applyGrokForbiddenPolicy(ctx context.Context, acc
 	match := matches[0]
 	// Reuse the central policy implementation when it has a repository. This
 	// preserves the existing reason/cache format and avoids duplicating writes.
-	if s != nil && s.rateLimitService != nil && s.rateLimitService.accountRepo != nil {
+	if s != nil && s.rateLimitService != nil && s.rateLimitService.accountRepo != nil { // relay:pending 随 Grok 入口改为主节点判定（剩余事项总账）
 		stateCtx, cancel := openAIAccountStateContext(ctx)
-		handled := s.rateLimitService.tryTempUnschedulable(
+		handled := s.rateLimitService.tryTempUnschedulable( // relay:pending 同上
 			stateCtx,
 			account,
 			http.StatusForbidden,

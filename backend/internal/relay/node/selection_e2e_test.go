@@ -341,3 +341,44 @@ func TestUsageBatchesOverTheWire(t *testing.T) {
 	_, err = client.Submit(ctx, big)
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
 }
+
+// 非 OpenAI 网关服务的账号状态判定：限流、流超时、错误策略同步问主节点，会话窗口作为账号事件发出。
+func TestRemoteAccountStateOverTheWire(t *testing.T) {
+	ctx := context.Background()
+	m := startMaster(t)
+	n := startNode(t, m)
+	sel := newFakeSelector()
+	m.control.AttachSelector(sel, m.srv.Epoch())
+	master.RouteNodeEvents(m.events, sel)
+	outbox := node.NewEventOutbox(0)
+	runCtx, stop := context.WithCancel(ctx)
+	defer stop()
+	go node.RunEvents(runCtx, n.client, n.syncer, node.EventHandlers{Outbox: outbox})
+
+	s := node.NewRemoteAccountState(node.NewRemoteUpstreamErrorDecider(n.client), node.NewRemoteAccountReporter(outbox))
+	account := &service.Account{ID: 7}
+	rctx := node.WithSelectionID(ctx, "sel-3")
+
+	require.True(t, s.HandleUpstreamError(rctx, account, 529, http.Header{"Retry-After": {"3"}}, []byte("overloaded"), "claude-sonnet-4-5"))
+	req := sel.upstream[0]
+	require.Equal(t, relayv1.UpstreamErrorKind_UPSTREAM_ERROR_KIND_RATE_LIMIT, req.GetKind(), "the plain rate limit decision, not the OpenAI one")
+	require.Equal(t, "sel-3", req.GetSelectionId())
+	require.Equal(t, int32(529), req.GetStatusCode())
+	require.Equal(t, "claude-sonnet-4-5", req.GetModel())
+
+	require.True(t, s.HandleUpstreamError(rctx, account, 500, nil, nil))
+	require.False(t, sel.upstream[1].GetHasModel(), "no model stays no model")
+	require.True(t, s.HandleStreamTimeout(rctx, account, "claude-sonnet-4-5"))
+	require.Equal(t, relayv1.UpstreamErrorKind_UPSTREAM_ERROR_KIND_STREAM_TIMEOUT, sel.upstream[2].GetKind())
+	require.Equal(t, service.ErrorPolicyTempUnscheduled, s.CheckErrorPolicy(rctx, account, 400, []byte("bad"), "gemini-2.5-pro"))
+	require.Equal(t, "gemini-2.5-pro", sel.upstream[3].GetModel())
+
+	s.UpdateSessionWindow(ctx, account, http.Header{"Anthropic-Ratelimit-Unified-5h-Status": {"allowed"}})
+	select {
+	case ev := <-sel.accountEvents:
+		require.NotNil(t, ev.GetSessionWindow())
+		require.Equal(t, int64(7), ev.GetAccountId())
+	case <-time.After(5 * time.Second):
+		t.Fatal("session window event was not delivered")
+	}
+}

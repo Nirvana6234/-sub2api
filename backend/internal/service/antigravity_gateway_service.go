@@ -125,6 +125,8 @@ type AntigravityGatewayService struct {
 	accountRepo       AccountRepository
 	tokenProvider     *AntigravityTokenProvider
 	rateLimitService  *RateLimitService
+	// accountStateSlot：账号状态判定；从节点装远程实现（account_state_decider.go）。
+	accountStateSlot
 	httpUpstream      HTTPUpstream
 	settingService    *SettingService
 	cache             GatewayCache // 用于模型级限流时清除粘性会话绑定
@@ -200,10 +202,10 @@ func (s *AntigravityGatewayService) getUpstreamErrorDetail(body []byte) string {
 
 // checkErrorPolicy nil 安全的包装
 func (s *AntigravityGatewayService) checkErrorPolicy(ctx context.Context, account *Account, statusCode int, body []byte, requestedModel ...string) ErrorPolicyResult {
-	if s.rateLimitService == nil {
+	if s.accountState() == nil {
 		return ErrorPolicyNone
 	}
-	return s.rateLimitService.CheckErrorPolicy(ctx, account, statusCode, body, firstRequestedModel(requestedModel))
+	return s.accountState().CheckErrorPolicy(ctx, account, statusCode, body, firstRequestedModel(requestedModel))
 }
 
 // applyErrorPolicy 应用错误策略结果，返回是否应终止当前循环及应返回的状态码。

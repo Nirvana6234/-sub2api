@@ -175,8 +175,8 @@ func (s *GatewayService) ForwardAsResponses(
 				Message:            upstreamMsg,
 			})
 			shouldDisable := false
-			if s.rateLimitService != nil {
-				shouldDisable = s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody, mappedModel)
+			if s.accountState() != nil {
+				shouldDisable = s.accountState().HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody, mappedModel)
 			}
 			return nil, &UpstreamFailoverError{
 				StatusCode:             resp.StatusCode,

@@ -86,7 +86,7 @@ func (s *OpenAIGatewayService) CPASchedulingProfile(ctx context.Context) (*CPASc
 		Accounts: make([]CPAAccountScheduling, 0, len(accounts)),
 	}
 	settingService := s.settingService
-	if settingService == nil && s.rateLimitService != nil {
+	if settingService == nil && s.rateLimitService != nil { // relay:master-only 调度
 		settingService = s.rateLimitService.settingService
 	}
 	if settingService == nil {

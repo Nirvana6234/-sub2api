@@ -1273,10 +1273,10 @@ func (s *AntigravityGatewayService) handleUpstreamError(
 		return nil
 	}
 	// 其他错误码继续使用 rateLimitService
-	if s.rateLimitService == nil {
+	if s.accountState() == nil {
 		return nil
 	}
-	shouldDisable := s.rateLimitService.HandleUpstreamError(ctx, account, statusCode, headers, body)
+	shouldDisable := s.accountState().HandleUpstreamError(ctx, account, statusCode, headers, body)
 	if shouldDisable {
 		logger.LegacyPrintf("service.antigravity_gateway", "%s status=%d marked_error", prefix, statusCode)
 	}
