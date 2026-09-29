@@ -124,7 +124,8 @@ func TestLooksSecret(t *testing.T) {
 	for _, n := range []string{"access_token", "API_KEY", "client_secret", "cookie", "private_key", "aws_session_token"} {
 		require.True(t, accountcodec.LooksSecret(n), n)
 	}
-	for _, n := range []string{"base_url", "codex_usage", "model_mapping"} {
+	for _, n := range []string{"base_url", "codex_usage", "model_mapping",
+		"openai_apikey_responses_websockets_v2_enabled", "openai_apikey_responses_websockets_v2_mode"} {
 		require.False(t, accountcodec.LooksSecret(n), n)
 	}
 }

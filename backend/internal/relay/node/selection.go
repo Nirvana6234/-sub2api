@@ -54,6 +54,32 @@ func (s *SelectClient) Select(ctx context.Context, req *relayv1.SelectRequest) (
 	return s.control.Select(ctx, req)
 }
 
+// TurnTimeout 是 WebSocket 一轮准入、渠道映射、连接数租约调用的最长时间（主节点上不排队）。
+const TurnTimeout = 10 * time.Second
+
+// BeginTurn Responses WebSocket 的一轮开始（开发计划 WP10-3）。占槽、签凭证：带幂等键（callKey 每次调用不同，
+// 超时重发拿回同一个结果）和纪元。
+func (s *SelectClient) BeginTurn(ctx context.Context, callKey string, req *relayv1.BeginTurnRequest) (*relayv1.BeginTurnResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, TurnTimeout)
+	defer cancel()
+	ctx = transport.WithIdempotencyKey(ctx, "turn/"+req.GetSelectionId()+"/"+callKey)
+	return s.control.BeginTurn(ctx, req)
+}
+
+// TurnMapping 一轮的渠道映射。
+func (s *SelectClient) TurnMapping(ctx context.Context, req *relayv1.TurnMappingRequest) (*relayv1.TurnMappingResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, TurnTimeout)
+	defer cancel()
+	return s.control.TurnMapping(ctx, req)
+}
+
+// WebSocketLease 每 Key 的 WebSocket 连接数租约。
+func (s *SelectClient) WebSocketLease(ctx context.Context, req *relayv1.WebSocketLeaseRequest) (*relayv1.WebSocketLeaseResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, TurnTimeout)
+	defer cancel()
+	return s.control.WebSocketLease(ctx, req)
+}
+
 // CyberPolicyTimeout 是一次 cyber 命中报告的最长时间（处理函数只等 500ms，其余在后台等完）。
 const CyberPolicyTimeout = 10 * time.Second
 

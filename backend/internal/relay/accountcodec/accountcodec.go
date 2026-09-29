@@ -51,8 +51,18 @@ const (
 	proxyPasswordKey = "__proxy_password"
 )
 
+// nonSecretExtraKeys 是名字像密钥、其实只是开关的账号附加字段（按名字剔除会让从节点的转发与单机不同）。
+var nonSecretExtraKeys = map[string]bool{
+	// API Key 账号的 Responses WebSocket 开关与模式（名字里有 "apikey"）。
+	"openai_apikey_responses_websockets_v2_enabled": true,
+	"openai_apikey_responses_websockets_v2_mode":    true,
+}
+
 // LooksSecret 报告一个字段名是否像密钥（Extra 里剔除用）。
 func LooksSecret(name string) bool {
+	if nonSecretExtraKeys[name] {
+		return false
+	}
 	n := strings.ToLower(name)
 	for _, s := range []string{"token", "secret", "password", "passwd", "api_key", "apikey", "private", "cookie", "credential", "session_key"} {
 		if strings.Contains(n, s) {

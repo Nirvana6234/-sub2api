@@ -2,10 +2,13 @@ package handler
 
 import (
 	"net/http"
+	"strings"
+	"sync"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	coderws "github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
@@ -32,21 +35,36 @@ type OpenAIRelayDispatcher interface {
 	RequestDone(c *gin.Context)
 	// HandOff 把请求原样交给主节点转发（主节点回"暂不支持"时，只在还没写出任何响应时调用）。
 	HandOff(c *gin.Context)
+
+	// ---- Responses WebSocket（开发计划 WP10-3）：连接选号用 Select（WS 为 true），每一轮在主节点准入 ----
+
+	// WSIngressLeaseCache 返回经主节点申请的每 Key 连接数租约存储（带 Key 原文）。
+	WSIngressLeaseCache(c *gin.Context, apiKey *service.APIKey) service.OpenAIWSIngressLeaseCache
+	// BeginTurn 一轮开始（本地 BeforeTurn 里的复核、定价、占槽）：返回这一轮的尝试（用量、cyber 按它上报），
+	// 或者关闭连接的错误（service.OpenAIWSClientCloseError）。
+	BeginTurn(c *gin.Context, conn *OpenAIRelayAttempt, turn int, model string) (*OpenAIRelayAttempt, error)
+	// EndTurn 一轮结束（本地 AfterTurn 里的放槽）：放掉这一轮的槽，带上这一轮产生的 response id。
+	EndTurn(c *gin.Context, conn, turn *OpenAIRelayAttempt)
+	// TurnMapping 一轮的渠道映射（这一轮换了模型时）。
+	TurnMapping(c *gin.Context, conn *OpenAIRelayAttempt, model string) (service.ChannelMappingResult, error)
 }
 
 // OpenAIRelaySelectRequest 是一次远程选号的输入：处理函数在单机上交给主节点那几步的原始事实。
 type OpenAIRelaySelectRequest struct {
 	Chat bool
 	// Messages：OpenAI 分组的 /v1/messages 入口。
-	Messages           bool
-	APIKey             *service.APIKey
-	Model              string
-	Stream             bool
-	SessionHash        string
-	PreviousResponseID string
-	ImageIntent        bool
-	LegacyCompact      bool
-	NativeCompactionV2 bool
+	Messages bool
+	// WS：Responses WebSocket 的连接选号（PreviousResponseCanMove 只在这里用）。
+	WS                      bool
+	PreviousResponseCanMove bool
+	APIKey                  *service.APIKey
+	Model                   string
+	Stream                  bool
+	SessionHash             string
+	PreviousResponseID      string
+	ImageIntent             bool
+	LegacyCompact           bool
+	NativeCompactionV2      bool
 	// Excluded 是本请求已失败、要排除的账号。
 	Excluded map[int64]struct{}
 	// Body 是算会话哈希用的请求体（cyber 会话屏蔽的查询键从它算）。
@@ -69,6 +87,8 @@ type OpenAIRelayAttempt struct {
 	ForwardModel   string
 	// MaxAccountSwitches 是主节点给的换号上限。
 	MaxAccountSwitches int
+	// StickyPreviousHit：WebSocket 连接选号时 previous_response_id 命中了粘连账号。
+	StickyPreviousHit bool
 	// State 归分发实现所有（选号 ID、凭证、预扣）。
 	State any
 }
@@ -88,6 +108,8 @@ const (
 	// OpenAIRelayRejectUnavailable：主节点不可达。不重试、不换号（设计 3.1）：第一次尝试按 503 写，
 	// 之后按最近一次上游错误写。
 	OpenAIRelayRejectUnavailable
+	// OpenAIRelayRejectWSClose：关闭 WebSocket 连接（WSCloseStatus、WSCloseReason；CyberBlockKey 非空时先写 cyber 错误帧）。
+	OpenAIRelayRejectWSClose
 )
 
 // OpenAIRelayRejection 是远程选号的拒绝。
@@ -96,6 +118,8 @@ type OpenAIRelayRejection struct {
 	Gateway       OpenAIGatewayRejection
 	CyberBlockKey string
 	Raw           *middleware2.CapturedRejection
+	WSCloseStatus int
+	WSCloseReason string
 	// ContinuationUnsupported：这次选号跳过了不支持续链的账号，最后的错误是"续链不支持"。
 	ContinuationUnsupported bool
 }
@@ -208,4 +232,56 @@ func collectOpenAIUsageFacts(c *gin.Context, account *service.Account, res *serv
 		CyberBlocked:       service.GetOpsCyberPolicy(c) != nil,
 		NativeCompactionV2: nativeV2,
 	}
+}
+
+// openAIRelayWSUnavailableReason 是 WebSocket 连接上主节点不可达、这条连接不能再继续时的关闭原因。
+const openAIRelayWSUnavailableReason = "Service temporarily unavailable"
+
+// writeOpenAIRelayWSRejection 按远程连接选号的拒绝关闭 WebSocket（连接已经接受，不能再交给主节点），
+// 与单机在同样情况下的关闭码和原因一致。
+func (h *OpenAIGatewayHandler) writeOpenAIRelayWSRejection(c *gin.Context, conn *coderws.Conn, r *OpenAIRelayRejection, lastFailoverErr *service.UpstreamFailoverError, reqLog *zap.Logger) {
+	switch r.Kind {
+	case OpenAIRelayRejectWSClose:
+		if r.CyberBlockKey != "" {
+			writeCyberSessionBlockedWSError(c.Request.Context(), conn)
+		}
+		closeOpenAIClientWS(conn, coderws.StatusCode(r.WSCloseStatus), r.WSCloseReason)
+	case OpenAIRelayRejectFailoverExhausted:
+		if lastFailoverErr != nil {
+			closeOpenAIWSFailoverExhausted(c, conn, lastFailoverErr)
+			return
+		}
+		closeOpenAIClientWS(conn, coderws.StatusTryAgainLater, "no available account")
+	case OpenAIRelayRejectUnavailable:
+		reqLog.Warn("openai.websocket_relay_master_unavailable")
+		if lastFailoverErr != nil {
+			closeOpenAIWSFailoverExhausted(c, conn, lastFailoverErr)
+			return
+		}
+		closeOpenAIClientWS(conn, coderws.StatusTryAgainLater, openAIRelayWSUnavailableReason)
+	default:
+		// 暂不支持 / 中间件拒绝：升级之前的准入会交给主节点，到这里是配置刚变过，请客户端重连。
+		reqLog.Warn("openai.websocket_relay_rejected_after_upgrade", zap.Int("kind", int(r.Kind)))
+		closeOpenAIClientWS(conn, coderws.StatusTryAgainLater, "relay session expired, please reconnect")
+	}
+}
+
+// relayWSTurnMapping 是从节点上一轮的渠道映射：与连接开始时的模型相同时用连接选号回复里的，否则按模型缓存、
+// 问主节点（本地 MapRequestModel 里的 ResolveChannelMappingAndRestrict）。
+func (h *OpenAIGatewayHandler) relayWSTurnMapping(c *gin.Context, conn *OpenAIRelayAttempt, cache *sync.Map, reqModel, model string) (service.ChannelMappingResult, error) {
+	if conn == nil {
+		return service.ChannelMappingResult{}, service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, openAIRelayWSUnavailableReason, nil)
+	}
+	if strings.TrimSpace(model) == strings.TrimSpace(reqModel) {
+		return conn.ChannelMapping, nil
+	}
+	if v, ok := cache.Load(model); ok {
+		return v.(service.ChannelMappingResult), nil
+	}
+	mapping, err := h.relay.TurnMapping(c, conn, model)
+	if err != nil {
+		return service.ChannelMappingResult{}, service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, openAIRelayWSUnavailableReason, err)
+	}
+	cache.Store(model, mapping)
+	return mapping, nil
 }

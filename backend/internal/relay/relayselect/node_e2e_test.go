@@ -90,6 +90,12 @@ func startE2E(t *testing.T) *e2e {
 // startE2EWith 同 startE2E，账号由 accounts 给出（参数是假上游地址）。
 func startE2EWith(t *testing.T, accounts func(upstreamURL string) []service.Account) *e2e {
 	t.Helper()
+	return startE2EWithConfig(t, nil, accounts)
+}
+
+// startE2EWithConfig 同 startE2EWith；configure 非 nil 时同样改主节点和从节点的配置（如打开 WebSocket）。
+func startE2EWithConfig(t *testing.T, configure func(*config.Config), accounts func(upstreamURL string) []service.Account) *e2e {
+	t.Helper()
 	ctx := context.Background()
 	e := &e2e{settler: &recordingSettler{}, hits: make(chan *http.Request, 16)}
 
@@ -149,7 +155,11 @@ func startE2EWith(t *testing.T, accounts func(upstreamURL string) []service.Acco
 	require.NoError(t, err)
 	nodeCert := &tls.Certificate{Certificate: [][]byte{leaf.Raw}, PrivateKey: priv, Leaf: leaf}
 
-	e.world = newWorldOn(t, &config.Config{RunMode: config.RunModeSimple}, 10, n.ID, accounts(e.upstream.URL)...)
+	masterCfg := &config.Config{RunMode: config.RunModeSimple}
+	if configure != nil {
+		configure(masterCfg)
+	}
+	e.world = newWorldOn(t, masterCfg, 10, n.ID, accounts(e.upstream.URL)...)
 
 	srv, err := transport.NewServer(transport.ServerOptions{
 		TLS:        transport.ServerTLSOptions{Certificate: ca.MasterCertificate, Roots: ca.RootPool},
@@ -186,6 +196,9 @@ func startE2EWith(t *testing.T, accounts func(upstreamURL string) []service.Acco
 	nodeCfg := &config.Config{}
 	nodeCfg.Gateway.MaxBodySize = 10 << 20
 	nodeCfg.Security.URLAllowlist.AllowInsecureHTTP = true // 假上游是 http://127.0.0.1
+	if configure != nil {
+		configure(nodeCfg)
+	}
 	cache := node.NewConfigCache()
 	nodeSettings := service.NewSettingService(cache, nodeCfg)
 	cache.OnSwap(func(*relayv1.ConfigSnapshot) { nodeSettings.InvalidateAll() })

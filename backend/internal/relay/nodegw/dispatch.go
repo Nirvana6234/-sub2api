@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler"
@@ -71,11 +72,16 @@ type requestState struct {
 	current *attemptState
 }
 
-// attemptState 是一次选中的尝试。
+// attemptState 是一次选中的尝试。WebSocket 连接上，连接选号一份（收 response id、释放），每一轮另有一份
+// （这一轮的凭证和预扣，同一个选号 ID）。
 type attemptState struct {
 	selectionID string
 	voucher     []byte
 	reservation *node.Reservation
+	// userID、apiKeyID：WebSocket 每一轮报手里的额度用。
+	userID, apiKeyID int64
+	// turnCalls：这条 WebSocket 连接选号上调过几次 BeginTurn（幂等键用）。
+	turnCalls atomic.Uint32
 
 	mu             sync.Mutex
 	responseIDs    []string
@@ -162,23 +168,26 @@ func (d *Dispatcher) selectRequest(c *gin.Context, st *requestState, req handler
 		endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_CHAT
 	case req.Messages:
 		endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_MESSAGES
+	case req.WS:
+		endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_RESPONSES_WS
 	}
 	sreq := &relayv1.SelectRequest{
-		RequestId:          st.id,
-		Credential:         &relayv1.SelectRequest_ApiKey{ApiKey: req.APIKey.Key},
-		ClientIp:           clientIP,
-		Method:             c.Request.Method,
-		Path:               c.Request.URL.Path,
-		Endpoint:           endpoint,
-		Model:              req.Model,
-		Stream:             req.Stream,
-		SessionHash:        req.SessionHash,
-		PreviousResponseId: req.PreviousResponseID,
-		ImageIntent:        req.ImageIntent,
-		LegacyCompact:      req.LegacyCompact,
-		NativeCompactionV2: req.NativeCompactionV2,
-		UserAgent:          c.GetHeader("User-Agent"),
-		HttpRequestId:      c.Writer.Header().Get("X-Request-Id"),
+		RequestId:               st.id,
+		Credential:              &relayv1.SelectRequest_ApiKey{ApiKey: req.APIKey.Key},
+		ClientIp:                clientIP,
+		Method:                  c.Request.Method,
+		Path:                    c.Request.URL.Path,
+		Endpoint:                endpoint,
+		Model:                   req.Model,
+		Stream:                  req.Stream,
+		SessionHash:             req.SessionHash,
+		PreviousResponseId:      req.PreviousResponseID,
+		ImageIntent:             req.ImageIntent,
+		LegacyCompact:           req.LegacyCompact,
+		NativeCompactionV2:      req.NativeCompactionV2,
+		UserAgent:               c.GetHeader("User-Agent"),
+		HttpRequestId:           c.Writer.Header().Get("X-Request-Id"),
+		PreviousResponseCanMove: req.PreviousResponseCanMove,
 	}
 	sreq.ClientRequestId, _ = c.Request.Context().Value(ctxkey.ClientRequestID).(string)
 	sreq.GuardianParentSessionHash, sreq.GuardianParentLegacySessionHash = service.OpenAIGuardianParentSessionHashes(c.Request.Context())
@@ -195,21 +204,32 @@ func (d *Dispatcher) selectRequest(c *gin.Context, st *requestState, req handler
 	if st.rawBody != nil {
 		sreq.ModelCandidates = requestmodel.FromBodyCandidates(c.FullPath(), c.GetHeader("Content-Type"), st.rawBody)
 	}
-	if v, ok := d.scopes.Load(req.APIKey.ID); ok && req.APIKey.User != nil {
-		scopes, _ := v.([]node.QuotaScope)
-		for _, s := range scopes {
-			sreq.HeldQuota = append(sreq.HeldQuota, &relayv1.HeldQuota{
-				Scope:  &relayv1.QuotaScope{Dimension: s.Dimension, ScopeId: s.ScopeID, ScopeKey: s.ScopeKey},
-				Unused: max(d.deps.Quota.Unused(req.APIKey.User.ID, s), 0),
-			})
-		}
+	if req.APIKey.User != nil {
+		sreq.HeldQuota = d.heldQuota(req.APIKey.User.ID, req.APIKey.ID)
 	}
 	return sreq
 }
 
+// heldQuota 是这个 Key 上次用到的各项子额度里、手里还没用掉的金额（主节点据此决定补不补）。
+func (d *Dispatcher) heldQuota(userID, apiKeyID int64) []*relayv1.HeldQuota {
+	v, ok := d.scopes.Load(apiKeyID)
+	if !ok {
+		return nil
+	}
+	scopes, _ := v.([]node.QuotaScope)
+	out := make([]*relayv1.HeldQuota, 0, len(scopes))
+	for _, s := range scopes {
+		out = append(out, &relayv1.HeldQuota{
+			Scope:  &relayv1.QuotaScope{Dimension: s.Dimension, ScopeId: s.ScopeID, ScopeKey: s.ScopeKey},
+			Unused: max(d.deps.Quota.Unused(userID, s), 0),
+		})
+	}
+	return out
+}
+
 // admitSelection 用上选号结果：额度、预扣、账号凭据、ctx。失败时放掉这次选号并按主节点不可用处理。
 func (d *Dispatcher) admitSelection(c *gin.Context, st *requestState, req handler.OpenAIRelaySelectRequest, sel *relayv1.Selection) handler.OpenAIRelaySelectResult {
-	a := &attemptState{selectionID: sel.GetSelectionId(), voucher: sel.GetVoucher()}
+	a := &attemptState{selectionID: sel.GetSelectionId(), voucher: sel.GetVoucher(), userID: sel.GetUserId(), apiKeyID: req.APIKey.ID}
 	st.mu.Lock()
 	st.current = a
 	st.mu.Unlock()
@@ -224,7 +244,10 @@ func (d *Dispatcher) admitSelection(c *gin.Context, st *requestState, req handle
 	for _, s := range sel.GetQuotaScopes() {
 		scopes = append(scopes, node.QuotaScope{Dimension: s.GetDimension(), ScopeID: s.GetScopeId(), ScopeKey: s.GetScopeKey()})
 	}
-	d.scopes.Store(req.APIKey.ID, scopes)
+	if !req.WS {
+		// WebSocket 连接选号不带额度（每一轮在 BeginTurn）。
+		d.scopes.Store(req.APIKey.ID, scopes)
+	}
 	ctx := node.WithSelectionID(c.Request.Context(), a.selectionID)
 	if len(scopes) > 0 {
 		res, err := d.deps.Quota.Reserve(ctx, sel.GetUserId(), scopes, sel.GetQuotaNeed())
@@ -258,6 +281,7 @@ func (d *Dispatcher) admitSelection(c *gin.Context, st *requestState, req handle
 		},
 		ForwardModel:       sel.GetForwardModel(),
 		MaxAccountSwitches: int(sel.GetMaxAccountSwitches()),
+		StickyPreviousHit:  sel.GetStickyPreviousHit(),
 		State:              a,
 	}}
 }
@@ -448,6 +472,10 @@ func convertRejection(r *relayv1.SelectRejection) *handler.OpenAIRelayRejection 
 		return &handler.OpenAIRelayRejection{Kind: handler.OpenAIRelayRejectFailoverExhausted, ContinuationUnsupported: r.GetContinuationUnsupported()}
 	case relayv1.RejectionFormat_REJECTION_FORMAT_UNSUPPORTED:
 		return &handler.OpenAIRelayRejection{Kind: handler.OpenAIRelayRejectUnsupported}
+	case relayv1.RejectionFormat_REJECTION_FORMAT_WS_CLOSE:
+		return &handler.OpenAIRelayRejection{
+			Kind: handler.OpenAIRelayRejectWSClose, WSCloseStatus: int(r.GetStatus()), WSCloseReason: r.GetMessage(), CyberBlockKey: r.GetCyberBlockKey(),
+		}
 	default:
 		return &handler.OpenAIRelayRejection{Kind: handler.OpenAIRelayRejectUnavailable}
 	}
