@@ -2881,118 +2881,48 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		reqLog.Debug("openai.websocket_account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
-		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
-			ctx,
-			apiKey.GroupID,
-			previousResponseID,
-			sessionHash,
-			wsForwardModel,
-			failedAccountIDs,
-			requiredTransport,
-			requiredCapability,
-			false,
-			previousResponseCanMove,
-			!imageIntent,
-			requestPlatform,
-		)
-		if err != nil {
-			reqLog.Warn("openai.websocket_account_select_failed",
-				zap.Error(openAICompatibleSelectionErrorForLog(err, requestPlatform)),
-				zap.Int("excluded_account_count", len(failedAccountIDs)),
-			)
+		// 选号 → 不排队抢账号槽 → 利润终检 → 粘性绑定（与主从分流主节点的连接选号共用）。
+		outcome := OpenAIAccountAdmitter{Gateway: h.gatewayService, Concurrency: h.concurrencyHelper}.SelectAndAdmitWS(ctx, OpenAIWSSelectRequest{
+			GroupID:                 apiKey.GroupID,
+			PreviousResponseID:      previousResponseID,
+			SessionHash:             sessionHash,
+			ForwardModel:            wsForwardModel,
+			RequiredTransport:       requiredTransport,
+			RequiredCapability:      requiredCapability,
+			PreviousResponseCanMove: previousResponseCanMove,
+			ImageIntent:             imageIntent,
+			RequestPlatform:         requestPlatform,
+			Excluded:                failedAccountIDs,
+		}, &profitVetoCount, reqLog)
+		ctx = outcome.Ctx
+		switch outcome.Kind {
+		case OpenAIWSSelected:
+		case OpenAIWSSelectFailed:
 			if lastFailoverErr != nil {
 				closeOpenAIWSFailoverExhausted(c, wsConn, lastFailoverErr)
 			} else {
 				closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "no available account")
 			}
 			return
-		}
-		if selection == nil || selection.Account == nil {
-			if lastFailoverErr != nil {
-				closeOpenAIWSFailoverExhausted(c, wsConn, lastFailoverErr)
-			} else {
-				closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "no available account")
-			}
+		case OpenAIWSSelectVetoExhausted:
+			closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "no available account")
+			return
+		case OpenAIWSSelectBusy:
+			closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "account is busy, please retry later")
+			return
+		case OpenAIWSSelectSlotError:
+			closeOpenAIClientWS(wsConn, coderws.StatusInternalError, "failed to acquire account concurrency slot")
+			return
+		default:
 			return
 		}
-
-		account := selection.Account
-		accountMaxConcurrency := account.Concurrency
-		if selection.WaitPlan != nil && selection.WaitPlan.MaxConcurrency > 0 {
-			accountMaxConcurrency = selection.WaitPlan.MaxConcurrency
-		}
-		// 终检、准入后绑定与后续 turn 级复核都使用选号结果携带的门（composite
-		// 等跨分组调度的门只存在于调度栈局部 ctx）；准入成功后并入连接 ctx。
-		// 兜底事实同样在此并入：长连接的用量任务以这个 ctx 为 parent。
-		ctx = service.ContextWithSelectionFallbackTrace(ctx, selection)
-		admissionCtx := service.ContextWithSelectionProfitGate(ctx, selection)
-		accountReleaseFunc := selection.ReleaseFunc
-		if selection.Acquired {
-			// 调度器已抢槽路径同样终检：选号与抢槽之间账号倍率可能刷新。
-			latest, vetoed, reason := h.gatewayService.ProfitControlVetoLatest(admissionCtx, account)
-			if vetoed {
-				if accountReleaseFunc != nil {
-					accountReleaseFunc()
-				}
-				reqLog.Debug("openai.websocket_account_slot_profit_vetoed", zap.Int64("account_id", account.ID), zap.String("reason", reason))
-				if !recordOpenAIProfitVeto(failedAccountIDs, account.ID, &profitVetoCount) {
-					reqLog.Warn("openai.websocket_profit_veto_attempts_exhausted", zap.Int("profit_veto_count", profitVetoCount))
-					closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "no available account")
-					return
-				}
-				continue
-			}
-			account = latest
-			selection.Account = latest
-		}
-		if !selection.Acquired {
-			if selection.WaitPlan == nil {
-				closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "account is busy, please retry later")
-				return
-			}
-			fastReleaseFunc, fastAcquired, err := h.concurrencyHelper.TryAcquireAccountSlot(
-				ctx,
-				account.ID,
-				selection.WaitPlan.MaxConcurrency,
-			)
-			if err != nil {
-				reqLog.Warn("openai.websocket_account_slot_acquire_failed", zap.Int64("account_id", account.ID), zap.Error(err))
-				closeOpenAIClientWS(wsConn, coderws.StatusInternalError, "failed to acquire account concurrency slot")
-				return
-			}
-			if !fastAcquired {
-				closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "account is busy, please retry later")
-				return
-			}
-			// 分组利润控制：WS 快速抢槽成功后终检，越线则释放
-			// 槽位、排除该账号重新选号，全池耗尽由下一轮选号关闭连接。
-			latest, vetoed, reason := h.gatewayService.ProfitControlVetoLatest(admissionCtx, account)
-			if vetoed {
-				if fastReleaseFunc != nil {
-					fastReleaseFunc()
-				}
-				reqLog.Debug("openai.websocket_account_slot_profit_vetoed", zap.Int64("account_id", account.ID), zap.String("reason", reason))
-				if !recordOpenAIProfitVeto(failedAccountIDs, account.ID, &profitVetoCount) {
-					reqLog.Warn("openai.websocket_profit_veto_attempts_exhausted", zap.Int("profit_veto_count", profitVetoCount))
-					closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "no available account")
-					return
-				}
-				continue
-			}
-			account = latest
-			selection.Account = latest
-			accountReleaseFunc = fastReleaseFunc
-		}
-		// 准入完成：门并入连接 ctx，turn 级复核与 failover 重选共用。
-		ctx = admissionCtx
+		account := outcome.Account
+		accountMaxConcurrency := outcome.MaxConcurrency
+		scheduleDecision := outcome.Decision
 		// Account selection starts a fresh upstream attempt. Clear any model
 		// captured by the previous failover account before credential lookup.
 		setOpsSelectedAccount(c, account.ID, account.Platform)
-		currentAccountRelease = wrapReleaseOnDone(ctx, accountReleaseFunc)
-		if err := h.gatewayService.BindStickySessionAfterProfitAdmission(ctx, apiKey.GroupID, sessionHash, account.ID); err != nil {
-			reqLog.Warn("openai.websocket_bind_sticky_session_after_profit_admission_failed", zap.Int64("account_id", account.ID), zap.Error(err))
-		}
+		currentAccountRelease = wrapReleaseOnDone(ctx, outcome.Release)
 
 		token, _, err := h.gatewayService.GetRequestCredential(ctx, c, account)
 		if err != nil {
