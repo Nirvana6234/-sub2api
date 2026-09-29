@@ -2916,6 +2916,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		var accountMaxConcurrency int
 		var scheduleDecision service.OpenAIAccountScheduleDecision
 		if h.relay != nil {
+			// 选号接着这条连接的 ctx（租约、会话抢占的登记等）：换号时 admitSelection 从它派生，
+			// 否则再次登记会话抢占时会把本连接当成"旧连接"关掉。
+			c.Request = c.Request.WithContext(ctx)
 			res := h.relay.Select(c, OpenAIRelaySelectRequest{
 				WS: true, APIKey: apiKey, Model: reqModel, Stream: true, SessionHash: sessionHash,
 				PreviousResponseID: previousResponseID, PreviousResponseCanMove: previousResponseCanMove,

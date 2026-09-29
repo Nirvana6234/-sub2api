@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -135,4 +136,78 @@ func TestNodeServesResponsesWebSocketEndToEnd(t *testing.T) {
 		defer e.world.slots.leaseMu.Unlock()
 		return len(e.world.slots.leases) == 0
 	}, 5*time.Second, 20*time.Millisecond, "the connection lease is released")
+}
+
+// 连接内换号：第一个账号的上游在第一轮回限流错误，从节点经主节点判定、换号（放掉旧选号、以同一请求选号、
+// 新选号上重新开这一轮），第二个账号完成这一轮。只有一条用量，凭证是第二次选号的；关闭后槽都放掉。
+func TestNodeWebSocketFailsOverWithinAConnection(t *testing.T) {
+	logger.InitBootstrap()
+	var limitedHits atomic.Int32
+	limited := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		limitedHits.Add(1)
+		conn, err := coderws.Accept(w, r, &coderws.AcceptOptions{CompressionMode: coderws.CompressionContextTakeover})
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+		if _, _, err := conn.Read(r.Context()); err != nil {
+			return
+		}
+		_ = conn.Write(r.Context(), coderws.MessageText, []byte(`{"type":"error","error":{"code":"rate_limit_exceeded","type":"usage_limit_reached","message":"The usage limit has been reached"}}`))
+	}))
+	t.Cleanup(limited.Close)
+	up := newWSUpstream(t)
+	e := startE2EWithConfig(t, wsE2EConfig, func(string) []service.Account {
+		a := wsAccount(1, "limited")
+		a.Priority = 1
+		a.Credentials = map[string]any{"api_key": "SECRET-limited", "base_url": limited.URL}
+		b := wsAccount(2, "healthy")
+		b.Priority = 100
+		b.Credentials = map[string]any{"api_key": "SECRET-healthy", "base_url": up.srv.URL}
+		return []service.Account{a, b}
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	conn, _, err := coderws.Dial(ctx, "ws"+strings.TrimPrefix(e.gateway.URL, "http")+"/v1/responses",
+		&coderws.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer sk-a"}}})
+	require.NoError(t, err)
+	defer func() { _ = conn.CloseNow() }()
+	require.NoError(t, conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5","input":[{"role":"user","content":"hi"}]}`)))
+	done := readUntilCompleted(t, ctx, conn)
+	require.NotEmpty(t, gjson.GetBytes(done, "response.id").String(), "the turn completes on the second account")
+	require.Positive(t, limitedHits.Load(), "the first account was tried and failed")
+	up.mu.Lock()
+	require.Equal(t, []string{"Bearer SECRET-healthy"}, up.auths)
+	up.mu.Unlock()
+
+	require.Eventually(t, func() bool { return len(e.settler.records()) == 1 }, 5*time.Second, 20*time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
+	require.Len(t, e.settler.records(), 1, "only the completed turn is billed")
+
+	require.NoError(t, conn.Close(coderws.StatusNormalClosure, ""))
+	e.world.waitReleased(t)
+}
+
+// 连着发几轮（不等上一轮的槽放掉）：每一轮都占着自己的槽转发，结束后都放掉。
+func TestNodeWebSocketBackToBackTurns(t *testing.T) {
+	up := newWSUpstream(t)
+	e := startE2EWithConfig(t, wsE2EConfig, func(string) []service.Account {
+		a := wsAccount(1, "one")
+		a.Credentials = map[string]any{"api_key": "SECRET-one", "base_url": up.srv.URL}
+		return []service.Account{a}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	conn, _, err := coderws.Dial(ctx, "ws"+strings.TrimPrefix(e.gateway.URL, "http")+"/v1/responses",
+		&coderws.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer sk-a"}}})
+	require.NoError(t, err)
+	defer func() { _ = conn.CloseNow() }()
+	for i := 0; i < 4; i++ {
+		require.NoError(t, conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5","input":[{"role":"user","content":"go"}]}`)))
+		readUntilCompleted(t, ctx, conn)
+	}
+	require.Eventually(t, func() bool { return len(e.settler.records()) == 4 }, 5*time.Second, 20*time.Millisecond)
+	require.NoError(t, conn.Close(coderws.StatusNormalClosure, ""))
+	e.world.waitReleased(t)
 }
