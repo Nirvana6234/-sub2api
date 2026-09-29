@@ -496,7 +496,13 @@ public sealed class CodexPluginSupportTests : IDisposable
 
         public TaskCompletionSource AllowStop { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public Task StartAsync(string apiKey, string baseUrl, CancellationToken cancellationToken = default) =>
+        public Task StartAsync(
+            string apiKey,
+            string baseUrl,
+            CancellationToken cancellationToken = default,
+            string? catalogUrl = null,
+            string? preferredModel = null,
+            IReadOnlyCollection<string>? keepModelIfIn = null) =>
             Task.CompletedTask;
 
         public async Task StopAsync()

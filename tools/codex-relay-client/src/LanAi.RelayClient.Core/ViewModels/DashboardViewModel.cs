@@ -167,6 +167,9 @@ public sealed partial class DashboardViewModel : ObservableObject
         SetContextFilterWithoutApplying(_contextFilterPreferences.Load() ?? true);
         RefreshContextFilterUsageText();
         ClaudePreference = new ClaudePreferenceViewModel(_client, _session, _safeAsync);
+        // The model the user picked is the default Codex is moved to when it asks for one the
+        // group does not serve, so the relay has to hear about a change as well as a switch.
+        ClaudePreference.Changed += OnClaudePreferenceChanged;
         ClaudeCode = new ClaudeCodeViewModel(
             _codex,
             _preferences,
@@ -344,6 +347,8 @@ public sealed partial class DashboardViewModel : ObservableObject
         OnPropertyChanged(nameof(HasNoGroupSelected));
         OnPropertyChanged(nameof(IsClaudeGroup));
         OnPropertyChanged(nameof(ShowConfigureAutoGroupButton));
+        OnPropertyChanged(nameof(CodexModelChoices));
+        OnPropertyChanged(nameof(CodexModelChoice));
         // The start button is gated on having a group; see AwaitingBillingGroup.
         OnPropertyChanged(nameof(CanStartCodex));
         OnPropertyChanged(nameof(StartCodexLabel));
@@ -383,8 +388,147 @@ public sealed partial class DashboardViewModel : ObservableObject
     // selection itself decides.
 
     /// <summary>True when the selected group uses the Anthropic/Claude platform.</summary>
-    public bool IsClaudeGroup => SelectedGroup?.Platform?.ToLowerInvariant().Contains("claude") == true
-                               || SelectedGroup?.Platform?.ToLowerInvariant().Contains("anthropic") == true;
+    public bool IsClaudeGroup => IsClaudePlatform(SelectedGroup);
+
+    private static bool IsClaudePlatform(GroupItemViewModel? group) =>
+        group?.Platform?.ToLowerInvariant().Contains("claude") == true
+        || group?.Platform?.ToLowerInvariant().Contains("anthropic") == true;
+
+    // ---- Codex's model picker -----------------------------------------------------------
+    //
+    // A group with a whitelist switched on has a definite list of models, and Codex's picker
+    // is made to show exactly that (see CodexModelCatalog). A group without one, and the
+    // automatic group, leave Codex on the list it ships with.
+
+    /// <summary>What <paramref name="group"/> serves, or null when it has no list of its own.</summary>
+    private CodexGroupModels? ModelsFor(GroupItemViewModel? group) =>
+        group is null || group.IsAutomatic || !group.HasModelAllowlist
+            ? null
+            : CodexGroupModels.From(group.AllowedModels, IsClaudePlatform(group) ? ClaudePreference.SelectedClaudeModel : null);
+
+    private GroupItemViewModel? CurrentGroup => Groups.FirstOrDefault(g => g.IsCurrent);
+
+    private void OnClaudePreferenceChanged()
+    {
+        if (_codex.UsesLocalTransport && CurrentGroup is { IsAutomatic: false } current)
+        {
+            _codex.SetActiveGroup(current.Id, current.Name, ModelsFor(current));
+        }
+
+        OnPropertyChanged(nameof(CodexModelChoices));
+        OnPropertyChanged(nameof(CodexModelChoice));
+    }
+
+    /// <summary>
+    /// The models the Codex page offers for the chosen Claude group's default. Just the two
+    /// Claude models without a whitelist; with one, the whitelist's own — narrowed to the
+    /// ones the preference can name, when there are any.
+    /// </summary>
+    public IReadOnlyList<string> CodexModelChoices
+    {
+        get
+        {
+            IReadOnlyList<string> known = ClaudePreferenceViewModel.ClaudeModels;
+            if (SelectedGroup is not { IsAutomatic: false, HasModelAllowlist: true } group)
+            {
+                return known;
+            }
+
+            IReadOnlyList<string> both = [.. group.AllowedModels.Where(m => known.Contains(m, StringComparer.OrdinalIgnoreCase))];
+            return both.Count > 0 ? both : group.AllowedModels;
+        }
+    }
+
+    /// <summary>
+    /// The default model as the Codex page shows it: the preference when the choices include it,
+    /// otherwise the first choice — the same answer <see cref="CodexGroupModels"/> gives the relay.
+    /// </summary>
+    public string CodexModelChoice
+    {
+        get
+        {
+            IReadOnlyList<string> choices = CodexModelChoices;
+            string chosen = ClaudePreference.SelectedClaudeModel;
+            return choices.FirstOrDefault(m => string.Equals(m, chosen, StringComparison.OrdinalIgnoreCase))
+                ?? choices[0];
+        }
+
+        set
+        {
+            // A ComboBox reports null while its items are being replaced; taking that as a
+            // choice would write nothing into the preference and lose the real one.
+            if (!string.IsNullOrWhiteSpace(value) && CodexModelChoices.Contains(value))
+            {
+                ClaudePreference.SelectedClaudeModel = value;
+            }
+        }
+    }
+
+    // ---- Restart to see a new model list ---------------------------------------------------
+
+    /// <summary>
+    /// Asks whether to restart Codex now so its picker shows the model list of a group just
+    /// switched to. The host supplies the dialog; without one the answer is no, and the Codex
+    /// page keeps saying the list is out of date.
+    /// </summary>
+    public Func<string, Task<bool>>? ConfirmModelListRestart { get; set; }
+
+    [ObservableProperty]
+    private string codexModelListNotice = string.Empty;
+
+    public bool HasCodexModelListNotice => !string.IsNullOrWhiteSpace(CodexModelListNotice);
+
+    partial void OnCodexModelListNoticeChanged(string value) => OnPropertyChanged(nameof(HasCodexModelListNotice));
+
+    /// <summary>
+    /// Whether the Codex that is running was started with a different model list than the
+    /// current group's, and so will show the old one until it is restarted.
+    /// </summary>
+    private bool ModelListIsStale(GroupItemViewModel? current) =>
+        IsCodexRunning &&
+        _codex.UsesLocalTransport &&
+        _codex.LoadedCatalogSignature is { } loaded &&
+        current is not null &&
+        !string.Equals(loaded, CodexGroupModels.SignatureOf(ModelsFor(current)), StringComparison.Ordinal);
+
+    private void RefreshModelListNotice()
+    {
+        CodexModelListNotice = ModelListIsStale(CurrentGroup)
+            ? "Codex 的模型下拉还是切换分组之前的列表，重启 Codex 后才会更新。"
+            : string.Empty;
+    }
+
+    /// <summary>
+    /// After a switch: when the running Codex will keep showing the old model list, offer to
+    /// restart it now. Declining is fine — the relay moves any request for a model the new
+    /// group does not serve onto its default, so the next turn still works.
+    /// </summary>
+    private async Task OfferModelListRestartAsync(GroupItemViewModel group, CancellationToken cancellationToken)
+    {
+        RefreshModelListNotice();
+        if (!ModelListIsStale(group) || ConfirmModelListRestart is null)
+        {
+            return;
+        }
+
+        CodexGroupModels? models = ModelsFor(group);
+        string effect = models is null
+            ? $"{group.Name} 没有模型白名单，重启后 Codex 会恢复为自带的模型列表。"
+            : $"重启后 Codex 的模型下拉会只显示 {group.Name} 支持的模型。";
+        string fallback = models is null
+            ? string.Empty
+            : $"\n\n选“稍后”也能继续使用：Codex 仍请求旧模型时，共飞会自动换成 {models.DefaultModel}。";
+
+        bool restart = await ConfirmModelListRestart(
+                $"已切换到 {group.Name}。Codex 的模型下拉要重启 Codex 才会更新，现在还是旧列表。\n\n{effect}{fallback}\n\n重启会中断正在进行的对话，要现在重启吗？")
+            .ConfigureAwait(true);
+        if (restart)
+        {
+            await StartCodexAsync(_ => Task.FromResult(true), cancellationToken, forceRestart: true).ConfigureAwait(true);
+        }
+
+        RefreshModelListNotice();
+    }
 
     // ---- Codex ---------------------------------------------------------------
 
@@ -571,6 +715,7 @@ public sealed partial class DashboardViewModel : ObservableObject
             IsCodexRunning = health.IsRunning;
             RequiresCodexReconnect = health.IsRunning && !health.IsConnected && !IsStartingCodex;
             UpdateCodexAccountActivationState();
+            RefreshModelListNotice();
             CodexNotInstalled = !health.IsInstalled;
             CodexInstallerAvailable = _codexInstaller.Inspect().PackageAvailable;
 
@@ -670,7 +815,15 @@ public sealed partial class DashboardViewModel : ObservableObject
         {
             long? groupId = SelectedGroup is { IsAutomatic: false } selected ? selected.Id : null;
             string? groupName = SelectedGroup?.Name;
-            string? preferredModel = IsClaudeGroup ? ClaudePreference.SelectedClaudeModel : null;
+            CodexGroupModels? groupModels = groupId is null ? null : ModelsFor(SelectedGroup);
+
+            // A Claude group's chosen model always replaces the one in config.toml. For any
+            // other group with a whitelist the user's own model stays whenever the group
+            // serves it, and only otherwise gives way to the group's default.
+            string? preferredModel = IsClaudeGroup
+                ? groupModels?.DefaultModel ?? ClaudePreference.SelectedClaudeModel
+                : groupModels?.DefaultModel;
+            bool keepUserModel = !IsClaudeGroup && groupModels is not null;
             CodexStartupResult result;
             if (forceRestart)
             {
@@ -682,7 +835,9 @@ public sealed partial class DashboardViewModel : ObservableObject
                         cancellationToken: cancellationToken,
                         preferredModel: preferredModel,
                         forceNewKey: forceNewKey,
-                        groupName: groupName)
+                        groupName: groupName,
+                        groupModels: groupModels,
+                        keepUserModelIfServed: keepUserModel)
                     .ConfigureAwait(true);
             }
             else if (RequiresCodexAccountRestart || RequiresCodexReconnect)
@@ -705,7 +860,9 @@ public sealed partial class DashboardViewModel : ObservableObject
                         cancellationToken: cancellationToken,
                         preferredModel: preferredModel,
                         forceNewKey: forceNewKey,
-                        groupName: groupName)
+                        groupName: groupName,
+                        groupModels: groupModels,
+                        keepUserModelIfServed: keepUserModel)
                     .ConfigureAwait(true);
             }
             else
@@ -718,7 +875,9 @@ public sealed partial class DashboardViewModel : ObservableObject
                         cancellationToken: cancellationToken,
                         preferredModel: preferredModel,
                         forceNewKey: forceNewKey,
-                        groupName: groupName)
+                        groupName: groupName,
+                        groupModels: groupModels,
+                        keepUserModelIfServed: keepUserModel)
                     .ConfigureAwait(true);
             }
 
@@ -733,7 +892,9 @@ public sealed partial class DashboardViewModel : ObservableObject
                         cancellationToken: cancellationToken,
                         preferredModel: preferredModel,
                         forceNewKey: forceNewKey,
-                        groupName: groupName)
+                        groupName: groupName,
+                        groupModels: groupModels,
+                        keepUserModelIfServed: keepUserModel)
                     .ConfigureAwait(true);
             }
 
@@ -756,6 +917,8 @@ public sealed partial class DashboardViewModel : ObservableObject
                     _codexAccountStore.Save(currentEmail);
                     RequiresCodexAccountRestart = false;
                 }
+
+                RefreshModelListNotice();
             }
         }
         catch (Exception ex) when (RefreshState.IsCardFailure(ex))
@@ -1103,7 +1266,7 @@ public sealed partial class DashboardViewModel : ObservableObject
                 ApplyCurrentLabels(inForce);
                 if (_codex.UsesLocalTransport && inForce is not null)
                 {
-                    _codex.SetActiveGroup(inForce.IsAutomatic ? null : inForce.Id, inForce.Name);
+                    _codex.SetActiveGroup(inForce.IsAutomatic ? null : inForce.Id, inForce.Name, ModelsFor(inForce));
                 }
                 if (IsClaudeGroup) _ = _safeAsync.RunAsync(ClaudePreference.LoadAsync);
                 ClaudeCode.RequestSync();
@@ -1231,11 +1394,14 @@ public sealed partial class DashboardViewModel : ObservableObject
             // group on each request, so the switch is a local push and is in force for
             // the very next turn. Falling through to the branch below instead would
             // leave the relay on the previous group while telling the user otherwise.
-            _codex.SetActiveGroup(group.Id, group.Name);
+            _codex.SetActiveGroup(group.Id, group.Name, ModelsFor(group));
             _preferences.Save(group.Id);
             GroupMessage = $"已切换到 {group.Name}。";
             if (IsClaudeGroup) _ = _safeAsync.RunAsync(ClaudePreference.LoadAsync);
             ClaudeCode.RequestSync();
+            OnPropertyChanged(nameof(CodexModelChoices));
+            OnPropertyChanged(nameof(CodexModelChoice));
+            await OfferModelListRestartAsync(group, cancellationToken).ConfigureAwait(true);
 
             // Best-effort record for another installation of the same account to pick
             // up as its own bootstrap default (see LoadGroupCardAsync) — never
@@ -1367,6 +1533,9 @@ public sealed partial class DashboardViewModel : ObservableObject
             _codex.SetActiveGroup(null, automatic.Name);
             ClaudeCode.RequestSync();
             GroupMessage = "已启用自动分组。";
+            OnPropertyChanged(nameof(CodexModelChoices));
+            OnPropertyChanged(nameof(CodexModelChoice));
+            await OfferModelListRestartAsync(automatic, cancellationToken).ConfigureAwait(true);
             OnPropertyChanged(nameof(CanStartCodex));
             OnPropertyChanged(nameof(StartCodexLabel));
         }

@@ -125,7 +125,13 @@ internal sealed class FakeCodexRouteGuardHost : ICodexRouteGuardHost
 
     public int StopCallCount { get; private set; }
 
-    public Task StartAsync(string apiKey, string baseUrl, CancellationToken cancellationToken = default)
+    public Task StartAsync(
+        string apiKey,
+        string baseUrl,
+        CancellationToken cancellationToken = default,
+        string? catalogUrl = null,
+        string? preferredModel = null,
+        IReadOnlyCollection<string>? keepModelIfIn = null)
     {
         StartCallCount++;
         return Task.CompletedTask;

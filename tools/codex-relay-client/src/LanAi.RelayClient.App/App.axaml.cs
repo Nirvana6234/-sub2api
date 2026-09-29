@@ -211,7 +211,8 @@ public partial class App : Application
             {
                 localProxyUsage.Add(usage);
                 Avalonia.Threading.Dispatcher.UIThread.Post(() => dashboardForRelay?.LocalProxy.RefreshUsage());
-            });
+            },
+            codexCatalogSource: new CodexBundledCatalogSource());
         // Claude Code's settings.json and the editor's own settings, put back on exit.
         var pluginBinding = new ClaudePluginBinding(
             new ClaudeCodeSettingsWriter(Path.Combine(AppPaths.PluginConfigRoot, "claude-settings-journal.json")),
@@ -371,6 +372,8 @@ public partial class App : Application
         dashboard.ConfigureAutoGroup = (settings, candidates) =>
             AutoGroupDialog.ShowAsync(shell, settings, candidates);
         dashboard.ShowGroupModels = message => NoticeDialog.ShowNoticeAsync(shell, message);
+        dashboard.ConfirmModelListRestart = message =>
+            ConfirmDialog.AskAsync(shell, message, confirmLabel: "立即重启", cancelLabel: "稍后");
 
         clientUpdate.ConfirmUpdate = message => ConfirmDialog.AskAsync(shell, message, confirmLabel: "更新");
         clientUpdate.ShowMessage = message => NoticeDialog.ShowNoticeAsync(shell, message);

@@ -108,7 +108,11 @@ public sealed partial class ClaudePreferenceViewModel : ObservableObject
         {
             var token = await _session.GetAccessTokenAsync().ConfigureAwait(true);
             var modelIdx = System.Array.IndexOf(ClaudeModels.ToArray(), SelectedClaudeModel);
-            if (modelIdx < 0) modelIdx = 0;
+
+            // A model only a group's whitelist names (the Codex page can pick one) is not a
+            // value this account setting can hold; saving the first model in its place would
+            // silently change what the user chose.
+            if (modelIdx < 0) return;
             var levelIdx = System.Array.IndexOf(
                 ClaudeThinkingLevels.ToArray(),
                 SelectedClaudeThinkingLevel);

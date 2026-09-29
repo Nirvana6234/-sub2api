@@ -755,4 +755,155 @@ public sealed class CodexConfigWriterTests : IDisposable
 
         Assert.Equal("gongfei", _writer.ReadActiveProvider());
     }
+
+    // ---- The model list address ---------------------------------------------
+
+    private const string Catalog = "http://127.0.0.1:5555/v1/models";
+
+    [Fact]
+    public void WritesTheCatalogAddressIntoOurProviderAndTurnsTheSwitchOn()
+    {
+        _writer.Apply("sk-relay", "https://relay.test/v1", catalogUrl: Catalog);
+
+        string config = Config();
+        Assert.Contains($"model_catalog_url = \"{Catalog}\"", config, StringComparison.Ordinal);
+        Assert.Contains("[features]\napi_key_model_discovery = true", config.Replace("\r\n", "\n"), StringComparison.Ordinal);
+        // Under our provider, not loose at the top of the file.
+        Assert.True(config.IndexOf("[model_providers.gongfei]", StringComparison.Ordinal) < config.IndexOf("model_catalog_url", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void WritesNeitherWithoutACatalogAddress()
+    {
+        _writer.Apply("sk-relay", "https://relay.test/v1");
+
+        string config = Config();
+        Assert.DoesNotContain("model_catalog_url", config, StringComparison.Ordinal);
+        Assert.DoesNotContain("api_key_model_discovery", config, StringComparison.Ordinal);
+        Assert.DoesNotContain("[features]", config, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AddsTheSwitchToTheUsersOwnFeaturesTableInsteadOfMakingASecond()
+    {
+        // Two tables of one name are a TOML error, and Codex would stop reading the file.
+        GivenConfig("model = \"gpt-5\"\n\n[features]\nweb_search = true\n\n[projects.x]\ntrust = \"yes\"\n");
+
+        _writer.Apply("sk-relay", "https://relay.test/v1", catalogUrl: Catalog);
+
+        string config = Config();
+        Assert.Equal(1, CountOf(config, "[features]"));
+        Assert.Contains("web_search = true", config, StringComparison.Ordinal);
+        Assert.Contains("api_key_model_discovery = true", config, StringComparison.Ordinal);
+        Assert.Contains("[projects.x]", config, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TurnsOnASwitchTheUserHadLeftOff_WithoutRepeatingTheKey()
+    {
+        GivenConfig("[features]\napi_key_model_discovery = false\n");
+
+        _writer.Apply("sk-relay", "https://relay.test/v1", catalogUrl: Catalog);
+
+        string config = Config();
+        Assert.Equal(1, CountOf(config, "api_key_model_discovery"));
+        Assert.Contains("api_key_model_discovery = true", config, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WritingTwiceLeavesOneOfEach()
+    {
+        _writer.Apply("sk-relay", "https://relay.test/v1", catalogUrl: Catalog);
+        _writer.Apply("sk-relay", "https://relay.test/v1", catalogUrl: "http://127.0.0.1:6666/v1/models");
+
+        string config = Config();
+        Assert.Equal(1, CountOf(config, "model_catalog_url"));
+        Assert.Equal(1, CountOf(config, "api_key_model_discovery"));
+        Assert.Equal(1, CountOf(config, "[features]"));
+        Assert.Contains("6666", config, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheRouteCheckAlsoWantsTheCatalogAddressAndTheSwitch()
+    {
+        _writer.Apply("sk-relay", "https://relay.test/v1", catalogUrl: Catalog);
+
+        Assert.True(_writer.IsRelayRoute("https://relay.test/v1", "sk-relay", Catalog));
+        Assert.False(_writer.IsRelayRoute("https://relay.test/v1", "sk-relay", "http://127.0.0.1:9/v1/models"));
+
+        // An official sign-in rewrites the file wholesale; the route check must notice the
+        // part that is gone even when the base address happens to survive.
+        File.WriteAllText(_paths.ConfigPath, Config().Replace("api_key_model_discovery = true", "api_key_model_discovery = false"));
+        Assert.False(_writer.IsRelayRoute("https://relay.test/v1", "sk-relay", Catalog));
+
+        // Without a catalog the extra checks do not apply.
+        Assert.True(_writer.IsRelayRoute("https://relay.test/v1"));
+    }
+
+    // ---- Which model ends up in the file ------------------------------------
+
+    [Fact]
+    public void KeepsTheUsersModelWhenTheGroupServesIt()
+    {
+        GivenConfig("model = \"claude-opus-5\"\n");
+
+        _writer.Apply("sk-relay", "https://relay.test/v1", "claude-sonnet-5", Catalog, keepModelIfIn: ["claude-sonnet-5", "CLAUDE-OPUS-5"]);
+
+        Assert.Contains("model = \"claude-opus-5\"", Config(), StringComparison.Ordinal);
+        Assert.DoesNotContain("model = \"claude-sonnet-5\"", Config(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ReplacesTheUsersModelWhenTheGroupDoesNotServeIt()
+    {
+        GivenConfig("model = \"gpt-5.5\"\n");
+
+        _writer.Apply("sk-relay", "https://relay.test/v1", "claude-sonnet-5", Catalog, keepModelIfIn: ["claude-sonnet-5"]);
+
+        string config = Config();
+        Assert.Contains("model = \"claude-sonnet-5\"", config, StringComparison.Ordinal);
+        Assert.DoesNotContain("gpt-5.5", config, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WritesTheDefaultModelWhenThereWasNone()
+    {
+        _writer.Apply("sk-relay", "https://relay.test/v1", "claude-sonnet-5", Catalog, keepModelIfIn: ["claude-sonnet-5"]);
+
+        Assert.Contains("model = \"claude-sonnet-5\"", Config(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WithoutAKeepListThePreferredModelAlwaysWins()
+    {
+        GivenConfig("model = \"claude-opus-5\"\n");
+
+        _writer.Apply("sk-relay", "https://relay.test/v1", "claude-sonnet-5", Catalog);
+
+        Assert.Contains("model = \"claude-sonnet-5\"", Config(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AModelNamedInsideATableIsNotTheUsersModel()
+    {
+        GivenConfig("[profiles.work]\nmodel = \"gpt-5.5\"\n");
+
+        _writer.Apply("sk-relay", "https://relay.test/v1", "claude-sonnet-5", Catalog, keepModelIfIn: ["gpt-5.5"]);
+
+        string config = Config();
+        // The top-level model is ours to fill in; the profile's own stays as it was.
+        Assert.Contains("model = \"claude-sonnet-5\"", config, StringComparison.Ordinal);
+        Assert.Contains("[profiles.work]\nmodel = \"gpt-5.5\"", config.Replace("\r\n", "\n"), StringComparison.Ordinal);
+    }
+
+    private static int CountOf(string text, string needle)
+    {
+        int count = 0;
+        for (int at = text.IndexOf(needle, StringComparison.Ordinal); at >= 0; at = text.IndexOf(needle, at + needle.Length, StringComparison.Ordinal))
+        {
+            count++;
+        }
+
+        return count;
+    }
 }

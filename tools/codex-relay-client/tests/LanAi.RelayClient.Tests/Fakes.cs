@@ -459,7 +459,21 @@ internal sealed class FakeCodexStartup : ICodexStartup
     /// <summary>Every group pushed to the transport, in order.</summary>
     public List<long?> ActiveGroups { get; } = [];
 
-    public void SetActiveGroup(long? groupId, string? groupName = null) => ActiveGroups.Add(groupId);
+    /// <summary>The models pushed with each group, in step with <see cref="ActiveGroups"/>.</summary>
+    public List<CodexGroupModels?> ActiveGroupModels { get; } = [];
+
+    public void SetActiveGroup(long? groupId, string? groupName = null, CodexGroupModels? models = null)
+    {
+        ActiveGroups.Add(groupId);
+        ActiveGroupModels.Add(models);
+    }
+
+    public CodexGroupModels? LastGroupModels { get; private set; }
+
+    public bool LastKeepUserModel { get; private set; }
+
+    /// <summary>What a running Codex is taken to have loaded; null: none was started.</summary>
+    public string? LoadedCatalogSignature { get; set; }
 
     public List<(LanAi.RelayClient.Server.LocalProxyKind Kind, LanAi.RelayClient.Transport.LocalProxyTarget? Target)> LocalProxies { get; } = [];
 
@@ -503,9 +517,14 @@ internal sealed class FakeCodexStartup : ICodexStartup
         CancellationToken cancellationToken = default,
         string? preferredModel = null,
         bool forceNewKey = false,
-        string? groupName = null)
+        string? groupName = null,
+        CodexGroupModels? groupModels = null,
+        bool keepUserModelIfServed = false)
     {
         RunCount++;
+        LastGroupModels = groupModels;
+        LastKeepUserModel = keepUserModelIfServed;
+        LoadedCatalogSignature = CodexGroupModels.SignatureOf(groupModels);
         LastAllowRestart = allowRestart;
         LastPreferredModel = preferredModel;
         LastForceNewKey = forceNewKey;
