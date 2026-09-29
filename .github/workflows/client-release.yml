@@ -1,11 +1,18 @@
 # 共飞直连客户端 —— 出包
 #
-#   打 tag：  git tag client-v0.9 && git push origin client-v0.9
+#   打 tag：  git tag client-v1.0 && git push origin client-v1.0
 #   或在 Actions 页面手动运行（workflow_dispatch）。
 #
 # 产出
-#   codex-relay-client_v<版本>_x64.zip            Windows 单文件
-#   codex-relay-client_v<版本>_macos-arm64.tar.gz macOS .app（已 ad-hoc 签名）
+#   codex-relay-client_v<版本>_x64.zip            Windows 单文件，带 context-filter 与微信读屏组件
+#   codex-relay-client_v<版本>_macos-arm64.tar.gz macOS .app（自签名证书签名，带 context-filter 与微信读屏组件）
+#
+# 微信读屏组件（wechat-reader，「探索」页的微信消息意图判断）是 -p:IncludeWeChatReader=true
+# 才编进去的独立进程，两个包都带。Windows 版是 .NET，随 win-x64 发布一起编；macOS 版是
+# Swift，只能在 Mac 上编译——所以先由 mac-reader 任务在 macOS runner 上编出通用二进制
+# （arm64 + x86_64），再交给这里的 osx-arm64 发布（WeChatReaderMacBinary）。
+# context-filter 的 macOS 版由上游随每个版本发布（darwin-arm64），同一个任务按
+# bundled-context-filter/VERSION 下载、对照上游 SHA256SUMS 校验后一并交过来（ContextFilterMacBinary）。
 #
 # 为什么整条流水线在 windows-latest（2× 计费）
 # --------------------------------------------
@@ -15,10 +22,25 @@
 # 发布是按 tag 触发的低频任务，省下的分钟数远不值得拿「出包能不能成」去换。
 # 等有人在 ubuntu 上实测通过，再迁移不迟。
 #
-# 没有任何 secret
-# ---------------
-# 不买开发者账号 = 不做公证 = 没有证书、私钥或 API Key 要管（§9.5.2）。
-# ad-hoc 签名不需要任何 Apple 凭据。这是无账号方案少见的正面副作用。
+# 唯一的 secret：macOS 代码签名证书
+# ---------------------------------
+# 不买开发者账号 = 不做公证 = 没有 Apple 凭据要管（§9.5.2）。但 macOS 按签名里的「指定要求」
+# 认一个 App：ad-hoc 签名的指定要求是这次构建的 cdhash，每个版本都不同，于是每次升级后
+# 「屏幕录制」（探索页读微信）要重新授权，钥匙串「始终允许」也会再问。
+#
+# 所以 1.0 起改用一张固定的自签名证书签：指定要求变成
+#   identifier "com.gongfeiai.chatgpt-assistant" and certificate root = H"<证书 SHA-1>"
+# 每个版本都一样，授权随升级保留。它仍不能公证，Gatekeeper 照旧拦浏览器下载的包，
+# 所以安装方式不变（install-mac.sh）。
+#
+#   MACOS_SIGNING_P12_BASE64    私钥 + 证书（p12）的 base64
+#   MACOS_SIGNING_P12_PASSWORD  p12 的密码
+#
+# 由 packaging/macos/new-signing-cert.sh 一次性生成，公开证书 signing-cert.pem 提交在仓库里，
+# 签完核对指定要求里的指纹与它一致——secret 被换成别的证书时在这里失败，而不是让所有用户
+# 悄悄重新授权一遍。私钥泄露或丢失才换证书，换了就要在发版说明里告诉用户重新授权。
+#
+# 没配 secret 时：tag 触发或要创建 Release 的运行直接失败；只出工件的手动运行退回 ad-hoc 并警告。
 
 name: client-release
 
@@ -53,9 +75,56 @@ defaults:
     working-directory: tools/codex-relay-client
 
 jobs:
+  # macOS 包里的两个辅助程序，在 macOS runner 上准备好再交给 release：
+  # - 微信读屏组件：Swift（ScreenCaptureKit + Vision），只能在 Mac 上编译。链接器会给 arm64
+  #   产物加 ad-hoc 签名；打进 .app 后下面还会再签一次、再核验。
+  # - context-filter 的 darwin-arm64 版：上游发布物，走下载地址而不是 api.github.com（后者按
+  #   共享的 runner IP 限流），并对照上游 SHA256SUMS 校验。
+  mac-reader:
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 编译 macOS 微信读屏组件
+        run: sh src/LanAi.RelayClient.WeChatReader.Mac/build.sh
+
+      - name: 下载并校验 macOS 版 context-filter
+        run: |
+          version=$(tr -d '[:space:]' < bundled-context-filter/VERSION)
+          base="https://github.com/LiangMu-Studio/context-filter/releases/download/$version"
+          dir="$RUNNER_TEMP/context-filter-mac"
+          mkdir -p "$dir" && cd "$dir"
+          curl -fsSL --retry 3 -o context-filter-darwin-arm64.tar.gz "$base/context-filter-darwin-arm64.tar.gz"
+          curl -fsSL --retry 3 -o SHA256SUMS "$base/SHA256SUMS"
+          grep ' context-filter-darwin-arm64.tar.gz$' SHA256SUMS | shasum -a 256 -c -
+          tar -xzf context-filter-darwin-arm64.tar.gz
+          found=$(find . -type f -name context-filter | head -n 1)
+          if [ -z "$found" ]; then echo "::error::压缩包里没有 context-filter"; exit 1; fi
+          mkdir -p "$RUNNER_TEMP/mac-helpers"
+          cp "$found" "$RUNNER_TEMP/mac-helpers/context-filter"
+          file "$RUNNER_TEMP/mac-helpers/context-filter"
+
+      # 两个文件放进同一个目录再上传：分处两个根目录时，upload-artifact 会按公共上级目录
+      # 保留层级，下载后就不在 release 任务期待的位置了。
+      - name: 汇总
+        run: |
+          cp src/LanAi.RelayClient.WeChatReader.Mac/.build/apple/Products/Release/wechat-reader "$RUNNER_TEMP/mac-helpers/wechat-reader"
+          ls -la "$RUNNER_TEMP/mac-helpers"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wechat-reader-mac
+          path: ${{ runner.temp }}/mac-helpers/*
+          retention-days: 1
+          if-no-files-found: error
+
   release:
+    needs: mac-reader
     runs-on: windows-latest
     timeout-minutes: 60
+    outputs:
+      version: ${{ steps.version.outputs.version }}
 
     # Read by fetch-context-filter.ps1. Not optional here: the Windows package is
     # refused below when the filter is missing, and anonymous api.github.com is rate
@@ -140,8 +209,8 @@ jobs:
         run: |
           dotnet publish src/LanAi.RelayClient.App/LanAi.RelayClient.App.csproj `
             -c Release -r win-x64 --self-contained true `
-            -p:IncludeWeChatReader=true `
             -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:IncludeWeChatReader=true `
             -o "${{ runner.temp }}/pub-win"
 
       # 发布渠道绝不能带上 TEST_SERVER。核在出货字节上而不是构建参数上：
@@ -169,14 +238,13 @@ jobs:
             exit 1
           fi
 
-      # 「探索」页签及微信消息意图判断依赖这个独立进程。它不能塞进单文件，
-      # 且 App.axaml.cs 会以它是否存在作为功能开关；漏掉它时客户端会静默隐藏
-      # 整个页签，所以发布阶段必须显式拦截。
-      - name: 发布包必须带上 wechat-reader
+      # 微信读屏组件同理：少了它「探索」页签整个不出现，也没有报错。它在 wechat-reader\
+      # 子目录下（App.axaml.cs 按 AppContext.BaseDirectory\wechat-reader\wechat-reader.exe 找）。
+      - name: 发布包必须带上微信读屏组件
         shell: bash
         run: |
           if [ ! -f "${{ runner.temp }}/pub-win/wechat-reader/wechat-reader.exe" ]; then
-            echo "::error::win-x64 发布目录里没有 wechat-reader\\wechat-reader.exe，拒绝出包"
+            echo "::error::win-x64 发布目录里没有 wechat-reader\\wechat-reader.exe（IncludeWeChatReader 没生效？），拒绝出包"
             ls -la "${{ runner.temp }}/pub-win"
             exit 1
           fi
@@ -205,10 +273,25 @@ jobs:
       # -------------------------------------------------------------------
       # macOS 产物
       # -------------------------------------------------------------------
+      # 上传工件会丢掉可执行位；build-app.py 按名字把 wechat-reader 标成 0755。
+      - uses: actions/download-artifact@v4
+        with:
+          name: wechat-reader-mac
+          path: ${{ runner.temp }}/wechat-reader-mac
+
+      # 单文件发布：Contents/MacOS 在苹果那里只能放可执行代码（Mach-O）。不打包时那一堆 .dll /
+      # .json / .pdb 都在这里，rcodesign 不把它们封进签名，macOS 上 codesign 就拒绝整个 .app。
+      # 原生库（.dylib）照旧单独放，它们是 Mach-O，逐个签名；**不要**加
+      # IncludeNativeLibrariesForSelfExtract——那会让它们运行时解压到临时目录、落在签名之外。
+      # build-app.py 组装时会核对 Contents/MacOS 里只有 Mach-O。
       - name: 发布 osx-arm64
         run: |
           dotnet publish src/LanAi.RelayClient.App/LanAi.RelayClient.App.csproj `
             -c Release -r osx-arm64 --self-contained true `
+            -p:PublishSingleFile=true -p:DebugType=none `
+            -p:IncludeWeChatReader=true `
+            -p:WeChatReaderMacBinary="${{ runner.temp }}/wechat-reader-mac/wechat-reader" `
+            -p:ContextFilterMacBinary="${{ runner.temp }}/wechat-reader-mac/context-filter" `
             -o "${{ runner.temp }}/pub-mac"
 
       - name: 生成图标
@@ -229,6 +312,20 @@ jobs:
             --out "${{ runner.temp }}/macos" \
             --assemble-only
 
+      # 与 Windows 包同理：少了读屏组件 Mac 上「探索」页签整个不出现，少了 context-filter
+      # 「启用上下文压缩」永久置灰，都没有报错。
+      - name: .app 必须带上微信读屏组件与 context-filter
+        shell: bash
+        run: |
+          macos="${{ runner.temp }}/macos/共飞-ChatGPT助手.app/Contents/MacOS"
+          for helper in wechat-reader/wechat-reader context-filter/context-filter; do
+            if [ ! -f "$macos/$helper" ]; then
+              echo "::error::.app 里没有 Contents/MacOS/$helper，拒绝出包"
+              ls -laR "$macos" | head -50
+              exit 1
+            fi
+          done
+
       - name: 缓存 rcodesign
         id: cache-rcodesign
         uses: actions/cache@v4
@@ -245,10 +342,57 @@ jobs:
       # 强制步骤，不是可选优化（§8.2）。Apple Silicon 要求每个 arm64 可执行文件
       # 带签名，哪怕只是 ad-hoc；内核不警告，直接杀进程。而 .NET 从 Windows
       # 交叉编译时不会签名。
-      - name: ad-hoc 签名
+      # 读屏组件、context-filter 是 Contents/MacOS 下子目录里的另外两个 Mach-O：先单独签它们，
+      # 再签整个 .app（后者把它们的签名封进 CodeResources）。不依赖 rcodesign 会不会自己找到嵌套的可执行文件。
+      #
+      # 用证书签时 rcodesign 自己写出指定要求（identifier + certificate root = H"…"，与 Apple
+      # codesign 的默认一致），不需要另给 --code-requirements-file；下一步核对它。
+      - name: 签名
         shell: bash
+        env:
+          P12_BASE64: ${{ secrets.MACOS_SIGNING_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
+          MUST_USE_CERT: ${{ startsWith(github.ref, 'refs/tags/client-v') || inputs.publish_release }}
         run: |
-          rcodesign sign "${{ runner.temp }}/macos/共飞-ChatGPT助手.app"
+          app="${{ runner.temp }}/macos/共飞-ChatGPT助手.app"
+          key_dir="$RUNNER_TEMP/macos-signing"
+          trap 'rm -rf "$key_dir"' EXIT
+          identity=()
+          if [ -n "$P12_BASE64" ]; then
+            if [ -z "$P12_PASSWORD" ]; then
+              echo "::error::有 MACOS_SIGNING_P12_BASE64 却没有 MACOS_SIGNING_P12_PASSWORD"
+              exit 1
+            fi
+            # 去掉粘贴时可能带进来的空白：生成的密码与 base64 都不含空白字符，rcodesign 却会把它们当成密码的一部分。
+            password=$(printf '%s' "$P12_PASSWORD" | tr -d ' \t\r\n')
+            mkdir -p "$key_dir"
+            printf '%s' "$P12_BASE64" | tr -d ' \t\r\n' | base64 -d > "$key_dir/signing.p12"
+            printf '%s' "$password" > "$key_dir/password"
+            identity=(--p12-file "$key_dir/signing.p12" --p12-password-file "$key_dir/password")
+            echo "用固定证书签名"
+            # 先单独签一个，打不开证书时说清楚是哪一项不对（只报长度，不报内容）。
+            if ! rcodesign sign "${identity[@]}" "$app/Contents/MacOS/wechat-reader/wechat-reader"; then
+              echo "::error::签名证书打不开。MACOS_SIGNING_P12_PASSWORD 有 ${#password} 个字符（new-signing-cert.sh 生成的是 32 个），p12 解码后 $(wc -c < "$key_dir/signing.p12") 字节。多半是两个 secret 填反了，或密码与 p12 不是同一次生成的。"
+              exit 1
+            fi
+          elif [ "$MUST_USE_CERT" = "true" ]; then
+            echo "::error::没有配置 MACOS_SIGNING_P12_BASE64。正式发布必须用固定证书签，否则用户每次升级都要重新授权屏幕录制。见本文件开头与 packaging/macos/new-signing-cert.sh"
+            exit 1
+          else
+            echo "::warning::没有配置签名证书，这个包是 ad-hoc 签名：装它的机器升级后要重新授权屏幕录制。只用于测试。"
+          fi
+          # rcodesign 遇到 Contents/MacOS 下不是 Mach-O 的文件只在日志里报错、退出码仍是 0，那个文件就
+          # 不在签名里，macOS 上 codesign 会拒绝整个 .app。所以看日志，不只看退出码。
+          log="$RUNNER_TEMP/rcodesign.log"
+          : > "$log"
+          rcodesign sign "${identity[@]}" "$app/Contents/MacOS/wechat-reader/wechat-reader" 2>&1 | tee -a "$log"
+          rcodesign sign "${identity[@]}" "$app/Contents/MacOS/context-filter/context-filter" 2>&1 | tee -a "$log"
+          rcodesign sign "${identity[@]}" "$app" 2>&1 | tee -a "$log"
+          if grep -q "non Mach-O file with a nested rule" "$log"; then
+            echo "::error::rcodesign 跳过了 Contents/MacOS 下不是可执行文件的内容，这些文件不在签名里："
+            grep "non Mach-O file with a nested rule" "$log"
+            exit 1
+          fi
 
       # 漏签的产物在 CI 里完全看不出来，只有到用户的机器上才会被内核杀掉。
       # 因此签完必须回头验一次，而不是相信上一步的退出码。
@@ -262,6 +406,46 @@ jobs:
           fi
           rcodesign print-signature-info "$app/Contents/MacOS/LanAi.RelayClient.App" \
             || { echo "::error::主可执行文件没有可读的签名"; exit 1; }
+          rcodesign print-signature-info "$app/Contents/MacOS/wechat-reader/wechat-reader" \
+            || { echo "::error::微信读屏组件没有可读的签名"; exit 1; }
+          rcodesign print-signature-info "$app/Contents/MacOS/context-filter/context-filter" \
+            || { echo "::error::context-filter 没有可读的签名"; exit 1; }
+          # 单文件包是主程序后面接着程序集。签名若把尾部截掉，codesign 照样通过，程序却一启动就报
+          # 找不到程序集——所以回头确认程序集清单还在（清单里的名字是 UTF-8）。
+          if ! grep -q "LanAi.RelayClient.Core.dll" "$app/Contents/MacOS/LanAi.RelayClient.App"; then
+            echo "::error::签名后的主程序里找不到打包进去的程序集，单文件的内容被截掉了"
+            exit 1
+          fi
+
+      # 授权能不能随升级保留，全看主程序的指定要求：必须是 Bundle ID + 仓库里那张证书的指纹。
+      # 指纹不对（secret 换成了别的证书）或退回了 cdhash（没用上证书），用户升级后都会被要求重新授权，
+      # 而这在出包时没有任何别的迹象。
+      - name: 核对指定要求
+        shell: bash
+        env:
+          HAS_CERT: ${{ secrets.MACOS_SIGNING_P12_BASE64 != '' }}
+        run: |
+          if [ "$HAS_CERT" != "true" ]; then
+            echo "ad-hoc 签名，跳过"
+            exit 0
+          fi
+          cert=packaging/macos/signing-cert.pem
+          if [ ! -f "$cert" ]; then
+            echo "::error::仓库里没有 $cert（new-signing-cert.sh 生成的公开证书），无法核对签名用的是不是那张证书"
+            exit 1
+          fi
+          expected=$(openssl x509 -in "$cert" -noout -fingerprint -sha1 | sed 's/.*=//; s/://g' | tr 'A-F' 'a-f')
+          info=$(rcodesign print-signature-info "${{ runner.temp }}/macos/共飞-ChatGPT助手.app/Contents/MacOS/LanAi.RelayClient.App")
+          designated=$(printf '%s\n' "$info" | grep 'designated' || true)
+          echo "指定要求：$designated"
+          want='(identifier "com.gongfeiai.chatgpt-assistant") and (certificate root = H"'"$expected"'")'
+          case "$designated" in
+            *"$want"*) echo "与 signing-cert.pem（$expected）一致" ;;
+            *)
+              echo "::error::主程序的指定要求不是 $want。secret 里的证书与仓库里的 signing-cert.pem 不是同一张？"
+              exit 1
+              ;;
+          esac
 
       - name: 打包 .tar.gz
         shell: bash
@@ -292,22 +476,82 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
-      # -------------------------------------------------------------------
-      # GitHub Release
-      #
-      # tag 触发时自动创建；手动触发时默认只留构建工件，避免误发。
-      # -------------------------------------------------------------------
+  # 在真的 macOS 上用 Apple 的 codesign 再验一遍。上面的核验都是 rcodesign 在 Windows 上
+  # 读自己写的签名；这里是用户机器上真正做判断的那一方。
+  mac-verify:
+    needs: release
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      # 只取公开证书，用来核对 Apple 读出来的指定要求。
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: tools/codex-relay-client/packaging/macos/signing-cert.pem
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: client-v${{ needs.release.outputs.version }}
+          path: ${{ runner.temp }}/client
+
+      # 工作目录用仓库根：没有 signing-cert.pem 时稀疏检出连 tools/codex-relay-client 都不会建。
+      - name: codesign 核验
+        working-directory: ${{ github.workspace }}
+        env:
+          HAS_CERT: ${{ secrets.MACOS_SIGNING_P12_BASE64 != '' }}
+        run: |
+          cert="$PWD/tools/codex-relay-client/packaging/macos/signing-cert.pem"
+          cd "$RUNNER_TEMP/client"
+          tar -xzf codex-relay-client_v*_macos-arm64.tar.gz
+          app="共飞-ChatGPT助手.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          for helper in wechat-reader/wechat-reader context-filter/context-filter; do
+            codesign --verify --strict --verbose=2 "$app/Contents/MacOS/$helper"
+          done
+          codesign -dv "$app" 2>&1 | grep -E '^(Identifier|Authority|Signature)=' || true
+          requirement=$(codesign -d -r- "$app" 2>&1)
+          echo "$requirement"
+          # 整段转小写再比：codesign 写的是 H"…"（大写 H），指纹按十六进制也可能大小写不一。
+          # 只认两样——标识符与证书指纹，不依赖 codesign 把它写成 certificate root = 还是 anchor。
+          if [ "$HAS_CERT" = "true" ]; then
+            expected=$(openssl x509 -in "$cert" -noout -fingerprint -sha1 | sed 's/.*=//; s/://g' | tr 'A-Z' 'a-z')
+            designated=$(printf '%s' "$requirement" | grep 'designated' | tr 'A-Z' 'a-z')
+            case "$designated" in
+              *'identifier "com.gongfeiai.chatgpt-assistant"'*"h\"$expected\""*) echo "与 signing-cert.pem（$expected）一致" ;;
+              *)
+                echo "::error::codesign 读出的指定要求里没有 com.gongfeiai.chatgpt-assistant 与 signing-cert.pem 的指纹 $expected"
+                exit 1
+                ;;
+            esac
+          fi
+
+  # -------------------------------------------------------------------
+  # GitHub Release
+  #
+  # tag 触发时自动创建；手动触发时默认只留构建工件，避免误发。
+  # 等 macOS 上的核验通过才建，签坏的包不会进草稿。
+  # -------------------------------------------------------------------
+  publish:
+    needs: [release, mac-verify]
+    if: startsWith(github.ref, 'refs/tags/client-v') || inputs.publish_release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: client-v${{ needs.release.outputs.version }}
+          path: ${{ runner.temp }}/artifacts
+
       - name: 创建 Release
-        if: startsWith(github.ref, 'refs/tags/client-v') || inputs.publish_release
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ runner.temp }}/artifacts/*
           draft: true
-          name: 共飞-ChatGPT助手 v${{ steps.version.outputs.version }}
+          name: 共飞-ChatGPT助手 v${{ needs.release.outputs.version }}
           body: |
             ## 安装
 
-            **Windows**：下载 `codex-relay-client_v${{ steps.version.outputs.version }}_x64.zip`，解压后运行。
+            **Windows**：下载 `codex-relay-client_v${{ needs.release.outputs.version }}_x64.zip`，解压后运行。
 
             **macOS（Apple 芯片）**：终端里执行
 
@@ -319,4 +563,7 @@ jobs:
 
             > macOS 版本未经过公证（未购买开发者账号），因此用脚本安装而不是双击 .dmg——
             > 经浏览器下载的文件会被 Gatekeeper 拦截，而 curl 取回的不会。
+            >
+            > 从 1.0 起 macOS 版用固定证书签名。「探索」页读微信需要授权一次「屏幕录制」；从更早的版本
+            > 升上来，第一次启动可能会问一次钥匙串「始终允许」。之后再升级，这两项都不会再问。
           fail_on_unmatched_files: true

@@ -30,27 +30,14 @@ Thumbs.db
 # Build artifacts
 dist/
 build/
-!backend/internal/web/dist/
-!backend/internal/web/dist/**
+backend/bin/
 
 # Node modules (will be installed in container)
 frontend/node_modules/
-frontend/node_modules
-frontend/node_modules/**
-**/node_modules/
-**/node_modules/**
 node_modules/
-frontend/.pnpm-store/
-.pnpm-store/
-**/.pnpm-store/
-**/.ignored/
-**/.vite/
 
 # Go build cache (will be built in container)
 backend/vendor/
-
-# TransitHub is deployed separately and is not part of the Sub2API image.
-transit-hub/
 
 # Test files
 *_test.go
@@ -62,6 +49,9 @@ coverage/
 .env
 .env.*
 !.env.example
+
+# 本地闭源插件目录可能包含发布签名私钥，绝不能进入 Docker 构建上下文。
+/plugins/
 
 # Local config
 config.yaml
@@ -75,26 +65,6 @@ logs/
 tmp/
 temp/
 *.tmp
-
-# Local workspace material not referenced by the production Dockerfile.
-assets/
-data/
-skills/
-openspec/
-tools/*
-!tools/
-!tools/chat/
-!tools/chat/**
-tools/chat/node_modules/
-tools/chat/.next/
-tools/chat/out/
-
-# Local Windows diagnostic binaries; the image builds its Linux binary from Go source.
-backend/*.exe
-backend/.local/
-backend/bin/*
-!backend/bin/sub2api-linux-amd64
-backend/data/
 
 # Deploy files (not needed in image)
 deploy/install.sh
@@ -114,6 +84,3 @@ deploy/redis_data/
 .claude/
 issues/
 CLAUDE.md
-
-# 本地闭源插件目录可能包含发布签名私钥，绝不能进入 Docker 构建上下文。
-/plugins/

@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using LanAi.RelayClient.DesktopSync;
 using Xunit;
 
@@ -32,31 +30,6 @@ public sealed class PhoneProtocolVectorTests
             "cofly-remote/1\nmessage.send\n5\n01a0ced9-0000-7000-8000-000000000001\nqueue\n" +
             "5cf4668abee37f0614db4b4df55676a9f0c0119d21a4cf6f269ce0c0be6f2267\n1790200000000\nbm9uY2Utbm9uY2Utbm9uY2Ut",
             SignedSendVerifier.Canonical(5, Thread, "queue", Text, Ts, Nonce));
-
-    /// <summary>The same vector as protocol.test.ts: the command is signed, and a repair has no text.</summary>
-    [Fact]
-    public void TheRepairStringMatchesThePhones() =>
-        Assert.Equal(
-            "cofly-remote/1\ndesktop.repair\n5\n01a0ced9-0000-7000-8000-000000000001\nrestart\n" +
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n1790200000000\nbm9uY2Utbm9uY2Utbm9uY2Ut",
-            SignedSendVerifier.Canonical(5, Thread, DesktopSyncCommands.RepairMode, string.Empty, Ts, Nonce, DesktopSyncCommands.Repair));
-
-    /// <summary>
-    /// A captured send must not work as a restart: the command is part of what is signed.
-    /// </summary>
-    [Fact]
-    public void ASendsSignatureDoesNotPassForARepair()
-    {
-        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        var phone = new ApprovedPhone(5, "iPhone", Convert.ToBase64String(key.ExportSubjectPublicKeyInfo()), DateTimeOffset.UnixEpoch);
-        string sig = Convert.ToBase64String(key.SignData(
-            Encoding.UTF8.GetBytes(SignedSendVerifier.Canonical(5, Thread, DesktopSyncCommands.RepairMode, string.Empty, Ts, Nonce)),
-            HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation));
-        SignedSendVerifier Verifier() => new(() => DateTimeOffset.FromUnixTimeMilliseconds(Ts + 1000));
-
-        Assert.NotNull(Verifier().Verify(phone, Thread, DesktopSyncCommands.RepairMode, string.Empty, Ts, Nonce, sig, DesktopSyncCommands.Repair));
-        Assert.Null(Verifier().Verify(phone, Thread, DesktopSyncCommands.RepairMode, string.Empty, Ts, Nonce, sig));
-    }
 
     [Fact]
     public void TheFingerprintMatchesThePhones() =>

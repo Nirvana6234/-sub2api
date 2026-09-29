@@ -54,6 +54,11 @@ type Config struct {
 	// Sub2API 兜底池事件回调共享密钥。为空时不启用回调接口。
 	FallbackAlertSecret string
 
+	// Exact public origins whose admin/auth API traffic uses the trusted internal
+	// Sub2API endpoint. Saved site URLs and third-party requests remain unchanged.
+	Sub2APIInternalAdminOrigins []string
+	Sub2APIInternalAdminURL     string
+
 	// GPT-5.6 纯度检测旁路服务地址，形如 http://gpt56-detector:8760。
 	// 留空表示没部署检测器：purity_check 的接口一律返回「检测器不可用」，
 	// 也不启动后台 worker。这个旁路服务没有业务鉴权，只能填容器内网地址。
@@ -105,8 +110,10 @@ func Load() Config {
 
 		TicketUploadDir: envOrDefault("TICKET_UPLOAD_DIR", "data/ticket-uploads"),
 
-		SMTPEncryptionKey:   os.Getenv("SMTP_ENCRYPTION_KEY"),
-		FallbackAlertSecret: strings.TrimSpace(os.Getenv("SUB2API_FALLBACK_ALERT_SECRET")),
+		SMTPEncryptionKey:           os.Getenv("SMTP_ENCRYPTION_KEY"),
+		FallbackAlertSecret:         strings.TrimSpace(os.Getenv("SUB2API_FALLBACK_ALERT_SECRET")),
+		Sub2APIInternalAdminOrigins: splitOrigins(os.Getenv("SUB2API_INTERNAL_ADMIN_ORIGINS")),
+		Sub2APIInternalAdminURL:     strings.TrimSpace(os.Getenv("SUB2API_INTERNAL_ADMIN_URL")),
 
 		PurityCheckDetectorURL:     os.Getenv("PURITY_CHECK_DETECTOR_URL"),
 		PurityCheckDetectorRunsDir: os.Getenv("PURITY_CHECK_DETECTOR_RUNS_DIR"),

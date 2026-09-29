@@ -63,17 +63,6 @@ func RegisterGatewayRoutes(
 	blacklistIP := middleware.GlobalBlacklistIP(settingService, cfg)
 	blacklistAccount := middleware.GlobalBlacklistAccount(settingService, cfg)
 
-	isOpenAIResponsesCompatibleGatewayPlatform := func(c *gin.Context) bool {
-		switch getGroupPlatform(c) {
-		case service.PlatformOpenAI, service.PlatformGrok,
-			service.PlatformKimi, service.PlatformZhipu, service.PlatformDeepseek,
-			service.PlatformMiniMax, service.PlatformOpenCodeGo:
-			// 国产 OpenAI 兼容供应商与 openai/grok 一样经 OpenAI 网关转发。
-			return true
-		default:
-			return false
-		}
-	}
 	countTokensHandler := func(c *gin.Context) {
 		switch getGroupPlatform(c) {
 		case service.PlatformOpenAI, service.PlatformKimi, service.PlatformZhipu, service.PlatformDeepseek, service.PlatformMiniMax, service.PlatformOpenCodeGo:
@@ -601,6 +590,20 @@ func typeSafeGroupAllowsRoute(method, fullPath string) bool {
 	case method == http.MethodPost && fullPath == "/v1/systemone":
 		return true
 	case method == http.MethodGet && (fullPath == "/v1/usage" || fullPath == "/v1/models" || fullPath == "/v1/models/:model"):
+		return true
+	default:
+		return false
+	}
+}
+
+// isOpenAIResponsesCompatibleGatewayPlatform 判断请求是否应经 OpenAI 网关转发。
+// 国产 OpenAI 兼容供应商与 openai/grok 一样走 OpenAI 网关；其余平台落到 Anthropic 网关，
+// 会被转成 {base_url}/v1/messages。/v1 网关与试用 / Playground 面板入口共用这一份判断。
+func isOpenAIResponsesCompatibleGatewayPlatform(c *gin.Context) bool {
+	switch getGroupPlatform(c) {
+	case service.PlatformOpenAI, service.PlatformGrok,
+		service.PlatformKimi, service.PlatformZhipu, service.PlatformDeepseek,
+		service.PlatformMiniMax, service.PlatformOpenCodeGo:
 		return true
 	default:
 		return false

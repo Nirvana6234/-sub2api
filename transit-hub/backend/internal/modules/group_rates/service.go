@@ -159,10 +159,17 @@ func (s *Service) SaveSiteSnapshot(ctx context.Context, userID string, adminAcco
 
 func (s *Service) List(ctx context.Context, userID string, adminAccountID string, query ListQuery) (ListResult, error) {
 	if s.refresher != nil {
-		if err := s.refresher.RefreshGroupRateSnapshots(ctx, strings.TrimSpace(userID), strings.TrimSpace(adminAccountID)); err != nil {
-			// A down upstream must not make historical multiplier data disappear.
-			log.Printf("refresh group rate snapshots: %v", err)
-		}
+		// A slow or unavailable upstream must not block the page from reading
+		// the latest persisted snapshots. The refresh loop still updates those
+		// snapshots in the background for the next request.
+		refreshCtx := context.WithoutCancel(ctx)
+		refreshUserID := strings.TrimSpace(userID)
+		refreshAdminAccountID := strings.TrimSpace(adminAccountID)
+		go func() {
+			if err := s.refresher.RefreshGroupRateSnapshots(refreshCtx, refreshUserID, refreshAdminAccountID); err != nil {
+				log.Printf("refresh group rate snapshots: %v", err)
+			}
+		}()
 	}
 	query = normalizeListQuery(query)
 	records, err := s.repository.List(ctx, strings.TrimSpace(userID), strings.TrimSpace(adminAccountID), query)

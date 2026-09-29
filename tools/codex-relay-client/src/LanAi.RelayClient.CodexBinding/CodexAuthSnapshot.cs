@@ -77,6 +77,33 @@ public sealed class CodexAuthSnapshot
         }
     }
 
+    /// <summary>
+    /// Overwrites what was recorded with <paramref name="auth"/>, when something was.
+    /// </summary>
+    /// <remarks>
+    /// Only ever given the user's own sign-in — a newer one, or the same one with refreshed
+    /// tokens — never the client's key: see <see cref="CaptureOnce"/> for why that matters.
+    /// </remarks>
+    public void ReplaceIfExists(JsonObject auth)
+    {
+        ArgumentNullException.ThrowIfNull(auth);
+        if (!Exists)
+        {
+            return;
+        }
+
+        byte[] plaintext = Encoding.UTF8.GetBytes(
+            auth.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+        try
+        {
+            AtomicWrite(SnapshotBlobFormat.Protect(plaintext, _protector));
+        }
+        finally
+        {
+            Array.Clear(plaintext, 0, plaintext.Length);
+        }
+    }
+
     /// <summary>Returns what was recorded, or null when nothing was.</summary>
     public JsonObject? Read()
     {

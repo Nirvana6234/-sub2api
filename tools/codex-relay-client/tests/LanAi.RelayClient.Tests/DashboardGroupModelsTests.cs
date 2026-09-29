@@ -96,4 +96,43 @@ public sealed class DashboardGroupModelsTests
 
         Assert.Equal(0, calls);
     }
+
+    // ---- Entries that are not model ids ----------------------------------------------
+
+    [Theory]
+    [InlineData("gpt-5", true)]
+    [InlineData("claude-sonnet-5", true)]
+    [InlineData("gpt-5*", true)]
+    [InlineData("gpt-5 折扣", false)]
+    [InlineData("测试模型", false)]
+    [InlineData("gpt-5（限时）", false)]
+    [InlineData("gpt-5，gpt-4", false)]
+    [InlineData("ｇｐｔ", false)]
+    [InlineData("", false)]
+    [InlineData("  ", false)]
+    public void OnlyEntriesWithoutChineseCharactersCanBeModels(string entry, bool expected) =>
+        Assert.Equal(expected, GroupItemViewModel.IsSelectableModelId(entry));
+
+    [Fact]
+    public async Task ChineseEntriesAreLeftOutOfTheTip()
+    {
+        DashboardViewModel dashboard = await BuildAsync(Group(11, "OpenAI 甲", true, "gpt-5", "测试模型", "gpt-4", "限时 gpt-3"));
+        var messages = new List<string>();
+        dashboard.ShowGroupModels = message => { messages.Add(message); return Task.CompletedTask; };
+
+        await dashboard.ShowGroupModelsAsync(dashboard.Groups.Single(g => g.Id == 11));
+
+        Assert.Equal(["OpenAI 甲 支持的模型：\n\ngpt-4\ngpt-5"], messages);
+    }
+
+    [Fact]
+    public async Task AWhitelistOfNothingButChineseEntriesIsNoWhitelistAtAll()
+    {
+        DashboardViewModel dashboard = await BuildAsync(Group(11, "OpenAI 甲", true, "测试", "另一个"));
+
+        GroupItemViewModel group = dashboard.Groups.Single(g => g.Id == 11);
+
+        Assert.Empty(group.AllowedModels);
+        Assert.False(group.HasModelAllowlist);
+    }
 }

@@ -104,37 +104,11 @@ function subtle(): SubtleCrypto {
   return crypto.subtle;
 }
 
-/** The commands a phone signs. The command is part of the signed string, so one cannot pass as another. */
-export type SignedCommand = "message.send" | "desktop.repair";
-
 /**
- * The string a signed command is signed over. Must equal
- * SignedSendVerifier.Canonical on the assistant. A repair signs mode "restart" and empty text.
+ * The string a `message.send` is signed over. Must equal
+ * SignedSendVerifier.Canonical on the assistant.
  */
-export async function canonical(
-  command: SignedCommand,
-  pairingId: number,
-  threadId: string,
-  mode: string,
-  text: string,
-  timestampMs: number,
-  nonce: string,
-): Promise<string> {
-  const textHash = hex(await subtle().digest("SHA-256", encoder.encode(text)));
-  return [
-    "cofly-remote/1",
-    command,
-    String(pairingId),
-    threadId,
-    mode,
-    textHash,
-    String(timestampMs),
-    nonce,
-  ].join("\n");
-}
-
-/** The string a `message.send` is signed over. */
-export function canonicalSend(
+export async function canonicalSend(
   pairingId: number,
   threadId: string,
   mode: "queue" | "insert",
@@ -142,7 +116,17 @@ export function canonicalSend(
   timestampMs: number,
   nonce: string,
 ): Promise<string> {
-  return canonical("message.send", pairingId, threadId, mode, text, timestampMs, nonce);
+  const textHash = hex(await subtle().digest("SHA-256", encoder.encode(text)));
+  return [
+    "cofly-remote/1",
+    "message.send",
+    String(pairingId),
+    threadId,
+    mode,
+    textHash,
+    String(timestampMs),
+    nonce,
+  ].join("\n");
 }
 
 /**
@@ -179,7 +163,7 @@ export async function generateSigningKey(): Promise<{ keyPair: CryptoKeyPair; pu
 }
 
 /** Signs a send exactly as the assistant verifies it: ECDSA P-256 / SHA-256, raw r‖s. */
-export function signSend(
+export async function signSend(
   privateKey: CryptoKey,
   pairingId: number,
   threadId: string,
@@ -187,20 +171,8 @@ export function signSend(
   text: string,
   now: number = Date.now(),
 ): Promise<{ ts: number; nonce: string; sig: string }> {
-  return signCommand(privateKey, "message.send", pairingId, threadId, mode, text, now);
-}
-
-export async function signCommand(
-  privateKey: CryptoKey,
-  command: SignedCommand,
-  pairingId: number,
-  threadId: string,
-  mode: string,
-  text: string,
-  now: number = Date.now(),
-): Promise<{ ts: number; nonce: string; sig: string }> {
   const nonce = newNonce();
-  const message = await canonical(command, pairingId, threadId, mode, text, now, nonce);
+  const message = await canonicalSend(pairingId, threadId, mode, text, now, nonce);
   const signature = await subtle().sign(
     { name: "ECDSA", hash: "SHA-256" },
     privateKey,
@@ -381,7 +353,7 @@ export function classifyTurnFailure(text: string | null): TurnFailureKind {
 }
 
 export const TURN_FAILURE_HINT: Record<TurnFailureKind, string> = {
-  login: "登录或授权失效：先做电脑自检，看电脑上的共飞助手是否还登录着。",
+  login: "登录或授权失效：请在电脑上确认共飞助手已登录，仍不行再点「修复 ChatGPT 启动」。",
   rate_limit: "请求太频繁或额度受限，稍等一会儿再重发。",
   local_relay: "经电脑上的本机中转时出错，多半是服务端临时故障。可以先做电脑自检，再决定是否重发。",
   upstream: "模型服务出错，可以重发；反复失败请到电脑上查看。",
@@ -402,8 +374,6 @@ export const REMOTE_ERROR_TEXT: Record<string, string> = {
   rate_limited: "发送太频繁，请稍后再试",
   desktop_unavailable: "电脑上的 Codex 桌面版没有运行",
   missing: "找不到这个会话的记录",
-  // Also what an assistant too old to know a command answers.
-  refused: "电脑拒绝了这个请求（电脑上的共飞助手可能需要更新）",
+  refused: "电脑拒绝了这个请求",
   unconfirmed: "电脑没有回应，这条消息可能已经发出：请先看会话里有没有，再决定是否重发",
-  repair_failed: "远程修复没有成功",
 };

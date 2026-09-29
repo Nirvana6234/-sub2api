@@ -1,0 +1,9 @@
+[Unit]
+Description=Ship sub2api Postgres WAL to 154.9.26.202 replica hourly
+
+[Timer]
+OnCalendar=*-*-* *:05:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

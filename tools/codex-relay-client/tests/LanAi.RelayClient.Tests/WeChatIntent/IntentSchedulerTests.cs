@@ -37,6 +37,29 @@ public sealed class IntentSchedulerTests
     }
 
     [Fact]
+    public void AScreenThatChangesWithoutTheConversationMovingKeepsTheWait()
+    {
+        // The overlay scrollbar fading in and out: a new picture every second, same messages.
+        var scheduler = new IntentScheduler();
+        scheduler.OnScreen("小明", [T("那你说")], T0);
+        scheduler.OnScreen("小明", [T("那你说")], T0.AddSeconds(0.8));
+        scheduler.OnScreen("小明", [T("那你说"), T("你最好是")], T0.AddSeconds(1.6));
+
+        Assert.Equal(["那你说", "你最好是"], scheduler.Poll(T0.AddSeconds(1.7))!.Items.Select(i => i.Text));
+    }
+
+    [Fact]
+    public void AnotherConversationStartsItsOwnWait()
+    {
+        var scheduler = new IntentScheduler();
+        scheduler.OnScreen("小明", [T("那你说")], T0);
+        scheduler.OnScreen("小红", [T("那你说")], T0.AddSeconds(0.8));
+
+        Assert.Null(scheduler.Poll(T0.AddSeconds(1.2)));
+        Assert.Equal("小红", scheduler.Poll(T0.AddSeconds(1.8))!.Chat);
+    }
+
+    [Fact]
     public void MessagesInFlightAreNotSentAgain()
     {
         var scheduler = new IntentScheduler();

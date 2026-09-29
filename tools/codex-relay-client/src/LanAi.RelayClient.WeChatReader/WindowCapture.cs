@@ -41,39 +41,74 @@ internal sealed class WindowCapture : IDisposable
 {
     private readonly IDirect3DDevice _device = CreateDevice();
 
-    public async Task<Pixels> CaptureAsync(IntPtr hwnd, TimeSpan timeout)
+    /// <summary>What the last capture saw, for the log when it fails: the item's size and the frame-pool callbacks.</summary>
+    public string LastAttempt { get; private set; } = string.Empty;
+
+    public async Task<Pixels> CaptureAsync(IntPtr hwnd, TimeSpan timeout, StageClock? stage = null)
     {
+        var seen = new FrameCounts();
+        stage?.Enter("创建截图对象");
         GraphicsCaptureItem item = CreateItemForWindow(hwnd);
-        using Direct3D11CaptureFramePool pool = Direct3D11CaptureFramePool.CreateFreeThreaded(
+        LastAttempt = $"截图对象 {item.Size.Width}x{item.Size.Height}";
+        stage?.Enter("创建帧池");
+        Direct3D11CaptureFramePool pool = Direct3D11CaptureFramePool.CreateFreeThreaded(
             _device, DirectXPixelFormat.B8G8R8A8UIntNormalized, 1, item.Size);
-        var arrived = new TaskCompletionSource<SoftwareBitmap>(TaskCreationOptions.RunContinuationsAsynchronously);
-        pool.FrameArrived += async (sender, _) =>
+        GraphicsCaptureSession? session = null;
+        try
         {
-            try
+            var arrived = new TaskCompletionSource<SoftwareBitmap>(TaskCreationOptions.RunContinuationsAsynchronously);
+            pool.FrameArrived += async (sender, _) =>
             {
-                using Direct3D11CaptureFrame? frame = sender.TryGetNextFrame();
-                if (frame is null || arrived.Task.IsCompleted)
+                Interlocked.Increment(ref seen.Arrived);
+                try
                 {
-                    return;
+                    using Direct3D11CaptureFrame? frame = sender.TryGetNextFrame();
+                    if (frame is null)
+                    {
+                        Interlocked.Increment(ref seen.Empty);
+                        return;
+                    }
+
+                    if (arrived.Task.IsCompleted)
+                    {
+                        return;
+                    }
+
+                    arrived.TrySetResult(await SoftwareBitmap.CreateCopyFromSurfaceAsync(frame.Surface, BitmapAlphaMode.Premultiplied));
                 }
+                catch (Exception ex)
+                {
+                    arrived.TrySetException(ex);
+                }
+            };
 
-                arrived.TrySetResult(await SoftwareBitmap.CreateCopyFromSurfaceAsync(frame.Surface, BitmapAlphaMode.Premultiplied));
-            }
-            catch (Exception ex)
-            {
-                arrived.TrySetException(ex);
-            }
-        };
+            session = pool.CreateCaptureSession(item);
+            session.IsCursorCaptureEnabled = false;
+            TryRemoveBorder(session);
+            stage?.Enter("开始截图");
+            session.StartCapture();
 
-        using GraphicsCaptureSession session = pool.CreateCaptureSession(item);
-        session.IsCursorCaptureEnabled = false;
-        TryRemoveBorder(session);
-        session.StartCapture();
+            stage?.Enter("等待画面");
+            using SoftwareBitmap bitmap = await arrived.Task.WaitAsync(timeout).ConfigureAwait(false);
+            stage?.Enter("复制画面");
+            var bytes = new byte[bitmap.PixelWidth * bitmap.PixelHeight * 4];
+            bitmap.CopyToBuffer(bytes.AsBuffer());
+            return new Pixels(bitmap.PixelWidth, bitmap.PixelHeight, bytes);
+        }
+        finally
+        {
+            LastAttempt = $"截图对象 {item.Size.Width}x{item.Size.Height}，帧回调 {Volatile.Read(ref seen.Arrived)} 次（空帧 {Volatile.Read(ref seen.Empty)}）";
+            stage?.Enter("释放截图会话");
+            session?.Dispose();
+            pool.Dispose();
+            stage?.Leave();
+        }
+    }
 
-        using SoftwareBitmap bitmap = await arrived.Task.WaitAsync(timeout).ConfigureAwait(false);
-        var bytes = new byte[bitmap.PixelWidth * bitmap.PixelHeight * 4];
-        bitmap.CopyToBuffer(bytes.AsBuffer());
-        return new Pixels(bitmap.PixelWidth, bitmap.PixelHeight, bytes);
+    private sealed class FrameCounts
+    {
+        public int Arrived;
+        public int Empty;
     }
 
     /// <summary>The yellow capture border. Removable on Windows 11; on 10 the call throws and the border stays.</summary>

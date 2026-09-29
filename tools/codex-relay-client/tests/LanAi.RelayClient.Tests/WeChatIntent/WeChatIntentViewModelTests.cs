@@ -79,7 +79,9 @@ public sealed class WeChatIntentViewModelTests : IDisposable
 
     /// <param name="ownKeyRoute">A test build (the own-key route exists). False is a production build.</param>
     /// <param name="startOnOwnKey">Most tests exercise the pipeline through the own-key client; the 共飞 group is the default otherwise.</param>
-    private (WeChatIntentViewModel Vm, FakeReader Reader, FakeJev Jev) Create(bool withReader = true, bool withKey = true, JevKeyCheck check = JevKeyCheck.Valid, bool ownKeyRoute = true, bool startOnOwnKey = true)
+    private readonly List<Uri> _opened = [];
+
+    private (WeChatIntentViewModel Vm, FakeReader Reader, FakeJev Jev) Create(bool withReader = true, bool withKey = true, JevKeyCheck check = JevKeyCheck.Valid, bool ownKeyRoute = true, bool startOnOwnKey = true, bool mac = false)
     {
         var reader = new FakeReader();
         var jev = new FakeJev();
@@ -110,7 +112,13 @@ public sealed class WeChatIntentViewModelTests : IDisposable
             action => action(),
             (interval, onTick) => _timer = new FakeUiTimer(interval, onTick),
             () => _now,
-            relayJev: _relay = new FakeJev())
+            relayJev: _relay = new FakeJev(),
+            isMacOS: mac,
+            openUrl: url =>
+            {
+                _opened.Add(url);
+                return true;
+            })
         {
             Confirm = _ => Task.FromResult(true),
         };
@@ -204,6 +212,91 @@ public sealed class WeChatIntentViewModelTests : IDisposable
         Assert.Equal([111 + 187 - 8, 111 + 320 - 8], vm.Overlay.InlineCards.Select(c => c.ScreenY));
         Assert.All(vm.Overlay.InlineCards, c => Assert.StartsWith("⏱ 在考验你 93%", c.Headline, StringComparison.Ordinal));
         Assert.StartsWith("今日 2 次", vm.TodayText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheLogFollowsEachScreenWithCountsButNeverTheText()
+    {
+        var log = new System.Text.StringBuilder();
+        using (LanAi.RelayClient.Services.ClientLog.Capture(log))
+        {
+            var (vm, reader, _) = Create();
+            await vm.SetEnabledAsync(true);
+            reader.Raise(InFront());
+            reader.Raise(Frame("小明", Them(187, "你今天是不是又忘了"), Me(250, "记得"),
+                new ReaderLine { Text = "深色模式的气泡", X = 383, Y = 450, W = 120, H = 13, Bg = [60, 60, 60] }));
+            Advance(1);
+        }
+
+        string text = log.ToString();
+        Assert.Contains("意图判断状态：Running", text, StringComparison.Ordinal);
+        Assert.Contains("微信窗口：foreground", text, StringComparison.Ordinal);
+        Assert.Contains("3 行 → 对方 1、自己 1、时间 0、丢弃 1（丢弃行底色 (60,60,60)×1）", text, StringComparison.Ordinal);
+        Assert.Contains("标题 2 字", text, StringComparison.Ordinal);
+        Assert.Contains("待判断 1 条", text, StringComparison.Ordinal);
+        Assert.Contains("发出判断 1 条", text, StringComparison.Ordinal);
+        foreach (string secret in new[] { "小明", "你今天是不是又忘了", "记得", "深色模式的气泡" })
+        {
+            Assert.DoesNotContain(secret, text, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public async Task AScreenThatKeepsChangingUnderThePointerIsStillJudged()
+    {
+        // Measured on a 150 % display: the scrollbar showing and hiding sent a 「scrolling」 and a
+        // new settled screen every second or so, and nothing after the first screen was judged.
+        var (vm, reader, jev) = Create();
+        await vm.SetEnabledAsync(true);
+        reader.Raise(InFront());
+
+        for (int i = 0; i < 4; i++)
+        {
+            reader.Raise(new ReaderEvent { Type = ReaderEvent.Scrolling });
+            reader.Raise(Frame("小明", Me(187, "在"), Them(250, "那你说")));
+            Advance(0.6);
+        }
+
+        Assert.Single(jev.Seen);
+    }
+
+    [Fact]
+    public async Task CardsOfMessagesCloseTogetherDoNotOverlap()
+    {
+        var (vm, reader, jev) = Create();
+        await vm.SetEnabledAsync(true);
+        reader.Raise(InFront());
+
+        reader.Raise(Frame("小明", Them(187, "在吗"), Them(215, "那你说"), Them(243, "你最好是")));
+        Advance(1);
+
+        Assert.Equal(3, jev.Seen.Count);
+        var cards = vm.Overlay.InlineCards.ToList();
+        Assert.Equal([111 + 187 - 8, 111 + 215 - 8, 111 + 243 - 8], cards.Select(c => c.ScreenY));   // each level with its message
+        foreach (var a in cards)
+        {
+            foreach (var b in cards.Where(b => !ReferenceEquals(a, b)))
+            {
+                bool overlap = a.ScreenX < b.ScreenX + 220 && b.ScreenX < a.ScreenX + 220 && a.ScreenY < b.ScreenY + 44 && b.ScreenY < a.ScreenY + 44;
+                Assert.False(overlap);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task InANarrowWindowTheCardStillGoesBesideTheMessagePastTheWindow()
+    {
+        var (vm, reader, _) = Create();
+        await vm.SetEnabledAsync(true);
+        reader.Raise(InFront());
+
+        // A bubble reaching almost to the list's right edge (1148): no room beside it inside the window.
+        reader.Raise(Frame("小明", Them(250, "一条很长很长的消息", w: 700)));
+        Advance(1);
+
+        InlineCardViewModel card = Assert.Single(vm.Overlay.InlineCards);
+        Assert.Equal(111 + 250 - 8, card.ScreenY);
+        Assert.Equal(346 + 383 + 700 + 20, card.ScreenX);
     }
 
     [Fact]
@@ -474,6 +567,89 @@ public sealed class WeChatIntentViewModelTests : IDisposable
         Assert.Equal(JevKeyState.Missing, vm.KeyState);
         Assert.Equal("TypeSafe 不接受这个 key，请检查后重试", vm.KeyMessage);
         Assert.Empty(Directory.Exists(_lastDir) ? Directory.GetFiles(_lastDir, "typesafe-key-*") : []);
+    }
+
+    [Fact]
+    public async Task OnAMacTheFirstSwitchOnSaysWhatScreenRecordingIsForOnce()
+    {
+        var (vm, _, _) = Create(mac: true);
+        var asked = new List<string>();
+        vm.Confirm = message =>
+        {
+            asked.Add(message);
+            return Task.FromResult(true);
+        };
+
+        await vm.SetEnabledAsync(true);
+        await vm.SetEnabledAsync(false);
+        await vm.SetEnabledAsync(true);
+
+        Assert.Single(asked, m => m == WeChatIntentViewModel.ScreenRecordingText);
+        Assert.True(vm.IsEnabled);
+    }
+
+    [Fact]
+    public async Task OnAMacDecliningTheExplanationLeavesTheSwitchOff()
+    {
+        var (vm, reader, _) = Create(mac: true);
+        vm.Confirm = message => Task.FromResult(message != WeChatIntentViewModel.ScreenRecordingText);
+
+        await vm.SetEnabledAsync(true);
+
+        Assert.False(vm.IsEnabled);
+        Assert.False(reader.IsRunning);
+    }
+
+    [Fact]
+    public async Task OnWindowsNothingIsSaidAboutScreenRecording()
+    {
+        var (vm, _, _) = Create();
+        var asked = new List<string>();
+        vm.Confirm = message =>
+        {
+            asked.Add(message);
+            return Task.FromResult(true);
+        };
+
+        await vm.SetEnabledAsync(true);
+
+        Assert.DoesNotContain(WeChatIntentViewModel.ScreenRecordingText, asked);
+    }
+
+    [Fact]
+    public async Task ARefusedScreenRecordingOffersTheSettingsAndARestart()
+    {
+        var (vm, reader, _) = Create(mac: true);
+        await vm.SetEnabledAsync(true);
+        reader.Raise(InFront());
+
+        reader.Raise(new ReaderEvent { Type = ReaderEvent.Error, Code = ReaderEvent.ErrorScreenRecordingDenied, Message = "需要「屏幕录制」权限" });
+
+        Assert.True(vm.NeedsScreenRecording);
+        Assert.Equal(WeChatIntentRunState.Stopped, vm.RunState);
+        Assert.Contains("打开系统设置", vm.StatusText, StringComparison.Ordinal);
+        Assert.False(reader.IsRunning);
+
+        vm.OpenScreenRecordingSettings();
+        Assert.Equal("x-apple.systempreferences", Assert.Single(_opened).Scheme);
+
+        Assert.False(vm.CanRestartClient);
+        int restarts = 0;
+        vm.RestartClient = () =>
+        {
+            restarts++;
+            return Task.CompletedTask;
+        };
+        Assert.True(vm.CanRestartClient);
+        await vm.RestartClient();
+        Assert.Equal(1, restarts);
+
+        // Allowed and restarted: the first frame clears it.
+        await vm.SetEnabledAsync(false);
+        await vm.SetEnabledAsync(true);
+        reader.Raise(InFront());
+        reader.Raise(Frame("小明", Them(250, "那你说")));
+        Assert.False(vm.NeedsScreenRecording);
     }
 
     [Fact]

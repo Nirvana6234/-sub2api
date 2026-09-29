@@ -27,6 +27,7 @@ public sealed class LocalPawRelayTests
     {
         Assert.Equal(404, StatusOf(Reject(method: "GET")));
         Assert.Equal(404, StatusOf(Reject(path: "/v1/chat/completions")));
+        // The one GET the relay answers is Codex's model list; see OnlyTheCatalogPathAnswersGet.
         Assert.Equal(404, StatusOf(Reject(path: "/v1/models")));
         Assert.Null(Reject());
     }
@@ -395,6 +396,188 @@ public sealed class LocalPawRelayTests
     }
 
     // ---- Harness -------------------------------------------------------------
+
+    // ---- The model list Codex's picker shows ---------------------------------
+
+    private const string BundledCatalog = """
+        {"models":[
+          {"slug":"gpt-6-astra","display_name":"GPT-6-Astra","description":"d","priority":1,"visibility":"list","tool_mode":"code_mode_only","use_responses_lite":true,"multi_agent_version":"v2","shell_type":"unified_exec","base_instructions":"b","supported_reasoning_levels":[{"effort":"low","description":"x"}]},
+          {"slug":"gpt-5.5","display_name":"GPT-5.5","description":"d","priority":9,"visibility":"list","tool_mode":null,"use_responses_lite":false,"multi_agent_version":null,"shell_type":"unified_exec","base_instructions":"b","upgrade":{"model":"x"},"supported_reasoning_levels":[{"effort":"low","description":"x"}]}
+        ]}
+        """;
+
+    private sealed class FixedCatalogSource(string? json) : LanAi.RelayClient.Services.ICodexCatalogSource
+    {
+        public int Calls { get; private set; }
+
+        public Task<string?> GetBundledCatalogAsync(CancellationToken cancellationToken = default)
+        {
+            Calls++;
+            return Task.FromResult(json);
+        }
+    }
+
+    private static async Task<HttpResponseMessage> GetModelsAsync(LocalPawRelay relay, string? token = null)
+    {
+        using var client = new HttpClient();
+        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(relay.BaseAddress!, "models?client_version=0.158.0"));
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + (token ?? relay.Token));
+        return await client.SendAsync(request);
+    }
+
+    private static string[] SlugsOf(string catalogJson) =>
+        [.. JsonDocument.Parse(catalogJson).RootElement.GetProperty("models").EnumerateArray()
+            .Select(m => m.GetProperty("slug").GetString()!)];
+
+    [Fact]
+    public void OnlyTheCatalogPathAnswersGet_AndOnlyResponsesAnswersPost()
+    {
+        Assert.Null(Reject(method: "GET", path: "/v1/models"));
+        Assert.Equal(404, StatusOf(Reject(method: "POST", path: "/v1/models")));
+        Assert.Equal(404, StatusOf(Reject(method: "GET", path: "/v1/responses")));
+    }
+
+    [Fact]
+    public async Task TheCatalogGateStillDemandsTheLocalToken()
+    {
+        await using var relay = new LocalPawRelay("http://127.0.0.1:1", _ => Task.FromResult("jwt"), codexCatalogSource: new FixedCatalogSource(BundledCatalog));
+        await relay.StartAsync();
+        relay.SetGroup(7, "g", LanAi.RelayClient.Services.CodexGroupModels.From(["claude-sonnet-5"]));
+
+        HttpResponseMessage response = await GetModelsAsync(relay, token: "not-the-token");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ServesTheGroupsModelsAsCodexsCatalogWithTheDefaultFirst()
+    {
+        await using var relay = new LocalPawRelay("http://127.0.0.1:1", _ => Task.FromResult("jwt"), codexCatalogSource: new FixedCatalogSource(BundledCatalog));
+        await relay.StartAsync();
+        relay.SetGroup(7, "Claude", LanAi.RelayClient.Services.CodexGroupModels.From(["claude-sonnet-5", "claude-opus-5"], preferred: "claude-opus-5"));
+
+        HttpResponseMessage response = await GetModelsAsync(relay);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(["claude-opus-5", "claude-sonnet-5"], SlugsOf(await response.Content.ReadAsStringAsync()));
+    }
+
+    [Theory]
+    [InlineData("no whitelist")]
+    [InlineData("automatic group")]
+    public async Task GivesCodexItsOwnListBackWhenThereIsNothingOfOursToShow(string why)
+    {
+        // Its own list rather than a 404: a 404 makes Codex fall back to the copy of the last
+        // catalog it fetched, which is still the previous group's for up to five minutes.
+        var models = LanAi.RelayClient.Services.CodexGroupModels.From(["claude-sonnet-5"]);
+        await using var relay = new LocalPawRelay("http://127.0.0.1:1", _ => Task.FromResult("jwt"), codexCatalogSource: new FixedCatalogSource(BundledCatalog));
+        await relay.StartAsync();
+        if (why == "no whitelist")
+        {
+            relay.SetGroup(7, "g", null);
+        }
+        else
+        {
+            relay.SetGroup(null, "auto", models);
+        }
+
+        HttpResponseMessage response = await GetModelsAsync(relay);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(["gpt-6-astra", "gpt-5.5"], SlugsOf(await response.Content.ReadAsStringAsync()));
+    }
+
+    [Fact]
+    public async Task IsA404OnlyWhenCodexsOwnCatalogCannotBeRead()
+    {
+        var models = LanAi.RelayClient.Services.CodexGroupModels.From(["claude-sonnet-5"]);
+        await using var relay = new LocalPawRelay("http://127.0.0.1:1", _ => Task.FromResult("jwt"), codexCatalogSource: new FixedCatalogSource(null));
+        await relay.StartAsync();
+
+        relay.SetGroup(7, "g", models);
+        Assert.Equal(HttpStatusCode.NotFound, (await GetModelsAsync(relay)).StatusCode);
+
+        relay.SetGroup(7, "g", null);
+        Assert.Equal(HttpStatusCode.NotFound, (await GetModelsAsync(relay)).StatusCode);
+    }
+
+    [Fact]
+    public async Task SwitchingGroupsChangesWhatTheNextCatalogRequestSees()
+    {
+        await using var relay = new LocalPawRelay("http://127.0.0.1:1", _ => Task.FromResult("jwt"), codexCatalogSource: new FixedCatalogSource(BundledCatalog));
+        await relay.StartAsync();
+
+        relay.SetGroup(1, "a", LanAi.RelayClient.Services.CodexGroupModels.From(["claude-sonnet-5"]));
+        Assert.Equal(["claude-sonnet-5"], SlugsOf(await (await GetModelsAsync(relay)).Content.ReadAsStringAsync()));
+
+        relay.SetGroup(2, "b", null);
+        Assert.Equal(["gpt-6-astra", "gpt-5.5"], SlugsOf(await (await GetModelsAsync(relay)).Content.ReadAsStringAsync()));
+    }
+
+    // ---- A model the group does not serve ------------------------------------
+
+    [Fact]
+    public async Task MovesARequestForAnUnservedModelOntoTheGroupsDefault_AndTouchesNothingElse()
+    {
+        await using var upstream = await FakeUpstream.StartAsync();
+        await using var relay = new LocalPawRelay(upstream.BaseAddress, _ => Task.FromResult("jwt"));
+        await relay.StartAsync();
+        relay.SetGroup(7, "Claude", LanAi.RelayClient.Services.CodexGroupModels.From(["claude-sonnet-5", "claude-opus-5"], "claude-opus-5"));
+
+        await PostAsync(relay, body: """{"input":[{"model":"nested-untouched"}],  "model" : "gpt-5.5","stream":true}""");
+
+        FakeUpstream.Captured sent = Assert.Single(upstream.Requests);
+        Assert.Equal("""{"input":[{"model":"nested-untouched"}],  "model" : "claude-opus-5","stream":true}""", sent.Body);
+    }
+
+    [Theory]
+    [InlineData("""{"model":"claude-sonnet-5","input":[]}""")]
+    [InlineData("""{"model":"CLAUDE-SONNET-5","input":[]}""")]
+    [InlineData("""{"input":[],"nothing":"here"}""")]
+    [InlineData("""{"model":12}""")]
+    public async Task LeavesARequestAloneWhenTheModelIsServedOrThereIsNoneToJudge(string body)
+    {
+        await using var upstream = await FakeUpstream.StartAsync();
+        await using var relay = new LocalPawRelay(upstream.BaseAddress, _ => Task.FromResult("jwt"));
+        await relay.StartAsync();
+        relay.SetGroup(7, "Claude", LanAi.RelayClient.Services.CodexGroupModels.From(["claude-sonnet-5"]));
+
+        await PostAsync(relay, body: body);
+
+        Assert.Equal(body, Assert.Single(upstream.Requests).Body);
+    }
+
+    [Fact]
+    public async Task DoesNotRewriteWithoutAWhitelistOrOnTheAutomaticGroup()
+    {
+        await using var upstream = await FakeUpstream.StartAsync();
+        await using var relay = new LocalPawRelay(upstream.BaseAddress, _ => Task.FromResult("jwt"));
+        await relay.StartAsync();
+        const string body = """{"model":"gpt-5.5"}""";
+
+        relay.SetGroup(7, "g", null);
+        await PostAsync(relay, body: body);
+        relay.SetGroup(null, "auto", LanAi.RelayClient.Services.CodexGroupModels.From(["claude-sonnet-5"]));
+        await PostAsync(relay, body: body);
+
+        Assert.All(upstream.Requests, r => Assert.Equal(body, r.Body));
+    }
+
+    [Fact]
+    public async Task ASwitchToAGroupWithoutAWhitelistDropsTheOldGroupsModels()
+    {
+        // Models live and die with the group they came from: left behind, they would
+        // rewrite the next group's traffic onto a model it does not offer.
+        await using var upstream = await FakeUpstream.StartAsync();
+        await using var relay = new LocalPawRelay(upstream.BaseAddress, _ => Task.FromResult("jwt"));
+        await relay.StartAsync();
+        relay.SetGroup(7, "Claude", LanAi.RelayClient.Services.CodexGroupModels.From(["claude-sonnet-5"]));
+        relay.SetGroup(8, "OpenAI");
+
+        await PostAsync(relay, body: """{"model":"gpt-5.5"}""");
+
+        Assert.Equal("""{"model":"gpt-5.5"}""", Assert.Single(upstream.Requests).Body);
+    }
 
     private static async Task<HttpResponseMessage> PostAsync(
         LocalPawRelay relay,

@@ -31,16 +31,29 @@ func DefaultTypeSafeModelIDs() []string {
 	return []string{"jev-1.13.0", "jev-latest"}
 }
 
-// HasTypeSafePricing 报告模型在该分组下是否有显式配置的价格（分组或渠道定价，
-// 按次或按 token 都算）。
+// HasTypeSafePricing 报告模型在该分组下是否有价格可用于入账：分组或渠道的显式定价
+// （按次或按 token 都算），或者 Jev 系列的内置官方价（见 BillingService 的兜底价表）。
 //
-// 只认显式定价，不认全局价格表：两条网关找不到价格时都按 0 元入账，全局表又会
+// 不认按名字子串猜出来的其他兜底价：两条网关找不到价格时都按 0 元入账，全局表又会
 // 按名字子串猜兜底价，这两种结果用在 Jev 上都不对。没有价格就不转发。
 func (s *GatewayService) HasTypeSafePricing(ctx context.Context, model string, apiKey *APIKey) bool {
 	if s == nil || apiKey == nil || strings.TrimSpace(model) == "" {
 		return false
 	}
-	return s.resolveChannelPricing(ctx, model, apiKey) != nil
+	if s.resolveChannelPricing(ctx, model, apiKey) != nil {
+		return true
+	}
+	return s.hasBuiltinJevPricing(model)
+}
+
+// hasBuiltinJevPricing 报告 jev-* 模型能否拿到内置官方价。只对 Jev 系列放行，
+// 其他名字即使全局价格表能猜出价格也不算。
+func (s *GatewayService) hasBuiltinJevPricing(model string) bool {
+	if s.billingService == nil || !IsTypeSafeJevModel(model) {
+		return false
+	}
+	pricing, err := s.billingService.GetModelPricing(model)
+	return err == nil && pricing != nil && pricing.InputPricePerToken > 0
 }
 
 // TypeSafeClientError 表示上游的回答已经原样写给了客户端，不换号。

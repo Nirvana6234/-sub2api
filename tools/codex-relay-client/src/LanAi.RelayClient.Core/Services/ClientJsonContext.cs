@@ -41,6 +41,7 @@ namespace LanAi.RelayClient.Services;
 [JsonSerializable(typeof(ContextFilterUsageStore.Totals), TypeInfoPropertyName = "ContextFilterUsageTotals")]
 [JsonSerializable(typeof(LocalProxyUsageStore.State), TypeInfoPropertyName = "LocalProxyUsageState")]
 [JsonSerializable(typeof(LocalProxyChoice))]
+[JsonSerializable(typeof(LanAi.RelayClient.Transport.OfficialAccountStore.State), TypeInfoPropertyName = "OfficialAccountState")]
 [JsonSerializable(typeof(LanAi.RelayClient.DesktopSync.DesktopSyncState))]
 [JsonSerializable(typeof(List<LanAi.RelayClient.DesktopSync.SyncAuditEntry>))]
 // Every property carries an explicit [JsonPropertyName] in snake_case, so the

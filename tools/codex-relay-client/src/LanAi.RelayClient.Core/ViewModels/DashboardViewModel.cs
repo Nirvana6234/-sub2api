@@ -50,6 +50,15 @@ public sealed partial class DashboardViewModel : ObservableObject
 
     private RelayApiKey? _managedKey;
 
+    // The group this installation is on, held in memory once it has been decided. Decided once,
+    // at start-up (see LoadGroupCardAsync), and changed only by this client's own switches:
+    // polling must not read it back from anywhere, or a second copy of the client running on the
+    // same machine — which shares the preference file — would drag this one to its group on every
+    // poll and leave two groups marked as in use.
+    private bool _groupSelectionInitialized;
+    private long? _selectedGroupId;
+    private bool _automaticMode;
+
     /// <summary>Whether there is a bundled filter to switch; false greys the checkbox out.</summary>
     public bool CanToggleContextFilter => _codex.HasContextFilter;
 
@@ -145,7 +154,9 @@ public sealed partial class DashboardViewModel : ObservableObject
         ILocalProxyCredentialSource? localProxyCredentials = null,
         ILocalProxyPreferenceStore? localProxyPreferences = null,
         ILocalProxyUsageStore? localProxyUsage = null,
-        IOfficialReachability? localProxyReachability = null)
+        IOfficialReachability? localProxyReachability = null,
+        Func<LocalProxyKind, OfficialSignInSession>? localOfficialSignIn = null,
+        Func<Uri, bool>? openUrl = null)
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
         _session = session ?? throw new ArgumentNullException(nameof(session));
@@ -165,6 +176,9 @@ public sealed partial class DashboardViewModel : ObservableObject
         SetContextFilterWithoutApplying(_contextFilterPreferences.Load() ?? true);
         RefreshContextFilterUsageText();
         ClaudePreference = new ClaudePreferenceViewModel(_client, _session, _safeAsync);
+        // The model the user picked is the default Codex is moved to when it asks for one the
+        // group does not serve, so the relay has to hear about a change as well as a switch.
+        ClaudePreference.Changed += OnClaudePreferenceChanged;
         ClaudeCode = new ClaudeCodeViewModel(
             _codex,
             _preferences,
@@ -172,18 +186,27 @@ public sealed partial class DashboardViewModel : ObservableObject
             ClaudePreference,
             _safeAsync);
         // The credential source must be the very instance the relay reads from, so a token
-        // checked on switch-on is the one the next turn uses; the host passes it in.
+        // checked on switch-on is the one the next turn uses; the host passes it in. The page
+        // lists what it routes to: this machine's own sign-ins, and the client's own.
+        var localRouter = localProxyCredentials as LocalProxyCredentialRouter;
         LocalProxy = new LocalProxyViewModel(
-            _client,
-            RefreshState,
             _codex,
-            localProxyCredentials ?? new LocalProxyCredentialCache(_client, _session.GetAccessTokenAsync),
+            localProxyCredentials ?? NoLocalProxyAccounts.Instance,
             localProxyPreferences ?? new LocalProxyPreferenceStore(),
             localProxyUsage ?? new LocalProxyUsageStore(),
             ClaudeCode,
             ClaudePreference,
             () => IsClaudeGroup,
-            reachability: localProxyReachability);
+            reachability: localProxyReachability,
+            localCodex: localRouter?.LocalCodex,
+            localClaude: localRouter?.LocalClaude,
+            officialAccounts: localRouter?.Official?.Store,
+            // The client's own official accounts belong to the 共飞 user signed in (D5).
+            officialScope: () => _session.IsSignedIn
+                ? LanAi.RelayClient.WeChatIntent.JevApiKeyStore.ScopeFor(ClientOptions.ServerAddress, _session.UserEmail)
+                : null,
+            startSignIn: localOfficialSignIn,
+            openUrl: openUrl);
         // Switching Codex onto a local proxy starts ChatGPT when it is not running yet. Only
         // a plain start: a ChatGPT that would need restarting is never restarted from here.
         LocalProxy.CodexNeedsLaunch = () =>
@@ -333,6 +356,8 @@ public sealed partial class DashboardViewModel : ObservableObject
         OnPropertyChanged(nameof(HasNoGroupSelected));
         OnPropertyChanged(nameof(IsClaudeGroup));
         OnPropertyChanged(nameof(ShowConfigureAutoGroupButton));
+        OnPropertyChanged(nameof(CodexModelChoices));
+        OnPropertyChanged(nameof(CodexModelChoice));
         // The start button is gated on having a group; see AwaitingBillingGroup.
         OnPropertyChanged(nameof(CanStartCodex));
         OnPropertyChanged(nameof(StartCodexLabel));
@@ -372,8 +397,198 @@ public sealed partial class DashboardViewModel : ObservableObject
     // selection itself decides.
 
     /// <summary>True when the selected group uses the Anthropic/Claude platform.</summary>
-    public bool IsClaudeGroup => SelectedGroup?.Platform?.ToLowerInvariant().Contains("claude") == true
-                               || SelectedGroup?.Platform?.ToLowerInvariant().Contains("anthropic") == true;
+    public bool IsClaudeGroup => IsClaudePlatform(SelectedGroup);
+
+    private static bool IsClaudePlatform(GroupItemViewModel? group) =>
+        group?.Platform?.ToLowerInvariant().Contains("claude") == true
+        || group?.Platform?.ToLowerInvariant().Contains("anthropic") == true;
+
+    // ---- Codex's model picker -----------------------------------------------------------
+    //
+    // A group with a whitelist switched on has a definite list of models, and Codex's picker
+    // is made to show exactly that (see CodexModelCatalog). A group without one, and the
+    // automatic group, leave Codex on the list it ships with.
+
+    /// <summary>
+    /// A default the user picked on the Codex page that the account's Claude preference cannot
+    /// hold (a model only the group's whitelist names). Kept here rather than in the preference,
+    /// which the Claude page and Claude Code's settings share: a model chosen for Codex must not
+    /// show up there. Not remembered across restarts.
+    /// </summary>
+    private string? _codexOnlyModel;
+
+    /// <summary>What <paramref name="group"/> serves, or null when it has no list of its own.</summary>
+    private CodexGroupModels? ModelsFor(GroupItemViewModel? group)
+    {
+        if (group is null || group.IsAutomatic || !group.HasModelAllowlist)
+        {
+            return null;
+        }
+
+        return CodexGroupModels.From(group.AllowedModels, IsClaudePlatform(group) ? PreferredCodexModel : null);
+    }
+
+    /// <summary>The model the Codex page currently names as the default, if it names one.</summary>
+    private string? PreferredCodexModel => _codexOnlyModel ?? ClaudePreference.SelectedClaudeModel;
+
+    private GroupItemViewModel? CurrentGroup => Groups.FirstOrDefault(g => g.IsCurrent);
+
+    private void OnClaudePreferenceChanged()
+    {
+        if (_codex.UsesLocalTransport && CurrentGroup is { IsAutomatic: false } current)
+        {
+            _codex.SetActiveGroup(current.Id, current.Name, ModelsFor(current));
+        }
+
+        OnPropertyChanged(nameof(CodexModelChoices));
+        OnPropertyChanged(nameof(CodexModelChoice));
+    }
+
+    /// <summary>
+    /// The models the Codex page offers for the chosen Claude group's default. Just the two
+    /// Claude models without a whitelist; with one, the whitelist's own — narrowed to the
+    /// ones the preference can name, when there are any.
+    /// </summary>
+    public IReadOnlyList<string> CodexModelChoices
+    {
+        get
+        {
+            IReadOnlyList<string> known = ClaudePreferenceViewModel.ClaudeModels;
+            if (SelectedGroup is not { IsAutomatic: false, HasModelAllowlist: true } group)
+            {
+                return known;
+            }
+
+            IReadOnlyList<string> concrete = [.. group.AllowedModels.Where(CodexGroupModels.IsConcrete)];
+            if (concrete.Count == 0)
+            {
+                return known;
+            }
+
+            IReadOnlyList<string> both = [.. concrete.Where(m => known.Contains(m, StringComparer.OrdinalIgnoreCase))];
+            return both.Count > 0 ? both : concrete;
+        }
+    }
+
+    /// <summary>
+    /// The default model as the Codex page shows it: the preference when the choices include it,
+    /// otherwise the first choice — the same answer <see cref="CodexGroupModels"/> gives the relay.
+    /// </summary>
+    public string CodexModelChoice
+    {
+        get
+        {
+            IReadOnlyList<string> choices = CodexModelChoices;
+            string chosen = PreferredCodexModel!;
+            return choices.FirstOrDefault(m => string.Equals(m, chosen, StringComparison.OrdinalIgnoreCase))
+                ?? choices[0];
+        }
+
+        set
+        {
+            // A ComboBox reports null while its items are being replaced; taking that as a
+            // choice would lose the real one.
+            if (string.IsNullOrWhiteSpace(value) || !CodexModelChoices.Contains(value))
+            {
+                return;
+            }
+
+            if (ClaudePreferenceViewModel.ClaudeModels.Contains(value))
+            {
+                // One the account setting can hold: it is the shared preference, as before.
+                _codexOnlyModel = null;
+                ClaudePreference.SelectedClaudeModel = value;
+                return;
+            }
+
+            _codexOnlyModel = value;
+            OnClaudePreferenceChanged();
+        }
+    }
+
+    // ---- Telling the user a switch changes Codex's picker ---------------------------------
+
+    /// <summary>
+    /// Asks whether to restart Codex now so its picker shows a switched-to group's models, or to
+    /// wait for the window to catch up on its own. The host supplies the dialog; without one the
+    /// answer is to wait.
+    /// </summary>
+    public Func<string, Task<bool>>? ConfirmModelListRestart { get; set; }
+
+    private static bool ModelListChanges(CodexGroupModels? from, CodexGroupModels? to) =>
+        !string.Equals(CodexGroupModels.SignatureOf(from), CodexGroupModels.SignatureOf(to), StringComparison.Ordinal);
+
+    /// <summary>Whether Codex is running right now — asked afresh, since the poll behind the flag may be a minute old.</summary>
+    private async Task<bool> CodexIsRunningNowAsync(CancellationToken cancellationToken)
+    {
+        if (IsCodexRunning)
+        {
+            return true;
+        }
+
+        try
+        {
+            return (await _codex.CheckAsync(cancellationToken).ConfigureAwait(true)).IsRunning;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// After a switch that changes which models Codex's picker should show: lets the user choose
+    /// between restarting Codex now and waiting. Waiting is safe — the window catches up within
+    /// about five minutes, and until then the relay moves any request for a model the new group
+    /// does not serve onto its default.
+    /// </summary>
+    private async Task OfferModelListRestartAsync(
+        GroupItemViewModel? from,
+        GroupItemViewModel to,
+        CancellationToken cancellationToken)
+    {
+        CodexGroupModels? models = ModelsFor(to);
+        if (ConfirmModelListRestart is null ||
+            !ModelListChanges(ModelsFor(from), models) ||
+            !await CodexIsRunningNowAsync(cancellationToken).ConfigureAwait(true))
+        {
+            return;
+        }
+
+        string what = models is null
+            ? $"{to.Name} 没有模型白名单，Codex 的模型下拉会恢复为它自带的列表。"
+            : $"Codex 的模型下拉会只显示 {to.Name} 支持的模型。";
+        string waiting = models is null
+            ? "不用重启，下拉最多约 5 分钟后自动更新。"
+            : $"不用重启，下拉最多约 5 分钟后自动更新；期间 Codex 仍请求旧模型时，共飞会自动换成 {models.DefaultModel}。";
+
+        bool restart = await ConfirmModelListRestart(
+                $"已切换到 {to.Name}。{what}\n\n" +
+                "· 立即重启：马上看到新的模型列表，会中断正在进行的对话。\n" +
+                $"· 等待：{waiting}")
+            .ConfigureAwait(true);
+        if (restart)
+        {
+            await StartCodexAsync(_ => Task.FromResult(true), cancellationToken, forceRestart: true).ConfigureAwait(true);
+        }
+    }
+
+    /// <summary>
+    /// The sentence added to a switch's message when the running Codex will show a different
+    /// model list. Nothing needs restarting — the relay and the client see to it that Codex's
+    /// server side fetches the new list (see <c>CodexStartup.SetActiveGroup</c>) — but the
+    /// desktop window keeps the list it has for five minutes and asks again only when the window
+    /// next gains focus after that (its own query cache, read out of the app bundle), so the
+    /// picker can lag by that long. Saying so beats a user wondering.
+    /// </summary>
+    private string ModelListNote(GroupItemViewModel? from, GroupItemViewModel to) =>
+        IsCodexRunning &&
+        !string.Equals(
+            CodexGroupModels.SignatureOf(ModelsFor(from)),
+            CodexGroupModels.SignatureOf(ModelsFor(to)),
+            StringComparison.Ordinal)
+            ? " Codex 的模型下拉最多约 5 分钟后更新，重启 Codex 可立即更新。"
+            : string.Empty;
 
     // ---- Codex ---------------------------------------------------------------
 
@@ -659,7 +874,15 @@ public sealed partial class DashboardViewModel : ObservableObject
         {
             long? groupId = SelectedGroup is { IsAutomatic: false } selected ? selected.Id : null;
             string? groupName = SelectedGroup?.Name;
-            string? preferredModel = IsClaudeGroup ? ClaudePreference.SelectedClaudeModel : null;
+            CodexGroupModels? groupModels = groupId is null ? null : ModelsFor(SelectedGroup);
+
+            // A Claude group's chosen model always replaces the one in config.toml. For any
+            // other group with a whitelist the user's own model stays whenever the group
+            // serves it, and only otherwise gives way to the group's default.
+            string? preferredModel = IsClaudeGroup
+                ? groupModels?.DefaultModel ?? ClaudePreference.SelectedClaudeModel
+                : groupModels?.DefaultModel;
+            bool keepUserModel = !IsClaudeGroup && groupModels is not null;
             CodexStartupResult result;
             if (forceRestart)
             {
@@ -671,7 +894,9 @@ public sealed partial class DashboardViewModel : ObservableObject
                         cancellationToken: cancellationToken,
                         preferredModel: preferredModel,
                         forceNewKey: forceNewKey,
-                        groupName: groupName)
+                        groupName: groupName,
+                        groupModels: groupModels,
+                        keepUserModelIfServed: keepUserModel)
                     .ConfigureAwait(true);
             }
             else if (RequiresCodexAccountRestart || RequiresCodexReconnect)
@@ -694,7 +919,9 @@ public sealed partial class DashboardViewModel : ObservableObject
                         cancellationToken: cancellationToken,
                         preferredModel: preferredModel,
                         forceNewKey: forceNewKey,
-                        groupName: groupName)
+                        groupName: groupName,
+                        groupModels: groupModels,
+                        keepUserModelIfServed: keepUserModel)
                     .ConfigureAwait(true);
             }
             else
@@ -707,7 +934,9 @@ public sealed partial class DashboardViewModel : ObservableObject
                         cancellationToken: cancellationToken,
                         preferredModel: preferredModel,
                         forceNewKey: forceNewKey,
-                        groupName: groupName)
+                        groupName: groupName,
+                        groupModels: groupModels,
+                        keepUserModelIfServed: keepUserModel)
                     .ConfigureAwait(true);
             }
 
@@ -722,7 +951,9 @@ public sealed partial class DashboardViewModel : ObservableObject
                         cancellationToken: cancellationToken,
                         preferredModel: preferredModel,
                         forceNewKey: forceNewKey,
-                        groupName: groupName)
+                        groupName: groupName,
+                        groupModels: groupModels,
+                        keepUserModelIfServed: keepUserModel)
                     .ConfigureAwait(true);
             }
 
@@ -745,6 +976,7 @@ public sealed partial class DashboardViewModel : ObservableObject
                     _codexAccountStore.Save(currentEmail);
                     RequiresCodexAccountRestart = false;
                 }
+
             }
         }
         catch (Exception ex) when (RefreshState.IsCardFailure(ex))
@@ -800,49 +1032,6 @@ public sealed partial class DashboardViewModel : ObservableObject
         return IsCodexRunning
             ? new DesktopSync.DesktopStartResult(DesktopSync.DesktopStartOutcome.Starting)
             : new DesktopSync.DesktopStartResult(DesktopSync.DesktopStartOutcome.Refused, CodexMessage ?? "电脑上的 ChatGPT 没有启动");
-    }
-
-    /// <summary>
-    /// 修复 ChatGPT 启动, asked for from the phone: the relay started, config rewritten, and
-    /// ChatGPT restarted when it is running.
-    /// </summary>
-    /// <remarks>
-    /// The button's repair without its dialog: nobody is at this computer to answer it, and
-    /// the phone's signed request, confirmed there, is the consent. Unlike the button it
-    /// keeps the key: what breaks while nobody is here is ChatGPT pointing at a relay that
-    /// is gone (a client restart, say), which the restart fixes; replacing the key is for
-    /// a key that is itself broken, and is left to the button. The restart confirmation
-    /// passed on is still "no" — <c>forceRestart</c> already restarts, and nothing else
-    /// should be agreed to on the user's behalf. Never installs, and never runs while a
-    /// start or an install is under way (<see cref="StartCodexAsync"/> lets a forced restart
-    /// through an install, so that is checked here).
-    /// </remarks>
-    /// <returns>Null when ChatGPT is up again, otherwise why not.</returns>
-    public async Task<string?> RepairCodexForPhoneAsync(CancellationToken cancellationToken = default)
-    {
-        if (IsStartingCodex || IsInstallingCodex)
-        {
-            return "电脑上正在启动或安装 ChatGPT，请稍后再试。";
-        }
-
-        CodexHealth health = await _codex.CheckAsync(cancellationToken).ConfigureAwait(true);
-        IsCodexRunning = health.IsRunning;
-        if (!health.IsInstalled)
-        {
-            return "电脑上还没有安装 ChatGPT，请在电脑上安装。";
-        }
-
-        // forceRestart even when not running: it takes the path that neither asks nor, for a
-        // stopped ChatGPT, has anything to stop — the other path asks about an account
-        // switch, and the answer here would be no.
-        await StartCodexAsync(_ => Task.FromResult(false), cancellationToken, forceRestart: true)
-            .ConfigureAwait(true);
-        if (!IsCodexRunning)
-        {
-            IsCodexRunning = (await _codex.CheckAsync(cancellationToken).ConfigureAwait(true)).IsRunning;
-        }
-
-        return IsCodexRunning ? null : CodexMessage ?? "修复后 ChatGPT 没有启动";
     }
 
     public async Task InstallCodexAsync(CancellationToken cancellationToken = default)
@@ -1063,29 +1252,42 @@ public sealed partial class DashboardViewModel : ObservableObject
                 }
             }
 
-            // Under the local transport, the managed key's group id (if a key exists
-            // at all — a leftover from before this installation moved to the loopback
-            // relay, or one recorded by another installation of the same account, see
-            // SwitchGroupAsync below) is only ever a *default*: something to seed a
-            // client that has not made its own choice yet. Once this installation has
-            // a local preference, that preference is authoritative for as long as it
-            // runs — a refresh must never drag the group back to the server's record,
-            // and neither may some other device's later switch, which is why the
-            // server default is written into the local preference immediately below
-            // rather than re-read on every poll.
-            long? localGroup = _preferences.Load();
+            // Which group this installation is on is decided once, when it starts: its own last
+            // choice if it has one, otherwise the server's default (the managed key's group, if
+            // an account has one — a leftover from before this installation moved to the loopback
+            // relay, or one recorded by another installation). The default is written into the
+            // local preference straight away, so it is only ever a seed.
+            //
+            // After that the selection lives in memory and is changed only by this client's own
+            // switches. A poll must not read it again — from the server, or from the preference
+            // file, which a second copy of the client on the same machine also writes: either
+            // would drag the group away from what the user chose here, and could leave two
+            // groups showing as in use.
             long? current;
+            bool automaticWanted;
             if (_codex.UsesLocalTransport)
             {
-                current = localGroup ?? _managedKey?.GroupId;
-                if (localGroup is null && current is not null)
+                if (!_groupSelectionInitialized)
                 {
-                    _preferences.Save(current.Value);
+                    long? localGroup = _preferences.Load();
+                    current = localGroup ?? _managedKey?.GroupId;
+                    if (localGroup is null && current is not null)
+                    {
+                        _preferences.Save(current.Value);
+                    }
+
+                    automaticWanted = _preferences.LoadAutomatic();
+                }
+                else
+                {
+                    current = _selectedGroupId;
+                    automaticWanted = _automaticMode;
                 }
             }
             else
             {
-                current = _managedKey?.GroupId ?? localGroup;
+                current = _managedKey?.GroupId ?? _preferences.Load();
+                automaticWanted = _preferences.LoadAutomatic();
             }
 
             Groups.Clear();
@@ -1108,8 +1310,15 @@ public sealed partial class DashboardViewModel : ObservableObject
             // The mode is the client's own choice, so it is read back from local
             // preferences. The server's auto_group flag says only that candidates
             // exist for this account, never which mode this machine is in.
-            if (_preferences.LoadAutomatic() && automatic is not null)
+            if (automaticWanted && automatic is not null)
             {
+                // One group in use, not two: the fixed group the local preference still names
+                // was marked above and must not stay marked beside 自动分组.
+                foreach (GroupItemViewModel item in Groups)
+                {
+                    item.IsCurrent = false;
+                }
+
                 automatic.IsCurrent = true;
                 inForce = automatic;
             }
@@ -1117,6 +1326,10 @@ public sealed partial class DashboardViewModel : ObservableObject
             {
                 inForce = Groups.FirstOrDefault(g => !g.IsAutomatic && g.IsCurrent);
             }
+
+            _selectedGroupId = inForce is { IsAutomatic: false } fixedInForce ? fixedInForce.Id : current;
+            _automaticMode = inForce?.IsAutomatic == true;
+            _groupSelectionInitialized = true;
 
             // A first-time account has neither a managed key nor a local choice.
             // Select the first server-approved group so Codex has a usable billing
@@ -1135,7 +1348,7 @@ public sealed partial class DashboardViewModel : ObservableObject
                 ApplyCurrentLabels(inForce);
                 if (_codex.UsesLocalTransport && inForce is not null)
                 {
-                    _codex.SetActiveGroup(inForce.IsAutomatic ? null : inForce.Id, inForce.Name);
+                    _codex.SetActiveGroup(inForce.IsAutomatic ? null : inForce.Id, inForce.Name, ModelsFor(inForce));
                 }
                 if (IsClaudeGroup) _ = _safeAsync.RunAsync(ClaudePreference.LoadAsync);
                 ClaudeCode.RequestSync();
@@ -1257,17 +1470,24 @@ public sealed partial class DashboardViewModel : ObservableObject
         SelectWithoutSwitching(group);
         GroupMessage = string.Empty;
 
+        if (_codexOnlyModel is { } pick && !group.AllowedModels.Contains(pick, StringComparer.OrdinalIgnoreCase))
+        {
+            _codexOnlyModel = null;
+        }
+
         if (_codex.UsesLocalTransport)
         {
             // There is no server-side key to re-point: the loopback relay stamps the
             // group on each request, so the switch is a local push and is in force for
             // the very next turn. Falling through to the branch below instead would
             // leave the relay on the previous group while telling the user otherwise.
-            _codex.SetActiveGroup(group.Id, group.Name);
+            _codex.SetActiveGroup(group.Id, group.Name, ModelsFor(group));
             _preferences.Save(group.Id);
-            GroupMessage = $"已切换到 {group.Name}。";
+            GroupMessage = $"已切换到 {group.Name}。" + ModelListNote(previous, group);
             if (IsClaudeGroup) _ = _safeAsync.RunAsync(ClaudePreference.LoadAsync);
             ClaudeCode.RequestSync();
+            OnPropertyChanged(nameof(CodexModelChoices));
+            OnPropertyChanged(nameof(CodexModelChoice));
 
             // Best-effort record for another installation of the same account to pick
             // up as its own bootstrap default (see LoadGroupCardAsync) — never
@@ -1279,6 +1499,8 @@ public sealed partial class DashboardViewModel : ObservableObject
             {
                 _ = _safeAsync.RunAsync(() => RecordGroupOnManagedKeyAsync(_managedKey.Id, group.Id, cancellationToken));
             }
+
+            await OfferModelListRestartAsync(previous, group, cancellationToken).ConfigureAwait(true);
             return;
         }
 
@@ -1398,9 +1620,12 @@ public sealed partial class DashboardViewModel : ObservableObject
             SelectWithoutSwitching(automatic);
             _codex.SetActiveGroup(null, automatic.Name);
             ClaudeCode.RequestSync();
-            GroupMessage = "已启用自动分组。";
+            GroupMessage = "已启用自动分组。" + ModelListNote(previous, automatic);
+            OnPropertyChanged(nameof(CodexModelChoices));
+            OnPropertyChanged(nameof(CodexModelChoice));
             OnPropertyChanged(nameof(CanStartCodex));
             OnPropertyChanged(nameof(StartCodexLabel));
+            await OfferModelListRestartAsync(previous, automatic, cancellationToken).ConfigureAwait(true);
         }
         catch (RelayApiException ex)
         {
@@ -1505,6 +1730,12 @@ public sealed partial class DashboardViewModel : ObservableObject
             item.IsCurrent = item == group;
         }
 
+        _automaticMode = group.IsAutomatic;
+        if (!group.IsAutomatic)
+        {
+            _selectedGroupId = group.Id;
+        }
+
         ApplyCurrentLabels(group);
     }
 
@@ -1556,6 +1787,9 @@ public sealed partial class DashboardViewModel : ObservableObject
         _refreshCancellation = null;
 
         _managedKey = null;
+        _groupSelectionInitialized = false;
+        _selectedGroupId = null;
+        _automaticMode = false;
         _autoGroupSettings = null;
         _autoGroupSupported = true;
         CanConfigureAutoGroup = false;

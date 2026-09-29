@@ -21,12 +21,35 @@ namespace LanAi.RelayClient.CodexBinding;
 /// oversight.
 /// </para>
 /// </remarks>
-public sealed class CodexConfigWriter
+public sealed class CodexConfigWriter : ICodexLoginStore
 {
     /// <summary>The provider name this client owns inside <c>config.toml</c>.</summary>
     internal const string ProviderName = "gongfei";
 
+    private const string FeaturesHeader = "[features]";
+
+    /// <summary>
+    /// The switch that lets Codex fetch a model list when it signs in with an API key. Still
+    /// marked as under development in Codex, hence a constant to find in one place if it moves.
+    /// </summary>
+    private const string DiscoveryFeature = "api_key_model_discovery";
+
+    /// <summary>
+    /// Codex warns in every conversation when a feature still under development is on
+    /// ("Under-development features enabled: api_key_model_discovery", measured). The switch is
+    /// ours, not something the user opted into, so the warning is silenced along with it.
+    /// </summary>
+    private const string SuppressUnstableWarning = "suppress_unstable_features_warning";
+
     private const string ApiKeyField = "OPENAI_API_KEY";
+
+    /// <summary>
+    /// Serialises every read and write of the user's sign-in, across instances: the local
+    /// proxy refreshes it from relay threads while launch, the route guard and release move
+    /// it between <c>auth.json</c> and the snapshots. A refresh written into a copy that a
+    /// restore is about to replace would be lost — and OpenAI refresh tokens are single-use.
+    /// </summary>
+    private static readonly object LoginGate = new();
 
     private readonly CodexPaths _paths;
     private readonly CodexAuthSnapshot _snapshot;
@@ -72,16 +95,64 @@ public sealed class CodexConfigWriter
     /// The Claude model selected for a Claude/Kiro group. Null leaves the user's
     /// existing top-level model setting unchanged.
     /// </param>
-    public void Apply(string apiKey, string baseUrl, string? preferredModel = null)
+    /// <param name="catalogUrl">
+    /// Where Codex should ask for its model list. Written to the provider together with the
+    /// feature switch Codex requires before it will ask at all (measured: without the switch
+    /// the address is ignored). Null writes neither.
+    /// </param>
+    /// <param name="keepModelIfIn">
+    /// When given, <paramref name="preferredModel"/> only replaces the user's model if the
+    /// user's is not among these — a model the user picked and the group serves is theirs to
+    /// keep. Null replaces unconditionally.
+    /// </param>
+    public void Apply(
+        string apiKey,
+        string baseUrl,
+        string? preferredModel = null,
+        string? catalogUrl = null,
+        IReadOnlyCollection<string>? keepModelIfIn = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(apiKey);
         ArgumentException.ThrowIfNullOrWhiteSpace(baseUrl);
 
-        _fileSnapshot.CaptureOnce();
-        Directory.CreateDirectory(_paths.Home);
+        lock (LoginGate)
+        {
+            bool firstCapture = _fileSnapshot.CaptureOnce();
+            Directory.CreateDirectory(_paths.Home);
 
-        WriteAuth(apiKey);
-        WriteConfig(baseUrl, preferredModel);
+            WriteAuth(apiKey, firstCapture);
+            WriteConfig(baseUrl, preferredModel, catalogUrl, keepModelIfIn);
+
+            if (catalogUrl is not null)
+            {
+                ForgetCachedModelList();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Codex's on-disk copy of the last model list it fetched, for up to five minutes.
+    /// </summary>
+    internal const string ModelsCacheFile = "models_cache.json";
+
+    /// <summary>
+    /// Deletes Codex's cached model list so the next start asks for it again.
+    /// </summary>
+    /// <remarks>
+    /// Codex answers its first request from that copy and refreshes it in the background, so a
+    /// restart right after a group switch raced the refresh and often showed the previous
+    /// group's models (measured, against the real binary). Best-effort: a copy that cannot be
+    /// removed only means the old list may show once more.
+    /// </remarks>
+    public void ForgetCachedModelList()
+    {
+        try
+        {
+            File.Delete(Path.Combine(_paths.Home, ModelsCacheFile));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+        }
     }
 
     /// <summary>
@@ -124,16 +195,28 @@ public sealed class CodexConfigWriter
     /// The account material is therefore taken into safekeeping first, and only
     /// then removed. <see cref="RestoreOriginalAuth"/> hands it back.
     /// </para>
+    /// <para>
+    /// Account material found when a snapshot already exists is a sign-in the user made
+    /// while Codex pointed at the relay (<c>codex login</c> rewrites the file, the route
+    /// guard then calls here). It is newer than what the snapshot holds, so it replaces
+    /// it: keeping the old one would hand back a sign-in the user had already replaced,
+    /// and drop the one they just made.
+    /// </para>
     /// </remarks>
-    private void WriteAuth(string apiKey)
+    private void WriteAuth(string apiKey, bool firstCapture)
     {
         JsonObject current = ReadAuth();
 
-        // Captured before anything is discarded, and only when this client has not
-        // already replaced the file — otherwise the second run would "preserve"
-        // its own key and lose the user's login permanently.
+        // Captured before anything is discarded. Only account material is ever captured —
+        // a file carrying just a key is one this client wrote, and "preserving" it would
+        // lose the user's login permanently.
         if (HasAccountMaterial(current))
         {
+            if (!firstCapture)
+            {
+                ReplaceSnapshotAuth(current, File.ReadAllBytes(_paths.AuthPath));
+            }
+
             _snapshot.CaptureOnce(current);
         }
 
@@ -170,31 +253,191 @@ public sealed class CodexConfigWriter
     /// </remarks>
     public bool RestoreOriginalAuth()
     {
-        JsonObject? original = _snapshot.Read();
-        if (original is null)
+        lock (LoginGate)
         {
-            return false;
-        }
+            JsonObject? original = _snapshot.Read();
+            if (original is null)
+            {
+                return false;
+            }
 
-        WriteAuthObject(original);
-        _snapshot.Clear();
-        return true;
+            WriteAuthObject(original);
+            _snapshot.Clear();
+            return true;
+        }
     }
 
     /// <summary>Restores both Codex files exactly as they were before the first apply.</summary>
+    /// <remarks>
+    /// "As they were" except for the sign-in: a newer one the user made meanwhile, or the
+    /// same one with tokens the local proxy refreshed, is what goes back.
+    /// </remarks>
     public bool RestoreOriginalFiles()
     {
-        bool restored = _fileSnapshot.Restore();
-        if (restored)
+        lock (LoginGate)
         {
-            _snapshot.Clear();
-        }
+            bool restored = _fileSnapshot.Restore();
+            if (restored)
+            {
+                _snapshot.Clear();
+            }
 
-        return restored;
+            return restored;
+        }
     }
 
+    /// <inheritdoc />
+    public CodexLogin? ReadLogin()
+    {
+        lock (LoginGate)
+        {
+            // Newest first: a sign-in in the file itself is either the only copy (Codex not on
+            // the relay) or one made since the snapshot was taken.
+            foreach (Func<JsonObject?> source in LoginSources())
+            {
+                if (ParseLogin(source()) is { } login)
+                {
+                    return login;
+                }
+            }
+
+            return null;
+        }
+    }
+
+    /// <inheritdoc />
+    public bool UpdateLoginTokens(string previousRefreshToken, CodexRefreshedTokens refreshed, DateTimeOffset refreshedAt)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(previousRefreshToken);
+        ArgumentNullException.ThrowIfNull(refreshed);
+        ArgumentException.ThrowIfNullOrWhiteSpace(refreshed.AccessToken);
+
+        lock (LoginGate)
+        {
+            bool updated = false;
+
+            JsonObject live = ReadAuth();
+            if (HasRefreshToken(live, previousRefreshToken))
+            {
+                WriteAuthObject(ApplyRefresh(live, refreshed, refreshedAt));
+                updated = true;
+            }
+
+            if (ReadFileSnapshotAuth() is { } recorded && HasRefreshToken(recorded, previousRefreshToken))
+            {
+                byte[] plaintext = Encoding.UTF8.GetBytes(
+                    ApplyRefresh(recorded, refreshed, refreshedAt).ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+                try
+                {
+                    _fileSnapshot.ReplaceAuth(plaintext);
+                }
+                finally
+                {
+                    Array.Clear(plaintext, 0, plaintext.Length);
+                }
+
+                updated = true;
+            }
+
+            if (_snapshot.Read() is { } legacy && HasRefreshToken(legacy, previousRefreshToken))
+            {
+                _snapshot.ReplaceIfExists(ApplyRefresh(legacy, refreshed, refreshedAt));
+                updated = true;
+            }
+
+            return updated;
+        }
+    }
+
+    private IEnumerable<Func<JsonObject?>> LoginSources()
+    {
+        yield return () => ReadAuth() is { } live && HasAccountMaterial(live) ? live : null;
+        yield return ReadFileSnapshotAuth;
+        yield return _snapshot.Read;
+    }
+
+    private JsonObject? ReadFileSnapshotAuth()
+    {
+        byte[]? plaintext = _fileSnapshot.ReadAuth();
+        if (plaintext is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonNode.Parse(plaintext) as JsonObject;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+        finally
+        {
+            Array.Clear(plaintext, 0, plaintext.Length);
+        }
+    }
+
+    /// <summary>Puts a newer sign-in into both snapshots, in place of the one they hold.</summary>
+    private void ReplaceSnapshotAuth(JsonObject auth, byte[] raw)
+    {
+        try
+        {
+            _fileSnapshot.ReplaceAuth(raw);
+        }
+        finally
+        {
+            Array.Clear(raw, 0, raw.Length);
+        }
+
+        _snapshot.ReplaceIfExists(auth);
+    }
+
+    private static CodexLogin? ParseLogin(JsonObject? auth)
+    {
+        if (auth?["tokens"] is not JsonObject tokens)
+        {
+            return null;
+        }
+
+        string refresh = StringOf(tokens, "refresh_token");
+        string access = StringOf(tokens, "access_token");
+        if (refresh.Length == 0 && access.Length == 0)
+        {
+            return null;
+        }
+
+        return new CodexLogin(access, refresh, StringOf(tokens, "id_token"), StringOf(tokens, "account_id"));
+    }
+
+    private static bool HasRefreshToken(JsonObject auth, string refreshToken) =>
+        auth["tokens"] is JsonObject tokens &&
+        string.Equals(StringOf(tokens, "refresh_token"), refreshToken, StringComparison.Ordinal);
+
+    /// <summary>The same shape Codex itself writes after a refresh: the three tokens and <c>last_refresh</c>.</summary>
+    private static JsonObject ApplyRefresh(JsonObject auth, CodexRefreshedTokens refreshed, DateTimeOffset refreshedAt)
+    {
+        var tokens = (JsonObject)auth["tokens"]!;
+        tokens["access_token"] = refreshed.AccessToken;
+        if (!string.IsNullOrWhiteSpace(refreshed.RefreshToken))
+        {
+            tokens["refresh_token"] = refreshed.RefreshToken;
+        }
+        if (!string.IsNullOrWhiteSpace(refreshed.IdToken))
+        {
+            tokens["id_token"] = refreshed.IdToken;
+        }
+
+        auth["last_refresh"] = refreshedAt.UtcDateTime.ToString(
+            "yyyy-MM-dd'T'HH:mm:ss.fffffff'Z'", System.Globalization.CultureInfo.InvariantCulture);
+        return auth;
+    }
+
+    private static string StringOf(JsonObject obj, string name) =>
+        obj[name] is JsonValue value && value.TryGetValue(out string? text) ? text ?? string.Empty : string.Empty;
+
     /// <summary>Reads the live TOML without changing it and verifies the owned route.</summary>
-    public bool IsRelayRoute(string baseUrl, string? expectedApiKey = null)
+    public bool IsRelayRoute(string baseUrl, string? expectedApiKey = null, string? catalogUrl = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(baseUrl);
         if (expectedApiKey is not null)
@@ -209,7 +452,10 @@ public sealed class CodexConfigWriter
 
         bool providerSelected = false;
         bool baseUrlMatches = false;
+        bool catalogMatches = catalogUrl is null;
+        bool discoveryOn = catalogUrl is null;
         bool inRelaySection = false;
+        bool inFeatures = false;
         bool inAnySection = false;
         string relayHeader = $"[model_providers.{ProviderName}]";
 
@@ -220,6 +466,7 @@ public sealed class CodexConfigWriter
             {
                 inAnySection = true;
                 inRelaySection = string.Equals(trimmed, relayHeader, StringComparison.Ordinal);
+                inFeatures = string.Equals(trimmed, FeaturesHeader, StringComparison.Ordinal);
                 continue;
             }
 
@@ -231,9 +478,18 @@ public sealed class CodexConfigWriter
             {
                 baseUrlMatches = true;
             }
+            else if (inRelaySection && catalogUrl is not null && AssignmentEquals(rawLine, "model_catalog_url", catalogUrl))
+            {
+                catalogMatches = true;
+            }
+            else if (inFeatures && IsAssignmentTo(rawLine, DiscoveryFeature) &&
+                     rawLine.Split('=', 2)[1].Trim().StartsWith("true", StringComparison.Ordinal))
+            {
+                discoveryOn = true;
+            }
         }
 
-        if (!providerSelected || !baseUrlMatches)
+        if (!providerSelected || !baseUrlMatches || !catalogMatches || !discoveryOn)
         {
             return false;
         }
@@ -372,20 +628,29 @@ public sealed class CodexConfigWriter
     /// dependency the installer budget does not want, and a round-trip through one
     /// would reformat the whole file and lose the user's comments.
     /// </remarks>
-    private void WriteConfig(string baseUrl, string? preferredModel)
+    private void WriteConfig(
+        string baseUrl,
+        string? preferredModel,
+        string? catalogUrl = null,
+        IReadOnlyCollection<string>? keepModelIfIn = null)
     {
         string existing = File.Exists(_paths.ConfigPath)
             ? File.ReadAllText(_paths.ConfigPath)
             : string.Empty;
 
-        AtomicWrite(_paths.ConfigPath, MergeConfig(existing, baseUrl, preferredModel));
+        AtomicWrite(_paths.ConfigPath, MergeConfig(existing, baseUrl, preferredModel, catalogUrl, keepModelIfIn));
     }
 
     /// <summary>
     /// Produces a <c>config.toml</c> routing through the relay while keeping
     /// everything the user had that is not this client's to change.
     /// </summary>
-    internal static string MergeConfig(string existing, string baseUrl, string? preferredModel = null)
+    internal static string MergeConfig(
+        string existing,
+        string baseUrl,
+        string? preferredModel = null,
+        string? catalogUrl = null,
+        IReadOnlyCollection<string>? keepModelIfIn = null)
     {
         var preamble = new List<string>();
         var sections = new List<(string Header, List<string> Body)>();
@@ -409,13 +674,24 @@ public sealed class CodexConfigWriter
             }
         }
 
-        bool replaceModel = !string.IsNullOrWhiteSpace(preferredModel);
+        string? existingModel = preamble
+            .Select(line => IsAssignmentTo(line, "model") ? ReadQuotedValue(line) : null)
+            .FirstOrDefault(value => value is not null);
+        bool replaceModel = !string.IsNullOrWhiteSpace(preferredModel) &&
+            (keepModelIfIn is null ||
+             existingModel is null ||
+             !keepModelIfIn.Contains(existingModel, StringComparer.OrdinalIgnoreCase));
         bool wroteModel = false;
         bool hasReasoningEffort = false;
         var topLevel = new List<string>();
         foreach (string line in preamble)
         {
             if (IsAssignmentTo(line, "model_provider"))
+            {
+                continue;
+            }
+
+            if (catalogUrl is not null && IsAssignmentTo(line, SuppressUnstableWarning))
             {
                 continue;
             }
@@ -450,6 +726,11 @@ public sealed class CodexConfigWriter
             topLevel.Add("model_reasoning_effort = \"medium\"");
         }
 
+        if (catalogUrl is not null)
+        {
+            topLevel.Add($"{SuppressUnstableWarning} = true");
+        }
+
         topLevel.Add($"model_provider = \"{ProviderName}\"");
 
         string ourHeader = $"[model_providers.{ProviderName}]";
@@ -466,6 +747,15 @@ public sealed class CodexConfigWriter
         builder.AppendLine($"base_url = \"{EscapeToml(baseUrl)}\"");
         builder.AppendLine("wire_api = \"responses\"");
         builder.AppendLine("requires_openai_auth = true");
+        if (catalogUrl is not null)
+        {
+            builder.AppendLine($"model_catalog_url = \"{EscapeToml(catalogUrl)}\"");
+        }
+
+        if (catalogUrl is not null)
+        {
+            EnsureDiscoveryFeature(sections);
+        }
 
         foreach ((string header, List<string> body) in sections)
         {
@@ -488,6 +778,52 @@ public sealed class CodexConfigWriter
         }
 
         return builder.ToString();
+    }
+
+    /// <summary>
+    /// Turns the model-list switch on inside the user's own <c>[features]</c> table, or adds
+    /// the table. Two tables of the same name are a TOML error that stops Codex reading the
+    /// file at all, so an existing one is edited rather than appended to.
+    /// </summary>
+    private static void EnsureDiscoveryFeature(List<(string Header, List<string> Body)> sections)
+    {
+        string line = $"{DiscoveryFeature} = true";
+        int at = sections.FindIndex(s => string.Equals(s.Header, FeaturesHeader, StringComparison.Ordinal));
+        if (at < 0)
+        {
+            sections.Add((FeaturesHeader, [line]));
+            return;
+        }
+
+        List<string> body = sections[at].Body;
+        int existing = body.FindIndex(l => IsAssignmentTo(l, DiscoveryFeature));
+        if (existing >= 0)
+        {
+            body[existing] = line;
+        }
+        else
+        {
+            body.Insert(0, line);
+        }
+    }
+
+    /// <summary>The string in <c>key = "value"</c>, or null when the value is not a plain quoted string.</summary>
+    private static string? ReadQuotedValue(string line)
+    {
+        int equals = line.IndexOf('=', StringComparison.Ordinal);
+        if (equals < 0)
+        {
+            return null;
+        }
+
+        string value = line[(equals + 1)..].Trim();
+        if (value.Length < 2 || value[0] != '"')
+        {
+            return null;
+        }
+
+        int close = value.IndexOf('"', 1);
+        return close < 0 ? null : value[1..close];
     }
 
     private static IEnumerable<string> SplitLines(string text) =>

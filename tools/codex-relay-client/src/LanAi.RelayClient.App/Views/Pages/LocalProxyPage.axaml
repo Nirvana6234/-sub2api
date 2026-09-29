@@ -4,6 +4,34 @@
              x:Class="LanAi.RelayClient.App.Views.Pages.LocalProxyPage"
              x:DataType="vm:DashboardPageViewModel">
 
+  <UserControl.Resources>
+    <!-- One row for both kinds of account. A sign-in that cannot be used shows why instead of
+         a switch (CanToggle), unless it is the one in use and can be switched off. The client's
+         own accounts can also be signed in again and removed. -->
+    <DataTemplate x:Key="AccountRow" x:DataType="vm:LocalProxyAccountItem">
+      <Border BorderBrush="#E5E7EB" BorderThickness="0,1,0,0" Padding="0,8">
+        <DockPanel>
+          <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" Margin="8,0,0,0">
+            <Button Content="重新授权" Click="Reauthorize_OnClick" Classes="quiet" IsVisible="{Binding IsOfficial}" />
+            <Button Content="删除" Click="Remove_OnClick" Classes="quiet" IsVisible="{Binding IsOfficial}" />
+            <Button Content="{Binding ActionLabel}" Click="Toggle_OnClick"
+                    Classes="toggle" Classes.active="{Binding IsActive}" IsVisible="{Binding CanToggle}" />
+          </StackPanel>
+          <StackPanel>
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextWrapping="Wrap" />
+              <TextBlock Text="推荐" Foreground="#2563EB" FontSize="12" Margin="8,0,0,0"
+                         IsVisible="{Binding IsRecommended}" VerticalAlignment="Center" />
+              <TextBlock Text="使用中" Foreground="#059669" FontSize="12" Margin="8,0,0,0"
+                         IsVisible="{Binding IsActive}" VerticalAlignment="Center" />
+            </StackPanel>
+            <TextBlock Text="{Binding StatusText}" Classes="hint" TextWrapping="Wrap" />
+          </StackPanel>
+        </DockPanel>
+      </Border>
+    </DataTemplate>
+  </UserControl.Resources>
+
   <UserControl.Styles>
     <Style Selector="TextBlock.error">
       <Setter Property="Foreground" Value="#DC2626" />
@@ -21,11 +49,31 @@
       <Setter Property="BorderBrush" Value="#D1D5DB" />
       <Setter Property="BorderThickness" Value="1" />
     </Style>
+    <Style Selector="Button.quiet">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="#374151" />
+      <Setter Property="BorderBrush" Value="#D1D5DB" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Padding" Value="10,4" />
+    </Style>
+    <Style Selector="Button.link">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="#2563EB" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="FontSize" Value="12" />
+    </Style>
+    <Style Selector="Border.signIn">
+      <Setter Property="Background" Value="#F3F4F6" />
+      <Setter Property="CornerRadius" Value="6" />
+      <Setter Property="Padding" Value="10" />
+      <Setter Property="Margin" Value="0,8,0,0" />
+    </Style>
   </UserControl.Styles>
 
   <!-- Each tool is its own either/or with the relay server. A tool on a local proxy goes
-       straight to the official API with one of the user's own accounts; it costs no
-       balance, and it never falls back to the relay server on its own. -->
+       straight to the official API — with this machine's own official sign-in first, or with an
+       official account signed in within the client; it costs no balance, and it never falls
+       back to the relay server on its own. -->
   <ScrollViewer VerticalScrollBarVisibility="Auto">
     <StackPanel>
 
@@ -33,16 +81,13 @@
         <StackPanel>
           <TextBlock Text="本地代理" Classes="cardTitle" />
           <TextBlock Classes="hint" Margin="0,4,0,0"
-                     Text="用你在中转站上自己的账号，让 Codex 或 Claude Code 直接连官方：不经过中转站、不扣余额。每个工具各自选择，出错时只提醒、不会自动切回中转站。" />
+                     Text="让 Codex 或 Claude Code 不经过中转站、直接连官方，不扣余额。" />
           <!-- The one thing most likely to go wrong: the official hosts usually need a proxy/VPN. -->
           <TextBlock Classes="hint" Foreground="#B45309" Margin="0,4,0,0"
                      Text="需要本机能直接访问官方（国内通常要开启代理/VPN）。开启时会先检测网络；使用期间请保持代理开启，代理断开时工具会无法使用。" />
           <TextBlock Text="{Binding Dashboard.LocalProxy.ActionMessage}" Foreground="#2563EB" FontSize="12"
                      TextWrapping="Wrap" Margin="0,8,0,0"
                      IsVisible="{Binding Dashboard.LocalProxy.HasActionMessage}" />
-          <TextBlock Text="{Binding Dashboard.LocalProxy.AccountsMessage}" Foreground="#6B7280" FontSize="12"
-                     TextWrapping="Wrap" Margin="0,8,0,0"
-                     IsVisible="{Binding Dashboard.LocalProxy.HasAccountsMessage}" />
         </StackPanel>
       </Border>
 
@@ -57,35 +102,51 @@
           <TextBlock Text="{Binding Dashboard.LocalProxy.CodexStatusText}" Margin="0,6,0,0" FontSize="12" />
           <TextBlock Text="{Binding Dashboard.LocalProxy.CodexError}" Classes="error" Margin="0,4,0,0"
                      IsVisible="{Binding Dashboard.LocalProxy.HasCodexError}" />
-          <ItemsControl ItemsSource="{Binding Dashboard.LocalProxy.CodexAccounts}" Margin="0,8,0,0">
-            <ItemsControl.ItemTemplate>
-              <DataTemplate x:DataType="vm:LocalProxyAccountItem">
-                <Border BorderBrush="#E5E7EB" BorderThickness="0,1,0,0" Padding="0,8">
-                  <DockPanel>
-                    <Button DockPanel.Dock="Right" Content="{Binding ActionLabel}" Click="Toggle_OnClick"
-                            Classes="toggle" Classes.active="{Binding IsActive}" VerticalAlignment="Center" />
-                    <StackPanel>
-                      <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
-                        <TextBlock Text="{Binding PlanText}" Classes="label" Margin="8,0,0,0"
-                                   IsVisible="{Binding HasPlan}" VerticalAlignment="Center" />
-                        <TextBlock Text="使用中" Foreground="#059669" FontSize="12" Margin="8,0,0,0"
-                                   IsVisible="{Binding IsActive}" VerticalAlignment="Center" />
-                      </StackPanel>
-                      <TextBlock Text="{Binding StatusText}" Classes="hint" />
-                    </StackPanel>
-                  </DockPanel>
-                </Border>
-              </DataTemplate>
-            </ItemsControl.ItemTemplate>
-          </ItemsControl>
-          <TextBlock Text="没有可用的 ChatGPT 订阅账号" Classes="hint" Margin="0,6,0,0"
-                     IsVisible="{Binding !Dashboard.LocalProxy.HasCodexAccounts}" />
+
+          <TextBlock Text="这台电脑上已登录的账号" Classes="label" Margin="0,10,0,0"
+                     IsVisible="{Binding Dashboard.LocalProxy.HasLocalCodexAccount}" />
+          <ContentControl Content="{Binding Dashboard.LocalProxy.LocalCodexAccount}"
+                          ContentTemplate="{StaticResource AccountRow}"
+                          IsVisible="{Binding Dashboard.LocalProxy.HasLocalCodexAccount}" />
+
+          <TextBlock Text="已授权给共飞AI助手的账号" Classes="label" Margin="0,10,0,0"
+                     IsVisible="{Binding Dashboard.LocalProxy.HasCodexSignIns}" />
+          <ItemsControl ItemsSource="{Binding Dashboard.LocalProxy.CodexSignIns}"
+                        ItemTemplate="{StaticResource AccountRow}" />
+
+          <Button Classes="toggle" Content="授权共飞AI助手本地代理" Tag="Codex" Click="StartSignIn_OnClick"
+                  HorizontalAlignment="Left" Margin="0,10,0,0"
+                  IsVisible="{Binding Dashboard.LocalProxy.ShowCodexSignInButton}" />
+          <Button Classes="link" Content="授权其他 ChatGPT 账号" Tag="Codex" Click="StartSignIn_OnClick"
+                  HorizontalAlignment="Left" Margin="0,8,0,0"
+                  IsVisible="{Binding Dashboard.LocalProxy.ShowCodexSignInLink}" />
+
+          <Border Classes="signIn" IsVisible="{Binding Dashboard.LocalProxy.IsCodexSigningIn}">
+            <StackPanel Spacing="6">
+              <TextBlock Text="{Binding Dashboard.LocalProxy.SignInPrompt}" TextWrapping="Wrap" FontSize="12" />
+              <StackPanel Orientation="Horizontal" Spacing="8" IsVisible="{Binding Dashboard.LocalProxy.CanSubmitSignIn}">
+                <Button Classes="quiet" Content="重新打开登录页" Click="OpenSignInPage_OnClick" />
+                <Button Classes="quiet" Content="复制链接" Click="CopySignInUrl_OnClick" />
+              </StackPanel>
+              <TextBox Text="{Binding Dashboard.LocalProxy.PastedSignIn, Mode=TwoWay}"
+                       Watermark="粘贴浏览器地址栏里的网址（http://localhost:1455/auth/callback?code=…）"
+                       IsVisible="{Binding Dashboard.LocalProxy.CanSubmitSignIn}" />
+              <TextBlock Text="{Binding Dashboard.LocalProxy.SignInError}" Classes="error"
+                         IsVisible="{Binding Dashboard.LocalProxy.HasSignInError}" />
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Classes="toggle" Content="完成登录" Click="SubmitSignIn_OnClick"
+                        IsVisible="{Binding Dashboard.LocalProxy.CanSubmitSignIn}" />
+                <Button Classes="toggle" Content="重新开始" Tag="Codex" Click="StartSignIn_OnClick"
+                        IsVisible="{Binding Dashboard.LocalProxy.SignInFailed}" />
+                <Button Classes="quiet" Content="取消" Click="CancelSignIn_OnClick" />
+              </StackPanel>
+            </StackPanel>
+          </Border>
         </StackPanel>
       </Border>
 
       <!-- Claude Code -->
-      <Border Classes="card">
+      <Border Classes="card" Margin="0">
         <StackPanel>
           <DockPanel>
             <TextBlock DockPanel.Dock="Right" Text="{Binding Dashboard.LocalProxy.ClaudeUsageText, StringFormat='今日：{0}'}"
@@ -95,54 +156,49 @@
           <TextBlock Text="{Binding Dashboard.LocalProxy.ClaudeStatusText}" Margin="0,6,0,0" FontSize="12" />
           <TextBlock Text="{Binding Dashboard.LocalProxy.ClaudeError}" Classes="error" Margin="0,4,0,0"
                      IsVisible="{Binding Dashboard.LocalProxy.HasClaudeError}" />
-          <ItemsControl ItemsSource="{Binding Dashboard.LocalProxy.ClaudeAccounts}" Margin="0,8,0,0">
-            <ItemsControl.ItemTemplate>
-              <DataTemplate x:DataType="vm:LocalProxyAccountItem">
-                <Border BorderBrush="#E5E7EB" BorderThickness="0,1,0,0" Padding="0,8">
-                  <DockPanel>
-                    <Button DockPanel.Dock="Right" Content="{Binding ActionLabel}" Click="Toggle_OnClick"
-                            Classes="toggle" Classes.active="{Binding IsActive}" VerticalAlignment="Center" />
-                    <StackPanel>
-                      <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
-                        <TextBlock Text="{Binding PlanText}" Classes="label" Margin="8,0,0,0"
-                                   IsVisible="{Binding HasPlan}" VerticalAlignment="Center" />
-                        <TextBlock Text="使用中" Foreground="#059669" FontSize="12" Margin="8,0,0,0"
-                                   IsVisible="{Binding IsActive}" VerticalAlignment="Center" />
-                      </StackPanel>
-                      <TextBlock Text="{Binding StatusText}" Classes="hint" />
-                    </StackPanel>
-                  </DockPanel>
-                </Border>
-              </DataTemplate>
-            </ItemsControl.ItemTemplate>
-          </ItemsControl>
-          <TextBlock Text="没有可用的 Claude 订阅账号" Classes="hint" Margin="0,6,0,0"
-                     IsVisible="{Binding !Dashboard.LocalProxy.HasClaudeAccounts}" />
-          <TextBlock Classes="hint" Margin="0,6,0,0"
-                     Text="开启后会自动打开 Claude 页的「接入 Claude Code」，模型沿用 Claude 页的设置。" />
-        </StackPanel>
-      </Border>
 
-      <!-- Everything the local proxy cannot use, said in words rather than hidden. -->
-      <Border Classes="card" Margin="0" IsVisible="{Binding Dashboard.LocalProxy.HasOtherAccounts}">
-        <StackPanel>
-          <TextBlock Text="暂不支持的账号" Classes="cardTitle" />
-          <TextBlock Classes="hint" Margin="0,4,0,0"
-                     Text="本地代理只支持订阅登录的 ChatGPT / Claude 账号；API Key、长期令牌和其他平台的账号请继续经中转站使用。" />
-          <ItemsControl ItemsSource="{Binding Dashboard.LocalProxy.OtherAccounts}" Margin="0,6,0,0">
-            <ItemsControl.ItemTemplate>
-              <DataTemplate x:DataType="vm:LocalProxyAccountItem">
-                <TextBlock Classes="label" Margin="0,2,0,0">
-                  <Run Text="{Binding Name}" />
-                  <Run Text=" · " />
-                  <Run Text="{Binding PlatformLabel}" />
-                  <Run Text=" · " />
-                  <Run Text="{Binding TypeLabel}" />
-                </TextBlock>
-              </DataTemplate>
-            </ItemsControl.ItemTemplate>
-          </ItemsControl>
+          <TextBlock Text="这台电脑上已登录的账号" Classes="label" Margin="0,10,0,0"
+                     IsVisible="{Binding Dashboard.LocalProxy.HasLocalClaudeAccount}" />
+          <ContentControl Content="{Binding Dashboard.LocalProxy.LocalClaudeAccount}"
+                          ContentTemplate="{StaticResource AccountRow}"
+                          IsVisible="{Binding Dashboard.LocalProxy.HasLocalClaudeAccount}" />
+
+          <TextBlock Text="已授权给共飞AI助手的账号" Classes="label" Margin="0,10,0,0"
+                     IsVisible="{Binding Dashboard.LocalProxy.HasClaudeSignIns}" />
+          <ItemsControl ItemsSource="{Binding Dashboard.LocalProxy.ClaudeSignIns}"
+                        ItemTemplate="{StaticResource AccountRow}" />
+
+          <Button Classes="toggle" Content="授权共飞AI助手本地代理" Tag="ClaudeCode" Click="StartSignIn_OnClick"
+                  HorizontalAlignment="Left" Margin="0,10,0,0"
+                  IsVisible="{Binding Dashboard.LocalProxy.ShowClaudeSignInButton}" />
+          <Button Classes="link" Content="授权其他 Claude 账号" Tag="ClaudeCode" Click="StartSignIn_OnClick"
+                  HorizontalAlignment="Left" Margin="0,8,0,0"
+                  IsVisible="{Binding Dashboard.LocalProxy.ShowClaudeSignInLink}" />
+
+          <Border Classes="signIn" IsVisible="{Binding Dashboard.LocalProxy.IsClaudeSigningIn}">
+            <StackPanel Spacing="6">
+              <TextBlock Text="{Binding Dashboard.LocalProxy.SignInPrompt}" TextWrapping="Wrap" FontSize="12" />
+              <StackPanel Orientation="Horizontal" Spacing="8" IsVisible="{Binding Dashboard.LocalProxy.CanSubmitSignIn}">
+                <Button Classes="quiet" Content="重新打开授权页" Click="OpenSignInPage_OnClick" />
+                <Button Classes="quiet" Content="复制链接" Click="CopySignInUrl_OnClick" />
+              </StackPanel>
+              <TextBox Text="{Binding Dashboard.LocalProxy.PastedSignIn, Mode=TwoWay}"
+                       Watermark="粘贴授权页显示的授权码"
+                       IsVisible="{Binding Dashboard.LocalProxy.CanSubmitSignIn}" />
+              <TextBlock Text="{Binding Dashboard.LocalProxy.SignInError}" Classes="error"
+                         IsVisible="{Binding Dashboard.LocalProxy.HasSignInError}" />
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Classes="toggle" Content="完成登录" Click="SubmitSignIn_OnClick"
+                        IsVisible="{Binding Dashboard.LocalProxy.CanSubmitSignIn}" />
+                <Button Classes="toggle" Content="重新开始" Tag="ClaudeCode" Click="StartSignIn_OnClick"
+                        IsVisible="{Binding Dashboard.LocalProxy.SignInFailed}" />
+                <Button Classes="quiet" Content="取消" Click="CancelSignIn_OnClick" />
+              </StackPanel>
+            </StackPanel>
+          </Border>
+
+          <TextBlock Classes="hint" Margin="0,8,0,0"
+                     Text="开启后会自动打开 Claude 页的「接入 Claude Code」，模型沿用 Claude 页的设置。" />
         </StackPanel>
       </Border>
 

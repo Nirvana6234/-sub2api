@@ -168,7 +168,7 @@ internal sealed class WeChatReaderProcess : IWeChatReader
         new Thread(() => DrainErrors(process)) { IsBackground = true, Name = "wechat-reader stderr" }.Start();
 
         WriteLine(process, new ReaderCommand { Cmd = ReaderCommand.Start, IntervalMs = IntervalMs });
-        ClientLog.Info("微信读取组件已启动");
+        ClientLog.Info($"微信读取组件已启动（pid {process.Id}，第 {_failures + 1} 次尝试）");
     }
 
     private void Send(ReaderCommand command)
@@ -222,7 +222,11 @@ internal sealed class WeChatReaderProcess : IWeChatReader
                     _lastHeard = DateTime.UtcNow;
                 }
 
-                if (e.Type == ReaderEvent.Error)
+                if (e.Type == ReaderEvent.Ready)
+                {
+                    ClientLog.Info("微信读取组件就绪");
+                }
+                else if (e.Type == ReaderEvent.Error)
                 {
                     // The code and the reader's own message, which never contains recognised text.
                     ClientLog.Warning($"微信读取组件：{e.Code} {e.Message}");
@@ -243,8 +247,9 @@ internal sealed class WeChatReaderProcess : IWeChatReader
             string? line;
             while ((line = process.StandardError.ReadLine()) is not null)
             {
-                // The reader writes only exception type names here (see its Program.cs).
-                ClientLog.Warning($"微信读取组件 stderr：{(line.Length > 120 ? line[..120] : line)}");
+                // The reader's diagnostics (its Diag.Log): counts, durations, sizes, colours,
+                // window classes and error codes — never recognised text.
+                ClientLog.Info($"读屏：{(line.Length > 600 ? line[..600] : line)}");
             }
         }
         catch (Exception ex) when (ex is IOException or InvalidOperationException or ObjectDisposedException)

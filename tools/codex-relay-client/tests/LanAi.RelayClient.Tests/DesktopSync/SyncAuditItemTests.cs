@@ -15,7 +15,6 @@ public sealed class SyncAuditItemTests
     [InlineData("unconfirmed", "未确认", true)]
     [InlineData("failed: boom", "失败（boom）", true)]
     [InlineData("ok", "成功", false)]
-    [InlineData("started", "已开始", false)]
     public void EachOutcomeReadsAsWhatHappened(string outcome, string expected, bool flagged)
     {
         var item = new SyncAuditItem(new SyncAuditEntry(DateTimeOffset.UtcNow, 5, "iPhone", DesktopSyncCommands.SendMessage, "t", "你好", outcome));

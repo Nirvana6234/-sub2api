@@ -1,17 +1,26 @@
-.PHONY: build build-backend build-frontend build-paw test test-backend test-frontend test-frontend-critical
+.PHONY: build build-backend build-frontend test test-backend test-frontend test-frontend-critical
 
 FRONTEND_CRITICAL_VITEST := \
+	src/i18n/__tests__/localeKeyCompleteness.spec.ts \
 	src/api/__tests__/client.spec.ts \
 	src/api/__tests__/tokenRefresh.spec.ts \
+	src/api/__tests__/keys.bulkUpdate.spec.ts \
+	src/components/keys/__tests__/BulkEditKeysModal.spec.ts \
+	src/views/user/__tests__/KeysView.spec.ts \
+	src/api/__tests__/channelMonitorV2.spec.ts \
 	src/views/auth/__tests__/LinuxDoCallbackView.spec.ts \
 	src/views/auth/__tests__/WechatCallbackView.spec.ts \
 	src/views/user/__tests__/PaymentView.spec.ts \
 	src/views/user/__tests__/PaymentResultView.spec.ts \
+	src/views/user/__tests__/ChannelStatusView.mode.spec.ts \
 	src/components/user/profile/__tests__/ProfileInfoCard.spec.ts \
-	src/views/admin/__tests__/SettingsView.spec.ts
+	src/views/admin/__tests__/SettingsView.spec.ts \
+	src/features/channel-monitor-v2/__tests__/designSystem.structure.spec.ts \
+	src/features/channel-monitor-v2/__tests__/monitorFormat.spec.ts \
+	src/features/channel-monitor-v2/__tests__/monitorZoom.spec.ts
 
 # 一键编译前后端
-build: build-frontend build-paw build-backend
+build: build-backend build-frontend
 
 # 编译后端（复用 backend/Makefile）
 build-backend:
@@ -20,12 +29,6 @@ build-backend:
 # 编译前端（需要已安装依赖）
 build-frontend:
 	@pnpm --dir frontend run build
-
-# 构建并暂存 Paw PWA，供 Go embed 构建使用
-build-paw:
-	@npm --prefix tools/chat ci
-	@npm --prefix tools/chat run export
-	@npm --prefix tools/chat run stage:server
 
 # 运行测试（后端 + 前端）
 test: test-backend test-frontend

@@ -50,15 +50,6 @@ internal sealed class DesktopSyncAgent : IDisposable
     /// </summary>
     internal TimeSpan StartAnswerWait { get; init; } = TimeSpan.FromSeconds(4);
 
-    /// <summary>
-    /// A repair from the phone is not accepted again within this long of a successful or
-    /// running one: each stops every conversation on this computer.
-    /// </summary>
-    public static readonly TimeSpan RepairInterval = TimeSpan.FromMinutes(2);
-
-    /// <summary>How long a repair is waited for before the phone is told it is still running.</summary>
-    internal TimeSpan RepairAnswerWait { get; init; } = TimeSpan.FromSeconds(8);
-
     private readonly IDesktopAppTools _tools;
     private readonly SessionContentSync _content;
     private readonly Func<string, CodexThreadRecord?> _findThread;
@@ -68,11 +59,8 @@ internal sealed class DesktopSyncAgent : IDisposable
     private readonly Func<DateTimeOffset> _clock;
     private readonly Func<CancellationToken, Task<DesktopStartResult>>? _startDesktop;
     private readonly Func<CancellationToken, Task<DesktopSelfCheckResult>>? _selfCheck;
-    private readonly Func<CancellationToken, Task<string?>>? _repairDesktop;
     private Task<DesktopStartResult>? _start;
     private DateTimeOffset _startAt;
-    private Task<string?>? _repair;
-    private DateTimeOffset _repairAt;
     private readonly object _gate = new();
     private readonly Dictionary<long, Queue<DateTimeOffset>> _sendTimes = [];
     private readonly List<QueuedSend> _queue = [];
@@ -90,12 +78,10 @@ internal sealed class DesktopSyncAgent : IDisposable
         SignedSendVerifier? verifier = null,
         Func<DateTimeOffset>? clock = null,
         Func<CancellationToken, Task<DesktopStartResult>>? startDesktop = null,
-        Func<CancellationToken, Task<DesktopSelfCheckResult>>? selfCheck = null,
-        Func<CancellationToken, Task<string?>>? repairDesktop = null)
+        Func<CancellationToken, Task<DesktopSelfCheckResult>>? selfCheck = null)
     {
         _startDesktop = startDesktop;
         _selfCheck = selfCheck;
-        _repairDesktop = repairDesktop;
         _tools = tools;
         _content = content;
         _findThread = findThread;
@@ -243,7 +229,6 @@ internal sealed class DesktopSyncAgent : IDisposable
                     DesktopSyncCommands.SendMessage => await SendAsync(phone!, threadId!, root, cancellationToken).ConfigureAwait(false),
                     DesktopSyncCommands.Navigate => await NavigateAsync(phone!, threadId!, cancellationToken).ConfigureAwait(false),
                     DesktopSyncCommands.SelfCheck => await SelfCheckAsync(cancellationToken).ConfigureAwait(false),
-                    DesktopSyncCommands.Repair => await RepairAsync(phone!, threadId!, root, cancellationToken).ConfigureAwait(false),
                     _ => SyncJson.Error("refused", "不支持的指令"),
                 };
             }
@@ -572,11 +557,9 @@ internal sealed class DesktopSyncAgent : IDisposable
     private async Task<byte[]> SelfCheckAsync(CancellationToken cancellationToken)
     {
         bool desktop = true;
-        int active = 0;
         try
         {
-            // Counted for the phone's repair confirmation: a repair stops these.
-            active = (await _tools.ListThreadsAsync(50, cancellationToken).ConfigureAwait(false)).Count(t => t.Status == "active");
+            await _tools.ListThreadsAsync(1, cancellationToken).ConfigureAwait(false);
         }
         catch (DesktopAppToolsException)
         {
@@ -587,7 +570,6 @@ internal sealed class DesktopSyncAgent : IDisposable
         return SyncJson.Ok(w =>
         {
             w.WriteBoolean("desktop_running", desktop);
-            w.WriteNumber("active_conversations", active);
             if (check is not null)
             {
                 w.WriteBoolean("relay_listening", check.RelayListening);
@@ -601,86 +583,6 @@ internal sealed class DesktopSyncAgent : IDisposable
                 : !desktop ? "电脑上的 ChatGPT 没有运行，从手机发消息时会自动启动。"
                 : check?.Summary ?? "电脑上的 ChatGPT 在运行。");
         });
-    }
-
-    /// <summary>
-    /// 修复 ChatGPT 启动 from the phone, for when nobody can get to this computer. Signed
-    /// like a send: it stops every conversation here, so the server must not be able to
-    /// ask for it. One at a time, and not again within <see cref="RepairInterval"/> of one
-    /// that worked or is still running.
-    /// </summary>
-    private async Task<byte[]> RepairAsync(ApprovedPhone phone, string threadId, JsonElement root, CancellationToken cancellationToken)
-    {
-        if (_repairDesktop is null)
-        {
-            return SyncJson.Error("refused", "这台电脑不支持远程修复");
-        }
-
-        long timestamp = root.TryGetProperty("ts", out JsonElement ts) && ts.TryGetInt64(out long ms) ? ms : 0;
-        string? invalid = _verifier.Verify(phone, threadId, DesktopSyncCommands.RepairMode, string.Empty, timestamp,
-            Str(root, "nonce"), Str(root, "sig"), DesktopSyncCommands.Repair);
-        if (invalid is not null)
-        {
-            Audit(phone.PairingId, phone.PhoneLabel, DesktopSyncCommands.Repair, threadId, null, $"signature: {invalid}");
-            return SyncJson.Error("bad_signature", invalid);
-        }
-
-        Task<string?> repair;
-        lock (_gate)
-        {
-            if (_repair is { IsCompleted: false })
-            {
-                return SyncJson.Ok(w =>
-                {
-                    w.WriteBoolean("repaired", false);
-                    w.WriteBoolean("in_progress", true);
-                });
-            }
-
-            if (_repair is { Result: null } && _clock() - _repairAt < RepairInterval)
-            {
-                Audit(phone.PairingId, phone.PhoneLabel, DesktopSyncCommands.Repair, threadId, null, "rate_limited");
-                return SyncJson.Error("rate_limited", "刚刚修复过，请两分钟后再试");
-            }
-
-            _repairAt = _clock();
-            _repair = repair = RunRepairAsync(phone, threadId);
-        }
-
-        Task finished = await Task.WhenAny(repair, Task.Delay(RepairAnswerWait, cancellationToken)).ConfigureAwait(false);
-        if (finished != repair)
-        {
-            return SyncJson.Ok(w =>
-            {
-                w.WriteBoolean("repaired", false);
-                w.WriteBoolean("in_progress", true);
-            });
-        }
-
-        string? failure = await repair.ConfigureAwait(false);
-        return failure is null
-            ? SyncJson.Ok(w => w.WriteBoolean("repaired", true))
-            : SyncJson.Error("repair_failed", failure);
-    }
-
-    /// <returns>Null when ChatGPT is up again, otherwise why not. Audited either way, also when the phone has stopped waiting.</returns>
-    private async Task<string?> RunRepairAsync(ApprovedPhone phone, string threadId)
-    {
-        Audit(phone.PairingId, phone.PhoneLabel, DesktopSyncCommands.Repair, threadId, null, "started");
-        string? failure;
-        try
-        {
-            failure = await _repairDesktop!(CancellationToken.None).ConfigureAwait(false);
-        }
-        catch (Exception ex) when (ex is not OutOfMemoryException)
-        {
-            ClientLog.Warning("手机远程修复 ChatGPT 失败", ex);
-            failure = "修复时出错，详情见电脑上的日志";
-        }
-
-        Audit(phone.PairingId, phone.PhoneLabel, DesktopSyncCommands.Repair, threadId, null, failure is null ? "ok" : $"failed: {failure}");
-        StateChanged?.Invoke();
-        return failure;
     }
 
     /// <summary>

@@ -115,6 +115,7 @@
   - key 只在发请求时解密到内存（`WeChatIntentViewModel.CurrentKey` 每次从加密文件读），不写日志，不出现在异常信息里。HTTP 请求的日志也不能带 `Authorization` 头。
 - **今日次数与估算花费**：新增 `WeChatIntentUsageStore`，写法参照 `ContextFilterUsageStore`，只存日期、次数和 `input_tokens` 合计，按本地日期跨天清零。
 - **不保存任何聊天内容**：本机不写文件，也不写 `ClientLog`。日志里只允许出现计数、耗时和错误码。唯一的例外是 4.7 的调试导出：开发者手动打开，默认关闭。
+  - 诊断日志（2026-09-28 起默认开）：为了能从用户发回的 `logs\client.log` 看出「开着却不发」卡在哪一步，还允许记录窗口的类名、位置尺寸、DPI、进程名，截图各步骤的耗时和卡住的步骤，聊天区的像素边界和底色，每屏各类行的**条数**、被丢弃行的**底色**、标题的**字数**。读屏组件的这些行经 stderr 由客户端以「读屏：」前缀写入日志。仍然**不记**任何识别出的文字、会话标题和窗口标题。
 - 会话上下文（最近几条消息）只放在内存里，关闭开关或退出客户端就清空。
 
 ## 4. 读取微信：平台助手进程
@@ -192,8 +193,8 @@
 - **打包**：
   - 在 Mac 上跑 `build.sh`，同时编 arm64 和 x86_64，产物在 `.build/apple/Products/Release/wechat-reader`。链接器会给 arm64 产物加 ad-hoc 签名。
   - 用 osx 运行时标识发布时加 `-p:IncludeWeChatReader=true`：在 Mac 上会自动编译；在其他机器上从 `-p:WeChatReaderMacBinary=<路径>` 或上面的默认路径取现成的二进制；找不到就报错。它会被放到发布目录的 `wechat-reader/` 下，`build-app.py` 再把它放进 `Contents/MacOS/wechat-reader/`，并在打 tar 包时加上可执行位（`EXECUTABLE_NAMES`）。
-  - 正式发布流程 `client-release.yml` 不带这个参数，所以正式发布的 Mac 版同样没有这个功能。
-- **签名风险不变**：正式包是 rcodesign ad-hoc 签名，屏幕录制授权可能在每次升级后失效（10.3）。
+  - 1.0 起正式发布流程 `client-release.yml` 带这个参数：`mac-reader` 任务在 macOS runner 上编好读屏组件，再交给 osx-arm64 发布。
+- **签名**：1.0 起正式包用一张固定的自签名证书签（`packaging/macos/new-signing-cert.sh`，私钥在 GitHub secret），指定要求是 `identifier "com.gongfeiai.chatgpt-assistant" and certificate root = H"…"`，每个版本相同，屏幕录制授权应能随升级保留。此前的 ad-hoc 签名以 cdhash 为指定要求，每次升级都要重新授权。**待真机确认**（10.3）。
 
 ### 4.5 消息解析
 
@@ -561,15 +562,15 @@ internal interface IJevClient
 ### 7.5 计费：没配价格就拒绝
 
 - 已核实：两条网关在找不到模型价格时都按 0 元记账。OpenAI 这条见 `openai_gateway_usage.go` 里的 `pricing_missing_record_zero_cost`；Anthropic 这条见 `gateway_usage_billing.go`，注释写明「所有候选都无价时…走既有的 warn + 零成本路径」。**这条新接口不能沿用这个行为**，否则就是免费用。
-- 价格从哪里来：LiteLLM 的动态价格表里不会有 Jev。**由管理员在渠道定价（`ChannelModelPricing`，平台选 typesafe）里配置**，`jev-1.13.0` 和 `jev-latest` 两个名字都要配。不写进硬编码的兜底价格表，避免价格被悄悄定死。
+- 价格从哪里来：LiteLLM 的动态价格表里不会有 Jev。**优先用管理员在分组定价或渠道定价（`ChannelModelPricing`，平台选 typesafe）里配置的价格**；都没配时，`jev-*` 全系列按内置官方价计费（`BillingService` 兜底价表的 `jev` 条目：输入 $0.042/MTok，输出免费，分组倍率照常生效）。2026-09-28 起改为内置兜底：此前「只认显式定价」导致没配价格的 Jev 分组一律 503，客户端无法使用。
 - 上游官方价格：只收输入，$0.042 / 百万 token，输出免费。实测每次约 1130 个输入 token，**上游成本约 $0.00005/次**。
 - 渠道定价支持两种计费方式（`BillingModeToken` 和 `BillingModePerRequest`），**建议按次计费**：
   - 按 token 计费的话，每次只扣几万分之一美元，用户在账单上几乎看不到数字，对账也不直观。
   - 按次计费的话，单价由我们定，例如每次 $0.0005（上游成本的 10 倍），用户看得懂，「今日次数与花费」也好算。
   - 如果坚持按 token 计费：输入单价按上游价乘倍率，输出单价填 0，和上游口径一致。
-- 转发前调用 `GatewayService.HasTypeSafePricing(ctx, model, apiKey)`，它只认 `resolveChannelPricing`（分组或渠道显式定价，按次和按 token 都算），**不认全局价格表**：全局表按名字子串猜的兜底价不能用在 Jev 上。返回 false 就直接返回 503「Jev 价格未配置」，不转发。
+- 转发前调用 `GatewayService.HasTypeSafePricing(ctx, model, apiKey)`：先认 `resolveChannelPricing`（分组或渠道显式定价，按次和按 token 都算），再认 `jev-*` 的内置官方价；**其他名字的全局兜底价一律不认**（全局表按名字子串猜的价格不能用在 Jev 分组上）。返回 false 就直接返回 503「Jev 价格未配置」，不转发。
   - 已核实分组是怎么传进来的：渠道定价由 `resolveChannelPricing` 按 `apiKey.Group` 解析，`apiKey.Group` 为空时直接返回 nil。小白端内部 key 本身不带分组，`PrepareMessages` 返回的是 `clonePawAPIKeyWithGroup` 生成的、带上请求头里那个分组的副本，所以检查能拿到分组。
-  - **管理员要把配了 Jev 价格的渠道关联到 typesafe 分组**，光在渠道里填价格不够。后台配置说明里写明这一步。
+  - 想按次收费或加价时，**管理员要把配了 Jev 价格的渠道关联到 typesafe 分组**（或直接在分组定价里配），光在渠道里填价格不够。
   - 已核实：按次计费经 `CalculateTokenCostForRequest` 进入 `CalculateCostUnified`，`BillingModePerRequest` 按 `RequestCount = 1` 计价。
 - 小白端这条路径没有用户自己的 API Key，`apiKey` 用现有小白端接口替换进去的服务端内部 key，和 `/paw/messages` 的做法一致。
 
@@ -624,7 +625,7 @@ internal interface IJevClient
 3. **macOS**（代码已写，全部待在真机上验证）：
    - Swift 包能否编译（`build.sh`）；`--probe` 能否在 Mac 版微信上找到聊天区。颜色阈值来自 Windows 版，Mac 版微信的颜色还没测过。
    - Avalonia 在 macOS 上的 `Window.Position` 是不是「点」、原点在主屏左上角。如果不是，卡片会错位，要在 `WeChatIntentViewModel.RefreshInline` 里调换算。
-   - 屏幕录制的授权弹窗是否记在共飞助手名下；授权后要不要重启；ad-hoc 签名升级后授权是否失效；有没有可用的 Developer ID；macOS 15 定期确认弹窗的频率。
+   - 屏幕录制的授权弹窗是否记在共飞助手名下；授权后要不要重启；换成固定自签名证书后，升级时屏幕录制授权是否确实保留；从 ad-hoc 签名的版本升上来，钥匙串是否只问一次；macOS 15 定期确认弹窗的频率。
    - rcodesign 给 .app 签名时会不会连带处理 `Contents/MacOS/wechat-reader/wechat-reader`（链接器已经给它加了 ad-hoc 签名，应该能运行）。
 4. **消息区定位**：窄窗口、宽窗口、深色模式、会话列表折叠这几种布局下能否稳定找到消息区。实测固定比例在窄窗口上就分错了。
 5. **Jev 效果与延迟**
@@ -693,4 +694,3 @@ internal interface IJevClient
 | 测试 | `tests/LanAi.RelayClient.Tests/WeChatIntent/`，64 个 | 全部通过；客户端测试共 893 个，全部通过。**还缺**：假助手进程的心跳超时和崩溃重启测试（第 12 节列了，没写） |
 
 **还没做的**：在真实微信上的端到端冒烟测试（第 12 节「手工冒烟」），包括浮窗的位置、不抢焦点、是否停在底部的判断（`IsAtBottom` 目前一直是 null，见 10.12）、深色模式的颜色标定。
-

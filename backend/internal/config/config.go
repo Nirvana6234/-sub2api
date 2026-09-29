@@ -106,6 +106,7 @@ type Config struct {
 	Plugins                 PluginConfig                  `mapstructure:"plugins"`
 	FallbackPoolAlert       FallbackPoolAlertConfig       `mapstructure:"fallback_pool_alert"`
 	Relay                   RelayConfig                   `mapstructure:"relay"`
+	CPAScheduling           CPASchedulingConfig           `mapstructure:"cpa_scheduling"`
 }
 
 // 主从分流的节点角色（docs/MASTER_RELAY_NODES.md 不变量 5）。
@@ -2051,6 +2052,8 @@ func configureConfigSource(setConfigFile, addConfigPath func(string)) {
 }
 
 func setDefaults() {
+	viper.SetDefault("cpa_scheduling.sync_token", "")
+	viper.SetDefault("cpa_scheduling.source_id", "")
 	viper.SetDefault("run_mode", RunModeStandard)
 
 	// Server
@@ -2731,6 +2734,9 @@ func setEnvReachableDefaults() {
 }
 
 func (c *Config) Validate() error {
+	if err := c.CPAScheduling.Validate(); err != nil {
+		return err
+	}
 	switch c.Relay.NodeRole = strings.ToLower(strings.TrimSpace(c.Relay.NodeRole)); c.Relay.NodeRole {
 	case "":
 		c.Relay.NodeRole = RelayNodeRoleMaster

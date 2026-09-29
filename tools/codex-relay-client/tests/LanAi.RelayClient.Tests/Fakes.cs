@@ -287,27 +287,6 @@ internal sealed class FakeRelayClient : IRelayServerClient
 
     public int ClaudePreferenceSetCallCount { get; private set; }
 
-    public Func<IReadOnlyList<ContributionAccount>>? OnListContributionAccounts { get; set; }
-
-    public Task<IReadOnlyList<ContributionAccount>> ListContributionAccountsAsync(string accessToken, CancellationToken cancellationToken = default) =>
-        Task.FromResult(OnListContributionAccounts?.Invoke() ?? Array.Empty<ContributionAccount>());
-
-    public Func<long, LocalProxyCredential>? OnLocalProxyCredential { get; set; }
-
-    public List<long> LocalProxyCredentialRequests { get; } = [];
-
-    public Task<LocalProxyCredential> GetLocalProxyCredentialAsync(string accessToken, long accountId, CancellationToken cancellationToken = default)
-    {
-        lock (LocalProxyCredentialRequests)
-        {
-            LocalProxyCredentialRequests.Add(accountId);
-        }
-
-        return OnLocalProxyCredential is null
-            ? Task.FromException<LocalProxyCredential>(new RelayApiException(RelayFailure.NotFound, "no credential"))
-            : Task.FromResult(OnLocalProxyCredential(accountId));
-    }
-
     public Task<ClaudePreferenceDto> GetClaudePreferenceAsync(string accessToken, CancellationToken cancellationToken = default)
     {
         ClaudePreferenceGetCallCount++;
@@ -480,7 +459,18 @@ internal sealed class FakeCodexStartup : ICodexStartup
     /// <summary>Every group pushed to the transport, in order.</summary>
     public List<long?> ActiveGroups { get; } = [];
 
-    public void SetActiveGroup(long? groupId, string? groupName = null) => ActiveGroups.Add(groupId);
+    /// <summary>The models pushed with each group, in step with <see cref="ActiveGroups"/>.</summary>
+    public List<CodexGroupModels?> ActiveGroupModels { get; } = [];
+
+    public void SetActiveGroup(long? groupId, string? groupName = null, CodexGroupModels? models = null)
+    {
+        ActiveGroups.Add(groupId);
+        ActiveGroupModels.Add(models);
+    }
+
+    public CodexGroupModels? LastGroupModels { get; private set; }
+
+    public bool LastKeepUserModel { get; private set; }
 
     public List<(LanAi.RelayClient.Server.LocalProxyKind Kind, LanAi.RelayClient.Transport.LocalProxyTarget? Target)> LocalProxies { get; } = [];
 
@@ -524,9 +514,13 @@ internal sealed class FakeCodexStartup : ICodexStartup
         CancellationToken cancellationToken = default,
         string? preferredModel = null,
         bool forceNewKey = false,
-        string? groupName = null)
+        string? groupName = null,
+        CodexGroupModels? groupModels = null,
+        bool keepUserModelIfServed = false)
     {
         RunCount++;
+        LastGroupModels = groupModels;
+        LastKeepUserModel = keepUserModelIfServed;
         LastAllowRestart = allowRestart;
         LastPreferredModel = preferredModel;
         LastForceNewKey = forceNewKey;

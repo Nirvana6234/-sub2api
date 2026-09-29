@@ -116,4 +116,17 @@ public sealed class ChatScreenParserTests
 
         Assert.Empty(screen.Items);
     }
+
+    [Fact]
+    public void TheStatsCountEachSpeakerAndGiveTheColoursOfDroppedLines()
+    {
+        ChatScreen screen = ChatScreenParser.Parse(Frame("小明",
+            Them(187, "今天下班路上看到一只猫"),
+            Stamp(300, "19:12"),
+            Me(378, "发来看看"),
+            new ReaderLine { Text = "深色模式的气泡", X = 383, Y = 450, W = 120, H = 13, Bg = [60, 60, 60] },
+            new ReaderLine { Text = "又一个", X = 383, Y = 520, W = 120, H = 13, Bg = [60, 60, 60] }), 1.0);
+
+        Assert.Equal(new ParseStats(5, 1, 1, 1, 2, "(60,60,60)×2", 0, 0, (248, 248, 248)), screen.Stats);
+    }
 }

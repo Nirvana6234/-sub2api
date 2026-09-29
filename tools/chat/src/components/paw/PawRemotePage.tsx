@@ -20,7 +20,6 @@ import {
   navigateOnComputer,
   openSession,
   refreshPairingStatus,
-  repairComputer,
   revokePairing,
   sendMessage,
   type SelfCheck,
@@ -544,7 +543,6 @@ function RemoteConversation({
               busy={sending}
               onResend={(text) => deliver(text, "queue")}
               onCheck={() => checkComputer(pairing, threadId)}
-              onRepair={() => repairComputer(pairing, threadId)}
             />
           ) : (
             <RemoteItem key={item.seq} item={item} onDetail={openDetail} />
@@ -605,9 +603,9 @@ function sentText(result: SendResult): string {
 
 /**
  * A turn that ended in an error, after the message had reached the computer. Nothing is
- * done by itself: the message ran once already, so sending it again is the user's call,
- * and so is 远程修复, which restarts ChatGPT and stops every conversation on the
- * computer. Both sit behind a confirmation that says so.
+ * sent again by itself: the message ran once already, and running it again is the
+ * user's call. Repairing ChatGPT restarts it, which stops every conversation, so that
+ * stays a button on the computer; the phone only checks and says so.
  */
 function FailedTurn({
   error,
@@ -616,7 +614,6 @@ function FailedTurn({
   busy,
   onResend,
   onCheck,
-  onRepair,
 }: {
   error: string | null;
   message: string | null;
@@ -624,21 +621,15 @@ function FailedTurn({
   busy: boolean;
   onResend: (text: string) => Promise<boolean>;
   onCheck: () => Promise<SelfCheck>;
-  onRepair: () => Promise<{ repaired: boolean; inProgress: boolean }>;
 }) {
-  const [confirming, setConfirming] = useState<"resend" | "repair" | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const [checking, setChecking] = useState(false);
   const [check, setCheck] = useState<string | null>(null);
-  const [active, setActive] = useState<number | null>(null);
-  const [repairing, setRepairing] = useState(false);
-  const [repair, setRepair] = useState<string | null>(null);
 
   const runCheck = async () => {
     setChecking(true);
     try {
-      const result = await onCheck();
-      setCheck(result.summary || "电脑没有给出结果");
-      setActive(result.activeConversations);
+      setCheck((await onCheck()).summary || "电脑没有给出结果");
     } catch (err) {
       setCheck(errorText(err));
     } finally {
@@ -647,25 +638,7 @@ function FailedTurn({
   };
 
   const resend = async () => {
-    if (message && (await onResend(message))) setConfirming(null);
-  };
-
-  const runRepair = async () => {
-    setRepairing(true);
-    try {
-      const result = await onRepair();
-      setRepair(
-        result.repaired
-          ? "已修复：电脑上的 ChatGPT 已重新启动。可以再做一次电脑自检，然后重发这一条。"
-          : "修复还在进行（重启 ChatGPT 要一会儿），稍后做一次电脑自检看结果。",
-      );
-      setConfirming(null);
-    } catch (err) {
-      setRepair(errorText(err));
-      setConfirming(null);
-    } finally {
-      setRepairing(false);
-    }
+    if (message && (await onResend(message))) setConfirming(false);
   };
 
   return (
@@ -673,21 +646,7 @@ function FailedTurn({
       <p className="paw-remote-error">这一轮出错：{error}</p>
       <small className="paw-remote-muted">{TURN_FAILURE_HINT[classifyTurnFailure(error)]}</small>
       {check ? <p className="paw-remote-progress">电脑自检：{check}</p> : null}
-      {repair ? <p className="paw-remote-progress">远程修复：{repair}</p> : null}
-      {confirming === "repair" ? (
-        <div className="paw-remote-confirm">
-          <small className="paw-remote-danger">
-            会立即重启电脑上的 ChatGPT。电脑上所有会话（不只是同步的这几个）正在做的事都会被中断
-            {active ? `，现在有 ${active} 个会话在运行` : ""}。
-          </small>
-          <div className="paw-remote-actions">
-            <button type="button" className="paw-button paw-remote-small" disabled={repairing} onClick={() => setConfirming(null)}>取消</button>
-            <button type="button" className="paw-button primary paw-remote-small" disabled={repairing} onClick={() => void runRepair()}>
-              {repairing ? "修复中…" : "确认远程修复"}
-            </button>
-          </div>
-        </div>
-      ) : confirming === "resend" && message ? (
+      {confirming && message ? (
         <div className="paw-remote-confirm">
           <small className={fullAccess ? "paw-remote-danger" : "paw-remote-muted"}>
             {fullAccess
@@ -695,7 +654,7 @@ function FailedTurn({
               : "这条消息会在电脑上再执行一次。"}
           </small>
           <div className="paw-remote-actions">
-            <button type="button" className="paw-button paw-remote-small" disabled={busy} onClick={() => setConfirming(null)}>取消</button>
+            <button type="button" className="paw-button paw-remote-small" disabled={busy} onClick={() => setConfirming(false)}>取消</button>
             <button type="button" className="paw-button primary paw-remote-small" disabled={busy} onClick={() => void resend()}>
               {busy ? "发送中…" : "确认重发"}
             </button>
@@ -706,11 +665,8 @@ function FailedTurn({
           <button type="button" className="paw-button paw-remote-small" disabled={checking} onClick={() => void runCheck()}>
             {checking ? "自检中…" : "电脑自检"}
           </button>
-          {check ? (
-            <button type="button" className="paw-button paw-remote-small" disabled={repairing} onClick={() => setConfirming("repair")}>远程修复 ChatGPT</button>
-          ) : null}
           {message ? (
-            <button type="button" className="paw-button paw-remote-small" disabled={busy} onClick={() => setConfirming("resend")}>重发这一条</button>
+            <button type="button" className="paw-button paw-remote-small" disabled={busy} onClick={() => setConfirming(true)}>重发这一条</button>
           ) : null}
         </div>
       )}

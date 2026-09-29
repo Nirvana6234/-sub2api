@@ -158,8 +158,8 @@
             <TextBlock Text="Claude 模型设置" FontWeight="SemiBold" Classes="label" Margin="0,0,0,6" />
             <Grid ColumnDefinitions="*,8,*">
               <ComboBox Grid.Column="0"
-                        ItemsSource="{x:Static vm:ClaudePreferenceViewModel.ClaudeModels}"
-                        SelectedItem="{Binding Dashboard.ClaudePreference.SelectedClaudeModel, Mode=TwoWay}"
+                        ItemsSource="{Binding Dashboard.CodexModelChoices}"
+                        SelectedItem="{Binding Dashboard.CodexModelChoice, Mode=TwoWay}"
                         HorizontalAlignment="Stretch" Padding="8,6" />
               <ComboBox Grid.Column="2"
                         ItemsSource="{x:Static vm:ClaudePreferenceViewModel.ClaudeThinkingLevels}"

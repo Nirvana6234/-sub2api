@@ -43,6 +43,12 @@
                      IsVisible="{Binding !CanTurnOn}" />
           <TextBlock Text="{Binding Overlay.Status}" Classes="info" Margin="0,4,0,0" TextWrapping="Wrap"
                      IsVisible="{Binding Overlay.HasStatus}" />
+          <!-- macOS: 「屏幕录制」 was refused. macOS asks only once, and applies the permission only to
+               a new process, so the way out is on the page: the settings pane, then a restart. -->
+          <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,0" IsVisible="{Binding NeedsScreenRecording}">
+            <Button Content="打开系统设置" Click="OpenScreenRecording_OnClick" Classes="secondary" />
+            <Button Content="重新启动助手" Click="Restart_OnClick" Classes="secondary" IsVisible="{Binding CanRestartClient}" />
+          </StackPanel>
           <TextBlock Text="调试导出中：识别出的聊天文字正在写入本机目录（GONGFEI_WECHAT_DEBUG_DUMP）" Classes="danger"
                      Margin="0,4,0,0" TextWrapping="Wrap" IsVisible="{Binding Overlay.IsDumping}" />
 
@@ -63,7 +69,7 @@
             </StackPanel>
           </Grid>
           <TextBlock Classes="hint" Margin="0,6,0,0" TextWrapping="Wrap"
-                     Text="每次判断从共飞余额按次扣费，按分组倍率计算。消息文字经共飞服务器转给 TypeSafe 的 Jev 模型，服务器不保存。" />
+                     Text="每次判断从共飞余额扣费，按分组价格和倍率计算。消息文字经共飞服务器转给 TypeSafe 的 Jev 模型，服务器不保存。" />
           <TextBlock Text="当前使用本地直连（见下方测试卡片）" Classes="danger" Margin="0,4,0,0" IsVisible="{Binding UseOwnKey}" />
 
           <StackPanel IsVisible="{Binding IsEnabled}">

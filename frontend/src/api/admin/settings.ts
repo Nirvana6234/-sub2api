@@ -1643,6 +1643,8 @@ export interface GuestTrialConfig {
   enabled: boolean;
   api_key_id: number;
   models: string[];
+  /** 按模型指定承担流量的密钥；未列出的模型用 api_key_id。 */
+  model_keys?: Record<string, number>;
   daily_per_visitor: number;
   daily_global: number;
   max_input_chars: number;

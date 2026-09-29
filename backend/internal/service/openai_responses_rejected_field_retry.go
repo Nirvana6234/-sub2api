@@ -33,12 +33,6 @@ type openAIResponsesRejectedFieldRetryState struct {
 	mu             sync.Mutex
 	budget         *openAIResponsesRejectedFieldRetryBudget
 	seenBodyHashes map[[sha256.Size]byte]struct{}
-	// initialBody is hashed only when the first retry is considered. Every
-	// forwarded request creates this state, but rejected-field retries are
-	// rare, and hashing a multi-MB body up front costs every relay hop.
-	// Request bodies are never modified in place, so the deferred hash equals
-	// the one that would have been taken at construction.
-	initialBody []byte
 }
 
 type openAIResponsesRejectedFieldRetryBudget struct {
@@ -77,9 +71,7 @@ func newOpenAIResponsesRejectedFieldRetryStateWithBudget(initialBody []byte, bud
 		budget:         budget,
 		seenBodyHashes: make(map[[sha256.Size]byte]struct{}, maxOpenAIResponsesRejectedFieldRetries+1),
 	}
-	if len(initialBody) > 0 {
-		state.initialBody = initialBody
-	}
+	state.remember(initialBody)
 	return state
 }
 
@@ -89,7 +81,6 @@ func (s *openAIResponsesRejectedFieldRetryState) Allow(nextBody []byte) bool {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.rememberInitialLocked()
 	bodyHash := sha256.Sum256(nextBody)
 	if _, seen := s.seenBodyHashes[bodyHash]; seen {
 		return false
@@ -111,14 +102,6 @@ func (s *openAIResponsesRejectedFieldRetryState) remember(body []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.rememberLocked(body)
-}
-
-func (s *openAIResponsesRejectedFieldRetryState) rememberInitialLocked() {
-	if s.initialBody == nil {
-		return
-	}
-	s.rememberLocked(s.initialBody)
-	s.initialBody = nil
 }
 
 func (s *openAIResponsesRejectedFieldRetryState) rememberLocked(body []byte) {

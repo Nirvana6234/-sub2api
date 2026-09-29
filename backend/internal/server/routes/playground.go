@@ -221,11 +221,12 @@ func registerPlaygroundRoutes(
 // OpenAI / Grok 分组走 Responses 兼容网关，其余平台走通用网关。
 func newPanelChatCompletionsHandler(h *handler.Handlers) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		switch getGroupPlatform(c) {
-		case service.PlatformOpenAI, service.PlatformGrok:
+		// 必须与 /v1/chat/completions 同口径：只放行 openai/grok 时，deepseek 等国产供应商
+		// 会落到 Anthropic 网关，被拼成 {base_url}/v1/messages（base_url 以 /v1 结尾时即 /v1/v1/messages）。
+		if isOpenAIResponsesCompatibleGatewayPlatform(c) {
 			h.OpenAIGateway.ChatCompletions(c)
-		default:
-			h.Gateway.ChatCompletions(c)
+			return
 		}
+		h.Gateway.ChatCompletions(c)
 	}
 }
