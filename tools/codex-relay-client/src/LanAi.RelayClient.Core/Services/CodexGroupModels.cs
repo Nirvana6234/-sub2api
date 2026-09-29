@@ -55,8 +55,9 @@ internal sealed class CodexGroupModels
         List<string> distinct = [.. allowed
             .Where(m => !string.IsNullOrWhiteSpace(m))
             .Select(m => m.Trim())
+            .Where(IsConcrete)
             .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(m => m, StringComparer.Ordinal)];
+            .Order(NewestFirst.Instance)];
         if (distinct.Count == 0)
         {
             return null;
@@ -78,4 +79,75 @@ internal sealed class CodexGroupModels
 
     /// <summary>The signature of <paramref name="models"/>, empty for a group that has none.</summary>
     public static string SignatureOf(CodexGroupModels? models) => models?.Signature ?? string.Empty;
+
+    /// <summary>
+    /// Whether <paramref name="id"/> names one model. A whitelist may hold a pattern
+    /// (<c>gpt-5*</c>) saying what the group admits; that is worth showing in a tip but is not
+    /// something to put in a picker or send as a model name.
+    /// </summary>
+    public static bool IsConcrete(string id) => !id.Contains('*') && !id.Contains('?');
+
+    /// <summary>
+    /// Newest version first, so the default — the head of the list — is the latest model rather
+    /// than whichever sorts first alphabetically (which put <c>gpt-5.2</c> ahead of
+    /// <c>gpt-6</c>). Numbers compare as numbers; where one id is the other plus a suffix
+    /// (<c>gpt-5.6</c>, <c>gpt-5.6-sol</c>) the plain one comes first.
+    /// </summary>
+    private sealed class NewestFirst : IComparer<string>
+    {
+        public static readonly NewestFirst Instance = new();
+
+        public int Compare(string? x, string? y)
+        {
+            string[] a = Tokens(x ?? string.Empty);
+            string[] b = Tokens(y ?? string.Empty);
+            for (int i = 0; i < Math.Min(a.Length, b.Length); i++)
+            {
+                int c = CompareToken(a[i], b[i]);
+                if (c != 0)
+                {
+                    return -c; // larger version first
+                }
+            }
+
+            int byLength = a.Length.CompareTo(b.Length);
+            return byLength != 0 ? byLength : string.Compare(x, y, StringComparison.Ordinal);
+        }
+
+        private static int CompareToken(string a, string b)
+        {
+            bool aDigits = char.IsAsciiDigit(a[0]);
+            bool bDigits = char.IsAsciiDigit(b[0]);
+            if (aDigits && bDigits)
+            {
+                string ta = a.TrimStart('0');
+                string tb = b.TrimStart('0');
+                int byLength = ta.Length.CompareTo(tb.Length);
+                return byLength != 0 ? byLength : string.CompareOrdinal(ta, tb);
+            }
+
+            if (aDigits != bDigits)
+            {
+                return aDigits ? 1 : -1;
+            }
+
+            return string.Compare(a, b, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string[] Tokens(string id)
+        {
+            var tokens = new List<string>();
+            int start = 0;
+            for (int i = 1; i <= id.Length; i++)
+            {
+                if (i == id.Length || char.IsAsciiDigit(id[i]) != char.IsAsciiDigit(id[i - 1]))
+                {
+                    tokens.Add(id[start..i]);
+                    start = i;
+                }
+            }
+
+            return [.. tokens.Where(t => t.Length > 0)];
+        }
+    }
 }

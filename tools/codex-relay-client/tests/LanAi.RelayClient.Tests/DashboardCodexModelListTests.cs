@@ -118,7 +118,7 @@ public sealed class DashboardCodexModelListTests
 
         await dashboard.StartCodexAsync(_ => Task.FromResult(false));
 
-        Assert.Equal("gpt-5.4", codex.LastPreferredModel); // the group's default, used only if the user's is not served
+        Assert.Equal("gpt-5.5", codex.LastPreferredModel); // the group's newest model, used only if the user's is not served
         Assert.True(codex.LastKeepUserModel);
     }
 
@@ -428,5 +428,35 @@ public sealed class DashboardCodexModelListTests
 
         Assert.Equal(["claude-opus-5", "claude-sonnet-5"], codex.LastGroupModels!.Models.OrderBy(m => m, StringComparer.Ordinal));
         Assert.Equal(["claude-sonnet-5", "claude-opus-5"], dashboard.CodexModelChoices.OrderByDescending(m => m));
+    }
+
+    [Fact]
+    public async Task ProductionNamesThatAreNotChatModelsNeverReachCodexOrBecomeTheDefault()
+    {
+        // Names taken from production groups. Sorted alphabetically, codex-auto-review used to be
+        // the default of the OpenAI groups.
+        var real = Group(9, "plus", "openai",
+            "gpt-5.6", "gpt-5.6-sol", "gpt-5.5", "gpt-5.4", "gpt-5.3-codex-spark", "codex-auto-review",
+            "gpt-5.2", "gpt-image-1", "gpt-image-2", "gpt-5.6-sol-openai-compact", "gpt-reserve", "gpt-4o-realtime-preview");
+        (DashboardViewModel dashboard, FakeCodexStartup codex) = await BuildWithCodexAsync(real);
+
+        await dashboard.StartCodexAsync(_ => Task.FromResult(false));
+
+        Assert.Equal(
+            ["gpt-5.6", "gpt-5.6-sol", "gpt-5.5", "gpt-5.4", "gpt-5.3-codex-spark", "gpt-5.2"],
+            codex.LastGroupModels!.Models);
+        Assert.Equal("gpt-5.6", codex.LastPreferredModel);
+    }
+
+    [Fact]
+    public async Task AWildcardInTheWhitelistStaysInTheTipButNotInThePicker()
+    {
+        var wild = Group(9, "Wild", "anthropic", "claude-*", "claude-opus-5");
+        (DashboardViewModel dashboard, FakeCodexStartup codex) = await BuildWithCodexAsync(wild);
+        await dashboard.StartCodexAsync(_ => Task.FromResult(false));
+
+        Assert.Equal(["claude-opus-5"], codex.LastGroupModels!.Models);
+        Assert.Equal(["claude-opus-5"], dashboard.CodexModelChoices);
+        Assert.Contains("claude-*", dashboard.Groups.Single(g => g.Id == 9).AllowedModels);
     }
 }

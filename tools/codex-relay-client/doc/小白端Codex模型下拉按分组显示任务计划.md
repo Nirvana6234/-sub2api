@@ -221,9 +221,19 @@ relay 的版本号和删缓存都作用在 Codex 后端（已实测有效），�
 - 退出登录（`Reset`）后重新决定；非本机链路（托管 key 模式）保持原来的行为，因为那时分组本来就存在共享的 key 上。
 - 已知边界：另一份客户端之后改了偏好文件，这份要到下次启动才会用到它——这正是要求的行为。
 
-## 11. 白名单里带中文的条目一律剔除（2026-09-29 晚，用户要求）
+## 11. 白名单里不是模型的名称一律剔除（2026-09-29 晚，用户要求；取代「只剔中文」）
 
-白名单里含中文（含全角标点）的条目是运营写的备注，不是模型 id，出现在下拉里只会是一个必然失败的选择。
-在 `GroupItemViewModel` 读取白名单的**唯一入口**过滤（`IsSelectableModelId`），所以「模型」提示、Codex 下拉、默认模型、Claude 下拉的选项、
-弹窗的比较全部一致。过滤后白名单为空，就当作**没有白名单**（Codex 保持自带列表）。
-判断范围：CJK 统一表意文字（含扩展 A）、兼容表意文字、CJK 标点、全角形式；只含 ASCII 的 `gpt-5*` 这类通配符**不动**（是否也该剔除待定）。
+只剔中文不够。只读查了线上（分组手动白名单 + 各账号的模型映射键），确实混着这些**不是聊天模型**的名称：
+`codex-auto-review`（Codex 内部审核，还曾因按字母序排第一成了 OpenAI 分组的默认模型）、`*-openai-compact`（压缩路由的内部别名）、
+`gpt-reserve`（占位）、`gpt-image-*` / `gemini-*-image-*` / `seedream-*`（图像）、`gpt-4o-audio-preview` / `gpt-4o-realtime-preview` / `*tts*` / `*asr*`（音频、实时）、
+`*embedding*`、中文备注。做法（`Services/ModelIdFilter.cs`）：
+- **剔除规则**（不区分大小写的通配符，`*` `?`）：内置一份，来自上面的线上名称；含中文（含全角标点）的一律剔除，不可关。
+- **允许规则**（默认空 = 不限制）：配了就只保留匹配它的。
+- 用户文件 `%LOCALAPPDATA%\LanAi.RelayClient\model-filter.json`（Mac 同 AppPaths.Data）：
+  `{ "allow": ["gpt-*", "claude-*"], "deny": ["gpt-5.3-*", "*-thinking"], "useDefaultDeny": true }`；`deny` 追加到内置，`useDefaultDeny: false` 关掉内置；
+  允许注释和尾随逗号；文件坏了或不是对象就忽略并写一行日志，不会让模型从所有列表里消失。启动时读一次。
+- 在 `GroupItemViewModel` 读白名单的唯一入口应用，「模型」提示、Codex 下拉、默认模型、Claude 下拉的选项、弹窗比较一致；过滤后为空 = 没有白名单。
+- **通配符条目**（`gpt-5*`）保留在「模型」提示里（说明分组放行什么），但不进 Codex 下拉、不当默认（`CodexGroupModels.IsConcrete`）。
+- **排序改为新版本优先**（数字按数值比较，`gpt-5.6` 排在它的变体 `gpt-5.6-sol` 前）：原来按字母序，默认模型是最老或最奇怪的那个。
+  线上 `plus` 分组过滤后的顺序是 `gpt-5.6, gpt-5.6-sol, gpt-5.5, gpt-5.4, gpt-5.3-codex-spark, gpt-5.2`，默认 `gpt-5.6`。
+- 没有默认屏蔽的：Claude 的 `*-thinking` 别名（Codex→Claude 桥接已用思考强度，它们是重复项，但可能有人在用）、带日期的快照名。要屏蔽就在文件里加 `*-thinking`。

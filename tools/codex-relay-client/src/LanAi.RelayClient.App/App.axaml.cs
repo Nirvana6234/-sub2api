@@ -178,6 +178,12 @@ public partial class App : Application
 
         var contextFilterUsage = new ContextFilterUsageStore();
 
+        // Which entries of a group's model whitelist may be offered: built-in rules, plus the
+        // user's own in model-filter.json when there is one (see ModelIdFilter).
+        ModelIdFilter.Current = ModelIdFilter.Load(
+            AppPaths.InData("model-filter.json"),
+            message => ClientLog.Warning(message));
+
         // Local proxy: one credential source for the relay and the page alike, so the token
         // checked when the user switches it on is the one the next turn uses — this machine's
         // own Codex and Claude Code sign-ins, and the official accounts signed in within the

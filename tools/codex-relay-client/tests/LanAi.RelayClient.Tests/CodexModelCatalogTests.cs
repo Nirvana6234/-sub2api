@@ -23,12 +23,12 @@ public sealed class CodexModelCatalogTests
     // ---- CodexGroupModels ---------------------------------------------------
 
     [Fact]
-    public void TheDefaultComesFirstAndTheRestKeepAStableOrder()
+    public void TheDefaultComesFirstAndTheRestFollowNewestFirst()
     {
-        var models = CodexGroupModels.From(["claude-sonnet-5", "claude-opus-5", "claude-haiku-4"], preferred: "claude-sonnet-5");
+        var models = CodexGroupModels.From(["claude-sonnet-5", "claude-opus-5", "claude-haiku-4"], preferred: "claude-haiku-4");
 
-        Assert.Equal(["claude-sonnet-5", "claude-haiku-4", "claude-opus-5"], models!.Models);
-        Assert.Equal("claude-sonnet-5", models.DefaultModel);
+        Assert.Equal(["claude-haiku-4", "claude-sonnet-5", "claude-opus-5"], models!.Models);
+        Assert.Equal("claude-haiku-4", models.DefaultModel);
     }
 
     [Fact]
@@ -37,7 +37,8 @@ public sealed class CodexModelCatalogTests
         // The choice may have been made for another group.
         var models = CodexGroupModels.From(["claude-opus-5", "claude-haiku-4"], preferred: "claude-sonnet-5");
 
-        Assert.Equal("claude-haiku-4", models!.DefaultModel);
+        // Not the preference; the newest model of the group instead.
+        Assert.Equal("claude-opus-5", models!.DefaultModel);
     }
 
     [Theory]
@@ -311,5 +312,36 @@ public sealed class CodexModelCatalogTests
         string? catalog = CodexModelCatalog.Build(bundled, CodexGroupModels.From(["claude-sonnet-5", "claude-opus-5"])!);
         Assert.NotNull(catalog);
         Assert.Equal(2, Entries(catalog).Length);
+    }
+
+    // ---- Order: newest first ---------------------------------------------------------
+
+    [Fact]
+    public void WithoutAPreferenceTheDefaultIsTheNewestModel_NotTheAlphabeticallyFirst()
+    {
+        // The old ordering put gpt-5.2 ahead of gpt-6 (and codex-auto-review ahead of both).
+        var models = CodexGroupModels.From(["gpt-5.2", "gpt-5.4-mini", "gpt-5.4", "gpt-5.5", "gpt-6-astra", "gpt-5.10", "gpt-5.6"])!;
+
+        Assert.Equal(["gpt-6-astra", "gpt-5.10", "gpt-5.6", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.2"], models.Models);
+        Assert.Equal("gpt-6-astra", models.DefaultModel);
+    }
+
+    [Fact]
+    public void ThePlainModelComesBeforeItsVariants()
+    {
+        var models = CodexGroupModels.From(["gpt-5.6-sol", "gpt-5.6", "gpt-5.6-terra"])!;
+
+        Assert.Equal("gpt-5.6", models.Models[0]);
+    }
+
+    [Fact]
+    public void AWildcardEntryNamesNoModelAndNeverReachesThePicker()
+    {
+        var models = CodexGroupModels.From(["gpt-5*", "gpt-5.5", "gpt-?"])!;
+
+        Assert.Equal(["gpt-5.5"], models.Models);
+        Assert.Null(CodexGroupModels.From(["gpt-5*"]));
+        Assert.True(CodexGroupModels.IsConcrete("gpt-5.5"));
+        Assert.False(CodexGroupModels.IsConcrete("gpt-*"));
     }
 }

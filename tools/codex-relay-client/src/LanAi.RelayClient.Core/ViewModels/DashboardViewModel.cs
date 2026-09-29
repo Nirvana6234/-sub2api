@@ -459,8 +459,14 @@ public sealed partial class DashboardViewModel : ObservableObject
                 return known;
             }
 
-            IReadOnlyList<string> both = [.. group.AllowedModels.Where(m => known.Contains(m, StringComparer.OrdinalIgnoreCase))];
-            return both.Count > 0 ? both : group.AllowedModels;
+            IReadOnlyList<string> concrete = [.. group.AllowedModels.Where(CodexGroupModels.IsConcrete)];
+            if (concrete.Count == 0)
+            {
+                return known;
+            }
+
+            IReadOnlyList<string> both = [.. concrete.Where(m => known.Contains(m, StringComparer.OrdinalIgnoreCase))];
+            return both.Count > 0 ? both : concrete;
         }
     }
 
