@@ -34,6 +34,18 @@ func (s *recordingSelector) UpstreamError(context.Context, int64, *relayv1.Upstr
 	return &relayv1.UpstreamErrorResponse{}, nil
 }
 
+func (s *recordingSelector) BeginTurn(context.Context, int64, *relayv1.BeginTurnRequest) (*relayv1.BeginTurnResponse, error) {
+	return &relayv1.BeginTurnResponse{}, nil
+}
+
+func (s *recordingSelector) TurnMapping(context.Context, int64, *relayv1.TurnMappingRequest) (*relayv1.TurnMappingResponse, error) {
+	return &relayv1.TurnMappingResponse{}, nil
+}
+
+func (s *recordingSelector) WebSocketLease(context.Context, int64, *relayv1.WebSocketLeaseRequest) (*relayv1.WebSocketLeaseResponse, error) {
+	return &relayv1.WebSocketLeaseResponse{}, nil
+}
+
 func (s *recordingSelector) CyberPolicyHit(context.Context, int64, *relayv1.CyberPolicyHitRequest) (*relayv1.CyberPolicyHitResponse, error) {
 	return &relayv1.CyberPolicyHitResponse{}, nil
 }

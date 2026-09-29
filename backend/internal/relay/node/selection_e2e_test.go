@@ -67,6 +67,18 @@ func (f *fakeSelector) RefillQuota(context.Context, int64, *relayv1.RefillQuotaR
 	return nil, errors.New("database is down: secret detail")
 }
 
+func (f *fakeSelector) BeginTurn(context.Context, int64, *relayv1.BeginTurnRequest) (*relayv1.BeginTurnResponse, error) {
+	return &relayv1.BeginTurnResponse{}, nil
+}
+
+func (f *fakeSelector) TurnMapping(context.Context, int64, *relayv1.TurnMappingRequest) (*relayv1.TurnMappingResponse, error) {
+	return &relayv1.TurnMappingResponse{}, nil
+}
+
+func (f *fakeSelector) WebSocketLease(context.Context, int64, *relayv1.WebSocketLeaseRequest) (*relayv1.WebSocketLeaseResponse, error) {
+	return &relayv1.WebSocketLeaseResponse{}, nil
+}
+
 func (f *fakeSelector) CyberPolicyHit(context.Context, int64, *relayv1.CyberPolicyHitRequest) (*relayv1.CyberPolicyHitResponse, error) {
 	return &relayv1.CyberPolicyHitResponse{}, nil
 }

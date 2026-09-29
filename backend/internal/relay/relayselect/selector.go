@@ -67,6 +67,8 @@ type selector struct {
 	recent map[nodeAccount]recentUse
 	events chan queuedAccountEvent
 	closed bool
+	// wsLeases：主节点代各节点持有的 WebSocket 连接数租约（按租约 ID，记归属节点）。
+	wsLeases map[string]wsLease
 	// localReporter 执行账号事件（默认网关服务的本机实现；测试替换）。
 	localReporter func() service.OpenAIAccountReporter
 	// findCyberBlocked 查 cyber 会话屏蔽（默认网关服务；测试替换）。
@@ -103,6 +105,8 @@ type requestRecord struct {
 	lastSeen   time.Time
 	// cyberRecorded：这次请求已记过 cyber 命中（与单机每请求只记一次一致）。由 selector.mu 保护。
 	cyberRecorded bool
+	// ws：这是一条 Responses WebSocket 连接（用户槽按轮占、放；两轮之间不占槽，清理按 wsIdleLimit）。
+	ws bool
 }
 
 // selectionRecord 是一次进行中的选号。
@@ -121,6 +125,8 @@ type selectionRecord struct {
 	// apiKey 是选号时准入的 Key（含用户、分组），cyber 是这次选号上送的 cyber 查询键：cyber 命中的记录用。
 	apiKey *service.APIKey
 	cyber  service.CyberSessionLookup
+	// maxConcurrency：WebSocket 连接之后每一轮重新占这个账号的槽时的上限。
+	maxConcurrency int
 }
 
 func newSelector(d Deps, env master.SelectEnv) *selector {
@@ -135,6 +141,7 @@ func newSelector(d Deps, env master.SelectEnv) *selector {
 		selections: map[string]*selectionRecord{},
 		delivered:  map[int64]map[int64]string{},
 		recent:     map[nodeAccount]recentUse{},
+		wsLeases:   map[string]wsLease{},
 		events:     make(chan queuedAccountEvent, accountEventQueue),
 	}
 	s.localReporter = d.Gateway.LocalAccountReporter
@@ -262,6 +269,10 @@ func (s *selector) Release(nodeID int64, rel *relayv1.SelectionRelease) {
 }
 
 func (s *selector) release(nodeID int64, rel *relayv1.SelectionRelease) {
+	if rel.GetTurnEnd() {
+		s.endTurn(nodeID, rel)
+		return
+	}
 	sel := s.takeSelection(nodeID, rel.GetSelectionId())
 	if sel == nil {
 		// 已释放（重发）、不属于这台节点，或占用太久已被清理（槽早已放掉）。
@@ -421,9 +432,21 @@ func (s *selector) reap() {
 		}
 	}
 	var stale []*requestRecord
+	wsCutoff := s.now().Add(-wsIdleLimit)
 	for _, r := range s.requests {
-		if r.lastSeen.Before(cutoff) {
-			stale = append(stale, r)
+		if !r.lastSeen.Before(cutoff) {
+			continue
+		}
+		// WebSocket 连接两轮之间不占槽：只按更长的空闲上限清理。
+		if r.ws && !s.holdsSlotsLocked(r) && !r.lastSeen.Before(wsCutoff) {
+			continue
+		}
+		stale = append(stale, r)
+	}
+	leaseCutoff := s.now().Add(-wsLeaseTTL)
+	for id, l := range s.wsLeases {
+		if l.seen.Before(leaseCutoff) {
+			delete(s.wsLeases, id)
 		}
 	}
 	s.mu.Unlock()
@@ -431,6 +454,19 @@ func (s *selector) reap() {
 		slog.Warn("relay selection held too long, releasing", "node_id", r.key.nodeID, "request_id", r.key.requestID)
 		s.dropRequest(r)
 	}
+}
+
+// holdsSlotsLocked 报告请求还占着用户槽或账号槽（调用方持有 s.mu）。
+func (s *selector) holdsSlotsLocked(r *requestRecord) bool {
+	if r.userRelease != nil {
+		return true
+	}
+	for id := range r.active {
+		if sel, ok := s.selections[id]; ok && sel.release != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // bindFromVoucher 按释放消息带回的凭证记响应归属（选号记录已被清理时）。

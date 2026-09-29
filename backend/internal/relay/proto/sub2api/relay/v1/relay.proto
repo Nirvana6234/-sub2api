@@ -67,6 +67,17 @@ service RelayControl {
   // 单机同一段代码判定并记录账号状态（限流、临时不可调度、停用、冷却），返回判定结果。
   // 只能针对这台节点正在用的账号（有进行中的选号）。
   rpc UpstreamError(UpstreamErrorRequest) returns (UpstreamErrorResponse);
+  // ---- Responses WebSocket（开发计划 WP10-3）----
+  // BeginTurn 一条 WebSocket 连接的一轮开始时同步调用：按当时的利润门复核这次选号的账号、冻结这一轮的计价时间、
+  // 补占这一轮的用户槽和账号槽（不排队）、按这一轮的模型签凭证，尽量补充额度（额度不够也不拒绝：单机只在建连时
+  // 查计费资格）。复核不过或占不到槽时回 close，从节点按它关闭连接。
+  rpc BeginTurn(BeginTurnRequest) returns (BeginTurnResponse);
+  // TurnMapping 一轮的渠道映射（这一轮换了模型时，按模型缓存）。选号必须是这台节点进行中的。
+  rpc TurnMapping(TurnMappingRequest) returns (TurnMappingResponse);
+  // WebSocketLease 每个 Key 的 WebSocket 连接数租约（Redis 里的全局租约，主节点代为申请、续期、释放；
+  // 上限用主节点的配置）。租约按节点记归属，别的节点不能续期或释放。
+  rpc WebSocketLease(WebSocketLeaseRequest) returns (WebSocketLeaseResponse);
+
   // CyberPolicyHit 上游判定 cyber 策略后调用（设计 3.4）：主节点写会话屏蔽标记（同步）、风控记录和
   // 运维日志（异步），用单机同一段代码（handler.CyberPolicyRecorder）。用户、Key、分组、账号取自这次选号的
   // 记录，屏蔽的键由选号时上送的查询键推导；每次请求只记一次。选号必须是这台节点进行中的。
@@ -448,6 +459,9 @@ enum SelectEndpoint {
   SELECT_ENDPOINT_OPENAI_CHAT = 2;
   // OpenAI 分组的 Anthropic Messages（/v1/messages，按 Chat Completions 能力选号，错误按 Anthropic 格式）。
   SELECT_ENDPOINT_OPENAI_MESSAGES = 3;
+  // Responses WebSocket 的连接选号（第一次：建连；之后：连接内换号）。选中的账号绑定这条连接，
+  // 每一轮用 BeginTurn 签凭证；回复不带凭证。拒绝按 WebSocket 关闭码（REJECTION_FORMAT_WS_CLOSE）。
+  SELECT_ENDPOINT_OPENAI_RESPONSES_WS = 4;
 }
 
 message AdmitRequest {
@@ -518,6 +532,8 @@ message SelectRequest {
   // 选号优先用父会话绑定的账号。
   string guardian_parent_session_hash = 22;
   string guardian_parent_legacy_session_hash = 23;
+  // WebSocket 连接选号：首帧的函数调用输出都能在上下文里找到对应调用（previous_response_id 可以换账号）。
+  bool previous_response_can_move = 24;
 }
 
 // cyber 会话屏蔽的查询键（都已哈希）。
@@ -556,6 +572,8 @@ enum RejectionFormat {
   REJECTION_FORMAT_FAILOVER_EXHAUSTED = 3;
   // 这个请求还不能经从节点处理（自动分组、组合平台分组、尚未接入的平台）：从节点交给主节点转发。
   REJECTION_FORMAT_UNSUPPORTED = 4;
+  // 关闭 WebSocket 连接：status 是关闭码，message 是原因；cyber_block_key 非空时先按 cyber 屏蔽写错误帧。
+  REJECTION_FORMAT_WS_CLOSE = 5;
 }
 
 message SelectRejection {
@@ -615,6 +633,9 @@ message Selection {
   int64 pricing_at_unix_ms = 19;
   // 选中的是影子账号时，它的母账号（凭据取自母账号，转发时按 ID 找它）。
   AccountSnapshot credential_parent = 20;
+  // WebSocket 连接选号：previous_response_id 命中了这个分组里的粘连账号（没命中时从节点剥掉首帧的
+  // previous_response_id）。
+  bool sticky_previous_hit = 21;
 }
 
 message FetchCredentialsRequest {
@@ -850,6 +871,61 @@ message SelectionRelease {
   // 这次选号的扣费凭证（原样）。选号在主节点上已被清理时（长请求超过占用上限），
   // 主节点验签后按凭证里的账号、分组、用户、Key 记响应归属，不信消息里的其他值。
   bytes voucher = 4;
+  // WebSocket 一轮结束：放掉这一轮的用户槽和账号槽、记响应归属，选号留着（账号绑定这条连接）。
+  bool turn_end = 5;
+}
+
+message BeginTurnRequest {
+  string selection_id = 1;
+  // 连接内的第几轮（每次选号从 1 开始，与单机的钩子一致）。
+  int32 turn = 2;
+  // 这一轮客户端请求的模型（凭证里的请求模型和渠道映射按它）。
+  string model = 3;
+  // 从节点手里这个用户各项子额度还没用掉的金额（同 SelectRequest.held_quota）。
+  repeated HeldQuota held_quota = 4;
+}
+
+message BeginTurnResponse {
+  // 非 0 时关闭连接：WebSocket 关闭码与原因（单机在同样情况下用的）。
+  int32 close_status = 1;
+  string close_reason = 2;
+  // 这一轮的扣费凭证（用量上报时原样带回）。
+  bytes voucher = 3;
+  repeated QuotaScope quota_scopes = 4;
+  int64 quota_need = 5;
+  repeated QuotaGrant grants = 6;
+  int64 pricing_at_unix_ms = 7;
+}
+
+message TurnMappingRequest {
+  string selection_id = 1;
+  string model = 2;
+}
+
+message TurnMappingResponse {
+  bool channel_mapped = 1;
+  string channel_mapped_model = 2;
+  int64 channel_id = 3;
+  string billing_model_source = 4;
+}
+
+enum WebSocketLeaseOp {
+  WEB_SOCKET_LEASE_OP_UNSPECIFIED = 0;
+  WEB_SOCKET_LEASE_OP_ACQUIRE = 1;
+  WEB_SOCKET_LEASE_OP_REFRESH = 2;
+  WEB_SOCKET_LEASE_OP_RELEASE = 3;
+}
+
+message WebSocketLeaseRequest {
+  WebSocketLeaseOp op = 1;
+  // 申请时带 Key 原文（主节点自己验证）；续期、释放按 lease_id。
+  string api_key = 2;
+  string lease_id = 3;
+}
+
+message WebSocketLeaseResponse {
+  // 申请：拿到了（没拿到表示这个 Key 的连接数到了上限）；续期：租约还在。
+  bool ok = 1;
 }
 
 

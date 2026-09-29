@@ -314,6 +314,9 @@ const (
 	RelayControl_FetchCredentials_FullMethodName = "/sub2api.relay.v1.RelayControl/FetchCredentials"
 	RelayControl_RefillQuota_FullMethodName      = "/sub2api.relay.v1.RelayControl/RefillQuota"
 	RelayControl_UpstreamError_FullMethodName    = "/sub2api.relay.v1.RelayControl/UpstreamError"
+	RelayControl_BeginTurn_FullMethodName        = "/sub2api.relay.v1.RelayControl/BeginTurn"
+	RelayControl_TurnMapping_FullMethodName      = "/sub2api.relay.v1.RelayControl/TurnMapping"
+	RelayControl_WebSocketLease_FullMethodName   = "/sub2api.relay.v1.RelayControl/WebSocketLease"
 	RelayControl_CyberPolicyHit_FullMethodName   = "/sub2api.relay.v1.RelayControl/CyberPolicyHit"
 )
 
@@ -356,6 +359,16 @@ type RelayControlClient interface {
 	// 单机同一段代码判定并记录账号状态（限流、临时不可调度、停用、冷却），返回判定结果。
 	// 只能针对这台节点正在用的账号（有进行中的选号）。
 	UpstreamError(ctx context.Context, in *UpstreamErrorRequest, opts ...grpc.CallOption) (*UpstreamErrorResponse, error)
+	// ---- Responses WebSocket（开发计划 WP10-3）----
+	// BeginTurn 一条 WebSocket 连接的一轮开始时同步调用：按当时的利润门复核这次选号的账号、冻结这一轮的计价时间、
+	// 补占这一轮的用户槽和账号槽（不排队）、按这一轮的模型签凭证，尽量补充额度（额度不够也不拒绝：单机只在建连时
+	// 查计费资格）。复核不过或占不到槽时回 close，从节点按它关闭连接。
+	BeginTurn(ctx context.Context, in *BeginTurnRequest, opts ...grpc.CallOption) (*BeginTurnResponse, error)
+	// TurnMapping 一轮的渠道映射（这一轮换了模型时，按模型缓存）。选号必须是这台节点进行中的。
+	TurnMapping(ctx context.Context, in *TurnMappingRequest, opts ...grpc.CallOption) (*TurnMappingResponse, error)
+	// WebSocketLease 每个 Key 的 WebSocket 连接数租约（Redis 里的全局租约，主节点代为申请、续期、释放；
+	// 上限用主节点的配置）。租约按节点记归属，别的节点不能续期或释放。
+	WebSocketLease(ctx context.Context, in *WebSocketLeaseRequest, opts ...grpc.CallOption) (*WebSocketLeaseResponse, error)
 	// CyberPolicyHit 上游判定 cyber 策略后调用（设计 3.4）：主节点写会话屏蔽标记（同步）、风控记录和
 	// 运维日志（异步），用单机同一段代码（handler.CyberPolicyRecorder）。用户、Key、分组、账号取自这次选号的
 	// 记录，屏蔽的键由选号时上送的查询键推导；每次请求只记一次。选号必须是这台节点进行中的。
@@ -480,6 +493,36 @@ func (c *relayControlClient) UpstreamError(ctx context.Context, in *UpstreamErro
 	return out, nil
 }
 
+func (c *relayControlClient) BeginTurn(ctx context.Context, in *BeginTurnRequest, opts ...grpc.CallOption) (*BeginTurnResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BeginTurnResponse)
+	err := c.cc.Invoke(ctx, RelayControl_BeginTurn_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *relayControlClient) TurnMapping(ctx context.Context, in *TurnMappingRequest, opts ...grpc.CallOption) (*TurnMappingResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TurnMappingResponse)
+	err := c.cc.Invoke(ctx, RelayControl_TurnMapping_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *relayControlClient) WebSocketLease(ctx context.Context, in *WebSocketLeaseRequest, opts ...grpc.CallOption) (*WebSocketLeaseResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WebSocketLeaseResponse)
+	err := c.cc.Invoke(ctx, RelayControl_WebSocketLease_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *relayControlClient) CyberPolicyHit(ctx context.Context, in *CyberPolicyHitRequest, opts ...grpc.CallOption) (*CyberPolicyHitResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CyberPolicyHitResponse)
@@ -529,6 +572,16 @@ type RelayControlServer interface {
 	// 单机同一段代码判定并记录账号状态（限流、临时不可调度、停用、冷却），返回判定结果。
 	// 只能针对这台节点正在用的账号（有进行中的选号）。
 	UpstreamError(context.Context, *UpstreamErrorRequest) (*UpstreamErrorResponse, error)
+	// ---- Responses WebSocket（开发计划 WP10-3）----
+	// BeginTurn 一条 WebSocket 连接的一轮开始时同步调用：按当时的利润门复核这次选号的账号、冻结这一轮的计价时间、
+	// 补占这一轮的用户槽和账号槽（不排队）、按这一轮的模型签凭证，尽量补充额度（额度不够也不拒绝：单机只在建连时
+	// 查计费资格）。复核不过或占不到槽时回 close，从节点按它关闭连接。
+	BeginTurn(context.Context, *BeginTurnRequest) (*BeginTurnResponse, error)
+	// TurnMapping 一轮的渠道映射（这一轮换了模型时，按模型缓存）。选号必须是这台节点进行中的。
+	TurnMapping(context.Context, *TurnMappingRequest) (*TurnMappingResponse, error)
+	// WebSocketLease 每个 Key 的 WebSocket 连接数租约（Redis 里的全局租约，主节点代为申请、续期、释放；
+	// 上限用主节点的配置）。租约按节点记归属，别的节点不能续期或释放。
+	WebSocketLease(context.Context, *WebSocketLeaseRequest) (*WebSocketLeaseResponse, error)
 	// CyberPolicyHit 上游判定 cyber 策略后调用（设计 3.4）：主节点写会话屏蔽标记（同步）、风控记录和
 	// 运维日志（异步），用单机同一段代码（handler.CyberPolicyRecorder）。用户、Key、分组、账号取自这次选号的
 	// 记录，屏蔽的键由选号时上送的查询键推导；每次请求只记一次。选号必须是这台节点进行中的。
@@ -575,6 +628,15 @@ func (UnimplementedRelayControlServer) RefillQuota(context.Context, *RefillQuota
 }
 func (UnimplementedRelayControlServer) UpstreamError(context.Context, *UpstreamErrorRequest) (*UpstreamErrorResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpstreamError not implemented")
+}
+func (UnimplementedRelayControlServer) BeginTurn(context.Context, *BeginTurnRequest) (*BeginTurnResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method BeginTurn not implemented")
+}
+func (UnimplementedRelayControlServer) TurnMapping(context.Context, *TurnMappingRequest) (*TurnMappingResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method TurnMapping not implemented")
+}
+func (UnimplementedRelayControlServer) WebSocketLease(context.Context, *WebSocketLeaseRequest) (*WebSocketLeaseResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method WebSocketLease not implemented")
 }
 func (UnimplementedRelayControlServer) CyberPolicyHit(context.Context, *CyberPolicyHitRequest) (*CyberPolicyHitResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CyberPolicyHit not implemented")
@@ -798,6 +860,60 @@ func _RelayControl_UpstreamError_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RelayControl_BeginTurn_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BeginTurnRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayControlServer).BeginTurn(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayControl_BeginTurn_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayControlServer).BeginTurn(ctx, req.(*BeginTurnRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RelayControl_TurnMapping_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TurnMappingRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayControlServer).TurnMapping(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayControl_TurnMapping_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayControlServer).TurnMapping(ctx, req.(*TurnMappingRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RelayControl_WebSocketLease_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WebSocketLeaseRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayControlServer).WebSocketLease(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayControl_WebSocketLease_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayControlServer).WebSocketLease(ctx, req.(*WebSocketLeaseRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _RelayControl_CyberPolicyHit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(CyberPolicyHitRequest)
 	if err := dec(in); err != nil {
@@ -866,6 +982,18 @@ var RelayControl_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UpstreamError",
 			Handler:    _RelayControl_UpstreamError_Handler,
+		},
+		{
+			MethodName: "BeginTurn",
+			Handler:    _RelayControl_BeginTurn_Handler,
+		},
+		{
+			MethodName: "TurnMapping",
+			Handler:    _RelayControl_TurnMapping_Handler,
+		},
+		{
+			MethodName: "WebSocketLease",
+			Handler:    _RelayControl_WebSocketLease_Handler,
 		},
 		{
 			MethodName: "CyberPolicyHit",

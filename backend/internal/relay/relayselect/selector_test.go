@@ -122,11 +122,51 @@ type countingSlots struct {
 	service.ConcurrencyCache
 	held     atomic.Int64
 	accounts atomic.Int64
+	// accountLimit 大于 0 时账号槽最多占这么多（测"账号忙"）。
+	accountLimit atomic.Int64
+
+	leaseMu sync.Mutex
+	leases  map[string]int64 // lease id -> api key id
 }
 
 func (c *countingSlots) AcquireAccountSlot(context.Context, int64, int, string) (bool, error) {
+	if limit := c.accountLimit.Load(); limit > 0 && c.accounts.Load() >= limit {
+		return false, nil
+	}
 	c.accounts.Add(1)
 	return true, nil
+}
+
+func (c *countingSlots) AcquireOpenAIWSIngressLease(_ context.Context, apiKeyID int64, maxConnections int, leaseID string) (bool, error) {
+	c.leaseMu.Lock()
+	defer c.leaseMu.Unlock()
+	if c.leases == nil {
+		c.leases = map[string]int64{}
+	}
+	n := 0
+	for _, k := range c.leases {
+		if k == apiKeyID {
+			n++
+		}
+	}
+	if n >= maxConnections {
+		return false, nil
+	}
+	c.leases[leaseID] = apiKeyID
+	return true, nil
+}
+
+func (c *countingSlots) RefreshOpenAIWSIngressLease(_ context.Context, apiKeyID int64, leaseID string) (bool, error) {
+	c.leaseMu.Lock()
+	defer c.leaseMu.Unlock()
+	return c.leases[leaseID] == apiKeyID, nil
+}
+
+func (c *countingSlots) ReleaseOpenAIWSIngressLease(_ context.Context, _ int64, leaseID string) error {
+	c.leaseMu.Lock()
+	defer c.leaseMu.Unlock()
+	delete(c.leases, leaseID)
+	return nil
 }
 
 func (c *countingSlots) ReleaseAccountSlot(context.Context, int64, string) error {

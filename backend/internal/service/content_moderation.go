@@ -832,6 +832,26 @@ func (s *ContentModerationService) AppliesTo(ctx context.Context, groupID *int64
 	return cfg.includesGroup(groupID) && cfg.includesModel(model)
 }
 
+// AppliesToGroup 报告审核可能处理这个分组的请求（不看模型：任一模型会被审核就算）。主从分流在接受 WebSocket
+// 之前用它决定交给主节点（那时还不知道模型）。读配置失败时按"会"处理。
+func (s *ContentModerationService) AppliesToGroup(ctx context.Context, groupID *int64) bool {
+	if s == nil || s.settingRepo == nil || s.repo == nil {
+		return false
+	}
+	runtimeSnapshot, err := s.loadRuntimeSnapshot(ctx)
+	if err != nil {
+		return true
+	}
+	if !runtimeSnapshot.riskControlEnabled {
+		return false
+	}
+	cfg := runtimeSnapshot.config
+	if !cfg.Enabled || cfg.Mode == ContentModerationModeOff {
+		return false
+	}
+	return cfg.includesGroup(groupID)
+}
+
 func (s *ContentModerationService) Check(ctx context.Context, input ContentModerationCheckInput) (*ContentModerationDecision, error) {
 	allow := &ContentModerationDecision{Allowed: true, Action: ContentModerationActionAllow}
 	if s == nil || s.settingRepo == nil || s.repo == nil {

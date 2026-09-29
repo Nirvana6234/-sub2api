@@ -258,13 +258,31 @@ func (s *ConcurrencyService) AcquireOpenAIWSIngressLease(ctx context.Context, ap
 	if maxConnections <= 0 {
 		return nil, true, nil
 	}
-	if s == nil || s.cache == nil || apiKeyID <= 0 {
-		return nil, false, errors.New("openai websocket ingress lease cache is unavailable")
+	cache, err := s.OpenAIWSIngressLeaseCache()
+	if err != nil || apiKeyID <= 0 {
+		if err == nil {
+			err = errors.New("openai websocket ingress lease cache is unavailable")
+		}
+		return nil, false, err
+	}
+	return AcquireOpenAIWSIngressLeaseWith(ctx, cache, apiKeyID, maxConnections)
+}
+
+// OpenAIWSIngressLeaseCache 返回 WebSocket 连接租约的底层存储（主从分流主节点代从节点申请租约用）。
+func (s *ConcurrencyService) OpenAIWSIngressLeaseCache() (OpenAIWSIngressLeaseCache, error) {
+	if s == nil || s.cache == nil {
+		return nil, errors.New("openai websocket ingress lease cache is unavailable")
 	}
 	cache, ok := s.cache.(OpenAIWSIngressLeaseCache)
 	if !ok {
-		return nil, false, errors.New("openai websocket ingress lease cache is unsupported")
+		return nil, errors.New("openai websocket ingress lease cache is unsupported")
 	}
+	return cache, nil
+}
+
+// AcquireOpenAIWSIngressLeaseWith 用给定的存储申请一份 WebSocket 连接租约并定时续期（续期失败的容忍同单机）。
+// 主从分流的从节点传入经主节点申请的实现。
+func AcquireOpenAIWSIngressLeaseWith(ctx context.Context, cache OpenAIWSIngressLeaseCache, apiKeyID int64, maxConnections int) (*OpenAIWSIngressLease, bool, error) {
 	leaseID := generateRequestID()
 	baseCtx := context.Background()
 	if ctx != nil {

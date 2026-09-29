@@ -26,6 +26,12 @@ type Selector interface {
 	RefillQuota(ctx context.Context, nodeID int64, req *relayv1.RefillQuotaRequest) (*relayv1.RefillQuotaResponse, error)
 	// UpstreamError 上游错误决策（设计 3.1 第 10 步）。账号不是这台节点正在用的时返回 ErrSelectionNotFound。
 	UpstreamError(ctx context.Context, nodeID int64, req *relayv1.UpstreamErrorRequest) (*relayv1.UpstreamErrorResponse, error)
+	// BeginTurn / TurnMapping：Responses WebSocket 的一轮（开发计划 WP10-3）。选号不是这台节点进行中的时返回
+	// ErrSelectionNotFound。
+	BeginTurn(ctx context.Context, nodeID int64, req *relayv1.BeginTurnRequest) (*relayv1.BeginTurnResponse, error)
+	TurnMapping(ctx context.Context, nodeID int64, req *relayv1.TurnMappingRequest) (*relayv1.TurnMappingResponse, error)
+	// WebSocketLease 每个 Key 的 WebSocket 连接数租约。
+	WebSocketLease(ctx context.Context, nodeID int64, req *relayv1.WebSocketLeaseRequest) (*relayv1.WebSocketLeaseResponse, error)
 	// CyberPolicyHit 上游 cyber 策略命中（设计 3.4）。选号不是这台节点进行中的时返回 ErrSelectionNotFound。
 	CyberPolicyHit(ctx context.Context, nodeID int64, req *relayv1.CyberPolicyHitRequest) (*relayv1.CyberPolicyHitResponse, error)
 	// Release 处理事件连接上的释放消息（不回复，按选号 ID 幂等）。在事件流的接收协程里调用，
@@ -147,6 +153,45 @@ func (c *Control) UpstreamError(ctx context.Context, req *relayv1.UpstreamErrorR
 	resp, err := c.selector.UpstreamError(ctx, nodeID, req)
 	if err != nil {
 		return nil, selectionError(ctx, "upstream_error", nodeID, err)
+	}
+	return resp, nil
+}
+
+// BeginTurn Responses WebSocket 的一轮开始。占槽、签凭证：校验纪元。
+func (c *Control) BeginTurn(ctx context.Context, req *relayv1.BeginTurnRequest) (*relayv1.BeginTurnResponse, error) {
+	nodeID, err := c.selectPeer(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.selector.BeginTurn(ctx, nodeID, req)
+	if err != nil {
+		return nil, selectionError(ctx, "begin_turn", nodeID, err)
+	}
+	return resp, nil
+}
+
+// TurnMapping 一轮的渠道映射（只读）。
+func (c *Control) TurnMapping(ctx context.Context, req *relayv1.TurnMappingRequest) (*relayv1.TurnMappingResponse, error) {
+	nodeID, err := c.selectPeer(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.selector.TurnMapping(ctx, nodeID, req)
+	if err != nil {
+		return nil, selectionError(ctx, "turn_mapping", nodeID, err)
+	}
+	return resp, nil
+}
+
+// WebSocketLease WebSocket 连接数租约（租约在 Redis 里，跨纪元有效）。
+func (c *Control) WebSocketLease(ctx context.Context, req *relayv1.WebSocketLeaseRequest) (*relayv1.WebSocketLeaseResponse, error) {
+	nodeID, err := c.selectPeer(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.selector.WebSocketLease(ctx, nodeID, req)
+	if err != nil {
+		return nil, selectionError(ctx, "websocket_lease", nodeID, err)
 	}
 	return resp, nil
 }

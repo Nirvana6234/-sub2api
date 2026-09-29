@@ -20,16 +20,25 @@ import (
 // Select 选号。目前接入 OpenAI 分组的 Responses、Chat Completions、Messages + API Key，其余返回"暂不支持"，
 // 由从节点交给主节点转发。
 func (s *selector) Select(ctx context.Context, nodeID int64, req *relayv1.SelectRequest) (*relayv1.SelectResponse, error) {
+	ws := false
 	switch req.GetEndpoint() {
 	case relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_RESPONSES, relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_CHAT,
 		relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_MESSAGES:
+	case relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_RESPONSES_WS:
+		ws = true
 	default:
 		return unsupported(), nil
 	}
 	if req.GetApiKey() == "" {
 		return unsupported(), nil
 	}
-	resp, err := s.selectOpenAI(ctx, nodeID, req)
+	var resp *relayv1.SelectResponse
+	var err error
+	if ws {
+		resp, err = s.selectOpenAIWS(ctx, nodeID, req)
+	} else {
+		resp, err = s.selectOpenAI(ctx, nodeID, req)
+	}
 	if err == nil && ctx.Err() != nil && resp.GetSelection() == nil {
 		// 调用已取消时的拒绝多半是取消造成的（查 Key 失败等）；按错误返回，幂等缓存不会记住它，
 		// 从节点超时重发时重新判断。
@@ -223,6 +232,10 @@ func (s *selector) Admit(ctx context.Context, _ int64, req *relayv1.AdmitRequest
 	}
 	if rej != nil {
 		return &relayv1.AdmitResponse{Result: &relayv1.AdmitResponse_Rejection{Rejection: rej.GetRejection()}}, nil
+	}
+	if isResponsesWebSocketAdmission(req.GetMethod(), req.GetPath()) && s.wsAuditMayApply(ctx, adm.APIKey.GroupID) {
+		// WebSocket 升级之前还不知道模型：分组可能被安全审计处理时整条连接交给主节点（审核接入主从通信之前）。
+		return &relayv1.AdmitResponse{Result: &relayv1.AdmitResponse_Rejection{Rejection: unsupported().GetRejection()}}, nil
 	}
 	key, err := keycodec.EncodeAPIKey(adm.APIKey)
 	if err != nil {
