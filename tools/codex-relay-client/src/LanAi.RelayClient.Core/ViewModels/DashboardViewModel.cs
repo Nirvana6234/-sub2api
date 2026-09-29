@@ -400,11 +400,27 @@ public sealed partial class DashboardViewModel : ObservableObject
     // is made to show exactly that (see CodexModelCatalog). A group without one, and the
     // automatic group, leave Codex on the list it ships with.
 
+    /// <summary>
+    /// A default the user picked on the Codex page that the account's Claude preference cannot
+    /// hold (a model only the group's whitelist names). Kept here rather than in the preference,
+    /// which the Claude page and Claude Code's settings share: a model chosen for Codex must not
+    /// show up there. Not remembered across restarts.
+    /// </summary>
+    private string? _codexOnlyModel;
+
     /// <summary>What <paramref name="group"/> serves, or null when it has no list of its own.</summary>
-    private CodexGroupModels? ModelsFor(GroupItemViewModel? group) =>
-        group is null || group.IsAutomatic || !group.HasModelAllowlist
-            ? null
-            : CodexGroupModels.From(group.AllowedModels, IsClaudePlatform(group) ? ClaudePreference.SelectedClaudeModel : null);
+    private CodexGroupModels? ModelsFor(GroupItemViewModel? group)
+    {
+        if (group is null || group.IsAutomatic || !group.HasModelAllowlist)
+        {
+            return null;
+        }
+
+        return CodexGroupModels.From(group.AllowedModels, IsClaudePlatform(group) ? PreferredCodexModel : null);
+    }
+
+    /// <summary>The model the Codex page currently names as the default, if it names one.</summary>
+    private string? PreferredCodexModel => _codexOnlyModel ?? ClaudePreference.SelectedClaudeModel;
 
     private GroupItemViewModel? CurrentGroup => Groups.FirstOrDefault(g => g.IsCurrent);
 
@@ -448,7 +464,7 @@ public sealed partial class DashboardViewModel : ObservableObject
         get
         {
             IReadOnlyList<string> choices = CodexModelChoices;
-            string chosen = ClaudePreference.SelectedClaudeModel;
+            string chosen = PreferredCodexModel!;
             return choices.FirstOrDefault(m => string.Equals(m, chosen, StringComparison.OrdinalIgnoreCase))
                 ?? choices[0];
         }
@@ -456,11 +472,22 @@ public sealed partial class DashboardViewModel : ObservableObject
         set
         {
             // A ComboBox reports null while its items are being replaced; taking that as a
-            // choice would write nothing into the preference and lose the real one.
-            if (!string.IsNullOrWhiteSpace(value) && CodexModelChoices.Contains(value))
+            // choice would lose the real one.
+            if (string.IsNullOrWhiteSpace(value) || !CodexModelChoices.Contains(value))
             {
-                ClaudePreference.SelectedClaudeModel = value;
+                return;
             }
+
+            if (ClaudePreferenceViewModel.ClaudeModels.Contains(value))
+            {
+                // One the account setting can hold: it is the shared preference, as before.
+                _codexOnlyModel = null;
+                ClaudePreference.SelectedClaudeModel = value;
+                return;
+            }
+
+            _codexOnlyModel = value;
+            OnClaudePreferenceChanged();
         }
     }
 
@@ -1387,6 +1414,11 @@ public sealed partial class DashboardViewModel : ObservableObject
         // (a tray menu later, or a test) rather than from the dropdown itself.
         SelectWithoutSwitching(group);
         GroupMessage = string.Empty;
+
+        if (_codexOnlyModel is { } pick && !group.AllowedModels.Contains(pick, StringComparer.OrdinalIgnoreCase))
+        {
+            _codexOnlyModel = null;
+        }
 
         if (_codex.UsesLocalTransport)
         {

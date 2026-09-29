@@ -120,7 +120,7 @@ Windows 上桌面版的 codex.exe 在 `C:\Program Files\WindowsApps\…`，**该
 - 集成（有 Codex 才跑，条件跳过）：起 relay + 真 `codex.exe app-server`，`model/list` 断言随分组变化。
 - 真机：Claude 分组 ↔ 无白名单分组 ↔ 自动分组来回切，看下拉、弹窗、重启后的列表、稍后场景下第一轮的日志。
 
-### M6 Mac ✅（代码已写，未在 Mac 上运行）
+### M6 Mac（代码已写但**未在 Mac 上运行**；`ChatGPT.app` 里 `codex` 的位置是**猜的**，找不到时退回 Codex 自带列表）
 - `ICodexCatalogSource` 的 Mac 实现：定位 `/Applications/Codex.app` 里的 `codex` 可执行文件，取不到就返回 null（退回自带列表，不影响使用）。
 - 其余全部共用；`config.toml` 路径与写法平台无关。Mac 不在开发机上编译，出包由现有流水线负责。
 
@@ -152,5 +152,20 @@ Windows 上桌面版的 codex.exe 在 `C:\Program Files\WindowsApps\…`，**该
   - 兜底替换的日志同一个「分组+模型」只记一次，避免长会话每轮刷屏。
   - 下拉选项：Claude 分组有白名单时，先取「白名单 ∩ 偏好能表示的两个模型」，交集为空才显示白名单全部。
   - 目录地址与开关**只要走本机 relay 就写**（D1），有没有目录由 relay 请求时决定，所以运行中换分组不用改 `config.toml`。
+- 提交后自查发现并修掉的四个问题（都是最初的测试没覆盖的）：
+  1. **目录条目改变了 Codex 发出的请求**。用真 Codex 抓 `/responses` 请求体，对比「有目录」和「没目录（Codex 对未知模型的兜底元数据）」：
+     照抄 gpt-5.5 的条目会多出 `reasoning.effort`（桥接会把它变成扩展思考）、`text.verbosity`、自由格式 `apply_patch` 工具、`tool_search` 工具。
+     现在条目里这些全部按 Codex 兜底元数据置回，再抓一次：`tools`（列表和内容，除了 `multi_agent_v1` 描述里的可用模型清单）、
+     `reasoning`、`text`、`include` 与不下发目录时完全一致。**仍然不同的只有 `instructions`（系统提示词）**：
+     条目带 gpt-5.5 的提示词，而未列出的模型用 Codex 内置的通用提示词。上下文窗口两边都是 272000，没有差异。
+     副作用：这些模型在 Codex 下拉里没有「思考强度」选项——与未列出时相同。
+  2. **重启后仍显示旧列表**。Codex 先用磁盘上 `models_cache.json`（5 分钟内）回答第一次列表请求，后台再刷新，重启后偶尔来不及刷新。
+     现在写配置（带目录地址时）会顺手删掉这个缓存文件，重启后必然重新请求。集成测试因此从「4/6 失败」变成「8/8 通过」。
+  3. **Codex 会在每个对话里发「Under-development features enabled: api_key_model_discovery」警告**（抓 app-server 通知实测）。
+     现在同时写顶层 `suppress_unstable_features_warning = true`；再抓一次，警告消失。副作用：用户自己开的其他实验功能也不再提示。
+  4. **不在共享偏好里的模型不写进共享偏好**。白名单与两个已知 Claude 模型没有交集时，在 Codex 页选的模型只记在 Codex 一侧
+     （不持久，重启客户端后回到白名单第一个），不会出现在 Claude 页或 Claude Code 的设置里。
+- 已知边界：路由守护重写配置时会补回**启动时**选的默认模型；用户选「稍后」之后如果配置被重写，会回到上一个分组的默认模型。
+  relay 的兜底替换会遮住这个影响，所以只是低风险。
 - 已知边界：「稍后」之后，如果 Codex 在 5 分钟缓存到期后自己重新拉了目录，它可能已经显示新列表；这时提示条还在，
   重启一次即消除，无害。

@@ -34,6 +34,13 @@ public sealed class CodexConfigWriter : ICodexLoginStore
     /// </summary>
     private const string DiscoveryFeature = "api_key_model_discovery";
 
+    /// <summary>
+    /// Codex warns in every conversation when a feature still under development is on
+    /// ("Under-development features enabled: api_key_model_discovery", measured). The switch is
+    /// ours, not something the user opted into, so the warning is silenced along with it.
+    /// </summary>
+    private const string SuppressUnstableWarning = "suppress_unstable_features_warning";
+
     private const string ApiKeyField = "OPENAI_API_KEY";
 
     /// <summary>
@@ -115,6 +122,36 @@ public sealed class CodexConfigWriter : ICodexLoginStore
 
             WriteAuth(apiKey, firstCapture);
             WriteConfig(baseUrl, preferredModel, catalogUrl, keepModelIfIn);
+
+            if (catalogUrl is not null)
+            {
+                ForgetCachedModelList();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Codex's on-disk copy of the last model list it fetched, for up to five minutes.
+    /// </summary>
+    internal const string ModelsCacheFile = "models_cache.json";
+
+    /// <summary>
+    /// Deletes Codex's cached model list so the next start asks for it again.
+    /// </summary>
+    /// <remarks>
+    /// Codex answers its first request from that copy and refreshes it in the background, so a
+    /// restart right after a group switch raced the refresh and often showed the previous
+    /// group's models (measured, against the real binary). Best-effort: a copy that cannot be
+    /// removed only means the old list may show once more.
+    /// </remarks>
+    private void ForgetCachedModelList()
+    {
+        try
+        {
+            File.Delete(Path.Combine(_paths.Home, ModelsCacheFile));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
         }
     }
 
@@ -654,6 +691,11 @@ public sealed class CodexConfigWriter : ICodexLoginStore
                 continue;
             }
 
+            if (catalogUrl is not null && IsAssignmentTo(line, SuppressUnstableWarning))
+            {
+                continue;
+            }
+
             if (replaceModel && IsAssignmentTo(line, "model"))
             {
                 if (!wroteModel)
@@ -682,6 +724,11 @@ public sealed class CodexConfigWriter : ICodexLoginStore
         if (!hasReasoningEffort)
         {
             topLevel.Add("model_reasoning_effort = \"medium\"");
+        }
+
+        if (catalogUrl is not null)
+        {
+            topLevel.Add($"{SuppressUnstableWarning} = true");
         }
 
         topLevel.Add($"model_provider = \"{ProviderName}\"");

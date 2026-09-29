@@ -98,7 +98,47 @@ public sealed class CodexModelCatalogTests
         Assert.Equal("plain", (string)entry["base_instructions"]!);
         Assert.Null(entry["tool_mode"]);
         Assert.False((bool)entry["use_responses_lite"]!);
-        Assert.Equal(2, ((JsonArray)entry["supported_reasoning_levels"]!).Count);
+    }
+
+    /// <summary>
+    /// A model reached through the bridge ran on Codex's fallback metadata before it was
+    /// listed. Diffing the real /responses request with and without the entry showed the gpt
+    /// template adding a reasoning effort (which the bridge turns into extended thinking), a
+    /// verbosity setting, a freeform apply_patch tool and a tool-search tool. Listing a model
+    /// must change none of that.
+    /// </summary>
+    [Fact]
+    public void AnEntryAsksCodexForNothingItDidNotAskForAnUnlistedModel()
+    {
+        const string generous = """
+            {"models":[{"slug":"gpt-5.5","priority":1,"visibility":"list","shell_type":"unified_exec",
+              "default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"low","description":"x"}],
+              "supports_reasoning_effort_updates":true,"support_verbosity":true,"default_verbosity":"low",
+              "apply_patch_tool_type":"freeform","web_search_tool_type":"text_and_image","supports_search_tool":true,
+              "supports_experimental_context":true,"supports_image_detail_original":true,
+              "experimental_supported_tools":["a"],"include_skills_usage_instructions":true,
+              "include_plugin_usage_instructions":true,"include_apps_usage_instructions":true,
+              "default_reasoning_summary":"none","base_instructions":"b"}]}
+            """;
+
+        JsonObject entry = Entries(CodexModelCatalog.Build(generous, CodexGroupModels.From(["claude-sonnet-5"])!)!).Single();
+
+        Assert.Null(entry["default_reasoning_level"]);
+        Assert.Empty((JsonArray)entry["supported_reasoning_levels"]!);
+        Assert.False((bool)entry["supports_reasoning_effort_updates"]!);
+        Assert.False((bool)entry["support_verbosity"]!);
+        Assert.Null(entry["default_verbosity"]);
+        Assert.Null(entry["apply_patch_tool_type"]);
+        Assert.Equal("text", (string)entry["web_search_tool_type"]!);
+        Assert.False((bool)entry["supports_search_tool"]!);
+        Assert.False((bool)entry["supports_experimental_context"]!);
+        Assert.False((bool)entry["supports_image_detail_original"]!);
+        Assert.Empty((JsonArray)entry["experimental_supported_tools"]!);
+        Assert.False((bool)entry["include_skills_usage_instructions"]!);
+        Assert.False((bool)entry["include_plugin_usage_instructions"]!);
+        Assert.False((bool)entry["include_apps_usage_instructions"]!);
+        Assert.Equal("auto", (string)entry["default_reasoning_summary"]!);
+        Assert.True((bool)entry["supports_reasoning_summary_parameter"]!);
     }
 
     [Fact]
@@ -110,7 +150,6 @@ public sealed class CodexModelCatalogTests
 
         Assert.Null(entry["upgrade"]);
         Assert.Null(entry["availability_nux"]);
-        Assert.Null(entry["model_messages"]);
         Assert.Null(entry["default_service_tier"]);
         Assert.Empty((JsonArray)entry["service_tiers"]!);
     }

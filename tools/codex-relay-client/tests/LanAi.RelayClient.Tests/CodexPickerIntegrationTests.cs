@@ -64,7 +64,13 @@ public sealed class CodexPickerIntegrationTests : IDisposable
         Assert.Equal(["claude-opus-5", "claude-sonnet-5"], claude);
 
         // The same relay moved to a group with none: a restarted Codex is back on its own list.
+        // A restart is the client writing the configuration again, which also clears Codex's
+        // cached copy of the previous list — without that, the old list races the refresh.
         relay.SetGroup(2, "OpenAI", null);
+        writer.Apply(
+            relay.Token,
+            relay.Origin + "/v1",
+            catalogUrl: relay.Origin + LocalPawRelay.CatalogPath);
         string[] own = await PickerAsync(codex, home);
         Assert.DoesNotContain(own, m => m.StartsWith("claude", StringComparison.Ordinal));
         Assert.True(own.Length > 0);

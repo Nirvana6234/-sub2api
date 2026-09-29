@@ -89,7 +89,6 @@ internal static class CodexModelCatalog
         // What belongs to the model the template was copied from, not to this one.
         copy["upgrade"] = null;
         copy["availability_nux"] = null;
-        copy["model_messages"] = null;
         copy["model_specialty"] = null;
         copy["service_tiers"] = new JsonArray();
         copy["default_service_tier"] = null;
@@ -100,6 +99,30 @@ internal static class CodexModelCatalog
         copy["use_responses_lite"] = false;
         copy["multi_agent_version"] = null;
         copy["multi_agent_reasoning_effort"] = null;
+
+        // What Codex itself assumes for a model it has never heard of. A model reached
+        // through the bridge behaved exactly like that until it was listed, and listing it
+        // must not change what Codex sends for it — measured against the real binary by
+        // diffing the /responses request with and without the entry. Left as copied, the
+        // gpt template adds a reasoning effort (which the bridge turns into extended
+        // thinking), a verbosity setting, a freeform apply_patch tool and a tool-search tool,
+        // none of which a Claude model was ever sent, and shrinks nothing in exchange.
+        copy["default_reasoning_level"] = null;
+        copy["supported_reasoning_levels"] = new JsonArray();
+        copy["supports_reasoning_effort_updates"] = false;
+        copy["supports_reasoning_summary_parameter"] = true;
+        copy["default_reasoning_summary"] = "auto";
+        copy["support_verbosity"] = false;
+        copy["default_verbosity"] = null;
+        copy["apply_patch_tool_type"] = null;
+        copy["web_search_tool_type"] = "text";
+        copy["supports_search_tool"] = false;
+        copy["supports_experimental_context"] = false;
+        copy["supports_image_detail_original"] = false;
+        copy["experimental_supported_tools"] = new JsonArray();
+        copy["include_skills_usage_instructions"] = false;
+        copy["include_plugin_usage_instructions"] = false;
+        copy["include_apps_usage_instructions"] = false;
         return copy;
     }
 

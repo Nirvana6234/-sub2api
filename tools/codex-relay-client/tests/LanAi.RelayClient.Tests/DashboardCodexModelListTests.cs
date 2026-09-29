@@ -176,6 +176,50 @@ public sealed class DashboardCodexModelListTests
     }
 
     [Fact]
+    public async Task AModelOnlyTheWhitelistNamesStaysOnTheCodexSide()
+    {
+        // The Claude page and Claude Code's settings read the shared preference; a model chosen
+        // for Codex that they cannot show or hold must not end up there.
+        var wide = Group(9, "Wide", "anthropic", "claude-haiku-4", "kimi-k2.5");
+        (DashboardViewModel dashboard, FakeCodexStartup codex) = await BuildWithCodexAsync(wide);
+        string before = dashboard.ClaudePreference.SelectedClaudeModel;
+
+        dashboard.CodexModelChoice = "kimi-k2.5";
+
+        Assert.Equal(before, dashboard.ClaudePreference.SelectedClaudeModel);
+        Assert.Equal("kimi-k2.5", dashboard.CodexModelChoice);
+        Assert.Equal("kimi-k2.5", codex.ActiveGroupModels[^1]!.DefaultModel);
+    }
+
+    [Fact]
+    public async Task ACodexOnlyPickIsDroppedWhenTheNextGroupDoesNotNameIt()
+    {
+        var wide = Group(9, "Wide", "anthropic", "claude-haiku-4", "kimi-k2.5");
+        (DashboardViewModel dashboard, FakeCodexStartup codex) = await BuildWithCodexAsync(wide, ClaudeGroup);
+        dashboard.CodexModelChoice = "kimi-k2.5";
+
+        await dashboard.SwitchGroupAsync(Item(dashboard, 1));
+
+        Assert.NotEqual("kimi-k2.5", codex.ActiveGroupModels[^1]!.DefaultModel);
+    }
+
+    private static async Task<(DashboardViewModel Dashboard, FakeCodexStartup Codex)> BuildWithCodexAsync(params RelayGroup[] groups)
+    {
+        var relay = new FakeRelayClient();
+        var session = new RelaySessionManager(relay, new FakeSessionStore(), "https://relay.test/", new TestClock().Read);
+        var codex = new FakeCodexStartup { UsesLocalTransport = true };
+        var preferences = new FakeGroupPreferenceStore();
+        preferences.Save(groups[0].Id);
+        var dashboard = new DashboardViewModel(
+            relay, session, preferences, new ManagedKeyNaming(new FixedInstallId("testinst")), codex);
+        await session.SignInAsync("a@b.com", "pw");
+        relay.OnAvailableGroups = () => groups;
+        relay.OnListKeys = () => [];
+        await dashboard.RefreshAsync();
+        return (dashboard, codex);
+    }
+
+    [Fact]
     public async Task ThePageShowsTheFirstChoiceWhenThePreferenceIsNotOneOfThem()
     {
         var onlyHaiku = Group(9, "Haiku", "anthropic", "claude-haiku-4");

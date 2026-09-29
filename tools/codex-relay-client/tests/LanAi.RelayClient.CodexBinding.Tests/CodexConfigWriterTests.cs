@@ -773,6 +773,32 @@ public sealed class CodexConfigWriterTests : IDisposable
     }
 
     [Fact]
+    public void SilencesCodexsUnderDevelopmentWarningForTheSwitchItTurnedOn()
+    {
+        // Measured: Codex posts "Under-development features enabled: api_key_model_discovery"
+        // into every conversation otherwise.
+        GivenConfig("suppress_unstable_features_warning = false\nmodel = \"gpt-5\"\n");
+
+        _writer.Apply("sk-relay", "https://relay.test/v1", catalogUrl: Catalog);
+
+        string config = Config();
+        Assert.Equal(1, CountOf(config, "suppress_unstable_features_warning"));
+        Assert.Contains("suppress_unstable_features_warning = true", config, StringComparison.Ordinal);
+        // Top level, before the first table: after one it would belong to that table.
+        Assert.True(config.IndexOf("suppress_unstable_features_warning", StringComparison.Ordinal) < config.IndexOf("[model_providers", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void LeavesTheWarningSettingAloneWithoutACatalog()
+    {
+        GivenConfig("suppress_unstable_features_warning = false\n");
+
+        _writer.Apply("sk-relay", "https://relay.test/v1");
+
+        Assert.Contains("suppress_unstable_features_warning = false", Config(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void WritesNeitherWithoutACatalogAddress()
     {
         _writer.Apply("sk-relay", "https://relay.test/v1");
@@ -894,6 +920,31 @@ public sealed class CodexConfigWriterTests : IDisposable
         // The top-level model is ours to fill in; the profile's own stays as it was.
         Assert.Contains("model = \"claude-sonnet-5\"", config, StringComparison.Ordinal);
         Assert.Contains("[profiles.work]\nmodel = \"gpt-5.5\"", config.Replace("\r\n", "\n"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ForgetsCodexsCachedModelListWhenItIsToBeAskedForOne()
+    {
+        // Otherwise a restart right after a group switch is answered from the old group's copy.
+        string cache = Path.Combine(_home, "models_cache.json");
+        Directory.CreateDirectory(_home);
+        File.WriteAllText(cache, "{}");
+
+        _writer.Apply("sk-relay", "https://relay.test/v1", catalogUrl: Catalog);
+
+        Assert.False(File.Exists(cache));
+    }
+
+    [Fact]
+    public void LeavesTheCachedModelListAloneWhenNoCatalogIsInvolved()
+    {
+        string cache = Path.Combine(_home, "models_cache.json");
+        Directory.CreateDirectory(_home);
+        File.WriteAllText(cache, "{}");
+
+        _writer.Apply("sk-relay", "https://relay.test/v1");
+
+        Assert.True(File.Exists(cache));
     }
 
     private static int CountOf(string text, string needle)
