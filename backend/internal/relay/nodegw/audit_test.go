@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
 	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
@@ -18,13 +19,16 @@ import (
 )
 
 type fakeModeration struct {
-	calls []*relayv1.SecurityAuditRequest
-	resp  *relayv1.SecurityAuditResponse
-	err   error
+	calls     []*relayv1.SecurityAuditRequest
+	deadlines []time.Time
+	resp      *relayv1.SecurityAuditResponse
+	err       error
 }
 
-func (f *fakeModeration) SecurityAudit(_ context.Context, in *relayv1.SecurityAuditRequest, _ ...grpc.CallOption) (*relayv1.SecurityAuditResponse, error) {
+func (f *fakeModeration) SecurityAudit(ctx context.Context, in *relayv1.SecurityAuditRequest, _ ...grpc.CallOption) (*relayv1.SecurityAuditResponse, error) {
 	f.calls = append(f.calls, in)
+	deadline, _ := ctx.Deadline()
+	f.deadlines = append(f.deadlines, deadline)
 	return f.resp, f.err
 }
 
@@ -64,6 +68,8 @@ func TestNodeSecurityAuditPolicy(t *testing.T) {
 	var prepared securityaudit.PreparedInput
 	require.NoError(t, json.Unmarshal(call.GetPrepared(), &prepared))
 	require.Equal(t, "hello", prepared.Moderation.Text)
+	// 等得比审核连接默认的 10 秒久：主节点上最慢的判定要几分钟，单机会等到真实结果。
+	require.WithinDuration(t, time.Now().Add(auditCallTimeout), m.deadlines[0], 5*time.Second)
 
 	// 复查不通过：放行（选号时拒绝）。
 	m.resp = &relayv1.SecurityAuditResponse{Skipped: true}

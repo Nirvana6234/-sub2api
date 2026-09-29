@@ -42,6 +42,12 @@ func TestNodeRunsTheSecurityAuditOnTheMaster(t *testing.T) {
 	require.Equal(t, "please audit me", snapshot.ScanText)
 	require.Equal(t, int64(0), e.world.slots.held.Load(), "nothing was selected")
 
+	// 单机在审计之前就拒的（分组不允许 /v1/messages 派发），从节点同样先拒，不送审计（不留审核记录、不计违规）。
+	status, body = e.post(t, "/v1/messages", "sk-a", `{"model":"claude-sonnet-4-5","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`)
+	require.Equal(t, http.StatusForbidden, status, body)
+	require.Contains(t, body, `"type":"error"`)
+	require.Len(t, audit.requests(), 1, "rejected before the audit, like a single server")
+
 	audit.set(securityaudit.AllowDecision())
 	status, body = e.post(t, "/v1/responses", "sk-a", `{"model":"gpt-5","input":"hi"}`)
 	require.Equal(t, http.StatusOK, status, "an audited request is served by the node: %s", body)

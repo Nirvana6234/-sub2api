@@ -471,22 +471,22 @@ type OpenAIGatewayService struct {
 	liveAttestation       liveattestation.Provider
 	liveAttestationCipher SecretEncryptor
 
-	openaiWSPoolOnce               sync.Once
-	openaiWSStateStoreOnce         sync.Once
-	openaiSchedulerOnce            sync.Once
-	openaiProxyStreamCircuitOnce   sync.Once
-	openaiWSPassthroughDialerOnce  sync.Once
-	openaiModelTransientOnce       sync.Once
-	agentIdentityTaskMu            sync.Mutex
-	openaiWSPool                   *openAIWSConnPool
-	openaiWSStateStore             OpenAIWSStateStore
-	openaiScheduler                OpenAIAccountScheduler
-	openaiWSPassthroughDialer      openAIWSClientDialer
-	openaiWSSessionPreemptions     openAIWSSessionPreemptRegistry
-	openaiAccountStats             *openAIAccountRuntimeStats
-	openaiLatencyTracker           *openAILatencyTracker
-	openaiLatencyTrackerOnce       sync.Once
-	openaiFallbackStickyStates     sync.Map // key: source group ID, value: *openAIFallbackStickyState
+	openaiWSPoolOnce              sync.Once
+	openaiWSStateStoreOnce        sync.Once
+	openaiSchedulerOnce           sync.Once
+	openaiProxyStreamCircuitOnce  sync.Once
+	openaiWSPassthroughDialerOnce sync.Once
+	openaiModelTransientOnce      sync.Once
+	agentIdentityTaskMu           sync.Mutex
+	openaiWSPool                  *openAIWSConnPool
+	openaiWSStateStore            OpenAIWSStateStore
+	openaiScheduler               OpenAIAccountScheduler
+	openaiWSPassthroughDialer     openAIWSClientDialer
+	openaiWSSessionPreemptions    openAIWSSessionPreemptRegistry
+	openaiAccountStats            *openAIAccountRuntimeStats
+	openaiLatencyTracker          *openAILatencyTracker
+	openaiLatencyTrackerOnce      sync.Once
+	openaiFallbackStickyStates    sync.Map // key: source group ID, value: *openAIFallbackStickyState
 	// openaiGroupAccountIDs 缓存分组的可调度账号清单，供延迟兜底前的
 	// "源组是否还有健康账号" 判断使用（key: group ID, value: *openAIGroupAccountIDsEntry）。
 	openaiGroupAccountIDs sync.Map
@@ -508,7 +508,7 @@ type OpenAIGatewayService struct {
 	// upstreamErrorDecider：上游错误的判定；空时用本机实现（见 openai_upstream_error_decider.go）。
 	upstreamErrorDecider atomic.Pointer[openAIUpstreamErrorDeciderHolder]
 	// accountReporterOverride：账号状态的上报；空时用本机实现（见 openai_account_reporter.go）。
-	accountReporterOverride atomic.Pointer[openAIAccountReporterHolder]
+	accountReporterOverride             atomic.Pointer[openAIAccountReporterHolder]
 	grokCredentialMutationLocks         sync.Map // key: int64(accountID), value: *sync.Mutex
 	openaiOAuth429WindowStartUnixNano   atomic.Int64
 	openaiOAuth429WindowCount           atomic.Int64

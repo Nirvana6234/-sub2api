@@ -225,11 +225,11 @@ type UsageLog struct {
 	AccountSource string
 	// NodeID 是经主从分流从节点转发、由主节点入账时的从节点 ID；nil 表示主节点自己转发的
 	// （docs/MASTER_RELAY_NODES.md 12 章，迁移 259 的约定）。
-	NodeID *int64
-	DurationMs    *int
-	FirstTokenMs  *int
-	UserAgent     *string
-	IPAddress     *string
+	NodeID       *int64
+	DurationMs   *int
+	FirstTokenMs *int
+	UserAgent    *string
+	IPAddress    *string
 	// SessionID is the explicit client-provided request correlation identifier
 	// (e.g. the session_id / X-Session-Id headers). Nil when the client sent no
 	// valid session header. It is never derived from prompt_cache_key or content.

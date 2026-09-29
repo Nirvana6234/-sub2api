@@ -1,10 +1,12 @@
 package nodegw
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
@@ -17,6 +19,11 @@ import (
 const maxAuditInputBytes = 15 << 20
 
 var errAuditInputTooLarge = errors.New("prepared audit input is too large")
+
+// auditCallTimeout 是一次审计调用最长等多久：盖住主节点上最慢的判定（内容审核单次最长 30 秒、最多 6 次，
+// 提示词审计单次最长 30 秒，两者并行），不用审核连接默认的 10 秒，免得审核慢时从节点比单机先放弃、
+// 按策略放行或回 503（单机会等到真实结果）。客户端断开时随请求 ctx 结束。
+const auditCallTimeout = 5 * time.Minute
 
 // SecurityAudit 转发前的安全审计（handler.OpenAIRelayDispatcher，设计 3.4）：按主节点给的审计策略（准入时给，
 // WebSocket 每一轮 BeginTurn 更新），不会被审计时直接放行；否则把预先抽好的审核输入（不带请求体）经审核连接
@@ -47,7 +54,9 @@ func (d *Dispatcher) SecurityAudit(c *gin.Context, apiKey *service.APIKey, reque
 	if len(raw) > maxAuditInputBytes {
 		return fail(errAuditInputTooLarge)
 	}
-	resp, err := d.deps.Moderation.SecurityAudit(c.Request.Context(), &relayv1.SecurityAuditRequest{
+	ctx, cancel := context.WithTimeout(c.Request.Context(), auditCallTimeout)
+	defer cancel()
+	resp, err := d.deps.Moderation.SecurityAudit(ctx, &relayv1.SecurityAuditRequest{
 		ApiKey: apiKey.Key, ClientIp: strings.TrimSpace(ip.GetClientIP(c)), Method: c.Request.Method, Path: c.Request.URL.Path,
 		RequestId: request.RequestID, Endpoint: request.Endpoint, Provider: request.Provider, Protocol: request.Protocol,
 		Model: request.Model, Stage: request.Stage, Prepared: raw,
