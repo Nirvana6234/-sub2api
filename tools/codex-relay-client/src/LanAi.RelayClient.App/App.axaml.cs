@@ -372,6 +372,8 @@ public partial class App : Application
         dashboard.ConfigureAutoGroup = (settings, candidates) =>
             AutoGroupDialog.ShowAsync(shell, settings, candidates);
         dashboard.ShowGroupModels = message => NoticeDialog.ShowNoticeAsync(shell, message);
+        dashboard.ConfirmModelListRestart = message =>
+            ConfirmDialog.AskAsync(shell, message, confirmLabel: "立即重启", cancelLabel: "等待");
 
         clientUpdate.ConfirmUpdate = message => ConfirmDialog.AskAsync(shell, message, confirmLabel: "更新");
         clientUpdate.ShowMessage = message => NoticeDialog.ShowNoticeAsync(shell, message);

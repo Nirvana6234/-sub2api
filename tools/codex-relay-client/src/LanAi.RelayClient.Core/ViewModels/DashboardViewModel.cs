@@ -50,6 +50,15 @@ public sealed partial class DashboardViewModel : ObservableObject
 
     private RelayApiKey? _managedKey;
 
+    // The group this installation is on, held in memory once it has been decided. Decided once,
+    // at start-up (see LoadGroupCardAsync), and changed only by this client's own switches:
+    // polling must not read it back from anywhere, or a second copy of the client running on the
+    // same machine — which shares the preference file — would drag this one to its group on every
+    // poll and leave two groups marked as in use.
+    private bool _groupSelectionInitialized;
+    private long? _selectedGroupId;
+    private bool _automaticMode;
+
     /// <summary>Whether there is a bundled filter to switch; false greys the checkbox out.</summary>
     public bool CanToggleContextFilter => _codex.HasContextFilter;
 
@@ -492,6 +501,71 @@ public sealed partial class DashboardViewModel : ObservableObject
     }
 
     // ---- Telling the user a switch changes Codex's picker ---------------------------------
+
+    /// <summary>
+    /// Asks whether to restart Codex now so its picker shows a switched-to group's models, or to
+    /// wait for the window to catch up on its own. The host supplies the dialog; without one the
+    /// answer is to wait.
+    /// </summary>
+    public Func<string, Task<bool>>? ConfirmModelListRestart { get; set; }
+
+    private static bool ModelListChanges(CodexGroupModels? from, CodexGroupModels? to) =>
+        !string.Equals(CodexGroupModels.SignatureOf(from), CodexGroupModels.SignatureOf(to), StringComparison.Ordinal);
+
+    /// <summary>Whether Codex is running right now — asked afresh, since the poll behind the flag may be a minute old.</summary>
+    private async Task<bool> CodexIsRunningNowAsync(CancellationToken cancellationToken)
+    {
+        if (IsCodexRunning)
+        {
+            return true;
+        }
+
+        try
+        {
+            return (await _codex.CheckAsync(cancellationToken).ConfigureAwait(true)).IsRunning;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// After a switch that changes which models Codex's picker should show: lets the user choose
+    /// between restarting Codex now and waiting. Waiting is safe — the window catches up within
+    /// about five minutes, and until then the relay moves any request for a model the new group
+    /// does not serve onto its default.
+    /// </summary>
+    private async Task OfferModelListRestartAsync(
+        GroupItemViewModel? from,
+        GroupItemViewModel to,
+        CancellationToken cancellationToken)
+    {
+        CodexGroupModels? models = ModelsFor(to);
+        if (ConfirmModelListRestart is null ||
+            !ModelListChanges(ModelsFor(from), models) ||
+            !await CodexIsRunningNowAsync(cancellationToken).ConfigureAwait(true))
+        {
+            return;
+        }
+
+        string what = models is null
+            ? $"{to.Name} 没有模型白名单，Codex 的模型下拉会恢复为它自带的列表。"
+            : $"Codex 的模型下拉会只显示 {to.Name} 支持的模型。";
+        string waiting = models is null
+            ? "不用重启，下拉最多约 5 分钟后自动更新。"
+            : $"不用重启，下拉最多约 5 分钟后自动更新；期间 Codex 仍请求旧模型时，共飞会自动换成 {models.DefaultModel}。";
+
+        bool restart = await ConfirmModelListRestart(
+                $"已切换到 {to.Name}。{what}\n\n" +
+                "· 立即重启：马上看到新的模型列表，会中断正在进行的对话。\n" +
+                $"· 等待：{waiting}")
+            .ConfigureAwait(true);
+        if (restart)
+        {
+            await StartCodexAsync(_ => Task.FromResult(true), cancellationToken, forceRestart: true).ConfigureAwait(true);
+        }
+    }
 
     /// <summary>
     /// The sentence added to a switch's message when the running Codex will show a different
@@ -1172,29 +1246,42 @@ public sealed partial class DashboardViewModel : ObservableObject
                 }
             }
 
-            // Under the local transport, the managed key's group id (if a key exists
-            // at all — a leftover from before this installation moved to the loopback
-            // relay, or one recorded by another installation of the same account, see
-            // SwitchGroupAsync below) is only ever a *default*: something to seed a
-            // client that has not made its own choice yet. Once this installation has
-            // a local preference, that preference is authoritative for as long as it
-            // runs — a refresh must never drag the group back to the server's record,
-            // and neither may some other device's later switch, which is why the
-            // server default is written into the local preference immediately below
-            // rather than re-read on every poll.
-            long? localGroup = _preferences.Load();
+            // Which group this installation is on is decided once, when it starts: its own last
+            // choice if it has one, otherwise the server's default (the managed key's group, if
+            // an account has one — a leftover from before this installation moved to the loopback
+            // relay, or one recorded by another installation). The default is written into the
+            // local preference straight away, so it is only ever a seed.
+            //
+            // After that the selection lives in memory and is changed only by this client's own
+            // switches. A poll must not read it again — from the server, or from the preference
+            // file, which a second copy of the client on the same machine also writes: either
+            // would drag the group away from what the user chose here, and could leave two
+            // groups showing as in use.
             long? current;
+            bool automaticWanted;
             if (_codex.UsesLocalTransport)
             {
-                current = localGroup ?? _managedKey?.GroupId;
-                if (localGroup is null && current is not null)
+                if (!_groupSelectionInitialized)
                 {
-                    _preferences.Save(current.Value);
+                    long? localGroup = _preferences.Load();
+                    current = localGroup ?? _managedKey?.GroupId;
+                    if (localGroup is null && current is not null)
+                    {
+                        _preferences.Save(current.Value);
+                    }
+
+                    automaticWanted = _preferences.LoadAutomatic();
+                }
+                else
+                {
+                    current = _selectedGroupId;
+                    automaticWanted = _automaticMode;
                 }
             }
             else
             {
-                current = _managedKey?.GroupId ?? localGroup;
+                current = _managedKey?.GroupId ?? _preferences.Load();
+                automaticWanted = _preferences.LoadAutomatic();
             }
 
             Groups.Clear();
@@ -1217,8 +1304,15 @@ public sealed partial class DashboardViewModel : ObservableObject
             // The mode is the client's own choice, so it is read back from local
             // preferences. The server's auto_group flag says only that candidates
             // exist for this account, never which mode this machine is in.
-            if (_preferences.LoadAutomatic() && automatic is not null)
+            if (automaticWanted && automatic is not null)
             {
+                // One group in use, not two: the fixed group the local preference still names
+                // was marked above and must not stay marked beside 自动分组.
+                foreach (GroupItemViewModel item in Groups)
+                {
+                    item.IsCurrent = false;
+                }
+
                 automatic.IsCurrent = true;
                 inForce = automatic;
             }
@@ -1226,6 +1320,10 @@ public sealed partial class DashboardViewModel : ObservableObject
             {
                 inForce = Groups.FirstOrDefault(g => !g.IsAutomatic && g.IsCurrent);
             }
+
+            _selectedGroupId = inForce is { IsAutomatic: false } fixedInForce ? fixedInForce.Id : current;
+            _automaticMode = inForce?.IsAutomatic == true;
+            _groupSelectionInitialized = true;
 
             // A first-time account has neither a managed key nor a local choice.
             // Select the first server-approved group so Codex has a usable billing
@@ -1395,6 +1493,8 @@ public sealed partial class DashboardViewModel : ObservableObject
             {
                 _ = _safeAsync.RunAsync(() => RecordGroupOnManagedKeyAsync(_managedKey.Id, group.Id, cancellationToken));
             }
+
+            await OfferModelListRestartAsync(previous, group, cancellationToken).ConfigureAwait(true);
             return;
         }
 
@@ -1519,6 +1619,7 @@ public sealed partial class DashboardViewModel : ObservableObject
             OnPropertyChanged(nameof(CodexModelChoice));
             OnPropertyChanged(nameof(CanStartCodex));
             OnPropertyChanged(nameof(StartCodexLabel));
+            await OfferModelListRestartAsync(previous, automatic, cancellationToken).ConfigureAwait(true);
         }
         catch (RelayApiException ex)
         {
@@ -1623,6 +1724,12 @@ public sealed partial class DashboardViewModel : ObservableObject
             item.IsCurrent = item == group;
         }
 
+        _automaticMode = group.IsAutomatic;
+        if (!group.IsAutomatic)
+        {
+            _selectedGroupId = group.Id;
+        }
+
         ApplyCurrentLabels(group);
     }
 
@@ -1674,6 +1781,9 @@ public sealed partial class DashboardViewModel : ObservableObject
         _refreshCancellation = null;
 
         _managedKey = null;
+        _groupSelectionInitialized = false;
+        _selectedGroupId = null;
+        _automaticMode = false;
         _autoGroupSettings = null;
         _autoGroupSupported = true;
         CanConfigureAutoGroup = false;

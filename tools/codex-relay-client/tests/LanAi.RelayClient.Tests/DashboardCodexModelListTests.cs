@@ -296,4 +296,125 @@ public sealed class DashboardCodexModelListTests
         // The list changed back, so it changed again: the running Codex still has to catch up.
         Assert.Contains("模型下拉", dashboard.GroupMessage, StringComparison.Ordinal);
     }
+
+    // ---- Asking whether to restart Codex or wait ----------------------------------------
+
+    private static async Task<(DashboardViewModel Dashboard, FakeCodexStartup Codex, List<string> Asked)> AskingOnAsync(
+        long groupId, bool answer, bool running = true)
+    {
+        (DashboardViewModel dashboard, FakeCodexStartup codex) = await BuildAsync(startOn: groupId);
+        dashboard.IsCodexRunning = running;
+        var asked = new List<string>();
+        dashboard.ConfirmModelListRestart = message => { asked.Add(message); return Task.FromResult(answer); };
+        return (dashboard, codex, asked);
+    }
+
+    [Fact]
+    public async Task AsksWhenTheRunningCodexWillShowADifferentList_AndNamesBothWays()
+    {
+        (DashboardViewModel dashboard, FakeCodexStartup codex, List<string> asked) = await AskingOnAsync(2, answer: false);
+
+        await dashboard.SwitchGroupAsync(Item(dashboard, 1));
+
+        string question = Assert.Single(asked);
+        Assert.Contains("Claude", question, StringComparison.Ordinal);
+        Assert.Contains("立即重启", question, StringComparison.Ordinal);
+        Assert.Contains("等待", question, StringComparison.Ordinal);
+        Assert.Contains(codex.ActiveGroupModels[^1]!.DefaultModel, question, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ChoosingToRestartRestartsCodexOnTheNewGroupsModels()
+    {
+        (DashboardViewModel dashboard, FakeCodexStartup codex, _) = await AskingOnAsync(2, answer: true);
+        int runsBefore = codex.RunCount;
+
+        await dashboard.SwitchGroupAsync(Item(dashboard, 1));
+
+        Assert.Equal(runsBefore + 1, codex.RunCount);
+        Assert.True(codex.LastAllowRestart);
+        Assert.Equal(3, codex.LastGroupModels!.Models.Count);
+    }
+
+    [Fact]
+    public async Task ChoosingToWaitLeavesCodexAlone()
+    {
+        (DashboardViewModel dashboard, FakeCodexStartup codex, _) = await AskingOnAsync(2, answer: false);
+        int runsBefore = codex.RunCount;
+
+        await dashboard.SwitchGroupAsync(Item(dashboard, 1));
+
+        Assert.Equal(runsBefore, codex.RunCount);
+        Assert.Equal(1, codex.ActiveGroups[^1]); // the relay is on the new group either way
+    }
+
+    [Fact]
+    public async Task DoesNotAskWhenCodexIsNotRunning()
+    {
+        (DashboardViewModel dashboard, _, List<string> asked) = await AskingOnAsync(2, answer: true, running: false);
+
+        await dashboard.SwitchGroupAsync(Item(dashboard, 1));
+
+        Assert.Empty(asked);
+    }
+
+    [Fact]
+    public async Task AsksEvenWhenTheRunningFlagIsStaleBecauseTheHealthCheckSaysCodexIsUp()
+    {
+        // The flag moves on a poll up to a minute old; a switch right after Codex started must
+        // still be asked about.
+        (DashboardViewModel dashboard, FakeCodexStartup codex, List<string> asked) = await AskingOnAsync(2, answer: false, running: false);
+        codex.OnCheck = () => new CodexHealth(true, true, null);
+
+        await dashboard.SwitchGroupAsync(Item(dashboard, 1));
+
+        Assert.Single(asked);
+    }
+
+    [Fact]
+    public async Task DoesNotAskWhenBothGroupsLeaveCodexOnItsOwnList()
+    {
+        (DashboardViewModel dashboard, _, List<string> asked) = await AskingOnAsync(3, answer: true);
+
+        await dashboard.SwitchGroupAsync(Item(dashboard, 4));
+
+        Assert.Empty(asked);
+    }
+
+    [Fact]
+    public async Task DoesNotAskWhenTheTwoGroupsShowTheSameModels()
+    {
+        var twin = Group(5, "Twin", "openai", "gpt-5.5", "gpt-5.4");
+        (DashboardViewModel dashboard, FakeCodexStartup codex) = await BuildWithCodexAsync(OpenAiGroup, twin);
+        dashboard.IsCodexRunning = true;
+        var asked = new List<string>();
+        dashboard.ConfirmModelListRestart = message => { asked.Add(message); return Task.FromResult(true); };
+        int runs = codex.RunCount;
+
+        await dashboard.SwitchGroupAsync(Item(dashboard, 5));
+
+        Assert.Empty(asked);
+        Assert.Equal(runs, codex.RunCount);
+    }
+
+    [Fact]
+    public async Task SwitchingToAGroupWithoutAWhitelistSaysTheListGoesBackToCodexsOwn()
+    {
+        (DashboardViewModel dashboard, _, List<string> asked) = await AskingOnAsync(1, answer: false);
+
+        await dashboard.SwitchGroupAsync(Item(dashboard, 3));
+
+        Assert.Contains("自带", Assert.Single(asked), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AWhitelistedGroupAskingNothingWithoutAHost()
+    {
+        (DashboardViewModel dashboard, _) = await BuildAsync(startOn: 2);
+        dashboard.IsCodexRunning = true;
+
+        await dashboard.SwitchGroupAsync(Item(dashboard, 1)); // no ConfirmModelListRestart set: must not throw
+
+        Assert.Equal(1, dashboard.SelectedGroup!.Id);
+    }
 }
