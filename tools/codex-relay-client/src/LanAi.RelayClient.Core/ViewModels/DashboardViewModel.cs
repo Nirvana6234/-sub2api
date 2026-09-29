@@ -491,71 +491,22 @@ public sealed partial class DashboardViewModel : ObservableObject
         }
     }
 
-    // ---- Restart to see a new model list ---------------------------------------------------
+    // ---- Telling the user a switch changes Codex's picker ---------------------------------
 
     /// <summary>
-    /// Asks whether to restart Codex now so its picker shows the model list of a group just
-    /// switched to. The host supplies the dialog; without one the answer is no, and the Codex
-    /// page keeps saying the list is out of date.
+    /// The sentence added to a switch's message when the running Codex will show a different
+    /// model list. Nothing needs restarting — the relay and the client see to it that Codex
+    /// fetches the new list (see <c>CodexStartup.SetActiveGroup</c>) — but the picker only
+    /// changes when it is next opened or a message is sent, and saying so beats a user wondering.
     /// </summary>
-    public Func<string, Task<bool>>? ConfirmModelListRestart { get; set; }
-
-    [ObservableProperty]
-    private string codexModelListNotice = string.Empty;
-
-    public bool HasCodexModelListNotice => !string.IsNullOrWhiteSpace(CodexModelListNotice);
-
-    partial void OnCodexModelListNoticeChanged(string value) => OnPropertyChanged(nameof(HasCodexModelListNotice));
-
-    /// <summary>
-    /// Whether the Codex that is running was started with a different model list than the
-    /// current group's, and so will show the old one until it is restarted.
-    /// </summary>
-    private bool ModelListIsStale(GroupItemViewModel? current) =>
+    private string ModelListNote(GroupItemViewModel? from, GroupItemViewModel to) =>
         IsCodexRunning &&
-        _codex.UsesLocalTransport &&
-        _codex.LoadedCatalogSignature is { } loaded &&
-        current is not null &&
-        !string.Equals(loaded, CodexGroupModels.SignatureOf(ModelsFor(current)), StringComparison.Ordinal);
-
-    private void RefreshModelListNotice()
-    {
-        CodexModelListNotice = ModelListIsStale(CurrentGroup)
-            ? "Codex 的模型下拉还是切换分组之前的列表，重启 Codex 后才会更新。"
+        !string.Equals(
+            CodexGroupModels.SignatureOf(ModelsFor(from)),
+            CodexGroupModels.SignatureOf(ModelsFor(to)),
+            StringComparison.Ordinal)
+            ? " Codex 的模型下拉会在下次打开或发送消息后更新。"
             : string.Empty;
-    }
-
-    /// <summary>
-    /// After a switch: when the running Codex will keep showing the old model list, offer to
-    /// restart it now. Declining is fine — the relay moves any request for a model the new
-    /// group does not serve onto its default, so the next turn still works.
-    /// </summary>
-    private async Task OfferModelListRestartAsync(GroupItemViewModel group, CancellationToken cancellationToken)
-    {
-        RefreshModelListNotice();
-        if (!ModelListIsStale(group) || ConfirmModelListRestart is null)
-        {
-            return;
-        }
-
-        CodexGroupModels? models = ModelsFor(group);
-        string effect = models is null
-            ? $"{group.Name} 没有模型白名单，重启后 Codex 会恢复为自带的模型列表。"
-            : $"重启后 Codex 的模型下拉会只显示 {group.Name} 支持的模型。";
-        string fallback = models is null
-            ? string.Empty
-            : $"\n\n选“稍后”也能继续使用：Codex 仍请求旧模型时，共飞会自动换成 {models.DefaultModel}。";
-
-        bool restart = await ConfirmModelListRestart(
-                $"已切换到 {group.Name}。Codex 的模型下拉要重启 Codex 才会更新，现在还是旧列表。\n\n{effect}{fallback}\n\n重启会中断正在进行的对话，要现在重启吗？")
-            .ConfigureAwait(true);
-        if (restart)
-        {
-            await StartCodexAsync(_ => Task.FromResult(true), cancellationToken, forceRestart: true).ConfigureAwait(true);
-        }
-
-        RefreshModelListNotice();
-    }
 
     // ---- Codex ---------------------------------------------------------------
 
@@ -742,7 +693,6 @@ public sealed partial class DashboardViewModel : ObservableObject
             IsCodexRunning = health.IsRunning;
             RequiresCodexReconnect = health.IsRunning && !health.IsConnected && !IsStartingCodex;
             UpdateCodexAccountActivationState();
-            RefreshModelListNotice();
             CodexNotInstalled = !health.IsInstalled;
             CodexInstallerAvailable = _codexInstaller.Inspect().PackageAvailable;
 
@@ -945,7 +895,6 @@ public sealed partial class DashboardViewModel : ObservableObject
                     RequiresCodexAccountRestart = false;
                 }
 
-                RefreshModelListNotice();
             }
         }
         catch (Exception ex) when (RefreshState.IsCardFailure(ex))
@@ -1428,12 +1377,11 @@ public sealed partial class DashboardViewModel : ObservableObject
             // leave the relay on the previous group while telling the user otherwise.
             _codex.SetActiveGroup(group.Id, group.Name, ModelsFor(group));
             _preferences.Save(group.Id);
-            GroupMessage = $"已切换到 {group.Name}。";
+            GroupMessage = $"已切换到 {group.Name}。" + ModelListNote(previous, group);
             if (IsClaudeGroup) _ = _safeAsync.RunAsync(ClaudePreference.LoadAsync);
             ClaudeCode.RequestSync();
             OnPropertyChanged(nameof(CodexModelChoices));
             OnPropertyChanged(nameof(CodexModelChoice));
-            await OfferModelListRestartAsync(group, cancellationToken).ConfigureAwait(true);
 
             // Best-effort record for another installation of the same account to pick
             // up as its own bootstrap default (see LoadGroupCardAsync) — never
@@ -1564,10 +1512,9 @@ public sealed partial class DashboardViewModel : ObservableObject
             SelectWithoutSwitching(automatic);
             _codex.SetActiveGroup(null, automatic.Name);
             ClaudeCode.RequestSync();
-            GroupMessage = "已启用自动分组。";
+            GroupMessage = "已启用自动分组。" + ModelListNote(previous, automatic);
             OnPropertyChanged(nameof(CodexModelChoices));
             OnPropertyChanged(nameof(CodexModelChoice));
-            await OfferModelListRestartAsync(automatic, cancellationToken).ConfigureAwait(true);
             OnPropertyChanged(nameof(CanStartCodex));
             OnPropertyChanged(nameof(StartCodexLabel));
         }

@@ -85,13 +85,6 @@ internal interface ICodexStartup
     /// </param>
     void SetActiveGroup(long? groupId, string? groupName = null, CodexGroupModels? models = null) { }
 
-    /// <summary>
-    /// The model-list signature (<see cref="CodexGroupModels.SignatureOf"/>) of the Codex this
-    /// client last started, or null when it has not started one. A running Codex keeps the
-    /// list it fetched then, so comparing this with the signature of a newly chosen group says
-    /// whether the switch will only show up after a restart.
-    /// </summary>
-    string? LoadedCatalogSignature => null;
 
     /// <summary>
     /// Sends one tool straight to the official API with one of the user's own accounts, or —
@@ -275,15 +268,42 @@ internal sealed class CodexStartup : ICodexStartup
 
     public bool UsesLocalTransport => _localRelay is not null;
 
-    public void SetActiveGroup(long? groupId, string? groupName = null, CodexGroupModels? models = null) =>
-        _localRelay?.SetGroup(groupId, groupName, models);
+    public void SetActiveGroup(long? groupId, string? groupName = null, CodexGroupModels? models = null)
+    {
+        if (_localRelay is null)
+        {
+            return;
+        }
 
-    private string? _loadedCatalogSignature;
+        string before = _localRelay.ModelsEtag;
+        _localRelay.SetGroup(groupId, groupName, models);
+        ForgetCachedModelListIfChanged(before);
+    }
 
-    public string? LoadedCatalogSignature => Volatile.Read(ref _loadedCatalogSignature);
+    /// <summary>
+    /// Makes a running Codex pick up a changed model list without a restart.
+    /// </summary>
+    /// <remarks>
+    /// Two nudges, since neither reaches every case. Deleting Codex's cached copy makes its next
+    /// list request go to the relay instead of being answered from that copy — the case of
+    /// opening the picker. The relay's new version number, stamped on the next reply, makes it
+    /// fetch during the next turn. Both measured against the real binary; the version number
+    /// alone leaves the list stale until a message is sent, the deleted cache alone until the
+    /// list is next requested.
+    /// </remarks>
+    private void ForgetCachedModelListIfChanged(string etagBefore)
+    {
+        if (_localRelay is null || string.Equals(etagBefore, _localRelay.ModelsEtag, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _config.ForgetCachedModelList();
+    }
 
     public void SetLocalProxy(LocalProxyKind kind, LocalProxyTarget? target)
     {
+        string etagBefore = _localRelay?.ModelsEtag ?? string.Empty;
         lock (_localProxyGate)
         {
             if (kind == LocalProxyKind.Codex)
@@ -301,6 +321,7 @@ internal sealed class CodexStartup : ICodexStartup
         }
 
         _localRelay?.SetLocalProxy(kind, target);
+        ForgetCachedModelListIfChanged(etagBefore);
     }
 
     /// <summary>Puts the chosen targets back on the relay after it (re)started.</summary>
@@ -510,7 +531,6 @@ internal sealed class CodexStartup : ICodexStartup
                     .ConfigureAwait(true);
 
                 _servingCodex = true;
-                Volatile.Write(ref _loadedCatalogSignature, CodexGroupModels.SignatureOf(groupModels));
                 return new CodexStartupResult(
                     CodexStartupStatus.Ready,
                     "ChatGPT 已就绪，可以开始对话了。");
@@ -676,7 +696,6 @@ internal sealed class CodexStartup : ICodexStartup
                         await _localRelay.StopAsync().ConfigureAwait(false);
                         _codexUsesRelay = false;
                         _servingCodex = false;
-                        Volatile.Write(ref _loadedCatalogSignature, null);
                         _pluginsUseRelay = false;
                         ClientLog.Info("已停止本机 Paw Relay");
                     }
@@ -1003,7 +1022,6 @@ internal sealed class CodexStartup : ICodexStartup
 
         _codexUsesRelay = false;
         _servingCodex = false;
-        Volatile.Write(ref _loadedCatalogSignature, null);
 
         // Only Codex's launch failed. An editor plug-in configured against the same relay is
         // still using it, and stopping it here would leave that configuration pointing at nothing

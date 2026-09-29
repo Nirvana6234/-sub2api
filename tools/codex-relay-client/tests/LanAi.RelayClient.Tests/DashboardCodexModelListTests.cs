@@ -25,6 +25,7 @@ public sealed class DashboardCodexModelListTests
     private static readonly RelayGroup ClaudeGroup = Group(1, "Claude", "anthropic", "claude-sonnet-5", "claude-opus-5", "claude-haiku-4");
     private static readonly RelayGroup OpenAiGroup = Group(2, "OpenAI", "openai", "gpt-5.5", "gpt-5.4");
     private static readonly RelayGroup PlainGroup = Group(3, "Plain", "openai");
+    private static readonly RelayGroup OtherPlainGroup = Group(4, "OtherPlain", "openai");
 
     private static async Task<(DashboardViewModel Dashboard, FakeCodexStartup Codex)> BuildAsync(long? startOn = null)
     {
@@ -40,7 +41,7 @@ public sealed class DashboardCodexModelListTests
         var dashboard = new DashboardViewModel(
             relay, session, preferences, new ManagedKeyNaming(new FixedInstallId("testinst")), codex);
         await session.SignInAsync("a@b.com", "pw");
-        relay.OnAvailableGroups = () => [ClaudeGroup, OpenAiGroup, PlainGroup];
+        relay.OnAvailableGroups = () => [ClaudeGroup, OpenAiGroup, PlainGroup, OtherPlainGroup];
         relay.OnListKeys = () => [];
         await dashboard.RefreshAsync();
         return (dashboard, codex);
@@ -229,104 +230,14 @@ public sealed class DashboardCodexModelListTests
         Assert.Equal("claude-haiku-4", dashboard.CodexModelChoice);
     }
 
-    // ---- Restarting to see the new list ---------------------------------------------
+    // ---- Telling the user what a switch does to Codex's picker -------------------------
 
-    private static async Task<(DashboardViewModel Dashboard, FakeCodexStartup Codex, List<string> Asked)> RunningOnAsync(long groupId, bool answer)
+    private static async Task<DashboardViewModel> WithCodexRunningOnAsync(long groupId, bool running = true)
     {
-        (DashboardViewModel dashboard, FakeCodexStartup codex) = await BuildAsync(startOn: groupId);
+        (DashboardViewModel dashboard, _) = await BuildAsync(startOn: groupId);
         await dashboard.StartCodexAsync(_ => Task.FromResult(false));
-        dashboard.IsCodexRunning = true;
-        var asked = new List<string>();
-        dashboard.ConfirmModelListRestart = message => { asked.Add(message); return Task.FromResult(answer); };
-        return (dashboard, codex, asked);
-    }
-
-    [Fact]
-    public async Task SwitchingToAGroupWithADifferentListWhileCodexRunsAsksWhetherToRestart()
-    {
-        (DashboardViewModel dashboard, FakeCodexStartup codex, List<string> asked) = await RunningOnAsync(2, answer: false);
-
-        await dashboard.SwitchGroupAsync(Item(dashboard, 1));
-
-        string question = Assert.Single(asked);
-        Assert.Contains("Claude", question, StringComparison.Ordinal);
-        Assert.Contains("稍后", question, StringComparison.Ordinal);
-        Assert.Contains(codex.ActiveGroupModels[^1]!.DefaultModel, question, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task DecliningLeavesANoticeOnThePageUntilCodexIsRestarted()
-    {
-        (DashboardViewModel dashboard, _, _) = await RunningOnAsync(2, answer: false);
-
-        await dashboard.SwitchGroupAsync(Item(dashboard, 1));
-
-        Assert.True(dashboard.HasCodexModelListNotice);
-
-        await dashboard.StartCodexAsync(_ => Task.FromResult(true), forceRestart: true);
-        Assert.False(dashboard.HasCodexModelListNotice);
-    }
-
-    [Fact]
-    public async Task AgreeingRestartsCodexWithTheNewGroupsModels()
-    {
-        (DashboardViewModel dashboard, FakeCodexStartup codex, _) = await RunningOnAsync(2, answer: true);
-        int runsBefore = codex.RunCount;
-
-        await dashboard.SwitchGroupAsync(Item(dashboard, 1));
-
-        Assert.Equal(runsBefore + 1, codex.RunCount);
-        Assert.True(codex.LastAllowRestart);
-        Assert.Equal(3, codex.LastGroupModels!.Models.Count);
-        Assert.False(dashboard.HasCodexModelListNotice);
-    }
-
-    [Fact]
-    public async Task SwitchingBetweenGroupsWithoutWhitelistsNeverAsks()
-    {
-        (DashboardViewModel dashboard, _, List<string> asked) = await RunningOnAsync(3, answer: false);
-        var another = Group(4, "Another", "openai");
-
-        // Both have no list: Codex's own list is right for either.
-        await dashboard.SwitchGroupAsync(Item(dashboard, 3));
-        Assert.Empty(asked);
-        Assert.False(dashboard.HasCodexModelListNotice);
-        _ = another;
-    }
-
-    [Fact]
-    public async Task DoesNotAskWhenCodexIsNotRunning()
-    {
-        (DashboardViewModel dashboard, _) = await BuildAsync(startOn: 2);
-        var asked = new List<string>();
-        dashboard.ConfirmModelListRestart = message => { asked.Add(message); return Task.FromResult(true); };
-
-        await dashboard.SwitchGroupAsync(Item(dashboard, 1));
-
-        Assert.Empty(asked);
-    }
-
-    [Fact]
-    public async Task SwitchingBackToTheGroupCodexWasStartedWithNeedsNoRestart()
-    {
-        (DashboardViewModel dashboard, _, List<string> asked) = await RunningOnAsync(2, answer: false);
-
-        await dashboard.SwitchGroupAsync(Item(dashboard, 1));
-        asked.Clear();
-        await dashboard.SwitchGroupAsync(Item(dashboard, 2));
-
-        Assert.Empty(asked);
-        Assert.False(dashboard.HasCodexModelListNotice);
-    }
-
-    [Fact]
-    public async Task ASwitchToAGroupWithoutAWhitelistSaysTheListGoesBackToCodexsOwn()
-    {
-        (DashboardViewModel dashboard, _, List<string> asked) = await RunningOnAsync(1, answer: false);
-
-        await dashboard.SwitchGroupAsync(Item(dashboard, 3));
-
-        Assert.Contains("自带", Assert.Single(asked), StringComparison.Ordinal);
+        dashboard.IsCodexRunning = running;
+        return dashboard;
     }
 
     [Fact]
@@ -342,14 +253,47 @@ public sealed class DashboardCodexModelListTests
     }
 
     [Fact]
-    public async Task DoesNotAskOnceCodexHasBeenClosed()
+    public async Task SwitchingToAGroupWithADifferentListSaysWhenTheRunningCodexUpdates()
     {
-        (DashboardViewModel dashboard, _, List<string> asked) = await RunningOnAsync(2, answer: true);
-        dashboard.IsCodexRunning = false;
+        // No restart is needed: the relay and the client see to it that Codex fetches the new
+        // list. The message only says when the picker changes.
+        DashboardViewModel dashboard = await WithCodexRunningOnAsync(2);
 
         await dashboard.SwitchGroupAsync(Item(dashboard, 1));
 
-        Assert.Empty(asked);
-        Assert.False(dashboard.HasCodexModelListNotice);
+        Assert.Contains("已切换到 Claude", dashboard.GroupMessage, StringComparison.Ordinal);
+        Assert.Contains("模型下拉", dashboard.GroupMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SaysNothingAboutThePickerWhenCodexIsNotRunning()
+    {
+        DashboardViewModel dashboard = await WithCodexRunningOnAsync(2, running: false);
+
+        await dashboard.SwitchGroupAsync(Item(dashboard, 1));
+
+        Assert.DoesNotContain("模型下拉", dashboard.GroupMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SaysNothingAboutThePickerWhenBothGroupsShowCodexsOwnList()
+    {
+        DashboardViewModel dashboard = await WithCodexRunningOnAsync(3);
+
+        await dashboard.SwitchGroupAsync(Item(dashboard, 4));
+
+        Assert.DoesNotContain("模型下拉", dashboard.GroupMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SwitchingBackStillTellsTheRunningCodexItHasToCatchUp()
+    {
+        DashboardViewModel dashboard = await WithCodexRunningOnAsync(2);
+
+        await dashboard.SwitchGroupAsync(Item(dashboard, 1));
+        await dashboard.SwitchGroupAsync(Item(dashboard, 2));
+
+        // The list changed back, so it changed again: the running Codex still has to catch up.
+        Assert.Contains("模型下拉", dashboard.GroupMessage, StringComparison.Ordinal);
     }
 }

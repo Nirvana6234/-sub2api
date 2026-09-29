@@ -144,7 +144,7 @@ public sealed class CodexConfigWriter : ICodexLoginStore
     /// group's models (measured, against the real binary). Best-effort: a copy that cannot be
     /// removed only means the old list may show once more.
     /// </remarks>
-    private void ForgetCachedModelList()
+    public void ForgetCachedModelList()
     {
         try
         {

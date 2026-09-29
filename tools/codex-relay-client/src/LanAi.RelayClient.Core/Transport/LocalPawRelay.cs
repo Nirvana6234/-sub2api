@@ -765,6 +765,7 @@ internal sealed class LocalPawRelay : IAsyncDisposable
 
                 byte[] payload = Encoding.UTF8.GetBytes(detail);
                 CopyResponseHeaders(response, context.Response, protocol);
+                StampModelsEtag(context.Response, protocol);
                 context.Response.StatusCode = (int)response.StatusCode;
                 context.Response.ContentType =
                     response.Content.Headers.ContentType?.ToString() ?? "application/json";
@@ -775,6 +776,7 @@ internal sealed class LocalPawRelay : IAsyncDisposable
             }
 
             CopyResponseHeaders(response, context.Response, protocol);
+            StampModelsEtag(context.Response, protocol);
             responseStarted = true;
             await PumpAsync(response, context, observe: null, cancellationToken).ConfigureAwait(false);
         }
@@ -1037,6 +1039,7 @@ internal sealed class LocalPawRelay : IAsyncDisposable
 
                 byte[] payload = Encoding.UTF8.GetBytes(detail);
                 CopyResponseHeaders(response, context.Response, protocol, localProxy: true);
+                StampModelsEtag(context.Response, protocol);
                 context.Response.StatusCode = (int)response.StatusCode;
                 context.Response.ContentType = response.Content.Headers.ContentType?.ToString() ?? "application/json";
                 context.Response.ContentLength64 = payload.Length;
@@ -1046,6 +1049,7 @@ internal sealed class LocalPawRelay : IAsyncDisposable
 
             Report(kind, target, true, null);
             CopyResponseHeaders(response, context.Response, protocol, localProxy: true);
+            StampModelsEtag(context.Response, protocol);
             var meter = new LocalProxyUsageMeter(protocol);
             try
             {
@@ -1324,6 +1328,7 @@ internal sealed class LocalPawRelay : IAsyncDisposable
 
         ClientLog.Info($"Codex 请求模型列表：{summary}");
         byte[] payload = Encoding.UTF8.GetBytes(catalog);
+        context.Response.Headers["ETag"] = EtagFor(models, group, localProxy);
         context.Response.StatusCode = 200;
         context.Response.ContentType = "application/json";
         context.Response.ContentLength64 = payload.Length;
@@ -1331,6 +1336,64 @@ internal sealed class LocalPawRelay : IAsyncDisposable
     }
 
     private string? _lastSubstitution;
+
+    /// <summary>
+    /// The version of the model list Codex is being shown, as HTTP entity-tag text.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Served as the catalog's <c>ETag</c> and stamped on every reply to Codex as
+    /// <c>X-Models-Etag</c>. Codex compares the two: when a turn's reply names a version it does
+    /// not hold, it fetches the list again on the spot (measured: 0.6 s, same process). That is
+    /// how a group switch reaches a running Codex without restarting it. The two values must be
+    /// identical down to the quotes, or every turn would fetch again.
+    /// </para>
+    /// <para>
+    /// Empty when this relay cannot answer a catalog request at all: with nothing to fetch, a
+    /// version Codex could never match would only make it ask every turn.
+    /// </para>
+    /// </remarks>
+    internal string ModelsEtag
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return EtagFor(_codexModels, _codexGroupId, _codexLocalProxy is not null);
+            }
+        }
+    }
+
+    private string EtagFor(CodexGroupModels? models, long? group, bool localProxy)
+    {
+        if (_codexCatalogSource is null)
+        {
+            return string.Empty;
+        }
+
+        if (localProxy || group is null || models is null)
+        {
+            return "\"bundled\"";
+        }
+
+        byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(models.Signature));
+        return "\"g-" + Convert.ToHexString(hash, 0, 8).ToLowerInvariant() + "\"";
+    }
+
+    /// <summary>Puts the current model-list version on a reply to Codex. See <see cref="ModelsEtag"/>.</summary>
+    private void StampModelsEtag(HttpListenerResponse to, RelayProtocol protocol)
+    {
+        if (protocol != RelayProtocol.Responses)
+        {
+            return;
+        }
+
+        string etag = ModelsEtag;
+        if (etag.Length > 0)
+        {
+            to.Headers["X-Models-Etag"] = etag;
+        }
+    }
 
     /// <summary>
     /// Moves a request for a model the group does not serve onto the group's default.

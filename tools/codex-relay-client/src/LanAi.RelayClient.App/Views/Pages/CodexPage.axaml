@@ -24,9 +24,6 @@
           <TextBlock Text="{Binding Dashboard.CodexMessage}" TextWrapping="Wrap"
                      Foreground="#6B7280" FontSize="12" Margin="0,8,0,0"
                      IsVisible="{Binding Dashboard.HasCodexMessage}" />
-          <TextBlock Text="{Binding Dashboard.CodexModelListNotice}" TextWrapping="Wrap"
-                     Foreground="#B45309" FontSize="12" Margin="0,6,0,0"
-                     IsVisible="{Binding Dashboard.HasCodexModelListNotice}" />
           <TextBlock Text="{Binding Dashboard.LeaseStatus}"
                      Foreground="#059669" FontSize="11" Margin="0,6,0,0"
                      IsVisible="{Binding Dashboard.HasLeaseStatus}" />

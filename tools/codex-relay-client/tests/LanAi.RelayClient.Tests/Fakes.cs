@@ -472,9 +472,6 @@ internal sealed class FakeCodexStartup : ICodexStartup
 
     public bool LastKeepUserModel { get; private set; }
 
-    /// <summary>What a running Codex is taken to have loaded; null: none was started.</summary>
-    public string? LoadedCatalogSignature { get; set; }
-
     public List<(LanAi.RelayClient.Server.LocalProxyKind Kind, LanAi.RelayClient.Transport.LocalProxyTarget? Target)> LocalProxies { get; } = [];
 
     public void SetLocalProxy(LanAi.RelayClient.Server.LocalProxyKind kind, LanAi.RelayClient.Transport.LocalProxyTarget? target) =>
@@ -524,7 +521,6 @@ internal sealed class FakeCodexStartup : ICodexStartup
         RunCount++;
         LastGroupModels = groupModels;
         LastKeepUserModel = keepUserModelIfServed;
-        LoadedCatalogSignature = CodexGroupModels.SignatureOf(groupModels);
         LastAllowRestart = allowRestart;
         LastPreferredModel = preferredModel;
         LastForceNewKey = forceNewKey;
