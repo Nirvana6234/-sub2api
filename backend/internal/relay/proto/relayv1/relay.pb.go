@@ -4837,8 +4837,11 @@ type Selection struct {
 	// Anthropic Messages：这次请求开始时粘性会话绑定的账号（0 没有）。从节点据此判断"有绑定的会话"（换号时按本地规则
 	// 强制按缓存计费）；成功转发后是否刷新绑定由主节点在释放时按同一条件决定。
 	StickyBoundAccountId int64 `protobuf:"varint,22,opt,name=sticky_bound_account_id,json=stickyBoundAccountId,proto3" json:"sticky_bound_account_id,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// 分组所属渠道的功能配置（Channel.FeaturesConfig 的 JSON；分组没有渠道时为空）。转发路径上按分组查渠道的地方
+	// （联网搜索模拟"跟随渠道"、Bedrock CC 兼容、Codex 生图桥接的渠道级开关）读它，渠道在主节点。
+	ChannelFeatures []byte `protobuf:"bytes,23,opt,name=channel_features,json=channelFeatures,proto3" json:"channel_features,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *Selection) Reset() {
@@ -5023,6 +5026,13 @@ func (x *Selection) GetStickyBoundAccountId() int64 {
 		return x.StickyBoundAccountId
 	}
 	return 0
+}
+
+func (x *Selection) GetChannelFeatures() []byte {
+	if x != nil {
+		return x.ChannelFeatures
+	}
+	return nil
 }
 
 type FetchCredentialsRequest struct {
@@ -8427,7 +8437,7 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x11vetoed_account_id\x18\x11 \x01(\x03R\x0fvetoedAccountId\x1a:\n" +
 	"\fHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xde\a\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x89\b\n" +
 	"\tSelection\x12!\n" +
 	"\fselection_id\x18\x01 \x01(\tR\vselectionId\x12\x17\n" +
 	"\auser_id\x18\x02 \x01(\x03R\x06userId\x12\x1c\n" +
@@ -8454,7 +8464,8 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x12pricing_at_unix_ms\x18\x13 \x01(\x03R\x0fpricingAtUnixMs\x12N\n" +
 	"\x11credential_parent\x18\x14 \x01(\v2!.sub2api.relay.v1.AccountSnapshotR\x10credentialParent\x12.\n" +
 	"\x13sticky_previous_hit\x18\x15 \x01(\bR\x11stickyPreviousHit\x125\n" +
-	"\x17sticky_bound_account_id\x18\x16 \x01(\x03R\x14stickyBoundAccountId\"<\n" +
+	"\x17sticky_bound_account_id\x18\x16 \x01(\x03R\x14stickyBoundAccountId\x12)\n" +
+	"\x10channel_features\x18\x17 \x01(\fR\x0fchannelFeatures\"<\n" +
 	"\x17FetchCredentialsRequest\x12!\n" +
 	"\fselection_id\x18\x01 \x01(\tR\vselectionId\"\xa7\x01\n" +
 	"\x18FetchCredentialsResponse\x12;\n" +

@@ -2,6 +2,7 @@ package relayselect
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -431,6 +432,15 @@ func (s *selector) cyberRejection(ctx context.Context, nodeID int64, req *relayv
 	return rej
 }
 
+// channelFeatures 是分组所属渠道的功能配置（JSON，选号结果带给从节点）；没有渠道时为空。
+func (s *selector) channelFeatures(ctx context.Context, groupID int64) ([]byte, error) {
+	features, err := s.deps.Gateway.ChannelFeaturesForGroup(ctx, groupID)
+	if err != nil || features == nil {
+		return nil, err
+	}
+	return json.Marshal(features)
+}
+
 // buildSelection 组装选号结果：额度、账号快照、扣费凭证。
 func (s *selector) buildSelection(ctx context.Context, nodeID int64, req *relayv1.SelectRequest, sel *selectionRecord, outcome handler.OpenAISelectOutcome,
 	forwardModel, reqModel string, mapping service.ChannelMappingResult, subscription *service.UserSubscription, anthropicBilling bool,
@@ -480,8 +490,13 @@ func (s *selector) buildSelection(ctx context.Context, nodeID int64, req *relayv
 		}
 		return nil, nil, err
 	}
+	features, err := s.channelFeatures(ctx, sel.groupID)
+	if err != nil {
+		return nil, nil, err
+	}
 	return &relayv1.SelectResponse{Result: &relayv1.SelectResponse_Selection{Selection: &relayv1.Selection{
-		SelectionId: sel.id, UserId: sel.userID, ApiKeyId: sel.apiKeyID, GroupId: sel.groupID, BillingMode: mode,
+		ChannelFeatures: features,
+		SelectionId:     sel.id, UserId: sel.userID, ApiKeyId: sel.apiKeyID, GroupId: sel.groupID, BillingMode: mode,
 		Account: snap, ForwardModel: forwardModel, ChannelMapped: mapping.Mapped, ChannelMappedModel: mapping.MappedModel,
 		ChannelId: mapping.ChannelID, BillingModelSource: mapping.BillingModelSource, SessionHash: outcome.SessionHash,
 		Voucher: voucher, QuotaScopes: scopes, QuotaNeed: quotaNeed, Grants: grants,

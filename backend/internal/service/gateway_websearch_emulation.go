@@ -69,10 +69,10 @@ func (s *GatewayService) shouldEmulateWebSearch(ctx context.Context, account *Ac
 	case WebSearchModeDisabled:
 		return false
 	default: // "default" → follow channel config
-		if groupID == nil || s.channelService == nil {
+		if groupID == nil {
 			return false
 		}
-		ch, err := s.channelService.GetChannelForGroup(ctx, *groupID)
+		ch, err := channelForGroup(ctx, s.channelService, *groupID)
 		if err != nil || ch == nil {
 			return false
 		}

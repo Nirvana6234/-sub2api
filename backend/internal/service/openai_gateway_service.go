@@ -640,8 +640,8 @@ func (s *OpenAIGatewayService) isCodexImageGenerationBridgeEnabled(ctx context.C
 	if override := account.CodexImageGenerationBridgeOverride(); override != nil {
 		return *override
 	}
-	if s != nil && s.channelService != nil && apiKey != nil && apiKey.GroupID != nil {
-		ch, err := s.channelService.GetChannelForGroup(ctx, *apiKey.GroupID)
+	if s != nil && apiKey != nil && apiKey.GroupID != nil {
+		ch, err := channelForGroup(ctx, s.channelService, *apiKey.GroupID)
 		if err != nil {
 			slog.Warn("failed to resolve codex image generation bridge channel override", "group_id", *apiKey.GroupID, "error", err)
 		} else if override := ch.CodexImageGenerationBridgeOverride(PlatformOpenAI); override != nil {

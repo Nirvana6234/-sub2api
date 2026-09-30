@@ -219,8 +219,13 @@ func (s *selector) buildWSSelection(ctx context.Context, nodeID int64, sel *sele
 	if err != nil {
 		return nil, err
 	}
+	features, err := s.channelFeatures(ctx, sel.groupID)
+	if err != nil {
+		return nil, err
+	}
 	return &relayv1.SelectResponse{Result: &relayv1.SelectResponse_Selection{Selection: &relayv1.Selection{
-		SelectionId: sel.id, UserId: sel.userID, ApiKeyId: sel.apiKeyID, GroupId: sel.groupID, BillingMode: billingMode(sel, subscription),
+		ChannelFeatures: features,
+		SelectionId:     sel.id, UserId: sel.userID, ApiKeyId: sel.apiKeyID, GroupId: sel.groupID, BillingMode: billingMode(sel, subscription),
 		Account: snap, ForwardModel: forwardModel, ChannelMapped: mapping.Mapped, ChannelMappedModel: mapping.MappedModel,
 		ChannelId: mapping.ChannelID, BillingModelSource: mapping.BillingModelSource, SessionHash: sessionHash,
 		MaxAccountSwitches: int32(s.maxAccountSwitches()), ConfigVersion: version, CredentialParent: parentSnap,

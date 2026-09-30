@@ -286,6 +286,14 @@ func (d *Dispatcher) admitSelection(c *gin.Context, st *requestState, req handle
 	if parent != nil {
 		ctx = service.WithCredentialParent(ctx, parent)
 	}
+	var features map[string]any
+	if raw := sel.GetChannelFeatures(); len(raw) > 0 {
+		if err := json.Unmarshal(raw, &features); err != nil {
+			return fail("relay channel features are malformed", err, &handler.OpenAIRelayRejection{Kind: handler.OpenAIRelayRejectUnavailable})
+		}
+	}
+	// 转发路径上按分组查渠道的地方读主节点给的功能配置（渠道在主节点）。
+	ctx = service.WithRelayChannelFeatures(ctx, features)
 
 	c.Request = c.Request.WithContext(withAttempt(ctx, a))
 	sessionHash := sel.GetSessionHash()
