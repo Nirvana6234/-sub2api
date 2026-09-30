@@ -60,7 +60,7 @@ func (d *Dispatcher) AdmitMiddleware() gin.HandlerFunc {
 		stateOf(c).rawBody = body
 
 		if resp.GetRejection() != nil {
-			// 暂不支持（自动分组、组合平台、非 OpenAI 分组等）：交给主节点转发。
+			// 暂不支持（未分组、非 OpenAI 分组等）：交给主节点转发。
 			d.HandOff(c)
 			c.Abort()
 			return

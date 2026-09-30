@@ -1393,6 +1393,24 @@ func (s *APIKeyService) resolveAutoGroupForModel(ctx context.Context, apiKey *AP
 	return nil, fmt.Errorf("automatic group selection changed repeatedly while resolving")
 }
 
+// AutoGroupCandidate 返回用 groupID 这个分组的 Key 快照：groupID 必须是这把自动分组 Key 现在能用的候选
+// （与冷启动、按模型选组同一个候选集合），否则返回 ErrAutoGroupUnavailable。主从分流的主节点用它核对
+// 从节点带来的、这次请求已定下的分组，不重新选。
+func (s *APIKeyService) AutoGroupCandidate(ctx context.Context, apiKey *APIKey, groupID int64) (*APIKey, error) {
+	if apiKey == nil || !apiKey.AutoGroup {
+		return apiKey, nil
+	}
+	groups, err := s.GetAvailableGroups(ctx, apiKey.UserID)
+	if err != nil {
+		return nil, fmt.Errorf("list available groups for auto mode: %w", err)
+	}
+	group := findAvailableAutoGroup(filterAutoGroupCandidates(groups, apiKey.AutoGroupIDs), groupID)
+	if group == nil {
+		return nil, ErrAutoGroupUnavailable
+	}
+	return resolveAPIKeyWithAutoGroup(apiKey, group), nil
+}
+
 // ResolveAutoGroupForModelExcluding resolves the next automatic candidate for
 // the current request after one or more groups have already failed. The normal
 // resolver intentionally reuses a settled choice; that is correct between

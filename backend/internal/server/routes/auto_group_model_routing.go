@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/requestmodel"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -41,7 +42,7 @@ func autoGroupModelRoutingMiddleware(apiKeyService *service.APIKeyService, subsc
 			model = compositeGeminiModelFromParams(c)
 		}
 		if strings.TrimSpace(model) == "" {
-			model = defaultAutoGroupModelForRequest(c.Request.URL.Path)
+			model = requestmodel.DefaultAutoGroupModel(c.Request.URL.Path)
 		}
 		resetRequestBody(c, body)
 		if strings.TrimSpace(model) == "" {
@@ -106,19 +107,6 @@ func autoGroupModelRoutingMiddleware(apiKeyService *service.APIKeyService, subsc
 			observedAPIKey = current
 		}
 		apiKeyService.ObserveAutoGroupRequestResult(observedAPIKey, model, status, autoGroupFirstTokenMs(c))
-	}
-}
-
-func defaultAutoGroupModelForRequest(path string) string {
-	path = strings.TrimSuffix(strings.TrimSpace(path), "/")
-	switch {
-	case strings.HasSuffix(path, "/images/generations"),
-		strings.HasSuffix(path, "/images/edits"),
-		strings.HasSuffix(path, "/images/generations/async"),
-		strings.HasSuffix(path, "/images/edits/async"):
-		return "gpt-image-2"
-	default:
-		return ""
 	}
 }
 

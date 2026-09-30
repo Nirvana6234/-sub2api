@@ -43,6 +43,9 @@ type RelayAPIKeyAdmissionInput struct {
 	Settings *service.SettingService
 	// Models 是请求里可能被下游解析到的全部模型名（从节点按分组白名单中间件的规则提取）。
 	Models []string
+	// AutoGroup 给自动分组 Key 定这次请求用的分组（本地 autoGroupModelRoutingMiddleware 那一步）：返回换好分组的
+	// Key 快照；返回的 Key 与传入的分组相同表示保留鉴权时的冷启动分组。nil 时自动分组 Key 回"暂不支持"。
+	AutoGroup func(ctx context.Context, apiKey *service.APIKey) (*service.APIKey, error)
 }
 
 // RelayAPIKeyAdmission 是复查通过的结果。
@@ -51,12 +54,12 @@ type RelayAPIKeyAdmission struct {
 	Billing APIKeyBillingDecision
 }
 
-// ErrRelayAdmissionUnsupported：这个 Key 的请求还不能经主从分流处理（自动分组、组合平台分组，
-// 开发计划 WP7 逐步接入）。调用方回"暂不支持"，从节点改由主节点转发。
+// ErrRelayAdmissionUnsupported：这个 Key 的请求还不能经主从分流处理。调用方回"暂不支持"，从节点改由主节点转发。
+// AutoGroup 也可以返回它（选定的分组从节点还接不了）。
 var ErrRelayAdmissionUnsupported = errors.New("this API key cannot be served through relay nodes yet")
 
 // EvaluateRelayAPIKeyAdmission 按本地网关中间件链的顺序复查一个 API Key 请求：
-// 全局 IP 黑名单 → Key 鉴权与计费检查 → 全局用户黑名单 → 分组模型白名单 → 未分组拦截。
+// 全局 IP 黑名单 → Key 鉴权与计费检查 → 全局用户黑名单 → 自动分组 → 分组模型白名单 → 未分组拦截。
 // 被拒时返回按本地写法生成的响应；Key 的分组要走还没接入的路径时返回 ErrRelayAdmissionUnsupported。
 // 未分组拦截按 /v1 网关链的 Anthropic 错误格式（与 routes/gateway.go 的 requireGroupAnthropic 一致）。
 func EvaluateRelayAPIKeyAdmission(ctx context.Context, in RelayAPIKeyAdmissionInput) (RelayAPIKeyAdmission, *CapturedRejection, error) {
@@ -107,7 +110,31 @@ func EvaluateRelayAPIKeyAdmission(ctx context.Context, in RelayAPIKeyAdmissionIn
 		}
 	}
 	if apiKey.AutoGroup {
-		return RelayAPIKeyAdmission{}, nil, ErrRelayAdmissionUnsupported
+		if in.AutoGroup == nil {
+			return RelayAPIKeyAdmission{}, nil, ErrRelayAdmissionUnsupported
+		}
+		resolved, err := in.AutoGroup(ctx, apiKey)
+		if errors.Is(err, ErrRelayAdmissionUnsupported) {
+			return RelayAPIKeyAdmission{}, nil, err
+		}
+		if err != nil || resolved == nil {
+			// 与本地自动分组中间件选组出错时的写法一致。
+			return RelayAPIKeyAdmission{}, capture(func(c *gin.Context) {
+				if errors.Is(err, service.ErrAutoGroupUnavailable) {
+					AbortWithError(c, http.StatusForbidden, "AUTO_GROUP_UNAVAILABLE", "No available group satisfies the automatic routing requirements")
+				} else {
+					AbortWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to resolve automatic API key group")
+				}
+			}), nil
+		}
+		if resolved.GroupID != nil && (apiKey.GroupID == nil || *resolved.GroupID != *apiKey.GroupID) {
+			// 与本地一样：换了分组时订阅按新分组取（取不到就没有订阅）。
+			billing.Subscription = nil
+			if resolved.Group != nil && resolved.Group.IsSubscriptionType() && in.Subscriptions != nil {
+				billing.Subscription, _ = in.Subscriptions.GetActiveSubscription(ctx, resolved.UserID, resolved.Group.ID)
+			}
+		}
+		apiKey = resolved
 	}
 	if apiKey.Group != nil && apiKey.Group.ModelAllowlistEnabled() {
 		if blocked := firstModelNotAllowed(apiKey.Group.ModelAllowlist, in.Models); blocked != "" {

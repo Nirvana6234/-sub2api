@@ -193,6 +193,7 @@ func (d *Dispatcher) selectRequest(c *gin.Context, st *requestState, req handler
 		HttpRequestId:           c.Writer.Header().Get("X-Request-Id"),
 		PreviousResponseCanMove: req.PreviousResponseCanMove,
 		RouteModel:              st.routeModel,
+		AutoGroupId:             autoGroupID(req.APIKey),
 	}
 	sreq.ClientRequestId, _ = c.Request.Context().Value(ctxkey.ClientRequestID).(string)
 	sreq.GuardianParentSessionHash, sreq.GuardianParentLegacySessionHash = service.OpenAIGuardianParentSessionHashes(c.Request.Context())

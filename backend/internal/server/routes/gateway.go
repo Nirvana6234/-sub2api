@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"io"
-	"mime"
-	"mime/multipart"
 	"net/http"
 	"strconv"
 	"strings"
@@ -753,58 +751,5 @@ func resetRequestBody(c *gin.Context, body []byte) {
 }
 
 func compositeRequestModelFromBody(contentType string, body []byte) string {
-	if model, _ := compositeJSONRequestModel(body); model != "" {
-		return model
-	}
-	return compositeMultipartModelFromBody(contentType, body)
-}
-
-func compositeJSONRequestModel(body []byte) (string, string) {
-	for _, path := range []string{"model", "session.model"} {
-		model := gjson.GetBytes(body, path)
-		if model.Type != gjson.String {
-			continue
-		}
-		if value := strings.TrimSpace(model.String()); value != "" {
-			return value, path
-		}
-	}
-	return "", ""
-}
-
-func compositeMultipartModelFromBody(contentType string, body []byte) string {
-	mediaType, params, err := mime.ParseMediaType(strings.TrimSpace(contentType))
-	if err != nil || !strings.EqualFold(mediaType, "multipart/form-data") {
-		return ""
-	}
-	boundary := strings.TrimSpace(params["boundary"])
-	if boundary == "" {
-		return ""
-	}
-	reader := multipart.NewReader(bytes.NewReader(body), boundary)
-	for {
-		part, err := reader.NextPart()
-		if errors.Is(err, io.EOF) {
-			return ""
-		}
-		if err != nil {
-			return ""
-		}
-		fieldName := part.FormName()
-		if part.FileName() != "" || (fieldName != "model" && fieldName != "session") {
-			continue
-		}
-		data, err := io.ReadAll(part)
-		if err != nil {
-			return ""
-		}
-		switch fieldName {
-		case "model":
-			return strings.TrimSpace(string(data))
-		case "session":
-			if model, _ := compositeJSONRequestModel(data); model != "" {
-				return model
-			}
-		}
-	}
+	return requestmodel.RoutingModel(contentType, body)
 }

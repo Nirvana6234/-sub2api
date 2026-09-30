@@ -59,7 +59,8 @@ func (s *selector) Select(ctx context.Context, nodeID int64, req *relayv1.Select
 func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.SelectRequest) (*relayv1.SelectResponse, error) {
 	chat := req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_CHAT
 	messages := req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_MESSAGES
-	adm, rej, err := s.admitAPIKey(ctx, req.GetApiKey(), req.GetClientIp(), req.GetMethod(), req.GetPath(), modelCandidates(req))
+	adm, rej, err := s.admitAPIKey(ctx, req.GetApiKey(), req.GetClientIp(), req.GetMethod(), req.GetPath(), modelCandidates(req),
+		autoGroupChoice{pinned: req.GetAutoGroupId()})
 	if err != nil || rej != nil {
 		return rej, err
 	}
@@ -231,7 +232,7 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 // Admit 准入（设计 3.2）：中间件链的检查，不含分组模型白名单（从节点用快照里的分组在本地跑那个中间件，
 // 保持与单机相同的检查顺序；选号时这里再按请求里的模型名查一遍）。
 func (s *selector) Admit(ctx context.Context, nodeID int64, req *relayv1.AdmitRequest) (*relayv1.AdmitResponse, error) {
-	adm, rej, err := s.admitAPIKey(ctx, req.GetApiKey(), req.GetClientIp(), req.GetMethod(), req.GetPath(), nil)
+	adm, rej, err := s.admitAPIKey(ctx, req.GetApiKey(), req.GetClientIp(), req.GetMethod(), req.GetPath(), nil, autoGroupChoice{coldStart: true})
 	if err != nil {
 		return nil, err
 	}
@@ -250,17 +251,45 @@ func (s *selector) Admit(ctx context.Context, nodeID int64, req *relayv1.AdmitRe
 	return &relayv1.AdmitResponse{Result: &relayv1.AdmitResponse_Admission{Admission: &relayv1.Admission{ApiKey: key, Subscription: sub}}}, nil
 }
 
+// autoGroupChoice 是自动分组 Key 这次请求怎么定分组（本地 autoGroupModelRoutingMiddleware，设计 3.2）：
+//   - pinned 非 0：从节点带来的、这次请求已定下的分组（按模型选定或切换后的），核对是这把 Key 的候选再用；
+//   - 否则 model 非空：按模型选（与本地同一个选组器，选定的分组记在主节点）；
+//   - 都没有：保留鉴权时的冷启动分组（本地没取到模型、WebSocket 升级请求时也是这样）。
+//
+// coldStart：准入（还不知道模型）时保留冷启动分组、不查平台，分组由从节点接着按模型问 ResolveRoute 定。
+type autoGroupChoice struct {
+	pinned    int64
+	model     string
+	coldStart bool
+}
+
+func (s *selector) resolveAutoGroup(choice autoGroupChoice) func(context.Context, *service.APIKey) (*service.APIKey, error) {
+	return func(ctx context.Context, apiKey *service.APIKey) (*service.APIKey, error) {
+		switch {
+		case choice.coldStart:
+			return apiKey, nil
+		case choice.pinned != 0:
+			return s.deps.APIKeys.AutoGroupCandidate(ctx, apiKey, choice.pinned)
+		case choice.model != "":
+			return s.deps.APIKeys.ResolveAutoGroupForModel(ctx, apiKey, choice.model)
+		default:
+			return apiKey, nil
+		}
+	}
+}
+
 // admitAPIKey 按本地网关中间件链复查 Key（EvaluateRelayAPIKeyAdmission），再挡掉还不能经从节点处理的分组。
 // 被拒时返回拒绝回复。
-func (s *selector) admitAPIKey(ctx context.Context, rawKey, clientIP, method, path string, models []string) (middleware.RelayAPIKeyAdmission, *relayv1.SelectResponse, error) {
+func (s *selector) admitAPIKey(ctx context.Context, rawKey, clientIP, method, path string, models []string, auto autoGroupChoice) (middleware.RelayAPIKeyAdmission, *relayv1.SelectResponse, error) {
 	adm, raw, err := middleware.EvaluateRelayAPIKeyAdmission(ctx, middleware.RelayAPIKeyAdmissionInput{
 		APIKeyAuthInput: middleware.APIKeyAuthInput{
 			APIKeys: s.deps.APIKeys, Subscriptions: s.deps.Subscriptions, Config: s.deps.Config,
 			ClientIP: clientIP, Method: method, Path: path,
 		},
-		RawKey:   rawKey,
-		Settings: s.deps.Settings,
-		Models:   models,
+		RawKey:    rawKey,
+		Settings:  s.deps.Settings,
+		Models:    models,
+		AutoGroup: s.resolveAutoGroup(auto),
 	})
 	if errors.Is(err, middleware.ErrRelayAdmissionUnsupported) {
 		return adm, unsupported(), nil
@@ -270,6 +299,9 @@ func (s *selector) admitAPIKey(ctx context.Context, rawKey, clientIP, method, pa
 	}
 	if raw != nil {
 		return adm, rawRejection(raw), nil
+	}
+	if auto.coldStart && adm.APIKey.AutoGroup {
+		return adm, nil, nil
 	}
 	if g := adm.APIKey.Group; g == nil || (g.Platform != service.PlatformOpenAI && g.Platform != service.PlatformComposite) {
 		// 未分组 Key 走 Anthropic 网关，其他 OpenAI 兼容平台（Grok 等）还没接入。

@@ -530,6 +530,8 @@ message ResolveRouteRequest {
   string path = 4;
   // 请求体里的模型（按路由取，与本地中间件同一段代码）。
   string model = 5;
+  // 自动分组 Key 这次请求已定下的分组（非 0 时主节点核对它是这把 Key 的候选再用，不重新选；0 时按 model 选）。
+  int64 auto_group_id = 6;
 }
 
 message ResolveRouteResponse {
@@ -543,6 +545,9 @@ message ResolveRouteResponse {
 message RouteResolution {
   // 组合平台分组按模型选定的走向（service.CompositeRouteDecision 的 JSON；没匹配时 matched 为 false）。
   bytes composite_decision = 1;
+  // 自动分组 Key：按模型选定分组后的 Key 快照与订阅（keycodec 编码；不是自动分组 Key 时为空）。
+  bytes api_key = 2;
+  bytes subscription = 3;
 }
 
 message SelectRequest {
@@ -592,6 +597,8 @@ message SelectRequest {
   bool previous_response_can_move = 24;
   // 组合平台分组：选目标平台用的公开模型（改写请求体之前的，ResolveRoute 用的同一个）。主节点按它重新选定目标。
   string route_model = 25;
+  // 自动分组 Key 这次请求用的分组（从节点按模型选定或切换后的；主节点核对是这把 Key 的候选再用）。
+  int64 auto_group_id = 26;
 }
 
 // cyber 会话屏蔽的查询键（都已哈希）。

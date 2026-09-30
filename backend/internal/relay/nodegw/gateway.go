@@ -56,8 +56,8 @@ func NewOpenAIHandler(d GatewayDeps) *handler.OpenAIGatewayHandler {
 
 // RegisterRoutes 注册从节点的网关路由。已接入的是 OpenAI 分组的 Responses（含 WebSocket）、Chat Completions、Messages；
 // 其余请求原样交给主节点转发（开发计划 WP10 逐步接入）。中间件链对照本地 /v1 网关链（routes/gateway.go）：
-// 全局 IP 黑名单、Key 鉴权、用户黑名单、自动分组、未分组拦截合成准入中间件；组合平台、TypeSafe 分组在准入时
-// 回"暂不支持"。
+// 全局 IP 黑名单、Key 鉴权、用户黑名单、未分组拦截合成准入中间件；自动分组、组合平台按模型问主节点
+// （AutoGroupMiddleware、CompositeRouteMiddleware）；TypeSafe 等还没接入的分组在准入时回"暂不支持"。
 func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatcher, cfg *config.Config) {
 	bodyLimit := middleware2.RequestBodyLimit(cfg.Gateway.MaxBodySize)
 	chain := []gin.HandlerFunc{
@@ -65,6 +65,7 @@ func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatche
 		middleware2.ClientRequestID(),
 		handler.InboundEndpointMiddleware(),
 		d.AdmitMiddleware(),
+		d.AutoGroupMiddleware(),
 		middleware2.GroupModelAllowlist(),
 		d.CompositeRouteMiddleware(),
 	}

@@ -40,7 +40,8 @@ func wsFailoverExhausted() *relayv1.SelectResponse {
 // 第一次（建连）：cyber 会话屏蔽 → 渠道映射 → 用户槽（不排队）→ 计费资格 → 计价上下文 → 选号与准入（SelectAndAdmitWS）；
 // 之后（连接内换号）：补占用户槽（不排队）→ 选号与准入。选中的账号绑定这条连接，每一轮用 BeginTurn 签凭证。
 func (s *selector) selectOpenAIWS(ctx context.Context, nodeID int64, req *relayv1.SelectRequest) (*relayv1.SelectResponse, error) {
-	adm, rej, err := s.admitAPIKey(ctx, req.GetApiKey(), req.GetClientIp(), req.GetMethod(), req.GetPath(), modelCandidates(req))
+	adm, rej, err := s.admitAPIKey(ctx, req.GetApiKey(), req.GetClientIp(), req.GetMethod(), req.GetPath(), modelCandidates(req),
+		autoGroupChoice{pinned: req.GetAutoGroupId()})
 	if err != nil {
 		return nil, err
 	}

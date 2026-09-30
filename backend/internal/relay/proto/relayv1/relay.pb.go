@@ -3543,7 +3543,9 @@ type ResolveRouteRequest struct {
 	Method   string                 `protobuf:"bytes,3,opt,name=method,proto3" json:"method,omitempty"`
 	Path     string                 `protobuf:"bytes,4,opt,name=path,proto3" json:"path,omitempty"`
 	// 请求体里的模型（按路由取，与本地中间件同一段代码）。
-	Model         string `protobuf:"bytes,5,opt,name=model,proto3" json:"model,omitempty"`
+	Model string `protobuf:"bytes,5,opt,name=model,proto3" json:"model,omitempty"`
+	// 自动分组 Key 这次请求已定下的分组（非 0 时主节点核对它是这把 Key 的候选再用，不重新选；0 时按 model 选）。
+	AutoGroupId   int64 `protobuf:"varint,6,opt,name=auto_group_id,json=autoGroupId,proto3" json:"auto_group_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3611,6 +3613,13 @@ func (x *ResolveRouteRequest) GetModel() string {
 		return x.Model
 	}
 	return ""
+}
+
+func (x *ResolveRouteRequest) GetAutoGroupId() int64 {
+	if x != nil {
+		return x.AutoGroupId
+	}
+	return 0
 }
 
 type ResolveRouteResponse struct {
@@ -3700,8 +3709,11 @@ type RouteResolution struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// 组合平台分组按模型选定的走向（service.CompositeRouteDecision 的 JSON；没匹配时 matched 为 false）。
 	CompositeDecision []byte `protobuf:"bytes,1,opt,name=composite_decision,json=compositeDecision,proto3" json:"composite_decision,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// 自动分组 Key：按模型选定分组后的 Key 快照与订阅（keycodec 编码；不是自动分组 Key 时为空）。
+	ApiKey        []byte `protobuf:"bytes,2,opt,name=api_key,json=apiKey,proto3" json:"api_key,omitempty"`
+	Subscription  []byte `protobuf:"bytes,3,opt,name=subscription,proto3" json:"subscription,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *RouteResolution) Reset() {
@@ -3737,6 +3749,20 @@ func (*RouteResolution) Descriptor() ([]byte, []int) {
 func (x *RouteResolution) GetCompositeDecision() []byte {
 	if x != nil {
 		return x.CompositeDecision
+	}
+	return nil
+}
+
+func (x *RouteResolution) GetApiKey() []byte {
+	if x != nil {
+		return x.ApiKey
+	}
+	return nil
+}
+
+func (x *RouteResolution) GetSubscription() []byte {
+	if x != nil {
+		return x.Subscription
 	}
 	return nil
 }
@@ -3790,7 +3816,9 @@ type SelectRequest struct {
 	// WebSocket 连接选号：首帧的函数调用输出都能在上下文里找到对应调用（previous_response_id 可以换账号）。
 	PreviousResponseCanMove bool `protobuf:"varint,24,opt,name=previous_response_can_move,json=previousResponseCanMove,proto3" json:"previous_response_can_move,omitempty"`
 	// 组合平台分组：选目标平台用的公开模型（改写请求体之前的，ResolveRoute 用的同一个）。主节点按它重新选定目标。
-	RouteModel    string `protobuf:"bytes,25,opt,name=route_model,json=routeModel,proto3" json:"route_model,omitempty"`
+	RouteModel string `protobuf:"bytes,25,opt,name=route_model,json=routeModel,proto3" json:"route_model,omitempty"`
+	// 自动分组 Key 这次请求用的分组（从节点按模型选定或切换后的；主节点核对是这把 Key 的候选再用）。
+	AutoGroupId   int64 `protobuf:"varint,26,opt,name=auto_group_id,json=autoGroupId,proto3" json:"auto_group_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4007,6 +4035,13 @@ func (x *SelectRequest) GetRouteModel() string {
 		return x.RouteModel
 	}
 	return ""
+}
+
+func (x *SelectRequest) GetAutoGroupId() int64 {
+	if x != nil {
+		return x.AutoGroupId
+	}
+	return 0
 }
 
 type isSelectRequest_Credential interface {
@@ -7804,21 +7839,24 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x06result\"N\n" +
 	"\tAdmission\x12\x17\n" +
 	"\aapi_key\x18\x01 \x01(\fR\x06apiKey\x12\"\n" +
-	"\fsubscription\x18\x02 \x01(\fR\fsubscriptionJ\x04\b\x03\x10\x04\"\x8d\x01\n" +
+	"\fsubscription\x18\x02 \x01(\fR\fsubscriptionJ\x04\b\x03\x10\x04\"\xb1\x01\n" +
 	"\x13ResolveRouteRequest\x12\x17\n" +
 	"\aapi_key\x18\x01 \x01(\tR\x06apiKey\x12\x1b\n" +
 	"\tclient_ip\x18\x02 \x01(\tR\bclientIp\x12\x16\n" +
 	"\x06method\x18\x03 \x01(\tR\x06method\x12\x12\n" +
 	"\x04path\x18\x04 \x01(\tR\x04path\x12\x14\n" +
-	"\x05model\x18\x05 \x01(\tR\x05model\"\xa8\x01\n" +
+	"\x05model\x18\x05 \x01(\tR\x05model\x12\"\n" +
+	"\rauto_group_id\x18\x06 \x01(\x03R\vautoGroupId\"\xa8\x01\n" +
 	"\x14ResolveRouteResponse\x12C\n" +
 	"\n" +
 	"resolution\x18\x01 \x01(\v2!.sub2api.relay.v1.RouteResolutionH\x00R\n" +
 	"resolution\x12A\n" +
 	"\trejection\x18\x02 \x01(\v2!.sub2api.relay.v1.SelectRejectionH\x00R\trejectionB\b\n" +
-	"\x06result\"@\n" +
+	"\x06result\"}\n" +
 	"\x0fRouteResolution\x12-\n" +
-	"\x12composite_decision\x18\x01 \x01(\fR\x11compositeDecision\"\xac\b\n" +
+	"\x12composite_decision\x18\x01 \x01(\fR\x11compositeDecision\x12\x17\n" +
+	"\aapi_key\x18\x02 \x01(\fR\x06apiKey\x12\"\n" +
+	"\fsubscription\x18\x03 \x01(\fR\fsubscription\"\xd0\b\n" +
 	"\rSelectRequest\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x18\n" +
@@ -7849,7 +7887,8 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"#guardian_parent_legacy_session_hash\x18\x17 \x01(\tR\x1fguardianParentLegacySessionHash\x12;\n" +
 	"\x1aprevious_response_can_move\x18\x18 \x01(\bR\x17previousResponseCanMove\x12\x1f\n" +
 	"\vroute_model\x18\x19 \x01(\tR\n" +
-	"routeModelB\f\n" +
+	"routeModel\x12\"\n" +
+	"\rauto_group_id\x18\x1a \x01(\x03R\vautoGroupIdB\f\n" +
 	"\n" +
 	"credential\"\xdf\x01\n" +
 	"\x12CyberSessionLookup\x12!\n" +
