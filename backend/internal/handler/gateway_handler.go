@@ -343,22 +343,15 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			if outcome.Kind == AnthropicSelectFailed {
 				err := outcome.Err
 				if len(fs.FailedAccountIDs) == 0 {
-					cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, reqModel, reqModel, service.PlatformGemini)
-					if !cls.ModelNotFound {
-						markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
-					}
+					rej, modelNotFound := AnthropicFirstSelectFailureRejection(c.Request.Context(), h.gatewayService, apiKey, reqModel, service.PlatformGemini, err)
 					reqLog.Warn("gateway.select_account_no_available",
 						zap.String("model", reqModel),
 						zap.Int64p("group_id", apiKey.GroupID),
 						zap.String("platform", platform),
-						zap.Bool("model_not_found", cls.ModelNotFound),
+						zap.Bool("model_not_found", modelNotFound),
 						zap.Error(err),
 					)
-					message := cls.Message
-					if !cls.ModelNotFound {
-						message = "No available accounts: " + err.Error()
-					}
-					h.handleStreamingAwareError(c, cls.Status, cls.ErrType, message, streamStarted)
+					h.writeGatewayRejection(c, rej, streamStarted)
 					return
 				}
 				action := fs.HandleSelectionExhausted(c.Request.Context())
@@ -388,20 +381,15 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					sendMockInterceptResponse(c, reqModel, outcome.Intercept)
 				}
 				return
-			case AnthropicSelectNoWaitPlan:
-				markOpsRoutingCapacityLimited(c)
-				reqLog.Warn("gateway.select_account_no_slot_no_wait_plan",
-					zap.Int64("account_id", account.ID),
-					zap.String("model", reqModel),
-					zap.String("platform", platform),
-				)
-				h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts", streamStarted)
-				return
-			case AnthropicSelectQueueFull:
-				h.handleStreamingAwareErrorWithCode(c, http.StatusTooManyRequests, "rate_limit_error", gatewayQueueFullCode, "Too many pending requests, please retry later", streamStarted)
-				return
-			case AnthropicSelectSlotError:
-				h.handleConcurrencyError(c, outcome.Err, "account", streamStarted)
+			case AnthropicSelectNoWaitPlan, AnthropicSelectQueueFull, AnthropicSelectSlotError:
+				if outcome.Kind == AnthropicSelectNoWaitPlan {
+					reqLog.Warn("gateway.select_account_no_slot_no_wait_plan",
+						zap.Int64("account_id", account.ID),
+						zap.String("model", reqModel),
+						zap.String("platform", platform),
+					)
+				}
+				h.writeGatewayRejection(c, AnthropicSelectOutcomeRejection(outcome), streamStarted)
 				return
 			case AnthropicSelectProfitVetoed:
 				reqLog.Debug("gateway.account_slot_profit_vetoed", zap.Int64("account_id", account.ID), zap.String("reason", outcome.VetoReason))
@@ -632,23 +620,16 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			if outcome.Kind == AnthropicSelectFailed {
 				err := outcome.Err
 				if len(fs.FailedAccountIDs) == 0 {
-					cls := classifyNoAccountErrorFromGin(c, h.gatewayService, currentAPIKey, reqModel, reqModel, platform)
-					if !cls.ModelNotFound {
-						markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
-					}
+					rej, modelNotFound := AnthropicFirstSelectFailureRejection(c.Request.Context(), h.gatewayService, currentAPIKey, reqModel, platform, err)
 					reqLog.Warn("gateway.select_account_no_available",
 						zap.String("model", reqModel),
 						zap.Int64p("group_id", currentAPIKey.GroupID),
 						zap.String("platform", platform),
 						zap.Bool("fallback_used", fallbackUsed),
-						zap.Bool("model_not_found", cls.ModelNotFound),
+						zap.Bool("model_not_found", modelNotFound),
 						zap.Error(err),
 					)
-					message := cls.Message
-					if !cls.ModelNotFound {
-						message = "No available accounts: " + err.Error()
-					}
-					h.handleStreamingAwareError(c, cls.Status, cls.ErrType, message, streamStarted)
+					h.writeGatewayRejection(c, rej, streamStarted)
 					return
 				}
 				action := fs.HandleSelectionExhausted(c.Request.Context())
@@ -678,20 +659,15 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					sendMockInterceptResponse(c, reqModel, outcome.Intercept)
 				}
 				return
-			case AnthropicSelectNoWaitPlan:
-				markOpsRoutingCapacityLimited(c)
-				reqLog.Warn("gateway.select_account_no_slot_no_wait_plan",
-					zap.Int64("account_id", account.ID),
-					zap.String("model", reqModel),
-					zap.String("platform", platform),
-				)
-				h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts", streamStarted)
-				return
-			case AnthropicSelectQueueFull:
-				h.handleStreamingAwareErrorWithCode(c, http.StatusTooManyRequests, "rate_limit_error", gatewayQueueFullCode, "Too many pending requests, please retry later", streamStarted)
-				return
-			case AnthropicSelectSlotError:
-				h.handleConcurrencyError(c, outcome.Err, "account", streamStarted)
+			case AnthropicSelectNoWaitPlan, AnthropicSelectQueueFull, AnthropicSelectSlotError:
+				if outcome.Kind == AnthropicSelectNoWaitPlan {
+					reqLog.Warn("gateway.select_account_no_slot_no_wait_plan",
+						zap.Int64("account_id", account.ID),
+						zap.String("model", reqModel),
+						zap.String("platform", platform),
+					)
+				}
+				h.writeGatewayRejection(c, AnthropicSelectOutcomeRejection(outcome), streamStarted)
 				return
 			case AnthropicSelectProfitVetoed:
 				reqLog.Debug("gateway.account_slot_profit_vetoed", zap.Int64("account_id", account.ID), zap.String("reason", outcome.VetoReason))

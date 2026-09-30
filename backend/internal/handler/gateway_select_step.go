@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -183,4 +184,45 @@ func (h *GatewayHandler) anthropicAdmissionWaitHooks(c *gin.Context, reqStream b
 		}
 	}
 	return onTick, cannotWait
+}
+
+// AnthropicFirstSelectFailureRejection 是 /v1/messages 第一次就选不出账号时的错误（本地与主从分流共用）。
+// modelNotFound：按模型不存在分类（日志用）。
+func AnthropicFirstSelectFailureRejection(ctx context.Context, diag service.ModelAvailabilityDiagnoser, apiKey *service.APIKey, model, platform string, selectErr error) (r OpenAIGatewayRejection, modelNotFound bool) {
+	cls := classifyNoAccountError(ctx, diag, apiKey, model, model, platform)
+	r = OpenAIGatewayRejection{Status: cls.Status, ErrType: cls.ErrType, Message: cls.Message}
+	if cls.ModelNotFound {
+		r.OpsBusinessLimitedReason = service.OpsClientBusinessLimitedReasonLocalModelConfiguration
+	} else {
+		r.RoutingCapacityLimited = isOpsNoAvailableAccountError(selectErr)
+		r.Message = "No available accounts: " + selectErr.Error()
+	}
+	return r, cls.ModelNotFound
+}
+
+// AnthropicSelectOutcomeRejection 是准入失败（没有等待计划、队列满、抢槽出错）的错误（本地与主从分流共用）。
+func AnthropicSelectOutcomeRejection(outcome AnthropicSelectOutcome) OpenAIGatewayRejection {
+	switch outcome.Kind {
+	case AnthropicSelectQueueFull:
+		return OpenAIGatewayRejection{Status: http.StatusTooManyRequests, ErrType: "rate_limit_error", Code: gatewayQueueFullCode, Message: "Too many pending requests, please retry later"}
+	case AnthropicSelectSlotError:
+		status, errType, code, message := concurrencyErrorResponse(outcome.Err, "account")
+		return OpenAIGatewayRejection{Status: status, ErrType: errType, Code: code, Message: message}
+	default:
+		return OpenAIGatewayRejection{Status: http.StatusServiceUnavailable, ErrType: "api_error", Message: "No available accounts", RoutingCapacityLimited: true}
+	}
+}
+
+// writeGatewayRejection 按 Messages 处理函数的写法写出选号阶段的错误（运维标记、Retry-After、流式感知的错误）。
+func (h *GatewayHandler) writeGatewayRejection(c *gin.Context, r OpenAIGatewayRejection, streamStarted bool) {
+	if r.OpsBusinessLimitedReason != "" {
+		service.MarkOpsClientBusinessLimited(c, r.OpsBusinessLimitedReason)
+	}
+	if r.RoutingCapacityLimited {
+		markOpsRoutingCapacityLimited(c)
+	}
+	if r.RetryAfter > 0 {
+		c.Header("Retry-After", strconv.Itoa(r.RetryAfter))
+	}
+	h.handleStreamingAwareErrorWithCode(c, r.Status, r.ErrType, r.Code, r.Message, streamStarted)
 }
