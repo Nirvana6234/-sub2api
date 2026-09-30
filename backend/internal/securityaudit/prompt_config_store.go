@@ -36,6 +36,8 @@ type ConfigManager struct {
 	encryptionKeyConfigured bool
 
 	snapshot atomic.Pointer[activeConfigSnapshot]
+	// changed 在配置有变化（新版本、风控开关变了、加载失败或恢复）时调用（主从分流：主节点当场把新配置推给从节点）。
+	changed  atomic.Pointer[func()]
 	expected atomic.Int64
 	// expectedBlocking records the last storage intent that could be decoded,
 	// independently of whether endpoint credentials or the full config could be
@@ -144,8 +146,27 @@ func (m *ConfigManager) Reload(ctx context.Context) error {
 		LogInfo(EventConfigLoaded, map[string]any{
 			"config_version": storage.ConfigVersion, "status": "loaded",
 		})
+		m.notifyChanged()
 	}
 	return nil
+}
+
+// SetChangeListener 设置配置变化的回调（nil 取消）。
+func (m *ConfigManager) SetChangeListener(fn func()) {
+	if fn == nil {
+		m.changed.Store(nil)
+		return
+	}
+	m.changed.Store(&fn)
+}
+
+func (m *ConfigManager) notifyChanged() {
+	if m == nil {
+		return
+	}
+	if fn := m.changed.Load(); fn != nil {
+		(*fn)()
+	}
 }
 
 // shouldLogConfigLoaded reports whether a successful reload carries news: the
@@ -499,9 +520,14 @@ func (m *ConfigManager) recordLoadError(_ error) {
 	}
 	now := m.clock.Now()
 	m.stateMu.Lock()
+	first := m.lastLoadError == ""
 	m.lastLoadError = stableErrorMessage("config_load_failed")
 	m.lastErrorAt = &now
 	m.stateMu.Unlock()
+	if first {
+		// 降级状态可能变了（阻断模式下要拒绝放行）。
+		m.notifyChanged()
+	}
 }
 
 // clearLoadError drops the recorded load failure and reports whether one was

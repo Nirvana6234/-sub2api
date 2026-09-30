@@ -29,6 +29,9 @@ var SealedSettingKeys = []string{
 // 加密下发的配置引用的代理（审核接口、联网搜索服务）。
 const SealedSectionProxies = "proxies"
 
+// SealedSectionPromptAudit 是加密下发的提示词审计配置（JSON：securityaudit.RelayPromptConfig，含解密后的接口凭据）。
+const SealedSectionPromptAudit = "prompt_audit"
+
 // SealedPayload 是加密下发部分的明文（只在主节点内存和从节点内存里出现）。
 type SealedPayload struct {
 	Settings map[string]string `json:"settings,omitempty"`

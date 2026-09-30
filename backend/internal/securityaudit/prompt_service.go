@@ -12,10 +12,18 @@ import (
 	"time"
 )
 
+// PromptRepository 是提示词审计的任务队列和审计事件存储（单机是 PostgreSQL；主从分流的从节点用本机实现）。
+type PromptRepository interface {
+	JobRepository
+	EventRepository
+}
+
+var _ PromptRepository = (*PostgreSQLRepository)(nil)
+
 type PromptService struct {
 	config    ConfigStore
-	repo      *PostgreSQLRepository
-	payload   *RedisPayloadStore
+	repo      PromptRepository
+	payload   PayloadStore
 	enqueuer  *Enqueuer
 	runner    *Runner
 	evaluator *GuardEvaluator
@@ -36,6 +44,26 @@ func NewPromptService(
 	config ConfigStore,
 	repo *PostgreSQLRepository,
 	payload *RedisPayloadStore,
+	scanner *OpenAICompatibleScanner,
+	metrics *AtomicMetrics,
+) *PromptService {
+	// nil 指针不能直接放进接口（会变成非 nil 的接口），与原来"没有就跳过"的判断保持一致。
+	var r PromptRepository
+	if repo != nil {
+		r = repo
+	}
+	var p PayloadStore
+	if payload != nil {
+		p = payload
+	}
+	return NewPromptServiceWith(config, r, p, scanner, metrics)
+}
+
+// NewPromptServiceWith 用给定的存储创建提示词审计服务（主从分流的从节点用本机的任务队列、待审内容和事件存储）。
+func NewPromptServiceWith(
+	config ConfigStore,
+	repo PromptRepository,
+	payload PayloadStore,
 	scanner *OpenAICompatibleScanner,
 	metrics *AtomicMetrics,
 ) *PromptService {

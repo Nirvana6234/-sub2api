@@ -13,7 +13,6 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/relay/node"
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
-	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -231,24 +230,4 @@ func TestNodeSyncsTheFlaggedInputList(t *testing.T) {
 	require.Contains(t, cache.set, h3)
 	require.Equal(t, []service.ContentModerationHashChange{{Added: []string{h3}}}, pushed)
 	require.Error(t, replica.RecordFlaggedInputHash(ctx, "junk"), "the master rejects a malformed hash")
-}
-
-type promptMode securityaudit.Mode
-
-func (m promptMode) EffectiveMode() securityaudit.Mode { return securityaudit.Mode(m) }
-
-// 过渡期：提示词审计还没搬到从节点，开着时准入回"暂不支持"（交给主节点转发，含 WebSocket 升级）。
-func TestPromptAuditStillHandsRequestsToTheMaster(t *testing.T) {
-	ctx := context.Background()
-	w := newWorld(t, config.RunModeSimple, apiKeyAccount(1, "one"))
-	admit := func() *relayv1.AdmitResponse {
-		out, err := w.sel.Admit(ctx, testNode, &relayv1.AdmitRequest{Credential: &relayv1.AdmitRequest_ApiKey{ApiKey: "sk-a"}, ClientIp: "5.6.7.8", Method: "POST", Path: "/v1/responses"})
-		require.NoError(t, err)
-		return out
-	}
-	require.NotNil(t, admit().GetAdmission())
-	w.sel.deps.PromptAudit = promptMode(securityaudit.ModeAsync)
-	require.Equal(t, relayv1.RejectionFormat_REJECTION_FORMAT_UNSUPPORTED, admit().GetRejection().GetFormat())
-	w.sel.deps.PromptAudit = promptMode(securityaudit.ModeOff)
-	require.NotNil(t, admit().GetAdmission())
 }

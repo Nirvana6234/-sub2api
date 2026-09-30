@@ -31,6 +31,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
 	"github.com/Wei-Shaw/sub2api/internal/relay/sealbox"
 	"github.com/Wei-Shaw/sub2api/internal/relay/transport"
+	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -84,6 +85,15 @@ type e2e struct {
 	// moderation 是从节点上的安全审计；records 是从节点本机的记录存储。
 	moderation *nodegw.Moderation
 	records    *nodestore.Store
+}
+
+// testPromptAudit 是端到端测试世界里主节点下发的提示词审计配置（nil 时不下发）。用例用 usePromptAudit 设置。
+var testPromptAudit *securityaudit.RelayPromptConfig
+
+func usePromptAudit(t *testing.T, cfg securityaudit.RelayPromptConfig) {
+	t.Helper()
+	testPromptAudit = &cfg
+	t.Cleanup(func() { testPromptAudit = nil })
 }
 
 // testMasterSettings 是端到端测试世界里主节点额外的系统设置（在开始之前设；nil 时不加）。用例用 useMasterSettings 设置。
@@ -190,6 +200,10 @@ func startE2EWithConfig(t *testing.T, configure func(*config.Config), accounts f
 	require.NoError(t, err)
 	nodes.AttachRegistry(srv.Registry())
 	control := master.NewControl(publisher)
+	if testPromptAudit != nil {
+		cfg := *testPromptAudit
+		publisher.RegisterSealedSection(master.SealedSectionPromptAudit, func(context.Context) ([]byte, error) { return json.Marshal(cfg) })
+	}
 	// 加密下发的部分（审核配置等）用这台节点的加密公钥封（与上游凭据同一把）。
 	publisher.SetEncryptionKeys(func(id int64) (*ecdh.PublicKey, bool) {
 		if id != n.ID {

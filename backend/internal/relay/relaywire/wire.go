@@ -64,16 +64,24 @@ func ProvideMasterRuntime(
 		NewSelector: relayselect.NewFactory(relayselect.Deps{
 			Config: cfg, APIKeys: apiKeys, Subscriptions: subscriptions, Settings: settingService,
 			Billing: billing, Gateway: gateway, Concurrency: concurrency,
-			Moderation: moderation, PromptAudit: promptAuditMode(promptAudit), Ops: ops, Users: users,
+			Moderation: moderation, Ops: ops, Users: users,
 		}),
 		VoucherPartitions: repository.NewRelayVoucherPartitions(db),
 		Sections:          forwardingSections(errorPassthrough),
-		SealedSections:    sealedSections(settings, proxies),
+		SealedSections:    sealedSections(settings, proxies, promptAudit),
 		NewSettler: relaysettle.NewFactory(relaysettle.Deps{
 			Gateway: gateway, APIKeys: apiKeys, Accounts: accounts, Groups: groups, Subscriptions: subscriptions,
 			Vouchers: relayVoucherRecorder(db),
 		}),
 	})
+	if promptAudit != nil {
+		// 提示词审计配置变了（新版本、风控开关、加载失败或恢复）当场重新生成快照推给从节点。
+		promptAudit.SetConfigChangeListener(func() {
+			if p := rt.Publisher(); p != nil {
+				p.Trigger()
+			}
+		})
+	}
 	if moderation != nil {
 		// 命中过的输入名单变了（审核命中、后台删除或清空、从节点上报）当场推给各从节点的副本（设计 3.4）。
 		moderation.SetHashChangeListener(func(ch service.ContentModerationHashChange) {
@@ -99,37 +107,35 @@ func relayVoucherRecorder(db *sql.DB) service.RelayVoucherRecorder {
 	return r
 }
 
-// promptAuditMode 把可能为 nil 的提示词审计服务转成接口（nil 指针不能直接放进接口）。
-func promptAuditMode(p *securityaudit.PromptService) interface{ EffectiveMode() securityaudit.Mode } {
-	if p == nil {
-		return nil
-	}
-	return p
-}
-
 // sealedSections 是按节点加密下发的分段（设计 6 第二类）：加密下发的配置（内容审核、联网搜索）引用的代理，
 // 含代理密码。代理改了由主节点定时重新生成快照带上（30 秒）。
-func sealedSections(settings service.SettingRepository, proxies service.ProxyRepository) map[string]master.SectionProvider {
+func sealedSections(settings service.SettingRepository, proxies service.ProxyRepository, promptAudit *securityaudit.PromptService) map[string]master.SectionProvider {
+	sections := map[string]master.SectionProvider{}
+	if promptAudit != nil {
+		// 提示词审计配置（解密后的生效配置和降级状态；加密这些凭据的密钥不下发），设计 3.4。
+		sections[master.SealedSectionPromptAudit] = func(context.Context) ([]byte, error) {
+			return json.Marshal(promptAudit.RelayConfig())
+		}
+	}
 	if proxies == nil {
-		return nil
+		return sections
 	}
-	return map[string]master.SectionProvider{
-		master.SealedSectionProxies: func(ctx context.Context) ([]byte, error) {
-			values, err := settings.GetMultiple(ctx, []string{service.SettingKeyContentModerationConfig, service.SettingKeyWebSearchEmulationConfig})
-			if err != nil {
-				return nil, err
-			}
-			ids := service.SealedConfigProxyIDs(values[service.SettingKeyContentModerationConfig], values[service.SettingKeyWebSearchEmulationConfig])
-			if len(ids) == 0 {
-				return nil, nil
-			}
-			list, err := proxies.ListByIDs(ctx, ids)
-			if err != nil {
-				return nil, err
-			}
-			return json.Marshal(list)
-		},
+	sections[master.SealedSectionProxies] = func(ctx context.Context) ([]byte, error) {
+		values, err := settings.GetMultiple(ctx, []string{service.SettingKeyContentModerationConfig, service.SettingKeyWebSearchEmulationConfig})
+		if err != nil {
+			return nil, err
+		}
+		ids := service.SealedConfigProxyIDs(values[service.SettingKeyContentModerationConfig], values[service.SettingKeyWebSearchEmulationConfig])
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		list, err := proxies.ListByIDs(ctx, ids)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(list)
 	}
+	return sections
 }
 
 // forwardingSections 是配置快照里 settings 表之外的转发配置分段（设计 6）。
