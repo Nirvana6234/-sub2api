@@ -34,6 +34,9 @@ type Deps struct {
 	Gateway       *service.OpenAIGatewayService
 	// AnthropicGateway 是 Anthropic Messages 的选号与准入用的网关服务；nil 时 Messages（Anthropic 分组）回"暂不支持"。
 	AnthropicGateway *service.GatewayService
+	// UserMsgQueue、RPM 是用户消息串行队列的锁与账号 RPM 计数（从节点的排队代码每一步在这里执行）；nil 时放行。
+	UserMsgQueue service.UserMsgQueueCache
+	RPM          service.RPMCache
 	Concurrency      *service.ConcurrencyService
 	// Moderation 执行从节点上报的审核违规（累计、封号、通知）和命中过的输入名单（设计 3.4）；
 	// 判定在从节点。nil 表示没有这个功能。

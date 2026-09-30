@@ -51,6 +51,8 @@ func ProvideMasterRuntime(
 	composite *service.CompositeRouteResolver,
 	anthropicGateway *service.GatewayService,
 	tlsProfiles *service.TLSFingerprintProfileService,
+	userMsgQueue service.UserMsgQueueCache,
+	rpm service.RPMCache,
 ) *master.Runtime {
 	// 用户、分组、订阅作废时发布改动（平台配额在仓储层已接好，见 repository/wire.go）。
 	service.AttachAccessChangeHub(accessChanges, apiKeys, billing)
@@ -67,6 +69,7 @@ func ProvideMasterRuntime(
 		NewSelector: relayselect.NewFactory(relayselect.Deps{
 			Config: cfg, APIKeys: apiKeys, Subscriptions: subscriptions, Settings: settingService,
 			Billing: billing, Gateway: gateway, AnthropicGateway: anthropicGateway, Concurrency: concurrency,
+				UserMsgQueue: userMsgQueue, RPM: rpm,
 			Moderation: moderation, Composite: composite, Ops: ops, Users: users,
 		}),
 		VoucherPartitions: repository.NewRelayVoucherPartitions(db),

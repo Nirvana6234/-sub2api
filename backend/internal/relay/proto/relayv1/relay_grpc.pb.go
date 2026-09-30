@@ -313,6 +313,7 @@ const (
 	RelayControl_ResolveRoute_FullMethodName          = "/sub2api.relay.v1.RelayControl/ResolveRoute"
 	RelayControl_SwitchAutoGroup_FullMethodName       = "/sub2api.relay.v1.RelayControl/SwitchAutoGroup"
 	RelayControl_ReportAutoGroupResult_FullMethodName = "/sub2api.relay.v1.RelayControl/ReportAutoGroupResult"
+	RelayControl_UserMsgQueue_FullMethodName          = "/sub2api.relay.v1.RelayControl/UserMsgQueue"
 	RelayControl_Select_FullMethodName                = "/sub2api.relay.v1.RelayControl/Select"
 	RelayControl_FetchCredentials_FullMethodName      = "/sub2api.relay.v1.RelayControl/FetchCredentials"
 	RelayControl_RefillQuota_FullMethodName           = "/sub2api.relay.v1.RelayControl/RefillQuota"
@@ -365,6 +366,9 @@ type RelayControlClient interface {
 	// ReportAutoGroupResult 自动分组 Key 一次请求的最终结果（本地自动分组中间件在请求结束时的观察）：主节点据此
 	// 调整之后的选组（首字慢、失败时换组）。从节点在后台发，失败不重试。
 	ReportAutoGroupResult(ctx context.Context, in *AutoGroupResult, opts ...grpc.CallOption) (*AutoGroupResultAck, error)
+	// UserMsgQueue 用户消息串行队列的一步（锁、上次完成时间、Redis 时钟、账号当前 RPM，都在主节点的 Redis）：从节点的
+	// 处理函数照本地同一段排队代码（含排队期间的 SSE 保活），每一步在主节点执行。只认这台节点正在用的账号。
+	UserMsgQueue(ctx context.Context, in *UserMsgQueueRequest, opts ...grpc.CallOption) (*UserMsgQueueResponse, error)
 	// Select 为一次客户端请求的一次尝试选号：主节点复查凭据、做只有它能做的检查、选号、占并发槽，
 	// 签发扣费凭证，需要时顺带补充额度。带幂等键（请求 ID + 第几次选号）：超时重发拿到同一个结果。
 	// 被拒绝时正常返回 rejection（不是 gRPC 错误），从节点按它写客户端响应。
@@ -511,6 +515,16 @@ func (c *relayControlClient) ReportAutoGroupResult(ctx context.Context, in *Auto
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(AutoGroupResultAck)
 	err := c.cc.Invoke(ctx, RelayControl_ReportAutoGroupResult_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *relayControlClient) UserMsgQueue(ctx context.Context, in *UserMsgQueueRequest, opts ...grpc.CallOption) (*UserMsgQueueResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UserMsgQueueResponse)
+	err := c.cc.Invoke(ctx, RelayControl_UserMsgQueue_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -684,6 +698,9 @@ type RelayControlServer interface {
 	// ReportAutoGroupResult 自动分组 Key 一次请求的最终结果（本地自动分组中间件在请求结束时的观察）：主节点据此
 	// 调整之后的选组（首字慢、失败时换组）。从节点在后台发，失败不重试。
 	ReportAutoGroupResult(context.Context, *AutoGroupResult) (*AutoGroupResultAck, error)
+	// UserMsgQueue 用户消息串行队列的一步（锁、上次完成时间、Redis 时钟、账号当前 RPM，都在主节点的 Redis）：从节点的
+	// 处理函数照本地同一段排队代码（含排队期间的 SSE 保活），每一步在主节点执行。只认这台节点正在用的账号。
+	UserMsgQueue(context.Context, *UserMsgQueueRequest) (*UserMsgQueueResponse, error)
 	// Select 为一次客户端请求的一次尝试选号：主节点复查凭据、做只有它能做的检查、选号、占并发槽，
 	// 签发扣费凭证，需要时顺带补充额度。带幂等键（请求 ID + 第几次选号）：超时重发拿到同一个结果。
 	// 被拒绝时正常返回 rejection（不是 gRPC 错误），从节点按它写客户端响应。
@@ -765,6 +782,9 @@ func (UnimplementedRelayControlServer) SwitchAutoGroup(context.Context, *SwitchA
 }
 func (UnimplementedRelayControlServer) ReportAutoGroupResult(context.Context, *AutoGroupResult) (*AutoGroupResultAck, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReportAutoGroupResult not implemented")
+}
+func (UnimplementedRelayControlServer) UserMsgQueue(context.Context, *UserMsgQueueRequest) (*UserMsgQueueResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UserMsgQueue not implemented")
 }
 func (UnimplementedRelayControlServer) Select(context.Context, *SelectRequest) (*SelectResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Select not implemented")
@@ -1002,6 +1022,24 @@ func _RelayControl_ReportAutoGroupResult_Handler(srv interface{}, ctx context.Co
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(RelayControlServer).ReportAutoGroupResult(ctx, req.(*AutoGroupResult))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RelayControl_UserMsgQueue_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UserMsgQueueRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayControlServer).UserMsgQueue(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayControl_UserMsgQueue_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayControlServer).UserMsgQueue(ctx, req.(*UserMsgQueueRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1286,6 +1324,10 @@ var RelayControl_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReportAutoGroupResult",
 			Handler:    _RelayControl_ReportAutoGroupResult_Handler,
+		},
+		{
+			MethodName: "UserMsgQueue",
+			Handler:    _RelayControl_UserMsgQueue_Handler,
 		},
 		{
 			MethodName: "Select",

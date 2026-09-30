@@ -202,9 +202,8 @@ func (s *selector) attachIdentity(ctx context.Context, selection *relayv1.Select
 	return nil
 }
 
-// nodeServesAnthropicAccount 报告从节点现在能不能转发这个账号：Anthropic 的 API Key、OAuth / setup-token、服务账号
-// （Vertex）、Bedrock；Antigravity 账号随后接入。用户消息串行队列（账号或全局开了）还没接到从节点，
-// 这种 OAuth 账号也还不接。
+// nodeServesAnthropicAccount 报告从节点现在能不能转发这个账号：Anthropic 平台的 API Key、OAuth / setup-token、
+// 服务账号（Vertex）、Bedrock 账号（用户消息串行队列的锁和计数经 UserMsgQueue 在主节点）；Antigravity 账号随后接入。
 func (s *selector) nodeServesAnthropicAccount(a *service.Account) bool {
 	if a == nil || a.Platform != service.PlatformAnthropic {
 		return false
@@ -213,11 +212,7 @@ func (s *selector) nodeServesAnthropicAccount(a *service.Account) bool {
 	case a.Type == service.AccountTypeAPIKey, a.Type == service.AccountTypeServiceAccount, a.Type == service.AccountTypeBedrock:
 		return true
 	case a.IsAnthropicOAuthOrSetupToken():
-		mode := a.GetUserMsgQueueMode()
-		if mode == "" && s.deps.Config != nil {
-			mode = s.deps.Config.Gateway.UserMessageQueue.GetEffectiveMode()
-		}
-		return mode == ""
+		return true
 	}
 	return false
 }

@@ -26,6 +26,8 @@ type Selector interface {
 	SwitchAutoGroup(ctx context.Context, nodeID int64, req *relayv1.SwitchAutoGroupRequest) (*relayv1.SwitchAutoGroupResponse, error)
 	// ReportAutoGroupResult 自动分组 Key 一次请求的最终结果（主节点据此调整之后的选组）。
 	ReportAutoGroupResult(ctx context.Context, nodeID int64, req *relayv1.AutoGroupResult) (*relayv1.AutoGroupResultAck, error)
+	// UserMsgQueue 用户消息串行队列的一步。账号不是这台节点正在用的时返回 ErrSelectionNotFound。
+	UserMsgQueue(ctx context.Context, nodeID int64, req *relayv1.UserMsgQueueRequest) (*relayv1.UserMsgQueueResponse, error)
 	// Select 被拒绝时返回带 rejection 的回复，不返回 error；error 只表示主节点自身的故障。
 	Select(ctx context.Context, nodeID int64, req *relayv1.SelectRequest) (*relayv1.SelectResponse, error)
 	FetchCredentials(ctx context.Context, nodeID int64, req *relayv1.FetchCredentialsRequest) (*relayv1.FetchCredentialsResponse, error)
@@ -149,6 +151,19 @@ func (c *Control) ReportAutoGroupResult(ctx context.Context, req *relayv1.AutoGr
 	resp, err := c.selector.ReportAutoGroupResult(ctx, nodeID, req)
 	if err != nil {
 		return nil, selectionError(ctx, "report_auto_group_result", nodeID, err)
+	}
+	return resp, nil
+}
+
+// UserMsgQueue 用户消息串行队列的一步（锁和计数在主节点的 Redis）。
+func (c *Control) UserMsgQueue(ctx context.Context, req *relayv1.UserMsgQueueRequest) (*relayv1.UserMsgQueueResponse, error) {
+	nodeID, err := c.selectPeer(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.selector.UserMsgQueue(ctx, nodeID, req)
+	if err != nil {
+		return nil, selectionError(ctx, "user_msg_queue", nodeID, err)
 	}
 	return resp, nil
 }

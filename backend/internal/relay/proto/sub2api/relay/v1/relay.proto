@@ -65,6 +65,9 @@ service RelayControl {
   // ReportAutoGroupResult 自动分组 Key 一次请求的最终结果（本地自动分组中间件在请求结束时的观察）：主节点据此
   // 调整之后的选组（首字慢、失败时换组）。从节点在后台发，失败不重试。
   rpc ReportAutoGroupResult(AutoGroupResult) returns (AutoGroupResultAck);
+  // UserMsgQueue 用户消息串行队列的一步（锁、上次完成时间、Redis 时钟、账号当前 RPM，都在主节点的 Redis）：从节点的
+  // 处理函数照本地同一段排队代码（含排队期间的 SSE 保活），每一步在主节点执行。只认这台节点正在用的账号。
+  rpc UserMsgQueue(UserMsgQueueRequest) returns (UserMsgQueueResponse);
   // Select 为一次客户端请求的一次尝试选号：主节点复查凭据、做只有它能做的检查、选号、占并发槽，
   // 签发扣费凭证，需要时顺带补充额度。带幂等键（请求 ID + 第几次选号）：超时重发拿到同一个结果。
   // 被拒绝时正常返回 rejection（不是 gRPC 错误），从节点按它写客户端响应。
@@ -604,6 +607,30 @@ message AutoGroupResult {
 }
 
 message AutoGroupResultAck {}
+
+message UserMsgQueueRequest {
+  enum Op {
+    OP_UNSPECIFIED = 0;
+    // 试着拿账号的串行锁（request_id、lock_ttl_ms）：value 为 1 表示拿到。
+    OP_ACQUIRE = 1;
+    // 放锁并记下完成时间（request_id）：value 为 1 表示放了。
+    OP_RELEASE = 2;
+    // 上次完成时间（毫秒，Redis 时钟）。
+    OP_LAST_COMPLETED_MS = 3;
+    // Redis 当前时间（毫秒）。
+    OP_NOW_MS = 4;
+    // 账号当前这一分钟的 RPM 计数。
+    OP_ACCOUNT_RPM = 5;
+  }
+  Op op = 1;
+  int64 account_id = 2;
+  string request_id = 3;
+  int32 lock_ttl_ms = 4;
+}
+
+message UserMsgQueueResponse {
+  int64 value = 1;
+}
 
 message SelectRequest {
   // 从节点为这次客户端请求起的 ID。同一请求的多次选号（换号）共用：用户并发槽、利润否决次数、

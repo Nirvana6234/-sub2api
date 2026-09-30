@@ -10,6 +10,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
+	"github.com/Wei-Shaw/sub2api/internal/relay/master"
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
 	"github.com/Wei-Shaw/sub2api/internal/relay/sign"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -187,17 +188,74 @@ func TestAnthropicAttemptReleaseFollowsTheLocalHandler(t *testing.T) {
 	w.waitReleased(t)
 }
 
-// 用户消息串行队列还没接到从节点：开了队列的 OAuth 账号交给主节点。
-func TestAnthropicOAuthWithMessageQueueStaysOnTheMaster(t *testing.T) {
+// 用户消息串行队列的每一步只认这台节点正在用的账号（读 Redis 时钟除外）。
+func TestUserMsgQueueOnlyForAccountsInUse(t *testing.T) {
 	ctx := context.Background()
-	oauth := anthropicAccount(1, "oauth", service.AccountTypeOAuth)
-	oauth.Credentials = map[string]any{"access_token": "SECRET-at"}
-	oauth.Extra = map[string]any{"user_msg_queue_mode": "serialize"}
-	w := newWorld(t, config.RunModeStandard, oauth)
-	resp, err := w.sel.Select(ctx, testNode, anthropicMessagesRequest("q1", 1, "sk-anthropic"))
+	w := newWorld(t, config.RunModeStandard, anthropicAccount(1, "one", service.AccountTypeAPIKey))
+	queue := &memUserMsgQueue{}
+	w.sel.deps.UserMsgQueue = queue
+
+	_, err := w.sel.UserMsgQueue(ctx, testNode, &relayv1.UserMsgQueueRequest{Op: relayv1.UserMsgQueueRequest_OP_ACQUIRE, AccountId: 1, RequestId: "r"})
+	require.ErrorIs(t, err, master.ErrSelectionNotFound)
+	resp, err := w.sel.UserMsgQueue(ctx, testNode, &relayv1.UserMsgQueueRequest{Op: relayv1.UserMsgQueueRequest_OP_NOW_MS})
 	require.NoError(t, err)
-	require.Equal(t, relayv1.RejectionFormat_REJECTION_FORMAT_UNSUPPORTED, resp.GetRejection().GetFormat())
+	require.Positive(t, resp.GetValue())
+
+	sel, err := w.sel.Select(ctx, testNode, anthropicMessagesRequest("u1", 1, "sk-anthropic"))
+	require.NoError(t, err)
+	require.NotNil(t, sel.GetSelection(), "rejection: %+v", sel.GetRejection())
+	resp, err = w.sel.UserMsgQueue(ctx, testNode, &relayv1.UserMsgQueueRequest{Op: relayv1.UserMsgQueueRequest_OP_ACQUIRE, AccountId: 1, RequestId: "r", LockTtlMs: 1000})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, resp.GetValue())
+	w.sel.Release(testNode, &relayv1.SelectionRelease{SelectionId: sel.GetSelection().GetSelectionId(), RequestDone: true})
 	w.waitReleased(t)
+}
+
+// memUserMsgQueue 是主节点的用户消息串行队列锁（记下拿锁、放锁）。
+type memUserMsgQueue struct {
+	mu       sync.Mutex
+	held     map[int64]string
+	acquired int
+	released int
+}
+
+func (q *memUserMsgQueue) AcquireLock(_ context.Context, accountID int64, requestID string, _ int) (bool, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.held == nil {
+		q.held = map[int64]string{}
+	}
+	if _, busy := q.held[accountID]; busy {
+		return false, nil
+	}
+	q.held[accountID] = requestID
+	q.acquired++
+	return true, nil
+}
+
+func (q *memUserMsgQueue) ReleaseLock(_ context.Context, accountID int64, requestID string) (bool, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.held[accountID] != requestID {
+		return false, nil
+	}
+	delete(q.held, accountID)
+	q.released++
+	return true, nil
+}
+
+func (q *memUserMsgQueue) GetLastCompletedMs(context.Context, int64) (int64, error) { return 0, nil }
+func (q *memUserMsgQueue) GetCurrentTimeMs(context.Context) (int64, error) {
+	return time.Now().UnixMilli(), nil
+}
+func (q *memUserMsgQueue) ReconcileExpiredLockCandidates(context.Context, int) (int, error) {
+	return 0, nil
+}
+
+func (q *memUserMsgQueue) counts() (acquired, released int, held int) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.acquired, q.released, len(q.held)
 }
 
 // antigravityMixedAccount 是开了混合调度、可以被 Anthropic 分组选到的 Antigravity 账号（从节点还不能转发）。

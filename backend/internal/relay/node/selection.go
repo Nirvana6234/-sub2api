@@ -53,6 +53,13 @@ func (s *SelectClient) ResolveRoute(ctx context.Context, req *relayv1.ResolveRou
 	return s.control.ResolveRoute(ctx, req)
 }
 
+// UserMsgQueue 用户消息串行队列的一步（锁、完成时间、RPM 在主节点的 Redis）。
+func (s *SelectClient) UserMsgQueue(ctx context.Context, req *relayv1.UserMsgQueueRequest) (*relayv1.UserMsgQueueResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, AdmitTimeout)
+	defer cancel()
+	return s.control.UserMsgQueue(ctx, req)
+}
+
 // SwitchAutoGroup 自动分组 Key 换到下一个候选分组（本地 tryOpenAIAutoGroupFailover）。不幂等：出错不重发。
 func (s *SelectClient) SwitchAutoGroup(ctx context.Context, req *relayv1.SwitchAutoGroupRequest) (*relayv1.SwitchAutoGroupResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, AdmitTimeout)

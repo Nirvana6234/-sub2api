@@ -320,3 +320,28 @@ func TestNodeForwardsAnthropicBedrockAccounts(t *testing.T) {
 	require.Eventually(t, func() bool { return len(e.settler.records()) == 1 }, 5*time.Second, 20*time.Millisecond)
 	e.world.waitReleased(t)
 }
+
+// 开了用户消息串行队列的 OAuth 账号经从节点：从节点照本地的排队代码拿锁、转发、放锁，锁在主节点。
+func TestNodeSerializesUserMessagesThroughTheMaster(t *testing.T) {
+	e := startE2EWith(t, func(string) []service.Account {
+		a := anthropicAccount(1, "oauth", service.AccountTypeOAuth)
+		a.Credentials = map[string]any{"access_token": "SECRET-at"}
+		a.Extra = map[string]any{"user_msg_queue_mode": "serialize"}
+		return []service.Account{a}
+	})
+	queue := &memUserMsgQueue{}
+	e.world.sel.deps.UserMsgQueue = queue
+
+	status, body := e.post(t, "/v1/messages", "sk-anthropic", `{"model":"claude-sonnet-4-5","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`)
+	require.Equal(t, http.StatusOK, status, body)
+	select {
+	case <-e.hits:
+	case <-time.After(5 * time.Second):
+		t.Fatal("upstream was not called")
+	}
+	require.Eventually(t, func() bool {
+		acquired, released, held := queue.counts()
+		return acquired == 1 && released == 1 && held == 0
+	}, 5*time.Second, 20*time.Millisecond, "the node took the master's lock for the account and gave it back")
+	e.world.waitReleased(t)
+}

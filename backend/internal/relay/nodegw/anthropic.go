@@ -98,7 +98,13 @@ func NewAnthropicHandler(d GatewayDeps, a AnthropicDeps) *handler.GatewayHandler
 	if d.Moderation != nil {
 		moderation = d.Moderation.Service
 	}
-	h := handler.NewGatewayHandler(gw, nil, nil, nil, nil, nil, nil, nil, nil, nil, d.ErrorPassthrough, moderation, nil, d.Config, d.Settings)
+	// 用户消息串行队列：与本地同一段排队代码（含排队期间的 SSE 保活），锁和计数每一步问主节点。
+	var userMsgQueue *service.UserMessageQueueService
+	if d.Dispatcher != nil && d.Dispatcher.deps.Select != nil && d.Config != nil {
+		call := d.Dispatcher.deps.Select.UserMsgQueue
+		userMsgQueue = service.NewUserMessageQueueService(remoteUserMsgQueue{call: call}, remoteRPM{call: call}, &d.Config.Gateway.UserMessageQueue)
+	}
+	h := handler.NewGatewayHandler(gw, nil, nil, nil, nil, nil, nil, nil, nil, nil, d.ErrorPassthrough, moderation, userMsgQueue, d.Config, d.Settings)
 	h.SetRelayDispatcher(d.Dispatcher)
 	if d.Moderation != nil {
 		// 安全审计在从节点本地判定（设计 3.4），与单机同一个协调器。

@@ -103,6 +103,10 @@ func (f *fakeSelector) ReportAutoGroupResult(context.Context, int64, *relayv1.Au
 	return &relayv1.AutoGroupResultAck{}, nil
 }
 
+func (f *fakeSelector) UserMsgQueue(context.Context, int64, *relayv1.UserMsgQueueRequest) (*relayv1.UserMsgQueueResponse, error) {
+	return &relayv1.UserMsgQueueResponse{}, nil
+}
+
 func (f *fakeSelector) ResolveRoute(context.Context, int64, *relayv1.ResolveRouteRequest) (*relayv1.ResolveRouteResponse, error) {
 	return &relayv1.ResolveRouteResponse{}, nil
 }
