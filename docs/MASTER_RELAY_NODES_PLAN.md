@@ -278,7 +278,7 @@ WP10 工作量最大（所有平台），WP9 完成后按平台拆给多人并�
 |---|---|---|
 | 非 OpenAI 网关服务的账号状态接口：Anthropic（`GatewayService`，含 Bedrock / Vertex / Antigravity 账号）、Gemini、Antigravity、Grok、Bedrock 转发文件里直接调限流服务的约 30 处，统一成一个"账号状态"接口（同步判定走上游错误决策、异步的走账号事件），源码守卫扩到全部转发文件 | WP10 | 限流服务的四种判定已接（`AccountStateDecider`、从节点 `RemoteAccountState`、源码守卫）；各平台自己的写库（Gemini 429 冷却与限流标记、Grok 临时不可调度、`accountRepo.UpdateExtra` 等）随各自入口做 |
 | 各服务族的扣费记录种类与入账（`GatewayService.RecordUsage` 等），每族一个与单机逐字段比对的一致性测试 | WP10 | |
-| 安全审计按分工原则重做（设计 3.4）：① 转发要用的密钥按节点加密下发（审核、提示词审计、联网搜索配置及其代理，联网搜索共用）；② 内容审核在从节点判定（本机记录存储、命中名单副本与增量同步、违规事件 → 主节点最小违规记录 → 单机同一段累计与封号、只认本节点近期准入的用户）；③ 提示词审计在从节点（本机任务队列和待审内容）；④ cyber 风控记录、运维日志改写从节点本机（屏蔽标记仍同步写主节点）；⑤ 删掉 WP10-4 的同步审计调用、审计策略、预先抽取的传输形式 | WP10 | 待做（WP10-4 的同步版本已提交，按新原则推翻） |
+| 安全审计按分工原则重做（设计 3.4）：内容审核、cyber 记录已完成（WP10-4 ①–⑧）；**提示词审计搬到从节点**（本机任务队列、待审内容、审计事件，配置解密后加密下发）待做；从节点 cyber 运维错误日志随 WP14 | WP10 | 部分完成 |
 | 联网搜索在从节点执行（设计 3.3）：配置加密下发（共用上一行 ①）、配额本地计数并定期上报汇总 | WP10 | |
 | 自动分组 Key、组合平台分组经从节点（主节点选号时选组、选目标平台） | WP10 | |
 | Anthropic 网关入口：`/v1/messages`、count_tokens（含 Bedrock、Vertex、Antigravity 账号）；`ForceCacheBilling` 核对 | WP10 | |
@@ -304,19 +304,30 @@ WP10 工作量最大（所有平台），WP9 完成后按平台拆给多人并�
 - **OpenAI 分组的 `/v1/messages`**（WP10-1）：主节点 `SELECT_ENDPOINT_OPENAI_MESSAGES`，按分组的派发映射模型选号（要求支持 Chat Completions），计费资格、额度不足、选不出账号的拒绝按 Anthropic 格式，其余（用户并发槽、准入）与单机一样仍是 OpenAI 格式；从节点只注册 `/v1/messages`（与单机一致）。
 - **影子账号**：选号与取凭据的回复带母账号快照（`credential_parent`，同样白名单编码、凭据加密），从节点放进请求 ctx（`service.WithCredentialParent`），转发路径上按 ID 查母账号的地方先认 ctx 里的。
 - **错误透传规则**：配置快照登记分段 `error_passthrough_rules`，规则增删改经 `SettingChangeHub` 当场重新生成；从节点 `NewStaticErrorPassthroughService` 按快照匹配。其他单独表的转发配置照此加（`RuntimeDeps.Sections`）。
-- **cyber 记录**（设计 3.4）：`recordCyberPolicyIfMarked` 拆成"在请求上拍下事实"（`handler.CyberPolicyHit`）和执行（`handler.CyberPolicyRecorder`，单机与主节点共用）。从节点调 `CyberPolicyHit`，主节点只认这台节点进行中的选号、账号一致，归属取自选号记录，屏蔽键由选号时的查询键推导（查询键加了 `pre_latest_user_key`；单机的写入键也改由查询键推导，结果不变，有等价测试）；每请求只记一次。转发返回错误时的用量行是扣费记录种类 `OPENAI_CYBER_POLICY`，入账与单机 `RecordCyberPolicyUsageLog` 逐字段一致（记成 cyber、按入账时计价、ctx 里没有请求 ID 和兜底事实，一致性测试覆盖）。运维错误日志补上 `node_id` 列的写入。选号时命中 cyber 会话屏蔽，主节点记 `cyber_policy_session_blocked` 运维日志（与单机 `writeCyberSessionBlocked` 共用 `handler.EnqueueCyberSessionBlockedOpsEntry`；选号请求为此加了 UA、请求 ID、客户端请求 ID）。本机真机：经从节点的 cyber 请求，客户端收到上游原错误，用量行 `request_type=4`、`node_id=1`，运维日志 `cyber_policy` 带 `node_id=1`，同一会话下一次请求被屏蔽（403）并记下屏蔽日志（与直打主节点的那条除 `node_id` 外相同）、其他会话照常。已知差异：流式 Responses 在 cyber 事件之后客户端断开、转发又以错误返回时，单机会写两条用量行（cyber 那条和断开时的部分结果，请求 ID 不同，两条都计费），主从下同一凭证只入账先到的 cyber 那条；Chat / Messages 不会出现这种组合。
+- **cyber 记录**（设计 3.4）：`recordCyberPolicyIfMarked` 拆成"在请求上拍下事实"（`handler.CyberPolicyHit`）和执行（`handler.CyberPolicyRecorder`，单机与主节点共用）。从节点调 `CyberPolicyHit`，主节点只认这台节点进行中的选号、账号一致，归属取自选号记录，屏蔽键由选号时的查询键推导（WP10-4 后主节点只写屏蔽标记，风控记录在从节点本机）（查询键加了 `pre_latest_user_key`；单机的写入键也改由查询键推导，结果不变，有等价测试）；每请求只记一次。转发返回错误时的用量行是扣费记录种类 `OPENAI_CYBER_POLICY`，入账与单机 `RecordCyberPolicyUsageLog` 逐字段一致（记成 cyber、按入账时计价、ctx 里没有请求 ID 和兜底事实，一致性测试覆盖）。运维错误日志补上 `node_id` 列的写入。选号时命中 cyber 会话屏蔽，主节点记 `cyber_policy_session_blocked` 运维日志（与单机 `writeCyberSessionBlocked` 共用 `handler.EnqueueCyberSessionBlockedOpsEntry`；选号请求为此加了 UA、请求 ID、客户端请求 ID）。本机真机：经从节点的 cyber 请求，客户端收到上游原错误，用量行 `request_type=4`、`node_id=1`，运维日志 `cyber_policy` 带 `node_id=1`，同一会话下一次请求被屏蔽（403）并记下屏蔽日志（与直打主节点的那条除 `node_id` 外相同）、其他会话照常。已知差异：流式 Responses 在 cyber 事件之后客户端断开、转发又以错误返回时，单机会写两条用量行（cyber 那条和断开时的部分结果，请求 ID 不同，两条都计费），主从下同一凭证只入账先到的 cyber 那条；Chat / Messages 不会出现这种组合。
 - **Codex 的 Responses WebSocket**（WP10-3，设计见下一节）：已接入。顺带修的：Codex 审查子代理的父会话哈希随选号带给主节点（HTTP Responses 原来也丢了）；三处"有限流服务才判定"的写法在从节点上悄悄跳过（Anthropic 原生直通的会话窗口 → 账号事件 `UpdateSessionWindow`、原生直通 2xx 非 JSON 的限流判定 → 判定接口 `HandleRateLimitError`、WS 限流信号），源码守卫改为 OpenAI 转发文件不能出现 `rateLimitService`；账号附加字段"像密钥就剔除"把 API Key 账号的 WebSocket 开关剔掉了（名字里有 apikey），加了例外。本机真机（HTTP 假上游之外另起 WebSocket 假上游）：经从节点与直打主节点各两轮（带 `previous_response_id` 续链），升级、上游收到的 Key、每轮用量行（`request_type=3`、tokens、费用、端点）除 `node_id` 外相同，每轮一张凭证，没有运维错误。
 
-### WP10-4 安全审计（按分工原则重做中）
+### WP10-4 安全审计在从节点
 
-2026-09-29 先做了一版"整个判定在主节点、从节点同步调用"（cf9ebfc0、a942ddac、4dd3a24e：审核连接上的 `SecurityAudit`、准入与每轮 `BeginTurn` 回审计策略、`PrepareRequest` 预先抽取的传输形式、5 分钟等待）。同日负责人定分工原则（第 7 节第 21 条），这版推翻，按设计 3.4 重做：
+2026-09-29 先做了一版"整个判定在主节点、从节点同步调用"（cf9ebfc0、a942ddac、4dd3a24e），同日负责人定分工原则（第 7 节第 21 条），这版推翻，按设计 3.4 重做。已完成（内容审核）：
 
-1. **加密下发的密钥**：配置快照加一段按节点加密的内容（节点加密公钥 + sealbox，附加数据绑定节点和版本），清单是审核配置、提示词审计配置、联网搜索配置和它们引用的代理；从节点解开后作为设置仓储的一部分，只在内存。版本不能泄露密钥内容（用主节点进程内的随机密钥做 HMAC），节点换加密密钥后重新封。普通快照的"不含密钥"测试保持不变，另加一条测试断言加密那段只含清单内的项。
-2. **内容审核在从节点**：从节点装配 `ContentModerationService`，依赖换成：设置仓储（快照 + 加密段）、代理仓储（加密段里的代理）、本机记录存储（`CreateLog` 等写数据目录；`CountFlaggedByUserSince` 不在从节点用）、命中名单副本（连上时整份拉取、事件连接增量推送；新命中报主节点）、封号与邮件的副作用接口（从节点实现是发违规事件）。主节点：违规事件 → 最小违规记录（只含 `CountFlaggedByUserSince` 条件里用到的列，带 `node_id`）→ 单机同一段累计、封号、邮件；只认这台节点最近 30 分钟准入过的用户；后台删除、清空命中名单时推送到所有节点。
-3. **提示词审计在从节点**：`PostgreSQLRepository`、`RedisPayloadStore` 抽成接口，从节点用本机实现（任务队列、待审内容、审计事件都在数据目录）。
-4. **cyber**：`CyberPolicyHit` 只让主节点写屏蔽标记（仍同步、只等 500ms）；风控记录、运维日志由从节点写本机；计入封号的命中发违规事件。
-5. **删掉的**：`RelayModeration.SecurityAudit`、`AuditPolicy`（准入、`BeginTurn`、从节点每连接的策略）、`PrepareRequest` / `ForTransfer`、审计调用的 5 分钟等待；WebSocket"审计晚一轮生效"的差异随之消失。处理函数里从节点不再跳过审计（已改），判定函数用本机协调器。
-6. **测试**：单机与从节点对同一批请求（关键词、命中名单、外部接口拦截、observe、阻断模式提示词审计）判定一致；违规跨节点累计到阈值封号；命中名单在节点间同步；谎报未准入用户的违规被丢弃。
+1. **加密下发的密钥**（0f5bbae6）：配置快照加一段按节点加密的内容（sealbox，附加数据绑定节点和版本），清单是内容审核配置、联网搜索配置和它们引用的代理；版本用主节点进程内随机密钥的 HMAC，节点换加密密钥版本随之变；从节点解开后并进设置仓储，只在内存，解不开就不换快照。普通快照照旧不含密钥，另有测试断言与转发无关的密钥不进加密清单。
+2. **命中后的账号动作接口**（ab0b4d3f）：`service.ContentModerationAccountActions`（累计违规、封号、通知邮件），本机实现就是原来的代码。
+3. **主节点的违规台账**（d25dcd3f）：`ModerationViolation` / `ModerationNotify`，只认这台节点最近 30 分钟准入过的用户（准入、选号、WebSocket 每一轮续上）；主节点只记一条不含输入内容的最小违规记录（迁移 263：`content_moderation_logs.node_id`），收件人按主节点库里的用户。
+4. **从节点上报**（62c0e529）：`node.RemoteModerationActions`，调不通时按第 1 次记、不封号，后台同一幂等键重试 20 分钟，主节点明确拒绝或换纪元时不再重试。
+5. **命中名单同步**（84121eb0）：主节点的增删清空、从节点上报都经事件连接推增量；从节点每次连上事件流后分页整份拉取，拉取期间的增量按先后补上，断线期间错过的删除以拉到的为准。
+6. **本机记录存储**（45e53f98）：`internal/relay/nodestore`（按种类、日期分段的 JSON 行文件，按保留期整天删除，总大小上限）；`node.ModerationStore` 实现审核记录仓储。
+7. **从节点装配**（c26e9cbe）：`nodegw.NewModeration`，与单机同一个审核服务和协调器；风控开关进白名单；换快照时审核配置缓存当场作废。撤掉了同步审计那一版的全部代码（审核连接上的 `SecurityAudit`、审计策略、预先抽取的传输形式、处理函数的远程判定接缝、只为"交给主节点"用的 `AppliesTo*`）。
+8. **cyber**（3585a1a2）：主节点只写会话屏蔽标记；风控记录由从节点写本机，计入封号的违规照上面上报。
+
+测试：主节点单测（未准入的用户被拒、最小记录不含内容、跨次累计封号）；从节点单测（上报重试与幂等键、名单副本的整份拉取与增量、本机记录的筛选与保留期）；进程内端到端（HTTP 关键词拦截不转发、记录留在从节点、违规累计封号、命中名单直接拦截、WebSocket 每轮本地审计、cyber 记录留在从节点）；关键接线都做了变异检查。
+
+还没做 / 与单机的差异：
+- **提示词审计**还没搬到从节点（从节点上的协调器现在只有内容审核）：`PostgreSQLRepository`、`RedisPayloadStore` 要抽成接口，任务队列、待审内容、审计事件放本机；配置（含凭据，主节点用 `secretEncryptor` 加密存）以解密后的形式进加密下发的部分。下一步做。
+- 从节点上 cyber 的运维错误日志还没写（主节点不再写），随 WP14 的本机日志接上。
+- 违规上报在从节点重启时会丢掉还没补上的；这台新命中的输入报给主节点失败时只留在本机副本里，下次整份拉取时丢掉。
+- 本机记录按天清理，保留期最多多留不到一天。
+- 主节点库里多了从节点违规的最小记录（带 `node_id`、没有输入内容），后台审核记录列表按节点区分和到从节点查完整记录在 WP16 / WP14 做。
 
 ### WP10-3 Codex WebSocket（Responses WS）的设计
 
