@@ -3,6 +3,7 @@ package securityaudit
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"regexp"
 	"sort"
@@ -40,10 +41,11 @@ func ExtractBlockingPromptSnapshot(req Request, latestTurnOnly bool) (PromptSnap
 }
 
 func extractPromptSnapshot(req Request, latestTurnOnly bool) (PromptSnapshot, error) {
-	extracted, err := requestSegments(req)
-	if err != nil {
-		return PromptSnapshot{}, err
+	var document any
+	if err := json.Unmarshal(req.Body, &document); err != nil {
+		return PromptSnapshot{}, errors.New("prompt audit request JSON is invalid")
 	}
+	extracted := extractProtocolSegments(req.Protocol, document)
 	segments := normalizeSegmentsLatestUserFirst(extracted)
 	if latestTurnOnly {
 		segments = blockingSegmentsLatestUserAndPreviousOutput(extracted)

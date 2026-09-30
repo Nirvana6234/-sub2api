@@ -15,7 +15,7 @@ import (
 )
 
 // OpenAIRelayDispatcher 是主从分流从节点上的接缝（开发计划 WP9，设计 3.1）。处理函数里由主节点负责的步骤
-// ——续链归属、安全审计、用户并发槽、计费资格、cyber 会话屏蔽、渠道映射、计价上下文、选号与准入——
+// ——续链归属、用户并发槽、计费资格、cyber 会话屏蔽、渠道映射、计价上下文、选号与准入——
 // 在从节点上合成一次远程选号；用量写本地扣费队列，不调 RecordUsage；每次尝试结束发释放。
 // 处理函数其余代码（请求校验与规范化、转发、失败换号的分类）两边是同一份。
 // 处理函数的 relay 为 nil 时走单机逻辑。
@@ -36,9 +36,6 @@ type OpenAIRelayDispatcher interface {
 	RequestDone(c *gin.Context)
 	// HandOff 把请求原样交给主节点转发（主节点回"暂不支持"时，只在还没写出任何响应时调用）。
 	HandOff(c *gin.Context)
-	// SecurityAudit 转发前的安全审计（代替本机的审计协调器，设计 3.4）：按准入（WebSocket 为上一轮）时主节点给的
-	// 审计策略，不会被审计时直接放行；否则把预先抽好的审核输入交给主节点判定，调不通时按策略放行或回审计不可用。
-	SecurityAudit(c *gin.Context, apiKey *service.APIKey, request securityaudit.Request) securityaudit.Decision
 
 	// ---- Responses WebSocket（开发计划 WP10-3）：连接选号用 Select（WS 为 true），每一轮在主节点准入 ----
 
@@ -149,6 +146,11 @@ type OpenAIRelayCyberUsage struct {
 
 // SetRelayDispatcher 让处理函数在主从分流的从节点上运行（WP9 装配时调用）。
 func (h *OpenAIGatewayHandler) SetRelayDispatcher(d OpenAIRelayDispatcher) { h.relay = d }
+
+// SetSecurityAuditCoordinator 装上安全审计协调器（从节点装配用：审计在从节点本地判定，设计 3.4）。
+func (h *OpenAIGatewayHandler) SetSecurityAuditCoordinator(c *securityaudit.Coordinator) {
+	h.securityAuditCoordinator = c
+}
 
 // openAIHTTPContinuationUnsupportedError 是 HTTP 续链落到不支持的账号时的最后错误（选号跳过 OAuth 账号时记下）。
 func openAIHTTPContinuationUnsupportedError() *service.UpstreamFailoverError {

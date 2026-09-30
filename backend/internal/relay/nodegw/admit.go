@@ -71,7 +71,6 @@ func (d *Dispatcher) AdmitMiddleware() gin.HandlerFunc {
 			sub, subErr := keycodec.DecodeSubscription(adm.GetSubscription())
 			if subErr == nil {
 				middleware2.ReplaceAuthenticatedAPIKey(c, apiKey, sub)
-				stateOf(c).auditPolicy.Store(int32(adm.GetAuditPolicy()))
 				c.Next()
 				return
 			}

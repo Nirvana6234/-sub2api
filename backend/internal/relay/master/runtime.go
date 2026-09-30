@@ -441,7 +441,6 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 		RouteNodeEvents(events, selector)
 	}
 	relayv1.RegisterRelayControlServer(server.GRPC(), control)
-	relayv1.RegisterRelayModerationServer(server.GRPC(), NewModerationServer(control))
 	if r.deps.NewSettler != nil {
 		env := SettleEnv{VerifyVoucher: r.VerifyVoucher, LastSuspectRevocation: r.deps.Store.LastSuspectRevocation}
 		if quotas != nil {

@@ -41,8 +41,6 @@ type Selector interface {
 	// FetchFlaggedHashes / RecordFlaggedHash 命中过的输入名单的整份拉取与从节点新命中（设计 3.4）。
 	FetchFlaggedHashes(ctx context.Context, nodeID int64, req *relayv1.FetchFlaggedHashesRequest) (*relayv1.FetchFlaggedHashesResponse, error)
 	RecordFlaggedHash(ctx context.Context, nodeID int64, req *relayv1.RecordFlaggedHashRequest) (*relayv1.RecordFlaggedHashResponse, error)
-	// SecurityAudit 转发前的安全审计（设计 3.4，走审核连接）。Key 复查不通过时回 skipped，不返回 error。
-	SecurityAudit(ctx context.Context, nodeID int64, req *relayv1.SecurityAuditRequest) (*relayv1.SecurityAuditResponse, error)
 	// Release 处理事件连接上的释放消息（不回复，按选号 ID 幂等）。在事件流的接收协程里调用，
 	// 不能阻塞：要访问 Redis 等的工作放到自己的协程里做。
 	Release(nodeID int64, rel *relayv1.SelectionRelease)
@@ -266,32 +264,6 @@ func (c *Control) RecordFlaggedHash(ctx context.Context, req *relayv1.RecordFlag
 	resp, err := c.selector.RecordFlaggedHash(ctx, nodeID, req)
 	if err != nil {
 		return nil, selectionError(ctx, "record_flagged_hash", nodeID, err)
-	}
-	return resp, nil
-}
-
-// ModerationServer 是审核连接上的服务（设计 3.4）：同一个选号实现，走单独的连接和限流类别，
-// 审核慢时不挤占选号。
-type ModerationServer struct {
-	relayv1.UnimplementedRelayModerationServer
-	control *Control
-}
-
-// NewModerationServer 创建审核连接上的服务。
-func NewModerationServer(control *Control) *ModerationServer {
-	return &ModerationServer{control: control}
-}
-
-// SecurityAudit 转发前的安全审计。只读（审核记录、累计封号是审计本身的副作用，与单机一样每次判定一次）：
-// 不校验纪元，不带幂等键。
-func (m *ModerationServer) SecurityAudit(ctx context.Context, req *relayv1.SecurityAuditRequest) (*relayv1.SecurityAuditResponse, error) {
-	nodeID, err := m.control.selectPeer(ctx, false)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := m.control.selector.SecurityAudit(ctx, nodeID, req)
-	if err != nil {
-		return nil, selectionError(ctx, "security_audit", nodeID, err)
 	}
 	return resp, nil
 }

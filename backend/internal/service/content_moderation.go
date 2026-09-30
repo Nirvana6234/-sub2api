@@ -319,38 +319,11 @@ type ContentModerationCheckInput struct {
 	Model      string
 	Protocol   string
 	Body       []byte
-	// Prepared 是预先从请求体抽好的输入（主从分流时从节点算好、不带请求体）；有它就不再从 Body 抽。
-	Prepared *ContentModerationInput
 }
 
 type ContentModerationInput struct {
 	Text   string
 	Images []string
-	// ImageHashes 只在主从分流的传输形式里有（见 ForTransfer）：全部图片各自的 SHA-256（十六进制，按原顺序），
-	// 这时 Images 只剩审核时抽中的那一张。输入哈希和图片数按它算，与单机按全部图片算的一致。
-	ImageHashes []string `json:",omitempty"`
-}
-
-// ForTransfer 是从节点发给主节点的形式：图片多于审核接口一次要的张数时，只带抽中的那张（抽法与
-// ModerationInput 相同）和全部图片的哈希，免得历史截图把审核连接撑满。
-func (in ContentModerationInput) ForTransfer() ContentModerationInput {
-	if in.ImageHashes != nil || len(in.Images) <= maxContentModerationInputImages {
-		return in
-	}
-	hashes := make([]string, len(in.Images))
-	for i, image := range in.Images {
-		sum := sha256.Sum256([]byte(image))
-		hashes[i] = hex.EncodeToString(sum[:])
-	}
-	return ContentModerationInput{Text: in.Text, Images: limitContentModerationImages(in.Images), ImageHashes: hashes}
-}
-
-// ImageCount 是请求里的图片数（传输形式按哈希数）。
-func (in ContentModerationInput) ImageCount() int {
-	if in.ImageHashes != nil {
-		return len(in.ImageHashes)
-	}
-	return len(in.Images)
 }
 
 func (in *ContentModerationInput) Normalize() {
@@ -391,13 +364,6 @@ func (in ContentModerationInput) Hash() string {
 	h := sha256.New()
 	_, _ = h.Write([]byte("text:"))
 	_, _ = h.Write([]byte(in.Text))
-	if in.ImageHashes != nil {
-		for _, imageHash := range in.ImageHashes {
-			_, _ = h.Write([]byte("\nimage:"))
-			_, _ = h.Write([]byte(imageHash))
-		}
-		return hex.EncodeToString(h.Sum(nil))
-	}
 	for _, image := range in.Images {
 		imageHash := sha256.Sum256([]byte(image))
 		_, _ = h.Write([]byte("\nimage:"))
@@ -851,47 +817,6 @@ func (s *ContentModerationService) TestAPIKeys(ctx context.Context, input TestCo
 	return &TestContentModerationAPIKeysResult{Items: items, AuditResult: auditResult, ImageCount: imageCount}, nil
 }
 
-// AppliesTo 报告这个分组、模型的请求会不会进内容审核（不看抽样和输入内容，宁宽勿漏）。
-// 主从分流用：在审核接入主从通信之前（设计 3.4），会被审核的请求留在主节点转发，不交给从节点。
-// 读不到配置时按"会"处理。
-func (s *ContentModerationService) AppliesTo(ctx context.Context, groupID *int64, model string) bool {
-	if s == nil || s.settingRepo == nil || s.repo == nil {
-		return false
-	}
-	runtimeSnapshot, err := s.loadRuntimeSnapshot(ctx)
-	if err != nil {
-		return true
-	}
-	if !runtimeSnapshot.riskControlEnabled {
-		return false
-	}
-	cfg := runtimeSnapshot.config
-	if !cfg.Enabled || cfg.Mode == ContentModerationModeOff {
-		return false
-	}
-	return cfg.includesGroup(groupID) && cfg.includesModel(model)
-}
-
-// AppliesToGroup 报告审核可能处理这个分组的请求（不看模型：任一模型会被审核就算）。主从分流在接受 WebSocket
-// 之前用它决定交给主节点（那时还不知道模型）。读配置失败时按"会"处理。
-func (s *ContentModerationService) AppliesToGroup(ctx context.Context, groupID *int64) bool {
-	if s == nil || s.settingRepo == nil || s.repo == nil {
-		return false
-	}
-	runtimeSnapshot, err := s.loadRuntimeSnapshot(ctx)
-	if err != nil {
-		return true
-	}
-	if !runtimeSnapshot.riskControlEnabled {
-		return false
-	}
-	cfg := runtimeSnapshot.config
-	if !cfg.Enabled || cfg.Mode == ContentModerationModeOff {
-		return false
-	}
-	return cfg.includesGroup(groupID)
-}
-
 func (s *ContentModerationService) Check(ctx context.Context, input ContentModerationCheckInput) (*ContentModerationDecision, error) {
 	allow := &ContentModerationDecision{Allowed: true, Action: ContentModerationActionAllow}
 	if s == nil || s.settingRepo == nil || s.repo == nil {
@@ -990,13 +915,7 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 			"configured_models", cfg.ModelFilter.Models)
 		return allow, nil
 	}
-	var content ContentModerationInput
-	if input.Prepared != nil {
-		// 主从分流：从节点用同一段抽取代码算好的输入（不带请求体）。
-		content = *input.Prepared
-	} else {
-		content = ExtractContentModerationInput(input.Protocol, input.Body)
-	}
+	content := ExtractContentModerationInput(input.Protocol, input.Body)
 	if content.IsEmpty() {
 		slog.Info("content_moderation.skip_empty_input",
 			"user_id", input.UserID,
@@ -1015,7 +934,7 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 		"endpoint", input.Endpoint,
 		"protocol", input.Protocol,
 		"text_runes", len([]rune(content.Text)),
-		"image_count", content.ImageCount())
+		"image_count", len(content.Images))
 	hashText := content.Hash()
 	if cfg.Mode == ContentModerationModePreBlock {
 		if cfg.KeywordBlockingMode != ContentModerationKeywordModeAPIOnly && len(cfg.BlockedKeywords) > 0 {

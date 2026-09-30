@@ -3,6 +3,7 @@ package relayselect
 import (
 	"bytes"
 	"context"
+	"crypto/ecdh"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/tls"
@@ -26,6 +27,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/relay/master"
 	"github.com/Wei-Shaw/sub2api/internal/relay/node"
 	"github.com/Wei-Shaw/sub2api/internal/relay/nodegw"
+	"github.com/Wei-Shaw/sub2api/internal/relay/nodestore"
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
 	"github.com/Wei-Shaw/sub2api/internal/relay/sealbox"
 	"github.com/Wei-Shaw/sub2api/internal/relay/transport"
@@ -79,6 +81,18 @@ type e2e struct {
 	// client 是从节点到主节点的连接（端到端测试直接用它调主节点）。
 	client *transport.Client
 	nodeID int64
+	// moderation 是从节点上的安全审计；records 是从节点本机的记录存储。
+	moderation *nodegw.Moderation
+	records    *nodestore.Store
+}
+
+// testMasterSettings 是端到端测试世界里主节点额外的系统设置（在开始之前设；nil 时不加）。用例用 useMasterSettings 设置。
+var testMasterSettings map[string]string
+
+func useMasterSettings(t *testing.T, values map[string]string) {
+	t.Helper()
+	testMasterSettings = values
+	t.Cleanup(func() { testMasterSettings = nil })
 }
 
 func startE2E(t *testing.T) *e2e {
@@ -145,6 +159,9 @@ func startE2EWithConfig(t *testing.T, configure func(*config.Config), accounts f
 	store := master.NewMemoryStore()
 	// cyber 会话屏蔽打开：从节点把查询键随选号上送（主节点的网关服务没有设置，查屏蔽表时按关闭处理）。
 	settings := memSettings{values: map[string]string{service.SettingKeyCyberSessionBlockEnabled: "true"}}
+	for k, v := range testMasterSettings {
+		settings.values[k] = v
+	}
 	nodes := master.NewNodes(store, ca, nil, master.NodesOptions{})
 	events := master.NewEventHub()
 	publisher := master.NewConfigPublisher(settings, store, events, func() master.Trust { return master.Trust{RootFingerprints: ca.RootFingerprints()} })
@@ -173,10 +190,16 @@ func startE2EWithConfig(t *testing.T, configure func(*config.Config), accounts f
 	require.NoError(t, err)
 	nodes.AttachRegistry(srv.Registry())
 	control := master.NewControl(publisher)
+	// 加密下发的部分（审核配置等）用这台节点的加密公钥封（与上游凭据同一把）。
+	publisher.SetEncryptionKeys(func(id int64) (*ecdh.PublicKey, bool) {
+		if id != n.ID {
+			return nil, false
+		}
+		return e.world.nodeKey.PublicKey(), true
+	})
 	control.AttachSelector(e.world.sel, srv.Epoch())
 	master.RouteNodeEvents(events, e.world.sel)
 	relayv1.RegisterRelayControlServer(srv.GRPC(), control)
-	relayv1.RegisterRelayModerationServer(srv.GRPC(), master.NewModerationServer(control))
 	relayv1.RegisterRelayEventsServer(srv.GRPC(), events)
 	relayv1.RegisterRelayBillingServer(srv.GRPC(), master.NewBilling(e.settler))
 	lis, err := net.Listen("tcp4", "127.0.0.1:0")
@@ -205,6 +228,7 @@ func startE2EWithConfig(t *testing.T, configure func(*config.Config), accounts f
 		configure(nodeCfg)
 	}
 	cache := node.NewConfigCache()
+	cache.SetOpener(func(sealed, aad []byte) ([]byte, error) { return sealbox.Open(e.world.nodeKey, sealed, aad) })
 	nodeSettings := service.NewSettingService(cache, nodeCfg)
 	cache.OnSwap(func(*relayv1.ConfigSnapshot) { nodeSettings.InvalidateAll() })
 	syncer := node.NewConfigSyncer(cache, client)
@@ -235,17 +259,25 @@ func startE2EWithConfig(t *testing.T, configure func(*config.Config), accounts f
 			return syncer.EnsureVersion(ctx, v)
 		},
 		AfterEpochChange: quotaSync.Report,
-		Moderation:       relayv1.NewRelayModerationClient(client.Conn(transport.TierModeration)),
 	})
 	runCtx, stop := context.WithCancel(ctx)
 	t.Cleanup(stop)
-	go node.RunEvents(runCtx, client, syncer, node.EventHandlers{Outbox: outbox})
+	records, err := nodestore.Open(t.TempDir(), nodestore.Options{})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = records.Close() })
+	e.moderation = nodegw.NewModeration(runCtx, cache, records, client)
+	cache.OnSwap(func(*relayv1.ConfigSnapshot) { e.moderation.Service.InvalidateRuntimeSnapshot() })
+	e.records = records
+	go node.RunEvents(runCtx, client, syncer, node.EventHandlers{
+		Outbox: outbox, OnFlaggedHashes: e.moderation.Hashes.Apply, OnConnected: e.moderation.Hashes.RunResyncOnConnect,
+	})
 	go sender.Run(runCtx)
 
 	h := nodegw.NewOpenAIHandler(nodegw.GatewayDeps{
 		Config: nodeCfg, Settings: nodeSettings, HTTPUpstream: plainUpstream{target: upstreamURL}, Dispatcher: d,
-		Decider:  node.NewRemoteUpstreamErrorDecider(client),
-		Reporter: node.NewRemoteAccountReporter(outbox),
+		Decider:    node.NewRemoteUpstreamErrorDecider(client),
+		Reporter:   node.NewRemoteAccountReporter(outbox),
+		Moderation: e.moderation,
 	})
 	r := nodegw.NewEngine()
 	nodegw.RegisterRoutes(r, h, d, nodeCfg)

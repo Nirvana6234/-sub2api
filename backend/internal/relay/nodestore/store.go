@@ -41,10 +41,14 @@ type Store struct {
 	maxBytes int64
 	now      func() time.Time
 
-	mu    sync.Mutex
-	open  map[string]*segment // 种类 -> 今天的段
-	total int64
+	mu     sync.Mutex
+	open   map[string]*segment // 种类 -> 今天的段
+	total  int64
+	closed bool
 }
+
+// ErrClosed：存储已关闭（进程退出时后台任务晚到的写入）。
+var ErrClosed = errors.New("nodestore: closed")
 
 type segment struct {
 	day  string
@@ -91,6 +95,9 @@ func (s *Store) Append(kind string, rec any) error {
 	line = append(line, '\n')
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return ErrClosed
+	}
 	seg, err := s.segmentLocked(kind)
 	if err != nil {
 		return err
@@ -272,10 +279,11 @@ func (s *Store) Scan(kind string, from, to time.Time, fn func(line []byte) bool)
 	return nil
 }
 
-// Close 关闭打开的段。
+// Close 关闭打开的段；之后的写入返回 ErrClosed。
 func (s *Store) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.closed = true
 	for kind, seg := range s.open {
 		_ = seg.w.Flush()
 		_ = seg.file.Close()

@@ -60,6 +60,8 @@ var ForwardingSettingKeys = []string{
 	service.SettingKeyGlobalBlacklist,
 	service.SettingKeyCyberSessionBlockEnabled,
 	service.SettingKeyCyberSessionBlockTTLSeconds,
+	// 风控中心开关：内容审核在从节点本地判定（设计 3.4；审核配置本身在加密下发的部分）
+	service.SettingKeyRiskControlEnabled,
 }
 
 // secretName 匹配看起来像密钥的名字（设置名、JSON 字段名）。

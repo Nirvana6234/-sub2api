@@ -21,6 +21,17 @@ type ContentModerationHashScanner interface {
 // ErrContentModerationHashScanUnsupported：哈希缓存不能分页列出。
 var ErrContentModerationHashScanUnsupported = errors.New("content moderation hash cache cannot be scanned")
 
+// InvalidateRuntimeSnapshot 丢掉缓存的审核配置，下一次判定重新读取（从节点换配置快照时调用：
+// 主节点下发的新配置当场生效，不等缓存过期）。
+func (s *ContentModerationService) InvalidateRuntimeSnapshot() {
+	if s == nil {
+		return
+	}
+	s.runtimeRefreshMu.Lock()
+	s.runtimeSnapshot.Store(nil)
+	s.runtimeRefreshMu.Unlock()
+}
+
 // SetHashChangeListener 设置名单变化的回调（主节点的主从分流运行时用）；nil 取消。
 func (s *ContentModerationService) SetHashChangeListener(fn func(ContentModerationHashChange)) {
 	if fn == nil {

@@ -2,7 +2,6 @@ package securityaudit
 
 import (
 	"context"
-	"slices"
 	"time"
 )
 
@@ -82,19 +81,10 @@ type Request struct {
 	Model      string
 	Body       []byte
 	Stage      string
-	// Prepared 是预先从请求体抽好的审核输入（主从分流时从节点算好、不带请求体，见 PrepareRequest）。
-	Prepared *PreparedInput
 }
 
 func (r Request) Clone() Request {
 	r.Body = append([]byte(nil), r.Body...)
-	if r.Prepared != nil {
-		p := *r.Prepared
-		p.Segments = slices.Clone(p.Segments)
-		p.Moderation.Images = slices.Clone(p.Moderation.Images)
-		p.Moderation.ImageHashes = slices.Clone(p.Moderation.ImageHashes)
-		r.Prepared = &p
-	}
 	if r.GroupID != nil {
 		id := *r.GroupID
 		r.GroupID = &id

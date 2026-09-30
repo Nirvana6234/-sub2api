@@ -23,6 +23,8 @@ type GatewayDeps struct {
 	Reporter     service.OpenAIAccountReporter
 	// ErrorPassthrough 是随配置快照下发的错误透传规则（nil 表示不透传）。
 	ErrorPassthrough *service.ErrorPassthroughService
+	// Moderation 是本机的安全审计（NewModeration）；nil 表示不审计（测试）。
+	Moderation *Moderation
 }
 
 // NewOpenAIHandler 组装从节点上的 OpenAI 处理函数：与单机同一个处理函数和转发服务，换上远程选号、
@@ -39,8 +41,16 @@ func NewOpenAIHandler(d GatewayDeps) *handler.OpenAIGatewayHandler {
 			return on
 		}
 	}
-	h := handler.NewOpenAIGatewayHandler(gw, nil, nil, nil, nil, d.ErrorPassthrough, nil, nil, d.Config)
+	var moderation *service.ContentModerationService
+	if d.Moderation != nil {
+		moderation = d.Moderation.Service
+	}
+	h := handler.NewOpenAIGatewayHandler(gw, nil, nil, nil, nil, d.ErrorPassthrough, moderation, nil, d.Config)
 	h.SetRelayDispatcher(d.Dispatcher)
+	if d.Moderation != nil {
+		// 安全审计在从节点本地判定（设计 3.4），与单机同一个协调器。
+		h.SetSecurityAuditCoordinator(d.Moderation.Coordinator)
+	}
 	return h
 }
 

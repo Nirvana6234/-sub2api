@@ -99,10 +99,6 @@ func (f *fakeSelector) RecordFlaggedHash(context.Context, int64, *relayv1.Record
 	return &relayv1.RecordFlaggedHashResponse{}, nil
 }
 
-func (f *fakeSelector) SecurityAudit(context.Context, int64, *relayv1.SecurityAuditRequest) (*relayv1.SecurityAuditResponse, error) {
-	return &relayv1.SecurityAuditResponse{Skipped: true}, nil
-}
-
 func (f *fakeSelector) UpstreamError(_ context.Context, nodeID int64, req *relayv1.UpstreamErrorRequest) (*relayv1.UpstreamErrorResponse, error) {
 	f.mu.Lock()
 	f.upstream = append(f.upstream, req)

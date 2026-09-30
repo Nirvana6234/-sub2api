@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/ecdh"
 	"crypto/rand"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"sync"
@@ -22,7 +21,6 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
 	"github.com/Wei-Shaw/sub2api/internal/relay/sealbox"
 	"github.com/Wei-Shaw/sub2api/internal/relay/sign"
-	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
@@ -673,101 +671,6 @@ func TestLongRequestStillRecordsTheResponseOwner(t *testing.T) {
 		owned, _ = w.sel.deps.Gateway.ValidateOpenAIHTTPResponseOwner(ctx, 5, id, 3, 11)
 		require.False(t, owned, id)
 	}
-}
-
-type fixedPromptMode securityaudit.Mode
-
-func (m fixedPromptMode) EffectiveMode() securityaudit.Mode { return securityaudit.Mode(m) }
-
-type recordingAudit struct {
-	mu       sync.Mutex
-	got      []securityaudit.Request
-	decision securityaudit.Decision
-}
-
-func (r *recordingAudit) Check(_ context.Context, req securityaudit.Request) securityaudit.Decision {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.got = append(r.got, req)
-	return r.decision
-}
-
-func (r *recordingAudit) requests() []securityaudit.Request {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return append([]securityaudit.Request(nil), r.got...)
-}
-
-func (r *recordingAudit) set(d securityaudit.Decision) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.decision = d
-}
-
-// 安全审计（设计 3.4）：开着审计的请求照常在从节点转发；准入回审计策略（与单机审计服务出错时的处理对应），
-// 判定在主节点用同一个协调器做，用户、Key、分组按主节点复查的 Key 填，不信从节点。
-func TestSecurityAuditOnTheMaster(t *testing.T) {
-	ctx := context.Background()
-	w := newWorld(t, config.RunModeSimple, apiKeyAccount(1, "one"))
-	policy := func() relayv1.AuditPolicy {
-		out, err := w.sel.Admit(ctx, testNode, &relayv1.AdmitRequest{Credential: &relayv1.AdmitRequest_ApiKey{ApiKey: "sk-a"}, ClientIp: "5.6.7.8", Method: "POST", Path: "/v1/responses"})
-		require.NoError(t, err)
-		require.NotNil(t, out.GetAdmission())
-		return out.GetAdmission().GetAuditPolicy()
-	}
-	require.Equal(t, relayv1.AuditPolicy_AUDIT_POLICY_SKIP, policy(), "no prompt audit, no moderation: the node skips the call")
-	w.sel.deps.PromptAudit = fixedPromptMode(securityaudit.ModeAsync)
-	require.Equal(t, relayv1.AuditPolicy_AUDIT_POLICY_FAIL_OPEN, policy())
-	w.sel.deps.PromptAudit = fixedPromptMode(securityaudit.ModeBlocking)
-	require.Equal(t, relayv1.AuditPolicy_AUDIT_POLICY_FAIL_CLOSED, policy())
-
-	resp, err := w.sel.Select(ctx, testNode, responsesRequest("r1", 1, "sk-a"))
-	require.NoError(t, err)
-	require.NotNil(t, resp.GetSelection(), "audited requests are no longer handed to the master")
-
-	prepared := securityaudit.PrepareRequest(securityaudit.Request{Protocol: "openai_responses", Body: []byte(`{"input":"hello there"}`)})
-	raw, err := json.Marshal(prepared.Prepared)
-	require.NoError(t, err)
-	auditReq := &relayv1.SecurityAuditRequest{
-		ApiKey: "sk-a", ClientIp: "5.6.7.8", Method: "POST", Path: "/v1/responses", RequestId: "req-1",
-		Endpoint: "/v1/responses", Provider: "openai", Protocol: "openai_responses", Model: "gpt-5", Stage: "http", Prepared: raw,
-	}
-	out, err := w.sel.SecurityAudit(ctx, testNode, auditReq)
-	require.NoError(t, err)
-	require.True(t, out.GetSkipped(), "no coordinator on this master: nothing to audit")
-
-	audit := &recordingAudit{decision: securityaudit.Decision{Kind: securityaudit.DecisionBlock, HTTPStatus: 403, ErrorCode: "content_policy_violation", ClientMessage: "nope"}}
-	w.sel.deps.Audit = audit
-	out, err = w.sel.SecurityAudit(ctx, testNode, auditReq)
-	require.NoError(t, err)
-	require.False(t, out.GetSkipped())
-	var decision securityaudit.Decision
-	require.NoError(t, json.Unmarshal(out.GetDecision(), &decision))
-	require.Equal(t, audit.decision, decision)
-	require.Len(t, audit.got, 1)
-	got := audit.got[0]
-	require.Equal(t, int64(3), got.UserID)
-	require.Equal(t, int64(11), got.APIKeyID)
-	require.Equal(t, int64(5), *got.GroupID)
-	require.Equal(t, "req-1", got.RequestID)
-	require.Equal(t, "/v1/responses", got.Endpoint)
-	require.Equal(t, "gpt-5", got.Model)
-	require.Equal(t, "http", got.Stage)
-	require.Empty(t, got.Body)
-	snapshot, err := securityaudit.ExtractPromptSnapshot(got)
-	require.NoError(t, err)
-	require.Equal(t, "hello there", snapshot.ScanText)
-
-	// Key 复查不通过（停用、删除、不认识）：不审计，从节点照常往下走，选号时按同一复查拒绝。
-	auditReq.ApiKey = "sk-unknown"
-	out, err = w.sel.SecurityAudit(ctx, testNode, auditReq)
-	require.NoError(t, err)
-	require.True(t, out.GetSkipped())
-	require.Len(t, audit.got, 1)
-
-	auditReq.ApiKey, auditReq.Prepared = "sk-a", []byte("{")
-	_, err = w.sel.SecurityAudit(ctx, testNode, auditReq)
-	require.Error(t, err)
 }
 
 // 上游错误决策：只认这台节点正在用的账号，用主节点选号记录里的账号，状态记在主节点上。

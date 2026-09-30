@@ -238,9 +238,7 @@ func (s *selector) Admit(ctx context.Context, nodeID int64, req *relayv1.AdmitRe
 	if err != nil {
 		return nil, err
 	}
-	return &relayv1.AdmitResponse{Result: &relayv1.AdmitResponse_Admission{Admission: &relayv1.Admission{
-		ApiKey: key, Subscription: sub, AuditPolicy: s.auditPolicy(ctx, adm.APIKey.GroupID),
-	}}}, nil
+	return &relayv1.AdmitResponse{Result: &relayv1.AdmitResponse_Admission{Admission: &relayv1.Admission{ApiKey: key, Subscription: sub}}}, nil
 }
 
 // admitAPIKey 按本地网关中间件链复查 Key（EvaluateRelayAPIKeyAdmission），再挡掉还不能经从节点处理的分组。

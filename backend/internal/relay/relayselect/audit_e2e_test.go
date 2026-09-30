@@ -4,118 +4,122 @@ import (
 	"context"
 	"net/http"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	coderws "github.com/coder/websocket"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
 
-// 安全审计经审核连接在主节点判定（设计 3.4）：拦截的请求从节点照单机写出、不转发；放行的照常在从节点转发；
-// 主节点拿到的是预先抽好的审核输入（不带请求体），用户、Key 按主节点复查的 Key。
-func TestNodeRunsTheSecurityAuditOnTheMaster(t *testing.T) {
+// moderationConfig 是测试用的审核配置：关键词直接拦截（不调外部接口）、两次违规封号。
+const moderationConfig = `{"enabled":true,"mode":"pre_block","all_groups":true,"keyword_blocking_mode":"keyword_only",` +
+	`"blocked_keywords":["forbidden-word"],"auto_ban_enabled":true,"ban_threshold":2,"violation_window_hours":24,` +
+	`"api_key":"sk-moderation-secret"}`
+
+// 安全审计在从节点本地判定（设计 3.4）：审核配置（含审核接口 Key）经加密下发到达从节点；命中的请求在
+// 从节点当场拦截、不转发；审核记录留在从节点本机；违规次数报给主节点累计，到阈值封号。
+func TestNodeAuditsLocallyAndReportsViolations(t *testing.T) {
+	useMasterSettings(t, map[string]string{
+		service.SettingKeyRiskControlEnabled:      "true",
+		service.SettingKeyContentModerationConfig: moderationConfig,
+	})
 	e := startE2E(t)
-	audit := &recordingAudit{decision: securityaudit.Decision{Kind: securityaudit.DecisionBlock, HTTPStatus: http.StatusForbidden,
-		ErrorCode: "content_policy_violation", ClientMessage: "blocked on the master"}}
-	e.world.sel.deps.Audit = audit
-	e.world.sel.deps.PromptAudit = fixedPromptMode(securityaudit.ModeAsync)
+	ctx := context.Background()
+	logs := &moderationLogs{}
+	users := &banUsers{users: map[int64]*service.User{3: {ID: 3, Email: "u3@example.com", Status: service.StatusActive, Role: service.RoleUser}}}
+	e.world.sel.deps.Users = users
+	e.world.sel.deps.Moderation = service.NewContentModerationService(memSettings{values: map[string]string{
+		service.SettingKeyRiskControlEnabled:      "true",
+		service.SettingKeyContentModerationConfig: moderationConfig,
+	}}, logs, nil, nil, users, nil, nil, nil)
 
-	status, body := e.post(t, "/v1/responses", "sk-a", `{"model":"gpt-5","input":"please audit me"}`)
-	require.Equal(t, http.StatusForbidden, status, body)
-	require.Contains(t, body, "blocked on the master")
-	require.Len(t, e.hits, 0, "a blocked request is not forwarded")
-	got := audit.requests()
-	require.Len(t, got, 1)
-	require.Equal(t, int64(3), got[0].UserID)
-	require.Equal(t, int64(11), got[0].APIKeyID)
-	require.Equal(t, "/v1/responses", got[0].Endpoint)
-	require.Equal(t, "gpt-5", got[0].Model)
-	require.Equal(t, "http", got[0].Stage)
-	require.NotEmpty(t, got[0].RequestID)
-	require.Empty(t, got[0].Body, "the body stays on the node")
-	snapshot, err := securityaudit.ExtractPromptSnapshot(got[0])
-	require.NoError(t, err)
-	require.Equal(t, "please audit me", snapshot.ScanText)
-	require.Equal(t, int64(0), e.world.slots.held.Load(), "nothing was selected")
-
-	// 单机在审计之前就拒的（分组不允许 /v1/messages 派发），从节点同样先拒，不送审计（不留审核记录、不计违规）。
-	status, body = e.post(t, "/v1/messages", "sk-a", `{"model":"claude-sonnet-4-5","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`)
-	require.Equal(t, http.StatusForbidden, status, body)
-	require.Contains(t, body, `"type":"error"`)
-	require.Len(t, audit.requests(), 1, "rejected before the audit, like a single server")
-
-	audit.set(securityaudit.AllowDecision())
-	status, body = e.post(t, "/v1/responses", "sk-a", `{"model":"gpt-5","input":"hi"}`)
-	require.Equal(t, http.StatusOK, status, "an audited request is served by the node: %s", body)
-	select {
-	case <-e.hits:
-	case <-time.After(5 * time.Second):
-		t.Fatal("upstream was not called")
-	}
-	require.Len(t, audit.requests(), 2)
-	e.world.waitReleased(t)
-
-	// 审计都关着：准入回"不审计"，从节点不调审核连接。
-	e.world.sel.deps.PromptAudit = fixedPromptMode(securityaudit.ModeOff)
-	status, body = e.post(t, "/v1/responses", "sk-a", `{"model":"gpt-5","input":"hi"}`)
-	require.Equal(t, http.StatusOK, status, body)
+	status, body := e.post(t, "/v1/responses", "sk-a", `{"model":"gpt-5","input":"hello there"}`)
+	require.Equal(t, http.StatusOK, status, "a clean request is served by the node: %s", body)
 	<-e.hits
-	require.Len(t, audit.requests(), 2, "no audit call when nothing would audit the request")
 	e.world.waitReleased(t)
+
+	status, body = e.post(t, "/v1/responses", "sk-a", `{"model":"gpt-5","input":"this has a forbidden-word in it"}`)
+	require.Equal(t, http.StatusForbidden, status, body)
+	require.Len(t, e.hits, 0, "a blocked request is not forwarded")
+	require.Equal(t, int64(0), e.world.slots.held.Load(), "blocked before selection")
+
+	// 记录在从节点本机（审核服务后台写入），主节点收到一条不含输入内容的违规。
+	var local []service.ContentModerationLog
+	require.Eventually(t, func() bool {
+		local, _, _ = e.moderation.Service.ListLogs(ctx, service.ContentModerationLogFilter{Pagination: pagination.PaginationParams{Page: 1, PageSize: 10}})
+		return len(local) == 1
+	}, 5*time.Second, 20*time.Millisecond)
+	require.Equal(t, "keyword_block", local[0].Action)
+	require.Contains(t, local[0].InputExcerpt, "forbidden-word", "the node keeps the full record")
+	require.Equal(t, 1, local[0].ViolationCount, "the count comes from the master")
+	require.Eventually(t, func() bool {
+		logs.mu.Lock()
+		defer logs.mu.Unlock()
+		return len(logs.logs) == 1
+	}, 5*time.Second, 20*time.Millisecond)
+	require.Empty(t, logs.logs[0].InputExcerpt, "input content never reaches the master")
+	require.Equal(t, e.nodeID, *logs.logs[0].NodeID)
+
+	// 第二次违规：主节点累计到阈值封号。
+	status, _ = e.post(t, "/v1/responses", "sk-a", `{"model":"gpt-5","input":"again forbidden-word"}`)
+	require.Equal(t, http.StatusForbidden, status)
+	require.Eventually(t, func() bool {
+		users.mu.Lock()
+		defer users.mu.Unlock()
+		return len(users.banned) == 1
+	}, 5*time.Second, 20*time.Millisecond)
 }
 
-// promptAudit 按提示词判定：含 forbidden 的拦截，其余放行。
-type promptAudit struct {
-	mu     sync.Mutex
-	stages []string
+// 命中过的输入名单同步到从节点后，从节点不调外部审核接口也能直接拦截（与单机的哈希拦截一样）。
+func TestNodeBlocksKnownFlaggedInputLocally(t *testing.T) {
+	// 关键词之外还要过哈希和外部接口（keyword_and_api）：哈希命中时不再调外部接口。
+	cfg := strings.Replace(moderationConfig, `"keyword_blocking_mode":"keyword_only",`, `"keyword_blocking_mode":"keyword_and_api","pre_hash_check_enabled":true,`, 1)
+	useMasterSettings(t, map[string]string{
+		service.SettingKeyRiskControlEnabled:      "true",
+		service.SettingKeyContentModerationConfig: cfg,
+	})
+	e := startE2E(t)
+	ctx := context.Background()
+	body := `{"model":"gpt-5","input":"a previously flagged prompt"}`
+	hash := service.ExtractContentModerationInput(service.ContentModerationProtocolOpenAIResponses, []byte(body)).Hash()
+	cache := &scanHashes{set: []string{hash}}
+	e.world.sel.deps.Moderation = service.NewContentModerationService(memSettings{values: map[string]string{service.SettingKeyRiskControlEnabled: "true"}},
+		&moderationLogs{}, cache, nil, nil, nil, nil, nil)
+	require.NoError(t, e.moderation.Hashes.Resync(ctx))
+
+	status, out := e.post(t, "/v1/responses", "sk-a", body)
+	require.Equal(t, http.StatusForbidden, status, out)
+	require.Contains(t, out, hash, "blocked by the flagged-input list, like a single server")
+	require.Len(t, e.hits, 0)
 }
 
-func (p *promptAudit) Check(_ context.Context, req securityaudit.Request) securityaudit.Decision {
-	p.mu.Lock()
-	p.stages = append(p.stages, req.Stage)
-	p.mu.Unlock()
-	snapshot, err := securityaudit.ExtractPromptSnapshot(req)
-	if err == nil && strings.Contains(snapshot.ScanText, "forbidden") {
-		return securityaudit.Decision{Kind: securityaudit.DecisionBlock, HTTPStatus: http.StatusForbidden, ErrorCode: "content_policy_violation", ClientMessage: "turn blocked"}
-	}
-	return securityaudit.AllowDecision()
-}
-
-func (p *promptAudit) seen() []string {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return append([]string(nil), p.stages...)
-}
-
-// WebSocket：每一轮都经主节点审计（首轮 first_turn、之后 subsequent_turn），拦截的轮不转发并关闭连接，与单机一样。
-func TestNodeAuditsEveryWebSocketTurnOnTheMaster(t *testing.T) {
+// WebSocket：每一轮在从节点本地审计，命中的轮不转发并关闭连接，与单机一样。
+func TestNodeAuditsEveryWebSocketTurnLocally(t *testing.T) {
+	useMasterSettings(t, map[string]string{
+		service.SettingKeyRiskControlEnabled:      "true",
+		service.SettingKeyContentModerationConfig: moderationConfig,
+	})
 	up := newWSUpstream(t)
 	e := startE2EWithConfig(t, wsE2EConfig, func(string) []service.Account {
 		a := wsAccount(1, "one")
 		a.Credentials = map[string]any{"api_key": "SECRET-one", "base_url": up.srv.URL}
 		return []service.Account{a}
 	})
-	audit := &promptAudit{}
-	e.world.sel.deps.Audit = audit
-	e.world.sel.deps.PromptAudit = fixedPromptMode(securityaudit.ModeAsync)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	conn, _, err := coderws.Dial(ctx, "ws"+strings.TrimPrefix(e.gateway.URL, "http")+"/v1/responses",
 		&coderws.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer sk-a"}}})
-	require.NoError(t, err, "an audited connection is served by the node")
+	require.NoError(t, err)
 	defer func() { _ = conn.CloseNow() }()
-
 	require.NoError(t, conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5","input":[{"role":"user","content":"hi"}]}`)))
 	first := readUntilCompleted(t, ctx, conn)
 	require.NoError(t, conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5","previous_response_id":"`+
-		gjson.GetBytes(first, "response.id").String()+`","input":[{"role":"user","content":"something forbidden"}]}`)))
+		gjson.GetBytes(first, "response.id").String()+`","input":[{"role":"user","content":"a forbidden-word here"}]}`)))
 	var closeErr error
-	for closeErr == nil {
+	for {
 		_, msg, err := conn.Read(ctx)
 		if err != nil {
 			closeErr = err
@@ -124,44 +128,8 @@ func TestNodeAuditsEveryWebSocketTurnOnTheMaster(t *testing.T) {
 		require.NotEqual(t, "response.completed", gjson.GetBytes(msg, "type").String(), "the blocked turn must not be forwarded: %s", msg)
 	}
 	require.NotEqual(t, coderws.StatusCode(-1), coderws.CloseStatus(closeErr), "the node closes the connection: %v", closeErr)
-	require.Equal(t, []string{"first_turn", "subsequent_turn"}, audit.seen())
 	up.mu.Lock()
-	require.Equal(t, 1, up.turns, "only the allowed turn reached the upstream")
+	require.Equal(t, 1, up.turns)
 	up.mu.Unlock()
 	e.world.waitReleased(t)
-}
-
-// 连接期间才打开审计：审计在每一轮 BeginTurn 之前做，所以按上一轮 BeginTurn 回的策略，晚一轮生效
-// （连接可以开几个小时，不能一直按建连时的策略）。
-func TestWebSocketAuditPolicyFollowsTheLatestTurn(t *testing.T) {
-	up := newWSUpstream(t)
-	e := startE2EWithConfig(t, wsE2EConfig, func(string) []service.Account {
-		a := wsAccount(1, "one")
-		a.Credentials = map[string]any{"api_key": "SECRET-one", "base_url": up.srv.URL}
-		return []service.Account{a}
-	})
-	audit := &promptAudit{}
-	e.world.sel.deps.Audit = audit
-
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	conn, _, err := coderws.Dial(ctx, "ws"+strings.TrimPrefix(e.gateway.URL, "http")+"/v1/responses",
-		&coderws.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer sk-a"}}})
-	require.NoError(t, err)
-	defer func() { _ = conn.CloseNow() }()
-	turn := func(text, previous string) []byte {
-		frame := `{"type":"response.create","model":"gpt-5","input":[{"role":"user","content":"` + text + `"}]`
-		if previous != "" {
-			frame += `,"previous_response_id":"` + previous + `"`
-		}
-		require.NoError(t, conn.Write(ctx, coderws.MessageText, []byte(frame+"}")))
-		return readUntilCompleted(t, ctx, conn)
-	}
-	first := turn("one", "")
-	require.Empty(t, audit.seen(), "audit off at connect: no audit call")
-	e.world.sel.deps.PromptAudit = fixedPromptMode(securityaudit.ModeAsync)
-	second := turn("two", gjson.GetBytes(first, "response.id").String())
-	require.Empty(t, audit.seen(), "turn 2 follows the policy from turn 1's admission")
-	turn("three", gjson.GetBytes(second, "response.id").String())
-	require.Equal(t, []string{"subsequent_turn"}, audit.seen(), "turn 3 follows the policy from turn 2's admission")
 }

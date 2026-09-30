@@ -55,8 +55,6 @@ func (d *Dispatcher) BeginTurn(c *gin.Context, conn *handler.OpenAIRelayAttempt,
 	if code := resp.GetCloseStatus(); code != 0 {
 		return nil, wsCloseError(coderws.StatusCode(code), resp.GetCloseReason(), nil)
 	}
-	// 下一轮的安全审计按这一轮时的策略（审计在 BeginTurn 之前做）。
-	stateOf(c).auditPolicy.Store(int32(resp.GetAuditPolicy()))
 	t := &attemptState{selectionID: a.selectionID, voucher: resp.GetVoucher(), userID: a.userID, apiKeyID: a.apiKeyID, turnID: resp.GetTurnId()}
 	d.deps.Quota.ApplyGrants(resp.GetGrants())
 	if len(resp.GetQuotaScopes()) > 0 {

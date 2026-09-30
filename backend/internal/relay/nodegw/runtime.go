@@ -21,6 +21,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/relay/identity"
 	"github.com/Wei-Shaw/sub2api/internal/relay/master"
 	"github.com/Wei-Shaw/sub2api/internal/relay/node"
+	"github.com/Wei-Shaw/sub2api/internal/relay/nodestore"
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
 	"github.com/Wei-Shaw/sub2api/internal/relay/transport"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -86,8 +87,13 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 	cache.SetOpener(id.OpenSealed)
 	settings := service.NewSettingService(cache, cfg)
 	errorPassthrough := service.NewStaticErrorPassthroughService(nil)
+	// moderation 在下面组装（要用主从连接）；换快照时它还没有就跳过。
+	var moderation *Moderation
 	cache.OnSwap(func(*relayv1.ConfigSnapshot) {
 		settings.InvalidateAll()
+		if moderation != nil {
+			moderation.Service.InvalidateRuntimeSnapshot()
+		}
 		applyErrorPassthroughRules(cache, errorPassthrough)
 		if changed, err := pins.Update(cache.RootFingerprints()); err != nil {
 			slog.Warn("relay root fingerprints could not be saved", "error", err)
@@ -114,6 +120,12 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 		return fmt.Errorf("relay usage queue: %w", err)
 	}
 	defer func() { _ = wal.Close() }()
+	// 本机的日志和记录（审核记录等，设计第 12 节），与扣费队列同在数据目录下。
+	records, err := nodestore.Open(filepath.Join(dataDir, "records"), nodestore.Options{})
+	if err != nil {
+		return fmt.Errorf("relay node records: %w", err)
+	}
+	defer func() { _ = records.Close() }()
 	var d *Dispatcher
 	sender := node.NewUsageSender(wal, node.NewBillingClient(client), node.UsageSenderOptions{
 		OnResult: func(rec *relayv1.UsageRecord, res *relayv1.UsageRecordResult) { d.OnUsageResult(rec, res) },
@@ -122,7 +134,6 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 		NodeID: id.NodeID, Select: selectClient, Quota: quota, Secrets: accountcodec.NewSecretCache(),
 		Open: id.OpenSealed, WAL: wal, Kick: sender.Kick, EnsureConfig: syncer.EnsureVersion,
 		AfterEpochChange: quotaSync.Report,
-		Moderation:       relayv1.NewRelayModerationClient(client.Conn(transport.TierModeration)),
 	}
 	if u := strings.TrimSpace(rc.NodeMasterURL); u != "" {
 		masterURL, err := url.Parse(u)
@@ -135,8 +146,11 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 
 	runCtx, stop := context.WithCancel(context.WithoutCancel(ctx))
 	defer stop()
+	moderation = NewModeration(runCtx, cache, records, client)
 	go node.RunEvents(runCtx, client, syncer, node.EventHandlers{
-		Outbox: outbox,
+		Outbox:          outbox,
+		OnFlaggedHashes: moderation.Hashes.Apply,
+		OnConnected:     moderation.Hashes.RunResyncOnConnect,
 		OnQuotaRecall: func(rc *relayv1.QuotaRecall) {
 			if err := quotaSync.HandleRecall(runCtx, rc); err != nil {
 				slog.Warn("relay quota recall failed", "error", err)
@@ -161,6 +175,7 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 		Decider:          node.NewRemoteUpstreamErrorDecider(client),
 		Reporter:         node.NewRemoteAccountReporter(outbox),
 		ErrorPassthrough: errorPassthrough,
+		Moderation:       moderation,
 	})
 	r := NewEngine()
 	r.GET("/health", func(c *gin.Context) {

@@ -319,8 +319,7 @@ func (s *selector) BeginTurn(ctx context.Context, nodeID int64, req *relayv1.Beg
 	if err != nil {
 		return nil, err
 	}
-	resp := &relayv1.BeginTurnResponse{Voucher: voucher, QuotaNeed: quotaNeed, PricingAtUnixMs: turnAt.UnixMilli(), TurnId: turnID,
-		AuditPolicy: s.auditPolicy(ctx, apiKey.GroupID)}
+	resp := &relayv1.BeginTurnResponse{Voucher: voucher, QuotaNeed: quotaNeed, PricingAtUnixMs: turnAt.UnixMilli(), TurnId: turnID}
 	// 额度：尽量补充，但不因为额度拒绝这一轮（本地只在建连时查计费资格）。
 	grants, scopes, err := s.acquireQuota(ctx, nodeID, sel.quota, req.GetHeldQuota(), quotaNeed, false)
 	if err != nil {
