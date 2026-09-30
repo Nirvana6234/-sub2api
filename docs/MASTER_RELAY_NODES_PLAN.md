@@ -279,9 +279,9 @@ WP10 工作量最大（所有平台），WP9 完成后按平台拆给多人并�
 | 非 OpenAI 网关服务的账号状态接口：Anthropic（`GatewayService`，含 Bedrock / Vertex / Antigravity 账号）、Gemini、Antigravity、Grok、Bedrock 转发文件里直接调限流服务的约 30 处，统一成一个"账号状态"接口（同步判定走上游错误决策、异步的走账号事件），源码守卫扩到全部转发文件 | WP10 | 限流服务的四种判定已接（`AccountStateDecider`、从节点 `RemoteAccountState`、源码守卫）；各平台自己的写库（Gemini 429 冷却与限流标记、Grok 临时不可调度、`accountRepo.UpdateExtra` 等）随各自入口做 |
 | 各服务族的扣费记录种类与入账（`GatewayService.RecordUsage` 等），每族一个与单机逐字段比对的一致性测试 | WP10 | |
 | ~~安全审计按分工原则重做（设计 3.4）~~ | WP10 | 已完成（WP10-4 ①–⑩）：内容审核、提示词审计、cyber 记录都在从节点；从节点 cyber 的运维错误日志随 WP14 本机日志接上 |
-| 联网搜索在从节点执行（设计 3.3）：配置加密下发（共用上一行 ①）、配额本地计数并定期上报汇总 | WP10 | |
+| ~~联网搜索在从节点执行（设计 3.3）~~ | WP10 | 已完成（fb373e85）：websearch 配额抽成 QuotaStore（单机仍是 Redis）；从节点用加密下发的配置建搜索管理器、换快照重建，份额内本机计数、每 10 秒上报，主节点汇总进 Redis 并回份额 |
 | 自动分组 Key、组合平台分组经从节点（主节点选号时选组、选目标平台） | WP10 | |
-| Anthropic 网关入口：`/v1/messages`、count_tokens（含 Bedrock、Vertex、Antigravity 账号）；`ForceCacheBilling` 核对 | WP10 | |
+| Anthropic 网关入口：`/v1/messages`、count_tokens（含 Bedrock、Vertex、Antigravity 账号）；`ForceCacheBilling` 核对；联网搜索模拟的渠道级开关（账号"跟随渠道"时看渠道配置，渠道在主节点）随选号带下来 | WP10 | |
 | Gemini v1beta、Antigravity 路由 | WP10 | |
 | OpenAI 其余入口：图片（同步）、嵌入、count_tokens（input_tokens）、`/alpha/search`、`/web_search`、`/x_search`、Codex 直连路径 `/backend-api/codex/*` | WP10 | |
 | Grok（含语音）、Ollama Cloud、TypeSafe `/v1/systemone`、Seedance | WP10 | |
