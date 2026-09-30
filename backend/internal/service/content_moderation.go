@@ -569,6 +569,8 @@ type ContentModerationService struct {
 	keyHealth                map[string]*contentModerationKeyHealth
 	// contentModerationAccountActionsSlot：命中后的账号动作；从节点装远程实现（content_moderation_account_actions.go）。
 	contentModerationAccountActionsSlot
+	// hashChanges：命中过的输入名单变了时的回调（主从分流时主节点推给从节点，content_moderation_hash_sync.go）。
+	hashChanges atomic.Pointer[func(ContentModerationHashChange)]
 }
 
 type contentModerationRuntimeSnapshot struct {
@@ -1437,6 +1439,9 @@ func (s *ContentModerationService) DeleteFlaggedInputHash(ctx context.Context, i
 	if err != nil {
 		return nil, fmt.Errorf("delete content moderation flagged hash: %w", err)
 	}
+	if deleted {
+		s.publishHashChange(ContentModerationHashChange{Removed: []string{inputHash}})
+	}
 	return &ContentModerationDeleteHashResult{
 		InputHash: inputHash,
 		Deleted:   deleted,
@@ -1451,6 +1456,7 @@ func (s *ContentModerationService) ClearFlaggedInputHashes(ctx context.Context) 
 	if err != nil {
 		return nil, fmt.Errorf("clear content moderation flagged hashes: %w", err)
 	}
+	s.publishHashChange(ContentModerationHashChange{Cleared: true})
 	return &ContentModerationClearHashesResult{Deleted: deleted}, nil
 }
 
@@ -1978,6 +1984,8 @@ func (s *ContentModerationService) persistContentModerationLog(ctx context.Conte
 	if recordHash && s.hashCache != nil {
 		if err := s.hashCache.RecordFlaggedInputHash(ctx, hashText); err != nil {
 			slog.Warn("content_moderation.record_hash_failed", "user_id", contentModerationEmailUserID(log), "endpoint", log.Endpoint, "error", err)
+		} else {
+			s.publishHashChange(ContentModerationHashChange{Added: []string{hashText}})
 		}
 	}
 	if applySideEffects {

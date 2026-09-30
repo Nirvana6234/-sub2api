@@ -12,6 +12,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/relay/master"
+	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
 	"github.com/Wei-Shaw/sub2api/internal/relay/relayselect"
 	"github.com/Wei-Shaw/sub2api/internal/relay/relaysettle"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
@@ -84,6 +85,12 @@ func ProvideMasterRuntime(
 			Vouchers: relayVoucherRecorder(db),
 		}),
 	})
+	if moderation != nil {
+		// 命中过的输入名单变了（审核命中、后台删除或清空、从节点上报）当场推给各从节点的副本（设计 3.4）。
+		moderation.SetHashChangeListener(func(ch service.ContentModerationHashChange) {
+			rt.BroadcastFlaggedHashes(&relayv1.FlaggedHashes{Added: ch.Added, Removed: ch.Removed, Cleared: ch.Cleared})
+		})
+	}
 	if errorPassthrough != nil {
 		// 规则改了当场重新生成快照（发布器另有 30 秒一次的定时重算兜底）。
 		errorPassthrough.SetChangeNotifier(func() { hub.Notify([]string{master.SectionChangedKey(master.SectionErrorPassthroughRules)}) })

@@ -307,6 +307,18 @@ func (r *Runtime) Nodes() *Nodes {
 	return r.running.nodes
 }
 
+// BroadcastFlaggedHashes 把命中过的输入名单的变化推给所有在线从节点（设计 3.4）；没在运行时不做。
+// 离线的节点重连后会整份重新拉取。
+func (r *Runtime) BroadcastFlaggedHashes(change *relayv1.FlaggedHashes) {
+	r.mu.Lock()
+	running := r.running
+	r.mu.Unlock()
+	if running == nil || change == nil {
+		return
+	}
+	running.events.Broadcast(&relayv1.MasterEnvelope{Body: &relayv1.MasterEnvelope_FlaggedHashes{FlaggedHashes: change}})
+}
+
 // Publisher 返回运行中的配置发布器；没在运行时为 nil。
 func (r *Runtime) Publisher() *ConfigPublisher {
 	r.mu.Lock()

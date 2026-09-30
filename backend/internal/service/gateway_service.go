@@ -766,19 +766,19 @@ func (s *GatewayService) TempUnscheduleRetryableError(ctx context.Context, accou
 
 // GatewayService handles API gateway operations
 type GatewayService struct {
-	accountRepo           AccountRepository
-	groupRepo             GroupRepository
-	usageLogRepo          UsageLogRepository
-	usageBillingRepo      UsageBillingRepository
-	userRepo              UserRepository
-	userSubRepo           UserSubscriptionRepository
-	userGroupRateRepo     UserGroupRateRepository
-	cache                 GatewayCache
-	digestStore           *DigestSessionStore
-	cfg                   *config.Config
-	schedulerSnapshot     *SchedulerSnapshotService
-	billingService        *BillingService
-	rateLimitService      *RateLimitService
+	accountRepo       AccountRepository
+	groupRepo         GroupRepository
+	usageLogRepo      UsageLogRepository
+	usageBillingRepo  UsageBillingRepository
+	userRepo          UserRepository
+	userSubRepo       UserSubscriptionRepository
+	userGroupRateRepo UserGroupRateRepository
+	cache             GatewayCache
+	digestStore       *DigestSessionStore
+	cfg               *config.Config
+	schedulerSnapshot *SchedulerSnapshotService
+	billingService    *BillingService
+	rateLimitService  *RateLimitService
 	// accountStateSlot：账号状态判定；从节点装远程实现（account_state_decider.go）。
 	accountStateSlot
 	billingCacheService   *BillingCacheService

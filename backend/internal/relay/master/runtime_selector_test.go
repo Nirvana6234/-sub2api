@@ -58,6 +58,14 @@ func (s *recordingSelector) ModerationNotify(context.Context, int64, *relayv1.Mo
 	return &relayv1.ModerationNotifyResponse{}, nil
 }
 
+func (s *recordingSelector) FetchFlaggedHashes(context.Context, int64, *relayv1.FetchFlaggedHashesRequest) (*relayv1.FetchFlaggedHashesResponse, error) {
+	return &relayv1.FetchFlaggedHashesResponse{}, nil
+}
+
+func (s *recordingSelector) RecordFlaggedHash(context.Context, int64, *relayv1.RecordFlaggedHashRequest) (*relayv1.RecordFlaggedHashResponse, error) {
+	return &relayv1.RecordFlaggedHashResponse{}, nil
+}
+
 func (s *recordingSelector) SecurityAudit(context.Context, int64, *relayv1.SecurityAuditRequest) (*relayv1.SecurityAuditResponse, error) {
 	return &relayv1.SecurityAuditResponse{Skipped: true}, nil
 }

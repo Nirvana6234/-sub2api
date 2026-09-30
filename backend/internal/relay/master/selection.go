@@ -38,6 +38,9 @@ type Selector interface {
 	// 返回 PermissionDenied。
 	ModerationViolation(ctx context.Context, nodeID int64, req *relayv1.ModerationViolationRequest) (*relayv1.ModerationViolationResponse, error)
 	ModerationNotify(ctx context.Context, nodeID int64, req *relayv1.ModerationNotifyRequest) (*relayv1.ModerationNotifyResponse, error)
+	// FetchFlaggedHashes / RecordFlaggedHash 命中过的输入名单的整份拉取与从节点新命中（设计 3.4）。
+	FetchFlaggedHashes(ctx context.Context, nodeID int64, req *relayv1.FetchFlaggedHashesRequest) (*relayv1.FetchFlaggedHashesResponse, error)
+	RecordFlaggedHash(ctx context.Context, nodeID int64, req *relayv1.RecordFlaggedHashRequest) (*relayv1.RecordFlaggedHashResponse, error)
 	// SecurityAudit 转发前的安全审计（设计 3.4，走审核连接）。Key 复查不通过时回 skipped，不返回 error。
 	SecurityAudit(ctx context.Context, nodeID int64, req *relayv1.SecurityAuditRequest) (*relayv1.SecurityAuditResponse, error)
 	// Release 处理事件连接上的释放消息（不回复，按选号 ID 幂等）。在事件流的接收协程里调用，
@@ -237,6 +240,32 @@ func (c *Control) ModerationNotify(ctx context.Context, req *relayv1.ModerationN
 	resp, err := c.selector.ModerationNotify(ctx, nodeID, req)
 	if err != nil {
 		return nil, selectionError(ctx, "moderation_notify", nodeID, err)
+	}
+	return resp, nil
+}
+
+// FetchFlaggedHashes 分页拉取命中过的输入名单。
+func (c *Control) FetchFlaggedHashes(ctx context.Context, req *relayv1.FetchFlaggedHashesRequest) (*relayv1.FetchFlaggedHashesResponse, error) {
+	nodeID, err := c.selectPeer(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.selector.FetchFlaggedHashes(ctx, nodeID, req)
+	if err != nil {
+		return nil, selectionError(ctx, "fetch_flagged_hashes", nodeID, err)
+	}
+	return resp, nil
+}
+
+// RecordFlaggedHash 从节点新命中的输入。
+func (c *Control) RecordFlaggedHash(ctx context.Context, req *relayv1.RecordFlaggedHashRequest) (*relayv1.RecordFlaggedHashResponse, error) {
+	nodeID, err := c.selectPeer(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.selector.RecordFlaggedHash(ctx, nodeID, req)
+	if err != nil {
+		return nil, selectionError(ctx, "record_flagged_hash", nodeID, err)
 	}
 	return resp, nil
 }

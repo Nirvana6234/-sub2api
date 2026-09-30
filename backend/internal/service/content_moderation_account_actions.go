@@ -21,7 +21,9 @@ type ContentModerationAccountActions interface {
 	Notify(ctx context.Context, cfg *ContentModerationConfig, log *ContentModerationLog, autoBanJustApplied, cyber bool) bool
 }
 
-type contentModerationAccountActionsHolder struct{ a ContentModerationAccountActions }
+type contentModerationAccountActionsHolder struct {
+	a ContentModerationAccountActions
+}
 
 // contentModerationAccountActionsSlot 嵌进审核服务：从节点装远程实现；没装时用本机实现。
 type contentModerationAccountActionsSlot struct {

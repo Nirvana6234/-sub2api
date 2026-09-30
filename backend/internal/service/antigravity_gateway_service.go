@@ -122,9 +122,9 @@ func (e *PromptTooLongError) Error() string {
 
 // AntigravityGatewayService 处理 Antigravity 平台的 API 转发
 type AntigravityGatewayService struct {
-	accountRepo       AccountRepository
-	tokenProvider     *AntigravityTokenProvider
-	rateLimitService  *RateLimitService
+	accountRepo      AccountRepository
+	tokenProvider    *AntigravityTokenProvider
+	rateLimitService *RateLimitService
 	// accountStateSlot：账号状态判定；从节点装远程实现（account_state_decider.go）。
 	accountStateSlot
 	httpUpstream      HTTPUpstream

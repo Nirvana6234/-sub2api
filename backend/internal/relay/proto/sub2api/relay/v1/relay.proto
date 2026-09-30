@@ -89,6 +89,10 @@ service RelayControl {
   rpc ModerationViolation(ModerationViolationRequest) returns (ModerationViolationResponse);
   // ModerationNotify 命中与封号通知邮件（SMTP 不下发，由主节点发）。收件人按主节点库里的用户。
   rpc ModerationNotify(ModerationNotifyRequest) returns (ModerationNotifyResponse);
+  // FetchFlaggedHashes 分页拉取命中过的输入名单（从节点每次连上事件流后整份拉一次，之后按增量更新）。
+  rpc FetchFlaggedHashes(FetchFlaggedHashesRequest) returns (FetchFlaggedHashesResponse);
+  // RecordFlaggedHash 从节点新命中的输入：主节点写进名单，再把增量推给所有节点。
+  rpc RecordFlaggedHash(RecordFlaggedHashRequest) returns (RecordFlaggedHashResponse);
 }
 
 // 审核连接：转发前的安全审计（设计 3.4），走单独的连接，不和选号挤在一起。
@@ -269,7 +273,16 @@ message MasterEnvelope {
     Invalidation invalidation = 12;
     TicketRevocations ticket_revocations = 13;
     QuotaRecall quota_recall = 14;
+    FlaggedHashes flagged_hashes = 15;
   }
+}
+
+// 命中过的输入名单的增量（设计 3.4）：主节点的 Redis 名单是权威，每台从节点保留一份副本。
+message FlaggedHashes {
+  repeated string added = 1;
+  repeated string removed = 2;
+  // 后台清空了名单（先于 added 生效）。
+  bool cleared = 3;
 }
 
 message EventPing {
@@ -803,6 +816,22 @@ message ModerationNotifyRequest {
 message ModerationNotifyResponse {
   bool email_sent = 1;
 }
+
+message FetchFlaggedHashesRequest {
+  // 从 0 开始；回复的 next_cursor 为 0 表示拉完了。
+  uint64 cursor = 1;
+}
+
+message FetchFlaggedHashesResponse {
+  repeated string hashes = 1;
+  uint64 next_cursor = 2;
+}
+
+message RecordFlaggedHashRequest {
+  string hash = 1;
+}
+
+message RecordFlaggedHashResponse {}
 
 message UpstreamErrorResponse {
   bool should_disable = 1;

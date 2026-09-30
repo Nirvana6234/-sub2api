@@ -128,3 +128,30 @@ func (s *selector) ModerationNotify(ctx context.Context, nodeID int64, req *rela
 	}
 	return &relayv1.ModerationNotifyResponse{EmailSent: sent}, nil
 }
+
+// flaggedHashPage 是整份拉取名单时每页的条数。
+const flaggedHashPage = 5000
+
+// FetchFlaggedHashes 见 RelayControl.FetchFlaggedHashes。
+func (s *selector) FetchFlaggedHashes(ctx context.Context, _ int64, req *relayv1.FetchFlaggedHashesRequest) (*relayv1.FetchFlaggedHashesResponse, error) {
+	if s.deps.Moderation == nil {
+		return &relayv1.FetchFlaggedHashesResponse{}, nil
+	}
+	hashes, next, err := s.deps.Moderation.ScanFlaggedInputHashes(ctx, req.GetCursor(), flaggedHashPage)
+	if err != nil {
+		return nil, err
+	}
+	return &relayv1.FetchFlaggedHashesResponse{Hashes: hashes, NextCursor: next}, nil
+}
+
+// RecordFlaggedHash 见 RelayControl.RecordFlaggedHash。
+func (s *selector) RecordFlaggedHash(ctx context.Context, nodeID int64, req *relayv1.RecordFlaggedHashRequest) (*relayv1.RecordFlaggedHashResponse, error) {
+	if s.deps.Moderation == nil {
+		return &relayv1.RecordFlaggedHashResponse{}, nil
+	}
+	if err := s.deps.Moderation.RecordRelayFlaggedHash(ctx, req.GetHash()); err != nil {
+		slog.Warn("relay: record flagged hash from node failed", "node_id", nodeID, "error", err)
+		return nil, status.Error(codes.InvalidArgument, "invalid flagged hash")
+	}
+	return &relayv1.RecordFlaggedHashResponse{}, nil
+}

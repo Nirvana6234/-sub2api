@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -174,4 +175,59 @@ func TestNodeReportsModerationViolations(t *testing.T) {
 	// 不是命中、没有用户的记录不上报。
 	require.False(t, actions.Apply(ctx, nil, &service.ContentModerationLog{Flagged: false, UserID: &uid}))
 	require.Len(t, logs.logs, 2)
+}
+
+// scanHashes 是主节点的名单（能分页列出，像 Redis 实现）。
+type scanHashes struct {
+	mu  sync.Mutex
+	set []string
+}
+
+func (c *scanHashes) RecordFlaggedInputHash(_ context.Context, h string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.set = append(c.set, h)
+	return nil
+}
+func (c *scanHashes) HasFlaggedInputHash(context.Context, string) (bool, error)    { return false, nil }
+func (c *scanHashes) DeleteFlaggedInputHash(context.Context, string) (bool, error) { return false, nil }
+func (c *scanHashes) ClearFlaggedInputHashes(context.Context) (int64, error)       { return 0, nil }
+func (c *scanHashes) CountFlaggedInputHashes(context.Context) (int64, error)       { return 0, nil }
+func (c *scanHashes) ScanFlaggedInputHashes(_ context.Context, cursor uint64, _ int64) ([]string, uint64, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// 一次给一条，测分页。
+	if int(cursor) >= len(c.set) {
+		return nil, 0, nil
+	}
+	next := cursor + 1
+	if int(next) >= len(c.set) {
+		next = 0
+	}
+	return []string{c.set[cursor]}, next, nil
+}
+
+// 端到端：从节点整份拉取主节点的名单（分页）；这台新命中的输入报给主节点，主节点写入并通知（推给各节点）。
+func TestNodeSyncsTheFlaggedInputList(t *testing.T) {
+	e := startE2E(t)
+	ctx := context.Background()
+	h1, h2, h3 := strings.Repeat("1", 64), strings.Repeat("2", 64), strings.Repeat("3", 64)
+	cache := &scanHashes{set: []string{h1, h2}}
+	svc := service.NewContentModerationService(memSettings{values: map[string]string{service.SettingKeyRiskControlEnabled: "true"}},
+		&moderationLogs{}, cache, nil, nil, nil, nil, nil)
+	var pushed []service.ContentModerationHashChange
+	svc.SetHashChangeListener(func(ch service.ContentModerationHashChange) { pushed = append(pushed, ch) })
+	e.world.sel.deps.Moderation = svc
+
+	replica := node.NewFlaggedHashReplica(e.client)
+	require.NoError(t, replica.Resync(ctx))
+	for _, h := range []string{h1, h2} {
+		ok, err := replica.HasFlaggedInputHash(ctx, h)
+		require.NoError(t, err)
+		require.True(t, ok)
+	}
+	require.NoError(t, replica.RecordFlaggedInputHash(ctx, h3))
+	require.Contains(t, cache.set, h3)
+	require.Equal(t, []service.ContentModerationHashChange{{Added: []string{h3}}}, pushed)
+	require.Error(t, replica.RecordFlaggedInputHash(ctx, "junk"), "the master rejects a malformed hash")
 }

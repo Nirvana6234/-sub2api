@@ -320,6 +320,8 @@ const (
 	RelayControl_CyberPolicyHit_FullMethodName      = "/sub2api.relay.v1.RelayControl/CyberPolicyHit"
 	RelayControl_ModerationViolation_FullMethodName = "/sub2api.relay.v1.RelayControl/ModerationViolation"
 	RelayControl_ModerationNotify_FullMethodName    = "/sub2api.relay.v1.RelayControl/ModerationNotify"
+	RelayControl_FetchFlaggedHashes_FullMethodName  = "/sub2api.relay.v1.RelayControl/FetchFlaggedHashes"
+	RelayControl_RecordFlaggedHash_FullMethodName   = "/sub2api.relay.v1.RelayControl/RecordFlaggedHash"
 )
 
 // RelayControlClient is the client API for RelayControl service.
@@ -381,6 +383,10 @@ type RelayControlClient interface {
 	ModerationViolation(ctx context.Context, in *ModerationViolationRequest, opts ...grpc.CallOption) (*ModerationViolationResponse, error)
 	// ModerationNotify 命中与封号通知邮件（SMTP 不下发，由主节点发）。收件人按主节点库里的用户。
 	ModerationNotify(ctx context.Context, in *ModerationNotifyRequest, opts ...grpc.CallOption) (*ModerationNotifyResponse, error)
+	// FetchFlaggedHashes 分页拉取命中过的输入名单（从节点每次连上事件流后整份拉一次，之后按增量更新）。
+	FetchFlaggedHashes(ctx context.Context, in *FetchFlaggedHashesRequest, opts ...grpc.CallOption) (*FetchFlaggedHashesResponse, error)
+	// RecordFlaggedHash 从节点新命中的输入：主节点写进名单，再把增量推给所有节点。
+	RecordFlaggedHash(ctx context.Context, in *RecordFlaggedHashRequest, opts ...grpc.CallOption) (*RecordFlaggedHashResponse, error)
 }
 
 type relayControlClient struct {
@@ -561,6 +567,26 @@ func (c *relayControlClient) ModerationNotify(ctx context.Context, in *Moderatio
 	return out, nil
 }
 
+func (c *relayControlClient) FetchFlaggedHashes(ctx context.Context, in *FetchFlaggedHashesRequest, opts ...grpc.CallOption) (*FetchFlaggedHashesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FetchFlaggedHashesResponse)
+	err := c.cc.Invoke(ctx, RelayControl_FetchFlaggedHashes_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *relayControlClient) RecordFlaggedHash(ctx context.Context, in *RecordFlaggedHashRequest, opts ...grpc.CallOption) (*RecordFlaggedHashResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RecordFlaggedHashResponse)
+	err := c.cc.Invoke(ctx, RelayControl_RecordFlaggedHash_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RelayControlServer is the server API for RelayControl service.
 // All implementations must embed UnimplementedRelayControlServer
 // for forward compatibility.
@@ -620,6 +646,10 @@ type RelayControlServer interface {
 	ModerationViolation(context.Context, *ModerationViolationRequest) (*ModerationViolationResponse, error)
 	// ModerationNotify 命中与封号通知邮件（SMTP 不下发，由主节点发）。收件人按主节点库里的用户。
 	ModerationNotify(context.Context, *ModerationNotifyRequest) (*ModerationNotifyResponse, error)
+	// FetchFlaggedHashes 分页拉取命中过的输入名单（从节点每次连上事件流后整份拉一次，之后按增量更新）。
+	FetchFlaggedHashes(context.Context, *FetchFlaggedHashesRequest) (*FetchFlaggedHashesResponse, error)
+	// RecordFlaggedHash 从节点新命中的输入：主节点写进名单，再把增量推给所有节点。
+	RecordFlaggedHash(context.Context, *RecordFlaggedHashRequest) (*RecordFlaggedHashResponse, error)
 	mustEmbedUnimplementedRelayControlServer()
 }
 
@@ -680,6 +710,12 @@ func (UnimplementedRelayControlServer) ModerationViolation(context.Context, *Mod
 }
 func (UnimplementedRelayControlServer) ModerationNotify(context.Context, *ModerationNotifyRequest) (*ModerationNotifyResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ModerationNotify not implemented")
+}
+func (UnimplementedRelayControlServer) FetchFlaggedHashes(context.Context, *FetchFlaggedHashesRequest) (*FetchFlaggedHashesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method FetchFlaggedHashes not implemented")
+}
+func (UnimplementedRelayControlServer) RecordFlaggedHash(context.Context, *RecordFlaggedHashRequest) (*RecordFlaggedHashResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RecordFlaggedHash not implemented")
 }
 func (UnimplementedRelayControlServer) mustEmbedUnimplementedRelayControlServer() {}
 func (UnimplementedRelayControlServer) testEmbeddedByValue()                      {}
@@ -1008,6 +1044,42 @@ func _RelayControl_ModerationNotify_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RelayControl_FetchFlaggedHashes_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FetchFlaggedHashesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayControlServer).FetchFlaggedHashes(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayControl_FetchFlaggedHashes_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayControlServer).FetchFlaggedHashes(ctx, req.(*FetchFlaggedHashesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RelayControl_RecordFlaggedHash_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RecordFlaggedHashRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayControlServer).RecordFlaggedHash(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayControl_RecordFlaggedHash_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayControlServer).RecordFlaggedHash(ctx, req.(*RecordFlaggedHashRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // RelayControl_ServiceDesc is the grpc.ServiceDesc for RelayControl service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1082,6 +1154,14 @@ var RelayControl_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ModerationNotify",
 			Handler:    _RelayControl_ModerationNotify_Handler,
+		},
+		{
+			MethodName: "FetchFlaggedHashes",
+			Handler:    _RelayControl_FetchFlaggedHashes_Handler,
+		},
+		{
+			MethodName: "RecordFlaggedHash",
+			Handler:    _RelayControl_RecordFlaggedHash_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

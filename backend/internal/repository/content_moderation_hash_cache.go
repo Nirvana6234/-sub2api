@@ -69,3 +69,11 @@ func (c *contentModerationHashCache) CountFlaggedInputHashes(ctx context.Context
 	}
 	return c.rdb.SCard(ctx, contentModerationFlaggedHashSetKey).Result()
 }
+
+// ScanFlaggedInputHashes 分页列出名单（service.ContentModerationHashScanner，主从分流时从节点整份拉取副本用）。
+func (c *contentModerationHashCache) ScanFlaggedInputHashes(ctx context.Context, cursor uint64, count int64) ([]string, uint64, error) {
+	if c == nil || c.rdb == nil {
+		return nil, 0, nil
+	}
+	return c.rdb.SScan(ctx, contentModerationFlaggedHashSetKey, cursor, "", count).Result()
+}
