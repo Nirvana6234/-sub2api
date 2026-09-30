@@ -96,6 +96,8 @@ type attemptState struct {
 	finished       bool
 	usageSubmitted bool
 	released       bool
+	// forwardSucceeded：Anthropic Messages 这次尝试转发成功（主节点释放时据此刷新粘性会话绑定）。
+	forwardSucceeded bool
 	// cyberDone 在 cyber 命中报告发完（或放弃）时关闭：释放要等它，主节点按进行中的选号认这份报告。
 	cyberDone chan struct{}
 }
@@ -176,6 +178,8 @@ func (d *Dispatcher) selectRequest(c *gin.Context, st *requestState, req handler
 	clientIP := strings.TrimSpace(ip.GetClientIP(c))
 	endpoint := relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_RESPONSES
 	switch {
+	case req.Anthropic:
+		endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_MESSAGES
 	case req.Chat:
 		endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_CHAT
 	case req.Messages:
@@ -202,13 +206,15 @@ func (d *Dispatcher) selectRequest(c *gin.Context, st *requestState, req handler
 		PreviousResponseCanMove: req.PreviousResponseCanMove,
 		RouteModel:              st.routeModel,
 		AutoGroupId:             autoGroupID(req.APIKey),
+		MetadataUserId:          req.MetadataUserID,
+		InterceptType:           int32(req.InterceptType),
 	}
 	sreq.ClientRequestId, _ = c.Request.Context().Value(ctxkey.ClientRequestID).(string)
 	sreq.GuardianParentSessionHash, sreq.GuardianParentLegacySessionHash = service.OpenAIGuardianParentSessionHashes(c.Request.Context())
 	for id := range req.Excluded {
 		sreq.ExcludedAccountIds = append(sreq.ExcludedAccountIds, id)
 	}
-	if d.deps.CyberEnabled != nil && d.deps.CyberEnabled(c.Request.Context()) {
+	if !req.Anthropic && d.deps.CyberEnabled != nil && d.deps.CyberEnabled(c.Request.Context()) {
 		l := service.NewCyberSessionLookup(req.APIKey.ID, c, req.Body, clientIP, c.GetHeader("User-Agent"))
 		sreq.Cyber = &relayv1.CyberSessionLookup{
 			ExplicitKey: l.ExplicitKey, ScopeKey: l.ScopeKey, TranscriptKeys: l.TranscriptKeys, TranscriptTruncated: l.TranscriptTruncated,
@@ -293,10 +299,11 @@ func (d *Dispatcher) admitSelection(c *gin.Context, st *requestState, req handle
 			MappedModel: sel.GetChannelMappedModel(), ChannelID: sel.GetChannelId(), Mapped: sel.GetChannelMapped(),
 			BillingModelSource: sel.GetBillingModelSource(),
 		},
-		ForwardModel:       sel.GetForwardModel(),
-		MaxAccountSwitches: int(sel.GetMaxAccountSwitches()),
-		StickyPreviousHit:  sel.GetStickyPreviousHit(),
-		State:              a,
+		ForwardModel:         sel.GetForwardModel(),
+		MaxAccountSwitches:   int(sel.GetMaxAccountSwitches()),
+		StickyPreviousHit:    sel.GetStickyPreviousHit(),
+		StickyBoundAccountID: sel.GetStickyBoundAccountId(),
+		State:                a,
 	}}
 }
 
@@ -332,12 +339,13 @@ func (d *Dispatcher) flush(st *requestState, requestDone bool) {
 	a.released = true
 	ids := append([]string(nil), a.responseIDs...)
 	submitted := a.usageSubmitted
+	succeeded := a.forwardSucceeded
 	cyberDone := a.cyberDone
 	a.mu.Unlock()
 	if !submitted && a.reservation != nil {
 		a.reservation.Cancel()
 	}
-	rel := &relayv1.SelectionRelease{SelectionId: a.selectionID, RequestDone: requestDone, ResponseIds: ids, Voucher: a.voucher}
+	rel := &relayv1.SelectionRelease{SelectionId: a.selectionID, RequestDone: requestDone, ResponseIds: ids, Voucher: a.voucher, ForwardSucceeded: succeeded}
 	if cyberDone != nil {
 		// cyber 命中报告还没发完：等它（最长 node.CyberPolicyTimeout）再释放，否则主节点查不到这次选号。
 		go func() {
@@ -355,8 +363,36 @@ func (d *Dispatcher) SubmitUsage(c *gin.Context, attempt *handler.OpenAIRelayAtt
 }
 
 func (d *Dispatcher) submitUsage(c *gin.Context, attempt *handler.OpenAIRelayAttempt, facts handler.OpenAIUsageFacts, result *service.OpenAIForwardResult, kind relayv1.UsageRecordKind) {
+	if result == nil {
+		return
+	}
+	d.submitRecord(c, attempt, facts, result, kind, false)
+}
+
+// SubmitAnthropicUsage 把 Messages 这次尝试的转发结果写进本地扣费队列（handler.OpenAIRelayDispatcher）。
+func (d *Dispatcher) SubmitAnthropicUsage(c *gin.Context, attempt *handler.OpenAIRelayAttempt, facts handler.OpenAIUsageFacts, result *service.ForwardResult, forceCacheBilling bool) {
+	if result == nil {
+		return
+	}
+	d.submitRecord(c, attempt, facts, result, relayv1.UsageRecordKind_USAGE_RECORD_KIND_ANTHROPIC, forceCacheBilling)
+}
+
+// ForwardSucceeded 记下这次尝试转发成功（handler.OpenAIRelayDispatcher），释放时带给主节点。
+func (d *Dispatcher) ForwardSucceeded(_ *gin.Context, attempt *handler.OpenAIRelayAttempt) {
+	if attempt == nil {
+		return
+	}
+	if a, ok := attempt.State.(*attemptState); ok {
+		a.mu.Lock()
+		a.forwardSucceeded = true
+		a.mu.Unlock()
+	}
+}
+
+// submitRecord 写一条扣费记录：凭证原样带上，转发结果按 JSON（主节点按种类解码）。
+func (d *Dispatcher) submitRecord(c *gin.Context, attempt *handler.OpenAIRelayAttempt, facts handler.OpenAIUsageFacts, result any, kind relayv1.UsageRecordKind, forceCacheBilling bool) {
 	a, ok := attempt.State.(*attemptState)
-	if !ok || result == nil {
+	if !ok {
 		return
 	}
 	resultJSON, err := json.Marshal(result)
@@ -369,7 +405,7 @@ func (d *Dispatcher) submitUsage(c *gin.Context, attempt *handler.OpenAIRelayAtt
 		Voucher: a.voucher, Kind: kind, ResultJson: resultJSON,
 		InboundEndpoint: facts.InboundEndpoint, UpstreamEndpoint: facts.UpstreamEndpoint, UserAgent: facts.UserAgent,
 		IpAddress: facts.IPAddress, SessionId: facts.SessionID, RequestPayloadHash: facts.RequestPayloadHash,
-		CyberBlocked: facts.CyberBlocked, NativeCompactionV2: facts.NativeCompactionV2,
+		CyberBlocked: facts.CyberBlocked, NativeCompactionV2: facts.NativeCompactionV2, ForceCacheBilling: forceCacheBilling,
 	}
 	rec.ClientRequestId, _ = ctx.Value(ctxkey.ClientRequestID).(string)
 	rec.RequestId, _ = ctx.Value(ctxkey.RequestID).(string)
@@ -489,6 +525,10 @@ func convertRejectionKind(r *relayv1.SelectRejection) *handler.OpenAIRelayReject
 		return &handler.OpenAIRelayRejection{Kind: handler.OpenAIRelayRejectFailoverExhausted, ContinuationUnsupported: r.GetContinuationUnsupported()}
 	case relayv1.RejectionFormat_REJECTION_FORMAT_UNSUPPORTED:
 		return &handler.OpenAIRelayRejection{Kind: handler.OpenAIRelayRejectUnsupported}
+	case relayv1.RejectionFormat_REJECTION_FORMAT_INTERCEPTED:
+		return &handler.OpenAIRelayRejection{Kind: handler.OpenAIRelayRejectIntercepted, InterceptType: handler.InterceptType(r.GetInterceptType())}
+	case relayv1.RejectionFormat_REJECTION_FORMAT_PROFIT_VETOED:
+		return &handler.OpenAIRelayRejection{Kind: handler.OpenAIRelayRejectProfitVetoed, VetoedAccountID: r.GetVetoedAccountId()}
 	case relayv1.RejectionFormat_REJECTION_FORMAT_WS_CLOSE:
 		return &handler.OpenAIRelayRejection{
 			Kind: handler.OpenAIRelayRejectWSClose, WSCloseStatus: int(r.GetStatus()), WSCloseReason: r.GetMessage(), CyberBlockKey: r.GetCyberBlockKey(),

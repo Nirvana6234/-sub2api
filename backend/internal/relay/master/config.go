@@ -55,6 +55,9 @@ var ForwardingSettingKeys = []string{
 	service.SettingKeyEnableAnthropicCacheTTL1hInjection,
 	service.SettingKeyRewriteMessageCacheControl,
 	service.SettingKeyEnableClientDatelineNormalization,
+	// Anthropic 转发路径：beta 策略、整流（签名/预算）开关。
+	service.SettingKeyBetaPolicySettings,
+	service.SettingKeyRectifierSettings,
 	service.SettingKeyGrokDefaultTextModel,
 	// 风控：全局 IP 黑名单在从节点本地检查；cyber 会话屏蔽开关
 	service.SettingKeyGlobalBlacklist,

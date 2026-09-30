@@ -941,6 +941,8 @@ enum UsageRecordKind {
   // OpenAI 网关上 cyber 策略拒绝、转发返回错误的请求（service.OpenAIGatewayService.RecordCyberPolicyUsageLog 的口径：
   // 只有上游已报的 token，按入账时计价）。
   USAGE_RECORD_KIND_OPENAI_CYBER_POLICY = 2;
+  // Anthropic 网关（service.GatewayService.RecordUsage，GatewayHandler.Messages）：result_json 是 service.ForwardResult。
+  USAGE_RECORD_KIND_ANTHROPIC = 3;
 }
 
 // 一条扣费记录（设计 5.1）：扣费凭证 + 只有转发的从节点知道的事实（字段清单见 relayselect 的字段守卫）。
@@ -964,6 +966,9 @@ message UsageRecord {
   // 请求 ID（入账日志、扣费请求 ID 的回退）。
   string client_request_id = 13;
   string request_id = 14;
+  // Anthropic：换号时按本地规则强制按缓存计费（FailoverState.ForceCacheBilling：有绑定的会话实际换了账号，或上游
+  // 明确要求）。与 token 数一样是转发节点得出的事实。
+  bool force_cache_billing = 15;
 }
 
 // 一批扣费记录。batch_seq 是本节点的批次序号（连续递增），主节点据此发现漏掉或重复的批次（只报警，
@@ -1017,6 +1022,7 @@ message AccountEvent {
     TransportErrorEvent transport_error = 14;
     OllamaActivityEvent ollama_activity = 15;
     SessionWindowEvent session_window = 16;
+    TempUnschedulableEvent temp_unschedulable = 17;
   }
 }
 
@@ -1049,6 +1055,13 @@ message CodexUsageEvent {
   bytes snapshot_json = 1;
 }
 
+// 非 OpenAI 网关转发路径上的临时不可调度（GatewayService 里直接写 accountRepo.SetTempUnschedulable 的几处：
+// 请求级 400/502 同账号重试用尽、持久的传输错误）。主节点照写，时长不超过这些地方用的最长时长。
+message TempUnschedulableEvent {
+  int64 until_unix_ms = 1;
+  string reason = 2;
+}
+
 message TransportErrorEvent {
   // 已脱敏的传输错误。
   string message = 1;
@@ -1075,6 +1088,9 @@ message SelectionRelease {
   // turn_end 时是哪一轮（BeginTurn 回的 turn_id）。事件连接上的释放可能晚于下一轮的 BeginTurn：
   // 主节点只放这一轮还开着时占的槽，已被下一轮接手的不动。
   string turn_id = 6;
+  // Anthropic Messages：这次尝试转发成功（本地这时刷新粘性会话绑定）。主节点按本地同一条件决定刷不刷：请求开始时
+  // 没有绑定，或者绑定的就是这个账号。
+  bool forward_succeeded = 7;
 }
 
 message BeginTurnRequest {

@@ -20,10 +20,18 @@ import (
 func TestNodeObjectGraphHasNoDatabaseOrRedis(t *testing.T) {
 	cfg := &config.Config{}
 	d := NewDispatcher(Deps{})
-	h := NewOpenAIHandler(GatewayDeps{
+	decider, reporter := node.NewRemoteUpstreamErrorDecider(nil), node.NewRemoteAccountReporter(node.NewEventOutbox(0))
+	deps := GatewayDeps{
 		Config: cfg, Settings: service.NewSettingService(node.NewConfigCache(), cfg), Dispatcher: d,
-		Decider: node.NewRemoteUpstreamErrorDecider(nil), Reporter: node.NewRemoteAccountReporter(node.NewEventOutbox(0)),
-	})
+		Decider: decider, Reporter: reporter,
+	}
+	h := struct {
+		OpenAI    any
+		Anthropic any
+	}{
+		NewOpenAIHandler(deps),
+		NewAnthropicHandler(deps, AnthropicDeps{AccountState: node.NewRemoteAccountState(decider, reporter), TempUnschedulable: reporter.TempUnschedulable}),
+	}
 	forbidden := []reflect.Type{
 		reflect.TypeOf((*ent.Client)(nil)),
 		reflect.TypeOf((*sql.DB)(nil)),

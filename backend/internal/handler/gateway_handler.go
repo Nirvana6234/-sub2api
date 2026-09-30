@@ -57,6 +57,8 @@ type GatewayHandler struct {
 	maxAccountSwitchesGemini  int
 	cfg                       *config.Config
 	settingService            *service.SettingService
+	// relay 非 nil 时在主从分流的从节点上（SetRelayDispatcher）。
+	relay OpenAIRelayDispatcher
 }
 
 // NewGatewayHandler creates a new GatewayHandler
@@ -239,28 +241,33 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	// 获取订阅信息（可能为nil）- 提前获取用于后续检查
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
 
-	// 1. 首先获取用户并发槽位
-	userReleaseFunc, err := h.concurrencyHelper.AcquireUserSlotWithWait(c, subject.UserID, subject.Concurrency, reqStream, &streamStarted)
-	if err != nil {
-		reqLog.Warn("gateway.user_slot_acquire_failed", zap.Error(err))
-		h.handleConcurrencyError(c, err, "user", streamStarted)
-		return
-	}
-	// 在请求结束或 Context 取消时确保释放槽位，避免客户端断开造成泄漏
-	userReleaseFunc = wrapReleaseOnDone(c.Request.Context(), userReleaseFunc)
-	if userReleaseFunc != nil {
-		defer userReleaseFunc()
-	}
-
-	// 2. 【新增】Wait后二次检查余额/订阅
-	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
-		reqLog.Info("gateway.billing_eligibility_check_failed", zap.Error(err))
-		status, code, message, retryAfter := billingErrorDetails(err)
-		if retryAfter > 0 {
-			c.Header("Retry-After", strconv.Itoa(retryAfter))
+	if h.relay != nil {
+		// 从节点：用户并发槽、计费资格在主节点选号时做（设计 3.2），请求结束时放掉。
+		defer h.relay.RequestDone(c)
+	} else {
+		// 1. 首先获取用户并发槽位
+		userReleaseFunc, err := h.concurrencyHelper.AcquireUserSlotWithWait(c, subject.UserID, subject.Concurrency, reqStream, &streamStarted)
+		if err != nil {
+			reqLog.Warn("gateway.user_slot_acquire_failed", zap.Error(err))
+			h.handleConcurrencyError(c, err, "user", streamStarted)
+			return
 		}
-		h.handleStreamingAwareError(c, status, code, message, streamStarted)
-		return
+		// 在请求结束或 Context 取消时确保释放槽位，避免客户端断开造成泄漏
+		userReleaseFunc = wrapReleaseOnDone(c.Request.Context(), userReleaseFunc)
+		if userReleaseFunc != nil {
+			defer userReleaseFunc()
+		}
+
+		// 2. 【新增】Wait后二次检查余额/订阅
+		if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
+			reqLog.Info("gateway.billing_eligibility_check_failed", zap.Error(err))
+			status, code, message, retryAfter := billingErrorDetails(err)
+			if retryAfter > 0 {
+				c.Header("Retry-After", strconv.Itoa(retryAfter))
+			}
+			h.handleStreamingAwareError(c, status, code, message, streamStarted)
+			return
+		}
 	}
 
 	// 设置请求所属分组 ID（用于渠道级功能判断，如 WebSearch 模拟）
@@ -318,6 +325,11 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	hasBoundSession := sessionKey != "" && sessionBoundAccountID > 0
 
 	if platform == service.PlatformGemini {
+		if h.relay != nil {
+			// 从节点还没接 Gemini 平台（主节点选号时也不会让它走到这里）：交给主节点转发。
+			h.relay.HandOff(c)
+			return
+		}
 		fs := NewFailoverState(h.maxAccountSwitchesGemini, hasBoundSession)
 
 		// 单账号分组提前设置 SingleAccountRetry 标记，让 Service 层首次 503 就不设模型限流标记。
@@ -556,7 +568,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 
 	// 单账号分组提前设置 SingleAccountRetry 标记，让 Service 层首次 503 就不设模型限流标记。
 	// 避免单账号分组收到 503 (MODEL_CAPACITY_EXHAUSTED) 时设 29s 限流，导致后续请求连续快速失败。
-	if h.gatewayService.IsSingleAntigravityAccountGroup(c.Request.Context(), currentAPIKey.GroupID) {
+	if h.relay == nil && h.gatewayService.IsSingleAntigravityAccountGroup(c.Request.Context(), currentAPIKey.GroupID) {
 		ctx := service.WithSingleAccountRetry(c.Request.Context(), true, h.metadataBridgeEnabled())
 		c.Request = c.Request.WithContext(ctx)
 	}
@@ -578,6 +590,8 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		}
 	}()
 
+	// relayAttempt：从节点上这一轮远程选中的尝试。
+	var relayAttempt *OpenAIRelayAttempt
 	for {
 		fs := NewFailoverState(h.maxAccountSwitches, hasBoundSession)
 		retryWithFallback := false
@@ -596,27 +610,41 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				zap.Bool("has_bound_session", hasBoundSession),
 				zap.Int("failed_account_count", len(fs.FailedAccountIDs)),
 			)
-			onTick, cannotWait := h.anthropicAdmissionWaitHooks(c, reqStream, &streamStarted)
-			outcome := AnthropicAccountAdmitter{Gateway: h.gatewayService, Concurrency: h.concurrencyHelper}.SelectAndAdmit(c.Request.Context(), AnthropicSelectRequest{
-				GroupID: currentAPIKey.GroupID, SessionKey: sessionKey, Model: reqModel, Excluded: fs.FailedAccountIDs,
-				MetadataUserID: parsedReq.MetadataUserID, UserID: subject.UserID,
-				Intercept: func() InterceptType {
-					return detectInterceptType(body, reqModel, parsedReq.MaxTokens, isClaudeCodeClient)
-				},
-				OnAccountChosen: func(selection *service.AccountSelectionResult) {
-					setOpsSelectedAccount(c, selection.Account.ID, selection.Account.Platform)
-					// [DEBUG-STICKY] 打印账号选择结果
-					reqLog.Info("sticky.account_selected",
-						zap.Int64("selected_account_id", selection.Account.ID),
-						zap.String("account_name", selection.Account.Name),
-						zap.Bool("slot_acquired", selection.Acquired),
-						zap.Bool("has_wait_plan", selection.WaitPlan != nil),
-						zap.Int64("sticky_bound_account_id", sessionBoundAccountID),
-						zap.Bool("sticky_honored", sessionBoundAccountID > 0 && sessionBoundAccountID == selection.Account.ID),
-					)
-				},
-				OnTick: onTick, CannotWait: cannotWait,
-			}, reqLog)
+			var outcome AnthropicSelectOutcome
+			if h.relay != nil {
+				var written bool
+				outcome, relayAttempt, written = h.relayAnthropicSelect(c, fs, currentAPIKey, reqModel, reqStream, sessionKey, parsedReq, body, isClaudeCodeClient, platform, streamStarted, reqLog)
+				if written {
+					return
+				}
+				if relayAttempt != nil {
+					// 渠道映射、粘性会话绑定在主节点选号时定下。
+					channelMapping = relayAttempt.ChannelMapping
+					sessionBoundAccountID = relayAttempt.StickyBoundAccountID
+				}
+			} else {
+				onTick, cannotWait := h.anthropicAdmissionWaitHooks(c, reqStream, &streamStarted)
+				outcome = AnthropicAccountAdmitter{Gateway: h.gatewayService, Concurrency: h.concurrencyHelper}.SelectAndAdmit(c.Request.Context(), AnthropicSelectRequest{
+					GroupID: currentAPIKey.GroupID, SessionKey: sessionKey, Model: reqModel, Excluded: fs.FailedAccountIDs,
+					MetadataUserID: parsedReq.MetadataUserID, UserID: subject.UserID,
+					Intercept: func() InterceptType {
+						return detectInterceptType(body, reqModel, parsedReq.MaxTokens, isClaudeCodeClient)
+					},
+					OnAccountChosen: func(selection *service.AccountSelectionResult) {
+						setOpsSelectedAccount(c, selection.Account.ID, selection.Account.Platform)
+						// [DEBUG-STICKY] 打印账号选择结果
+						reqLog.Info("sticky.account_selected",
+							zap.Int64("selected_account_id", selection.Account.ID),
+							zap.String("account_name", selection.Account.Name),
+							zap.Bool("slot_acquired", selection.Acquired),
+							zap.Bool("has_wait_plan", selection.WaitPlan != nil),
+							zap.Int64("sticky_bound_account_id", sessionBoundAccountID),
+							zap.Bool("sticky_honored", sessionBoundAccountID > 0 && sessionBoundAccountID == selection.Account.ID),
+						)
+					},
+					OnTick: onTick, CannotWait: cannotWait,
+				}, reqLog)
+			}
 			if outcome.Kind == AnthropicSelectFailed {
 				err := outcome.Err
 				if len(fs.FailedAccountIDs) == 0 {
@@ -812,6 +840,14 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				forceCacheBilling := fs.ForceCacheBilling
 				quotaPlatform := service.QuotaPlatform(c.Request.Context(), currentAPIKey)
 				sessionID := service.ExtractClientSessionID(c)
+				if h.relay != nil {
+					// 从节点：写进本地扣费队列，主节点按凭证用同一个 RecordUsage 入账。
+					h.relay.SubmitAnthropicUsage(c, relayAttempt, OpenAIUsageFacts{
+						InboundEndpoint: inboundEndpoint, UpstreamEndpoint: upstreamEndpoint, UserAgent: userAgent,
+						IPAddress: clientIP, RequestPayloadHash: requestPayloadHash, SessionID: sessionID,
+					}, result, forceCacheBilling)
+					return
+				}
 				h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 					if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 						Result:             result,
@@ -974,7 +1010,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			// - 选中账号与粘性账号一致：刷新 TTL
 			// - 粘性账号因负载/RPM 被跳过、选中了其他账号：不覆盖原绑定，
 			//   下次请求粘性账号恢复后仍可命中
-			if sessionKey != "" && (sessionBoundAccountID == 0 || sessionBoundAccountID == account.ID) {
+			if h.relay != nil {
+				// 从节点：主节点在释放这次选号时按同一条件刷新绑定。
+				h.relay.ForwardSucceeded(c, relayAttempt)
+			} else if sessionKey != "" && (sessionBoundAccountID == 0 || sessionBoundAccountID == account.ID) {
 				if err := h.gatewayService.BindStickySession(c.Request.Context(), currentAPIKey.GroupID, sessionKey, account.ID); err != nil {
 					reqLog.Warn("gateway.bind_sticky_session_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 				}

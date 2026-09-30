@@ -3,6 +3,7 @@ package relayselect
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler"
@@ -175,4 +176,23 @@ func nodeServesAnthropicAccount(a *service.Account) bool {
 // metadataBridgeEnabled 与 GatewayHandler.metadataBridgeEnabled 一致。
 func (s *selector) metadataBridgeEnabled() bool {
 	return s.deps.Config == nil || s.deps.Config.Gateway.OpenAIWS.MetadataBridgeEnabled
+}
+
+// bindAnthropicSticky 是 Messages 转发成功后的粘性会话绑定（本地同一条件）：请求开始时没有绑定，或者绑定的就是
+// 这次的账号时创建/刷新；粘性账号因负载被跳过、选中了别的账号时不覆盖原绑定。
+func (s *selector) bindAnthropicSticky(sel *selectionRecord) {
+	gw := s.deps.AnthropicGateway
+	record := sel.request
+	if gw == nil || record == nil || record.sessionKey == "" {
+		return
+	}
+	if record.stickyBound != 0 && record.stickyBound != sel.account.ID {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	groupID := sel.groupID
+	if err := gw.BindStickySession(ctx, &groupID, record.sessionKey, sel.account.ID); err != nil {
+		slog.Warn("relay: bind sticky session failed", "account_id", sel.account.ID, "error", err)
+	}
 }

@@ -53,6 +53,13 @@ type OpenAIRelayDispatcher interface {
 	// SwitchAutoGroup 自动分组 Key 换到下一个候选分组（本地 tryOpenAIAutoGroupFailover 里选组那一步，经主节点）。
 	// failedGroupIDs 已含当前分组。没有可换的返回 false；出错按没换处理（不重发：换组会改主节点的选组状态）。
 	SwitchAutoGroup(c *gin.Context, apiKey *service.APIKey, model string, failedGroupIDs map[int64]struct{}) (OpenAIRelayAutoGroupSwitch, bool)
+
+	// ---- Anthropic Messages（GatewayHandler.Messages，选号用 Select，Anthropic 为 true）----
+
+	// SubmitAnthropicUsage 把这次尝试的转发结果写入本地扣费队列（代替 GatewayService.RecordUsage）。
+	SubmitAnthropicUsage(c *gin.Context, attempt *OpenAIRelayAttempt, facts OpenAIUsageFacts, result *service.ForwardResult, forceCacheBilling bool)
+	// ForwardSucceeded 这次尝试转发成功（本地这时刷新粘性会话绑定；主节点在释放时按同一条件刷新）。
+	ForwardSucceeded(c *gin.Context, attempt *OpenAIRelayAttempt)
 }
 
 // OpenAIRelayAutoGroupSwitch 是主节点定下的换组：换到的分组的 Key 快照和订阅。
@@ -83,6 +90,12 @@ type OpenAIRelaySelectRequest struct {
 	Excluded map[int64]struct{}
 	// Body 是算会话哈希用的请求体（cyber 会话屏蔽的查询键从它算）。
 	Body []byte
+
+	// Anthropic：Anthropic 分组的 /v1/messages（GatewayHandler.Messages）。SessionHash 是会话键；
+	// MetadataUserID 是请求体里的 metadata.user_id；InterceptType 是按请求体算好的预热拦截类型。
+	Anthropic      bool
+	MetadataUserID string
+	InterceptType  InterceptType
 }
 
 // OpenAIRelaySelectResult 是一次远程选号的结果：Attempt 与 Rejection 二选一。
@@ -96,6 +109,8 @@ type OpenAIRelayAttempt struct {
 	Account *service.Account
 	// SessionHash 是主节点实际使用的会话哈希（池模式账号可能改写），后续尝试沿用。
 	SessionHash string
+	// StickyBoundAccountID：Anthropic Messages 请求开始时粘性会话绑定的账号（0 没有）。
+	StickyBoundAccountID int64
 	// ChannelMapping 是主节点定下的渠道映射，ForwardModel 是映射后发给上游的模型。
 	ChannelMapping service.ChannelMappingResult
 	ForwardModel   string
@@ -124,6 +139,10 @@ const (
 	OpenAIRelayRejectUnavailable
 	// OpenAIRelayRejectWSClose：关闭 WebSocket 连接（WSCloseStatus、WSCloseReason；CyberBlockKey 非空时先写 cyber 错误帧）。
 	OpenAIRelayRejectWSClose
+	// OpenAIRelayRejectIntercepted：Anthropic Messages 选到的账号开了预热拦截，写模拟响应（InterceptType）。
+	OpenAIRelayRejectIntercepted
+	// OpenAIRelayRejectProfitVetoed：Anthropic Messages 利润终检否决（VetoedAccountID），照本地记一次否决再选。
+	OpenAIRelayRejectProfitVetoed
 )
 
 // OpenAIRelayRejection 是远程选号的拒绝。
@@ -136,6 +155,8 @@ type OpenAIRelayRejection struct {
 	WSCloseReason string
 	// ContinuationUnsupported：这次选号跳过了不支持续链的账号，最后的错误是"续链不支持"。
 	ContinuationUnsupported bool
+	InterceptType           InterceptType
+	VetoedAccountID         int64
 	// AutoGroupFailover：自动分组 Key 的这个失败本地会先换到下一个候选分组再试（选不出账号、换号用完）。
 	// 处理函数照本地的换组分支走（relayAutoGroupFailoverOutcome），没换成再按这个拒绝写。
 	AutoGroupFailover bool

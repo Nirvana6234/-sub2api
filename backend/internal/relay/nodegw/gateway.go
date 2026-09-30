@@ -58,7 +58,9 @@ func NewOpenAIHandler(d GatewayDeps) *handler.OpenAIGatewayHandler {
 // 其余请求原样交给主节点转发（开发计划 WP10 逐步接入）。中间件链对照本地 /v1 网关链（routes/gateway.go）：
 // 全局 IP 黑名单、Key 鉴权、用户黑名单、未分组拦截合成准入中间件；自动分组、组合平台按模型问主节点
 // （AutoGroupMiddleware、CompositeRouteMiddleware）；TypeSafe 等还没接入的分组在准入时回"暂不支持"。
-func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatcher, cfg *config.Config) {
+//
+// gh 是 Anthropic 分组的 Messages 处理函数（NewAnthropicHandler）；nil 时 Anthropic 分组交给主节点转发。
+func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatcher, cfg *config.Config, gh *handler.GatewayHandler) {
 	bodyLimit := middleware2.RequestBodyLimit(cfg.Gateway.MaxBodySize)
 	chain := []gin.HandlerFunc{
 		bodyLimit,
@@ -95,7 +97,18 @@ func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatche
 		g.GET("/responses", openAIOnly(h.ResponsesWebSocket))
 		if prefix == "/v1" {
 			// 与本地一致：只有 /v1/messages（OpenAI 兼容分组走 OpenAI 网关的 Messages）。
-			g.POST("/messages", openAIOnly(h.Messages))
+			g.POST("/messages", func(c *gin.Context) {
+				// 与本地 /v1/messages 一样按分组平台分：OpenAI 分组走 OpenAI 网关的 Messages，Anthropic 分组走 Messages。
+				key, ok := middleware2.GetAPIKeyFromContext(c)
+				switch {
+				case ok && servedPlatform(c, key) == service.PlatformOpenAI:
+					h.Messages(c)
+				case ok && gh != nil && servedPlatform(c, key) == service.PlatformAnthropic:
+					gh.Messages(c)
+				default:
+					d.HandOff(c)
+				}
+			})
 		}
 	}
 	r.NoRoute(bodyLimit, func(c *gin.Context) {

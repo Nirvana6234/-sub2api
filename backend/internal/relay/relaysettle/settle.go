@@ -25,9 +25,11 @@ import (
 
 // Deps 是入账用到的服务。
 type Deps struct {
-	Gateway  *service.OpenAIGatewayService
-	APIKeys  *service.APIKeyService
-	Accounts interface {
+	Gateway *service.OpenAIGatewayService
+	// AnthropicGateway 入账 Anthropic Messages 的记录（service.GatewayService.RecordUsage）；nil 时这种记录不收。
+	AnthropicGateway *service.GatewayService
+	APIKeys          *service.APIKeyService
+	Accounts         interface {
 		GetByID(ctx context.Context, id int64) (*service.Account, error)
 	}
 	Groups interface {
@@ -115,6 +117,10 @@ func (s *Settler) Settle(ctx context.Context, nodeID int64, rec *relayv1.UsageRe
 func (s *Settler) settle(ctx context.Context, nodeID int64, rec *relayv1.UsageRecord) (*service.RelaySettlement, error) {
 	switch rec.GetKind() {
 	case relayv1.UsageRecordKind_USAGE_RECORD_KIND_OPENAI, relayv1.UsageRecordKind_USAGE_RECORD_KIND_OPENAI_CYBER_POLICY:
+	case relayv1.UsageRecordKind_USAGE_RECORD_KIND_ANTHROPIC:
+		if s.deps.AnthropicGateway == nil {
+			return nil, reject("unsupported usage record kind %v", rec.GetKind())
+		}
 	default:
 		return nil, reject("unsupported usage record kind %v", rec.GetKind())
 	}
@@ -122,18 +128,36 @@ func (s *Settler) settle(ctx context.Context, nodeID int64, rec *relayv1.UsageRe
 	if err != nil {
 		return nil, reject("invalid voucher: %v", err)
 	}
-	var result service.OpenAIForwardResult
-	if err := json.Unmarshal(rec.GetResultJson(), &result); err != nil {
-		return nil, reject("malformed forward result: %v", err)
-	}
-	input, err := s.buildOpenAIInput(ctx, v, rec, &result)
-	if err != nil {
-		return nil, err
-	}
 	cyber := rec.GetKind() == relayv1.UsageRecordKind_USAGE_RECORD_KIND_OPENAI_CYBER_POLICY
-	if cyber {
-		// 与单机 RecordCyberPolicyUsageLog 同口径：记成 cyber 请求、按入账时计价、配额平台按 Key 的分组取。
-		input.CyberBlocked, input.PricingAt, input.QuotaPlatform = true, time.Time{}, ""
+	// reported 是记录里上报的模型（核对凭证允许的范围）；recordUsage 用单机同一个入账函数入账。
+	var reported []string
+	var recordUsage func(context.Context) error
+	if rec.GetKind() == relayv1.UsageRecordKind_USAGE_RECORD_KIND_ANTHROPIC {
+		var result service.ForwardResult
+		if err := json.Unmarshal(rec.GetResultJson(), &result); err != nil {
+			return nil, reject("malformed forward result: %v", err)
+		}
+		input, err := s.buildAnthropicInput(ctx, v, rec, &result)
+		if err != nil {
+			return nil, err
+		}
+		reported = []string{result.Model, result.UpstreamModel}
+		recordUsage = func(ctx context.Context) error { return s.deps.AnthropicGateway.RecordUsage(ctx, input) }
+	} else {
+		var result service.OpenAIForwardResult
+		if err := json.Unmarshal(rec.GetResultJson(), &result); err != nil {
+			return nil, reject("malformed forward result: %v", err)
+		}
+		input, err := s.buildOpenAIInput(ctx, v, rec, &result)
+		if err != nil {
+			return nil, err
+		}
+		if cyber {
+			// 与单机 RecordCyberPolicyUsageLog 同口径：记成 cyber 请求、按入账时计价、配额平台按 Key 的分组取。
+			input.CyberBlocked, input.PricingAt, input.QuotaPlatform = true, time.Time{}, ""
+		}
+		reported = []string{result.Model, result.UpstreamModel, result.BillingModel}
+		recordUsage = func(ctx context.Context) error { return s.deps.Gateway.RecordUsage(ctx, input) }
 	}
 	sc := v.GetContext()
 	relay := &service.RelaySettlement{
@@ -149,7 +173,7 @@ func (s *Settler) settle(ctx context.Context, nodeID int64, rec *relayv1.UsageRe
 		// 节点因怀疑被攻破而吊销过，这张凭证签发在吊销之前：照常入账，记为待复核，管理员可按用户整笔退回（设计 5.4）。
 		relay.ReviewStatus = "pending_review"
 	}
-	if outside := modelsOutsideVoucher(v, &result); len(outside) > 0 {
+	if outside := modelsOutsideVoucher(v, reported); len(outside) > 0 {
 		// 上报的模型不在凭证允许的范围内：按上报的计费（与单机一致），报警并记为待复核（设计 5.3、5.4）。
 		relay.ReviewStatus = "pending_review"
 		slog.Error("relay usage reports a model outside the voucher", "node_id", nodeID, "user_id", v.GetUserId(),
@@ -171,7 +195,7 @@ func (s *Settler) settle(ctx context.Context, nodeID int64, rec *relayv1.UsageRe
 		}
 	}
 
-	recordErr := s.deps.Gateway.RecordUsage(sctx, input)
+	recordErr := recordUsage(sctx)
 	if !relay.Handled {
 		// 入账没走到扣费事务（简易模式、没有扣费命令、扣费出错）：把凭证记成零消耗，与单机一样这一笔
 		// 不再补扣；记不下来（数据库故障）就让从节点重发。
@@ -190,8 +214,70 @@ func (s *Settler) settle(ctx context.Context, nodeID int64, rec *relayv1.UsageRe
 	return relay, nil
 }
 
+// selectionFacts 是入账输入里由选号定下的部分（取自凭证）：Key（按选号时的分组）、账号（含贡献房间路由）、订阅、
+// 渠道映射、计价时间。
+type selectionFacts struct {
+	apiKey       *service.APIKey
+	account      *service.Account
+	subscription *service.UserSubscription
+	mapping      service.ChannelMappingResult
+	pricingAt    time.Time
+}
+
+// buildAnthropicInput 按单机 Messages 构造入账输入的方式组装：选号定下的取自凭证，转发事实取自记录。
+func (s *Settler) buildAnthropicInput(ctx context.Context, v *relayv1.Voucher, rec *relayv1.UsageRecord, result *service.ForwardResult) (*service.RecordUsageInput, error) {
+	f, err := s.selectionFacts(ctx, v)
+	if err != nil {
+		return nil, err
+	}
+	return &service.RecordUsageInput{
+		Result:             result,
+		APIKey:             f.apiKey,
+		User:               f.apiKey.User,
+		Account:            f.account,
+		Subscription:       f.subscription,
+		PricingAt:          f.pricingAt,
+		InboundEndpoint:    rec.GetInboundEndpoint(),
+		UpstreamEndpoint:   rec.GetUpstreamEndpoint(),
+		UserAgent:          rec.GetUserAgent(),
+		IPAddress:          rec.GetIpAddress(),
+		SessionID:          rec.GetSessionId(),
+		RequestPayloadHash: rec.GetRequestPayloadHash(),
+		ForceCacheBilling:  rec.GetForceCacheBilling(),
+		APIKeyService:      s.deps.APIKeys,
+		QuotaPlatform:      v.GetContext().GetQuotaPlatform(),
+		ChannelUsageFields: f.mapping.ToUsageFields(v.GetRequestedModel(), result.UpstreamModel),
+	}, nil
+}
+
 // buildOpenAIInput 按单机处理函数构造入账输入的方式组装：选号定下的取自凭证，转发事实取自记录。
 func (s *Settler) buildOpenAIInput(ctx context.Context, v *relayv1.Voucher, rec *relayv1.UsageRecord, result *service.OpenAIForwardResult) (*service.OpenAIRecordUsageInput, error) {
+	f, err := s.selectionFacts(ctx, v)
+	if err != nil {
+		return nil, err
+	}
+	return &service.OpenAIRecordUsageInput{
+		Result:             result,
+		APIKey:             f.apiKey,
+		User:               f.apiKey.User,
+		Account:            f.account,
+		Subscription:       f.subscription,
+		InboundEndpoint:    rec.GetInboundEndpoint(),
+		UpstreamEndpoint:   rec.GetUpstreamEndpoint(),
+		UserAgent:          rec.GetUserAgent(),
+		IPAddress:          rec.GetIpAddress(),
+		SessionID:          rec.GetSessionId(),
+		RequestPayloadHash: rec.GetRequestPayloadHash(),
+		APIKeyService:      s.deps.APIKeys,
+		QuotaPlatform:      v.GetContext().GetQuotaPlatform(),
+		PricingAt:          f.pricingAt,
+		CyberBlocked:       rec.GetCyberBlocked(),
+		NativeCompactionV2: rec.GetNativeCompactionV2(),
+		ChannelUsageFields: f.mapping.ToUsageFields(v.GetRequestedModel(), result.UpstreamModel),
+	}, nil
+}
+
+func (s *Settler) selectionFacts(ctx context.Context, v *relayv1.Voucher) (*selectionFacts, error) {
 	sc := v.GetContext()
 	apiKey, err := s.deps.APIKeys.GetByID(ctx, v.GetApiKeyId())
 	if err != nil {
@@ -237,25 +323,7 @@ func (s *Settler) buildOpenAIInput(ctx context.Context, v *relayv1.Voucher, rec 
 	if ms := sc.GetPricingAtUnixMs(); ms > 0 {
 		pricingAt = time.UnixMilli(ms)
 	}
-	return &service.OpenAIRecordUsageInput{
-		Result:             result,
-		APIKey:             apiKey,
-		User:               apiKey.User,
-		Account:            account,
-		Subscription:       subscription,
-		InboundEndpoint:    rec.GetInboundEndpoint(),
-		UpstreamEndpoint:   rec.GetUpstreamEndpoint(),
-		UserAgent:          rec.GetUserAgent(),
-		IPAddress:          rec.GetIpAddress(),
-		SessionID:          rec.GetSessionId(),
-		RequestPayloadHash: rec.GetRequestPayloadHash(),
-		APIKeyService:      s.deps.APIKeys,
-		QuotaPlatform:      sc.GetQuotaPlatform(),
-		PricingAt:          pricingAt,
-		CyberBlocked:       rec.GetCyberBlocked(),
-		NativeCompactionV2: rec.GetNativeCompactionV2(),
-		ChannelUsageFields: mapping.ToUsageFields(v.GetRequestedModel(), result.UpstreamModel),
-	}, nil
+	return &selectionFacts{apiKey: apiKey, account: account, subscription: subscription, mapping: mapping, pricingAt: pricingAt}, nil
 }
 
 // issuedBeforeSuspectRevocation 报告凭证是否签发在节点最近一次可疑吊销之前（含同一时刻）。
@@ -281,13 +349,13 @@ func (s *Settler) issuedBeforeSuspectRevocation(ctx context.Context, nodeID int6
 }
 
 // modelsOutsideVoucher 返回转发结果里不在凭证允许范围内的计费相关模型。
-func modelsOutsideVoucher(v *relayv1.Voucher, result *service.OpenAIForwardResult) []string {
+func modelsOutsideVoucher(v *relayv1.Voucher, reported []string) []string {
 	allowed := map[string]bool{}
 	for _, m := range v.GetAllowedBillingModels() {
 		allowed[strings.ToLower(strings.TrimSpace(m))] = true
 	}
 	var out []string
-	for _, m := range []string{result.Model, result.UpstreamModel, result.BillingModel} {
+	for _, m := range reported {
 		if m = strings.TrimSpace(m); m != "" && !allowed[strings.ToLower(m)] {
 			out = append(out, m)
 		}

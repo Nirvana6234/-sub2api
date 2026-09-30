@@ -72,7 +72,7 @@ func ProvideMasterRuntime(
 		Sections:          forwardingSections(errorPassthrough),
 		SealedSections:    sealedSections(settings, proxies, promptAudit),
 		NewSettler: relaysettle.NewFactory(relaysettle.Deps{
-			Gateway: gateway, APIKeys: apiKeys, Accounts: accounts, Groups: groups, Subscriptions: subscriptions,
+			Gateway: gateway, AnthropicGateway: anthropicGateway, APIKeys: apiKeys, Accounts: accounts, Groups: groups, Subscriptions: subscriptions,
 			Vouchers: relayVoucherRecorder(db),
 		}),
 	})

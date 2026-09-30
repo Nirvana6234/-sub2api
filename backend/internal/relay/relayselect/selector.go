@@ -308,6 +308,9 @@ func (s *selector) release(nodeID int64, rel *relayv1.SelectionRelease) {
 	if sel.release != nil {
 		sel.release()
 	}
+	if rel.GetForwardSucceeded() && sel.account != nil {
+		s.bindAnthropicSticky(sel)
+	}
 	if len(rel.GetResponseIds()) > 0 && sel.account != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		for _, id := range rel.GetResponseIds() {

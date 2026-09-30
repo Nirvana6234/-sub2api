@@ -179,12 +179,17 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 	if strings.EqualFold(cfg.Server.Mode, gin.ReleaseMode) {
 		gin.SetMode(gin.ReleaseMode)
 	}
-	h := NewOpenAIHandler(GatewayDeps{
+	decider, reporter := node.NewRemoteUpstreamErrorDecider(client), node.NewRemoteAccountReporter(outbox)
+	gatewayDeps := GatewayDeps{
 		Config: cfg, Settings: settings, HTTPUpstream: opts.HTTPUpstream, Dispatcher: d,
-		Decider:          node.NewRemoteUpstreamErrorDecider(client),
-		Reporter:         node.NewRemoteAccountReporter(outbox),
+		Decider:          decider,
+		Reporter:         reporter,
 		ErrorPassthrough: errorPassthrough,
 		Moderation:       moderation,
+	}
+	h := NewOpenAIHandler(gatewayDeps)
+	gh := NewAnthropicHandler(gatewayDeps, AnthropicDeps{
+		AccountState: node.NewRemoteAccountState(decider, reporter), TempUnschedulable: reporter.TempUnschedulable,
 	})
 	r := NewEngine()
 	r.GET("/health", func(c *gin.Context) {
@@ -202,7 +207,7 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 		}
 		c.Next()
 	})
-	RegisterRoutes(r, h, d, cfg)
+	RegisterRoutes(r, h, d, cfg, gh)
 
 	srv := &http.Server{
 		Addr:              net.JoinHostPort(cfg.Server.Host, strconv.Itoa(cfg.Server.Port)),

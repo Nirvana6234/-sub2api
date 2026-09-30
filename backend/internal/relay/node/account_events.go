@@ -90,6 +90,16 @@ func (r *RemoteAccountReporter) UpdateCodexUsageSnapshot(_ context.Context, acco
 }
 
 // TempUnscheduleTransportError 见 service.OpenAIAccountReporter。
+// TempUnschedulable 让账号临时不可调度（非 OpenAI 网关转发路径上直接写账号仓储的那几处），主节点照写。
+func (r *RemoteAccountReporter) TempUnschedulable(accountID int64, until time.Time, reason string) {
+	if accountID <= 0 {
+		return
+	}
+	r.send(&relayv1.AccountEvent{AccountId: accountID, Kind: &relayv1.AccountEvent_TempUnschedulable{
+		TempUnschedulable: &relayv1.TempUnschedulableEvent{UntilUnixMs: until.UnixMilli(), Reason: reason},
+	}})
+}
+
 func (r *RemoteAccountReporter) TempUnscheduleTransportError(_ context.Context, account *service.Account, safeErr string) {
 	if account == nil {
 		return

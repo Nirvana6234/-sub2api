@@ -116,6 +116,8 @@ func (s *selector) applyAccountEvent(nodeID int64, ev *relayv1.AccountEvent) {
 		reporter.TempUnscheduleTransportError(ctx, account, kind.TransportError.GetMessage())
 	case *relayv1.AccountEvent_OllamaActivity:
 		reporter.OllamaCloudUsageActivity(account)
+	case *relayv1.AccountEvent_TempUnschedulable:
+		s.applyTempUnschedulable(ctx, nodeID, account, kind.TempUnschedulable)
 	case *relayv1.AccountEvent_SessionWindow:
 		reporter.UpdateSessionWindow(ctx, account, service.SessionWindowHeaders(headersFromProto(kind.SessionWindow.GetHeaders())))
 	}
@@ -127,4 +129,29 @@ func healthFailure(f *relayv1.HealthFailureFacts) error {
 		return nil
 	}
 	return service.OpenAIHealthFailureError(int(f.GetStatusCode()), f.GetBody(), f.GetEligible())
+}
+
+// maxRelayTempUnschedulable 是从节点报来的临时不可调度的最长时长：非 OpenAI 网关转发路径上写账号仓储的几处
+// 用的是 1 分钟（同账号重试用尽的 400/502）和 10 分钟（持久的传输错误），超出的按它截断。
+const maxRelayTempUnschedulable = 10 * time.Minute
+
+// applyTempUnschedulable 照写从节点转发路径上的临时不可调度（本地这几处直接写 accountRepo.SetTempUnschedulable）。
+func (s *selector) applyTempUnschedulable(ctx context.Context, nodeID int64, account *service.Account, ev *relayv1.TempUnschedulableEvent) {
+	if s.deps.AnthropicGateway == nil {
+		return
+	}
+	until := time.UnixMilli(ev.GetUntilUnixMs())
+	if limit := s.now().Add(maxRelayTempUnschedulable); until.After(limit) {
+		until = limit
+	}
+	if !until.After(s.now()) {
+		return
+	}
+	reason := ev.GetReason()
+	if len(reason) > 256 {
+		reason = reason[:256]
+	}
+	if err := s.deps.AnthropicGateway.SetAccountTempUnschedulable(ctx, account.ID, until, reason); err != nil {
+		slog.Warn("relay temp unschedulable event failed", "node_id", nodeID, "account_id", account.ID, "error", err)
+	}
 }

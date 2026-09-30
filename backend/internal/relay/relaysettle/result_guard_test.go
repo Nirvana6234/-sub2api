@@ -80,3 +80,21 @@ func TestForwardResultSurvivesTheUsageRecord(t *testing.T) {
 		require.Equal(t, reflect.ValueOf(in).Field(i).Interface(), reflect.ValueOf(out).Field(i).Interface(), "OpenAIForwardResult.%s does not survive the usage record", f.Name)
 	}
 }
+
+// Anthropic Messages 的转发结果（service.ForwardResult）同样按 JSON 传：每个导出字段都要原样到达。
+func TestAnthropicForwardResultSurvivesTheUsageRecord(t *testing.T) {
+	var in service.ForwardResult
+	n := 0
+	fill(t, reflect.ValueOf(&in).Elem(), &n)
+	raw, err := json.Marshal(in)
+	require.NoError(t, err)
+	var out service.ForwardResult
+	require.NoError(t, json.Unmarshal(raw, &out))
+
+	typ := reflect.TypeOf(in)
+	for i := 0; i < typ.NumField(); i++ {
+		f := typ.Field(i)
+		require.True(t, f.IsExported(), "ForwardResult.%s is unexported and is lost on relay nodes", f.Name)
+		require.Equal(t, reflect.ValueOf(in).Field(i).Interface(), reflect.ValueOf(out).Field(i).Interface(), "ForwardResult.%s does not survive the usage record", f.Name)
+	}
+}

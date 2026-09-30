@@ -44,7 +44,7 @@ func TestHandOffProxiesWebSocketUpgrades(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Gateway.MaxBodySize = 1 << 20
 	r := NewEngine()
-	RegisterRoutes(r, nil, d, cfg)
+	RegisterRoutes(r, nil, d, cfg, nil)
 	node := httptest.NewServer(r)
 	t.Cleanup(node.Close)
 

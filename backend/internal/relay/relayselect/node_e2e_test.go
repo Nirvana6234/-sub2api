@@ -145,6 +145,13 @@ func startE2EWithConfig(t *testing.T, configure func(*config.Config), accounts f
 			_, _ = io.WriteString(w, `{"error":{"code":"cyber_policy","message":"blocked by policy","type":"invalid_request_error"}}`)
 			return
 		}
+		if strings.HasSuffix(r.URL.Path, "/v1/messages") {
+			// Anthropic 账号的 Messages（Anthropic 分组经从节点）。
+			_, _ = io.WriteString(w, `{"id":"msg_e2e","type":"message","role":"assistant","model":"claude-sonnet-4-5",`+
+				`"content":[{"type":"text","text":"hello"}],"stop_reason":"end_turn","stop_sequence":null,`+
+				`"usage":{"input_tokens":5,"output_tokens":3}}`)
+			return
+		}
 		if strings.HasSuffix(r.URL.Path, "/chat/completions") {
 			_, _ = io.WriteString(w, `{"id":"chatcmpl-e2e","object":"chat.completion","model":"gpt-5",`+
 				`"choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}],`+
@@ -297,14 +304,19 @@ func startE2EWithConfig(t *testing.T, configure func(*config.Config), accounts f
 	})
 	go sender.Run(runCtx)
 
-	h := nodegw.NewOpenAIHandler(nodegw.GatewayDeps{
+	decider, reporter := node.NewRemoteUpstreamErrorDecider(client), node.NewRemoteAccountReporter(outbox)
+	gatewayDeps := nodegw.GatewayDeps{
 		Config: nodeCfg, Settings: nodeSettings, HTTPUpstream: plainUpstream{target: upstreamURL}, Dispatcher: d,
-		Decider:    node.NewRemoteUpstreamErrorDecider(client),
-		Reporter:   node.NewRemoteAccountReporter(outbox),
+		Decider:    decider,
+		Reporter:   reporter,
 		Moderation: e.moderation,
+	}
+	h := nodegw.NewOpenAIHandler(gatewayDeps)
+	gh := nodegw.NewAnthropicHandler(gatewayDeps, nodegw.AnthropicDeps{
+		AccountState: node.NewRemoteAccountState(decider, reporter), TempUnschedulable: reporter.TempUnschedulable,
 	})
 	r := nodegw.NewEngine()
-	nodegw.RegisterRoutes(r, h, d, nodeCfg)
+	nodegw.RegisterRoutes(r, h, d, nodeCfg, gh)
 	e.gateway = httptest.NewServer(r)
 	t.Cleanup(e.gateway.Close)
 	return e

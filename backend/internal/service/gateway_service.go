@@ -764,6 +764,14 @@ func (s *GatewayService) TempUnscheduleRetryableError(ctx context.Context, accou
 	}
 }
 
+// SetAccountTempUnschedulable 让账号临时不可调度（主从分流的主节点照写从节点转发路径上的这一步）。
+func (s *GatewayService) SetAccountTempUnschedulable(ctx context.Context, accountID int64, until time.Time, reason string) error {
+	if s == nil || s.accountRepo == nil {
+		return nil
+	}
+	return s.accountRepo.SetTempUnschedulable(ctx, accountID, until, reason)
+}
+
 // GatewayService handles API gateway operations
 type GatewayService struct {
 	accountRepo       AccountRepository
