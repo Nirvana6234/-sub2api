@@ -79,7 +79,10 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 		return unsupported(), nil
 	}
 	ctx = service.WithCompositeRouteDecision(ctx, composite)
-	if messages && !apiKey.Group.AllowMessagesDispatch {
+	// 请求开头的检查（/v1/messages 派发、previous_response_id 归属、生图）本地只在开头按当时的分组做一次，
+	// 自动分组中途换组后不重做：这里同样按请求开始时的分组。
+	startGroup := s.requestStartGroup(ctx, apiKey, req.GetAutoGroupStartId())
+	if messages && !startGroup.AllowMessagesDispatch {
 		// 本地在读请求体之前就查（分组平台只会是 OpenAI：其余平台在准入时已回"暂不支持"）。
 		return gatewayRejection(handler.OpenAIMessagesDispatchDeniedRejection()), nil
 	}
@@ -111,7 +114,7 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 		if service.ClassifyOpenAIPreviousResponseIDKind(previousResponseID) == service.OpenAIPreviousResponseIDKindMessageID {
 			return gatewayRejection(handler.OpenAIGatewayRejection{Status: http.StatusBadRequest, ErrType: "invalid_request_error", Message: "previous_response_id must be a response.id (resp_*), not a message id"}), nil
 		}
-		owned, ownershipErr := s.deps.Gateway.ValidateOpenAIHTTPResponseOwner(ctx, groupID, previousResponseID, userID, apiKey.ID)
+		owned, ownershipErr := s.deps.Gateway.ValidateOpenAIHTTPResponseOwner(ctx, startGroup.ID, previousResponseID, userID, apiKey.ID)
 		if ownershipErr != nil {
 			slog.Warn("relay: previous response owner lookup failed", "error", ownershipErr)
 		}
@@ -119,7 +122,7 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 			return gatewayRejection(handler.OpenAIGatewayRejection{Status: http.StatusBadRequest, ErrType: "invalid_request_error", Message: "previous_response_id is not available for this user"}), nil
 		}
 	}
-	if imageIntent && !service.GroupAllowsImageGeneration(apiKey.Group) {
+	if imageIntent && !service.GroupAllowsImageGeneration(startGroup) {
 		return gatewayRejection(handler.OpenAIGatewayRejection{Status: http.StatusForbidden, ErrType: "permission_error", Message: service.ImageGenerationPermissionMessage()}), nil
 	}
 	channelMapping, _ := s.deps.Gateway.ResolveChannelMappingAndRestrict(ctx, apiKey.GroupID, reqModel)
@@ -268,6 +271,19 @@ func (s *selector) Admit(ctx context.Context, nodeID int64, req *relayv1.AdmitRe
 		return nil, err
 	}
 	return &relayv1.AdmitResponse{Result: &relayv1.AdmitResponse_Admission{Admission: &relayv1.Admission{ApiKey: key, Subscription: sub}}}, nil
+}
+
+// requestStartGroup 是这次请求开始时的分组：自动分组 Key 中途换过组时是从节点带来的开始分组（核对是这把 Key 的
+// 候选；已经不是时按现在的分组），其余就是 Key 现在的分组。
+func (s *selector) requestStartGroup(ctx context.Context, apiKey *service.APIKey, startGroupID int64) *service.Group {
+	if !apiKey.AutoGroup || startGroupID == 0 || startGroupID == apiKey.Group.ID {
+		return apiKey.Group
+	}
+	start, err := s.deps.APIKeys.AutoGroupCandidate(ctx, apiKey, startGroupID)
+	if err != nil || start == nil || start.Group == nil {
+		return apiKey.Group
+	}
+	return start.Group
 }
 
 // autoGroupChoice 是自动分组 Key 这次请求怎么定分组（本地 autoGroupModelRoutingMiddleware，设计 3.2）：

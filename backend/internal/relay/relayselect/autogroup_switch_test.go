@@ -15,11 +15,15 @@ import (
 )
 
 // useAutoGroupCandidates 给测试世界装上一把自动分组 Key（sk-switch，按价格选）：候选是 41（最便宜）和 42，都是 OpenAI。
-func useAutoGroupCandidates(w *world) {
+// tweak 非空时在装上之前改这两个分组。
+func useAutoGroupCandidates(w *world, tweak ...func(cheap, other *service.Group)) {
 	cheap := openAIGroup(41)
 	cheap.RateMultiplier, cheap.ActiveAccountCount, cheap.AllowMessagesDispatch = 0.5, 1, true
 	other := openAIGroup(42)
 	other.ActiveAccountCount, other.AllowMessagesDispatch = 1, true
+	for _, f := range tweak {
+		f(cheap, other)
+	}
 	key := testKey("sk-switch", 16, nil)
 	key.AutoGroup, key.AutoGroupIDs, key.AutoGroupStrategy = true, []int64{41, 42}, "price"
 	w.keys.keys["sk-switch"] = key
@@ -90,6 +94,22 @@ func TestNodeSwitchesAutoGroupWhenGroupHasNoAccount(t *testing.T) {
 			"%s: the result is recorded against the group that served the request", tc.path)
 		e.world.waitReleased(t)
 	}
+}
+
+// 请求开头的检查（这里是 /v1/messages 派发）本地只按开始时的分组做一次，中途换到不允许派发的分组照样接着转发。
+func TestNodeKeepsRequestStartChecksAfterAutoGroupSwitch(t *testing.T) {
+	e := startStandardE2E(t, func(upstream string) []service.Account {
+		return []service.Account{inGroup(e2eAccount(1, "one", upstream), 42)}
+	})
+	useAutoGroupCandidates(e.world, func(_, other *service.Group) { other.AllowMessagesDispatch = false })
+
+	status, body := e.post(t, "/v1/messages", "sk-switch", `{"model":"gpt-5","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`)
+	require.Equal(t, http.StatusOK, status, body)
+	require.Eventually(t, func() bool { return len(e.settler.records()) == 1 }, 5*time.Second, 20*time.Millisecond)
+	voucher, err := sign.VerifyVoucher(e.settler.records()[0].GetVoucher(), e.world.pub, e.nodeID, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, int64(42), voucher.GetGroupId())
+	e.world.waitReleased(t)
 }
 
 // 当前分组的账号都失败了（换号用完，本地第二处）：换到下一个候选接着选；本地这时复查计费资格，从节点用主节点换组时

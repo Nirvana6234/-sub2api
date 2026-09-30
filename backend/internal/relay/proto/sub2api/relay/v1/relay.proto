@@ -647,6 +647,9 @@ message SelectRequest {
   string route_model = 25;
   // 自动分组 Key 这次请求用的分组（从节点按模型选定或切换后的；主节点核对是这把 Key 的候选再用）。
   int64 auto_group_id = 26;
+  // 自动分组 Key 这次请求开始时的分组（中途换过组时与 auto_group_id 不同）。本地在请求开头按它做的检查
+  // （previous_response_id 归属、分组是否允许生图、是否允许 /v1/messages 派发）换组后不再重做，主节点同样按它做。
+  int64 auto_group_start_id = 27;
 }
 
 // cyber 会话屏蔽的查询键（都已哈希）。

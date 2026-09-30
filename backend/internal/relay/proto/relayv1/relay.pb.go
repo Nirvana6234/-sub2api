@@ -4117,9 +4117,12 @@ type SelectRequest struct {
 	// 组合平台分组：选目标平台用的公开模型（改写请求体之前的，ResolveRoute 用的同一个）。主节点按它重新选定目标。
 	RouteModel string `protobuf:"bytes,25,opt,name=route_model,json=routeModel,proto3" json:"route_model,omitempty"`
 	// 自动分组 Key 这次请求用的分组（从节点按模型选定或切换后的；主节点核对是这把 Key 的候选再用）。
-	AutoGroupId   int64 `protobuf:"varint,26,opt,name=auto_group_id,json=autoGroupId,proto3" json:"auto_group_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	AutoGroupId int64 `protobuf:"varint,26,opt,name=auto_group_id,json=autoGroupId,proto3" json:"auto_group_id,omitempty"`
+	// 自动分组 Key 这次请求开始时的分组（中途换过组时与 auto_group_id 不同）。本地在请求开头按它做的检查
+	// （previous_response_id 归属、分组是否允许生图、是否允许 /v1/messages 派发）换组后不再重做，主节点同样按它做。
+	AutoGroupStartId int64 `protobuf:"varint,27,opt,name=auto_group_start_id,json=autoGroupStartId,proto3" json:"auto_group_start_id,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *SelectRequest) Reset() {
@@ -4339,6 +4342,13 @@ func (x *SelectRequest) GetRouteModel() string {
 func (x *SelectRequest) GetAutoGroupId() int64 {
 	if x != nil {
 		return x.AutoGroupId
+	}
+	return 0
+}
+
+func (x *SelectRequest) GetAutoGroupStartId() int64 {
+	if x != nil {
+		return x.AutoGroupStartId
 	}
 	return 0
 }
@@ -8188,7 +8198,7 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x06status\x18\x04 \x01(\x05R\x06status\x12+\n" +
 	"\x12has_first_token_ms\x18\x05 \x01(\bR\x0fhasFirstTokenMs\x12$\n" +
 	"\x0efirst_token_ms\x18\x06 \x01(\x03R\ffirstTokenMs\"\x14\n" +
-	"\x12AutoGroupResultAck\"\xd0\b\n" +
+	"\x12AutoGroupResultAck\"\xff\b\n" +
 	"\rSelectRequest\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x18\n" +
@@ -8220,7 +8230,8 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x1aprevious_response_can_move\x18\x18 \x01(\bR\x17previousResponseCanMove\x12\x1f\n" +
 	"\vroute_model\x18\x19 \x01(\tR\n" +
 	"routeModel\x12\"\n" +
-	"\rauto_group_id\x18\x1a \x01(\x03R\vautoGroupIdB\f\n" +
+	"\rauto_group_id\x18\x1a \x01(\x03R\vautoGroupId\x12-\n" +
+	"\x13auto_group_start_id\x18\x1b \x01(\x03R\x10autoGroupStartIdB\f\n" +
 	"\n" +
 	"credential\"\xdf\x01\n" +
 	"\x12CyberSessionLookup\x12!\n" +

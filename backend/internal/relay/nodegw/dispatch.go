@@ -73,7 +73,9 @@ type requestState struct {
 	routeModel string
 	// handedOff：这次请求已交给主节点转发（主节点照本地处理，自动分组的结果也由它自己记）。
 	handedOff bool
-	current   *attemptState
+	// startGroupID：自动分组 Key 这次请求第一次选号时的分组（请求开头那几项检查按它做）。
+	startGroupID int64
+	current      *attemptState
 }
 
 // attemptState 是一次选中的尝试。WebSocket 连接上，连接选号一份（收 response id、释放），每一轮另有一份
@@ -135,6 +137,10 @@ func (d *Dispatcher) Select(c *gin.Context, req handler.OpenAIRelaySelectRequest
 	st.mu.Lock()
 	st.attempt++
 	sreq.Attempt = st.attempt
+	if st.startGroupID == 0 {
+		st.startGroupID = sreq.AutoGroupId
+	}
+	sreq.AutoGroupStartId = st.startGroupID
 	st.mu.Unlock()
 	resp, err := d.deps.Select.Select(ctx, sreq)
 	if errors.Is(err, transport.ErrEpochChanged) && d.deps.AfterEpochChange != nil {
