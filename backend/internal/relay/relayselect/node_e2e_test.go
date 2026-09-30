@@ -76,6 +76,9 @@ type e2e struct {
 	gateway  *httptest.Server
 	upstream *httptest.Server
 	hits     chan *http.Request
+	// client 是从节点到主节点的连接（端到端测试直接用它调主节点）。
+	client *transport.Client
+	nodeID int64
 }
 
 func startE2E(t *testing.T) *e2e {
@@ -194,6 +197,7 @@ func startE2EWithConfig(t *testing.T, configure func(*config.Config), accounts f
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Close() })
+	e.client, e.nodeID = client, n.ID
 	nodeCfg := &config.Config{}
 	nodeCfg.Gateway.MaxBodySize = 10 << 20
 	nodeCfg.Security.URLAllowlist.AllowInsecureHTTP = true // 假上游是 http://127.0.0.1

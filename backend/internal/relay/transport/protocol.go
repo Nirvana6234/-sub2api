@@ -87,6 +87,9 @@ func EpochMismatch(ctx context.Context) error {
 		"relay master restarted; start the call again under the new epoch")
 }
 
+// IdempotencyKey 返回 ctx 里带的幂等键（没有时为空）。
+func IdempotencyKey(ctx context.Context) string { return idempotencyKeyFrom(ctx) }
+
 func idempotencyKeyFrom(ctx context.Context) string {
 	key, _ := ctx.Value(idempotencyKeyCtx{}).(string)
 	return key

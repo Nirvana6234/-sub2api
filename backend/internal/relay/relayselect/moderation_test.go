@@ -3,12 +3,14 @@ package relayselect
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
+	"github.com/Wei-Shaw/sub2api/internal/relay/node"
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
@@ -135,4 +137,41 @@ func TestModerationViolationsOnTheMaster(t *testing.T) {
 
 	_, err = w.sel.ModerationViolation(ctx, testNode, &relayv1.ModerationViolationRequest{Log: []byte("{")})
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
+}
+
+// 端到端：从节点经主从连接上报违规，主节点累计、封号；调不通时按第 1 次记、之后重试补上。
+func TestNodeReportsModerationViolations(t *testing.T) {
+	e := startE2E(t)
+	ctx := context.Background()
+	logs := &moderationLogs{}
+	users := &banUsers{users: map[int64]*service.User{3: {ID: 3, Email: "u3@example.com", Status: service.StatusActive, Role: service.RoleUser}}}
+	e.world.sel.deps.Users = users
+	e.world.sel.deps.Moderation = service.NewContentModerationService(memSettings{values: map[string]string{
+		service.SettingKeyRiskControlEnabled:      "true",
+		service.SettingKeyContentModerationConfig: `{"auto_ban_enabled":true,"ban_threshold":2,"violation_window_hours":24}`,
+	}}, logs, nil, nil, users, nil, nil, nil)
+	status, body := e.post(t, "/v1/responses", "sk-a", `{"model":"gpt-5","input":"hi"}`)
+	require.Equal(t, http.StatusOK, status, body)
+	<-e.hits
+	e.world.waitReleased(t)
+
+	actions := node.NewRemoteModerationActions(ctx, e.client)
+	uid := int64(3)
+	first := &service.ContentModerationLog{UserID: &uid, Flagged: true, Action: "block", InputExcerpt: "words"}
+	require.False(t, actions.Apply(ctx, nil, first))
+	require.Equal(t, 1, first.ViolationCount)
+	second := &service.ContentModerationLog{UserID: &uid, Flagged: true, Action: "block"}
+	require.True(t, actions.Apply(ctx, nil, second), "the second violation reaches the threshold on the master")
+	require.True(t, second.AutoBanned)
+	require.Equal(t, 2, second.ViolationCount)
+	require.Equal(t, []int64{3}, users.banned)
+	for _, row := range logs.logs {
+		require.Equal(t, e.nodeID, *row.NodeID)
+		require.Empty(t, row.InputExcerpt)
+	}
+	require.False(t, actions.Notify(ctx, nil, second, true, false), "no mail service on this master")
+
+	// 不是命中、没有用户的记录不上报。
+	require.False(t, actions.Apply(ctx, nil, &service.ContentModerationLog{Flagged: false, UserID: &uid}))
+	require.Len(t, logs.logs, 2)
 }
