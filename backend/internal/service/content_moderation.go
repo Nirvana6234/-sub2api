@@ -447,7 +447,9 @@ type ContentModerationLog struct {
 	EmailSent         bool               `json:"email_sent"`
 	UserStatus        string             `json:"user_status"`
 	QueueDelayMS      *int               `json:"queue_delay_ms,omitempty"`
-	CreatedAt         time.Time          `json:"created_at"`
+	// NodeID 是上报这次违规的从节点（主从分流，设计 3.4）；nil 表示主节点自己的记录。
+	NodeID    *int64    `json:"node_id,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type ContentModerationLogFilter struct {

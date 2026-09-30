@@ -83,6 +83,14 @@ func (f *fakeSelector) CyberPolicyHit(context.Context, int64, *relayv1.CyberPoli
 	return &relayv1.CyberPolicyHitResponse{}, nil
 }
 
+func (f *fakeSelector) ModerationViolation(context.Context, int64, *relayv1.ModerationViolationRequest) (*relayv1.ModerationViolationResponse, error) {
+	return &relayv1.ModerationViolationResponse{}, nil
+}
+
+func (f *fakeSelector) ModerationNotify(context.Context, int64, *relayv1.ModerationNotifyRequest) (*relayv1.ModerationNotifyResponse, error) {
+	return &relayv1.ModerationNotifyResponse{}, nil
+}
+
 func (f *fakeSelector) SecurityAudit(context.Context, int64, *relayv1.SecurityAuditRequest) (*relayv1.SecurityAuditResponse, error) {
 	return &relayv1.SecurityAuditResponse{Skipped: true}, nil
 }

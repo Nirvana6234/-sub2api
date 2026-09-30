@@ -303,21 +303,23 @@ var RelayEnrollment_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	RelayControl_Ping_FullMethodName             = "/sub2api.relay.v1.RelayControl/Ping"
-	RelayControl_FetchConfig_FullMethodName      = "/sub2api.relay.v1.RelayControl/FetchConfig"
-	RelayControl_ReleaseQuota_FullMethodName     = "/sub2api.relay.v1.RelayControl/ReleaseQuota"
-	RelayControl_RenewLeases_FullMethodName      = "/sub2api.relay.v1.RelayControl/RenewLeases"
-	RelayControl_ReportLeases_FullMethodName     = "/sub2api.relay.v1.RelayControl/ReportLeases"
-	RelayControl_AckQuotaRecall_FullMethodName   = "/sub2api.relay.v1.RelayControl/AckQuotaRecall"
-	RelayControl_Admit_FullMethodName            = "/sub2api.relay.v1.RelayControl/Admit"
-	RelayControl_Select_FullMethodName           = "/sub2api.relay.v1.RelayControl/Select"
-	RelayControl_FetchCredentials_FullMethodName = "/sub2api.relay.v1.RelayControl/FetchCredentials"
-	RelayControl_RefillQuota_FullMethodName      = "/sub2api.relay.v1.RelayControl/RefillQuota"
-	RelayControl_UpstreamError_FullMethodName    = "/sub2api.relay.v1.RelayControl/UpstreamError"
-	RelayControl_BeginTurn_FullMethodName        = "/sub2api.relay.v1.RelayControl/BeginTurn"
-	RelayControl_TurnMapping_FullMethodName      = "/sub2api.relay.v1.RelayControl/TurnMapping"
-	RelayControl_WebSocketLease_FullMethodName   = "/sub2api.relay.v1.RelayControl/WebSocketLease"
-	RelayControl_CyberPolicyHit_FullMethodName   = "/sub2api.relay.v1.RelayControl/CyberPolicyHit"
+	RelayControl_Ping_FullMethodName                = "/sub2api.relay.v1.RelayControl/Ping"
+	RelayControl_FetchConfig_FullMethodName         = "/sub2api.relay.v1.RelayControl/FetchConfig"
+	RelayControl_ReleaseQuota_FullMethodName        = "/sub2api.relay.v1.RelayControl/ReleaseQuota"
+	RelayControl_RenewLeases_FullMethodName         = "/sub2api.relay.v1.RelayControl/RenewLeases"
+	RelayControl_ReportLeases_FullMethodName        = "/sub2api.relay.v1.RelayControl/ReportLeases"
+	RelayControl_AckQuotaRecall_FullMethodName      = "/sub2api.relay.v1.RelayControl/AckQuotaRecall"
+	RelayControl_Admit_FullMethodName               = "/sub2api.relay.v1.RelayControl/Admit"
+	RelayControl_Select_FullMethodName              = "/sub2api.relay.v1.RelayControl/Select"
+	RelayControl_FetchCredentials_FullMethodName    = "/sub2api.relay.v1.RelayControl/FetchCredentials"
+	RelayControl_RefillQuota_FullMethodName         = "/sub2api.relay.v1.RelayControl/RefillQuota"
+	RelayControl_UpstreamError_FullMethodName       = "/sub2api.relay.v1.RelayControl/UpstreamError"
+	RelayControl_BeginTurn_FullMethodName           = "/sub2api.relay.v1.RelayControl/BeginTurn"
+	RelayControl_TurnMapping_FullMethodName         = "/sub2api.relay.v1.RelayControl/TurnMapping"
+	RelayControl_WebSocketLease_FullMethodName      = "/sub2api.relay.v1.RelayControl/WebSocketLease"
+	RelayControl_CyberPolicyHit_FullMethodName      = "/sub2api.relay.v1.RelayControl/CyberPolicyHit"
+	RelayControl_ModerationViolation_FullMethodName = "/sub2api.relay.v1.RelayControl/ModerationViolation"
+	RelayControl_ModerationNotify_FullMethodName    = "/sub2api.relay.v1.RelayControl/ModerationNotify"
 )
 
 // RelayControlClient is the client API for RelayControl service.
@@ -373,6 +375,12 @@ type RelayControlClient interface {
 	// 运维日志（异步），用单机同一段代码（handler.CyberPolicyRecorder）。用户、Key、分组、账号取自这次选号的
 	// 记录，屏蔽的键由选号时上送的查询键推导；每次请求只记一次。选号必须是这台节点进行中的。
 	CyberPolicyHit(ctx context.Context, in *CyberPolicyHitRequest, opts ...grpc.CallOption) (*CyberPolicyHitResponse, error)
+	// ---- 内容审核命中后的账号动作（设计 3.4）：判定和记录在从节点，违规次数跨节点累计、封号、邮件在主节点 ----
+	// ModerationViolation 从节点写一条计入封号的审核记录之前调用：主节点用单机同一段代码累计窗口内违规次数、
+	// 按阈值封号，并记一条不含输入内容的违规记录（带节点）。只认这台节点最近准入过的用户。带幂等键。
+	ModerationViolation(ctx context.Context, in *ModerationViolationRequest, opts ...grpc.CallOption) (*ModerationViolationResponse, error)
+	// ModerationNotify 命中与封号通知邮件（SMTP 不下发，由主节点发）。收件人按主节点库里的用户。
+	ModerationNotify(ctx context.Context, in *ModerationNotifyRequest, opts ...grpc.CallOption) (*ModerationNotifyResponse, error)
 }
 
 type relayControlClient struct {
@@ -533,6 +541,26 @@ func (c *relayControlClient) CyberPolicyHit(ctx context.Context, in *CyberPolicy
 	return out, nil
 }
 
+func (c *relayControlClient) ModerationViolation(ctx context.Context, in *ModerationViolationRequest, opts ...grpc.CallOption) (*ModerationViolationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ModerationViolationResponse)
+	err := c.cc.Invoke(ctx, RelayControl_ModerationViolation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *relayControlClient) ModerationNotify(ctx context.Context, in *ModerationNotifyRequest, opts ...grpc.CallOption) (*ModerationNotifyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ModerationNotifyResponse)
+	err := c.cc.Invoke(ctx, RelayControl_ModerationNotify_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RelayControlServer is the server API for RelayControl service.
 // All implementations must embed UnimplementedRelayControlServer
 // for forward compatibility.
@@ -586,6 +614,12 @@ type RelayControlServer interface {
 	// 运维日志（异步），用单机同一段代码（handler.CyberPolicyRecorder）。用户、Key、分组、账号取自这次选号的
 	// 记录，屏蔽的键由选号时上送的查询键推导；每次请求只记一次。选号必须是这台节点进行中的。
 	CyberPolicyHit(context.Context, *CyberPolicyHitRequest) (*CyberPolicyHitResponse, error)
+	// ---- 内容审核命中后的账号动作（设计 3.4）：判定和记录在从节点，违规次数跨节点累计、封号、邮件在主节点 ----
+	// ModerationViolation 从节点写一条计入封号的审核记录之前调用：主节点用单机同一段代码累计窗口内违规次数、
+	// 按阈值封号，并记一条不含输入内容的违规记录（带节点）。只认这台节点最近准入过的用户。带幂等键。
+	ModerationViolation(context.Context, *ModerationViolationRequest) (*ModerationViolationResponse, error)
+	// ModerationNotify 命中与封号通知邮件（SMTP 不下发，由主节点发）。收件人按主节点库里的用户。
+	ModerationNotify(context.Context, *ModerationNotifyRequest) (*ModerationNotifyResponse, error)
 	mustEmbedUnimplementedRelayControlServer()
 }
 
@@ -640,6 +674,12 @@ func (UnimplementedRelayControlServer) WebSocketLease(context.Context, *WebSocke
 }
 func (UnimplementedRelayControlServer) CyberPolicyHit(context.Context, *CyberPolicyHitRequest) (*CyberPolicyHitResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CyberPolicyHit not implemented")
+}
+func (UnimplementedRelayControlServer) ModerationViolation(context.Context, *ModerationViolationRequest) (*ModerationViolationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ModerationViolation not implemented")
+}
+func (UnimplementedRelayControlServer) ModerationNotify(context.Context, *ModerationNotifyRequest) (*ModerationNotifyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ModerationNotify not implemented")
 }
 func (UnimplementedRelayControlServer) mustEmbedUnimplementedRelayControlServer() {}
 func (UnimplementedRelayControlServer) testEmbeddedByValue()                      {}
@@ -932,6 +972,42 @@ func _RelayControl_CyberPolicyHit_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RelayControl_ModerationViolation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ModerationViolationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayControlServer).ModerationViolation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayControl_ModerationViolation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayControlServer).ModerationViolation(ctx, req.(*ModerationViolationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RelayControl_ModerationNotify_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ModerationNotifyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayControlServer).ModerationNotify(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayControl_ModerationNotify_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayControlServer).ModerationNotify(ctx, req.(*ModerationNotifyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // RelayControl_ServiceDesc is the grpc.ServiceDesc for RelayControl service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -998,6 +1074,14 @@ var RelayControl_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CyberPolicyHit",
 			Handler:    _RelayControl_CyberPolicyHit_Handler,
+		},
+		{
+			MethodName: "ModerationViolation",
+			Handler:    _RelayControl_ModerationViolation_Handler,
+		},
+		{
+			MethodName: "ModerationNotify",
+			Handler:    _RelayControl_ModerationNotify_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

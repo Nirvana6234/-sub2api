@@ -42,6 +42,8 @@ type Deps struct {
 	}
 	// Ops 记运维错误日志（cyber 命中、cyber 会话屏蔽）；nil 表示不记。
 	Ops *service.OpsService
+	// Users 取违规通知的收件人（主节点库里的用户邮箱）；nil 时不发信。
+	Users service.UserRepository
 }
 
 // holdLimit 是一次选号最长占着槽位的时间：从节点的释放消息丢了、从节点下线时由定时清理放掉。
@@ -82,6 +84,8 @@ type selector struct {
 	recordCyberBlocked func(ctx context.Context, apiKey *service.APIKey, r handler.CyberSessionBlockedRequest)
 
 	stopReaper context.CancelFunc
+	// admitted：各节点最近准入过的用户（违规上报只认这些，moderation.go）。
+	admitted admittedUsers
 }
 
 type requestKey struct {

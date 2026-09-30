@@ -34,6 +34,10 @@ type Selector interface {
 	WebSocketLease(ctx context.Context, nodeID int64, req *relayv1.WebSocketLeaseRequest) (*relayv1.WebSocketLeaseResponse, error)
 	// CyberPolicyHit 上游 cyber 策略命中（设计 3.4）。选号不是这台节点进行中的时返回 ErrSelectionNotFound。
 	CyberPolicyHit(ctx context.Context, nodeID int64, req *relayv1.CyberPolicyHitRequest) (*relayv1.CyberPolicyHitResponse, error)
+	// ModerationViolation / ModerationNotify 内容审核命中后的账号动作（设计 3.4）。用户不是这台节点最近准入过的
+	// 返回 PermissionDenied。
+	ModerationViolation(ctx context.Context, nodeID int64, req *relayv1.ModerationViolationRequest) (*relayv1.ModerationViolationResponse, error)
+	ModerationNotify(ctx context.Context, nodeID int64, req *relayv1.ModerationNotifyRequest) (*relayv1.ModerationNotifyResponse, error)
 	// SecurityAudit 转发前的安全审计（设计 3.4，走审核连接）。Key 复查不通过时回 skipped，不返回 error。
 	SecurityAudit(ctx context.Context, nodeID int64, req *relayv1.SecurityAuditRequest) (*relayv1.SecurityAuditResponse, error)
 	// Release 处理事件连接上的释放消息（不回复，按选号 ID 幂等）。在事件流的接收协程里调用，
@@ -207,6 +211,32 @@ func (c *Control) CyberPolicyHit(ctx context.Context, req *relayv1.CyberPolicyHi
 	resp, err := c.selector.CyberPolicyHit(ctx, nodeID, req)
 	if err != nil {
 		return nil, selectionError(ctx, "cyber_policy_hit", nodeID, err)
+	}
+	return resp, nil
+}
+
+// ModerationViolation 内容审核命中后累计违规、判封号。
+func (c *Control) ModerationViolation(ctx context.Context, req *relayv1.ModerationViolationRequest) (*relayv1.ModerationViolationResponse, error) {
+	nodeID, err := c.selectPeer(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.selector.ModerationViolation(ctx, nodeID, req)
+	if err != nil {
+		return nil, selectionError(ctx, "moderation_violation", nodeID, err)
+	}
+	return resp, nil
+}
+
+// ModerationNotify 内容审核命中与封号的通知邮件。
+func (c *Control) ModerationNotify(ctx context.Context, req *relayv1.ModerationNotifyRequest) (*relayv1.ModerationNotifyResponse, error) {
+	nodeID, err := c.selectPeer(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.selector.ModerationNotify(ctx, nodeID, req)
+	if err != nil {
+		return nil, selectionError(ctx, "moderation_notify", nodeID, err)
 	}
 	return resp, nil
 }

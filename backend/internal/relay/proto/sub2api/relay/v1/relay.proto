@@ -82,6 +82,13 @@ service RelayControl {
   // 运维日志（异步），用单机同一段代码（handler.CyberPolicyRecorder）。用户、Key、分组、账号取自这次选号的
   // 记录，屏蔽的键由选号时上送的查询键推导；每次请求只记一次。选号必须是这台节点进行中的。
   rpc CyberPolicyHit(CyberPolicyHitRequest) returns (CyberPolicyHitResponse);
+
+  // ---- 内容审核命中后的账号动作（设计 3.4）：判定和记录在从节点，违规次数跨节点累计、封号、邮件在主节点 ----
+  // ModerationViolation 从节点写一条计入封号的审核记录之前调用：主节点用单机同一段代码累计窗口内违规次数、
+  // 按阈值封号，并记一条不含输入内容的违规记录（带节点）。只认这台节点最近准入过的用户。带幂等键。
+  rpc ModerationViolation(ModerationViolationRequest) returns (ModerationViolationResponse);
+  // ModerationNotify 命中与封号通知邮件（SMTP 不下发，由主节点发）。收件人按主节点库里的用户。
+  rpc ModerationNotify(ModerationNotifyRequest) returns (ModerationNotifyResponse);
 }
 
 // 审核连接：转发前的安全审计（设计 3.4），走单独的连接，不和选号挤在一起。
@@ -772,6 +779,30 @@ message CyberPolicyHitRequest {
 }
 
 message CyberPolicyHitResponse {}
+
+message ModerationViolationRequest {
+  // 从节点这条审核记录（service.ContentModerationLog 的 JSON）。主节点只取计数、封号、通知要用的字段，
+  // 输入内容摘录、命中的关键词、错误信息一律丢弃；用户、Key 按主节点自己的记录。
+  bytes log = 1;
+}
+
+message ModerationViolationResponse {
+  int32 violation_count = 1;
+  bool auto_banned = 2;
+  // 这一次刚封号（发封号通知用）。
+  bool auto_ban_just_applied = 3;
+}
+
+message ModerationNotifyRequest {
+  bytes log = 1;
+  bool auto_ban_just_applied = 2;
+  // cyber 策略命中的通知（否则按配置的"命中即通知"）。
+  bool cyber = 3;
+}
+
+message ModerationNotifyResponse {
+  bool email_sent = 1;
+}
 
 message UpstreamErrorResponse {
   bool should_disable = 1;

@@ -74,7 +74,7 @@ func ProvideMasterRuntime(
 		NewSelector: relayselect.NewFactory(relayselect.Deps{
 			Config: cfg, APIKeys: apiKeys, Subscriptions: subscriptions, Settings: settingService,
 			Billing: billing, Gateway: gateway, Concurrency: concurrency,
-			Moderation: moderation, PromptAudit: prompt, Audit: audit, Ops: ops,
+			Moderation: moderation, PromptAudit: prompt, Audit: audit, Ops: ops, Users: users,
 		}),
 		VoucherPartitions: repository.NewRelayVoucherPartitions(db),
 		Sections:          forwardingSections(errorPassthrough),

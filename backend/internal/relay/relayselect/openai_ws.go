@@ -52,6 +52,7 @@ func (s *selector) selectOpenAIWS(ctx context.Context, nodeID int64, req *relayv
 		return wsClose(coderws.StatusPolicyViolation, "request rejected"), nil
 	}
 	apiKey := adm.APIKey
+	s.admitted.note(nodeID, apiKey.User.ID, s.now())
 	ctx = middleware.RelayRequestContext(ctx, adm)
 	ctx = service.WithOpenAIGuardianParentSessionHashes(ctx, req.GetGuardianParentSessionHash(), req.GetGuardianParentLegacySessionHash())
 	subscription := adm.Billing.Subscription
@@ -262,6 +263,7 @@ func (s *selector) BeginTurn(ctx context.Context, nodeID int64, req *relayv1.Beg
 	defer record.mu.Unlock()
 	s.touch(record)
 	apiKey := sel.apiKey
+	s.admitted.note(nodeID, sel.userID, s.now())
 
 	// 上一轮的结束消息还没到（事件连接上的释放可能晚于这次调用）：当作上一轮已结束，放掉它的槽再占
 	// （本地 BeforeTurn 同样先 releaseTurnSlots 再占）。之后迟到的结束消息对不上轮 ID，不再放槽。

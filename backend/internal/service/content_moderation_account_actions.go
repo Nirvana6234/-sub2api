@@ -78,3 +78,29 @@ func (l localContentModerationAccountActions) Notify(ctx context.Context, cfg *C
 	}
 	return emailSent
 }
+
+// ApplyRelayViolation 在主节点执行从节点上报的一次违规（主从分流，设计 3.4）：用主节点当前的审核配置、
+// 单机同一段代码累计违规次数、按阈值封号，再把这条最小记录（不含输入内容，带节点）写进库，
+// 让之后的累计把各节点的违规加在一起算。log 由调用方按主节点的记录填好。
+func (s *ContentModerationService) ApplyRelayViolation(ctx context.Context, log *ContentModerationLog) (bool, error) {
+	snapshot, err := s.loadRuntimeSnapshot(ctx)
+	if err != nil {
+		return false, err
+	}
+	just := s.LocalAccountActions().Apply(ctx, snapshot.config, log)
+	if s.repo != nil {
+		if err := s.repo.CreateLog(ctx, log); err != nil {
+			slog.Warn("content_moderation.relay_violation_log_failed", "user_id", contentModerationEmailUserID(log), "error", err)
+		}
+	}
+	return just, nil
+}
+
+// NotifyRelayViolation 在主节点发从节点上报的违规的通知邮件（SMTP 不下发，设计 3.4）。
+func (s *ContentModerationService) NotifyRelayViolation(ctx context.Context, log *ContentModerationLog, autoBanJustApplied, cyber bool) (bool, error) {
+	snapshot, err := s.loadRuntimeSnapshot(ctx)
+	if err != nil {
+		return false, err
+	}
+	return s.LocalAccountActions().Notify(ctx, snapshot.config, log, autoBanJustApplied, cyber), nil
+}

@@ -64,6 +64,7 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 		return rej, err
 	}
 	apiKey := adm.APIKey
+	s.admitted.note(nodeID, apiKey.User.ID, s.now())
 	if messages && !apiKey.Group.AllowMessagesDispatch {
 		// 本地在读请求体之前就查（分组平台只会是 OpenAI：其余平台在准入时已回"暂不支持"）。
 		return gatewayRejection(handler.OpenAIMessagesDispatchDeniedRejection()), nil
@@ -220,7 +221,7 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 
 // Admit 准入（设计 3.2）：中间件链的检查，不含分组模型白名单（从节点用快照里的分组在本地跑那个中间件，
 // 保持与单机相同的检查顺序；选号时这里再按请求里的模型名查一遍）。
-func (s *selector) Admit(ctx context.Context, _ int64, req *relayv1.AdmitRequest) (*relayv1.AdmitResponse, error) {
+func (s *selector) Admit(ctx context.Context, nodeID int64, req *relayv1.AdmitRequest) (*relayv1.AdmitResponse, error) {
 	adm, rej, err := s.admitAPIKey(ctx, req.GetApiKey(), req.GetClientIp(), req.GetMethod(), req.GetPath(), nil)
 	if err != nil {
 		return nil, err
@@ -228,6 +229,7 @@ func (s *selector) Admit(ctx context.Context, _ int64, req *relayv1.AdmitRequest
 	if rej != nil {
 		return &relayv1.AdmitResponse{Result: &relayv1.AdmitResponse_Rejection{Rejection: rej.GetRejection()}}, nil
 	}
+	s.admitted.note(nodeID, adm.APIKey.User.ID, s.now())
 	key, err := keycodec.EncodeAPIKey(adm.APIKey)
 	if err != nil {
 		return nil, err
