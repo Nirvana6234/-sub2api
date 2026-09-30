@@ -155,20 +155,19 @@ func TestRelayAPIKeyAdmissionMatchesTheLocalMiddlewareChain(t *testing.T) {
 
 func TestRelayAPIKeyAdmissionLeavesUnsupportedKeysToTheMaster(t *testing.T) {
 	cfg := &config.Config{}
-	for name, mutate := range map[string]func(k *service.APIKey){
-		"composite": func(k *service.APIKey) { k.Group.Platform = service.PlatformComposite },
-	} {
-		t.Run(name, func(t *testing.T) {
-			key := relayAdmissionKey(mutate)
-			keys := service.NewAPIKeyService(&stubApiKeyRepo{getByKey: func(context.Context, string) (*service.APIKey, error) { return key, nil }}, nil, nil, nil, nil, nil, cfg)
-			_, rej, err := EvaluateRelayAPIKeyAdmission(context.Background(), RelayAPIKeyAdmissionInput{
-				APIKeyAuthInput: APIKeyAuthInput{APIKeys: keys, Config: cfg, Method: http.MethodPost, Path: "/v1/responses"},
-				RawKey:          "sk-relay",
-				Settings:        service.NewSettingService(fakeSettingRepo{}, cfg),
-				Models:          []string{"gpt-5"},
-			})
-			require.Nil(t, rej)
-			require.ErrorIs(t, err, ErrRelayAdmissionUnsupported)
+	admit := func(mutate func(k *service.APIKey)) (RelayAPIKeyAdmission, *CapturedRejection, error) {
+		key := relayAdmissionKey(mutate)
+		keys := service.NewAPIKeyService(&stubApiKeyRepo{getByKey: func(context.Context, string) (*service.APIKey, error) { return key, nil }}, nil, nil, nil, nil, nil, cfg)
+		return EvaluateRelayAPIKeyAdmission(context.Background(), RelayAPIKeyAdmissionInput{
+			APIKeyAuthInput: APIKeyAuthInput{APIKeys: keys, Config: cfg, Method: http.MethodPost, Path: "/v1/responses"},
+			RawKey:          "sk-relay",
+			Settings:        service.NewSettingService(fakeSettingRepo{}, cfg),
+			Models:          []string{"gpt-5"},
 		})
 	}
+	// 组合平台分组照常准入：目标平台之后按模型选（ResolveRoute）。
+	adm, rej, err := admit(func(k *service.APIKey) { k.Group.Platform = service.PlatformComposite })
+	require.NoError(t, err)
+	require.Nil(t, rej)
+	require.Equal(t, service.PlatformComposite, adm.APIKey.Group.Platform)
 }

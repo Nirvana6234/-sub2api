@@ -65,6 +65,15 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 	}
 	apiKey := adm.APIKey
 	s.admitted.note(nodeID, apiKey.User.ID, s.now())
+	// 组合平台分组：按改写前的公开模型选目标（本地 compositeTarget 中间件），与 ResolveRoute 同一个输入。
+	composite, err := s.resolveComposite(ctx, apiKey, req.GetRouteModel(), req.GetPath())
+	if err != nil {
+		return nil, err
+	}
+	if !compositeServedByNode(apiKey, composite) {
+		return unsupported(), nil
+	}
+	ctx = service.WithCompositeRouteDecision(ctx, composite)
 	if messages && !apiKey.Group.AllowMessagesDispatch {
 		// 本地在读请求体之前就查（分组平台只会是 OpenAI：其余平台在准入时已回"暂不支持"）。
 		return gatewayRejection(handler.OpenAIMessagesDispatchDeniedRejection()), nil
@@ -262,7 +271,7 @@ func (s *selector) admitAPIKey(ctx context.Context, rawKey, clientIP, method, pa
 	if raw != nil {
 		return adm, rawRejection(raw), nil
 	}
-	if g := adm.APIKey.Group; g == nil || g.Platform != service.PlatformOpenAI {
+	if g := adm.APIKey.Group; g == nil || (g.Platform != service.PlatformOpenAI && g.Platform != service.PlatformComposite) {
 		// 未分组 Key 走 Anthropic 网关，其他 OpenAI 兼容平台（Grok 等）还没接入。
 		return adm, unsupported(), nil
 	}

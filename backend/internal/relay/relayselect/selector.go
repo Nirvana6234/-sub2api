@@ -36,6 +36,8 @@ type Deps struct {
 	// Moderation 执行从节点上报的审核违规（累计、封号、通知）和命中过的输入名单（设计 3.4）；
 	// 判定在从节点。nil 表示没有这个功能。
 	Moderation *service.ContentModerationService
+	// Composite 给组合平台分组按模型选目标（本地 compositeTarget 中间件同一个）；nil 时组合平台分组不匹配任何目标。
+	Composite *service.CompositeRouteResolver
 	// Ops 记运维错误日志（cyber 命中、cyber 会话屏蔽）；nil 表示不记。
 	Ops *service.OpsService
 	// Users 取违规通知的收件人（主节点库里的用户邮箱）；nil 时不发信。

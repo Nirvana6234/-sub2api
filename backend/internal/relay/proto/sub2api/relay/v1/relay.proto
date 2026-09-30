@@ -53,6 +53,10 @@ service RelayControl {
   // 分组模型白名单除外：从节点用回复里分组的白名单在本地跑同一个中间件），通过时回 Key 快照，
   // 从节点据此运行处理函数里选号之前的步骤。只读，不带幂等键；选号时主节点仍然独立复查。
   rpc Admit(AdmitRequest) returns (AdmitResponse);
+  // ResolveRoute 按模型定这次请求的走向（本地 autoGroupModelRouting、compositeTarget 两个中间件，设计 3.2）：
+  // 组合平台分组按模型选目标平台和上游模型。准入之后、从节点读出请求体里的模型再调（本地这两个中间件也在鉴权之后、
+  // 读请求体时才做）。只读，不带幂等键；选号时主节点按同样的输入再选一次。
+  rpc ResolveRoute(ResolveRouteRequest) returns (ResolveRouteResponse);
   // Select 为一次客户端请求的一次尝试选号：主节点复查凭据、做只有它能做的检查、选号、占并发槽，
   // 签发扣费凭证，需要时顺带补充额度。带幂等键（请求 ID + 第几次选号）：超时重发拿到同一个结果。
   // 被拒绝时正常返回 rejection（不是 gRPC 错误），从节点按它写客户端响应。
@@ -519,6 +523,28 @@ message Admission {
   reserved 3;
 }
 
+message ResolveRouteRequest {
+  string api_key = 1;
+  string client_ip = 2;
+  string method = 3;
+  string path = 4;
+  // 请求体里的模型（按路由取，与本地中间件同一段代码）。
+  string model = 5;
+}
+
+message ResolveRouteResponse {
+  oneof result {
+    RouteResolution resolution = 1;
+    // Key 复查不通过（原样响应）或这条路还不能经从节点（交给主节点）。
+    SelectRejection rejection = 2;
+  }
+}
+
+message RouteResolution {
+  // 组合平台分组按模型选定的走向（service.CompositeRouteDecision 的 JSON；没匹配时 matched 为 false）。
+  bytes composite_decision = 1;
+}
+
 message SelectRequest {
   // 从节点为这次客户端请求起的 ID。同一请求的多次选号（换号）共用：用户并发槽、利润否决次数、
   // 已排除的账号按请求记在主节点。
@@ -564,6 +590,8 @@ message SelectRequest {
   string guardian_parent_legacy_session_hash = 23;
   // WebSocket 连接选号：首帧的函数调用输出都能在上下文里找到对应调用（previous_response_id 可以换账号）。
   bool previous_response_can_move = 24;
+  // 组合平台分组：选目标平台用的公开模型（改写请求体之前的，ResolveRoute 用的同一个）。主节点按它重新选定目标。
+  string route_model = 25;
 }
 
 // cyber 会话屏蔽的查询键（都已哈希）。

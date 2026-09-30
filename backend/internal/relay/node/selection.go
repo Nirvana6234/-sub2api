@@ -45,6 +45,13 @@ func (s *SelectClient) Admit(ctx context.Context, req *relayv1.AdmitRequest) (*r
 	return s.control.Admit(ctx, req)
 }
 
+// ResolveRoute 按模型定走向（组合平台分组选目标，设计 3.2）。只读，不带幂等键。
+func (s *SelectClient) ResolveRoute(ctx context.Context, req *relayv1.ResolveRouteRequest) (*relayv1.ResolveRouteResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, AdmitTimeout)
+	defer cancel()
+	return s.control.ResolveRoute(ctx, req)
+}
+
 // Select 选号。幂等键是"请求 ID/第几次"：超时重发拿回同一个结果，不会多占一个槽。
 // 主节点纪元变了返回 transport.ErrEpochChanged：调用方先核对租约（ReportLeases），再以新的一次选号重来。
 func (s *SelectClient) Select(ctx context.Context, req *relayv1.SelectRequest) (*relayv1.SelectResponse, error) {

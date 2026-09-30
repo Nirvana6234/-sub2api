@@ -310,6 +310,7 @@ const (
 	RelayControl_ReportLeases_FullMethodName         = "/sub2api.relay.v1.RelayControl/ReportLeases"
 	RelayControl_AckQuotaRecall_FullMethodName       = "/sub2api.relay.v1.RelayControl/AckQuotaRecall"
 	RelayControl_Admit_FullMethodName                = "/sub2api.relay.v1.RelayControl/Admit"
+	RelayControl_ResolveRoute_FullMethodName         = "/sub2api.relay.v1.RelayControl/ResolveRoute"
 	RelayControl_Select_FullMethodName               = "/sub2api.relay.v1.RelayControl/Select"
 	RelayControl_FetchCredentials_FullMethodName     = "/sub2api.relay.v1.RelayControl/FetchCredentials"
 	RelayControl_RefillQuota_FullMethodName          = "/sub2api.relay.v1.RelayControl/RefillQuota"
@@ -350,6 +351,10 @@ type RelayControlClient interface {
 	// 分组模型白名单除外：从节点用回复里分组的白名单在本地跑同一个中间件），通过时回 Key 快照，
 	// 从节点据此运行处理函数里选号之前的步骤。只读，不带幂等键；选号时主节点仍然独立复查。
 	Admit(ctx context.Context, in *AdmitRequest, opts ...grpc.CallOption) (*AdmitResponse, error)
+	// ResolveRoute 按模型定这次请求的走向（本地 autoGroupModelRouting、compositeTarget 两个中间件，设计 3.2）：
+	// 组合平台分组按模型选目标平台和上游模型。准入之后、从节点读出请求体里的模型再调（本地这两个中间件也在鉴权之后、
+	// 读请求体时才做）。只读，不带幂等键；选号时主节点按同样的输入再选一次。
+	ResolveRoute(ctx context.Context, in *ResolveRouteRequest, opts ...grpc.CallOption) (*ResolveRouteResponse, error)
 	// Select 为一次客户端请求的一次尝试选号：主节点复查凭据、做只有它能做的检查、选号、占并发槽，
 	// 签发扣费凭证，需要时顺带补充额度。带幂等键（请求 ID + 第几次选号）：超时重发拿到同一个结果。
 	// 被拒绝时正常返回 rejection（不是 gRPC 错误），从节点按它写客户端响应。
@@ -466,6 +471,16 @@ func (c *relayControlClient) Admit(ctx context.Context, in *AdmitRequest, opts .
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(AdmitResponse)
 	err := c.cc.Invoke(ctx, RelayControl_Admit_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *relayControlClient) ResolveRoute(ctx context.Context, in *ResolveRouteRequest, opts ...grpc.CallOption) (*ResolveRouteResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ResolveRouteResponse)
+	err := c.cc.Invoke(ctx, RelayControl_ResolveRoute_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -627,6 +642,10 @@ type RelayControlServer interface {
 	// 分组模型白名单除外：从节点用回复里分组的白名单在本地跑同一个中间件），通过时回 Key 快照，
 	// 从节点据此运行处理函数里选号之前的步骤。只读，不带幂等键；选号时主节点仍然独立复查。
 	Admit(context.Context, *AdmitRequest) (*AdmitResponse, error)
+	// ResolveRoute 按模型定这次请求的走向（本地 autoGroupModelRouting、compositeTarget 两个中间件，设计 3.2）：
+	// 组合平台分组按模型选目标平台和上游模型。准入之后、从节点读出请求体里的模型再调（本地这两个中间件也在鉴权之后、
+	// 读请求体时才做）。只读，不带幂等键；选号时主节点按同样的输入再选一次。
+	ResolveRoute(context.Context, *ResolveRouteRequest) (*ResolveRouteResponse, error)
 	// Select 为一次客户端请求的一次尝试选号：主节点复查凭据、做只有它能做的检查、选号、占并发槽，
 	// 签发扣费凭证，需要时顺带补充额度。带幂等键（请求 ID + 第几次选号）：超时重发拿到同一个结果。
 	// 被拒绝时正常返回 rejection（不是 gRPC 错误），从节点按它写客户端响应。
@@ -699,6 +718,9 @@ func (UnimplementedRelayControlServer) AckQuotaRecall(context.Context, *AckQuota
 }
 func (UnimplementedRelayControlServer) Admit(context.Context, *AdmitRequest) (*AdmitResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Admit not implemented")
+}
+func (UnimplementedRelayControlServer) ResolveRoute(context.Context, *ResolveRouteRequest) (*ResolveRouteResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ResolveRoute not implemented")
 }
 func (UnimplementedRelayControlServer) Select(context.Context, *SelectRequest) (*SelectResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Select not implemented")
@@ -882,6 +904,24 @@ func _RelayControl_Admit_Handler(srv interface{}, ctx context.Context, dec func(
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(RelayControlServer).Admit(ctx, req.(*AdmitRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RelayControl_ResolveRoute_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResolveRouteRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayControlServer).ResolveRoute(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayControl_ResolveRoute_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayControlServer).ResolveRoute(ctx, req.(*ResolveRouteRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1154,6 +1194,10 @@ var RelayControl_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Admit",
 			Handler:    _RelayControl_Admit_Handler,
+		},
+		{
+			MethodName: "ResolveRoute",
+			Handler:    _RelayControl_ResolveRoute_Handler,
 		},
 		{
 			MethodName: "Select",

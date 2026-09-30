@@ -53,6 +53,10 @@ func (s *selector) selectOpenAIWS(ctx context.Context, nodeID int64, req *relayv
 	}
 	apiKey := adm.APIKey
 	s.admitted.note(nodeID, apiKey.User.ID, s.now())
+	if apiKey.Group.Platform == service.PlatformComposite {
+		// 升级请求（GET）本地不按模型选目标：组合平台分组的 WebSocket 由主节点处理（从节点在准入后就交给主节点）。
+		return wsClose(coderws.StatusTryAgainLater, wsReconnectReason), nil
+	}
 	ctx = middleware.RelayRequestContext(ctx, adm)
 	ctx = service.WithOpenAIGuardianParentSessionHashes(ctx, req.GetGuardianParentSessionHash(), req.GetGuardianParentLegacySessionHash())
 	subscription := adm.Billing.Subscription

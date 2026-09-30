@@ -69,7 +69,9 @@ type requestState struct {
 	id      string
 	attempt uint32
 	rawBody []byte
-	current *attemptState
+	// routeModel：组合平台分组选目标用的公开模型（改写请求体之前的），选号时带给主节点。
+	routeModel string
+	current    *attemptState
 }
 
 // attemptState 是一次选中的尝试。WebSocket 连接上，连接选号一份（收 response id、释放），每一轮另有一份
@@ -190,6 +192,7 @@ func (d *Dispatcher) selectRequest(c *gin.Context, st *requestState, req handler
 		UserAgent:               c.GetHeader("User-Agent"),
 		HttpRequestId:           c.Writer.Header().Get("X-Request-Id"),
 		PreviousResponseCanMove: req.PreviousResponseCanMove,
+		RouteModel:              st.routeModel,
 	}
 	sreq.ClientRequestId, _ = c.Request.Context().Value(ctxkey.ClientRequestID).(string)
 	sreq.GuardianParentSessionHash, sreq.GuardianParentLegacySessionHash = service.OpenAIGuardianParentSessionHashes(c.Request.Context())

@@ -114,9 +114,6 @@ func EvaluateRelayAPIKeyAdmission(ctx context.Context, in RelayAPIKeyAdmissionIn
 			return RelayAPIKeyAdmission{}, capture(func(c *gin.Context) { abortGroupModelNotAllowed(c, blocked) }), nil
 		}
 	}
-	if apiKey.Group != nil && apiKey.Group.Platform == service.PlatformComposite {
-		return RelayAPIKeyAdmission{}, nil, ErrRelayAdmissionUnsupported
-	}
 	if apiKey.GroupID == nil && (in.Settings == nil || !in.Settings.IsUngroupedKeySchedulingAllowed(ctx)) {
 		return RelayAPIKeyAdmission{}, capture(func(c *gin.Context) { abortGroupUnassigned(c, AnthropicErrorWriter) }), nil
 	}

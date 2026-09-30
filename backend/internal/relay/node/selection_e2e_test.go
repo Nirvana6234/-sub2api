@@ -95,6 +95,10 @@ func (f *fakeSelector) ReportWebSearchUsage(context.Context, int64, *relayv1.Web
 	return &relayv1.WebSearchUsageShares{}, nil
 }
 
+func (f *fakeSelector) ResolveRoute(context.Context, int64, *relayv1.ResolveRouteRequest) (*relayv1.ResolveRouteResponse, error) {
+	return &relayv1.ResolveRouteResponse{}, nil
+}
+
 func (f *fakeSelector) FetchFlaggedHashes(context.Context, int64, *relayv1.FetchFlaggedHashesRequest) (*relayv1.FetchFlaggedHashesResponse, error) {
 	return &relayv1.FetchFlaggedHashesResponse{}, nil
 }

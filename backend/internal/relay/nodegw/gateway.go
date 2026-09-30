@@ -66,10 +66,11 @@ func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatche
 		handler.InboundEndpointMiddleware(),
 		d.AdmitMiddleware(),
 		middleware2.GroupModelAllowlist(),
+		d.CompositeRouteMiddleware(),
 	}
 	openAIOnly := func(next gin.HandlerFunc) gin.HandlerFunc {
 		return func(c *gin.Context) {
-			if g, ok := middleware2.GetAPIKeyFromContext(c); !ok || g.Group == nil || g.Group.Platform != service.PlatformOpenAI {
+			if g, ok := middleware2.GetAPIKeyFromContext(c); !ok || servedPlatform(c, g) != service.PlatformOpenAI {
 				d.HandOff(c)
 				return
 			}
