@@ -92,7 +92,7 @@ func TestSelectAnthropicMessagesRejections(t *testing.T) {
 	})
 
 	t.Run("account types the node cannot forward yet go to the master", func(t *testing.T) {
-		w := newWorld(t, config.RunModeStandard, anthropicAccount(1, "bedrock", service.AccountTypeBedrock))
+		w := newWorld(t, config.RunModeStandard, antigravityMixedAccount(1))
 		resp, err := w.sel.Select(ctx, testNode, anthropicMessagesRequest("o1", 1, "sk-anthropic"))
 		require.NoError(t, err)
 		require.Equal(t, relayv1.RejectionFormat_REJECTION_FORMAT_UNSUPPORTED, resp.GetRejection().GetFormat())
@@ -198,4 +198,12 @@ func TestAnthropicOAuthWithMessageQueueStaysOnTheMaster(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, relayv1.RejectionFormat_REJECTION_FORMAT_UNSUPPORTED, resp.GetRejection().GetFormat())
 	w.waitReleased(t)
+}
+
+// antigravityMixedAccount 是开了混合调度、可以被 Anthropic 分组选到的 Antigravity 账号（从节点还不能转发）。
+func antigravityMixedAccount(id int64) service.Account {
+	a := anthropicAccount(id, "antigravity", service.AccountTypeOAuth)
+	a.Platform = service.PlatformAntigravity
+	a.Extra = map[string]any{"mixed_scheduling": true}
+	return a
 }

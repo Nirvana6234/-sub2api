@@ -53,10 +53,10 @@ func TestNodeServesAnthropicMessages(t *testing.T) {
 	e.world.waitReleased(t)
 }
 
-// 从节点还不能转发的账号类型（这里是 Bedrock）：交给主节点（测试世界没有主节点转发，按 503 写），上游不被调用。
+// 从节点还不能转发的账号类型（这里是开了混合调度的 Antigravity 账号）：交给主节点（测试世界没有主节点转发，按 503 写），上游不被调用。
 func TestNodeHandsOffAnthropicAccountTypesNotServedYet(t *testing.T) {
 	e := startE2EWith(t, func(upstream string) []service.Account {
-		a := anthropicAccount(1, "bedrock", service.AccountTypeBedrock)
+		a := antigravityMixedAccount(1)
 		a.Credentials["base_url"] = upstream
 		return []service.Account{a}
 	})
@@ -299,4 +299,24 @@ func TestNodeServesAnthropicCountTokens(t *testing.T) {
 	e.world.waitReleased(t)
 	require.Empty(t, e.settler.records(), "count_tokens is not billed")
 	require.Zero(t, e.world.slots.userAcquires.Load(), "count_tokens takes no user slot")
+}
+
+// Bedrock（API Key 模式）经从节点：凭据随选号加密下发，从节点照本地转发到 Bedrock。
+func TestNodeForwardsAnthropicBedrockAccounts(t *testing.T) {
+	e := startE2EWith(t, func(string) []service.Account {
+		a := anthropicAccount(1, "bedrock", service.AccountTypeBedrock)
+		a.Credentials = map[string]any{"auth_mode": "apikey", "api_key": "SECRET-bedrock-key", "aws_region": "us-east-1"}
+		return []service.Account{a}
+	})
+	status, body := e.post(t, "/v1/messages", "sk-anthropic", `{"model":"claude-sonnet-4-5","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`)
+	require.Equal(t, http.StatusOK, status, body)
+	select {
+	case r := <-e.hits:
+		require.True(t, strings.HasPrefix(r.URL.Path, "/model/"), r.URL.Path)
+		require.Equal(t, "Bearer SECRET-bedrock-key", r.Header.Get("Authorization"))
+	case <-time.After(5 * time.Second):
+		t.Fatal("upstream was not called")
+	}
+	require.Eventually(t, func() bool { return len(e.settler.records()) == 1 }, 5*time.Second, 20*time.Millisecond)
+	e.world.waitReleased(t)
 }
