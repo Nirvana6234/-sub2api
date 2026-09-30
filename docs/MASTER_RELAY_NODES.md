@@ -1,4 +1,4 @@
-# 主从节点架构设计（v0.17，2026-09-30）
+# 主从节点架构设计（v0.18，2026-09-30）
 
 > 状态：开发中（分支 `feat/master-relay-nodes`，进度见开发计划）。本文只记录当前结论；历史版本不再保留在正文里。开发计划见 `docs/MASTER_RELAY_NODES_PLAN.md`。
 > 代码引用按 2026-09-25 的 main（`c652d850`）核对；行号会漂移，引用处同时写了函数名，以函数名为准。
@@ -159,6 +159,14 @@
 | `usage_record_worker_pool.go` | 写 `usage_log`、扣费 | 从节点本地队列 → 主节点批量入账 |
 
 转发内部的依赖替换：`openAITokenProvider` 等 → 选号返回的短期凭据；`settingService` 的读取 → 主节点下发的配置快照；`settingService` 的写入（如 `SetOllamaCloudUsageSettings`）→ 异步事件；上游错误相关的 `rateLimitService`、`accountRepo` 写入 → 同步的上游错误决策（3.1 第 10 步）；其余账号状态更新（`UpdateSessionWindow`、`UpdateExtra`）→ 异步事件；粘性会话 → 主节点在选号和释放时处理；`getOpenAIWSStateStore` → 主节点在选号和入账时处理。完整清单见开发计划 2.2。
+
+Anthropic Messages（`internal/handler/gateway_handler.go` 的 `Messages`，Anthropic 分组）与 OpenAI 的分法相同，只有换号循环的位置不同：
+
+- 主节点：中间件复查、渠道映射、用户并发槽、计费资格、计价时间、粘性会话预取（请求开始时一次），然后一轮"选号 → 预热拦截检查 → 抢槽或排队 → 利润终检 → 准入后粘性绑定"（`handler.AnthropicAccountAdmitter`，本地同一段代码）。
+- 从节点：换号状态（已失败的账号、同账号重试、利润否决次数、选号耗尽后的退避、强制按缓存计费）留在处理函数的 `FailoverState` 里，与单机同一段代码。主节点把"利润否决""选号耗尽""预热拦截"作为拒绝回来，从节点转成本地的结果照原来的循环走；这几种拒绝之后主节点留着请求记录（用户槽、计价时间、粘性会话起点只算一次），请求结束时手里没有选号的由从节点按请求 ID 结束。
+- 转发成功时释放消息带"转发成功"，主节点按本地同一条件刷新粘性会话绑定；转发路径上直接写账号仓储的临时不可调度作为账号事件由主节点照写（时长不超过本地用的最长时长）。
+- 强制按缓存计费（换号时有绑定的会话、或上游明确要求）是从节点得出的、影响价格的事实，与 token 数一样随扣费记录上报、照用。
+- 选号结果带上分组所属渠道的功能配置（`FeaturesConfig`），转发路径上按分组查渠道的地方（联网搜索模拟"跟随渠道"、Bedrock CC 兼容、OpenAI 的 Codex 生图桥接）读它；JSON 往返后数字是 float64，现在读的都是布尔值。
 
 ### 3.3 联网搜索模拟
 

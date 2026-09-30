@@ -281,7 +281,7 @@ WP10 工作量最大（所有平台），WP9 完成后按平台拆给多人并�
 | ~~安全审计按分工原则重做（设计 3.4）~~ | WP10 | 已完成（WP10-4 ①–⑩）：内容审核、提示词审计、cyber 记录都在从节点；从节点 cyber 的运维错误日志随 WP14 本机日志接上 |
 | ~~联网搜索在从节点执行（设计 3.3）~~ | WP10 | 已完成（fb373e85）：websearch 配额抽成 QuotaStore（单机仍是 Redis）；从节点用加密下发的配置建搜索管理器、换快照重建，份额内本机计数、每 10 秒上报，主节点汇总进 Redis 并回份额 |
 | ~~自动分组 Key、组合平台分组经从节点（主节点选组、选目标平台）~~ | WP10 | 已完成：组合平台（335c975a）、按模型选组并固定（f49aebf6）、中途换组与结果回报（0dee1498），见下方 WP10 进展 |
-| Anthropic 网关入口：`/v1/messages`、count_tokens（含 Bedrock、Vertex、Antigravity 账号）；`ForceCacheBilling` 核对；联网搜索模拟的渠道级开关（账号"跟随渠道"时看渠道配置，渠道在主节点）随选号带下来 | WP10 | |
+| Anthropic 网关入口：`/v1/messages`、count_tokens（含 Bedrock、Vertex、Antigravity 账号）；`ForceCacheBilling` 核对；联网搜索模拟的渠道级开关（账号"跟随渠道"时看渠道配置，渠道在主节点）随选号带下来 | WP10 | 进行中：Anthropic 分组的 API Key 账号已经从节点（331cac30…cf59224b），渠道功能配置随选号下发、`ForceCacheBilling` 定为节点事实，见下方 WP10 进展。剩：OAuth / setup-token（主节点按 Anthropic 取 access token、身份指纹、会话 ID 伪装、TLS 指纹配置作为快照分段、会话数注册的释放、RPM、用户消息串行队列）、Bedrock、Vertex（服务账号）、Antigravity 账号（含 prompt 过长的兜底分组）、count_tokens、Gemini 分组分支、未分组 Key、组合平台选到 Anthropic。**阻塞项**：过渡用的账号类型闸门（选到从节点接不了的账号时回"暂不支持"交给主节点）要在这些都接完后去掉——第一次选号就命中时无害，换号后才命中会让主节点把整个请求重做一遍 |
 | Gemini v1beta、Antigravity 路由 | WP10 | |
 | OpenAI 其余入口：图片（同步）、嵌入、count_tokens（input_tokens）、`/alpha/search`、`/web_search`、`/x_search`、Codex 直连路径 `/backend-api/codex/*` | WP10 | |
 | Grok（含语音）、Ollama Cloud、TypeSafe `/v1/systemone`、Seedance | WP10 | |
@@ -394,7 +394,15 @@ OpenAI（Responses、Chat）这一路已完成（WP8-1 ~ WP8-4）：
   - 顺带修的：同一请求后来的选号在查到请求之前就被拒（Key 被停用、带来的分组不再是候选、换到从节点接不了的分组等）时，主节点也结束这次请求、放掉用户槽。原来要等 15 分钟定时清理，交给主节点转发时还会再占一个槽。
   - 请求开头的检查（`/v1/messages` 派发、`previous_response_id` 归属、生图）本地只在开头按当时的分组做一次、换组后不重做：选号带 `auto_group_start_id`（第一次选号时的分组），主节点按它做这几项。
   - 测试缺口：上游终止性错误后换组（`NextAccountStop`）目前只有 Grok OAuth 会出现，从节点还没接 Grok；"换号次数用完后换组"这条路径里主节点清空换号记录由单元测试覆盖，端到端要有状态的假上游，留到 WP19。
-  - 与单机的已知差别：①选号失败时主节点照旧结束这次请求记录（放用户槽），换组后的下一次选号重新占槽、重新做计费资格检查，本地在整个请求里一直占着；②中途换到从节点接不了的分组（非 OpenAI，或换进组合平台分组）时整个请求交给主节点转发，由主节点从头处理；③结果回报后台发、丢了不补，只影响之后的选组，不影响请求。
+  - 与单机的已知差别：①~~选号失败时主节点照旧结束这次请求记录~~（cf59224b 起，会换组的这两种拒绝之后主节点留着记录，用户槽、计价时间只算一次）；②中途换到从节点接不了的分组（非 OpenAI，或换进组合平台分组）时整个请求交给主节点转发，由主节点从头处理；③结果回报后台发、丢了不补，只影响之后的选组，不影响请求。
+
+- **Anthropic Messages**（设计 3.2 末尾）：
+  - 本地先抽出 `handler.AnthropicAccountAdmitter`（一轮选号与准入）和选号阶段的共用拒绝（`AnthropicFirstSelectFailureRejection`、`AnthropicSelectOutcomeRejection`），本地 Messages 改用它们，行为不变；主节点 `SELECT_ENDPOINT_ANTHROPIC_MESSAGES` 用同一段。
+  - 从节点：同一个 `GatewayHandler` 和 `GatewayService`（远程账号状态判定；账号仓储只实现临时不可调度，源码守卫限制转发文件只能用它），`/v1/messages` 按分组平台分给 OpenAI 或 Anthropic 处理函数；用量记 `USAGE_RECORD_KIND_ANTHROPIC`，主节点用 `GatewayService.RecordUsage` 入账，与单机逐字段一致（含强制按缓存计费）。
+  - 下发的系统设置补上 `beta_policy_settings`、`rectifier_settings`（转发路径读它们）。
+  - 顺带修的：组合平台分组的凭证请求模型改为改写前的公开模型（原来用量行的"请求模型"与单机不一致）；OpenAI 的 Codex 生图桥接渠道级开关在从节点上原来一直没生效。
+  - 过渡：只接 Anthropic 平台的 API Key 账号（见总账阻塞项）。
+  - 测试缺口：主节点选号结果带渠道功能配置这一步没有单独的测试（测试世界没有渠道服务），节点读取一侧有；主节点排队时给客户端保活仍是总账里的单独一项。
 
 - **上游错误决策**（WP7-10、WP7-11）：OpenAI 转发路径上改账号状态的判定都经 `service.OpenAIUpstreamErrorDecider`（处理上游错误响应、OAuth 瞬时 429 能否同账号重试、流超时、错误策略）。单机和主节点用本机实现（原来的代码）；从节点装 `node.RemoteUpstreamErrorDecider`，同步调 `UpstreamError`，主节点对这台节点正在用的账号（有进行中的选号）执行同一段判定，库里的状态和调度用的内存状态都在主节点。转发代码不变、调用顺序与单机一致，所以不另定义"重试 / 换号 / 透传"，这些仍由转发代码和选号循环按判定结果决定。与状态无关的前置判断在从节点本地做。源码守卫禁止 OpenAI 转发文件直接调限流服务的这几个方法（count_tokens 暂列白名单）。主节点不可达时远端判定按"不改变账号状态"回答；设计 3.1"不重试、不换号、事实排队重报"由 WP9 在选号循环里实现。
 
@@ -450,6 +458,7 @@ OpenAI（Responses、Chat）这一路已完成（WP8-1 ~ WP8-4）：
 20. 全部工作在 `feat/master-relay-nodes` 分支上，合并 main 由负责人另行要求（第 1 节）。
 21. v0.16（2026-09-29 负责人定）：**分工原则**——几乎所有转发逻辑在从节点完成，主从之间只有授权和计费，日志和记录留在从节点、由从节点提供查询（后续加）。随之：安全审计在从节点判定，违规次数报主节点累计封号，命中过的输入名单同步到各节点；联网搜索在从节点执行；审核接口 Key、提示词审计凭据、联网搜索 Key 及其代理按节点加密下发、只在内存；账号状态判定仍同步问主节点；审核记录、风控记录、运维错误日志、程序日志都留在从节点（设计第 1 节、3.3、3.4、6、7、12、15.1）。
 22. v0.17：自动分组选组、组合平台选目标在从节点读出模型后问主节点（`ResolveRoute`），之后的选号只核对；中途换组经主节点（`SwitchAutoGroup`），请求结果回报主节点调整选组（设计 3.1、3.2）。
+23. v0.18：Anthropic Messages 的换号循环留在从节点（主节点一轮选号与准入），选号带渠道功能配置，强制按缓存计费作为节点事实（设计 3.2）。
 
 以后实施中再发现的，同样先改设计稿再改代码。
 
