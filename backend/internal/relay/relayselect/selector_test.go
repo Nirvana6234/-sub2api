@@ -84,6 +84,23 @@ func (r fakeAccounts) ListSchedulableByGroupIDAndPlatform(_ context.Context, gro
 	return out, nil
 }
 
+func (r fakeAccounts) ListSchedulableByGroupIDAndPlatforms(ctx context.Context, groupID int64, platforms []string) ([]service.Account, error) {
+	var out []service.Account
+	for _, p := range platforms {
+		accounts, _ := r.ListSchedulableByGroupIDAndPlatform(ctx, groupID, p)
+		out = append(out, accounts...)
+	}
+	return out, nil
+}
+
+func (r fakeAccounts) ListSchedulableByPlatforms(_ context.Context, platforms []string) ([]service.Account, error) {
+	var out []service.Account
+	for _, p := range platforms {
+		out = append(out, r.forPlatform(p)...)
+	}
+	return out, nil
+}
+
 func (r fakeAccounts) ListModelAvailabilityCandidates(_ context.Context, _ *int64, platforms []string, _ bool) ([]service.Account, error) {
 	var out []service.Account
 	for _, p := range platforms {
@@ -287,10 +304,13 @@ func newWorldOn(t *testing.T, cfg *config.Config, balance float64, nodeID int64,
 	quotas, err := master.NewQuotas(context.Background(), leases, "epoch-1", time.Now)
 	require.NoError(t, err)
 
+	anthropicGateway := service.NewGatewayService(fakeAccounts{accounts: accounts}, nil, nil, nil, nil, nil, nil, gatewayCache, cfg,
+		nil, concurrency, nil, nil, billing, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
 	sel := newSelector(Deps{
 		Config: cfg, APIKeys: service.NewAPIKeyService(keys, nil, nil, nil, nil, nil, cfg),
 		Settings: service.NewSettingService(memSettings{values: map[string]string{}}, cfg),
-		Billing:  billing, Gateway: gateway, Concurrency: concurrency,
+		Billing:  billing, Gateway: gateway, AnthropicGateway: anthropicGateway, Concurrency: concurrency,
 	}, master.SelectEnv{
 		Epoch:  "epoch-1",
 		Quotas: quotas,
@@ -433,7 +453,12 @@ func TestAdmit(t *testing.T) {
 	require.Equal(t, int32(401), rej.GetStatus())
 	require.JSONEq(t, `{"code":"INVALID_API_KEY","message":"Invalid API key"}`, string(rej.GetBody()))
 
-	require.Equal(t, relayv1.RejectionFormat_REJECTION_FORMAT_UNSUPPORTED, admit("sk-anthropic").GetRejection().GetFormat())
+	// Anthropic 分组照常准入（哪个入口接由从节点的路由按分组平台分）；还没接入的平台回"暂不支持"。
+	require.NotNil(t, admit("sk-anthropic").GetAdmission())
+	gemini := openAIGroup(10)
+	gemini.Platform = service.PlatformGemini
+	w.keys.keys["sk-gemini"] = testKey("sk-gemini", 19, gemini)
+	require.Equal(t, relayv1.RejectionFormat_REJECTION_FORMAT_UNSUPPORTED, admit("sk-gemini").GetRejection().GetFormat())
 
 	adm := admit("sk-a").GetAdmission()
 	require.NotNil(t, adm)

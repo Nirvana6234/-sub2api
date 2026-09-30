@@ -32,7 +32,9 @@ type Deps struct {
 	Settings      *service.SettingService
 	Billing       *service.BillingCacheService
 	Gateway       *service.OpenAIGatewayService
-	Concurrency   *service.ConcurrencyService
+	// AnthropicGateway 是 Anthropic Messages 的选号与准入用的网关服务；nil 时 Messages（Anthropic 分组）回"暂不支持"。
+	AnthropicGateway *service.GatewayService
+	Concurrency      *service.ConcurrencyService
 	// Moderation 执行从节点上报的审核违规（累计、封号、通知）和命中过的输入名单（设计 3.4）；
 	// 判定在从节点。nil 表示没有这个功能。
 	Moderation *service.ContentModerationService
@@ -54,11 +56,12 @@ func NewFactory(d Deps) func(master.SelectEnv) master.Selector {
 }
 
 type selector struct {
-	deps     Deps
-	env      master.SelectEnv
-	admitter handler.OpenAIAccountAdmitter
-	helper   *handler.ConcurrencyHelper
-	now      func() time.Time
+	deps              Deps
+	env               master.SelectEnv
+	admitter          handler.OpenAIAccountAdmitter
+	anthropicAdmitter handler.AnthropicAccountAdmitter
+	helper            *handler.ConcurrencyHelper
+	now               func() time.Time
 
 	mu         sync.Mutex
 	requests   map[requestKey]*requestRecord
@@ -105,6 +108,9 @@ type requestRecord struct {
 	apiKeyID int64
 	// groupID 是这次请求现在用的分组（自动分组 Key 中途换组时跟着变）。
 	groupID int64
+	// sessionKey、stickyBound：Anthropic Messages 的会话键和请求开始时粘性会话绑定的账号（成功转发后刷新绑定用）。
+	sessionKey  string
+	stickyBound int64
 	// userRelease 放掉用户并发槽（请求结束时）。
 	userRelease func()
 	// pricingCtx 带着本请求固定的计价时间和利润门（不带取消），每次选号在它上面挂上调用的取消。
@@ -148,17 +154,19 @@ type selectionRecord struct {
 func newSelector(d Deps, env master.SelectEnv) *selector {
 	helper := handler.NewConcurrencyHelper(d.Concurrency, "", 0)
 	s := &selector{
-		deps:       d,
-		env:        env,
-		admitter:   handler.OpenAIAccountAdmitter{Gateway: d.Gateway, Concurrency: helper},
-		helper:     helper,
-		now:        time.Now,
-		requests:   map[requestKey]*requestRecord{},
-		selections: map[string]*selectionRecord{},
-		delivered:  map[int64]map[int64]string{},
-		recent:     map[nodeAccount]recentUse{},
-		wsLeases:   map[string]wsLease{},
-		events:     make(chan queuedAccountEvent, accountEventQueue),
+		deps:     d,
+		env:      env,
+		admitter: handler.OpenAIAccountAdmitter{Gateway: d.Gateway, Concurrency: helper},
+		// Anthropic 的账号槽不按请求排队保活（从节点自己给客户端保活），与 OpenAI 一致。
+		anthropicAdmitter: handler.AnthropicAccountAdmitter{Gateway: d.AnthropicGateway, Concurrency: helper},
+		helper:            helper,
+		now:               time.Now,
+		requests:          map[requestKey]*requestRecord{},
+		selections:        map[string]*selectionRecord{},
+		delivered:         map[int64]map[int64]string{},
+		recent:            map[nodeAccount]recentUse{},
+		wsLeases:          map[string]wsLease{},
+		events:            make(chan queuedAccountEvent, accountEventQueue),
 	}
 	s.localReporter = d.Gateway.LocalAccountReporter
 	s.findCyberBlocked = d.Gateway.FindCyberSessionBlockedByLookup

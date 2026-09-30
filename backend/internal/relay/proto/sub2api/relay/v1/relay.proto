@@ -502,6 +502,10 @@ enum SelectEndpoint {
   // Responses WebSocket 的连接选号（第一次：建连；之后：连接内换号）。选中的账号绑定这条连接，
   // 每一轮用 BeginTurn 签凭证；回复不带凭证。拒绝按 WebSocket 关闭码（REJECTION_FORMAT_WS_CLOSE）。
   SELECT_ENDPOINT_OPENAI_RESPONSES_WS = 4;
+  // Anthropic Messages（GatewayHandler.Messages 的主循环：Anthropic 分组的 /v1/messages）。选号与准入一次只做一轮
+  // （handler.AnthropicAccountAdmitter）：换号状态（已失败的账号、利润否决次数、选号耗尽后的退避）在从节点的
+  // 处理函数里，与单机同一段代码；主节点按从节点带来的已排除账号选，不累计。
+  SELECT_ENDPOINT_ANTHROPIC_MESSAGES = 5;
 }
 
 message AdmitRequest {
@@ -650,6 +654,11 @@ message SelectRequest {
   // 自动分组 Key 这次请求开始时的分组（中途换过组时与 auto_group_id 不同）。本地在请求开头按它做的检查
   // （previous_response_id 归属、分组是否允许生图、是否允许 /v1/messages 派发）换组后不再重做，主节点同样按它做。
   int64 auto_group_start_id = 27;
+  // Anthropic Messages：请求体里的 metadata.user_id（选号时的会话数限制按它识别会话）。
+  string metadata_user_id = 28;
+  // Anthropic Messages：从节点按请求体算好的预热拦截类型（handler.InterceptType；0 不拦）。选到开了拦截的账号时
+  // 主节点不准入，回 REJECTION_FORMAT_INTERCEPTED，从节点照本地写模拟响应。
+  int32 intercept_type = 29;
 }
 
 // cyber 会话屏蔽的查询键（都已哈希）。
@@ -690,6 +699,11 @@ enum RejectionFormat {
   REJECTION_FORMAT_UNSUPPORTED = 4;
   // 关闭 WebSocket 连接：status 是关闭码，message 是原因；cyber_block_key 非空时先按 cyber 屏蔽写错误帧。
   REJECTION_FORMAT_WS_CLOSE = 5;
+  // Anthropic Messages：选到的账号开了预热拦截，这个请求要拦（intercept_type）；槽位已放，从节点写模拟响应。
+  REJECTION_FORMAT_INTERCEPTED = 6;
+  // Anthropic Messages：拿到槽位后利润终检否决（vetoed_account_id），槽位和会话注册已放。从节点照本地记一次否决
+  // （FailoverState.RecordProfitVeto），没到上限就排除这个账号再选。
+  REJECTION_FORMAT_PROFIT_VETOED = 7;
 }
 
 message SelectRejection {
@@ -719,6 +733,10 @@ message SelectRejection {
   // 自动分组 Key：这是本地会换到下一个候选分组再试的失败（选不出账号、换号用完）。从节点先问 SwitchAutoGroup，
   // 换成了就接着选号，没换成再按这个拒绝写。
   bool auto_group_failover = 15;
+  // REJECTION_FORMAT_INTERCEPTED：拦截类型。
+  int32 intercept_type = 16;
+  // REJECTION_FORMAT_PROFIT_VETOED：被否决的账号。
+  int64 vetoed_account_id = 17;
 }
 
 message Selection {
@@ -755,6 +773,9 @@ message Selection {
   // WebSocket 连接选号：previous_response_id 命中了这个分组里的粘连账号（没命中时从节点剥掉首帧的
   // previous_response_id）。
   bool sticky_previous_hit = 21;
+  // Anthropic Messages：这次请求开始时粘性会话绑定的账号（0 没有）。从节点据此判断"有绑定的会话"（换号时按本地规则
+  // 强制按缓存计费）；成功转发后是否刷新绑定由主节点在释放时按同一条件决定。
+  int64 sticky_bound_account_id = 22;
 }
 
 message FetchCredentialsRequest {

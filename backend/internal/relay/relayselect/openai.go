@@ -5,7 +5,9 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/relay/keycodec"
@@ -25,6 +27,7 @@ func (s *selector) Select(ctx context.Context, nodeID int64, req *relayv1.Select
 		relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_MESSAGES:
 	case relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_RESPONSES_WS:
 		ws = true
+	case relayv1.SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_MESSAGES:
 	default:
 		return unsupported(), nil
 	}
@@ -33,9 +36,12 @@ func (s *selector) Select(ctx context.Context, nodeID int64, req *relayv1.Select
 	}
 	var resp *relayv1.SelectResponse
 	var err error
-	if ws {
+	switch {
+	case ws:
 		resp, err = s.selectOpenAIWS(ctx, nodeID, req)
-	} else {
+	case req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_MESSAGES:
+		resp, err = s.selectAnthropic(ctx, nodeID, req)
+	default:
 		resp, err = s.selectOpenAI(ctx, nodeID, req)
 	}
 	if err == nil && ctx.Err() != nil && resp.GetSelection() == nil {
@@ -151,7 +157,7 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 		}
 	}()
 	if first {
-		if rej := s.startRequest(ctx, record, req, adm, quotaReq, !chat, messages); rej != nil {
+		if rej := s.startRequest(ctx, record, req, adm, quotaReq, !chat, messages, nil); rej != nil {
 			return rej, nil
 		}
 		record.groupID = groupID
@@ -254,7 +260,7 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 // Admit 准入（设计 3.2）：中间件链的检查，不含分组模型白名单（从节点用快照里的分组在本地跑那个中间件，
 // 保持与单机相同的检查顺序；选号时这里再按请求里的模型名查一遍）。
 func (s *selector) Admit(ctx context.Context, nodeID int64, req *relayv1.AdmitRequest) (*relayv1.AdmitResponse, error) {
-	adm, rej, err := s.admitAPIKey(ctx, req.GetApiKey(), req.GetClientIp(), req.GetMethod(), req.GetPath(), nil, autoGroupChoice{coldStart: true})
+	adm, rej, err := s.admitAPIKey(ctx, req.GetApiKey(), req.GetClientIp(), req.GetMethod(), req.GetPath(), nil, autoGroupChoice{coldStart: true}, relayServedPlatforms...)
 	if err != nil {
 		return nil, err
 	}
@@ -315,7 +321,8 @@ func (s *selector) resolveAutoGroup(choice autoGroupChoice) func(context.Context
 
 // admitAPIKey 按本地网关中间件链复查 Key（EvaluateRelayAPIKeyAdmission），再挡掉还不能经从节点处理的分组。
 // 被拒时返回拒绝回复。
-func (s *selector) admitAPIKey(ctx context.Context, rawKey, clientIP, method, path string, models []string, auto autoGroupChoice) (middleware.RelayAPIKeyAdmission, *relayv1.SelectResponse, error) {
+// served 是这次允许的分组平台（不传时是 OpenAI 入口能接的 OpenAI、组合平台）；分组不在其中时回"暂不支持"。
+func (s *selector) admitAPIKey(ctx context.Context, rawKey, clientIP, method, path string, models []string, auto autoGroupChoice, served ...string) (middleware.RelayAPIKeyAdmission, *relayv1.SelectResponse, error) {
 	adm, raw, err := middleware.EvaluateRelayAPIKeyAdmission(ctx, middleware.RelayAPIKeyAdmissionInput{
 		APIKeyAuthInput: middleware.APIKeyAuthInput{
 			APIKeys: s.deps.APIKeys, Subscriptions: s.deps.Subscriptions, Config: s.deps.Config,
@@ -338,17 +345,31 @@ func (s *selector) admitAPIKey(ctx context.Context, rawKey, clientIP, method, pa
 	if auto.coldStart && adm.APIKey.AutoGroup {
 		return adm, nil, nil
 	}
-	if g := adm.APIKey.Group; g == nil || (g.Platform != service.PlatformOpenAI && g.Platform != service.PlatformComposite) {
-		// 未分组 Key 走 Anthropic 网关，其他 OpenAI 兼容平台（Grok 等）还没接入。
+	if len(served) == 0 {
+		served = openAIServedPlatforms
+	}
+	if g := adm.APIKey.Group; g == nil || !slices.Contains(served, g.Platform) {
+		// 未分组 Key 走 Anthropic 网关（还没接入），其他 OpenAI 兼容平台（Grok 等）还没接入。
 		return adm, unsupported(), nil
 	}
 	return adm, nil, nil
 }
 
+var (
+	// openAIServedPlatforms 是 OpenAI 入口经从节点能接的分组平台。
+	openAIServedPlatforms = []string{service.PlatformOpenAI, service.PlatformComposite}
+	// anthropicServedPlatforms 是 Anthropic Messages 入口经从节点能接的分组平台。
+	anthropicServedPlatforms = []string{service.PlatformAnthropic}
+	// relayServedPlatforms 是准入、定走向时放行的分组平台（哪个入口接由从节点的路由按分组平台再分）。
+	relayServedPlatforms = []string{service.PlatformOpenAI, service.PlatformComposite, service.PlatformAnthropic}
+)
+
 // startRequest 是一次请求的第一次选号时做的：用户并发槽、计费资格、（cyberAfterBilling 时）cyber 会话屏蔽、
 // 计价上下文。被拒时返回拒绝（调用方放掉用户槽）。
-// anthropicBilling：计费资格的拒绝按 Anthropic 格式写（Messages 入口）。
-func (s *selector) startRequest(ctx context.Context, record *requestRecord, req *relayv1.SelectRequest, adm middleware.RelayAPIKeyAdmission, quotaReq service.QuotaRequest, cyberAfterBilling, anthropicBilling bool) *relayv1.SelectResponse {
+// anthropicBilling：计费资格的拒绝按 Anthropic 格式写（Messages 入口）。pricing 定计价上下文（nil 时按 OpenAI 的）。
+func (s *selector) startRequest(ctx context.Context, record *requestRecord, req *relayv1.SelectRequest, adm middleware.RelayAPIKeyAdmission, quotaReq service.QuotaRequest, cyberAfterBilling, anthropicBilling bool,
+	pricing func(context.Context, *int64) (context.Context, time.Time),
+) *relayv1.SelectResponse {
 	apiKey := adm.APIKey
 	record.userID, record.apiKeyID = apiKey.User.ID, apiKey.ID
 	release, err := s.helper.AcquireUserSlotWithWaitNoGin(ctx, apiKey.User.ID, apiKey.ID, apiKey.User.Concurrency)
@@ -365,7 +386,10 @@ func (s *selector) startRequest(ctx context.Context, record *requestRecord, req 
 			return rej
 		}
 	}
-	pricingCtx, pricingAt := s.deps.Gateway.WithOpenAIRequestPricingContext(context.WithoutCancel(ctx), apiKey.GroupID)
+	if pricing == nil {
+		pricing = s.deps.Gateway.WithOpenAIRequestPricingContext
+	}
+	pricingCtx, pricingAt := pricing(context.WithoutCancel(ctx), apiKey.GroupID)
 	record.pricingCtx, record.pricingAt = pricingCtx, pricingAt
 	return nil
 }

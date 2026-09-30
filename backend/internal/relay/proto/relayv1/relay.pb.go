@@ -215,6 +215,10 @@ const (
 	// Responses WebSocket 的连接选号（第一次：建连；之后：连接内换号）。选中的账号绑定这条连接，
 	// 每一轮用 BeginTurn 签凭证；回复不带凭证。拒绝按 WebSocket 关闭码（REJECTION_FORMAT_WS_CLOSE）。
 	SelectEndpoint_SELECT_ENDPOINT_OPENAI_RESPONSES_WS SelectEndpoint = 4
+	// Anthropic Messages（GatewayHandler.Messages 的主循环：Anthropic 分组的 /v1/messages）。选号与准入一次只做一轮
+	// （handler.AnthropicAccountAdmitter）：换号状态（已失败的账号、利润否决次数、选号耗尽后的退避）在从节点的
+	// 处理函数里，与单机同一段代码；主节点按从节点带来的已排除账号选，不累计。
+	SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_MESSAGES SelectEndpoint = 5
 )
 
 // Enum value maps for SelectEndpoint.
@@ -225,6 +229,7 @@ var (
 		2: "SELECT_ENDPOINT_OPENAI_CHAT",
 		3: "SELECT_ENDPOINT_OPENAI_MESSAGES",
 		4: "SELECT_ENDPOINT_OPENAI_RESPONSES_WS",
+		5: "SELECT_ENDPOINT_ANTHROPIC_MESSAGES",
 	}
 	SelectEndpoint_value = map[string]int32{
 		"SELECT_ENDPOINT_UNSPECIFIED":         0,
@@ -232,6 +237,7 @@ var (
 		"SELECT_ENDPOINT_OPENAI_CHAT":         2,
 		"SELECT_ENDPOINT_OPENAI_MESSAGES":     3,
 		"SELECT_ENDPOINT_OPENAI_RESPONSES_WS": 4,
+		"SELECT_ENDPOINT_ANTHROPIC_MESSAGES":  5,
 	}
 )
 
@@ -279,6 +285,11 @@ const (
 	RejectionFormat_REJECTION_FORMAT_UNSUPPORTED RejectionFormat = 4
 	// 关闭 WebSocket 连接：status 是关闭码，message 是原因；cyber_block_key 非空时先按 cyber 屏蔽写错误帧。
 	RejectionFormat_REJECTION_FORMAT_WS_CLOSE RejectionFormat = 5
+	// Anthropic Messages：选到的账号开了预热拦截，这个请求要拦（intercept_type）；槽位已放，从节点写模拟响应。
+	RejectionFormat_REJECTION_FORMAT_INTERCEPTED RejectionFormat = 6
+	// Anthropic Messages：拿到槽位后利润终检否决（vetoed_account_id），槽位和会话注册已放。从节点照本地记一次否决
+	// （FailoverState.RecordProfitVeto），没到上限就排除这个账号再选。
+	RejectionFormat_REJECTION_FORMAT_PROFIT_VETOED RejectionFormat = 7
 )
 
 // Enum value maps for RejectionFormat.
@@ -290,6 +301,8 @@ var (
 		3: "REJECTION_FORMAT_FAILOVER_EXHAUSTED",
 		4: "REJECTION_FORMAT_UNSUPPORTED",
 		5: "REJECTION_FORMAT_WS_CLOSE",
+		6: "REJECTION_FORMAT_INTERCEPTED",
+		7: "REJECTION_FORMAT_PROFIT_VETOED",
 	}
 	RejectionFormat_value = map[string]int32{
 		"REJECTION_FORMAT_UNSPECIFIED":        0,
@@ -298,6 +311,8 @@ var (
 		"REJECTION_FORMAT_FAILOVER_EXHAUSTED": 3,
 		"REJECTION_FORMAT_UNSUPPORTED":        4,
 		"REJECTION_FORMAT_WS_CLOSE":           5,
+		"REJECTION_FORMAT_INTERCEPTED":        6,
+		"REJECTION_FORMAT_PROFIT_VETOED":      7,
 	}
 )
 
@@ -4121,8 +4136,13 @@ type SelectRequest struct {
 	// 自动分组 Key 这次请求开始时的分组（中途换过组时与 auto_group_id 不同）。本地在请求开头按它做的检查
 	// （previous_response_id 归属、分组是否允许生图、是否允许 /v1/messages 派发）换组后不再重做，主节点同样按它做。
 	AutoGroupStartId int64 `protobuf:"varint,27,opt,name=auto_group_start_id,json=autoGroupStartId,proto3" json:"auto_group_start_id,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Anthropic Messages：请求体里的 metadata.user_id（选号时的会话数限制按它识别会话）。
+	MetadataUserId string `protobuf:"bytes,28,opt,name=metadata_user_id,json=metadataUserId,proto3" json:"metadata_user_id,omitempty"`
+	// Anthropic Messages：从节点按请求体算好的预热拦截类型（handler.InterceptType；0 不拦）。选到开了拦截的账号时
+	// 主节点不准入，回 REJECTION_FORMAT_INTERCEPTED，从节点照本地写模拟响应。
+	InterceptType int32 `protobuf:"varint,29,opt,name=intercept_type,json=interceptType,proto3" json:"intercept_type,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SelectRequest) Reset() {
@@ -4349,6 +4369,20 @@ func (x *SelectRequest) GetAutoGroupId() int64 {
 func (x *SelectRequest) GetAutoGroupStartId() int64 {
 	if x != nil {
 		return x.AutoGroupStartId
+	}
+	return 0
+}
+
+func (x *SelectRequest) GetMetadataUserId() string {
+	if x != nil {
+		return x.MetadataUserId
+	}
+	return ""
+}
+
+func (x *SelectRequest) GetInterceptType() int32 {
+	if x != nil {
+		return x.InterceptType
 	}
 	return 0
 }
@@ -4604,8 +4638,12 @@ type SelectRejection struct {
 	// 自动分组 Key：这是本地会换到下一个候选分组再试的失败（选不出账号、换号用完）。从节点先问 SwitchAutoGroup，
 	// 换成了就接着选号，没换成再按这个拒绝写。
 	AutoGroupFailover bool `protobuf:"varint,15,opt,name=auto_group_failover,json=autoGroupFailover,proto3" json:"auto_group_failover,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// REJECTION_FORMAT_INTERCEPTED：拦截类型。
+	InterceptType int32 `protobuf:"varint,16,opt,name=intercept_type,json=interceptType,proto3" json:"intercept_type,omitempty"`
+	// REJECTION_FORMAT_PROFIT_VETOED：被否决的账号。
+	VetoedAccountId int64 `protobuf:"varint,17,opt,name=vetoed_account_id,json=vetoedAccountId,proto3" json:"vetoed_account_id,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *SelectRejection) Reset() {
@@ -4743,6 +4781,20 @@ func (x *SelectRejection) GetAutoGroupFailover() bool {
 	return false
 }
 
+func (x *SelectRejection) GetInterceptType() int32 {
+	if x != nil {
+		return x.InterceptType
+	}
+	return 0
+}
+
+func (x *SelectRejection) GetVetoedAccountId() int64 {
+	if x != nil {
+		return x.VetoedAccountId
+	}
+	return 0
+}
+
 type Selection struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// 主节点起的选号 ID：释放、取凭据、补额度都按它。
@@ -4778,8 +4830,11 @@ type Selection struct {
 	// WebSocket 连接选号：previous_response_id 命中了这个分组里的粘连账号（没命中时从节点剥掉首帧的
 	// previous_response_id）。
 	StickyPreviousHit bool `protobuf:"varint,21,opt,name=sticky_previous_hit,json=stickyPreviousHit,proto3" json:"sticky_previous_hit,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// Anthropic Messages：这次请求开始时粘性会话绑定的账号（0 没有）。从节点据此判断"有绑定的会话"（换号时按本地规则
+	// 强制按缓存计费）；成功转发后是否刷新绑定由主节点在释放时按同一条件决定。
+	StickyBoundAccountId int64 `protobuf:"varint,22,opt,name=sticky_bound_account_id,json=stickyBoundAccountId,proto3" json:"sticky_bound_account_id,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *Selection) Reset() {
@@ -4957,6 +5012,13 @@ func (x *Selection) GetStickyPreviousHit() bool {
 		return x.StickyPreviousHit
 	}
 	return false
+}
+
+func (x *Selection) GetStickyBoundAccountId() int64 {
+	if x != nil {
+		return x.StickyBoundAccountId
+	}
+	return 0
 }
 
 type FetchCredentialsRequest struct {
@@ -8198,7 +8260,7 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x06status\x18\x04 \x01(\x05R\x06status\x12+\n" +
 	"\x12has_first_token_ms\x18\x05 \x01(\bR\x0fhasFirstTokenMs\x12$\n" +
 	"\x0efirst_token_ms\x18\x06 \x01(\x03R\ffirstTokenMs\"\x14\n" +
-	"\x12AutoGroupResultAck\"\xff\b\n" +
+	"\x12AutoGroupResultAck\"\xd0\t\n" +
 	"\rSelectRequest\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x18\n" +
@@ -8231,7 +8293,9 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\vroute_model\x18\x19 \x01(\tR\n" +
 	"routeModel\x12\"\n" +
 	"\rauto_group_id\x18\x1a \x01(\x03R\vautoGroupId\x12-\n" +
-	"\x13auto_group_start_id\x18\x1b \x01(\x03R\x10autoGroupStartIdB\f\n" +
+	"\x13auto_group_start_id\x18\x1b \x01(\x03R\x10autoGroupStartId\x12(\n" +
+	"\x10metadata_user_id\x18\x1c \x01(\tR\x0emetadataUserId\x12%\n" +
+	"\x0eintercept_type\x18\x1d \x01(\x05R\rinterceptTypeB\f\n" +
 	"\n" +
 	"credential\"\xdf\x01\n" +
 	"\x12CyberSessionLookup\x12!\n" +
@@ -8246,7 +8310,7 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x0eSelectResponse\x12;\n" +
 	"\tselection\x18\x01 \x01(\v2\x1b.sub2api.relay.v1.SelectionH\x00R\tselection\x12A\n" +
 	"\trejection\x18\x02 \x01(\v2!.sub2api.relay.v1.SelectRejectionH\x00R\trejectionB\b\n" +
-	"\x06result\"\xe6\x05\n" +
+	"\x06result\"\xb9\x06\n" +
 	"\x0fSelectRejection\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\x05R\x06status\x12\x1d\n" +
 	"\n" +
@@ -8264,10 +8328,12 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x04body\x18\f \x01(\fR\x04body\x129\n" +
 	"\x18continuation_unsupported\x18\r \x01(\bR\x17continuationUnsupported\x12)\n" +
 	"\x10anthropic_format\x18\x0e \x01(\bR\x0fanthropicFormat\x12.\n" +
-	"\x13auto_group_failover\x18\x0f \x01(\bR\x11autoGroupFailover\x1a:\n" +
+	"\x13auto_group_failover\x18\x0f \x01(\bR\x11autoGroupFailover\x12%\n" +
+	"\x0eintercept_type\x18\x10 \x01(\x05R\rinterceptType\x12*\n" +
+	"\x11vetoed_account_id\x18\x11 \x01(\x03R\x0fvetoedAccountId\x1a:\n" +
 	"\fHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xa7\a\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xde\a\n" +
 	"\tSelection\x12!\n" +
 	"\fselection_id\x18\x01 \x01(\tR\vselectionId\x12\x17\n" +
 	"\auser_id\x18\x02 \x01(\x03R\x06userId\x12\x1c\n" +
@@ -8293,7 +8359,8 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x0econfig_version\x18\x12 \x01(\tR\rconfigVersion\x12+\n" +
 	"\x12pricing_at_unix_ms\x18\x13 \x01(\x03R\x0fpricingAtUnixMs\x12N\n" +
 	"\x11credential_parent\x18\x14 \x01(\v2!.sub2api.relay.v1.AccountSnapshotR\x10credentialParent\x12.\n" +
-	"\x13sticky_previous_hit\x18\x15 \x01(\bR\x11stickyPreviousHit\"<\n" +
+	"\x13sticky_previous_hit\x18\x15 \x01(\bR\x11stickyPreviousHit\x125\n" +
+	"\x17sticky_bound_account_id\x18\x16 \x01(\x03R\x14stickyBoundAccountId\"<\n" +
 	"\x17FetchCredentialsRequest\x12!\n" +
 	"\fselection_id\x18\x01 \x01(\tR\vselectionId\"\xa7\x01\n" +
 	"\x18FetchCredentialsResponse\x12;\n" +
@@ -8547,20 +8614,23 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\vBillingMode\x12\x1c\n" +
 	"\x18BILLING_MODE_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14BILLING_MODE_BALANCE\x10\x01\x12\x1d\n" +
-	"\x19BILLING_MODE_SUBSCRIPTION\x10\x02*\xc6\x01\n" +
+	"\x19BILLING_MODE_SUBSCRIPTION\x10\x02*\xee\x01\n" +
 	"\x0eSelectEndpoint\x12\x1f\n" +
 	"\x1bSELECT_ENDPOINT_UNSPECIFIED\x10\x00\x12$\n" +
 	" SELECT_ENDPOINT_OPENAI_RESPONSES\x10\x01\x12\x1f\n" +
 	"\x1bSELECT_ENDPOINT_OPENAI_CHAT\x10\x02\x12#\n" +
 	"\x1fSELECT_ENDPOINT_OPENAI_MESSAGES\x10\x03\x12'\n" +
-	"#SELECT_ENDPOINT_OPENAI_RESPONSES_WS\x10\x04*\xd5\x01\n" +
+	"#SELECT_ENDPOINT_OPENAI_RESPONSES_WS\x10\x04\x12&\n" +
+	"\"SELECT_ENDPOINT_ANTHROPIC_MESSAGES\x10\x05*\x9b\x02\n" +
 	"\x0fRejectionFormat\x12 \n" +
 	"\x1cREJECTION_FORMAT_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18REJECTION_FORMAT_GATEWAY\x10\x01\x12\x18\n" +
 	"\x14REJECTION_FORMAT_RAW\x10\x02\x12'\n" +
 	"#REJECTION_FORMAT_FAILOVER_EXHAUSTED\x10\x03\x12 \n" +
 	"\x1cREJECTION_FORMAT_UNSUPPORTED\x10\x04\x12\x1d\n" +
-	"\x19REJECTION_FORMAT_WS_CLOSE\x10\x05*\xf4\x01\n" +
+	"\x19REJECTION_FORMAT_WS_CLOSE\x10\x05\x12 \n" +
+	"\x1cREJECTION_FORMAT_INTERCEPTED\x10\x06\x12\"\n" +
+	"\x1eREJECTION_FORMAT_PROFIT_VETOED\x10\a*\xf4\x01\n" +
 	"\x11UpstreamErrorKind\x12#\n" +
 	"\x1fUPSTREAM_ERROR_KIND_UNSPECIFIED\x10\x00\x12 \n" +
 	"\x1cUPSTREAM_ERROR_KIND_RESPONSE\x10\x01\x12&\n" +

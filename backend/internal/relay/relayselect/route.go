@@ -30,7 +30,7 @@ func compositeServedByNode(apiKey *service.APIKey, decision service.CompositeRou
 // 只核对），组合平台分组按模型选目标。
 func (s *selector) ResolveRoute(ctx context.Context, nodeID int64, req *relayv1.ResolveRouteRequest) (*relayv1.ResolveRouteResponse, error) {
 	adm, rej, err := s.admitAPIKey(ctx, req.GetApiKey(), req.GetClientIp(), req.GetMethod(), req.GetPath(), nil,
-		autoGroupChoice{pinned: req.GetAutoGroupId(), model: req.GetModel()})
+		autoGroupChoice{pinned: req.GetAutoGroupId(), model: req.GetModel()}, relayServedPlatforms...)
 	if err != nil {
 		return nil, err
 	}
