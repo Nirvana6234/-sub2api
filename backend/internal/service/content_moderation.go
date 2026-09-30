@@ -565,6 +565,8 @@ type ContentModerationService struct {
 	runtimeRefreshRetryAt    atomic.Int64
 	keyHealthMu              sync.Mutex
 	keyHealth                map[string]*contentModerationKeyHealth
+	// contentModerationAccountActionsSlot：命中后的账号动作；从节点装远程实现（content_moderation_account_actions.go）。
+	contentModerationAccountActionsSlot
 }
 
 type contentModerationRuntimeSnapshot struct {
@@ -1976,10 +1978,10 @@ func (s *ContentModerationService) persistContentModerationLog(ctx context.Conte
 			slog.Warn("content_moderation.record_hash_failed", "user_id", contentModerationEmailUserID(log), "endpoint", log.Endpoint, "error", err)
 		}
 	}
-	autoBanJustApplied := false
 	if applySideEffects {
-		autoBanJustApplied = s.applyFlaggedAccountSideEffects(ctx, cfg, log)
-		s.sendFlaggedNotificationSideEffects(ctx, cfg, log, autoBanJustApplied)
+		actions := s.accountActions()
+		autoBanJustApplied := actions.Apply(ctx, cfg, log)
+		log.EmailSent = actions.Notify(ctx, cfg, log, autoBanJustApplied, false)
 	}
 	if s.repo != nil {
 		if err := s.repo.CreateLog(ctx, log); err != nil {
@@ -2029,12 +2031,12 @@ func (s *ContentModerationService) applyFlaggedAccountSideEffects(ctx context.Co
 	return autoBanJustApplied
 }
 
-func (s *ContentModerationService) sendFlaggedNotificationSideEffects(ctx context.Context, cfg *ContentModerationConfig, log *ContentModerationLog, autoBanJustApplied bool) {
+func (s *ContentModerationService) sendFlaggedNotificationSideEffects(ctx context.Context, cfg *ContentModerationConfig, log *ContentModerationLog, autoBanJustApplied bool) bool {
 	if s == nil || cfg == nil || log == nil || !log.Flagged {
-		return
+		return false
 	}
 	if s.emailService == nil || strings.TrimSpace(log.UserEmail) == "" {
-		return
+		return false
 	}
 	emailSent := false
 	if cfg.EmailOnHit {
@@ -2051,7 +2053,7 @@ func (s *ContentModerationService) sendFlaggedNotificationSideEffects(ctx contex
 			emailSent = true
 		}
 	}
-	log.EmailSent = emailSent
+	return emailSent
 }
 
 func (s *ContentModerationService) sendViolationEmail(ctx context.Context, cfg *ContentModerationConfig, log *ContentModerationLog) error {
@@ -3123,9 +3125,10 @@ func (s *ContentModerationService) RecordCyberPolicyEvent(ctx context.Context, i
 	}
 	// 开关开时 cyber_policy 不参与封号计数：当次不判定（此处跳过），
 	// 历史行由 CountFlaggedByUserSince 的 excludeCyberPolicy 排除。
+	actions := s.accountActions()
 	autoBanned := false
 	if !cfg.CyberPolicyExcludeFromBanCount {
-		autoBanned = s.applyFlaggedAccountSideEffects(ctx, cfg, log)
+		autoBanned = actions.Apply(ctx, cfg, log)
 	}
 	log.EmailSent = false
 	logPersisted := true
@@ -3133,21 +3136,7 @@ func (s *ContentModerationService) RecordCyberPolicyEvent(ctx context.Context, i
 		logPersisted = false
 		slog.Warn("content_moderation.cyber_create_log_failed", "user_id", in.UserID, "error", err)
 	}
-	emailSent := false
-	if s.emailService != nil && strings.TrimSpace(log.UserEmail) != "" {
-		if err := s.sendCyberPolicyEmail(ctx, log); err != nil {
-			slog.Warn("content_moderation.cyber_email_failed", "user_id", in.UserID, "error", err)
-		} else {
-			emailSent = true
-		}
-		if autoBanned {
-			if err := s.sendAccountDisabledEmail(ctx, cfg, log); err != nil {
-				slog.Warn("content_moderation.cyber_ban_email_failed", "user_id", in.UserID, "error", err)
-			} else {
-				emailSent = true
-			}
-		}
-	}
+	emailSent := actions.Notify(ctx, cfg, log, autoBanned, true)
 	if logPersisted && emailSent {
 		if err := s.repo.UpdateLogEmailSent(ctx, log.ID, true); err != nil {
 			slog.Warn("content_moderation.cyber_update_email_sent_failed", "log_id", log.ID, "error", err)
