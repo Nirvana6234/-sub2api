@@ -252,6 +252,31 @@ func TestNodeForwardsAnthropicOAuthWithTheMastersIdentity(t *testing.T) {
 	e.world.waitReleased(t)
 }
 
+// Vertex 服务账号经从节点：服务账号文件不下发，主节点换好的 token 和只写在文件里的项目随凭据下发，从节点照本地转发。
+func TestNodeForwardsAnthropicVertexServiceAccounts(t *testing.T) {
+	e := startE2EWith(t, func(string) []service.Account {
+		a := anthropicAccount(1, "vertex", service.AccountTypeServiceAccount)
+		a.Credentials = map[string]any{
+			"service_account_json": `{"type":"service_account","client_email":"relay@proj.iam.gserviceaccount.com",` +
+				`"private_key":"SECRET-PRIVATE-KEY","private_key_id":"k1","project_id":"proj-from-file"}`,
+			"location": "us-east5",
+		}
+		return []service.Account{a}
+	})
+
+	status, body := e.post(t, "/v1/messages", "sk-anthropic", `{"model":"claude-sonnet-4-5","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`)
+	require.Equal(t, http.StatusOK, status, body)
+	select {
+	case r := <-e.hits:
+		require.Equal(t, "Bearer SECRET-vertex-token", r.Header.Get("Authorization"), "the master's exchanged token")
+		require.Contains(t, r.URL.Path, "/projects/proj-from-file/locations/us-east5/publishers/anthropic/models/")
+	case <-time.After(5 * time.Second):
+		t.Fatal("upstream was not called")
+	}
+	require.Eventually(t, func() bool { return len(e.settler.records()) == 1 }, 5*time.Second, 20*time.Millisecond)
+	e.world.waitReleased(t)
+}
+
 // count_tokens 经从节点：主节点查计费资格、按模型选账号（不占槽），从节点直连上游；不计费，没有扣费记录。
 func TestNodeServesAnthropicCountTokens(t *testing.T) {
 	e := startE2EWith(t, func(upstream string) []service.Account {

@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -311,7 +312,8 @@ func newWorldOn(t *testing.T, cfg *config.Config, balance float64, nodeID int64,
 
 	identity := &memIdentity{fingerprints: map[int64]*service.Fingerprint{}, masked: map[int64]string{}}
 	anthropicGateway := service.NewGatewayService(fakeAccounts{accounts: accounts}, nil, nil, nil, nil, nil, nil, gatewayCache, cfg,
-		nil, concurrency, nil, nil, billing, service.NewIdentityService(identity), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+		nil, concurrency, nil, nil, billing, service.NewIdentityService(identity), nil, nil,
+		service.NewClaudeTokenProvider(nil, seededTokens{}, nil), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	sel := newSelector(Deps{
 		Config: cfg, APIKeys: service.NewAPIKeyService(keys, nil, nil, nil, nil, nil, cfg),
@@ -1046,3 +1048,21 @@ func (m *memIdentity) SetMaskedSessionID(_ context.Context, id int64, sessionID 
 	m.maskedSets++
 	return nil
 }
+
+// seededTokens 是主节点的 token 缓存：Vertex 服务账号的 token 已经换好（测试不去访问 Google）。
+type seededTokens struct{}
+
+func (seededTokens) GetAccessToken(_ context.Context, key string) (string, error) {
+	if strings.HasPrefix(key, "vertex:service_account:") {
+		return "SECRET-vertex-token", nil
+	}
+	return "", nil
+}
+func (seededTokens) SetAccessToken(context.Context, string, string, time.Duration) error {
+	return nil
+}
+func (seededTokens) DeleteAccessToken(context.Context, string) error { return nil }
+func (seededTokens) AcquireRefreshLock(context.Context, string, time.Duration) (bool, error) {
+	return true, nil
+}
+func (seededTokens) ReleaseRefreshLock(context.Context, string) error { return nil }

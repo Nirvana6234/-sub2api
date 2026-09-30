@@ -386,8 +386,15 @@ func (s *selector) encodeAccount(ctx context.Context, nodeID int64, account *ser
 		if err != nil {
 			return nil, err
 		}
+		overrides = map[string]any{}
 		if token != "" {
-			overrides = map[string]any{"access_token": token}
+			overrides["access_token"] = token
+		}
+		if account.Type == service.AccountTypeServiceAccount {
+			// Vertex 的项目可能只写在服务账号文件里（不下发）：取出来随凭据下发。
+			if project := account.VertexProjectID(); project != "" {
+				overrides["project_id"] = project
+			}
 		}
 	case account.Type == service.AccountTypeOAuth:
 		token, _, err := s.deps.Gateway.GetAccessToken(ctx, account)

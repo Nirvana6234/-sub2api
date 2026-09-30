@@ -145,6 +145,13 @@ func startE2EWithConfig(t *testing.T, configure func(*config.Config), accounts f
 			_, _ = io.WriteString(w, `{"error":{"code":"cyber_policy","message":"blocked by policy","type":"invalid_request_error"}}`)
 			return
 		}
+		if strings.Contains(r.URL.Path, "/publishers/anthropic/models/") {
+			// Vertex 上的 Anthropic 模型（服务账号）。
+			_, _ = io.WriteString(w, `{"id":"msg_vertex","type":"message","role":"assistant","model":"claude-sonnet-4-5",`+
+				`"content":[{"type":"text","text":"hello"}],"stop_reason":"end_turn","stop_sequence":null,`+
+				`"usage":{"input_tokens":5,"output_tokens":3}}`)
+			return
+		}
 		if strings.HasSuffix(r.URL.Path, "/v1/messages/count_tokens") {
 			_, _ = io.WriteString(w, `{"input_tokens":7}`)
 			return
