@@ -298,6 +298,12 @@ func (s *selector) release(nodeID int64, rel *relayv1.SelectionRelease) {
 		s.endTurn(nodeID, rel)
 		return
 	}
+	if rel.GetSelectionId() == "" {
+		if rel.GetRequestDone() && rel.GetRequestId() != "" {
+			s.endRequest(nodeID, rel.GetRequestId())
+		}
+		return
+	}
 	sel := s.takeSelection(nodeID, rel.GetSelectionId())
 	if sel == nil {
 		// 已释放（重发）、不属于这台节点，或占用太久已被清理（槽早已放掉）。

@@ -149,6 +149,8 @@ type countingSlots struct {
 	service.ConcurrencyCache
 	held     atomic.Int64
 	accounts atomic.Int64
+	// userAcquires 是用户槽一共占过几次。
+	userAcquires atomic.Int64
 	// accountLimit 大于 0 时账号槽最多占这么多（测"账号忙"）。
 	accountLimit atomic.Int64
 
@@ -202,6 +204,7 @@ func (c *countingSlots) ReleaseAccountSlot(context.Context, int64, string) error
 }
 
 func (c *countingSlots) AcquireUserSlot(context.Context, int64, int, string) (bool, error) {
+	c.userAcquires.Add(1)
 	c.held.Add(1)
 	return true, nil
 }

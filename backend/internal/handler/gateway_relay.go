@@ -63,8 +63,11 @@ func (h *GatewayHandler) relayAnthropicSelect(
 	if a.MaxAccountSwitches > 0 {
 		fs.MaxSwitches = a.MaxAccountSwitches
 	}
-	// 有绑定的会话换号时强制按缓存计费（needForceCacheBilling）：绑定在主节点查。
-	fs.hasBoundSession = sessionKey != "" && a.StickyBoundAccountID > 0
+	// 有绑定的会话换号时强制按缓存计费（needForceCacheBilling）：绑定在主节点请求开始时查一次，这里也只取第一次的。
+	if !fs.relayStickyKnown {
+		fs.relayStickyKnown = true
+		fs.hasBoundSession = sessionKey != "" && a.StickyBoundAccountID > 0
+	}
 	return AnthropicSelectOutcome{Kind: AnthropicSelected, Account: a.Account, Release: func() { h.relay.AttemptDone(c, a) }, Ctx: ctx}, a, false
 }
 

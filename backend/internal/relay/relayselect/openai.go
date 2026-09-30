@@ -50,11 +50,25 @@ func (s *selector) Select(ctx context.Context, nodeID int64, req *relayv1.Select
 		// 从节点超时重发时重新判断。
 		return nil, ctx.Err()
 	}
-	if !ws && resp.GetRejection() != nil {
+	if !ws && resp.GetRejection() != nil && !requestContinues(resp.GetRejection()) {
 		// 拒绝了这次请求就到此为止（查到请求之后的拒绝已经放过了；这里补上之前就拒的）。
 		s.endRequest(nodeID, req.GetRequestId())
 	}
 	return resp, err
+}
+
+// requestContinues 报告这个拒绝之后从节点是否照本地接着这次请求选号（自动分组换组、Anthropic 的利润否决与
+// 选号耗尽后的重选）：这时请求记录（用户槽、计价时间、粘性会话起点）留着，由之后的选号或请求结束消息收尾。
+func requestContinues(r *relayv1.SelectRejection) bool {
+	switch {
+	case r.GetAutoGroupFailover():
+		return true
+	case r.GetFormat() == relayv1.RejectionFormat_REJECTION_FORMAT_PROFIT_VETOED:
+		return true
+	case r.GetFormat() == relayv1.RejectionFormat_REJECTION_FORMAT_FAILOVER_EXHAUSTED && r.GetAnthropicMessages():
+		return true
+	}
+	return false
 }
 
 // selectOpenAI 按本地处理函数的顺序做 OpenAI 的选号：
@@ -151,9 +165,11 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 	}
 	// 没有成功选出账号就结束这次请求（放掉用户槽）：与本地一致，被拒、出错、调用被取消时请求都到此为止。
 	// 从节点超时重发同一次选号时从头来过。
-	selected := false
+	// keep：这次没选出账号，但从节点照本地接着这次请求（自动分组换组后再选），请求记录（用户槽、计价时间）留着，
+	// 由之后的选号或请求结束消息收尾。
+	selected, keep := false, false
 	defer func() {
-		if !selected {
+		if !selected && !keep {
 			s.dropRequest(record)
 		}
 	}()
@@ -209,6 +225,7 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 			// 换号用完（本地：handleFailoverExhausted）。续链不支持是这次选号里刚记下的才算最后的错误。
 			// 自动分组 Key：本地这时换到下一个候选分组再试（从节点问 SwitchAutoGroup）。
 			continuation := record.state.LastFailoverErr != nil && record.state.LastFailoverErr != lastFailover
+			keep = apiKey.AutoGroup
 			return &relayv1.SelectResponse{Result: &relayv1.SelectResponse_Rejection{Rejection: &relayv1.SelectRejection{
 				Format: relayv1.RejectionFormat_REJECTION_FORMAT_FAILOVER_EXHAUSTED, ContinuationUnsupported: continuation,
 				AutoGroupFailover: apiKey.AutoGroup,
@@ -222,6 +239,7 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 		}
 		// 第一次就选不出账号（没有可用账号）：本地同样先换组再试。
 		rej.GetRejection().AutoGroupFailover = apiKey.AutoGroup && handler.IsAutoGroupSelectionFailoverError(outcome.Err)
+		keep = rej.GetRejection().GetAutoGroupFailover()
 		return rej, nil
 	case handler.OpenAISelectNone:
 		if messages {
@@ -460,9 +478,14 @@ func (s *selector) buildSelection(ctx context.Context, nodeID int64, req *relayv
 		mode = relayv1.BillingMode_BILLING_MODE_SUBSCRIPTION
 	}
 	allowed := allowedBillingModels(reqModel, forwardModel, sel.account)
+	// 用量行的"请求模型"与单机一样取客户端写的模型：组合平台分组是改写前的公开模型（clientRequestedModel）。
+	requested := reqModel
+	if public, ok := service.RequestedPublicModelFromContext(ctx); ok {
+		requested = public
+	}
 	voucher, _, err := s.env.IssueVoucher(&relayv1.Voucher{
 		NodeId: nodeID, SelectionId: sel.id, UserId: sel.userID, ApiKeyId: sel.apiKeyID, AccountId: sel.account.ID,
-		GroupId: sel.groupID, BillingMode: mode, RequestedModel: reqModel, AllowedBillingModels: allowed,
+		GroupId: sel.groupID, BillingMode: mode, RequestedModel: requested, AllowedBillingModels: allowed,
 		Quote:   &relayv1.Quote{},
 		Context: selectionContext(outcome, sel, mapping, subscription),
 	})

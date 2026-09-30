@@ -51,6 +51,9 @@ func TestSelectAnthropicMessages(t *testing.T) {
 	resp, err = w.sel.Select(ctx, testNode, exhausted)
 	require.NoError(t, err)
 	require.Equal(t, relayv1.RejectionFormat_REJECTION_FORMAT_FAILOVER_EXHAUSTED, resp.GetRejection().GetFormat())
+	// 从节点照本地可能退避后接着选：请求记录（用户槽）留着，直到请求结束消息。
+	require.EqualValues(t, 1, w.slots.held.Load())
+	w.sel.Release(testNode, &relayv1.SelectionRelease{RequestDone: true, RequestId: exhausted.GetRequestId()})
 	w.waitReleased(t)
 
 	// OpenAI 分组的 Key 不走这个入口。
@@ -93,4 +96,37 @@ func TestSelectAnthropicMessagesRejections(t *testing.T) {
 		require.Equal(t, relayv1.RejectionFormat_REJECTION_FORMAT_UNSUPPORTED, resp.GetRejection().GetFormat())
 		w.waitReleased(t)
 	})
+}
+
+// 同一次请求里选号耗尽后接着选（从节点照本地 HandleSelectionExhausted 退避后重选）：请求记录留着，用户槽只占一次，
+// 计价时间和粘性会话起点不变（与单机在整个请求里只算一次一致）。
+func TestSelectAnthropicKeepsTheRequestAcrossRetries(t *testing.T) {
+	ctx := context.Background()
+	cache := &countingSticky{bound: map[string]int64{}}
+	useGatewayCache(t, cache)
+	w := newWorld(t, config.RunModeStandard, anthropicAccount(1, "one", service.AccountTypeAPIKey))
+
+	first, err := w.sel.Select(ctx, testNode, anthropicMessagesRequest("k1", 1, "sk-anthropic"))
+	require.NoError(t, err)
+	sel := first.GetSelection()
+	require.NotNil(t, sel, "rejection: %+v", first.GetRejection())
+	require.Zero(t, sel.GetStickyBoundAccountId())
+	w.sel.Release(testNode, &relayv1.SelectionRelease{SelectionId: sel.GetSelectionId()})
+
+	// 选号时已经按本地的做法绑了粘性会话；请求开始时没有绑定，这一点不因为重选而变。
+	exhausted := anthropicMessagesRequest("k1", 2, "sk-anthropic")
+	exhausted.ExcludedAccountIds = []int64{1}
+	resp, err := w.sel.Select(ctx, testNode, exhausted)
+	require.NoError(t, err)
+	require.Equal(t, relayv1.RejectionFormat_REJECTION_FORMAT_FAILOVER_EXHAUSTED, resp.GetRejection().GetFormat())
+
+	again, err := w.sel.Select(ctx, testNode, anthropicMessagesRequest("k1", 3, "sk-anthropic"))
+	require.NoError(t, err)
+	sel2 := again.GetSelection()
+	require.NotNil(t, sel2, "rejection: %+v", again.GetRejection())
+	require.Zero(t, sel2.GetStickyBoundAccountId(), "the sticky starting point is taken once per request")
+	require.Equal(t, sel.GetPricingAtUnixMs(), sel2.GetPricingAtUnixMs(), "the pricing time is fixed at the start of the request")
+	require.EqualValues(t, 1, w.slots.userAcquires.Load(), "the user slot is taken once for the whole request")
+	w.sel.Release(testNode, &relayv1.SelectionRelease{SelectionId: sel2.GetSelectionId(), RequestDone: true})
+	w.waitReleased(t)
 }

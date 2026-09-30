@@ -167,3 +167,31 @@ func TestTempUnschedulableEventFromNode(t *testing.T) {
 	w.sel.Release(testNode, &relayv1.SelectionRelease{SelectionId: resp.GetSelection().GetSelectionId(), RequestDone: true})
 	w.waitReleased(t)
 }
+
+// 从节点上照本地的换号循环：第一个账号 429，换号（带上已失败的账号）后第二个账号成功；没有绑定的会话，不强制按缓存计费。
+func TestNodeAnthropicFailsOverToTheNextAccount(t *testing.T) {
+	e := startE2EWith(t, func(upstream string) []service.Account {
+		limited := anthropicAccount(1, "limited", service.AccountTypeAPIKey)
+		limited.Credentials["base_url"] = upstream + "/status-429"
+		limited.Priority = 1
+		fine := anthropicAccount(2, "fine", service.AccountTypeAPIKey)
+		fine.Credentials["base_url"] = upstream
+		fine.Priority = 5
+		return []service.Account{limited, fine}
+	})
+
+	status, body := e.post(t, "/v1/messages", "sk-anthropic", `{"model":"claude-sonnet-4-5","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`)
+	require.Equal(t, http.StatusOK, status, body)
+	require.Eventually(t, func() bool {
+		for _, rec := range e.settler.records() {
+			v, err := sign.VerifyVoucher(rec.GetVoucher(), e.world.pub, e.nodeID, time.Now())
+			if err == nil && v.GetAccountId() == 2 {
+				require.False(t, rec.GetForceCacheBilling())
+				return true
+			}
+		}
+		return false
+	}, 5*time.Second, 20*time.Millisecond, "served by the second account")
+	require.GreaterOrEqual(t, len(e.hits), 2, "the rate-limited account was tried first")
+	e.world.waitReleased(t)
+}

@@ -335,8 +335,13 @@ func (d *Dispatcher) flush(st *requestState, requestDone bool) {
 	st.mu.Lock()
 	a := st.current
 	st.current = nil
+	selected := st.attempt > 0
 	st.mu.Unlock()
 	if a == nil {
+		if requestDone && selected {
+			// 手里没有进行中的选号（最后一次选号被拒）：主节点可能为照本地接着选留着请求记录，按请求 ID 结束它。
+			d.deps.Select.Release(&relayv1.SelectionRelease{RequestDone: true, RequestId: st.id})
+		}
 		return
 	}
 	a.mu.Lock()

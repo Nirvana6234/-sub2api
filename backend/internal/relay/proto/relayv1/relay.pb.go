@@ -4646,8 +4646,11 @@ type SelectRejection struct {
 	InterceptType int32 `protobuf:"varint,16,opt,name=intercept_type,json=interceptType,proto3" json:"intercept_type,omitempty"`
 	// REJECTION_FORMAT_PROFIT_VETOED：被否决的账号。
 	VetoedAccountId int64 `protobuf:"varint,17,opt,name=vetoed_account_id,json=vetoedAccountId,proto3" json:"vetoed_account_id,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// REJECTION_FORMAT_FAILOVER_EXHAUSTED：这是 Anthropic Messages 的选号耗尽（从节点照本地 HandleSelectionExhausted
+	// 可能退避后接着选，请求记录留着）。
+	AnthropicMessages bool `protobuf:"varint,18,opt,name=anthropic_messages,json=anthropicMessages,proto3" json:"anthropic_messages,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *SelectRejection) Reset() {
@@ -4797,6 +4800,13 @@ func (x *SelectRejection) GetVetoedAccountId() int64 {
 		return x.VetoedAccountId
 	}
 	return 0
+}
+
+func (x *SelectRejection) GetAnthropicMessages() bool {
+	if x != nil {
+		return x.AnthropicMessages
+	}
+	return false
 }
 
 type Selection struct {
@@ -7298,8 +7308,11 @@ type SelectionRelease struct {
 	// Anthropic Messages：这次尝试转发成功（本地这时刷新粘性会话绑定）。主节点按本地同一条件决定刷不刷：请求开始时
 	// 没有绑定，或者绑定的就是这个账号。
 	ForwardSucceeded bool `protobuf:"varint,7,opt,name=forward_succeeded,json=forwardSucceeded,proto3" json:"forward_succeeded,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// 请求结束、手里没有进行中的选号时（最后一次选号被拒、之后没再选）：selection_id 为空，按 request_id 结束这次
+	// 请求（放掉用户槽）。request_done 同时为 true。
+	RequestId     string `protobuf:"bytes,8,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SelectionRelease) Reset() {
@@ -7379,6 +7392,13 @@ func (x *SelectionRelease) GetForwardSucceeded() bool {
 		return x.ForwardSucceeded
 	}
 	return false
+}
+
+func (x *SelectionRelease) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
 }
 
 type BeginTurnRequest struct {
@@ -8414,7 +8434,7 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x0eSelectResponse\x12;\n" +
 	"\tselection\x18\x01 \x01(\v2\x1b.sub2api.relay.v1.SelectionH\x00R\tselection\x12A\n" +
 	"\trejection\x18\x02 \x01(\v2!.sub2api.relay.v1.SelectRejectionH\x00R\trejectionB\b\n" +
-	"\x06result\"\xb9\x06\n" +
+	"\x06result\"\xe8\x06\n" +
 	"\x0fSelectRejection\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\x05R\x06status\x12\x1d\n" +
 	"\n" +
@@ -8434,7 +8454,8 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x10anthropic_format\x18\x0e \x01(\bR\x0fanthropicFormat\x12.\n" +
 	"\x13auto_group_failover\x18\x0f \x01(\bR\x11autoGroupFailover\x12%\n" +
 	"\x0eintercept_type\x18\x10 \x01(\x05R\rinterceptType\x12*\n" +
-	"\x11vetoed_account_id\x18\x11 \x01(\x03R\x0fvetoedAccountId\x1a:\n" +
+	"\x11vetoed_account_id\x18\x11 \x01(\x03R\x0fvetoedAccountId\x12-\n" +
+	"\x12anthropic_messages\x18\x12 \x01(\bR\x11anthropicMessages\x1a:\n" +
 	"\fHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x89\b\n" +
@@ -8634,7 +8655,7 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\amessage\x18\x01 \x01(\tR\amessage\"\x15\n" +
 	"\x13OllamaActivityEvent\"N\n" +
 	"\x12SessionWindowEvent\x128\n" +
-	"\aheaders\x18\x01 \x03(\v2\x1e.sub2api.relay.v1.HeaderValuesR\aheaders\"\xf6\x01\n" +
+	"\aheaders\x18\x01 \x03(\v2\x1e.sub2api.relay.v1.HeaderValuesR\aheaders\"\x95\x02\n" +
 	"\x10SelectionRelease\x12!\n" +
 	"\fselection_id\x18\x01 \x01(\tR\vselectionId\x12!\n" +
 	"\frequest_done\x18\x02 \x01(\bR\vrequestDone\x12!\n" +
@@ -8642,7 +8663,9 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\avoucher\x18\x04 \x01(\fR\avoucher\x12\x19\n" +
 	"\bturn_end\x18\x05 \x01(\bR\aturnEnd\x12\x17\n" +
 	"\aturn_id\x18\x06 \x01(\tR\x06turnId\x12+\n" +
-	"\x11forward_succeeded\x18\a \x01(\bR\x10forwardSucceeded\"\x9b\x01\n" +
+	"\x11forward_succeeded\x18\a \x01(\bR\x10forwardSucceeded\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\b \x01(\tR\trequestId\"\x9b\x01\n" +
 	"\x10BeginTurnRequest\x12!\n" +
 	"\fselection_id\x18\x01 \x01(\tR\vselectionId\x12\x12\n" +
 	"\x04turn\x18\x02 \x01(\x05R\x04turn\x12\x14\n" +

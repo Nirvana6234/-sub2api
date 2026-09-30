@@ -58,9 +58,11 @@ func (s *selector) selectAnthropic(ctx context.Context, nodeID int64, req *relay
 		return nil, errors.New("relay request id reused by a different API key")
 	}
 	// 没有成功选出账号就结束这次请求（放掉用户槽），与 OpenAI 一致：从节点照本地的循环接着选时从头占。
-	selected := false
+	// keep：利润否决、选号耗尽后从节点照本地接着选（同一请求），请求记录（用户槽、计价时间、粘性会话起点）留着，
+	// 由之后的选号或请求结束消息收尾。
+	selected, keep := false, false
 	defer func() {
-		if !selected {
+		if !selected && !keep {
 			s.dropRequest(record)
 		}
 	}()
@@ -108,8 +110,9 @@ func (s *selector) selectAnthropic(ctx context.Context, nodeID int64, req *relay
 	case handler.AnthropicSelectFailed:
 		if len(excluded) > 0 {
 			// 选号耗尽：从节点按本地的 HandleSelectionExhausted 决定退避重试还是按最近的上游错误写。
+			keep = true
 			return &relayv1.SelectResponse{Result: &relayv1.SelectResponse_Rejection{Rejection: &relayv1.SelectRejection{
-				Format: relayv1.RejectionFormat_REJECTION_FORMAT_FAILOVER_EXHAUSTED,
+				Format: relayv1.RejectionFormat_REJECTION_FORMAT_FAILOVER_EXHAUSTED, AnthropicMessages: true,
 			}}}, nil
 		}
 		r, _ := handler.AnthropicFirstSelectFailureRejection(ctx, gw, apiKey, reqModel, platform, outcome.Err)
@@ -121,6 +124,7 @@ func (s *selector) selectAnthropic(ctx context.Context, nodeID int64, req *relay
 	case handler.AnthropicSelectProfitVetoed:
 		// 尝试被否决（从未转发），立即释放该账号的会话注册（本地同一处）。
 		gw.ReleaseAccountSession(context.Background(), outcome.Account, record.sessionKey)
+		keep = true
 		return &relayv1.SelectResponse{Result: &relayv1.SelectResponse_Rejection{Rejection: &relayv1.SelectRejection{
 			Format: relayv1.RejectionFormat_REJECTION_FORMAT_PROFIT_VETOED, VetoedAccountId: outcome.Account.ID,
 		}}}, nil

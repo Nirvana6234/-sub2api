@@ -737,6 +737,9 @@ message SelectRejection {
   int32 intercept_type = 16;
   // REJECTION_FORMAT_PROFIT_VETOED：被否决的账号。
   int64 vetoed_account_id = 17;
+  // REJECTION_FORMAT_FAILOVER_EXHAUSTED：这是 Anthropic Messages 的选号耗尽（从节点照本地 HandleSelectionExhausted
+  // 可能退避后接着选，请求记录留着）。
+  bool anthropic_messages = 18;
 }
 
 message Selection {
@@ -1094,6 +1097,9 @@ message SelectionRelease {
   // Anthropic Messages：这次尝试转发成功（本地这时刷新粘性会话绑定）。主节点按本地同一条件决定刷不刷：请求开始时
   // 没有绑定，或者绑定的就是这个账号。
   bool forward_succeeded = 7;
+  // 请求结束、手里没有进行中的选号时（最后一次选号被拒、之后没再选）：selection_id 为空，按 request_id 结束这次
+  // 请求（放掉用户槽）。request_done 同时为 true。
+  string request_id = 8;
 }
 
 message BeginTurnRequest {

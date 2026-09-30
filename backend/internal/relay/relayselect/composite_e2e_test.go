@@ -57,6 +57,7 @@ func TestNodeServesCompositeGroups(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, service.PlatformOpenAI, voucher.GetContext().GetQuotaPlatform(), "platform quotas count the resolved target, like a single server")
 	require.Equal(t, int64(7), voucher.GetGroupId())
+	require.Equal(t, "public-model", voucher.GetRequestedModel(), "the usage log's requested model is what the client wrote, like a single server")
 	e.world.waitReleased(t)
 
 	// 目标是 Anthropic、没有匹配的路由：交给主节点（测试世界没有主节点转发，按 503 写）。
