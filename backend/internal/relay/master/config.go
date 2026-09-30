@@ -170,6 +170,8 @@ type globalSnapshot struct {
 	general  GeneralConfig
 	trust    Trust
 	hash     string
+	// sealed 是按节点加密下发的部分（sealed.go）；nil 表示没有。
+	sealed *sealedState
 }
 
 // buildGlobal 读取设置和各分段，生成共用部分。含密钥字段的 JSON 值被剔除并报错。

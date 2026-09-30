@@ -47,6 +47,7 @@ func ProvideMasterRuntime(
 	groups service.GroupRepository,
 	errorPassthrough *service.ErrorPassthroughService,
 	ops *service.OpsService,
+	proxies service.ProxyRepository,
 ) *master.Runtime {
 	// 用户、分组、订阅作废时发布改动（平台配额在仓储层已接好，见 repository/wire.go）。
 	service.AttachAccessChangeHub(accessChanges, apiKeys, billing)
@@ -77,6 +78,7 @@ func ProvideMasterRuntime(
 		}),
 		VoucherPartitions: repository.NewRelayVoucherPartitions(db),
 		Sections:          forwardingSections(errorPassthrough),
+		SealedSections:    sealedSections(settings, proxies),
 		NewSettler: relaysettle.NewFactory(relaysettle.Deps{
 			Gateway: gateway, APIKeys: apiKeys, Accounts: accounts, Groups: groups, Subscriptions: subscriptions,
 			Vouchers: relayVoucherRecorder(db),
@@ -99,6 +101,31 @@ func relayVoucherRecorder(db *sql.DB) service.RelayVoucherRecorder {
 		panic("relaywire: the usage billing repository does not record relay vouchers")
 	}
 	return r
+}
+
+// sealedSections 是按节点加密下发的分段（设计 6 第二类）：加密下发的配置（内容审核、联网搜索）引用的代理，
+// 含代理密码。代理改了由主节点定时重新生成快照带上（30 秒）。
+func sealedSections(settings service.SettingRepository, proxies service.ProxyRepository) map[string]master.SectionProvider {
+	if proxies == nil {
+		return nil
+	}
+	return map[string]master.SectionProvider{
+		master.SealedSectionProxies: func(ctx context.Context) ([]byte, error) {
+			values, err := settings.GetMultiple(ctx, []string{service.SettingKeyContentModerationConfig, service.SettingKeyWebSearchEmulationConfig})
+			if err != nil {
+				return nil, err
+			}
+			ids := service.SealedConfigProxyIDs(values[service.SettingKeyContentModerationConfig], values[service.SettingKeyWebSearchEmulationConfig])
+			if len(ids) == 0 {
+				return nil, nil
+			}
+			list, err := proxies.ListByIDs(ctx, ids)
+			if err != nil {
+				return nil, err
+			}
+			return json.Marshal(list)
+		},
+	}
 }
 
 // forwardingSections 是配置快照里 settings 表之外的转发配置分段（设计 6）。

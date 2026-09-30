@@ -2,6 +2,7 @@ package master
 
 import (
 	"context"
+	"crypto/ecdh"
 	"log/slog"
 	"strings"
 	"sync"
@@ -24,6 +25,12 @@ type ConfigPublisher struct {
 
 	sectionsMu sync.Mutex
 	sections   map[string]SectionProvider
+	// sealedSections：按节点加密下发的分段（sealed.go）。
+	sealedSections map[string]SectionProvider
+	// sealedMACKey：加密下发部分参与版本时用的 HMAC 密钥（进程内随机）。
+	sealedMACKey []byte
+	// encryptionKey 返回节点的加密公钥；nil 时不下发加密部分。
+	encryptionKey func(nodeID int64) (*ecdh.PublicKey, bool)
 
 	mu      sync.RWMutex
 	current *globalSnapshot
@@ -41,7 +48,36 @@ type ConfigPublisher struct {
 
 // NewConfigPublisher 创建发布器。trust 返回当前要下发的信任材料（所有未停用的根证书指纹、票据公钥）。
 func NewConfigPublisher(settings SettingsReader, nodes NodeStore, events *EventHub, trust func() Trust) *ConfigPublisher {
-	return &ConfigPublisher{settings: settings, nodes: nodes, events: events, trust: trust, sections: map[string]SectionProvider{}, delivered: map[int64]map[string]struct{}{}, versions: map[int64]nodeVersion{}, now: time.Now}
+	return &ConfigPublisher{settings: settings, nodes: nodes, events: events, trust: trust, sections: map[string]SectionProvider{},
+		sealedSections: map[string]SectionProvider{}, sealedMACKey: newSealedMACKey(),
+		delivered: map[int64]map[string]struct{}{}, versions: map[int64]nodeVersion{}, now: time.Now}
+}
+
+// SetEncryptionKeys 设置取节点加密公钥的函数（加密下发部分按它封，设计 6、7.1）。
+func (p *ConfigPublisher) SetEncryptionKeys(fn func(nodeID int64) (*ecdh.PublicKey, bool)) {
+	p.sectionsMu.Lock()
+	p.encryptionKey = fn
+	p.sectionsMu.Unlock()
+}
+
+// RegisterSealedSection 登记一个按节点加密下发的分段（内容可以含密钥，如审核接口引用的代理）。
+func (p *ConfigPublisher) RegisterSealedSection(name string, provide SectionProvider) {
+	p.sectionsMu.Lock()
+	p.sealedSections[name] = provide
+	p.sectionsMu.Unlock()
+}
+
+func (p *ConfigPublisher) nodeEncryptionKey(nodeID int64) *ecdh.PublicKey {
+	p.sectionsMu.Lock()
+	fn := p.encryptionKey
+	p.sectionsMu.Unlock()
+	if fn == nil {
+		return nil
+	}
+	if key, ok := fn(nodeID); ok {
+		return key
+	}
+	return nil
 }
 
 // RegisterSection 登记一个配置分段（错误透传规则、TLS 指纹等）。登记后下一次生成生效。
@@ -58,6 +94,10 @@ func (p *ConfigPublisher) Rebuild(ctx context.Context) error {
 	for k, v := range p.sections {
 		sections[k] = v
 	}
+	sealedSections := make(map[string]SectionProvider, len(p.sealedSections))
+	for k, v := range p.sealedSections {
+		sealedSections[k] = v
+	}
 	p.sectionsMu.Unlock()
 
 	next, err := buildGlobal(ctx, p.settings, sections, p.trust(), func(key string) {
@@ -66,6 +106,12 @@ func (p *ConfigPublisher) Rebuild(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	sealed, err := buildSealed(ctx, p.settings, sealedSections, p.sealedMACKey)
+	if err != nil {
+		return err
+	}
+	next.sealed = sealed
+	next.hash = hashParts([]byte(next.hash), sealed.mac)
 	p.mu.Lock()
 	changed := p.current == nil || p.current.hash != next.hash
 	p.current = next
@@ -110,6 +156,11 @@ func isPublishedSetting(key string) bool {
 	if strings.HasPrefix(key, "relay_") {
 		return true
 	}
+	for _, k := range SealedSettingKeys {
+		if k == key {
+			return true
+		}
+	}
 	for _, k := range ForwardingSettingKeys {
 		if k == key {
 			return true
@@ -153,22 +204,32 @@ func (p *ConfigPublisher) SnapshotFor(ctx context.Context, nodeID int64) (*relay
 	if err != nil {
 		return nil, err
 	}
-	return cur.snapshotFor(node), nil
+	snap := cur.snapshotFor(node)
+	if err := cur.sealFor(snap, nodeID, p.nodeEncryptionKey(nodeID)); err != nil {
+		return nil, err
+	}
+	return snap, nil
 }
 
 type nodeVersion struct {
 	global  *globalSnapshot
 	version string
+	// encKey：算版本时这台的加密公钥（换了就重算，版本里含它）。
+	encKey string
 }
 
 // VersionFor 返回某台节点当前的配置版本，选号返回里带着它（WP7）。
 // 同一份全局快照下按节点缓存；节点配置改了会触发重新生成，缓存随之失效。
 func (p *ConfigPublisher) VersionFor(ctx context.Context, nodeID int64) (string, error) {
+	var encKey string
+	if key := p.nodeEncryptionKey(nodeID); key != nil {
+		encKey = string(key.Bytes())
+	}
 	p.mu.RLock()
 	cur := p.current
 	cached, ok := p.versions[nodeID]
 	p.mu.RUnlock()
-	if ok && cur != nil && cached.global == cur {
+	if ok && cur != nil && cached.global == cur && cached.encKey == encKey {
 		return cached.version, nil
 	}
 	snap, err := p.SnapshotFor(ctx, nodeID)
@@ -177,7 +238,7 @@ func (p *ConfigPublisher) VersionFor(ctx context.Context, nodeID int64) (string,
 	}
 	if cur != nil {
 		p.mu.Lock()
-		p.versions[nodeID] = nodeVersion{global: cur, version: snap.Version}
+		p.versions[nodeID] = nodeVersion{global: cur, version: snap.Version, encKey: encKey}
 		p.mu.Unlock()
 	}
 	return snap.Version, nil

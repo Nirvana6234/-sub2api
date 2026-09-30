@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -48,10 +49,42 @@ type NodeConfig struct {
 // ConfigCache 保存主节点下发的配置快照，并实现 service.SettingRepository：
 // 从节点上的 SettingService 用它代替数据库，读到的只有白名单内的设置。
 type ConfigCache struct {
-	snap   atomic.Pointer[relayv1.ConfigSnapshot]
-	node   atomic.Pointer[NodeConfig]
+	snap atomic.Pointer[relayv1.ConfigSnapshot]
+	node atomic.Pointer[NodeConfig]
+	// sealed 是快照里按节点加密下发的部分解开后的明文（只在内存，设计 6 第二类）。
+	sealed atomic.Pointer[SealedPayload]
 	mu     sync.Mutex
 	onSwap []func(*relayv1.ConfigSnapshot)
+	// open 用本节点的加密私钥解开加密下发的部分（identity.OpenSealed）。
+	open func(sealed, aad []byte) ([]byte, error)
+}
+
+// SealedPayload 与 master.SealedPayload 的 JSON 相同（这里不依赖 master 包）。
+type SealedPayload struct {
+	Settings map[string]string `json:"settings,omitempty"`
+	Sections map[string][]byte `json:"sections,omitempty"`
+}
+
+// SealedAAD 与 master.SealedAAD 相同：加密下发的内容绑定到节点和快照版本。
+func SealedAAD(nodeID int64, version string) []byte {
+	return []byte("sub2api-relay-sealed-config|v1|node:" + strconv.FormatInt(nodeID, 10) + "|" + version)
+}
+
+// SetOpener 设置解开加密下发部分用的函数。没设置时快照里带了加密部分会换不上（Apply 报错）。
+func (c *ConfigCache) SetOpener(open func(sealed, aad []byte) ([]byte, error)) {
+	c.mu.Lock()
+	c.open = open
+	c.mu.Unlock()
+}
+
+// SealedSection 返回一个加密下发的分段（明文，可含密钥，不要写日志）。
+func (c *ConfigCache) SealedSection(name string) ([]byte, bool) {
+	p := c.sealed.Load()
+	if p == nil {
+		return nil, false
+	}
+	b, ok := p.Sections[name]
+	return b, ok
 }
 
 var _ service.SettingRepository = (*ConfigCache)(nil)
@@ -115,7 +148,22 @@ func (c *ConfigCache) Apply(snap *relayv1.ConfigSnapshot) error {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	sealed := &SealedPayload{}
+	if len(snap.Sealed) > 0 {
+		// 解不开就不换快照：宁可按版本栅栏拒绝请求，也不带着缺了密钥的配置转发。
+		if c.open == nil {
+			return errors.New("relay config carries sealed settings but this node cannot open them")
+		}
+		plain, err := c.open(snap.Sealed, SealedAAD(nc.NodeID, snap.Version))
+		if err != nil {
+			return fmt.Errorf("open sealed relay config: %w", err)
+		}
+		if err := json.Unmarshal(plain, sealed); err != nil {
+			return fmt.Errorf("sealed relay config is malformed: %w", err)
+		}
+	}
 	c.node.Store(&nc)
+	c.sealed.Store(sealed)
 	c.snap.Store(snap)
 	for _, fn := range c.onSwap {
 		fn(snap)
@@ -125,12 +173,24 @@ func (c *ConfigCache) Apply(snap *relayv1.ConfigSnapshot) error {
 
 // ---- service.SettingRepository ----
 
+// settings 返回白名单设置和加密下发的设置合在一起的视图（两者的键不重叠）。
 func (c *ConfigCache) settings() (map[string]string, error) {
 	s := c.snap.Load()
 	if s == nil {
 		return nil, ErrNoConfig
 	}
-	return s.Settings, nil
+	p := c.sealed.Load()
+	if p == nil || len(p.Settings) == 0 {
+		return s.Settings, nil
+	}
+	merged := make(map[string]string, len(s.Settings)+len(p.Settings))
+	for k, v := range s.Settings {
+		merged[k] = v
+	}
+	for k, v := range p.Settings {
+		merged[k] = v
+	}
+	return merged, nil
 }
 
 func (c *ConfigCache) Get(_ context.Context, key string) (*service.Setting, error) {

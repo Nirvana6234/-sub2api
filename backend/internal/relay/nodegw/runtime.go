@@ -82,6 +82,8 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 	slog.Info("relay node certificate ready", "node_id", id.NodeID())
 
 	cache := node.NewConfigCache()
+	// 加密下发的部分（审核、联网搜索的配置和代理）用本节点的加密私钥解开，只在内存（设计 6 第二类）。
+	cache.SetOpener(id.OpenSealed)
 	settings := service.NewSettingService(cache, cfg)
 	errorPassthrough := service.NewStaticErrorPassthroughService(nil)
 	cache.OnSwap(func(*relayv1.ConfigSnapshot) {

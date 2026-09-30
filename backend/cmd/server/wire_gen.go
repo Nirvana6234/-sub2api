@@ -296,7 +296,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	ticketHandler := admin.NewTicketHandler(ticketService)
 	legacyEngine := securityaudit.NewLegacyModerationAdapter(contentModerationService)
 	coordinator := securityaudit.NewCoordinator(legacyEngine, promptService)
-	runtime := relaywire.ProvideMasterRuntime(configConfig, db, settingRepository, settingChangeHub, apiKeyService, billingCacheService, accessChangeHub, userRepository, subscriptionService, settingService, openAIGatewayService, concurrencyService, contentModerationService, promptService, coordinator, accountRepository, groupRepository, errorPassthroughService, opsService)
+	runtime := relaywire.ProvideMasterRuntime(configConfig, db, settingRepository, settingChangeHub, apiKeyService, billingCacheService, accessChangeHub, userRepository, subscriptionService, settingService, openAIGatewayService, concurrencyService, contentModerationService, promptService, coordinator, accountRepository, groupRepository, errorPassthroughService, opsService, proxyRepository)
 	relayHandler := admin.NewRelayHandler(runtime)
 	upstreamBillingProbeService := service.ProvideUpstreamBillingProbeService(accountRepository, accountTestService, settingService, leaderLockCache, db)
 	accountProfileStatisticsCache := repository.NewAccountProfileStatisticsCache(redisClient)

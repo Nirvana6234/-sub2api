@@ -233,6 +233,9 @@ message ConfigSnapshot {
   // 验中转票据的公钥（全部未停用的版本，含预备中的，设计 8.1）。
   // 扣费凭证只在主节点验，公钥不下发。
   repeated SigningPublicKey ticket_public_keys = 7;
+  // 按节点加密下发的部分（设计 6 第二类）：转发功能要用的密钥（审核、联网搜索配置及其引用的代理），
+  // 用这台节点的加密公钥封（sealbox，附加数据绑定节点 ID 和版本）；明文是 SealedPayload 的 JSON。
+  bytes sealed = 8;
 }
 
 // 配置变了，从节点拉取新版本。

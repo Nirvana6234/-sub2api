@@ -76,6 +76,8 @@ type RuntimeDeps struct {
 	VoucherPartitions VoucherPartitionMaintainer
 	// Sections 是配置快照里 settings 表之外的转发配置分段（错误透传规则等，设计 6），按名字登记。
 	Sections map[string]SectionProvider
+	// SealedSections 是按节点加密下发的分段（内容可含密钥，如审核、联网搜索引用的代理），按名字登记。
+	SealedSections map[string]SectionProvider
 }
 
 // VoucherPartitionMaintainer 维护已入账凭证表的分区（repository.RelayVoucherPartitions）。
@@ -363,6 +365,10 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 	for name, provide := range r.deps.Sections {
 		publisher.RegisterSection(name, provide)
 	}
+	for name, provide := range r.deps.SealedSections {
+		publisher.RegisterSealedSection(name, provide)
+	}
+	publisher.SetEncryptionKeys(nodes.EncryptionKey)
 	invalidator := NewInvalidator(events)
 
 	server, err := transport.NewServer(transport.ServerOptions{

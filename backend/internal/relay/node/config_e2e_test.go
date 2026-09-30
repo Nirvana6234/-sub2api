@@ -2,6 +2,7 @@ package node_test
 
 import (
 	"context"
+	"crypto/ecdh"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/tls"
@@ -15,6 +16,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/relay/master"
 	"github.com/Wei-Shaw/sub2api/internal/relay/node"
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
+	"github.com/Wei-Shaw/sub2api/internal/relay/sealbox"
 	"github.com/Wei-Shaw/sub2api/internal/relay/sign"
 	"github.com/Wei-Shaw/sub2api/internal/relay/transport"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -37,6 +39,8 @@ type testMaster struct {
 	addr      string
 	nodeID    int64
 	nodeCert  *tls.Certificate
+	// nodeEncKey：这台节点的加密私钥（加密下发的部分用它的公钥封）。
+	nodeEncKey *ecdh.PrivateKey
 	// settler：扣费服务背后的入账，测试替换。
 	settler settlerSlot
 }
@@ -76,7 +80,9 @@ func startMaster(t *testing.T) *testMaster {
 
 	m := &testMaster{store: master.NewMemoryStore(), ca: ca, settings: &memSettings{values: map[string]string{
 		service.SettingKeyMinClaudeCodeVersion: "1.0.0",
-		// 白名单外、而且含密钥：绝不能出现在快照里。
+		// 与转发无关的密钥：绝不能出现在快照里。
+		service.SettingKeyAdminAPIKey: "admin-secret",
+		// 转发要用的密钥：只在按节点加密的部分里。
 		service.SettingKeyWebSearchEmulationConfig: `{"providers":[{"api_key":"sk-search-secret"}]}`,
 	}}}
 	hub := service.NewSettingChangeHub()
@@ -100,6 +106,14 @@ func startMaster(t *testing.T) *testMaster {
 	require.NoError(t, err)
 	m.nodeID = n.ID
 	m.nodeCert = &tls.Certificate{Certificate: [][]byte{leaf.Raw}, PrivateKey: priv, Leaf: leaf}
+	m.nodeEncKey, err = sealbox.GenerateKey()
+	require.NoError(t, err)
+	m.publisher.SetEncryptionKeys(func(id int64) (*ecdh.PublicKey, bool) {
+		if id != m.nodeID {
+			return nil, false
+		}
+		return m.nodeEncKey.PublicKey(), true
+	})
 
 	srv, err := transport.NewServer(transport.ServerOptions{
 		TLS:        transport.ServerTLSOptions{Certificate: ca.MasterCertificate, Roots: ca.RootPool},
@@ -143,6 +157,7 @@ func startNode(t *testing.T, m *testMaster) *testNode {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Close() })
 	cache := node.NewConfigCache()
+	cache.SetOpener(func(sealed, aad []byte) ([]byte, error) { return sealbox.Open(m.nodeEncKey, sealed, aad) })
 	settings := service.NewSettingService(cache, &config.Config{})
 	cache.OnSwap(func(*relayv1.ConfigSnapshot) { settings.InvalidateAll() })
 	return &testNode{client: client, cache: cache, syncer: node.NewConfigSyncer(cache, client), settings: settings}
@@ -164,13 +179,17 @@ func TestNodeGetsOnlyWhitelistedSettings(t *testing.T) {
 	minV, _ := n.settings.GetClaudeCodeVersionBounds(ctx)
 	require.Equal(t, "1.0.0", minV)
 
-	_, err = n.cache.GetValue(ctx, service.SettingKeyWebSearchEmulationConfig)
+	_, err = n.cache.GetValue(ctx, service.SettingKeyAdminAPIKey)
 	require.ErrorIs(t, err, service.ErrSettingNotFound, "settings outside the whitelist read as absent")
 	all, err := n.cache.GetAll(ctx)
 	require.NoError(t, err)
 	for k, v := range all {
-		require.NotContains(t, v, "sk-search-secret", k)
+		require.NotContains(t, v, "admin-secret", k)
 	}
+	// 转发要用的密钥经加密部分下发，节点解开后照常读到（设计 6 第二类）。
+	search, err := n.cache.GetValue(ctx, service.SettingKeyWebSearchEmulationConfig)
+	require.NoError(t, err)
+	require.Contains(t, search, "sk-search-secret")
 
 	nc, ok := n.cache.Node()
 	require.True(t, ok)
@@ -199,11 +218,30 @@ func TestSettingChangeIsPushedAndSeenImmediately(t *testing.T) {
 	minV, _ = n.settings.GetClaudeCodeVersionBounds(ctx)
 	require.Equal(t, "2.0.0", minV, "the swap invalidates the node's setting caches")
 
-	// 白名单外的设置改了不推送（版本不变）。
+	// 加密下发的设置改了同样当场推送。
 	second := n.cache.Version()
-	require.NoError(t, m.repo.Set(ctx, service.SettingKeyWebSearchEmulationConfig, `{"providers":[]}`))
+	require.NoError(t, m.repo.Set(ctx, service.SettingKeyWebSearchEmulationConfig, `{"providers":[{"api_key":"sk-rotated"}]}`))
+	require.Eventually(t, func() bool { return n.cache.Version() != second }, 5*time.Second, 10*time.Millisecond)
+	search, err := n.cache.GetValue(ctx, service.SettingKeyWebSearchEmulationConfig)
+	require.NoError(t, err)
+	require.Contains(t, search, "sk-rotated")
+
+	// 不下发的设置改了不推送（版本不变）。
+	third := n.cache.Version()
+	require.NoError(t, m.repo.Set(ctx, service.SettingKeyAdminAPIKey, "admin-rotated"))
 	time.Sleep(500 * time.Millisecond)
-	require.Equal(t, second, n.cache.Version())
+	require.Equal(t, third, n.cache.Version())
+}
+
+// 解不开加密部分（密钥不对）时不换快照：节点不带着缺了密钥的配置转发。
+func TestSealedConfigNeedsTheNodesKey(t *testing.T) {
+	m := startMaster(t)
+	n := startNode(t, m)
+	wrong, err := sealbox.GenerateKey()
+	require.NoError(t, err)
+	n.cache.SetOpener(func(sealed, aad []byte) ([]byte, error) { return sealbox.Open(wrong, sealed, aad) })
+	require.Error(t, n.syncer.Sync(context.Background()))
+	require.False(t, n.cache.Ready())
 }
 
 func TestVersionFenceFetchesBeforeForwardingAndFailsClosed(t *testing.T) {

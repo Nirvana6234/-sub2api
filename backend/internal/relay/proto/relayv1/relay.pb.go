@@ -1438,8 +1438,11 @@ type ConfigSnapshot struct {
 	// 验中转票据的公钥（全部未停用的版本，含预备中的，设计 8.1）。
 	// 扣费凭证只在主节点验，公钥不下发。
 	TicketPublicKeys []*SigningPublicKey `protobuf:"bytes,7,rep,name=ticket_public_keys,json=ticketPublicKeys,proto3" json:"ticket_public_keys,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// 按节点加密下发的部分（设计 6 第二类）：转发功能要用的密钥（审核、联网搜索配置及其引用的代理），
+	// 用这台节点的加密公钥封（sealbox，附加数据绑定节点 ID 和版本）；明文是 SealedPayload 的 JSON。
+	Sealed        []byte `protobuf:"bytes,8,opt,name=sealed,proto3" json:"sealed,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ConfigSnapshot) Reset() {
@@ -1517,6 +1520,13 @@ func (x *ConfigSnapshot) GetRootFingerprints() []string {
 func (x *ConfigSnapshot) GetTicketPublicKeys() []*SigningPublicKey {
 	if x != nil {
 		return x.TicketPublicKeys
+	}
+	return nil
+}
+
+func (x *ConfigSnapshot) GetSealed() []byte {
+	if x != nil {
+		return x.Sealed
 	}
 	return nil
 }
@@ -7049,7 +7059,7 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\raccount_event\x18\f \x01(\v2\x1e.sub2api.relay.v1.AccountEventH\x00R\faccountEventB\x06\n" +
 	"\x04body\"9\n" +
 	"\x12FetchConfigRequest\x12#\n" +
-	"\rknown_version\x18\x01 \x01(\tR\fknownVersion\"\xfa\x03\n" +
+	"\rknown_version\x18\x01 \x01(\tR\fknownVersion\"\x92\x04\n" +
 	"\x0eConfigSnapshot\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12\x1c\n" +
 	"\tunchanged\x18\x02 \x01(\bR\tunchanged\x12J\n" +
@@ -7058,7 +7068,8 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\vnode_config\x18\x05 \x01(\fR\n" +
 	"nodeConfig\x12+\n" +
 	"\x11root_fingerprints\x18\x06 \x03(\tR\x10rootFingerprints\x12P\n" +
-	"\x12ticket_public_keys\x18\a \x03(\v2\".sub2api.relay.v1.SigningPublicKeyR\x10ticketPublicKeys\x1a;\n" +
+	"\x12ticket_public_keys\x18\a \x03(\v2\".sub2api.relay.v1.SigningPublicKeyR\x10ticketPublicKeys\x12\x16\n" +
+	"\x06sealed\x18\b \x01(\fR\x06sealed\x1a;\n" +
 	"\rSettingsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a;\n" +
