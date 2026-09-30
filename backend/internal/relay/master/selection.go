@@ -20,8 +20,12 @@ import (
 type Selector interface {
 	// Admit 准入：按本地中间件链复查 API Key，通过时回 Key 快照（设计 3.2）。被拒绝时返回带 rejection 的回复。
 	Admit(ctx context.Context, nodeID int64, req *relayv1.AdmitRequest) (*relayv1.AdmitResponse, error)
-	// ResolveRoute 按模型定这次请求的走向（组合平台分组选目标）。
+	// ResolveRoute 按模型定这次请求的走向（自动分组 Key 选分组、组合平台分组选目标）。
 	ResolveRoute(ctx context.Context, nodeID int64, req *relayv1.ResolveRouteRequest) (*relayv1.ResolveRouteResponse, error)
+	// SwitchAutoGroup 自动分组 Key 在一次请求里换到下一个候选分组。
+	SwitchAutoGroup(ctx context.Context, nodeID int64, req *relayv1.SwitchAutoGroupRequest) (*relayv1.SwitchAutoGroupResponse, error)
+	// ReportAutoGroupResult 自动分组 Key 一次请求的最终结果（主节点据此调整之后的选组）。
+	ReportAutoGroupResult(ctx context.Context, nodeID int64, req *relayv1.AutoGroupResult) (*relayv1.AutoGroupResultAck, error)
 	// Select 被拒绝时返回带 rejection 的回复，不返回 error；error 只表示主节点自身的故障。
 	Select(ctx context.Context, nodeID int64, req *relayv1.SelectRequest) (*relayv1.SelectResponse, error)
 	FetchCredentials(ctx context.Context, nodeID int64, req *relayv1.FetchCredentialsRequest) (*relayv1.FetchCredentialsResponse, error)
@@ -119,6 +123,32 @@ func (c *Control) ResolveRoute(ctx context.Context, req *relayv1.ResolveRouteReq
 	resp, err := c.selector.ResolveRoute(ctx, nodeID, req)
 	if err != nil {
 		return nil, selectionError(ctx, "resolve_route", nodeID, err)
+	}
+	return resp, nil
+}
+
+// SwitchAutoGroup 自动分组 Key 换到下一个候选分组。不校验纪元：换的是这次请求的分组，不占槽、不发额度。
+func (c *Control) SwitchAutoGroup(ctx context.Context, req *relayv1.SwitchAutoGroupRequest) (*relayv1.SwitchAutoGroupResponse, error) {
+	nodeID, err := c.selectPeer(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.selector.SwitchAutoGroup(ctx, nodeID, req)
+	if err != nil {
+		return nil, selectionError(ctx, "switch_auto_group", nodeID, err)
+	}
+	return resp, nil
+}
+
+// ReportAutoGroupResult 自动分组 Key 一次请求的最终结果。
+func (c *Control) ReportAutoGroupResult(ctx context.Context, req *relayv1.AutoGroupResult) (*relayv1.AutoGroupResultAck, error) {
+	nodeID, err := c.selectPeer(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.selector.ReportAutoGroupResult(ctx, nodeID, req)
+	if err != nil {
+		return nil, selectionError(ctx, "report_auto_group_result", nodeID, err)
 	}
 	return resp, nil
 }

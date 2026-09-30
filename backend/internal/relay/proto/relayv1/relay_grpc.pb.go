@@ -303,27 +303,29 @@ var RelayEnrollment_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	RelayControl_Ping_FullMethodName                 = "/sub2api.relay.v1.RelayControl/Ping"
-	RelayControl_FetchConfig_FullMethodName          = "/sub2api.relay.v1.RelayControl/FetchConfig"
-	RelayControl_ReleaseQuota_FullMethodName         = "/sub2api.relay.v1.RelayControl/ReleaseQuota"
-	RelayControl_RenewLeases_FullMethodName          = "/sub2api.relay.v1.RelayControl/RenewLeases"
-	RelayControl_ReportLeases_FullMethodName         = "/sub2api.relay.v1.RelayControl/ReportLeases"
-	RelayControl_AckQuotaRecall_FullMethodName       = "/sub2api.relay.v1.RelayControl/AckQuotaRecall"
-	RelayControl_Admit_FullMethodName                = "/sub2api.relay.v1.RelayControl/Admit"
-	RelayControl_ResolveRoute_FullMethodName         = "/sub2api.relay.v1.RelayControl/ResolveRoute"
-	RelayControl_Select_FullMethodName               = "/sub2api.relay.v1.RelayControl/Select"
-	RelayControl_FetchCredentials_FullMethodName     = "/sub2api.relay.v1.RelayControl/FetchCredentials"
-	RelayControl_RefillQuota_FullMethodName          = "/sub2api.relay.v1.RelayControl/RefillQuota"
-	RelayControl_UpstreamError_FullMethodName        = "/sub2api.relay.v1.RelayControl/UpstreamError"
-	RelayControl_BeginTurn_FullMethodName            = "/sub2api.relay.v1.RelayControl/BeginTurn"
-	RelayControl_TurnMapping_FullMethodName          = "/sub2api.relay.v1.RelayControl/TurnMapping"
-	RelayControl_WebSocketLease_FullMethodName       = "/sub2api.relay.v1.RelayControl/WebSocketLease"
-	RelayControl_CyberPolicyHit_FullMethodName       = "/sub2api.relay.v1.RelayControl/CyberPolicyHit"
-	RelayControl_ModerationViolation_FullMethodName  = "/sub2api.relay.v1.RelayControl/ModerationViolation"
-	RelayControl_ModerationNotify_FullMethodName     = "/sub2api.relay.v1.RelayControl/ModerationNotify"
-	RelayControl_FetchFlaggedHashes_FullMethodName   = "/sub2api.relay.v1.RelayControl/FetchFlaggedHashes"
-	RelayControl_RecordFlaggedHash_FullMethodName    = "/sub2api.relay.v1.RelayControl/RecordFlaggedHash"
-	RelayControl_ReportWebSearchUsage_FullMethodName = "/sub2api.relay.v1.RelayControl/ReportWebSearchUsage"
+	RelayControl_Ping_FullMethodName                  = "/sub2api.relay.v1.RelayControl/Ping"
+	RelayControl_FetchConfig_FullMethodName           = "/sub2api.relay.v1.RelayControl/FetchConfig"
+	RelayControl_ReleaseQuota_FullMethodName          = "/sub2api.relay.v1.RelayControl/ReleaseQuota"
+	RelayControl_RenewLeases_FullMethodName           = "/sub2api.relay.v1.RelayControl/RenewLeases"
+	RelayControl_ReportLeases_FullMethodName          = "/sub2api.relay.v1.RelayControl/ReportLeases"
+	RelayControl_AckQuotaRecall_FullMethodName        = "/sub2api.relay.v1.RelayControl/AckQuotaRecall"
+	RelayControl_Admit_FullMethodName                 = "/sub2api.relay.v1.RelayControl/Admit"
+	RelayControl_ResolveRoute_FullMethodName          = "/sub2api.relay.v1.RelayControl/ResolveRoute"
+	RelayControl_SwitchAutoGroup_FullMethodName       = "/sub2api.relay.v1.RelayControl/SwitchAutoGroup"
+	RelayControl_ReportAutoGroupResult_FullMethodName = "/sub2api.relay.v1.RelayControl/ReportAutoGroupResult"
+	RelayControl_Select_FullMethodName                = "/sub2api.relay.v1.RelayControl/Select"
+	RelayControl_FetchCredentials_FullMethodName      = "/sub2api.relay.v1.RelayControl/FetchCredentials"
+	RelayControl_RefillQuota_FullMethodName           = "/sub2api.relay.v1.RelayControl/RefillQuota"
+	RelayControl_UpstreamError_FullMethodName         = "/sub2api.relay.v1.RelayControl/UpstreamError"
+	RelayControl_BeginTurn_FullMethodName             = "/sub2api.relay.v1.RelayControl/BeginTurn"
+	RelayControl_TurnMapping_FullMethodName           = "/sub2api.relay.v1.RelayControl/TurnMapping"
+	RelayControl_WebSocketLease_FullMethodName        = "/sub2api.relay.v1.RelayControl/WebSocketLease"
+	RelayControl_CyberPolicyHit_FullMethodName        = "/sub2api.relay.v1.RelayControl/CyberPolicyHit"
+	RelayControl_ModerationViolation_FullMethodName   = "/sub2api.relay.v1.RelayControl/ModerationViolation"
+	RelayControl_ModerationNotify_FullMethodName      = "/sub2api.relay.v1.RelayControl/ModerationNotify"
+	RelayControl_FetchFlaggedHashes_FullMethodName    = "/sub2api.relay.v1.RelayControl/FetchFlaggedHashes"
+	RelayControl_RecordFlaggedHash_FullMethodName     = "/sub2api.relay.v1.RelayControl/RecordFlaggedHash"
+	RelayControl_ReportWebSearchUsage_FullMethodName  = "/sub2api.relay.v1.RelayControl/ReportWebSearchUsage"
 )
 
 // RelayControlClient is the client API for RelayControl service.
@@ -352,9 +354,17 @@ type RelayControlClient interface {
 	// 从节点据此运行处理函数里选号之前的步骤。只读，不带幂等键；选号时主节点仍然独立复查。
 	Admit(ctx context.Context, in *AdmitRequest, opts ...grpc.CallOption) (*AdmitResponse, error)
 	// ResolveRoute 按模型定这次请求的走向（本地 autoGroupModelRouting、compositeTarget 两个中间件，设计 3.2）：
-	// 组合平台分组按模型选目标平台和上游模型。准入之后、从节点读出请求体里的模型再调（本地这两个中间件也在鉴权之后、
-	// 读请求体时才做）。只读，不带幂等键；选号时主节点按同样的输入再选一次。
+	// 自动分组 Key 按模型选分组，组合平台分组按模型选目标平台和上游模型。准入之后、从节点读出请求体里的模型再调
+	// （本地这两个中间件也在鉴权之后、读请求体时才做）。不带幂等键：自动分组的选组记在主节点（与本地同一个选组器），
+	// 重发只会得到同一个或按同样规则的选择；组合平台选目标只读，选号时主节点按同样的输入再选一次。
 	ResolveRoute(ctx context.Context, in *ResolveRouteRequest, opts ...grpc.CallOption) (*ResolveRouteResponse, error)
+	// SwitchAutoGroup 自动分组 Key 在一次请求里换到下一个候选分组（本地 tryOpenAIAutoGroupFailover）：当前分组选不出
+	// 账号或换号用完时从节点调。主节点把当前分组记为失败，按同一个选组器选下一个这次请求没试过的候选。
+	// 不幂等（会记失败、改选组状态）：超时不重发，按"没换"处理。
+	SwitchAutoGroup(ctx context.Context, in *SwitchAutoGroupRequest, opts ...grpc.CallOption) (*SwitchAutoGroupResponse, error)
+	// ReportAutoGroupResult 自动分组 Key 一次请求的最终结果（本地自动分组中间件在请求结束时的观察）：主节点据此
+	// 调整之后的选组（首字慢、失败时换组）。从节点在后台发，失败不重试。
+	ReportAutoGroupResult(ctx context.Context, in *AutoGroupResult, opts ...grpc.CallOption) (*AutoGroupResultAck, error)
 	// Select 为一次客户端请求的一次尝试选号：主节点复查凭据、做只有它能做的检查、选号、占并发槽，
 	// 签发扣费凭证，需要时顺带补充额度。带幂等键（请求 ID + 第几次选号）：超时重发拿到同一个结果。
 	// 被拒绝时正常返回 rejection（不是 gRPC 错误），从节点按它写客户端响应。
@@ -481,6 +491,26 @@ func (c *relayControlClient) ResolveRoute(ctx context.Context, in *ResolveRouteR
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ResolveRouteResponse)
 	err := c.cc.Invoke(ctx, RelayControl_ResolveRoute_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *relayControlClient) SwitchAutoGroup(ctx context.Context, in *SwitchAutoGroupRequest, opts ...grpc.CallOption) (*SwitchAutoGroupResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SwitchAutoGroupResponse)
+	err := c.cc.Invoke(ctx, RelayControl_SwitchAutoGroup_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *relayControlClient) ReportAutoGroupResult(ctx context.Context, in *AutoGroupResult, opts ...grpc.CallOption) (*AutoGroupResultAck, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AutoGroupResultAck)
+	err := c.cc.Invoke(ctx, RelayControl_ReportAutoGroupResult_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -643,9 +673,17 @@ type RelayControlServer interface {
 	// 从节点据此运行处理函数里选号之前的步骤。只读，不带幂等键；选号时主节点仍然独立复查。
 	Admit(context.Context, *AdmitRequest) (*AdmitResponse, error)
 	// ResolveRoute 按模型定这次请求的走向（本地 autoGroupModelRouting、compositeTarget 两个中间件，设计 3.2）：
-	// 组合平台分组按模型选目标平台和上游模型。准入之后、从节点读出请求体里的模型再调（本地这两个中间件也在鉴权之后、
-	// 读请求体时才做）。只读，不带幂等键；选号时主节点按同样的输入再选一次。
+	// 自动分组 Key 按模型选分组，组合平台分组按模型选目标平台和上游模型。准入之后、从节点读出请求体里的模型再调
+	// （本地这两个中间件也在鉴权之后、读请求体时才做）。不带幂等键：自动分组的选组记在主节点（与本地同一个选组器），
+	// 重发只会得到同一个或按同样规则的选择；组合平台选目标只读，选号时主节点按同样的输入再选一次。
 	ResolveRoute(context.Context, *ResolveRouteRequest) (*ResolveRouteResponse, error)
+	// SwitchAutoGroup 自动分组 Key 在一次请求里换到下一个候选分组（本地 tryOpenAIAutoGroupFailover）：当前分组选不出
+	// 账号或换号用完时从节点调。主节点把当前分组记为失败，按同一个选组器选下一个这次请求没试过的候选。
+	// 不幂等（会记失败、改选组状态）：超时不重发，按"没换"处理。
+	SwitchAutoGroup(context.Context, *SwitchAutoGroupRequest) (*SwitchAutoGroupResponse, error)
+	// ReportAutoGroupResult 自动分组 Key 一次请求的最终结果（本地自动分组中间件在请求结束时的观察）：主节点据此
+	// 调整之后的选组（首字慢、失败时换组）。从节点在后台发，失败不重试。
+	ReportAutoGroupResult(context.Context, *AutoGroupResult) (*AutoGroupResultAck, error)
 	// Select 为一次客户端请求的一次尝试选号：主节点复查凭据、做只有它能做的检查、选号、占并发槽，
 	// 签发扣费凭证，需要时顺带补充额度。带幂等键（请求 ID + 第几次选号）：超时重发拿到同一个结果。
 	// 被拒绝时正常返回 rejection（不是 gRPC 错误），从节点按它写客户端响应。
@@ -721,6 +759,12 @@ func (UnimplementedRelayControlServer) Admit(context.Context, *AdmitRequest) (*A
 }
 func (UnimplementedRelayControlServer) ResolveRoute(context.Context, *ResolveRouteRequest) (*ResolveRouteResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ResolveRoute not implemented")
+}
+func (UnimplementedRelayControlServer) SwitchAutoGroup(context.Context, *SwitchAutoGroupRequest) (*SwitchAutoGroupResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SwitchAutoGroup not implemented")
+}
+func (UnimplementedRelayControlServer) ReportAutoGroupResult(context.Context, *AutoGroupResult) (*AutoGroupResultAck, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReportAutoGroupResult not implemented")
 }
 func (UnimplementedRelayControlServer) Select(context.Context, *SelectRequest) (*SelectResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Select not implemented")
@@ -922,6 +966,42 @@ func _RelayControl_ResolveRoute_Handler(srv interface{}, ctx context.Context, de
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(RelayControlServer).ResolveRoute(ctx, req.(*ResolveRouteRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RelayControl_SwitchAutoGroup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SwitchAutoGroupRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayControlServer).SwitchAutoGroup(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayControl_SwitchAutoGroup_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayControlServer).SwitchAutoGroup(ctx, req.(*SwitchAutoGroupRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RelayControl_ReportAutoGroupResult_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AutoGroupResult)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayControlServer).ReportAutoGroupResult(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayControl_ReportAutoGroupResult_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayControlServer).ReportAutoGroupResult(ctx, req.(*AutoGroupResult))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1198,6 +1278,14 @@ var RelayControl_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ResolveRoute",
 			Handler:    _RelayControl_ResolveRoute_Handler,
+		},
+		{
+			MethodName: "SwitchAutoGroup",
+			Handler:    _RelayControl_SwitchAutoGroup_Handler,
+		},
+		{
+			MethodName: "ReportAutoGroupResult",
+			Handler:    _RelayControl_ReportAutoGroupResult_Handler,
 		},
 		{
 			MethodName: "Select",

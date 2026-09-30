@@ -178,7 +178,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
 			if len(failedAccountIDs) == 0 {
-				if isAutoGroupSelectionFailoverError(err) && tryOpenAIAutoGroupFailover(c, h.apiKeyService, &apiKey, clientRequestModel, failedGroupIDs, &subscription) {
+				if isAutoGroupSelectionFailoverError(err) && h.tryAutoGroupFailover(c, &apiKey, clientRequestModel, failedGroupIDs, &subscription) {
 					channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, clientRequestModel)
 					routingModel = openAIChannelForwardModel(channelMapping, clientRequestModel)
 					requestCtx = service.WithOpenAIImagesEndpoint(service.WithOpenAIImageGenerationIntent(c.Request.Context()))
@@ -196,7 +196,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 				return
 			}
 			if lastFailoverErr != nil {
-				if tryOpenAIAutoGroupFailover(c, h.apiKeyService, &apiKey, clientRequestModel, failedGroupIDs, &subscription) {
+				if h.tryAutoGroupFailover(c, &apiKey, clientRequestModel, failedGroupIDs, &subscription) {
 					failedAccountIDs = make(map[int64]struct{})
 					sameAccountRetryCount = make(map[int64]int)
 					switchCount = 0
@@ -206,7 +206,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 					channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, clientRequestModel)
 					routingModel = openAIChannelForwardModel(channelMapping, clientRequestModel)
 					requestCtx = service.WithOpenAIImagesEndpoint(service.WithOpenAIImageGenerationIntent(c.Request.Context()))
-					if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
+					if err := h.autoGroupFailoverBillingError(c, apiKey, subscription); err != nil {
 						reqLog.Warn("openai.images.auto_group_failover_billing_check_failed", zap.Error(err))
 						status, code, message, retryAfter := billingErrorDetails(err)
 						if retryAfter > 0 {
@@ -359,7 +359,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 					failedAccountIDs[account.ID] = struct{}{}
 					lastFailoverErr = failoverErr
 					if switchCount >= maxAccountSwitches {
-						if tryOpenAIAutoGroupFailover(c, h.apiKeyService, &apiKey, clientRequestModel, failedGroupIDs, &subscription) {
+						if h.tryAutoGroupFailover(c, &apiKey, clientRequestModel, failedGroupIDs, &subscription) {
 							failedAccountIDs = make(map[int64]struct{})
 							sameAccountRetryCount = make(map[int64]int)
 							switchCount = 0

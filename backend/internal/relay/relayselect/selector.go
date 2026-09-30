@@ -80,6 +80,8 @@ type selector struct {
 	recordCyber func(hit handler.CyberPolicyHit, subj handler.CyberPolicySubject, blockScope string, blockKeys []string)
 	// recordCyberBlocked 记 cyber 会话屏蔽拒绝的运维日志（默认 handler.EnqueueCyberSessionBlockedOpsEntry；测试替换）。
 	recordCyberBlocked func(ctx context.Context, apiKey *service.APIKey, r handler.CyberSessionBlockedRequest)
+	// observeAutoGroup 把自动分组的请求结果交给选组器（nil 时用 deps.APIKeys；测试替换）。
+	observeAutoGroup func(apiKey *service.APIKey, model string, status int, firstTokenMs *int64)
 
 	stopReaper context.CancelFunc
 	// admitted：各节点最近准入过的用户（违规上报只认这些，moderation.go）。
@@ -101,6 +103,8 @@ type requestRecord struct {
 
 	userID   int64
 	apiKeyID int64
+	// groupID 是这次请求现在用的分组（自动分组 Key 中途换组时跟着变）。
+	groupID int64
 	// userRelease 放掉用户并发槽（请求结束时）。
 	userRelease func()
 	// pricingCtx 带着本请求固定的计价时间和利润门（不带取消），每次选号在它上面挂上调用的取消。

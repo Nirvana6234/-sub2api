@@ -43,6 +43,10 @@ func (s *selector) Select(ctx context.Context, nodeID int64, req *relayv1.Select
 		// 从节点超时重发时重新判断。
 		return nil, ctx.Err()
 	}
+	if !ws && resp.GetRejection() != nil {
+		// 拒绝了这次请求就到此为止（查到请求之后的拒绝已经放过了；这里补上之前就拒的）。
+		s.endRequest(nodeID, req.GetRequestId())
+	}
 	return resp, err
 }
 
@@ -147,6 +151,14 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 		if rej := s.startRequest(ctx, record, req, adm, quotaReq, !chat, messages); rej != nil {
 			return rej, nil
 		}
+		record.groupID = groupID
+	} else if record.groupID != groupID {
+		// 自动分组 Key 在这次请求里换了分组（从节点经 SwitchAutoGroup 换的，本地 tryOpenAIAutoGroupFailover）：与本地
+		// 换组之后一样，换号记录和选号状态从头来，计价上下文按新分组。
+		record.groupID = groupID
+		record.excluded = map[int64]struct{}{}
+		record.state = handler.OpenAISelectState{}
+		record.pricingCtx, record.pricingAt = s.deps.Gateway.WithOpenAIRequestPricingContext(context.WithoutCancel(ctx), apiKey.GroupID)
 	}
 
 	// 每次选号：计价上下文沿用请求开始时固定的，取消跟着这次调用。
@@ -185,15 +197,22 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 	case handler.OpenAISelectFailed:
 		if len(record.excluded) > 0 {
 			// 换号用完（本地：handleFailoverExhausted）。续链不支持是这次选号里刚记下的才算最后的错误。
+			// 自动分组 Key：本地这时换到下一个候选分组再试（从节点问 SwitchAutoGroup）。
 			continuation := record.state.LastFailoverErr != nil && record.state.LastFailoverErr != lastFailover
 			return &relayv1.SelectResponse{Result: &relayv1.SelectResponse_Rejection{Rejection: &relayv1.SelectRejection{
 				Format: relayv1.RejectionFormat_REJECTION_FORMAT_FAILOVER_EXHAUSTED, ContinuationUnsupported: continuation,
+				AutoGroupFailover: apiKey.AutoGroup,
 			}}}, nil
 		}
+		var rej *relayv1.SelectResponse
 		if messages {
-			return gatewayRejection(handler.OpenAIMessagesNoAccountRejection(ctx, s.deps.Gateway, apiKey, forwardModel, reqModel, requestPlatform, outcome.Err)), nil
+			rej = gatewayRejection(handler.OpenAIMessagesNoAccountRejection(ctx, s.deps.Gateway, apiKey, forwardModel, reqModel, requestPlatform, outcome.Err))
+		} else {
+			rej = gatewayRejection(handler.OpenAIFirstSelectFailureRejection(ctx, s.deps.Gateway, apiKey, reqModel, requestPlatform, legacyCompact, outcome.Err))
 		}
-		return gatewayRejection(handler.OpenAIFirstSelectFailureRejection(ctx, s.deps.Gateway, apiKey, reqModel, requestPlatform, legacyCompact, outcome.Err)), nil
+		// 第一次就选不出账号（没有可用账号）：本地同样先换组再试。
+		rej.GetRejection().AutoGroupFailover = apiKey.AutoGroup && handler.IsAutoGroupSelectionFailoverError(outcome.Err)
+		return rej, nil
 	case handler.OpenAISelectNone:
 		if messages {
 			return gatewayRejection(handler.OpenAIMessagesNoAccountRejection(ctx, s.deps.Gateway, apiKey, forwardModel, reqModel, requestPlatform, nil)), nil
@@ -322,17 +341,7 @@ func (s *selector) startRequest(ctx context.Context, record *requestRecord, req 
 	}
 	record.userRelease = release
 
-	held := heldBalance(req.GetHeldQuota())
-	if held > 0 && s.env.Quotas != nil {
-		// 不信节点报的数：不超过主节点记着的、锁在这台上的。
-		locked, err := s.env.Quotas.NodeReservedBalance(ctx, apiKey.User.ID, record.key.nodeID)
-		if err != nil {
-			return gatewayRejection(billingRejection(service.ErrBillingServiceUnavailable.WithCause(err), anthropicBilling))
-		}
-		held = min(held, locked)
-	}
-	billingCtx := service.WithRelayRequesterHeldBalance(ctx, master.FromMicros(held))
-	if err := s.deps.Billing.CheckBillingEligibility(billingCtx, apiKey.User, apiKey, apiKey.Group, quotaReq.Subscription, quotaReq.Platform); err != nil {
+	if err := s.checkBilling(ctx, record.key.nodeID, req.GetHeldQuota(), apiKey, quotaReq.Subscription, quotaReq.Platform); err != nil {
 		return gatewayRejection(billingRejection(err, anthropicBilling))
 	}
 	if cyberAfterBilling {
@@ -343,6 +352,21 @@ func (s *selector) startRequest(ctx context.Context, record *requestRecord, req 
 	pricingCtx, pricingAt := s.deps.Gateway.WithOpenAIRequestPricingContext(context.WithoutCancel(ctx), apiKey.GroupID)
 	record.pricingCtx, record.pricingAt = pricingCtx, pricingAt
 	return nil
+}
+
+// checkBilling 是计费资格检查（本地 CheckBillingEligibility）。从节点手里还没用掉的余额算作这个请求方的
+// （不信节点报的数：不超过主节点记着的、锁在这台上的）。
+func (s *selector) checkBilling(ctx context.Context, nodeID int64, heldQuota []*relayv1.HeldQuota, apiKey *service.APIKey, subscription *service.UserSubscription, platform string) error {
+	held := heldBalance(heldQuota)
+	if held > 0 && s.env.Quotas != nil {
+		locked, err := s.env.Quotas.NodeReservedBalance(ctx, apiKey.User.ID, nodeID)
+		if err != nil {
+			return service.ErrBillingServiceUnavailable.WithCause(err)
+		}
+		held = min(held, locked)
+	}
+	billingCtx := service.WithRelayRequesterHeldBalance(ctx, master.FromMicros(held))
+	return s.deps.Billing.CheckBillingEligibility(billingCtx, apiKey.User, apiKey, apiKey.Group, subscription, platform)
 }
 
 // cyberRejection 查 cyber 会话屏蔽（从节点算好的键）；命中时记运维日志（与单机 writeCyberSessionBlocked 一样）

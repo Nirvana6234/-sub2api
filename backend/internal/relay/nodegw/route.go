@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/requestmodel"
 	"github.com/Wei-Shaw/sub2api/internal/relay/keycodec"
@@ -21,6 +22,8 @@ import (
 // 分组模型白名单之前，按请求体里的模型（与本地同一段取法）问主节点选分组，换上选定分组的 Key 快照和订阅。
 // 选定的分组记在这次请求的 Key 上，之后问主节点（组合平台选目标、选号）都带着它，主节点只核对不重选。
 // GET（WebSocket 升级）、取不到模型的请求与本地一样保留鉴权时的冷启动分组。
+// 请求结束时把结果（按本地同一段算法得出的状态码、首字耗时）报给主节点调整之后的选组；交给主节点转发的不报
+// （主节点照本地处理，自己记）。
 func (d *Dispatcher) AutoGroupMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		apiKey, ok := middleware2.GetAPIKeyFromContext(c)
@@ -47,6 +50,7 @@ func (d *Dispatcher) AutoGroupMiddleware() gin.HandlerFunc {
 				if sub, err = keycodec.DecodeSubscription(resp.GetResolution().GetSubscription()); err == nil {
 					middleware2.ReplaceAuthenticatedAPIKey(c, resolved, sub)
 					c.Next()
+					d.reportAutoGroupResult(c, apiKey.Key, model)
 					return
 				}
 			}
@@ -59,6 +63,68 @@ func (d *Dispatcher) AutoGroupMiddleware() gin.HandlerFunc {
 		}
 		writeRouteRejection(c, d, resp.GetRejection())
 	}
+}
+
+// reportAutoGroupResult 在请求结束时报自动分组的结果（本地自动分组中间件 c.Next 之后那一段）。按请求结束时
+// 上下文里的 Key 报：处理函数中途换过分组的，记在换到的分组上。
+func (d *Dispatcher) reportAutoGroupResult(c *gin.Context, rawKey, model string) {
+	st := stateOf(c)
+	st.mu.Lock()
+	handedOff := st.handedOff
+	st.mu.Unlock()
+	current, ok := middleware2.GetAPIKeyFromContext(c)
+	if handedOff || !ok || autoGroupID(current) == 0 {
+		return
+	}
+	status, firstTokenMs := middleware2.AutoGroupObservedResult(c)
+	report := &relayv1.AutoGroupResult{ApiKey: rawKey, Model: model, GroupId: autoGroupID(current), Status: int32(status)}
+	if firstTokenMs != nil {
+		report.HasFirstTokenMs, report.FirstTokenMs = true, *firstTokenMs
+	}
+	d.deps.Select.ReportAutoGroupResult(report)
+}
+
+// SwitchAutoGroup 自动分组 Key 换到下一个候选分组（handler.OpenAIRelayDispatcher）：主节点选，这里换上它回的 Key 快照
+// 和订阅。不重发（换组会改主节点的选组状态），出错按没换处理。
+func (d *Dispatcher) SwitchAutoGroup(c *gin.Context, apiKey *service.APIKey, model string, failedGroupIDs map[int64]struct{}) (handler.OpenAIRelayAutoGroupSwitch, bool) {
+	current := autoGroupID(apiKey)
+	if current == 0 {
+		return handler.OpenAIRelayAutoGroupSwitch{}, false
+	}
+	req := &relayv1.SwitchAutoGroupRequest{
+		ApiKey: apiKey.Key, ClientIp: strings.TrimSpace(ip.GetClientIP(c)), Method: c.Request.Method, Path: c.Request.URL.Path,
+		Model: model, CurrentGroupId: current,
+	}
+	for id := range failedGroupIDs {
+		req.FailedGroupIds = append(req.FailedGroupIds, id)
+	}
+	if apiKey.User != nil {
+		req.HeldQuota = d.heldQuota(apiKey.User.ID, apiKey.ID)
+	}
+	resp, err := d.deps.Select.SwitchAutoGroup(c.Request.Context(), req)
+	if err != nil {
+		slog.Warn("relay auto group switch failed", "error", err)
+		return handler.OpenAIRelayAutoGroupSwitch{}, false
+	}
+	if !resp.GetSwitched() {
+		return handler.OpenAIRelayAutoGroupSwitch{}, false
+	}
+	resolved, err := keycodec.DecodeAPIKey(resp.GetApiKey(), apiKey.Key)
+	if err != nil {
+		slog.Error("relay auto group switch: bad api key snapshot", "error", err)
+		return handler.OpenAIRelayAutoGroupSwitch{}, false
+	}
+	sub, err := keycodec.DecodeSubscription(resp.GetSubscription())
+	if err != nil {
+		slog.Error("relay auto group switch: bad subscription snapshot", "error", err)
+		return handler.OpenAIRelayAutoGroupSwitch{}, false
+	}
+	out := handler.OpenAIRelayAutoGroupSwitch{APIKey: resolved, Subscription: sub}
+	if r := resp.GetBillingRejection(); r != nil {
+		g := gatewayOf(r)
+		out.BillingRejection = &g
+	}
+	return out, true
 }
 
 // writeRouteRejection 写出 ResolveRoute 的拒绝：主节点生成的拒绝原样写出，"暂不支持"交给主节点转发。

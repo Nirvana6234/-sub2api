@@ -62,6 +62,14 @@ func (s *recordingSelector) ReportWebSearchUsage(context.Context, int64, *relayv
 	return &relayv1.WebSearchUsageShares{}, nil
 }
 
+func (s *recordingSelector) SwitchAutoGroup(context.Context, int64, *relayv1.SwitchAutoGroupRequest) (*relayv1.SwitchAutoGroupResponse, error) {
+	return &relayv1.SwitchAutoGroupResponse{}, nil
+}
+
+func (s *recordingSelector) ReportAutoGroupResult(context.Context, int64, *relayv1.AutoGroupResult) (*relayv1.AutoGroupResultAck, error) {
+	return &relayv1.AutoGroupResultAck{}, nil
+}
+
 func (s *recordingSelector) ResolveRoute(context.Context, int64, *relayv1.ResolveRouteRequest) (*relayv1.ResolveRouteResponse, error) {
 	return &relayv1.ResolveRouteResponse{}, nil
 }

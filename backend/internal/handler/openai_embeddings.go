@@ -147,7 +147,7 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
 			if len(failedAccountIDs) == 0 {
-				if isAutoGroupSelectionFailoverError(err) && tryOpenAIAutoGroupFailover(c, h.apiKeyService, &apiKey, reqModel, failedGroupIDs, &subscription) {
+				if isAutoGroupSelectionFailoverError(err) && h.tryAutoGroupFailover(c, &apiKey, reqModel, failedGroupIDs, &subscription) {
 					channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
 					forwardModel = openAIChannelForwardModel(channelMapping, reqModel)
 					embPricingCtx, pricingAt = h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
@@ -161,7 +161,7 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 				h.errorResponse(c, cls.Status, cls.ErrType, cls.Message)
 				return
 			}
-			if tryOpenAIAutoGroupFailover(c, h.apiKeyService, &apiKey, reqModel, failedGroupIDs, &subscription) {
+			if h.tryAutoGroupFailover(c, &apiKey, reqModel, failedGroupIDs, &subscription) {
 				failedAccountIDs = make(map[int64]struct{})
 				switchCount = 0
 				profitVetoCount = 0
@@ -170,7 +170,7 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 				forwardModel = openAIChannelForwardModel(channelMapping, reqModel)
 				embPricingCtx, pricingAt = h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
 				c.Request = c.Request.WithContext(embPricingCtx)
-				if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
+				if err := h.autoGroupFailoverBillingError(c, apiKey, subscription); err != nil {
 					reqLog.Warn("openai_embeddings.auto_group_failover_billing_check_failed", zap.Error(err))
 					status, code, message, retryAfter := billingErrorDetails(err)
 					if retryAfter > 0 {
@@ -256,7 +256,7 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 				failedAccountIDs[account.ID] = struct{}{}
 				lastFailoverErr = failoverErr
 				if switchCount >= maxAccountSwitches {
-					if tryOpenAIAutoGroupFailover(c, h.apiKeyService, &apiKey, reqModel, failedGroupIDs, &subscription) {
+					if h.tryAutoGroupFailover(c, &apiKey, reqModel, failedGroupIDs, &subscription) {
 						failedAccountIDs = make(map[int64]struct{})
 						switchCount = 0
 						profitVetoCount = 0

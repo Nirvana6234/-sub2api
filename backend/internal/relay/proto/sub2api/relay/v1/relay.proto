@@ -54,9 +54,17 @@ service RelayControl {
   // 从节点据此运行处理函数里选号之前的步骤。只读，不带幂等键；选号时主节点仍然独立复查。
   rpc Admit(AdmitRequest) returns (AdmitResponse);
   // ResolveRoute 按模型定这次请求的走向（本地 autoGroupModelRouting、compositeTarget 两个中间件，设计 3.2）：
-  // 组合平台分组按模型选目标平台和上游模型。准入之后、从节点读出请求体里的模型再调（本地这两个中间件也在鉴权之后、
-  // 读请求体时才做）。只读，不带幂等键；选号时主节点按同样的输入再选一次。
+  // 自动分组 Key 按模型选分组，组合平台分组按模型选目标平台和上游模型。准入之后、从节点读出请求体里的模型再调
+  // （本地这两个中间件也在鉴权之后、读请求体时才做）。不带幂等键：自动分组的选组记在主节点（与本地同一个选组器），
+  // 重发只会得到同一个或按同样规则的选择；组合平台选目标只读，选号时主节点按同样的输入再选一次。
   rpc ResolveRoute(ResolveRouteRequest) returns (ResolveRouteResponse);
+  // SwitchAutoGroup 自动分组 Key 在一次请求里换到下一个候选分组（本地 tryOpenAIAutoGroupFailover）：当前分组选不出
+  // 账号或换号用完时从节点调。主节点把当前分组记为失败，按同一个选组器选下一个这次请求没试过的候选。
+  // 不幂等（会记失败、改选组状态）：超时不重发，按"没换"处理。
+  rpc SwitchAutoGroup(SwitchAutoGroupRequest) returns (SwitchAutoGroupResponse);
+  // ReportAutoGroupResult 自动分组 Key 一次请求的最终结果（本地自动分组中间件在请求结束时的观察）：主节点据此
+  // 调整之后的选组（首字慢、失败时换组）。从节点在后台发，失败不重试。
+  rpc ReportAutoGroupResult(AutoGroupResult) returns (AutoGroupResultAck);
   // Select 为一次客户端请求的一次尝试选号：主节点复查凭据、做只有它能做的检查、选号、占并发槽，
   // 签发扣费凭证，需要时顺带补充额度。带幂等键（请求 ID + 第几次选号）：超时重发拿到同一个结果。
   // 被拒绝时正常返回 rejection（不是 gRPC 错误），从节点按它写客户端响应。
@@ -550,6 +558,46 @@ message RouteResolution {
   bytes subscription = 3;
 }
 
+message SwitchAutoGroupRequest {
+  string api_key = 1;
+  string client_ip = 2;
+  string method = 3;
+  string path = 4;
+  // 选组用的模型（本地处理函数的请求模型）。
+  string model = 5;
+  // 要切走的当前分组；failed_group_ids 是这次请求里已经失败过的分组（含当前分组）。
+  int64 current_group_id = 6;
+  repeated int64 failed_group_ids = 7;
+  // 换组后的计费资格复查用（同 SelectRequest.held_quota）。
+  repeated HeldQuota held_quota = 8;
+}
+
+message SwitchAutoGroupResponse {
+  // switched 为 false：没有可换的候选（从节点按原来的错误写响应）。
+  bool switched = 1;
+  // 切到的分组的 Key 快照与订阅（keycodec 编码）。
+  bytes api_key = 2;
+  bytes subscription = 3;
+  // 换到的分组计费资格复查不过（本地在"换号用完后换组"时复查）：状态码、错误类型、文案、Retry-After
+  // （GATEWAY 格式），从节点在本地复查的那一处按本地的写法写出。
+  SelectRejection billing_rejection = 4;
+}
+
+message AutoGroupResult {
+  string api_key = 1;
+  // 选组用的模型（与 ResolveRoute 的 model 相同）。
+  string model = 2;
+  // 请求结束时用的分组（中途切过分组的是切到的那个）。
+  int64 group_id = 3;
+  // 观察到的状态码（本地同一段算法：处理函数写的状态、流内错误的本意状态、失败时上游的原始状态）。
+  int32 status = 4;
+  // 首字耗时（毫秒）；has_first_token_ms 为 false 时没有。
+  bool has_first_token_ms = 5;
+  int64 first_token_ms = 6;
+}
+
+message AutoGroupResultAck {}
+
 message SelectRequest {
   // 从节点为这次客户端请求起的 ID。同一请求的多次选号（换号）共用：用户并发槽、利润否决次数、
   // 已排除的账号按请求记在主节点。
@@ -665,6 +713,9 @@ message SelectRejection {
   // REJECTION_FORMAT_GATEWAY：按 Anthropic Messages 的错误格式写（OpenAI 分组的 /v1/messages 入口里
   // 单机按 Anthropic 格式写的那些错误）。
   bool anthropic_format = 14;
+  // 自动分组 Key：这是本地会换到下一个候选分组再试的失败（选不出账号、换号用完）。从节点先问 SwitchAutoGroup，
+  // 换成了就接着选号，没换成再按这个拒绝写。
+  bool auto_group_failover = 15;
 }
 
 message Selection {

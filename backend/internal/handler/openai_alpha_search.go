@@ -146,7 +146,7 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 				return
 			}
 			if len(failedAccountIDs) == 0 {
-				if isAutoGroupSelectionFailoverError(err) && tryOpenAIAutoGroupFailover(c, h.apiKeyService, &apiKey, requestedModel, failedGroupIDs, &subscription) {
+				if isAutoGroupSelectionFailoverError(err) && h.tryAutoGroupFailover(c, &apiKey, requestedModel, failedGroupIDs, &subscription) {
 					channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, requestedModel)
 					forwardBody = openAIModelMappedBody(body, channelMapping.Mapped, channelMapping.MappedModel, h.gatewayService.ReplaceModelInBody)
 					asPricingCtx, _ = h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
@@ -161,7 +161,7 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 				return
 			}
 			if lastFailoverErr != nil {
-				if tryOpenAIAutoGroupFailover(c, h.apiKeyService, &apiKey, requestedModel, failedGroupIDs, &subscription) {
+				if h.tryAutoGroupFailover(c, &apiKey, requestedModel, failedGroupIDs, &subscription) {
 					failedAccountIDs = make(map[int64]struct{})
 					sameAccountRetryCount = make(map[int64]int)
 					switchCount = 0
@@ -172,7 +172,7 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 					forwardBody = openAIModelMappedBody(body, channelMapping.Mapped, channelMapping.MappedModel, h.gatewayService.ReplaceModelInBody)
 					asPricingCtx, _ = h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
 					c.Request = c.Request.WithContext(asPricingCtx)
-					if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
+					if err := h.autoGroupFailoverBillingError(c, apiKey, subscription); err != nil {
 						reqLog.Warn("openai_alpha_search.auto_group_failover_billing_check_failed", zap.Error(err))
 						status, code, message, retryAfter := billingErrorDetails(err)
 						if retryAfter > 0 {
@@ -270,7 +270,7 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 		failedAccountIDs[account.ID] = struct{}{}
 		lastFailoverErr = failoverErr
 		if switchCount >= h.maxAccountSwitches {
-			if tryOpenAIAutoGroupFailover(c, h.apiKeyService, &apiKey, requestedModel, failedGroupIDs, &subscription) {
+			if h.tryAutoGroupFailover(c, &apiKey, requestedModel, failedGroupIDs, &subscription) {
 				failedAccountIDs = make(map[int64]struct{})
 				sameAccountRetryCount = make(map[int64]int)
 				switchCount = 0

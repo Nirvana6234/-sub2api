@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -48,6 +49,18 @@ type OpenAIRelayDispatcher interface {
 	EndTurn(c *gin.Context, conn, turn *OpenAIRelayAttempt)
 	// TurnMapping 一轮的渠道映射（这一轮换了模型时）。
 	TurnMapping(c *gin.Context, conn *OpenAIRelayAttempt, model string) (service.ChannelMappingResult, error)
+
+	// SwitchAutoGroup 自动分组 Key 换到下一个候选分组（本地 tryOpenAIAutoGroupFailover 里选组那一步，经主节点）。
+	// failedGroupIDs 已含当前分组。没有可换的返回 false；出错按没换处理（不重发：换组会改主节点的选组状态）。
+	SwitchAutoGroup(c *gin.Context, apiKey *service.APIKey, model string, failedGroupIDs map[int64]struct{}) (OpenAIRelayAutoGroupSwitch, bool)
+}
+
+// OpenAIRelayAutoGroupSwitch 是主节点定下的换组：换到的分组的 Key 快照和订阅。
+type OpenAIRelayAutoGroupSwitch struct {
+	APIKey       *service.APIKey
+	Subscription *service.UserSubscription
+	// BillingRejection 非 nil：换到的分组计费资格复查不过（主节点顺带查的；本地在"换号用完后换组"时复查）。
+	BillingRejection *OpenAIGatewayRejection
 }
 
 // OpenAIRelaySelectRequest 是一次远程选号的输入：处理函数在单机上交给主节点那几步的原始事实。
@@ -123,6 +136,33 @@ type OpenAIRelayRejection struct {
 	WSCloseReason string
 	// ContinuationUnsupported：这次选号跳过了不支持续链的账号，最后的错误是"续链不支持"。
 	ContinuationUnsupported bool
+	// AutoGroupFailover：自动分组 Key 的这个失败本地会先换到下一个候选分组再试（选不出账号、换号用完）。
+	// 处理函数照本地的换组分支走（relayAutoGroupFailoverOutcome），没换成再按这个拒绝写。
+	AutoGroupFailover bool
+}
+
+// relayAutoGroupFailoverError 是主节点回的、本地会先换组再试的选号失败：按"没有可用账号"走本地的换组分支，
+// 没换成时按主节点的拒绝写（writeRelayAutoGroupFailoverRejection）。
+type relayAutoGroupFailoverError struct {
+	rejection *OpenAIRelayRejection
+}
+
+func (e *relayAutoGroupFailoverError) Error() string { return service.ErrNoAvailableAccounts.Error() }
+func (e *relayAutoGroupFailoverError) Unwrap() error { return service.ErrNoAvailableAccounts }
+
+// relayAutoGroupFailoverOutcome 把主节点标了 AutoGroupFailover 的拒绝转成本地选号失败的结果（会话哈希照旧，与本地一样）。
+func relayAutoGroupFailoverOutcome(c *gin.Context, r *OpenAIRelayRejection, sessionHash string) OpenAISelectOutcome {
+	return OpenAISelectOutcome{Kind: OpenAISelectFailed, Ctx: c.Request.Context(), SessionHash: sessionHash, Err: &relayAutoGroupFailoverError{rejection: r}}
+}
+
+// writeRelayAutoGroupFailoverRejection：换组分支没换成时，err 是主节点的拒绝就按它写（与没有自动分组时一样）。
+func (h *OpenAIGatewayHandler) writeRelayAutoGroupFailoverRejection(c *gin.Context, err error, apiKey *service.APIKey, model string, format cyberSessionBlockFormat, lastFailoverErr *service.UpstreamFailoverError, streamStarted bool, reqLog *zap.Logger) bool {
+	var relayErr *relayAutoGroupFailoverError
+	if !errors.As(err, &relayErr) {
+		return false
+	}
+	h.writeOpenAIRelayRejection(c, relayErr.rejection, apiKey, model, format, lastFailoverErr, streamStarted, reqLog)
+	return true
 }
 
 // OpenAIUsageFacts 是入账输入里由转发节点得出的字段。单机直接放进 RecordUsage 的输入，从节点写进扣费记录，

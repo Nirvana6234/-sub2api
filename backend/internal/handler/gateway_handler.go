@@ -2430,6 +2430,11 @@ func extractQuotaResetSeconds(err error) int {
 }
 
 func billingErrorDetails(err error) (status int, code, message string, retryAfter int) {
+	var relayErr *relayBillingRejectionError
+	if errors.As(err, &relayErr) {
+		// 从节点：主节点按同一个函数算好的。
+		return relayErr.rejection.Status, relayErr.rejection.ErrType, relayErr.rejection.Message, relayErr.rejection.RetryAfter
+	}
 	if errors.Is(err, service.ErrBillingServiceUnavailable) {
 		msg := pkgerrors.Message(err)
 		if msg == "" {

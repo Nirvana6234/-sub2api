@@ -68,35 +68,7 @@ func autoGroupModelRoutingMiddleware(apiKeyService *service.APIKeyService, subsc
 		}
 		c.Next()
 
-		status := c.Writer.Status()
-		if streamErr, ok := service.GetOpsStreamError(c); ok && streamErr.IntendedStatus >= http.StatusBadRequest {
-			status = streamErr.IntendedStatus
-		}
-		// Handlers map upstream 529 to a client-facing 503. Preserve the raw
-		// upstream status for auto-group observation so overload is not mistaken
-		// for a confirmed group failure.
-		//
-		// Only a failed request may take the raw upstream status. The key is
-		// written by every upstream attempt and is not cleared when a later
-		// attempt (often on another group after auto-group failover) succeeds;
-		// letting it override a final 2xx would record the earlier group's 503
-		// against the group that actually served the request.
-		if rawStatus, ok := c.Get(service.OpsUpstreamStatusCodeKey); ok && status >= http.StatusBadRequest {
-			switch typed := rawStatus.(type) {
-			case int:
-				if typed > 0 {
-					status = typed
-				}
-			case int32:
-				if typed > 0 {
-					status = int(typed)
-				}
-			case int64:
-				if typed > 0 {
-					status = int(typed)
-				}
-			}
-		}
+		status, firstTokenMs := middleware.AutoGroupObservedResult(c)
 		// A downstream handler may have switched an automatic key to another
 		// candidate group after account failover. Observe the final request
 		// snapshot from the context, otherwise a successful fallback request is
@@ -106,28 +78,6 @@ func autoGroupModelRoutingMiddleware(apiKeyService *service.APIKeyService, subsc
 		if current, ok := middleware.GetAPIKeyFromContext(c); ok && current != nil {
 			observedAPIKey = current
 		}
-		apiKeyService.ObserveAutoGroupRequestResult(observedAPIKey, model, status, autoGroupFirstTokenMs(c))
-	}
-}
-
-func autoGroupFirstTokenMs(c *gin.Context) *int64 {
-	if c == nil {
-		return nil
-	}
-	value, ok := c.Get(service.OpsTimeToFirstTokenMsKey)
-	if !ok {
-		return nil
-	}
-	switch typed := value.(type) {
-	case int64:
-		return &typed
-	case int:
-		converted := int64(typed)
-		return &converted
-	case int32:
-		converted := int64(typed)
-		return &converted
-	default:
-		return nil
+		apiKeyService.ObserveAutoGroupRequestResult(observedAPIKey, model, status, firstTokenMs)
 	}
 }

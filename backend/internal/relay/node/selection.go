@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"log/slog"
 	"strconv"
 	"sync"
 	"time"
@@ -50,6 +51,27 @@ func (s *SelectClient) ResolveRoute(ctx context.Context, req *relayv1.ResolveRou
 	ctx, cancel := context.WithTimeout(ctx, AdmitTimeout)
 	defer cancel()
 	return s.control.ResolveRoute(ctx, req)
+}
+
+// SwitchAutoGroup 自动分组 Key 换到下一个候选分组（本地 tryOpenAIAutoGroupFailover）。不幂等：出错不重发。
+func (s *SelectClient) SwitchAutoGroup(ctx context.Context, req *relayv1.SwitchAutoGroupRequest) (*relayv1.SwitchAutoGroupResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, AdmitTimeout)
+	defer cancel()
+	return s.control.SwitchAutoGroup(ctx, req)
+}
+
+// AutoGroupReportTimeout 是一次自动分组结果上报的最长时间（后台发，不影响请求）。
+const AutoGroupReportTimeout = 5 * time.Second
+
+// ReportAutoGroupResult 在后台上报自动分组 Key 一次请求的最终结果；失败只记日志（本地的观察同样不影响请求）。
+func (s *SelectClient) ReportAutoGroupResult(req *relayv1.AutoGroupResult) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), AutoGroupReportTimeout)
+		defer cancel()
+		if _, err := s.control.ReportAutoGroupResult(ctx, req); err != nil {
+			slog.Debug("relay auto group result report failed", "error", err)
+		}
+	}()
 }
 
 // Select 选号。幂等键是"请求 ID/第几次"：超时重发拿回同一个结果，不会多占一个槽。

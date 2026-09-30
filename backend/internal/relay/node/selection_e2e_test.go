@@ -95,6 +95,14 @@ func (f *fakeSelector) ReportWebSearchUsage(context.Context, int64, *relayv1.Web
 	return &relayv1.WebSearchUsageShares{}, nil
 }
 
+func (f *fakeSelector) SwitchAutoGroup(context.Context, int64, *relayv1.SwitchAutoGroupRequest) (*relayv1.SwitchAutoGroupResponse, error) {
+	return &relayv1.SwitchAutoGroupResponse{}, nil
+}
+
+func (f *fakeSelector) ReportAutoGroupResult(context.Context, int64, *relayv1.AutoGroupResult) (*relayv1.AutoGroupResultAck, error) {
+	return &relayv1.AutoGroupResultAck{}, nil
+}
+
 func (f *fakeSelector) ResolveRoute(context.Context, int64, *relayv1.ResolveRouteRequest) (*relayv1.ResolveRouteResponse, error) {
 	return &relayv1.ResolveRouteResponse{}, nil
 }

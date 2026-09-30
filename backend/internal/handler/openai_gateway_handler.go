@@ -675,21 +675,26 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				PreviousResponseID: previousResponseID, ImageIntent: imageIntent, LegacyCompact: legacyCompact,
 				NativeCompactionV2: nativeV2, Excluded: failedAccountIDs, Body: sessionHashBody,
 			})
-			if res.Rejection != nil {
+			if res.Rejection != nil && !res.Rejection.AutoGroupFailover {
 				h.writeOpenAIRelayRejection(c, res.Rejection, apiKey, reqModel, cyberBlockFormatResponses, lastFailoverErr, streamStarted, reqLog)
 				return
 			}
-			if relayAttempt == nil {
-				seedOpenAIForwardImageIntentHint(c, res.Attempt.ChannelMapping.Mapped, imageIntent)
+			if res.Rejection != nil {
+				// 本地这时先换到下一个候选分组再试：照本地选号失败的分支走（没换成时按这个拒绝写）。
+				outcome = relayAutoGroupFailoverOutcome(c, res.Rejection, sessionHash)
+			} else {
+				if relayAttempt == nil {
+					seedOpenAIForwardImageIntentHint(c, res.Attempt.ChannelMapping.Mapped, imageIntent)
+				}
+				relayAttempt = res.Attempt
+				channelMapping = relayAttempt.ChannelMapping
+				forwardBody = openAIModelMappedBody(body, channelMapping.Mapped, channelMapping.MappedModel, h.gatewayService.ReplaceModelInBody)
+				forwardModel = relayAttempt.ForwardModel
+				c.Request = c.Request.WithContext(service.WithOpenAIForwardModel(c.Request.Context(), forwardModel, legacyCompact))
+				maxAccountSwitches = relayAttempt.MaxAccountSwitches
+				setOpsSelectedAccount(c, relayAttempt.Account.ID, relayAttempt.Account.Platform)
+				outcome = h.relayAttemptOutcome(c, relayAttempt)
 			}
-			relayAttempt = res.Attempt
-			channelMapping = relayAttempt.ChannelMapping
-			forwardBody = openAIModelMappedBody(body, channelMapping.Mapped, channelMapping.MappedModel, h.gatewayService.ReplaceModelInBody)
-			forwardModel = relayAttempt.ForwardModel
-			c.Request = c.Request.WithContext(service.WithOpenAIForwardModel(c.Request.Context(), forwardModel, legacyCompact))
-			maxAccountSwitches = relayAttempt.MaxAccountSwitches
-			setOpsSelectedAccount(c, relayAttempt.Account.ID, relayAttempt.Account.Platform)
-			outcome = h.relayAttemptOutcome(c, relayAttempt)
 		} else {
 			// Select account supporting the requested model, then admit it (shared with relay selection).
 			onTick, cannotWait := h.openAIAdmissionWaitHooks(c, reqStream, &streamStarted)
@@ -742,7 +747,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
 			if len(failedAccountIDs) == 0 {
-				if isAutoGroupSelectionFailoverError(err) && tryOpenAIAutoGroupFailover(c, h.apiKeyService, &apiKey, reqModel, failedGroupIDs, &subscription) {
+				if isAutoGroupSelectionFailoverError(err) && h.tryAutoGroupFailover(c, &apiKey, reqModel, failedGroupIDs, &subscription) {
 					requestPlatform = openAICompatibleRequestPlatform(c.Request.Context(), apiKey)
 					channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
 					forwardBody = openAIModelMappedBody(body, channelMapping.Mapped, channelMapping.MappedModel, h.gatewayService.ReplaceModelInBody)
@@ -752,10 +757,13 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					c.Request = c.Request.WithContext(pricingCtx)
 					continue
 				}
+				if h.writeRelayAutoGroupFailoverRejection(c, err, apiKey, reqModel, cyberBlockFormatResponses, lastFailoverErr, streamStarted, reqLog) {
+					return
+				}
 				h.writeOpenAIGatewayRejection(c, OpenAIFirstSelectFailureRejection(c.Request.Context(), h.gatewayService, apiKey, reqModel, requestPlatform, legacyCompact, err), streamStarted)
 				return
 			}
-			if tryOpenAIAutoGroupFailover(c, h.apiKeyService, &apiKey, reqModel, failedGroupIDs, &subscription) {
+			if h.tryAutoGroupFailover(c, &apiKey, reqModel, failedGroupIDs, &subscription) {
 				failedAccountIDs = make(map[int64]struct{})
 				sameAccountRetryCount = make(map[int64]int)
 				switchCount = 0
@@ -771,7 +779,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				requiredCapability = openAIResponsesRequiredCapabilityForRequest(imageIntent, needsResponses, requestPlatform)
 				pricingCtx, pricingAt = h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
 				c.Request = c.Request.WithContext(pricingCtx)
-				if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
+				if err := h.autoGroupFailoverBillingError(c, apiKey, subscription); err != nil {
 					reqLog.Warn("openai.auto_group_failover_billing_check_failed", zap.Error(err))
 					status, code, message, retryAfter := billingErrorDetails(err)
 					if retryAfter > 0 {
@@ -781,6 +789,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					return
 				}
 				continue
+			}
+			if h.writeRelayAutoGroupFailoverRejection(c, err, apiKey, reqModel, cyberBlockFormatResponses, lastFailoverErr, streamStarted, reqLog) {
+				return
 			}
 			if lastFailoverErr != nil {
 				h.handleFailoverExhausted(c, lastFailoverErr, streamStarted)
@@ -931,7 +942,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 						h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, forwardModel, requireCompact, nil), false, nil, err)
 					}
 					if !failoverErr.ShouldRetryNextAccount() {
-						if shouldTryOpenAIAutoGroupAfterTerminalFailover(failoverErr) && tryOpenAIAutoGroupFailover(c, h.apiKeyService, &apiKey, reqModel, failedGroupIDs, &subscription) {
+						if shouldTryOpenAIAutoGroupAfterTerminalFailover(failoverErr) && h.tryAutoGroupFailover(c, &apiKey, reqModel, failedGroupIDs, &subscription) {
 							failedAccountIDs = make(map[int64]struct{})
 							sameAccountRetryCount = make(map[int64]int)
 							switchCount = 0
@@ -980,7 +991,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					failedAccountIDs[account.ID] = struct{}{}
 					lastFailoverErr = failoverErr
 					if switchCount >= maxAccountSwitches {
-						if tryOpenAIAutoGroupFailover(c, h.apiKeyService, &apiKey, reqModel, failedGroupIDs, &subscription) {
+						if h.tryAutoGroupFailover(c, &apiKey, reqModel, failedGroupIDs, &subscription) {
 							failedAccountIDs = make(map[int64]struct{})
 							sameAccountRetryCount = make(map[int64]int)
 							switchCount = 0
@@ -1378,15 +1389,20 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 				Messages: true, APIKey: apiKey, Model: reqModel, Stream: reqStream, SessionHash: sessionHash,
 				Excluded: failedAccountIDs, Body: body,
 			})
-			if res.Rejection != nil {
+			if res.Rejection != nil && !res.Rejection.AutoGroupFailover {
 				h.writeOpenAIRelayRejection(c, res.Rejection, apiKey, reqModel, cyberBlockFormatAnthropic, lastFailoverErr, streamStarted, reqLog)
 				return
 			}
-			relayAttempt = res.Attempt
-			channelMappingMsg = relayAttempt.ChannelMapping
-			maxAccountSwitches = relayAttempt.MaxAccountSwitches
-			setOpsSelectedAccount(c, relayAttempt.Account.ID, relayAttempt.Account.Platform)
-			outcome = h.relayAttemptOutcome(c, relayAttempt)
+			if res.Rejection != nil {
+				// 本地这时先换到下一个候选分组再试：照本地选号失败的分支走（没换成时按这个拒绝写）。
+				outcome = relayAutoGroupFailoverOutcome(c, res.Rejection, sessionHash)
+			} else {
+				relayAttempt = res.Attempt
+				channelMappingMsg = relayAttempt.ChannelMapping
+				maxAccountSwitches = relayAttempt.MaxAccountSwitches
+				setOpsSelectedAccount(c, relayAttempt.Account.ID, relayAttempt.Account.Platform)
+				outcome = h.relayAttemptOutcome(c, relayAttempt)
+			}
 		} else {
 			// Select account and admit it (shared with relay selection, see OpenAIAccountAdmitter.SelectAndAdmit).
 			onTick, cannotWait := h.openAIAdmissionWaitHooks(c, reqStream, &streamStarted)
@@ -1434,7 +1450,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
 			if len(failedAccountIDs) == 0 {
-				if isAutoGroupSelectionFailoverError(err) && tryOpenAIAutoGroupFailover(c, h.apiKeyService, &apiKey, reqModel, failedGroupIDs, &subscription) {
+				if isAutoGroupSelectionFailoverError(err) && h.tryAutoGroupFailover(c, &apiKey, reqModel, failedGroupIDs, &subscription) {
 					channelMappingMsg, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
 					preferredMappedModel = resolveOpenAIMessagesDispatchMappedModel(c, apiKey, reqModel)
 					mappedBodyForMessages = newOpenAIModelMappedBodyCache(body, h.gatewayService.ReplaceModelInBody)
@@ -1443,10 +1459,13 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 					c.Request = c.Request.WithContext(msgPricingCtx)
 					continue
 				}
+				if h.writeRelayAutoGroupFailoverRejection(c, err, apiKey, reqModel, cyberBlockFormatAnthropic, lastFailoverErr, streamStarted, reqLog) {
+					return
+				}
 				h.writeOpenAIGatewayRejection(c, OpenAIMessagesNoAccountRejection(c.Request.Context(), h.gatewayService, apiKey, currentRoutingModel, reqModel, openAICompatibleRequestPlatform(c.Request.Context(), apiKey), err), streamStarted)
 				return
 			} else {
-				if tryOpenAIAutoGroupFailover(c, h.apiKeyService, &apiKey, reqModel, failedGroupIDs, &subscription) {
+				if h.tryAutoGroupFailover(c, &apiKey, reqModel, failedGroupIDs, &subscription) {
 					failedAccountIDs = make(map[int64]struct{})
 					sameAccountRetryCount = make(map[int64]int)
 					switchCount = 0
@@ -1457,7 +1476,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 					requestPlatform = openAICompatibleRequestPlatform(c.Request.Context(), apiKey)
 					msgPricingCtx, pricingAt = h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
 					c.Request = c.Request.WithContext(msgPricingCtx)
-					if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
+					if err := h.autoGroupFailoverBillingError(c, apiKey, subscription); err != nil {
 						reqLog.Warn("openai_messages.auto_group_failover_billing_check_failed", zap.Error(err))
 						status, code, message, retryAfter := billingErrorDetails(err)
 						if retryAfter > 0 {
@@ -1467,6 +1486,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 						return
 					}
 					continue
+				}
+				if h.writeRelayAutoGroupFailoverRejection(c, err, apiKey, reqModel, cyberBlockFormatAnthropic, lastFailoverErr, streamStarted, reqLog) {
+					return
 				}
 				if lastFailoverErr != nil {
 					h.handleAnthropicFailoverExhausted(c, lastFailoverErr, streamStarted)
@@ -1577,7 +1599,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 						h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, currentRoutingModel, false, nil), false, nil, err)
 					}
 					if !failoverErr.ShouldRetryNextAccount() {
-						if shouldTryOpenAIAutoGroupAfterTerminalFailover(failoverErr) && tryOpenAIAutoGroupFailover(c, h.apiKeyService, &apiKey, reqModel, failedGroupIDs, &subscription) {
+						if shouldTryOpenAIAutoGroupAfterTerminalFailover(failoverErr) && h.tryAutoGroupFailover(c, &apiKey, reqModel, failedGroupIDs, &subscription) {
 							failedAccountIDs = make(map[int64]struct{})
 							sameAccountRetryCount = make(map[int64]int)
 							switchCount = 0
@@ -1620,7 +1642,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 					failedAccountIDs[account.ID] = struct{}{}
 					lastFailoverErr = failoverErr
 					if switchCount >= maxAccountSwitches {
-						if tryOpenAIAutoGroupFailover(c, h.apiKeyService, &apiKey, reqModel, failedGroupIDs, &subscription) {
+						if h.tryAutoGroupFailover(c, &apiKey, reqModel, failedGroupIDs, &subscription) {
 							failedAccountIDs = make(map[int64]struct{})
 							sameAccountRetryCount = make(map[int64]int)
 							switchCount = 0

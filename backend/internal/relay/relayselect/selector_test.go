@@ -69,8 +69,19 @@ func (r fakeAccounts) forPlatform(platform string) []service.Account {
 	return out
 }
 
-func (r fakeAccounts) ListSchedulableByGroupIDAndPlatform(_ context.Context, _ int64, platform string) ([]service.Account, error) {
-	return r.forPlatform(platform), nil
+// ListSchedulableByGroupIDAndPlatform：写了 AccountGroups 的账号只在这些分组里（没写的在所有分组里）。
+func (r fakeAccounts) ListSchedulableByGroupIDAndPlatform(_ context.Context, groupID int64, platform string) ([]service.Account, error) {
+	var out []service.Account
+	for _, a := range r.forPlatform(platform) {
+		in := len(a.AccountGroups) == 0
+		for _, g := range a.AccountGroups {
+			in = in || g.GroupID == groupID
+		}
+		if in {
+			out = append(out, a)
+		}
+	}
+	return out, nil
 }
 
 func (r fakeAccounts) ListModelAvailabilityCandidates(_ context.Context, _ *int64, platforms []string, _ bool) ([]service.Account, error) {

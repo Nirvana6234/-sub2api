@@ -134,6 +134,12 @@ func startE2EWithConfig(t *testing.T, configure func(*config.Config), accounts f
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		e.hits <- r
 		w.Header().Set("Content-Type", "application/json")
+		if strings.HasPrefix(r.URL.Path, "/status-429") {
+			// 账号的 base_url 带这个前缀时上游回 429（换号、自动分组换组的用例）。
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"error":{"message":"rate limited","type":"rate_limit_error"}}`)
+			return
+		}
 		if bytes.Contains(body, []byte("cyber-trigger")) {
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = io.WriteString(w, `{"error":{"code":"cyber_policy","message":"blocked by policy","type":"invalid_request_error"}}`)

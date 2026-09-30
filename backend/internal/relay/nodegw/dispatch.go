@@ -71,7 +71,9 @@ type requestState struct {
 	rawBody []byte
 	// routeModel：组合平台分组选目标用的公开模型（改写请求体之前的），选号时带给主节点。
 	routeModel string
-	current    *attemptState
+	// handedOff：这次请求已交给主节点转发（主节点照本地处理，自动分组的结果也由它自己记）。
+	handedOff bool
+	current   *attemptState
 }
 
 // attemptState 是一次选中的尝试。WebSocket 连接上，连接选号一份（收 response id、释放），每一轮另有一份
@@ -403,11 +405,15 @@ func (d *Dispatcher) OnUsageResult(rec *relayv1.UsageRecord, res *relayv1.UsageR
 
 // HandOff 交给主节点转发（handler.OpenAIRelayDispatcher）。
 func (d *Dispatcher) HandOff(c *gin.Context) {
+	st := stateOf(c)
+	st.mu.Lock()
+	st.handedOff = true
+	st.mu.Unlock()
 	if d.deps.HandOff == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"type": "api_error", "message": "Service temporarily unavailable"}})
 		return
 	}
-	d.deps.HandOff(c, stateOf(c).rawBody)
+	d.deps.HandOff(c, st.rawBody)
 }
 
 func rejection(r *handler.OpenAIRelayRejection) handler.OpenAIRelaySelectResult {
@@ -462,16 +468,15 @@ func (d *Dispatcher) RecordCyberPolicy(c *gin.Context, attempt *handler.OpenAIRe
 
 // convertRejection 把主节点的拒绝转成处理函数的写法。
 func convertRejection(r *relayv1.SelectRejection) *handler.OpenAIRelayRejection {
+	out := convertRejectionKind(r)
+	out.AutoGroupFailover = r.GetAutoGroupFailover()
+	return out
+}
+
+func convertRejectionKind(r *relayv1.SelectRejection) *handler.OpenAIRelayRejection {
 	switch r.GetFormat() {
 	case relayv1.RejectionFormat_REJECTION_FORMAT_GATEWAY:
-		return &handler.OpenAIRelayRejection{
-			Kind: handler.OpenAIRelayRejectGateway, CyberBlockKey: r.GetCyberBlockKey(),
-			Gateway: handler.OpenAIGatewayRejection{
-				Status: int(r.GetStatus()), ErrType: r.GetErrorType(), Code: r.GetCode(), Message: r.GetMessage(),
-				RetryAfter: int(r.GetRetryAfterSeconds()), RoutingCapacityLimited: r.GetRoutingCapacityLimited(),
-				OpsBusinessLimitedReason: r.GetOpsBusinessLimitedReason(), Anthropic: r.GetAnthropicFormat(),
-			},
-		}
+		return &handler.OpenAIRelayRejection{Kind: handler.OpenAIRelayRejectGateway, CyberBlockKey: r.GetCyberBlockKey(), Gateway: gatewayOf(r)}
 	case relayv1.RejectionFormat_REJECTION_FORMAT_RAW:
 		return &handler.OpenAIRelayRejection{Kind: handler.OpenAIRelayRejectRaw, Raw: capturedRejection(r)}
 	case relayv1.RejectionFormat_REJECTION_FORMAT_FAILOVER_EXHAUSTED:
@@ -484,6 +489,15 @@ func convertRejection(r *relayv1.SelectRejection) *handler.OpenAIRelayRejection 
 		}
 	default:
 		return &handler.OpenAIRelayRejection{Kind: handler.OpenAIRelayRejectUnavailable}
+	}
+}
+
+// gatewayOf 是 GATEWAY 格式拒绝的内容。
+func gatewayOf(r *relayv1.SelectRejection) handler.OpenAIGatewayRejection {
+	return handler.OpenAIGatewayRejection{
+		Status: int(r.GetStatus()), ErrType: r.GetErrorType(), Code: r.GetCode(), Message: r.GetMessage(),
+		RetryAfter: int(r.GetRetryAfterSeconds()), RoutingCapacityLimited: r.GetRoutingCapacityLimited(),
+		OpsBusinessLimitedReason: r.GetOpsBusinessLimitedReason(), Anthropic: r.GetAnthropicFormat(),
 	}
 }
 
