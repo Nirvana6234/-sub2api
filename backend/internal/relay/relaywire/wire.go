@@ -16,6 +16,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/relay/relayselect"
 	"github.com/Wei-Shaw/sub2api/internal/relay/relaysettle"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
+	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/google/wire"
 )
@@ -41,6 +42,7 @@ func ProvideMasterRuntime(
 	gateway *service.OpenAIGatewayService,
 	concurrency *service.ConcurrencyService,
 	moderation *service.ContentModerationService,
+	promptAudit *securityaudit.PromptService,
 	accounts service.AccountRepository,
 	groups service.GroupRepository,
 	errorPassthrough *service.ErrorPassthroughService,
@@ -62,7 +64,7 @@ func ProvideMasterRuntime(
 		NewSelector: relayselect.NewFactory(relayselect.Deps{
 			Config: cfg, APIKeys: apiKeys, Subscriptions: subscriptions, Settings: settingService,
 			Billing: billing, Gateway: gateway, Concurrency: concurrency,
-			Moderation: moderation, Ops: ops, Users: users,
+			Moderation: moderation, PromptAudit: promptAuditMode(promptAudit), Ops: ops, Users: users,
 		}),
 		VoucherPartitions: repository.NewRelayVoucherPartitions(db),
 		Sections:          forwardingSections(errorPassthrough),
@@ -95,6 +97,14 @@ func relayVoucherRecorder(db *sql.DB) service.RelayVoucherRecorder {
 		panic("relaywire: the usage billing repository does not record relay vouchers")
 	}
 	return r
+}
+
+// promptAuditMode 把可能为 nil 的提示词审计服务转成接口（nil 指针不能直接放进接口）。
+func promptAuditMode(p *securityaudit.PromptService) interface{ EffectiveMode() securityaudit.Mode } {
+	if p == nil {
+		return nil
+	}
+	return p
 }
 
 // sealedSections 是按节点加密下发的分段（设计 6 第二类）：加密下发的配置（内容审核、联网搜索）引用的代理，

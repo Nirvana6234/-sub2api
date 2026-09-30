@@ -24,6 +24,8 @@ var errFlaggedHashesMasterOnly = errors.New("flagged input list is managed on th
 // 这台新命中的输入先记进副本，再报给主节点，主节点写入后推给所有节点。
 type FlaggedHashReplica struct {
 	control relayv1.RelayControlClient
+	// resyncMu 串行化整份拉取（重连时上一次还在重试也不会两次同时进行、互相清掉拉取期间的增量）。
+	resyncMu sync.Mutex
 
 	mu    sync.RWMutex
 	set   map[string]struct{}
@@ -120,6 +122,8 @@ func applyFlaggedHashes(set map[string]struct{}, ch *relayv1.FlaggedHashes) {
 
 // Resync 整份拉取名单并换上（每次连上事件流后调用：断线期间的增量可能错过了）。
 func (r *FlaggedHashReplica) Resync(ctx context.Context) error {
+	r.resyncMu.Lock()
+	defer r.resyncMu.Unlock()
 	r.mu.Lock()
 	r.resyncing, r.during = true, nil
 	r.mu.Unlock()

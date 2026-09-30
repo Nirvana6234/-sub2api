@@ -18,6 +18,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/relay/accountcodec"
 	"github.com/Wei-Shaw/sub2api/internal/relay/master"
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
+	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -35,6 +36,9 @@ type Deps struct {
 	// Moderation 执行从节点上报的审核违规（累计、封号、通知）和命中过的输入名单（设计 3.4）；
 	// 判定在从节点。nil 表示没有这个功能。
 	Moderation *service.ContentModerationService
+	// PromptAudit 是提示词审计的生效模式。过渡期（提示词审计还没搬到从节点，开发计划 WP10-4）：
+	// 不是关闭时准入回"暂不支持"，请求交给主节点转发；nil 表示没有这个功能。
+	PromptAudit interface{ EffectiveMode() securityaudit.Mode }
 	// Ops 记运维错误日志（cyber 命中、cyber 会话屏蔽）；nil 表示不记。
 	Ops *service.OpsService
 	// Users 取违规通知的收件人（主节点库里的用户邮箱）；nil 时不发信。

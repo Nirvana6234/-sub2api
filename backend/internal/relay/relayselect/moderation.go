@@ -24,12 +24,18 @@ type admittedUsers struct {
 	calls int
 }
 
+// admittedRefresh：一分钟内记过的不再重写（准入、选号每个请求都会调，别在热路径上反复写）。
+const admittedRefresh = time.Minute
+
 func (a *admittedUsers) note(nodeID, userID int64, now time.Time) {
 	if userID <= 0 {
 		return
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if at, ok := a.seen[nodeID][userID]; ok && now.Sub(at) < admittedRefresh {
+		return
+	}
 	if a.seen == nil {
 		a.seen = map[int64]map[int64]time.Time{}
 	}

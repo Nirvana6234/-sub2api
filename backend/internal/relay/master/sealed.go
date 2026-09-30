@@ -90,8 +90,9 @@ func (g *globalSnapshot) sealFor(snap *relayv1.ConfigSnapshot, nodeID int64, pub
 		return nil
 	}
 	if pub == nil {
-		// 没有这台的加密公钥（未领证）：不下发密钥，从节点上这些功能按未配置处理。
-		return nil
+		// 已领证的节点一定有加密公钥（领证、续签时上报，主节点重启从库里恢复）。拿不到就报错：宁可让这台
+		// 拉不到配置（请求 503），也不能让它悄悄少了审核配置、把该拦的请求放过去。
+		return fmt.Errorf("relay node %d has no encryption key; sealed config cannot be delivered", nodeID)
 	}
 	snap.Version = hashParts([]byte(snap.Version), pub.Bytes())
 	plain, err := json.Marshal(g.sealed.payload)

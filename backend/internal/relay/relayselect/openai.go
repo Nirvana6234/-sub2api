@@ -11,6 +11,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/relay/keycodec"
 	"github.com/Wei-Shaw/sub2api/internal/relay/master"
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
+	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"go.uber.org/zap"
@@ -230,6 +231,10 @@ func (s *selector) Admit(ctx context.Context, nodeID int64, req *relayv1.AdmitRe
 		return &relayv1.AdmitResponse{Result: &relayv1.AdmitResponse_Rejection{Rejection: rej.GetRejection()}}, nil
 	}
 	s.admitted.note(nodeID, adm.APIKey.User.ID, s.now())
+	if p := s.deps.PromptAudit; p != nil && p.EffectiveMode() != securityaudit.ModeOff {
+		// 过渡期：从节点上还没有提示词审计（WP10-4），开着时整个请求（含 WebSocket 升级）交给主节点。
+		return &relayv1.AdmitResponse{Result: &relayv1.AdmitResponse_Rejection{Rejection: unsupported().GetRejection()}}, nil
+	}
 	key, err := keycodec.EncodeAPIKey(adm.APIKey)
 	if err != nil {
 		return nil, err

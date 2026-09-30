@@ -95,10 +95,9 @@ func TestSealedSnapshotIsBoundToTheNode(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, v2, v3, "a changed sealed value means a new version")
 
-	// 没有加密公钥的节点（未领证）拿不到加密部分。
+	// 没有加密公钥的节点拿不到快照（不能带着缺了审核配置的快照去转发）。
 	n2, err := store.CreatePending(ctx, &Node{IdentityFingerprint: "fp-2", IdentityPublicKey: []byte{2}}, 20)
 	require.NoError(t, err)
-	snap2, err := p.SnapshotFor(ctx, n2.ID)
-	require.NoError(t, err)
-	require.Empty(t, snap2.Sealed)
+	_, err = p.SnapshotFor(ctx, n2.ID)
+	require.Error(t, err)
 }

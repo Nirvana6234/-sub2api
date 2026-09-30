@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -234,12 +235,25 @@ func (s *Store) DeleteBefore(kind string, cutoff time.Time) (int64, error) {
 	return deleted, nil
 }
 
+// countLines 按块数换行（不把整个段读进内存）。
 func countLines(path string) (int64, error) {
-	b, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return 0, err
 	}
-	return int64(bytes.Count(b, []byte{'\n'})), nil
+	defer func() { _ = f.Close() }()
+	buf := make([]byte, 64<<10)
+	var n int64
+	for {
+		k, err := f.Read(buf)
+		n += int64(bytes.Count(buf[:k], []byte{'\n'}))
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return n, nil
+			}
+			return n, err
+		}
+	}
 }
 
 // Scan 按时间从新到旧逐条交给 fn（fn 返回 false 时停）；只看 [from, to] 这些天的段（零值表示不限）。
