@@ -428,8 +428,9 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 	var selector Selector
 	if r.deps.NewSelector != nil {
 		selector = r.deps.NewSelector(SelectEnv{
-			Epoch:  server.Epoch(),
-			Quotas: quotas,
+			Epoch:       server.Epoch(),
+			OnlineNodes: func() int { return len(events.ConnectedNodes()) },
+			Quotas:      quotas,
 			IssueVoucher: func(v *relayv1.Voucher) ([]byte, *relayv1.Voucher, error) {
 				return sign.IssueVoucher(signing.currentVoucherSigner(), v, r.now())
 			},

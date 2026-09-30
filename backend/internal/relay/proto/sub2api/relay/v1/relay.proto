@@ -93,6 +93,11 @@ service RelayControl {
   rpc FetchFlaggedHashes(FetchFlaggedHashesRequest) returns (FetchFlaggedHashesResponse);
   // RecordFlaggedHash 从节点新命中的输入：主节点写进名单，再把增量推给所有节点。
   rpc RecordFlaggedHash(RecordFlaggedHashRequest) returns (RecordFlaggedHashResponse);
+
+  // ReportWebSearchUsage 联网搜索用量（设计 3.3）：搜索在从节点执行，各搜索服务的配额是全局的。从节点定期报
+  // 上次确认以来新用的次数，主节点加进全局计数，回每个服务当前的上限、已用和这台可用的份额（剩余按在线节点分摊）。
+  // 带幂等键：回复丢了重发同一份，只加一次。
+  rpc ReportWebSearchUsage(WebSearchUsageReport) returns (WebSearchUsageShares);
 }
 
 // 扣费连接：扣费批次（设计 5.1、5.2，开发计划 WP8）。
@@ -788,6 +793,25 @@ message RecordFlaggedHashRequest {
 }
 
 message RecordFlaggedHashResponse {}
+
+message WebSearchUsageReport {
+  // 搜索服务类型 -> 上次确认以来这台新用的次数。
+  map<string, int64> used = 1;
+}
+
+message WebSearchUsageShares {
+  repeated WebSearchShare shares = 1;
+}
+
+message WebSearchShare {
+  string provider = 1;
+  // 配额上限（0 表示不限）。
+  int64 limit = 2;
+  // 全局已用（含这次报上来的）。
+  int64 used = 3;
+  // 这台在下次上报之前最多还能用多少次（剩余按在线节点分摊，至少 1，用完为 0）。
+  int64 allowance = 4;
+}
 
 message UpstreamErrorResponse {
   bool should_disable = 1;

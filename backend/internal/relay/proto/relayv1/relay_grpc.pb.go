@@ -303,25 +303,26 @@ var RelayEnrollment_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	RelayControl_Ping_FullMethodName                = "/sub2api.relay.v1.RelayControl/Ping"
-	RelayControl_FetchConfig_FullMethodName         = "/sub2api.relay.v1.RelayControl/FetchConfig"
-	RelayControl_ReleaseQuota_FullMethodName        = "/sub2api.relay.v1.RelayControl/ReleaseQuota"
-	RelayControl_RenewLeases_FullMethodName         = "/sub2api.relay.v1.RelayControl/RenewLeases"
-	RelayControl_ReportLeases_FullMethodName        = "/sub2api.relay.v1.RelayControl/ReportLeases"
-	RelayControl_AckQuotaRecall_FullMethodName      = "/sub2api.relay.v1.RelayControl/AckQuotaRecall"
-	RelayControl_Admit_FullMethodName               = "/sub2api.relay.v1.RelayControl/Admit"
-	RelayControl_Select_FullMethodName              = "/sub2api.relay.v1.RelayControl/Select"
-	RelayControl_FetchCredentials_FullMethodName    = "/sub2api.relay.v1.RelayControl/FetchCredentials"
-	RelayControl_RefillQuota_FullMethodName         = "/sub2api.relay.v1.RelayControl/RefillQuota"
-	RelayControl_UpstreamError_FullMethodName       = "/sub2api.relay.v1.RelayControl/UpstreamError"
-	RelayControl_BeginTurn_FullMethodName           = "/sub2api.relay.v1.RelayControl/BeginTurn"
-	RelayControl_TurnMapping_FullMethodName         = "/sub2api.relay.v1.RelayControl/TurnMapping"
-	RelayControl_WebSocketLease_FullMethodName      = "/sub2api.relay.v1.RelayControl/WebSocketLease"
-	RelayControl_CyberPolicyHit_FullMethodName      = "/sub2api.relay.v1.RelayControl/CyberPolicyHit"
-	RelayControl_ModerationViolation_FullMethodName = "/sub2api.relay.v1.RelayControl/ModerationViolation"
-	RelayControl_ModerationNotify_FullMethodName    = "/sub2api.relay.v1.RelayControl/ModerationNotify"
-	RelayControl_FetchFlaggedHashes_FullMethodName  = "/sub2api.relay.v1.RelayControl/FetchFlaggedHashes"
-	RelayControl_RecordFlaggedHash_FullMethodName   = "/sub2api.relay.v1.RelayControl/RecordFlaggedHash"
+	RelayControl_Ping_FullMethodName                 = "/sub2api.relay.v1.RelayControl/Ping"
+	RelayControl_FetchConfig_FullMethodName          = "/sub2api.relay.v1.RelayControl/FetchConfig"
+	RelayControl_ReleaseQuota_FullMethodName         = "/sub2api.relay.v1.RelayControl/ReleaseQuota"
+	RelayControl_RenewLeases_FullMethodName          = "/sub2api.relay.v1.RelayControl/RenewLeases"
+	RelayControl_ReportLeases_FullMethodName         = "/sub2api.relay.v1.RelayControl/ReportLeases"
+	RelayControl_AckQuotaRecall_FullMethodName       = "/sub2api.relay.v1.RelayControl/AckQuotaRecall"
+	RelayControl_Admit_FullMethodName                = "/sub2api.relay.v1.RelayControl/Admit"
+	RelayControl_Select_FullMethodName               = "/sub2api.relay.v1.RelayControl/Select"
+	RelayControl_FetchCredentials_FullMethodName     = "/sub2api.relay.v1.RelayControl/FetchCredentials"
+	RelayControl_RefillQuota_FullMethodName          = "/sub2api.relay.v1.RelayControl/RefillQuota"
+	RelayControl_UpstreamError_FullMethodName        = "/sub2api.relay.v1.RelayControl/UpstreamError"
+	RelayControl_BeginTurn_FullMethodName            = "/sub2api.relay.v1.RelayControl/BeginTurn"
+	RelayControl_TurnMapping_FullMethodName          = "/sub2api.relay.v1.RelayControl/TurnMapping"
+	RelayControl_WebSocketLease_FullMethodName       = "/sub2api.relay.v1.RelayControl/WebSocketLease"
+	RelayControl_CyberPolicyHit_FullMethodName       = "/sub2api.relay.v1.RelayControl/CyberPolicyHit"
+	RelayControl_ModerationViolation_FullMethodName  = "/sub2api.relay.v1.RelayControl/ModerationViolation"
+	RelayControl_ModerationNotify_FullMethodName     = "/sub2api.relay.v1.RelayControl/ModerationNotify"
+	RelayControl_FetchFlaggedHashes_FullMethodName   = "/sub2api.relay.v1.RelayControl/FetchFlaggedHashes"
+	RelayControl_RecordFlaggedHash_FullMethodName    = "/sub2api.relay.v1.RelayControl/RecordFlaggedHash"
+	RelayControl_ReportWebSearchUsage_FullMethodName = "/sub2api.relay.v1.RelayControl/ReportWebSearchUsage"
 )
 
 // RelayControlClient is the client API for RelayControl service.
@@ -387,6 +388,10 @@ type RelayControlClient interface {
 	FetchFlaggedHashes(ctx context.Context, in *FetchFlaggedHashesRequest, opts ...grpc.CallOption) (*FetchFlaggedHashesResponse, error)
 	// RecordFlaggedHash 从节点新命中的输入：主节点写进名单，再把增量推给所有节点。
 	RecordFlaggedHash(ctx context.Context, in *RecordFlaggedHashRequest, opts ...grpc.CallOption) (*RecordFlaggedHashResponse, error)
+	// ReportWebSearchUsage 联网搜索用量（设计 3.3）：搜索在从节点执行，各搜索服务的配额是全局的。从节点定期报
+	// 上次确认以来新用的次数，主节点加进全局计数，回每个服务当前的上限、已用和这台可用的份额（剩余按在线节点分摊）。
+	// 带幂等键：回复丢了重发同一份，只加一次。
+	ReportWebSearchUsage(ctx context.Context, in *WebSearchUsageReport, opts ...grpc.CallOption) (*WebSearchUsageShares, error)
 }
 
 type relayControlClient struct {
@@ -587,6 +592,16 @@ func (c *relayControlClient) RecordFlaggedHash(ctx context.Context, in *RecordFl
 	return out, nil
 }
 
+func (c *relayControlClient) ReportWebSearchUsage(ctx context.Context, in *WebSearchUsageReport, opts ...grpc.CallOption) (*WebSearchUsageShares, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WebSearchUsageShares)
+	err := c.cc.Invoke(ctx, RelayControl_ReportWebSearchUsage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RelayControlServer is the server API for RelayControl service.
 // All implementations must embed UnimplementedRelayControlServer
 // for forward compatibility.
@@ -650,6 +665,10 @@ type RelayControlServer interface {
 	FetchFlaggedHashes(context.Context, *FetchFlaggedHashesRequest) (*FetchFlaggedHashesResponse, error)
 	// RecordFlaggedHash 从节点新命中的输入：主节点写进名单，再把增量推给所有节点。
 	RecordFlaggedHash(context.Context, *RecordFlaggedHashRequest) (*RecordFlaggedHashResponse, error)
+	// ReportWebSearchUsage 联网搜索用量（设计 3.3）：搜索在从节点执行，各搜索服务的配额是全局的。从节点定期报
+	// 上次确认以来新用的次数，主节点加进全局计数，回每个服务当前的上限、已用和这台可用的份额（剩余按在线节点分摊）。
+	// 带幂等键：回复丢了重发同一份，只加一次。
+	ReportWebSearchUsage(context.Context, *WebSearchUsageReport) (*WebSearchUsageShares, error)
 	mustEmbedUnimplementedRelayControlServer()
 }
 
@@ -716,6 +735,9 @@ func (UnimplementedRelayControlServer) FetchFlaggedHashes(context.Context, *Fetc
 }
 func (UnimplementedRelayControlServer) RecordFlaggedHash(context.Context, *RecordFlaggedHashRequest) (*RecordFlaggedHashResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RecordFlaggedHash not implemented")
+}
+func (UnimplementedRelayControlServer) ReportWebSearchUsage(context.Context, *WebSearchUsageReport) (*WebSearchUsageShares, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReportWebSearchUsage not implemented")
 }
 func (UnimplementedRelayControlServer) mustEmbedUnimplementedRelayControlServer() {}
 func (UnimplementedRelayControlServer) testEmbeddedByValue()                      {}
@@ -1080,6 +1102,24 @@ func _RelayControl_RecordFlaggedHash_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RelayControl_ReportWebSearchUsage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WebSearchUsageReport)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayControlServer).ReportWebSearchUsage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayControl_ReportWebSearchUsage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayControlServer).ReportWebSearchUsage(ctx, req.(*WebSearchUsageReport))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // RelayControl_ServiceDesc is the grpc.ServiceDesc for RelayControl service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1162,6 +1202,10 @@ var RelayControl_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RecordFlaggedHash",
 			Handler:    _RelayControl_RecordFlaggedHash_Handler,
+		},
+		{
+			MethodName: "ReportWebSearchUsage",
+			Handler:    _RelayControl_ReportWebSearchUsage_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

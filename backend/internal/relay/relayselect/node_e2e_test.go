@@ -84,7 +84,10 @@ type e2e struct {
 	nodeID int64
 	// moderation 是从节点上的安全审计；records 是从节点本机的记录存储。
 	moderation *nodegw.Moderation
-	records    *nodestore.Store
+	// nodeSettings 是从节点的设置服务（配置快照 + 加密下发的部分）；nodeCache 是它背后的快照。
+	nodeSettings *service.SettingService
+	nodeCache    *node.ConfigCache
+	records      *nodestore.Store
 }
 
 // testPromptAudit 是端到端测试世界里主节点下发的提示词审计配置（nil 时不下发）。用例用 usePromptAudit 设置。
@@ -244,6 +247,7 @@ func startE2EWithConfig(t *testing.T, configure func(*config.Config), accounts f
 	cache := node.NewConfigCache()
 	cache.SetOpener(func(sealed, aad []byte) ([]byte, error) { return sealbox.Open(e.world.nodeKey, sealed, aad) })
 	nodeSettings := service.NewSettingService(cache, nodeCfg)
+	e.nodeSettings, e.nodeCache = nodeSettings, cache
 	cache.OnSwap(func(*relayv1.ConfigSnapshot) { nodeSettings.InvalidateAll() })
 	syncer := node.NewConfigSyncer(cache, client)
 	require.NoError(t, syncer.Sync(ctx))

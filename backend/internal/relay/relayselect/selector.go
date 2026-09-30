@@ -15,6 +15,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/websearch"
 	"github.com/Wei-Shaw/sub2api/internal/relay/accountcodec"
 	"github.com/Wei-Shaw/sub2api/internal/relay/master"
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
@@ -81,6 +82,8 @@ type selector struct {
 	stopReaper context.CancelFunc
 	// admitted：各节点最近准入过的用户（违规上报只认这些，moderation.go）。
 	admitted admittedUsers
+	// webSearchManager 取联网搜索管理器（默认 service.CurrentWebSearchManager；测试替换）。
+	webSearchManager func() *websearch.Manager
 }
 
 type requestKey struct {

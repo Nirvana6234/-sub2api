@@ -89,8 +89,12 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 	errorPassthrough := service.NewStaticErrorPassthroughService(nil)
 	// moderation 在下面组装（要用主从连接）；换快照时它还没有就跳过。
 	var moderation *Moderation
+	var webSearchReady bool
 	cache.OnSwap(func(*relayv1.ConfigSnapshot) {
 		settings.InvalidateAll()
+		if webSearchReady {
+			settings.RebuildWebSearchManager(context.Background())
+		}
 		if moderation != nil {
 			moderation.Service.InvalidateRuntimeSnapshot()
 		}
@@ -105,6 +109,10 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 	if err := retry(ctx, "config sync", syncer.Sync); err != nil {
 		return err
 	}
+	// 联网搜索在从节点执行（设计 3.3）；配额本机计数、定期汇总（下面 Run）。
+	webSearchQuota := node.NewWebSearchQuota(client)
+	SetupWebSearch(ctx, settings, cache, webSearchQuota)
+	webSearchReady = true
 
 	outbox := node.NewEventOutbox(0)
 	selectClient := node.NewSelectClient(client, outbox)
@@ -147,6 +155,7 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 	runCtx, stop := context.WithCancel(context.WithoutCancel(ctx))
 	defer stop()
 	moderation = NewModeration(runCtx, cache, records, client)
+	go webSearchQuota.Run(runCtx)
 	go node.RunEvents(runCtx, client, syncer, node.EventHandlers{
 		Outbox:          outbox,
 		OnFlaggedHashes: moderation.Hashes.Apply,

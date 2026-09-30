@@ -352,3 +352,52 @@ func SanitizeWebSearchConfig(ctx context.Context, cfg *WebSearchEmulationConfig)
 	}
 	return &out
 }
+
+// WebSearchProviderConfigs 把联网搜索配置转成搜索服务列表（单机和主从分流的从节点共用）：没有 Key 的跳过，
+// 配了代理却找不到代理的跳过（不能退回直连）。关闭或没有服务时 ok 为 false。
+func WebSearchProviderConfigs(cfg *WebSearchEmulationConfig, proxyURLs map[int64]string) ([]websearch.ProviderConfig, bool) {
+	if cfg == nil || !cfg.Enabled || len(cfg.Providers) == 0 {
+		return nil, false
+	}
+	configs := make([]websearch.ProviderConfig, 0, len(cfg.Providers))
+	for _, p := range cfg.Providers {
+		if p.APIKey == "" {
+			continue
+		}
+		pc := websearch.ProviderConfig{
+			Type:       p.Type,
+			APIKey:     p.APIKey,
+			QuotaLimit: webSearchDerefInt64(p.QuotaLimit),
+			ExpiresAt:  p.ExpiresAt,
+		}
+		if p.SubscribedAt != nil {
+			pc.SubscribedAt = p.SubscribedAt
+		}
+		if p.ProxyID != nil {
+			pc.ProxyID = *p.ProxyID
+			if u, ok := proxyURLs[*p.ProxyID]; ok {
+				pc.ProxyURL = u
+			} else {
+				// Proxy configured but not found — skip this provider to prevent direct connection.
+				slog.Warn("websearch: proxy not found for provider, skipping",
+					"provider", p.Type, "proxy_id", *p.ProxyID)
+				continue
+			}
+		}
+		configs = append(configs, pc)
+	}
+	return configs, true
+}
+
+func webSearchDerefInt64(v *int64) int64 {
+	if v == nil {
+		return 0
+	}
+	return *v
+}
+
+// RebuildWebSearchManager 按当前配置重建联网搜索管理器（主从分流的从节点换配置快照后调用）。
+func (s *SettingService) RebuildWebSearchManager(ctx context.Context) { s.rebuildWebSearchManager(ctx) }
+
+// CurrentWebSearchManager 返回当前的联网搜索管理器（没有时为 nil）。主从分流的主节点用它汇总各节点的用量。
+func CurrentWebSearchManager() *websearch.Manager { return getWebSearchManager() }

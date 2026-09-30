@@ -58,6 +58,10 @@ func (s *recordingSelector) ModerationNotify(context.Context, int64, *relayv1.Mo
 	return &relayv1.ModerationNotifyResponse{}, nil
 }
 
+func (s *recordingSelector) ReportWebSearchUsage(context.Context, int64, *relayv1.WebSearchUsageReport) (*relayv1.WebSearchUsageShares, error) {
+	return &relayv1.WebSearchUsageShares{}, nil
+}
+
 func (s *recordingSelector) FetchFlaggedHashes(context.Context, int64, *relayv1.FetchFlaggedHashesRequest) (*relayv1.FetchFlaggedHashesResponse, error) {
 	return &relayv1.FetchFlaggedHashesResponse{}, nil
 }

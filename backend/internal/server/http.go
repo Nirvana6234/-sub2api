@@ -4,7 +4,6 @@ package server
 import (
 	"context"
 	"log"
-	"log/slog"
 	"net/http"
 	"time"
 
@@ -53,36 +52,10 @@ func ProvideRouter(
 
 	// Wire up websearch Manager builder so it initializes on startup and rebuilds on config save.
 	settingService.SetWebSearchManagerBuilder(context.Background(), func(cfg *service.WebSearchEmulationConfig, proxyURLs map[int64]string) {
-		if cfg == nil || !cfg.Enabled || len(cfg.Providers) == 0 {
+		configs, ok := service.WebSearchProviderConfigs(cfg, proxyURLs)
+		if !ok {
 			service.SetWebSearchManager(nil)
 			return
-		}
-		configs := make([]websearch.ProviderConfig, 0, len(cfg.Providers))
-		for _, p := range cfg.Providers {
-			if p.APIKey == "" {
-				continue
-			}
-			pc := websearch.ProviderConfig{
-				Type:       p.Type,
-				APIKey:     p.APIKey,
-				QuotaLimit: derefInt64(p.QuotaLimit),
-				ExpiresAt:  p.ExpiresAt,
-			}
-			if p.SubscribedAt != nil {
-				pc.SubscribedAt = p.SubscribedAt
-			}
-			if p.ProxyID != nil {
-				pc.ProxyID = *p.ProxyID
-				if u, ok := proxyURLs[*p.ProxyID]; ok {
-					pc.ProxyURL = u
-				} else {
-					// Proxy configured but not found — skip this provider to prevent direct connection.
-					slog.Warn("websearch: proxy not found for provider, skipping",
-						"provider", p.Type, "proxy_id", *p.ProxyID)
-					continue
-				}
-			}
-			configs = append(configs, pc)
 		}
 		service.SetWebSearchManager(websearch.NewManager(configs, redisClient))
 	})
@@ -161,11 +134,4 @@ func ProvideHTTPServer(cfg *config.Config, router *gin.Engine) *http.Server {
 
 	server.Handler = httpHandler
 	return server
-}
-
-func derefInt64(p *int64) int64 {
-	if p == nil {
-		return 0
-	}
-	return *p
 }
