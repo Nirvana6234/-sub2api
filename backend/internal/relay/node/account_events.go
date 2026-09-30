@@ -90,6 +90,14 @@ func (r *RemoteAccountReporter) UpdateCodexUsageSnapshot(_ context.Context, acco
 }
 
 // TempUnscheduleTransportError 见 service.OpenAIAccountReporter。
+// MaskedSession 报告转发时用了这个伪装会话 ID（主节点写入并续期）。
+func (r *RemoteAccountReporter) MaskedSession(accountID int64, sessionID string) {
+	if accountID <= 0 || sessionID == "" {
+		return
+	}
+	r.send(&relayv1.AccountEvent{AccountId: accountID, Kind: &relayv1.AccountEvent_MaskedSession{MaskedSession: &relayv1.MaskedSessionEvent{SessionId: sessionID}}})
+}
+
 // TempUnschedulable 让账号临时不可调度（非 OpenAI 网关转发路径上直接写账号仓储的那几处），主节点照写。
 func (r *RemoteAccountReporter) TempUnschedulable(accountID int64, until time.Time, reason string) {
 	if accountID <= 0 {

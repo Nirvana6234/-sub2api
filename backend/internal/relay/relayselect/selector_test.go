@@ -231,6 +231,8 @@ type world struct {
 	pub     *sign.PublicKeys
 	leases  *master.MemoryLeaseStore
 	quotas  *master.Quotas
+	// identity 是主节点的身份缓存（指纹、伪装会话 ID）。
+	identity *memIdentity
 }
 
 const testNode = int64(21)
@@ -307,8 +309,9 @@ func newWorldOn(t *testing.T, cfg *config.Config, balance float64, nodeID int64,
 	quotas, err := master.NewQuotas(context.Background(), leases, "epoch-1", time.Now)
 	require.NoError(t, err)
 
+	identity := &memIdentity{fingerprints: map[int64]*service.Fingerprint{}, masked: map[int64]string{}}
 	anthropicGateway := service.NewGatewayService(fakeAccounts{accounts: accounts}, nil, nil, nil, nil, nil, nil, gatewayCache, cfg,
-		nil, concurrency, nil, nil, billing, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+		nil, concurrency, nil, nil, billing, service.NewIdentityService(identity), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	sel := newSelector(Deps{
 		Config: cfg, APIKeys: service.NewAPIKeyService(keys, nil, nil, nil, nil, nil, cfg),
@@ -329,7 +332,7 @@ func newWorldOn(t *testing.T, cfg *config.Config, balance float64, nodeID int64,
 		},
 	})
 	t.Cleanup(sel.Close)
-	return &world{keys: keys, sel: sel, slots: slots, nodeKey: nodeKey, pub: pub, leases: leases, quotas: quotas}
+	return &world{keys: keys, sel: sel, slots: slots, nodeKey: nodeKey, pub: pub, leases: leases, quotas: quotas, identity: identity}
 }
 
 func apiKeyAccount(id int64, name string) service.Account {
@@ -1002,4 +1005,44 @@ func TestAllowedBillingModels(t *testing.T) {
 	mapped := &service.Account{Credentials: map[string]any{"model_mapping": map[string]any{"gpt-5": "gpt-5-2025"}}}
 	require.Equal(t, []string{"gpt-5-alias", "gpt-5", "gpt-5-2025"}, allowedBillingModels("gpt-5-alias", "gpt-5", mapped))
 	require.Equal(t, []string{"gpt-5"}, allowedBillingModels("gpt-5", "gpt-5", &service.Account{}))
+}
+
+// memIdentity 是主节点的身份缓存（service.IdentityCache）。
+type memIdentity struct {
+	mu           sync.Mutex
+	fingerprints map[int64]*service.Fingerprint
+	masked       map[int64]string
+	maskedSets   int
+}
+
+func (m *memIdentity) GetFingerprint(_ context.Context, id int64) (*service.Fingerprint, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if fp, ok := m.fingerprints[id]; ok {
+		copied := *fp
+		return &copied, nil
+	}
+	return nil, errors.New("no fingerprint")
+}
+
+func (m *memIdentity) SetFingerprint(_ context.Context, id int64, fp *service.Fingerprint) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	copied := *fp
+	m.fingerprints[id] = &copied
+	return nil
+}
+
+func (m *memIdentity) GetMaskedSessionID(_ context.Context, id int64) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.masked[id], nil
+}
+
+func (m *memIdentity) SetMaskedSessionID(_ context.Context, id int64, sessionID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.masked[id] = sessionID
+	m.maskedSets++
+	return nil
 }

@@ -209,6 +209,16 @@ func (d *Dispatcher) selectRequest(c *gin.Context, st *requestState, req handler
 		MetadataUserId:          req.MetadataUserID,
 		InterceptType:           int32(req.InterceptType),
 	}
+	if req.Anthropic {
+		for _, name := range service.FingerprintHeaderNames {
+			if v := c.GetHeader(name); v != "" {
+				if sreq.FingerprintHeaders == nil {
+					sreq.FingerprintHeaders = map[string]string{}
+				}
+				sreq.FingerprintHeaders[name] = v
+			}
+		}
+	}
 	sreq.ClientRequestId, _ = c.Request.Context().Value(ctxkey.ClientRequestID).(string)
 	sreq.GuardianParentSessionHash, sreq.GuardianParentLegacySessionHash = service.OpenAIGuardianParentSessionHashes(c.Request.Context())
 	for id := range req.Excluded {
@@ -294,6 +304,13 @@ func (d *Dispatcher) admitSelection(c *gin.Context, st *requestState, req handle
 	}
 	// 转发路径上按分组查渠道的地方读主节点给的功能配置（渠道在主节点）。
 	ctx = service.WithRelayChannelFeatures(ctx, features)
+	if raw := sel.GetFingerprint(); len(raw) > 0 {
+		var fp service.Fingerprint
+		if err := json.Unmarshal(raw, &fp); err != nil {
+			return fail("relay fingerprint is malformed", err, &handler.OpenAIRelayRejection{Kind: handler.OpenAIRelayRejectUnavailable})
+		}
+		ctx = withRelayIdentity(ctx, relayIdentity{accountID: account.ID, fingerprint: &fp, maskedSessionID: sel.GetMaskedSessionId()})
+	}
 
 	c.Request = c.Request.WithContext(withAttempt(ctx, a))
 	sessionHash := sel.GetSessionHash()

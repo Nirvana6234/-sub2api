@@ -83,6 +83,8 @@ type selector struct {
 	recordCyber func(hit handler.CyberPolicyHit, subj handler.CyberPolicySubject, blockScope string, blockKeys []string)
 	// recordCyberBlocked 记 cyber 会话屏蔽拒绝的运维日志（默认 handler.EnqueueCyberSessionBlockedOpsEntry；测试替换）。
 	recordCyberBlocked func(ctx context.Context, apiKey *service.APIKey, r handler.CyberSessionBlockedRequest)
+	// anthropicServed 报告从节点现在能不能转发这个 Anthropic 账号（过渡闸门，nodeServesAnthropicAccount；测试替换）。
+	anthropicServed func(*service.Account) bool
 	// observeAutoGroup 把自动分组的请求结果交给选组器（nil 时用 deps.APIKeys；测试替换）。
 	observeAutoGroup func(apiKey *service.APIKey, model string, status int, firstTokenMs *int64)
 
@@ -169,6 +171,7 @@ func newSelector(d Deps, env master.SelectEnv) *selector {
 		events:            make(chan queuedAccountEvent, accountEventQueue),
 	}
 	s.localReporter = d.Gateway.LocalAccountReporter
+	s.anthropicServed = nodeServesAnthropicAccount
 	s.findCyberBlocked = d.Gateway.FindCyberSessionBlockedByLookup
 	// 主节点只写会话屏蔽标记（授权）；风控记录、运维日志由从节点写本机（设计 3.4、第 12 节）。
 	recorder := handler.CyberPolicyRecorder{Gateway: d.Gateway}
@@ -370,7 +373,19 @@ func (s *selector) encodeAccount(ctx context.Context, nodeID int64, account *ser
 		return nil, status.Error(codes.FailedPrecondition, "the node has no encryption key; obtain a certificate first")
 	}
 	var overrides map[string]any
-	if account.Type == service.AccountTypeOAuth {
+	switch {
+	case s.deps.AnthropicGateway != nil && account.Platform == service.PlatformAnthropic &&
+		(account.IsOAuth() || account.Type == service.AccountTypeServiceAccount):
+		// Anthropic 的 OAuth / setup-token / 服务账号：与本地转发时同一个取 token（快过期时当场刷新），刷新后凭据版本
+		// 跟着变，从节点重新取。服务账号文件、refresh token 不下发。
+		token, _, err := s.deps.AnthropicGateway.GetAccessToken(ctx, account)
+		if err != nil {
+			return nil, err
+		}
+		if token != "" {
+			overrides = map[string]any{"access_token": token}
+		}
+	case account.Type == service.AccountTypeOAuth:
 		token, _, err := s.deps.Gateway.GetAccessToken(ctx, account)
 		if err != nil {
 			return nil, err

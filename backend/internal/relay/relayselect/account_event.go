@@ -116,6 +116,12 @@ func (s *selector) applyAccountEvent(nodeID int64, ev *relayv1.AccountEvent) {
 		reporter.TempUnscheduleTransportError(ctx, account, kind.TransportError.GetMessage())
 	case *relayv1.AccountEvent_OllamaActivity:
 		reporter.OllamaCloudUsageActivity(account)
+	case *relayv1.AccountEvent_MaskedSession:
+		if id := kind.MaskedSession.GetSessionId(); id != "" && len(id) <= 64 && s.deps.AnthropicGateway != nil && account.IsSessionIDMaskingEnabled() {
+			if err := s.deps.AnthropicGateway.SetRelayMaskedSessionID(ctx, account.ID, id); err != nil {
+				slog.Warn("relay masked session event failed", "node_id", nodeID, "account_id", account.ID, "error", err)
+			}
+		}
 	case *relayv1.AccountEvent_TempUnschedulable:
 		s.applyTempUnschedulable(ctx, nodeID, account, kind.TempUnschedulable)
 	case *relayv1.AccountEvent_SessionWindow:

@@ -313,7 +313,7 @@ func startE2EWithConfig(t *testing.T, configure func(*config.Config), accounts f
 	}
 	h := nodegw.NewOpenAIHandler(gatewayDeps)
 	gh := nodegw.NewAnthropicHandler(gatewayDeps, nodegw.AnthropicDeps{
-		AccountState: node.NewRemoteAccountState(decider, reporter), TempUnschedulable: reporter.TempUnschedulable,
+		AccountState: node.NewRemoteAccountState(decider, reporter), TempUnschedulable: reporter.TempUnschedulable, MaskedSession: reporter.MaskedSession,
 	})
 	r := nodegw.NewEngine()
 	nodegw.RegisterRoutes(r, h, d, nodeCfg, gh)

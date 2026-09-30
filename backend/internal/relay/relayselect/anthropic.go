@@ -2,8 +2,10 @@ package relayselect
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler"
@@ -132,7 +134,7 @@ func (s *selector) selectAnthropic(ctx context.Context, nodeID int64, req *relay
 		return gatewayRejection(handler.AnthropicSelectOutcomeRejection(outcome)), nil
 	}
 
-	if !nodeServesAnthropicAccount(outcome.Account) {
+	if !s.anthropicServed(outcome.Account) {
 		// 过渡：从节点还不能转发这种账号（OAuth、Bedrock、Vertex、Antigravity，开发计划总账）。放掉槽位和会话注册，
 		// 交给主节点转发。
 		if outcome.Release != nil {
@@ -162,6 +164,13 @@ func (s *selector) selectAnthropic(ctx context.Context, nodeID int64, req *relay
 		return nil, err
 	}
 	selection := resp.GetSelection()
+	if err := s.attachIdentity(ctx, selection, outcome.Account, req.GetFingerprintHeaders()); err != nil {
+		s.ungrant(sel.userID, nodeID, selection.GetGrants())
+		if outcome.Release != nil {
+			outcome.Release()
+		}
+		return nil, err
+	}
 	selection.StickyBoundAccountId = record.stickyBound
 	selection.MaxAccountSwitches = int32(anthropicDefaultMaxAccountSwitches)
 	if cfg := s.deps.Config; cfg != nil && cfg.Gateway.MaxAccountSwitches > 0 {
@@ -170,6 +179,26 @@ func (s *selector) selectAnthropic(ctx context.Context, nodeID int64, req *relay
 	s.addSelection(sel)
 	selected = true
 	return resp, nil
+}
+
+// attachIdentity 给 OAuth / setup-token 账号带上主节点定下的指纹和伪装会话 ID（service.GatewayService.RelayIdentity）。
+func (s *selector) attachIdentity(ctx context.Context, selection *relayv1.Selection, account *service.Account, headers map[string]string) error {
+	h := http.Header{}
+	for _, name := range service.FingerprintHeaderNames {
+		if v := headers[name]; v != "" {
+			h.Set(name, v)
+		}
+	}
+	fp, masked, err := s.deps.AnthropicGateway.RelayIdentity(ctx, account, h)
+	if err != nil || fp == nil {
+		return err
+	}
+	raw, err := json.Marshal(fp)
+	if err != nil {
+		return err
+	}
+	selection.Fingerprint, selection.MaskedSessionId = raw, masked
+	return nil
 }
 
 // nodeServesAnthropicAccount 报告从节点现在能不能转发这个账号：先接 Anthropic 的 API Key 账号，其余账号类型随后接入。

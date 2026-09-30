@@ -3,7 +3,9 @@ package relayselect
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -14,6 +16,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/relay/sign"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 // Anthropic 分组的 /v1/messages 经从节点（开发计划 WP10）：主节点选号，从节点用单机同一个处理函数和转发服务
@@ -193,5 +196,59 @@ func TestNodeAnthropicFailsOverToTheNextAccount(t *testing.T) {
 		return false
 	}, 5*time.Second, 20*time.Millisecond, "served by the second account")
 	require.GreaterOrEqual(t, len(e.hits), 2, "the rate-limited account was tried first")
+	e.world.waitReleased(t)
+}
+
+// OAuth 账号经从节点（开发计划 WP10，身份信息在主节点）：主节点按客户端的指纹头做与本地同一段 GetOrCreateFingerprint、
+// 取 access token，从节点照本地的伪装转发；用到的伪装会话 ID 报回主节点写入。
+func TestNodeForwardsAnthropicOAuthWithTheMastersIdentity(t *testing.T) {
+	e := startE2EWith(t, func(upstream string) []service.Account {
+		a := anthropicAccount(1, "oauth", service.AccountTypeOAuth)
+		a.Credentials = map[string]any{"access_token": "SECRET-at"}
+		a.Extra = map[string]any{"account_uuid": "11111111-2222-3333-4444-555555555555", "session_id_masking_enabled": true}
+		return []service.Account{a}
+	})
+	e.world.sel.anthropicServed = func(a *service.Account) bool { return a.Platform == service.PlatformAnthropic }
+
+	req, err := http.NewRequest(http.MethodPost, e.gateway.URL+"/v1/messages",
+		strings.NewReader(`{"model":"claude-sonnet-4-5","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer sk-anthropic")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Stainless-OS", "Linux")
+	req.Header.Set("X-Stainless-Arch", "arm64")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(body))
+
+	var hit *http.Request
+	select {
+	case hit = <-e.hits:
+	case <-time.After(5 * time.Second):
+		t.Fatal("upstream was not called")
+	}
+	require.Equal(t, "Bearer SECRET-at", hit.Header.Get("Authorization"), "the master's access token")
+
+	e.world.identity.mu.Lock()
+	fp := e.world.identity.fingerprints[1]
+	e.world.identity.mu.Unlock()
+	require.NotNil(t, fp, "the fingerprint is created on the master")
+	require.Equal(t, "Linux", fp.StainlessOS)
+	require.Equal(t, fp.StainlessArch, hit.Header.Get("X-Stainless-Arch"), "the node applies the master's fingerprint")
+	sent, _ := io.ReadAll(hit.Body)
+	userID := gjson.GetBytes(sent, "metadata.user_id").String()
+	require.Contains(t, userID, fp.ClientID, "metadata.user_id carries the master's client id")
+
+	require.Eventually(t, func() bool {
+		e.world.identity.mu.Lock()
+		defer e.world.identity.mu.Unlock()
+		return e.world.identity.masked[1] != ""
+	}, 5*time.Second, 20*time.Millisecond, "the masked session id the node used is written on the master")
+	e.world.identity.mu.Lock()
+	masked := e.world.identity.masked[1]
+	e.world.identity.mu.Unlock()
+	require.Contains(t, userID, masked)
 	e.world.waitReleased(t)
 }
