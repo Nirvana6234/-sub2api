@@ -78,8 +78,8 @@ service RelayControl {
   // 上限用主节点的配置）。租约按节点记归属，别的节点不能续期或释放。
   rpc WebSocketLease(WebSocketLeaseRequest) returns (WebSocketLeaseResponse);
 
-  // CyberPolicyHit 上游判定 cyber 策略后调用（设计 3.4）：主节点写会话屏蔽标记（同步）、风控记录和
-  // 运维日志（异步），用单机同一段代码（handler.CyberPolicyRecorder）。用户、Key、分组、账号取自这次选号的
+  // CyberPolicyHit 上游判定 cyber 策略后调用（设计 3.4）：主节点写会话屏蔽标记（同步，属于授权），用单机同一段
+  // 代码（handler.CyberPolicyRecorder）；风控记录、运维日志由从节点写本机。用户、Key、分组、账号取自这次选号的
   // 记录，屏蔽的键由选号时上送的查询键推导；每次请求只记一次。选号必须是这台节点进行中的。
   rpc CyberPolicyHit(CyberPolicyHitRequest) returns (CyberPolicyHitResponse);
 

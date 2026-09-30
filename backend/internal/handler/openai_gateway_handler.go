@@ -4486,6 +4486,9 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 			}
 		}
 		h.relay.RecordCyberPolicy(c, relayAttempt, hit, usage)
+		// 风控记录写从节点本机（设计 3.4）：屏蔽标记、用量行由主节点按这次选号处理（上面）；计入封号的
+		// 违规经审核服务报给主节点累计。运维错误日志随从节点本机日志接上（WP14）。
+		CyberPolicyRecorder{Moderation: h.contentModerationService}.Record(hit, CyberPolicySubject{APIKey: apiKey, Account: account}, "", nil, nil)
 		return
 	}
 

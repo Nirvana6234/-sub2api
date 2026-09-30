@@ -83,7 +83,7 @@ func (s *SelectClient) WebSocketLease(ctx context.Context, req *relayv1.WebSocke
 // CyberPolicyTimeout 是一次 cyber 命中报告的最长时间（处理函数只等 500ms，其余在后台等完）。
 const CyberPolicyTimeout = 10 * time.Second
 
-// CyberPolicyHit 报告上游 cyber 策略命中（设计 3.4）：主节点写会话屏蔽标记、风控记录和运维日志。
+// CyberPolicyHit 报告上游 cyber 策略命中（设计 3.4）：主节点写会话屏蔽标记。
 func (s *SelectClient) CyberPolicyHit(ctx context.Context, req *relayv1.CyberPolicyHitRequest) error {
 	ctx, cancel := context.WithTimeout(ctx, CyberPolicyTimeout)
 	defer cancel()

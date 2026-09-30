@@ -11,11 +11,11 @@ import (
 )
 
 // cyberHitTextLimit 是 cyber 命中消息里上游 message、body 的上限（单机截到 4 KiB，见 markOpenAICyberPolicyEvent），
-// 超过的截断，不让从节点把大块内容写进风控记录和运维日志。
+// 超过的截断。
 const cyberHitTextLimit = 8 << 10
 
-// CyberPolicyHit 上游 cyber 策略命中（设计 3.4）：用单机同一段代码（handler.CyberPolicyRecorder）写会话屏蔽标记、
-// 风控记录和运维日志。用户、Key、分组、账号取自这次选号的记录，屏蔽的键由选号时上送的查询键推导，
+// CyberPolicyHit 上游 cyber 策略命中（设计 3.4）：用单机同一段代码（handler.CyberPolicyRecorder）写会话屏蔽标记
+// （风控记录、运维日志在从节点本机）。用户、Key、分组、账号取自这次选号的记录，屏蔽的键由选号时上送的查询键推导，
 // 都不信消息里的；消息只提供上游标记和请求上的事实。每次请求只记一次（与单机一致）。
 func (s *selector) CyberPolicyHit(_ context.Context, nodeID int64, req *relayv1.CyberPolicyHitRequest) (*relayv1.CyberPolicyHitResponse, error) {
 	s.mu.Lock()

@@ -414,8 +414,8 @@ func rejection(r *handler.OpenAIRelayRejection) handler.OpenAIRelaySelectResult 
 // 超过后报告在后台继续发，释放等它发完。
 const cyberPolicyWait = 500 * time.Millisecond
 
-// RecordCyberPolicy 上游 cyber 策略命中（handler.OpenAIRelayDispatcher，设计 3.4）：屏蔽标记、风控记录、运维日志
-// 由主节点执行；转发返回错误时用量行写本地扣费队列（主节点按 RecordCyberPolicyUsageLog 的口径入账）。
+// RecordCyberPolicy 上游 cyber 策略命中（handler.OpenAIRelayDispatcher，设计 3.4）：会话屏蔽标记由主节点写；
+// 转发返回错误时用量行写本地扣费队列（主节点按 RecordCyberPolicyUsageLog 的口径入账）。风控记录由处理函数写本机。
 func (d *Dispatcher) RecordCyberPolicy(c *gin.Context, attempt *handler.OpenAIRelayAttempt, hit handler.CyberPolicyHit, usage *handler.OpenAIRelayCyberUsage) {
 	a, ok := attempt.State.(*attemptState)
 	if !ok {
@@ -444,7 +444,7 @@ func (d *Dispatcher) RecordCyberPolicy(c *gin.Context, attempt *handler.OpenAIRe
 	go func() {
 		defer close(done)
 		if err := d.deps.Select.CyberPolicyHit(ctx, req); err != nil {
-			// 主节点不可达：这次的屏蔽标记、风控记录丢失（用量行在扣费队列里，不丢）。
+			// 主节点不可达：这次的屏蔽标记丢失（风控记录在本机、用量行在扣费队列里，都不丢）。
 			slog.Warn("relay cyber policy hit could not be reported", "selection_id", a.selectionID, "error", err)
 		}
 	}()

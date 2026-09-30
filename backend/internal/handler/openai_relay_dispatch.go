@@ -28,9 +28,9 @@ type OpenAIRelayDispatcher interface {
 	AttemptDone(c *gin.Context, attempt *OpenAIRelayAttempt)
 	// SubmitUsage 把这次尝试的转发结果写入本地扣费队列（代替 RecordUsage）。
 	SubmitUsage(c *gin.Context, attempt *OpenAIRelayAttempt, facts OpenAIUsageFacts, result *service.OpenAIForwardResult)
-	// RecordCyberPolicy 上游判定 cyber 策略后调用（代替本机的 CyberPolicyRecorder，设计 3.4）：会话屏蔽标记、
-	// 风控记录、运维日志交给主节点，最多等 500ms（单机同步写屏蔽标记的上限）；usage 非 nil 时（转发返回错误）
-	// 把用量行写进本地扣费队列。
+	// RecordCyberPolicy 上游判定 cyber 策略后调用（设计 3.4）：会话屏蔽标记交给主节点（授权），最多等 500ms
+	// （单机同步写屏蔽标记的上限）；usage 非 nil 时（转发返回错误）把用量行写进本地扣费队列。风控记录由处理函数
+	// 用本机的审核服务写（CyberPolicyRecorder）。
 	RecordCyberPolicy(c *gin.Context, attempt *OpenAIRelayAttempt, hit CyberPolicyHit, usage *OpenAIRelayCyberUsage)
 	// RequestDone 在处理函数返回时调用：最后一次尝试的释放带"请求结束"，主节点放掉用户并发槽。
 	RequestDone(c *gin.Context)

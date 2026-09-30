@@ -153,7 +153,8 @@ func newSelector(d Deps, env master.SelectEnv) *selector {
 	}
 	s.localReporter = d.Gateway.LocalAccountReporter
 	s.findCyberBlocked = d.Gateway.FindCyberSessionBlockedByLookup
-	recorder := handler.CyberPolicyRecorder{Gateway: d.Gateway, Moderation: d.Moderation, Ops: d.Ops}
+	// 主节点只写会话屏蔽标记（授权）；风控记录、运维日志由从节点写本机（设计 3.4、第 12 节）。
+	recorder := handler.CyberPolicyRecorder{Gateway: d.Gateway}
 	s.recordCyber = func(hit handler.CyberPolicyHit, subj handler.CyberPolicySubject, blockScope string, blockKeys []string) {
 		recorder.Record(hit, subj, blockScope, blockKeys, nil)
 	}

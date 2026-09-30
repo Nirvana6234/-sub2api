@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	coderws "github.com/coder/websocket"
@@ -132,4 +133,47 @@ func TestNodeAuditsEveryWebSocketTurnLocally(t *testing.T) {
 	require.Equal(t, 1, up.turns)
 	up.mu.Unlock()
 	e.world.waitReleased(t)
+}
+
+// cyber 策略命中：会话屏蔽标记由主节点写（授权），风控记录留在从节点本机，计入封号的违规报给主节点累计。
+func TestNodeKeepsCyberRecordsLocally(t *testing.T) {
+	useMasterSettings(t, map[string]string{
+		service.SettingKeyRiskControlEnabled:      "true",
+		service.SettingKeyContentModerationConfig: moderationConfig,
+	})
+	e := startE2E(t)
+	ctx := context.Background()
+	marked := make(chan recordedCyber, 2)
+	e.world.sel.recordCyber = func(hit handler.CyberPolicyHit, subj handler.CyberPolicySubject, scope string, keys []string) {
+		marked <- recordedCyber{hit: hit, subj: subj, blockScope: scope, blockKeys: keys}
+	}
+	logs := &moderationLogs{}
+	users := &banUsers{users: map[int64]*service.User{3: {ID: 3, Status: service.StatusActive, Role: service.RoleUser}}}
+	e.world.sel.deps.Users = users
+	e.world.sel.deps.Moderation = service.NewContentModerationService(memSettings{values: map[string]string{
+		service.SettingKeyRiskControlEnabled:      "true",
+		service.SettingKeyContentModerationConfig: moderationConfig,
+	}}, logs, nil, nil, users, nil, nil, nil)
+
+	status, _ := e.post(t, "/v1/responses", "sk-a", `{"model":"gpt-5","input":"cyber-trigger"}`)
+	require.Equal(t, http.StatusBadRequest, status, "the client gets the upstream error, like a single server")
+	select {
+	case <-marked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the master was not asked to mark the session")
+	}
+	var local []service.ContentModerationLog
+	require.Eventually(t, func() bool {
+		local, _, _ = e.moderation.Service.ListLogs(ctx, service.ContentModerationLogFilter{Result: "hit"})
+		return len(local) == 1
+	}, 5*time.Second, 20*time.Millisecond)
+	require.Equal(t, service.ContentModerationActionCyberPolicy, local[0].Action)
+	require.Contains(t, local[0].Error, "blocked by policy", "the upstream message stays on the node")
+	require.Eventually(t, func() bool {
+		logs.mu.Lock()
+		defer logs.mu.Unlock()
+		return len(logs.logs) == 1
+	}, 5*time.Second, 20*time.Millisecond)
+	require.Equal(t, service.ContentModerationActionCyberPolicy, logs.logs[0].Action)
+	require.Empty(t, logs.logs[0].Error)
 }

@@ -373,8 +373,8 @@ type RelayControlClient interface {
 	// WebSocketLease 每个 Key 的 WebSocket 连接数租约（Redis 里的全局租约，主节点代为申请、续期、释放；
 	// 上限用主节点的配置）。租约按节点记归属，别的节点不能续期或释放。
 	WebSocketLease(ctx context.Context, in *WebSocketLeaseRequest, opts ...grpc.CallOption) (*WebSocketLeaseResponse, error)
-	// CyberPolicyHit 上游判定 cyber 策略后调用（设计 3.4）：主节点写会话屏蔽标记（同步）、风控记录和
-	// 运维日志（异步），用单机同一段代码（handler.CyberPolicyRecorder）。用户、Key、分组、账号取自这次选号的
+	// CyberPolicyHit 上游判定 cyber 策略后调用（设计 3.4）：主节点写会话屏蔽标记（同步，属于授权），用单机同一段
+	// 代码（handler.CyberPolicyRecorder）；风控记录、运维日志由从节点写本机。用户、Key、分组、账号取自这次选号的
 	// 记录，屏蔽的键由选号时上送的查询键推导；每次请求只记一次。选号必须是这台节点进行中的。
 	CyberPolicyHit(ctx context.Context, in *CyberPolicyHitRequest, opts ...grpc.CallOption) (*CyberPolicyHitResponse, error)
 	// ---- 内容审核命中后的账号动作（设计 3.4）：判定和记录在从节点，违规次数跨节点累计、封号、邮件在主节点 ----
@@ -636,8 +636,8 @@ type RelayControlServer interface {
 	// WebSocketLease 每个 Key 的 WebSocket 连接数租约（Redis 里的全局租约，主节点代为申请、续期、释放；
 	// 上限用主节点的配置）。租约按节点记归属，别的节点不能续期或释放。
 	WebSocketLease(context.Context, *WebSocketLeaseRequest) (*WebSocketLeaseResponse, error)
-	// CyberPolicyHit 上游判定 cyber 策略后调用（设计 3.4）：主节点写会话屏蔽标记（同步）、风控记录和
-	// 运维日志（异步），用单机同一段代码（handler.CyberPolicyRecorder）。用户、Key、分组、账号取自这次选号的
+	// CyberPolicyHit 上游判定 cyber 策略后调用（设计 3.4）：主节点写会话屏蔽标记（同步，属于授权），用单机同一段
+	// 代码（handler.CyberPolicyRecorder）；风控记录、运维日志由从节点写本机。用户、Key、分组、账号取自这次选号的
 	// 记录，屏蔽的键由选号时上送的查询键推导；每次请求只记一次。选号必须是这台节点进行中的。
 	CyberPolicyHit(context.Context, *CyberPolicyHitRequest) (*CyberPolicyHitResponse, error)
 	// ---- 内容审核命中后的账号动作（设计 3.4）：判定和记录在从节点，违规次数跨节点累计、封号、邮件在主节点 ----
