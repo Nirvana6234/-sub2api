@@ -23,6 +23,8 @@ type GatewayDeps struct {
 	Reporter     service.OpenAIAccountReporter
 	// ErrorPassthrough 是随配置快照下发的错误透传规则（nil 表示不透传）。
 	ErrorPassthrough *service.ErrorPassthroughService
+	// TLSProfiles 是随配置快照下发的 TLS 指纹模板（Anthropic OAuth 账号开了 TLS 指纹伪装时用）；nil 时用空模板集。
+	TLSProfiles *service.TLSFingerprintProfileService
 	// Moderation 是本机的安全审计（NewModeration）；nil 表示不审计（测试）。
 	Moderation *Moderation
 }

@@ -87,6 +87,7 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 	cache.SetOpener(id.OpenSealed)
 	settings := service.NewSettingService(cache, cfg)
 	errorPassthrough := service.NewStaticErrorPassthroughService(nil)
+	tlsProfiles := service.NewStaticTLSFingerprintProfileService(nil)
 	// moderation 在下面组装（要用主从连接）；换快照时它还没有就跳过。
 	var moderation *Moderation
 	var webSearchReady bool
@@ -99,6 +100,7 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 			moderation.Service.InvalidateRuntimeSnapshot()
 		}
 		applyErrorPassthroughRules(cache, errorPassthrough)
+		applyTLSFingerprintProfiles(cache, tlsProfiles)
 		if changed, err := pins.Update(cache.RootFingerprints()); err != nil {
 			slog.Warn("relay root fingerprints could not be saved", "error", err)
 		} else if changed {
@@ -185,6 +187,7 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 		Decider:          decider,
 		Reporter:         reporter,
 		ErrorPassthrough: errorPassthrough,
+		TLSProfiles:      tlsProfiles,
 		Moderation:       moderation,
 	}
 	h := NewOpenAIHandler(gatewayDeps)
@@ -283,6 +286,21 @@ func every(ctx context.Context, d time.Duration, fn func()) {
 			fn()
 		}
 	}
+}
+
+// applyTLSFingerprintProfiles 用配置快照里的 TLS 指纹模板替换本地模板；分段缺失时清空，解不开时保留原来的并报警。
+func applyTLSFingerprintProfiles(cache *node.ConfigCache, svc *service.TLSFingerprintProfileService) {
+	raw, ok := cache.Section(master.SectionTLSFingerprintProfiles)
+	if !ok {
+		svc.ReplaceProfiles(nil)
+		return
+	}
+	var profiles []*model.TLSFingerprintProfile
+	if err := json.Unmarshal(raw, &profiles); err != nil {
+		slog.Error("relay TLS fingerprint profiles in the config snapshot are malformed; keeping the previous profiles", "error", err)
+		return
+	}
+	svc.ReplaceProfiles(profiles)
 }
 
 // applyErrorPassthroughRules 用配置快照里的错误透传规则替换本地规则；分段缺失或解不开时保留原来的并报警。

@@ -50,6 +50,7 @@ func ProvideMasterRuntime(
 	proxies service.ProxyRepository,
 	composite *service.CompositeRouteResolver,
 	anthropicGateway *service.GatewayService,
+	tlsProfiles *service.TLSFingerprintProfileService,
 ) *master.Runtime {
 	// 用户、分组、订阅作废时发布改动（平台配额在仓储层已接好，见 repository/wire.go）。
 	service.AttachAccessChangeHub(accessChanges, apiKeys, billing)
@@ -69,7 +70,7 @@ func ProvideMasterRuntime(
 			Moderation: moderation, Composite: composite, Ops: ops, Users: users,
 		}),
 		VoucherPartitions: repository.NewRelayVoucherPartitions(db),
-		Sections:          forwardingSections(errorPassthrough),
+		Sections:          forwardingSections(errorPassthrough, tlsProfiles),
 		SealedSections:    sealedSections(settings, proxies, promptAudit),
 		NewSettler: relaysettle.NewFactory(relaysettle.Deps{
 			Gateway: gateway, AnthropicGateway: anthropicGateway, APIKeys: apiKeys, Accounts: accounts, Groups: groups, Subscriptions: subscriptions,
@@ -93,6 +94,9 @@ func ProvideMasterRuntime(
 	if errorPassthrough != nil {
 		// 规则改了当场重新生成快照（发布器另有 30 秒一次的定时重算兜底）。
 		errorPassthrough.SetChangeNotifier(func() { hub.Notify([]string{master.SectionChangedKey(master.SectionErrorPassthroughRules)}) })
+	}
+	if tlsProfiles != nil {
+		tlsProfiles.SetChangeNotifier(func() { hub.Notify([]string{master.SectionChangedKey(master.SectionTLSFingerprintProfiles)}) })
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -141,8 +145,17 @@ func sealedSections(settings service.SettingRepository, proxies service.ProxyRep
 }
 
 // forwardingSections 是配置快照里 settings 表之外的转发配置分段（设计 6）。
-func forwardingSections(errorPassthrough *service.ErrorPassthroughService) map[string]master.SectionProvider {
+func forwardingSections(errorPassthrough *service.ErrorPassthroughService, tlsProfiles *service.TLSFingerprintProfileService) map[string]master.SectionProvider {
 	sections := map[string]master.SectionProvider{}
+	if tlsProfiles != nil {
+		sections[master.SectionTLSFingerprintProfiles] = func(ctx context.Context) ([]byte, error) {
+			profiles, err := tlsProfiles.List(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return json.Marshal(profiles)
+		}
+	}
 	if errorPassthrough != nil {
 		sections[master.SectionErrorPassthroughRules] = func(ctx context.Context) ([]byte, error) {
 			rules, err := errorPassthrough.List(ctx)

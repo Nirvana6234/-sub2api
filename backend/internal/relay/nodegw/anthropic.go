@@ -85,9 +85,14 @@ func (r relayAccountRepo) SetTempUnschedulable(_ context.Context, id int64, unti
 // 换上远程选号与记账（Dispatcher）、远程账号状态判定、只写临时不可调度的账号仓储。仓储、调度、并发、计费一律
 // 不给（这些在主节点）。
 func NewAnthropicHandler(d GatewayDeps, a AnthropicDeps) *handler.GatewayHandler {
+	tlsProfiles := d.TLSProfiles
+	if tlsProfiles == nil {
+		// 模板服务不能是 nil：账号开了 TLS 指纹伪装时转发要按它解析（没有模板时用内置默认）。
+		tlsProfiles = service.NewStaticTLSFingerprintProfileService(nil)
+	}
 	gw := service.NewGatewayService(relayAccountRepo{tempUnschedulable: a.TempUnschedulable}, nil, nil, nil, nil, nil, nil,
 		NoopGatewayCache{}, d.Config, nil, nil, nil, nil, nil, service.NewIdentityService(relayIdentityCache{maskedSession: a.MaskedSession}), d.HTTPUpstream, nil, nil, nil, nil,
-		service.NewDigestSessionStore(), d.Settings, nil, nil, nil, nil, nil, nil)
+		service.NewDigestSessionStore(), d.Settings, tlsProfiles, nil, nil, nil, nil, nil)
 	gw.SetAccountStateDecider(a.AccountState)
 	var moderation *service.ContentModerationService
 	if d.Moderation != nil {

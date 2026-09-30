@@ -35,3 +35,22 @@ func TestErrorPassthroughRulesFollowTheConfigSnapshot(t *testing.T) {
 	require.NoError(t, cache.Apply(&relayv1.ConfigSnapshot{Version: "v3"}))
 	require.Nil(t, svc.MatchRule(service.PlatformOpenAI, 429, body), "rules removed on the master are removed here")
 }
+
+// TLS 指纹模板随配置快照下发：开了 TLS 指纹伪装的 Anthropic OAuth 账号按模板握手；分段缺失时清空（按内置默认）。
+func TestTLSFingerprintProfilesFollowTheConfigSnapshot(t *testing.T) {
+	cache := node.NewConfigCache()
+	svc := service.NewStaticTLSFingerprintProfileService(nil)
+	cache.OnSwap(func(*relayv1.ConfigSnapshot) { applyTLSFingerprintProfiles(cache, svc) })
+	account := &service.Account{ID: 1, Platform: service.PlatformAnthropic, Type: service.AccountTypeOAuth,
+		Extra: map[string]any{"enable_tls_fingerprint": true, "tls_fingerprint_profile_id": float64(3)}}
+
+	profiles, err := json.Marshal([]*model.TLSFingerprintProfile{{ID: 3, Name: "chrome", CipherSuites: []uint16{4865}}})
+	require.NoError(t, err)
+	require.NoError(t, cache.Apply(&relayv1.ConfigSnapshot{Version: "v1", Sections: map[string][]byte{master.SectionTLSFingerprintProfiles: profiles}}))
+	require.NotNil(t, svc.GetProfileByID(3))
+	require.Equal(t, []uint16{4865}, svc.ResolveTLSProfile(account).CipherSuites)
+
+	require.NoError(t, cache.Apply(&relayv1.ConfigSnapshot{Version: "v2"}))
+	require.Nil(t, svc.GetProfileByID(3), "profiles removed on the master are removed here")
+	require.NotNil(t, svc.ResolveTLSProfile(account), "falls back to the built-in default like a single server without the profile")
+}

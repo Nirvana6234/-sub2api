@@ -37,6 +37,26 @@ type TLSFingerprintProfileService struct {
 	// 本地 ID→Profile 映射缓存，用于 DoWithTLS 热路径快速查找
 	localCache map[int64]*model.TLSFingerprintProfile
 	localMu    sync.RWMutex
+
+	// onChange 在模板增删改之后调用（主从分流主节点重新生成配置快照）。
+	onChange func()
+}
+
+// NewStaticTLSFingerprintProfileService 创建只读、不连库的模板服务（主从分流的从节点：模板随配置快照下发）。
+func NewStaticTLSFingerprintProfileService(profiles []*model.TLSFingerprintProfile) *TLSFingerprintProfileService {
+	svc := &TLSFingerprintProfileService{localCache: make(map[int64]*model.TLSFingerprintProfile)}
+	svc.setLocalCache(profiles)
+	return svc
+}
+
+// ReplaceProfiles 整体替换本地模板（从节点换配置快照时）。
+func (s *TLSFingerprintProfileService) ReplaceProfiles(profiles []*model.TLSFingerprintProfile) {
+	s.setLocalCache(profiles)
+}
+
+// SetChangeNotifier 设置模板增删改之后的回调（主从分流主节点重新生成配置快照）。
+func (s *TLSFingerprintProfileService) SetChangeNotifier(fn func()) {
+	s.onChange = fn
 }
 
 // NewTLSFingerprintProfileService 创建 TLS 指纹模板服务
@@ -255,5 +275,8 @@ func (s *TLSFingerprintProfileService) invalidateAndNotify(ctx context.Context) 
 		if err := s.cache.NotifyUpdate(ctx); err != nil {
 			logger.LegacyPrintf("service.tls_fp_profile", "[TLSFPProfileService] Failed to notify cache update: %v", err)
 		}
+	}
+	if s.onChange != nil {
+		s.onChange()
 	}
 }

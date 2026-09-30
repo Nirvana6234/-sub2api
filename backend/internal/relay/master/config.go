@@ -334,5 +334,9 @@ func cloneSigningKeys(in []*relayv1.SigningPublicKey) []*relayv1.SigningPublicKe
 // SectionErrorPassthroughRules 是配置快照里错误透传规则的分段名（JSON：[]model.ErrorPassthroughRule）。
 const SectionErrorPassthroughRules = "error_passthrough_rules"
 
+// SectionTLSFingerprintProfiles 是配置快照里 TLS 指纹模板的分段名（JSON：[]model.TLSFingerprintProfile）。
+// Anthropic OAuth 账号开了 TLS 指纹伪装时转发按它握手；模板里没有密钥。
+const SectionTLSFingerprintProfiles = "tls_fingerprint_profiles"
+
 // SectionChangedKey 是分段内容改了时发给 SettingChangeHub 的键：以 relay_ 开头，发布器据此当场重新生成。
 func SectionChangedKey(section string) string { return "relay_section_" + section }
