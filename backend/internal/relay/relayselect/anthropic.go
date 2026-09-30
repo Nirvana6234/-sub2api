@@ -147,6 +147,7 @@ func (s *selector) selectAnthropic(ctx context.Context, nodeID int64, req *relay
 	sel := &selectionRecord{
 		id: newSelectionID(), nodeID: nodeID, request: record, account: outcome.Account, release: outcome.Release,
 		createdAt: s.now(), quota: quotaReq, groupID: groupID, userID: userID, apiKeyID: apiKey.ID, apiKey: apiKey,
+		anthropic: true,
 	}
 	picked := handler.OpenAISelectOutcome{Kind: handler.OpenAISelected, Account: outcome.Account, Ctx: outcome.Ctx, SessionHash: record.sessionKey}
 	resp, rej, err := s.buildSelection(ctx, nodeID, req, sel, picked, forwardModel, reqModel, channelMapping, subscription, true)
@@ -201,14 +202,52 @@ func (s *selector) attachIdentity(ctx context.Context, selection *relayv1.Select
 	return nil
 }
 
-// nodeServesAnthropicAccount 报告从节点现在能不能转发这个账号：先接 Anthropic 的 API Key 账号，其余账号类型随后接入。
-func nodeServesAnthropicAccount(a *service.Account) bool {
-	return a != nil && a.Platform == service.PlatformAnthropic && a.Type == service.AccountTypeAPIKey
+// nodeServesAnthropicAccount 报告从节点现在能不能转发这个账号：Anthropic 的 API Key、OAuth / setup-token 账号；
+// 其余账号类型（Bedrock、服务账号、Antigravity）随后接入。用户消息串行队列（账号或全局开了）还没接到从节点，
+// 这种 OAuth 账号也还不接。
+func (s *selector) nodeServesAnthropicAccount(a *service.Account) bool {
+	if a == nil || a.Platform != service.PlatformAnthropic {
+		return false
+	}
+	switch {
+	case a.Type == service.AccountTypeAPIKey:
+		return true
+	case a.IsAnthropicOAuthOrSetupToken():
+		mode := a.GetUserMsgQueueMode()
+		if mode == "" && s.deps.Config != nil {
+			mode = s.deps.Config.Gateway.UserMessageQueue.GetEffectiveMode()
+		}
+		return mode == ""
+	}
+	return false
 }
 
 // metadataBridgeEnabled 与 GatewayHandler.metadataBridgeEnabled 一致。
 func (s *selector) metadataBridgeEnabled() bool {
 	return s.deps.Config == nil || s.deps.Config.Gateway.OpenAIWS.MetadataBridgeEnabled
+}
+
+// releaseAnthropicAttempt 是 Messages 一次尝试结束时本地在处理函数里做的主节点那几步：
+//   - 转发成功：刷新粘性会话绑定（bindAnthropicSticky）、OAuth 账号有基础 RPM 时计一次 RPM；
+//   - 上游没服务这次尝试：放掉这个账号为这次会话做的会话数注册（本地 failover 继续、请求最终失败时的释放）。
+func (s *selector) releaseAnthropicAttempt(sel *selectionRecord, rel *relayv1.SelectionRelease) {
+	gw := s.deps.AnthropicGateway
+	if gw == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if rel.GetForwardSucceeded() {
+		s.bindAnthropicSticky(sel)
+		if sel.account.IsAnthropicOAuthOrSetupToken() && sel.account.GetBaseRPM() > 0 {
+			if err := gw.IncrementAccountRPM(ctx, sel.account.ID); err != nil {
+				slog.Warn("relay: increment account rpm failed", "account_id", sel.account.ID, "error", err)
+			}
+		}
+	}
+	if !rel.GetUpstreamServed() && sel.request != nil {
+		gw.ReleaseAccountSession(ctx, sel.account, sel.request.sessionKey)
+	}
 }
 
 // bindAnthropicSticky 是 Messages 转发成功后的粘性会话绑定（本地同一条件）：请求开始时没有绑定，或者绑定的就是

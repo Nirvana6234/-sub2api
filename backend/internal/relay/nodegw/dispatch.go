@@ -375,7 +375,10 @@ func (d *Dispatcher) flush(st *requestState, requestDone bool) {
 	if !submitted && a.reservation != nil {
 		a.reservation.Cancel()
 	}
-	rel := &relayv1.SelectionRelease{SelectionId: a.selectionID, RequestDone: requestDone, ResponseIds: ids, Voucher: a.voucher, ForwardSucceeded: succeeded}
+	rel := &relayv1.SelectionRelease{
+		SelectionId: a.selectionID, RequestDone: requestDone, ResponseIds: ids, Voucher: a.voucher,
+		ForwardSucceeded: succeeded, UpstreamServed: succeeded || submitted,
+	}
 	if cyberDone != nil {
 		// cyber 命中报告还没发完：等它（最长 node.CyberPolicyTimeout）再释放，否则主节点查不到这次选号。
 		go func() {

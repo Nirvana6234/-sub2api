@@ -1113,6 +1113,9 @@ message SelectionRelease {
   // 请求结束、手里没有进行中的选号时（最后一次选号被拒、之后没再选）：selection_id 为空，按 request_id 结束这次
   // 请求（放掉用户槽）。request_done 同时为 true。
   string request_id = 8;
+  // Anthropic Messages：上游已服务这次尝试（转发成功，或出错前上游已计量、用量已入队）。没服务时主节点立即放掉
+  // 这个账号为这次会话做的会话数注册（本地 failover 继续时、请求最终失败时的释放）。
+  bool upstream_served = 9;
 }
 
 message BeginTurnRequest {

@@ -7399,9 +7399,12 @@ type SelectionRelease struct {
 	ForwardSucceeded bool `protobuf:"varint,7,opt,name=forward_succeeded,json=forwardSucceeded,proto3" json:"forward_succeeded,omitempty"`
 	// 请求结束、手里没有进行中的选号时（最后一次选号被拒、之后没再选）：selection_id 为空，按 request_id 结束这次
 	// 请求（放掉用户槽）。request_done 同时为 true。
-	RequestId     string `protobuf:"bytes,8,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	RequestId string `protobuf:"bytes,8,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	// Anthropic Messages：上游已服务这次尝试（转发成功，或出错前上游已计量、用量已入队）。没服务时主节点立即放掉
+	// 这个账号为这次会话做的会话数注册（本地 failover 继续时、请求最终失败时的释放）。
+	UpstreamServed bool `protobuf:"varint,9,opt,name=upstream_served,json=upstreamServed,proto3" json:"upstream_served,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *SelectionRelease) Reset() {
@@ -7488,6 +7491,13 @@ func (x *SelectionRelease) GetRequestId() string {
 		return x.RequestId
 	}
 	return ""
+}
+
+func (x *SelectionRelease) GetUpstreamServed() bool {
+	if x != nil {
+		return x.UpstreamServed
+	}
+	return false
 }
 
 type BeginTurnRequest struct {
@@ -8754,7 +8764,7 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\amessage\x18\x01 \x01(\tR\amessage\"\x15\n" +
 	"\x13OllamaActivityEvent\"N\n" +
 	"\x12SessionWindowEvent\x128\n" +
-	"\aheaders\x18\x01 \x03(\v2\x1e.sub2api.relay.v1.HeaderValuesR\aheaders\"\x95\x02\n" +
+	"\aheaders\x18\x01 \x03(\v2\x1e.sub2api.relay.v1.HeaderValuesR\aheaders\"\xbe\x02\n" +
 	"\x10SelectionRelease\x12!\n" +
 	"\fselection_id\x18\x01 \x01(\tR\vselectionId\x12!\n" +
 	"\frequest_done\x18\x02 \x01(\bR\vrequestDone\x12!\n" +
@@ -8764,7 +8774,8 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\aturn_id\x18\x06 \x01(\tR\x06turnId\x12+\n" +
 	"\x11forward_succeeded\x18\a \x01(\bR\x10forwardSucceeded\x12\x1d\n" +
 	"\n" +
-	"request_id\x18\b \x01(\tR\trequestId\"\x9b\x01\n" +
+	"request_id\x18\b \x01(\tR\trequestId\x12'\n" +
+	"\x0fupstream_served\x18\t \x01(\bR\x0eupstreamServed\"\x9b\x01\n" +
 	"\x10BeginTurnRequest\x12!\n" +
 	"\fselection_id\x18\x01 \x01(\tR\vselectionId\x12\x12\n" +
 	"\x04turn\x18\x02 \x01(\x05R\x04turn\x12\x14\n" +

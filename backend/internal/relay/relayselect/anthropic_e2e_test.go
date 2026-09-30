@@ -53,10 +53,10 @@ func TestNodeServesAnthropicMessages(t *testing.T) {
 	e.world.waitReleased(t)
 }
 
-// 从节点还不能转发的账号类型（这里是 OAuth）：交给主节点（测试世界没有主节点转发，按 503 写），上游不被调用。
+// 从节点还不能转发的账号类型（这里是 Bedrock）：交给主节点（测试世界没有主节点转发，按 503 写），上游不被调用。
 func TestNodeHandsOffAnthropicAccountTypesNotServedYet(t *testing.T) {
 	e := startE2EWith(t, func(upstream string) []service.Account {
-		a := anthropicAccount(1, "oauth", service.AccountTypeOAuth)
+		a := anthropicAccount(1, "bedrock", service.AccountTypeBedrock)
 		a.Credentials["base_url"] = upstream
 		return []service.Account{a}
 	})
@@ -208,7 +208,6 @@ func TestNodeForwardsAnthropicOAuthWithTheMastersIdentity(t *testing.T) {
 		a.Extra = map[string]any{"account_uuid": "11111111-2222-3333-4444-555555555555", "session_id_masking_enabled": true}
 		return []service.Account{a}
 	})
-	e.world.sel.anthropicServed = func(a *service.Account) bool { return a.Platform == service.PlatformAnthropic }
 
 	req, err := http.NewRequest(http.MethodPost, e.gateway.URL+"/v1/messages",
 		strings.NewReader(`{"model":"claude-sonnet-4-5","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`))

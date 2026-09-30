@@ -3,6 +3,8 @@ package relayselect
 import (
 	"context"
 	"net/http"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -90,7 +92,7 @@ func TestSelectAnthropicMessagesRejections(t *testing.T) {
 	})
 
 	t.Run("account types the node cannot forward yet go to the master", func(t *testing.T) {
-		w := newWorld(t, config.RunModeStandard, anthropicAccount(1, "oauth", service.AccountTypeOAuth))
+		w := newWorld(t, config.RunModeStandard, anthropicAccount(1, "bedrock", service.AccountTypeBedrock))
 		resp, err := w.sel.Select(ctx, testNode, anthropicMessagesRequest("o1", 1, "sk-anthropic"))
 		require.NoError(t, err)
 		require.Equal(t, relayv1.RejectionFormat_REJECTION_FORMAT_UNSUPPORTED, resp.GetRejection().GetFormat())
@@ -128,5 +130,72 @@ func TestSelectAnthropicKeepsTheRequestAcrossRetries(t *testing.T) {
 	require.Equal(t, sel.GetPricingAtUnixMs(), sel2.GetPricingAtUnixMs(), "the pricing time is fixed at the start of the request")
 	require.EqualValues(t, 1, w.slots.userAcquires.Load(), "the user slot is taken once for the whole request")
 	w.sel.Release(testNode, &relayv1.SelectionRelease{SelectionId: sel2.GetSelectionId(), RequestDone: true})
+	w.waitReleased(t)
+}
+
+type recordingSessions struct {
+	service.SessionLimitCache
+	mu           sync.Mutex
+	unregistered []int64
+}
+
+func (r *recordingSessions) UnregisterSession(_ context.Context, accountID int64, _ string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.unregistered = append(r.unregistered, accountID)
+	return nil
+}
+
+type recordingRPM struct {
+	service.RPMCache
+	increments atomic.Int64
+}
+
+func (r *recordingRPM) IncrementRPM(context.Context, int64) (int, error) {
+	return int(r.increments.Add(1)), nil
+}
+
+// OAuth 账号一次尝试结束时本地做的主节点那几步：转发成功计一次 RPM；上游没服务这次尝试时放掉会话数注册。
+func TestAnthropicAttemptReleaseFollowsTheLocalHandler(t *testing.T) {
+	ctx := context.Background()
+	oauth := anthropicAccount(1, "oauth", service.AccountTypeOAuth)
+	oauth.Credentials = map[string]any{"access_token": "SECRET-at"}
+	oauth.Extra = map[string]any{"max_sessions": float64(2), "base_rpm": float64(10)}
+	w := newWorld(t, config.RunModeStandard, oauth)
+	sessions, rpm := &recordingSessions{}, &recordingRPM{}
+	w.sel.deps.AnthropicGateway = service.NewGatewayService(fakeAccounts{accounts: []service.Account{oauth}}, nil, nil, nil, nil, nil, nil, nil, w.sel.deps.Config,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, sessions, rpm, nil, nil, nil, nil, nil, nil, nil, nil)
+	unregistered := func() int {
+		sessions.mu.Lock()
+		defer sessions.mu.Unlock()
+		return len(sessions.unregistered)
+	}
+
+	resp, err := w.sel.Select(ctx, testNode, anthropicMessagesRequest("o1", 1, "sk-anthropic"))
+	require.NoError(t, err)
+	require.NotNil(t, resp.GetSelection(), "rejection: %+v", resp.GetRejection())
+	w.sel.release(testNode, &relayv1.SelectionRelease{SelectionId: resp.GetSelection().GetSelectionId(), RequestDone: true, ForwardSucceeded: true, UpstreamServed: true})
+	require.EqualValues(t, 1, rpm.increments.Load())
+	require.Zero(t, unregistered(), "a served session keeps its registration")
+
+	resp, err = w.sel.Select(ctx, testNode, anthropicMessagesRequest("o2", 1, "sk-anthropic"))
+	require.NoError(t, err)
+	require.NotNil(t, resp.GetSelection(), "rejection: %+v", resp.GetRejection())
+	w.sel.release(testNode, &relayv1.SelectionRelease{SelectionId: resp.GetSelection().GetSelectionId(), RequestDone: true})
+	require.EqualValues(t, 1, rpm.increments.Load())
+	require.Equal(t, 1, unregistered(), "an attempt the upstream never served gives its session registration back")
+	w.waitReleased(t)
+}
+
+// 用户消息串行队列还没接到从节点：开了队列的 OAuth 账号交给主节点。
+func TestAnthropicOAuthWithMessageQueueStaysOnTheMaster(t *testing.T) {
+	ctx := context.Background()
+	oauth := anthropicAccount(1, "oauth", service.AccountTypeOAuth)
+	oauth.Credentials = map[string]any{"access_token": "SECRET-at"}
+	oauth.Extra = map[string]any{"user_msg_queue_mode": "serialize"}
+	w := newWorld(t, config.RunModeStandard, oauth)
+	resp, err := w.sel.Select(ctx, testNode, anthropicMessagesRequest("q1", 1, "sk-anthropic"))
+	require.NoError(t, err)
+	require.Equal(t, relayv1.RejectionFormat_REJECTION_FORMAT_UNSUPPORTED, resp.GetRejection().GetFormat())
 	w.waitReleased(t)
 }

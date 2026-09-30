@@ -151,6 +151,8 @@ type selectionRecord struct {
 	maxConcurrency int
 	// turnID：WebSocket 这次选号上开着的一轮（BeginTurn 起、这一轮的结束消息清掉）。由 selector.mu 保护。
 	turnID string
+	// anthropic：Anthropic Messages 的选号（释放时刷新粘性会话、RPM、放会话数注册）。
+	anthropic bool
 }
 
 func newSelector(d Deps, env master.SelectEnv) *selector {
@@ -171,7 +173,7 @@ func newSelector(d Deps, env master.SelectEnv) *selector {
 		events:            make(chan queuedAccountEvent, accountEventQueue),
 	}
 	s.localReporter = d.Gateway.LocalAccountReporter
-	s.anthropicServed = nodeServesAnthropicAccount
+	s.anthropicServed = s.nodeServesAnthropicAccount
 	s.findCyberBlocked = d.Gateway.FindCyberSessionBlockedByLookup
 	// 主节点只写会话屏蔽标记（授权）；风控记录、运维日志由从节点写本机（设计 3.4、第 12 节）。
 	recorder := handler.CyberPolicyRecorder{Gateway: d.Gateway}
@@ -317,8 +319,8 @@ func (s *selector) release(nodeID int64, rel *relayv1.SelectionRelease) {
 	if sel.release != nil {
 		sel.release()
 	}
-	if rel.GetForwardSucceeded() && sel.account != nil {
-		s.bindAnthropicSticky(sel)
+	if sel.anthropic && sel.account != nil {
+		s.releaseAnthropicAttempt(sel, rel)
 	}
 	if len(rel.GetResponseIds()) > 0 && sel.account != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
