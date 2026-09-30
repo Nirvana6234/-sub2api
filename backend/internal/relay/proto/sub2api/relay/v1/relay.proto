@@ -506,6 +506,9 @@ enum SelectEndpoint {
   // （handler.AnthropicAccountAdmitter）：换号状态（已失败的账号、利润否决次数、选号耗尽后的退避）在从节点的
   // 处理函数里，与单机同一段代码；主节点按从节点带来的已排除账号选，不累计。
   SELECT_ENDPOINT_ANTHROPIC_MESSAGES = 5;
+  // Anthropic 的 /v1/messages/count_tokens（GatewayHandler.CountTokens）：计费资格检查后按模型选一个账号，不占槽、
+  // 不计费（没有凭证、不给额度）；上游没服务时释放放掉会话数注册。
+  SELECT_ENDPOINT_ANTHROPIC_COUNT_TOKENS = 6;
 }
 
 message AdmitRequest {

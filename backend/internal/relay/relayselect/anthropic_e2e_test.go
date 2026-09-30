@@ -251,3 +251,27 @@ func TestNodeForwardsAnthropicOAuthWithTheMastersIdentity(t *testing.T) {
 	require.Contains(t, userID, masked)
 	e.world.waitReleased(t)
 }
+
+// count_tokens 经从节点：主节点查计费资格、按模型选账号（不占槽），从节点直连上游；不计费，没有扣费记录。
+func TestNodeServesAnthropicCountTokens(t *testing.T) {
+	e := startE2EWith(t, func(upstream string) []service.Account {
+		a := anthropicAccount(1, "claude", service.AccountTypeAPIKey)
+		a.Credentials["base_url"] = upstream
+		return []service.Account{a}
+	})
+	for _, path := range []string{"/v1/messages/count_tokens", "/messages/count_tokens"} {
+		status, body := e.post(t, path, "sk-anthropic", `{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":"hi"}]}`)
+		require.Equal(t, http.StatusOK, status, "%s: %s", path, body)
+		require.JSONEq(t, `{"input_tokens":7}`, body)
+		select {
+		case r := <-e.hits:
+			require.Equal(t, "/v1/messages/count_tokens", r.URL.Path)
+			require.Equal(t, "SECRET-claude", r.Header.Get("x-api-key"))
+		case <-time.After(5 * time.Second):
+			t.Fatal("upstream was not called")
+		}
+	}
+	e.world.waitReleased(t)
+	require.Empty(t, e.settler.records(), "count_tokens is not billed")
+	require.Zero(t, e.world.slots.userAcquires.Load(), "count_tokens takes no user slot")
+}

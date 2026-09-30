@@ -219,6 +219,9 @@ const (
 	// （handler.AnthropicAccountAdmitter）：换号状态（已失败的账号、利润否决次数、选号耗尽后的退避）在从节点的
 	// 处理函数里，与单机同一段代码；主节点按从节点带来的已排除账号选，不累计。
 	SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_MESSAGES SelectEndpoint = 5
+	// Anthropic 的 /v1/messages/count_tokens（GatewayHandler.CountTokens）：计费资格检查后按模型选一个账号，不占槽、
+	// 不计费（没有凭证、不给额度）；上游没服务时释放放掉会话数注册。
+	SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_COUNT_TOKENS SelectEndpoint = 6
 )
 
 // Enum value maps for SelectEndpoint.
@@ -230,14 +233,16 @@ var (
 		3: "SELECT_ENDPOINT_OPENAI_MESSAGES",
 		4: "SELECT_ENDPOINT_OPENAI_RESPONSES_WS",
 		5: "SELECT_ENDPOINT_ANTHROPIC_MESSAGES",
+		6: "SELECT_ENDPOINT_ANTHROPIC_COUNT_TOKENS",
 	}
 	SelectEndpoint_value = map[string]int32{
-		"SELECT_ENDPOINT_UNSPECIFIED":         0,
-		"SELECT_ENDPOINT_OPENAI_RESPONSES":    1,
-		"SELECT_ENDPOINT_OPENAI_CHAT":         2,
-		"SELECT_ENDPOINT_OPENAI_MESSAGES":     3,
-		"SELECT_ENDPOINT_OPENAI_RESPONSES_WS": 4,
-		"SELECT_ENDPOINT_ANTHROPIC_MESSAGES":  5,
+		"SELECT_ENDPOINT_UNSPECIFIED":            0,
+		"SELECT_ENDPOINT_OPENAI_RESPONSES":       1,
+		"SELECT_ENDPOINT_OPENAI_CHAT":            2,
+		"SELECT_ENDPOINT_OPENAI_MESSAGES":        3,
+		"SELECT_ENDPOINT_OPENAI_RESPONSES_WS":    4,
+		"SELECT_ENDPOINT_ANTHROPIC_MESSAGES":     5,
+		"SELECT_ENDPOINT_ANTHROPIC_COUNT_TOKENS": 6,
 	}
 )
 
@@ -8858,14 +8863,15 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\vBillingMode\x12\x1c\n" +
 	"\x18BILLING_MODE_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14BILLING_MODE_BALANCE\x10\x01\x12\x1d\n" +
-	"\x19BILLING_MODE_SUBSCRIPTION\x10\x02*\xee\x01\n" +
+	"\x19BILLING_MODE_SUBSCRIPTION\x10\x02*\x9a\x02\n" +
 	"\x0eSelectEndpoint\x12\x1f\n" +
 	"\x1bSELECT_ENDPOINT_UNSPECIFIED\x10\x00\x12$\n" +
 	" SELECT_ENDPOINT_OPENAI_RESPONSES\x10\x01\x12\x1f\n" +
 	"\x1bSELECT_ENDPOINT_OPENAI_CHAT\x10\x02\x12#\n" +
 	"\x1fSELECT_ENDPOINT_OPENAI_MESSAGES\x10\x03\x12'\n" +
 	"#SELECT_ENDPOINT_OPENAI_RESPONSES_WS\x10\x04\x12&\n" +
-	"\"SELECT_ENDPOINT_ANTHROPIC_MESSAGES\x10\x05*\x9b\x02\n" +
+	"\"SELECT_ENDPOINT_ANTHROPIC_MESSAGES\x10\x05\x12*\n" +
+	"&SELECT_ENDPOINT_ANTHROPIC_COUNT_TOKENS\x10\x06*\x9b\x02\n" +
 	"\x0fRejectionFormat\x12 \n" +
 	"\x1cREJECTION_FORMAT_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18REJECTION_FORMAT_GATEWAY\x10\x01\x12\x18\n" +

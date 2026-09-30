@@ -28,7 +28,7 @@ func (s *selector) Select(ctx context.Context, nodeID int64, req *relayv1.Select
 		relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_MESSAGES:
 	case relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_RESPONSES_WS:
 		ws = true
-	case relayv1.SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_MESSAGES:
+	case relayv1.SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_MESSAGES, relayv1.SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_COUNT_TOKENS:
 	default:
 		return unsupported(), nil
 	}
@@ -42,6 +42,8 @@ func (s *selector) Select(ctx context.Context, nodeID int64, req *relayv1.Select
 		resp, err = s.selectOpenAIWS(ctx, nodeID, req)
 	case req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_MESSAGES:
 		resp, err = s.selectAnthropic(ctx, nodeID, req)
+	case req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_COUNT_TOKENS:
+		resp, err = s.selectAnthropicCountTokens(ctx, nodeID, req)
 	default:
 		resp, err = s.selectOpenAI(ctx, nodeID, req)
 	}

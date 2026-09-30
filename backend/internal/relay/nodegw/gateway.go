@@ -90,8 +90,18 @@ func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatche
 		}
 		h.Responses(c)
 	})
+	countTokens := func(c *gin.Context) {
+		// 与本地 countTokensHandler 一样按分组平台分：Anthropic 分组走 Messages 处理函数的 count_tokens；
+		// OpenAI 兼容平台的（上游桥接、Grok 本地估算）还没接入。
+		if key, ok := middleware2.GetAPIKeyFromContext(c); ok && gh != nil && servedPlatform(c, key) == service.PlatformAnthropic {
+			gh.CountTokens(c)
+			return
+		}
+		d.HandOff(c)
+	}
 	for _, prefix := range []string{"/v1", ""} {
 		g := r.Group(prefix, chain...)
+		g.POST("/messages/count_tokens", countTokens)
 		g.POST("/responses", responses)
 		g.POST("/responses/*subpath", responses)
 		g.POST("/chat/completions", openAIOnly(h.ChatCompletions))

@@ -2002,6 +2002,10 @@ func (h *GatewayHandler) CountTokens(c *gin.Context) {
 		h.errorResponse(c, http.StatusInternalServerError, "api_error", "User context not found")
 		return
 	}
+	if h.relay != nil {
+		// 从节点：选号在主节点（不占槽、不计费），请求结束时放掉这次的选号。
+		defer h.relay.RequestDone(c)
+	}
 	reqLog := requestLogger(
 		c,
 		"handler.gateway.count_tokens",
@@ -2060,14 +2064,16 @@ func (h *GatewayHandler) CountTokens(c *gin.Context) {
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
 
 	// 校验 billing eligibility（订阅/余额）
-	// 【注意】不计算并发，但需要校验订阅/余额
-	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
-		status, code, message, retryAfter := billingErrorDetails(err)
-		if retryAfter > 0 {
-			c.Header("Retry-After", strconv.Itoa(retryAfter))
+	// 【注意】不计算并发，但需要校验订阅/余额（从节点：在主节点选号时做）
+	if h.relay == nil {
+		if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
+			status, code, message, retryAfter := billingErrorDetails(err)
+			if retryAfter > 0 {
+				c.Header("Retry-After", strconv.Itoa(retryAfter))
+			}
+			h.errorResponse(c, status, code, message)
+			return
 		}
-		h.errorResponse(c, status, code, message)
-		return
 	}
 
 	// 计算粘性会话 hash
@@ -2079,15 +2085,24 @@ func (h *GatewayHandler) CountTokens(c *gin.Context) {
 	sessionHash := h.gatewayService.GenerateSessionHash(parsedReq)
 
 	// 选择支持该模型的账号
-	account, err := h.gatewayService.SelectAccountForModel(c.Request.Context(), apiKey.GroupID, sessionHash, parsedReq.Model)
-	if err != nil {
-		reqLog.Warn("gateway.count_tokens_select_account_failed", zap.Error(err))
-		cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, parsedReq.Model, parsedReq.Model, service.PlatformAnthropic)
-		if !cls.ModelNotFound {
-			markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
+	var account *service.Account
+	var relayAttempt *OpenAIRelayAttempt
+	if h.relay != nil {
+		res := h.relay.Select(c, OpenAIRelaySelectRequest{
+			Anthropic: true, CountTokens: true, APIKey: apiKey, Model: parsedReq.Model, SessionHash: sessionHash, Body: body,
+		})
+		if res.Rejection != nil {
+			h.writeAnthropicRelayRejection(c, res.Rejection, &FailoverState{}, service.PlatformAnthropic, false, reqLog)
+			return
 		}
-		h.errorResponse(c, cls.Status, cls.ErrType, cls.Message)
-		return
+		relayAttempt, account = res.Attempt, res.Attempt.Account
+	} else {
+		account, err = h.gatewayService.SelectAccountForModel(c.Request.Context(), apiKey.GroupID, sessionHash, parsedReq.Model)
+		if err != nil {
+			reqLog.Warn("gateway.count_tokens_select_account_failed", zap.Error(err))
+			h.writeGatewayRejection(c, AnthropicCountTokensSelectFailureRejection(c.Request.Context(), h.gatewayService, apiKey, parsedReq.Model, err), false)
+			return
+		}
 	}
 	setOpsSelectedAccount(c, account.ID, account.Platform)
 
@@ -2096,8 +2111,12 @@ func (h *GatewayHandler) CountTokens(c *gin.Context) {
 		reqLog.Error("gateway.count_tokens_forward_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 		// 错误响应已在 ForwardCountTokens 中处理
 		// 上游未服务该会话，立即释放选号时注册的会话槽（客户端可能已断开，用独立 ctx）
+		// （从节点：释放这次选号时主节点按"上游没服务"放掉）
 		h.gatewayService.ReleaseAccountSession(context.Background(), account, sessionHash)
 		return
+	}
+	if h.relay != nil {
+		h.relay.ForwardSucceeded(c, relayAttempt)
 	}
 }
 

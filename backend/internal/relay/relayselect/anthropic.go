@@ -227,6 +227,83 @@ func (s *selector) metadataBridgeEnabled() bool {
 	return s.deps.Config == nil || s.deps.Config.Gateway.OpenAIWS.MetadataBridgeEnabled
 }
 
+// selectAnthropicCountTokens 按本地 GatewayHandler.CountTokens 的顺序：中间件复查 → 计费资格（不占用户槽）→ 按模型选
+// 一个账号（SelectAccountForModel，不占账号槽）。不计费：没有凭证、不给额度（设计 5.3 不计费请求不签凭证）。
+// 选号结果带账号快照、渠道功能配置、身份信息，从节点照本地转发。
+func (s *selector) selectAnthropicCountTokens(ctx context.Context, nodeID int64, req *relayv1.SelectRequest) (*relayv1.SelectResponse, error) {
+	gw := s.deps.AnthropicGateway
+	if gw == nil {
+		return unsupported(), nil
+	}
+	adm, rej, err := s.admitAPIKey(ctx, req.GetApiKey(), req.GetClientIp(), req.GetMethod(), req.GetPath(), modelCandidates(req),
+		autoGroupChoice{pinned: req.GetAutoGroupId()}, anthropicServedPlatforms...)
+	if err != nil || rej != nil {
+		return rej, err
+	}
+	apiKey := adm.APIKey
+	s.admitted.note(nodeID, apiKey.User.ID, s.now())
+	ctx = middleware.RelayRequestContext(ctx, adm)
+	if err := s.checkBilling(ctx, nodeID, req.GetHeldQuota(), apiKey, adm.Billing.Subscription, service.QuotaPlatform(ctx, apiKey)); err != nil {
+		return gatewayRejection(billingRejection(err, false)), nil
+	}
+	sessionHash, model := req.GetSessionHash(), req.GetModel()
+	account, err := gw.SelectAccountForModel(ctx, apiKey.GroupID, sessionHash, model)
+	if err != nil {
+		return gatewayRejection(handler.AnthropicCountTokensSelectFailureRejection(ctx, gw, apiKey, model, err)), nil
+	}
+	if !s.anthropicServed(account) {
+		gw.ReleaseAccountSession(context.Background(), account, sessionHash)
+		return unsupported(), nil
+	}
+
+	record, _, err := s.requestFor(nodeID, req.GetRequestId())
+	if err != nil {
+		return nil, err
+	}
+	record.mu.Lock()
+	defer record.mu.Unlock()
+	record.userID, record.apiKeyID, record.sessionKey = apiKey.User.ID, apiKey.ID, sessionHash
+	sel := &selectionRecord{
+		id: newSelectionID(), nodeID: nodeID, request: record, account: account, createdAt: s.now(),
+		groupID: apiKey.Group.ID, userID: apiKey.User.ID, apiKeyID: apiKey.ID, apiKey: apiKey, anthropic: true, countTokens: true,
+	}
+	fail := func(err error) (*relayv1.SelectResponse, error) {
+		gw.ReleaseAccountSession(context.Background(), account, sessionHash)
+		s.dropRequest(record)
+		return nil, err
+	}
+	snap, err := s.encodeAccount(ctx, nodeID, account, s.nodeHas(nodeID))
+	if err != nil {
+		return fail(err)
+	}
+	var parentSnap *relayv1.AccountSnapshot
+	if account.IsShadow() {
+		if parentSnap, err = s.encodeCredentialParent(ctx, nodeID, account, s.nodeHas(nodeID)); err != nil {
+			return fail(err)
+		}
+	}
+	version, err := s.env.ConfigVersion(ctx, nodeID)
+	if err != nil {
+		return fail(err)
+	}
+	features, err := s.channelFeatures(ctx, sel.groupID)
+	if err != nil {
+		return fail(err)
+	}
+	selection := &relayv1.Selection{
+		SelectionId: sel.id, UserId: sel.userID, ApiKeyId: sel.apiKeyID, GroupId: sel.groupID, Account: snap, ForwardModel: model,
+		SessionHash: sessionHash, ConfigVersion: version, CredentialParent: parentSnap, ChannelFeatures: features,
+	}
+	if err := s.attachIdentity(ctx, selection, account, req.GetFingerprintHeaders()); err != nil {
+		return fail(err)
+	}
+	if ctx.Err() != nil {
+		return fail(ctx.Err())
+	}
+	s.addSelection(sel)
+	return &relayv1.SelectResponse{Result: &relayv1.SelectResponse_Selection{Selection: selection}}, nil
+}
+
 // releaseAnthropicAttempt 是 Messages 一次尝试结束时本地在处理函数里做的主节点那几步：
 //   - 转发成功：刷新粘性会话绑定（bindAnthropicSticky）、OAuth 账号有基础 RPM 时计一次 RPM；
 //   - 上游没服务这次尝试：放掉这个账号为这次会话做的会话数注册（本地 failover 继续、请求最终失败时的释放）。
@@ -237,7 +314,7 @@ func (s *selector) releaseAnthropicAttempt(sel *selectionRecord, rel *relayv1.Se
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if rel.GetForwardSucceeded() {
+	if rel.GetForwardSucceeded() && !sel.countTokens {
 		s.bindAnthropicSticky(sel)
 		if sel.account.IsAnthropicOAuthOrSetupToken() && sel.account.GetBaseRPM() > 0 {
 			if err := gw.IncrementAccountRPM(ctx, sel.account.ID); err != nil {

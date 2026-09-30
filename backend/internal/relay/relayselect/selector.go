@@ -153,6 +153,8 @@ type selectionRecord struct {
 	turnID string
 	// anthropic：Anthropic Messages 的选号（释放时刷新粘性会话、RPM、放会话数注册）。
 	anthropic bool
+	// countTokens：Anthropic count_tokens 的选号（不占槽、不计费；释放时只放会话数注册）。
+	countTokens bool
 }
 
 func newSelector(d Deps, env master.SelectEnv) *selector {

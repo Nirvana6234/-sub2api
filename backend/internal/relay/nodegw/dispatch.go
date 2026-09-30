@@ -178,6 +178,8 @@ func (d *Dispatcher) selectRequest(c *gin.Context, st *requestState, req handler
 	clientIP := strings.TrimSpace(ip.GetClientIP(c))
 	endpoint := relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_RESPONSES
 	switch {
+	case req.CountTokens:
+		endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_COUNT_TOKENS
 	case req.Anthropic:
 		endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_MESSAGES
 	case req.Chat:

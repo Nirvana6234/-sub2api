@@ -96,6 +96,8 @@ type OpenAIRelaySelectRequest struct {
 	Anthropic      bool
 	MetadataUserID string
 	InterceptType  InterceptType
+	// CountTokens：Anthropic 的 /v1/messages/count_tokens（不占槽、不计费、没有凭证）。
+	CountTokens bool
 }
 
 // OpenAIRelaySelectResult 是一次远程选号的结果：Attempt 与 Rejection 二选一。

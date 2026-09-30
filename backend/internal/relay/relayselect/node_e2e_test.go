@@ -145,6 +145,10 @@ func startE2EWithConfig(t *testing.T, configure func(*config.Config), accounts f
 			_, _ = io.WriteString(w, `{"error":{"code":"cyber_policy","message":"blocked by policy","type":"invalid_request_error"}}`)
 			return
 		}
+		if strings.HasSuffix(r.URL.Path, "/v1/messages/count_tokens") {
+			_, _ = io.WriteString(w, `{"input_tokens":7}`)
+			return
+		}
 		if strings.HasSuffix(r.URL.Path, "/v1/messages") {
 			// Anthropic 账号的 Messages（Anthropic 分组经从节点）。
 			_, _ = io.WriteString(w, `{"id":"msg_e2e","type":"message","role":"assistant","model":"claude-sonnet-4-5",`+

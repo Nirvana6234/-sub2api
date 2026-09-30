@@ -200,6 +200,19 @@ func AnthropicFirstSelectFailureRejection(ctx context.Context, diag service.Mode
 	return r, cls.ModelNotFound
 }
 
+// AnthropicCountTokensSelectFailureRejection 是 count_tokens 选不出账号时的错误（本地与主从分流共用）：
+// 与 Messages 不同，文案不带调度器的错误。
+func AnthropicCountTokensSelectFailureRejection(ctx context.Context, diag service.ModelAvailabilityDiagnoser, apiKey *service.APIKey, model string, selectErr error) OpenAIGatewayRejection {
+	cls := classifyNoAccountError(ctx, diag, apiKey, model, model, service.PlatformAnthropic)
+	r := OpenAIGatewayRejection{Status: cls.Status, ErrType: cls.ErrType, Message: cls.Message}
+	if cls.ModelNotFound {
+		r.OpsBusinessLimitedReason = service.OpsClientBusinessLimitedReasonLocalModelConfiguration
+	} else {
+		r.RoutingCapacityLimited = isOpsNoAvailableAccountError(selectErr)
+	}
+	return r
+}
+
 // AnthropicSelectOutcomeRejection 是准入失败（没有等待计划、队列满、抢槽出错）的错误（本地与主从分流共用）。
 func AnthropicSelectOutcomeRejection(outcome AnthropicSelectOutcome) OpenAIGatewayRejection {
 	switch outcome.Kind {
