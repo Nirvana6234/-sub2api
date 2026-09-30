@@ -142,7 +142,9 @@ func TestRefreshedTokenChangesTheCredentialVersion(t *testing.T) {
 	a := sampleAccount()
 	first, err := accountcodec.Encode(a, map[string]any{"access_token": "SECRET-TOKEN-1"}, 7, key.PublicKey(), nil)
 	require.NoError(t, err)
-	nodeHas := func(accountID int64, version string) bool { return accountID == a.ID && version == first.GetCredentialVersion() }
+	nodeHas := func(accountID int64, version string) bool {
+		return accountID == a.ID && version == first.GetCredentialVersion()
+	}
 
 	same, err := accountcodec.Encode(a, map[string]any{"access_token": "SECRET-TOKEN-1"}, 7, key.PublicKey(), nodeHas)
 	require.NoError(t, err)
