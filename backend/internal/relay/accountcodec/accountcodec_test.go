@@ -134,3 +134,23 @@ func clone(s *relayv1.AccountSnapshot) *relayv1.AccountSnapshot {
 	c, _ := proto.Clone(s).(*relayv1.AccountSnapshot)
 	return c
 }
+
+// 主节点刷新了 access token（覆盖值变了）：凭据版本跟着变，从节点手里旧版本的凭据不再算"已有"，新凭据照样下发。
+func TestRefreshedTokenChangesTheCredentialVersion(t *testing.T) {
+	key, err := sealbox.GenerateKey()
+	require.NoError(t, err)
+	a := sampleAccount()
+	first, err := accountcodec.Encode(a, map[string]any{"access_token": "SECRET-TOKEN-1"}, 7, key.PublicKey(), nil)
+	require.NoError(t, err)
+	nodeHas := func(accountID int64, version string) bool { return accountID == a.ID && version == first.GetCredentialVersion() }
+
+	same, err := accountcodec.Encode(a, map[string]any{"access_token": "SECRET-TOKEN-1"}, 7, key.PublicKey(), nodeHas)
+	require.NoError(t, err)
+	require.Equal(t, first.GetCredentialVersion(), same.GetCredentialVersion())
+	require.Empty(t, same.GetSealedCredentials(), "the node already has this version")
+
+	refreshed, err := accountcodec.Encode(a, map[string]any{"access_token": "SECRET-TOKEN-2"}, 7, key.PublicKey(), nodeHas)
+	require.NoError(t, err)
+	require.NotEqual(t, first.GetCredentialVersion(), refreshed.GetCredentialVersion())
+	require.NotEmpty(t, refreshed.GetSealedCredentials(), "the refreshed token is delivered")
+}
