@@ -1163,8 +1163,9 @@ func TestUpdateAccountModelRateLimitInCache_NilSchedulerSnapshot(t *testing.T) {
 	// 不应 panic
 	svc.updateAccountModelRateLimitInCache(context.Background(), account, "claude-sonnet-4-5", time.Now().Add(30*time.Second))
 
-	// Extra 不应被更新（因为函数提前返回）
-	require.Nil(t, account.Extra)
+	// 没有调度快照（主从分流的从节点）时账号对象仍然更新：同一请求里后面的重试看得到这次限流；只是不写调度快照。
+	limits, _ := account.Extra["model_rate_limits"].(map[string]any)
+	require.Contains(t, limits, "claude-sonnet-4-5")
 }
 
 // TestUpdateAccountModelRateLimitInCache_PreservesExistingExtra 测试保留已有的 Extra 数据

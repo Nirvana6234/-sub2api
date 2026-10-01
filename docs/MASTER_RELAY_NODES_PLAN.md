@@ -281,7 +281,7 @@ WP10 工作量最大（所有平台），WP9 完成后按平台拆给多人并�
 | ~~安全审计按分工原则重做（设计 3.4）~~ | WP10 | 已完成（WP10-4 ①–⑩）：内容审核、提示词审计、cyber 记录都在从节点；从节点 cyber 的运维错误日志随 WP14 本机日志接上 |
 | ~~联网搜索在从节点执行（设计 3.3）~~ | WP10 | 已完成（fb373e85）：websearch 配额抽成 QuotaStore（单机仍是 Redis）；从节点用加密下发的配置建搜索管理器、换快照重建，份额内本机计数、每 10 秒上报，主节点汇总进 Redis 并回份额 |
 | ~~自动分组 Key、组合平台分组经从节点（主节点选组、选目标平台）~~ | WP10 | 已完成：组合平台（335c975a）、按模型选组并固定（f49aebf6）、中途换组与结果回报（0dee1498），见下方 WP10 进展 |
-| Anthropic 网关入口：`/v1/messages`、count_tokens（含 Bedrock、Vertex、Antigravity 账号）；`ForceCacheBilling` 核对；联网搜索模拟的渠道级开关（账号"跟随渠道"时看渠道配置，渠道在主节点）随选号带下来 | WP10 | 进行中：Anthropic 平台的全部账号类型（API Key、OAuth / setup-token 含用户消息串行队列、Vertex 服务账号、Bedrock）的 `/v1/messages` 与 count_tokens 已经从节点（331cac30…afe6aa34），渠道功能配置随选号下发、`ForceCacheBilling` 定为节点事实，见下方 WP10 进展。剩：Antigravity 账号（混合调度进 Anthropic 分组的；Google token、摘要会话、单账号重试、prompt 过长的兜底分组）、Gemini 分组分支、未分组 Key、组合平台选到 Anthropic。**阻塞项**：过渡用的账号类型闸门（选到从节点接不了的账号时回"暂不支持"交给主节点）要在这些都接完后去掉——第一次选号就命中时无害，换号后才命中会让主节点把整个请求重做一遍 |
+| ~~Anthropic 网关入口：`/v1/messages`、count_tokens（含 Bedrock、Vertex、Antigravity 账号）；`ForceCacheBilling` 核对；联网搜索模拟的渠道级开关随选号带下来~~ | WP10 | 已完成（331cac30…本次提交）：Anthropic 平台全部账号类型、混合调度进来的 Antigravity 账号、count_tokens、用户消息串行队列、组合平台选到 Anthropic、未分组 Key 都从节点转发，见下方 WP10 进展。仍交给主节点的：Gemini 分组（含选到 Gemini 的组合平台）和 Antigravity 路由，归下面"Gemini v1beta、Antigravity 路由"一行；过渡闸门只剩"选到的账号类型从节点接不了"这一道安全网（生产装配下 Anthropic 平台的账号类型和 Antigravity 都接了），不再是阻塞项 |
 | Gemini v1beta、Antigravity 路由 | WP10 | |
 | OpenAI 其余入口：图片（同步）、嵌入、count_tokens（input_tokens）、`/alpha/search`、`/web_search`、`/x_search`、Codex 直连路径 `/backend-api/codex/*` | WP10 | |
 | Grok（含语音）、Ollama Cloud、TypeSafe `/v1/systemone`、Seedance | WP10 | |
@@ -294,7 +294,7 @@ WP10 工作量最大（所有平台），WP9 完成后按平台拆给多人并�
 | ACME 证书、Caddy on_demand、域名解析检查与健康探测 | WP13 | |
 | 接口白名单、HTTP 服务参数与内存预算、从节点本机日志存储与查询接口、主节点查询转发、时钟偏差来源（心跳测得，现在按 0）、"签发数 / 入账数"统计与少报检测、日志和用量的节点查询 | WP14 | |
 | 待复核凭证的后台列表与按用户退回，以及 WP16 行的全部页面 | WP16 | |
-| 部署说明：主节点把从节点配成可信代理（交给主节点转发时客户端 IP 在 X-Forwarded-For）；从节点配置文件里的 `gateway.user_message_queue`、`gateway.max_account_switches` 等转发参数与主节点一致 | WP18 | |
+| 部署说明：主节点把从节点配成可信代理（交给主节点转发时客户端 IP 在 X-Forwarded-For）；从节点配置文件里的 `gateway.user_message_queue`、`gateway.max_account_switches`、`gateway.antigravity_*` 等转发参数与主节点一致 | WP18 | |
 | 最后统一测试时要走的：OAuth 账号经从节点（凭据快照、WebSocket 会话抢占修复）、WebSocket 直通与 HTTP 桥接模式、压测（机型待定）、域名与证书（要真实域名和服务器） | WP19 | |
 
 ### WP10 进展与已定细节
@@ -405,7 +405,11 @@ OpenAI（Responses、Chat）这一路已完成（WP8-1 ~ WP8-4）：
   - count_tokens（c7485a6d）：主节点查计费资格、按模型选账号（不占槽），不计费、没有凭证；上游没服务时放会话数注册。
   - Vertex 服务账号（7e896e00）：服务账号文件不下发，主节点换好的 token 和只写在文件里的项目 ID 随凭据下发。Bedrock（55946e43）：只用加密下发的凭据。
   - 用户消息串行队列（b154ee37）：从节点照本地同一段排队代码（含排队期间 SSE 保活），锁、完成时间、Redis 时钟、账号 RPM 每一步经 `UserMsgQueue` 在主节点执行，只认这台节点正在用的账号。队列的延迟、锁时长、等待超时读从节点自己的配置文件（`gateway.user_message_queue`），部署时与主节点保持一致（WP18 部署说明）。
-  - 过渡：Anthropic 平台的账号都接了，只有混合调度进 Anthropic 分组的 Antigravity 账号还交给主节点（见总账阻塞项）。
+  - Antigravity 账号（混合调度进 Anthropic 分组的，1d24e630）：Google token 由主节点的 Antigravity token 提供者取好随凭据下发，从节点的提供者只读下发的 `access_token`。转发路径上直接写账号状态的几处（模型级限流、账号级限流、积分耗尽标记的清除）作为账号事件交主节点照写，时长不超过 7 天、只认 Antigravity 账号；INTERNAL 500 渐进惩罚的计数和惩罚在主节点（从节点重试耗尽发事件，成功清零只在这台节点报过耗尽或距上次清零超过一分钟时才发）。单账号分组的 `SingleAccountRetry` 由主节点在请求开始时查好随选号带下来。身份补丁开关和提示词加进下发的系统设置。限流写入在没有调度快照时也更新账号对象（原来提前返回），同一请求里后面的重试看得到。
+  - prompt 过长换兜底分组：新增 `SwitchFallbackGroup`（主节点解析兜底分组、核对合规——Anthropic 平台、非订阅、自己没有兜底——做计费资格复查，回兜底分组的 Key），之后的选号带 `fallback_group_id`，主节点核对是这把 Key 的分组配置的兜底分组后按它选号、计费，渠道映射、渠道功能配置、粘性会话起点仍按原来的分组（本地只在请求开头算一次）；自动分组 Key 切换前后用的分组也分开记。
+  - 组合平台选到 Anthropic 目标、未分组 Key（08348f57）：Anthropic 入口（Messages、count_tokens）按改写前的公开模型选目标，只接选到 Anthropic 的；未分组 Key 按"未分组账号"选号、用量没有分组，OpenAI 入口仍交给主节点。
+  - 与单机的已知差别：①Antigravity 的 INTERNAL 500 计数在从节点这边不累计，成功清零按上面的规则发（其他节点报的计数最多晚一分钟清掉）；②Antigravity 的摘要会话存储在进程内存，每台从节点各一份（与单机多实例的行为一样）；③Antigravity 转发读的配置文件项（`gateway.antigravity_*`）读从节点自己的配置文件，部署时与主节点一致（WP18）。
+  - 过渡闸门（选到的账号从节点接不了时回"暂不支持"交给主节点）保留为安全网：生产装配下 Anthropic 平台的账号类型（API Key、OAuth / setup-token、服务账号、Bedrock）和 Antigravity 都接了；主节点没装 Antigravity 转发服务时 Antigravity 账号才会被它挡下。
   - 与单机的已知差别：①伪装会话 ID 过期（15 分钟空闲）后第一次用时，写入要等事件到主节点，这段时间里并发的两个请求会各自生成一个，本地在 Redis 上共用一个；②单次流超过 15 分钟（选号占用上限）时选号被清理，迟到的释放只按凭证记响应归属，这次的会话数注册释放、RPM、粘性会话刷新会丢，本地总会做；③全局开了用户消息串行队列时所有 Anthropic OAuth 账号都留在主节点，直到队列接入。
   - 测试缺口：主节点选号结果带渠道功能配置这一步没有单独的测试（测试世界没有渠道服务），节点读取一侧有；主节点排队时给客户端保活仍是总账里的单独一项。
 
@@ -464,6 +468,7 @@ OpenAI（Responses、Chat）这一路已完成（WP8-1 ~ WP8-4）：
 21. v0.16（2026-09-29 负责人定）：**分工原则**——几乎所有转发逻辑在从节点完成，主从之间只有授权和计费，日志和记录留在从节点、由从节点提供查询（后续加）。随之：安全审计在从节点判定，违规次数报主节点累计封号，命中过的输入名单同步到各节点；联网搜索在从节点执行；审核接口 Key、提示词审计凭据、联网搜索 Key 及其代理按节点加密下发、只在内存；账号状态判定仍同步问主节点；审核记录、风控记录、运维错误日志、程序日志都留在从节点（设计第 1 节、3.3、3.4、6、7、12、15.1）。
 22. v0.17：自动分组选组、组合平台选目标在从节点读出模型后问主节点（`ResolveRoute`），之后的选号只核对；中途换组经主节点（`SwitchAutoGroup`），请求结果回报主节点调整选组（设计 3.1、3.2）。
 23. v0.18：Anthropic Messages 的换号循环留在从节点（主节点一轮选号与准入），选号带渠道功能配置，强制按缓存计费作为节点事实（设计 3.2）。
+24. v0.19：Anthropic 网关入口全部经从节点：OAuth 身份信息与 token、TLS 指纹模板快照分段、用户消息串行队列远程缓存、Antigravity 账号（账号状态写入作为事件、INTERNAL 500 惩罚在主节点）、prompt 过长换兜底分组（`SwitchFallbackGroup`）、组合平台选到 Anthropic、未分组 Key（设计 3.2）。
 
 以后实施中再发现的，同样先改设计稿再改代码。
 
