@@ -93,7 +93,7 @@ func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatche
 	countTokens := func(c *gin.Context) {
 		// 与本地 countTokensHandler 一样按分组平台分：Anthropic 分组走 Messages 处理函数的 count_tokens；
 		// OpenAI 兼容平台的（上游桥接、Grok 本地估算）还没接入。
-		if key, ok := middleware2.GetAPIKeyFromContext(c); ok && gh != nil && servedPlatform(c, key) == service.PlatformAnthropic {
+		if key, ok := middleware2.GetAPIKeyFromContext(c); ok && gh != nil && servesAnthropicRoutes(c, key) {
 			gh.CountTokens(c)
 			return
 		}
@@ -115,7 +115,7 @@ func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatche
 				switch {
 				case ok && servedPlatform(c, key) == service.PlatformOpenAI:
 					h.Messages(c)
-				case ok && gh != nil && servedPlatform(c, key) == service.PlatformAnthropic:
+				case ok && gh != nil && servesAnthropicRoutes(c, key):
 					gh.Messages(c)
 				default:
 					d.HandOff(c)
@@ -135,6 +135,15 @@ func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatche
 		}
 		d.deps.HandOff(c, body)
 	})
+}
+
+// servesAnthropicRoutes 报告这次请求走 Anthropic 网关：Anthropic 平台的分组（含组合平台选到 Anthropic 的），或没有分组的
+// Key（后台允许未分组 Key 调度时，本地同样走 Anthropic 网关）。
+func servesAnthropicRoutes(c *gin.Context, key *service.APIKey) bool {
+	if key == nil {
+		return false
+	}
+	return key.Group == nil || servedPlatform(c, key) == service.PlatformAnthropic
 }
 
 // NoopGatewayCache 是从节点上的网关缓存：粘性会话在主节点（选号时读、释放时写），这里一律"没有"；

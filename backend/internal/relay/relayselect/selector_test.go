@@ -94,6 +94,19 @@ func (r fakeAccounts) ListSchedulableByGroupIDAndPlatforms(ctx context.Context, 
 	return out, nil
 }
 
+// ListSchedulableUngroupedByPlatforms：没有写 AccountGroups 的账号当作"没有分组"（未分组 Key 选的）。
+func (r fakeAccounts) ListSchedulableUngroupedByPlatforms(_ context.Context, platforms []string) ([]service.Account, error) {
+	var out []service.Account
+	for _, p := range platforms {
+		for _, a := range r.forPlatform(p) {
+			if len(a.AccountGroups) == 0 {
+				out = append(out, a)
+			}
+		}
+	}
+	return out, nil
+}
+
 func (r fakeAccounts) ListSchedulableByPlatforms(_ context.Context, platforms []string) ([]service.Account, error) {
 	var out []service.Account
 	for _, p := range platforms {

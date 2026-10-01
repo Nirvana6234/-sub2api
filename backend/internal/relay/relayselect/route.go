@@ -18,12 +18,17 @@ func (s *selector) resolveComposite(ctx context.Context, apiKey *service.APIKey,
 	return s.deps.Composite.Resolve(ctx, apiKey.Group.ID, model, service.CompositeRouteEndpointForPath(path))
 }
 
-// compositeServedByNode 报告组合平台分组这次选定的目标从节点能不能接（从节点目前只有 OpenAI 平台的处理函数）。
+// compositeServedByNode 报告组合平台分组这次选定的目标 OpenAI 入口能不能接。
 func compositeServedByNode(apiKey *service.APIKey, decision service.CompositeRouteDecision) bool {
+	return compositeServedBy(apiKey, decision, service.PlatformOpenAI)
+}
+
+// compositeServedBy 报告组合平台分组这次选定的目标是不是 target（入口自己接的平台）；不是组合平台分组时都接。
+func compositeServedBy(apiKey *service.APIKey, decision service.CompositeRouteDecision, target string) bool {
 	if apiKey == nil || apiKey.Group == nil || apiKey.Group.Platform != service.PlatformComposite {
 		return true
 	}
-	return decision.Matched && decision.TargetPlatform == service.PlatformOpenAI
+	return decision.Matched && decision.TargetPlatform == target
 }
 
 // ResolveRoute 见 RelayControl.ResolveRoute：Key 按准入同一段复查，自动分组 Key 按模型选分组（带了已定的分组时

@@ -369,20 +369,27 @@ func (s *selector) admitAPIKey(ctx context.Context, rawKey, clientIP, method, pa
 	if len(served) == 0 {
 		served = openAIServedPlatforms
 	}
-	if g := adm.APIKey.Group; g == nil || !slices.Contains(served, g.Platform) {
-		// 未分组 Key 走 Anthropic 网关（还没接入），其他 OpenAI 兼容平台（Grok 等）还没接入。
+	platform := noGroupPlatform
+	if g := adm.APIKey.Group; g != nil {
+		platform = g.Platform
+	}
+	if !slices.Contains(served, platform) {
+		// 其他 OpenAI 兼容平台（Grok 等）还没接入；未分组 Key 只有 Anthropic 入口接（走 Anthropic 网关）。
 		return adm, unsupported(), nil
 	}
 	return adm, nil, nil
 }
 
+// noGroupPlatform 代表没有分组的 Key（后台允许未分组 Key 调度时，本地走 Anthropic 网关按"未分组账号"选号）。
+const noGroupPlatform = ""
+
 var (
 	// openAIServedPlatforms 是 OpenAI 入口经从节点能接的分组平台。
 	openAIServedPlatforms = []string{service.PlatformOpenAI, service.PlatformComposite}
-	// anthropicServedPlatforms 是 Anthropic Messages 入口经从节点能接的分组平台。
-	anthropicServedPlatforms = []string{service.PlatformAnthropic}
+	// anthropicServedPlatforms 是 Anthropic Messages 入口经从节点能接的分组平台（组合平台分组只接选到 Anthropic 目标的）。
+	anthropicServedPlatforms = []string{service.PlatformAnthropic, service.PlatformComposite, noGroupPlatform}
 	// relayServedPlatforms 是准入、定走向时放行的分组平台（哪个入口接由从节点的路由按分组平台再分）。
-	relayServedPlatforms = []string{service.PlatformOpenAI, service.PlatformComposite, service.PlatformAnthropic}
+	relayServedPlatforms = []string{service.PlatformOpenAI, service.PlatformComposite, service.PlatformAnthropic, noGroupPlatform}
 )
 
 // startRequest 是一次请求的第一次选号时做的：用户并发槽、计费资格、（cyberAfterBilling 时）cyber 会话屏蔽、
@@ -454,6 +461,9 @@ func (s *selector) cyberRejection(ctx context.Context, nodeID int64, req *relayv
 
 // channelFeatures 是分组所属渠道的功能配置（JSON，选号结果带给从节点）；没有渠道时为空。
 func (s *selector) channelFeatures(ctx context.Context, groupID int64) ([]byte, error) {
+	if groupID == 0 {
+		return nil, nil // 未分组 Key 没有渠道
+	}
 	features, err := s.deps.Gateway.ChannelFeaturesForGroup(ctx, groupID)
 	if err != nil || features == nil {
 		return nil, err

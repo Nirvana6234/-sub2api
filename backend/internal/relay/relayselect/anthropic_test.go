@@ -258,7 +258,7 @@ func (q *memUserMsgQueue) counts() (acquired, released int, held int) {
 	return q.acquired, q.released, len(q.held)
 }
 
-// antigravityMixedAccount 是开了混合调度、可以被 Anthropic 分组选到的 Antigravity 账号（从节点还不能转发）。
+// antigravityMixedAccount 是开了混合调度、可以被 Anthropic 分组选到的 Antigravity 账号（主节点没装 Antigravity 转发服务时从节点不接）。
 func antigravityMixedAccount(id int64) service.Account {
 	a := anthropicAccount(id, "antigravity", service.AccountTypeOAuth)
 	a.Platform = service.PlatformAntigravity

@@ -53,7 +53,7 @@ func TestNodeServesAnthropicMessages(t *testing.T) {
 	e.world.waitReleased(t)
 }
 
-// 从节点还不能转发的账号类型（这里是开了混合调度的 Antigravity 账号）：交给主节点（测试世界没有主节点转发，按 503 写），上游不被调用。
+// 从节点不接的账号：主节点没装 Antigravity 转发服务时，混合调度进来的 Antigravity 账号交给主节点：交给主节点（测试世界没有主节点转发，按 503 写），上游不被调用。
 func TestNodeHandsOffAnthropicAccountTypesNotServedYet(t *testing.T) {
 	e := startE2EWith(t, func(upstream string) []service.Account {
 		a := antigravityMixedAccount(1)
@@ -344,4 +344,33 @@ func TestNodeSerializesUserMessagesThroughTheMaster(t *testing.T) {
 		return acquired == 1 && released == 1 && held == 0
 	}, 5*time.Second, 20*time.Millisecond, "the node took the master's lock for the account and gave it back")
 	e.world.waitReleased(t)
+}
+
+// 没有分组的 Key（后台允许未分组 Key 调度时，本地走 Anthropic 网关按"未分组账号"选号）经从节点：只有 Anthropic 的
+// 入口接，其他入口交给主节点；用量没有分组。
+func TestNodeServesUngroupedKeys(t *testing.T) {
+	e := startStandardE2E(t, func(upstream string) []service.Account {
+		a := anthropicAccount(1, "claude", service.AccountTypeAPIKey)
+		a.Credentials["base_url"] = upstream
+		return []service.Account{a}
+	})
+	e.world.sel.deps.Settings = service.NewSettingService(memSettings{values: map[string]string{service.SettingKeyAllowUngroupedKeyScheduling: "true"}}, e.world.sel.deps.Config)
+	e.world.keys.keys["sk-ungrouped"] = testKey("sk-ungrouped", 18, nil)
+
+	status, body := e.post(t, "/v1/messages", "sk-ungrouped", `{"model":"claude-sonnet-4-5","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`)
+	require.Equal(t, http.StatusOK, status, body)
+	select {
+	case <-e.hits:
+	case <-time.After(5 * time.Second):
+		t.Fatal("upstream was not called")
+	}
+	require.Eventually(t, func() bool { return len(e.settler.records()) == 1 }, 5*time.Second, 20*time.Millisecond)
+	voucher, err := sign.VerifyVoucher(e.settler.records()[0].GetVoucher(), e.world.pub, e.nodeID, time.Now())
+	require.NoError(t, err)
+	require.Zero(t, voucher.GetGroupId())
+	e.world.waitReleased(t)
+
+	// OpenAI 的入口不接未分组 Key：交给主节点（测试世界没有主节点转发，按 503 写）。
+	status, body = e.post(t, "/v1/responses", "sk-ungrouped", `{"model":"gpt-5","input":"hi"}`)
+	require.Equal(t, http.StatusServiceUnavailable, status, body)
 }

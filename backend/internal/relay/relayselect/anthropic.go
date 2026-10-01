@@ -52,9 +52,21 @@ func (s *selector) selectAnthropic(ctx context.Context, nodeID int64, req *relay
 		}
 		apiKey, subscription = fallbackKey, nil
 	}
-	userID, groupID := apiKey.User.ID, apiKey.Group.ID
+	// 组合平台分组：按改写前的公开模型选目标（本地 compositeTarget 中间件），只接选到 Anthropic 的，其余交给主节点。
+	composite, err := s.resolveComposite(ctx, apiKey, req.GetRouteModel(), req.GetPath())
+	if err != nil {
+		return nil, err
+	}
+	if !compositeServedBy(apiKey, composite, service.PlatformAnthropic) {
+		return unsupported(), nil
+	}
+	ctx = service.WithCompositeRouteDecision(ctx, composite)
+	userID, groupID := apiKey.User.ID, groupIDOf(apiKey)
 	reqModel := req.GetModel()
-	platform := apiKey.Group.Platform
+	platform := groupPlatformOf(apiKey)
+	if target, ok := service.ResolvedTargetPlatformFromContext(ctx); ok {
+		platform = target
+	}
 	log := zap.NewNop()
 
 	channelMapping, _ := gw.ResolveChannelMappingAndRestrict(ctx, origKey.GroupID, reqModel)
@@ -104,7 +116,7 @@ func (s *selector) selectAnthropic(ctx context.Context, nodeID int64, req *relay
 	stop := context.AfterFunc(ctx, cancel)
 	defer stop()
 	if record.stickyBound > 0 {
-		attemptCtx = service.WithPrefetchedStickySession(attemptCtx, record.stickyBound, origKey.Group.ID, s.metadataBridgeEnabled())
+		attemptCtx = service.WithPrefetchedStickySession(attemptCtx, record.stickyBound, groupIDOf(origKey), s.metadataBridgeEnabled())
 	}
 	excluded := make(map[int64]struct{}, len(req.GetExcludedAccountIds()))
 	for _, id := range req.GetExcludedAccountIds() {
@@ -163,7 +175,7 @@ func (s *selector) selectAnthropic(ctx context.Context, nodeID int64, req *relay
 	sel := &selectionRecord{
 		id: newSelectionID(), nodeID: nodeID, request: record, account: outcome.Account, release: outcome.Release,
 		createdAt: s.now(), quota: quotaReq, groupID: groupID, userID: userID, apiKeyID: apiKey.ID, apiKey: apiKey,
-		anthropic: true, channelGroupID: origKey.Group.ID,
+		anthropic: true, channelGroupID: groupIDOf(origKey),
 	}
 	picked := handler.OpenAISelectOutcome{Kind: handler.OpenAISelected, Account: outcome.Account, Ctx: outcome.Ctx, SessionHash: record.sessionKey}
 	resp, rej, err := s.buildSelection(ctx, nodeID, req, sel, picked, forwardModel, reqModel, channelMapping, subscription, true)
@@ -197,6 +209,21 @@ func (s *selector) selectAnthropic(ctx context.Context, nodeID int64, req *relay
 	s.addSelection(sel)
 	selected = true
 	return resp, nil
+}
+
+// groupIDOf、groupPlatformOf：Key 所属分组的 ID 和平台；未分组的 Key 是 0 和空。
+func groupIDOf(k *service.APIKey) int64 {
+	if k == nil || k.Group == nil {
+		return 0
+	}
+	return k.Group.ID
+}
+
+func groupPlatformOf(k *service.APIKey) string {
+	if k == nil || k.Group == nil {
+		return noGroupPlatform
+	}
+	return k.Group.Platform
 }
 
 // fallbackAPIKey 解析 Key 当前分组配置的兜底分组并换上（本地 Messages 里 PromptTooLongError 的分支）：id 必须是分组的
@@ -282,6 +309,14 @@ func (s *selector) selectAnthropicCountTokens(ctx context.Context, nodeID int64,
 	apiKey := adm.APIKey
 	s.admitted.note(nodeID, apiKey.User.ID, s.now())
 	ctx = middleware.RelayRequestContext(ctx, adm)
+	composite, err := s.resolveComposite(ctx, apiKey, req.GetRouteModel(), req.GetPath())
+	if err != nil {
+		return nil, err
+	}
+	if !compositeServedBy(apiKey, composite, service.PlatformAnthropic) {
+		return unsupported(), nil
+	}
+	ctx = service.WithCompositeRouteDecision(ctx, composite)
 	if err := s.checkBilling(ctx, nodeID, req.GetHeldQuota(), apiKey, adm.Billing.Subscription, service.QuotaPlatform(ctx, apiKey)); err != nil {
 		return gatewayRejection(billingRejection(err, false)), nil
 	}
@@ -304,7 +339,7 @@ func (s *selector) selectAnthropicCountTokens(ctx context.Context, nodeID int64,
 	record.userID, record.apiKeyID, record.sessionKey = apiKey.User.ID, apiKey.ID, sessionHash
 	sel := &selectionRecord{
 		id: newSelectionID(), nodeID: nodeID, request: record, account: account, createdAt: s.now(),
-		groupID: apiKey.Group.ID, userID: apiKey.User.ID, apiKeyID: apiKey.ID, apiKey: apiKey, anthropic: true, countTokens: true,
+		groupID: groupIDOf(apiKey), userID: apiKey.User.ID, apiKeyID: apiKey.ID, apiKey: apiKey, anthropic: true, countTokens: true,
 	}
 	fail := func(err error) (*relayv1.SelectResponse, error) {
 		gw.ReleaseAccountSession(context.Background(), account, sessionHash)
