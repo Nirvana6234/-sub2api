@@ -859,9 +859,12 @@ func (r *userRepository) filterUsersByAttributes(ctx context.Context, attrs map[
 }
 
 func (r *userRepository) UpdateBalance(ctx context.Context, id int64, amount float64) error {
+	// 充值余额有效期：加款前先把已花掉的部分摊给到期批次，加款后把增量记入永久部分。
+	// 充值本身（兑换码）会在之后由 BalanceExpiryService.RecordRecharge 重新算永久部分并记批次。
+	var guard *service.BalanceCreditGuard
 	if amount > 0 {
-		// 充值余额有效期：加款前先把已花掉的部分摊给到期批次，见 service/balance_expiry.go。
-		if err := service.SyncBalanceLotsBeforeCredit(ctx, r.client, id); err != nil {
+		var err error
+		if guard, err = service.BeginBalanceCredit(ctx, r.client, id); err != nil {
 			return err
 		}
 	}
@@ -878,7 +881,7 @@ func (r *userRepository) UpdateBalance(ctx context.Context, id int64, amount flo
 	if n == 0 {
 		return service.ErrUserNotFound
 	}
-	return nil
+	return guard.Done(ctx, amount)
 }
 
 func (r *userRepository) ApplyRedeemBalanceAdjustment(ctx context.Context, id int64, delta float64) error {
@@ -887,8 +890,10 @@ func (r *userRepository) ApplyRedeemBalanceAdjustment(ctx context.Context, id in
 		SET balance = GREATEST(balance + $1, 0), updated_at = NOW()
 		WHERE id = $2 AND deleted_at IS NULL
 	`
+	var guard *service.BalanceCreditGuard
 	if delta > 0 {
-		if err := service.SyncBalanceLotsBeforeCredit(ctx, r.client, id); err != nil {
+		var err error
+		if guard, err = service.BeginBalanceCredit(ctx, r.client, id); err != nil {
 			return err
 		}
 	}
@@ -904,7 +909,7 @@ func (r *userRepository) ApplyRedeemBalanceAdjustment(ctx context.Context, id in
 	if affected == 0 {
 		return service.ErrUserNotFound
 	}
-	return nil
+	return guard.Done(ctx, delta)
 }
 
 // DeductBalance 扣除用户余额
@@ -983,8 +988,10 @@ func (r *userRepository) DeductAvailableBalance(ctx context.Context, id int64, a
 // 相比"读余额 → 算新值 → 整行写回"，这里把读与写压进同一条 UPDATE，
 // 并发的计费扣款不会被旧快照覆盖。
 func (r *userRepository) AdjustBalance(ctx context.Context, id int64, delta float64) (service.BalanceChange, error) {
+	var guard *service.BalanceCreditGuard
 	if delta > 0 {
-		if err := service.SyncBalanceLotsBeforeCredit(ctx, r.client, id); err != nil {
+		var err error
+		if guard, err = service.BeginBalanceCredit(ctx, r.client, id); err != nil {
 			return service.BalanceChange{}, err
 		}
 	}
@@ -999,7 +1006,7 @@ func (r *userRepository) AdjustBalance(ctx context.Context, id int64, delta floa
 		return service.BalanceChange{}, err
 	}
 	if ok {
-		return change, nil
+		return change, guard.Done(ctx, delta)
 	}
 
 	// 0 行既可能是用户不存在，也可能是余额不足以承受这次扣减，需要区分。
@@ -1020,7 +1027,8 @@ func (r *userRepository) SetBalance(ctx context.Context, id int64, value float64
 		}
 		return service.BalanceChange{Old: current, New: value}, service.ErrBalanceNegative
 	}
-	if err := service.SyncBalanceLotsBeforeCredit(ctx, r.client, id); err != nil {
+	guard, err := service.BeginBalanceCredit(ctx, r.client, id)
+	if err != nil {
 		return service.BalanceChange{}, err
 	}
 	const updateSQL = `
@@ -1037,7 +1045,8 @@ func (r *userRepository) SetBalance(ctx context.Context, id int64, value float64
 	if !ok {
 		return service.BalanceChange{}, service.ErrUserNotFound
 	}
-	return change, nil
+	// 调高余额的部分算永久；调低的部分是消耗，下次对账时按先到期先扣摊给批次。
+	return change, guard.Done(ctx, change.New-change.Old)
 }
 
 // currentBalance 读取用户当前余额，用户不存在时返回 ErrUserNotFound。

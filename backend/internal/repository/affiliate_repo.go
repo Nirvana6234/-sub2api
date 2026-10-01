@@ -286,8 +286,9 @@ FROM cleared`, userID)
 			return service.ErrAffiliateQuotaEmpty
 		}
 
-		// 充值余额有效期：加款前先把已花掉的部分摊给到期批次。
-		if err := service.SyncBalanceLotsBeforeCredit(txCtx, r.client, userID); err != nil {
+		// 充值余额有效期：加款前先把已花掉的部分摊给到期批次，加款后把增量记入永久部分。
+		creditGuard, err := service.BeginBalanceCredit(txCtx, r.client, userID)
+		if err != nil {
 			return err
 		}
 
@@ -301,6 +302,9 @@ FROM cleared`, userID)
 		}
 		if affected == 0 {
 			return service.ErrUserNotFound
+		}
+		if err := creditGuard.Done(txCtx, transferred); err != nil {
+			return err
 		}
 
 		newBalance, err = queryUserBalance(txCtx, txClient, userID)

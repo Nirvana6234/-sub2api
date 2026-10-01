@@ -287,19 +287,50 @@ func persistReconciledLots(ctx context.Context, db *dbent.Client, userID int64, 
 	return err
 }
 
-// SyncBalanceLotsBeforeCredit 在任何「增加余额」的写入之前调用：把已经花掉的部分先摊给批次。
-// 用户没有有效批次时什么都不做（只多一次带索引的存在性查询）。
-func SyncBalanceLotsBeforeCredit(ctx context.Context, base *dbent.Client, userID int64) error {
+// BalanceCreditGuard 守住一次「非充值」的加款（赠送、管理员加款、返利、退款回滚……）：
+//
+//	guard, err := BeginBalanceCredit(ctx, client, userID) // 加款前：把已花掉的部分摊给批次
+//	... 把钱加到 users.balance ...
+//	err = guard.Done(ctx, amount)                         // 加款后：这笔增量记入永久部分
+//
+// 两步缺一不可。只做前一步的话，加款之后用户继续消费，「加 5、花 4」会被净成「加 1」，
+// 到期时就把花掉的 4 当成没花、多清用户的钱。
+type BalanceCreditGuard struct {
+	base    *dbent.Client
+	userID  int64
+	hasLots bool
+}
+
+// BeginBalanceCredit 在任何「增加余额」的写入之前调用。
+// 用户没有有效批次时什么都不做（只多一次带索引的存在性查询），返回的 guard 的 Done 也是空操作。
+func BeginBalanceCredit(ctx context.Context, base *dbent.Client, userID int64) (*BalanceCreditGuard, error) {
+	guard := &BalanceCreditGuard{base: base, userID: userID}
 	if base == nil {
-		return nil
+		return guard, nil
 	}
 	found, err := hasActiveBalanceLots(ctx, balanceLotDB(ctx, base), userID)
 	if err != nil {
-		return fmt.Errorf("check balance lots: %w", err)
+		return nil, fmt.Errorf("check balance lots: %w", err)
 	}
 	if !found {
+		return guard, nil
+	}
+	guard.hasLots = true
+	return guard, syncBalanceLots(ctx, base, userID)
+}
+
+// Done 在加款成功之后调用：把增量记入永久部分。加款失败时不要调用。
+func (g *BalanceCreditGuard) Done(ctx context.Context, amount float64) error {
+	if g == nil || !g.hasLots || amount <= 0 {
 		return nil
 	}
+	_, err := balanceLotDB(ctx, g.base).ExecContext(ctx,
+		`UPDATE users SET permanent_balance = permanent_balance + $1 WHERE id = $2`, amount, g.userID)
+	return err
+}
+
+// syncBalanceLots 在一个事务里把用户的消耗摊给各批次并写回。
+func syncBalanceLots(ctx context.Context, base *dbent.Client, userID int64) error {
 	return withBalanceLotTx(ctx, base, func(db *dbent.Client) error {
 		balance, permanent, err := lockBalanceLotUser(ctx, db, userID)
 		if err != nil {

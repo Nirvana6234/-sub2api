@@ -15,7 +15,7 @@
 `users.balance` 仍是唯一的总余额。新表 `balance_expiry_lots` 只记「会过期的那一部分」，`users.permanent_balance` 记对账时的永久部分。
 
 - **不在每次扣费时维护批次**。需要时用总余额倒推：`总余额 = 永久部分 + 各批次剩余`，扣费先扣先到期的批次，批次扣完才动永久部分，所以「总余额比上次对账少了多少」就是消耗，按到期先后摊给批次（`reconcileBalanceLots`）。
-- **比对账时多出来的余额一律算永久**。所以任何会增加余额的路径都必须先对账再加款：`UpdateBalance` / `AdjustBalance` / `SetBalance` / `ApplyRedeemBalanceAdjustment` / 返利转余额已在仓储层加了 `SyncBalanceLotsBeforeCredit`。**以后新增加款路径，必须同样先调用它**，否则「先花后加」的净变化会把已花掉的批次额度当成没花，到期时误清用户的钱。
+- **比对账时多出来的余额一律算永久，而且必须「加款前对账、加款后记账」两步都做**：`UpdateBalance` / `AdjustBalance` / `SetBalance` / `ApplyRedeemBalanceAdjustment` / 返利转余额已在仓储层用 `BeginBalanceCredit` + `guard.Done` 包住。**以后新增加款路径，必须同样包住**：只做前一步的话，加款后用户继续消费，「加 5、花 4」会被净成「加 1」，到期时把花掉的 4 当成没花、多清用户的钱（端到端测试里真实复现过）。
 - 充值入账只有一个入口：支付订单最终都走余额类兑换码（`RedeemService.Redeem`），在同一个事务里 `RecordRecharge` 记批次。
 - 清零由 `PaymentOrderExpiryService` 每 60 秒带上（`SweepExpired`），复用它的多实例选主锁；清零后失效鉴权缓存和余额缓存。到期到清零最多有约 1 分钟延迟。
 
@@ -36,3 +36,9 @@
 - 批量图片任务的冻结/释放（`frozen_balance`）不对账：冻结期间释放回来的余额按「多出来的余额」计入永久部分，影响仅限冻结额度，量级很小。
 - 管理员给某笔充值退款时，扣掉的余额按先到期的批次顺序摊，不会专门扣那一笔的批次。
 - 清零不通知用户（只在首页提醒）；如需邮件/站内信，可在 `expireUser` 成功后接通知。
+
+## 怎么测
+
+- 纯逻辑：`go test ./internal/service/ -run TestReconcileBalanceLots`
+- 真库（需要一个空的 Postgres，库名必须含 `test`，每次会清空重建）：
+  `BALANCE_EXPIRY_PG_DSN="postgres://postgres@127.0.0.1:5432/balance_expiry_test?sslmode=disable" go test -tags pgtest ./internal/service/ -run TestBalanceExpiryPG -count=1`
