@@ -53,6 +53,13 @@ func (s *SelectClient) ResolveRoute(ctx context.Context, req *relayv1.ResolveRou
 	return s.control.ResolveRoute(ctx, req)
 }
 
+// SwitchFallbackGroup 换到兜底分组（Antigravity 回 prompt 过长）。不幂等性要求：只读解析，出错按没换处理。
+func (s *SelectClient) SwitchFallbackGroup(ctx context.Context, req *relayv1.SwitchFallbackGroupRequest) (*relayv1.SwitchFallbackGroupResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, AdmitTimeout)
+	defer cancel()
+	return s.control.SwitchFallbackGroup(ctx, req)
+}
+
 // UserMsgQueue 用户消息串行队列的一步（锁、完成时间、RPM 在主节点的 Redis）。
 func (s *SelectClient) UserMsgQueue(ctx context.Context, req *relayv1.UserMsgQueueRequest) (*relayv1.UserMsgQueueResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, AdmitTimeout)

@@ -38,7 +38,7 @@ func (s *AntigravityGatewayService) applyInternal500Penalty(
 	switch {
 	case count >= int64(internal500PenaltyTier3Threshold):
 		reason := fmt.Sprintf("INTERNAL 500 consecutive failures: %d rounds", count)
-		if err := s.accountRepo.SetError(ctx, account.ID, reason); err != nil {
+		if err := s.accountRepo.SetError(ctx, account.ID, reason); err != nil { // relay:master-only 惩罚在主节点执行（从节点的计数返回 0 轮）
 			slog.Error("internal500_set_error_failed", "account_id", account.ID, "error", err)
 			return
 		}

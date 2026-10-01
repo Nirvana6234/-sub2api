@@ -127,6 +127,40 @@ func (d *Dispatcher) SwitchAutoGroup(c *gin.Context, apiKey *service.APIKey, mod
 	return out, true
 }
 
+// SwitchFallbackGroup 换到兜底分组（handler.OpenAIRelayDispatcher）：主节点解析兜底分组、做计费资格复查，回兜底分组的
+// Key 快照；之后的选号带上兜底分组（主节点核对）。出错按没换处理。
+func (d *Dispatcher) SwitchFallbackGroup(c *gin.Context, apiKey *service.APIKey) (handler.OpenAIRelayFallbackSwitch, bool) {
+	req := &relayv1.SwitchFallbackGroupRequest{
+		ApiKey: apiKey.Key, ClientIp: strings.TrimSpace(ip.GetClientIP(c)), Method: c.Request.Method, Path: c.Request.URL.Path,
+		AutoGroupId: autoGroupID(apiKey),
+	}
+	if apiKey.User != nil {
+		req.HeldQuota = d.heldQuota(apiKey.User.ID, apiKey.ID)
+	}
+	resp, err := d.deps.Select.SwitchFallbackGroup(c.Request.Context(), req)
+	if err != nil {
+		slog.Warn("relay fallback group switch failed", "error", err)
+		return handler.OpenAIRelayFallbackSwitch{}, false
+	}
+	if r := resp.GetBillingRejection(); r != nil {
+		g := gatewayOf(r)
+		return handler.OpenAIRelayFallbackSwitch{BillingRejection: &g}, false
+	}
+	if !resp.GetSwitched() {
+		return handler.OpenAIRelayFallbackSwitch{}, false
+	}
+	resolved, err := keycodec.DecodeAPIKey(resp.GetApiKey(), apiKey.Key)
+	if err != nil {
+		slog.Error("relay fallback group switch: bad api key snapshot", "error", err)
+		return handler.OpenAIRelayFallbackSwitch{}, false
+	}
+	st := stateOf(c)
+	st.mu.Lock()
+	st.fallbackGroupID, st.fallbackAutoGroupID = resp.GetFallbackGroupId(), autoGroupID(apiKey)
+	st.mu.Unlock()
+	return handler.OpenAIRelayFallbackSwitch{APIKey: resolved}, true
+}
+
 // writeRouteRejection 写出 ResolveRoute 的拒绝：主节点生成的拒绝原样写出，"暂不支持"交给主节点转发。
 func writeRouteRejection(c *gin.Context, d *Dispatcher, r *relayv1.SelectRejection) {
 	if r.GetFormat() == relayv1.RejectionFormat_REJECTION_FORMAT_RAW {

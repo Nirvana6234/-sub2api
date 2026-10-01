@@ -1174,11 +1174,11 @@ func (s *AntigravityGatewayService) setModelRateLimitAndClearSession(p *handleMo
 
 // updateAccountModelRateLimitInCache 立即更新 Redis 中账号的模型限流状态
 func (s *AntigravityGatewayService) updateAccountModelRateLimitInCache(ctx context.Context, account *Account, modelKey string, resetAt time.Time) {
-	if s.schedulerSnapshot == nil || account == nil || modelKey == "" {
+	if account == nil || modelKey == "" {
 		return
 	}
 
-	// 更新账号对象的 Extra 字段
+	// 更新账号对象的 Extra 字段（主从分流的从节点没有调度快照，这一步仍要做：同一请求里后面的重试看得到限流）
 	if account.Extra == nil {
 		account.Extra = make(map[string]any)
 	}
@@ -1195,6 +1195,9 @@ func (s *AntigravityGatewayService) updateAccountModelRateLimitInCache(ctx conte
 	}
 
 	// 更新 Redis 快照
+	if s.schedulerSnapshot == nil {
+		return
+	}
 	if err := s.schedulerSnapshot.UpdateAccountInCache(ctx, account); err != nil {
 		logger.LegacyPrintf("service.antigravity_gateway", "[antigravity-Forward] cache_update_failed account=%d model=%s err=%v", account.ID, modelKey, err)
 	}

@@ -58,8 +58,17 @@ type OpenAIRelayDispatcher interface {
 
 	// SubmitAnthropicUsage 把这次尝试的转发结果写入本地扣费队列（代替 GatewayService.RecordUsage）。
 	SubmitAnthropicUsage(c *gin.Context, attempt *OpenAIRelayAttempt, facts OpenAIUsageFacts, result *service.ForwardResult, forceCacheBilling bool)
+	// SwitchFallbackGroup Antigravity 回 prompt 过长时换到分组配置的兜底分组（经主节点解析、做计费资格复查）：
+	// 返回兜底分组的 Key；没有可换的 ok 为 false；计费复查不过时返回的拒绝非空（照它写响应）。之后的选号带兜底分组。
+	SwitchFallbackGroup(c *gin.Context, apiKey *service.APIKey) (OpenAIRelayFallbackSwitch, bool)
 	// ForwardSucceeded 这次尝试转发成功（本地这时刷新粘性会话绑定；主节点在释放时按同一条件刷新）。
 	ForwardSucceeded(c *gin.Context, attempt *OpenAIRelayAttempt)
+}
+
+// OpenAIRelayFallbackSwitch 是主节点定下的兜底分组切换。
+type OpenAIRelayFallbackSwitch struct {
+	APIKey           *service.APIKey
+	BillingRejection *OpenAIGatewayRejection
 }
 
 // OpenAIRelayAutoGroupSwitch 是主节点定下的换组：换到的分组的 Key 快照和订阅。
@@ -113,6 +122,8 @@ type OpenAIRelayAttempt struct {
 	SessionHash string
 	// StickyBoundAccountID：Anthropic Messages 请求开始时粘性会话绑定的账号（0 没有）。
 	StickyBoundAccountID int64
+	// SingleAccountRetry：分组里只有一个 Antigravity 账号（请求开始时主节点查好）。
+	SingleAccountRetry bool
 	// ChannelMapping 是主节点定下的渠道映射，ForwardModel 是映射后发给上游的模型。
 	ChannelMapping service.ChannelMappingResult
 	ForwardModel   string

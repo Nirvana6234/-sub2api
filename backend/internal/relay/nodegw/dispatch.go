@@ -75,7 +75,11 @@ type requestState struct {
 	handedOff bool
 	// startGroupID：自动分组 Key 这次请求第一次选号时的分组（请求开头那几项检查按它做）。
 	startGroupID int64
-	current      *attemptState
+	// fallbackGroupID：这次请求已经切到的兜底分组（Antigravity 回 prompt 过长），之后的选号带给主节点。
+	fallbackGroupID int64
+	// fallbackAutoGroupID：切到兜底分组时自动分组 Key 用的分组（之后选号带它，不带兜底分组本身）。
+	fallbackAutoGroupID int64
+	current             *attemptState
 }
 
 // attemptState 是一次选中的尝试。WebSocket 连接上，连接选号一份（收 response id、释放），每一轮另有一份
@@ -210,6 +214,11 @@ func (d *Dispatcher) selectRequest(c *gin.Context, st *requestState, req handler
 		AutoGroupId:             autoGroupID(req.APIKey),
 		MetadataUserId:          req.MetadataUserID,
 		InterceptType:           int32(req.InterceptType),
+		FallbackGroupId:         st.fallbackGroupID,
+	}
+	if st.fallbackGroupID != 0 {
+		// Key 现在是换了分组的副本，自动分组的"当前分组"仍是切换之前的。
+		sreq.AutoGroupId = st.fallbackAutoGroupID
 	}
 	if req.Anthropic {
 		for _, name := range service.FingerprintHeaderNames {
@@ -330,6 +339,7 @@ func (d *Dispatcher) admitSelection(c *gin.Context, st *requestState, req handle
 		MaxAccountSwitches:   int(sel.GetMaxAccountSwitches()),
 		StickyPreviousHit:    sel.GetStickyPreviousHit(),
 		StickyBoundAccountID: sel.GetStickyBoundAccountId(),
+		SingleAccountRetry:   sel.GetSingleAccountRetry(),
 		State:                a,
 	}}
 }

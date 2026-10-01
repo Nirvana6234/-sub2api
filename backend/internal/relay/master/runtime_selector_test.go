@@ -70,6 +70,10 @@ func (s *recordingSelector) ReportAutoGroupResult(context.Context, int64, *relay
 	return &relayv1.AutoGroupResultAck{}, nil
 }
 
+func (s *recordingSelector) SwitchFallbackGroup(context.Context, int64, *relayv1.SwitchFallbackGroupRequest) (*relayv1.SwitchFallbackGroupResponse, error) {
+	return &relayv1.SwitchFallbackGroupResponse{}, nil
+}
+
 func (s *recordingSelector) UserMsgQueue(context.Context, int64, *relayv1.UserMsgQueueRequest) (*relayv1.UserMsgQueueResponse, error) {
 	return &relayv1.UserMsgQueueResponse{}, nil
 }

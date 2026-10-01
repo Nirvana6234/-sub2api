@@ -65,6 +65,10 @@ service RelayControl {
   // ReportAutoGroupResult 自动分组 Key 一次请求的最终结果（本地自动分组中间件在请求结束时的观察）：主节点据此
   // 调整之后的选组（首字慢、失败时换组）。从节点在后台发，失败不重试。
   rpc ReportAutoGroupResult(AutoGroupResult) returns (AutoGroupResultAck);
+  // SwitchFallbackGroup Antigravity 回 prompt 过长时换到分组配置的兜底分组（本地 Messages 里 PromptTooLongError 的分支）：
+  // 主节点按本地同一套检查解析兜底分组（Anthropic 平台、非订阅、自己没有兜底）、做计费资格复查，回兜底分组的 Key 快照。
+  // 之后的选号带 fallback_group_id。
+  rpc SwitchFallbackGroup(SwitchFallbackGroupRequest) returns (SwitchFallbackGroupResponse);
   // UserMsgQueue 用户消息串行队列的一步（锁、上次完成时间、Redis 时钟、账号当前 RPM，都在主节点的 Redis）：从节点的
   // 处理函数照本地同一段排队代码（含排队期间的 SSE 保活），每一步在主节点执行。只认这台节点正在用的账号。
   rpc UserMsgQueue(UserMsgQueueRequest) returns (UserMsgQueueResponse);
@@ -608,6 +612,26 @@ message AutoGroupResult {
 
 message AutoGroupResultAck {}
 
+message SwitchFallbackGroupRequest {
+  string api_key = 1;
+  string client_ip = 2;
+  string method = 3;
+  string path = 4;
+  // 自动分组 Key 当前用的分组（0 表示按 Key 自己的分组）。
+  int64 auto_group_id = 5;
+  repeated HeldQuota held_quota = 6;
+}
+
+message SwitchFallbackGroupResponse {
+  // switched 为 false：没有兜底分组或兜底分组不合规（从节点按原来的 prompt 过长错误写）。
+  bool switched = 1;
+  // 兜底分组的 Key 快照（keycodec 编码）。
+  bytes api_key = 2;
+  int64 fallback_group_id = 3;
+  // 兜底分组计费资格复查不过（GATEWAY 格式），从节点按它写。
+  SelectRejection billing_rejection = 4;
+}
+
 message UserMsgQueueRequest {
   enum Op {
     OP_UNSPECIFIED = 0;
@@ -692,6 +716,9 @@ message SelectRequest {
   // Anthropic Messages：客户端请求里指纹要读的那几个头（service.FingerprintHeaderNames）。选到 OAuth / setup-token 账号时
   // 主节点按它们做与本地同一段 GetOrCreateFingerprint（指纹在主节点的缓存里）。
   map<string, string> fingerprint_headers = 30;
+  // Anthropic Messages：这次请求已经切到的兜底分组（Antigravity 回 prompt 过长时本地换到
+  // FallbackGroupIDOnInvalidRequest 重试）。主节点核对是这把 Key 的分组配置的兜底分组再用，非 0 时选号、计费都按它。
+  int64 fallback_group_id = 31;
 }
 
 // cyber 会话屏蔽的查询键（都已哈希）。
@@ -819,6 +846,9 @@ message Selection {
   // 现在的伪装会话 ID（可能为空，从节点照本地生成一个；真用到时以账号事件报回主节点写入、续期）。
   bytes fingerprint = 24;
   string masked_session_id = 25;
+  // Anthropic Messages：分组里只有一个 Antigravity 账号（本地在请求开始时设 SingleAccountRetry，避免单账号分组收到
+  // 503 就设模型限流）。主节点第一次选号时查好带下来。
+  bool single_account_retry = 26;
 }
 
 message FetchCredentialsRequest {
@@ -1067,7 +1097,31 @@ message AccountEvent {
     SessionWindowEvent session_window = 16;
     TempUnschedulableEvent temp_unschedulable = 17;
     MaskedSessionEvent masked_session = 18;
+    // Antigravity 转发路径上直接写账号状态的几处（模型级限流、账号级限流、积分耗尽标记的清除、INTERNAL 500 渐进惩罚）。
+    ModelRateLimitEvent model_rate_limit = 19;
+    RateLimitedEvent rate_limited = 20;
+    ModelRateLimitsExtraEvent model_rate_limits_extra = 21;
+    Internal500Event internal500 = 22;
   }
+}
+
+message ModelRateLimitEvent {
+  string model_key = 1;
+  int64 reset_at_unix_ms = 2;
+}
+
+message RateLimitedEvent {
+  int64 reset_at_unix_ms = 1;
+}
+
+// 清除积分耗尽标记后的整张模型级限流表（账号 extra 里的 model_rate_limits，JSON）。
+message ModelRateLimitsExtraEvent {
+  bytes limits_json = 1;
+}
+
+// INTERNAL 500 渐进惩罚：succeeded 为 true 是成功响应后清零，否则是重试耗尽（主节点计数并按轮次惩罚）。
+message Internal500Event {
+  bool succeeded = 1;
 }
 
 // 健康熔断要看的失败事实（service.OpenAIHealthFailureFacts）；eligible 为 false 表示不计入熔断。

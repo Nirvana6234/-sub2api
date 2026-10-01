@@ -313,6 +313,7 @@ const (
 	RelayControl_ResolveRoute_FullMethodName          = "/sub2api.relay.v1.RelayControl/ResolveRoute"
 	RelayControl_SwitchAutoGroup_FullMethodName       = "/sub2api.relay.v1.RelayControl/SwitchAutoGroup"
 	RelayControl_ReportAutoGroupResult_FullMethodName = "/sub2api.relay.v1.RelayControl/ReportAutoGroupResult"
+	RelayControl_SwitchFallbackGroup_FullMethodName   = "/sub2api.relay.v1.RelayControl/SwitchFallbackGroup"
 	RelayControl_UserMsgQueue_FullMethodName          = "/sub2api.relay.v1.RelayControl/UserMsgQueue"
 	RelayControl_Select_FullMethodName                = "/sub2api.relay.v1.RelayControl/Select"
 	RelayControl_FetchCredentials_FullMethodName      = "/sub2api.relay.v1.RelayControl/FetchCredentials"
@@ -366,6 +367,10 @@ type RelayControlClient interface {
 	// ReportAutoGroupResult 自动分组 Key 一次请求的最终结果（本地自动分组中间件在请求结束时的观察）：主节点据此
 	// 调整之后的选组（首字慢、失败时换组）。从节点在后台发，失败不重试。
 	ReportAutoGroupResult(ctx context.Context, in *AutoGroupResult, opts ...grpc.CallOption) (*AutoGroupResultAck, error)
+	// SwitchFallbackGroup Antigravity 回 prompt 过长时换到分组配置的兜底分组（本地 Messages 里 PromptTooLongError 的分支）：
+	// 主节点按本地同一套检查解析兜底分组（Anthropic 平台、非订阅、自己没有兜底）、做计费资格复查，回兜底分组的 Key 快照。
+	// 之后的选号带 fallback_group_id。
+	SwitchFallbackGroup(ctx context.Context, in *SwitchFallbackGroupRequest, opts ...grpc.CallOption) (*SwitchFallbackGroupResponse, error)
 	// UserMsgQueue 用户消息串行队列的一步（锁、上次完成时间、Redis 时钟、账号当前 RPM，都在主节点的 Redis）：从节点的
 	// 处理函数照本地同一段排队代码（含排队期间的 SSE 保活），每一步在主节点执行。只认这台节点正在用的账号。
 	UserMsgQueue(ctx context.Context, in *UserMsgQueueRequest, opts ...grpc.CallOption) (*UserMsgQueueResponse, error)
@@ -515,6 +520,16 @@ func (c *relayControlClient) ReportAutoGroupResult(ctx context.Context, in *Auto
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(AutoGroupResultAck)
 	err := c.cc.Invoke(ctx, RelayControl_ReportAutoGroupResult_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *relayControlClient) SwitchFallbackGroup(ctx context.Context, in *SwitchFallbackGroupRequest, opts ...grpc.CallOption) (*SwitchFallbackGroupResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SwitchFallbackGroupResponse)
+	err := c.cc.Invoke(ctx, RelayControl_SwitchFallbackGroup_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -698,6 +713,10 @@ type RelayControlServer interface {
 	// ReportAutoGroupResult 自动分组 Key 一次请求的最终结果（本地自动分组中间件在请求结束时的观察）：主节点据此
 	// 调整之后的选组（首字慢、失败时换组）。从节点在后台发，失败不重试。
 	ReportAutoGroupResult(context.Context, *AutoGroupResult) (*AutoGroupResultAck, error)
+	// SwitchFallbackGroup Antigravity 回 prompt 过长时换到分组配置的兜底分组（本地 Messages 里 PromptTooLongError 的分支）：
+	// 主节点按本地同一套检查解析兜底分组（Anthropic 平台、非订阅、自己没有兜底）、做计费资格复查，回兜底分组的 Key 快照。
+	// 之后的选号带 fallback_group_id。
+	SwitchFallbackGroup(context.Context, *SwitchFallbackGroupRequest) (*SwitchFallbackGroupResponse, error)
 	// UserMsgQueue 用户消息串行队列的一步（锁、上次完成时间、Redis 时钟、账号当前 RPM，都在主节点的 Redis）：从节点的
 	// 处理函数照本地同一段排队代码（含排队期间的 SSE 保活），每一步在主节点执行。只认这台节点正在用的账号。
 	UserMsgQueue(context.Context, *UserMsgQueueRequest) (*UserMsgQueueResponse, error)
@@ -782,6 +801,9 @@ func (UnimplementedRelayControlServer) SwitchAutoGroup(context.Context, *SwitchA
 }
 func (UnimplementedRelayControlServer) ReportAutoGroupResult(context.Context, *AutoGroupResult) (*AutoGroupResultAck, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReportAutoGroupResult not implemented")
+}
+func (UnimplementedRelayControlServer) SwitchFallbackGroup(context.Context, *SwitchFallbackGroupRequest) (*SwitchFallbackGroupResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SwitchFallbackGroup not implemented")
 }
 func (UnimplementedRelayControlServer) UserMsgQueue(context.Context, *UserMsgQueueRequest) (*UserMsgQueueResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method UserMsgQueue not implemented")
@@ -1022,6 +1044,24 @@ func _RelayControl_ReportAutoGroupResult_Handler(srv interface{}, ctx context.Co
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(RelayControlServer).ReportAutoGroupResult(ctx, req.(*AutoGroupResult))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RelayControl_SwitchFallbackGroup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SwitchFallbackGroupRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayControlServer).SwitchFallbackGroup(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayControl_SwitchFallbackGroup_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayControlServer).SwitchFallbackGroup(ctx, req.(*SwitchFallbackGroupRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1324,6 +1364,10 @@ var RelayControl_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReportAutoGroupResult",
 			Handler:    _RelayControl_ReportAutoGroupResult_Handler,
+		},
+		{
+			MethodName: "SwitchFallbackGroup",
+			Handler:    _RelayControl_SwitchFallbackGroup_Handler,
 		},
 		{
 			MethodName: "UserMsgQueue",

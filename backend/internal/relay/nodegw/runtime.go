@@ -192,7 +192,7 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 	}
 	h := NewOpenAIHandler(gatewayDeps)
 	gh := NewAnthropicHandler(gatewayDeps, AnthropicDeps{
-		AccountState: node.NewRemoteAccountState(decider, reporter), TempUnschedulable: reporter.TempUnschedulable, MaskedSession: reporter.MaskedSession,
+		AccountState: node.NewRemoteAccountState(decider, reporter), TempUnschedulable: reporter.TempUnschedulable, MaskedSession: reporter.MaskedSession, Reporter: reporter,
 	})
 	r := NewEngine()
 	r.GET("/health", func(c *gin.Context) {

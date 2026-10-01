@@ -145,6 +145,18 @@ func startE2EWithConfig(t *testing.T, configure func(*config.Config), accounts f
 			_, _ = io.WriteString(w, `{"error":{"code":"cyber_policy","message":"blocked by policy","type":"invalid_request_error"}}`)
 			return
 		}
+		if strings.Contains(r.URL.Path, ":streamGenerateContent") {
+			// Antigravity（Google 内部接口）：上下文超长时回 400，账号标了 429 前缀时回 429，否则回一段流。
+			if bytes.Contains(body, []byte("too-long-trigger")) {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(w, `{"error":{"message":"Prompt is too long"}}`)
+				return
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(w, `data: {"response":{"candidates":[{"content":{"parts":[{"text":"hello"}]},"finishReason":"STOP"}],`+
+				`"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":3}}}`+"\n\n")
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/model/") && strings.HasSuffix(r.URL.Path, "/invoke") {
 			// Bedrock 上的 Anthropic 模型。
 			_, _ = io.WriteString(w, `{"id":"msg_bedrock","type":"message","role":"assistant","model":"claude-sonnet-4-5",`+
@@ -331,7 +343,7 @@ func startE2EWithConfig(t *testing.T, configure func(*config.Config), accounts f
 	}
 	h := nodegw.NewOpenAIHandler(gatewayDeps)
 	gh := nodegw.NewAnthropicHandler(gatewayDeps, nodegw.AnthropicDeps{
-		AccountState: node.NewRemoteAccountState(decider, reporter), TempUnschedulable: reporter.TempUnschedulable, MaskedSession: reporter.MaskedSession,
+		AccountState: node.NewRemoteAccountState(decider, reporter), TempUnschedulable: reporter.TempUnschedulable, MaskedSession: reporter.MaskedSession, Reporter: reporter,
 	})
 	r := nodegw.NewEngine()
 	nodegw.RegisterRoutes(r, h, d, nodeCfg, gh)

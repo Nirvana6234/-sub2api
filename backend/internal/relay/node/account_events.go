@@ -90,6 +90,44 @@ func (r *RemoteAccountReporter) UpdateCodexUsageSnapshot(_ context.Context, acco
 }
 
 // TempUnscheduleTransportError 见 service.OpenAIAccountReporter。
+// ModelRateLimit 报告 Antigravity 转发路径上设了模型级限流（本地写账号仓储），主节点照写。
+func (r *RemoteAccountReporter) ModelRateLimit(accountID int64, modelKey string, resetAt time.Time) {
+	if accountID <= 0 || modelKey == "" {
+		return
+	}
+	r.send(&relayv1.AccountEvent{AccountId: accountID, Kind: &relayv1.AccountEvent_ModelRateLimit{
+		ModelRateLimit: &relayv1.ModelRateLimitEvent{ModelKey: modelKey, ResetAtUnixMs: resetAt.UnixMilli()},
+	}})
+}
+
+// RateLimited 报告 Antigravity 转发路径上设了账号级限流，主节点照写。
+func (r *RemoteAccountReporter) RateLimited(accountID int64, resetAt time.Time) {
+	if accountID <= 0 {
+		return
+	}
+	r.send(&relayv1.AccountEvent{AccountId: accountID, Kind: &relayv1.AccountEvent_RateLimited{
+		RateLimited: &relayv1.RateLimitedEvent{ResetAtUnixMs: resetAt.UnixMilli()},
+	}})
+}
+
+// ModelRateLimitsExtra 报告清除了积分耗尽标记后的整张模型级限流表，主节点写回账号 extra。
+func (r *RemoteAccountReporter) ModelRateLimitsExtra(accountID int64, limitsJSON []byte) {
+	if accountID <= 0 || len(limitsJSON) == 0 {
+		return
+	}
+	r.send(&relayv1.AccountEvent{AccountId: accountID, Kind: &relayv1.AccountEvent_ModelRateLimitsExtra{
+		ModelRateLimitsExtra: &relayv1.ModelRateLimitsExtraEvent{LimitsJson: limitsJSON},
+	}})
+}
+
+// Internal500 报告 INTERNAL 500 渐进惩罚的一步（成功清零或重试耗尽），主节点计数并惩罚。
+func (r *RemoteAccountReporter) Internal500(accountID int64, succeeded bool) {
+	if accountID <= 0 {
+		return
+	}
+	r.send(&relayv1.AccountEvent{AccountId: accountID, Kind: &relayv1.AccountEvent_Internal500{Internal500: &relayv1.Internal500Event{Succeeded: succeeded}}})
+}
+
 // MaskedSession 报告转发时用了这个伪装会话 ID（主节点写入并续期）。
 func (r *RemoteAccountReporter) MaskedSession(accountID int64, sessionID string) {
 	if accountID <= 0 || sessionID == "" {

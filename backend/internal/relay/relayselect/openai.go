@@ -515,7 +515,11 @@ func (s *selector) buildSelection(ctx context.Context, nodeID int64, req *relayv
 		}
 		return nil, nil, err
 	}
-	features, err := s.channelFeatures(ctx, sel.groupID)
+	featureGroup := sel.groupID
+	if sel.channelGroupID != 0 {
+		featureGroup = sel.channelGroupID
+	}
+	features, err := s.channelFeatures(ctx, featureGroup)
 	if err != nil {
 		return nil, nil, err
 	}

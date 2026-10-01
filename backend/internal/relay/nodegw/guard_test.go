@@ -30,7 +30,7 @@ func TestNodeObjectGraphHasNoDatabaseOrRedis(t *testing.T) {
 		Anthropic any
 	}{
 		NewOpenAIHandler(deps),
-		NewAnthropicHandler(deps, AnthropicDeps{AccountState: node.NewRemoteAccountState(decider, reporter), TempUnschedulable: reporter.TempUnschedulable, MaskedSession: reporter.MaskedSession}),
+		NewAnthropicHandler(deps, AnthropicDeps{AccountState: node.NewRemoteAccountState(decider, reporter), TempUnschedulable: reporter.TempUnschedulable, MaskedSession: reporter.MaskedSession, Reporter: reporter}),
 	}
 	forbidden := []reflect.Type{
 		reflect.TypeOf((*ent.Client)(nil)),

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler"
+	"github.com/Wei-Shaw/sub2api/internal/relay/keycodec"
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -34,16 +35,29 @@ func (s *selector) selectAnthropic(ctx context.Context, nodeID int64, req *relay
 	if err != nil || rej != nil {
 		return rej, err
 	}
-	apiKey := adm.APIKey
+	origKey := adm.APIKey
+	apiKey := origKey
 	s.admitted.note(nodeID, apiKey.User.ID, s.now())
 	ctx = middleware.RelayRequestContext(ctx, adm)
 	subscription := adm.Billing.Subscription
+	if fb := req.GetFallbackGroupId(); fb != 0 {
+		// 请求中途已经切到兜底分组（Antigravity 回 prompt 过长，本地 currentAPIKey = fallbackAPIKey）：选号、计费、
+		// 凭证里的分组按兜底分组，订阅清空；渠道映射、渠道功能配置、粘性会话起点仍按原来的分组（本地只在请求开头算一次）。
+		fallbackKey, ok, err := s.fallbackAPIKey(ctx, origKey, fb)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return gatewayRejection(handler.OpenAIGatewayRejection{Status: http.StatusBadRequest, ErrType: "invalid_request_error", Message: "Invalid fallback group"}), nil
+		}
+		apiKey, subscription = fallbackKey, nil
+	}
 	userID, groupID := apiKey.User.ID, apiKey.Group.ID
 	reqModel := req.GetModel()
 	platform := apiKey.Group.Platform
 	log := zap.NewNop()
 
-	channelMapping, _ := gw.ResolveChannelMappingAndRestrict(ctx, apiKey.GroupID, reqModel)
+	channelMapping, _ := gw.ResolveChannelMappingAndRestrict(ctx, origKey.GroupID, reqModel)
 	forwardModel := reqModel
 	if channelMapping.Mapped {
 		forwardModel = channelMapping.MappedModel
@@ -79,8 +93,10 @@ func (s *selector) selectAnthropic(ctx context.Context, nodeID int64, req *relay
 		// 粘性会话：本地在选号循环之前按会话键查一次绑定的账号。
 		record.sessionKey = req.GetSessionHash()
 		if record.sessionKey != "" {
-			record.stickyBound, _ = gw.GetCachedSessionAccountID(ctx, apiKey.GroupID, record.sessionKey)
+			record.stickyBound, _ = gw.GetCachedSessionAccountID(ctx, origKey.GroupID, record.sessionKey)
 		}
+		// 单账号分组提前设 SingleAccountRetry（Antigravity 单账号分组收到 503 时不设模型限流）：本地在请求开始时查一次。
+		record.singleAccountRetry = gw.IsSingleAntigravityAccountGroup(ctx, origKey.GroupID)
 	}
 
 	attemptCtx, cancel := context.WithCancel(record.pricingCtx)
@@ -88,7 +104,7 @@ func (s *selector) selectAnthropic(ctx context.Context, nodeID int64, req *relay
 	stop := context.AfterFunc(ctx, cancel)
 	defer stop()
 	if record.stickyBound > 0 {
-		attemptCtx = service.WithPrefetchedStickySession(attemptCtx, record.stickyBound, groupID, s.metadataBridgeEnabled())
+		attemptCtx = service.WithPrefetchedStickySession(attemptCtx, record.stickyBound, origKey.Group.ID, s.metadataBridgeEnabled())
 	}
 	excluded := make(map[int64]struct{}, len(req.GetExcludedAccountIds()))
 	for _, id := range req.GetExcludedAccountIds() {
@@ -147,7 +163,7 @@ func (s *selector) selectAnthropic(ctx context.Context, nodeID int64, req *relay
 	sel := &selectionRecord{
 		id: newSelectionID(), nodeID: nodeID, request: record, account: outcome.Account, release: outcome.Release,
 		createdAt: s.now(), quota: quotaReq, groupID: groupID, userID: userID, apiKeyID: apiKey.ID, apiKey: apiKey,
-		anthropic: true,
+		anthropic: true, channelGroupID: origKey.Group.ID,
 	}
 	picked := handler.OpenAISelectOutcome{Kind: handler.OpenAISelected, Account: outcome.Account, Ctx: outcome.Ctx, SessionHash: record.sessionKey}
 	resp, rej, err := s.buildSelection(ctx, nodeID, req, sel, picked, forwardModel, reqModel, channelMapping, subscription, true)
@@ -173,6 +189,7 @@ func (s *selector) selectAnthropic(ctx context.Context, nodeID int64, req *relay
 		return nil, err
 	}
 	selection.StickyBoundAccountId = record.stickyBound
+	selection.SingleAccountRetry = record.singleAccountRetry
 	selection.MaxAccountSwitches = int32(anthropicDefaultMaxAccountSwitches)
 	if cfg := s.deps.Config; cfg != nil && cfg.Gateway.MaxAccountSwitches > 0 {
 		selection.MaxAccountSwitches = int32(cfg.Gateway.MaxAccountSwitches)
@@ -180,6 +197,25 @@ func (s *selector) selectAnthropic(ctx context.Context, nodeID int64, req *relay
 	s.addSelection(sel)
 	selected = true
 	return resp, nil
+}
+
+// fallbackAPIKey 解析 Key 当前分组配置的兜底分组并换上（本地 Messages 里 PromptTooLongError 的分支）：id 必须是分组的
+// FallbackGroupIDOnInvalidRequest，兜底分组必须是 Anthropic 平台、非订阅、自己没有兜底。不合规时 ok 为 false。
+func (s *selector) fallbackAPIKey(ctx context.Context, apiKey *service.APIKey, id int64) (*service.APIKey, bool, error) {
+	gw := s.deps.AnthropicGateway
+	if gw == nil || apiKey == nil || apiKey.Group == nil || apiKey.Group.FallbackGroupIDOnInvalidRequest == nil ||
+		*apiKey.Group.FallbackGroupIDOnInvalidRequest != id || id <= 0 {
+		return nil, false, nil
+	}
+	group, err := gw.ResolveGroupByID(ctx, id)
+	if err != nil {
+		return nil, false, nil
+	}
+	if group.Platform != service.PlatformAnthropic || group.SubscriptionType == service.SubscriptionTypeSubscription ||
+		group.FallbackGroupIDOnInvalidRequest != nil {
+		return nil, false, nil
+	}
+	return handler.CloneAPIKeyWithGroup(apiKey, group), true, nil
 }
 
 // attachIdentity 给 OAuth / setup-token 账号带上主节点定下的指纹和伪装会话 ID（service.GatewayService.RelayIdentity）。
@@ -203,9 +239,17 @@ func (s *selector) attachIdentity(ctx context.Context, selection *relayv1.Select
 }
 
 // nodeServesAnthropicAccount 报告从节点现在能不能转发这个账号：Anthropic 平台的 API Key、OAuth / setup-token、
-// 服务账号（Vertex）、Bedrock 账号（用户消息串行队列的锁和计数经 UserMsgQueue 在主节点）；Antigravity 账号随后接入。
+// 服务账号（Vertex）、Bedrock 账号（用户消息串行队列的锁和计数经 UserMsgQueue 在主节点），以及混合调度进来的
+// Antigravity 账号（Google token 由主节点给，转发路径上的账号状态写入交主节点）。
 func (s *selector) nodeServesAnthropicAccount(a *service.Account) bool {
-	if a == nil || a.Platform != service.PlatformAnthropic {
+	if a == nil {
+		return false
+	}
+	if a.Platform == service.PlatformAntigravity {
+		// 开了混合调度进 Anthropic 分组的 Antigravity 账号：主节点装了 Antigravity 转发服务（取 token、照写账号状态）才接。
+		return s.deps.Antigravity != nil
+	}
+	if a.Platform != service.PlatformAnthropic {
 		return false
 	}
 	switch {
@@ -339,4 +383,34 @@ func (s *selector) bindAnthropicSticky(sel *selectionRecord) {
 	if err := gw.BindStickySession(ctx, &groupID, record.sessionKey, sel.account.ID); err != nil {
 		slog.Warn("relay: bind sticky session failed", "account_id", sel.account.ID, "error", err)
 	}
+}
+
+// SwitchFallbackGroup 见 RelayControl.SwitchFallbackGroup：本地 Messages 里 PromptTooLongError 分支在主节点的那一半。
+// Key 按准入同一段复查，解析当前分组配置的兜底分组（不合规就当没有），做计费资格复查（订阅为空，平台取兜底分组的），
+// 回兜底分组的 Key 快照；计费复查不过时回那个错误，从节点按它写。
+func (s *selector) SwitchFallbackGroup(ctx context.Context, nodeID int64, req *relayv1.SwitchFallbackGroupRequest) (*relayv1.SwitchFallbackGroupResponse, error) {
+	none := &relayv1.SwitchFallbackGroupResponse{}
+	adm, rej, err := s.admitAPIKey(ctx, req.GetApiKey(), req.GetClientIp(), req.GetMethod(), req.GetPath(), nil,
+		autoGroupChoice{pinned: req.GetAutoGroupId()}, anthropicServedPlatforms...)
+	if err != nil {
+		return nil, err
+	}
+	if rej != nil || adm.APIKey.Group == nil || adm.APIKey.Group.FallbackGroupIDOnInvalidRequest == nil {
+		return none, nil
+	}
+	s.admitted.note(nodeID, adm.APIKey.User.ID, s.now())
+	ctx = middleware.RelayRequestContext(ctx, adm)
+	id := *adm.APIKey.Group.FallbackGroupIDOnInvalidRequest
+	fallbackKey, ok, err := s.fallbackAPIKey(ctx, adm.APIKey, id)
+	if err != nil || !ok {
+		return none, err
+	}
+	if err := s.checkBilling(ctx, nodeID, req.GetHeldQuota(), fallbackKey, nil, service.PlatformFromAPIKey(fallbackKey)); err != nil {
+		return &relayv1.SwitchFallbackGroupResponse{BillingRejection: gatewayRejection(billingRejection(err, false)).GetRejection()}, nil
+	}
+	encoded, err := keycodec.EncodeAPIKey(fallbackKey)
+	if err != nil {
+		return nil, err
+	}
+	return &relayv1.SwitchFallbackGroupResponse{Switched: true, ApiKey: encoded, FallbackGroupId: id}, nil
 }

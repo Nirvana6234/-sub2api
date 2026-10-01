@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -60,6 +61,11 @@ func (h *GatewayHandler) relayAnthropicSelect(
 		zap.Int64("sticky_bound_account_id", a.StickyBoundAccountID),
 		zap.Bool("sticky_honored", a.StickyBoundAccountID > 0 && a.StickyBoundAccountID == a.Account.ID),
 	)
+	if a.SingleAccountRetry && !fs.relaySingleAccountSet {
+		// 单账号分组提前设 SingleAccountRetry（本地在请求开始时设一次，之后一直在请求 ctx 里）。
+		fs.relaySingleAccountSet = true
+		c.Request = c.Request.WithContext(service.WithSingleAccountRetry(c.Request.Context(), true, h.metadataBridgeEnabled()))
+	}
 	if a.MaxAccountSwitches > 0 {
 		fs.MaxSwitches = a.MaxAccountSwitches
 	}
@@ -99,4 +105,55 @@ func (h *GatewayHandler) writeAnthropicRelayRejection(c *gin.Context, r *OpenAIR
 // SetSecurityAuditCoordinator 装上安全审计协调器（从节点装配用，与 OpenAI 处理函数的同名方法一致）。
 func (h *GatewayHandler) SetSecurityAuditCoordinator(c *securityaudit.Coordinator) {
 	h.securityAuditCoordinator = c
+}
+
+// antigravityFallbackAPIKey 是 Antigravity 回 prompt 过长时换到兜底分组的前半段（本地 Messages 里 PromptTooLongError 分支）：
+// 解析兜底分组、核对它合规（Anthropic 平台、非订阅、自己没有兜底）、做计费资格复查，换上兜底分组的 Key。
+// 从节点经主节点做（分组、计费资格都在主节点）。ok 为 false 时响应已经写好（原来的 prompt 过长错误或计费错误）。
+func (h *GatewayHandler) antigravityFallbackAPIKey(c *gin.Context, apiKey *service.APIKey, fallbackGroupID int64, account *service.Account,
+	tooLong *service.PromptTooLongError, streamStarted bool, reqLog *zap.Logger,
+) (*service.APIKey, bool) {
+	writeOriginal := func() {
+		_ = h.antigravityGatewayService.WriteMappedClaudeError(c, account, tooLong.StatusCode, tooLong.RequestID, tooLong.Body)
+	}
+	if h.relay != nil {
+		sw, ok := h.relay.SwitchFallbackGroup(c, apiKey)
+		if sw.BillingRejection != nil {
+			h.writeGatewayRejection(c, *sw.BillingRejection, streamStarted)
+			return nil, false
+		}
+		if !ok || sw.APIKey == nil {
+			reqLog.Warn("gateway.fallback_group_unavailable", zap.Int64("fallback_group_id", fallbackGroupID))
+			writeOriginal()
+			return nil, false
+		}
+		return sw.APIKey, true
+	}
+	fallbackGroup, err := h.gatewayService.ResolveGroupByID(c.Request.Context(), fallbackGroupID)
+	if err != nil {
+		reqLog.Warn("gateway.resolve_fallback_group_failed", zap.Int64("fallback_group_id", fallbackGroupID), zap.Error(err))
+		writeOriginal()
+		return nil, false
+	}
+	if fallbackGroup.Platform != service.PlatformAnthropic ||
+		fallbackGroup.SubscriptionType == service.SubscriptionTypeSubscription ||
+		fallbackGroup.FallbackGroupIDOnInvalidRequest != nil {
+		reqLog.Warn("gateway.fallback_group_invalid",
+			zap.Int64("fallback_group_id", fallbackGroup.ID),
+			zap.String("fallback_platform", fallbackGroup.Platform),
+			zap.String("fallback_subscription_type", fallbackGroup.SubscriptionType),
+		)
+		writeOriginal()
+		return nil, false
+	}
+	fallbackAPIKey := cloneAPIKeyWithGroup(apiKey, fallbackGroup)
+	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), fallbackAPIKey.User, fallbackAPIKey, fallbackGroup, nil, service.PlatformFromAPIKey(fallbackAPIKey)); err != nil {
+		status, code, message, retryAfter := billingErrorDetails(err)
+		if retryAfter > 0 {
+			c.Header("Retry-After", strconv.Itoa(retryAfter))
+		}
+		h.handleStreamingAwareError(c, status, code, message, streamStarted)
+		return nil, false
+	}
+	return fallbackAPIKey, true
 }

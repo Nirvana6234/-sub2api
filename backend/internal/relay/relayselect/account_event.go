@@ -116,6 +116,28 @@ func (s *selector) applyAccountEvent(nodeID int64, ev *relayv1.AccountEvent) {
 		reporter.TempUnscheduleTransportError(ctx, account, kind.TransportError.GetMessage())
 	case *relayv1.AccountEvent_OllamaActivity:
 		reporter.OllamaCloudUsageActivity(account)
+	case *relayv1.AccountEvent_ModelRateLimit:
+		s.applyAntigravityEvent(nodeID, account, func(gw *service.AntigravityGatewayService) error {
+			return gw.RelaySetModelRateLimit(ctx, account, kind.ModelRateLimit.GetModelKey(), time.UnixMilli(kind.ModelRateLimit.GetResetAtUnixMs()))
+		})
+	case *relayv1.AccountEvent_RateLimited:
+		s.applyAntigravityEvent(nodeID, account, func(gw *service.AntigravityGatewayService) error {
+			return gw.RelaySetRateLimited(ctx, account, time.UnixMilli(kind.RateLimited.GetResetAtUnixMs()))
+		})
+	case *relayv1.AccountEvent_ModelRateLimitsExtra:
+		var limits map[string]any
+		if err := json.Unmarshal(kind.ModelRateLimitsExtra.GetLimitsJson(), &limits); err != nil {
+			slog.Warn("relay model rate limits event is malformed", "node_id", nodeID, "account_id", account.ID, "error", err)
+			return
+		}
+		s.applyAntigravityEvent(nodeID, account, func(gw *service.AntigravityGatewayService) error {
+			return gw.RelayUpdateModelRateLimits(ctx, account, limits)
+		})
+	case *relayv1.AccountEvent_Internal500:
+		s.applyAntigravityEvent(nodeID, account, func(gw *service.AntigravityGatewayService) error {
+			gw.RelayInternal500(ctx, account, kind.Internal500.GetSucceeded())
+			return nil
+		})
 	case *relayv1.AccountEvent_MaskedSession:
 		if id := kind.MaskedSession.GetSessionId(); id != "" && len(id) <= 64 && s.deps.AnthropicGateway != nil && account.IsSessionIDMaskingEnabled() {
 			if err := s.deps.AnthropicGateway.SetRelayMaskedSessionID(ctx, account.ID, id); err != nil {
@@ -159,5 +181,15 @@ func (s *selector) applyTempUnschedulable(ctx context.Context, nodeID int64, acc
 	}
 	if err := s.deps.AnthropicGateway.SetAccountTempUnschedulable(ctx, account.ID, until, reason); err != nil {
 		slog.Warn("relay temp unschedulable event failed", "node_id", nodeID, "account_id", account.ID, "error", err)
+	}
+}
+
+// applyAntigravityEvent 执行 Antigravity 账号的从节点事件：只认 Antigravity 账号，且主节点装了 Antigravity 转发服务。
+func (s *selector) applyAntigravityEvent(nodeID int64, account *service.Account, apply func(*service.AntigravityGatewayService) error) {
+	if s.deps.Antigravity == nil || account == nil || account.Platform != service.PlatformAntigravity {
+		return
+	}
+	if err := apply(s.deps.Antigravity); err != nil {
+		slog.Warn("relay antigravity account event failed", "node_id", nodeID, "account_id", account.ID, "error", err)
 	}
 }

@@ -234,6 +234,8 @@ type world struct {
 	quotas  *master.Quotas
 	// identity 是主节点的身份缓存（指纹、伪装会话 ID）。
 	identity *memIdentity
+	// groups 是主节点分组仓储里的分组（解析兜底分组用；用例往里加）。
+	groups *memGroups
 }
 
 const testNode = int64(21)
@@ -311,7 +313,8 @@ func newWorldOn(t *testing.T, cfg *config.Config, balance float64, nodeID int64,
 	require.NoError(t, err)
 
 	identity := &memIdentity{fingerprints: map[int64]*service.Fingerprint{}, masked: map[int64]string{}}
-	anthropicGateway := service.NewGatewayService(fakeAccounts{accounts: accounts}, nil, nil, nil, nil, nil, nil, gatewayCache, cfg,
+	groupRepo := &memGroups{byID: map[int64]*service.Group{}}
+	anthropicGateway := service.NewGatewayService(fakeAccounts{accounts: accounts}, groupRepo, nil, nil, nil, nil, nil, gatewayCache, cfg,
 		nil, concurrency, nil, nil, billing, service.NewIdentityService(identity), nil, nil,
 		service.NewClaudeTokenProvider(nil, seededTokens{}, nil), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
@@ -334,7 +337,7 @@ func newWorldOn(t *testing.T, cfg *config.Config, balance float64, nodeID int64,
 		},
 	})
 	t.Cleanup(sel.Close)
-	return &world{keys: keys, sel: sel, slots: slots, nodeKey: nodeKey, pub: pub, leases: leases, quotas: quotas, identity: identity}
+	return &world{keys: keys, sel: sel, slots: slots, nodeKey: nodeKey, pub: pub, leases: leases, quotas: quotas, identity: identity, groups: groupRepo}
 }
 
 func apiKeyAccount(id int64, name string) service.Account {
@@ -1066,3 +1069,21 @@ func (seededTokens) AcquireRefreshLock(context.Context, string, time.Duration) (
 	return true, nil
 }
 func (seededTokens) ReleaseRefreshLock(context.Context, string) error { return nil }
+
+// memGroups 是主节点的分组仓储（解析兜底分组用）。
+type memGroups struct {
+	service.GroupRepository
+	byID map[int64]*service.Group
+}
+
+func (m *memGroups) GetByID(ctx context.Context, id int64) (*service.Group, error) {
+	return m.GetByIDLite(ctx, id)
+}
+
+func (m *memGroups) GetByIDLite(_ context.Context, id int64) (*service.Group, error) {
+	if g, ok := m.byID[id]; ok {
+		copied := *g
+		return &copied, nil
+	}
+	return nil, errors.New("no group")
+}

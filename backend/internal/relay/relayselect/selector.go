@@ -34,6 +34,9 @@ type Deps struct {
 	Gateway       *service.OpenAIGatewayService
 	// AnthropicGateway 是 Anthropic Messages 的选号与准入用的网关服务；nil 时 Messages（Anthropic 分组）回"暂不支持"。
 	AnthropicGateway *service.GatewayService
+	// Antigravity 是 Antigravity 账号的转发服务：主节点用它取 Google token、照写从节点转发路径上的账号状态
+	// （模型级限流、账号级限流、INTERNAL 500 惩罚）；nil 时 Antigravity 账号交给主节点转发。
+	Antigravity *service.AntigravityGatewayService
 	// UserMsgQueue、RPM 是用户消息串行队列的锁与账号 RPM 计数（从节点的排队代码每一步在这里执行）；nil 时放行。
 	UserMsgQueue service.UserMsgQueueCache
 	RPM          service.RPMCache
@@ -113,6 +116,8 @@ type requestRecord struct {
 	apiKeyID int64
 	// groupID 是这次请求现在用的分组（自动分组 Key 中途换组时跟着变）。
 	groupID int64
+	// singleAccountRetry：分组里只有一个 Antigravity 账号（请求开始时查一次，随选号带给从节点）。
+	singleAccountRetry bool
 	// sessionKey、stickyBound：Anthropic Messages 的会话键和请求开始时粘性会话绑定的账号（成功转发后刷新绑定用）。
 	sessionKey  string
 	stickyBound int64
@@ -156,6 +161,8 @@ type selectionRecord struct {
 	turnID string
 	// anthropic：Anthropic Messages 的选号（释放时刷新粘性会话、RPM、放会话数注册）。
 	anthropic bool
+	// channelGroupID：渠道映射和渠道功能配置按哪个分组查（非 0 时；请求中途切到兜底分组后仍按原来的分组）。
+	channelGroupID int64
 	// countTokens：Anthropic count_tokens 的选号（不占槽、不计费；释放时只放会话数注册）。
 	countTokens bool
 }
@@ -381,6 +388,16 @@ func (s *selector) encodeAccount(ctx context.Context, nodeID int64, account *ser
 	}
 	var overrides map[string]any
 	switch {
+	case s.deps.Antigravity != nil && account.Platform == service.PlatformAntigravity && account.Type == service.AccountTypeOAuth:
+		// Antigravity 的 OAuth 账号：与本地转发时同一个取 token（快过期时当场刷新，缺项目 ID 时补上）；刷新 token 不下发。
+		token, err := s.deps.Antigravity.GetTokenProvider().GetAccessToken(ctx, account)
+		if err != nil {
+			return nil, err
+		}
+		overrides = map[string]any{"access_token": token}
+		if project := account.GetCredential("project_id"); project != "" {
+			overrides["project_id"] = project
+		}
 	case s.deps.AnthropicGateway != nil && account.Platform == service.PlatformAnthropic &&
 		(account.IsOAuth() || account.Type == service.AccountTypeServiceAccount):
 		// Anthropic 的 OAuth / setup-token / 服务账号：与本地转发时同一个取 token（快过期时当场刷新），刷新后凭据版本
