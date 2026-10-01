@@ -40,6 +40,9 @@ type pgEnv struct {
 var (
 	pgShared *pgEnv
 	seq      int64
+
+	// 迁移刚跑完时的开关默认值：在任何用例改动设置之前读出来，避免用例执行顺序影响断言。
+	seededEnabled, seededDays string
 )
 
 func TestMain(m *testing.M) {
@@ -66,6 +69,12 @@ func TestMain(m *testing.M) {
 	}
 	if err := repository.ApplyMigrations(context.Background(), db); err != nil {
 		panic(fmt.Errorf("apply migrations: %w", err))
+	}
+	if err := db.QueryRow(`SELECT value FROM settings WHERE key='balance_expiry_enabled'`).Scan(&seededEnabled); err != nil {
+		panic(err)
+	}
+	if err := db.QueryRow(`SELECT value FROM settings WHERE key='balance_expiry_days'`).Scan(&seededDays); err != nil {
+		panic(err)
 	}
 	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
 	users := repository.NewUserRepository(client, db)
@@ -122,11 +131,8 @@ func near(t *testing.T, name string, got, want float64) {
 
 func TestBalanceExpiryPG_Defaults(t *testing.T) {
 	e := pgShared
-	var enabled, days string
-	require.NoError(t, e.db.QueryRow(`SELECT value FROM settings WHERE key='balance_expiry_enabled'`).Scan(&enabled))
-	require.NoError(t, e.db.QueryRow(`SELECT value FROM settings WHERE key='balance_expiry_days'`).Scan(&days))
-	require.Equal(t, "false", enabled, "迁移后默认关闭")
-	require.Equal(t, "30", days)
+	require.Equal(t, "false", seededEnabled, "迁移后默认关闭")
+	require.Equal(t, "30", seededDays)
 
 	require.Error(t, e.be.SetConfig(context.Background(), service.BalanceExpiryConfig{Enabled: true, Days: 0}))
 	require.Error(t, e.be.SetConfig(context.Background(), service.BalanceExpiryConfig{Enabled: true, Days: 4000}))
