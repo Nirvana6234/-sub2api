@@ -1502,5 +1502,36 @@ export default {
     noAccounts: '该房间还没有贡献账号。',
   },
 
+  balanceExpiry: {
+    title: '余额提醒',
+    total: '当前余额',
+    expiring: '限时余额',
+    permanent: '长期有效',
+    nextExpire: '最早到期',
+    daysLeft: '还剩 {days} 天',
+    dueToday: '今天到期',
+    lotLine: '{amount} 将于 {date} 到期',
+    lotsHeading: '限时余额明细',
+    credited: '{date} 充值',
+    policy: '新充值的余额自到账之日起 {days} 天内有效，到期未用完的部分将自动清零。',
+    noLots: '当前没有限时余额。',
+    lastExpired: '{date} 有 {amount} 余额到期清零',
+    soon: '即将到期，请尽快使用',
+    orderColumn: '余额有效期至',
+    orderExpired: '已到期，剩余 {amount} 已清零',
+    orderUsedUp: '已用完',
+    admin: {
+      title: '充值余额有效期',
+      description: '打开后，用户每次充值的余额从到账当天起只在设定天数内有效，到期未用完的部分自动清零。关闭或打开之前的余额不受影响，仍然长期有效。',
+      enabled: '启用充值有效期',
+      days: '有效天数',
+      daysHint: '只影响之后的充值，已到账的充值保持原到期时间。',
+      save: '保存',
+      saved: '已保存',
+      saveFailed: '保存失败',
+      offHint: '关闭期间已有的限时余额暂停清零；重新打开后已过期的部分会立即清零。'
+    }
+  },
+
   // Admin
 }

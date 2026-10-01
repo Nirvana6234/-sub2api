@@ -104,6 +104,34 @@ export interface PaymentOrder {
   refund_request_reason?: string
   plan_id?: number
   provider_instance_id?: string
+  /** 充值余额有效期：这笔充值的余额到期时间；没有到期批次的订单没有这三项 */
+  balance_expires_at?: string
+  balance_lot_status?: 'active' | 'depleted' | 'expired'
+  balance_expired_amount?: number
+}
+
+/** 一笔充值产生的到期批次 */
+export interface BalanceLot {
+  id: number
+  source_ref?: string
+  amount: number
+  remaining: number
+  expired_amount: number
+  status: 'active' | 'depleted' | 'expired'
+  credited_at: string
+  expires_at: string
+  settled_at?: string
+}
+
+/** GET /payment/balance-expiry：余额构成与到期时间 */
+export interface BalanceExpiryView {
+  enabled: boolean
+  days: number
+  permanent_balance: number
+  expiring_balance: number
+  next_expires_at?: string
+  lots: BalanceLot[]
+  expired: BalanceLot[]
 }
 
 // ==================== Plans & Channels ====================

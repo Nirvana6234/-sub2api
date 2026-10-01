@@ -874,7 +874,8 @@ var ProviderSet = wire.NewSet(
 	NewCompositeRouteResolver,
 	NewAccountService,
 	NewProxyService,
-	NewRedeemService,
+	NewBalanceExpiryService,
+	ProvideRedeemService,
 	NewPromoService,
 	NewUsageService,
 	NewResultCache,
@@ -1092,4 +1093,21 @@ func ProvideChannelMonitorV2Aggregator(repo ChannelMonitorV2Repository, db *sql.
 	}
 	aggregator.Start()
 	return aggregator
+}
+
+// ProvideRedeemService 创建兑换服务，并接上充值余额有效期。
+func ProvideRedeemService(
+	redeemRepo RedeemCodeRepository,
+	userRepo UserRepository,
+	subscriptionService *SubscriptionService,
+	cache RedeemCache,
+	billingCacheService *BillingCacheService,
+	entClient *dbent.Client,
+	authCacheInvalidator APIKeyAuthCacheInvalidator,
+	affiliateService *AffiliateService,
+	balanceExpiry *BalanceExpiryService,
+) *RedeemService {
+	svc := NewRedeemService(redeemRepo, userRepo, subscriptionService, cache, billingCacheService, entClient, authCacheInvalidator, affiliateService)
+	svc.SetBalanceExpiry(balanceExpiry)
+	return svc
 }

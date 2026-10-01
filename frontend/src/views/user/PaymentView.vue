@@ -45,6 +45,8 @@
               <p class="mt-1 text-base font-semibold text-gray-900 dark:text-white">{{ user?.username || '' }}</p>
               <p class="mt-0.5 text-sm font-medium text-green-600 dark:text-green-400">{{ t('payment.currentBalance') }}: {{ user?.balance?.toFixed(2) || '0.00' }}</p>
             </div>
+            <!-- 余额有效期提醒：充值前就让用户看到有效期与现有限时余额 -->
+            <UserBalanceExpiryNotice :balance="user?.balance || 0" />
             <div v-if="enabledMethods.length === 0" class="card py-16 text-center">
               <p class="text-gray-500 dark:text-gray-400">{{ t('payment.notAvailable') }}</p>
             </div>
@@ -260,6 +262,7 @@
 </template>
 
 <script setup lang="ts">
+import UserBalanceExpiryNotice from '@/components/user/dashboard/UserBalanceExpiryNotice.vue'
 import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { marked } from 'marked'

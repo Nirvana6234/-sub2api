@@ -49,6 +49,13 @@ func RegisterPaymentRoutes(
 		}
 	}
 
+	// 余额构成与到期时间：不挂充值黑名单，名单内用户同样要看到自己的余额什么时候过期。
+	balanceExpiry := v1.Group("/payment/balance-expiry")
+	balanceExpiry.Use(gin.HandlerFunc(jwtAuth))
+	balanceExpiry.Use(middleware.BackendModeUserGuard(settingService))
+	balanceExpiry.Use(panelRateLimiter.Global())
+	balanceExpiry.GET("", paymentHandler.GetBalanceExpiry)
+
 	// --- Public payment endpoints ---
 	// Signed resume-token recovery is intentionally anonymous: possession of the
 	// short-lived signed token is the checkout capability.
@@ -89,6 +96,10 @@ func RegisterPaymentRoutes(
 		// Config
 		adminGroup.GET("/config", adminPaymentHandler.GetConfig)
 		adminGroup.PUT("/config", adminPaymentHandler.UpdateConfig)
+
+		// 充值余额有效期（开关 + 天数）
+		adminGroup.GET("/balance-expiry", adminPaymentHandler.GetBalanceExpiryConfig)
+		adminGroup.PUT("/balance-expiry", adminPaymentHandler.UpdateBalanceExpiryConfig)
 
 		// Orders
 		adminOrders := adminGroup.Group("/orders")

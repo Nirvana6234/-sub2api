@@ -286,6 +286,11 @@ FROM cleared`, userID)
 			return service.ErrAffiliateQuotaEmpty
 		}
 
+		// 充值余额有效期：加款前先把已花掉的部分摊给到期批次。
+		if err := service.SyncBalanceLotsBeforeCredit(txCtx, r.client, userID); err != nil {
+			return err
+		}
+
 		affected, err := txClient.User.Update().
 			Where(user.IDEQ(userID)).
 			AddBalance(transferred).

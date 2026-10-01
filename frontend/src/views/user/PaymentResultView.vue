@@ -67,6 +67,11 @@
               <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.status') }}</span>
               <OrderStatusBadge :status="displayOrderStatus(order.status)" />
             </div>
+            <!-- 充值余额有效期：到账后标出这笔余额的到期时间 -->
+            <div v-if="balanceExpiresAt" class="flex justify-between">
+              <span class="text-gray-500 dark:text-gray-400">{{ t('balanceExpiry.orderColumn') }}</span>
+              <span class="font-medium text-amber-600 dark:text-amber-400">{{ formatBalanceExpiry(balanceExpiresAt) }}</span>
+            </div>
           </div>
         </div>
         <!-- EasyPay return info (when no order loaded) -->
@@ -124,6 +129,17 @@ const authStore = useAuthStore()
 type ResolvedOrder = PaymentOrder | PublicOrderVerifyResult
 
 const order = ref<ResolvedOrder | null>(null)
+
+const balanceExpiresAt = computed(() => {
+  const current = order.value
+  return current && 'balance_expires_at' in current ? current.balance_expires_at ?? '' : ''
+})
+
+function formatBalanceExpiry(iso: string): string {
+  const d = new Date(iso)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
 const loading = ref(true)
 const currency = ref('CNY')
 

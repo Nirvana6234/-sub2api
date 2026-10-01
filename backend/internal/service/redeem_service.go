@@ -151,6 +151,20 @@ type RedeemService struct {
 	entClient            *dbent.Client
 	authCacheInvalidator APIKeyAuthCacheInvalidator
 	affiliateService     *AffiliateService
+	balanceExpiry        *BalanceExpiryService
+}
+
+// SetBalanceExpiry 注入充值余额有效期服务；不注入时所有充值都是永久余额（旧行为）。
+func (s *RedeemService) SetBalanceExpiry(balanceExpiry *BalanceExpiryService) {
+	s.balanceExpiry = balanceExpiry
+}
+
+// BalanceExpiry 返回充值余额有效期服务，可能为 nil。
+func (s *RedeemService) BalanceExpiry() *BalanceExpiryService {
+	if s == nil {
+		return nil
+	}
+	return s.balanceExpiry
 }
 
 // NewRedeemService 创建兑换码服务实例
@@ -500,8 +514,14 @@ func (s *RedeemService) redeem(ctx context.Context, userID int64, code string, r
 			if err := s.redeemUserRepo.ApplyRedeemBalanceAdjustment(txCtx, userID, amount); err != nil {
 				return nil, fmt.Errorf("update user balance: %w", err)
 			}
-		} else if err := s.userRepo.UpdateBalance(txCtx, userID, amount); err != nil {
-			return nil, fmt.Errorf("update user balance: %w", err)
+		} else {
+			if err := s.userRepo.UpdateBalance(txCtx, userID, amount); err != nil {
+				return nil, fmt.Errorf("update user balance: %w", err)
+			}
+			// 充值余额有效期：同一事务里记下这笔余额的到期时间（开关关闭时什么都不做）。
+			if _, err := s.balanceExpiry.RecordRecharge(txCtx, userID, amount, redeemCode.Code); err != nil {
+				return nil, fmt.Errorf("record balance expiry: %w", err)
+			}
 		}
 
 	case RedeemTypeConcurrency:

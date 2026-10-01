@@ -1498,5 +1498,36 @@ export default {
     noAccounts: 'No accounts have been contributed to this room yet.',
   },
 
+  balanceExpiry: {
+    title: 'Balance reminder',
+    total: 'Current balance',
+    expiring: 'Expiring balance',
+    permanent: 'No expiry',
+    nextExpire: 'Next expiry',
+    daysLeft: '{days} days left',
+    dueToday: 'Expires today',
+    lotLine: '{amount} expires on {date}',
+    lotsHeading: 'Expiring balance details',
+    credited: 'Topped up on {date}',
+    policy: 'Newly recharged balance is valid for {days} days from the day it is credited; any unused part is cleared automatically.',
+    noLots: 'You have no expiring balance.',
+    lastExpired: '{amount} expired and was cleared on {date}',
+    soon: 'Expiring soon, please use it',
+    orderColumn: 'Balance valid until',
+    orderExpired: 'Expired, remaining {amount} cleared',
+    orderUsedUp: 'Used up',
+    admin: {
+      title: 'Recharge balance validity',
+      description: 'When enabled, balance from each recharge is valid only for the set number of days from the day it is credited, and any unused part is cleared automatically. Balance from before it was enabled is unaffected and never expires.',
+      enabled: 'Enable validity period',
+      days: 'Valid days',
+      daysHint: 'Applies to later recharges only; recharges already credited keep their expiry date.',
+      save: 'Save',
+      saved: 'Saved',
+      saveFailed: 'Failed to save',
+      offHint: 'While off, existing expiring balance stops being cleared; anything already past due is cleared right after you turn it back on.'
+    }
+  },
+
   // Admin
 }

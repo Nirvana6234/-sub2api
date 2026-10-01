@@ -68,7 +68,12 @@ func (h *PaymentHandler) ListOrders(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
-	response.Paginated(c, sanitizeAdminPaymentOrdersForResponse(orders), int64(total), page, pageSize)
+	results := sanitizeAdminPaymentOrdersForResponse(orders)
+	marks := h.paymentService.BalanceExpiryMarks(c.Request.Context(), orders)
+	for _, item := range results {
+		item.applyBalanceExpiry(marks)
+	}
+	response.Paginated(c, results, int64(total), page, pageSize)
 }
 
 // GetOrderDetail returns detailed information about a single order.
@@ -84,7 +89,9 @@ func (h *PaymentHandler) GetOrderDetail(c *gin.Context) {
 		return
 	}
 	auditLogs, _ := h.paymentService.GetOrderAuditLogs(c.Request.Context(), orderID)
-	response.Success(c, gin.H{"order": sanitizeAdminPaymentOrderForResponse(order), "auditLogs": auditLogs})
+	detail := sanitizeAdminPaymentOrderForResponse(order)
+	detail.applyBalanceExpiry(h.paymentService.BalanceExpiryMarks(c.Request.Context(), []*dbent.PaymentOrder{order}))
+	response.Success(c, gin.H{"order": detail, "auditLogs": auditLogs})
 }
 
 // CancelOrder cancels a pending order (admin).
@@ -157,6 +164,23 @@ type AdminPaymentOrderResult struct {
 	SrcURL              *string    `json:"src_url,omitempty"`
 	CreatedAt           time.Time  `json:"created_at"`
 	UpdatedAt           time.Time  `json:"updated_at"`
+
+	// 充值余额有效期：这笔充值的余额什么时候到期。没有到期批次的订单不带这几项。
+	BalanceExpiresAt     *time.Time `json:"balance_expires_at,omitempty"`
+	BalanceLotStatus     string     `json:"balance_lot_status,omitempty"`
+	BalanceExpiredAmount float64    `json:"balance_expired_amount,omitempty"`
+}
+
+func (r *AdminPaymentOrderResult) applyBalanceExpiry(marks map[int64]service.BalanceLotInfo) {
+	if r == nil {
+		return
+	}
+	if lot, ok := marks[r.ID]; ok {
+		expiresAt := lot.ExpiresAt
+		r.BalanceExpiresAt = &expiresAt
+		r.BalanceLotStatus = lot.Status
+		r.BalanceExpiredAmount = lot.ExpiredAmount
+	}
 }
 
 func sanitizeAdminPaymentOrdersForResponse(orders []*dbent.PaymentOrder) []*AdminPaymentOrderResult {
@@ -500,4 +524,42 @@ func (h *PaymentHandler) UpdateConfig(c *gin.Context) {
 		return
 	}
 	response.Success(c, gin.H{"message": "updated"})
+}
+
+type balanceExpiryConfigRequest struct {
+	Enabled bool `json:"enabled"`
+	Days    int  `json:"days"`
+}
+
+// GetBalanceExpiryConfig returns whether recharged balance expires and after how many days.
+// GET /api/v1/admin/payment/balance-expiry
+func (h *PaymentHandler) GetBalanceExpiryConfig(c *gin.Context) {
+	svc := h.paymentService.BalanceExpiry()
+	if svc == nil {
+		response.Success(c, service.BalanceExpiryConfig{Days: service.BalanceExpiryDefaultDays})
+		return
+	}
+	response.Success(c, svc.GetConfig(c.Request.Context()))
+}
+
+// UpdateBalanceExpiryConfig turns the recharge-balance validity period on or off and sets its length.
+// The length only applies to recharges made afterwards; lots already booked keep their expiry date.
+// PUT /api/v1/admin/payment/balance-expiry
+func (h *PaymentHandler) UpdateBalanceExpiryConfig(c *gin.Context) {
+	var req balanceExpiryConfigRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	svc := h.paymentService.BalanceExpiry()
+	if svc == nil {
+		response.InternalError(c, "balance expiry is not available")
+		return
+	}
+	cfg := service.BalanceExpiryConfig{Enabled: req.Enabled, Days: req.Days}
+	if err := svc.SetConfig(c.Request.Context(), cfg); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, svc.GetConfig(c.Request.Context()))
 }

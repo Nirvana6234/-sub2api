@@ -352,7 +352,36 @@ func (h *PaymentHandler) GetMyOrders(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
-	response.Paginated(c, sanitizePaymentOrdersForResponse(orders), int64(total), page, pageSize)
+	results := sanitizePaymentOrdersForResponse(orders)
+	marks := h.paymentService.BalanceExpiryMarks(c.Request.Context(), orders)
+	for i := range results {
+		results[i].applyBalanceExpiry(marks)
+	}
+	response.Paginated(c, results, int64(total), page, pageSize)
+}
+
+// GetBalanceExpiry returns the authenticated user's balance split into the part that
+// never expires and the recharge lots that do, plus the admin's current policy.
+// GET /api/v1/payment/balance-expiry
+func (h *PaymentHandler) GetBalanceExpiry(c *gin.Context) {
+	subject, ok := requireAuth(c)
+	if !ok {
+		return
+	}
+	svc := h.paymentService.BalanceExpiry()
+	if svc == nil {
+		response.Success(c, &service.UserBalanceExpiryView{
+			Days: service.BalanceExpiryDefaultDays,
+			Lots: []service.BalanceLotInfo{}, Expired: []service.BalanceLotInfo{},
+		})
+		return
+	}
+	view, err := svc.GetUserView(c.Request.Context(), subject.UserID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, view)
 }
 
 // GetOrder returns a single order for the authenticated user.
@@ -374,7 +403,11 @@ func (h *PaymentHandler) GetOrder(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
-	response.Success(c, sanitizePaymentOrderForResponse(order))
+	result := sanitizePaymentOrderForResponse(order)
+	if result != nil {
+		result.applyBalanceExpiry(h.paymentService.BalanceExpiryMarks(c.Request.Context(), []*dbent.PaymentOrder{order}))
+	}
+	response.Success(c, result)
 }
 
 // CancelOrder cancels a pending order for the authenticated user.
@@ -637,6 +670,20 @@ type PaymentOrderResult struct {
 	RefundRequestReason *string    `json:"refund_request_reason,omitempty"`
 	PlanID              *int64     `json:"plan_id,omitempty"`
 	ProviderInstanceID  *string    `json:"provider_instance_id,omitempty"`
+
+	// 充值余额有效期：这笔充值的余额什么时候到期。没有到期批次的订单不带这几项。
+	BalanceExpiresAt     *time.Time `json:"balance_expires_at,omitempty"`
+	BalanceLotStatus     string     `json:"balance_lot_status,omitempty"`
+	BalanceExpiredAmount float64    `json:"balance_expired_amount,omitempty"`
+}
+
+func (r *PaymentOrderResult) applyBalanceExpiry(marks map[int64]service.BalanceLotInfo) {
+	if lot, ok := marks[r.ID]; ok {
+		expiresAt := lot.ExpiresAt
+		r.BalanceExpiresAt = &expiresAt
+		r.BalanceLotStatus = lot.Status
+		r.BalanceExpiredAmount = lot.ExpiredAmount
+	}
 }
 
 func sanitizePaymentOrdersForResponse(orders []*dbent.PaymentOrder) []PaymentOrderResult {

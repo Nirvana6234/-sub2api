@@ -859,6 +859,12 @@ func (r *userRepository) filterUsersByAttributes(ctx context.Context, attrs map[
 }
 
 func (r *userRepository) UpdateBalance(ctx context.Context, id int64, amount float64) error {
+	if amount > 0 {
+		// 充值余额有效期：加款前先把已花掉的部分摊给到期批次，见 service/balance_expiry.go。
+		if err := service.SyncBalanceLotsBeforeCredit(ctx, r.client, id); err != nil {
+			return err
+		}
+	}
 	client := clientFromContext(ctx, r.client)
 	update := client.User.Update().Where(dbuser.IDEQ(id)).AddBalance(amount)
 	// Track cumulative recharge amount for percentage-based notifications
@@ -881,6 +887,11 @@ func (r *userRepository) ApplyRedeemBalanceAdjustment(ctx context.Context, id in
 		SET balance = GREATEST(balance + $1, 0), updated_at = NOW()
 		WHERE id = $2 AND deleted_at IS NULL
 	`
+	if delta > 0 {
+		if err := service.SyncBalanceLotsBeforeCredit(ctx, r.client, id); err != nil {
+			return err
+		}
+	}
 	client := clientFromContext(ctx, r.client)
 	result, err := client.ExecContext(ctx, updateSQL, delta, id)
 	if err != nil {
@@ -972,6 +983,11 @@ func (r *userRepository) DeductAvailableBalance(ctx context.Context, id int64, a
 // 相比"读余额 → 算新值 → 整行写回"，这里把读与写压进同一条 UPDATE，
 // 并发的计费扣款不会被旧快照覆盖。
 func (r *userRepository) AdjustBalance(ctx context.Context, id int64, delta float64) (service.BalanceChange, error) {
+	if delta > 0 {
+		if err := service.SyncBalanceLotsBeforeCredit(ctx, r.client, id); err != nil {
+			return service.BalanceChange{}, err
+		}
+	}
 	const updateSQL = `
 		UPDATE users
 		SET balance = balance + $1, updated_at = NOW()
@@ -1003,6 +1019,9 @@ func (r *userRepository) SetBalance(ctx context.Context, id int64, value float64
 			return service.BalanceChange{}, err
 		}
 		return service.BalanceChange{Old: current, New: value}, service.ErrBalanceNegative
+	}
+	if err := service.SyncBalanceLotsBeforeCredit(ctx, r.client, id); err != nil {
+		return service.BalanceChange{}, err
 	}
 	const updateSQL = `
 		UPDATE users AS u
