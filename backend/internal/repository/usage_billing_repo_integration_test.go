@@ -365,3 +365,46 @@ func TestUsageBillingRepositoryApply_DeduplicatesAgainstArchivedKey(t *testing.T
 	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT balance FROM users WHERE id = $1", user.ID).Scan(&balance))
 	require.InDelta(t, 98.75, balance, 0.000001)
 }
+
+// 回归：请求在途时 Key 被软删除，落账仍必须扣用户余额（不得整体回滚）。
+func TestUsageBillingRepositoryApply_StillChargesBalanceWhenAPIKeySoftDeleted(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	repo := NewUsageBillingRepository(client, integrationDB)
+
+	user := mustCreateUser(t, client, &service.User{
+		Email:        fmt.Sprintf("usage-billing-deleted-key-%d@example.com", time.Now().UnixNano()),
+		PasswordHash: "hash",
+		Balance:      100,
+	})
+	apiKey := mustCreateApiKey(t, client, &service.APIKey{
+		UserID: user.ID,
+		Key:    "sk-usage-billing-deleted-" + uuid.NewString(),
+		Name:   "billing-deleted",
+		Quota:  10,
+	})
+	account := mustCreateAccount(t, client, &service.Account{
+		Name: "usage-billing-deleted-account-" + uuid.NewString(),
+		Type: service.AccountTypeAPIKey,
+	})
+
+	_, err := integrationDB.ExecContext(ctx, "UPDATE api_keys SET deleted_at = NOW() WHERE id = $1", apiKey.ID)
+	require.NoError(t, err)
+
+	result, err := repo.Apply(ctx, &service.UsageBillingCommand{
+		RequestID:           uuid.NewString(),
+		APIKeyID:            apiKey.ID,
+		UserID:              user.ID,
+		AccountID:           account.ID,
+		AccountType:         service.AccountTypeAPIKey,
+		BalanceCost:         2,
+		APIKeyQuotaCost:     2,
+		APIKeyRateLimitCost: 2,
+	})
+	require.NoError(t, err)
+	require.True(t, result.Applied)
+
+	var balance float64
+	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT balance FROM users WHERE id = $1", user.ID).Scan(&balance))
+	require.InDelta(t, 98, balance, 0.000001)
+}

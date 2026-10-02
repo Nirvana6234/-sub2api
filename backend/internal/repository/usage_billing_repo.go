@@ -575,6 +575,12 @@ func userExistsForBilling(ctx context.Context, tx *sql.Tx, userID int64) (bool, 
 	return true, nil
 }
 
+// incrementUsageBillingAPIKeyQuota 更新 Key 级配额计数。
+//
+// 计费是响应结束后异步落账，请求在途期间用户可能已删除该 Key（软删除）。
+// Key 计数只是统计，绝不能让用户余额/订阅扣费随之回滚，因此：
+//   - 不过滤 deleted_at：墓碑行仍可写入，无副作用（Key 已无法再鉴权）；
+//   - 行确实不存在时记日志后跳过，而不是返回 ErrAPIKeyNotFound 回滚整个事务。
 func incrementUsageBillingAPIKeyQuota(ctx context.Context, tx *sql.Tx, apiKeyID int64, amount float64) (bool, error) {
 	var exhausted bool
 	err := tx.QueryRowContext(ctx, `
@@ -589,11 +595,12 @@ func incrementUsageBillingAPIKeyQuota(ctx context.Context, tx *sql.Tx, apiKeyID 
 				ELSE status
 			END,
 			updated_at = NOW()
-		WHERE id = $2 AND deleted_at IS NULL
+		WHERE id = $2
 		RETURNING quota > 0 AND quota_used >= quota AND quota_used - $1 < quota
 	`, amount, apiKeyID, service.StatusAPIKeyActive, service.StatusAPIKeyQuotaExhausted).Scan(&exhausted)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, service.ErrAPIKeyNotFound
+		logger.LegacyPrintf("repository.usage_billing", "[UsageBilling] api key row missing, skip key quota update: api_key=%d amount=%v", apiKeyID, amount)
+		return false, nil
 	}
 	if err != nil {
 		return false, err
@@ -601,6 +608,7 @@ func incrementUsageBillingAPIKeyQuota(ctx context.Context, tx *sql.Tx, apiKeyID 
 	return exhausted, nil
 }
 
+// incrementUsageBillingAPIKeyRateLimit 更新 Key 级限流窗口计数，容错策略同 incrementUsageBillingAPIKeyQuota。
 func incrementUsageBillingAPIKeyRateLimit(ctx context.Context, tx *sql.Tx, apiKeyID int64, cost float64) error {
 	res, err := tx.ExecContext(ctx, `
 		UPDATE api_keys SET
@@ -611,7 +619,7 @@ func incrementUsageBillingAPIKeyRateLimit(ctx context.Context, tx *sql.Tx, apiKe
 			window_1d_start = CASE WHEN window_1d_start IS NULL OR window_1d_start + INTERVAL '24 hours' <= NOW() THEN date_trunc('day', NOW()) ELSE window_1d_start END,
 			window_7d_start = CASE WHEN window_7d_start IS NULL OR window_7d_start + INTERVAL '7 days' <= NOW() THEN date_trunc('day', NOW()) ELSE window_7d_start END,
 			updated_at = NOW()
-		WHERE id = $2 AND deleted_at IS NULL
+		WHERE id = $2
 	`, cost, apiKeyID)
 	if err != nil {
 		return err
@@ -621,7 +629,7 @@ func incrementUsageBillingAPIKeyRateLimit(ctx context.Context, tx *sql.Tx, apiKe
 		return err
 	}
 	if affected == 0 {
-		return service.ErrAPIKeyNotFound
+		logger.LegacyPrintf("repository.usage_billing", "[UsageBilling] api key row missing, skip key rate limit update: api_key=%d cost=%v", apiKeyID, cost)
 	}
 	return nil
 }
