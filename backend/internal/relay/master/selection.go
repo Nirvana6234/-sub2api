@@ -362,13 +362,22 @@ func (c *Control) ReportWebSearchUsage(ctx context.Context, req *relayv1.WebSear
 	return resp, nil
 }
 
-// ImageTask 异步图片任务：状态查询、创建、取结果、报结果。
-func (c *Control) ImageTask(ctx context.Context, req *relayv1.ImageTaskRequest) (*relayv1.ImageTaskResponse, error) {
-	nodeID, err := c.selectPeer(ctx, false)
+// TasksServer 是任务连接（异步图片任务）的服务端：状态查询、创建、取结果、报结果。
+type TasksServer struct {
+	relayv1.UnimplementedRelayTasksServer
+	control *Control
+}
+
+// NewTasksServer 创建任务连接的服务端（与 Control 共用选号实现）。
+func NewTasksServer(control *Control) *TasksServer { return &TasksServer{control: control} }
+
+// ImageTask 异步图片任务。
+func (t *TasksServer) ImageTask(ctx context.Context, req *relayv1.ImageTaskRequest) (*relayv1.ImageTaskResponse, error) {
+	nodeID, err := t.control.selectPeer(ctx, false)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.selector.ImageTask(ctx, nodeID, req)
+	resp, err := t.control.selector.ImageTask(ctx, nodeID, req)
 	if err != nil {
 		return nil, selectionError(ctx, "image_task", nodeID, err)
 	}

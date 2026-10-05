@@ -328,7 +328,6 @@ const (
 	RelayControl_FetchFlaggedHashes_FullMethodName    = "/sub2api.relay.v1.RelayControl/FetchFlaggedHashes"
 	RelayControl_RecordFlaggedHash_FullMethodName     = "/sub2api.relay.v1.RelayControl/RecordFlaggedHash"
 	RelayControl_ReportWebSearchUsage_FullMethodName  = "/sub2api.relay.v1.RelayControl/ReportWebSearchUsage"
-	RelayControl_ImageTask_FullMethodName             = "/sub2api.relay.v1.RelayControl/ImageTask"
 )
 
 // RelayControlClient is the client API for RelayControl service.
@@ -417,9 +416,6 @@ type RelayControlClient interface {
 	// 上次确认以来新用的次数，主节点加进全局计数，回每个服务当前的上限、已用和这台可用的份额（剩余按在线节点分摊）。
 	// 带幂等键：回复丢了重发同一份，只加一次。
 	ReportWebSearchUsage(ctx context.Context, in *WebSearchUsageReport, opts ...grpc.CallOption) (*WebSearchUsageShares, error)
-	// 异步图片任务（设计 14）：任务状态在主节点（Redis），从节点接到提交后登记、执行完报结果，轮询落在任何节点都向主节点查。
-	// 结果里的图片由主节点转存到对象存储（从节点不持有对象存储凭据）。创建、取结果、报结果只认这台节点最近准入过的用户。
-	ImageTask(ctx context.Context, in *ImageTaskRequest, opts ...grpc.CallOption) (*ImageTaskResponse, error)
 }
 
 type relayControlClient struct {
@@ -680,16 +676,6 @@ func (c *relayControlClient) ReportWebSearchUsage(ctx context.Context, in *WebSe
 	return out, nil
 }
 
-func (c *relayControlClient) ImageTask(ctx context.Context, in *ImageTaskRequest, opts ...grpc.CallOption) (*ImageTaskResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ImageTaskResponse)
-	err := c.cc.Invoke(ctx, RelayControl_ImageTask_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // RelayControlServer is the server API for RelayControl service.
 // All implementations must embed UnimplementedRelayControlServer
 // for forward compatibility.
@@ -776,9 +762,6 @@ type RelayControlServer interface {
 	// 上次确认以来新用的次数，主节点加进全局计数，回每个服务当前的上限、已用和这台可用的份额（剩余按在线节点分摊）。
 	// 带幂等键：回复丢了重发同一份，只加一次。
 	ReportWebSearchUsage(context.Context, *WebSearchUsageReport) (*WebSearchUsageShares, error)
-	// 异步图片任务（设计 14）：任务状态在主节点（Redis），从节点接到提交后登记、执行完报结果，轮询落在任何节点都向主节点查。
-	// 结果里的图片由主节点转存到对象存储（从节点不持有对象存储凭据）。创建、取结果、报结果只认这台节点最近准入过的用户。
-	ImageTask(context.Context, *ImageTaskRequest) (*ImageTaskResponse, error)
 	mustEmbedUnimplementedRelayControlServer()
 }
 
@@ -863,9 +846,6 @@ func (UnimplementedRelayControlServer) RecordFlaggedHash(context.Context, *Recor
 }
 func (UnimplementedRelayControlServer) ReportWebSearchUsage(context.Context, *WebSearchUsageReport) (*WebSearchUsageShares, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReportWebSearchUsage not implemented")
-}
-func (UnimplementedRelayControlServer) ImageTask(context.Context, *ImageTaskRequest) (*ImageTaskResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method ImageTask not implemented")
 }
 func (UnimplementedRelayControlServer) mustEmbedUnimplementedRelayControlServer() {}
 func (UnimplementedRelayControlServer) testEmbeddedByValue()                      {}
@@ -1338,24 +1318,6 @@ func _RelayControl_ReportWebSearchUsage_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
-func _RelayControl_ImageTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ImageTaskRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(RelayControlServer).ImageTask(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: RelayControl_ImageTask_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RelayControlServer).ImageTask(ctx, req.(*ImageTaskRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 // RelayControl_ServiceDesc is the grpc.ServiceDesc for RelayControl service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1463,9 +1425,115 @@ var RelayControl_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "ReportWebSearchUsage",
 			Handler:    _RelayControl_ReportWebSearchUsage_Handler,
 		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "sub2api/relay/v1/relay.proto",
+}
+
+const (
+	RelayTasks_ImageTask_FullMethodName = "/sub2api.relay.v1.RelayTasks/ImageTask"
+)
+
+// RelayTasksClient is the client API for RelayTasks service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// 任务连接：异步图片任务（设计 14）。任务状态在主节点（Redis），从节点接到提交后登记、执行完报结果，轮询落在任何节点都向主节点查。
+// 结果里的图片由主节点转存到对象存储（从节点不持有对象存储凭据），所以报结果的消息可能有几十 MB，单独一类调用、单独的消息上限。
+// 创建、取结果、报结果只认这台节点最近准入过的用户。
+type RelayTasksClient interface {
+	ImageTask(ctx context.Context, in *ImageTaskRequest, opts ...grpc.CallOption) (*ImageTaskResponse, error)
+}
+
+type relayTasksClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewRelayTasksClient(cc grpc.ClientConnInterface) RelayTasksClient {
+	return &relayTasksClient{cc}
+}
+
+func (c *relayTasksClient) ImageTask(ctx context.Context, in *ImageTaskRequest, opts ...grpc.CallOption) (*ImageTaskResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ImageTaskResponse)
+	err := c.cc.Invoke(ctx, RelayTasks_ImageTask_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// RelayTasksServer is the server API for RelayTasks service.
+// All implementations must embed UnimplementedRelayTasksServer
+// for forward compatibility.
+//
+// 任务连接：异步图片任务（设计 14）。任务状态在主节点（Redis），从节点接到提交后登记、执行完报结果，轮询落在任何节点都向主节点查。
+// 结果里的图片由主节点转存到对象存储（从节点不持有对象存储凭据），所以报结果的消息可能有几十 MB，单独一类调用、单独的消息上限。
+// 创建、取结果、报结果只认这台节点最近准入过的用户。
+type RelayTasksServer interface {
+	ImageTask(context.Context, *ImageTaskRequest) (*ImageTaskResponse, error)
+	mustEmbedUnimplementedRelayTasksServer()
+}
+
+// UnimplementedRelayTasksServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedRelayTasksServer struct{}
+
+func (UnimplementedRelayTasksServer) ImageTask(context.Context, *ImageTaskRequest) (*ImageTaskResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ImageTask not implemented")
+}
+func (UnimplementedRelayTasksServer) mustEmbedUnimplementedRelayTasksServer() {}
+func (UnimplementedRelayTasksServer) testEmbeddedByValue()                    {}
+
+// UnsafeRelayTasksServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to RelayTasksServer will
+// result in compilation errors.
+type UnsafeRelayTasksServer interface {
+	mustEmbedUnimplementedRelayTasksServer()
+}
+
+func RegisterRelayTasksServer(s grpc.ServiceRegistrar, srv RelayTasksServer) {
+	// If the following call panics, it indicates UnimplementedRelayTasksServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&RelayTasks_ServiceDesc, srv)
+}
+
+func _RelayTasks_ImageTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ImageTaskRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayTasksServer).ImageTask(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayTasks_ImageTask_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayTasksServer).ImageTask(ctx, req.(*ImageTaskRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// RelayTasks_ServiceDesc is the grpc.ServiceDesc for RelayTasks service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var RelayTasks_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "sub2api.relay.v1.RelayTasks",
+	HandlerType: (*RelayTasksServer)(nil),
+	Methods: []grpc.MethodDesc{
 		{
 			MethodName: "ImageTask",
-			Handler:    _RelayControl_ImageTask_Handler,
+			Handler:    _RelayTasks_ImageTask_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

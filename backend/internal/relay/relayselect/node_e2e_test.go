@@ -332,6 +332,7 @@ func startE2EWithConfig(t *testing.T, configure func(*config.Config), accounts f
 	control.AttachSelector(e.world.sel, srv.Epoch())
 	master.RouteNodeEvents(events, e.world.sel)
 	relayv1.RegisterRelayControlServer(srv.GRPC(), control)
+	relayv1.RegisterRelayTasksServer(srv.GRPC(), master.NewTasksServer(control))
 	relayv1.RegisterRelayEventsServer(srv.GRPC(), events)
 	relayv1.RegisterRelayBillingServer(srv.GRPC(), master.NewBilling(e.settler))
 	lis, err := net.Listen("tcp4", "127.0.0.1:0")

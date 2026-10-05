@@ -62,6 +62,7 @@ var defaultMaxMessageBytes = map[CallClass]int{
 	ClassBilling:    16 << 20,
 	ClassModeration: 16 << 20,
 	ClassLogs:       4 << 20,
+	ClassTasks:      64 << 20,
 }
 
 // Server 是主节点端的主从通信服务。端口上只有 TLS，没有明文（设计 7.1）。
@@ -184,6 +185,8 @@ func classOf(fullMethod string) CallClass {
 		return ClassModeration
 	case strings.HasPrefix(fullMethod, "/sub2api.relay.v1.RelayLogs/"):
 		return ClassLogs
+	case strings.HasPrefix(fullMethod, "/sub2api.relay.v1.RelayTasks/"):
+		return ClassTasks
 	default:
 		return ClassControl
 	}

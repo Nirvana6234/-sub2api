@@ -344,6 +344,7 @@ var defaultRelayLimits = map[transport.CallClass]transport.Limit{
 	transport.ClassBilling:    {RatePerSecond: 50, Burst: 100, MaxInflight: 16},
 	transport.ClassModeration: {RatePerSecond: 500, Burst: 1000, MaxInflight: 200},
 	transport.ClassLogs:       {RatePerSecond: 20, Burst: 40, MaxInflight: 4},
+	transport.ClassTasks:      {RatePerSecond: 200, Burst: 400, MaxInflight: 32},
 }
 
 func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) {
@@ -442,6 +443,7 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 		RouteNodeEvents(events, selector)
 	}
 	relayv1.RegisterRelayControlServer(server.GRPC(), control)
+	relayv1.RegisterRelayTasksServer(server.GRPC(), NewTasksServer(control))
 	if r.deps.NewSettler != nil {
 		env := SettleEnv{VerifyVoucher: r.VerifyVoucher, LastSuspectRevocation: r.deps.Store.LastSuspectRevocation}
 		if quotas != nil {

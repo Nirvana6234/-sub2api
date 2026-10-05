@@ -2,12 +2,14 @@ package relayselect
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/relay/nodegw"
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
@@ -85,4 +87,50 @@ func TestNodeRunsAsyncImageTasksWithTheTaskStateOnTheMaster(t *testing.T) {
 	// 别的 Key（同一个用户）查不到这个任务。
 	status, body = e2.get(t, "/v1/images/tasks/"+id, "sk-b")
 	require.Equal(t, http.StatusNotFound, status, body)
+}
+
+// 结果带大图（超过控制连接 4MB 的消息上限）也能送到主节点：任务连接的消息上限更大。
+func TestImageTaskResultLargerThanTheControlLimitReachesTheMaster(t *testing.T) {
+	e := startStandardE2E(t, func(string) []service.Account { return nil })
+	e.world.sel.deps.ImageTasks = service.NewImageTaskServiceWithUploader(&memTaskStore{}, nil, time.Hour, time.Minute)
+	e.world.sel.admitted.note(e.nodeID, 3, time.Now())
+	tasks := nodegw.NewRemoteImageTasks(e.client)
+	ctx := context.Background()
+	owner := service.ImageTaskOwner{UserID: 3, APIKeyID: 11}
+
+	task, err := tasks.Create(ctx, owner)
+	require.NoError(t, err)
+	payload := `{"data":[{"b64_json":"` + strings.Repeat("A", 6<<20) + `"}]}`
+	require.NoError(t, tasks.Complete(ctx, task.ID, http.StatusOK, json.RawMessage(payload)))
+	got, err := tasks.Get(ctx, owner, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, service.ImageTaskStatusCompleted, got.Status)
+	require.Len(t, got.Result, len(payload))
+
+	// 不是这台节点最近准入过的用户：拒绝。
+	_, err = tasks.Create(ctx, service.ImageTaskOwner{UserID: 99, APIKeyID: 1})
+	require.Error(t, err)
+}
+
+// 执行中的从节点挂了：任务一直"处理中"，超过执行超时加余量后查询时标为失败。
+func TestStuckImageTaskIsFailedOnTheMasterWhenPolled(t *testing.T) {
+	e := startStandardE2E(t, func(string) []service.Account { return nil })
+	store := &memTaskStore{}
+	e.world.sel.deps.ImageTasks = service.NewImageTaskServiceWithUploader(store, nil, time.Hour, time.Minute)
+	e.world.sel.admitted.note(e.nodeID, 3, time.Now())
+	tasks := nodegw.NewRemoteImageTasks(e.client)
+	ctx := context.Background()
+	owner := service.ImageTaskOwner{UserID: 3, APIKeyID: 11}
+	task, err := tasks.Create(ctx, owner)
+	require.NoError(t, err)
+
+	got, err := tasks.Get(ctx, owner, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, service.ImageTaskStatusProcessing, got.Status, "a fresh task is still running")
+
+	e.world.sel.now = func() time.Time { return time.Now().Add(time.Minute + imageTaskStuckMargin + time.Second) }
+	got, err = tasks.Get(ctx, owner, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, service.ImageTaskStatusFailed, got.Status)
+	require.Equal(t, http.StatusGatewayTimeout, got.HTTPStatus)
 }

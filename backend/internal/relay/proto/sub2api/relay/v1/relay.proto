@@ -117,8 +117,12 @@ service RelayControl {
   // 上次确认以来新用的次数，主节点加进全局计数，回每个服务当前的上限、已用和这台可用的份额（剩余按在线节点分摊）。
   // 带幂等键：回复丢了重发同一份，只加一次。
   rpc ReportWebSearchUsage(WebSearchUsageReport) returns (WebSearchUsageShares);
-  // 异步图片任务（设计 14）：任务状态在主节点（Redis），从节点接到提交后登记、执行完报结果，轮询落在任何节点都向主节点查。
-  // 结果里的图片由主节点转存到对象存储（从节点不持有对象存储凭据）。创建、取结果、报结果只认这台节点最近准入过的用户。
+}
+
+// 任务连接：异步图片任务（设计 14）。任务状态在主节点（Redis），从节点接到提交后登记、执行完报结果，轮询落在任何节点都向主节点查。
+// 结果里的图片由主节点转存到对象存储（从节点不持有对象存储凭据），所以报结果的消息可能有几十 MB，单独一类调用、单独的消息上限。
+// 创建、取结果、报结果只认这台节点最近准入过的用户。
+service RelayTasks {
   rpc ImageTask(ImageTaskRequest) returns (ImageTaskResponse);
 }
 

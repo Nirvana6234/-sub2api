@@ -26,11 +26,13 @@ const (
 	imageTaskCompleteTimeout = 3 * time.Minute
 	imageTaskStatusTTL       = 30 * time.Second
 	imageTaskStatusTimeout   = 3 * time.Second
+	// imageTaskFinishRetries：报结果失败时最多再试几次（间隔 1、2、4、8、16 秒）。
+	imageTaskFinishRetries = 5
 )
 
 // RemoteImageTasks 是经主节点的异步图片任务存取（handler.AsyncImageTasks）。
 type RemoteImageTasks struct {
-	control relayv1.RelayControlClient
+	control relayv1.RelayTasksClient
 	now     func() time.Time
 
 	mu       sync.Mutex
@@ -38,17 +40,19 @@ type RemoteImageTasks struct {
 	fetched  time.Time
 	pending  map[string]service.ImageTaskOwner // 本机创建、还没报结果的任务归属（报结果时带上）
 	statusMu sync.Mutex
+	// retryDelay 是报结果重发的起始间隔（测试里调小）。
+	retryDelay time.Duration
 }
 
 var _ handler.AsyncImageTasks = (*RemoteImageTasks)(nil)
 
 // NewRemoteImageTasks 创建。
 func NewRemoteImageTasks(client *transport.Client) *RemoteImageTasks {
-	return newRemoteImageTasks(relayv1.NewRelayControlClient(client.Conn(transport.TierControl)))
+	return newRemoteImageTasks(relayv1.NewRelayTasksClient(client.Conn(transport.TierTasks)))
 }
 
-func newRemoteImageTasks(control relayv1.RelayControlClient) *RemoteImageTasks {
-	return &RemoteImageTasks{control: control, now: time.Now, pending: map[string]service.ImageTaskOwner{}}
+func newRemoteImageTasks(control relayv1.RelayTasksClient) *RemoteImageTasks {
+	return &RemoteImageTasks{control: control, now: time.Now, pending: map[string]service.ImageTaskOwner{}, retryDelay: time.Second}
 }
 
 // current 是主节点上这个功能的状态（缓存 30 秒；取不到时沿用上一次的，从没取到过按"不可用"）。
@@ -163,9 +167,19 @@ func (r *RemoteImageTasks) finish(ctx context.Context, op relayv1.ImageTaskReque
 	if !ok {
 		return service.ErrImageTaskNotFound
 	}
-	_, err := r.call(ctx, imageTaskCompleteTimeout, &relayv1.ImageTaskRequest{
-		Op: op, UserId: owner.UserID, ApiKeyId: owner.APIKeyID, TaskId: id, HttpStatus: int32(statusCode), Payload: payload,
-	})
+	// 结果只在内存里：主节点暂时不可达时有限次退避重发（用户已经按同步图片入口扣过费，结果送不到任务就一直"处理中"）。
+	req := &relayv1.ImageTaskRequest{Op: op, UserId: owner.UserID, ApiKeyId: owner.APIKeyID, TaskId: id, HttpStatus: int32(statusCode), Payload: payload}
+	var err error
+	for attempt := 0; ; attempt++ {
+		_, err = r.call(ctx, imageTaskCompleteTimeout, req)
+		if err == nil || !errors.Is(err, service.ErrImageTaskUnavailable) || attempt >= imageTaskFinishRetries || ctx.Err() != nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(r.retryDelay << attempt):
+		}
+	}
 	if err != nil && !errors.Is(err, service.ErrImageTaskUnavailable) {
 		// 主节点明确拒绝（任务不存在、不属于这个用户）：不会因重试而成功。
 		r.mu.Lock()

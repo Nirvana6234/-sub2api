@@ -28,11 +28,13 @@ const (
 	TierBilling Tier = "billing"
 	// TierModeration：内容审核输入（文字 + 最多 1 张图），不和选号挤在一起。
 	TierModeration Tier = "moderation"
+	// TierTasks：异步任务的结果（带图片，单条消息可能很大）。
+	TierTasks Tier = "tasks"
 	// TierLogs：日志摘要、计数、指标，优先级最低。
 	TierLogs Tier = "logs"
 )
 
-var allTiers = []Tier{TierControl, TierEvents, TierBilling, TierModeration, TierLogs}
+var allTiers = []Tier{TierControl, TierEvents, TierBilling, TierModeration, TierLogs, TierTasks}
 
 // 各类连接单条消息的默认上限，与服务端 defaultMaxMessageBytes 对应。
 var defaultTierMaxBytes = map[Tier]int{
@@ -41,6 +43,7 @@ var defaultTierMaxBytes = map[Tier]int{
 	TierBilling:    16 << 20,
 	TierModeration: 16 << 20,
 	TierLogs:       4 << 20,
+	TierTasks:      64 << 20,
 }
 
 // 调用没有自带截止时间时用的默认值。流（事件连接）不设。
@@ -49,6 +52,7 @@ var defaultTierTimeout = map[Tier]time.Duration{
 	TierBilling:    30 * time.Second,
 	TierModeration: 10 * time.Second,
 	TierLogs:       10 * time.Second,
+	TierTasks:      60 * time.Second,
 }
 
 // ClientOptions 配置从节点到主节点的连接。

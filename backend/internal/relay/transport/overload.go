@@ -18,6 +18,7 @@ const (
 	ClassBilling    CallClass = "billing"
 	ClassModeration CallClass = "moderation"
 	ClassLogs       CallClass = "logs"
+	ClassTasks      CallClass = "tasks"
 )
 
 // Limit 是一类调用对单个对端的上限。零值字段表示不限。

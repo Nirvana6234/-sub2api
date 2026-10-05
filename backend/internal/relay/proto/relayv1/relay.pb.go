@@ -10131,7 +10131,7 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\n" +
 	"NodeStatus\x12#.sub2api.relay.v1.NodeStatusRequest\x1a$.sub2api.relay.v1.NodeStatusResponse\x12`\n" +
 	"\x11ObtainCertificate\x12$.sub2api.relay.v1.CertificateRequest\x1a%.sub2api.relay.v1.CertificateResponse\x12_\n" +
-	"\x10RenewCertificate\x12$.sub2api.relay.v1.CertificateRequest\x1a%.sub2api.relay.v1.CertificateResponse2\xdf\x13\n" +
+	"\x10RenewCertificate\x12$.sub2api.relay.v1.CertificateRequest\x1a%.sub2api.relay.v1.CertificateResponse2\x89\x13\n" +
 	"\fRelayControl\x12E\n" +
 	"\x04Ping\x12\x1d.sub2api.relay.v1.PingRequest\x1a\x1e.sub2api.relay.v1.PingResponse\x12U\n" +
 	"\vFetchConfig\x12$.sub2api.relay.v1.FetchConfigRequest\x1a .sub2api.relay.v1.ConfigSnapshot\x12]\n" +
@@ -10157,7 +10157,9 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x10ModerationNotify\x12).sub2api.relay.v1.ModerationNotifyRequest\x1a*.sub2api.relay.v1.ModerationNotifyResponse\x12o\n" +
 	"\x12FetchFlaggedHashes\x12+.sub2api.relay.v1.FetchFlaggedHashesRequest\x1a,.sub2api.relay.v1.FetchFlaggedHashesResponse\x12l\n" +
 	"\x11RecordFlaggedHash\x12*.sub2api.relay.v1.RecordFlaggedHashRequest\x1a+.sub2api.relay.v1.RecordFlaggedHashResponse\x12f\n" +
-	"\x14ReportWebSearchUsage\x12&.sub2api.relay.v1.WebSearchUsageReport\x1a&.sub2api.relay.v1.WebSearchUsageShares\x12T\n" +
+	"\x14ReportWebSearchUsage\x12&.sub2api.relay.v1.WebSearchUsageReport\x1a&.sub2api.relay.v1.WebSearchUsageShares2b\n" +
+	"\n" +
+	"RelayTasks\x12T\n" +
 	"\tImageTask\x12\".sub2api.relay.v1.ImageTaskRequest\x1a#.sub2api.relay.v1.ImageTaskResponse2\\\n" +
 	"\fRelayBilling\x12L\n" +
 	"\vSubmitUsage\x12\x1c.sub2api.relay.v1.UsageBatch\x1a\x1f.sub2api.relay.v1.UsageBatchAck2]\n" +
@@ -10434,7 +10436,7 @@ var file_sub2api_relay_v1_relay_proto_depIdxs = []int32{
 	85,  // 118: sub2api.relay.v1.RelayControl.FetchFlaggedHashes:input_type -> sub2api.relay.v1.FetchFlaggedHashesRequest
 	87,  // 119: sub2api.relay.v1.RelayControl.RecordFlaggedHash:input_type -> sub2api.relay.v1.RecordFlaggedHashRequest
 	89,  // 120: sub2api.relay.v1.RelayControl.ReportWebSearchUsage:input_type -> sub2api.relay.v1.WebSearchUsageReport
-	90,  // 121: sub2api.relay.v1.RelayControl.ImageTask:input_type -> sub2api.relay.v1.ImageTaskRequest
+	90,  // 121: sub2api.relay.v1.RelayTasks.ImageTask:input_type -> sub2api.relay.v1.ImageTaskRequest
 	96,  // 122: sub2api.relay.v1.RelayBilling.SubmitUsage:input_type -> sub2api.relay.v1.UsageBatch
 	22,  // 123: sub2api.relay.v1.RelayEvents.Stream:input_type -> sub2api.relay.v1.NodeEnvelope
 	13,  // 124: sub2api.relay.v1.RelayEnrollment.Hello:output_type -> sub2api.relay.v1.HelloResponse
@@ -10467,7 +10469,7 @@ var file_sub2api_relay_v1_relay_proto_depIdxs = []int32{
 	86,  // 151: sub2api.relay.v1.RelayControl.FetchFlaggedHashes:output_type -> sub2api.relay.v1.FetchFlaggedHashesResponse
 	88,  // 152: sub2api.relay.v1.RelayControl.RecordFlaggedHash:output_type -> sub2api.relay.v1.RecordFlaggedHashResponse
 	92,  // 153: sub2api.relay.v1.RelayControl.ReportWebSearchUsage:output_type -> sub2api.relay.v1.WebSearchUsageShares
-	91,  // 154: sub2api.relay.v1.RelayControl.ImageTask:output_type -> sub2api.relay.v1.ImageTaskResponse
+	91,  // 154: sub2api.relay.v1.RelayTasks.ImageTask:output_type -> sub2api.relay.v1.ImageTaskResponse
 	97,  // 155: sub2api.relay.v1.RelayBilling.SubmitUsage:output_type -> sub2api.relay.v1.UsageBatchAck
 	27,  // 156: sub2api.relay.v1.RelayEvents.Stream:output_type -> sub2api.relay.v1.MasterEnvelope
 	124, // [124:157] is the sub-list for method output_type
@@ -10538,7 +10540,7 @@ func file_sub2api_relay_v1_relay_proto_init() {
 			NumEnums:      11,
 			NumMessages:   121,
 			NumExtensions: 0,
-			NumServices:   4,
+			NumServices:   5,
 		},
 		GoTypes:           file_sub2api_relay_v1_relay_proto_goTypes,
 		DependencyIndexes: file_sub2api_relay_v1_relay_proto_depIdxs,

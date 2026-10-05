@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net/http"
+	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
@@ -43,6 +45,9 @@ func (s *selector) ImageTask(ctx context.Context, nodeID int64, req *relayv1.Ima
 		task, err = tasks.Create(ctx, owner)
 	case relayv1.ImageTaskRequest_OP_GET:
 		task, err = tasks.Get(ctx, owner, req.GetTaskId())
+		if err == nil {
+			task, err = s.failStuckImageTask(ctx, tasks, owner, task)
+		}
 	case relayv1.ImageTaskRequest_OP_COMPLETE, relayv1.ImageTaskRequest_OP_FAIL:
 		if _, err = tasks.Get(ctx, owner, req.GetTaskId()); err != nil {
 			break
@@ -73,4 +78,23 @@ func (s *selector) ImageTask(ctx context.Context, nodeID int64, req *relayv1.Ima
 func failedImageTask(resp *relayv1.ImageTaskResponse, err error) *relayv1.ImageTaskResponse {
 	resp.ErrorReason, resp.ErrorStatus, resp.ErrorMessage = infraerrors.Reason(err), int32(infraerrors.Code(err)), infraerrors.Message(err)
 	return resp
+}
+
+// imageTaskStuckMargin 是任务执行超时之后再多等多久才认定执行它的从节点已经不在了。
+const imageTaskStuckMargin = 5 * time.Minute
+
+// failStuckImageTask 执行中的从节点挂了（设计 14）：任务一直"处理中"，超过执行超时加余量后查询时标为失败（不另扣费：用量在执行
+// 时已按同步图片入口入账，或根本没有入账）。
+func (s *selector) failStuckImageTask(ctx context.Context, tasks *service.ImageTaskService, owner service.ImageTaskOwner, task *service.ImageTask) (*service.ImageTask, error) {
+	if task.Status != service.ImageTaskStatusProcessing {
+		return task, nil
+	}
+	if s.now().Sub(time.Unix(task.CreatedAt, 0)) <= tasks.ExecutionTimeout()+imageTaskStuckMargin {
+		return task, nil
+	}
+	taskErr, _ := json.Marshal(map[string]string{"type": "timeout_error", "message": "image generation task timed out"})
+	if err := tasks.Fail(ctx, task.ID, http.StatusGatewayTimeout, taskErr); err != nil {
+		return nil, err
+	}
+	return tasks.Get(ctx, owner, task.ID)
 }
