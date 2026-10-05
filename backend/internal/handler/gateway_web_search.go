@@ -79,7 +79,10 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 
 	// Billing eligibility (same as other requests)
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
-	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
+	if h.relay != nil {
+		// 从节点：计费资格在主节点选号时做（没有用户并发槽），请求结束时放掉这次的选号。
+		defer h.relay.RequestDone(c)
+	} else if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
 		status, code, message, retryAfter := billingErrorDetails(err)
 		if retryAfter > 0 {
 			c.Header("Retry-After", strconv.Itoa(retryAfter))
@@ -137,44 +140,69 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 		}
 	}()
 
-	// First attempt + up to 3 failover accounts (max 4 total).
-	for attempt := 0; attempt < 4; attempt++ {
-		selected, selectErr := h.gatewayService.SelectAccountWithLoadAwareness(
-			c.Request.Context(), groupID, "", searchModel, failedAccounts, "", 0,
-		)
-		if selectErr != nil {
-			if attempt == 0 {
-				c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{
-					"type":    "scheduling_error",
-					"message": selectErr.Error(),
-				}})
-				return
-			}
-			break
-		}
-		if selected == nil || selected.Account == nil {
-			if attempt == 0 {
-				c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{
-					"type":    "scheduling_error",
-					"message": "No available accounts",
-				}})
-				return
-			}
-			break
-		}
+	var relayAttempt *OpenAIRelayAttempt
 
-		release, acquireOK, acquireErr := h.acquireWebSearchAccountSlot(c, selected)
-		if !acquireOK {
-			// First hop: surface concurrency errors; later hops try another account.
-			if attempt == 0 && acquireErr != nil {
-				h.handleConcurrencyError(c, acquireErr, "account", false)
+	// First attempt + up to 3 failover accounts (max 4 total).
+attempts:
+	for attempt := 0; attempt < 4; attempt++ {
+		if h.relay != nil {
+			// 从节点：选号与准入经主节点（换号状态在这里）。
+			res := h.relay.Select(c, OpenAIRelaySelectRequest{GrokSearch: true, APIKey: apiKey, Model: searchModel, Excluded: failedAccounts})
+			if r := res.Rejection; r != nil {
+				switch r.Kind {
+				case OpenAIRelayRejectFailoverExhausted:
+					// 之前换过号、再选不出账号：与本地 break 一样，按最近一次错误写。
+					break attempts
+				case OpenAIRelayRejectProfitVetoed:
+					// 准入失败：把这个账号排除接着选（本地同样）。
+					failedAccounts[r.VetoedAccountID] = struct{}{}
+					continue
+				}
+				h.writeSearchRelayRejection(c, r)
 				return
 			}
-			failedAccounts[selected.Account.ID] = struct{}{}
-			continue
+			relayAttempt = res.Attempt
+			account = relayAttempt.Account
+			setOpsSelectedAccount(c, account.ID, account.Platform)
+			accountReleaseFunc = func() { h.relay.AttemptDone(c, relayAttempt) }
+		} else {
+			selected, selectErr := h.gatewayService.SelectAccountWithLoadAwareness(
+				c.Request.Context(), groupID, "", searchModel, failedAccounts, "", 0,
+			)
+			if selectErr != nil {
+				if attempt == 0 {
+					c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{
+						"type":    "scheduling_error",
+						"message": selectErr.Error(),
+					}})
+					return
+				}
+				break
+			}
+			if selected == nil || selected.Account == nil {
+				if attempt == 0 {
+					c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{
+						"type":    "scheduling_error",
+						"message": "No available accounts",
+					}})
+					return
+				}
+				break
+			}
+
+			release, acquireOK, acquireErr := h.acquireWebSearchAccountSlot(c, selected)
+			if !acquireOK {
+				// First hop: surface concurrency errors; later hops try another account.
+				if attempt == 0 && acquireErr != nil {
+					h.handleConcurrencyError(c, acquireErr, "account", false)
+					return
+				}
+				failedAccounts[selected.Account.ID] = struct{}{}
+				continue
+			}
+			account = selected.Account
+			accountReleaseFunc = release
 		}
-		account = selected.Account
-		accountReleaseFunc = release
 
 		if isXSearch {
 			nativeResp, providerName, err = h.doGrokNativeXSearch(c.Request.Context(), c, account, req, searchModel, maxResults)
@@ -227,6 +255,21 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 				zap.Int64("group_id", apiKey.Group.ID),
 			).Info("gateway.web_search.search_price_per_1k_explicit_free")
 		}
+	}
+	if h.relay != nil {
+		// 从节点：写进本地扣费队列，主节点按凭证用同一个 RecordUsage 入账（用量不带渠道字段，与单机一致）。
+		h.relay.ForwardSucceeded(c, relayAttempt)
+		h.relay.SubmitAnthropicUsage(c, relayAttempt, OpenAIUsageFacts{
+			InboundEndpoint: inboundEndpoint, UpstreamEndpoint: upstreamEndpoint, UserAgent: userAgent, IPAddress: clientIP,
+			RequestPayloadHash: requestPayloadHash,
+		}, &service.ForwardResult{RequestID: searchRequestID, Model: "grok-" + strings.ReplaceAll(searchLabel, "_", "-"), SearchCount: 1}, false)
+		c.JSON(http.StatusOK, gin.H{
+			"query":       req.Query,
+			"results":     nativeResp.Results,
+			"provider":    providerName,
+			"max_results": maxResults,
+		})
+		return
 	}
 	h.submitMandatoryUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 		if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
@@ -545,4 +588,35 @@ func grokWebSearchTitleFromURL(rawURL string) string {
 		return rawURL
 	}
 	return strings.TrimPrefix(strings.ToLower(u.Host), "www.")
+}
+
+// writeSearchRelayRejection 按独立搜索入口自己的错误格式写出主节点的拒绝。
+func (h *GatewayHandler) writeSearchRelayRejection(c *gin.Context, r *OpenAIRelayRejection) {
+	switch r.Kind {
+	case OpenAIRelayRejectRaw:
+		middleware2.WriteCapturedRejection(c, r.Raw)
+	case OpenAIRelayRejectUnsupported:
+		if c.Writer.Written() {
+			c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"type": "web_search_error", "message": "web search failed"}})
+			return
+		}
+		h.relay.HandOff(c)
+	case OpenAIRelayRejectUnavailable:
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"type": "scheduling_error", "message": "Service temporarily unavailable"}})
+	default:
+		g := r.Gateway
+		if g.RetryAfter > 0 {
+			c.Header("Retry-After", strconv.Itoa(g.RetryAfter))
+		}
+		if g.ErrType == "scheduling_error" {
+			c.JSON(g.Status, gin.H{"error": gin.H{"type": g.ErrType, "message": g.Message}})
+			return
+		}
+		// 并发错误按 Messages 的写法（本地 handleConcurrencyError），计费错误是 {"error":{"type":code,"message"}}。
+		if g.Code != "" || g.Status == http.StatusTooManyRequests {
+			h.writeGatewayRejection(c, g, false)
+			return
+		}
+		c.JSON(g.Status, gin.H{"error": gin.H{"type": g.ErrType, "message": g.Message}})
+	}
 }

@@ -222,6 +222,8 @@ type selectionFacts struct {
 	subscription *service.UserSubscription
 	mapping      service.ChannelMappingResult
 	pricingAt    time.Time
+	// omitChannelFields：这个入口本地入账不带渠道用量字段。
+	omitChannelFields bool
 }
 
 // buildAnthropicInput 按单机 Messages 构造入账输入的方式组装：选号定下的取自凭证，转发事实取自记录。
@@ -246,8 +248,16 @@ func (s *Settler) buildAnthropicInput(ctx context.Context, v *relayv1.Voucher, r
 		ForceCacheBilling:  rec.GetForceCacheBilling(),
 		APIKeyService:      s.deps.APIKeys,
 		QuotaPlatform:      v.GetContext().GetQuotaPlatform(),
-		ChannelUsageFields: f.mapping.ToUsageFields(v.GetRequestedModel(), result.UpstreamModel),
+		ChannelUsageFields: f.channelUsageFields(v.GetRequestedModel(), result.UpstreamModel),
 	}, nil
+}
+
+// channelUsageFields 是入账输入里的渠道用量字段：有的入口（TypeSafe、Grok 搜索）本地入账不带，主节点同样不带。
+func (f *selectionFacts) channelUsageFields(requestedModel, upstreamModel string) service.ChannelUsageFields {
+	if f.omitChannelFields {
+		return service.ChannelUsageFields{}
+	}
+	return f.mapping.ToUsageFields(requestedModel, upstreamModel)
 }
 
 // buildOpenAIInput 按单机处理函数构造入账输入的方式组装：选号定下的取自凭证，转发事实取自记录。
@@ -323,7 +333,8 @@ func (s *Settler) selectionFacts(ctx context.Context, v *relayv1.Voucher) (*sele
 	if ms := sc.GetPricingAtUnixMs(); ms > 0 {
 		pricingAt = time.UnixMilli(ms)
 	}
-	return &selectionFacts{apiKey: apiKey, account: account, subscription: subscription, mapping: mapping, pricingAt: pricingAt}, nil
+	return &selectionFacts{apiKey: apiKey, account: account, subscription: subscription, mapping: mapping, pricingAt: pricingAt,
+		omitChannelFields: sc.GetOmitChannelUsageFields()}, nil
 }
 
 // issuedBeforeSuspectRevocation 报告凭证是否签发在节点最近一次可疑吊销之前（含同一时刻）。

@@ -175,6 +175,8 @@ type selectionRecord struct {
 	countTokens bool
 	// gemini：Gemini 原生入口的选号（释放时保存内容摘要会话）。
 	gemini bool
+	// omitChannelFields：这个入口本地入账不带渠道用量字段（凭证里带下去）。
+	omitChannelFields bool
 }
 
 func newSelector(d Deps, env master.SelectEnv) *selector {

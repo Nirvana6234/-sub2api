@@ -293,7 +293,10 @@ func newWorldOn(t *testing.T, cfg *config.Config, balance float64, nodeID int64,
 	gemini.Platform = service.PlatformGemini
 	typeSafe := openAIGroup(31)
 	typeSafe.Platform = service.PlatformTypeSafe
+	grokGroup := openAIGroup(41)
+	grokGroup.Platform = service.PlatformGrok
 	keys := fakeKeys{keys: map[string]*service.APIKey{
+		"sk-grokgroup": testKey("sk-grokgroup", 16, grokGroup),
 		"sk-typesafe":  testKey("sk-typesafe", 15, typeSafe),
 		"sk-a":         testKey("sk-a", 11, openAIGroup(5)),
 		"sk-b":         testKey("sk-b", 12, openAIGroup(5)),

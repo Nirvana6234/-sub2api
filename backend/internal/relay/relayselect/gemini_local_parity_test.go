@@ -59,6 +59,8 @@ func startLocalGemini(t *testing.T, e *e2e, accounts []service.Account) *localGe
 	messages.POST("/systemone", h.SystemOne)
 	messages.POST("/chat/completions", h.ChatCompletions)
 	messages.POST("/responses", h.Responses)
+	messages.POST("/web_search", h.WebSearch)
+	messages.POST("/x_search", func(c *gin.Context) { h.XSearch(c) })
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
 	return &localGemini{server: srv, cache: cache}

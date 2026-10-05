@@ -247,6 +247,9 @@ const (
 	// 选号与准入，换号状态在从节点；错误按 TypeSafe 自己的格式（Gateway 拒绝的 code）由从节点写。准入失败（没有等待计划、队列满、
 	// 之后尝试的抢槽出错）回"否决"格式，从节点把这个账号排除接着选。
 	SelectEndpoint_SELECT_ENDPOINT_GATEWAY_SYSTEMONE SelectEndpoint = 15
+	// Grok 分组的独立搜索入口（POST /web_search、/x_search，GatewayHandler.WebSearch / XSearch）：计费资格检查（没有用户并发槽）后
+	// 一轮选号与准入（不装利润门、不做利润否决），换号状态在从节点；按次计费，用量用固定的模型名（grok-web-search / grok-x-search）。
+	SelectEndpoint_SELECT_ENDPOINT_GATEWAY_SEARCH SelectEndpoint = 16
 )
 
 // Enum value maps for SelectEndpoint.
@@ -268,6 +271,7 @@ var (
 		13: "SELECT_ENDPOINT_OPENAI_COUNT_TOKENS",
 		14: "SELECT_ENDPOINT_OPENAI_ALPHA_SEARCH",
 		15: "SELECT_ENDPOINT_GATEWAY_SYSTEMONE",
+		16: "SELECT_ENDPOINT_GATEWAY_SEARCH",
 	}
 	SelectEndpoint_value = map[string]int32{
 		"SELECT_ENDPOINT_UNSPECIFIED":            0,
@@ -286,6 +290,7 @@ var (
 		"SELECT_ENDPOINT_OPENAI_COUNT_TOKENS":    13,
 		"SELECT_ENDPOINT_OPENAI_ALPHA_SEARCH":    14,
 		"SELECT_ENDPOINT_GATEWAY_SYSTEMONE":      15,
+		"SELECT_ENDPOINT_GATEWAY_SEARCH":         16,
 	}
 )
 
@@ -2380,8 +2385,10 @@ type SelectionContext struct {
 	ContributionRateMultiplierOverride    float64 `protobuf:"fixed64,14,opt,name=contribution_rate_multiplier_override,json=contributionRateMultiplierOverride,proto3" json:"contribution_rate_multiplier_override,omitempty"`
 	// 渠道是否做了映射（channel_mapped_model 在没映射时等于请求模型）。
 	ChannelMapped bool `protobuf:"varint,15,opt,name=channel_mapped,json=channelMapped,proto3" json:"channel_mapped,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// 这个入口本地入账时不带渠道用量字段（TypeSafe systemone、Grok 搜索）：入账同样不带。
+	OmitChannelUsageFields bool `protobuf:"varint,16,opt,name=omit_channel_usage_fields,json=omitChannelUsageFields,proto3" json:"omit_channel_usage_fields,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *SelectionContext) Reset() {
@@ -2515,6 +2522,13 @@ func (x *SelectionContext) GetContributionRateMultiplierOverride() float64 {
 func (x *SelectionContext) GetChannelMapped() bool {
 	if x != nil {
 		return x.ChannelMapped
+	}
+	return false
+}
+
+func (x *SelectionContext) GetOmitChannelUsageFields() bool {
+	if x != nil {
+		return x.OmitChannelUsageFields
 	}
 	return false
 }
@@ -9150,7 +9164,7 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x16allowed_billing_models\x18\v \x03(\tR\x14allowedBillingModels\x12-\n" +
 	"\x05quote\x18\f \x01(\v2\x17.sub2api.relay.v1.QuoteR\x05quote\x12<\n" +
 	"\acontext\x18\r \x01(\v2\".sub2api.relay.v1.SelectionContextR\acontext\"\a\n" +
-	"\x05Quote\"\xc0\x06\n" +
+	"\x05Quote\"\xfb\x06\n" +
 	"\x10SelectionContext\x12+\n" +
 	"\x12pricing_at_unix_ms\x18\x01 \x01(\x03R\x0fpricingAtUnixMs\x12%\n" +
 	"\x0equota_platform\x18\x02 \x01(\tR\rquotaPlatform\x12'\n" +
@@ -9168,7 +9182,8 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x14contribution_room_id\x18\f \x01(\x03R\x12contributionRoomId\x12X\n" +
 	")has_contribution_rate_multiplier_override\x18\r \x01(\bR%hasContributionRateMultiplierOverride\x12Q\n" +
 	"%contribution_rate_multiplier_override\x18\x0e \x01(\x01R\"contributionRateMultiplierOverride\x12%\n" +
-	"\x0echannel_mapped\x18\x0f \x01(\bR\rchannelMapped\"N\n" +
+	"\x0echannel_mapped\x18\x0f \x01(\bR\rchannelMapped\x129\n" +
+	"\x19omit_channel_usage_fields\x18\x10 \x01(\bR\x16omitChannelUsageFields\"N\n" +
 	"\x11TicketRevocations\x129\n" +
 	"\x05users\x18\x01 \x03(\v2#.sub2api.relay.v1.RevokedTicketUserR\x05users\"a\n" +
 	"\x11RevokedTicketUser\x12\x17\n" +
@@ -9709,7 +9724,7 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\vBillingMode\x12\x1c\n" +
 	"\x18BILLING_MODE_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14BILLING_MODE_BALANCE\x10\x01\x12\x1d\n" +
-	"\x19BILLING_MODE_SUBSCRIPTION\x10\x02*\xf2\x04\n" +
+	"\x19BILLING_MODE_SUBSCRIPTION\x10\x02*\x96\x05\n" +
 	"\x0eSelectEndpoint\x12\x1f\n" +
 	"\x1bSELECT_ENDPOINT_UNSPECIFIED\x10\x00\x12$\n" +
 	" SELECT_ENDPOINT_OPENAI_RESPONSES\x10\x01\x12\x1f\n" +
@@ -9727,7 +9742,8 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"#SELECT_ENDPOINT_OPENAI_INPUT_TOKENS\x10\f\x12'\n" +
 	"#SELECT_ENDPOINT_OPENAI_COUNT_TOKENS\x10\r\x12'\n" +
 	"#SELECT_ENDPOINT_OPENAI_ALPHA_SEARCH\x10\x0e\x12%\n" +
-	"!SELECT_ENDPOINT_GATEWAY_SYSTEMONE\x10\x0f*\x9b\x02\n" +
+	"!SELECT_ENDPOINT_GATEWAY_SYSTEMONE\x10\x0f\x12\"\n" +
+	"\x1eSELECT_ENDPOINT_GATEWAY_SEARCH\x10\x10*\x9b\x02\n" +
 	"\x0fRejectionFormat\x12 \n" +
 	"\x1cREJECTION_FORMAT_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18REJECTION_FORMAT_GATEWAY\x10\x01\x12\x18\n" +

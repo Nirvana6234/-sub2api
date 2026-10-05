@@ -14,26 +14,27 @@ import (
 	"go.uber.org/zap"
 )
 
-// selectSystemOne 按本地 GatewayHandler.SystemOne（TypeSafe 的 Jev 判断请求）的顺序：中间件复查 → 模型有没有价格 → 计费资格（没有用户
-// 并发槽）→ 选号与准入（一轮，不带会话）。换号状态（已失败的账号、最多换几次）在从节点的处理函数里。
-//
-// 准入失败（没有等待计划、队列满、抢槽出错）：第一次尝试时按并发错误回给客户端，之后的尝试只把这个账号排除再选（本地同样），
-// 这里分别回 Gateway 拒绝和"否决"格式（从节点把它当成"排除这个账号接着选"）。错误由从节点按 TypeSafe 自己的格式写（code 在
-// Gateway 拒绝的 code 里）。
-func (s *selector) selectSystemOne(ctx context.Context, nodeID int64, req *relayv1.SelectRequest) (*relayv1.SelectResponse, error) {
+// selectGrokSearch 按本地 GatewayHandler.WebSearch / XSearch（Grok 分组的独立搜索入口）的顺序：中间件复查 → 计费资格（没有用户并发槽）→
+// 选号与准入（一轮，不带会话，不做利润终检）。换号状态在从节点的处理函数里。错误按这个入口自己的格式（`{"error":{"type","message"}}`）
+// 由从节点写；准入失败的处理同 TypeSafe（第一次尝试的抢槽出错按并发错误回，其余排除这个账号接着选）。
+func (s *selector) selectGrokSearch(ctx context.Context, nodeID int64, req *relayv1.SelectRequest) (*relayv1.SelectResponse, error) {
 	gw := s.deps.AnthropicGateway
 	if gw == nil {
 		return unsupported(), nil
 	}
 	adm, rej, err := s.admitAPIKey(ctx, req.GetApiKey(), req.GetClientIp(), req.GetMethod(), req.GetPath(), modelCandidates(req),
-		autoGroupChoice{pinned: req.GetAutoGroupId()}, service.PlatformTypeSafe)
+		autoGroupChoice{pinned: req.GetAutoGroupId()}, service.PlatformGrok)
 	if err != nil || rej != nil {
 		return rej, err
 	}
 	apiKey := adm.APIKey
 	s.admitted.note(nodeID, apiKey.User.ID, s.now())
 	ctx = middleware.RelayRequestContext(ctx, adm)
-	model := req.GetModel()
+	searchModel := req.GetModel()
+	label := "grok-web-search"
+	if strings.Contains(req.GetPath(), "x_search") {
+		label = "grok-x-search"
+	}
 	subscription := adm.Billing.Subscription
 	quotaReq := service.QuotaRequest{User: apiKey.User, APIKey: apiKey, Group: apiKey.Group, Subscription: subscription, Platform: service.QuotaPlatform(ctx, apiKey)}
 
@@ -54,16 +55,9 @@ func (s *selector) selectSystemOne(ctx context.Context, nodeID int64, req *relay
 	}()
 	if first {
 		record.userID, record.apiKeyID, record.groupID = apiKey.User.ID, apiKey.ID, groupIDOf(apiKey)
-		// 两条网关找不到价格时都按 0 元入账，Jev 不能这样免费用：没配价格就不转发。
-		if !gw.HasTypeSafePricing(ctx, model, apiKey) {
-			return gatewayRejection(handler.OpenAIGatewayRejection{Status: http.StatusServiceUnavailable, ErrType: "api_error", Code: "PRICING_UNAVAILABLE", Message: "Pricing is not configured for this model"}), nil
-		}
 		if err := s.checkBilling(ctx, nodeID, req.GetHeldQuota(), apiKey, subscription, quotaReq.Platform); err != nil {
-			r := billingRejection(err, false)
-			r.Code = strings.ToUpper(r.ErrType)
-			return gatewayRejection(r), nil
+			return gatewayRejection(billingRejection(err, false)), nil
 		}
-		// 不装利润门、不固定计价时间（入账时按当时的价）。
 		record.pricingCtx, record.pricingAt = context.WithoutCancel(ctx), time.Time{}
 	}
 
@@ -76,7 +70,7 @@ func (s *selector) selectSystemOne(ctx context.Context, nodeID int64, req *relay
 		excluded[id] = struct{}{}
 	}
 	outcome := s.anthropicAdmitter.SelectAndAdmit(attemptCtx, handler.AnthropicSelectRequest{
-		GroupID: apiKey.GroupID, Model: model, Excluded: excluded, NoProfitVeto: true,
+		GroupID: apiKey.GroupID, Model: searchModel, Excluded: excluded, NoProfitVeto: true,
 	}, zap.NewNop())
 	if ctx.Err() != nil {
 		if outcome.Kind == handler.AnthropicSelected && outcome.Release != nil {
@@ -88,16 +82,14 @@ func (s *selector) selectSystemOne(ctx context.Context, nodeID int64, req *relay
 	case handler.AnthropicSelected:
 	case handler.AnthropicSelectFailed:
 		if len(excluded) > 0 {
-			// 之前换过号：从节点按最近一次上游错误写（本地：break 后 writeTypeSafeFailoverExhausted）。
+			// 之前换过号、再选不出账号：本地 break，按最近一次错误写。
 			keep = true
 			return &relayv1.SelectResponse{Result: &relayv1.SelectResponse_Rejection{Rejection: &relayv1.SelectRejection{
 				Format: relayv1.RejectionFormat_REJECTION_FORMAT_FAILOVER_EXHAUSTED, AnthropicMessages: true,
 			}}}, nil
 		}
-		return gatewayRejection(handler.OpenAIGatewayRejection{Status: http.StatusServiceUnavailable, ErrType: "api_error", Code: "NO_AVAILABLE_ACCOUNTS",
-			Message: "No available accounts", RoutingCapacityLimited: true}), nil
+		return gatewayRejection(handler.OpenAIGatewayRejection{Status: http.StatusServiceUnavailable, ErrType: "scheduling_error", Message: outcome.Err.Error()}), nil
 	default:
-		// 准入失败：第一次尝试按并发错误回给客户端（只有抢槽出错时）；其余把这个账号排除接着选。
 		if outcome.Kind == handler.AnthropicSelectSlotError && req.GetAttempt() <= 1 {
 			return gatewayRejection(handler.OpenAIConcurrencyRejection(outcome.Err, "account")), nil
 		}
@@ -106,7 +98,8 @@ func (s *selector) selectSystemOne(ctx context.Context, nodeID int64, req *relay
 			Format: relayv1.RejectionFormat_REJECTION_FORMAT_PROFIT_VETOED, VetoedAccountId: outcome.Account.ID,
 		}}}, nil
 	}
-	if a := outcome.Account; a == nil || a.Platform != service.PlatformTypeSafe || a.Type != service.AccountTypeAPIKey {
+	if !openAICompatAccountServed(service.PlatformGrok, outcome.Account) || outcome.Account.Platform != service.PlatformGrok {
+		// Grok OAuth 的凭据失败处理在主节点：放掉槽位，交给主节点转发。
 		if outcome.Release != nil {
 			outcome.Release()
 		}
@@ -119,7 +112,8 @@ func (s *selector) selectSystemOne(ctx context.Context, nodeID int64, req *relay
 		channelGroupID: groupIDOf(apiKey), omitChannelFields: true,
 	}
 	picked := handler.OpenAISelectOutcome{Kind: handler.OpenAISelected, Account: outcome.Account, Ctx: outcome.Ctx}
-	resp, brej, err := s.buildSelection(ctx, nodeID, req, sel, picked, model, model, service.ChannelMappingResult{}, subscription, false)
+	// 用量的模型是固定的搜索名（grok-web-search / grok-x-search），选号用的是搜索模型：两个都进凭证允许的范围。
+	resp, brej, err := s.buildSelection(ctx, nodeID, req, sel, picked, searchModel, label, service.ChannelMappingResult{}, subscription, false)
 	if err == nil && brej == nil && ctx.Err() != nil {
 		s.ungrant(sel.userID, nodeID, resp.GetSelection().GetGrants())
 		err = ctx.Err()
@@ -133,11 +127,7 @@ func (s *selector) selectSystemOne(ctx context.Context, nodeID int64, req *relay
 		}
 		return nil, err
 	}
-	resp.GetSelection().MaxAccountSwitches = int32(typeSafeMaxAccountSwitches)
 	s.addSelection(sel)
 	selected = true
 	return resp, nil
 }
-
-// typeSafeMaxAccountSwitches 是一次 Jev 请求最多换几次号（与本地 typeSafeMaxAccountSwitches 一致）。
-const typeSafeMaxAccountSwitches = 3

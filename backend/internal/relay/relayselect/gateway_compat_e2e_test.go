@@ -125,3 +125,47 @@ func TestNodeServesTypeSafeSystemOneLikeASingleServer(t *testing.T) {
 	require.Equal(t, localStatus, nodeStatus)
 	require.Equal(t, localBody, nodeBody)
 }
+
+// Grok 分组的独立搜索入口（/web_search、/x_search）经从节点：与单机同请求的响应一致，用量按固定的搜索模型名、同一个记录种类；
+// 没有可用账号时的错误一致；非 Grok 分组由本地处理函数回 400（两边一致）。
+func TestNodeServesGrokStandaloneSearchLikeASingleServer(t *testing.T) {
+	t.Setenv("XAI_ALLOW_UNSAFE_URL_OVERRIDES", "1") // 测试上游是本机 http
+	account := service.Account{ID: 1, Name: "grok", Platform: service.PlatformGrok, Type: service.AccountTypeAPIKey,
+		Status: service.StatusActive, Schedulable: true, Concurrency: 2,
+		Credentials: map[string]any{"api_key": "SECRET-grok"}, AccountGroups: []service.AccountGroup{{AccountID: 1, GroupID: 41}}}
+	accounts := []service.Account{account}
+	e := startStandardE2E(t, func(upstream string) []service.Account {
+		accounts[0].Credentials["base_url"] = upstream
+		return accounts
+	})
+	local := startLocalGemini(t, e, accounts)
+	const body = `{"query":"golang relay","max_results":3}`
+	for i, path := range []string{"/v1/web_search", "/v1/x_search"} {
+		nodeStatus, nodeBody := e.post(t, path, "sk-grokgroup", body)
+		e.world.waitReleased(t)
+		localStatus, localBody := local.post(t, path, "sk-grokgroup", body)
+		require.Equal(t, http.StatusOK, localStatus, localBody)
+		require.Equal(t, localStatus, nodeStatus, nodeBody)
+		require.Equal(t, localBody, nodeBody, path)
+		require.Eventually(t, func() bool { return len(e.settler.records()) == i+1 }, 5*time.Second, 20*time.Millisecond)
+		rec := e.settler.records()[i]
+		require.Equal(t, relayv1.UsageRecordKind_USAGE_RECORD_KIND_ANTHROPIC, rec.GetKind())
+		require.Equal(t, int64(41), mustVoucher(t, e, rec).GetGroupId())
+	}
+
+	// 非 Grok 分组：本地处理函数回 400。
+	nodeStatus, nodeBody := e.post(t, "/v1/web_search", "sk-anthropic", body)
+	localStatus, localBody := local.post(t, "/v1/web_search", "sk-anthropic", body)
+	require.Equal(t, http.StatusBadRequest, localStatus, localBody)
+	require.Equal(t, localStatus, nodeStatus)
+	require.Equal(t, localBody, nodeBody)
+
+	empty := startStandardE2E(t, func(string) []service.Account { return nil })
+	emptyLocal := startLocalGemini(t, empty, nil)
+	nodeStatus, nodeBody = empty.post(t, "/v1/web_search", "sk-grokgroup", body)
+	empty.world.waitReleased(t)
+	localStatus, localBody = emptyLocal.post(t, "/v1/web_search", "sk-grokgroup", body)
+	require.Equal(t, http.StatusServiceUnavailable, localStatus, localBody)
+	require.Equal(t, localStatus, nodeStatus)
+	require.Equal(t, localBody, nodeBody)
+}

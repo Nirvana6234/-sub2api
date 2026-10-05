@@ -54,6 +54,8 @@ type AnthropicSelectRequest struct {
 	// CompatStyle：/v1/responses、/v1/chat/completions 处理函数的写法——账号槽排队不计排队数（直接等槽），准入后的粘性绑定只在
 	// 有利润门时补（Messages 在等待路径上也补）。
 	CompatStyle bool
+	// NoProfitVeto：不做利润终检（TypeSafe、Grok 搜索本地不装利润门、不查否决）。
+	NoProfitVeto bool
 }
 
 // AnthropicSelectOutcome 是 SelectAndAdmit 的结果。
@@ -148,7 +150,10 @@ func (a AnthropicAccountAdmitter) SelectAndAdmit(ctx context.Context, req Anthro
 	}
 	// 终检与准入后绑定使用选号结果携带的门（见 responses 同名注释）。
 	admissionCtx := service.ContextWithSelectionProfitGate(ctx, selection)
-	latest, vetoed, reason := a.Gateway.GatewayProfitControlVetoLatest(admissionCtx, account)
+	latest, vetoed, reason := account, false, ""
+	if !req.NoProfitVeto {
+		latest, vetoed, reason = a.Gateway.GatewayProfitControlVetoLatest(admissionCtx, account)
+	}
 	if vetoed {
 		if accountReleaseFunc != nil {
 			accountReleaseFunc()

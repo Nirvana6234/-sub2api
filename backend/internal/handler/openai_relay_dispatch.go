@@ -134,6 +134,9 @@ type OpenAIRelaySelectRequest struct {
 
 	// SystemOne：TypeSafe 分组的 Jev 判断请求。
 	SystemOne bool
+
+	// GrokSearch：Grok 分组的独立搜索入口（/web_search、/x_search）；Model 是搜索模型。
+	GrokSearch bool
 }
 
 // OpenAIRelaySelectResult 是一次远程选号的结果：Attempt 与 Rejection 二选一。

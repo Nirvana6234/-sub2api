@@ -392,6 +392,8 @@ message SelectionContext {
   double contribution_rate_multiplier_override = 14;
   // 渠道是否做了映射（channel_mapped_model 在没映射时等于请求模型）。
   bool channel_mapped = 15;
+  // 这个入口本地入账时不带渠道用量字段（TypeSafe systemone、Grok 搜索）：入账同样不带。
+  bool omit_channel_usage_fields = 16;
 }
 
 // 票据吊销（设计 8.1）：这些用户在 revoked_before 及之前签发的票据作废。
@@ -541,6 +543,9 @@ enum SelectEndpoint {
   // 选号与准入，换号状态在从节点；错误按 TypeSafe 自己的格式（Gateway 拒绝的 code）由从节点写。准入失败（没有等待计划、队列满、
   // 之后尝试的抢槽出错）回"否决"格式，从节点把这个账号排除接着选。
   SELECT_ENDPOINT_GATEWAY_SYSTEMONE = 15;
+  // Grok 分组的独立搜索入口（POST /web_search、/x_search，GatewayHandler.WebSearch / XSearch）：计费资格检查（没有用户并发槽）后
+  // 一轮选号与准入（不装利润门、不做利润否决），换号状态在从节点；按次计费，用量用固定的模型名（grok-web-search / grok-x-search）。
+  SELECT_ENDPOINT_GATEWAY_SEARCH = 16;
 }
 
 message AdmitRequest {
