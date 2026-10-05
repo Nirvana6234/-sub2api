@@ -504,8 +504,39 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 	}
 
 	for {
-		selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, sessionKey, modelName, fs.FailedAccountIDs, "", int64(0)) // Gemini 不使用会话限制
-		if err != nil {
+		outcome := AnthropicAccountAdmitter{Gateway: h.gatewayService, Concurrency: geminiConcurrency}.SelectAndAdmit(c.Request.Context(), AnthropicSelectRequest{
+			GroupID: apiKey.GroupID, SessionKey: sessionKey, Model: modelName, Excluded: fs.FailedAccountIDs, // Gemini 不使用会话限制
+			OnAccountChosen: func(selection *service.AccountSelectionResult) {
+				account := selection.Account
+				setOpsSelectedAccount(c, account.ID, account.Platform)
+
+				// 检测账号切换：如果粘性会话绑定的账号与当前选择的账号不同，清除 thoughtSignature
+				// 注意：Gemini 原生 API 的 thoughtSignature 与具体上游账号强相关；跨账号透传会导致 400。
+				if sessionBoundAccountID > 0 && sessionBoundAccountID != account.ID {
+					reqLog.Info("gemini.sticky_session_account_switched",
+						zap.Int64("from_account_id", sessionBoundAccountID),
+						zap.Int64("to_account_id", account.ID),
+						zap.Bool("clean_thought_signature", true),
+					)
+					body = service.CleanGeminiNativeThoughtSignatures(body)
+					sessionBoundAccountID = account.ID
+				} else if sessionKey != "" && sessionBoundAccountID == 0 && !cleanedForUnknownBinding && bytes.Contains(body, []byte(`"thoughtSignature"`)) {
+					// 无缓存绑定但请求里已有 thoughtSignature：常见于缓存丢失/TTL 过期后，客户端继续携带旧签名。
+					// 为避免第一次转发就 400，这里做一次确定性清理，让新账号重新生成签名链路。
+					reqLog.Info("gemini.sticky_session_binding_missing",
+						zap.Bool("clean_thought_signature", true),
+					)
+					body = service.CleanGeminiNativeThoughtSignatures(body)
+					cleanedForUnknownBinding = true
+					sessionBoundAccountID = account.ID
+				} else if sessionBoundAccountID == 0 {
+					// 记录本次请求中首次选择到的账号，便于同一请求内 failover 时检测切换。
+					sessionBoundAccountID = account.ID
+				}
+			},
+		}, reqLog)
+		if outcome.Kind == AnthropicSelectFailed {
+			err := outcome.Err
 			if len(fs.FailedAccountIDs) == 0 {
 				cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, modelName, modelName, service.PlatformGemini)
 				if !cls.ModelNotFound {
@@ -532,88 +563,20 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 				return
 			}
 		}
-		account := selection.Account
-		setOpsSelectedAccount(c, account.ID, account.Platform)
-
-		// 检测账号切换：如果粘性会话绑定的账号与当前选择的账号不同，清除 thoughtSignature
-		// 注意：Gemini 原生 API 的 thoughtSignature 与具体上游账号强相关；跨账号透传会导致 400。
-		if sessionBoundAccountID > 0 && sessionBoundAccountID != account.ID {
-			reqLog.Info("gemini.sticky_session_account_switched",
-				zap.Int64("from_account_id", sessionBoundAccountID),
-				zap.Int64("to_account_id", account.ID),
-				zap.Bool("clean_thought_signature", true),
-			)
-			body = service.CleanGeminiNativeThoughtSignatures(body)
-			sessionBoundAccountID = account.ID
-		} else if sessionKey != "" && sessionBoundAccountID == 0 && !cleanedForUnknownBinding && bytes.Contains(body, []byte(`"thoughtSignature"`)) {
-			// 无缓存绑定但请求里已有 thoughtSignature：常见于缓存丢失/TTL 过期后，客户端继续携带旧签名。
-			// 为避免第一次转发就 400，这里做一次确定性清理，让新账号重新生成签名链路。
-			reqLog.Info("gemini.sticky_session_binding_missing",
-				zap.Bool("clean_thought_signature", true),
-			)
-			body = service.CleanGeminiNativeThoughtSignatures(body)
-			cleanedForUnknownBinding = true
-			sessionBoundAccountID = account.ID
-		} else if sessionBoundAccountID == 0 {
-			// 记录本次请求中首次选择到的账号，便于同一请求内 failover 时检测切换。
-			sessionBoundAccountID = account.ID
-		}
-
-		// 4) account concurrency slot
-		accountReleaseFunc := selection.ReleaseFunc
-		if !selection.Acquired {
-			if selection.WaitPlan == nil {
-				markOpsRoutingCapacityLimited(c)
-				googleError(c, http.StatusServiceUnavailable, "No available Gemini accounts")
-				return
-			}
-			accountWaitCounted := false
-			canWait, err := geminiConcurrency.IncrementAccountWaitCount(c.Request.Context(), account.ID, selection.WaitPlan.MaxWaiting)
-			if err != nil {
-				reqLog.Warn("gemini.account_wait_counter_increment_failed", zap.Int64("account_id", account.ID), zap.Error(err))
-			} else if !canWait {
-				reqLog.Info("gemini.account_wait_queue_full",
-					zap.Int64("account_id", account.ID),
-					zap.Int("max_waiting", selection.WaitPlan.MaxWaiting),
-				)
-				googleError(c, http.StatusTooManyRequests, "Too many pending requests, please retry later")
-				return
-			}
-			if err == nil && canWait {
-				accountWaitCounted = true
-			}
-			defer func() {
-				if accountWaitCounted {
-					geminiConcurrency.DecrementAccountWaitCount(c.Request.Context(), account.ID)
-				}
-			}()
-
-			accountReleaseFunc, err = geminiConcurrency.AcquireAccountSlotWithWaitTimeout(
-				c,
-				account.ID,
-				selection.WaitPlan.MaxConcurrency,
-				selection.WaitPlan.Timeout,
-				stream,
-				&streamStarted,
-			)
-			if err != nil {
-				reqLog.Warn("gemini.account_slot_acquire_failed", zap.Int64("account_id", account.ID), zap.Error(err))
-				googleError(c, http.StatusTooManyRequests, err.Error())
-				return
-			}
-			if accountWaitCounted {
-				geminiConcurrency.DecrementAccountWaitCount(c.Request.Context(), account.ID)
-				accountWaitCounted = false
-			}
-		}
-		// 终检与准入后绑定使用选号结果携带的门（见 responses 同名注释）。
-		admissionCtx := service.ContextWithSelectionProfitGate(c.Request.Context(), selection)
-		latest, vetoed, reason := h.gatewayService.GatewayProfitControlVetoLatest(admissionCtx, account)
-		if vetoed {
-			if accountReleaseFunc != nil {
-				accountReleaseFunc()
-			}
-			reqLog.Debug("gemini.account_slot_profit_vetoed", zap.Int64("account_id", account.ID), zap.String("reason", reason))
+		account := outcome.Account
+		switch outcome.Kind {
+		case AnthropicSelectNoWaitPlan:
+			markOpsRoutingCapacityLimited(c)
+			googleError(c, http.StatusServiceUnavailable, "No available Gemini accounts")
+			return
+		case AnthropicSelectQueueFull:
+			googleError(c, http.StatusTooManyRequests, "Too many pending requests, please retry later")
+			return
+		case AnthropicSelectSlotError:
+			googleError(c, http.StatusTooManyRequests, outcome.Err.Error())
+			return
+		case AnthropicSelectProfitVetoed:
+			reqLog.Debug("gemini.account_slot_profit_vetoed", zap.Int64("account_id", account.ID), zap.String("reason", outcome.VetoReason))
 			if fs.RecordProfitVeto(account.ID) == FailoverExhausted {
 				reqLog.Warn("gemini.profit_veto_attempts_exhausted", zap.Int("profit_veto_count", fs.ProfitVetoCount()))
 				markOpsRoutingCapacityLimited(c)
@@ -622,15 +585,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 			}
 			continue
 		}
-		account = latest
-		selection.Account = latest
-		// 等待路径保持既有 eager 绑定（无门时 helper 直接绑定）；调度器已抢槽
-		// 的直达路径无门时由选号内部绑定，这里只在门下补准入后绑定。
-		if selection.ProfitGateActive() || !selection.Acquired {
-			if err := h.gatewayService.BindStickySessionAfterProfitAdmission(admissionCtx, apiKey.GroupID, sessionKey, account.ID); err != nil {
-				reqLog.Warn("gemini.bind_sticky_session_after_profit_admission_failed", zap.Int64("account_id", account.ID), zap.Error(err))
-			}
-		}
+		accountReleaseFunc := outcome.Release
 		// 账号槽位/等待计数需要在超时或断开时安全回收
 		accountReleaseFunc = wrapReleaseOnDone(c.Request.Context(), accountReleaseFunc)
 
