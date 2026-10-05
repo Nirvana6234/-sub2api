@@ -24,6 +24,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/relay/node"
 	"github.com/Wei-Shaw/sub2api/internal/relay/nodestore"
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
+	"github.com/Wei-Shaw/sub2api/internal/relay/sign"
 	"github.com/Wei-Shaw/sub2api/internal/relay/transport"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -155,6 +156,7 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 	}
 	d = NewDispatcher(deps)
 
+	revocations := sign.NewRevocationList()
 	runCtx, stop := context.WithCancel(context.WithoutCancel(ctx))
 	defer stop()
 	moderation = NewModeration(runCtx, cache, records, client)
@@ -162,7 +164,9 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 	go node.RunEvents(runCtx, client, syncer, node.EventHandlers{
 		Outbox:          outbox,
 		OnFlaggedHashes: moderation.Hashes.Apply,
-		OnConnected:     moderation.Hashes.RunResyncOnConnect,
+		// 中转票据的吊销表（设计 8.1）：只用来提前拒绝，以主节点复查为准。
+		OnTicketRevocations: func(m *relayv1.TicketRevocations) { revocations.Apply(m, time.Now()) },
+		OnConnected:         moderation.Hashes.RunResyncOnConnect,
 		OnQuotaRecall: func(rc *relayv1.QuotaRecall) {
 			if err := quotaSync.HandleRecall(runCtx, rc); err != nil {
 				slog.Warn("relay quota recall failed", "error", err)
@@ -211,7 +215,8 @@ func Run(ctx context.Context, cfg *config.Config, opts RunOptions) error {
 		}
 		c.Next()
 	})
-	RegisterRoutes(r, h, d, cfg, gh, WithAsyncImages(handler.NewAsyncImageHandlerWithTasks(NewRemoteImageTasks(client), h)))
+	RegisterRoutes(r, h, d, cfg, gh, WithAsyncImages(handler.NewAsyncImageHandlerWithTasks(NewRemoteImageTasks(client), h)),
+		WithPaw(NewPawNode(&sign.TicketVerifier{Keys: cache.TicketKeys, NodeID: id.NodeID, Revocations: revocations})))
 
 	srv := &http.Server{
 		Addr:              net.JoinHostPort(cfg.Server.Host, strconv.Itoa(cfg.Server.Port)),

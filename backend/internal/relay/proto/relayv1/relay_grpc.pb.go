@@ -328,6 +328,7 @@ const (
 	RelayControl_FetchFlaggedHashes_FullMethodName    = "/sub2api.relay.v1.RelayControl/FetchFlaggedHashes"
 	RelayControl_RecordFlaggedHash_FullMethodName     = "/sub2api.relay.v1.RelayControl/RecordFlaggedHash"
 	RelayControl_ReportWebSearchUsage_FullMethodName  = "/sub2api.relay.v1.RelayControl/ReportWebSearchUsage"
+	RelayControl_PawResolve_FullMethodName            = "/sub2api.relay.v1.RelayControl/PawResolve"
 )
 
 // RelayControlClient is the client API for RelayControl service.
@@ -416,6 +417,10 @@ type RelayControlClient interface {
 	// 上次确认以来新用的次数，主节点加进全局计数，回每个服务当前的上限、已用和这台可用的份额（剩余按在线节点分摊）。
 	// 带幂等键：回复丢了重发同一份，只加一次。
 	ReportWebSearchUsage(ctx context.Context, in *WebSearchUsageReport, opts ...grpc.CallOption) (*WebSearchUsageShares, error)
+	// 小白端转发接口（/paw/*）：从节点验过票据后，每个请求向主节点解析（设计 8.1）。主节点复查用户（存在、启用、token_version、
+	// 后台模式），按本地 /paw 同一段服务代码（PawChatService / PawImageService）校验分组和模型、取内部 key 钉死在分组上，回一个
+	// 不透明的会话句柄：之后这次请求的选号、换组等调用用它代替 API Key 原文，**内部 key 的原文不离开主节点**。
+	PawResolve(ctx context.Context, in *PawResolveRequest, opts ...grpc.CallOption) (*PawResolveResponse, error)
 }
 
 type relayControlClient struct {
@@ -676,6 +681,16 @@ func (c *relayControlClient) ReportWebSearchUsage(ctx context.Context, in *WebSe
 	return out, nil
 }
 
+func (c *relayControlClient) PawResolve(ctx context.Context, in *PawResolveRequest, opts ...grpc.CallOption) (*PawResolveResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PawResolveResponse)
+	err := c.cc.Invoke(ctx, RelayControl_PawResolve_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RelayControlServer is the server API for RelayControl service.
 // All implementations must embed UnimplementedRelayControlServer
 // for forward compatibility.
@@ -762,6 +777,10 @@ type RelayControlServer interface {
 	// 上次确认以来新用的次数，主节点加进全局计数，回每个服务当前的上限、已用和这台可用的份额（剩余按在线节点分摊）。
 	// 带幂等键：回复丢了重发同一份，只加一次。
 	ReportWebSearchUsage(context.Context, *WebSearchUsageReport) (*WebSearchUsageShares, error)
+	// 小白端转发接口（/paw/*）：从节点验过票据后，每个请求向主节点解析（设计 8.1）。主节点复查用户（存在、启用、token_version、
+	// 后台模式），按本地 /paw 同一段服务代码（PawChatService / PawImageService）校验分组和模型、取内部 key 钉死在分组上，回一个
+	// 不透明的会话句柄：之后这次请求的选号、换组等调用用它代替 API Key 原文，**内部 key 的原文不离开主节点**。
+	PawResolve(context.Context, *PawResolveRequest) (*PawResolveResponse, error)
 	mustEmbedUnimplementedRelayControlServer()
 }
 
@@ -846,6 +865,9 @@ func (UnimplementedRelayControlServer) RecordFlaggedHash(context.Context, *Recor
 }
 func (UnimplementedRelayControlServer) ReportWebSearchUsage(context.Context, *WebSearchUsageReport) (*WebSearchUsageShares, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReportWebSearchUsage not implemented")
+}
+func (UnimplementedRelayControlServer) PawResolve(context.Context, *PawResolveRequest) (*PawResolveResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PawResolve not implemented")
 }
 func (UnimplementedRelayControlServer) mustEmbedUnimplementedRelayControlServer() {}
 func (UnimplementedRelayControlServer) testEmbeddedByValue()                      {}
@@ -1318,6 +1340,24 @@ func _RelayControl_ReportWebSearchUsage_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RelayControl_PawResolve_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PawResolveRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayControlServer).PawResolve(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayControl_PawResolve_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayControlServer).PawResolve(ctx, req.(*PawResolveRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // RelayControl_ServiceDesc is the grpc.ServiceDesc for RelayControl service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1424,6 +1464,10 @@ var RelayControl_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReportWebSearchUsage",
 			Handler:    _RelayControl_ReportWebSearchUsage_Handler,
+		},
+		{
+			MethodName: "PawResolve",
+			Handler:    _RelayControl_PawResolve_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

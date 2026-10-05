@@ -58,6 +58,10 @@ func (s *recordingSelector) ModerationNotify(context.Context, int64, *relayv1.Mo
 	return &relayv1.ModerationNotifyResponse{}, nil
 }
 
+func (s *recordingSelector) PawResolve(context.Context, int64, *relayv1.PawResolveRequest) (*relayv1.PawResolveResponse, error) {
+	return &relayv1.PawResolveResponse{}, nil
+}
+
 func (s *recordingSelector) ImageTask(context.Context, int64, *relayv1.ImageTaskRequest) (*relayv1.ImageTaskResponse, error) {
 	return &relayv1.ImageTaskResponse{}, nil
 }

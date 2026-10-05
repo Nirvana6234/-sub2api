@@ -53,6 +53,8 @@ type Selector interface {
 	RecordFlaggedHash(ctx context.Context, nodeID int64, req *relayv1.RecordFlaggedHashRequest) (*relayv1.RecordFlaggedHashResponse, error)
 	// ReportWebSearchUsage 联网搜索用量汇总（设计 3.3）。
 	ReportWebSearchUsage(ctx context.Context, nodeID int64, req *relayv1.WebSearchUsageReport) (*relayv1.WebSearchUsageShares, error)
+	// PawResolve 小白端转发接口的请求解析（设计 8.1）：复查票据对应的用户，校验分组和模型，回会话句柄。
+	PawResolve(ctx context.Context, nodeID int64, req *relayv1.PawResolveRequest) (*relayv1.PawResolveResponse, error)
 	// ImageTask 异步图片任务（设计 14）。用户不是这台节点最近准入过的返回 PermissionDenied。
 	ImageTask(ctx context.Context, nodeID int64, req *relayv1.ImageTaskRequest) (*relayv1.ImageTaskResponse, error)
 	// Release 处理事件连接上的释放消息（不回复，按选号 ID 幂等）。在事件流的接收协程里调用，
@@ -83,6 +85,8 @@ type SelectEnv struct {
 	ConfigVersion func(ctx context.Context, nodeID int64) (string, error)
 	// VerifyVoucher 验一张扣费凭证（签名、期限、上报节点）。
 	VerifyVoucher func(raw []byte, reportingNodeID int64) (*relayv1.Voucher, error)
+	// VerifyTicket 验一张中转票据（签名、有效期、签给的节点；用户状态和 token_version 由选号实现复查，设计 8.1）。
+	VerifyTicket func(token string, nodeID int64) (*relayv1.Ticket, error)
 }
 
 // AttachSelector 挂上选号实现（运行时启动时）。
@@ -358,6 +362,19 @@ func (c *Control) ReportWebSearchUsage(ctx context.Context, req *relayv1.WebSear
 	resp, err := c.selector.ReportWebSearchUsage(ctx, nodeID, req)
 	if err != nil {
 		return nil, selectionError(ctx, "report_web_search_usage", nodeID, err)
+	}
+	return resp, nil
+}
+
+// PawResolve 小白端转发接口的请求解析。只读（句柄记在主节点内存里，过期自动清），不校验纪元。
+func (c *Control) PawResolve(ctx context.Context, req *relayv1.PawResolveRequest) (*relayv1.PawResolveResponse, error) {
+	nodeID, err := c.selectPeer(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.selector.PawResolve(ctx, nodeID, req)
+	if err != nil {
+		return nil, selectionError(ctx, "paw_resolve", nodeID, err)
 	}
 	return resp, nil
 }

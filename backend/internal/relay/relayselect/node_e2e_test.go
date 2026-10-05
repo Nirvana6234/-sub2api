@@ -31,6 +31,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/relay/nodestore"
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
 	"github.com/Wei-Shaw/sub2api/internal/relay/sealbox"
+	"github.com/Wei-Shaw/sub2api/internal/relay/sign"
 	"github.com/Wei-Shaw/sub2api/internal/relay/transport"
 	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -89,6 +90,8 @@ type e2e struct {
 	nodeSettings *service.SettingService
 	nodeCache    *node.ConfigCache
 	records      *nodestore.Store
+	// revocations 是从节点的票据吊销表。
+	revocations *sign.RevocationList
 }
 
 // testPromptAudit 是端到端测试世界里主节点下发的提示词审计配置（nil 时不下发）。用例用 usePromptAudit 设置。
@@ -420,7 +423,10 @@ func startE2EWithConfig(t *testing.T, configure func(*config.Config), accounts f
 		AccountState: node.NewRemoteAccountState(decider, reporter), TempUnschedulable: reporter.TempUnschedulable, MaskedSession: reporter.MaskedSession, Reporter: reporter,
 	})
 	r := nodegw.NewEngine()
-	nodegw.RegisterRoutes(r, h, d, nodeCfg, gh, nodegw.WithAsyncImages(handler.NewAsyncImageHandlerWithTasks(nodegw.NewRemoteImageTasks(client), h)))
+	e.revocations = sign.NewRevocationList()
+	verifier := &sign.TicketVerifier{Keys: func() *sign.PublicKeys { return e.world.ticketPub }, NodeID: func() int64 { return n.ID }, Revocations: e.revocations}
+	nodegw.RegisterRoutes(r, h, d, nodeCfg, gh, nodegw.WithAsyncImages(handler.NewAsyncImageHandlerWithTasks(nodegw.NewRemoteImageTasks(client), h)),
+		nodegw.WithPaw(nodegw.NewPawNode(verifier)))
 	e.gateway = httptest.NewServer(r)
 	t.Cleanup(e.gateway.Close)
 	return e

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
+	"github.com/Wei-Shaw/sub2api/internal/relay/sign"
 	"github.com/Wei-Shaw/sub2api/internal/relay/transport"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"golang.org/x/sync/singleflight"
@@ -57,6 +58,31 @@ type ConfigCache struct {
 	onSwap []func(*relayv1.ConfigSnapshot)
 	// open 用本节点的加密私钥解开加密下发的部分（identity.OpenSealed）。
 	open func(sealed, aad []byte) ([]byte, error)
+	// tickets 是按当前快照建好的票据公钥集合（换快照后重建）。
+	tickets atomic.Pointer[ticketKeys]
+}
+
+type ticketKeys struct {
+	snap *relayv1.ConfigSnapshot
+	keys *sign.PublicKeys
+}
+
+// TicketKeys 返回快照里的票据公钥（验中转票据用，设计 8.1）；还没有快照或公钥无效时是空集合（所有票据都验不过）。
+func (c *ConfigCache) TicketKeys() *sign.PublicKeys {
+	snap := c.snap.Load()
+	if cached := c.tickets.Load(); cached != nil && cached.snap == snap {
+		return cached.keys
+	}
+	var list []*relayv1.SigningPublicKey
+	if snap != nil {
+		list = snap.TicketPublicKeys
+	}
+	keys, err := sign.NewPublicKeys(list)
+	if err != nil {
+		keys, _ = sign.NewPublicKeys(nil)
+	}
+	c.tickets.Store(&ticketKeys{snap: snap, keys: keys})
+	return keys
 }
 
 // SealedPayload 与 master.SealedPayload 的 JSON 相同（这里不依赖 master 包）。

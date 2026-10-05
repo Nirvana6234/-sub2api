@@ -63,6 +63,7 @@ type RouteOption func(*routeOptions)
 
 type routeOptions struct {
 	asyncImages *handler.AsyncImageHandler
+	paw         *PawNode
 }
 
 // WithAsyncImages 注册异步图片任务的提交与查询入口（nil 时这些入口交给主节点）。
@@ -276,6 +277,9 @@ func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatche
 		antigravityV1.POST("/messages/count_tokens", gh.CountTokens)
 		antigravityV1Beta := r.Group("/antigravity/v1beta", antigravityChain()...)
 		antigravityV1Beta.POST("/models/*modelAction", gh.GeminiV1BetaModels)
+	}
+	if ro.paw != nil {
+		ro.paw.register(r, h, gh, d, cfg)
 	}
 	r.NoRoute(bodyLimit, func(c *gin.Context) {
 		body, err := readBody(c)

@@ -438,6 +438,7 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 			NodeEncryptionKey: nodes.EncryptionKey,
 			ConfigVersion:     publisher.VersionFor,
 			VerifyVoucher:     r.VerifyVoucher,
+			VerifyTicket:      r.VerifyTicket,
 		})
 		control.AttachSelector(selector, server.Epoch())
 		RouteNodeEvents(events, selector)

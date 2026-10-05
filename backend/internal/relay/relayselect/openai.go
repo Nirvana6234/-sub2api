@@ -23,6 +23,10 @@ import (
 // Select 选号。目前接入 OpenAI 分组的 Responses、Chat Completions、Messages + API Key，其余返回"暂不支持"，
 // 由从节点交给主节点转发。
 func (s *selector) Select(ctx context.Context, nodeID int64, req *relayv1.SelectRequest) (*relayv1.SelectResponse, error) {
+	ctx = withCallingNode(ctx, nodeID)
+	if s.onSelect != nil {
+		s.onSelect(req)
+	}
 	ws := false
 	switch req.GetEndpoint() {
 	case relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_RESPONSES, relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_CHAT,
@@ -349,6 +353,7 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 // Admit 准入（设计 3.2）：中间件链的检查，不含分组模型白名单（从节点用快照里的分组在本地跑那个中间件，
 // 保持与单机相同的检查顺序；选号时这里再按请求里的模型名查一遍）。
 func (s *selector) Admit(ctx context.Context, nodeID int64, req *relayv1.AdmitRequest) (*relayv1.AdmitResponse, error) {
+	ctx = withCallingNode(ctx, nodeID)
 	adm, rej, err := s.admitAPIKey(ctx, req.GetApiKey(), req.GetClientIp(), req.GetMethod(), req.GetPath(), nil, autoGroupChoice{coldStart: true}, relayServedFor(req.GetPath())...)
 	if err != nil {
 		return nil, err
@@ -412,6 +417,10 @@ func (s *selector) resolveAutoGroup(choice autoGroupChoice) func(context.Context
 // 被拒时返回拒绝回复。
 // served 是这次允许的分组平台（不传时是 OpenAI 入口能接的 OpenAI、组合平台）；分组不在其中时回"暂不支持"。
 func (s *selector) admitAPIKey(ctx context.Context, rawKey, clientIP, method, path string, models []string, auto autoGroupChoice, served ...string) (middleware.RelayAPIKeyAdmission, *relayv1.SelectResponse, error) {
+	if isPawSession(rawKey) {
+		// 小白端请求：凭据是 PawResolve 回的会话句柄（内部 key 原文不在从节点上）。
+		return s.admitPawSession(ctx, rawKey, method, path, served)
+	}
 	adm, raw, err := middleware.EvaluateRelayAPIKeyAdmission(ctx, middleware.RelayAPIKeyAdmissionInput{
 		APIKeyAuthInput: middleware.APIKeyAuthInput{
 			APIKeys: s.deps.APIKeys, Subscriptions: s.deps.Subscriptions, Config: s.deps.Config,

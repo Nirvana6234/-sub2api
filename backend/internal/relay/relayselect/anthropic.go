@@ -485,6 +485,7 @@ func (s *selector) bindAnthropicSticky(sel *selectionRecord) {
 // Key 按准入同一段复查，解析当前分组配置的兜底分组（不合规就当没有），做计费资格复查（订阅为空，平台取兜底分组的），
 // 回兜底分组的 Key 快照；计费复查不过时回那个错误，从节点按它写。
 func (s *selector) SwitchFallbackGroup(ctx context.Context, nodeID int64, req *relayv1.SwitchFallbackGroupRequest) (*relayv1.SwitchFallbackGroupResponse, error) {
+	ctx = withCallingNode(ctx, nodeID)
 	none := &relayv1.SwitchFallbackGroupResponse{}
 	adm, rej, err := s.admitAPIKey(ctx, req.GetApiKey(), req.GetClientIp(), req.GetMethod(), req.GetPath(), nil,
 		autoGroupChoice{pinned: req.GetAutoGroupId()}, servedAnthropicFor(req.GetPath())...)

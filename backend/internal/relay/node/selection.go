@@ -53,6 +53,13 @@ func (s *SelectClient) ResolveRoute(ctx context.Context, req *relayv1.ResolveRou
 	return s.control.ResolveRoute(ctx, req)
 }
 
+// PawResolve 解析小白端转发接口的一次请求（设计 8.1）：主节点复查票据对应的用户，校验分组和模型，回会话句柄。只读，不带幂等键。
+func (s *SelectClient) PawResolve(ctx context.Context, req *relayv1.PawResolveRequest) (*relayv1.PawResolveResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, AdmitTimeout)
+	defer cancel()
+	return s.control.PawResolve(ctx, req)
+}
+
 // SwitchFallbackGroup 换到兜底分组（Antigravity 回 prompt 过长）。不幂等性要求：只读解析，出错按没换处理。
 func (s *SelectClient) SwitchFallbackGroup(ctx context.Context, req *relayv1.SwitchFallbackGroupRequest) (*relayv1.SwitchFallbackGroupResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, AdmitTimeout)

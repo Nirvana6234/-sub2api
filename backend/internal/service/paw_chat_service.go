@@ -252,6 +252,21 @@ func (s *PawChatService) PrepareMessages(ctx context.Context, userID, groupID in
 }
 
 func (s *PawChatService) Prepare(ctx context.Context, userID int64, req PawChatRequest) (*PawChatResolution, error) {
+	resolution, err := s.PrepareSelection(ctx, userID, req)
+	if err != nil {
+		return nil, err
+	}
+	body, err := s.BuildChatBody(ctx, userID, req)
+	if err != nil {
+		return nil, err
+	}
+	resolution.Body = body
+	return resolution, nil
+}
+
+// PrepareSelection 是 Prepare 里需要数据库的那一半：校验请求、定分组和模型、取内部 key（钉死在分组上）。不碰附件和请求体：
+// 主从分流下这一半在主节点做，请求体（带附件内容）由从节点用本机的附件服务拼（BuildChatBody）。
+func (s *PawChatService) PrepareSelection(ctx context.Context, userID int64, req PawChatRequest) (*PawChatResolution, error) {
 	if s == nil || s.config == nil || s.keySource == nil {
 		return nil, errPawKeyUnavailable
 	}
@@ -286,6 +301,16 @@ func (s *PawChatService) Prepare(ctx context.Context, userID int64, req PawChatR
 	if err != nil {
 		return nil, err
 	}
+	return &PawChatResolution{
+		APIKey:       resolvedKey,
+		Subscription: subscription,
+		Group:        group,
+		Model:        modelID,
+	}, nil
+}
+
+// BuildChatBody 拼发给网关的聊天请求体（把附件内容并进最后一条用户消息）。只用附件服务，不需要配置和 key 源。
+func (s *PawChatService) BuildChatBody(ctx context.Context, userID int64, req PawChatRequest) ([]byte, error) {
 	messages, err := s.buildPawChatMessages(ctx, userID, req.Messages, req.Attachments)
 	if err != nil {
 		return nil, err
@@ -296,7 +321,7 @@ func (s *PawChatService) Prepare(ctx context.Context, userID int64, req PawChatR
 		Stream          bool                    `json:"stream"`
 		ReasoningEffort string                  `json:"reasoning_effort,omitempty"`
 	}{
-		Model:           modelID,
+		Model:           strings.TrimSpace(req.ModelID),
 		Messages:        messages,
 		Stream:          req.Stream,
 		ReasoningEffort: strings.TrimSpace(req.Reasoning),
@@ -304,13 +329,7 @@ func (s *PawChatService) Prepare(ctx context.Context, userID int64, req PawChatR
 	if err != nil {
 		return nil, errPawKeyUnavailable.WithCause(err)
 	}
-	return &PawChatResolution{
-		Body:         body,
-		APIKey:       resolvedKey,
-		Subscription: subscription,
-		Group:        group,
-		Model:        modelID,
-	}, nil
+	return body, nil
 }
 
 // selectPawGroupModel 校验「这个用户能不能在这个分组里用这个模型」。

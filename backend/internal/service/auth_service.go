@@ -1929,6 +1929,9 @@ func hashToken(token string) string {
 	return hex.EncodeToString(hash[:])
 }
 
+// ResolvedTokenVersion 是用户当前的 token_version（登录态和中转票据比对用的同一个值，见 resolvedTokenVersion）。
+func ResolvedTokenVersion(user *User) int64 { return resolvedTokenVersion(user) }
+
 func resolvedTokenVersion(user *User) int64 {
 	if user == nil {
 		return 0

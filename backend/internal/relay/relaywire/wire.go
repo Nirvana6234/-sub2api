@@ -57,7 +57,12 @@ func ProvideMasterRuntime(
 	gemini *service.GeminiMessagesCompatService,
 	grokQuota *service.GrokQuotaService,
 	imageTasks *service.ImageTaskService,
+	pawConfig *service.PawConfigService,
 ) *master.Runtime {
+	// 小白端转发接口（/paw/*）的校验服务：与本地路由同一份代码；不带附件服务（附件在从节点）。
+	pawKeys := service.APIKeyPawChatKeySource{Service: apiKeys}
+	pawChat := service.NewPawChatService(pawConfig, pawKeys)
+	pawImages := service.NewPawImageService(pawConfig, pawKeys)
 	// 用户、分组、订阅作废时发布改动（平台配额在仓储层已接好，见 repository/wire.go）。
 	service.AttachAccessChangeHub(accessChanges, apiKeys, billing)
 	rt := master.NewRuntime(master.RuntimeDeps{
@@ -74,7 +79,7 @@ func ProvideMasterRuntime(
 			Config: cfg, APIKeys: apiKeys, Subscriptions: subscriptions, Settings: settingService,
 			Billing: billing, Gateway: gateway, AnthropicGateway: anthropicGateway, Concurrency: concurrency,
 			UserMsgQueue: userMsgQueue, RPM: rpm, Antigravity: antigravity, Gemini: gemini,
-			Moderation: moderation, Composite: composite, Ops: ops, Users: users, MediaEligibility: grokQuota, ImageTasks: imageTasks,
+			Moderation: moderation, Composite: composite, Ops: ops, Users: users, MediaEligibility: grokQuota, ImageTasks: imageTasks, PawChat: pawChat, PawImages: pawImages,
 		}),
 		VoucherPartitions: repository.NewRelayVoucherPartitions(db),
 		Sections:          forwardingSections(errorPassthrough, tlsProfiles),

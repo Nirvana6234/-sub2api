@@ -249,6 +249,9 @@ type world struct {
 	identity *memIdentity
 	// groups 是主节点分组仓储里的分组（解析兜底分组用；用例往里加）。
 	groups *memGroups
+	// ticketSigner、ticketPub：中转票据的签名密钥和公钥（小白端请求）。
+	ticketSigner *sign.Signer
+	ticketPub    *sign.PublicKeys
 }
 
 const testNode = int64(21)
@@ -327,6 +330,15 @@ func newWorldOn(t *testing.T, cfg *config.Config, balance float64, nodeID int64,
 	require.NoError(t, err)
 	pub, _, err := sign.PublicKeysFromRing(ring)
 	require.NoError(t, err)
+	// 中转票据的签名密钥（小白端 /paw 请求，主节点验票据、测试里签票据用）。
+	_, err = store.EnsureActive(keystore.PurposeTicket)
+	require.NoError(t, err)
+	ticketRing, err := store.Ring(keystore.PurposeTicket)
+	require.NoError(t, err)
+	ticketSigner, err := sign.NewSigner(ticketRing.Active)
+	require.NoError(t, err)
+	ticketPub, _, err := sign.PublicKeysFromRing(ticketRing)
+	require.NoError(t, err)
 
 	nodeKey, err := sealbox.GenerateKey()
 	require.NoError(t, err)
@@ -359,9 +371,14 @@ func newWorldOn(t *testing.T, cfg *config.Config, balance float64, nodeID int64,
 		VerifyVoucher: func(raw []byte, nodeID int64) (*relayv1.Voucher, error) {
 			return sign.VerifyVoucher(raw, pub, nodeID, time.Now())
 		},
+		VerifyTicket: func(token string, nodeID int64) (*relayv1.Ticket, error) {
+			v := sign.TicketVerifier{Keys: func() *sign.PublicKeys { return ticketPub }, NodeID: func() int64 { return nodeID }}
+			return v.Verify(token)
+		},
 	})
 	t.Cleanup(sel.Close)
-	return &world{keys: keys, sel: sel, slots: slots, nodeKey: nodeKey, pub: pub, leases: leases, quotas: quotas, identity: identity, groups: groupRepo}
+	return &world{keys: keys, sel: sel, slots: slots, nodeKey: nodeKey, pub: pub, leases: leases, quotas: quotas, identity: identity, groups: groupRepo,
+		ticketSigner: ticketSigner, ticketPub: ticketPub}
 }
 
 func apiKeyAccount(id int64, name string) service.Account {

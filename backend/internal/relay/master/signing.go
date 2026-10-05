@@ -156,6 +156,20 @@ func (r *Runtime) VerifyVoucher(raw []byte, reportingNodeID int64) (*relayv1.Vou
 	return sign.VerifyVoucher(raw, pub, reportingNodeID, r.now())
 }
 
+// VerifyTicket 验一张中转票据（小白端请求，从节点转来解析时）。nodeID 是转来的节点（取自主从连接的证书）：
+// 票据只能在签给的那台节点上用。不查吊销表（用户状态和 token_version 在选号时复查，设计 8.1）。
+func (r *Runtime) VerifyTicket(token string, nodeID int64) (*relayv1.Ticket, error) {
+	s, err := r.signing()
+	if err != nil {
+		return nil, err
+	}
+	s.mu.RLock()
+	pub := s.ticketPub
+	s.mu.RUnlock()
+	v := sign.TicketVerifier{Keys: func() *sign.PublicKeys { return pub }, NodeID: func() int64 { return nodeID }, Now: r.now}
+	return v.Verify(token)
+}
+
 // TicketPublicKeys 返回当前的票据公钥（测试和诊断用；从节点从配置快照取）。
 func (r *Runtime) TicketPublicKeys() (*sign.PublicKeys, error) {
 	s, err := r.signing()

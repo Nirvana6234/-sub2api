@@ -1,4 +1,4 @@
-# 主从节点架构设计（v0.22，2026-10-05）
+# 主从节点架构设计（v0.23，2026-10-05）
 
 > 状态：开发中（分支 `feat/master-relay-nodes`，进度见开发计划）。本文只记录当前结论；历史版本不再保留在正文里。开发计划见 `docs/MASTER_RELAY_NODES_PLAN.md`。
 > 代码引用按 2026-09-25 的 main（`c652d850`）核对；行号会漂移，引用处同时写了函数名，以函数名为准。
@@ -515,6 +515,12 @@ cyber 策略：
   主从模式下这一步在主节点做：从节点首次为这个用户（和分组）申请额度时，主节点解析，必要时创建，把内部 Key ID 随额度返回；从节点按（用户, 分组）缓存。
   内部 Key 被删除、重建时主节点推送作废。4.1 的 Key 维度额度记在内部 Key 上。
 - 内部 Key 不导出，不走 10.2 的节点分配和规则；它只能通过票据在分配给这个用户的从节点上使用。
+
+**实现状态（v0.23）**：`/api/v1/paw/{files,chat/completions,responses,messages,messages/count_tokens,images/generations,images/edits,systemone}` 已在从节点上提供。
+- 票据在从节点本地验（签名、有效期、签给本节点、吊销表，错误码与 `jwtAuth` 一致）；之后每个请求发 `PawResolve`：主节点用同一个票据验证器再验一次，复查用户（存在、启用、`token_version`——与 `GetByIDForAuth` 同一个值）和后台模式（管理员放行），再跑本地 /paw 同一段服务代码（`PawChatService.PrepareSelection / PrepareResponses / PrepareMessages`、`PawImageService.ValidateGeneration`，聊天的"校验"和"拼请求体"拆开了：校验在主节点，请求体带附件内容在从节点用本机附件服务拼）、TypeSafe 分组拒绝和组合平台选目标，回**会话句柄**。错误体用本地同样的两种写法（`{"error":{"code","message"}}`；`/paw/messages` 是 Anthropic 形状）。
+- **内部 key 的原文不离开主节点**：从节点拿到的是 key 快照（不含原文）和一个不透明的句柄，选号、换组（`SwitchAutoGroup`、`SwitchFallbackGroup`）等调用都用句柄代替 API Key 原文放进凭据字段；主节点在 `admitAPIKey` 里认句柄：句柄存在且签给调用的这台节点、没过期（30 分钟，只为覆盖一次请求里的重试），**每次使用都复查用户**（启用、`token_version`）——所以改密码后哪怕从节点还没收到吊销，下一次选号也被拒。句柄只存在主节点内存里（重启作废，进行中的请求最多在下一次选号时失败）。
+- 不跑 API Key 的鉴权链（IP 白名单、全局黑名单、自动分组、分组模型白名单）：本地 /paw 本来就不过那条链（只有 `/paw/systemone` 单独挂分组白名单，从节点同样挂）。
+- 面板限流（`panelRateLimiter`，记在 Redis）不在从节点做：转发请求的并发由主节点选号时的用户并发槽限制。`/paw/files` 只在从节点本地（附件在内存，不查主节点，所以改密码后到票据过期前仍能上传——不影响用上游额度）。`/paw/config`、`/paw/auto-group`、`PUT /paw/config/defaults` 仍只在主节点（登录态）。
 
 ### 8.2 API Key
 

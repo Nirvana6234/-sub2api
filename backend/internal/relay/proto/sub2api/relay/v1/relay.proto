@@ -117,6 +117,10 @@ service RelayControl {
   // 上次确认以来新用的次数，主节点加进全局计数，回每个服务当前的上限、已用和这台可用的份额（剩余按在线节点分摊）。
   // 带幂等键：回复丢了重发同一份，只加一次。
   rpc ReportWebSearchUsage(WebSearchUsageReport) returns (WebSearchUsageShares);
+  // 小白端转发接口（/paw/*）：从节点验过票据后，每个请求向主节点解析（设计 8.1）。主节点复查用户（存在、启用、token_version、
+  // 后台模式），按本地 /paw 同一段服务代码（PawChatService / PawImageService）校验分组和模型、取内部 key 钉死在分组上，回一个
+  // 不透明的会话句柄：之后这次请求的选号、换组等调用用它代替 API Key 原文，**内部 key 的原文不离开主节点**。
+  rpc PawResolve(PawResolveRequest) returns (PawResolveResponse);
 }
 
 // 任务连接：异步图片任务（设计 14）。任务状态在主节点（Redis），从节点接到提交后登记、执行完报结果，轮询落在任何节点都向主节点查。
@@ -1038,6 +1042,53 @@ message RecordFlaggedHashResponse {}
 message WebSearchUsageReport {
   // 搜索服务类型 -> 上次确认以来这台新用的次数。
   map<string, int64> used = 1;
+}
+
+message PawResolveRequest {
+  enum Op {
+    OP_UNSPECIFIED = 0;
+    // /paw/chat/completions：request_json 是 PawChatRequest（附件只带引用，内容在从节点）。
+    OP_CHAT = 1;
+    // /paw/responses：group_id 取自 X-Paw-Group-Id（0 = 自动分组），model_id 是请求体里读出的模型。
+    OP_RESPONSES = 2;
+    // /paw/messages、/paw/messages/count_tokens（count_tokens）：group_id 取自 X-Paw-Group-Id，model_id 是请求体里的模型。
+    OP_MESSAGES = 3;
+    // /paw/images/generations、/paw/images/edits：request_json 是 PawImageGenerationRequest。
+    OP_IMAGES = 4;
+    // /paw/systemone（TypeSafe 意图判断）：group_id 取自 X-Paw-Group-Id，分组必须是 TypeSafe 平台。
+    OP_SYSTEMONE = 5;
+  }
+  Op op = 1;
+  // 中转票据原文（Authorization: Bearer）。
+  string ticket = 2;
+  string client_ip = 3;
+  // 入口路径和方法（错误响应、组合平台的入口类型按它）。
+  string method = 4;
+  string path = 5;
+  int64 group_id = 6;
+  string model_id = 7;
+  bool count_tokens = 8;
+  bytes request_json = 9;
+}
+
+message PawResolveResponse {
+  oneof result {
+    PawResolution resolution = 1;
+    // 票据 / 用户复查不过，或本地 /paw 同一处会写的错误（原样的状态码和响应体）。
+    SelectRejection rejection = 2;
+  }
+}
+
+message PawResolution {
+  // 会话句柄：代替 API Key 原文放进之后各个调用的凭据字段。
+  string session = 1;
+  // 内部 key 的快照（钉死在分组上）和订阅（keycodec 编码，不含 key 原文）。
+  bytes api_key = 2;
+  bytes subscription = 3;
+  // 校验后的模型（聊天、Responses）或图片模型。
+  string model = 4;
+  // 组合平台分组按模型选定的走向（service.CompositeRouteDecision 的 JSON；没匹配时为空）。
+  bytes composite_decision = 5;
 }
 
 message ImageTaskRequest {

@@ -36,6 +36,11 @@ func captureRejection(method, path string, write func(c *gin.Context)) *Captured
 	return out
 }
 
+// CaptureResponse 在一个临时 gin 上下文里运行 write，收集它写出的响应（主节点按本地写法生成拒绝，交给从节点原样写出）。
+func CaptureResponse(method, path string, write func(c *gin.Context)) *CapturedRejection {
+	return captureRejection(method, path, write)
+}
+
 // RelayAPIKeyAdmissionInput 是主节点复查 API Key 请求的输入。
 type RelayAPIKeyAdmissionInput struct {
 	APIKeyAuthInput

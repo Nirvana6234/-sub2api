@@ -67,6 +67,7 @@ func compositeServedBy(apiKey *service.APIKey, decision service.CompositeRouteDe
 // ResolveRoute 见 RelayControl.ResolveRoute：Key 按准入同一段复查，自动分组 Key 按模型选分组（带了已定的分组时
 // 只核对），组合平台分组按模型选目标。
 func (s *selector) ResolveRoute(ctx context.Context, nodeID int64, req *relayv1.ResolveRouteRequest) (*relayv1.ResolveRouteResponse, error) {
+	ctx = withCallingNode(ctx, nodeID)
 	adm, rej, err := s.admitAPIKey(ctx, req.GetApiKey(), req.GetClientIp(), req.GetMethod(), req.GetPath(), nil,
 		autoGroupChoice{pinned: req.GetAutoGroupId(), model: req.GetModel()}, relayServedFor(req.GetPath())...)
 	if err != nil {

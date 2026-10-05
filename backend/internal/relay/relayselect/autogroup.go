@@ -12,6 +12,7 @@ import (
 // 复查（核对当前分组是候选），把当前分组记为失败，按同一个选组器选下一个这次请求没试过的候选；订阅按本地的规则换。
 // 换到的分组顺带做计费资格复查，结果交给从节点在本地复查的那一处用。
 func (s *selector) SwitchAutoGroup(ctx context.Context, nodeID int64, req *relayv1.SwitchAutoGroupRequest) (*relayv1.SwitchAutoGroupResponse, error) {
+	ctx = withCallingNode(ctx, nodeID)
 	none := &relayv1.SwitchAutoGroupResponse{}
 	current := req.GetCurrentGroupId()
 	if current == 0 || req.GetModel() == "" {
@@ -60,7 +61,8 @@ func (s *selector) SwitchAutoGroup(ctx context.Context, nodeID int64, req *relay
 func (s *selector) ReportAutoGroupResult(ctx context.Context, nodeID int64, req *relayv1.AutoGroupResult) (*relayv1.AutoGroupResultAck, error) {
 	ack := &relayv1.AutoGroupResultAck{}
 	groupID := req.GetGroupId()
-	if groupID <= 0 || req.GetModel() == "" {
+	if groupID <= 0 || req.GetModel() == "" || isPawSession(req.GetApiKey()) {
+		// 小白端请求没有自动分组观察（本地 /paw 不过自动分组中间件）。
 		return ack, nil
 	}
 	apiKey, err := s.deps.APIKeys.GetByKey(ctx, req.GetApiKey())

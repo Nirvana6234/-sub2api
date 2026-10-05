@@ -53,6 +53,9 @@ type Deps struct {
 	Ops *service.OpsService
 	// Users 取违规通知的收件人（主节点库里的用户邮箱）；nil 时不发信。
 	Users service.UserRepository
+	// PawChat、PawImages 是小白端转发接口（/paw/*）的校验服务（本地 /paw 路由同一个；PawChat 不带附件服务：附件在从节点）。
+	PawChat   *service.PawChatService
+	PawImages *service.PawImageService
 	// ImageTasks 是异步图片任务服务（任务状态在主节点的 Redis，结果转存到对象存储）；nil 时这个功能不可用。
 	ImageTasks *service.ImageTaskService
 	// MediaEligibility 探测 Grok 账号有没有媒体生成资格（billing_unobserved 时）；nil 时这种账号按没有资格。
@@ -102,6 +105,10 @@ type selector struct {
 	observeAutoGroup func(apiKey *service.APIKey, model string, status int, firstTokenMs *int64)
 
 	stopReaper context.CancelFunc
+	// paw：小白端请求的会话句柄（paw.go）。
+	paw pawSessions
+	// onSelect 在每次选号开始时调用（测试里记下从节点发来的凭据等）。
+	onSelect func(*relayv1.SelectRequest)
 	// admitted：各节点最近准入过的用户（违规上报只认这些，moderation.go）。
 	admitted admittedUsers
 	// webSearchManager 取联网搜索管理器（默认 service.CurrentWebSearchManager；测试替换）。
