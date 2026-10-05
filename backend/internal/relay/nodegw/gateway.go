@@ -158,13 +158,17 @@ func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatche
 	})
 }
 
-// servesAnthropicRoutes 报告这次请求走 Anthropic 网关：Anthropic 平台的分组（含组合平台选到 Anthropic 的），或没有分组的
-// Key（后台允许未分组 Key 调度时，本地同样走 Anthropic 网关）。
+// servesAnthropicRoutes 报告这次请求走 Anthropic 网关（Messages、count_tokens）：Anthropic、Gemini、Antigravity 平台的分组（含组合平台
+// 选到 Anthropic / Gemini 的），或没有分组的 Key（后台允许未分组 Key 调度时，本地同样走 Anthropic 网关）。
 func servesAnthropicRoutes(c *gin.Context, key *service.APIKey) bool {
 	if key == nil {
 		return false
 	}
-	return key.Group == nil || servedPlatform(c, key) == service.PlatformAnthropic
+	switch servedPlatform(c, key) {
+	case service.PlatformAnthropic, service.PlatformGemini, service.PlatformAntigravity:
+		return true
+	}
+	return key.Group == nil
 }
 
 // relayStickyCache 是 Antigravity 转发服务在从节点上的缓存：除了转发路径上清粘性会话绑定（限流、重试失败时）作为账号事件交给

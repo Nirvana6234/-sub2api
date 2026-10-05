@@ -325,33 +325,43 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	hasBoundSession := sessionKey != "" && sessionBoundAccountID > 0
 
 	if platform == service.PlatformGemini {
-		if h.relay != nil {
-			// 从节点还没接 Gemini 平台（主节点选号时也不会让它走到这里）：交给主节点转发。
-			h.relay.HandOff(c)
-			return
-		}
 		fs := NewFailoverState(h.maxAccountSwitchesGemini, hasBoundSession)
 
 		// 单账号分组提前设置 SingleAccountRetry 标记，让 Service 层首次 503 就不设模型限流标记。
 		// 避免单账号分组收到 503 (MODEL_CAPACITY_EXHAUSTED) 时设 29s 限流，导致后续请求连续快速失败。
-		if h.gatewayService.IsSingleAntigravityAccountGroup(c.Request.Context(), apiKey.GroupID) {
+		// （从节点：主节点在第一次选号时查好，随选号带下来。）
+		if h.relay == nil && h.gatewayService.IsSingleAntigravityAccountGroup(c.Request.Context(), apiKey.GroupID) {
 			ctx := service.WithSingleAccountRetry(c.Request.Context(), true, h.metadataBridgeEnabled())
 			c.Request = c.Request.WithContext(ctx)
 		}
 
+		var geminiRelayAttempt *OpenAIRelayAttempt
 		for {
 			var err error
-			onTick, cannotWait := h.anthropicAdmissionWaitHooks(c, reqStream, &streamStarted)
-			outcome := AnthropicAccountAdmitter{Gateway: h.gatewayService, Concurrency: h.concurrencyHelper}.SelectAndAdmit(c.Request.Context(), AnthropicSelectRequest{
-				GroupID: apiKey.GroupID, SessionKey: sessionKey, Model: reqModel, Excluded: fs.FailedAccountIDs, // Gemini 不使用会话限制
-				Intercept: func() InterceptType {
-					return detectInterceptType(body, reqModel, parsedReq.MaxTokens, isClaudeCodeClient)
-				},
-				OnAccountChosen: func(selection *service.AccountSelectionResult) {
-					setOpsSelectedAccount(c, selection.Account.ID, selection.Account.Platform)
-				},
-				OnTick: onTick, CannotWait: cannotWait,
-			}, reqLog)
+			var outcome AnthropicSelectOutcome
+			if h.relay != nil {
+				// 从节点：选号与准入经主节点（会话、粘性绑定的账号在主节点第一次选号时定下，换号状态在这里）。
+				var written bool
+				outcome, geminiRelayAttempt, written = h.relayAnthropicSelect(c, fs, apiKey, reqModel, reqStream, sessionKey, parsedReq, body, isClaudeCodeClient, platform, streamStarted, reqLog)
+				if written {
+					return
+				}
+				if geminiRelayAttempt != nil {
+					hasBoundSession = sessionKey != "" && geminiRelayAttempt.StickyBoundAccountID > 0
+				}
+			} else {
+				onTick, cannotWait := h.anthropicAdmissionWaitHooks(c, reqStream, &streamStarted)
+				outcome = AnthropicAccountAdmitter{Gateway: h.gatewayService, Concurrency: h.concurrencyHelper}.SelectAndAdmit(c.Request.Context(), AnthropicSelectRequest{
+					GroupID: apiKey.GroupID, SessionKey: sessionKey, Model: reqModel, Excluded: fs.FailedAccountIDs, // Gemini 不使用会话限制
+					Intercept: func() InterceptType {
+						return detectInterceptType(body, reqModel, parsedReq.MaxTokens, isClaudeCodeClient)
+					},
+					OnAccountChosen: func(selection *service.AccountSelectionResult) {
+						setOpsSelectedAccount(c, selection.Account.ID, selection.Account.Platform)
+					},
+					OnTick: onTick, CannotWait: cannotWait,
+				}, reqLog)
+			}
 			if outcome.Kind == AnthropicSelectFailed {
 				err := outcome.Err
 				if len(fs.FailedAccountIDs) == 0 {
@@ -525,6 +535,14 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			forceCacheBilling := fs.ForceCacheBilling
 			quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 			sessionID := service.ExtractClientSessionID(c)
+			if h.relay != nil {
+				// 从节点：写进本地扣费队列，主节点按凭证用同一个 RecordUsage 入账。
+				h.relay.SubmitAnthropicUsage(c, geminiRelayAttempt, OpenAIUsageFacts{
+					InboundEndpoint: inboundEndpoint, UpstreamEndpoint: upstreamEndpoint, UserAgent: userAgent,
+					IPAddress: clientIP, RequestPayloadHash: requestPayloadHash, SessionID: sessionID,
+				}, result, forceCacheBilling)
+				return
+			}
 			h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 				if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 					Result:             result,

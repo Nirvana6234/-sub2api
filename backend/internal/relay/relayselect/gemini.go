@@ -147,7 +147,7 @@ func (s *selector) selectGeminiNative(ctx context.Context, nodeID int64, req *re
 		return gatewayRejection(handler.GeminiSelectOutcomeRejection(outcome)), nil
 	}
 
-	if !s.geminiServed(outcome.Account) {
+	if !s.geminiServed(outcome.Account, true) {
 		// 过渡闸门：从节点接不了这种账号。放掉槽位，交给主节点转发。
 		if outcome.Release != nil {
 			outcome.Release()
@@ -242,10 +242,11 @@ func (s *selector) releaseGeminiAttempt(sel *selectionRecord, rel *relayv1.Selec
 	}
 }
 
-// geminiServed 报告从节点现在能不能转发这个账号（Gemini 原生入口）：Gemini 平台的 API Key、OAuth（Code Assist / Google One /
+// geminiServed 报告从节点现在能不能转发这个账号（Gemini 原生入口 native 为 true；Gemini 平台的 Messages 为 false，那里 Antigravity
+// 账号一律走 Antigravity 转发）：Gemini 平台的 API Key、OAuth（Code Assist / Google One /
 // AI Studio）、服务账号（Vertex，token 由主节点换好随凭据下发），以及混合调度进来的 Antigravity 账号（Google token 由主节点给，
 // 转发路径上的账号状态写入交主节点；API Key 类型的 Antigravity 账号走 Gemini 转发）。
-func (s *selector) geminiServed(a *service.Account) bool {
+func (s *selector) geminiServed(a *service.Account, native bool) bool {
 	if a == nil {
 		return false
 	}
@@ -253,7 +254,7 @@ func (s *selector) geminiServed(a *service.Account) bool {
 	case service.PlatformGemini:
 		return s.deps.Gemini != nil
 	case service.PlatformAntigravity:
-		if a.Type == service.AccountTypeAPIKey {
+		if native && a.Type == service.AccountTypeAPIKey {
 			return s.deps.Gemini != nil
 		}
 		return s.deps.Antigravity != nil

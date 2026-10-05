@@ -58,12 +58,12 @@ func (s *selector) selectAnthropic(ctx context.Context, nodeID int64, req *relay
 		}
 		apiKey, subscription = fallbackKey, nil
 	}
-	// 组合平台分组：按改写前的公开模型选目标（本地 compositeTarget 中间件），只接选到 Anthropic 的，其余交给主节点。
+	// 组合平台分组：按改写前的公开模型选目标（本地 compositeTarget 中间件），只接选到 Anthropic 或 Gemini 的，其余交给主节点。
 	composite, err := s.resolveComposite(ctx, apiKey, req.GetRouteModel(), req.GetPath())
 	if err != nil {
 		return nil, err
 	}
-	if !compositeServedBy(apiKey, composite, service.PlatformAnthropic) {
+	if !compositeServedBy(apiKey, composite, service.PlatformAnthropic) && !compositeServedBy(apiKey, composite, service.PlatformGemini) {
 		return unsupported(), nil
 	}
 	ctx = service.WithCompositeRouteDecision(ctx, composite)
@@ -75,6 +75,9 @@ func (s *selector) selectAnthropic(ctx context.Context, nodeID int64, req *relay
 	} else if target, ok := service.ResolvedTargetPlatformFromContext(ctx); ok {
 		platform = target
 	}
+	// Gemini 平台的 Messages（本地 GatewayHandler.Messages 的 platform == gemini 分支）：Gemini 不使用会话数限制、换号上限用
+	// Gemini 的、没有指纹，账号用完不做粘性续期、不放会话数注册。
+	isGemini := platform == service.PlatformGemini
 	log := zap.NewNop()
 
 	channelMapping, _ := gw.ResolveChannelMappingAndRestrict(ctx, origKey.GroupID, reqModel)
@@ -134,11 +137,15 @@ func (s *selector) selectAnthropic(ctx context.Context, nodeID int64, req *relay
 	for _, id := range req.GetExcludedAccountIds() {
 		excluded[id] = struct{}{}
 	}
-	outcome := s.anthropicAdmitter.SelectAndAdmit(attemptCtx, handler.AnthropicSelectRequest{
+	selectReq := handler.AnthropicSelectRequest{
 		GroupID: apiKey.GroupID, SessionKey: record.sessionKey, Model: reqModel, Excluded: excluded,
 		MetadataUserID: req.GetMetadataUserId(), UserID: userID,
 		Intercept: func() handler.InterceptType { return handler.InterceptType(req.GetInterceptType()) },
-	}, log)
+	}
+	if isGemini {
+		selectReq.MetadataUserID, selectReq.UserID = "", 0 // Gemini 不使用会话限制
+	}
+	outcome := s.anthropicAdmitter.SelectAndAdmit(attemptCtx, selectReq, log)
 
 	if ctx.Err() != nil {
 		// 从节点已经不等了（本地：failoverClientGone 先于一切错误处理）。
@@ -174,20 +181,25 @@ func (s *selector) selectAnthropic(ctx context.Context, nodeID int64, req *relay
 		return gatewayRejection(handler.AnthropicSelectOutcomeRejection(outcome)), nil
 	}
 
-	if !s.anthropicServed(outcome.Account) {
-		// 过渡：从节点还不能转发这种账号（OAuth、Bedrock、Vertex、Antigravity，开发计划总账）。放掉槽位和会话注册，
-		// 交给主节点转发。
+	served := s.anthropicServed(outcome.Account)
+	if isGemini {
+		served = s.geminiServed(outcome.Account, false)
+	}
+	if !served {
+		// 过渡：从节点还不能转发这种账号。放掉槽位和会话注册，交给主节点转发。
 		if outcome.Release != nil {
 			outcome.Release()
 		}
-		gw.ReleaseAccountSession(context.Background(), outcome.Account, record.sessionKey)
+		if !isGemini {
+			gw.ReleaseAccountSession(context.Background(), outcome.Account, record.sessionKey)
+		}
 		return unsupported(), nil
 	}
 
 	sel := &selectionRecord{
 		id: newSelectionID(), nodeID: nodeID, request: record, account: outcome.Account, release: outcome.Release,
 		createdAt: s.now(), quota: quotaReq, groupID: groupID, userID: userID, apiKeyID: apiKey.ID, apiKey: apiKey,
-		anthropic: true, channelGroupID: groupIDOf(origKey),
+		anthropic: !isGemini, gemini: isGemini, channelGroupID: groupIDOf(origKey),
 	}
 	picked := handler.OpenAISelectOutcome{Kind: handler.OpenAISelected, Account: outcome.Account, Ctx: outcome.Ctx, SessionHash: record.sessionKey}
 	resp, rej, err := s.buildSelection(ctx, nodeID, req, sel, picked, forwardModel, reqModel, channelMapping, subscription, true)
@@ -205,18 +217,26 @@ func (s *selector) selectAnthropic(ctx context.Context, nodeID int64, req *relay
 		return nil, err
 	}
 	selection := resp.GetSelection()
-	if err := s.attachIdentity(ctx, selection, outcome.Account, req.GetFingerprintHeaders()); err != nil {
-		s.ungrant(sel.userID, nodeID, selection.GetGrants())
-		if outcome.Release != nil {
-			outcome.Release()
+	if !isGemini {
+		if err := s.attachIdentity(ctx, selection, outcome.Account, req.GetFingerprintHeaders()); err != nil {
+			s.ungrant(sel.userID, nodeID, selection.GetGrants())
+			if outcome.Release != nil {
+				outcome.Release()
+			}
+			return nil, err
 		}
-		return nil, err
 	}
 	selection.StickyBoundAccountId = record.stickyBound
 	selection.SingleAccountRetry = record.singleAccountRetry
 	selection.MaxAccountSwitches = int32(anthropicDefaultMaxAccountSwitches)
 	if cfg := s.deps.Config; cfg != nil && cfg.Gateway.MaxAccountSwitches > 0 {
 		selection.MaxAccountSwitches = int32(cfg.Gateway.MaxAccountSwitches)
+	}
+	if isGemini {
+		selection.MaxAccountSwitches = int32(geminiDefaultMaxAccountSwitches)
+		if cfg := s.deps.Config; cfg != nil && cfg.Gateway.MaxAccountSwitchesGemini > 0 {
+			selection.MaxAccountSwitches = int32(cfg.Gateway.MaxAccountSwitchesGemini)
+		}
 	}
 	s.addSelection(sel)
 	selected = true
@@ -287,6 +307,10 @@ func (s *selector) nodeServesAnthropicAccount(a *service.Account) bool {
 	if a.Platform == service.PlatformAntigravity {
 		// 开了混合调度进 Anthropic 分组的 Antigravity 账号：主节点装了 Antigravity 转发服务（取 token、照写账号状态）才接。
 		return s.deps.Antigravity != nil
+	}
+	if a.Platform == service.PlatformGemini {
+		// count_tokens 选到的 Gemini 账号（本地转发时回"不支持"，同一段代码在从节点上跑）。
+		return s.geminiServed(a, false)
 	}
 	if a.Platform != service.PlatformAnthropic {
 		return false

@@ -392,9 +392,10 @@ var (
 	// openAIServedPlatforms 是 OpenAI 入口经从节点能接的分组平台。
 	openAIServedPlatforms = []string{service.PlatformOpenAI, service.PlatformComposite}
 	// anthropicServedPlatforms 是 Anthropic Messages 入口经从节点能接的分组平台（组合平台分组只接选到 Anthropic 目标的）。
-	anthropicServedPlatforms = []string{service.PlatformAnthropic, service.PlatformComposite, noGroupPlatform}
+	// Gemini 平台的 Messages（本地 platform == gemini 分支）和 Antigravity 平台分组的 Messages 也走这个入口。
+	anthropicServedPlatforms = []string{service.PlatformAnthropic, service.PlatformGemini, service.PlatformAntigravity, service.PlatformComposite, noGroupPlatform}
 	// relayServedPlatforms 是准入、定走向时放行的分组平台（哪个入口接由从节点的路由按分组平台再分）。
-	relayServedPlatforms = []string{service.PlatformOpenAI, service.PlatformComposite, service.PlatformAnthropic, noGroupPlatform}
+	relayServedPlatforms = []string{service.PlatformOpenAI, service.PlatformComposite, service.PlatformAnthropic, service.PlatformGemini, service.PlatformAntigravity, noGroupPlatform}
 	// geminiServedPlatforms 是 Gemini 原生入口（/v1beta）经从节点能接的分组平台（组合平台分组只接选到 Gemini 或没有匹配目标的）。
 	geminiServedPlatforms = []string{service.PlatformGemini, service.PlatformComposite}
 )

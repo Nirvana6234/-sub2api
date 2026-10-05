@@ -320,3 +320,49 @@ func TestNodeWritesGeminiBodyTooLargeInGoogleFormat(t *testing.T) {
 	require.Len(t, e.hits, 0)
 	e.world.waitReleased(t)
 }
+
+// Gemini 分组的 /v1/messages（本地 Messages 的 platform == gemini 分支）经从节点：与 Anthropic 一样走 Messages 选号，Gemini 不使用会话数限制，
+// 用量同一个记录种类；Claude 格式的请求由转发服务转成 Gemini 请求。
+func TestNodeServesMessagesOnAGeminiGroup(t *testing.T) {
+	e := startE2EWith(t, func(upstream string) []service.Account {
+		a := geminiAccount(1, "gem")
+		a.Credentials["base_url"] = upstream
+		return []service.Account{a}
+	})
+	status, body := e.post(t, "/v1/messages", "sk-gemini", `{"model":"gemini-2.5-pro","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`)
+	require.Equal(t, http.StatusOK, status, body)
+	require.Contains(t, body, "hello")
+	hit := waitHit(t, e, func(r *http.Request) bool { return strings.HasPrefix(r.URL.Path, "/v1beta/models/gemini-2.5-pro:") })
+	require.Equal(t, "SECRET-gem", hit.Header.Get("x-goog-api-key"))
+	require.Eventually(t, func() bool { return len(e.settler.records()) == 1 }, 5*time.Second, 20*time.Millisecond)
+	rec := e.settler.records()[0]
+	require.Equal(t, relayv1.UsageRecordKind_USAGE_RECORD_KIND_ANTHROPIC, rec.GetKind())
+	require.Equal(t, int64(10), mustVoucher(t, e, rec).GetGroupId())
+	e.world.waitReleased(t)
+
+	// count_tokens：不计费，选号后由本地同一个转发代码处理（Gemini 平台的账号也经从节点）。
+	status, body = e.post(t, "/v1/messages/count_tokens", "sk-gemini", `{"model":"gemini-2.5-pro","messages":[{"role":"user","content":"hi"}]}`)
+	require.Equal(t, http.StatusOK, status, body)
+	require.Contains(t, body, "input_tokens")
+	e.world.waitReleased(t)
+}
+
+// Gemini 平台的 Messages：选号不带会话数限制、换号上限用 Gemini 的、不带指纹；用完不做粘性续期（本地这个分支没有）。
+func TestSelectGeminiPlatformMessagesFollowsTheGeminiBranch(t *testing.T) {
+	ctx := context.Background()
+	cache := &countingSticky{bound: map[string]int64{}}
+	useGatewayCache(t, cache)
+	w := newWorld(t, config.RunModeStandard, geminiAccount(1, "one"))
+	req := anthropicMessagesRequest("m1", 1, "sk-gemini")
+	req.Model, req.SessionHash, req.MetadataUserId = "gemini-2.5-pro", "gemini:abc", "user_x"
+	resp, err := w.sel.Select(ctx, testNode, req)
+	require.NoError(t, err)
+	sel := resp.GetSelection()
+	require.NotNil(t, sel, "rejection: %+v", resp.GetRejection())
+	require.Equal(t, int32(3), sel.GetMaxAccountSwitches())
+	require.Empty(t, sel.GetFingerprint())
+	before := cache.sets
+	w.sel.Release(testNode, &relayv1.SelectionRelease{SelectionId: sel.GetSelectionId(), RequestDone: true, ForwardSucceeded: true})
+	w.waitReleased(t)
+	require.Equal(t, before, cache.sets, "no sticky refresh after a successful Gemini Messages forward (the local branch does not do it)")
+}

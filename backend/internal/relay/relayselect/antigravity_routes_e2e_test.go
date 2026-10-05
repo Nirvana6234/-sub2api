@@ -113,3 +113,21 @@ func TestNodeClearsTheForcedPlatformOnTheFallbackGroup(t *testing.T) {
 	}, 5*time.Second, 20*time.Millisecond, "served by the fallback group's Anthropic account")
 	e.world.waitReleased(t)
 }
+
+// Antigravity 平台的分组（不是混合调度）的 /v1/messages 也经从节点：本地 Messages 的通用循环，账号是 Antigravity 账号。
+func TestNodeServesMessagesOnAnAntigravityGroup(t *testing.T) {
+	accounts := []service.Account{antigravityOAuthAccount(1, 11)}
+	accounts[0].Extra = nil
+	e := startStandardE2E(t, func(string) []service.Account { return accounts })
+	useAntigravity(e.world, accounts)
+	group := openAIGroup(11)
+	group.Platform = service.PlatformAntigravity
+	e.world.keys.keys["sk-ag"] = testKey("sk-ag", 16, group)
+
+	status, body := e.post(t, "/v1/messages", "sk-ag", `{"model":"claude-sonnet-4-5","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`)
+	require.Equal(t, http.StatusOK, status, body)
+	require.Contains(t, body, "hello")
+	require.Eventually(t, func() bool { return len(e.settler.records()) == 1 }, 5*time.Second, 20*time.Millisecond)
+	require.Equal(t, int64(11), mustVoucher(t, e, e.settler.records()[0]).GetGroupId())
+	e.world.waitReleased(t)
+}
