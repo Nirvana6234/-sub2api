@@ -34,7 +34,7 @@ func (s *selector) Select(ctx context.Context, nodeID int64, req *relayv1.Select
 		ws = true
 	case relayv1.SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_MESSAGES, relayv1.SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_COUNT_TOKENS,
 		relayv1.SelectEndpoint_SELECT_ENDPOINT_GEMINI_NATIVE, relayv1.SelectEndpoint_SELECT_ENDPOINT_GATEWAY_RESPONSES,
-		relayv1.SelectEndpoint_SELECT_ENDPOINT_GATEWAY_CHAT:
+		relayv1.SelectEndpoint_SELECT_ENDPOINT_GATEWAY_CHAT, relayv1.SelectEndpoint_SELECT_ENDPOINT_GATEWAY_SYSTEMONE:
 	default:
 		return unsupported(), nil
 	}
@@ -52,6 +52,8 @@ func (s *selector) Select(ctx context.Context, nodeID int64, req *relayv1.Select
 		resp, err = s.selectAnthropicCountTokens(ctx, nodeID, req)
 	case req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_GEMINI_NATIVE:
 		resp, err = s.selectGeminiNative(ctx, nodeID, req)
+	case req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_GATEWAY_SYSTEMONE:
+		resp, err = s.selectSystemOne(ctx, nodeID, req)
 	case req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_INPUT_TOKENS || req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_COUNT_TOKENS:
 		resp, err = s.selectOpenAICountTokens(ctx, nodeID, req)
 	default:
@@ -455,7 +457,7 @@ var (
 	relayServedPlatforms = []string{
 		service.PlatformOpenAI, service.PlatformComposite, service.PlatformAnthropic, service.PlatformGemini, service.PlatformAntigravity,
 		service.PlatformGrok, service.PlatformKimi, service.PlatformZhipu, service.PlatformDeepseek, service.PlatformMiniMax, service.PlatformOpenCodeGo,
-		noGroupPlatform,
+		service.PlatformTypeSafe, noGroupPlatform,
 	}
 	// geminiServedPlatforms 是 Gemini 原生入口（/v1beta）经从节点能接的分组平台（组合平台分组只接选到 Gemini 或没有匹配目标的）。
 	geminiServedPlatforms = []string{service.PlatformGemini, service.PlatformComposite}

@@ -43,7 +43,7 @@ func startLocalGemini(t *testing.T, e *e2e, accounts []service.Account) *localGe
 	upstream := plainUpstream{target: upstreamURL}
 	repo := newRecordingAntigravityRepo(accounts) // 单机转发路径上写账号状态（429 限流）的仓储
 	gw := service.NewGatewayService(repo, e.world.groups, nil, nil, nil, nil, nil, cache, cfg,
-		nil, concurrency, nil, nil, billing, service.NewIdentityService(identity), upstream, nil,
+		nil, concurrency, service.NewBillingService(cfg, nil), nil, billing, service.NewIdentityService(identity), upstream, nil,
 		service.NewClaudeTokenProvider(nil, seededTokens{}, nil), nil, nil, service.NewDigestSessionStore(), nil, nil, nil, nil, nil, nil, nil)
 	compat := service.NewGeminiMessagesCompatService(repo, e.world.groups, cache, nil, service.NewGeminiTokenProvider(nil, seededTokens{}, nil), nil, upstream, nil, cfg)
 	apiKeys := service.NewAPIKeyService(touchKeys{e.world.keys}, nil, nil, nil, nil, nil, cfg)
@@ -56,6 +56,7 @@ func startLocalGemini(t *testing.T, e *e2e, accounts []service.Account) *localGe
 	gemini.POST("/models/*modelAction", h.GeminiV1BetaModels)
 	messages := r.Group("/v1", gin.HandlerFunc(middleware.NewAPIKeyAuthMiddleware(apiKeys, nil, cfg)))
 	messages.POST("/messages", h.Messages)
+	messages.POST("/systemone", h.SystemOne)
 	messages.POST("/chat/completions", h.ChatCompletions)
 	messages.POST("/responses", h.Responses)
 	srv := httptest.NewServer(r)

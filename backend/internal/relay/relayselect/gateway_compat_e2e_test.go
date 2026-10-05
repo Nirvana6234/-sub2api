@@ -90,3 +90,38 @@ func TestGatewayChatAndResponsesLocalAndNodeAgree(t *testing.T) {
 		require.Equal(t, localBody, nodeBody, tc.path)
 	}
 }
+
+func typeSafeAccount(id int64, base string) service.Account {
+	return service.Account{ID: id, Name: "ts", Platform: service.PlatformTypeSafe, Type: service.AccountTypeAPIKey,
+		Status: service.StatusActive, Schedulable: true, Concurrency: 2,
+		Credentials: map[string]any{"api_key": "SECRET-ts", "base_url": base}, AccountGroups: []service.AccountGroup{{AccountID: id, GroupID: 31}}}
+}
+
+// TypeSafe 的 Jev 判断请求（/v1/systemone）经从节点：与单机同请求的响应一致，用量同一个记录种类；没有可用账号时的错误一致。
+func TestNodeServesTypeSafeSystemOneLikeASingleServer(t *testing.T) {
+	const body = `{"model":"jev-latest","state":{"text":"hi"},"questions":{"q":{"type":"noul"}}}`
+	accounts := []service.Account{typeSafeAccount(1, "")}
+	e := startStandardE2E(t, func(upstream string) []service.Account {
+		accounts[0].Credentials["base_url"] = upstream
+		return accounts
+	})
+	local := startLocalGemini(t, e, accounts)
+	nodeStatus, nodeBody := e.post(t, "/v1/systemone", "sk-typesafe", body)
+	e.world.waitReleased(t)
+	localStatus, localBody := local.post(t, "/v1/systemone", "sk-typesafe", body)
+	require.Equal(t, http.StatusOK, localStatus, localBody)
+	require.Equal(t, localStatus, nodeStatus, nodeBody)
+	require.Equal(t, localBody, nodeBody)
+	require.Eventually(t, func() bool { return len(e.settler.records()) == 1 }, 5*time.Second, 20*time.Millisecond)
+	require.Equal(t, relayv1.UsageRecordKind_USAGE_RECORD_KIND_ANTHROPIC, e.settler.records()[0].GetKind())
+	require.Equal(t, int64(31), mustVoucher(t, e, e.settler.records()[0]).GetGroupId())
+
+	empty := startStandardE2E(t, func(string) []service.Account { return nil })
+	emptyLocal := startLocalGemini(t, empty, nil)
+	nodeStatus, nodeBody = empty.post(t, "/v1/systemone", "sk-typesafe", body)
+	empty.world.waitReleased(t)
+	localStatus, localBody = emptyLocal.post(t, "/v1/systemone", "sk-typesafe", body)
+	require.Equal(t, http.StatusServiceUnavailable, localStatus, localBody)
+	require.Equal(t, localStatus, nodeStatus)
+	require.Equal(t, localBody, nodeBody)
+}

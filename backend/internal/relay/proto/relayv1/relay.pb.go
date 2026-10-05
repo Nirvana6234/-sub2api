@@ -243,6 +243,10 @@ const (
 	// OpenAI 分组的 Codex alpha search（POST /alpha/search、/backend-api/codex/alpha/search，OpenAIGatewayHandler.AlphaSearch）：
 	// HTTP/SSE、alpha search 能力、不按上游 token 成本选号，按次计费。
 	SelectEndpoint_SELECT_ENDPOINT_OPENAI_ALPHA_SEARCH SelectEndpoint = 14
+	// TypeSafe 分组的 Jev 判断请求（POST /v1/systemone，GatewayHandler.SystemOne）：模型要有价格、计费资格检查（没有用户并发槽）后一轮
+	// 选号与准入，换号状态在从节点；错误按 TypeSafe 自己的格式（Gateway 拒绝的 code）由从节点写。准入失败（没有等待计划、队列满、
+	// 之后尝试的抢槽出错）回"否决"格式，从节点把这个账号排除接着选。
+	SelectEndpoint_SELECT_ENDPOINT_GATEWAY_SYSTEMONE SelectEndpoint = 15
 )
 
 // Enum value maps for SelectEndpoint.
@@ -263,6 +267,7 @@ var (
 		12: "SELECT_ENDPOINT_OPENAI_INPUT_TOKENS",
 		13: "SELECT_ENDPOINT_OPENAI_COUNT_TOKENS",
 		14: "SELECT_ENDPOINT_OPENAI_ALPHA_SEARCH",
+		15: "SELECT_ENDPOINT_GATEWAY_SYSTEMONE",
 	}
 	SelectEndpoint_value = map[string]int32{
 		"SELECT_ENDPOINT_UNSPECIFIED":            0,
@@ -280,6 +285,7 @@ var (
 		"SELECT_ENDPOINT_OPENAI_INPUT_TOKENS":    12,
 		"SELECT_ENDPOINT_OPENAI_COUNT_TOKENS":    13,
 		"SELECT_ENDPOINT_OPENAI_ALPHA_SEARCH":    14,
+		"SELECT_ENDPOINT_GATEWAY_SYSTEMONE":      15,
 	}
 )
 
@@ -9703,7 +9709,7 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\vBillingMode\x12\x1c\n" +
 	"\x18BILLING_MODE_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14BILLING_MODE_BALANCE\x10\x01\x12\x1d\n" +
-	"\x19BILLING_MODE_SUBSCRIPTION\x10\x02*\xcb\x04\n" +
+	"\x19BILLING_MODE_SUBSCRIPTION\x10\x02*\xf2\x04\n" +
 	"\x0eSelectEndpoint\x12\x1f\n" +
 	"\x1bSELECT_ENDPOINT_UNSPECIFIED\x10\x00\x12$\n" +
 	" SELECT_ENDPOINT_OPENAI_RESPONSES\x10\x01\x12\x1f\n" +
@@ -9720,7 +9726,8 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x1dSELECT_ENDPOINT_OPENAI_IMAGES\x10\v\x12'\n" +
 	"#SELECT_ENDPOINT_OPENAI_INPUT_TOKENS\x10\f\x12'\n" +
 	"#SELECT_ENDPOINT_OPENAI_COUNT_TOKENS\x10\r\x12'\n" +
-	"#SELECT_ENDPOINT_OPENAI_ALPHA_SEARCH\x10\x0e*\x9b\x02\n" +
+	"#SELECT_ENDPOINT_OPENAI_ALPHA_SEARCH\x10\x0e\x12%\n" +
+	"!SELECT_ENDPOINT_GATEWAY_SYSTEMONE\x10\x0f*\x9b\x02\n" +
 	"\x0fRejectionFormat\x12 \n" +
 	"\x1cREJECTION_FORMAT_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18REJECTION_FORMAT_GATEWAY\x10\x01\x12\x18\n" +

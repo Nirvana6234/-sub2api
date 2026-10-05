@@ -131,6 +131,9 @@ type OpenAIRelaySelectRequest struct {
 
 	// AlphaSearch：OpenAI 分组的 Codex alpha search。
 	AlphaSearch bool
+
+	// SystemOne：TypeSafe 分组的 Jev 判断请求。
+	SystemOne bool
 }
 
 // OpenAIRelaySelectResult 是一次远程选号的结果：Attempt 与 Rejection 二选一。

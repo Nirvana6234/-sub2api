@@ -537,6 +537,10 @@ enum SelectEndpoint {
   // OpenAI 分组的 Codex alpha search（POST /alpha/search、/backend-api/codex/alpha/search，OpenAIGatewayHandler.AlphaSearch）：
   // HTTP/SSE、alpha search 能力、不按上游 token 成本选号，按次计费。
   SELECT_ENDPOINT_OPENAI_ALPHA_SEARCH = 14;
+  // TypeSafe 分组的 Jev 判断请求（POST /v1/systemone，GatewayHandler.SystemOne）：模型要有价格、计费资格检查（没有用户并发槽）后一轮
+  // 选号与准入，换号状态在从节点；错误按 TypeSafe 自己的格式（Gateway 拒绝的 code）由从节点写。准入失败（没有等待计划、队列满、
+  // 之后尝试的抢槽出错）回"否决"格式，从节点把这个账号排除接着选。
+  SELECT_ENDPOINT_GATEWAY_SYSTEMONE = 15;
 }
 
 message AdmitRequest {

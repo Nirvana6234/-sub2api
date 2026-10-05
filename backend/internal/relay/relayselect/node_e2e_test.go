@@ -211,6 +211,10 @@ func startE2EWithConfig(t *testing.T, configure func(*config.Config), accounts f
 				`"usage":{"input_tokens":5,"output_tokens":3}}`)
 			return
 		}
+		if strings.HasSuffix(r.URL.Path, "/systemone") {
+			_, _ = io.WriteString(w, `{"answers":{"q":true},"usage":{"input_tokens":5,"output_tokens":3},"model":"jev-1"}`)
+			return
+		}
 		if strings.HasSuffix(r.URL.Path, "/responses/input_tokens") {
 			_, _ = io.WriteString(w, `{"object":"response.input_tokens","input_tokens":7}`)
 			return

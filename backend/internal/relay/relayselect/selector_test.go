@@ -291,7 +291,10 @@ func newWorldOn(t *testing.T, cfg *config.Config, balance float64, nodeID int64,
 	anthropic.Platform = service.PlatformAnthropic
 	gemini := openAIGroup(10)
 	gemini.Platform = service.PlatformGemini
+	typeSafe := openAIGroup(31)
+	typeSafe.Platform = service.PlatformTypeSafe
 	keys := fakeKeys{keys: map[string]*service.APIKey{
+		"sk-typesafe":  testKey("sk-typesafe", 15, typeSafe),
 		"sk-a":         testKey("sk-a", 11, openAIGroup(5)),
 		"sk-b":         testKey("sk-b", 12, openAIGroup(5)),
 		"sk-anthropic": testKey("sk-anthropic", 13, anthropic),
@@ -331,7 +334,7 @@ func newWorldOn(t *testing.T, cfg *config.Config, balance float64, nodeID int64,
 	identity := &memIdentity{fingerprints: map[int64]*service.Fingerprint{}, masked: map[int64]string{}}
 	groupRepo := &memGroups{byID: map[int64]*service.Group{}}
 	anthropicGateway := service.NewGatewayService(fakeAccounts{accounts: accounts}, groupRepo, nil, nil, nil, nil, nil, gatewayCache, cfg,
-		nil, concurrency, nil, nil, billing, service.NewIdentityService(identity), nil, nil,
+		nil, concurrency, service.NewBillingService(cfg, nil), nil, billing, service.NewIdentityService(identity), nil, nil,
 		service.NewClaudeTokenProvider(nil, seededTokens{}, nil), nil, nil, service.NewDigestSessionStore(), nil, nil, nil, nil, nil, nil, nil)
 	geminiCompat := service.NewGeminiMessagesCompatService(fakeAccounts{accounts: accounts}, groupRepo, gatewayCache, nil,
 		service.NewGeminiTokenProvider(nil, seededTokens{}, nil), nil, nil, nil, cfg)
@@ -492,7 +495,7 @@ func TestAdmit(t *testing.T) {
 	require.NotNil(t, admit("sk-anthropic").GetAdmission())
 	require.NotNil(t, admit("sk-gemini").GetAdmission(), "Gemini groups are admitted too (their Messages entry is served; other entries are routed by the node)")
 	grok := openAIGroup(12) // 还没接的平台（TypeSafe 只说自己的协议）
-	grok.Platform = service.PlatformTypeSafe
+	grok.Platform = "mystery"
 	w.keys.keys["sk-grok"] = testKey("sk-grok", 19, grok)
 	require.Equal(t, relayv1.RejectionFormat_REJECTION_FORMAT_UNSUPPORTED, admit("sk-grok").GetRejection().GetFormat())
 

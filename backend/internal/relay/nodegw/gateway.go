@@ -142,6 +142,14 @@ func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatche
 		// Responses WebSocket（Codex）：与本地一样是 GET /responses 的升级请求。
 		g.GET("/responses", openAIOnly(h.ResponsesWebSocket))
 		if prefix == "/v1" {
+			// TypeSafe 的 Jev 判断请求：非 TypeSafe 分组本地处理函数自己回 404，不用问主节点。
+			g.POST("/systemone", func(c *gin.Context) {
+				if gh == nil {
+					d.HandOff(c)
+					return
+				}
+				gh.SystemOne(c)
+			})
 			// 与本地一致：只有 /v1/messages（OpenAI 兼容分组走 OpenAI 网关的 Messages）。
 			g.POST("/messages", func(c *gin.Context) {
 				// 与本地 /v1/messages 一样按分组平台分：OpenAI 分组走 OpenAI 网关的 Messages，Anthropic 分组走 Messages。

@@ -66,58 +66,93 @@ func (h *GatewayHandler) SystemOne(c *gin.Context) {
 		zap.String("model", model),
 	)
 
-	// 两条网关找不到价格时都按 0 元入账，Jev 不能这样免费用：没配价格就不转发。
-	if !h.gatewayService.HasTypeSafePricing(c.Request.Context(), model, apiKey) {
-		reqLog.Warn("gateway.systemone.pricing_missing")
-		typeSafeError(c, http.StatusServiceUnavailable, "api_error", "PRICING_UNAVAILABLE", "Pricing is not configured for this model")
-		return
-	}
-
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
-	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
-		status, code, message, retryAfter := billingErrorDetails(err)
-		if retryAfter > 0 {
-			c.Header("Retry-After", strconv.Itoa(retryAfter))
+	if h.relay != nil {
+		// 从节点：模型价格、计费资格在主节点选号时做，请求结束时放掉这次的选号。
+		defer h.relay.RequestDone(c)
+	} else {
+		// 两条网关找不到价格时都按 0 元入账，Jev 不能这样免费用：没配价格就不转发。
+		if !h.gatewayService.HasTypeSafePricing(c.Request.Context(), model, apiKey) {
+			reqLog.Warn("gateway.systemone.pricing_missing")
+			typeSafeError(c, http.StatusServiceUnavailable, "api_error", "PRICING_UNAVAILABLE", "Pricing is not configured for this model")
+			return
 		}
-		typeSafeError(c, status, code, strings.ToUpper(code), message)
-		return
+
+		if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
+			status, code, message, retryAfter := billingErrorDetails(err)
+			if retryAfter > 0 {
+				c.Header("Retry-After", strconv.Itoa(retryAfter))
+			}
+			typeSafeError(c, status, code, strings.ToUpper(code), message)
+			return
+		}
 	}
 
 	failedAccounts := make(map[int64]struct{})
 	var lastFailover *service.UpstreamFailoverError
+	var relayAttempt *OpenAIRelayAttempt
 	for attempt := 0; attempt <= typeSafeMaxAccountSwitches; attempt++ {
-		selected, selectErr := h.gatewayService.SelectAccountWithLoadAwareness(
-			c.Request.Context(), apiKey.GroupID, "", model, failedAccounts, "", 0,
-		)
-		if selectErr != nil || selected == nil || selected.Account == nil {
-			if lastFailover != nil {
-				break
-			}
-			if selectErr != nil {
-				reqLog.Warn("gateway.systemone.account_select_failed", zap.Error(selectErr))
-			}
-			markOpsRoutingCapacityLimited(c)
-			typeSafeError(c, http.StatusServiceUnavailable, "api_error", "NO_AVAILABLE_ACCOUNTS", "No available accounts")
-			return
-		}
-		release, acquired, acquireErr := h.acquireWebSearchAccountSlot(c, selected)
-		if !acquired {
-			if attempt == 0 && acquireErr != nil {
-				h.handleConcurrencyError(c, acquireErr, "account", false)
+		var account *service.Account
+		var release func()
+		if h.relay != nil {
+			res := h.relay.Select(c, OpenAIRelaySelectRequest{SystemOne: true, APIKey: apiKey, Model: model, Excluded: failedAccounts})
+			if r := res.Rejection; r != nil {
+				switch r.Kind {
+				case OpenAIRelayRejectFailoverExhausted:
+					// 之前换过号、再选不出账号：按最近一次上游错误写（本地：break 之后）。
+					writeTypeSafeFailoverExhausted(c, lastFailover)
+					return
+				case OpenAIRelayRejectProfitVetoed:
+					// 准入失败：把这个账号排除接着选（本地同样）。
+					failedAccounts[r.VetoedAccountID] = struct{}{}
+					continue
+				}
+				h.writeTypeSafeRelayRejection(c, r, lastFailover)
 				return
 			}
-			failedAccounts[selected.Account.ID] = struct{}{}
-			continue
+			relayAttempt = res.Attempt
+			account = relayAttempt.Account
+			setOpsSelectedAccount(c, account.ID, account.Platform)
+			release = func() { h.relay.AttemptDone(c, relayAttempt) }
+		} else {
+			selected, selectErr := h.gatewayService.SelectAccountWithLoadAwareness(
+				c.Request.Context(), apiKey.GroupID, "", model, failedAccounts, "", 0,
+			)
+			if selectErr != nil || selected == nil || selected.Account == nil {
+				if lastFailover != nil {
+					break
+				}
+				if selectErr != nil {
+					reqLog.Warn("gateway.systemone.account_select_failed", zap.Error(selectErr))
+				}
+				markOpsRoutingCapacityLimited(c)
+				typeSafeError(c, http.StatusServiceUnavailable, "api_error", "NO_AVAILABLE_ACCOUNTS", "No available accounts")
+				return
+			}
+			var acquired bool
+			var acquireErr error
+			release, acquired, acquireErr = h.acquireWebSearchAccountSlot(c, selected)
+			if !acquired {
+				if attempt == 0 && acquireErr != nil {
+					h.handleConcurrencyError(c, acquireErr, "account", false)
+					return
+				}
+				failedAccounts[selected.Account.ID] = struct{}{}
+				continue
+			}
+			account = selected.Account
+			setOpsSelectedAccount(c, account.ID, account.Platform)
 		}
-		account := selected.Account
-		setOpsSelectedAccount(c, account.ID, account.Platform)
 
 		result, forwardErr := h.gatewayService.ForwardTypeSafeSystemOne(c.Request.Context(), c, account, body)
 		if release != nil {
 			release()
 		}
 		if forwardErr == nil {
-			h.recordSystemOneUsage(c, apiKey, subscription, account, result)
+			if h.relay != nil {
+				h.relay.ForwardSucceeded(c, relayAttempt)
+			}
+			h.recordSystemOneUsage(c, apiKey, subscription, account, result, relayAttempt)
 			return
 		}
 
@@ -152,7 +187,7 @@ func (h *GatewayHandler) SystemOne(c *gin.Context) {
 	writeTypeSafeFailoverExhausted(c, lastFailover)
 }
 
-func (h *GatewayHandler) recordSystemOneUsage(c *gin.Context, apiKey *service.APIKey, subscription *service.UserSubscription, account *service.Account, result *service.ForwardResult) {
+func (h *GatewayHandler) recordSystemOneUsage(c *gin.Context, apiKey *service.APIKey, subscription *service.UserSubscription, account *service.Account, result *service.ForwardResult, relayAttempt *OpenAIRelayAttempt) {
 	if result == nil {
 		return
 	}
@@ -163,6 +198,13 @@ func (h *GatewayHandler) recordSystemOneUsage(c *gin.Context, apiKey *service.AP
 	userAgent := c.GetHeader("User-Agent")
 	clientIP := ip.GetClientIP(c)
 	quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
+	if h.relay != nil {
+		// 从节点：写进本地扣费队列，主节点按凭证用同一个 RecordUsage 入账。
+		h.relay.SubmitAnthropicUsage(c, relayAttempt, OpenAIUsageFacts{
+			InboundEndpoint: EndpointSystemOne, UpstreamEndpoint: EndpointSystemOne, UserAgent: userAgent, IPAddress: clientIP,
+		}, result, false)
+		return
+	}
 	h.submitMandatoryUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 		if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 			Result:           result,
@@ -221,4 +263,40 @@ func writeTypeSafeFailoverExhausted(c *gin.Context, lastFailover *service.Upstre
 // 保留 TypeSafe 自己的 {"detail":{...}}。
 func typeSafeError(c *gin.Context, status int, errType, code, message string) {
 	c.JSON(status, gin.H{"error": gin.H{"type": errType, "code": code, "message": message}})
+}
+
+// writeTypeSafeRelayRejection 按 TypeSafe 自己的错误格式写出主节点的拒绝（Gateway 拒绝的 code 是错误码，没有时取错误类型的大写）。
+func (h *GatewayHandler) writeTypeSafeRelayRejection(c *gin.Context, r *OpenAIRelayRejection, lastFailover *service.UpstreamFailoverError) {
+	switch r.Kind {
+	case OpenAIRelayRejectRaw:
+		middleware2.WriteCapturedRejection(c, r.Raw)
+	case OpenAIRelayRejectUnsupported:
+		if c.Writer.Written() {
+			typeSafeError(c, http.StatusBadGateway, "upstream_error", "UPSTREAM_ERROR", "Upstream request failed")
+			return
+		}
+		h.relay.HandOff(c)
+	case OpenAIRelayRejectUnavailable:
+		if lastFailover != nil {
+			writeTypeSafeFailoverExhausted(c, lastFailover)
+			return
+		}
+		typeSafeError(c, http.StatusServiceUnavailable, "api_error", "SERVICE_UNAVAILABLE", "Service temporarily unavailable")
+	default:
+		g := r.Gateway
+		if g.OpsBusinessLimitedReason != "" {
+			service.MarkOpsClientBusinessLimited(c, g.OpsBusinessLimitedReason)
+		}
+		if g.RoutingCapacityLimited {
+			markOpsRoutingCapacityLimited(c)
+		}
+		if g.RetryAfter > 0 {
+			c.Header("Retry-After", strconv.Itoa(g.RetryAfter))
+		}
+		code := g.Code
+		if code == "" {
+			code = strings.ToUpper(g.ErrType)
+		}
+		typeSafeError(c, g.Status, g.ErrType, code, g.Message)
+	}
 }
