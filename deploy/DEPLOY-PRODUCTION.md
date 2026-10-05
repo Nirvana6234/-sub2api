@@ -536,6 +536,16 @@ ssh -i "$PRODKEY" ec2-user@$PRODIP \
 > **遗留**：macOS 1.0 安装包尚未上传（`codex-relay-client_v1.0_macos-arm64.tar.gz` 返回 404），而
 > `client-version.json` 已是 1.0，下载页 macOS 链接仍是 0.9。
 
+**r2（同日追加）**：二进制 `sub2api-20261005-keydelete-billing-expiry-r2`（`84850924f`），SHA256
+`20bb1e3e4eba03ef6e3312c791052b88b1bdacc9974da3c5817ec5d2358920fd`，仅前端改动：用户首页「客户端」卡片在 Windows 与
+macOS 最新版本不一致时分别显示（`最新版 Windows v1.0 · macOS v0.9`），不再只显示 Windows 版本号。
+macOS 的版本由后台设置 `client_latest_version_mac` 单独控制（当前 0.9），Mac 客户端不会被提示升级到 1.0，
+待 macOS 1.0 包构建上传后再把它改到 1.0。
+
+**CPA 同日发版**：release `20261005-b49dbf6-concurrency-fdc7eec`（后端 `b49dbf6`、管理界面 `fdc7eec`），
+上一版 `20260927-a303e91-concurrency-37e6b5b`。内容：Codex 重置额度后立即清除限流冷却状态；额度页新增
+周额度自动重置开关与天数阈值（默认关闭）。`release.py candidate` 隔离验证通过后 `activate`，live verifier 通过。
+
 ## B5. 回滚
 
 bind mount 模式：把 compose 里挂载的文件名改回上一个二进制，重跑 B3 最后那条命令即可。
