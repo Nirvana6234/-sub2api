@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/relay/keycodec"
 	"github.com/Wei-Shaw/sub2api/internal/relay/master"
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
@@ -398,12 +399,50 @@ var (
 	geminiServedPlatforms = []string{service.PlatformGemini, service.PlatformComposite}
 )
 
-// relayServedFor 是准入、定走向时放行的分组平台：Gemini 原生入口只放 Gemini（及组合平台），其余入口按 relayServedPlatforms。
+// relayServedFor 是准入、定走向时放行的分组平台：/antigravity/* 强制 Antigravity 平台（不看分组平台，见 antigravityRouteServed），
+// Gemini 原生入口只放 Gemini（及组合平台），其余入口按 relayServedPlatforms。
 func relayServedFor(path string) []string {
-	if middleware.IsGoogleRelayPath(path) {
+	switch {
+	case isAntigravityRoute(path):
+		return antigravityRouteServedPlatforms
+	case middleware.IsGoogleRelayPath(path):
 		return geminiServedPlatforms
 	}
 	return relayServedPlatforms
+}
+
+// antigravityRouteServedPlatforms 是 /antigravity/* 入口经从节点能接的分组平台：这些入口强制 Antigravity 平台（本地
+// middleware.ForcePlatform），调度不看分组平台；只接 Antigravity、Anthropic、Gemini 分组和未分组 Key，其余分组（OpenAI、组合平台等）
+// 交给主节点。
+var antigravityRouteServedPlatforms = []string{service.PlatformAntigravity, service.PlatformAnthropic, service.PlatformGemini, noGroupPlatform}
+
+// isAntigravityRoute 报告这是 /antigravity/* 入口（本地路由强制 Antigravity 平台，由主节点按路径定，不信从节点的说法）。
+func isAntigravityRoute(path string) bool {
+	return strings.HasPrefix(path, "/antigravity/")
+}
+
+// withForcedPlatform 给选号的 ctx 加上路由强制的平台（本地 middleware.ForcePlatform 放进请求 ctx 的同一个值）。
+func withForcedPlatform(ctx context.Context, path string) context.Context {
+	if isAntigravityRoute(path) {
+		return context.WithValue(ctx, ctxkey.ForcePlatform, service.PlatformAntigravity)
+	}
+	return ctx
+}
+
+// servedAnthropicFor 是 Messages / count_tokens 入口放行的分组平台。
+func servedAnthropicFor(path string) []string {
+	if isAntigravityRoute(path) {
+		return antigravityRouteServedPlatforms
+	}
+	return anthropicServedPlatforms
+}
+
+// servedGeminiFor 是 Gemini 原生入口放行的分组平台。
+func servedGeminiFor(path string) []string {
+	if isAntigravityRoute(path) {
+		return antigravityRouteServedPlatforms
+	}
+	return geminiServedPlatforms
 }
 
 // startRequest 是一次请求的第一次选号时做的：用户并发槽、计费资格、（cyberAfterBilling 时）cyber 会话屏蔽、

@@ -57,18 +57,20 @@ func (d *Dispatcher) AdmitMiddleware() gin.HandlerFunc {
 		}
 
 		body, err := httputil.ReadRequestBodyWithPrealloc(c.Request)
+		// replay：Gemini 原生入口本地的链路里只有自动分组中间件会读请求体（按 URL 模型的白名单、组合平台选目标都不读），
+		// 读失败（超限、断开）由处理函数自己读时报错（Google 格式）。非自动分组的 Key 把读到的错误原样交给处理函数。
+		var replay error
 		if err != nil {
-			// 与分组模型白名单中间件读请求体失败时的写法一致。
-			status, message := http.StatusBadRequest, "Failed to read request body"
-			var maxErr *http.MaxBytesError
-			if errors.As(err, &maxErr) {
-				status, message = http.StatusRequestEntityTooLarge, "Request body is too large"
+			if !google || resp.GetAdmission() == nil {
+				writeBodyReadError(c, err)
+				return
 			}
-			c.AbortWithStatusJSON(status, gin.H{"error": gin.H{"type": "invalid_request_error", "message": message}})
-			return
+			replay = err
 		}
-		requestmodel.ResetRequestBody(c.Request, body)
-		stateOf(c).rawBody = body
+		if replay == nil {
+			requestmodel.ResetRequestBody(c.Request, body)
+			stateOf(c).rawBody = body
+		}
 
 		if resp.GetRejection() != nil {
 			// 暂不支持（未分组、非 OpenAI 分组等）：交给主节点转发。
@@ -81,6 +83,13 @@ func (d *Dispatcher) AdmitMiddleware() gin.HandlerFunc {
 		if err == nil {
 			sub, subErr := keycodec.DecodeSubscription(adm.GetSubscription())
 			if subErr == nil {
+				if replay != nil {
+					if apiKey.AutoGroup {
+						writeBodyReadError(c, replay)
+						return
+					}
+					c.Request.Body = erroringBody{err: replay}
+				}
 				middleware2.ReplaceAuthenticatedAPIKey(c, apiKey, sub)
 				c.Next()
 				return
@@ -91,6 +100,22 @@ func (d *Dispatcher) AdmitMiddleware() gin.HandlerFunc {
 		middleware2.AbortWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to validate API key")
 	}
 }
+
+// writeBodyReadError 与分组模型白名单、自动分组中间件读请求体失败时的写法一致。
+func writeBodyReadError(c *gin.Context, err error) {
+	status, message := http.StatusBadRequest, "Failed to read request body"
+	var maxErr *http.MaxBytesError
+	if errors.As(err, &maxErr) {
+		status, message = http.StatusRequestEntityTooLarge, "Request body is too large"
+	}
+	c.AbortWithStatusJSON(status, gin.H{"error": gin.H{"type": "invalid_request_error", "message": message}})
+}
+
+// erroringBody 把准入时读请求体遇到的错误原样交给后面读它的处理函数。
+type erroringBody struct{ err error }
+
+func (b erroringBody) Read([]byte) (int, error) { return 0, b.err }
+func (erroringBody) Close() error               { return nil }
 
 // readBody 读出请求体并放回。
 func readBody(c *gin.Context) ([]byte, error) {

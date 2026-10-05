@@ -40,20 +40,22 @@ func (s *selector) selectGeminiNative(ctx context.Context, nodeID int64, req *re
 		return unsupported(), nil
 	}
 	adm, rej, err := s.admitAPIKey(ctx, req.GetApiKey(), req.GetClientIp(), req.GetMethod(), req.GetPath(), modelCandidates(req),
-		autoGroupChoice{pinned: req.GetAutoGroupId()}, geminiServedPlatforms...)
+		autoGroupChoice{pinned: req.GetAutoGroupId()}, servedGeminiFor(req.GetPath())...)
 	if err != nil || rej != nil {
 		return rej, err
 	}
 	apiKey := adm.APIKey
 	s.admitted.note(nodeID, apiKey.User.ID, s.now())
 	ctx = middleware.RelayRequestContext(ctx, adm)
+	// /antigravity/v1beta：强制 Antigravity 平台（由路径定）。
+	ctx = withForcedPlatform(ctx, req.GetPath())
 	subscription := adm.Billing.Subscription
 	// 组合平台分组：按改写前的公开模型选目标（本地 compositeGeminiTarget 中间件）；没有匹配的目标时按 Gemini，选到别的平台的交给主节点。
 	composite, err := s.resolveComposite(ctx, apiKey, req.GetRouteModel(), req.GetPath())
 	if err != nil {
 		return nil, err
 	}
-	if apiKey.Group != nil && apiKey.Group.Platform == service.PlatformComposite {
+	if !isAntigravityRoute(req.GetPath()) && apiKey.Group != nil && apiKey.Group.Platform == service.PlatformComposite {
 		if composite.Matched && composite.TargetPlatform != service.PlatformGemini {
 			return unsupported(), nil
 		}

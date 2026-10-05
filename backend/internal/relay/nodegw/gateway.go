@@ -130,6 +130,19 @@ func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatche
 		gemini := r.Group("/v1beta", bodyLimit, middleware2.ClientRequestID(), handler.InboundEndpointMiddleware(),
 			d.AdmitMiddleware(), d.AutoGroupMiddleware(), middleware2.GroupModelAllowlist(), d.CompositeGeminiRouteMiddleware())
 		gemini.POST("/models/*modelAction", gh.GeminiV1BetaModels)
+
+		// Antigravity 专用入口（强制 Antigravity 平台，不看分组平台；本地 /antigravity/v1、/antigravity/v1beta 组）：链路同上但没有
+		// 组合平台选目标。强制平台由节点路由和主节点各按路径定。模型列表、用量等 GET 请求仍交给主节点。
+		forced := middleware2.ForcePlatform(service.PlatformAntigravity)
+		antigravityChain := func() []gin.HandlerFunc {
+			return []gin.HandlerFunc{bodyLimit, middleware2.ClientRequestID(), handler.InboundEndpointMiddleware(), forced,
+				d.AdmitMiddleware(), d.AutoGroupMiddleware(), middleware2.GroupModelAllowlist()}
+		}
+		antigravityV1 := r.Group("/antigravity/v1", antigravityChain()...)
+		antigravityV1.POST("/messages", gh.Messages)
+		antigravityV1.POST("/messages/count_tokens", gh.CountTokens)
+		antigravityV1Beta := r.Group("/antigravity/v1beta", antigravityChain()...)
+		antigravityV1Beta.POST("/models/*modelAction", gh.GeminiV1BetaModels)
 	}
 	r.NoRoute(bodyLimit, func(c *gin.Context) {
 		body, err := readBody(c)

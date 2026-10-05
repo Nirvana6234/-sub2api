@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/relay/keycodec"
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -31,7 +32,7 @@ func (s *selector) selectAnthropic(ctx context.Context, nodeID int64, req *relay
 		return unsupported(), nil
 	}
 	adm, rej, err := s.admitAPIKey(ctx, req.GetApiKey(), req.GetClientIp(), req.GetMethod(), req.GetPath(), modelCandidates(req),
-		autoGroupChoice{pinned: req.GetAutoGroupId()}, anthropicServedPlatforms...)
+		autoGroupChoice{pinned: req.GetAutoGroupId()}, servedAnthropicFor(req.GetPath())...)
 	if err != nil || rej != nil {
 		return rej, err
 	}
@@ -40,6 +41,11 @@ func (s *selector) selectAnthropic(ctx context.Context, nodeID int64, req *relay
 	s.admitted.note(nodeID, apiKey.User.ID, s.now())
 	ctx = middleware.RelayRequestContext(ctx, adm)
 	subscription := adm.Billing.Subscription
+	forced := ""
+	if req.GetFallbackGroupId() == 0 && isAntigravityRoute(req.GetPath()) {
+		// /antigravity/v1：强制 Antigravity 平台（由路径定）；切到兜底分组后本地清掉强制平台，按分组平台调度。
+		ctx, forced = withForcedPlatform(ctx, req.GetPath()), service.PlatformAntigravity
+	}
 	if fb := req.GetFallbackGroupId(); fb != 0 {
 		// 请求中途已经切到兜底分组（Antigravity 回 prompt 过长，本地 currentAPIKey = fallbackAPIKey）：选号、计费、
 		// 凭证里的分组按兜底分组，订阅清空；渠道映射、渠道功能配置、粘性会话起点仍按原来的分组（本地只在请求开头算一次）。
@@ -64,7 +70,9 @@ func (s *selector) selectAnthropic(ctx context.Context, nodeID int64, req *relay
 	userID, groupID := apiKey.User.ID, groupIDOf(apiKey)
 	reqModel := req.GetModel()
 	platform := groupPlatformOf(apiKey)
-	if target, ok := service.ResolvedTargetPlatformFromContext(ctx); ok {
+	if forced != "" {
+		platform = forced
+	} else if target, ok := service.ResolvedTargetPlatformFromContext(ctx); ok {
 		platform = target
 	}
 	log := zap.NewNop()
@@ -115,6 +123,10 @@ func (s *selector) selectAnthropic(ctx context.Context, nodeID int64, req *relay
 	defer cancel()
 	stop := context.AfterFunc(ctx, cancel)
 	defer stop()
+	if isAntigravityRoute(req.GetPath()) {
+		// 强制平台以这次选号为准（请求的计价上下文来自第一次选号：切到兜底分组之后要清掉）。
+		attemptCtx = context.WithValue(attemptCtx, ctxkey.ForcePlatform, forced)
+	}
 	if record.stickyBound > 0 {
 		attemptCtx = service.WithPrefetchedStickySession(attemptCtx, record.stickyBound, groupIDOf(origKey), s.metadataBridgeEnabled())
 	}
@@ -302,13 +314,14 @@ func (s *selector) selectAnthropicCountTokens(ctx context.Context, nodeID int64,
 		return unsupported(), nil
 	}
 	adm, rej, err := s.admitAPIKey(ctx, req.GetApiKey(), req.GetClientIp(), req.GetMethod(), req.GetPath(), modelCandidates(req),
-		autoGroupChoice{pinned: req.GetAutoGroupId()}, anthropicServedPlatforms...)
+		autoGroupChoice{pinned: req.GetAutoGroupId()}, servedAnthropicFor(req.GetPath())...)
 	if err != nil || rej != nil {
 		return rej, err
 	}
 	apiKey := adm.APIKey
 	s.admitted.note(nodeID, apiKey.User.ID, s.now())
 	ctx = middleware.RelayRequestContext(ctx, adm)
+	ctx = withForcedPlatform(ctx, req.GetPath())
 	composite, err := s.resolveComposite(ctx, apiKey, req.GetRouteModel(), req.GetPath())
 	if err != nil {
 		return nil, err
@@ -426,7 +439,7 @@ func (s *selector) bindAnthropicSticky(sel *selectionRecord) {
 func (s *selector) SwitchFallbackGroup(ctx context.Context, nodeID int64, req *relayv1.SwitchFallbackGroupRequest) (*relayv1.SwitchFallbackGroupResponse, error) {
 	none := &relayv1.SwitchFallbackGroupResponse{}
 	adm, rej, err := s.admitAPIKey(ctx, req.GetApiKey(), req.GetClientIp(), req.GetMethod(), req.GetPath(), nil,
-		autoGroupChoice{pinned: req.GetAutoGroupId()}, anthropicServedPlatforms...)
+		autoGroupChoice{pinned: req.GetAutoGroupId()}, servedAnthropicFor(req.GetPath())...)
 	if err != nil {
 		return nil, err
 	}

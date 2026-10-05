@@ -289,6 +289,34 @@ func TestGeminiAccountEventsAreAppliedOnTheMaster(t *testing.T) {
 	require.Eventually(t, func() bool { return cache.deleted("gemini:cli-hash") }, 2*time.Second, 5*time.Millisecond)
 	require.False(t, cache.deleted("gemini:someone-else"))
 
+	// 节点在换号、请求结束时先释放这次选号，清绑定的事件才到：仍认这次请求自己的会话键（刚用过这个账号）。
+	cache.mu.Lock()
+	cache.bound["gemini:cli-hash"] = 1
+	cache.mu.Unlock()
 	w.sel.Release(testNode, &relayv1.SelectionRelease{SelectionId: sel.GetSelectionId(), RequestDone: true})
 	w.waitReleased(t)
+	w.sel.AccountEvent(testNode, &relayv1.AccountEvent{AccountId: 1, Kind: &relayv1.AccountEvent_StickyCleared{StickyCleared: &relayv1.StickySessionClearedEvent{SessionKey: "gemini:someone-else"}}})
+	w.sel.AccountEvent(testNode, &relayv1.AccountEvent{AccountId: 1, Kind: &relayv1.AccountEvent_StickyCleared{StickyCleared: &relayv1.StickySessionClearedEvent{SessionKey: "gemini:cli-hash"}}})
+	require.Eventually(t, func() bool {
+		cache.mu.Lock()
+		defer cache.mu.Unlock()
+		_, bound := cache.bound["gemini:cli-hash"]
+		return !bound
+	}, 2*time.Second, 5*time.Millisecond, "an event that arrives after the release is still honored")
+}
+
+// 请求体读失败（超限）：Gemini 原生入口本地的链路里没有中间件读请求体，由处理函数读时按 Google 格式报错。
+func TestNodeWritesGeminiBodyTooLargeInGoogleFormat(t *testing.T) {
+	e := startE2EWith(t, func(upstream string) []service.Account {
+		a := geminiAccount(1, "gem")
+		a.Credentials["base_url"] = upstream
+		return []service.Account{a}
+	})
+	big := `{"contents":[{"role":"user","parts":[{"text":"` + strings.Repeat("x", 11<<20) + `"}]}]}`
+	status, body := e.postGoogle(t, geminiPath, "sk-gemini", big)
+	require.Equal(t, http.StatusRequestEntityTooLarge, status)
+	require.Contains(t, body, `"code":413`)
+	require.Contains(t, body, "Request body too large, limit is")
+	require.Len(t, e.hits, 0)
+	e.world.waitReleased(t)
 }

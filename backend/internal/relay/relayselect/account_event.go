@@ -28,6 +28,9 @@ type nodeAccount struct {
 type recentUse struct {
 	account *service.Account
 	until   time.Time
+	// geminiSession、geminiGroupID：Gemini 原生入口这次选号的会话键和分组（释放之后才到的"清粘性绑定"事件认它）。
+	geminiSession string
+	geminiGroupID int64
 }
 
 type queuedAccountEvent struct {
@@ -40,7 +43,11 @@ func (s *selector) rememberUseLocked(sel *selectionRecord) {
 	if sel == nil || sel.account == nil {
 		return
 	}
-	s.recent[nodeAccount{nodeID: sel.nodeID, accountID: sel.account.ID}] = recentUse{account: sel.account, until: s.now().Add(recentUseTTL)}
+	use := recentUse{account: sel.account, until: s.now().Add(recentUseTTL)}
+	if sel.gemini && sel.request != nil && sel.apiKey != nil {
+		use.geminiSession, use.geminiGroupID = sel.request.sessionKey, derefGroupID(sel.apiKey.GroupID)
+	}
+	s.recent[nodeAccount{nodeID: sel.nodeID, accountID: sel.account.ID}] = use
 }
 
 // accountForEvent 返回这台节点正在用或刚用过的账号对象；都不是时返回 nil。
@@ -220,6 +227,12 @@ func (s *selector) applyStickyCleared(ctx context.Context, nodeID int64, account
 		if sel.nodeID == nodeID && sel.gemini && sel.account != nil && sel.account.ID == account.ID && sel.request != nil && sel.request.sessionKey == key {
 			groupID, owned = derefGroupID(sel.apiKey.GroupID), true
 			break
+		}
+	}
+	if !owned {
+		// 事件在释放之后才到（节点在换号、请求结束时先释放这次选号）：认刚用过这个账号的这次请求自己的会话键。
+		if r, ok := s.recent[nodeAccount{nodeID: nodeID, accountID: account.ID}]; ok && s.now().Before(r.until) && r.geminiSession == key {
+			groupID, owned = r.geminiGroupID, true
 		}
 	}
 	s.mu.Unlock()
