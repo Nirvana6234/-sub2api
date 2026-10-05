@@ -677,7 +677,18 @@ func selectionContext(outcome handler.OpenAISelectOutcome, sel *selectionRecord,
 func allowedBillingModels(reqModel, forwardModel string, account *service.Account) []string {
 	out := []string{}
 	seen := map[string]bool{}
-	for _, m := range []string{reqModel, forwardModel, account.GetMappedModel(forwardModel)} {
+	candidates := []string{reqModel, forwardModel, account.GetMappedModel(forwardModel)}
+	if account.Platform == service.PlatformAntigravity {
+		// Antigravity 转发时按账号映射表另选目标（裸 Gemini 名按 thinking 档位换成映射表里的 -low/-high 变体、Claude 名换成
+		// 思考版等），上报的模型是映射表里的名字：映射表里出现的名字都算允许的（范围仍限于这个账号的映射）。
+		var extra []string
+		for from, to := range account.GetModelMapping() {
+			extra = append(extra, from, to)
+		}
+		slices.Sort(extra)
+		candidates = append(candidates, extra...)
+	}
+	for _, m := range candidates {
 		if m = strings.TrimSpace(m); m != "" && !seen[m] {
 			seen[m] = true
 			out = append(out, m)

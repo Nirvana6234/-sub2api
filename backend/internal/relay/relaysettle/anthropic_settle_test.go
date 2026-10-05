@@ -100,3 +100,51 @@ func TestRelayAnthropicSettlementNeedsTheGateway(t *testing.T) {
 	})
 	require.Equal(t, relayv1.UsageRecordStatus_USAGE_RECORD_STATUS_REJECTED, res.GetStatus())
 }
+
+// Gemini 原生入口的记录（同一种记录种类）：开着渠道映射时主从入账与单机入账一致，上报的模型（转发模型、上游模型）都在凭证允许
+// 的范围内，不会被记成待复核。
+func TestRelayGeminiNativeSettlementMatchesLocalBilling(t *testing.T) {
+	w := newWorld(t)
+	gw := w.useAnthropicGateway()
+	account := w.account
+	mapping := service.ChannelMappingResult{ChannelID: 4, MappedModel: "gemini-2.5-flash", Mapped: true, BillingModelSource: service.BillingModelSourceRequested}
+	forward := func() *service.ForwardResult {
+		return &service.ForwardResult{
+			RequestID: "gem_parity", Model: "gemini-2.5-flash", UpstreamModel: "gemini-2.5-flash", Duration: 900 * time.Millisecond,
+			Usage: service.ClaudeUsage{InputTokens: 700, OutputTokens: 120, CacheReadInputTokens: 50},
+		}
+	}
+	result := forward()
+	ctx := context.WithValue(context.Background(), ctxkey.RequestID, "req-g")
+	require.NoError(t, gw.RecordUsage(ctx, &service.RecordUsageInput{
+		Result: result, APIKey: w.key, User: w.key.User, Account: &account, PricingAt: pricingAt,
+		InboundEndpoint: "/v1beta/models", UpstreamEndpoint: "/v1beta/models/*action", UserAgent: "gemini-cli", IPAddress: "5.6.7.8",
+		SessionID: "sess-g", RequestPayloadHash: "hash-g", QuotaPlatform: service.PlatformGemini,
+		ChannelUsageFields: mapping.ToUsageFields("gemini-2.5-pro", result.UpstreamModel),
+	}))
+	require.Len(t, w.billing.commands, 1)
+
+	voucher, _, err := sign.IssueVoucher(w.signer, &relayv1.Voucher{
+		NodeId: node, SelectionId: "sel-g", UserId: 3, ApiKeyId: 11, AccountId: 7, GroupId: 5,
+		BillingMode: relayv1.BillingMode_BILLING_MODE_BALANCE, RequestedModel: "gemini-2.5-pro", AllowedBillingModels: []string{"gemini-2.5-pro", "gemini-2.5-flash"},
+		Context: &relayv1.SelectionContext{
+			PricingAtUnixMs: pricingAt.UnixMilli(), QuotaPlatform: service.PlatformGemini,
+			ChannelId: 4, ChannelMapped: true, ChannelMappedModel: "gemini-2.5-flash", BillingModelSource: service.BillingModelSourceRequested,
+		},
+	}, time.Now())
+	require.NoError(t, err)
+	raw, err := json.Marshal(forward())
+	require.NoError(t, err)
+	res := w.settler.Settle(context.Background(), node, &relayv1.UsageRecord{
+		Seq: 1, Voucher: voucher, Kind: relayv1.UsageRecordKind_USAGE_RECORD_KIND_ANTHROPIC, ResultJson: raw,
+		InboundEndpoint: "/v1beta/models", UpstreamEndpoint: "/v1beta/models/*action", UserAgent: "gemini-cli", IpAddress: "5.6.7.8",
+		SessionId: "sess-g", RequestPayloadHash: "hash-g", RequestId: "req-g",
+	})
+	require.Equal(t, relayv1.UsageRecordStatus_USAGE_RECORD_STATUS_SETTLED, res.GetStatus(), res.GetReason())
+	require.Len(t, w.billing.commands, 2)
+	require.Equal(t, w.billing.commands[0], w.billing.commands[1], "same billing command")
+	relayed := *w.logs.logs[1]
+	relayed.NodeID = nil
+	require.Equal(t, comparableLog(w.logs.logs[0]), comparableLog(&relayed), "same usage log apart from the node")
+	require.NotContains(t, w.billing.reviews, "pending_review", "the reported models are inside the voucher")
+}

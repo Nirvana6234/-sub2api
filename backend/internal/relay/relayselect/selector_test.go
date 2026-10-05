@@ -1035,6 +1035,15 @@ func TestAllowedBillingModels(t *testing.T) {
 	mapped := &service.Account{Credentials: map[string]any{"model_mapping": map[string]any{"gpt-5": "gpt-5-2025"}}}
 	require.Equal(t, []string{"gpt-5-alias", "gpt-5", "gpt-5-2025"}, allowedBillingModels("gpt-5-alias", "gpt-5", mapped))
 	require.Equal(t, []string{"gpt-5"}, allowedBillingModels("gpt-5", "gpt-5", &service.Account{}))
+
+	// Antigravity：转发时用映射表里的名字（含 thinking 变体），都算允许的。
+	ag := &service.Account{Platform: service.PlatformAntigravity, Credentials: map[string]any{"model_mapping": map[string]any{
+		"gemini-3.8-flash-low": "gemini-3.8-flash-low", "claude-sonnet-4-5": "claude-sonnet-4-5-thinking"}}}
+	allowed := allowedBillingModels("gemini-3.8-flash", "gemini-3.8-flash", ag)
+	require.Contains(t, allowed, "gemini-3.8-flash")
+	require.Contains(t, allowed, "gemini-3.8-flash-low")
+	require.Contains(t, allowed, "claude-sonnet-4-5-thinking")
+	require.Equal(t, allowed, allowedBillingModels("gemini-3.8-flash", "gemini-3.8-flash", ag), "deterministic order")
 }
 
 // memIdentity 是主节点的身份缓存（service.IdentityCache）。
