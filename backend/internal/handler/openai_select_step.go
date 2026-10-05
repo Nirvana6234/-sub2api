@@ -57,6 +57,8 @@ type OpenAISelectRequest struct {
 	RequiredCapability service.OpenAIEndpointCapability
 	// ImagesCapability 非空时是同步图片入口的选号（SelectAccountWithSchedulerForImages，不装利润门、只走 HTTP/SSE）。
 	ImagesCapability service.OpenAIImagesCapability
+	// NoUpstreamTokenCost：选号不按上游 token 成本比较（alpha search 这类按次计费的入口）。
+	NoUpstreamTokenCost bool
 	// Transport 为空时是 OpenAIUpstreamTransportAny（Embeddings 用 HTTP/SSE）。
 	Transport      service.OpenAIUpstreamTransport
 	RequireCompact bool
@@ -132,7 +134,7 @@ func (a OpenAIAccountAdmitter) SelectAndAdmit(ctx context.Context, req OpenAISel
 				req.RequiredCapability,
 				req.RequireCompact,
 				false,
-				!req.ImageIntent,
+				!req.ImageIntent && !req.NoUpstreamTokenCost,
 				req.RequestPlatform,
 			)
 		}

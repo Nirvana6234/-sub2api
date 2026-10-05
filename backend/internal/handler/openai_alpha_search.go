@@ -87,26 +87,35 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 		return
 	}
 
-	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, requestedModel)
+	// 从节点：渠道映射在主节点选号时做。
+	var channelMapping service.ChannelMappingResult
+	if h.relay == nil {
+		channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, requestedModel)
+	}
 	forwardBody := openAIModelMappedBody(body, channelMapping.Mapped, channelMapping.MappedModel, h.gatewayService.ReplaceModelInBody)
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
 	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(requestStart).Milliseconds())
 
-	userRelease, acquired := h.acquireResponsesUserSlot(c, subject.UserID, subject.Concurrency, false, &streamStarted, reqLog)
-	if !acquired {
-		return
-	}
-	if userRelease != nil {
-		defer userRelease()
-	}
-
-	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
-		status, code, message, retryAfter := billingErrorDetails(err)
-		if retryAfter > 0 {
-			c.Header("Retry-After", strconv.Itoa(retryAfter))
+	// 从节点：用户并发槽和计费资格在主节点第一次选号时做。
+	if h.relay != nil {
+		defer h.relay.RequestDone(c)
+	} else {
+		userRelease, acquired := h.acquireResponsesUserSlot(c, subject.UserID, subject.Concurrency, false, &streamStarted, reqLog)
+		if !acquired {
+			return
 		}
-		h.errorResponse(c, status, code, message)
-		return
+		if userRelease != nil {
+			defer userRelease()
+		}
+
+		if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
+			status, code, message, retryAfter := billingErrorDetails(err)
+			if retryAfter > 0 {
+				c.Header("Retry-After", strconv.Itoa(retryAfter))
+			}
+			h.errorResponse(c, status, code, message)
+			return
+		}
 	}
 
 	searchID := strings.TrimSpace(gjson.GetBytes(body, "id").String())
@@ -122,25 +131,72 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 
 	// 分组利润控制：alpha search 文本入口请求级装门并固定 pricingAt
 	//（记录路径经 service.OpenAIPricingAtFromContext 从请求 ctx 回读）。
-	asPricingCtx, _ := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
-	c.Request = c.Request.WithContext(asPricingCtx)
+	// 从节点：计价在主节点。
+	var asPricingCtx context.Context
+	if h.relay == nil {
+		asPricingCtx, _ = h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
+		c.Request = c.Request.WithContext(asPricingCtx)
+	}
+	var relayAttempt *OpenAIRelayAttempt
+	maxAccountSwitches := h.maxAccountSwitches
 
 	for {
-		selection, _, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
-			c.Request.Context(),
-			apiKey.GroupID,
-			"",
-			sessionHash,
-			requestedModel,
-			failedAccountIDs,
-			service.OpenAIUpstreamTransportHTTPSSE,
-			service.OpenAIEndpointCapabilityAlphaSearch,
-			false,
-			false,
-			false,
-			service.PlatformOpenAI,
-		)
-		if err != nil || selection == nil || selection.Account == nil {
+		var outcome OpenAISelectOutcome
+		if h.relay != nil {
+			res := h.relay.Select(c, OpenAIRelaySelectRequest{AlphaSearch: true, APIKey: apiKey, Model: requestedModel, SessionHash: sessionHash, Excluded: failedAccountIDs})
+			if res.Rejection != nil && !res.Rejection.AutoGroupFailover {
+				h.writeOpenAIRelayRejection(c, res.Rejection, apiKey, requestedModel, cyberBlockFormatChat, lastFailoverErr, false, reqLog)
+				return
+			}
+			if res.Rejection != nil {
+				// 本地这时先换到下一个候选分组再试：照本地选号失败的分支走（没换成时按这个拒绝写）。
+				outcome = relayAutoGroupFailoverOutcome(c, res.Rejection, sessionHash)
+			} else {
+				relayAttempt = res.Attempt
+				channelMapping = relayAttempt.ChannelMapping
+				forwardBody = openAIModelMappedBody(body, channelMapping.Mapped, channelMapping.MappedModel, h.gatewayService.ReplaceModelInBody)
+				maxAccountSwitches = relayAttempt.MaxAccountSwitches
+				setOpsSelectedAccount(c, relayAttempt.Account.ID, relayAttempt.Account.Platform)
+				outcome = h.relayAttemptOutcome(c, relayAttempt)
+			}
+		} else {
+			// 选号与准入（与主节点的选号共用 OpenAIAccountAdmitter）：alpha search 只走 HTTP/SSE，按次计费不按上游 token 成本选号。
+			selectState := OpenAISelectState{ProfitVetoCount: profitVetoCount}
+			outcome = OpenAIAccountAdmitter{Gateway: h.gatewayService, Concurrency: h.concurrencyHelper}.SelectAndAdmit(c.Request.Context(), OpenAISelectRequest{
+				GroupID:             apiKey.GroupID,
+				SessionHash:         sessionHash,
+				ForwardModel:        requestedModel,
+				RequestPlatform:     service.PlatformOpenAI,
+				RequiredCapability:  service.OpenAIEndpointCapabilityAlphaSearch,
+				Transport:           service.OpenAIUpstreamTransportHTTPSSE,
+				NoUpstreamTokenCost: true,
+				Excluded:            failedAccountIDs,
+				OnAccountChosen: func(_ context.Context, selection *service.AccountSelectionResult) context.Context {
+					setOpsSelectedAccount(c, selection.Account.ID, selection.Account.Platform)
+					c.Request = c.Request.WithContext(service.ContextWithSelectionFallbackTrace(c.Request.Context(), selection))
+					return c.Request.Context()
+				},
+			}, &selectState, reqLog)
+			profitVetoCount = selectState.ProfitVetoCount
+		}
+		var err error
+		switch outcome.Kind {
+		case OpenAISelected:
+		case OpenAISelectAborted:
+			failoverClientGone(c)
+			return
+		case OpenAISelectVetoExhausted:
+			h.handleOpenAIProfitVetoExhausted(c, streamStarted, reqLog, profitVetoCount)
+			return
+		case OpenAISelectQueueFull, OpenAISelectSlotError, OpenAISelectNoWaitPlan:
+			h.writeOpenAIAdmissionFailure(c, outcome, streamStarted)
+			return
+		case OpenAISelectNone:
+			// 没有选出账号也没有错误：与选号失败同一个分支。
+		default:
+			err = outcome.Err
+		}
+		if outcome.Kind == OpenAISelectNone || err != nil {
 			if failoverClientGone(c) {
 				reqLog.Info("openai_alpha_search.account_select_aborted_client_disconnected", zap.Error(err))
 				return
@@ -152,6 +208,9 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 					asPricingCtx, _ = h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
 					c.Request = c.Request.WithContext(asPricingCtx)
 					continue
+				}
+				if h.writeRelayAutoGroupFailoverRejection(c, err, apiKey, requestedModel, cyberBlockFormatChat, lastFailoverErr, streamStarted, reqLog) {
+					return
 				}
 				cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, requestedModel, requestedModel, service.PlatformOpenAI)
 				if !cls.ModelNotFound {
@@ -190,20 +249,8 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 			return
 		}
 
-		account := selection.Account
-		setOpsSelectedAccount(c, account.ID, account.Platform)
-		accountRelease, slotResult := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, false, &streamStarted, reqLog)
-		if slotResult == openAISlotAcquireProfitVetoed {
-			// 利润终检否决：排除该账号重新选号；否决次数达上限则按无可用账号终止。
-			if !recordOpenAIProfitVeto(failedAccountIDs, account.ID, &profitVetoCount) {
-				h.handleOpenAIProfitVetoExhausted(c, streamStarted, reqLog, profitVetoCount)
-				return
-			}
-			continue
-		}
-		if slotResult != openAISlotAcquireOK {
-			return
-		}
+		account := outcome.Account
+		accountRelease := wrapReleaseOnDone(outcome.Ctx, outcome.Release)
 		service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, time.Since(routingStart).Milliseconds())
 		writerSizeBeforeForward := c.Writer.Size()
 		forwardStart := time.Now()
@@ -219,6 +266,14 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 		if err == nil {
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, requestedModel, false, result), true, nil)
 			if result != nil {
+				if h.relay != nil {
+					// 从节点：写进本地扣费队列，主节点按凭证用同一个 RecordUsage 入账。
+					h.relay.SubmitUsage(c, relayAttempt, OpenAIUsageFacts{
+						InboundEndpoint: GetInboundEndpoint(c), UpstreamEndpoint: GetUpstreamEndpoint(c, account.Platform), UserAgent: c.GetHeader("User-Agent"),
+						IPAddress: ip.GetClientIP(c), RequestPayloadHash: service.HashUsageRequestPayload(body), SessionID: service.ExtractClientSessionID(c),
+					}, result)
+					return
+				}
 				h.recordAlphaSearchUsage(c, apiKey, account, subscription, channelMapping, requestedModel, body, result, subject.UserID)
 			}
 			return
@@ -269,7 +324,7 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 		h.gatewayService.RecordOpenAIAccountSwitch()
 		failedAccountIDs[account.ID] = struct{}{}
 		lastFailoverErr = failoverErr
-		if switchCount >= h.maxAccountSwitches {
+		if switchCount >= maxAccountSwitches {
 			if h.tryAutoGroupFailover(c, &apiKey, requestedModel, failedGroupIDs, &subscription) {
 				failedAccountIDs = make(map[int64]struct{})
 				sameAccountRetryCount = make(map[int64]int)

@@ -534,6 +534,9 @@ enum SelectEndpoint {
   // （Anthropic 格式的错误）。计费资格检查后按模型选一个账号（不占槽、不装利润门），不计费（没有凭证、不给额度）。
   SELECT_ENDPOINT_OPENAI_INPUT_TOKENS = 12;
   SELECT_ENDPOINT_OPENAI_COUNT_TOKENS = 13;
+  // OpenAI 分组的 Codex alpha search（POST /alpha/search、/backend-api/codex/alpha/search，OpenAIGatewayHandler.AlphaSearch）：
+  // HTTP/SSE、alpha search 能力、不按上游 token 成本选号，按次计费。
+  SELECT_ENDPOINT_OPENAI_ALPHA_SEARCH = 14;
 }
 
 message AdmitRequest {

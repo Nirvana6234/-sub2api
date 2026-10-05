@@ -128,6 +128,9 @@ type OpenAIRelaySelectRequest struct {
 	// InputTokens、OpenAICountTokens：OpenAI 分组的 /v1/responses/input_tokens 和 /v1/messages/count_tokens（不占槽、不计费）。
 	InputTokens       bool
 	OpenAICountTokens bool
+
+	// AlphaSearch：OpenAI 分组的 Codex alpha search。
+	AlphaSearch bool
 }
 
 // OpenAIRelaySelectResult 是一次远程选号的结果：Attempt 与 Rejection 二选一。

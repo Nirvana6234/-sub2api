@@ -28,7 +28,8 @@ func (s *selector) Select(ctx context.Context, nodeID int64, req *relayv1.Select
 	case relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_RESPONSES, relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_CHAT,
 		relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_MESSAGES, relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_EMBEDDINGS,
 		relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_IMAGES, relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_INPUT_TOKENS,
-		relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_COUNT_TOKENS:
+		relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_COUNT_TOKENS,
+		relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_ALPHA_SEARCH:
 	case relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_RESPONSES_WS:
 		ws = true
 	case relayv1.SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_MESSAGES, relayv1.SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_COUNT_TOKENS,
@@ -97,6 +98,7 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 	messages := req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_MESSAGES
 	embeddings := req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_EMBEDDINGS
 	images := req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_IMAGES
+	alpha := req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_ALPHA_SEARCH
 	adm, rej, err := s.admitAPIKey(ctx, req.GetApiKey(), req.GetClientIp(), req.GetMethod(), req.GetPath(), modelCandidates(req),
 		autoGroupChoice{pinned: req.GetAutoGroupId()})
 	if err != nil || rej != nil {
@@ -134,7 +136,7 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 	previousResponseID, imageIntent := strings.TrimSpace(req.GetPreviousResponseId()), req.GetImageIntent()
 	legacyCompact, nativeV2 := req.GetLegacyCompact(), req.GetNativeCompactionV2()
 	capability := handler.OpenAIResponsesRequiredCapability(imageIntent, nativeV2 || legacyCompact, requestPlatform)
-	if chat || messages || embeddings || images {
+	if chat || messages || embeddings || images || alpha {
 		previousResponseID, imageIntent, legacyCompact = "", false, false
 		capability = service.OpenAIEndpointCapabilityChatCompletions
 	}
@@ -142,6 +144,10 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 	if embeddings {
 		// Embeddings 只走 HTTP/SSE，按 Embeddings 能力选，没有会话、没有 cyber 屏蔽。
 		capability, transport = service.OpenAIEndpointCapabilityEmbeddings, service.OpenAIUpstreamTransportHTTPSSE
+	}
+	if alpha {
+		// alpha search 只走 HTTP/SSE，按 alpha search 能力选，按次计费所以不按上游 token 成本比较；没有 cyber 屏蔽。
+		capability, transport = service.OpenAIEndpointCapabilityAlphaSearch, service.OpenAIUpstreamTransportHTTPSSE
 	}
 	if chat {
 		// Chat 在占用户槽之前查 cyber 屏蔽（本地 ChatCompletions 的顺序）。
@@ -201,7 +207,7 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 			// 图片入口不装利润门、不固定计价时间（入账时按当时的价）。
 			pricing = func(ctx context.Context, _ *int64) (context.Context, time.Time) { return ctx, time.Time{} }
 		}
-		if rej := s.startRequest(ctx, record, req, adm, quotaReq, !chat && !embeddings && !images, messages, pricing); rej != nil {
+		if rej := s.startRequest(ctx, record, req, adm, quotaReq, !chat && !embeddings && !images && !alpha, messages, pricing); rej != nil {
 			return rej, nil
 		}
 		record.groupID = groupID
@@ -230,17 +236,18 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 	}
 	lastFailover := record.state.LastFailoverErr
 	outcome := s.admitter.SelectAndAdmit(attemptCtx, handler.OpenAISelectRequest{
-		GroupID:            apiKey.GroupID,
-		PreviousResponseID: previousResponseID,
-		SessionHash:        req.GetSessionHash(),
-		ForwardModel:       forwardModel,
-		RequestPlatform:    requestPlatform,
-		RequiredCapability: capability,
-		Transport:          transport,
-		ImagesCapability:   imagesCapability,
-		RequireCompact:     legacyCompact,
-		ImageIntent:        imageIntent,
-		Excluded:           record.excluded,
+		GroupID:             apiKey.GroupID,
+		PreviousResponseID:  previousResponseID,
+		SessionHash:         req.GetSessionHash(),
+		ForwardModel:        forwardModel,
+		RequestPlatform:     requestPlatform,
+		RequiredCapability:  capability,
+		Transport:           transport,
+		ImagesCapability:    imagesCapability,
+		NoUpstreamTokenCost: alpha,
+		RequireCompact:      legacyCompact,
+		ImageIntent:         imageIntent,
+		Excluded:            record.excluded,
 	}, &record.state, log)
 
 	if ctx.Err() != nil {
@@ -270,6 +277,8 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 			rej = gatewayRejection(handler.OpenAIEmbeddingsFirstSelectFailureRejection(ctx, s.deps.Gateway, apiKey, reqModel, outcome.Err))
 		} else if images {
 			rej = gatewayRejection(handler.OpenAIImagesNoAccountRejection(ctx, s.deps.Gateway, apiKey, reqModel, outcome.Err))
+		} else if alpha {
+			rej = gatewayRejection(handler.OpenAIEmbeddingsFirstSelectFailureRejection(ctx, s.deps.Gateway, apiKey, reqModel, outcome.Err))
 		} else if messages {
 			rej = gatewayRejection(handler.OpenAIMessagesNoAccountRejection(ctx, s.deps.Gateway, apiKey, forwardModel, reqModel, requestPlatform, outcome.Err))
 		} else {
@@ -280,6 +289,10 @@ func (s *selector) selectOpenAI(ctx context.Context, nodeID int64, req *relayv1.
 		keep = rej.GetRejection().GetAutoGroupFailover()
 		return rej, nil
 	case handler.OpenAISelectNone:
+		if alpha {
+			// 没有选出账号也没有错误：本地 alpha search 与第一次选号失败同一个写法（只是没有调度器的错误可参考）。
+			return gatewayRejection(handler.OpenAIEmbeddingsFirstSelectFailureRejection(ctx, s.deps.Gateway, apiKey, reqModel, nil)), nil
+		}
 		if messages {
 			return gatewayRejection(handler.OpenAIMessagesNoAccountRejection(ctx, s.deps.Gateway, apiKey, forwardModel, reqModel, requestPlatform, nil)), nil
 		}

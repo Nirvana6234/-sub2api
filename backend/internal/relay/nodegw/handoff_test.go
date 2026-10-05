@@ -50,7 +50,8 @@ func TestHandOffProxiesWebSocketUpgrades(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	wsURL := "ws" + strings.TrimPrefix(node.URL, "http") + "/backend-api/codex/responses"
+	// 实时会话旁路（/:call_id）按 ID 选号，还没接入，仍整条连接交给主节点。
+	wsURL := "ws" + strings.TrimPrefix(node.URL, "http") + "/backend-api/codex/call_sideband1"
 	conn, resp, err := coderws.Dial(ctx, wsURL, &coderws.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer sk-a"}}})
 	require.NoError(t, err)
 	defer func() { _ = conn.CloseNow() }()
@@ -63,7 +64,7 @@ func TestHandOffProxiesWebSocketUpgrades(t *testing.T) {
 		require.Equal(t, "echo:"+frame, string(got))
 	}
 	require.Equal(t, "Bearer sk-a", gotAuth, "the credential reaches the master unchanged")
-	require.Equal(t, "/backend-api/codex/responses", gotPath)
+	require.Equal(t, "/backend-api/codex/call_sideband1", gotPath)
 	require.Equal(t, "127.0.0.1", gotXFF, "the client IP rides in X-Forwarded-For")
 	require.NoError(t, conn.Close(coderws.StatusNormalClosure, ""))
 }

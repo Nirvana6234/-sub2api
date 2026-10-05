@@ -240,6 +240,9 @@ const (
 	// （Anthropic 格式的错误）。计费资格检查后按模型选一个账号（不占槽、不装利润门），不计费（没有凭证、不给额度）。
 	SelectEndpoint_SELECT_ENDPOINT_OPENAI_INPUT_TOKENS SelectEndpoint = 12
 	SelectEndpoint_SELECT_ENDPOINT_OPENAI_COUNT_TOKENS SelectEndpoint = 13
+	// OpenAI 分组的 Codex alpha search（POST /alpha/search、/backend-api/codex/alpha/search，OpenAIGatewayHandler.AlphaSearch）：
+	// HTTP/SSE、alpha search 能力、不按上游 token 成本选号，按次计费。
+	SelectEndpoint_SELECT_ENDPOINT_OPENAI_ALPHA_SEARCH SelectEndpoint = 14
 )
 
 // Enum value maps for SelectEndpoint.
@@ -259,6 +262,7 @@ var (
 		11: "SELECT_ENDPOINT_OPENAI_IMAGES",
 		12: "SELECT_ENDPOINT_OPENAI_INPUT_TOKENS",
 		13: "SELECT_ENDPOINT_OPENAI_COUNT_TOKENS",
+		14: "SELECT_ENDPOINT_OPENAI_ALPHA_SEARCH",
 	}
 	SelectEndpoint_value = map[string]int32{
 		"SELECT_ENDPOINT_UNSPECIFIED":            0,
@@ -275,6 +279,7 @@ var (
 		"SELECT_ENDPOINT_OPENAI_IMAGES":          11,
 		"SELECT_ENDPOINT_OPENAI_INPUT_TOKENS":    12,
 		"SELECT_ENDPOINT_OPENAI_COUNT_TOKENS":    13,
+		"SELECT_ENDPOINT_OPENAI_ALPHA_SEARCH":    14,
 	}
 )
 
@@ -9698,7 +9703,7 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\vBillingMode\x12\x1c\n" +
 	"\x18BILLING_MODE_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14BILLING_MODE_BALANCE\x10\x01\x12\x1d\n" +
-	"\x19BILLING_MODE_SUBSCRIPTION\x10\x02*\xa2\x04\n" +
+	"\x19BILLING_MODE_SUBSCRIPTION\x10\x02*\xcb\x04\n" +
 	"\x0eSelectEndpoint\x12\x1f\n" +
 	"\x1bSELECT_ENDPOINT_UNSPECIFIED\x10\x00\x12$\n" +
 	" SELECT_ENDPOINT_OPENAI_RESPONSES\x10\x01\x12\x1f\n" +
@@ -9714,7 +9719,8 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x12!\n" +
 	"\x1dSELECT_ENDPOINT_OPENAI_IMAGES\x10\v\x12'\n" +
 	"#SELECT_ENDPOINT_OPENAI_INPUT_TOKENS\x10\f\x12'\n" +
-	"#SELECT_ENDPOINT_OPENAI_COUNT_TOKENS\x10\r*\x9b\x02\n" +
+	"#SELECT_ENDPOINT_OPENAI_COUNT_TOKENS\x10\r\x12'\n" +
+	"#SELECT_ENDPOINT_OPENAI_ALPHA_SEARCH\x10\x0e*\x9b\x02\n" +
 	"\x0fRejectionFormat\x12 \n" +
 	"\x1cREJECTION_FORMAT_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18REJECTION_FORMAT_GATEWAY\x10\x01\x12\x18\n" +

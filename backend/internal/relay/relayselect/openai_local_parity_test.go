@@ -166,3 +166,31 @@ func TestNodeServesOpenAITokenCountingLikeASingleServer(t *testing.T) {
 		require.Equal(t, localBody, nodeBody, tc.path)
 	}
 }
+
+// Codex alpha search 经从节点：与单机同请求的结果一致（有账号、没有可用账号）；有账号时用量同一个记录种类。
+func TestNodeServesAlphaSearchLikeASingleServer(t *testing.T) {
+	routes := func(g *gin.RouterGroup, h *handler.OpenAIGatewayHandler) {
+		g.POST("/alpha/search", h.AlphaSearch)
+	}
+	const body = `{"model":"gpt-5","id":"search-1","query":"hi"}`
+	accounts := []service.Account{apiKeyAccount(1, "one")}
+	e := startStandardE2E(t, func(upstream string) []service.Account {
+		accounts[0].Credentials["base_url"] = upstream
+		accounts[0].AccountGroups = []service.AccountGroup{{AccountID: 1, GroupID: 5}}
+		return accounts
+	})
+	local := startLocalOpenAI(t, e, accounts, routes)
+	nodeStatus, nodeBody := e.post(t, "/v1/alpha/search", "sk-a", body)
+	e.world.waitReleased(t)
+	localStatus, localBody := local.post(t, "/v1/alpha/search", "sk-a", body)
+	require.Equal(t, localStatus, nodeStatus, nodeBody)
+	require.Equal(t, localBody, nodeBody)
+
+	empty := startStandardE2E(t, func(string) []service.Account { return nil })
+	emptyLocal := startLocalOpenAI(t, empty, nil, routes)
+	nodeStatus, nodeBody = empty.post(t, "/v1/alpha/search", "sk-a", body)
+	empty.world.waitReleased(t)
+	localStatus, localBody = emptyLocal.post(t, "/v1/alpha/search", "sk-a", body)
+	require.Equal(t, localStatus, nodeStatus)
+	require.Equal(t, localBody, nodeBody)
+}

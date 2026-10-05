@@ -122,6 +122,7 @@ func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatche
 		g.POST("/images/generations", openAIOnly(h.Images))
 		g.POST("/images/edits", openAIOnly(h.Images))
 		g.POST("/embeddings", middleware2.RequestBodyLimit(cfg.Gateway.TextMaxBodySize), openAIOnly(h.Embeddings))
+		g.POST("/alpha/search", middleware2.RequestBodyLimit(cfg.Gateway.TextMaxBodySize), openAIOnly(h.AlphaSearch))
 		// Responses WebSocket（Codex）：与本地一样是 GET /responses 的升级请求。
 		g.GET("/responses", openAIOnly(h.ResponsesWebSocket))
 		if prefix == "/v1" {
@@ -140,6 +141,13 @@ func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatche
 			})
 		}
 	}
+	// Codex 直连路径 /backend-api/codex/*：与本地一样的链路，responses（含子路径、WebSocket）和 alpha search 走 OpenAI 网关。
+	// 实时会话（/realtime/calls、/:call_id）、模型列表等仍交给主节点。
+	codexDirect := r.Group("/backend-api/codex", chain...)
+	codexDirect.POST("/responses", responses)
+	codexDirect.POST("/responses/*subpath", responses)
+	codexDirect.POST("/alpha/search", middleware2.RequestBodyLimit(cfg.Gateway.TextMaxBodySize), openAIOnly(h.AlphaSearch))
+	codexDirect.GET("/responses", openAIOnly(h.ResponsesWebSocket))
 	if gh != nil {
 		// Gemini 原生入口（SDK / CLI 直连）：链路对照本地 /v1beta 组（准入含 Google 格式的鉴权与错误、自动分组按 URL 模型、
 		// 分组模型白名单、组合平台选目标）。模型列表等 GET 请求不在这里，仍交给主节点。
