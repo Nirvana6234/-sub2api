@@ -153,6 +153,10 @@ type OpenAIRelaySelectRequest struct {
 	MediaEndpoint     string
 	TaskID            string
 	MediaRequestModel string
+
+	// Voice：Grok 语音入口（GrokVoice 的 tts / stt / custom-voices，GrokRealtime）；MediaEndpoint 是入口名，realtime 的
+	// MediaRequestModel 是语音模型。
+	Voice bool
 }
 
 // OpenAIRelaySelectResult 是一次远程选号的结果：Attempt 与 Rejection 二选一。

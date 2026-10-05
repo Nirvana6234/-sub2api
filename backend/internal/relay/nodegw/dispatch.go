@@ -200,6 +200,8 @@ func (d *Dispatcher) selectRequest(c *gin.Context, st *requestState, req handler
 		endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_GATEWAY_SEARCH
 	case req.Media:
 		endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_MEDIA
+	case req.Voice:
+		endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_VOICE
 	case req.AlphaSearch:
 		endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_ALPHA_SEARCH
 	case req.InputTokens:
@@ -264,7 +266,7 @@ func (d *Dispatcher) selectRequest(c *gin.Context, st *requestState, req handler
 	for id := range req.Excluded {
 		sreq.ExcludedAccountIds = append(sreq.ExcludedAccountIds, id)
 	}
-	if !req.Anthropic && !req.Gemini && !req.GatewayResponses && !req.GatewayChat && !req.Embeddings && !req.Images && !req.InputTokens && !req.OpenAICountTokens && !req.AlphaSearch && !req.SystemOne && !req.GrokSearch && !req.Media && d.deps.CyberEnabled != nil && d.deps.CyberEnabled(c.Request.Context()) {
+	if !req.Anthropic && !req.Gemini && !req.GatewayResponses && !req.GatewayChat && !req.Embeddings && !req.Images && !req.InputTokens && !req.OpenAICountTokens && !req.AlphaSearch && !req.SystemOne && !req.GrokSearch && !req.Media && !req.Voice && d.deps.CyberEnabled != nil && d.deps.CyberEnabled(c.Request.Context()) {
 		l := service.NewCyberSessionLookup(req.APIKey.ID, c, req.Body, clientIP, c.GetHeader("User-Agent"))
 		sreq.Cyber = &relayv1.CyberSessionLookup{
 			ExplicitKey: l.ExplicitKey, ScopeKey: l.ScopeKey, TranscriptKeys: l.TranscriptKeys, TranscriptTruncated: l.TranscriptTruncated,
@@ -277,6 +279,8 @@ func (d *Dispatcher) selectRequest(c *gin.Context, st *requestState, req handler
 		if m := requestmodel.GeminiModelFromRouteParams(c.Param("model"), c.Param("modelAction")); m != "" {
 			sreq.ModelCandidates = []string{m}
 		}
+	case req.Voice:
+		// 语音入口没有模型白名单可查。
 	case req.Media:
 		// 媒体入口的白名单按客户端请求的模型校验（任务查询没有模型）。
 		if req.MediaRequestModel != "" {

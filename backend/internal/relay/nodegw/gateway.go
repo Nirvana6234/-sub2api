@@ -3,6 +3,7 @@ package nodegw
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -170,6 +171,20 @@ func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatche
 		g.GET("/videos/extensions/:request_id", grok(h.GrokVideoStatus))
 		g.GET("/videos/:request_id", grok(h.GrokVideoStatus))
 		g.GET("/videos/:request_id/content", grok(h.GrokVideoContent))
+		// xAI 语音（tts、stt、custom-voices）和 Realtime WebSocket，只有 Grok 分组。
+		voice := func(endpoint string) gin.HandlerFunc {
+			return grok(func(c *gin.Context) { h.GrokVoice(c, endpoint) })
+		}
+		customVoice := grok(func(c *gin.Context) { h.GrokVoice(c, grokCustomVoiceEndpoint(c)) })
+		g.POST("/tts", voice("tts"))
+		g.POST("/stt", voice("stt"))
+		g.POST("/custom-voices", voice("custom-voices"))
+		g.GET("/custom-voices", voice("custom-voices"))
+		g.GET("/custom-voices/:voice_id/audio", customVoice)
+		g.GET("/custom-voices/:voice_id", customVoice)
+		g.PATCH("/custom-voices/:voice_id", customVoice)
+		g.DELETE("/custom-voices/:voice_id", customVoice)
+		g.GET("/realtime", grok(h.GrokRealtime))
 		g.POST("/embeddings", middleware2.RequestBodyLimit(cfg.Gateway.TextMaxBodySize), openAIOnly(h.Embeddings))
 		g.POST("/alpha/search", middleware2.RequestBodyLimit(cfg.Gateway.TextMaxBodySize), openAIOnly(h.AlphaSearch))
 		// Responses WebSocket（Codex）：与本地一样是 GET /responses 的升级请求。
@@ -252,6 +267,15 @@ func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatche
 		}
 		d.deps.HandOff(c, body)
 	})
+}
+
+// grokCustomVoiceEndpoint 是自定义语音路径对应的入口名（本地 routes 同名函数）。
+func grokCustomVoiceEndpoint(c *gin.Context) string {
+	endpoint := "custom-voices/" + c.Param("voice_id")
+	if strings.HasSuffix(c.FullPath(), "/:voice_id/audio") {
+		endpoint += "/audio"
+	}
+	return endpoint
 }
 
 // servesAnthropicRoutes 报告这次请求走 Anthropic 网关（Messages、count_tokens）：Anthropic、Gemini、Antigravity 平台的分组（含组合平台

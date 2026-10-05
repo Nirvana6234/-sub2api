@@ -12,6 +12,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/relay/nodegw"
 	"github.com/Wei-Shaw/sub2api/internal/relay/proto/relayv1"
+	"github.com/Wei-Shaw/sub2api/internal/relay/sign"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -226,4 +227,57 @@ func TestNodeServesSeedanceLikeASingleServer(t *testing.T) {
 	// 非 OpenAI 分组的 Seedance 请求交给主节点（本地回 403）。
 	status, body := e.post(t, "/v1/contents/generations/tasks", "sk-grokgroup", create)
 	require.NotEqual(t, http.StatusOK, status, strings.TrimSpace(body))
+}
+
+// Grok 语音（TTS）经从节点：与单机同请求的响应一致，用量按入口名（OpenAI 记录种类）；没有账号时错误一致；
+// realtime 在主节点按能力选号（不带模型），用量的模型是语音模型。
+func TestNodeServesGrokVoiceLikeASingleServer(t *testing.T) {
+	account := grokMediaAccount(1)
+	accounts := []service.Account{account}
+	e := startStandardE2E(t, func(upstream string) []service.Account {
+		accounts[0].Credentials["base_url"] = upstream
+		return accounts
+	})
+	local := startLocalOpenAI(t, e, accounts, func(g *gin.RouterGroup, h *handler.OpenAIGatewayHandler) {
+		g.POST("/tts", func(c *gin.Context) { h.GrokVoice(c, "tts") })
+	})
+	const tts = `{"input":"hello world","voice":"eve"}`
+	nodeStatus, nodeBody := e.post(t, "/v1/tts", "sk-grokgroup", tts)
+	e.world.waitReleased(t)
+	localStatus, localBody := local.post(t, "/v1/tts", "sk-grokgroup", tts)
+	require.Equal(t, http.StatusOK, localStatus, localBody)
+	require.Equal(t, localStatus, nodeStatus, nodeBody)
+	require.Equal(t, localBody, nodeBody)
+	rec := e.lastRecord(t, 1)
+	require.Equal(t, relayv1.UsageRecordKind_USAGE_RECORD_KIND_OPENAI, rec.GetKind())
+	v := mustVoucher(t, e, rec)
+	require.Equal(t, "tts", v.GetRequestedModel())
+	require.Equal(t, int64(41), v.GetGroupId())
+	require.False(t, v.GetContext().GetMediaChannelUsageFields())
+
+	// 非 Grok 分组交给主节点（本地回 404）；没有账号时的错误一致。
+	status, _ := e.post(t, "/v1/tts", "sk-anthropic", tts)
+	require.NotEqual(t, http.StatusOK, status)
+	empty := startStandardE2E(t, func(string) []service.Account { return nil })
+	emptyLocal := startLocalOpenAI(t, empty, nil, func(g *gin.RouterGroup, h *handler.OpenAIGatewayHandler) {
+		g.POST("/tts", func(c *gin.Context) { h.GrokVoice(c, "tts") })
+	})
+	nodeStatus, nodeBody = empty.post(t, "/v1/tts", "sk-grokgroup", tts)
+	empty.world.waitReleased(t)
+	localStatus, localBody = emptyLocal.post(t, "/v1/tts", "sk-grokgroup", tts)
+	require.Equal(t, http.StatusServiceUnavailable, localStatus, localBody)
+	require.Equal(t, localStatus, nodeStatus)
+	require.Equal(t, localBody, nodeBody)
+
+	// realtime 的选号：不带模型，用量的模型是语音模型。
+	resp, err := e.world.sel.Select(context.Background(), e.nodeID, &relayv1.SelectRequest{
+		RequestId: "rt-1", Attempt: 1, Credential: &relayv1.SelectRequest_ApiKey{ApiKey: "sk-grokgroup"}, Method: "GET", Path: "/v1/realtime",
+		Endpoint: relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_VOICE, MediaEndpoint: "realtime", MediaRequestModel: "grok-voice-latest", ClientIp: "5.6.7.8",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp.GetSelection(), "%+v", resp.GetRejection())
+	require.Equal(t, "", resp.GetSelection().GetForwardModel())
+	v, err = sign.VerifyVoucher(resp.GetSelection().GetVoucher(), e.world.pub, e.nodeID, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, "grok-voice-latest", v.GetRequestedModel())
 }

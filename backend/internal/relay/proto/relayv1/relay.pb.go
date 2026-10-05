@@ -253,6 +253,10 @@ const (
 	// Grok 媒体入口（图片生成 / 编辑、视频创建 / 编辑 / 延伸 / 状态 / 内容）和 Seedance 任务入口（OpenAIGatewayHandler.handleGrokMedia）：
 	// media_endpoint 是入口名（service.GrokMediaEndpoint），视频状态 / 内容 / Seedance 查询带 task_id（主节点按任务绑定的账号选号）。
 	SelectEndpoint_SELECT_ENDPOINT_OPENAI_MEDIA SelectEndpoint = 17
+	// Grok 语音入口（OpenAIGatewayHandler.GrokVoice：tts、stt、custom-voices，GrokRealtime：realtime）：media_endpoint 是入口名
+	// （custom-voices 带语音 ID 路径），realtime 的 media_request_model 是语音模型。计费资格检查（没有用户并发槽）后一轮选号与准入
+	// （不装利润门），换号状态在从节点；用量（按时长 / 字数）按转发结果入账。
+	SelectEndpoint_SELECT_ENDPOINT_OPENAI_VOICE SelectEndpoint = 18
 )
 
 // Enum value maps for SelectEndpoint.
@@ -276,6 +280,7 @@ var (
 		15: "SELECT_ENDPOINT_GATEWAY_SYSTEMONE",
 		16: "SELECT_ENDPOINT_GATEWAY_SEARCH",
 		17: "SELECT_ENDPOINT_OPENAI_MEDIA",
+		18: "SELECT_ENDPOINT_OPENAI_VOICE",
 	}
 	SelectEndpoint_value = map[string]int32{
 		"SELECT_ENDPOINT_UNSPECIFIED":            0,
@@ -296,6 +301,7 @@ var (
 		"SELECT_ENDPOINT_GATEWAY_SYSTEMONE":      15,
 		"SELECT_ENDPOINT_GATEWAY_SEARCH":         16,
 		"SELECT_ENDPOINT_OPENAI_MEDIA":           17,
+		"SELECT_ENDPOINT_OPENAI_VOICE":           18,
 	}
 )
 
@@ -9798,7 +9804,7 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\vBillingMode\x12\x1c\n" +
 	"\x18BILLING_MODE_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14BILLING_MODE_BALANCE\x10\x01\x12\x1d\n" +
-	"\x19BILLING_MODE_SUBSCRIPTION\x10\x02*\xb8\x05\n" +
+	"\x19BILLING_MODE_SUBSCRIPTION\x10\x02*\xda\x05\n" +
 	"\x0eSelectEndpoint\x12\x1f\n" +
 	"\x1bSELECT_ENDPOINT_UNSPECIFIED\x10\x00\x12$\n" +
 	" SELECT_ENDPOINT_OPENAI_RESPONSES\x10\x01\x12\x1f\n" +
@@ -9818,7 +9824,8 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"#SELECT_ENDPOINT_OPENAI_ALPHA_SEARCH\x10\x0e\x12%\n" +
 	"!SELECT_ENDPOINT_GATEWAY_SYSTEMONE\x10\x0f\x12\"\n" +
 	"\x1eSELECT_ENDPOINT_GATEWAY_SEARCH\x10\x10\x12 \n" +
-	"\x1cSELECT_ENDPOINT_OPENAI_MEDIA\x10\x11*\x9b\x02\n" +
+	"\x1cSELECT_ENDPOINT_OPENAI_MEDIA\x10\x11\x12 \n" +
+	"\x1cSELECT_ENDPOINT_OPENAI_VOICE\x10\x12*\x9b\x02\n" +
 	"\x0fRejectionFormat\x12 \n" +
 	"\x1cREJECTION_FORMAT_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18REJECTION_FORMAT_GATEWAY\x10\x01\x12\x18\n" +

@@ -551,6 +551,10 @@ enum SelectEndpoint {
   // Grok 媒体入口（图片生成 / 编辑、视频创建 / 编辑 / 延伸 / 状态 / 内容）和 Seedance 任务入口（OpenAIGatewayHandler.handleGrokMedia）：
   // media_endpoint 是入口名（service.GrokMediaEndpoint），视频状态 / 内容 / Seedance 查询带 task_id（主节点按任务绑定的账号选号）。
   SELECT_ENDPOINT_OPENAI_MEDIA = 17;
+  // Grok 语音入口（OpenAIGatewayHandler.GrokVoice：tts、stt、custom-voices，GrokRealtime：realtime）：media_endpoint 是入口名
+  // （custom-voices 带语音 ID 路径），realtime 的 media_request_model 是语音模型。计费资格检查（没有用户并发槽）后一轮选号与准入
+  // （不装利润门），换号状态在从节点；用量（按时长 / 字数）按转发结果入账。
+  SELECT_ENDPOINT_OPENAI_VOICE = 18;
 }
 
 message AdmitRequest {

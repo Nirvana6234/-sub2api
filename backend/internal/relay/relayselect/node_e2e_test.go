@@ -211,6 +211,12 @@ func startE2EWithConfig(t *testing.T, configure func(*config.Config), accounts f
 				`"usage":{"input_tokens":5,"output_tokens":3}}`)
 			return
 		}
+		if strings.HasSuffix(r.URL.Path, "/tts") {
+			// Grok TTS：音频字节。
+			w.Header().Set("Content-Type", "audio/mpeg")
+			_, _ = io.WriteString(w, "FAKE-AUDIO-BYTES")
+			return
+		}
 		if strings.HasSuffix(r.URL.Path, "/videos/generations") {
 			// Grok 视频创建。
 			_, _ = io.WriteString(w, `{"request_id":"vid_e2e1"}`)

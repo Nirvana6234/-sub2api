@@ -35,7 +35,8 @@ func (s *selector) Select(ctx context.Context, nodeID int64, req *relayv1.Select
 	case relayv1.SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_MESSAGES, relayv1.SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_COUNT_TOKENS,
 		relayv1.SelectEndpoint_SELECT_ENDPOINT_GEMINI_NATIVE, relayv1.SelectEndpoint_SELECT_ENDPOINT_GATEWAY_RESPONSES,
 		relayv1.SelectEndpoint_SELECT_ENDPOINT_GATEWAY_CHAT, relayv1.SelectEndpoint_SELECT_ENDPOINT_GATEWAY_SYSTEMONE,
-		relayv1.SelectEndpoint_SELECT_ENDPOINT_GATEWAY_SEARCH, relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_MEDIA:
+		relayv1.SelectEndpoint_SELECT_ENDPOINT_GATEWAY_SEARCH, relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_MEDIA,
+		relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_VOICE:
 	default:
 		return unsupported(), nil
 	}
@@ -59,6 +60,8 @@ func (s *selector) Select(ctx context.Context, nodeID int64, req *relayv1.Select
 		resp, err = s.selectGrokSearch(ctx, nodeID, req)
 	case req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_MEDIA:
 		resp, err = s.selectMedia(ctx, nodeID, req)
+	case req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_VOICE:
+		resp, err = s.selectGrokVoice(ctx, nodeID, req)
 	case req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_INPUT_TOKENS || req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_COUNT_TOKENS:
 		resp, err = s.selectOpenAICountTokens(ctx, nodeID, req)
 	default:

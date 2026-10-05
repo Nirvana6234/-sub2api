@@ -35,7 +35,10 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 		return
 	}
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
-	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
+	if h.relay != nil {
+		// 从节点：计费资格在主节点选号时做（没有用户并发槽），请求结束时放掉这次的选号。
+		defer h.relay.RequestDone(c)
+	} else if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
 		status, code, message, retryAfter := billingErrorDetails(err)
 		if retryAfter > 0 {
 			c.Header("Retry-After", strconv.Itoa(retryAfter))
@@ -53,7 +56,8 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 	// Realtime is not an HTTP streaming response; using reqStream=true here would
 	// let the wait queue flush an SSE ping before the WebSocket handshake succeeds.
 	failed := map[int64]struct{}{}
-	var selection *service.AccountSelectionResult
+	var selectedAccount *service.Account
+	var relayAttempt *OpenAIRelayAttempt
 	var release func()
 	var token string
 	var upstream *service.GrokRealtimeUpstream
@@ -64,26 +68,51 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 		// older/default text model before the upstream handshake can decide.
 		// An empty requested model keeps account selection capability-based;
 		// the actual voice model remains in the upstream WS query below.
-		candidate, _, selectErr := h.gatewayService.SelectAccountWithSchedulerForCapability(
-			c.Request.Context(), apiKey.GroupID, "", "", "", failed,
-			service.OpenAIUpstreamTransportHTTPSSE,
-			service.OpenAIEndpointCapabilityChatCompletions,
-			false, false, false, service.PlatformGrok,
-		)
-		if selectErr != nil || candidate == nil || candidate.Account == nil {
-			break
-		}
-		candidateSeen = true
-		account := candidate.Account
-		var streamStarted bool
-		var slotStatus openAISlotAcquireResult
-		release, slotStatus = h.acquireResponsesAccountSlot(c, apiKey.GroupID, "", candidate, false, &streamStarted, reqLog)
-		if slotStatus != openAISlotAcquireOK {
-			if slotStatus == openAISlotAcquireFailed {
-				return
+		var account *service.Account
+		if h.relay != nil {
+			// 从节点：选号与准入经主节点（换号状态在这里）。
+			res := h.relay.Select(c, OpenAIRelaySelectRequest{Voice: true, MediaEndpoint: "realtime", MediaRequestModel: model, APIKey: apiKey, Excluded: failed})
+			if r := res.Rejection; r != nil {
+				switch r.Kind {
+				case OpenAIRelayRejectProfitVetoed:
+					candidateSeen = true
+					failed[r.VetoedAccountID] = struct{}{}
+					continue
+				case OpenAIRelayRejectFailoverExhausted:
+					// 本地：选不出账号就结束选号循环，按"没有可用账号 / 上游不可用"写。
+				default:
+					h.writeGrokMediaRelayRejection(c, r, nil)
+					return
+				}
+				break
 			}
-			failed[account.ID] = struct{}{}
-			continue
+			relayAttempt = res.Attempt
+			account = relayAttempt.Account
+			candidateSeen = true
+			attempt := relayAttempt
+			release = func() { h.relay.AttemptDone(c, attempt) }
+		} else {
+			candidate, _, selectErr := h.gatewayService.SelectAccountWithSchedulerForCapability(
+				c.Request.Context(), apiKey.GroupID, "", "", "", failed,
+				service.OpenAIUpstreamTransportHTTPSSE,
+				service.OpenAIEndpointCapabilityChatCompletions,
+				false, false, false, service.PlatformGrok,
+			)
+			if selectErr != nil || candidate == nil || candidate.Account == nil {
+				break
+			}
+			candidateSeen = true
+			account = candidate.Account
+			var streamStarted bool
+			var slotStatus openAISlotAcquireResult
+			release, slotStatus = h.acquireResponsesAccountSlot(c, apiKey.GroupID, "", candidate, false, &streamStarted, reqLog)
+			if slotStatus != openAISlotAcquireOK {
+				if slotStatus == openAISlotAcquireFailed {
+					return
+				}
+				failed[account.ID] = struct{}{}
+				continue
+			}
 		}
 		var credErr error
 		token, _, credErr = h.gatewayService.GetRequestCredential(c.Request.Context(), c, account)
@@ -109,10 +138,10 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 			failed[account.ID] = struct{}{}
 			continue
 		}
-		selection, upstream = candidate, candidateUpstream
+		selectedAccount, upstream = account, candidateUpstream
 		break
 	}
-	if selection == nil || selection.Account == nil || release == nil || upstream == nil {
+	if selectedAccount == nil || release == nil || upstream == nil {
 		if !candidateSeen {
 			h.errorResponse(c, http.StatusServiceUnavailable, "api_error", "No available Grok accounts")
 		} else {
@@ -140,7 +169,7 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 		}
 	}
 	if result := grokRealtimeBillingResult(model, elapsed, audioObserved); result != nil {
-		h.recordGrokVoiceUsage(c, apiKey, selection.Account, subscription, "realtime", nil, result)
+		h.recordGrokVoiceUsage(c, apiKey, selectedAccount, subscription, "realtime", nil, result, relayAttempt)
 	}
 }
 
@@ -180,7 +209,10 @@ func (h *OpenAIGatewayHandler) GrokVoice(c *gin.Context, endpoint string) {
 		return
 	}
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
-	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
+	if h.relay != nil {
+		// 从节点：计费资格在主节点选号时做（没有用户并发槽），请求结束时放掉这次的选号。
+		defer h.relay.RequestDone(c)
+	} else if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
 		status, code, message, retryAfter := billingErrorDetails(err)
 		if retryAfter > 0 {
 			c.Header("Retry-After", strconv.Itoa(retryAfter))
@@ -223,50 +255,78 @@ func (h *OpenAIGatewayHandler) GrokVoice(c *gin.Context, endpoint string) {
 	selectionModel := "grok-4.5"
 
 	for attempts := 0; attempts < 4; attempts++ {
-		selection, _, selectErr := h.gatewayService.SelectAccountWithSchedulerForCapability(
-			c.Request.Context(),
-			apiKey.GroupID,
-			"",
-			"",
-			selectionModel,
-			failed,
-			service.OpenAIUpstreamTransportHTTPSSE,
-			service.OpenAIEndpointCapabilityChatCompletions,
-			false,
-			false,
-			false,
-			service.PlatformGrok,
-		)
-		if selectErr != nil || selection == nil || selection.Account == nil {
-			if last != nil {
-				h.handleFailoverExhausted(c, last, false)
-			} else {
-				h.errorResponse(c, http.StatusServiceUnavailable, "api_error", "No available Grok accounts")
-			}
-			return
-		}
-		account := selection.Account
-		var started bool
-		release, status := h.acquireResponsesAccountSlot(c, apiKey.GroupID, "", selection, false, &started, reqLog)
-		if status == openAISlotAcquireProfitVetoed {
-			failed[account.ID] = struct{}{}
-			continue
-		}
-		if status != openAISlotAcquireOK {
-			// Failed already wrote error response (or transient reject).
-			if status == openAISlotAcquireFailed && len(failed) == 0 {
-				// Slot path wrote the response; stop.
+		var account *service.Account
+		var release func()
+		var relayAttempt *OpenAIRelayAttempt
+		if h.relay != nil {
+			// 从节点：选号与准入经主节点（换号状态在这里）。
+			res := h.relay.Select(c, OpenAIRelaySelectRequest{Voice: true, MediaEndpoint: endpoint, APIKey: apiKey, Excluded: failed})
+			if r := res.Rejection; r != nil {
+				switch r.Kind {
+				case OpenAIRelayRejectProfitVetoed:
+					failed[r.VetoedAccountID] = struct{}{}
+					continue
+				case OpenAIRelayRejectFailoverExhausted:
+					if last != nil {
+						h.handleFailoverExhausted(c, last, false)
+					} else {
+						h.errorResponse(c, http.StatusServiceUnavailable, "api_error", "No available Grok accounts")
+					}
+					return
+				}
+				h.writeGrokMediaRelayRejection(c, r, last)
 				return
 			}
-			failed[account.ID] = struct{}{}
-			continue
+			relayAttempt = res.Attempt
+			account = relayAttempt.Account
+			release = func() { h.relay.AttemptDone(c, relayAttempt) }
+		} else {
+			selection, _, selectErr := h.gatewayService.SelectAccountWithSchedulerForCapability(
+				c.Request.Context(),
+				apiKey.GroupID,
+				"",
+				"",
+				selectionModel,
+				failed,
+				service.OpenAIUpstreamTransportHTTPSSE,
+				service.OpenAIEndpointCapabilityChatCompletions,
+				false,
+				false,
+				false,
+				service.PlatformGrok,
+			)
+			if selectErr != nil || selection == nil || selection.Account == nil {
+				if last != nil {
+					h.handleFailoverExhausted(c, last, false)
+				} else {
+					h.errorResponse(c, http.StatusServiceUnavailable, "api_error", "No available Grok accounts")
+				}
+				return
+			}
+			account = selection.Account
+			var started bool
+			var status openAISlotAcquireResult
+			release, status = h.acquireResponsesAccountSlot(c, apiKey.GroupID, "", selection, false, &started, reqLog)
+			if status == openAISlotAcquireProfitVetoed {
+				failed[account.ID] = struct{}{}
+				continue
+			}
+			if status != openAISlotAcquireOK {
+				// Failed already wrote error response (or transient reject).
+				if status == openAISlotAcquireFailed && len(failed) == 0 {
+					// Slot path wrote the response; stop.
+					return
+				}
+				failed[account.ID] = struct{}{}
+				continue
+			}
 		}
 		result, forwardErr := func() (*service.OpenAIForwardResult, error) {
 			defer release()
 			return h.gatewayService.ForwardGrokVoice(c.Request.Context(), c, account, endpoint, body, contentType)
 		}()
 		if forwardErr == nil {
-			h.recordGrokVoiceUsage(c, apiKey, account, subscription, endpoint, body, result)
+			h.recordGrokVoiceUsage(c, apiKey, account, subscription, endpoint, body, result, relayAttempt)
 			return
 		}
 		var failoverErr *service.UpstreamFailoverError
@@ -292,6 +352,7 @@ func (h *OpenAIGatewayHandler) recordGrokVoiceUsage(
 	endpoint string,
 	body []byte,
 	result *service.OpenAIForwardResult,
+	relayAttempt *OpenAIRelayAttempt,
 ) {
 	if h == nil || c == nil || apiKey == nil || account == nil || result == nil {
 		return
@@ -320,6 +381,14 @@ func (h *OpenAIGatewayHandler) recordGrokVoiceUsage(
 		model = endpoint
 	}
 
+	if relayAttempt != nil && h.relay != nil {
+		// 从节点：写进本地扣费队列，主节点按凭证用同一个 RecordUsage 入账。
+		h.relay.SubmitUsage(c, relayAttempt, OpenAIUsageFacts{
+			InboundEndpoint: inboundEndpoint, UpstreamEndpoint: upstreamEndpoint, UserAgent: userAgent, IPAddress: clientIP,
+			RequestPayloadHash: requestPayloadHash, SessionID: sessionID,
+		}, result)
+		return
+	}
 	h.submitMandatoryUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 		if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 			Result:             result,
