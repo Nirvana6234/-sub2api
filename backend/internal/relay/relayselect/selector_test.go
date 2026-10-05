@@ -1036,6 +1036,11 @@ func TestAllowedBillingModels(t *testing.T) {
 	require.Equal(t, []string{"gpt-5-alias", "gpt-5", "gpt-5-2025"}, allowedBillingModels("gpt-5-alias", "gpt-5", mapped))
 	require.Equal(t, []string{"gpt-5"}, allowedBillingModels("gpt-5", "gpt-5", &service.Account{}))
 
+	// 渠道映射后的模型也算（图片入口按路由模型选号、转发时才映射）。
+	chMapped := service.ChannelMappingResult{Mapped: true, MappedModel: "gpt-image-1-hd"}
+	require.Equal(t, []string{"gpt-image-1", "gpt-image-1-hd"}, voucherAllowedModels("gpt-image-1", "gpt-image-1", chMapped, &service.Account{}))
+	require.Equal(t, []string{"gpt-5"}, voucherAllowedModels("gpt-5", "gpt-5", service.ChannelMappingResult{}, &service.Account{}))
+
 	// Antigravity：转发时用映射表里的名字（含 thinking 变体），都算允许的。
 	ag := &service.Account{Platform: service.PlatformAntigravity, Credentials: map[string]any{"model_mapping": map[string]any{
 		"gemini-3.8-flash-low": "gemini-3.8-flash-low", "claude-sonnet-4-5": "claude-sonnet-4-5-thinking"}}}

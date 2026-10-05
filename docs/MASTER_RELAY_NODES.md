@@ -1,4 +1,4 @@
-# 主从节点架构设计（v0.20，2026-10-05）
+# 主从节点架构设计（v0.21，2026-10-05）
 
 > 状态：开发中（分支 `feat/master-relay-nodes`，进度见开发计划）。本文只记录当前结论；历史版本不再保留在正文里。开发计划见 `docs/MASTER_RELAY_NODES_PLAN.md`。
 > 代码引用按 2026-09-25 的 main（`c652d850`）核对；行号会漂移，引用处同时写了函数名，以函数名为准。
@@ -167,6 +167,7 @@ Anthropic Messages（`internal/handler/gateway_handler.go` 的 `Messages`，Anth
 - 转发成功时释放消息带"转发成功"，主节点按本地同一条件刷新粘性会话绑定；转发路径上直接写账号仓储的临时不可调度作为账号事件由主节点照写（时长不超过本地用的最长时长）。
 - 账号类型：OAuth / setup-token（指纹、access token 由主节点给，TLS 指纹模板走快照分段）、服务账号（Vertex，主节点换好的 token 随凭据下发）、Bedrock、混合调度进 Anthropic 分组的 Antigravity 账号（Google token 由主节点给；转发路径上写账号状态的几处——模型级 / 账号级限流、积分耗尽标记——作为账号事件交主节点照写，INTERNAL 500 渐进惩罚的计数和惩罚在主节点）。用户消息串行队列的锁和计数每一步经 `UserMsgQueue` 在主节点的 Redis 上执行，从节点照本地同一段排队代码（含排队期间的 SSE 保活）。
 - Gemini 原生入口（`/v1beta` 的 POST，SDK / CLI 直连）、Antigravity 专用入口（`/antigravity/v1/messages`、`/antigravity/v1beta`）、Gemini / Antigravity 平台分组的 Messages 同样经从节点：换号状态留在从节点，会话（CLI / 通用会话哈希、粘性绑定、内容摘要会话匹配与保存）整段在主节点，从节点只带哈希和摘要链；Gemini OAuth / 服务账号的 token 由主节点换好下发；429 的账号级限流（含按档位的冷却）和清粘性绑定作为账号事件交主节点；强制 Antigravity 平台由主节点按路径定。Gemini 的准入、拒绝按 Google 格式（与本地 Google 鉴权链逐字节一致）。
+- OpenAI 网关的其余文本入口同样经从节点：Embeddings、同步图片、`/v1/responses/input_tokens` 与 `/v1/messages/count_tokens`（不占槽、不计费）、Codex alpha search 与 Codex 直连路径；Anthropic / Gemini / Antigravity 平台分组的 `/v1/responses`、`/v1/chat/completions` 走 Messages 的选号与准入；Grok 与国产兼容平台分组的 Responses / Chat / Messages 按选定平台调度（只接 API Key 账号）。凭证允许的计费模型包含渠道映射后的模型。
 - Antigravity 回 prompt 过长时本地换到分组配置的兜底分组重试：从节点经 `SwitchFallbackGroup` 让主节点解析兜底分组、做计费资格复查，之后的选号带兜底分组，主节点核对后按它选号和计费（渠道映射、渠道功能配置、粘性会话起点仍按原来的分组）。组合平台选到 Anthropic 目标、没有分组的 Key 也走这个入口。
 - 强制按缓存计费（换号时有绑定的会话、或上游明确要求）是从节点得出的、影响价格的事实，与 token 数一样随扣费记录上报、照用。
 - 选号结果带上分组所属渠道的功能配置（`FeaturesConfig`），转发路径上按分组查渠道的地方（联网搜索模拟"跟随渠道"、Bedrock CC 兼容、OpenAI 的 Codex 生图桥接）读它；JSON 往返后数字是 float64，现在读的都是布尔值。

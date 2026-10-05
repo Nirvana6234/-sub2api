@@ -148,3 +148,27 @@ func TestRelayGeminiNativeSettlementMatchesLocalBilling(t *testing.T) {
 	require.Equal(t, comparableLog(w.logs.logs[0]), comparableLog(&relayed), "same usage log apart from the node")
 	require.NotContains(t, w.billing.reviews, "pending_review", "the reported models are inside the voucher")
 }
+
+// 同步图片记录（OpenAI 的记录种类）开着渠道映射时：转发结果里的模型是映射后的，凭证允许范围里有它，不会被记成待复核。
+func TestRelayImagesSettlementWithChannelMappingIsNotFlagged(t *testing.T) {
+	w := newWorld(t)
+	result := &service.OpenAIForwardResult{
+		RequestID: "img_parity", Model: "gpt-image-1-hd", UpstreamModel: "gpt-image-1-hd", ImageCount: 1,
+		Usage: service.OpenAIUsage{InputTokens: 5, OutputTokens: 3},
+	}
+	raw, err := json.Marshal(result)
+	require.NoError(t, err)
+	voucher, _, err := sign.IssueVoucher(w.signer, &relayv1.Voucher{
+		NodeId: node, SelectionId: "sel-i", UserId: 3, ApiKeyId: 11, AccountId: 7, GroupId: 5,
+		BillingMode: relayv1.BillingMode_BILLING_MODE_BALANCE, RequestedModel: "gpt-image-1",
+		AllowedBillingModels: []string{"gpt-image-1", "gpt-image-1-hd"},
+		Context: &relayv1.SelectionContext{
+			QuotaPlatform: service.PlatformOpenAI, ChannelId: 4, ChannelMapped: true, ChannelMappedModel: "gpt-image-1-hd",
+			BillingModelSource: service.BillingModelSourceRequested,
+		},
+	}, time.Now())
+	require.NoError(t, err)
+	res := w.settler.Settle(context.Background(), node, &relayv1.UsageRecord{Seq: 1, Voucher: voucher, Kind: relayv1.UsageRecordKind_USAGE_RECORD_KIND_OPENAI, ResultJson: raw})
+	require.Equal(t, relayv1.UsageRecordStatus_USAGE_RECORD_STATUS_SETTLED, res.GetStatus(), res.GetReason())
+	require.NotContains(t, w.billing.reviews, "pending_review")
+}

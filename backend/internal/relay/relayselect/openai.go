@@ -608,7 +608,7 @@ func (s *selector) buildSelection(ctx context.Context, nodeID int64, req *relayv
 	if sel.quota.Group != nil && sel.quota.Group.IsSubscriptionType() && subscription != nil {
 		mode = relayv1.BillingMode_BILLING_MODE_SUBSCRIPTION
 	}
-	allowed := allowedBillingModels(reqModel, forwardModel, sel.account)
+	allowed := voucherAllowedModels(reqModel, forwardModel, mapping, sel.account)
 	// 用量行的"请求模型"与单机一样取客户端写的模型：组合平台分组是改写前的公开模型（clientRequestedModel）。
 	requested := reqModel
 	if public, ok := service.RequestedPublicModelFromContext(ctx); ok {
@@ -737,6 +737,16 @@ func selectionContext(outcome handler.OpenAISelectOutcome, sel *selectionRecord,
 		}
 	}
 	return c
+}
+
+// voucherAllowedModels 是凭证允许的计费模型：allowedBillingModels 加上渠道映射后的模型（图片入口按路由模型选号、转发时才映射，
+// 转发结果里的模型是映射后的）。
+func voucherAllowedModels(reqModel, forwardModel string, mapping service.ChannelMappingResult, account *service.Account) []string {
+	allowed := allowedBillingModels(reqModel, forwardModel, account)
+	if mapped := strings.TrimSpace(mapping.MappedModel); mapping.Mapped && mapped != "" && !slices.Contains(allowed, mapped) {
+		allowed = append(allowed, mapped)
+	}
+	return allowed
 }
 
 // allowedBillingModels 是凭证允许的计费模型（设计 5.3）：请求模型、渠道映射后的模型、账号映射后发给上游的模型。
