@@ -20,7 +20,8 @@ const geminiPath = "/v1beta/models/gemini-2.5-pro:generateContent"
 
 func geminiAccount(id int64, name string) service.Account {
 	return service.Account{ID: id, Name: name, Platform: service.PlatformGemini, Type: service.AccountTypeAPIKey,
-		Status: service.StatusActive, Schedulable: true, Concurrency: 2, Credentials: map[string]any{"api_key": "SECRET-" + name, "base_url": "https://up.example"}}
+		Status: service.StatusActive, Schedulable: true, Concurrency: 2, Credentials: map[string]any{"api_key": "SECRET-" + name, "base_url": "https://up.example"},
+		AccountGroups: []service.AccountGroup{{AccountID: id, GroupID: 10}}}
 }
 
 func geminiSelectRequest(requestID string, attempt uint32, key, chain string) *relayv1.SelectRequest {
@@ -221,6 +222,7 @@ func TestGeminiNativeSessionHashAndStickyBinding(t *testing.T) {
 	require.NotNil(t, sel, "rejection: %+v", resp.GetRejection())
 	require.Equal(t, "gemini:cli-hash", sel.GetSessionHash())
 	require.Equal(t, int64(2), sel.GetStickyBoundAccountId())
+	require.Equal(t, int64(2), sel.GetAccount().GetId(), "the sticky account is used")
 
 	// 这个账号失败后换号：粘性绑定仍是请求开始时查到的那个，选到另一个账号。
 	retry := geminiSelectRequest("g1", 2, "sk-gemini", "")
