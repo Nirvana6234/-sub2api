@@ -441,6 +441,9 @@ func (s *selector) admitAPIKey(ctx context.Context, rawKey, clientIP, method, pa
 	if raw != nil {
 		return adm, rawRejection(raw), nil
 	}
+	if rej := s.nodeRuleRejection(ctx, adm.APIKey, method, path); rej != nil {
+		return adm, rej, nil
+	}
 	if auto.coldStart && adm.APIKey.AutoGroup {
 		return adm, nil, nil
 	}
@@ -799,4 +802,22 @@ func allowedBillingModels(reqModel, forwardModel string, account *service.Accoun
 		}
 	}
 	return out
+}
+
+// nodeRuleRejection 执行节点规则（设计 10.2）：规则为"仅分配的从节点"（默认）时，分配给别的节点（含主节点）的 Key 在这台从节点上
+// 回 403，提示改用分配的地址；还没分配的 Key（relay_node_id 为空，开关打开前建的）哪台都接。规则为"全部从节点"时不限。
+// 主节点自己的域名不过这里（任何 Key 照常处理，设计 10.5）。
+func (s *selector) nodeRuleRejection(ctx context.Context, apiKey *service.APIKey, method, path string) *relayv1.SelectResponse {
+	nodeID := callingNode(ctx)
+	if nodeID <= 0 || apiKey == nil || apiKey.RelayNodeID == nil || *apiKey.RelayNodeID == nodeID {
+		return nil
+	}
+	rule := master.APIKeyNodeRuleAssigned
+	if s.env.GeneralConfig != nil {
+		rule = s.env.GeneralConfig(ctx).APIKeyNodeRule
+	}
+	if rule == master.APIKeyNodeRuleAny {
+		return nil
+	}
+	return rawRejection(middleware.RelayNodeNotAssignedRejection(method, path, "This API key can only be used through the address assigned to it"))
 }

@@ -41,6 +41,23 @@ func CaptureResponse(method, path string, write func(c *gin.Context)) *CapturedR
 	return captureRejection(method, path, write)
 }
 
+// RelayNodeNotAssignedRejection 是"这个 Key 不是分配给这台从节点"的拒绝（节点规则为"仅分配的从节点"，设计 10.2）：403，
+// 按入口写成 OpenAI / Anthropic / Google 的错误格式，提示改用分配的地址。
+func RelayNodeNotAssignedRejection(method, path, message string) *CapturedRejection {
+	return captureRejection(method, path, func(c *gin.Context) {
+		switch {
+		case IsGoogleRelayPath(path):
+			abortWithGoogleError(c, http.StatusForbidden, message)
+		case strings.Contains(path, "/messages"):
+			AnthropicErrorWriter(c, http.StatusForbidden, message)
+			c.Abort()
+		default:
+			c.JSON(http.StatusForbidden, gin.H{"error": gin.H{"message": message, "type": "permission_error", "code": "api_key_node_mismatch"}})
+			c.Abort()
+		}
+	})
+}
+
 // RelayAPIKeyAdmissionInput 是主节点复查 API Key 请求的输入。
 type RelayAPIKeyAdmissionInput struct {
 	APIKeyAuthInput

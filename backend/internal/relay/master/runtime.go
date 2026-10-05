@@ -103,6 +103,13 @@ type Runtime struct {
 	// keyMu 串行化密钥轮换操作（预备、启用、停用）。
 	keyMu sync.Mutex
 	now   func() time.Time
+
+	// generalCache 是选号热路径上通用配置的短缓存。
+	generalCache struct {
+		mu    sync.Mutex
+		value GeneralConfig
+		at    time.Time
+	}
 }
 
 type runningRelay struct {
@@ -439,6 +446,7 @@ func (r *Runtime) start(ctx context.Context, kek []byte) (*runningRelay, error) 
 			ConfigVersion:     publisher.VersionFor,
 			VerifyVoucher:     r.VerifyVoucher,
 			VerifyTicket:      r.VerifyTicket,
+			GeneralConfig:     r.cachedGeneralConfig,
 		})
 		control.AttachSelector(selector, server.Epoch())
 		RouteNodeEvents(events, selector)
@@ -982,4 +990,25 @@ func (r *Runtime) RetireKey(ctx context.Context, actor int64, purpose keystore.P
 	}
 	r.audit(ctx, actor, AuditKeyRetired, map[string]any{"purpose": purpose, "version": version, "fingerprint": keyFingerprint(target), "staged": target.Staged})
 	return nil
+}
+
+// generalConfigCacheTTL：选号热路径上读通用配置的缓存时间（改配置后最多这么久生效；节点规则还随配置快照下发给从节点）。
+const generalConfigCacheTTL = 5 * time.Second
+
+// cachedGeneralConfig 是选号用的通用配置读取：短缓存，读不到时沿用上一次的（从没读到过是默认值）。
+func (r *Runtime) cachedGeneralConfig(ctx context.Context) GeneralConfig {
+	r.generalCache.mu.Lock()
+	defer r.generalCache.mu.Unlock()
+	if !r.generalCache.at.IsZero() && r.now().Sub(r.generalCache.at) < generalConfigCacheTTL {
+		return r.generalCache.value
+	}
+	g, err := LoadGeneralConfig(ctx, r.deps.Settings)
+	if err != nil {
+		if r.generalCache.at.IsZero() {
+			return GeneralConfig{}.WithDefaults()
+		}
+		return r.generalCache.value
+	}
+	r.generalCache.value, r.generalCache.at = g, r.now()
+	return g
 }

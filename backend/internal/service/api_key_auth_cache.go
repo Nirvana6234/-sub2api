@@ -12,15 +12,17 @@ type APIKeyAuthSnapshot struct {
 	// 按本次请求的模型现选。少了这三个字段，认证快照重建出的 Key 恒为
 	// AutoGroup=false 且无分组，选组中间件会直接跳过，请求随即被
 	// RequireGroupAssignment 以 403「未分配分组」拒掉。
-	AutoGroup         bool                     `json:"auto_group"`
-	AutoGroupStrategy string                   `json:"auto_group_strategy"`
-	AutoGroupIDs      []int64                  `json:"auto_group_ids,omitempty"`
-	Name              string                   `json:"name"`
-	Status            string                   `json:"status"`
-	IPWhitelist       []string                 `json:"ip_whitelist,omitempty"`
-	IPBlacklist       []string                 `json:"ip_blacklist,omitempty"`
-	User              APIKeyAuthUserSnapshot   `json:"user"`
-	Group             *APIKeyAuthGroupSnapshot `json:"group,omitempty"`
+	AutoGroup         bool    `json:"auto_group"`
+	AutoGroupStrategy string  `json:"auto_group_strategy"`
+	AutoGroupIDs      []int64 `json:"auto_group_ids,omitempty"`
+	// RelayNodeID 是分配的节点（0 = 主节点，空 = 还没分配；主从分流的节点规则用）。
+	RelayNodeID *int64                   `json:"relay_node_id,omitempty"`
+	Name        string                   `json:"name"`
+	Status      string                   `json:"status"`
+	IPWhitelist []string                 `json:"ip_whitelist,omitempty"`
+	IPBlacklist []string                 `json:"ip_blacklist,omitempty"`
+	User        APIKeyAuthUserSnapshot   `json:"user"`
+	Group       *APIKeyAuthGroupSnapshot `json:"group,omitempty"`
 
 	// Quota fields for API Key independent quota feature
 	Quota     float64 `json:"quota"`      // Quota limit in USD (0 = unlimited)

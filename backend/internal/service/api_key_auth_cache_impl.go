@@ -14,7 +14,7 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
-const apiKeyAuthSnapshotVersion = 26 // v26: record which group the RPM override was resolved for (absent overrides are cached too)
+const apiKeyAuthSnapshotVersion = 27 // v27: carry relay_node_id (主从分流的节点规则); v26: record which group the RPM override was resolved for (absent overrides are cached too)
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -356,6 +356,7 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 		AutoGroup:         apiKey.AutoGroup,
 		AutoGroupStrategy: apiKey.AutoGroupStrategy,
 		AutoGroupIDs:      append([]int64(nil), apiKey.AutoGroupIDs...),
+		RelayNodeID:       apiKey.RelayNodeID,
 		Name:              apiKey.Name,
 		Status:            apiKey.Status,
 		IPWhitelist:       apiKey.IPWhitelist,
@@ -471,6 +472,7 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 		AutoGroup:         snapshot.AutoGroup,
 		AutoGroupStrategy: snapshot.AutoGroupStrategy,
 		AutoGroupIDs:      append([]int64(nil), snapshot.AutoGroupIDs...),
+		RelayNodeID:       snapshot.RelayNodeID,
 		Key:               key,
 		Name:              snapshot.Name,
 		Status:            snapshot.Status,
