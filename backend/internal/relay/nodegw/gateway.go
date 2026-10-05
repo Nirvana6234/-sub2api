@@ -99,6 +99,25 @@ func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatche
 			next(c)
 		}
 	}
+	// onPlatform：只服务指定平台（解析后的目标平台）的入口，其余（含还没选目标的组合平台分组）交给主节点：本地同样回 404 / 403，
+	// 或由主节点按组合平台的规则处理。
+	onPlatform := func(platform string, next gin.HandlerFunc) gin.HandlerFunc {
+		return func(c *gin.Context) {
+			if key, ok := middleware2.GetAPIKeyFromContext(c); !ok || servedPlatform(c, key) != platform {
+				d.HandOff(c)
+				return
+			}
+			next(c)
+		}
+	}
+	// 图片入口与本地一样按分组平台分：OpenAI 分组走 OpenAI 图片，Grok 分组走 Grok 媒体，其余交给主节点（本地回 404）。
+	images := func(c *gin.Context) {
+		if key, ok := middleware2.GetAPIKeyFromContext(c); ok && servedPlatform(c, key) == service.PlatformGrok {
+			h.GrokImages(c)
+			return
+		}
+		openAIOnly(h.Images)(c)
+	}
 	responses := byPlatform(func(c *gin.Context) {
 		if !service.IsForwardableOpenAIResponsesRequestPath(c) {
 			// 不可转发的子路径由主节点照原逻辑处理。
@@ -135,8 +154,22 @@ func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatche
 		g.POST("/responses", responses)
 		g.POST("/responses/*subpath", responses)
 		g.POST("/chat/completions", chatCompletions)
-		g.POST("/images/generations", openAIOnly(h.Images))
-		g.POST("/images/edits", openAIOnly(h.Images))
+		g.POST("/images/generations", images)
+		g.POST("/images/edits", images)
+		// Grok 视频（创建、编辑、延伸、状态、内容；本地 routes/gateway.go 的 video*Handler）。
+		grok := func(next gin.HandlerFunc) gin.HandlerFunc { return onPlatform(service.PlatformGrok, next) }
+		g.POST("/videos", grok(h.GrokVideoGeneration))
+		g.POST("/videos/generations", grok(h.GrokVideoGeneration))
+		g.POST("/videos/edits", grok(h.GrokVideoEdit))
+		g.POST("/videos/extensions", grok(h.GrokVideoExtension))
+		g.GET("/videos/generations/:request_id/content", grok(h.GrokVideoContent))
+		g.GET("/videos/edits/:request_id/content", grok(h.GrokVideoContent))
+		g.GET("/videos/extensions/:request_id/content", grok(h.GrokVideoContent))
+		g.GET("/videos/generations/:request_id", grok(h.GrokVideoStatus))
+		g.GET("/videos/edits/:request_id", grok(h.GrokVideoStatus))
+		g.GET("/videos/extensions/:request_id", grok(h.GrokVideoStatus))
+		g.GET("/videos/:request_id", grok(h.GrokVideoStatus))
+		g.GET("/videos/:request_id/content", grok(h.GrokVideoContent))
 		g.POST("/embeddings", middleware2.RequestBodyLimit(cfg.Gateway.TextMaxBodySize), openAIOnly(h.Embeddings))
 		g.POST("/alpha/search", middleware2.RequestBodyLimit(cfg.Gateway.TextMaxBodySize), openAIOnly(h.AlphaSearch))
 		// Responses WebSocket（Codex）：与本地一样是 GET /responses 的升级请求。
@@ -164,6 +197,13 @@ func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatche
 				}
 			})
 		}
+	}
+	// Seedance 任务入口（OpenAI 分组；本地 rootRoute 同样四个前缀）。
+	for _, prefix := range []string{"/api/v3", "/v3", "/v1", ""} {
+		sg := r.Group(prefix, chain...)
+		sg.POST("/contents/generations/tasks", onPlatform(service.PlatformOpenAI, h.SeedanceTasks))
+		sg.GET("/contents/generations/tasks/:task_id", onPlatform(service.PlatformOpenAI, h.SeedanceTasks))
+		sg.DELETE("/contents/generations/tasks/:task_id", onPlatform(service.PlatformOpenAI, h.SeedanceTasks))
 	}
 	// Codex 直连路径 /backend-api/codex/*：与本地一样的链路，responses（含子路径、WebSocket）和 alpha search 走 OpenAI 网关。
 	// 实时会话（/realtime/calls、/:call_id）、模型列表等仍交给主节点。

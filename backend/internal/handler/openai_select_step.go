@@ -44,6 +44,8 @@ const (
 	OpenAISelectNoWaitPlan
 	// OpenAISelectAborted：内部重选之间请求已取消。
 	OpenAISelectAborted
+	// OpenAISelectIneligible：媒体入口选到的账号没有生成资格（Account；已放掉槽位、已排除），调用方按本地的换号计数处理。
+	OpenAISelectIneligible
 )
 
 // OpenAISelectRequest 是 Responses 选号一次尝试的输入。
@@ -63,6 +65,11 @@ type OpenAISelectRequest struct {
 	Transport      service.OpenAIUpstreamTransport
 	RequireCompact bool
 	ImageIntent    bool
+	// BoundAccountID 非 0 时是媒体任务查询（视频状态 / 内容、Seedance）：只准入任务绑定的账号
+	// （SelectMediaVideoRequestAccount），不走调度器、不刷新绑定，准入时不带会话。
+	BoundAccountID int64
+	// Eligibility 非 nil 时在选中账号之后、准入之前检查账号有没有生成资格（Grok 媒体生成）；不满足返回 OpenAISelectIneligible。
+	Eligibility func(ctx context.Context, account *service.Account) (bool, string, error)
 	// Excluded 是本请求已排除的账号；续链不支持、利润否决的账号会被加进去（调用方的同一个 map）。
 	Excluded map[int64]struct{}
 	// OnTick、CannotWait 见 OpenAIAccountAdmitter.Admit。
@@ -116,7 +123,9 @@ func (a OpenAIAccountAdmitter) SelectAndAdmit(ctx context.Context, req OpenAISel
 			scheduleDecision service.OpenAIAccountScheduleDecision
 			err              error
 		)
-		if req.ImagesCapability != "" {
+		if req.BoundAccountID > 0 {
+			selection, scheduleDecision, err = a.Gateway.SelectMediaVideoRequestAccount(ctx, req.GroupID, sessionHash, req.BoundAccountID, req.ForwardModel, req.RequestPlatform)
+		} else if req.ImagesCapability != "" {
 			selection, scheduleDecision, err = a.Gateway.SelectAccountWithSchedulerForImages(ctx, req.GroupID, sessionHash, req.ForwardModel, req.Excluded, req.ImagesCapability)
 		} else {
 			choose := a.choose
@@ -173,6 +182,17 @@ func (a OpenAIAccountAdmitter) SelectAndAdmit(ctx context.Context, req OpenAISel
 			)
 			continue
 		}
+		if req.Eligibility != nil {
+			eligible, _, _ := req.Eligibility(ctx, account)
+			if !eligible {
+				if selection.ReleaseFunc != nil {
+					selection.ReleaseFunc()
+					selection.ReleaseFunc = nil
+				}
+				req.Excluded[account.ID] = struct{}{}
+				return OpenAISelectOutcome{Kind: OpenAISelectIneligible, Account: account, Ctx: ctx, SessionHash: sessionHash}
+			}
+		}
 		sessionHash = ensureOpenAIPoolModeSessionHash(sessionHash, account)
 		reqLog.Debug("openai.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
 		if req.OnAccountChosen != nil {
@@ -181,7 +201,12 @@ func (a OpenAIAccountAdmitter) SelectAndAdmit(ctx context.Context, req OpenAISel
 			ctx = service.ContextWithSelectionFallbackTrace(ctx, selection)
 		}
 
-		admitCtx, admission := a.Admit(ctx, req.GroupID, sessionHash, selection, req.OnTick, req.CannotWait, reqLog)
+		admissionSession := sessionHash
+		if req.BoundAccountID > 0 {
+			// 等待不能用文本粘性的 TTL 顶掉视频任务的归属绑定。
+			admissionSession = ""
+		}
+		admitCtx, admission := a.Admit(ctx, req.GroupID, admissionSession, selection, req.OnTick, req.CannotWait, reqLog)
 		switch admission.Kind {
 		case OpenAIAdmitted:
 			return OpenAISelectOutcome{Kind: OpenAISelected, Selection: selection, Account: selection.Account, SessionHash: sessionHash, Release: admission.Release, Ctx: admitCtx}

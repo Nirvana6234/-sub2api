@@ -394,6 +394,8 @@ message SelectionContext {
   bool channel_mapped = 15;
   // 这个入口本地入账时不带渠道用量字段（TypeSafe systemone、Grok 搜索）：入账同样不带。
   bool omit_channel_usage_fields = 16;
+  // Grok / Seedance 媒体入口：本地入账的渠道用量字段是"请求的模型 = 映射后的模型"（不查渠道映射）。
+  bool media_channel_usage_fields = 17;
 }
 
 // 票据吊销（设计 8.1）：这些用户在 revoked_before 及之前签发的票据作废。
@@ -546,6 +548,9 @@ enum SelectEndpoint {
   // Grok 分组的独立搜索入口（POST /web_search、/x_search，GatewayHandler.WebSearch / XSearch）：计费资格检查（没有用户并发槽）后
   // 一轮选号与准入（不装利润门、不做利润否决），换号状态在从节点；按次计费，用量用固定的模型名（grok-web-search / grok-x-search）。
   SELECT_ENDPOINT_GATEWAY_SEARCH = 16;
+  // Grok 媒体入口（图片生成 / 编辑、视频创建 / 编辑 / 延伸 / 状态 / 内容）和 Seedance 任务入口（OpenAIGatewayHandler.handleGrokMedia）：
+  // media_endpoint 是入口名（service.GrokMediaEndpoint），视频状态 / 内容 / Seedance 查询带 task_id（主节点按任务绑定的账号选号）。
+  SELECT_ENDPOINT_OPENAI_MEDIA = 17;
 }
 
 message AdmitRequest {
@@ -754,6 +759,11 @@ message SelectRequest {
   string gemini_digest_chain = 32;
   // 同步图片入口：请求需要的图片能力（service.OpenAIImagesCapability，如 native / basic）。
   string required_capability = 33;
+  // 媒体入口（SELECT_ENDPOINT_OPENAI_MEDIA）：入口名和任务 ID（视频 / Seedance 的状态、内容、删除）。
+  string media_endpoint = 34;
+  string task_id = 35;
+  // 媒体入口：客户端请求的模型（计费、白名单用）；model 是选号用的路由模型（按有没有输入图片规范化过）。
+  string media_request_model = 36;
 }
 
 // cyber 会话屏蔽的查询键（都已哈希）。
@@ -1054,6 +1064,12 @@ enum UsageRecordKind {
   // Anthropic 网关（service.GatewayService.RecordUsage，GatewayHandler.Messages）：result_json 是 service.ForwardResult。
   // Gemini 原生入口（GeminiV1BetaModels）的记录也用这一种（同一个入账函数、同样的输入）。
   USAGE_RECORD_KIND_ANTHROPIC = 3;
+  // 异步视频任务创建成功（Grok 视频、Seedance）：不扣费，登记任务（账号绑定、待计费快照）：task_id、task_pending_json、
+  // 选号的账号取自凭证。主节点执行绑定和快照写入（任务状态在主节点的 Redis 里）。
+  USAGE_RECORD_KIND_OPENAI_VIDEO_TASK = 4;
+  // 视频任务完成（状态或内容轮询第一次看到 done + 视频地址）：result_json 是轮询的 service.OpenAIForwardResult，task_id 是任务 ID；
+  // 主节点按任务认领计费（只入账一次），合并创建时的快照后用 RecordUsage 入账。
+  USAGE_RECORD_KIND_OPENAI_VIDEO_COMPLETION = 5;
 }
 
 // 一条扣费记录（设计 5.1）：扣费凭证 + 只有转发的从节点知道的事实（字段清单见 relayselect 的字段守卫）。
@@ -1080,6 +1096,10 @@ message UsageRecord {
   // Anthropic：换号时按本地规则强制按缓存计费（FailoverState.ForceCacheBilling：有绑定的会话实际换了账号，或上游
   // 明确要求）。与 token 数一样是转发节点得出的事实。
   bool force_cache_billing = 15;
+  // 视频任务（USAGE_RECORD_KIND_OPENAI_VIDEO_TASK / _VIDEO_COMPLETION）：任务 ID 和创建时的待计费快照
+  // （service.GrokVideoPendingBilling 的 JSON，只在创建记录里有）。
+  string task_id = 16;
+  bytes task_pending_json = 17;
 }
 
 // 一批扣费记录。batch_seq 是本节点的批次序号（连续递增），主节点据此发现漏掉或重复的批次（只报警，

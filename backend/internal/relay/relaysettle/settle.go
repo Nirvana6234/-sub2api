@@ -116,7 +116,8 @@ func (s *Settler) Settle(ctx context.Context, nodeID int64, rec *relayv1.UsageRe
 
 func (s *Settler) settle(ctx context.Context, nodeID int64, rec *relayv1.UsageRecord) (*service.RelaySettlement, error) {
 	switch rec.GetKind() {
-	case relayv1.UsageRecordKind_USAGE_RECORD_KIND_OPENAI, relayv1.UsageRecordKind_USAGE_RECORD_KIND_OPENAI_CYBER_POLICY:
+	case relayv1.UsageRecordKind_USAGE_RECORD_KIND_OPENAI, relayv1.UsageRecordKind_USAGE_RECORD_KIND_OPENAI_CYBER_POLICY,
+		relayv1.UsageRecordKind_USAGE_RECORD_KIND_OPENAI_VIDEO_TASK, relayv1.UsageRecordKind_USAGE_RECORD_KIND_OPENAI_VIDEO_COMPLETION:
 	case relayv1.UsageRecordKind_USAGE_RECORD_KIND_ANTHROPIC:
 		if s.deps.AnthropicGateway == nil {
 			return nil, reject("unsupported usage record kind %v", rec.GetKind())
@@ -132,7 +133,25 @@ func (s *Settler) settle(ctx context.Context, nodeID int64, rec *relayv1.UsageRe
 	// reported 是记录里上报的模型（核对凭证允许的范围）；recordUsage 用单机同一个入账函数入账。
 	var reported []string
 	var recordUsage func(context.Context) error
-	if rec.GetKind() == relayv1.UsageRecordKind_USAGE_RECORD_KIND_ANTHROPIC {
+	// retryOnError：执行失败时让从节点重发（任务登记丢了任务就查不到、不能计费），而不是按"没扣费"记下。
+	retryOnError := false
+	switch rec.GetKind() {
+	case relayv1.UsageRecordKind_USAGE_RECORD_KIND_OPENAI_VIDEO_TASK:
+		fn, err := s.videoTaskRegistration(ctx, v, rec)
+		if err != nil {
+			return nil, err
+		}
+		recordUsage, retryOnError = fn, true
+	case relayv1.UsageRecordKind_USAGE_RECORD_KIND_OPENAI_VIDEO_COMPLETION:
+		fn, models, err := s.videoCompletion(ctx, v, rec)
+		if err != nil {
+			return nil, err
+		}
+		recordUsage, reported = fn, models
+	}
+	if recordUsage != nil {
+		// 视频任务的两种记录已经准备好了。
+	} else if rec.GetKind() == relayv1.UsageRecordKind_USAGE_RECORD_KIND_ANTHROPIC {
 		var result service.ForwardResult
 		if err := json.Unmarshal(rec.GetResultJson(), &result); err != nil {
 			return nil, reject("malformed forward result: %v", err)
@@ -196,6 +215,9 @@ func (s *Settler) settle(ctx context.Context, nodeID int64, rec *relayv1.UsageRe
 	}
 
 	recordErr := recordUsage(sctx)
+	if recordErr != nil && retryOnError {
+		return nil, recordErr
+	}
 	if !relay.Handled {
 		// 入账没走到扣费事务（简易模式、没有扣费命令、扣费出错）：把凭证记成零消耗，与单机一样这一笔
 		// 不再补扣；记不下来（数据库故障）就让从节点重发。
@@ -224,6 +246,8 @@ type selectionFacts struct {
 	pricingAt    time.Time
 	// omitChannelFields：这个入口本地入账不带渠道用量字段。
 	omitChannelFields bool
+	// mediaChannelFields：媒体入口的渠道用量字段是"请求的模型 = 映射后的模型"。
+	mediaChannelFields bool
 }
 
 // buildAnthropicInput 按单机 Messages 构造入账输入的方式组装：选号定下的取自凭证，转发事实取自记录。
@@ -283,8 +307,16 @@ func (s *Settler) buildOpenAIInput(ctx context.Context, v *relayv1.Voucher, rec 
 		PricingAt:          f.pricingAt,
 		CyberBlocked:       rec.GetCyberBlocked(),
 		NativeCompactionV2: rec.GetNativeCompactionV2(),
-		ChannelUsageFields: f.mapping.ToUsageFields(v.GetRequestedModel(), result.UpstreamModel),
+		ChannelUsageFields: f.openAIChannelUsageFields(v.GetRequestedModel(), result.UpstreamModel),
 	}, nil
+}
+
+// openAIChannelUsageFields：媒体入口本地入账的渠道用量字段是"请求的模型 = 映射后的模型"，其余按渠道映射。
+func (f *selectionFacts) openAIChannelUsageFields(requestedModel, upstreamModel string) service.ChannelUsageFields {
+	if f.mediaChannelFields {
+		return service.ChannelUsageFields{OriginalModel: requestedModel, ChannelMappedModel: requestedModel}
+	}
+	return f.mapping.ToUsageFields(requestedModel, upstreamModel)
 }
 
 func (s *Settler) selectionFacts(ctx context.Context, v *relayv1.Voucher) (*selectionFacts, error) {
@@ -334,7 +366,7 @@ func (s *Settler) selectionFacts(ctx context.Context, v *relayv1.Voucher) (*sele
 		pricingAt = time.UnixMilli(ms)
 	}
 	return &selectionFacts{apiKey: apiKey, account: account, subscription: subscription, mapping: mapping, pricingAt: pricingAt,
-		omitChannelFields: sc.GetOmitChannelUsageFields()}, nil
+		omitChannelFields: sc.GetOmitChannelUsageFields(), mediaChannelFields: sc.GetMediaChannelUsageFields()}, nil
 }
 
 // issuedBeforeSuspectRevocation 报告凭证是否签发在节点最近一次可疑吊销之前（含同一时刻）。

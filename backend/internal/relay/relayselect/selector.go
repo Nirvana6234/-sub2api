@@ -53,6 +53,8 @@ type Deps struct {
 	Ops *service.OpsService
 	// Users 取违规通知的收件人（主节点库里的用户邮箱）；nil 时不发信。
 	Users service.UserRepository
+	// MediaEligibility 探测 Grok 账号有没有媒体生成资格（billing_unobserved 时）；nil 时这种账号按没有资格。
+	MediaEligibility MediaEligibility
 }
 
 // holdLimit 是一次选号最长占着槽位的时间：从节点的释放消息丢了、从节点下线时由定时清理放掉。
@@ -129,6 +131,8 @@ type requestRecord struct {
 	stickyPrefetch int64
 	// geminiDigest：Gemini 内容摘要会话在这次请求里的状态。
 	geminiDigest *geminiDigestSession
+	// mediaIneligible：媒体入口这次请求里有账号因没有生成资格被排除过。
+	mediaIneligible bool
 	// userRelease 放掉用户并发槽（请求结束时）。
 	userRelease func()
 	// pricingCtx 带着本请求固定的计价时间和利润门（不带取消），每次选号在它上面挂上调用的取消。
@@ -177,6 +181,10 @@ type selectionRecord struct {
 	gemini bool
 	// omitChannelFields：这个入口本地入账不带渠道用量字段（凭证里带下去）。
 	omitChannelFields bool
+	// mediaChannelFields：媒体入口的渠道用量字段是"请求的模型 = 映射后的模型"（凭证里带下去）。
+	mediaChannelFields bool
+	// extraModels：补充进凭证允许范围的计费模型（视频任务完成时取自创建快照的模型）。
+	extraModels []string
 }
 
 func newSelector(d Deps, env master.SelectEnv) *selector {

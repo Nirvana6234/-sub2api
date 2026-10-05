@@ -250,6 +250,9 @@ const (
 	// Grok 分组的独立搜索入口（POST /web_search、/x_search，GatewayHandler.WebSearch / XSearch）：计费资格检查（没有用户并发槽）后
 	// 一轮选号与准入（不装利润门、不做利润否决），换号状态在从节点；按次计费，用量用固定的模型名（grok-web-search / grok-x-search）。
 	SelectEndpoint_SELECT_ENDPOINT_GATEWAY_SEARCH SelectEndpoint = 16
+	// Grok 媒体入口（图片生成 / 编辑、视频创建 / 编辑 / 延伸 / 状态 / 内容）和 Seedance 任务入口（OpenAIGatewayHandler.handleGrokMedia）：
+	// media_endpoint 是入口名（service.GrokMediaEndpoint），视频状态 / 内容 / Seedance 查询带 task_id（主节点按任务绑定的账号选号）。
+	SelectEndpoint_SELECT_ENDPOINT_OPENAI_MEDIA SelectEndpoint = 17
 )
 
 // Enum value maps for SelectEndpoint.
@@ -272,6 +275,7 @@ var (
 		14: "SELECT_ENDPOINT_OPENAI_ALPHA_SEARCH",
 		15: "SELECT_ENDPOINT_GATEWAY_SYSTEMONE",
 		16: "SELECT_ENDPOINT_GATEWAY_SEARCH",
+		17: "SELECT_ENDPOINT_OPENAI_MEDIA",
 	}
 	SelectEndpoint_value = map[string]int32{
 		"SELECT_ENDPOINT_UNSPECIFIED":            0,
@@ -291,6 +295,7 @@ var (
 		"SELECT_ENDPOINT_OPENAI_ALPHA_SEARCH":    14,
 		"SELECT_ENDPOINT_GATEWAY_SYSTEMONE":      15,
 		"SELECT_ENDPOINT_GATEWAY_SEARCH":         16,
+		"SELECT_ENDPOINT_OPENAI_MEDIA":           17,
 	}
 )
 
@@ -474,6 +479,12 @@ const (
 	// Anthropic 网关（service.GatewayService.RecordUsage，GatewayHandler.Messages）：result_json 是 service.ForwardResult。
 	// Gemini 原生入口（GeminiV1BetaModels）的记录也用这一种（同一个入账函数、同样的输入）。
 	UsageRecordKind_USAGE_RECORD_KIND_ANTHROPIC UsageRecordKind = 3
+	// 异步视频任务创建成功（Grok 视频、Seedance）：不扣费，登记任务（账号绑定、待计费快照）：task_id、task_pending_json、
+	// 选号的账号取自凭证。主节点执行绑定和快照写入（任务状态在主节点的 Redis 里）。
+	UsageRecordKind_USAGE_RECORD_KIND_OPENAI_VIDEO_TASK UsageRecordKind = 4
+	// 视频任务完成（状态或内容轮询第一次看到 done + 视频地址）：result_json 是轮询的 service.OpenAIForwardResult，task_id 是任务 ID；
+	// 主节点按任务认领计费（只入账一次），合并创建时的快照后用 RecordUsage 入账。
+	UsageRecordKind_USAGE_RECORD_KIND_OPENAI_VIDEO_COMPLETION UsageRecordKind = 5
 )
 
 // Enum value maps for UsageRecordKind.
@@ -483,12 +494,16 @@ var (
 		1: "USAGE_RECORD_KIND_OPENAI",
 		2: "USAGE_RECORD_KIND_OPENAI_CYBER_POLICY",
 		3: "USAGE_RECORD_KIND_ANTHROPIC",
+		4: "USAGE_RECORD_KIND_OPENAI_VIDEO_TASK",
+		5: "USAGE_RECORD_KIND_OPENAI_VIDEO_COMPLETION",
 	}
 	UsageRecordKind_value = map[string]int32{
-		"USAGE_RECORD_KIND_UNSPECIFIED":         0,
-		"USAGE_RECORD_KIND_OPENAI":              1,
-		"USAGE_RECORD_KIND_OPENAI_CYBER_POLICY": 2,
-		"USAGE_RECORD_KIND_ANTHROPIC":           3,
+		"USAGE_RECORD_KIND_UNSPECIFIED":             0,
+		"USAGE_RECORD_KIND_OPENAI":                  1,
+		"USAGE_RECORD_KIND_OPENAI_CYBER_POLICY":     2,
+		"USAGE_RECORD_KIND_ANTHROPIC":               3,
+		"USAGE_RECORD_KIND_OPENAI_VIDEO_TASK":       4,
+		"USAGE_RECORD_KIND_OPENAI_VIDEO_COMPLETION": 5,
 	}
 )
 
@@ -2387,8 +2402,10 @@ type SelectionContext struct {
 	ChannelMapped bool `protobuf:"varint,15,opt,name=channel_mapped,json=channelMapped,proto3" json:"channel_mapped,omitempty"`
 	// 这个入口本地入账时不带渠道用量字段（TypeSafe systemone、Grok 搜索）：入账同样不带。
 	OmitChannelUsageFields bool `protobuf:"varint,16,opt,name=omit_channel_usage_fields,json=omitChannelUsageFields,proto3" json:"omit_channel_usage_fields,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	// Grok / Seedance 媒体入口：本地入账的渠道用量字段是"请求的模型 = 映射后的模型"（不查渠道映射）。
+	MediaChannelUsageFields bool `protobuf:"varint,17,opt,name=media_channel_usage_fields,json=mediaChannelUsageFields,proto3" json:"media_channel_usage_fields,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
 }
 
 func (x *SelectionContext) Reset() {
@@ -2529,6 +2546,13 @@ func (x *SelectionContext) GetChannelMapped() bool {
 func (x *SelectionContext) GetOmitChannelUsageFields() bool {
 	if x != nil {
 		return x.OmitChannelUsageFields
+	}
+	return false
+}
+
+func (x *SelectionContext) GetMediaChannelUsageFields() bool {
+	if x != nil {
+		return x.MediaChannelUsageFields
 	}
 	return false
 }
@@ -4550,8 +4574,13 @@ type SelectRequest struct {
 	GeminiDigestChain string `protobuf:"bytes,32,opt,name=gemini_digest_chain,json=geminiDigestChain,proto3" json:"gemini_digest_chain,omitempty"`
 	// 同步图片入口：请求需要的图片能力（service.OpenAIImagesCapability，如 native / basic）。
 	RequiredCapability string `protobuf:"bytes,33,opt,name=required_capability,json=requiredCapability,proto3" json:"required_capability,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// 媒体入口（SELECT_ENDPOINT_OPENAI_MEDIA）：入口名和任务 ID（视频 / Seedance 的状态、内容、删除）。
+	MediaEndpoint string `protobuf:"bytes,34,opt,name=media_endpoint,json=mediaEndpoint,proto3" json:"media_endpoint,omitempty"`
+	TaskId        string `protobuf:"bytes,35,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	// 媒体入口：客户端请求的模型（计费、白名单用）；model 是选号用的路由模型（按有没有输入图片规范化过）。
+	MediaRequestModel string `protobuf:"bytes,36,opt,name=media_request_model,json=mediaRequestModel,proto3" json:"media_request_model,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *SelectRequest) Reset() {
@@ -4820,6 +4849,27 @@ func (x *SelectRequest) GetGeminiDigestChain() string {
 func (x *SelectRequest) GetRequiredCapability() string {
 	if x != nil {
 		return x.RequiredCapability
+	}
+	return ""
+}
+
+func (x *SelectRequest) GetMediaEndpoint() string {
+	if x != nil {
+		return x.MediaEndpoint
+	}
+	return ""
+}
+
+func (x *SelectRequest) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *SelectRequest) GetMediaRequestModel() string {
+	if x != nil {
+		return x.MediaRequestModel
 	}
 	return ""
 }
@@ -6745,8 +6795,12 @@ type UsageRecord struct {
 	// Anthropic：换号时按本地规则强制按缓存计费（FailoverState.ForceCacheBilling：有绑定的会话实际换了账号，或上游
 	// 明确要求）。与 token 数一样是转发节点得出的事实。
 	ForceCacheBilling bool `protobuf:"varint,15,opt,name=force_cache_billing,json=forceCacheBilling,proto3" json:"force_cache_billing,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// 视频任务（USAGE_RECORD_KIND_OPENAI_VIDEO_TASK / _VIDEO_COMPLETION）：任务 ID 和创建时的待计费快照
+	// （service.GrokVideoPendingBilling 的 JSON，只在创建记录里有）。
+	TaskId          string `protobuf:"bytes,16,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	TaskPendingJson []byte `protobuf:"bytes,17,opt,name=task_pending_json,json=taskPendingJson,proto3" json:"task_pending_json,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *UsageRecord) Reset() {
@@ -6882,6 +6936,20 @@ func (x *UsageRecord) GetForceCacheBilling() bool {
 		return x.ForceCacheBilling
 	}
 	return false
+}
+
+func (x *UsageRecord) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *UsageRecord) GetTaskPendingJson() []byte {
+	if x != nil {
+		return x.TaskPendingJson
+	}
+	return nil
 }
 
 // 一批扣费记录。batch_seq 是本节点的批次序号（连续递增），主节点据此发现漏掉或重复的批次（只报警，
@@ -9164,7 +9232,7 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x16allowed_billing_models\x18\v \x03(\tR\x14allowedBillingModels\x12-\n" +
 	"\x05quote\x18\f \x01(\v2\x17.sub2api.relay.v1.QuoteR\x05quote\x12<\n" +
 	"\acontext\x18\r \x01(\v2\".sub2api.relay.v1.SelectionContextR\acontext\"\a\n" +
-	"\x05Quote\"\xfb\x06\n" +
+	"\x05Quote\"\xb8\a\n" +
 	"\x10SelectionContext\x12+\n" +
 	"\x12pricing_at_unix_ms\x18\x01 \x01(\x03R\x0fpricingAtUnixMs\x12%\n" +
 	"\x0equota_platform\x18\x02 \x01(\tR\rquotaPlatform\x12'\n" +
@@ -9183,7 +9251,8 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	")has_contribution_rate_multiplier_override\x18\r \x01(\bR%hasContributionRateMultiplierOverride\x12Q\n" +
 	"%contribution_rate_multiplier_override\x18\x0e \x01(\x01R\"contributionRateMultiplierOverride\x12%\n" +
 	"\x0echannel_mapped\x18\x0f \x01(\bR\rchannelMapped\x129\n" +
-	"\x19omit_channel_usage_fields\x18\x10 \x01(\bR\x16omitChannelUsageFields\"N\n" +
+	"\x19omit_channel_usage_fields\x18\x10 \x01(\bR\x16omitChannelUsageFields\x12;\n" +
+	"\x1amedia_channel_usage_fields\x18\x11 \x01(\bR\x17mediaChannelUsageFields\"N\n" +
 	"\x11TicketRevocations\x129\n" +
 	"\x05users\x18\x01 \x03(\v2#.sub2api.relay.v1.RevokedTicketUserR\x05users\"a\n" +
 	"\x11RevokedTicketUser\x12\x17\n" +
@@ -9324,7 +9393,7 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\tOP_NOW_MS\x10\x04\x12\x12\n" +
 	"\x0eOP_ACCOUNT_RPM\x10\x05\",\n" +
 	"\x14UserMsgQueueResponse\x12\x14\n" +
-	"\x05value\x18\x01 \x01(\x03R\x05value\"\x8e\f\n" +
+	"\x05value\x18\x01 \x01(\x03R\x05value\"\xfe\f\n" +
 	"\rSelectRequest\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x18\n" +
@@ -9363,7 +9432,10 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x13fingerprint_headers\x18\x1e \x03(\v27.sub2api.relay.v1.SelectRequest.FingerprintHeadersEntryR\x12fingerprintHeaders\x12*\n" +
 	"\x11fallback_group_id\x18\x1f \x01(\x03R\x0ffallbackGroupId\x12.\n" +
 	"\x13gemini_digest_chain\x18  \x01(\tR\x11geminiDigestChain\x12/\n" +
-	"\x13required_capability\x18! \x01(\tR\x12requiredCapability\x1aE\n" +
+	"\x13required_capability\x18! \x01(\tR\x12requiredCapability\x12%\n" +
+	"\x0emedia_endpoint\x18\" \x01(\tR\rmediaEndpoint\x12\x17\n" +
+	"\atask_id\x18# \x01(\tR\x06taskId\x12.\n" +
+	"\x13media_request_model\x18$ \x01(\tR\x11mediaRequestModel\x1aE\n" +
 	"\x17FingerprintHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\f\n" +
@@ -9529,7 +9601,7 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x0eshould_disable\x18\x01 \x01(\bR\rshouldDisable\x12,\n" +
 	"\x12retry_same_account\x18\x02 \x01(\bR\x10retrySameAccount\x123\n" +
 	"\x16retry_deadline_unix_ms\x18\x03 \x01(\x03R\x13retryDeadlineUnixMs\x12!\n" +
-	"\ferror_policy\x18\x04 \x01(\x05R\verrorPolicy\"\xca\x04\n" +
+	"\ferror_policy\x18\x04 \x01(\x05R\verrorPolicy\"\x8f\x05\n" +
 	"\vUsageRecord\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x04R\x03seq\x12\x18\n" +
 	"\avoucher\x18\x02 \x01(\fR\avoucher\x125\n" +
@@ -9551,7 +9623,9 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x11client_request_id\x18\r \x01(\tR\x0fclientRequestId\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x0e \x01(\tR\trequestId\x12.\n" +
-	"\x13force_cache_billing\x18\x0f \x01(\bR\x11forceCacheBilling\"b\n" +
+	"\x13force_cache_billing\x18\x0f \x01(\bR\x11forceCacheBilling\x12\x17\n" +
+	"\atask_id\x18\x10 \x01(\tR\x06taskId\x12*\n" +
+	"\x11task_pending_json\x18\x11 \x01(\fR\x0ftaskPendingJson\"b\n" +
 	"\n" +
 	"UsageBatch\x12\x1b\n" +
 	"\tbatch_seq\x18\x01 \x01(\x04R\bbatchSeq\x127\n" +
@@ -9724,7 +9798,7 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\vBillingMode\x12\x1c\n" +
 	"\x18BILLING_MODE_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14BILLING_MODE_BALANCE\x10\x01\x12\x1d\n" +
-	"\x19BILLING_MODE_SUBSCRIPTION\x10\x02*\x96\x05\n" +
+	"\x19BILLING_MODE_SUBSCRIPTION\x10\x02*\xb8\x05\n" +
 	"\x0eSelectEndpoint\x12\x1f\n" +
 	"\x1bSELECT_ENDPOINT_UNSPECIFIED\x10\x00\x12$\n" +
 	" SELECT_ENDPOINT_OPENAI_RESPONSES\x10\x01\x12\x1f\n" +
@@ -9743,7 +9817,8 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"#SELECT_ENDPOINT_OPENAI_COUNT_TOKENS\x10\r\x12'\n" +
 	"#SELECT_ENDPOINT_OPENAI_ALPHA_SEARCH\x10\x0e\x12%\n" +
 	"!SELECT_ENDPOINT_GATEWAY_SYSTEMONE\x10\x0f\x12\"\n" +
-	"\x1eSELECT_ENDPOINT_GATEWAY_SEARCH\x10\x10*\x9b\x02\n" +
+	"\x1eSELECT_ENDPOINT_GATEWAY_SEARCH\x10\x10\x12 \n" +
+	"\x1cSELECT_ENDPOINT_OPENAI_MEDIA\x10\x11*\x9b\x02\n" +
 	"\x0fRejectionFormat\x12 \n" +
 	"\x1cREJECTION_FORMAT_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18REJECTION_FORMAT_GATEWAY\x10\x01\x12\x18\n" +
@@ -9759,12 +9834,14 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\"UPSTREAM_ERROR_KIND_OAUTH429_RETRY\x10\x02\x12&\n" +
 	"\"UPSTREAM_ERROR_KIND_STREAM_TIMEOUT\x10\x03\x12$\n" +
 	" UPSTREAM_ERROR_KIND_ERROR_POLICY\x10\x04\x12\"\n" +
-	"\x1eUPSTREAM_ERROR_KIND_RATE_LIMIT\x10\x05*\x9e\x01\n" +
+	"\x1eUPSTREAM_ERROR_KIND_RATE_LIMIT\x10\x05*\xf6\x01\n" +
 	"\x0fUsageRecordKind\x12!\n" +
 	"\x1dUSAGE_RECORD_KIND_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18USAGE_RECORD_KIND_OPENAI\x10\x01\x12)\n" +
 	"%USAGE_RECORD_KIND_OPENAI_CYBER_POLICY\x10\x02\x12\x1f\n" +
-	"\x1bUSAGE_RECORD_KIND_ANTHROPIC\x10\x03*\xc3\x01\n" +
+	"\x1bUSAGE_RECORD_KIND_ANTHROPIC\x10\x03\x12'\n" +
+	"#USAGE_RECORD_KIND_OPENAI_VIDEO_TASK\x10\x04\x12-\n" +
+	")USAGE_RECORD_KIND_OPENAI_VIDEO_COMPLETION\x10\x05*\xc3\x01\n" +
 	"\x11UsageRecordStatus\x12#\n" +
 	"\x1fUSAGE_RECORD_STATUS_UNSPECIFIED\x10\x00\x12\x1f\n" +
 	"\x1bUSAGE_RECORD_STATUS_SETTLED\x10\x01\x12'\n" +

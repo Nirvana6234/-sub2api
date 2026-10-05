@@ -63,6 +63,15 @@ type OpenAIRelayDispatcher interface {
 	SwitchFallbackGroup(c *gin.Context, apiKey *service.APIKey) (OpenAIRelayFallbackSwitch, bool)
 	// ForwardSucceeded 这次尝试转发成功（本地这时刷新粘性会话绑定；主节点在释放时按同一条件刷新）。
 	ForwardSucceeded(c *gin.Context, attempt *OpenAIRelayAttempt)
+
+	// ---- 媒体入口（handleGrokMedia：Grok 图片 / 视频、Seedance）----
+
+	// SubmitVideoTask 异步视频任务创建成功：任务登记（账号绑定、创建时的待计费快照）写进本地扣费队列，由主节点执行
+	// （任务状态在主节点的 Redis 里；代替本地的 BindGrokMediaVideoRequestAccount + StoreGrokVideoPendingBilling）。
+	SubmitVideoTask(c *gin.Context, attempt *OpenAIRelayAttempt, taskID string, pending service.GrokVideoPendingBilling)
+	// SubmitVideoCompletion 状态 / 内容轮询第一次看到完成的视频：把轮询的转发结果写进本地扣费队列，主节点按任务认领计费
+	// （只入账一次，合并创建时的快照；代替本地的 prepare…CompletionBilling + RecordUsage）。
+	SubmitVideoCompletion(c *gin.Context, attempt *OpenAIRelayAttempt, facts OpenAIUsageFacts, taskID string, result *service.OpenAIForwardResult)
 }
 
 // OpenAIRelayFallbackSwitch 是主节点定下的兜底分组切换。
@@ -137,6 +146,13 @@ type OpenAIRelaySelectRequest struct {
 
 	// GrokSearch：Grok 分组的独立搜索入口（/web_search、/x_search）；Model 是搜索模型。
 	GrokSearch bool
+
+	// Media：Grok 媒体入口和 Seedance 任务入口（handleGrokMedia）；MediaEndpoint 是入口名（service.GrokMediaEndpoint），
+	// TaskID 是视频 / Seedance 查询的任务 ID，MediaRequestModel 是客户端请求的模型（Model 是选号用的路由模型）。
+	Media             bool
+	MediaEndpoint     string
+	TaskID            string
+	MediaRequestModel string
 }
 
 // OpenAIRelaySelectResult 是一次远程选号的结果：Attempt 与 Rejection 二选一。

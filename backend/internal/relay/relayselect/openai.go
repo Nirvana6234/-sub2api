@@ -35,7 +35,7 @@ func (s *selector) Select(ctx context.Context, nodeID int64, req *relayv1.Select
 	case relayv1.SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_MESSAGES, relayv1.SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_COUNT_TOKENS,
 		relayv1.SelectEndpoint_SELECT_ENDPOINT_GEMINI_NATIVE, relayv1.SelectEndpoint_SELECT_ENDPOINT_GATEWAY_RESPONSES,
 		relayv1.SelectEndpoint_SELECT_ENDPOINT_GATEWAY_CHAT, relayv1.SelectEndpoint_SELECT_ENDPOINT_GATEWAY_SYSTEMONE,
-		relayv1.SelectEndpoint_SELECT_ENDPOINT_GATEWAY_SEARCH:
+		relayv1.SelectEndpoint_SELECT_ENDPOINT_GATEWAY_SEARCH, relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_MEDIA:
 	default:
 		return unsupported(), nil
 	}
@@ -57,6 +57,8 @@ func (s *selector) Select(ctx context.Context, nodeID int64, req *relayv1.Select
 		resp, err = s.selectSystemOne(ctx, nodeID, req)
 	case req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_GATEWAY_SEARCH:
 		resp, err = s.selectGrokSearch(ctx, nodeID, req)
+	case req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_MEDIA:
+		resp, err = s.selectMedia(ctx, nodeID, req)
 	case req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_INPUT_TOKENS || req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_COUNT_TOKENS:
 		resp, err = s.selectOpenAICountTokens(ctx, nodeID, req)
 	default:
@@ -614,6 +616,11 @@ func (s *selector) buildSelection(ctx context.Context, nodeID int64, req *relayv
 		mode = relayv1.BillingMode_BILLING_MODE_SUBSCRIPTION
 	}
 	allowed := voucherAllowedModels(reqModel, forwardModel, mapping, sel.account)
+	for _, m := range sel.extraModels {
+		if m = strings.TrimSpace(m); m != "" && !slices.Contains(allowed, m) {
+			allowed = append(allowed, m)
+		}
+	}
 	// 用量行的"请求模型"与单机一样取客户端写的模型：组合平台分组是改写前的公开模型（clientRequestedModel）。
 	requested := reqModel
 	if public, ok := service.RequestedPublicModelFromContext(ctx); ok {
@@ -721,13 +728,14 @@ func billingRejectionFor(req *relayv1.SelectRequest, err error, anthropic bool) 
 // selectionContext 是凭证里的选号上下文：入账要用、由这次选号定下的值（字段清单见 fields_guard_test.go）。
 func selectionContext(outcome handler.OpenAISelectOutcome, sel *selectionRecord, mapping service.ChannelMappingResult, subscription *service.UserSubscription) *relayv1.SelectionContext {
 	c := &relayv1.SelectionContext{
-		PricingAtUnixMs:        sel.request.pricingAt.UnixMilli(),
-		QuotaPlatform:          sel.quota.Platform,
-		ChannelId:              mapping.ChannelID,
-		ChannelMappedModel:     mapping.MappedModel,
-		BillingModelSource:     mapping.BillingModelSource,
-		ChannelMapped:          mapping.Mapped,
-		OmitChannelUsageFields: sel.omitChannelFields,
+		PricingAtUnixMs:         sel.request.pricingAt.UnixMilli(),
+		QuotaPlatform:           sel.quota.Platform,
+		ChannelId:               mapping.ChannelID,
+		ChannelMappedModel:      mapping.MappedModel,
+		BillingModelSource:      mapping.BillingModelSource,
+		ChannelMapped:           mapping.Mapped,
+		OmitChannelUsageFields:  sel.omitChannelFields,
+		MediaChannelUsageFields: sel.mediaChannelFields,
 	}
 	if subscription != nil {
 		c.SubscriptionId = subscription.ID

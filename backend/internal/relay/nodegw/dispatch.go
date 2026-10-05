@@ -198,6 +198,8 @@ func (d *Dispatcher) selectRequest(c *gin.Context, st *requestState, req handler
 		endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_GATEWAY_SYSTEMONE
 	case req.GrokSearch:
 		endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_GATEWAY_SEARCH
+	case req.Media:
+		endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_MEDIA
 	case req.AlphaSearch:
 		endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_ALPHA_SEARCH
 	case req.InputTokens:
@@ -239,6 +241,9 @@ func (d *Dispatcher) selectRequest(c *gin.Context, st *requestState, req handler
 		FallbackGroupId:         st.fallbackGroupID,
 		GeminiDigestChain:       req.GeminiDigestChain,
 		RequiredCapability:      req.ImagesCapability,
+		MediaEndpoint:           req.MediaEndpoint,
+		TaskId:                  req.TaskID,
+		MediaRequestModel:       req.MediaRequestModel,
 	}
 	if st.fallbackGroupID != 0 {
 		// Key 现在是换了分组的副本，自动分组的"当前分组"仍是切换之前的。
@@ -259,7 +264,7 @@ func (d *Dispatcher) selectRequest(c *gin.Context, st *requestState, req handler
 	for id := range req.Excluded {
 		sreq.ExcludedAccountIds = append(sreq.ExcludedAccountIds, id)
 	}
-	if !req.Anthropic && !req.Gemini && !req.GatewayResponses && !req.GatewayChat && !req.Embeddings && !req.Images && !req.InputTokens && !req.OpenAICountTokens && !req.AlphaSearch && !req.SystemOne && !req.GrokSearch && d.deps.CyberEnabled != nil && d.deps.CyberEnabled(c.Request.Context()) {
+	if !req.Anthropic && !req.Gemini && !req.GatewayResponses && !req.GatewayChat && !req.Embeddings && !req.Images && !req.InputTokens && !req.OpenAICountTokens && !req.AlphaSearch && !req.SystemOne && !req.GrokSearch && !req.Media && d.deps.CyberEnabled != nil && d.deps.CyberEnabled(c.Request.Context()) {
 		l := service.NewCyberSessionLookup(req.APIKey.ID, c, req.Body, clientIP, c.GetHeader("User-Agent"))
 		sreq.Cyber = &relayv1.CyberSessionLookup{
 			ExplicitKey: l.ExplicitKey, ScopeKey: l.ScopeKey, TranscriptKeys: l.TranscriptKeys, TranscriptTruncated: l.TranscriptTruncated,
@@ -271,6 +276,11 @@ func (d *Dispatcher) selectRequest(c *gin.Context, st *requestState, req handler
 		// Gemini 原生入口的白名单按 URL 里的模型校验（本地 GroupModelAllowlist 先取路由参数；组合平台选目标之前的公开模型）。
 		if m := requestmodel.GeminiModelFromRouteParams(c.Param("model"), c.Param("modelAction")); m != "" {
 			sreq.ModelCandidates = []string{m}
+		}
+	case req.Media:
+		// 媒体入口的白名单按客户端请求的模型校验（任务查询没有模型）。
+		if req.MediaRequestModel != "" {
+			sreq.ModelCandidates = []string{req.MediaRequestModel}
 		}
 	case st.rawBody != nil:
 		sreq.ModelCandidates = requestmodel.FromBodyCandidates(c.FullPath(), c.GetHeader("Content-Type"), st.rawBody)
@@ -465,8 +475,28 @@ func (d *Dispatcher) ForwardSucceeded(_ *gin.Context, attempt *handler.OpenAIRel
 	}
 }
 
-// submitRecord 写一条扣费记录：凭证原样带上，转发结果按 JSON（主节点按种类解码）。
-func (d *Dispatcher) submitRecord(c *gin.Context, attempt *handler.OpenAIRelayAttempt, facts handler.OpenAIUsageFacts, result any, kind relayv1.UsageRecordKind, forceCacheBilling bool) {
+// SubmitVideoTask 把视频任务的登记写进本地扣费队列（handler.OpenAIRelayDispatcher）。
+func (d *Dispatcher) SubmitVideoTask(c *gin.Context, attempt *handler.OpenAIRelayAttempt, taskID string, pending service.GrokVideoPendingBilling) {
+	pendingJSON, err := json.Marshal(pending)
+	if err != nil {
+		slog.Error("relay video task record: encode pending billing", "error", err)
+		return
+	}
+	d.submitRecord(c, attempt, handler.OpenAIUsageFacts{}, struct{}{}, relayv1.UsageRecordKind_USAGE_RECORD_KIND_OPENAI_VIDEO_TASK, false,
+		func(rec *relayv1.UsageRecord) { rec.TaskId, rec.TaskPendingJson = taskID, pendingJSON })
+}
+
+// SubmitVideoCompletion 把视频任务完成的轮询结果写进本地扣费队列（handler.OpenAIRelayDispatcher）。
+func (d *Dispatcher) SubmitVideoCompletion(c *gin.Context, attempt *handler.OpenAIRelayAttempt, facts handler.OpenAIUsageFacts, taskID string, result *service.OpenAIForwardResult) {
+	if result == nil {
+		return
+	}
+	d.submitRecord(c, attempt, facts, result, relayv1.UsageRecordKind_USAGE_RECORD_KIND_OPENAI_VIDEO_COMPLETION, false,
+		func(rec *relayv1.UsageRecord) { rec.TaskId = taskID })
+}
+
+// submitRecord 写一条扣费记录：凭证原样带上，转发结果按 JSON（主节点按种类解码）。extra 补记录里按种类才有的字段。
+func (d *Dispatcher) submitRecord(c *gin.Context, attempt *handler.OpenAIRelayAttempt, facts handler.OpenAIUsageFacts, result any, kind relayv1.UsageRecordKind, forceCacheBilling bool, extra ...func(*relayv1.UsageRecord)) {
 	a, ok := attempt.State.(*attemptState)
 	if !ok {
 		return
@@ -482,6 +512,9 @@ func (d *Dispatcher) submitRecord(c *gin.Context, attempt *handler.OpenAIRelayAt
 		InboundEndpoint: facts.InboundEndpoint, UpstreamEndpoint: facts.UpstreamEndpoint, UserAgent: facts.UserAgent,
 		IpAddress: facts.IPAddress, SessionId: facts.SessionID, RequestPayloadHash: facts.RequestPayloadHash,
 		CyberBlocked: facts.CyberBlocked, NativeCompactionV2: facts.NativeCompactionV2, ForceCacheBilling: forceCacheBilling,
+	}
+	for _, fn := range extra {
+		fn(rec)
 	}
 	rec.ClientRequestId, _ = ctx.Value(ctxkey.ClientRequestID).(string)
 	rec.RequestId, _ = ctx.Value(ctxkey.RequestID).(string)

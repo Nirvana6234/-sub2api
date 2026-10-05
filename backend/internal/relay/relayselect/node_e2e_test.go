@@ -211,6 +211,26 @@ func startE2EWithConfig(t *testing.T, configure func(*config.Config), accounts f
 				`"usage":{"input_tokens":5,"output_tokens":3}}`)
 			return
 		}
+		if strings.HasSuffix(r.URL.Path, "/videos/generations") {
+			// Grok 视频创建。
+			_, _ = io.WriteString(w, `{"request_id":"vid_e2e1"}`)
+			return
+		}
+		if strings.Contains(r.URL.Path, "/videos/vid_e2e1") {
+			// Grok 视频状态：已完成。
+			_, _ = io.WriteString(w, `{"status":"done","model":"grok-imagine-video","video":{"url":"https://cdn.example/v.mp4","duration":6}}`)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/contents/generations/tasks") {
+			// Seedance 创建。
+			_, _ = io.WriteString(w, `{"id":"cgt-e2e1"}`)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/contents/generations/tasks/cgt-e2e1") {
+			// Seedance 状态：已完成。
+			_, _ = io.WriteString(w, `{"id":"cgt-e2e1","status":"succeeded","model":"seedance-1","usage":{"completion_tokens":100}}`)
+			return
+		}
 		if strings.HasSuffix(r.URL.Path, "/systemone") {
 			_, _ = io.WriteString(w, `{"answers":{"q":true},"usage":{"input_tokens":5,"output_tokens":3},"model":"jev-1"}`)
 			return
