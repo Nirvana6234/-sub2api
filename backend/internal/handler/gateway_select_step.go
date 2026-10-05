@@ -51,6 +51,9 @@ type AnthropicSelectRequest struct {
 	// OnTick、CannotWait：排队期间的保活（本地流式发 SSE ping）；CannotWait 非空时不排队，抢不到就以它失败。
 	OnTick     func() error
 	CannotWait error
+	// CompatStyle：/v1/responses、/v1/chat/completions 处理函数的写法——账号槽排队不计排队数（直接等槽），准入后的粘性绑定只在
+	// 有利润门时补（Messages 在等待路径上也补）。
+	CompatStyle bool
 }
 
 // AnthropicSelectOutcome 是 SelectAndAdmit 的结果。
@@ -111,7 +114,10 @@ func (a AnthropicAccountAdmitter) SelectAndAdmit(ctx context.Context, req Anthro
 			return AnthropicSelectOutcome{Kind: AnthropicSelectNoWaitPlan, Selection: selection, Account: account, Ctx: ctx}
 		}
 		accountWaitCounted := false
-		canWait, err := a.Concurrency.IncrementAccountWaitCount(ctx, account.ID, selection.WaitPlan.MaxWaiting)
+		canWait, err := true, error(nil)
+		if !req.CompatStyle {
+			canWait, err = a.Concurrency.IncrementAccountWaitCount(ctx, account.ID, selection.WaitPlan.MaxWaiting)
+		}
 		if err != nil {
 			reqLog.Warn("gateway.account_wait_counter_increment_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 		} else if !canWait {
@@ -121,7 +127,7 @@ func (a AnthropicAccountAdmitter) SelectAndAdmit(ctx context.Context, req Anthro
 			)
 			return AnthropicSelectOutcome{Kind: AnthropicSelectQueueFull, Selection: selection, Account: account, Ctx: ctx}
 		}
-		if err == nil && canWait {
+		if err == nil && canWait && !req.CompatStyle {
 			accountWaitCounted = true
 		}
 		releaseWait := func() {
@@ -152,7 +158,7 @@ func (a AnthropicAccountAdmitter) SelectAndAdmit(ctx context.Context, req Anthro
 	selection.Account = latest
 	// 等待路径保持既有 eager 绑定（无门时 helper 直接绑定）；调度器已
 	// 抢槽的直达路径无门时由选号内部绑定，这里只在门下补准入后绑定。
-	if selection.ProfitGateActive() || !selection.Acquired {
+	if selection.ProfitGateActive() || (!selection.Acquired && !req.CompatStyle) {
 		if err := a.Gateway.BindStickySessionAfterProfitAdmission(admissionCtx, req.GroupID, req.SessionKey, latest.ID); err != nil {
 			reqLog.Warn("gateway.bind_sticky_session_after_profit_admission_failed", zap.Int64("account_id", latest.ID), zap.Error(err))
 		}

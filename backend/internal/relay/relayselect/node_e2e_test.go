@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/json"
+	"github.com/tidwall/gjson"
 	"io"
 	"net"
 	"net/http"
@@ -185,6 +186,22 @@ func startE2EWithConfig(t *testing.T, configure func(*config.Config), accounts f
 		}
 		if strings.HasSuffix(r.URL.Path, "/v1/messages/count_tokens") {
 			_, _ = io.WriteString(w, `{"input_tokens":7}`)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/v1/messages") && bytes.Contains(body, []byte(`"stream":true`)) {
+			// Anthropic 账号的流式 Messages（/v1/responses、/v1/chat/completions 转成 Messages 请求时总是流式）。
+			w.Header().Set("Content-Type", "text/event-stream")
+			events := []string{
+				`{"type":"message_start","message":{"id":"msg_e2e","type":"message","role":"assistant","model":"claude-sonnet-4-5","content":[],"usage":{"input_tokens":5,"output_tokens":0}}}`,
+				`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+				`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}`,
+				`{"type":"content_block_stop","index":0}`,
+				`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3}}`,
+				`{"type":"message_stop"}`,
+			}
+			for _, ev := range events {
+				_, _ = io.WriteString(w, "event: "+gjson.Get(ev, "type").String()+"\ndata: "+ev+"\n\n")
+			}
 			return
 		}
 		if strings.HasSuffix(r.URL.Path, "/v1/messages") {

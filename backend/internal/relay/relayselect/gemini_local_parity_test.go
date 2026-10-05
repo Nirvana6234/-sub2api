@@ -56,6 +56,8 @@ func startLocalGemini(t *testing.T, e *e2e, accounts []service.Account) *localGe
 	gemini.POST("/models/*modelAction", h.GeminiV1BetaModels)
 	messages := r.Group("/v1", gin.HandlerFunc(middleware.NewAPIKeyAuthMiddleware(apiKeys, nil, cfg)))
 	messages.POST("/messages", h.Messages)
+	messages.POST("/chat/completions", h.ChatCompletions)
+	messages.POST("/responses", h.Responses)
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
 	return &localGemini{server: srv, cache: cache}
@@ -131,10 +133,9 @@ func TestGeminiNativeLocalAndNodeAgree(t *testing.T) {
 	local := startLocalGemini(t, e, accounts)
 
 	type result struct {
-		status          int
-		body            string
-		turn1, turn2    string
-		sessionAccounts []string
+		status       int
+		body         string
+		turn1, turn2 string
 	}
 	run := func(post func(path, key, body string) (int, string)) result {
 		accounts[0].Priority, accounts[1].Priority = 1, 2

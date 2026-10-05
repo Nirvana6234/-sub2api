@@ -77,7 +77,11 @@ func (s *selector) selectAnthropic(ctx context.Context, nodeID int64, req *relay
 	}
 	// Gemini 平台的 Messages（本地 GatewayHandler.Messages 的 platform == gemini 分支）：Gemini 不使用会话数限制、换号上限用
 	// Gemini 的、没有指纹，账号用完不做粘性续期、不放会话数注册。
-	isGemini := platform == service.PlatformGemini
+	// /v1/responses、/v1/chat/completions（GatewayHandler.Responses / ChatCompletions）：同一套选号，写法按这两个处理函数
+	// （不带会话数限制、不查粘性绑定、没有预热拦截、账号槽直接等、错误按 OpenAI 兼容格式、没有粘性续期 / RPM / 会话数注册）。
+	compat := isGatewayCompatEndpoint(req.GetEndpoint())
+	chat := req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_GATEWAY_CHAT
+	isGemini := platform == service.PlatformGemini && !compat
 	log := zap.NewNop()
 
 	channelMapping, _ := gw.ResolveChannelMappingAndRestrict(ctx, origKey.GroupID, reqModel)
@@ -109,13 +113,13 @@ func (s *selector) selectAnthropic(ctx context.Context, nodeID int64, req *relay
 		pricing := func(ctx context.Context, _ *int64) (context.Context, time.Time) {
 			return service.WithGatewayTokenRequestPricing(ctx)
 		}
-		if rej := s.startRequest(ctx, record, req, adm, quotaReq, false, true, pricing); rej != nil {
+		if rej := s.startRequest(ctx, record, req, adm, quotaReq, false, !compat, pricing); rej != nil {
 			return rej, nil
 		}
 		record.groupID = groupID
-		// 粘性会话：本地在选号循环之前按会话键查一次绑定的账号。
+		// 粘性会话：本地在选号循环之前按会话键查一次绑定的账号（compat 入口没有这一步，调度器自己按会话键查）。
 		record.sessionKey = req.GetSessionHash()
-		if record.sessionKey != "" {
+		if record.sessionKey != "" && !compat {
 			record.stickyBound, _ = gw.GetCachedSessionAccountID(ctx, origKey.GroupID, record.sessionKey)
 		}
 		// 单账号分组提前设 SingleAccountRetry（Antigravity 单账号分组收到 503 时不设模型限流）：本地在请求开始时查一次。
@@ -142,8 +146,11 @@ func (s *selector) selectAnthropic(ctx context.Context, nodeID int64, req *relay
 		MetadataUserID: req.GetMetadataUserId(), UserID: userID,
 		Intercept: func() handler.InterceptType { return handler.InterceptType(req.GetInterceptType()) },
 	}
-	if isGemini {
-		selectReq.MetadataUserID, selectReq.UserID = "", 0 // Gemini 不使用会话限制
+	if isGemini || compat {
+		selectReq.MetadataUserID, selectReq.UserID = "", 0 // Gemini、compat 入口不使用会话限制
+	}
+	if compat {
+		selectReq.Intercept, selectReq.CompatStyle = nil, true
 	}
 	outcome := s.anthropicAdmitter.SelectAndAdmit(attemptCtx, selectReq, log)
 
@@ -164,6 +171,13 @@ func (s *selector) selectAnthropic(ctx context.Context, nodeID int64, req *relay
 				Format: relayv1.RejectionFormat_REJECTION_FORMAT_FAILOVER_EXHAUSTED, AnthropicMessages: true,
 			}}}, nil
 		}
+		if compat {
+			// 第一次就选不出账号：Chat 入口对自动分组 Key 本地先换组再试（从节点问 SwitchAutoGroup），没换成再按这个拒绝写。
+			rej := gatewayRejection(handler.GatewayCompatFirstSelectFailureRejection(ctx, gw, apiKey, reqModel, platform, outcome.Err))
+			rej.GetRejection().AutoGroupFailover = chat && apiKey.AutoGroup && handler.IsAutoGroupSelectionFailoverError(outcome.Err)
+			keep = rej.GetRejection().GetAutoGroupFailover()
+			return rej, nil
+		}
 		r, _ := handler.AnthropicFirstSelectFailureRejection(ctx, gw, apiKey, reqModel, platform, outcome.Err)
 		return gatewayRejection(r), nil
 	case handler.AnthropicSelectIntercepted:
@@ -171,13 +185,18 @@ func (s *selector) selectAnthropic(ctx context.Context, nodeID int64, req *relay
 			Format: relayv1.RejectionFormat_REJECTION_FORMAT_INTERCEPTED, InterceptType: int32(outcome.Intercept),
 		}}}, nil
 	case handler.AnthropicSelectProfitVetoed:
-		// 尝试被否决（从未转发），立即释放该账号的会话注册（本地同一处）。
-		gw.ReleaseAccountSession(context.Background(), outcome.Account, record.sessionKey)
+		// 尝试被否决（从未转发），立即释放该账号的会话注册（本地同一处；Gemini、compat 入口没有这一步）。
+		if !isGemini && !compat {
+			gw.ReleaseAccountSession(context.Background(), outcome.Account, record.sessionKey)
+		}
 		keep = true
 		return &relayv1.SelectResponse{Result: &relayv1.SelectResponse_Rejection{Rejection: &relayv1.SelectRejection{
 			Format: relayv1.RejectionFormat_REJECTION_FORMAT_PROFIT_VETOED, VetoedAccountId: outcome.Account.ID,
 		}}}, nil
 	default:
+		if compat {
+			return gatewayRejection(handler.GatewayCompatSelectOutcomeRejection(outcome)), nil
+		}
 		return gatewayRejection(handler.AnthropicSelectOutcomeRejection(outcome)), nil
 	}
 
@@ -190,7 +209,7 @@ func (s *selector) selectAnthropic(ctx context.Context, nodeID int64, req *relay
 		if outcome.Release != nil {
 			outcome.Release()
 		}
-		if !isGemini {
+		if !isGemini && !compat {
 			gw.ReleaseAccountSession(context.Background(), outcome.Account, record.sessionKey)
 		}
 		return unsupported(), nil
@@ -199,7 +218,7 @@ func (s *selector) selectAnthropic(ctx context.Context, nodeID int64, req *relay
 	sel := &selectionRecord{
 		id: newSelectionID(), nodeID: nodeID, request: record, account: outcome.Account, release: outcome.Release,
 		createdAt: s.now(), quota: quotaReq, groupID: groupID, userID: userID, apiKeyID: apiKey.ID, apiKey: apiKey,
-		anthropic: !isGemini, gemini: isGemini, channelGroupID: groupIDOf(origKey),
+		anthropic: !isGemini && !compat, gemini: isGemini, channelGroupID: groupIDOf(origKey),
 	}
 	picked := handler.OpenAISelectOutcome{Kind: handler.OpenAISelected, Account: outcome.Account, Ctx: outcome.Ctx, SessionHash: record.sessionKey}
 	resp, rej, err := s.buildSelection(ctx, nodeID, req, sel, picked, forwardModel, reqModel, channelMapping, subscription, true)
@@ -232,7 +251,7 @@ func (s *selector) selectAnthropic(ctx context.Context, nodeID int64, req *relay
 	if cfg := s.deps.Config; cfg != nil && cfg.Gateway.MaxAccountSwitches > 0 {
 		selection.MaxAccountSwitches = int32(cfg.Gateway.MaxAccountSwitches)
 	}
-	if isGemini {
+	if isGemini || (chat && platform == service.PlatformGemini) {
 		selection.MaxAccountSwitches = int32(geminiDefaultMaxAccountSwitches)
 		if cfg := s.deps.Config; cfg != nil && cfg.Gateway.MaxAccountSwitchesGemini > 0 {
 			selection.MaxAccountSwitches = int32(cfg.Gateway.MaxAccountSwitchesGemini)
@@ -241,6 +260,11 @@ func (s *selector) selectAnthropic(ctx context.Context, nodeID int64, req *relay
 	s.addSelection(sel)
 	selected = true
 	return resp, nil
+}
+
+// isGatewayCompatEndpoint 报告这是 /v1/responses、/v1/chat/completions 这两个 Anthropic / Gemini / Antigravity 平台分组的入口。
+func isGatewayCompatEndpoint(e relayv1.SelectEndpoint) bool {
+	return e == relayv1.SelectEndpoint_SELECT_ENDPOINT_GATEWAY_RESPONSES || e == relayv1.SelectEndpoint_SELECT_ENDPOINT_GATEWAY_CHAT
 }
 
 // groupIDOf、groupPlatformOf：Key 所属分组的 ID 和平台；未分组的 Key 是 0 和空。

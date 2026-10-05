@@ -112,6 +112,11 @@ type OpenAIRelaySelectRequest struct {
 	// GeminiDigestChain 是请求体的内容摘要链；会话键、内容摘要会话匹配都在主节点。
 	Gemini            bool
 	GeminiDigestChain string
+
+	// GatewayResponses、GatewayChat：Anthropic / Gemini / Antigravity 平台分组的 /v1/responses、/v1/chat/completions
+	// （GatewayHandler.Responses / ChatCompletions）。SessionHash 是调度用的会话键（Gemini 平台带 "gemini:" 前缀）。
+	GatewayResponses bool
+	GatewayChat      bool
 }
 
 // OpenAIRelaySelectResult 是一次远程选号的结果：Attempt 与 Rejection 二选一。

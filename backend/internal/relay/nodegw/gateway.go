@@ -74,23 +74,38 @@ func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatche
 		middleware2.GroupModelAllowlist(),
 		d.CompositeRouteMiddleware(),
 	}
-	openAIOnly := func(next gin.HandlerFunc) gin.HandlerFunc {
+	// byPlatform 与本地路由一样按分组平台分：OpenAI 分组走 OpenAI 网关，Anthropic / Gemini / Antigravity 平台的分组和没有分组的 Key
+	// 走 Anthropic 网关（gateway，nil 时交给主节点），其余平台（Grok、国产兼容平台等）还没接入。
+	byPlatform := func(openAI, gateway gin.HandlerFunc) gin.HandlerFunc {
 		return func(c *gin.Context) {
-			if g, ok := middleware2.GetAPIKeyFromContext(c); !ok || servedPlatform(c, g) != service.PlatformOpenAI {
+			key, ok := middleware2.GetAPIKeyFromContext(c)
+			switch {
+			case ok && servedPlatform(c, key) == service.PlatformOpenAI:
+				openAI(c)
+			case ok && gateway != nil && gh != nil && servesAnthropicRoutes(c, key):
+				gateway(c)
+			default:
 				d.HandOff(c)
-				return
 			}
-			next(c)
 		}
 	}
-	responses := openAIOnly(func(c *gin.Context) {
+	openAIOnly := func(next gin.HandlerFunc) gin.HandlerFunc { return byPlatform(next, nil) }
+	responses := byPlatform(func(c *gin.Context) {
 		if !service.IsForwardableOpenAIResponsesRequestPath(c) || service.IsOpenAIResponsesInputTokensRequestPath(c) {
 			// 不可转发的子路径与 input_tokens 由主节点照原逻辑处理。
 			d.HandOff(c)
 			return
 		}
 		h.Responses(c)
+	}, func(c *gin.Context) {
+		if c.Param("subpath") != "" {
+			// Anthropic 网关只接 /responses 本身，子路径交给主节点照本地逻辑处理。
+			d.HandOff(c)
+			return
+		}
+		gh.Responses(c)
 	})
+	chatCompletions := byPlatform(h.ChatCompletions, func(c *gin.Context) { gh.ChatCompletions(c) })
 	countTokens := func(c *gin.Context) {
 		// 与本地 countTokensHandler 一样按分组平台分：Anthropic 分组走 Messages 处理函数的 count_tokens；
 		// OpenAI 兼容平台的（上游桥接、Grok 本地估算）还没接入。
@@ -105,7 +120,7 @@ func RegisterRoutes(r *gin.Engine, h *handler.OpenAIGatewayHandler, d *Dispatche
 		g.POST("/messages/count_tokens", countTokens)
 		g.POST("/responses", responses)
 		g.POST("/responses/*subpath", responses)
-		g.POST("/chat/completions", openAIOnly(h.ChatCompletions))
+		g.POST("/chat/completions", chatCompletions)
 		// Responses WebSocket（Codex）：与本地一样是 GET /responses 的升级请求。
 		g.GET("/responses", openAIOnly(h.ResponsesWebSocket))
 		if prefix == "/v1" {

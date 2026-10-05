@@ -389,7 +389,8 @@ func TestNodeServesUngroupedKeys(t *testing.T) {
 	require.Zero(t, voucher.GetGroupId())
 	e.world.waitReleased(t)
 
-	// OpenAI 的入口不接未分组 Key：交给主节点（测试世界没有主节点转发，按 503 写）。
+	// /v1/responses：本地同样走 Anthropic 网关（未分组账号），经从节点。
 	status, body = e.post(t, "/v1/responses", "sk-ungrouped", `{"model":"gpt-5","input":"hi"}`)
-	require.Equal(t, http.StatusServiceUnavailable, status, body)
+	require.Equal(t, http.StatusOK, status, body)
+	e.world.waitReleased(t)
 }

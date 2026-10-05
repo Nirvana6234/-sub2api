@@ -226,6 +226,11 @@ const (
 	// 选号与准入，换号状态在从节点；会话（粘性键、内容摘要会话）整段在主节点：从节点只带 session_hash（CLI / 通用会话哈希）和
 	// gemini_digest_chain，主节点回最终的会话键（Selection.session_hash）和绑定的账号（sticky_bound_account_id）。
 	SelectEndpoint_SELECT_ENDPOINT_GEMINI_NATIVE SelectEndpoint = 7
+	// Anthropic / Gemini / Antigravity 平台分组的 /v1/responses、/v1/chat/completions（GatewayHandler.Responses / ChatCompletions：把请求
+	// 转成 Messages 再转发）。与 Messages 一样一轮选号与准入、换号状态在从节点；不带会话数限制、不查粘性绑定、没有预热拦截，
+	// 账号槽排队不计排队数（本地这两个处理函数直接等槽）；错误按 OpenAI 兼容格式由从节点写。
+	SelectEndpoint_SELECT_ENDPOINT_GATEWAY_RESPONSES SelectEndpoint = 8
+	SelectEndpoint_SELECT_ENDPOINT_GATEWAY_CHAT      SelectEndpoint = 9
 )
 
 // Enum value maps for SelectEndpoint.
@@ -239,6 +244,8 @@ var (
 		5: "SELECT_ENDPOINT_ANTHROPIC_MESSAGES",
 		6: "SELECT_ENDPOINT_ANTHROPIC_COUNT_TOKENS",
 		7: "SELECT_ENDPOINT_GEMINI_NATIVE",
+		8: "SELECT_ENDPOINT_GATEWAY_RESPONSES",
+		9: "SELECT_ENDPOINT_GATEWAY_CHAT",
 	}
 	SelectEndpoint_value = map[string]int32{
 		"SELECT_ENDPOINT_UNSPECIFIED":            0,
@@ -249,6 +256,8 @@ var (
 		"SELECT_ENDPOINT_ANTHROPIC_MESSAGES":     5,
 		"SELECT_ENDPOINT_ANTHROPIC_COUNT_TOKENS": 6,
 		"SELECT_ENDPOINT_GEMINI_NATIVE":          7,
+		"SELECT_ENDPOINT_GATEWAY_RESPONSES":      8,
+		"SELECT_ENDPOINT_GATEWAY_CHAT":           9,
 	}
 )
 
@@ -5022,8 +5031,10 @@ type SelectRejection struct {
 	// REJECTION_FORMAT_FAILOVER_EXHAUSTED：这是 Anthropic Messages 的选号耗尽（从节点照本地 HandleSelectionExhausted
 	// 可能退避后接着选，请求记录留着）。
 	AnthropicMessages bool `protobuf:"varint,18,opt,name=anthropic_messages,json=anthropicMessages,proto3" json:"anthropic_messages,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// REJECTION_FORMAT_GATEWAY：按 /v1/responses、/v1/chat/completions 处理函数自己的 OpenAI 兼容错误格式写（计费资格、没有可用账号等）。
+	OpenaiCompatFormat bool `protobuf:"varint,19,opt,name=openai_compat_format,json=openaiCompatFormat,proto3" json:"openai_compat_format,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *SelectRejection) Reset() {
@@ -5178,6 +5189,13 @@ func (x *SelectRejection) GetVetoedAccountId() int64 {
 func (x *SelectRejection) GetAnthropicMessages() bool {
 	if x != nil {
 		return x.AnthropicMessages
+	}
+	return false
+}
+
+func (x *SelectRejection) GetOpenaiCompatFormat() bool {
+	if x != nil {
+		return x.OpenaiCompatFormat
 	}
 	return false
 }
@@ -9310,7 +9328,7 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x0eSelectResponse\x12;\n" +
 	"\tselection\x18\x01 \x01(\v2\x1b.sub2api.relay.v1.SelectionH\x00R\tselection\x12A\n" +
 	"\trejection\x18\x02 \x01(\v2!.sub2api.relay.v1.SelectRejectionH\x00R\trejectionB\b\n" +
-	"\x06result\"\xe8\x06\n" +
+	"\x06result\"\x9a\a\n" +
 	"\x0fSelectRejection\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\x05R\x06status\x12\x1d\n" +
 	"\n" +
@@ -9331,7 +9349,8 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\x13auto_group_failover\x18\x0f \x01(\bR\x11autoGroupFailover\x12%\n" +
 	"\x0eintercept_type\x18\x10 \x01(\x05R\rinterceptType\x12*\n" +
 	"\x11vetoed_account_id\x18\x11 \x01(\x03R\x0fvetoedAccountId\x12-\n" +
-	"\x12anthropic_messages\x18\x12 \x01(\bR\x11anthropicMessages\x1a:\n" +
+	"\x12anthropic_messages\x18\x12 \x01(\bR\x11anthropicMessages\x120\n" +
+	"\x14openai_compat_format\x18\x13 \x01(\bR\x12openaiCompatFormat\x1a:\n" +
 	"\fHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x89\t\n" +
@@ -9652,7 +9671,7 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"\vBillingMode\x12\x1c\n" +
 	"\x18BILLING_MODE_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14BILLING_MODE_BALANCE\x10\x01\x12\x1d\n" +
-	"\x19BILLING_MODE_SUBSCRIPTION\x10\x02*\xbd\x02\n" +
+	"\x19BILLING_MODE_SUBSCRIPTION\x10\x02*\x86\x03\n" +
 	"\x0eSelectEndpoint\x12\x1f\n" +
 	"\x1bSELECT_ENDPOINT_UNSPECIFIED\x10\x00\x12$\n" +
 	" SELECT_ENDPOINT_OPENAI_RESPONSES\x10\x01\x12\x1f\n" +
@@ -9661,7 +9680,9 @@ const file_sub2api_relay_v1_relay_proto_rawDesc = "" +
 	"#SELECT_ENDPOINT_OPENAI_RESPONSES_WS\x10\x04\x12&\n" +
 	"\"SELECT_ENDPOINT_ANTHROPIC_MESSAGES\x10\x05\x12*\n" +
 	"&SELECT_ENDPOINT_ANTHROPIC_COUNT_TOKENS\x10\x06\x12!\n" +
-	"\x1dSELECT_ENDPOINT_GEMINI_NATIVE\x10\a*\x9b\x02\n" +
+	"\x1dSELECT_ENDPOINT_GEMINI_NATIVE\x10\a\x12%\n" +
+	"!SELECT_ENDPOINT_GATEWAY_RESPONSES\x10\b\x12 \n" +
+	"\x1cSELECT_ENDPOINT_GATEWAY_CHAT\x10\t*\x9b\x02\n" +
 	"\x0fRejectionFormat\x12 \n" +
 	"\x1cREJECTION_FORMAT_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18REJECTION_FORMAT_GATEWAY\x10\x01\x12\x18\n" +

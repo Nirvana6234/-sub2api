@@ -24,6 +24,8 @@ type OpenAIGatewayRejection struct {
 	OpsBusinessLimitedReason string
 	// Anthropic：按 Anthropic Messages 的错误格式写（OpenAI 分组的 /v1/messages 入口，Code 不写出）。
 	Anthropic bool
+	// Compat：按 Anthropic 平台分组的 /v1/responses、/v1/chat/completions 处理函数自己的错误格式写（Responses 写 code、Chat 写 type）。
+	Compat bool
 }
 
 // writeOpenAIGatewayRejection 打运维标记并写出错误（流式已开始时写流内错误）。

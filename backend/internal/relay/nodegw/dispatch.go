@@ -186,6 +186,10 @@ func (d *Dispatcher) selectRequest(c *gin.Context, st *requestState, req handler
 	switch {
 	case req.Gemini:
 		endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_GEMINI_NATIVE
+	case req.GatewayResponses:
+		endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_GATEWAY_RESPONSES
+	case req.GatewayChat:
+		endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_GATEWAY_CHAT
 	case req.CountTokens:
 		endpoint = relayv1.SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_COUNT_TOKENS
 	case req.Anthropic:
@@ -225,7 +229,7 @@ func (d *Dispatcher) selectRequest(c *gin.Context, st *requestState, req handler
 		// Key 现在是换了分组的副本，自动分组的"当前分组"仍是切换之前的。
 		sreq.AutoGroupId = st.fallbackAutoGroupID
 	}
-	if req.Anthropic {
+	if req.Anthropic || req.GatewayResponses || req.GatewayChat {
 		for _, name := range service.FingerprintHeaderNames {
 			if v := c.GetHeader(name); v != "" {
 				if sreq.FingerprintHeaders == nil {
@@ -240,7 +244,7 @@ func (d *Dispatcher) selectRequest(c *gin.Context, st *requestState, req handler
 	for id := range req.Excluded {
 		sreq.ExcludedAccountIds = append(sreq.ExcludedAccountIds, id)
 	}
-	if !req.Anthropic && !req.Gemini && d.deps.CyberEnabled != nil && d.deps.CyberEnabled(c.Request.Context()) {
+	if !req.Anthropic && !req.Gemini && !req.GatewayResponses && !req.GatewayChat && d.deps.CyberEnabled != nil && d.deps.CyberEnabled(c.Request.Context()) {
 		l := service.NewCyberSessionLookup(req.APIKey.ID, c, req.Body, clientIP, c.GetHeader("User-Agent"))
 		sreq.Cyber = &relayv1.CyberSessionLookup{
 			ExplicitKey: l.ExplicitKey, ScopeKey: l.ScopeKey, TranscriptKeys: l.TranscriptKeys, TranscriptTruncated: l.TranscriptTruncated,
@@ -600,7 +604,7 @@ func gatewayOf(r *relayv1.SelectRejection) handler.OpenAIGatewayRejection {
 	return handler.OpenAIGatewayRejection{
 		Status: int(r.GetStatus()), ErrType: r.GetErrorType(), Code: r.GetCode(), Message: r.GetMessage(),
 		RetryAfter: int(r.GetRetryAfterSeconds()), RoutingCapacityLimited: r.GetRoutingCapacityLimited(),
-		OpsBusinessLimitedReason: r.GetOpsBusinessLimitedReason(), Anthropic: r.GetAnthropicFormat(),
+		OpsBusinessLimitedReason: r.GetOpsBusinessLimitedReason(), Anthropic: r.GetAnthropicFormat(), Compat: r.GetOpenaiCompatFormat(),
 	}
 }
 

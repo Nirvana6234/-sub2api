@@ -146,26 +146,31 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 
 	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(requestStart).Milliseconds())
 
-	userReleaseFunc, err := h.concurrencyHelper.AcquireUserSlotWithWait(c, subject.UserID, subject.Concurrency, reqStream, &streamStarted)
-	if err != nil {
-		reqLog.Warn("gateway.responses.user_slot_acquire_failed", zap.Error(err))
-		h.handleConcurrencyError(c, err, "user", streamStarted)
-		return
-	}
-	userReleaseFunc = wrapReleaseOnDone(c.Request.Context(), userReleaseFunc)
-	if userReleaseFunc != nil {
-		defer userReleaseFunc()
-	}
-
-	// 2. Re-check billing
-	if err := h.billingCacheService.CheckBillingEligibility(requestCtx, apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(requestCtx, apiKey)); err != nil {
-		reqLog.Info("gateway.responses.billing_check_failed", zap.Error(err))
-		status, code, message, retryAfter := billingErrorDetails(err)
-		if retryAfter > 0 {
-			c.Header("Retry-After", strconv.Itoa(retryAfter))
+	if h.relay != nil {
+		// 从节点：用户并发槽、计费资格在主节点选号时做（设计 3.2），请求结束时放掉。
+		defer h.relay.RequestDone(c)
+	} else {
+		userReleaseFunc, err := h.concurrencyHelper.AcquireUserSlotWithWait(c, subject.UserID, subject.Concurrency, reqStream, &streamStarted)
+		if err != nil {
+			reqLog.Warn("gateway.responses.user_slot_acquire_failed", zap.Error(err))
+			h.handleConcurrencyError(c, err, "user", streamStarted)
+			return
 		}
-		h.responsesErrorResponse(c, status, code, message)
-		return
+		userReleaseFunc = wrapReleaseOnDone(c.Request.Context(), userReleaseFunc)
+		if userReleaseFunc != nil {
+			defer userReleaseFunc()
+		}
+
+		// 2. Re-check billing
+		if err := h.billingCacheService.CheckBillingEligibility(requestCtx, apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(requestCtx, apiKey)); err != nil {
+			reqLog.Info("gateway.responses.billing_check_failed", zap.Error(err))
+			status, code, message, retryAfter := billingErrorDetails(err)
+			if retryAfter > 0 {
+				c.Header("Retry-After", strconv.Itoa(retryAfter))
+			}
+			h.responsesErrorResponse(c, status, code, message)
+			return
+		}
 	}
 
 	// Parse request for session hash
@@ -183,12 +188,28 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 
 	// 3. Account selection + failover loop
 	fs := NewFailoverState(h.maxAccountSwitches, false)
+	var relayAttempt *OpenAIRelayAttempt
 
 	for {
 		if requestCtx.Err() != nil {
 			return
 		}
-		selection, err := h.gatewayService.SelectAccountWithLoadAwareness(requestCtx, apiKey.GroupID, sessionHash, reqModel, fs.FailedAccountIDs, "", int64(0))
+		var selection *service.AccountSelectionResult
+		var relayOutcome AnthropicSelectOutcome
+		var err error
+		if h.relay != nil {
+			// 从节点：选号与准入经主节点（换号状态在这里）。
+			var written bool
+			relayOutcome, relayAttempt, written = h.relayCompatSelect(c, compatResponses, fs, apiKey, reqModel, reqStream, sessionHash, streamStarted, reqLog)
+			if written {
+				return
+			}
+			if relayOutcome.Kind == AnthropicSelectFailed {
+				err = relayOutcome.Err
+			}
+		} else {
+			selection, err = h.gatewayService.SelectAccountWithLoadAwareness(requestCtx, apiKey.GroupID, sessionHash, reqModel, fs.FailedAccountIDs, "", int64(0))
+		}
 		if err != nil {
 			if len(fs.FailedAccountIDs) == 0 {
 				cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, reqModel, reqModel, effectiveAPIKeyPlatform(c, apiKey))
@@ -219,53 +240,70 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 				return
 			}
 		}
-		account := selection.Account
-		setOpsSelectedAccount(c, account.ID, account.Platform)
+		var account *service.Account
+		var accountReleaseFunc func()
+		if h.relay != nil {
+			if relayOutcome.Kind == AnthropicSelectProfitVetoed {
+				reqLog.Debug("gateway.responses.account_slot_profit_vetoed", zap.Int64("account_id", relayOutcome.Account.ID))
+				if fs.RecordProfitVeto(relayOutcome.Account.ID) == FailoverExhausted {
+					reqLog.Warn("gateway.responses.profit_veto_attempts_exhausted", zap.Int("profit_veto_count", fs.ProfitVetoCount()))
+					h.responsesErrorResponse(c, http.StatusServiceUnavailable, "api_error", profitVetoExhaustedMessage)
+					return
+				}
+				continue
+			}
+			account, accountReleaseFunc = relayOutcome.Account, relayOutcome.Release
+			// 渠道映射在主节点选号时定下。
+			channelMapping = relayAttempt.ChannelMapping
+		} else {
+			account = selection.Account
+			setOpsSelectedAccount(c, account.ID, account.Platform)
 
-		// 4. Acquire account concurrency slot
-		accountReleaseFunc := selection.ReleaseFunc
-		if !selection.Acquired {
-			if selection.WaitPlan == nil {
-				markOpsRoutingCapacityLimited(c)
-				h.responsesErrorResponse(c, http.StatusServiceUnavailable, "api_error", "No available accounts")
-				return
+			// 4. Acquire account concurrency slot
+			accountReleaseFunc = selection.ReleaseFunc
+			if !selection.Acquired {
+				if selection.WaitPlan == nil {
+					markOpsRoutingCapacityLimited(c)
+					h.responsesErrorResponse(c, http.StatusServiceUnavailable, "api_error", "No available accounts")
+					return
+				}
+				accountReleaseFunc, err = h.concurrencyHelper.AcquireAccountSlotWithWaitTimeout(
+					c,
+					account.ID,
+					selection.WaitPlan.MaxConcurrency,
+					selection.WaitPlan.Timeout,
+					reqStream,
+					&streamStarted,
+				)
+				if err != nil {
+					reqLog.Warn("gateway.responses.account_slot_acquire_failed", zap.Int64("account_id", account.ID), zap.Error(err))
+					h.handleConcurrencyError(c, err, "account", streamStarted)
+					return
+				}
 			}
-			accountReleaseFunc, err = h.concurrencyHelper.AcquireAccountSlotWithWaitTimeout(
-				c,
-				account.ID,
-				selection.WaitPlan.MaxConcurrency,
-				selection.WaitPlan.Timeout,
-				reqStream,
-				&streamStarted,
-			)
-			if err != nil {
-				reqLog.Warn("gateway.responses.account_slot_acquire_failed", zap.Int64("account_id", account.ID), zap.Error(err))
-				h.handleConcurrencyError(c, err, "account", streamStarted)
-				return
+			// 终检与准入后绑定必须使用选号结果携带的门：门安装在调度栈的局部
+			// ctx 上（composite/fallback 还可能解析出与入口分组不同的门），直接用
+			// requestCtx 会退化为空操作。
+			admissionCtx := service.ContextWithSelectionProfitGate(requestCtx, selection)
+			latest, vetoed, reason := h.gatewayService.GatewayProfitControlVetoLatest(admissionCtx, account)
+			if vetoed {
+				if accountReleaseFunc != nil {
+					accountReleaseFunc()
+				}
+				reqLog.Debug("gateway.responses.account_slot_profit_vetoed", zap.Int64("account_id", account.ID), zap.String("reason", reason))
+				if fs.RecordProfitVeto(account.ID) == FailoverExhausted {
+					reqLog.Warn("gateway.responses.profit_veto_attempts_exhausted", zap.Int("profit_veto_count", fs.ProfitVetoCount()))
+					h.responsesErrorResponse(c, http.StatusServiceUnavailable, "api_error", profitVetoExhaustedMessage)
+					return
+				}
+				continue
 			}
-		}
-		// 终检与准入后绑定必须使用选号结果携带的门：门安装在调度栈的局部
-		// ctx 上（composite/fallback 还可能解析出与入口分组不同的门），直接用
-		// requestCtx 会退化为空操作。
-		admissionCtx := service.ContextWithSelectionProfitGate(requestCtx, selection)
-		latest, vetoed, reason := h.gatewayService.GatewayProfitControlVetoLatest(admissionCtx, account)
-		if vetoed {
-			if accountReleaseFunc != nil {
-				accountReleaseFunc()
-			}
-			reqLog.Debug("gateway.responses.account_slot_profit_vetoed", zap.Int64("account_id", account.ID), zap.String("reason", reason))
-			if fs.RecordProfitVeto(account.ID) == FailoverExhausted {
-				reqLog.Warn("gateway.responses.profit_veto_attempts_exhausted", zap.Int("profit_veto_count", fs.ProfitVetoCount()))
-				h.responsesErrorResponse(c, http.StatusServiceUnavailable, "api_error", profitVetoExhaustedMessage)
-				return
-			}
-			continue
-		}
-		account = latest
-		selection.Account = latest
-		if selection.ProfitGateActive() {
-			if err := h.gatewayService.BindStickySessionAfterProfitAdmission(admissionCtx, apiKey.GroupID, sessionHash, account.ID); err != nil {
-				reqLog.Warn("gateway.responses.bind_sticky_session_after_profit_admission_failed", zap.Int64("account_id", account.ID), zap.Error(err))
+			account = latest
+			selection.Account = latest
+			if selection.ProfitGateActive() {
+				if err := h.gatewayService.BindStickySessionAfterProfitAdmission(admissionCtx, apiKey.GroupID, sessionHash, account.ID); err != nil {
+					reqLog.Warn("gateway.responses.bind_sticky_session_after_profit_admission_failed", zap.Int64("account_id", account.ID), zap.Error(err))
+				}
 			}
 		}
 		accountReleaseFunc = wrapReleaseOnDone(c.Request.Context(), accountReleaseFunc)
@@ -340,6 +378,14 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 		sessionID := service.ExtractClientSessionID(c)
 		stampForwardRequestedReasoningEffort(result, service.RequestedReasoningEffortFromContext(c.Request.Context()))
+		if h.relay != nil {
+			// 从节点：写进本地扣费队列，主节点按凭证用同一个 RecordUsage 入账。
+			h.relay.SubmitAnthropicUsage(c, relayAttempt, OpenAIUsageFacts{
+				InboundEndpoint: inboundEndpoint, UpstreamEndpoint: upstreamEndpoint, UserAgent: userAgent,
+				IPAddress: clientIP, RequestPayloadHash: requestPayloadHash, SessionID: sessionID,
+			}, result, false)
+			return
+		}
 		h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 			if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 				Result:             result,

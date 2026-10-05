@@ -520,6 +520,11 @@ enum SelectEndpoint {
   // 选号与准入，换号状态在从节点；会话（粘性键、内容摘要会话）整段在主节点：从节点只带 session_hash（CLI / 通用会话哈希）和
   // gemini_digest_chain，主节点回最终的会话键（Selection.session_hash）和绑定的账号（sticky_bound_account_id）。
   SELECT_ENDPOINT_GEMINI_NATIVE = 7;
+  // Anthropic / Gemini / Antigravity 平台分组的 /v1/responses、/v1/chat/completions（GatewayHandler.Responses / ChatCompletions：把请求
+  // 转成 Messages 再转发）。与 Messages 一样一轮选号与准入、换号状态在从节点；不带会话数限制、不查粘性绑定、没有预热拦截，
+  // 账号槽排队不计排队数（本地这两个处理函数直接等槽）；错误按 OpenAI 兼容格式由从节点写。
+  SELECT_ENDPOINT_GATEWAY_RESPONSES = 8;
+  SELECT_ENDPOINT_GATEWAY_CHAT = 9;
 }
 
 message AdmitRequest {
@@ -807,6 +812,8 @@ message SelectRejection {
   // REJECTION_FORMAT_FAILOVER_EXHAUSTED：这是 Anthropic Messages 的选号耗尽（从节点照本地 HandleSelectionExhausted
   // 可能退避后接着选，请求记录留着）。
   bool anthropic_messages = 18;
+  // REJECTION_FORMAT_GATEWAY：按 /v1/responses、/v1/chat/completions 处理函数自己的 OpenAI 兼容错误格式写（计费资格、没有可用账号等）。
+  bool openai_compat_format = 19;
 }
 
 message Selection {

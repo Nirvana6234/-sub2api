@@ -30,7 +30,8 @@ func (s *selector) Select(ctx context.Context, nodeID int64, req *relayv1.Select
 	case relayv1.SelectEndpoint_SELECT_ENDPOINT_OPENAI_RESPONSES_WS:
 		ws = true
 	case relayv1.SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_MESSAGES, relayv1.SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_COUNT_TOKENS,
-		relayv1.SelectEndpoint_SELECT_ENDPOINT_GEMINI_NATIVE:
+		relayv1.SelectEndpoint_SELECT_ENDPOINT_GEMINI_NATIVE, relayv1.SelectEndpoint_SELECT_ENDPOINT_GATEWAY_RESPONSES,
+		relayv1.SelectEndpoint_SELECT_ENDPOINT_GATEWAY_CHAT:
 	default:
 		return unsupported(), nil
 	}
@@ -42,7 +43,7 @@ func (s *selector) Select(ctx context.Context, nodeID int64, req *relayv1.Select
 	switch {
 	case ws:
 		resp, err = s.selectOpenAIWS(ctx, nodeID, req)
-	case req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_MESSAGES:
+	case req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_MESSAGES || isGatewayCompatEndpoint(req.GetEndpoint()):
 		resp, err = s.selectAnthropic(ctx, nodeID, req)
 	case req.GetEndpoint() == relayv1.SelectEndpoint_SELECT_ENDPOINT_ANTHROPIC_COUNT_TOKENS:
 		resp, err = s.selectAnthropicCountTokens(ctx, nodeID, req)
@@ -465,7 +466,7 @@ func (s *selector) startRequest(ctx context.Context, record *requestRecord, req 
 	record.userRelease = release
 
 	if err := s.checkBilling(ctx, record.key.nodeID, req.GetHeldQuota(), apiKey, quotaReq.Subscription, quotaReq.Platform); err != nil {
-		return gatewayRejection(billingRejection(err, anthropicBilling))
+		return gatewayRejection(billingRejectionFor(req, err, anthropicBilling))
 	}
 	if cyberAfterBilling {
 		if rej := s.cyberRejection(ctx, record.key.nodeID, req, apiKey); rej != nil {
@@ -575,11 +576,11 @@ func (s *selector) buildSelection(ctx context.Context, nodeID int64, req *relayv
 	if err != nil {
 		var insufficient *master.QuotaInsufficientError
 		if errors.As(err, &insufficient) {
-			return nil, gatewayRejection(billingRejection(quotaError(insufficient.Scope.Dimension), anthropicBilling)), nil
+			return nil, gatewayRejection(billingRejectionFor(req, quotaError(insufficient.Scope.Dimension), anthropicBilling)), nil
 		}
 		if errors.Is(err, service.ErrSubscriptionInvalid) || errors.Is(err, service.ErrBillingServiceUnavailable) {
 			// 与本地计费检查在同样的情况下返回的一致（订阅已失效、计费数据取不到）。
-			return nil, gatewayRejection(billingRejection(err, anthropicBilling)), nil
+			return nil, gatewayRejection(billingRejectionFor(req, err, anthropicBilling)), nil
 		}
 		return nil, nil, err
 	}
@@ -634,7 +635,7 @@ func gatewayRejection(r handler.OpenAIGatewayRejection) *relayv1.SelectResponse 
 	return &relayv1.SelectResponse{Result: &relayv1.SelectResponse_Rejection{Rejection: &relayv1.SelectRejection{
 		Format: relayv1.RejectionFormat_REJECTION_FORMAT_GATEWAY, Status: int32(r.Status), ErrorType: r.ErrType, Code: r.Code,
 		Message: r.Message, RetryAfterSeconds: int32(r.RetryAfter), RoutingCapacityLimited: r.RoutingCapacityLimited,
-		OpsBusinessLimitedReason: r.OpsBusinessLimitedReason, AnthropicFormat: r.Anthropic,
+		OpsBusinessLimitedReason: r.OpsBusinessLimitedReason, AnthropicFormat: r.Anthropic, OpenaiCompatFormat: r.Compat,
 	}}}
 }
 
@@ -642,6 +643,13 @@ func gatewayRejection(r handler.OpenAIGatewayRejection) *relayv1.SelectResponse 
 func billingRejection(err error, anthropic bool) handler.OpenAIGatewayRejection {
 	r := handler.OpenAIBillingRejection(err)
 	r.Anthropic = anthropic
+	return r
+}
+
+// billingRejectionFor 同 billingRejection，/v1/responses、/v1/chat/completions 入口按处理函数自己的格式写。
+func billingRejectionFor(req *relayv1.SelectRequest, err error, anthropic bool) handler.OpenAIGatewayRejection {
+	r := billingRejection(err, anthropic)
+	r.Compat = isGatewayCompatEndpoint(req.GetEndpoint())
 	return r
 }
 
